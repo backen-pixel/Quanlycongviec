@@ -42,6 +42,11 @@ import {
 import CommentDisplayHiddenBanner, { useCommentShowOnScreenEnabled } from '../components/CommentDisplayHiddenBanner';
 import TaskFillFormModal from '../components/TaskFillFormModal';
 import LeadDealPicker from '../components/LeadDealPicker';
+import {
+  canManageAssignment as canManageAssignmentAccess,
+  isAssignmentCreator,
+  isAssignmentAssignee,
+} from '../lib/assignmentManageAccess';
 
 const PRIORITY_OPTIONS = [
   { value: 'low',    label: 'Thấp',   color: 'bg-gray-100 text-gray-600' },
@@ -1392,21 +1397,12 @@ function useAssignmentsPageContext() {
   return useContext(AssignmentsPageContext);
 }
 
-function isAssignmentCreator(task, userId) {
-  return String(task?.created_by_id || '') === String(userId || '');
-}
-
-function isAssignmentAssignee(task, userId) {
-  if (!userId) return false;
-  const list = (task?.assignees?.length) ? task.assignees : (task?.assignee ? [task.assignee] : []);
-  if (list.some((a) => String(a.id) === String(userId))) return true;
-  if (task?.assignee_id && String(task.assignee_id) === String(userId)) return true;
-  return false;
-}
-
-/** Kéo cột / đổi trạng thái: người tạo hoặc người được giao (chung một cột cho cả nhóm). */
-function canMoveAssignment(task, userId) {
-  return isAssignmentCreator(task, userId) || isAssignmentAssignee(task, userId);
+/** Kéo cột / đổi trạng thái: người tạo, người được giao, hoặc quản trị được sửa cấu trúc. */
+function canMoveAssignment(task, user) {
+  const userId = user?.id || user?.userId;
+  return canManageAssignmentAccess(task, user)
+    || isAssignmentCreator(task, userId)
+    || isAssignmentAssignee(task, userId);
 }
 
 const PIPELINE_STATUS_STAGES = [
@@ -1560,8 +1556,8 @@ export default function CRMAssignmentsPage({
   const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = ['admin', 'manager', 'sales_admin'].includes(user?.role);
   const uid = String(user?.id || '');
-  const canManageTask = useCallback((t) => isAssignmentCreator(t, uid), [uid]);
-  const canMoveTask = useCallback((t) => canMoveAssignment(t, uid), [uid]);
+  const canManageTask = useCallback((t) => canManageAssignmentAccess(t, user), [user]);
+  const canMoveTask = useCallback((t) => canMoveAssignment(t, user), [user]);
 
   const [pageTab, setPageTab] = useState(() => (
     String(searchParams.get('pageTab') || '').toLowerCase() === 'private' ? 'private' : 'assignments'

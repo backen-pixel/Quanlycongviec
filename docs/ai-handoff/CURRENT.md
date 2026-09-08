@@ -1,6 +1,16 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-08 15:40 (UTC+7)
+Cập nhật: 2026-09-08 16:10 (UTC+7)
+
+## Không gian chung — admin hệ thống sửa/xóa việc người khác
+
+Trạng thái: **đã commit trên `feat/project-phat-sinh-report`.**
+
+Người tạo vẫn sửa/xóa được việc của mình. Admin hệ thống (role `admin`, không
+`company_id` — gồm Trương Trọng Thành) sửa/xóa được việc người khác trên
+Không gian chung và bảng Giao việc. Admin/sales_admin gắn công ty chỉ trong
+phạm vi `company_id` / `executor_company_id`. NV thường không thấy nút Sửa/Xóa
+trên việc không phải của mình.
 
 ## Lỗi query-guard / 42703 trên tổng quan dự án — Claude lên kế hoạch sửa
 

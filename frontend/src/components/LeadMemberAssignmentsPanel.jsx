@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
+import { canManageAssignment, isAssignmentAssignee } from '../lib/assignmentManageAccess';
 import { formatDate } from '../lib/utils';
 import { rememberCompanyDeadlineClock, companyDeadlineIsoFromYmd } from '../lib/companyDeadlineClock';
 import { vnNowParts, addCalendarDaysYmd, nextSxWorkingYmd, addSxWorkingDaysYmd } from '../lib/sxWorkshopSchedule';
@@ -249,6 +251,8 @@ export default function LeadMemberAssignmentsPanel({
   linkedProjectId = null,
   refreshKey = null,
 }) {
+  const { user } = useAuth();
+  const uid = String(user?.id || '');
   const initialModule = ['crm', 'production', 'logistics'].includes(defaultModule)
     ? defaultModule
     : 'all';
@@ -625,7 +629,11 @@ export default function LeadMemberAssignmentsPanel({
     setShowForm(true);
   };
 
+  const canManage = (a) => canManageAssignment(a, user);
+  const canCycleStatus = (a) => canManage(a) || isAssignmentAssignee(a, uid);
+
   const openEdit = (a) => {
+    if (!canManage(a)) return;
     const mod = String(a.assignment_module || '').toLowerCase();
     if (mod === 'crm' || mod === 'production' || mod === 'logistics') {
       setModuleTab(mod);
@@ -750,6 +758,7 @@ export default function LeadMemberAssignmentsPanel({
 
   /** Giống nhiệm vụ Công việc: Chờ → Đang làm → Xong → Chờ */
   const cycleStatus = (a) => {
+    if (!canCycleStatus(a)) return;
     const next = a.status === 'completed'
       ? 'pending'
       : a.status === 'pending'
@@ -953,6 +962,8 @@ export default function LeadMemberAssignmentsPanel({
   };
 
   const remove = async (id) => {
+    const row = assignments.find((a) => String(a.id) === String(id));
+    if (row && !canManage(row)) return;
     if (!confirm('Xóa phân công này?')) return;
     try {
       await api.delete(`/crm/assignments/${id}`);
@@ -1434,14 +1445,19 @@ export default function LeadMemberAssignmentsPanel({
                 <button
                   type="button"
                   onClick={() => cycleStatus(a)}
-                  className="shrink-0 mt-0.5 cursor-pointer rounded-full p-0.5 hover:bg-violet-50"
+                  className={`shrink-0 mt-0.5 rounded-full p-0.5 ${
+                    canCycleStatus(a) ? 'cursor-pointer hover:bg-violet-50' : 'cursor-default'
+                  }`}
                   title={
-                    a.status === 'completed'
-                      ? 'Đánh dấu chờ lại'
-                      : a.status === 'pending'
-                        ? 'Chuyển sang đang làm'
-                        : 'Đánh dấu hoàn thành'
+                    !canCycleStatus(a)
+                      ? 'Chỉ người tạo, người được giao hoặc quản trị mới đổi trạng thái'
+                      : a.status === 'completed'
+                        ? 'Đánh dấu chờ lại'
+                        : a.status === 'pending'
+                          ? 'Chuyển sang đang làm'
+                          : 'Đánh dấu hoàn thành'
                   }
+                  disabled={!canCycleStatus(a)}
                 >
                   <StIcon className={`h-4 w-4 ${
                     a.status === 'completed' ? 'text-emerald-500'
@@ -1595,6 +1611,8 @@ export default function LeadMemberAssignmentsPanel({
                   >
                     <Paperclip size={14} />
                   </button>
+                  {canManage(a) && (
+                    <>
                   <button
                     type="button"
                     onClick={() => openEdit(a)}
@@ -1611,6 +1629,8 @@ export default function LeadMemberAssignmentsPanel({
                   >
                     <Trash2 size={14} />
                   </button>
+                    </>
+                  )}
                   <Link
                     to={assignmentBoardHref(a)}
                     className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"

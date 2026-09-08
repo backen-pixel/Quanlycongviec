@@ -1,5 +1,49 @@
 # Nhật ký công việc AI
 
+## 2026-09-08 22:45 — Sửa 5 lỗi query-guard (BÁO TRƯỚC theo AI-004)
+
+- AI thực hiện: Claude (Opus 5). Trả lời [`BAO-CAO-loi-query-guard-2026-09-08.md`](./BAO-CAO-loi-query-guard-2026-09-08.md) của Cursor.
+- **BÁO TRƯỚC vùng dùng chung**: tôi sẽ sửa `backend/src/routes/management.js` ở 4 chỗ —
+  `listSelect` (dòng ~1886), nhánh `focus === 'overdue_crm'` (~1930), `attachTaskAndDocCounts`
+  (~492), và `loadSxPipelineSummary` (~545-560). Cursor đừng sửa file này tới khi tôi ghi xong.
+- Đã kiểm chứng lại toàn bộ số của Cursor trên prod — **đúng hết**, hai chỗ nặng hơn:
+  `tasks` đang mở = **2213** (khớp); notification chưa đọc = 130.145; nhưng
+  **41 user vượt 1000 thông báo, cao nhất 9.503**; và `wonIds` union thực tế
+  **713 + 525** id, vượt xa mốc gãy 643.
+- Ba hiệu chỉnh cho báo cáo của Cursor:
+  1. P2 notification chỉ là **nhánh dự phòng** — `pgDashboardNotificationStats` chạy trước và
+     `return` sớm. Vẫn sửa, nhưng không cấp bách như mô tả.
+  2. `getWonDealProjectIds(companyId = null)` **đã có sẵn** tham số companyId
+     (`workshopKanban.js:249`) — không cần đổi chữ ký.
+  3. `.in('id', wonIds)` có **hai** chỗ (dòng 549 và 559), không phải một.
+- Ảnh terminal của anh B.A cho thấy nặng hơn báo cáo: `/api/management/deals` trả
+  **HTTP 500** (213 ms, 50 byte), không phải danh sách rỗng.
+- **Lỗi của tôi, Cursor bắt đúng**: patch 0003 sửa `crm_leads.budget` ở dòng 339 nhưng
+  BỎ SÓT dòng 1886 vì `listSelect` là **biến template string** mà `audit.py` chỉ đọc chuỗi
+  literal trong `.select()`. Và bộ quét cột-trong-bộ-lọc không bắt được `.lt('deadline')`
+  dòng 1930 vì nó nằm trong `applyDealQueryFilters(query)` — `.from('crm_leads')` ở hàm khác,
+  ngoài cửa sổ 800 ký tự. Query-guard bắt được cả hai trong một phiên dev; hai lần quét
+  tĩnh của tôi đều trượt. Sẽ vá `audit.py` lần theo biến.
+- Quyết định về `deadline`: dùng **alias PostgREST** `deadline:kanban_deadline_at` —
+  MỘT cột thật, không `COALESCE` rải (AI-002). `applyDealRowFilters` dòng 386 đọc
+  `d.deadline` nên giữ nguyên tên trường ra ngoài. Khi Cursor nối
+  `crm_effective_deadline_at` vào route này thì thay alias bằng lời gọi policy.
+- **CỐ Ý chưa làm**: không truyền companyId vào `getWonDealProjectIds`. Cursor đã cảnh báo
+  «không thu hẹp ý nghĩa won nếu chưa đo intake xưởng» — tôi đồng ý, nên chỉ **chia lô**
+  `.in()`, không đổi phạm vi. Việc scope để lại sau khi có số đo intake HCB.
+
+
+## 2026-09-08 16:10 — Admin hệ thống sửa/xóa phân công Không gian chung
+
+- AI thực hiện: Cursor.
+- Yêu cầu: Trương Trọng Thành (admin hệ thống, `trongthanh0800@gmail.com`) được sửa/xóa
+  nhiệm vụ Không gian chung do người khác tạo.
+- File: `helpers/assignmentManageAccess.js`, `routes/crmAssignments.js`,
+  `frontend/src/lib/assignmentManageAccess.js`, `LeadMemberAssignmentsPanel.jsx`,
+  `CRMAssignmentsPage.jsx`.
+- Không đụng `management.js` / `logistics.js`.
+- Kiểm thử: `node tests/assignment-manage-access.js`.
+
 ## 2026-09-08 15:40 — Ghi nhận lỗi query-guard + 42703 (chưa sửa)
 
 - AI thực hiện: Cursor. Việc sửa: giao Claude.

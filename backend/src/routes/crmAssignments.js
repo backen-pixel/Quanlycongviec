@@ -36,6 +36,7 @@ const { emitCrmTaskChanged } = require('../helpers/crmTaskRealtime');
 const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
 const { listSharedWorkspaceInboxTasks, listPrivateDealInboxTasks } = require('../helpers/sharedWorkspaceInbox');
 const { listSharedWorkspaceAssignmentsReport } = require('../helpers/sharedWorkspaceAssignmentsReport');
+const { canManageAssignmentStructure } = require('../helpers/assignmentManageAccess');
 const {
   crmReportTodayYmdVn,
   crmReportCreatedAtFromIso,
@@ -1026,12 +1027,12 @@ r.put('/:id', async (req, res) => {
   try {
     const { data: before } = await supabase
       .from('crm_assignments')
-      .select('id, assignee_id, status, company_id, created_by_id')
+      .select('id, assignee_id, status, company_id, executor_company_id, created_by_id')
       .eq('id', req.params.id)
       .maybeSingle();
     if (!before) return res.status(404).json({ error: 'Không tìm thấy nhiệm vụ' });
 
-    const creator = isAssignmentCreator(req, before);
+    const creator = canManageAssignmentStructure(req.user, before);
     const rawIds = req.body.assignee_ids;
     const rawDept = req.body.department_ids;
     const rawReg = req.body.region_ids;
@@ -1040,12 +1041,12 @@ r.put('/:id', async (req, res) => {
 
     if (!creator) {
       if (structuralChange) {
-        return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ mới được sửa hoặc xóa' });
+        return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ hoặc quản trị mới được sửa hoặc xóa' });
       }
       const progressKeys = ['status', 'column_id', 'position'];
       const touched = progressKeys.filter((k) => req.body[k] !== undefined);
       if (!touched.length || !(await isAssignmentAssignee(req, before.id))) {
-        return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ mới được sửa hoặc xóa' });
+        return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ hoặc quản trị mới được sửa hoặc xóa' });
       }
     }
 
@@ -1191,13 +1192,13 @@ r.post('/:id/move', async (req, res) => {
   try {
     const { data: row } = await supabase
       .from('crm_assignments')
-      .select('id, created_by_id')
+      .select('id, created_by_id, company_id, executor_company_id')
       .eq('id', req.params.id)
       .maybeSingle();
     if (!row) return res.status(404).json({ error: 'Không tìm thấy nhiệm vụ' });
-    const creator = isAssignmentCreator(req, row);
+    const creator = canManageAssignmentStructure(req.user, row);
     if (!creator && !(await isAssignmentAssignee(req, row.id))) {
-      return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ mới được sửa hoặc xóa' });
+      return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ hoặc quản trị mới được sửa hoặc xóa' });
     }
 
     const { column_id, position } = req.body || {};
@@ -1268,12 +1269,12 @@ r.delete('/:id', async (req, res) => {
   try {
     const { data: row } = await supabase
       .from('crm_assignments')
-      .select('id, created_by_id, lead_id, crm_task_id')
+      .select('id, created_by_id, lead_id, crm_task_id, company_id, executor_company_id')
       .eq('id', req.params.id)
       .maybeSingle();
     if (!row) return res.status(404).json({ error: 'Không tìm thấy nhiệm vụ' });
-    if (!isAssignmentCreator(req, row)) {
-      return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ mới được sửa hoặc xóa' });
+    if (!canManageAssignmentStructure(req.user, row)) {
+      return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ hoặc quản trị mới được sửa hoặc xóa' });
     }
     const result = await deleteCrmAssignmentCore(req, req.params.id);
     if (result.error) return res.status(result.status || 500).json({ error: result.error });
