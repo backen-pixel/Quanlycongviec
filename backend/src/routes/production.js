@@ -3842,11 +3842,15 @@ r.patch('/projects/:id/kanban-deadline', requireProductionKanbanEdit(), async (r
       throw upErr;
     }
 
-    await logDealDeadlineChangeComment(req, {
-      projectId: id,
-      newDeadlineAt: newIso,
-      cleared: !newIso,
-    });
+    try {
+      await logDealDeadlineChangeComment(req, {
+        projectId: id,
+        newDeadlineAt: newIso,
+        cleared: !newIso,
+      });
+    } catch (commentErr) {
+      console.warn('[sx/kanban-deadline] comment:', commentErr.message);
+    }
 
     const ioDl = req.app.get('io');
     const { emitProductionKanbanChangedImmediate, emitProductionKanbanChangedAsync } = require('../helpers/workshopIntakeNotify');

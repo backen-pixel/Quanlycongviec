@@ -7166,7 +7166,9 @@ export default function CRMDashboard() {
           setAllDeals((prev) => prev.map((d) => (String(d.id) === lid ? { ...d, ...patch } : d)));
         }
         setDeadlineCtx(null);
-        load({ silent: true });
+        try {
+          load({ silent: true });
+        } catch (_) { /* đã lưu xong */ }
         return;
       }
       const mergedExtra = {

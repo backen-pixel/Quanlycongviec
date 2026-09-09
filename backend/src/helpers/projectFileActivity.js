@@ -503,16 +503,20 @@ async function logDealStageChangeComment(req, { leadId, projectId, stageName }) 
 }
 
 async function logDealDeadlineChangeComment(req, { leadId, projectId, newDeadlineAt, cleared = false }) {
-  const uid = getRequestUserId(req);
-  if (!uid) return;
-  const { data: user } = await supabase.from('users').select('full_name').eq('id', uid).maybeSingle();
-  const userName = user?.full_name || 'Người dùng';
-  const when = cleared ? '— (đã xóa hạn)' : formatDeadlineVi(newDeadlineAt);
-  await logDealActivityComment(req, {
-    leadId,
-    projectId,
-    body: `⏰ ${userName} đã thay đổi hạn chót thành ${when}.`,
-  });
+  try {
+    const uid = getRequestUserId(req);
+    if (!uid) return;
+    const { data: user } = await supabase.from('users').select('full_name').eq('id', uid).maybeSingle();
+    const userName = user?.full_name || 'Người dùng';
+    const when = cleared ? '— (đã xóa hạn)' : formatDeadlineVi(newDeadlineAt);
+    await logDealActivityComment(req, {
+      leadId,
+      projectId,
+      body: `⏰ ${userName} đã thay đổi hạn chót thành ${when}.`,
+    });
+  } catch (e) {
+    console.warn('[logDealDeadlineChangeComment]', e.message);
+  }
 }
 
 async function assertFileAttachmentMutation(req, res, fileRow) {

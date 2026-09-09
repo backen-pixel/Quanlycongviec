@@ -1,5 +1,11 @@
 # Nhật ký công việc AI
 
+## 2026-09-09 14:10 — Harden lưu deadline (CRM + SX)
+
+- AI: Cursor.
+- FE: sau PATCH cập nhật lead tại chỗ qua `onLeadPatch`; `onUpdate` lỗi không còn alert «Lỗi lưu deadline».
+- BE: bọc comment / emit / effective deadline; `logDealDeadlineChangeComment` không throw.
+
 ## 2026-09-09 13:55 — Ghim góc phải trên CRM và VC/LĐ
 
 - AI: Cursor.

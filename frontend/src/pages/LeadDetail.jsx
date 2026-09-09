@@ -3910,6 +3910,9 @@ export default function LeadDetail() {
               load({ silent: true });
               setCrmTasksRefreshKey((k) => k + 1);
             }}
+            onLeadPatch={(patch) => {
+              setLead((prev) => (prev ? { ...prev, ...patch } : prev));
+            }}
             currentUser={user}
             productionCompaniesSx={productionCompaniesSx}
             onOpenTransferAssignee={canTransferRegion ? openTransferRegionModal : null}
@@ -6553,6 +6556,7 @@ function LeadInfoPanel({
   lead,
   allUsers,
   onUpdate,
+  onLeadPatch,
   currentUser,
   productionCompaniesSx = [],
   onOpenTransferAssignee = null,
@@ -7032,13 +7036,26 @@ function LeadInfoPanel({
     if (!lead?.id) return;
     setDeadlineBusy(true);
     try {
-      await api.patch(`/crm/leads/${lead.id}/deadline`, {
+      const { data } = await api.patch(`/crm/leads/${lead.id}/deadline`, {
         kanban_deadline_at: deadlineIso,
         reason: reason || '',
         sync_open_tasks: true,
       });
+      onLeadPatch?.({
+        kanban_deadline_at: data?.kanban_deadline_at ?? deadlineIso,
+        kanban_deadline_reason: data?.kanban_deadline_reason ?? reason ?? null,
+        ...(data?.crm_next_open_task_deadline !== undefined
+          ? { crm_next_open_task_deadline: data.crm_next_open_task_deadline }
+          : {}),
+        effective_deadline_module: data?.effective_deadline_module,
+        effective_deadline_at: data?.effective_deadline_at,
+        effective_deadline_source: data?.effective_deadline_source,
+        deadline_state: data?.deadline_state,
+      });
       setDeadlineModalOpen(false);
-      onUpdate?.();
+      try {
+        onUpdate?.();
+      } catch (_) { /* reload không được coi là lỗi lưu */ }
       if (deadlineHistoryOpen) loadDeadlineHistory();
     } catch (e) {
       alert(e.response?.data?.error || e.message || 'Lỗi lưu deadline');

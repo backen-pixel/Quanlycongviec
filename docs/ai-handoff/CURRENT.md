@@ -4,7 +4,7 @@ Cập nhật: 2026-09-09 13:55 (UTC+7)
 
 ## Sửa deadline thẻ CRM — lỗi «Lỗi lưu deadline»
 
-Trạng thái: **đã push nhánh feature, đang gộp main.**
+Trạng thái: **đang harden thêm (local) — PATCH thành công không bị side-effect làm 500.**
 
 `LeadInfoPanel.saveKanbanDeadline` gọi `setLead` (không có trong scope) sau khi
 API thành công → alert generic dù hạn đã ghi DB. Đã bỏ `setLead`, reload qua

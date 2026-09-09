@@ -2985,17 +2985,25 @@ r.patch('/leads/:id/deadline', async (req, res) => {
       console.warn('[crm/deadline] history:', histErr.message);
     }
 
-    await logKanbanDeadlineUnifiedHistory({
-      leadId,
-      companyId: lead.company_id,
-      actorUserId: req.user.userId,
-      oldDeadlineAt: lead.kanban_deadline_at || null,
-      newDeadlineAt: newIso,
-      reason,
-      source: 'manual_edit',
-    });
+    try {
+      await logKanbanDeadlineUnifiedHistory({
+        leadId,
+        companyId: lead.company_id,
+        actorUserId: req.user.userId,
+        oldDeadlineAt: lead.kanban_deadline_at || null,
+        newDeadlineAt: newIso,
+        reason,
+        source: 'manual_edit',
+      });
+    } catch (histUnifiedErr) {
+      console.warn('[crm/deadline] unified history:', histUnifiedErr.message);
+    }
 
-    emitCrmDashboardChanged(req, { type: lead.type, company_id: lead.company_id, lead_id: leadId, action: 'deadline_changed' });
+    try {
+      emitCrmDashboardChanged(req, { type: lead.type, company_id: lead.company_id, lead_id: leadId, action: 'deadline_changed' });
+    } catch (emitErr) {
+      console.warn('[crm/deadline] emit:', emitErr.message);
+    }
 
     try {
       const { data: leadProj } = await supabase.from('crm_leads').select('project_id').eq('id', leadId).maybeSingle();
@@ -3009,25 +3017,30 @@ r.patch('/leads/:id/deadline', async (req, res) => {
       console.warn('[crm/deadline] comment:', commentErr.message);
     }
 
+    let extra = {};
+    try {
+      const effective = resolveModuleDeadline(MODULE.CRM, {
+        ...lead,
+        kanban_deadline_at: newIso,
+        crm_next_open_task_deadline: syncOpenTasks && syncedOpenTasks ? newIso : null,
+      }, { stage: lead.stage || leadStage });
+      extra = {
+        effective_deadline_module: MODULE.CRM,
+        effective_deadline_at: effective.deadlineAt,
+        effective_deadline_source: effective.source,
+        deadline_state: effective.state,
+      };
+    } catch (effErr) {
+      console.warn('[crm/deadline] effective:', effErr.message);
+    }
+
     res.json({
       ok: true,
       kanban_deadline_at: newIso,
       kanban_deadline_reason: reason || null,
       crm_next_open_task_deadline: syncedOpenTasks > 0 ? (newIso || null) : undefined,
       synced_open_tasks: syncedOpenTasks,
-      ...(() => {
-        const effective = resolveModuleDeadline(MODULE.CRM, {
-          ...lead,
-          kanban_deadline_at: newIso,
-          crm_next_open_task_deadline: syncOpenTasks && syncedOpenTasks ? newIso : null,
-        }, { stage: lead.stage || leadStage });
-        return {
-          effective_deadline_module: MODULE.CRM,
-          effective_deadline_at: effective.deadlineAt,
-          effective_deadline_source: effective.source,
-          deadline_state: effective.state,
-        };
-      })(),
+      ...extra,
     });
     try { require('../../../jobs/projectDeadlineDispatch').triggerAfterDeadlineChange(); } catch (_) { /* ignore */ }
   } catch (e) {
