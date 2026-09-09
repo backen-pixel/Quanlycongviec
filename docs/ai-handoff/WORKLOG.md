@@ -1,5 +1,16 @@
 # Nhật ký công việc AI
 
+## 2026-09-09 12:10 — Ghim dự án xuống góc phải
+
+- AI: Cursor.
+- FE: `pinnedProjects.js` (localStorage, tối đa 5), `PinProjectButton`,
+  `PinnedProjectsWidget` dạng danh sách ẩn/hiện + bỏ ghim.
+- Nút ghim: Work Unified, ProductionDetail (SX/VC), ProductionProjectDetailPage,
+  LeadDetail (deal đã có dự án).
+- `App.jsx`: widget luôn gắn (kể cả CRM-only).
+- Đã kiểm TB-2026-538: ghim Work Unified, ẩn/hiện, còn trên CRM dashboard,
+  bấm danh sách mở lại; nút Bỏ ghim hiện trên `/sx/projects/:id`.
+
 ## 2026-09-09 09:00 — Nhật ký công trình: lọc công ty / khu vực / NV
 
 - AI: Cursor.

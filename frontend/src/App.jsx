@@ -395,7 +395,7 @@ function ProtectedLayout() {
               )}
             </main>
           </div>
-          {!crmOnly && <PinnedProjectsWidget />}
+          <PinnedProjectsWidget />
         </div>
       </ProductTourProvider>
     </CrmNotesFabProvider>

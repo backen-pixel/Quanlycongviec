@@ -34,6 +34,7 @@ import { downloadWorkshopDocumentsZip } from '../lib/workshopDocumentsZipDownloa
 import { resolveSxProjectLeadId, pickPrimarySxCrmDeal } from '../lib/sxProjectComments';
 import { countMembersByModule } from '../lib/memberModuleCounts';
 import DealModulePathStrip from '../components/DealModulePathStrip';
+import PinProjectButton from '../components/PinProjectButton';
 import {
   addCalendarDaysYmd,
   buildSxInstallBackPlan,
@@ -3250,6 +3251,13 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <PinProjectButton
+            projectId={project.id}
+            code={displayCode}
+            name={displayTitle}
+            href={moduleKey === 'vc' ? `/vc/projects/${project.id}` : `/sx/projects/${project.id}`}
+            module={moduleKey === 'vc' ? 'vc' : 'sx'}
+          />
           {moduleKey !== 'vc' && (() => {
             const sourceCid = String(project.company_id || project.company?.id || '');
             const canPlace = isSystemAdmin(user) || isAdminLike(user)

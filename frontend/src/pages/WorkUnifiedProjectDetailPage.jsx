@@ -31,6 +31,7 @@ import { LeadMembersTab } from '../components/LeadChatTabs';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import { useAuth } from '../lib/auth';
+import PinProjectButton from '../components/PinProjectButton';
 import { FilePreviewOpenLink, useFilePreview } from '../context/FilePreviewContext';
 import { getFileDownloadAnchorProps, getFileOpenAnchorProps, publicFileUrl } from '../lib/publicFileUrl';
 import { resolveFilePreviewMode } from '../lib/filePreview';
@@ -2216,6 +2217,13 @@ function WorkUnifiedProjectDetailInner() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <PinProjectButton
+            projectId={id}
+            code={project.code}
+            name={project.name}
+            href={`/management/work-unified/${id}`}
+            module="project"
+          />
           <button
             type="button"
             onClick={() => setActiveTab('tasks')}

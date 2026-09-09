@@ -1,6 +1,20 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-09 08:55 (UTC+7)
+Cập nhật: 2026-09-09 12:10 (UTC+7)
+
+## Ghim dự án góc phải (tối đa 5)
+
+Trạng thái: **đã sửa local, chưa commit.**
+
+Nút **Ghim** trên chi tiết dự án: Work Unified, SX (`/sx/projects/:id`),
+VC (`/vc/projects/:id`), tổng quan SX, CRM deal đã có `project_id`.
+Danh sách góc phải (localStorage), giữ khi đổi trang; bấm mở lại đúng module;
+bỏ ghim; ẩn/hiện. Tối đa 5. Widget hiện cả tài khoản CRM-only.
+
+Đã kiểm trên TB-2026-538: ghim từ Work Unified → danh sách góc phải;
+ẩn thành nút số; sang `/crm/dashboard` vẫn còn; bấm mở lại dự án.
+
+## Nhật ký công trình — trang gom log + xuất Excel
 
 ## Nhật ký công trình — trang gom log + xuất Excel
 

@@ -7,6 +7,7 @@ import { Section, EmptyNote, TasksTab, DocumentsTab, HistoryTab } from './WorkUn
 import UnifiedTaskRow from '../components/UnifiedTaskRow';
 import WorkTaskExtrasPanel from '../components/WorkTaskExtrasPanel';
 import { formatDate } from '../lib/utils';
+import PinProjectButton from '../components/PinProjectButton';
 import {
   ArrowLeft, ChevronRight, ExternalLink, MessageCircle, Loader2, CheckCircle2, X as XIcon,
 } from 'lucide-react';
@@ -368,6 +369,13 @@ export default function ProductionProjectDetailPage() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <PinProjectButton
+            projectId={id}
+            code={project.code}
+            name={project.name}
+            href={`/management/production-overview/${id}`}
+            module="sx"
+          />
           <Link
             to={`/management/work-unified/${id}`}
             className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"

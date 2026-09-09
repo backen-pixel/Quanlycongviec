@@ -101,6 +101,7 @@ import {
   Pin, CheckCircle2, ShoppingCart, Package, Search, Eye, BookOpen, Truck,
 } from 'lucide-react';
 import { useProductTour } from '../components/productTour/ProductTourProvider';
+import PinProjectButton from '../components/PinProjectButton';
 import { CRM_LEAD_DEAL_DETAIL_TOUR_ID } from '../lib/productTour/tours';
 
 function formatLeadDealEventTitle(lead, customer) {
@@ -3027,6 +3028,15 @@ export default function LeadDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap" data-tour="lead-detail-actions">
+          {lead?.project_id ? (
+            <PinProjectButton
+              projectId={lead.project_id}
+              code={lead.project_code || lead.code}
+              name={lead.title || lead.project_name}
+              href={`/crm/leads/${lead.id}`}
+              module="crm"
+            />
+          ) : null}
           <button
             type="button"
             data-tour="lead-detail-tour-btn"
