@@ -159,6 +159,7 @@ const CRMCustomersPage = lazyWithRetry(() => import('./pages/CRMCustomersPage'))
 const CRMTasksPage = lazyWithRetry(() => import('./pages/CRMTasksPage'));
 const CRMAssignmentsPage = lazyWithRetry(() => import('./pages/CRMAssignmentsPage'));
 const SharedWorkspaceAssignmentsReportPage = lazyWithRetry(() => import('./pages/SharedWorkspaceAssignmentsReportPage'));
+const ProjectConstructionLogsPage = lazyWithRetry(() => import('./pages/ProjectConstructionLogsPage'));
 const SharedWorkspaceErrorTypesPage = lazyWithRetry(() => import('./pages/SharedWorkspaceErrorTypesPage'));
 const CrmDeptPlanPage = lazyWithRetry(() => import('./pages/CrmDeptPlanPage'));
 const CrmDailyReportPage = lazyWithRetry(() => import('./pages/CrmDailyReportPage'));
@@ -483,6 +484,7 @@ export default function App() {
             <Route path="/management/production-overview" element={<Suspense fallback={<PageLoader />}><ProductionOverviewPage /></Suspense>} />
             <Route path="/management/production-overview/:id" element={<Suspense fallback={<PageLoader />}><ProductionProjectDetailPage /></Suspense>} />
             <Route path="/management/shared-workspace-report" element={<SharedWorkspaceAssignmentsReportPage />} />
+            <Route path="/management/project-logs" element={<Suspense fallback={<PageLoader />}><ProjectConstructionLogsPage /></Suspense>} />
             <Route path="/management/shared-workspace-settings" element={<RequireCrmElevated><SharedWorkspaceErrorTypesPage /></RequireCrmElevated>} />
             <Route path="/work/flows" element={<Suspense fallback={<PageLoader />}><ModuleFlowSetupPage /></Suspense>} />
             <Route path="/projects" element={<Navigate to="/management/work-unified" replace state={{ moduleContext: 'congviec' }} />} />

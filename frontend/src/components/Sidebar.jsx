@@ -33,6 +33,7 @@ import SidebarModuleCycleButton from './SidebarModuleCycleButton';
 import { APP_MODULE_DEFINITIONS, mapCustomAppModuleToDef } from '../lib/appSwitcherModules';
 import { buildCustomAppModuleMenuGroups } from '../lib/customAppModuleSidebar';
 import { preloadModuleIconsFromModules } from '../lib/moduleIconPreload';
+import { prefetchCompanies } from '../lib/companiesPrefetch';
 import {
   readModuleLocalMenuPins,
   saveModuleMenuPins,
@@ -144,6 +145,7 @@ const CONGVIEC_MENU_GROUPS = [
     items: [
       { to: '/management/work-unified', icon: LayoutDashboard, label: 'Dashboard dự án', end: true },
       { to: '/management/shared-workspace-report', icon: BarChart3, label: 'Báo cáo phát sinh' },
+      { to: '/management/project-logs', icon: History, label: 'Nhật ký công trình' },
       { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
     ],
   },
@@ -222,6 +224,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
       { to: '/crm/kpi/scorecard', icon: ClipboardCheck, label: 'Scorecard KPI tháng', executiveOnly: true },
       { to: '/crm/kpi/settings', icon: Settings, label: 'Cấu hình KPI Tủ bếp', executiveOnly: true },
       { to: '/crm/reports', icon: BarChart3, label: 'Báo cáo', adminOnly: true },
+      { to: '/management/project-logs', icon: History, label: 'Nhật ký công trình' },
       { to: '/crm/reports/org-overview', icon: Building2, label: 'BC theo tổ chức', executiveOnly: true },
       { to: '/crm/reports/staff-lead-deal', icon: Users, label: 'BC Lead/Deal theo NV', executiveOnly: true },
       { to: '/crm/admin/sla-watchlist', icon: Timer, label: 'SLA Lead/Deal (quản trị)', executiveOnly: true },
@@ -328,6 +331,7 @@ const SX_MENU_GROUPS = [
       { to: '/sx/dashboard', icon: LayoutDashboard, label: 'Dashboard xưởng', end: true },
       { to: '/sx/project-tasks', icon: CheckSquare, label: 'Quản lý nhiệm vụ' },
       { to: '/sx/assignments', icon: ClipboardList, label: 'Giao việc Sản xuất' },
+      { to: '/management/project-logs', icon: History, label: 'Nhật ký công trình' },
       { to: '/drive?module=sx', icon: HardDrive, label: 'Drive Sản xuất' },
     ]
   },
@@ -477,6 +481,7 @@ const VC_MENU_GROUPS = [
       { to: '/vc/dashboard', icon: LayoutDashboard, label: 'Dashboard Lắp đặt', end: true },
       { to: '/vc/project-tasks', icon: CheckSquare, label: 'Quản lý nhiệm vụ' },
       { to: '/vc/assignments', icon: ClipboardList, label: 'Giao việc Lắp đặt' },
+      { to: '/management/project-logs', icon: History, label: 'Nhật ký công trình' },
       { to: '/drive?module=vc', icon: HardDrive, label: 'Drive Lắp đặt' },
     ]
   },
@@ -612,10 +617,15 @@ function SideLink({
     }
     if (moduleContext) storeModule(moduleContext);
   };
+  const prefetchIfProjectTasks = () => {
+    if (String(to || '').includes('project-tasks')) prefetchCompanies(api);
+  };
   const link = (
     <NavLink
       to={to}
       state={moduleContext ? { moduleContext } : undefined}
+      onMouseEnter={prefetchIfProjectTasks}
+      onFocus={prefetchIfProjectTasks}
       onClick={onNavClick}
       end={to === '/' || end}
       data-tour={dataTour}
@@ -857,7 +867,8 @@ export default function Sidebar() {
 
   useEffect(() => {
     void preloadModuleIconsFromModules(APP_MODULE_DEFINITIONS);
-  }, []);
+    if (user) void prefetchCompanies(api);
+  }, [user]);
 
   // Auto-collapse sidebar on quotation form pages (need more screen space)
   useEffect(() => {

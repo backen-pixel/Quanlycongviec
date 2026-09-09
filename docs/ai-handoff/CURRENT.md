@@ -1,6 +1,67 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-08 16:20 (UTC+7)
+Cập nhật: 2026-09-09 08:55 (UTC+7)
+
+## Nhật ký công trình — trang gom log + xuất Excel
+
+Trạng thái: **đã commit, đang push.**
+
+Trang `/management/project-logs`: tìm công trình, tab Tất cả / nhiệm vụ / phát sinh /
+dự án / CRM / bình luận, lọc công ty / khu vực / nhân viên + ngày + nội dung, xuất Excel.
+API `GET /api/management/project-logs` (route mới, không sửa `management.js`).
+Lọc công ty/khu vực/NV: tìm CT (`work-unified/search`) và lọc log theo người thao tác.
+Đã kiểm thử trên TB-2026-819: 105 dòng (70 nhiệm vụ, 8 CRM, 27 bình luận).
+
+## Tách NextGo sang instance QLCV riêng — chuẩn bị, chưa cắt
+
+Trạng thái: **đã kiểm kê + script + dump tool; chưa freeze, chưa đổi webhook.**
+
+Nguồn: `87479a83-1145-43b7-b090-3e40812cb5a9`. Không dùng clone cùng DB.
+Tài liệu: [`docs/ops/nextgo-instance/README.md`](../ops/nextgo-instance/README.md).
+Khi anh nói chuyển: làm theo `CUTOVER.md` (`NEXTGO_CUTOVER=YES`).
+
+## Không gian chung — chọn vai trò thành viên khi tạo phát sinh
+
+Trạng thái: **đã commit cùng nhật ký công trình.**
+
+Form tạo/sửa phân công phát sinh (tab Không gian chung trên Dự án / CRM / SX / VC-LĐ
+và modal Giao việc Không gian chung) chọn vai trò từng NV:
+`primary` / `executor` / `observer` / `manager`. Gửi `assignee_roles` lên API
+(backend đã hỗ trợ). Nút **Áp dụng** gán cùng vai trò cho mọi người đã chọn.
+
+File: `frontend/src/lib/assignmentAssignRoles.js`,
+`frontend/src/components/LeadMemberAssignmentsPanel.jsx`,
+`frontend/src/pages/CRMAssignmentsPage.jsx`.
+
+Chưa xác minh trình duyệt (dev server / phiên đăng nhập chưa mở).
+
+## Tổng quan nhiệm vụ — tải công ty trước cho nhanh
+
+Trạng thái: **đã sửa local, chưa commit.**
+
+`/management/project-tasks` prefetch `/companies` từ sidebar, tự chọn công ty
+(mặc định CRM / công ty đăng nhập), rồi mới gọi `GET /work-tasks/project-overview?company_id=`.
+Admin hệ thống có thể đổi công ty trên header; không còn tải hết mọi công ty lúc mở trang.
+
+## Tổng quan nhiệm vụ — thẻ SX lấy người chịu trách nhiệm sản xuất
+
+Khi dự án chưa có `production_person_id` và staff xưởng chỉ admin hệ thống, fallback
+`production_handover_settings.responsible_user_id` (Phúc Đạt: Minh sản xuất cửa).
+
+## Tổng quan nhiệm vụ — không hiện admin hệ thống trên thẻ SX
+
+TB-2026-029 (CHÚ ĐẠT TÂN PHÚ): không có `production_person_id`, staff xưởng chỉ
+Trương Trọng Thành → fallback hiện TT. Đã bỏ admin hệ thống khỏi phụ trách mặc định.
+
+## Tổng quan nhiệm vụ — việc PS không dính cột Sản xuất
+
+Trạng thái: **đã sửa local, chưa commit.**
+
+`crm_tasks` Không gian chung (`shared_workspace` / `sx_shared` / `vc_shared`) từng lấy
+`pipeline_stage_id` của deal (vd. «Sản xuất.») nên người được giao việc PS hiện trên
+thẻ Sản xuất (TB-2026-738). Nay tách thành danh mục «Không gian chung».
+
+## 2026-09-08 16:20 — Commit + push WIP còn lại trong ngày
 
 ## Đã commit + push phần WIP còn lại (16:20)
 

@@ -1,5 +1,78 @@
 # Nhật ký công việc AI
 
+## 2026-09-09 09:00 — Nhật ký công trình: lọc công ty / khu vực / NV
+
+- AI: Cursor.
+- FE: dropdown Công ty / Khu vực / Nhân viên trên `/management/project-logs`.
+- Tìm CT truyền `company_id`, `region_id`, `user_id` vào `work-unified/search`.
+- API log lọc theo người thao tác (`actor_id`); khu vực `__none__` = NV chưa gán KV.
+- Excel ghi thêm các bộ lọc này.
+
+## 2026-09-09 08:55 — Trang nhật ký công trình
+
+- AI thực hiện: Cursor.
+- API `GET /api/management/project-logs` gom unified_task_history, activity_logs,
+  crm_activities, bình luận deal, hạn CRM, phát sinh Không gian chung.
+- UI `/management/project-logs`: tìm CT, tab, phân trang, xuất Excel.
+- Menu: Dự án và công việc, CRM, SX, VC-LĐ.
+- Không sửa `management.js` / `logistics.js`.
+- Kiểm thử trình duyệt TB-2026-819: 105 log; tab nhiệm vụ còn 70 dòng.
+
+## 2026-09-09 09:00 — Chuẩn bị tách instance NextGo (chưa cắt)
+
+- AI: Cursor. Đo prod: 734 lead, 32 project, 8 user, 15997 tin FB; 0 xuyên công ty.
+- Script: `export-nextgo-instance.js`, `import-nextgo-instance.js`,
+  `copy-nextgo-storage.js`, `freeze-nextgo-source.js` (cần NEXTGO_CUTOVER=YES).
+- Docs: `docs/ops/nextgo-instance/*`. SQL 597 chỉ instance trống.
+- Dump gitignore: `backend/uploads/_nextgo_instance_export/`.
+- Không freeze, không import đích, không đổi webhook.
+
+## 2026-09-09 08:30 — Chọn vai trò thành viên khi tạo phát sinh Không gian chung
+
+- AI thực hiện: Cursor.
+- Form tạo phát sinh trên tab Không gian chung (Dự án, CRM, SX, VC-LĐ) và
+  modal Giao việc Không gian chung: dropdown vai trò từng NV + nút Áp dụng hàng loạt.
+- Payload `assignee_roles` gửi kèm `assignee_ids`. Backend sẵn có
+  `assignmentAssigneeRoles.js` — không đổi API.
+- File: `frontend/src/lib/assignmentAssignRoles.js`,
+  `LeadMemberAssignmentsPanel.jsx`, `CRMAssignmentsPage.jsx`.
+- Chưa xác minh trên trình duyệt.
+
+## 2026-09-08 16:52 — Thẻ SX lấy người chịu trách nhiệm sản xuất của công ty
+
+- AI thực hiện: Cursor.
+- **BÁO TRƯỚC**: tiếp `enrichTaskModuleOwners` trong `workTasks.js`.
+- TB-2026-045 không có `production_person_id`, staff chỉ admin hệ thống → thẻ
+  «Chưa có người phụ trách». Fallback đúng: `production_handover_settings.responsible_user_id`
+  (Phúc Đạt = Minh sản xuất cửa).
+- Không đụng `management.js` / `logistics.js`.
+
+## 2026-09-08 16:48 — Không lấy admin hệ thống làm phụ trách SX trên tổng quan
+
+- AI thực hiện: Cursor.
+- **BÁO TRƯỚC**: sửa `enrichTaskModuleOwners` trong `backend/src/routes/workTasks.js`.
+- TB-2026-029: `production_person_id` trống, `project_production_staff` chỉ còn
+  Trương Trọng Thành → thẻ Sản xuất hiện TT.
+- Admin hệ thống (`admin` không `company_id`) không còn dùng làm fallback phụ trách
+  module SX/VC. Không đụng `management.js` / `logistics.js`.
+
+## 2026-09-08 16:40 — Tổng quan nhiệm vụ tải công ty trước
+
+- AI thực hiện: Cursor.
+- Prefetch `GET /companies` khi mở sidebar / hover menu nhiệm vụ.
+- Trang `ProjectTasksOverviewPage` chờ danh sách công ty, tự chọn công ty, rồi
+  gọi `GET /work-tasks/project-overview` kèm `company_id`.
+- Backend `workTasks.js` nhận `company_id` cho admin hệ thống.
+
+## 2026-09-08 16:28 — Tách việc Không gian chung khỏi cột CRM Sản xuất
+
+- AI thực hiện: Cursor.
+- **BÁO TRƯỚC**: sửa `backend/src/routes/workTasks.js` — `projectOverviewCategoryId`
+  và `categoryFor` trên `GET /project-overview` (+ remind cùng hàm).
+- Nguyên nhân TB-2026-738: `crm_tasks.stage_slug = shared_workspace` nhưng
+  `pipeline_stage_id` trỏ cột «Sản xuất.» → thẻ Sản xuất hiện người của việc PS.
+- Không đụng `management.js` / `logistics.js`.
+
 ## 2026-09-08 16:20 — Commit + push WIP còn lại trong ngày
 
 - AI thực hiện: Cursor.
