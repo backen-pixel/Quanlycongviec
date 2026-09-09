@@ -7034,28 +7034,16 @@ function LeadInfoPanel({
     if (!lead?.id) return;
     setDeadlineBusy(true);
     try {
-      const { data } = await api.patch(`/crm/leads/${lead.id}/deadline`, {
+      await api.patch(`/crm/leads/${lead.id}/deadline`, {
         kanban_deadline_at: deadlineIso,
         reason: reason || '',
         sync_open_tasks: true,
       });
-      setLead((prev) => prev ? {
-        ...prev,
-        kanban_deadline_at: data?.kanban_deadline_at ?? deadlineIso,
-        kanban_deadline_reason: data?.kanban_deadline_reason ?? reason ?? null,
-        ...(data?.crm_next_open_task_deadline !== undefined
-          ? { crm_next_open_task_deadline: data.crm_next_open_task_deadline }
-          : {}),
-        effective_deadline_module: data?.effective_deadline_module,
-        effective_deadline_at: data?.effective_deadline_at,
-        effective_deadline_source: data?.effective_deadline_source,
-        deadline_state: data?.deadline_state,
-      } : prev);
       setDeadlineModalOpen(false);
-      onUpdate();
+      onUpdate?.();
       if (deadlineHistoryOpen) loadDeadlineHistory();
     } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi lưu deadline');
+      alert(e.response?.data?.error || e.message || 'Lỗi lưu deadline');
     } finally {
       setDeadlineBusy(false);
     }

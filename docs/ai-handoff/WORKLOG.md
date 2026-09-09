@@ -1,5 +1,13 @@
 # Nhật ký công việc AI
 
+## 2026-09-09 13:50 — Sửa lỗi lưu deadline thẻ CRM
+
+- AI: Cursor.
+- Nguyên nhân: `LeadInfoPanel` gọi `setLead` (không tồn tại) sau PATCH thành công
+  → alert «Lỗi lưu deadline» dù DB đã ghi (LEAD-2026-809, hạn 22/9).
+- FE: bỏ `setLead`, đóng modal + `onUpdate`.
+- BE: bọc comment sau lưu; so sánh hạn theo timestamp để khỏi ghi lịch sử trùng.
+
 ## 2026-09-09 12:10 — Ghim dự án xuống góc phải
 
 - AI: Cursor.

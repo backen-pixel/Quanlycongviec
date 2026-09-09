@@ -2927,7 +2927,11 @@ r.patch('/leads/:id/deadline', async (req, res) => {
     if (lead.kanban_deadline_at && !reason) {
       return res.status(400).json({ error: 'Vui lòng nhập lý do thay đổi deadline', code: 'reason_required' });
     }
-    const kanbanUnchanged = String(lead.kanban_deadline_at || '') === String(newIso || '');
+    const kanbanUnchanged = (() => {
+      if (!lead.kanban_deadline_at && !newIso) return true;
+      if (!lead.kanban_deadline_at || !newIso) return false;
+      return new Date(lead.kanban_deadline_at).getTime() === new Date(newIso).getTime();
+    })();
     if (kanbanUnchanged && !syncOpenTasks) {
       return res.json({ ok: true, unchanged: true, kanban_deadline_at: lead.kanban_deadline_at });
     }
@@ -2993,13 +2997,17 @@ r.patch('/leads/:id/deadline', async (req, res) => {
 
     emitCrmDashboardChanged(req, { type: lead.type, company_id: lead.company_id, lead_id: leadId, action: 'deadline_changed' });
 
-    const { data: leadProj } = await supabase.from('crm_leads').select('project_id').eq('id', leadId).maybeSingle();
-    await logDealDeadlineChangeComment(req, {
-      leadId,
-      projectId: leadProj?.project_id,
-      newDeadlineAt: newIso,
-      cleared: !newIso,
-    });
+    try {
+      const { data: leadProj } = await supabase.from('crm_leads').select('project_id').eq('id', leadId).maybeSingle();
+      await logDealDeadlineChangeComment(req, {
+        leadId,
+        projectId: leadProj?.project_id,
+        newDeadlineAt: newIso,
+        cleared: !newIso,
+      });
+    } catch (commentErr) {
+      console.warn('[crm/deadline] comment:', commentErr.message);
+    }
 
     res.json({
       ok: true,
