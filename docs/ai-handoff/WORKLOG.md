@@ -1,5 +1,10 @@
 # Nhật ký công việc AI
 
+## 2026-09-09 15:40 — Ghim góc phải tối đa 20
+
+- AI: Cursor.
+- `MAX_PINNED_PROJECTS` 5 → 20.
+
 ## 2026-09-09 14:10 — Harden lưu deadline (CRM + SX)
 
 - AI: Cursor.

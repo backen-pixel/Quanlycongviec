@@ -1,7 +1,7 @@
 export const PINNED_PROJECTS_KEY = 'tubep_pinned_projects';
 export const PINNED_PROJECTS_HIDDEN_KEY = 'tubep_pinned_projects_hidden';
 export const PINNED_CHANGED_EVENT = 'pinned-changed';
-export const MAX_PINNED_PROJECTS = 5;
+export const MAX_PINNED_PROJECTS = 20;
 
 function emitChanged() {
   if (typeof window === 'undefined') return;

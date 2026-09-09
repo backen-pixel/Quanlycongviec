@@ -10,7 +10,7 @@ Trạng thái: **đang harden thêm (local) — PATCH thành công không bị s
 API thành công → alert generic dù hạn đã ghi DB. Đã bỏ `setLead`, reload qua
 `onUpdate`. Backend bọc comment sau lưu; so sánh hạn theo timestamp.
 
-## Ghim dự án góc phải (tối đa 5)
+## Ghim dự án góc phải (tối đa 20)
 
 Trạng thái: **bổ sung CRM + VC/LĐ, đang gộp main.**
 

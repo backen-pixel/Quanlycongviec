@@ -175,7 +175,7 @@ export default function KanbanCardOptionsMenu({
     showDockPin && {
       key: 'dockPin',
       label: dockPinned ? 'Bỏ ghim góc phải' : 'Ghim góc phải',
-      hint: 'Giữ khi đổi trang, tối đa 5',
+      hint: `Giữ khi đổi trang, tối đa ${MAX_PINNED_PROJECTS}`,
       active: dockPinned,
       Icon: Pin,
       iconClass: dockPinned ? 'rotate-45 fill-amber-500 text-amber-600' : '',
