@@ -1817,6 +1817,13 @@ const AppModuleKanbanCard = memo(function AppModuleKanbanCard({
               onToggleInteracted={async () => {
                 await onSaveMeta(item, { is_interacted: !item.is_interacted });
               }}
+              dockPin={{
+                id: item.id,
+                code: item.code,
+                name: item.name || item.title,
+                href: `/m/${moduleKey}/records/${item.id}`,
+                module: moduleKey || 'project',
+              }}
             />
             {typeof onDelete === 'function' && (
               <button

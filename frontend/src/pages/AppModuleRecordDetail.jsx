@@ -5,6 +5,7 @@ import PipelineStepper from '../components/PipelineStepper';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
 import AppModuleRecordTabs from '../components/AppModuleRecordTabs';
 import { decorateAppModuleRecord } from '../lib/appModuleRecordDisplay';
+import PinProjectButton from '../components/PinProjectButton';
 import { formatDateTime, formatVND } from '../lib/utils';
 import {
   ArrowLeft, Loader2, CheckCircle2, Edit2, Save, X, Pin,
@@ -302,12 +303,21 @@ export default function AppModuleRecordDetail() {
             </div>
           </div>
         </div>
-        {record.company && (
-          <span className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700">
-            <Building2 className="h-4 w-4 text-indigo-500" />
-            {record.company.short_name || record.company.name}
-          </span>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          <PinProjectButton
+            projectId={record.id}
+            code={record.code}
+            name={record.name}
+            href={`/m/${moduleKey}/records/${record.id}`}
+            module={moduleKey || 'project'}
+          />
+          {record.company && (
+            <span className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-700">
+              <Building2 className="h-4 w-4 text-indigo-500" />
+              {record.company.short_name || record.company.name}
+            </span>
+          )}
+        </div>
       </div>
 
       {(record.lost_reason || currentStage?.is_lost) && (

@@ -11683,6 +11683,13 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
               onOpenDeadline={onOpenDeadline}
               onTogglePin={onTogglePin}
               onToggleInteracted={onToggleInteracted}
+              dockPin={{
+                id: item.project_id || item.id,
+                code: item.code,
+                name: item.title,
+                href: `/crm/leads/${item.id}`,
+                module: 'crm',
+              }}
             />
           </div>
         </div>

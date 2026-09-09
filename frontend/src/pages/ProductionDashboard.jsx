@@ -5546,6 +5546,13 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
           hideDeadlineOption={hideColumnDeadline}
           onTogglePin={onTogglePin}
           pinEnabled={!!sxLeadId}
+          dockPin={{
+            id: item.id,
+            code: item.code,
+            name: item.name,
+            href: `/sx/projects/${item.id}`,
+            module: 'sx',
+          }}
         />
         </div>
       </div>

@@ -1,10 +1,10 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-09 13:50 (UTC+7)
+Cập nhật: 2026-09-09 13:55 (UTC+7)
 
 ## Sửa deadline thẻ CRM — lỗi «Lỗi lưu deadline»
 
-Trạng thái: **đã sửa, đang đẩy lên remote.**
+Trạng thái: **đã push nhánh feature, đang gộp main.**
 
 `LeadInfoPanel.saveKanbanDeadline` gọi `setLead` (không có trong scope) sau khi
 API thành công → alert generic dù hạn đã ghi DB. Đã bỏ `setLead`, reload qua
@@ -12,7 +12,10 @@ API thành công → alert generic dù hạn đã ghi DB. Đã bỏ `setLead`, r
 
 ## Ghim dự án góc phải (tối đa 5)
 
-Trạng thái: **đã commit `4a9cbe0a`.**
+Trạng thái: **bổ sung CRM + VC/LĐ, đang gộp main.**
+
+Nút **Ghim** trên chi tiết CRM (kể cả chưa có `project_id`). Menu thẻ Kanban
+CRM / SX / VC-LĐ có **Ghim góc phải**. Chi tiết VC (`/vc/projects/:id`) đã có nút.
 
 Nút **Ghim** trên chi tiết dự án: Work Unified, SX (`/sx/projects/:id`),
 VC (`/vc/projects/:id`), tổng quan SX, CRM deal đã có `project_id`.

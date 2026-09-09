@@ -1,5 +1,12 @@
 # Nhật ký công việc AI
 
+## 2026-09-09 13:55 — Ghim góc phải trên CRM và VC/LĐ
+
+- AI: Cursor.
+- CRM chi tiết: nút Ghim luôn hiện (lead chưa có dự án cũng ghim được).
+- Menu `⋯` thẻ Kanban CRM / SX / VC-LĐ: mục «Ghim góc phải».
+- Chi tiết module tùy chỉnh: thêm `PinProjectButton`.
+
 ## 2026-09-09 13:50 — Sửa lỗi lưu deadline thẻ CRM
 
 - AI: Cursor.

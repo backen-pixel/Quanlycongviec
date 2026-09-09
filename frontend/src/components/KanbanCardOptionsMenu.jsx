@@ -1,6 +1,12 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { MoreHorizontal, Clock, Pin, CheckCircle2 } from 'lucide-react';
+import {
+  isProjectPinned,
+  MAX_PINNED_PROJECTS,
+  PINNED_CHANGED_EVENT,
+  togglePinnedProject,
+} from '../lib/pinnedProjects';
 
 /**
  * Menu tùy chọn thẻ Kanban: deadline, ghim, đã tương tác (CRM).
@@ -14,6 +20,7 @@ export default function KanbanCardOptionsMenu({
   onTogglePin,
   onToggleInteracted,
   pinEnabled = true,
+  dockPin = null,
   disabled = false,
   disabledTitle,
 }) {
@@ -30,7 +37,10 @@ export default function KanbanCardOptionsMenu({
   const showDeadline = !hideDeadlineOption && typeof onOpenDeadline === 'function';
   const showPin = pinEnabled && typeof onTogglePin === 'function';
   const showInteracted = typeof onToggleInteracted === 'function';
-  const canRender = showDeadline || showPin || showInteracted;
+  const dockPinId = dockPin?.id || dockPin?.project_id || null;
+  const showDockPin = !!dockPinId;
+  const [dockPinned, setDockPinned] = useState(() => isProjectPinned(dockPinId));
+  const canRender = showDeadline || showPin || showInteracted || showDockPin;
 
   const isSx = theme === 'sx';
   const sizeClass = isSx ? 'h-5 w-5' : 'h-6 w-6';
@@ -39,7 +49,7 @@ export default function KanbanCardOptionsMenu({
   const hasDeadline = !!deadlineAt;
   const isPinned = !!item?.is_pinned;
   const isInteracted = !!item?.is_interacted;
-  const hasActiveOption = hasDeadline || isPinned || isInteracted;
+  const hasActiveOption = hasDeadline || isPinned || isInteracted || dockPinned;
 
   const updateMenuPosition = () => {
     const btn = btnRef.current;
@@ -74,7 +84,18 @@ export default function KanbanCardOptionsMenu({
     }
     updateMenuPosition();
     setMenuPositioned(true);
-  }, [menuOpen, showDeadline, showPin, showInteracted]);
+  }, [menuOpen, showDeadline, showPin, showInteracted, showDockPin, dockPinned]);
+
+  useEffect(() => {
+    const sync = () => setDockPinned(isProjectPinned(dockPinId));
+    sync();
+    window.addEventListener(PINNED_CHANGED_EVENT, sync);
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener(PINNED_CHANGED_EVENT, sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, [dockPinId]);
 
   useEffect(() => {
     if (!menuOpen) return undefined;
@@ -149,6 +170,33 @@ export default function KanbanCardOptionsMenu({
         e.stopPropagation();
         closeMenu();
         onOpenDeadline(item);
+      },
+    },
+    showDockPin && {
+      key: 'dockPin',
+      label: dockPinned ? 'Bỏ ghim góc phải' : 'Ghim góc phải',
+      hint: 'Giữ khi đổi trang, tối đa 5',
+      active: dockPinned,
+      Icon: Pin,
+      iconClass: dockPinned ? 'rotate-45 fill-amber-500 text-amber-600' : '',
+      tone: {
+        iconBg: 'bg-amber-100',
+        iconText: 'text-amber-600',
+        idle: 'hover:bg-amber-50/90',
+        hover: 'bg-amber-100 text-amber-950 ring-1 ring-inset ring-amber-300',
+        active: 'bg-amber-50',
+        badge: 'bg-amber-100 text-amber-800',
+        arrow: 'text-amber-600',
+      },
+      onClick: (e) => {
+        e.stopPropagation();
+        closeMenu();
+        const result = togglePinnedProject(dockPin);
+        if (!result.ok && result.reason === 'limit') {
+          window.alert(`Chỉ ghim tối đa ${MAX_PINNED_PROJECTS} dự án. Bỏ ghim một dự án trước.`);
+          return;
+        }
+        setDockPinned(result.pinned);
       },
     },
     showPin && {

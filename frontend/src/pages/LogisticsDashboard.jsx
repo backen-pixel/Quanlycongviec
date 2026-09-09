@@ -27,6 +27,7 @@ import NewLogisticsProjectModal from '../components/NewLogisticsProjectModal';
 import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../components/WorkshopPipelineKanbanScroll';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
+import KanbanCardOptionsMenu from '../components/KanbanCardOptionsMenu';
 import {
   useKanbanColumnTheme, KANBAN_CARDS_BODY_CLASS, UI_KANBAN_FIXED_CLASS,
   KANBAN_BOARD_COLUMN_RAILS_CLASS, KANBAN_COLUMN_RAIL_CLASS,
@@ -2185,6 +2186,18 @@ const KanbanCard = memo(function KanbanCard({
           >
             <ExternalLink className="h-3 w-3" />
           </button>
+          <KanbanCardOptionsMenu
+            item={item}
+            theme="sx"
+            hideDeadlineOption
+            dockPin={{
+              id: item.id,
+              code: item.code,
+              name: cardTitle || item.name,
+              href: `/vc/projects/${item.id}`,
+              module: 'vc',
+            }}
+          />
         </div>
       </div>
     </div>
