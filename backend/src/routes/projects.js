@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const { supabase } = require('../config/supabase');
+const { fetchAllByIds } = require('../helpers/supabaseFetchAll');
 const { auth } = require('../middleware/auth');
 const { generateStepTasks } = require('../helpers/generateFlowTasks');
 const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
@@ -3327,12 +3328,12 @@ r.get('/comments/index', async (req, res) => {
     const raw = String(req.query.project_ids || '').trim();
     const ids = raw.split(',').map((s) => String(s).trim()).filter(Boolean);
     if (!ids.length) return res.json({});
-    const { data, error } = await supabase
-      .from('project_comments')
-      .select('project_id, created_at, user_id')
-      .in('project_id', ids)
-      .order('created_at', { ascending: false });
-    if (error) throw error;
+    const data = await fetchAllByIds({
+      table: 'project_comments',
+      columns: 'project_id, created_at, user_id',
+      key: 'project_id',
+      ids,
+    });
     const out = {};
     for (const row of (data || [])) {
       const k = String(row.project_id || '');
@@ -3345,6 +3346,11 @@ r.get('/comments/index', async (req, res) => {
         };
       }
       out[k].count += 1;
+      const ts = row.created_at;
+      if (ts && (!out[k].last_at || ts > out[k].last_at)) {
+        out[k].last_at = ts;
+        out[k].last_user_id = row.user_id || null;
+      }
     }
     res.json(out);
   } catch (e) {

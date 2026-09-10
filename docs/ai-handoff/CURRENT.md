@@ -1,6 +1,142 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-09 13:55 (UTC+7)
+Cập nhật: 2026-09-10 14:35 (UTC+7)
+
+## Bình luận HST mặc định — chỉ mục bị cắt 1.000 dòng
+
+Trạng thái: **đã commit, đang push main.**
+
+Dữ liệu không mất: HST mặc định còn 27.653 bình luận deal (9.767 hội thoại,
+17.881 hệ thống), 587/651 dự án có comment CRM. View «Bình luận» CRM/SX trống
+vì `GET /crm/lead-comments/index` chỉ lấy 1.000 dòng PostgREST → ~110/4.668
+deal hiện badge. CRM còn gửi tối đa 2.000 UUID một URL (vượt ~600 UUID).
+
+Đã vá: index dùng `fetchAllByIds` (chia khúc + phân trang); CRM chunk 200 id.
+Hoàn tác: revert `leadComments.js`, `projects.js`, `CRMDashboard.jsx`.
+
+## Xóa deal trùng Anh Tám DEAL-2026-1518
+
+Trạng thái: **đã chạy trên DB, script local chưa commit.**
+
+Minh (Phúc Đạt) tạo `DEAL-2026-1518` trên Metalla hôm nay — trùng khách
+Anh Tám / 0946714857. Đã xóa; giữ deal Nghĩa `LEAD-2026-1252` (VPT,
+ĐANG SẢN XUẤT). Snapshot thùng rác `de7e69ed-3d13-4ff5-baed-7028e649a13e`.
+
+Hoàn tác: khôi phục từ Thùng rác hoặc
+`backend/uploads/_delete_deal_1518_rollback_1789024228487.json`.
+Script: `backend/scripts/delete-dup-anh-tam-deal-1518.js`.
+
+Còn bản đặt xưởng (không xóa): HCB `1398`/`1399`/`1511`, Phúc Đạt `1401` (Thua).
+
+## Bộ lọc nhân viên Work Unified — chọn nhiều NV
+
+Trạng thái: **local, đang vá số đếm khớp bảng.**
+
+Đã push `71c5cc17` (checkbox `user_ids`). Vá tiếp: danh sách khi đang lọc
+tải **đủ dòng** (không cắt 20/trang) nên thẻ «Đang thực hiện» = số dòng bảng.
+Khớp NV theo **deal CRM**; sale/PM chỉ khi dự án không có deal (tránh đếm
+dự án hiện tên NV khác). Chỉ lấy `crm_leads.type=deal`.
+
+Hoàn tác: revert `management.js`, `workUnifiedUserFilter.js`,
+`WorkUnifiedFilterFields.jsx`, `WorkUnifiedOverviewPage.jsx`.
+
+## Anh Tám — chuyển Cửa Phúc Đạt về HCB Tủ bếp
+
+Trạng thái: **đã chạy trên DB, script local chưa commit.**
+
+`TB-2026-767` (Phúc Đạt · Cửa) hủy. Nguồn Metalla `TB-2026-740` đặt thêm
+Hucabi · Tủ bếp → `TB-2026-827` / `DEAL-2026-1511`, cột Tiếp nhận, phụ trách
+Sang Thiết Kế VPT 1. Deal clone Phúc Đạt `DEAL-2026-1401` → Thua.
+Giữ HCB Cánh kính `TB-2026-765`.
+
+Hoàn tác: khôi phục placement Phúc Đạt, `status=producing` cho `TB-2026-767`,
+gỡ `TB-2026-827`. Script: `backend/scripts/reclassify-anh-tam-to-hcb-tu.js`.
+
+## Bộ lọc nhân viên Work Unified — chọn nhiều NV
+
+Trạng thái: **local, chưa commit — đã vá cột Người phụ trách.**
+
+Tổng quan dự án lọc nhiều NV bằng checkbox. API nhận `user_ids` CSV.
+Khớp theo **mọi deal gắn dự án** (không chỉ deal được pick), cột «Người phụ
+trách» ưu tiên NV deal đang lọc (tránh hiện PM/xưởng như Hoàng Dương khi
+đang lọc Vũ / Rốt Trần). Chip hiện từng tên NV.
+
+Hoàn tác: revert `management.js`, `workUnifiedUserFilter.js`,
+`WorkUnifiedFilterFields.jsx`, `WorkUnifiedOverviewPage.jsx`,
+`WorkUnifiedProjectDetailPage.jsx`.
+
+## Nhật ký hoạt động HST NextGo (đã vá)
+
+Clone không mang log thật; 7.716 dòng «created» ở HST mới là do trigger sinh ra
+khi clone (dồn về 21/08). Đã vá bằng `backend/scripts/fix-nextgo-history-log.js`:
+chép 1.318 dòng thay đổi (xoá / đổi người / đổi trạng thái / hoàn thành / đổi
+deadline) và trả lại thời điểm gốc cho 7.303 dòng «created». Log HST mới giờ
+trải 12/06 → 09/09, số dòng mỗi loại ≥ công ty cũ. 1.002 `source_id` của bản ghi
+đã xoá giữ nguyên id cũ (cột text, không phải khoá ngoại).
+
+Hoàn tác: `node scripts/fix-nextgo-history-log.js --rollback=uploads/_nextgo_log_rollback_1788975783246.json`.
+
+## Bù lịch sử trước mốc clone (đã xong)
+
+`clone-nextgo-to-tenant.js` chỉ sao chép lead / khách hàng / dự án / việc /
+thành viên, nên 625 deal trước 21/08 ở HST mới thiếu phần phụ. Đã bù bằng
+`backend/scripts/copy-nextgo-history.js` (id mới, ánh xạ FK theo bản đồ clone,
+việc CRM ghép theo lead + thời điểm tạo + tiêu đề — 6.566/6.587 khớp):
+bình luận 2.414, tài liệu lead 386, tệp việc 385, giao việc 328, sự kiện 22,
+snapshot báo cáo ngày 1.116, kế hoạch phòng ban 20, KPI ledger 1.622, điểm KPI
+146 — khớp đúng bản dump. Không chép `trash_items` (97, thùng rác).
+Kiểm tra: 0 bản ghi trỏ người dùng / việc ngoài HST NextGo.
+
+Hoàn tác: `node scripts/copy-nextgo-history.js --rollback=uploads/_nextgo_history_rollback_1788974016467.json`
+(và file `..._1788974138250.json` cho phần KPI bù sau).
+
+## Chuyển delta NextGo về HST mới (đã xong)
+
+Từ 21/08 (mốc clone) đến 09/09, NV NextGo vẫn làm trên công ty cũ ở HST mặc định
+nên dữ liệu mới rơi vào đó. Đã chuyển bằng `backend/scripts/migrate-nextgo-delta.js`
+(giữ nguyên id, chỉ ánh xạ lại FK theo `uploads/_nextgo_clone_id_map.json`):
+141 deal, 150 khách hàng, 6 dự án, 1.738 việc CRM, 532 bình luận, 9 thành viên,
+78 tệp việc, 6 sự kiện, 242 dòng KPI, 2.049 dòng lịch sử, 167 việc SX, 140 báo
+cáo ngày. Sau khi chạy: công ty cũ còn 0 bản ghi sau mốc clone, HST mới 766 deal,
+0 tham chiếu chéo HST (người dùng / pipeline / stage / khu vực / nguồn).
+
+Hoàn tác: `node scripts/migrate-nextgo-delta.js --rollback=uploads/_nextgo_delta_rollback_1788973190866.json`.
+
+Còn lại: chưa có lượt Facebook / Google Form nào chạy qua cấu hình HST mới để
+kiểm chứng đầu-cuối (cần 1 tin nhắn FB có SĐT và 1 lượt submit form thật).
+
+## Rà soát cách ly HST NextGo (đã xong)
+
+Quét toàn bộ bảng có `company_id` và 84 khoá ngoại → HST `nextgo` chỉ có 1 công
+ty, không có công ty/nhân sự HST khác. 7 tài khoản HST NextGo đăng nhập được,
+chỉ thấy công ty + khu vực + lead NextGo (6 NV chưa tự đăng nhập lần nào).
+
+Đã siết thêm: `/api/external/project-deadlines` và API key không gắn công ty
+(`all_companies`) giờ chỉ đọc trong HST của chủ key (`tenant_company_ids`),
+nên MCP «toàn quyền» không còn thấy công ty HST NextGo. HST mặc định giữ nguyên
+phạm vi cũ (đã kiểm: 95 thông báo hạn, 5 công ty như trước).
+
+Đã tắt 2 tài khoản test `saletest.ui@nextgo.vn`, `sanxuattest.ui@nextgo.vn`
+(còn sống ở HST mặc định, `tenant_id` rỗng) và trả `created_by` của
+`crm_referrers`/`drive_roots` NextGo về `quantri.hst@nextgo.vn`.
+
+## Facebook + Google Form HST NextGo — chỉ cài đặt NextGo
+
+Nguồn CRM / API key / form ngoài (`source_name=Google Form`) lọc theo tenant.
+Key `NextGo NV Yến` đã gắn công ty HST mới (cùng token Apps Script).
+
+## Facebook HST NextGo — chỉ cài đặt NextGo
+
+Admin/NV tenant `nextgo` không còn thấy Page, auto pipeline, nguồn, bộ ảnh,
+công tắc tổng hay auto-lead config của HST mặc định. Page phải gắn công ty
+NextGo; auto-lead lưu `app_settings.auto_lead_config:<tenant_id>`.
+
+## NextGo HST mới — đã đưa vào dùng (cùng app)
+
+Tenant `nextgo` + công ty clone. Admin HST: `quantri.hst@nextgo.vn`.
+6 NV đăng nhập email cũ → HST mới (bản cũ `+oldhst`, tắt, không xóa).
+Fanpage gắn công ty HST mới. Webhook URL không đổi.
+Dữ liệu HST mới = bản clone 21/08 + delta 21/08→09/09 đã chuyển về (xem mục trên).
 
 ## Sửa deadline thẻ CRM — lỗi «Lỗi lưu deadline»
 
@@ -36,14 +172,6 @@ dự án / CRM / bình luận, lọc công ty / khu vực / nhân viên + ngày 
 API `GET /api/management/project-logs` (route mới, không sửa `management.js`).
 Lọc công ty/khu vực/NV: tìm CT (`work-unified/search`) và lọc log theo người thao tác.
 Đã kiểm thử trên TB-2026-819: 105 dòng (70 nhiệm vụ, 8 CRM, 27 bình luận).
-
-## Tách NextGo sang instance QLCV riêng — chuẩn bị, chưa cắt
-
-Trạng thái: **đã kiểm kê + script + dump tool; chưa freeze, chưa đổi webhook.**
-
-Nguồn: `87479a83-1145-43b7-b090-3e40812cb5a9`. Không dùng clone cùng DB.
-Tài liệu: [`docs/ops/nextgo-instance/README.md`](../ops/nextgo-instance/README.md).
-Khi anh nói chuyển: làm theo `CUTOVER.md` (`NEXTGO_CUTOVER=YES`).
 
 ## Không gian chung — chọn vai trò thành viên khi tạo phát sinh
 

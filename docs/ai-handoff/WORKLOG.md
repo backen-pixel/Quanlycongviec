@@ -1,5 +1,134 @@
 # Nhật ký công việc AI
 
+## 2026-09-10 14:35 — Vá chỉ mục bình luận HST mặc định
+
+- Quét DB: comment CRM HST mặc định còn đủ (27.653 dòng, không bị delta
+  NextGo xóa). `project_comments` vốn ít (36) vì SX/VC đọc `crm_lead_comments`.
+- Lỗi hiển thị: `GET /crm/lead-comments/index` không phân trang → PostgREST
+  cắt 1.000 dòng, chỉ ~110/4.668 deal có badge. CRM gửi 2.000 UUID/URL.
+- Sửa: `fetchAllByIds` trên index CRM + dự án; FE CRM chunk 200 id.
+
+## 2026-09-10 14:10 — Xóa deal trùng Anh Tám DEAL-2026-1518
+
+- Deal Minh tạo trên Metalla (`DEAL-2026-1518`) trùng khách của Nghĩa.
+  Đã xóa (không có dự án SX). Giữ `LEAD-2026-1252` Huỳnh Văn Nghĩa / VPT.
+- Snapshot thùng rác; script `delete-dup-anh-tam-deal-1518.js`.
+
+## 2026-09-10 10:45 — Số đếm lọc Work Unified khớp dòng hiển thị
+
+- Danh sách khi lọc NV/KV/hạn/tìm không còn cắt 20/trang — thẻ đếm = số dòng.
+- Khớp NV theo deal CRM; sale/PM chỉ khi không có deal. Bỏ lọc lại phía FE.
+- Deal scan `type=deal`. Test: `node tests/work-unified-user-filter.js`.
+
+## 2026-09-10 09:20 — Chuyển Anh Tám từ Cửa Phúc Đạt về HCB Tủ bếp
+
+- Deal gốc VPT / Metalla `TB-2026-740`. Bản Phúc Đạt `TB-2026-767` (Cửa) hủy;
+  deal `DEAL-2026-1401` → Thua.
+- Đặt xưởng Hucabi · Tủ bếp: `TB-2026-827`, cột Tiếp nhận, Sang Thiết Kế VPT 1.
+- Giữ HCB Cánh kính `TB-2026-765`. Script `reclassify-anh-tam-to-hcb-tu.js`.
+
+## 2026-09-10 09:10 — Lọc nhiều NV Work Unified hiện đúng người
+
+- Bỏ response cũ khi đổi NV (tránh bảng Showroom ghi đè kết quả đã lọc).
+  Khớp đúng NV deal/sale, không lấy thợ SX. FE lọc lại trên trang đang xem.
+- Test: `node tests/work-unified-user-filter.js`.
+
+## 2026-09-10 08:45 — Lọc nhiều nhân viên trên tổng quan dự án
+
+- Bộ lọc Work Unified đổi dropdown NV thành danh sách checkbox (tìm tên, chọn
+  đang hiện, bỏ chọn). Danh sách + Kanban (và các view cùng API) gửi
+  `user_ids` CSV.
+- Backend `GET /management/work-unified` và `/work-unified/search` lọc OR theo
+  nhiều UUID (`user_ids` / `user_id`). Helper `workUnifiedUserFilter.js`.
+  Test: `node tests/work-unified-user-filter.js`. Ô nhảy chi tiết dùng cùng panel.
+
+## 2026-09-10 00:55 — Vá nhật ký hoạt động HST NextGo
+
+- Rà nốt 22 bảng danh mục/cấu hình còn lại: đều khớp giữa công ty cũ và HST mới.
+- Khoảng trống cuối: `unified_task_history`. Thêm
+  `backend/scripts/fix-nextgo-history-log.js` — ghép thực thể (việc CRM 6.566,
+  việc SX 737, giao việc 328) theo cha + created_at + tiêu đề, chép 1.318 dòng
+  thay đổi và sửa created_at cho 7.303 dòng «created» do clone sinh ra.
+- Sau vá: log HST mới trải 12/06 → 09/09, mỗi loại sự kiện ≥ bên cũ (created
+  9.670, deleted 995, assignee_changed 257, status 51, completed 42, deadline 11).
+
+## 2026-09-10 00:40 — Bù lịch sử NextGo mà clone bỏ sót
+
+- Đối chiếu công ty cũ ↔ HST mới trên mọi bảng có `company_id` và các bảng con
+  của lead/dự án: phát hiện clone không chép bình luận, tài liệu, tệp việc,
+  giao việc, sự kiện, snapshot báo cáo ngày, kế hoạch phòng ban, KPI.
+- Thêm `backend/scripts/copy-nextgo-history.js`: dựng map việc CRM theo
+  (lead + created_at + title), chèn bản ghi mới với FK ánh xạ, vá `parent_id`
+  bình luận sau khi có id mới, chèn lại từng dòng khi lô vướng ràng buộc trùng,
+  lọc idempotent cho KPI, kèm dry-run và file hoàn tác (xoá theo id).
+- Kết quả: 5.746 hàng chèn. HST mới khớp dump (bình luận 2.414, tệp việc 385,
+  giao việc 328, sự kiện 22, snapshot 1.116, kế hoạch 20, KPI 1.622 / 146).
+  Bỏ qua `trash_items` (97) và 60 điểm KPI đã do HST mới tự tính.
+
+## 2026-09-10 00:05 — Kiểm tra FB/Google Form theo HST + chuyển delta NextGo
+
+- Kiểm tra dữ liệu thực: cấu hình Fanpage và key `NextGo NV Yến` đều trỏ công ty
+  NextGo HST mới, nhưng lead thực tế từ 21/08→09/09 (141 deal FB/Zalo/nhập tay)
+  vẫn rơi vào công ty NextGo cũ vì NV còn làm trên hệ cũ; chưa có lượt FB/form
+  nào chạy qua cấu hình mới để kiểm chứng.
+- Thêm `backend/scripts/migrate-nextgo-delta.js`: dò delta theo bản đồ id clone,
+  ánh xạ FK (công ty, pipeline, stage, khu vực, nguồn, người dùng, phòng ban),
+  khớp danh mục theo tên cho phần clone không phủ, gán bot HST khác về admin HST
+  NextGo, kèm dry-run và file hoàn tác.
+- Đã chạy `--apply`: 5.258 bản ghi cập nhật, 0 lỗi. Kiểm chứng: công ty cũ 0 bản
+  ghi sau mốc clone, HST mới 766 deal, 0 tham chiếu chéo HST.
+- Lưu ý vận hành: `npm run dev` local dùng chung DB production nên lịch bật/tắt
+  auto-pipeline FB bị ghi trùng đôi — tắt khi không dùng.
+
+## 2026-09-09 20:05 — Rà soát cách ly HST NextGo + kiểm tra tài khoản NV
+
+- Quét động mọi bảng có `company_id` (84 FK về `users`/`companies`): HST `nextgo`
+  chỉ 1 công ty, 0 liên kết chéo sang HST khác (cả hai chiều).
+- BE `external.js`: `/project-deadlines` giới hạn công ty theo HST của chủ key
+  (không key → HST mặc định), thêm `resolveDefaultTenantId` ở `tenantScope.js`.
+- BE `apiKeyAuth.js` + `mcpGateway.js`: key `all_companies` chỉ đọc trong HST của
+  chủ key (`tenant_company_ids`); tool báo cáo nhận `company_whitelist` từ key.
+- DB (chỉ bản ghi NextGo): tắt `saletest.ui@nextgo.vn`, `sanxuattest.ui@nextgo.vn`;
+  `created_by` của `crm_referrers`/`drive_roots` NextGo → `quantri.hst@nextgo.vn`.
+- Kiểm thử: 7 tài khoản HST NextGo đăng nhập OK, chỉ thấy 1 công ty / 2 KV / lead
+  NextGo; HST mặc định giữ nguyên (95 thông báo hạn, 5 công ty, MCP không thấy
+  công ty HST NextGo).
+
+## 2026-09-09 19:40 — HST NextGo chỉ lấy cài đặt Google Form NextGo
+
+- Nguồn / phân loại CRM và API key lọc tenant; form ngoài tìm `Google Form` theo `company_id` của key.
+- Key `NextGo NV Yến` chuyển sang công ty / KV / pipeline / Yến bản HST mới (giữ token).
+- FE nguồn: ẩn «Chung toàn hệ thống» khi có tenant.
+
+## 2026-09-09 19:30 — HST NextGo chỉ lấy cài đặt Facebook NextGo
+
+- BE `facebook.js`: tenant lọc Page / page-sources / auto-pipeline / image-sets;
+  PUT/DELETE Page và bộ ảnh chỉ trong tenant; NextGo không bật công tắc tổng;
+  auto-lead config tách theo tenant.
+- FE: bỏ «Tất cả công ty» khi có tenant; ẩn master schedule trên HST NextGo.
+
+## 2026-09-09 19:20 — Bộ lọc HST NextGo lẫn công ty HST khác
+
+- Cache `GET /ecosystem/units` (và levels/stage-groups) `scope: role` — mọi
+  `admin` dùng chung cache, admin NextGo nhận cây HST mặc định.
+- Đổi `scope: company` (theo `tenant_id` khi tenantGate enforced).
+- `available-companies` / `available-departments` lọc theo tenant.
+
+## 2026-09-09 19:15 — Đưa HST NextGo vào dùng + admin cao nhất
+
+- Script `provision-nextgo-ecosystem-live.js --apply`.
+- Admin tenant: `quantri.hst@nextgo.vn` (không company_id).
+- 6 NV chuyển email sang user HST mới; user cũ `+oldhst` tắt.
+- Fanpage `1102202982968909` → company HST mới; remap contact lead_id khi có map.
+- Không xóa dữ liệu HST mặc định. Hộp thư Yến resolve theo tenant nextgo.
+
+## 2026-09-09 19:00 — Đồng bộ dump NextGo 100%, chờ đích
+
+- Export lại; verify khớp nguồn (739 lead, 8325 crm_tasks, 16050 tin FB).
+- Không import: chỉ có qlycv + QLCV_Backup.
+- Không xóa / freeze / webhook hệ cũ.
+- File: `verify-nextgo-completeness.js`, `docs/ops/nextgo-instance/SYNC-STATUS.md`.
+
 ## 2026-09-09 15:40 — Ghim góc phải tối đa 20
 
 - AI: Cursor.
