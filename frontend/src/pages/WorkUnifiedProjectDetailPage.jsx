@@ -9,7 +9,8 @@ import WorkUnifiedFilterPanel, {
   WORK_UNIFIED_REGION_NONE,
   getWorkUnifiedPresetDateRange,
   loadWorkUnifiedEmployees,
-  filterWorkUnifiedStaff,
+  pruneWorkUnifiedUserIds,
+  workUnifiedUserFilterChips,
 } from '../components/WorkUnifiedFilterFields';
 import { WorkUnifiedOpenTabProvider, workUnifiedPath } from '../components/WorkUnifiedOpenTabMenu';
 import ProjectOverviewPanel from '../components/ProjectOverviewPanel';
@@ -1518,7 +1519,7 @@ function ProjectJumpSearch({ currentId }) {
   const [companyId, setCompanyId] = useState('');
   const [users, setUsers] = useState([]);
   const [regions, setRegions] = useState([]);
-  const [filterUserId, setFilterUserId] = useState('');
+  const [filterUserIds, setFilterUserIds] = useState([]);
   const [filterRegionId, setFilterRegionId] = useState('');
   const [timePreset, setTimePreset] = useState('');
   const [rangeFrom, setRangeFrom] = useState('');
@@ -1589,16 +1590,18 @@ function ProjectJumpSearch({ currentId }) {
   }, [catalogsNeeded, effectiveCompanyIdForUsers, canPickCompany, companies]);
 
   useEffect(() => {
-    setFilterUserId('');
+    setFilterUserIds([]);
     setFilterRegionId('');
   }, [effectiveCompanyIdForUsers]);
 
   useEffect(() => {
-    if (!filterUserId) return;
-    const ok = filterWorkUnifiedStaff(users, { companyId, regionId: filterRegionId })
-      .some((u) => String(u.id) === String(filterUserId));
-    if (!ok) setFilterUserId('');
-  }, [users, companyId, filterRegionId, filterUserId]);
+    setFilterUserIds((prev) => {
+      if (!prev.length || !users.length) return prev;
+      const next = pruneWorkUnifiedUserIds(prev, users, { companyId, regionId: filterRegionId });
+      if (next.length === prev.length && next.every((id, i) => id === prev[i])) return prev;
+      return next;
+    });
+  }, [users, companyId, filterRegionId]);
 
   const handleTimePresetChange = (preset) => {
     setTimePreset(preset);
@@ -1608,7 +1611,7 @@ function ProjectJumpSearch({ currentId }) {
   };
 
   const clearAdvancedFilters = () => {
-    setFilterUserId('');
+    setFilterUserIds([]);
     setFilterRegionId('');
     setTimePreset('');
     setRangeFrom('');
@@ -1617,7 +1620,7 @@ function ProjectJumpSearch({ currentId }) {
   };
 
   const activeFilterCount = [
-    !!filterUserId, !!filterRegionId, !!timePreset, canPickCompany && !!companyId,
+    filterUserIds.length > 0, !!filterRegionId, !!timePreset, canPickCompany && !!companyId,
   ].filter(Boolean).length;
 
   useEffect(() => {
@@ -1631,7 +1634,7 @@ function ProjectJumpSearch({ currentId }) {
       setLoading(true);
       const params = { q: term };
       if (canPickCompany && companyId) params.company_id = companyId;
-      if (filterUserId) params.user_id = filterUserId;
+      if (filterUserIds.length) params.user_ids = filterUserIds.join(',');
       if (filterRegionId) params.region_id = filterRegionId;
       if (rangeFrom) params.date_from = rangeFrom;
       if (rangeTo) params.date_to = rangeTo;
@@ -1641,7 +1644,7 @@ function ProjectJumpSearch({ currentId }) {
         .finally(() => setLoading(false));
     }, 250);
     return () => clearTimeout(t);
-  }, [q, companyId, canPickCompany, filterUserId, filterRegionId, rangeFrom, rangeTo]);
+  }, [q, companyId, canPickCompany, filterUserIds, filterRegionId, rangeFrom, rangeTo]);
 
   useEffect(() => {
     const onDoc = (e) => {
@@ -1680,13 +1683,12 @@ function ProjectJumpSearch({ currentId }) {
         onClear: () => setCompanyId(''),
       });
     }
-    if (filterUserId) {
-      const u = users.find((x) => String(x.id) === String(filterUserId));
-      chips.push({
-        key: 'user',
-        label: u?.full_name || 'Nhân viên',
-        onClear: () => setFilterUserId(''),
-      });
+    if (filterUserIds.length) {
+      chips.push(...workUnifiedUserFilterChips({
+        filterUserIds,
+        users,
+        onRemove: (id) => setFilterUserIds((prev) => prev.filter((x) => String(x) !== String(id))),
+      }));
     }
     if (filterRegionId === WORK_UNIFIED_REGION_NONE) {
       chips.push({
@@ -1711,7 +1713,7 @@ function ProjectJumpSearch({ currentId }) {
       });
     }
     return chips;
-  }, [canPickCompany, companyId, companies, filterUserId, users, filterRegionId, regions, timePreset]);
+  }, [canPickCompany, companyId, companies, filterUserIds, users, filterRegionId, regions, timePreset]);
 
   return (
     <div ref={boxRef} className="relative ml-auto w-52 sm:w-80 shrink-0">
@@ -1786,8 +1788,8 @@ function ProjectJumpSearch({ currentId }) {
             companyId={companyId}
             onCompanyChange={setCompanyId}
             users={users}
-            filterUserId={filterUserId}
-            onUserChange={setFilterUserId}
+            filterUserIds={filterUserIds}
+            onUserIdsChange={setFilterUserIds}
             regions={regions}
             filterRegionId={filterRegionId}
             onRegionChange={setFilterRegionId}

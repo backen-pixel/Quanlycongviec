@@ -33,6 +33,12 @@ const {
 const { responseCache } = require('../middleware/responseCache');
 const { PROJECTS_LIST_TAG } = require('../middleware/projectsCacheInvalidation');
 const { MODULE, resolveModuleDeadline } = require('../helpers/moduleDeadlinePolicy');
+const {
+  WORK_UNIFIED_UUID_RE,
+  parseWorkUnifiedUserIds,
+  workUnifiedItemMatchesUserIds,
+  dealMatchesWorkUnifiedUser,
+} = require('../helpers/workUnifiedUserFilter');
 
 const r = Router();
 r.use(auth);
@@ -115,8 +121,8 @@ const WORK_UNIFIED_PROJECT_COLUMNS_LITE_SEARCH = `${WORK_UNIFIED_PROJECT_COLUMNS
 /** Cột deal nhẹ — bỏ embed company_regions; bộ lọc khu vực chỉ dùng `region_id` phẳng. */
 const WORK_UNIFIED_DEAL_COLUMNS_LITE = 'id, code, title, project_id, company_id, parent_lead_id, created_at, assigned_to, lead_owner_id, region_id';
 
-/** Cột deal đầy đủ — cần `crm_region` để trả `region_name` ra ngoài. */
-const WORK_UNIFIED_DEAL_COLUMNS = `${WORK_UNIFIED_DEAL_COLUMNS_LITE}, crm_region:company_regions(id, name, company_id)`;
+/** Cột deal đầy đủ — cần `crm_region` + tên NV deal để cột «Người phụ trách» khớp bộ lọc NV. */
+const WORK_UNIFIED_DEAL_COLUMNS = `${WORK_UNIFIED_DEAL_COLUMNS_LITE}, crm_region:company_regions(id, name, company_id), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name)`;
 
 function denyScope(res, scope) {
   if (scope?.ok) return false;
@@ -1134,14 +1140,14 @@ r.get('/work-unified/search', async (req, res) => {
     const q = raw.replace(/[%_,.()]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
     if (q.length < 2) return res.json({ items: [] });
 
-    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    const userId = uuidRe.test(String(req.query.user_id || '').trim()) ? String(req.query.user_id).trim() : '';
+    const userIds = parseWorkUnifiedUserIds(req.query);
+    const userIdSet = new Set(userIds);
     const regionRaw = String(req.query.region_id || '').trim();
     const regionNone = regionRaw === '__none__';
-    const regionId = uuidRe.test(regionRaw) ? regionRaw : '';
+    const regionId = WORK_UNIFIED_UUID_RE.test(regionRaw) ? regionRaw : '';
     const dateFrom = String(req.query.date_from || '').trim().slice(0, 10);
     const dateTo = String(req.query.date_to || '').trim().slice(0, 10);
-    const hasExtra = !!(userId || regionId || regionNone || dateFrom || dateTo);
+    const hasExtra = !!(userIds.length || regionId || regionNone || dateFrom || dateTo);
 
     let regionProjectIds = null;
     if (regionId) {
@@ -1209,11 +1215,11 @@ r.get('/work-unified/search', async (req, res) => {
       const withRegion = new Set((withRegionLeads || []).map((l) => String(l.project_id)));
       rows = rows.filter((p) => !withRegion.has(String(p.id)));
     }
-    if (userId) {
+    if (userIds.length) {
       const byProjectPeople = new Set();
       rows.forEach((p) => {
         const hit = [p.project_manager_id, p.sales_person_id, p.production_person_id]
-          .some((id) => String(id || '') === userId);
+          .some((id) => userIdSet.has(String(id || '')));
         if (hit) byProjectPeople.add(String(p.id));
       });
       const leftover = rows.filter((p) => !byProjectPeople.has(String(p.id))).map((p) => p.id);
@@ -1224,7 +1230,7 @@ r.get('/work-unified/search', async (req, res) => {
           .in('project_id', leftover)
           .eq('type', 'deal');
         (dealRows || []).forEach((d) => {
-          if ([d.assigned_to, d.lead_owner_id].some((id) => String(id || '') === userId) && d.project_id) {
+          if ([d.assigned_to, d.lead_owner_id].some((id) => userIdSet.has(String(id || ''))) && d.project_id) {
             byProjectPeople.add(String(d.project_id));
           }
         });
@@ -1268,9 +1274,11 @@ r.get('/work-unified', responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_L
     if (denyScope(res, scope)) return;
     const {
       stage: stageFilter, forecast: forecastFilter,
-      search: searchQuery, user_id: userIdFilter, region_id: regionIdFilter,
+      search: searchQuery, region_id: regionIdFilter,
       date_from: dateFrom, date_to: dateTo, page: pageParam, page_size: pageSizeParam,
     } = req.query;
+    const userIdFilters = parseWorkUnifiedUserIds(req.query);
+    const userIdSet = new Set(userIdFilters);
 
     const searchQ = String(searchQuery || '').trim().toLowerCase();
     // page_size chỉ áp dụng khi client yêu cầu (view Danh sách) — Kanban/Lịch cần đủ tập đã lọc để gom nhóm.
@@ -1396,8 +1404,15 @@ r.get('/work-unified', responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_L
         : 0;
       const commitmentDate = p.install_date || p.delivery_date || p.production_deadline || p.deadline || null;
       const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitmentDate);
-      const deal = pickWorkUnifiedDeal(dealMap.get(String(p.id)), scopeIdSet);
-      const assignee = p.project_manager || p.sales_person || p.production_person || null;
+      const allDeals = dealMap.get(String(p.id)) || [];
+      const dealStaffIds = [...new Set(
+        allDeals.flatMap((d) => [d.assigned_to, d.lead_owner_id]).filter(Boolean).map(String),
+      )];
+      const matchingDeal = userIdSet.size
+        ? allDeals.find((d) => dealMatchesWorkUnifiedUser(d, userIdSet))
+        : null;
+      const deal = matchingDeal || pickWorkUnifiedDeal(allDeals, scopeIdSet);
+      const projectAssignee = p.project_manager || p.sales_person || p.production_person || null;
       const person1 = p.project_manager || p.sales_person || null;
       const person2 = p.production_person && p.production_person.id !== person1?.id ? p.production_person : null;
       // Id nhân sự suy từ cột phẳng để lượt quét NHẸ (không embed users) vẫn lọc theo
@@ -1407,6 +1422,14 @@ r.get('/work-unified', responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_L
         && String(p.production_person_id) !== String(person1IdFlat || '')
         ? p.production_person_id
         : null;
+      const dealAssigneeId = deal?.assigned_to || deal?.lead_owner_id || null;
+      const dealAssigneeName = deal?.assignee?.full_name
+        || deal?.lead_owner?.full_name
+        || null;
+      const assigneeId = dealAssigneeId || projectAssignee?.id || person1IdFlat || p.production_person_id || null;
+      const assigneeName = dealAssigneeName
+        || projectAssignee?.full_name
+        || null;
       const hasCrm = !!deal;
       const hasSx = !!p.company_id;
       const hasVc = !!(p.logistics_company_id || p.install_date || p.delivery_date);
@@ -1444,15 +1467,18 @@ r.get('/work-unified', responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_L
         has_crm: hasCrm,
         has_sx: hasSx,
         has_vc: hasVc,
-        assignee_name: assignee?.full_name || null,
-        assignee_id: assignee?.id || person1IdFlat || p.production_person_id || null,
-        person1_name: person1?.full_name || null,
-        person1_id: person1?.id || person1IdFlat || null,
+        assignee_name: assigneeName,
+        assignee_id: assigneeId,
+        person1_name: person1?.full_name || dealAssigneeName || null,
+        person1_id: person1?.id || person1IdFlat || dealAssigneeId || null,
         person2_name: person2?.full_name || null,
         person2_id: person2?.id || person2IdFlat || null,
+        sales_person_id: p.sales_person_id || p.sales_person?.id || null,
+        project_manager_id: p.project_manager_id || p.project_manager?.id || null,
         region_id: region?.id || deal?.region_id || null,
         region_name: region?.name || null,
-        deal_assignee_id: deal?.assigned_to || deal?.lead_owner_id || null,
+        deal_assignee_id: dealAssigneeId,
+        deal_staff_ids: dealStaffIds,
       };
     };
 
@@ -1515,9 +1541,8 @@ r.get('/work-unified', responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_L
         return hay.includes(searchQ);
       });
     }
-    if (userIdFilter) {
-      filtered = filtered.filter((it) => [it.person1_id, it.person2_id, it.assignee_id, it.deal_assignee_id]
-        .some((id) => String(id) === String(userIdFilter)));
+    if (userIdFilters.length) {
+      filtered = filtered.filter((it) => workUnifiedItemMatchesUserIds(it, userIdSet));
     }
     if (regionIdFilter === '__none__') {
       filtered = filtered.filter((it) => !it.region_id);

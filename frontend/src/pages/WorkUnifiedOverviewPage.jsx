@@ -17,7 +17,9 @@ import WorkUnifiedFilterPanel, {
   WORK_UNIFIED_REGION_NONE,
   getWorkUnifiedPresetDateRange,
   loadWorkUnifiedEmployees,
-  filterWorkUnifiedStaff,
+  pruneWorkUnifiedUserIds,
+  workUnifiedUserFilterChips,
+  workUnifiedRowMatchesStaff,
 } from '../components/WorkUnifiedFilterFields';
 
 const PAGE_SIZE = 20;
@@ -396,7 +398,7 @@ export default function WorkUnifiedOverviewPage() {
   const [showCalendarGrid, setShowCalendarGrid] = useState(true);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [filterUserId, setFilterUserId] = useState('');
+  const [filterUserIds, setFilterUserIds] = useState([]);
   const [filterRegionId, setFilterRegionId] = useState('');
   const [timePreset, setTimePreset] = useState('');
   const [rangeFrom, setRangeFrom] = useState('');
@@ -409,6 +411,7 @@ export default function WorkUnifiedOverviewPage() {
   const resultsCardRef = useRef(null);
   const kanbanBoardRef = useRef(null);
   const pageMountedRef = useRef(false);
+  const loadGenRef = useRef(0);
 
   useEffect(() => {
     api.get('/companies', { params: { for_module: 'crm' } }).then((res) => {
@@ -462,16 +465,18 @@ export default function WorkUnifiedOverviewPage() {
   }, [effectiveCompanyIdForUsers, canPickCompany, companies]);
 
   useEffect(() => {
-    setFilterUserId('');
+    setFilterUserIds([]);
     setFilterRegionId('');
   }, [effectiveCompanyIdForUsers]);
 
   useEffect(() => {
-    if (!filterUserId) return;
-    const ok = filterWorkUnifiedStaff(users, { companyId, regionId: filterRegionId })
-      .some((u) => String(u.id) === String(filterUserId));
-    if (!ok) setFilterUserId('');
-  }, [users, companyId, filterRegionId, filterUserId]);
+    setFilterUserIds((prev) => {
+      if (!prev.length || !users.length) return prev;
+      const next = pruneWorkUnifiedUserIds(prev, users, { companyId, regionId: filterRegionId });
+      if (next.length === prev.length && next.every((id, i) => id === prev[i])) return prev;
+      return next;
+    });
+  }, [users, companyId, filterRegionId]);
 
   /** Debounce ô tìm kiếm 300ms — tránh gọi API/lọc lại toàn bộ danh sách trên mỗi phím gõ (quan trọng khi công ty có hàng nghìn dự án). */
   useEffect(() => {
@@ -487,7 +492,7 @@ export default function WorkUnifiedOverviewPage() {
   };
 
   const activeFilterCount = [
-    !!filterUserId, !!filterRegionId, !!timePreset, canPickCompany && !!companyId,
+    filterUserIds.length > 0, !!filterRegionId, !!timePreset, canPickCompany && !!companyId,
   ].filter(Boolean).length;
 
   const wuInlineFilterChips = useMemo(() => {
@@ -500,13 +505,12 @@ export default function WorkUnifiedOverviewPage() {
         onClear: () => setCompanyId(''),
       });
     }
-    if (filterUserId) {
-      const u = users.find((x) => String(x.id) === String(filterUserId));
-      chips.push({
-        key: 'user',
-        label: u?.full_name || 'Nhân viên',
-        onClear: () => setFilterUserId(''),
-      });
+    if (filterUserIds.length) {
+      chips.push(...workUnifiedUserFilterChips({
+        filterUserIds,
+        users,
+        onRemove: (id) => setFilterUserIds((prev) => prev.filter((x) => String(x) !== String(id))),
+      }));
     }
     if (filterRegionId === WORK_UNIFIED_REGION_NONE) {
       chips.push({
@@ -531,7 +535,7 @@ export default function WorkUnifiedOverviewPage() {
       });
     }
     return chips;
-  }, [canPickCompany, companyId, companies, filterUserId, users, filterRegionId, regions, timePreset]);
+  }, [canPickCompany, companyId, companies, filterUserIds, users, filterRegionId, regions, timePreset]);
 
   const emptyResultsMessage = useMemo(() => {
     if (filterRegionId === WORK_UNIFIED_REGION_NONE) {
@@ -545,7 +549,7 @@ export default function WorkUnifiedOverviewPage() {
   }, [filterRegionId, regions]);
 
   const clearAdvancedFilters = () => {
-    setFilterUserId('');
+    setFilterUserIds([]);
     setFilterRegionId('');
     setTimePreset('');
     setRangeFrom('');
@@ -553,9 +557,10 @@ export default function WorkUnifiedOverviewPage() {
     if (canPickCompany) setCompanyId('');
   };
 
-  useEffect(() => { setPage(1); }, [stageFilter, forecastFilter, companyId, debouncedSearch, filterUserId, filterRegionId, rangeFrom, rangeTo]);
+  useEffect(() => { setPage(1); }, [stageFilter, forecastFilter, companyId, debouncedSearch, filterUserIds, filterRegionId, rangeFrom, rangeTo]);
 
   const load = useCallback(async () => {
+    const gen = ++loadGenRef.current;
     setLoading(true);
     setError('');
     try {
@@ -564,25 +569,26 @@ export default function WorkUnifiedOverviewPage() {
       if (forecastFilter !== 'all') params.forecast = forecastFilter;
       if (canPickCompany && companyId) params.company_id = companyId;
       if (debouncedSearch) params.search = debouncedSearch;
-      if (filterUserId) params.user_id = filterUserId;
+      if (filterUserIds.length) params.user_ids = filterUserIds.join(',');
       if (filterRegionId) params.region_id = filterRegionId;
       if (rangeFrom) params.date_from = rangeFrom;
       if (rangeTo) params.date_to = rangeTo;
-      // Chỉ phân trang ở view Danh sách — Kanban / Deadline / Planner / Lịch cần đủ tập đã lọc.
       if (viewMode === 'list') {
         params.page = page;
         params.page_size = PAGE_SIZE;
       }
       const res = await api.get('/management/work-unified', { params });
+      if (gen !== loadGenRef.current) return;
       setData(res.data);
     } catch (e) {
+      if (gen !== loadGenRef.current) return;
       setError(e?.response?.data?.error || 'Không tải được dữ liệu dự án');
     } finally {
-      setLoading(false);
+      if (gen === loadGenRef.current) setLoading(false);
     }
   }, [
     stageFilter, forecastFilter, canPickCompany, companyId, debouncedSearch,
-    filterUserId, filterRegionId, rangeFrom, rangeTo, viewMode, page,
+    filterUserIds, filterRegionId, rangeFrom, rangeTo, viewMode, page,
   ]);
 
   useEffect(() => { load(); }, [load]);
@@ -609,9 +615,11 @@ export default function WorkUnifiedOverviewPage() {
   }, [canPickCompany, companyId, companies, user?.company_id]);
 
   const stages = data?.stages || [];
-  // Ở view Danh sách, backend đã trả đúng 1 trang (page/page_size) + total của toàn bộ tập đã lọc.
-  // Ở Kanban / Deadline / Planner / Lịch, backend trả đủ tập đã lọc (không phân trang).
-  const items = data?.items || [];
+  const rawItems = data?.items || [];
+  const items = useMemo(
+    () => (filterUserIds.length ? rawItems.filter((it) => workUnifiedRowMatchesStaff(it, filterUserIds)) : rawItems),
+    [rawItems, filterUserIds],
+  );
   const stats = data?.stats || { total: 0, on_track: 0, at_risk: 0, late: 0 };
   const totalFiltered = data?.total ?? items.length;
   const totalPages = Math.max(1, Math.ceil(totalFiltered / PAGE_SIZE));
@@ -859,8 +867,8 @@ export default function WorkUnifiedOverviewPage() {
                   companyId={companyId}
                   onCompanyChange={setCompanyId}
                   users={users}
-                  filterUserId={filterUserId}
-                  onUserChange={setFilterUserId}
+                  filterUserIds={filterUserIds}
+                  onUserIdsChange={setFilterUserIds}
                   regions={regions}
                   filterRegionId={filterRegionId}
                   onRegionChange={setFilterRegionId}
