@@ -12,7 +12,7 @@ assert.deepStrictEqual(parseWorkUnifiedUserIds({}), []);
 assert.deepStrictEqual(parseWorkUnifiedUserIds({ user_id: a }), [a]);
 assert.deepStrictEqual(parseWorkUnifiedUserIds({ user_ids: `${a},${b}` }), [a, b]);
 assert.deepStrictEqual(parseWorkUnifiedUserIds({ user_id: [a, b], user_ids: c }), [c, a, b]);
-assert.deepStrictEqual(parseWorkUnifiedUserIds({ user_id: 'not-a-uuid' }), []);
+assert.deepStrictEqual(parseWorkUnifiedUserIds({}, `?user_ids=${a},${b}`), [a, b]);
 
 const item = {
   sales_person_id: a,
@@ -21,9 +21,15 @@ const item = {
   deal_staff_ids: [c],
 };
 assert.strictEqual(workUnifiedItemMatchesUserIds(item, []), true);
-assert.strictEqual(workUnifiedItemMatchesUserIds(item, [a]), true);
+assert.strictEqual(workUnifiedItemMatchesUserIds(item, [a]), false, 'sale/PM không đếm khi đã có deal CRM');
 assert.strictEqual(workUnifiedItemMatchesUserIds(item, [b, c]), true);
 assert.strictEqual(workUnifiedItemMatchesUserIds(item, [b]), false);
+assert.strictEqual(workUnifiedItemMatchesUserIds({
+  sales_person_id: a,
+  project_manager_id: null,
+  deal_assignee_id: null,
+  deal_staff_ids: [],
+}, [a]), true, 'không có deal thì lọc theo sale/PM');
 assert.strictEqual(workUnifiedItemMatchesUserIds({
   ...item,
   person2_id: b,

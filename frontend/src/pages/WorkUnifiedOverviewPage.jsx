@@ -567,13 +567,22 @@ export default function WorkUnifiedOverviewPage() {
       const params = {};
       if (stageFilter) params.stage = stageFilter;
       if (forecastFilter !== 'all') params.forecast = forecastFilter;
-      if (canPickCompany && companyId) params.company_id = companyId;
+      if (effectiveCompanyIdForUsers) params.company_id = effectiveCompanyIdForUsers;
+      else if (canPickCompany && companyId) params.company_id = companyId;
       if (debouncedSearch) params.search = debouncedSearch;
       if (filterUserIds.length) params.user_ids = filterUserIds.join(',');
       if (filterRegionId) params.region_id = filterRegionId;
       if (rangeFrom) params.date_from = rangeFrom;
       if (rangeTo) params.date_to = rangeTo;
-      if (viewMode === 'list') {
+      // Danh sách không phân trang khi đang lọc NV/KV/hạn/tìm — trả đủ dòng
+      // để số trên thẻ = số dòng bảng. Không lọc thì vẫn 20/trang.
+      const listPaging = viewMode === 'list'
+        && !filterUserIds.length
+        && !filterRegionId
+        && !debouncedSearch
+        && !rangeFrom
+        && !rangeTo;
+      if (listPaging) {
         params.page = page;
         params.page_size = PAGE_SIZE;
       }
@@ -587,8 +596,8 @@ export default function WorkUnifiedOverviewPage() {
       if (gen === loadGenRef.current) setLoading(false);
     }
   }, [
-    stageFilter, forecastFilter, canPickCompany, companyId, debouncedSearch,
-    filterUserIds, filterRegionId, rangeFrom, rangeTo, viewMode, page,
+    stageFilter, forecastFilter, canPickCompany, companyId, effectiveCompanyIdForUsers,
+    debouncedSearch, filterUserIds, filterRegionId, rangeFrom, rangeTo, viewMode, page,
   ]);
 
   useEffect(() => { load(); }, [load]);
@@ -620,8 +629,27 @@ export default function WorkUnifiedOverviewPage() {
     () => (filterUserIds.length ? rawItems.filter((it) => workUnifiedRowMatchesStaff(it, filterUserIds)) : rawItems),
     [rawItems, filterUserIds],
   );
-  const stats = data?.stats || { total: 0, on_track: 0, at_risk: 0, late: 0 };
-  const totalFiltered = data?.total ?? items.length;
+  const listPaging = viewMode === 'list'
+    && !filterUserIds.length
+    && !filterRegionId
+    && !debouncedSearch
+    && !rangeFrom
+    && !rangeTo;
+  const statsFromItems = useMemo(() => {
+    const s = { total: items.length, on_track: 0, at_risk: 0, late: 0 };
+    items.forEach((it) => {
+      if (it.forecast === 'late') s.late += 1;
+      else if (it.forecast === 'at_risk') s.at_risk += 1;
+      else s.on_track += 1;
+    });
+    return s;
+  }, [items]);
+  const apiStats = data?.stats || { total: 0, on_track: 0, at_risk: 0, late: 0 };
+  const clientTightened = filterUserIds.length > 0 && items.length !== rawItems.length;
+  const stats = clientTightened ? statsFromItems : apiStats;
+  const totalFiltered = listPaging
+    ? (data?.total ?? items.length)
+    : (clientTightened || forecastFilter === 'all' ? items.length : (data?.total ?? items.length));
   const totalPages = Math.max(1, Math.ceil(totalFiltered / PAGE_SIZE));
   const pageStart = (page - 1) * PAGE_SIZE;
   const pageItems = items;
@@ -936,7 +964,7 @@ export default function WorkUnifiedOverviewPage() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 shrink-0">
         {[
-          { key: 'all', label: 'Đang thực hiện', value: stats.total, valueCls: 'text-gray-900' },
+          { key: 'all', label: 'Đang thực hiện', value: forecastFilter === 'all' ? totalFiltered : stats.total, valueCls: 'text-gray-900' },
           { key: 'on_track', label: 'Đúng tiến độ', value: stats.on_track, valueCls: 'text-emerald-600' },
           { key: 'at_risk', label: 'Nguy cơ trễ', value: stats.at_risk, valueCls: 'text-amber-600' },
           { key: 'late', label: 'Trễ hạn', value: stats.late, valueCls: 'text-red-600' },
@@ -967,7 +995,7 @@ export default function WorkUnifiedOverviewPage() {
                   forecastFilter === t.key ? 'bg-emerald-600 text-white' : 'text-gray-600 hover:bg-gray-50'
                 }`}
               >
-                {t.label} · {t.key === 'all' ? stats.total : stats[t.key] || 0}
+                {t.label} · {t.key === 'all' ? (forecastFilter === 'all' ? totalFiltered : stats.total) : stats[t.key] || 0}
               </button>
             ))}
           </div>
@@ -1296,9 +1324,18 @@ export default function WorkUnifiedOverviewPage() {
         {!loading && totalFiltered > 0 && (
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 py-3 border-t border-gray-100">
             <p className="text-xs text-gray-500">
-              Hiển thị <span className="font-medium text-gray-700">{pageStart + 1}-{Math.min(pageStart + PAGE_SIZE, totalFiltered)}</span> trong tổng số{' '}
-              <span className="font-medium text-gray-700">{totalFiltered}</span> dự án
+              {listPaging ? (
+                <>
+                  Hiển thị <span className="font-medium text-gray-700">{pageStart + 1}-{pageStart + items.length}</span> trong tổng số{' '}
+                  <span className="font-medium text-gray-700">{totalFiltered}</span> dự án
+                </>
+              ) : (
+                <>
+                  <span className="font-medium text-gray-700">{items.length}</span> dự án
+                </>
+              )}
             </p>
+            {listPaging && totalPages > 1 && (
             <div className="flex items-center gap-1.5">
               <button
                 type="button"
@@ -1322,6 +1359,7 @@ export default function WorkUnifiedOverviewPage() {
                 <ChevronRight className="h-4 w-4" />
               </button>
             </div>
+            )}
           </div>
         )}
         </>

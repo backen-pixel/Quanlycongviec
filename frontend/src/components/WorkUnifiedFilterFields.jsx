@@ -31,13 +31,13 @@ export function workUnifiedRowMatchesStaff(it, selectedIds) {
   const ids = normalizeWorkUnifiedUserIds(selectedIds);
   if (!ids.length) return true;
   const idSet = new Set(ids);
-  const rowIds = [
+  const dealIds = [
     ...(Array.isArray(it?.deal_staff_ids) ? it.deal_staff_ids : []),
     it?.deal_assignee_id,
-    it?.sales_person_id,
-    it?.project_manager_id,
-    it?.person1_id,
   ].filter(Boolean).map(String);
+  const rowIds = dealIds.length
+    ? dealIds
+    : [it?.sales_person_id, it?.project_manager_id, it?.person1_id].filter(Boolean).map(String);
   return rowIds.some((id) => idSet.has(id));
 }
 

@@ -1140,7 +1140,7 @@ r.get('/work-unified/search', async (req, res) => {
     const q = raw.replace(/[%_,.()]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
     if (q.length < 2) return res.json({ items: [] });
 
-    const userIds = parseWorkUnifiedUserIds(req.query);
+    const userIds = parseWorkUnifiedUserIds(req.query, req.originalUrl || req.url);
     const userIdSet = new Set(userIds);
     const regionRaw = String(req.query.region_id || '').trim();
     const regionNone = regionRaw === '__none__';
@@ -1277,7 +1277,7 @@ r.get('/work-unified', responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_L
       search: searchQuery, region_id: regionIdFilter,
       date_from: dateFrom, date_to: dateTo, page: pageParam, page_size: pageSizeParam,
     } = req.query;
-    const userIdFilters = parseWorkUnifiedUserIds(req.query);
+    const userIdFilters = parseWorkUnifiedUserIds(req.query, req.originalUrl || req.url);
     const userIdSet = new Set(userIdFilters);
 
     const searchQ = String(searchQuery || '').trim().toLowerCase();
@@ -1350,6 +1350,7 @@ r.get('/work-unified', responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_L
           columns: scanDealColumns,
           key: 'project_id',
           ids: projectIds,
+          tune: (q) => q.eq('type', 'deal'),
         }),
         fetchAllByIdsParallel({
           table: 'crm_deal_projects',
@@ -1380,6 +1381,7 @@ r.get('/work-unified', responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_L
             columns: scanDealColumns,
             key: 'id',
             ids: missingDealIds,
+            tune: (q) => q.eq('type', 'deal'),
           });
           (extraDeals || []).forEach((d) => { if (d?.id) dealById.set(String(d.id), d); });
         }
@@ -1495,7 +1497,11 @@ r.get('/work-unified', responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_L
           table: 'projects', columns: WORK_UNIFIED_PROJECT_COLUMNS, key: 'id', ids,
         }),
         fetchAllByIdsParallel({
-          table: 'crm_leads', columns: WORK_UNIFIED_DEAL_COLUMNS, key: 'project_id', ids,
+          table: 'crm_leads',
+          columns: WORK_UNIFIED_DEAL_COLUMNS,
+          key: 'project_id',
+          ids,
+          tune: (q) => q.eq('type', 'deal'),
         }),
         fetchAllByIdsParallel({
           table: 'crm_deal_projects', columns: 'deal_id, project_id', key: 'project_id', ids,
@@ -1514,7 +1520,11 @@ r.get('/work-unified', responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_L
         .map(String))];
       if (missingDealIds.length) {
         const extra = await fetchAllByIdsParallel({
-          table: 'crm_leads', columns: WORK_UNIFIED_DEAL_COLUMNS, key: 'id', ids: missingDealIds,
+          table: 'crm_leads',
+          columns: WORK_UNIFIED_DEAL_COLUMNS,
+          key: 'id',
+          ids: missingDealIds,
+          tune: (q) => q.eq('type', 'deal'),
         });
         (extra || []).forEach((d) => { if (d?.id) dealById.set(String(d.id), d); });
       }
