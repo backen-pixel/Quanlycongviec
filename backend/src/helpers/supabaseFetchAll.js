@@ -101,16 +101,25 @@ async function fetchAllPagesParallel(buildQuery, { batchSize = 5 } = {}) {
 /**
  * Như `fetchAllByIds` nhưng chạy song song `chunkConcurrency` khúc id cùng lúc (mỗi khúc
  * tự phân trang song song qua `fetchAllPagesParallel`) thay vì tuần tự từng khúc.
- * @param {object} opts Giống `fetchAllByIds`, thêm `chunkConcurrency` (mặc định 4).
+ *
+ * `idChunk` — số id mỗi khúc, mặc định ID_CHUNK (500, tức sát trần độ dài URL).
+ * Hạ xuống khi biết mỗi id kéo theo NHIỀU dòng: 500 id × 12 dòng = 6.000 dòng, tức 7 trang
+ * phải đọc lồng nhau bên trong khúc, mà các trang đó lại chờ nhau theo lô. Chia khúc nhỏ
+ * cho mỗi khúc gọn trong một trang 1.000 dòng thì phân trang biến mất — còn lại toàn truy
+ * vấn nhỏ chạy cùng lúc. Đoán hụt cũng không sai kết quả: khúc nào tràn vẫn tự phân trang
+ * như cũ, chỉ tốn thêm một trang.
+ *
+ * @param {object} opts Giống `fetchAllByIds`, thêm `chunkConcurrency` (mặc định 4),
+ *   `idChunk`, `pageBatchSize`.
  * @returns {Promise<object[]>}
  */
 async function fetchAllByIdsParallel({
-  table, columns, key, ids, tune, chunkConcurrency = 4, pageBatchSize,
+  table, columns, key, ids, tune, chunkConcurrency = 4, pageBatchSize, idChunk = ID_CHUNK,
 }) {
   const list = [...new Set((ids || []).filter((v) => v !== null && v !== undefined).map(String))];
   if (!list.length) return [];
 
-  const chunks = chunk(list, ID_CHUNK);
+  const chunks = chunk(list, Math.max(1, Math.min(idChunk, ID_CHUNK)));
   const out = [];
   for (let i = 0; i < chunks.length; i += chunkConcurrency) {
     const batch = chunks.slice(i, i + chunkConcurrency);

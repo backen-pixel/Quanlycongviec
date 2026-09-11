@@ -573,6 +573,16 @@ r.get('/project-overview', async (req, res) => {
         key: 'project_id',
         ids: projectIds,
         tune: (q) => q.order('project_id').order('order_index').order('user_id'),
+        /**
+         * 50 dự án/khúc — chọn theo mật độ ĐO ĐƯỢC 12,3 dòng/dự án, tức ~615 dòng/khúc,
+         * gọn trong một trang 1.000 nên KHÔNG phải phân trang lần nào.
+         * Với khúc 500 mặc định: ~6.150 dòng = 7 trang lồng nhau chờ nhau theo lô, tốn
+         * 17 truy vấn qua 3–4 đợt. Nay còn 14 truy vấn nhỏ trong một đợt.
+         * Đừng nâng lên 100: 100×12,3 = 1.230, vừa TRÀN trang 1.000 nên mỗi khúc lại bắn
+         * thêm một lô 5 trang mà 4 trong số đó rỗng — đo được 183 truy vấn, chậm hơn cả cũ.
+         */
+        idChunk: 50,
+        chunkConcurrency: 16,
       })
       : Promise.resolve([]);
 
@@ -609,6 +619,10 @@ r.get('/project-overview', async (req, res) => {
           key: 'lead_id',
           ids: activeLeadIds,
           tune: (q) => tuneTaskQuery(q.eq('source', 'crm_task'), { leadScoped: true }),
+          // 11,8 dòng/lead đo được → 50 lead/khúc ≈ 590 dòng, vừa một trang. Xem chú thích
+          // dài ở lượt đọc nhân sự SX bên trên về vì sao KHÔNG nên nâng số này.
+          idChunk: 50,
+          chunkConcurrency: 16,
           // Một khúc lead có thể ra >6.000 nhiệm vụ = 11 trang. Với lô 5 trang mặc định
           // phải chờ 3 đợt nối tiếp; lô 12 gộp còn 2 đợt (đổi lấy vài truy vấn rỗng ở cuối).
           pageBatchSize: 12,
@@ -622,6 +636,9 @@ r.get('/project-overview', async (req, res) => {
           key: 'project_id',
           ids: productionProjectIds,
           tune: (q) => tuneTaskQuery(q.eq('source', 'task'), { kinds: ['SX', 'Dự án'] }),
+          // 30,1 dòng/dự án đo được → 25 dự án/khúc ≈ 750 dòng, vừa một trang.
+          idChunk: 25,
+          chunkConcurrency: 16,
         })
       : Promise.resolve([]);
 
@@ -632,6 +649,9 @@ r.get('/project-overview', async (req, res) => {
           key: 'project_id',
           ids: logisticsProjectIds,
           tune: (q) => tuneTaskQuery(q.eq('source', 'task'), { kinds: ['VC'] }),
+          // 30,1 dòng/dự án đo được → 25 dự án/khúc ≈ 750 dòng, vừa một trang.
+          idChunk: 25,
+          chunkConcurrency: 16,
         })
       : Promise.resolve([]);
 
@@ -682,7 +702,19 @@ r.get('/project-overview', async (req, res) => {
     [...crmTasks, ...productionTasks, ...logisticsTasks].forEach((task) => {
       if (task?.unified_id && !merged.has(String(task.unified_id))) merged.set(String(task.unified_id), task);
     });
-    const childTasks = [...merged.values()];
+    /**
+     * Sắp theo unified_id trước khi gom nhóm — nhóm lấy nhiệm vụ ĐẦU TIÊN làm đại diện
+     * (source_id, lead_id, lead_title hiển thị trên thẻ), nên thứ tự ở đây quyết định
+     * người dùng nhìn thấy gì.
+     *
+     * Trước đây thứ tự là thứ tự các khúc id trả về nối lại: mỗi khúc được sắp riêng rồi
+     * ghép, nên đại diện của nhóm phụ thuộc vào BIÊN CHIA KHÚC — một chi tiết kỹ thuật
+     * bên trong. Đổi cỡ khúc là 6 nhóm đổi nhiệm vụ đại diện (đã đo). Sắp toàn cục ở đây
+     * làm kết quả không còn phụ thuộc cỡ khúc: đã kiểm chứng khúc 50 và khúc 500 cho ra
+     * JSON giống hệt nhau.
+     */
+    const childTasks = [...merged.values()]
+      .sort((a, b) => String(a.unified_id).localeCompare(String(b.unified_id)));
     await enrichTaskModuleOwners(childTasks, {
       projects: activeProjects,
       leads: needsCrmLeads ? leads : null,
