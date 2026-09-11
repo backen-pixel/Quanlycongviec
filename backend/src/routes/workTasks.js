@@ -129,6 +129,7 @@ function taskOwnerLane(task) {
 async function enrichTaskModuleOwners(rows, {
   projects: providedProjects = null,
   leads: providedLeads = null,
+  productionStaff: providedProductionStaff = null,
 } = {}) {
   const tasks = rows || [];
   if (!tasks.length) return tasks;
@@ -161,7 +162,11 @@ async function enrichTaskModuleOwners(rows, {
         tune: (q) => q.order('id'),
       })
       : Promise.resolve([]),
-    projectIds.length
+    // Nhân sự SX chỉ phụ thuộc danh sách dự án — chỗ gọi biết trước thì nạp sẵn và
+    // truyền vào, để lượt đọc này chạy song song với lượt đọc nhiệm vụ thay vì nối tiếp.
+    providedProductionStaff
+      ? Promise.resolve(providedProductionStaff)
+      : projectIds.length
       ? fetchAllByIdsParallel({
         table: 'project_production_staff',
         columns: 'project_id, user_id, is_primary, order_index',
@@ -464,17 +469,24 @@ r.get('/project-overview', async (req, res) => {
       if (!isManagerLike(req.user)) q = applyEmployeeScope(q, req.user.userId);
       return q.order('unified_id');
     };
-    const [crmTasks, productionTasks, logisticsTasks] = await Promise.all([
-      (!requestedModule || requestedModule === 'crm') && activeLeadIds.length
+    // Nhân sự SX chỉ cần danh sách dự án — đã biết từ trước lượt đọc nhiệm vụ. Trước đây
+    // chờ có nhiệm vụ rồi mới đọc (đo được 1,1s nằm thẳng trên đường tới hạn); nay đọc
+    // cùng lúc. Lấy theo TOÀN BỘ dự án đang hoạt động thay vì theo dự án suy ra từ nhiệm
+    // vụ — đo thực tế cùng cỡ (6.163 so với 6.304 dòng) nên không tốn thêm.
+    const crmTasksPromise = (!requestedModule || requestedModule === 'crm') && activeLeadIds.length
         ? fetchAllByIdsParallel({
           table: 'unified_tasks_v',
           columns: PROJECT_OVERVIEW_TASK_SELECT,
           key: 'lead_id',
           ids: activeLeadIds,
           tune: (q) => tuneTaskQuery(q.eq('source', 'crm_task'), { leadScoped: true }),
+          // Một khúc lead có thể ra >6.000 nhiệm vụ = 11 trang. Với lô 5 trang mặc định
+          // phải chờ 3 đợt nối tiếp; lô 12 gộp còn 2 đợt (đổi lấy vài truy vấn rỗng ở cuối).
+          pageBatchSize: 12,
         })
-        : Promise.resolve([]),
-      (!requestedModule || requestedModule === 'sx') && productionProjectIds.length
+      : Promise.resolve([]);
+
+    const productionTasksPromise = (!requestedModule || requestedModule === 'sx') && productionProjectIds.length
         ? fetchAllByIdsParallel({
           table: 'unified_tasks_v',
           columns: PROJECT_OVERVIEW_TASK_SELECT,
@@ -482,8 +494,9 @@ r.get('/project-overview', async (req, res) => {
           ids: productionProjectIds,
           tune: (q) => tuneTaskQuery(q.eq('source', 'task'), { kinds: ['SX', 'Dự án'] }),
         })
-        : Promise.resolve([]),
-      (!requestedModule || requestedModule === 'vc') && logisticsProjectIds.length
+      : Promise.resolve([]);
+
+    const logisticsTasksPromise = (!requestedModule || requestedModule === 'vc') && logisticsProjectIds.length
         ? fetchAllByIdsParallel({
           table: 'unified_tasks_v',
           columns: PROJECT_OVERVIEW_TASK_SELECT,
@@ -491,7 +504,56 @@ r.get('/project-overview', async (req, res) => {
           ids: logisticsProjectIds,
           tune: (q) => tuneTaskQuery(q.eq('source', 'task'), { kinds: ['VC'] }),
         })
-        : Promise.resolve([]),
+      : Promise.resolve([]);
+
+    const productionStaffPromise = projectIds.length
+      ? fetchAllByIdsParallel({
+        table: 'project_production_staff',
+        columns: 'project_id, user_id, is_primary, order_index',
+        key: 'project_id',
+        ids: projectIds,
+        tune: (q) => q.order('project_id').order('order_index').order('user_id'),
+      })
+      : Promise.resolve([]);
+
+    /**
+     * Chi tiết nhiệm vụ (để suy ra hạng mục) chỉ cần id của chính nhóm nhiệm vụ đó, nên
+     * bắt đầu đọc NGAY KHI nguồn tương ứng xong thay vì chờ cả ba nguồn.
+     * Phạm vi id giữ nguyên như cũ — vẫn lấy từ nhiệm vụ thật, không mở rộng theo dự án —
+     * nên kết quả không đổi, chỉ khác thời điểm bắt đầu.
+     */
+    const projectTaskDetailsPromise = Promise.all([productionTasksPromise, logisticsTasksPromise])
+      .then(([sxRows, vcRows]) => {
+        const ids = [...sxRows, ...vcRows].map((t) => t.source_id).filter(Boolean);
+        return ids.length
+          ? fetchAllByIdsParallel({
+            table: 'tasks',
+            columns: 'id, metadata, production_stage_id, stage_id',
+            key: 'id',
+            ids,
+            tune: (q) => q.order('id'),
+            // Đọc THEO ID: mỗi lô tối đa ID_CHUNK dòng nên không bao giờ phải phân trang,
+            // mỗi lô đúng một truy vấn nhỏ. Chạy nhiều lô cùng lúc gộp 4 đợt nối tiếp thành 1.
+            chunkConcurrency: 16,
+          })
+          : [];
+      });
+    const crmTaskDetailsPromise = crmTasksPromise.then((rows) => {
+      const ids = rows.map((t) => t.source_id).filter(Boolean);
+      return ids.length
+        ? fetchAllByIdsParallel({
+          table: 'crm_tasks',
+          columns: 'id, stage_slug, pipeline_stage_id, production_pipeline_stage_id',
+          key: 'id',
+          ids,
+          tune: (q) => q.order('id'),
+          chunkConcurrency: 16,
+        })
+        : [];
+    });
+
+    const [crmTasks, productionTasks, logisticsTasks, productionStaffRows] = await Promise.all([
+      crmTasksPromise, productionTasksPromise, logisticsTasksPromise, productionStaffPromise,
     ]);
 
     const merged = new Map();
@@ -502,29 +564,12 @@ r.get('/project-overview', async (req, res) => {
     await enrichTaskModuleOwners(childTasks, {
       projects: activeProjects,
       leads: needsCrmLeads ? leads : null,
+      productionStaff: productionStaffRows,
     });
 
-    const projectTaskIds = childTasks.filter((task) => task.source === 'task').map((task) => task.source_id);
-    const crmTaskIds = childTasks.filter((task) => task.source === 'crm_task').map((task) => task.source_id);
+    // Đã bắt đầu đọc từ lúc từng nguồn nhiệm vụ xong (xem trên) — ở đây chỉ chờ kết quả.
     const [projectTaskDetails, crmTaskDetails] = await Promise.all([
-      projectTaskIds.length
-        ? fetchAllByIdsParallel({
-          table: 'tasks',
-          columns: 'id, metadata, production_stage_id, stage_id',
-          key: 'id',
-          ids: projectTaskIds,
-          tune: (q) => q.order('id'),
-        })
-        : Promise.resolve([]),
-      crmTaskIds.length
-        ? fetchAllByIdsParallel({
-          table: 'crm_tasks',
-          columns: 'id, stage_slug, pipeline_stage_id, production_pipeline_stage_id',
-          key: 'id',
-          ids: crmTaskIds,
-          tune: (q) => q.order('id'),
-        })
-        : Promise.resolve([]),
+      projectTaskDetailsPromise, crmTaskDetailsPromise,
     ]);
     const projectDetailById = new Map(projectTaskDetails.map((row) => [String(row.id), row]));
     const crmDetailById = new Map(crmTaskDetails.map((row) => [String(row.id), row]));

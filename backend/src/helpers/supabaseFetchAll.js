@@ -104,7 +104,9 @@ async function fetchAllPagesParallel(buildQuery, { batchSize = 5 } = {}) {
  * @param {object} opts Giống `fetchAllByIds`, thêm `chunkConcurrency` (mặc định 4).
  * @returns {Promise<object[]>}
  */
-async function fetchAllByIdsParallel({ table, columns, key, ids, tune, chunkConcurrency = 4 }) {
+async function fetchAllByIdsParallel({
+  table, columns, key, ids, tune, chunkConcurrency = 4, pageBatchSize,
+}) {
   const list = [...new Set((ids || []).filter((v) => v !== null && v !== undefined).map(String))];
   if (!list.length) return [];
 
@@ -115,7 +117,7 @@ async function fetchAllByIdsParallel({ table, columns, key, ids, tune, chunkConc
     const results = await Promise.all(batch.map((part) => fetchAllPagesParallel(() => {
       const q = supabase.from(table).select(columns).in(key, part);
       return tune ? tune(q) : q;
-    })));
+    }, pageBatchSize ? { batchSize: pageBatchSize } : undefined)));
     for (const rows of results) out.push(...rows);
   }
   return out;
