@@ -421,10 +421,18 @@ function isProductionTaskTerminalStage(stage) {
  * tính thống kê rồi trả JSON. Dùng chung cho cả đường RPC gộp lẫn đường cũ nên hai
  * đường chắc chắn cho cùng một hình dạng kết quả.
  */
-async function finishProjectOverview(res, tasks) {
+/**
+ * @param {{companies: object[], regions: object[]}|null} preloaded Hai bảng này rất nhỏ
+ *   nên chỗ gọi nạp trọn từ đầu; ở đây chỉ lọc lại đúng những dòng có xuất hiện, giữ
+ *   nguyên thứ tự theo id như khi đọc theo id.
+ */
+async function finishProjectOverview(res, tasks, preloaded = null) {
   const companyIds = [...new Set(tasks.map((task) => task.company_id).filter(Boolean).map(String))];
   const regionIds = [...new Set(tasks.map((task) => task.region_id).filter(Boolean).map(String))];
-  const [companies, regions] = await Promise.all([
+  const [companies, regions] = preloaded ? [
+    (preloaded.companies || []).filter((row) => companyIds.includes(String(row.id))),
+    (preloaded.regions || []).filter((row) => regionIds.includes(String(row.id))),
+  ] : await Promise.all([
     companyIds.length
       ? fetchAllByIdsParallel({
         table: 'companies',
@@ -499,6 +507,18 @@ r.get('/project-overview', async (req, res) => {
     const requestedModule = ['crm', 'sx', 'vc'].includes(String(req.query.module || '').toLowerCase())
       ? String(req.query.module).toLowerCase()
       : '';
+    /**
+     * Bốn bảng tra cứu này rất nhỏ (222 + 97 + 9 + 12 = 340 dòng) nhưng trước đây được
+     * đọc ở CUỐI đường tới hạn, sau khi đã gom đủ id — đo được ~400ms chỉ để chờ. Nạp
+     * trọn ngay từ đầu, song song với projects: cùng dữ liệu, chỉ khác thời điểm.
+     */
+    const lookupsPromise = Promise.all([
+      fetchAllPages(() => supabase.from('crm_pipeline_stages').select('id, name, order_index').order('id')),
+      fetchAllPages(() => supabase.from('workshop_task_templates').select('id, name, workshop_area, order_index').order('id')),
+      fetchAllPages(() => supabase.from('companies').select('id, name, short_name').order('id')),
+      fetchAllPages(() => supabase.from('company_regions').select('id, company_id, name, code').order('id')),
+    ]);
+
     const projects = await fetchAllPages(() => {
       let q = supabase
         .from('projects')
@@ -675,36 +695,11 @@ r.get('/project-overview', async (req, res) => {
     ]);
     const projectDetailById = new Map(projectTaskDetails.map((row) => [String(row.id), row]));
     const crmDetailById = new Map(crmTaskDetails.map((row) => [String(row.id), row]));
-    const workshopTemplateIds = [...new Set(projectTaskDetails
-      .map((row) => row.metadata?.workshop_template_id)
-      .filter(Boolean)
-      .map(String))];
-    const crmStageIds = [...new Set(crmTaskDetails
-      .map((row) => row.pipeline_stage_id)
-      .filter(Boolean)
-      .map(String))];
-    const [workshopTemplates, crmTaskStages] = await Promise.all([
-      workshopTemplateIds.length
-        ? fetchAllByIdsParallel({
-          table: 'workshop_task_templates',
-          columns: 'id, name, workshop_area, order_index',
-          key: 'id',
-          ids: workshopTemplateIds,
-          tune: (q) => q.order('id'),
-        })
-        : Promise.resolve([]),
-      crmStageIds.length
-        ? fetchAllByIdsParallel({
-          table: 'crm_pipeline_stages',
-          columns: 'id, name, order_index',
-          key: 'id',
-          ids: crmStageIds,
-          tune: (q) => q.order('id'),
-        })
-        : Promise.resolve([]),
-    ]);
-    const workshopTemplateById = new Map(workshopTemplates.map((row) => [String(row.id), row]));
-    const crmTaskStageById = new Map(crmTaskStages.map((row) => [String(row.id), row]));
+    // Đã nạp từ đầu (lookupsPromise) — ở đây chỉ chờ. Map tra theo id nên có dư dòng
+    // cũng không sao: chỉ những id thật sự xuất hiện mới được tra.
+    const [allCrmStages, allWorkshopTemplates, allCompanies, allRegions] = await lookupsPromise;
+    const workshopTemplateById = new Map(allWorkshopTemplates.map((row) => [String(row.id), row]));
+    const crmTaskStageById = new Map(allCrmStages.map((row) => [String(row.id), row]));
     const terminalStatuses = new Set(['done', 'completed', 'cancelled', 'canceled']);
     const humanizeSlug = (value) => {
       const text = String(value || '').replace(/^vc_ws_/, '').replace(/^sx_/, '').replace(/[-_]+/g, ' ').trim();
@@ -786,7 +781,7 @@ r.get('/project-overview', async (req, res) => {
         effective_assignee_name: assigned?.effective_assignee_name || first.module_owner_name || null,
       };
     }).filter(Boolean);
-    return finishProjectOverview(res, tasks);
+    return finishProjectOverview(res, tasks, { companies: allCompanies, regions: allRegions });
   } catch (e) {
     console.error('[work-tasks] project-overview:', e);
     res.status(500).json({ error: e.message || 'Lỗi tải tổng quan nhiệm vụ dự án' });
