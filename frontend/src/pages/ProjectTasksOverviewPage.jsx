@@ -3,7 +3,7 @@ import {
 } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
-  AlertTriangle, Bell, CheckCircle2, Clock3, Factory, Loader2, RefreshCw, Search, Target, Truck, X,
+  AlertTriangle, Bell, Building2, CheckCircle2, Clock3, Factory, Loader2, RefreshCw, Search, Target, Truck, X,
 } from 'lucide-react';
 import api from '../lib/api';
 import { canSendTaskRemind, getDeepLink } from '../components/UnifiedTaskRow';
@@ -11,6 +11,9 @@ import { AdvFilterButton } from '../components/SearchInlineFilterChips';
 import ProjectTasksFilterPanel from '../components/ProjectTasksFilterPanel';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import { useAuth } from '../lib/auth';
+import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
+import { peekCompaniesPrefetch, prefetchCompanies } from '../lib/companiesPrefetch';
+import { resolveDefaultCrmAdminCompanyId, setStoredCrmFilterCompanyId } from '../lib/crmCompanyFilter';
 import { avatarColor, formatDate, getStaffInitials } from '../lib/utils';
 
 const WARNING_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
@@ -223,9 +226,19 @@ const KanbanColumn = memo(function KanbanColumn({
   );
 });
 
+function defaultCompanyId(list, user, canPickCompany) {
+  if (canPickCompany) return resolveDefaultCrmAdminCompanyId(list) || (list[0]?.id ? String(list[0].id) : '');
+  const ownId = user?.company_id != null ? String(user.company_id).trim() : '';
+  if (ownId && list.some((company) => String(company.id) === ownId)) return ownId;
+  return ownId || (list[0]?.id ? String(list[0].id) : '');
+}
+
 export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
   const { user } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
+  const isAdmin = isAdminLike(user);
+  const isCompanyScoped = isCompanyScopedAdmin(user);
+  const canPickCompany = isAdmin && !isCompanyScoped;
   const fixedModuleKey = MODULES.some((module) => module.key === fixedModule) ? fixedModule : '';
   const fixedModuleConfig = MODULES.find((module) => module.key === fixedModuleKey) || null;
   const FixedModuleIcon = fixedModuleConfig?.icon;
@@ -235,6 +248,8 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     || (moduleParam === 'all' || MODULES.some((m) => m.key === moduleParam) ? moduleParam : 'all');
   const [tasks, setTasks] = useState([]);
   const [stats, setStats] = useState({ total: 0, warning: 0, overdue: 0, by_module: {} });
+  const [companies, setCompanies] = useState(() => peekCompaniesPrefetch() || []);
+  const [companiesReady, setCompaniesReady] = useState(() => !!(peekCompaniesPrefetch() || []).length);
   const [filterOptions, setFilterOptions] = useState({ companies: [], regions: [] });
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -242,20 +257,50 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [riskFilter, setRiskFilter] = useState('all');
   const [progressFilter, setProgressFilter] = useState('all');
-  const [companyFilter, setCompanyFilter] = useState('');
+  const [companyFilter, setCompanyFilter] = useState(() => {
+    const prefetched = peekCompaniesPrefetch() || [];
+    return defaultCompanyId(prefetched, user, canPickCompany);
+  });
   const [regionFilter, setRegionFilter] = useState('');
   const [assigneeFilter, setAssigneeFilter] = useState('');
   const [deadlineFrom, setDeadlineFrom] = useState('');
   const [deadlineTo, setDeadlineTo] = useState('');
   const canRemind = canSendTaskRemind(user);
+  const applyCompany = useCallback((value) => {
+    const next = String(value || '');
+    setCompanyFilter(next);
+    setRegionFilter('');
+    if (canPickCompany && next) setStoredCrmFilterCompanyId(next);
+  }, [canPickCompany]);
+
+  useEffect(() => {
+    let cancelled = false;
+    prefetchCompanies(api).then((list) => {
+      if (cancelled) return;
+      setCompanies(list);
+      setCompanyFilter((prev) => {
+        if (prev && list.some((company) => String(company.id) === String(prev))) return prev;
+        return defaultCompanyId(list, user, canPickCompany);
+      });
+      setCompaniesReady(true);
+    }).catch(() => {
+      if (!cancelled) {
+        setCompanies([]);
+        setCompaniesReady(true);
+      }
+    });
+    return () => { cancelled = true; };
+  }, [canPickCompany, user]);
 
   const load = useCallback(async () => {
+    if (!companiesReady) return;
     setLoading(true);
     setError('');
     try {
-      const res = await api.get('/work-tasks/project-overview', {
-        params: fixedModuleKey ? { module: fixedModuleKey } : {},
-      });
+      const params = {};
+      if (fixedModuleKey) params.module = fixedModuleKey;
+      if (companyFilter) params.company_id = companyFilter;
+      const res = await api.get('/work-tasks/project-overview', { params });
       setTasks(res.data?.tasks || []);
       setStats(res.data?.stats || { total: 0, warning: 0, overdue: 0, by_module: {} });
       setFilterOptions(res.data?.filter_options || { companies: [], regions: [] });
@@ -264,7 +309,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     } finally {
       setLoading(false);
     }
-  }, [fixedModuleKey]);
+  }, [companiesReady, companyFilter, fixedModuleKey]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -297,11 +342,11 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       : prepared.filter((task) => task._module.key === activeModule)
   ), [activeModule, prepared]);
   const companyOptions = useMemo(() => {
-    const availableIds = new Set(
-      moduleScopedTasks.map((task) => String(task.company_id || '')).filter(Boolean),
-    );
-    return (filterOptions.companies || []).filter((company) => availableIds.has(String(company.id)));
-  }, [filterOptions.companies, moduleScopedTasks]);
+    const fromPrefetch = companies.length ? companies : (filterOptions.companies || []);
+    return [...fromPrefetch].sort((a, b) => (
+      String(a.short_name || a.name || '').localeCompare(String(b.short_name || b.name || ''), 'vi')
+    ));
+  }, [companies, filterOptions.companies]);
   const regionOptions = useMemo(() => {
     const availableIds = new Set(
       moduleScopedTasks.map((task) => String(task.region_id || '')).filter(Boolean),
@@ -313,15 +358,15 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
   }, [companyFilter, filterOptions.regions, moduleScopedTasks]);
 
   useEffect(() => {
-    if (companyFilter && !companyOptions.some((company) => String(company.id) === companyFilter)) {
-      setCompanyFilter('');
-      setRegionFilter('');
-      return;
-    }
     if (regionFilter && !regionOptions.some((region) => String(region.id) === regionFilter)) {
       setRegionFilter('');
     }
-  }, [companyFilter, companyOptions, regionFilter, regionOptions]);
+  }, [regionFilter, regionOptions]);
+
+  useEffect(() => {
+    setRegionFilter('');
+    setAssigneeFilter('');
+  }, [companyFilter]);
 
   const normalizedQuery = query.trim().toLowerCase();
   const visibleTasks = useMemo(() => prepared.filter((task) => {
@@ -332,7 +377,6 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       Number(task.child_completed || 0) <= 0
       || Number(task.child_completed || 0) >= Number(task.child_total || 0)
     )) return false;
-    if (companyFilter && String(task.company_id || '') !== companyFilter) return false;
     if (regionFilter && String(task.region_id || '') !== regionFilter) return false;
     if (assigneeFilter && String(task.effective_assignee_id || '') !== assigneeFilter) return false;
     const deadlineMs = task.deadline ? new Date(task.deadline).getTime() : null;
@@ -344,7 +388,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       task.assignee_name, task.effective_assignee_name, task.company_name, task.region_name,
     ].filter(Boolean).join(' ').toLowerCase().includes(normalizedQuery);
   }), [
-    activeModule, assigneeFilter, companyFilter, deadlineFrom, deadlineTo, normalizedQuery,
+    activeModule, assigneeFilter, deadlineFrom, deadlineTo, normalizedQuery,
     prepared, progressFilter, regionFilter, riskFilter,
   ]);
 
@@ -364,7 +408,6 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
   const activeAdvancedFilters = [
     riskFilter !== 'all',
     progressFilter !== 'all',
-    !!companyFilter,
     !!regionFilter,
     !!assigneeFilter,
     !!deadlineFrom,
@@ -374,8 +417,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
   const resetAdvancedFilters = () => {
     setRiskFilter('all');
     setProgressFilter('all');
-    setCompanyFilter('');
-    setRegionFilter('');
+    applyCompany(defaultCompanyId(companyOptions, user, canPickCompany));
     setAssigneeFilter('');
     setDeadlineFrom('');
     setDeadlineTo('');
@@ -387,7 +429,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     setSearchParams(next, { replace: true });
   };
 
-  const selectedCompany = (filterOptions.companies || [])
+  const selectedCompany = companyOptions
     .find((company) => String(company.id) === companyFilter);
   const selectedRegion = (filterOptions.regions || [])
     .find((region) => String(region.id) === regionFilter);
@@ -416,13 +458,10 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       label: `Tiến độ: ${progressFilter === 'not_started' ? 'Chưa bắt đầu' : 'Đang làm'}`,
       clear: () => setProgressFilter('all'),
     },
-    companyFilter && {
+    canPickCompany && companyFilter && companyFilter !== defaultCompanyId(companyOptions, user, canPickCompany) && {
       key: 'company',
       label: `Công ty: ${selectedCompany?.short_name || selectedCompany?.name || companyFilter}`,
-      clear: () => {
-        setCompanyFilter('');
-        setRegionFilter('');
-      },
+      clear: () => applyCompany(defaultCompanyId(companyOptions, user, canPickCompany)),
     },
     regionFilter && {
       key: 'region',
@@ -467,6 +506,21 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            {canPickCompany && companyOptions.length > 0 && (
+              <div className="relative">
+                <Building2 className="h-4 w-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <select
+                  value={companyFilter}
+                  onChange={(event) => applyCompany(event.target.value)}
+                  className="h-9 pl-8 pr-3 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
+                >
+                  <option value="">Tất cả công ty</option>
+                  {companyOptions.map((company) => (
+                    <option key={company.id} value={company.id}>{company.short_name || company.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <AdvFilterButton
               open={filtersOpen}
               active={activeAdvancedFilters > 0}
@@ -528,10 +582,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
           progressFilter={progressFilter}
           setProgressFilter={setProgressFilter}
           companyFilter={companyFilter}
-          setCompanyFilter={(value) => {
-            setCompanyFilter(value);
-            setRegionFilter('');
-          }}
+          setCompanyFilter={applyCompany}
           companyOptions={companyOptions}
           regionFilter={regionFilter}
           setRegionFilter={setRegionFilter}
@@ -600,7 +651,13 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       </div>
 
       {loading && !tasks.length ? (
-        <div className="py-16 text-center text-sm text-gray-400">Đang tải toàn bộ nhiệm vụ dự án đang hoạt động…</div>
+        <div className="py-16 text-center text-sm text-gray-400">
+          {!companiesReady
+            ? 'Đang tải danh sách công ty…'
+            : companyFilter
+              ? `Đang tải nhiệm vụ của ${selectedCompany?.short_name || selectedCompany?.name || 'công ty đã chọn'}…`
+              : 'Đang tải nhiệm vụ dự án đang hoạt động…'}
+        </div>
       ) : (
         <div className="grid md:grid-cols-3 gap-4 items-start">
           {COLUMNS.map((column) => (

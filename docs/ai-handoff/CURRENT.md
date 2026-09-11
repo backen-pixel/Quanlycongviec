@@ -1,10 +1,88 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-10 14:35 (UTC+7)
+Cập nhật: 2026-09-11 10:05 (UTC+7)
+
+## HCB Tủ bếp — Kanban tới Hoàn thiện + nhánh Công nợ
+
+Trạng thái: **đã chạy 588 trên primary + backup.**
+
+Board SX **Tủ bếp** HCB còn 5 cột: Tiếp nhận → Kế hoạch → Duyệt → Gia công
+(6 việc: vật tư, kính, sơn, thùng, alu, cánh) → Hoàn thiện (bàn giao VC).
+Giao hàng / lắp đặt ở Kanban VC/LĐ. Công nợ là phân loại **Công nợ**.
+Kế hoạch SX lấy mốc **ngày lắp** (`install_occurrence` / `install_date`, rồi mới
+`delivery_date`).
+
+Hoàn tác: khôi phục cột/pipeline từ snapshot trước 588; revert FE
+`sxWorkshopSchedule.js`, `ProductionDetail.jsx`, `SxMultiTargetPicker.jsx`.
+
+## Tab Tiến độ Unified — nhiều xưởng SX / VC
+
+Trạng thái: **local, chưa commit.**
+
+Tab Tiến độ Work Unified hiện **từng dự án SX** và **từng nơi VC/LĐ** khi deal đặt
+nhiều xưởng. Stepper đủ cột; dưới bước ghi ngày `dd/mm/yyyy` (không giờ). CRM lấy
+lịch sử stage; SX/VC lấy ngày vào cột hiện tại và mốc hoàn thành/giao/lắp.
+
+Hoàn tác: revert `WorkUnifiedProjectDetailPage.jsx`, `PipelineStepper.jsx`,
+`autoDealWonProject.js`, `projectDealBundle.js`.
+
+## Tổng quan công việc — chỉ từ deal đã ký HĐ
+
+Trạng thái: **local, chưa commit.**
+
+`/management/work-overview` không lấy lead: dự án/việc chỉ deal đã ký HĐ (mốc
+`is_won` / `contract_signed`) trở đi. Thẻ «Công việc quá hạn» trước đây gọi
+`/work-tasks` (gồm `CRM-Lead`, cắt 50 dòng). Nay lọc `unified_tasks_v` theo
+project/deal đã ký, loại `CRM-Lead` và việc cá nhân.
+
+Hoàn tác: revert `management.js`, `WorkOverviewPage.jsx`.
+
+## Sidebar — gỡ «Dashboard dự án»
+
+Trạng thái: **local, chưa commit.**
+
+Bỏ mục trùng `/management/work-unified` ở nhóm «2. Làm việc». Vào trang đó vẫn từ
+«Work Unified» (Tổng quan). Hoàn tác: thêm lại dòng trong `Sidebar.jsx`.
+
+## GCCK đã hoàn thành SX — không hiện trễ hạn
+
+Trạng thái: **local, chưa commit.**
+
+Work Unified / Tổng quan công việc đếm trễ theo ngày lắp. Đơn Cánh kính (tên `GCCK-…`
+hoặc loại xưởng «Cánh kính») đã sang cột SX «Hoàn thành» / đã giao thì **không** hiện
+«Trễ hạn». GCCK còn đang sản xuất, và tủ bếp/cửa dù cột hoàn thành, vẫn đếm trễ như cũ.
+
+Hoàn tác: revert `projectForecast.js`, `management.js`, `projectDealBundle.js`.
+
+## Tổng quan công việc lấy cùng tập Work Unified
+
+Trạng thái: **local, chưa commit.**
+
+`/management/work-overview` trước đây đếm `projects` trực tiếp (thiếu deal CRM
+đặt xưởng khác, khu vực theo project_id lead). Đã dùng chung `queryWorkUnifiedList`
+với `/work-unified` cho «Dự án đang thực hiện» và «Dự án cần chú ý».
+
+Doanh thu 6 tháng / KH mới / việc quá hạn vẫn nguồn cũ (`projects.estimated_value`,
+`crm_leads` type=lead, `unified_tasks_v`).
+
+Hoàn tác: revert `backend/src/routes/management.js`.
+
+## Work Unified tab Bình luận — deal con che thread gốc
+
+Trạng thái: **local, chưa commit.**
+
+TB-2026-800 (`6ddb5e86-…`): deal con Hucabi `DEAL-2026-1515` (0 comment, updated_at mới hơn)
+đè deal gốc Phúc Đạt `DEAL-2026-1459` (60 comment). Tài khoản Trương Trọng Thành
+(admin HST, `comment_show_on_screen=true`) không lỗi quyền — tab Chat lấy `primary_lead`
+theo `updated_at DESC`.
+
+Đã vá: `projectDealBundle` chọn deal gốc (`sortProjectCrmDeals`) + đếm comment cả thread;
+FE `pickPrimarySxCrmDeal`. Hoàn tác: revert `projectDealBundle.js`,
+`WorkUnifiedProjectDetailPage.jsx`.
 
 ## Bình luận HST mặc định — chỉ mục bị cắt 1.000 dòng
 
-Trạng thái: **đã commit, đang push main.**
+Trạng thái: **đã push `cd6d001b` lên main.**
 
 Dữ liệu không mất: HST mặc định còn 27.653 bình luận deal (9.767 hội thoại,
 17.881 hệ thống), 587/651 dự án có comment CRM. View «Bình luận» CRM/SX trống

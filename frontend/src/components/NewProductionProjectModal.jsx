@@ -3,6 +3,7 @@ import { X, Search } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
+import { excludeNonPlacementWorkshopTypes } from '../lib/sxCompanySuggestFromLeadType';
 import FlowModuleComposer from './FlowModuleComposer';
 
 export default function NewProductionProjectModal({ onClose, onCreated }) {
@@ -37,7 +38,7 @@ export default function NewProductionProjectModal({ onClose, onCreated }) {
       return;
     }
     api.get('/workshop/project-types', { params: { company_id: cid, module: 'production' } })
-      .then((r) => setWorkTypes(Array.isArray(r.data) ? r.data : []))
+      .then((r) => setWorkTypes(excludeNonPlacementWorkshopTypes(Array.isArray(r.data) ? r.data : [])))
       .catch(() => setWorkTypes([]));
   }, [user?.company_id]);
 

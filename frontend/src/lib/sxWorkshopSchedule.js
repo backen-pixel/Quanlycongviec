@@ -165,9 +165,41 @@ export function remainingSxWorkingDaysTo(targetYmd, {
   return countSxWorkingDaysFromTo(start, targetYmd, holidayIndex);
 }
 
+/** YYYY-MM-DD từ DATE / ISO / timestamptz (lịch VN). */
+export function ymdFromUnknownDate(raw) {
+  if (raw == null || raw === '') return '';
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+    const ms = Date.parse(s);
+    if (Number.isFinite(ms)) return vnNowParts(ms).ymd;
+    return s.slice(0, 10);
+  }
+  const ms = Date.parse(s);
+  if (!Number.isFinite(ms)) return '';
+  return vnNowParts(ms).ymd;
+}
+
+/**
+ * Mốc kế hoạch SX = ngày lắp (kế hoạch lắp đặt), không dùng nhầm ngày giao hàng.
+ * Ưu tiên: các ngày lắp (occurrence) → install_date → delivery_date (ô «Ngày lắp» trên SX).
+ */
+export function resolveSxPlanInstallYmd(project) {
+  const occ = Array.isArray(project?.install_occurrence_dates)
+    ? project.install_occurrence_dates
+    : [];
+  for (const d of occ) {
+    const y = ymdFromUnknownDate(d);
+    if (y) return y;
+  }
+  return ymdFromUnknownDate(project?.install_date)
+    || ymdFromUnknownDate(project?.delivery_date)
+    || '';
+}
+
 /**
  * Kế hoạch SX tính ngược từ ngày lắp (ngày lịch, không bỏ CN/lễ):
- * lắp → đóng hàng 1 → hoàn thiện 2 → hoàn thiện thùng 2 → phần còn lại = kế hoạch.
+ * lắp → giao hàng 1 → hoàn thiện 2 → gia công 2 → phần còn lại = kế hoạch (tiếp nhận / duyệt).
  * Ngày hoàn thiện SX (production_finish) = cuối hoàn thiện = lắp − 2.
  */
 export const SX_INSTALL_BACK_PLAN = {
@@ -179,11 +211,11 @@ export const SX_INSTALL_BACK_PLAN = {
 };
 
 export const SX_INSTALL_BACK_PLAN_RULES = [
-  'Tính ngược từ ngày lắp đặt (ngày lịch).',
-  'Đóng hàng / đóng gói: 1 ngày (ngay trước ngày lắp).',
-  'Hoàn thiện: 2 ngày (trước đóng hàng). Ngày hoàn thiện SX = cuối công đoạn này (= lắp − 2).',
-  'Hoàn thiện thùng: 2 ngày (trước hoàn thiện).',
-  'Kế hoạch sản xuất: toàn bộ ngày còn lại từ ngày tiếp nhận xưởng đến hết ngày trước hoàn thiện thùng.',
+  'Tính ngược từ ngày lắp đặt trên kế hoạch VC/LĐ (ngày lịch).',
+  'Giao hàng: 1 ngày (ngay trước ngày lắp) — board VC/LĐ.',
+  'Hoàn thiện SX: 2 ngày (trước giao hàng). Ngày hoàn thiện = lắp − 2.',
+  'Gia công (vật tư, kính, sơn, thùng, alu, cánh): 2 ngày trước hoàn thiện.',
+  'Kế hoạch SX (tiếp nhận → duyệt): ngày còn lại từ tiếp nhận xưởng đến hết ngày trước gia công.',
 ];
 
 /** Nhóm deadline cột pipeline SX — khớp kế hoạch lắp (production_pipeline_stages.deadline_group). */
@@ -192,15 +224,15 @@ export const SX_DEADLINE_GROUPS = [
     value: 'planning',
     label: 'Kế hoạch SX',
     shortLabel: 'Kế hoạch',
-    hint: 'Phần còn lại từ tiếp nhận → trước hoàn thiện thùng',
+    hint: 'Phần còn lại từ tiếp nhận / kế hoạch / duyệt → trước gia công',
     className: 'bg-violet-50 text-violet-800 border-violet-200',
     headerClassName: 'bg-violet-100 text-violet-900 border-violet-200',
   },
   {
     value: 'cabinet',
-    label: 'Hoàn thiện thùng',
-    shortLabel: 'Thùng',
-    hint: '2 ngày trước hoàn thiện',
+    label: 'Gia công',
+    shortLabel: 'Gia công',
+    hint: '2 ngày trước hoàn thiện (vật tư, kính, sơn, thùng, alu, cánh)',
     className: 'bg-amber-50 text-amber-900 border-amber-200',
     headerClassName: 'bg-amber-100 text-amber-950 border-amber-200',
   },
@@ -214,9 +246,9 @@ export const SX_DEADLINE_GROUPS = [
   },
   {
     value: 'packing',
-    label: 'Đóng hàng / đóng gói',
-    shortLabel: 'Đóng gói',
-    hint: '1 ngày ngay trước ngày lắp',
+    label: 'Giao hàng',
+    shortLabel: 'Giao hàng',
+    hint: '1 ngày ngay trước ngày lắp (board VC/LĐ)',
     className: 'bg-orange-50 text-orange-900 border-orange-200',
     headerClassName: 'bg-orange-100 text-orange-950 border-orange-200',
   },
@@ -291,7 +323,7 @@ export function buildSxInstallBackPlan(installYmd, { startYmd = null, slipDays =
     installCollision,
     packing: {
       key: 'packing',
-      label: 'Đóng hàng',
+      label: 'Giao hàng',
       daysFixed: SX_INSTALL_BACK_PLAN.packingDays,
       startYmd: shift(packingStart),
       endYmd: shiftedPackingEnd,
@@ -305,14 +337,14 @@ export function buildSxInstallBackPlan(installYmd, { startYmd = null, slipDays =
     },
     cabinet: {
       key: 'cabinet',
-      label: 'Hoàn thiện thùng',
+      label: 'Gia công',
       daysFixed: SX_INSTALL_BACK_PLAN.cabinetDays,
       startYmd: shift(cabinetStart),
       endYmd: shift(cabinetEnd),
     },
     planning: {
       key: 'planning',
-      label: 'Kế hoạch sản xuất',
+      label: 'Kế hoạch SX',
       daysFixed: null,
       days: planningDays,
       startYmd: planningStart,

@@ -30,6 +30,12 @@
 - Admin hệ thống (`admin` không `company_id`) được sửa/xóa việc người khác tạo.
 - Admin/sales_admin gắn công ty chỉ trên việc cùng `company_id` hoặc `executor_company_id`.
 
+## AI-006 — Tách NextGo instance
+
+- Chuẩn bị dump/script được phép; **không cắt** (freeze, webhook, ẩn UI) cho đến khi người dùng ra lệnh.
+- Nguồn UUID: `87479a83-1145-43b7-b090-3e40812cb5a9`. Không dùng clone cùng DB.
+- Import đích chỉ qua `NEXTGO_SUPABASE_*` khác URL nguồn.
+
 ## AI-004 — Ranh giới file khi hai AI chạy song song
 
 - Vùng «chính sách deadline» thuộc Cursor; vùng «trang tổng quan nhiệm vụ» thuộc Claude.

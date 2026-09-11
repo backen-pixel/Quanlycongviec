@@ -7,6 +7,7 @@
  *   currentStageName – tên stage khi stage_id không có trong `stages` (orphan)
  *   visitedStageIds – Set<string> các stage_id đã từng vào (lịch sử CRM)
  *   linearProgress  – true: pipeline xưởng/VC (tích ✓ theo order_index); false: CRM deal (bỏ qua cột SX/VC)
+ *   stageDates      – { [stageId]: 'dd/mm/yyyy' } ngày vào cột (không kèm giờ)
  */
 import { sortAndDedupePipelineStages, pipelineStageSortKey } from '../lib/crmPipelineStages';
 import { classifyCrmPostWonManagedKind } from '../lib/crmDealStageGate';
@@ -18,6 +19,7 @@ export default function PipelineStepper({
   onMoveToStage,
   visitedStageIds = null,
   linearProgress = false,
+  stageDates = null,
 }) {
   const sortedStages = sortAndDedupePipelineStages(stages);
   const curId = currentStageId != null ? String(currentStageId) : '';
@@ -85,6 +87,11 @@ export default function PipelineStepper({
                 >
                   {s.name}
                 </p>
+                {stageDates?.[String(s.id)] ? (
+                  <p className="mt-0.5 text-[10px] tabular-nums text-gray-400 leading-none">
+                    {stageDates[String(s.id)]}
+                  </p>
+                ) : null}
               </div>
 
               {i < sortedStages.length - 1 && (

@@ -30,6 +30,7 @@ import WorkTaskExtrasPanel from '../components/WorkTaskExtrasPanel';
 import ProjectSharedWorkspaceTab from '../components/ProjectSharedWorkspaceTab';
 import { LeadMembersTab } from '../components/LeadChatTabs';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
+import { pickPrimarySxCrmDeal } from '../lib/sxProjectComments';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import { useAuth } from '../lib/auth';
 import PinProjectButton from '../components/PinProjectButton';
@@ -543,6 +544,119 @@ function labeledWorkshopStages(stages) {
   });
 }
 
+function formatStepperDay(v) {
+  if (!v) return '';
+  const s = String(v);
+  const ymd = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (ymd) return `${ymd[3]}/${ymd[2]}/${ymd[1]}`;
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('vi-VN', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    timeZone: 'Asia/Ho_Chi_Minh',
+  });
+}
+
+function foldStageName(name) {
+  return String(name || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase();
+}
+
+function crmStageDateMap(histRows, currentStageId, currentEnteredAt) {
+  const map = {};
+  for (const h of histRows || []) {
+    const id = h?.to_stage_id ? String(h.to_stage_id) : '';
+    if (!id || map[id]) continue;
+    const day = formatStepperDay(h.entered_at);
+    if (day) map[id] = day;
+  }
+  const cur = currentStageId ? String(currentStageId) : '';
+  if (cur && currentEnteredAt && !map[cur]) {
+    const day = formatStepperDay(currentEnteredAt);
+    if (day) map[cur] = day;
+  }
+  return map;
+}
+
+function workshopStageDateMap(stages, row, currentId) {
+  const map = {};
+  const cur = currentId ? String(currentId) : '';
+  if (cur && row?.sx_pipeline_stage_entered_at) {
+    const day = formatStepperDay(row.sx_pipeline_stage_entered_at);
+    if (day) map[cur] = day;
+  }
+  const rules = [
+    [row?.production_finish_date, (n) => n.includes('hoan thanh')],
+    [row?.delivery_date, (n) => n.includes('da giao') || n.includes('giao xong') || n === 'dang giao'],
+    [row?.pickup_at, (n) => n.includes('cho van') || n.includes('van chuyen')],
+    [row?.install_date, (n) => n.includes('lap dat') || n === 'lap dat'],
+  ];
+  for (const s of stages || []) {
+    const id = s?.id ? String(s.id) : '';
+    if (!id || map[id]) continue;
+    const n = foldStageName(s.name);
+    for (const [raw, test] of rules) {
+      if (!raw || !test(n)) continue;
+      const day = formatStepperDay(raw);
+      if (day) map[id] = day;
+      break;
+    }
+  }
+  return map;
+}
+
+function dedupeProductionProjects(list, project) {
+  const map = new Map();
+  for (const row of list || []) {
+    const pid = row?.project_id || row?.id;
+    if (!pid) continue;
+    map.set(String(pid), row);
+  }
+  if (project?.id && !map.has(String(project.id))) {
+    map.set(String(project.id), {
+      project_id: project.id,
+      code: project.code,
+      name: project.name,
+      company_id: project.company_id || project.company?.id || null,
+      company_name: project.company?.short_name || project.company?.name || null,
+      workshop_type_id: project.workshop_type_id || project.workshop_type?.id || null,
+      workshop_type_name: project.workshop_type?.name || null,
+      sx_kanban_column_id: project.sx_kanban_column_id || null,
+      vc_kanban_column_id: project.vc_kanban_column_id || null,
+      sx_pipeline_stage_entered_at: project.sx_pipeline_stage_entered_at || null,
+      logistics_company_id: project.logistics_company_id || project.logistics_company?.id || null,
+      logistics_company_name: project.logistics_company?.short_name || project.logistics_company?.name || null,
+      install_date: project.install_date || null,
+      delivery_date: project.delivery_date || null,
+      pickup_at: project.pickup_at || null,
+      production_finish_date: project.production_finish_date || null,
+      sx_intake: project.sx_intake || null,
+      vc_intake: project.vc_intake || null,
+      vc_temp_staged: project.vc_temp_staged || null,
+    });
+  }
+  return [...map.values()];
+}
+
+function sxTrackLabel(row, many) {
+  const bits = [row.company_name, row.workshop_type_name, row.code].filter(Boolean);
+  if (!many) return bits.length ? `Sản xuất · ${bits.join(' · ')}` : 'Sản xuất';
+  return `Sản xuất · ${bits.join(' · ') || row.project_id}`;
+}
+
+function vcTrackLabel(row, many) {
+  const place = row.logistics_company_name || row.company_name;
+  const bits = [place, row.workshop_type_name, row.code].filter(Boolean);
+  if (!many) return bits.length ? `VC / LĐ · ${bits.join(' · ')}` : 'VC / LĐ';
+  return `VC / LĐ · ${bits.join(' · ') || row.project_id}`;
+}
+
 function notifyProjectBadges(projectId) {
   if (!projectId || typeof window === 'undefined') return;
   window.setTimeout(() => {
@@ -552,12 +666,15 @@ function notifyProjectBadges(projectId) {
   }, 200);
 }
 
-function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, syncKey }) {
+function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, syncKey, productionProjects }) {
   const [pipesReady, setPipesReady] = useState(false);
   const { loading, error, items } = useProjectOperationHistory(projectId, leadId, pipesReady);
   const [crmStages, setCrmStages] = useState([]);
   const [sxStages, setSxStages] = useState([]);
   const [vcStages, setVcStages] = useState([]);
+  const [sxTracks, setSxTracks] = useState([]);
+  const [vcTracks, setVcTracks] = useState([]);
+  const [crmStageDates, setCrmStageDates] = useState({});
   const [visitedStageIds, setVisitedStageIds] = useState(() => new Set());
   const [pipesLoading, setPipesLoading] = useState(true);
   const [crmLead, setCrmLead] = useState(null);
@@ -566,7 +683,13 @@ function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, sy
   const [liveCrmStageId, setLiveCrmStageId] = useState(null);
   const [liveSxColId, setLiveSxColId] = useState(null);
   const [liveVcColId, setLiveVcColId] = useState(null);
+  const [liveSxByProject, setLiveSxByProject] = useState({});
+  const [liveVcByProject, setLiveVcByProject] = useState({});
   const [moving, setMoving] = useState(false);
+  const relatedProjectIdsRef = useRef([]);
+  const productionProjectsKey = (productionProjects || [])
+    .map((p) => `${p.project_id}:${p.sx_kanban_column_id || ''}:${p.vc_kanban_column_id || ''}:${p.logistics_company_id || ''}:${p.company_id || ''}:${p.workshop_type_id || ''}`)
+    .join('|');
 
   const loadPipes = useCallback(async ({ silent } = {}) => {
     if (!silent) setPipesLoading(true);
@@ -583,10 +706,10 @@ function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, sy
     setVcProject(project || null);
     if (lead?.stage_id) setLiveCrmStageId(String(lead.stage_id));
     if (project?.sx_kanban_column_id) setLiveSxColId(String(project.sx_kanban_column_id));
-    else if (project?.sx_intake) {
-      /* cột intake — id sẽ gán sau khi có danh sách stage */
-    }
     if (project?.vc_kanban_column_id) setLiveVcColId(String(project.vc_kanban_column_id));
+
+    const rows = dedupeProductionProjects(productionProjects, project);
+    relatedProjectIdsRef.current = rows.map((r) => String(r.project_id)).filter(Boolean);
 
     const leadType = lead?.type === 'lead' ? 'lead' : 'deal';
     const crmParams = lead?.pipeline_id
@@ -594,63 +717,138 @@ function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, sy
       : { type: leadType, ...(lead?.company_id ? { company_id: lead.company_id } : {}) };
     if (lead?.stage_id) crmParams.ensure_stage_id = lead.stage_id;
 
-    const sxCompanyId = project?.company_id || project?.company?.id || null;
-    const vcCompanyId = project?.logistics_company_id
-      || project?.logistics_company?.id
-      || sxCompanyId;
-    const wtId = project?.workshop_type_id || project?.workshop_type?.id || null;
-    const sxParams = { company_id: sxCompanyId };
-    if (wtId) sxParams.workshop_type_id = wtId;
-
     const histBody = { lead_ids: leadId ? [leadId] : [] };
     const pipeId = liveLead?.pipeline_id || lead?.pipeline_id;
     const coId = liveLead?.company_id || lead?.company_id;
     if (pipeId) histBody.pipeline_id = pipeId;
     else if (coId) histBody.company_id = coId;
 
-    const [crmRes, sxRes, vcRes, histRes] = await Promise.all([
+    const sxKeyOf = (r) => {
+      const cid = r.company_id || r.company?.id || null;
+      const wt = r.workshop_type_id || r.workshop_type?.id || null;
+      return cid ? `${cid}|${wt || ''}` : '';
+    };
+    const sxKeys = new Map();
+    const vcKeys = new Map();
+    for (const r of rows) {
+      const sk = sxKeyOf(r);
+      if (sk) {
+        const [cid, wt] = sk.split('|');
+        sxKeys.set(sk, { companyId: cid, workshopTypeId: wt || null });
+      }
+      const lid = r.logistics_company_id || r.logistics_company?.id || null;
+      if (lid) vcKeys.set(String(lid), lid);
+    }
+    if (!sxKeys.size && (project?.company_id || project?.company?.id)) {
+      const cid = project.company_id || project.company.id;
+      const wt = project.workshop_type_id || project.workshop_type?.id || null;
+      sxKeys.set(`${cid}|${wt || ''}`, { companyId: cid, workshopTypeId: wt });
+    }
+    if (!vcKeys.size) {
+      const fallback = project?.logistics_company_id || project?.logistics_company?.id
+        || project?.company_id || project?.company?.id || null;
+      if (fallback) vcKeys.set(String(fallback), fallback);
+    }
+
+    const [crmRes, histRes, sxPairs, vcPairs] = await Promise.all([
       leadId
         ? api.get('/crm/pipeline-stages', { params: crmParams }).catch(() => ({ data: [] }))
-        : Promise.resolve({ data: [] }),
-      sxCompanyId
-        ? api.get('/production/pipeline-stages', { params: sxParams }).catch(() => ({ data: [] }))
-        : Promise.resolve({ data: [] }),
-      vcCompanyId
-        ? api.get('/logistics/pipeline-stages', { params: { company_id: vcCompanyId } }).catch(() => ({ data: [] }))
         : Promise.resolve({ data: [] }),
       leadId
         ? api.post('/crm/leads/stage-history-summary', histBody).catch(() => ({ data: null }))
         : Promise.resolve({ data: null }),
+      Promise.all([...sxKeys.entries()].map(([key, v]) => {
+        const params = { company_id: v.companyId };
+        if (v.workshopTypeId) params.workshop_type_id = v.workshopTypeId;
+        return api.get('/production/pipeline-stages', { params })
+          .then((r) => [key, labeledWorkshopStages(asStageList(r.data))])
+          .catch(() => [key, []]);
+      })),
+      Promise.all([...vcKeys.entries()].map(([key, cid]) => (
+        api.get('/logistics/pipeline-stages', { params: { company_id: cid } })
+          .then((r) => [key, labeledWorkshopStages(asStageList(r.data))])
+          .catch(() => [key, []])
+      ))),
     ]);
 
     const nextCrm = asStageList(crmRes.data);
-    const nextSx = labeledWorkshopStages(asStageList(sxRes.data));
-    const nextVc = labeledWorkshopStages(asStageList(vcRes.data));
-
     setCrmStages(nextCrm);
-    setSxStages(nextSx);
-    setVcStages(nextVc);
-    if (!project?.sx_kanban_column_id && project?.sx_intake && nextSx.length) {
-      const intake = nextSx.find((s) => s.bucket_slug === 'won_pending');
+
+    const sxMap = Object.fromEntries(sxPairs || []);
+    const vcMap = Object.fromEntries(vcPairs || []);
+    const liveSx = {};
+    const liveVc = {};
+    const manySx = rows.length > 1;
+    const nextSxTracks = rows.map((r) => {
+      const sk = sxKeyOf(r);
+      const stages = (sk && sxMap[sk]) ? sxMap[sk] : [];
+      const col = r.sx_kanban_column_id || r.sx_pipeline_stage?.id || null;
+      if (col) liveSx[String(r.project_id)] = String(col);
+      return {
+        projectId: r.project_id,
+        row: r,
+        stages,
+        currentName: r.sx_pipeline_stage?.name || null,
+        href: r.project_id ? `/sx/projects/${r.project_id}` : null,
+        label: sxTrackLabel(r, manySx),
+      };
+    });
+    const vcSource = rows.filter((r) => r.logistics_company_id || r.vc_kanban_column_id || r.vc_pipeline_stage?.id);
+    const vcRows = vcSource.length ? vcSource : rows.slice(0, 1);
+    const manyVc = vcRows.length > 1;
+    const nextVcTracks = vcRows.map((r) => {
+      const lid = r.logistics_company_id || r.logistics_company?.id
+        || project?.logistics_company_id || project?.company_id || null;
+      const stages = lid && vcMap[String(lid)] ? vcMap[String(lid)] : [];
+      const col = r.vc_kanban_column_id || r.vc_pipeline_stage?.id || null;
+      if (col) liveVc[String(r.project_id)] = String(col);
+      return {
+        projectId: r.project_id,
+        row: r,
+        stages,
+        currentName: r.vc_pipeline_stage?.name || null,
+        href: r.project_id ? `/vc/projects/${r.project_id}` : null,
+        label: vcTrackLabel(r, manyVc),
+      };
+    });
+
+    setSxTracks(nextSxTracks);
+    setVcTracks(nextVcTracks);
+    setLiveSxByProject(liveSx);
+    setLiveVcByProject(liveVc);
+    const currentSx = nextSxTracks.find((t) => String(t.projectId) === String(projectId)) || nextSxTracks[0];
+    const currentVc = nextVcTracks.find((t) => String(t.projectId) === String(projectId)) || nextVcTracks[0];
+    setSxStages(currentSx?.stages || []);
+    setVcStages(currentVc?.stages || []);
+    if (liveSx[String(projectId)]) setLiveSxColId(liveSx[String(projectId)]);
+    if (liveVc[String(projectId)]) setLiveVcColId(liveVc[String(projectId)]);
+    if (!project?.sx_kanban_column_id && project?.sx_intake && currentSx?.stages?.length) {
+      const intake = currentSx.stages.find((s) => s.bucket_slug === 'won_pending');
       if (intake?.id) setLiveSxColId(String(intake.id));
     }
 
+    const histRows = leadId
+      ? (histRes?.data?.by_lead?.[leadId] || histRes?.data?.by_lead?.[String(leadId)] || [])
+      : [];
     if (leadId) {
-      const rows = histRes?.data?.by_lead?.[leadId]
-        || histRes?.data?.by_lead?.[String(leadId)]
-        || [];
       const visited = new Set();
-      for (const h of rows) {
+      for (const h of histRows) {
         if (h?.to_stage_id) visited.add(String(h.to_stage_id));
       }
       const sid = liveLead?.stage_id || lead?.stage_id;
       if (sid) visited.add(String(sid));
       setVisitedStageIds(visited);
+      setCrmStageDates(crmStageDateMap(histRows, sid, liveLead?.stage_entered_at || lead?.stage_entered_at));
     } else {
       setVisitedStageIds(new Set());
+      setCrmStageDates({});
     }
     setPipesLoading(false);
     setPipesReady(true);
+    const sock = getSocket();
+    if (sock) {
+      relatedProjectIdsRef.current.forEach((pid) => sock.emit('join:project', pid));
+    }
   }, [
     leadId,
     projectId,
@@ -658,6 +856,7 @@ function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, sy
     lead?.company_id,
     lead?.stage_id,
     lead?.type,
+    lead?.stage_entered_at,
     project?.company_id,
     project?.sx_kanban_column_id,
     project?.vc_kanban_column_id,
@@ -667,6 +866,7 @@ function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, sy
     pipelines?.sx?.id,
     pipelines?.vc?.id,
     pipelines?.crm?.id,
+    productionProjectsKey,
   ]);
 
   useEffect(() => { loadPipes(); }, [loadPipes, syncKey]);
@@ -696,9 +896,16 @@ function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, sy
     if (!socket) return undefined;
     const onProject = (payload) => {
       const pid = payload?.project_id || payload?.id || payload?.project?.id;
-      if (pid && projectId && String(pid) !== String(projectId)) return;
-      if (payload?.sx_kanban_column_id) setLiveSxColId(String(payload.sx_kanban_column_id));
-      if (payload?.vc_kanban_column_id) setLiveVcColId(String(payload.vc_kanban_column_id));
+      const related = relatedProjectIdsRef.current || [];
+      if (pid && related.length && !related.includes(String(pid)) && String(pid) !== String(projectId)) return;
+      if (payload?.sx_kanban_column_id && pid) {
+        setLiveSxByProject((prev) => ({ ...prev, [String(pid)]: String(payload.sx_kanban_column_id) }));
+        if (String(pid) === String(projectId)) setLiveSxColId(String(payload.sx_kanban_column_id));
+      }
+      if (payload?.vc_kanban_column_id && pid) {
+        setLiveVcByProject((prev) => ({ ...prev, [String(pid)]: String(payload.vc_kanban_column_id) }));
+        if (String(pid) === String(projectId)) setLiveVcColId(String(payload.vc_kanban_column_id));
+      }
       loadPipes({ silent: true });
     };
     const onCrmLead = (payload) => {
@@ -712,7 +919,10 @@ function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, sy
       if (pid && projectId && String(pid) === String(projectId)) loadPipes({ silent: true });
     };
     const join = () => {
-      if (projectId) socket.emit('join:project', projectId);
+      const ids = relatedProjectIdsRef.current?.length
+        ? relatedProjectIdsRef.current
+        : (projectId ? [String(projectId)] : []);
+      ids.forEach((pid) => socket.emit('join:project', pid));
       if (leadId) socket.emit('join:lead', leadId);
     };
     join();
@@ -828,15 +1038,19 @@ function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, sy
     }
   };
 
-  const moveSx = async (stageId) => {
-    if (!projectId || moving) return;
-    const sxStage = sxStages.find((s) => String(s.id) === String(stageId));
-    const proj = sxProject || project;
+  const moveSx = async (stageId, trackProjectId) => {
+    const pid = trackProjectId || projectId;
+    if (!pid || moving) return;
+    const track = sxTracks.find((t) => String(t.projectId) === String(pid));
+    const stageList = track?.stages?.length ? track.stages : sxStages;
+    const sxStage = stageList.find((s) => String(s.id) === String(stageId));
+    const proj = String(pid) === String(projectId) ? (sxProject || project) : (track?.row || {});
     if (!TEMP_SX_FREE_DRAG && sxStage?.is_handover_to_logistics === true && !isProjectAlreadyInLogistics(proj)) {
       setMoving(true);
       try {
         setLiveSxColId(String(sxStage?.id || stageId));
-        await api.post(`/vc-handover/projects/${projectId}/request`, { sx_stage_id: String(sxStage?.id || stageId) });
+        setLiveSxByProject((prev) => ({ ...prev, [String(pid)]: String(sxStage?.id || stageId) }));
+        await api.post(`/vc-handover/projects/${pid}/request`, { sx_stage_id: String(sxStage?.id || stageId) });
         alert('Đã gửi thông báo cho Sale CRM — chọn công ty VC/LĐ và ngày lấy/lắp trong bình luận deal. VC xác nhận xong mới tạo lịch.');
         afterMove();
       } catch (e) {
@@ -857,13 +1071,14 @@ function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, sy
     } else {
       body = {
         sx_pipeline_stage_id: sxStage?.id || stageId,
-        current_sx_pipeline_stage_id: liveSxColId || proj?.sx_kanban_column_id || null,
+        current_sx_pipeline_stage_id: liveSxByProject[String(pid)] || liveSxColId || proj?.sx_kanban_column_id || null,
       };
     }
     setMoving(true);
     setLiveSxColId(String(sxStage?.id || stageId));
+    setLiveSxByProject((prev) => ({ ...prev, [String(pid)]: String(sxStage?.id || stageId) }));
     try {
-      await api.patch(`/production/projects/${projectId}/stage`, body);
+      await api.patch(`/production/projects/${pid}/stage`, body);
       afterMove();
     } catch (e) {
       const bodyErr = e?.response?.data || {};
@@ -881,21 +1096,26 @@ function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, sy
     }
   };
 
-  const moveVc = async (stageId) => {
-    if (!projectId || moving) return;
-    const proj = vcProject || project;
-    if (proj?.vc_temp_staged && String(stageId) !== String(proj?.vc_kanban_column_id || liveVcColId || '')) {
+  const moveVc = async (stageId, trackProjectId) => {
+    const pid = trackProjectId || projectId;
+    if (!pid || moving) return;
+    const track = vcTracks.find((t) => String(t.projectId) === String(pid));
+    const stageList = track?.stages?.length ? track.stages : vcStages;
+    const proj = String(pid) === String(projectId) ? (vcProject || project) : (track?.row || {});
+    const liveCol = liveVcByProject[String(pid)] || liveVcColId;
+    if (proj?.vc_temp_staged && String(stageId) !== String(proj?.vc_kanban_column_id || liveCol || '')) {
       alert(VC_TEMP_LOCK_MSG);
       return;
     }
-    const vcStage = vcStages.find((s) => String(s.id) === String(stageId));
+    const vcStage = stageList.find((s) => String(s.id) === String(stageId));
     let body = { vc_stage_id: stageId };
     if (vcStage?.workflow_stage_id) body.stage_id = vcStage.workflow_stage_id;
     if (vcStage?.bucket_slug === 'delivery_pending') body = { move_to_intake: true };
     setMoving(true);
     setLiveVcColId(String(stageId));
+    setLiveVcByProject((prev) => ({ ...prev, [String(pid)]: String(stageId) }));
     try {
-      await api.patch(`/logistics/projects/${projectId}/stage`, body);
+      await api.patch(`/logistics/projects/${pid}/stage`, body);
       afterMove();
     } catch (e) {
       const bodyErr = e?.response?.data || {};
@@ -916,32 +1136,23 @@ function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, sy
     liveCrmStageId || crmLead?.stage_id || lead?.stage_id,
     pipelines?.crm,
   );
-  const sxResolved = resolveSxDisplayColumnId(
-    {
-      ...(sxProject || {}),
-      ...(project || {}),
-      sx_kanban_column_id: liveSxColId || sxProject?.sx_kanban_column_id || project?.sx_kanban_column_id,
-      crmDeals: sxProject?.crmDeals || (crmLead ? [crmLead] : []),
-    },
-    sxStages,
-    {
-      leadColId: crmLead?.sx_pipeline_stage?.id || crmLead?.sx_pipeline_stage_id || pipelines?.sx?.id || null,
-    },
-  );
-  const sxCurrentId = pipelineCurrentId(
-    sxStages,
-    sxResolved || liveSxColId || project?.sx_kanban_column_id,
-    pipelines?.sx,
-  );
-  const vcList = vcStages;
-  const vcColRaw = liveVcColId || vcProject?.vc_kanban_column_id || project?.vc_kanban_column_id;
-  let vcCurrentId = pipelineCurrentId(vcList, vcColRaw, pipelines?.vc);
-  if ((!vcCurrentId || !vcList.some((s) => String(s.id) === String(vcCurrentId))) && (vcProject?.vc_intake || pipelines?.vc?.bucket_slug === 'delivery_pending')) {
-    const intake = vcList.find((s) => String(s.bucket_slug || '') === 'delivery_pending');
-    if (intake?.id) vcCurrentId = String(intake.id);
-  }
-
   const crmHref = leadId ? `/crm/leads/${leadId}` : null;
+  const sxBlocks = sxTracks.length ? sxTracks : [{
+    projectId,
+    row: project || {},
+    stages: sxStages,
+    currentName: pipelines?.sx?.name,
+    href: projectId ? `/sx/projects/${projectId}` : null,
+    label: 'Sản xuất',
+  }];
+  const vcBlocks = vcTracks.length ? vcTracks : [{
+    projectId,
+    row: project || {},
+    stages: vcStages,
+    currentName: pipelines?.vc?.name,
+    href: projectId ? `/vc/projects/${projectId}` : null,
+    label: 'VC / LĐ',
+  }];
 
   return (
     <div className="space-y-4">
@@ -956,37 +1167,85 @@ function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, sy
           currentStageId={crmCurrentId}
           currentStageName={crmLead?.stage?.name || lead?.stage?.name || pipelines?.crm?.name}
           visitedStageIds={visitedStageIds}
+          stageDates={crmStageDates}
           onMoveToStage={moving ? undefined : moveCrm}
         />
       </ModuleStepperBlock>
-      <ModuleStepperBlock
-        label="Sản xuất"
-        href={projectId ? `/sx/projects/${projectId}` : null}
-        loading={pipesLoading}
-        empty={!sxStages.length ? 'Chưa có pipeline sản xuất' : null}
-      >
-        <PipelineStepper
-          stages={sxStages}
-          currentStageId={sxCurrentId}
-          currentStageName={pipelines?.sx?.name}
-          linearProgress
-          onMoveToStage={moving ? undefined : moveSx}
-        />
-      </ModuleStepperBlock>
-      <ModuleStepperBlock
-        label="VC / LĐ"
-        href={projectId ? `/vc/projects/${projectId}` : null}
-        loading={pipesLoading}
-        empty={!vcStages.length ? 'Chưa có pipeline VC/LĐ' : null}
-      >
-        <PipelineStepper
-          stages={vcStages}
-          currentStageId={vcCurrentId}
-          currentStageName={pipelines?.vc?.name}
-          linearProgress
-          onMoveToStage={moving ? undefined : moveVc}
-        />
-      </ModuleStepperBlock>
+      {sxBlocks.map((track) => {
+        const pid = track.projectId;
+        const stages = track.stages || [];
+        const liveCol = liveSxByProject[String(pid)]
+          || (String(pid) === String(projectId) ? liveSxColId : null)
+          || track.row?.sx_kanban_column_id
+          || track.row?.sx_pipeline_stage?.id
+          || null;
+        const resolved = String(pid) === String(projectId)
+          ? resolveSxDisplayColumnId(
+            {
+              ...(sxProject || {}),
+              ...(project || {}),
+              sx_kanban_column_id: liveCol,
+              crmDeals: sxProject?.crmDeals || (crmLead ? [crmLead] : []),
+            },
+            stages,
+            {
+              leadColId: crmLead?.sx_pipeline_stage?.id || crmLead?.sx_pipeline_stage_id || pipelines?.sx?.id || null,
+            },
+          )
+          : liveCol;
+        const currentId = pipelineCurrentId(stages, resolved || liveCol, track.row?.sx_pipeline_stage);
+        return (
+          <ModuleStepperBlock
+            key={`sx-${pid}`}
+            label={track.label}
+            href={track.href}
+            loading={pipesLoading}
+            empty={!stages.length ? 'Chưa có pipeline sản xuất' : null}
+          >
+            <PipelineStepper
+              stages={stages}
+              currentStageId={currentId}
+              currentStageName={track.currentName}
+              linearProgress
+              stageDates={workshopStageDateMap(stages, track.row, currentId)}
+              onMoveToStage={moving ? undefined : (stageId) => moveSx(stageId, pid)}
+            />
+          </ModuleStepperBlock>
+        );
+      })}
+      {vcBlocks.map((track) => {
+        const pid = track.projectId;
+        const stages = track.stages || [];
+        const liveCol = liveVcByProject[String(pid)]
+          || (String(pid) === String(projectId) ? liveVcColId : null)
+          || track.row?.vc_kanban_column_id
+          || track.row?.vc_pipeline_stage?.id
+          || null;
+        let currentId = pipelineCurrentId(stages, liveCol, track.row?.vc_pipeline_stage);
+        if ((!currentId || !stages.some((s) => String(s.id) === String(currentId)))
+          && (track.row?.vc_intake || pipelines?.vc?.bucket_slug === 'delivery_pending')) {
+          const intake = stages.find((s) => String(s.bucket_slug || '') === 'delivery_pending');
+          if (intake?.id) currentId = String(intake.id);
+        }
+        return (
+          <ModuleStepperBlock
+            key={`vc-${pid}`}
+            label={track.label}
+            href={track.href}
+            loading={pipesLoading}
+            empty={!stages.length ? 'Chưa có pipeline VC/LĐ' : null}
+          >
+            <PipelineStepper
+              stages={stages}
+              currentStageId={currentId}
+              currentStageName={track.currentName}
+              linearProgress
+              stageDates={workshopStageDateMap(stages, track.row, currentId)}
+              onMoveToStage={moving ? undefined : (stageId) => moveVc(stageId, pid)}
+            />
+          </ModuleStepperBlock>
+        );
+      })}
       <Section
         title="Lịch sử thao tác"
         action={<span className="text-[11px] text-gray-500">{items.length} sự kiện</span>}
@@ -2103,7 +2362,7 @@ function WorkUnifiedProjectDetailInner() {
 
   const { project, primary_lead: primaryLead, lead_id: leadId } = bundle;
   const overview = bundle.overview || {};
-  const effectiveLeadId = primaryLead?.id || leadId || null;
+  const effectiveLeadId = pickPrimarySxCrmDeal(bundle.leads)?.id || primaryLead?.id || leadId || null;
   const currentPp = (overview.production_projects || []).find((p) => String(p.project_id) === String(id))
     || (overview.production_projects || [])[0]
     || null;
@@ -2133,6 +2392,7 @@ function WorkUnifiedProjectDetailInner() {
     bundle.pipelines?.crm?.id,
     bundle.pipelines?.sx?.id,
     bundle.pipelines?.vc?.id,
+    (overview.production_projects || []).map((p) => `${p.project_id}:${p.sx_kanban_column_id || ''}:${p.vc_kanban_column_id || ''}`).join(','),
   ].filter(Boolean).join('|');
 
   const withOwner = (pipe, owner) => {
@@ -2333,6 +2593,7 @@ function WorkUnifiedProjectDetailInner() {
           project={projectForPipes}
           lead={primaryLead}
           pipelines={bundle.pipelines}
+          productionProjects={overview.production_projects || []}
           onReload={() => load({ silent: true, noCache: true })}
           syncKey={pipeSyncKey}
         />

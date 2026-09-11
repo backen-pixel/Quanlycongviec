@@ -143,7 +143,6 @@ const CONGVIEC_MENU_GROUPS = [
     title: '2. Làm việc',
     emoji: '✅',
     items: [
-      { to: '/management/work-unified', icon: LayoutDashboard, label: 'Dashboard dự án', end: true },
       { to: '/management/shared-workspace-report', icon: BarChart3, label: 'Báo cáo phát sinh' },
       { to: '/management/project-logs', icon: History, label: 'Nhật ký công trình' },
       { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },

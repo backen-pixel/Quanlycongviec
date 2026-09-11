@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
-import { vnTodayYmd, vnAddDaysYmd } from '../lib/vnDate';
 import { formatStaffDisplayName, getStaffInitials, avatarColor } from '../lib/utils';
 import { getDeepLink } from '../components/UnifiedTaskRow';
 import SearchInlineFilterChips, { AdvFilterButton, searchGroupClass } from '../components/SearchInlineFilterChips';
@@ -252,42 +251,16 @@ export default function WorkOverviewPage() {
     setLoading(true);
     setError('');
     try {
-      const today = vnTodayYmd();
-      const yesterday = vnAddDaysYmd(today, -1);
       const scopeParams = {
         ...(canPickCompany && companyId ? { company_id: companyId } : {}),
         ...(filterRegionId ? { region_id: filterRegionId } : {}),
         ...(rangeFrom ? { date_from: rangeFrom } : {}),
         ...(rangeTo ? { date_to: rangeTo } : {}),
       };
-      const taskBase = { open_only: '1', page_size: 50, ...scopeParams };
-      const dueFrom = rangeFrom || today;
-      const dueTo = rangeTo || today;
-      const overdueTo = (!rangeTo || rangeTo >= today) ? yesterday : rangeTo;
-      const [overviewRes, tasksRes, overdueRes] = await Promise.all([
-        api.get('/management/work-overview', { params: scopeParams }),
-        api.get('/work-tasks', {
-          params: {
-            ...taskBase,
-            date_from: `${dueFrom}T00:00:00+07:00`,
-            date_to: `${dueTo}T23:59:59+07:00`,
-          },
-        }),
-        api.get('/work-tasks', {
-          params: {
-            ...taskBase,
-            ...(rangeFrom ? { date_from: `${rangeFrom}T00:00:00+07:00` } : {}),
-            date_to: `${overdueTo}T23:59:59+07:00`,
-          },
-        }),
-      ]);
+      const overviewRes = await api.get('/management/work-overview', { params: scopeParams });
       setOverview(overviewRes.data);
-      const todayList = tasksRes.data?.tasks || [];
-      const overdueList = (overdueRes.data?.tasks || [])
-        .slice()
-        .sort((a, b) => String(a.deadline || '').localeCompare(String(b.deadline || '')));
-      setTodayTasks(todayList);
-      setOverdueTasks(overdueList);
+      setTodayTasks(overviewRes.data?.today_tasks || []);
+      setOverdueTasks(overviewRes.data?.overdue_task_items || []);
     } catch (e) {
       setError(e?.response?.data?.error || 'Không tải được dữ liệu tổng quan');
     } finally {
@@ -373,8 +346,8 @@ export default function WorkOverviewPage() {
     ? `Doanh thu ${periodPhrase}`
     : `Doanh thu tháng ${now.getMonth() + 1} (đến ${pad2(now.getDate())}/${pad2(now.getMonth() + 1)})`;
   const customersLabel = periodPhrase
-    ? `Khách hàng mới ${periodPhrase}`
-    : 'Khách hàng mới tháng này';
+    ? `Deal đã ký HĐ ${periodPhrase}`
+    : 'Deal đã ký HĐ tháng này';
   const dueTasksTitle = periodPhrase && timePreset !== 'today'
     ? `Việc cần làm ${periodPhrase}`
     : 'Việc cần làm hôm nay';
@@ -606,7 +579,7 @@ export default function WorkOverviewPage() {
             icon={<CalendarDays className="h-3.5 w-3.5" />}
             iconWrap="bg-sky-50 text-sky-600"
             title={dueTasksTitle}
-            count={todayTasks.length}
+            count={overview?.today_task_count ?? todayTasks.length}
             countCls="bg-sky-50 text-sky-700"
             loading={loading && todayTasks.length === 0 && !overview}
             empty={todayTasks.length === 0 ? dueTasksEmpty : null}
@@ -635,7 +608,7 @@ export default function WorkOverviewPage() {
             iconWrap="bg-red-50 text-red-600"
             title="Công việc quá hạn"
             titleHref="/management/project-tasks?risk=overdue"
-            count={overdueTasks.length}
+            count={overview?.overdue_tasks ?? overdueTasks.length}
             countCls="bg-red-50 text-red-700"
             loading={loading && overdueTasks.length === 0 && !overview}
             empty={overdueTasks.length === 0 ? 'Không có việc quá hạn.' : null}

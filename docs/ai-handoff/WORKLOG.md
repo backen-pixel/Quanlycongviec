@@ -1,5 +1,134 @@
 # Nhật ký công việc AI
 
+## 2026-09-11 10:05 — HCB Tủ bếp: Kanban tới Hoàn thiện
+
+- Pipeline Tủ bếp: Tiếp nhận, Kế hoạch, Duyệt, Gia công (6 việc), Hoàn thiện.
+- Công nợ tách phân loại riêng; giao/lắp ở VC/LĐ.
+- Kế hoạch SX tính từ ngày lắp. Migration `588_hcb_tubep_kanban_to_hoan_thien.sql`.
+
+## 2026-09-11 09:35 — Tiến độ Unified nhiều xưởng SX/VC
+
+- Tab Tiến độ: một stepper / xưởng SX và / nơi VC-LĐ; ngày `dd/mm/yyyy` dưới cột.
+- `listDealProductionProjects` thêm cột Kanban SX/VC để phân luồng.
+
+## 2026-09-11 09:30 — Tổng quan: chỉ deal đã ký HĐ, bỏ việc lead
+
+- `work-overview` lọc `postContract` (mốc won / ký HĐ). Việc hôm nay/quá hạn
+  không còn `CRM-Lead`. KPI khách mới = deal đang ở giai đoạn đã ký, tạo trong kỳ.
+
+## 2026-09-11 09:25 — Gỡ nút sidebar Dashboard dự án
+
+- Xóa `Dashboard dự án` khỏi nhóm Làm việc (`Sidebar.jsx`). Trùng URL với Work Unified.
+
+## 2026-09-11 09:20 — GCCK hoàn thành SX không hiện trễ hạn
+
+- Forecast Work Unified bỏ «Trễ hạn» khi dự án loại Cánh kính / tên `GCCK-` đã ở cột
+  SX Hoàn thành (hoặc đã giao). Helper `projectForecast.js`.
+- Tủ bếp/cửa và GCCK chưa xong vẫn tính trễ theo ngày lắp.
+
+## 2026-09-11 09:10 — Tổng quan công việc dùng cùng tập Work Unified
+
+- `GET /management/work-overview`: số dự án đang làm + danh sách cần chú ý lấy từ
+  `queryWorkUnifiedList` (cùng nguồn `/work-unified`, gồm deal đặt xưởng khác và
+  lọc khu vực theo deal CRM).
+- Doanh thu / khách mới / việc quá hạn giữ nguyên nguồn cũ.
+
+## 2026-09-11 09:35 — Bộ lọc Page/Nguồn ở trang Facebook rò dữ liệu chéo hệ sinh thái
+
+- AI thực hiện: Claude.
+- Triệu chứng (người dùng báo): đăng nhập `quantri.hst@nextgo.vn` (HST NextGo) nhưng ô
+  "— Nguồn (tất cả Page) —" ở CRM → Facebook → Danh bạ liệt kê đủ 11 Page của HST mặc định
+  (Phúc Đạt, Vạn Phú Thành, Metalla…) lẫn Page NextGo.
+- Nguyên nhân gốc (đã đo): `routes/facebook.js` KHÔNG mount `enforceTenantContext`.
+  Auth ở router này là per-route (`r.get('/x', authMiddleware, ...)`) nên `r.use()` cấp router
+  sẽ chạy TRƯỚC khi có `req.user` — không thể mount middleware đó như `routes/ecosystem.js`.
+  Hệ quả: `req.tenantContext` luôn undefined → `isTenantScopeEnforced(req)` luôn false →
+  admin không có `company_id` rơi thẳng vào nhánh `return { mode: 'all' }` của
+  `resolveFacebookPageScope`. Các nhánh lọc theo tenant ĐÃ CÓ SẴN ngay bên trên nhưng
+  chưa bao giờ chạy.
+- Sửa:
+  - `backend/src/routes/facebook.js`: thêm `attachTenantContext` (từ `middleware/tenantGate`)
+    và helper `ensureFacebookTenantContext(req, res)`; gọi ở dòng đầu của
+    `resolveFacebookPageScope`. Không đổi logic lọc — chỉ bật nó lên.
+  - `frontend/src/pages/FacebookPage.jsx`: `GET /api/facebook/page-sources` nay gửi kèm
+    `fbCompanyQs` và phụ thuộc `[fbCompanyQs]` (trước để `[]`), để chọn công ty ở đầu trang
+    cũng thu hẹp danh sách nguồn.
+- Phạm vi ảnh hưởng (đo trên prod): 17 endpoint FB dùng `resolveFacebookPageScope` được sửa
+  cùng lúc. Tài khoản đổi hành vi: 19 admin có `tenant_id`.
+  - 4 admin HST NextGo: 11 Page → 1 Page (`1102202982968909`), 10 nguồn → 1 nguồn.
+  - 13 admin HST mặc định: mất Page NextGo, còn 11 Page / 10 nguồn của HST mình.
+  - 2 admin HST `abc1` và `Xưởng Anh Hoang Nguyen`: 11 Page → 0 (đúng, 2 HST này không có Page).
+  - 3 admin `tenant_id = NULL` và 1 `platform_admin`: KHÔNG đổi (`enforced=false` → `mode:'all'`).
+  - 4 HST đều `is_active = true` → `assertTenantActive` không sinh 403 mới.
+- Kiểm thử: `node --check backend/src/routes/facebook.js` đạt. CHƯA restart backend nên
+  CHƯA xác nhận trên môi trường chạy — cần restart rồi đăng nhập lại `quantri.hst@nextgo.vn`.
+- Rủi ro còn lại (CHƯA sửa, báo để quyết định): 65/82 endpoint FB có `authMiddleware`
+  nhưng KHÔNG gọi `resolveFacebookPageScope`. Đáng lo nhất vì ghi/đọc chéo HST:
+  `PUT/DELETE /contacts/:id`, `POST /contacts/:id/create-lead`, `POST /batch-create-leads`,
+  `GET /comments`, `GET /lead-ads`, `POST /dedup-leads`, `POST /sync-contact-phones`.
+
+---
+
+## 2026-09-11 09:00 — Work Unified: deal con không che bình luận deal gốc
+
+- TB-2026-800: `DEAL-2026-1515` (Hucabi, 0 comment) vs `DEAL-2026-1459` (Phúc Đạt, 60).
+  Bundle lấy deal `updated_at` mới nhất → tab Bình luận trống. Không phải quyền NV Thành.
+- Sửa `pickBundlePrimaryLead` = `sortProjectCrmDeals` (deal gốc trước); đếm comment theo
+  thread cha+con. FE dùng `pickPrimarySxCrmDeal`.
+
+## 2026-09-11 — NextGo: khôi phục quyền hệ sinh thái + chặn rò chéo tenant
+
+- AI thực hiện: Claude (Opus 5). Yêu cầu của anh B.A: «lead không về» và «tk nào không vào được hệ sinh thái».
+
+### Kết luận 1 — lead KHÔNG hỏng
+- Trang FB NextGo đặt `default_target_type = 'deal'` từ **17/06/2026** (anh B.A xác nhận cố ý).
+  Bản ghi `type='lead'` cuối cùng: 19/06; tổng cộng chỉ có 1. Dữ liệu vẫn về đều
+  (54 bản ghi/7 ngày). Tab «Lead» trống là hệ quả cấu hình. **Không sửa.**
+- Phát sinh: 2 deal ngày 10/09 (nguồn Zalo) rơi vào công ty NextGo **CŨ** `87479a83`, giao cho
+  `tranthingochan+oldhst@` (tài khoản đã tắt). Nguồn Zalo vẫn trỏ công ty cũ — **chưa xử lý**.
+
+### Kết luận 2 — 2 tài khoản bị chặn, đã sửa bằng DỮ LIỆU
+- `getUserAccessibleUnits` (routes/ecosystem.js) cho qua `['admin','manager']`; role khác phải có
+  dòng trong `ecosystem_unit_members`, không có thì trả mảng rỗng.
+- Chuyển tenant đã chép `user_companies` nhưng **KHÔNG chép `ecosystem_unit_members`**:
+  cả 5 đơn vị NextGo đều 0 thành viên; 4 tài khoản `+oldhst` (đã tắt) mỗi cái có 1.
+- Đã chép lại y nguyên phân bổ cũ (`unit_role=member`, `can_manage_children=false`):
+  Ngọc Trinh + Ngọc Hân → Phòng Kinh doanh `4471ee38`; Hải Hiền → Xưởng sản xuất `cb4bcf59`;
+  Biện Anh Pháp → Phòng Marketing `50c2522f`. Dùng `ON CONFLICT DO NOTHING`, 4 dòng.
+- Kiểm chứng: **Ngọc Trinh** và **Hải Hiền** từ BỊ CHẶN → VÀO ĐƯỢC.
+
+### ĐÍNH CHÍNH — tôi nói quá ở phiên trước
+- Tôi đã báo «quantri.hst@nextgo.vn nhìn thấy cả hệ sinh thái tenant khác». **Sai một nửa.**
+  `GET /units` (trang hệ sinh thái) CÓ lọc tenant qua `addEcosystemUnitTenantFilter`, và
+  `r.use(enforceTenantContext)` bật cho cả router; cả 5 user NextGo đều có `tenant_id`, không ai
+  là platform_admin ⇒ **tenantContext.enforced = true**, danh sách đơn vị KHÔNG rò.
+  Tôi kết luận từ mỗi hàm `getUserAccessibleUnits` mà không đọc route gọi nó.
+
+### Chỗ rò THẬT (đã vá) — routes/ecosystem.js
+- `getUserAccessibleUnits` nhánh admin/manager trả **mọi đơn vị đang hoạt động của TOÀN hệ thống**,
+  không lọc tenant. Hai nơi dùng: `GET /my-units` (`accessible_unit_ids`) và
+  `middleware/permission.js:160` — nơi này mới nặng: admin tenant này được tính **có quyền theo
+  đơn vị** trên đơn vị của tenant khác.
+- Đã thêm `tenantScopeOfUser(userId, userRole)` dùng `resolveTenantIdForUser` +
+  `getTenantCompanyIds`, lọc y hệt khuôn `addEcosystemUnitTenantFilter`. Bỏ qua khi
+  platform_admin hoặc user chưa gắn tenant — đúng như `attachTenantContext`.
+- `isPlatformAdmin` lấy từ `helpers/adminRole` đã import sẵn (tránh khai báo trùng).
+- Số đo trước/sau:
+  · 3 admin NextGo: **54 → 13** đơn vị (đúng 13 của NextGo)
+  · admin tenant mặc định (VPT/Metalla/tubep): **54 → 41** (đúng của họ, không mất gì)
+  · 2 user không phải admin: giữ nguyên 1 đơn vị
+  · Toàn hệ thống **0** trường hợp user là thành viên đơn vị của tenant khác ⇒ nhánh membership
+    không cần đổi.
+- Kiểm thử: `node --check` đạt; nạp được `routes/ecosystem` và `middleware/permission`
+  (vòng require vẫn OK).
+
+### Chưa làm
+- 46 user toàn hệ thống vẫn bị chặn khỏi hệ sinh thái vì danh sách trắng cứng
+  `['admin','manager']` (gồm cả `platform_admin`). Anh B.A yêu cầu **chỉ** xử lý chuyện
+  chéo tenant, nên để nguyên.
+- Nguồn Zalo trỏ công ty NextGo cũ.
+
+
 ## 2026-09-10 14:35 — Vá chỉ mục bình luận HST mặc định
 
 - Quét DB: comment CRM HST mặc định còn đủ (27.653 dòng, không bị delta
