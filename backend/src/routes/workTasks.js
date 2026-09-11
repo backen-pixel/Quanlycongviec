@@ -397,12 +397,100 @@ function projectOverviewCategoryId(task, projectDetailById, crmDetailById) {
 }
 
 // GET /api/work-tasks/project-overview — toàn bộ NV mở của các dự án chưa kết thúc theo từng module
+/**
+ * Phần đuôi dùng chung của /project-overview: gắn tên công ty/khu vực, sắp xếp,
+ * tính thống kê rồi trả JSON. Dùng chung cho cả đường RPC gộp lẫn đường cũ nên hai
+ * đường chắc chắn cho cùng một hình dạng kết quả.
+ */
+async function finishProjectOverview(res, tasks) {
+  const companyIds = [...new Set(tasks.map((task) => task.company_id).filter(Boolean).map(String))];
+  const regionIds = [...new Set(tasks.map((task) => task.region_id).filter(Boolean).map(String))];
+  const [companies, regions] = await Promise.all([
+    companyIds.length
+      ? fetchAllByIdsParallel({
+        table: 'companies',
+        columns: 'id, name, short_name',
+        key: 'id',
+        ids: companyIds,
+        tune: (q) => q.order('id'),
+      })
+      : Promise.resolve([]),
+    regionIds.length
+      ? fetchAllByIdsParallel({
+        table: 'company_regions',
+        columns: 'id, company_id, name, code',
+        key: 'id',
+        ids: regionIds,
+        tune: (q) => q.order('id'),
+      })
+      : Promise.resolve([]),
+  ]);
+  const companyById = new Map(companies.map((row) => [String(row.id), row]));
+  const regionById = new Map(regions.map((row) => [String(row.id), row]));
+  tasks.forEach((task) => {
+    const company = companyById.get(String(task.company_id || ''));
+    const region = regionById.get(String(task.region_id || ''));
+    task.company_name = company?.short_name || company?.name || null;
+    task.region_name = region?.name || null;
+  });
+  tasks.sort((a, b) => (
+    String(a.deadline || '9999-12-31').localeCompare(String(b.deadline || '9999-12-31'))
+    || (a.category_order || 999) - (b.category_order || 999)
+  ));
+
+  const nowMs = Date.now();
+  const warningMs = nowMs + 3 * 24 * 60 * 60 * 1000;
+  const stats = {
+    total: tasks.length,
+    overdue: 0,
+    warning: 0,
+    by_module: { crm: 0, sx: 0, vc: 0 },
+  };
+  tasks.forEach((task) => {
+    const lane = taskOwnerLane(task);
+    if (lane === 'sales') stats.by_module.crm += 1;
+    else if (lane === 'logistics') stats.by_module.vc += 1;
+    else stats.by_module.sx += 1;
+    const deadlineMs = task.deadline ? new Date(task.deadline).getTime() : null;
+    if (deadlineMs != null && Number.isFinite(deadlineMs)) {
+      if (deadlineMs < nowMs) stats.overdue += 1;
+      else if (deadlineMs <= warningMs) stats.warning += 1;
+    }
+  });
+  return res.json({
+    tasks,
+    stats,
+    filter_options: {
+      companies,
+      regions,
+    },
+  });
+}
+
 r.get('/project-overview', async (req, res) => {
   try {
     const effectiveCompany = !isSystemAdmin(req.user) ? req.user?.company_id : null;
     const requestedModule = ['crm', 'sx', 'vc'].includes(String(req.query.module || '').toLowerCase())
       ? String(req.query.module).toLowerCase()
       : '';
+    /**
+     * Đường gộp: RPC làm luôn việc chọn phạm vi + gom nhóm (migration 597), trả về ~2.500
+     * dòng nhóm thay vì ~13.000 dòng nhiệm vụ.
+     *
+     * Vì sao không chỉ gộp round-trip: đã thử một RPC chỉ chọn phạm vi rồi vẫn gom nhóm ở
+     * JS — CHẬM HƠN đường cũ (5,2s so với 4,0s), vì 3MB JSON đi trong một luồng duy nhất
+     * không giấu được độ trễ như ~20 truy vấn song song. Phải giảm KHỐI LƯỢNG truyền thì
+     * mới ăn: nhóm nặng ~600KB thay vì 3MB, và bỏ luôn được bước đọc chi tiết nhiệm vụ.
+     *
+     * Chưa chạy migration → rơi về đúng đường cũ bên dưới, không đổi hành vi.
+     */
+    const groupsRpcPromise = supabase.rpc('work_project_overview_groups', {
+      p_company_id: effectiveCompany || null,
+      p_module: requestedModule || null,
+      p_user_id: req.user?.userId || null,
+      p_manager: isManagerLike(req.user),
+    });
+
     const projects = await fetchAllPages(() => {
       let q = supabase
         .from('projects')
@@ -447,6 +535,19 @@ r.get('/project-overview', async (req, res) => {
         })
         : Promise.resolve([]),
     ]);
+
+    // Nhân sự SX chỉ cần danh sách dự án — cho chạy ngay, song song với RPC gộp,
+    // thay vì chờ RPC trả về rồi mới đọc (đo được ~500ms nằm thẳng trên đường tới hạn).
+    const staffPromiseEarly = projectIds.length
+      ? fetchAllByIdsParallel({
+        table: 'project_production_staff',
+        columns: 'project_id, user_id, is_primary, order_index',
+        key: 'project_id',
+        ids: projectIds,
+        tune: (q) => q.order('project_id').order('order_index').order('user_id'),
+      })
+      : Promise.resolve([]);
+
     if (sxStagesRes.error) throw sxStagesRes.error;
     if (vcStagesRes.error) throw vcStagesRes.error;
 
@@ -461,6 +562,28 @@ r.get('/project-overview', async (req, res) => {
     const activeLeadIds = (leads || [])
       .filter((lead) => !lead.stage?.is_won && !lead.stage?.is_lost && !isCrmCompletedStage(lead.stage))
       .map((lead) => lead.id);
+
+    // RPC gộp đã xong việc chọn phạm vi + gom nhóm → chỉ còn gắn người phụ trách module.
+    // Nhân sự SX là lượt đọc duy nhất còn lại (chỉ cần danh sách dự án).
+    {
+      const rpcRes = await groupsRpcPromise;
+      if (rpcRes.error) {
+        const thieuHam = /work_project_overview_groups|does not exist|Could not find|schema cache|PGRST202/i
+          .test(String(rpcRes.error.message || ''));
+        if (!thieuHam) {
+          console.warn('[work-tasks] work_project_overview_groups RPC lỗi → dùng đường cũ:', rpcRes.error.message);
+        }
+      } else if (Array.isArray(rpcRes.data)) {
+        const groups = rpcRes.data;
+        const staffRows = await staffPromiseEarly;
+        await enrichTaskModuleOwners(groups, {
+          projects: activeProjects,
+          leads: needsCrmLeads ? leads : null,
+          productionStaff: staffRows,
+        });
+        return finishProjectOverview(res, groups);
+      }
+    }
 
     const tuneTaskQuery = (q, { kinds, leadScoped = false } = {}) => {
       q = applyPrimaryLeadOnly(q, leadScoped);
@@ -506,15 +629,8 @@ r.get('/project-overview', async (req, res) => {
         })
       : Promise.resolve([]);
 
-    const productionStaffPromise = projectIds.length
-      ? fetchAllByIdsParallel({
-        table: 'project_production_staff',
-        columns: 'project_id, user_id, is_primary, order_index',
-        key: 'project_id',
-        ids: projectIds,
-        tune: (q) => q.order('project_id').order('order_index').order('user_id'),
-      })
-      : Promise.resolve([]);
+    // Dùng lại lượt đọc đã khởi động ở trên — không đọc lần hai.
+    const productionStaffPromise = staffPromiseEarly;
 
     /**
      * Chi tiết nhiệm vụ (để suy ra hạng mục) chỉ cần id của chính nhóm nhiệm vụ đó, nên
@@ -683,68 +799,7 @@ r.get('/project-overview', async (req, res) => {
         effective_assignee_name: assigned?.assignee_name || first.module_owner_name || null,
       };
     }).filter(Boolean);
-    const companyIds = [...new Set(tasks.map((task) => task.company_id).filter(Boolean).map(String))];
-    const regionIds = [...new Set(tasks.map((task) => task.region_id).filter(Boolean).map(String))];
-    const [companies, regions] = await Promise.all([
-      companyIds.length
-        ? fetchAllByIdsParallel({
-          table: 'companies',
-          columns: 'id, name, short_name',
-          key: 'id',
-          ids: companyIds,
-          tune: (q) => q.order('id'),
-        })
-        : Promise.resolve([]),
-      regionIds.length
-        ? fetchAllByIdsParallel({
-          table: 'company_regions',
-          columns: 'id, company_id, name, code',
-          key: 'id',
-          ids: regionIds,
-          tune: (q) => q.order('id'),
-        })
-        : Promise.resolve([]),
-    ]);
-    const companyById = new Map(companies.map((row) => [String(row.id), row]));
-    const regionById = new Map(regions.map((row) => [String(row.id), row]));
-    tasks.forEach((task) => {
-      const company = companyById.get(String(task.company_id || ''));
-      const region = regionById.get(String(task.region_id || ''));
-      task.company_name = company?.short_name || company?.name || null;
-      task.region_name = region?.name || null;
-    });
-    tasks.sort((a, b) => (
-      String(a.deadline || '9999-12-31').localeCompare(String(b.deadline || '9999-12-31'))
-      || (a.category_order || 999) - (b.category_order || 999)
-    ));
-
-    const nowMs = Date.now();
-    const warningMs = nowMs + 3 * 24 * 60 * 60 * 1000;
-    const stats = {
-      total: tasks.length,
-      overdue: 0,
-      warning: 0,
-      by_module: { crm: 0, sx: 0, vc: 0 },
-    };
-    tasks.forEach((task) => {
-      const lane = taskOwnerLane(task);
-      if (lane === 'sales') stats.by_module.crm += 1;
-      else if (lane === 'logistics') stats.by_module.vc += 1;
-      else stats.by_module.sx += 1;
-      const deadlineMs = task.deadline ? new Date(task.deadline).getTime() : null;
-      if (deadlineMs != null && Number.isFinite(deadlineMs)) {
-        if (deadlineMs < nowMs) stats.overdue += 1;
-        else if (deadlineMs <= warningMs) stats.warning += 1;
-      }
-    });
-    res.json({
-      tasks,
-      stats,
-      filter_options: {
-        companies,
-        regions,
-      },
-    });
+    return finishProjectOverview(res, tasks);
   } catch (e) {
     console.error('[work-tasks] project-overview:', e);
     res.status(500).json({ error: e.message || 'Lỗi tải tổng quan nhiệm vụ dự án' });
