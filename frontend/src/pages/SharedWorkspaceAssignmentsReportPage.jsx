@@ -429,7 +429,7 @@ export default function SharedWorkspaceAssignmentsReportPage() {
                     <td className="px-3 py-3">{row.phat_sinh_kind_name || '—'}</td>
                     <td className="max-w-[220px] px-3 py-3">{(row.assignees || []).map((item) => item.full_name || item.email).filter(Boolean).join(', ') || '—'}</td>
                     <td className="px-3 py-3">{row.created_by?.full_name || row.created_by?.email || '—'}</td>
-                    <td className="px-3 py-3"><span className={`rounded-full px-2 py-1 font-semibold ${statusBadgeClass(row)}`}>{STATUS_LABELS[row.status] || row.status}</span></td>
+                    <td className="whitespace-nowrap px-3 py-3"><span className={`rounded-full px-2 py-1 font-semibold ${statusBadgeClass(row)}`}>{STATUS_LABELS[row.status] || row.status}</span></td>
                     <td className="whitespace-nowrap px-3 py-3">{formatDate(row.deadline)}</td>
                   </tr>
                   );
