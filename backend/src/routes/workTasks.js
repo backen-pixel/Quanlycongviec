@@ -402,10 +402,14 @@ function projectOverviewCategoryId(task, projectDetailById, crmDetailById) {
  * tính thống kê rồi trả JSON. Dùng chung cho cả đường RPC gộp lẫn đường cũ nên hai
  * đường chắc chắn cho cùng một hình dạng kết quả.
  */
-async function finishProjectOverview(res, tasks) {
+/**
+ * @param {{companies: object[], regions: object[]}|null} pre Danh mục lọc đã có sẵn
+ *   (đường RPC gộp trả kèm) — truyền vào thì khỏi đọc lại.
+ */
+async function finishProjectOverview(res, tasks, pre = null) {
   const companyIds = [...new Set(tasks.map((task) => task.company_id).filter(Boolean).map(String))];
   const regionIds = [...new Set(tasks.map((task) => task.region_id).filter(Boolean).map(String))];
-  const [companies, regions] = await Promise.all([
+  const [companies, regions] = pre ? [pre.companies || [], pre.regions || []] : await Promise.all([
     companyIds.length
       ? fetchAllByIdsParallel({
         table: 'companies',
@@ -436,6 +440,10 @@ async function finishProjectOverview(res, tasks) {
   tasks.sort((a, b) => (
     String(a.deadline || '9999-12-31').localeCompare(String(b.deadline || '9999-12-31'))
     || (a.category_order || 999) - (b.category_order || 999)
+    // Hoà cả hai khoá trên thì trước đây thứ tự phụ thuộc thứ tự nạp (chia khúc id),
+    // nên mỗi lần mỗi khác. Chốt bằng unified_id để cả hai đường và mọi lần chạy
+    // đều cho cùng một thứ tự.
+    || String(a.unified_id).localeCompare(String(b.unified_id))
   ));
 
   const nowMs = Date.now();
@@ -484,6 +492,29 @@ r.get('/project-overview', async (req, res) => {
      *
      * Chưa chạy migration → rơi về đúng đường cũ bên dưới, không đổi hành vi.
      */
+    // Đường gộp đầy đủ: SQL làm hết — chọn phạm vi, gom nhóm, giải người phụ trách
+    // module, lấy tên người/công ty/khu vực. Thành công thì KHÔNG đọc thêm gì nữa.
+    {
+      const full = await supabase.rpc('work_project_overview_full', {
+        p_company_id: effectiveCompany || null,
+        p_module: requestedModule || null,
+        p_user_id: req.user?.userId || null,
+        p_manager: isManagerLike(req.user),
+      });
+      if (full.error) {
+        const thieuHam = /work_project_overview_full|does not exist|Could not find|schema cache|PGRST202/i
+          .test(String(full.error.message || ''));
+        if (!thieuHam) {
+          console.warn('[work-tasks] work_project_overview_full RPC lỗi → dùng đường cũ:', full.error.message);
+        }
+      } else if (full.data && Array.isArray(full.data.groups)) {
+        return finishProjectOverview(res, full.data.groups, {
+          companies: full.data.companies,
+          regions: full.data.regions,
+        });
+      }
+    }
+
     const groupsRpcPromise = supabase.rpc('work_project_overview_groups', {
       p_company_id: effectiveCompany || null,
       p_module: requestedModule || null,
