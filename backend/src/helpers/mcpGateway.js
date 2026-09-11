@@ -41,7 +41,12 @@ function getKeyAllowedCompanyIds(apiKey) {
   const list = Array.isArray(apiKey?.allowed_company_ids)
     ? apiKey.allowed_company_ids.map((x) => String(x)).filter(Boolean)
     : [];
-  return list.length ? list : null;
+  if (list.length) return list;
+  // Key "toàn quyền" vẫn bị giới hạn trong hệ sinh thái của chủ key.
+  const tenantList = Array.isArray(apiKey?.tenant_company_ids)
+    ? apiKey.tenant_company_ids.map((x) => String(x)).filter(Boolean)
+    : [];
+  return tenantList.length ? tenantList : null;
 }
 
 /** Tool báo cáo được phép qua MCP (không expose quản trị bot / skill). */
@@ -230,7 +235,7 @@ function buildMcpToolContext(req, user) {
     last_company_id: keyCompanyId || user.company_id || null,
     days_offset: 0,
     mcp_api_key_name: req.apiKey?.name || null,
-    mcp_all_companies: !getKeyAllowedCompanyIds(req.apiKey),
+    mcp_all_companies: req.apiKey?.all_companies === true,
     mcp_allowed_company_ids: getKeyAllowedCompanyIds(req.apiKey),
     mcp_org_wide: isMcpOrgWideViewer(user),
   };
@@ -240,6 +245,10 @@ function normalizeReportArgs(args = {}, ctx) {
   const out = { ...args };
   if (!out.company_id && ctx.last_company_id) {
     out.company_id = ctx.last_company_id;
+  }
+  // Chặn tool liệt kê/tổng hợp vượt ra ngoài phạm vi công ty của API key.
+  if (!out.company_whitelist && ctx.mcp_allowed_company_ids?.length) {
+    out.company_whitelist = ctx.mcp_allowed_company_ids;
   }
   return out;
 }

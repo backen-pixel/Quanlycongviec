@@ -40,6 +40,7 @@ import {
   buildSxInstallBackPlan,
   normalizeHolidayIndex,
   remainingSxWorkingDaysTo,
+  resolveSxPlanInstallYmd,
   resolveSxReceptionYmd,
   SX_INSTALL_BACK_PLAN_RULES,
 } from '../lib/sxWorkshopSchedule';
@@ -352,20 +353,25 @@ function WorkshopInfoPanel({
     return resolveSxReceptionYmd(Date.now(), holidayIndex);
   }, [project?.sx_reception_date, project?.created_at, holidayIndex]);
 
+  const planInstallYmd = useMemo(
+    () => resolveSxPlanInstallYmd(project),
+    [project?.install_occurrence_dates, project?.install_date, project?.delivery_date],
+  );
+
   const finishTone = workshopScheduleTone(
     remainingSxWorkingDaysTo(productionFinishDate, { receptionYmd, holidayIndex }),
     'finish',
   );
   const installTone = workshopScheduleTone(
-    remainingSxWorkingDaysTo(deliveryDate, { receptionYmd, holidayIndex }),
+    remainingSxWorkingDaysTo(planInstallYmd || deliveryDate, { receptionYmd, holidayIndex }),
     'install',
   );
   const installBackPlan = useMemo(
-    () => buildSxInstallBackPlan(deliveryDate, {
+    () => buildSxInstallBackPlan(planInstallYmd, {
       startYmd: receptionYmd,
       slipDays: project?.sx_schedule_slip_days || 0,
     }),
-    [deliveryDate, receptionYmd, project?.sx_schedule_slip_days],
+    [planInstallYmd, receptionYmd, project?.sx_schedule_slip_days],
   );
 
   const formatPlanRange = (startYmd, endYmd) => {

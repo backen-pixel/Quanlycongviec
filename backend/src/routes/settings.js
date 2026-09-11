@@ -2,6 +2,7 @@ const { Router } = require('express');
 const multer = require('multer');
 const { auth } = require('../middleware/auth');
 const { isAdminLike } = require('../helpers/adminRole');
+const { isTenantScopeEnforced, companyInTenantContext } = require('../helpers/tenantScope');
 const { supabase } = require('../config/supabase');
 const {
   getAppSettingValue,
@@ -186,6 +187,21 @@ const {
 const { buildTokenPair, formatOneTimeTokenResponse } = require('../helpers/apiKeyTokens');
 const crypto = require('crypto');
 
+function apiKeyAllowedInTenant(req, k) {
+  if (!isTenantScopeEnforced(req)) return true;
+  if (k.company_id && companyInTenantContext(req, k.company_id)) return true;
+  const extra = Array.isArray(k.allowed_company_ids) ? k.allowed_company_ids : [];
+  return extra.some((id) => companyInTenantContext(req, id));
+}
+
+function assertApiKeyCompanyInTenant(req, res, companyId, allowedList = []) {
+  if (!isTenantScopeEnforced(req)) return true;
+  if (companyId && companyInTenantContext(req, companyId)) return true;
+  if (allowedList.length && allowedList.every((id) => companyInTenantContext(req, id))) return true;
+  res.status(403).json({ error: 'Chỉ được dùng API key của hệ sinh thái hiện tại' });
+  return false;
+}
+
 function previewKey(k) {
   return (k.key || '').slice(0, 8) + '••••••••••••••••';
 }
@@ -194,7 +210,7 @@ function previewKey(k) {
 r.get('/api-keys', async (req, res) => {
   try {
     await migrateLegacyFileOnce();
-    const rows = await listKeys();
+    const rows = (await listKeys()).filter((k) => apiKeyAllowedInTenant(req, k));
     res.json(rows.map((k) => ({
       id: k.id,
       name: k.name,
@@ -303,6 +319,9 @@ r.post('/api-keys', async (req, res) => {
     let effectiveRegionId = null;
     let effectiveAllowed = [];
 
+    if (isTenantScopeEnforced(req) && (wantAllCompanies || all_companies === true || company_id === 'all')) {
+      return res.status(400).json({ error: 'API key phải gắn công ty của hệ sinh thái hiện tại' });
+    }
     if (wantAllCompanies || all_companies === true || company_id === 'all') {
       effectiveCompanyId = null;
       effectiveRegionId = null;
@@ -323,6 +342,7 @@ r.post('/api-keys', async (req, res) => {
     } else {
       return res.status(400).json({ error: 'Chọn công ty (1 / nhiều) hoặc «Tất cả công ty»' });
     }
+    if (!assertApiKeyCompanyInTenant(req, res, effectiveCompanyId, effectiveAllowed)) return;
 
     const scopes = normalizeMcpScopes(mcp_scopes);
     const pair = buildTokenPair();
@@ -361,6 +381,9 @@ r.patch('/api-keys/:id', async (req, res) => {
     }
     const cur = await findKeyById(req.params.id);
     if (!cur) return res.status(404).json({ error: 'Không tìm thấy key' });
+    if (!apiKeyAllowedInTenant(req, cur)) {
+      return res.status(403).json({ error: 'Chỉ được dùng API key của hệ sinh thái hiện tại' });
+    }
     const {
       name, default_assigned_to, active, webhook_url, company_id,
       region_id, default_source_category_id, default_lead_type_id, default_pipeline_id,
@@ -383,6 +406,9 @@ r.patch('/api-keys/:id', async (req, res) => {
       }
     }
 
+    if (isTenantScopeEnforced(req) && (all_companies === true || company_id === 'all')) {
+      return res.status(400).json({ error: 'API key phải gắn công ty của hệ sinh thái hiện tại' });
+    }
     if (all_companies === true || company_id === 'all') {
       patch.company_id = null;
       patch.region_id = null;
@@ -398,6 +424,10 @@ r.patch('/api-keys/:id', async (req, res) => {
     // Nếu đổi region hoặc company → kiểm tra khớp (dùng giá trị mới nếu có)
     const effectiveRegion = patch.region_id !== undefined ? patch.region_id : cur.region_id;
     const effectiveCompany = patch.company_id !== undefined ? patch.company_id : cur.company_id;
+    const effectiveAllowed = patch.allowed_company_ids !== undefined
+      ? (Array.isArray(patch.allowed_company_ids) ? patch.allowed_company_ids : [])
+      : (Array.isArray(cur.allowed_company_ids) ? cur.allowed_company_ids : []);
+    if (!assertApiKeyCompanyInTenant(req, res, effectiveCompany, effectiveAllowed)) return;
     if (patch.region_id !== undefined || patch.company_id !== undefined) {
       const chk = await assertRegionMatchesCompany(effectiveRegion, effectiveCompany);
       if (!chk.ok) return res.status(400).json({ error: chk.error });
@@ -434,6 +464,9 @@ r.post('/api-keys/:id/rotate', async (req, res) => {
     }
     const cur = await findKeyById(req.params.id);
     if (!cur) return res.status(404).json({ error: 'Không tìm thấy key' });
+    if (!apiKeyAllowedInTenant(req, cur)) {
+      return res.status(403).json({ error: 'Chỉ được dùng API key của hệ sinh thái hiện tại' });
+    }
     const pair = buildTokenPair();
     const updated = await updateKey(req.params.id, {
       key: pair.access_token,
@@ -546,6 +579,9 @@ r.delete('/api-keys/:id', async (req, res) => {
     }
     const cur = await findKeyById(req.params.id);
     if (!cur) return res.status(404).json({ error: 'Không tìm thấy key' });
+    if (!apiKeyAllowedInTenant(req, cur)) {
+      return res.status(403).json({ error: 'Chỉ được dùng API key của hệ sinh thái hiện tại' });
+    }
     await deleteKey(req.params.id);
     res.json({ success: true });
   } catch (e) {

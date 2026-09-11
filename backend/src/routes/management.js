@@ -6,7 +6,7 @@ const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { isAdminLike } = require('../helpers/adminRole');
 const { getWonDealProjectIds, ensureHasCrmDealColumn } = require('../helpers/workshopKanban');
-const { fetchAllByIds, fetchAllPages, fetchAllByIdsParallel, fetchAllPagesParallel } = require('../helpers/supabaseFetchAll');
+const { fetchAllByIds, fetchAllByIdsParallel, fetchAllPagesParallel } = require('../helpers/supabaseFetchAll');
 const {
   buildProjectDealBundle,
   isProjectDeliveryStageRow,
@@ -26,13 +26,12 @@ const {
 } = require('../helpers/tenantScope');
 const { applyOpenOnlyFilter, applyPrimaryLeadOnly } = require('../helpers/unifiedTasksQuery');
 const { warnQ } = require('../helpers/queryErrorLog');
-const {
-  resolveWorkRegionScope,
-  countOverdueTasksForRegion,
-} = require('../helpers/workRegionFilter');
+const { resolveWorkRegionScope } = require('../helpers/workRegionFilter');
 const { responseCache } = require('../middleware/responseCache');
 const { PROJECTS_LIST_TAG } = require('../middleware/projectsCacheInvalidation');
 const { MODULE, resolveModuleDeadline } = require('../helpers/moduleDeadlinePolicy');
+const { classifyProjectForecast } = require('../helpers/projectForecast');
+const { orgReportDealIsClosedWon, loadDealKhSplitContext } = require('../helpers/crmDealKhSplit');
 const {
   WORK_UNIFIED_UUID_RE,
   parseWorkUnifiedUserIds,
@@ -94,6 +93,7 @@ const WORK_UNIFIED_PROJECT_COLUMNS = `
         id, code, name, status, deadline, estimated_value, production_value, deposit_amount, collected_amount,
         customer_id, current_stage_id, install_date, delivery_date, production_deadline,
         project_manager_id, sales_person_id, production_person_id, company_id, logistics_company_id,
+        workshop_type_id, sx_kanban_column_id,
         customer:customers(id, full_name, phone),
         current_stage:workflow_stages(id, name, slug, color, order_index),
         project_manager:users!projects_project_manager_id_fkey(id, full_name),
@@ -112,14 +112,15 @@ const WORK_UNIFIED_PROJECT_COLUMNS = `
 const WORK_UNIFIED_PROJECT_COLUMNS_LITE = `
         id, code, name, status, deadline, install_date, delivery_date, production_deadline,
         customer_id, current_stage_id,
-        project_manager_id, sales_person_id, production_person_id, company_id, logistics_company_id
+        project_manager_id, sales_person_id, production_person_id, company_id, logistics_company_id,
+        workshop_type_id, sx_kanban_column_id
       `;
 
 /** Như trên nhưng thêm tên khách — chỉ cần khi có tham số `search` (tìm theo tên KH). */
 const WORK_UNIFIED_PROJECT_COLUMNS_LITE_SEARCH = `${WORK_UNIFIED_PROJECT_COLUMNS_LITE}, customer:customers(full_name)`;
 
 /** Cột deal nhẹ — bỏ embed company_regions; bộ lọc khu vực chỉ dùng `region_id` phẳng. */
-const WORK_UNIFIED_DEAL_COLUMNS_LITE = 'id, code, title, project_id, company_id, parent_lead_id, created_at, assigned_to, lead_owner_id, region_id';
+const WORK_UNIFIED_DEAL_COLUMNS_LITE = 'id, code, title, type, project_id, company_id, parent_lead_id, created_at, assigned_to, lead_owner_id, region_id, stage_id';
 
 /** Cột deal đầy đủ — cần `crm_region` + tên NV deal để cột «Người phụ trách» khớp bộ lọc NV. */
 const WORK_UNIFIED_DEAL_COLUMNS = `${WORK_UNIFIED_DEAL_COLUMNS_LITE}, crm_region:company_regions(id, name, company_id), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name)`;
@@ -751,7 +752,89 @@ const WORK_OVERVIEW_ACTIVE_STATUSES = [
   'consulting', 'designing', 'quoting', 'contract_signed', 'producing', 'shipping', 'installing',
 ];
 
-// GET /api/management/work-overview — Tổng quan công việc (doanh thu, dự án cần chú ý, KH mới)
+/** Dự án/deal từ lúc ký HĐ — không gồm tư vấn/thiết kế/báo giá và không gồm lead. */
+const POST_CONTRACT_PROJECT_STATUSES = ['contract_signed', 'producing', 'shipping', 'installing'];
+const POST_CONTRACT_SLUGS = new Set(['contract_signed', 'producing', 'installing', 'completed', 'won']);
+const OVERVIEW_TASK_SELECT = 'unified_id, source, source_id, project_id, lead_id, title, status, deadline, assignee_id, task_kind, project_code, project_name, lead_title';
+
+function dealHasSignedContract(deal, khCtx) {
+  if (!deal || String(deal.type || 'deal') === 'lead') return false;
+  const st = deal.stage || (deal.stage_id && khCtx?.stageMap?.[deal.stage_id]) || null;
+  if (!st || st.is_lost) return false;
+  if (st.canonical_slug === 'lost' || st.deal_report_bucket === 'lost') return false;
+  if (orgReportDealIsClosedWon(st, khCtx?.wonStageOrderByPipe)) return true;
+  if (st.is_won) return true;
+  if (POST_CONTRACT_SLUGS.has(String(st.canonical_slug || ''))) return true;
+  if (st.deal_report_bucket === 'implementation' || st.deal_report_bucket === 'completed') return true;
+  return /ký\s*(hợp\s*)?đồng|ký hd/i.test(String(st.name || ''));
+}
+
+function overviewTaskAllowed(t) {
+  const kind = String(t?.task_kind || '');
+  if (kind === 'CRM-Lead' || kind === 'Cá nhân') return false;
+  return true;
+}
+
+async function attachOverviewTaskAssignees(tasks) {
+  const ids = [...new Set((tasks || []).map((t) => t.assignee_id).filter(Boolean).map(String))];
+  if (!ids.length) return tasks || [];
+  const users = await fetchAllByIds({
+    table: 'users', columns: 'id, full_name', key: 'id', ids,
+  });
+  const names = new Map((users || []).map((u) => [String(u.id), u.full_name]));
+  return (tasks || []).map((t) => ({
+    ...t,
+    assignee_name: names.get(String(t.assignee_id || '')) || null,
+  }));
+}
+
+async function fetchPostContractOverviewTasks({
+  projectIds, leadIds, scope, deadlineGte, deadlineLte, deadlineLt,
+}) {
+  const pids = [...new Set((projectIds || []).filter(Boolean).map(String))];
+  const lids = [...new Set((leadIds || []).filter(Boolean).map(String))];
+  if (!pids.length && !lids.length) return [];
+
+  const tune = (q, leadScoped) => {
+    let t = applyOpenOnlyFilter(applyPrimaryLeadOnly(q, !!leadScoped))
+      .neq('task_kind', 'CRM-Lead')
+      .not('deadline', 'is', null);
+    if (deadlineGte) t = t.gte('deadline', deadlineGte);
+    if (deadlineLte) t = t.lte('deadline', deadlineLte);
+    if (deadlineLt) t = t.lt('deadline', deadlineLt);
+    return applyCompanyScopeFilter(t, scope);
+  };
+
+  const seen = new Map();
+  const merge = (rows) => {
+    for (const row of rows || []) {
+      if (!row?.unified_id || !overviewTaskAllowed(row)) continue;
+      const k = String(row.unified_id);
+      if (!seen.has(k)) seen.set(k, row);
+    }
+  };
+  if (pids.length) {
+    merge(await fetchAllByIdsParallel({
+      table: 'unified_tasks_v',
+      columns: OVERVIEW_TASK_SELECT,
+      key: 'project_id',
+      ids: pids,
+      tune: (q) => tune(q, false),
+    }));
+  }
+  if (lids.length) {
+    merge(await fetchAllByIdsParallel({
+      table: 'unified_tasks_v',
+      columns: OVERVIEW_TASK_SELECT,
+      key: 'lead_id',
+      ids: lids,
+      tune: (q) => tune(q, true),
+    }));
+  }
+  return [...seen.values()];
+}
+
+// GET /api/management/work-overview — KPI + dự án cần chú ý lấy cùng tập Work Unified
 r.get('/work-overview', async (req, res) => {
   try {
     const scope = getCompanyScope(req, req.query.company_id);
@@ -776,7 +859,6 @@ r.get('/work-overview', async (req, res) => {
       if (to && ymd > to) return false;
       return true;
     };
-    const commitmentYmd = (p) => ymdLocal(p.install_date || p.delivery_date || p.production_deadline || p.deadline || '');
 
     const regionScope = await resolveWorkRegionScope(req.query.region_id, scope);
     const regionProjectIds = regionScope && !regionScope.none ? regionScope.projectIds : null;
@@ -788,67 +870,35 @@ r.get('/work-overview', async (req, res) => {
       return q;
     };
 
-    let activeQ = supabase.from('projects').select('*', { count: 'exact', head: true })
-      .in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
-    activeQ = applyProjectScopeFilter(activeQ, scope);
-    activeQ = applyRegionProjectIn(activeQ);
-
-    let trendQ = supabase.from('projects').select('id, estimated_value, created_at')
-      .gte('created_at', sixMonthsAgoStart.toISOString());
+    let trendQ = supabase.from('projects').select('id, estimated_value, created_at, status')
+      .gte('created_at', sixMonthsAgoStart.toISOString())
+      .not('status', 'in', '(new,consulting,designing,quoting)');
     trendQ = applyProjectScopeFilter(trendQ, scope);
     trendQ = applyRegionProjectIn(trendQ);
 
     const customersFrom = dateFrom
       ? `${dateFrom}T00:00:00+07:00`
       : firstDayThisMonth.toISOString();
+    const { data: signedStages } = await supabase
+      .from('crm_pipeline_stages')
+      .select('id, is_won, is_lost, canonical_slug, deal_report_bucket, name');
+    const signedStageIds = (signedStages || [])
+      .filter((st) => dealHasSignedContract({ type: 'deal', stage: st }, { wonStageOrderByPipe: {} }))
+      .map((st) => st.id);
     let newCustomersQ = supabase.from('crm_leads').select('*', { count: 'exact', head: true })
-      .eq('type', 'lead').gte('created_at', customersFrom);
+      .eq('type', 'deal').gte('created_at', customersFrom);
+    if (signedStageIds.length) newCustomersQ = newCustomersQ.in('stage_id', signedStageIds.slice(0, 200));
+    else newCustomersQ = newCustomersQ.eq('id', '00000000-0000-0000-0000-000000000000');
     if (dateTo) newCustomersQ = newCustomersQ.lte('created_at', `${dateTo}T23:59:59+07:00`);
     newCustomersQ = applyCompanyScopeFilter(newCustomersQ, scope);
     if (regionScope?.none) newCustomersQ = newCustomersQ.is('region_id', null);
     else if (regionScope?.regionId) newCustomersQ = newCustomersQ.eq('region_id', regionScope.regionId);
 
-    const dateFromIso = dateFrom ? `${dateFrom}T00:00:00+07:00` : '';
-    const dateToIso = dateTo ? `${dateTo}T23:59:59+07:00` : '';
-    let overdueTasksQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
-      .lt('deadline', now.toISOString()).not('deadline', 'is', null);
-    overdueTasksQ = applyPrimaryLeadOnly(overdueTasksQ, false);
-    overdueTasksQ = applyOpenOnlyFilter(overdueTasksQ);
-    overdueTasksQ = applyCompanyScopeFilter(overdueTasksQ, scope);
-    if (dateFromIso) overdueTasksQ = overdueTasksQ.gte('deadline', dateFromIso);
-    if (dateToIso) overdueTasksQ = overdueTasksQ.lte('deadline', dateToIso);
-
-    const todayYmd = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
-    const plus3 = (() => {
-      const [y, m, d] = todayYmd.split('-').map(Number);
-      const dt = new Date(Date.UTC(y, m - 1, d + 3));
-      return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
-    })();
-    // Hạn thực tế = lắp / giao / hạn SX / deadline — cùng nguồn với Work Unified (không chỉ projects.deadline).
-    let atRiskQ = supabase.from('projects')
-      .select(`
-        id, code, name, status, deadline, production_deadline, delivery_date, install_date,
-        sx_kanban_column_id, company_id, project_manager_id, sales_person_id, production_person_id,
-        project_manager:users!projects_project_manager_id_fkey(id, full_name),
-        sales_person:users!projects_sales_person_id_fkey(id, full_name),
-        production_person:users!projects_production_person_id_fkey(id, full_name)
-      `)
-      .in('status', WORK_OVERVIEW_ACTIVE_STATUSES)
-      .or(`deadline.lte.${plus3},production_deadline.lte.${plus3},delivery_date.lte.${plus3},install_date.lte.${plus3}`);
-    atRiskQ = applyProjectScopeFilter(atRiskQ, scope);
-    atRiskQ = applyRegionProjectIn(atRiskQ);
-
-    const overdueRegionCountP = regionScope && !regionScope.none
-      ? countOverdueTasksForRegion(regionScope, {
-        scope, nowIso: now.toISOString(), applyOpenOnlyFilter,
-        dateFromIso, dateToIso,
-      })
-      : Promise.resolve(null);
-
-    const [activeRes, trendRes, newCustomersRes, overdueTasksRes, atRiskRes, overdueRegionCount] = await Promise.all([
-      activeQ, trendQ, newCustomersQ, overdueTasksQ, atRiskQ, overdueRegionCountP,
+    const [wu, trendRes, newCustomersRes] = await Promise.all([
+      queryWorkUnifiedList(req, { forceLite: true, postContract: true }),
+      trendQ, newCustomersQ,
     ]);
-    if (atRiskRes.error) console.warn('[work-overview] at-risk:', atRiskRes.error.message);
+    if (wu.scope && denyScope(res, wu.scope)) return;
 
     // Doanh thu 6 tháng gần đây — giá trị dự án (estimated_value) tạo trong tháng đó.
     const trendBuckets = [];
@@ -878,50 +928,33 @@ r.get('/work-overview', async (req, res) => {
     }
     trendBuckets[trendBuckets.length - 1].isCurrentMonth = true;
 
-    // Dự án cần chú ý — quá hạn (late) hoặc hạn trong 3 ngày (at_risk), cùng ngưỡng Work Unified.
-    const projectsAtRisk = (atRiskRes.data || [])
-      .filter((p) => {
-        if (regionScope?.none && regionScope.projectIdSet.has(String(p.id))) return false;
-        if (hasDateRange && !ymdInRange(commitmentYmd(p), dateFrom, dateTo)) return false;
-        return true;
-      })
-      .map((p) => {
-        const commitmentDate = p.install_date || p.delivery_date || p.production_deadline || p.deadline || null;
-        const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitmentDate);
-        if (forecast !== 'late' && forecast !== 'at_risk') return null;
-        const owner = p.project_manager || p.sales_person || p.production_person || null;
-        const risk = forecast === 'late'
-          ? { level: 'overdue', label: `Trễ hạn ${delay_days} ngày` }
-          : { level: 'warning', label: 'Nguy cơ trễ' };
-        return {
-          id: p.id, code: p.code, name: p.name, deadline: commitmentDate,
-          days_left: days_remaining, owner_name: owner?.full_name || null, risk,
-        };
-      })
-      .filter(Boolean)
+    // Dự án cần chú ý — cùng tập + forecast với Work Unified (late / at_risk).
+    const atRiskLite = (wu.filtered || [])
+      .filter((it) => it.forecast === 'late' || it.forecast === 'at_risk')
       .sort((a, b) => {
-        const ao = a.risk.level === 'overdue' ? 0 : 1;
-        const bo = b.risk.level === 'overdue' ? 0 : 1;
+        const ao = a.forecast === 'late' ? 0 : 1;
+        const bo = b.forecast === 'late' ? 0 : 1;
         if (ao !== bo) return ao - bo;
-        return a.days_left - b.days_left;
+        return (a.days_remaining ?? 0) - (b.days_remaining ?? 0);
       })
       .slice(0, 50);
+    const atRiskHydrated = await wu.hydratePage(atRiskLite);
+    const projectsAtRisk = atRiskHydrated.map((it) => {
+      const late = it.forecast === 'late';
+      return {
+        id: it.id,
+        code: it.code,
+        name: it.name,
+        deadline: it.deadline,
+        days_left: it.days_remaining,
+        owner_name: it.assignee_name || it.person1_name || null,
+        risk: late
+          ? { level: 'overdue', label: `Trễ hạn ${it.delay_days || 0} ngày` }
+          : { level: 'warning', label: 'Nguy cơ trễ' },
+      };
+    });
 
-    let projectsActive = activeRes.count || 0;
-    if (regionScope?.none || hasDateRange) {
-      const activeDated = await fetchAllPages(() => {
-        let q = supabase.from('projects')
-          .select('id, deadline, production_deadline, delivery_date, install_date')
-          .in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
-        q = applyProjectScopeFilter(q, scope);
-        return applyRegionProjectIn(q);
-      });
-      projectsActive = (activeDated || []).filter((p) => {
-        if (regionScope?.none && regionScope.projectIdSet.has(String(p.id))) return false;
-        if (hasDateRange && !ymdInRange(commitmentYmd(p), dateFrom, dateTo)) return false;
-        return true;
-      }).length;
-    }
+    const projectsActive = wu.stats?.total || 0;
 
     let revenuePeriod = trendBuckets[trendBuckets.length - 1].total;
     if (hasDateRange) {
@@ -933,31 +966,51 @@ r.get('/work-overview', async (req, res) => {
       }
     }
 
-    let overdueTasks = overdueTasksRes.count || 0;
-    if (overdueRegionCount != null) overdueTasks = overdueRegionCount;
-    else if (regionScope?.none) {
-      const overdueRows = await fetchAllPages(() => {
-        let q = supabase.from('unified_tasks_v').select('unified_id, lead_id, project_id')
-          .lt('deadline', now.toISOString()).not('deadline', 'is', null);
-        q = applyOpenOnlyFilter(q);
-        if (dateFromIso) q = q.gte('deadline', dateFromIso);
-        if (dateToIso) q = q.lte('deadline', dateToIso);
-        return applyCompanyScopeFilter(q, scope);
-      });
-      overdueTasks = (overdueRows || []).filter((t) => {
-        const lid = t.lead_id != null ? String(t.lead_id) : '';
-        const pid = t.project_id != null ? String(t.project_id) : '';
-        const hit = (lid && regionScope.leadIdSet.has(lid))
-          || (pid && regionScope.projectIdSet.has(pid));
-        return !hit;
-      }).length;
-    }
+    const todayYmd = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+    const dueFrom = dateFrom || todayYmd;
+    const dueTo = dateTo || todayYmd;
+    const overdueToYmd = (!dateTo || dateTo >= todayYmd)
+      ? (() => {
+        const [y, m, d] = todayYmd.split('-').map(Number);
+        const dt = new Date(Date.UTC(y, m - 1, d - 1));
+        return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+      })()
+      : dateTo;
+    const projectIds = (wu.filtered || []).map((it) => it.id).filter(Boolean);
+    const signedLeadIds = [...new Set(
+      (wu.filtered || []).flatMap((it) => it.signed_lead_ids || []),
+    )];
+    const [todayRaw, overdueRaw] = await Promise.all([
+      fetchPostContractOverviewTasks({
+        projectIds,
+        leadIds: signedLeadIds,
+        scope,
+        deadlineGte: `${dueFrom}T00:00:00+07:00`,
+        deadlineLte: `${dueTo}T23:59:59+07:00`,
+      }),
+      fetchPostContractOverviewTasks({
+        projectIds,
+        leadIds: signedLeadIds,
+        scope,
+        ...(dateFrom ? { deadlineGte: `${dateFrom}T00:00:00+07:00` } : {}),
+        deadlineLte: `${overdueToYmd}T23:59:59+07:00`,
+      }),
+    ]);
+    todayRaw.sort((a, b) => String(a.deadline || '').localeCompare(String(b.deadline || '')));
+    overdueRaw.sort((a, b) => String(a.deadline || '').localeCompare(String(b.deadline || '')));
+    const [todayTasks, overdueTaskItems] = await Promise.all([
+      attachOverviewTaskAssignees(todayRaw.slice(0, 50)),
+      attachOverviewTaskAssignees(overdueRaw.slice(0, 50)),
+    ]);
 
     res.json({
       company_id: primaryCompanyIdFromScope(scope),
       projects_active: projectsActive,
       new_customers_this_month: newCustomersRes.count || 0,
-      overdue_tasks: overdueTasks,
+      overdue_tasks: overdueRaw.length,
+      today_task_count: todayRaw.length,
+      today_tasks: todayTasks,
+      overdue_task_items: overdueTaskItems,
       revenue_this_month: revenuePeriod,
       revenue_trend: trendBuckets.map((b, idx) => ({
         label: b.label,
@@ -1116,19 +1169,367 @@ r.get('/crm-overview', async (req, res) => {
   }
 });
 
-function startOfDayMs(d) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x.getTime();
-}
+/**
+ * Cùng tập dự án + bộ lọc với GET /work-unified (kèm deal CRM đặt xưởng khác).
+ * `forceLite`: quét cột nhẹ (trang Tổng quan công việc) — hydrate sau cho đúng dòng cần hiện.
+ */
+async function queryWorkUnifiedList(req, opts = {}) {
+  const scope = getCompanyScope(req, req.query.company_id);
+  if (!scope?.ok) return { scope };
+  const {
+    stage: stageFilter, forecast: forecastFilter,
+    search: searchQuery, region_id: regionIdFilter,
+    date_from: dateFrom, date_to: dateTo, page: pageParam, page_size: pageSizeParam,
+  } = req.query;
+  const userIdFilters = parseWorkUnifiedUserIds(req.query, req.originalUrl || req.url);
+  const userIdSet = new Set(userIdFilters);
 
-/** on_track | at_risk | late | unknown — cùng ngưỡng với buildProjectOverview (projectDealBundle.js). */
-function classifyProjectForecast(commitmentDate) {
-  if (!commitmentDate) return { forecast: 'unknown', days_remaining: null, delay_days: 0 };
-  const daysRemaining = Math.round((startOfDayMs(commitmentDate) - startOfDayMs(new Date())) / 86400000);
-  if (daysRemaining < 0) return { forecast: 'late', days_remaining: daysRemaining, delay_days: Math.abs(daysRemaining) };
-  if (daysRemaining <= 3) return { forecast: 'at_risk', days_remaining: daysRemaining, delay_days: 2 };
-  return { forecast: 'on_track', days_remaining: daysRemaining, delay_days: 0 };
+  const searchQ = String(searchQuery || '').trim().toLowerCase();
+  const pageSize = opts.forceLite
+    ? null
+    : (pageSizeParam ? Math.max(1, Math.min(200, parseInt(pageSizeParam, 10) || 20)) : null);
+  const useLite = opts.forceLite || !!pageSize;
+
+  const scanProjectColumns = !useLite
+    ? WORK_UNIFIED_PROJECT_COLUMNS
+    : (searchQ ? WORK_UNIFIED_PROJECT_COLUMNS_LITE_SEARCH : WORK_UNIFIED_PROJECT_COLUMNS_LITE);
+  const scanDealColumns = useLite ? WORK_UNIFIED_DEAL_COLUMNS_LITE : WORK_UNIFIED_DEAL_COLUMNS;
+
+  const [stageRowsRes, ownedProjects] = await Promise.all([
+    supabase
+      .from('workflow_stages')
+      .select('id, name, slug, color, order_index, is_active, company_id')
+      .is('company_id', null)
+      .eq('is_active', true)
+      .order('order_index'),
+    fetchAllPagesParallel(() => {
+      const pq = supabase.from('projects').select(scanProjectColumns)
+        .in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
+      return applyProjectScopeFilter(pq, scope);
+    }),
+  ]);
+  const stages = (stageRowsRes?.data || []).filter(isProjectDeliveryStageRow);
+  const deliveryStages = stages.length ? stages : DEFAULT_DELIVERY_STAGES;
+
+  const scopedCompanyIds = scopeCompanyIdList(scope);
+  const scopeIdSet = new Set(scopedCompanyIds);
+  const projectsById = new Map();
+  (ownedProjects || []).forEach((p) => { if (p?.id) projectsById.set(String(p.id), p); });
+
+  if (scopedCompanyIds.length) {
+    const linkedIds = await listCrmLinkedProjectIds(scopedCompanyIds);
+    const missing = linkedIds.filter((id) => !projectsById.has(String(id)));
+    if (missing.length) {
+      const extra = await fetchAllByIdsParallel({
+        table: 'projects',
+        columns: scanProjectColumns,
+        key: 'id',
+        ids: missing,
+        tune: (q) => q.in('status', WORK_OVERVIEW_ACTIVE_STATUSES),
+      });
+      (extra || []).forEach((p) => { if (p?.id) projectsById.set(String(p.id), p); });
+    }
+  }
+
+  const projects = [...projectsById.values()];
+  const projectIds = projects.map((p) => p.id);
+  const workshopTypeIds = [...new Set(projects.map((p) => p.workshop_type_id).filter(Boolean))];
+  const sxColumnIds = [...new Set(projects.map((p) => p.sx_kanban_column_id).filter(Boolean))];
+  const dealsForProject = new Map();
+  const workshopTypeById = new Map();
+  const sxStageById = new Map();
+  if (projectIds.length) {
+    const [deals, linksOrNull, workshopTypes, sxStages] = await Promise.all([
+      fetchAllByIdsParallel({
+        table: 'crm_leads',
+        columns: scanDealColumns,
+        key: 'project_id',
+        ids: projectIds,
+        tune: (q) => q.eq('type', 'deal'),
+      }),
+      fetchAllByIdsParallel({
+        table: 'crm_deal_projects',
+        columns: 'deal_id, project_id',
+        key: 'project_id',
+        ids: projectIds,
+      }).catch((e) => {
+        if (!String(e.message || '').includes('crm_deal_projects')) {
+          console.warn('[work-unified] junction deals:', e.message);
+        }
+        return null;
+      }),
+      workshopTypeIds.length
+        ? fetchAllByIdsParallel({
+          table: 'workshop_project_types',
+          columns: 'id, name',
+          key: 'id',
+          ids: workshopTypeIds,
+        })
+        : Promise.resolve([]),
+      sxColumnIds.length
+        ? fetchAllByIdsParallel({
+          table: 'production_pipeline_stages',
+          columns: 'id, name, bucket_slug, counts_as_completed_revenue, counts_as_collected_revenue',
+          key: 'id',
+          ids: sxColumnIds,
+        })
+        : Promise.resolve([]),
+    ]);
+    (workshopTypes || []).forEach((w) => { if (w?.id) workshopTypeById.set(String(w.id), w); });
+    (sxStages || []).forEach((s) => { if (s?.id) sxStageById.set(String(s.id), s); });
+    const dealById = new Map();
+    (deals || []).forEach((d) => {
+      if (d?.id) dealById.set(String(d.id), d);
+      attachDealToProjectMap(dealsForProject, d.project_id, d);
+    });
+    try {
+      const links = linksOrNull;
+      const missingDealIds = [...new Set((links || [])
+        .map((r) => r.deal_id)
+        .filter((id) => id && !dealById.has(String(id)))
+        .map(String))];
+      if (missingDealIds.length) {
+        const extraDeals = await fetchAllByIdsParallel({
+          table: 'crm_leads',
+          columns: scanDealColumns,
+          key: 'id',
+          ids: missingDealIds,
+          tune: (q) => q.eq('type', 'deal'),
+        });
+        (extraDeals || []).forEach((d) => { if (d?.id) dealById.set(String(d.id), d); });
+      }
+      (links || []).forEach((r) => {
+        attachDealToProjectMap(dealsForProject, r.project_id, dealById.get(String(r.deal_id)));
+      });
+    } catch (e) {
+      if (!String(e.message || '').includes('crm_deal_projects')) {
+        console.warn('[work-unified] junction deals:', e.message);
+      }
+    }
+  }
+
+  let khCtx = { stageMap: {}, wonStageOrderByPipe: {}, dealKhSplitAvailable: false };
+  if (opts.postContract && projectIds.length) {
+    const allLoadedDeals = [...dealsForProject.values()].flat().filter(Boolean);
+    try {
+      const stageIds = [...new Set(allLoadedDeals.map((d) => d.stage_id).filter(Boolean))];
+      if (stageIds.length) {
+        const { data: stRows } = await supabase
+          .from('crm_pipeline_stages')
+          .select('id, pipeline_id, order_index, is_won, is_lost, canonical_slug, deal_report_bucket, pipeline_type, name')
+          .in('id', stageIds);
+        const stById = Object.create(null);
+        (stRows || []).forEach((s) => { if (s?.id) stById[s.id] = s; });
+        allLoadedDeals.forEach((d) => {
+          if (d.stage_id && stById[d.stage_id]) d.stage = stById[d.stage_id];
+        });
+      }
+      khCtx = await loadDealKhSplitContext(allLoadedDeals);
+    } catch (e) {
+      console.warn('[work-unified] signed-contract stages:', e.message);
+    }
+  }
+
+  const buildItem = (p, dealMap) => {
+    const flow = buildDeliveryFlow({ project: p, deliveryStages, pipelines: {} });
+    const doneSteps = flow.filter((s) => s.status === 'done').length;
+    const currentStep = flow.find((s) => s.status === 'current');
+    const progressPct = flow.length
+      ? Math.round(((doneSteps + (currentStep ? 0.35 : 0)) / flow.length) * 100)
+      : 0;
+    const commitmentDate = p.install_date || p.delivery_date || p.production_deadline || p.deadline || null;
+    const workshopType = p.workshop_type || workshopTypeById.get(String(p.workshop_type_id || '')) || null;
+    const sxStage = sxStageById.get(String(p.sx_kanban_column_id || '')) || p.sx_pipeline_stage || null;
+    const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitmentDate, {
+      project: { ...p, workshop_type: workshopType },
+      sxStage,
+    });
+    const allDeals = dealMap.get(String(p.id)) || [];
+    const scopedDeals = scopeIdSet.size
+      ? allDeals.filter((d) => scopeIdSet.has(String(d.company_id)))
+      : allDeals;
+    const signedLeadIds = [...new Set(
+      (scopedDeals.length ? scopedDeals : allDeals)
+        .filter((d) => dealHasSignedContract(d, khCtx))
+        .map((d) => d.id)
+        .filter(Boolean)
+        .map(String),
+    )];
+    const postContract = signedLeadIds.length > 0
+      || (!allDeals.length && POST_CONTRACT_PROJECT_STATUSES.includes(p.status));
+    const dealStaffIds = [...new Set(
+      allDeals.flatMap((d) => [d.assigned_to, d.lead_owner_id]).filter(Boolean).map(String),
+    )];
+    const matchingDeal = userIdSet.size
+      ? allDeals.find((d) => dealMatchesWorkUnifiedUser(d, userIdSet))
+      : null;
+    const deal = matchingDeal || pickWorkUnifiedDeal(allDeals, scopeIdSet);
+    const projectAssignee = p.project_manager || p.sales_person || p.production_person || null;
+    const person1 = p.project_manager || p.sales_person || null;
+    const person2 = p.production_person && p.production_person.id !== person1?.id ? p.production_person : null;
+    const person1IdFlat = p.project_manager_id || p.sales_person_id || null;
+    const person2IdFlat = p.production_person_id
+      && String(p.production_person_id) !== String(person1IdFlat || '')
+      ? p.production_person_id
+      : null;
+    const dealAssigneeId = deal?.assigned_to || deal?.lead_owner_id || null;
+    const dealAssigneeName = deal?.assignee?.full_name
+      || deal?.lead_owner?.full_name
+      || null;
+    const assigneeId = dealAssigneeId || projectAssignee?.id || person1IdFlat || p.production_person_id || null;
+    const assigneeName = dealAssigneeName
+      || projectAssignee?.full_name
+      || null;
+    const hasCrm = !!deal;
+    const hasSx = !!p.company_id;
+    const hasVc = !!(p.logistics_company_id || p.install_date || p.delivery_date);
+    const regionCompany = deal?.crm_region?.company_id != null ? String(deal.crm_region.company_id) : '';
+    const region = (deal?.crm_region && (
+      !regionCompany
+      || regionCompany === String(deal.company_id || '')
+      || regionCompany === String(p.company_id || '')
+    ))
+      ? deal.crm_region
+      : null;
+    return {
+      id: p.id,
+      code: p.code,
+      name: p.name,
+      customer_name: p.customer?.full_name || null,
+      customer_phone: p.customer?.phone || null,
+      deal_code: deal?.code || null,
+      deal_title: deal?.title || null,
+      flow,
+      current_stage_slug: currentStep?.key || null,
+      current_stage_label: currentStep?.stage_name || currentStep?.label || null,
+      progress_pct: progressPct,
+      forecast,
+      days_remaining,
+      delay_days,
+      deadline: commitmentDate,
+      production_deadline: p.production_deadline || null,
+      delivery_date: p.delivery_date || null,
+      install_date: p.install_date || null,
+      value: p.estimated_value || p.production_value || null,
+      has_crm: hasCrm,
+      has_sx: hasSx,
+      has_vc: hasVc,
+      assignee_name: assigneeName,
+      assignee_id: assigneeId,
+      person1_name: person1?.full_name || dealAssigneeName || null,
+      person1_id: person1?.id || person1IdFlat || dealAssigneeId || null,
+      person2_name: person2?.full_name || null,
+      person2_id: person2?.id || person2IdFlat || null,
+      sales_person_id: p.sales_person_id || p.sales_person?.id || null,
+      project_manager_id: p.project_manager_id || p.project_manager?.id || null,
+      region_id: region?.id || deal?.region_id || null,
+      region_name: region?.name || null,
+      deal_assignee_id: dealAssigneeId,
+      deal_staff_ids: dealStaffIds,
+      signed_lead_ids: signedLeadIds,
+      post_contract: postContract,
+    };
+  };
+
+  const hydratePage = async (liteItems) => {
+    const ids = liteItems.map((it) => it.id).filter(Boolean);
+    if (!ids.length) return liteItems;
+    const [fullProjects, fullDeals, fullLinks] = await Promise.all([
+      fetchAllByIdsParallel({
+        table: 'projects', columns: WORK_UNIFIED_PROJECT_COLUMNS, key: 'id', ids,
+      }),
+      fetchAllByIdsParallel({
+        table: 'crm_leads',
+        columns: WORK_UNIFIED_DEAL_COLUMNS,
+        key: 'project_id',
+        ids,
+        tune: (q) => q.eq('type', 'deal'),
+      }),
+      fetchAllByIdsParallel({
+        table: 'crm_deal_projects', columns: 'deal_id, project_id', key: 'project_id', ids,
+      }).catch(() => []),
+    ]);
+    const pageDealMap = new Map();
+    const dealById = new Map();
+    (fullDeals || []).forEach((d) => {
+      if (d?.id) dealById.set(String(d.id), d);
+      attachDealToProjectMap(pageDealMap, d.project_id, d);
+    });
+    const missingDealIds = [...new Set((fullLinks || [])
+      .map((r) => r.deal_id)
+      .filter((id) => id && !dealById.has(String(id)))
+      .map(String))];
+    if (missingDealIds.length) {
+      const extra = await fetchAllByIdsParallel({
+        table: 'crm_leads',
+        columns: WORK_UNIFIED_DEAL_COLUMNS,
+        key: 'id',
+        ids: missingDealIds,
+        tune: (q) => q.eq('type', 'deal'),
+      });
+      (extra || []).forEach((d) => { if (d?.id) dealById.set(String(d.id), d); });
+    }
+    (fullLinks || []).forEach((r) => {
+      attachDealToProjectMap(pageDealMap, r.project_id, dealById.get(String(r.deal_id)));
+    });
+
+    const fullById = new Map();
+    (fullProjects || []).forEach((p) => { if (p?.id) fullById.set(String(p.id), p); });
+    return liteItems.map((it) => {
+      const p = fullById.get(String(it.id));
+      return p ? buildItem(p, pageDealMap) : it;
+    });
+  };
+
+  const items = (projects || []).map((p) => buildItem(p, dealsForProject));
+
+  let filtered = items;
+  if (stageFilter) filtered = filtered.filter((it) => it.current_stage_slug === stageFilter);
+  if (searchQ) {
+    filtered = filtered.filter((it) => {
+      const hay = [it.code, it.name, it.customer_name, it.deal_code, it.deal_title]
+        .filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(searchQ);
+    });
+  }
+  if (userIdFilters.length) {
+    filtered = filtered.filter((it) => workUnifiedItemMatchesUserIds(it, userIdSet));
+  }
+  if (regionIdFilter === '__none__') {
+    filtered = filtered.filter((it) => !it.region_id);
+  } else if (regionIdFilter) {
+    filtered = filtered.filter((it) => String(it.region_id || '') === String(regionIdFilter));
+  }
+  if (dateFrom || dateTo) {
+    filtered = filtered.filter((it) => {
+      const d = it.deadline ? String(it.deadline).slice(0, 10) : '';
+      if (!d) return false;
+      if (dateFrom && d < dateFrom) return false;
+      if (dateTo && d > dateTo) return false;
+      return true;
+    });
+  }
+  if (opts.postContract) {
+    filtered = filtered.filter((it) => it.post_contract);
+  }
+
+  const stats = { total: filtered.length, on_track: 0, at_risk: 0, late: 0 };
+  filtered.forEach((it) => {
+    if (it.forecast === 'late') stats.late += 1;
+    else if (it.forecast === 'at_risk') stats.at_risk += 1;
+    else stats.on_track += 1;
+  });
+
+  return {
+    scope,
+    deliveryStages,
+    filtered,
+    stats,
+    hydratePage,
+    pageSize,
+    pageParam,
+    forecastFilter,
+  };
 }
 
 // GET /api/management/work-unified/search — tìm nhanh dự án (ô nhảy trang chi tiết)
@@ -1270,316 +1671,11 @@ r.get('/work-unified/search', async (req, res) => {
 // làm dữ liệu cũ quá lâu.
 r.get('/work-unified', responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_LIST_TAG] }), async (req, res) => {
   try {
-    const scope = getCompanyScope(req, req.query.company_id);
-    if (denyScope(res, scope)) return;
-    const {
-      stage: stageFilter, forecast: forecastFilter,
-      search: searchQuery, region_id: regionIdFilter,
-      date_from: dateFrom, date_to: dateTo, page: pageParam, page_size: pageSizeParam,
-    } = req.query;
-    const userIdFilters = parseWorkUnifiedUserIds(req.query, req.originalUrl || req.url);
-    const userIdSet = new Set(userIdFilters);
-
-    const searchQ = String(searchQuery || '').trim().toLowerCase();
-    // page_size chỉ áp dụng khi client yêu cầu (view Danh sách) — Kanban/Lịch cần đủ tập đã lọc để gom nhóm.
-    const pageSize = pageSizeParam ? Math.max(1, Math.min(200, parseInt(pageSizeParam, 10) || 20)) : null;
-
-    // Có phân trang → quét bằng cột NHẸ rồi chỉ hydrate embed nặng cho đúng 1 trang.
-    // Không phân trang (Kanban/Deadline/Planner/Lịch) → phải trả item đầy đủ cho cả tập,
-    // nên quét luôn bằng cột đầy đủ, không hydrate lại.
-    const scanProjectColumns = !pageSize
-      ? WORK_UNIFIED_PROJECT_COLUMNS
-      : (searchQ ? WORK_UNIFIED_PROJECT_COLUMNS_LITE_SEARCH : WORK_UNIFIED_PROJECT_COLUMNS_LITE);
-    const scanDealColumns = pageSize ? WORK_UNIFIED_DEAL_COLUMNS_LITE : WORK_UNIFIED_DEAL_COLUMNS;
-
-    // Chi phí chính của route này là SỐ LƯỢT gọi Supabase tuần tự (đo được ~360ms/lượt do
-    // Supabase ở xa), không phải khối lượng dòng (deal chỉ ~657, junction ~506). Vì vậy hai
-    // truy vấn ĐỘC LẬP nhau — bảng công đoạn và danh sách dự án — được bắn song song thay vì
-    // chờ nhau, tiết kiệm trọn một lượt trên MỌI request.
-    // fetchAllPagesParallel: PostgREST âm thầm cắt ở 1.000 dòng bất kể select trả về bao nhiêu —
-    // công ty >1.000 dự án active sẽ mất dữ liệu nếu query trực tiếp không .range() theo trang.
-    const [stageRowsRes, ownedProjects] = await Promise.all([
-      supabase
-        .from('workflow_stages')
-        .select('id, name, slug, color, order_index, is_active, company_id')
-        .is('company_id', null)
-        .eq('is_active', true)
-        .order('order_index'),
-      fetchAllPagesParallel(() => {
-        const pq = supabase.from('projects').select(scanProjectColumns)
-          .in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
-        return applyProjectScopeFilter(pq, scope);
-      }),
-    ]);
-    const stages = (stageRowsRes?.data || []).filter(isProjectDeliveryStageRow);
-    const deliveryStages = stages.length ? stages : DEFAULT_DELIVERY_STAGES;
-
-    const scopedCompanyIds = scopeCompanyIdList(scope);
-    const scopeIdSet = new Set(scopedCompanyIds);
-    const projectsById = new Map();
-    (ownedProjects || []).forEach((p) => { if (p?.id) projectsById.set(String(p.id), p); });
-
-    // Deal CRM của công ty đang xem nhưng SX đặt ở xưởng khác (vd. Phúc Đạt → Hucabi).
-    if (scopedCompanyIds.length) {
-      const linkedIds = await listCrmLinkedProjectIds(scopedCompanyIds);
-      const missing = linkedIds.filter((id) => !projectsById.has(String(id)));
-      if (missing.length) {
-        const extra = await fetchAllByIdsParallel({
-          table: 'projects',
-          columns: scanProjectColumns,
-          key: 'id',
-          ids: missing,
-          tune: (q) => q.in('status', WORK_OVERVIEW_ACTIVE_STATUSES),
-        });
-        (extra || []).forEach((p) => { if (p?.id) projectsById.set(String(p.id), p); });
-      }
-    }
-
-    const projects = [...projectsById.values()];
-    const projectIds = projects.map((p) => p.id);
-    const dealsForProject = new Map();
-    if (projectIds.length) {
-      // fetchAllByIdsParallel: cùng lý do — chia khúc id (tránh URL quá dài) + phân trang mỗi
-      // khúc (tránh cắt ở 1.000 dòng), chạy song song nhiều khúc — xem
-      // backend/src/helpers/supabaseFetchAll.js.
-      // Deal và bảng junction đều chỉ cần `projectIds` → độc lập nhau, bắn song song để
-      // bớt một lượt tuần tự nữa. Junction có thể chưa tồn tại ở DB cũ nên bọc riêng.
-      const [deals, linksOrNull] = await Promise.all([
-        fetchAllByIdsParallel({
-          table: 'crm_leads',
-          columns: scanDealColumns,
-          key: 'project_id',
-          ids: projectIds,
-          tune: (q) => q.eq('type', 'deal'),
-        }),
-        fetchAllByIdsParallel({
-          table: 'crm_deal_projects',
-          columns: 'deal_id, project_id',
-          key: 'project_id',
-          ids: projectIds,
-        }).catch((e) => {
-          if (!String(e.message || '').includes('crm_deal_projects')) {
-            console.warn('[work-unified] junction deals:', e.message);
-          }
-          return null;
-        }),
-      ]);
-      const dealById = new Map();
-      (deals || []).forEach((d) => {
-        if (d?.id) dealById.set(String(d.id), d);
-        attachDealToProjectMap(dealsForProject, d.project_id, d);
-      });
-      try {
-        const links = linksOrNull;
-        const missingDealIds = [...new Set((links || [])
-          .map((r) => r.deal_id)
-          .filter((id) => id && !dealById.has(String(id)))
-          .map(String))];
-        if (missingDealIds.length) {
-          const extraDeals = await fetchAllByIdsParallel({
-            table: 'crm_leads',
-            columns: scanDealColumns,
-            key: 'id',
-            ids: missingDealIds,
-            tune: (q) => q.eq('type', 'deal'),
-          });
-          (extraDeals || []).forEach((d) => { if (d?.id) dealById.set(String(d.id), d); });
-        }
-        (links || []).forEach((r) => {
-          attachDealToProjectMap(dealsForProject, r.project_id, dealById.get(String(r.deal_id)));
-        });
-      } catch (e) {
-        if (!String(e.message || '').includes('crm_deal_projects')) {
-          console.warn('[work-unified] junction deals:', e.message);
-        }
-      }
-    }
-
-    // Dựng 1 item đầu ra — dùng cho CẢ lượt quét (cột nhẹ) và lượt hydrate 1 trang (cột đầy đủ),
-    // nên logic chỉ tồn tại một chỗ, hai lượt không thể lệch nhau.
-    const buildItem = (p, dealMap) => {
-      const flow = buildDeliveryFlow({ project: p, deliveryStages, pipelines: {} });
-      const doneSteps = flow.filter((s) => s.status === 'done').length;
-      const currentStep = flow.find((s) => s.status === 'current');
-      const progressPct = flow.length
-        ? Math.round(((doneSteps + (currentStep ? 0.35 : 0)) / flow.length) * 100)
-        : 0;
-      const commitmentDate = p.install_date || p.delivery_date || p.production_deadline || p.deadline || null;
-      const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitmentDate);
-      const allDeals = dealMap.get(String(p.id)) || [];
-      const dealStaffIds = [...new Set(
-        allDeals.flatMap((d) => [d.assigned_to, d.lead_owner_id]).filter(Boolean).map(String),
-      )];
-      const matchingDeal = userIdSet.size
-        ? allDeals.find((d) => dealMatchesWorkUnifiedUser(d, userIdSet))
-        : null;
-      const deal = matchingDeal || pickWorkUnifiedDeal(allDeals, scopeIdSet);
-      const projectAssignee = p.project_manager || p.sales_person || p.production_person || null;
-      const person1 = p.project_manager || p.sales_person || null;
-      const person2 = p.production_person && p.production_person.id !== person1?.id ? p.production_person : null;
-      // Id nhân sự suy từ cột phẳng để lượt quét NHẸ (không embed users) vẫn lọc theo
-      // `user_id` đúng như lượt đầy đủ — embed chỉ dùng để lấy TÊN.
-      const person1IdFlat = p.project_manager_id || p.sales_person_id || null;
-      const person2IdFlat = p.production_person_id
-        && String(p.production_person_id) !== String(person1IdFlat || '')
-        ? p.production_person_id
-        : null;
-      const dealAssigneeId = deal?.assigned_to || deal?.lead_owner_id || null;
-      const dealAssigneeName = deal?.assignee?.full_name
-        || deal?.lead_owner?.full_name
-        || null;
-      const assigneeId = dealAssigneeId || projectAssignee?.id || person1IdFlat || p.production_person_id || null;
-      const assigneeName = dealAssigneeName
-        || projectAssignee?.full_name
-        || null;
-      const hasCrm = !!deal;
-      const hasSx = !!p.company_id;
-      const hasVc = !!(p.logistics_company_id || p.install_date || p.delivery_date);
-      // Khu vực theo công ty CRM của deal (không theo xưởng SX) — deal Phúc Đạt đặt Hucabi
-      // vẫn giữ region Showroom. Bỏ region nếu company_id của region không khớp deal/xưởng
-      // (deal đã chuyển công ty mà region_id cũ chưa cập nhật).
-      const regionCompany = deal?.crm_region?.company_id != null ? String(deal.crm_region.company_id) : '';
-      const region = (deal?.crm_region && (
-        !regionCompany
-        || regionCompany === String(deal.company_id || '')
-        || regionCompany === String(p.company_id || '')
-      ))
-        ? deal.crm_region
-        : null;
-      return {
-        id: p.id,
-        code: p.code,
-        name: p.name,
-        customer_name: p.customer?.full_name || null,
-        customer_phone: p.customer?.phone || null,
-        deal_code: deal?.code || null,
-        deal_title: deal?.title || null,
-        flow,
-        current_stage_slug: currentStep?.key || null,
-        current_stage_label: currentStep?.stage_name || currentStep?.label || null,
-        progress_pct: progressPct,
-        forecast,
-        days_remaining,
-        delay_days,
-        deadline: commitmentDate,
-        production_deadline: p.production_deadline || null,
-        delivery_date: p.delivery_date || null,
-        install_date: p.install_date || null,
-        value: p.estimated_value || p.production_value || null,
-        has_crm: hasCrm,
-        has_sx: hasSx,
-        has_vc: hasVc,
-        assignee_name: assigneeName,
-        assignee_id: assigneeId,
-        person1_name: person1?.full_name || dealAssigneeName || null,
-        person1_id: person1?.id || person1IdFlat || dealAssigneeId || null,
-        person2_name: person2?.full_name || null,
-        person2_id: person2?.id || person2IdFlat || null,
-        sales_person_id: p.sales_person_id || p.sales_person?.id || null,
-        project_manager_id: p.project_manager_id || p.project_manager?.id || null,
-        region_id: region?.id || deal?.region_id || null,
-        region_name: region?.name || null,
-        deal_assignee_id: dealAssigneeId,
-        deal_staff_ids: dealStaffIds,
-      };
-    };
-
-    /**
-     * Hydrate embed nặng cho đúng các dòng của 1 trang: nạp lại project (cột đầy đủ) +
-     * deal kèm `crm_region` chỉ cho ≤ page_size id, rồi dựng lại item bằng cùng `buildItem`.
-     * Giữ nguyên thứ tự đã sắp xếp ở lượt quét.
-     */
-    const hydratePage = async (liteItems) => {
-      const ids = liteItems.map((it) => it.id).filter(Boolean);
-      if (!ids.length) return liteItems;
-      const [fullProjects, fullDeals, fullLinks] = await Promise.all([
-        fetchAllByIdsParallel({
-          table: 'projects', columns: WORK_UNIFIED_PROJECT_COLUMNS, key: 'id', ids,
-        }),
-        fetchAllByIdsParallel({
-          table: 'crm_leads',
-          columns: WORK_UNIFIED_DEAL_COLUMNS,
-          key: 'project_id',
-          ids,
-          tune: (q) => q.eq('type', 'deal'),
-        }),
-        fetchAllByIdsParallel({
-          table: 'crm_deal_projects', columns: 'deal_id, project_id', key: 'project_id', ids,
-        }).catch(() => []),
-      ]);
-      const pageDealMap = new Map();
-      const dealById = new Map();
-      (fullDeals || []).forEach((d) => {
-        if (d?.id) dealById.set(String(d.id), d);
-        attachDealToProjectMap(pageDealMap, d.project_id, d);
-      });
-      // Deal nối qua bảng junction (deal ở công ty khác project) — nạp thêm cho đủ.
-      const missingDealIds = [...new Set((fullLinks || [])
-        .map((r) => r.deal_id)
-        .filter((id) => id && !dealById.has(String(id)))
-        .map(String))];
-      if (missingDealIds.length) {
-        const extra = await fetchAllByIdsParallel({
-          table: 'crm_leads',
-          columns: WORK_UNIFIED_DEAL_COLUMNS,
-          key: 'id',
-          ids: missingDealIds,
-          tune: (q) => q.eq('type', 'deal'),
-        });
-        (extra || []).forEach((d) => { if (d?.id) dealById.set(String(d.id), d); });
-      }
-      (fullLinks || []).forEach((r) => {
-        attachDealToProjectMap(pageDealMap, r.project_id, dealById.get(String(r.deal_id)));
-      });
-
-      const fullById = new Map();
-      (fullProjects || []).forEach((p) => { if (p?.id) fullById.set(String(p.id), p); });
-      return liteItems.map((it) => {
-        const p = fullById.get(String(it.id));
-        return p ? buildItem(p, pageDealMap) : it;
-      });
-    };
-
-    const items = (projects || []).map((p) => buildItem(p, dealsForProject));
-
-    let filtered = items;
-    if (stageFilter) filtered = filtered.filter((it) => it.current_stage_slug === stageFilter);
-    if (searchQ) {
-      filtered = filtered.filter((it) => {
-        const hay = [it.code, it.name, it.customer_name, it.deal_code, it.deal_title]
-          .filter(Boolean).join(' ').toLowerCase();
-        return hay.includes(searchQ);
-      });
-    }
-    if (userIdFilters.length) {
-      filtered = filtered.filter((it) => workUnifiedItemMatchesUserIds(it, userIdSet));
-    }
-    if (regionIdFilter === '__none__') {
-      filtered = filtered.filter((it) => !it.region_id);
-    } else if (regionIdFilter) {
-      filtered = filtered.filter((it) => String(it.region_id || '') === String(regionIdFilter));
-    }
-    if (dateFrom || dateTo) {
-      filtered = filtered.filter((it) => {
-        const d = it.deadline ? String(it.deadline).slice(0, 10) : '';
-        if (!d) return false;
-        if (dateFrom && d < dateFrom) return false;
-        if (dateTo && d > dateTo) return false;
-        return true;
-      });
-    }
-
-    // KPI + tab «Tất cả / Đúng tiến độ / …» theo bộ lọc (công đoạn, NV, khu vực, hạn, tìm kiếm).
-    // Không trừ tab forecast — để vẫn thấy phân bố khi đang xem «Trễ hạn».
-    const stats = { total: filtered.length, on_track: 0, at_risk: 0, late: 0 };
-    filtered.forEach((it) => {
-      if (it.forecast === 'late') stats.late += 1;
-      else if (it.forecast === 'at_risk') stats.at_risk += 1;
-      else stats.on_track += 1;
-    });
-
-    if (forecastFilter && forecastFilter !== 'all') {
-      filtered = filtered.filter((it) => it.forecast === forecastFilter);
+    const wu = await queryWorkUnifiedList(req);
+    if (denyScope(res, wu.scope)) return;
+    let filtered = wu.filtered;
+    if (wu.forecastFilter && wu.forecastFilter !== 'all') {
+      filtered = filtered.filter((it) => it.forecast === wu.forecastFilter);
     }
     filtered.sort((a, b) => {
       const da = a.deadline ? new Date(a.deadline).getTime() : Infinity;
@@ -1589,19 +1685,17 @@ r.get('/work-unified', responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_L
 
     const total = filtered.length;
     let pageItems = filtered;
-    if (pageSize) {
-      const page = Math.max(1, parseInt(pageParam, 10) || 1);
-      const start = (page - 1) * pageSize;
-      pageItems = filtered.slice(start, start + pageSize);
-      // Lượt quét ở trên dùng cột NHẸ nên item chưa có tên KH/công đoạn/nhân sự/khu vực.
-      // Hydrate embed nặng cho ĐÚNG các dòng của trang (≤ 200) — thay vì cho cả tập.
-      pageItems = await hydratePage(pageItems);
+    if (wu.pageSize) {
+      const page = Math.max(1, parseInt(wu.pageParam, 10) || 1);
+      const startIdx = (page - 1) * wu.pageSize;
+      pageItems = filtered.slice(startIdx, startIdx + wu.pageSize);
+      pageItems = await wu.hydratePage(pageItems);
     }
 
     res.json({
-      company_id: primaryCompanyIdFromScope(scope),
-      stages: deliveryStages.map((s) => ({ slug: s.slug, label: s.name })),
-      stats,
+      company_id: primaryCompanyIdFromScope(wu.scope),
+      stages: wu.deliveryStages.map((st) => ({ slug: st.slug, label: st.name })),
+      stats: wu.stats,
       items: pageItems,
       total,
     });

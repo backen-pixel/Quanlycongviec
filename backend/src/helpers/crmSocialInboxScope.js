@@ -11,9 +11,22 @@ const CRM_SOCIAL_INBOX_COMPANY_KEYS = {
 
 let _nextGoCompanyIdCache = { id: null, ts: 0 };
 
+const NEXTGO_HST_TENANT_ID = 'e37fac98-acd2-4675-84f4-285b65e423b1';
+
 async function resolveNextGoCompanyId() {
   if (_nextGoCompanyIdCache.id && Date.now() - _nextGoCompanyIdCache.ts < 300_000) {
     return _nextGoCompanyIdCache.id;
+  }
+  const { data: hst } = await supabase
+    .from('companies')
+    .select('id')
+    .eq('tenant_id', NEXTGO_HST_TENANT_ID)
+    .or('name.ilike.%NextGo%,short_name.ilike.%NextGo%')
+    .limit(1)
+    .maybeSingle();
+  if (hst?.id) {
+    _nextGoCompanyIdCache = { id: hst.id, ts: Date.now() };
+    return hst.id;
   }
   const { data } = await supabase
     .from('companies')

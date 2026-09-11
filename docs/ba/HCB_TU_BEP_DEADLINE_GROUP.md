@@ -1,6 +1,6 @@
 # HCB · Tủ bếp — Nhóm deadline pipeline & kế hoạch từ ngày lắp
 
-Tài liệu để thực hiện sau: gán `deadline_group` cho các cột pipeline SX của **HCB / Tủ bếp**, khớp quy tắc tính ngược từ ngày lắp đặt.
+Tài liệu khớp pipeline 588 (2026-09-11): gán `deadline_group` và tính ngược từ ngày lắp.
 
 - Ngày soạn: 2026-08-12
 - Công ty: **HCB** (Công ty Hucabi)
@@ -16,18 +16,18 @@ Tính **ngược** từ ngày lắp đặt:
 
 | # | Công đoạn | Số ngày | Ghi chú |
 |---|-----------|---------|---------|
-| 1 | Đóng hàng / đóng gói | **1** | Ngay trước ngày lắp |
-| 2 | Hoàn thiện | **2** | Trước đóng hàng. **Ngày hoàn thiện SX** = cuối đoạn này (= lắp − 2) |
-| 3 | Hoàn thiện thùng | **2** | Trước hoàn thiện |
-| 4 | Kế hoạch sản xuất | **Phần còn lại** | Từ **ngày tiếp nhận xưởng** → hết ngày trước hoàn thiện thùng |
+| 1 | Giao hàng | **1** | Ngay trước ngày lắp (board VC/LĐ) |
+| 2 | Hoàn thiện | **2** | Trước giao hàng. **Ngày hoàn thiện SX** = cuối đoạn này (= lắp − 2) |
+| 3 | Gia công | **2** | Trước hoàn thiện (vật tư, kính, sơn, thùng, alu, cánh) |
+| 4 | Kế hoạch SX | **Phần còn lại** | Từ **ngày tiếp nhận xưởng** → hết ngày trước gia công (cột Tiếp nhận / Kế hoạch / Duyệt) |
 
 ### Công thức (lắp = D)
 
 | Công đoạn | Khoảng ngày |
 |-----------|-------------|
-| Đóng hàng | `D−1` |
+| Giao hàng | `D−1` |
 | Hoàn thiện | `D−3` → `D−2` |
-| Hoàn thiện thùng | `D−5` → `D−4` |
+| Gia công | `D−5` → `D−4` |
 | Kế hoạch SX | `tiếp nhận` → `D−6` |
 
 Code tham chiếu: `frontend/src/lib/sxWorkshopSchedule.js` → `buildSxInstallBackPlan()`, `SX_DEADLINE_GROUPS`.
@@ -41,65 +41,48 @@ Setup UI: **Cài đặt pipeline SX** → mỗi cột chọn **Nhóm deadline** 
 | Công đoạn | `deadline_group` | Khoảng ngày | Hạn cuối công đoạn |
 |-----------|------------------|-------------|--------------------|
 | Kế hoạch SX | `planning` | **10 → 13/8** (4 ngày) | 13/8 |
-| Hoàn thiện thùng | `cabinet` | **14 → 15/8** | 15/8 |
+| Gia công | `cabinet` | **14 → 15/8** | 15/8 |
 | Hoàn thiện | `finishing` | **16 → 17/8** | **17/8** (= `production_finish_date`) |
-| Đóng hàng | `packing` | **18/8** | 18/8 |
-| Lắp đặt | — (mốc) | **19/8** | `delivery_date` |
+| Giao hàng | `packing` | **18/8** | 18/8 |
+| Lắp đặt | — (mốc) | **19/8** | ngày lắp (`install_date` / occurrence, fallback `delivery_date`) |
 
 Khi thẻ ở cột thuộc nhóm X → deadline công đoạn nên hiểu là **hạn cuối** của nhóm X ở bảng trên.
 
 ---
 
-## 3. Đề xuất gán nhóm — HCB Tủ bếp (theo cột hiện tại)
+## 3. Cột Kanban — HCB Tủ bếp (từ 2026-09-11)
 
-Thứ tự theo `order_index` pipeline HCB · Tủ bếp (snapshot 2026-08-12).
+Board **Tủ bếp** chỉ tới Hoàn thiện. Giao hàng / lắp đặt ở **VC/LĐ**. Công nợ là phân loại **Công nợ** (chip Kanban SX riêng).
 
-### `planning` — Kế hoạch SX
-
-| # | Tên cột |
-|---|---------|
-| 1 | Tiếp nhận đơn hàng về SX |
-| 2 | Thiết kế & lập kế hoạch NVL |
-| 3 | Sản xuất kiểm tra chéo đặt kính |
-| 4 | CHUẨN BỊ VẬT TƯ, CẮT KÍNH |
-| 5 | ĐANG CẮT CÁNH, |
-| 6 | KẾ HOẠCH SX THÙNG HỢP KIM |
-| 7 | KẾ HOẠCH SX THÙNG LÁ GHÉP |
-
-### `cabinet` — Hoàn thiện thùng
+### `planning` — Kế hoạch SX (Tiếp nhận → Duyệt)
 
 | # | Tên cột |
-|---|---------|
-| 8 | ĐANG SX THÙNG HỢP KIM + 100 X 16 |
-| 9 | ĐANG SX THÙNG LÁ GHÉP NHỎ |
+|---|---|
+| 1 | Tiếp nhận |
+| 2 | Kế hoạch |
+| 3 | Duyệt |
+
+### `cabinet` — Gia công (6 việc trên thẻ)
+
+| # | Tên cột | Việc |
+|---|---|---|
+| 4 | Gia công | Chuẩn bị vật tư, Đặt kính, Sơn, Thùng, Alu, Cánh |
 
 ### `finishing` — Hoàn thiện
 
 | # | Tên cột |
-|---|---------|
-| 10 | ĐỘI SƠN |
-| 11 | HT NHÔM NGUYÊN TẤM |
-| 12 | HT NHÔM LÁ GHÉP NHỎ |
-| 13 | KT KCS SẢN PHẨM, TÍNH CN |
+|---|---|
+| 5 | Hoàn thiện | Bàn giao VC/LĐ (`is_handover_to_logistics`) |
 
-### `packing` — Đóng hàng / đóng gói
+### `packing` — Giao hàng (board VC, không còn cột SX)
 
-| # | Tên cột |
-|---|---------|
-| 14 | ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG |
-| 15 | ĐƠN HÀNG NGÀY MAI GIAO |
+Giao hàng 1 ngày trước lắp; lắp đặt là mốc.
 
-### `NULL` — Không gán (sau giao / công nợ)
+### Công nợ (phân loại khác)
 
-| # | Tên cột |
-|---|---------|
-| 16 | ĐƠN HÀNG ĐÃ GIAO |
-| 17 | CÔNG NỢ ĐÃ TÍNH , |
-| 18 | CÔNG NỢ ĐANG ĐÔI CHIẾU |
-| 19 | CÔNG NỢ ĐÃ CHỐT |
-| 20 | CÔNG NỢ ĐÃ THANH TOÁN |
+CÔNG NỢ ĐÃ TÍNH → ĐANG ĐỐI CHIẾU → ĐÃ CHỐT → ĐÃ THANH TOÁN. `deadline_group` = NULL.
 
-> Nếu tên cột trên môi trường lệch nhẹ (chữ hoa/thường, dấu phẩy), map theo **ý nghĩa** cột, không cứng theo chuỗi tuyệt đối.
+Migration: `database/588_hcb_tubep_kanban_to_hoan_thien.sql`.
 
 ---
 
@@ -160,9 +143,8 @@ ORDER BY p.order_index;
 
 ## 5. Việc chưa làm (ghi chú kỹ thuật)
 
-- Gán `deadline_group` **chưa** chạy trên DB (cột còn `NULL`).
-- Kanban / modal deadline **chưa** tự điền hạn theo nhóm từ `buildSxInstallBackPlan` — nếu cần, làm bước tiếp: khi kéo vào cột có `deadline_group`, gợi ý `endYmd` của nhóm đó.
-- Phân loại **Cánh kính** HCB chưa nằm trong tài liệu này — map riêng khi cần.
+- Kanban / modal deadline **chưa** tự điền hạn theo nhóm từ `buildSxInstallBackPlan` khi kéo thẻ.
+- Phân loại **Cánh kính** HCB không đổi trong đợt 588.
 
 ---
 

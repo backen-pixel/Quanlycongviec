@@ -27,6 +27,7 @@ Migration SQL thật nằm ở `/database/*.sql` (root repo) — không nhân b�
 5. Workflow Claude ↔ Cursor ↔ GitHub → [`project/workflow-claude-cursor-github.md`](./project/workflow-claude-cursor-github.md)
 6. Công việc AI hiện tại → [`ai-handoff/CURRENT.md`](./ai-handoff/CURRENT.md)
 7. Lỗi query-guard 2026-09-08 (Claude kế hoạch sửa) → [`ai-handoff/BAO-CAO-loi-query-guard-2026-09-08.md`](./ai-handoff/BAO-CAO-loi-query-guard-2026-09-08.md)
+8. Tách NextGo instance (chuẩn bị, chưa cắt) → [`ops/nextgo-instance/README.md`](./ops/nextgo-instance/README.md)
 
 ## Regenerate tài liệu máy sinh
 

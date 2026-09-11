@@ -161,16 +161,31 @@ const LS_FB_COMPANY = 'facebook_filter_company_id';
 /** Lần đầu vào Facebook (admin): mặc định lọc đúng công ty của user, không ép lại sau khi user chọn «Tất cả». */
 const LS_FB_COMPANY_INIT = 'facebook_filter_company_initialized';
 
+function fbCompanyLsKey(user) {
+  const tid = String(user?.tenant_id || user?.tenantId || '').trim();
+  return tid ? `${LS_FB_COMPANY}:${tid}` : LS_FB_COMPANY;
+}
+
+function readFbCompanyFilter(user) {
+  try {
+    const keyed = localStorage.getItem(fbCompanyLsKey(user));
+    if (keyed != null && keyed !== '') return keyed;
+    if (user?.tenant_id || user?.tenantId) return '';
+    return localStorage.getItem(LS_FB_COMPANY) || '';
+  } catch {
+    return '';
+  }
+}
+
 export default function FacebookPage() {
   const { socket, user } = useAuth();
   const socialInboxLocked = isCrmSocialInboxCompanyLocked(user);
   const isAdmin = isAdminLike(user) && !isCrmSocialInboxUser(user);
   const loginCompanyId = String(user?.company_id || user?.companyId || '').trim();
+  const tenantScoped = !!(user?.tenant_id || user?.tenantId);
   const lockToLoginCompany = socialInboxLocked || !!loginCompanyId;
   const [companies, setCompanies] = useState([]);
-  const [filterFbCompany, setFilterFbCompany] = useState(() => {
-    try { return localStorage.getItem(LS_FB_COMPANY) || ''; } catch { return ''; }
-  });
+  const [filterFbCompany, setFilterFbCompany] = useState('');
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState(searchParams.get('tab') || 'inbox');
   const [stats, setStats] = useState(null);
@@ -206,25 +221,44 @@ export default function FacebookPage() {
   }, [isAdmin, lockToLoginCompany]);
 
   useEffect(() => {
-    if (!isAdmin || !user || lockToLoginCompany) return;
-    try {
-      if (localStorage.getItem(LS_FB_COMPANY_INIT)) return;
-      const cid = user.company_id || user.companyId;
-      if (cid) {
-        setFilterFbCompany(String(cid));
-        localStorage.setItem(LS_FB_COMPANY, String(cid));
-      }
-      localStorage.setItem(LS_FB_COMPANY_INIT, '1');
-    } catch { /* ignore */ }
-  }, [isAdmin, user, lockToLoginCompany]);
+    if (!user || lockToLoginCompany) return;
+    setFilterFbCompany(readFbCompanyFilter(user));
+  }, [user?.tenant_id, user?.tenantId, user?.id, lockToLoginCompany]);
 
   useEffect(() => {
-    if (!isAdmin || lockToLoginCompany) return;
+    if (!isAdmin || lockToLoginCompany || !companies.length) return;
+    const allowed = new Set(companies.map((c) => String(c.id)));
+    if (filterFbCompany && !allowed.has(String(filterFbCompany))) {
+      const fallback = loginCompanyId && allowed.has(loginCompanyId)
+        ? loginCompanyId
+        : String(companies[0].id);
+      setFilterFbCompany(fallback);
+    } else if (tenantScoped && !filterFbCompany) {
+      setFilterFbCompany(String(companies[0].id));
+    }
+  }, [isAdmin, lockToLoginCompany, companies, filterFbCompany, loginCompanyId, tenantScoped]);
+
+  useEffect(() => {
+    if (!isAdmin || !user || lockToLoginCompany) return;
     try {
-      if (filterFbCompany) localStorage.setItem(LS_FB_COMPANY, filterFbCompany);
-      else localStorage.removeItem(LS_FB_COMPANY);
+      const initKey = `${LS_FB_COMPANY_INIT}:${user.tenant_id || user.tenantId || 'none'}`;
+      if (localStorage.getItem(initKey)) return;
+      const cid = user.company_id || user.companyId || (companies[0] && companies[0].id);
+      if (cid) {
+        setFilterFbCompany(String(cid));
+        localStorage.setItem(fbCompanyLsKey(user), String(cid));
+      }
+      localStorage.setItem(initKey, '1');
     } catch { /* ignore */ }
-  }, [isAdmin, filterFbCompany, lockToLoginCompany]);
+  }, [isAdmin, user, lockToLoginCompany, companies]);
+
+  useEffect(() => {
+    if (!isAdmin || lockToLoginCompany || !user) return;
+    try {
+      if (filterFbCompany) localStorage.setItem(fbCompanyLsKey(user), filterFbCompany);
+      else localStorage.removeItem(fbCompanyLsKey(user));
+    } catch { /* ignore */ }
+  }, [isAdmin, filterFbCompany, lockToLoginCompany, user]);
 
   // Pham vi dang chon ben trong hop thu (Page + khoang ngay) — de cac chi so o dau trang
   // bam theo dung cong ty + Page + khoang ngay nguoi dung dang xem, thay vi luon la "hom nay".
@@ -306,7 +340,7 @@ export default function FacebookPage() {
               className="h-9 min-w-[170px] px-3 border rounded-lg text-sm bg-white"
               title="Lọc Page/chỉ số theo công ty (default_company_id trên Page)"
             >
-              <option value="">Tất cả công ty</option>
+              {!tenantScoped && <option value="">Tất cả công ty</option>}
               {companies.map((c) => (
                 <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
               ))}
@@ -1982,12 +2016,15 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
 
   // Load DISTINCT nguồn được cấu hình ở Page setup (facebook_pages.default_source_id)
   // — chỉ những nguồn này mới có ý nghĩa khi lọc trên danh bạ FB.
+  // Phải đi kèm bộ lọc công ty (fbCompanyQs) — backend còn lọc tiếp theo hệ sinh thái
+  // của tài khoản, nên admin HST chỉ thấy nguồn của Page trong HST mình.
   useEffect(() => {
-    fetch(`${API}/api/facebook/page-sources`, { headers: hdr() })
+    const q = fbCompanyQs ? `?${fbCompanyQs}` : '';
+    fetch(`${API}/api/facebook/page-sources${q}`, { headers: hdr() })
       .then(r => r.ok ? r.json() : { sources: [] })
       .then(data => setPageSources(data?.sources || []))
       .catch(() => setPageSources([]));
-  }, []);
+  }, [fbCompanyQs]);
 
   useEffect(() => { load(false); }, [load]);
 

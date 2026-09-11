@@ -137,9 +137,12 @@ function CompanyCard({ st, name, masterEnabled, busy, onToggle, onRunNow }) {
   );
 }
 
+const NEXTGO_LIVE_TENANT_ID = 'e37fac98-acd2-4675-84f4-285b65e423b1';
+
 export function FacebookAutoCompaniesPanel({ embedded = false }) {
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
+  const hidePlatformMaster = String(user?.tenant_id || user?.tenantId || '') === NEXTGO_LIVE_TENANT_ID;
   const all = useBatchAutoAll();
   const [companies, setCompanies] = useState([]);
   const [masterSaving, setMasterSaving] = useState(false);
@@ -247,6 +250,7 @@ export function FacebookAutoCompaniesPanel({ embedded = false }) {
             <RefreshCw size={13} /> Làm mới
           </button>
 
+          {!hidePlatformMaster && (
           <div className="flex items-center gap-2 pl-3 border-l border-gray-200" title="Công tắc tổng: tắt sẽ dừng auto của tất cả công ty">
             <Power size={15} className={all.master_enabled ? 'text-indigo-600' : 'text-gray-400'} />
             <span className="text-xs font-semibold text-gray-700">Công tắc tổng</span>
@@ -268,12 +272,15 @@ export function FacebookAutoCompaniesPanel({ embedded = false }) {
               {all.master_enabled ? 'BẬT' : 'TẮT'}
             </span>
           </div>
+          )}
         </div>
       </div>
 
+      {!hidePlatformMaster && (
       <div className="mb-4">
         <FbMasterSchedulePanel />
       </div>
+      )}
 
       {!all.master_enabled && (
         <div className="mb-4 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-4 py-2.5 text-sm flex items-center gap-2">

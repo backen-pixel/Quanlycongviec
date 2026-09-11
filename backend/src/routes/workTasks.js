@@ -43,6 +43,13 @@ const {
 } = require('../helpers/unifiedTasksQuery');
 const { fetchAllByIds, fetchAllByIdsParallel, fetchAllPages } = require('../helpers/supabaseFetchAll');
 const { resolveWorkRegionScope, taskMatchesRegionScope } = require('../helpers/workRegionFilter');
+const {
+  projectOverviewCategoryId,
+  projectOverviewSharedCategoryTitle,
+  firstVisibleOwnerId,
+  isHiddenOverviewOwner,
+  productionOwnerCandidateIds,
+} = require('../helpers/projectOverviewCategory');
 const { assertProjectAccessible } = require('../helpers/projectAccessScope');
 const {
   isCrmCompletedStage,
@@ -143,7 +150,7 @@ async function enrichTaskModuleOwners(rows, {
       ? fetchAllByIdsParallel({
         table: 'projects',
         columns: `
-          id, project_manager_id, sales_person_id, responsible_person_id,
+          id, company_id, project_manager_id, sales_person_id, responsible_person_id,
           production_person_id, logistics_person_id, installer_person_id, installation_person_id
         `,
         key: 'id',
@@ -179,29 +186,78 @@ async function enrichTaskModuleOwners(rows, {
 
   const projectById = new Map((projects || []).map((p) => [String(p.id), p]));
   const leadById = new Map((leads || []).map((l) => [String(l.id), l]));
+  const companyIds = [...new Set((projects || []).map((p) => p.company_id).filter(Boolean).map(String))];
+  const handoverRows = companyIds.length
+    ? await fetchAllByIdsParallel({
+      table: 'production_handover_settings',
+      columns: 'production_company_id, responsible_user_id',
+      key: 'production_company_id',
+      ids: companyIds,
+      tune: (q) => q.order('production_company_id'),
+    })
+    : [];
+  const handoverByCompany = new Map(
+    (handoverRows || [])
+      .filter((row) => row.responsible_user_id)
+      .map((row) => [String(row.production_company_id), String(row.responsible_user_id)]),
+  );
+  const userIds = new Set();
+  const addUserId = (id) => {
+    if (id) userIds.add(String(id));
+  };
+  handoverByCompany.forEach((id) => addUserId(id));
+  (projects || []).forEach((project) => {
+    addUserId(project.production_person_id);
+    addUserId(project.logistics_person_id);
+    addUserId(project.installer_person_id);
+    addUserId(project.installation_person_id);
+    addUserId(project.project_manager_id);
+    addUserId(project.responsible_person_id);
+    addUserId(project.sales_person_id);
+  });
+  (leads || []).forEach((lead) => {
+    addUserId(lead.assigned_to);
+    addUserId(lead.lead_owner_id);
+  });
+  (productionStaff || []).forEach((row) => addUserId(row.user_id));
+  for (const task of tasks) addUserId(task.assignee_id);
+
+  const users = userIds.size
+    ? await fetchAllByIdsParallel({
+      table: 'users',
+      columns: 'id, full_name, role, company_id',
+      key: 'id',
+      ids: [...userIds],
+      tune: (q) => q.order('id'),
+    })
+    : [];
+  const userById = new Map((users || []).map((u) => [String(u.id), u]));
+  const nameById = new Map((users || []).map((u) => [String(u.id), u.full_name]));
+  const pickOwner = (...ids) => firstVisibleOwnerId(ids, userById);
+
   const productionStaffByProject = new Map();
   (productionStaff || [])
     .slice()
     .sort((a, b) => Number(b.is_primary) - Number(a.is_primary) || (a.order_index || 0) - (b.order_index || 0))
     .forEach((row) => {
       const key = String(row.project_id);
-      if (!productionStaffByProject.has(key)) productionStaffByProject.set(key, row.user_id);
+      if (productionStaffByProject.has(key)) return;
+      const visibleId = pickOwner(row.user_id);
+      if (visibleId) productionStaffByProject.set(key, visibleId);
     });
-  const firstId = (...ids) => ids.find(Boolean) || null;
   const ownerIdFor = (task) => {
     const lead = task.lead_id ? leadById.get(String(task.lead_id)) : null;
     const project = projectById.get(String(task.project_id || lead?.project_id || '')) || null;
     const lane = taskOwnerLane(task);
     if (lane === 'production') {
-      return firstId(
-        project?.production_person_id,
+      return pickOwner(...productionOwnerCandidateIds(
+        project,
         productionStaffByProject.get(String(project?.id || '')),
-        project?.project_manager_id,
-        project?.responsible_person_id,
-      );
+        handoverByCompany,
+      ));
     }
     if (lane === 'logistics') {
-      return firstId(
+      return pickOwner(
         project?.logistics_person_id,
         project?.installer_person_id,
         project?.installation_person_id,
@@ -209,7 +265,7 @@ async function enrichTaskModuleOwners(rows, {
         productionStaffByProject.get(String(project?.id || '')),
       );
     }
-    return firstId(
+    return pickOwner(
       project?.project_manager_id,
       project?.sales_person_id,
       project?.responsible_person_id,
@@ -218,34 +274,19 @@ async function enrichTaskModuleOwners(rows, {
     );
   };
 
-  const ownerByTask = new Map();
-  const userIds = new Set();
   for (const task of tasks) {
     const ownerId = ownerIdFor(task);
-    ownerByTask.set(String(task.unified_id), ownerId);
-    if (task.assignee_id) userIds.add(String(task.assignee_id));
-    if (ownerId) userIds.add(String(ownerId));
-  }
-  const users = userIds.size
-    ? await fetchAllByIdsParallel({
-      table: 'users',
-      columns: 'id, full_name',
-      key: 'id',
-      ids: [...userIds],
-      tune: (q) => q.order('id'),
-    })
-    : [];
-  const nameById = new Map((users || []).map((u) => [String(u.id), u.full_name]));
-
-  for (const task of tasks) {
-    const ownerId = ownerByTask.get(String(task.unified_id)) || null;
-    const assigneeId = task.assignee_id || null;
+    const assigneeId = task.assignee_id ? String(task.assignee_id) : null;
     const lead = task.lead_id ? leadById.get(String(task.lead_id)) : null;
-    task.assignee_name = assigneeId ? (nameById.get(String(assigneeId)) || null) : null;
+    const assigneeUser = assigneeId ? userById.get(assigneeId) : null;
+    const visibleAssigneeId = assigneeId && !isHiddenOverviewOwner(assigneeUser) ? assigneeId : null;
+    task.assignee_name = assigneeId ? (nameById.get(assigneeId) || null) : null;
     task.module_owner_id = ownerId;
     task.module_owner_name = ownerId ? (nameById.get(String(ownerId)) || null) : null;
-    task.effective_assignee_id = assigneeId || ownerId;
-    task.effective_assignee_name = task.assignee_name || task.module_owner_name || null;
+    task.effective_assignee_id = visibleAssigneeId || ownerId || null;
+    task.effective_assignee_name = visibleAssigneeId
+      ? (nameById.get(visibleAssigneeId) || null)
+      : (task.module_owner_name || null);
     task.region_id = lead?.region_id || null;
   }
   return tasks;
@@ -374,28 +415,6 @@ function isProductionTaskTerminalStage(stage) {
     || name.startsWith('hoan thanh') || name.startsWith('da thu');
 }
 
-function projectOverviewCategoryId(task, projectDetailById, crmDetailById) {
-  if (task?.source === 'crm_task') {
-    const detail = crmDetailById.get(String(task.source_id)) || {};
-    return String(
-      detail.pipeline_stage_id
-      || detail.production_pipeline_stage_id
-      || detail.stage_slug
-      || 'crm-general',
-    );
-  }
-  const detail = projectDetailById.get(String(task?.source_id || '')) || {};
-  const meta = detail.metadata && typeof detail.metadata === 'object' ? detail.metadata : {};
-  return String(
-    meta.workshop_template_id
-    || detail.production_stage_id
-    || meta.logistics_pipeline_stage_id
-    || meta.guessed_stage_slug
-    || detail.stage_id
-    || 'project-general',
-  );
-}
-
 // GET /api/work-tasks/project-overview — toàn bộ NV mở của các dự án chưa kết thúc theo từng module
 /**
  * Phần đuôi dùng chung của /project-overview: gắn tên công ty/khu vực, sắp xếp,
@@ -477,7 +496,10 @@ async function finishProjectOverview(res, tasks, pre = null) {
 
 r.get('/project-overview', async (req, res) => {
   try {
-    const effectiveCompany = !isSystemAdmin(req.user) ? req.user?.company_id : null;
+    const requestedCompany = String(req.query.company_id || '').trim();
+    const effectiveCompany = isSystemAdmin(req.user)
+      ? (requestedCompany || null)
+      : (req.user?.company_id || null);
     const requestedModule = ['crm', 'sx', 'vc'].includes(String(req.query.module || '').toLowerCase())
       ? String(req.query.module).toLowerCase()
       : '';
@@ -758,13 +780,14 @@ r.get('/project-overview', async (req, res) => {
     const categoryFor = (task) => {
       if (task.source === 'crm_task') {
         const detail = crmDetailById.get(String(task.source_id)) || {};
+        const sharedTitle = projectOverviewSharedCategoryTitle(detail);
         const crmStage = crmTaskStageById.get(String(detail.pipeline_stage_id || ''));
         const sxStage = sxStageById.get(String(detail.production_pipeline_stage_id || ''));
         const categoryId = projectOverviewCategoryId(task, projectDetailById, crmDetailById);
         return {
           id: String(categoryId),
-          title: crmStage?.name || sxStage?.name || humanizeSlug(detail.stage_slug) || 'Nhiệm vụ CRM',
-          order: crmStage?.order_index ?? sxStage?.order_index ?? 999,
+          title: sharedTitle || crmStage?.name || sxStage?.name || humanizeSlug(detail.stage_slug) || 'Nhiệm vụ CRM',
+          order: sharedTitle ? 40 : (crmStage?.order_index ?? sxStage?.order_index ?? 999),
         };
       }
       const detail = projectDetailById.get(String(task.source_id)) || {};
@@ -798,7 +821,7 @@ r.get('/project-overview', async (req, res) => {
       const openChildren = group.children.filter((task) => !terminalStatuses.has(String(task.status || '').toLowerCase()));
       if (!openChildren.length) return null;
       const first = openChildren[0] || group.children[0];
-      const assigned = openChildren.find((task) => task.assignee_id) || null;
+      const assigned = openChildren.find((task) => task.effective_assignee_id) || null;
       const deadlines = openChildren
         .map((task) => task.deadline)
         .filter(Boolean)
@@ -822,12 +845,12 @@ r.get('/project-overview', async (req, res) => {
         deadline: deadlines[0] || null,
         child_completed: completedChildren.length,
         child_total: group.children.length,
-        assignee_id: assigned?.assignee_id || null,
-        assignee_name: assigned?.assignee_name || null,
+        assignee_id: assigned?.effective_assignee_id || null,
+        assignee_name: assigned?.effective_assignee_name || null,
         module_owner_id: first.module_owner_id || null,
         module_owner_name: first.module_owner_name || null,
-        effective_assignee_id: assigned?.assignee_id || first.module_owner_id || null,
-        effective_assignee_name: assigned?.assignee_name || first.module_owner_name || null,
+        effective_assignee_id: assigned?.effective_assignee_id || first.module_owner_id || null,
+        effective_assignee_name: assigned?.effective_assignee_name || first.module_owner_name || null,
       };
     }).filter(Boolean);
     return finishProjectOverview(res, tasks);
