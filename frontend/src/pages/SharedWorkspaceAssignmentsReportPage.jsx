@@ -16,6 +16,18 @@ const STATUS_LABELS = {
   completed: 'Hoàn thành',
   cancelled: 'Đã hủy',
 };
+/**
+ * Màu của ô Trạng thái. Quá hạn được ưu tiên hơn trạng thái: một nhiệm vụ "Chưa làm"
+ * mà đã trễ hạn thì hiện đỏ, chữ vẫn là "Chưa làm".
+ * Luật quá hạn giữ ĐÚNG như backend đếm cho thẻ "Quá hạn" (fetchSummary): chưa hoàn
+ * thành + có hạn + hạn đã qua — để con số trên đầu trang và màu trong bảng không đá nhau.
+ */
+function statusBadgeClass(row) {
+  if (row?.status === 'completed') return 'bg-emerald-100 text-emerald-700';
+  if (row?.deadline && new Date(row.deadline).getTime() < Date.now()) return 'bg-red-100 text-red-700';
+  return 'bg-slate-100';
+}
+
 const PRIORITY_LABELS = { low: 'Thấp', medium: 'Trung bình', high: 'Cao', urgent: 'Khẩn cấp' };
 const PAGE_SIZE = 50;
 
@@ -417,7 +429,7 @@ export default function SharedWorkspaceAssignmentsReportPage() {
                     <td className="px-3 py-3">{row.phat_sinh_kind_name || '—'}</td>
                     <td className="max-w-[220px] px-3 py-3">{(row.assignees || []).map((item) => item.full_name || item.email).filter(Boolean).join(', ') || '—'}</td>
                     <td className="px-3 py-3">{row.created_by?.full_name || row.created_by?.email || '—'}</td>
-                    <td className="px-3 py-3"><span className="rounded-full bg-slate-100 px-2 py-1 font-semibold">{STATUS_LABELS[row.status] || row.status}</span></td>
+                    <td className="px-3 py-3"><span className={`rounded-full px-2 py-1 font-semibold ${statusBadgeClass(row)}`}>{STATUS_LABELS[row.status] || row.status}</span></td>
                     <td className="whitespace-nowrap px-3 py-3">{formatDate(row.deadline)}</td>
                   </tr>
                   );
