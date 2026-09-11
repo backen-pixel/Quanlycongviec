@@ -1,8 +1,30 @@
+/**
+ * Báo cáo nhiệm vụ phát sinh (/management/shared-workspace-report).
+ *
+ * ══ VÌ SAO CÓ VIEW crm_assignments_report_v ══
+ * Bản trước nạp TOÀN BỘ dòng khớp rồi mới lọc / sắp / phân trang trong JS, nên
+ * `limit`/`offset` không giảm việc gì: mở trang xem 50 dòng vẫn kéo về đủ mọi dòng kèm
+ * 6 bảng join. Lọc theo chữ và theo người nhận cũng ở JS nên không đẩy xuống SQL được —
+ * chúng quét cả tên dự án, tên người nhận, mã lead… nằm ở bảng khác.
+ *
+ * View chỉ thêm ba CỘT DẪN XUẤT, không chứa quyết định nghiệp vụ nào:
+ *   • search_text            — gộp đúng các trường mà bản JS vẫn quét
+ *   • effective_assignee_ids — người nhận (junction nếu có, không thì cột assignee_id)
+ *   • involved_user_ids      — ai "có liên quan" (được giao / người tạo / trong junction)
+ * Mọi quyết định LỌC vẫn nằm ở file này, dựng bằng query builder — nên không có chuyện
+ * hai nơi cùng định nghĩa một luật rồi lệch nhau.
+ *
+ * Postgres chỉ tính các cột đó khi truy vấn thật sự dùng tới: mở trang mà không tìm kiếm
+ * thì kế hoạch chỉ còn 2 bảng (đo được 1,46 ms).
+ */
+
 const { supabase } = require('../config/supabase');
 const { fetchAllByIdsParallel } = require('./supabaseFetchAll');
 
+const REPORT_VIEW = 'crm_assignments_report_v';
 const PAGE_SIZE = 1000;
-const ID_CHUNK = 250;
+/** Chặn vòng lặp chạy hoang nếu server phớt lờ .range(); 200 trang = 200.000 dòng. */
+const MAX_PAGES = 200;
 const SOURCE_TYPES = ['customer_request', 'employee_error'];
 const MODULES = new Set(['crm', 'production', 'logistics']);
 const STATUSES = new Set(['pending', 'in_progress', 'completed', 'cancelled']);
@@ -45,6 +67,11 @@ function endOfDateIso(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s}T23:59:59.999+07:00` : null;
 }
 
+/** `%` và `_` trong từ khoá người dùng là ký tự thường, không phải wildcard của LIKE. */
+function escapeLike(value) {
+  return String(value).replace(/([\\%_])/g, '\\$1');
+}
+
 function applyScalarFilters(query, filters, fixedCompanyId) {
   let q = query
     .not('lead_id', 'is', null)
@@ -79,83 +106,115 @@ function applyScalarFilters(query, filters, fixedCompanyId) {
   if (from) q = q.gte('created_at', from);
   if (to) q = q.lte('created_at', to);
 
-  return q
-    .order('created_at', { ascending: false })
-    .order('id', { ascending: false });
-}
-
-/** Chặn vòng lặp chạy hoang nếu server phớt lờ .range(); 200 trang = 200.000 dòng. */
-const MAX_PAGES = 200;
-
-async function fetchPaged(makeQuery) {
-  const rows = [];
-  for (let page = 0; page < MAX_PAGES; page += 1) {
-    const offset = page * PAGE_SIZE;
-    const { data, error } = await makeQuery().range(offset, offset + PAGE_SIZE - 1);
-    if (error) throw error;
-    const chunk = data || [];
-    rows.push(...chunk);
-    if (chunk.length < PAGE_SIZE) return rows;
-  }
-  console.warn(`[shared-workspace-report] chạm trần ${MAX_PAGES} trang — có thể còn dòng chưa đọc`);
-  return rows;
-}
-
-async function fetchReportRows(filters, { visibleIds, fixedCompanyId }) {
-  if (Array.isArray(visibleIds)) {
-    if (!visibleIds.length) return [];
-    // Các lô id độc lập nhau → chạy song song thay vì nối tiếp. Với người có vài nghìn
-    // assignment, vòng cũ phải chờ hàng chục lượt round-trip liên tiếp.
-    const chunks = [];
-    for (let i = 0; i < visibleIds.length; i += ID_CHUNK) chunks.push(visibleIds.slice(i, i + ID_CHUNK));
-    const parts = await Promise.all(chunks.map((ids) => fetchPaged(() => applyScalarFilters(
-      supabase.from('crm_assignments').select(REPORT_SELECT).in('id', ids),
-      filters,
-      fixedCompanyId,
-    ))));
-    return parts.flat();
-  }
-  return fetchPaged(() => applyScalarFilters(
-    supabase.from('crm_assignments').select(REPORT_SELECT),
-    filters,
-    fixedCompanyId,
-  ));
+  return q;
 }
 
 /**
- * Một assignment có NHIỀU người nhận (đo được: trung bình 1,05 — cao nhất 44), nên
- * truy vấn theo lô id có thể trả về nhiều dòng hơn số id. Dùng fetchAllByIdsParallel
- * để vừa phân trang trong từng lô (tránh trần 1.000 dòng cắt im lặng) vừa chạy các lô
- * song song thay vì nối tiếp.
+ * Toàn bộ bộ lọc của báo cáo, dựng trên view.
+ * `extra` để thêm điều kiện cho từng ô thống kê mà không phải viết lại bộ lọc.
+ */
+function buildReportFilter(filters, ctx, selectCols, selectOpts, extra) {
+  let q = applyScalarFilters(
+    supabase.from(REPORT_VIEW).select(selectCols, selectOpts),
+    filters,
+    ctx.fixedCompanyId,
+  );
+
+  // Người không phải admin chỉ thấy việc mình có liên quan. Bản cũ phải đọc trước danh
+  // sách id rồi nhét vào .in(): vừa bị cắt im lặng ở 1.000 dòng (đo được: có người mất
+  // 197 dòng), vừa đụng trần độ dài URL khi danh sách dài.
+  if (ctx.viewerUserId) q = q.contains('involved_user_ids', [ctx.viewerUserId]);
+
+  const assigneeId = clean(filters.assignee_id);
+  if (assigneeId) q = q.contains('effective_assignee_ids', [assigneeId]);
+
+  const term = clean(filters.q).toLocaleLowerCase('vi');
+  if (term) q = q.like('search_text', `%${escapeLike(term)}%`);
+
+  return extra ? extra(q) : q;
+}
+
+const sortPage = (q) => q
+  .order('created_at', { ascending: false })
+  .order('id', { ascending: false });
+
+/** Đọc hết id khớp bộ lọc — chỉ dùng cho export. */
+async function fetchAllMatchingIds(filters, ctx) {
+  const ids = [];
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const offset = page * PAGE_SIZE;
+    const { data, error } = await sortPage(buildReportFilter(filters, ctx, 'id'))
+      .range(offset, offset + PAGE_SIZE - 1);
+    if (error) throw error;
+    const chunk = data || [];
+    ids.push(...chunk.map((row) => row.id));
+    if (chunk.length < PAGE_SIZE) return ids;
+  }
+  console.warn(`[shared-workspace-report] chạm trần ${MAX_PAGES} trang — có thể còn dòng chưa đọc`);
+  return ids;
+}
+
+/**
+ * Thống kê trên TOÀN BỘ tập đã lọc — đếm bằng `head: true` nên không kéo dòng nào về.
+ * Điều kiện của từng ô vẫn do JS quyết định, chỉ là diễn đạt dưới dạng filter.
+ */
+async function fetchSummary(filters, ctx, total) {
+  const countOf = async (extra) => {
+    const { count, error } = await buildReportFilter(
+      filters, ctx, 'id', { count: 'exact', head: true }, extra,
+    );
+    if (error) throw error;
+    return count || 0;
+  };
+  const nowIso = new Date().toISOString();
+  const [pending, inProgress, completed, cancelled, customerRequest, employeeError, overdue] = await Promise.all([
+    countOf((q) => q.eq('status', 'pending')),
+    countOf((q) => q.eq('status', 'in_progress')),
+    countOf((q) => q.eq('status', 'completed')),
+    countOf((q) => q.eq('status', 'cancelled')),
+    countOf((q) => q.eq('task_source_type', 'customer_request')),
+    countOf((q) => q.eq('task_source_type', 'employee_error')),
+    countOf((q) => q.neq('status', 'completed').not('deadline', 'is', null).lt('deadline', nowIso)),
+  ]);
+  return {
+    total,
+    pending,
+    in_progress: inProgress,
+    completed,
+    cancelled,
+    overdue,
+    customer_request: customerRequest,
+    employee_error: employeeError,
+  };
+}
+
+/**
+ * Một assignment có NHIỀU người nhận (đo được: trung bình 1,05 — cao nhất 44) nên một lô
+ * id có thể trả về nhiều dòng hơn số id; fetchAllByIdsParallel lo cả phân trang lẫn chạy
+ * các lô song song.
  */
 async function attachReportAssignees(rows) {
   if (!rows.length) return;
   const ids = rows.map((row) => row.id);
   const COLS_FULL = 'assignment_id, user_id, assign_role, user:users(id, full_name, email, department_id)';
   const COLS_LEGACY = 'assignment_id, user_id, user:users(id, full_name, email, department_id)';
+  // Phân trang bắt buộc phải có thứ tự tất định. Bản cũ không sắp xếp nên thứ tự người
+  // nhận là thứ tự vật lý tuỳ tiện (đổi được sau mỗi lần cập nhật bảng); nay cố định
+  // theo lúc được thêm vào.
+  const tune = (q) => q.order('assignment_id', { ascending: true })
+    .order('added_at', { ascending: true })
+    .order('user_id', { ascending: true });
 
   let data;
   try {
     data = await fetchAllByIdsParallel({
-      table: 'crm_assignment_assignees', columns: COLS_FULL, key: 'assignment_id', ids,
-      // Phân trang bắt buộc phải có thứ tự tất định. Bản cũ không sắp xếp nên thứ tự
-      // người nhận là thứ tự vật lý tuỳ tiện (có thể đổi sau mỗi lần cập nhật bảng);
-      // nay cố định theo lúc được thêm vào.
-      tune: (q) => q.order('assignment_id', { ascending: true })
-        .order('added_at', { ascending: true })
-        .order('user_id', { ascending: true }),
+      table: 'crm_assignment_assignees', columns: COLS_FULL, key: 'assignment_id', ids, tune,
     });
   } catch (e) {
     // DB chưa có cột assign_role → đọc lại bản rút gọn, giữ nguyên hành vi cũ.
     if (!/assign_role/.test(e.message || '')) throw e;
     data = await fetchAllByIdsParallel({
-      table: 'crm_assignment_assignees', columns: COLS_LEGACY, key: 'assignment_id', ids,
-      // Phân trang bắt buộc phải có thứ tự tất định. Bản cũ không sắp xếp nên thứ tự
-      // người nhận là thứ tự vật lý tuỳ tiện (có thể đổi sau mỗi lần cập nhật bảng);
-      // nay cố định theo lúc được thêm vào.
-      tune: (q) => q.order('assignment_id', { ascending: true })
-        .order('added_at', { ascending: true })
-        .order('user_id', { ascending: true }),
+      table: 'crm_assignment_assignees', columns: COLS_LEGACY, key: 'assignment_id', ids, tune,
     });
   }
 
@@ -172,13 +231,15 @@ async function attachReportAssignees(rows) {
 
 async function attachProjectLabels(rows) {
   const projectIds = [...new Set(rows.map((row) => row.lead?.project_id).filter(Boolean).map(String))];
-  if (!projectIds.length) return;
+  if (!projectIds.length) {
+    rows.forEach((row) => { row.project = null; });
+    return;
+  }
   const projects = await fetchAllByIdsParallel({
     table: 'projects', columns: 'id, code, name', key: 'id', ids: projectIds,
     tune: (q) => q.order('id', { ascending: true }),
   });
-  const map = new Map();
-  projects.forEach((project) => map.set(String(project.id), project));
+  const map = new Map(projects.map((project) => [String(project.id), project]));
   rows.forEach((row) => {
     row.project = row.lead?.project_id ? (map.get(String(row.lead.project_id)) || null) : null;
   });
@@ -188,7 +249,8 @@ async function loadKindLabels() {
   const { data, error } = await supabase
     .from('shared_workspace_phat_sinh_kinds')
     .select('id, slug, name, company_id')
-    .order('sort_order', { ascending: true });
+    .order('sort_order', { ascending: true })
+    .range(0, PAGE_SIZE - 1);
   if (error) return {};
   const labels = {};
   for (const row of data || []) {
@@ -198,74 +260,64 @@ async function loadKindLabels() {
   return labels;
 }
 
-function matchesClientFilters(row, filters) {
-  const assigneeId = clean(filters.assignee_id);
-  if (assigneeId && !(row.assignees || []).some((user) => String(user.id) === assigneeId)) return false;
-
-  const q = clean(filters.q).toLocaleLowerCase('vi');
-  if (!q) return true;
-  const haystack = [
-    row.title,
-    row.description,
-    row.lead?.code,
-    row.lead?.title,
-    row.project?.code,
-    row.project?.name,
-    row.created_by?.full_name,
-    ...(row.assignees || []).flatMap((user) => [user.full_name, user.email]),
-  ].filter(Boolean).join(' ').toLocaleLowerCase('vi');
-  return haystack.includes(q);
-}
-
-function reportSummary(rows) {
-  const now = Date.now();
-  const summary = {
-    total: rows.length,
-    pending: 0,
-    in_progress: 0,
-    completed: 0,
-    cancelled: 0,
-    overdue: 0,
-    customer_request: 0,
-    employee_error: 0,
-  };
-  for (const row of rows) {
-    if (Object.prototype.hasOwnProperty.call(summary, row.status)) summary[row.status] += 1;
-    if (Object.prototype.hasOwnProperty.call(summary, row.task_source_type)) summary[row.task_source_type] += 1;
-    if (row.status !== 'completed' && row.deadline && new Date(row.deadline).getTime() < now) summary.overdue += 1;
-  }
-  return summary;
+/** Lấy đủ dữ liệu hiển thị cho ĐÚNG các dòng của trang hiện tại. */
+async function hydrateRows(ids) {
+  if (!ids.length) return [];
+  const rows = await fetchAllByIdsParallel({
+    table: 'crm_assignments', columns: REPORT_SELECT, key: 'id', ids,
+    tune: (q) => q.order('id', { ascending: false }),
+  });
+  const byId = new Map(rows.map((row) => [String(row.id), row]));
+  const ordered = ids.map((id) => byId.get(String(id))).filter(Boolean);
+  const [, , kindLabels] = await Promise.all([
+    attachReportAssignees(ordered),
+    attachProjectLabels(ordered),
+    loadKindLabels(),
+  ]);
+  ordered.forEach((row) => {
+    row.phat_sinh_kind_name = kindLabels[String(row.phat_sinh_kind || '')] || row.phat_sinh_kind || null;
+  });
+  return ordered;
 }
 
 async function listSharedWorkspaceAssignmentsReport(filters = {}, scope = {}) {
-  const rows = await fetchReportRows(filters, scope);
-  await Promise.all([attachReportAssignees(rows), attachProjectLabels(rows)]);
-  const filtered = rows
-    .filter((row) => matchesClientFilters(row, filters))
-    .sort((a, b) => {
-      const byCreated = String(b.created_at || '').localeCompare(String(a.created_at || ''));
-      return byCreated || Number(b.id || 0) - Number(a.id || 0);
-    });
-  const kindLabels = await loadKindLabels();
-  filtered.forEach((row) => {
-    row.phat_sinh_kind_name = kindLabels[String(row.phat_sinh_kind || '')] || row.phat_sinh_kind || null;
-  });
+  const ctx = {
+    viewerUserId: scope.viewerUserId || null,
+    fixedCompanyId: scope.fixedCompanyId || null,
+  };
 
   const exportAll = clean(filters.export).toLowerCase() === '1';
   const offset = exportAll ? 0 : parseOffset(filters.offset);
-  const limit = exportAll ? filtered.length : parseLimit(filters.limit);
+  const limit = parseLimit(filters.limit);
+
+  if (exportAll) {
+    const ids = await fetchAllMatchingIds(filters, ctx);
+    const [rows, summary] = await Promise.all([
+      hydrateRows(ids),
+      fetchSummary(filters, ctx, ids.length),
+    ]);
+    return {
+      rows, summary, total: ids.length, offset: 0, limit: ids.length, has_more: false,
+    };
+  }
+
+  // Một lượt: id của đúng trang này + tổng số dòng khớp.
+  const { data, error, count } = await sortPage(
+    buildReportFilter(filters, ctx, 'id', { count: 'exact' }),
+  ).range(offset, offset + limit - 1);
+  if (error) throw error;
+  const total = count || 0;
+  const ids = (data || []).map((row) => row.id);
+
+  const [rows, summary] = await Promise.all([
+    hydrateRows(ids),
+    fetchSummary(filters, ctx, total),
+  ]);
   return {
-    rows: exportAll ? filtered : filtered.slice(offset, offset + limit),
-    summary: reportSummary(filtered),
-    total: filtered.length,
-    offset,
-    limit,
-    has_more: !exportAll && offset + limit < filtered.length,
+    rows, summary, total, offset, limit, has_more: offset + ids.length < total,
   };
 }
 
 module.exports = {
   listSharedWorkspaceAssignmentsReport,
-  matchesClientFilters,
-  reportSummary,
 };

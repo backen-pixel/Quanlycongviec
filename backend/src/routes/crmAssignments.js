@@ -1838,11 +1838,11 @@ r.get('/shared-workspace-tasks', async (req, res) => {
 r.get('/shared-workspace-report', async (req, res) => {
   try {
     const elevated = isAdmin(req);
-    const fixedCompanyId = elevated ? viewerCompanyId(req) : null;
-    const visibleIds = elevated ? null : await getVisibleAssignmentIdsForNonAdmin(req);
+    // Phạm vi của người không phải admin nay lọc thẳng trong SQL (cột involved_user_ids),
+    // không còn phải đọc trước danh sách id — chính chỗ đang bị cắt im lặng ở 1.000 dòng.
     const result = await listSharedWorkspaceAssignmentsReport(req.query, {
-      visibleIds,
-      fixedCompanyId,
+      viewerUserId: elevated ? null : (req.user?.userId || null),
+      fixedCompanyId: elevated ? viewerCompanyId(req) : null,
     });
     res.json(result);
   } catch (e) {
