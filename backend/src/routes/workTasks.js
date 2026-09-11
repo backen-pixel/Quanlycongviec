@@ -421,14 +421,10 @@ function isProductionTaskTerminalStage(stage) {
  * tính thống kê rồi trả JSON. Dùng chung cho cả đường RPC gộp lẫn đường cũ nên hai
  * đường chắc chắn cho cùng một hình dạng kết quả.
  */
-/**
- * @param {{companies: object[], regions: object[]}|null} pre Danh mục lọc đã có sẵn
- *   (đường RPC gộp trả kèm) — truyền vào thì khỏi đọc lại.
- */
-async function finishProjectOverview(res, tasks, pre = null) {
+async function finishProjectOverview(res, tasks) {
   const companyIds = [...new Set(tasks.map((task) => task.company_id).filter(Boolean).map(String))];
   const regionIds = [...new Set(tasks.map((task) => task.region_id).filter(Boolean).map(String))];
-  const [companies, regions] = pre ? [pre.companies || [], pre.regions || []] : await Promise.all([
+  const [companies, regions] = await Promise.all([
     companyIds.length
       ? fetchAllByIdsParallel({
         table: 'companies',
@@ -503,47 +499,6 @@ r.get('/project-overview', async (req, res) => {
     const requestedModule = ['crm', 'sx', 'vc'].includes(String(req.query.module || '').toLowerCase())
       ? String(req.query.module).toLowerCase()
       : '';
-    /**
-     * Đường gộp: RPC làm luôn việc chọn phạm vi + gom nhóm (migration 597), trả về ~2.500
-     * dòng nhóm thay vì ~13.000 dòng nhiệm vụ.
-     *
-     * Vì sao không chỉ gộp round-trip: đã thử một RPC chỉ chọn phạm vi rồi vẫn gom nhóm ở
-     * JS — CHẬM HƠN đường cũ (5,2s so với 4,0s), vì 3MB JSON đi trong một luồng duy nhất
-     * không giấu được độ trễ như ~20 truy vấn song song. Phải giảm KHỐI LƯỢNG truyền thì
-     * mới ăn: nhóm nặng ~600KB thay vì 3MB, và bỏ luôn được bước đọc chi tiết nhiệm vụ.
-     *
-     * Chưa chạy migration → rơi về đúng đường cũ bên dưới, không đổi hành vi.
-     */
-    // Đường gộp đầy đủ: SQL làm hết — chọn phạm vi, gom nhóm, giải người phụ trách
-    // module, lấy tên người/công ty/khu vực. Thành công thì KHÔNG đọc thêm gì nữa.
-    {
-      const full = await supabase.rpc('work_project_overview_full', {
-        p_company_id: effectiveCompany || null,
-        p_module: requestedModule || null,
-        p_user_id: req.user?.userId || null,
-        p_manager: isManagerLike(req.user),
-      });
-      if (full.error) {
-        const thieuHam = /work_project_overview_full|does not exist|Could not find|schema cache|PGRST202/i
-          .test(String(full.error.message || ''));
-        if (!thieuHam) {
-          console.warn('[work-tasks] work_project_overview_full RPC lỗi → dùng đường cũ:', full.error.message);
-        }
-      } else if (full.data && Array.isArray(full.data.groups)) {
-        return finishProjectOverview(res, full.data.groups, {
-          companies: full.data.companies,
-          regions: full.data.regions,
-        });
-      }
-    }
-
-    const groupsRpcPromise = supabase.rpc('work_project_overview_groups', {
-      p_company_id: effectiveCompany || null,
-      p_module: requestedModule || null,
-      p_user_id: req.user?.userId || null,
-      p_manager: isManagerLike(req.user),
-    });
-
     const projects = await fetchAllPages(() => {
       let q = supabase
         .from('projects')
@@ -615,28 +570,6 @@ r.get('/project-overview', async (req, res) => {
     const activeLeadIds = (leads || [])
       .filter((lead) => !lead.stage?.is_won && !lead.stage?.is_lost && !isCrmCompletedStage(lead.stage))
       .map((lead) => lead.id);
-
-    // RPC gộp đã xong việc chọn phạm vi + gom nhóm → chỉ còn gắn người phụ trách module.
-    // Nhân sự SX là lượt đọc duy nhất còn lại (chỉ cần danh sách dự án).
-    {
-      const rpcRes = await groupsRpcPromise;
-      if (rpcRes.error) {
-        const thieuHam = /work_project_overview_groups|does not exist|Could not find|schema cache|PGRST202/i
-          .test(String(rpcRes.error.message || ''));
-        if (!thieuHam) {
-          console.warn('[work-tasks] work_project_overview_groups RPC lỗi → dùng đường cũ:', rpcRes.error.message);
-        }
-      } else if (Array.isArray(rpcRes.data)) {
-        const groups = rpcRes.data;
-        const staffRows = await staffPromiseEarly;
-        await enrichTaskModuleOwners(groups, {
-          projects: activeProjects,
-          leads: needsCrmLeads ? leads : null,
-          productionStaff: staffRows,
-        });
-        return finishProjectOverview(res, groups);
-      }
-    }
 
     const tuneTaskQuery = (q, { kinds, leadScoped = false } = {}) => {
       q = applyPrimaryLeadOnly(q, leadScoped);
