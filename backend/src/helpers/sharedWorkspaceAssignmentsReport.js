@@ -40,8 +40,31 @@ const REPORT_SELECT = `
   company:companies!crm_assignments_company_id_fkey(id, name, short_name),
   executor_company:companies!crm_assignments_executor_company_id_fkey(id, name, short_name),
   department:departments!crm_assignments_department_id_fkey(id, name),
-  lead:crm_leads!inner(id, code, title, type, project_id)
+  lead:crm_leads!inner(id, code, title, type, project_id, project:projects(id, code, name)),
+  assignee_rows:crm_assignment_assignees(user_id, assign_role, added_at, user:users(id, full_name, email, department_id))
 `;
+
+/**
+ * Dự án và người nhận nhúng thẳng vào lượt đọc chính thay vì đọc thêm hai lượt nữa.
+ * Hai lượt đó trước đây phải CHỜ có id/dòng rồi mới chạy được — nằm thẳng trên đường
+ * tới hạn. Nhúng vào thì cả trang chỉ còn một lượt đọc.
+ *
+ * Sau khi đọc phải nắn lại đúng hình dạng cũ của API: `project` nằm ở cấp dòng (không
+ * lồng trong `lead`), `assignees` là mảng user phẳng kèm assign_role.
+ */
+function reshapeEmbedded(rows) {
+  for (const row of rows || []) {
+    row.project = row.lead?.project || null;
+    if (row.lead && 'project' in row.lead) delete row.lead.project;
+
+    const embedded = (row.assignee_rows || [])
+      .filter((item) => item.user)
+      .map((item) => ({ ...item.user, assign_role: item.assign_role || null }));
+    delete row.assignee_rows;
+    row.assignees = embedded.length ? embedded : (row.assignee ? [row.assignee] : []);
+  }
+  return rows || [];
+}
 
 function clean(value) {
   return String(value == null ? '' : value).trim();
@@ -110,12 +133,17 @@ function applyScalarFilters(query, filters, fixedCompanyId) {
 }
 
 /**
- * Toàn bộ bộ lọc của báo cáo, dựng trên view.
- * `extra` để thêm điều kiện cho từng ô thống kê mà không phải viết lại bộ lọc.
+ * Có cần đi qua view không? Chỉ ba bộ lọc dưới đây nằm ngoài bảng chính. Không có chúng
+ * thì đọc thẳng crm_assignments — nhanh hơn hẳn vì bỏ được join của view.
  */
+function needsView(filters, ctx) {
+  return !!(ctx.viewerUserId || clean(filters.assignee_id) || clean(filters.q));
+}
+
 function buildReportFilter(filters, ctx, selectCols, selectOpts, extra) {
+  const source = needsView(filters, ctx) ? REPORT_VIEW : 'crm_assignments';
   let q = applyScalarFilters(
-    supabase.from(REPORT_VIEW).select(selectCols, selectOpts),
+    supabase.from(source).select(selectCols, selectOpts),
     filters,
     ctx.fixedCompanyId,
   );
@@ -138,6 +166,14 @@ const sortPage = (q) => q
   .order('created_at', { ascending: false })
   .order('id', { ascending: false });
 
+/**
+ * Thứ tự người nhận trong mỗi dòng. Không sắp thì PostgREST trả theo thứ tự vật lý tuỳ
+ * tiện (đổi được sau mỗi lần cập nhật bảng); cố định theo lúc được thêm vào.
+ */
+const sortAssignees = (q) => q
+  .order('added_at', { referencedTable: 'assignee_rows', ascending: true })
+  .order('user_id', { referencedTable: 'assignee_rows', ascending: true });
+
 /** Đọc hết id khớp bộ lọc — chỉ dùng cho export. */
 async function fetchAllMatchingIds(filters, ctx) {
   const ids = [];
@@ -158,7 +194,7 @@ async function fetchAllMatchingIds(filters, ctx) {
  * Thống kê trên TOÀN BỘ tập đã lọc — đếm bằng `head: true` nên không kéo dòng nào về.
  * Điều kiện của từng ô vẫn do JS quyết định, chỉ là diễn đạt dưới dạng filter.
  */
-async function fetchSummary(filters, ctx, total) {
+async function fetchSummary(filters, ctx) {
   const countOf = async (extra) => {
     const { count, error } = await buildReportFilter(
       filters, ctx, 'id', { count: 'exact', head: true }, extra,
@@ -177,7 +213,7 @@ async function fetchSummary(filters, ctx, total) {
     countOf((q) => q.neq('status', 'completed').not('deadline', 'is', null).lt('deadline', nowIso)),
   ]);
   return {
-    total,
+    total: 0,   // chỗ gọi điền lại sau khi có count của trang
     pending,
     in_progress: inProgress,
     completed,
@@ -186,63 +222,6 @@ async function fetchSummary(filters, ctx, total) {
     customer_request: customerRequest,
     employee_error: employeeError,
   };
-}
-
-/**
- * Một assignment có NHIỀU người nhận (đo được: trung bình 1,05 — cao nhất 44) nên một lô
- * id có thể trả về nhiều dòng hơn số id; fetchAllByIdsParallel lo cả phân trang lẫn chạy
- * các lô song song.
- */
-async function attachReportAssignees(rows) {
-  if (!rows.length) return;
-  const ids = rows.map((row) => row.id);
-  const COLS_FULL = 'assignment_id, user_id, assign_role, user:users(id, full_name, email, department_id)';
-  const COLS_LEGACY = 'assignment_id, user_id, user:users(id, full_name, email, department_id)';
-  // Phân trang bắt buộc phải có thứ tự tất định. Bản cũ không sắp xếp nên thứ tự người
-  // nhận là thứ tự vật lý tuỳ tiện (đổi được sau mỗi lần cập nhật bảng); nay cố định
-  // theo lúc được thêm vào.
-  const tune = (q) => q.order('assignment_id', { ascending: true })
-    .order('added_at', { ascending: true })
-    .order('user_id', { ascending: true });
-
-  let data;
-  try {
-    data = await fetchAllByIdsParallel({
-      table: 'crm_assignment_assignees', columns: COLS_FULL, key: 'assignment_id', ids, tune,
-    });
-  } catch (e) {
-    // DB chưa có cột assign_role → đọc lại bản rút gọn, giữ nguyên hành vi cũ.
-    if (!/assign_role/.test(e.message || '')) throw e;
-    data = await fetchAllByIdsParallel({
-      table: 'crm_assignment_assignees', columns: COLS_LEGACY, key: 'assignment_id', ids, tune,
-    });
-  }
-
-  const byAssignment = new Map();
-  for (const item of data) {
-    const key = String(item.assignment_id);
-    if (!byAssignment.has(key)) byAssignment.set(key, []);
-    if (item.user) byAssignment.get(key).push({ ...item.user, assign_role: item.assign_role || null });
-  }
-  for (const row of rows) {
-    row.assignees = byAssignment.get(String(row.id)) || (row.assignee ? [row.assignee] : []);
-  }
-}
-
-async function attachProjectLabels(rows) {
-  const projectIds = [...new Set(rows.map((row) => row.lead?.project_id).filter(Boolean).map(String))];
-  if (!projectIds.length) {
-    rows.forEach((row) => { row.project = null; });
-    return;
-  }
-  const projects = await fetchAllByIdsParallel({
-    table: 'projects', columns: 'id, code, name', key: 'id', ids: projectIds,
-    tune: (q) => q.order('id', { ascending: true }),
-  });
-  const map = new Map(projects.map((project) => [String(project.id), project]));
-  rows.forEach((row) => {
-    row.project = row.lead?.project_id ? (map.get(String(row.lead.project_id)) || null) : null;
-  });
 }
 
 async function loadKindLabels() {
@@ -260,23 +239,29 @@ async function loadKindLabels() {
   return labels;
 }
 
-/** Lấy đủ dữ liệu hiển thị cho ĐÚNG các dòng của trang hiện tại. */
-async function hydrateRows(ids) {
+/**
+ * Bồi đủ dữ liệu hiển thị cho các dòng của trang hiện tại.
+ * `preRows` là dòng đã đọc sẵn (đường không cần view) — khỏi đọc lại.
+ *
+ * Người nhận và danh mục loại phát sinh CHỈ cần id, không cần dòng đã bồi, nên đọc
+ * song song với chính lượt đọc dòng thay vì chờ xong mới đọc (đo được ~153ms nằm
+ * thẳng trên đường tới hạn).
+ */
+async function hydrateRows(ids, preRows = null, kindLabelsPromise = null) {
   if (!ids.length) return [];
-  const rows = await fetchAllByIdsParallel({
-    table: 'crm_assignments', columns: REPORT_SELECT, key: 'id', ids,
-    tune: (q) => q.order('id', { ascending: false }),
-  });
+  const [rows, kindLabels] = await Promise.all([
+    preRows || fetchAllByIdsParallel({
+      table: 'crm_assignments', columns: REPORT_SELECT, key: 'id', ids,
+      tune: (q) => sortAssignees(q.order('id', { ascending: false })),
+    }),
+    kindLabelsPromise || loadKindLabels(),
+  ]);
+  reshapeEmbedded(rows);
   const byId = new Map(rows.map((row) => [String(row.id), row]));
   const ordered = ids.map((id) => byId.get(String(id))).filter(Boolean);
-  const [, , kindLabels] = await Promise.all([
-    attachReportAssignees(ordered),
-    attachProjectLabels(ordered),
-    loadKindLabels(),
-  ]);
-  ordered.forEach((row) => {
+  for (const row of ordered) {
     row.phat_sinh_kind_name = kindLabels[String(row.phat_sinh_kind || '')] || row.phat_sinh_kind || null;
-  });
+  }
   return ordered;
 }
 
@@ -294,25 +279,53 @@ async function listSharedWorkspaceAssignmentsReport(filters = {}, scope = {}) {
     const ids = await fetchAllMatchingIds(filters, ctx);
     const [rows, summary] = await Promise.all([
       hydrateRows(ids),
-      fetchSummary(filters, ctx, ids.length),
+      fetchSummary(filters, ctx),
     ]);
+    summary.total = ids.length;
     return {
       rows, summary, total: ids.length, offset: 0, limit: ids.length, has_more: false,
     };
   }
 
-  // Một lượt: id của đúng trang này + tổng số dòng khớp.
-  const { data, error, count } = await sortPage(
-    buildReportFilter(filters, ctx, 'id', { count: 'exact' }),
-  ).range(offset, offset + limit - 1);
-  if (error) throw error;
-  const total = count || 0;
-  const ids = (data || []).map((row) => row.id);
+  /**
+   * Ba bộ lọc dưới đây là lý do phải đi qua view. Không có chúng thì mọi điều kiện đều
+   * nằm trên chính bảng crm_assignments — đọc thẳng một lượt kèm đủ embed, khỏi phải
+   * lấy id rồi đọc lại (đo được bước lấy id tốn 395ms nằm chặn đường tới hạn).
+   */
+  const canDocThang = !needsView(filters, ctx);
+
+  // Thống kê và danh mục loại phát sinh KHÔNG phụ thuộc trang đang xem — cho chạy ngay,
+  // song song với lượt đọc trang, thay vì chờ đọc xong mới bắt đầu.
+  const summaryPromise = fetchSummary(filters, ctx);
+  const kindLabelsPromise = loadKindLabels();
+
+  let total = 0;
+  let ids = [];
+  let preRows = null;
+  if (canDocThang) {
+    const { data, error, count } = await sortAssignees(sortPage(applyScalarFilters(
+      supabase.from('crm_assignments').select(REPORT_SELECT, { count: 'exact' }),
+      filters,
+      ctx.fixedCompanyId,
+    ))).range(offset, offset + limit - 1);
+    if (error) throw error;
+    total = count || 0;
+    preRows = data || [];
+    ids = preRows.map((row) => row.id);
+  } else {
+    const { data, error, count } = await sortPage(
+      buildReportFilter(filters, ctx, 'id', { count: 'exact' }),
+    ).range(offset, offset + limit - 1);
+    if (error) throw error;
+    total = count || 0;
+    ids = (data || []).map((row) => row.id);
+  }
 
   const [rows, summary] = await Promise.all([
-    hydrateRows(ids),
-    fetchSummary(filters, ctx, total),
+    hydrateRows(ids, preRows, kindLabelsPromise),
+    summaryPromise,
   ]);
+  summary.total = total;
   return {
     rows, summary, total, offset, limit, has_more: offset + ids.length < total,
   };
