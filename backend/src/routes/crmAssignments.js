@@ -5,6 +5,7 @@ const multer = require('multer');
 const path = require('path');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
+const { fetchAllPages } = require('../helpers/supabaseFetchAll');
 const { sanitizeStorageFilename, isInvalidStorageKeyError } = require('../helpers/storageFilename');
 const {
   persistAssignmentNotification,
@@ -226,20 +227,31 @@ async function getSharedColumnsCached() {
 }
 
 /** Id nhiệm vụ user được giao / tạo (bảng assignees + assignee_id + created_by). */
+/**
+ * Danh sách assignment mà một người có liên quan (được giao, hoặc tự tạo).
+ *
+ * PHẢI phân trang: thiếu .range() thì PostgREST cắt im lặng ở 1.000 dòng. Đo trên dữ
+ * liệu thật (11/09/2026) đã có người vượt ngưỡng — "Nam" 1.197 dòng nhưng chỉ nhận về
+ * 1.000 (mất 197), "Sale Admin Nhã" 1.080 nhận 1.000 (mất 80). Hệ quả: những người đó
+ * không nhìn thấy một phần việc của chính mình, mà không có lỗi nào báo ra.
+ */
 async function getUserInvolvedAssignmentIds(uid) {
   if (!uid) return [];
   const ids = new Set();
-  const { data: junction } = await supabase
-    .from('crm_assignment_assignees')
-    .select('assignment_id')
-    .eq('user_id', uid);
-  (junction || []).forEach((r) => ids.add(r.assignment_id));
-
-  const { data: direct } = await supabase
-    .from('crm_assignments')
-    .select('id')
-    .or(`assignee_id.eq.${uid},created_by_id.eq.${uid}`);
-  (direct || []).forEach((r) => ids.add(r.id));
+  const [junction, direct] = await Promise.all([
+    fetchAllPages(() => supabase
+      .from('crm_assignment_assignees')
+      .select('assignment_id')
+      .eq('user_id', uid)
+      .order('assignment_id', { ascending: true })),
+    fetchAllPages(() => supabase
+      .from('crm_assignments')
+      .select('id')
+      .or(`assignee_id.eq.${uid},created_by_id.eq.${uid}`)
+      .order('id', { ascending: true })),
+  ]);
+  junction.forEach((r) => ids.add(r.assignment_id));
+  direct.forEach((r) => ids.add(r.id));
   return [...ids];
 }
 

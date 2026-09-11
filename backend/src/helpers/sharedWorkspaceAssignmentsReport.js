@@ -1,4 +1,5 @@
 const { supabase } = require('../config/supabase');
+const { fetchAllByIdsParallel } = require('./supabaseFetchAll');
 
 const PAGE_SIZE = 1000;
 const ID_CHUNK = 250;
@@ -83,32 +84,36 @@ function applyScalarFilters(query, filters, fixedCompanyId) {
     .order('id', { ascending: false });
 }
 
+/** Chặn vòng lặp chạy hoang nếu server phớt lờ .range(); 200 trang = 200.000 dòng. */
+const MAX_PAGES = 200;
+
 async function fetchPaged(makeQuery) {
   const rows = [];
-  for (let offset = 0; ; offset += PAGE_SIZE) {
+  for (let page = 0; page < MAX_PAGES; page += 1) {
+    const offset = page * PAGE_SIZE;
     const { data, error } = await makeQuery().range(offset, offset + PAGE_SIZE - 1);
     if (error) throw error;
-    const page = data || [];
-    rows.push(...page);
-    if (page.length < PAGE_SIZE) break;
+    const chunk = data || [];
+    rows.push(...chunk);
+    if (chunk.length < PAGE_SIZE) return rows;
   }
+  console.warn(`[shared-workspace-report] chạm trần ${MAX_PAGES} trang — có thể còn dòng chưa đọc`);
   return rows;
 }
 
 async function fetchReportRows(filters, { visibleIds, fixedCompanyId }) {
   if (Array.isArray(visibleIds)) {
     if (!visibleIds.length) return [];
-    const rows = [];
-    for (let i = 0; i < visibleIds.length; i += ID_CHUNK) {
-      const ids = visibleIds.slice(i, i + ID_CHUNK);
-      const chunkRows = await fetchPaged(() => applyScalarFilters(
-        supabase.from('crm_assignments').select(REPORT_SELECT).in('id', ids),
-        filters,
-        fixedCompanyId,
-      ));
-      rows.push(...chunkRows);
-    }
-    return rows;
+    // Các lô id độc lập nhau → chạy song song thay vì nối tiếp. Với người có vài nghìn
+    // assignment, vòng cũ phải chờ hàng chục lượt round-trip liên tiếp.
+    const chunks = [];
+    for (let i = 0; i < visibleIds.length; i += ID_CHUNK) chunks.push(visibleIds.slice(i, i + ID_CHUNK));
+    const parts = await Promise.all(chunks.map((ids) => fetchPaged(() => applyScalarFilters(
+      supabase.from('crm_assignments').select(REPORT_SELECT).in('id', ids),
+      filters,
+      fixedCompanyId,
+    ))));
+    return parts.flat();
   }
   return fetchPaged(() => applyScalarFilters(
     supabase.from('crm_assignments').select(REPORT_SELECT),
@@ -117,27 +122,48 @@ async function fetchReportRows(filters, { visibleIds, fixedCompanyId }) {
   ));
 }
 
+/**
+ * Một assignment có NHIỀU người nhận (đo được: trung bình 1,05 — cao nhất 44), nên
+ * truy vấn theo lô id có thể trả về nhiều dòng hơn số id. Dùng fetchAllByIdsParallel
+ * để vừa phân trang trong từng lô (tránh trần 1.000 dòng cắt im lặng) vừa chạy các lô
+ * song song thay vì nối tiếp.
+ */
 async function attachReportAssignees(rows) {
   if (!rows.length) return;
+  const ids = rows.map((row) => row.id);
+  const COLS_FULL = 'assignment_id, user_id, assign_role, user:users(id, full_name, email, department_id)';
+  const COLS_LEGACY = 'assignment_id, user_id, user:users(id, full_name, email, department_id)';
+
+  let data;
+  try {
+    data = await fetchAllByIdsParallel({
+      table: 'crm_assignment_assignees', columns: COLS_FULL, key: 'assignment_id', ids,
+      // Phân trang bắt buộc phải có thứ tự tất định. Bản cũ không sắp xếp nên thứ tự
+      // người nhận là thứ tự vật lý tuỳ tiện (có thể đổi sau mỗi lần cập nhật bảng);
+      // nay cố định theo lúc được thêm vào.
+      tune: (q) => q.order('assignment_id', { ascending: true })
+        .order('added_at', { ascending: true })
+        .order('user_id', { ascending: true }),
+    });
+  } catch (e) {
+    // DB chưa có cột assign_role → đọc lại bản rút gọn, giữ nguyên hành vi cũ.
+    if (!/assign_role/.test(e.message || '')) throw e;
+    data = await fetchAllByIdsParallel({
+      table: 'crm_assignment_assignees', columns: COLS_LEGACY, key: 'assignment_id', ids,
+      // Phân trang bắt buộc phải có thứ tự tất định. Bản cũ không sắp xếp nên thứ tự
+      // người nhận là thứ tự vật lý tuỳ tiện (có thể đổi sau mỗi lần cập nhật bảng);
+      // nay cố định theo lúc được thêm vào.
+      tune: (q) => q.order('assignment_id', { ascending: true })
+        .order('added_at', { ascending: true })
+        .order('user_id', { ascending: true }),
+    });
+  }
+
   const byAssignment = new Map();
-  for (let i = 0; i < rows.length; i += ID_CHUNK) {
-    const ids = rows.slice(i, i + ID_CHUNK).map((row) => row.id);
-    let { data, error } = await supabase
-      .from('crm_assignment_assignees')
-      .select('assignment_id, user_id, assign_role, user:users(id, full_name, email, department_id)')
-      .in('assignment_id', ids);
-    if (error && /assign_role/.test(error.message || '')) {
-      ({ data, error } = await supabase
-        .from('crm_assignment_assignees')
-        .select('assignment_id, user_id, user:users(id, full_name, email, department_id)')
-        .in('assignment_id', ids));
-    }
-    if (error) throw error;
-    for (const item of data || []) {
-      const key = String(item.assignment_id);
-      if (!byAssignment.has(key)) byAssignment.set(key, []);
-      if (item.user) byAssignment.get(key).push({ ...item.user, assign_role: item.assign_role || null });
-    }
+  for (const item of data) {
+    const key = String(item.assignment_id);
+    if (!byAssignment.has(key)) byAssignment.set(key, []);
+    if (item.user) byAssignment.get(key).push({ ...item.user, assign_role: item.assign_role || null });
   }
   for (const row of rows) {
     row.assignees = byAssignment.get(String(row.id)) || (row.assignee ? [row.assignee] : []);
@@ -147,15 +173,12 @@ async function attachReportAssignees(rows) {
 async function attachProjectLabels(rows) {
   const projectIds = [...new Set(rows.map((row) => row.lead?.project_id).filter(Boolean).map(String))];
   if (!projectIds.length) return;
+  const projects = await fetchAllByIdsParallel({
+    table: 'projects', columns: 'id, code, name', key: 'id', ids: projectIds,
+    tune: (q) => q.order('id', { ascending: true }),
+  });
   const map = new Map();
-  for (let i = 0; i < projectIds.length; i += ID_CHUNK) {
-    const { data, error } = await supabase
-      .from('projects')
-      .select('id, code, name')
-      .in('id', projectIds.slice(i, i + ID_CHUNK));
-    if (error) throw error;
-    (data || []).forEach((project) => map.set(String(project.id), project));
-  }
+  projects.forEach((project) => map.set(String(project.id), project));
   rows.forEach((row) => {
     row.project = row.lead?.project_id ? (map.get(String(row.lead.project_id)) || null) : null;
   });
