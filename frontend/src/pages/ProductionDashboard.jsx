@@ -3696,17 +3696,8 @@ export default function ProductionDashboard() {
                 title="Tạo deal mới và đưa vào cột Chờ vào xưởng"
               >
                 <Plus className="h-3.5 w-3.5" />
-                Tạo deal
-          </button>
-              <button
-                type="button"
-                onClick={() => setShowNewSxProject(true)}
-                className="h-8 px-3.5 border border-indigo-200 text-indigo-700 hover:bg-indigo-50 rounded-lg font-semibold inline-flex items-center gap-1.5 cursor-pointer text-sm shrink-0"
-                title="Tạo dự án sản xuất và tự chọn luồng module"
-              >
-                <Plus className="h-3.5 w-3.5" />
                 Tạo dự án
-              </button>
+          </button>
               <AssignedTasksToolbarButton to="/sx/assignments" assignmentModule="production" variant="outlined" className="!h-8 !rounded-lg !text-sm" />
       </div>
 
@@ -3960,7 +3951,6 @@ export default function ProductionDashboard() {
                     title="Tùy chỉnh cuộn Kanban"
                   >
                     <Settings className="h-3.5 w-3.5" />
-                    <span className="hidden sm:inline">Tùy chỉnh</span>
                   </button>
                   <AnchoredDropdownMenu
                     open={showKanbanSettings}
