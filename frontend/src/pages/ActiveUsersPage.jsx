@@ -514,7 +514,7 @@ export default function ActiveUsersPage() {
   return (
     <div className="flex flex-col h-full min-h-0 bg-white">
       <div className="shrink-0 border-b border-gray-200 bg-white px-4 py-3 sm:px-5">
-        <div className="flex items-center justify-between gap-3 mb-3">
+        <div data-guide-khu-vuc="Tiêu đề & thao tác" className="flex items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-9 h-9 rounded-xl bg-emerald-50 border border-emerald-100 flex items-center justify-center shrink-0">
               <Activity className="h-4 w-4 text-emerald-600" />
@@ -553,7 +553,7 @@ export default function ActiveUsersPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 items-center">
+        <div data-guide-khu-vuc="Bộ lọc công ty, phòng ban & trạng thái" className="grid grid-cols-1 lg:grid-cols-12 gap-2 items-center">
           <div className="lg:col-span-2 flex items-center gap-1.5 min-w-0">
             <Building2 className="h-4 w-4 text-gray-400 shrink-0" aria-hidden />
             <select
@@ -647,8 +647,8 @@ export default function ActiveUsersPage() {
         )}
 
         {filter !== 'auth_log' && (
-        <div className="mb-4 rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
-          <div className="flex border-b border-gray-200 px-2 sm:px-3 gap-0 overflow-x-auto bg-white">
+        <div data-guide-khu-vuc="Bản đồ & vị trí nhân viên" className="mb-4 rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
+          <div data-guide-khu-vuc="Tab Bản đồ / Danh sách điểm / Chưa có vị trí" className="flex border-b border-gray-200 px-2 sm:px-3 gap-0 overflow-x-auto bg-white">
             {[
               { id: 'map', label: 'Bản đồ', Icon: MapPin },
               { id: 'list', label: 'Danh sách điểm', Icon: List, count: mapPoints.length },
@@ -743,7 +743,7 @@ export default function ActiveUsersPage() {
               mapPoints.length === 0 ? (
                 <p className="text-sm text-gray-500 py-6 text-center">Chưa có điểm nào trên bản đồ.</p>
               ) : (
-                <ul className="divide-y divide-gray-100 max-h-[min(420px,55vh)] overflow-y-auto rounded-lg border border-gray-200 bg-white [scrollbar-width:thin]">
+                <ul data-guide-khu-vuc="Danh sách điểm vị trí" className="divide-y divide-gray-100 max-h-[min(420px,55vh)] overflow-y-auto rounded-lg border border-gray-200 bg-white [scrollbar-width:thin]">
                   {mapPoints.map((loc) => {
                     const href = mapOpenHref(loc);
                     const hasGeo = Number.isFinite(Number(loc.lat)) && Number.isFinite(Number(loc.lng));
@@ -834,7 +834,7 @@ export default function ActiveUsersPage() {
                     <strong>{employeesWithoutLocation.length} nhân viên</strong> chưa có vị trí hợp lệ ({mapEmployeeScope === 'online' ? 'đang online' : 'trong bộ lọc'}).
                     Nhắc mở app/web → Cài đặt → <strong>Vị trí làm việc</strong> → «Cập nhật ngay» và cho phép định vị.
                   </p>
-                  <ul className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-[min(420px,55vh)] overflow-y-auto [scrollbar-width:thin]">
+                  <ul data-guide-khu-vuc="Nhân viên chưa có vị trí" className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-[min(420px,55vh)] overflow-y-auto [scrollbar-width:thin]">
                     {employeesWithoutLocation.map((u) => (
                       <li
                         key={u.id}
@@ -855,7 +855,7 @@ export default function ActiveUsersPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 border-t border-gray-100 bg-gray-50/80 text-center text-[11px]">
+          <div data-guide-khu-vuc="Thống kê chi nhánh & vị trí" className="grid grid-cols-3 border-t border-gray-100 bg-gray-50/80 text-center text-[11px]">
             <div className="py-2.5 border-r border-gray-100">
               <p className="text-lg font-bold text-gray-900">{branchLocations.length}</p>
               <p className="text-gray-500">chi nhánh</p>
@@ -874,7 +874,7 @@ export default function ActiveUsersPage() {
 
         {filter === 'auth_log' && (
           <div className="mb-4 rounded-xl border border-gray-200 bg-white overflow-hidden shadow-sm">
-            <div className="px-3 sm:px-4 py-3 border-b border-gray-100 flex flex-wrap items-center justify-between gap-2 bg-white">
+            <div data-guide-khu-vuc="Lịch sử đăng nhập (chi tiết đến giây)" className="px-3 sm:px-4 py-3 border-b border-gray-100 flex flex-wrap items-center justify-between gap-2 bg-white">
               <h2 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
                 <History className="h-4 w-4 text-sky-600" />
                 Lịch sử đăng nhập
@@ -935,7 +935,7 @@ export default function ActiveUsersPage() {
               </div>
             ) : (
               <>
-              <div
+              <div data-guide-khu-vuc="Bảng lịch sử đăng nhập"
                 className="overflow-auto [scrollbar-width:thin]"
                 style={{ maxHeight: 'calc(100vh - 380px)', minHeight: 240 }}
               >
@@ -1021,7 +1021,7 @@ export default function ActiveUsersPage() {
             {filter === 'online' ? 'Chưa có ai đang hoạt động trong bộ lọc này.' : 'Không có nhân viên phù hợp.'}
           </div>
         ) : (
-          <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+          <div data-guide-khu-vuc="Danh sách người đang hoạt động" className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
             <button
               type="button"
               onClick={() => setEmployeeListOpen((open) => !open)}

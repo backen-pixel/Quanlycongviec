@@ -144,7 +144,7 @@ export default function CRMProductsPage() {
           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-2 flex items-center gap-1">
             <Tag className="h-3 w-3" /> Phân loại theo nhóm ngành
           </p>
-          <div className="flex gap-2 overflow-x-auto pb-1">
+          <div className="flex gap-2 overflow-x-auto pb-1" data-guide-khu-vuc="Bộ lọc nhóm ngành">
             <button onClick={() => setCategoryFilter('')}
               className={`px-3 py-1.5 rounded-full text-xs font-medium border whitespace-nowrap cursor-pointer transition-all ${!categoryFilter ? 'bg-blue-600 text-white border-blue-600' : 'bg-white hover:bg-gray-50'}`}>
               Tất cả ({products.length})
@@ -175,7 +175,7 @@ export default function CRMProductsPage() {
 
       {/* Nhóm SP (code_group) */}
       {Object.keys(codeGroups).length > 0 && (
-        <div className="flex gap-2 overflow-x-auto">
+        <div className="flex gap-2 overflow-x-auto" data-guide-khu-vuc="Bộ lọc nhóm sản phẩm">
           <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide flex items-center gap-1 shrink-0 mr-1">
             <Boxes className="h-3 w-3" /> Nhóm SP:
           </span>
@@ -367,7 +367,7 @@ function CategoryManager({ categories, companyIdForAdmin, onReload }) {
         </button>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2" data-guide-khu-vuc="Danh sách nhóm ngành">
         {categories.map(cat => (
           <div key={cat.id} className="flex items-center gap-1.5 bg-purple-50 px-3 py-1.5 rounded-full">
             <span className="text-xs font-medium text-purple-700">{cat.name}</span>

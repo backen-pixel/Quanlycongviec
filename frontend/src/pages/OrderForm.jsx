@@ -224,7 +224,7 @@ export default function OrderForm() {
     <div className="space-y-4 w-full">
       <SaveToast status={saveStatus} message={saveMsg} onDone={() => setSaveStatus('idle')} />
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div data-guide-khu-vuc="Tiêu đề & thao tác đơn hàng" className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button onClick={() => navigate(returnTo || (id ? `/crm/orders/${id}` : '/crm/orders'))} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
           <div>
@@ -275,7 +275,7 @@ export default function OrderForm() {
       </div>
 
       {/* Customer Info */}
-      <div className="bg-white rounded-xl border p-4">
+      <div data-guide-khu-vuc="Liên kết deal & khách hàng" className="bg-white rounded-xl border p-4">
         <h2 className="text-sm font-bold text-gray-900 mb-3">Liên kết deal & khách hàng</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="md:col-span-2">
@@ -351,7 +351,7 @@ export default function OrderForm() {
       </CommercialItemsTable>
 
       {/* Notes */}
-      <div className="bg-white rounded-xl border p-4">
+      <div data-guide-khu-vuc="Ghi chú đơn hàng" className="bg-white rounded-xl border p-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="text-xs font-medium text-gray-600">Điều khoản thanh toán</label>

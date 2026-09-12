@@ -109,7 +109,7 @@ export default function CrmLineItemsReadonly({ items = [], document: doc, accent
   let itemNo = 0;
 
   return (
-    <div className="bg-white rounded-xl border p-3">
+    <div className="bg-white rounded-xl border p-3" data-guide-khu-vuc="Chi tiết hàng hóa / dịch vụ">
       <h2 className="text-sm font-bold text-gray-900 mb-4">Chi tiết hàng hóa / dịch vụ</h2>
       <div className="overflow-x-auto overflow-y-auto border rounded-lg" style={{ maxHeight: 'min(65vh, 720px)' }}>
         <table className="min-w-[2200px] w-full text-xs">

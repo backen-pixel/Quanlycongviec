@@ -1070,7 +1070,7 @@ export default function EventsOffLeaveSection({
 
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_300px] gap-5 items-start">
           <div className="space-y-5 min-w-0">
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden" data-guide-khu-vuc={`Lịch nghỉ tháng ${month}/${year}`}>
               <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
                 <div className="flex items-center gap-1">
                   <button type="button" onClick={prevMonth} className="w-9 h-9 inline-flex items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-violet-700 cursor-pointer">
@@ -1296,7 +1296,7 @@ export default function EventsOffLeaveSection({
             </div>
 
             {/* Bảng đơn nghỉ gần đây */}
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden" data-guide-khu-vuc="Đơn nghỉ gần đây">
               <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                 <div>
                   <h3 className="text-[15px] font-bold text-gray-900 inline-flex items-center gap-2">
@@ -1401,7 +1401,7 @@ export default function EventsOffLeaveSection({
 
           {/* Sidebar phải */}
           <div className="space-y-4 xl:sticky xl:top-4">
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden" data-guide-khu-vuc="Nghỉ sắp tới">
               <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
                 <div>
                   <h3 className="text-[15px] font-bold text-gray-900">Sắp tới</h3>
@@ -1455,7 +1455,7 @@ export default function EventsOffLeaveSection({
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5" data-guide-khu-vuc="Tạo đơn nghỉ mới">
               <div className="mb-4 flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <h3 className="text-[16px] font-bold text-gray-900">Tạo đơn nghỉ mới</h3>

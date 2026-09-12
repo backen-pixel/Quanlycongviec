@@ -118,7 +118,7 @@ function GroupATimeParamsPanel({ defs, edits, setEdits, save, savingId }) {
   };
 
   return (
-    <div className="bg-blue-50/80 border border-blue-200 rounded-xl p-4 space-y-3">
+    <div data-guide-khu-vuc="Nhóm A — thông số thời gian" className="bg-blue-50/80 border border-blue-200 rounded-xl p-4 space-y-3">
       <div className="flex items-start gap-2">
         <Clock className="w-5 h-5 text-blue-700 shrink-0 mt-0.5" />
         <div>
@@ -247,7 +247,7 @@ function DefinitionsTab({ companyId, roleFilter }) {
   };
 
   return (
-    <div className="space-y-3">
+    <div data-guide-khu-vuc="Định nghĩa KPI" className="space-y-3">
       {roleFilter && (
         <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
           Đang <strong>lọc hiển thị</strong> theo vai trò <code className="bg-amber-100 px-1 rounded">{roleFilter}</code> — chỉ các KPI có cột «Áp dụng»
@@ -297,7 +297,7 @@ function DefinitionsTab({ companyId, roleFilter }) {
       {loading ? (
         <div className="text-center py-8 text-gray-400">Đang tải…</div>
       ) : (
-        <div className="bg-white rounded-xl border border-gray-100 overflow-x-auto">
+        <div data-guide-khu-vuc="Bảng định nghĩa KPI" className="bg-white rounded-xl border border-gray-100 overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs text-gray-700 uppercase">
               <tr>
@@ -541,7 +541,7 @@ function TargetsTab({ companyId, roleFilter }) {
   }, [targets, roleFilter, userMap]);
 
   return (
-    <div className="space-y-3">
+    <div data-guide-khu-vuc="Target KPI" className="space-y-3">
       {roleFilter && (
         <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
           Lọc theo vai trò <code className="bg-amber-100 px-1 rounded">{roleFilter}</code>: danh sách nhân viên gọi API với{' '}
@@ -571,7 +571,7 @@ function TargetsTab({ companyId, roleFilter }) {
 
       {err && <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">{err}</div>}
 
-      <div className="bg-blue-50/40 border border-blue-100 rounded-xl p-3">
+      <div data-guide-khu-vuc="Thêm / cập nhật target" className="bg-blue-50/40 border border-blue-100 rounded-xl p-3">
         <h3 className="font-semibold text-sm mb-2 flex items-center gap-2" style={{ color: '#000000' }}>
           <Plus className="w-4 h-4" /> Thêm / cập nhật target
         </h3>
@@ -716,7 +716,7 @@ function PeriodsTab({ companyId }) {
   };
 
   return (
-    <div className="space-y-3">
+    <div data-guide-khu-vuc="Kỳ KPI" className="space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-600">
           Trạng thái <strong>locked</strong>: chặn recompute. <strong>Closed</strong>: chốt số chính thức.
@@ -881,7 +881,7 @@ function BusinessHoursPanel({ companyId }) {
   if (!config) return null;
 
   return (
-    <div className="bg-white border border-gray-100 rounded-xl p-4 space-y-4 max-w-2xl">
+    <div data-guide-khu-vuc="Giờ hành chính" className="bg-white border border-gray-100 rounded-xl p-4 space-y-4 max-w-2xl">
       <div className="flex items-center gap-2">
         <Clock className="w-5 h-5 text-blue-600" />
         <h3 className="font-semibold" style={{ color: '#000000' }}>Giờ hành chính</h3>
@@ -987,7 +987,7 @@ function HolidaysPanel({ companyId }) {
   };
 
   return (
-    <div className="space-y-3">
+    <div data-guide-khu-vuc="Ngày lễ / nghỉ chung" className="space-y-3">
       <div className="flex items-center gap-2">
         <CalendarDays className="w-5 h-5 text-amber-600" />
         <h3 className="font-semibold" style={{ color: '#000000' }}>Ngày lễ / nghỉ chung</h3>
@@ -1113,7 +1113,7 @@ function LeavesPanel({ companyId, roleFilter }) {
   };
 
   return (
-    <div className="space-y-3">
+    <div data-guide-khu-vuc="Ngày phép nhân viên" className="space-y-3">
       <div className="flex items-center gap-2">
         <UserMinus className="w-5 h-5 text-purple-600" />
         <h3 className="font-semibold" style={{ color: '#000000' }}>Ngày phép nhân viên</h3>
@@ -1216,7 +1216,7 @@ function CalendarTab({ companyId, roleFilter }) {
     { id: 'leaves', label: 'Ngày phép NV', icon: UserMinus },
   ];
   return (
-    <div className="space-y-3">
+    <div data-guide-khu-vuc="Lịch làm việc & nghỉ" className="space-y-3">
       <div className="flex gap-1 flex-wrap">
         {subTabs.map((t) => {
           const Ic = t.icon;
@@ -1460,7 +1460,7 @@ function PipelineKpiTab({ companyId, companies, roleFilter }) {
   };
 
   return (
-    <div className="space-y-3">
+    <div data-guide-khu-vuc="KPI theo pipeline" className="space-y-3">
       {roleFilter === 'sales_admin' && (
         <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
           Đang lọc vai trò <strong>Sales Admin</strong>: map <strong>Lead</strong> quan trọng cho KPI nhóm A; map <strong>Deal</strong> chủ yếu cho NV kinh doanh (nhóm B) — vẫn có thể chỉnh tại đây.
@@ -1748,7 +1748,7 @@ function CrmTaskBundleTab({ companyId, variant = 'full', roleFilter = '' }) {
   );
 
   return (
-    <div className="space-y-4">
+    <div data-guide-khu-vuc="Bộ nhiệm vụ CRM cho KPI" className="space-y-4">
       <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-sm text-slate-700">
         <p className="font-semibold text-slate-900 flex items-center gap-2">
           <Paperclip className="w-4 h-4 text-slate-500 shrink-0" />
@@ -1885,7 +1885,7 @@ export default function KpiSettingsPage() {
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2.5">
+      <div data-guide-khu-vuc="Chọn công ty & vai trò" className="flex flex-wrap items-center gap-3 rounded-xl border border-gray-200 bg-white px-3 py-2.5">
         <Building2 className="w-4 h-4 text-gray-600 shrink-0" />
         <label className="text-sm text-gray-700 flex flex-wrap items-center gap-2">
           <span className="font-medium">Lọc theo công ty</span>
@@ -1919,7 +1919,7 @@ export default function KpiSettingsPage() {
         </span>
       </div>
 
-      <div className="flex gap-1 border-b border-gray-200 overflow-x-auto">
+      <div data-guide-khu-vuc="Tab cấu hình KPI" className="flex gap-1 border-b border-gray-200 overflow-x-auto">
         {tabs.map((t) => (
           <button
             key={t.id}

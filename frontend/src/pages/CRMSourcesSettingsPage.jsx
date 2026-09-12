@@ -195,7 +195,7 @@ export default function CRMSourcesSettingsPage() {
       ) : (
         <>
           {/* Phân loại */}
-          <section className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+          <section data-guide-khu-vuc="Phân loại nguồn" className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
             <h2 className="text-sm font-bold text-gray-900 mb-3">Phân loại nguồn</h2>
             <form onSubmit={saveCategory} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2 mb-4 items-end">
               <div>
@@ -338,7 +338,7 @@ export default function CRMSourcesSettingsPage() {
           </section>
 
           {/* Nguồn */}
-          <section className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+          <section data-guide-khu-vuc="Danh sách nguồn" className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
             <h2 className="text-sm font-bold text-gray-900 mb-3">Danh sách nguồn (crm_sources)</h2>
             <form onSubmit={saveSource} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2 mb-4 items-end">
               <div>

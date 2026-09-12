@@ -59,7 +59,11 @@ export default function ScopeFilterBar({
           <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide">
             {companyLabel}
           </span>
+          {/* aria-label: có trang truyền companyLabel="" để giấu caption cho gọn (VD
+              /crm/events), khi đó select KHÔNG còn tên gọi nào — trình đọc màn hình và Trợ lý
+              hướng dẫn đều chỉ thấy "(không nhãn)". Không đổi giao diện, chỉ thêm tên. */}
           <select
+            aria-label={companyLabel || 'Công ty'}
             value={companyId}
             onChange={(e) => setCompanyId?.(e.target.value)}
             disabled={metaLoading}
@@ -81,6 +85,7 @@ export default function ScopeFilterBar({
             {departmentLabel}
           </span>
           <select
+            aria-label={departmentLabel || 'Phòng ban'}
             value={departmentId}
             onChange={(e) => setDepartmentId?.(e.target.value)}
             disabled={

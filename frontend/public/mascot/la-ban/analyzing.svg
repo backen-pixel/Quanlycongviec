@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 146 132" width="146" height="132" role="img" aria-label="Trợ lý đang đọc màn hình">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#4f46e5"/></linearGradient>
+    <linearGradient id="head" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e0e7ff"/></linearGradient>
+  </defs>
+  <ellipse cx="60" cy="124" rx="30" ry="5" fill="#1e293b" opacity=".12"/>
+  <path d="M32 78 L20 86" stroke="#a5b4fc" stroke-width="9" stroke-linecap="round" fill="none"/>
+  <rect x="28" y="64" width="64" height="47" rx="18" fill="url(#body)"/>
+  <circle cx="60" cy="88" r="13" fill="#eef2ff" stroke="#c7d2fe" stroke-width="2"/>
+  <path d="M60 79 L64 88 L56 88 Z" fill="#ef4444"/>
+  <path d="M60 97 L64 88 L56 88 Z" fill="#cbd5e1"/>
+  <circle cx="60" cy="88" r="1.8" fill="#475569"/>
+  <path d="M60 13 L60 6" stroke="#a5b4fc" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="60" cy="4" r="4" fill="#fcd34d"/>
+  <circle cx="60" cy="40" r="28" fill="url(#head)" stroke="#6366f1" stroke-width="3"/>
+  <circle cx="30" cy="42" r="5" fill="#c7d2fe"/>
+  <circle cx="90" cy="42" r="5" fill="#c7d2fe"/>
+  <!-- mắt nheo lại: đang dò -->
+  <rect x="48" y="37" width="9" height="4" rx="2" fill="#1e293b"/>
+  <rect x="66" y="37" width="9" height="4" rx="2" fill="#1e293b"/>
+  <path d="M54 50 q6 4 12 0" stroke="#1e293b" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+  <!-- bảng dữ liệu cầm tay phải -->
+  <path d="M88 76 L104 70" stroke="#a5b4fc" stroke-width="9" stroke-linecap="round" fill="none"/>
+  <rect x="96" y="46" width="40" height="32" rx="5" fill="#ffffff" stroke="#6366f1" stroke-width="2.5"/>
+  <rect x="101" y="52" width="22" height="3.4" rx="1.7" fill="#c7d2fe"/>
+  <rect x="101" y="59" width="30" height="3.4" rx="1.7" fill="#c7d2fe"/>
+  <rect x="101" y="66" width="16" height="3.4" rx="1.7" fill="#a5b4fc"/>
+  <!-- kính lúp rà trên bảng -->
+  <circle cx="124" cy="66" r="9" fill="#eef2ff" fill-opacity=".85" stroke="#4f46e5" stroke-width="2.5"/>
+  <path d="M131 73 L137 79" stroke="#4f46e5" stroke-width="3" stroke-linecap="round"/>
+</svg>

@@ -22,8 +22,12 @@ import {
   isLeadDetailTabActive,
   findBestTourTarget,
 } from '../../lib/productTour/target';
+import { datTieuDiem, xoaTieuDiem } from '../../lib/productTour/focus';
 import TourOverlay from './TourOverlay';
 import TourHintChip from './TourHintChip';
+
+/** Trần số lần cuộn sửa vị trí trong MỘT bước tour — xem chú thích ở `lanCuon`. */
+const MAX_LAN_CUON = 3;
 
 const ProductTourContext = createContext(null);
 
@@ -367,6 +371,7 @@ export default function ProductTourProvider({ children }) {
       revealCleanupRef.current = null;
     }
     stickyRef.current = { cardId: null, taskRowId: null, lastCenter: null };
+    xoaTieuDiem();
     setActiveTourId((id) => {
       if (id) {
         if (completed) markTourDone(id);
@@ -414,6 +419,19 @@ export default function ProductTourProvider({ children }) {
     return () => window.removeEventListener('product-tour:start', onStart);
   }, [startTour]);
 
+  /**
+   * Đối xứng với `product-tour:start`: cho phép đóng tour từ ngoài context.
+   *
+   * Người mở tour bằng sự kiện (trợ lý hướng dẫn) cũng phải có đường dẹp nó đi khi bối cảnh
+   * không còn đúng nữa — chẳng hạn chính nó vừa kéo người dùng sang trang khác. Không có lối
+   * này thì tour treo lại, trỏ vào phần tử đã biến mất và hiện "mất mục tiêu".
+   */
+  useEffect(() => {
+    const onStop = () => stopTour({ completed: false, dismissHint: true });
+    window.addEventListener('product-tour:stop', onStop);
+    return () => window.removeEventListener('product-tour:stop', onStop);
+  }, [stopTour]);
+
   const next = useCallback(() => {
     if (!tour) return;
     const current = tour.steps[stepIndex];
@@ -440,12 +458,33 @@ export default function ProductTourProvider({ children }) {
     return () => window.clearTimeout(t);
   }, []);
 
+  // Không còn bước nào → nhân vật thôi bám. KHÔNG xoá trong cleanup theo `step`: cleanup chạy ở
+  // MỌI lần đổi bước, nhân vật sẽ nháy về góc đậu rồi mới bay lại mỗi bước.
+  useEffect(() => {
+    if (!step) xoaTieuDiem();
+  }, [step]);
+
+  // Gỡ provider (đăng xuất / HMR) thì không để lại tiêu điểm mồ côi.
+  useEffect(() => () => xoaTieuDiem(), []);
+
   useEffect(() => {
     if (!step) return undefined;
     let cancelled = false;
     let tries = 0;
     const maxTries = step.optional ? 24 : 70;
-    let scrolledForStep = false;
+    /**
+     * Đếm SỐ LẦN ĐÃ CUỘN THẬT của bước này, thay cho cờ "đã cuộn một lần rồi".
+     *
+     * Cờ cũ bật ngay ở lần đo ĐẦU TIÊN — mà lần đó thường xảy ra trước khi tab/panel của bước
+     * kịp mở. Cuộn xong thì layout đổi, mục tiêu trôi khỏi chỗ vừa cuộn tới, và không còn lần
+     * cuộn nào nữa: đó là những bước "tour dừng ở lưng chừng, khoanh sáng một chỗ trống".
+     *
+     * Nay còn được sửa thêm vài lần. Không sợ cuộn qua lại: `scrollTourTargetGently` tự bỏ qua
+     * khi mục tiêu đã đủ thấy (trả về false, không tính vào số lần), nên số lần cuộn thật hội tụ
+     * về 0 ngay khi layout đứng yên. Trần 3 lần chỉ là chốt chặn cho trường hợp trang có thứ gì
+     * đó tự cuộn ngược lại — thà khoanh sai chỗ còn hơn giằng co với trang.
+     */
+    let lanCuon = 0;
     let autoSkipped = false;
 
     if (revealCleanupRef.current) {
@@ -474,14 +513,11 @@ export default function ProductTourProvider({ children }) {
       stickyRef.current = updateStickyFromTarget(step.target, el, stickyRef.current);
 
       // Cuộn tối thiểu trong main — tránh scrollIntoView kéo trang từ bước dưới lên đầu
-      if (!scrolledForStep) {
-        scrolledForStep = true;
+      if (lanCuon < MAX_LAN_CUON) {
         const skipScroll = step.scroll === false
           || String(step.target || '').startsWith('lead-tab-')
           || step.target === 'lead-detail-tabs';
-        if (!skipScroll) {
-          scrollTourTargetGently(el);
-        }
+        if (!skipScroll && scrollTourTargetGently(el)) lanCuon += 1;
       }
       const nextRect = el.getBoundingClientRect();
       // Bỏ qua đo 0×0 / ngoài màn hình quá xa khi vừa remount
@@ -499,6 +535,14 @@ export default function ProductTourProvider({ children }) {
         return nextVal;
       });
       setMissing(false);
+      // Báo cho nhân vật hệ thống biết đang chỉ vào đâu (lib/productTour/focus.js). Gọi mỗi nhịp
+      // đo là cố ý: phần tử có thể bị thay khi React remount danh sách, và hàm kia tự lọc trùng.
+      datTieuDiem({
+        el,
+        buoc: stepIndex + 1,
+        tong: tour?.steps?.length || 0,
+        tieuDe: String(step.title || ''),
+      });
       return 'ok';
     };
 
@@ -527,6 +571,7 @@ export default function ProductTourProvider({ children }) {
         setMissing(true);
         // Chỉ xóa spotlight khi chắc không tìm thấy — tránh chớp lúc đổi bước
         setTargetRect(null);
+        xoaTieuDiem();
         return;
       }
       window.setTimeout(tick, 70);
@@ -536,7 +581,8 @@ export default function ProductTourProvider({ children }) {
     window.requestAnimationFrame(() => {
       if (!cancelled) tick();
     });
-    // Đo lại sau khi tab/panel mở — không reset scrolledForStep (tránh cuộn lần 2)
+    // Đo lại sau khi tab/panel mở. Lần đo này ĐƯỢC PHÉP cuộn tiếp: đây chính là lúc layout
+    // vừa đổi và vị trí cuộn của lần trước đã sai — xem chú thích ở `lanCuon`.
     const lateMeasure = window.setTimeout(() => {
       if (!cancelled) updateRect();
     }, 360);

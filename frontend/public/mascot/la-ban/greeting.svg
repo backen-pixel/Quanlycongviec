@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 146 132" width="146" height="132" role="img" aria-label="Trợ lý vẫy tay chào">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#4f46e5"/></linearGradient>
+    <linearGradient id="head" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e0e7ff"/></linearGradient>
+  </defs>
+  <ellipse cx="62" cy="124" rx="30" ry="5" fill="#1e293b" opacity=".12"/>
+  <!-- tay trái (phía người xem) -->
+  <path d="M34 78 L18 84" stroke="#a5b4fc" stroke-width="9" stroke-linecap="round" fill="none"/>
+  <circle cx="16" cy="85" r="6.5" fill="#fcd34d"/>
+  <!-- tay phải vẫy chào -->
+  <path d="M92 74 L112 46" stroke="#a5b4fc" stroke-width="9" stroke-linecap="round" fill="none"/>
+  <circle cx="115" cy="41" r="7.5" fill="#fcd34d"/>
+  <path d="M124 32 a10 10 0 0 1 3 9" stroke="#fcd34d" stroke-width="2.5" stroke-linecap="round" fill="none" opacity=".7"/>
+  <path d="M129 27 a16 16 0 0 1 4 14" stroke="#fcd34d" stroke-width="2.5" stroke-linecap="round" fill="none" opacity=".45"/>
+  <!-- thân -->
+  <rect x="30" y="64" width="64" height="47" rx="18" fill="url(#body)"/>
+  <!-- mặt la bàn trên ngực -->
+  <circle cx="62" cy="88" r="13" fill="#eef2ff" stroke="#c7d2fe" stroke-width="2"/>
+  <path d="M62 79 L66 88 L58 88 Z" fill="#ef4444"/>
+  <path d="M62 97 L66 88 L58 88 Z" fill="#cbd5e1"/>
+  <circle cx="62" cy="88" r="1.8" fill="#475569"/>
+  <!-- ăng ten -->
+  <path d="M62 13 L62 6" stroke="#a5b4fc" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="62" cy="4" r="4" fill="#fcd34d"/>
+  <!-- đầu -->
+  <circle cx="62" cy="40" r="28" fill="url(#head)" stroke="#6366f1" stroke-width="3"/>
+  <circle cx="32" cy="42" r="5" fill="#c7d2fe"/>
+  <circle cx="92" cy="42" r="5" fill="#c7d2fe"/>
+  <!-- mắt + miệng -->
+  <circle cx="53" cy="39" r="4.2" fill="#1e293b"/>
+  <circle cx="71" cy="39" r="4.2" fill="#1e293b"/>
+  <circle cx="54.4" cy="37.6" r="1.3" fill="#ffffff"/>
+  <circle cx="72.4" cy="37.6" r="1.3" fill="#ffffff"/>
+  <path d="M55 50 q7 6 14 0" stroke="#1e293b" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+  <ellipse cx="46" cy="48" rx="4" ry="2.6" fill="#fda4af" opacity=".55"/>
+  <ellipse cx="78" cy="48" rx="4" ry="2.6" fill="#fda4af" opacity=".55"/>
+</svg>

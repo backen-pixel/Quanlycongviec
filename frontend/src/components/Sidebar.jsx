@@ -11,7 +11,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, UsersRound,
   Target, FileText, ShoppingCart, ShoppingBag, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic, Award, Plus,
-  BookOpen, FolderTree, Factory, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Download, UserMinus,
+  BookOpen, FolderTree, Factory, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Compass, Download, UserMinus,
   Sigma, Calculator, FileUp, History as HistoryIcon, History, HardDrive, Database, Globe, CreditCard, Sparkles, Pin,
   Menu as MenuIcon, X as XIcon,
 } from 'lucide-react';
@@ -113,6 +113,7 @@ const MENU_GROUPS = [
       { to: '/settings/pdf', icon: Settings, label: 'Thông tin PDF' },
       { to: '/settings/theme', icon: Settings, label: 'Giao diện & Hình nền' },
       { to: '/settings/ai-chat-bot', icon: Bot, label: 'AI Bot trong chat' },
+      { to: '/settings/tro-ly-huong-dan', icon: Compass, label: 'Trợ lý hướng dẫn' },
       { to: '/settings/app-updates', icon: Smartphone, label: 'Cập nhật App' },
       { to: '/settings/request-monitor', icon: Activity, label: 'Theo dõi Request' },
       { to: '/management/backup-sync', icon: Database, label: 'Giám sát Supabase' },

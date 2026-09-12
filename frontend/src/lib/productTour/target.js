@@ -301,6 +301,20 @@ export function isTourTargetMostlyVisible(el) {
   return visibleH >= Math.min(r.height, 48) * 0.55 && visibleW >= Math.min(r.width, 48) * 0.55;
 }
 
+/**
+ * Bao nhiêu pixel của mục tiêu phải THẬT SỰ nhìn thấy thì mới coi là khỏi cuộn.
+ *
+ * Ngưỡng cũ là 36 px và nó chính là lý do "tour không cuộn tới đúng chỗ": một thẻ cao 300 px hở
+ * đúng 36 px ở mép dưới màn hình vẫn bị tính là "thấy rồi", nên tour đứng yên và khoanh sáng một
+ * vệt mỏng sát đáy — người dùng không nhận ra nó đang chỉ cái gì, còn tooltip thì hết chỗ đặt.
+ *
+ * Ngưỡng mới đọc là: thấy được ít nhất 120 px của nó, hoặc thấy TRỌN nếu nó thấp hơn 120 px.
+ * Vẫn nới hơn `mostlyVisible` (không đòi thấy phần lớn) nên không gây cuộn qua lại giữa các
+ * bước, mà cũng không còn chấp nhận một vệt hở vô nghĩa.
+ */
+const DU_THAY_DOC = 120;
+const DU_THAY_NGANG = 80;
+
 /** Có cần cuộn không — nới lỏng hơn mostlyVisible để tránh nhảy trang giữa các bước. */
 export function needsTourScroll(el) {
   if (!el) return false;
@@ -310,8 +324,8 @@ export function needsTourScroll(el) {
   const vw = window.innerWidth || 1;
   const visibleH = Math.max(0, Math.min(r.bottom, vh) - Math.max(r.top, 0));
   const visibleW = Math.max(0, Math.min(r.right, vw) - Math.max(r.left, 0));
-  if (visibleH >= 36 && visibleW >= 36) return false;
-  return true;
+  return visibleH < Math.min(r.height, DU_THAY_DOC) - 1
+    || visibleW < Math.min(r.width, DU_THAY_NGANG) - 1;
 }
 
 /**
@@ -319,11 +333,11 @@ export function needsTourScroll(el) {
  * Ưu tiên đưa mép trên target vào vùng nhìn (nút/tab nằm phía trên khối lớn).
  */
 export function scrollTourTargetGently(el) {
-  if (!el || !needsTourScroll(el)) return;
+  if (!el || !needsTourScroll(el)) return false;
   try {
     const pos = window.getComputedStyle(el).position;
     // Menu/panel cố định — không cuộn trang
-    if (pos === 'fixed') return;
+    if (pos === 'fixed') return false;
   } catch { /* ignore */ }
 
   const main = document.querySelector('main.overflow-y-auto, main.flex-1.overflow-y-auto');
@@ -339,9 +353,9 @@ export function scrollTourTargetGently(el) {
     } else if (focusBottom > mr.bottom - margin) {
       delta = focusBottom - (mr.bottom - margin);
     }
-    if (Math.abs(delta) < 4) return;
+    if (Math.abs(delta) < 4) return false;
     main.scrollTop += delta;
-    return;
+    return true;
   }
 
   let delta = 0;
@@ -351,7 +365,9 @@ export function scrollTourTargetGently(el) {
   }
   if (Math.abs(delta) >= 4) {
     window.scrollBy(0, delta);
+    return true;
   }
+  return false;
 }
 
 /** Tab LeadDetail đã active? */

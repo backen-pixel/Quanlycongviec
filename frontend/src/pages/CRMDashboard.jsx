@@ -489,6 +489,15 @@ const KANBAN_COLUMN_SCROLL_MODES = ['unified', 'per-column'];
 const KANBAN_DEFAULT_COLUMN_SCROLL_MODE = 'unified';
 const LS_CRM_KANBAN_COLUMN_SCROLL = 'crm_kanban_column_scroll_mode';
 /** Trang đầu và mỗi lần cuộn chỉ lấy 40 thẻ để phản hồi nhanh, không nạp dồn dữ liệu. */
+/**
+ * Tên hiển thị của từng tab — dùng cho `data-guide-khu-vuc` (Trợ lý hướng dẫn).
+ *
+ * Ba tab, không phải hai: bản đầu của khai báo này viết `lead ? 'Lead' : 'Deal'` nên tab Khách
+ * hàng bị dán nhãn "Deal", và trợ lý sẽ nói sai loại bản ghi người dùng đang xem — đúng kiểu lỗi
+ * mà `tab_dang_chon` sinh ra để chặn.
+ */
+const TEN_TAB = { lead: 'Lead', deal: 'Deal', customer: 'Khách hàng' };
+
 const KANBAN_INITIAL_PAGE_SIZE = 40;
 const KANBAN_PAGE_SIZE = 40;
 /** Mặc định trần auto-load khi cuộn; có thể tăng trần nhưng vẫn tải từng batch 40. */
@@ -7696,13 +7705,18 @@ export default function CRMDashboard() {
       <div className="ui-solid-white rounded-xl border border-slate-200/90 bg-white shadow-sm overflow-hidden">
       {/* Header — tab + hành động + tìm kiếm + chế độ xem */}
       <div className="border-b border-slate-200/60">
-      {/* Hàng 1 — tab pipeline & hành động */}
-      <div className="flex items-center justify-between gap-1.5 flex-wrap px-2.5 py-1 sm:px-3 bg-slate-50/50">
+      {/* Hàng 1 — tab pipeline & hành động. Khai khu vực cho Trợ lý hướng dẫn: ghim, cảnh báo quá hạn,
+          cập nhật, hướng dẫn, thùng rác, Thêm Lead/Deal. Tab Leads/Deals/Khách hàng là khu vực con riêng. */}
+      <div className="flex items-center justify-between gap-1.5 flex-wrap px-2.5 py-1 sm:px-3 bg-slate-50/50" data-guide-khu-vuc="Thanh tab & thao tác nhanh">
         <div className="flex items-center gap-1 min-w-0">
-          <div data-tour="pipeline-tabs" className="inline-flex gap-px p-0.5 bg-slate-200/60 border border-slate-300/50 rounded-lg shrink-0">
+          <div data-tour="pipeline-tabs" data-guide-khu-vuc="Chọn Leads / Deals / Khách hàng" className="inline-flex gap-px p-0.5 bg-slate-200/60 border border-slate-300/50 rounded-lg shrink-0">
+            {/* aria-pressed: trạng thái tab trước đây CHỈ nằm trong class Tailwind, nên trình đọc
+                màn hình và Trợ lý hướng dẫn đều không biết tab nào đang mở — trợ lý từng mở một
+                LEAD rồi báo với người dùng là "đã mở deal". Xem docs/guide-assistant-current.md. */}
             <button
               type="button"
               data-tour="pipeline-tab-lead"
+              aria-pressed={pipelineType === 'lead'}
               onClick={() => switchTab('lead')}
               className={`rounded-md font-semibold transition-colors flex items-center gap-1 px-2 py-1 text-[11px] whitespace-nowrap ${
                 pipelineType === 'lead'
@@ -7716,6 +7730,7 @@ export default function CRMDashboard() {
             <button
               type="button"
               data-tour="pipeline-tab-deal"
+              aria-pressed={pipelineType === 'deal'}
               onClick={() => switchTab('deal')}
               className={`rounded-md font-semibold transition-colors flex items-center gap-1 px-2 py-1 text-[11px] whitespace-nowrap ${
                 pipelineType === 'deal'
@@ -7729,6 +7744,8 @@ export default function CRMDashboard() {
             {showCustomerTab && (
               <button
                 type="button"
+                data-tour="pipeline-tab-customer"
+                aria-pressed={pipelineType === 'customer'}
                 onClick={() => switchTab('customer')}
                 className={`rounded-md font-semibold transition-colors flex items-center gap-1 px-2 py-1 text-[11px] whitespace-nowrap ${
                   pipelineType === 'customer'
@@ -7918,6 +7935,7 @@ export default function CRMDashboard() {
         <div
             ref={searchBoxRef}
             data-tour="crm-search"
+            data-guide-khu-vuc="Tìm kiếm & bộ lọc đang áp dụng"
             className={`group/search flex items-center shrink-0 basis-full sm:basis-auto flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${
               searchFocused
                 ? 'border-violet-400 bg-white ring-1 ring-violet-200/60'
@@ -8097,6 +8115,7 @@ export default function CRMDashboard() {
 
           <div
             data-tour="crm-view-mode"
+            data-guide-khu-vuc="Chế độ xem & tùy chỉnh bảng"
             className="flex items-center gap-0.5 shrink-0 basis-full sm:basis-auto sm:ml-auto max-sm:[&>:last-child]:ml-auto sm:pl-1 sm:border-l sm:border-slate-200/80"
           >
             <div className="inline-flex items-center gap-px p-0.5 rounded-md bg-slate-100 border border-slate-200/80">
@@ -8183,6 +8202,7 @@ export default function CRMDashboard() {
                 onClose={() => setShowKanbanSettings(false)}
                 anchorRef={kanbanSettingsTriggerRef}
                 data-tour="crm-kanban-settings-menu"
+                guideRegion="Menu tùy chỉnh hiển thị bảng"
                 className="rounded-xl border-gray-200 p-3 w-[min(100vw-1.5rem,18rem)] max-h-[min(80vh,32rem)] overflow-y-auto"
                 align="right"
               >
@@ -8377,6 +8397,7 @@ export default function CRMDashboard() {
           <div
             ref={filterPanelRef}
             data-tour="crm-filter-panel"
+            data-guide-khu-vuc="Bảng bộ lọc nâng cao"
             className="ui-solid-white fixed z-[75] max-sm:left-4 max-sm:right-4 max-sm:bottom-4 max-sm:top-auto w-[min(100vw-2rem,400px)] max-h-[min(calc(100vh-5rem),620px)] flex flex-col rounded-xl border border-gray-200 bg-white shadow-2xl overflow-hidden animate-fade-in"
             style={filterPanelPos
               ? { left: filterPanelPos.x, top: filterPanelPos.y }
@@ -8724,9 +8745,11 @@ export default function CRMDashboard() {
           </div>
         )}
 
-      {/* KPI */}
+      {/* KPI — khai khu vực trên CẢ khối, không chỉ dải thẻ khi mở rộng: lúc thu gọn (mặc định) dải thẻ
+          không được dựng, và trợ lý mất hẳn khối KPI khỏi bản đồ dù dòng tóm tắt vẫn hiện số liệu. */}
       <section
         data-tour="crm-kpis"
+        data-guide-khu-vuc={`Chỉ số KPI ${TEN_TAB[pipelineType] || 'Deal'}`}
         className="border-t border-slate-200/60 bg-slate-50/30"
       >
         <button
@@ -8761,6 +8784,13 @@ export default function CRMDashboard() {
 
         {kpiPanelOpen && (
           <div
+            /**
+             * Khai cho Trợ lý hướng dẫn — dải thẻ KPI. Các thẻ trong dải không phải lúc nào cũng
+             * cùng chữ ký class (số cột đổi theo `pipelineType` và theo bề rộng màn hình), nên
+             * bộ dò theo hình dạng lúc thấy lúc không. Khai ra thì nó luôn nằm trong bản đồ, và
+             * đây là vùng người dùng hỏi nhiều nhất: "tổng bao nhiêu lead/deal".
+             */
+            data-guide-khu-vuc="Thẻ KPI chi tiết"
             className={`border-t border-violet-100/70 bg-white/40 px-2 sm:px-3 pb-2 pt-2 overflow-visible grid items-stretch gap-2 ${
               pipelineType === 'lead'
                 ? 'grid-cols-2 sm:grid-cols-3 xl:grid-cols-4'
@@ -9096,6 +9126,7 @@ export default function CRMDashboard() {
           {(viewMode === 'kanban' || viewMode === 'deadline') && manualMergeIds.length > 0 && (
             <div
               data-tour="crm-bulk-bar"
+              data-guide-khu-vuc="Thanh thao tác hàng loạt"
               className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm"
             >
               <GitMerge className="h-4 w-4 text-amber-700 shrink-0" />
@@ -10882,6 +10913,17 @@ const KanbanStageCard = memo(function KanbanStageCard({
       onDragOver={handleColumnDragOver}
       onDragLeave={handleColumnDragLeave}
       onDrop={handleColumnDrop}
+      /**
+       * KHAI BÁO KHU VỰC cho Trợ lý hướng dẫn.
+       *
+       * Bộ dò của trợ lý nhận khu vực bằng cách ĐOÁN hình dạng — nhóm từ 2 phần tử anh em cùng
+       * chữ ký class. Cột kanban rỗng hoặc chỉ có 1 thẻ không đủ để thành nhóm, nên biến mất
+       * khỏi bản đồ và trợ lý trả lời "không có cột đó". Đã đo: bảng 8 cột, bản đồ chỉ ra 4.
+       *
+       * Khai tên ra đây thì cột LUÔN có mặt kèm đúng tên thật, khỏi phụ thuộc số thẻ đang hiển
+       * thị. Xem features/guide/lib/pageRegions.js — lối dò 2c.
+       */
+      data-guide-khu-vuc={stage.name}
       className={`flex flex-col flex-shrink-0 rounded-lg transition-all duration-200 kanban-column-surface ${KANBAN_COLUMN_RAIL_CLASS} ${
         compact ? 'w-[15rem] max-[380px]:w-[13.5rem]' : 'w-[17rem] max-[420px]:w-[15rem]'
       } ${perColumnScroll ? 'h-full self-stretch overflow-x-visible overflow-y-hidden' : 'overflow-visible kanban-unified-scroll-column'} ${isOverColumn ? 'ring-2 ring-blue-500 ring-dashed' : ''}`}
@@ -12070,6 +12112,11 @@ function KanbanView({
       scrollContainerRef={kanbanHScrollRef}
     >
       <div
+        /**
+         * Khai cho Trợ lý hướng dẫn — chính cái bảng chứa các cột. Không khai thì nó vào bản đồ
+         * dưới tên "Khu vực N (không có tiêu đề)", hoặc tệ hơn là mượn tiêu đề của cột đầu tiên.
+         */
+        data-guide-khu-vuc={`Bảng kanban ${TEN_TAB[pipelineType] || ''}`.trim()}
         className={`${
           virtualizeColumns ? 'relative' : `flex min-w-max items-stretch ${compact ? 'gap-1.5' : 'gap-2.5'}`
         } ${KANBAN_BOARD_COLUMN_RAILS_CLASS} ${perColumnScroll ? 'h-full' : ''}`}

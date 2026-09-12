@@ -290,7 +290,7 @@ export default function FacebookPage() {
 
   return (
     <div className="h-[calc(100vh-64px)] flex flex-col bg-gray-100">
-      <div className="border-b bg-white px-6 py-3 flex items-center justify-between shrink-0 shadow-sm">
+      <div className="border-b bg-white px-6 py-3 flex items-center justify-between shrink-0 shadow-sm" data-guide-khu-vuc="Chọn công ty & chỉ số Facebook">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="w-9 h-9 bg-gradient-to-br from-blue-500 to-blue-700 rounded-xl flex items-center justify-center shadow-sm">
             <span className="text-white font-bold text-sm">f</span>
@@ -359,7 +359,7 @@ export default function FacebookPage() {
         />
       )}
 
-      <div className="border-b bg-white px-6 flex gap-0.5 shrink-0">
+      <div className="border-b bg-white px-6 flex gap-0.5 shrink-0" data-guide-khu-vuc="Tab Facebook">
         {tabs.map(t => (
           <button key={t.id} onClick={() => { setTab(t.id); setSearchParams(prev => { const p = new URLSearchParams(prev); p.set('tab', t.id); if (t.id !== 'inbox') p.delete('contact'); return p; }); }}
             className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-all cursor-pointer ${
@@ -537,6 +537,8 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
   const [recording, setRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const contactMetaRef = useRef(contactMeta);
+  contactMetaRef.current = contactMeta;
   const messagesEndRef = useRef(null);
   const selectedRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -745,7 +747,7 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
     if (timeRange.activity_from) params.set('activity_from', timeRange.activity_from);
     if (timeRange.activity_to) params.set('activity_to', timeRange.activity_to);
     params.set('limit', String(contactLimit));
-    params.set('offset', append ? String(contactMeta.nextOffset || 0) : '0');
+    params.set('offset', append ? String(contactMetaRef.current.nextOffset || 0) : '0');
     if (fbCompanyQs) {
       new URLSearchParams(fbCompanyQs).forEach((v, k) => params.set(k, v));
     }
@@ -754,19 +756,20 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
       .then(r => r.ok ? r.json() : { data: [], total: 0, hasMore: false, nextOffset: 0 })
       .then(payload => {
         const rows = payload?.data || [];
-        const merged = append ? [...contacts, ...rows] : rows;
-        const deduped = merged.filter((item, idx, arr) => arr.findIndex(x => x.id === item.id) === idx);
-        const sorted = [...deduped].sort((a, b) => {
-          const ua = (a.unread_count || 0) > 0 ? 1 : 0;
-          const ub = (b.unread_count || 0) > 0 ? 1 : 0;
-          if (ub !== ua) return ub - ua;
-          const act = fbActivityTs(b) - fbActivityTs(a);
-          if (act !== 0) return act;
-          const ap = (a.display_phone || a.phone || a.customer?.phone) ? 1 : 0;
-          const bp = (b.display_phone || b.phone || b.customer?.phone) ? 1 : 0;
-          return bp - ap;
+        setContacts(prev => {
+          const merged = append ? [...prev, ...rows] : rows;
+          const deduped = merged.filter((item, idx, arr) => arr.findIndex(x => x.id === item.id) === idx);
+          return [...deduped].sort((a, b) => {
+            const ua = (a.unread_count || 0) > 0 ? 1 : 0;
+            const ub = (b.unread_count || 0) > 0 ? 1 : 0;
+            if (ub !== ua) return ub - ua;
+            const act = fbActivityTs(b) - fbActivityTs(a);
+            if (act !== 0) return act;
+            const ap = (a.display_phone || a.phone || a.customer?.phone) ? 1 : 0;
+            const bp = (b.display_phone || b.phone || b.customer?.phone) ? 1 : 0;
+            return bp - ap;
+          });
         });
-        setContacts(sorted);
         setContactMeta({
           total: payload?.total || 0,
           hasMore: !!payload?.hasMore,
@@ -775,8 +778,9 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
           // cho nhãn nút "Tải thêm" thay vì con số người dùng đã chọn.
           limit: payload?.limit || contactLimit,
         });
+
       }).catch(() => {});
-  }, [search, pageFilter, timeRange.activity_from, timeRange.activity_to, contactLimit, contactMeta.nextOffset, contacts, fbCompanyQs]);
+  }, [search, pageFilter, timeRange.activity_from, timeRange.activity_to, contactLimit, fbCompanyQs]);
 
   useEffect(() => { loadContacts(false); }, [loadContacts]);
 
@@ -1105,7 +1109,7 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
     <div className="flex h-full min-h-0 min-w-0 overflow-hidden">
       {/* ── LEFT: Contact list ── */}
       <div className={`w-80 border-r bg-white flex flex-col shrink-0 ${selected ? 'hidden md:flex' : 'flex'}`}>
-        <div className="p-3 border-b bg-gray-50 space-y-2">
+        <div className="p-3 border-b bg-gray-50 space-y-2" data-guide-khu-vuc="Tìm kiếm, thống kê & chọn Page">
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm kiếm khách hàng..."
@@ -1245,7 +1249,7 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
             />
           )}
         </div>
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto" data-guide-khu-vuc="Danh sách hội thoại" data-guide-so-muc={filteredContacts.length}>
           {filteredContacts.map(c => (
             <div key={c.id} onClick={() => {
               setSelected(c);
@@ -1324,11 +1328,11 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
       </div>
 
       {/* ── RIGHT: Chat area ── */}
-      <div className={`flex-1 flex flex-col bg-gray-50 min-h-0 min-w-0 overflow-hidden ${!selected ? 'hidden md:flex' : 'flex'}`}>
+      <div data-guide-khu-vuc="Khung chat" className={`flex-1 flex flex-col bg-gray-50 min-h-0 min-w-0 overflow-hidden ${!selected ? 'hidden md:flex' : 'flex'}`}>
         {selected ? (
           <>
             {/* Chat header */}
-            <div className="border-b px-4 py-3 bg-white flex items-center justify-between shrink-0 shadow-sm">
+            <div data-guide-khu-vuc="Thông tin khách & thao tác chat" className="border-b px-4 py-3 bg-white flex items-center justify-between shrink-0 shadow-sm">
               <div className="flex items-center gap-3">
                 <button onClick={() => setSelected(null)} className="md:hidden text-gray-400 hover:text-gray-600 cursor-pointer mr-1">
                   <ArrowLeft size={20} />
@@ -1399,7 +1403,7 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
             </div>
 
             {/* Messages + khung tin soạn sẵn (chat-style) */}
-            <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden flex-row">
+            <div data-guide-khu-vuc="Tin nhắn" className="flex flex-1 min-h-0 min-w-0 overflow-hidden flex-row">
               <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden px-4 py-3 space-y-2">
                 {timeRange.label && (
                   <div className="sticky top-0 z-10 flex justify-center mb-2">
@@ -1638,7 +1642,7 @@ function InboxTab({ pageStats, fbCompanyQs = '', companyId = null, onScopeChange
             </div>
 
             {/* ── Input bar ── */}
-            <div className="border-t bg-white p-3 shrink-0 shadow-inner">
+            <div data-guide-khu-vuc="Ô soạn tin nhắn" className="border-t bg-white p-3 shrink-0 shadow-inner">
               {uploading && (
                 <div className="flex items-center gap-2 text-xs text-blue-600 mb-2 px-2">
                   <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
@@ -2414,7 +2418,7 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
   };
 
   return (
-    <div className="p-6 overflow-y-auto h-full">
+    <div className="p-6 overflow-y-auto h-full" data-guide-khu-vuc="Tab Danh bạ Facebook">
       <div className="mb-4 shrink-0 space-y-3" data-tour="fb-contacts-auto-tools">
         <AutoToolPanel onComplete={() => load(false)} />
         <BatchActionsBar onComplete={() => load(false)} companyId={toolCompanyId} isAdmin={isAdmin} />
@@ -3559,7 +3563,7 @@ function LeadAdsTab() {
     fetch(`${API}/api/facebook/lead-ads`, { headers: hdr() }).then(r => r.ok ? r.json() : []).then(setAds).catch(() => {});
   }, []);
   return (
-    <div className="p-6 overflow-y-auto h-full">
+    <div className="p-6 overflow-y-auto h-full" data-guide-khu-vuc="Tab Lead Ads">
       <h2 className="text-lg font-bold mb-4">📋 Facebook Lead Ads</h2>
       {!ads.length ? (
         <div className="text-center text-gray-400 py-12"><FileText size={48} className="mx-auto mb-3 opacity-30" /><p>Chưa có lead ads.</p></div>
@@ -3604,7 +3608,7 @@ function CommentsTab() {
     } catch (e) { console.error(e); }
   };
   return (
-    <div className="p-6 overflow-y-auto h-full">
+    <div className="p-6 overflow-y-auto h-full" data-guide-khu-vuc="Tab Bình luận Facebook">
       <h2 className="text-lg font-bold mb-4">💬 Bình luận Facebook</h2>
       {!comments.length ? (
         <div className="text-center text-gray-400 py-12"><MessageSquare size={48} className="mx-auto mb-3 opacity-30" /><p>Chưa có bình luận.</p></div>
@@ -3737,7 +3741,7 @@ function AnalyticsTab({ fbCompanyQs = '' }) {
   }
 
   return (
-    <div className="p-6 overflow-y-auto h-full space-y-6">
+    <div className="p-6 overflow-y-auto h-full space-y-6" data-guide-khu-vuc="Tab Phân tích Facebook">
       {/* Header + Filters */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-bold text-gray-800">📊 Phân tích hành vi khách hàng</h2>
@@ -5272,7 +5276,7 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
   );
 
   return (
-    <div className="p-6 overflow-y-auto h-full max-w-4xl">
+    <div className="p-6 overflow-y-auto h-full max-w-4xl" data-guide-khu-vuc="Tab Cài đặt Facebook">
       <h2 className="text-lg font-bold mb-4">⚙ Cài đặt Facebook</h2>
       <FacebookPageTokenReminderBanner pages={pages} />
       <div className="bg-white border border-amber-200 rounded-xl p-4 mb-6 flex flex-wrap items-center justify-between gap-3">

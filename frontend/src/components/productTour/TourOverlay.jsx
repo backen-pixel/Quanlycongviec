@@ -182,6 +182,10 @@ export default function TourOverlay({
       <div
         className="fixed rounded-2xl border border-slate-200 bg-white shadow-2xl p-4 text-left pointer-events-auto"
         style={{ ...tooltipStyle, zIndex: Z + 2 }}
+        /* Nhân vật hệ thống đo hộp này để KHÔNG đứng đè lên lời giải thích của bước.
+           Đo DOM thật thay vì tính lại công thức đặt tooltip ở trên: một công thức chép ra hai
+           nơi thì lần sửa sau chỉ sửa một nơi. */
+        data-product-tour-tip
       >
         {arrow && (
           <span

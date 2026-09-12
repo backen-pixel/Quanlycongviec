@@ -103,6 +103,30 @@ import {
 import { useProductTour } from '../components/productTour/ProductTourProvider';
 import { CRM_LEAD_DEAL_DETAIL_TOUR_ID } from '../lib/productTour/tours';
 
+/**
+ * Tên hiển thị của từng tab — dùng làm TÊN KHU VỰC nội dung tab cho trợ lý hướng dẫn.
+ *
+ * Khu vực nội dung đổi tên theo tab đang mở ("Nội dung tab Công việc", "Nội dung tab Bình luận")
+ * thay vì một tên chung chung: người dùng hỏi "trong tab Bình luận có gì" thì trợ lý khớp được
+ * ngay bằng tên, không phải đọc thanh tab trước để đoán tab nào đang mở. Khoá khớp `activeTab`,
+ * nhãn khớp `aria-label` của nút tab bên dưới — đổi một bên thì đổi cả hai.
+ */
+const LEAD_TAB_LABELS = {
+  tasks: 'Công việc',
+  'shared-workspace': 'Không gian chung',
+  purchase_orders: 'Đặt hàng',
+  documents: 'Tài liệu',
+  drive: 'Drive',
+  notes: 'Ghi chú & HĐ',
+  facebook: 'Facebook',
+  zalo: 'Zalo',
+  team: 'Thành viên',
+  comments: 'Bình luận',
+  history: 'Lịch sử',
+  voice_crm: 'Ghi âm',
+  deal_scores: 'Điểm chéo & KH',
+};
+
 function formatLeadDealEventTitle(lead, customer) {
   const title = (lead?.title || '').trim() || (lead?.code ? String(lead.code).trim() : '') || (lead?.type === 'deal' ? 'Deal' : 'Lead');
   const cust = (customer?.full_name || customer?.name || lead?.customer?.full_name || lead?.customer_name || '').trim();
@@ -2864,7 +2888,7 @@ export default function LeadDetail() {
         </div>
       )}
       {/* Header */}
-      <div className="flex items-center justify-between" data-tour="lead-detail-header">
+      <div className="flex items-center justify-between" data-tour="lead-detail-header" data-guide-khu-vuc="Tiêu đề hồ sơ">
         <div className="flex items-center gap-2.5">
           <button
             type="button"
@@ -3023,7 +3047,7 @@ export default function LeadDetail() {
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2 flex-wrap" data-tour="lead-detail-actions">
+        <div className="flex items-center gap-2 flex-wrap" data-tour="lead-detail-actions" data-guide-khu-vuc="Nút hành động hồ sơ">
           <button
             type="button"
             data-tour="lead-detail-tour-btn"
@@ -3804,7 +3828,7 @@ export default function LeadDetail() {
           </div>
         </div>
       )}
-      <div data-tour="lead-pipeline-stepper">
+      <div data-tour="lead-pipeline-stepper" data-guide-khu-vuc="Thanh giai đoạn pipeline">
         <PipelineStepper
           stages={stages}
           currentStageId={lead.stage_id}
@@ -3818,7 +3842,7 @@ export default function LeadDetail() {
         {/* Left: Customer Info */}
         <div className="lg:col-span-1 space-y-4 min-w-0" data-tour="lead-sidebar">
           {/* Customer Card - Inline Edit */}
-          <div className="bg-white rounded-xl border p-5 space-y-4" data-tour="lead-info-customer">
+          <div className="bg-white rounded-xl border p-5 space-y-4" data-tour="lead-info-customer" data-guide-khu-vuc="Khách hàng">
             <h3 className="text-sm font-bold uppercase" style={{ color: '#000000' }}>Khách hàng</h3>
             
             {customer ? (
@@ -3980,11 +4004,19 @@ export default function LeadDetail() {
         {/* Right: Documents + Activities with Tabs */}
         <div className="lg:col-span-3 space-y-4 min-w-0">
           {/* Tab Switcher */}
+          {/* role="tab" + aria-selected trên từng nút: trước đây trạng thái "đang mở" CHỈ nằm trong
+              class Tailwind (border-b-2 + màu chữ), nên Trợ lý hướng dẫn đọc `tab_dang_chon` ra RỖNG
+              ở trang chi tiết lead/deal — nó thấy đủ các mục nhưng không biết người dùng đang đứng ở
+              mục nào. aria-label cho tên GỌN: nếu không, mục Thành viên đọc ra "100👥 Thành viên" vì
+              dính 3 số đếm CRM/SX/LD, và mục Ghi chú/Tài liệu dính số huy hiệu ("Tài liệu0"). */}
           <div className="bg-white rounded-xl border" data-tour="lead-detail-tabs">
-            <div className="flex border-b">
+            <div className="flex border-b" data-guide-khu-vuc="Thanh tab hồ sơ">
               <button
                 type="button"
                 data-tour="lead-tab-tasks"
+                role="tab"
+                aria-selected={activeTab === 'tasks'}
+                aria-label="Công việc"
                 onClick={() => setActiveTab('tasks')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'tasks'
@@ -3998,6 +4030,9 @@ export default function LeadDetail() {
               <button
                 type="button"
                 data-tour="lead-tab-shared"
+                role="tab"
+                aria-selected={activeTab === 'shared-workspace'}
+                aria-label="Không gian chung"
                 onClick={() => setActiveTab('shared-workspace')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'shared-workspace'
@@ -4011,6 +4046,9 @@ export default function LeadDetail() {
               <button
                 type="button"
                 data-tour="lead-tab-orders"
+                role="tab"
+                aria-selected={activeTab === 'purchase_orders'}
+                aria-label="Đặt hàng"
                 onClick={() => setActiveTab('purchase_orders')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'purchase_orders'
@@ -4031,6 +4069,9 @@ export default function LeadDetail() {
               <button
                 type="button"
                 data-tour="lead-tab-documents"
+                role="tab"
+                aria-selected={activeTab === 'documents'}
+                aria-label="Tài liệu"
                 onClick={() => setActiveTab('documents')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'documents'
@@ -4050,6 +4091,9 @@ export default function LeadDetail() {
               <button
                 type="button"
                 data-tour="lead-tab-drive"
+                role="tab"
+                aria-selected={activeTab === 'drive'}
+                aria-label="Drive"
                 onClick={() => setActiveTab('drive')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'drive'
@@ -4070,6 +4114,9 @@ export default function LeadDetail() {
               <button
                 type="button"
                 data-tour="lead-tab-notes"
+                role="tab"
+                aria-selected={activeTab === 'notes'}
+                aria-label="Ghi chú & HĐ"
                 onClick={() => setActiveTab('notes')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'notes'
@@ -4091,6 +4138,9 @@ export default function LeadDetail() {
               <button
                 type="button"
                 data-tour="lead-tab-facebook"
+                role="tab"
+                aria-selected={activeTab === 'facebook'}
+                aria-label="Facebook"
                 onClick={() => setActiveTab('facebook')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'facebook'
@@ -4105,6 +4155,9 @@ export default function LeadDetail() {
               <button
                 type="button"
                 data-tour="lead-tab-zalo"
+                role="tab"
+                aria-selected={activeTab === 'zalo'}
+                aria-label="Zalo"
                 onClick={() => setActiveTab('zalo')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'zalo'
@@ -4118,6 +4171,9 @@ export default function LeadDetail() {
               <button
                 type="button"
                 data-tour="lead-tab-team"
+                role="tab"
+                aria-selected={activeTab === 'team'}
+                aria-label="Thành viên"
                 onClick={() => setActiveTab('team')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'team'
@@ -4145,6 +4201,9 @@ export default function LeadDetail() {
               <button
                 type="button"
                 data-tour="lead-tab-comments"
+                role="tab"
+                aria-selected={activeTab === 'comments'}
+                aria-label="Bình luận"
                 onClick={() => setActiveTab('comments')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'comments'
@@ -4176,6 +4235,9 @@ export default function LeadDetail() {
               <button
                 type="button"
                 data-tour="lead-tab-voice"
+                role="tab"
+                aria-selected={activeTab === 'voice_crm'}
+                aria-label="Ghi âm"
                 onClick={() => setActiveTab('voice_crm')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all inline-flex items-center justify-center gap-1 ${
                   activeTab === 'voice_crm'
@@ -4190,6 +4252,9 @@ export default function LeadDetail() {
                 <button
                   type="button"
                   data-tour="lead-tab-scores"
+                  role="tab"
+                  aria-selected={activeTab === 'deal_scores'}
+                  aria-label="Điểm chéo & KH"
                   onClick={() => setActiveTab('deal_scores')}
                   className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                     activeTab === 'deal_scores'
@@ -4203,8 +4268,8 @@ export default function LeadDetail() {
               )}
             </div>
 
-            {/* Tab Content */}
-            <div className="p-5">
+            {/* Tab Content — tên khu vực đổi theo tab đang mở, xem LEAD_TAB_LABELS. */}
+            <div className="p-5" data-guide-khu-vuc={`Nội dung tab ${LEAD_TAB_LABELS[activeTab] || 'đang mở'}`}>
               {activeTab === 'tasks' ? (
                 <>
                 <CRMTasksTab
@@ -7201,7 +7266,7 @@ function LeadInfoPanel({
   const prob = lead?.probability ?? 0;
 
   return (
-    <div className="bg-white rounded-xl border p-5 space-y-1 overflow-visible" data-tour="lead-info-panel">
+    <div className="bg-white rounded-xl border p-5 space-y-1 overflow-visible" data-tour="lead-info-panel" data-guide-khu-vuc="Thông tin hồ sơ">
       <h3 className="text-sm font-bold uppercase mb-2" style={{ color: '#000000' }}>Thông tin</h3>
 
       <LeadInfoEditableRow {...editableRowProps} icon="💰" label="Giá trị" field="estimated_value"

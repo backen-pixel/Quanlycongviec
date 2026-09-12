@@ -22,6 +22,7 @@ import { isMessengerCallLogMessage } from '../lib/messengerCallLog';
 import { messengerThreadKey } from '../lib/messengerHubStorage';
 import { useRelativeTimeTick } from '../hooks/useRelativeTimeTick';
 import { CallPortalBridge } from '../calling/CallProvider';
+import { openChatWindow } from '../features/guide/lib/openGuide';
 import MessengerQuickChatDock, {
   QUICK_CHAT_DOCK_VISUAL_W,
   QUICK_CHAT_PANEL_W,
@@ -187,7 +188,7 @@ function DockAvatar({ src, name, size = 'sm', className = '', ringClass = 'ring-
       : size === 'dock'
         ? 'w-10 h-10 text-[11px] rounded-xl'
         : 'w-8 h-8 text-[11px] rounded-xl';
-  const initials = initialsOf(label).slice(0, maxInitials);
+  const initials = [...initialsOf(label)].slice(0, maxInitials).join('');
 
   return (
     <span
@@ -209,12 +210,17 @@ function DockAvatar({ src, name, size = 'sm', className = '', ringClass = 'ring-
   );
 }
 
+/** Ký tự đầu của một từ, tính theo KÝ TỰ NGƯỜI ĐỌC — `s[0]` cắt đôi emoji thành ký tự hỏng. */
+function kyTuDau(tu) {
+  return [...String(tu || '')][0] || '';
+}
+
 function initialsOf(name) {
   if (!name) return '?';
   const parts = String(name).trim().split(/\s+/);
   if (!parts.length) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  if (parts.length === 1) return kyTuDau(parts[0]).toUpperCase();
+  return (kyTuDau(parts[0]) + kyTuDau(parts[parts.length - 1])).toUpperCase();
 }
 
 const BUBBLE_GRADIENTS = [
@@ -255,6 +261,9 @@ export default function MessengerDock() {
   const [groups, setGroups] = useState([]);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [staffRows, setStaffRows] = useState([]);
+  // Danh bạ AI: bot nhắn được như nhắn người. Nạp MỘT lần và luôn hiện — khác danh sách nhân
+  // viên (chỉ hiện khi gõ tìm), vì mục đích ở đây là thấy ngay mà chọn, không phải đi tìm.
+  const [aiContacts, setAiContacts] = useState([]);
   const [staffLoading, setStaffLoading] = useState(false);
 
   const dockRef = useRef(null);
@@ -394,6 +403,15 @@ export default function MessengerDock() {
   const expanded = useMemo(() => windows.filter((w) => !w.minimized), [windows]);
 
   useEffect(() => {
+    if (!uid) return undefined;
+    let huy = false;
+    api.get('/messenger/ai-contacts')
+      .then(({ data }) => { if (!huy) setAiContacts(data?.contacts || []); })
+      .catch(() => { if (!huy) setAiContacts([]); }); // bot lỗi thì ẩn mục, không chặn khung chat
+    return () => { huy = true; };
+  }, [uid]);
+
+  useEffect(() => {
     const q = panelSearch.trim();
     if (!dockExpanded || !q) {
       setStaffRows([]);
@@ -498,6 +516,18 @@ export default function MessengerDock() {
     } catch (e) {
       alert(e.response?.data?.error || 'Không mở được chat 1-1');
     }
+  };
+
+  /**
+   * Bấm "Trợ lý hướng dẫn" trong danh bạ chat: mở KHUNG COPILOTKIT bên phải, KHÔNG mở cửa sổ
+   * tin nhắn. Chủ hệ thống chốt như vậy — trợ lý này đọc được màn hình đang mở và bấm hộ nút,
+   * nên nó phải sống cạnh trang chứ không phải trong một luồng tin nhắn tách rời.
+   */
+  const onPickAiContact = () => {
+    // Đây là NGƯỜI DÙNG tự bấm nên được mở khung chat. Mọi đường khác (ô hỏi nổi, tour, tool)
+    // chỉ được mount trợ lý — xem AppGuideCopilot.jsx.
+    openChatWindow();
+    closeDock();
   };
 
   const onDockItemClick = (item) => {
@@ -835,6 +865,8 @@ export default function MessengerDock() {
         onOnlineOnlyChange={setOnlineOnly}
         staffRows={staffRows}
         staffLoading={staffLoading}
+        aiContacts={aiContacts}
+        onPickAiContact={onPickAiContact}
         recentConversations={recentConversations}
         groupConversations={groupConversations}
         onItemClick={onDockItemClick}

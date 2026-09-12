@@ -1,0 +1,60 @@
+# BepPro chạy cạnh bộ Supabase self-host đã có sẵn trên Docker Desktop.
+#
+# Chạy:   docker compose up -d --build
+# Mở:     http://localhost:4000
+# Nhật ký: docker compose logs -f beppro
+#
+# Bộ Supabase KHÔNG do file này quản lý — nó là compose project riêng ở
+# E:\supabase\supabase\docker. Ở đây chỉ GHÉP VÀO mạng của nó (external), nên
+# `docker compose down` bên này không đụng gì tới Supabase.
+
+services:
+  beppro:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # Trợ lý hướng dẫn chạy TOÀN QUYỀN trên bản nội bộ này (tự bấm nút, tự điền trường,
+        # tự điều hướng, đọc được giá trị thật đang hiển thị). Đổi tạm bằng:
+        #   GUIDE_FULL_ACCESS=0 docker compose up -d --build
+        VITE_GUIDE_FULL_ACCESS: "${GUIDE_FULL_ACCESS:-1}"
+    image: beppro:local
+    container_name: beppro
+    restart: unless-stopped
+
+    # Toàn bộ 65 biến giữ nguyên trong backend/.env — KHÔNG chép lại, không bake vào image.
+    # `localhost:8000 / :6543 / :5432` trong đó vẫn đúng nhờ cầu nối ở docker-entrypoint.sh.
+    env_file:
+      - backend/.env
+
+    environment:
+      NODE_ENV: production
+      # Trình duyệt vào bằng cổng 4000 (backend serve luôn frontend đã build).
+      FRONTEND_URL: http://localhost:4000
+      CORS_ORIGINS: http://localhost:4000,http://localhost:5173
+
+    ports:
+      # Cổng phía máy đổi được: BEPPRO_PORT=4001 docker compose up -d
+      # (mặc định 4000 — trùng với backend chạy bằng npm run dev, nên khi test song song thì đổi)
+      - "${BEPPRO_PORT:-4000}:4000"
+
+    volumes:
+      # BẮT BUỘC. Ảnh/tệp chat vẫn ghi thẳng xuống đĩa (multer diskStorage,
+      # `uploads/lead-chat/`, `uploads/dept-chat/`…). Không có volume thì mỗi lần dựng lại
+      # container là mất sạch — hiện đã có 69 MB trong backend/uploads.
+      - beppro-uploads:/app/backend/uploads
+
+    networks:
+      - supabase
+
+    depends_on: []
+
+volumes:
+  beppro-uploads:
+
+networks:
+  supabase:
+    # Mạng do compose project "supabase" tạo ra. `external: true` = chỉ dùng, không tạo,
+    # không xoá. Supabase phải đang chạy trước khi `up`.
+    name: supabase_default
+    external: true

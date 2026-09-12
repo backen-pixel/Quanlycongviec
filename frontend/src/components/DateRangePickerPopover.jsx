@@ -250,11 +250,14 @@ export default function DateRangePickerPopover({
           )}
 
           <div className="flex items-center justify-between">
-            <button type="button" onClick={() => setCursorMonth((m) => addMonths(m, -1))} className="p-2 rounded-lg hover:bg-gray-100 cursor-pointer">
+            {/* aria-label bắt buộc: hai nút này chỉ có ICON, không một chữ nào. Trình đọc màn hình
+                đọc ra "button" trống, và trợ lý hướng dẫn cũng không gọi tên được để bấm — tức là
+                lịch mở ra nhưng không ai đổi được sang tháng khác. */}
+            <button type="button" aria-label="Tháng trước đó" onClick={() => setCursorMonth((m) => addMonths(m, -1))} className="p-2 rounded-lg hover:bg-gray-100 cursor-pointer">
               <ChevronLeft className="h-4 w-4 text-gray-600" />
             </button>
             <div className="text-sm font-semibold text-gray-900">{monthLabel}</div>
-            <button type="button" onClick={() => setCursorMonth((m) => addMonths(m, 1))} className="p-2 rounded-lg hover:bg-gray-100 cursor-pointer">
+            <button type="button" aria-label="Tháng kế tiếp" onClick={() => setCursorMonth((m) => addMonths(m, 1))} className="p-2 rounded-lg hover:bg-gray-100 cursor-pointer">
               <ChevronRight className="h-4 w-4 text-gray-600" />
             </button>
           </div>
@@ -276,6 +279,11 @@ export default function DateRangePickerPopover({
                 <button
                   key={iso(d)}
                   type="button"
+                  /* Nhãn hiển thị chỉ là con số ("20"), vô nghĩa khi tách khỏi lưới: trình đọc màn
+                     hình đọc "20" mà không biết tháng nào, và trợ lý hướng dẫn cũng không có cách
+                     nào chỉ đích danh một ngày. Chữ "Ngày" ở đầu không phải cho đẹp — nhãn chỉ
+                     gồm chữ số như "2026-09-20" bị bộ chặn số điện thoại của trợ lý từ chối bấm. */
+                  aria-label={`Ngày ${iso(d)}`}
                   onClick={() => pickDay(d)}
                   className={`h-9 rounded-lg text-sm cursor-pointer hover:bg-indigo-100 transition ${base} ${edge}`}
                 >

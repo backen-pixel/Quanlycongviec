@@ -127,6 +127,12 @@ const IS_VC_DELETED_AT_MISSING = (err) =>
   !!err && String(err.message || '').toLowerCase().includes('vc_deleted_at');
 const IS_VC_DELETE_REASON_MISSING = (err) =>
   !!err && String(err.message || '').toLowerCase().includes('vc_delete_reason');
+/** projects.vc_notes / vc_temp_staged — chưa có nếu migration 532 chưa chạy. */
+const IS_VC_532_COL_MISSING = (err) =>
+  !!err && /vc_notes|vc_temp_staged/i.test(String(err.message || ''));
+/** Bỏ cột của migration 532 khỏi select để retry graceful. */
+const vcStrip532Cols = (sel) =>
+  String(sel).replace(/\s*,\s*vc_notes\b/g, '').replace(/\s*,\s*vc_temp_staged\b/g, '');
 
 const VC_SELECT_FULL = `id, company_id, name, color, icon, order_index, is_active, progress_percent, workflow_stage_id, bucket_slug, crm_sync_type, is_handover_to_install, is_temp_install_staging,
       crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index),
@@ -993,8 +999,10 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
       .order('created_at', { ascending: false })
       .range((parsedPage - 1) * parsedLimit, parsedPage * parsedLimit - 1);
 
+    let softDeleteFilterUnavailable = false;
     if (error && IS_VC_DELETED_AT_MISSING(error)) {
       // Migration 242 chưa chạy — retry không có cờ
+      softDeleteFilterUnavailable = true;
       let qNoSoft = supabase
         .from('projects')
         .select(selectClause, { count: 'exact' })
@@ -1010,6 +1018,28 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
       projectsRaw = r2.data;
       error = r2.error;
       if (r2.count != null) count = r2.count;
+    }
+
+    if (error && IS_VC_532_COL_MISSING(error)) {
+      // Migration 532 chưa chạy — retry không có vc_notes / vc_temp_staged
+      let q532 = supabase
+        .from('projects')
+        .select(vcStrip532Cols(selectClause), { count: 'exact' })
+        .or(orFilter);
+      q532 = applyProjectTenantScope(q532, req);
+      if (!softDeleteFilterUnavailable) q532 = applyVcNotDeletedFilter(q532);
+      if (search) q532 = q532.or(`name.ilike.%${search}%,code.ilike.%${search}%`);
+      if (priority) q532 = q532.eq('priority', priority);
+      if (division_id) q532 = q532.eq('division_id', division_id);
+      if (company_id) q532 = q532.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
+      if (workshop_type_id) q532 = q532.eq('workshop_type_id', workshop_type_id);
+      ({ query: q532 } = await applyWorkshopProjectVisibilityScope(q532, req.user, company_id, null));
+      const r532 = await q532
+        .order('created_at', { ascending: false })
+        .range((parsedPage - 1) * parsedLimit, parsedPage * parsedLimit - 1);
+      projectsRaw = r532.data;
+      error = r532.error;
+      if (r532.count != null) count = r532.count;
     }
 
     let projects = projectsRaw || [];
@@ -1203,7 +1233,14 @@ async function fetchLogisticsProjectRow(projectUuid) {
   for (const baseSel of baseTries) {
     for (const tx of transforms) {
       const sel = tx(baseSel);
-      const { data, error } = await supabase.from('projects').select(sel).eq('id', projectUuid).single();
+      let { data, error } = await supabase.from('projects').select(sel).eq('id', projectUuid).single();
+      // Migration 532 chưa chạy → retry cùng select nhưng bỏ vc_notes / vc_temp_staged
+      if (error && IS_VC_532_COL_MISSING(error)) {
+        const sel532 = vcStrip532Cols(sel);
+        if (sel532 !== sel) {
+          ({ data, error } = await supabase.from('projects').select(sel532).eq('id', projectUuid).single());
+        }
+      }
       if (!error && data) return { data, error: null };
       lastErr = error;
       if (error?.code === 'PGRST116') return { data: null, error };

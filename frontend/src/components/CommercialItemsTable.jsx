@@ -102,7 +102,7 @@ export default function CommercialItemsTable({
   const getGroupDiscountPercent = (groupName) => getGroupDiscountPercentOf(items, groupName);
 
   return (
-    <div className="bg-white rounded-xl border p-3">
+    <div className="bg-white rounded-xl border p-3" data-guide-khu-vuc="Chi tiết hàng hóa / dịch vụ">
       <div className="flex items-center justify-between mb-2">
         <h2 className="text-sm font-bold" style={{ color: '#000000' }}>Chi tiết hàng hóa / dịch vụ</h2>
         <div className="flex items-center gap-2 flex-wrap">

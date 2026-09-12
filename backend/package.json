@@ -11,7 +11,7 @@
     "dev": "node --use-system-ca --watch src/server.js",
     "fb:rescan-inbound-phones": "node scripts/rescan-fb-inbound-phones.js",
     "fb:validate-contact-phones": "node scripts/validate-fb-contact-phones.js",
-    "build:frontend": "node ../scripts/knowledge/sync-screenshots-deploy.js && cd ../frontend && npm ci --prefer-offline --no-audit && npm run build",
+    "build:frontend": "node ../scripts/guide/generate-registry.js && node ../scripts/guide/check-drift.js && node ../scripts/knowledge/sync-screenshots-deploy.js && cd ../frontend && npm ci --prefer-offline --no-audit && npm run build",
     "db:migrate:180": "node scripts/run-sql-migration.js ../database/180_internal_social_schedule_visibility_hide_share.sql",
     "db:sync-backup": "node scripts/sync-supabase-backup.js",
     "db:verify-backup": "node scripts/sync-supabase-backup.js --verify",
@@ -39,15 +39,24 @@
     "test:mcp-audit": "node tests/mcp-audit-reason-codes.js",
     "test:perf-retention": "node tests/perf-retention-and-chunking.js",
     "crm:route-inventory": "node scripts/crm-route-inventory.js --write",
-    "cron:crm-missing-tasks": "node scripts/run-crm-missing-tasks-cron.js"
+    "cron:crm-missing-tasks": "node scripts/run-crm-missing-tasks-cron.js",
+    "guide:sync": "node ../scripts/guide/generate-registry.js",
+    "guide:check": "node ../scripts/guide/check-drift.js",
+    "guide:tours": "node ../scripts/guide/generate-tour-guides.js",
+    "guide:lead-detail": "node ../scripts/guide/generate-lead-detail.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.111",
+    "@ai-sdk/openai": "^3.0.109",
+    "@anthropic-ai/sdk": "^0.116.0",
+    "@copilotkit/runtime": "1.66.2",
     "@socket.io/redis-adapter": "^8.3.0",
     "@supabase/server": "^1.4.1",
     "@supabase/supabase-js": "^2.98.0",
+    "ai": "^6.0.261",
     "axios": "^1.15.1",
     "bcryptjs": "^3.0.3",
     "compression": "^1.7.5",
@@ -66,11 +75,14 @@
     "multer": "^2.1.0",
     "pdfkit": "^0.18.0",
     "pg": "^8.19.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
     "socket.io": "^4.8.3",
     "tus-js-client": "^4.3.1",
     "undici": "^8.3.0",
     "web-push": "^3.6.7",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "playwright": "^1.61.1"

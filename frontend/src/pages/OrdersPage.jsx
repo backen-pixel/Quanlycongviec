@@ -78,12 +78,12 @@ export default function OrdersPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between" data-guide-khu-vuc="Tiêu đề đơn hàng">
         <div><h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><ShoppingCart className="h-6 w-6 text-emerald-600" /> Đơn hàng</h1><p className="text-sm text-gray-500 mt-1">{orders.length} đơn · {formatVND(totalValue)}{orphanCount > 0 ? ` · ${orphanCount} chưa gắn deal` : ''}</p></div>
       </div>
 
       {/* Status tabs */}
-      <div className="flex gap-2 overflow-x-auto">
+      <div className="flex gap-2 overflow-x-auto" data-guide-khu-vuc="Lọc theo trạng thái đơn hàng">
         <button onClick={() => setStatusFilter('')} className={`px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer ${!statusFilter ? 'bg-emerald-600 text-white border-emerald-600' : 'hover:bg-gray-50'}`}>Tất cả ({orders.length})</button>
         {Object.entries(ORDER_STATUS).map(([k, v]) => (summary[k] || 0) > 0 && (
           <button key={k} onClick={() => setStatusFilter(statusFilter === k ? '' : k)} className={`px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer whitespace-nowrap ${statusFilter === k ? 'bg-emerald-600 text-white border-emerald-600' : ORDER_COLORS[k]}`}>{v} ({summary[k]})</button>
@@ -97,7 +97,7 @@ export default function OrdersPage() {
       </div>
 
       <div className="bg-white rounded-xl border p-6">
-        <div className="flex flex-wrap items-center gap-3 mb-5">
+        <div className="flex flex-wrap items-center gap-3 mb-5" data-guide-khu-vuc="Tìm kiếm & bộ lọc đơn hàng">
           <div className="relative flex-1 min-w-[200px] max-w-sm"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm mã, tên, KH..." className="w-full h-10 pl-10 pr-3 border rounded-lg text-sm" /></div>
           <select value={payFilter} onChange={e => setPayFilter(e.target.value)} className="h-10 px-3 border rounded-lg text-sm">
             <option value="">TT: Tất cả</option>
@@ -111,6 +111,7 @@ export default function OrdersPage() {
         </div>
         <div
           className="overflow-auto rounded-lg border border-gray-200 [scrollbar-width:thin]"
+          data-guide-khu-vuc="Danh sách đơn hàng"
           style={{ maxHeight: 'calc(100vh - 360px)', minHeight: 240 }}
         >
         <table className="w-full text-sm">

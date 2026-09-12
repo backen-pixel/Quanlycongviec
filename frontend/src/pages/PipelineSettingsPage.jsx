@@ -1824,7 +1824,7 @@ export default function PipelineSettingsPage() {
             </p>
 
             {/* Allowlist công ty SX hiển thị */}
-            <div className="mx-4 mb-3 rounded-xl border border-amber-200 bg-amber-50/60 p-3 space-y-2">
+            <div data-guide-khu-vuc="Công ty SX hiển thị" className="mx-4 mb-3 rounded-xl border border-amber-200 bg-amber-50/60 p-3 space-y-2">
               <div className="flex items-start justify-between gap-2">
                 <div>
                   <p className="text-[11px] font-semibold text-amber-950">Công ty SX hiển thị</p>
@@ -1880,7 +1880,7 @@ export default function PipelineSettingsPage() {
 
             {/* Tóm tắt liên kết loại CRM → nhiều công ty SX · phân loại */}
             {leadTypes.length > 0 && (
-              <div className="mx-4 mb-3 rounded-xl border border-violet-200 bg-violet-50/50 p-3 space-y-2">
+              <div data-guide-khu-vuc="Liên kết loại CRM với công ty SX" className="mx-4 mb-3 rounded-xl border border-violet-200 bg-violet-50/50 p-3 space-y-2">
                 <p className="text-[11px] font-semibold text-violet-950">Liên kết loại CRM ↔ SX</p>
                 <p className="text-[10px] text-violet-900/75 leading-snug">
                   1 loại CRM có thể gắn nhiều công ty SX và nhiều phân loại xưởng. Dòng <span className="text-red-600 font-bold">★</span> = ưu tiên gợi ý khi chọn xưởng trên deal.
@@ -2336,7 +2336,7 @@ export default function PipelineSettingsPage() {
         )}
 
         {activeTab === 'permissions' && (
-          <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-4 shadow-sm max-w-2xl">
+          <div data-guide-khu-vuc="Quyền xóa Lead / Deal" className="rounded-xl border border-gray-200 bg-white p-4 space-y-4 shadow-sm max-w-2xl">
             <h2 className="text-xs font-semibold text-gray-900 flex items-center gap-2">
               <IconShieldLock className="w-4 h-4 text-rose-600" stroke={2} />
               Quyền xóa Lead / Deal
@@ -2535,7 +2535,7 @@ export default function PipelineSettingsPage() {
               </div>
             </CollapsiblePanel>
 
-            <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-3 shadow-sm">
+            <div data-guide-khu-vuc="Zalo OA theo pipeline" className="rounded-xl border border-gray-200 bg-white p-4 space-y-3 shadow-sm">
               <h2 className="text-xs font-semibold text-gray-900 flex items-center gap-2">
                 <IconMessageCircle className="w-4 h-4 text-violet-600" stroke={2} />
                 Zalo OA theo pipeline
@@ -2611,7 +2611,7 @@ export default function PipelineSettingsPage() {
         )}
 
         {activeTab === 'copy' && isAdminLike(user) && (
-          <div className="rounded-xl border border-gray-200 bg-white p-4 space-y-4 shadow-sm max-w-2xl">
+          <div data-guide-khu-vuc="Sao chép pipeline CRM" className="rounded-xl border border-gray-200 bg-white p-4 space-y-4 shadow-sm max-w-2xl">
             <h2 className="text-xs font-semibold text-gray-900 flex items-center gap-2">
               <IconCopy className="w-4 h-4 text-emerald-600" stroke={2} />
               Sao chép pipeline CRM
@@ -3104,7 +3104,7 @@ function StageForm({
 
       {/* Module management — chỉ hiện khi đang edit deal stage */}
       {pipelineType === 'deal' && editingStageId && !form.is_won && !form.is_lost && (
-        <div className="border border-indigo-100 rounded-lg p-3 bg-indigo-50/40 space-y-2">
+        <div data-guide-khu-vuc="Quản lý module của cột Deal" className="border border-indigo-100 rounded-lg p-3 bg-indigo-50/40 space-y-2">
           <p className="text-[10px] font-bold text-indigo-700 uppercase tracking-wide">
             🔗 Cột module nào sẽ nhảy vào CRM cột này?
           </p>

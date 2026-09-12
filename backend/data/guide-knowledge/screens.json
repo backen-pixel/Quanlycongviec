@@ -1,0 +1,4194 @@
+[
+  {
+    "path": "/",
+    "label": "Trang mặc định",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Đường dẫn gốc — hệ thống tự đưa về màn hình mặc định theo quyền và module của tài khoản (thường là Dashboard CRM).",
+    "keywords": [
+      "trang chu",
+      "trang mac dinh",
+      "home",
+      "vao he thong"
+    ]
+  },
+  {
+    "path": "/admin/trash",
+    "label": "Thùng rác (tổng hợp)",
+    "menu": "CRM → Quản trị CRM",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Thùng rác tổng hợp — mục đã xóa theo module CRM (lead, deal, file ghi chú, đính kèm), Sản xuất (dự án xưởng) và Lắp đặt (dự án VC); khôi phục hoặc xóa hẳn. Cần quyền quản trị.",
+    "keywords": [
+      "thung rac",
+      "khoi phuc du lieu",
+      "xoa mem",
+      "lay lai lead da xoa",
+      "trash"
+    ],
+    "actions": [
+      {
+        "label": "Về CRM"
+      },
+      {
+        "label": "Sản xuất"
+      },
+      {
+        "label": "Lắp đặt"
+      }
+    ]
+  },
+  {
+    "path": "/approval-rules",
+    "label": "Quy tắc duyệt",
+    "menu": "4. Cài đặt",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Quy tắc duyệt tự động cho từng quy trình — chọn Chờ duyệt thủ công hay Tự động duyệt, và đặt điều kiện (tất cả task hoàn thành, checklist tick hết, checklist có file/ghi chú).",
+    "keywords": [
+      "quy tac duyet",
+      "duyet tu dong",
+      "dieu kien duyet",
+      "cho duyet thu cong",
+      "checklist duyet"
+    ],
+    "actions": [
+      {
+        "label": "Lưu quy tắc"
+      },
+      {
+        "label": "Chờ duyệt"
+      },
+      {
+        "label": "Tự động"
+      }
+    ]
+  },
+  {
+    "path": "/calc",
+    "label": "Trang chính",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Trang chính module Tính toán — lối vào Tính nhanh, Thiết kế hộp cứng, Tính hộp cứng, Tính từ file 3D, Lịch sử tính và Cấu hình; hiện số danh mục, loại sản phẩm, lượt tính, file 3D đã import.",
+    "keywords": [
+      "module tinh toan",
+      "calc",
+      "tinh gia",
+      "hop cung",
+      "tinh tu file 3d"
+    ],
+    "actions": [
+      {
+        "label": "Tính nhanh"
+      },
+      {
+        "label": "Tính hộp cứng"
+      },
+      {
+        "label": "Tính từ file 3D"
+      },
+      {
+        "label": "Lịch sử tính"
+      }
+    ]
+  },
+  {
+    "path": "/calc/history",
+    "label": "Lịch sử tính",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Lịch sử tính — tất cả lượt tính tay và auto-tính từ file 3D: thời gian, loại sản phẩm, người tính, nguồn, kết quả và ghi chú; lọc Tất cả hoặc Của tôi.",
+    "keywords": [
+      "lich su tinh",
+      "luot tinh",
+      "ket qua da tinh",
+      "xoa luot tinh"
+    ]
+  },
+  {
+    "path": "/calc/hop-cung",
+    "label": "Tính hộp cứng",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Tính hộp cứng (NEXTGO) — nhập kích thước, số lượng Q và vật tư (chipboard, giấy bồi, màng, keo, UV, nam châm, khuôn bế/ép kim) để ra COST và giá bán ở mức 300/500/1000 sản phẩm.",
+    "keywords": [
+      "tinh hop cung",
+      "gia hop cung",
+      "cost hop",
+      "gia ban 300 500 1000",
+      "chipboard",
+      "nam cham"
+    ],
+    "actions": [
+      {
+        "label": "Bán 300"
+      },
+      {
+        "label": "Bán 500"
+      },
+      {
+        "label": "Bán 1000"
+      }
+    ]
+  },
+  {
+    "path": "/calc/hop-cung/thiet-ke",
+    "label": "Thiết kế hộp cứng",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Thiết kế hộp cứng — wizard chọn mẫu hộp trong thư viện, nhập thông số L×W×H, độ dày, nắp, xem mockup 3D mở–đóng nắp và bóc tách cấu trúc; tải dieline SVG (bleed/trim/crease) rồi sang tính giá.",
+    "keywords": [
+      "thiet ke hop cung",
+      "dieline",
+      "mockup 3d",
+      "boc tach cau truc",
+      "svg tam blank",
+      "mau hop"
+    ],
+    "actions": [
+      {
+        "label": "Chọn mẫu hộp"
+      },
+      {
+        "label": "Tải dieline SVG"
+      },
+      {
+        "label": "Sang tính giá"
+      },
+      {
+        "label": "Tính COST"
+      }
+    ]
+  },
+  {
+    "path": "/calc/import-3d",
+    "label": "Tính từ file 3D",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Tính từ file 3D / Cutlist — kéo thả file xuất từ SketchUp (OpenCutList CSV/XLSX) hoặc mô hình 3D, hệ thống map từng item về loại sản phẩm rồi tính đơn giá và thành tiền.",
+    "keywords": [
+      "tinh tu file 3d",
+      "cutlist",
+      "opencutlist",
+      "sketchup",
+      "import file 3d",
+      "map ve loai"
+    ],
+    "actions": [
+      {
+        "label": "Kéo file vào đây"
+      },
+      {
+        "label": "Xuất bảng cắt"
+      }
+    ]
+  },
+  {
+    "path": "/calc/run",
+    "label": "Tính nhanh",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Tính nhanh — chọn danh mục và loại sản phẩm, nhập kích thước, hệ thống chọn rule + công thức và trả ra kết quả; lưu được vào lịch sử kèm ghi chú.",
+    "keywords": [
+      "tinh nhanh",
+      "nhap kich thuoc",
+      "ket qua tinh",
+      "rule khop",
+      "luu lich su tinh"
+    ],
+    "actions": [
+      {
+        "label": "Tính"
+      },
+      {
+        "label": "Lưu vào lịch sử"
+      }
+    ]
+  },
+  {
+    "path": "/calc/setup",
+    "label": "Danh mục / Loại / Công thức / Rule",
+    "menu": "2. Cấu hình",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Cấu hình tính toán — khai báo Danh mục, Loại sản phẩm (đơn vị kích thước/kết quả, từ khóa map từ file 3D), Biến đầu vào (var_key ASCII), Công thức và Rule điều kiện.",
+    "keywords": [
+      "cau hinh tinh toan",
+      "cong thuc",
+      "rule dieu kien",
+      "bien dau vao",
+      "var key",
+      "danh muc tinh toan"
+    ],
+    "actions": [
+      {
+        "label": "Biến đầu vào"
+      },
+      {
+        "label": "Công thức"
+      },
+      {
+        "label": "Rule điều kiện"
+      },
+      {
+        "label": "Thêm danh mục"
+      }
+    ]
+  },
+  {
+    "path": "/companies",
+    "label": "Công ty",
+    "menu": "3. Hệ thống",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Danh sách công ty trong hệ sinh thái (đa công ty).",
+    "keywords": [
+      "cong ty",
+      "công ty",
+      "company"
+    ]
+  },
+  {
+    "path": "/company-processes",
+    "label": "QT nội bộ công ty",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Lối vào phần QT Nội Bộ Công Ty của trung tâm quy trình — tạo và sửa quy trình riêng của từng công ty.",
+    "keywords": [
+      "qt noi bo cong ty",
+      "quy trinh cong ty",
+      "company process"
+    ]
+  },
+  {
+    "path": "/crm",
+    "label": "/crm",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": true,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/crm/activity",
+    "label": "Đang hoạt động",
+    "menu": "CRM → Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Đang hoạt động — số người đang online, tổng nhân viên, lọc theo công ty/phòng ban/chi nhánh, kèm lịch sử đăng nhập (đăng nhập, sai mật khẩu, đăng xuất, hết phiên, đổi mật khẩu).",
+    "keywords": [
+      "dang hoat dong",
+      "ai dang online",
+      "lich su dang nhap",
+      "theo doi nhan vien online"
+    ],
+    "actions": [
+      {
+        "label": "Làm mới"
+      },
+      {
+        "label": "Tìm kiếm"
+      }
+    ]
+  },
+  {
+    "path": "/crm/admin/sla-watchlist",
+    "label": "SLA Lead/Deal (quản trị)",
+    "menu": "CRM → KPI & báo cáo",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Danh sách theo dõi SLA Lead/Deal — lọc quá hạn SLA hoặc sắp hết hạn trong cửa sổ N ngày, chỉ Lead hoặc chỉ Deal, chọn nhiều dòng để gửi nhắc.",
+    "keywords": [
+      "sla watchlist",
+      "qua han sla",
+      "sap het han",
+      "nhac deal qua han",
+      "theo doi sla"
+    ],
+    "actions": [
+      {
+        "label": "Chọn tất cả"
+      },
+      {
+        "label": "Làm mới"
+      }
+    ]
+  },
+  {
+    "path": "/crm/assignments",
+    "label": "Giao việc CRM",
+    "menu": "CRM → Bán hàng",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Giao việc CRM — bảng nhiệm vụ gắn deal theo hạn (Quá hạn, Hôm nay, Tuần này, Sau đó, Chưa có hạn) và trạng thái; thêm việc, lọc theo không gian chung. Chỉ người tạo hoặc người được giao mới di chuyển được việc.",
+    "keywords": [
+      "giao viec crm",
+      "phan cong nhiem vu",
+      "nhiem vu qua han",
+      "giao viec theo deal"
+    ],
+    "actions": [
+      {
+        "label": "Thêm"
+      },
+      {
+        "label": "Bộ lọc"
+      },
+      {
+        "label": "Chế độ xem khác"
+      }
+    ]
+  },
+  {
+    "path": "/crm/auto-project-config",
+    "label": "Auto tạo dự án",
+    "menu": "CRM → Quản trị CRM",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Cấu hình tự động tạo dự án — chọn sẵn luồng quy trình, khối/công ty, bộ nhiệm vụ và độ ưu tiên; khi Deal thắng hệ thống tự tạo dự án theo cấu hình, có tùy chọn import CRM tasks sang dự án.",
+    "keywords": [
+      "auto tao du an",
+      "deal thang tu tao du an",
+      "luong mac dinh",
+      "bo nhiem vu mac dinh",
+      "import crm task"
+    ],
+    "actions": [
+      {
+        "label": "Lưu cấu hình"
+      },
+      {
+        "label": "Thêm bước"
+      }
+    ]
+  },
+  {
+    "path": "/crm/blocked-phones",
+    "label": "Chặn KH (SĐT)",
+    "menu": "CRM → Quản trị CRM",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Danh sách chặn khách hàng theo số điện thoại — thêm SĐT kèm ghi chú, tìm theo số hoặc ghi chú, bỏ chặn; số bị chặn sẽ không tự tạo lead.",
+    "keywords": [
+      "chan sdt",
+      "danh sach chan",
+      "khong tao lead tu so nay",
+      "bo chan",
+      "chan khach"
+    ],
+    "actions": [
+      {
+        "label": "Thêm SĐT chặn"
+      },
+      {
+        "label": "Bỏ chặn"
+      }
+    ]
+  },
+  {
+    "path": "/crm/categories",
+    "label": "Nhóm ngành",
+    "menu": "CRM → Dữ liệu",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Quản lý Nhóm ngành — phân loại sản phẩm theo nhóm (Tủ bếp, Phụ kiện, Thiết bị…), theo công ty, có mô tả, thứ tự, ẩn/hiện và số SP đã/chưa phân loại.",
+    "keywords": [
+      "nhom nganh",
+      "phan loai san pham",
+      "them nhom nganh",
+      "sp chua phan loai"
+    ],
+    "actions": [
+      {
+        "label": "Thêm nhóm ngành"
+      },
+      {
+        "label": "Sửa đầy đủ"
+      }
+    ]
+  },
+  {
+    "path": "/crm/customers",
+    "label": "Khách hàng",
+    "menu": "CRM → Dữ liệu",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Danh sách khách hàng CRM — tra cứu, tạo mới, xem lịch sử giao dịch.",
+    "keywords": [
+      "khach hang",
+      "khách hàng",
+      "customer",
+      "danh sach khach hang"
+    ]
+  },
+  {
+    "path": "/crm/daily-reports",
+    "label": "Báo cáo hằng ngày",
+    "menu": "CRM → Bán hàng",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Báo cáo hằng ngày — phiếu báo cáo theo hạng mục, một phần số liệu tự lấy từ hệ thống (deal vào sản xuất, deal lắp đặt, deal hoàn thành, lead không phản hồi), phần còn lại điền tay; lưu nháp rồi nộp, xuất PDF, đổi mẫu báo cáo.",
+    "keywords": [
+      "bao cao hang ngay",
+      "phieu bao cao",
+      "nop bao cao",
+      "bao cao ngay",
+      "xuat pdf bao cao"
+    ],
+    "actions": [
+      {
+        "label": "Xuất PDF"
+      },
+      {
+        "label": "Nháp"
+      }
+    ]
+  },
+  {
+    "path": "/crm/daily-reports/history",
+    "label": "Lịch sử công việc ngày",
+    "menu": "CRM → Bán hàng",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Lịch sử công việc trong ngày — tóm tắt và chi tiết những gì đã làm trên hệ thống: lead/deal tạo mới, chuyển cột, thắng/mất deal, task hoàn thành, sự kiện, tương tác, bình luận.",
+    "keywords": [
+      "lich su cong viec ngay",
+      "hom nay lam gi",
+      "hoat dong trong ngay",
+      "nhat ky lam viec"
+    ],
+    "actions": [
+      {
+        "label": "Tóm tắt"
+      },
+      {
+        "label": "Chi tiết"
+      },
+      {
+        "label": "Mở hồ sơ CRM"
+      }
+    ]
+  },
+  {
+    "path": "/crm/dashboard",
+    "label": "Dashboard CRM",
+    "menu": "CRM → Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Dashboard CRM dạng Kanban — kéo thả lead/deal qua các giai đoạn pipeline, xem tổng quan bán hàng.",
+    "keywords": [
+      "crm dashboard",
+      "kanban",
+      "pipeline",
+      "lead",
+      "deal",
+      "bang ban hang"
+    ]
+  },
+  {
+    "path": "/crm/deadline-settings",
+    "label": "Cấu hình Deadline CRM",
+    "menu": "CRM → KPI & báo cáo",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Cấu hình Deadline CRM — chọn trường nguồn deadline hiển thị trên thẻ/Kanban (Deadline nhiệm vụ, Deadline tự setup, SLA cột), đặt các nhóm hiển thị (Quá hạn, Hôm nay, Tuần này…) và ngưỡng cho từng công ty.",
+    "keywords": [
+      "cau hinh deadline",
+      "han tren the",
+      "sla cot",
+      "nhom deadline",
+      "deadline kanban"
+    ],
+    "actions": [
+      {
+        "label": "Lưu"
+      }
+    ]
+  },
+  {
+    "path": "/crm/dept-plan",
+    "label": "Kế hoạch phòng ban",
+    "menu": "CRM → Bán hàng",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Kế hoạch phòng ban — lập KH tuần theo đầu công việc (mức ưu tiên Gấp-quan trọng, Quan trọng-không gấp…), nhập kết quả thực hiện, vấn đề tồn đọng và đề xuất trong phần Tổng kết tuần; hỗ trợ nhập từ file bảng.",
+    "keywords": [
+      "ke hoach phong ban",
+      "kh tuan",
+      "tong ket tuan",
+      "de xuat",
+      "van de ton dong",
+      "nhap file ke hoach"
+    ],
+    "actions": [
+      {
+        "label": "KH tuần"
+      },
+      {
+        "label": "Tổng kết tuần"
+      },
+      {
+        "label": "Lưu tổng kết"
+      }
+    ]
+  },
+  {
+    "path": "/crm/download-app",
+    "label": "Tải app CRM",
+    "menu": "CRM → Hỗ trợ & công cụ",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Tải app CRM (APK Android) — xem bản mới nhất, dung lượng, ngày phát hành và ghi chú phiên bản; nguồn lấy từ trang Cập nhật App.",
+    "keywords": [
+      "tai app crm",
+      "apk",
+      "cai app dien thoai",
+      "ban moi nhat app"
+    ],
+    "actions": [
+      {
+        "label": "Tải APK đầy đủ"
+      },
+      {
+        "label": "Làm mới"
+      }
+    ]
+  },
+  {
+    "path": "/crm/events",
+    "label": "Sự kiện",
+    "menu": "CRM → Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Dòng sự kiện CRM (khảo sát, lịch trong ngày) — lọc theo thời gian, người phụ trách, khu vực; xem sự kiện đã tạo / được giao, đánh dấu hoàn thành và xuất BC tháng.",
+    "keywords": [
+      "su kien",
+      "khao sat",
+      "lich trong ngay",
+      "su kien duoc giao",
+      "bc thang su kien"
+    ],
+    "actions": [
+      {
+        "label": "BC tháng"
+      },
+      {
+        "label": "Áp dụng"
+      }
+    ]
+  },
+  {
+    "path": "/crm/events/overview",
+    "label": "Tổng quan sự kiện",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Tổng quan sự kiện — tổng số, hoàn thành, đang/kế hoạch, tần suất theo ngày/tuần/tháng, nhân viên tham gia, khu vực và khối có sự kiện.",
+    "keywords": [
+      "tong quan su kien",
+      "thong ke su kien",
+      "tan suat su kien",
+      "su kien theo khu vuc"
+    ]
+  },
+  {
+    "path": "/crm/executive-kpi",
+    "label": "KPI Giám đốc",
+    "menu": "CRM → KPI & báo cáo",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "KPI Giám đốc theo đơn hàng — doanh thu đơn sales, số đơn/sản lượng, đơn có lắp đặt, doanh thu theo Sale và theo phòng ban, đối soát chéo Lead/DA vs Đơn. Cần vai trò Admin/Quản lý/Giám đốc/Supervisor.",
+    "keywords": [
+      "kpi giam doc",
+      "doanh thu theo sale",
+      "doanh thu phong ban",
+      "doi soat cheo",
+      "kpi theo don hang"
+    ],
+    "actions": [
+      {
+        "label": "Áp dụng"
+      }
+    ]
+  },
+  {
+    "path": "/crm/facebook",
+    "label": "Facebook",
+    "menu": "CRM → Kênh chat",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Kênh Facebook — Hộp thư tin nhắn Page, Danh bạ liên hệ, Bình luận, Phân tích, mẫu trả lời nhanh, quy tắc Tự động và Auto công ty; lọc khách đã có/chưa có SĐT và đồng bộ tin nhắn.",
+    "keywords": [
+      "facebook",
+      "messenger",
+      "hop thu facebook",
+      "tra loi khach fb",
+      "mau tin nhan",
+      "auto facebook",
+      "dong bo tin nhan"
+    ],
+    "actions": [
+      {
+        "label": "Hộp thư"
+      },
+      {
+        "label": "Danh bạ"
+      },
+      {
+        "label": "Bình luận"
+      },
+      {
+        "label": "Phân tích"
+      },
+      {
+        "label": "Tự động"
+      },
+      {
+        "label": "Cài đặt"
+      }
+    ]
+  },
+  {
+    "path": "/crm/facebook/link-phone-cleanup",
+    "label": "Dọn SĐT từ link",
+    "menu": "CRM → Quản trị CRM",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Dọn SĐT nghi từ link Messenger — quét liên hệ trong khoảng ngày, gom thành lô phân tích, kiểm tra SĐT lấy nhầm từ link rồi xử lý hàng loạt.",
+    "keywords": [
+      "don sdt tu link",
+      "sdt sai facebook",
+      "quet lien he",
+      "lo phan tich",
+      "lam sach danh ba fb"
+    ],
+    "actions": [
+      {
+        "label": "1. Quét"
+      },
+      {
+        "label": "Gom liên hệ"
+      },
+      {
+        "label": "Phân tích SĐT"
+      }
+    ]
+  },
+  {
+    "path": "/crm/follow-up-care",
+    "label": "CSKH theo hạn",
+    "menu": "CRM → Bán hàng",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "CSKH theo hạn — danh sách lead/deal cần chăm sóc theo tuổi lead và ngày cập nhật cuối, cột pipeline, người phụ trách, lý do mất; đánh dấu theo dõi tiếp, chuyển sang Deal, xuất Excel.",
+    "keywords": [
+      "cskh",
+      "cham soc khach hang",
+      "tuoi lead",
+      "theo doi tiep",
+      "lead qua han cham soc",
+      "xuat excel cskh"
+    ],
+    "actions": [
+      {
+        "label": "Chuyển sang Deal"
+      },
+      {
+        "label": "Xuất Excel"
+      },
+      {
+        "label": "Bỏ đánh dấu CSKH"
+      }
+    ]
+  },
+  {
+    "path": "/crm/invoices",
+    "label": "Hóa đơn",
+    "menu": "CRM → Tài chính",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Danh sách hóa đơn đã xuất cho khách hàng.",
+    "keywords": [
+      "hoa don",
+      "hóa đơn",
+      "invoice"
+    ]
+  },
+  {
+    "path": "/crm/invoices/:id",
+    "label": "Chi tiết hóa đơn",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Chi tiết hóa đơn — thông tin khách, chứng từ & điều khoản, ngày HĐ, hạn thanh toán, tiến độ thu tiền; xuất/in PDF, xác nhận thu (tiền mặt/chuyển khoản), phát hành hóa đơn điện tử lên MISA meInvoice và gửi email HĐĐT.",
+    "keywords": [
+      "chi tiet hoa don",
+      "phat hanh hddt",
+      "misa meinvoice",
+      "thu tien",
+      "gui email hoa don",
+      "in hoa don"
+    ],
+    "actions": [
+      {
+        "label": "Xuất PDF"
+      },
+      {
+        "label": "Phát hành HĐĐT"
+      },
+      {
+        "label": "Thu tiền"
+      },
+      {
+        "label": "Gửi email"
+      }
+    ]
+  },
+  {
+    "path": "/crm/invoices/:id/edit",
+    "label": "Sửa hóa đơn",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Sửa hóa đơn — cập nhật thông tin khách, dòng sản phẩm, hạn và trạng thái thanh toán.",
+    "keywords": [
+      "sua hoa don",
+      "cap nhat hoa don",
+      "chinh hoa don"
+    ],
+    "actions": [
+      {
+        "label": "Lưu thay đổi"
+      }
+    ]
+  },
+  {
+    "path": "/crm/invoices/new",
+    "label": "Tạo hóa đơn",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Tạo hóa đơn mới — chọn khách (tên, SĐT, địa chỉ, mã số thuế), thêm sản phẩm, hạn thanh toán và trạng thái (Chưa thanh toán / 1 phần / Đã đủ).",
+    "keywords": [
+      "tao hoa don",
+      "hoa don moi",
+      "ma so thue",
+      "han thanh toan",
+      "trang thai thanh toan"
+    ],
+    "actions": [
+      {
+        "label": "Lưu hóa đơn"
+      },
+      {
+        "label": "Xuất PDF"
+      }
+    ]
+  },
+  {
+    "path": "/crm/kpi/company",
+    "label": "KPI Nhân viên (Tổng quan)",
+    "menu": "CRM → KPI & báo cáo",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "KPI Nhân viên (Tổng quan) — tổng NV, điểm trung bình, NV xuất sắc ≥100 điểm, bị gating, đang nghỉ phép; xem theo bảng nhân viên, biểu đồ và xu hướng. Chỉ quản lý hoặc Sales Admin đã gán công ty xem được.",
+    "keywords": [
+      "kpi nhan vien tong quan",
+      "diem tb kpi",
+      "nv xuat sac",
+      "xu huong kpi",
+      "bi gating"
+    ],
+    "actions": [
+      {
+        "label": "Bảng nhân viên"
+      },
+      {
+        "label": "Biểu đồ NV"
+      },
+      {
+        "label": "Xu hướng"
+      }
+    ]
+  },
+  {
+    "path": "/crm/kpi/deal",
+    "label": "KPI Deal (Tủ bếp)",
+    "menu": "CRM → KPI & báo cáo",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "KPI Deal (Tủ bếp) cho nhân viên kinh doanh phụ trách deal — chuyển đổi báo giá, ký hợp đồng, doanh số; theo dõi task hoàn thành, chuyển stage, deal mất và vi phạm SLA.",
+    "keywords": [
+      "kpi deal",
+      "kpi kinh doanh",
+      "chot hop dong",
+      "vi pham sla deal",
+      "phieu deal"
+    ],
+    "actions": [
+      {
+        "label": "Tính lại"
+      }
+    ]
+  },
+  {
+    "path": "/crm/kpi/guide",
+    "label": "Hướng dẫn KPI",
+    "menu": "CRM → KPI & báo cáo",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Hướng dẫn KPI — giải thích từng chỉ tiêu (phản hồi lead ≤15 phút, tỷ lệ lead hoàn thiện thông tin, hoàn thành task đúng hạn, chuyển stage đúng SLA, tỷ lệ lead chuyển deal) kèm mục tiêu, mức gating và lỗi thường gặp.",
+    "keywords": [
+      "huong dan kpi",
+      "y nghia chi tieu kpi",
+      "cach tinh kpi",
+      "muc tieu kpi",
+      "gating kpi"
+    ]
+  },
+  {
+    "path": "/crm/kpi/sales-admin",
+    "label": "KPI Sales Admin (Tủ bếp)",
+    "menu": "CRM → KPI & báo cáo",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "KPI Sales Admin (Tủ bếp) — chấm tốc độ phản hồi lead, kỷ luật follow-up và chất lượng lead; hiện tổng điểm KPI tháng, vi phạm gating và phễu lead trong tháng.",
+    "keywords": [
+      "kpi sales admin",
+      "toc do phan hoi lead",
+      "phieu lead",
+      "diem kpi thang",
+      "gating"
+    ],
+    "actions": [
+      {
+        "label": "Tính lại"
+      }
+    ]
+  },
+  {
+    "path": "/crm/kpi/scorecard",
+    "label": "Scorecard KPI tháng",
+    "menu": "CRM → KPI & báo cáo",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Bảng điểm KPI tháng — 15 KPI × nhân viên, chia Nhóm A (tốc độ phản hồi), Nhóm B (tỷ lệ chuyển đổi), Nhóm C (kết quả kinh doanh); xếp loại Tốt / Khá / Cần cải thiện. Chỉ quản lý/admin xem được.",
+    "keywords": [
+      "scorecard kpi",
+      "bang diem kpi thang",
+      "nhom a b c",
+      "xep loai nhan vien",
+      "kpi dat 80 diem"
+    ],
+    "actions": [
+      {
+        "label": "Lọc"
+      }
+    ]
+  },
+  {
+    "path": "/crm/kpi/settings",
+    "label": "Cấu hình KPI Tủ bếp",
+    "menu": "CRM → KPI & báo cáo",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Cấu hình KPI Tủ bếp — đặt target cho từng chỉ tiêu, chiều tính điểm (tăng/giảm dần), trọng số kỳ, khoá/mở lại và đóng kỳ, tính lại KPI; kèm khai báo loại nghỉ (phép có lương, ốm, công tác, làm từ xa).",
+    "keywords": [
+      "cau hinh kpi",
+      "target kpi",
+      "dong ky kpi",
+      "tinh lai kpi",
+      "trong so kpi",
+      "loai nghi"
+    ],
+    "actions": [
+      {
+        "label": "Lưu cấu hình"
+      },
+      {
+        "label": "Đóng kỳ"
+      },
+      {
+        "label": "Tính lại KPI cho kỳ này"
+      }
+    ]
+  },
+  {
+    "path": "/crm/kpi/verify-b",
+    "label": "Verify KPI nhóm B",
+    "menu": "CRM → KPI & báo cáo",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Verify KPI nhóm B — soi từng lead xem hệ thống chấm B2/B3/B4/B5 thế nào: lịch sử kéo stage, mốc đầu tiên vào survey_done / quoted / contract_signed, đánh dấu nhảy cóc hay đi lùi. Chỉ manager trở lên.",
+    "keywords": [
+      "verify kpi nhom b",
+      "kiem tra cham kpi",
+      "nhay coc stage",
+      "moc chuyen stage",
+      "b2 b3 b4 b5"
+    ]
+  },
+  {
+    "path": "/crm/lead-journey",
+    "label": "Hành trình Lead",
+    "menu": "CRM → Bán hàng",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Hành trình Lead — sơ đồ vòng đời từ lead vào, tư vấn, báo giá, hợp đồng, sản xuất, vận chuyển, lắp đặt tới nghiệm thu và upsell, kèm việc nên làm ở mỗi chặng.",
+    "keywords": [
+      "hanh trinh lead",
+      "vong doi lead",
+      "quy trinh ban hang",
+      "lead journey",
+      "nen lam gi o moi buoc"
+    ]
+  },
+  {
+    "path": "/crm/leads/:id",
+    "label": "Chi tiết Lead / Deal",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Trang chi tiết một Lead/Deal — hoạt động, tài liệu, chuyển giai đoạn, chuyển Lead sang Deal.",
+    "keywords": [
+      "chi tiet lead",
+      "chi tiết lead",
+      "chi tiet deal",
+      "lead detail"
+    ]
+  },
+  {
+    "path": "/crm/leaves",
+    "label": "Lịch nghỉ",
+    "menu": "CRM → Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Lịch nghỉ dạng lịch — xem ai nghỉ ngày nào, đăng ký nghỉ phép theo cả ngày/sáng/chiều.",
+    "keywords": [
+      "lich nghi",
+      "nghi phep",
+      "dang ky nghi",
+      "ai nghi hom nay"
+    ]
+  },
+  {
+    "path": "/crm/leaves/list",
+    "label": "Danh sách nghỉ phép",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Danh sách đơn nghỉ dạng bảng — lọc, duyệt và theo dõi trạng thái từng đơn nghỉ phép.",
+    "keywords": [
+      "danh sach nghi phep",
+      "don xin nghi",
+      "duyet nghi phep"
+    ]
+  },
+  {
+    "path": "/crm/messenger",
+    "label": "Nhóm chat",
+    "menu": "CRM → Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Nhóm chat nội bộ — danh sách hội thoại (Tất cả / Ưu tiên / Chưa đọc), tạo nhóm chat, thêm-xoá thành viên, đổi vai trò, đặt biệt danh, đổi avatar nhóm.",
+    "keywords": [
+      "nhom chat",
+      "messenger noi bo",
+      "tao nhom chat",
+      "chat voi nhan vien",
+      "chua doc"
+    ],
+    "actions": [
+      {
+        "label": "Tạo nhóm chat"
+      },
+      {
+        "label": "Mở chat Messenger"
+      }
+    ]
+  },
+  {
+    "path": "/crm/orders",
+    "label": "Đơn hàng",
+    "menu": "CRM → Tài chính",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Danh sách đơn hàng đã lên từ báo giá được duyệt.",
+    "keywords": [
+      "don hang",
+      "đơn hàng",
+      "order"
+    ]
+  },
+  {
+    "path": "/crm/orders/:id",
+    "label": "Chi tiết đơn hàng",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Chi tiết đơn hàng — mã đơn, thông tin khách, dòng sản phẩm, chiết khấu, tổng tiền sau thuế, tiền cọc theo báo giá và trạng thái nhận cọc; tổng đã thu = đã thanh toán trên đơn + cọc đã nhận. Chuyển trạng thái, xuất PDF, hủy đơn.",
+    "keywords": [
+      "chi tiet don hang",
+      "tien coc",
+      "da thanh toan",
+      "chuyen trang thai don",
+      "huy don hang"
+    ],
+    "actions": [
+      {
+        "label": "Xuất PDF"
+      },
+      {
+        "label": "Sửa"
+      },
+      {
+        "label": "Hủy đơn hàng"
+      }
+    ]
+  },
+  {
+    "path": "/crm/orders/:id/edit",
+    "label": "Sửa đơn hàng",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Sửa đơn hàng — cập nhật khách hàng, dòng sản phẩm, điều khoản thanh toán và trạng thái đơn.",
+    "keywords": [
+      "sua don hang",
+      "cap nhat don hang",
+      "chinh don hang"
+    ],
+    "actions": [
+      {
+        "label": "Lưu thay đổi"
+      }
+    ]
+  },
+  {
+    "path": "/crm/orders/new",
+    "label": "Tạo đơn hàng",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Tạo đơn hàng mới — chọn khách hàng, tiêu đề, ít nhất 1 sản phẩm, điều khoản thanh toán và trạng thái (Nháp, Xác nhận, Đang SX, Đang giao, Đã giao, Hủy).",
+    "keywords": [
+      "tao don hang",
+      "don hang moi",
+      "them san pham vao don",
+      "trang thai don hang"
+    ],
+    "actions": [
+      {
+        "label": "Lưu đơn hàng"
+      },
+      {
+        "label": "Xuất PDF"
+      }
+    ]
+  },
+  {
+    "path": "/crm/pipeline",
+    "label": "Pipeline CRM",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Pipeline CRM — cùng màn hình Dashboard CRM: bảng kéo thả lead/deal theo giai đoạn, kèm chế độ Danh sách, Bình luận và Lịch; xem doanh thu thắng/hoàn thành, chuyển lead sang deal, đánh dấu mất.",
+    "keywords": [
+      "pipeline crm",
+      "keo tha deal",
+      "chuyen sang deal",
+      "danh dau mat",
+      "doanh thu thang"
+    ],
+    "actions": [
+      {
+        "label": "Danh sách"
+      },
+      {
+        "label": "Bình luận"
+      },
+      {
+        "label": "Lịch"
+      },
+      {
+        "label": "Chuyển sang Deal"
+      }
+    ]
+  },
+  {
+    "path": "/crm/pipeline-settings",
+    "label": "Pipeline",
+    "menu": "CRM → Quản trị CRM",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Cấu hình Pipeline CRM — thêm/sửa giai đoạn (cột), đánh dấu cột Thắng/Mất/Bỏ QH, quyền xóa, phân loại lead/deal, sao chép pipeline giữa công ty, xem toàn cảnh flow; bật yêu cầu chọn deadline + lý do khi thẻ vào cột.",
+    "keywords": [
+      "cau hinh pipeline",
+      "them cot",
+      "cot thang",
+      "cot mat",
+      "sao chep pipeline",
+      "phan loai lead",
+      "deadline khi vao cot"
+    ],
+    "actions": [
+      {
+        "label": "Giai đoạn"
+      },
+      {
+        "label": "Phân loại"
+      },
+      {
+        "label": "Sao chép pipeline"
+      },
+      {
+        "label": "Toàn cảnh flow pipeline"
+      }
+    ]
+  },
+  {
+    "path": "/crm/products",
+    "label": "Sản phẩm",
+    "menu": "CRM → Dữ liệu",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Sản phẩm trong CRM — danh mục thành phẩm dùng khi lập báo giá/đơn hàng: mã, tên, kích thước, nhóm SP, quy cách, tiêu chuẩn, hình thức, kính; lọc theo công ty và nhóm ngành.",
+    "keywords": [
+      "san pham crm",
+      "thanh pham",
+      "chon san pham bao gia",
+      "nhom nganh",
+      "quy cach"
+    ]
+  },
+  {
+    "path": "/crm/quotations",
+    "label": "Báo giá",
+    "menu": "CRM → Tài chính",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Danh sách báo giá đã tạo cho khách hàng.",
+    "keywords": [
+      "bao gia",
+      "báo giá",
+      "quotation",
+      "danh sach bao gia"
+    ]
+  },
+  {
+    "path": "/crm/quotations/:id",
+    "label": "Chi tiết / sửa báo giá",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Sửa một báo giá — chọn khách hàng, thêm dòng sản phẩm, chiết khấu/giảm giá tổng, điều khoản thanh toán, tiền cọc; xuất PDF hoặc chuyển báo giá sang đơn hàng.",
+    "keywords": [
+      "sua bao gia",
+      "bao gia chi tiet",
+      "chiet khau bao gia",
+      "xuat pdf bao gia",
+      "chuyen bao gia sang don hang"
+    ],
+    "actions": [
+      {
+        "label": "Xuất PDF"
+      },
+      {
+        "label": "Chuyển báo giá sang đơn hàng"
+      }
+    ]
+  },
+  {
+    "path": "/crm/quotations/new",
+    "label": "Tạo báo giá",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Form tạo báo giá mới: thêm sản phẩm, tính tổng tiền, xuất PDF gửi khách.",
+    "keywords": [
+      "tao bao gia",
+      "tạo báo giá",
+      "bao gia moi",
+      "quotation moi",
+      "xuat pdf bao gia"
+    ]
+  },
+  {
+    "path": "/crm/reports",
+    "label": "Báo cáo",
+    "menu": "CRM → KPI & báo cáo",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Báo cáo tổng hợp CRM — doanh thu, số lượng lead/deal theo thời gian (chỉ admin).",
+    "keywords": [
+      "bao cao crm",
+      "báo cáo crm",
+      "report",
+      "doanh thu"
+    ]
+  },
+  {
+    "path": "/crm/reports/org-overview",
+    "label": "BC theo tổ chức",
+    "menu": "CRM → KPI & báo cáo",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Báo cáo theo tổ chức — theo từng đơn vị/công ty: deal đang mở, giá trị báo giá, giá trị chốt, tỷ lệ chốt/BG, tỷ lệ chốt/tổng deal, tỷ lệ hủy, tăng trưởng và tình trạng báo cáo (đúng hạn/trễ/thiếu).",
+    "keywords": [
+      "bc theo to chuc",
+      "bao cao cong ty",
+      "ty le chot",
+      "tang truong",
+      "gia tri chot"
+    ],
+    "actions": [
+      {
+        "label": "Tổng quan"
+      },
+      {
+        "label": "Công ty"
+      }
+    ]
+  },
+  {
+    "path": "/crm/reports/staff-lead-deal",
+    "label": "BC Lead/Deal theo NV",
+    "menu": "CRM → KPI & báo cáo",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Báo cáo Lead/Deal theo nhân viên — số & giá trị lead/deal, deal đang mở, deal chốt, giá trị thua, deal hoàn thành và tỉ lệ hoàn thành; xem theo giai đoạn hoặc theo kết quả deal.",
+    "keywords": [
+      "bc lead deal theo nv",
+      "bao cao nhan vien",
+      "gia tri dang mo",
+      "ty le hoan thanh",
+      "tong pipeline"
+    ],
+    "actions": [
+      {
+        "label": "Giai đoạn"
+      },
+      {
+        "label": "Kết quả deal"
+      }
+    ]
+  },
+  {
+    "path": "/crm/settings/deal-stage-report",
+    "label": "Phân loại cột BC Deal",
+    "menu": "CRM → KPI & báo cáo",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Phân loại cột BC Deal — gán mỗi cột pipeline của công ty vào nhóm báo cáo Chưa chốt / Đang triển khai / Hoàn thành và đánh dấu Thắng-Thua, để báo cáo deal gom đúng nhóm.",
+    "keywords": [
+      "phan loai cot bc deal",
+      "nhom bao cao",
+      "cot thang thua",
+      "cau hinh bao cao deal"
+    ],
+    "actions": [
+      {
+        "label": "Chọn công ty…"
+      }
+    ]
+  },
+  {
+    "path": "/crm/sources-settings",
+    "label": "Nguồn & phân loại",
+    "menu": "CRM → Quản trị CRM",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Nguồn & phân loại lead — khai báo nguồn (VD: Quảng cáo trả phí) và gắn phân loại nguồn (Online, Đối tác…), đặt màu, thứ tự, phạm vi chung toàn hệ thống hay riêng công ty.",
+    "keywords": [
+      "nguon lead",
+      "phan loai nguon",
+      "them nguon",
+      "nguon quang cao",
+      "nguon theo cong ty"
+    ],
+    "actions": [
+      {
+        "label": "Thêm"
+      },
+      {
+        "label": "Sửa"
+      },
+      {
+        "label": "Phân loại nguồn"
+      }
+    ]
+  },
+  {
+    "path": "/crm/task-templates",
+    "label": "Bộ mẫu CRM",
+    "menu": "CRM → Quản trị CRM",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Bộ mẫu nhiệm vụ CRM — bộ nhiệm vụ tự sinh theo giai đoạn (Nhiệm vụ Deal mới, Báo giá & Hợp đồng, Tiến hành đặt hàng, Hẹn ngày lắp đặt, Đặt Vận chuyển…); dùng bộ Global hoặc riêng theo pipeline từng công ty, đặt bộ mặc định.",
+    "keywords": [
+      "bo mau crm",
+      "mau nhiem vu",
+      "task template",
+      "nhiem vu tu sinh",
+      "bo mau global",
+      "bo mac dinh"
+    ],
+    "actions": [
+      {
+        "label": "Giai đoạn"
+      },
+      {
+        "label": "Hoàn tất"
+      }
+    ]
+  },
+  {
+    "path": "/crm/tasks",
+    "label": "Công việc CRM",
+    "menu": "CRM → Bán hàng",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Công việc CRM — task gắn với lead/deal, theo dõi tiến độ nhân viên bán hàng.",
+    "keywords": [
+      "cong viec crm",
+      "công việc crm",
+      "task crm",
+      "nhiem vu crm"
+    ]
+  },
+  {
+    "path": "/crm/zalo",
+    "label": "Zalo OA",
+    "menu": "CRM → Kênh chat",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Kênh Zalo OA — Hộp thư, Danh bạ, Công cụ Lead và Cài đặt kết nối OA (OA ID, Access Token, refresh token, webhook n8n); cập nhật tên khách hàng tự động. Lưu ý cửa sổ phản hồi 7 ngày.",
+    "keywords": [
+      "zalo oa",
+      "hop thu zalo",
+      "access token zalo",
+      "refresh token",
+      "webhook n8n",
+      "lay ten khach zalo"
+    ],
+    "actions": [
+      {
+        "label": "Hộp thư"
+      },
+      {
+        "label": "Danh bạ"
+      },
+      {
+        "label": "Công cụ Lead"
+      },
+      {
+        "label": "Cài đặt"
+      }
+    ]
+  },
+  {
+    "path": "/customers",
+    "label": "Khách hàng",
+    "menu": "2. Làm việc",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Danh sách khách hàng chung — tìm theo tên/SĐT/email/công ty, thêm & sửa khách, quét trùng Lead, chặn tự tạo lead Facebook theo SĐT.",
+    "keywords": [
+      "khach hang",
+      "danh sach khach",
+      "them khach hang",
+      "quet trung lead",
+      "chan tao lead facebook"
+    ],
+    "actions": [
+      {
+        "label": "Thêm KH"
+      },
+      {
+        "label": "Quét trùng Lead"
+      }
+    ]
+  },
+  {
+    "path": "/customers/:id",
+    "label": "Chi tiết khách hàng",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Chi tiết khách hàng — thông tin liên hệ, nguồn, người phụ trách, báo giá gần nhất và tổng giá trị báo giá; có lịch sử tương tác (gọi điện, gặp mặt, ghi chú, khảo sát) và danh sách dự án.",
+    "keywords": [
+      "chi tiet khach hang",
+      "lich su tuong tac",
+      "them tuong tac",
+      "du an cua khach",
+      "gia tri bao gia"
+    ],
+    "actions": [
+      {
+        "label": "Thêm tương tác"
+      },
+      {
+        "label": "Lịch sử tương tác"
+      },
+      {
+        "label": "Dự án"
+      }
+    ]
+  },
+  {
+    "path": "/dashboard",
+    "label": "Tổng hợp Quản lý",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Trang tổng hợp Quản lý: tổng quan dự án đang chạy, KPI theo khối, bộ lọc theo nhân viên/quy trình/thời gian.",
+    "keywords": [
+      "dashboard",
+      "tong quan",
+      "tổng quan",
+      "trang chu",
+      "trang chủ"
+    ]
+  },
+  {
+    "path": "/dashboard/classic",
+    "label": "/dashboard/classic",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": true,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/dashboard/divisions",
+    "label": "/dashboard/divisions",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": true,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/departments",
+    "label": "Phòng ban",
+    "menu": "3. Hệ thống",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Danh sách phòng ban trong công ty.",
+    "keywords": [
+      "phong ban",
+      "phòng ban",
+      "department"
+    ]
+  },
+  {
+    "path": "/departments/:id/chat",
+    "label": "Chat phòng ban",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Nhóm chat của một phòng ban — gửi tin nhắn, ảnh/video/file, trả lời, sửa/xóa tin, ghim, thả cảm xúc; thêm được cả người ngoài phòng ban vào nhóm.",
+    "keywords": [
+      "chat phong ban",
+      "nhom chat",
+      "nhan tin noi bo",
+      "them nguoi vao chat",
+      "ghim tin nhan"
+    ],
+    "actions": [
+      {
+        "label": "Thêm người"
+      },
+      {
+        "label": "Tải ảnh/video/file"
+      },
+      {
+        "label": "Mở trình chiếu"
+      }
+    ]
+  },
+  {
+    "path": "/drive",
+    "label": "Drive lưu trữ",
+    "menu": "2. Làm việc",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Drive lưu trữ — Drive của tôi, Drive chung theo Cá nhân/Công ty, Truy cập nhanh, Gần đây, Được chia sẻ với tôi và Thùng rác; tạo thư mục, tải tệp, đổi tên, di chuyển, chia sẻ Xem/Sửa, xem dạng lưới hoặc danh sách.",
+    "keywords": [
+      "drive",
+      "luu tru file",
+      "tai len tep",
+      "chia se file",
+      "thu muc",
+      "duoc chia se voi toi",
+      "thung rac drive"
+    ],
+    "actions": [
+      {
+        "label": "Drive của tôi"
+      },
+      {
+        "label": "Được chia sẻ với tôi"
+      },
+      {
+        "label": "Thùng rác"
+      },
+      {
+        "label": "Chia sẻ (Xem / Sửa)"
+      }
+    ]
+  },
+  {
+    "path": "/drive/folder/:folderId",
+    "label": "Thư mục Drive",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Nội dung một thư mục trong Drive — tệp và thư mục con, tạo mới, đổi tên, di chuyển, chia sẻ hoặc đưa vào thùng rác.",
+    "keywords": [
+      "thu muc drive",
+      "mo thu muc",
+      "file trong thu muc"
+    ]
+  },
+  {
+    "path": "/drive/root/:rootId",
+    "label": "Drive gốc",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Một Drive gốc cụ thể (Drive của tôi hoặc Drive chung của công ty) — duyệt thư mục, tải tệp và chia sẻ trong phạm vi Drive đó.",
+    "keywords": [
+      "drive chung",
+      "drive cong ty",
+      "drive goc"
+    ]
+  },
+  {
+    "path": "/drive/view/:view",
+    "label": "Khung xem Drive",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Các khung xem nhanh của Drive — Gần đây, Được chia sẻ với tôi, Thùng rác.",
+    "keywords": [
+      "drive gan day",
+      "duoc chia se",
+      "thung rac drive",
+      "khung xem drive"
+    ]
+  },
+  {
+    "path": "/ecosystem",
+    "label": "Cấu trúc công ty",
+    "menu": "3. Hệ thống",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Sơ đồ cấu trúc công ty — cây hệ sinh thái kéo/zoom được, thêm đơn vị gốc và đơn vị con theo cấp bậc, xem Quản lý & NV, Quy trình, Dự án mẫu, Dự án của từng đơn vị.",
+    "keywords": [
+      "cau truc cong ty",
+      "so do to chuc",
+      "cay he sinh thai",
+      "them don vi",
+      "khoi cong ty"
+    ],
+    "actions": [
+      {
+        "label": "Thêm gốc"
+      },
+      {
+        "label": "Mở tất cả nhánh"
+      },
+      {
+        "label": "Thu tất cả nhánh"
+      }
+    ]
+  },
+  {
+    "path": "/ecosystem-levels",
+    "label": "Cấp bậc HST",
+    "menu": "3. Hệ thống",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Cấp bậc hệ sinh thái — định nghĩa các cấp từ cao xuống thấp (Cấp 0 gốc/Tập đoàn, Cấp 1 Khối…), đặt tên, depth, màu và mô tả cho từng cấp.",
+    "keywords": [
+      "cap bac hst",
+      "depth",
+      "tap doan khoi",
+      "them cap bac",
+      "so do cap bac"
+    ],
+    "actions": [
+      {
+        "label": "Thêm cấp bậc"
+      },
+      {
+        "label": "Sửa"
+      }
+    ]
+  },
+  {
+    "path": "/ecosystem-permissions",
+    "label": "Phân quyền hệ sinh thái",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Phân quyền theo hệ sinh thái — chọn đơn vị trên cây (Tập đoàn → Khối → Công ty → Phòng ban → Đội nhóm) rồi gán nhân viên với quyền Xem dự án hoặc Quản lý; quyền có tính phân cấp.",
+    "keywords": [
+      "phan quyen he sinh thai",
+      "quyen theo don vi",
+      "gan nhan vien quyen",
+      "quyen phan cap",
+      "xem du an"
+    ],
+    "actions": [
+      {
+        "label": "Gán nhân viên"
+      },
+      {
+        "label": "Thêm"
+      }
+    ]
+  },
+  {
+    "path": "/ecosystem/app-modules",
+    "label": "Module tùy chỉnh",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Quản trị module tùy chỉnh — tạo module riêng (VD: QC, Bảo hành nội bộ) với key, icon/emoji, màu accent, phạm vi công ty; bật/tắt hiển thị trên App Switcher.",
+    "keywords": [
+      "module tuy chinh",
+      "tao module rieng",
+      "app switcher",
+      "icon module",
+      "pham vi cong ty module"
+    ],
+    "actions": [
+      {
+        "label": "Tạo module mới"
+      },
+      {
+        "label": "Cấu hình"
+      },
+      {
+        "label": "Mở Kanban"
+      }
+    ]
+  },
+  {
+    "path": "/ecosystem/app-modules/:moduleKey",
+    "label": "Cấu hình module tùy chỉnh",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Cấu hình một module tùy chỉnh — thêm/sửa tab (mỗi tab tự tạo 3 cột Tiếp nhận / Đang xử lý / Hoàn thành), đặt giai đoạn, bộ mẫu nhiệm vụ và phạm vi công ty. Chỉ admin cấu hình được.",
+    "keywords": [
+      "cau hinh module tuy chinh",
+      "them tab module",
+      "giai doan module",
+      "bo mau nhiem vu module"
+    ],
+    "actions": [
+      {
+        "label": "Giai đoạn"
+      },
+      {
+        "label": "Bộ nhiệm vụ"
+      },
+      {
+        "label": "Công ty"
+      },
+      {
+        "label": "Thêm tab"
+      }
+    ]
+  },
+  {
+    "path": "/ecosystem/modules",
+    "label": "Module & Khối",
+    "menu": "3. Hệ thống",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Module & Khối — quyết định khối nào được dùng module nào. Mỗi công ty thuộc đúng một khối; module không tick khối nào là mở cho mọi khối.",
+    "keywords": [
+      "module va khoi",
+      "gioi han module theo khoi",
+      "bat module cho khoi",
+      "phan bo module"
+    ],
+    "actions": [
+      {
+        "label": "Cấu trúc công ty"
+      },
+      {
+        "label": "Module tùy chỉnh"
+      }
+    ]
+  },
+  {
+    "path": "/guide",
+    "label": "Hướng dẫn sử dụng",
+    "menu": "CRM → Hỗ trợ & công cụ",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Trang hướng dẫn sử dụng hệ thống theo từng bài, từng bước.",
+    "keywords": [
+      "huong dan",
+      "hướng dẫn",
+      "guide"
+    ]
+  },
+  {
+    "path": "/ketoan",
+    "label": "Module Kế toán",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Khung module Kế toán — cửa vào Tổng hợp deal SX, chi tiết kế toán từng deal và danh sách tài khoản ngân hàng.",
+    "keywords": [
+      "module ke toan",
+      "ketoan",
+      "vao ke toan"
+    ]
+  },
+  {
+    "path": "/ketoan/bank-accounts",
+    "label": "Tài khoản NH",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Tài khoản ngân hàng của công ty — khai báo và quản lý số tài khoản dùng cho thu tiền và in trên chứng từ.",
+    "keywords": [
+      "tai khoan ngan hang",
+      "so tai khoan",
+      "ngan hang cong ty"
+    ]
+  },
+  {
+    "path": "/ketoan/dashboard",
+    "label": "Tổng hợp deal SX",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Tổng hợp deal SX cho kế toán — deal của công ty phân loại theo xưởng và trạng thái tài chính (Chưa BG, Có BG chưa ĐH, Có ĐH chưa HĐ, SX xong chưa HĐ), còn phải thu và chi phí xưởng; xuất Excel, tạo hóa đơn.",
+    "keywords": [
+      "tong hop deal sx",
+      "ke toan dashboard",
+      "con phai thu",
+      "chua co hoa don",
+      "chi phi xuong",
+      "xuat excel ke toan"
+    ],
+    "actions": [
+      {
+        "label": "Tạo hóa đơn"
+      },
+      {
+        "label": "Xuất Excel"
+      },
+      {
+        "label": "Mở deal CRM"
+      },
+      {
+        "label": "Mở dự án SX"
+      }
+    ]
+  },
+  {
+    "path": "/ketoan/deals/:leadId",
+    "label": "Chi tiết kế toán của deal",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Chi tiết kế toán của một deal — mục Tài chính (báo giá, đơn hàng, hóa đơn, giao dịch thu tiền mặt/chuyển khoản, trạng thái Chưa TT / TT một phần / Quá hạn), Tài liệu, nhiệm vụ CRM và Sản xuất; import file Excel vào báo giá/đơn hàng/hóa đơn.",
+    "keywords": [
+      "ke toan deal",
+      "tai chinh deal",
+      "giao dich thu tien",
+      "import excel bao gia",
+      "cong no deal"
+    ],
+    "actions": [
+      {
+        "label": "Tài chính"
+      },
+      {
+        "label": "Tài liệu"
+      },
+      {
+        "label": "CRM"
+      },
+      {
+        "label": "Sản xuất"
+      }
+    ]
+  },
+  {
+    "path": "/knowledge",
+    "label": "Kiến thức",
+    "menu": "CRM → Thông báo",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Thư viện kiến thức — bài học, bài tập, chứng nhận nội bộ.",
+    "keywords": [
+      "kien thuc",
+      "kiến thức",
+      "hoc tap",
+      "học tập"
+    ]
+  },
+  {
+    "path": "/knowledge/admin",
+    "label": "Quản trị kiến thức",
+    "menu": "Sản xuất → 2. Quản lý nội dung",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Quản trị kiến thức — quản lý Danh mục, Bài học, Bài tập, Chứng nhận NV, Bảng điểm và Thống kê; upload tài liệu/huy chương, đặt người ký chứng nhận và thu hồi chứng nhận kèm lý do.",
+    "keywords": [
+      "quan tri kien thuc",
+      "tao bai hoc",
+      "tao bai tap",
+      "cap chung nhan",
+      "thu hoi chung nhan",
+      "danh muc kien thuc"
+    ],
+    "actions": [
+      {
+        "label": "Danh mục"
+      },
+      {
+        "label": "Bài học"
+      },
+      {
+        "label": "Bài tập"
+      },
+      {
+        "label": "Chứng nhận NV"
+      },
+      {
+        "label": "Bảng điểm"
+      },
+      {
+        "label": "Thống kê"
+      }
+    ]
+  },
+  {
+    "path": "/knowledge/certificates",
+    "label": "Chứng nhận của tôi",
+    "menu": "Sản xuất → 1. Học tập",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Chứng nhận của tôi — bộ sưu tập chứng nhận và huy chương, khoá đang học kèm tổng tiến độ, số CN, ngày cấp, bài đã học và điểm TB bài tập. Hoàn thành hết bài học trong một danh mục sẽ được cấp chứng nhận.",
+    "keywords": [
+      "chung nhan",
+      "huy chuong",
+      "khoa hoc",
+      "du dieu kien cap chung nhan",
+      "tien do hoc"
+    ],
+    "actions": [
+      {
+        "label": "Xem lịch học & bài tập"
+      },
+      {
+        "label": "Đi học ngay"
+      }
+    ]
+  },
+  {
+    "path": "/knowledge/certificates/:id",
+    "label": "Chi tiết chứng nhận",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Chi tiết một chứng nhận — mẫu chứng nhận có số CN, ngày cấp, người ký, mã xác minh; in hoặc lưu PDF. Chứng nhận bị thu hồi sẽ hiện cảnh báo.",
+    "keywords": [
+      "chi tiet chung nhan",
+      "in chung nhan",
+      "ma xac minh",
+      "luu pdf chung nhan",
+      "thu hoi chung nhan"
+    ],
+    "actions": [
+      {
+        "label": "In / Lưu PDF"
+      },
+      {
+        "label": "Sao mã xác minh"
+      }
+    ]
+  },
+  {
+    "path": "/knowledge/exercises/:id",
+    "label": "Làm bài tập",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Làm bài tập — trắc nghiệm (chọn 1 hoặc nhiều đáp án), checklist thực hành, mô phỏng thao tác hoặc tự luận; một số bài có giới hạn thời gian và tự nộp khi hết giờ.",
+    "keywords": [
+      "lam bai tap",
+      "trac nghiem",
+      "tu luan",
+      "nop bai",
+      "gioi han thoi gian",
+      "chua dat lam lai"
+    ],
+    "actions": [
+      {
+        "label": "Nộp bài"
+      },
+      {
+        "label": "Câu trước"
+      }
+    ]
+  },
+  {
+    "path": "/knowledge/lessons/:id",
+    "label": "Học bài",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Trang học một bài — nội dung văn bản, tài liệu & media tham khảo, các dạng bài tập (trắc nghiệm, mô phỏng thao tác, tự luận); bookmark, đánh dấu hoàn thành và đánh giá bài học. Bài sau chỉ mở khi đạt bài tập của bài trước.",
+    "keywords": [
+      "hoc bai",
+      "bai hoc",
+      "khoa bai hoc",
+      "danh dau hoan thanh",
+      "danh gia bai hoc",
+      "luu de xem sau"
+    ],
+    "actions": [
+      {
+        "label": "Đánh dấu hoàn thành"
+      },
+      {
+        "label": "Lưu để xem sau"
+      },
+      {
+        "label": "Gửi đánh giá"
+      }
+    ]
+  },
+  {
+    "path": "/knowledge/my-history",
+    "label": "Lịch sử bài làm",
+    "menu": "Sản xuất → 1. Học tập",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Lịch sử bài làm của tôi — tất cả lần làm bài, điểm số, trạng thái Đạt / Chưa đạt / Chờ chấm, nhận xét của người chấm; tổng lượt làm và điểm trung bình.",
+    "keywords": [
+      "lich su bai lam",
+      "diem cua toi",
+      "cho cham",
+      "lam lai bai tap",
+      "diem trung binh"
+    ],
+    "actions": [
+      {
+        "label": "Làm lại bài tập này →"
+      }
+    ]
+  },
+  {
+    "path": "/knowledge/scoreboard",
+    "label": "Bảng điểm công ty",
+    "menu": "Sản xuất → 2. Quản lý nội dung",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Bảng điểm công ty — kết quả học tập toàn bộ nhân viên: bài học, bài tập, loại, điểm, trạng thái, lần thử, ngày nộp và nhận xét; lọc theo công ty/phòng ban và xuất CSV.",
+    "keywords": [
+      "bang diem cong ty",
+      "ket qua hoc tap nhan vien",
+      "xuat csv diem",
+      "cho cham bai",
+      "thong ke hoc tap"
+    ],
+    "actions": [
+      {
+        "label": "Xuất CSV"
+      },
+      {
+        "label": "Bộ lọc"
+      }
+    ]
+  },
+  {
+    "path": "/login",
+    "label": "Đăng nhập",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Màn hình đăng nhập TuBep Pro — nhập email/mật khẩu hoặc đăng nhập bằng Google, có lối sang trang chọn gói để đăng ký mới.",
+    "keywords": [
+      "dang nhap",
+      "login",
+      "mat khau",
+      "dang nhap google",
+      "het phien",
+      "dang xuat roi vao lai"
+    ]
+  },
+  {
+    "path": "/m/:moduleKey",
+    "label": "Module tùy chỉnh (Kanban)",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Khung làm việc của một module tùy chỉnh — Kanban theo tab đã cấu hình, kèm các trang con Giao việc, Sự kiện, Lịch nghỉ, Đang hoạt động, Nhóm chat, Bảng tin, Cài đặt.",
+    "keywords": [
+      "module tuy chinh kanban",
+      "mo module rieng",
+      "khung module",
+      "kanban module"
+    ]
+  },
+  {
+    "path": "/m/:moduleKey/activity",
+    "label": "Đang hoạt động (module tùy chỉnh)",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Đang hoạt động — ai đang online, tổng nhân viên, lọc theo công ty/phòng ban, kèm lịch sử đăng nhập (đăng nhập, sai mật khẩu, đăng xuất, hết phiên).",
+    "keywords": [
+      "dang hoat dong",
+      "online",
+      "lich su dang nhap",
+      "ai dang online",
+      "phien dang nhap"
+    ],
+    "actions": [
+      {
+        "label": "Làm mới"
+      },
+      {
+        "label": "Tìm kiếm"
+      }
+    ]
+  },
+  {
+    "path": "/m/:moduleKey/assignments",
+    "label": "Giao việc (module tùy chỉnh)",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Giao việc trong module tùy chỉnh — phân công nhiệm vụ cho nhân viên theo thẻ/giai đoạn của module đó.",
+    "keywords": [
+      "giao viec module",
+      "phan cong module tuy chinh"
+    ]
+  },
+  {
+    "path": "/m/:moduleKey/events",
+    "label": "Sự kiện (module tùy chỉnh)",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Dòng sự kiện của module tùy chỉnh — nhật ký thay đổi thẻ, giai đoạn và nhiệm vụ trong module.",
+    "keywords": [
+      "su kien module",
+      "nhat ky module",
+      "hoat dong module"
+    ]
+  },
+  {
+    "path": "/m/:moduleKey/leaves",
+    "label": "Lịch nghỉ (module tùy chỉnh)",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Lịch nghỉ hiển thị trong module tùy chỉnh — xem ai nghỉ ngày nào theo dạng lịch.",
+    "keywords": [
+      "lich nghi module",
+      "nghi phep",
+      "lich nghi"
+    ]
+  },
+  {
+    "path": "/m/:moduleKey/leaves/list",
+    "label": "Danh sách nghỉ (module tùy chỉnh)",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Danh sách đơn nghỉ trong module tùy chỉnh — dạng bảng, duyệt và lọc đơn nghỉ.",
+    "keywords": [
+      "danh sach nghi phep",
+      "don nghi module",
+      "duyet nghi phep"
+    ]
+  },
+  {
+    "path": "/m/:moduleKey/messenger",
+    "label": "Nhóm chat (module tùy chỉnh)",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Nhóm chat trong module tùy chỉnh — danh sách hội thoại (Tất cả / Ưu tiên / Chưa đọc), tạo nhóm, thêm/xoá thành viên, đổi vai trò và biệt danh.",
+    "keywords": [
+      "nhom chat module",
+      "messenger",
+      "tao nhom chat",
+      "hoi thoai",
+      "chua doc"
+    ],
+    "actions": [
+      {
+        "label": "Tạo nhóm chat"
+      },
+      {
+        "label": "Mở chat Messenger"
+      }
+    ]
+  },
+  {
+    "path": "/m/:moduleKey/records/:recordId",
+    "label": "Chi tiết thẻ (module tùy chỉnh)",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Chi tiết một thẻ trong module tùy chỉnh — tên, SĐT, địa chỉ, công ty, phân loại, deadline thẻ, ghim lên đầu Kanban và đánh dấu đã tương tác.",
+    "keywords": [
+      "chi tiet the module",
+      "record module",
+      "deadline the",
+      "ghim the kanban",
+      "danh dau da tuong tac"
+    ],
+    "actions": [
+      {
+        "label": "Quay lại Kanban"
+      },
+      {
+        "label": "Ghim lên đầu Kanban"
+      },
+      {
+        "label": "Đặt deadline thẻ"
+      }
+    ]
+  },
+  {
+    "path": "/m/:moduleKey/settings",
+    "label": "Cài đặt module tùy chỉnh",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Cài đặt module tùy chỉnh đang mở — sửa tab, giai đoạn, bộ mẫu nhiệm vụ và phạm vi công ty (giống trang cấu hình từ Cấu trúc công ty).",
+    "keywords": [
+      "cai dat module",
+      "sua tab module",
+      "cau hinh module dang mo"
+    ],
+    "actions": [
+      {
+        "label": "Giai đoạn"
+      },
+      {
+        "label": "Bộ nhiệm vụ"
+      },
+      {
+        "label": "Công ty"
+      }
+    ]
+  },
+  {
+    "path": "/m/:moduleKey/social",
+    "label": "Bảng tin (module tùy chỉnh)",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Bảng tin nội bộ hiển thị trong module tùy chỉnh — đăng bài, ảnh/tệp, cảm xúc và bình luận như bảng tin chung.",
+    "keywords": [
+      "bang tin module",
+      "dang bai module",
+      "social module"
+    ]
+  },
+  {
+    "path": "/m/:moduleKey/trash",
+    "label": "/m/:moduleKey/trash",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": true,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/management",
+    "label": "Tổng hợp Quản lý",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Tổng hợp Quản lý — một màn hình gộp CRM, Sản xuất, Vận chuyển, Lắp đặt: giá trị deal đang mở, số đang SX/chờ SX/đang VC/đang lắp đặt, nhiệm vụ mở và quá hạn, mục cần xử lý gấp.",
+    "keywords": [
+      "tong hop quan ly",
+      "management dashboard",
+      "toan canh",
+      "deal dang mo",
+      "can xu ly gap",
+      "nv qua han"
+    ],
+    "actions": [
+      {
+        "label": "Làm mới"
+      },
+      {
+        "label": "Tổng hợp NV"
+      },
+      {
+        "label": "Xóa lọc cột"
+      }
+    ]
+  },
+  {
+    "path": "/management/backup-sync",
+    "label": "Giám sát Supabase",
+    "menu": "4. Cài đặt",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Giám sát Supabase — trạng thái Primary/Backup, kiểm tra drift, lịch đồng bộ tự động, phân tích sử dụng và nhật ký truy cập; có nút chuyển DB khi failover.",
+    "keywords": [
+      "giam sat supabase",
+      "backup",
+      "dong bo db",
+      "drift",
+      "failover",
+      "nhat ky truy cap"
+    ],
+    "actions": [
+      {
+        "label": "Giám sát"
+      },
+      {
+        "label": "Kiểm tra drift"
+      },
+      {
+        "label": "Lịch đồng bộ"
+      },
+      {
+        "label": "Chuyển DB"
+      }
+    ]
+  },
+  {
+    "path": "/management/crm-overview",
+    "label": "Tổng quan CRM",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/management/deals/:leadId",
+    "label": "Deal hợp nhất (Quản lý)",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Trang deal hợp nhất từ Tổng hợp Quản lý — xem một deal xuyên suốt CRM/SX/VC: Tổng quan, Nhiệm vụ, Tài liệu, Hoạt động, BG/ĐH và tiến độ tổng hợp.",
+    "keywords": [
+      "deal hop nhat",
+      "unified deal",
+      "xem deal xuyen suot",
+      "tien do tong hop deal"
+    ],
+    "actions": [
+      {
+        "label": "Tổng quan"
+      },
+      {
+        "label": "Nhiệm vụ"
+      },
+      {
+        "label": "Tài liệu"
+      },
+      {
+        "label": "Hoạt động"
+      },
+      {
+        "label": "BG / ĐH"
+      }
+    ]
+  },
+  {
+    "path": "/management/mcp-api",
+    "label": "MCP API báo cáo",
+    "menu": "4. Cài đặt",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Quản lý API Key MCP cho báo cáo — tạo key, chọn user act-as, giới hạn phạm vi công ty, bật/tắt/xóa key và phân quyền từng key.",
+    "keywords": [
+      "mcp api",
+      "api key bao cao",
+      "act as",
+      "tich hop bao cao",
+      "thu hoi key"
+    ],
+    "actions": [
+      {
+        "label": "Tạo key"
+      },
+      {
+        "label": "Tắt key"
+      },
+      {
+        "label": "Xóa key"
+      },
+      {
+        "label": "Quản lý phân quyền key này"
+      }
+    ]
+  },
+  {
+    "path": "/management/production-overview",
+    "label": "Sản xuất",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/management/production-overview/:id",
+    "label": "/management/production-overview/:id",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/management/project-deadlines",
+    "label": "Cảnh báo hạn công trình",
+    "menu": "4. Cài đặt",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/management/purchasing-overview",
+    "label": "Mua hàng",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/management/quotes-overview",
+    "label": "Dự toán & Báo giá",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/management/work-overview",
+    "label": "Tổng quan công việc",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/management/work-unified",
+    "label": "Dự án",
+    "menu": "2. Làm việc",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/management/work-unified/:id",
+    "label": "/management/work-unified/:id",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/modules",
+    "label": "Bảng giá & gói dịch vụ",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Trang giới thiệu & chọn gói dịch vụ (Free / Standard / Pro / Ultra) và mua modun thêm — đăng ký tài khoản mới, chọn phương thức thanh toán VNPay / MoMo / VietQR.",
+    "keywords": [
+      "chon goi",
+      "bang gia",
+      "mua modun",
+      "dang ky tai khoan",
+      "goi dich vu",
+      "saas",
+      "nang cap goi"
+    ],
+    "actions": [
+      {
+        "label": "Bắt đầu miễn phí"
+      },
+      {
+        "label": "Mua modun thêm"
+      },
+      {
+        "label": "Chọn gói này"
+      }
+    ]
+  },
+  {
+    "path": "/modules/checkout/:purchaseId",
+    "label": "Thanh toán đơn mua gói",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Trang thanh toán cho một đơn mua gói/modun — chọn cổng VNPay, ví MoMo hoặc quét VietQR rồi kiểm tra trạng thái giao dịch.",
+    "keywords": [
+      "thanh toan goi",
+      "checkout",
+      "vnpay",
+      "momo",
+      "vietqr",
+      "chuyen khoan mua goi"
+    ]
+  },
+  {
+    "path": "/modules/payment/return",
+    "label": "Kết quả thanh toán",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Trang kết quả sau khi thanh toán quay về từ cổng — báo thành công hoặc chưa hoàn tất, cho thử thanh toán lại.",
+    "keywords": [
+      "ket qua thanh toan",
+      "payment return",
+      "thanh toan that bai",
+      "thanh toan thanh cong"
+    ]
+  },
+  {
+    "path": "/mua-hang",
+    "label": "Inbox Mua hàng",
+    "menu": "1. Lệnh đặt hàng",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Khung module Mua hàng — Inbox lệnh đặt hàng và Catalog (Thương hiệu, Danh mục, Sản phẩm).",
+    "keywords": [
+      "module mua hang",
+      "purchasing",
+      "vao mua hang"
+    ]
+  },
+  {
+    "path": "/mua-hang/brands",
+    "label": "Thương hiệu",
+    "menu": "2. Catalog",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Thương hiệu trong catalog mua hàng — thêm/sửa tên thương hiệu kèm ghi chú, dùng để lọc sản phẩm mua hàng.",
+    "keywords": [
+      "thuong hieu",
+      "brand mua hang",
+      "them thuong hieu"
+    ],
+    "actions": [
+      {
+        "label": "Thêm thương hiệu"
+      }
+    ]
+  },
+  {
+    "path": "/mua-hang/categories",
+    "label": "Danh mục",
+    "menu": "2. Catalog",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Danh mục catalog mua hàng — cây danh mục nhiều cấp (có danh mục cha), thêm danh mục con, mô tả.",
+    "keywords": [
+      "danh muc mua hang",
+      "cay danh muc",
+      "danh muc cha",
+      "them danh muc con"
+    ],
+    "actions": [
+      {
+        "label": "Thêm danh mục"
+      },
+      {
+        "label": "Thêm con"
+      }
+    ]
+  },
+  {
+    "path": "/mua-hang/orders",
+    "label": "Danh sách lệnh đặt hàng",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Inbox Mua hàng — danh sách lệnh đặt hàng đã gửi (Nháp, Xác nhận, Nhận 1 phần…), tìm theo mã/deal/khách, ẩn hoặc hiện lệnh nháp.",
+    "keywords": [
+      "inbox mua hang",
+      "lenh dat hang",
+      "don mua hang",
+      "an nhap"
+    ],
+    "actions": [
+      {
+        "label": "Ẩn nháp"
+      },
+      {
+        "label": "Hiện nháp"
+      }
+    ]
+  },
+  {
+    "path": "/mua-hang/orders/:id",
+    "label": "Chi tiết lệnh đặt hàng",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Chi tiết lệnh đặt hàng — khách hàng, nhà cung cấp, ngày đặt/dự kiến nhận, danh sách sản phẩm với ĐVT, đơn giá, thành tiền; gửi lệnh sang inbox Mua hàng.",
+    "keywords": [
+      "chi tiet lenh dat hang",
+      "gui mua hang",
+      "don gia ncc",
+      "xem lenh dat"
+    ],
+    "actions": [
+      {
+        "label": "Gửi Mua hàng"
+      },
+      {
+        "label": "Sửa"
+      }
+    ]
+  },
+  {
+    "path": "/mua-hang/orders/:id/edit",
+    "label": "Sửa lệnh đặt hàng",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Sửa lệnh đặt hàng — cập nhật nhà cung cấp, ngày, dòng hàng và ghi chú trước khi gửi Mua hàng.",
+    "keywords": [
+      "sua lenh dat hang",
+      "chinh don mua hang",
+      "cap nhat dong hang"
+    ],
+    "actions": [
+      {
+        "label": "Lưu nháp"
+      },
+      {
+        "label": "Lưu & gửi Mua hàng"
+      }
+    ]
+  },
+  {
+    "path": "/mua-hang/orders/new",
+    "label": "Tạo lệnh đặt hàng",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Tạo lệnh đặt hàng — gắn deal CRM, chọn nhà cung cấp, ngày đặt và dự kiến nhận, thêm dòng hàng từ catalog mua hàng; lưu nháp hoặc lưu & gửi sang Mua hàng.",
+    "keywords": [
+      "tao lenh dat hang",
+      "nha cung cap",
+      "them tu catalog",
+      "gui mua hang",
+      "du kien nhan"
+    ],
+    "actions": [
+      {
+        "label": "Thêm từ catalog"
+      },
+      {
+        "label": "Lưu nháp"
+      },
+      {
+        "label": "Lưu & gửi Mua hàng"
+      }
+    ]
+  },
+  {
+    "path": "/mua-hang/products",
+    "label": "Sản phẩm",
+    "menu": "2. Catalog",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Sản phẩm mua hàng — catalog vật tư/phụ kiện: tên, mã SP, SKU (VD mã Häfele), thương hiệu, danh mục, đơn vị, giá mua, giá bán và ảnh; tìm theo tên/mã/SKU.",
+    "keywords": [
+      "san pham mua hang",
+      "vat tu",
+      "sku",
+      "hafele",
+      "gia mua gia ban",
+      "catalog mua hang"
+    ],
+    "actions": [
+      {
+        "label": "Thêm sản phẩm"
+      },
+      {
+        "label": "Upload ảnh"
+      }
+    ]
+  },
+  {
+    "path": "/my-tasks",
+    "label": "/my-tasks",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": true,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/permissions",
+    "label": "Phân quyền",
+    "menu": "3. Hệ thống",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Cấu hình phân quyền theo vai trò.",
+    "keywords": [
+      "phan quyen",
+      "phân quyền",
+      "permission",
+      "quyen"
+    ]
+  },
+  {
+    "path": "/personal-tasks",
+    "label": "NV cá nhân",
+    "menu": "2. Làm việc",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Nhiệm vụ cá nhân — việc bạn tạo hoặc được giao, theo trạng thái Đang chờ / Đang làm / Chờ kiểm tra, kèm số tổng, sắp đến hạn và quá hạn.",
+    "keywords": [
+      "nhiem vu ca nhan",
+      "viec cua toi",
+      "personal task",
+      "sap den han",
+      "qua han",
+      "tao nhiem vu ca nhan"
+    ],
+    "actions": [
+      {
+        "label": "Tạo nhiệm vụ"
+      },
+      {
+        "label": "Được giao cho tôi"
+      },
+      {
+        "label": "Tôi tạo"
+      }
+    ]
+  },
+  {
+    "path": "/platform",
+    "label": "Tổng quan SaaS",
+    "menu": "Nền tảng SaaS",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Khu quản trị Nền tảng SaaS (chỉ Platform Admin) — cửa vào các trang Tổng quan, 4 gói chính, Hệ sinh thái, Đơn mua, Gói thuê bao, Tính năng gói, Thống kê.",
+    "keywords": [
+      "nen tang saas",
+      "platform admin",
+      "quan tri saas",
+      "tong quan saas"
+    ],
+    "actions": [
+      {
+        "label": "Tạo hệ sinh thái"
+      }
+    ]
+  },
+  {
+    "path": "/platform/billing",
+    "label": "Gói thuê bao",
+    "menu": "Nền tảng SaaS",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Quản lý gói thuê bao của các hệ sinh thái — lọc Đang hoạt động / Sắp hết hạn, sửa gói, theo dõi ngày bắt đầu, hết hạn và giới hạn tài nguyên.",
+    "keywords": [
+      "goi thue bao",
+      "billing",
+      "sap het han",
+      "gia han goi",
+      "gioi han tai nguyen"
+    ],
+    "actions": [
+      {
+        "label": "Sửa gói"
+      },
+      {
+        "label": "Sắp hết hạn"
+      }
+    ]
+  },
+  {
+    "path": "/platform/modules",
+    "label": "Modun add-on",
+    "menu": "Nền tảng SaaS",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Quản lý modun mua thêm (add-on) hiển thị trên landing — tên gói, giá/tháng, danh mục, gói tối thiểu để mua, feature_key liên kết, mô tả và danh sách tính năng.",
+    "keywords": [
+      "modun add on",
+      "mua them modun",
+      "goi modun",
+      "feature key",
+      "landing modun"
+    ],
+    "actions": [
+      {
+        "label": "Thêm gói"
+      },
+      {
+        "label": "Sửa"
+      },
+      {
+        "label": "Lưu gói"
+      }
+    ]
+  },
+  {
+    "path": "/platform/plans",
+    "label": "4 gói chính",
+    "menu": "Nền tảng SaaS",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Cấu hình 4 gói chính (Free · Standard · Pro · Ultra) — tên hiển thị, giá/tháng, phụ đề, max công ty, điểm nổi bật, quota, bật hiển thị trên landing và cho đăng ký online.",
+    "keywords": [
+      "4 goi chinh",
+      "cau hinh goi",
+      "gia goi",
+      "quota goi",
+      "hien thi landing"
+    ],
+    "actions": [
+      {
+        "label": "Sửa"
+      },
+      {
+        "label": "Lưu gói"
+      }
+    ]
+  },
+  {
+    "path": "/platform/purchases",
+    "label": "Đơn mua & thông báo",
+    "menu": "Nền tảng SaaS",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Đơn mua & đăng ký thông báo — theo dõi ai đã mua gói/modun, xác nhận thanh toán, cấp tài khoản qua email, huỷ đơn; kèm danh sách đăng ký nhận tin theo modun quan tâm.",
+    "keywords": [
+      "don mua",
+      "xac nhan thanh toan",
+      "cap tai khoan",
+      "dang ky thong bao",
+      "cho cap goi"
+    ],
+    "actions": [
+      {
+        "label": "Xác nhận TT"
+      },
+      {
+        "label": "Cấp TK + Email"
+      },
+      {
+        "label": "Huỷ"
+      }
+    ]
+  },
+  {
+    "path": "/platform/stats",
+    "label": "Thống kê chi tiết",
+    "menu": "Nền tảng SaaS",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Thống kê nền tảng — tổng hệ sinh thái, đang hoạt động, tổng users, tổng công ty, phân bổ theo gói, TB công ty/HST và tỷ lệ hoạt động.",
+    "keywords": [
+      "thong ke nen tang",
+      "so lieu saas",
+      "phan bo theo goi",
+      "ty le hoat dong"
+    ]
+  },
+  {
+    "path": "/platform/tenants",
+    "label": "Hệ sinh thái",
+    "menu": "Nền tảng SaaS",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Quản lý Hệ sinh thái (tenant) toàn nền tảng — tạo hệ sinh thái mới kèm tài khoản admin, đặt gói và max công ty, tìm theo tên/slug, xem trạng thái Hoạt động/Tạm dừng.",
+    "keywords": [
+      "he sinh thai",
+      "tenant",
+      "tao he sinh thai",
+      "max cong ty",
+      "tam dung tenant"
+    ],
+    "actions": [
+      {
+        "label": "Tạo mới"
+      },
+      {
+        "label": "Tạo hệ sinh thái"
+      }
+    ]
+  },
+  {
+    "path": "/platform/tenants/:id",
+    "label": "Chi tiết hệ sinh thái",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Chi tiết một hệ sinh thái — Tổng quan (tổng users, users hoạt động, công ty, dự án), Sơ đồ HST, Gói thuê bao (ngày bắt đầu/hết hạn) và Tính năng; tạm dừng hoặc kích hoạt lại tenant.",
+    "keywords": [
+      "chi tiet he sinh thai",
+      "tenant detail",
+      "so do hst",
+      "goi thue bao tenant",
+      "kich hoat tenant"
+    ],
+    "actions": [
+      {
+        "label": "Tổng quan"
+      },
+      {
+        "label": "Sơ đồ HST"
+      },
+      {
+        "label": "Gói thuê bao"
+      },
+      {
+        "label": "Tính năng"
+      }
+    ]
+  },
+  {
+    "path": "/platform/tier-features",
+    "label": "Tính năng theo gói",
+    "menu": "Nền tảng SaaS",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Bật/tắt tính năng theo từng gói — quyết định gói nào được dùng tính năng nào; muốn mở riêng cho một hệ sinh thái thì vào chi tiết tenant → tab Tính năng.",
+    "keywords": [
+      "tinh nang theo goi",
+      "tier feature",
+      "bat tinh nang",
+      "gioi han theo goi"
+    ],
+    "actions": [
+      {
+        "label": "Bật"
+      },
+      {
+        "label": "Tắt"
+      }
+    ]
+  },
+  {
+    "path": "/platform/users",
+    "label": "Users toàn nền tảng",
+    "menu": "Nền tảng SaaS",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Danh sách người dùng toàn nền tảng — tìm theo tên/email trên tất cả hệ sinh thái, xem hệ sinh thái, lần đăng nhập cuối và trạng thái.",
+    "keywords": [
+      "users toan nen tang",
+      "nguoi dung saas",
+      "tim user",
+      "dang nhap cuoi"
+    ]
+  },
+  {
+    "path": "/privacy",
+    "label": "Chính sách quyền riêng tư",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Chính sách quyền riêng tư: thông tin thu thập, mục đích sử dụng, bảo mật, chia sẻ dữ liệu, quyền người dùng và cách xóa dữ liệu Facebook.",
+    "keywords": [
+      "chinh sach",
+      "quyen rieng tu",
+      "privacy",
+      "xoa du lieu facebook",
+      "bao mat du lieu"
+    ]
+  },
+  {
+    "path": "/production/assignments",
+    "label": "/production/assignments",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": true,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/products",
+    "label": "Sản phẩm",
+    "menu": "2. Làm việc",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Danh mục sản phẩm/thành phẩm — mã, tên, kích thước, nhóm SP, quy cách, tiêu chuẩn, loại/phân loại, hình thức, kính; lọc theo công ty và nhóm ngành, xuất file.",
+    "keywords": [
+      "san pham",
+      "thanh pham",
+      "danh muc san pham",
+      "quy cach",
+      "nhom nganh",
+      "xuat san pham"
+    ]
+  },
+  {
+    "path": "/project-workflow",
+    "label": "/project-workflow",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": true,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/projects",
+    "label": "Dự án",
+    "menu": "2. Làm việc",
+    "needs_admin": false,
+    "redirect": true,
+    "summary": "Danh sách dự án (module Quản lý công việc).",
+    "keywords": [
+      "du an",
+      "dự án",
+      "project"
+    ]
+  },
+  {
+    "path": "/projects/:id",
+    "label": "Chi tiết dự án",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Chi tiết dự án — các giai đoạn Tư vấn → Thiết kế → Báo giá → Hợp đồng → Sản xuất → Vận chuyển, cùng các mục Tổng hợp CRM/SX/VC, Công việc, Đơn hàng, Luồng, Tài liệu, Duyệt, Trao đổi.",
+    "keywords": [
+      "chi tiet du an",
+      "project detail",
+      "giai doan du an",
+      "ghim du an",
+      "xoa du an",
+      "khoa giai doan"
+    ],
+    "actions": [
+      {
+        "label": "Công việc"
+      },
+      {
+        "label": "Đơn hàng"
+      },
+      {
+        "label": "Luồng"
+      },
+      {
+        "label": "Tài liệu"
+      },
+      {
+        "label": "Duyệt"
+      },
+      {
+        "label": "Trao đổi"
+      }
+    ]
+  },
+  {
+    "path": "/projects/create",
+    "label": "Tạo dự án",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Tạo dự án mới theo 3 bước: Thông tin (dự án & khách hàng) → Quy trình (luồng, nhiệm vụ & phân công) → Tệp (báo giá & tài liệu). Tạo được từ deal có sẵn hoặc tạo trắng.",
+    "keywords": [
+      "tao du an",
+      "du an moi",
+      "tao du an tu deal",
+      "chon luong san xuat",
+      "phan cong nhiem vu du an"
+    ],
+    "actions": [
+      {
+        "label": "📋 Thông Tin"
+      },
+      {
+        "label": "🔄 Quy Trình"
+      },
+      {
+        "label": "📎 Tệp"
+      }
+    ]
+  },
+  {
+    "path": "/s/:token",
+    "label": "/s/:token",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/settings/ai-chat-bot",
+    "label": "AI Bot trong chat",
+    "menu": "4. Cài đặt",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "AI Bot trong chat — đặt lịch chạy bot gửi báo cáo/nhắc việc vào kênh chat hoặc DM, chọn mẫu nội dung AI, phạm vi dữ liệu kèm theo (task + lead + CSKH, KPI tháng, báo cáo công ty) và khoảng ngày.",
+    "keywords": [
+      "ai bot chat",
+      "lich chay bot",
+      "mau noi dung ai",
+      "bot gui bao cao",
+      "ky nang tri nho bot"
+    ],
+    "actions": [
+      {
+        "label": "Lịch chạy"
+      },
+      {
+        "label": "Mẫu nội dung AI"
+      },
+      {
+        "label": "Kỹ năng & Trí nhớ"
+      }
+    ]
+  },
+  {
+    "path": "/settings/api-keys",
+    "label": "API Key tích hợp",
+    "menu": "CRM → Hỗ trợ & công cụ",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "API Key tích hợp — tạo key gắn với một công ty để hệ thống ngoài đẩy lead vào CRM (đúng luồng pipeline, region, lead type, auto task); test kết nối, gửi lead test, tắt hoặc xóa key.",
+    "keywords": [
+      "api key",
+      "tich hop website",
+      "day lead tu web",
+      "x-api-key",
+      "test ket noi",
+      "webhook lead"
+    ],
+    "actions": [
+      {
+        "label": "Tạo key"
+      },
+      {
+        "label": "Test kết nối"
+      },
+      {
+        "label": "Gửi test"
+      },
+      {
+        "label": "Tắt key này"
+      }
+    ]
+  },
+  {
+    "path": "/settings/app-updates",
+    "label": "Cập nhật App",
+    "menu": "4. Cài đặt",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Cập nhật App — quản lý bản phát hành app di động: thêm app_key, upload file APK hoặc bundle OTA, đặt version, kênh phát hành, bật/tắt phát hành và đánh dấu bản cập nhật bắt buộc.",
+    "keywords": [
+      "cap nhat app",
+      "apk",
+      "bundle ota",
+      "phat hanh app",
+      "phien ban bat buoc",
+      "app key"
+    ],
+    "actions": [
+      {
+        "label": "Thêm app mới"
+      },
+      {
+        "label": "Bật phát hành"
+      },
+      {
+        "label": "Đặt bắt buộc"
+      },
+      {
+        "label": "Tải APK"
+      }
+    ]
+  },
+  {
+    "path": "/settings/devices",
+    "label": "Thiết bị đăng nhập",
+    "menu": "CRM → Hỗ trợ & công cụ",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Thiết bị đang đăng nhập — danh sách thiết bị, thiết bị nào đang online, gỡ/đăng xuất từ xa, mã QR đăng nhập app và gửi push thử.",
+    "keywords": [
+      "thiet bi dang nhap",
+      "dang xuat tu xa",
+      "qr dang nhap app",
+      "push thu",
+      "quan ly thiet bi"
+    ],
+    "actions": [
+      {
+        "label": "Đăng xuất"
+      },
+      {
+        "label": "Gửi push thử (Chat)"
+      },
+      {
+        "label": "Làm mới"
+      }
+    ]
+  },
+  {
+    "path": "/settings/location",
+    "label": "Vị trí làm việc",
+    "menu": "CRM → Hỗ trợ & công cụ",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Vị trí làm việc — cấp quyền định vị, xem vị trí đã ghi nhận trên Google Maps, cập nhật ngay hoặc xóa vị trí cũ khi bị sai.",
+    "keywords": [
+      "vi tri lam viec",
+      "dinh vi",
+      "gps",
+      "cham cong vi tri",
+      "xoa vi tri cu"
+    ],
+    "actions": [
+      {
+        "label": "Cập nhật ngay"
+      },
+      {
+        "label": "Xóa vị trí cũ"
+      },
+      {
+        "label": "Mở Google Maps"
+      }
+    ]
+  },
+  {
+    "path": "/settings/misa",
+    "label": "MISA meInvoice",
+    "menu": "CRM → Tài chính",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Kết nối MISA meInvoice — nhập AppID, mã số thuế, tài khoản meInvoice, chọn ký hiệu hóa đơn (GTGT/Bán hàng, có mã/không mã), ký số HSM; kiểm tra kết nối trước khi phát hành HĐĐT.",
+    "keywords": [
+      "misa meinvoice",
+      "hoa don dien tu",
+      "appid misa",
+      "ky hieu hoa don",
+      "ky so hsm",
+      "kiem tra ket noi"
+    ],
+    "actions": [
+      {
+        "label": "Kiểm tra kết nối"
+      },
+      {
+        "label": "Lưu cấu hình"
+      }
+    ]
+  },
+  {
+    "path": "/settings/password",
+    "label": "Đổi mật khẩu",
+    "menu": "CRM → Hỗ trợ & công cụ",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Đổi mật khẩu — nhập mật khẩu hiện tại rồi đặt mật khẩu mới tối thiểu 8 ký tự.",
+    "keywords": [
+      "doi mat khau",
+      "mat khau moi",
+      "bao mat tai khoan"
+    ],
+    "actions": [
+      {
+        "label": "Cập nhật mật khẩu"
+      }
+    ]
+  },
+  {
+    "path": "/settings/pdf",
+    "label": "Thông tin PDF",
+    "menu": "4. Cài đặt",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Thông tin in trên PDF — tên công ty, nhiều dòng địa chỉ, liên hệ, mã số thuế, ngân hàng & số tài khoản; lời chào, tiêu đề Báo giá/Đơn hàng/Hóa đơn, bảo hành và chữ ký hai bên.",
+    "keywords": [
+      "thong tin pdf",
+      "in bao gia",
+      "chu ky pdf",
+      "ma so thue",
+      "tai khoan ngan hang",
+      "mau pdf"
+    ],
+    "actions": [
+      {
+        "label": "Lưu"
+      },
+      {
+        "label": "+ Thêm địa chỉ"
+      },
+      {
+        "label": "+ Thêm liên hệ"
+      }
+    ]
+  },
+  {
+    "path": "/settings/qr-scan",
+    "label": "QR đăng nhập app",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Mã QR đăng nhập app — app trên điện thoại quét mã này để đăng nhập bằng tài khoản đang mở trên web.",
+    "keywords": [
+      "qr dang nhap",
+      "quet ma dang nhap app",
+      "dang nhap app bang qr"
+    ]
+  },
+  {
+    "path": "/settings/request-monitor",
+    "label": "Theo dõi Request",
+    "menu": "4. Cài đặt",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Theo dõi Request API — req/phút, tổng từ khởi động, tỉ lệ lỗi 5xx, biểu đồ 60 phút gần nhất và bảng theo endpoint; số liệu lưu trong RAM nên reset khi khởi động lại server.",
+    "keywords": [
+      "theo doi request",
+      "monitor api",
+      "loi 5xx",
+      "endpoint cham",
+      "tai he thong"
+    ],
+    "actions": [
+      {
+        "label": "Làm mới"
+      },
+      {
+        "label": "Tự động (10s)"
+      },
+      {
+        "label": "Xoá số liệu"
+      }
+    ]
+  },
+  {
+    "path": "/settings/theme",
+    "label": "Giao diện & Hình nền",
+    "menu": "4. Cài đặt",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Đổi giao diện, ảnh nền hệ thống.",
+    "keywords": [
+      "giao dien",
+      "giao diện",
+      "anh nen",
+      "ảnh nền",
+      "theme"
+    ]
+  },
+  {
+    "path": "/settings/tro-ly-huong-dan",
+    "label": "Trợ lý hướng dẫn",
+    "menu": "4. Cài đặt",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Cấu hình trợ lý hướng dẫn (CopilotKit) — trợ lý đọc màn hình đang xem, chỉ đường và thao tác hộ. Ba tab: Tinh chỉnh (12 núm chi phí, bộ nhớ, suy luận, số lần lặp), Kiến thức (sửa kho tra cứu), Kinh nghiệm (soi và dọn đường đi trợ lý tự học). KHÁC với \"AI Bot trong chat\".",
+    "keywords": [
+      "tro ly huong dan",
+      "cau hinh tro ly",
+      "copilotkit",
+      "kien thuc tro ly",
+      "kinh nghiem tro ly",
+      "tinh chinh tro ly",
+      "chinh tro ly ai",
+      "bo nho tro ly"
+    ],
+    "actions": [
+      {
+        "label": "Tinh chỉnh"
+      },
+      {
+        "label": "Kiến thức"
+      },
+      {
+        "label": "Kinh nghiệm"
+      }
+    ]
+  },
+  {
+    "path": "/setup",
+    "label": "Thiết lập HST",
+    "menu": "3. Hệ thống",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Trình thiết lập hệ sinh thái lần đầu — dựng công ty, khối, phòng ban trước khi dùng hệ thống. Chỉ quản trị mở được.",
+    "keywords": [
+      "thiet lap he sinh thai",
+      "setup",
+      "cai dat lan dau",
+      "khoi tao he thong"
+    ]
+  },
+  {
+    "path": "/social",
+    "label": "Bảng tin nội bộ",
+    "menu": "CRM → Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Bảng tin nội bộ — đăng bài kèm ảnh/tệp, thả cảm xúc, bình luận, xem thành viên online và bài viết hôm nay; chặn công ty xem bài khi cần.",
+    "keywords": [
+      "bang tin",
+      "mang xa hoi noi bo",
+      "dang bai",
+      "binh luan",
+      "cam xuc",
+      "thanh vien online"
+    ],
+    "actions": [
+      {
+        "label": "Ảnh"
+      },
+      {
+        "label": "Tệp đính kèm"
+      },
+      {
+        "label": "Gửi"
+      }
+    ]
+  },
+  {
+    "path": "/social/u/:userId",
+    "label": "Trang cá nhân",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Trang cá nhân trên bảng tin — ảnh đại diện, ảnh bìa, giới thiệu, danh sách bài đăng và chứng nhận đã đạt.",
+    "keywords": [
+      "trang ca nhan",
+      "profile",
+      "doi anh dai dien",
+      "anh bia",
+      "gioi thieu ban than",
+      "chung nhan cua toi"
+    ],
+    "actions": [
+      {
+        "label": "Đổi ảnh đại diện"
+      },
+      {
+        "label": "Đổi ảnh bìa"
+      },
+      {
+        "label": "Đổi tên"
+      }
+    ]
+  },
+  {
+    "path": "/stage-groups",
+    "label": "Nhóm quy trình",
+    "menu": "4. Cài đặt",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Nhóm quy trình — gộp nhiều quy trình thành một nhóm để gán cho đơn vị trong hệ sinh thái; đặt tên, màu, mô tả và chọn khối áp dụng.",
+    "keywords": [
+      "nhom quy trinh",
+      "gop quy trinh",
+      "gan quy trinh cho don vi",
+      "stage group"
+    ],
+    "actions": [
+      {
+        "label": "Tạo nhóm"
+      },
+      {
+        "label": "Chọn quy trình trong nhóm"
+      }
+    ]
+  },
+  {
+    "path": "/stage/:slug",
+    "label": "Màn hình giai đoạn",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Màn hình một giai đoạn quy trình (Tư vấn, Thiết kế, Báo giá, Hợp đồng, Sản xuất, Vận chuyển, Lắp đặt, Chăm sóc KH) — lọc theo thời gian/công ty/dự án/nhân viên, thêm NV, chuyển giai đoạn và gửi yêu cầu duyệt.",
+    "keywords": [
+      "giai doan",
+      "stage",
+      "chuyen giai doan",
+      "yeu cau duyet",
+      "ghi chu chuyen giao",
+      "loc theo giai doan"
+    ],
+    "actions": [
+      {
+        "label": "Thêm NV"
+      },
+      {
+        "label": "✅ Chuyển"
+      }
+    ]
+  },
+  {
+    "path": "/sx",
+    "label": "Module Sản xuất",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Khung module Sản xuất (xưởng) — cửa vào Dashboard xưởng, Pipeline, Duyệt, Giao việc, Khu vực, Bộ mẫu nhiệm vụ, Sự kiện và cấu hình bàn giao CRM → SX.",
+    "keywords": [
+      "module san xuat",
+      "xuong",
+      "sx",
+      "vao san xuat"
+    ]
+  },
+  {
+    "path": "/sx/approvals",
+    "label": "Duyệt xưởng",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Duyệt của xưởng — danh sách yêu cầu duyệt gắn với dự án xưởng theo deal, kèm giai đoạn và giá trị; mở chi tiết để duyệt.",
+    "keywords": [
+      "duyet xuong",
+      "yeu cau duyet san xuat",
+      "duyet theo deal",
+      "phe duyet sx"
+    ],
+    "actions": [
+      {
+        "label": "Chi tiết và duyệt"
+      }
+    ]
+  },
+  {
+    "path": "/sx/assignments",
+    "label": "Giao việc Sản xuất",
+    "menu": "Sản xuất → 1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Giao việc Sản xuất — lọc và bấm nút để xem việc đang làm/quá hạn của xưởng.",
+    "keywords": [
+      "giao viec san xuat",
+      "giao việc sản xuất",
+      "assignment sx",
+      "viec dang lam"
+    ]
+  },
+  {
+    "path": "/sx/dashboard",
+    "label": "Dashboard xưởng",
+    "menu": "Sản xuất → 1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Dashboard xưởng sản xuất — Kanban dự án đang thi công theo giai đoạn.",
+    "keywords": [
+      "dashboard xuong",
+      "sản xuất",
+      "san xuat",
+      "kanban san xuat"
+    ]
+  },
+  {
+    "path": "/sx/download-app",
+    "label": "Tải app Xưởng",
+    "menu": "Sản xuất → 4. Hỗ trợ",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Tải app Xưởng (APK Android) cho module Sản xuất — bản mới nhất, dung lượng, ghi chú phiên bản.",
+    "keywords": [
+      "tai app xuong",
+      "apk san xuat",
+      "app sx"
+    ],
+    "actions": [
+      {
+        "label": "Tải APK đầy đủ"
+      }
+    ]
+  },
+  {
+    "path": "/sx/events",
+    "label": "Sự kiện Sản xuất",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Dòng sự kiện của module Sản xuất — sự kiện đã tạo / được giao trong xưởng, lọc theo thời gian, người phụ trách, khu vực; xuất BC tháng.",
+    "keywords": [
+      "su kien san xuat",
+      "lich xuong",
+      "su kien sx",
+      "bc thang sx"
+    ],
+    "actions": [
+      {
+        "label": "BC tháng"
+      }
+    ]
+  },
+  {
+    "path": "/sx/handover-settings",
+    "label": "Bàn giao CRM → SX (nâng cao)",
+    "menu": "Sản xuất → 3. Điều hành xưởng",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Bàn giao CRM → Sản xuất (nâng cao) — chọn công ty sản xuất, pipeline xưởng nhận, đội SX mặc định gán vào dự án, bộ mẫu và người nhận theo từng mục việc sx_*.",
+    "keywords": [
+      "ban giao crm sang sx",
+      "handover",
+      "doi sx mac dinh",
+      "nguoi nhan viec sx",
+      "cau hinh ban giao"
+    ],
+    "actions": [
+      {
+        "label": "Tạo đội sản xuất thuộc công ty"
+      }
+    ]
+  },
+  {
+    "path": "/sx/pipeline",
+    "label": "Pipeline xưởng",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Pipeline xưởng dạng Kanban — kéo thẻ dự án sản xuất qua các cột, xem theo Danh sách / Bình luận / Lịch, sắp xếp theo deadline hay giá trị, ghim thẻ, đổi phân loại và bàn giao sang Vận chuyển.",
+    "keywords": [
+      "pipeline xuong",
+      "kanban san xuat",
+      "keo the sx",
+      "ban giao vc",
+      "phan loai san xuat"
+    ],
+    "actions": [
+      {
+        "label": "Danh sách"
+      },
+      {
+        "label": "Bình luận"
+      },
+      {
+        "label": "Lịch"
+      },
+      {
+        "label": "Bàn giao VC"
+      }
+    ]
+  },
+  {
+    "path": "/sx/pipeline-settings",
+    "label": "Pipeline xưởng",
+    "menu": "Sản xuất → 3. Điều hành xưởng",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Cấu hình pipeline xưởng — thêm/sửa/xóa cột theo phân loại (Tủ bếp, Cánh kính, B2B…) hoặc bộ chung, kéo sắp xếp, gán nhóm deadline, gắn bộ mẫu nhiệm vụ và cấu hình NV theo cột; cột «chờ vào xưởng» cố định ở đầu.",
+    "keywords": [
+      "cau hinh pipeline xuong",
+      "cot xuong",
+      "phan loai xuong",
+      "nhom deadline",
+      "tao nhanh 5 cot mau"
+    ],
+    "actions": [
+      {
+        "label": "Tạo nhanh 5 cột mẫu"
+      },
+      {
+        "label": "Bộ mẫu nhiệm vụ"
+      },
+      {
+        "label": "Cấu hình NV"
+      }
+    ]
+  },
+  {
+    "path": "/sx/projects/:id",
+    "label": "Chi tiết dự án xưởng",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Chi tiết dự án xưởng — thông tin khách & địa chỉ lắp đặt, tài liệu theo loại (Yêu cầu KH, Bản vẽ, Hình ảnh, Hợp đồng, Số đo), tương tác (gọi điện, gặp mặt, ghi chú) và cây nhiệm vụ theo công đoạn; file tải lên hiện sang tab Tài liệu của deal bên CRM.",
+    "keywords": [
+      "chi tiet du an xuong",
+      "ban ve",
+      "so do",
+      "tai lieu san xuat",
+      "nhiem vu cong doan",
+      "dia chi lap dat"
+    ],
+    "actions": [
+      {
+        "label": "Bản vẽ"
+      },
+      {
+        "label": "Hình ảnh"
+      },
+      {
+        "label": "Hợp đồng"
+      },
+      {
+        "label": "Số đo"
+      }
+    ]
+  },
+  {
+    "path": "/sx/regions",
+    "label": "Khu vực",
+    "menu": "Sản xuất → 3. Điều hành xưởng",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Khu vực sản xuất — khai báo khu vực/xưởng của công ty sản xuất để gán dự án và phân quyền nhân viên theo khu vực.",
+    "keywords": [
+      "khu vuc san xuat",
+      "xuong khu vuc",
+      "them khu vuc sx"
+    ]
+  },
+  {
+    "path": "/sx/task-templates",
+    "label": "Bộ mẫu nhiệm vụ xưởng",
+    "menu": "Sản xuất → 3. Điều hành xưởng",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Bộ mẫu nhiệm vụ xưởng — cây công đoạn theo phân loại (Sản xuất thùng, Sản xuất alu, Hoàn thiện, Đóng gói, Giao hàng…) với các bước Tiếp nhận, Thiết kế, Vật tư, Gia công, Lắp ráp, QC, Dán nhãn & bàn giao kho.",
+    "keywords": [
+      "bo mau nhiem vu xuong",
+      "cong doan san xuat",
+      "mau viec sx",
+      "gia cong",
+      "dong goi",
+      "qc"
+    ],
+    "actions": [
+      {
+        "label": "🏭 Sản xuất"
+      },
+      {
+        "label": "🔧 Lắp đặt"
+      }
+    ]
+  },
+  {
+    "path": "/sx/trash",
+    "label": "/sx/trash",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": true,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/tasks",
+    "label": "Tất cả CV",
+    "menu": "2. Làm việc",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Tất cả công việc trong hệ thống Quản lý công việc (chỉ admin).",
+    "keywords": [
+      "tat ca cong viec",
+      "tất cả công việc",
+      "task"
+    ]
+  },
+  {
+    "path": "/tasks/regions",
+    "label": "Khu vực công ty",
+    "menu": "2. Làm việc",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Khu vực công ty (CRM) — tạo/sửa khu vực theo từng công ty và khối, gắn lead/deal và phân quyền nhân viên theo khu vực; có địa chỉ chi nhánh và thứ tự hiển thị.",
+    "keywords": [
+      "khu vuc cong ty",
+      "chi nhanh",
+      "khu vuc crm",
+      "phan quyen theo khu vuc",
+      "them khu vuc"
+    ],
+    "actions": [
+      {
+        "label": "Thêm khu vực"
+      },
+      {
+        "label": "Sửa"
+      },
+      {
+        "label": "Mở bản đồ"
+      }
+    ]
+  },
+  {
+    "path": "/teams",
+    "label": "Team",
+    "menu": "3. Hệ thống",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Quản lý Team — tạo team theo công ty/phòng ban, chọn trưởng nhóm và màu, thêm nhân viên vào team, vô hiệu hóa team.",
+    "keywords": [
+      "team",
+      "nhom lam viec",
+      "truong nhom",
+      "them nhan vien vao team",
+      "quan ly team"
+    ],
+    "actions": [
+      {
+        "label": "Thêm team"
+      },
+      {
+        "label": "Sửa"
+      },
+      {
+        "label": "Xóa"
+      }
+    ]
+  },
+  {
+    "path": "/template-sets",
+    "label": "Bộ quy trình mẫu",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Lối vào phần Bộ Quy Trình Mẫu — danh sách bộ mẫu nhiệm vụ dùng lại cho nhiều dự án, copy được từ QT nội bộ.",
+    "keywords": [
+      "bo quy trinh mau",
+      "template set",
+      "bo mau nhiem vu"
+    ]
+  },
+  {
+    "path": "/template-sets/:setId",
+    "label": "Chi tiết bộ quy trình mẫu",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Chi tiết một bộ quy trình mẫu — thêm/sắp xếp nhiệm vụ mẫu, gán quy trình, độ ưu tiên, deadline, người thực hiện và checklist cho từng nhiệm vụ.",
+    "keywords": [
+      "chi tiet bo mau",
+      "nhiem vu mau",
+      "checklist mau",
+      "gan nv mau",
+      "copy tu quy trinh noi bo"
+    ],
+    "actions": [
+      {
+        "label": "Thêm nhiệm vụ"
+      },
+      {
+        "label": "Thêm checklist..."
+      },
+      {
+        "label": "Copy từ Quy trình nội bộ"
+      }
+    ]
+  },
+  {
+    "path": "/templates",
+    "label": "Dự án mẫu",
+    "menu": "4. Cài đặt",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Dự án mẫu — tạo bộ dự án dựng sẵn theo Khối → Công ty → Quy trình để lần sau tạo dự án nhanh; đặt mẫu mặc định.",
+    "keywords": [
+      "du an mau",
+      "template du an",
+      "tao du an mau",
+      "mau quy trinh du an"
+    ],
+    "actions": [
+      {
+        "label": "Tạo dự án mẫu"
+      },
+      {
+        "label": "Mở"
+      }
+    ]
+  },
+  {
+    "path": "/tools/voice-recordings",
+    "label": "Cuộc gọi & ghi âm",
+    "menu": "CRM → Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Cuộc gọi & ghi âm — tải lên hoặc ghi âm trực tiếp, quét SĐT từ tên file, phân loại & chuyển lời nói thành văn bản (STT), quét trùng và tạo khách/deal CRM từ bản ghi.",
+    "keywords": [
+      "ghi am",
+      "cuoc goi",
+      "voice",
+      "quet sdt tu ten file",
+      "phan loai ghi am",
+      "stt",
+      "tao crm tu ghi am"
+    ],
+    "actions": [
+      {
+        "label": "Quét SĐT"
+      },
+      {
+        "label": "Phân loại & STT"
+      },
+      {
+        "label": "Quét trùng"
+      },
+      {
+        "label": "Lịch ghi âm"
+      }
+    ]
+  },
+  {
+    "path": "/trash",
+    "label": "/trash",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": true,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/updates",
+    "label": "Có gì mới?",
+    "menu": "CRM → Thông báo",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Có gì mới? — nhật ký cập nhật hệ thống theo loại (Tính năng mới, Cải thiện, Sửa lỗi, Thông báo, Hướng dẫn); quản trị soạn nháp, xem trước rồi xuất bản & thông báo cho người dùng.",
+    "keywords": [
+      "co gi moi",
+      "release note",
+      "cap nhat he thong",
+      "thong bao moi",
+      "xuat ban thong bao"
+    ],
+    "actions": [
+      {
+        "label": "Tạo thông báo"
+      },
+      {
+        "label": "Xem trước"
+      },
+      {
+        "label": "🚀 Xuất bản & Thông báo"
+      }
+    ]
+  },
+  {
+    "path": "/users",
+    "label": "Nhân viên",
+    "menu": "3. Hệ thống",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Danh sách nhân viên — tạo tài khoản, phân quyền, gán phòng ban.",
+    "keywords": [
+      "nhan vien",
+      "nhân viên",
+      "user",
+      "tai khoan",
+      "tài khoản"
+    ]
+  },
+  {
+    "path": "/vc",
+    "label": "Module Vận chuyển / Lắp đặt",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Khung module Vận chuyển / Lắp đặt — cửa vào Kanban Lắp đặt, Giao việc, Đội nhóm, Bộ nhiệm vụ, Sự kiện và cấu hình pipeline lắp đặt.",
+    "keywords": [
+      "module van chuyen",
+      "lap dat",
+      "vc",
+      "vao lap dat"
+    ]
+  },
+  {
+    "path": "/vc/assignments",
+    "label": "Giao việc Lắp đặt",
+    "menu": "Vận chuyển → 1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Giao việc Lắp đặt — phân công nhiệm vụ vận chuyển/lắp đặt cho đội và nhân viên, theo dõi hạn và trạng thái.",
+    "keywords": [
+      "giao viec lap dat",
+      "phan cong vc",
+      "nhiem vu lap dat"
+    ]
+  },
+  {
+    "path": "/vc/dashboard",
+    "label": "Kanban Lắp đặt",
+    "menu": "2. Theo dõi SX",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Kanban Lắp đặt/Vận chuyển — theo dõi tiến độ giao hàng, lắp đặt.",
+    "keywords": [
+      "van chuyen",
+      "vận chuyển",
+      "lap dat",
+      "lắp đặt",
+      "kanban vc"
+    ]
+  },
+  {
+    "path": "/vc/download-app",
+    "label": "Tải app Lắp đặt",
+    "menu": "Vận chuyển → 4. Hỗ trợ",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Tải app Lắp đặt (APK Android) — bản mới nhất, dung lượng, ghi chú phiên bản cho đội vận chuyển/lắp đặt.",
+    "keywords": [
+      "tai app lap dat",
+      "apk vc",
+      "app van chuyen"
+    ],
+    "actions": [
+      {
+        "label": "Tải APK đầy đủ"
+      }
+    ]
+  },
+  {
+    "path": "/vc/events",
+    "label": "Sự kiện Lắp đặt",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Dòng sự kiện của module Vận chuyển / Lắp đặt — sự kiện đã tạo/được giao, lọc theo thời gian, người phụ trách và khu vực.",
+    "keywords": [
+      "su kien lap dat",
+      "lich vc",
+      "su kien van chuyen"
+    ]
+  },
+  {
+    "path": "/vc/pipeline-settings",
+    "label": "Pipeline Lắp đặt",
+    "menu": "Vận chuyển → 3. Điều hành Lắp đặt",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Cấu hình pipeline Lắp đặt — thêm/sửa/xóa giai đoạn VC/LĐ, đánh dấu cột Lắp đặt, ẩn/hiện cột trên Kanban, đặt trigger bàn giao SX→VC; cột tiếp nhận cố định ở đầu.",
+    "keywords": [
+      "cau hinh pipeline lap dat",
+      "cot vc",
+      "ban giao sx vc",
+      "trigger lap dat",
+      "an cot kanban"
+    ],
+    "actions": [
+      {
+        "label": "Giai đoạn"
+      },
+      {
+        "label": "Bàn giao SX→VC"
+      },
+      {
+        "label": "Toàn cảnh flow pipeline"
+      }
+    ]
+  },
+  {
+    "path": "/vc/projects/:id",
+    "label": "Chi tiết dự án Lắp đặt",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Chi tiết dự án Vận chuyển / Lắp đặt — thông tin giao hàng, đội phụ trách, tiến độ nhiệm vụ và tài liệu liên quan.",
+    "keywords": [
+      "chi tiet du an vc",
+      "du an lap dat",
+      "tien do lap dat"
+    ]
+  },
+  {
+    "path": "/vc/task-templates",
+    "label": "Bộ nhiệm vụ Lắp đặt",
+    "menu": "Vận chuyển → 3. Điều hành Lắp đặt",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Bộ nhiệm vụ Lắp đặt — mẫu công việc sinh sẵn cho dự án vận chuyển/lắp đặt theo từng giai đoạn.",
+    "keywords": [
+      "bo nhiem vu lap dat",
+      "mau viec vc",
+      "task template lap dat"
+    ]
+  },
+  {
+    "path": "/vc/teams",
+    "label": "Quản lý Đội nhóm",
+    "menu": "Vận chuyển → 3. Điều hành Lắp đặt",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Quản lý Đội nhóm Vận chuyển / Lắp đặt — tạo đội, đặt trưởng nhóm, thêm/xóa thành viên; xóa đội sẽ làm dự án đang gán mất liên kết.",
+    "keywords": [
+      "doi nhom vc",
+      "doi lap dat",
+      "doi van chuyen",
+      "truong nhom doi",
+      "them thanh vien doi"
+    ],
+    "actions": [
+      {
+        "label": "Tạo đội mới"
+      },
+      {
+        "label": "Thêm thành viên"
+      }
+    ]
+  },
+  {
+    "path": "/vc/trash",
+    "label": "/vc/trash",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": true,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/work",
+    "label": "/work",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": true,
+    "summary": "",
+    "keywords": []
+  },
+  {
+    "path": "/work/flows",
+    "label": "Setup luồng",
+    "menu": "3. Thiết lập",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Setup luồng module — canvas kéo thả nối các bước Deal → Dự án → Sản xuất → Lắp đặt, chọn kích hoạt khi deal thắng / khi cột bàn giao / thủ công, chạy song song hoặc rẽ theo điều kiện.",
+    "keywords": [
+      "setup luong",
+      "luong module",
+      "so do quy trinh",
+      "khi deal thang",
+      "ban giao tu dong",
+      "canvas luong"
+    ],
+    "actions": [
+      {
+        "label": "Thêm bước tiếp theo"
+      },
+      {
+        "label": "Kéo vào canvas"
+      }
+    ]
+  },
+  {
+    "path": "/workflow-flows",
+    "label": "Quản lý luồng",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Lối vào phần Quản Lý Luồng của trung tâm quy trình — cùng màn hình với Quản lý quy trình (QT nội bộ, Bộ quy trình mẫu, Quản lý luồng).",
+    "keywords": [
+      "quan ly luong",
+      "workflow flows",
+      "luong cong viec"
+    ]
+  },
+  {
+    "path": "/workflow-hub",
+    "label": "Quản lý quy trình",
+    "menu": "2. Làm việc",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Trung tâm quản lý quy trình — 3 phần: QT Nội Bộ Công Ty, Bộ Quy Trình Mẫu và Quản Lý Luồng; thứ tự thiết lập là tạo QT nội bộ → tạo bộ mẫu (nhiệm vụ + checklist) → xây luồng → tạo dự án.",
+    "keywords": [
+      "quan ly quy trinh",
+      "workflow hub",
+      "bo quy trinh mau",
+      "quan ly luong",
+      "qt noi bo"
+    ],
+    "actions": [
+      {
+        "label": "Tạo QT nội bộ"
+      },
+      {
+        "label": "Tạo bộ mẫu"
+      },
+      {
+        "label": "Tạo luồng"
+      }
+    ]
+  },
+  {
+    "path": "/workflow-settings",
+    "label": "Quy trình & KH",
+    "menu": "4. Cài đặt",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Quản lý quy trình & trạng thái khách hàng — 3 thẻ: Quy trình (thêm/sửa/sắp xếp), Trạng thái KH, và Liên kết QT↔KH; lọc theo công ty hoặc dùng bộ mặc định chung.",
+    "keywords": [
+      "quy trinh",
+      "trang thai khach hang",
+      "lien ket quy trinh",
+      "them quy trinh",
+      "nhom quy trinh"
+    ],
+    "actions": [
+      {
+        "label": "📋 Quy trình"
+      },
+      {
+        "label": "👤 Trạng thái KH"
+      },
+      {
+        "label": "🔗 Liên kết QT↔KH"
+      },
+      {
+        "label": "Thêm quy trình"
+      }
+    ]
+  },
+  {
+    "path": "/workspace/org-setup",
+    "label": "Tổ chức nhanh",
+    "menu": "2. Làm việc",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Thiết lập tổ chức nhanh — chọn công ty và khối rồi tạo phòng ban, thêm nhiều nhân viên một lượt và gán quyền sẵn (Admin CRM, Admin Sản xuất, Tài xế, Lắp đặt…).",
+    "keywords": [
+      "to chuc nhanh",
+      "tao phong ban",
+      "them nhan vien hang loat",
+      "gan quyen nhanh",
+      "thiet lap to chuc"
+    ],
+    "actions": [
+      {
+        "label": "Gán quyền"
+      },
+      {
+        "label": "Thêm khu vực CRM"
+      },
+      {
+        "label": "Lưu"
+      }
+    ]
+  }
+]

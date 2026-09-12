@@ -127,7 +127,7 @@ export default function InvoiceDetail() {
       </div>
 
       {/* Payment Progress */}
-      <div className="bg-white rounded-xl border p-4">
+      <div data-guide-khu-vuc="Tiến độ thanh toán" className="bg-white rounded-xl border p-4">
         <div className="flex items-center justify-between mb-3">
           <div>
             <p className="text-sm text-gray-500">Tiến độ thanh toán</p>
@@ -146,9 +146,9 @@ export default function InvoiceDetail() {
       {/* MISA meInvoice Status Panel */}
       <MisaStatusPanel invoice={invoice} onPublish={publishToMisa} onSendEmail={() => setShowMisaEmail(true)} loading={misaLoading} />
 
-      <div className="grid grid-cols-1 gap-4">
+      <div data-guide-khu-vuc="Trạng thái hóa đơn điện tử" className="grid grid-cols-1 gap-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-white rounded-xl border p-4 space-y-3">
+          <div data-guide-khu-vuc="Khách hàng" className="bg-white rounded-xl border p-4 space-y-3">
             <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide">Khách hàng</h3>
             {invoice.customer_name && <p className="text-sm font-medium text-gray-900 flex items-center gap-2"><User className="h-4 w-4 text-gray-400 shrink-0" />{invoice.customer_name}</p>}
             {invoice.customer_phone && <p className="text-xs text-gray-600 flex items-center gap-2"><Phone className="h-3.5 w-3.5 text-gray-400 shrink-0" />{invoice.customer_phone}</p>}
@@ -161,7 +161,7 @@ export default function InvoiceDetail() {
             )}
           </div>
 
-          <div className="bg-white rounded-xl border p-4 space-y-3">
+          <div data-guide-khu-vuc="Chứng từ & điều khoản" className="bg-white rounded-xl border p-4 space-y-3">
             <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide flex items-center gap-2">
               <FileText className="h-4 w-4 text-purple-600" /> Chứng từ & điều khoản
             </h3>
@@ -218,7 +218,7 @@ export default function InvoiceDetail() {
           </div>
         </div>
 
-        <div className="bg-white rounded-xl border p-4">
+        <div data-guide-khu-vuc="Lịch sử thanh toán" className="bg-white rounded-xl border p-4">
           <h3 className="text-sm font-bold text-gray-900 uppercase tracking-wide mb-3">Lịch sử thanh toán</h3>
           {(invoice.payments || []).length === 0 ? (
             <p className="text-xs text-gray-400 text-center py-4">Chưa có thanh toán</p>

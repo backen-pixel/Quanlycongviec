@@ -314,6 +314,7 @@ function SegmentedControl({ value, onChange, options, activeText = 'text-violet-
     <div
       className="inline-flex items-center gap-px p-0.5 rounded-md bg-slate-100 border border-slate-200/80 shrink-0"
       data-tour="assign-page-tabs"
+      data-guide-khu-vuc="Tab trang giao việc"
     >
       {options.map((opt) => {
         const active = value === opt.id;
@@ -359,7 +360,7 @@ function ViewModeSwitcher({ view, onChange, theme, modes, primaryId, fallbackIco
   const AltIcon = activeAlt?.icon || FallbackIcon;
   const toolbarBtn = 'h-8 px-2 rounded-md text-xs font-medium inline-flex items-center gap-1 cursor-pointer transition-colors shrink-0';
   return (
-    <div className="inline-flex items-center gap-px p-0.5 rounded-md bg-slate-100 border border-slate-200/80" data-tour="assign-view-mode">
+    <div className="inline-flex items-center gap-px p-0.5 rounded-md bg-slate-100 border border-slate-200/80" data-tour="assign-view-mode" data-guide-khu-vuc="Chế độ xem giao việc">
       <button
         type="button"
         data-tour={primary.id === 'kanban' ? 'assign-view-kanban' : undefined}
@@ -759,7 +760,7 @@ function AssignQuickFilterPanel({
   }
 
   return (
-    <aside className="w-full lg:w-60 lg:shrink-0 rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden self-start">
+    <aside className="w-full lg:w-60 lg:shrink-0 rounded-2xl border border-slate-200/90 bg-white shadow-sm overflow-hidden self-start" data-guide-khu-vuc="Bộ lọc nhanh giao việc">
       <button
         type="button"
         onClick={() => setOpen(false)}
@@ -2602,7 +2603,7 @@ export default function CRMAssignmentsPage({
     <div className="space-y-3">
       {/* Panel điều khiển — đồng bộ dashboard CRM / SX / VC */}
       <div className={`ui-solid-white rounded-2xl border border-slate-200/90 bg-white shadow-md overflow-hidden ${theme.panelRing}`}>
-        <div className={`border-b border-slate-200/80 bg-gradient-to-r ${theme.headerGrad}`} data-tour="assign-page-header">
+        <div className={`border-b border-slate-200/80 bg-gradient-to-r ${theme.headerGrad}`} data-tour="assign-page-header" data-guide-khu-vuc="Tiêu đề & thao tác giao việc">
           <div className="flex flex-col gap-2 px-3 py-2.5 sm:px-4 lg:flex-row lg:items-center lg:justify-between lg:gap-3">
             <div className="flex flex-wrap items-center gap-2 min-w-0">
               {dashboardLink ? (
@@ -2723,6 +2724,7 @@ export default function CRMAssignmentsPage({
               <div
                 ref={searchBoxRef}
                 data-tour="assign-search"
+                data-guide-khu-vuc="Tìm kiếm & bộ lọc đang áp dụng"
                 className={`group/search flex items-center shrink-0 flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem] rounded-md border transition-colors ${searchBoxCls}`}
               >
                 <div className="relative flex-1 min-w-0 flex items-center pl-7 pr-1">
@@ -2880,6 +2882,7 @@ export default function CRMAssignmentsPage({
             <button
               type="button"
               data-tour="assign-kpis"
+              data-guide-khu-vuc="Chỉ số KPI giao việc"
               onClick={() => setKpiPanelOpen((v) => !v)}
               className={`w-full flex items-center gap-2 px-3 py-1.5 sm:px-4 text-left border-b ${theme.kpiToggle} bg-white/40 hover:bg-slate-50/80 cursor-pointer transition-colors`}
             >
@@ -2902,7 +2905,10 @@ export default function CRMAssignmentsPage({
               </span>
             </button>
             {kpiPanelOpen && (
-              <div className={`border-b ${theme.kpiToggle} bg-white/40 px-2 sm:px-3 pb-2 pt-2 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2`}>
+              <div
+                className={`border-b ${theme.kpiToggle} bg-white/40 px-2 sm:px-3 pb-2 pt-2 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2`}
+                data-guide-khu-vuc="Chỉ số công việc"
+              >
                 {[
                   { label: 'Tổng', value: stats.total, icon: ListIcon, iconBg: 'bg-violet-100', iconColor: 'text-violet-700', viewId: null, sub: kpiSubs.total },
                   { label: 'Chưa làm', value: stats.pending, icon: Circle, iconBg: 'bg-slate-100', iconColor: 'text-slate-600', viewId: 'status', sub: kpiSubs.pending },
@@ -2934,6 +2940,7 @@ export default function CRMAssignmentsPage({
         <div
           ref={filterPanelRef}
           data-tour="assign-filter-panel"
+          data-guide-khu-vuc="Bảng bộ lọc nâng cao"
           className="ui-solid-white fixed z-[75] max-sm:left-4 max-sm:right-4 max-sm:bottom-4 max-sm:top-auto w-[min(100vw-2rem,400px)] max-h-[min(calc(100vh-5rem),620px)] flex flex-col rounded-xl border border-gray-200 bg-white shadow-2xl overflow-hidden animate-fade-in"
           style={{ top: '4.5rem', right: '1rem' }}
           role="region"
@@ -3448,6 +3455,7 @@ function KanbanView({
             style={{ maxHeight: 'var(--assign-col-max-h, 520px)' }}
             onDragOver={allowDrop}
             onDrop={onDropCol(col.id)}
+            data-guide-khu-vuc={col.name}
           >
             <div
               className="px-3 py-2 flex items-center gap-2 border-b border-slate-100 rounded-t-xl bg-slate-50/80 shrink-0"
@@ -3494,6 +3502,7 @@ function KanbanView({
           style={{ maxHeight: 'var(--assign-col-max-h, 520px)' }}
           onDragOver={allowDrop}
           onDrop={onDropCol('__none__')}
+          data-guide-khu-vuc="Chưa phân loại"
         >
           <div className="px-3 py-2 border-b border-slate-200 text-sm font-semibold text-slate-500 shrink-0">
             Chưa phân loại <span className="text-[11px] text-slate-400">{columnTotal('__none__', noneList.length)}</span>
@@ -3849,6 +3858,7 @@ function PersonalColumnBoard({
       className="w-72 shrink-0 rounded-xl border border-slate-200/90 bg-white flex flex-col shadow-sm"
       onDragOver={allowDrop}
       onDrop={onDrop}
+      data-guide-khu-vuc={column.name}
     >
       <div
         className="px-3 py-2 flex items-center gap-2 border-b border-slate-100 rounded-t-xl bg-slate-50/80"

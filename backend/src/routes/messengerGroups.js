@@ -8,6 +8,7 @@ const { notifyMultiple } = require('../helpers/notifications');
 const { isAdminLike } = require('../helpers/adminRole');
 const { addTenantFilter } = require('../helpers/tenantScope');
 const { handleIncomingMessage } = require('../helpers/aiConversation');
+
 const {
   extractCallLogPayloadFromRow,
   hydrateMessengerCallLogRow,
@@ -650,6 +651,7 @@ function triggerAiHookIfNeeded(messageRow, groupId, io) {
     channelId: groupId,
     io,
   }).catch((err) => console.warn('[ai-conv] hook err:', err.message));
+
 }
 
 /** .in('id', …) + map UUID — tránh lệch khóa string/UUID khi join profile */
@@ -1168,6 +1170,29 @@ r.post('/leads/:leadId/ensure-internal-chat', async (req, res) => {
  * Tìm nhân viên để mở chat / chuyển tiếp — theo tên/email/SĐT, không khóa theo công ty.
  * Vẫn giới hạn theo tenant (SaaS) nếu user có tenant_id.
  */
+/**
+ * Danh bạ AI — trợ lý mà nhân viên chọn được ngay trong thanh chat.
+ *
+ * Đây KHÔNG phải một người dùng trong bảng `users`, và CHỦ Ý như vậy: bấm vào mục này sẽ mở
+ * khung Trợ lý hướng dẫn (CopilotKit) bên phải màn hình, chứ không mở một luồng tin nhắn.
+ * Nếu tạo user bot thật thì nó lọt vào `/messenger/users/search`, ai đó sẽ mở chat 1-1 rồi
+ * ngồi chờ một câu trả lời không bao giờ tới — đúng cái bẫy mà bot báo cáo đang mắc.
+ *
+ * Là endpoint chứ không phải hằng số ở frontend để sau này chặn theo quyền (ai được dùng trợ
+ * lý) chỉ phải sửa đúng một chỗ.
+ */
+r.get('/ai-contacts', (req, res) => {
+  res.json({
+    contacts: [{
+      id: 'guide-copilot',
+      kind: 'copilot',
+      full_name: '🧭 Trợ lý hướng dẫn',
+      mo_ta: 'Hỏi cách dùng hệ thống',
+      avatar: null,
+    }],
+  });
+});
+
 r.get('/users/search', async (req, res) => {
   try {
     const q = String(req.query.q || '').trim();

@@ -4405,7 +4405,7 @@ export default function CRMTasksTab({
   return (
     <div className="space-y-4">
       {/* Header: Stats + Views + Templates */}
-      <div className="flex items-center justify-between flex-wrap gap-2">
+      <div className="flex items-center justify-between flex-wrap gap-2" data-guide-khu-vuc="Tiến độ & chế độ xem công việc">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
             <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center text-xs font-bold text-blue-700">{stats.percent}%</div>
@@ -4680,7 +4680,8 @@ export default function CRMTasksTab({
 
       {/* LIST VIEW — tab Công việc thông thường */}
       {!isSharedWorkspace && viewMode === 'list' && (
-        <div className="space-y-3">
+        // Khai số nhóm thật: nhóm đang thu gọn vẫn là một nhóm, bộ dò DOM không đếm chắc được.
+        <div className="space-y-3" data-guide-khu-vuc="Nhóm việc theo giai đoạn" data-guide-so-muc={listStagesToRender.length}>
           {listStagesToRender.map(stage => {
             const stageTasks = tasksByStage[stage.slug] || [];
             const completed = stageTasks.filter(t => t.status === 'completed').length;
@@ -4781,7 +4782,7 @@ export default function CRMTasksTab({
 
       {/* DEADLINE VIEW */}
       {!isSharedWorkspace && viewMode === 'deadline' && (
-        <div className="space-y-3">
+        <div className="space-y-3" data-guide-khu-vuc="Công việc theo deadline">
           {[
             { key: 'overdue', label: '🔴 Quá hạn', tasks: deadlineGroups.overdue, color: 'border-red-300 bg-red-50' },
             { key: 'today', label: '🟡 Hôm nay', tasks: deadlineGroups.today, color: 'border-amber-300 bg-amber-50' },
@@ -4823,7 +4824,7 @@ export default function CRMTasksTab({
 
       {/* PLANNER VIEW */}
       {!isSharedWorkspace && viewMode === 'planner' && (
-        <div className="space-y-3">
+        <div className="space-y-3" data-guide-khu-vuc="Công việc theo người phụ trách">
           {plannerGroups.assignees.map(group => (
             <div key={group.user.id} className="border rounded-lg">
               <div className="flex items-center justify-between gap-2 px-3 py-2 bg-gray-50">
@@ -4884,7 +4885,7 @@ export default function CRMTasksTab({
 
       {/* CALENDAR VIEW */}
       {!isSharedWorkspace && viewMode === 'calendar' && (
-        <div>
+        <div data-guide-khu-vuc="Lịch công việc">
           <div className="flex items-center justify-between mb-3">
             <button onClick={() => setCalMonth(p => { const d = new Date(p.y, p.m - 1); return { y: d.getFullYear(), m: d.getMonth() }; })}
               className="px-2 py-1 rounded hover:bg-gray-100 cursor-pointer text-sm">◀</button>

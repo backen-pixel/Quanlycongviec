@@ -9,6 +9,18 @@ backend/uploads/app-releases/
 # Cursor local config
 .cursor/
 
+# Claude Code local config
+.claude/
+
+# Local log files
+backend/_luna.log
+
+# Local backup/upload archives (not source)
+beppro-uploads.tgz
+
+# Runtime uploaded data for guide assistant
+backend/uploads/guide-memory/
+
 # Local env files (contain secrets)
 backend/.env
 frontend/.env

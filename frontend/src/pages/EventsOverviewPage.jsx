@@ -576,7 +576,7 @@ export default function EventsOverviewPage() {
               />
             </div>
 
-            <div className="bg-white rounded-xl border p-4">
+            <div data-guide-khu-vuc="Xu hướng sự kiện" className="bg-white rounded-xl border p-4">
               <h2 className="text-sm font-bold text-gray-800 mb-3">
                 Xu hướng sự kiện ({granLabel})
               </h2>
@@ -599,7 +599,7 @@ export default function EventsOverviewPage() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div className="bg-white rounded-xl border p-4">
+              <div data-guide-khu-vuc="Theo khối (module)" className="bg-white rounded-xl border p-4">
                 <div className="flex items-center justify-between mb-1">
                   <h2 className="text-sm font-bold text-gray-800">Theo khối (module)</h2>
                   <span className="text-[11px] text-gray-500 flex items-center gap-1">
@@ -655,7 +655,7 @@ export default function EventsOverviewPage() {
                 )}
               </div>
 
-              <div className="bg-white rounded-xl border p-4">
+              <div data-guide-khu-vuc="Theo loại sự kiện" className="bg-white rounded-xl border p-4">
                 <h2 className="text-sm font-bold text-gray-800 mb-3">Theo loại sự kiện</h2>
                 {typeChartData.length === 0 ? (
                   <p className="text-sm text-gray-400 py-8 text-center">—</p>
@@ -678,7 +678,7 @@ export default function EventsOverviewPage() {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              <div className="bg-white rounded-xl border p-4">
+              <div data-guide-khu-vuc="Theo khu vực" className="bg-white rounded-xl border p-4">
                 <div className="flex items-center justify-between mb-1">
                   <h2 className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
                     <MapPin className="h-4 w-4 text-sky-600" /> Theo khu vực
@@ -738,7 +738,7 @@ export default function EventsOverviewPage() {
                 )}
               </div>
 
-              <div className="bg-white rounded-xl border overflow-hidden">
+              <div data-guide-khu-vuc="Chi tiết theo khối" className="bg-white rounded-xl border overflow-hidden">
                 <div className="px-4 py-3 border-b bg-gray-50 flex items-center justify-between flex-wrap gap-2">
                   <h2 className="text-sm font-bold text-gray-800">Chi tiết theo khối</h2>
                   <span className="text-[11px] text-gray-500">Bấm dòng để lọc</span>
@@ -792,7 +792,7 @@ export default function EventsOverviewPage() {
               </div>
             </div>
 
-            <div className="bg-white rounded-xl border p-4">
+            <div data-guide-khu-vuc="Theo nhân viên" className="bg-white rounded-xl border p-4">
               <div className="flex items-center justify-between mb-1">
                 <h2 className="text-sm font-bold text-gray-800">Theo nhân viên</h2>
                 <span className="text-[11px] text-gray-500 flex items-center gap-1">
@@ -820,7 +820,7 @@ export default function EventsOverviewPage() {
             </div>
 
             {data.by_region?.length > 0 && (
-              <div className="bg-white rounded-xl border overflow-hidden">
+              <div data-guide-khu-vuc="Chi tiết theo khu vực" className="bg-white rounded-xl border overflow-hidden">
                 <div className="px-4 py-3 border-b bg-gray-50 flex items-center justify-between flex-wrap gap-2">
                   <h2 className="text-sm font-bold text-gray-800 flex items-center gap-1.5">
                     <MapPin className="h-4 w-4 text-sky-600" /> Chi tiết theo khu vực
@@ -881,7 +881,7 @@ export default function EventsOverviewPage() {
             )}
 
             {data.by_staff?.length > 0 && (
-              <div className="bg-white rounded-xl border overflow-hidden">
+              <div data-guide-khu-vuc="Chi tiết theo nhân viên" className="bg-white rounded-xl border overflow-hidden">
                 <div className="px-4 py-3 border-b bg-gray-50 flex items-center justify-between flex-wrap gap-2">
                   <h2 className="text-sm font-bold text-gray-800">Chi tiết theo nhân viên</h2>
                   <span className="text-[11px] text-gray-500 flex items-center gap-1">

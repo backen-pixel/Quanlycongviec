@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 146 132" width="146" height="132" role="img" aria-label="Trợ lý chỉ sang phải">
+  <!--
+    ĐẦU NGÓN TAY nằm đúng (137, 53) trong khung 146×132 — khớp mốc HAND_X / HAND_Y của
+    GuideMascot.jsx (94,02% ngang, 39,82% dọc). Sửa tư thế này thì phải giữ nguyên điểm đó,
+    nếu không ngón tay chỉ lệch khỏi tâm nút.
+  -->
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#818cf8"/><stop offset="1" stop-color="#4f46e5"/></linearGradient>
+    <linearGradient id="head" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#e0e7ff"/></linearGradient>
+  </defs>
+  <ellipse cx="58" cy="124" rx="29" ry="5" fill="#1e293b" opacity=".12"/>
+  <path d="M30 80 L16 86" stroke="#a5b4fc" stroke-width="9" stroke-linecap="round" fill="none"/>
+  <circle cx="14" cy="87" r="6.5" fill="#fcd34d"/>
+  <!-- tay chỉ -->
+  <path d="M88 74 L116 56" stroke="#a5b4fc" stroke-width="9" stroke-linecap="round" fill="none"/>
+  <circle cx="121" cy="54" r="7.5" fill="#fcd34d"/>
+  <path d="M126 49 L137 53 L126 58 Z" fill="#fcd34d"/>
+  <circle cx="137" cy="53" r="2.6" fill="#f59e0b"/>
+  <rect x="26" y="64" width="64" height="47" rx="18" fill="url(#body)"/>
+  <circle cx="58" cy="88" r="13" fill="#eef2ff" stroke="#c7d2fe" stroke-width="2"/>
+  <path d="M58 79 L62 88 L54 88 Z" fill="#ef4444"/>
+  <path d="M58 97 L62 88 L54 88 Z" fill="#cbd5e1"/>
+  <circle cx="58" cy="88" r="1.8" fill="#475569"/>
+  <path d="M58 13 L58 6" stroke="#a5b4fc" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="58" cy="4" r="4" fill="#fcd34d"/>
+  <circle cx="58" cy="40" r="28" fill="url(#head)" stroke="#6366f1" stroke-width="3"/>
+  <circle cx="28" cy="42" r="5" fill="#c7d2fe"/>
+  <circle cx="88" cy="42" r="5" fill="#c7d2fe"/>
+  <!-- mắt nhìn theo hướng chỉ -->
+  <circle cx="52" cy="39" r="4.2" fill="#1e293b"/>
+  <circle cx="70" cy="39" r="4.2" fill="#1e293b"/>
+  <circle cx="53.6" cy="37.6" r="1.3" fill="#ffffff"/>
+  <circle cx="71.6" cy="37.6" r="1.3" fill="#ffffff"/>
+  <path d="M52 50 q6 5 12 0" stroke="#1e293b" stroke-width="2.5" stroke-linecap="round" fill="none"/>
+</svg>

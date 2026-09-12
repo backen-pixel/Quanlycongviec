@@ -1,0 +1,49 @@
+[
+  {
+    "path": "/crm/dashboard#tao-lead",
+    "label": "Tạo Lead mới",
+    "menu": "CRM → Bán hàng",
+    "summary": "Tạo một Lead (khách tiềm năng) mới từ Dashboard CRM: sang tab Leads, bấm \"+ Thêm Lead\", điền tên lead và tên khách (hai trường bắt buộc), chọn công ty / khu vực, nhập số điện thoại để hệ thống quét trùng, rồi bấm \"Tạo Lead\".",
+    "keywords": [
+      "tao lead",
+      "them lead",
+      "lead moi",
+      "tao khach tiem nang",
+      "nhap lead",
+      "them khach moi",
+      "tao moi lead",
+      "form lead"
+    ],
+    "content": "1. Chọn tab Leads — Trước khi tạo khách mới — chắc chắn đang ở tab Leads.\n2. Bấm + Thêm Lead — Bấm nút xanh + Thêm Lead để mở form tạo nhanh.\n3. Cửa sổ form Lead — Form bên trái nhập liệu; bên phải xem trước thẻ Kanban.\n4. Ô tên lead — Bắt buộc — đặt tên gợi nhớ (VD: Tủ bếp chữ L - Anh Minh).\n5. Công ty / khu vực — Chọn công ty (và khu vực nếu có). Admin chọn từ danh sách; nhân viên thường đã gán sẵn.\n6. Khối khách hàng — Điền tên khách (bắt buộc), SĐT, công ty KH nếu có.\n7. Số điện thoại — Nên nhập SĐT để quét trùng và gọi lại khách sau này.\n8. Nguồn & loại Lead — Chọn nguồn (Zalo, Facebook…) và loại Lead nếu công ty có cấu hình.\n9. Nút Tạo Lead — Khi đủ thông tin bấm Tạo Lead. Bài này không bắt buộc lưu — có thể Hủy / Tiếp.\n10. Đóng form Lead — Bấm X (hoặc Hủy) để đóng form trước khi sang tạo Deal.",
+    "actions": [
+      {
+        "label": "Thêm Lead"
+      }
+    ],
+    "generated_from_tour": "crm-create-lead-deal",
+    "generated_from_step": "Chọn tab Leads → Đóng form Lead (10 bước)"
+  },
+  {
+    "path": "/crm/dashboard#tao-deal",
+    "label": "Tạo Deal mới",
+    "menu": "CRM → Bán hàng",
+    "summary": "Tạo một Deal (cơ hội bán hàng) mới từ Dashboard CRM: sang tab Deals, nút đổi thành \"+ Thêm Deal\", điền tên deal (bắt buộc), khách và giá trị. Tạo Deal thẳng được, không bắt buộc phải có Lead trước.",
+    "keywords": [
+      "tao deal",
+      "them deal",
+      "deal moi",
+      "tao co hoi ban hang",
+      "co hoi moi",
+      "tao moi deal",
+      "form deal"
+    ],
+    "content": "1. Chuyển sang tab Deals — Bấm tab Deals để tạo cơ hội bán hàng trực tiếp.\n2. Nút + Thêm Deal — Trên tab Deals nút đổi thành + Thêm Deal — bấm để mở form Deal.\n3. Form tạo Deal — Tương tự Lead: tên deal, khách, giá trị… Có thể tạo Deal không qua Lead.\n4. Ô tên Deal — Nhập tên Deal (bắt buộc) — thường gắn với công trình / khách.\n5. Nút Tạo Deal — Bấm Tạo Deal khi đủ thông tin — hoặc đóng form. Xong nhiệm vụ này.",
+    "actions": [
+      {
+        "label": "Thêm Deal"
+      }
+    ],
+    "generated_from_tour": "crm-create-lead-deal",
+    "generated_from_step": "Chuyển sang tab Deals → (hết tour) (5 bước)"
+  }
+]

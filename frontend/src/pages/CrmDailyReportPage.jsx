@@ -652,8 +652,7 @@ function MyReportPanel({ date, onDateChange }) {
       )}
 
       {/* I. Kế hoạch */}
-      {!!workLines.length && (
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm" data-guide-khu-vuc="I. Kế hoạch công việc ngày mới">
           <div className="flex items-center justify-between gap-2 bg-slate-700 px-4 py-2.5 text-sm font-semibold text-white">
             <span>
               I. NỘI DUNG KẾ HOẠCH CÔNG VIỆC CỦA NGÀY MỚI
@@ -752,15 +751,18 @@ function MyReportPanel({ date, onDateChange }) {
                   </tr>
                   );
                 })}
+                {!workLines.length && (
+                  <tr>
+                    <td colSpan={5} className="px-3 py-6 text-center text-sm text-gray-400">Chưa có hạng mục — bấm Thêm dòng</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
         </div>
-      )}
 
       {/* II. Báo cáo kết quả — snapshot 16:45 */}
-      {!!workLines.length && (
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm" data-guide-khu-vuc="II. Báo cáo công việc trong ngày">
           <div className="flex items-center justify-between gap-2 bg-slate-700 px-4 py-2.5 text-sm font-semibold text-white">
             <span>
               II. NỘI DUNG BÁO CÁO CÔNG VIỆC TRONG NGÀY
@@ -874,14 +876,18 @@ function MyReportPanel({ date, onDateChange }) {
                     </tr>
                   );
                 })}
+                {!workLines.length && (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-6 text-center text-sm text-gray-400">Chưa có hạng mục — bấm Thêm dòng</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
         </div>
-      )}
 
       {/* III. Mài dao */}
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm" data-guide-khu-vuc="III. Công việc mài dao">
         <div className="flex items-center justify-between gap-2 bg-indigo-700 px-4 py-2.5 text-sm font-semibold text-white">
           <span>
             III. CÔNG VIỆC MÀI DAO
@@ -972,7 +978,7 @@ function MyReportPanel({ date, onDateChange }) {
       </div>
 
       {/* IV. Đề xuất */}
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm" data-guide-khu-vuc="IV. Đề xuất">
         <div className="flex items-center justify-between gap-2 bg-emerald-800 px-4 py-2.5 text-sm font-semibold text-white">
           <span>
             IV. ĐỀ XUẤT
@@ -2936,7 +2942,7 @@ function TeamMatrixPanel({ date, onDateChange }) {
       {/* CỘT CHÍNH — bảng ma trận lên ngay đầu trang; bộ lọc dời sang cột phải. */}
       <div className="min-w-0 flex-1 space-y-4">
       {/* Tab theo từng mục I–IV */}
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2" data-guide-khu-vuc="Tab mục I–IV">
         {companyId ? (
           <div className="flex min-w-0 flex-1 flex-wrap gap-1.5 rounded-xl border border-violet-200 bg-white p-1.5 shadow-sm">
             {SECTION_TAB_META.map((tab) => (
@@ -2994,7 +3000,7 @@ function TeamMatrixPanel({ date, onDateChange }) {
       )}
 
       {companyId && (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-guide-khu-vuc="Chỉ số tổng hợp theo ngày">
           {/* Icon tròn màu + nhãn nhỏ + số lớn. Icon, số và viền cùng một tông để phân
               biệt 4 thẻ mà không phải đọc nhãn. */}
           {[
@@ -3034,7 +3040,7 @@ function TeamMatrixPanel({ date, onDateChange }) {
           Không có nhân viên / báo cáo khớp bộ lọc
         </div>
       ) : companyId ? (
-        <div className="space-y-4">
+        <div className="space-y-4" data-guide-khu-vuc="Bảng ma trận báo cáo nhóm">
           {sectionBlocks.map((block) => (
             <MatrixSectionTable
               key={block.id}
@@ -3059,7 +3065,7 @@ function TeamMatrixPanel({ date, onDateChange }) {
           Trước đây là dải ngang trên đầu, chiếm 4 hàng chiều cao trước khi thấy số liệu.
           Đưa sang cột phải cho bảng ma trận (thứ người dùng thật sự đọc) lên ngay đầu trang,
           và bộ lọc luôn ở trong tầm mắt khi cuộn. */}
-      <aside className="w-full shrink-0 space-y-3 xl:sticky xl:top-4 xl:w-[268px]">
+      <aside className="w-full shrink-0 space-y-3 xl:sticky xl:top-4 xl:w-[268px]" data-guide-khu-vuc="Bộ lọc báo cáo">
         <div className="overflow-hidden rounded-2xl border border-violet-200 bg-white shadow-sm">
           <div className="flex items-center gap-2 border-b border-violet-100 bg-violet-50/70 px-3 py-2.5">
             <Filter className="h-4 w-4 shrink-0 text-violet-600" />
@@ -3260,7 +3266,7 @@ export default function CrmDailyReportPage() {
               : 'Phần I Deadline QH+hôm nay (08:00) · Phần II điểm đến cuối ngày (16:45) · III/IV điền tay.'}
           </p>
         </div>
-        <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5 shadow-sm">
+        <div className="inline-flex rounded-lg border border-gray-200 bg-white p-0.5 shadow-sm" data-guide-khu-vuc="Chọn báo cáo của tôi / nhóm">
           <button
             type="button"
             onClick={() => setTab('mine')}

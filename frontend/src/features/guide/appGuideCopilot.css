@@ -1,0 +1,1298 @@
+/* Nút ✨ mở trợ lý — chỉ hiện TRƯỚC khi panel mount lần đầu (xem AppGuideCopilot.jsx).
+   Sau khi mount, CopilotSidebar có nút mở/đóng riêng — không cần ẩn gì, không có hai nút chồng nhau. */
+.app-guide-launcher {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  width: 52px;
+  height: 52px;
+  border-radius: 9999px;
+  border: none;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  font-size: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4);
+  cursor: pointer;
+  z-index: 70;
+  transition: transform 0.15s ease;
+}
+.app-guide-launcher:hover { transform: scale(1.06); }
+
+/* Khung chat giờ là CopilotSidebar dán mép PHẢI (`[data-copilot-sidebar]`), không còn popup nổi.
+   Bề ngang truyền bằng prop `width` trong AppGuideCopilotPanel.jsx, không đặt ở CSS — để JS của
+   bảng hành động và CSS dùng chung MỘT nguồn số. Trên màn hẹp thì thu lại theo viewport. */
+@media (max-width: 640px) {
+  [data-copilot-sidebar] { width: 100vw !important; }
+}
+
+/* Khung nội dung suy luận (💭 "Thought for...") — bo chiều cao cố định, cuộn nội bộ.
+   Nội dung mới luôn hiện ở đáy (xem lib/reasoningAutoScroll.js), phần cũ trôi lên và khuất
+   dần thay vì đẩy cả khung chat dài ra. Thu gọn về dòng tiêu đề khi suy luận kết thúc là hành
+   vi có sẵn của thư viện, không cần CSS riêng. */
+[data-copilot-sidebar] [data-message-id] .cpk\:pb-2.cpk\:pt-1 {
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+/* ── Vòng sáng chỉ nút (uiSpotlight.js) ── */
+.app-guide-spotlight {
+  position: fixed;
+  border: 2px solid #6366f1;
+  border-radius: 8px;
+  box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.25), 0 0 16px rgba(99, 102, 241, 0.5);
+  pointer-events: none;
+  z-index: 55;
+  transition: top 0.15s ease, left 0.15s ease, width 0.15s ease, height 0.15s ease;
+}
+
+/* Nút × trên vòng sáng — phần DUY NHẤT của vòng sáng nhận chuột (xem ensureOverlay). */
+.app-guide-spotlight__close {
+  position: absolute;
+  top: -12px;
+  right: -12px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(99, 102, 241, 0.55);
+  background: #fff;
+  color: #4338ca;
+  font: 700 16px/1 system-ui, sans-serif;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.25);
+}
+.app-guide-spotlight__close:hover { background: #eef2ff; }
+.app-guide-spotlight__close:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
+/* Sát mép màn hình thì thu nút vào trong khung, không để thò ra ngoài. */
+.app-guide-spotlight--inset .app-guide-spotlight__close { top: 4px; right: 4px; }
+/* Vạch đếm ngược: co dần đúng bằng thời gian tự tắt (--spot-ms do uiSpotlight.js đặt). */
+.app-guide-spotlight::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -7px;
+  height: 3px;
+  border-radius: 999px;
+  background: #6366f1;
+  transform-origin: left center;
+  animation: app-guide-spot-countdown var(--spot-ms, 8000ms) linear forwards;
+}
+.app-guide-spotlight--inset::after { bottom: 3px; }
+@keyframes app-guide-spot-countdown { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .app-guide-spotlight::after { animation: none; opacity: 0.5; }
+}
+
+/* ── Bảng hành động của trợ lý (AgentActivityPanel.jsx) ──
+   Dán cạnh trái khung chat, vị trí do JS đo và set inline (left/top/width/maxHeight).
+   z-index 1199: ngay DƯỚI wrapper khung chat (thư viện dùng 1200) nên khung chat luôn thắng
+   khi chồng nhau, mà bảng vẫn nằm trên mọi thứ của trang. */
+.guide-act {
+  position: fixed;
+  z-index: 1199;
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  overflow: hidden;
+  /* Dùng đúng biến của ThemeProvider: --color-topbar là màu bề mặt (thanh trên),
+     --color-text-card là màu chữ trên thẻ. `--color-card-bg` / `--color-text` KHÔNG được
+     định nghĩa ở :root nên viết vào đây chỉ là ăn giá trị fallback, đổi theme sẽ không theo. */
+  background: var(--color-topbar, #fff);
+  border: 1px solid rgba(99, 102, 241, 0.22);
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.16);
+  font-size: 12px;
+  color: var(--color-text-card, #1f2937);
+}
+
+/* Thanh tiêu đề giờ chứa NHIỀU nút (thu gọn / mở rộng) nên nó là <div>, không còn là <button>.
+   Nút <button> lồng trong <button> là HTML không hợp lệ và Chrome tự tách thẻ ra, làm layout
+   vỡ theo cách rất khó lần. */
+.guide-act__head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  border-bottom: 1px solid rgba(99, 102, 241, 0.16);
+  background: rgba(99, 102, 241, 0.08);
+}
+/* Nút BẬT bảng — trạng thái mặc định. Dán mép trái khung chat, `right` do JS tính theo rect
+   thật của sidebar nên không lệch khi đổi bề ngang sidebar hay kích thước cửa sổ. */
+.guide-act-open {
+  position: fixed;
+  z-index: 1199;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  background: var(--color-topbar, #fff);
+  color: var(--color-text-card, #1f2937);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.14);
+  cursor: pointer;
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.guide-act-open:hover { border-color: rgba(99, 102, 241, 0.5); }
+
+/* Không còn là <button> (bảng chỉ ẩn/hiện bằng nút ✕ riêng), nên đây chỉ là hàng tiêu đề. */
+.guide-act__headmain {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 9px 4px 9px 11px;
+}
+
+.guide-act__iconbtn {
+  flex: 0 0 auto;
+  padding: 6px 7px;
+  margin-right: 3px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  color: inherit;
+  opacity: 0.6;
+}
+.guide-act__iconbtn:hover { background: rgba(99, 102, 241, 0.16); opacity: 1; }
+
+.guide-act__tabs {
+  display: flex;
+  gap: 2px;
+  padding: 5px 6px 0;
+  border-bottom: 1px solid rgba(99, 102, 241, 0.14);
+}
+.guide-act__tab {
+  padding: 4px 10px 5px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  color: inherit;
+  opacity: 0.6;
+}
+.guide-act__tab:hover { opacity: 0.9; }
+.guide-act__tab--on { opacity: 1; font-weight: 600; border-bottom-color: #4f46e5; }
+
+.guide-act__title { font-weight: 600; flex: 1; min-width: 0; }
+.guide-act__count {
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #4f46e5;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: center;
+}
+.guide-act__chev { opacity: 0.55; font-size: 10px; }
+/* Nhãn chế độ toàn quyền — đỏ, vì ở chế độ này trợ lý bấm được cả nút Xoá. */
+.guide-act__mode {
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(220, 38, 38, 0.12);
+  color: #b91c1c;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.guide-act__list { overflow-y: auto; padding: 6px 0; }
+.guide-act__ul { list-style: none; margin: 0; padding: 0; }
+.guide-act__empty { margin: 0; padding: 10px 12px; opacity: 0.6; line-height: 1.5; }
+
+/* Dòng phân lượt — mốc "bạn hỏi gì", để đọc timeline theo từng lượt. */
+.guide-act__turn {
+  padding: 8px 0 3px;
+  border-top: 1px dashed rgba(99, 102, 241, 0.2);
+  margin-top: 4px;
+}
+.guide-act__turn:first-child { border-top: 0; margin-top: 0; }
+.guide-act__turn-btn {
+  display: flex;
+  gap: 5px;
+  align-items: baseline;
+  width: 100%;
+  padding: 0 11px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+.guide-act__turn-btn:hover { background: rgba(99, 102, 241, 0.07); }
+.guide-act__turn-label { font-weight: 600; opacity: 0.55; white-space: nowrap; }
+.guide-act__turn-text { opacity: 0.75; overflow-wrap: anywhere; }
+
+.guide-act__row { display: block; }
+.guide-act__row--muted { opacity: 0.62; }
+/* Cả dòng là nút mở dữ liệu thô. `text-align: left` + `font: inherit` để nút không mang
+   style mặc định của trình duyệt (căn giữa, font hệ thống) làm lệch hẳn khỏi các dòng khác. */
+.guide-act__rowbtn {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 5px 11px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+.guide-act__rowbtn:hover { background: rgba(99, 102, 241, 0.07); }
+.guide-act__icon { flex: 0 0 auto; line-height: 1.45; }
+.guide-act__body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.guide-act__label { display: flex; align-items: center; gap: 5px; font-weight: 600; }
+.guide-act__detail { opacity: 0.8; overflow-wrap: anywhere; }
+.guide-act__note { opacity: 0.62; overflow-wrap: anywhere; }
+.guide-act__more { margin-left: auto; opacity: 0.45; font-weight: 700; padding-left: 6px; }
+
+/* Chip chi phí ở tiêu đề — xanh lá, phân biệt rõ với badge đếm hành động (tím) và
+   nhãn toàn quyền (đỏ). */
+.guide-act__cost {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(22, 163, 74, 0.13);
+  color: #15803d;
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.guide-act__cost-total {
+  padding: 9px 11px 10px;
+  border-bottom: 1px solid rgba(99, 102, 241, 0.14);
+}
+.guide-act__cost-big {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 19px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #15803d;
+}
+.guide-act__cost-vnd { font-size: 12px; font-weight: 600; opacity: 0.7; color: inherit; }
+/* auto/1fr đôi: nhãn co theo chữ, số bám sát nhãn — đọc theo cặp dễ hơn là dàn đều 4 cột. */
+.guide-act__cost-grid {
+  display: grid;
+  grid-template-columns: auto 1fr auto 1fr;
+  gap: 2px 6px;
+  margin-top: 7px;
+}
+.guide-act__cost-grid span { opacity: 0.6; }
+.guide-act__cost-grid b { font-variant-numeric: tabular-nums; }
+.guide-act__empty-li { list-style: none; }
+
+/* Khối dữ liệu thô. `overflow: auto` trên <pre> để JSON dài cuộn TRONG khối, không kéo giãn
+   bề ngang panel (panel là position: fixed với width tính sẵn — giãn ra là tràn khỏi màn hình). */
+.guide-act__raw {
+  position: relative;
+  margin: 2px 11px 8px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.05);
+  border: 1px solid rgba(99, 102, 241, 0.14);
+}
+.guide-act__raw pre {
+  margin: 0;
+  padding: 8px 9px;
+  max-height: 260px;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.guide-act__copy {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  padding: 1px 6px;
+  border: 1px solid rgba(99, 102, 241, 0.28);
+  border-radius: 5px;
+  background: var(--color-topbar, #fff);
+  cursor: pointer;
+  font: inherit;
+  font-size: 9.5px;
+  color: inherit;
+  opacity: 0.75;
+}
+.guide-act__copy:hover { opacity: 1; }
+
+.guide-act__dot { width: 6px; height: 6px; border-radius: 50%; flex: 0 0 auto; }
+.guide-act__dot--done { background: #16a34a; }
+.guide-act__dot--empty { background: #a1a1aa; }
+.guide-act__dot--failed { background: #dc2626; }
+.guide-act__dot--cancelled { background: #a1a1aa; }
+.guide-act__dot--waiting { background: #2563eb; }
+.guide-act__dot--muted { background: transparent; }
+.guide-act__dot--running {
+  background: #f59e0b;
+  animation: guide-act-pulse 1s ease-in-out infinite;
+}
+@keyframes guide-act-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.75); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guide-act__dot--running { animation: none; }
+}
+
+/* ── Nhân vật hệ thống (GuideMascot.jsx) ──
+   Kích thước ở đây PHẢI khớp W / H trong GuideMascot.jsx: việc chọn đứng bên nào được tính bằng
+   số TRƯỚC khi phần tử có layout, nên hai nơi lệch nhau là ngón tay chỉ trượt.
+   z-index 55 = ngang vòng sáng, thấp hơn khung chat (70) nên không bao giờ che khung chat. */
+.app-guide-mascot {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 146px;
+  height: 132px;
+  pointer-events: none;
+  z-index: 55;
+  /* Di chuyển bằng transform (chạy trên GPU), KHÔNG bằng top/left — animate top/left bắt trình
+     duyệt tính lại layout mỗi khung hình, trên trang kanban vài nghìn phần tử là thấy giật. */
+  transition: transform 0.42s cubic-bezier(0.33, 1, 0.68, 1), opacity 0.28s ease;
+  will-change: transform;
+}
+
+/* Đang bám theo HƯỚNG DẪN TỪNG BƯỚC: phải nổi lên trên lớp tối của tour (z-index 100050 trong
+   TourOverlay.jsx), nếu không nhân vật bị phủ mờ và trông như đã tắt. Vẫn thấp hơn tooltip
+   (100052) — che mất lời giải thích của bước thì hỏng cả tour.
+   `pointer-events: none` giữ nguyên nên vẫn bấm xuyên qua được vào nút đang khoanh sáng. */
+.app-guide-mascot[data-tour="1"] {
+  z-index: 100051;
+}
+
+/* TAN ĐI khi rảnh quá lâu — và cũng là trạng thái BAN ĐẦU, khi người dùng chưa hỏi câu nào.
+   Không gỡ khỏi DOM: gỡ rồi dựng lại thì mất animation và mất luôn vị trí đang bám. Cho nó chìm
+   xuống, nhỏ lại, mờ hẳn — và `visibility: hidden` ở cuối để không còn ăn chuột. */
+.app-guide-mascot[data-tan="1"] {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.42s ease, visibility 0s linear 0.42s, filter 0.42s ease;
+  filter: blur(3px);
+}
+.app-guide-mascot[data-tan="1"] .app-guide-mascot__body {
+  transform: scale(0.7) translateY(14px);
+  transition: transform 0.42s cubic-bezier(0.4, 0, 1, 1);
+}
+
+/* Lúc rảnh thì mờ đi và thu nhỏ, không biến mất hẳn — biến mất rồi hiện lại đột ngột giật mắt
+   hơn là đứng im ở góc. Vẫn không nhận chuột nên không cản gì. */
+.app-guide-mascot[data-an="1"] {
+  opacity: 0.32;
+  transform-origin: bottom left;
+}
+.app-guide-mascot[data-an="1"] .app-guide-mascot__body { transform: scale(0.82); }
+
+/* Lật người khi phải đứng bên phải thứ cần chỉ. Chỉ lật THÂN, không lật bong bóng chữ. */
+.app-guide-mascot[data-lat="1"] .app-guide-mascot__body { transform: scaleX(-1); }
+.app-guide-mascot[data-lat="1"][data-an="1"] .app-guide-mascot__body { transform: scaleX(-1) scale(0.82); }
+
+/* Thân nhân vật thật: nhận chuột KHI ĐANG RẢNH để bấm mở ô hỏi. Lúc đang trỏ thì tắt — xem
+   chú thích ở GuideMascot.jsx. */
+.app-guide-mascot__body[data-bam-duoc="1"] {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.app-guide-mascot__body[data-bam-duoc="1"]:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 4px;
+  border-radius: 12px;
+}
+
+/* Nút ẩn ô hỏi. */
+.app-guide-askbar__close {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.app-guide-askbar__close:hover { background: #eef2ff; color: #4f46e5; }
+
+/* Ảnh do chủ hệ thống cắm vào (xem lib/mascotSprite.js) — co vừa khung, giữ tỉ lệ.
+   `drop-shadow` bám theo viền alpha của ảnh (khác `box-shadow` đổ theo hình chữ nhật), nên hào
+   quang ôm đúng dáng nhân vật. Đây cũng là thứ tách nhân vật khỏi nền trắng của trang. */
+.app-guide-mascot__body img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  user-select: none;
+  filter: drop-shadow(0 6px 14px rgba(26, 145, 255, 0.42));
+}
+
+/* Đang chỉ trỏ thì hào quang mạnh hơn — mắt bắt ngay chỗ cần nhìn. */
+.app-guide-mascot--pointing .app-guide-mascot__body img {
+  filter: drop-shadow(0 0 12px rgba(56, 178, 255, 0.75)) drop-shadow(0 6px 14px rgba(26, 145, 255, 0.5));
+}
+
+/* Trạng thái "xong": ánh vàng ấm, khác hẳn xanh để phân biệt được bằng đuôi mắt. */
+.app-guide-mascot--done .app-guide-mascot__body img {
+  filter: drop-shadow(0 0 12px rgba(252, 211, 77, 0.7)) drop-shadow(0 6px 14px rgba(217, 119, 6, 0.4));
+}
+
+/* Nhịp nổi nhẹ khi rảnh — nhân vật tu tiên vốn lơ lửng, đứng chết cứng trông như ảnh dán. */
+.app-guide-mascot--idle .app-guide-mascot__body,
+.app-guide-mascot--done .app-guide-mascot__body {
+  animation: app-guide-mascot-float 3.4s ease-in-out infinite;
+}
+@keyframes app-guide-mascot-float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-7px); }
+}
+
+/* Đang tính: nhấp nhô chậm và hơi nghiêng.
+   HAI trạng thái cùng một nhịp, cố ý — `suy_nghi` (model đang nghĩ) và `lam_viec` (đang chạy
+   tool) nay dùng chung ảnh `analyzing`, nếu để khác animation thì vẫn nhấp nháy đúng như khi
+   còn khác ảnh. Xem lib/mascotSprite.js. */
+.app-guide-mascot--thinking .app-guide-mascot__body,
+.app-guide-mascot--working .app-guide-mascot__body { animation: app-guide-mascot-think 2.4s ease-in-out infinite; }
+/* Đang trả lời: gật nhẹ theo nhịp nói. */
+.app-guide-mascot--answering .app-guide-mascot__body { animation: app-guide-mascot-talk 0.9s ease-in-out infinite; }
+
+@keyframes app-guide-mascot-think {
+  0%, 100% { transform: translateY(0) rotate(-3deg); }
+  50%      { transform: translateY(-5px) rotate(3deg); }
+}
+@keyframes app-guide-mascot-talk {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-3px); }
+}
+
+/* Bong bóng nằm NGOÀI luồng để chiều cao khung đúng bằng thân bé bot — nhờ vậy uiSpotlight.js
+   căn được ngón tay vào tâm nút mà không phải trừ đi phần bong bóng. */
+.app-guide-mascot__bubble {
+  position: absolute;
+  white-space: nowrap;
+  left: 50%;
+  bottom: calc(100% + 3px);
+  transform: translateX(-50%);
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #4f46e5;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.45);
+}
+
+/* Chóp nhỏ của bong bóng, chỉ xuống đầu bé bot. */
+.app-guide-mascot__bubble:not(.app-guide-mascot__bubble--long)::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -3px;
+  width: 7px;
+  height: 7px;
+  margin-left: -3.5px;
+  background: #4f46e5;
+  transform: rotate(45deg);
+  border-radius: 1px;
+}
+
+/* Nút sát mép trên màn hình → bong bóng tụt xuống chân, chóp quay lên. */
+.app-guide-mascot[data-bubble-below] .app-guide-mascot__bubble {
+  bottom: auto;
+  top: calc(100% + 3px);
+}
+.app-guide-mascot[data-bubble-below] .app-guide-mascot__bubble:not(.app-guide-mascot__bubble--long)::after {
+  bottom: auto;
+  top: -3px;
+}
+
+/* Lật NGANG chỉ phần thân khi bé đứng bên phải nút — bong bóng chữ nằm ngoài nên không bị lật
+   ngược (đó là lý do bong bóng và thân là hai phần tử riêng). */
+
+.app-guide-mascot__body svg { animation: app-guide-mascot-bob 1.9s ease-in-out infinite; }
+
+/* transform-box: fill-box để transform-origin tính theo hộp của chính nhóm SVG, không theo
+   toàn bộ viewBox — thiếu dòng này cánh tay quay quanh gốc toạ độ và bay ra khỏi khung. */
+.app-guide-mascot__arm {
+  transform-box: fill-box;
+  transform-origin: 4% 50%;
+  animation: app-guide-mascot-point 0.9s ease-in-out infinite;
+}
+
+.app-guide-mascot__eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: app-guide-mascot-blink 4.5s ease-in-out infinite;
+}
+
+.app-guide-mascot__antenna { animation: app-guide-mascot-antenna 1.4s ease-in-out infinite; }
+
+@keyframes app-guide-mascot-in {
+  from { opacity: 0; transform: scale(0.6) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes app-guide-mascot-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+@keyframes app-guide-mascot-point {
+  0%, 100% { transform: rotate(-9deg); }
+  50% { transform: rotate(7deg); }
+}
+@keyframes app-guide-mascot-blink {
+  0%, 90%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.12); }
+}
+@keyframes app-guide-mascot-antenna {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
+/* Người dùng tắt hiệu ứng chuyển động trong hệ điều hành → bé vẫn hiện và vẫn trỏ, chỉ đứng im. */
+@media (prefers-reduced-motion: reduce) {
+  .app-guide-mascot,
+  .app-guide-mascot__body,
+  .app-guide-mascot__body svg,
+  .app-guide-mascot__arm,
+  .app-guide-mascot__eyes,
+  .app-guide-mascot__antenna {
+    animation: none;
+  }
+  /* Vẫn đổi chỗ được — chỉ là nhảy tới ngay thay vì trượt. */
+  .app-guide-mascot { transition: none; }
+}
+
+/* ── Thẻ Generative UI / Human-in-the-loop trong khung chat ── */
+.guide-tool-card {
+  border: 1px solid rgba(99, 102, 241, 0.25);
+  background: rgba(99, 102, 241, 0.06);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 4px 0;
+}
+.guide-tool-card--pending { opacity: 0.75; font-style: italic; }
+.guide-tool-card--done { background: rgba(16, 185, 129, 0.08); border-color: rgba(16, 185, 129, 0.3); }
+.guide-tool-card--confirm { background: rgba(245, 158, 11, 0.08); border-color: rgba(245, 158, 11, 0.35); }
+.guide-tool-card__title { font-weight: 600; margin-bottom: 6px; }
+.guide-tool-card__summary { font-size: 12px; opacity: 0.75; margin-top: 2px; overflow-wrap: anywhere; }
+.guide-tool-card__actions { display: flex; gap: 8px; margin-top: 8px; }
+
+.guide-screen-card { padding: 6px 0; border-top: 1px solid rgba(0, 0, 0, 0.06); }
+.guide-screen-card:first-of-type { border-top: none; }
+.guide-screen-card__label { font-weight: 600; }
+.guide-screen-card__menu { font-size: 12px; opacity: 0.7; }
+.guide-screen-card__summary { font-size: 12px; margin-top: 2px; }
+
+.guide-btn {
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  background: #fff;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.guide-btn--primary {
+  background: #6366f1;
+  border-color: #6366f1;
+  color: #fff;
+  font-weight: 600;
+}
+.guide-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.guide-metric-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+.guide-metric-row:first-of-type { border-top: none; }
+.guide-metric-row__value { font-weight: 700; }
+
+/* ─────────────────── Nén nội dung câu trả lời của trợ lý ───────────────────
+ * Mặc định của thư viện trong khung chat rộng 420px là quá thưa — đã đo bằng computed style:
+ *   p   → font-size 16px / line-height 28px / margin 20px 0
+ *   ol  → margin 20px 0, kèm class `list-inside`
+ *   li  → margin 8px 0 + `py-1`  ⇒ mỗi mục chiếm 64–92px
+ * Một danh sách 3 mục ăn gần hết chiều cao khung. Ghi đè trong phạm vi
+ * `.copilotKitAssistantMessage` nên KHÔNG đụng tới phần còn lại của giao diện thư viện.
+ *
+ * Dùng selector hai class (`.copilotKitMessage.copilotKitAssistantMessage`) để thắng chắc các
+ * utility Tailwind của thư viện (một class) mà không phải rải `!important`.
+ */
+.copilotKitMessage.copilotKitAssistantMessage {
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+/* Đặt cỡ chữ TƯỜNG MINH trên từng thẻ, KHÔNG dùng `inherit`: giữa `.copilotKitAssistantMessage`
+   và các thẻ nội dung còn một wrapper của thư viện đặt lại `text-base` (16px/28px), nên
+   `inherit` chỉ kế thừa đúng cái 16px đó. Đã đo: margin nén xuống nhưng font vẫn 16px/28px. */
+.copilotKitMessage.copilotKitAssistantMessage p,
+.copilotKitMessage.copilotKitAssistantMessage ul,
+.copilotKitMessage.copilotKitAssistantMessage ol,
+.copilotKitMessage.copilotKitAssistantMessage li {
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.copilotKitMessage.copilotKitAssistantMessage p {
+  margin: 0 0 7px;
+}
+.copilotKitMessage.copilotKitAssistantMessage > *:last-child { margin-bottom: 0; }
+
+/* Tiêu đề trong câu trả lời: giữ vai trò phân mục nhưng không to như tiêu đề trang.
+   Ảnh người dùng gửi có một H2 "Các trường cần điền:" chiếm gần hai dòng. */
+.copilotKitMessage.copilotKitAssistantMessage h1,
+.copilotKitMessage.copilotKitAssistantMessage h2,
+.copilotKitMessage.copilotKitAssistantMessage h3,
+.copilotKitMessage.copilotKitAssistantMessage h4 {
+  margin: 11px 0 4px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.copilotKitMessage.copilotKitAssistantMessage > h1:first-child,
+.copilotKitMessage.copilotKitAssistantMessage > h2:first-child,
+.copilotKitMessage.copilotKitAssistantMessage > h3:first-child { margin-top: 0; }
+
+/* `list-inside` của thư viện làm dòng xuống hàng thụt ngược dưới số thứ tự — đọc rất khó ở
+   khung hẹp. Chuyển sang marker ngoài + thụt lề cố định. */
+.copilotKitMessage.copilotKitAssistantMessage ul,
+.copilotKitMessage.copilotKitAssistantMessage ol {
+  margin: 5px 0 8px;
+  padding-left: 20px;
+  list-style-position: outside;
+}
+.copilotKitMessage.copilotKitAssistantMessage li {
+  margin: 0;
+  padding: 1px 0;
+}
+.copilotKitMessage.copilotKitAssistantMessage li > p { margin: 0; }
+.copilotKitMessage.copilotKitAssistantMessage li > ul,
+.copilotKitMessage.copilotKitAssistantMessage li > ol { margin: 2px 0 2px; }
+
+.copilotKitMessage.copilotKitAssistantMessage pre {
+  margin: 6px 0;
+  padding: 8px 9px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  border-radius: 7px;
+}
+.copilotKitMessage.copilotKitAssistantMessage code { font-size: 12px; }
+.copilotKitMessage.copilotKitAssistantMessage blockquote {
+  margin: 6px 0;
+  padding-left: 10px;
+}
+.copilotKitMessage.copilotKitAssistantMessage table { margin: 6px 0; font-size: 12px; }
+.copilotKitMessage.copilotKitAssistantMessage th,
+.copilotKitMessage.copilotKitAssistantMessage td { padding: 3px 6px; }
+.copilotKitMessage.copilotKitAssistantMessage hr { margin: 9px 0; }
+
+/* ── KHÔNG CÒN NÚT NỔI Ở GÓC PHẢI ──────────────────────────────────────────────────────
+   Lối vào trợ lý giờ nằm ở mục "Trợ lý AI" trong thanh chat chung (MessengerQuickChatDock),
+   nên hai nút nổi góc dưới-phải bị ẩn: nút ✨ của ta và nút bật/tắt mặc định của CopilotKit.
+
+   Vì sao ẩn bằng CSS chứ không bỏ hẳn nút của CopilotKit: `CopilotSidebar` KHÔNG có prop điều
+   khiển đóng/mở (chỉ `defaultOpen`), nên đó là đường DUY NHẤT để mở lại panel đã mount mà đang
+   đóng — lib/openGuide.js gọi `.click()` lên chính nút này. Phần tử `display:none` vẫn nhận
+   `.click()` từ JS, nên ẩn đi không làm mất khả năng mở.
+
+   Đóng panel: dùng nút ✕ trên đầu khung chat (CopilotKit tự vẽ). */
+.app-guide-launcher,
+.copilotKitButton {
+  display: none !important;
+}
+
+/* ── Bong bóng DÀI = LINH PHÙ TOÀN ẢNH (cuộn thư trục dọc, dựng bằng ánh sáng) ──
+
+   Lấy thẳng từ bảng hologram mà chính nhân vật đang cầm trong tư thế `analyzing`: kính lam trong,
+   viền phát sáng, lưới mạch chạy phía sau chữ. Nhờ vậy thứ trợ lý đưa ra và thứ nó cầm trên tay
+   là CÙNG MỘT VẬT — không còn cảnh tu sĩ cầm bảng công nghệ mà nói chuyện qua một tờ giấy cổ.
+
+   Vẫn là CUỘN TRỤC DỌC: hai thanh ngang trên/dưới đóng vai trục, giấy nằm giữa và chỉ nó cuộn.
+   Trục không còn là gỗ mà là thanh năng lượng có hai đầu phát sáng — cùng hình, khác chất.
+
+   Dựng hoàn toàn bằng CSS, không thêm tệp ảnh nào.
+
+   `pointer-events: auto` ở đây là ngoại lệ thứ ba của cả tính năng (cùng nút × và ô hỏi nổi), và
+   là ngoại lệ đắt nhất: một khối tới 320×340 px sẽ ăn mất cú bấm rơi vào nó. Ba thứ bù lại — nó
+   chỉ xuất hiện SAU KHI người dùng hỏi (không tự mọc ra giữa lúc đang thao tác), nút × nằm ngay
+   góc trên, và `overscroll-behavior: contain` giữ cuộn lại trong bảng thay vì truyền tiếp xuống
+   trang phía dưới khi đọc hết. */
+.app-guide-mascot__bubble--long {
+  white-space: normal;
+  text-align: left;
+  max-width: min(322px, calc(100vw - 40px));
+  width: max-content;
+  padding: 10px 0;                       /* chỗ cho hai thanh trục, bảng nằm giữa */
+  /* Bo rất nhẹ, và KHÔNG dùng `clip-path` để vát góc kiểu HUD dù rất muốn: clip-path cắt cả
+     ::before/::after lẫn box-shadow, tức là cắt mất đúng hai thứ làm nên hình cuộn — hai đầu
+     trục thò ra ngoài mép và quầng sáng toả quanh. Đã dựng thử và thấy: vát được góc thì trục
+     cụt mất hai đầu, bảng thành cái khung phẳng. Lưới mạch và quầng sáng đã đủ ra chất công
+     nghệ mà không phải đánh đổi. */
+  border-radius: 3px;
+  background:
+    linear-gradient(180deg, rgba(125, 211, 252, 0.05) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(90deg, rgba(125, 211, 252, 0.07) 0 1px, transparent 1px 22px),
+    repeating-linear-gradient(0deg, rgba(125, 211, 252, 0.06) 0 1px, transparent 1px 22px),
+    radial-gradient(120% 80% at 50% 0%, rgba(56, 189, 248, 0.22) 0%, transparent 60%),
+    linear-gradient(165deg, rgba(11, 38, 66, 0.96) 0%, rgba(8, 26, 48, 0.96) 55%, rgba(6, 18, 36, 0.97) 100%);
+  color: #dceffd;
+  font-size: 12.6px;
+  line-height: 1.62;
+  font-weight: 500;
+  /* Ba lớp bóng: viền sáng sát mép, quầng lam toả ra ngoài, và bóng đổ để nó vẫn nổi trên nền
+     trắng của trang. Thiếu lớp thứ ba thì trên trang sáng nó trông như một lỗ thủng. */
+  box-shadow:
+    0 0 0 1px rgba(56, 189, 248, 0.5) inset,
+    0 0 22px rgba(56, 189, 248, 0.34),
+    0 14px 34px rgba(4, 16, 32, 0.5);
+}
+
+/* HAI THANH TRỤC — thanh năng lượng, sáng nhất ở giữa và tắt dần ra hai mép, hai đầu là nút phát
+   sáng. Thò ra 9px mỗi bên: đầu trục lộ ra ngoài mép bảng mới ra dáng cuộn; bằng đúng mép thì
+   nhìn như cái viền. */
+.app-guide-mascot__bubble--long::before,
+.app-guide-mascot__bubble--long::after {
+  content: '';
+  position: absolute;
+  left: -9px;
+  right: -9px;
+  height: 7px;
+  width: auto;
+  margin: 0;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 4px 50%, #bae6fd 0 3px, transparent 3.4px),
+    radial-gradient(circle at calc(100% - 4px) 50%, #bae6fd 0 3px, transparent 3.4px),
+    linear-gradient(90deg, rgba(56, 189, 248, 0) 0%, #38bdf8 18%, #7dd3fc 50%, #38bdf8 82%, rgba(56, 189, 248, 0) 100%);
+  box-shadow: 0 0 12px rgba(56, 189, 248, 0.75);
+  transform: none;
+}
+.app-guide-mascot__bubble--long::before { top: -2px; }
+.app-guide-mascot__bubble--long::after  { bottom: -2px; top: auto; }
+
+/* Bong bóng NGẮN không có bảng nào cả — lớp bọc biến mất khỏi layout để viên thuốc một dòng
+   giữ nguyên hình dạng cũ. */
+.app-guide-mascot__one-line { display: contents; }
+
+/* MẶT BẢNG — lớp DUY NHẤT cuộn. Hai thanh trục ở khung ngoài nên chúng đứng yên khi đọc. */
+.app-guide-mascot__shoes {
+  /* `pre-wrap`, KHÔNG phải `normal`: câu trả lời của trợ lý là văn bản đã xuống dòng sẵn — các
+     bước 1./2./3., các gạch đầu dòng. Bỏ xuống dòng đi là cả danh sách dính thành một khối chữ. */
+  white-space: pre-wrap;
+  max-height: min(42vh, 336px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  pointer-events: auto;
+  padding: 9px 14px;
+  /* Đường sáng viền mép bảng — chi tiết duy nhất mang màu mạnh, đủ để mắt nhận ra "cuộn trục
+     dọc" ngay cả khi bong bóng chỉ cao hai dòng. Đặc chứ không mờ: bản đầu để alpha 0.5 thì
+     thanh trục nằm sát ngay trên nó nuốt mất, dựng thử ra một vệt không nhìn thấy. */
+  border-top: 1px solid rgba(125, 211, 252, 0.55);
+  border-bottom: 1px solid rgba(125, 211, 252, 0.55);
+  /* Quầng sáng hắt vào từ hai thanh trục — thứ làm bảng có chiều sâu thay vì phẳng lì. */
+  box-shadow:
+    inset 0 7px 12px -8px rgba(125, 211, 252, 0.75),
+    inset 0 -7px 12px -8px rgba(125, 211, 252, 0.75);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(125, 211, 252, 0.5) transparent;
+}
+.app-guide-mascot__shoes::-webkit-scrollbar { width: 6px; }
+.app-guide-mascot__shoes::-webkit-scrollbar-track { background: transparent; }
+.app-guide-mascot__shoes::-webkit-scrollbar-thumb {
+  background: rgba(125, 211, 252, 0.45);
+  border-radius: 999px;
+}
+.app-guide-mascot__shoes::-webkit-scrollbar-thumb:hover { background: rgba(125, 211, 252, 0.7); }
+
+/* Bong bóng dài neo theo BÊN nhân vật đang đứng, không căn giữa đầu: căn giữa thì khung 320px
+   thò ra ngoài mép trái màn hình khi nhân vật đậu sát lề. */
+.app-guide-mascot__bubble--long {
+  left: 50%;
+  /* `--agm-bong-dx` do GuideMascot.jsx đo và đặt: số px phải trượt ngang để bong bóng không trào
+     ra ngoài mép màn hình. Mặc định 0 nên khi không cần dịch thì y hệt bản cũ. */
+  transform: translateX(calc(-50% + var(--agm-bong-dx, 0px)));
+}
+.app-guide-mascot[data-lat="1"] .app-guide-mascot__bubble--long {
+  left: auto;
+  right: 0;
+  transform: translateX(var(--agm-bong-dx, 0px));
+}
+
+/* ── Ô hỏi nổi ──
+   Đứng yên ở đáy vùng nội dung. Đây là thứ DUY NHẤT trong cụm nhân vật nhận chuột. */
+.app-guide-askbar {
+  position: fixed;
+  /* Neo MÉP TRÁI vùng nội dung (biến do GuideAskBar.jsx đo `<main>` rồi đặt vào), không căn giữa
+     màn hình: căn giữa thì lúc thu gọn quả bóng rơi vào chính giữa nội dung. */
+  left: var(--agb-trai, 24px);
+  bottom: 18px;
+  z-index: 56;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Bề ngang để trong biến: lúc THU GỌN phải tính ngược ra mép trái của thanh, để nút tròn đứng
+     đúng chỗ ảnh đại diện đang đứng — không thì thu lại một cái là nó nhảy ra giữa màn hình. */
+  /* Trừ cả phần lề trái đã neo, nếu không thanh thò ra ngoài mép phải trên màn hẹp.
+     Và trừ `--agb-phai` — bề ngang khung chat dán mép phải, do GuideAskBar.jsx đo. Không trừ thì
+     thanh chạy xuống dưới khung chat: vẫn vẽ ra bình thường nhưng khung chat có z-index cao hơn
+     nên nuốt hết cú bấm, kể cả nút ➤. */
+  --agb-w: min(520px, calc(100vw - var(--agb-trai, 24px) - var(--agb-phai, 0px) - 16px));
+  width: var(--agb-w);
+  padding: 7px 8px 7px 10px;
+  transition: width 0.28s ease, padding 0.28s ease, left 0.28s ease;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.97);
+  border: 1px solid rgba(99, 102, 241, 0.28);
+  box-shadow: 0 12px 38px rgba(15, 23, 42, 0.2);
+  backdrop-filter: blur(8px);
+  pointer-events: auto;
+}
+
+/* ── THU GỌN: co lại còn đúng nút tròn ──
+   Không `display:none` phần còn lại: ẩn kiểu đó thì không có animation nào cả, ô nhập bụp một
+   cái là mất. Cho nó co bề ngang về 0 và mờ đi, đồng thời chặn chuột để không bấm nhầm nút vô
+   hình. */
+.app-guide-askbar--collapsed {
+  gap: 0;
+  padding: 6px;
+  border-radius: 999px;
+  width: auto;
+}
+.app-guide-askbar--collapsed .app-guide-askbar__input,
+.app-guide-askbar--collapsed .app-guide-askbar__history,
+.app-guide-askbar--collapsed .app-guide-askbar__close,
+.app-guide-askbar--collapsed .app-guide-askbar__send {
+  width: 0;
+  min-width: 0;
+  flex-basis: 0;
+  padding: 0;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.app-guide-askbar__input,
+.app-guide-askbar__history,
+.app-guide-askbar__close,
+.app-guide-askbar__send {
+  transition: opacity 0.22s ease, width 0.28s ease, flex-basis 0.28s ease;
+}
+
+/* Nút tròn bọc ngoài ảnh đại diện — lối vào thường trực khi nhân vật đã tan. */
+.app-guide-askbar__avatar-button {
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  background: #eef2ff;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: box-shadow 0.18s ease, transform 0.18s ease;
+}
+.app-guide-askbar__avatar-button:hover { transform: scale(1.06); box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.25); }
+.app-guide-askbar__avatar-button:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
+.app-guide-askbar--collapsed .app-guide-askbar__avatar-button { flex-basis: 40px; width: 40px; height: 40px; }
+
+.app-guide-askbar__avatar {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 50%;
+  object-fit: cover;
+  /* Ảnh nhân vật là toàn thân; kéo lên và phóng to để khung tròn lấy đúng phần mặt. */
+  object-position: 50% 16%;
+  transform: scale(1.5);
+  background: #eef2ff;
+}
+
+.app-guide-askbar__input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  resize: none;
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+  line-height: 1.4;
+  max-height: 76px;
+  color: #0f172a;
+  padding: 4px 2px;
+}
+.app-guide-askbar__input::placeholder { color: #94a3b8; }
+.app-guide-askbar__input:disabled { color: #94a3b8; }
+
+.app-guide-askbar__send {
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 50%;
+  background: #4f46e5;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+.app-guide-askbar__send:hover:not(:disabled) { background: #4338ca; }
+.app-guide-askbar__send:disabled { opacity: 0.4; cursor: default; }
+.app-guide-askbar__send:focus-visible,
+.app-guide-askbar__input:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
+
+.app-guide-askbar__line {
+  position: absolute;
+  left: 14px;
+  bottom: calc(100% + 6px);
+  font-size: 11.5px;
+  color: #b91c1c;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  padding: 3px 9px;
+  border-radius: 999px;
+}
+
+/* Màn hẹp: ô hỏi bám sát hai mép, nhân vật thu nhỏ để không tranh chỗ. */
+@media (max-width: 640px) {
+  .app-guide-askbar { --agb-w: calc(100vw - var(--agb-trai, 12px) - var(--agb-phai, 0px) - 12px); bottom: 12px; }
+  .app-guide-mascot { transform-origin: bottom left; }
+}
+
+/* ── AG-UI trên nhân vật: các bước tool của lượt hiện tại ──
+   Nằm NGOÀI luồng (absolute) như bong bóng, để không làm đổi chiều cao khung — chiều cao đó là
+   thứ dùng để căn ngón tay vào tâm nút. `pointer-events: none` như mọi phần của nhân vật. */
+.app-guide-mascot__step {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: min(300px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  pointer-events: none;
+}
+.app-guide-mascot[data-lat="1"] .app-guide-mascot__step { left: auto; right: 0; transform: none; }
+
+/* Bong bóng đã tụt xuống chân (không đủ chỗ trên đầu) thì dải bước đổi lên đầu — hai thứ cùng
+   neo dưới chân là chúng chồng lên nhau, đo được: dòng "Chỉ nút trên màn hình" nằm đè lên dòng
+   đầu của câu trả lời. */
+.app-guide-mascot[data-bubble-below] .app-guide-mascot__step {
+  top: auto;
+  bottom: calc(100% + 6px);
+}
+
+.app-guide-mascot__step-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.82);
+  color: #e2e8f0;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  backdrop-filter: blur(4px);
+}
+.app-guide-mascot__step-icon { flex: 0 0 auto; }
+.app-guide-mascot__step-label { font-weight: 600; }
+.app-guide-mascot__step-note { opacity: 0.72; overflow: hidden; text-overflow: ellipsis; }
+
+/* Màu theo kết quả — nhìn một cái biết bước nào trôi, bước nào vướng. */
+.app-guide-mascot__step-row.is-running { background: rgba(79, 70, 229, 0.9); color: #fff; }
+.app-guide-mascot__step-row.is-done    { background: rgba(15, 110, 98, 0.88); color: #ecfdf5; }
+.app-guide-mascot__step-row.is-empty   { background: rgba(120, 113, 108, 0.88); }
+.app-guide-mascot__step-row.is-failed  { background: rgba(158, 59, 46, 0.9); color: #fef2f2; }
+.app-guide-mascot__step-row.is-waiting { background: rgba(154, 107, 18, 0.9); color: #fffbeb; }
+
+/* Nút mở khung chat trên ô hỏi — khung chat nay mặc định đóng. */
+.app-guide-askbar__history {
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #64748b;
+  font-size: 15px;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.app-guide-askbar__history:hover { background: #eef2ff; color: #4f46e5; }
+.app-guide-askbar__history:focus-visible { outline: 2px solid #6366f1; outline-offset: 2px; }
+
+/* ── Nút × đóng lời thoại ──
+   Chữ trong bong bóng KHÔNG tự tắt theo giờ nữa (xem GuideMascot.jsx): người dùng đóng khi đọc
+   xong, hoặc hệ thống tự thay bằng câu mới. Nên phải có chỗ bấm.
+
+   `pointer-events: auto` là ngoại lệ có chủ ý giữa một cây `pointer-events: none`. Vùng chắn
+   chuột đúng bằng 18×18 px ở góc bong bóng — nhân vật đi khắp màn hình nên không được phép
+   chắn nhiều hơn thế. */
+.app-guide-mascot__close {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.app-guide-mascot__close:hover { background: rgba(255, 255, 255, 0.32); }
+.app-guide-mascot__close:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+
+/* ── MŨI TÊN khi nhân vật phải đứng TRÊN / DƯỚI mục tiêu ──
+   Ảnh nhân vật chỉ có tư thế trỏ ngang, nên ở hai thế đứng này bàn tay chỉ vào khoảng không.
+   Mũi tên nói hộ phần hướng. Chỉ hiện trong tour, và chỉ ở hai thế đứng đó (xem GuideMascot.jsx).
+   Nhấp nháy cùng nhịp với vòng sáng của tour để mắt nối được hai thứ với nhau. */
+.app-guide-mascot__nose {
+  position: absolute;
+  left: 50%;
+  width: 0;
+  height: 0;
+  margin-left: -9px;
+  border-left: 9px solid transparent;
+  border-right: 9px solid transparent;
+  filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.9));
+  animation: app-guide-mascot-mui 1.6s ease-in-out infinite;
+}
+.app-guide-mascot[data-huong="duoi"] .app-guide-mascot__nose {
+  top: -16px;
+  border-bottom: 12px solid #38bdf8;
+}
+.app-guide-mascot[data-huong="tren"] .app-guide-mascot__nose {
+  bottom: -16px;
+  border-top: 12px solid #38bdf8;
+}
+@keyframes app-guide-mascot-mui {
+  0%, 100% { opacity: 0.55; transform: translateY(0); }
+  50%      { opacity: 1; transform: translateY(3px); }
+}
+.app-guide-mascot[data-huong="tren"] .app-guide-mascot__nose {
+  animation-name: app-guide-mascot-mui-tren;
+}
+@keyframes app-guide-mascot-mui-tren {
+  0%, 100% { opacity: 0.55; transform: translateY(0); }
+  50%      { opacity: 1; transform: translateY(-3px); }
+}
+
+/* ── Hai nút TRẢ LỜI câu hỏi xác nhận (điều hướng) ──
+   `pointer-events: auto` — ngoại lệ có chủ đích, cùng loại với nút ×: không có nút bấm được thì
+   câu hỏi chỉ nằm trong khung chat đang đóng, và lượt chạy của agent treo. */
+.app-guide-mascot__ask {
+  display: flex;
+  gap: 6px;
+  margin-top: 9px;
+}
+.app-guide-mascot__button {
+  pointer-events: auto;
+  cursor: pointer;
+  border: 0;
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #312e81;
+  background: rgba(255, 255, 255, 0.86);
+}
+.app-guide-mascot__button--primary {
+  color: #fff;
+  background: #0ea5e9;
+  box-shadow: 0 2px 10px rgba(14, 165, 233, 0.5);
+}
+.app-guide-mascot__button:hover { filter: brightness(1.08); }
+.app-guide-mascot__button:focus-visible { outline: 2px solid #fff; outline-offset: 1px; }
+
+/* Nút × trên LINH PHÙ = nút HUD viền sáng, không phải con dấu son.
+   Đỏ son hợp giấy cổ nhưng trên kính lam thì đỏ và lam đánh nhau; viền lam phát sáng vừa đọc
+   được vừa cùng một ngôn ngữ với cả bảng.
+
+   `sticky` + `float: right` chứ không `absolute`: absolute neo theo padding-box của mặt bảng, mà
+   padding-box trôi theo nội dung khi cuộn — đọc xuống vài dòng là nút biến mất đúng lúc người ta
+   muốn đóng. Sticky giữ nó ở góc trên phải, float cho chữ chảy quanh. */
+.app-guide-mascot__bubble--long .app-guide-mascot__close {
+  position: sticky;
+  float: right;
+  top: 0;
+  right: 0;
+  margin: -1px -5px 2px 9px;
+  width: 19px;
+  height: 19px;
+  border-radius: 3px;
+  background: rgba(56, 189, 248, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.6);
+  color: #dceffd;
+  font-size: 13px;
+}
+.app-guide-mascot__bubble--long .app-guide-mascot__close:hover {
+  background: rgba(56, 189, 248, 0.32);
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.9), 0 0 10px rgba(56, 189, 248, 0.6);
+}
+.app-guide-mascot__bubble--long .app-guide-mascot__close:focus-visible {
+  outline: 2px solid #7dd3fc;
+  outline-offset: 2px;
+}
+
+/* Hai nút xác nhận theo cùng ngôn ngữ: Đồng ý = khối lam đặc phát sáng, Thôi = chỉ có viền. */
+.app-guide-mascot__bubble--long .app-guide-mascot__button {
+  border-radius: 4px;
+  font-weight: 600;
+  color: #dceffd;
+  background: rgba(125, 211, 252, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.45);
+}
+.app-guide-mascot__bubble--long .app-guide-mascot__button--primary {
+  color: #04223a;
+  background: linear-gradient(165deg, #7dd3fc, #38bdf8);
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.55);
+}
+.app-guide-mascot__bubble--long .app-guide-mascot__button:focus-visible {
+  outline: 2px solid #7dd3fc;
+  outline-offset: 2px;
+}
+
+/* ═══════════════════════ Tab LUỒNG — sơ đồ một lượt hỏi ═══════════════════════
+ *
+ * Vẽ bằng SVG hand-author, không thư viện: bảng này rộng ~320px và chỉ cần hộp + mũi tên, kéo
+ * thêm một thư viện đồ thị là 100 KB cho ba hình chữ nhật.
+ *
+ * Chữ và mũi tên đều `currentColor` nên sơ đồ tự đổi theo nền sáng/tối của bảng (bảng lấy màu từ
+ * ThemeProvider qua --color-topbar / --color-text-card). Chỉ viền hộp mới dùng màu cứng, và đó là
+ * màu MANG NGHĨA: tím = kinh nghiệm, vàng = cứu hộ, đỏ = trần bước / bước hỏng, lam = tool.
+ */
+.guide-flow { padding: 6px 4px 12px; }
+
+.guide-flow__svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  /* SVG kế thừa cỡ chữ của bảng nếu không chốt — chốt lại để phép ước lượng bề rộng khi ngắt
+     dòng (KY_TU_MOI_DONG) không sai khi người dùng phóng to chữ toàn app. */
+  font-family: inherit;
+}
+
+/* ── Tab Ngữ cảnh: bản đồ khu vực có nút CHI TIẾT ──
+   Nút "Chi tiết" gọi đúng hàm mà tool `read_region` của trợ lý gọi (lib/regionTools.js), nên
+   thứ hiện ra ở đây là thứ trợ lý nhận — không phải bản dựng lại. */
+.guide-act__regions { list-style: none; margin: 2px 0 8px; padding: 0 8px; display: flex; flex-direction: column; gap: 6px; }
+.guide-act__region {
+  border: 1px solid rgba(99, 102, 241, 0.16);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: rgba(99, 102, 241, 0.03);
+}
+.guide-act__region--agent { border-color: rgba(22, 163, 74, 0.45); }
+.guide-act__region-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.guide-act__region-id { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10.5px; opacity: 0.55; }
+.guide-act__region-name { font-weight: 600; overflow-wrap: anywhere; }
+.guide-act__region-name--none { font-style: italic; opacity: 0.7; }
+.guide-act__chips { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+.guide-act__chip {
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.guide-act__chip--kind { background: rgba(99, 102, 241, 0.12); color: #4338ca; font-weight: 600; }
+.guide-act__chip--warn { background: rgba(245, 158, 11, 0.16); color: #b45309; }
+.guide-act__chip--agent { background: rgba(22, 163, 74, 0.14); color: #15803d; font-weight: 600; }
+.guide-act__region-actions { display: flex; gap: 5px; margin-top: 5px; flex-wrap: wrap; align-items: center; }
+.guide-act__btn {
+  padding: 2px 8px;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 6px;
+  background: var(--color-topbar, #fff);
+  color: inherit;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.guide-act__btn:hover { background: rgba(99, 102, 241, 0.08); }
+.guide-act__btn:disabled { opacity: 0.5; cursor: default; }
+.guide-act__btn--on { background: rgba(99, 102, 241, 0.14); border-color: rgba(99, 102, 241, 0.55); }
+.guide-act__hint { font-size: 10.5px; opacity: 0.65; }
+
+.guide-act__rd { margin-top: 6px; padding-top: 6px; border-top: 1px dashed rgba(99, 102, 241, 0.22); display: flex; flex-direction: column; gap: 6px; }
+.guide-act__call {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: rgba(15, 23, 42, 0.05);
+  overflow-wrap: anywhere;
+}
+.guide-act__warn {
+  padding: 4px 7px;
+  border-radius: 6px;
+  background: rgba(245, 158, 11, 0.12);
+  color: #92400e;
+  font-size: 11px;
+  line-height: 1.45;
+}
+.guide-act__sec-title { font-weight: 600; font-size: 11px; opacity: 0.75; margin-bottom: 2px; }
+.guide-act__kv { display: grid; grid-template-columns: minmax(70px, auto) 1fr; gap: 1px 8px; font-size: 11px; }
+.guide-act__kv dt { opacity: 0.62; overflow-wrap: anywhere; }
+.guide-act__kv dd { margin: 0; overflow-wrap: anywhere; }
+.guide-act__lines { margin: 0; padding-left: 16px; font-size: 11px; line-height: 1.45; }
+.guide-act__lines li { overflow-wrap: anywhere; }
+.guide-act__tablewrap { overflow-x: auto; max-width: 100%; }
+.guide-act__table { border-collapse: collapse; font-size: 10.5px; min-width: 100%; }
+.guide-act__table th, .guide-act__table td {
+  border: 1px solid rgba(99, 102, 241, 0.16);
+  padding: 2px 5px;
+  text-align: left;
+  white-space: nowrap;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.guide-act__table th { background: rgba(99, 102, 241, 0.07); font-weight: 600; }

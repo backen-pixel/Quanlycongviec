@@ -20,16 +20,23 @@ import {
   Loader2, Send, Trash2, Globe,
 } from 'lucide-react';
 
+// `ten`: tên gọi SẠCH của mục, không emoji và không dính số huy hiệu — dùng cho `aria-label`.
+// Trợ lý hướng dẫn đọc nhãn nút từ `aria-label` trước, nên thiếu nó thì mục Thành viên hiện ra
+// thành "100👥 Thành viên" (dính 3 số đếm CRM/SX/LD) và mục Ghi âm không có nhãn nào.
+// role="tab" + aria-selected trên từng nút: trạng thái "đang mở" trước đây CHỈ nằm trong class
+// Tailwind (border-b-2 + màu chữ), nên trợ lý hướng dẫn đọc `tab_dang_chon` ra RỖNG trên trang
+// chi tiết lead/deal — nó thấy đủ 10 mục nhưng không biết người dùng đang đứng ở mục nào, rồi đi
+// hướng dẫn theo mục khác. Khai tường minh là đủ để đọc được.
 const TAB_DEFS = [
-  { id: 'tasks', label: '✅ Công việc', title: 'Nhiệm vụ pipeline' },
-  { id: 'shared-workspace', label: '🤝 Không gian chung', title: 'Phân công giao chéo', activeClass: 'text-indigo-600 border-indigo-600' },
-  { id: 'purchase_orders', label: '🛒 Đặt hàng', title: 'Lệnh đặt hàng', activeClass: 'text-amber-700 border-amber-500', badgeKey: 'po' },
-  { id: 'documents', label: '📋 Tài liệu', title: 'Tài liệu', badgeKey: 'docs' },
-  { id: 'drive', label: '☁️ Drive', title: 'Google Drive', badgeKey: 'drive' },
-  { id: 'notes', label: '📝 Ghi chú & HĐ', title: 'Ghi chú và hoạt động', badgeKey: 'notes' },
-  { id: 'team', label: '👥 Thành viên', title: 'Thành viên' },
-  { id: 'comments', label: '💬 Bình luận', title: 'Bình luận', badgeKey: 'comments' },
-  { id: 'voice_crm', label: null, title: 'Ghi âm', activeClass: 'text-violet-600 border-violet-600' },
+  { id: 'tasks', label: '✅ Công việc', ten: 'Công việc', title: 'Nhiệm vụ pipeline' },
+  { id: 'shared-workspace', label: '🤝 Không gian chung', ten: 'Không gian chung', title: 'Phân công giao chéo', activeClass: 'text-indigo-600 border-indigo-600' },
+  { id: 'purchase_orders', label: '🛒 Đặt hàng', ten: 'Đặt hàng', title: 'Lệnh đặt hàng', activeClass: 'text-amber-700 border-amber-500', badgeKey: 'po' },
+  { id: 'documents', label: '📋 Tài liệu', ten: 'Tài liệu', title: 'Tài liệu', badgeKey: 'docs' },
+  { id: 'drive', label: '☁️ Drive', ten: 'Drive', title: 'Google Drive', badgeKey: 'drive' },
+  { id: 'notes', label: '📝 Ghi chú & HĐ', ten: 'Ghi chú & HĐ', title: 'Ghi chú và hoạt động', badgeKey: 'notes' },
+  { id: 'team', label: '👥 Thành viên', ten: 'Thành viên', title: 'Thành viên' },
+  { id: 'comments', label: '💬 Bình luận', ten: 'Bình luận', title: 'Bình luận', badgeKey: 'comments' },
+  { id: 'voice_crm', label: null, ten: 'Ghi âm', title: 'Ghi âm', activeClass: 'text-violet-600 border-violet-600' },
 ];
 
 function EmptyDash({ icon: Icon, title, hint, action }) {
@@ -247,6 +254,10 @@ export default function AppModuleRecordTabs({
           <button
             key={tab.id}
             type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            aria-label={tab.ten}
+            data-record-tab={tab.id}
             title={tab.title}
             onClick={() => setActiveTab(tab.id)}
             className={tabBtnClass(tab)}

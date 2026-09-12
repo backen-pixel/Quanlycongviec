@@ -126,6 +126,21 @@ export default function KanbanColumnVirtualList({
     <div
       ref={listRootRef}
       className="relative w-full"
+      /**
+       * SỐ MỤC THẬT, khai cho Trợ lý hướng dẫn.
+       *
+       * Bộ dò khu vực của trợ lý đếm phần tử trong DOM. Ở đây DOM chỉ chứa cửa sổ ảo — vùng cuộn
+       * cao 383px, thẻ cao 238px, cộng overscan 6 là ra đúng 7 thẻ được dựng, bất kể cột có 18.
+       * Nó còn đổi theo chiều cao cửa sổ trình duyệt và vị trí cuộn, nên hai người dùng hai màn
+       * hình sẽ nghe hai con số khác nhau cho cùng một cột.
+       *
+       * Đã đo: cột "Đã Khảo sát." có 18 deal, trợ lý báo 7 — và báo rất chắc chắn, vì chỉ dẫn
+       * của nó vốn ghi `so_muc` là "con số THẬT".
+       *
+       * `itemCount` là tổng thật mà chính component này đang dựng danh sách theo. Khai ra đây là
+       * chỗ rẻ nhất và đúng nhất: mọi cột kanban trong hệ thống đều đi qua component này.
+       */
+      data-guide-so-muc={itemCount}
       style={shouldVirtualize ? { height: virtualizer.getTotalSize() } : undefined}
     >
       {shouldVirtualize ? (

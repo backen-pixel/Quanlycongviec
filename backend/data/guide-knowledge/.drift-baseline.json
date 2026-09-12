@@ -1,0 +1,12 @@
+[
+  "/management/crm-overview",
+  "/management/production-overview",
+  "/management/production-overview/:id",
+  "/management/project-deadlines",
+  "/management/purchasing-overview",
+  "/management/quotes-overview",
+  "/management/work-overview",
+  "/management/work-unified",
+  "/management/work-unified/:id",
+  "/s/:token"
+]
