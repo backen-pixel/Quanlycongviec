@@ -141,7 +141,7 @@ async function linkDealToProject({
  */
 async function listDealProductionProjects(dealId, opts = {}) {
   if (!dealId) return [];
-  const projectDateCols = 'install_date, delivery_date, pickup_at, production_finish_date, logistics_company_id, logistics_person_id, vc_notes';
+  const projectDateCols = 'install_date, delivery_date, pickup_at, production_finish_date, logistics_company_id, logistics_person_id, vc_notes, sx_kanban_column_id, vc_kanban_column_id, sx_pipeline_stage_entered_at';
   const projectEmbed = `
         id, code, name, status, company_id, workshop_type_id, ${projectDateCols},
         company:companies!projects_company_id_fkey(id, name, short_name),
@@ -170,6 +170,9 @@ async function listDealProductionProjects(dealId, opts = {}) {
       delivery_date: p.delivery_date || null,
       pickup_at: p.pickup_at || null,
       production_finish_date: p.production_finish_date || null,
+      sx_kanban_column_id: p.sx_kanban_column_id || null,
+      vc_kanban_column_id: p.vc_kanban_column_id || null,
+      sx_pipeline_stage_entered_at: p.sx_pipeline_stage_entered_at || null,
       logistics_company_id: p.logistics_company_id || lc.id || null,
       logistics_company_name: lc.short_name || lc.name || null,
       logistics_person_id: p.logistics_person_id || p.logistics_person?.id || null,
@@ -186,13 +189,16 @@ async function listDealProductionProjects(dealId, opts = {}) {
     `)
     .eq('deal_id', dealId)
     .order('created_at', { ascending: true });
-  if (error && /logistics_person/i.test(String(error.message || ''))) {
-    const embedNoPerson = projectEmbed.replace(/logistics_person:users!projects_logistics_person_id_fkey\(id, full_name\),/, '');
+  if (error && /logistics_person|sx_pipeline_stage_entered_at|sx_kanban_column_id|vc_kanban_column_id/i.test(String(error.message || ''))) {
+    const embedLite = projectEmbed
+      .replace(/logistics_person:users!projects_logistics_person_id_fkey\(id, full_name\),/, '')
+      .replace(/, sx_pipeline_stage_entered_at/, '')
+      .replace(/, sx_kanban_column_id, vc_kanban_column_id/, '');
     ({ data: links, error } = await supabase
       .from('crm_deal_projects')
       .select(`
         id, deal_id, project_id, is_primary, label, created_at,
-        project:projects!crm_deal_projects_project_id_fkey(${embedNoPerson})
+        project:projects!crm_deal_projects_project_id_fkey(${embedLite})
       `)
       .eq('deal_id', dealId)
       .order('created_at', { ascending: true }));

@@ -438,12 +438,21 @@ r.get('/:entity_type/:entity_id', async (req, res) => {
 r.delete('/:id', async (req, res) => {
   try {
     const { data: file } = await supabase.from('file_attachments')
-      .select('id, storage_path, uploaded_by, entity_type, entity_id')
+      // file_attachments KHÔNG có cột `storage_path` — chỉ có `file_url`. Tên sai
+      // làm cả câu hỏng -> `file` luôn undefined -> endpoint xoá luôn trả 404,
+      // và file trên Storage không bao giờ được dọn.
+      .select('id, file_url, uploaded_by, entity_type, entity_id')
       .eq('id', req.params.id).single();
     if (!file) return res.status(404).json({ error: 'Không tìm thấy file' });
     if (!await assertFileAttachmentMutation(req, res, file)) return;
-    if (file?.storage_path) {
-      await supabase.storage.from(BUCKET).remove([file.storage_path]);
+    // file_url là public URL dựng bởi getPublicUrl(storagePath), dạng
+    //   .../storage/v1/object/public/<BUCKET>/<storagePath>
+    // nên tách ngược để lấy đường dẫn trong bucket.
+    const marker = `/object/public/${BUCKET}/`;
+    const idx = String(file?.file_url || '').indexOf(marker);
+    if (idx >= 0) {
+      const storagePath = decodeURIComponent(String(file.file_url).slice(idx + marker.length));
+      if (storagePath) await supabase.storage.from(BUCKET).remove([storagePath]);
     }
     await supabase.from('file_attachments').delete().eq('id', req.params.id);
     res.json({ message: 'Đã xóa' });

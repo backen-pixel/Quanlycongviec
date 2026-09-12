@@ -247,6 +247,23 @@ r.post('/leads/:id/assignments', async (req, res) => {
     }
 
     try {
+      const {
+        postSharedWorkspaceAssignmentMentionComment,
+      } = require('../../../helpers/dealCommentNotifications');
+      await postSharedWorkspaceAssignmentMentionComment(req, notifyMultiple, {
+        leadId,
+        senderId: req.user.userId,
+        assignment: data,
+        assigneeIds,
+        taskSourceType: data.task_source_type || b.task_source_type || null,
+        assignmentModule: mod,
+      });
+    } catch (commentErr) {
+      // Bình luận/@mention là side-effect; không làm thất bại nhiệm vụ đã tạo.
+      console.warn('[shared-ws] assignment mention comment:', commentErr?.message || commentErr);
+    }
+
+    try {
       await emitCrmTaskChanged(req, {
         leadId,
         taskId: data.crm_task_id || result.data?.task?.id || null,

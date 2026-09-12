@@ -1161,6 +1161,24 @@ function dedupeCrmKanbanRows(rows) {
   return [...map.values()];
 }
 
+const CRM_COMMENTS_INDEX_CHUNK = 200;
+
+async function fetchCrmLeadCommentsIndex(leadIds) {
+  const uniq = [...new Set((leadIds || []).map((id) => String(id || '').trim()).filter(Boolean))];
+  const out = {};
+  const chunks = [];
+  for (let i = 0; i < uniq.length; i += CRM_COMMENTS_INDEX_CHUNK) {
+    chunks.push(uniq.slice(i, i + CRM_COMMENTS_INDEX_CHUNK));
+  }
+  const maps = await Promise.all(
+    chunks.map((part) => api.get(`/crm/lead-comments/index?lead_ids=${part.join(',')}`)
+      .then((r) => r.data || {})
+      .catch(() => ({}))),
+  );
+  maps.forEach((m) => Object.assign(out, m || {}));
+  return out;
+}
+
 export default function CRMDashboard() {
   const { user } = useAuth();
   const productTour = useProductTour();
@@ -2408,9 +2426,8 @@ export default function CRMDashboard() {
     const ids = all.map(x => x.id).filter(Boolean);
     if (!ids.length) { setCommentsIndex({}); return; }
     let cancelled = false;
-    const chunk = ids.slice(0, 2000);
-    api.get(`/crm/lead-comments/index?lead_ids=${chunk.join(',')}`)
-      .then(r => { if (!cancelled) setCommentsIndex(r.data || {}); })
+    fetchCrmLeadCommentsIndex(ids)
+      .then((idx) => { if (!cancelled) setCommentsIndex(idx || {}); })
       .catch(() => { if (!cancelled) setCommentsIndex({}); });
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -7151,18 +7168,22 @@ export default function CRMDashboard() {
     setDeadlineBusy(true);
     try {
       if (ctx.mode === 'edit_only') {
-        await api.patch(`/crm/leads/${ctx.leadId}/deadline`, {
+        const { data } = await api.patch(`/crm/leads/${ctx.leadId}/deadline`, {
           kanban_deadline_at: deadlineIso,
           reason: reason || '',
           sync_open_tasks: true,
         });
         const lid = String(ctx.leadId);
         const patch = {
-          kanban_deadline_at: deadlineIso,
-          kanban_deadline_reason: reason || null,
-          crm_next_open_task_deadline: ctx.card?.crm_next_open_task_deadline
-            ? (deadlineIso || null)
+          kanban_deadline_at: data?.kanban_deadline_at ?? deadlineIso,
+          kanban_deadline_reason: data?.kanban_deadline_reason ?? reason ?? null,
+          crm_next_open_task_deadline: data?.crm_next_open_task_deadline !== undefined
+            ? data.crm_next_open_task_deadline
             : ctx.card?.crm_next_open_task_deadline,
+          effective_deadline_module: data?.effective_deadline_module,
+          effective_deadline_at: data?.effective_deadline_at,
+          effective_deadline_source: data?.effective_deadline_source,
+          deadline_state: data?.deadline_state,
           updated_at: new Date().toISOString(),
         };
         if (pipelineType === 'lead') {
@@ -7171,7 +7192,9 @@ export default function CRMDashboard() {
           setAllDeals((prev) => prev.map((d) => (String(d.id) === lid ? { ...d, ...patch } : d)));
         }
         setDeadlineCtx(null);
-        load({ silent: true });
+        try {
+          load({ silent: true });
+        } catch (_) { /* đã lưu xong */ }
         return;
       }
       const mergedExtra = {
@@ -9374,8 +9397,8 @@ export default function CRMDashboard() {
               onRefreshIndex={() => {
                 const ids = currentPipeline.flatMap(s => s.items.map(i => i.id));
                 if (!ids.length) return;
-                api.get(`/crm/lead-comments/index?lead_ids=${ids.join(',')}`)
-                  .then(r => setCommentsIndex(r.data || {})).catch(() => {});
+                fetchCrmLeadCommentsIndex(ids)
+                  .then((idx) => setCommentsIndex(idx || {})).catch(() => {});
               }}
             />
           )}
@@ -11721,6 +11744,13 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
               onOpenDeadline={onOpenDeadline}
               onTogglePin={onTogglePin}
               onToggleInteracted={onToggleInteracted}
+              dockPin={{
+                id: item.project_id || item.id,
+                code: item.code,
+                name: item.title,
+                href: `/crm/leads/${item.id}`,
+                module: 'crm',
+              }}
             />
           </div>
         </div>

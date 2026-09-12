@@ -1119,7 +1119,7 @@ export default function SxMultiTargetPicker({
                           {backPlan.planning.days != null ? ` (${backPlan.planning.days} ngày)` : ''}
                         </p>
                         <p>
-                          <span className="font-semibold">HT thùng:</span>{' '}
+                          <span className="font-semibold">Gia công:</span>{' '}
                           {fmtRange(backPlan.cabinet.startYmd, backPlan.cabinet.endYmd)} (2 ngày)
                         </p>
                         <p>
@@ -1127,7 +1127,7 @@ export default function SxMultiTargetPicker({
                           {fmtRange(backPlan.finishing.startYmd, backPlan.finishing.endYmd)} (2 ngày)
                         </p>
                         <p>
-                          <span className="font-semibold">Đóng hàng:</span>{' '}
+                          <span className="font-semibold">Giao hàng:</span>{' '}
                           {fmtRange(backPlan.packing.startYmd, backPlan.packing.endYmd)} (1 ngày)
                         </p>
                       </div>

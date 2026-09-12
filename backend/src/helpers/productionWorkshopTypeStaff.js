@@ -1245,7 +1245,9 @@ async function mergeDealLeadMembers({ dealId, userIds, addedBy = null }) {
     role: 'member',
     ...(addedBy ? { added_by: addedBy } : {}),
   }));
-  const { error } = await supabase.from('lead_members').insert(rows);
+  // upsert-ignore: không ghi đè role thành viên đã có (đúng ý định của hàm này).
+  const { error } = await supabase.from('lead_members')
+    .upsert(rows, { onConflict: 'lead_id,user_id', ignoreDuplicates: true });
   if (error) {
     console.warn('[productionWorkshopTypeStaff] mergeDealLeadMembers:', error.message);
     return { added: 0, error: error.message, added_user_ids: [] };

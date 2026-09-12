@@ -10,6 +10,7 @@
  */
 
 const { supabase } = require('../config/supabase');
+const { warnQ } = require('./queryErrorLog');
 
 // Stage slug → Division mapping (fallback if no flow)
 const STAGE_DIVISION_MAP = {
@@ -95,11 +96,12 @@ async function findDefaultTemplateSet(companyUnitId) {
 async function getTemplateTasks(templateSetId, stageId) {
   if (!templateSetId) return [];
 
-  const { data } = await supabase.from('company_template_tasks')
-    .select('id, title, description, priority, estimated_hours, stage_id, order_index, checklist_items')
+  const { data } = warnQ('stage-flow:template-tasks')(await supabase.from('company_template_tasks')
+    // company_template_tasks không có cột `checklist_items`
+    .select('id, title, description, priority, estimated_hours, stage_id, order_index')
     .eq('template_set_id', templateSetId)
     .eq('stage_id', stageId)
-    .order('order_index');
+    .order('order_index'));
 
   return data || [];
 }

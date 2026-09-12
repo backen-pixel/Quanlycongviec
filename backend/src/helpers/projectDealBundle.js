@@ -3,10 +3,13 @@
  * Kèm overview Tổng quan: KPI + luồng + công việc trọng yếu.
  */
 const { supabase } = require('../config/supabase');
+const { warnQ } = require('./queryErrorLog');
 const {
   leadDocVisibleForModuleAndUser,
 } = require('./documentShareScope');
 const { listDealProductionProjects } = require('./autoDealWonProject');
+const { sortProjectCrmDeals } = require('./workshopCrmDeals');
+const { classifyProjectForecast } = require('./projectForecast');
 
 const DONE = new Set(['completed', 'done']);
 const IN_PROGRESS = new Set(['in_progress', 'doing', 'active', 'processing']);
@@ -185,17 +188,6 @@ function mergeTasksByKey(existing, incoming, keyFn) {
   return Array.from(map.values());
 }
 
-function startOfDay(d) {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
-}
-
-function daysBetween(a, b) {
-  const ms = startOfDay(b).getTime() - startOfDay(a).getTime();
-  return Math.round(ms / 86400000);
-}
-
 function sectionTaskStats(section) {
   return section?.stats?.tasks || countDone(section?.tasks || []);
 }
@@ -296,14 +288,53 @@ async function resolveLeadInboxLinksSafe(leadId, primaryLead) {
   }
 }
 
+async function resolveCommentThreadLeadIds(leadId) {
+  if (!leadId) return [];
+  try {
+    const { data: row } = await supabase
+      .from('crm_leads')
+      .select('id, parent_lead_id')
+      .eq('id', leadId)
+      .maybeSingle();
+    if (!row) return [leadId];
+    const rootId = row.parent_lead_id || row.id;
+    const { data: family } = await supabase
+      .from('crm_leads')
+      .select('id')
+      .or(`id.eq.${rootId},parent_lead_id.eq.${rootId}`);
+    const ids = [...new Set((family || []).map((d) => d.id).filter(Boolean).map(String))];
+    return ids.length ? ids : [String(leadId)];
+  } catch {
+    return [String(leadId)];
+  }
+}
+
+function pickBundlePrimaryLead(refs, softRefs) {
+  const pool = (refs && refs.length) ? refs : (softRefs || []);
+  if (!pool.length) return null;
+  const deals = pool.filter((l) => String(l?.type || '') === 'deal');
+  return sortProjectCrmDeals(deals.length ? deals : pool)[0] || null;
+}
+
 async function loadProjectCommentCount(leadId, projectId) {
   try {
     if (leadId) {
-      const { count } = await supabase
+      const ids = await resolveCommentThreadLeadIds(leadId);
+      const threadIds = ids.length ? ids : [leadId];
+      const counted = await supabase
         .from('crm_lead_comments')
         .select('id', { count: 'exact', head: true })
-        .eq('lead_id', leadId);
-      return count || 0;
+        .in('lead_id', threadIds)
+        .is('deleted_at', null);
+      if (counted.error && String(counted.error.message || '').includes('deleted_at')) {
+        const fb = await supabase
+          .from('crm_lead_comments')
+          .select('id', { count: 'exact', head: true })
+          .in('lead_id', threadIds);
+        return fb.count || 0;
+      }
+      if (counted.error) throw counted.error;
+      return counted.count || 0;
     }
     const q = await supabase
       .from('project_comments')
@@ -443,22 +474,10 @@ function buildProjectOverview({
   const commitmentRaw = project?.install_date || project?.delivery_date
     || project?.production_deadline || project?.deadline || null;
   const commitment_date = commitmentRaw ? String(commitmentRaw).slice(0, 10) : null;
-  const today = new Date();
-  let days_remaining = null;
-  let delay_days = 0;
-  let forecast = 'unknown';
-  if (commitment_date) {
-    days_remaining = daysBetween(today, commitment_date);
-    if (days_remaining < 0) {
-      forecast = 'late';
-      delay_days = Math.abs(days_remaining);
-    } else if (days_remaining <= 3) {
-      forecast = 'at_risk';
-      delay_days = Math.max(0, 2);
-    } else {
-      forecast = 'on_track';
-    }
-  }
+  const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitment_date, {
+    project,
+    sxStage,
+  });
 
   const budgetTotal = Number(
     project?.production_value
@@ -624,6 +643,7 @@ const PROJECT_BUNDLE_SELECT_CORE = `
   install_date, delivery_date, production_deadline, workshop_type_id, logistics_company_id,
   production_person_id, logistics_person_id, installation_person_id,
   current_stage:workflow_stages(id, name, slug, color, order_index),
+  workshop_type:workshop_project_types!projects_workshop_type_id_fkey(id, name),
   production_person:users!projects_production_person_id_fkey(id, full_name),
   logistics_person:users!projects_logistics_person_id_fkey(id, full_name),
   installation_person:users!projects_installation_person_id_fkey(id, full_name),
@@ -682,6 +702,7 @@ async function fetchProjectForBundle(projectId, opts = {}) {
         install_date, delivery_date, production_deadline, workshop_type_id, logistics_company_id,
         production_person_id, logistics_person_id, installation_person_id,
         current_stage:workflow_stages(id, name, slug, color, order_index),
+        workshop_type:workshop_project_types!projects_workshop_type_id_fkey(id, name),
         company:companies!projects_company_id_fkey(id, name, short_name),
         customer:customers(id, full_name, phone)
       `)
@@ -735,7 +756,7 @@ async function buildProjectDealBundle(projectId, opts = {}) {
 }
 
 const LEAD_BUNDLE_SELECT = `
-  id, code, title, type, estimated_value, company_id, project_id, customer_id,
+  id, code, title, type, estimated_value, company_id, project_id, customer_id, parent_lead_id, created_at,
   assigned_to, lead_owner_id, stage_id, pipeline_id, description, lead_type_id,
   stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, order_index),
   customer:customers(id, full_name, phone, source),
@@ -744,7 +765,7 @@ const LEAD_BUNDLE_SELECT = `
   lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name)
 `;
 
-const LEAD_REF_SELECT = 'id, type, project_id, title, estimated_value, customer_id, updated_at';
+const LEAD_REF_SELECT = 'id, type, project_id, title, estimated_value, customer_id, parent_lead_id, created_at, updated_at';
 
 async function hydrateLeadsByIds(ids) {
   const uniq = [...new Set((ids || []).filter(Boolean).map(String))];
@@ -911,9 +932,8 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
       : loadCachedDeliveryStages(),
   ]);
   mark('lead-refs-ready', tAll);
-  const primaryRef = (refs.find((l) => l.type === 'deal') || refs[0]
-    || softRefs.find((l) => l.type === 'deal') || softRefs[0]
-    || null);
+  // Deal con bàn giao xưởng (updated_at mới hơn) không được đè deal gốc — thread bình luận nằm ở gốc.
+  const primaryRef = pickBundlePrimaryLead(refs, softRefs);
   const leadId = primaryRef?.id || null;
   const leadIsPrimaryForProject = !!leadId
     && String(primaryRef?.project_id || '') === String(projectId);
@@ -933,13 +953,13 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
       ? Promise.resolve({ data: [] })
       : (crmLeadIdForWork
         ? supabase.from('lead_documents')
-          .select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_path, file_url, crm_stage_slug, source_crm_task_id, project_id')
+          .select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_url, crm_stage_slug, source_crm_task_id, project_id')
           .eq('lead_id', crmLeadIdForWork)
           .order('created_at', { ascending: false })
         : supabase.from('lead_documents')
-          .select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_path, file_url, crm_stage_slug, source_crm_task_id, project_id')
+          .select('id, name, file_name, doc_type, created_at, shared_to_workshop, allowed_share_modules, file_url, crm_stage_slug, source_crm_task_id, project_id')
           .eq('project_id', projectId)
-          .order('created_at', { ascending: false })),
+          .order('created_at', { ascending: false })).then(warnQ('bundle:lead_documents')),
     lite || !leadIds.length
       ? Promise.resolve({ data: [] })
       : supabase.from('unified_tasks_v')
@@ -977,9 +997,7 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
   const hydratedById = new Map((hydratedLeads || []).map((l) => [String(l.id), l]));
   const hardLeads = refs.map((r) => hydratedById.get(String(r.id))).filter(Boolean);
   const softLeads = softRefs.map((r) => hydratedById.get(String(r.id))).filter(Boolean);
-  const primaryLead = (hardLeads.find((l) => l.type === 'deal') || hardLeads[0]
-    || softLeads.find((l) => l.type === 'deal') || softLeads[0]
-    || null);
+  const primaryLead = pickBundlePrimaryLead(hardLeads, softLeads);
 
   // crm_tasks.blocks_stage_advance có thể chưa có — retry không cột đó
   let crmTasksRaw = crmTasksRes.data || [];
@@ -1032,8 +1050,11 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
     lite || !crmTaskIds.length
       ? Promise.resolve({ data: [] })
       : supabase.from('crm_task_attachments')
-        .select('id, file_name, name, file_path, file_url, mime_type, created_at, crm_task_id, shared_to_workshop, allowed_share_modules')
-        .in('crm_task_id', crmTaskIds),
+        // crm_task_attachments dùng `task_id` và `shared_to_project`; không có
+        // `file_path` lẫn `crm_task_id`. Cả ba tên sai làm hỏng CẢ câu -> khối
+        // đính kèm của crm_task chưa từng vào được bundle.
+        .select('id, file_name, name, file_url, mime_type, created_at, task_id, shared_to_project, allowed_share_modules')
+        .in('task_id', crmTaskIds).then(warnQ('bundle:crm_task_attachments')),
     lite || !assigneeIds.size
       ? Promise.resolve({ data: [] })
       : supabase.from('users').select('id, full_name').in('id', [...assigneeIds]),
@@ -1149,12 +1170,11 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
     id: a.id,
     name: a.name || a.file_name,
     file_name: a.file_name,
-    file_path: a.file_path,
     file_url: a.file_url,
     created_at: a.created_at,
     bucket: 'crm',
     kind: 'crm_task_attachment',
-    crm_task_id: a.crm_task_id,
+    crm_task_id: a.task_id,
   }));
 
   const projectNativeFiles = (projectFilesRes.data || []).map((f) => ({
@@ -1370,6 +1390,10 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
       vc_pipeline_stage: pipelines.vc?.id
         ? { id: pipelines.vc.id, name: pipelines.vc.name, icon: pipelines.vc.icon, bucket_slug: pipelines.vc.bucket_slug }
         : null,
+      company_id: project.company_id || null,
+      workshop_type_id: project.workshop_type_id || null,
+      sx_kanban_column_id: project.sx_kanban_column_id || pipelines.sx?.id || null,
+      vc_kanban_column_id: project.vc_kanban_column_id || pipelines.vc?.id || null,
     }];
   }
   overview.production_projects = production_projects;

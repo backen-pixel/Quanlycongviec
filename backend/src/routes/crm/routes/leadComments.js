@@ -4,6 +4,7 @@
  */
 const { Router } = require('express');
 const helpers = require('../shared/helpersBundle');
+const { fetchAllByIds, PAGE: COMMENT_INDEX_PAGE } = require('../../../helpers/supabaseFetchAll');
 
 const r = Router();
 
@@ -476,23 +477,45 @@ r.get('/lead-comments/index', async (req, res) => {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     const raw = String(req.query.lead_ids || '').trim();
-    let leadIds = raw
+    const leadIds = raw
       ? raw.split(',').map((s) => s.trim()).filter(Boolean)
       : [];
-    let q = supabase
-      .from('crm_lead_comments')
-      .select('lead_id, user_id, created_at')
-      .is('deleted_at', null);
-    if (leadIds.length) q = q.in('lead_id', leadIds);
-    // Bảo vệ: nếu không truyền lead_ids, giới hạn 5000 dòng gần nhất để tránh tải nặng.
-    if (!leadIds.length) q = q.order('created_at', { ascending: false }).limit(5000);
-    const { data, error } = await q;
-    if (error) {
+    let rows;
+    try {
+      if (leadIds.length) {
+        // PostgREST cắt 1.000 dòng/request — HST mặc định có ~27k comment nên phải phân trang.
+        rows = await fetchAllByIds({
+          table: 'crm_lead_comments',
+          columns: 'lead_id, user_id, created_at',
+          key: 'lead_id',
+          ids: leadIds,
+          tune: (q) => q.is('deleted_at', null),
+        });
+      } else {
+        const cap = 5000;
+        rows = [];
+        const maxPages = Math.ceil(cap / COMMENT_INDEX_PAGE);
+        for (let page = 0; page < maxPages; page += 1) {
+          const from = page * COMMENT_INDEX_PAGE;
+          const { data, error } = await supabase
+            .from('crm_lead_comments')
+            .select('lead_id, user_id, created_at')
+            .is('deleted_at', null)
+            .order('created_at', { ascending: false })
+            .range(from, from + COMMENT_INDEX_PAGE - 1);
+          if (error) throw error;
+          const part = data || [];
+          rows.push(...part);
+          if (part.length < COMMENT_INDEX_PAGE) break;
+        }
+        if (rows.length > cap) rows = rows.slice(0, cap);
+      }
+    } catch (error) {
       if (commentsTableMissing(error)) return res.json({});
       throw error;
     }
     const out = {};
-    (data || []).forEach((row) => {
+    (rows || []).forEach((row) => {
       const lid = String(row.lead_id);
       const cur = out[lid] || { count: 0, last_at: null, last_user_id: null };
       cur.count += 1;

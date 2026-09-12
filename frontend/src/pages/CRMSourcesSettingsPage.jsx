@@ -8,6 +8,7 @@ import { resolveDefaultCrmAdminCompanyId, setStoredCrmFilterCompanyId } from '..
 export default function CRMSourcesSettingsPage() {
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
+  const tenantScoped = !!(user?.tenant_id || user?.tenantId);
 
   const [companies, setCompanies] = useState([]);
   const [selectedCompanyId, setSelectedCompanyId] = useState('');
@@ -15,8 +16,8 @@ export default function CRMSourcesSettingsPage() {
   const [sources, setSources] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const [catForm, setCatForm] = useState({ name: '', icon: '', color: '#64748b', companyScope: 'global' });
-  const [srcForm, setSrcForm] = useState({ name: '', icon: '📎', color: '', category_id: '', companyScope: 'global' });
+  const [catForm, setCatForm] = useState({ name: '', icon: '', color: '#64748b', companyScope: 'company' });
+  const [srcForm, setSrcForm] = useState({ name: '', icon: '📎', color: '', category_id: '', companyScope: 'company' });
   const [editingCat, setEditingCat] = useState(null);
   const [editingSrc, setEditingSrc] = useState(null);
 
@@ -91,7 +92,7 @@ export default function CRMSourcesSettingsPage() {
       } else {
         await api.post('/crm/source-categories', payload);
       }
-      setCatForm({ name: '', icon: '', color: '#64748b', companyScope: 'global' });
+      setCatForm({ name: '', icon: '', color: '#64748b', companyScope: tenantScoped ? 'company' : 'global' });
       setEditingCat(null);
       load();
     } catch (err) {
@@ -137,7 +138,7 @@ export default function CRMSourcesSettingsPage() {
       } else {
         await api.post('/crm/sources', payload);
       }
-      setSrcForm({ name: '', icon: '📎', color: '', category_id: '', companyScope: 'global' });
+      setSrcForm({ name: '', icon: '📎', color: '', category_id: '', companyScope: tenantScoped ? 'company' : 'global' });
       setEditingSrc(null);
       load();
     } catch (err) {
@@ -248,7 +249,7 @@ export default function CRMSourcesSettingsPage() {
                   }}
                   className="w-full border rounded-lg px-2 py-1.5 text-sm"
                 >
-                  <option value="global">Chung toàn hệ thống</option>
+                  {!tenantScoped && <option value="global">Chung toàn hệ thống</option>}
                   <option value="company" disabled={!selectedCompanyId}>
                     Riêng công ty đang chọn
                   </option>
@@ -266,7 +267,7 @@ export default function CRMSourcesSettingsPage() {
                     type="button"
                     onClick={() => {
                       setEditingCat(null);
-                      setCatForm({ name: '', icon: '', color: '#64748b', companyScope: 'global' });
+                      setCatForm({ name: '', icon: '', color: '#64748b', companyScope: tenantScoped ? 'company' : 'global' });
                     }}
                     className="h-9 px-3 border rounded-lg text-sm"
                   >
@@ -399,7 +400,7 @@ export default function CRMSourcesSettingsPage() {
                   }}
                   className="w-full border rounded-lg px-2 py-1.5 text-sm"
                 >
-                  <option value="global">Chung toàn hệ thống</option>
+                  {!tenantScoped && <option value="global">Chung toàn hệ thống</option>}
                   <option value="company" disabled={!selectedCompanyId}>
                     Riêng công ty đang chọn
                   </option>
@@ -417,7 +418,7 @@ export default function CRMSourcesSettingsPage() {
                     type="button"
                     onClick={() => {
                       setEditingSrc(null);
-                      setSrcForm({ name: '', icon: '📎', color: '', category_id: '', companyScope: 'global' });
+                      setSrcForm({ name: '', icon: '📎', color: '', category_id: '', companyScope: tenantScoped ? 'company' : 'global' });
                     }}
                     className="h-9 px-3 border rounded-lg text-sm"
                   >

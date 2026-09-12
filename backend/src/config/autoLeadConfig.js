@@ -47,6 +47,29 @@ async function loadConfig() {
   return { ...DEFAULT_CONFIG };
 }
 
+async function loadConfigForScope(tenantId) {
+  if (!tenantId) return loadConfig();
+  try {
+    const { data } = await supabase.from('app_settings')
+      .select('value').eq('key', `${CONFIG_KEY}:${tenantId}`).maybeSingle();
+    if (data?.value) return { ...DEFAULT_CONFIG, ...data.value };
+  } catch (e) {
+    console.warn('[AutoLead] tenant config load error (using defaults):', e.message);
+  }
+  return { ...DEFAULT_CONFIG };
+}
+
+async function saveConfigForScope(tenantId, config) {
+  if (!tenantId) return saveConfig(config);
+  const merged = { ...DEFAULT_CONFIG, ...config };
+  await supabase.from('app_settings').upsert({
+    key: `${CONFIG_KEY}:${tenantId}`,
+    value: merged,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'key' });
+  return merged;
+}
+
 async function saveConfig(config) {
   const merged = { ...DEFAULT_CONFIG, ...config };
   try {
@@ -74,4 +97,4 @@ function getConfig() {
   return { ...DEFAULT_CONFIG };
 }
 
-module.exports = { getConfig, loadConfig, saveConfig, DEFAULT_CONFIG };
+module.exports = { getConfig, loadConfig, saveConfig, loadConfigForScope, saveConfigForScope, DEFAULT_CONFIG };

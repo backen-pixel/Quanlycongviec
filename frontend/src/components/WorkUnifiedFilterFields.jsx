@@ -1,4 +1,5 @@
-import { Clock, Filter, RotateCcw, X } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { Clock, Filter, RotateCcw, Search, X } from 'lucide-react';
 import api from '../lib/api';
 
 export const WORK_UNIFIED_TIME_PRESETS = [
@@ -10,6 +11,47 @@ export const WORK_UNIFIED_TIME_PRESETS = [
 ];
 
 export const WORK_UNIFIED_REGION_NONE = '__none__';
+
+export function normalizeWorkUnifiedUserIds(value) {
+  if (Array.isArray(value)) return [...new Set(value.map((id) => String(id || '').trim()).filter(Boolean))];
+  if (value) return [String(value).trim()].filter(Boolean);
+  return [];
+}
+
+export function pruneWorkUnifiedUserIds(ids, users, { companyId = '', regionId = '' } = {}) {
+  const selected = normalizeWorkUnifiedUserIds(ids);
+  if (!selected.length) return selected;
+  const allowed = new Set(
+    filterWorkUnifiedStaff(users, { companyId, regionId }).map((u) => String(u.id)),
+  );
+  return selected.filter((id) => allowed.has(String(id)));
+}
+
+export function workUnifiedRowMatchesStaff(it, selectedIds) {
+  const ids = normalizeWorkUnifiedUserIds(selectedIds);
+  if (!ids.length) return true;
+  const idSet = new Set(ids);
+  const dealIds = [
+    ...(Array.isArray(it?.deal_staff_ids) ? it.deal_staff_ids : []),
+    it?.deal_assignee_id,
+  ].filter(Boolean).map(String);
+  const rowIds = dealIds.length
+    ? dealIds
+    : [it?.sales_person_id, it?.project_manager_id, it?.person1_id].filter(Boolean).map(String);
+  return rowIds.some((id) => idSet.has(id));
+}
+
+export function workUnifiedUserFilterChips({ filterUserIds, users = [], onRemove }) {
+  const ids = normalizeWorkUnifiedUserIds(filterUserIds);
+  return ids.map((id) => {
+    const u = users.find((x) => String(x.id) === String(id));
+    return {
+      key: `user:${id}`,
+      label: u?.full_name || 'Nhân viên',
+      onClear: () => onRemove(id),
+    };
+  });
+}
 
 /** NV Work Unified: cùng nguồn CRM (`employees-by-company` + `crm_region_ids`). */
 export function filterWorkUnifiedStaff(users, { companyId = '', regionId = '' } = {}) {
@@ -124,6 +166,8 @@ export default function WorkUnifiedFilterPanel({
   users = [],
   filterUserId,
   onUserChange,
+  filterUserIds,
+  onUserIdsChange,
   regions = [],
   filterRegionId,
   onRegionChange,
@@ -131,19 +175,57 @@ export default function WorkUnifiedFilterPanel({
   onTimePresetChange,
   activeFilterCount = 0,
   onClear,
+  showUser = true,
+  showTime = true,
 }) {
+  const selectedUserIds = normalizeWorkUnifiedUserIds(
+    filterUserIds != null ? filterUserIds : filterUserId,
+  );
   const staffOptions = filterWorkUnifiedStaff(users, { companyId, regionId: filterRegionId });
   const hideCompanySuffix = !!companyId;
+  const [staffSearch, setStaffSearch] = useState('');
+
+  const visibleStaff = useMemo(() => {
+    const q = staffSearch.trim().toLowerCase();
+    if (!q) return staffOptions;
+    return staffOptions.filter((u) => {
+      const name = String(u.full_name || '').toLowerCase();
+      const pos = String(u.position || '').toLowerCase();
+      const company = String(u.company_name || '').toLowerCase();
+      return name.includes(q) || pos.includes(q) || company.includes(q);
+    });
+  }, [staffOptions, staffSearch]);
+
+  const selectedSet = useMemo(() => new Set(selectedUserIds.map(String)), [selectedUserIds]);
+
+  const emitUserIds = (nextIds) => {
+    const next = normalizeWorkUnifiedUserIds(nextIds);
+    if (typeof onUserIdsChange === 'function') onUserIdsChange(next);
+    else if (typeof onUserChange === 'function') onUserChange(next[0] || '');
+  };
+
+  const toggleUser = (userId) => {
+    const sid = String(userId);
+    const next = new Set(selectedSet);
+    if (next.has(sid)) next.delete(sid);
+    else next.add(sid);
+    emitUserIds([...next]);
+  };
 
   const handleCompanyChange = (v) => {
     onCompanyChange(v);
     onRegionChange('');
-    onUserChange('');
+    emitUserIds([]);
   };
 
   const handleRegionChange = (v) => {
     onRegionChange(v);
-    onUserChange('');
+  };
+
+  const selectVisible = () => {
+    const next = new Set(selectedSet);
+    visibleStaff.forEach((u) => { if (u?.id) next.add(String(u.id)); });
+    emitUserIds([...next]);
   };
 
   return (
@@ -207,23 +289,78 @@ export default function WorkUnifiedFilterPanel({
             </div>
           </div>
 
+          {showUser && (
           <div className="min-w-0">
-            <label className={FILTER_LABEL_CLS}>Nhân viên</label>
-            <select
-              value={filterUserId}
-              onChange={(e) => onUserChange(e.target.value)}
-              className={FILTER_SELECT_CLS}
-              title="NV thuộc công ty và khu vực đã chọn"
-            >
-              <option value="">Tất cả nhân viên</option>
-              {staffOptions.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.full_name}{u.position ? ` (${u.position})` : ''}{!companyId && u.company_name ? ` — ${u.company_name}` : ''}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <label className={`${FILTER_LABEL_CLS} mb-0`}>Nhân viên</label>
+              <span className="text-[10px] font-semibold text-violet-700 tabular-nums">
+                {selectedUserIds.length ? `${selectedUserIds.length} đã chọn` : 'Có thể chọn nhiều'}
+              </span>
+            </div>
+            <div className="relative mb-1.5">
+              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+              <input
+                type="search"
+                value={staffSearch}
+                onChange={(e) => setStaffSearch(e.target.value)}
+                placeholder="Tìm tên nhân viên…"
+                className={`${FILTER_FIELD_CLS} pl-7`}
+              />
+            </div>
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <button
+                type="button"
+                onClick={selectVisible}
+                disabled={!visibleStaff.length}
+                className="h-6 px-2 rounded-md border border-violet-200 bg-white text-[10px] font-semibold text-violet-700 hover:bg-violet-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Chọn đang hiện
+              </button>
+              <button
+                type="button"
+                onClick={() => emitUserIds([])}
+                disabled={!selectedUserIds.length}
+                className="h-6 px-2 rounded-md border border-violet-200 bg-white text-[10px] font-semibold text-violet-700 hover:bg-violet-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Bỏ chọn
+              </button>
+            </div>
+            <div className="max-h-48 overflow-y-auto rounded-md border border-violet-200 bg-white divide-y divide-violet-50 [scrollbar-width:thin]">
+              {!staffOptions.length ? (
+                <p className="px-2.5 py-3 text-[11px] text-slate-400 text-center">Không có nhân viên trong phạm vi đã chọn.</p>
+              ) : !visibleStaff.length ? (
+                <p className="px-2.5 py-3 text-[11px] text-slate-400 text-center">Không khớp từ khóa tìm.</p>
+              ) : (
+                visibleStaff.map((u) => {
+                  const checked = selectedSet.has(String(u.id));
+                  const suffix = [
+                    u.position,
+                    !companyId && u.company_name ? u.company_name : '',
+                  ].filter(Boolean).join(' · ');
+                  return (
+                    <label
+                      key={u.id}
+                      className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer ${checked ? 'bg-violet-50' : 'hover:bg-slate-50'}`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleUser(u.id)}
+                        className="h-3.5 w-3.5 rounded border-violet-300 text-violet-600 focus:ring-violet-400"
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-xs font-medium text-slate-800 truncate">{u.full_name}</span>
+                        {suffix ? <span className="block text-[10px] text-slate-400 truncate">{suffix}</span> : null}
+                      </span>
+                    </label>
+                  );
+                })
+              )}
+            </div>
           </div>
+          )}
 
+          {showTime && (
           <div className="min-w-0">
             <label className={FILTER_LABEL_CLS}>Khoảng thời gian</label>
             <div className="relative">
@@ -239,6 +376,7 @@ export default function WorkUnifiedFilterPanel({
               <Clock className={`absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 pointer-events-none ${timePreset ? 'text-violet-500' : 'text-slate-400'}`} />
             </div>
           </div>
+          )}
         </div>
       </div>
 

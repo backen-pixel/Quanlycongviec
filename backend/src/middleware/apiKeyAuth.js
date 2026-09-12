@@ -251,6 +251,16 @@ async function apiKeyAuth(req, res, next) {
       ? found.allowed_company_ids.map((x) => String(x)).filter(Boolean)
       : [];
 
+    // Key không gắn công ty vẫn phải nằm trong 1 hệ sinh thái: lấy HST của chủ key
+    // để dữ liệu HST khác (vd NextGo) không lọt qua key "toàn quyền".
+    let tenantCompanyIds = [];
+    if (!found.company_id && !allowedCompanies.length) {
+      const { resolveTenantIdForUser, getTenantCompanyIds, resolveDefaultTenantId } = require('../helpers/tenantScope');
+      const ownerId = found.created_by || found.default_assigned_to || null;
+      const tenantId = (await resolveTenantIdForUser(ownerId)) || (await resolveDefaultTenantId());
+      tenantCompanyIds = await getTenantCompanyIds(tenantId);
+    }
+
     req.apiKey = {
       id: found.id,
       name: found.name,
@@ -264,6 +274,7 @@ async function apiKeyAuth(req, res, next) {
       webhook_url: found.webhook_url || null,
       mcp_scopes: scopes,
       allowed_company_ids: allowedCompanies,
+      tenant_company_ids: tenantCompanyIds,
       all_companies: !found.company_id && allowedCompanies.length === 0,
     };
     next();
@@ -275,6 +286,7 @@ async function apiKeyAuth(req, res, next) {
 
 module.exports = {
   apiKeyAuth,
+  extractApiKey,
   listKeys,
   findKeyById,
   findKeyByValue,

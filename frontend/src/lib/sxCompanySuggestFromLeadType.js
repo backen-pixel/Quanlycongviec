@@ -58,6 +58,16 @@ export function sxPickGuideFallbackText(company) {
   return 'Chưa có phân loại CRM — ★ sẽ hiện khi deal có loại (Tủ bếp / Cửa…).';
 }
 
+/** Phân loại thu công nợ — hiện trên Kanban SX, ẩn khi đặt xưởng / tạo dự án mới. */
+export function isFinanceWorkshopTypeName(name) {
+  const n = foldViSx(name);
+  return n.includes('cong no');
+}
+
+export function excludeNonPlacementWorkshopTypes(types) {
+  return (Array.isArray(types) ? types : []).filter((t) => !isFinanceWorkshopTypeName(t?.name));
+}
+
 /** Phân loại xưởng có khớp loại CRM không? */
 export function workshopTypeMatchesSxKind(workshopTypeName, kind) {
   if (!kind) return true;
@@ -108,7 +118,7 @@ export function filterSxCompaniesByLeadType(companies, typesByCompanyId, kind, c
 
 /** Chỉ hiện phân loại khớp nếu có; không thì hiện tất cả. */
 export function orderWorkshopTypesForSxKind(types, kind) {
-  const rows = Array.isArray(types) ? [...types] : [];
+  const rows = excludeNonPlacementWorkshopTypes(types);
   if (!kind) return rows;
   const matched = rows.filter((t) => workshopTypeMatchesSxKind(t.name, kind));
   return matched.length ? matched : rows;
@@ -261,7 +271,7 @@ export function orderSxCompaniesPreferredFirst(companies, kind, preferredCompany
 
 /** Hiện tất cả phân loại; đưa loại khớp CRM / default_workshop_type_id lên đầu. */
 export function orderWorkshopTypesPreferredFirst(types, kind, preferredTypeId = '') {
-  const rows = Array.isArray(types) ? [...types] : [];
+  const rows = excludeNonPlacementWorkshopTypes(types);
   const pref = String(preferredTypeId || '');
   if (!kind && !pref) return rows;
   return rows.sort((a, b) => {

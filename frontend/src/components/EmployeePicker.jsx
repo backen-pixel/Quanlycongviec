@@ -52,6 +52,7 @@ export default function EmployeePicker({
 
   const buttonRef = useRef(null);
   const dropdownRef = useRef(null);
+  const searchInputRef = useRef(null);
 
   // companyId takes priority over companyUnitId
   const effectiveKey = companyId || companyUnitId;
@@ -93,6 +94,13 @@ export default function EmployeePicker({
       setSelectedUser(null);
     }
   }, [value, allUsers]);
+
+  // Focus search input without letting the browser auto-scroll the page into view
+  // (that scroll was tripping the outside-scroll-closes-dropdown handler below,
+  // closing the dropdown right after it opened).
+  useLayoutEffect(() => {
+    if (open) searchInputRef.current?.focus({ preventScroll: true });
+  }, [open]);
 
   // Calculate position synchronously before paint to avoid flicker
   useLayoutEffect(() => {
@@ -246,8 +254,8 @@ export default function EmployeePicker({
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
             <input
+              ref={searchInputRef}
               type="text"
-              autoFocus
               placeholder="Tìm tên, email..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}

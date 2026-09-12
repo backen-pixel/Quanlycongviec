@@ -1,0 +1,134 @@
+From a9fd68bcdd1291ad8572427fe9413408230bc96a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 5 Sep 2026 03:14:52 +0000
+Subject: [PATCH 2/2] =?UTF-8?q?fix:=20h=E1=BA=A1=20m=E1=BB=8Di=20l=C3=B4?=
+ =?UTF-8?q?=20.in()=20xu=E1=BB=91ng=20300=20=E2=80=94=20suy=20lu=E1=BA=ADn?=
+ =?UTF-8?q?=20"800=20=C4=91=C3=A3=20ch=E1=BA=A1y=20=C4=91=C6=B0=E1=BB=A3c"?=
+ =?UTF-8?q?=20c=E1=BB=A7a=20t=C3=B4i=20l=C3=A0=20SAI?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+supabaseQueryGuard.js (7fa59c49) đã ĐO ngưỡng gãy thật trên chính DB này:
+
+    .in(...)        gãy khi vượt 643 id
+    chuỗi or(...)   gãy khi vượt 556 id
+    URL tương ứng   ~22.000–24.000 ký tự
+    vượt nữa thì ĐỨT KẾT NỐI, không phải trả lỗi tử tế
+
+Số đo này lật lại một quyết định của tôi. Tôi từng hạ CH từ 800 xuống 200 vì
+lo URL dài, RỒI TỰ HOÀN NGUYÊN về 800 với lập luận: "800 là con số đã chạy
+trong production nên là bằng chứng tốt nhất về giới hạn thực tế".
+
+Lập luận đó sai: tôi lấy số lượt quét của idx_fb_contacts_page_created — một
+chỉ mục dùng chung cho nhiều đường mã — làm bằng chứng riêng cho nhánh này.
+Nó không chứng minh nhánh 800-id từng chạy trót lọt lần nào. Và 800 nằm TRÊN
+ngưỡng gãy 643.
+
+Bài học: "chạy được lâu nay mà không ai kêu" KHÔNG phải bằng chứng, nhất là
+với lỗi im lặng — đúng loại lỗi cả đợt này đang đi tìm. Chỉ số đo mới là.
+
+  routes/facebook.js          IN_CHUNK 500 -> 300, CH 800 -> IN_CHUNK
+  notificationRetentionCron   BATCH_REST 500 -> 300
+  logRetentionCron            BATCH_REST 500 -> 300
+  tests/                      siết assert từ <= 800 xuống <= 643
+
+300 là ngưỡng cảnh báo của chính supabaseQueryGuard (SUPABASE_GUARD_IN_WARN),
+lấy luôn để code không tự bật cảnh báo của mình. Trang 1000 dòng thành 4
+round-trip — rẻ hơn nhiều so với đứt kết nối.
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01NQGZinD1fBWKPaxCtm2udT
+---
+ backend/src/jobs/logRetentionCron.js          | 8 +++++++-
+ backend/src/jobs/notificationRetentionCron.js | 8 +++++++-
+ backend/src/routes/facebook.js                | 5 +++--
+ backend/tests/perf-retention-and-chunking.js  | 4 ++--
+ 4 files changed, 19 insertions(+), 6 deletions(-)
+
+diff --git a/backend/src/jobs/logRetentionCron.js b/backend/src/jobs/logRetentionCron.js
+index f61a8bfb..886ae52f 100644
+--- a/backend/src/jobs/logRetentionCron.js
++++ b/backend/src/jobs/logRetentionCron.js
+@@ -51,7 +51,13 @@ const BATCH_SQL = 5000;
+  * Giới hạn URL thật của proxy chưa đo được từ đây; mức đã kiểm chứng trong
+  * production là 800 id (~30 KB) ở routes/facebook.js. 500 (~19 KB) an toàn.
+  */
+-const BATCH_REST = 500;
++/**
++ * GIỚI HẠN THẬT, ĐO TRÊN DB NÀY (helpers/supabaseQueryGuard.js):
++ *   `.in(...)` gãy khi vượt 643 id, chuỗi `or(...)` gãy khi vượt 556 id,
++ *   tương ứng URL ~22.000–24.000 ký tự; vượt nữa thì ĐỨT KẾT NỐI.
++ * 300 là ngưỡng cảnh báo của chính guard đó (SUPABASE_GUARD_IN_WARN).
++ */
++const BATCH_REST = 300;
+ const MAX_BATCHES = 400;
+ /** Bảng được phép dọn — chặn truy vấn động ghép tên bảng tuỳ ý vào SQL. */
+ const ALLOWED = Object.freeze({
+diff --git a/backend/src/jobs/notificationRetentionCron.js b/backend/src/jobs/notificationRetentionCron.js
+index ab04a30b..e18f3d0a 100644
+--- a/backend/src/jobs/notificationRetentionCron.js
++++ b/backend/src/jobs/notificationRetentionCron.js
+@@ -36,7 +36,13 @@ const BATCH_SQL = 5000;
+  * 800 id (~30 KB). 500 (~19 KB) nằm gọn bên trong vùng đó.
+  * Đừng nâng lên gần BATCH_SQL — 200 KB là 6 lần lớn hơn mọi thứ từng chạy được.
+  */
+-const BATCH_REST = 500;
++/**
++ * GIỚI HẠN THẬT, ĐO TRÊN DB NÀY (helpers/supabaseQueryGuard.js):
++ *   `.in(...)` gãy khi vượt 643 id, chuỗi `or(...)` gãy khi vượt 556 id,
++ *   tương ứng URL ~22.000–24.000 ký tự; vượt nữa thì ĐỨT KẾT NỐI.
++ * 300 là ngưỡng cảnh báo của chính guard đó (SUPABASE_GUARD_IN_WARN).
++ */
++const BATCH_REST = 300;
+ 
+ function retentionDays() {
+   const n = parseInt(process.env.NOTIFICATION_RETENTION_DAYS || '60', 10);
+diff --git a/backend/src/routes/facebook.js b/backend/src/routes/facebook.js
+index 6b3cdc7e..81b5af85 100644
+--- a/backend/src/routes/facebook.js
++++ b/backend/src/routes/facebook.js
+@@ -132,7 +132,7 @@ const FB_CONTACTS_DEFAULT_LIMIT = Math.min(FB_CONTACTS_MAX_LIMIT, 400);
+  * Điều chắc chắn: danh sách dài theo kích thước trang thì PHẢI chia lô, vì độ
+  * dài URL sẽ tăng theo dữ liệu chứ không theo một hằng số nào cả.
+  */
+-const IN_CHUNK = 500;
++const IN_CHUNK = 300;  // xem ghi chú ngưỡng gãy đo được ở database/590 & supabaseQueryGuard.js
+ 
+ /**
+  * Chạy `.in(col, ids)` theo từng lô IN_CHUNK rồi gộp kết quả.
+@@ -4402,7 +4402,8 @@ r.get('/contacts', authMiddleware, async (req, res) => {
+       // bằng chứng tốt nhất về giới hạn thực tế. Tôi từng hạ xuống 200 vì lo URL
+       // quá dài, nhưng đó chỉ là suy đoán và đổi lấy 4x round-trip trên một
+       // đường đang lành — đã hoàn nguyên.
+-      const CH = 800;
++      // 800 nằm TRÊN ngưỡng gãy đã đo của `.in(...)` là 643 (supabaseQueryGuard.js).
++      const CH = IN_CHUNK;
+       for (let i = 0; i < qualifyingIds.length; i += CH) {
+         const slice = qualifyingIds.slice(i, i + CH);
+         const { data } = await base().in('id', slice)
+diff --git a/backend/tests/perf-retention-and-chunking.js b/backend/tests/perf-retention-and-chunking.js
+index e660831d..a882f440 100644
+--- a/backend/tests/perf-retention-and-chunking.js
++++ b/backend/tests/perf-retention-and-chunking.js
+@@ -159,7 +159,7 @@ function servePages(pagesOfFull) {
+     const sel = sbCalls.filter((c) => c.op === 'select');
+     const del = sbCalls.filter((c) => c.op === 'delete');
+     assert.ok(sel.length >= 1, 'không có SELECT');
+-    assert.ok(sel[0].limit <= 800, 'lô REST = ' + sel[0].limit + ' → URL vượt mức từng chạy được (800)');
++    assert.ok(sel[0].limit <= 643, 'lô REST = ' + sel[0].limit + ' → vượt ngưỡng gãy đo được của .in() là 643');
+     assert.ok(sel[0].limit >= 100, 'lô REST = ' + sel[0].limit + ' → quá nhỏ, thừa round-trip');
+     assert.strictEqual(del[0].in[1], sel[0].limit, 'số id trong DELETE khác lô SELECT');
+     assert.strictEqual(r.via, 'rest');
+@@ -215,7 +215,7 @@ function servePages(pagesOfFull) {
+     const r = await notifCron.runOnce();
+     const sel = sbCalls.filter((c) => c.op === 'select');
+     const upd = sbCalls.filter((c) => c.op === 'update');
+-    assert.ok(sel[0].limit <= 800, 'lô = ' + sel[0].limit);
++    assert.ok(sel[0].limit <= 643, 'lô = ' + sel[0].limit);
+     assert.ok(upd.length >= 1, 'không có UPDATE');
+     assert.ok(upd[0].val && upd[0].val.dismissed_at, 'UPDATE không đặt dismissed_at');
+     assert.strictEqual(upd[0].in[1], sel[0].limit);
+-- 
+2.43.0
+

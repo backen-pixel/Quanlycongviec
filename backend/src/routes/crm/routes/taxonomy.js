@@ -4,6 +4,20 @@
  */
 const { Router } = require('express');
 const helpers = require('../shared/helpersBundle');
+const { isTenantScopeEnforced, companyInTenantContext } = require('../../../helpers/tenantScope');
+
+function filterTaxonomyRowsToTenant(req, rows) {
+  if (!isTenantScopeEnforced(req)) return rows || [];
+  const allowed = new Set((req.tenantCompanyIds || []).map(String));
+  return (rows || []).filter((r) => r.company_id && allowed.has(String(r.company_id)));
+}
+
+function assertTaxonomyCompanyInTenant(req, res, companyId) {
+  if (!isTenantScopeEnforced(req)) return true;
+  if (companyId && companyInTenantContext(req, companyId)) return true;
+  res.status(403).json({ error: 'Chỉ được dùng nguồn / phân loại của hệ sinh thái hiện tại' });
+  return false;
+}
 
 const r = Router();
 
@@ -522,14 +536,29 @@ r.get('/sources', responseCache({ ttl: 120, scope: 'company', tags: ['crm:taxono
     }
 
     const includeInactive = userIsAdmin(req.user?.role) && String(req.query.include_inactive) === '1';
-    const data = await getCrmSourcesList({ filterCo, includeInactive });
+    if (isTenantScopeEnforced(req)) {
+      if (filterCo && !companyInTenantContext(req, filterCo)) {
+        return res.status(403).json({ error: 'Không có quyền xem nguồn công ty này' });
+      }
+      if (!filterCo) {
+        const ids = req.tenantCompanyIds || [];
+        filterCo = ids[0] || null;
+      }
+    }
+    let data = await getCrmSourcesList({ filterCo, includeInactive });
+    data = filterTaxonomyRowsToTenant(req, data);
 
     let pagesQ = supabase
       .from('facebook_pages')
       .select('id, page_id, page_name, is_active, default_company_id')
       .eq('is_active', true);
     if (filterCo) {
-      pagesQ = pagesQ.or(`default_company_id.is.null,default_company_id.eq.${filterCo}`);
+      pagesQ = isTenantScopeEnforced(req)
+        ? pagesQ.eq('default_company_id', filterCo)
+        : pagesQ.or(`default_company_id.is.null,default_company_id.eq.${filterCo}`);
+    } else if (isTenantScopeEnforced(req)) {
+      const ids = req.tenantCompanyIds || [];
+      pagesQ = ids.length ? pagesQ.in('default_company_id', ids) : pagesQ.eq('default_company_id', '00000000-0000-0000-0000-000000000000');
     }
     const { data: rawPages, error: pgErr } = await pagesQ;
     if (pgErr) throw pgErr;
@@ -566,7 +595,17 @@ r.get('/source-categories', async (req, res) => {
       filterCo = cid;
     }
     const includeInactive = userIsAdmin(req.user?.role) && String(req.query.include_inactive) === '1';
-    const data = await getCrmSourceCategoriesList({ filterCo, includeInactive });
+    if (isTenantScopeEnforced(req)) {
+      if (filterCo && !companyInTenantContext(req, filterCo)) {
+        return res.status(403).json({ error: 'Không có quyền xem phân loại công ty này' });
+      }
+      if (!filterCo) {
+        const ids = req.tenantCompanyIds || [];
+        filterCo = ids[0] || null;
+      }
+    }
+    let data = await getCrmSourceCategoriesList({ filterCo, includeInactive });
+    data = filterTaxonomyRowsToTenant(req, data);
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -580,6 +619,10 @@ r.post('/source-categories', async (req, res) => {
     if (!b.name?.trim()) return res.status(400).json({ error: 'Thiếu tên phân loại' });
     let company_id = b.company_id === '' || b.company_id === undefined ? null : b.company_id;
     if (company_id && typeof company_id !== 'string') company_id = String(company_id);
+    if (isTenantScopeEnforced(req) && !company_id) {
+      return res.status(400).json({ error: 'Phân loại phải gắn công ty của hệ sinh thái hiện tại' });
+    }
+    if (company_id && !assertTaxonomyCompanyInTenant(req, res, company_id)) return;
 
     const { data: lastRow } = await supabase
       .from('crm_source_categories')
@@ -617,6 +660,7 @@ r.put('/source-categories/:id', async (req, res) => {
       .eq('id', req.params.id)
       .single();
     if (exErr) throw exErr;
+    if (!assertTaxonomyCompanyInTenant(req, res, existing.company_id)) return;
     const b = req.body || {};
     const update = {};
     if (b.name !== undefined) update.name = String(b.name || '').trim();
@@ -626,6 +670,10 @@ r.put('/source-categories/:id', async (req, res) => {
     if (b.is_active !== undefined) update.is_active = !!b.is_active;
     if (b.company_id !== undefined) {
       update.company_id = b.company_id === '' || b.company_id === null ? null : String(b.company_id);
+      if (isTenantScopeEnforced(req) && !update.company_id) {
+        return res.status(400).json({ error: 'Phân loại phải gắn công ty của hệ sinh thái hiện tại' });
+      }
+      if (update.company_id && !assertTaxonomyCompanyInTenant(req, res, update.company_id)) return;
     }
     if (update.name === '') return res.status(400).json({ error: 'Tên không được trống' });
 
@@ -646,6 +694,13 @@ r.put('/source-categories/:id', async (req, res) => {
 r.delete('/source-categories/:id', async (req, res) => {
   try {
     if (!userIsAdmin(req.user?.role)) return res.status(403).json({ error: 'Chỉ admin' });
+    const { data: existingCat } = await supabase
+      .from('crm_source_categories')
+      .select('id, company_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!existingCat) return res.status(404).json({ error: 'Không tìm thấy phân loại' });
+    if (!assertTaxonomyCompanyInTenant(req, res, existingCat.company_id)) return;
     const { count } = await supabase
       .from('crm_sources')
       .select('id', { count: 'exact', head: true })
@@ -668,6 +723,10 @@ r.post('/sources', async (req, res) => {
     const b = req.body || {};
     if (!b.name?.trim()) return res.status(400).json({ error: 'Thiếu tên nguồn' });
     let company_id = b.company_id === '' || b.company_id === undefined ? null : String(b.company_id);
+    if (isTenantScopeEnforced(req) && !company_id) {
+      return res.status(400).json({ error: 'Nguồn phải gắn công ty của hệ sinh thái hiện tại' });
+    }
+    if (company_id && !assertTaxonomyCompanyInTenant(req, res, company_id)) return;
     const category_id = b.category_id === '' || b.category_id === undefined ? null : String(b.category_id);
     const chk = await assertCategoryFitsSource(supabase, category_id, company_id);
     if (!chk.ok) return res.status(400).json({ error: chk.error });
@@ -702,10 +761,15 @@ r.put('/sources/:id', async (req, res) => {
       .eq('id', req.params.id)
       .single();
     if (exErr) throw exErr;
+    if (!assertTaxonomyCompanyInTenant(req, res, existing.company_id)) return;
 
     let company_id = existing.company_id;
     if (b.company_id !== undefined) {
       company_id = b.company_id === '' || b.company_id === null ? null : String(b.company_id);
+      if (isTenantScopeEnforced(req) && !company_id) {
+        return res.status(400).json({ error: 'Nguồn phải gắn công ty của hệ sinh thái hiện tại' });
+      }
+      if (company_id && !assertTaxonomyCompanyInTenant(req, res, company_id)) return;
     }
     let category_id = existing.category_id;
     if (b.category_id !== undefined) {

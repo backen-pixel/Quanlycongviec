@@ -252,7 +252,8 @@ r.post('/notify-from-crm-stage', async (req, res) => {
 
     const { data: lead } = await supabase
       .from('crm_leads')
-      .select('id, name, code, company_id')
+      // crm_leads: tên thật là `title`, không phải `name`
+      .select('id, title, code, company_id')
       .eq('id', leadId)
       .maybeSingle();
 
@@ -264,7 +265,7 @@ r.post('/notify-from-crm-stage', async (req, res) => {
         moduleRow: mod,
         record: {
           id: leadId,
-          name: lead?.name || lead?.code || 'Deal',
+          name: lead?.title || lead?.code || 'Deal',
           assignee_id: null,
           company_id: lead?.company_id || mod.company_id,
           source_crm_lead_id: leadId,

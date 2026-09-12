@@ -5,6 +5,10 @@
 import { effectivePipelineStageSlaDays, isPipelineStageSlaDisabled } from './crmPipelineSla';
 import { isHucabiCompany, isHucabiSameDayPastWorkEnd } from './companyDeadlineClock';
 import { endOfVnCalendarDayAfterEntered } from './vnDate';
+import {
+  DEADLINE_MODULE,
+  resolveEffectiveModuleDeadline,
+} from './moduleDeadlinePolicy';
 
 const INTAKE_BUCKET = 'won_pending';
 const VC_SHIPPED_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
@@ -273,16 +277,18 @@ function startOfLocalDay(d) {
 
 /**
  * Bucket deadline view SX — khớp ProductionDeadlineView.
- * Ưu tiên delivery_date → production_deadline → deadline.
+ * Nguồn hạn do adapter chung chọn: hạn thẻ → hoàn thiện/hạn SX → giao → hạn chung.
  */
 export function resolveSxDeadlineBucket(item, todayMs = Date.now(), stage = null) {
-  const raw = item?.delivery_date || item?.production_deadline || item?.deadline;
-  if (!raw) return { bucket: 'none', ts: null, source: null };
-  const t = new Date(raw).getTime();
-  if (!Number.isFinite(t)) return { bucket: 'none', ts: null, source: null };
-  const source = item.delivery_date
-    ? 'delivery_date'
-    : (item.production_deadline ? 'production_deadline' : 'deadline');
+  const resolved = resolveEffectiveModuleDeadline(
+    DEADLINE_MODULE.PRODUCTION,
+    item,
+    stage || item?.sx_pipeline_stage,
+  );
+  const raw = resolved.raw;
+  const t = resolved.deadlineTs;
+  const source = resolved.source;
+  if (!raw || t == null || !Number.isFinite(t)) return { bucket: 'none', ts: null, source: null };
   const today = startOfLocalDay(new Date(todayMs));
   const dayMs = 86400000;
   const diffDays = Math.floor((startOfLocalDay(t).getTime() - today.getTime()) / dayMs);
@@ -395,19 +401,36 @@ export function isSxPipelineStageCollectedRevenue(stage) {
   return !!stage?.counts_as_collected_revenue;
 }
 
-/** Cột không theo dõi deadline (Đã công / Đã thu / Hoàn thành). */
-export function isSxPipelineStageNoDeadline(stage) {
-  return isSxPipelineStageCompletedRevenue(stage) || isSxPipelineStageCollectedRevenue(stage);
+/** Cột xác nhận đã giao hàng — hỗ trợ slug mới và tên cột cũ theo từng công ty. */
+export function isSxDeliveredStage(stage) {
+  if (!stage) return false;
+  const slug = String(stage.bucket_slug || stage.slug || '').toLowerCase().trim();
+  if (slug === 'delivered' || slug === 'delivery_done') return true;
+  const name = String(stage.name || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase();
+  return name.includes('da giao') || name.includes('giao xong');
 }
 
-/** Ẩn badge deadline trên thẻ Kanban SX khi ở cột «Đã công» / «Hoàn thành». */
+/** Cột không theo dõi deadline (Đã giao / Đã công / Đã thu / Hoàn thành). */
+export function isSxPipelineStageNoDeadline(stage) {
+  return isSxDeliveredStage(stage)
+    || isSxPipelineStageCompletedRevenue(stage)
+    || isSxPipelineStageCollectedRevenue(stage);
+}
+
+/** Ẩn badge deadline trên thẻ Kanban SX khi đã giao hoặc hoàn thành. */
 export function shouldHideSxKanbanDeadlineOnCard(item, stage) {
   const st = stage || item?.sx_pipeline_stage;
   return isSxPipelineStageNoDeadline(st);
 }
 
 /**
- * Cột bật «Bỏ quá hạn» (sla_days=0) hoặc «Đã công» / «Đã thu» — không tô đỏ ngày đặt/giao/deadline dự án.
+ * Cột bật «Bỏ quá hạn» (sla_days=0), «Đã giao», «Đã công» / «Đã thu»
+ * — không tô đỏ ngày đặt/giao/deadline dự án.
  * Khớp cấu hình pipeline setup.
  */
 export function shouldIgnoreSxOrderDeliveryOverdue(stage) {
@@ -437,16 +460,12 @@ export function getSxOrderDeliveryDateUrgency(dateIso, stage, companyOrId = null
 }
 
 export function isSxProjectDeliveryDateOverdue(project, stage) {
-  const st = stage || project?.sx_pipeline_stage;
-  if (shouldIgnoreSxOrderDeliveryOverdue(st)) return false;
-  // Đã bàn giao VC / lắp / BH / xong — ngày lắp/giao quá khứ không còn là «Quá hạn».
-  if (projectIsShipped(project)) return false;
-  const raw = project?.delivery_date || project?.production_deadline || project?.deadline;
-  if (!raw || project?.status === 'completed') return false;
-  const t = new Date(raw);
-  if (Number.isNaN(t.getTime())) return false;
-  if (startOfLocalDay(t).getTime() < startOfLocalDay(new Date()).getTime()) return true;
-  return isHucabiSameDayPastWorkEnd(raw, project?.company_id || project?.company);
+  const resolved = resolveEffectiveModuleDeadline(
+    DEADLINE_MODULE.PRODUCTION,
+    project,
+    stage || project?.sx_pipeline_stage,
+  );
+  return resolved.deadlineTs != null && resolved.deadlineTs < Date.now();
 }
 
 /** SLA cột pipeline SX — null nếu không áp dụng. */

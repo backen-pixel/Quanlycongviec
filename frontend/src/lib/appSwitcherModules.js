@@ -18,7 +18,7 @@ import {
 
 export const WORK_MODULE_LABEL = 'Quản lý';
 export const CONGVIEC_MODULE_LABEL = 'Dự án và công việc';
-export const LOGISTICS_MODULE_LABEL = 'Lắp đặt';
+export const LOGISTICS_MODULE_LABEL = 'Giao nhận - Lắp đặt';
 export const CRM_MODULE_ICON = '/icons/crm-module.png?v=4';
 export const WORK_MODULE_ICON = '/icons/work-module.png?v=3';
 export const CONGVIEC_MODULE_ICON = '/icons/work-module.png?v=4';

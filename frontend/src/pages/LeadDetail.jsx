@@ -101,6 +101,7 @@ import {
   Pin, CheckCircle2, ShoppingCart, Package, Search, Eye, BookOpen, Truck,
 } from 'lucide-react';
 import { useProductTour } from '../components/productTour/ProductTourProvider';
+import PinProjectButton from '../components/PinProjectButton';
 import { CRM_LEAD_DEAL_DETAIL_TOUR_ID } from '../lib/productTour/tours';
 
 /**
@@ -998,6 +999,9 @@ export default function LeadDetail() {
       return;
     }
     setActiveTab(t);
+    // Giữ ?tab=shared-workspace: nếu xóa tab mà còn crm_task, effect chạy lại
+    // và nhánh `!t && crmTask` đẩy sang tab Nhiệm vụ.
+    if (t === 'shared-workspace') return;
     const next = new URLSearchParams(searchParams);
     next.delete('tab');
     setSearchParams(next, { replace: true });
@@ -3048,6 +3052,13 @@ export default function LeadDetail() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap" data-tour="lead-detail-actions" data-guide-khu-vuc="Nút hành động hồ sơ">
+          <PinProjectButton
+            projectId={lead.project_id || lead.id}
+            code={lead.project_code || lead.code}
+            name={lead.title || lead.project_name}
+            href={`/crm/leads/${lead.id}`}
+            module="crm"
+          />
           <button
             type="button"
             data-tour="lead-detail-tour-btn"
@@ -3922,6 +3933,9 @@ export default function LeadDetail() {
             onUpdate={() => {
               load({ silent: true });
               setCrmTasksRefreshKey((k) => k + 1);
+            }}
+            onLeadPatch={(patch) => {
+              setLead((prev) => (prev ? { ...prev, ...patch } : prev));
             }}
             currentUser={user}
             productionCompaniesSx={productionCompaniesSx}
@@ -6607,6 +6621,7 @@ function LeadInfoPanel({
   lead,
   allUsers,
   onUpdate,
+  onLeadPatch,
   currentUser,
   productionCompaniesSx = [],
   onOpenTransferAssignee = null,
@@ -7086,16 +7101,29 @@ function LeadInfoPanel({
     if (!lead?.id) return;
     setDeadlineBusy(true);
     try {
-      await api.patch(`/crm/leads/${lead.id}/deadline`, {
+      const { data } = await api.patch(`/crm/leads/${lead.id}/deadline`, {
         kanban_deadline_at: deadlineIso,
         reason: reason || '',
         sync_open_tasks: true,
       });
+      onLeadPatch?.({
+        kanban_deadline_at: data?.kanban_deadline_at ?? deadlineIso,
+        kanban_deadline_reason: data?.kanban_deadline_reason ?? reason ?? null,
+        ...(data?.crm_next_open_task_deadline !== undefined
+          ? { crm_next_open_task_deadline: data.crm_next_open_task_deadline }
+          : {}),
+        effective_deadline_module: data?.effective_deadline_module,
+        effective_deadline_at: data?.effective_deadline_at,
+        effective_deadline_source: data?.effective_deadline_source,
+        deadline_state: data?.deadline_state,
+      });
       setDeadlineModalOpen(false);
-      onUpdate();
+      try {
+        onUpdate?.();
+      } catch (_) { /* reload không được coi là lỗi lưu */ }
       if (deadlineHistoryOpen) loadDeadlineHistory();
     } catch (e) {
-      alert(e.response?.data?.error || 'Lỗi lưu deadline');
+      alert(e.response?.data?.error || e.message || 'Lỗi lưu deadline');
     } finally {
       setDeadlineBusy(false);
     }

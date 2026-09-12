@@ -3,7 +3,10 @@ const { requirePermission } = require('../middleware/newPermission');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { enforceTenantContext } = require('../middleware/tenantGate');
-const { addEcosystemUnitTenantFilter, companyInTenantContext } = require('../helpers/tenantScope');
+const {
+  addEcosystemUnitTenantFilter, addTenantFilter, companyInTenantContext,
+  resolveTenantIdForUser, getTenantCompanyIds,
+} = require('../helpers/tenantScope');
 const {
   KNOWN_MODULE_KEYS,
   buildMyModuleAccessMap,
@@ -67,9 +70,40 @@ async function canManageUnit(userId, userRole, unitId) {
 }
 
 // Get all units user has access to (their units + child units)
+/**
+ * Phạm vi tenant của CHÍNH user.
+ *
+ * `getUserAccessibleUnits` chỉ nhận (userId, userRole) nên không có `req.tenantContext`
+ * như các route khác — phải tự tra tenant. Trả null = KHÔNG giới hạn, đúng hai trường
+ * hợp mà `attachTenantContext` (middleware/tenantGate.js) cũng không ép: platform_admin,
+ * và user chưa gắn tenant.
+ */
+async function tenantScopeOfUser(userId, userRole) {
+  if (isPlatformAdmin({ role: userRole })) return null;
+  const tenantId = await resolveTenantIdForUser(userId);
+  if (!tenantId) return null;
+  const companyIds = await getTenantCompanyIds(tenantId);
+  return { tenantId, companyIds: companyIds || [] };
+}
+
 async function getUserAccessibleUnits(userId, userRole) {
   if (['admin', 'manager'].includes(userRole)) {
-    const { data } = await supabase.from('ecosystem_units').select('id').eq('is_active', true);
+    // Trước đây nhánh này trả về MỌI đơn vị đang hoạt động của TOÀN hệ thống, không lọc
+    // tenant — admin của tenant này được tính là có quyền trên đơn vị của tenant khác
+    // (middleware/permission.js dùng danh sách này ở bước kiểm tra theo đơn vị).
+    // Lọc y hệt `addEcosystemUnitTenantFilter` để một khuôn duy nhất.
+    let q = supabase.from('ecosystem_units').select('id').eq('is_active', true);
+    const scope = await tenantScopeOfUser(userId, userRole);
+    if (scope) {
+      q = scope.companyIds.length
+        ? q.or(`tenant_id.eq.${scope.tenantId},company_id.in.(${scope.companyIds.join(',')})`)
+        : q.eq('tenant_id', scope.tenantId);
+    }
+    const { data, error } = await q;
+    if (error) {
+      console.warn('[ecosystem] getUserAccessibleUnits:', error.message);
+      return [];
+    }
     return (data || []).map(u => u.id);
   }
 
@@ -110,7 +144,7 @@ async function getDescendantUnits(unitId) {
 // CẤP BẬC — ECOSYSTEM LEVELS
 // ═══════════════════════════════════════════════
 
-r.get('/levels', responseCache({ ttl: 300, scope: 'role', tags: ['ecosystem'] }), async (req, res) => {
+r.get('/levels', responseCache({ ttl: 300, scope: 'company', tags: ['ecosystem'] }), async (req, res) => {
   try {
     const { data, error } = await supabase.from('ecosystem_levels')
       .select('*').order('depth');
@@ -173,7 +207,7 @@ r.delete('/levels/:id', async (req, res) => {
 // ═══════════════════════════════════════════════
 
 // GET tree structure
-r.get('/units', responseCache({ ttl: 300, scope: 'role', tags: ['ecosystem'] }), async (req, res) => {
+r.get('/units', responseCache({ ttl: 300, scope: 'company', tags: ['ecosystem'] }), async (req, res) => {
   try {
     const { level } = req.query;
 
@@ -478,7 +512,7 @@ r.delete('/units/:unitId/members/:memberId', async (req, res) => {
 // NHÓM QUY TRÌNH — STAGE GROUPS
 // ═══════════════════════════════════════════════
 
-r.get('/stage-groups', responseCache({ ttl: 300, scope: 'role', tags: ['ecosystem'] }), async (req, res) => {
+r.get('/stage-groups', responseCache({ ttl: 300, scope: 'company', tags: ['ecosystem'] }), async (req, res) => {
   try {
     const { data: groups, error } = await supabase.from('workflow_stage_groups')
       .select('*').eq('is_active', true).order('order_index');
@@ -676,11 +710,14 @@ r.post('/projects/:projectId/units', async (req, res) => {
 // GET companies chưa liên kết (hoặc tất cả)
 r.get('/available-companies', async (req, res) => {
   try {
-    const { data: companies, error } = await supabase
+    let q = supabase
       .from('companies')
-      .select('id, name, short_name, code, logo, is_active')
+      // companies không có `code`; cột logo tên thật là `logo_url`
+      .select('id, name, short_name, tax_code, logo_url, is_active, tenant_id')
       .or('is_active.eq.true,is_active.is.null')
       .order('name');
+    q = addTenantFilter(q, req.user);
+    const { data: companies, error } = await q;
     if (error) throw error;
 
     // Đánh dấu đã liên kết
@@ -698,8 +735,17 @@ r.get('/available-companies', async (req, res) => {
 r.get('/available-departments', async (req, res) => {
   try {
     const { company_id } = req.query;
-    let q = supabase.from('departments').select('id, name, short_name, company_id, division_unit_id, is_active').eq('is_active', true).order('name');
+    if (company_id && !companyInTenantContext(req, company_id)) {
+      return res.status(403).json({ error: 'Không có quyền truy cập công ty này' });
+    }
+    let q = supabase.from('departments')// departments không có `short_name`
+    .select('id, name, company_id, division_unit_id, is_active').eq('is_active', true).order('name');
     if (company_id) q = q.eq('company_id', company_id);
+    else if (req.tenantContext?.enforced) {
+      const ids = req.tenantCompanyIds || [];
+      if (!ids.length) return res.json({ departments: [] });
+      q = q.in('company_id', ids);
+    }
     const { data, error } = await q;
     if (error) throw error;
 
@@ -784,9 +830,10 @@ r.post('/setup-wizard', async (req, res) => {
 
     // Get level IDs
     const { data: levels } = await supabase.from('ecosystem_levels')
-      .select('id, level_index').order('level_index');
+      // ecosystem_levels: cột thật là `depth`, không phải `level_index`
+      .select('id, depth').order('depth');
     const levelMap = {};
-    (levels || []).forEach(l => { levelMap[l.level_index] = l.id; });
+    (levels || []).forEach(l => { levelMap[l.depth] = l.id; });
 
     const createdUnits = [];
 

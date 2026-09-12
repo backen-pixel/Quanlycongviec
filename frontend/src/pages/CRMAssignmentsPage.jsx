@@ -5,6 +5,13 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatDate } from '../lib/utils';
 import { unpackAssignmentsDict } from '../lib/assignmentDictPayload';
+import {
+  ASSIGN_ROLE_OPTIONS,
+  DEFAULT_ASSIGN_ROLE,
+  normalizeAssignRole,
+  rolesMapFromAssignees,
+  assigneeRolesPayload,
+} from '../lib/assignmentAssignRoles';
 import { runWithConcurrency } from '../lib/runWithConcurrency';
 import {
   LayoutGrid, List as ListIcon, Users as UsersIcon, AlertTriangle, Search, Plus,
@@ -12,7 +19,8 @@ import {
   Pencil, GripVertical, Flag, MoreVertical, MessageSquare, Send, Paperclip,
   FileText as FileIcon, Download, Upload, Repeat2, CalendarClock, ChevronDown,
   ChevronUp, ClipboardList, ChevronRight, ChevronLeft, Lock, ArrowLeft, RefreshCw, Filter, RotateCcw,
-  Eye, BookOpen, TrendingUp, TrendingDown, Minus, SlidersHorizontal, LayoutList, Check,
+  Eye, BookOpen, TrendingUp, TrendingDown, Minus, SlidersHorizontal, LayoutList, Check, FileChartColumn,
+  UserCog,
 } from 'lucide-react';
 import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
 import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
@@ -42,6 +50,11 @@ import {
 import CommentDisplayHiddenBanner, { useCommentShowOnScreenEnabled } from '../components/CommentDisplayHiddenBanner';
 import TaskFillFormModal from '../components/TaskFillFormModal';
 import LeadDealPicker from '../components/LeadDealPicker';
+import {
+  canManageAssignment as canManageAssignmentAccess,
+  isAssignmentCreator,
+  isAssignmentAssignee,
+} from '../lib/assignmentManageAccess';
 
 const PRIORITY_OPTIONS = [
   { value: 'low',    label: 'Thấp',   color: 'bg-gray-100 text-gray-600' },
@@ -1393,21 +1406,12 @@ function useAssignmentsPageContext() {
   return useContext(AssignmentsPageContext);
 }
 
-function isAssignmentCreator(task, userId) {
-  return String(task?.created_by_id || '') === String(userId || '');
-}
-
-function isAssignmentAssignee(task, userId) {
-  if (!userId) return false;
-  const list = (task?.assignees?.length) ? task.assignees : (task?.assignee ? [task.assignee] : []);
-  if (list.some((a) => String(a.id) === String(userId))) return true;
-  if (task?.assignee_id && String(task.assignee_id) === String(userId)) return true;
-  return false;
-}
-
-/** Kéo cột / đổi trạng thái: người tạo hoặc người được giao (chung một cột cho cả nhóm). */
-function canMoveAssignment(task, userId) {
-  return isAssignmentCreator(task, userId) || isAssignmentAssignee(task, userId);
+/** Kéo cột / đổi trạng thái: người tạo, người được giao, hoặc quản trị được sửa cấu trúc. */
+function canMoveAssignment(task, user) {
+  const userId = user?.id || user?.userId;
+  return canManageAssignmentAccess(task, user)
+    || isAssignmentCreator(task, userId)
+    || isAssignmentAssignee(task, userId);
 }
 
 const PIPELINE_STATUS_STAGES = [
@@ -1561,8 +1565,8 @@ export default function CRMAssignmentsPage({
   const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = ['admin', 'manager', 'sales_admin'].includes(user?.role);
   const uid = String(user?.id || '');
-  const canManageTask = useCallback((t) => isAssignmentCreator(t, uid), [uid]);
-  const canMoveTask = useCallback((t) => canMoveAssignment(t, uid), [uid]);
+  const canManageTask = useCallback((t) => canManageAssignmentAccess(t, user), [user]);
+  const canMoveTask = useCallback((t) => canMoveAssignment(t, user), [user]);
 
   const [pageTab, setPageTab] = useState(() => (
     String(searchParams.get('pageTab') || '').toLowerCase() === 'private' ? 'private' : 'assignments'
@@ -2691,6 +2695,13 @@ export default function CRMAssignmentsPage({
               )}
               {pageTab === 'private' && (
                 <>
+                  <Link
+                    to={`/management/shared-workspace-report?module=${encodeURIComponent(assignmentModule)}`}
+                    className="h-8 px-3 rounded-md bg-white border border-emerald-200 text-emerald-800 text-xs font-semibold inline-flex items-center justify-center gap-1.5 cursor-pointer hover:bg-emerald-50 shadow-sm"
+                    title="Xem và xuất báo cáo nhiệm vụ phát sinh"
+                  >
+                    <FileChartColumn className="h-3.5 w-3.5" /> Báo cáo phát sinh
+                  </Link>
                   <button
                     type="button"
                     data-tour="assign-create-shared-btn"
@@ -4150,6 +4161,8 @@ function ItemModal({
   const [selRegions, setSelRegions] = useState(new Set());
   const [selDepts, setSelDepts] = useState(new Set());
   const [selUsers, setSelUsers] = useState(new Set(initialAssigneeIds));
+  const [memberRoles, setMemberRoles] = useState(() => rolesMapFromAssignees(item?.assignees));
+  const [bulkAssignRole, setBulkAssignRole] = useState(DEFAULT_ASSIGN_ROLE);
   const [userSearch, setUserSearch] = useState('');
   const [showAssigneePicker, setShowAssigneePicker] = useState(!item?.id);
   const [stagedFiles, setStagedFiles] = useState([]);
@@ -4272,23 +4285,74 @@ function ItemModal({
     return next;
   };
 
-  const addAllFiltered = () => setSelUsers((p) => {
-    const next = new Set(p);
-    filteredUsers.forEach((u) => next.add(String(u.id)));
-    return next;
-  });
-  const clearAllSelected = () => setSelUsers(new Set());
+  const addRolesForIds = (ids) => {
+    setMemberRoles((prev) => {
+      const next = { ...prev };
+      for (const id of ids) next[String(id)] = next[String(id)] || DEFAULT_ASSIGN_ROLE;
+      return next;
+    });
+  };
 
-  const addUsersOfDept = (deptId) => setSelUsers((p) => {
-    const next = new Set(p);
-    (lookups.users || []).filter((u) => String(u.department_id) === String(deptId)).forEach((u) => next.add(String(u.id)));
-    return next;
-  });
-  const addUsersOfRegion = (regionId) => setSelUsers((p) => {
-    const next = new Set(p);
-    (lookups.users || []).filter((u) => (u.region_ids || []).map(String).includes(String(regionId))).forEach((u) => next.add(String(u.id)));
-    return next;
-  });
+  const addAllFiltered = () => {
+    const ids = filteredUsers.map((u) => String(u.id));
+    setSelUsers((p) => {
+      const next = new Set(p);
+      ids.forEach((id) => next.add(id));
+      return next;
+    });
+    addRolesForIds(ids);
+  };
+  const clearAllSelected = () => {
+    setSelUsers(new Set());
+    setMemberRoles({});
+  };
+
+  const addUsersOfDept = (deptId) => {
+    const ids = (lookups.users || [])
+      .filter((u) => String(u.department_id) === String(deptId))
+      .map((u) => String(u.id));
+    setSelUsers((p) => {
+      const next = new Set(p);
+      ids.forEach((id) => next.add(id));
+      return next;
+    });
+    addRolesForIds(ids);
+  };
+  const addUsersOfRegion = (regionId) => {
+    const ids = (lookups.users || [])
+      .filter((u) => (u.region_ids || []).map(String).includes(String(regionId)))
+      .map((u) => String(u.id));
+    setSelUsers((p) => {
+      const next = new Set(p);
+      ids.forEach((id) => next.add(id));
+      return next;
+    });
+    addRolesForIds(ids);
+  };
+
+  const toggleUser = (userId) => {
+    const sid = String(userId);
+    const wasSelected = selUsers.has(sid);
+    setSelUsers((p) => toggleSet(p, sid));
+    setMemberRoles((prev) => {
+      if (wasSelected) {
+        const next = { ...prev };
+        delete next[sid];
+        return next;
+      }
+      return { ...prev, [sid]: prev[sid] || DEFAULT_ASSIGN_ROLE };
+    });
+  };
+
+  const applyBulkRoleToSelected = () => {
+    if (!selUsers.size) return;
+    const role = normalizeAssignRole(bulkAssignRole);
+    setMemberRoles((prev) => {
+      const next = { ...prev };
+      for (const id of selUsers) next[String(id)] = role;
+      return next;
+    });
+  };
 
   const submit = (e) => {
     e.preventDefault();
@@ -4308,6 +4372,7 @@ function ItemModal({
     onSave({
       ...form,
       assignee_ids: [...selUsers],
+      assignee_roles: assigneeRolesPayload([...selUsers], memberRoles),
       department_ids: [],
       region_ids: [],
       column_id: form.column_id || null,
@@ -4401,11 +4466,21 @@ function ItemModal({
       </div>
 
       {selectedUserObjects.length > 0 ? (
-        <div className="flex flex-wrap gap-1 mb-2 p-2 bg-white/80 rounded-xl border border-emerald-200 max-h-20 overflow-y-auto">
+        <div className="flex flex-wrap gap-1 mb-2 p-2 bg-white/80 rounded-xl border border-emerald-200 max-h-28 overflow-y-auto">
           {selectedUserObjects.map((u) => (
-            <span key={u.id} className="inline-flex items-center gap-1 bg-emerald-50 border border-emerald-200 rounded-full px-2 py-0.5 text-xs text-emerald-900">
+            <span key={u.id} className="inline-flex items-center gap-1 bg-emerald-50 border border-emerald-200 rounded-full pl-2 pr-1 py-0.5 text-xs text-emerald-900">
               {u.full_name}
-              <button type="button" onClick={() => setSelUsers((p) => toggleSet(p, u.id))} className="text-emerald-600/70 hover:text-red-500 cursor-pointer">
+              <select
+                value={normalizeAssignRole(memberRoles[String(u.id)])}
+                onChange={(e) => setMemberRoles((prev) => ({ ...prev, [String(u.id)]: normalizeAssignRole(e.target.value) }))}
+                title="Vai trò trên việc phát sinh"
+                className="h-6 max-w-[7.5rem] px-1 border border-emerald-200 rounded-full text-[10px] bg-white text-emerald-900"
+              >
+                {ASSIGN_ROLE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+              <button type="button" onClick={() => toggleUser(u.id)} className="text-emerald-600/70 hover:text-red-500 cursor-pointer">
                 <X className="h-3 w-3" />
               </button>
             </span>
@@ -4416,6 +4491,28 @@ function ItemModal({
           Chọn ít nhất 1 nhân viên bên dưới.
         </p>
       )}
+
+      <div className="flex flex-wrap items-center gap-1.5 mb-2 rounded-xl border border-white/80 bg-white/80 px-2 py-1.5">
+        <UserCog className="h-3.5 w-3.5 text-slate-600 shrink-0" />
+        <span className="text-[10px] font-semibold text-slate-700">Vai trò</span>
+        <select
+          value={bulkAssignRole}
+          onChange={(e) => setBulkAssignRole(e.target.value)}
+          className="h-7 px-1.5 border border-gray-200 rounded-lg text-[11px] bg-white min-w-0 flex-1"
+        >
+          {ASSIGN_ROLE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>{o.label}</option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={applyBulkRoleToSelected}
+          disabled={!selUsers.size}
+          className="h-7 px-2 text-[11px] font-semibold text-slate-700 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-40 cursor-pointer whitespace-nowrap"
+        >
+          Áp dụng ({selUsers.size})
+        </button>
+      </div>
 
       {showAssigneePicker && (
         <div className="flex flex-col min-h-0 gap-2">
@@ -4526,16 +4623,30 @@ function ItemModal({
                 const checked = selUsers.has(String(u.id));
                 const dept = lookups.departments.find((d) => String(d.id) === String(u.department_id));
                 return (
-                  <label key={u.id} className={`flex items-center gap-2 px-3 py-2 cursor-pointer hover:bg-gray-50 ${checked ? (isLd ? 'bg-orange-50' : isSx ? 'bg-indigo-50' : 'bg-blue-50') : ''}`}>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => setSelUsers((p) => toggleSet(p, u.id))}
-                      className="cursor-pointer"
-                    />
-                    <span className="text-sm flex-1 min-w-0 truncate">{u.full_name}</span>
-                    {dept && <span className="text-[10px] text-gray-500 shrink-0">{dept.name}</span>}
-                  </label>
+                  <div key={u.id} className={`flex items-center gap-2 px-3 py-2 hover:bg-gray-50 ${checked ? (isLd ? 'bg-orange-50' : isSx ? 'bg-indigo-50' : 'bg-blue-50') : ''}`}>
+                    <label className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleUser(u.id)}
+                        className="cursor-pointer"
+                      />
+                      <span className="text-sm flex-1 min-w-0 truncate">{u.full_name}</span>
+                      {dept && <span className="text-[10px] text-gray-500 shrink-0">{dept.name}</span>}
+                    </label>
+                    {checked && (
+                      <select
+                        value={normalizeAssignRole(memberRoles[String(u.id)])}
+                        onChange={(e) => setMemberRoles((prev) => ({ ...prev, [String(u.id)]: normalizeAssignRole(e.target.value) }))}
+                        title="Vai trò thành viên"
+                        className="h-7 max-w-[8.5rem] px-1 border border-gray-200 rounded text-[10px] bg-white shrink-0"
+                      >
+                        {ASSIGN_ROLE_OPTIONS.map((o) => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
                 );
               })
             )}
@@ -4605,6 +4716,7 @@ function ItemModal({
                         setSelRegions(new Set());
                         setSelDepts(new Set());
                         setSelUsers(new Set());
+                        setMemberRoles({});
                         setDealAssigneeFilter('');
                         setDealAssigneeSearch('');
                       }}

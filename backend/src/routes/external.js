@@ -30,10 +30,16 @@
  * POST /api/external/project-deadlines/run — chạy ngay cron POST webhook quá hạn
  */
 const { Router } = require('express');
-const { apiKeyAuth } = require('../middleware/apiKeyAuth');
+const { apiKeyAuth, extractApiKey, resolveKeyCredential } = require('../middleware/apiKeyAuth');
 const { supabase } = require('../config/supabase');
 const { nextCrmCode } = require('../helpers/crmNextCode');
 const { enforceQuotaForRequest, invalidateTenantUsageCache, resolveTenantIdForQuota } = require('../helpers/tenantQuotas');
+const {
+  getTenantCompanyIds,
+  resolveTenantIdForUser,
+  resolveDefaultTenantId,
+  TENANT_EMPTY_COMPANY_SENTINEL,
+} = require('../helpers/tenantScope');
 const https = require('https');
 const http = require('http');
 // Cùng helper auto-gen task theo template lead type — y hệt POST /crm/leads
@@ -128,7 +134,10 @@ async function findOrCreateCustomer({ full_name, phone, email, address, company 
 
 async function findOrCreateSource(name, category_id, company_id) {
   if (!name) return null;
-  const { data } = await supabase.from('crm_sources').select('id, category_id').ilike('name', name).maybeSingle();
+  let q = supabase.from('crm_sources').select('id, category_id').ilike('name', name);
+  if (company_id) q = q.eq('company_id', company_id);
+  const { data: rows } = await q.limit(5);
+  const data = (rows || [])[0] || null;
   if (data) {
     // Nếu source đã có nhưng chưa có category và body có truyền → cập nhật
     if (category_id && !data.category_id) {
@@ -588,10 +597,12 @@ r.get('/stages', apiKeyAuth, async (req, res) => {
 
 r.get('/sources', apiKeyAuth, async (req, res) => {
   try {
-    const { data, error } = await supabase
+    let q = supabase
       .from('crm_sources')
       .select('id, name')
       .order('name');
+    if (req.apiKey?.company_id) q = q.eq('company_id', req.apiKey.company_id);
+    const { data, error } = await q;
     if (error) throw error;
     res.json({ sources: data || [] });
   } catch (e) {
@@ -720,6 +731,37 @@ const {
   listProjectDeadlineNotifications,
 } = require('../helpers/projectDeadlineExport');
 
+/**
+ * Giới hạn phạm vi công ty của /project-deadlines theo hệ sinh thái của người gọi.
+ * Không truyền company_id nghĩa là "tất cả công ty" — nhưng chỉ trong 1 HST,
+ * để dữ liệu HST khác (vd NextGo) không lọt ra ngoài.
+ */
+async function resolveDeadlineTenantCompanyIds(req, requestedIds) {
+  const key = extractApiKey(req);
+  let tenantId = null;
+  if (key) {
+    const cred = await resolveKeyCredential(key);
+    if (!cred || cred.active === false) return { error: 'API key không hợp lệ hoặc đã bị thu hồi' };
+    const allowed = Array.isArray(cred.allowed_company_ids) ? cred.allowed_company_ids.map(String) : [];
+    const own = cred.company_id ? [String(cred.company_id)] : [];
+    const keyScope = [...new Set([...own, ...allowed])];
+    if (keyScope.length) {
+      const ids = requestedIds?.length
+        ? requestedIds.map(String).filter((id) => keyScope.includes(id))
+        : keyScope;
+      return { companyIds: ids.length ? ids : [TENANT_EMPTY_COMPANY_SENTINEL] };
+    }
+    tenantId = await resolveTenantIdForUser(cred.created_by || cred.default_assigned_to || null);
+  }
+  if (!tenantId) tenantId = await resolveDefaultTenantId();
+  const tenantCompanyIds = await getTenantCompanyIds(tenantId);
+  if (!tenantCompanyIds.length) return { companyIds: requestedIds?.length ? requestedIds : null };
+  const ids = requestedIds?.length
+    ? requestedIds.map(String).filter((id) => tenantCompanyIds.includes(id))
+    : tenantCompanyIds;
+  return { companyIds: ids.length ? ids : [TENANT_EMPTY_COMPANY_SENTINEL] };
+}
+
 r.get('/project-deadlines', async (req, res) => {
   try {
     const q = parseProjectDeadlineExportQuery(req.query);
@@ -736,9 +778,12 @@ r.get('/project-deadlines', async (req, res) => {
       }
     } catch { /* ignore */ }
 
-    const companyIds = q.queryCompanyIds.length
+    const requestedCompanyIds = q.queryCompanyIds.length
       ? q.queryCompanyIds
       : (saved.company_ids?.length ? saved.company_ids : null);
+    const scope = await resolveDeadlineTenantCompanyIds(req, requestedCompanyIds);
+    if (scope.error) return res.status(401).json({ error: scope.error });
+    const companyIds = scope.companyIds;
     const regionIds = q.regionIds.length ? q.regionIds : (saved.region_ids || []);
     const hasModuleQuery = !!(req.query.module || req.query.modules);
     const module = hasModuleQuery

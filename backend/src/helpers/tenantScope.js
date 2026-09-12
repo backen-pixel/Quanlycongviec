@@ -94,6 +94,18 @@ async function getTenantCompanyIds(tenantId) {
   });
 }
 
+/** HST mặc định (slug 'default') — dùng khi request không xác định được tenant. */
+async function resolveDefaultTenantId() {
+  return tenantCache.getOrFetch('slug:default', async () => {
+    const { data } = await supabase
+      .from('tenants')
+      .select('id')
+      .eq('slug', 'default')
+      .maybeSingle();
+    return data?.id || null;
+  });
+}
+
 async function assertCompanyInTenant(companyId, tenantId) {
   if (!tenantId || !companyId) return false;
   const ids = await getTenantCompanyIds(tenantId);
@@ -260,6 +272,7 @@ module.exports = {
   getTenantLimits,
   assertTenantActive,
   getTenantCompanyIds,
+  resolveDefaultTenantId,
   assertCompanyInTenant,
   isTenantScopeEnforced,
   companyInTenantContext,

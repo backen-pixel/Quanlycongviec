@@ -3,10 +3,15 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
-import { vnTodayYmd, vnAddDaysYmd } from '../lib/vnDate';
 import { formatStaffDisplayName, getStaffInitials, avatarColor } from '../lib/utils';
 import { getDeepLink } from '../components/UnifiedTaskRow';
-import { RefreshCw, Building2, AlertTriangle, CalendarDays, CircleAlert } from 'lucide-react';
+import SearchInlineFilterChips, { AdvFilterButton, searchGroupClass } from '../components/SearchInlineFilterChips';
+import WorkUnifiedFilterPanel, {
+  WORK_UNIFIED_REGION_NONE,
+  WORK_UNIFIED_TIME_PRESETS,
+  getWorkUnifiedPresetDateRange,
+} from '../components/WorkUnifiedFilterFields';
+import { RefreshCw, AlertTriangle, CalendarDays, CircleAlert } from 'lucide-react';
 
 const WEEKDAY_LABELS = ['Chủ nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
 
@@ -107,16 +112,34 @@ function OverviewRow({ href, title, subtitle, titleCls, delay, warning, personNa
   return <Link to={href} className="block">{inner}</Link>;
 }
 
-function OverviewCard({ icon, iconWrap, title, count, countCls, loading, empty, children, footer }) {
+function taskProjectSubtitle(task) {
+  const code = String(task?.project_code || '').trim();
+  const name = String(task?.project_name || '').trim();
+  if (code && name) return `Dự án ${code} · ${name}`;
+  if (code) return `Dự án ${code}`;
+  if (name) return `Dự án ${name}`;
+  return task?.lead_title ? `Deal/Lead · ${task.lead_title}` : '';
+}
+
+function OverviewCard({ icon, iconWrap, title, titleHref, count, countCls, loading, empty, children, footer }) {
+  const titleContent = (
+    <>
+      <span className={`h-7 w-7 rounded-lg flex items-center justify-center shrink-0 ${iconWrap}`}>
+        {icon}
+      </span>
+      <h2 className="text-sm font-semibold text-gray-800 truncate">{title}</h2>
+    </>
+  );
   return (
     <div className="rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden flex flex-col h-full">
       <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-50">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className={`h-7 w-7 rounded-lg flex items-center justify-center shrink-0 ${iconWrap}`}>
-            {icon}
-          </span>
-          <h2 className="text-sm font-semibold text-gray-800 truncate">{title}</h2>
-        </div>
+        {titleHref ? (
+          <Link to={titleHref} className="flex items-center gap-2 min-w-0 hover:opacity-75">
+            {titleContent}
+          </Link>
+        ) : (
+          <div className="flex items-center gap-2 min-w-0">{titleContent}</div>
+        )}
         {count > 0 && (
           <span className={`text-[11px] font-semibold tabular-nums px-2 py-0.5 rounded-full ${countCls || 'bg-gray-100 text-gray-600'}`}>
             {count}
@@ -157,6 +180,12 @@ export default function WorkOverviewPage() {
 
   const [companies, setCompanies] = useState([]);
   const [companyId, setCompanyId] = useState('');
+  const [filterRegionId, setFilterRegionId] = useState('');
+  const [timePreset, setTimePreset] = useState('');
+  const [rangeFrom, setRangeFrom] = useState('');
+  const [rangeTo, setRangeTo] = useState('');
+  const [regions, setRegions] = useState([]);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [overview, setOverview] = useState(null);
   const [todayTasks, setTodayTasks] = useState([]);
   const [overdueTasks, setOverdueTasks] = useState([]);
@@ -165,6 +194,18 @@ export default function WorkOverviewPage() {
   const [showOverdue, setShowOverdue] = useState(LIST_PAGE);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  const lockedCompanyLabel = useMemo(() => {
+    const cid = user?.company_id != null ? String(user.company_id).trim() : '';
+    const c = companies.find((x) => String(x.id) === cid);
+    return c?.short_name || c?.name || 'Công ty của bạn';
+  }, [user?.company_id, companies]);
+
+  const effectiveCompanyId = useMemo(() => {
+    if (canPickCompany) return companyId || '';
+    const cid = user?.company_id != null ? String(user.company_id).trim() : '';
+    return cid || '';
+  }, [canPickCompany, companyId, user?.company_id]);
 
   useEffect(() => {
     api.get('/companies', { params: { for_module: 'crm' } }).then((res) => {
@@ -180,50 +221,59 @@ export default function WorkOverviewPage() {
     }).catch(() => setCompanies([]));
   }, [canPickCompany, user?.company_id]);
 
+  useEffect(() => {
+    const params = {};
+    if (effectiveCompanyId) {
+      params.company_id = effectiveCompanyId;
+    } else if (canPickCompany && companies.length > 0) {
+      params.company_ids = companies.map((c) => c.id).join(',');
+    } else {
+      setRegions([]);
+      return;
+    }
+    api.get('/crm/company-regions', { params })
+      .then((r) => setRegions((Array.isArray(r.data) ? r.data : []).filter((rg) => rg.is_active !== false)))
+      .catch(() => setRegions([]));
+  }, [effectiveCompanyId, canPickCompany, companies]);
+
+  useEffect(() => {
+    setFilterRegionId('');
+  }, [effectiveCompanyId]);
+
+  const handleTimePresetChange = (preset) => {
+    setTimePreset(preset);
+    const range = getWorkUnifiedPresetDateRange(preset);
+    setRangeFrom(range.from);
+    setRangeTo(range.to);
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const today = vnTodayYmd();
-      const yesterday = vnAddDaysYmd(today, -1);
-      const scopeParams = canPickCompany && companyId ? { company_id: companyId } : {};
-      const taskBase = { open_only: '1', page_size: 50, ...scopeParams };
-      const [overviewRes, tasksRes, overdueRes] = await Promise.all([
-        api.get('/management/work-overview', { params: scopeParams }),
-        api.get('/work-tasks', {
-          params: {
-            ...taskBase,
-            date_from: `${today}T00:00:00+07:00`,
-            date_to: `${today}T23:59:59+07:00`,
-          },
-        }),
-        api.get('/work-tasks', {
-          params: {
-            ...taskBase,
-            date_to: `${yesterday}T23:59:59+07:00`,
-          },
-        }),
-      ]);
+      const scopeParams = {
+        ...(canPickCompany && companyId ? { company_id: companyId } : {}),
+        ...(filterRegionId ? { region_id: filterRegionId } : {}),
+        ...(rangeFrom ? { date_from: rangeFrom } : {}),
+        ...(rangeTo ? { date_to: rangeTo } : {}),
+      };
+      const overviewRes = await api.get('/management/work-overview', { params: scopeParams });
       setOverview(overviewRes.data);
-      const todayList = tasksRes.data?.tasks || [];
-      const overdueList = (overdueRes.data?.tasks || [])
-        .slice()
-        .sort((a, b) => String(a.deadline || '').localeCompare(String(b.deadline || '')));
-      setTodayTasks(todayList);
-      setOverdueTasks(overdueList);
+      setTodayTasks(overviewRes.data?.today_tasks || []);
+      setOverdueTasks(overviewRes.data?.overdue_task_items || []);
     } catch (e) {
       setError(e?.response?.data?.error || 'Không tải được dữ liệu tổng quan');
     } finally {
       setLoading(false);
     }
-  }, [canPickCompany, companyId]);
+  }, [canPickCompany, companyId, filterRegionId, rangeFrom, rangeTo]);
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     setShowProjects(LIST_PAGE);
     setShowToday(LIST_PAGE);
     setShowOverdue(LIST_PAGE);
-  }, [companyId]);
+  }, [companyId, filterRegionId, rangeFrom, rangeTo]);
 
   const companyName = useMemo(() => {
     if (canPickCompany) {
@@ -233,15 +283,82 @@ export default function WorkOverviewPage() {
     return companies.find((c) => String(c.id) === String(user?.company_id))?.name || companies[0]?.name || 'công ty bạn';
   }, [canPickCompany, companyId, companies, user?.company_id]);
 
+  const regionLabel = useMemo(() => {
+    if (filterRegionId === WORK_UNIFIED_REGION_NONE) return 'chưa gán khu vực';
+    if (!filterRegionId) return '';
+    return regions.find((r) => String(r.id) === String(filterRegionId))?.name || 'khu vực đã chọn';
+  }, [filterRegionId, regions]);
+
+  const activeFilterCount = [canPickCompany && !!companyId, !!filterRegionId, !!timePreset].filter(Boolean).length;
+
+  const overviewFilterChips = useMemo(() => {
+    const chips = [];
+    if (canPickCompany && companyId) {
+      const c = companies.find((x) => String(x.id) === String(companyId));
+      chips.push({
+        key: 'company',
+        label: c?.short_name || c?.name || 'Công ty',
+        onClear: () => setCompanyId(''),
+      });
+    }
+    if (filterRegionId === WORK_UNIFIED_REGION_NONE) {
+      chips.push({
+        key: 'region',
+        label: 'Chưa gán khu vực',
+        onClear: () => setFilterRegionId(''),
+      });
+    } else if (filterRegionId) {
+      const rg = regions.find((x) => String(x.id) === String(filterRegionId));
+      chips.push({
+        key: 'region',
+        label: rg?.name || 'Khu vực',
+        onClear: () => setFilterRegionId(''),
+      });
+    }
+    if (timePreset) {
+      const t = WORK_UNIFIED_TIME_PRESETS.find((x) => x.key === timePreset);
+      chips.push({
+        key: 'time',
+        label: t?.label || 'Thời gian',
+        onClear: () => handleTimePresetChange(''),
+      });
+    }
+    return chips;
+  }, [canPickCompany, companyId, companies, filterRegionId, regions, timePreset]);
+
+  const clearOverviewFilters = () => {
+    setFilterRegionId('');
+    handleTimePresetChange('');
+    if (canPickCompany) setCompanyId('');
+  };
+
   const now = useMemo(() => new Date(), []);
-  const revenueLabel = `Doanh thu tháng ${now.getMonth() + 1} (đến ${pad2(now.getDate())}/${pad2(now.getMonth() + 1)})`;
+  const periodPhrase = timePreset === 'today'
+    ? 'hôm nay'
+    : timePreset === 'this_week'
+      ? 'tuần này'
+      : timePreset === 'this_month'
+        ? `tháng ${now.getMonth() + 1}`
+        : timePreset === 'this_quarter'
+          ? 'quý này'
+          : '';
+  const revenueLabel = periodPhrase
+    ? `Doanh thu ${periodPhrase}`
+    : `Doanh thu tháng ${now.getMonth() + 1} (đến ${pad2(now.getDate())}/${pad2(now.getMonth() + 1)})`;
+  const customersLabel = periodPhrase
+    ? `Deal đã ký HĐ ${periodPhrase}`
+    : 'Deal đã ký HĐ tháng này';
+  const dueTasksTitle = periodPhrase && timePreset !== 'today'
+    ? `Việc cần làm ${periodPhrase}`
+    : 'Việc cần làm hôm nay';
+  const dueTasksEmpty = `Không có việc nào hạn ${periodPhrase || 'hôm nay'}.`;
   const subtitleDate = `${WEEKDAY_LABELS[now.getDay()]}, ${pad2(now.getDate())}/${pad2(now.getMonth() + 1)}/${now.getFullYear()}`;
 
   const stats = [
     { key: 'active', label: 'Dự án đang thực hiện', value: overview?.projects_active, cls: 'text-gray-900' },
     { key: 'revenue', label: revenueLabel, value: overview ? formatMoneyShort(overview.revenue_this_month) : null, cls: 'text-emerald-600' },
     { key: 'overdue', label: 'Công việc quá hạn', value: overview?.overdue_tasks, cls: 'text-red-600' },
-    { key: 'customers', label: 'Khách hàng mới tháng này', value: overview?.new_customers_this_month, cls: 'text-gray-900' },
+    { key: 'customers', label: customersLabel, value: overview?.new_customers_this_month, cls: 'text-gray-900' },
   ];
 
   const trend = overview?.revenue_trend || [];
@@ -267,31 +384,73 @@ export default function WorkOverviewPage() {
             {greetingForHour(now.getHours())}, {user?.full_name || ''}
           </h1>
           <p className="text-sm mt-0.5" style={{ color: '#6b7280' }}>
-            Toàn cảnh hoạt động của {companyName} · {subtitleDate}
+            Toàn cảnh hoạt động của {companyName}{regionLabel ? ` · ${regionLabel}` : ''} · {subtitleDate}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {canPickCompany && companies.length > 0 && (
-            <div className="relative">
-              <Building2 className="h-4 w-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <select
-                value={companyId}
-                onChange={(e) => setCompanyId(e.target.value)}
-                className="h-9 pl-8 pr-3 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
-              >
-                <option value="">Tất cả công ty</option>
-                {companies.map((c) => (
-                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                ))}
-              </select>
+          <div className="relative min-w-0 max-w-[22rem]">
+            <div
+              className={`group/search flex items-center h-9 rounded-md border transition-colors ${
+                searchGroupClass({
+                  focused: false,
+                  hasQuery: false,
+                  hasChips: overviewFilterChips.length > 0,
+                  panelOpen: filterPanelOpen,
+                })
+              }`}
+            >
+              <div className="flex-1 min-w-0 flex items-center gap-1 pl-2.5 pr-1">
+                {!filterPanelOpen && overviewFilterChips.length > 0 ? (
+                  <SearchInlineFilterChips
+                    chips={overviewFilterChips}
+                    opacityClass="opacity-45 group-hover/search:opacity-100"
+                    onClearChip={(chip) => { chip.onClear(); }}
+                    onClearAll={clearOverviewFilters}
+                    showClearAll={overviewFilterChips.length > 1}
+                  />
+                ) : (
+                  <span className="text-xs font-medium text-slate-500 truncate">
+                    {canPickCompany && !companyId ? 'Tất cả công ty' : (lockedCompanyLabel || companyName)}
+                  </span>
+                )}
+              </div>
+              <div className="shrink-0 pr-1">
+                <AdvFilterButton
+                  open={filterPanelOpen}
+                  active={activeFilterCount > 0}
+                  onClick={() => setFilterPanelOpen((v) => !v)}
+                />
+              </div>
             </div>
-          )}
-          {!canPickCompany && (user?.company_id) && (
-            <div className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg border border-blue-100 bg-blue-50 text-sm font-medium text-blue-800">
-              <Building2 className="h-4 w-4" />
-              {companyName}
-            </div>
-          )}
+            {filterPanelOpen && (
+              <>
+                <div
+                  className="fixed inset-0 z-30"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    setFilterPanelOpen(false);
+                  }}
+                />
+                <WorkUnifiedFilterPanel
+                  align="right"
+                  onClose={() => setFilterPanelOpen(false)}
+                  canPickCompany={canPickCompany}
+                  lockedCompanyLabel={lockedCompanyLabel}
+                  companies={companies}
+                  companyId={companyId}
+                  onCompanyChange={setCompanyId}
+                  regions={regions}
+                  filterRegionId={filterRegionId}
+                  onRegionChange={setFilterRegionId}
+                  timePreset={timePreset}
+                  onTimePresetChange={handleTimePresetChange}
+                  activeFilterCount={activeFilterCount}
+                  onClear={clearOverviewFilters}
+                  showUser={false}
+                />
+              </>
+            )}
+          </div>
           <button
             type="button"
             onClick={load}
@@ -419,11 +578,11 @@ export default function WorkOverviewPage() {
           <OverviewCard
             icon={<CalendarDays className="h-3.5 w-3.5" />}
             iconWrap="bg-sky-50 text-sky-600"
-            title="Việc cần làm hôm nay"
-            count={todayTasks.length}
+            title={dueTasksTitle}
+            count={overview?.today_task_count ?? todayTasks.length}
             countCls="bg-sky-50 text-sky-700"
             loading={loading && todayTasks.length === 0 && !overview}
-            empty={todayTasks.length === 0 ? 'Không có việc nào hạn hôm nay.' : null}
+            empty={todayTasks.length === 0 ? dueTasksEmpty : null}
             footer={(
               <LoadMoreBtn
                 shown={showToday}
@@ -437,7 +596,8 @@ export default function WorkOverviewPage() {
                 key={t.unified_id}
                 href={getDeepLink(t)}
                 title={t.title}
-                personName={t.assignee_name}
+                subtitle={taskProjectSubtitle(t)}
+                personName={t.assignee_name || t.effective_assignee_name}
                 accent="bg-sky-400"
               />
             ))}
@@ -447,7 +607,8 @@ export default function WorkOverviewPage() {
             icon={<CircleAlert className="h-3.5 w-3.5" />}
             iconWrap="bg-red-50 text-red-600"
             title="Công việc quá hạn"
-            count={overdueTasks.length}
+            titleHref="/management/project-tasks?risk=overdue"
+            count={overview?.overdue_tasks ?? overdueTasks.length}
             countCls="bg-red-50 text-red-700"
             loading={loading && overdueTasks.length === 0 && !overview}
             empty={overdueTasks.length === 0 ? 'Không có việc quá hạn.' : null}
@@ -468,8 +629,9 @@ export default function WorkOverviewPage() {
                   key={t.unified_id}
                   href={getDeepLink(t)}
                   title={t.title}
+                  subtitle={taskProjectSubtitle(t)}
                   delay={delay}
-                  personName={t.assignee_name}
+                  personName={t.assignee_name || t.effective_assignee_name}
                   accent="bg-red-500"
                 />
               );

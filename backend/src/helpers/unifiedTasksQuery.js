@@ -58,6 +58,25 @@ async function fetchLeadOptionsForAssignee(assigneeId, companyId, maxRows = 300)
   }));
 }
 
+/**
+ * unified_tasks_v nhân dòng khi một dự án có nhiều crm_leads (đo: 49 dự án,
+ * tối đa 4 lead/dự án, 2.338 dòng thừa trên 127.262). Cột is_primary_lead
+ * (migration 594) đánh dấu đúng MỘT dòng cho mỗi unified_id.
+ *
+ * CHỈ lọc khi truy vấn KHÔNG bám theo lead. Nếu đang lọc theo lead_id mà vẫn
+ * thêm is_primary_lead thì task của lead thứ 2 sẽ biến mất khỏi trang lead đó.
+ */
+function applyPrimaryLeadOnly(q, leadScoped) {
+  return leadScoped ? q : q.eq('is_primary_lead', true);
+}
+
+/** Truy vấn có bám theo lead không? (lead_id, hoặc assignee kèm danh sách lead) */
+function isLeadScoped({ lead_id: leadId, assignee_id: assigneeId, assignee_lead_ids: leadIds } = {}) {
+  if (leadId) return true;
+  if (assigneeId && (leadIds || []).filter(Boolean).length > 0) return true;
+  return false;
+}
+
 function applyAssigneeFilter(q, assigneeId, leadIds = []) {
   if (!assigneeId) return q;
   const ids = (leadIds || []).filter(Boolean);
@@ -92,6 +111,7 @@ function buildUnifiedTasksBaseQuery(user, {
   } else if (assignee_id) {
     q = applyAssigneeFilter(q, assignee_id, assignee_lead_ids);
   }
+  q = applyPrimaryLeadOnly(q, isLeadScoped({ lead_id, assignee_id, assignee_lead_ids }));
   if (status) q = q.eq('status', status);
   if (task_kind) q = q.eq('task_kind', task_kind);
   const search = String(searchQ || '').trim();
@@ -118,6 +138,7 @@ async function countUnifiedOpenTasks(user, opts = {}) {
   } else if (opts.assignee_id) {
     q = applyAssigneeFilter(q, opts.assignee_id, opts.assignee_lead_ids);
   }
+  q = applyPrimaryLeadOnly(q, isLeadScoped(opts));
   if (opts.date_from) q = q.gte('deadline', opts.date_from);
   if (opts.date_to) q = q.lte('deadline', opts.date_to);
 
@@ -143,6 +164,7 @@ async function countUnifiedOverdueTasks(user, opts = {}) {
   } else if (opts.assignee_id) {
     q = applyAssigneeFilter(q, opts.assignee_id, opts.assignee_lead_ids);
   }
+  q = applyPrimaryLeadOnly(q, isLeadScoped(opts));
   if (opts.date_from) q = q.gte('deadline', opts.date_from);
   if (opts.date_to) q = q.lte('deadline', opts.date_to);
 
@@ -215,6 +237,8 @@ module.exports = {
   applyEmployeeScope,
   applyOpenOnlyFilter,
   applyAssigneeFilter,
+  applyPrimaryLeadOnly,
+  isLeadScoped,
   resolveModuleKey,
   fetchLeadIdsForAssignee,
   fetchLeadOptionsForAssignee,

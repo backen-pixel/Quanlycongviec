@@ -31,10 +31,17 @@ async function replaceCrmTaskAssignees(taskId, userIds) {
   const uniq = [...new Set((userIds || []).filter(Boolean).map(String))];
   await supabase.from('crm_task_assignees').delete().eq('task_id', taskId);
   if (!uniq.length) return uniq;
-  const { error } = await supabase.from('crm_task_assignees').insert(
+  // DELETE + INSERT KHÔNG nguyên tử: hai luồng cùng lưu một task sẽ đâm nhau ở
+  // crm_task_assignees_pkey (task_id, user_id) — đo được 7 lần trong 1 giờ.
+  // upsert-ignore giữ nguyên hàng đã có thay vì ném 23505 rồi bị nuốt.
+  const { error } = await supabase.from('crm_task_assignees').upsert(
     uniq.map((uid) => ({ task_id: taskId, user_id: uid })),
+    { onConflict: 'task_id,user_id', ignoreDuplicates: true },
   );
-  if (error && !/crm_task_assignees/.test(error.message || '')) throw error;
+  if (error) {
+    if (!/crm_task_assignees/.test(error.message || '')) throw error;
+    console.warn('[crm-task-assignees]', error.code || '', error.message);
+  }
   return uniq;
 }
 

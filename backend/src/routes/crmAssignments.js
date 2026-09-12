@@ -5,6 +5,7 @@ const multer = require('multer');
 const path = require('path');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
+const { fetchAllPages } = require('../helpers/supabaseFetchAll');
 const { sanitizeStorageFilename, isInvalidStorageKeyError } = require('../helpers/storageFilename');
 const {
   persistAssignmentNotification,
@@ -35,6 +36,8 @@ const { promoteNextAssignmentAfterComplete } = require('../helpers/crmSequential
 const { emitCrmTaskChanged } = require('../helpers/crmTaskRealtime');
 const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
 const { listSharedWorkspaceInboxTasks, listPrivateDealInboxTasks } = require('../helpers/sharedWorkspaceInbox');
+const { listSharedWorkspaceAssignmentsReport } = require('../helpers/sharedWorkspaceAssignmentsReport');
+const { canManageAssignmentStructure } = require('../helpers/assignmentManageAccess');
 const {
   crmReportTodayYmdVn,
   crmReportCreatedAtFromIso,
@@ -224,20 +227,31 @@ async function getSharedColumnsCached() {
 }
 
 /** Id nhiệm vụ user được giao / tạo (bảng assignees + assignee_id + created_by). */
+/**
+ * Danh sách assignment mà một người có liên quan (được giao, hoặc tự tạo).
+ *
+ * PHẢI phân trang: thiếu .range() thì PostgREST cắt im lặng ở 1.000 dòng. Đo trên dữ
+ * liệu thật (11/09/2026) đã có người vượt ngưỡng — "Nam" 1.197 dòng nhưng chỉ nhận về
+ * 1.000 (mất 197), "Sale Admin Nhã" 1.080 nhận 1.000 (mất 80). Hệ quả: những người đó
+ * không nhìn thấy một phần việc của chính mình, mà không có lỗi nào báo ra.
+ */
 async function getUserInvolvedAssignmentIds(uid) {
   if (!uid) return [];
   const ids = new Set();
-  const { data: junction } = await supabase
-    .from('crm_assignment_assignees')
-    .select('assignment_id')
-    .eq('user_id', uid);
-  (junction || []).forEach((r) => ids.add(r.assignment_id));
-
-  const { data: direct } = await supabase
-    .from('crm_assignments')
-    .select('id')
-    .or(`assignee_id.eq.${uid},created_by_id.eq.${uid}`);
-  (direct || []).forEach((r) => ids.add(r.id));
+  const [junction, direct] = await Promise.all([
+    fetchAllPages(() => supabase
+      .from('crm_assignment_assignees')
+      .select('assignment_id')
+      .eq('user_id', uid)
+      .order('assignment_id', { ascending: true })),
+    fetchAllPages(() => supabase
+      .from('crm_assignments')
+      .select('id')
+      .or(`assignee_id.eq.${uid},created_by_id.eq.${uid}`)
+      .order('id', { ascending: true })),
+  ]);
+  junction.forEach((r) => ids.add(r.assignment_id));
+  direct.forEach((r) => ids.add(r.id));
   return [...ids];
 }
 
@@ -1025,12 +1039,12 @@ r.put('/:id', async (req, res) => {
   try {
     const { data: before } = await supabase
       .from('crm_assignments')
-      .select('id, assignee_id, status, company_id, created_by_id')
+      .select('id, assignee_id, status, company_id, executor_company_id, created_by_id')
       .eq('id', req.params.id)
       .maybeSingle();
     if (!before) return res.status(404).json({ error: 'Không tìm thấy nhiệm vụ' });
 
-    const creator = isAssignmentCreator(req, before);
+    const creator = canManageAssignmentStructure(req.user, before);
     const rawIds = req.body.assignee_ids;
     const rawDept = req.body.department_ids;
     const rawReg = req.body.region_ids;
@@ -1039,12 +1053,12 @@ r.put('/:id', async (req, res) => {
 
     if (!creator) {
       if (structuralChange) {
-        return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ mới được sửa hoặc xóa' });
+        return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ hoặc quản trị mới được sửa hoặc xóa' });
       }
       const progressKeys = ['status', 'column_id', 'position'];
       const touched = progressKeys.filter((k) => req.body[k] !== undefined);
       if (!touched.length || !(await isAssignmentAssignee(req, before.id))) {
-        return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ mới được sửa hoặc xóa' });
+        return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ hoặc quản trị mới được sửa hoặc xóa' });
       }
     }
 
@@ -1190,13 +1204,13 @@ r.post('/:id/move', async (req, res) => {
   try {
     const { data: row } = await supabase
       .from('crm_assignments')
-      .select('id, created_by_id')
+      .select('id, created_by_id, company_id, executor_company_id')
       .eq('id', req.params.id)
       .maybeSingle();
     if (!row) return res.status(404).json({ error: 'Không tìm thấy nhiệm vụ' });
-    const creator = isAssignmentCreator(req, row);
+    const creator = canManageAssignmentStructure(req.user, row);
     if (!creator && !(await isAssignmentAssignee(req, row.id))) {
-      return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ mới được sửa hoặc xóa' });
+      return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ hoặc quản trị mới được sửa hoặc xóa' });
     }
 
     const { column_id, position } = req.body || {};
@@ -1267,12 +1281,12 @@ r.delete('/:id', async (req, res) => {
   try {
     const { data: row } = await supabase
       .from('crm_assignments')
-      .select('id, created_by_id, lead_id, crm_task_id')
+      .select('id, created_by_id, lead_id, crm_task_id, company_id, executor_company_id')
       .eq('id', req.params.id)
       .maybeSingle();
     if (!row) return res.status(404).json({ error: 'Không tìm thấy nhiệm vụ' });
-    if (!isAssignmentCreator(req, row)) {
-      return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ mới được sửa hoặc xóa' });
+    if (!canManageAssignmentStructure(req.user, row)) {
+      return res.status(403).json({ error: 'Chỉ người tạo nhiệm vụ hoặc quản trị mới được sửa hoặc xóa' });
     }
     const result = await deleteCrmAssignmentCore(req, req.params.id);
     if (result.error) return res.status(result.status || 500).json({ error: result.error });
@@ -1817,6 +1831,23 @@ r.get('/shared-workspace-tasks', async (req, res) => {
   } catch (e) {
     console.error('[shared-workspace-tasks]', e);
     res.status(500).json({ error: e.message || 'Lỗi tải công việc chung' });
+  }
+});
+
+// GET /api/crm/assignments/shared-workspace-report
+r.get('/shared-workspace-report', async (req, res) => {
+  try {
+    const elevated = isAdmin(req);
+    // Phạm vi của người không phải admin nay lọc thẳng trong SQL (cột involved_user_ids),
+    // không còn phải đọc trước danh sách id — chính chỗ đang bị cắt im lặng ở 1.000 dòng.
+    const result = await listSharedWorkspaceAssignmentsReport(req.query, {
+      viewerUserId: elevated ? null : (req.user?.userId || null),
+      fixedCompanyId: elevated ? viewerCompanyId(req) : null,
+    });
+    res.json(result);
+  } catch (e) {
+    console.error('[shared-workspace-report]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải báo cáo phát sinh' });
   }
 });
 

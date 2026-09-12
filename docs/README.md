@@ -14,6 +14,7 @@ GitHub repository là **nguồn chuẩn**. Claude / Cursor đọc theo map bên 
 | [`ui/`](./ui/) | UI / cài đặt giao diện |
 | [`project/`](./project/) | Coding standard, kế hoạch module, báo cáo, workflow |
 | [`ops/`](./ops/) | Triển khai server, call/Coturn, vận hành hạ tầng |
+| [`ai-handoff/`](./ai-handoff/) | Trạng thái, nhật ký và quyết định bàn giao giữa Cursor/Claude/AI |
 
 Migration SQL thật nằm ở `/database/*.sql` (root repo) — không nhân bản vào `docs/`.
 
@@ -24,6 +25,9 @@ Migration SQL thật nằm ở `/database/*.sql` (root repo) — không nhân b�
 3. API → [`api/API_DOCUMENT.md`](./api/API_DOCUMENT.md)
 4. Coding / inventory → [`project/CODING_STANDARD.md`](./project/CODING_STANDARD.md)
 5. Workflow Claude ↔ Cursor ↔ GitHub → [`project/workflow-claude-cursor-github.md`](./project/workflow-claude-cursor-github.md)
+6. Công việc AI hiện tại → [`ai-handoff/CURRENT.md`](./ai-handoff/CURRENT.md)
+7. Lỗi query-guard 2026-09-08 (Claude kế hoạch sửa) → [`ai-handoff/BAO-CAO-loi-query-guard-2026-09-08.md`](./ai-handoff/BAO-CAO-loi-query-guard-2026-09-08.md)
+8. Tách NextGo instance (chuẩn bị, chưa cắt) → [`ops/nextgo-instance/README.md`](./ops/nextgo-instance/README.md)
 
 ## Regenerate tài liệu máy sinh
 
@@ -44,6 +48,7 @@ node docs/project/generate-coding-standard-doc.js
 - `docs/database/`
 - `docs/ui/`
 - `docs/project/`
+- `docs/ai-handoff/`
 - `database/` (migrations SQL)
 - `README.md`
 - `AGENTS.md`

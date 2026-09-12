@@ -72,11 +72,14 @@ async function addLogisticsPersonToDealMembers(projectId, userId, addedBy) {
       added_by: addedBy || null,
       history_cutoff_at: cutoff,
     };
-    const { error } = await supabase.from('lead_members').insert(row);
+    // upsert-ignore: maybeSingle ở trên là kiểm-rồi-ghi, không nguyên tử.
+    const { error } = await supabase.from('lead_members')
+      .upsert(row, { onConflict: 'lead_id,user_id', ignoreDuplicates: true });
     if (error && String(error.message || '').includes('history_cutoff_at')) {
       const { history_cutoff_at: _c, ...noCutoff } = row;
       void _c;
-      const retry = await supabase.from('lead_members').insert(noCutoff);
+      const retry = await supabase.from('lead_members')
+        .upsert(noCutoff, { onConflict: 'lead_id,user_id', ignoreDuplicates: true });
       if (retry.error) {
         console.warn('[workshop-teams] add lead_member:', retry.error.message);
         continue;
@@ -389,12 +392,17 @@ r.patch('/projects/:projectId/assign', async (req, res) => {
 // ─── GET /workshop-teams/users — danh sách user có thể gán ───────────────────
 r.get('/users', requirePermission('projects', 'view'), async (req, res) => {
   try {
-    const { data } = await supabase
+    // Moi gia tri phai co trong enum user_role, neu khong ca cau query hong (22P02).
+    const { data, error } = await supabase
       .from('users')
       .select('id, full_name, email, role, avatar')
-      .in('role', ['logistics_admin', 'logistics', 'installer', 'driver', 'production', 'manager', 'admin', 'sales_admin'])
+      .in('role', ['logistics_admin', 'installer', 'driver', 'production', 'manager', 'admin', 'sales_admin'])
       .eq('is_active', true)
       .order('full_name');
+    if (error) {
+      console.error('[workshop-teams/users]', error.message);
+      return res.status(500).json({ error: error.message });
+    }
     res.json(data || []);
   } catch (e) {
     res.status(500).json({ error: e.message });

@@ -7,6 +7,7 @@ const { supabase } = require('../config/supabase');
 const { frontendUrl, normalizeFrontendOrigin, defaultProductionFrontendUrl } = require('../config');
 const { isCrmCompletedStage } = require('./completeOpenWorkOnModuleDone');
 const { loadCompletedKanbanColumnSets, projectIsInCompletedKanban } = require('./clearCompletedProjectDeadlines');
+const { MODULE, resolveModuleDeadline } = require('./moduleDeadlinePolicy');
 
 const PUBLIC_APP_URL = defaultProductionFrontendUrl || 'https://tubep-frontend-s30w.onrender.com';
 
@@ -232,22 +233,61 @@ function packCo(companyMap, id) {
   return { id: String(c.id), name: c.name || null, short_name: c.short_name || null };
 }
 
-function collectDeadlines(project, deal, { includeCrmDealDates = true } = {}) {
-  const rows = [
-    { at: project.sx_kanban_deadline_at, source: 'sx_kanban', label: 'Hạn Kanban SX', module: 'production' },
-    { at: project.production_deadline, source: 'production', label: 'Hạn SX', module: 'production' },
-    { at: project.deadline, source: 'project', label: 'Hạn công trình', module: 'production' },
-    { at: project.design_deadline, source: 'design', label: 'Hạn thiết kế', module: 'crm' },
-    { at: project.delivery_date, source: 'delivery', label: 'Ngày giao', module: 'logistics' },
-    { at: project.install_date, source: 'install', label: 'Ngày lắp', module: 'logistics' },
-  ];
-  if (includeCrmDealDates) {
-    rows.push(
-      { at: deal?.kanban_deadline_at, source: 'crm_kanban', label: 'Hạn Kanban CRM', module: 'crm' },
-      { at: deal?.expected_close_date, source: 'expected_close', label: 'Dự kiến chốt', module: 'crm' },
-    );
+const DEADLINE_LABEL = {
+  task: 'Deadline nhiệm vụ',
+  kanban: 'Hạn Kanban CRM',
+  sla: 'SLA cột CRM',
+  expected_close: 'Dự kiến chốt',
+  sx_kanban: 'Hạn Kanban SX',
+  production_finish: 'Ngày hoàn thiện SX',
+  production: 'Hạn SX',
+  delivery: 'Ngày giao',
+  install: 'Ngày lắp',
+  project: 'Hạn công trình',
+};
+
+function collectDeadlines(project, deal, context = {}) {
+  const rows = [];
+  if (context.includeCrmDealDates && deal) {
+    const crm = resolveModuleDeadline(MODULE.CRM, {
+      ...deal,
+      crm_next_open_task_deadline: context.crmTaskDeadline || null,
+      customer: context.customer || null,
+    }, { stage: context.crmStage || null });
+    if (crm.deadlineAt) {
+      rows.push({
+        at: crm.deadlineAt,
+        source: crm.source,
+        label: DEADLINE_LABEL[crm.source] || 'Deadline CRM',
+        module: MODULE.CRM,
+      });
+    }
   }
-  return rows.filter((d) => d.at);
+
+  const production = resolveModuleDeadline(MODULE.PRODUCTION, project, {
+    stage: context.productionStage || null,
+  });
+  if (production.deadlineAt) {
+    rows.push({
+      at: production.deadlineAt,
+      source: production.source,
+      label: DEADLINE_LABEL[production.source] || 'Deadline SX',
+      module: MODULE.PRODUCTION,
+    });
+  }
+
+  const logistics = resolveModuleDeadline(MODULE.LOGISTICS, project, {
+    stage: context.logisticsStage || null,
+  });
+  if (logistics.deadlineAt) {
+    rows.push({
+      at: logistics.deadlineAt,
+      source: logistics.source,
+      label: DEADLINE_LABEL[logistics.source] || 'Deadline VC/LĐ',
+      module: MODULE.LOGISTICS,
+    });
+  }
+  return rows;
 }
 
 function stubProjectFromCrmDeal(deal) {
@@ -328,7 +368,7 @@ function orIn(column, ids) {
   return `${column}.in.(${ids.join(',')})`;
 }
 
-const DEAL_SELECT = 'id, code, title, type, company_id, region_id, project_id, customer_id, stage_id, assigned_to, lead_owner_id, kanban_deadline_at, expected_close_date, deadline_disabled_at';
+const DEAL_SELECT = 'id, code, title, type, company_id, region_id, project_id, customer_id, stage_id, stage_entered_at, phone, assigned_to, lead_owner_id, kanban_deadline_at, expected_close_date, deadline_disabled_at';
 
 async function paginateProjects(apply) {
   const map = new Map();
@@ -393,6 +433,33 @@ async function loadCrmDeadlineDeals(companyIds) {
     }
   }
   return deals;
+}
+
+async function loadCurrentCrmTaskDeadlines(deals) {
+  const dealById = new Map((deals || []).filter((d) => d?.id).map((d) => [String(d.id), d]));
+  const out = new Map();
+  const ids = [...dealById.keys()];
+  for (const part of chunk(ids, IN_CHUNK)) {
+    const { data, error } = await supabase
+      .from('crm_tasks')
+      .select('lead_id, pipeline_stage_id, deadline, status')
+      .in('lead_id', part)
+      .in('status', ['pending', 'in_progress'])
+      .not('deadline', 'is', null)
+      .order('deadline', { ascending: true });
+    if (error) {
+      console.warn('[projectDeadlineExport] CRM task deadlines:', error.message);
+      continue;
+    }
+    for (const task of data || []) {
+      const lead = dealById.get(String(task.lead_id));
+      if (!lead) continue;
+      if (task.pipeline_stage_id && String(task.pipeline_stage_id) !== String(lead.stage_id || '')) continue;
+      const key = String(task.lead_id);
+      if (!out.has(key)) out.set(key, task.deadline);
+    }
+  }
+  return out;
 }
 
 async function loadProjectsForCompanyScope(companyIds) {
@@ -507,11 +574,28 @@ async function listProjectDeadlineNotifications(opts = {}) {
   const stageMap = new Map(
     (await fetchByIds(
       'crm_pipeline_stages',
-      'id, is_won, is_lost, counts_as_completed_revenue, canonical_slug, name',
+      'id, is_won, is_lost, counts_as_completed_revenue, canonical_slug, deal_report_bucket, name, sla_days',
       'id',
       (deals || []).map((d) => d.stage_id),
     )).map((s) => [String(s.id), s]),
   );
+  const [productionStages, logisticsStages, crmTaskDeadlineMap] = await Promise.all([
+    fetchByIds(
+      'production_pipeline_stages',
+      'id, name, bucket_slug, sla_days, counts_as_completed_revenue, counts_as_collected_revenue',
+      'id',
+      projects.map((p) => p.sx_kanban_column_id),
+    ),
+    fetchByIds(
+      'logistics_pipeline_stages',
+      'id, name, bucket_slug',
+      'id',
+      projects.map((p) => p.vc_kanban_column_id),
+    ),
+    loadCurrentCrmTaskDeadlines(deals),
+  ]);
+  const productionStageMap = new Map(productionStages.map((s) => [String(s.id), s]));
+  const logisticsStageMap = new Map(logisticsStages.map((s) => [String(s.id), s]));
 
   const includeCrmModule = !moduleSet || moduleSet.has('crm');
   if (includeCrmModule) {
@@ -565,7 +649,18 @@ async function listProjectDeadlineNotifications(opts = {}) {
   for (const p of projects) {
     const deal = dealByProject.get(String(p.id)) || null;
     const includeCrmDealDates = !!deal && !deal.deadline_disabled_at && !isClosedCrmStage(deal, stageMap);
-    const rawDeadlines = collectDeadlines(p, deal, { includeCrmDealDates }).map((d) => {
+    const rawDeadlines = collectDeadlines(p, deal, {
+      includeCrmDealDates,
+      crmTaskDeadline: deal?.id ? crmTaskDeadlineMap.get(String(deal.id)) : null,
+      crmStage: deal?.stage_id ? stageMap.get(String(deal.stage_id)) : null,
+      productionStage: p.sx_kanban_column_id
+        ? productionStageMap.get(String(p.sx_kanban_column_id))
+        : null,
+      logisticsStage: p.vc_kanban_column_id
+        ? logisticsStageMap.get(String(p.vc_kanban_column_id))
+        : null,
+      customer: deal?.customer_id ? customerMap.get(String(deal.customer_id)) : null,
+    }).map((d) => {
       const ts = toTs(d.at);
       if (!ts) return null;
       const days = daysFromNow(ts, nowMs);

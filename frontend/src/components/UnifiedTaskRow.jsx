@@ -94,6 +94,8 @@ export default function UnifiedTaskRow({ task, onStatusChange, onOpenExtras, com
   const kanbanStatus = normalizeKanbanStatus(task.status);
   const isOpenTask = !DONE_STATUSES.has(String(task.status || '').toLowerCase());
   const remindCopy = remindButtonCopy(task);
+  const responsibleName = task.assignee_name || task.effective_assignee_name || task.module_owner_name || null;
+  const responsibleIsFallback = !task.assignee_id && !!responsibleName;
   const canShowRemind = !!(task.source && task.source_id
     && (canSendTaskRemind(user) || typeof onStatusChange === 'function'));
   const remindTitle = isOpenTask
@@ -138,6 +140,17 @@ export default function UnifiedTaskRow({ task, onStatusChange, onOpenExtras, com
           )}
         </div>
         <p className={`font-medium text-gray-900 truncate ${compact ? 'text-sm' : ''}`}>{task.title}</p>
+        {responsibleName && (
+          <p
+            className="mt-0.5 inline-flex items-center gap-1 text-[11px] text-gray-500 max-w-full"
+            title={responsibleIsFallback ? 'Người chịu trách nhiệm chính của module' : 'Nhân viên được giao nhiệm vụ'}
+          >
+            <User className="h-3 w-3 shrink-0" />
+            <span className="truncate">
+              {responsibleIsFallback ? 'Phụ trách module: ' : 'Phụ trách: '}{responsibleName}
+            </span>
+          </p>
+        )}
         {!compact && (
           <div className="flex flex-wrap gap-3 mt-1 text-xs text-gray-500">
             {task.project_code && <span>DA {task.project_code}</span>}
@@ -146,12 +159,6 @@ export default function UnifiedTaskRow({ task, onStatusChange, onOpenExtras, com
               <span className="inline-flex items-center gap-1">
                 <Calendar className="h-3 w-3" />
                 {formatDate(task.deadline)}
-              </span>
-            )}
-            {task.assignee_id && (
-              <span className="inline-flex items-center gap-1">
-                <User className="h-3 w-3" />
-                NV giao
               </span>
             )}
           </div>
@@ -221,4 +228,4 @@ export default function UnifiedTaskRow({ task, onStatusChange, onOpenExtras, com
   );
 }
 
-export { getDeepLink, SOURCE_LABELS };
+export { canSendTaskRemind, getDeepLink, SOURCE_LABELS };

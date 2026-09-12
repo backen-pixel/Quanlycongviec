@@ -1,5 +1,6 @@
 const { Router } = require('express');
 const { supabase } = require('../config/supabase');
+const { fetchAllByIds } = require('../helpers/supabaseFetchAll');
 const { auth } = require('../middleware/auth');
 const { generateStepTasks } = require('../helpers/generateFlowTasks');
 const { createNotification: createNotif, notifyMultiple: notifyMultipleShared } = require('../helpers/notifications');
@@ -2032,12 +2033,13 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
             // Also check if lead has a parent (lead→deal conversion keeps same ID or has parent)
             // Load from original lead if deal has lead_source_id
             const { data: deal } = await supabase.from('crm_leads')
-              .select('id, lead_source_id').eq('id', dealId).single();
+              // crm_leads không có `lead_source_id`; quan hệ lead->deal dùng `parent_lead_id`
+              .select('id, parent_lead_id').eq('id', dealId).single();
             let parentLeadTasks = [];
-            if (deal?.lead_source_id) {
+            if (deal?.parent_lead_id) {
               const { data: lt } = await supabase.from('crm_tasks')
                 .select('*, assignee:users!crm_tasks_assignee_id_fkey(id,full_name), attachments:crm_task_attachments(*)')
-                .eq('lead_id', deal.lead_source_id).order('order_index');
+                .eq('lead_id', deal.parent_lead_id).order('order_index');
               parentLeadTasks = lt || [];
             }
 
@@ -3326,12 +3328,12 @@ r.get('/comments/index', async (req, res) => {
     const raw = String(req.query.project_ids || '').trim();
     const ids = raw.split(',').map((s) => String(s).trim()).filter(Boolean);
     if (!ids.length) return res.json({});
-    const { data, error } = await supabase
-      .from('project_comments')
-      .select('project_id, created_at, user_id')
-      .in('project_id', ids)
-      .order('created_at', { ascending: false });
-    if (error) throw error;
+    const data = await fetchAllByIds({
+      table: 'project_comments',
+      columns: 'project_id, created_at, user_id',
+      key: 'project_id',
+      ids,
+    });
     const out = {};
     for (const row of (data || [])) {
       const k = String(row.project_id || '');
@@ -3344,6 +3346,11 @@ r.get('/comments/index', async (req, res) => {
         };
       }
       out[k].count += 1;
+      const ts = row.created_at;
+      if (ts && (!out[k].last_at || ts > out[k].last_at)) {
+        out[k].last_at = ts;
+        out[k].last_user_id = row.user_id || null;
+      }
     }
     res.json(out);
   } catch (e) {

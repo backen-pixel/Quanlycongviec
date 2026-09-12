@@ -3,6 +3,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { FolderOpen, Image, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
+import { useAuth } from '../../lib/auth';
 import api from '../../lib/api';
 import {
   createFacebookImageSet,
@@ -25,6 +26,8 @@ const emptyForm = () => ({
 });
 
 export default function FacebookImageSetsSettings() {
+  const { user } = useAuth();
+  const tenantScoped = !!(user?.tenant_id || user?.tenantId);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -53,6 +56,9 @@ export default function FacebookImageSetsSettings() {
         setCompanies(list);
         if (list.length >= 1) {
           setKhoCompanyId((prev) => prev || list[0].id);
+          if (tenantScoped) {
+            setForm((f) => (f.company_id ? f : { ...f, company_id: list[0].id }));
+          }
         }
       })
       .catch(() => setCompanies([]));
@@ -235,7 +241,7 @@ export default function FacebookImageSetsSettings() {
             onChange={(e) => setForm((f) => ({ ...f, company_id: e.target.value }))}
             className="h-9 px-3 text-sm border border-gray-200 rounded-lg bg-white"
           >
-            <option value="">Tất cả công ty</option>
+            {!tenantScoped && <option value="">Tất cả công ty</option>}
             {companies.map((c) => (
               <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
             ))}

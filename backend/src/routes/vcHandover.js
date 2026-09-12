@@ -211,13 +211,16 @@ async function ensureSaleUsersAsLeadMembers(dealId, saleUserIds, addedBy) {
   const have = new Set((existing || []).map((m) => String(m.user_id)));
   const toAdd = ids.filter((id) => !have.has(id));
   if (!toAdd.length) return;
-  const { error } = await supabase.from('lead_members').insert(
+  // upsert-ignore: kiểm-rồi-ghi không nguyên tử, hai luồng song song đâm nhau
+  // ở lead_members_lead_id_user_id_key. DO NOTHING giữ nguyên role cũ.
+  const { error } = await supabase.from('lead_members').upsert(
     toAdd.map((uid) => ({
       lead_id: dealId,
       user_id: uid,
       role: 'member',
       added_by: addedBy || null,
     })),
+    { onConflict: 'lead_id,user_id', ignoreDuplicates: true },
   );
   if (error) console.warn('[vc-handover] ensure sale members:', error.message);
 }
@@ -309,12 +312,15 @@ async function addVcMembersWithCutoff(leadId, userIds, addedBy) {
     added_by: addedBy,
     history_cutoff_at: cutoff,
   }));
-  const { error } = await supabase.from('lead_members').insert(rows);
+  // upsert-ignore: giữ nguyên role/history_cutoff_at của thành viên đã có.
+  const { error } = await supabase.from('lead_members')
+    .upsert(rows, { onConflict: 'lead_id,user_id', ignoreDuplicates: true });
   if (error) {
     // history_cutoff_at chưa migrate — thêm không kèm cutoff.
     if (String(error.message || '').includes('history_cutoff_at')) {
-      await supabase.from('lead_members').insert(
+      await supabase.from('lead_members').upsert(
         toAdd.map((uid) => ({ lead_id: leadId, user_id: uid, role: 'member', added_by: addedBy })),
+        { onConflict: 'lead_id,user_id', ignoreDuplicates: true },
       );
     } else {
       console.warn('[vc-handover] addVcMembers:', error.message);

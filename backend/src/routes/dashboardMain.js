@@ -86,12 +86,9 @@ r.get('/', async (req, res) => {
         name,
         code,
         status,
-        start_date,
-        end_date,
-        customer_name,
-        customer_phone,
         created_at,
         created_by,
+        customer:customers(full_name, phone),
         flow:workflow_flows(id, name)
       `)
       .in('id', projectIds)
@@ -108,7 +105,7 @@ r.get('/', async (req, res) => {
         title,
         status,
         priority,
-        assigned_to,
+        assignee_id,
         due_date,
         completed_at
       `)
@@ -131,7 +128,7 @@ r.get('/', async (req, res) => {
     // 7. Build response
     const projectsWithStats = projects.map(project => {
       const projectTasks = tasksByProject[project.id] || [];
-      const myTasks = projectTasks.filter(t => t.assigned_to === userId);
+      const myTasks = projectTasks.filter(t => t.assignee_id === userId);
 
       return {
         ...project,
@@ -211,10 +208,10 @@ r.get('/stats', responseCache({ ttl: 30, scope: 'user', tags: ['dashboard-main']
     // Đếm tasks
     const { data: tasks } = await supabase
       .from('tasks')
-      .select('id, status, assigned_to, due_date')
+      .select('id, status, assignee_id, due_date')
       .in('project_id', projectIds);
 
-    const myTasks = tasks.filter(t => t.assigned_to === userId);
+    const myTasks = tasks.filter(t => t.assignee_id === userId);
     const now = new Date();
 
     const stats = {
@@ -317,7 +314,7 @@ async function getProjectIdsByDepartment(departmentId, req) {
   const { data: tasks } = await supabase
     .from('tasks')
     .select('project_id')
-    .in('assigned_to', userIds);
+    .in('assignee_id', userIds);
 
   return filterProjectIdsByTenant(req, [...new Set((tasks || []).map(t => t.project_id))]);
 }
@@ -333,7 +330,7 @@ async function getProjectIdsByUser(userId, req) {
   const { data: tasks } = await supabase
     .from('tasks')
     .select('project_id')
-    .eq('assigned_to', userId);
+    .eq('assignee_id', userId);
 
   const projectIds = [
     ...(created || []).map(p => p.id),
@@ -345,7 +342,7 @@ async function getProjectIdsByUser(userId, req) {
 
 function calculateStats(projects, tasks, userId) {
   const now = new Date();
-  const myTasks = tasks.filter(t => t.assigned_to === userId);
+  const myTasks = tasks.filter(t => t.assignee_id === userId);
 
   return {
     total_projects: projects.length,

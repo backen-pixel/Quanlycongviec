@@ -4,6 +4,7 @@ import { publicFileUrl } from '../lib/publicFileUrl';
 /** Toast không tự ẩn — chỉ đóng khi bấm X; xếp chồng khi có nhiều thông báo. */
 const STICKY_TOAST_TYPES = new Set([
   'comment_added',
+  'crm_assignment_assigned',
   'crm_assignment_comment',
   'workshop_new_deal',
 ]);

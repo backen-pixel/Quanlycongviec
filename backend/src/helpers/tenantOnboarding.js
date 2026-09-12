@@ -18,7 +18,8 @@ async function onboardTenant({ name, slug, tier = 'free', maxUsers = 50, maxComp
   const { data: rootLevel } = await supabase
     .from('ecosystem_levels')
     .select('id')
-    .eq('level_index', 0)
+    // cột thật là `depth`, không phải `level_index`
+    .eq('depth', 0)
     .maybeSingle();
 
   let rootUnit = null;

@@ -34,11 +34,13 @@ import { downloadWorkshopDocumentsZip } from '../lib/workshopDocumentsZipDownloa
 import { resolveSxProjectLeadId, pickPrimarySxCrmDeal } from '../lib/sxProjectComments';
 import { countMembersByModule } from '../lib/memberModuleCounts';
 import DealModulePathStrip from '../components/DealModulePathStrip';
+import PinProjectButton from '../components/PinProjectButton';
 import {
   addCalendarDaysYmd,
   buildSxInstallBackPlan,
   normalizeHolidayIndex,
   remainingSxWorkingDaysTo,
+  resolveSxPlanInstallYmd,
   resolveSxReceptionYmd,
   SX_INSTALL_BACK_PLAN_RULES,
 } from '../lib/sxWorkshopSchedule';
@@ -351,20 +353,25 @@ function WorkshopInfoPanel({
     return resolveSxReceptionYmd(Date.now(), holidayIndex);
   }, [project?.sx_reception_date, project?.created_at, holidayIndex]);
 
+  const planInstallYmd = useMemo(
+    () => resolveSxPlanInstallYmd(project),
+    [project?.install_occurrence_dates, project?.install_date, project?.delivery_date],
+  );
+
   const finishTone = workshopScheduleTone(
     remainingSxWorkingDaysTo(productionFinishDate, { receptionYmd, holidayIndex }),
     'finish',
   );
   const installTone = workshopScheduleTone(
-    remainingSxWorkingDaysTo(deliveryDate, { receptionYmd, holidayIndex }),
+    remainingSxWorkingDaysTo(planInstallYmd || deliveryDate, { receptionYmd, holidayIndex }),
     'install',
   );
   const installBackPlan = useMemo(
-    () => buildSxInstallBackPlan(deliveryDate, {
+    () => buildSxInstallBackPlan(planInstallYmd, {
       startYmd: receptionYmd,
       slipDays: project?.sx_schedule_slip_days || 0,
     }),
-    [deliveryDate, receptionYmd, project?.sx_schedule_slip_days],
+    [planInstallYmd, receptionYmd, project?.sx_schedule_slip_days],
   );
 
   const formatPlanRange = (startYmd, endYmd) => {
@@ -3250,6 +3257,13 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <PinProjectButton
+            projectId={project.id}
+            code={displayCode}
+            name={displayTitle}
+            href={moduleKey === 'vc' ? `/vc/projects/${project.id}` : `/sx/projects/${project.id}`}
+            module={moduleKey === 'vc' ? 'vc' : 'sx'}
+          />
           {moduleKey !== 'vc' && (() => {
             const sourceCid = String(project.company_id || project.company?.id || '');
             const canPlace = isSystemAdmin(user) || isAdminLike(user)

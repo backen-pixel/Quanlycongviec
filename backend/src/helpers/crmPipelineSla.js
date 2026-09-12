@@ -44,11 +44,32 @@ function crmLeadMissingPhone(lead) {
   return !crmLeadHasPhone(lead);
 }
 
-function isSxPipelineStageNoDeadline(stage) {
-  return !!(stage?.counts_as_completed_revenue || stage?.counts_as_collected_revenue);
+/**
+ * Cột SX xác nhận hàng đã giao là mốc kết thúc theo dõi quá hạn SX.
+ * Hỗ trợ cả cấu hình mới bằng slug và tên cột cũ theo từng công ty.
+ */
+function isSxDeliveredStage(stage) {
+  if (!stage) return false;
+  const slug = String(stage.bucket_slug || stage.slug || '').toLowerCase().trim();
+  if (slug === 'delivered' || slug === 'delivery_done') return true;
+  const name = String(stage.name || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase();
+  return name.includes('da giao') || name.includes('giao xong');
 }
 
-/** Cột «Bỏ quá hạn» hoặc «Đã công» / «Đã thu» — không ghi nhận quá hạn ngày đặt/giao. */
+function isSxPipelineStageNoDeadline(stage) {
+  return !!(
+    stage?.counts_as_completed_revenue
+    || stage?.counts_as_collected_revenue
+    || isSxDeliveredStage(stage)
+  );
+}
+
+/** Cột «Bỏ quá hạn», «Đã giao», «Đã công» / «Đã thu» — không ghi nhận quá hạn ngày đặt/giao. */
 function shouldIgnoreSxOrderDeliveryOverdue(stage) {
   if (!stage) return false;
   if (isSxPipelineStageNoDeadline(stage)) return true;
@@ -106,7 +127,7 @@ function isSxColumnSlaOverdue(project, stage) {
 
 /**
  * Quá hạn ngày giao/SX — khớp frontend `isSxProjectDeliveryDateOverdue`.
- * Ưu tiên: delivery_date → production_deadline → deadline.
+ * Ưu tiên chuẩn SX: hạn thẻ → ngày hoàn thiện → hạn SX → ngày giao → hạn chung.
  * So sánh theo ngày lịch (không tính «hôm nay đã qua giờ»).
  * Bỏ qua khi cột «Đã công» / «Đã thu» hoặc sla_days=0 («Bỏ quá hạn»),
  * hoặc dự án đã bàn giao VC / đang lắp / hoàn thành.
@@ -115,7 +136,11 @@ function isSxProjectDeliveryDateOverdue(project, stage) {
   const st = stage || project?.sx_pipeline_stage;
   if (shouldIgnoreSxOrderDeliveryOverdue(st)) return false;
   if (projectLooksShippedForOverdue(project)) return false;
-  const raw = project?.delivery_date || project?.production_deadline || project?.deadline;
+  const raw = project?.sx_kanban_deadline_at
+    || project?.production_finish_date
+    || project?.production_deadline
+    || project?.delivery_date
+    || project?.deadline;
   if (!raw || project?.status === 'completed') return false;
   if (crmReportIsYmdBeforeToday(raw)) return true;
   return isHucabiSameDayPastWorkEnd(raw, project?.company_id || project?.company);
@@ -128,6 +153,7 @@ module.exports = {
   effectivePipelineStageSlaDays,
   crmLeadHasPhone,
   crmLeadMissingPhone,
+  isSxDeliveredStage,
   isSxPipelineStageNoDeadline,
   shouldIgnoreSxOrderDeliveryOverdue,
   projectLooksShippedForOverdue,

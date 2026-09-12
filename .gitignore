@@ -38,6 +38,7 @@ backend/data/api-keys.json
 backend/uploads/_clone/*.dump
 backend/uploads/_tmp_*
 backend/uploads/_auth_*
+backend/uploads/_nextgo_instance_export/
 
 # Local backup from CRM route split (regenerable from git history)
 backend/src/routes/crm/core.js.bak

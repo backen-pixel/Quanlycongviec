@@ -16,6 +16,11 @@ Full docs live under `docs/` — see [`docs/README.md`](./docs/README.md) and [`
 | SQL migrations | `/database/*.sql` |
 | Coding standard | `docs/project/CODING_STANDARD.md` |
 | Claude↔Cursor workflow | `docs/project/workflow-claude-cursor-github.md` |
+| AI handoff | `docs/ai-handoff/CURRENT.md` |
+
+Trước khi tiếp tục công việc từ AI khác, đọc theo thứ tự:
+`docs/ai-handoff/CURRENT.md` → `DECISIONS.md` → `WORKLOG.md`.
+Sau phiên có thay đổi code, cập nhật trạng thái và nhật ký tại đây; không ghi secret.
 
 ## Project Overview
 

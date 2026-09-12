@@ -1,6 +1,8 @@
 const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
+const { warnQ } = require('../helpers/queryErrorLog');
+const { fetchAllPagesParallel } = require('../helpers/supabaseFetchAll');
 const { lookupCache } = require('../helpers/ttlCache');
 const {
   pgDashboardNotificationStats,
@@ -203,16 +205,18 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['notifications'] }), a
       return res.json(pgResult);
     }
 
-    const { data: rows, error } = await supabase
+    // Nhánh dự phòng khi pgDashboardNotificationStats không dùng được.
+    // `.limit(1000)` cũ chạm đúng trần max-rows của PostgREST: đo trên prod có
+    // 41 user đang giữ >1.000 thông báo chưa đọc, cao nhất 9.503 ⇒ badge thiếu số
+    // mà không báo lỗi. Phân trang để con số là thật.
+    const rows = await fetchAllPagesParallel(() => supabase
       .from('notifications')
       .select('type, entity_type, metadata')
       .eq('user_id', req.user.userId)
       .eq('is_read', false)
       .is('dismissed_at', null)
       .or('entity_type.neq.project,metadata->>ecosystem_module_key.in.(production,crm,logistics)')
-      .or("metadata->>ecosystem_module_key.is.null,metadata->>ecosystem_module_key.neq.projects")
-      .limit(1000);
-    if (error) return res.status(500).json({ error: error.message });
+      .or("metadata->>ecosystem_module_key.is.null,metadata->>ecosystem_module_key.neq.projects"));
 
     const filtered = filterNotificationsForViewer(
       (rows || []).filter((n) => !isProjectModuleNotification(n)),
@@ -945,7 +949,17 @@ r.get('/overview', responseCache({ ttl: 60, scope: 'global', tags: ['dashboard:o
       supabase.from('projects').select('*', { count: 'exact', head: true }).in('status', ['consulting', 'designing', 'quoting', 'contract_signed', 'producing', 'shipping', 'installing']),
       supabase.from('projects').select('*', { count: 'exact', head: true }).eq('status', 'warranty'),
       supabase.from('projects').select('*', { count: 'exact', head: true }).gte('created_at', sevenDaysAgo.toISOString()),
-      supabase.from('projects').select('*', { count: 'exact', head: true }).lt('due_date', now.toISOString()).neq('status', 'warranty'),
+      // projects không có `due_date` — cột đúng là `deadline`. Tên sai làm hỏng
+      // CẢ câu (42703): 45 lỗi/giờ, ô «dự án trễ hạn» không bao giờ có số.
+      //
+      // LƯU Ý DỮ LIỆU: `projects.deadline` hiện RỖNG ở cả 669 dự án, nên ô này
+      // vẫn hiện 0 cho tới khi cột được điền. Các cột ngày có dữ liệu thật:
+      // install_date (194), production_finish_date (94), production_deadline (91),
+      // delivery_date (82). CỐ TÌNH không đổi sang install_date: 155/194 dự án
+      // đã qua ngày lắp vì đã lắp xong — đếm chúng là «trễ hạn» thì sai nặng hơn
+      // là hiện 0. Muốn ô này có số thì điền `deadline`, hoặc chốt lại định
+      // nghĩa «trễ hạn» rồi đổi cả `isProjectOverdue` trong routes/management.js.
+      supabase.from('projects').select('*', { count: 'exact', head: true }).lt('deadline', now.toISOString()).neq('status', 'warranty'),
       supabase.from('tasks').select('*', { count: 'exact', head: true }),
       supabase.from('tasks').select('*', { count: 'exact', head: true }).eq('status', 'done'),
       supabase.from('tasks').select('*', { count: 'exact', head: true }).lt('due_date', now.toISOString()).neq('status', 'done'),
@@ -961,7 +975,8 @@ r.get('/overview', responseCache({ ttl: 60, scope: 'global', tags: ['dashboard:o
       supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'lead').gte('created_at', thirtyDaysAgo.toISOString()),
       supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal').gte('created_at', thirtyDaysAgo.toISOString()),
       supabase.from('crm_leads').select('*', { count: 'exact', head: true }).eq('type', 'deal').not('project_id', 'is', null),
-      supabase.from('crm_leads').select('budget').eq('type', 'deal').is('project_id', null),
+      supabase.from('crm_leads').select('estimated_value').eq('type', 'deal').is('project_id', null)
+        .then(warnQ('dashboard:deal-pipeline-value')),
     ]);
 
     const totalProjects = totalProjectsRes.count;
@@ -1245,7 +1260,8 @@ r.get('/alerts', async (req, res) => {
       allActiveTasks,
     ] = await Promise.all([
       supabase.from('projects').select('*', { count: 'exact', head: true })
-        .lt('due_date', now.toISOString())
+        // projects: `deadline`, không phải `due_date`.
+        .lt('deadline', now.toISOString())
         .neq('status', 'warranty'),
       
       supabase.from('tasks').select('*', { count: 'exact', head: true })
@@ -1258,9 +1274,13 @@ r.get('/alerts', async (req, res) => {
         .is('assignee_id', null)
         .eq('priority', 'urgent'),
       
-      // Get all active tasks at once
-      supabase.from('tasks').select('assignee_id')
-        .in('status', ['pending', 'in_progress', 'review']),
+      // PostgREST âm thầm cắt ở 1.000 dòng. Đo trên prod: 2.213 task đang mở
+      // (pending|in_progress|review) ⇒ KPI «quá tải nhân sự» mất hơn nửa dữ liệu.
+      // fetchAllPagesParallel tự phân trang; bọc lại thành { data } để chỗ đọc bên dưới
+      // (allActiveTasks.data) không phải đổi.
+      fetchAllPagesParallel(() => supabase.from('tasks').select('assignee_id')
+        .in('status', ['pending', 'in_progress', 'review']))
+        .then((rows) => ({ data: rows })),
     ]);
 
     // Count resource overload in JS (no loops)
@@ -1366,8 +1386,10 @@ r.get('/divisions', async (req, res) => {
     let divisionUnits = [];
 
     const levels = await lookupCache.getOrFetch('ecosystem_levels:active', async () => {
+      // ecosystem_levels KHÔNG có cột is_active — lọc theo nó làm hỏng cả câu
+      // (42703) ⇒ toàn bộ khối hệ sinh thái trên dashboard trả về rỗng.
       const { data } = await supabase.from('ecosystem_levels')
-        .select('id, name, depth').eq('is_active', true).order('depth');
+        .select('id, name, depth').order('depth');
       return data || [];
     });
     

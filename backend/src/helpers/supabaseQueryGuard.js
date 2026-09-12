@@ -13,6 +13,13 @@
  *     URL. Đo trên DB thật: `in()` gãy trên 643 id, chuỗi OR gãy trên 556 id
  *     (URL ~22–24KB); vượt nữa thì đứt kết nối.
  *
+ *  3) TRUY VẤN BỊ TỪ CHỐI CẢ CÂU — cột/bảng/enum sai làm Postgres huỷ TOÀN BỘ câu.
+ *     Chỗ gọi viết `const { data } = await supabase...` (không đọc `error`) sẽ nhận
+ *     data === undefined và trả [] như không có gì. Đây là cách 29 cột sai sống
+ *     nhiều tháng, và cách `role = 'logistics'` làm trống danh sách user xưởng.
+ *     Bắt tại chỗ theo SQLSTATE nên hiện trên log Render trong vài phút, không
+ *     phải chờ quét log Postgres 24h bằng tay.
+ *
  * Cách dùng: gọi installSupabaseQueryGuard() một lần lúc khởi động.
  * Tắt bằng SUPABASE_QUERY_GUARD=0.
  *
@@ -33,13 +40,36 @@ const DEFAULTS = {
   summaryMinutes: Number(process.env.SUPABASE_GUARD_SUMMARY_MIN || 15),
 };
 
+/**
+ * Mã lỗi làm HỎNG CẢ CÂU truy vấn (không phải lỗi từng dòng).
+ * Mã Postgres 5 ký tự + mã PostgREST (PGRST…) khi lỗi chặn ngay ở tầng REST.
+ */
+const MA_LOI_GIET_CA_CAU = {
+  '42703': 'COT-KHONG-TON-TAI',
+  '42P01': 'BANG-KHONG-TON-TAI',
+  '42883': 'HAM-KHONG-TON-TAI',
+  '22P02': 'GIA-TRI-SAI-KIEU',
+  '42P18': 'THAM-SO-KHONG-RO-KIEU',
+  '42601': 'CU-PHAP-SAI',
+  PGRST200: 'THIEU-QUAN-HE-EMBED',
+  PGRST202: 'RPC-KHONG-TON-TAI',
+  PGRST204: 'COT-KHONG-TON-TAI-KHI-GHI',
+};
+
 /** key -> { kind, table, site, count, detail, firstAt, lastAt } */
 const findings = new Map();
 let installed = false;
 
-function tableFromUrl(url) {
+function tableFromUrl(url, builder) {
   const m = /\/rest\/v1\/([^?/]+)/.exec(url);
-  return m ? m[1] : '?';
+  const t = m ? m[1] : '?';
+  // RPC: /rest/v1/rpc/<ten> — ghi kèm tên hàm để còn đi tìm được.
+  if (t === 'rpc') {
+    const ten = builder && builder.__guardRpcName;
+    const tuUrl = /\/rest\/v1\/rpc\/([^?/]+)/.exec(url);
+    return `rpc:${ten || (tuUrl && tuUrl[1]) || '?'}`;
+  }
+  return t;
 }
 
 /**
@@ -99,7 +129,7 @@ function inspect(builder, res) {
   const stackErr = builder.__guardStack;
   const url = String(builder.url || '');
   if (!url) return;
-  const table = tableFromUrl(url);
+  const table = tableFromUrl(url, builder);
 
   // ── 1) Nghi bị cắt ở max-rows ──────────────────────────────────────────────
   const data = res && res.data;
@@ -128,6 +158,14 @@ function inspect(builder, res) {
   } else if (url.length >= DEFAULTS.urlWarn) {
     record('URL-QUA-DAI', table, `URL ${url.length} ký tự (gãy quanh 22.000) — nên chia lô hoặc chuyển sang RPC`, stackErr);
   }
+
+  // ── 3) Truy vấn bị từ chối cả câu (cột/bảng/enum sai) ─────────────────────
+  const err = res && res.error;
+  const kind = err && err.code ? MA_LOI_GIET_CA_CAU[String(err.code)] : null;
+  if (kind) {
+    const phu = [err.details, err.hint].filter(Boolean).join(' · ');
+    record(kind, table, `${err.code} · ${err.message}${phu ? ` · ${phu}` : ''}`, stackErr);
+  }
 }
 
 function printSummary() {
@@ -150,8 +188,9 @@ function installSupabaseQueryGuard() {
 
   let PostgrestBuilder;
   let PostgrestQueryBuilder;
+  let PostgrestClient;
   try {
-    ({ PostgrestBuilder, PostgrestQueryBuilder } = require('@supabase/postgrest-js'));
+    ({ PostgrestBuilder, PostgrestQueryBuilder, PostgrestClient } = require('@supabase/postgrest-js'));
   } catch (e) {
     console.warn('[query-guard] không nạp được @supabase/postgrest-js — bỏ qua:', e.message);
     return false;
@@ -160,14 +199,35 @@ function installSupabaseQueryGuard() {
   // Ghi lại nơi dựng truy vấn. Chỉ tạo Error (rẻ) — chuỗi stack chỉ được dựng khi
   // thật sự có cảnh báo. Các hàm filter/transform của postgrest-js đều trả về `this`
   // nên thuộc tính này theo được tới builder cuối cùng.
-  if (PostgrestQueryBuilder && typeof PostgrestQueryBuilder.prototype.select === 'function') {
-    const originalSelect = PostgrestQueryBuilder.prototype.select;
-    PostgrestQueryBuilder.prototype.select = function guardedSelect(...args) {
-      const out = originalSelect.apply(this, args);
-      try { out.__guardStack = new Error(); } catch (_) { /* bỏ qua */ }
+  // Bọc cả các lệnh GHI: mã 42703 / PGRST204 hay xảy ra ở insert/update, mà nếu
+  // không bắt stack ở đây thì báo cáo chỉ ghi được «khong-xac-dinh».
+  for (const ten of ['select', 'insert', 'update', 'upsert', 'delete']) {
+    const proto0 = PostgrestQueryBuilder && PostgrestQueryBuilder.prototype;
+    if (!proto0 || typeof proto0[ten] !== 'function') continue;
+    const gocc = proto0[ten];
+    proto0[ten] = function guardedBuilder(...args) {
+      const out = gocc.apply(this, args);
+      try { if (out && !out.__guardStack) out.__guardStack = new Error(); } catch (_) { /* bỏ qua */ }
       return out;
     };
   }
+  // `.rpc()` nằm trên PostgrestClient chứ không phải PostgrestQueryBuilder. Không bọc
+  // thì mã PGRST202 (RPC không tồn tại) chỉ ghi được «khong-xac-dinh», vô dụng để đi tìm.
+  const rpcProto = PostgrestClient && PostgrestClient.prototype;
+  if (rpcProto && typeof rpcProto.rpc === 'function') {
+    const rpcGoc = rpcProto.rpc;
+    rpcProto.rpc = function guardedRpc(...args) {
+      const out = rpcGoc.apply(this, args);
+      try {
+        if (out && !out.__guardStack) out.__guardStack = new Error();
+        if (out && !out.__guardRpcName) out.__guardRpcName = String(args[0] || '?');
+      } catch (_) { /* bỏ qua */ }
+      return out;
+    };
+  } else {
+    console.warn('[query-guard] không bọc được PostgrestClient.prototype.rpc — site của lỗi RPC sẽ là «khong-xac-dinh»');
+  }
+
   const proto = PostgrestBuilder && PostgrestBuilder.prototype;
   if (!proto || typeof proto.then !== 'function') {
     console.warn('[query-guard] không tìm thấy PostgrestBuilder.prototype.then — bỏ qua');
@@ -187,7 +247,7 @@ function installSupabaseQueryGuard() {
     const t = setInterval(printSummary, DEFAULTS.summaryMinutes * 60_000);
     if (t.unref) t.unref();
   }
-  console.log(`[query-guard] đang theo dõi: cắt ${DEFAULTS.maxRows} dòng, filter ≥ ${DEFAULTS.inFilterWarn} id, URL ≥ ${DEFAULTS.urlWarn} ký tự`);
+  console.log(`[query-guard] đang theo dõi: cắt ${DEFAULTS.maxRows} dòng, filter ≥ ${DEFAULTS.inFilterWarn} id, URL ≥ ${DEFAULTS.urlWarn} ký tự, và ${Object.keys(MA_LOI_GIET_CA_CAU).length} mã lỗi giết cả câu (42703, 22P02, PGRST204…)`);
   return true;
 }
 

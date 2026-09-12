@@ -1,4 +1,5 @@
 const { supabase } = require('../config/supabase');
+const { warnQ } = require('./queryErrorLog');
 const { getTenantCompanyIds, invalidateTenantCache } = require('./tenantScope');
 const { TIER_TO_PLAN } = require('./saasPlans');
 
@@ -198,7 +199,9 @@ async function sumAttachmentBytes(companyIds) {
         .from('drive_files')
         .select('size_bytes')
         .in('root_id', rootIds)
-        .eq('is_trashed', false);
+        // drive_files không có `is_trashed` — cột đúng là `trashed_at`.
+        // Tên sai làm hỏng CẢ câu ⇒ hạn mức Drive của tenant luôn = 0.
+        .is('trashed_at', null);
       for (const row of files || []) total += Number(row.size_bytes) || 0;
     }
   } catch (_) { /* drive chưa migrate */ }
@@ -221,12 +224,12 @@ async function estimateNotesBytes(companyIds) {
   if (!leadIds.length) return 0;
 
   let total = 0;
-  const { data: comments } = await supabase
+  const { data: comments } = warnQ('tenant-quota:crm_lead_comments')(await supabase
     .from('crm_lead_comments')
-    .select('content')
-    .in('lead_id', leadIds.slice(0, 5000));
+    .select('body')
+    .in('lead_id', leadIds.slice(0, 5000)));
   for (const c of comments || []) {
-    total += Buffer.byteLength(String(c.content || ''), 'utf8');
+    total += Buffer.byteLength(String(c.body || ''), 'utf8');
   }
   return total;
 }

@@ -6,6 +6,8 @@ const { supabase } = require('../config/supabase');
 const { fetchAllPagesParallel } = require('../helpers/supabaseFetchAll');
 const axios = require('axios');
 const { isAdminLike, isSystemAdmin, hasCompanyId } = require('../helpers/adminRole');
+const { companyInTenantContext, isTenantScopeEnforced } = require('../helpers/tenantScope');
+const { attachTenantContext } = require('../middleware/tenantGate');
 const { runIfLeader, tryAcquireLeader, renewLeader, releaseLeader } = require('../helpers/cronLeader');
 const { resolveCrmSocialInboxCompanyId } = require('../helpers/crmSocialInboxScope');
 const {
@@ -28,6 +30,8 @@ const { reconcileInboundPhoneAfterScan, phonesEqualDigits } = require('../helper
 const {
   loadConfig: loadAutoLeadConfig,
   saveConfig: saveAutoLeadConfig,
+  loadConfigForScope: loadAutoLeadConfigForScope,
+  saveConfigForScope: saveAutoLeadConfigForScope,
   DEFAULT_CONFIG: AUTO_LEAD_DEFAULTS,
 } = require('../config/autoLeadConfig');
 const {
@@ -671,6 +675,18 @@ async function resolvePageIdsForCompanyScoped(req, res, companyIdRaw) {
       return undefined;
     }
     return await getPageIdsForCompany(socialCid);
+  }
+  const tenantIds = facebookTenantCompanyIds(req);
+  if (tenantIds) {
+    if (companyId) {
+      if (!tenantIds.includes(companyId)) {
+        res.status(403).json({ error: 'Chỉ được dùng cài đặt Facebook của hệ sinh thái hiện tại' });
+        return undefined;
+      }
+      return await getPageIdsForCompany(companyId);
+    }
+    const nested = await Promise.all(tenantIds.map((id) => getPageIdsForCompany(id)));
+    return [...new Set(nested.flat())];
   }
   if (isSystemAdmin(req.user)) {
     return companyId ? await getPageIdsForCompany(companyId) : null;
@@ -4013,8 +4029,60 @@ async function handleComment(pageId, value) {
 
 const { auth: authMiddleware } = require('../middleware/auth');
 
+const NEXTGO_LIVE_TENANT_ID = 'e37fac98-acd2-4675-84f4-285b65e423b1';
+
+function facebookTenantCompanyIds(req) {
+  if (!isTenantScopeEnforced(req)) return null;
+  return (req.tenantCompanyIds || []).map(String);
+}
+
+function isFacebookMasterAdmin(req) {
+  if (!isSystemAdmin(req.user)) return false;
+  if (String(req.tenantContext?.tenantId || req.user?.tenant_id || '') === NEXTGO_LIVE_TENANT_ID) {
+    return false;
+  }
+  return true;
+}
+
+function filterImageSetsForTenant(req, rows) {
+  const allowed = facebookTenantCompanyIds(req);
+  if (!allowed) return rows || [];
+  const set = new Set(allowed);
+  return (rows || []).filter((r) => r.company_id && set.has(String(r.company_id)));
+}
+
+function assertFacebookCompanyInTenant(req, res, companyId) {
+  const allowed = facebookTenantCompanyIds(req);
+  if (!allowed) return true;
+  if (companyId && allowed.includes(String(companyId))) return true;
+  res.status(403).json({
+    error: 'Chỉ được dùng cài đặt Facebook của hệ sinh thái hiện tại',
+    code: 'tenant_company_denied',
+  });
+  return false;
+}
+
+/**
+ * Router /api/facebook KHÔNG mount enforceTenantContext (auth là per-route nên r.use chạy
+ * trước khi có req.user). Hậu quả: isTenantScopeEnforced(req) luôn false → admin không
+ * công ty (ví dụ quantri.hst@nextgo.vn) rơi vào nhánh mode:'all' và thấy Page/Nguồn của
+ * MỌI hệ sinh thái. Gắn tenantContext ngay trước khi tính scope để các nhánh lọc
+ * theo tenant (đã có sẵn bên dưới) thực sự chạy. platform_admin/system → enforced=false.
+ */
+async function ensureFacebookTenantContext(req, res) {
+  if (req.tenantContext) return true;
+  try {
+    await attachTenantContext(req);
+    return true;
+  } catch (e) {
+    res.status(e.statusCode || 500).json({ error: e.message, code: e.code || 'tenant_inactive' });
+    return false;
+  }
+}
+
 /** Phạm vi Page FB theo default_company_id: admin ?company_id=; NV chỉ Page gán đúng công ty. */
 async function resolveFacebookPageScope(req, res, opts = {}) {
+  if (!(await ensureFacebookTenantContext(req, res))) return null;
   const forcedLeadCompanyId =
     opts.leadCompanyId != null && String(opts.leadCompanyId).trim() !== ''
       ? String(opts.leadCompanyId).trim()
@@ -4040,6 +4108,10 @@ async function resolveFacebookPageScope(req, res, opts = {}) {
     };
   }
   if (isSystemAdmin(req.user) || (isAdminLike(req.user) && !hasCompanyId(req.user))) {
+    if (forcedLeadCompanyId && isTenantScopeEnforced(req) && !companyInTenantContext(req, forcedLeadCompanyId)) {
+      res.status(403).json({ error: 'Không có quyền truy cập công ty này', code: 'tenant_company_denied' });
+      return null;
+    }
     if (forcedLeadCompanyId) {
       return {
         mode: 'filter',
@@ -4049,7 +4121,19 @@ async function resolveFacebookPageScope(req, res, opts = {}) {
     }
     const co = req.query.company_id && String(req.query.company_id).trim();
     if (co) {
+      if (isTenantScopeEnforced(req) && !companyInTenantContext(req, co)) {
+        res.status(403).json({ error: 'Không có quyền truy cập công ty này', code: 'tenant_company_denied' });
+        return null;
+      }
       return { mode: 'filter', companyId: co, pageIds: rows.filter((p) => String(p.default_company_id || '') === co).map((p) => p.page_id) };
+    }
+    if (isTenantScopeEnforced(req)) {
+      const allowed = new Set((req.tenantCompanyIds || []).map(String));
+      return {
+        mode: 'filter',
+        companyId: null,
+        pageIds: rows.filter((p) => p.default_company_id && allowed.has(String(p.default_company_id))).map((p) => p.page_id),
+      };
     }
     return { mode: 'all', pageIds: null, companyId: null };
   }
@@ -4079,12 +4163,20 @@ function contactAllowedByFacebookScope(scope, contact) {
 // các Page Facebook đã setup (active). Dùng cho ô lọc "Nguồn" trong Danh bạ.
 r.get('/page-sources', authMiddleware, async (req, res) => {
   try {
-    const { data: pages, error: pgErr } = await supabase
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+    let pq = supabase
       .from('facebook_pages')
-      .select('default_source_id, is_active')
+      .select('page_id, default_source_id, is_active')
       .not('default_source_id', 'is', null);
+    const { data: pages, error: pgErr } = await pq;
     if (pgErr) throw pgErr;
-    const sourceIds = [...new Set((pages || []).filter(p => p.is_active !== false).map(p => p.default_source_id))];
+    let pageRows = pages || [];
+    if (scope.mode === 'filter') {
+      const set = new Set(scope.pageIds || []);
+      pageRows = pageRows.filter((p) => set.has(p.page_id));
+    }
+    const sourceIds = [...new Set(pageRows.filter(p => p.is_active !== false).map(p => p.default_source_id))];
     if (!sourceIds.length) return res.json({ sources: [] });
 
     const { data: sources, error: srcErr } = await supabase
@@ -4222,6 +4314,10 @@ r.post('/pages', authMiddleware, async (req, res) => {
       updated_at: now,
     };
     const coId = optionalUuidField(default_company_id);
+    if (coId && !assertFacebookCompanyInTenant(req, res, coId)) return;
+    if (isTenantScopeEnforced(req) && !coId) {
+      return res.status(400).json({ error: 'Page Facebook phải gắn công ty của hệ sinh thái hiện tại' });
+    }
     if (coId) insertData.default_company_id = coId;
     const regionId = optionalUuidField(default_region_id);
     if (regionId) insertData.default_region_id = regionId;
@@ -4275,6 +4371,18 @@ r.put('/pages/:id', authMiddleware, async (req, res) => {
     if (update.default_target_type !== undefined) {
       update.default_target_type = normalizeFacebookTargetType(update.default_target_type);
     }
+    const { data: existingPage } = await supabase
+      .from('facebook_pages')
+      .select('id, default_company_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!existingPage) return res.status(404).json({ error: 'Không tìm thấy Page' });
+    if (!assertFacebookCompanyInTenant(req, res, existingPage.default_company_id)) return;
+    if (update.default_company_id !== undefined && update.default_company_id
+      && !assertFacebookCompanyInTenant(req, res, update.default_company_id)) return;
+    if (isTenantScopeEnforced(req) && update.default_company_id === null) {
+      return res.status(400).json({ error: 'Page Facebook phải gắn công ty của hệ sinh thái hiện tại' });
+    }
     const now = new Date().toISOString();
     update.updated_at = now;
     if (shouldBumpFacebookPageSettingsUpdatedAt(req.body, Object.keys(update))) {
@@ -4305,6 +4413,13 @@ r.put('/pages/:id', authMiddleware, async (req, res) => {
 
 r.delete('/pages/:id', authMiddleware, async (req, res) => {
   try {
+    const { data: existingPage } = await supabase
+      .from('facebook_pages')
+      .select('id, default_company_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!existingPage) return res.status(404).json({ error: 'Không tìm thấy Page' });
+    if (!assertFacebookCompanyInTenant(req, res, existingPage.default_company_id)) return;
     await supabase.from('facebook_pages').delete().eq('id', req.params.id);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -7596,7 +7711,13 @@ loadAutoLeadConfig().then(() => console.log('[AutoLead] ✅ Config loaded from D
 // GET /facebook/auto-lead-config
 r.get('/auto-lead-config', authMiddleware, async (req, res) => {
   try {
-    const config = await loadAutoLeadConfig();
+    const tid = isTenantScopeEnforced(req) ? req.tenantContext.tenantId : null;
+    const config = tid ? await loadAutoLeadConfigForScope(tid) : await loadAutoLeadConfig();
+    const allowed = facebookTenantCompanyIds(req);
+    if (allowed && config.default_company_id && !allowed.includes(String(config.default_company_id))) {
+      config.default_company_id = allowed[0] || null;
+      config.default_lead_type_id = null;
+    }
     res.json(config);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -7604,7 +7725,16 @@ r.get('/auto-lead-config', authMiddleware, async (req, res) => {
 // PUT /facebook/auto-lead-config
 r.put('/auto-lead-config', authMiddleware, async (req, res) => {
   try {
-    const saved = await saveAutoLeadConfig(req.body);
+    const body = { ...(req.body || {}) };
+    const allowed = facebookTenantCompanyIds(req);
+    if (allowed) {
+      if (body.default_company_id && !allowed.includes(String(body.default_company_id))) {
+        return res.status(403).json({ error: 'Chỉ được dùng cài đặt Facebook của hệ sinh thái hiện tại' });
+      }
+      if (!body.default_company_id && allowed[0]) body.default_company_id = allowed[0];
+    }
+    const tid = isTenantScopeEnforced(req) ? req.tenantContext.tenantId : null;
+    const saved = tid ? await saveAutoLeadConfigForScope(tid, body) : await saveAutoLeadConfig(body);
     console.log('[AutoLead] ✅ Config updated:', JSON.stringify(saved));
     res.json(saved);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -7996,6 +8126,9 @@ r.get('/lead-scan/config', authMiddleware, async (req, res) => {
 // PUT /facebook/lead-scan/config — cập nhật cấu hình
 r.put('/lead-scan/config', authMiddleware, async (req, res) => {
   try {
+    if (String(req.tenantContext?.tenantId || req.user?.tenant_id || '') === NEXTGO_LIVE_TENANT_ID) {
+      return res.status(403).json({ error: 'Hệ sinh thái NextGo không đổi lịch quét Facebook toàn hệ thống.' });
+    }
     const { enabled, interval_minutes } = req.body;
     const cfg = await saveScanConfig({
       ...(enabled !== undefined && { enabled }),
@@ -8180,6 +8313,21 @@ r.delete('/webhook-logs', authMiddleware, async (req, res) => {
 function resolveAutoCompanyKey(req, res) {
   const raw = (req.body && req.body.company_id != null) ? req.body.company_id : req.query?.company_id;
   const companyId = raw != null && String(raw).trim() !== '' ? String(raw).trim() : null;
+  const tenantIds = facebookTenantCompanyIds(req);
+  if (tenantIds) {
+    if (companyId) {
+      if (!tenantIds.includes(companyId)) {
+        res.status(403).json({ error: 'Chỉ được dùng cài đặt Facebook của hệ sinh thái hiện tại' });
+        return undefined;
+      }
+      return companyId;
+    }
+    if (!tenantIds.length) {
+      res.status(400).json({ error: 'Hệ sinh thái chưa có công ty Facebook.' });
+      return undefined;
+    }
+    return tenantIds[0];
+  }
   if (isSystemAdmin(req.user)) {
     return companyId || FB_GLOBAL_SCOPE_KEY;
   }
@@ -8220,8 +8368,13 @@ function getAutoStateForScope(companyKey, pageIdsByCompany) {
 // Tổng hợp trạng thái tất cả công ty + master (chỉ admin xem toàn bộ; NV xem công ty mình)
 r.get('/auto-pipeline/status-all', authMiddleware, async (req, res) => {
   await loadFbPipelineConfigFromDb();
-  const admin = isSystemAdmin(req.user);
   const cache = await refreshCompanyPageIdsCache();
+  const tenantIds = facebookTenantCompanyIds(req);
+  if (tenantIds) {
+    const companies = tenantIds.map((id) => getAutoStateForScope(id, cache.byCompany));
+    return res.json({ master_enabled: getFbMasterEnabledSync(), companies });
+  }
+  const admin = isSystemAdmin(req.user);
   if (!admin) {
     const cid = req.user?.company_id;
     if (!cid) return res.status(400).json({ error: 'Thiếu company_id trên tài khoản.' });
@@ -8264,6 +8417,9 @@ r.post('/auto-pipeline/start', authMiddleware, async (req, res) => {
   const companyKey = resolveAutoCompanyKey(req, res);
   if (companyKey === undefined) return;
   if (!getFbMasterEnabledSync()) {
+    if (!isFacebookMasterAdmin(req)) {
+      return res.status(403).json({ error: 'Công tắc tổng Facebook đang tắt. Liên hệ admin hệ thống.' });
+    }
     await setFbPipelineMaster(true);
   }
   await saveFbPipelineConfigForCompany(companyKey, { enabled: true });
@@ -8282,7 +8438,7 @@ r.post('/auto-pipeline/stop', authMiddleware, async (req, res) => {
 // Công tắc TỔNG (master) — chỉ admin
 r.post('/auto-pipeline/master', authMiddleware, async (req, res) => {
   try {
-    if (!isSystemAdmin(req.user)) return res.status(403).json({ error: 'Chỉ admin được bật/tắt công tắc tổng.' });
+    if (!isFacebookMasterAdmin(req)) return res.status(403).json({ error: 'Chỉ admin hệ thống được bật/tắt công tắc tổng.' });
     await loadFbPipelineConfigFromDb();
     const enabled = !!req.body?.enabled;
     await applyFbPipelineMaster(enabled);
@@ -8294,13 +8450,13 @@ r.post('/auto-pipeline/master', authMiddleware, async (req, res) => {
 
 // Hẹn giờ bật/tắt công tắc TỔNG — chỉ admin hệ thống
 r.get('/auto-pipeline/master-schedule/config', authMiddleware, async (req, res) => {
-  if (!isSystemAdmin(req.user)) return res.status(403).json({ error: 'Chỉ admin được xem lịch công tắc tổng.' });
+  if (!isFacebookMasterAdmin(req)) return res.status(403).json({ error: 'Chỉ admin hệ thống được xem lịch công tắc tổng.' });
   await loadFbMasterScheduleConfig();
   res.json(getFbMasterScheduleStatus());
 });
 
 r.get('/auto-pipeline/master-schedule/logs', authMiddleware, async (req, res) => {
-  if (!isSystemAdmin(req.user)) return res.status(403).json({ error: 'Chỉ admin được xem nhật ký lịch công tắc tổng.' });
+  if (!isFacebookMasterAdmin(req)) return res.status(403).json({ error: 'Chỉ admin hệ thống được xem nhật ký lịch công tắc tổng.' });
   const limit = Math.min(200, Math.max(1, parseInt(req.query?.limit, 10) || 30));
   const logs = await loadFbMasterScheduleLogs(limit);
   res.json({ logs });
@@ -8308,7 +8464,7 @@ r.get('/auto-pipeline/master-schedule/logs', authMiddleware, async (req, res) =>
 
 r.put('/auto-pipeline/master-schedule/config', authMiddleware, async (req, res) => {
   try {
-    if (!isSystemAdmin(req.user)) return res.status(403).json({ error: 'Chỉ admin được cấu hình lịch công tắc tổng.' });
+    if (!isFacebookMasterAdmin(req)) return res.status(403).json({ error: 'Chỉ admin hệ thống được cấu hình lịch công tắc tổng.' });
     const prevEnabled = fbMasterSchedule.enabled;
     stopFbMasterScheduleTimer();
     const body = req.body || {};
@@ -9618,7 +9774,8 @@ r.get('/image-sets', authMiddleware, async (req, res) => {
     const scope = await resolveFacebookPageScope(req, res);
     if (!scope) return;
     const companyId = resolveImageSetCompanyFilter(scope);
-    const rows = await listImageSets(companyId);
+    let rows = await listImageSets(companyId);
+    rows = filterImageSetsForTenant(req, rows);
     const items = await Promise.all(rows.map((row) => enrichSetWithImageCount(req.user, row)));
     res.json({ items });
   } catch (e) {
@@ -9629,7 +9786,7 @@ r.get('/image-sets', authMiddleware, async (req, res) => {
 r.get('/image-sets/admin', authMiddleware, async (req, res) => {
   try {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ admin cấu hình bộ ảnh' });
-    const rows = await listAllImageSetsAdmin();
+    const rows = filterImageSetsForTenant(req, await listAllImageSetsAdmin());
     const items = await Promise.all(rows.map((row) => enrichSetWithImageCount(req.user, row)));
     res.json({ items });
   } catch (e) {
@@ -9647,6 +9804,9 @@ r.get('/image-sets/:id/images', authMiddleware, async (req, res) => {
     if (companyId && set.company_id && String(set.company_id) !== String(companyId)) {
       return res.status(403).json({ error: 'Bộ ảnh không thuộc phạm vi công ty' });
     }
+    if (facebookTenantCompanyIds(req) && !filterImageSetsForTenant(req, [set]).length) {
+      return res.status(403).json({ error: 'Bộ ảnh không thuộc hệ sinh thái hiện tại' });
+    }
     const images = await listFolderImages(req.user, set.drive_folder_id, MAX_IMAGES_PER_SEND);
     res.json({ set, images });
   } catch (e) {
@@ -9657,6 +9817,11 @@ r.get('/image-sets/:id/images', authMiddleware, async (req, res) => {
 r.post('/image-sets', authMiddleware, async (req, res) => {
   try {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ admin cấu hình bộ ảnh' });
+    const coId = req.body?.company_id || null;
+    if (isTenantScopeEnforced(req) && !coId) {
+      return res.status(400).json({ error: 'Bộ ảnh phải gắn công ty của hệ sinh thái hiện tại' });
+    }
+    if (coId && !assertFacebookCompanyInTenant(req, res, coId)) return;
     const row = await createImageSet(req.user, req.body || {});
     const enriched = await enrichSetWithImageCount(req.user, row);
     res.json(enriched);
@@ -9668,6 +9833,17 @@ r.post('/image-sets', authMiddleware, async (req, res) => {
 r.put('/image-sets/:id', authMiddleware, async (req, res) => {
   try {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ admin cấu hình bộ ảnh' });
+    const existingSet = await getImageSet(req.params.id);
+    if (!existingSet) return res.status(404).json({ error: 'Không tìm thấy bộ ảnh' });
+    if (facebookTenantCompanyIds(req) && !filterImageSetsForTenant(req, [existingSet]).length) {
+      return res.status(403).json({ error: 'Bộ ảnh không thuộc hệ sinh thái hiện tại' });
+    }
+    if (req.body?.company_id !== undefined) {
+      if (isTenantScopeEnforced(req) && !req.body.company_id) {
+        return res.status(400).json({ error: 'Bộ ảnh phải gắn công ty của hệ sinh thái hiện tại' });
+      }
+      if (req.body.company_id && !assertFacebookCompanyInTenant(req, res, req.body.company_id)) return;
+    }
     if (req.body?.drive_folder_id) {
       const driveAcl = require('../helpers/drivePermissions');
       const access = await driveAcl.canAccess({
@@ -9689,6 +9865,10 @@ r.put('/image-sets/:id', authMiddleware, async (req, res) => {
 r.delete('/image-sets/:id', authMiddleware, async (req, res) => {
   try {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ admin cấu hình bộ ảnh' });
+    const existingSet = await getImageSet(req.params.id);
+    if (facebookTenantCompanyIds(req) && !filterImageSetsForTenant(req, existingSet ? [existingSet] : []).length) {
+      return res.status(403).json({ error: 'Bộ ảnh không thuộc hệ sinh thái hiện tại' });
+    }
     await deleteImageSet(req.params.id);
     res.json({ ok: true });
   } catch (e) {
@@ -9716,6 +9896,9 @@ r.post('/contacts/:contactId/send-image-set', authMiddleware, async (req, res) =
     const companyId = resolveImageSetCompanyFilter(scope);
     if (companyId && set.company_id && String(set.company_id) !== String(companyId)) {
       return res.status(403).json({ error: 'Bộ ảnh không thuộc phạm vi công ty' });
+    }
+    if (facebookTenantCompanyIds(req) && !filterImageSetsForTenant(req, [set]).length) {
+      return res.status(403).json({ error: 'Bộ ảnh không thuộc hệ sinh thái hiện tại' });
     }
 
     const messengerImageSender = await createMessengerImageSender(contact);

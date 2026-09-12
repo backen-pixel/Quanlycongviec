@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
+import { canManageAssignment, isAssignmentAssignee } from '../lib/assignmentManageAccess';
 import { formatDate } from '../lib/utils';
 import { rememberCompanyDeadlineClock, companyDeadlineIsoFromYmd } from '../lib/companyDeadlineClock';
 import { vnNowParts, addCalendarDaysYmd, nextSxWorkingYmd, addSxWorkingDaysYmd } from '../lib/sxWorkshopSchedule';
@@ -16,8 +18,17 @@ import UploadFileLightbox, {
 } from './UploadFileLightbox';
 import { useFilePreview } from '../context/FilePreviewContext';
 import {
+  ASSIGN_ROLE_OPTIONS,
+  DEFAULT_ASSIGN_ROLE,
+  normalizeAssignRole,
+  assignRoleShortLabel,
+  rolesMapFromAssignees,
+  assigneeRolesPayload,
+} from '../lib/assignmentAssignRoles';
+import {
   ClipboardList, Plus, Calendar, CheckCircle2, Circle, Clock, X, Pencil, Trash2, Save,
   LayoutGrid, Target, Factory, Truck, ExternalLink, MessageSquare, Paperclip, FileUp, ImagePlus,
+  UserCog,
 } from 'lucide-react';
 
 const NOTE_DOC_TYPES = new Set(['task_inline_note', 'task_note', 'checklist_inline_note']);
@@ -249,6 +260,8 @@ export default function LeadMemberAssignmentsPanel({
   linkedProjectId = null,
   refreshKey = null,
 }) {
+  const { user } = useAuth();
+  const uid = String(user?.id || '');
   const initialModule = ['crm', 'production', 'logistics'].includes(defaultModule)
     ? defaultModule
     : 'all';
@@ -269,6 +282,8 @@ export default function LeadMemberAssignmentsPanel({
   const [status, setStatus] = useState('pending');
   const [columnId, setColumnId] = useState('');
   const [memberIds, setMemberIds] = useState(() => new Set());
+  const [memberRoles, setMemberRoles] = useState({});
+  const [bulkAssignRole, setBulkAssignRole] = useState(DEFAULT_ASSIGN_ROLE);
   const [taskSourceType, setTaskSourceType] = useState('customer_request');
   const [employeeErrorModule, setEmployeeErrorModule] = useState('crm');
   const [phatSinhKind, setPhatSinhKind] = useState('');
@@ -381,6 +396,8 @@ export default function LeadMemberAssignmentsPanel({
     setStatus('pending');
     setColumnId(columns[0] ? String(columns[0].id) : '');
     setMemberIds(new Set());
+    setMemberRoles({});
+    setBulkAssignRole(DEFAULT_ASSIGN_ROLE);
     setTaskSourceType('customer_request');
     setEmployeeErrorModule('crm');
     setPhatSinhKind('');
@@ -595,14 +612,48 @@ export default function LeadMemberAssignmentsPanel({
       const next = new Set([...prev].filter((id) => allowed.has(String(id))));
       return next.size === prev.size ? prev : next;
     });
+    setMemberRoles((prev) => {
+      const allowed = new Set(formMembers.map((m) => String(m.user_id)));
+      const keys = Object.keys(prev);
+      if (keys.every((id) => allowed.has(id))) return prev;
+      const next = {};
+      for (const id of keys) {
+        if (allowed.has(id)) next[id] = prev[id];
+      }
+      return next;
+    });
   }, [formMembers, showForm, editingId]);
 
   const toggleMember = (userId) => {
     const sid = String(userId);
+    const removing = memberIds.has(sid);
     setMemberIds((prev) => {
       const next = new Set(prev);
-      if (next.has(sid)) next.delete(sid);
+      if (removing) next.delete(sid);
       else next.add(sid);
+      return next;
+    });
+    setMemberRoles((prev) => {
+      if (removing) {
+        const next = { ...prev };
+        delete next[sid];
+        return next;
+      }
+      return { ...prev, [sid]: prev[sid] || DEFAULT_ASSIGN_ROLE };
+    });
+  };
+
+  const setMemberRole = (userId, role) => {
+    const sid = String(userId);
+    setMemberRoles((prev) => ({ ...prev, [sid]: normalizeAssignRole(role) }));
+  };
+
+  const applyBulkRoleToSelected = () => {
+    if (!memberIds.size) return;
+    const role = normalizeAssignRole(bulkAssignRole);
+    setMemberRoles((prev) => {
+      const next = { ...prev };
+      for (const id of memberIds) next[String(id)] = role;
       return next;
     });
   };
@@ -613,9 +664,16 @@ export default function LeadMemberAssignmentsPanel({
   const selectAllFilteredMembers = () => {
     if (allFormMembersSelected) {
       setMemberIds(new Set());
+      setMemberRoles({});
       return;
     }
-    setMemberIds(new Set(formMembers.map((m) => String(m.user_id)).filter(Boolean)));
+    const ids = formMembers.map((m) => String(m.user_id)).filter(Boolean);
+    setMemberIds(new Set(ids));
+    setMemberRoles((prev) => {
+      const next = { ...prev };
+      for (const id of ids) next[id] = next[id] || DEFAULT_ASSIGN_ROLE;
+      return next;
+    });
   };
 
   const openCreate = () => {
@@ -625,7 +683,11 @@ export default function LeadMemberAssignmentsPanel({
     setShowForm(true);
   };
 
+  const canManage = (a) => canManageAssignment(a, user);
+  const canCycleStatus = (a) => canManage(a) || isAssignmentAssignee(a, uid);
+
   const openEdit = (a) => {
+    if (!canManage(a)) return;
     const mod = String(a.assignment_module || '').toLowerCase();
     if (mod === 'crm' || mod === 'production' || mod === 'logistics') {
       setModuleTab(mod);
@@ -655,6 +717,9 @@ export default function LeadMemberAssignmentsPanel({
       : (a.assignee_id ? [a.assignee_id] : [])
     ).map(String).filter(Boolean);
     setMemberIds(new Set(ids));
+    setMemberRoles(rolesMapFromAssignees(a.assignees?.length
+      ? a.assignees
+      : (a.assignee ? [a.assignee] : [])));
   };
 
   const submit = async () => {
@@ -703,6 +768,7 @@ export default function LeadMemberAssignmentsPanel({
           column_id: columnId || null,
           deadline: deadline ? new Date(deadline).toISOString() : null,
           assignee_ids: [...memberIds],
+          assignee_roles: assigneeRolesPayload([...memberIds], memberRoles),
           assignment_module: formModule,
           ...sourcePayload,
         });
@@ -714,6 +780,7 @@ export default function LeadMemberAssignmentsPanel({
           column_id: columnId || null,
           deadline: deadline ? new Date(deadline).toISOString() : null,
           assignee_ids: [...memberIds],
+          assignee_roles: assigneeRolesPayload([...memberIds], memberRoles),
           assignment_module: formModule,
           company_id: formCompanyId || undefined,
           ...sourcePayload,
@@ -750,6 +817,7 @@ export default function LeadMemberAssignmentsPanel({
 
   /** Giống nhiệm vụ Công việc: Chờ → Đang làm → Xong → Chờ */
   const cycleStatus = (a) => {
+    if (!canCycleStatus(a)) return;
     const next = a.status === 'completed'
       ? 'pending'
       : a.status === 'pending'
@@ -953,6 +1021,8 @@ export default function LeadMemberAssignmentsPanel({
   };
 
   const remove = async (id) => {
+    const row = assignments.find((a) => String(a.id) === String(id));
+    if (row && !canManage(row)) return;
     if (!confirm('Xóa phân công này?')) return;
     try {
       await api.delete(`/crm/assignments/${id}`);
@@ -1166,6 +1236,7 @@ export default function LeadMemberAssignmentsPanel({
                   onChange={(e) => {
                     setExecutorCompanyId(e.target.value);
                     setMemberIds(new Set());
+                    setMemberRoles({});
                   }}
                   className="w-full h-8 px-2 border border-teal-200 rounded-lg text-xs bg-white"
                 >
@@ -1264,37 +1335,73 @@ export default function LeadMemberAssignmentsPanel({
                 : `Chọn tất cả (${formMembers.length})`}
             </button>
           </div>
+          <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-violet-100 bg-white/80 px-2 py-1.5">
+            <UserCog className="h-3.5 w-3.5 text-violet-600 shrink-0" />
+            <span className="text-[10px] font-semibold text-violet-800">Vai trò</span>
+            <select
+              value={bulkAssignRole}
+              onChange={(e) => setBulkAssignRole(e.target.value)}
+              className="h-7 px-1.5 border border-violet-200 rounded-lg text-[11px] bg-white min-w-0 flex-1 sm:flex-none"
+            >
+              {ASSIGN_ROLE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={applyBulkRoleToSelected}
+              disabled={!memberIds.size}
+              className="h-7 px-2 text-[11px] font-semibold text-violet-700 border border-violet-200 rounded-lg hover:bg-violet-50 disabled:opacity-40 cursor-pointer"
+            >
+              Áp dụng ({memberIds.size})
+            </button>
+          </div>
           <div className="max-h-56 overflow-y-auto rounded border border-gray-100 divide-y">
             {formMembers.map((m) => {
               const checked = memberIds.has(String(m.user_id));
               const mods = memberModulesFromUser(m.user || m);
+              const role = normalizeAssignRole(memberRoles[String(m.user_id)]);
               return (
-                <label
+                <div
                   key={m.user_id}
-                  className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer text-xs ${checked ? 'bg-violet-50' : ''}`}
+                  className={`flex items-center gap-2 px-2 py-1.5 text-xs ${checked ? 'bg-violet-50' : ''}`}
                 >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggleMember(m.user_id)}
-                    className="rounded border-violet-300 text-violet-600"
-                  />
-                  <span className="truncate flex-1">{m.user?.full_name || m.user_id}</span>
-                  <span className="inline-flex gap-0.5 shrink-0">
-                    {mods.map((mod) => (
-                      <span
-                        key={mod}
-                        className={`text-[9px] px-1 rounded font-semibold ${
-                          mod === 'production' ? 'bg-teal-100 text-teal-700'
-                            : mod === 'logistics' ? 'bg-orange-100 text-orange-700'
-                              : 'bg-blue-100 text-blue-700'
-                        }`}
-                      >
-                        {assignmentModuleLabel(mod)}
-                      </span>
-                    ))}
-                  </span>
-                </label>
+                  <label className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleMember(m.user_id)}
+                      className="rounded border-violet-300 text-violet-600"
+                    />
+                    <span className="truncate flex-1">{m.user?.full_name || m.user_id}</span>
+                    <span className="inline-flex gap-0.5 shrink-0">
+                      {mods.map((mod) => (
+                        <span
+                          key={mod}
+                          className={`text-[9px] px-1 rounded font-semibold ${
+                            mod === 'production' ? 'bg-teal-100 text-teal-700'
+                              : mod === 'logistics' ? 'bg-orange-100 text-orange-700'
+                                : 'bg-blue-100 text-blue-700'
+                          }`}
+                        >
+                          {assignmentModuleLabel(mod)}
+                        </span>
+                      ))}
+                    </span>
+                  </label>
+                  {checked && (
+                    <select
+                      value={role}
+                      onChange={(e) => setMemberRole(m.user_id, e.target.value)}
+                      title="Vai trò thành viên trên việc phát sinh"
+                      className="h-7 max-w-[9.5rem] px-1 border border-violet-200 rounded text-[10px] bg-white shrink-0"
+                    >
+                      {ASSIGN_ROLE_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
               );
             })}
             {!formMembers.length && (
@@ -1415,7 +1522,12 @@ export default function LeadMemberAssignmentsPanel({
             const assigneeNames = (a.assignees?.length
               ? a.assignees
               : (a.assignee ? [a.assignee] : [])
-            ).map((u) => u.full_name).filter(Boolean).join(', ');
+            ).map((u) => {
+              const name = u.full_name;
+              if (!name) return '';
+              const short = assignRoleShortLabel(u.assign_role);
+              return short ? `${name} (${short})` : name;
+            }).filter(Boolean).join(', ');
             const mod = String(a.assignment_module || '').toLowerCase();
             const srcType = String(a.task_source_type || '').toLowerCase();
             const srcLabel = taskSourceLabel(srcType);
@@ -1434,14 +1546,19 @@ export default function LeadMemberAssignmentsPanel({
                 <button
                   type="button"
                   onClick={() => cycleStatus(a)}
-                  className="shrink-0 mt-0.5 cursor-pointer rounded-full p-0.5 hover:bg-violet-50"
+                  className={`shrink-0 mt-0.5 rounded-full p-0.5 ${
+                    canCycleStatus(a) ? 'cursor-pointer hover:bg-violet-50' : 'cursor-default'
+                  }`}
                   title={
-                    a.status === 'completed'
-                      ? 'Đánh dấu chờ lại'
-                      : a.status === 'pending'
-                        ? 'Chuyển sang đang làm'
-                        : 'Đánh dấu hoàn thành'
+                    !canCycleStatus(a)
+                      ? 'Chỉ người tạo, người được giao hoặc quản trị mới đổi trạng thái'
+                      : a.status === 'completed'
+                        ? 'Đánh dấu chờ lại'
+                        : a.status === 'pending'
+                          ? 'Chuyển sang đang làm'
+                          : 'Đánh dấu hoàn thành'
                   }
+                  disabled={!canCycleStatus(a)}
                 >
                   <StIcon className={`h-4 w-4 ${
                     a.status === 'completed' ? 'text-emerald-500'
@@ -1595,6 +1712,8 @@ export default function LeadMemberAssignmentsPanel({
                   >
                     <Paperclip size={14} />
                   </button>
+                  {canManage(a) && (
+                    <>
                   <button
                     type="button"
                     onClick={() => openEdit(a)}
@@ -1611,6 +1730,8 @@ export default function LeadMemberAssignmentsPanel({
                   >
                     <Trash2 size={14} />
                   </button>
+                    </>
+                  )}
                   <Link
                     to={assignmentBoardHref(a)}
                     className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
