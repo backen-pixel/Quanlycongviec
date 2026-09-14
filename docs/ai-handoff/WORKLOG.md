@@ -1,5 +1,10 @@
 # Nhật ký công việc AI
 
+## 2026-09-14 16:00 — Fix build Render: GiaVonExcelModal
+
+- AI: Cursor. Commit `frontend/src/components/GiaVonExcelModal.jsx` vì trang
+  mẫu nhiệm vụ đã import, deploy thiếu file.
+
 ## 2026-09-14 14:55 — Chi tiết SX: ẩn tab Sự cố
 
 - AI: Cursor. Ẩn nút tab «Sự cố» trên `ProductionDetail`; URL cũ
