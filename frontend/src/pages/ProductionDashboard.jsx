@@ -39,7 +39,7 @@ import {
   Factory, Users, LayoutGrid, List,
   CheckSquare, UserCheck, Loader2, Truck, Clock, Layers, Trash2, MessageSquare, Pin, Building2, ArrowRightLeft, Settings, ChevronDown, Eye, ChevronRight, Banknote,
 } from 'lucide-react';
-import { gopPipeline, coTheGopCot, gomCotTheoNhom } from '../lib/sxGopCot';
+import { gopPipeline, coTheGopCot, gomCotTheoNhom, docSxGopCot, ghiSxGopCot } from '../lib/sxGopCot';
 import { tachCotTheoTab, demTheCot } from '../lib/sxTachCongNo';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView, ProductionDeadlineView } from '../components/ProductionViews';
@@ -668,7 +668,13 @@ export default function ProductionDashboard() {
   const [showDateRangePicker, setShowDateRangePicker] = useState(false);
   const [kanbanLoadKey, setKanbanLoadKey] = useState(() => P0?.kanbanLoadKey ?? '500');
   // Gộp/tách cột Kanban: gộp cột nhỏ vào cột lớn theo production_pipeline_stages.group_key.
-  const [sxGopCot, setSxGopCot] = useState(false);
+  const [sxGopCot, setSxGopCot] = useState(() => {
+    try {
+      return docSxGopCot(JSON.parse(localStorage.getItem('user') || 'null'));
+    } catch {
+      return false;
+    }
+  });
   // Tab Sản xuất / Công nợ — nhớ lại lần mở sau.
   const [sxTab, setSxTab] = useState(() => {
     try { return localStorage.getItem(LS_SX_TAB) === 'cong_no' ? 'cong_no' : 'sx'; }
@@ -2185,6 +2191,10 @@ export default function ProductionDashboard() {
     if (!isAdmin || !filterCompany || !companies?.length) return;
     if (!companies.some((c) => String(c.id) === String(filterCompany))) setFilterCompany('');
   }, [isAdmin, filterCompany, companies]);
+
+  useEffect(() => {
+    setSxGopCot(docSxGopCot(user));
+  }, [user?.id]);
 
   useEffect(() => {
     try {
@@ -3978,7 +3988,11 @@ export default function ProductionDashboard() {
                       <button
                         type="button"
                         onClick={() => {
-                          setSxGopCot((v) => !v);
+                          setSxGopCot((v) => {
+                            const next = !v;
+                            ghiSxGopCot(user, next);
+                            return next;
+                          });
                           setShowViewModeMenu(false);
                         }}
                         title={sxGopCot

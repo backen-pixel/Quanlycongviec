@@ -97,3 +97,46 @@ export function gopPipeline(pipeline, nhomDangMo) {
     }];
   });
 }
+
+const LS_SX_GOP_COT = 'sx_gop_cot_pref_v1';
+const SX_GOP_COT_MAC_DINH_USER_ID = 'e679aa3f-efa0-4a57-8d81-5374950dc8d4';
+
+function foldTenNv(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Nguyễn Phạm Hùng (Phúc Đạt) — Kanban SX mặc định Gộp cột; user khác mặc định tách. */
+export function userMacDinhGopCotSx(user) {
+  if (!user) return false;
+  if (String(user.id || '') === SX_GOP_COT_MAC_DINH_USER_ID) return true;
+  if (String(user.email || '').toLowerCase().trim() === 'kinhphucdat@gmail.com') return true;
+  return foldTenNv(user.full_name) === 'nguyen pham hung';
+}
+
+export function docSxGopCot(user) {
+  try {
+    if (user?.id) {
+      const map = JSON.parse(localStorage.getItem(LS_SX_GOP_COT) || '{}');
+      if (map && Object.prototype.hasOwnProperty.call(map, String(user.id))) {
+        return !!map[String(user.id)];
+      }
+    }
+  } catch { /* ignore */ }
+  return userMacDinhGopCotSx(user);
+}
+
+export function ghiSxGopCot(user, value) {
+  if (!user?.id) return;
+  try {
+    const map = JSON.parse(localStorage.getItem(LS_SX_GOP_COT) || '{}') || {};
+    map[String(user.id)] = !!value;
+    localStorage.setItem(LS_SX_GOP_COT, JSON.stringify(map));
+  } catch { /* ignore */ }
+}
