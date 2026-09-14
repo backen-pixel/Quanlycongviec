@@ -3,10 +3,18 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { Settings, Plus, Trash2, Save, ChevronRight, ChevronDown, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft, Search, Wrench, Eye, EyeOff } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, ChevronRight, ChevronDown, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft, Search, Wrench, Eye, EyeOff, Layers } from 'lucide-react';
 import WorkshopTypeSettingsSection from '../components/WorkshopTypeSettingsSection';
 import { isPipelineStageSlaDisabled } from '../lib/crmPipelineSla';
 import { SX_DEADLINE_GROUPS, sxDeadlineGroupMeta } from '../lib/sxWorkshopSchedule';
+import { nhanCotLon } from '../lib/sxGopCot';
+
+/**
+ * Cột lớn (giai đoạn NỐI TIẾP) — ghi thẳng TÊN vào production_pipeline_stages.group_key.
+ * Không còn danh sách cứng: mỗi công ty tự đặt tên cột lớn của mình. Các cột nhỏ cùng một
+ * tên = việc SONG SONG bên trong giai đoạn đó. Dưới đây chỉ là gợi ý cho pipeline mới tinh.
+ */
+const SX_COT_LON_GOI_Y = ['Tiếp nhận', 'Kế hoạch', 'Duyệt', 'Gia công', 'Hoàn thiện', 'Công nợ'];
 
 const INTAKE = 'won_pending';
 const LS_SX_PIPE_COMPANY = 'sx_pipeline_settings_company_id';
@@ -84,6 +92,7 @@ export default function ProductionPipelineSettingsPage() {
     counts_as_collected_revenue: false,
     requires_deadline: false,
     deadline_group: '',
+    group_key: '',
     auto_add_members_on_enter: false,
     stage_staff_user_ids: [],
     stage_staff_primary_user_id: '',
@@ -818,6 +827,7 @@ export default function ProductionPipelineSettingsPage() {
     counts_as_collected_revenue: !!form.counts_as_collected_revenue,
     requires_deadline: !!form.requires_deadline,
     deadline_group: form.deadline_group || null,
+    group_key: form.group_key || null,
   });
 
   const requestEdit = (stage) => {
@@ -849,6 +859,7 @@ export default function ProductionPipelineSettingsPage() {
       counts_as_collected_revenue: false,
       requires_deadline: false,
       deadline_group: '',
+    group_key: '',
       auto_add_members_on_enter: false,
       stage_staff_user_ids: [],
       stage_staff_primary_user_id: '',
@@ -886,6 +897,7 @@ export default function ProductionPipelineSettingsPage() {
       counts_as_collected_revenue: !!stage.counts_as_collected_revenue,
       requires_deadline: !!stage.requires_deadline,
       deadline_group: stage.deadline_group || '',
+      group_key: stage.group_key || '',
       auto_add_members_on_enter: !!stage.auto_add_members_on_enter,
       stage_staff_user_ids: (stage.default_staff?.user_ids || []).map(String),
       stage_staff_primary_user_id: stage.default_staff?.primary_user_id ? String(stage.default_staff.primary_user_id) : '',
@@ -1224,6 +1236,56 @@ export default function ProductionPipelineSettingsPage() {
   };
 
   const sorted = [...stages].sort((a, b) => a.order_index - b.order_index);
+
+  /** Các cột lớn đang dùng trong pipeline này + số cột nhỏ song song bên trong. */
+  const cotLonDaCo = useMemo(() => {
+    const m = new Map();
+    (stages || []).forEach((st) => {
+      const k = String(st.group_key || '').trim();
+      if (!k) return;
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(st);
+    });
+    return [...m.entries()]
+      .map(([key, ds]) => ({
+        key,
+        ds,
+        moc: Math.min(...ds.map((x) => Number(x.order_index ?? 9999))),
+      }))
+      .sort((a, b) => a.moc - b.moc);
+  }, [stages]);
+
+  /** Gợi ý cho ô «Cột lớn»: tên đang dùng trước, rồi tới bộ gợi ý mặc định. */
+  const cotLonGoiY = useMemo(() => {
+    const ra = cotLonDaCo.map((g) => nhanCotLon(g.key) || g.key);
+    SX_COT_LON_GOI_Y.forEach((t) => { if (!ra.includes(t)) ra.push(t); });
+    return ra;
+  }, [cotLonDaCo]);
+
+  const doiTenCotLon = async (key, ds) => {
+    const cu = nhanCotLon(key) || key;
+    const nhap = window.prompt(`Đổi tên cột lớn «${cu}» thành:`, cu);
+    if (nhap === null) return;
+    const moi = nhap.trim();
+    if (!moi || moi === key) return;
+    try {
+      await Promise.all(ds.map((st) => api.put(`/production/pipeline-stages/${st.id}`, { group_key: moi })));
+      await load();
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không đổi được tên cột lớn');
+    }
+  };
+
+  const boCotLon = async (key, ds) => {
+    const ten = nhanCotLon(key) || key;
+    if (!window.confirm(`Tách ${ds.length} cột nhỏ ra khỏi «${ten}»?\n\nỞ chế độ Gộp cột trên Kanban, chúng sẽ hiện thành từng cột riêng thay vì nằm song song trong một cột lớn.`)) return;
+    try {
+      await Promise.all(ds.map((st) => api.put(`/production/pipeline-stages/${st.id}`, { group_key: null })));
+      await load();
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không tách được cột lớn');
+    }
+  };
   const editingIntake = editId && sorted.find((s) => s.id === editId)?.bucket_slug === INTAKE;
 
   return (
@@ -1869,6 +1931,57 @@ export default function ProductionPipelineSettingsPage() {
             );
           })()}
 
+          <div className="border-t bg-violet-50/70 px-4 py-2.5">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <p className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-violet-800">
+                <Layers className="h-3 w-3" /> Cột lớn — giai đoạn nối tiếp
+              </p>
+              <p className="text-[10px] text-violet-500">
+                Các cột nhỏ cùng một cột lớn = việc <strong>song song</strong>, chạy cùng lúc.
+                Gán ở ô «Cột lớn» khi sửa từng cột — gõ tên mới hoặc chọn tên đã có.
+              </p>
+            </div>
+            {cotLonDaCo.length === 0 ? (
+              <p className="mt-1 text-[11px] text-violet-500">
+                Chưa gán cột nào — bảng Kanban ở chế độ Gộp sẽ hiện y như hiện tại (mỗi cột đứng riêng).
+              </p>
+            ) : (
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {cotLonDaCo.map((g) => (
+                  <span
+                    key={g.key}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-white px-2 py-1 text-[11px]"
+                    title={g.ds.map((x) => x.name).join(' · ')}
+                  >
+                    <strong className="text-violet-900">{nhanCotLon(g.key) || g.key}</strong>
+                    <span className="rounded-full bg-violet-100 px-1.5 text-[10px] font-bold tabular-nums text-violet-700">
+                      {g.ds.length}
+                    </span>
+                    <span className="text-[10px] text-violet-400">
+                      {g.ds.length > 1 ? 'việc song song' : 'chỉ 1 cột'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => doiTenCotLon(g.key, g.ds)}
+                      title="Đổi tên cột lớn (đổi cho tất cả cột nhỏ bên trong)"
+                      className="rounded px-1 text-violet-500 hover:bg-violet-100 hover:text-violet-800 cursor-pointer"
+                    >
+                      Đổi tên
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => boCotLon(g.key, g.ds)}
+                      title="Tách hết cột nhỏ ra khỏi cột lớn này"
+                      className="rounded px-1 text-rose-500 hover:bg-rose-50 hover:text-rose-700 cursor-pointer"
+                    >
+                      Tách
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="border-t">
             <div className="px-4 py-2 bg-slate-50 border-b text-[10px] text-slate-600 leading-snug">
               <p className="font-semibold text-slate-800 mb-1">Nhóm deadline (theo kế hoạch từ ngày lắp)</p>
@@ -1962,6 +2075,15 @@ export default function ProductionPipelineSettingsPage() {
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">
                           <Tags className="h-2.5 w-2.5" />
                           {workshopTypes.find((t) => String(t.id) === String(s.workshop_type_id))?.name || 'Loại đã xóa'}
+                        </span>
+                      )}
+                      {String(s.group_key || '').trim() && (
+                        <span
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-50 text-violet-700 border border-violet-200"
+                          title="Cột lớn (giai đoạn nối tiếp) mà cột này thuộc về"
+                        >
+                          <Layers className="h-2.5 w-2.5" />
+                          {nhanCotLon(s.group_key)}
                         </span>
                       )}
                       {s.crm_target_stage && (
@@ -2272,6 +2394,20 @@ export default function ProductionPipelineSettingsPage() {
                       />
                       <Clock className="h-3.5 w-3.5 text-rose-600" /> Bắt buộc đặt deadline khi kéo thẻ tới cột
                     </label>
+                    <div className="flex items-center gap-2 text-xs text-violet-950 bg-violet-50 px-2 py-1 rounded-lg border border-violet-200">
+                      <span className="font-semibold whitespace-nowrap">Cột lớn</span>
+                      <input
+                        list="sx-cot-lon-goi-y"
+                        value={form.group_key || ''}
+                        onChange={(e) => setForm((f) => ({ ...f, group_key: e.target.value }))}
+                        placeholder="— Đứng riêng —"
+                        className="h-7 px-2 border border-violet-200 rounded-md text-xs bg-white min-w-[11rem]"
+                        title="Tên giai đoạn nối tiếp mà cột này thuộc về. Các cột cùng một tên = việc SONG SONG bên trong giai đoạn đó. Gõ tên mới hoặc chọn tên đã có. Để trống = cột đứng riêng."
+                      />
+                      <datalist id="sx-cot-lon-goi-y">
+                        {cotLonGoiY.map((t) => <option key={t} value={t} />)}
+                      </datalist>
+                    </div>
                     <div className="flex items-center gap-2 text-xs text-indigo-950 bg-indigo-50 px-2 py-1 rounded-lg border border-indigo-200">
                       <span className="font-semibold whitespace-nowrap">Nhóm deadline</span>
                       <select

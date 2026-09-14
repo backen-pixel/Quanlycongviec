@@ -4299,6 +4299,7 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
       handoverProjectId,
       pcv.company.id,
       projRow?.workshop_type_id || null,
+      { primaryOnly: true },
     );
     const leadHandoverPatch = {
       sx_handover_at: now,

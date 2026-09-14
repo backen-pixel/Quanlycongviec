@@ -106,7 +106,7 @@ function candidate(raw, source, item) {
 }
 
 function resolveCrmDeadline(item, stage) {
-  if (!item || item.deadline_disabled_at || item.is_interacted) return null;
+  if (!item || item.deadline_disabled_at) return null;
   if (crmLeadMissingPhone(item) || isCrmTerminalStage(stage)) return null;
 
   const task = candidate(item.crm_next_open_task_deadline, 'task', item);

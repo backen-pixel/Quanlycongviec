@@ -1235,6 +1235,7 @@ async function runAutoCreateProjectFromWonDeal({
       projectId,
       coCheck.company.id,
       validatedWorkshopTypeId,
+      { primaryOnly: true },
     );
     const staffIds = await loadProjectProductionStaffUserIds(projectId);
     notifyStaff = staffIds.length ? staffIds : (primaryStaffId ? [primaryStaffId] : []);

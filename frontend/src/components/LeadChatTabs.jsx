@@ -895,6 +895,10 @@ export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace,
           <Building2 size={12} /> Thêm thành viên
           <span className="font-normal text-blue-600/80">— NV mọi công ty trong hệ sinh thái</span>
         </p>
+        <p className="text-[11px] text-blue-800/90 leading-snug">
+          Khi CRM thêm sản xuất, hệ thống chỉ gắn <strong>1 người chịu trách nhiệm chính</strong> của xưởng.
+          Người đó (và phụ trách chính CRM/VC) được thêm NV vào dự án tại đây hoặc trên trang chi tiết SX.
+        </p>
 
         <WorkshopStaffFilterPanel
           isAdmin={isAdmin}

@@ -28,7 +28,7 @@ function isGcckProject(project) {
 function isGcckSxCompleted(sxStage) {
   if (!sxStage) return false;
   const n = foldVi(sxStage.name);
-  return n.includes('hoan thanh') || n.includes('da giao') || n.includes('giao xong');
+  return n.includes('hoan thanh') || n.includes('hoan thien') || n.includes('da giao') || n.includes('giao xong');
 }
 
 function shouldSkipGcckInstallOverdue(project, sxStage) {

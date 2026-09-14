@@ -1,19 +1,113 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-11 10:05 (UTC+7)
+Cập nhật: 2026-09-12 11:35 (UTC+7)
 
-## HCB Tủ bếp — Kanban tới Hoàn thiện + nhánh Công nợ
+## Ma trận SX — ô Đang làm / Xong hiện tên dự án
 
-Trạng thái: **đã chạy 588 trên primary + backup.**
+Trạng thái: **local, chưa commit.**
 
-Board SX **Tủ bếp** HCB còn 5 cột: Tiếp nhận → Kế hoạch → Duyệt → Gia công
-(6 việc: vật tư, kính, sơn, thùng, alu, cánh) → Hoàn thiện (bàn giao VC).
-Giao hàng / lắp đặt ở Kanban VC/LĐ. Công nợ là phân loại **Công nợ**.
-Kế hoạch SX lấy mốc **ngày lắp** (`install_occurrence` / `install_date`, rồi mới
-`delivery_date`).
+`SxMaTranSongSong`: ô việc song song (Đang làm, Xong) ghi tên dự án dưới nhãn
+trạng thái, cùng nguồn tên với thẻ Kanban bên trái.
 
-Hoàn tác: khôi phục cột/pipeline từ snapshot trước 588; revert FE
-`sxWorkshopSchedule.js`, `ProductionDetail.jsx`, `SxMultiTargetPicker.jsx`.
+Hoàn tác: revert khối ô trong `ProductionDashboard.jsx` (`SxMaTranSongSong`).
+
+## Deadline CRM — tick «đã tương tác» không còn ẩn hạn
+
+Trạng thái: **RPC primary + backup đã chạy (SQL 606); code FE/BE local đã sửa; production FE chưa deploy.**
+
+Tick xanh «đã tương tác» chỉ còn đánh dấu cá nhân. Không đẩy thẻ sang «Không hạn»
+và không ẩn badge Quá hạn (Deadline / Kanban). LEAD-2026-279 của Admin Q2 sẽ
+hiện lại ở cột Quá hạn sau khi RPC primary + FE/BE lên production.
+
+Hoàn tác: revert `moduleDeadlinePolicy` (BE/FE), `crmLeadDeadlineDisplay.js`,
+`leadsList.js` `crmDeadlineTsForRow`, `dailyReportMetrics.js`, SQL 605.
+
+## Xóa 2 đơn Cửa Phúc Đạt (Minh)
+
+Trạng thái: **đã chạy trên DB, script local chưa commit.**
+
+Đã xóa đúng bản Phúc Đạt trên Kanban Cửa:
+- `TB-2026-767` / `DEAL-2026-1401` (Anh Tám)
+- `TB-2026-337` / `DEAL-2026-440` (Anh Hường)
+
+Giữ nguyên xưởng khác (Anh Tám): Metalla `TB-2026-740`, HCB `754`/`755`/`764`/`765`/`827`.
+Anh Hường không có bản xưởng khác. Snapshot thùng rác + rollback
+`backend/uploads/_delete_phucdat_minh_two_orders_1789180288590.json`.
+Script: `backend/scripts/delete-phucdat-minh-two-orders.js`.
+
+Hoàn tác: khôi phục từ Thùng rác (project + deal).
+
+## CRM thêm SX — chỉ 1 NV xưởng; phụ trách chính thêm người
+
+Trạng thái: **local, chưa commit.**
+
+Khi CRM thêm sản xuất (tạo dự án / bàn giao / intake / đổi xưởng), hệ thống
+chỉ gắn **1 người chịu trách nhiệm chính** (setup phân loại hoặc NV handover),
+không còn đổ cả đội / cả xưởng vào `project_production_staff`.
+
+Phụ trách chính module (CRM / SX / VC) được thêm NV vào dự án:
+`POST/DELETE /projects/:id/production-staff` + tab Thành viên (NV SX đồng bộ đội).
+Chi tiết SX: ô «Thêm NV vào dự án» dưới Đội SX.
+
+Hoàn tác: revert `productionWorkshopTypeStaff.js`, `autoDealWonProject.js`,
+`projects.js` (route production-staff), `ProductionDetail.jsx`, `LeadChatTabs.jsx`.
+
+## Báo cáo phát sinh — phân tích + bài học
+
+Trạng thái: **local, chưa commit.**
+
+Trang `/management/shared-workspace-report` có tab **Phân tích** (mặc định) và
+**Danh sách**. Phân tích theo tuần / tháng / bộ phận / dự án / nhân viên / loại;
+sinh bài học rút kinh nghiệm. Excel xuất thêm các sheet này. API field `analysis`.
+
+Hoàn tác: revert `sharedWorkspaceAssignmentsAnalysis.js` + report helper/page/excel.
+
+## Hồ sơ liên thông — thêm TT cơ bản theo module
+
+Trạng thái: **local, chưa commit.**
+
+Work Unified: chip CRM/SX/VC và khối «Hồ sơ liên thông» chỉ hiện module dự án
+đang có (VC ẩn nếu chưa bàn giao / chưa gắn công ty VC hoặc cột Kanban VC).
+Hồ sơ thêm địa chỉ, khu vực, giai đoạn, phân loại, phụ trách, ngày lắp.
+
+Hoàn tác: revert `projectDealBundle.js`, `ProjectOverviewPanel.jsx`,
+`WorkUnifiedProjectDetailPage.jsx`.
+
+## Tổng quan dự án — cụm nhiệm vụ như trang Quản lý nhiệm vụ
+
+Trạng thái: **local, chưa commit.**
+
+Tab Tổng quan Work Unified (`ProjectOverviewPanel`) không còn liệt kê từng việc lẻ
+«Công việc trọng yếu». Gọi `/work-tasks/project-overview?project_id=` — cùng thuật
+gom cụm với `/crm/project-tasks`, chỉ hồ sơ đang mở. Bấm dòng → tab Công việc.
+
+Hoàn tác: revert `workTasks.js` + `ProjectOverviewPanel.jsx` + prop `projectId`.
+
+## Luồng tổng quan — gộp Giao nhận
+
+Trạng thái: **local, chưa commit.**
+
+Luồng thực hiện (Work Unified / tab Tổng quan) gộp 3 bước «Chuẩn bị vật tư»,
+«Giao hàng», «Lắp đặt» thành **một** bước **Giao nhận**. Kanban cột workflow_stages
+trong DB không đổi; chỉ hiển thị + lọc stage.
+
+Hoàn tác: revert `projectDealBundle.js` + `management.js`.
+
+## HCB — pipeline cũ + chỉnh tiến trình Tủ bếp
+
+Trạng thái: **600/601 pipeline cũ; 602 kéo thẻ Tủ bếp đúng cột (primary + backup).**
+
+Quy tắc 602 (không đụng CHỐT CÔNG NỢ / Cánh kính / Cửa):
+- đang lắp hoặc ngày giao/lắp đã qua → ĐÃ GIAO
+- shipping + giao ngày mai → NGÀY MAI GIAO
+- shipping / đã bàn giao VC → ĐÃ CHUẨN BỊ XONG
+- Ban thành phẩm, giao hôm nay hoặc trước → KCS
+
+Primary Tủ bếp: Tiếp nhận 8 · Kế hoạch 1 · Ban TP 22 · KCS 9 · Chuẩn bị xong 3 · Mai giao 2 · Đã giao 70 · CHỐT CN 215.
+
+Cánh kính giữ: sản xuất 6, Đợi TT 5, Hoàn thành 149, Hủy 2. Cửa 0 thẻ.
+
+F5 Kanban SX.
 
 ## Tab Tiến độ Unified — nhiều xưởng SX / VC
 

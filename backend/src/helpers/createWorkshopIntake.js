@@ -219,6 +219,7 @@ function scheduleWorkshopIntakeBackground({
         if (workshopTypeId) {
           await applyWorkshopTypeDefaultStaffToProject(projectId, companyId, workshopTypeId, {
             allowFallback: staffAllowFallback !== false,
+            primaryOnly: true,
           });
         }
       } catch (e) {

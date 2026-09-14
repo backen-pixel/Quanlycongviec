@@ -9,6 +9,8 @@ import {
   getActiveMentionState,
   memberDisplayName,
   resolveMentionIdsFromContent,
+  getActiveSlashState,
+  filterSlashCommands,
 } from '../lib/crmCommentMentions';
 
 const COMPOSER_MAX_H = 160;
@@ -30,6 +32,8 @@ export function CrmCommentMentionComposer({
   quickReplyTemplates = [],
   onQuickReply,
   allowPrivate = true,
+  slashCommands = [],
+  onSlashCommand,
 }) {
   const textareaRef = useRef(null);
   const pickedIdsRef = useRef(new Set());
@@ -40,6 +44,10 @@ export function CrmCommentMentionComposer({
   const [privateOn, setPrivateOn] = useState(false);
   const [privatePickerOpen, setPrivatePickerOpen] = useState(false);
   const [privateSelectedIds, setPrivateSelectedIds] = useState(() => new Set());
+  const [slashOpen, setSlashOpen] = useState(false);
+  const [slashStart, setSlashStart] = useState(0);
+  const [slashQuery, setSlashQuery] = useState('');
+  const [slashPickIdx, setSlashPickIdx] = useState(0);
 
   const meId = user?.userId || user?.id;
 
@@ -77,6 +85,11 @@ export function CrmCommentMentionComposer({
   const syncMentionUi = useCallback((pos) => {
     const p = pos ?? cursorPos;
     setCursorPos(p);
+    const sl = getActiveSlashState(value, p);
+    setSlashOpen(!!(sl.active && (slashCommands || []).length));
+    setSlashStart(sl.start);
+    setSlashQuery(sl.query);
+    if (sl.active) { setMentionOpen(false); return; }
     const { active, start } = getActiveMentionState(value, p);
     if (!active) {
       setMentionOpen(false);
@@ -84,7 +97,7 @@ export function CrmCommentMentionComposer({
     }
     setMentionStart(start);
     setMentionOpen(true);
-  }, [value, cursorPos]);
+  }, [value, cursorPos, slashCommands]);
 
   const mentionState = buildMentionPickerItems({
     text: value,
@@ -97,6 +110,10 @@ export function CrmCommentMentionComposer({
     setMentionPickIdx(0);
   }, [mentionState.query, mentionStart]);
 
+  useEffect(() => {
+    setSlashPickIdx(0);
+  }, [slashQuery, slashStart]);
+
   const handleChange = (e) => {
     const pos = e.target.selectionStart ?? 0;
     const nextText = e.target.value;
@@ -104,6 +121,11 @@ export function CrmCommentMentionComposer({
     requestAnimationFrame(() => {
       syncHeight();
       setCursorPos(pos);
+      const sl = getActiveSlashState(nextText, pos);
+      setSlashOpen(!!(sl.active && (slashCommands || []).length));
+      setSlashStart(sl.start);
+      setSlashQuery(sl.query);
+      if (sl.active) { setMentionOpen(false); return; }
       const { active, start } = getActiveMentionState(nextText, pos);
       if (!active) {
         setMentionOpen(false);
@@ -111,6 +133,26 @@ export function CrmCommentMentionComposer({
       }
       setMentionStart(start);
       setMentionOpen(true);
+    });
+  };
+
+  const slashItems = slashOpen ? filterSlashCommands(slashCommands, slashQuery) : [];
+
+  /** Chon 1 lenh: xoa doan «/tu-khoa» khoi o nhap roi ban lenh ra ngoai. */
+  const applySlashPick = (cmd) => {
+    if (!cmd) return;
+    const text = String(value || '');
+    const next = text.slice(0, slashStart) + text.slice(cursorPos);
+    onChange?.({ target: { value: next } });
+    setSlashOpen(false);
+    setCursorPos(slashStart);
+    onSlashCommand?.(cmd);
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(slashStart, slashStart);
+      }
+      syncHeight();
     });
   };
 
@@ -185,6 +227,33 @@ export function CrmCommentMentionComposer({
 
   return (
     <div className="relative">
+      {(slashOpen && slashItems.length > 0) && (
+        <div className="absolute bottom-full left-10 right-14 z-[100] mb-1 max-h-60 overflow-y-auto rounded-xl border border-[#e4e6eb] bg-white py-1 shadow-xl ring-1 ring-black/5">
+          <p className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#65676b]">
+            Tạo nhanh · Tab hoặc Enter để chọn
+          </p>
+          {slashItems.map((cmd, idx) => {
+            const active = idx === slashPickIdx;
+            return (
+              <button
+                key={cmd.id}
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); applySlashPick(cmd); }}
+                onMouseEnter={() => setSlashPickIdx(idx)}
+                className={`flex w-full items-start gap-2.5 px-3 py-2 text-left ${active ? 'bg-[#f0f2f5]' : 'hover:bg-[#f7f8fa]'}`}
+              >
+                <span className="mt-0.5 text-base leading-none">{cmd.emoji || '📋'}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[13px] font-semibold text-[#050505]">{cmd.label}</span>
+                  {cmd.hint ? (
+                    <span className="block text-[11px] leading-snug text-[#65676b]">{cmd.hint}</span>
+                  ) : null}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
       {(mentionOpen && pickerItems.length > 0) && (
         <div className="absolute bottom-full left-10 right-14 z-[100] mb-1 max-h-52 overflow-y-auto rounded-xl border border-[#e4e6eb] bg-white py-1 shadow-xl ring-1 ring-black/5">
           <p className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#65676b]">
@@ -336,6 +405,27 @@ export function CrmCommentMentionComposer({
               rows={minRows}
               placeholder={placeholder}
             onKeyDown={(e) => {
+              if (slashOpen && slashItems.length) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setSlashPickIdx((i) => (i + 1) % slashItems.length);
+                  return;
+                }
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setSlashPickIdx((i) => (i - 1 + slashItems.length) % slashItems.length);
+                  return;
+                }
+                if (e.key === 'Enter' || e.key === 'Tab') {
+                  e.preventDefault();
+                  applySlashPick(slashItems[slashPickIdx] || slashItems[0]);
+                  return;
+                }
+                if (e.key === 'Escape') {
+                  setSlashOpen(false);
+                  return;
+                }
+              }
               if (mentionOpen && pickerItems.length) {
                 if (e.key === 'ArrowDown') {
                   e.preventDefault();

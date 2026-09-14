@@ -72,7 +72,7 @@ BEGIN
     SELECT
       s.id,
       CASE
-        WHEN NOT s.has_display_phone OR s.is_interacted THEN NULL
+        WHEN NOT s.has_display_phone THEN NULL
         ELSE COALESCE(
           td.deadline,
           s.kanban_deadline_at,

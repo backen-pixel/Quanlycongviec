@@ -44,7 +44,6 @@ assert.equal(resolveModuleDeadline(MODULE.CRM, {
 for (const hidden of [
   { phone: null },
   { phone: '1', deadline_disabled_at: future(0) },
-  { phone: '1', is_interacted: true },
 ]) {
   assert.equal(resolveModuleDeadline(MODULE.CRM, {
     ...crmBase,
@@ -52,6 +51,11 @@ for (const hidden of [
     customer: null,
   }, { stage: { sla_days: 7 } }).deadlineAt, null);
 }
+assert.equal(resolveModuleDeadline(MODULE.CRM, {
+  ...crmBase,
+  phone: '1',
+  is_interacted: true,
+}, { stage: { sla_days: 7 } }).source, 'task');
 assert.equal(resolveModuleDeadline(MODULE.CRM, crmBase, {
   stage: { is_won: true, sla_days: 7 },
 }).deadlineAt, null);

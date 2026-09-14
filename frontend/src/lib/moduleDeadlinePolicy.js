@@ -93,7 +93,7 @@ export function resolveEffectiveModuleDeadline(moduleKey, item, stage = null) {
   const key = String(moduleKey || '').toLowerCase();
 
   if (key === DEADLINE_MODULE.CRM) {
-    if (!item || item.deadline_disabled_at || item.is_interacted || !hasPhone(item) || crmTerminal(stage)) {
+    if (!item || item.deadline_disabled_at || !hasPhone(item) || crmTerminal(stage)) {
       return { raw: null, source: null, deadlineTs: null, deadlineAt: null };
     }
     const direct = result(item.crm_next_open_task_deadline, 'task', item)

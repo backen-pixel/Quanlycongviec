@@ -1321,11 +1321,12 @@ function useCommentPasteUpload(onFilesUploaded) {
   return { handlePasteFiles, uploadingPaste, pasteProgress };
 }
 
-function commentComposerPlaceholder(replyTo, user, { withPasteHint = false, withMentionHint = false } = {}) {
+function commentComposerPlaceholder(replyTo, user, { withPasteHint = false, withMentionHint = false, withSlashHint = false } = {}) {
   if (replyTo) return `Trả lời ${replyTo.name}…`;
   const who = user?.full_name || user?.email || 'bạn';
   let text = `Bình luận với tư cách ${who}…`;
   if (withMentionHint) text += ' (@ nhắc thành viên)';
+  if (withSlashHint) text += ' · / tạo công việc';
   if (withPasteHint) text += ' · Ctrl+V dán ảnh/file';
   return text;
 }
@@ -2438,6 +2439,9 @@ function CommentThread({
   onThreadScroll,
   newCommentCount = 0,
   onScrollToNewComments,
+  slashCommands = [],
+  onSlashCommand,
+  slashFormSlot = null,
   quickReplyTemplates = [],
   onVcSelect,
   onVcSchedule,
@@ -2513,6 +2517,7 @@ function CommentThread({
   const composerPlaceholder = commentComposerPlaceholder(replyTo, user, {
     withPasteHint: enableAttachments,
     withMentionHint: enableMentions,
+    withSlashHint: (slashCommands || []).length > 0,
   });
 
   const renderBranch = (parentKey, depth) => {
@@ -2889,6 +2894,7 @@ function CommentThread({
                 />
               </div>
             ) : null}
+            {slashFormSlot ? <div className="px-3 pt-2">{slashFormSlot}</div> : null}
             {enableMentions ? (
               <CrmCommentMentionComposer
                 user={user}
@@ -2903,6 +2909,8 @@ function CommentThread({
                 placeholder={composerPlaceholder}
                 quickReplyTemplates={quickReplyTemplates}
                 onQuickReply={(text) => setBody(text)}
+                slashCommands={slashCommands}
+                onSlashCommand={onSlashCommand}
               />
             ) : (
               <FbCrmCommentComposer
@@ -2940,6 +2948,9 @@ export function CrmLeadCommentsPanel({
   onUnreadCountChange,
   quickReplyTemplates = [],
   forModule = null,
+  slashCommands = [],
+  onSlashCommand,
+  slashFormSlot = null,
 }) {
   const showOnScreen = useCommentShowOnScreenEnabled();
   const { user } = useAuth();
@@ -3290,6 +3301,9 @@ export function CrmLeadCommentsPanel({
 
   return (
     <CommentThread
+      slashCommands={slashCommands}
+      onSlashCommand={onSlashCommand}
+      slashFormSlot={slashFormSlot}
       comments={comments}
       loading={loading}
       loadError={loadError}

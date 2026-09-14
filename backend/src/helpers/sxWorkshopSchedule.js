@@ -137,6 +137,67 @@ function countSxWorkingDaysFromTo(fromYmd, toYmd, holidayIndex = null) {
   return forward ? count : -count;
 }
 
+function ymdFromUnknownDate(raw) {
+  if (raw == null || raw === '') return '';
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+    const ms = Date.parse(s);
+    if (Number.isFinite(ms)) return vnNowParts(ms).ymd;
+    return s.slice(0, 10);
+  }
+  const ms = Date.parse(s);
+  if (!Number.isFinite(ms)) return '';
+  return vnNowParts(ms).ymd;
+}
+
+function resolveSxPlanInstallYmd(project) {
+  const occ = Array.isArray(project?.install_occurrence_dates)
+    ? project.install_occurrence_dates
+    : [];
+  for (const d of occ) {
+    const y = ymdFromUnknownDate(d);
+    if (y) return y;
+  }
+  return ymdFromUnknownDate(project?.install_date)
+    || ymdFromUnknownDate(project?.delivery_date)
+    || '';
+}
+
+function buildSxInstallBackPlan(installYmd, { startYmd = null, slipDays = 0 } = {}) {
+  const install = String(installYmd || '').slice(0, 10);
+  if (!parseYmd(install)) return null;
+  const packingEnd = addCalendarDaysYmd(install, -1);
+  const finishEnd = addCalendarDaysYmd(install, -2);
+  const finishStartYmd = addCalendarDaysYmd(install, -3);
+  const cabinetEnd = addCalendarDaysYmd(install, -4);
+  const cabinetStart = addCalendarDaysYmd(install, -5);
+  const planEnd = addCalendarDaysYmd(install, -6);
+  const start = startYmd ? String(startYmd).slice(0, 10) : '';
+  const hasStart = Boolean(parseYmd(start));
+  let planningEnd = planEnd;
+  if (hasStart && start > planEnd) planningEnd = null;
+  const slip = Math.max(0, Math.floor(Number(slipDays) || 0));
+  const shift = (ymd) => (ymd && slip ? addCalendarDaysYmd(ymd, slip) : ymd);
+  return {
+    installYmd: install,
+    productionFinishYmd: shift(finishEnd),
+    packing: { endYmd: shift(packingEnd) },
+    finishing: { endYmd: shift(finishEnd), startYmd: shift(finishStartYmd) },
+    cabinet: { endYmd: shift(cabinetEnd), startYmd: shift(cabinetStart) },
+    planning: {
+      startYmd: hasStart ? start : null,
+      endYmd: hasStart && planningEnd && start <= planEnd ? planningEnd : (hasStart ? null : planEnd),
+    },
+  };
+}
+
+function endYmdForDeadlineGroup(plan, group) {
+  const key = String(group || '').trim();
+  if (!plan || !key) return '';
+  return String(plan[key]?.endYmd || '').slice(0, 10);
+}
+
 module.exports = {
   resolveSxReceptionYmd,
   resolveSxReceptionDateForCompany,
@@ -148,4 +209,8 @@ module.exports = {
   countSxWorkingDaysFromTo,
   vnNowParts,
   parseYmd,
+  ymdFromUnknownDate,
+  resolveSxPlanInstallYmd,
+  buildSxInstallBackPlan,
+  endYmdForDeadlineGroup,
 };

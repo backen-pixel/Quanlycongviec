@@ -17,9 +17,9 @@
  * Postgres chỉ tính các cột đó khi truy vấn thật sự dùng tới: mở trang mà không tìm kiếm
  * thì kế hoạch chỉ còn 2 bảng (đo được 1,46 ms).
  */
-
 const { supabase } = require('../config/supabase');
 const { fetchAllByIdsParallel } = require('./supabaseFetchAll');
+const { buildSharedWorkspaceAnalysis } = require('./sharedWorkspaceAssignmentsAnalysis');
 
 const REPORT_VIEW = 'crm_assignments_report_v';
 const PAGE_SIZE = 1000;
@@ -283,7 +283,13 @@ async function listSharedWorkspaceAssignmentsReport(filters = {}, scope = {}) {
     ]);
     summary.total = ids.length;
     return {
-      rows, summary, total: ids.length, offset: 0, limit: ids.length, has_more: false,
+      rows,
+      summary,
+      analysis: buildSharedWorkspaceAnalysis(rows, summary),
+      total: ids.length,
+      offset: 0,
+      limit: ids.length,
+      has_more: false,
     };
   }
 
@@ -327,10 +333,17 @@ async function listSharedWorkspaceAssignmentsReport(filters = {}, scope = {}) {
   ]);
   summary.total = total;
   return {
-    rows, summary, total, offset, limit, has_more: offset + ids.length < total,
+    rows,
+    summary,
+    analysis: buildSharedWorkspaceAnalysis(rows, summary),
+    total,
+    offset,
+    limit,
+    has_more: offset + ids.length < total,
   };
 }
 
 module.exports = {
   listSharedWorkspaceAssignmentsReport,
+  buildSharedWorkspaceAnalysis,
 };

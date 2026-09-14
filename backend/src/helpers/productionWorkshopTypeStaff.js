@@ -174,18 +174,36 @@ function withAlwaysWorkshopStaff(companyId, block) {
   };
 }
 
+/** CRM→SX: chỉ 1 người chịu trách nhiệm chính (người đó thêm NV còn lại). */
+function toPrimaryOnlyStaff(block) {
+  const pid = block?.primaryUserId || (block?.userIds && block.userIds[0]) || null;
+  if (!pid) return { userIds: [], primaryUserId: null };
+  const id = String(pid);
+  return { userIds: [id], primaryUserId: id };
+}
+
 async function getDefaultStaffForType(companyId, workshopTypeId, opts = {}) {
   if (!companyId) {
     return { userIds: [], primaryUserId: null };
   }
   const allowFallback = opts.allowFallback !== false;
+  const primaryOnly = opts.primaryOnly === true;
+  let block = { userIds: [], primaryUserId: null };
   if (workshopTypeId) {
     const map = await loadWorkshopTypeDefaultStaffMap(companyId);
-    const block = map.get(String(workshopTypeId));
-    if (block?.userIds?.length) return withAlwaysWorkshopStaff(companyId, block);
+    const found = map.get(String(workshopTypeId));
+    if (found?.userIds?.length) block = found;
   }
-  if (!allowFallback) return withAlwaysWorkshopStaff(companyId, { userIds: [], primaryUserId: null });
-  return withAlwaysWorkshopStaff(companyId, await resolveFallbackStaffForProductionCompany(companyId));
+  if (!block.userIds.length) {
+    if (!allowFallback) {
+      return primaryOnly
+        ? { userIds: [], primaryUserId: null }
+        : withAlwaysWorkshopStaff(companyId, { userIds: [], primaryUserId: null });
+    }
+    block = await resolveFallbackStaffForProductionCompany(companyId);
+  }
+  if (primaryOnly) return toPrimaryOnlyStaff(block);
+  return withAlwaysWorkshopStaff(companyId, block);
 }
 
 /** @deprecated dùng getDefaultStaffForType */
@@ -443,20 +461,42 @@ async function pruneNonResponsibleCrmLeadMembersForProject(projectId) {
  * @param {object} [opts]
  * @param {boolean} [opts.allowFallback=true] — không setup phân loại thì lấy mọi NV SX công ty (CRM→SX cũ).
  *   Đặt xưởng: false — chỉ NV trong setup phân loại.
+ * @param {boolean} [opts.primaryOnly=false] — CRM thêm SX: chỉ người chịu trách nhiệm chính.
+ * @param {boolean} [opts.skipIfStaffExists=false] — đã có đội SX thì không ghi đè.
  * @returns {Promise<string|null>} production_person_id (phụ trách chính)
  */
 async function applyWorkshopTypeDefaultStaffToProject(projectId, companyId, workshopTypeId, opts = {}) {
   if (!projectId || !companyId) return null;
   const allowFallback = opts.allowFallback !== false;
+  const primaryOnly = opts.primaryOnly === true;
+
+  if (opts.skipIfStaffExists) {
+    const existing = await loadProjectProductionStaffUserIds(projectId);
+    if (existing.length) {
+      const { data: p } = await supabase
+        .from('projects')
+        .select('production_person_id')
+        .eq('id', projectId)
+        .maybeSingle();
+      return p?.production_person_id || existing[0] || null;
+    }
+  }
 
   let { userIds, primaryUserId } = await getDefaultStaffForType(companyId, workshopTypeId, {
     allowFallback: false,
+    primaryOnly,
   });
 
   if (!userIds.length && allowFallback) {
     const fb = await resolveFallbackStaffForProductionCompany(companyId);
-    userIds = fb.userIds || [];
-    primaryUserId = fb.primaryUserId || null;
+    if (primaryOnly) {
+      const sliced = toPrimaryOnlyStaff(fb);
+      userIds = sliced.userIds;
+      primaryUserId = sliced.primaryUserId;
+    } else {
+      userIds = fb.userIds || [];
+      primaryUserId = fb.primaryUserId || null;
+    }
   }
 
   if (!userIds.length) {
@@ -522,6 +562,88 @@ async function applyWorkshopTypeDefaultStaffToProject(projectId, companyId, work
   await pruneNonResponsibleCrmLeadMembersForProject(projectId);
 
   return primaryId;
+}
+
+/**
+ * Thêm NV vào đội SX dự án (không ghi đè phụ trách chính / roster hiện có).
+ */
+async function appendProjectProductionStaff(projectId, userIds, opts = {}) {
+  if (!projectId || !userIds?.length) return { added: 0, added_user_ids: [] };
+  const toAdd = [...new Set(userIds.map(String).filter(Boolean))];
+  if (!toAdd.length) return { added: 0, added_user_ids: [] };
+
+  let staffRows = [];
+  try {
+    const { data } = await supabase
+      .from('project_production_staff')
+      .select('user_id, order_index, is_primary')
+      .eq('project_id', projectId)
+      .order('order_index');
+    staffRows = data || [];
+  } catch (e) {
+    if (String(e.message || '').includes('project_production_staff')) {
+      return { added: 0, added_user_ids: [], error: e.message };
+    }
+    throw e;
+  }
+
+  const existing = new Set((staffRows || []).map((r) => String(r.user_id)));
+  const missing = toAdd.filter((uid) => !existing.has(uid));
+  if (!missing.length) {
+    return {
+      added: 0,
+      added_user_ids: [],
+      users: await loadProjectProductionStaffForApi(projectId),
+    };
+  }
+
+  const maxOrder = staffRows.reduce((m, r) => Math.max(m, r.order_index ?? 0), -1);
+  const rows = missing.map((uid, i) => ({
+    project_id: projectId,
+    user_id: uid,
+    order_index: maxOrder + 1 + i,
+    is_primary: false,
+  }));
+  let { error: insErr } = await supabase.from('project_production_staff').insert(rows);
+  if (insErr && String(insErr.message || '').includes('is_primary')) {
+    const plainRows = rows.map(({ project_id, user_id, order_index }) => ({
+      project_id, user_id, order_index,
+    }));
+    ({ error: insErr } = await supabase.from('project_production_staff').insert(plainRows));
+  }
+  if (insErr) {
+    console.warn('[productionWorkshopTypeStaff] append staff:', insErr.message);
+    return { added: 0, added_user_ids: [], error: insErr.message };
+  }
+
+  await mergeLeadMembersForProject(projectId, missing, { addedBy: opts.addedBy || null });
+  return {
+    added: missing.length,
+    added_user_ids: missing,
+    users: await loadProjectProductionStaffForApi(projectId),
+  };
+}
+
+async function removeProjectProductionStaffUser(projectId, userId) {
+  if (!projectId || !userId) return { removed: 0 };
+  const uid = String(userId);
+  const { data: row } = await supabase
+    .from('project_production_staff')
+    .select('user_id, is_primary')
+    .eq('project_id', projectId)
+    .eq('user_id', uid)
+    .maybeSingle();
+  if (!row) return { removed: 0 };
+  if (row.is_primary) {
+    return { removed: 0, error: 'Không xóa người chịu trách nhiệm chính. Hãy đổi phụ trách trước.' };
+  }
+  const { error } = await supabase
+    .from('project_production_staff')
+    .delete()
+    .eq('project_id', projectId)
+    .eq('user_id', uid);
+  if (error) return { removed: 0, error: error.message };
+  return { removed: 1 };
 }
 
 /**
@@ -1652,6 +1774,10 @@ module.exports = {
   enrichCrmLeadsWithProductionStaff,
   loadProjectProductionStaffForApi,
   applyWorkshopTypeDefaultStaffToProject,
+  appendProjectProductionStaff,
+  removeProjectProductionStaffUser,
+  toPrimaryOnlyStaff,
+  filterUserIdsEligibleForAutoLeadMembers,
   applyWorkshopTypeDefaultStaffToAllProjects,
   saveWorkshopTypeDefaultStaff,
   formatDefaultsForApi,

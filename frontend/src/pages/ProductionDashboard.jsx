@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue, memo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue, memo, Fragment } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { getSocket } from '../lib/socket';
@@ -37,8 +37,10 @@ import {
 import {
   CheckCircle2, Search, X, Calendar, Plus,
   Factory, Users, LayoutGrid, List,
-  CheckSquare, UserCheck, Loader2, Truck, Clock, Layers, Trash2, MessageSquare, Pin, Building2, ArrowRightLeft, Settings, ChevronDown, Eye, ChevronRight,
+  CheckSquare, UserCheck, Loader2, Truck, Clock, Layers, Trash2, MessageSquare, Pin, Building2, ArrowRightLeft, Settings, ChevronDown, Eye, ChevronRight, Banknote,
 } from 'lucide-react';
+import { gopPipeline, coTheGopCot, gomCotTheoNhom } from '../lib/sxGopCot';
+import { tachCotTheoTab, demTheCot } from '../lib/sxTachCongNo';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView, ProductionDeadlineView } from '../components/ProductionViews';
 import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../components/WorkshopPipelineKanbanScroll';
@@ -103,6 +105,7 @@ const SX_VIEW_MODES = [
 const SX_ALT_VIEW_MODES = SX_VIEW_MODES.filter((v) => v.id !== 'kanban');
 
 const LS_SX = 'sx_dash_filters_v1';
+const LS_SX_TAB = 'sx_tab_v1';
 const LS_SX_FILTER_PANEL_POS = 'sx_filter_panel_pos';
 const LS_SX_STAGE_KPIS = 'sx_dash_stage_kpis_v1';
 const LS_SX_COLUMN_COUNTS = 'sx_dash_column_counts_v1';
@@ -664,6 +667,14 @@ export default function ProductionDashboard() {
   );
   const [showDateRangePicker, setShowDateRangePicker] = useState(false);
   const [kanbanLoadKey, setKanbanLoadKey] = useState(() => P0?.kanbanLoadKey ?? '500');
+  // Gộp/tách cột Kanban: gộp cột nhỏ vào cột lớn theo production_pipeline_stages.group_key.
+  const [sxGopCot, setSxGopCot] = useState(false);
+  // Tab Sản xuất / Công nợ — nhớ lại lần mở sau.
+  const [sxTab, setSxTab] = useState(() => {
+    try { return localStorage.getItem(LS_SX_TAB) === 'cong_no' ? 'cong_no' : 'sx'; }
+    catch { return 'sx'; }
+  });
+  const [sxNhomDangMo, setSxNhomDangMo] = useState(() => new Set());
   const [filterPhone, setFilterPhone] = useState(() => P0?.filterPhone ?? '');
   const [showAdvFilter, setShowAdvFilter] = useState(() => !!P0?.showAdvFilter);
   // Dải KPI 7 thẻ: dưới 768px xếp 2 cột = 4 hàng, chiếm hết màn trước khi thấy Kanban.
@@ -2348,8 +2359,13 @@ export default function ProductionDashboard() {
   const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
 
   const filteredKanbanPipelineRef = useRef([]);
+  /** Cột của TAB đang xem — «Chọn tất cả» không được vơ luôn thẻ của tab kia. */
+  const sxPipelineTabRef = useRef([]);
   const selectAll = useCallback(() => {
-    const allVisible = filteredKanbanPipelineRef.current.flatMap(s => s.items).map(p => p.id);
+    const nguon = sxPipelineTabRef.current?.length
+      ? sxPipelineTabRef.current
+      : (filteredKanbanPipelineRef.current || []);
+    const allVisible = nguon.flatMap((s) => s.items || []).map((p) => p.id);
     setSelectedIds(new Set(allVisible));
   }, []);
 
@@ -2561,9 +2577,31 @@ export default function ProductionDashboard() {
     return result;
   }, [kanbanPipeline, deferredSearchQuery, priorityFilter, stageFilter, sortBy]);
 
-  const allVisibleProjectIds = useMemo(
-    () => filteredKanbanPipeline.flatMap((s) => (s.items || []).map((x) => x.id)).filter(Boolean),
+  // Tab Sản xuất / Công nợ — phải khai báo SAU filteredKanbanPipeline vì phụ thuộc vào nó.
+  const { cotSX: sxCotSanXuat, cotCongNo: sxCotCongNo } = useMemo(
+    () => tachCotTheoTab(filteredKanbanPipeline, { giuCuaRa: false }),
     [filteredKanbanPipeline],
+  );
+  const sxCoTabCongNo = sxCotCongNo.length > 0;
+  const sxTabHienTai = sxCoTabCongNo ? sxTab : 'sx';
+  const sxPipelineTab = sxTabHienTai === 'cong_no' ? sxCotCongNo : sxCotSanXuat;
+  sxPipelineTabRef.current = sxPipelineTab;
+
+  // Gộp cột chỉ có nghĩa ở tab Sản xuất — gộp 5 cột công nợ thành một cột thì hết gì để xem.
+  const sxCacNhom = useMemo(() => gomCotTheoNhom(sxPipelineTab), [sxPipelineTab]);
+  const sxGopDuoc = useMemo(
+    () => sxTabHienTai !== 'cong_no' && coTheGopCot(sxPipelineTab),
+    [sxTabHienTai, sxPipelineTab],
+  );
+  const sxGopDangBat = sxGopCot && sxGopDuoc;
+  const sxPipelineHienThi = useMemo(
+    () => (sxGopDangBat ? gopPipeline(sxPipelineTab, sxNhomDangMo) : sxPipelineTab),
+    [sxGopDangBat, sxNhomDangMo, sxPipelineTab],
+  );
+
+  const allVisibleProjectIds = useMemo(
+    () => sxPipelineTab.flatMap((s) => (s.items || []).map((x) => x.id)).filter(Boolean),
+    [sxPipelineTab],
   );
 
   const filteredCardCount = allVisibleProjectIds.length;
@@ -3904,7 +3942,9 @@ export default function ProductionDashboard() {
                     className={`h-7 px-2 sm:px-2.5 rounded-md text-xs font-semibold inline-flex items-center gap-1 cursor-pointer transition-all ${
                       viewMode !== 'kanban'
                         ? 'bg-indigo-600 text-white shadow-sm'
-                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                        : sxGopCot
+                          ? 'bg-violet-50 text-violet-700 hover:bg-violet-100'
+                          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                     }`}
                     title="Chế độ xem khác"
                     aria-expanded={showViewModeMenu}
@@ -3934,10 +3974,43 @@ export default function ProductionDashboard() {
                       setViewMode(id);
                       setShowViewModeMenu(false);
                     }}
+                    extra={viewMode === 'kanban' && sxGopDuoc ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSxGopCot((v) => !v);
+                          setShowViewModeMenu(false);
+                        }}
+                        title={sxGopCot
+                          ? 'Đang gộp — bấm để tách lại từng cột nhỏ'
+                          : 'Gộp các cột nhỏ vào giai đoạn lớn; bấm tên cột lớn để mở việc song song'}
+                        className={`group flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-semibold cursor-pointer transition-all ${
+                          sxGopCot
+                            ? 'bg-violet-600 text-white shadow-sm'
+                            : 'text-slate-700 hover:bg-indigo-50 hover:text-indigo-900'
+                        }`}
+                      >
+                        <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${
+                          sxGopCot ? 'bg-white/20 text-white' : 'bg-violet-100 text-violet-600'
+                        }`}
+                        >
+                          <Layers className="h-3.5 w-3.5" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block whitespace-nowrap">{sxGopCot ? 'Đang gộp' : 'Gộp cột'}</span>
+                          <span className={`block text-[10px] font-medium mt-0.5 leading-snug ${
+                            sxGopCot ? 'text-white/80' : 'text-slate-500'
+                          }`}
+                          >
+                            {sxGopCot ? 'Tách lại từng cột nhỏ' : 'Gom việc song song vào cột lớn'}
+                          </span>
+                        </span>
+                      </button>
+                    ) : null}
                   />
         </div>
               </div>
-              {viewMode === 'kanban' && (
+      {viewMode === 'kanban' && (
                 <div className="relative">
                   <button
                     ref={kanbanSettingsTriggerRef}
@@ -4102,6 +4175,95 @@ export default function ProductionDashboard() {
           </div>
         </div>
       </div>
+
+      {viewMode === 'kanban' && sxCoTabCongNo && (
+        <div className="flex flex-wrap items-center gap-2 px-1">
+          <div className="inline-flex items-center gap-0.5 rounded-lg border border-slate-200 bg-white/90 p-0.5 shadow-inner">
+            <button
+              type="button"
+              onClick={() => { setSxTab('sx'); try { localStorage.setItem(LS_SX_TAB, 'sx'); } catch { /* private mode */ } }}
+              className={`h-7 rounded-md px-3 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-all ${
+                sxTabHienTai === 'sx' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              }`}
+            >
+              <Factory className="h-3.5 w-3.5" />
+              Sản xuất
+              <span className={`rounded-full px-1.5 text-[10px] font-bold tabular-nums ${
+                sxTabHienTai === 'sx' ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-500'
+              }`}>
+                {demTheCot(sxCotSanXuat, pipelineStageCounts)}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => { setSxTab('cong_no'); try { localStorage.setItem(LS_SX_TAB, 'cong_no'); } catch { /* private mode */ } }}
+              className={`h-7 rounded-md px-3 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-all ${
+                sxTabHienTai === 'cong_no' ? 'bg-amber-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+              }`}
+            >
+              <Banknote className="h-3.5 w-3.5" />
+              Công nợ
+              <span className={`rounded-full px-1.5 text-[10px] font-bold tabular-nums ${
+                sxTabHienTai === 'cong_no' ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-500'
+              }`}>
+                {demTheCot(sxCotCongNo, pipelineStageCounts)}
+              </span>
+            </button>
+          </div>
+          <span className="text-[11px] text-slate-500">
+            {sxTabHienTai === 'cong_no'
+              ? `${sxCotCongNo.length} cột công nợ của phân loại đang chọn — kéo thẻ y như bảng xưởng`
+              : `Đã dời ${sxCotCongNo.length} cột công nợ sang tab riêng — chuyển thẻ sang đó bằng nút ⇄ trên thẻ`}
+          </span>
+        </div>
+      )}
+
+      {viewMode === 'kanban' && sxGopDangBat && (
+        <div className="flex flex-wrap items-center gap-1.5 px-1">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Cột lớn</span>
+          {sxCacNhom.map((g) => {
+            if (g.riengLe) return null;
+            const mo = sxNhomDangMo.has(g.key);
+            return (
+              <button
+                key={g.key}
+                type="button"
+                aria-expanded={mo}
+                onClick={() => setSxNhomDangMo((prev) => {
+                  const next = new Set(prev);
+                  if (next.has(g.key)) next.delete(g.key); else next.add(g.key);
+                  return next;
+                })}
+                title={`${g.cotNho.length} việc song song bên trong`}
+                className={`h-7 px-2.5 rounded-md text-xs font-semibold inline-flex items-center gap-1 cursor-pointer transition-all border ${
+                  mo
+                    ? 'bg-violet-600 border-violet-600 text-white shadow-sm'
+                    : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                {mo ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                <span>{g.nhan}</span>
+                <span className={mo ? 'text-violet-100' : 'text-slate-400'}>{g.soDuAn}</span>
+              </button>
+            );
+          })}
+          <span className="flex-1" />
+          <button
+            type="button"
+            onClick={() => setSxNhomDangMo(new Set(sxCacNhom.filter((g) => !g.riengLe).map((g) => g.key)))}
+            className="h-7 px-2.5 rounded-md text-xs font-semibold text-slate-600 border border-slate-200 bg-white hover:bg-slate-100 cursor-pointer"
+          >
+            Mở tất cả
+          </button>
+          <button
+            type="button"
+            onClick={() => setSxNhomDangMo(new Set())}
+            className="h-7 px-2.5 rounded-md text-xs font-semibold text-slate-600 border border-slate-200 bg-white hover:bg-slate-100 cursor-pointer"
+          >
+            Thu tất cả
+          </button>
+        </div>
+      )}
 
       {/* Chip lọc / panel nâng cao */}
       <div className="space-y-2">
@@ -4296,8 +4458,17 @@ export default function ProductionDashboard() {
         ) : (
           <>
       {viewMode === 'kanban' && (
-        <KanbanView pipeline={filteredKanbanPipeline} onMoveStage={handleMoveStage} calculateDays={calculateDays}
+        <KanbanView pipeline={sxPipelineHienThi} allStages={filteredKanbanPipeline}
+          onMoveStage={handleMoveStage} calculateDays={calculateDays}
           selectedIds={selectedIds} onToggleSelect={toggleSelect} onSelectColumn={selectColumn}
+          onToggleGroup={sxGopDangBat ? ((key) => {
+            if (!key) return;
+            setSxNhomDangMo((prev) => {
+              const next = new Set(prev);
+              if (next.has(key)) next.delete(key); else next.add(key);
+              return next;
+            });
+          }) : null}
             onHandoverVC={openHandoverModal}
             onOpenKanbanComment={(item) => { setKanbanCommentItem(item); setKanbanCommentBody(''); }}
             workTypes={workTypes}
@@ -4700,7 +4871,7 @@ function KPICard({ accent = 'bg-blue-500', label, value, descriptor, valueTone }
 }
 
 // ── KANBAN STAGE CARD — header tối giản (dot + tên + count + total) ────────
-const KanbanStageCard = memo(function KanbanStageCard({
+export const KanbanStageCard = memo(function KanbanStageCard({
   stage,
   items,
   onMoveStage,
@@ -4709,6 +4880,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
   selectedIds,
   onToggleSelect,
   onSelectColumn,
+  onToggleGroup,
   onHandoverVC,
   onOpenKanbanComment,
   workTypes,
@@ -4845,6 +5017,7 @@ const KanbanStageCard = memo(function KanbanStageCard({
   const handleColumnDrop = (e) => {
     e.preventDefault();
     setIsOverColumn(false);
+    if (stage.__cotGop) return;
     const projectId = e.dataTransfer.getData('projectId');
     if (projectId) onMoveStage(projectId, stage);
   };
@@ -4867,14 +5040,34 @@ const KanbanStageCard = memo(function KanbanStageCard({
       {/* Header — nền theo màu stage; cuộn chung: dính top vùng scroll */}
       <div
         ref={headerRef}
-        className={`${perColumnScroll ? 'shrink-0' : 'sticky top-0 kanban-column-header-sticky'} z-10 px-2 py-2.5 border-b rounded-t-md transition-colors kanban-column-surface`}
+        className={`${perColumnScroll ? 'shrink-0' : 'sticky top-0 kanban-column-header-sticky'} z-10 px-2 py-2.5 border-b rounded-t-md transition-colors kanban-column-surface ${
+          stage.__cotGop && onToggleGroup ? 'cursor-pointer' : ''
+        }`}
         style={{
           backgroundColor: isOverColumn ? columnTheme.dropBg : columnTheme.headerBg,
           borderColor: columnTheme.border,
           boxShadow: columnTheme.headerShadow,
         }}
+        role={stage.__cotGop && onToggleGroup ? 'button' : undefined}
+        tabIndex={stage.__cotGop && onToggleGroup ? 0 : undefined}
+        title={stage.__cotGop
+          ? `Bấm để mở ${stage.__soCotNho || ''} việc song song bên trong`
+          : undefined}
+        onClick={stage.__cotGop && onToggleGroup ? () => {
+          const key = stage.__groupKey || String(stage.id || '').replace(/^grp:/, '');
+          if (key) onToggleGroup(key);
+        } : undefined}
+        onKeyDown={stage.__cotGop && onToggleGroup ? (e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          const key = stage.__groupKey || String(stage.id || '').replace(/^grp:/, '');
+          if (key) onToggleGroup(key);
+        } : undefined}
       >
         <div className="flex flex-nowrap items-center gap-1 min-w-0">
+          {stage.__cotGop ? (
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-black/70" aria-hidden />
+          ) : null}
           <h3
             className="flex-1 min-w-0 text-sm font-semibold truncate leading-snug"
             style={{ color: '#000000' }}
@@ -5592,6 +5785,452 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   );
 });
 
+/**
+ * MA TRẬN VIỆC SONG SONG — ruột của một cột lớn khi mở ra.
+ *
+ * MỘT DỰ ÁN = MỘT HÀNG NGANG. Thẻ dự án neo bên trái (cột lớn), bên phải là các ô
+ * của từng việc song song. Nhìn ngang một dòng là thấy dự án đó còn kẹt khâu nào;
+ * nhìn dọc một cột là thấy khâu đó đang ôm bao nhiêu dự án.
+ *
+ * Trạng thái từng ô lấy từ bảng `project_substage_status` (migration 605) —
+ * chua / dang / xong, bấm vào ô để xoay vòng. Dự án nào chưa có dòng trong bảng thì
+ * ô của cột nó đang đứng coi như «đang làm», các ô còn lại «chưa tới lượt».
+ * Bảng chưa tạo → API trả rỗng → bảng vẫn chạy, chỉ là mọi ô đều trống.
+ *
+ * Kéo thẻ vào một ô = chuyển dự án sang việc song song đó (dùng lại onMoveStage cũ)
+ * đồng thời đánh dấu ô đó «đang làm».
+ */
+/**
+ * THẺ DỰ ÁN GỌN — chỉ dùng bên trong ma trận việc song song.
+ *
+ * Thẻ Kanban đầy đủ cao ~250px; nhân với 19 dự án thì ma trận dài mênh mông và mỗi ô
+ * trạng thái bị kéo cao theo nên nhìn rỗng hoác. Bản gọn cao ~58px → cả giai đoạn nằm
+ * gọn trong một màn, quét mắt theo hàng (dự án) hay theo cột (khâu) đều nhanh.
+ * Bấm «Đầy đủ» trên đầu cột lớn để quay lại đúng thẻ Kanban gốc.
+ *
+ * Màu hạn giao lấy nguyên getSxOrderDeliveryDateUrgency() mà thẻ gốc đang dùng —
+ * không tự đặt luật hạn thứ hai.
+ */
+const SxTheGon = memo(function SxTheGon({ item, stage, soXong, tongViec, isSelected }) {
+  const navigate = useNavigate();
+  const deals = Array.isArray(item.crm_deals) ? item.crm_deals : [];
+  const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
+  const ten = (primaryDeal?.title || '').trim() || item.name || item.code || '—';
+  const moi = !!item.sx_intake;
+  const giao = item.delivery_date
+    ? getSxOrderDeliveryDateUrgency(item.delivery_date, stage || item.sx_pipeline_stage, item.company_id)
+    : null;
+  const pct = tongViec ? Math.round((soXong / tongViec) * 100) : 0;
+  const xongHet = tongViec > 0 && soXong === tongViec;
+
+  return (
+    <div
+      data-sx-kanban-card={item.id}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('projectId', item.id);
+      }}
+      onClick={() => {
+        markWorkshopPipelineCardFocus(item.id, 'sx');
+        navigate(`/sx/projects/${item.id}`);
+      }}
+      title={ten}
+      className={`flex h-full w-full min-w-0 cursor-pointer flex-col justify-center gap-[3px] rounded-xl border-l-[3px] bg-white px-2.5 py-2 transition-shadow hover:shadow-md ${
+        xongHet ? 'border-l-emerald-500' : 'border-l-violet-500'
+      } ${isSelected ? 'ring-2 ring-blue-400' : 'ring-1 ring-slate-200'}`}
+    >
+      <div className="flex items-center gap-1.5">
+        <span className="truncate font-mono text-[10px] font-bold text-blue-600">{item.code}</span>
+        {moi && (
+          <span className="shrink-0 rounded bg-rose-500 px-1 py-px text-[8.5px] font-bold uppercase leading-none text-white">
+            Mới
+          </span>
+        )}
+        {item.delivery_date && (
+          <span
+            title={`Ngày lắp / giao: ${formatDate(item.delivery_date)}`}
+            className={`ml-auto shrink-0 rounded px-1 py-px text-[9.5px] font-semibold tabular-nums ${
+              giao?.overdue
+                ? 'bg-red-50 text-red-700'
+                : giao?.soon
+                  ? 'bg-amber-50 text-amber-700'
+                  : 'bg-slate-100 text-slate-500'
+            }`}
+          >
+            {formatDate(item.delivery_date)}
+          </span>
+        )}
+      </div>
+
+      <p className="truncate text-[12px] font-semibold leading-tight text-slate-900">{ten}</p>
+
+      <div className="flex items-center gap-1.5">
+        {item.workshop_type?.name ? (
+          <span className="max-w-[6rem] shrink-0 truncate rounded bg-teal-50 px-1 py-px text-[9.5px] font-medium text-teal-700">
+            {item.workshop_type.name}
+          </span>
+        ) : (
+          <span className="shrink-0 rounded bg-amber-50 px-1 py-px text-[9.5px] font-medium text-amber-700">
+            Chưa phân loại
+          </span>
+        )}
+        <span className="min-w-0 truncate text-[10px] text-slate-500">{item.customer?.full_name || ''}</span>
+        <span className="ml-auto flex shrink-0 items-center gap-1" title={`${soXong}/${tongViec} việc song song đã xong`}>
+          <span className="block h-1 w-9 overflow-hidden rounded-full bg-slate-200">
+            <span className="block h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
+          </span>
+          <span className={`text-[9.5px] font-bold tabular-nums ${xongHet ? 'text-emerald-600' : 'text-slate-500'}`}>
+            {soXong}/{tongViec}
+          </span>
+        </span>
+      </div>
+    </div>
+  );
+});
+
+const SX_O_KE_TIEP = { chua: 'dang', dang: 'xong', xong: 'chua' };
+
+function SxMaTranSongSong({
+  nhom,
+  onToggleGroup,
+  onMoveStage,
+  pipelineStages,
+  calculateDays,
+  selectedIds,
+  onToggleSelect,
+  onHandoverVC,
+  onOpenKanbanComment,
+  workTypes,
+  onSetWorkType,
+  onOpenDeadline,
+  onTogglePin,
+  searchHighlightId,
+  stageCounts,
+  onLoadMore,
+  perColumnScroll = false,
+}) {
+  const [oRe, setORe] = useState('');
+  // Mặc định GIỮ NGUYÊN thẻ Kanban gốc theo yêu cầu anh B.A — nút «Gọn» chỉ là tuỳ chọn.
+  const [theGon, setTheGon] = useState(false);
+  const [trangThai, setTrangThai] = useState({});
+  const [dangLuu, setDangLuu] = useState(() => new Set());
+  const [loiLuu, setLoiLuu] = useState('');
+  const ttRef = useRef({});
+  useEffect(() => { ttRef.current = trangThai; }, [trangThai]);
+
+  const cotNho = nhom?.stages || [];
+  const khoaCot = cotNho.map((c) => String(c.id)).join(',');
+
+  useEffect(() => {
+    if (!khoaCot) return undefined;
+    let song = true;
+    (async () => {
+      try {
+        const { data } = await api.get('/production/substage-status', { params: { stage_ids: khoaCot } });
+        if (!song) return;
+        const m = {};
+        (data?.rows || []).forEach((rw) => {
+          m[`${rw.project_id}:${rw.stage_id}`] = rw.trang_thai || 'chua';
+        });
+        setTrangThai(m);
+      } catch {
+        if (song) setTrangThai({});
+      }
+    })();
+    return () => { song = false; };
+  }, [khoaCot]);
+
+  const datO = useCallback(async (projectId, stage, tt) => {
+    if (!projectId || !stage?.id) return;
+    const k = `${projectId}:${stage.id}`;
+    const truoc = ttRef.current[k];
+    setTrangThai((prev) => ({ ...prev, [k]: tt }));
+    setDangLuu((prev) => new Set(prev).add(k));
+    try {
+      await api.put('/production/substage-status', {
+        project_id: projectId, stage_id: String(stage.id), trang_thai: tt,
+      });
+      setLoiLuu('');
+    } catch (e) {
+      // Trả đúng giá trị cũ, không đoán — tránh hiện sai trạng thái sản xuất.
+      setTrangThai((prev) => {
+        const next = { ...prev };
+        if (truoc === undefined) delete next[k]; else next[k] = truoc;
+        return next;
+      });
+      setLoiLuu(e?.response?.data?.error || 'Không lưu được trạng thái việc song song');
+    } finally {
+      setDangLuu((prev) => { const n = new Set(prev); n.delete(k); return n; });
+    }
+  }, []);
+
+  // Hàng xếp theo thứ tự cột nhỏ → nhìn xuống thấy ngay khâu nào đang ôm nhiều dự án.
+  const hang = useMemo(() => {
+    const ra = [];
+    const daCo = new Set();
+    cotNho.forEach((c) => {
+      (c.items || []).forEach((it) => {
+        const k = String(it?.id || '');
+        if (!k || daCo.has(k)) return;
+        daCo.add(k);
+        ra.push({ item: it, cotId: String(c.id), cot: c });
+      });
+    });
+    return ra;
+  }, [cotNho]);
+
+  const demCot = (c) => {
+    const n = Number(stageCounts?.[String(c.id)]);
+    return Number.isFinite(n) && n > 0 ? n : (c.items?.length || 0);
+  };
+  const tongServer = cotNho.reduce((a, c) => a + demCot(c), 0);
+  const conThieu = tongServer > hang.length;
+  const soCot = Math.max(cotNho.length, 1);
+  const tpl = `15rem repeat(${soCot}, 13rem)`;
+
+  // Ô nào chưa có dòng trong bảng: cột dự án đang đứng coi như «đang làm», còn lại «chưa».
+  const oCua = (item, c, cotId) => trangThai[`${item.id}:${c.id}`]
+    || (String(c.id) === cotId ? 'dang' : 'chua');
+
+  // Các ô của một hàng ghép thành MỘT DẢI liền mạch (viền trên/dưới chạy suốt,
+  // vách ngăn mảnh ở giữa) — nhìn ra ngay đây là một chuỗi việc của cùng một dự án,
+  // thay vì bốn cái hộp rời rạc.
+  const vienO = (ci) => [
+    'border-y border-violet-200/80',
+    ci === 0 ? 'rounded-l-xl border-l border-l-violet-200/80' : 'border-l border-l-violet-100',
+    ci === soCot - 1 ? 'rounded-r-xl border-r border-r-violet-200/80' : '',
+  ].join(' ');
+
+  return (
+    <div className="flex flex-shrink-0 flex-col self-stretch rounded-2xl border border-violet-200 bg-gradient-to-b from-violet-50 to-white p-2.5 shadow-[0_1px_3px_rgba(76,29,149,0.08)]">
+      <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+        <button
+          type="button"
+          onClick={() => onToggleGroup?.(nhom.key)}
+          className="flex items-center gap-1.5 rounded-lg px-1.5 py-1 text-left cursor-pointer hover:bg-violet-100/70"
+          title="Thu lại thành một cột lớn"
+        >
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-violet-500" />
+          <Layers className="h-3.5 w-3.5 shrink-0 text-violet-500" />
+          <span className="text-[12.5px] font-bold uppercase tracking-[0.08em] text-violet-900">{nhom.nhan}</span>
+          <span className="rounded-full bg-violet-600 px-1.5 py-px text-[10px] font-bold tabular-nums text-white">
+            {nhom.soDuAn}
+          </span>
+        </button>
+        <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-500 ring-1 ring-violet-200">
+          {cotNho.length} việc song song · 1 dự án = 1 hàng
+        </span>
+        <div className="ml-auto flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[10px] text-slate-500">
+          <span className="inline-flex overflow-hidden rounded-md ring-1 ring-violet-200">
+            <button
+              type="button"
+              onClick={() => setTheGon(true)}
+              className={`px-1.5 py-0.5 text-[10px] font-semibold cursor-pointer ${theGon ? 'bg-violet-600 text-white' : 'bg-white text-violet-600 hover:bg-violet-50'}`}
+              title="Thẻ gọn — xem được nhiều dự án cùng lúc"
+            >
+              Gọn
+            </button>
+            <button
+              type="button"
+              onClick={() => setTheGon(false)}
+              className={`px-1.5 py-0.5 text-[10px] font-semibold cursor-pointer ${!theGon ? 'bg-violet-600 text-white' : 'bg-white text-violet-600 hover:bg-violet-50'}`}
+              title="Thẻ Kanban đầy đủ"
+            >
+              Đầy đủ
+            </button>
+          </span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" />Xong</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-teal-500" />Đang làm</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-slate-300" />Chưa tới</span>
+          <span className="text-slate-400">· bấm ô để đổi</span>
+        </div>
+      </div>
+      {loiLuu && <p className="mb-1.5 px-1 text-[11px] font-semibold text-rose-600">{loiLuu}</p>}
+
+      <div className={perColumnScroll ? 'min-h-0 flex-1 overflow-y-auto overscroll-y-contain pr-0.5' : ''}>
+        <div className="grid items-center gap-x-0 gap-y-2" style={{ gridTemplateColumns: tpl }}>
+          <div className="sticky top-0 z-20 bg-violet-50 pr-2 text-[10px] font-bold uppercase tracking-[0.1em] text-violet-400 shadow-[0_8px_0_0_#f5f3ff]">
+            Dự án
+          </div>
+          {cotNho.map((c, ci) => (
+            <div
+              key={`h:${c.id}`}
+              title={c.name}
+              className={`sticky top-0 z-20 flex items-center gap-1 bg-white px-2 py-1.5 shadow-[0_8px_0_0_#f5f3ff] ${vienO(ci)}`}
+            >
+              <span className="truncate text-[10px] font-bold uppercase tracking-wide text-slate-600">{c.name}</span>
+              <span className="ml-auto shrink-0 rounded-full bg-slate-100 px-1.5 text-[10px] font-bold tabular-nums text-slate-500">
+                {demCot(c)}
+              </span>
+            </div>
+          ))}
+
+          {hang.map(({ item, cotId, cot }) => {
+            const soXong = cotNho.filter((c) => oCua(item, c, cotId) === 'xong').length;
+            const pct = cotNho.length ? Math.round((soXong / cotNho.length) * 100) : 0;
+            const dealsHang = Array.isArray(item.crm_deals) ? item.crm_deals : [];
+            const dealHang = dealsHang.find((d) => String(d?.type || '') === 'deal') || dealsHang[0] || null;
+            const tenDA = String((dealHang?.title || '').trim() || item.name || '').trim();
+            return (
+              <Fragment key={item.id}>
+                <div className={`min-w-0 pr-2 ${theGon ? 'flex' : ''}`}>
+                  {theGon ? (
+                    <SxTheGon
+                      item={item}
+                      stage={cot}
+                      soXong={soXong}
+                      tongViec={cotNho.length}
+                      isSelected={selectedIds?.has(item.id)}
+                    />
+                  ) : (
+                    <>
+                      <KanbanCard
+                        item={item}
+                        stage={cot}
+                        onMoveStage={onMoveStage}
+                        pipelineStages={pipelineStages}
+                        calculateDays={calculateDays}
+                        isSelected={selectedIds?.has(item.id)}
+                        onToggleSelect={onToggleSelect}
+                        onHandoverVC={onHandoverVC}
+                        onOpenKanbanComment={onOpenKanbanComment}
+                        workTypes={workTypes}
+                        onSetWorkType={onSetWorkType}
+                        onOpenDeadline={onOpenDeadline}
+                        onTogglePin={onTogglePin}
+                        columnAccent="#7c3aed"
+                        searchHighlighted={String(searchHighlightId) === String(item.id)}
+                      />
+                      <div className="mt-1 flex items-center gap-1.5 px-0.5" title={`${soXong}/${cotNho.length} việc song song đã xong`}>
+                        <div className="h-1 flex-1 overflow-hidden rounded-full bg-violet-100">
+                          <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${pct}%` }} />
+                        </div>
+                        <span className="shrink-0 text-[9px] font-bold tabular-nums text-violet-400">
+                          {soXong}/{cotNho.length}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                {cotNho.map((c, ci) => {
+                  const khoaO = `${item.id}:${c.id}`;
+                  const tt = oCua(item, c, cotId);
+                  const dangRe = oRe === khoaO;
+                  const luu = dangLuu.has(khoaO);
+                  const nen = tt === 'xong'
+                    ? 'bg-emerald-50/80 hover:bg-emerald-100'
+                    : tt === 'dang'
+                      ? 'bg-teal-50/80 hover:bg-teal-100'
+                      : 'bg-slate-50/60 hover:bg-violet-50';
+                  const chuThai = tt === 'xong' ? 'đã xong' : tt === 'dang' ? 'đang làm' : 'chưa tới lượt';
+                  return (
+                    <button
+                      key={khoaO}
+                      type="button"
+                      disabled={luu}
+                      onClick={() => datO(item.id, c, SX_O_KE_TIEP[tt] || 'dang')}
+                      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setORe(khoaO); }}
+                      onDragLeave={(e) => { if (e.target === e.currentTarget) setORe(''); }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        setORe('');
+                        const pid = e.dataTransfer.getData('projectId');
+                        if (!pid) return;
+                        onMoveStage?.(pid, c);
+                        datO(pid, c, 'dang');
+                      }}
+                      title={[tenDA, `${c.name} — ${chuThai}`, 'Bấm để đổi, hoặc kéo thẻ vào đây.'].filter(Boolean).join('\n')}
+                      className={`group flex min-h-[4.75rem] w-full flex-col items-stretch justify-center gap-0.5 px-2 py-1.5 transition-colors cursor-pointer disabled:opacity-50 ${vienO(ci)} ${
+                        dangRe ? 'bg-violet-200 ring-2 ring-inset ring-violet-500' : nen
+                      }`}
+                    >
+                      {luu ? (
+                        <Loader2 className="h-3 w-3 animate-spin text-violet-500" />
+                      ) : tt === 'xong' ? (
+                        <>
+                          <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                          <span className="text-[8.5px] font-bold uppercase tracking-wide text-emerald-700">Xong</span>
+                        </>
+                      ) : tt === 'dang' ? (
+                        <>
+                          <span className="relative flex h-2 w-2 shrink-0">
+                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-teal-400 opacity-60" />
+                            <span className="relative inline-flex h-2 w-2 rounded-full bg-teal-500" />
+                          </span>
+                          <span className="text-[8.5px] font-bold uppercase tracking-wide text-teal-700">Đang làm</span>
+                        </>
+                      ) : (
+                        <>
+                          <Plus className="h-3 w-3 shrink-0 text-slate-300 transition-colors group-hover:text-violet-500" />
+                          <span className="text-[8.5px] font-bold uppercase tracking-wide text-slate-400">Chưa</span>
+                        </>
+                      )}
+                      {!luu && tenDA ? (
+                        <span className={`w-full px-0.5 text-left text-[13px] font-semibold leading-snug line-clamp-2 ${
+                          tt === 'chua' || !tt ? 'text-slate-500' : 'text-slate-900'
+                        }`}>{tenDA}</span>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </Fragment>
+            );
+          })}
+        </div>
+
+        {!hang.length && (
+          <div className="py-8 text-center text-[12px] text-violet-400">Chưa có dự án trong giai đoạn này.</div>
+        )}
+
+        {conThieu && (
+          <button
+            type="button"
+            onClick={() => onLoadMore?.(cotNho.map((c) => String(c.id)), { ensureInitial: true })}
+            className="mt-2 w-full rounded-lg bg-white py-1.5 text-[11px] font-semibold text-violet-600 ring-1 ring-violet-200 hover:bg-violet-50 cursor-pointer"
+          >
+            Tải thêm ({hang.length}/{tongServer})
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Gom các cột nhỏ liên tiếp cùng một giai đoạn thành MỘT cột lớn (Kanban cột lồng).
+ * Cột lớn = giai đoạn nối tiếp; bên trong là ma trận việc song song (SxMaTranSongSong).
+ * Dấu `__nhomKey/__nhomNhan/...` do gopPipeline() gắn khi nhóm đang mở.
+ */
+function bocNhomCotLong(entries, veNhom) {
+  const list = (entries || []).filter(Boolean);
+  if (!list.some((e) => e && e.stage && e.stage.__nhomKey)) return list.map((e) => e.node);
+  const ra = [];
+  let cum = null;
+  const xaCum = () => {
+    if (!cum) return;
+    ra.push(veNhom(cum));
+    cum = null;
+  };
+  list.forEach((e) => {
+    const st = (e && e.stage) || {};
+    const key = st.__nhomKey || '';
+    if (!key) { xaCum(); ra.push(e.node); return; }
+    if (cum && cum.key === key) { cum.stages.push(st); return; }
+    xaCum();
+    cum = {
+      key,
+      nhan: st.__nhomNhan || 'Giai đoạn',
+      soCot: st.__nhomSoCot || 1,
+      soDuAn: st.__nhomSoDuAn || 0,
+      stages: [st],
+    };
+  });
+  xaCum();
+  return ra;
+}
+
 // ── KANBAN VIEW CONTAINER (y hệt CRM KanbanView) ─────────────────────────────
 function KanbanView({
   pipeline,
@@ -5600,6 +6239,7 @@ function KanbanView({
   selectedIds,
   onToggleSelect,
   onSelectColumn,
+  onToggleGroup,
   onHandoverVC,
   onOpenKanbanComment,
   workTypes,
@@ -5616,10 +6256,14 @@ function KanbanView({
   loadingMore = false,
   stageCounts = null,
   stagePageState = null,
+  /** Danh sách cột ĐẦY ĐỦ cho menu «chuyển cột» trên thẻ. Bảng tách tab Sản xuất /
+   *  Công nợ nên `pipeline` chỉ còn cột của tab đang xem — nếu menu cũng lấy từ đó thì
+   *  thẻ ở tab Sản xuất không còn đường nào sang cột công nợ. Bỏ trống = dùng `pipeline`. */
+  allStages = null,
 }) {
   const pipelineStages = useMemo(
-    () => (pipeline || []).map(({ items, ...stage }) => stage),
-    [pipeline],
+    () => ((allStages && allStages.length ? allStages : pipeline) || []).map(({ items, ...stage }) => stage),
+    [allStages, pipeline],
   );
   const perColumnScroll = columnScrollMode === 'per-column';
   const boardScrollRef = useRef(null);
@@ -5679,7 +6323,10 @@ function KanbanView({
       loadMoreCooldownRef.current = false;
     }, 700);
   }, [hasMore, loadingMore, onLoadMore, requestVisibleStagePages]);
-  const virtualizeColumns = pipeline.length >= 12;
+  // Có khung cột lớn (Kanban cột lồng) thì không ảo hoá: cột ảo dùng absolute,
+  // không bọc được vào khung DOM. Chế độ gộp luôn ít cột nên không ảnh hưởng hiệu năng.
+  const coKhungNhom = (pipeline || []).some((st) => st && st.__nhomKey);
+  const virtualizeColumns = pipeline.length >= 12 && !coKhungNhom;
   const columnWidth = 240;
   const columnGap = 4;
   const columnSlotWidth = columnWidth + columnGap;
@@ -5850,7 +6497,7 @@ function KanbanView({
           } : {}),
         }}
       >
-        {renderedColumns.map(({ stage, columnIndex, virtualItem }) => {
+        {bocNhomCotLong(renderedColumns.map(({ stage, columnIndex, virtualItem }) => {
           if (!stage) return null;
           const loadColIds = resolveSxKanbanLoadColumnIds(stage, stageCounts);
           const loadColId = loadColIds[0] || String(stage.id || '');
@@ -5892,6 +6539,7 @@ function KanbanView({
               selectedIds={selectedIds}
               onToggleSelect={onToggleSelect}
               onSelectColumn={onSelectColumn}
+              onToggleGroup={onToggleGroup}
               onHandoverVC={onHandoverVC}
               onOpenKanbanComment={onOpenKanbanComment}
               workTypes={workTypes}
@@ -5912,8 +6560,8 @@ function KanbanView({
               columnServerTotal={Number.isFinite(serverColTotal) ? serverColTotal : null}
             />
           );
-          if (!virtualItem) return column;
-          return (
+          if (!virtualItem) return { stage, node: column };
+          const boc = (
             <div
               key={stage.id || stage.slug}
               data-index={virtualItem.index}
@@ -5931,7 +6579,29 @@ function KanbanView({
               {column}
             </div>
           );
-        })}
+          return { stage, node: boc };
+        }), (nhom) => (
+          <SxMaTranSongSong
+            key={`nhom:${nhom.key}`}
+            nhom={nhom}
+            onToggleGroup={onToggleGroup}
+            onMoveStage={onMoveStage}
+            pipelineStages={pipelineStages}
+            calculateDays={calculateDays}
+            selectedIds={selectedIds}
+            onToggleSelect={onToggleSelect}
+            onHandoverVC={onHandoverVC}
+            onOpenKanbanComment={onOpenKanbanComment}
+            workTypes={workTypes}
+            onSetWorkType={onSetWorkType}
+            onOpenDeadline={onOpenDeadline}
+            onTogglePin={onTogglePin}
+            searchHighlightId={searchHighlightId}
+            stageCounts={stageCounts}
+            onLoadMore={onLoadMore}
+            perColumnScroll={perColumnScroll}
+          />
+        ))}
         {hasMore && (
           <div
             className={`${virtualizeColumns ? 'absolute top-0 bottom-0' : 'w-8 shrink-0 self-stretch'} flex items-end justify-center pb-6`}

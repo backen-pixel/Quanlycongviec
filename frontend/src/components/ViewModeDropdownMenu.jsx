@@ -36,6 +36,7 @@ export default function ViewModeDropdownMenu({
   activeId,
   onSelect,
   theme = 'violet',
+  extra = null,
 }) {
   const t = THEMES[theme] || THEMES.violet;
 
@@ -83,6 +84,12 @@ export default function ViewModeDropdownMenu({
           );
         })}
       </div>
+      {extra ? (
+        <>
+          <div className="my-1.5 mx-1 border-t border-slate-200/80" />
+          {extra}
+        </>
+      ) : null}
     </AnchoredDropdownMenu>
   );
 }

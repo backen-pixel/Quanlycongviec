@@ -8,7 +8,7 @@ const FOCUS_VC = 'vc_focus_pipeline_card_id';
 const RENAME_PATCHES_KEY = 'workshop_project_rename_patches_v1';
 const RENAME_PATCH_TTL_MS = 10 * 60 * 1000;
 /** Snapshot board SX/VC — hydrate ngay khi remount (detail → dashboard) tránh flash trống / kẹt loader. */
-const BOARD_SNAP_SX = 'sx_kanban_board_snap_v1';
+const BOARD_SNAP_SX = 'sx_kanban_board_snap_v2';
 const BOARD_SNAP_VC = 'vc_kanban_board_snap_v1';
 const BOARD_SNAP_TTL_MS = 30 * 60 * 1000;
 

@@ -651,7 +651,6 @@ async function listDealsOverdueProper(userId, reportDate, companyId = null, cach
 
   const ids = [];
   for (const row of cards) {
-    if (row.is_interacted) continue;
     const ts = deadlineTsForLead(row);
     if (deadlineBucketOnDate(ts, reportDate) === 'overdue') ids.push(String(row.id));
   }
@@ -1145,7 +1144,6 @@ async function computeAutoDailyPlans(userId, reportDate, roleKey = 'sale_admin',
   const todayIds = [];
 
   for (const row of cards) {
-    if (row.is_interacted) continue;
     const ts = deadlineTsForLead(row);
     const bucket = deadlineBucketOnDate(ts, reportDate);
     if (bucket !== 'overdue' && bucket !== 'today') continue;

@@ -1,6 +1,183 @@
 # Nhật ký công việc AI
 
-## 2026-09-11 10:05 — HCB Tủ bếp: Kanban tới Hoàn thiện
+## 2026-09-12 11:35 — Ô Đang làm ma trận SX hiện tên dự án
+
+- AI: Cursor. `SxMaTranSongSong` ghi `item.name` / tiêu đề deal dưới nhãn Đang làm và Xong.
+
+## 2026-09-12 10:55 — Deadline không ẩn vì «đã tương tác»
+
+- AI: Cursor. Admin Q2 (`adminq2@vpt.net`) không thấy LEAD-2026-279 ở Deadline
+  vì cờ per-user `is_interacted` (06/06) bị dùng như «không có hạn».
+- Đã tách: tick vẫn hiện, hạn vẫn tính (NV → setup → SLA).
+- File: `moduleDeadlinePolicy` BE/FE, `crmLeadDeadlineDisplay.js`, `leadsList.js`,
+  `dailyReportMetrics.js`, `database/606_crm_deadline_not_hidden_by_interacted.sql`.
+- Test: `node tests/module-deadline-policy.test.js` OK.
+- RPC: đã chạy `node scripts/run-migration-606.js` (primary + backup).
+
+## 2026-09-12 09:30 — Xóa 2 đơn Cửa Phúc Đạt của Minh (không đụng xưởng khác)
+
+- AI: Cursor. Đã chạy `--apply` trên DB primary.
+- Xóa: `TB-2026-767` + `DEAL-2026-1401` (Anh Tám); `TB-2026-337` + `DEAL-2026-440` (Anh Hường).
+- Không xóa: Metalla `TB-2026-740`, HCB `TB-2026-754/755/764/765/827` và deal `LEAD-2026-1252`, `DEAL-2026-1398/1399/1511`.
+- Script: `backend/scripts/delete-phucdat-minh-two-orders.js`.
+
+## 2026-09-12 09:20 — Kanban gộp cột cho dashboard SX (cột lớn nối tiếp / cột nhỏ song song)
+
+- AI thực hiện: Claude, theo yêu cầu anh B.A. Chưa commit (`.git/index.lock` vẫn chặn).
+- **Quyết định kiến trúc:** KHÔNG sửa bảng Kanban cũ trong `ProductionDashboard.jsx` (5.957 dòng,
+  kéo-thả + lọc + đồng bộ cuộn + highlight tìm kiếm). Làm **chế độ xem thứ 7** đứng cạnh →
+  rủi ro với bảng đang chạy bằng 0, bật/tắt bằng một nút.
+- **DB — `database/604_production_pipeline_group_key.sql` (ĐÃ CHẠY):**
+  thêm `production_pipeline_stages.group_key`, nullable. NULL = cột tự đứng riêng nên các công ty
+  khác không đổi gì. Backfill board Tủ bếp HCB theo đúng logic migration 588:
+  `tiep_nhan` 1 cột/8 dự án · `ke_hoach` 1/0 · `duyet` 1/0 · `gia_cong` 4/19 · `hoan_thien` 4/89 ·
+  `cong_no` 5/215.
+- **Backend:**
+  - `helpers/productionPipelineSchema.js` — thêm `group_key` vào `buildPipelineStageSelect()` theo
+    đúng khuôn cột tùy chọn sẵn có: cờ `pipelineGroupKeyColumnAvailable` + `isPipelineGroupKeyMissingError`
+    + `markPipelineGroupKeyColumnMissing`, đăng ký vào bảng retry. DB chưa có cột thì tự bỏ qua, không vỡ.
+  - `routes/production.js` — thêm `group_key` vào danh sách field được sửa ở `PUT /pipeline-stages/:id`,
+    để sau này gom nhóm lại được từ màn Cài đặt pipeline.
+- **Frontend:**
+  - `components/SxGroupedKanban.jsx` (mới) — thu lại: mỗi cột lớn là một cột Kanban gộp thẻ của các
+    cột nhỏ. Mở ra: lưới, **mỗi dự án đúng một hàng ngang**, thẻ neo trái, các ô phải là từng cột nhỏ.
+    Mặc định **thu hết** đúng yêu cầu «dashboard mở lên thì thu các cột vào».
+  - `pages/ProductionDashboard.jsx` — thêm view mode `grouped` (nhãn «Gộp cột», icon `Layers`) vào
+    `WS_DASH_VIEW_MODES` + `SX_VIEW_MODES`, render `<SxGroupedKanban pipeline={filteredKanbanPipeline}>`.
+    Dùng lại đúng dữ liệu đã lọc của Kanban nên mọi bộ lọc hiện có vẫn ăn.
+- **GIỚI HẠN đã ghi rõ trên giao diện:** mỗi hàng chỉ sáng ĐÚNG MỘT ô, vì `projects.sx_kanban_column_id`
+  chỉ lưu được một cột cho mỗi dự án. Muốn nhiều ô cùng sáng («thùng xong + nhôm đang làm») phải thêm
+  bảng `project_substage_status(project_id, stage_id, trang_thai, nguoi_lam, xong_luc)` — CHƯA LÀM,
+  đây mới là phần việc lớn, không phải phần giao diện.
+- Còn treo chờ anh B.A quyết: (1) `cong_no` 215 dự án có nên là cột lớn thứ 6 không; (2) hai cột lớn
+  `ke_hoach` và `duyet` đang 0 dự án — giữ hay bỏ.
+- Kiểm thử: parse bằng `@babel/parser` của chính Vite — 2/2 đạt; `node --check` đạt cho 2 file backend.
+  CHƯA chạy thử trên trình duyệt.
+
+---
+
+## 2026-09-12 08:35 — Chuẩn bị trả tiến độ SX của HCB về đúng ngày 10/09
+
+- AI thực hiện: Claude. **CHƯA ghi gì vào bảng `projects`** — mới sao lưu + soạn script.
+- Yêu cầu của anh B.A: trả tiến độ SX các dự án HCB về đúng vị trí ngày 10/09, **bỏ qua** dự án
+  người đã kéo tay sau đó.
+- **Phân biệt được «người kéo»:** `sx_pipeline_stage_entered_at` còn nguyên — route kéo thẻ
+  (`PATCH /production/projects/:id/stage`) luôn ghi mốc này, còn 588 / 599 / 602 đều KHÔNG ghi.
+  Hiện có **49 dự án** mốc >= 10/09 → được bảo vệ. Đáng chú ý 34 cái rơi vào 11/09 16:43–17:24,
+  tức ngay sau khi 602 chạy lúc 14:25 — anh em đã kéo tay sửa lại board.
+- **Vị trí thật ngày 10/09 KHÔNG còn trong DB.** Đã loại trừ 5 nguồn: `activity_logs` (trống),
+  `stage_transitions` (chỉ ghi bàn giao VC, from/to đều NULL — route kéo thẻ SX không ghi vào đây),
+  `_bak_20260911_hcb_projects` (chụp SAU 588), `QLCV_Backup` (cũng hậu-588, thiếu 43 dự án),
+  `crm_daily_report_snapshots` (chỉ có metric CRM `deal_*`/`lead_*`, không có cột SX).
+  → **Chỉ còn đường Point-in-Time Recovery** về mốc trước `2026-09-11 02:46 UTC`.
+- **Đã chuẩn bị sẵn:**
+  - `_bak_20260912_hcb_projects` — 509 dòng, ảnh chụp trạng thái hôm nay trước mọi thay đổi.
+  - `_restore_hcb_sx_10_09` — bảng rỗng chờ nạp (project_code, ten_cot_ngay_10_09).
+  - `database/603a_xuat_tien_do_10_09_tu_ban_PITR.sql` — chạy TRÊN bản PITR, sinh ra các câu INSERT.
+  - `database/603_hcb_tra_tien_do_ve_10_09.sql` — script áp dụng, **chưa chạy**.
+- **Điểm kỹ thuật quan trọng:** phải khớp lại theo **TÊN cột**, không theo id. 588 đã DELETE 7 cột,
+  599/600/601 dựng lại nên chúng mang id MỚI — `sx_kanban_column_id` trong bản PITR là id cũ đã chết.
+  603 khớp tên trong phạm vi đúng công ty + đúng `workshop_type_id` của từng dự án, và **dừng lại
+  không ghi gì** nếu có bất kỳ tên cột nào không khớp được.
+- Câu hoàn tác nằm ở cuối file 603.
+
+---
+
+## 2026-09-11 12:10 — Lệnh «/» trong ô bình luận + rà chức năng thông báo nhiệm vụ phát sinh
+
+- AI thực hiện: Claude. Chưa commit (`.git/index.lock` vẫn chặn).
+- **Rà soát (đo trên production):**
+  - Thông báo giao việc: ĐÚNG — 12/12 nhiệm vụ phát sinh có `crm_assignment_assigned`, số thông báo khớp số người nhận.
+  - Bình luận tự động @mention: ĐÚNG. `postSharedWorkspaceAssignmentMentionComment` vào từ commit
+    `9a21fd75` (08/09 16:15) nên 11/12 nhiệm vụ cũ không có bình luận — do có TRƯỚC tính năng, không phải lỗi.
+    Nhiệm vụ duy nhất sau mốc đó (11/09 03:51) chạy đủ: bình luận + 2 thông báo mention.
+  - **LỖI THẬT:** vai trò `primary` («Chịu trách nhiệm chính») không được ghi cho ai **từ 21/08/2026**.
+    Mốc đổi rất gắt: 20/08 primary 52 / executor 11 → 21/08 14/62 → 22/08 trở đi **0**.
+    30 ngày qua: 1.751 nhiệm vụ, 1.891 lượt gán, **0 primary**.
+    Nguyên nhân: `frontend/src/lib/assignmentAssignRoles.js` `DEFAULT_ASSIGN_ROLE = 'executor'` và backend
+    `normalizeAssignRole(raw, fallback = 'executor')`. Hệ quả: bình luận tag tất cả ngang nhau, và
+    `getPrimaryAssignee()` rơi về `ids[0]` — một người ngẫu nhiên. CHƯA SỬA, chờ anh B.A duyệt.
+- **Đã làm — lệnh «/» trong ô bình luận:**
+  - `lib/crmCommentMentions.js`: thêm `getActiveSlashState()` + `filterSlashCommands()`. «/» chỉ kích hoạt
+    khi đứng đầu dòng hoặc sau khoảng trắng — nếu không thì URL `https://…` và ngày `12/9` đều bật nhầm bảng lệnh.
+  - `components/crmCommentMentionUi.jsx`: prop `slashCommands` + `onSlashCommand`; bảng chọn dựng đúng kiểu
+    bảng @mention (mũi tên, Enter/Tab chọn, Esc đóng); chọn xong tự xóa đoạn «/từ-khóa». «/» và «@» loại trừ nhau.
+  - `components/CommentsPanels.jsx`: chuyển 2 prop qua `CommentThread` → composer; placeholder thêm
+    gợi ý «· / tạo công việc».
+  - `pages/WorkUnifiedProjectDetailPage.jsx`: khai báo 2 lệnh «Công việc» / «Phát sinh».
+- **Tạo tại chỗ (anh B.A yêu cầu):** thêm `components/CommentSlashTaskForm.jsx` — form gọn bật ngay
+  trên ô bình luận khi chọn lệnh, không rời trang. Trường: tiêu đề, khối phân công, loại phát sinh
+  (+ khối gây lỗi nếu là lỗi nhân viên), hạn xử lý, chọn người nhận dạng chip.
+  Gửi thẳng `POST /crm/leads/:id/assignments` — **cùng endpoint với form Giao việc đầy đủ**, nên dùng lại
+  nguyên luồng đã kiểm chứng: thông báo từng người nhận + tự đăng bình luận @mention + đồng bộ `crm_tasks`.
+  **Form này LUÔN gửi `assignee_roles` với đúng một người `primary`** (nút ★) — vá tại chỗ lỗ hổng
+  «không ai chịu trách nhiệm» cho mọi nhiệm vụ tạo bằng đường này. Lỗi gốc ở mặc định hệ thống vẫn còn.
+- Kiểm thử: `node --check` đạt cho file .js; JSX kiểm tra cân bằng thẻ/ngoặc ở vùng sửa. 4 file đều thống nhất
+  CRLF (0 dòng LF lẻ). CHƯA chạy thử trên trình duyệt.
+
+---
+
+## 2026-09-11 14:25 — HCB Tủ bếp kéo thẻ đúng tiến trình
+
+- 602: theo status / ngày giao-lắp / bàn giao VC. Không đụng cột công nợ.
+- Primary: ĐÃ GIAO 70, Mai giao 2, Chuẩn bị xong 3, KCS 9, Ban TP 22.
+
+## 2026-09-11 14:20 — CRM thêm SX: chỉ phụ trách chính
+
+- Trước: CRM→SX ghi cả NV mặc định phân loại, fallback thì cả NV SX công ty.
+- Nay: chỉ 1 người chịu trách nhiệm chính; người đó (và phụ trách CRM/VC)
+  thêm NV qua chi tiết SX hoặc tab Thành viên.
+- API `POST /projects/:id/production-staff`, `DELETE .../production-staff/:userId`.
+
+## 2026-09-11 14:05 — HCB Cánh kính + Cửa trả pipeline cũ
+
+- User: kế hoạch 5 cột chưa thực hiện — khôi phục kính/cửa như trước 589.
+- Migration `601_hcb_kinh_cua_restore_pipeline.sql` primary + backup.
+
+## 2026-09-11 13:55 — Luồng tổng quan: Giao nhận
+
+- Đổi nhãn bước đã gộp từ «Giao hàng» → **Giao nhận**.
+
+## 2026-09-11 13:50 — HCB Tủ bếp hoàn tác 5 cột (kế hoạch chưa làm)
+
+- User yêu cầu trả pipeline 15 cột Tủ bếp; công nợ kéo về board Tủ bếp.
+- Migration `600_hcb_tubep_restore_pipeline.sql` primary + backup.
+
+## 2026-09-11 13:45 — Hồ sơ liên thông theo module
+
+- Chip CRM / SX / VC trên Work Unified chỉ hiện khi dự án có module đó.
+- Panel Hồ sơ liên thông thêm địa chỉ, khu vực, giai đoạn, phân loại xưởng,
+  phụ trách, ngày lắp; ẩn khối VC nếu chưa vào vận chuyển/lắp đặt.
+
+## 2026-09-11 13:35 — Báo cáo phát sinh: phân tích + bài học
+
+- Tab Phân tích trên `/management/shared-workspace-report`: theo tuần, tháng,
+  bộ phận, dự án/deal, nhân viên, loại phát sinh + thẻ bài học rút kinh nghiệm.
+- API `GET /crm/assignments/shared-workspace-report` trả thêm `analysis`
+  (tính trên toàn bộ dữ liệu đã lọc, không chỉ trang hiện tại).
+- Excel thêm sheet tuần/tháng/bộ phận/dự án/nhân viên/bài học.
+
+## 2026-09-11 13:40 — Tổng quan: cụm nhiệm vụ theo dự án đang mở
+
+- Panel Tổng quan lấy cùng cụm với trang Quản lý nhiệm vụ, lọc `project_id`.
+- `GET /work-tasks/project-overview?project_id=` không lọc NV theo nhân viên.
+
+## 2026-09-11 13:30 — Luồng tổng quan gộp Giao hàng
+
+- User chọn 3 thẻ: Chuẩn bị vật tư / Giao hàng / Lắp đặt → gộp thành «Giao hàng».
+- `buildDeliveryFlow` collapse slug materials+delivery+installation.
+- Work Unified `stages` + lọc `stage=` theo cùng map.
+
+## 2026-09-11 13:25 — HCB: hạn Kanban từ ngày lắp + bộ mẫu 5 cột
+
+- User: «hiện chỉ là kế hoạch» — panel chưa ghi hạn thẻ; Tủ bếp vẫn pipeline cũ (588 no-op).
+- 599 gom Tủ bếp 5 cột (ILIKE KCS). 598 gắn bộ theo cột; backfill hạn 123 thẻ primary.
+- Kéo cột / đổi ngày lắp ghi `sx_kanban_deadline_at`.
+
+## 2026-09-11 10:00 — HCB Cánh kính/Cửa cùng mẫu 5 cột
+
+- User báo board vẫn pipeline cũ: lọc «Tất cả» / Cánh kính còn cột Hoàn thành, Chờ giao…
+- 589 đổi Cánh kính + Cửa giống Tủ bếp; công nợ trùng đã gom. F5 Kanban SX.
 
 - Pipeline Tủ bếp: Tiếp nhận, Kế hoạch, Duyệt, Gia công (6 việc), Hoàn thiện.
 - Công nợ tách phân loại riêng; giao/lắp ở VC/LĐ.

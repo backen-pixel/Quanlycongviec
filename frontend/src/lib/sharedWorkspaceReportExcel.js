@@ -35,7 +35,7 @@ function styleHeader(row) {
   row.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
 }
 
-export async function exportSharedWorkspaceReportExcel({ rows, summary, filters }) {
+export async function exportSharedWorkspaceReportExcel({ rows, summary, analysis = {}, filters }) {
   const [{ default: ExcelJS }, { saveAs }] = await Promise.all([
     import('exceljs'),
     import('file-saver'),
@@ -118,6 +118,66 @@ export async function exportSharedWorkspaceReportExcel({ rows, summary, filters 
     if (rowNumber > 1 && rowNumber % 2 === 0) {
       row.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8FAFC' } };
     }
+  });
+
+  const addGroupSheet = (name, items, labelHeader) => {
+    const sheet = workbook.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] });
+    sheet.columns = [
+      { header: labelHeader, key: 'label', width: 42 },
+      { header: 'Tổng', key: 'total', width: 12 },
+      { header: 'Chưa làm', key: 'pending', width: 12 },
+      { header: 'Đang làm', key: 'in_progress', width: 12 },
+      { header: 'Hoàn thành', key: 'completed', width: 14 },
+      { header: 'Quá hạn', key: 'overdue', width: 12 },
+      { header: 'KH yêu cầu', key: 'customer_request', width: 14 },
+      { header: 'Lỗi NV', key: 'employee_error', width: 12 },
+      { header: 'Tỷ lệ xong %', key: 'completed_rate', width: 14 },
+    ];
+    styleHeader(sheet.getRow(1));
+    (items || []).forEach((item) => {
+      sheet.addRow({
+        label: item.label,
+        total: item.total || 0,
+        pending: item.pending || 0,
+        in_progress: item.in_progress || 0,
+        completed: item.completed || 0,
+        overdue: item.overdue || 0,
+        customer_request: item.customer_request || 0,
+        employee_error: item.employee_error || 0,
+        completed_rate: item.completed_rate || 0,
+      });
+    });
+  };
+
+  addGroupSheet('Theo tuần', analysis.by_week, 'Tuần');
+  addGroupSheet('Theo tháng', analysis.by_month, 'Tháng');
+  addGroupSheet('Theo bộ phận', analysis.by_department, 'Bộ phận');
+  addGroupSheet('Theo dự án', analysis.by_project, 'Dự án / deal');
+  addGroupSheet('Theo nhân viên', analysis.by_employee, 'Nhân viên');
+
+  const lessons = workbook.addWorksheet('Bài học');
+  lessons.columns = [
+    { header: 'Mức', key: 'severity', width: 14 },
+    { header: 'Nhóm', key: 'group', width: 14 },
+    { header: 'Tiêu đề', key: 'title', width: 42 },
+    { header: 'Chi tiết', key: 'detail', width: 40 },
+    { header: 'Bài học', key: 'lesson', width: 45 },
+    { header: 'Việc cần làm', key: 'action', width: 45 },
+  ];
+  styleHeader(lessons.getRow(1));
+  const severityVi = { high: 'Ưu tiên cao', medium: 'Cần chú ý', info: 'Ghi nhận' };
+  (analysis.lessons || []).forEach((item) => {
+    lessons.addRow({
+      severity: severityVi[item.severity] || item.severity,
+      group: item.group,
+      title: item.title,
+      detail: item.detail,
+      lesson: item.lesson,
+      action: item.action,
+    });
+  });
+  lessons.eachRow((row) => {
+    row.alignment = { vertical: 'top', wrapText: true };
   });
 
   const buffer = await workbook.xlsx.writeBuffer();

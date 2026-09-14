@@ -500,6 +500,7 @@ async function finishProjectOverview(res, tasks, preloaded = null) {
 
 r.get('/project-overview', async (req, res) => {
   try {
+    const requestedProjectId = String(req.query.project_id || '').trim();
     const requestedCompany = String(req.query.company_id || '').trim();
     const effectiveCompany = isSystemAdmin(req.user)
       ? (requestedCompany || null)
@@ -519,21 +520,38 @@ r.get('/project-overview', async (req, res) => {
       fetchAllPages(() => supabase.from('company_regions').select('id, company_id, name, code').order('id')),
     ]);
 
-    const projects = await fetchAllPages(() => {
-      let q = supabase
-        .from('projects')
-        .select(`
+    const PROJECT_OVERVIEW_PROJECT_SELECT = `
           id, status, company_id, sx_kanban_column_id, vc_kanban_column_id,
           project_manager_id, sales_person_id, responsible_person_id,
           production_person_id, logistics_person_id, installer_person_id, installation_person_id
-        `)
-        .order('id');
-      if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
-      return q;
-    });
-    const activeProjects = (projects || []).filter((project) => (
-      !['completed', 'cancelled', 'canceled'].includes(String(project.status || '').toLowerCase())
-    ));
+        `;
+    let activeProjects;
+    if (requestedProjectId) {
+      const access = await assertProjectAccessible(req, res, requestedProjectId, {
+        operation: 'READ',
+        mode: 'company',
+      });
+      if (!access) return;
+      const { data: one, error: oneErr } = await supabase
+        .from('projects')
+        .select(PROJECT_OVERVIEW_PROJECT_SELECT)
+        .eq('id', requestedProjectId)
+        .maybeSingle();
+      if (oneErr) throw oneErr;
+      activeProjects = one ? [one] : [];
+    } else {
+      const projects = await fetchAllPages(() => {
+        let q = supabase
+          .from('projects')
+          .select(PROJECT_OVERVIEW_PROJECT_SELECT)
+          .order('id');
+        if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
+        return q;
+      });
+      activeProjects = (projects || []).filter((project) => (
+        !['completed', 'cancelled', 'canceled'].includes(String(project.status || '').toLowerCase())
+      ));
+    }
     const projectIds = activeProjects.map((project) => project.id).filter(Boolean);
 
     const needsCrmLeads = !requestedModule || requestedModule === 'crm';
@@ -604,8 +622,9 @@ r.get('/project-overview', async (req, res) => {
     const tuneTaskQuery = (q, { kinds, leadScoped = false } = {}) => {
       q = applyPrimaryLeadOnly(q, leadScoped);
       if (kinds?.length) q = q.in('task_kind', kinds);
-      if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
-      if (!isManagerLike(req.user)) q = applyEmployeeScope(q, req.user.userId);
+      if (!requestedProjectId && effectiveCompany) q = q.eq('company_id', effectiveCompany);
+      // Trang dự án đang mở: lấy đủ cụm của hồ sơ. Trang quản lý nhiệm vụ: vẫn lọc NV.
+      if (!requestedProjectId && !isManagerLike(req.user)) q = applyEmployeeScope(q, req.user.userId);
       return q.order('unified_id');
     };
     // Nhân sự SX chỉ cần danh sách dự án — đã biết từ trước lượt đọc nhiệm vụ. Trước đây

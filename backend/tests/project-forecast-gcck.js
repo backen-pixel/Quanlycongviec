@@ -17,6 +17,7 @@ const gcckDone = {
   sxStage: { name: 'Hoàn thành' },
 };
 assert.equal(shouldSkipGcckInstallOverdue(gcckDone.project, gcckDone.sxStage), true);
+assert.equal(shouldSkipGcckInstallOverdue(gcckDone.project, { name: 'Hoàn thiện' }), true);
 assert.equal(classifyProjectForecast(past.toISOString(), gcckDone).forecast, 'on_track');
 assert.equal(classifyProjectForecast(past.toISOString(), gcckDone).delay_days, 0);
 

@@ -190,7 +190,9 @@ async function reassignDealSxCompanyAndType({
 
   let primaryStaffId = null;
   try {
-    primaryStaffId = await applyWorkshopTypeDefaultStaffToProject(project.id, companyId, wt.id);
+    primaryStaffId = await applyWorkshopTypeDefaultStaffToProject(project.id, companyId, wt.id, {
+      primaryOnly: true,
+    });
   } catch (e) {
     console.warn('[reassign-sx] restaff:', e.message);
   }

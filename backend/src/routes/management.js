@@ -11,6 +11,8 @@ const {
   buildProjectDealBundle,
   isProjectDeliveryStageRow,
   buildDeliveryFlow,
+  collapseDeliveryDisplayStages,
+  displaySlugForDeliveryFlow,
   DEFAULT_DELIVERY_STAGES,
 } = require('../helpers/projectDealBundle');
 const { sortProjectCrmDeals } = require('../helpers/workshopCrmDeals');
@@ -1484,7 +1486,10 @@ async function queryWorkUnifiedList(req, opts = {}) {
   const items = (projects || []).map((p) => buildItem(p, dealsForProject));
 
   let filtered = items;
-  if (stageFilter) filtered = filtered.filter((it) => it.current_stage_slug === stageFilter);
+  if (stageFilter) {
+    const slug = displaySlugForDeliveryFlow(stageFilter);
+    filtered = filtered.filter((it) => it.current_stage_slug === slug);
+  }
   if (searchQ) {
     filtered = filtered.filter((it) => {
       const hay = [it.code, it.name, it.customer_name, it.deal_code, it.deal_title]
@@ -1694,7 +1699,7 @@ r.get('/work-unified', responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_L
 
     res.json({
       company_id: primaryCompanyIdFromScope(wu.scope),
-      stages: wu.deliveryStages.map((st) => ({ slug: st.slug, label: st.name })),
+      stages: collapseDeliveryDisplayStages(wu.deliveryStages).map((st) => ({ slug: st.slug, label: st.name })),
       stats: wu.stats,
       items: pageItems,
       total,

@@ -2222,6 +2222,61 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
   } catch (e) { console.error('create-with-flow error:', e); res.status(500).json({ error: e.message }); }
 });
 
+async function assertCanManageProjectTeam(req, res, projectId) {
+  const userId = req.user?.userId;
+  if (!userId) {
+    res.status(401).json({ error: 'Unauthorized - no user ID' });
+    return false;
+  }
+  if (await checkPermission(userId, 'projects', 'edit', null, req.user)) return true;
+  const { userCanManageProjectTeam } = require('../helpers/dealModuleResponsibleUsers');
+  if (await userCanManageProjectTeam(req.user, { projectId })) return true;
+  res.status(403).json({
+    error: 'Chỉ người chịu trách nhiệm chính của module (hoặc quản trị) được thêm người vào dự án',
+  });
+  return false;
+}
+
+// ─── POST /projects/:id/production-staff — thêm NV đội SX (phụ trách chính module) ──
+r.post('/:id/production-staff', async (req, res) => {
+  try {
+    const projectId = req.params.id;
+    if (!(await assertProjectAccessible(req, res, projectId, { operation: 'WRITE' }))) return;
+    if (!(await assertCanManageProjectTeam(req, res, projectId))) return;
+    const raw = Array.isArray(req.body?.user_ids)
+      ? req.body.user_ids
+      : (req.body?.user_id ? [req.body.user_id] : []);
+    const userIds = [...new Set(raw.map(String).filter(Boolean))];
+    if (!userIds.length) return res.status(400).json({ error: 'Thiếu user_ids' });
+    const { appendProjectProductionStaff } = require('../helpers/productionWorkshopTypeStaff');
+    const result = await appendProjectProductionStaff(projectId, userIds, { addedBy: req.user.userId });
+    if (result.error) return res.status(400).json({ error: result.error });
+    res.json({
+      added: result.added,
+      added_user_ids: result.added_user_ids || [],
+      production_staff: result.users || [],
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.delete('/:id/production-staff/:userId', async (req, res) => {
+  try {
+    const projectId = req.params.id;
+    if (!(await assertProjectAccessible(req, res, projectId, { operation: 'WRITE' }))) return;
+    if (!(await assertCanManageProjectTeam(req, res, projectId))) return;
+    const { removeProjectProductionStaffUser } = require('../helpers/productionWorkshopTypeStaff');
+    const result = await removeProjectProductionStaffUser(projectId, req.params.userId);
+    if (result.error) return res.status(400).json({ error: result.error });
+    const { loadProjectProductionStaffForApi } = require('../helpers/productionWorkshopTypeStaff');
+    const production_staff = await loadProjectProductionStaffForApi(projectId);
+    res.json({ removed: result.removed, production_staff });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── UPDATE PROJECT ──
 r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
   try {
@@ -2291,6 +2346,45 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
       ({ data, error } = await supabase.from('projects').update(safeCopy).eq('id', req.params.id).select(`*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`).single());
     }
     if (error) throw error;
+
+    if (
+      b.install_date !== undefined
+      || b.delivery_date !== undefined
+      || b.install_occurrence_dates !== undefined
+      || b.installOccurrenceDates !== undefined
+      || b.sx_reception_date !== undefined
+    ) {
+      try {
+        const {
+          computeSxInstallPlanDeadline,
+          isAutoInstallPlanDeadlineReason,
+        } = require('../helpers/sxInstallPlanKanbanDeadline');
+        const { data: sxRow } = await supabase
+          .from('projects')
+          .select('id, company_id, install_date, delivery_date, install_occurrence_dates, sx_reception_date, created_at, sx_schedule_slip_days, sx_kanban_column_id, sx_kanban_deadline_at, sx_kanban_deadline_reason')
+          .eq('id', req.params.id)
+          .maybeSingle();
+        if (sxRow?.sx_kanban_column_id && isAutoInstallPlanDeadlineReason(sxRow.sx_kanban_deadline_reason)) {
+          const { data: sxCol } = await supabase
+            .from('production_pipeline_stages')
+            .select('id, deadline_group')
+            .eq('id', sxRow.sx_kanban_column_id)
+            .maybeSingle();
+          const computed = computeSxInstallPlanDeadline(sxRow, sxCol);
+          if (computed?.iso) {
+            await supabase
+              .from('projects')
+              .update({
+                sx_kanban_deadline_at: new Date(computed.iso).toISOString(),
+                sx_kanban_deadline_reason: computed.reason,
+              })
+              .eq('id', req.params.id);
+          }
+        }
+      } catch (planDlErr) {
+        console.warn('[PUT /projects] install-plan kanban deadline:', planDlErr.message);
+      }
+    }
 
     if (
       b.delivery_date !== undefined

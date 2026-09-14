@@ -81,6 +81,24 @@ r.post('/leads/:id/members', async (req, res) => {
     const io = req.app.get('io');
     if (io) io.to(`lead:${req.params.id}`).emit('lead:member_added', results);
 
+    try {
+      const addedIds = toAdd.map((m) => m.user_id).filter(Boolean);
+      const {
+        loadProjectIdsForDeal,
+        appendProjectProductionStaff,
+        filterUserIdsEligibleForAutoLeadMembers,
+      } = require('../../../helpers/productionWorkshopTypeStaff');
+      const eligible = await filterUserIdsEligibleForAutoLeadMembers(addedIds);
+      if (eligible.length) {
+        const pids = await loadProjectIdsForDeal(req.params.id);
+        await Promise.all(pids.map((pid) => appendProjectProductionStaff(pid, eligible, {
+          addedBy: req.user.userId,
+        })));
+      }
+    } catch (staffErr) {
+      console.warn('[crm/leads/members] append production staff:', staffErr.message);
+    }
+
     res.json(results.length === 1 ? results[0] : results);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

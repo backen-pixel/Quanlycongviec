@@ -919,7 +919,7 @@ function crmDeadlineTsForRow(row, stage, config) {
   const hasPhone = !!String(
     row?.display_phone || row?.phone || row?.customer?.phone || '',
   ).trim();
-  if (!hasPhone || row?.is_interacted || row?.deadline_disabled_at || crmDeadlineStageExcluded(stage)) return null;
+  if (!hasPhone || row?.deadline_disabled_at || crmDeadlineStageExcluded(stage)) return null;
 
   // NV trước Setup: hạn user vừa ghi vào Setup chỉ có hiệu lực sau khi đã sync NV đang đếm.
   for (const field of ['crm_next_open_task_deadline', 'kanban_deadline_at']) {

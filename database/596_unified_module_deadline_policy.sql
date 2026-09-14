@@ -42,7 +42,6 @@ SET search_path = public
 AS $$
   SELECT CASE
     WHEN l.deadline_disabled_at IS NOT NULL
-      OR COALESCE(uf.is_interacted, false)
       OR (
         NULLIF(TRIM(COALESCE(l.phone::text, '')), '') IS NULL
         AND NULLIF(TRIM(COALESCE(c.phone::text, '')), '') IS NULL

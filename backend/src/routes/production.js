@@ -292,7 +292,9 @@ async function applyDefaultIntakeAssigneeIfNeeded(projectId, companyId) {
     const existingStaff = await loadProjectProductionStaffUserIds(projectId);
     if (existingStaff.length > 0 && proj.production_person_id) return;
 
-    await applyWorkshopTypeDefaultStaffToProject(projectId, companyId, proj.workshop_type_id || null);
+    await applyWorkshopTypeDefaultStaffToProject(projectId, companyId, proj.workshop_type_id || null, {
+      primaryOnly: true,
+    });
   } catch (e) {
     console.warn('[production] applyDefaultIntakeAssigneeIfNeeded:', e.message);
   }
@@ -847,7 +849,7 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
     ['name', 'color', 'icon', 'order_index', 'is_active', 'workflow_stage_id', 'bucket_slug',
       'is_handover_to_logistics', 'converts_workshop_type', 'target_workshop_type_id',
       'crm_sync_type', 'crm_target_stage_id', 'progress_percent',
-      'workshop_type_id', 'is_packaging_done'].forEach((f) => {
+      'workshop_type_id', 'is_packaging_done', 'group_key'].forEach((f) => {
       if (b[f] !== undefined) update[f] = f === 'is_packaging_done' ? !!b[f] : b[f];
     });
     if (b.is_switch_workshop_type !== undefined && b.converts_workshop_type === undefined) {
@@ -1121,6 +1123,109 @@ r.post('/pipeline-stages/seed-default-kitchen-glass', requirePermission('project
     res.json(out);
   } catch (e) {
     console.error(e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── TRẠNG THÁI TỪNG VIỆC SONG SONG (project_substage_status — migration 605) ──
+// Một dự án vẫn nằm ở ĐÚNG MỘT cột nhỏ (projects.sx_kanban_column_id) — đó là cột lớn
+// mà nó đang đứng. Bảng này ghi thêm: trong cột lớn đó, từng việc song song đang ở đâu.
+// Chưa có dòng = 'chua'. Bảng chưa tạo (migration chưa chạy) = trả rỗng, giao diện chạy như cũ.
+const PSS_TRANG_THAI = new Set(['chua', 'dang', 'xong']);
+const isSubstageTableMissing = (e) => {
+  const m = String(e?.message || '') + ' ' + String(e?.details || '');
+  return /project_substage_status/i.test(m)
+    && /(does not exist|schema cache|could not find|relation)/i.test(m);
+};
+
+r.get('/substage-status', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const ids = String(req.query.stage_ids || '')
+      .split(',').map((x) => x.trim()).filter(Boolean);
+    if (!ids.length) return res.json({ rows: [] });
+    if (ids.length > 200) return res.status(400).json({ error: 'Tối đa 200 cột mỗi lần đọc' });
+    const projectId = String(req.query.project_id || '').trim();
+    let q = supabase
+      .from('project_substage_status')
+      .select('project_id, stage_id, trang_thai, nguoi_lam, bat_dau_luc, xong_luc, ghi_chu, updated_at')
+      .in('stage_id', ids);
+    // Trang chi tiet chi xem mot du an -> khong keo ve ca cot.
+    if (projectId) q = q.eq('project_id', projectId);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ rows: data || [] });
+  } catch (e) {
+    if (isSubstageTableMissing(e)) return res.json({ rows: [], _note: 'migration_pending' });
+    console.error('[production/substage-status GET]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.put('/substage-status', requireProductionKanbanEdit(), async (req, res) => {
+  try {
+    const projectId = String(req.body?.project_id || '').trim();
+    const stageId = String(req.body?.stage_id || '').trim();
+    const trangThai = String(req.body?.trang_thai || '').trim();
+    if (!projectId || !stageId) return res.status(400).json({ error: 'Thiếu project_id hoặc stage_id' });
+    if (!PSS_TRANG_THAI.has(trangThai)) {
+      return res.status(400).json({ error: 'trang_thai phải là chua / dang / xong' });
+    }
+
+    const { assertProjectAccessible } = require('../helpers/projectAccessScope');
+    if (!(await assertProjectAccessible(req, res, projectId, { operation: 'WRITE' }))) return;
+
+    const [{ data: stage, error: stErr }, { data: prj, error: pjErr }] = await Promise.all([
+      supabase.from('production_pipeline_stages').select('id, company_id, group_key').eq('id', stageId).maybeSingle(),
+      supabase.from('projects').select('id, company_id').eq('id', projectId).maybeSingle(),
+    ]);
+    if (stErr) throw stErr;
+    if (pjErr) throw pjErr;
+    if (!stage) return res.status(404).json({ error: 'Không thấy cột' });
+    if (!prj) return res.status(404).json({ error: 'Không thấy dự án' });
+    // Chặn ghi chéo hệ sinh thái: cột phải cùng công ty với dự án.
+    if (stage.company_id && prj.company_id && String(stage.company_id) !== String(prj.company_id)) {
+      return res.status(403).json({ error: 'Cột không thuộc công ty của dự án' });
+    }
+
+    const { data: cu, error: cuErr } = await supabase
+      .from('project_substage_status')
+      .select('id, bat_dau_luc, nguoi_lam')
+      .eq('project_id', projectId)
+      .eq('stage_id', stageId)
+      .maybeSingle();
+    if (cuErr && !isSubstageTableMissing(cuErr)) throw cuErr;
+
+    const now = new Date().toISOString();
+    const nguoiLam = req.body?.nguoi_lam === undefined
+      ? (cu?.nguoi_lam ?? (trangThai === 'dang' ? (req.user?.userId || null) : null))
+      : (req.body.nguoi_lam || null);
+
+    const row = {
+      company_id: prj.company_id || stage.company_id || null,
+      project_id: projectId,
+      stage_id: stageId,
+      trang_thai: trangThai,
+      nguoi_lam: nguoiLam,
+      // Giữ mốc bắt đầu cũ; chỉ đặt mới khi lần đầu chuyển khỏi 'chua'.
+      bat_dau_luc: trangThai === 'chua' ? null : (cu?.bat_dau_luc || now),
+      xong_luc: trangThai === 'xong' ? now : null,
+      updated_by: req.user?.userId || null,
+      updated_at: now,
+    };
+    if (req.body?.ghi_chu !== undefined) row.ghi_chu = req.body.ghi_chu || null;
+
+    const { data, error } = await supabase
+      .from('project_substage_status')
+      .upsert(row, { onConflict: 'project_id,stage_id' })
+      .select('project_id, stage_id, trang_thai, nguoi_lam, bat_dau_luc, xong_luc, ghi_chu, updated_at')
+      .maybeSingle();
+    if (error) throw error;
+    res.json({ row: data || row });
+  } catch (e) {
+    if (isSubstageTableMissing(e)) {
+      return res.status(503).json({ error: 'Chưa chạy migration 605 (project_substage_status)' });
+    }
+    console.error('[production/substage-status PUT]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -3085,6 +3190,8 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
           is_switch_workshop_type: c.is_switch_workshop_type ?? false,
           target_workshop_type_id: c.target_workshop_type_id ?? null,
           target_workshop_type: c.target_workshop_type ?? null,
+          // Cot lon (giai doan noi tiep) — trang chi tiet dung de ve viec song song giong Kanban gop.
+          group_key: c.group_key ?? null,
         })),
       },
     });
@@ -3103,11 +3210,18 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
     const { stage_id, move_to_intake } = req.body;
     const userId = req.user.userId;
 
-    const { data: project } = await supabase
+    let { data: project } = await supabase
       .from('projects')
-      .select('id, current_stage_id, code, name, status, company_id, sx_kanban_deadline_at, sx_kanban_column_id, sx_schedule_slip_days, production_finish_date, delivery_date, install_date, logistics_company_id, vc_kanban_column_id')
+      .select('id, current_stage_id, code, name, status, company_id, sx_kanban_deadline_at, sx_kanban_deadline_reason, sx_kanban_column_id, sx_schedule_slip_days, production_finish_date, delivery_date, install_date, install_occurrence_dates, sx_reception_date, created_at, logistics_company_id, vc_kanban_column_id')
       .eq('id', id)
       .single();
+    if (!project) {
+      ({ data: project } = await supabase
+        .from('projects')
+        .select('id, current_stage_id, code, name, status, company_id, sx_kanban_deadline_at, sx_kanban_column_id, sx_schedule_slip_days, production_finish_date, delivery_date, install_date, logistics_company_id, vc_kanban_column_id')
+        .eq('id', id)
+        .single());
+    }
 
     if (!project) {
       return res.status(404).json({ error: 'Project not found' });
@@ -3239,7 +3353,7 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       const colId = String(pipelineStageId);
       let { data: colRow } = await supabase
         .from('production_pipeline_stages')
-        .select('id, name, workflow_stage_id, bucket_slug, crm_target_stage_id, requires_deadline, counts_as_completed_revenue, counts_as_collected_revenue')
+        .select('id, name, workflow_stage_id, bucket_slug, crm_target_stage_id, requires_deadline, deadline_group, counts_as_completed_revenue, counts_as_collected_revenue')
         .eq('id', colId)
         .maybeSingle();
       if (!colRow) {
@@ -3260,6 +3374,16 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
         parsedDeadlineTs = new Date(rawDeadline).getTime();
         if (Number.isNaN(parsedDeadlineTs)) {
           return res.status(400).json({ error: 'Deadline không hợp lệ' });
+        }
+      }
+
+      let autoPlanDeadline = null;
+      if (!hasDeadlineInput) {
+        try {
+          const { computeSxInstallPlanDeadline } = require('../helpers/sxInstallPlanKanbanDeadline');
+          autoPlanDeadline = computeSxInstallPlanDeadline(project, colRow);
+        } catch (planErr) {
+          console.warn('[production/stage] install-plan deadline:', planErr.message);
         }
       }
 
@@ -3286,7 +3410,8 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       const isCompletedCol = isSxColumnClearsDeadlines(colRow);
 
       // Gate deadline: cột bật requires_deadline → bắt buộc chọn deadline khi chuyển sang (cột mới).
-      if (isColChange && colRow?.requires_deadline && !hasDeadlineInput && !isCompletedCol) {
+      // Hạn tính từ ngày lắp (deadline_group) được coi là đã có deadline.
+      if (isColChange && colRow?.requires_deadline && !hasDeadlineInput && !autoPlanDeadline?.iso && !isCompletedCol) {
         return res.status(400).json({
           error: 'Cột này yêu cầu đặt deadline khi chuyển thẻ tới.',
           code: 'requires_deadline',
@@ -3359,6 +3484,9 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
         projectUpd.sx_kanban_deadline_at = new Date(parsedDeadlineTs).toISOString();
         const reason = (req.body?.deadline_reason || req.body?.sx_kanban_deadline_reason || '').toString().trim();
         projectUpd.sx_kanban_deadline_reason = reason || null;
+      } else if (autoPlanDeadline?.iso && (isColChange || !project.sx_kanban_deadline_at)) {
+        projectUpd.sx_kanban_deadline_at = new Date(autoPlanDeadline.iso).toISOString();
+        projectUpd.sx_kanban_deadline_reason = autoPlanDeadline.reason;
       }
       if (colRow.workflow_stage_id || colRow.id) {
         // Đã bàn giao VC: giữ status/shipping + không ghi đè current_stage_id về production
