@@ -1,6 +1,16 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-12 11:35 (UTC+7)
+Cập nhật: 2026-09-14 10:05 (UTC+7)
+
+## Work Unified — KPI không đổi khi bấm tab tiến độ
+
+Trạng thái: **local, chưa commit.**
+
+Thẻ Đang thực hiện / Đúng tiến độ / Nguy cơ / Trễ luôn đếm trên cùng bộ lọc
+(công ty, NV, khu vực, hạn, tìm, công đoạn). Tab tiến độ chỉ lọc danh sách,
+không đổi 4 số KPI. Không trộn `items.length` của tab hiện tại với `stats` API.
+
+Hoàn tác: revert `WorkUnifiedOverviewPage.jsx`.
 
 ## Ma trận SX — ô Đang làm / Xong hiện tên dự án
 

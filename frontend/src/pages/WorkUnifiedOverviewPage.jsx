@@ -559,6 +559,13 @@ export default function WorkUnifiedOverviewPage() {
 
   useEffect(() => { setPage(1); }, [stageFilter, forecastFilter, companyId, debouncedSearch, filterUserIds, filterRegionId, rangeFrom, rangeTo]);
 
+  const listPaging = viewMode === 'list'
+    && !filterUserIds.length
+    && !filterRegionId
+    && !debouncedSearch
+    && !rangeFrom
+    && !rangeTo;
+
   const load = useCallback(async () => {
     const gen = ++loadGenRef.current;
     setLoading(true);
@@ -566,7 +573,10 @@ export default function WorkUnifiedOverviewPage() {
     try {
       const params = {};
       if (stageFilter) params.stage = stageFilter;
-      if (forecastFilter !== 'all') params.forecast = forecastFilter;
+      // KPI luôn tính trên bộ lọc (công ty / NV / KV / hạn / tìm / công đoạn),
+      // không gồm tab Đúng tiến độ / Nguy cơ / Trễ. Chỉ gửi forecast khi phân
+      // trang danh sách — để lấy đúng trang. Các view khác lọc forecast trên client.
+      if (listPaging && forecastFilter !== 'all') params.forecast = forecastFilter;
       if (effectiveCompanyIdForUsers) params.company_id = effectiveCompanyIdForUsers;
       else if (canPickCompany && companyId) params.company_id = companyId;
       if (debouncedSearch) params.search = debouncedSearch;
@@ -576,12 +586,6 @@ export default function WorkUnifiedOverviewPage() {
       if (rangeTo) params.date_to = rangeTo;
       // Danh sách không phân trang khi đang lọc NV/KV/hạn/tìm — trả đủ dòng
       // để số trên thẻ = số dòng bảng. Không lọc thì vẫn 20/trang.
-      const listPaging = viewMode === 'list'
-        && !filterUserIds.length
-        && !filterRegionId
-        && !debouncedSearch
-        && !rangeFrom
-        && !rangeTo;
       if (listPaging) {
         params.page = page;
         params.page_size = PAGE_SIZE;
@@ -596,8 +600,10 @@ export default function WorkUnifiedOverviewPage() {
       if (gen === loadGenRef.current) setLoading(false);
     }
   }, [
-    stageFilter, forecastFilter, canPickCompany, companyId, effectiveCompanyIdForUsers,
-    debouncedSearch, filterUserIds, filterRegionId, rangeFrom, rangeTo, viewMode, page,
+    stageFilter,
+    listPaging && forecastFilter !== 'all' ? forecastFilter : 'all',
+    canPickCompany, companyId, effectiveCompanyIdForUsers,
+    debouncedSearch, filterUserIds, filterRegionId, rangeFrom, rangeTo, viewMode, page, listPaging,
   ]);
 
   useEffect(() => { load(); }, [load]);
@@ -629,12 +635,6 @@ export default function WorkUnifiedOverviewPage() {
     () => (filterUserIds.length ? rawItems.filter((it) => workUnifiedRowMatchesStaff(it, filterUserIds)) : rawItems),
     [rawItems, filterUserIds],
   );
-  const listPaging = viewMode === 'list'
-    && !filterUserIds.length
-    && !filterRegionId
-    && !debouncedSearch
-    && !rangeFrom
-    && !rangeTo;
   const statsFromItems = useMemo(() => {
     const s = { total: items.length, on_track: 0, at_risk: 0, late: 0 };
     items.forEach((it) => {
@@ -645,14 +645,20 @@ export default function WorkUnifiedOverviewPage() {
     return s;
   }, [items]);
   const apiStats = data?.stats || { total: 0, on_track: 0, at_risk: 0, late: 0 };
+  // Khi API chưa lọc NV đủ, đếm lại từ dòng đã khớp NV — chỉ khi đang có đủ tập
+  // (không phân trang / không cắt forecast trên server).
   const clientTightened = filterUserIds.length > 0 && items.length !== rawItems.length;
-  const stats = clientTightened ? statsFromItems : apiStats;
+  const stats = clientTightened || !listPaging ? statsFromItems : apiStats;
+  const displayItems = useMemo(() => {
+    if (forecastFilter === 'all' || listPaging) return items;
+    return items.filter((it) => it.forecast === forecastFilter);
+  }, [items, forecastFilter, listPaging]);
   const totalFiltered = listPaging
-    ? (data?.total ?? items.length)
-    : (clientTightened || forecastFilter === 'all' ? items.length : (data?.total ?? items.length));
+    ? (data?.total ?? displayItems.length)
+    : displayItems.length;
   const totalPages = Math.max(1, Math.ceil(totalFiltered / PAGE_SIZE));
   const pageStart = (page - 1) * PAGE_SIZE;
-  const pageItems = items;
+  const pageItems = displayItems;
 
   const kanbanColumns = useMemo(() => {
     const bySlug = new Map();
@@ -660,7 +666,7 @@ export default function WorkUnifiedOverviewPage() {
       bySlug.set(s.slug, { slug: s.slug, label: s.label, color: KANBAN_COLORS[i % KANBAN_COLORS.length], items: [] });
     });
     const unassigned = { slug: '__none', label: 'Chưa xác định', color: '#9ca3af', items: [] };
-    items.forEach((it) => {
+    displayItems.forEach((it) => {
       const col = it.current_stage_slug && bySlug.get(it.current_stage_slug);
       if (col) col.items.push(it);
       else unassigned.items.push(it);
@@ -668,7 +674,7 @@ export default function WorkUnifiedOverviewPage() {
     const cols = Array.from(bySlug.values());
     if (unassigned.items.length) cols.push(unassigned);
     return cols;
-  }, [stages, items]);
+  }, [stages, displayItems]);
 
   const deadlineColumns = useMemo(() => {
     const out = WU_DEADLINE_BUCKETS.map((b) => ({
@@ -678,7 +684,7 @@ export default function WorkUnifiedOverviewPage() {
       items: [],
     }));
     const byKey = new Map(out.map((c) => [c.slug, c]));
-    items.forEach((it) => {
+    displayItems.forEach((it) => {
       const key = resolveWuDeadlineBucket(it);
       (byKey.get(key) || byKey.get('none')).items.push(it);
     });
@@ -686,12 +692,12 @@ export default function WorkUnifiedOverviewPage() {
       col.items.sort((a, b) => String(wuDeadlineRaw(a) || '').localeCompare(String(wuDeadlineRaw(b) || '')));
     });
     return out;
-  }, [items]);
+  }, [displayItems]);
 
   const plannerColumns = useMemo(() => {
     const map = new Map();
     const unassigned = { slug: '__none', label: 'Chưa gán', color: '#9ca3af', items: [] };
-    items.forEach((it) => {
+    displayItems.forEach((it) => {
       const name = String(it.assignee_name || it.person1_name || '').trim();
       if (!name) {
         unassigned.items.push(it);
@@ -710,7 +716,7 @@ export default function WorkUnifiedOverviewPage() {
     const cols = Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, 'vi'));
     if (unassigned.items.length) cols.push(unassigned);
     return cols;
-  }, [items]);
+  }, [displayItems]);
 
   /**
    * Đang tìm kiếm ở view Kanban → dự án khớp có thể nằm ở cột đã cuộn khuất bên phải.
@@ -735,7 +741,7 @@ export default function WorkUnifiedOverviewPage() {
       return s.length >= 10 ? s.substring(0, 10) : null;
     };
     const todayStr = dayKey(new Date().toISOString());
-    items.forEach((it) => {
+    displayItems.forEach((it) => {
       const modules = [it.has_crm && 'CRM', it.has_sx && 'SX', it.has_vc && 'VC'].filter(Boolean);
       const person = it.person1_name || it.person2_name || null;
       const addEvent = (kind, label, at, tone) => {
@@ -768,7 +774,7 @@ export default function WorkUnifiedOverviewPage() {
     const order = { deadline: 0, delivery: 1, install: 2 };
     map.forEach((list) => list.sort((a, b) => (order[a.tone] ?? 9) - (order[b.tone] ?? 9)));
     return map;
-  }, [items, calendarMode]);
+  }, [displayItems, calendarMode]);
 
   const calendarWeeks = useMemo(() => {
     const y = calMonth.getFullYear();
@@ -964,7 +970,7 @@ export default function WorkUnifiedOverviewPage() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 shrink-0">
         {[
-          { key: 'all', label: 'Đang thực hiện', value: forecastFilter === 'all' ? totalFiltered : stats.total, valueCls: 'text-gray-900' },
+          { key: 'all', label: 'Đang thực hiện', value: stats.total, valueCls: 'text-gray-900' },
           { key: 'on_track', label: 'Đúng tiến độ', value: stats.on_track, valueCls: 'text-emerald-600' },
           { key: 'at_risk', label: 'Nguy cơ trễ', value: stats.at_risk, valueCls: 'text-amber-600' },
           { key: 'late', label: 'Trễ hạn', value: stats.late, valueCls: 'text-red-600' },
@@ -995,7 +1001,7 @@ export default function WorkUnifiedOverviewPage() {
                   forecastFilter === t.key ? 'bg-emerald-600 text-white' : 'text-gray-600 hover:bg-gray-50'
                 }`}
               >
-                {t.label} · {t.key === 'all' ? (forecastFilter === 'all' ? totalFiltered : stats.total) : stats[t.key] || 0}
+                {t.label} · {t.key === 'all' ? stats.total : stats[t.key] || 0}
               </button>
             ))}
           </div>
@@ -1221,7 +1227,7 @@ export default function WorkUnifiedOverviewPage() {
           <div className="p-3 flex-1 min-h-0">
             {loading ? (
               <div className="px-4 py-8 text-center text-gray-400 text-sm">Đang tải...</div>
-            ) : items.length === 0 ? (
+            ) : displayItems.length === 0 ? (
               <div className="px-4 py-8 text-center text-gray-400 text-sm">{emptyResultsMessage}</div>
             ) : (
               <div ref={viewMode === 'kanban' ? kanbanBoardRef : undefined} className="flex gap-3 overflow-x-auto h-full min-h-[28rem] items-stretch">
@@ -1326,12 +1332,12 @@ export default function WorkUnifiedOverviewPage() {
             <p className="text-xs text-gray-500">
               {listPaging ? (
                 <>
-                  Hiển thị <span className="font-medium text-gray-700">{pageStart + 1}-{pageStart + items.length}</span> trong tổng số{' '}
+                  Hiển thị <span className="font-medium text-gray-700">{pageStart + 1}-{pageStart + displayItems.length}</span> trong tổng số{' '}
                   <span className="font-medium text-gray-700">{totalFiltered}</span> dự án
                 </>
               ) : (
                 <>
-                  <span className="font-medium text-gray-700">{items.length}</span> dự án
+                  <span className="font-medium text-gray-700">{displayItems.length}</span> dự án
                 </>
               )}
             </p>

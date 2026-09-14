@@ -1,5 +1,12 @@
 # Nhật ký công việc AI
 
+## 2026-09-14 10:05 — Work Unified: số KPI ổn định khi đổi tab tiến độ
+
+- AI: Cursor. Tab Tất cả / Đúng tiến độ / Nguy cơ / Trễ đang refetch và trộn
+  `totalFiltered` (danh sách đã cắt) với `stats.total` (đôi khi chưa cùng lọc NV)
+  → 34 nhảy 79. KPI luôn lấy `stats` của tập chưa cắt forecast; tab lọc trên client
+  (trừ danh sách phân trang). File: `frontend/src/pages/WorkUnifiedOverviewPage.jsx`.
+
 ## 2026-09-12 11:35 — Ô Đang làm ma trận SX hiện tên dự án
 
 - AI: Cursor. `SxMaTranSongSong` ghi `item.name` / tiêu đề deal dưới nhãn Đang làm và Xong.
