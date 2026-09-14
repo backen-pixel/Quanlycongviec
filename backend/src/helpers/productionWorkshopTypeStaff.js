@@ -630,6 +630,58 @@ async function appendProjectProductionStaff(projectId, userIds, opts = {}) {
   };
 }
 
+/**
+ * BỔ SUNG cho đủ đội theo setup phân loại — CHỈ THÊM, KHÔNG XOÁ AI.
+ *
+ * Khác hẳn applyWorkshopTypeDefaultStaffToProject(): hàm kia xoá sạch roster rồi ghi lại
+ * theo setup, nên NV thêm tay bị mất. Hàm này chỉ thêm người còn thiếu, ai đang có thì giữ.
+ *
+ * Dùng cho yêu cầu «dự án HCB thì thêm tất cả nhân viên như ở setup»: gọi được nhiều lần,
+ * gọi lúc nào cũng an toàn, không phá dữ liệu ai đã sửa tay.
+ *
+ * Kèm vá cờ phụ trách chính: nếu roster không còn ai is_primary (hậu quả của nhánh retry
+ * bỏ cột is_primary trước đây) thì đặt lại theo setup, và đồng bộ projects.production_person_id.
+ */
+async function bosungDoiTheoSetup(projectId, companyId, workshopTypeId, opts = {}) {
+  if (!projectId || !companyId || !workshopTypeId) return { added: 0, primary_fixed: false };
+
+  // Lấy ĐỦ danh sách setup — không primaryOnly, không fallback sang toàn bộ NV công ty.
+  const { userIds, primaryUserId } = await getDefaultStaffForType(companyId, workshopTypeId, {
+    allowFallback: opts.allowFallback === true,
+  });
+  if (!userIds.length) return { added: 0, primary_fixed: false };
+
+  const them = await appendProjectProductionStaff(projectId, userIds, { addedBy: opts.addedBy || null });
+
+  let primaryFixed = false;
+  try {
+    const { data: rows } = await supabase
+      .from('project_production_staff')
+      .select('user_id, is_primary, order_index')
+      .eq('project_id', projectId)
+      .order('order_index');
+    const daCo = rows || [];
+    if (daCo.length && !daCo.some((r) => r.is_primary)) {
+      const muon = String(primaryUserId || '');
+      const chon = daCo.some((r) => String(r.user_id) === muon) ? muon : String(daCo[0].user_id);
+      await supabase
+        .from('project_production_staff')
+        .update({ is_primary: true })
+        .eq('project_id', projectId)
+        .eq('user_id', chon);
+      await supabase
+        .from('projects')
+        .update({ production_person_id: chon, updated_at: new Date().toISOString() })
+        .eq('id', projectId);
+      primaryFixed = true;
+    }
+  } catch (e) {
+    console.warn('[productionWorkshopTypeStaff] bosungDoiTheoSetup primary:', e.message);
+  }
+
+  return { added: them.added || 0, added_user_ids: them.added_user_ids || [], primary_fixed: primaryFixed };
+}
+
 async function removeProjectProductionStaffUser(projectId, userId) {
   if (!projectId || !userId) return { removed: 0 };
   const uid = String(userId);
@@ -1781,6 +1833,7 @@ module.exports = {
   loadProjectProductionStaffForApi,
   applyWorkshopTypeDefaultStaffToProject,
   appendProjectProductionStaff,
+  bosungDoiTheoSetup,
   removeProjectProductionStaffUser,
   toPrimaryOnlyStaff,
   shouldUsePrimaryOnlyStaff,

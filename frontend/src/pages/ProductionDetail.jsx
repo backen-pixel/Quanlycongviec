@@ -83,7 +83,7 @@ import { driveLinksCountByEntity } from '../lib/drive';
 import { canManageWorkshopProjectFiles } from '../lib/fileOwnership';
 
 /** Cùng tên tab với LeadDetail (chi tiết deal) — bỏ calls; facebook/zalo chỉ hiện khi có liên kết inbox */
-const DEAL_TAB_KEYS = new Set(['tasks', 'shared-workspace', 'documents', 'notes', 'comments', 'team', 'approvals', 'incidents', 'procurement', 'facebook', 'zalo']);
+const DEAL_TAB_KEYS = new Set(['tasks', 'shared-workspace', 'documents', 'notes', 'comments', 'team', 'approvals', 'procurement', 'facebook', 'zalo']);
 const LEGACY_TAB_MAP = {
   timeline: 'comments',
   'crm-notes': 'notes',
@@ -3794,9 +3794,6 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               {crmLeadId && inboxLinks.zalo && tabBtn('zalo', '💬 Zalo OA')}
               {tabBtn('comments', `💬 Bình luận${commentCount > 0 ? ` (${commentCount})` : ''}`)}
               {crmLeadId && tabBtn('history', '🕘 Lịch sử')}
-              {tabBtn('incidents', incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length > 0
-                ? `⚠️ Sự cố (${incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length})`
-                : '⚠️ Sự cố')}
               {moduleKey !== 'vc' && tabBtn('procurement', '📦 Vật tư / Mua hàng')}
               {tabBtn('team', teamTabLabel)}
               {moduleKey !== 'vc' && tabBtn('approvals', '✅ Gửi duyệt')}

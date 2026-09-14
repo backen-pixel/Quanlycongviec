@@ -290,7 +290,17 @@ async function applyDefaultIntakeAssigneeIfNeeded(projectId, companyId) {
 
     const { loadProjectProductionStaffUserIds, applyWorkshopTypeDefaultStaffToProject } = require('../helpers/productionWorkshopTypeStaff');
     const existingStaff = await loadProjectProductionStaffUserIds(projectId);
-    if (existingStaff.length > 0 && proj.production_person_id) return;
+    // PHẢI là ||: với && thì dự án ĐÃ CÓ đội nhưng production_person_id trống sẽ lọt
+    // xuống dưới và bị applyWorkshopTypeDefaultStaffToProject() xoá sạch roster.
+    // Đã đo được dữ liệu thật rơi đúng trạng thái này trên production.
+    if (existingStaff.length > 0 || proj.production_person_id) {
+      // Đã có đội thì chỉ bổ sung cho đủ setup, tuyệt đối không ghi đè.
+      try {
+        const { bosungDoiTheoSetup } = require('../helpers/productionWorkshopTypeStaff');
+        await bosungDoiTheoSetup(projectId, companyId, proj.workshop_type_id || null);
+      } catch (e) { console.warn('[production] bo sung doi:', e.message); }
+      return;
+    }
 
     await applyWorkshopTypeDefaultStaffToProject(projectId, companyId, proj.workshop_type_id || null, {
       primaryOnly: true,
@@ -4114,6 +4124,9 @@ r.patch('/projects/:id/switch-workshop-type', requireProductionKanbanEdit(), asy
     try {
       const { applyWorkshopTypeDefaultStaffToProject } = require('../helpers/productionWorkshopTypeStaff');
       await applyWorkshopTypeDefaultStaffToProject(id, companyId, targetTypeId);
+      // Bổ sung cho đủ đội theo setup phân loại mới — chỉ thêm, không xoá ai.
+      const { bosungDoiTheoSetup } = require('../helpers/productionWorkshopTypeStaff');
+      await bosungDoiTheoSetup(id, companyId, targetTypeId);
     } catch (staffErr) {
       console.warn('[production/switch-workshop-type] default staff:', staffErr.message);
     }

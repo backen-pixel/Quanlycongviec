@@ -193,6 +193,9 @@ async function reassignDealSxCompanyAndType({
     primaryStaffId = await applyWorkshopTypeDefaultStaffToProject(project.id, companyId, wt.id, {
       primaryOnly: true,
     });
+    // Bổ sung cho ĐỦ đội theo setup phân loại — chỉ thêm, không xoá ai.
+    const { bosungDoiTheoSetup } = require('./productionWorkshopTypeStaff');
+    await bosungDoiTheoSetup(project.id, companyId, wt.id);
   } catch (e) {
     console.warn('[reassign-sx] restaff:', e.message);
   }

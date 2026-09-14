@@ -1,6 +1,16 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-14 14:30 (UTC+7)
+Cập nhật: 2026-09-14 14:55 (UTC+7)
+
+## Chi tiết SX — ẩn tab Sự cố
+
+Trạng thái: **FE local, chưa commit.**
+
+Tab «⚠️ Sự cố» không còn trên chi tiết dự án xưởng. `?tab=incidents`
+chuyển về Công việc.
+
+Hoàn tác: hiện lại `tabBtn('incidents'…)` và thêm `'incidents'` vào
+`DEAL_TAB_KEYS`.
 
 ## HCB Cánh kính / Cửa — bỏ chặn kéo cột
 

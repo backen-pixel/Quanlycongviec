@@ -1,5 +1,11 @@
 # Nhật ký công việc AI
 
+## 2026-09-14 14:55 — Chi tiết SX: ẩn tab Sự cố
+
+- AI: Cursor. Ẩn nút tab «Sự cố» trên `ProductionDetail`; URL cũ
+  `?tab=incidents` không còn trong `DEAL_TAB_KEYS` nên về tab Công việc.
+- File: `ProductionDetail.jsx`.
+
 ## 2026-09-14 14:30 — Cánh kính/Cửa: bỏ yêu cầu hoàn thành việc trước khi kéo
 
 - AI: Cursor. Gate nhiệm vụ không còn chặn kéo cột Cánh kính và Cửa (BE + SQL 611

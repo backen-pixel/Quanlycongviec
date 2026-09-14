@@ -4301,6 +4301,11 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
       projRow?.workshop_type_id || null,
       { primaryOnly: true },
     );
+    // Bổ sung cho ĐỦ đội theo setup phân loại — chỉ thêm, không xoá ai.
+    try {
+      const { bosungDoiTheoSetup } = require('../../../helpers/productionWorkshopTypeStaff');
+      await bosungDoiTheoSetup(handoverProjectId, pcv.company.id, projRow?.workshop_type_id || null);
+    } catch (e) { console.warn('[handover-sx] bo sung doi:', e.message); }
     const leadHandoverPatch = {
       sx_handover_at: now,
       sx_handover_confirmed_by: uid,

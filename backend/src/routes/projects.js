@@ -1608,6 +1608,9 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
           data.company_id,
           b.workshop_type_id || data.workshop_type_id,
         );
+        // Bổ sung cho ĐỦ đội theo setup phân loại — chỉ thêm, không xoá ai.
+        const { bosungDoiTheoSetup } = require('../helpers/productionWorkshopTypeStaff');
+        await bosungDoiTheoSetup(data.id, data.company_id, b.workshop_type_id || data.workshop_type_id);
         if (primaryId) data.production_person_id = primaryId;
       } catch (staffErr) {
         console.warn('[POST /projects] apply default production staff:', staffErr.message);
@@ -2575,8 +2578,10 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
       && data?.company_id
     ) {
       try {
-        const { applyWorkshopTypeDefaultStaffToProject } = require('../helpers/productionWorkshopTypeStaff');
+        const { applyWorkshopTypeDefaultStaffToProject, bosungDoiTheoSetup } = require('../helpers/productionWorkshopTypeStaff');
         await applyWorkshopTypeDefaultStaffToProject(data.id, data.company_id, b.workshop_type_id || null);
+        // Bổ sung cho đủ đội theo setup phân loại — chỉ thêm, không xoá ai.
+        await bosungDoiTheoSetup(data.id, data.company_id, b.workshop_type_id || null);
         const { data: refreshed } = await supabase
           .from('projects')
           .select(`*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`)
