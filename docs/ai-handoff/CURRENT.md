@@ -1,6 +1,20 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-14 14:55 (UTC+7)
+Cập nhật: 2026-09-14 16:30 (UTC+7)
+
+## Zalo ZNS — token hiệu lực từ OA
+
+Trạng thái: **commit + push main.**
+
+Gửi ZNS / cấu hình / test lấy access token từ `zalo_oa_accounts` (tự refresh),
+không dùng bản chép cũ trong `app_settings`.
+
+## Deploy Render — thiếu GiaVonExcelModal
+
+Trạng thái: **commit + push main.**
+
+`WorkshopTaskTemplatesPage` import modal giá vốn nhưng file chưa git →
+vite build Render fail. Thêm `GiaVonExcelModal.jsx`.
 
 ## Chi tiết SX — ẩn tab Sự cố
 

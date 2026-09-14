@@ -1,5 +1,11 @@
 # Nhật ký công việc AI
 
+## 2026-09-14 16:30 — Zalo ZNS dùng token OA hiệu lực
+
+- AI: Cursor. `getZaloAccessTokenHieuLuc` đọc `zalo_oa_accounts` rồi mới
+  dự phòng `app_settings`. File: `zaloTokenHieuLuc.js`, `helpersBundle.js`,
+  `taxonomy.js`.
+
 ## 2026-09-14 16:00 — Fix build Render: GiaVonExcelModal
 
 - AI: Cursor. Commit `frontend/src/components/GiaVonExcelModal.jsx` vì trang

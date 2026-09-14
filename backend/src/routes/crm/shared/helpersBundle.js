@@ -470,6 +470,8 @@ async function getZaloNotifySettings() {
   };
 }
 
+const { getZaloAccessTokenHieuLuc } = require('../../../helpers/zaloTokenHieuLuc');
+
 async function upsertZaloNotifySettings(nextVal) {
   const { error } = await supabase.from('app_settings').upsert(
     { key: ZALO_APP_SETTING_KEY, value: nextVal, updated_at: new Date().toISOString() },
@@ -694,8 +696,10 @@ async function executeZaloDealStageNotify({
   }
 
   const settings = await getZaloNotifySettings();
-  if (!settings.enabled || !settings.access_token) {
-    console.log('[Zalo OA] Bỏ qua — tắt chức năng hoặc thiếu token');
+  // Token lấy từ zalo_oa_accounts (tự xoay vòng), không dùng bản chép trong app_settings.
+  const tokenHieuLuc = await getZaloAccessTokenHieuLuc(settings);
+  if (!settings.enabled || !tokenHieuLuc.token) {
+    console.log('[Zalo OA] Bỏ qua — tắt chức năng hoặc thiếu token (nguồn:', tokenHieuLuc.nguon, ')');
     return { ok: false, skipped: true, reason: 'zalo_not_configured' };
   }
 
@@ -762,7 +766,7 @@ async function executeZaloDealStageNotify({
   }
 
   const result = await sendZaloTemplateMessage({
-    accessToken: settings.access_token,
+    accessToken: tokenHieuLuc.token,
     phone: normalizedForSend,
     templateId,
     templateData,
@@ -7117,6 +7121,7 @@ module.exports = {
   SURVEY_EVENT_TYPES,
   XLSX,
   ZALO_APP_SETTING_KEY,
+  getZaloAccessTokenHieuLuc,
   crmSchemaCompat,
   addPhoneToAutoLeadBlocklist,
   aggregateCrmCommentReactions,

@@ -270,11 +270,17 @@ r.delete('/lead-types/:id', async (req, res) => {
 r.get('/zalo-notify-settings', async (_req, res) => {
   try {
     const s = await getZaloNotifySettings();
+    const { getZaloAccessTokenHieuLuc } = require('../../../helpers/zaloTokenHieuLuc');
+    const tokenHieuLuc = await getZaloAccessTokenHieuLuc(s);
     res.json({
       enabled: s.enabled,
       template_id: s.template_id,
       sending_mode: s.sending_mode,
-      has_token: !!(s.access_token && s.access_token.length > 8),
+      has_token: !!(tokenHieuLuc.token && tokenHieuLuc.token.length > 8),
+      // Cho giao diện biết token đang lấy từ đâu: zalo_oa_accounts (tự xoay vòng)
+      // hay bản dự phòng trong app_settings.
+      token_source: tokenHieuLuc.nguon,
+      token_oa_id: tokenHieuLuc.oa_id || '',
       merge_template_data: s.merge_template_data || {},
       template_structure: s.template_structure,
     });
@@ -322,7 +328,10 @@ r.put('/zalo-notify-settings', async (req, res) => {
 r.post('/zalo-notify-test', async (req, res) => {
   try {
     const s = await getZaloNotifySettings();
-    const token = (req.body.access_token && String(req.body.access_token).trim()) || s.access_token;
+    // Ưu tiên token gửi kèm; không có thì lấy token hiệu lực từ zalo_oa_accounts.
+    const { getZaloAccessTokenHieuLuc } = require('../../../helpers/zaloTokenHieuLuc');
+    const tokenHieuLuc = await getZaloAccessTokenHieuLuc(s);
+    const token = (req.body.access_token && String(req.body.access_token).trim()) || tokenHieuLuc.token;
     const tid = (req.body.template_id && String(req.body.template_id).trim()) || s.template_id;
     if (!token || !tid) {
       return res.status(400).json({ error: 'Cần access_token và template_id (lưu trong cấu hình hoặc gửi kèm body)' });
