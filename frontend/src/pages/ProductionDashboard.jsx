@@ -40,6 +40,8 @@ import {
   CheckSquare, UserCheck, Loader2, Truck, Clock, Layers, Trash2, MessageSquare, Pin, Building2, ArrowRightLeft, Settings, ChevronDown, Eye, ChevronRight, Banknote,
 } from 'lucide-react';
 import { gopPipeline, coTheGopCot, gomCotTheoNhom, docSxGopCot, ghiSxGopCot } from '../lib/sxGopCot';
+import { sxInstallPlanForProject, sxStagePlanSlice, vnNowParts } from '../lib/sxWorkshopSchedule';
+import { sxStagePrimaryOwnerName } from '../lib/sxStageStaff';
 import { tachCotTheoTab, demTheCot } from '../lib/sxTachCongNo';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView, ProductionDeadlineView } from '../components/ProductionViews';
@@ -78,6 +80,7 @@ import {
 } from '../lib/sxPipelineRevenue';
 import { isProjectAlreadyInLogistics, sxCardLogisticsProgress } from '../lib/projectLogistics';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
+import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import NewDealModal from '../components/NewDealModal';
 import NewProductionProjectModal from '../components/NewProductionProjectModal';
@@ -741,6 +744,7 @@ export default function ProductionDashboard() {
   const [kanbanCommentLeadId, setKanbanCommentLeadId] = useState(null);
   const [deadlineCtx, setDeadlineCtx] = useState(null);
   const [deadlineBusy, setDeadlineBusy] = useState(false);
+  const [blockingTasksModal, setBlockingTasksModal] = useState(null);
   const [showNewDeal, setShowNewDeal] = useState(false);
   const [showNewSxProject, setShowNewSxProject] = useState(false);
   const [showKanbanSettings, setShowKanbanSettings] = useState(false);
@@ -3098,6 +3102,19 @@ export default function ProductionDashboard() {
         load({ silent: true, bustCache: true });
         return;
       }
+      if (e.response?.data?.code === 'SX_BLOCKING_TASKS_INCOMPLETE') {
+        const body = e.response.data;
+        setBlockingTasksModal({
+          projectId,
+          targetCol,
+          leadId: resolveSxProjectLeadId(current),
+          currentStageName: body.current_stage_name || '',
+          targetStageName: body.target_stage_name || targetCol?.name || '',
+          remainingTasks: Array.isArray(body.remaining_tasks) ? body.remaining_tasks : [],
+        });
+        load({ silent: true, bustCache: true });
+        return;
+      }
       window.alert(e.response?.data?.error || e.message || 'Không chuyển được cột pipeline');
       load({ silent: true, bustCache: true });
     }
@@ -4844,6 +4861,22 @@ export default function ProductionDashboard() {
         />
       )}
 
+      <BlockingTasksAlertModal
+        open={!!blockingTasksModal}
+        onClose={() => setBlockingTasksModal(null)}
+        leadId={blockingTasksModal?.leadId || ''}
+        currentStageName={blockingTasksModal?.currentStageName || ''}
+        targetStageName={blockingTasksModal?.targetStageName || ''}
+        remainingTasks={blockingTasksModal?.remainingTasks || []}
+        onAllCleared={() => {
+          const pending = blockingTasksModal;
+          setBlockingTasksModal(null);
+          if (pending?.projectId && pending?.targetCol) {
+            executeStageMove(pending.projectId, pending.targetCol);
+          }
+        }}
+      />
+
       <CrmDeadlineModal
         open={!!deadlineCtx}
         title={deadlineCtx?.mode === 'edit_only' ? 'Deadline thẻ SX' : 'Đặt deadline khi chuyển cột'}
@@ -5721,6 +5754,23 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
         <button
           type="button"
           data-sx-quick-btn
+          title="Quản lý nhiệm vụ của dự án này"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const params = new URLSearchParams();
+            params.set('project', String(item.id));
+            if (item.code) params.set('code', String(item.code));
+            navigate(`/sx/project-tasks?${params.toString()}`);
+          }}
+          className="h-5 w-5 inline-flex items-center justify-center rounded-full text-violet-500 hover:text-violet-700 hover:bg-violet-100 cursor-pointer"
+        >
+          <CheckSquare className="h-3 w-3" />
+        </button>
+        <button
+          type="button"
+          data-sx-quick-btn
           data-sx-kanban-comment-btn
           title={typeof onOpenKanbanComment === 'function' ? 'Bình luận nhanh' : 'Mở trao đổi'}
           onClick={(e) => {
@@ -6002,6 +6052,7 @@ function SxMaTranSongSong({
   const conThieu = tongServer > hang.length;
   const soCot = Math.max(cotNho.length, 1);
   const tpl = `15rem repeat(${soCot}, 13rem)`;
+  const homNayYmd = vnNowParts().ymd;
 
   // Ô nào chưa có dòng trong bảng: cột dự án đang đứng coi như «đang làm», còn lại «chưa».
   const oCua = (item, c, cotId) => trangThai[`${item.id}:${c.id}`]
@@ -6067,18 +6118,26 @@ function SxMaTranSongSong({
           <div className="sticky top-0 z-20 bg-violet-50 pr-2 text-[10px] font-bold uppercase tracking-[0.1em] text-violet-400 shadow-[0_8px_0_0_#f5f3ff]">
             Dự án
           </div>
-          {cotNho.map((c, ci) => (
+          {cotNho.map((c, ci) => {
+            const chuCot = sxStagePrimaryOwnerName(c);
+            return (
             <div
               key={`h:${c.id}`}
-              title={c.name}
-              className={`sticky top-0 z-20 flex items-center gap-1 bg-white px-2 py-1.5 shadow-[0_8px_0_0_#f5f3ff] ${vienO(ci)}`}
+              title={[c.name, chuCot ? `Phụ trách: ${chuCot}` : 'Chưa setup người phụ trách cột (Cài đặt pipeline)'].join('\n')}
+              className={`sticky top-0 z-20 flex flex-col gap-0.5 bg-white px-2 py-1.5 shadow-[0_8px_0_0_#f5f3ff] ${vienO(ci)}`}
             >
-              <span className="truncate text-[10px] font-bold uppercase tracking-wide text-slate-600">{c.name}</span>
-              <span className="ml-auto shrink-0 rounded-full bg-slate-100 px-1.5 text-[10px] font-bold tabular-nums text-slate-500">
-                {demCot(c)}
+              <div className="flex items-center gap-1">
+                <span className="truncate text-[10px] font-bold uppercase tracking-wide text-slate-600">{c.name}</span>
+                <span className="ml-auto shrink-0 rounded-full bg-slate-100 px-1.5 text-[10px] font-bold tabular-nums text-slate-500">
+                  {demCot(c)}
+                </span>
+              </div>
+              <span className={`truncate text-[10px] font-medium leading-tight ${chuCot ? 'text-indigo-700' : 'text-slate-400 italic'}`}>
+                {chuCot || 'Chưa gán NV'}
               </span>
             </div>
-          ))}
+            );
+          })}
 
           {hang.map(({ item, cotId, cot }) => {
             const soXong = cotNho.filter((c) => oCua(item, c, cotId) === 'xong').length;
@@ -6086,6 +6145,7 @@ function SxMaTranSongSong({
             const dealsHang = Array.isArray(item.crm_deals) ? item.crm_deals : [];
             const dealHang = dealsHang.find((d) => String(d?.type || '') === 'deal') || dealsHang[0] || null;
             const tenDA = String((dealHang?.title || '').trim() || item.name || '').trim();
+            const planHang = sxInstallPlanForProject(item);
             return (
               <Fragment key={item.id}>
                 <div className={`min-w-0 pr-2 ${theGon ? 'flex' : ''}`}>
@@ -6133,6 +6193,10 @@ function SxMaTranSongSong({
                   const tt = oCua(item, c, cotId);
                   const dangRe = oRe === khoaO;
                   const luu = dangLuu.has(khoaO);
+                  const chuCot = sxStagePrimaryOwnerName(c);
+                  const han = sxStagePlanSlice(planHang, c);
+                  const hanCuoi = han?.endYmd || '';
+                  const hanTre = hanCuoi && hanCuoi < homNayYmd;
                   const nen = tt === 'xong'
                     ? 'bg-emerald-50/80 hover:bg-emerald-100'
                     : tt === 'dang'
@@ -6155,8 +6219,14 @@ function SxMaTranSongSong({
                         onMoveStage?.(pid, c);
                         datO(pid, c, 'dang');
                       }}
-                      title={[tenDA, `${c.name} — ${chuThai}`, 'Bấm để đổi, hoặc kéo thẻ vào đây.'].filter(Boolean).join('\n')}
-                      className={`group flex min-h-[4.75rem] w-full flex-col items-stretch justify-center gap-0.5 px-2 py-1.5 transition-colors cursor-pointer disabled:opacity-50 ${vienO(ci)} ${
+                      title={[
+                        tenDA,
+                        `${c.name} — ${chuThai}`,
+                        chuCot ? `Phụ trách: ${chuCot}` : 'Chưa setup người phụ trách cột',
+                        hanCuoi ? `Hạn: ${formatDate(hanCuoi)}` : '',
+                        'Bấm để đổi, hoặc kéo thẻ vào đây.',
+                      ].filter(Boolean).join('\n')}
+                      className={`group flex min-h-[5.25rem] w-full flex-col items-stretch justify-center gap-0.5 px-2 py-1.5 transition-colors cursor-pointer disabled:opacity-50 ${vienO(ci)} ${
                         dangRe ? 'bg-violet-200 ring-2 ring-inset ring-violet-500' : nen
                       }`}
                     >
@@ -6185,6 +6255,18 @@ function SxMaTranSongSong({
                         <span className={`w-full px-0.5 text-left text-[13px] font-semibold leading-snug line-clamp-2 ${
                           tt === 'chua' || !tt ? 'text-slate-500' : 'text-slate-900'
                         }`}>{tenDA}</span>
+                      ) : null}
+                      {!luu && (chuCot || hanCuoi) ? (
+                        <span className="w-full px-0.5 text-left text-[10px] leading-tight">
+                          {chuCot ? (
+                            <span className="block truncate font-medium text-indigo-800">{chuCot}</span>
+                          ) : null}
+                          {hanCuoi ? (
+                            <span className={`block tabular-nums ${hanTre ? 'font-bold text-red-600' : 'text-slate-500'}`}>
+                              Hạn {formatDate(hanCuoi)}
+                            </span>
+                          ) : null}
+                        </span>
                       ) : null}
                     </button>
                   );

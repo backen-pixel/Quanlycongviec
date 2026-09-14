@@ -15,7 +15,8 @@
  *                     bảng Kanban SX. false = đi nhánh cũ, CRM/LeadDetail không đổi một nét.
  *   trangThaiO      – { [stageId]: 'chua'|'dang'|'xong' } trạng thái từng việc song song của
  *                     RIÊNG dự án đang mở (bảng project_substage_status — migration 605).
- *   onDoiTrangThai  – (stageId, trangThaiMoi) => void; có thì hiện nút đổi trạng thái.
+ *   onDoiTrangThai  – (stageId, trangThaiMoi) => void; bấm vòng tròn việc song song
+ *                     để tích hoàn thành (xong) / bỏ tích. Việc đã tích hiện ✓.
  *
  * CÁCH VẼ CỘT LỒNG: cột lớn chạy NGANG, nối nhau bằng dấu «›» — đó là phần nối tiếp.
  * Việc song song xếp DỌC bên trong thẻ và cùng treo trên một thanh dọc bên trái.
@@ -26,7 +27,6 @@ import { sortAndDedupePipelineStages, pipelineStageSortKey } from '../lib/crmPip
 import { classifyCrmPostWonManagedKind } from '../lib/crmDealStageGate';
 import { nhanCotLon } from '../lib/sxGopCot';
 
-const KE_TIEP_TT = { chua: 'dang', dang: 'xong', xong: 'chua' };
 const NHAN_TT = { chua: 'Chưa tới', dang: 'Đang làm', xong: 'Xong' };
 const NHAN_TT_NGAN = { chua: 'Chưa', dang: 'Đang làm', xong: 'Xong' };
 
@@ -119,27 +119,43 @@ export default function PipelineStepper({
     </div>
   );
 
-  /** Chấm trạng thái của một việc song song. Bấm = chuyển dự án sang cột đó. */
-  const veCham = (s, tt, here, to) => (
+  /** Chấm việc song song: bấm vòng tròn = tích/bỏ hoàn thành. Cột lớn một việc: bấm = chuyển cột. */
+  const veCham = (s, tt, here, to, { checkable } = {}) => {
+    const coTheTich = !!(checkable && onDoiTrangThai);
+    const disabled = coTheTich ? false : !onMoveToStage;
+    const title = coTheTich
+      ? (tt === 'xong'
+        ? `${s.name} — đã xong. Bấm vòng tròn để bỏ tích.`
+        : `${s.name} — bấm vòng tròn để đánh dấu hoàn thành.`)
+      : `${s.name} — ${NHAN_TT[tt]}${here ? ' · thẻ dự án đang nằm ở cột này' : ''}${onMoveToStage ? '. Bấm để chuyển dự án sang cột này.' : ''}`;
+    return (
     <button
       type="button"
-      onClick={() => onMoveToStage?.(s.id)}
-      disabled={!onMoveToStage}
-      title={`${s.name} — ${NHAN_TT[tt]}${here ? ' · thẻ dự án đang nằm ở cột này' : ''}${onMoveToStage ? '. Bấm để chuyển dự án sang cột này.' : ''}`}
-      className={`${to ? 'h-7 w-7 text-[12px]' : 'h-5 w-5 text-[10px]'} shrink-0 rounded-full border-2 flex items-center justify-center font-bold transition-colors ${
-        onMoveToStage ? 'cursor-pointer' : 'cursor-default'
+      onClick={() => {
+        if (coTheTich) {
+          onDoiTrangThai(s.id, tt === 'xong' ? 'chua' : 'xong');
+          return;
+        }
+        onMoveToStage?.(s.id);
+      }}
+      disabled={disabled}
+      aria-pressed={coTheTich ? tt === 'xong' : undefined}
+      title={title}
+      className={`${to ? 'h-7 w-7 text-[12px]' : 'h-6 w-6 text-[11px]'} shrink-0 rounded-full border-2 flex items-center justify-center font-bold transition-colors ${
+        disabled ? 'cursor-default' : 'cursor-pointer'
       } ${
         tt === 'xong'
           ? 'border-emerald-500 bg-emerald-500 text-white'
           : tt === 'dang'
             ? 'border-transparent text-white'
-            : 'border-gray-300 bg-white text-gray-400'
+            : 'border-gray-300 bg-white text-gray-400 hover:border-emerald-400 hover:text-emerald-500'
       } ${here ? 'ring-2 ring-violet-400 ring-offset-1' : ''}`}
       style={tt === 'dang' ? { backgroundColor: s.color || '#3B82F6' } : undefined}
     >
       {tt === 'xong' ? '✓' : tt === 'dang' ? '●' : ''}
     </button>
-  );
+    );
+  };
 
   // Gom các cột LIÊN TIẾP cùng group_key thành một cột lớn. Danh sách đã sắp theo
   // order_index nên gom theo vị trí liền kề là đúng — không sắp lại lần nữa.
@@ -204,7 +220,7 @@ export default function PipelineStepper({
                     </span>
                     {nhieu && (
                       <span className="ml-auto whitespace-nowrap text-[9.5px] text-gray-400">
-                        {g.buoc.length} việc song song
+                        {g.buoc.filter(({ s }) => ttCua(s) === 'xong').length}/{g.buoc.length} xong
                       </span>
                     )}
                   </div>
@@ -225,34 +241,43 @@ export default function PipelineStepper({
                               className="absolute left-[-7px] top-1/2 h-0.5 w-[7px] bg-violet-200"
                               aria-hidden="true"
                             />
-                            {veCham(s, tt, here, false)}
-                            <span
-                              className={`min-w-0 flex-1 text-[11px] leading-tight ${
-                                tt === 'chua' ? 'text-gray-500' : 'font-semibold text-gray-900'
+                            {veCham(s, tt, here, false, { checkable: true })}
+                            <button
+                              type="button"
+                              onClick={() => onMoveToStage?.(s.id)}
+                              disabled={!onMoveToStage}
+                              className={`min-w-0 flex-1 text-left text-[11px] leading-tight ${
+                                onMoveToStage ? 'cursor-pointer hover:underline' : 'cursor-default'
+                              } ${
+                                tt === 'xong'
+                                  ? 'font-semibold text-emerald-700'
+                                  : tt === 'chua'
+                                    ? 'text-gray-500'
+                                    : 'font-semibold text-gray-900'
                               }`}
-                              title={s.name}
+                              title={onMoveToStage ? `${s.name} — bấm tên để chuyển thẻ sang cột này` : s.name}
                             >
                               {s.name}
+                            </button>
+                            <span
+                              className={`shrink-0 rounded-full px-1.5 py-px text-[9px] font-bold uppercase tracking-wide ${
+                                tt === 'xong'
+                                  ? 'bg-emerald-100 text-emerald-700'
+                                  : tt === 'dang'
+                                    ? 'bg-teal-100 text-teal-700'
+                                    : 'bg-gray-100 text-gray-400'
+                              }`}
+                            >
+                              {NHAN_TT_NGAN[tt]}
                             </span>
-                            {onDoiTrangThai && (
-                              <button
-                                type="button"
-                                onClick={() => onDoiTrangThai(s.id, KE_TIEP_TT[tt] || 'dang')}
-                                title="Bấm để đổi trạng thái việc song song này"
-                                className={`shrink-0 cursor-pointer rounded-full px-1.5 py-px text-[9px] font-bold uppercase tracking-wide transition-colors ${
-                                  tt === 'xong'
-                                    ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200'
-                                    : tt === 'dang'
-                                      ? 'bg-teal-100 text-teal-700 hover:bg-teal-200'
-                                      : 'bg-gray-100 text-gray-400 hover:bg-violet-100 hover:text-violet-600'
-                                }`}
-                              >
-                                {NHAN_TT_NGAN[tt]}
-                              </button>
-                            )}
                           </div>
                         );
                       })}
+                      {onDoiTrangThai && (
+                        <p className="pl-1 pt-0.5 text-[9px] leading-snug text-gray-400">
+                          Bấm vòng tròn để tích hoàn thành từng việc
+                        </p>
+                      )}
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 px-2.5 py-2.5">

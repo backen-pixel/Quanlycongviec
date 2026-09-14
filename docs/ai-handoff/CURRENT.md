@@ -1,10 +1,153 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-14 10:05 (UTC+7)
+Cập nhật: 2026-09-14 14:30 (UTC+7)
+
+## HCB Cánh kính / Cửa — bỏ chặn kéo cột
+
+Trạng thái: **SQL 611 + BE local.**
+
+Không còn bắt hoàn thành nhiệm vụ trước khi kéo Kanban Cánh kính/Cửa.
+Gate `assertSxKanbanAdvanceAllowed` bỏ qua hai phân loại này. Tủ bếp giữ chặn.
+
+Hoàn tác: revert `workshopStageAdvanceGate.js` + gán lại `blocks_stage_advance`.
+
+## HCB Cánh kính — kéo Tiếp nhận → sản xuất
+
+Trạng thái: **SQL 610 đã chạy; FE local.**
+
+Tài khoản quản lý Cánh kính (Nguyễn Nhật): kéo thẻ bị chặn vì 3 nhiệm vụ
+Tiếp nhận tick «Chặn chuyển giai đoạn» (mẫu 598). Đã tắt cờ chặn trên
+Cánh kính/Cửa cột Tiếp nhận. Kanban hiện hộp nhiệm vụ nếu còn chặn.
+
+Hoàn tác: gán lại `blocks_stage_advance=true` cho task/mẫu cột Tiếp nhận.
+
+## Bình luận SX — tin tải file không hiện 2 nút
+
+Trạng thái: **FE local, chưa commit.**
+
+Upload 1 file (TB-2026-817, `ANH PHÚC LONG AN - ĐƠN 4.xlsx`) chỉ 1 bản ghi
+`file_attachments` + 1 tin 📎; UI hiện tên file tải được *và* thẻ tải bên dưới.
+Tên trong pill chỉ còn in đậm; tải file ở chip/preview.
+
+Hoàn tác: revert `CommentsPanels.jsx` (`renderSystemCommentBody`).
+
+## HCB — đủ NV mặc định phân loại trên dự án
+
+Trạng thái: **SQL 609 đã chạy primary + backup; BE local.**
+
+Đơn HCB mới không còn cắt còn 1 phụ trách chính. Đơn đang thiếu đã được
+bổ sung đủ NV setup phân loại (Tủ bếp 20, Cánh kính 9) vào đội SX + tab
+Thành viên (role SX/VC). Công ty khác vẫn `primaryOnly`.
+
+Hoàn tác: xóa dòng staff/member vừa thêm (không đụng `is_primary` cũ).
+
+## HCB Cánh kính — hiện lại cột thanh toán
+
+Trạng thái: **SQL 608 đã chạy primary + backup; FE local.**
+
+Cột «Đợi thanh toán» / thu tiền / nợ quá hạn bị `group_key=cong_no` nên tab
+Sản xuất dời sang tab Công nợ. Gỡ group_key trên Cánh kính+Cửa; Tủ bếp giữ tab.
+
+Hoàn tác: gán lại `group_key='cong_no'` cho 3 cột đó.
+
+## Tab Công việc SX — Xong hết + hiện việc
+
+Trạng thái: **local, chưa commit.**
+
+Cột lớn (GIA CÔNG…) và từng cột nhỏ: nút **Xong hết** (tích hoàn thành
+hàng loạt). Nút **Hiện việc** / bấm tên cột nhỏ để mở danh sách nhiệm vụ
+thuộc nhóm đó (cháu).
+
+Hoàn tác: revert khối `sxPlanGroups` trong `CRMTasksTab.jsx`.
+
+## Quản lý NV — hạn kế hoạch SX (từ ngày lắp)
+
+Trạng thái: **local, chưa commit.**
+
+Thẻ `/sx/project-tasks` lấy hạn từ kế hoạch SX (panel indigo chi tiết dự án)
+khi nhiệm vụ chưa có deadline. Cột song song dùng hạn cột cha (`group_key`:
+Gia công → cabinet, Hoàn thiện → finishing, Tiếp nhận/KH/Duyệt → planning).
+
+Hoàn tác: revert `workTasks.js`, `sxInstallPlanKanbanDeadline.js`,
+`sxWorkshopSchedule.js` (BE+FE), `ProductionDetail.jsx`.
+
+## Tab Công việc SX — cha / con, ẩn cháu
+
+Trạng thái: **local, chưa commit.**
+
+Tab Công việc chi tiết dự án: cột lớn (Tiếp nhận, Gia công…) = cha;
+cột nhỏ (HT nhôm…) = con. Dòng nhiệm vụ (cháu) không hiện.
+
+Hoàn tác: revert `CRMTasksTab.jsx` (`sxPlanGroups`).
+
+## Quản lý NV xưởng — bấm thẻ vào chi tiết dự án
+
+Trạng thái: **local, chưa commit.**
+
+Thẻ trên `/sx/project-tasks` mở `/sx/projects/:id` (không còn nhảy CRM lead
+khi nhóm lấy source crm_task).
+
+Hoàn tác: revert `overviewCardHref` trong `ProjectTasksOverviewPage.jsx`.
+
+## Kanban SX — nút mở quản lý nhiệm vụ theo dự án
+
+Trạng thái: **local, chưa commit.**
+
+Nút ô vuông trên thẻ Kanban xưởng mở `/sx/project-tasks?project=…` và chỉ
+hiện nhiệm vụ của đúng dự án đó (chip «Dự án: mã»).
+
+Hoàn tác: revert `ProductionDashboard.jsx` (nút thẻ), `ProjectTasksOverviewPage.jsx`.
+
+## Work Unified Deadline — thẻ gọn, hạn nổi
+
+Trạng thái: **local, chưa commit.**
+
+View Deadline bỏ ĐA MODULE, deal, SĐT, badge CRM/SX/VC. Thẻ còn mã + tên,
+từng hạn SX/Giao/Lắp một dòng, rồi công đoạn · người phụ trách. Kanban/Planner
+giữ thẻ cũ.
+
+Hoàn tác: revert `WorkUnifiedOverviewPage.jsx` (`WorkKanbanCard` variant deadline).
+
+## Quản lý nhiệm vụ xưởng — cột theo hạn
+
+Trạng thái: **local, chưa commit.**
+
+`/sx/project-tasks` (và CRM/VC cùng trang): 6 cột Quá hạn / Hôm nay / Ngày mai /
+Trong tuần / Tuần sau / Chưa có hạn. Thẻ trong cột: mã dự án, tên việc, hạn,
+tiến độ n/N, người phụ trách. Hạn sau tuần sau gom vào «Tuần sau».
+
+Hoàn tác: revert `ProjectTasksOverviewPage.jsx`, `ProjectTasksFilterPanel.jsx`.
+
+## Ma trận gộp cột — hạn kế hoạch + người phụ trách cột
+
+Trạng thái: **local, chưa commit.**
+
+Panel «Kế hoạch SX» trên chi tiết khớp cột gộp (từng cột nhỏ + NV setup pipeline).
+Ô ma trận song song hiện hạn (tính từ ngày lắp) và người chịu trách nhiệm cột.
+
+Hoàn tác: revert `WorkshopInfoPanel` / `SxMaTranSongSong` / `sxKanbanStages` default_staff.
+
+## Chi tiết SX — bấm vòng tròn tích việc song song
+
+Trạng thái: **local, chưa commit.**
+
+Thanh tiến độ chi tiết: bấm vòng tròn việc song song để tích/bỏ hoàn thành;
+việc đã tích hiện ✓. Bấm tên cột vẫn chuyển thẻ. Ma trận Kanban dùng cùng bảng.
+
+Hoàn tác: revert `PipelineStepper.jsx`.
+
+## HCB Tủ bếp — mở Ban thành phẩm thành 3 cột
+
+Trạng thái: **đã chạy SQL 607 trên primary; backup chạy kèm 604 (thiếu group_key).**
+
+Cột «Ban thành phẩm» → **Chuẩn bị vật tư** (3 đơn giữ nguyên) + thêm **Đặt kính**, **Sơn**.
+Các cột sau (ĐANG SX THÙNG, HT NHÔM…) lùi thứ tự. `group_key` vẫn `gia_cong`.
+
+Hoàn tác: đổi tên lại Ban thành phẩm, xóa 2 cột Đặt kính/Sơn, dồn thẻ về cột 4.
 
 ## Work Unified — KPI không đổi khi bấm tab tiến độ
 
-Trạng thái: **local, chưa commit.**
+Trạng thái: **đã push main (`e14b41b0`).**
 
 Thẻ Đang thực hiện / Đúng tiến độ / Nguy cơ / Trễ luôn đếm trên cùng bộ lọc
 (công ty, NV, khu vực, hạn, tìm, công đoạn). Tab tiến độ chỉ lọc danh sách,

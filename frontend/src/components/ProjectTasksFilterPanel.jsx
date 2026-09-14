@@ -179,12 +179,15 @@ export default function ProjectTasksFilterPanel({
         {tab === 'status' && (
           <div className="py-2 space-y-3">
             <label className="block">
-              <span className={LABEL_CLS}>Tình trạng hạn</span>
+              <span className={LABEL_CLS}>Nhóm hạn</span>
               <select value={riskFilter} onChange={(event) => setRiskFilter(event.target.value)} className={SELECT_CLS}>
                 <option value="all">Tất cả</option>
-                <option value="normal">Đang thực hiện</option>
-                <option value="warning">Cảnh báo trong 3 ngày</option>
                 <option value="overdue">Quá hạn</option>
+                <option value="today">Hôm nay</option>
+                <option value="tomorrow">Ngày mai</option>
+                <option value="this_week">Trong tuần</option>
+                <option value="next_week">Tuần sau</option>
+                <option value="no_deadline">Chưa có hạn</option>
               </select>
             </label>
             <label className="block">

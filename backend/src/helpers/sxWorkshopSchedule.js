@@ -198,6 +198,31 @@ function endYmdForDeadlineGroup(plan, group) {
   return String(plan[key]?.endYmd || '').slice(0, 10);
 }
 
+const SX_GROUP_KEY_DEADLINE = {
+  tiep_nhan: 'planning',
+  ke_hoach: 'planning',
+  duyet: 'planning',
+  gia_cong: 'cabinet',
+  hoan_thien: 'finishing',
+  cong_no: null,
+};
+
+function sxStageDeadlineGroup(stage, siblingStages = null) {
+  const raw = String(stage?.deadline_group || '').trim();
+  if (raw) return raw;
+  const k = String(stage?.group_key || '').trim();
+  if (k && Object.prototype.hasOwnProperty.call(SX_GROUP_KEY_DEADLINE, k)) {
+    return SX_GROUP_KEY_DEADLINE[k] || '';
+  }
+  if (k && Array.isArray(siblingStages)) {
+    const sib = siblingStages.find((s) => (
+      String(s?.group_key || '').trim() === k && String(s?.deadline_group || '').trim()
+    ));
+    if (sib) return String(sib.deadline_group).trim();
+  }
+  return '';
+}
+
 module.exports = {
   resolveSxReceptionYmd,
   resolveSxReceptionDateForCompany,
@@ -213,4 +238,6 @@ module.exports = {
   resolveSxPlanInstallYmd,
   buildSxInstallBackPlan,
   endYmdForDeadlineGroup,
+  sxStageDeadlineGroup,
+  SX_GROUP_KEY_DEADLINE,
 };

@@ -9,6 +9,7 @@ const {
   resolveSxPlanInstallYmd,
   buildSxInstallBackPlan,
   endYmdForDeadlineGroup,
+  sxStageDeadlineGroup,
 } = require('./sxWorkshopSchedule');
 
 const AUTO_REASON = 'Tính từ ngày lắp (kế hoạch SX)';
@@ -18,8 +19,8 @@ function isAutoInstallPlanDeadlineReason(reason) {
   return !s || s === AUTO_REASON;
 }
 
-function computeSxInstallPlanDeadline(project, stage) {
-  const group = String(stage?.deadline_group || '').trim();
+function computeSxInstallPlanDeadline(project, stage, siblingStages = null) {
+  const group = sxStageDeadlineGroup(stage, siblingStages);
   if (!group) return null;
   const installYmd = resolveSxPlanInstallYmd(project);
   if (!installYmd) return null;

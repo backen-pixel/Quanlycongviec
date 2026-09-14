@@ -6,8 +6,9 @@ import { isAdminLike, isProductionAdmin } from '../lib/adminRole';
 import { findDefaultAdminCrmCompanyPhucDat } from '../lib/crmCompanyFilter';
 import { isMetallaOrHucabiCompanyId, productionWorkshopFilterCompanies } from '../lib/crossWorkshopProduction';
 import { isInstallVcStage } from '../lib/managementDashboardUtils';
-import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Globe, MapPin, Lock, Star, Paperclip, MessageSquare, User, Truck } from 'lucide-react';
+import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, GripVertical, Shield, Globe, MapPin, Lock, Star, Paperclip, MessageSquare, User, Truck, FileSpreadsheet } from 'lucide-react';
 import EvidenceFileTypesPicker from '../components/EvidenceFileTypesPicker';
+import GiaVonExcelModal from '../components/GiaVonExcelModal';
 import TemplateItemAssigneePicker from '../components/TemplateItemAssigneePicker';
 import { templateItemAssigneeIds, templateItemAssigneeCount } from '../lib/templateItemAssignees';
 import { formatEvidenceTypesShort, normalizeEvidenceFileTypes, checklistItemRequiresEvidence } from '../lib/evidenceFileTypes';
@@ -52,6 +53,8 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState({});
   const [editingTpl, setEditingTpl] = useState(null);
+  /** Mẫu đang mở hộp nhập Excel giá vốn (giá theo từng công đoạn — migration 606). */
+  const [giaVonTpl, setGiaVonTpl] = useState(null);
   const [newItem, setNewItem] = useState({});
   const [showAddTpl, setShowAddTpl] = useState(false);
   // Flow tuần tự: Công ty → Phân loại → Pipeline.
@@ -802,6 +805,13 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
 
   return (
     <div className="space-y-5 max-w-6xl">
+      {giaVonTpl && (
+        <GiaVonExcelModal
+          tpl={giaVonTpl}
+          onClose={() => setGiaVonTpl(null)}
+          onSaved={() => { setGiaVonTpl(null); load(); }}
+        />
+      )}
       {/* Header */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
@@ -1206,6 +1216,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
                     onToggleExpand={() => setExpanded((p) => ({ ...p, [tpl.id]: !p[tpl.id] }))}
                     editingTpl={editingTpl}
                     setEditingTpl={setEditingTpl}
+                    onMoGiaVon={() => setGiaVonTpl(tpl)}
                     updateTemplate={updateTemplate}
                     toggleDefault={toggleDefault}
                     deleteTemplate={deleteTemplate}
@@ -1268,7 +1279,7 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
 // ═══ Template Card with drag-drop items ═══
 function TemplateCard({
   tpl, stage, isDragging, dragHandleProps, fixedArea = '', expanded, onToggleExpand,
-  editingTpl, setEditingTpl, updateTemplate, toggleDefault, deleteTemplate,
+  editingTpl, setEditingTpl, updateTemplate, toggleDefault, deleteTemplate, onMoGiaVon,
   newItem, setNewItem, addItem, deleteItem,
   editingChecklist, setEditingChecklist, newCheckItem, setNewCheckItem,
   addChecklistItem, removeChecklistItem, updateChecklistItem,
@@ -1475,6 +1486,11 @@ function TemplateCard({
             {tpl.is_default && <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-medium shrink-0">⭐ Mặc định</span>}
             <span className="text-xs text-gray-400 shrink-0">{tpl.items?.length || 0} việc</span>
           </div>
+          <button type="button" onClick={(e) => { e.stopPropagation(); onMoGiaVon?.(); }}
+            className="p-1 text-gray-400 hover:text-emerald-600 cursor-pointer"
+            title="Nhập Excel giá vốn (chi phí / giá gia công) cho từng nhiệm vụ trong mẫu này">
+            <FileSpreadsheet className="h-3.5 w-3.5" />
+          </button>
           <button type="button" onClick={(e) => {
               e.stopPropagation();
               setEditingTpl({
@@ -1516,6 +1532,21 @@ function TemplateCard({
                         </div>
                         <span className="text-xs text-gray-400 w-5 shrink-0">{i + 1}.</span>
                         <span className="text-sm flex-1 min-w-0 truncate" title={item.title}>{item.title}</span>
+                        {(item.chi_phi != null || item.gia_gia_cong != null) && (
+                          <span
+                            className="shrink-0 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-emerald-700"
+                            title={[
+                              item.chi_phi != null ? `Chi phí: ${Number(item.chi_phi).toLocaleString('vi-VN')}đ` : null,
+                              item.gia_gia_cong != null ? `Giá gia công: ${Number(item.gia_gia_cong).toLocaleString('vi-VN')}đ` : null,
+                              item.don_vi_tinh ? `ĐVT: ${item.don_vi_tinh}` : null,
+                              item.ghi_chu_gia || null,
+                            ].filter(Boolean).join(' · ')}
+                          >
+                            {item.gia_gia_cong != null
+                              ? Number(item.gia_gia_cong).toLocaleString('vi-VN')
+                              : Number(item.chi_phi).toLocaleString('vi-VN')}đ
+                          </span>
+                        )}
                         {Array.isArray(item.checklist) && item.checklist.length > 0 && (
                           <span className="text-[10px] bg-emerald-50 text-emerald-600 px-1.5 py-0.5 rounded-full flex items-center gap-0.5">
                             <CheckSquare className="h-3 w-3" /> {item.checklist.length}

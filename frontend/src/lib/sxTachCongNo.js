@@ -2,8 +2,8 @@
  * Tách cột CÔNG NỢ khỏi bảng xưởng thành một tab riêng.
  *
  * Cột nào thuộc cột lớn «Công nợ» (production_pipeline_stages.group_key) thì dời sang
- * tab Công nợ. Vì bảng đã lọc cột theo Loại từ trước, mỗi loại tự ra đúng bộ cột công nợ
- * của nó — Tủ bếp 5 cột, Cánh kính 3 cột, Cửa 3 cột — không phải làm gì thêm.
+ * tab Công nợ. Tủ bếp: 5 cột công nợ sau «Đã giao». Cánh kính / Cửa: thu tiền,
+ * Đợi thanh toán, nợ quá hạn nằm trên bảng xưởng — không dời tab.
  *
  * Tab Công nợ vẫn là Kanban y hệt: cùng KanbanView, cùng thẻ, cùng kéo thả.
  * Khác duy nhất là bộ cột đưa vào.
@@ -25,8 +25,18 @@ function chuanHoaKhoa(s) {
     .replace(/\s+/g, '_');
 }
 
+function tenLoaiXuong(stage) {
+  return chuanHoaKhoa(stage?.workshop_type?.name);
+}
+
+/** Cánh kính / Cửa giữ cột thanh toán trên bảng xưởng (không dời sang tab Công nợ). */
 export function laCotCongNo(stage) {
-  return chuanHoaKhoa(stage?.group_key) === KHOA_CONG_NO;
+  if (chuanHoaKhoa(stage?.group_key) !== KHOA_CONG_NO) return false;
+  const loai = tenLoaiXuong(stage);
+  if (loai === 'canh_kinh' || loai === 'cua') return false;
+  const ten = chuanHoaKhoa(stage?.name);
+  if (ten === 'doi_thanh_toan' || ten.startsWith('no_qua_han')) return false;
+  return true;
 }
 
 /**

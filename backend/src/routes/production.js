@@ -3177,7 +3177,8 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
         recentComments: commentsRes.data || [],
         incidents: incidentsRes.error ? [] : (incidentsRes.data || []),
         workshopPipeline,
-        sxKanbanStages: sortedK.map((c) => ({
+        sxKanbanStages: await (async () => {
+          const slim = sortedK.map((c) => ({
           id: c.id,
           name: c.name,
           color: c.color,
@@ -3190,9 +3191,18 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
           is_switch_workshop_type: c.is_switch_workshop_type ?? false,
           target_workshop_type_id: c.target_workshop_type_id ?? null,
           target_workshop_type: c.target_workshop_type ?? null,
-          // Cot lon (giai doan noi tiep) — trang chi tiet dung de ve viec song song giong Kanban gop.
           group_key: c.group_key ?? null,
-        })),
+          deadline_group: c.deadline_group ?? null,
+          workshop_type_id: c.workshop_type_id ?? null,
+          }));
+          try {
+            const { enrichPipelineStagesWithDefaultStaff } = require('../helpers/productionWorkshopTypeStaff');
+            return await enrichPipelineStagesWithDefaultStaff(slim);
+          } catch (staffErr) {
+            console.warn('[production] sxKanbanStages default_staff:', staffErr.message);
+            return slim;
+          }
+        })(),
       },
     });
   } catch (e) {
@@ -3353,7 +3363,7 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       const colId = String(pipelineStageId);
       let { data: colRow } = await supabase
         .from('production_pipeline_stages')
-        .select('id, name, workflow_stage_id, bucket_slug, crm_target_stage_id, requires_deadline, deadline_group, counts_as_completed_revenue, counts_as_collected_revenue')
+        .select('id, name, workflow_stage_id, bucket_slug, crm_target_stage_id, requires_deadline, deadline_group, group_key, counts_as_completed_revenue, counts_as_collected_revenue')
         .eq('id', colId)
         .maybeSingle();
       if (!colRow) {
@@ -3381,7 +3391,15 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       if (!hasDeadlineInput) {
         try {
           const { computeSxInstallPlanDeadline } = require('../helpers/sxInstallPlanKanbanDeadline');
-          autoPlanDeadline = computeSxInstallPlanDeadline(project, colRow);
+          let siblingStages = null;
+          if (!String(colRow?.deadline_group || '').trim()) {
+            const { data: sibs } = await supabase
+              .from('production_pipeline_stages')
+              .select('id, deadline_group, group_key')
+              .eq('company_id', project.company_id);
+            siblingStages = sibs || [];
+          }
+          autoPlanDeadline = computeSxInstallPlanDeadline(project, colRow, siblingStages);
         } catch (planErr) {
           console.warn('[production/stage] install-plan deadline:', planErr.message);
         }
@@ -5071,6 +5089,135 @@ r.delete('/task-templates/:id', requirePermission('projects', 'edit'), async (re
   }
 });
 
+// ── GIÁ VỐN THEO CÔNG ĐOẠN (workshop_task_template_items — migration 606) ────
+// Mỗi dòng Excel giá vốn = một công đoạn. Giá gắn vào chính nhiệm vụ trong mẫu,
+// KHÔNG dùng products.cost_price — bảng đó là giá vốn theo mã hàng, khác hẳn.
+const GIA_VON_COT = ['chi_phi', 'gia_gia_cong', 'don_vi_tinh', 'ghi_chu_gia'];
+
+/** '1.250.000', '1,250,000', '1250000đ', 1250000 → 1250000. Không đọc được → null. */
+function doSoTien(v) {
+  if (v === null || v === undefined || v === '') return null;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  const raw = String(v).trim();
+  if (!raw) return null;
+  // Chỉ lấy CỤM SỐ ĐẦU TIÊN. Lọc toàn cục kiểu replace(/[^\d.,-]/g,'') sẽ nuốt luôn
+  // chữ số trong đơn vị: '85.000 đ/m2' → '85.0002' → sai thành 850002.
+  const khop = raw.match(/-?\d[\d.,\u00a0 ]*/);
+  if (!khop) return null;
+  let s2 = khop[0].replace(/[\s\u00a0]/g, '').replace(/[.,]+$/, '');
+  if (!s2) return null;
+  const phay = s2.lastIndexOf(',');
+  const cham = s2.lastIndexOf('.');
+  if (phay >= 0 && cham >= 0) {
+    // Dấu đứng sau là dấu thập phân; dấu kia là phân cách nghìn.
+    if (phay > cham) s2 = s2.replace(/\./g, '').replace(',', '.');
+    else s2 = s2.replace(/,/g, '');
+  } else if (phay >= 0) {
+    // Chỉ có dấu phẩy: 2 chữ số sau → thập phân, còn lại → phân cách nghìn (kiểu VN).
+    s2 = (s2.length - phay - 1) === 2 ? s2.replace(',', '.') : s2.replace(/,/g, '');
+  } else if (cham >= 0) {
+    s2 = (s2.length - cham - 1) === 2 ? s2 : s2.replace(/\./g, '');
+  }
+  const n = Number(s2);
+  return Number.isFinite(n) ? n : null;
+}
+
+function giaVonPatch(b) {
+  const out = {};
+  if (!b) return out;
+  if (b.chi_phi !== undefined) out.chi_phi = doSoTien(b.chi_phi);
+  if (b.gia_gia_cong !== undefined) out.gia_gia_cong = doSoTien(b.gia_gia_cong);
+  if (b.don_vi_tinh !== undefined) out.don_vi_tinh = String(b.don_vi_tinh || '').trim() || null;
+  if (b.ghi_chu_gia !== undefined) out.ghi_chu_gia = String(b.ghi_chu_gia || '').trim() || null;
+  return out;
+}
+
+const isGiaVonColumnMissing = (e) => /chi_phi|gia_gia_cong|don_vi_tinh|ghi_chu_gia/.test(
+  String(e?.message || '') + ' ' + String(e?.details || ''),
+) && /(does not exist|schema cache|could not find)/i.test(String(e?.message || '') + ' ' + String(e?.details || ''));
+
+/** Bỏ dấu + thường hoá để khớp tên công đoạn trong Excel với tên nhiệm vụ trong mẫu. */
+function chuanHoaTen(s) {
+  return String(s || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[đĐ]/g, 'd')
+    .toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+// PUT /production/task-templates/:tplId/gia-von — nhập hàng loạt từ file Excel đã đọc ở FE.
+// Body: { rows: [{ item_id?, title?, chi_phi, gia_gia_cong, don_vi_tinh?, ghi_chu_gia? }] }
+r.put('/task-templates/:tplId/gia-von', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    if (!rows.length) return res.status(400).json({ error: 'Không có dòng nào để nhập' });
+    if (rows.length > 500) return res.status(400).json({ error: 'Tối đa 500 dòng mỗi lần nhập' });
+
+    const { data: tpl } = await supabase
+      .from('workshop_task_templates')
+      .select('id, company_id')
+      .eq('id', req.params.tplId)
+      .maybeSingle();
+    const { assertCompanyOwnedRow } = require('../helpers/projectAccessScope');
+    if (!assertCompanyOwnedRow(req, res, tpl, { label: 'mẫu nhiệm vụ' })) return;
+
+    const { data: items, error: itErr } = await supabase
+      .from('workshop_task_template_items')
+      .select('id, title')
+      .eq('template_id', req.params.tplId);
+    if (itErr) throw itErr;
+
+    const theoId = new Map((items || []).map((i) => [String(i.id), i]));
+    const theoTen = new Map();
+    (items || []).forEach((i) => {
+      const k = chuanHoaTen(i.title);
+      // Tên trùng nhau trong cùng mẫu → không đoán, đánh dấu nhập nhằng.
+      if (theoTen.has(k)) theoTen.set(k, '__trung__');
+      else theoTen.set(k, i);
+    });
+
+    const capNhat = [];
+    const khongKhop = [];
+    const tenTrung = [];
+    rows.forEach((rw, i) => {
+      const it = rw?.item_id ? theoId.get(String(rw.item_id)) : theoTen.get(chuanHoaTen(rw?.title));
+      if (it === '__trung__') { tenTrung.push(rw?.title || `dòng ${i + 1}`); return; }
+      if (!it) { khongKhop.push(rw?.title || `dòng ${i + 1}`); return; }
+      const patch = giaVonPatch(rw);
+      if (!Object.keys(patch).length) return;
+      capNhat.push({ id: it.id, title: it.title, patch });
+    });
+
+    let soDong = 0;
+    const now = new Date().toISOString();
+    for (const c of capNhat) {
+      const { error } = await supabase
+        .from('workshop_task_template_items')
+        .update({ ...c.patch, gia_cap_nhat_luc: now, gia_cap_nhat_boi: req.user?.userId || null })
+        .eq('id', c.id);
+      if (error) {
+        if (isGiaVonColumnMissing(error)) {
+          return res.status(503).json({
+            error: 'Database chưa có cột giá vốn. Chạy database/606_task_template_gia_von.sql trên Supabase rồi thử lại.',
+            code: 'db_migration_gia_von',
+          });
+        }
+        throw error;
+      }
+      soDong += 1;
+    }
+
+    res.json({
+      da_cap_nhat: soDong,
+      khong_khop: khongKhop,
+      ten_trung: tenTrung,
+      cac_nhiem_vu: capNhat.map((c) => c.title),
+    });
+  } catch (e) {
+    console.error('[production/task-templates/gia-von]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.post('/task-templates/:tplId/items', requirePermission('projects', 'edit'), async (req, res) => {
   try {
     const { data: tpl } = await supabase
@@ -5108,6 +5255,7 @@ r.post('/task-templates/:tplId/items', requirePermission('projects', 'edit'), as
         || (Array.isArray(b.required_evidence_file_types) && b.required_evidence_file_types.length > 0),
       required_evidence_file_types: Array.isArray(b.required_evidence_file_types) ? b.required_evidence_file_types : [],
       requires_quick_verdict: !!b.requires_quick_verdict,
+      ...giaVonPatch(b),
       ...templateItemAssigneePatch(b),
     };
     let { data, error } = await supabase
@@ -5166,6 +5314,7 @@ r.put('/task-templates/:tplId/items/:itemId', requirePermission('projects', 'edi
       'completion_requires_file_or_note', 'required_evidence_file_types', 'requires_quick_verdict'].forEach((f) => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
+    Object.assign(update, giaVonPatch(req.body));
     Object.assign(update, templateItemAssigneePatch(req.body));
     if (req.body.executor_company_id === '' || req.body.executor_company_id === null) {
       update.executor_company_id = null;

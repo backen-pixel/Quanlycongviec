@@ -121,7 +121,18 @@ function WorkUnifiedListProjectLink({ it }) {
   );
 }
 
-function WorkKanbanCard({ it }) {
+function deadlineDateTone(raw, forecast) {
+  if (!raw) return 'text-gray-400';
+  const t = new Date(raw);
+  if (!Number.isFinite(t.getTime())) return 'text-gray-400';
+  const today = startOfLocalDay(new Date());
+  const diff = Math.floor((startOfLocalDay(t).getTime() - today.getTime()) / 86400000);
+  if (diff < 0 || forecast === 'late') return 'text-red-600';
+  if (diff === 0 || forecast === 'at_risk') return 'text-amber-600';
+  return 'text-gray-800';
+}
+
+function WorkKanbanCard({ it, variant = 'default' }) {
   const modules = [
     it.has_crm && { key: 'crm', label: 'CRM' },
     it.has_sx && { key: 'sx', label: 'SX' },
@@ -139,6 +150,47 @@ function WorkKanbanCard({ it }) {
   const overdue = it.forecast === 'late';
   const atRisk = it.forecast === 'at_risk';
   const dateTone = overdue ? 'text-red-600' : atRisk ? 'text-amber-600' : 'text-gray-500';
+
+  if (variant === 'deadline') {
+    const dateRows = [
+      it.production_deadline && { key: 'sx', label: 'Hạn SX', raw: it.production_deadline, chip: 'bg-emerald-50 text-emerald-800' },
+      it.delivery_date && { key: 'giao', label: 'Giao', raw: it.delivery_date, chip: 'bg-amber-50 text-amber-800' },
+      it.install_date && { key: 'lap', label: 'Lắp', raw: it.install_date, chip: 'bg-violet-50 text-violet-800' },
+    ].filter(Boolean);
+    const innerBits = [it.current_stage_label, people[0]].filter(Boolean);
+    return (
+      <Link
+        to={workUnifiedPath(it.id)}
+        data-wu-open-tab={it.id}
+        title="Chuột phải để mở tab mới"
+        className="block rounded-lg border border-gray-100 bg-white px-2.5 py-2 shadow-sm hover:shadow-md hover:border-gray-200 transition-shadow space-y-1.5"
+      >
+        <div className="min-w-0">
+          <p className="text-[11px] font-bold text-violet-700 truncate">{it.code}</p>
+          <p className="text-sm font-bold text-gray-900 leading-snug line-clamp-2" title={it.name}>{it.name}</p>
+        </div>
+        {dateRows.length > 0 ? (
+          <div className="space-y-1">
+            {dateRows.map((row) => (
+              <div key={row.key} className="flex items-center justify-between gap-2">
+                <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded ${row.chip}`}>{row.label}</span>
+                <span className={`text-sm font-bold tabular-nums ${deadlineDateTone(row.raw, it.forecast)}`}>
+                  {shortDate(row.raw)}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-[11px] text-gray-400">Chưa có hạn SX / giao / lắp</p>
+        )}
+        {innerBits.length > 0 && (
+          <p className="text-[11px] text-gray-600 leading-snug line-clamp-2" title={innerBits.join(' · ')}>
+            {innerBits.join(' · ')}
+          </p>
+        )}
+      </Link>
+    );
+  }
 
   return (
     <Link
@@ -196,7 +248,7 @@ function WorkKanbanCard({ it }) {
 }
 
 /** 1 cột Kanban — tự quản ref cuộn riêng để ảo hoá (@tanstack/react-virtual) khi cột có nhiều thẻ (>=8). */
-function WorkKanbanColumn({ col }) {
+function WorkKanbanColumn({ col, variant = 'default' }) {
   const scrollRef = useRef(null);
   // Chỉ mount KanbanColumnVirtualList sau khi scrollRef đã gắn vào DOM (tick kế tiếp) —
   // tránh useVirtualizer khởi tạo lúc scrollRef.current còn null, khiến getVirtualItems() rỗng.
@@ -205,7 +257,9 @@ function WorkKanbanColumn({ col }) {
   return (
     <div
       data-col-slug={col.slug}
-      className="flex flex-col flex-shrink-0 w-[260px] h-full min-h-[28rem] rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden"
+      className={`flex flex-col flex-shrink-0 h-full min-h-[28rem] rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden ${
+        variant === 'deadline' ? 'w-[280px]' : 'w-[260px]'
+      }`}
     >
       <div className="h-1 w-full shrink-0" style={{ backgroundColor: col.color }} aria-hidden />
       <div className="flex items-center justify-between gap-2 px-3 py-2 bg-white border-b border-gray-100 shrink-0">
@@ -233,7 +287,7 @@ function WorkKanbanColumn({ col }) {
             items={col.items}
             columnScrollRef={scrollRef}
             compact
-            renderCard={(it) => <WorkKanbanCard it={it} />}
+            renderCard={(it) => <WorkKanbanCard it={it} variant={variant} />}
           />
         ) : null}
       </div>
@@ -1232,7 +1286,7 @@ export default function WorkUnifiedOverviewPage() {
             ) : (
               <div ref={viewMode === 'kanban' ? kanbanBoardRef : undefined} className="flex gap-3 overflow-x-auto h-full min-h-[28rem] items-stretch">
                 {(viewMode === 'kanban' ? kanbanColumns : viewMode === 'deadline' ? deadlineColumns : plannerColumns).map((col) => (
-                  <WorkKanbanColumn key={col.slug} col={col} />
+                  <WorkKanbanColumn key={col.slug} col={col} variant={viewMode === 'deadline' ? 'deadline' : 'default'} />
                 ))}
               </div>
             )}

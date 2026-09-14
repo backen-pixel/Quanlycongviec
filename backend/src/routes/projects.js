@@ -2367,10 +2367,18 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
         if (sxRow?.sx_kanban_column_id && isAutoInstallPlanDeadlineReason(sxRow.sx_kanban_deadline_reason)) {
           const { data: sxCol } = await supabase
             .from('production_pipeline_stages')
-            .select('id, deadline_group')
+            .select('id, deadline_group, group_key, company_id')
             .eq('id', sxRow.sx_kanban_column_id)
             .maybeSingle();
-          const computed = computeSxInstallPlanDeadline(sxRow, sxCol);
+          let siblingStages = null;
+          if (sxCol && !String(sxCol.deadline_group || '').trim()) {
+            const { data: sibs } = await supabase
+              .from('production_pipeline_stages')
+              .select('id, deadline_group, group_key')
+              .eq('company_id', sxRow.company_id);
+            siblingStages = sibs || [];
+          }
+          const computed = computeSxInstallPlanDeadline(sxRow, sxCol, siblingStages);
           if (computed?.iso) {
             await supabase
               .from('projects')

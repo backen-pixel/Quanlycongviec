@@ -84,6 +84,28 @@ async function resolveTargetSxColumn(targetColId) {
   return fetchSxColumnById(targetColId);
 }
 
+function foldTenLoai(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase()
+    .trim();
+}
+
+/** Cánh kính / Cửa: kéo cột tự do, không bắt hoàn thành nhiệm vụ. */
+async function laLoaiKhongChanKeo(workshopTypeId) {
+  if (!workshopTypeId) return false;
+  const { data } = await supabase
+    .from('workshop_project_types')
+    .select('name')
+    .eq('id', workshopTypeId)
+    .maybeSingle();
+  const n = foldTenLoai(data?.name);
+  return n === 'canh kinh' || n === 'cua';
+}
+
 function shouldSkipGate(currentCol, targetCol) {
   if (!currentCol?.id) return true;
   if (!targetCol?.id) return true;
@@ -113,6 +135,12 @@ async function assertSxKanbanAdvanceAllowed({ projectId, targetColId, currentCol
     if (!currentCol) currentCol = await resolveCurrentSxColumn(projectId);
 
     if (shouldSkipGate(currentCol, targetCol)) return { ok: true };
+    if (
+      await laLoaiKhongChanKeo(currentCol.workshop_type_id)
+      || await laLoaiKhongChanKeo(targetCol.workshop_type_id)
+    ) {
+      return { ok: true };
+    }
 
     // (1) crm_tasks sx_* gắn cột hiện tại + cờ chặn — chưa completed/cancelled.
     const blockingCrm = [];

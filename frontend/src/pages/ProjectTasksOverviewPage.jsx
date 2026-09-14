@@ -3,7 +3,7 @@ import {
 } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
-  AlertTriangle, Bell, Building2, CheckCircle2, Clock3, Factory, Loader2, RefreshCw, Search, Target, Truck, X,
+  AlertTriangle, Bell, Building2, CalendarClock, CalendarDays, CalendarOff, Clock3, Factory, Loader2, RefreshCw, Search, Sun, Target, Truck, X,
 } from 'lucide-react';
 import api from '../lib/api';
 import { canSendTaskRemind, getDeepLink } from '../components/UnifiedTaskRow';
@@ -14,9 +14,8 @@ import { useAuth } from '../lib/auth';
 import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
 import { peekCompaniesPrefetch, prefetchCompanies } from '../lib/companiesPrefetch';
 import { resolveDefaultCrmAdminCompanyId, setStoredCrmFilterCompanyId } from '../lib/crmCompanyFilter';
+import { crmDeadlineBucketFromTs } from '../lib/crmLeadDeadlineDisplay';
 import { avatarColor, formatDate, getStaffInitials } from '../lib/utils';
-
-const WARNING_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
 
 const MODULES = [
   { key: 'crm', label: 'CRM', icon: Target, kinds: new Set(['CRM-Deal', 'CRM-Lead']) },
@@ -26,41 +25,75 @@ const MODULES = [
 
 const COLUMNS = [
   {
-    key: 'normal',
-    label: 'Đang thực hiện',
-    icon: CheckCircle2,
-    header: 'bg-blue-50 text-blue-800 border-blue-100',
-    dot: 'bg-blue-500',
-    empty: 'Không có nhiệm vụ đang thực hiện',
-  },
-  {
-    key: 'warning',
-    label: 'Cảnh báo',
-    icon: Clock3,
-    header: 'bg-amber-50 text-amber-800 border-amber-100',
-    dot: 'bg-amber-500',
-    empty: 'Không có nhiệm vụ hạn trong 3 ngày',
-  },
-  {
     key: 'overdue',
     label: 'Quá hạn',
     icon: AlertTriangle,
     header: 'bg-red-50 text-red-800 border-red-100',
-    dot: 'bg-red-500',
+    dateCls: 'text-red-600',
+    kpiCls: 'text-red-600',
     empty: 'Không có nhiệm vụ quá hạn',
+  },
+  {
+    key: 'today',
+    label: 'Hôm nay',
+    icon: Sun,
+    header: 'bg-orange-50 text-orange-800 border-orange-100',
+    dateCls: 'text-orange-700',
+    kpiCls: 'text-orange-600',
+    empty: 'Không có nhiệm vụ hạn hôm nay',
+  },
+  {
+    key: 'tomorrow',
+    label: 'Ngày mai',
+    icon: Clock3,
+    header: 'bg-amber-50 text-amber-800 border-amber-100',
+    dateCls: 'text-amber-700',
+    kpiCls: 'text-amber-600',
+    empty: 'Không có nhiệm vụ hạn ngày mai',
+  },
+  {
+    key: 'this_week',
+    label: 'Trong tuần',
+    icon: CalendarDays,
+    header: 'bg-sky-50 text-sky-800 border-sky-100',
+    dateCls: 'text-sky-700',
+    kpiCls: 'text-sky-600',
+    empty: 'Không có nhiệm vụ hạn trong tuần',
+  },
+  {
+    key: 'next_week',
+    label: 'Tuần sau',
+    icon: CalendarClock,
+    header: 'bg-teal-50 text-teal-800 border-teal-100',
+    dateCls: 'text-teal-700',
+    kpiCls: 'text-teal-600',
+    empty: 'Không có nhiệm vụ hạn tuần sau',
+  },
+  {
+    key: 'no_deadline',
+    label: 'Chưa có hạn',
+    icon: CalendarOff,
+    header: 'bg-slate-50 text-slate-700 border-slate-200',
+    dateCls: 'text-slate-400',
+    kpiCls: 'text-slate-500',
+    empty: 'Không có nhiệm vụ chưa có hạn',
   },
 ];
 
-function moduleOf(task) {
-  return MODULES.find((module) => module.kinds.has(String(task?.task_kind || ''))) || null;
+const COLUMN_BY_KEY = Object.fromEntries(COLUMNS.map((column) => [column.key, column]));
+
+function deadlineBucketOf(task, nowMs = Date.now()) {
+  const dueMs = task?.deadline ? new Date(task.deadline).getTime() : null;
+  if (dueMs == null || !Number.isFinite(dueMs)) return 'no_deadline';
+  const raw = crmDeadlineBucketFromTs(dueMs, null, nowMs);
+  if (raw === 'overdue' || raw === 'today' || raw === 'tomorrow' || raw === 'this_week' || raw === 'no_deadline') {
+    return raw;
+  }
+  return 'next_week';
 }
 
-function riskOf(task, nowMs) {
-  if (!task?.deadline) return 'normal';
-  const dueMs = new Date(task.deadline).getTime();
-  if (!Number.isFinite(dueMs)) return 'normal';
-  if (dueMs < nowMs) return 'overdue';
-  return dueMs - nowMs <= WARNING_WINDOW_MS ? 'warning' : 'normal';
+function moduleOf(task) {
+  return MODULES.find((module) => module.kinds.has(String(task?.task_kind || ''))) || null;
 }
 
 function projectLabel(task) {
@@ -70,13 +103,31 @@ function projectLabel(task) {
   return code || name || task?.lead_title || 'Chưa gắn dự án';
 }
 
-const TaskCard = memo(function TaskCard({ task, canRemind }) {
+function overviewCardHref(task) {
+  const projectId = String(task?.project_id || '').trim();
+  const moduleKey = task?._module?.key || '';
+  if (projectId) {
+    if (moduleKey === 'vc') return `/vc/projects/${projectId}`;
+    if (moduleKey === 'crm' && task.lead_id) return `/crm/leads/${task.lead_id}`;
+    return `/sx/projects/${projectId}`;
+  }
+  if (task?.lead_id) return `/crm/leads/${task.lead_id}`;
+  return getDeepLink(task);
+}
+
+const TaskCard = memo(function TaskCard({ task, canRemind, showModule }) {
   const [reminding, setReminding] = useState(false);
   const [reminded, setReminded] = useState(false);
-  const href = getDeepLink(task);
+  const href = overviewCardHref(task);
   const responsibleName = task.assignee_name || task.effective_assignee_name || '';
   const module = task._module;
-  const risk = task._risk;
+  const bucket = COLUMN_BY_KEY[task._bucket] || COLUMN_BY_KEY.no_deadline;
+  const completed = Number(task.child_completed || 0);
+  const total = Number(task.child_total || 0);
+  const pct = total ? Math.round((completed / total) * 100) : 0;
+  const projectCode = String(task.project_code || '').trim();
+  const projectName = String(task.project_name || task.lead_title || '').trim();
+  const placeBits = [task.company_name, task.region_name].filter(Boolean).join(' · ');
 
   const handleRemind = async (event) => {
     event.preventDefault();
@@ -105,69 +156,69 @@ const TaskCard = memo(function TaskCard({ task, canRemind }) {
 
   const body = (
     <>
-      <div className="flex items-center gap-1.5 mb-1.5">
-        <span className={`h-1.5 w-1.5 rounded-full ${
-          risk === 'overdue' ? 'bg-red-500' : risk === 'warning' ? 'bg-amber-500' : 'bg-blue-500'
-        }`}
-        />
-        <span className="text-[9px] font-bold uppercase tracking-wide text-gray-500">{module?.label}</span>
-        {task.deadline && (
-          <span className={`ml-auto inline-flex items-center gap-1 text-[10px] font-medium ${
-            risk === 'overdue' ? 'text-red-600' : risk === 'warning' ? 'text-amber-700' : 'text-gray-500'
-          }`}
-          >
-            <Clock3 className="h-3 w-3" />
-            {formatDate(task.deadline)}
-          </span>
-        )}
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0">
+            {showModule && (
+              <span className="text-[9px] font-bold uppercase tracking-wide text-gray-400 shrink-0">
+                {module?.label}
+              </span>
+            )}
+            {projectCode ? (
+              <span className="text-[11px] font-semibold text-teal-700 truncate">{projectCode}</span>
+            ) : (
+              <span className="text-[11px] text-gray-400">Chưa có mã</span>
+            )}
+          </div>
+          <h3 className="text-sm font-semibold text-gray-900 leading-snug line-clamp-2 mt-0.5">{task.title}</h3>
+        </div>
+        <span className={`shrink-0 text-[10px] font-semibold tabular-nums ${bucket.dateCls}`}>
+          {task.deadline ? formatDate(task.deadline) : '—'}
+        </span>
       </div>
-      <h3 className="text-sm font-semibold text-gray-900 line-clamp-2">{task.title}</h3>
-      <p className="text-[11px] text-gray-500 truncate mt-1">{projectLabel(task)}</p>
-      <div className="mt-2">
-        <div className="flex items-center justify-between gap-2 text-[10px]">
-          <span className="font-semibold text-gray-700">
-            {task.child_completed || 0}/{task.child_total || 0} nhiệm vụ
-          </span>
-          <span className="text-gray-400">Tiến độ</span>
+      {projectName ? (
+        <p className="text-[11px] text-gray-600 truncate mt-1" title={projectLabel(task)}>{projectName}</p>
+      ) : (
+        <p className="text-[11px] text-gray-400 truncate mt-1">Chưa gắn dự án</p>
+      )}
+      {placeBits ? (
+        <p className="text-[10px] text-gray-400 truncate">{placeBits}</p>
+      ) : null}
+      <div className="mt-2 flex items-center gap-2">
+        <div className="h-1.5 flex-1 rounded-full bg-gray-100 overflow-hidden">
+          <div className="h-full rounded-full bg-emerald-500" style={{ width: `${pct}%` }} />
         </div>
-        <div className="h-1.5 rounded-full bg-gray-100 overflow-hidden mt-1">
-          <div
-            className="h-full rounded-full bg-emerald-500"
-            style={{
-              width: `${task.child_total
-                ? Math.round(((task.child_completed || 0) / task.child_total) * 100)
-                : 0}%`,
-            }}
-          />
-        </div>
+        <span className="text-[10px] font-semibold tabular-nums text-gray-600 shrink-0">
+          {completed}/{total}
+        </span>
       </div>
     </>
+  );
+
+  const personRow = responsibleName ? (
+    <div className="flex items-center gap-1.5 min-w-0 flex-1" title={responsibleName}>
+      <span
+        className="h-6 w-6 rounded-full text-[8px] font-bold text-white flex items-center justify-center shrink-0"
+        style={{ backgroundColor: avatarColor(responsibleName) }}
+      >
+        {getStaffInitials(responsibleName)}
+      </span>
+      <span className="text-[11px] font-medium leading-tight text-gray-700 truncate">
+        {responsibleName}
+      </span>
+    </div>
+  ) : (
+    <span className="text-[11px] text-gray-400">Chưa có người phụ trách</span>
   );
 
   return (
     <article
       data-project-task-card={task.id}
-      className="rounded-lg border border-gray-100 bg-white p-3 shadow-sm hover:border-blue-200 hover:shadow transition-all"
+      className={`rounded-lg border border-gray-100 bg-white p-2.5 shadow-sm hover:border-blue-200 hover:shadow transition-all ${href ? 'cursor-pointer' : ''}`}
     >
       {href ? <Link to={href} className="block">{body}</Link> : body}
-      <div className="mt-2 min-h-7 flex items-center gap-2">
-        {responsibleName ? (
-          <div className="flex items-center gap-1.5 min-w-0 flex-1" title={responsibleName}>
-            <span
-              className="h-6 w-6 rounded-full text-[8px] font-bold text-white flex items-center justify-center shrink-0"
-              style={{ backgroundColor: avatarColor(responsibleName) }}
-            >
-              {getStaffInitials(responsibleName)}
-            </span>
-            <span className="min-w-0">
-              <span className="block text-[11px] font-semibold leading-tight text-gray-700 line-clamp-2">
-                {responsibleName}
-              </span>
-            </span>
-          </div>
-        ) : (
-          <span className="text-[11px] text-gray-400">Chưa có người phụ trách</span>
-        )}
+      <div className="mt-2 pt-2 border-t border-gray-50 min-h-7 flex items-center gap-2">
+        {href ? <Link to={href} className="flex items-center gap-1.5 min-w-0 flex-1">{personRow}</Link> : personRow}
         {canRemind && (
           <button
             type="button"
@@ -177,7 +228,7 @@ const TaskCard = memo(function TaskCard({ task, canRemind }) {
             title="Gửi thông báo nhắc người chịu trách nhiệm hoàn thành danh mục này"
           >
             {reminding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bell className="h-3 w-3" />}
-            {reminded ? 'Đã nhắc' : reminding ? 'Đang gửi' : 'Nhắc nhở'}
+            {reminded ? 'Đã nhắc' : reminding ? 'Đang gửi' : 'Nhắc'}
           </button>
         )}
       </div>
@@ -186,25 +237,25 @@ const TaskCard = memo(function TaskCard({ task, canRemind }) {
 });
 
 const KanbanColumn = memo(function KanbanColumn({
-  column, tasks, focused, canRemind,
+  column, tasks, focused, canRemind, showModule,
 }) {
   const Icon = column.icon;
   const scrollRef = useRef(null);
   const [scrollReady, setScrollReady] = useState(false);
   useEffect(() => { setScrollReady(true); }, []);
   const renderTaskCard = useCallback(
-    (task) => <TaskCard task={task} canRemind={canRemind} />,
-    [canRemind],
+    (task) => <TaskCard task={task} canRemind={canRemind} showModule={showModule} />,
+    [canRemind, showModule],
   );
   return (
-    <section className={`rounded-xl border bg-gray-50/70 overflow-hidden min-w-0 ${
+    <section className={`rounded-xl border bg-gray-50/70 overflow-hidden min-w-[260px] w-[280px] shrink-0 ${
       focused ? 'ring-2 ring-red-300 border-red-200' : 'border-gray-100'
     }`}
     >
-      <header className={`px-3 py-3 flex items-center gap-2 border-b ${column.header}`}>
-        <Icon className="h-4 w-4" />
-        <h2 className="text-sm font-bold">{column.label}</h2>
-        <span className="ml-auto text-[11px] font-bold bg-white/80 rounded-full px-2 py-0.5">{tasks.length}</span>
+      <header className={`px-3 py-2.5 flex items-center gap-2 border-b ${column.header}`}>
+        <Icon className="h-4 w-4 shrink-0" />
+        <h2 className="text-sm font-bold truncate">{column.label}</h2>
+        <span className="ml-auto text-[11px] font-bold bg-white/80 rounded-full px-2 py-0.5 tabular-nums">{tasks.length}</span>
       </header>
       <div ref={scrollRef} className="p-2 max-h-[calc(100vh-330px)] min-h-72 overflow-y-auto [scrollbar-width:thin]">
         {tasks.length ? (scrollReady && (
@@ -217,7 +268,7 @@ const KanbanColumn = memo(function KanbanColumn({
           />
         )) : (
           <div className="py-12 text-center">
-            <span className={`mx-auto mb-2 block h-2 w-2 rounded-full ${column.dot}`} />
+            <Icon className="mx-auto mb-2 h-4 w-4 text-gray-300" />
             <p className="text-xs text-gray-400">{column.empty}</p>
           </div>
         )}
@@ -243,7 +294,14 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
   const fixedModuleConfig = MODULES.find((module) => module.key === fixedModuleKey) || null;
   const FixedModuleIcon = fixedModuleConfig?.icon;
   const moduleParam = searchParams.get('module') || 'all';
-  const focusRisk = searchParams.get('risk') || '';
+  const projectFilter = String(searchParams.get('project') || '').trim();
+  const projectCodeParam = String(searchParams.get('code') || '').trim();
+  const focusRisk = (() => {
+    const raw = searchParams.get('risk') || '';
+    if (raw === 'warning') return 'today';
+    if (raw === 'normal') return 'this_week';
+    return raw;
+  })();
   const activeModule = fixedModuleKey
     || (moduleParam === 'all' || MODULES.some((m) => m.key === moduleParam) ? moduleParam : 'all');
   const [tasks, setTasks] = useState([]);
@@ -271,7 +329,13 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     setCompanyFilter(next);
     setRegionFilter('');
     if (canPickCompany && next) setStoredCrmFilterCompanyId(next);
-  }, [canPickCompany]);
+    if (projectFilter) {
+      const nextParams = new URLSearchParams(searchParams);
+      nextParams.delete('project');
+      nextParams.delete('code');
+      setSearchParams(nextParams, { replace: true });
+    }
+  }, [canPickCompany, projectFilter, searchParams, setSearchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -299,7 +363,8 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     try {
       const params = {};
       if (fixedModuleKey) params.module = fixedModuleKey;
-      if (companyFilter) params.company_id = companyFilter;
+      if (projectFilter) params.project_id = projectFilter;
+      else if (companyFilter) params.company_id = companyFilter;
       const res = await api.get('/work-tasks/project-overview', { params });
       setTasks(res.data?.tasks || []);
       setStats(res.data?.stats || { total: 0, warning: 0, overdue: 0, by_module: {} });
@@ -309,7 +374,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     } finally {
       setLoading(false);
     }
-  }, [companiesReady, companyFilter, fixedModuleKey]);
+  }, [companiesReady, companyFilter, fixedModuleKey, projectFilter]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -320,7 +385,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
         ...task,
         id: task.unified_id,
         _module: moduleOf(task),
-        _risk: riskOf(task, nowMs),
+        _bucket: deadlineBucketOf(task, nowMs),
       }))
       .filter((task) => task._module);
   }, [tasks]);
@@ -371,7 +436,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
   const normalizedQuery = query.trim().toLowerCase();
   const visibleTasks = useMemo(() => prepared.filter((task) => {
     if (activeModule !== 'all' && task._module.key !== activeModule) return false;
-    if (riskFilter !== 'all' && task._risk !== riskFilter) return false;
+    if (riskFilter !== 'all' && task._bucket !== riskFilter) return false;
     if (progressFilter === 'not_started' && Number(task.child_completed || 0) !== 0) return false;
     if (progressFilter === 'in_progress' && (
       Number(task.child_completed || 0) <= 0
@@ -379,6 +444,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     )) return false;
     if (regionFilter && String(task.region_id || '') !== regionFilter) return false;
     if (assigneeFilter && String(task.effective_assignee_id || '') !== assigneeFilter) return false;
+    if (projectFilter && String(task.project_id || '') !== projectFilter) return false;
     const deadlineMs = task.deadline ? new Date(task.deadline).getTime() : null;
     if (deadlineFrom && (!deadlineMs || deadlineMs < new Date(`${deadlineFrom}T00:00:00`).getTime())) return false;
     if (deadlineTo && (!deadlineMs || deadlineMs > new Date(`${deadlineTo}T23:59:59.999`).getTime())) return false;
@@ -389,21 +455,20 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     ].filter(Boolean).join(' ').toLowerCase().includes(normalizedQuery);
   }), [
     activeModule, assigneeFilter, deadlineFrom, deadlineTo, normalizedQuery,
-    prepared, progressFilter, regionFilter, riskFilter,
+    prepared, progressFilter, projectFilter, regionFilter, riskFilter,
   ]);
 
-  const tasksByRisk = useMemo(() => Object.fromEntries(
+  const tasksByBucket = useMemo(() => Object.fromEntries(
     COLUMNS.map((column) => [
       column.key,
-      visibleTasks.filter((task) => task._risk === column.key),
+      visibleTasks.filter((task) => task._bucket === column.key),
     ]),
   ), [visibleTasks]);
 
   const visibleStats = useMemo(() => ({
     total: visibleTasks.length,
-    warning: tasksByRisk.warning?.length || 0,
-    overdue: tasksByRisk.overdue?.length || 0,
-  }), [tasksByRisk, visibleTasks.length]);
+    ...Object.fromEntries(COLUMNS.map((column) => [column.key, tasksByBucket[column.key]?.length || 0])),
+  }), [tasksByBucket, visibleTasks.length]);
 
   const activeAdvancedFilters = [
     riskFilter !== 'all',
@@ -412,7 +477,15 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     !!assigneeFilter,
     !!deadlineFrom,
     !!deadlineTo,
+    !!projectFilter,
   ].filter(Boolean).length;
+
+  const clearProjectFilter = () => {
+    const next = new URLSearchParams(searchParams);
+    next.delete('project');
+    next.delete('code');
+    setSearchParams(next, { replace: true });
+  };
 
   const resetAdvancedFilters = () => {
     setRiskFilter('all');
@@ -421,6 +494,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     setAssigneeFilter('');
     setDeadlineFrom('');
     setDeadlineTo('');
+    if (projectFilter) clearProjectFilter();
   };
 
   const setModule = (moduleKey) => {
@@ -435,7 +509,15 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     .find((region) => String(region.id) === regionFilter);
   const selectedAssignee = assigneeOptions
     .find((person) => String(person.id) === assigneeFilter);
+  const projectChipLabel = projectCodeParam
+    || prepared.find((task) => String(task.project_id || '') === projectFilter)?.project_code
+    || projectFilter;
   const activeFilterChips = [
+    projectFilter && {
+      key: 'project',
+      label: `Dự án: ${projectChipLabel}`,
+      clear: clearProjectFilter,
+    },
     !fixedModuleKey && activeModule !== 'all' && {
       key: 'module',
       label: `Module: ${MODULES.find((module) => module.key === activeModule)?.label || activeModule}`,
@@ -448,9 +530,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     },
     riskFilter !== 'all' && {
       key: 'risk',
-      label: `Tình trạng hạn: ${
-        riskFilter === 'normal' ? 'Đang thực hiện' : riskFilter === 'warning' ? 'Cảnh báo trong 3 ngày' : 'Quá hạn'
-      }`,
+      label: `Hạn: ${COLUMN_BY_KEY[riskFilter]?.label || riskFilter}`,
       clear: () => setRiskFilter('all'),
     },
     progressFilter !== 'all' && {
@@ -597,16 +677,21 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
         />
       )}
 
-      <div className="grid grid-cols-3 gap-3">
-        {[
-          { label: 'Đang thực hiện', value: Math.max(0, visibleStats.total - visibleStats.warning - visibleStats.overdue), cls: 'text-blue-600' },
-          { label: 'Cảnh báo trong 3 ngày', value: visibleStats.warning, cls: 'text-amber-600' },
-          { label: 'Quá hạn', value: visibleStats.overdue, cls: 'text-red-600' },
-        ].map((item) => (
-          <div key={item.label} className="rounded-xl border border-gray-100 bg-white p-3 md:p-4 shadow-sm">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        {COLUMNS.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => setRiskFilter((current) => (current === item.key ? 'all' : item.key))}
+            className={`rounded-xl border bg-white p-3 md:p-4 shadow-sm text-left cursor-pointer ${
+              riskFilter === item.key ? 'border-blue-300 ring-2 ring-blue-100' : 'border-gray-100'
+            }`}
+          >
             <p className="text-[11px] md:text-xs text-gray-500 truncate">{item.label}</p>
-            <p className={`text-xl md:text-2xl font-bold mt-1 ${item.cls}`}>{loading ? '…' : item.value}</p>
-          </div>
+            <p className={`text-xl md:text-2xl font-bold mt-1 ${item.kpiCls}`}>
+              {loading ? '…' : visibleStats[item.key]}
+            </p>
+          </button>
         ))}
       </div>
 
@@ -659,14 +744,15 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
               : 'Đang tải nhiệm vụ dự án đang hoạt động…'}
         </div>
       ) : (
-        <div className="grid md:grid-cols-3 gap-4 items-start">
+        <div className="flex gap-3 overflow-x-auto pb-1 items-start [scrollbar-width:thin]">
           {COLUMNS.map((column) => (
             <KanbanColumn
               key={column.key}
               column={column}
-              tasks={tasksByRisk[column.key] || []}
+              tasks={tasksByBucket[column.key] || []}
               focused={focusRisk === column.key}
               canRemind={canRemind}
+              showModule={!fixedModuleKey}
             />
           ))}
         </div>

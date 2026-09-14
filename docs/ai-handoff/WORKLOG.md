@@ -1,5 +1,85 @@
 # Nhật ký công việc AI
 
+## 2026-09-14 14:30 — Cánh kính/Cửa: bỏ yêu cầu hoàn thành việc trước khi kéo
+
+- AI: Cursor. Gate nhiệm vụ không còn chặn kéo cột Cánh kính và Cửa (BE + SQL 611
+  tắt `blocks_stage_advance` mọi mẫu/task hai loại). Tủ bếp giữ nguyên.
+- File: `workshopStageAdvanceGate.js`, `database/611_hcb_canh_kinh_cua_khong_chan_keo.sql`.
+
+## 2026-09-14 14:20 — Cánh kính: kéo Tiếp nhận sang sản xuất
+
+- AI: Cursor. Quản lý Nguyễn Nhật không kéo được vì 3 crm_tasks Tiếp nhận
+  (Tiếp nhận thông tin / Chốt yêu cầu KT / Vẽ kế hoạch) `blocks_stage_advance`.
+- Tắt cờ chặn Cánh kính+Cửa cột Tiếp nhận. Kanban SX mở `BlockingTasksAlertModal`.
+- File: `database/610_hcb_canh_kinh_tiep_nhan_khong_chan_keo.sql`, `ProductionDashboard.jsx`.
+
+## 2026-09-14 14:15 — Bình luận: hết nút tải file trùng
+
+- AI: Cursor. Tin hệ thống 📎 vừa link tên file vừa chip Paperclip — 1 file
+  hiện 2 chỗ tải. Pill chỉ còn «tên»; chip/preview là chỗ tải duy nhất.
+- File: `CommentsPanels.jsx`. DB TB-2026-817 không nhân đôi bản ghi.
+
+## 2026-09-14 14:05 — HCB: đủ thành viên mặc định trên dự án
+
+- AI: Cursor. CRM→SX HCB không còn `primaryOnly` — copy đủ NV setup phân loại.
+  SQL 609 bổ sung đội đang thiếu (không đổi phụ trách chính). File:
+  `productionWorkshopTypeStaff.js`, `database/609_hcb_fill_workshop_type_staff.sql`.
+- RPC: `node scripts/run-migration-609.js` primary + backup, incomplete = 0.
+
+## 2026-09-14 13:55 — Cánh kính HCB: hiện lại cột thanh toán
+
+- AI: Cursor. Cột Đợi thanh toán (8 thẻ) vẫn còn trên DB nhưng `group_key=cong_no`
+  nên Kanban SX đẩy sang tab Công nợ. Gỡ group_key Cánh kính/Cửa; Tủ bếp không đổi.
+- File: `database/608_hcb_canh_kinh_hien_cot_thanh_toan.sql`, `sxTachCongNo.js`.
+
+## 2026-09-14 13:35 — Tab Công việc SX: Xong hết + hiện việc
+
+- AI: Cursor. Cột lớn/cột nhỏ trên tab Công việc: nút hoàn thành hàng loạt
+  và nút hiện/ẩn danh sách nhiệm vụ thuộc cột đó.
+- File: `CRMTasksTab.jsx`.
+
+## 2026-09-14 12:20 — NV xưởng dùng hạn kế hoạch SX
+
+- AI: Cursor. API project-overview gắn deadline kế hoạch (tính từ ngày lắp)
+  vào nhóm nhiệm vụ khi task chưa có hạn; cột con kế thừa hạn nhóm cha.
+- File: `workTasks.js`, `sxInstallPlanKanbanDeadline.js`, `sxWorkshopSchedule.js`,
+  `ProductionDetail.jsx`, `production.js`, `projects.js`.
+
+## 2026-09-14 12:00 — Kanban SX: nút nhiệm vụ theo dự án
+
+- AI: Cursor. Thẻ Kanban xưởng thêm nút CheckSquare → `/sx/project-tasks?project=`.
+  Trang quản lý NV lọc đúng dự án, chip có thể bỏ lọc.
+- File: `ProductionDashboard.jsx`, `ProjectTasksOverviewPage.jsx`.
+
+## 2026-09-14 11:36 — Deadline Work Unified: thẻ gọn
+
+- AI: Cursor. View Deadline lược ĐA MODULE / deal / SĐT / CRM·SX·VC.
+  Hiện rõ Hạn SX, Giao, Lắp từng dòng + công đoạn · NV. File:
+  `WorkUnifiedOverviewPage.jsx`.
+
+## 2026-09-14 11:28 — Quản lý NV xưởng: cột theo hạn
+
+- AI: Cursor. Trang `/sx/project-tasks` đổi 3 cột rủi hạn thành 6 cột:
+  Quá hạn, Hôm nay, Ngày mai, Trong tuần, Tuần sau, Chưa có hạn.
+- Thẻ trong cột: mã + hạn trên cùng, tên việc, dự án, thanh tiến độ, người phụ trách.
+- File: `ProjectTasksOverviewPage.jsx`, `ProjectTasksFilterPanel.jsx`.
+
+## 2026-09-14 11:30 — Hạn + NV phụ trách trên cột gộp
+
+- AI: Cursor. Phân tích deadline chi tiết SX theo cột gộp; ô ma trận hiện hạn từ ngày lắp
+  và người setup ở Cài đặt pipeline. `sxKanbanStages` thêm `deadline_group` + `default_staff`.
+
+## 2026-09-14 10:28 — Chi tiết: tích hoàn thành trên vòng tròn tiến độ
+
+- AI: Cursor. `PipelineStepper`: vòng tròn việc song song = tích xong / bỏ tích.
+  Việc đã xong hiện ✓ và đếm n/m trên cột lớn. Tên cột vẫn chuyển thẻ Kanban.
+
+## 2026-09-14 10:20 — HCB Tủ bếp: tách Ban thành phẩm
+
+- AI: Cursor. Mở cột Ban thành phẩm thành Chuẩn bị vật tư / Đặt kính / Sơn.
+- 3 đơn (TB-2026-839, 841, 842) ở lại Chuẩn bị vật tư.
+- File: `database/607_hcb_tubep_split_ban_thanh_pham.sql`. RPC primary OK; backup cần 604 rồi 607.
+
 ## 2026-09-14 10:05 — Work Unified: số KPI ổn định khi đổi tab tiến độ
 
 - AI: Cursor. Tab Tất cả / Đúng tiến độ / Nguy cơ / Trễ đang refetch và trộn

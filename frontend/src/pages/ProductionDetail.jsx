@@ -43,6 +43,8 @@ import {
   resolveSxPlanInstallYmd,
   resolveSxReceptionYmd,
   SX_INSTALL_BACK_PLAN_RULES,
+  sxGroupPlanSlice,
+  sxStagePlanSlice,
 } from '../lib/sxWorkshopSchedule';
 import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
@@ -60,6 +62,8 @@ import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 import FacebookChatTab from '../components/FacebookChatTab';
 import ZaloChatTab from '../components/ZaloChatTab';
 import PipelineStepper from '../components/PipelineStepper';
+import { gomCotTheoNhom } from '../lib/sxGopCot';
+import { sxStagePrimaryOwnerName } from '../lib/sxStageStaff';
 import { OverlayPortal } from '../components/Modal';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
@@ -297,6 +301,7 @@ function WorkshopInfoPanel({
   crmDeal = null,
   onDealUpdate,
   isVC = false,
+  pipelineStages = [],
 }) {
   const [editing, setEditing] = useState(null);
   const [draft, setDraft] = useState('');
@@ -373,6 +378,22 @@ function WorkshopInfoPanel({
     }),
     [planInstallYmd, receptionYmd, project?.sx_schedule_slip_days],
   );
+
+  const groupedDeadlineRows = useMemo(() => {
+    if (isVC || !installBackPlan || !(pipelineStages || []).length) return [];
+    return gomCotTheoNhom(pipelineStages).map((g) => {
+      const parentSlice = sxGroupPlanSlice(installBackPlan, g);
+      return {
+        ...g,
+        slice: parentSlice,
+        cotNho: g.cotNho.map((s) => ({
+          stage: s,
+          owner: sxStagePrimaryOwnerName(s),
+          slice: parentSlice || sxStagePlanSlice(installBackPlan, s, g),
+        })),
+      };
+    });
+  }, [isVC, installBackPlan, pipelineStages]);
 
   const formatPlanRange = (startYmd, endYmd) => {
     if (!startYmd && !endYmd) return '—';
@@ -718,26 +739,85 @@ function WorkshopInfoPanel({
                 </ul>
               </div>
               <div className="overflow-hidden rounded-md border border-indigo-100 bg-white divide-y divide-indigo-50">
-                {[
-                  installBackPlan.planning,
-                  installBackPlan.cabinet,
-                  installBackPlan.finishing,
-                  installBackPlan.packing,
-                ].map((stage) => (
-                  <div key={stage.key} className="flex items-start justify-between gap-2 px-2 py-1.5 text-[11px]">
+                {groupedDeadlineRows.length > 0 ? (
+                  groupedDeadlineRows.map((g) => {
+                    const groupSlice = g.slice
+                      || (g.cotNho.map((x) => x.slice).filter(Boolean)[0] || null);
+                    return (
+                      <div key={g.key} className="px-2 py-1.5 space-y-1">
+                        <div className="flex items-start justify-between gap-2 text-[11px]">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-slate-800">{g.nhan}</p>
+                            {groupSlice ? (
+                              <p className="text-[10px] text-slate-500 tabular-nums">
+                                {formatPlanRange(groupSlice.startYmd, groupSlice.endYmd)}
+                                {g.cotNho.length > 1 ? ' · song song' : ''}
+                              </p>
+                            ) : (
+                              <p className="text-[10px] text-slate-400">Chưa gán nhóm deadline</p>
+                            )}
+                          </div>
+                          {groupSlice ? (
+                            <span className="shrink-0 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-800 tabular-nums">
+                              {groupSlice.daysFixed != null
+                                ? `${groupSlice.daysFixed} ngày`
+                                : (groupSlice.days != null ? `${groupSlice.days} ngày` : '')}
+                            </span>
+                          ) : null}
+                        </div>
+                        {g.cotNho.length > 1 || g.cotNho.some((x) => x.owner) ? (
+                          <ul className="space-y-0.5">
+                            {g.cotNho.map((x) => (
+                              <li key={x.stage.id} className="flex items-baseline justify-between gap-1.5 text-[10px] leading-snug">
+                                <span className="min-w-0 truncate text-slate-700" title={x.stage.name}>
+                                  {x.stage.name}
+                                </span>
+                                <span className="shrink-0 max-w-[46%] truncate text-right text-indigo-800 font-medium" title={x.owner || 'Chưa setup người phụ trách cột'}>
+                                  {x.owner || '—'}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
+                    );
+                  })
+                ) : (
+                  [
+                    installBackPlan.planning,
+                    installBackPlan.cabinet,
+                    installBackPlan.finishing,
+                    installBackPlan.packing,
+                  ].map((stage) => (
+                    <div key={stage.key} className="flex items-start justify-between gap-2 px-2 py-1.5 text-[11px]">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-800">{stage.label}</p>
+                        <p className="text-[10px] text-slate-500 tabular-nums">
+                          {formatPlanRange(stage.startYmd, stage.endYmd)}
+                        </p>
+                      </div>
+                      <span className="shrink-0 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-800 tabular-nums">
+                        {stage.daysFixed != null
+                          ? `${stage.daysFixed} ngày`
+                          : (stage.days != null ? `${stage.days} ngày` : 'Phần còn lại')}
+                      </span>
+                    </div>
+                  ))
+                )}
+                {groupedDeadlineRows.length > 0 && installBackPlan.packing
+                  && !groupedDeadlineRows.some((g) => g.cotNho.some((x) => x.slice?.key === 'packing')) ? (
+                  <div className="flex items-start justify-between gap-2 px-2 py-1.5 text-[11px]">
                     <div className="min-w-0">
-                      <p className="font-semibold text-slate-800">{stage.label}</p>
+                      <p className="font-semibold text-slate-800">Giao hàng (VC/LĐ)</p>
                       <p className="text-[10px] text-slate-500 tabular-nums">
-                        {formatPlanRange(stage.startYmd, stage.endYmd)}
+                        {formatPlanRange(installBackPlan.packing.startYmd, installBackPlan.packing.endYmd)}
                       </p>
                     </div>
                     <span className="shrink-0 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-800 tabular-nums">
-                      {stage.daysFixed != null
-                        ? `${stage.daysFixed} ngày`
-                        : (stage.days != null ? `${stage.days} ngày` : 'Phần còn lại')}
+                      {installBackPlan.packing.daysFixed} ngày
                     </span>
                   </div>
-                ))}
+                ) : null}
                 <div className="flex items-start justify-between gap-2 px-2 py-1.5 text-[11px] bg-blue-50/80">
                   <div className="min-w-0">
                     <p className="font-semibold text-blue-900">Ngày lắp đặt</p>
@@ -3468,6 +3548,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         <div className="lg:col-span-1 space-y-4">
           <WorkshopInfoPanel
             project={project}
+            pipelineStages={safePipelineStages}
             onUpdate={() => {
               refreshProjectSilently();
               loadWorkshopPlacements();
@@ -3793,8 +3874,10 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     sxTemplateCompanyId={project?.company_id || project?.company?.id || null}
                     dealResponsible={primaryCrmDeal}
                     workshopProject={project}
+                    sxTrangThaiO={sxTrangThaiO}
+                    onDoiTrangThai={doiTrangThaiO}
                   />
-                ) : scopedWorkshopTasksForTab.length > 0 ? (
+                ) : scopedWorkshopTasksForTab.length ? (
                   <WorkshopTasksFallbackPanel
                     tasks={scopedWorkshopTasksForTab}
                     moduleLabel={MOD.label}

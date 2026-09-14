@@ -182,12 +182,18 @@ function toPrimaryOnlyStaff(block) {
   return { userIds: [id], primaryUserId: id };
 }
 
+/** HCB giữ đủ NV mặc định phân loại; công ty khác mới cắt còn phụ trách chính. */
+function shouldUsePrimaryOnlyStaff(companyId, primaryOnly) {
+  if (primaryOnly !== true) return false;
+  return String(companyId || '') !== String(HCB_COMPANY_ID);
+}
+
 async function getDefaultStaffForType(companyId, workshopTypeId, opts = {}) {
   if (!companyId) {
     return { userIds: [], primaryUserId: null };
   }
   const allowFallback = opts.allowFallback !== false;
-  const primaryOnly = opts.primaryOnly === true;
+  const primaryOnly = shouldUsePrimaryOnlyStaff(companyId, opts.primaryOnly);
   let block = { userIds: [], primaryUserId: null };
   if (workshopTypeId) {
     const map = await loadWorkshopTypeDefaultStaffMap(companyId);
@@ -461,14 +467,14 @@ async function pruneNonResponsibleCrmLeadMembersForProject(projectId) {
  * @param {object} [opts]
  * @param {boolean} [opts.allowFallback=true] — không setup phân loại thì lấy mọi NV SX công ty (CRM→SX cũ).
  *   Đặt xưởng: false — chỉ NV trong setup phân loại.
- * @param {boolean} [opts.primaryOnly=false] — CRM thêm SX: chỉ người chịu trách nhiệm chính.
+ * @param {boolean} [opts.primaryOnly=false] — CRM thêm SX: chỉ người chịu trách nhiệm chính (không áp HCB).
  * @param {boolean} [opts.skipIfStaffExists=false] — đã có đội SX thì không ghi đè.
  * @returns {Promise<string|null>} production_person_id (phụ trách chính)
  */
 async function applyWorkshopTypeDefaultStaffToProject(projectId, companyId, workshopTypeId, opts = {}) {
   if (!projectId || !companyId) return null;
   const allowFallback = opts.allowFallback !== false;
-  const primaryOnly = opts.primaryOnly === true;
+  const primaryOnly = shouldUsePrimaryOnlyStaff(companyId, opts.primaryOnly);
 
   if (opts.skipIfStaffExists) {
     const existing = await loadProjectProductionStaffUserIds(projectId);
@@ -1777,6 +1783,7 @@ module.exports = {
   appendProjectProductionStaff,
   removeProjectProductionStaffUser,
   toPrimaryOnlyStaff,
+  shouldUsePrimaryOnlyStaff,
   filterUserIdsEligibleForAutoLeadMembers,
   applyWorkshopTypeDefaultStaffToAllProjects,
   saveWorkshopTypeDefaultStaff,

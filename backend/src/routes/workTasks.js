@@ -51,6 +51,8 @@ const {
   productionOwnerCandidateIds,
 } = require('../helpers/projectOverviewCategory');
 const { assertProjectAccessible } = require('../helpers/projectAccessScope');
+const { computeSxInstallPlanDeadline } = require('../helpers/sxInstallPlanKanbanDeadline');
+const { matchProductionStageForLabel, matchProductionStageForLegacySlug } = require('../helpers/sxPipelineStageSlug');
 const {
   isCrmCompletedStage,
   isLogisticsCompletedColumn,
@@ -515,7 +517,7 @@ r.get('/project-overview', async (req, res) => {
      */
     const lookupsPromise = Promise.all([
       fetchAllPages(() => supabase.from('crm_pipeline_stages').select('id, name, order_index').order('id')),
-      fetchAllPages(() => supabase.from('workshop_task_templates').select('id, name, workshop_area, order_index').order('id')),
+      fetchAllPages(() => supabase.from('workshop_task_templates').select('id, name, workshop_area, order_index, production_stage_id').order('id')),
       fetchAllPages(() => supabase.from('companies').select('id, name, short_name').order('id')),
       fetchAllPages(() => supabase.from('company_regions').select('id, company_id, name, code').order('id')),
     ]);
@@ -523,7 +525,8 @@ r.get('/project-overview', async (req, res) => {
     const PROJECT_OVERVIEW_PROJECT_SELECT = `
           id, status, company_id, sx_kanban_column_id, vc_kanban_column_id,
           project_manager_id, sales_person_id, responsible_person_id,
-          production_person_id, logistics_person_id, installer_person_id, installation_person_id
+          production_person_id, logistics_person_id, installer_person_id, installation_person_id,
+          delivery_date, install_date, sx_reception_date, created_at, sx_schedule_slip_days
         `;
     let activeProjects;
     if (requestedProjectId) {
@@ -560,7 +563,7 @@ r.get('/project-overview', async (req, res) => {
     const [sxStagesRes, vcStagesRes, leads] = await Promise.all([
       needsSxStages
         ? supabase.from('production_pipeline_stages').select(
-          'id, name, order_index, bucket_slug, is_handover_to_logistics, counts_as_completed_revenue, counts_as_collected_revenue',
+          'id, name, order_index, bucket_slug, is_handover_to_logistics, counts_as_completed_revenue, counts_as_collected_revenue, deadline_group, group_key, company_id',
         )
         : Promise.resolve({ data: [], error: null }),
       needsVcStages
@@ -608,6 +611,8 @@ r.get('/project-overview', async (req, res) => {
     if (vcStagesRes.error) throw vcStagesRes.error;
 
     const sxStageById = new Map((sxStagesRes.data || []).map((stage) => [String(stage.id), stage]));
+    const sxStagesList = sxStagesRes.data || [];
+    const projectById = new Map(activeProjects.map((project) => [String(project.id), project]));
     const vcStageById = new Map((vcStagesRes.data || []).map((stage) => [String(stage.id), stage]));
     const productionProjectIds = activeProjects
       .filter((project) => !isProductionTaskTerminalStage(sxStageById.get(String(project.sx_kanban_column_id || ''))))
@@ -782,6 +787,31 @@ r.get('/project-overview', async (req, res) => {
         order: template?.order_index ?? productionStage?.order_index ?? logisticsStage?.order_index ?? 999,
       };
     };
+    const resolveSxStageForOverviewGroup = (group, first) => {
+      const project = projectById.get(String(first?.project_id || ''));
+      const companyId = String(project?.company_id || first?.company_id || '');
+      const scoped = companyId
+        ? sxStagesList.filter((s) => String(s.company_id || '') === companyId)
+        : sxStagesList;
+      const pool = scoped.length ? scoped : sxStagesList;
+      if (first?.source === 'crm_task') {
+        const detail = crmDetailById.get(String(first.source_id)) || {};
+        return sxStageById.get(String(detail.production_pipeline_stage_id || ''))
+          || matchProductionStageForLegacySlug(detail.stage_slug, pool)
+          || matchProductionStageForLabel(group.category?.title, pool)
+          || sxStageById.get(String(group.category?.id || ''))
+          || null;
+      }
+      const detail = projectDetailById.get(String(first?.source_id || '')) || {};
+      const meta = detail.metadata && typeof detail.metadata === 'object' ? detail.metadata : {};
+      const template = workshopTemplateById.get(String(meta.workshop_template_id || ''));
+      return sxStageById.get(String(detail.production_stage_id || ''))
+        || sxStageById.get(String(template?.production_stage_id || ''))
+        || matchProductionStageForLegacySlug(meta.guessed_stage_slug, pool)
+        || matchProductionStageForLabel(template?.name || group.category?.title, pool)
+        || sxStageById.get(String(group.category?.id || ''))
+        || null;
+    };
 
     const groupMap = new Map();
     childTasks.forEach((task) => {
@@ -805,6 +835,20 @@ r.get('/project-overview', async (req, res) => {
         .map((task) => task.deadline)
         .filter(Boolean)
         .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+      let deadline = deadlines[0] || null;
+      if (!deadline && group.lane === 'production' && first.project_id) {
+        const project = projectById.get(String(first.project_id));
+        const companyId = String(project?.company_id || first.company_id || '');
+        const scoped = companyId
+          ? sxStagesList.filter((s) => String(s.company_id || '') === companyId)
+          : sxStagesList;
+        const planIso = computeSxInstallPlanDeadline(
+          project,
+          resolveSxStageForOverviewGroup(group, first),
+          scoped.length ? scoped : sxStagesList,
+        )?.iso || null;
+        if (planIso) deadline = planIso;
+      }
       return {
         unified_id: `group:${group.key}`,
         source: first.source,
@@ -821,7 +865,7 @@ r.get('/project-overview', async (req, res) => {
         project_code: first.project_code,
         project_name: first.project_name,
         lead_title: first.lead_title,
-        deadline: deadlines[0] || null,
+        deadline,
         child_completed: completedChildren.length,
         child_total: group.children.length,
         assignee_id: assigned?.effective_assignee_id || null,
