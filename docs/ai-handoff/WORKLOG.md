@@ -1,5 +1,43 @@
 # Nhật ký công việc AI
 
+## 2026-09-15 09:22 — Push main: Zalo nút gửi + FE local
+
+- AI: Cursor. Push `main`: nút Gửi Zalo mọi cột, tắt tự gửi; Work Unified
+  bỏ chip module; menu 3. Setup xưởng; tab gộp cột pipeline SX.
+
+## 2026-09-15 09:08 — Nút Gửi Zalo mọi cột deal
+
+- AI: Cursor. Nút hiện trên mọi deal, không cần cột Hoàn thành. API
+  fill/send thủ công bỏ chặn cột. Tự gửi khi kéo cột vẫn tắt.
+- File: `LeadDetail.jsx`, `taxonomy.js`, `helpersBundle.js`.
+
+## 2026-09-15 09:05 — Tắt tự gửi Zalo khi kéo cột
+
+- AI: Cursor. `maybeSendZaloOnDealStageEnter` no-op. Ẩn toggle Zalo
+  trên pipeline. Nút **Gửi Zalo** trên chi tiết deal giữ nguyên.
+- File: `helpersBundle.js`, `PipelineSettingsPage.jsx`, `LeadDetail.jsx`.
+
+## 2026-09-15 08:58 — Pipeline Zalo: hiện token từ OA accounts
+
+- AI: Cursor. Tab Cài đặt Pipeline → Zalo OA hiện nguồn
+  `zalo_oa_accounts` (tự refresh). PUT/preview dùng token hiệu lực.
+- File: `taxonomy.js`, `PipelineSettingsPage.jsx`.
+
+## 2026-09-15 08:50 — CRM: hiện lại nút Gửi Zalo OA
+
+- AI: Cursor. Header chi tiết deal (cột Hoàn thành) hiện lại nút **Gửi Zalo**.
+- File: `LeadDetail.jsx`.
+
+## 2026-09-15 08:40 — Work Unified: bỏ chip CRM/SX/VC
+
+- AI: Cursor. Thẻ Kanban/Deadline không hiện badge module. Calendar
+  bỏ chip tương tự. File: `WorkUnifiedOverviewPage.jsx`.
+
+## 2026-09-14 16:46 — Nhóm menu 3. Setup xưởng
+
+- AI: Cursor. Sidebar SX: «3. Điều hành xưởng» → **3. Setup xưởng**.
+- File: `Sidebar.jsx`, `dictionary.en.js`.
+
 ## 2026-09-14 16:30 — Zalo ZNS dùng token OA hiệu lực
 
 - AI: Cursor. `getZaloAccessTokenHieuLuc` đọc `zalo_oa_accounts` rồi mới

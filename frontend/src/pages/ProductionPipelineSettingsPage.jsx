@@ -34,6 +34,8 @@ export default function ProductionPipelineSettingsPage() {
   const [companies, setCompanies] = useState([]);
   const [settingsCompanyId, setSettingsCompanyId] = useState('');
   const [stages, setStages] = useState([]);
+  /** Tab của trang: 'cot' = cấu hình cột pipeline, 'gop' = gộp cột / việc song song. */
+  const [tabTrang, setTabTrang] = useState('cot');
   const [workflowStages, setWorkflowStages] = useState([]);
   const [crmStages, setCrmStages] = useState([]);
   const [workshopTypes, setWorkshopTypes] = useState([]);
@@ -1262,6 +1264,18 @@ export default function ProductionPipelineSettingsPage() {
     return ra;
   }, [cotLonDaCo]);
 
+  /** Gán cột nhỏ vào một cột lớn — lưu ngay, cập nhật lạc quan rồi đồng bộ lại nếu lỗi. */
+  const datCotLon = async (stageId, ten) => {
+    const moi = String(ten || '').trim();
+    setStages((prev) => prev.map((x) => (String(x.id) === String(stageId) ? { ...x, group_key: moi || null } : x)));
+    try {
+      await api.put(`/production/pipeline-stages/${stageId}`, { group_key: moi || null });
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không lưu được cột lớn');
+      await load();
+    }
+  };
+
   const doiTenCotLon = async (key, ds) => {
     const cu = nhanCotLon(key) || key;
     const nhap = window.prompt(`Đổi tên cột lớn «${cu}» thành:`, cu);
@@ -1312,6 +1326,154 @@ export default function ProductionPipelineSettingsPage() {
         </div>
       </div>
 
+      <div className="flex flex-wrap gap-1 border-b border-gray-200">
+        {[
+          { id: 'cot', nhan: 'Cột pipeline', Icon: ListChecks },
+          { id: 'gop', nhan: 'Gộp cột · Việc song song', Icon: Layers },
+        ].map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTabTrang(t.id)}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold border-b-2 -mb-px cursor-pointer transition-colors ${
+              tabTrang === t.id
+                ? 'border-teal-600 text-teal-700'
+                : 'border-transparent text-gray-500 hover:text-gray-800'
+            }`}
+          >
+            <t.Icon className="h-4 w-4" /> {t.nhan}
+          </button>
+        ))}
+      </div>
+
+      {tabTrang === 'gop' && (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-violet-200 bg-violet-50/60 px-4 py-3">
+            <p className="inline-flex items-center gap-1.5 text-sm font-bold text-violet-900">
+              <Layers className="h-4 w-4" /> Cột lớn = giai đoạn NỐI TIẾP · Cột nhỏ cùng tên = việc SONG SONG
+            </p>
+            <p className="mt-1 text-[12px] leading-relaxed text-violet-700">
+              Đặt tên cột lớn cho từng cột pipeline bên dưới. Các cột mang <strong>cùng một tên</strong> sẽ được coi là
+              chạy cùng lúc — trên bảng Kanban bật «Gộp cột» sẽ thu chung thành một cột lớn, mở ra thành ma trận;
+              trang chi tiết dự án cũng vẽ chúng nằm song song trong một khung. Để trống = cột đứng riêng.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+            <span className="text-[10px] font-bold uppercase tracking-wide text-gray-500">Đang cấu hình cho</span>
+            <span className="inline-flex items-center gap-1 rounded-full border border-teal-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-teal-800">
+              <Building2 className="h-3 w-3" />
+              {companies.find((c) => String(c.id) === String(settingsCompanyId))?.name || '— chưa chọn công ty —'}
+            </span>
+            <span className="text-gray-300">·</span>
+            <span className="inline-flex items-center gap-1 rounded-full border border-indigo-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-indigo-800">
+              <Tags className="h-3 w-3" />
+              {selectedTypeLabel || '— chưa chọn phân loại —'}
+            </span>
+            <span className="text-[11px] text-gray-500">
+              {sorted.filter((st) => st.bucket_slug !== INTAKE).length} cột
+            </span>
+            <span className="ml-auto text-[10.5px] text-gray-500">
+              Cấu hình cột lớn là <strong>riêng từng công ty · từng phân loại</strong> — đổi ở đây không ảnh hưởng phân loại khác.
+            </span>
+          </div>
+
+          {!stepReady && (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+              Chọn công ty và phân loại ở tab «Cột pipeline» trước để thấy đúng bộ cột cần gán.
+            </p>
+          )}
+
+          {stages.some((st) => !st.workshop_type_id && String(st.group_key || '').trim()) && (
+            <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] leading-relaxed text-rose-800">
+              <strong>Cảnh báo:</strong> có cột thuộc <strong>Bộ chung</strong> đang được gán cột lớn. Cột bộ chung dùng
+              cho MỌI phân loại của công ty, nên cách gộp sẽ áp sang cả những phân loại khác. Nếu muốn mỗi phân loại
+              một kiểu gộp riêng, hãy chuyển cột đó về đúng phân loại trước (tab «Cột pipeline» → chuyển phân loại).
+            </p>
+          )}
+
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wide text-gray-500 mb-1.5">
+              Cột lớn đang dùng ({cotLonDaCo.length})
+            </p>
+            {cotLonDaCo.length === 0 ? (
+              <p className="text-[12px] text-gray-500">
+                Chưa gán cột nào. Gán ở bảng bên dưới — hai cột trở lên cùng tên là thành một nhóm song song.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {cotLonDaCo.map((g) => (
+                  <span
+                    key={g.key}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-white px-2 py-1 text-[11px]"
+                    title={g.ds.map((x) => x.name).join(' · ')}
+                  >
+                    <strong className="text-violet-900">{nhanCotLon(g.key) || g.key}</strong>
+                    <span className="rounded-full bg-violet-100 px-1.5 text-[10px] font-bold tabular-nums text-violet-700">
+                      {g.ds.length}
+                    </span>
+                    <span className="text-[10px] text-violet-400">
+                      {g.ds.length > 1 ? 'việc song song' : 'chỉ 1 cột'}
+                    </span>
+                    <button type="button" onClick={() => doiTenCotLon(g.key, g.ds)}
+                      className="rounded px-1 text-violet-500 hover:bg-violet-100 hover:text-violet-800 cursor-pointer">Đổi tên</button>
+                    <button type="button" onClick={() => boCotLon(g.key, g.ds)}
+                      className="rounded px-1 text-rose-500 hover:bg-rose-50 hover:text-rose-700 cursor-pointer">Tách</button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
+            <div className="grid grid-cols-[2.5rem_1fr_14rem] gap-2 bg-gray-50 px-3 py-2 text-[10px] font-bold uppercase tracking-wide text-gray-500">
+              <span>#</span><span>Cột pipeline</span><span>Cột lớn</span>
+            </div>
+            {sorted.filter((st) => st.bucket_slug !== INTAKE).map((st, i) => {
+              const key = String(st.group_key || '').trim();
+              const nhom = cotLonDaCo.find((g) => g.key === key);
+              return (
+                <div key={st.id} className="grid grid-cols-[2.5rem_1fr_14rem] items-center gap-2 border-t border-gray-100 px-3 py-2">
+                  <span className="text-[11px] text-gray-400 tabular-nums">{i + 1}</span>
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="shrink-0">{st.icon || '📋'}</span>
+                    <span className="truncate text-[13px] font-medium text-gray-900" title={st.name}>{st.name}</span>
+                    {!st.workshop_type_id && (
+                      <span
+                        className="shrink-0 rounded-full bg-rose-50 px-1.5 py-0.5 text-[9.5px] font-bold text-rose-700"
+                        title="Cột Bộ chung — gán cột lớn ở đây sẽ áp cho MỌI phân loại của công ty này"
+                      >
+                        bộ chung
+                      </span>
+                    )}
+                    {nhom && nhom.ds.length > 1 && (
+                      <span className="shrink-0 rounded-full bg-violet-50 px-1.5 py-0.5 text-[9.5px] font-bold text-violet-700">
+                        song song {nhom.ds.length}
+                      </span>
+                    )}
+                  </span>
+                  <span>
+                    <input
+                      list="sx-cot-lon-goi-y-tab"
+                      defaultValue={key}
+                      onBlur={(e) => { if (e.target.value.trim() !== key) datCotLon(st.id, e.target.value); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                      placeholder="— Đứng riêng —"
+                      className="h-8 w-full rounded-md border border-violet-200 bg-white px-2 text-xs"
+                      title="Gõ tên giai đoạn. Các cột cùng tên = việc song song. Để trống = đứng riêng."
+                    />
+                  </span>
+                </div>
+              );
+            })}
+            <datalist id="sx-cot-lon-goi-y-tab">
+              {cotLonGoiY.map((t) => <option key={t} value={t} />)}
+            </datalist>
+          </div>
+        </div>
+      )}
+
+      {tabTrang === 'cot' && (<>
       {/* Stepper: Công ty → Phân loại → Pipeline */}
       <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
         <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full ${settingsCompanyId ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}`}>
@@ -2834,6 +2996,7 @@ export default function ProductionPipelineSettingsPage() {
         </div>
       </aside>
       </div>{/* /grid */}
+      </>)}
     </div>
   );
 }

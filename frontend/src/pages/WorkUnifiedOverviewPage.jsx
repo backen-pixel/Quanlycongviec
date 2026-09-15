@@ -87,12 +87,6 @@ function forecastLabel(it) {
   return 'Chưa có hạn';
 }
 
-const MODULE_BADGE_CLS = {
-  crm: 'bg-emerald-600 text-white',
-  sx: 'bg-orange-600 text-white',
-  vc: 'bg-amber-600 text-white',
-};
-
 function shortDate(v) {
   if (!v) return '';
   const d = new Date(v);
@@ -133,13 +127,6 @@ function deadlineDateTone(raw, forecast) {
 }
 
 function WorkKanbanCard({ it, variant = 'default' }) {
-  const modules = [
-    it.has_crm && { key: 'crm', label: 'CRM' },
-    it.has_sx && { key: 'sx', label: 'SX' },
-    it.has_vc && { key: 'vc', label: 'VC' },
-  ].filter(Boolean);
-  const isMultiModule = modules.length >= 2;
-
   const people = [it.person1_name, it.person2_name].filter(Boolean);
 
   const dateBits = [];
@@ -201,11 +188,6 @@ function WorkKanbanCard({ it, variant = 'default' }) {
     >
       <div className="flex items-center gap-1.5 min-w-0">
         <span className="text-xs font-bold text-violet-700 truncate">{it.code}</span>
-        {isMultiModule && (
-          <span className="shrink-0 text-[9px] font-semibold px-1 py-0.5 rounded-full bg-violet-50 text-violet-700 whitespace-nowrap">
-            ĐA MODULE
-          </span>
-        )}
       </div>
       <p className="text-xs font-bold text-gray-900 leading-snug line-clamp-1" title={it.name}>{it.name}</p>
       {(it.deal_code || people[0]) && (
@@ -233,11 +215,6 @@ function WorkKanbanCard({ it, variant = 'default' }) {
               {initials(people[0])}
             </span>
           )}
-          {modules.map((m) => (
-            <span key={m.key} className={`text-[9px] font-bold px-1 py-0.5 rounded ${MODULE_BADGE_CLS[m.key]}`}>
-              {m.label}
-            </span>
-          ))}
         </div>
         {it.value ? (
           <span className="text-xs font-bold text-emerald-600 whitespace-nowrap shrink-0">{formatVND(it.value)}</span>
@@ -401,19 +378,11 @@ function CalendarDayFeed({ activeDay, isExplicitSelection, events, onClear, onSh
                   <span className="truncate">{[ev.customerName, ev.customerPhone].filter(Boolean).join(' · ')}</span>
                 </p>
               )}
-              <div className="flex items-center gap-2 flex-wrap mt-1.5">
-                {ev.modules.map((m) => (
-                  <span
-                    key={m}
-                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                      m === 'CRM' ? 'bg-emerald-600 text-white' : m === 'SX' ? 'bg-orange-600 text-white' : 'bg-amber-600 text-white'
-                    }`}
-                  >
-                    {m}
-                  </span>
-                ))}
-                {ev.person && <span className="text-xs text-gray-500">· {ev.person}</span>}
-              </div>
+              {ev.person && (
+                <div className="flex items-center gap-2 flex-wrap mt-1.5">
+                  <span className="text-xs text-gray-500">{ev.person}</span>
+                </div>
+              )}
             </CalendarEventLink>
           ))}
         </div>
@@ -796,7 +765,6 @@ export default function WorkUnifiedOverviewPage() {
     };
     const todayStr = dayKey(new Date().toISOString());
     displayItems.forEach((it) => {
-      const modules = [it.has_crm && 'CRM', it.has_sx && 'SX', it.has_vc && 'VC'].filter(Boolean);
       const person = it.person1_name || it.person2_name || null;
       const addEvent = (kind, label, at, tone) => {
         const dateStr = dayKey(at);
@@ -808,7 +776,6 @@ export default function WorkUnifiedOverviewPage() {
           code: it.code,
           name: it.name,
           label,
-          modules,
           person,
           dealCode: it.deal_code,
           customerName: it.customer_name,
@@ -1217,27 +1184,13 @@ export default function WorkUnifiedOverviewPage() {
                                   key={ev.id}
                                   ev={ev}
                                   className={`block rounded-md border px-1 py-0.5 hover:brightness-95 transition-[filter] ${calendarToneClass(ev)}`}
-                                  title={[ev.code, ev.name, ev.label, ev.stageLabel, ev.modules.join(' · '), ev.person, 'Chuột phải: mở tab mới'].filter(Boolean).join(' — ')}
+                                  title={[ev.code, ev.name, ev.label, ev.stageLabel, ev.person, 'Chuột phải: mở tab mới'].filter(Boolean).join(' — ')}
                                 >
                                   <div className="flex items-center justify-between gap-0.5">
                                     <span className="text-[9px] font-extrabold font-mono truncate">{ev.code}</span>
                                     <span className="text-[8px] font-bold uppercase opacity-90 shrink-0">{ev.label}</span>
                                   </div>
                                   <p className="text-[9px] font-semibold leading-tight line-clamp-2 opacity-95">{ev.name}</p>
-                                  {ev.modules.length > 0 && (
-                                    <div className="flex items-center gap-0.5 mt-0.5 flex-wrap">
-                                      {ev.modules.map((m) => (
-                                        <span
-                                          key={m}
-                                          className={`text-[7px] font-extrabold px-0.5 rounded ${
-                                            m === 'CRM' ? 'bg-emerald-100 text-emerald-800' : m === 'SX' ? 'bg-orange-100 text-orange-800' : 'bg-amber-100 text-amber-900'
-                                          }`}
-                                        >
-                                          {m}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  )}
                                 </CalendarEventLink>
                               ))}
                               {more > 0 && (

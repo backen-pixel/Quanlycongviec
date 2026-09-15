@@ -343,7 +343,7 @@ const SX_MENU_GROUPS = [
   {
     id: 'sx-projects',
     moduleKey: 'production',
-    title: '3. Điều hành xưởng',
+    title: '3. Setup xưởng',
     emoji: '📦',
     items: [
       { to: '/sx/dashboard', icon: FolderKanban, label: 'Deal vào xưởng' },

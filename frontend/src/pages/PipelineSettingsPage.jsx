@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import api from '../lib/api';
-import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2, Clock, Factory, Search, X, TrendingUp, RotateCcw, UserCircle, AlertTriangle } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, Loader2, Calendar, CheckCircle2, Clock, Factory, Search, X, TrendingUp, RotateCcw, UserCircle, AlertTriangle } from 'lucide-react';
 import {
   IconSettings,
   IconTags,
@@ -19,7 +19,6 @@ import {
   IconClock,
   IconPercentage,
   IconCalendar,
-  IconMessage,
   IconRotateClockwise,
   IconChevronRight,
   IconChevronDown,
@@ -86,6 +85,17 @@ const ZALO_TEST_PRESETS = [
 const ZALO_TEST_DEFAULT = ZALO_TEST_PRESETS[0];
 
 /** Key gửi lên Zalo — value rỗng; server điền từ deal. Lưu qua API, dùng cho nút «Gửi Zalo» trên chi tiết deal. */
+function zaloNotifyTokenSourceText(s) {
+  const src = String(s?.token_source || '');
+  if (src === 'zalo_oa_accounts') {
+    return s.token_oa_id
+      ? `Đang lấy từ bảng Zalo OA accounts · OA ${s.token_oa_id} (tự refresh)`
+      : 'Đang lấy từ bảng Zalo OA accounts (tự refresh)';
+  }
+  if (src === 'app_settings_du_phong') return 'Chưa lấy được OA — đang dùng token dán trong cấu hình này';
+  return 'Chưa có access token';
+}
+
 const DEFAULT_ZALO_TEMPLATE_STRUCTURE_DISPLAY = `{
   "ten_san_pham": "",
   "order_code": "",
@@ -240,7 +250,6 @@ function StageStatusBadges({ stage, linkedSx, linkedVc, syncRoleLabels }) {
   if (s.requires_deadline && !s.is_won && !s.is_lost) {
     badges.push({ key: 'deadline', cls: 'bg-rose-50 text-rose-700 border-rose-200', icon: IconCalendar, text: 'Deadline' });
   }
-  if (s.send_zalo_on_enter) badges.push({ key: 'zalo', cls: 'bg-sky-50 text-sky-800 border-sky-200', icon: IconMessage, text: 'Zalo' });
   if (s.create_event_on_enter) badges.push({ key: 'event', cls: 'bg-emerald-50 text-emerald-800 border-emerald-200', icon: IconCalendar, text: 'Sự kiện' });
   if (s.apply_default_assignee_on_enter) badges.push({ key: 'assignee', cls: 'bg-indigo-50 text-indigo-800 border-indigo-200', icon: IconUser, text: 'Chuyển PT' });
   if (s.allow_revert_to_lead) badges.push({ key: 'revert', cls: 'bg-amber-50 text-amber-800 border-amber-200', icon: IconRotateClockwise, text: 'Trả Lead' });
@@ -829,18 +838,6 @@ export default function PipelineSettingsPage() {
       setZaloTestResult({ ok: false, error: e.response?.data?.error || e.message });
     }
     setZaloTestSending(false);
-  };
-
-  const toggleZaloColumn = async (stage) => {
-    if (stage.pipeline_type !== 'deal') return;
-    const next = !stage.send_zalo_on_enter;
-    try {
-      await mutateStage(
-        stage.id,
-        () => api.put(`/crm/pipeline-stages/${stage.id}`, { send_zalo_on_enter: next }),
-        next ? 'Đã bật gửi Zalo khi vào cột' : 'Đã tắt gửi Zalo khi vào cột',
-      );
-    } catch { /* toast đã hiện */ }
   };
 
   const toggleCreateEventColumn = async (stage) => {
@@ -1600,19 +1597,6 @@ export default function PipelineSettingsPage() {
                   >
                     <Calendar className="h-3 w-3" />
                     Sự kiện
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => toggleZaloColumn(s)}
-                    className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
-                      s.send_zalo_on_enter
-                        ? 'bg-sky-100 text-sky-800 border-sky-300'
-                        : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-sky-200'
-                    }`}
-                    title="Khi deal kéo vào cột này: gửi tin Zalo OA (khuyến nghị chỉ bật trên cột tên «Hoàn thành»; cần bật OA + token/template)"
-                  >
-                    <MessageCircle className="h-3 w-3" />
-                    Zalo
                   </button>
                   {!s.is_won && (
                     <button
@@ -2396,8 +2380,8 @@ export default function PipelineSettingsPage() {
               title="Zalo OA — cấu hình chung"
               subtitle={
                 zaloSettings?.enabled
-                  ? `Đang bật · Template ${zaloSettings?.template_id || '566121'} · Token ${zaloSettings?.has_token ? 'đã lưu' : 'chưa có'}`
-                  : 'Đang tắt · Bấm để mở cấu hình token, template, gửi thử'
+                  ? `Đang bật · Template ${zaloSettings?.template_id || '566121'} · ${zaloNotifyTokenSourceText(zaloSettings)}`
+                  : 'Đang tắt · Bấm để mở cấu hình template, gửi thử — token lấy từ Zalo OA accounts'
               }
               icon={IconMessageCircle}
               iconClassName="text-sky-600"
@@ -2412,14 +2396,15 @@ export default function PipelineSettingsPage() {
                     <ToggleSwitch
                       checked={!!zaloSettings?.enabled}
                       onChange={(v) => saveZaloMaster({ enabled: v })}
-                      title="Gửi Zalo khi deal vào cột đã bật Zalo"
+                      title="Cho phép gửi Zalo OA bằng nút trên chi tiết deal"
                     />
                   </div>
                 )
               }
             >
               <p className="text-[11px] text-gray-500 leading-relaxed">
-                Lưu access_token từ Zalo Cloud. Template mặc định <strong className="text-sky-700">566121</strong> — bật «Zalo» trên cột Deal «Hoàn thành» ở tab Giai đoạn.
+                Access token lấy tự động từ bảng <strong className="text-sky-800">zalo_oa_accounts</strong> (trang Zalo OA, tự refresh).
+                Template mặc định <strong className="text-sky-700">566121</strong> — gửi bằng nút «Gửi Zalo» trên chi tiết deal (mọi cột). Không tự gửi khi kéo cột.
               </p>
               <div className="rounded-lg border border-sky-200 bg-sky-50/40 p-3 space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2458,13 +2443,17 @@ export default function PipelineSettingsPage() {
                     <option value="1">1 — Gửi thường</option>
                     <option value="3">3 — Vượt hạn mức (OA whitelist)</option>
                   </select>
-                  <label className="text-[10px] font-bold text-gray-700 uppercase tracking-wide">Access token</label>
+                  <label className="text-[10px] font-bold text-gray-700 uppercase tracking-wide">Access token (tuỳ chọn ghi đè)</label>
                   <input
                     type="password"
                     value={zaloTestToken}
                     onChange={(e) => setZaloTestToken(e.target.value)}
                     className={`w-full h-8 px-2 rounded-lg text-xs ${FIELD_KEY}`}
-                    placeholder={zaloSettings?.has_token ? '•••• đã lưu — nhập mới để thay' : 'Dán access_token'}
+                    placeholder={
+                      zaloSettings?.token_source === 'zalo_oa_accounts'
+                        ? 'Để trống — đang dùng token OA (tự refresh)'
+                        : (zaloSettings?.has_token ? '•••• dự phòng đã lưu — nhập mới để thay' : 'Dán access_token nếu chưa có OA')
+                    }
                     autoComplete="off"
                   />
                   <button
@@ -2475,7 +2464,9 @@ export default function PipelineSettingsPage() {
                     <IconDeviceFloppy className="w-3.5 h-3.5" stroke={2} />
                     Lưu cấu hình
                   </button>
-                  <p className="text-[10px] text-gray-400">Token đã lưu: {zaloSettings?.has_token ? 'Có' : 'Chưa'}</p>
+                  <p className={`text-[10px] ${zaloSettings?.has_token ? 'text-emerald-700' : 'text-gray-400'}`}>
+                    {zaloNotifyTokenSourceText(zaloSettings)}
+                  </p>
                 </div>
                 <div className="space-y-2 rounded-lg p-3 border border-gray-200 bg-gray-50/30">
                   <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Gửi thử API</p>
@@ -2966,17 +2957,6 @@ function StageForm({
               className="rounded border-violet-400"
             />
             <TrendingUp className="h-3.5 w-3.5 text-violet-600" /> Tính vào «Giá trị dự kiến / kỳ vọng»
-          </label>
-        )}
-        {pipelineType === 'deal' && (
-          <label className="flex items-center gap-2 text-xs cursor-pointer text-sky-800 bg-sky-50 px-2 py-1 rounded-lg border border-sky-200">
-            <input
-              type="checkbox"
-              checked={!!form.send_zalo_on_enter}
-              onChange={(e) => setForm((f) => ({ ...f, send_zalo_on_enter: e.target.checked }))}
-              className="rounded border-sky-400"
-            />
-            <MessageCircle className="h-3.5 w-3.5" /> Tự gửi Zalo OA khi deal vào cột này
           </label>
         )}
         {pipelineType === 'deal' && (

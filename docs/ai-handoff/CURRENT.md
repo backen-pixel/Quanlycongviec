@@ -1,6 +1,30 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-14 16:30 (UTC+7)
+Cập nhật: 2026-09-15 09:22 (UTC+7)
+
+## Zalo — tắt tự gửi, nút Gửi Zalo mọi cột deal
+
+Trạng thái: **commit + push main.**
+
+Kéo deal vào cột không tự gửi ZNS. Nút **Gửi Zalo** trên chi tiết deal
+(mọi cột). Ẩn toggle Zalo trên Cài đặt Pipeline. Token ZNS lấy từ
+`zalo_oa_accounts`.
+
+Hoàn tác: khôi phục `maybeSendZaloOnDealStageEnter` + điều kiện cột
+Hoàn thành trên nút.
+
+## Work Unified — bỏ badge CRM/SX/VC trên thẻ
+
+Trạng thái: **commit + push main.**
+
+Kanban và Deadline không còn chip CRM · SX · VC (và ĐA MODULE). Lịch
+cũng gỡ chip module.
+
+## Menu SX — nhóm 3 Setup xưởng
+
+Trạng thái: **commit + push main.**
+
+Đổi tiêu đề nhóm sidebar «3. Điều hành xưởng» → **3. Setup xưởng**.
 
 ## Zalo ZNS — token hiệu lực từ OA
 

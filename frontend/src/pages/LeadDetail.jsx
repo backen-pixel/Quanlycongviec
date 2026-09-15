@@ -1498,7 +1498,7 @@ export default function LeadDetail() {
 
   /** Một bước: điền template từ deal (cấu trúc lưu trên server / Cài đặt Pipeline) + gửi Zalo */
   const quickSendZaloOa = useCallback(async () => {
-    if (!id || !isDealHoanThanhForZalo) return;
+    if (!id) return;
     setZaloQuickSendLoading(true);
     try {
       const { data: fillRes } = await api.post(`/crm/leads/${id}/zalo-template-fill`, {});
@@ -1529,7 +1529,7 @@ export default function LeadDetail() {
     } finally {
       setZaloQuickSendLoading(false);
     }
-  }, [id, isDealHoanThanhForZalo, load]);
+  }, [id, load]);
 
   const navigateToCrmDealFocused = (dealId) => {
     persistCrmPipelineUiNow();
@@ -3138,6 +3138,19 @@ export default function LeadDetail() {
           >
             📥 Import Excel
           </button>
+          {lead.type === 'deal' && (
+            <button
+              type="button"
+              data-tour="lead-send-zalo-oa"
+              disabled={zaloQuickSendLoading}
+              onClick={() => quickSendZaloOa()}
+              title="Điền mẫu từ deal và gửi tin Zalo OA (không tự gửi khi kéo cột)"
+              className="h-9 px-3 bg-[#0068FF] hover:bg-[#0056d4] text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              {zaloQuickSendLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
+              Gửi Zalo
+            </button>
+          )}
           {lead?.type === 'deal' && (!lead?.project_id || canEditSxVcSchedule) ? (
             <button
               type="button"

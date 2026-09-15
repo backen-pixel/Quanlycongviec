@@ -675,7 +675,7 @@ async function fetchCrmPipelineZaloSlice(pipelineId) {
 /**
  * Gửi Zalo OA theo cấu hình app_settings + template deal.
  * @param {object} opts
- * @param {boolean} [opts.allowWithoutStageFlag] — true: gửi từ nút thủ công (deal ở cột Hoàn thành), không cần send_zalo_on_enter
+ * @param {boolean} [opts.allowWithoutStageFlag] — true: gửi từ nút thủ công, không cần send_zalo_on_enter / cột Hoàn thành
  * @param {boolean} [opts.force] — đã gửi OK trước đó (có msg_id): gửi thêm lần nữa. Lần gửi lỗi (không msg_id) luôn cho thử lại không cần force.
  * @param {Record<string,string>|null} [opts.templateDataOverride] — gửi đúng object này làm template_data (đã điền từ deal / sửa tay); bỏ qua pickDealZaloTemplatePayload.
  */
@@ -727,7 +727,7 @@ async function executeZaloDealStageNotify({
     .select('id, name, pipeline_type')
     .eq('id', stageId)
     .maybeSingle();
-  if (!isDealStageHoanThanhForZalo(zaloStageMeta)) {
+  if (!allowWithoutStageFlag && !isDealStageHoanThanhForZalo(zaloStageMeta)) {
     console.log('[Zalo OA] Bỏ qua — không phải cột Hoàn thành');
     return { ok: false, skipped: true, reason: 'not_hoan_thanh_stage' };
   }
@@ -810,16 +810,9 @@ async function executeZaloDealStageNotify({
   };
 }
 
-/** Gửi Zalo khi deal vào cột có send_zalo_on_enter (chạy nền, không chặn response) */
-async function maybeSendZaloOnDealStageEnter({ leadId, stageId, pipelineType, sendZaloOnEnter }) {
-  await executeZaloDealStageNotify({
-    leadId,
-    stageId,
-    pipelineType,
-    sendZaloOnEnter,
-    allowWithoutStageFlag: false,
-    force: false,
-  });
+/** Trước đây tự gửi Zalo khi deal vào cột send_zalo_on_enter. Đã tắt — chỉ gửi bằng nút «Gửi Zalo» trên chi tiết deal. */
+async function maybeSendZaloOnDealStageEnter() {
+  return { ok: false, skipped: true, reason: 'auto_send_disabled' };
 }
 const { onLeadWon = async () => null, onOrderConfirmed = async () => null, onQuotationAccepted = async () => null, onProjectCompleted = async () => null, getProjectCRMSummary = async () => ({}), getOverdueFollowUps = async () => [], getStaleLeads = async () => [], createProjectFromLead = async () => null } = autoFlowFns;
 
