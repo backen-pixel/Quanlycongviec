@@ -48,7 +48,6 @@ const COLUMNS = [
     icon: AlertTriangle,
     header: 'bg-red-50 text-red-800 border-red-100',
     dateCls: 'text-red-600',
-    kpiCls: 'text-red-600',
     empty: 'Không có nhiệm vụ quá hạn',
   },
   {
@@ -57,7 +56,6 @@ const COLUMNS = [
     icon: Sun,
     header: 'bg-orange-50 text-orange-800 border-orange-100',
     dateCls: 'text-orange-700',
-    kpiCls: 'text-orange-600',
     empty: 'Không có nhiệm vụ hạn hôm nay',
   },
   {
@@ -66,7 +64,6 @@ const COLUMNS = [
     icon: Clock3,
     header: 'bg-amber-50 text-amber-800 border-amber-100',
     dateCls: 'text-amber-700',
-    kpiCls: 'text-amber-600',
     empty: 'Không có nhiệm vụ hạn ngày mai',
   },
   {
@@ -75,7 +72,6 @@ const COLUMNS = [
     icon: CalendarDays,
     header: 'bg-sky-50 text-sky-800 border-sky-100',
     dateCls: 'text-sky-700',
-    kpiCls: 'text-sky-600',
     empty: 'Không có nhiệm vụ hạn trong tuần',
   },
   {
@@ -84,7 +80,6 @@ const COLUMNS = [
     icon: CalendarClock,
     header: 'bg-teal-50 text-teal-800 border-teal-100',
     dateCls: 'text-teal-700',
-    kpiCls: 'text-teal-600',
     empty: 'Không có nhiệm vụ hạn tuần sau',
   },
   {
@@ -93,7 +88,6 @@ const COLUMNS = [
     icon: CalendarOff,
     header: 'bg-slate-50 text-slate-700 border-slate-200',
     dateCls: 'text-slate-400',
-    kpiCls: 'text-slate-500',
     empty: 'Không có nhiệm vụ chưa có hạn',
   },
 ];
@@ -299,7 +293,9 @@ const KanbanColumn = memo(function KanbanColumn({
         <h2 className="text-sm font-bold truncate">{column.label}</h2>
         <span className="ml-auto text-[11px] font-bold bg-white/80 rounded-full px-2 py-0.5 tabular-nums">{tasks.length}</span>
       </header>
-      <div ref={scrollRef} className="p-2 max-h-[calc(100vh-330px)] min-h-72 overflow-y-auto [scrollbar-width:thin]">
+      {/* Trừ phần trên cột: tiêu đề + hàng module/tìm kiếm + header cột. Dưới lg khung app còn
+          thanh trên `pt-12` (48px) nên trừ thêm. */}
+      <div ref={scrollRef} className="p-2 max-h-[calc(100vh-313px)] lg:max-h-[calc(100vh-265px)] min-h-72 overflow-y-auto [scrollbar-width:thin]">
         {tasks.length ? (scrollReady && (
           <KanbanColumnVirtualList
             items={tasks}
@@ -889,24 +885,6 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
           setDeadlineTo={setDeadlineTo}
         />
       )}
-
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        {COLUMNS.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            onClick={() => setRiskFilter((current) => (current === item.key ? 'all' : item.key))}
-            className={`rounded-xl border bg-white p-3 md:p-4 shadow-sm text-left cursor-pointer ${
-              riskFilter === item.key ? 'border-blue-300 ring-2 ring-blue-100' : 'border-gray-100'
-            }`}
-          >
-            <p className="text-[11px] md:text-xs text-gray-500 truncate">{item.label}</p>
-            <p className={`text-xl md:text-2xl font-bold mt-1 ${item.kpiCls}`}>
-              {loading ? '…' : visibleStats[item.key]}
-            </p>
-          </button>
-        ))}
-      </div>
 
       {!fixedModuleConfig && (
         <div className="flex items-center gap-1.5 overflow-x-auto">
