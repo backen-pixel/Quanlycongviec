@@ -22,6 +22,7 @@
  * thực tế. Đo lại theo nhịp — khung chat mount/unmount và đổi kích thước theo viewport.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import GuidePageKnowledge from './GuidePageKnowledge';
 import { useAgent, useCopilotKit } from '@copilotkit/react-core/v2';
 import { deriveAgentActions, countRealActions } from './lib/agentActions';
 import { FULL_ACCESS } from './lib/guideAccess';
@@ -649,8 +650,13 @@ export default function AgentActivityPanel() {
   });
   const [tab, setTab] = useState(() => {
     try {
+      /**
+       * Danh sách phải kể ĐỦ mọi tab. Bản cũ chỉ có 'context' và 'cost', nên chọn "Luồng" rồi tải
+       * lại trang là bị ném về "Hành động" — một lỗi nhỏ nhưng gây bực đúng lúc người ta đang soi
+       * một sự cố và phải tải lại trang nhiều lần.
+       */
       const t = localStorage.getItem(LS_TAB);
-      return t === 'context' || t === 'cost' ? t : 'actions';
+      return ['context', 'cost', 'flow', 'knowledge'].includes(t) ? t : 'actions';
     } catch { return 'actions'; }
   });
   const [openKeys, setOpenKeys] = useState(() => ({}));
@@ -799,10 +805,25 @@ export default function AgentActivityPanel() {
             >
               Chi phí
             </button>
+            {/* Kiến thức của TRANG ĐANG XEM. Đứng cuối vì nó là việc quản trị kho, không phải
+                việc soi một lượt hỏi như bốn tab trước. */}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'knowledge'}
+              className={`guide-act__tab${tab === 'knowledge' ? ' guide-act__tab--on' : ''}`}
+              onClick={() => setTab('knowledge')}
+            >
+              Kiến thức trang
+            </button>
           </div>
 
           <div className="guide-act__list" ref={listRef}>
-            {tab === 'flow' ? (
+            {tab === 'knowledge' ? (
+              // Mount có điều kiện, không ẩn bằng CSS: component này hỏi `/knowledge/for-path`
+              // mỗi lần đổi trang. Ẩn bằng CSS thì nó vẫn hỏi, chỉ là không ai nhìn thấy.
+              <GuidePageKnowledge />
+            ) : tab === 'flow' ? (
               <FlowTab actions={actions} events={events} />
             ) : tab === 'context' ? (
               <ContextTab entries={ctxEntries} prompt={prompt} actions={actions} />

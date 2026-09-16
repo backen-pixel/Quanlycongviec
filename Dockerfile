@@ -28,12 +28,34 @@ ENV NODE_OPTIONS=--max-old-space-size=4096
 #
 # Bật ở đây chứ KHÔNG bật trong frontend/.env.production: file đó dùng chung với bản build trên
 # Render, tức bản khách hàng thật đang dùng. Trợ lý ở chế độ này tự bấm nút và tự điền trường
-# thay người dùng, kể cả nút Xoá — thứ đó chỉ nên có trên máy của chủ hệ thống.
+# thay người dùng (nhưng KHÔNG bấm được nút Xoá — xem VITE_GUIDE_ALLOW_DELETE bên dưới).
 #
 # Tắt khi cần:  GUIDE_FULL_ACCESS=0 docker compose up -d --build
 # (Vite đọc mọi biến môi trường có tiền tố VITE_ lúc build — xem src/features/guide/lib/guideAccess.js)
 ARG VITE_GUIDE_FULL_ACCESS=1
 ENV VITE_GUIDE_FULL_ACCESS=$VITE_GUIDE_FULL_ACCESS
+
+# QUYỀN XOÁ là cờ RIÊNG, và mặc định TẮT — kể cả khi toàn quyền đang bật.
+#
+# Gộp hai thứ làm một thì bản production chỉ còn hai lựa chọn đều sai: trợ lý vô dụng (không bấm
+# được gì) hoặc trợ lý bấm được nút Xoá trên dữ liệu thật của khách. Tách ra thì production chạy
+# được ở giữa — bấm/điền/điều hướng thật, cấm phá huỷ.
+#
+# Bật khi thật sự cần (máy của chủ hệ thống, bản thử nghiệm):
+#   GUIDE_ALLOW_DELETE=1 docker compose up -d --build
+ARG VITE_GUIDE_ALLOW_DELETE=0
+ENV VITE_GUIDE_ALLOW_DELETE=$VITE_GUIDE_ALLOW_DELETE
+
+# BẢNG "HÀNH ĐỘNG CỦA TRỢ LÝ" — công cụ cho người phát triển, mặc định ẨN ở bản build.
+#
+# Nó bày tham số + kết quả THÔ của từng tool, nguyên văn suy luận của model, chỉ dẫn hệ thống
+# thật, số token và tiền từng lượt. Người dùng cuối không cần và không nên thấy.
+#
+# KHÔNG cần khai biến này để ẩn: mặc định đã theo kiểu build (hiện ở `vite dev`, ẩn ở
+# `vite build`). Khai ở đây chỉ để nói rõ ý định và để bật lại khi cần soi lỗi:
+#   GUIDE_DEV_PANEL=1 docker compose up -d --build
+ARG VITE_GUIDE_DEV_PANEL=0
+ENV VITE_GUIDE_DEV_PANEL=$VITE_GUIDE_DEV_PANEL
 
 # ĐỒNG BỘ DANH MỤC MÀN HÌNH RỒI MỚI BUILD — không có bước này thì thêm một route mới là kho
 # kiến thức lệch âm thầm: trợ lý trả lời "đường dẫn đó không tồn tại" cho một trang có thật.

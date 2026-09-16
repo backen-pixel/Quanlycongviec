@@ -84,7 +84,7 @@ export function NavProposalCard({ args, status, result, respond }) {
       text: valid
         ? `Đi tới ${displayLabel}${target?.menu ? ` (${target.menu})` : ''}?`
         : `Đường dẫn "${args?.path || ''}" không có trong hệ thống.`,
-      confirm_label: 'Dẫn ta đi',
+      confirm_label: 'Dẫn mình đi',
       agree: valid ? agree : null,
       decline,
     });

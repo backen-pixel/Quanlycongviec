@@ -63,11 +63,40 @@ const threshold = () => settings.get('experience_threshold');
 const DUP_THRESHOLD = 0.62;
 /** Nhắc tối đa mấy kinh nghiệm mỗi lượt. Nhiều hơn là ngữ cảnh phình mà model vẫn chỉ dùng cái đầu. */
 const maxRecalls = () => settings.get('experience_recall_count');
+/** Dò bằng nguyên văn phải hơn ngưỡng chừng này thì mới được coi là chắc trúng. Xem `needsIntent`. */
+const skipMargin = () => {
+  const v = Number(settings.get('intent_skip_margin'));
+  return Number.isFinite(v) ? v : 0.15;
+};
 
 const COMBINING = new RegExp('[\\u0300-\\u036f]', 'g');
+/**
+ * Từ bị loại khi tách token.
+ *
+ * ═══ VÌ SAO NHÓM "CHỈ TRỎ" PHẢI NẰM Ở ĐÂY ═══
+ *
+ * Đo trên kho thật: bản ghi "đưa tôi đến trang đó" có `keywords` là `["dua","den","do"]` — không
+ * một từ nào mang nghĩa, vì `trang` và `toi` vốn đã bị loại. Nó trỏ tới /crm/pipeline-settings và
+ * bảo bấm "Zalo OA". Hậu quả đo được: hỏi "đưa tôi đến trang khách hàng", "…trang báo giá",
+ * "…trang sản xuất" đều dò TRÚNG bản đó, vì chỉ cần chung `dua` + `den` là đã vượt ngưỡng 0,34.
+ * Một bản ghi sai được nhắc cho mọi câu điều hướng.
+ *
+ * Bỏ chúng ở đây chữa được cả những bản RÁC ĐÃ NẰM TRONG KHO mà không phải sửa dữ liệu: bản cũ
+ * vẫn giữ `keywords` cũ, nhưng CÂU HỎI MỚI không còn sinh ra token nào trùng với chúng, nên phần
+ * giao về 0 và chúng lặng lẽ hết dò trúng.
+ *
+ * Đại từ chỉ trỏ (`do`, `day`, `kia`, `ay`, `nay`) mang đúng 0 thông tin về việc cần làm — ai
+ * cũng thấy. Động từ di chuyển (`dua`, `dan`, `den`) thì có vẻ đáng giữ, nhưng ở kho này mọi câu
+ * điều hướng đều chứa chúng, mà Jaccard KHÔNG có IDF để tự hạ trọng số từ phổ biến. Giữ lại là
+ * để chúng một mình quyết định độ giống.
+ */
 const STOPWORDS = new Set([
   'trang', 'la', 'gi', 'the', 'nao', 'o', 'dau', 'lam', 'sao', 'nhu', 'cua', 'cho', 'toi',
   'minh', 'co', 'khong', 'thi', 'va', 'voi', 'ban', 'giup', 'muon', 'can', 'xem', 'di',
+  // chỉ trỏ — không nói gì về việc cần làm
+  'do', 'day', 'kia', 'ay', 'nay',
+  // di chuyển — có ở mọi câu điều hướng, nên không phân biệt được câu nào với câu nào
+  'dua', 'dan', 'den',
 ]);
 
 function fold(s) {
@@ -559,6 +588,22 @@ function addExperience(rec) {
   const answerProbe = String(rec?.answer || '').trim();
 
   if (question.length < 8) return { saved: false, reason: 'question_too_short' };
+
+  /**
+   * CÂU KHÔNG CÒN TỪ NÀO MANG NGHĨA thì không ghi — bất kể nguồn.
+   *
+   * Cổng độ dài ở trên không bắt được loại này: "đưa tôi đến trang đó" dài 20 ký tự nên lọt, rồi
+   * nằm lại trong kho như một bản ghi có đường dẫn cụ thể mà câu hỏi thì rỗng nghĩa. Đo được
+   * trên kho thật, loại này còn có "chỉ mình từng cái", "sai rồi kiểm tra lại kiến thức",
+   * "DẪN TÔI ĐẾN ĐÓ".
+   *
+   * Ngưỡng là 2, khớp với `findExperience`: câu dưới 2 token vốn đã không dò được gì, nên bản ghi
+   * dưới 2 token cũng không có cách nào được dò trúng ĐÚNG — nó chỉ có thể được dò trúng NHẦM.
+   *
+   * Áp cho cả nguồn `agent`: câu việc do thủ thư viết thì luôn qua được, còn nếu một lần nào đó
+   * nó trả về một câu rỗng nghĩa thì đây là lưới cuối.
+   */
+  if (tokenize(question).length < 2) return { saved: false, reason: 'question_too_vague' };
   /**
    * Ngưỡng NỚI cho bản do agent chủ động ghi.
    *
@@ -673,7 +718,15 @@ function addExperience(rec) {
 
 /* ─────────────────────────── Tìm lại ─────────────────────────── */
 
-function findExperience(question, { company = 'chung', path: path = '' } = {}) {
+/**
+ * Như `findExperience` nhưng GIỮ LẠI ĐIỂM của từng bản.
+ *
+ * Tách ra vì `findCombined` cần biết bản đứng đầu khớp tới mức nào, chứ không chỉ cần "có mấy
+ * bản qua ngưỡng". Ngưỡng 0,34 khá dễ dãi: đủ số bản KHÔNG đồng nghĩa với dò trúng, nên nếu chỉ
+ * đếm số lượng thì một bản trùng chữ mà khác việc cũng đủ khiến hệ thống tưởng mình đã hiểu câu
+ * hỏi và bỏ qua bước diễn giải ý định.
+ */
+function rankExperience(question, { company = 'chung', path: path = '' } = {}) {
   if (!isEnabled()) return [];
   const qTokens = tokenize(question);
   if (qTokens.length < 2) return [];
@@ -692,8 +745,11 @@ function findExperience(question, { company = 'chung', path: path = '' } = {}) {
     })
     .filter((r) => r.d >= threshold())
     .sort((a, b) => b.d - a.d)
-    .slice(0, maxRecalls())
-    .map((r) => r.x);
+    .slice(0, maxRecalls());
+}
+
+function findExperience(question, opts) {
+  return rankExperience(question, opts).map((r) => r.x);
 }
 
 /** Mã ngắn hiện cho trợ lý. Sáu ký tự đầu của uuid — đủ phân biệt trong kho ≤ 300 bản. */
@@ -717,7 +773,79 @@ function shortCode(x) {
  *     này làm được thật, thì việc đúng là SỬA bản đó (nó mang tiền sử) chứ không phải viết bản
  *     mới sạch bong bên cạnh. Có cờ `discarded` để subagent biết mà cân.
  */
-function findCandidates(topic, { company = 'chung', path = '', limit = 5 } = {}) {
+/** Rút gọn một bản ghi thành thứ subagent đọc được. */
+function moTaUngVien(x, diem) {
+  return {
+    code: shortCode(x),
+    similarity: Number(diem.toFixed(2)),
+    question: x.question,
+    path: x.path,
+    steps: (x.steps || []).map((b) => b.summary || b.tool).filter(Boolean),
+    dead_ends: x.dead_ends || [],
+    lesson: x.lesson || '',
+    source: x.source,
+    discarded: !!x.discarded_at,
+    ...(x.discarded_at ? { discard_reason: x.discard_reason } : {}),
+  };
+}
+
+/**
+ * BẤT ĐỒNG BỘ, và thêm TẦNG NGỮ NGHĨA — đây là sửa đổi quan trọng nhất của kho ghi.
+ *
+ * Bản trước chỉ đếm từ trùng, nên nó giấu mất đúng thứ thủ thư cần thấy. Đo trên kho thật:
+ * "setup pipeline ở đâu" và "Thiết lập pipeline (cấu hình các giai đoạn của pipeline)" là MỘT
+ * việc, nằm cạnh nhau trong kho, mà đếm từ trùng cho ra 0 — không một cặp nào trong cụm 7 bản
+ * "sự kiện theo ngày" đạt nổi ngưỡng gộp. Thủ thư nhìn vào danh sách rỗng, kết luận "kho chưa
+ * có", rồi viết bản thứ tám.
+ *
+ * Nó phán bằng nghĩa, nhưng chỉ phán được trên thứ mà phép dò đưa tới. Dò bằng chữ thì dù model
+ * có thông minh mấy cũng không cứu được — nó không biết là có bản trùng để mà so.
+ *
+ * Xếp tầng chứ không trộn: đếm từ trước (0 ms, 0 đ), hụt mới nhúng. Thủ thư chạy nền nên một
+ * vòng mạng ở đây không ai phải chờ.
+ */
+async function findCandidates(topic, { company = 'chung', path = '', limit = 5 } = {}) {
+  if (!isEnabled()) return [];
+  const records = read()[String(company || 'chung')] || [];
+  if (!records.length) return [];
+  const dd = normalizePath(path);
+  const floor = threshold() * 0.6;
+  const qTokens = tokenize(topic);
+
+  const theoChu = (qTokens.length < 2 ? [] : records
+    .map((x) => {
+      let d = similarity(qTokens, x.keywords);
+      if (dd && x.path && dd === x.path) d += 0.08;
+      return { x, d };
+    })
+    .filter((r) => r.d >= floor)
+    .sort((a, b) => b.d - a.d)
+    .slice(0, limit));
+
+  const thieu = limit - theoChu.length;
+  if (thieu <= 0 || !settings.get('semantic_enabled')) return theoChu.map((r) => moTaUngVien(r.x, r.d));
+
+  /**
+   * Tầng ngữ nghĩa ở đây KHÔNG loại bản đã xoá mềm — cùng lý do như tầng chữ: một bản bị bỏ vì
+   * SAI, nay lượt này làm được thật, thì việc đúng là SỬA nó chứ không viết bản mới sạch bong
+   * bên cạnh. `findBySemantics` tự lọc bản đã xoá, nên phải tự dò ở đây.
+   */
+  const qv = await embeddings.embed(topic).catch(() => null);
+  if (!qv) return theoChu.map((r) => moTaUngVien(r.x, r.d));
+
+  const daCo = new Set(theoChu.map((r) => r.x.id));
+  const theoNghia = records
+    .filter((x) => x.vec && !daCo.has(x.id))
+    .map((x) => ({ x, d: embeddings.cosine(qv, x.vec) }))
+    .filter((r) => r.d >= settings.get('semantic_threshold'))
+    .sort((a, b) => b.d - a.d)
+    .slice(0, thieu);
+
+  return [...theoChu, ...theoNghia].map((r) => moTaUngVien(r.x, r.d));
+}
+
+/** Giữ lại bản đồng bộ cho những chỗ chỉ cần tầng chữ. */
+function findCandidatesByWords(topic, { company = 'chung', path = '', limit = 5 } = {}) {
   if (!isEnabled()) return [];
   const qTokens = tokenize(topic);
   if (qTokens.length < 2) return [];
@@ -944,21 +1072,91 @@ function restoreExperience({ company = 'chung', code } = {}) {
  * Bộ nhớ này là RAM, mất khi khởi động lại — chấp nhận được: nó chỉ cần sống đúng một lượt hỏi.
  */
 const INJECT_TTL_MS = 30 * 60 * 1000;
-const injected = new Map(); // khoaLuot -> { ids: Set<string>, luc: number }
+const injected = new Map(); // threadId -> { turn, ids: Set<string>, at, rescue }
 
 function pruneInjected() {
   const cutoff = Date.now() - INJECT_TTL_MS;
   for (const [k, v] of injected) if (v.at < cutoff) injected.delete(k);
 }
 
+/**
+ * Ô SỔ CỦA LƯỢT ĐANG CHẠY — tự thay mới khi sang lượt khác.
+ *
+ * Bản trước khoá theo `threadId` và KHÔNG BAO GIỜ dọn giữa chừng, nên "đã tiêm trong lượt này"
+ * thật ra là "đã tiêm trong 30 phút qua của hội thoại này". Hai hậu quả: cứu hộ ở lượt 4 bị chặn
+ * không được đưa lại một bản đã dùng ở lượt 1 — dù lượt 4 là việc khác hẳn; và thủ thư, khi hỏi
+ * "lượt vừa rồi đã được gợi ý gì", sẽ nhận về cả những bản của mấy lượt trước.
+ *
+ * `turn` = 0 nghĩa là "đang giữa lượt, đừng đổi ô" — cứu hộ và phần ghi chú dùng giá trị này, vì
+ * chúng chạy ở tầng model, nơi không đếm được lượt. Chỉ tầng AG-UI mới đóng dấu số lượt thật.
+ */
+function turnSlot(key, turn) {
+  let o = injected.get(key);
+  // `o.turn` phải khác 0 mới đem so: 0 nghĩa là ô được tạo bởi một chỗ không biết số lượt, và
+  // coi nó khác mọi lượt là xoá nhầm ghi chú của chính lượt đang chạy.
+  if (!o || (turn && o.turn && o.turn !== turn)) {
+    o = { turn: turn || 0, ids: new Set(), at: Date.now(), rescue: null };
+    injected.set(key, o);
+  }
+  if (turn && !o.turn) o.turn = turn;
+  o.at = Date.now();
+  return o;
+}
+
 /** Ghi lại những bản ghi vừa tiêm cho một lượt. `key` rỗng thì bỏ qua, không gộp chung. */
-function markInjected(key, records) {
+function markInjected(key, records, turn = 0) {
   if (!key || !records?.length) return;
   pruneInjected();
-  let o = injected.get(key);
-  if (!o) { o = { ids: new Set(), at: Date.now() }; injected.set(key, o); }
-  o.at = Date.now();
-  for (const x of records) o.ids.add(x.id);
+  const o = turnSlot(key, turn);
+  // Bỏ qua bản KHÔNG có `id`. `listAll()` trả bản rút gọn mang `code` thay cho `id`, nên đưa nhầm
+  // danh sách đó vào đây sẽ nhét `undefined` vào sổ: `getInjected` vẫn báo có phần tử, còn
+  // `turnReport` lại lọc sạch — hai bên nói hai chuyện khác nhau, và không có lỗi nào bật ra.
+  for (const x of records) if (x && x.id) o.ids.add(x.id);
+}
+
+/**
+ * Cứu hộ vừa làm gì trong lượt này — để thủ thư đọc lại sau khi lượt kết thúc.
+ *
+ * PHẢI đóng dấu SỐ LƯỢT, dù cứu hộ chạy ở tầng model. Không có nó thì ô sổ mang `turn: 0`, mà
+ * `turnSlot` coi 0 là "chưa biết" nên KHÔNG thay ô khi sang lượt mới — và ghi chú cứu hộ của lượt
+ * cũ đi lạc sang biên bản của lượt sau. Ca dựng lại được: một lượt không có kinh nghiệm nào được
+ * chèn (nên chưa ai tạo ô sổ), cứu hộ nổ giữa lượt, rồi lượt đó KHÔNG đủ điều kiện học nên không
+ * ai gọi `clearTurnReport`. Ghi chú nằm lại, và lượt kế tiếp bị chấm oan là "đã gợi ý mà vẫn bí".
+ *
+ * `flowLog.turnOf` là chỗ duy nhất tầng model lấy được số lượt — xem chú thích trong guideFlow.js.
+ */
+function noteRescue(key, detail) {
+  if (!key) return;
+  const o = turnSlot(key, flowLog.turnOf(key));
+  o.rescue = { ...(o.rescue || {}), ...detail };
+}
+
+/**
+ * BIÊN BẢN GỢI Ý CỦA LƯỢT — thứ thủ thư cần mà trước đây nó không có.
+ *
+ * Không có phần này, thủ thư tra lại kho từ đầu bằng một ngưỡng khác, một chuỗi khác, một bộ lọc
+ * khác — nên tập nó nhìn thấy có thể KHÔNG chứa bản vừa được gợi ý và vừa dẫn sai. Nó kết luận
+ * "kho chưa có" rồi viết một bản mới nằm ngay cạnh bản sai, và lần sau cả hai cùng được dò trúng.
+ *
+ * Trả về NỘI DUNG chứ không chỉ mã: thủ thư phải so được đường đi đã gợi ý với đường đi thật sự
+ * chạy được trong lượt, mới phán nổi "gợi ý này đúng" hay "gợi ý này dẫn sai".
+ */
+function turnReport(key) {
+  const o = key ? injected.get(key) : null;
+  if (!o) return { injected: [], rescue: null };
+
+  const byId = new Map();
+  for (const list of Object.values(read())) for (const x of list) byId.set(x.id, x);
+
+  const list = [...o.ids].map((id) => byId.get(id)).filter(Boolean).map((x) => ({
+    code: shortCode(x),
+    question: x.question,
+    path: x.path,
+    steps: (x.steps || []).map((b) => b.summary || b.tool).filter(Boolean),
+    dead_ends: x.dead_ends || [],
+    lesson: x.lesson || '',
+  }));
+  return { injected: list, rescue: o.rescue };
 }
 
 /**
@@ -969,6 +1167,11 @@ function markInjected(key, records) {
  */
 function getInjected(key) {
   return (key && injected.get(key)?.ids) || new Set();
+}
+
+/** Xoá sổ của một lượt — gọi sau khi thủ thư đã đọc xong, để lượt sau bắt đầu sạch. */
+function clearTurnReport(key) {
+  if (key) injected.delete(key);
 }
 
 function markRecalled(records) {
@@ -1132,8 +1335,43 @@ async function findBySemantics(question, {
  * tức cộng một vòng mạng vào mọi câu hỏi kể cả câu chẳng liên quan gì tới kinh nghiệm. Xếp tầng
  * thì phần lớn lượt trả 0 ₫, 0 ms — và tầng 2 chỉ chạy đúng lúc tầng 1 về tay không.
  */
-async function findCombined(question, { company = 'chung', path: path = '', turn = '', y = null } = {}) {
+/**
+ * ĐÃ DÒ TRÚNG CHẮC TAY CHƯA — quyết định có cần trả tiền cho subagent ý định hay không.
+ *
+ * Hai vế, và thiếu vế nào cũng hỏng:
+ *
+ *  1. ĐỦ SỐ BẢN. Thiếu bản thì tầng ngữ nghĩa sẽ chạy, mà tầng đó nhúng câu hỏi — nhúng nguyên
+ *     văn một câu tiếp nối ("còn tháng trước thì sao") là nhúng một câu vô nghĩa.
+ *  2. BẢN ĐỨNG ĐẦU PHẢI KHỚP RÕ. Ngưỡng nhắc lại mặc định là 0,34, đủ dễ dãi để một bản trùng
+ *     chữ mà khác việc lọt qua. Chỉ đếm số bản thì đúng những câu mơ hồ nhất — loại cần diễn
+ *     giải nhất — lại là loại bị coi là "đã hiểu rồi" và bỏ qua bước diễn giải.
+ *
+ * `skipMargin()` = 0 thì vế 2 luôn đúng, tức bỏ qua ngay khi vừa đủ số bản. Đặt cao thì gần như
+ * lượt nào cũng diễn giải, đúng cách chạy trước đây.
+ */
+function needsIntent(ranked) {
+  if (ranked.length < maxRecalls()) return true;
+  return ranked[0].d < threshold() + skipMargin();
+}
+
+/**
+ * @param {Function} getIntent  hàm KHÔNG THAM SỐ trả về ý định đã diễn giải (hoặc `null`).
+ *   Nhận hàm chứ không nhận kết quả dựng sẵn là toàn bộ điểm của bản này: người gọi không còn
+ *   phải trả tiền TRƯỚC khi biết có cần hay không. Bộ đệm theo lượt nằm trong `guideIntent`, nên
+ *   gọi hàm này nhiều lần trong cùng một lượt vẫn chỉ tốn đúng một lời gọi model.
+ */
+async function findCombined(question, { company = 'chung', path: path = '', turn = '', getIntent = null } = {}) {
   const startedAt = Date.now();
+
+  /**
+   * VÒNG 1 — dò bằng ĐÚNG CÂU NGƯỜI DÙNG GÕ. Tốn khoảng 0 ms và 0 đ, nên nó đi trước.
+   *
+   * Bản trước gọi subagent ý định ngay từ dòng đầu, tức mọi lượt hỏi đều trả hơn một giây trước
+   * khi biết kho có gì hay không — kể cả câu hỏi lặp lại y hệt lượt trước, loại mà dò theo chữ
+   * trúng ngay. Đảo thứ tự không mất năng lực nào: câu tiếp nối trượt phép dò theo chữ THEO CẤU
+   * TẠO (chữ của nó không nhắc gì tới việc đang làm), nên chúng vẫn rơi vào nhánh diễn giải.
+   */
+  const plain = rankExperience(question, { company, path: path });
 
   /**
    * `y` = ý định do SUBAGENT diễn giải (helpers/guideIntent.js). Có thì dùng nó thay nguyên văn.
@@ -1145,15 +1383,36 @@ async function findCombined(question, { company = 'chung', path: path = '', turn
    * `null` là đường lùi hợp lệ, không phải lỗi: subagent tắt, hết giờ, hay trả sai dạng đều cho
    * `null`, và khi đó hành vi phải giống hệt bản trước — dò bằng nguyên văn.
    */
+  let y = null;
+  let intentMode = 'skipped';
+  if (needsIntent(plain)) {
+    y = typeof getIntent === 'function' ? await getIntent() : null;
+    intentMode = y ? 'used' : 'failed';
+  }
+
   const topic = y ? [y.task, ...(y.keywords || [])].filter(Boolean).join(' ') : question;
   const queryEmbedText = y ? queryText(y) : '';
 
-  const keywords = findExperience(topic, { company, path: path });
+  /**
+   * DÒ LẠI BẰNG Ý ĐỊNH — nhưng KHÔNG vứt kết quả vòng 1 khi nó về tay không.
+   *
+   * Ý định thường tìm ra nhiều hơn, nhưng không phải luôn luôn: nó cố ý bỏ hết giá trị cụ thể
+   * (tên công ty, con số), trong khi phần lớn kho là bản ghi tự động có từ khoá lấy thẳng từ câu
+   * người dùng gõ — kể cả những từ đó. Có ca câu chữ trúng mà câu việc đã gọt thì trượt. Giữ lại
+   * bản vòng 1 trong ca đó là hơn hẳn trả về rỗng.
+   */
+  const byIntent = y ? rankExperience(topic, { company, path: path }) : [];
+  const keywords = (byIntent.length ? byIntent : plain).map((r) => r.x);
+
   const need = maxRecalls() - keywords.length;
   if (need <= 0 || !settings.get('semantic_enabled')) {
     // Ghi cả khi TRƯỢT (0 bản): "hỏi mà kho không có gì" là thông tin, không phải chuyện vô sự.
     flowLog.record(turn, 'experience', {
       tier: 'keyword', found: keywords.length, semantic: false, ms: Date.now() - startedAt,
+      // Ba giá trị, không phải hai. 'skipped' (dò theo chữ đã chắc trúng) và 'failed' (đã gọi mà
+      // hỏng) nhìn giống nhau trên sổ — cùng là "dò bằng nguyên văn" — nhưng một bên là tiết kiệm
+      // đúng ý đồ, bên kia là subagent đang chết âm thầm. Gộp lại là mất đúng tín hiệu báo hỏng.
+      intent_mode: intentMode,
       ...(y ? { intent: y.task } : {}),
     });
     return keywords.map((x) => ({ ...x, _tang: 'keywords' }));
@@ -1176,6 +1435,7 @@ async function findCombined(question, { company = 'chung', path: path = '', turn
     // khi ai đó hỏi "vì sao lượt này chậm hơn".
     embed_ms: Date.now() - beforeEmbed,
     ms: Date.now() - startedAt,
+    intent_mode: intentMode,
     ...(y ? { intent: y.task } : {}),
   });
   return [
@@ -1372,14 +1632,36 @@ function measureStuckSignals(prompt) {
  *  2. Câu hỏi khớp ở ngưỡng LỎNG hơn.
  * Trục 1 mới là cái cứu được ca "hỏi khác chữ mà cùng việc" — thứ mà lần dò đầu theo câu chữ trượt.
  */
-function findRescue(question, { company = 'chung', path: path = '' } = {}) {
+/**
+ * BA TRỤC, và trục thứ ba là mới.
+ *
+ * Trục 1 (màn hình) và trục 2 (chữ) giữ nguyên. Trục 3 so NGHĨA, và nó là trục duy nhất cứu được
+ * ca hay gặp nhất khi trợ lý bí: người dùng diễn đạt khác hẳn chữ đã lưu. Đo trên kho thật, hai
+ * bản cùng một việc mà khác chữ — "setup pipeline ở đâu" và "Thiết lập pipeline (cấu hình các
+ * giai đoạn)" — dò bằng chữ thì mỗi câu ra một bản và chúng không bao giờ gặp nhau; dò bằng nghĩa
+ * thì cả hai ra cùng lúc ở cả hai cách hỏi.
+ *
+ * Nay BẤT ĐỒNG BỘ vì trục 3 phải nhúng câu truy vấn. Chỉ chạy khi hai trục kia chưa đủ, nên lượt
+ * nào cứu được bằng màn hình thì vẫn tốn 0 đ như trước.
+ */
+async function findRescue(question, { company = 'chung', path: path = '', topic = '' } = {}) {
   if (!isEnabled()) return [];
   // Bỏ luôn bản đã HỎNG: cứu hộ là lúc trợ lý đang bí, đưa ra một bản từng làm người ta bí
   // Xếp hạng đã đẩy bản hạ bậc xuống cuối; loại hẳn thì lúc bí lại không còn gì để đưa ra.
   const records = (read()[String(company || 'chung')] || []).filter((x) => !x.discarded_at);
   if (!records.length) return [];
 
-  const qTokens = tokenize(question);
+  /**
+   * DÒ BẰNG Ý ĐỊNH nếu người gọi đưa được — đây là chỗ nó đáng giá nhất trong cả hệ thống.
+   *
+   * Cứu hộ nổ ĐÚNG VÀO những lượt mà phép dò theo chữ ở đầu lượt vừa trượt một lần rồi. Dò lại
+   * bằng chính câu chữ đó, chỉ hạ ngưỡng từ 0,34 xuống 0,22, là hỏi lại cùng một câu hỏi và chờ
+   * một câu trả lời khác: hoặc vẫn rỗng, hoặc moi lên đúng mấy bản lệch việc mà ngưỡng chặt đã
+   * loại đúng.
+   *
+   * Rỗng thì lùi về nguyên văn — không hỏng gì, chỉ là kém chính xác như trước.
+   */
+  const qTokens = tokenize(topic || question);
   const scores = new Map();
   const bump = (x, d) => scores.set(x, Math.max(scores.get(x) || 0, d));
 
@@ -1396,6 +1678,25 @@ function findRescue(question, { company = 'chung', path: path = '' } = {}) {
       if (d >= rescueThreshold()) bump(x, d);
     }
   }
+  // TRỤC 3 — NGHĨA. Chỉ chạy khi hai trục trên chưa lấp đủ chỗ.
+  const thieu = maxRecalls() - scores.size;
+  if (thieu > 0 && settings.get('semantic_enabled')) {
+    const chu = String(topic || question || '').trim();
+    const qv = chu ? await embeddings.embed(chu).catch(() => null) : null;
+    if (qv) {
+      const san = new Set([...scores.keys()].map((x) => x.id));
+      records
+        .filter((x) => x.vec && !san.has(x.id))
+        .map((x) => ({ x, d: embeddings.cosine(qv, x.vec) }))
+        .filter((r) => r.d >= settings.get('semantic_threshold'))
+        .sort((a, b) => b.d - a.d)
+        .slice(0, thieu)
+        // Trừ một chút để bản dò được bằng CHỮ hoặc bằng MÀN HÌNH vẫn đứng trước khi điểm ngang
+        // nhau: hai trục kia là bằng chứng chắc hơn, cosine chỉ là "nghe có vẻ liên quan".
+        .forEach((r) => bump(r.x, r.d - 0.05));
+    }
+  }
+
   return [...scores.entries()].sort((a, b) => b[1] - a[1]).slice(0, maxRecalls()).map(([x]) => x);
 }
 
@@ -1410,7 +1711,7 @@ function findRescue(question, { company = 'chung', path: path = '' } = {}) {
  * là phần KHÔNG cache và không đặt điểm cắt lên nó — đặt nhầm là mỗi bước ghi một cache mới, và
  * không lần nào đọc lại được.
  */
-function createRescueMiddleware(user, mark = '## Ngữ cảnh hiện tại', session = null) {
+function createRescueMiddleware(user, mark = '## Ngữ cảnh hiện tại', session = null, getIntent = null) {
   let inserted = false;
 
   return {
@@ -1441,9 +1742,35 @@ function createRescueMiddleware(user, mark = '## Ngữ cảnh hiện tại', ses
         flowLog.record(key, 'rescue', {
           mode: 'still_stuck', injected_before: existing.size, steps: d.step_count,
         });
+        /**
+         * "ĐÃ GỢI Ý RỒI MÀ VẪN BÍ" — ghi lại như một QUAN SÁT, không phải một phán quyết.
+         *
+         * Phân biệt này là bài học đắt nhất của tệp này. Bản đầu coi đây là bằng chứng gợi ý sai
+         * rồi tự cộng `fail_count`, và hạ bậc oan 34/55 bản ghi — vì lượt bí còn vì hết ngân sách
+         * bước, vì giao diện lọc ba tầng, vì model chậm. Nay nó chỉ được CHUYỂN CHO THỦ THƯ, là
+         * thứ duy nhất đọc được cả biên bản lượt nên phân biệt nổi "gợi ý sai" với "gợi ý đúng mà
+         * lượt hỏng vì chuyện khác". Một cái đếm thì không bao giờ phân biệt được.
+         */
+        noteRescue(key, { still_stuck: true, steps: d.step_count });
       }
+      /**
+       * XIN Ý ĐỊNH TRƯỚC KHI DÒ.
+       *
+       * Phần lớn lần nổ thì nó đã được tính từ đầu lượt và nằm sẵn trong bộ đệm, nên nhánh này
+       * tốn 0 đ. Chỉ ở lượt mà dò theo chữ đã trúng ngay từ đầu (nên chưa ai diễn giải) mà trợ lý
+       * VẪN bí thì mới phát sinh một lời gọi — và đó đúng là ca đáng trả nhất: chữ nghĩa khớp
+       * tốt mà việc không ra, tức chữ đang đánh lừa.
+       *
+       * `catch` nuốt hết: cứu hộ là tính năng phụ, không bao giờ được phép làm hỏng một lượt.
+       */
+      let y = null;
+      if (typeof getIntent === 'function') {
+        try { y = await getIntent({ question: d.question, path: d.path }); } catch { y = null; }
+      }
+      const topic = y ? [y.task, ...(y.keywords || [])].filter(Boolean).join(' ') : '';
+
       // Bản ĐÃ tiêm trong chính lượt này thì KHÔNG tiêm lại — đây là mắt xích khoá vòng lặp.
-      const records = findRescue(d.question, { company: user?.company_id || 'chung', path: d.path })
+      const records = (await findRescue(d.question, { company: user?.company_id || 'chung', path: d.path, topic }))
         .filter((x) => !existing.has(x.id));
 
       rescueLog.unshift({
@@ -1453,8 +1780,16 @@ function createRescueMiddleware(user, mark = '## Ngữ cảnh hiện tại', ses
         path: d.path,
         found: records.length,
         injected_before: existing.size,
+        intent: y ? y.task : '',
       });
       rescueLog.length = Math.min(rescueLog.length, 20);
+      noteRescue(key, {
+        fired: true,
+        steps: d.step_count,
+        signals: d.signals.slice(0, 6),
+        mode: records.length ? 'hint' : 'stop',
+        found: records.length,
+      });
       flowLog.record(key, 'rescue', {
         steps: d.step_count,
         signals: d.signals.length,
@@ -1464,6 +1799,8 @@ function createRescueMiddleware(user, mark = '## Ngữ cảnh hiện tại', ses
         // này (xem `eventText` trong AgentActivityPanel.jsx), đừng đổi một phía.
         mode: records.length ? 'hint' : 'stop',
         injected_before: existing.size,
+        // Soi được "cứu hộ trượt vì kho không có gì" khác với "trượt vì dò bằng câu chữ sai".
+        ...(y ? { intent: y.task } : {}),
       });
 
       inserted = true;
@@ -1591,12 +1928,15 @@ module.exports = {
   findCombined,
   queryText,
   findCandidates,
+  findCandidatesByWords,
   updateExperience,
   markRecalled,
   confidence,
   isBroken,
   markInjected,
   getInjected,
+  turnReport,
+  clearTurnReport,
   renderExperienceBlock,
   stats,
   writeNow,

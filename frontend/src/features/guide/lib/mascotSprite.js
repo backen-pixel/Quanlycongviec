@@ -32,6 +32,20 @@
 export const STATES = ['idle', 'thinking', 'working', 'pointing', 'answering', 'done'];
 
 /**
+ * SẮC MẶT — TÁCH HẲN khỏi `STATES`, và đây là chỗ dễ nhầm nhất của tệp này.
+ *
+ * `STATES` suy ra THUẦN CƠ HỌC từ hoạt động của agent, luôn đúng, luôn chạy. Bốn sắc mặt dưới
+ * đây là NHẬN XÉT của một subagent về nội dung câu hỏi (xem backend/helpers/guideMood.js): tuỳ
+ * chọn, mặc định tắt, và chỉ chèn một nhịp ngắn sau khi lượt kết thúc.
+ *
+ * Gộp chúng vào `STATES` là sai ngay: `hasSprite()` sẽ coi một bộ thiếu sắc mặt là bộ hỏng, và
+ * `deriveMascotState` — vốn không biết gì về subagent — sẽ không bao giờ trả về được chúng.
+ *
+ * Bộ nào không khai `moods` thì tính năng tự im với bộ đó, không lỗi.
+ */
+export const MOODS = ['speechless', 'contempt', 'amused', 'helpless'];
+
+/**
  * CÁC BỘ NHÂN VẬT.
  *
  * `poses` khuyết trạng thái nào thì trạng thái đó lùi về `idle`. `directional` liệt kê những tư
@@ -76,8 +90,19 @@ export const SETS = [
   {
     id: 'la-ban',
     name: 'Robot la bàn (vector)',
-    note: 'Vẽ bằng SVG theo tông tím của hệ thống, có mặt la bàn trên ngực. Cả 6 tư thế ~10 KB, '
-      + 'nét không vỡ ở mọi độ phân giải.',
+    /**
+     * THÂN vector, MẶT là ảnh chụp nhúng base64 — không còn thuần vector như tên gọi.
+     *
+     * Ảnh phải nhúng thẳng vào tệp chứ không trỏ đường dẫn: `GuideMascot` render bằng
+     * `<img src="....svg">`, mà SVG nạp dưới dạng ảnh thì bị cách ly — mọi tham chiếu ra ngoài
+     * bị chặn IM LẶNG, trỏ đường dẫn là ra mặt trống trơn mà không một lỗi nào báo.
+     *
+     * Cái giá là dung lượng: 24 KB (mặt vẽ tay) → ~380 KB. Vẫn nhẹ hơn bộ ảnh (1,4 MB) và chỉ
+     * tải khi người dùng mở trợ lý. Muốn giảm thì hạ ảnh gốc trong `E:/CRMtb/meme` từ 180px
+     * xuống ~110px rồi nhúng lại — vẫn nét ở màn hình 2×.
+     */
+    note: 'Thân vector tông tím có mặt la bàn trên ngực; mặt là ảnh chụp nhúng sẵn. '
+      + 'Cả 6 tư thế ~380 KB.',
     directional: ['pointing'],
     poses: {
       idle: '/mascot/la-ban/greeting.svg',
@@ -94,6 +119,16 @@ export const SETS = [
       pointing: '/mascot/la-ban/pointing.svg',
       answering: '/mascot/la-ban/answering.svg',
       done: '/mascot/la-ban/success.svg',
+    },
+    /**
+     * Bốn sắc mặt tuỳ chọn — chỉ hiện khi `mood_enabled` bật ở Cài đặt. Cùng thân với tư thế
+     * đứng chào, chỉ khác khuôn mặt: thứ đang nói ở đây là THÁI ĐỘ, không phải hành động.
+     */
+    moods: {
+      speechless: '/mascot/la-ban/speechless.svg',
+      contempt: '/mascot/la-ban/contempt.svg',
+      amused: '/mascot/la-ban/amused.svg',
+      helpless: '/mascot/la-ban/helpless.svg',
     },
   },
 ];
@@ -116,15 +151,25 @@ export function normalizeSet(id) {
  */
 const LS_KEY = 'guide.mascotSet';
 
+/**
+ * `typeof localStorage` KHÔNG an toàn và phải nằm TRONG try.
+ *
+ * Nó trông như một phép kiểm tra vô hại, nhưng `typeof` vẫn ĐỌC thuộc tính `localStorage` của
+ * `window` — và trong tài liệu có origin rỗng (iframe sandbox, `about:blank`) hay khi trình
+ * duyệt chặn lưu trữ, chính phép đọc đó ném `SecurityError`. Để ngoài try là dòng khởi tạo
+ * module ném ngay lúc nạp, và vì đây là module cấp cao nên CẢ chunk trợ lý chết theo — đúng cái
+ * mà `catch` bên dưới đang cố tránh. Đã tái hiện được trong Chromium headless.
+ */
 function readStored() {
   try {
+    if (typeof localStorage === 'undefined') return DEFAULT_SET;
     return normalizeSet(localStorage.getItem(LS_KEY));
   } catch {
     return DEFAULT_SET; // chế độ riêng tư chặn localStorage — không phải lý do để vỡ giao diện
   }
 }
 
-let active = typeof localStorage === 'undefined' ? DEFAULT_SET : readStored();
+let active = readStored();
 const listeners = new Set();
 
 /** Mã bộ đang dùng. */
@@ -169,4 +214,32 @@ export function hasSprite() {
 export function spriteFor(state) {
   const { poses } = activeSet();
   return poses[state] || poses.idle || '';
+}
+
+/**
+ * Ảnh cho một SẮC MẶT — trả `''` nếu bộ đang dùng không có.
+ *
+ * KHÔNG lùi về `idle` như `spriteFor`. Lùi ở đây là nhân vật đổi sang tư thế đứng chào giữa
+ * chừng mà không có sắc mặt nào — một cú nhấp nháy vô nghĩa. Trả rỗng thì chỗ gọi biết là "bộ
+ * này không có sắc mặt" và giữ nguyên tư thế cơ học, đúng thứ cần.
+ */
+export function moodSpriteFor(mood) {
+  const { moods } = activeSet();
+  if (!mood || !moods) return '';
+  return moods[mood] || '';
+}
+
+/**
+ * Bộ đang dùng có sắc mặt không — client khai lên server qua header `x-guide-moods`.
+ *
+ * Không có hàm này thì bộ "Cô gái áo trắng" vẫn tốn một lời gọi `gpt-4o-mini` MỖI LƯỢT HỎI để
+ * rồi `moodSpriteFor` trả rỗng và không hiện gì: trả tiền cho kết quả không ai thấy.
+ *
+ * Phép kiểm PHẢI nằm ở đây, không chép sang backend. Sổ đăng ký bộ nhân vật ở tệp này là nguồn
+ * duy nhất; chép danh sách sang bên kia là thêm một bộ ở đây rồi quên sửa bên đó, và không có
+ * lỗi nào báo.
+ */
+export function hasMoodSprites() {
+  const { moods } = activeSet();
+  return !!moods && Object.keys(moods).length > 0;
 }

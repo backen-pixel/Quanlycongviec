@@ -52,6 +52,22 @@ function toChunk(h) {
   if (Array.isArray(h.actions) && h.actions.length) c.actions = h.actions;
   if (h.needs_admin) c.needs_admin = true;
   if (h.redirect) c.redirect = true;
+
+  /**
+   * VECTOR ĐI KÈM CHUNK, không tải rời.
+   *
+   * Tra cứu cần cả nội dung lẫn vector của cùng một hàng; tải hai lần là mở ra cơ hội cho chúng
+   * lệch nhau giữa hai lần gọi. Giữ nguyên dạng chuỗi pgvector — phân tích ra số là việc của
+   * `guideKnowledge`, nơi đã có `fromPgVector` và biết số chiều đang dùng.
+   *
+   * Gạch dưới ở đầu tên: đây là dữ liệu nội bộ của tầng tra cứu, KHÔNG phải một trường kiến thức.
+   * `fieldTexts()` không được đụng tới, nếu không vector sẽ tự nhúng chính nó vào phép chấm điểm
+   * từ khoá dưới dạng một chuỗi số vô nghĩa.
+   */
+  c._source = h.source || '';
+  if (h.embedding) c._vec = h.embedding;
+  if (h.embedding_hash) c._vecHash = h.embedding_hash;
+  if (h.embedding_model) c._vecModel = h.embedding_model;
   return c;
 }
 
@@ -267,6 +283,115 @@ async function resetToFile(file, path, fileChunk) {
 }
 
 /** Danh sách cho màn hình quản lý — kèm cả chunk đã bỏ, khác `loadAll()`. */
+/**
+ * Chỉ những bản ghi của MỘT đường dẫn.
+ *
+ * Tách khỏi `listAll()` vì bảng "kiến thức trang này" hỏi lại mỗi lần admin đổi trang — kéo cả
+ * 334 dòng về chỉ để lọc lấy một hai dòng là lãng phí đúng ở chỗ lặp nhiều nhất.
+ *
+ * Trả về MẢNG chứ không phải một bản ghi: `/crm/leads/:id` có mặt ở nhiều nguồn (screens.json và
+ * lead-detail.json), và bảng phải cho người dùng thấy điều đó thay vì lặng lẽ chọn hộ một cái.
+ */
+/* ═══════════════════════ VECTOR NẰM CÙNG HÀNG VỚI KIẾN THỨC ═══════════════════════
+ *
+ * Xem `database/603_guide_knowledge_vectors.sql` cho lý do đầy đủ. Tóm tắt: trước đó vector sống
+ * trong hai tệp (một trong image, một trong volume) trong khi kiến thức sống trong DB — ba nguồn
+ * lệch pha nhau. Nay một hàng giữ cả nội dung lẫn vector của chính nó.
+ */
+
+/**
+ * Những hàng CẦN nhúng: chưa có vector, hoặc có nhưng băm/model đã lệch.
+ *
+ * Trả về cả `label` và các trường nội dung vì chỗ gọi phải dựng lại chuỗi đem nhúng — không lưu
+ * sẵn chuỗi đó trong DB, vì công thức dựng nó nằm ở `embedTextOf()` và có thể đổi.
+ *
+ * `storeId` = model + công thức đang dùng. Hàng nhúng bằng model khác cũng phải nhúng lại: con số
+ * vẫn hợp lệ nhưng thuộc một không gian vector khác, so cosine với nó là vô nghĩa.
+ */
+async function listNeedEmbedding(storeId, limit = 64) {
+  if (!ENABLED || gate.blocked()) return { ok: false };
+  try {
+    const { data, error } = await supabase.from(TABLE)
+      .select('path,source,label,menu,summary,content,keywords,embedding_hash,embedding_model')
+      .is('discarded_at', null)
+      .or(`embedding.is.null,embedding_model.neq.${storeId}`)
+      .limit(limit);
+    if (error) throw error;
+    gate.ok();
+    return { ok: true, list: data || [] };
+  } catch (e) {
+    gate.fail(e, 'tìm kiến thức chưa nhúng');
+    return { ok: false };
+  }
+}
+
+/**
+ * Ghi vector cho một hàng.
+ *
+ * Cập nhật theo (source, path) chứ không theo path: hai nguồn có thể cùng đường dẫn
+ * (`/crm/leads/:id` nằm ở cả screens.json lẫn lead-detail.json), và ghi theo path là đè vector
+ * của hàng này lên hàng kia.
+ *
+ * KHÔNG bump `edited_at`/`hand_edited`: nhúng là việc của máy, không phải người sửa nội dung.
+ * Đụng vào hai cột đó là làm hỏng đúng cơ chế bảo vệ mục sửa tay khỏi generator.
+ */
+async function writeEmbedding(source, path, vec, hash, storeId) {
+  if (!ENABLED || gate.blocked()) return { ok: false };
+  try {
+    const { error } = await supabase.from(TABLE)
+      .update({
+        embedding: vec,
+        embedding_hash: hash,
+        embedding_model: storeId,
+        embedded_at: new Date().toISOString(),
+      })
+      .eq('source', source).eq('path', path);
+    if (error) throw error;
+    gate.ok();
+    return { ok: true };
+  } catch (e) {
+    gate.fail(e, 'ghi vector kiến thức');
+    return { ok: false };
+  }
+}
+
+/** Đếm để bảng chẩn đoán và `guide:check` nói được kho đã nhúng tới đâu. */
+async function embeddingStats(storeId) {
+  if (!ENABLED || gate.blocked()) return { ok: false };
+  try {
+    const q = supabase.from(TABLE).select('*', { count: 'exact', head: true }).is('discarded_at', null);
+    const [tong, thieu] = await Promise.all([
+      q,
+      supabase.from(TABLE).select('*', { count: 'exact', head: true })
+        .is('discarded_at', null)
+        .or(`embedding.is.null,embedding_model.neq.${storeId}`),
+    ]);
+    if (tong.error) throw tong.error;
+    if (thieu.error) throw thieu.error;
+    gate.ok();
+    return { ok: true, total: tong.count || 0, missing: thieu.count || 0 };
+  } catch (e) {
+    gate.fail(e, 'đếm vector kiến thức');
+    return { ok: false };
+  }
+}
+
+async function listByPath(p) {
+  if (!ENABLED || gate.blocked()) return { ok: false };
+  try {
+    const { data, error } = await supabase.from(TABLE)
+      .select('path,source,label,menu,summary,content,keywords,actions,needs_admin,hand_edited,discarded_at,edited_at,edited_by')
+      .eq('path', p)
+      .order('source');
+    if (error) throw error;
+    gate.ok();
+    return { ok: true, list: data || [] };
+  } catch (e) {
+    gate.fail(e, 'đọc kiến thức theo đường dẫn');
+    return { ok: false };
+  }
+}
+
 async function listAll() {
   if (!ENABLED || gate.blocked()) return { ok: false };
   try {
@@ -288,5 +413,6 @@ function status() {
 }
 
 module.exports = {
-  loadAll, readVersion, syncFromFiles, insertMissing, editChunk, addChunk, setDiscarded, resetToFile, listAll, status, ENABLED, TABLE,
+  loadAll, readVersion, syncFromFiles, insertMissing, editChunk, addChunk, setDiscarded, resetToFile, listAll, listByPath,
+  listNeedEmbedding, writeEmbedding, embeddingStats, status, ENABLED, TABLE,
 };

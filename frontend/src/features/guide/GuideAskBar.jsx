@@ -175,7 +175,7 @@ export default function GuideAskBar() {
         onClick={() => toggleAskBar()}
         aria-label={open ? 'Thu ô hỏi' : 'Hỏi trợ lý hướng dẫn'}
         aria-expanded={open}
-        title={open ? 'Thu lại' : 'Bấm để hỏi ta'}
+        title={open ? 'Thu lại' : 'Bấm để hỏi mình'}
       >
         <img
           className="app-guide-askbar__avatar"
@@ -193,7 +193,7 @@ export default function GuideAskBar() {
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={onKey}
-        placeholder={running ? 'Đang trả lời…' : 'Hỏi ta bất cứ điều gì…'}
+        placeholder={running ? 'Đang trả lời…' : 'Hỏi mình bất cứ điều gì…'}
         disabled={running}
         tabIndex={open ? 0 : -1}
         aria-hidden={!open}

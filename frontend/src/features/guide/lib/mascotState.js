@@ -26,7 +26,7 @@ import { LINE_BY_TOOL } from './toolRegistry';
 
 const DEFAULT_LINES = {
   idle: '',
-  thinking: 'Để ta nghĩ đã…',
+  thinking: 'Để mình nghĩ đã…',
   working: 'Đang làm…',
   pointing: 'Ở đây!',
   answering: '',
@@ -63,7 +63,7 @@ function lastMessage(messages) {
  * gần nhất của người dùng.
  *
  * Có con số này thì chuỗi dài mới đọc được. Trước đây một yêu cầu 6 bước chỉ hiện đúng hai câu
- * thay nhau — "Đang làm…" rồi "Để ta nghĩ đã…" rồi lại "Đang làm…" — nhìn như treo, không ai
+ * thay nhau — "Đang làm…" rồi "Để mình nghĩ đã…" rồi lại "Đang làm…" — nhìn như treo, không ai
  * biết nó đang tiến hay đang quẩn.
  */
 function countSteps(messages) {
@@ -115,7 +115,7 @@ export function deriveMascotState(agent, isPointing = false, justFinished = fals
   /**
    * Kết quả tool vừa về, lượt chưa xong → model đang quyết định bước kế.
    *
-   * KHÔNG nói lại "Để ta nghĩ đã…" ở đây. Trong một chuỗi dài, nhịp này lặp lại sau MỖI tool,
+   * KHÔNG nói lại "Để mình nghĩ đã…" ở đây. Trong một chuỗi dài, nhịp này lặp lại sau MỖI tool,
    * nên dùng chung câu với lúc mới bắt đầu là biến bong bóng thành cái đèn nháy hai trạng thái.
    * Nói rõ vừa xong bước mấy thì người dùng thấy được tiến độ.
    */

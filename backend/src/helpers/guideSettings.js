@@ -291,6 +291,18 @@ const FIELDS = [
     description: 'Tắt thì trợ lý không đọc và không ghi kinh nghiệm nữa. Kho cũ vẫn còn nguyên, bật lại là dùng tiếp.',
   },
   {
+    key: 'experience_prime_turn',
+    group: 'experience',
+    label: 'Nạp kinh nghiệm ngay từ đầu lượt',
+    type: 'boolean',
+    default: () => boolEnv('GUIDE_KINH_NGHIEM_DAU_LUOT', false),
+    description: 'TẮT (mặc định): kho kinh nghiệm chỉ được dùng khi trợ lý có DẤU HIỆU BÍ giữa lượt — '
+      + 'lặp lại lời gọi, tool báo thất bại. Đây là vai "cứu hộ": rẻ nhất, và chỉ can thiệp khi '
+      + 'thật sự cần. BẬT: mọi lượt đều dò kho trước rồi mới hỏi model, nên trợ lý đi thẳng ngay '
+      + 'từ câu đầu thay vì phải mò hỏng một lần mới được nhắc — đổi lại tốn thêm một phép dò ở '
+      + 'mọi lượt, kể cả những câu chẳng liên quan gì tới kho.',
+  },
+  {
     key: 'intent_enabled',
     group: 'experience',
     label: 'Subagent diễn giải ý định',
@@ -314,6 +326,23 @@ const FIELDS = [
     description: 'Chọn model RẺ NHẤT dùng được: việc của nó chỉ là viết lại một câu ngắn, không cần suy '
       + 'luận sâu. Dùng model đắt ở đây là trả tiền cao cho một việc nhỏ chạy ở mọi lượt hỏi. Nó '
       + 'đi cùng nhà cung cấp và cùng API key với trợ lý chính.',
+  },
+  {
+    key: 'intent_skip_margin',
+    group: 'experience',
+    label: 'Dò trúng tới mức nào thì khỏi diễn giải',
+    type: 'number',
+    min: 0,
+    max: 0.5,
+    step: 0.01,
+    unit: 'cộng thêm vào ngưỡng',
+    default: () => numEnv('GUIDE_Y_DINH_BIEN', 0.15, { min: 0, max: 0.5 }),
+    description: 'Dò bằng đúng câu người dùng gõ tốn khoảng 0 ms, nên nó chạy trước. Nếu nó đã lấy đủ '
+      + 'số bản cần nhắc VÀ bản khớp nhất đạt "ngưỡng giống nhau + con số này", thì coi như chắc '
+      + 'trúng và BỎ QUA lời gọi model diễn giải ý định — tiết kiệm hơn một giây cho những câu '
+      + 'hỏi lặp lại. Đặt 0 là bỏ qua ngay khi vừa đủ số bản (nhanh nhất, dễ nhắc nhầm nhất); đặt '
+      + 'cao là gần như lượt nào cũng diễn giải, tức đúng cách chạy trước đây. Câu tiếp nối kiểu '
+      + '"còn tháng trước thì sao" luôn trượt phép dò theo chữ nên vẫn được diễn giải, dù đặt bao nhiêu.',
   },
   {
     key: 'background_learn_enabled',
@@ -401,6 +430,18 @@ const FIELDS = [
     description: 'Thấp hơn ngưỡng thường, cố ý: lúc đã bí thì một gợi ý gần đúng vẫn hơn không có gì.',
   },
 
+  {
+    key: 'knowledge_hybrid',
+    group: 'knowledge',
+    label: 'Tra kiến thức lai (từ khoá + ngữ nghĩa)',
+    type: 'boolean',
+    default: () => boolEnv('GUIDE_KIEN_THUC_LAI', true),
+    description: 'Trộn điểm từ khoá với độ giống ngữ nghĩa theo tỉ lệ 50/50 khi tra kho kiến thức. '
+      + 'Bắt được câu diễn đạt vòng vo mà từ khoá bỏ sót (đo: "phân công thợ đi lắp" từ hạng 3 lên '
+      + 'hạng 1). Đổi lại MỘT lần nhúng câu hỏi (~0,5 giây) ở mỗi lượt trợ lý thật sự tra kho. '
+      + 'Tắt là quay về đúng hành vi thuần từ khoá, không cần dựng lại. '
+      + 'Thiếu vector, nhúng hỏng hay hết giờ đều tự lùi về từ khoá.',
+  },
   {
     key: 'semantic_enabled',
     group: 'experience',
@@ -523,6 +564,31 @@ const FIELDS = [
       + '~1,4 MB, và nét không vỡ trên màn hình độ phân giải cao. Danh sách này lấy từ '
       + 'frontend/src/features/guide/lib/mascotSprite.js — thêm bộ ở đó thì phải thêm mã bộ vào đây.',
   },
+  {
+    key: 'mood_enabled',
+    group: 'appearance',
+    label: 'Sắc mặt theo câu hỏi (chỉ nên bật ở bản nội bộ)',
+    type: 'boolean',
+    default: () => false,
+    description: 'Bật thì sau mỗi câu trả lời, một subagent nhỏ đọc câu vừa hỏi cùng 3 câu gần nhất '
+      + 'rồi cho nhân vật làm mặt "cạn lời" (câu đã hỏi rồi), "khinh bỉ" (hỏi nút đó ở đâu), '
+      + '"bất lực" (bạn nói câu trả lời sai) hoặc "nhịn cười" (hỏi chuyện ngoài hệ thống). '
+      + 'Sắc mặt chỉ hiện một nhịp ngắn rồi trả nhân vật về bình thường — nó KHÔNG thay các '
+      + 'trạng thái đang nói thông tin thật (đang nghĩ, đang chỉ nút). '
+      + 'MẶC ĐỊNH TẮT, và nên để tắt trên bản khách hàng dùng: nhân viên hỏi một câu rồi bị máy '
+      + 'bĩu môi là chuyện dễ thành phàn nàn.',
+  },
+  {
+    key: 'mood_model',
+    group: 'appearance',
+    label: 'Model cho subagent sắc mặt',
+    type: 'select',
+    choices: ['gpt-4o-mini', 'gpt-4.1-mini', 'gpt-4o'],
+    default: () => 'gpt-4o-mini',
+    description: 'Việc của nó là chọn 1 trong 5 nhãn, nên lấy model rẻ nhất. Chạy bằng '
+      + 'OPENAI_API_KEY RIÊNG, không đi theo nhà cung cấp của trợ lý chính — thiếu key thì tính '
+      + 'năng tự tắt, không báo lỗi và không ảnh hưởng câu trả lời.',
+  },
 ];
 
 const GROUPS = [
@@ -534,6 +600,7 @@ const GROUPS = [
   { id: 'reasoning', name: 'Độ dài suy luận' },
   { id: 'iterations', name: 'Số lần lặp' },
   { id: 'appearance', name: 'Giao diện' },
+  { id: 'knowledge', name: 'Kho kiến thức' },
 ];
 
 const BY_KEY = new Map(FIELDS.map((t) => [t.key, t]));

@@ -173,7 +173,7 @@ export async function openTour(keyword, { pathname } = {}) {
   // được ngay với điều mình vừa hỏi.
   const stepName = titles[idx] || def.title;
   setTempLine({
-    text: `Để ta mở chỉ dẫn “${stepName}” cho ngươi…`,
+    text: `Để mình mở chỉ dẫn “${stepName}” cho bạn…`,
     state: 'answering',
     ms: MOUNT_WAIT_MS + 900,
   });

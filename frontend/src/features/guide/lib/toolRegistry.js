@@ -31,7 +31,7 @@ const REGISTRY = {
   // ── Backend (defineTool) — không có `onToolExecutionStart/End` nào bắn cho chúng, nhưng vẫn
   //    hiện trong bảng vì bảng dựng từ `agent.messages` chứ không từ callback.
   search_knowledge_base: {
-    icon: '🔎', label: 'Tra cứu hệ thống', line: 'Để ta tra trong điển tịch…', where: 'backend',
+    icon: '🔎', label: 'Tra cứu hệ thống', line: 'Để mình tra trong kho kiến thức…', where: 'backend',
   },
   save_experience: {
     icon: '📝', label: 'Ghi kinh nghiệm', line: 'Ghi vào sổ tay đã…', where: 'backend',
@@ -54,7 +54,7 @@ const REGISTRY = {
     icon: '🔍', label: 'Đọc sâu một khu vực', line: 'Xem kỹ khu vực này…', where: 'client',
   },
   open_page_tour: {
-    icon: '🧑‍🏫', label: 'Mở hướng dẫn trên trang', line: 'Mở chỉ dẫn cho ngươi…', where: 'client',
+    icon: '🧑‍🏫', label: 'Mở hướng dẫn trên trang', line: 'Mở chỉ dẫn cho bạn…', where: 'client',
   },
   /**
    * MỘT TÊN, HAI ĐỊNH NGHĨA — có chủ đích, xem `AppGuideCopilotPanel.jsx`:
@@ -75,7 +75,7 @@ const REGISTRY = {
     icon: '🔦', label: 'Rà tìm trên trang', line: 'Đang lần tìm trên trang…', where: 'client',
   },
   click_element: {
-    icon: '🖱️', label: 'Bấm nút', line: 'Ta bấm giúp đây.', where: 'client',
+    icon: '🖱️', label: 'Bấm nút', line: 'Mình bấm giúp đây.', where: 'client',
   },
   fill_field: {
     icon: '⌨️', label: 'Điền/chọn trường', line: 'Đang điền…', where: 'client',

@@ -12,15 +12,21 @@
  *  - Human-in-the-loop : useHumanInTheLoop cho `navigate_to_page` — agent chỉ ĐỀ NGHỊ,
  *                        chỉ điều hướng thật khi người dùng bấm "Đồng ý" trong khung chat.
  *
- * PHẠM VI — hai chế độ, chọn bằng cờ ở lib/guideAccess.js:
+ * PHẠM VI — BA chế độ, chọn bằng hai cờ ĐỘC LẬP ở lib/guideAccess.js:
  *
- *  ĐỌC (mặc định khi build production): chỉ đọc khung giao diện + số liệu tổng hợp đang hiển
- *  thị (lọc PII 3 lớp), điều hướng phải người dùng bấm xác nhận. Không action nào ghi/sửa/xoá.
+ *  ĐỌC (`FULL_ACCESS = false`): chỉ đọc khung giao diện + số liệu tổng hợp đang hiển thị (lọc
+ *  PII 3 lớp), điều hướng phải người dùng bấm xác nhận. Không action nào ghi/sửa/xoá.
  *
- *  TOÀN QUYỀN (mặc định khi chạy dev): thêm `read_page_state`, `click_element`, `fill_field` và điều
- *  hướng KHÔNG cần xác nhận. Trợ lý làm được đúng những gì người dùng làm được bằng chuột trên
- *  trang đó — kể cả bấm Xoá. Không lọc PII, vì nó chỉ đọc cái người dùng đang tự nhìn thấy.
- *  Chế độ này dành cho bản thử nghiệm; xem lib/guideAccess.js cho lý do phải có công tắc.
+ *  TOÀN QUYỀN — CẤM PHÁ HUỶ (`FULL_ACCESS = true`, `ALLOW_DELETE = false`) — ĐÂY LÀ BẢN CHO
+ *  PRODUCTION: thêm `read_page_state`, `click_element`, `fill_field`, điều hướng không cần xác
+ *  nhận. Trợ lý làm được gần hết những gì người dùng làm được bằng chuột, TRỪ xoá/huỷ/gỡ/đặt
+ *  lại — `pageActions.clickByLabel` từ chối thẳng những nhãn đó.
+ *
+ *  TOÀN QUYỀN ĐẦY ĐỦ (`ALLOW_DELETE = true`): thêm cả nút Xoá. Chỉ dành cho máy của chủ hệ
+ *  thống; phải bật tường minh bằng `VITE_GUIDE_ALLOW_DELETE=1` hoặc localStorage.
+ *
+ *  Hai chế độ toàn quyền không lọc PII, vì chúng chỉ đọc cái người dùng đang tự nhìn thấy.
+ *  Xem lib/guideAccess.js cho lý do phải tách làm hai cờ.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -43,7 +49,8 @@ import { scanPageStructure } from './lib/pageStructureScanner';
 import { highlightByLabel } from './lib/uiSpotlight';
 import { readScreenMetrics } from './lib/screenMetrics';
 import { attachReasoningAutoScroll } from './lib/reasoningAutoScroll';
-import { FULL_ACCESS } from './lib/guideAccess';
+import { FULL_ACCESS, ALLOW_DELETE, DEV_PANEL } from './lib/guideAccess';
+import { hasMoodSprites } from './lib/mascotSprite';
 import { TOOL } from './lib/toolRegistry';
 import { readPageState, readFilterSnapshot, searchOnPage } from './lib/pageState';
 import { scanRegions } from './lib/pageRegions';
@@ -68,7 +75,7 @@ import {
 } from './GuideToolStep';
 import AgentActivityPanel from './AgentActivityPanel';
 import GuideMascot from './GuideMascot';
-import { loadMascotSet } from './lib/useMascotSet';
+import { loadMascotSet, useMascotSet } from './lib/useMascotSet';
 import GuideAskBridge from './GuideAskBridge';
 import GuideExperienceRecorder from './GuideExperienceRecorder';
 import GuideChatPersist from './GuideChatPersist';
@@ -80,6 +87,17 @@ const SCAN_INTERVAL_MS = 4000;
  * hằng số này — đo thì đúng cả khi thư viện tự kẹp bề ngang theo viewport (màn hẹp).
  */
 const SIDEBAR_W = 420;
+
+/**
+ * Vai trò được coi là admin của trợ lý. MỘT hằng dùng chung cho ba chỗ: readable gửi lên model,
+ * bảng "Kiến thức trang này", và bảng Hành động. Ba danh sách rời nhau là ba thứ sẽ lệch nhau.
+ *
+ * Khai ở đầu tệp chứ không cạnh chỗ dùng: dự án này đã trả giá hai lần cho biến đọc trước khi
+ * khởi tạo, và một hằng cấp module nằm giữa hai component là thứ bắt người đọc phải tự chứng minh
+ * rằng nó an toàn.
+ */
+const IS_ADMIN_ROLE = ['admin', 'sales_admin', 'platform_admin'];
+
 
 /**
  * Bọc handler của tool client — KHÔNG BAO GIỜ để nó ném lỗi ra ngoài.
@@ -175,7 +193,7 @@ function GuideCopilotTools() {
     value: {
       name: user?.fullName || user?.full_name || user?.name || '',
       role: user?.role || '',
-      is_admin: ['admin', 'sales_admin', 'platform_admin'].includes(user?.role),
+      is_admin: IS_ADMIN_ROLE.includes(user?.role),
     },
   });
   useAgentContext({
@@ -202,7 +220,17 @@ function GuideCopilotTools() {
         can_fill_fields: true,
         can_navigate_without_confirm: true,
         can_read_visible_data: true,
-        note: 'Bản thử nghiệm — chủ hệ thống đã cho phép thao tác thật, kể cả xoá dữ liệu.',
+        /**
+         * TÁCH RIÊNG khỏi `full_access`. Nhãn cũ nói thẳng "kể cả xoá dữ liệu" và đó là câu
+         * duy nhất model có để phán đoán — nên ở bản production nó sẽ tự tin đi bấm nút Xoá.
+         * Nay quyền xoá là một cờ riêng (`guideAccess.ALLOW_DELETE`), mặc định TẮT.
+         */
+        can_delete: ALLOW_DELETE,
+        note: ALLOW_DELETE
+          ? 'Bản thử nghiệm — chủ hệ thống đã cho phép thao tác thật, KỂ CẢ xoá dữ liệu.'
+          : 'Bạn được bấm/điền/điều hướng thật, NHƯNG KHÔNG được xoá, huỷ, gỡ hay đặt lại bất'
+            + ' cứ thứ gì. Gặp việc như vậy: đưa người dùng tới đúng màn hình, chỉ rõ nút nằm ở'
+            + ' đâu, rồi để CHÍNH HỌ bấm. Tầng thao tác cũng đã chặn sẵn, có cố cũng không bấm được.',
       }
       : {
         full_access: false,
@@ -512,6 +540,19 @@ export default function AppGuideCopilotPanel() {
   useEffect(() => { loadMascotSet(); }, []);
 
   /**
+   * PHẢI ĐĂNG KÝ NGHE ĐỔI BỘ NHÂN VẬT, dù ở đây không vẽ nhân vật.
+   *
+   * `loadMascotSet()` hỏi máy chủ BẤT ĐỒNG BỘ. Không nghe thì component này chỉ render một lần,
+   * lúc bộ vẫn là mặc định `anime` (không có sắc mặt) — và header `x-guide-moods` bên dưới bị
+   * đóng băng ở `0` cho CẢ PHIÊN, kể cả sau khi máy chủ trả về `la-ban`.
+   *
+   * Đã đo: backend nhận `0`, subagent sắc mặt không chạy lần nào (`cached: 0`) trong khi client
+   * vẫn hỏi `/mood` 8 lần và luôn nhận rỗng. Không có lỗi nào báo, tính năng chỉ đơn giản là
+   * không hoạt động.
+   */
+  const mascotSetId = useMascotSet();
+
+  /**
    * Không khai `onError` thì mọi lỗi tool/agent chỉ nằm im trong `emitError` nội bộ của thư viện —
    * đúng lý do lỗi "trợ lý chỉ suy luận rồi im bặt" trước đây không để lại dấu vết nào để lần.
    *
@@ -564,13 +605,40 @@ export default function AppGuideCopilotPanel() {
       headers={{
         Authorization: `Bearer ${token || ''}`,
         'x-guide-full-access': FULL_ACCESS ? '1' : '0',
+        // Quyen xoa la co RIENG. Thieu header nay thi prompt van day model rang no duoc
+        // xoa, trong khi tang thao tac da chan — model se bam, bi tu choi, roi bao cao sai
+        // voi nguoi dung la 'da xoa xong'.
+        'x-guide-allow-delete': ALLOW_DELETE ? '1' : '0',
+        /**
+         * Bộ nhân vật đang dùng có sắc mặt không. Thiếu header này thì subagent sắc mặt vẫn
+         * chạy với bộ "Cô gái áo trắng" — tốn một lời gọi model mỗi lượt để rồi không hiện gì.
+         *
+         * `mascotSetId` KHÔNG dùng tới trong biểu thức, nhưng phải đọc ở trên để component
+         * render lại khi bộ đổi — `hasMoodSprites()` đọc biến cấp module nên React không tự
+         * biết. Bỏ nó đi là header đóng băng ở giá trị của lần render đầu.
+         */
+        'x-guide-moods': (mascotSetId && hasMoodSprites()) ? '1' : '0',
       }}
       onError={onCopilotError}
     >
       <GuideCopilotTools />
       {FULL_ACCESS ? <GuideFullAccessTools /> : <GuideNavConfirmTool />}
-      {/* Bảng hành động — phải nằm TRONG provider để useAgent() thấy được core. */}
-      <AgentActivityPanel />
+      {/* Bảng công cụ của trợ lý — cho người phát triển VÀ cho admin trên bản production.
+          Năm tab: Hành động · Luồng · Ngữ cảnh · Chi phí · Kiến thức trang (tab cuối chỉ có ý
+          nghĩa với admin, và nó thay cho bảng nổi riêng trước đây — hai bảng nổi cùng lúc là hai
+          thứ tranh chỗ trên màn hình người ta đang làm việc).
+          Phải nằm TRONG provider để useAgent() thấy được core.
+
+          Trước đây chỉ `DEV_PANEL`, tức tắt hẳn ở production. Nhưng ba endpoint nó đọc
+          (`/debug/prompt`, `/debug/flow`, `/debug/usage`) VỐN ĐÃ cho admin qua ở production
+          (`if (production && !isAdminLike) → 403`) — tức backend từ đầu đã tính tới người này,
+          chỉ có cổng phía giao diện là chặn nhầm.
+
+          Mount cho admin KHÔNG kéo theo việc nền: bảng mặc định đóng, và mọi vòng poll đều khoá
+          sau `!hidden` (`useUsage`, `useFlow`, `useContextSnapshot`). Đóng thì nó không gọi một
+          API nào. Đó là lý do ở đây mount được, trong khi với người dùng thường thì vẫn KHÔNG
+          mount — họ không có quyền đọc mấy endpoint đó, mở ra chỉ nhận 403. */}
+      {(DEV_PANEL || IS_ADMIN_ROLE.includes(user?.role)) ? <AgentActivityPanel /> : null}
       {/* Nhân vật hệ thống — cũng cần useAgent(), nên cũng phải nằm trong provider. Nó KHÔNG
           thay khung chat: khung chat vẫn mở như cũ, nhân vật diễn ở ngoài. */}
       <GuideMascot />

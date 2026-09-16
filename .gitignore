@@ -20,6 +20,7 @@ beppro-uploads.tgz
 
 # Runtime uploaded data for guide assistant
 backend/uploads/guide-memory/
+backend/backup-kinh-nghiem/
 
 # Local env files (contain secrets)
 backend/.env

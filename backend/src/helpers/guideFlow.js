@@ -65,6 +65,21 @@ function setTurn(threadId, n) {
 }
 
 /**
+ * Số lượt đang chạy của một thread — 0 nếu chưa ai đóng dấu.
+ *
+ * DÀNH CHO TẦNG MODEL. Tầng đó chỉ thấy `params.prompt`, không thấy `input.messages`, nên nó
+ * không tự đếm được lượt. Mà cứu hộ lại cần đúng con số này: nó hỏi `guideIntent` xem lượt NÀY
+ * đã diễn giải ý định chưa, và hỏi bằng số lượt sai thì nhận về ý định của lượt khác — tức
+ * dò kho bằng việc mà người dùng đã hỏi xong từ lâu.
+ *
+ * Dùng chung được vì `setTurn` và bộ đệm của `guideIntent` đếm bằng CÙNG một phép (`isTurnMark`,
+ * xem `realTurnCount` trong copilotkit.js). Đổi một bên thì phải đổi bên kia.
+ */
+function turnOf(threadId) {
+  return currentTurn.get(String(threadId || '').trim()) || 0;
+}
+
+/**
  * @param {string} threadId
  * @param {string} type  'experience' | 'embed' | 'rescue' | 'step_guard' | 'learn' | 'experience_write'
  * @param {object} detail  type-specific fields — keep them SHORT, this is what the UI renders
@@ -114,4 +129,4 @@ function clear(threadId) {
   currentTurn.delete(key);
 }
 
-module.exports = { record, read, clear, setTurn, MAX_PER_TURN };
+module.exports = { record, read, clear, setTurn, turnOf, MAX_PER_TURN };

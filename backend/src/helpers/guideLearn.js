@@ -58,6 +58,21 @@ function learnModel() {
   return settings.get('background_learn_model') || '';
 }
 
+/**
+ * Cho phép thử lại sau khi đã tự tắt vì model từ chối — xem chú thích đầy đủ ở `guideIntent.js`.
+ *
+ * Với thủ thư thì cái bẫy còn kín hơn: nó chạy nền, không ai nhìn thấy nó, nên "đã tắt từ lâu"
+ * chỉ lộ ra khi có người mở tab chẩn đoán. Trong lúc đó kho vẫn được ghi — nhưng bằng đường máy
+ * móc, tức câu hỏi lưu nguyên văn và không ai biên tập. Kho xấu đi âm thầm.
+ *
+ * @returns {string} lý do vừa được gỡ, hoặc chuỗi rỗng nếu vốn không tắt.
+ */
+function resetDisabled() {
+  const cu = disabledReason || '';
+  disabledReason = null;
+  return cu;
+}
+
 function status() {
   if (!ENABLED) return { on: false, reason: 'GUIDE_HOC_NEN=0' };
   if (settings.get('background_learn_enabled') === false) return { on: false, reason: 'disabled_in_settings' };
@@ -80,6 +95,22 @@ const INSTRUCTIONS = [
   'Bạn vừa được đưa biên bản của MỘT LƯỢT trợ lý làm việc trên giao diện, cộng những bản ghi',
   'đang có trong kho mà gần giống. Việc của bạn: quyết định kho cần ghi gì.',
   '',
+  'VIỆC ĐẦU TIÊN — CHẤM LẠI NHỮNG GỢI Ý ĐÃ ĐƯA:',
+  'Nếu biên bản có mục "Đã gợi ý cho lượt này", đó là những bản ghi kho đã đưa cho trợ lý TRƯỚC',
+  'KHI nó làm. So đường đi trong gợi ý với các bước THẬT SỰ chạy được ở lượt này:',
+  '  - GỢI Ý ĐÚNG (trợ lý đi đúng đường đó và xong việc) → kho đã tốt. Đừng viết bản mới trùng',
+  '    lặp. Chọn "skip", hoặc "append" nếu lượt này phát hiện thêm ngõ cụt mà bản cũ chưa có.',
+  '  - GỢI Ý DẪN SAI (trợ lý làm theo rồi trượt, phải quay ra đường khác mới xong) → đây là bản',
+  '    ghi HỎNG. Chọn "replace" đúng mã đó, viết lại đường đi bằng đường THẬT SỰ chạy được ở lượt',
+  '    này, và nêu rõ trong "reason" bản cũ sai ở chỗ nào.',
+  '  - GỢI Ý LẠC ĐỀ (nói về việc khác hẳn, trợ lý không đụng tới) → bản ghi đó không sai, chỉ là',
+  '    dò trúng nhầm. ĐỪNG sửa nó. Nếu lượt này đáng ghi thì "add" một bản mới.',
+  '',
+  'CẨN THẬN VỚI "vẫn bí": biên bản có thể ghi trợ lý đã được gợi ý mà lượt vẫn bí. ĐÓ KHÔNG PHẢI',
+  'bằng chứng gợi ý sai. Lượt bí còn vì hết ngân sách bước, vì giao diện nhiều tầng, vì việc đó',
+  'thật sự không làm được. Chỉ chọn "replace" khi biên bản CHO THẤY trợ lý đã đi đúng theo gợi ý',
+  'và chính bước đó trượt. Không thấy rõ thì đừng đè.',
+  '',
   'CHỌN MỘT hành động:',
   '- "skip": lượt này không dạy được gì mới. Kho đã có đủ, hoặc lượt quá tầm thường.',
   '- "add": kho CHƯA có việc này. Viết bản ghi mới.',
@@ -89,7 +120,8 @@ const INSTRUCTIONS = [
   'QUY TẮC BẮT BUỘC:',
   '1. Lưỡng lự giữa "append" và "replace" thì chọn "append". "replace" làm MẤT nội dung cũ; chỉ dùng',
   '   khi bản cũ SAI, không dùng khi nó chỉ THIẾU.',
-  '2. "append" và "replace" phải kèm "code" — lấy đúng mã trong danh sách ứng viên. Không được bịa mã.',
+  '2. "append" và "replace" phải kèm "code" — lấy đúng mã trong danh sách ứng viên HOẶC trong mục',
+  '   "Đã gợi ý cho lượt này". Không được bịa mã.',
   '3. "task" phải ĐỌC MỘT MÌNH VẪN HIỂU, viết như một việc cần làm. Người dùng hỏi "có cách sử',
   '   dụng chi tiết không" thì bạn nhìn biên bản để viết "xem hướng dẫn chi tiết Không gian',
   '   chung của deal", chứ không chép lại câu đó.',
@@ -123,7 +155,54 @@ const INSTRUCTIONS = [
   '"reason": bắt buộc khi hành động là "replace" — nói rõ bản cũ sai ở CHỖ NÀO.',
 ].join('\n');
 
-function buildReport({ question, intent, path, screen, steps, deadEnds, candidates }) {
+/**
+ * PHẦN "ĐÃ GỢI Ý GÌ" — in TRƯỚC danh sách ứng viên, và cố ý đặt trước.
+ *
+ * Hai mục nhìn giống nhau (đều là bản ghi kèm mã) nhưng khác hẳn về vai trò: mục này là những
+ * bản kho ĐÃ ĐƯA RA và đang chờ chấm lại, còn ứng viên chỉ là những bản gần giống để so trùng.
+ * Trộn hai mục làm một là thủ thư mất khả năng phân biệt "bản này vừa dẫn sai" với "bản này chỉ
+ * tình cờ giống chữ".
+ */
+function renderSuggested(injectedList, rescue) {
+  const d = [];
+  if (!injectedList?.length) {
+    // Nói rõ là KHÔNG CÓ, chứ không im lặng bỏ mục: im lặng thì model nhỏ dễ tự cho rằng
+    // nó đã bỏ sót phần nào đó rồi đi suy diễn bù vào.
+    d.push('## Đã gợi ý cho lượt này');
+    d.push('');
+    d.push('(không có — kho không đưa gợi ý nào, nên không có gì để chấm lại)');
+    d.push('');
+    return d;
+  }
+
+  d.push('## Đã gợi ý cho lượt này');
+  d.push('');
+  d.push('Những bản dưới đây ĐÃ được đưa cho trợ lý trước khi nó làm. So với các bước thật sự');
+  d.push('chạy được ở trên để chấm: đúng, dẫn sai, hay lạc đề.');
+  d.push('');
+  for (const u of injectedList) {
+    d.push(`[${u.code}] Hỏi: ${u.question}${u.path ? ` (ở ${u.path})` : ''}`);
+    if (u.steps?.length) d.push(`  Đường đi đã gợi ý: ${u.steps.join(' → ')}`);
+    else d.push('  Đường đi đã gợi ý: (bản này chỉ có ngõ cụt, không có đường đi)');
+    if (u.dead_ends?.length) d.push(`  Ngõ cụt đã báo: ${u.dead_ends.join(' | ')}`);
+    if (u.lesson) d.push(`  Bài học đã báo: ${u.lesson}`);
+    d.push('');
+  }
+
+  if (rescue?.fired) {
+    d.push(rescue.mode === 'hint'
+      ? `Giữa lượt, sau ${rescue.steps} bước, trợ lý có dấu hiệu bí nên được gợi ý THÊM một đường khác.`
+      : `Giữa lượt, sau ${rescue.steps} bước, trợ lý có dấu hiệu bí nhưng kho KHÔNG còn đường nào khác để đưa.`);
+  }
+  if (rescue?.still_stuck) {
+    d.push('Lưu ý: trợ lý đã nhận gợi ý mà VẪN bí. Đọc kỹ phần trên rồi hãy kết luận — chuyện này'
+      + ' không tự nó chứng minh gợi ý sai.');
+  }
+  if (rescue?.fired || rescue?.still_stuck) d.push('');
+  return d;
+}
+
+function buildReport({ question, intent, path, screen, steps, deadEnds, candidates, injected, rescue }) {
   const d = [];
   d.push('## Biên bản lượt vừa xong');
   d.push('');
@@ -157,6 +236,8 @@ function buildReport({ question, intent, path, screen, steps, deadEnds, candidat
   else d.push('  (không có)');
 
   d.push('');
+  for (const line of renderSuggested(injected, rescue)) d.push(line);
+
   d.push('## Kho đang có, những bản gần giống');
   d.push('');
   if (!candidates || !candidates.length) {
@@ -269,10 +350,22 @@ async function learnInBackground(input, callModel) {
    * gợi ý, phía ghi thì để lại rác vĩnh viễn.
    */
   const topic = String(input?.intent || '').trim() || question;
-  const candidates = experience.findCandidates(topic, {
+  // `await`: nay có tầng ngữ nghĩa, phải ra mạng khi tầng chữ hụt. Thủ thư chạy nền nên không ai chờ.
+  const candidates = await experience.findCandidates(topic, {
     company, path: input?.path || '', limit: CANDIDATE_LIMIT,
   });
-  const validCodes = new Set(candidates.map((u) => u.code));
+
+  /**
+   * MÃ HỢP LỆ = ứng viên CỘNG những bản đã gợi ý cho lượt này.
+   *
+   * Thiếu vế sau là hỏng im lặng, và hỏng đúng ở ca quan trọng nhất. Hai tập này dò bằng ngưỡng
+   * khác nhau, chuỗi khác nhau, bộ lọc khác nhau — nên một bản vừa được gợi ý và vừa dẫn sai
+   * HOÀN TOÀN có thể không nằm trong 5 ứng viên. Khi đó thủ thư đọc thấy nó ở mục trên, phán
+   * "replace" đúng mã đó, rồi `readVerdict` gạt phán quyết vì mã lạ — không lỗi, không log, và
+   * bản ghi sai nằm nguyên trong kho.
+   */
+  const suggested = Array.isArray(input?.injected) ? input.injected : [];
+  const validCodes = new Set([...candidates.map((u) => u.code), ...suggested.map((u) => u.code)]);
 
   let text = null;
   try {
@@ -284,6 +377,8 @@ async function learnInBackground(input, callModel) {
       steps: input?.steps || [],
       deadEnds: input?.deadEnds || [],
       candidates,
+      injected: suggested,
+      rescue: input?.rescue || null,
     }), { model: learnModel(), timeoutMs: TIMEOUT_MS });
   } catch (e) {
     const m = String((e && e.message) || e);
@@ -355,6 +450,10 @@ async function learnInBackground(input, callModel) {
     question: question.slice(0, 80),
     task: verdict.task,
     candidate_count: candidates.length,
+    // Soi được điều quan trọng nhất của bản này: thủ thư có ĐANG chấm lại gợi ý hay không, và
+    // trong bao nhiêu lượt được chấm thì nó phán 'replace'. Toàn 'add' với `suggested: 0` nghĩa
+    // là đường phản hồi chưa hề chạy.
+    suggested: suggested.length,
   };
   recordRun(entry);
   flowLog.record(key, 'learn', {
@@ -366,4 +465,4 @@ async function learnInBackground(input, callModel) {
   return res;
 }
 
-module.exports = { learnInBackground, status, recentRuns, ENABLED };
+module.exports = { learnInBackground, status, recentRuns, resetDisabled, ENABLED };

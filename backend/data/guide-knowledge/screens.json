@@ -1170,6 +1170,22 @@
     ]
   },
   {
+    "path": "/crm/project-tasks",
+    "label": "Quản lý nhiệm vụ",
+    "menu": "CRM → Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Cùng màn hình Tổng quan nhiệm vụ nhưng khoá sẵn ở module CRM — chỉ hiện nhiệm vụ của deal và lead. Lọc theo Đang thực hiện, Cảnh báo trong 3 ngày, Quá hạn; tìm được theo tên nhiệm vụ hoặc tên dự án.",
+    "keywords": [
+      "nhiem vu crm",
+      "quan ly nhiem vu crm",
+      "nhiem vu deal",
+      "nhiem vu lead",
+      "qua han",
+      "canh bao"
+    ]
+  },
+  {
     "path": "/crm/quotations",
     "label": "Báo giá",
     "menu": "CRM → Tài chính",
@@ -2375,6 +2391,39 @@
     "keywords": []
   },
   {
+    "path": "/management/project-logs",
+    "label": "Nhật ký công trình",
+    "menu": "2. Làm việc",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Nhật ký công trình — xem lại mọi thay đổi đã ghi, chia theo tab: Tất cả, Log nhiệm vụ, Log phát sinh, Log dự án, Log CRM / hoạt động, Log bình luận. Lọc được theo công ty, vùng miền và nhân viên.",
+    "keywords": [
+      "nhat ky cong trinh",
+      "log du an",
+      "log nhiem vu",
+      "log phat sinh",
+      "log binh luan",
+      "lich su thay doi"
+    ]
+  },
+  {
+    "path": "/management/project-tasks",
+    "label": "Tổng quan nhiệm vụ",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Tổng quan nhiệm vụ của mọi dự án, gộp cả ba module CRM, Sản xuất và Vận chuyển. Lọc theo module (Tất cả / CRM / Sản xuất / VC-LĐ) và theo tình trạng: Đang thực hiện, Cảnh báo trong 3 ngày, Quá hạn. Có ô tìm theo tên nhiệm vụ hoặc tên dự án.",
+    "keywords": [
+      "tong quan nhiem vu",
+      "nhiem vu du an",
+      "quan ly nhiem vu",
+      "qua han",
+      "canh bao",
+      "dang thuc hien",
+      "project tasks"
+    ]
+  },
+  {
     "path": "/management/purchasing-overview",
     "label": "Mua hàng",
     "menu": "1. Tổng quan",
@@ -2391,6 +2440,38 @@
     "redirect": false,
     "summary": "",
     "keywords": []
+  },
+  {
+    "path": "/management/shared-workspace-report",
+    "label": "Báo cáo phát sinh",
+    "menu": "2. Làm việc",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Báo cáo nhiệm vụ phát sinh trên không gian làm việc chung. Mỗi dòng cho biết nguồn phát sinh (từ khách hàng hay lỗi nhân viên), module (CRM / Sản xuất / VC-LĐ) và trạng thái (Chưa làm, Đang làm, Hoàn thành, Đã hủy); dòng quá hạn tô đỏ dù trạng thái vẫn là Chưa làm. Tìm được theo deal, dự án, nhiệm vụ hoặc nhân viên.",
+    "keywords": [
+      "bao cao phat sinh",
+      "nhiem vu phat sinh",
+      "khong gian lam viec chung",
+      "loi nhan vien",
+      "phat sinh tu khach hang",
+      "qua han"
+    ]
+  },
+  {
+    "path": "/management/shared-workspace-settings",
+    "label": "Setup phát sinh",
+    "menu": "3. Thiết lập",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Thiết lập phát sinh & người chịu trách nhiệm — khai các loại phát sinh (phát sinh từ khách hàng / lỗi từ nhân viên), vai trò nhân sự cho mỗi loại (chịu trách nhiệm chính, người thực hiện, người quan sát, quản lý) và hạn xử lý SLA. Chỉ quản trị viên vào được.",
+    "keywords": [
+      "setup phat sinh",
+      "thiet lap phat sinh",
+      "loai phat sinh",
+      "nguoi chiu trach nhiem",
+      "sla",
+      "vai tro nhan su"
+    ]
   },
   {
     "path": "/management/work-overview",
@@ -3625,6 +3706,21 @@
     ]
   },
   {
+    "path": "/sx/project-tasks",
+    "label": "Quản lý nhiệm vụ",
+    "menu": "Sản xuất → 1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Cùng màn hình Tổng quan nhiệm vụ nhưng khoá sẵn ở module Sản xuất — chỉ hiện nhiệm vụ của dự án sản xuất. Lọc theo Đang thực hiện, Cảnh báo trong 3 ngày, Quá hạn.",
+    "keywords": [
+      "nhiem vu san xuat",
+      "quan ly nhiem vu sx",
+      "nhiem vu xuong",
+      "qua han",
+      "canh bao"
+    ]
+  },
+  {
     "path": "/sx/projects/:id",
     "label": "Chi tiết dự án xưởng",
     "menu": "",
@@ -4004,6 +4100,21 @@
       {
         "label": "Toàn cảnh flow pipeline"
       }
+    ]
+  },
+  {
+    "path": "/vc/project-tasks",
+    "label": "Quản lý nhiệm vụ",
+    "menu": "Vận chuyển → 1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Cùng màn hình Tổng quan nhiệm vụ nhưng khoá sẵn ở module Vận chuyển / Lắp đặt — chỉ hiện nhiệm vụ của dự án VC-LĐ. Lọc theo Đang thực hiện, Cảnh báo trong 3 ngày, Quá hạn.",
+    "keywords": [
+      "nhiem vu van chuyen",
+      "nhiem vu lap dat",
+      "quan ly nhiem vu vc",
+      "qua han",
+      "canh bao"
     ]
   },
   {

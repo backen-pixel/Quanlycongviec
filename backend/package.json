@@ -44,6 +44,8 @@
     "cron:crm-missing-tasks": "node scripts/run-crm-missing-tasks-cron.js",
     "guide:sync": "node ../scripts/guide/generate-registry.js",
     "guide:check": "node ../scripts/guide/check-drift.js",
+    "guide:eval": "node ../scripts/guide/knowledge-eval.js",
+    "guide:embed": "node ../scripts/guide/knowledge-embed.js",
     "guide:tours": "node ../scripts/guide/generate-tour-guides.js",
     "guide:lead-detail": "node ../scripts/guide/generate-lead-detail.js"
   },

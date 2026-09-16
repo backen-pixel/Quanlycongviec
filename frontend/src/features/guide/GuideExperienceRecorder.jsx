@@ -71,7 +71,18 @@ export default function GuideExperienceRecorder() {
      * ba nhánh mò. Kho vốn đã có chỗ đúng cho nó (`dead_ends`) và server vốn đã nhận bản ghi chỉ
      * có ngõ cụt (nhánh `nguon: 'agent'` trong themKinhNghiem) — chỉ cổng này chặn.
      */
-    if (ok.length < 2 && !broken.length) return;
+    /**
+     * CỔNG TỐI THIỂU — quyết định THẬT nằm ở máy chủ (`dangHoc` trong copilotkit.js).
+     *
+     * Bản trước chặn ở "≥2 bước chạy được HOẶC có ngõ cụt", và đó là chặn nhầm chỗ: trình duyệt
+     * KHÔNG biết kho đã gợi ý gì cho lượt này — sổ gợi ý nằm trong RAM máy chủ. Mà lượt "được cứu
+     * hộ gợi ý rồi xong nhanh trong 1 bước" lại đúng là lượt đáng học nhất: nó là bằng chứng duy
+     * nhất cho biết gợi ý đó ĐÚNG. Chặn ở đây thì máy chủ không bao giờ thấy nó.
+     *
+     * Nay chỉ lọc lượt RỖNG. Gửi thừa thì máy chủ bỏ qua, tốn một POST; giữ lại thì mất hẳn một
+     * loại bằng chứng.
+     */
+    if (!ok.length && !broken.length) return;
 
     /**
      * GIẬM CHÂN — nay chỉ xét trên NHỮNG BƯỚC CHẠY ĐƯỢC.

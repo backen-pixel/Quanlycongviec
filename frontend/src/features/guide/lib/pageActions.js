@@ -31,6 +31,7 @@ import {
 } from './pageState';
 import { EXCLUDE_SELECTOR } from './pageStructureScanner';
 import { waitForPageReady, waitNote } from './pageReady';
+import { ALLOW_DELETE } from './guideAccess';
 
 const CLICKABLE_SELECTOR = 'button, a[href], [role="button"], [role="tab"], [role="menuitem"], [role="option"], summary, label';
 const CONTROL_SELECTOR = 'input, select, textarea, [contenteditable="true"], [role="switch"]';
@@ -163,9 +164,44 @@ function looksLikePhoneLabel(label) {
   return charsLeft.length < MIN_CHARS_LEFT;
 }
 
+/**
+ * NHÃN PHÁ HUỶ — chặn ở ĐÂY, không chỉ dặn trong prompt.
+ *
+ * Prompt là lời dặn, không phải hàng rào: model đọc xong vẫn có thể bấm, và một lần bấm nhầm
+ * trên production là mất dữ liệu thật. Chặn ở tầng thao tác thì dù model có quyết sai, nút vẫn
+ * không được bấm.
+ *
+ * KHỚP THEO TỪ, KHÔNG THEO CHUỖI CON. `fold()` bỏ dấu nên "Xoá" và "xoa" về cùng một dạng —
+ * nhưng "xoa" là chuỗi con của rất nhiều chữ vô hại ("xoay", "xoa dịu"), và "go" (gỡ) nằm trong
+ * "google", "gom". Dùng biên từ `\b` để "Xoá bộ lọc" bị chặn còn "Xoay ảnh" thì không.
+ *
+ * CỐ Ý CHẶN CẢ "Xoá bộ lọc" / "Xoá trắng ô tìm kiếm" dù chúng vô hại. Phân biệt được hai loại
+ * đòi hiểu ngữ nghĩa của từng nút trên từng màn hình — thứ không có ở đây. Thà chặn thừa vài
+ * nút tiện tay, còn hơn để lọt một nút xoá bản ghi. Người dùng tự bấm được, và câu trả lời nói
+ * rõ vì sao trợ lý không tự làm.
+ */
+const DESTRUCTIVE_RE = new RegExp(
+  '\\b(xoa|xoa bo|xoa trang|huy|huy bo|thu hoi|go|go bo|gb|loai bo|dat lai|khoi phuc mac dinh'
+  + '|delete|remove|discard|reset|clear|erase|drop|purge|revoke|unlink|detach|wipe)\\b',
+);
+
+function looksDestructive(label) {
+  return DESTRUCTIVE_RE.test(fold(String(label || '')));
+}
+
 /** ── Bấm ─────────────────────────────────────────────────────────────────────────────── */
 
 export async function clickByLabel(label) {
+  if (!ALLOW_DELETE && looksDestructive(label)) {
+    return {
+      ok: false,
+      reason: 'destructive_not_allowed',
+      note: `Từ chối bấm: nhãn "${label}" là một thao tác PHÁ HUỶ (xoá / huỷ / gỡ / đặt lại) và`
+        + ' bản triển khai này không cho trợ lý tự làm việc đó. ĐỪNG thử nhãn khác để lách.'
+        + ' Hãy nói với người dùng rằng bạn đã đưa họ tới đúng chỗ nhưng nút này họ phải tự bấm,'
+        + ' và mô tả nút đó nằm ở đâu trên màn hình.',
+    };
+  }
   if (looksLikePhoneLabel(label)) {
     return {
       ok: false,

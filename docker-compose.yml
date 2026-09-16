@@ -18,6 +18,12 @@ services:
         # tự điều hướng, đọc được giá trị thật đang hiển thị). Đổi tạm bằng:
         #   GUIDE_FULL_ACCESS=0 docker compose up -d --build
         VITE_GUIDE_FULL_ACCESS: "${GUIDE_FULL_ACCESS:-1}"
+        # Quyền XOÁ tách riêng, mặc định TẮT kể cả khi toàn quyền đang bật — xem Dockerfile.
+        # Bật:  GUIDE_ALLOW_DELETE=1 docker compose up -d --build
+        VITE_GUIDE_ALLOW_DELETE: "${GUIDE_ALLOW_DELETE:-0}"
+        # Bảng "Hành động của trợ lý" (công cụ dev) — ẩn ở bản build, xem Dockerfile.
+        # Bật lại để soi lỗi:  GUIDE_DEV_PANEL=1 docker compose up -d --build
+        VITE_GUIDE_DEV_PANEL: "${GUIDE_DEV_PANEL:-0}"
     image: beppro:local
     container_name: beppro
     restart: unless-stopped

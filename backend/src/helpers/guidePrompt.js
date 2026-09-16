@@ -361,8 +361,60 @@ function checkTrimmed(name, variant) {
 const READ_ONLY = checkTrimmed('read_only', READ_ONLY_PROMPT);
 const FULL_ACCESS = checkTrimmed('full_access', FULL_ACCESS_PROMPT);
 
-function buildPrompt(fullAccess) {
-  return fullAccess ? FULL_ACCESS : READ_ONLY;
+/**
+ * ═══════════ BẢN TOÀN QUYỀN NHƯNG CẤM PHÁ HUỶ ═══════════
+ *
+ * Ba chế độ, không phải hai: "chỉ đọc", "toàn quyền có xoá", "toàn quyền không xoá". Bản thứ ba
+ * là bản dùng cho PRODUCTION — trợ lý vẫn bấm/điền/điều hướng thật (không thì nó vô dụng),
+ * nhưng không được xoá/huỷ/gỡ/đặt lại bất cứ thứ gì.
+ *
+ * VÌ SAO PHẢI SỬA PROMPT chứ không chỉ chặn ở client: tầng thao tác
+ * (`pageActions.clickByLabel`) đã từ chối nhãn phá huỷ rồi. Nhưng nếu prompt vẫn dạy "cứ xoá
+ * đi", model sẽ gọi `click_element`, nhận `destructive_not_allowed`, rồi tuỳ nó xoay xở —
+ * thử nhãn khác để lách, hoặc tệ hơn là báo với người dùng "đã xoá xong" trong khi không có gì
+ * bị xoá. Nói trước thì nó đi thẳng tới câu trả lời đúng: chỉ chỗ, để người dùng tự bấm.
+ *
+ * Thay bằng CHUỖI CHÍNH XÁC chứ không regex: sai một chữ thì `assertReplaced` bên dưới bắt
+ * được ngay lúc nạp module, thay vì âm thầm gửi đi bản prompt sai quyền.
+ */
+const RULE2_ALLOW = "2. Người dùng yêu cầu một việc làm được bằng chuột (đổi bộ lọc, mở tab, lưu, xoá) → LÀM LUÔN";
+const RULE2_BLOCK = '2. Người dùng yêu cầu một việc làm được bằng chuột (đổi bộ lọc, mở tab, lưu) → LÀM LUÔN';
+
+const RULE6_ALLOW = "6. Việc PHÁ HUỶ (xoá, huỷ, gỡ, đặt lại) thì vẫn LÀM khi người dùng yêu cầu, nhưng phải nói rõ\n   trong câu trả lời là bạn vừa xoá/huỷ cái gì. Người dùng cần đọc được mình đã mất gì.";
+const RULE6_BLOCK = [
+  '6. Việc PHÁ HUỶ (xoá, huỷ, gỡ, đặt lại, thu hồi) thì bạn KHÔNG ĐƯỢC LÀM — bản triển khai này',
+  '   đã tắt quyền đó, và tầng thao tác cũng chặn sẵn nên có gọi `click_element` cũng chỉ nhận',
+  '   về `destructive_not_allowed`. ĐỪNG thử nhãn khác để lách, ĐỪNG nói rằng bạn đã xoá.',
+  '   Việc cần làm: đưa người dùng tới đúng màn hình, chỉ rõ nút đó nằm ở đâu (dùng',
+  '   `highlight_button` nếu thấy được), rồi nói thẳng là họ phải tự bấm vì bạn không có quyền',
+  '   xoá. Đó là câu trả lời ĐÚNG và ĐỦ, không phải một lời từ chối cụt.',
+].join('\n');
+
+/** Thay chuỗi và bắt lỗi ngay nếu không thay được — xem lý do ở khối chú thích trên. */
+function assertReplaced(text, from, to, what) {
+  if (!text.includes(from)) {
+    console.warn(`[guide] prompt: khong thay "${what}" de doi — CANH BAO, ban khong-xoa co the sai quyen.`);
+    return text;
+  }
+  return text.split(from).join(to);
+}
+
+const FULL_ACCESS_NO_DELETE = assertReplaced(
+  assertReplaced(FULL_ACCESS, RULE2_ALLOW, RULE2_BLOCK, 'luat 2'),
+  RULE6_ALLOW, RULE6_BLOCK, 'luat 6',
+);
+
+/**
+ * @param {boolean} fullAccess  client khai qua header `x-guide-full-access`
+ * @param {boolean} allowDelete client khai qua header `x-guide-allow-delete`
+ *
+ * `allowDelete` chỉ có nghĩa khi `fullAccess` — chế độ đọc vốn không có tool nào bấm được.
+ * Thiếu header `x-guide-allow-delete` → coi như KHÔNG được xoá. Đoán sai theo hướng này chỉ
+ * làm trợ lý dè dặt hơn; đoán sai theo hướng kia là mất dữ liệu thật.
+ */
+function buildPrompt(fullAccess, allowDelete = false) {
+  if (!fullAccess) return READ_ONLY;
+  return allowDelete ? FULL_ACCESS : FULL_ACCESS_NO_DELETE;
 }
 
 module.exports = { SYSTEM_PROMPT, buildPrompt };

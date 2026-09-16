@@ -279,6 +279,11 @@ export const SCREEN_REGISTRY = [
     "menu": "CRM → Dữ liệu"
   },
   {
+    "path": "/crm/project-tasks",
+    "label": "Quản lý nhiệm vụ",
+    "menu": "CRM → Tổng quan"
+  },
+  {
     "path": "/crm/quotations",
     "label": "Báo giá",
     "menu": "CRM → Tài chính"
@@ -584,6 +589,16 @@ export const SCREEN_REGISTRY = [
     "menu": "4. Cài đặt"
   },
   {
+    "path": "/management/project-logs",
+    "label": "Nhật ký công trình",
+    "menu": "2. Làm việc"
+  },
+  {
+    "path": "/management/project-tasks",
+    "label": "Tổng quan nhiệm vụ",
+    "menu": "1. Tổng quan"
+  },
+  {
     "path": "/management/purchasing-overview",
     "label": "Mua hàng",
     "menu": "1. Tổng quan"
@@ -592,6 +607,16 @@ export const SCREEN_REGISTRY = [
     "path": "/management/quotes-overview",
     "label": "Dự toán & Báo giá",
     "menu": "1. Tổng quan"
+  },
+  {
+    "path": "/management/shared-workspace-report",
+    "label": "Báo cáo phát sinh",
+    "menu": "2. Làm việc"
+  },
+  {
+    "path": "/management/shared-workspace-settings",
+    "label": "Setup phát sinh",
+    "menu": "3. Thiết lập"
   },
   {
     "path": "/management/work-overview",
@@ -899,6 +924,11 @@ export const SCREEN_REGISTRY = [
     "menu": "Sản xuất → 3. Điều hành xưởng"
   },
   {
+    "path": "/sx/project-tasks",
+    "label": "Quản lý nhiệm vụ",
+    "menu": "Sản xuất → 1. Tổng quan"
+  },
+  {
     "path": "/sx/projects/:id",
     "label": "Chi tiết dự án xưởng",
     "menu": ""
@@ -997,6 +1027,11 @@ export const SCREEN_REGISTRY = [
     "path": "/vc/pipeline-settings",
     "label": "Pipeline Lắp đặt",
     "menu": "Vận chuyển → 3. Điều hành Lắp đặt"
+  },
+  {
+    "path": "/vc/project-tasks",
+    "label": "Quản lý nhiệm vụ",
+    "menu": "Vận chuyển → 1. Tổng quan"
   },
   {
     "path": "/vc/projects/:id",
@@ -1100,6 +1135,10 @@ export const MODULE_INDEX = [
     ]
   },
   {
+    "module": "3. Thiết lập",
+    "groups": []
+  },
+  {
     "module": "1. Lệnh đặt hàng",
     "groups": []
   },
@@ -1121,10 +1160,6 @@ export const MODULE_INDEX = [
   },
   {
     "module": "2. Theo dõi SX",
-    "groups": []
-  },
-  {
-    "module": "3. Thiết lập",
     "groups": []
   }
 ];

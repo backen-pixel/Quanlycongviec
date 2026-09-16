@@ -29,7 +29,8 @@ import { theoDoiTieuDiem } from '../../lib/productTour/focus';
 import { deriveMascotState, latestAnswer, DONE_MS } from './lib/mascotState';
 import { deriveAgentActions } from './lib/agentActions';
 import { FULL_ACCESS } from './lib/guideAccess';
-import { spriteFor, hasSprite, canFlip } from './lib/mascotSprite';
+import { spriteFor, moodSpriteFor, hasSprite, canFlip } from './lib/mascotSprite';
+import { useMoodFace } from './lib/useMoodFace';
 import { useMascotSet } from './lib/useMascotSet';
 
 /**
@@ -720,6 +721,16 @@ export default function GuideMascot() {
    * thì cùng kết quả, nên chạy tối đa một lần lật rồi đứng yên.
    */
   const pose = tempLine?.state || state;
+
+  /**
+   * SẮC MẶT TUỲ CHỌN — chèn thêm một nhịp sau khi lượt xong, xem lib/useMoodFace.js.
+   *
+   * CHỈ ĐÈ KHI NHÂN VẬT ĐANG RẢNH (`idle`/`done`). Đè lên `pointing` hay `thinking` là xoá mất
+   * một thông tin THẬT — ngón tay đang chỉ vào nút, hay "tôi đang chạy tool" — để thay bằng một
+   * thái độ. Thông tin luôn thắng trang trí.
+   */
+  const mood = useMoodFace(agent);
+  const moodSprite = (pose === 'idle' || pose === 'done') ? moodSpriteFor(mood) : '';
   /**
    * CÓ THẬT SỰ LẬT KHÔNG — dùng chung cho `data-flip` và cho phép tính kẹp bong bóng bên dưới.
    *
@@ -766,11 +777,14 @@ export default function GuideMascot() {
 
   // Đăng ký nghe đổi bộ nhân vật: `spriteFor` đọc biến cấp module nên React không tự biết.
   useMascotSet();
-  const sprite = spriteFor(pose);
+  // Sắc mặt (nếu có) thắng ảnh của tư thế — nhưng chỉ ở `idle`/`done`, xem chỗ tính `moodSprite`.
+  const sprite = moodSprite || spriteFor(pose);
   /** Lúc nào thì thân nhân vật KHÔNG nhận chuột — xem chú thích ở chỗ dùng. */
   const lockClicks = pose === 'pointing' || inTour;
   // Còn bong bóng câu trả lời thì chưa mờ đi — mờ trong lúc người ta đang đọc là phản tác dụng.
-  const hidden = state === 'idle' && !target && !inTour && !shownAnswer && !tempLine && !confirm;
+  // `!moodSprite`: đang làm sắc mặt thì KHÔNG được ẩn, nếu không nó biến mất đúng lúc vừa hiện.
+  const hidden = state === 'idle' && !target && !inTour && !shownAnswer && !tempLine && !confirm
+    && !moodSprite;
 
   /**
    * Rảnh đủ lâu thì TAN hẳn; có việc thì hiện lại ngay. Xem RANH_TAN_MS.
@@ -890,7 +904,7 @@ export default function GuideMascot() {
         role={lockClicks ? undefined : 'button'}
         tabIndex={lockClicks ? undefined : 0}
         aria-label={lockClicks ? undefined : 'Mở ô hỏi trợ lý'}
-        title={lockClicks ? undefined : 'Bấm để hỏi ta'}
+        title={lockClicks ? undefined : 'Bấm để hỏi mình'}
         onClick={lockClicks ? undefined : () => toggleAskBar()}
         onKeyDown={lockClicks ? undefined : (e) => {
           if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleAskBar(); }

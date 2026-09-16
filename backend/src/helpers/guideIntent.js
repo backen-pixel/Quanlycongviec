@@ -73,6 +73,25 @@ function smallModel() {
   return settings.get('intent_model') || '';
 }
 
+/**
+ * Cho phép thử lại sau khi đã tự tắt vì model từ chối.
+ *
+ * VÌ SAO CẦN: `disabledReason` nằm NGOÀI tầm với của công tắc trên màn hình — `isEnabled()` kiểm
+ * nó sau cùng, nên một lần 401 là subagent chết cho tới khi dựng lại tiến trình. Người quản trị
+ * sửa key, bấm Lưu, thấy công tắc vẫn bật, rồi hỏi thử và nhận đúng sự im lặng cũ. Không có lỗi
+ * nào để lần, vì chính lỗi đó đã xảy ra từ mấy giờ trước.
+ *
+ * Bấm Lưu ở màn hình cấu hình nghĩa là "tôi vừa đổi gì đó, thử lại đi" — đó là nơi gọi hàm này.
+ * Thử lại mà vẫn sai thì nó tự tắt lại ngay sau đúng MỘT lời gọi, nên không có vòng lặp tốn kém.
+ *
+ * @returns {string} lý do vừa được gỡ, hoặc chuỗi rỗng nếu vốn không tắt.
+ */
+function resetDisabled() {
+  const cu = disabledReason || '';
+  disabledReason = null;
+  return cu;
+}
+
 function status() {
   if (!ENABLED) return { enabled: false, reason: 'GUIDE_Y_DINH=0' };
   if (settings.get('intent_enabled') === false) return { enabled: false, reason: 'disabled_in_settings' };
@@ -244,6 +263,23 @@ async function inferIntent(input, callModel) {
 }
 
 /**
+ * The intent of THIS EXACT TURN if it has already been paid for — never calls the model.
+ *
+ * `inferIntent` computes on a miss; this one only looks. Callers need that distinction to ask
+ * "has this turn already been interpreted?" before deciding whether to take the expensive road.
+ *
+ * Keyed on the turn number, unlike `latestFor` below: rescue runs DURING a turn, so the thread's
+ * newest entry may belong to an earlier turn, and searching the store with a task the user
+ * finished asking about two turns ago is worse than searching with their raw words.
+ */
+function cachedFor(threadId, turn) {
+  const t = String(threadId || '').trim();
+  if (!t) return null;
+  const hit = cache.get(`${t}#${turn || 1}`);
+  return hit ? hit.intent : null;
+}
+
+/**
  * The most recent intent for a thread — for the librarian sub-agent (guideLearn.js) to reuse.
  *
  * WHY NOT LOOK UP BY `${threadId}#${turn}`: the librarian is called from the `/experience`
@@ -276,4 +312,4 @@ function recent() {
   }));
 }
 
-module.exports = { inferIntent, latestFor, status, recent, ENABLED };
+module.exports = { inferIntent, cachedFor, latestFor, status, recent, resetDisabled, ENABLED };

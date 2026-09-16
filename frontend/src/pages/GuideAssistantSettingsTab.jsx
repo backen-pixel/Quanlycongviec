@@ -13,10 +13,11 @@
  * lời giải thích của nó. Khoảng hợp lệ cũng do server giữ — đặt ở đây thì ai gọi thẳng API vẫn
  * nhét được số vô lý vào.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Loader2, Save, RotateCcw, AlertTriangle, Info, Coins, Brain,
-  Lightbulb, Gauge, Repeat, CheckCircle2, Cpu,
+  Lightbulb, Gauge, Repeat, CheckCircle2, Cpu, ShieldCheck, Palette, BookOpen,
 } from 'lucide-react';
 import api from '../lib/api';
 import { setMascotSet } from '../features/guide/lib/mascotSprite';
@@ -24,11 +25,14 @@ import { setMascotSet } from '../features/guide/lib/mascotSprite';
 /** Biểu tượng theo nhóm. Nhóm lạ (thêm sau ở server) rơi về `Info` chứ không vỡ giao diện. */
 const GROUP_ICON = {
   model: Cpu,
+  quota: ShieldCheck,
   cost: Coins,
   memory: Brain,
   experience: Lightbulb,
+  knowledge: BookOpen,
   reasoning: Gauge,
   iterations: Repeat,
+  appearance: Palette,
 };
 
 /**
@@ -294,6 +298,122 @@ export default function GuideAssistantSettingsTab({ showToast }) {
  * `parentValue` chỉ dùng cho `dependent_select`: danh sách lựa chọn được lọc theo nó, và nó là giá
  * trị ĐANG GÕ DỞ của trường cha chứ không phải giá trị đã lưu.
  */
+/**
+ * DẤU "?" — lời giải thích dài của mỗi núm, chỉ hiện khi người dùng hỏi tới.
+ *
+ * ═══════════════ VÌ SAO GOM LẠI ═══════════════
+ *
+ * 29 núm × trung bình 259 ký tự = 7.517 ký tự mô tả bày sẵn trên một màn hình. Những dòng đó viết
+ * kỹ và đáng giá — nhưng chúng đáng giá LÚC ĐANG PHÂN VÂN một núm, không phải mọi lúc. Bày hết
+ * thì việc thường gặp nhất (liếc xem núm nào đang khác mặc định) phải lướt qua bảy nghìn chữ.
+ *
+ * ═══════════════ HOVER LÀ CHƯA ĐỦ ═══════════════
+ *
+ * Chỉ bắt `:hover` là bỏ rơi hai nhóm người: bàn phím (không có con trỏ) và cảm ứng (không có
+ * trạng thái rê). Nên mở bằng CẢ BA — rê chuột, nhận tiêu điểm, và bấm — rồi Esc đóng lại. Bấm
+ * còn có tác dụng GHIM: đọc một đoạn 600 chữ mà chuột nhích ra là mất thì không đọc nổi.
+ *
+ * ═══════════════ CÁI GÌ Ở LẠI NGOÀI ═══════════════
+ *
+ * Chỉ `description` — phần giải thích TĨNH — chui vào đây. Những dòng nói về TRẠNG THÁI HIỆN TẠI
+ * thì ở lại ngoài: "núm này không áp dụng vì model đang chọn", "server sẽ kẹp giá trị này lại".
+ * Giấu trạng thái sau một thao tác rê chuột là giấu đúng thứ người dùng cần thấy mà không biết
+ * để tìm.
+ */
+function HelpDot({ text, id }) {
+  const [open, setOpen] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const [box, setBox] = useState(null);
+  const nutRef = useRef(null);
+
+  /**
+   * Cuộn hoặc đổi kích thước là ĐÓNG, không tính lại vị trí.
+   *
+   * Toạ độ đo một lần lúc mở, nên cuộn trang mà vẫn để đó thì hộp lơ lửng sai chỗ — trông như
+   * lỗi vẽ. Tính lại theo từng khung hình cuộn thì đúng hơn nhưng phải gắn listener chạy liên
+   * tục cho 29 nút; đóng lại là hành vi người dùng hiểu ngay và không tốn gì.
+   *
+   * ĐẶT TRƯỚC `return null` bên dưới: hook phải chạy ở mọi lần render, kể cả lần không có mô tả.
+   */
+  useEffect(() => {
+    if (!open) return undefined;
+    const dongLai = () => { setOpen(false); setPinned(false); };
+    window.addEventListener('scroll', dongLai, true);
+    window.addEventListener('resize', dongLai);
+    return () => {
+      window.removeEventListener('scroll', dongLai, true);
+      window.removeEventListener('resize', dongLai);
+    };
+  }, [open]);
+
+  if (!text) return null;
+
+  const hienId = `${id}-help`;
+  const dong = () => { setOpen(false); setPinned(false); };
+
+  /**
+   * ĐO VỊ TRÍ RỒI VẼ QUA PORTAL, không đặt tuyệt đối trong dòng.
+   *
+   * `<section>` của mỗi nhóm có `overflow-hidden` (để bo góc), nên một hộp đặt tuyệt đối bên
+   * trong sẽ BỊ CẮT ở những núm gần đáy nhóm — đúng chỗ lời giải thích dài nhất. Vẽ ra thẳng
+   * `document.body` thì không ancestor nào cắt được, và toạ độ lấy từ chính nút nên vẫn dính
+   * đúng chỗ.
+   *
+   * Kẹp mép phải để hộp không tràn khỏi màn hình ở bề rộng hẹp.
+   */
+  const mo = () => {
+    const r = nutRef.current?.getBoundingClientRect();
+    if (r) {
+      const rong = Math.min(352, window.innerWidth * 0.8);
+      setBox({ top: r.bottom + 8, left: Math.min(r.left, window.innerWidth - rong - 12), rong: rong });
+    }
+    setOpen(true);
+  };
+
+  return (
+    <span className="inline-flex align-middle">
+      <button
+        ref={nutRef}
+        type="button"
+        aria-label="Giải thích"
+        aria-expanded={open}
+        aria-describedby={open ? hienId : undefined}
+        onMouseEnter={mo}
+        onMouseLeave={() => { if (!pinned) setOpen(false); }}
+        onFocus={mo}
+        onBlur={() => { if (!pinned) setOpen(false); }}
+        onClick={() => { setPinned((v) => !v); mo(); }}
+        onKeyDown={(e) => { if (e.key === 'Escape') dong(); }}
+        className={`h-4 w-4 rounded-full border text-[10px] font-bold leading-none flex items-center justify-center cursor-help transition-colors ${
+          open
+            ? 'border-indigo-400 bg-indigo-50 text-indigo-600'
+            : 'border-gray-300 text-gray-400 hover:border-indigo-400 hover:text-indigo-600'
+        }`}
+      >
+        ?
+      </button>
+
+      {open && box && createPortal(
+        <span
+          id={hienId}
+          role="tooltip"
+          onMouseEnter={() => setOpen(true)}
+          onMouseLeave={() => { if (!pinned) setOpen(false); }}
+          style={{ top: box.top, left: box.left, width: box.rong }}
+          className="fixed z-[9999] rounded-lg bg-gray-900 text-gray-100 text-xs leading-relaxed
+                     px-3 py-2 shadow-xl normal-case font-normal"
+        >
+          {text}
+          {pinned && (
+            <span className="block mt-1.5 text-[10px] text-gray-400">Bấm lại dấu ? để bỏ ghim</span>
+          )}
+        </span>,
+        document.body,
+      )}
+    </span>
+  );
+}
+
 function FieldInput({ fields, value, parentValue, error, disabledReason, note, onChange }) {
   const t = fields;
   const disabled = !!disabledReason;
@@ -306,6 +426,7 @@ function FieldInput({ fields, value, parentValue, error, disabledReason, note, o
         <div className="min-w-0">
           <label className="text-sm font-semibold text-gray-800 flex items-center gap-2 flex-wrap">
             {t.label}
+            <HelpDot text={t.description} id={`set-${t.key}`} />
             {/* Nhãn này là thứ trả lời câu "ai đã đổi gì" nhanh nhất — không có nó thì phải nhớ
                 từng mặc định để biết mình đang chạy cấu hình gốc hay đã chỉnh. */}
             {differsFromDefault && !disabled && (
@@ -319,7 +440,8 @@ function FieldInput({ fields, value, parentValue, error, disabledReason, note, o
               </span>
             )}
           </label>
-          <p className="text-xs text-gray-500 mt-0.5 leading-snug">{t.description}</p>
+          {/* `disabledReason` và `clamped` NÓI VỀ TRẠNG THÁI HIỆN TẠI nên ở lại ngoài — xem ghi
+              chú trong HelpDot. Chỉ phần giải thích tĩnh mới chui vào dấu ?. */}
           {disabled && <p className="text-xs text-amber-700 mt-1">{disabledReason}</p>}
           {!disabled && note === 'clamped' && (
             <p className="text-xs text-gray-500 mt-1">

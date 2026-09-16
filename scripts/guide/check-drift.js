@@ -103,7 +103,7 @@ function checkLabels(updateBaseline) {
 
 const updateBaseline = process.argv.includes('--update-baseline');
 
-function main() {
+async function main() {
   if (!fs.existsSync(SCREENS_JSON)) {
     console.error('❌ guide:check — chưa có backend/data/guide-knowledge/screens.json. Chạy `npm run guide:sync` trước.');
     process.exit(1);
@@ -137,9 +137,66 @@ function main() {
 
   console.log(`✅ guide:check — ${screens.length - missing.length}/${screens.length} màn hình có mô tả (${grew.length} đang miễn trừ trong baseline).`);
 
+  /**
+   * LỚP 3 — VECTOR CÓ CÒN KHỚP KIẾN THỨC KHÔNG. Chỉ CẢNH BÁO, không chặn.
+   *
+   * Sửa kiến thức mà quên `npm run guide:embed` thì vector cũ tả một nội dung không còn tồn tại.
+   * Vân tay bắt được chuyện đó và cho chunk lệch lùi về thuần từ khoá — tức hỏng về phía an
+   * toàn, người dùng không thấy kết quả sai, chỉ thấy kém hơn một chút. Vì vậy KHÔNG chặn
+   * deploy: nhúng lại cần OPENAI_API_KEY, mà CI thì thường không có.
+   */
+  // Bất đồng bộ vì nay nó hỏi DB. `main()` gọi trong một `.then()` ở cuối tệp.
+  await (async () => {
+    try {
+      // eslint-disable-next-line global-require
+      const kb = require(path.join(ROOT, 'backend/src/helpers/guideKnowledge'));
+      /**
+       * PHẢI ép nạp kho trước.
+       *
+       * `load()` nay đọc từ DB và việc đó bất đồng bộ (nhịp dò khởi động 3 giây). Không chờ thì
+       * kho trong bộ nhớ RỖNG, và hai phép kiểm dưới đây im lặng một cách rất thuyết phục: lớp 3
+       * báo "không có vector lỗi thời" vì không có vector nào để lệch, lớp 4 báo sạch vì không có
+       * mục nào để bẩn. Một cổng chặn luôn xanh vì không nhìn thấy gì còn tệ hơn không có cổng.
+       */
+      await kb.loadFromDb({ force: true });
+      const v = await kb.vectorStatus();
+      if (!v.db) {
+        console.log('ℹ  guide:check — không đọc được DB kiến thức từ máy này, bỏ qua phần vector.');
+      } else if (!v.on) {
+        console.log('ℹ  guide:check — nhúng đang tắt, trợ lý tra kiến thức thuần từ khoá.');
+      } else if (v.missing > 0) {
+        console.warn(`⚠  guide:check — ${v.missing}/${v.total} mục kiến thức chưa có vector (hoặc vector đã lỗi thời).`);
+        console.warn('   Vòng lặp nền sẽ tự bù; muốn xong ngay thì chạy `cd backend && npm run guide:embed`.');
+      } else {
+        console.log(`✅ guide:check — ${v.total} mục kiến thức đều đã nhúng và còn khớp nội dung.`);
+      }
+
+      /**
+       * LỚP 4 — DỮ LIỆU NHẤT THỜI TRONG TÀI LIỆU. Chỉ cảnh báo, không chặn.
+       *
+       * Con số đếm được lúc quét ("3.802 lead") nằm trong `content` là sai kiểu tệ nhất: trợ lý
+       * trả lời trôi chảy và tự tin, chỉ là sai sự thật, và không có cách nào phát hiện từ phía
+       * người dùng. Không chặn deploy vì sửa là việc VIẾT LẠI câu văn — không ai làm được trong
+       * lúc chờ build, và một cổng chặn không sửa nhanh được thì sẽ bị vô hiệu hoá.
+       */
+      const ban = kb.load().chunks
+        .map((c) => ({ c, bits: kb.findTransient([c.content, c.summary].filter(Boolean).join(' ')) }))
+        .filter((x) => x.bits.length);
+      if (ban.length) {
+        console.warn(`⚠  guide:check — ${ban.length} mục kiến thức chứa dữ liệu NHẤT THỜI trong mô tả:`);
+        for (const x of ban.slice(0, 10)) {
+          console.warn(`   ${x.c.path} — ${[...new Set(x.bits.map((b) => b.mau))].join(' , ')}`);
+        }
+        console.warn('   Số đếm và trạng thái lúc quét sẽ sai ngay ngày hôm sau. Sửa ở Cài đặt → Trợ lý → Kiến thức.');
+      }
+    } catch (e) {
+      console.log('ℹ  guide:check — không kiểm được vector kiến thức:', String(e && e.message).slice(0, 80));
+    }
+  })();
+
   // Lớp 2 chạy SAU và cũng chặn deploy: một nhãn chết làm trợ lý chỉ vào nút không tồn tại,
   // hỏng không kém gì một màn hình thiếu mô tả.
   if (!checkLabels(false)) process.exit(1);
 }
 
-main();
+main().catch((e) => { console.error(e); process.exit(1); });
