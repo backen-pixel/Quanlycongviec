@@ -3,7 +3,7 @@
  * Ưu tiên dữ liệu dẫn xuất từ backend; fallback giữ cùng thứ tự khi API cũ chưa trả field.
  */
 
-import { companyWorkEndMsFromRaw } from './companyDeadlineClock';
+import { companyWorkEndMsFromRaw, vnYmdFromTs } from './companyDeadlineClock';
 import { effectivePipelineStageSlaDays } from './crmPipelineSla';
 import { endOfVnCalendarDayAfterEntered } from './vnDate';
 
@@ -36,6 +36,33 @@ function result(raw, source, item) {
   const deadlineTs = tsOf(raw, item);
   if (deadlineTs == null) return null;
   return { raw, source, deadlineTs, deadlineAt: new Date(deadlineTs).toISOString() };
+}
+
+function ymdFromDeadlineRaw(raw) {
+  if (raw == null || raw === '') return null;
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const ts = new Date(s).getTime();
+  if (!Number.isFinite(ts)) return null;
+  return vnYmdFromTs(ts);
+}
+
+function collectInstallYmds(item) {
+  const occ = Array.isArray(item?.install_occurrence_dates) ? item.install_occurrence_dates : [];
+  const ymds = [...new Set(occ.map(ymdFromDeadlineRaw).filter(Boolean))].sort();
+  if (ymds.length) return ymds;
+  const one = ymdFromDeadlineRaw(item?.install_date);
+  return one ? [one] : [];
+}
+
+function activeInstallCommitmentRaw(item, nowMs = Date.now()) {
+  const ymds = collectInstallYmds(item);
+  if (!ymds.length) return null;
+  const today = vnYmdFromTs(nowMs);
+  const next = today ? ymds.find((y) => y >= today) : null;
+  const ymd = next || ymds[ymds.length - 1];
+  if (item?.install_date && ymdFromDeadlineRaw(item.install_date) === ymd) return item.install_date;
+  return ymd;
 }
 
 function crmTerminal(stage) {
@@ -130,7 +157,7 @@ export function resolveEffectiveModuleDeadline(moduleKey, item, stage = null) {
     if (!item || logisticsDone(item, stage)) {
       return { raw: null, source: null, deadlineTs: null, deadlineAt: null };
     }
-    return result(item.install_date, 'install', item)
+    return result(activeInstallCommitmentRaw(item), 'install', item)
       || result(item.delivery_date, 'delivery', item)
       || result(item.deadline, 'project', item)
       || { raw: null, source: null, deadlineTs: null, deadlineAt: null };

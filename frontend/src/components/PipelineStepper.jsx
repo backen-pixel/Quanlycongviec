@@ -6,7 +6,9 @@
  *   onMoveToStage  – (stageId) => void  called when a step circle is clicked
  *   currentStageName – tên stage khi stage_id không có trong `stages` (orphan)
  *   visitedStageIds – Set<string> các stage_id đã từng vào (lịch sử CRM)
- *   linearProgress  – true: pipeline xưởng/VC (tích ✓ theo order_index); false: CRM deal (bỏ qua cột SX/VC)
+ *   workshopProgress – { sx_pipeline_stage, vc_pipeline_stage, stage, project_status }
+ *                     để ✓ cột SX/VC/Hoàn thành khi module kia đã kéo tới
+ *   linearProgress  – true: pipeline xưởng/VC (tích ✓ theo order_index); false: CRM deal
  *   stageDates      – { [stageId]: 'dd/mm/yyyy' } ngày vào cột (không kèm giờ)
  *
  *   ── Chế độ CỘT LỒNG (chỉ dùng cho pipeline xưởng, mặc định TẮT) ───────────────
@@ -24,7 +26,7 @@
  * mà chế độ này sinh ra để xoá, nên cố ý không xếp ngang.
  */
 import { sortAndDedupePipelineStages, pipelineStageSortKey } from '../lib/crmPipelineStages';
-import { classifyCrmPostWonManagedKind } from '../lib/crmDealStageGate';
+import { workshopReachedCrmStepperStage } from '../lib/crmDealStageGate';
 import { nhanCotLon } from '../lib/sxGopCot';
 
 const NHAN_TT = { chua: 'Chưa tới', dang: 'Đang làm', xong: 'Xong' };
@@ -36,6 +38,7 @@ export default function PipelineStepper({
   currentStageName,
   onMoveToStage,
   visitedStageIds = null,
+  workshopProgress = null,
   linearProgress = false,
   stageDates = null,
   nhomSongSong = false,
@@ -55,14 +58,16 @@ export default function PipelineStepper({
   const stageIsPast = (s, i) => {
     const isCurrent = String(s.id) === curId;
     if (isCurrent) return false;
+    if (s.is_lost) return false;
     const sortKey = pipelineStageSortKey(s, i);
-    // Không tích các cột đứng sau cột hiện tại trên pipeline (tránh sync cũ làm ✓ Đàm phán/SX sau Thắng).
-    if (curSortKey != null && sortKey > curSortKey) return false;
-    // Chỉ bỏ ✓ trên cột SX/VC thật (sync_role) — không dùng heuristic tên «thiết kế»
-    // kẻo «Đã cọc thiết kế» / «Đang trao đổi thiết kế» mất dấu đã qua.
-    if (!linearProgress && classifyCrmPostWonManagedKind(s)) return false;
     if (visited?.has(String(s.id))) return true;
-    return curSortKey != null && sortKey < curSortKey;
+    // Đã đi qua trên CRM (kể cả cột SX/VC đứng trước cột đang đứng).
+    if (curSortKey != null && sortKey < curSortKey) return true;
+    // Thẻ CRM chưa kéo tới, nhưng SX/VC đã kéo tới cột tương ứng.
+    if (!linearProgress && workshopProgress && workshopReachedCrmStepperStage(workshopProgress, s)) {
+      return true;
+    }
+    return false;
   };
 
   /** Trạng thái một việc song song: lấy từ bảng, chưa có dòng thì suy từ cột đang đứng. */

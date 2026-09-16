@@ -105,6 +105,38 @@ function candidate(raw, source, item) {
   };
 }
 
+function ymdFromDeadlineRaw(raw) {
+  if (raw == null || raw === '') return null;
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const ts = new Date(s).getTime();
+  if (!Number.isFinite(ts)) return null;
+  return vnYmdFromTs(ts);
+}
+
+/** Mọi ngày lắp trên sự kiện VC (occurrence) hoặc install_date. */
+function collectInstallYmds(item) {
+  const occ = Array.isArray(item?.install_occurrence_dates) ? item.install_occurrence_dates : [];
+  const ymds = [...new Set(occ.map(ymdFromDeadlineRaw).filter(Boolean))].sort();
+  if (ymds.length) return ymds;
+  const one = ymdFromDeadlineRaw(item?.install_date);
+  return one ? [one] : [];
+}
+
+/**
+ * Hạn VC/LĐ khi đang lắp: buổi còn lại gần nhất (≥ hôm nay VN).
+ * Hết buổi thì lấy ngày cuối — quá hạn nếu chưa Hoàn thành.
+ */
+function activeInstallCommitmentRaw(item, nowMs = Date.now()) {
+  const ymds = collectInstallYmds(item);
+  if (!ymds.length) return null;
+  const today = vnYmdFromTs(nowMs);
+  const next = today ? ymds.find((y) => y >= today) : null;
+  const ymd = next || ymds[ymds.length - 1];
+  if (item?.install_date && ymdFromDeadlineRaw(item.install_date) === ymd) return item.install_date;
+  return ymd;
+}
+
 function resolveCrmDeadline(item, stage) {
   if (!item || item.deadline_disabled_at) return null;
   if (crmLeadMissingPhone(item) || isCrmTerminalStage(stage)) return null;
@@ -144,7 +176,7 @@ function resolveProductionDeadline(item, stage) {
 
 function resolveLogisticsDeadline(item, stage) {
   if (!item || item.status === 'completed' || isLogisticsFinalStage(stage)) return null;
-  return candidate(item.install_date, 'install', item)
+  return candidate(activeInstallCommitmentRaw(item), 'install', item)
     || candidate(item.delivery_date, 'delivery', item)
     || candidate(item.deadline, 'project', item);
 }
@@ -238,6 +270,7 @@ module.exports = {
   resolveCrmDeadline,
   resolveProductionDeadline,
   resolveLogisticsDeadline,
+  activeInstallCommitmentRaw,
   withEffectiveModuleDeadline,
   projectDeadlinePatchOnModuleDone,
 };

@@ -5,6 +5,7 @@ const {
   deadlineState,
   projectDeadlinePatchOnModuleDone,
   resolveModuleDeadline,
+  activeInstallCommitmentRaw,
 } = require('../src/helpers/moduleDeadlinePolicy');
 const {
   crmTaskMatchesModule,
@@ -87,6 +88,39 @@ const vc = { status: 'shipping', install_date: future(1), delivery_date: future(
 assert.equal(resolveModuleDeadline(MODULE.LOGISTICS, vc).source, 'install');
 assert.equal(resolveModuleDeadline(MODULE.LOGISTICS, { ...vc, install_date: null }).source, 'delivery');
 assert.equal(resolveModuleDeadline(MODULE.LOGISTICS, { ...vc, status: 'completed' }).deadlineAt, null);
+
+const todayYmd = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+const [y, m, d] = todayYmd.split('-').map(Number);
+const nextYmd = new Date(Date.UTC(y, m - 1, d + 5)).toISOString().slice(0, 10);
+assert.equal(
+  activeInstallCommitmentRaw({
+    install_date: past(30),
+    install_occurrence_dates: [String(past(30)).slice(0, 10), nextYmd],
+  }).slice(0, 10),
+  nextYmd,
+);
+assert.equal(
+  String(activeInstallCommitmentRaw({
+    install_date: past(30),
+    install_occurrence_dates: [String(past(30)).slice(0, 10)],
+  })).slice(0, 10),
+  String(past(30)).slice(0, 10),
+);
+assert.equal(
+  resolveModuleDeadline(MODULE.LOGISTICS, {
+    status: 'installing',
+    install_date: past(30),
+    install_occurrence_dates: [String(past(30)).slice(0, 10), nextYmd],
+  }).raw.slice(0, 10),
+  nextYmd,
+);
+assert.equal(
+  resolveModuleDeadline(MODULE.LOGISTICS, {
+    status: 'installing',
+    install_date: past(30),
+  }, { stage: { name: 'Hoàn thành', bucket_slug: 'completed' } }).deadlineAt,
+  null,
+);
 
 // DATE-only dùng giờ kết thúc công ty 17:30 VN.
 assert.equal(

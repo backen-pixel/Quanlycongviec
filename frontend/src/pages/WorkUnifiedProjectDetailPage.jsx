@@ -1251,6 +1251,12 @@ function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, sy
           currentStageName={crmLead?.stage?.name || lead?.stage?.name || pipelines?.crm?.name}
           visitedStageIds={visitedStageIds}
           stageDates={crmStageDates}
+          workshopProgress={{
+            sx_pipeline_stage: crmLead?.sx_pipeline_stage || pipelines?.sx || null,
+            vc_pipeline_stage: crmLead?.vc_pipeline_stage || pipelines?.vc || null,
+            stage: crmLead?.stage || pipelines?.crm || null,
+            project_status: project?.status || null,
+          }}
           onMoveToStage={moving ? undefined : moveCrm}
         />
       </ModuleStepperBlock>

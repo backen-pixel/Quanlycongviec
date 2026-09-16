@@ -1,6 +1,29 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-16 12:10 (UTC+7)
+Cập nhật: 2026-09-16 14:20 (UTC+7)
+
+## Stepper CRM — ✓ theo tiến độ SX/VC
+
+Trạng thái: **FE local.**
+
+Thanh tiến độ deal: cột Đang sản xuất / Vận chuyển / Lắp đặt / CSKH /
+Hoàn thành được ✓ khi Kanban SX hoặc VC đã kéo tới (hoặc qua) giai đoạn
+đó. Cột CRM đang đứng vẫn hiện icon hiện tại, không ✓.
+
+Hoàn tác: revert `PipelineStepper.jsx`, `crmDealStageGate.js`,
+`LeadDetail.jsx`, `WorkUnifiedProjectDetailPage.jsx`.
+
+## Work Unified — hạn bàn giao = lịch lắp VC-LĐ đang chạy
+
+Trạng thái: **BE+FE local.** Bỏ chống chế ẩn trễ khi VC còn Tiếp nhận.
+
+Hạn tổng quan = deadline module VC/LĐ: buổi lắp **còn lại gần nhất**
+(≥ hôm nay). Đang lắp nhiều buổi thì không trễ vì ngày đầu đã qua.
+Hết buổi mà chưa **Hoàn thành** VC thì mới trễ. Kéo Hoàn thành / dời
+lịch VC thì hạn đổi theo. Cánh kính SX xong giữ rule cũ.
+
+Hoàn tác: revert `moduleDeadlinePolicy.js` (BE+FE), `projectForecast.js`,
+`management.js`, `projectDealBundle.js`, test deadline + forecast.
 
 ## CRM Pipeline — tự thêm thành viên khi vào cột / lập KH SX
 

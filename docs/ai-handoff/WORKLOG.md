@@ -1,5 +1,33 @@
 # Nhật ký công việc AI
 
+## 2026-09-16 14:20 — Stepper CRM tích ✓ khi SX/VC đã kéo tới
+
+- AI: Cursor. Cột Sản xuất / VC / Hoàn thành trên thanh tiến độ deal
+  không còn trống nếu module xưởng/VC đã vào cột tương ứng (kể cả khi
+  thẻ CRM chưa kéo theo). Bỏ rule cũ «không bao giờ ✓ cột SX/VC».
+  File: `PipelineStepper.jsx`, `crmDealStageGate.js`, `LeadDetail.jsx`,
+  `WorkUnifiedProjectDetailPage.jsx`.
+
+## 2026-09-16 13:40 — Hạn Work Unified = buổi lắp VC-LĐ còn lại
+
+- AI: Cursor. Bỏ chống chế «SX đã giao + VC Tiếp nhận thì không trễ».
+  Trước khi sửa `routes/management.js`: `queryWorkUnifiedList` /
+  `buildItem` dùng `resolveModuleDeadline(logistics)` sau khi gắn
+  sự kiện lắp. Hạn = buổi lắp gần nhất ≥ hôm nay (đang lắp vẫn theo
+  lịch VC); hết buổi thì ngày cuối — quá hạn nếu chưa Hoàn thành.
+  File: `moduleDeadlinePolicy.js` (BE+FE), `projectForecast.js`,
+  `management.js`, `projectDealBundle.js`, test deadline + forecast.
+
+## 2026-09-16 13:30 — Work Unified: không trễ khi SX đã giao, VC còn Tiếp nhận
+
+- AI: Cursor. Trước khi sửa `routes/management.js` (vùng dùng chung):
+  `classifyProjectForecast` + `queryWorkUnifiedList` (`buildItem`).
+  Bỏ tính Trễ hạn ngày lắp khi cột SX đã giao/hoàn thành/chốt công nợ
+  và VC còn Tiếp nhận (`delivery_pending`) hoặc chưa có cột VC.
+  Đơn đã vào giao/lắp VC vẫn trễ nếu hạn lắp quá khứ.
+  File: `projectForecast.js`, `management.js`, `projectDealBundle.js`,
+  `project-forecast-gcck.js`.
+
 ## 2026-09-16 12:10 — CRM Pipeline tự thêm thành viên theo cột
 
 - AI: Cursor. Setup trên `/crm/pipeline-settings`: tick «Tự thêm thành

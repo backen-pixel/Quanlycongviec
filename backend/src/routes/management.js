@@ -33,6 +33,7 @@ const { responseCache } = require('../middleware/responseCache');
 const { PROJECTS_LIST_TAG } = require('../middleware/projectsCacheInvalidation');
 const { MODULE, resolveModuleDeadline } = require('../helpers/moduleDeadlinePolicy');
 const { classifyProjectForecast } = require('../helpers/projectForecast');
+const { attachInstallEventDatesToProjects } = require('../helpers/createPlannedVcLdEvents');
 const { orgReportDealIsClosedWon, loadDealKhSplitContext } = require('../helpers/crmDealKhSplit');
 const {
   WORK_UNIFIED_UUID_RE,
@@ -95,7 +96,7 @@ const WORK_UNIFIED_PROJECT_COLUMNS = `
         id, code, name, status, deadline, estimated_value, production_value, deposit_amount, collected_amount,
         customer_id, current_stage_id, install_date, delivery_date, production_deadline,
         project_manager_id, sales_person_id, production_person_id, company_id, logistics_company_id,
-        workshop_type_id, sx_kanban_column_id,
+        workshop_type_id, sx_kanban_column_id, vc_kanban_column_id,
         customer:customers(id, full_name, phone),
         current_stage:workflow_stages(id, name, slug, color, order_index),
         project_manager:users!projects_project_manager_id_fkey(id, full_name),
@@ -115,7 +116,7 @@ const WORK_UNIFIED_PROJECT_COLUMNS_LITE = `
         id, code, name, status, deadline, install_date, delivery_date, production_deadline,
         customer_id, current_stage_id,
         project_manager_id, sales_person_id, production_person_id, company_id, logistics_company_id,
-        workshop_type_id, sx_kanban_column_id
+        workshop_type_id, sx_kanban_column_id, vc_kanban_column_id
       `;
 
 /** Như trên nhưng thêm tên khách — chỉ cần khi có tham số `search` (tìm theo tên KH). */
@@ -1233,15 +1234,17 @@ async function queryWorkUnifiedList(req, opts = {}) {
     }
   }
 
-  const projects = [...projectsById.values()];
+  let projects = [...projectsById.values()];
   const projectIds = projects.map((p) => p.id);
   const workshopTypeIds = [...new Set(projects.map((p) => p.workshop_type_id).filter(Boolean))];
   const sxColumnIds = [...new Set(projects.map((p) => p.sx_kanban_column_id).filter(Boolean))];
+  const vcColumnIds = [...new Set(projects.map((p) => p.vc_kanban_column_id).filter(Boolean))];
   const dealsForProject = new Map();
   const workshopTypeById = new Map();
   const sxStageById = new Map();
+  const vcStageById = new Map();
   if (projectIds.length) {
-    const [deals, linksOrNull, workshopTypes, sxStages] = await Promise.all([
+    const [deals, linksOrNull, workshopTypes, sxStages, vcStages, withInstallEvents] = await Promise.all([
       fetchAllByIdsParallel({
         table: 'crm_leads',
         columns: scanDealColumns,
@@ -1276,9 +1279,23 @@ async function queryWorkUnifiedList(req, opts = {}) {
           ids: sxColumnIds,
         })
         : Promise.resolve([]),
+      vcColumnIds.length
+        ? fetchAllByIdsParallel({
+          table: 'logistics_pipeline_stages',
+          columns: 'id, name, bucket_slug',
+          key: 'id',
+          ids: vcColumnIds,
+        })
+        : Promise.resolve([]),
+      attachInstallEventDatesToProjects(projects).catch((e) => {
+        console.warn('[work-unified] attach install events:', e.message);
+        return projects;
+      }),
     ]);
     (workshopTypes || []).forEach((w) => { if (w?.id) workshopTypeById.set(String(w.id), w); });
     (sxStages || []).forEach((s) => { if (s?.id) sxStageById.set(String(s.id), s); });
+    (vcStages || []).forEach((s) => { if (s?.id) vcStageById.set(String(s.id), s); });
+    if (Array.isArray(withInstallEvents) && withInstallEvents.length) projects = withInstallEvents;
     const dealById = new Map();
     (deals || []).forEach((d) => {
       if (d?.id) dealById.set(String(d.id), d);
@@ -1339,12 +1356,15 @@ async function queryWorkUnifiedList(req, opts = {}) {
     const progressPct = flow.length
       ? Math.round(((doneSteps + (currentStep ? 0.35 : 0)) / flow.length) * 100)
       : 0;
-    const commitmentDate = p.install_date || p.delivery_date || p.production_deadline || p.deadline || null;
     const workshopType = p.workshop_type || workshopTypeById.get(String(p.workshop_type_id || '')) || null;
     const sxStage = sxStageById.get(String(p.sx_kanban_column_id || '')) || p.sx_pipeline_stage || null;
+    const vcStage = vcStageById.get(String(p.vc_kanban_column_id || '')) || p.vc_pipeline_stage || null;
+    const logisticsDeadline = resolveModuleDeadline(MODULE.LOGISTICS, p, { stage: vcStage });
+    const commitmentDate = logisticsDeadline.raw || null;
     const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitmentDate, {
       project: { ...p, workshop_type: workshopType },
       sxStage,
+      vcStage,
     });
     const allDeals = dealMap.get(String(p.id)) || [];
     const scopedDeals = scopeIdSet.size

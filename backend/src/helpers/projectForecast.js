@@ -1,6 +1,7 @@
 /**
  * Tiến độ hạn cam kết trên tổng quan dự án (Work Unified / chi tiết).
  * GCCK (Cánh kính) đã sang cột SX «Hoàn thành» không còn tính trễ theo ngày lắp.
+ * Các loại khác: hạn bàn giao = deadline VC/LĐ đang chạy (buổi lắp còn lại).
  */
 
 const { isHucabiCompany } = require('./companyDeadlineClock');

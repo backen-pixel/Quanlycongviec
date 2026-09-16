@@ -10,6 +10,7 @@ const {
 const { listDealProductionProjects } = require('./autoDealWonProject');
 const { sortProjectCrmDeals } = require('./workshopCrmDeals');
 const { classifyProjectForecast } = require('./projectForecast');
+const { MODULE, resolveModuleDeadline } = require('./moduleDeadlinePolicy');
 
 const DONE = new Set(['completed', 'done']);
 const IN_PROGRESS = new Set(['in_progress', 'doing', 'active', 'processing']);
@@ -532,12 +533,12 @@ function buildProjectOverview({
     ? Math.round(flowPct * 0.55 + taskPctVal * 0.45)
     : flowPct;
 
-  const commitmentRaw = project?.install_date || project?.delivery_date
-    || project?.production_deadline || project?.deadline || null;
-  const commitment_date = commitmentRaw ? String(commitmentRaw).slice(0, 10) : null;
+  const logisticsDeadline = resolveModuleDeadline(MODULE.LOGISTICS, project, { stage: vcStage });
+  const commitment_date = logisticsDeadline.raw || null;
   const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitment_date, {
     project,
     sxStage,
+    vcStage,
   });
 
   const budgetTotal = Number(
@@ -972,6 +973,13 @@ function pickBestLeadForProject(project, candidates) {
 
 async function buildProjectDealBundleWithProject(project, user, opts = {}) {
   const projectId = project.id;
+  try {
+    const { attachInstallEventDatesToProjects } = require('./createPlannedVcLdEvents');
+    const attached = await attachInstallEventDatesToProjects([project]);
+    if (attached?.[0]) Object.assign(project, attached[0]);
+  } catch (e) {
+    console.warn('[bundle] attach install events:', e.message);
+  }
   const lite = !!opts.lite;
   const mark = (label, t0) => {
     if (!opts.profile) return;

@@ -1454,6 +1454,18 @@ export default function LeadDetail() {
     [lead?.type, stagesDeal, stagesLead],
   );
 
+  const workshopProgress = useMemo(() => {
+    if (!lead || lead.type !== 'deal') return null;
+    const list = Array.isArray(lead.production_projects) ? lead.production_projects : [];
+    const pp = list.find((p) => p.is_primary) || list[0] || null;
+    return {
+      sx_pipeline_stage: resolveSxProgressMeta(pp, lead).stage || lead.sx_pipeline_stage || null,
+      vc_pipeline_stage: resolveVcProgressMeta(pp, lead).stage || lead.vc_pipeline_stage || null,
+      stage: lead.stage || null,
+      project_status: pp?.status || lead.linked_project?.status || null,
+    };
+  }, [lead]);
+
   const handleDownloadAllDocuments = useCallback(async () => {
     if (downloadingDocsZip || documentsTabTotal === 0) return;
     setDownloadingDocsZip(true);
@@ -3862,6 +3874,7 @@ export default function LeadDetail() {
           currentStageName={lead.stage?.name}
           onMoveToStage={moveStage}
           visitedStageIds={visitedStageIds}
+          workshopProgress={workshopProgress}
         />
       </div>
 
