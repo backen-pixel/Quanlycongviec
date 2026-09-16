@@ -160,11 +160,13 @@ function resolveCrmDeadline(item, stage) {
   return candidate(item.expected_close_date, 'expected_close', item);
 }
 
-function resolveProductionDeadline(item, stage) {
+function resolveProductionDeadline(item, stage, opts = {}) {
   if (!item || item.status === 'completed') return null;
-  if (isSxPipelineStageNoDeadline(stage)
-    || shouldIgnoreSxOrderDeliveryOverdue(stage)
-    || projectLooksShippedForOverdue(item)) {
+  if (isSxPipelineStageNoDeadline(stage)) return null;
+  if (!opts.forDisplay && (
+    shouldIgnoreSxOrderDeliveryOverdue(stage)
+    || projectLooksShippedForOverdue(item)
+  )) {
     return null;
   }
   return candidate(item.sx_kanban_deadline_at, 'sx_kanban', item)
@@ -197,7 +199,7 @@ function resolveModuleDeadline(moduleKey, item, opts = {}) {
   const stage = stageOf(item, opts.stage, key);
   let picked = null;
   if (key === MODULE.CRM) picked = resolveCrmDeadline(item, stage);
-  else if (key === MODULE.PRODUCTION) picked = resolveProductionDeadline(item, stage);
+  else if (key === MODULE.PRODUCTION) picked = resolveProductionDeadline(item, stage, opts);
   else if (key === MODULE.LOGISTICS) picked = resolveLogisticsDeadline(item, stage);
   const state = deadlineState(picked?.deadlineTs ?? null, opts.nowMs);
   return {

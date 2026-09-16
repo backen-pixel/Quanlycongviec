@@ -1,5 +1,33 @@
 # Nhật ký công việc AI
 
+## 2026-09-16 16:05 — Bật/tắt từng API cảnh báo hạn
+
+- AI: Cursor. Cột công tắc trên bảng API đã cấu hình; tắt thì cron
+  không gửi API đó. File: `ProjectDeadlineDispatchPage.jsx`,
+  `dashboard.js`, `projectDeadlineDispatch.js`.
+
+## 2026-09-16 16:00 — Bật/tắt cảnh báo hạn + gán hạn nhiệm vụ
+
+- AI: Cursor. Trang `/management/project-deadlines` thêm công tắc
+  cảnh báo Zalo toàn hệ thống và gán hạn module vào việc trống.
+  File: `ProjectDeadlineDispatchPage.jsx`, `dashboard.js`,
+  `projectDeadlineDispatch.js`, `workTasks.js`.
+
+## 2026-09-16 15:40 — Ghi hạn module vào việc con trống trên tổng quan NV
+
+- AI: Cursor. Việc mở chưa có `due_date`/`deadline` được ghi hạn module
+  khi tải `/work-tasks/project-overview`. Mẫu xưởng mới cũng nhận hạn
+  lúc tạo. File: `projectOverviewDeadline.js`, `workTasks.js`,
+  `workshopApplyTemplates.js`.
+
+## 2026-09-16 15:25 — Tổng quan NV: hạn thẻ theo deadline module
+
+- AI: Cursor. Thẻ `/sx/project-tasks` lấy hạn module (SX / VC-LĐ / CRM)
+  theo lane nhóm việc; việc con không hạn không còn đẩy thẻ vào
+  «Chưa có hạn» nếu dự án đã có hạn xưởng/lắp/deal. File:
+  `workTasks.js`, `projectOverviewDeadline.js`, `moduleDeadlinePolicy.js`,
+  `tests/project-overview-deadline.js`.
+
 ## 2026-09-16 14:20 — Stepper CRM tích ✓ khi SX/VC đã kéo tới
 
 - AI: Cursor. Cột Sản xuất / VC / Hoàn thành trên thanh tiến độ deal

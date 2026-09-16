@@ -82,6 +82,10 @@ assert.equal(resolveModuleDeadline(MODULE.PRODUCTION, {
   ...sx,
   logistics_company_id: 'linked',
 }).deadlineAt, null);
+assert.equal(resolveModuleDeadline(MODULE.PRODUCTION, {
+  ...sx,
+  logistics_company_id: 'linked',
+}, { forDisplay: true }).source, 'sx_kanban');
 
 // VC/LĐ: lắp -> giao -> hạn chung; hoàn thành thì tắt.
 const vc = { status: 'shipping', install_date: future(1), delivery_date: future(2), deadline: future(3) };

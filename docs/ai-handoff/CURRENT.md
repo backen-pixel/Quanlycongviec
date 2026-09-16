@@ -1,6 +1,40 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-16 14:20 (UTC+7)
+Cập nhật: 2026-09-16 16:05 (UTC+7)
+
+## Cảnh báo hạn — bật/tắt từng API
+
+Trạng thái: **FE+BE local.**
+
+Bảng «API đã cấu hình»: cột **Bật** từng dòng. Tắt thì cron/due-watch
+bỏ API đó; gửi tay / test vẫn được. Công tắc form đồng bộ với bảng.
+
+Hoàn tác: revert `ProjectDeadlineDispatchPage.jsx`, `dashboard.js`,
+`projectDeadlineDispatch.js` (field `enabled` trên profile).
+
+## Cảnh báo hạn — công tắc bật/tắt trên trang quản lý
+
+Trạng thái: **FE+BE local.**
+
+`/management/project-deadlines`: công tắc **Cảnh báo hạn công trình**
+(cron Zalo) và **Gán hạn module vào nhiệm vụ trống**. Tự gửi Zalo từng
+API cũng là công tắc. Gửi tay/test vẫn chạy khi tắt cron.
+
+Hoàn tác: revert `ProjectDeadlineDispatchPage.jsx`, `dashboard.js`,
+`projectDeadlineDispatch.js`; gỡ check stamp trong `workTasks.js` /
+`workshopApplyTemplates.js`.
+
+## Tổng quan nhiệm vụ — ghi hạn module vào việc con
+
+Trạng thái: **BE local.**
+
+Mở `/sx/project-tasks` (và CRM/VC cùng API): việc con còn mở, chưa có
+hạn, được ghi hạn module (SX / VC-LĐ / CRM). Việc đã có hạn không đụng.
+Tạo mẫu xưởng mới cũng nhận hạn module lúc insert. Dự án không có hạn
+module (vd. TB-2026-029 không ngày SX/giao/lắp) vẫn trống.
+
+Hoàn tác: revert `workTasks.js`, `projectOverviewDeadline.js`,
+`workshopApplyTemplates.js`, `moduleDeadlinePolicy.js` (`forDisplay`).
 
 ## Stepper CRM — ✓ theo tiến độ SX/VC
 

@@ -75,6 +75,28 @@ function summarizeConfig(cfg, companies = []) {
   return `${modLabels} · ${statusLabel} · ${co} · ${rg}`;
 }
 
+function ToggleSwitch({ checked, onChange, disabled, title }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={!!checked}
+      disabled={disabled}
+      title={title}
+      onClick={() => !disabled && onChange?.(!checked)}
+      className={`relative h-6 w-11 rounded-full transition-colors shrink-0 ${
+        checked ? 'bg-emerald-600' : 'bg-gray-300'
+      } ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+    >
+      <span
+        className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+          checked ? 'translate-x-5' : 'translate-x-0'
+        }`}
+      />
+    </button>
+  );
+}
+
 function emptyForm() {
   return {
     name: '',
@@ -90,6 +112,7 @@ function emptyForm() {
     zaloChatId: '',
     zaloTokenSet: false,
     zaloTokenHint: '',
+    apiEnabled: true,
   };
 }
 
@@ -100,6 +123,10 @@ export default function ProjectDeadlineDispatchPage() {
   const [companies, setCompanies] = useState([]);
   const [regions, setRegions] = useState([]);
   const [configs, setConfigs] = useState([]);
+  const [dispatchEnabled, setDispatchEnabled] = useState(true);
+  const [stampTaskDeadlines, setStampTaskDeadlines] = useState(true);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [togglingApiId, setTogglingApiId] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [editingId, setEditingId] = useState(null); // null = tạo mới
   const [form, setForm] = useState(emptyForm());
@@ -221,6 +248,7 @@ export default function ProjectDeadlineDispatchPage() {
       zaloChatId: cfg?.zalo_chat_id || '',
       zaloTokenSet: !!cfg?.zalo_bot_token_set,
       zaloTokenHint: cfg?.zalo_bot_token_hint || '',
+      apiEnabled: cfg?.enabled !== false,
     });
   }, [companyIdList, regionIdList]);
 
@@ -231,6 +259,8 @@ export default function ProjectDeadlineDispatchPage() {
       const { data } = await api.get('/dashboard/project-deadlines/configs');
       const list = Array.isArray(data?.configs) ? data.configs : [];
       setConfigs(list);
+      setDispatchEnabled(data?.enabled !== false);
+      setStampTaskDeadlines(data?.stamp_open_task_deadlines !== false);
       setConfigLoaded(true);
       const pick = selectId
         ? list.find((c) => String(c.id) === String(selectId))
@@ -302,6 +332,55 @@ export default function ProjectDeadlineDispatchPage() {
   const selectedUrl = selected ? apiUrlForConfig(selected.id) : '';
   const selectedCurl = selected ? `curl -s "${selectedUrl}"` : '';
 
+  const patchSettings = async (partial) => {
+    setSettingsSaving(true);
+    setErr(null);
+    setMsg(null);
+    try {
+      const { data } = await api.put('/dashboard/project-deadlines/settings', partial);
+      setDispatchEnabled(data?.enabled !== false);
+      setStampTaskDeadlines(data?.stamp_open_task_deadlines !== false);
+      setMsg(partial.enabled === false
+        ? 'Đã tắt cảnh báo hạn công trình.'
+        : (partial.enabled === true
+          ? 'Đã bật cảnh báo hạn công trình.'
+          : (partial.stamp_open_task_deadlines === false
+            ? 'Đã tắt gán hạn module vào nhiệm vụ.'
+            : 'Đã bật gán hạn module vào nhiệm vụ.')));
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message);
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
+  const toggleApiEnabled = async (cfg, next) => {
+    if (!cfg?.id) return;
+    setTogglingApiId(cfg.id);
+    setErr(null);
+    setMsg(null);
+    try {
+      const { data } = await api.put(`/dashboard/project-deadlines/configs/${encodeURIComponent(cfg.id)}`, {
+        name: cfg.name,
+        company_ids: cfg.company_ids || [],
+        region_ids: cfg.region_ids || [],
+        modules: cfg.modules || [],
+        status: cfg.status,
+        days_ahead: cfg.days_ahead,
+        zalo_enabled: !!cfg.zalo_enabled,
+        zalo_chat_id: cfg.zalo_chat_id || '',
+        enabled: next,
+      });
+      setConfigs((prev) => prev.map((c) => (String(c.id) === String(data.id) ? data : c)));
+      if (String(selectedId) === String(cfg.id)) applyFormFromConfig(data);
+      setMsg(next ? `Đã bật API «${cfg.name}».` : `Đã tắt API «${cfg.name}».`);
+    } catch (e) {
+      setErr(e.response?.data?.error || e.message);
+    } finally {
+      setTogglingApiId(null);
+    }
+  };
+
   const startCreate = () => {
     setEditingId(null);
     setSelectedId(null);
@@ -339,6 +418,7 @@ export default function ProjectDeadlineDispatchPage() {
         status: form.status,
         days_ahead: form.status === 'overdue' ? 0 : form.daysAhead,
         zalo_enabled: !!form.zaloEnabled,
+        enabled: form.apiEnabled !== false,
         zalo_chat_id: (form.zaloChatId || '').trim(),
       };
       if ((form.zaloBotToken || '').trim()) {
@@ -513,6 +593,47 @@ export default function ProjectDeadlineDispatchPage() {
       {err && <div className="mb-3 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{err}</div>}
       {msg && <div className="mb-3 text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">{msg}</div>}
 
+      <div className="bg-white rounded-xl border p-4 mb-4 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-gray-900">Cảnh báo hạn công trình</div>
+            <p className="text-[11px] text-gray-500 mt-0.5">
+              Tắt thì cron không gửi Zalo. Gửi tay / test trên từng API vẫn dùng được.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className={`text-xs font-semibold ${dispatchEnabled ? 'text-emerald-700' : 'text-gray-500'}`}>
+              {dispatchEnabled ? 'Đang bật' : 'Đang tắt'}
+            </span>
+            <ToggleSwitch
+              checked={dispatchEnabled}
+              disabled={settingsSaving || loading}
+              title={dispatchEnabled ? 'Tắt cảnh báo hạn' : 'Bật cảnh báo hạn'}
+              onChange={(next) => patchSettings({ enabled: next })}
+            />
+          </div>
+        </div>
+        <div className="flex items-start justify-between gap-3 pt-3 border-t border-gray-100">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-gray-900">Gán hạn module vào nhiệm vụ trống</div>
+            <p className="text-[11px] text-gray-500 mt-0.5">
+              Việc con còn mở, chưa có hạn, nhận hạn SX / VC-LĐ / CRM khi mở tổng quan nhiệm vụ.
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className={`text-xs font-semibold ${stampTaskDeadlines ? 'text-emerald-700' : 'text-gray-500'}`}>
+              {stampTaskDeadlines ? 'Đang bật' : 'Đang tắt'}
+            </span>
+            <ToggleSwitch
+              checked={stampTaskDeadlines}
+              disabled={settingsSaving || loading}
+              title={stampTaskDeadlines ? 'Tắt gán hạn vào nhiệm vụ' : 'Bật gán hạn vào nhiệm vụ'}
+              onChange={(next) => patchSettings({ stamp_open_task_deadlines: next })}
+            />
+          </div>
+        </div>
+      </div>
+
       {/* Danh sách API đã cấu hình */}
       <div className="bg-white rounded-xl border p-4 mb-4">
         <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
@@ -526,6 +647,7 @@ export default function ProjectDeadlineDispatchPage() {
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs text-gray-500">
               <tr>
+                <th className="text-left px-3 py-2 font-medium w-20">Bật</th>
                 <th className="text-left px-3 py-2 font-medium">Tên</th>
                 <th className="text-left px-3 py-2 font-medium">Phạm vi</th>
                 <th className="text-left px-3 py-2 font-medium">Zalo</th>
@@ -536,7 +658,7 @@ export default function ProjectDeadlineDispatchPage() {
             <tbody>
               {!configs.length && (
                 <tr>
-                  <td colSpan={5} className="px-3 py-6 text-center text-gray-400">
+                  <td colSpan={6} className="px-3 py-6 text-center text-gray-400">
                     {loading ? 'Đang tải…' : 'Chưa có API. Bấm «Tạo API mới».'}
                   </td>
                 </tr>
@@ -544,12 +666,21 @@ export default function ProjectDeadlineDispatchPage() {
               {configs.map((cfg) => {
                 const url = apiUrlForConfig(cfg.id);
                 const active = String(cfg.id) === String(selectedId);
+                const on = cfg.enabled !== false;
                 return (
                   <tr
                     key={cfg.id}
-                    className={`border-t cursor-pointer ${active ? 'bg-orange-50/80' : 'hover:bg-gray-50'}`}
+                    className={`border-t cursor-pointer ${!on ? 'opacity-60' : ''} ${active ? 'bg-orange-50/80' : 'hover:bg-gray-50'}`}
                     onClick={() => selectConfig(cfg)}
                   >
+                    <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                      <ToggleSwitch
+                        checked={on}
+                        disabled={togglingApiId === cfg.id || saving}
+                        title={on ? `Tắt API «${cfg.name}»` : `Bật API «${cfg.name}»`}
+                        onChange={(next) => toggleApiEnabled(cfg, next)}
+                      />
+                    </td>
                     <td className="px-3 py-2">
                       <div className="font-medium text-gray-900">{cfg.name}</div>
                       <div className="text-[10px] text-gray-400 font-mono">{cfg.id}</div>
@@ -610,9 +741,25 @@ export default function ProjectDeadlineDispatchPage() {
           <h2 className="text-sm font-semibold text-gray-900">
             {editingId ? `Chỉnh sửa: ${form.name || editingId}` : 'Tạo API mới'}
           </h2>
-          {editingId && (
-            <span className="text-[11px] text-gray-400 font-mono">{editingId}</span>
-          )}
+          <div className="flex items-center gap-2">
+            <span className={`text-xs font-semibold ${form.apiEnabled !== false ? 'text-emerald-700' : 'text-gray-500'}`}>
+              {form.apiEnabled !== false ? 'API đang bật' : 'API đang tắt'}
+            </span>
+            <ToggleSwitch
+              checked={form.apiEnabled !== false}
+              title={form.apiEnabled !== false ? 'Tắt API này' : 'Bật API này'}
+              onChange={(next) => {
+                setForm((p) => ({ ...p, apiEnabled: next }));
+                if (editingId) {
+                  const cfg = configs.find((c) => String(c.id) === String(editingId));
+                  if (cfg) toggleApiEnabled(cfg, next);
+                }
+              }}
+            />
+            {editingId && (
+              <span className="text-[11px] text-gray-400 font-mono">{editingId}</span>
+            )}
+          </div>
         </div>
 
         <div>
@@ -631,16 +778,19 @@ export default function ProjectDeadlineDispatchPage() {
               <div className="text-xs font-semibold text-sky-900">Zalo Bot — gửi tin khi quá hạn</div>
               <p className="text-[11px] text-gray-500 mt-0.5">
                 Backend gọi <code className="bg-white/80 px-1 rounded">POST …/bot{'{TOKEN}'}/sendMessage</code> với <code className="bg-white/80 px-1 rounded">parse_mode: markdown</code> và field <code className="bg-white/80 px-1 rounded">text</code>.
+                {' '}Tự gửi khi hết hạn (~5 phút). Bấm «Lưu thay đổi» sau khi gạt công tắc.
               </p>
             </div>
-            <label className="flex items-center gap-2 text-sm cursor-pointer shrink-0">
-              <input
-                type="checkbox"
+            <div className="flex items-center gap-2 shrink-0">
+              <span className={`text-xs font-semibold ${form.zaloEnabled ? 'text-emerald-700' : 'text-gray-500'}`}>
+                {form.zaloEnabled ? 'Tự gửi' : 'Tắt tự gửi'}
+              </span>
+              <ToggleSwitch
                 checked={form.zaloEnabled}
-                onChange={(e) => setForm((p) => ({ ...p, zaloEnabled: e.target.checked }))}
+                title={form.zaloEnabled ? 'Tắt tự gửi Zalo' : 'Bật tự gửi Zalo khi hết hạn'}
+                onChange={(next) => setForm((p) => ({ ...p, zaloEnabled: next }))}
               />
-              Tự gửi (ngay khi hết hạn, ~5 phút)
-            </label>
+            </div>
           </div>
           <div>
             <label className="block text-[11px] font-medium text-gray-700 mb-1">Bot Token</label>
