@@ -295,7 +295,7 @@ const KanbanColumn = memo(function KanbanColumn({
       </header>
       {/* Trừ phần trên cột: tiêu đề + hàng module/tìm kiếm + header cột. Dưới lg khung app còn
           thanh trên `pt-12` (48px) nên trừ thêm. */}
-      <div ref={scrollRef} className="p-2 max-h-[calc(100vh-313px)] lg:max-h-[calc(100vh-265px)] min-h-72 overflow-y-auto [scrollbar-width:thin]">
+      <div ref={scrollRef} className="p-2 max-h-[calc(100vh-374px)] lg:max-h-[calc(100vh-326px)] min-h-72 overflow-y-auto [scrollbar-width:thin]">
         {tasks.length ? (scrollReady && (
           <KanbanColumnVirtualList
             items={tasks}
