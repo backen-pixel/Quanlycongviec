@@ -365,7 +365,7 @@ async function pruneNonResponsibleCrmLeadMembersForDeal(dealId) {
 
   const { data: lead } = await supabase
     .from('crm_leads')
-    .select('id, company_id, assigned_to, lead_owner_id, project_id')
+    .select('id, company_id, assigned_to, lead_owner_id, project_id, pipeline_id, stage_id')
     .eq('id', dealId)
     .maybeSingle();
 
@@ -407,6 +407,12 @@ async function pruneNonResponsibleCrmLeadMembersForDeal(dealId) {
   try {
     const autoIds = await getDealCompanyAutoParticipantUserIds(lead?.company_id);
     for (const uid of autoIds || []) keep.add(String(uid));
+  } catch (_) { /* ignore */ }
+
+  try {
+    const { loadCrmPipelineAutoMemberUserIds } = require('./crmPipelineStageMembers');
+    const stageMemberIds = await loadCrmPipelineAutoMemberUserIds(lead?.pipeline_id);
+    for (const uid of stageMemberIds || []) keep.add(String(uid));
   } catch (_) { /* ignore */ }
 
   // Đảm bảo người chịu trách nhiệm CRM có trong tab Thành viên.

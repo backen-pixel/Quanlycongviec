@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import api from '../lib/api';
-import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, Loader2, Calendar, CheckCircle2, Clock, Factory, Search, X, TrendingUp, RotateCcw, UserCircle, AlertTriangle } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, Loader2, Calendar, CheckCircle2, Clock, Factory, Search, X, TrendingUp, RotateCcw, UserCircle, AlertTriangle, Users } from 'lucide-react';
 import {
   IconSettings,
   IconTags,
@@ -252,6 +252,10 @@ function StageStatusBadges({ stage, linkedSx, linkedVc, syncRoleLabels }) {
   }
   if (s.create_event_on_enter) badges.push({ key: 'event', cls: 'bg-emerald-50 text-emerald-800 border-emerald-200', icon: IconCalendar, text: 'Sự kiện' });
   if (s.apply_default_assignee_on_enter) badges.push({ key: 'assignee', cls: 'bg-indigo-50 text-indigo-800 border-indigo-200', icon: IconUser, text: 'Chuyển PT' });
+  if (s.auto_add_members_on_enter) {
+    const n = Array.isArray(s.default_members?.user_ids) ? s.default_members.user_ids.length : 0;
+    badges.push({ key: 'members', cls: 'bg-teal-50 text-teal-800 border-teal-200', icon: Users, text: n ? `TV ${n}` : 'TV' });
+  }
   if (s.allow_revert_to_lead) badges.push({ key: 'revert', cls: 'bg-amber-50 text-amber-800 border-amber-200', icon: IconRotateClockwise, text: 'Trả Lead' });
   if (s.is_revert_to_lead_target) badges.push({ key: 'revert-target', cls: 'bg-amber-50 text-amber-800 border-amber-200', icon: IconRotateClockwise, text: 'Nhận Lead trả về' });
   if (s.sync_role) {
@@ -312,6 +316,9 @@ export default function PipelineSettingsPage() {
     requires_deadline: false,
     apply_default_assignee_on_enter: false,
     default_assignee_user_id: '',
+    auto_add_members_on_enter: false,
+    default_member_user_ids: [],
+    default_member_users: [],
   });
   const isAdmin = isAdminLike(user);
   const [companies, setCompanies] = useState([]);
@@ -1113,6 +1120,9 @@ export default function PipelineSettingsPage() {
       is_revert_to_lead_target: false,
       apply_default_assignee_on_enter: false,
       default_assignee_user_id: '',
+      auto_add_members_on_enter: false,
+      default_member_user_ids: [],
+      default_member_users: [],
     });
   };
 
@@ -1139,6 +1149,11 @@ export default function PipelineSettingsPage() {
       is_revert_to_lead_target: !!stage.is_revert_to_lead_target,
       apply_default_assignee_on_enter: !!stage.apply_default_assignee_on_enter,
       default_assignee_user_id: stage.default_assignee_user_id || '',
+      auto_add_members_on_enter: !!stage.auto_add_members_on_enter,
+      default_member_user_ids: Array.isArray(stage.default_members?.user_ids)
+        ? stage.default_members.user_ids.map(String)
+        : [],
+      default_member_users: Array.isArray(stage.default_members?.users) ? stage.default_members.users : [],
     });
   };
 
@@ -1147,9 +1162,13 @@ export default function PipelineSettingsPage() {
     if (form.apply_default_assignee_on_enter && !form.default_assignee_user_id) {
       return showToast('Chọn người phụ trách trước khi bật «Chuyển người phụ trách».', 'err');
     }
+    if (form.auto_add_members_on_enter && !(form.default_member_user_ids || []).length) {
+      return showToast('Chọn nhân viên CRM trước khi bật «Tự thêm thành viên».', 'err');
+    }
     if (!selectedPipelineId) return showToast('Chọn pipeline trước', 'err');
     try {
       const payload = { ...form, pipeline_type: adding, pipeline_id: selectedPipelineId };
+      delete payload.default_member_users;
       if (payload.default_probability === '') delete payload.default_probability;
       if (payload.sla_days === '' || payload.sla_days == null) delete payload.sla_days;
       else payload.sla_days = Number(payload.sla_days);
@@ -1167,8 +1186,12 @@ export default function PipelineSettingsPage() {
     if (form.apply_default_assignee_on_enter && !form.default_assignee_user_id) {
       return showToast('Chọn người phụ trách trước khi bật «Chuyển người phụ trách».', 'err');
     }
+    if (form.auto_add_members_on_enter && !(form.default_member_user_ids || []).length) {
+      return showToast('Chọn nhân viên CRM trước khi bật «Tự thêm thành viên».', 'err');
+    }
     try {
       const payload = { ...form };
+      delete payload.default_member_users;
       if (payload.default_probability === '') payload.default_probability = null;
       if (payload.sla_days === '' || payload.sla_days == null) payload.sla_days = null;
       else payload.sla_days = Number(payload.sla_days);
@@ -3051,6 +3074,82 @@ function StageForm({
                 />
                 {!assigneeCompanyId && (
                   <p className="text-[10px] text-amber-700 mt-1">Chọn công ty pipeline trước khi gán NV.</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        {pipelineType === 'deal' && !form.is_lost && (
+          <div className="w-full space-y-2 p-3 rounded-lg border border-teal-200 bg-teal-50/50">
+            <label className="flex items-start gap-2 text-xs cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!form.auto_add_members_on_enter}
+                onChange={(e) => setForm((f) => ({ ...f, auto_add_members_on_enter: e.target.checked }))}
+                className="mt-0.5 rounded border-teal-400 accent-teal-600"
+              />
+              <span>
+                <span className="flex items-center gap-1 font-semibold text-teal-800">
+                  <Users className="h-3.5 w-3.5" /> Tự thêm thành viên CRM khi vào cột
+                </span>
+                <span className="block text-[10px] text-teal-700/90 mt-0.5 leading-snug">
+                  Mỗi lần deal vào cột này (kể cả lúc lập kế hoạch SX / VC-LĐ), NV đã chọn được thêm vào tab Thành viên.
+                  Không đổi người phụ trách CRM.
+                </span>
+              </span>
+            </label>
+            {(form.auto_add_members_on_enter || (form.default_member_user_ids || []).length > 0) && (
+              <div className="pl-1 space-y-2 max-w-md">
+                {(form.default_member_user_ids || []).length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {(form.default_member_user_ids || []).map((uid) => {
+                      const u = (form.default_member_users || []).find((x) => String(x.id) === String(uid));
+                      const label = u?.full_name || u?.email || 'NV CRM';
+                      return (
+                        <span
+                          key={uid}
+                          className="inline-flex items-center gap-1 max-w-[200px] truncate rounded-full bg-white border border-teal-200 px-2 py-0.5 text-[10px] text-teal-800"
+                          title={label}
+                        >
+                          {label}
+                          <button
+                            type="button"
+                            className="text-teal-500 hover:text-teal-800 cursor-pointer"
+                            onClick={() => setForm((f) => ({
+                              ...f,
+                              default_member_user_ids: (f.default_member_user_ids || []).filter((id) => String(id) !== String(uid)),
+                              default_member_users: (f.default_member_users || []).filter((x) => String(x.id) !== String(uid)),
+                            }))}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                <label className="text-[10px] font-semibold text-teal-700 uppercase tracking-wide block">
+                  Thêm nhân viên
+                </label>
+                <EmployeePicker
+                  companyId={assigneeCompanyId || undefined}
+                  forModule="all"
+                  value={null}
+                  onChange={(uid) => {
+                    if (!uid) return;
+                    setForm((f) => {
+                      const ids = f.default_member_user_ids || [];
+                      if (ids.some((id) => String(id) === String(uid))) return f;
+                      return { ...f, default_member_user_ids: [...ids, String(uid)] };
+                    });
+                  }}
+                  placeholder="Chọn NV CRM…"
+                  size="sm"
+                  disabled={!assigneeCompanyId}
+                  displayFullName
+                />
+                {!assigneeCompanyId && (
+                  <p className="text-[10px] text-amber-700">Chọn công ty pipeline trước khi gán NV.</p>
                 )}
               </div>
             )}

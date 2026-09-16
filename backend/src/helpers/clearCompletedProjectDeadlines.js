@@ -7,11 +7,13 @@ const { supabase } = require('../config/supabase');
 const {
   completeOpenWorkOnModuleDone,
   clearAllProjectDeadlinesOnInstallationDone,
+  finalizeHcbCanhKinhOnSxDone,
   isCrmCompletedStage,
   isLogisticsCompletedColumn,
 } = require('./completeOpenWorkOnModuleDone');
 const { isSxDeliveredStage } = require('./crmPipelineSla');
 const { projectDeadlinePatchOnModuleDone } = require('./moduleDeadlinePolicy');
+const { isHcbCanhKinhProject, isSxHoanThanhColumn } = require('./projectForecast');
 
 const PAGE = 800;
 const IN_CHUNK = 120;
@@ -139,7 +141,109 @@ async function clearSxSchedulesOnCompletedForProjects(projectIds, { completeWork
     }
   }
 
+  try {
+    const canhKinhDoneIds = await filterHcbCanhKinhSxDoneProjectIds(ids);
+    if (canhKinhDoneIds.length) {
+      await finalizeHcbCanhKinhOnSxDone({ projectIds: canhKinhDoneIds });
+    }
+  } catch (ckErr) {
+    console.warn('[clearCompletedDeadlines] HCB Cánh kính finalize:', ckErr.message);
+  }
+
   return { projects: ids.length, leads: leadIds.length };
+}
+
+async function fetchMapByIds(table, select, ids) {
+  const map = new Map();
+  const list = uniqIds(ids);
+  for (const part of chunk(list)) {
+    const { data, error } = await supabase.from(table).select(select).in('id', part);
+    if (error) {
+      console.warn(`[clearCompletedDeadlines] load ${table}:`, error.message);
+      break;
+    }
+    for (const row of data || []) {
+      if (row?.id) map.set(String(row.id), row);
+    }
+  }
+  return map;
+}
+
+/** Dự án HCB Cánh kính đang nằm ở cột SX «Hoàn thành». */
+async function filterHcbCanhKinhSxDoneProjectIds(projectIds) {
+  const ids = uniqIds(projectIds);
+  if (!ids.length) return [];
+  const rows = [];
+  for (const part of chunk(ids)) {
+    const { data, error } = await supabase
+      .from('projects')
+      .select('id, name, company_id, workshop_type_id, sx_kanban_column_id')
+      .in('id', part);
+    if (error) {
+      console.warn('[clearCompletedDeadlines] load Cánh kính projects:', error.message);
+      continue;
+    }
+    rows.push(...(data || []));
+  }
+  if (!rows.length) return [];
+
+  const [companyMap, typeMap] = await Promise.all([
+    fetchMapByIds('companies', 'id, name, short_name', rows.map((r) => r.company_id)),
+    fetchMapByIds('workshop_project_types', 'id, name', rows.map((r) => r.workshop_type_id)),
+  ]);
+  let colMap = await fetchMapByIds(
+    'production_pipeline_stages',
+    'id, name, counts_as_collected_revenue, bucket_slug',
+    rows.map((r) => r.sx_kanban_column_id),
+  );
+  if (!colMap.size && rows.some((r) => r.sx_kanban_column_id)) {
+    colMap = await fetchMapByIds(
+      'production_pipeline_stages',
+      'id, name, bucket_slug',
+      rows.map((r) => r.sx_kanban_column_id),
+    );
+  }
+
+  const missingColIds = uniqIds(rows.filter((r) => !r.sx_kanban_column_id).map((r) => r.id));
+  const leadColByProject = new Map();
+  for (const part of chunk(missingColIds)) {
+    const { data, error } = await supabase
+      .from('crm_leads')
+      .select('project_id, sx_pipeline_stage_id')
+      .eq('type', 'deal')
+      .in('project_id', part)
+      .not('sx_pipeline_stage_id', 'is', null);
+    if (error) {
+      console.warn('[clearCompletedDeadlines] Cánh kính lead columns:', error.message);
+      break;
+    }
+    for (const d of data || []) {
+      if (d.project_id && d.sx_pipeline_stage_id && !leadColByProject.has(String(d.project_id))) {
+        leadColByProject.set(String(d.project_id), d.sx_pipeline_stage_id);
+      }
+    }
+  }
+  const extraColIds = [...leadColByProject.values()].filter((id) => !colMap.has(String(id)));
+  if (extraColIds.length) {
+    const extra = await fetchMapByIds(
+      'production_pipeline_stages',
+      'id, name, counts_as_collected_revenue, bucket_slug',
+      extraColIds,
+    );
+    extra.forEach((row, key) => colMap.set(key, row));
+  }
+
+  return uniqIds(rows.filter((p) => {
+    const company = companyMap.get(String(p.company_id)) || p.company_id;
+    const workshopType = typeMap.get(String(p.workshop_type_id));
+    const colId = p.sx_kanban_column_id || leadColByProject.get(String(p.id));
+    const col = colMap.get(String(colId));
+    return isHcbCanhKinhProject({
+      ...p,
+      company,
+      workshop_type: workshopType,
+    }) && isSxHoanThanhColumn(col);
+  }).map((p) => p.id));
 }
 
 async function loadSxDoneColumnIds() {

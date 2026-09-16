@@ -3,7 +3,10 @@ const {
   classifyProjectForecast,
   isGcckProject,
   shouldSkipGcckInstallOverdue,
+  isHcbCanhKinhProject,
+  isSxHoanThanhColumn,
 } = require('../src/helpers/projectForecast');
+const { HUCABI_COMPANY_ID } = require('../src/helpers/companyDeadlineClock');
 
 const past = new Date();
 past.setDate(past.getDate() - 39);
@@ -36,5 +39,25 @@ assert.equal(
   }).forecast,
   'late',
 );
+
+assert.equal(isHcbCanhKinhProject({
+  name: 'GCCK-ANH TỈNH',
+  company_id: HUCABI_COMPANY_ID,
+  workshop_type: { name: 'Cánh kính' },
+}), true);
+assert.equal(isHcbCanhKinhProject({
+  name: 'GCCK-ANH TỈNH',
+  company_id: 'other-company',
+  workshop_type: { name: 'Cánh kính' },
+}), false);
+assert.equal(isHcbCanhKinhProject({
+  name: 'TỦ BẾP - A',
+  company_id: HUCABI_COMPANY_ID,
+  workshop_type: { name: 'Tủ bếp' },
+}), false);
+
+assert.equal(isSxHoanThanhColumn({ name: 'Hoàn thành', counts_as_collected_revenue: true }), true);
+assert.equal(isSxHoanThanhColumn({ name: 'Đợi thanh toán', counts_as_completed_revenue: true }), false);
+assert.equal(isSxHoanThanhColumn({ name: 'Chờ giao hàng', group_key: 'hoan_thien' }), false);
 
 console.log('project-forecast-gcck: ok');

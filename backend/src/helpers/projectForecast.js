@@ -3,6 +3,8 @@
  * GCCK (Cánh kính) đã sang cột SX «Hoàn thành» không còn tính trễ theo ngày lắp.
  */
 
+const { isHucabiCompany } = require('./companyDeadlineClock');
+
 function foldVi(s) {
   return String(s || '')
     .normalize('NFD')
@@ -31,6 +33,23 @@ function isGcckSxCompleted(sxStage) {
   return n.includes('hoan thanh') || n.includes('hoan thien') || n.includes('da giao') || n.includes('giao xong');
 }
 
+/** HCB + phân loại Cánh kính (hoặc mã GCCK-). */
+function isHcbCanhKinhProject(project) {
+  if (!isGcckProject(project)) return false;
+  return isHucabiCompany(project.company_id || project.company);
+}
+
+/**
+ * Cột SX «Hoàn thành» / Đã thu — không gồm «Đợi thanh toán» (Đã công)
+ * hay «Chờ giao hàng».
+ */
+function isSxHoanThanhColumn(col) {
+  if (!col) return false;
+  if (col.counts_as_collected_revenue) return true;
+  const n = foldVi(col.name);
+  return n === 'hoan thanh' || n.startsWith('hoan thanh ');
+}
+
 function shouldSkipGcckInstallOverdue(project, sxStage) {
   return isGcckProject(project)
     && isGcckSxCompleted(sxStage || project?.sx_pipeline_stage || project?.sx_kanban_column);
@@ -54,5 +73,7 @@ module.exports = {
   classifyProjectForecast,
   isGcckProject,
   isGcckSxCompleted,
+  isHcbCanhKinhProject,
+  isSxHoanThanhColumn,
   shouldSkipGcckInstallOverdue,
 };

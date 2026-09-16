@@ -1,6 +1,45 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-16 11:20 (UTC+7)
+Cập nhật: 2026-09-16 12:10 (UTC+7)
+
+## CRM Pipeline — tự thêm thành viên khi vào cột / lập KH SX
+
+Trạng thái: **FE+BE local + SQL 618 primary/backup.**
+
+Cài đặt Pipeline CRM (sửa cột Deal, kể cả cột Thắng): tick
+**Tự thêm thành viên CRM khi vào cột**, chọn NV. Deal vào cột đó
+(kéo Kanban / lập kế hoạch SX / gắn VC-LĐ) thì NV vào tab Thành viên.
+Phúc Đạt «Đã ký hợp đồng» đã seed Vân. Không còn hardcode trong code.
+
+Hoàn tác: revert `PipelineSettingsPage.jsx`, `pipelines.js`,
+`crmPipelineStageMembers.js`, `leadLifecycle.js`, `autoDealWonProject.js`;
+SQL trong `618_crm_pipeline_stage_default_members.sql`.
+
+## Phúc Đạt — mặc định thêm NV Vân vào deal SX / VC-LĐ
+
+Trạng thái: **BE local + SQL 617 primary/backup.**
+
+Hoàng Thị Phượng Vân (`phuongvanhoang1505@gmail.com`) tự vào tab
+Thành viên khi deal Phúc Đạt thiết lập kế hoạch SX hoặc gắn VC-LĐ.
+Đã backfill 38 deal đang chạy (6 Đã ký HĐ, 15 SX, 13 VC/LĐ, 4 Hóa đơn).
+Không thêm vào đội SX (chỉ thành viên deal).
+
+Hoàn tác: revert `dealParticipantProduction.js`,
+`vcHandoverDealMembers.js`, `productionWorkshopTypeStaff.js`;
+xóa `lead_members` user Vân vừa thêm.
+
+## HCB Cánh kính — hoàn thành SX tắt hết hạn + NV
+
+Trạng thái: **BE local.**
+
+Kéo loại **Cánh kính HCB** sang cột SX **Hoàn thành** (cờ Đã thu): đóng
+mọi nhiệm vụ còn mở (SX, VC/LĐ, CRM, giao việc), tắt deadline CRM/SX/VC,
+đánh `projects.status = completed`. Tủ bếp / Cửa / «Đợi thanh toán» không
+đổi (vẫn chỉ đóng hạn SX). Job quét hạn cũng dọn đơn Cánh kính đang nằm
+sẵn ở Hoàn thành.
+
+Hoàn tác: revert `completeOpenWorkOnModuleDone.js`,
+`clearCompletedProjectDeadlines.js`, `projectForecast.js`.
 
 ## Quản lý nhiệm vụ — mũi tên cuộn Kanban
 

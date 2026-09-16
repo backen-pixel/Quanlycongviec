@@ -1283,6 +1283,16 @@ async function runAutoCreateProjectFromWonDeal({
     } catch (syncErr) {
       console.warn('[auto-project] ensure lead members:', syncErr.message);
     }
+    try {
+      const { applyCrmStageDefaultMembersToDeal } = require('./crmPipelineStageMembers');
+      await applyCrmStageDefaultMembersToDeal({
+        dealId,
+        stageId: deal.stage_id,
+        addedBy: userId || null,
+      });
+    } catch (crmMemErr) {
+      console.warn('[auto-project] CRM stage members:', crmMemErr.message);
+    }
   }
 
   // Tạo sự kiện dự kiến: Lắp đặt / lấy hàng / hoàn thiện SX

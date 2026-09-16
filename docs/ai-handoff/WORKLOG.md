@@ -1,5 +1,30 @@
 # Nhật ký công việc AI
 
+## 2026-09-16 12:10 — CRM Pipeline tự thêm thành viên theo cột
+
+- AI: Cursor. Setup trên `/crm/pipeline-settings`: tick «Tự thêm thành
+  viên CRM khi vào cột», chọn NV (forModule=all, gồm kế toán). Áp khi
+  kéo Kanban, lập KH SX, gắn VC-LĐ. SQL 618 + seed Vân cột Đã ký HĐ
+  Phúc Đạt. Bỏ hardcode ALWAYS_PHUCDAT.
+  File: `PipelineSettingsPage.jsx`, `pipelines.js`,
+  `crmPipelineStageMembers.js`, `leadLifecycle.js`, `autoDealWonProject.js`,
+  `618_crm_pipeline_stage_default_members.sql`.
+
+## 2026-09-16 11:55 — Phúc Đạt mặc định thêm NV Vân vào deal SX/VC
+
+- AI: Cursor. Deal Phúc Đạt: tự thêm Hoàng Thị Phượng Vân vào tab
+  Thành viên khi lập kế hoạch SX và khi gắn VC-LĐ. SQL 617 backfill
+  38 deal đang chạy (ký HĐ → hóa đơn, không gồm hoàn thành).
+  File: `dealParticipantProduction.js`, `vcHandoverDealMembers.js`,
+  `productionWorkshopTypeStaff.js`, `617_phucdat_van_signed_deal_members.sql`.
+
+## 2026-09-16 11:50 — HCB Cánh kính hoàn thành SX tắt hạn toàn dự án
+
+- AI: Cursor. Cột Hoàn thành Cánh kính HCB đóng hết NV còn mở + tắt
+  deadline CRM/SX/VC (status completed) để bên khác không quá hạn.
+  File: `completeOpenWorkOnModuleDone.js`, `clearCompletedProjectDeadlines.js`,
+  `projectForecast.js`. Test: `project-forecast-gcck.js`.
+
 ## 2026-09-16 11:20 — Mũi tên cuộn trang Quản lý nhiệm vụ
 
 - AI: Cursor. Board hạn nhiệm vụ dùng cùng chrome mũi tên Dashboard

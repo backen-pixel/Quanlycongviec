@@ -2579,6 +2579,19 @@ r.patch('/leads/:id/stage', async (req, res) => {
       }
     }
 
+    if (isStageChange && stage_id) {
+      try {
+        const { applyCrmStageDefaultMembersToDeal } = require('../../../helpers/crmPipelineStageMembers');
+        await applyCrmStageDefaultMembersToDeal({
+          dealId: req.params.id,
+          stageId: stage_id,
+          addedBy: req.user?.userId || null,
+        });
+      } catch (crmMemErr) {
+        console.warn('[crm/stage] auto members:', crmMemErr.message);
+      }
+    }
+
     // Bổ sung nhiệm vụ CRM thiếu theo bộ mẫu của cột đích (chỉ thêm phần chưa có).
     // Cột hoàn thành: không gen thêm NV — đóng hết NV + deadline CRM còn mở.
     let taskWriteLeadId = req.params.id;

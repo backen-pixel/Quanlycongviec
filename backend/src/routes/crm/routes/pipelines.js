@@ -4,6 +4,11 @@
  */
 const { Router } = require('express');
 const helpers = require('../shared/helpersBundle');
+const {
+  enrichCrmStagesWithDefaultMembers,
+  saveCrmStageDefaultMembers,
+  normalizeMemberUserIds,
+} = require('../../../helpers/crmPipelineStageMembers');
 
 const r = Router();
 
@@ -361,7 +366,13 @@ r.get('/pipeline-stages', responseCache({ ttl: 120, scope: 'company', tags: ['cr
       .maybeSingle();
     if (extra) data = [...data, extra];
   }
-  res.json(normalizePipelineStagesList(data));
+  const list = normalizePipelineStagesList(data);
+  try {
+    res.json(await enrichCrmStagesWithDefaultMembers(list));
+  } catch (enrichErr) {
+    console.warn('[crm/pipeline-stages] enrich members:', enrichErr.message);
+    res.json(list);
+  }
 });
 
 r.post('/pipeline-stages', async (req, res) => {
@@ -398,6 +409,12 @@ r.post('/pipeline-stages', async (req, res) => {
     if (b.apply_default_assignee_on_enter && !normalizeCrmStageDefaultAssigneeUserId(b.default_assignee_user_id)) {
       return res.status(400).json({ error: 'Chọn người phụ trách trước khi bật «Chuyển người phụ trách».' });
     }
+    const createMemberIds = normalizeMemberUserIds(
+      b.default_member_user_ids ?? b.default_members?.user_ids,
+    );
+    if (b.auto_add_members_on_enter && !createMemberIds.length) {
+      return res.status(400).json({ error: 'Chọn nhân viên CRM trước khi bật «Tự thêm thành viên».' });
+    }
     const slaInsert =
       b.sla_days !== undefined ? normalizePipelineStageSlaDaysForDb(b.sla_days) : undefined;
     const insertObj = {
@@ -409,6 +426,7 @@ r.post('/pipeline-stages', async (req, res) => {
       sync_role: b.sync_role || null,
       apply_default_assignee_on_enter: !!b.apply_default_assignee_on_enter,
       default_assignee_user_id: normalizeCrmStageDefaultAssigneeUserId(b.default_assignee_user_id) ?? null,
+      auto_add_members_on_enter: !!b.auto_add_members_on_enter,
       default_probability: defaultProbability,
       description: stageDesc,
       ...(b.requires_deadline !== undefined ? { requires_deadline: !!b.requires_deadline } : {}),
@@ -444,9 +462,21 @@ r.post('/pipeline-stages', async (req, res) => {
       delete insertObj.default_assignee_user_id;
       ({ data, error } = await supabase.from('crm_pipeline_stages').insert(insertObj).select().single());
     }
+    if (error && /auto_add_members_on_enter/.test(error.message || '')) {
+      delete insertObj.auto_add_members_on_enter;
+      ({ data, error } = await supabase.from('crm_pipeline_stages').insert(insertObj).select().single());
+    }
     if (error) throw error;
+    if (data?.id) {
+      try {
+        await saveCrmStageDefaultMembers(data.id, createMemberIds);
+      } catch (memErr) {
+        console.warn('[crm/pipeline-stages] save members (create):', memErr.message);
+      }
+    }
     await invalidatePipelinesAndStages();
-    res.status(201).json(data);
+    const [enriched] = await enrichCrmStagesWithDefaultMembers([data]);
+    res.status(201).json(enriched || data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -505,6 +535,19 @@ r.put('/pipeline-stages/:id', async (req, res) => {
     if (b.default_assignee_user_id !== undefined) {
       update.default_assignee_user_id = normalizeCrmStageDefaultAssigneeUserId(b.default_assignee_user_id);
     }
+    if (b.auto_add_members_on_enter !== undefined) {
+      update.auto_add_members_on_enter = !!b.auto_add_members_on_enter;
+    }
+    const putMemberIds = b.default_member_user_ids !== undefined
+      ? normalizeMemberUserIds(b.default_member_user_ids)
+      : (b.default_members?.user_ids !== undefined
+        ? normalizeMemberUserIds(b.default_members.user_ids)
+        : null);
+    if ((update.auto_add_members_on_enter === true
+        || (update.auto_add_members_on_enter === undefined && b.auto_add_members_on_enter))
+      && putMemberIds && !putMemberIds.length) {
+      return res.status(400).json({ error: 'Chọn nhân viên CRM trước khi bật «Tự thêm thành viên».' });
+    }
     if (update.apply_default_assignee_on_enter && !update.default_assignee_user_id) {
       const { data: cur } = await supabase
         .from('crm_pipeline_stages')
@@ -538,9 +581,22 @@ r.put('/pipeline-stages/:id', async (req, res) => {
       ({ data, error } = await supabase.from('crm_pipeline_stages').update(update)
         .eq('id', req.params.id).select().single());
     }
+    if (error && /auto_add_members_on_enter/.test(error.message || '')) {
+      delete update.auto_add_members_on_enter;
+      ({ data, error } = await supabase.from('crm_pipeline_stages').update(update)
+        .eq('id', req.params.id).select().single());
+    }
     if (error) throw error;
+    if (putMemberIds) {
+      try {
+        await saveCrmStageDefaultMembers(req.params.id, putMemberIds);
+      } catch (memErr) {
+        console.warn('[crm/pipeline-stages] save members (update):', memErr.message);
+      }
+    }
     await invalidatePipelinesAndStages();
-    res.json(data);
+    const [enriched] = await enrichCrmStagesWithDefaultMembers([data]);
+    res.json(enriched || data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

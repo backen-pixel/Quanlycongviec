@@ -396,7 +396,11 @@ async function cancelOpenEvents({ leadIds, projectIds, module, reason }) {
  * deadline còn mở ở CRM, SX và VC/LĐ. Giữ delivery_date/install_date làm lịch sử
  * vận hành; projects.status = completed khiến các mốc này không còn bị tính là hạn.
  */
-async function clearAllProjectDeadlinesOnInstallationDone({ leadIds = [], projectIds = [] } = {}) {
+async function clearAllProjectDeadlinesOnInstallationDone({
+  leadIds = [],
+  projectIds = [],
+  reason = 'Dự án đã lắp xong',
+} = {}) {
   const projects = uniqIds(projectIds);
   let leads = uniqIds(leadIds);
   if (!projects.length && !leads.length) {
@@ -449,11 +453,11 @@ async function clearAllProjectDeadlinesOnInstallationDone({ leadIds = [], projec
   for (const part of chunk(leads)) {
     const patch = {
       kanban_deadline_at: null,
-      kanban_deadline_reason: 'Tự tắt khi dự án đã lắp xong',
+      kanban_deadline_reason: `Tự tắt khi ${reason}`,
       expected_close_date: null,
       next_follow_up: null,
       deadline_disabled_at: nowIso,
-      deadline_disabled_reason: 'Dự án đã lắp xong',
+      deadline_disabled_reason: reason,
       deadline_disabled_by: null,
       updated_at: nowIso,
     };
@@ -467,7 +471,7 @@ async function clearAllProjectDeadlinesOnInstallationDone({ leadIds = [], projec
         .from('crm_leads')
         .update({
           kanban_deadline_at: null,
-          kanban_deadline_reason: 'Tự tắt khi dự án đã lắp xong',
+          kanban_deadline_reason: `Tự tắt khi ${reason}`,
           updated_at: nowIso,
         })
         .in('id', part)
@@ -659,6 +663,155 @@ async function completeOpenWorkOnModuleDone({ module, leadIds = [], projectIds =
   };
 }
 
+async function resolveDealLeadIds(projectIds, extraLeadIds = []) {
+  let leads = uniqIds(extraLeadIds);
+  const projects = uniqIds(projectIds);
+  for (const part of chunk(projects)) {
+    const { data, error } = await supabase
+      .from('crm_leads')
+      .select('id')
+      .eq('type', 'deal')
+      .in('project_id', part);
+    if (error) {
+      console.warn('[completeOpenWork] deals for finalize:', error.message);
+      break;
+    }
+    leads = uniqIds([...leads, ...(data || []).map((d) => d.id)]);
+  }
+  return leads;
+}
+
+async function completeAllAssignmentsForLeads(leadIds) {
+  const leads = uniqIds(leadIds);
+  if (!leads.length) return 0;
+  const nowIso = new Date().toISOString();
+  const patch = await applyAssignmentStatusColumn({
+    status: 'completed',
+    completed_at: nowIso,
+    deadline: null,
+    updated_at: nowIso,
+  }, 'completed');
+  const legacy = {
+    status: 'completed',
+    completed_at: nowIso,
+    deadline: null,
+    updated_at: nowIso,
+  };
+  let count = 0;
+  for (const part of chunk(leads)) {
+    let { data, error } = await supabase
+      .from('crm_assignments')
+      .update(patch)
+      .in('lead_id', part)
+      .not('status', 'in', CRM_ASSIGNMENT_DONE_STATUSES)
+      .select('id');
+    if (error) {
+      ({ data, error } = await supabase
+        .from('crm_assignments')
+        .update(legacy)
+        .in('lead_id', part)
+        .not('status', 'in', CRM_ASSIGNMENT_DONE_STATUSES)
+        .select('id'));
+    }
+    if (error) {
+      if (!/lead_id/i.test(String(error.message || ''))) {
+        console.warn('[completeOpenWork] assignments all modules:', error.message);
+      }
+      break;
+    }
+    count += (data || []).length;
+  }
+  return count;
+}
+
+async function markProjectsCompleted(projectIds) {
+  const ids = uniqIds(projectIds);
+  if (!ids.length) return 0;
+  const nowIso = new Date().toISOString();
+  let n = 0;
+  for (const part of chunk(ids)) {
+    let { data, error } = await supabase
+      .from('projects')
+      .update({
+        status: 'completed',
+        completed_date: nowIso,
+        updated_at: nowIso,
+      })
+      .in('id', part)
+      .neq('status', 'completed')
+      .select('id');
+    if (error && /completed_date/.test(String(error.message || ''))) {
+      ({ data, error } = await supabase
+        .from('projects')
+        .update({ status: 'completed', updated_at: nowIso })
+        .in('id', part)
+        .neq('status', 'completed')
+        .select('id'));
+    }
+    if (error) {
+      console.warn('[completeOpenWork] mark projects completed:', error.message);
+      continue;
+    }
+    n += (data || []).length;
+  }
+  return n;
+}
+
+const HCB_CANH_KINH_DONE_REASON = 'Cánh kính HCB đã hoàn thành sản xuất';
+
+/**
+ * HCB Cánh kính vào cột SX «Hoàn thành»: đóng hết nhiệm vụ còn mở (SX + VC + CRM)
+ * và tắt mọi nguồn deadline để bên khác không bị quá hạn.
+ */
+async function finalizeHcbCanhKinhOnSxDone({ projectIds = [], leadIds = [] } = {}) {
+  const projects = uniqIds(projectIds);
+  const leads = await resolveDealLeadIds(projects, leadIds);
+  if (!projects.length && !leads.length) {
+    return { crm_tasks: 0, workshop_tasks: 0, assignments: 0, projects: 0 };
+  }
+
+  const openCrm = await fetchOpenCrmTasks(leads);
+  const crmResult = await completeCrmTaskRows(openCrm);
+
+  const allWs = (await fetchWorkshopTasks(projects)).filter((t) => !isTerminalStatus(t.status));
+  const workshopResult = await completeWorkshopTaskRows(allWs);
+
+  const byTask = await completeLinkedAssignments({
+    leadIds: leads,
+    crmTaskIds: crmResult.ids,
+    moduleKey: 'production',
+  });
+  const restAssignments = await completeAllAssignmentsForLeads(leads);
+
+  await cancelOpenEvents({
+    leadIds: leads,
+    projectIds: projects,
+    module: 'production',
+    reason: `Tự hủy khi ${HCB_CANH_KINH_DONE_REASON}`,
+  });
+  await cancelOpenEvents({
+    leadIds: leads,
+    projectIds: projects,
+    module: 'logistics',
+    reason: `Tự hủy khi ${HCB_CANH_KINH_DONE_REASON}`,
+  });
+
+  const cleared = await clearAllProjectDeadlinesOnInstallationDone({
+    projectIds: projects,
+    leadIds: leads,
+    reason: HCB_CANH_KINH_DONE_REASON,
+  });
+  const marked = await markProjectsCompleted(projects);
+
+  return {
+    crm_tasks: crmResult.count,
+    workshop_tasks: workshopResult.count,
+    assignments: byTask + restAssignments,
+    projects: marked,
+    final_clear: cleared,
+  };
+}
+
 module.exports = {
   isCrmCompletedStage,
   isLogisticsCompletedColumn,
@@ -667,4 +820,6 @@ module.exports = {
   workshopTaskMatchesModule,
   completeOpenWorkOnModuleDone,
   clearAllProjectDeadlinesOnInstallationDone,
+  finalizeHcbCanhKinhOnSxDone,
+  HCB_CANH_KINH_DONE_REASON,
 };
