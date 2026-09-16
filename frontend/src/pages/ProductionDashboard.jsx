@@ -41,8 +41,8 @@ import {
 } from 'lucide-react';
 import { gopPipeline, coTheGopCot, gomCotTheoNhom, docSxGopCot, ghiSxGopCot } from '../lib/sxGopCot';
 import { sxInstallPlanForProject, sxStagePlanSlice, vnNowParts } from '../lib/sxWorkshopSchedule';
-import { sxStagePrimaryOwnerName } from '../lib/sxStageStaff';
-import { tachCotTheoTab, demTheCot } from '../lib/sxTachCongNo';
+import { sxStagePrimaryOwnerName, sxGroupPrimaryOwnerName } from '../lib/sxStageStaff';
+import { tachCotTheoTab, demTheCot, nhanTabKanban, TAB_SX, TAB_CONG_NO } from '../lib/sxTachCongNo';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ProductionListView, ProductionPlannerView, ProductionCalendarView, ProductionCommentsView, ProductionDeadlineView } from '../components/ProductionViews';
 import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../components/WorkshopPipelineKanbanScroll';
@@ -52,6 +52,7 @@ import WorkshopDashboardFilterPanel, { SX_FILTER_TABS_META } from '../components
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
 import KanbanCardOptionsMenu from '../components/KanbanCardOptionsMenu';
+import KanbanGotoProjectTasksBtn from '../components/KanbanGotoProjectTasksBtn';
 import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
@@ -680,8 +681,8 @@ export default function ProductionDashboard() {
   });
   // Tab Sản xuất / Công nợ — nhớ lại lần mở sau.
   const [sxTab, setSxTab] = useState(() => {
-    try { return localStorage.getItem(LS_SX_TAB) === 'cong_no' ? 'cong_no' : 'sx'; }
-    catch { return 'sx'; }
+    try { return localStorage.getItem(LS_SX_TAB) || TAB_SX; }
+    catch { return TAB_SX; }
   });
   const [sxNhomDangMo, setSxNhomDangMo] = useState(() => new Set());
   const [filterPhone, setFilterPhone] = useState(() => P0?.filterPhone ?? '');
@@ -2592,19 +2593,35 @@ export default function ProductionDashboard() {
   }, [kanbanPipeline, deferredSearchQuery, priorityFilter, stageFilter, sortBy]);
 
   // Tab Sản xuất / Công nợ — phải khai báo SAU filteredKanbanPipeline vì phụ thuộc vào nó.
-  const { cotSX: sxCotSanXuat, cotCongNo: sxCotCongNo } = useMemo(
+  const sxTachTab = useMemo(
     () => tachCotTheoTab(filteredKanbanPipeline, { giuCuaRa: false }),
     [filteredKanbanPipeline],
   );
-  const sxCoTabCongNo = sxCotCongNo.length > 0;
-  const sxTabHienTai = sxCoTabCongNo ? sxTab : 'sx';
-  const sxPipelineTab = sxTabHienTai === 'cong_no' ? sxCotCongNo : sxCotSanXuat;
+  const sxCotSanXuat = sxTachTab.cotSX;
+  const sxCacTabKhac = useMemo(() => {
+    const tabs = [];
+    (sxTachTab.theoTab || new Map()).forEach((cot, key) => {
+      if (key === TAB_SX || !(cot || []).length) return;
+      tabs.push({ key, label: nhanTabKanban(key), cot });
+    });
+    tabs.sort((a, b) => {
+      if (a.key === TAB_CONG_NO) return -1;
+      if (b.key === TAB_CONG_NO) return 1;
+      return String(a.label).localeCompare(String(b.label), 'vi');
+    });
+    return tabs;
+  }, [sxTachTab]);
+  const sxCoNhieuTab = sxCacTabKhac.length > 0;
+  const sxTabHienTai = (sxTab === TAB_SX || sxCacTabKhac.some((t) => t.key === sxTab)) ? sxTab : TAB_SX;
+  const sxPipelineTab = sxTabHienTai === TAB_SX
+    ? sxCotSanXuat
+    : (sxCacTabKhac.find((t) => t.key === sxTabHienTai)?.cot || sxCotSanXuat);
   sxPipelineTabRef.current = sxPipelineTab;
 
   // Gộp cột chỉ có nghĩa ở tab Sản xuất — gộp 5 cột công nợ thành một cột thì hết gì để xem.
   const sxCacNhom = useMemo(() => gomCotTheoNhom(sxPipelineTab), [sxPipelineTab]);
   const sxGopDuoc = useMemo(
-    () => sxTabHienTai !== 'cong_no' && coTheGopCot(sxPipelineTab),
+    () => sxTabHienTai !== TAB_CONG_NO && coTheGopCot(sxPipelineTab),
     [sxTabHienTai, sxPipelineTab],
   );
   const sxGopDangBat = sxGopCot && sxGopDuoc;
@@ -4207,44 +4224,49 @@ export default function ProductionDashboard() {
         </div>
       </div>
 
-      {viewMode === 'kanban' && sxCoTabCongNo && (
+      {viewMode === 'kanban' && sxCoNhieuTab && (
         <div className="flex flex-wrap items-center gap-2 px-1">
-          <div className="inline-flex items-center gap-0.5 rounded-lg border border-slate-200 bg-white/90 p-0.5 shadow-inner">
+          <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-slate-200 bg-white/90 p-0.5 shadow-inner">
             <button
               type="button"
-              onClick={() => { setSxTab('sx'); try { localStorage.setItem(LS_SX_TAB, 'sx'); } catch { /* private mode */ } }}
+              onClick={() => { setSxTab(TAB_SX); try { localStorage.setItem(LS_SX_TAB, TAB_SX); } catch { /* private mode */ } }}
               className={`h-7 rounded-md px-3 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-all ${
-                sxTabHienTai === 'sx' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                sxTabHienTai === TAB_SX ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
               }`}
             >
               <Factory className="h-3.5 w-3.5" />
               Sản xuất
               <span className={`rounded-full px-1.5 text-[10px] font-bold tabular-nums ${
-                sxTabHienTai === 'sx' ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-500'
+                sxTabHienTai === TAB_SX ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-500'
               }`}>
                 {demTheCot(sxCotSanXuat, pipelineStageCounts)}
               </span>
             </button>
-            <button
-              type="button"
-              onClick={() => { setSxTab('cong_no'); try { localStorage.setItem(LS_SX_TAB, 'cong_no'); } catch { /* private mode */ } }}
-              className={`h-7 rounded-md px-3 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-all ${
-                sxTabHienTai === 'cong_no' ? 'bg-amber-600 text-white shadow-sm' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-              }`}
-            >
-              <Banknote className="h-3.5 w-3.5" />
-              Công nợ
-              <span className={`rounded-full px-1.5 text-[10px] font-bold tabular-nums ${
-                sxTabHienTai === 'cong_no' ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-500'
-              }`}>
-                {demTheCot(sxCotCongNo, pipelineStageCounts)}
-              </span>
-            </button>
+            {sxCacTabKhac.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => { setSxTab(t.key); try { localStorage.setItem(LS_SX_TAB, t.key); } catch { /* private mode */ } }}
+                className={`h-7 rounded-md px-3 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-all ${
+                  sxTabHienTai === t.key
+                    ? (t.key === TAB_CONG_NO ? 'bg-amber-600 text-white shadow-sm' : 'bg-teal-600 text-white shadow-sm')
+                    : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                }`}
+              >
+                {t.key === TAB_CONG_NO ? <Banknote className="h-3.5 w-3.5" /> : <Layers className="h-3.5 w-3.5" />}
+                {t.label}
+                <span className={`rounded-full px-1.5 text-[10px] font-bold tabular-nums ${
+                  sxTabHienTai === t.key ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-500'
+                }`}>
+                  {demTheCot(t.cot, pipelineStageCounts)}
+                </span>
+              </button>
+            ))}
           </div>
           <span className="text-[11px] text-slate-500">
-            {sxTabHienTai === 'cong_no'
-              ? `${sxCotCongNo.length} cột công nợ của phân loại đang chọn — kéo thẻ y như bảng xưởng`
-              : `Đã dời ${sxCotCongNo.length} cột công nợ sang tab riêng — chuyển thẻ sang đó bằng nút ⇄ trên thẻ`}
+            {sxTabHienTai === TAB_SX
+              ? `Đã dời ${sxCacTabKhac.reduce((n, t) => n + t.cot.length, 0)} cột sang tab riêng`
+              : `${(sxCacTabKhac.find((t) => t.key === sxTabHienTai)?.cot || []).length} cột «${nhanTabKanban(sxTabHienTai)}» — kéo thẻ y như bảng xưởng`}
           </span>
         </div>
       )}
@@ -4253,7 +4275,7 @@ export default function ProductionDashboard() {
         <div className="flex flex-wrap items-center gap-1.5 px-1">
           <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Cột lớn</span>
           {sxCacNhom.map((g) => {
-            if (g.riengLe) return null;
+            if (g.riengLe || g.chiMotCot) return null;
             const mo = sxNhomDangMo.has(g.key);
             return (
               <button
@@ -4281,7 +4303,7 @@ export default function ProductionDashboard() {
           <span className="flex-1" />
           <button
             type="button"
-            onClick={() => setSxNhomDangMo(new Set(sxCacNhom.filter((g) => !g.riengLe).map((g) => g.key)))}
+            onClick={() => setSxNhomDangMo(new Set(sxCacNhom.filter((g) => !g.riengLe && !g.chiMotCot).map((g) => g.key)))}
             className="h-7 px-2.5 rounded-md text-xs font-semibold text-slate-600 border border-slate-200 bg-white hover:bg-slate-100 cursor-pointer"
           >
             Mở tất cả
@@ -5165,6 +5187,14 @@ export const KanbanStageCard = memo(function KanbanStageCard({
             )}
           </div>
         </div>
+        {stage.__cotGop && (
+          <p
+            className={`mt-0.5 text-[10px] font-medium truncate ${sxStagePrimaryOwnerName(stage) ? 'text-indigo-800' : 'text-black/50 italic'}`}
+            title={sxStagePrimaryOwnerName(stage) ? `Phụ trách cột lớn: ${sxStagePrimaryOwnerName(stage)}` : 'Chưa gán người chịu trách nhiệm cột lớn'}
+          >
+            {sxStagePrimaryOwnerName(stage) || 'Chưa gán NV'}
+          </p>
+        )}
         {/* Mô tả phân loại — gắn với workshop_type của cột */}
         {(() => {
           const typeName = stage.workshop_type?.name;
@@ -5426,8 +5456,8 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
         </label>
       )}
 
-      {/* Row 1: Code (nhỏ) + ngày tạo lead + Mới badge */}
-      <div className="flex items-center gap-1.5 mb-1">
+      {/* Row 1: Code (nhỏ) + ngày tạo lead + Mới badge + nút Quản lý nhiệm vụ */}
+      <div className={`flex items-center gap-1.5 mb-1 ${onToggleSelect ? 'pr-5' : ''}`}>
         <span className="text-[10px] font-mono font-semibold text-blue-600 truncate">{item.code}</span>
         {leadCreatedAt && (
           <span
@@ -5447,6 +5477,13 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
             VC
           </span>
         )}
+        <KanbanGotoProjectTasksBtn
+          asLink
+          moduleKey="sx"
+          projectId={item.id}
+          code={item.code}
+          className="ml-auto"
+        />
       </div>
 
       {/* Row 2: Tên dự án — chính, đậm, 2 dòng */}
@@ -5736,8 +5773,9 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
           )}
         </div>
 
+        <div className="flex items-center gap-1.5 shrink-0">
         {/* Nhóm icon thao tác nhanh — luôn cố định bên phải */}
-        <div className="flex items-center gap-0.5 shrink-0 ml-0.5 rounded-full border border-teal-100 bg-white px-1 py-0.5 shadow-sm">
+        <div className="flex items-center gap-0.5 shrink-0 rounded-full border border-teal-100 bg-white px-1 py-0.5 shadow-sm">
         {typeof onMoveStage === 'function' && Array.isArray(pipelineStages) && pipelineStages.length > 1 && (
           <KanbanCardQuickMove
             stages={pipelineStages}
@@ -5749,25 +5787,6 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
             blockVirtualTargets={false}
           />
         )}
-
-        {/* Quick: bình luận nhanh (nếu có handler) hoặc mở chat */}
-        <button
-          type="button"
-          data-sx-quick-btn
-          title="Quản lý nhiệm vụ của dự án này"
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const params = new URLSearchParams();
-            params.set('project', String(item.id));
-            if (item.code) params.set('code', String(item.code));
-            navigate(`/sx/project-tasks?${params.toString()}`);
-          }}
-          className="h-5 w-5 inline-flex items-center justify-center rounded-full text-violet-500 hover:text-violet-700 hover:bg-violet-100 cursor-pointer"
-        >
-          <CheckSquare className="h-3 w-3" />
-        </button>
         <button
           type="button"
           data-sx-quick-btn
@@ -5801,6 +5820,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
             module: 'sx',
           }}
         />
+        </div>
         </div>
       </div>
 
@@ -6079,6 +6099,16 @@ function SxMaTranSongSong({
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-violet-500" />
           <Layers className="h-3.5 w-3.5 shrink-0 text-violet-500" />
           <span className="text-[12.5px] font-bold uppercase tracking-[0.08em] text-violet-900">{nhom.nhan}</span>
+          {(() => {
+            const chu = sxGroupPrimaryOwnerName(nhom.stages);
+            return chu ? (
+              <span className="max-w-[10rem] truncate text-[11px] font-medium text-indigo-700" title={`Phụ trách cột lớn: ${chu}`}>
+                {chu}
+              </span>
+            ) : (
+              <span className="text-[10px] italic text-slate-400">Chưa gán NV cột lớn</span>
+            );
+          })()}
           <span className="rounded-full bg-violet-600 px-1.5 py-px text-[10px] font-bold tabular-nums text-white">
             {nhom.soDuAn}
           </span>

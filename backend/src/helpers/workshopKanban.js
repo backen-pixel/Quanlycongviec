@@ -26,6 +26,12 @@ const {
   markPipelineSwitchWorkshopTypeColumnMissing,
   isPipelineTargetWorkshopTypeEmbedRelationshipError,
   markPipelineTargetWorkshopTypeJoinMissing,
+  isPipelineGroupKeyMissingError,
+  markPipelineGroupKeyColumnMissing,
+  isPipelineGroupSortMissingError,
+  markPipelineGroupSortColumnMissing,
+  isPipelineBoardTabMissingError,
+  markPipelineBoardTabColumnMissing,
   normalizePipelineStageApiRow,
 } = require('./productionPipelineSchema');
 const { isCrmPostWonManagedStage } = require('./crmDealStageGate');
@@ -448,6 +454,24 @@ async function loadProductionPipelineStagesRowsUncached(includeInactive = false,
     }
     if (error && isPipelineTargetWorkshopTypeEmbedRelationshipError(error)) {
       markPipelineTargetWorkshopTypeJoinMissing();
+      const retry = await runBase(scope);
+      data = retry.data;
+      error = retry.error;
+    }
+    if (error && isPipelineGroupKeyMissingError(error)) {
+      markPipelineGroupKeyColumnMissing();
+      const retry = await runBase(scope);
+      data = retry.data;
+      error = retry.error;
+    }
+    if (error && isPipelineGroupSortMissingError(error)) {
+      markPipelineGroupSortColumnMissing();
+      const retry = await runBase(scope);
+      data = retry.data;
+      error = retry.error;
+    }
+    if (error && isPipelineBoardTabMissingError(error)) {
+      markPipelineBoardTabColumnMissing();
       const retry = await runBase(scope);
       data = retry.data;
       error = retry.error;

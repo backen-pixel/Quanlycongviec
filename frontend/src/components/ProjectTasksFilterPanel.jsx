@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Clock, Filter, GripVertical, ListChecks, RotateCcw, Users, X,
+  Clock, Filter, GripVertical, ListChecks, RotateCcw, Search, Users, X,
 } from 'lucide-react';
+import { WORK_UNIFIED_REGION_NONE, normalizeWorkUnifiedUserIds } from './WorkUnifiedFilterFields';
+import { WorkshopScopeFields } from './WorkshopDashboardFilterPanel';
 
 const FIELD_CLS = 'h-8 w-full min-w-0 px-2.5 bg-white border border-violet-200 rounded-md text-xs font-medium text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-300/80 focus:border-violet-400';
 const SELECT_CLS = `${FIELD_CLS} cursor-pointer appearance-none pr-7`;
@@ -24,9 +26,24 @@ export default function ProjectTasksFilterPanel({
   setRiskFilter,
   progressFilter,
   setProgressFilter,
+  canPickCompany = false,
+  lockedCompanyLabel = '',
+  companyFilterActive = false,
   companyFilter,
   setCompanyFilter,
   companyOptions,
+  allowAllCompanies = true,
+  companyFieldLabel = 'Công ty',
+  allCompaniesLabel = 'Tất cả công ty',
+  showWorkshopScope = false,
+  showDealCompanyFilter = false,
+  canPickDealCompany = false,
+  filterDealCompany = '',
+  onDealCompanyChange,
+  clientCompaniesWorkshopId = '',
+  clientCrmDealOptions = [],
+  clientExternalDealOptions = [],
+  selectedDealCompanyLabel = '',
   regionFilter,
   setRegionFilter,
   regionOptions,
@@ -40,8 +57,42 @@ export default function ProjectTasksFilterPanel({
 }) {
   const panelRef = useRef(null);
   const dragRef = useRef(null);
-  const [tab, setTab] = useState('status');
+  const [tab, setTab] = useState('employee');
+  const [staffQuery, setStaffQuery] = useState('');
   const [position, setPosition] = useState(() => readPosition(storageKey));
+  const selectedAssigneeIds = normalizeWorkUnifiedUserIds(assigneeFilter);
+  const selectedSet = useMemo(
+    () => new Set(selectedAssigneeIds.map(String)),
+    [selectedAssigneeIds],
+  );
+  const visibleAssignees = useMemo(() => {
+    const q = staffQuery.trim().toLowerCase();
+    const list = assigneeOptions || [];
+    if (!q) return list;
+    const matched = list.filter((person) => String(person.name || '').toLowerCase().includes(q));
+    const seen = new Set(matched.map((person) => String(person.id)));
+    list.filter((person) => selectedSet.has(String(person.id))).forEach((person) => {
+      if (!seen.has(String(person.id))) matched.unshift(person);
+    });
+    return matched;
+  }, [assigneeOptions, selectedSet, staffQuery]);
+  const emitAssignees = (nextIds) => {
+    setAssigneeFilter(normalizeWorkUnifiedUserIds(nextIds));
+  };
+  const toggleAssignee = (userId) => {
+    const sid = String(userId);
+    const next = new Set(selectedSet);
+    if (next.has(sid)) next.delete(sid);
+    else next.add(sid);
+    emitAssignees([...next]);
+  };
+  const selectVisible = () => {
+    const next = new Set(selectedSet);
+    visibleAssignees.forEach((person) => {
+      if (person?.id) next.add(String(person.id));
+    });
+    emitAssignees([...next]);
+  };
   const tabs = useMemo(() => ([
     {
       id: 'status',
@@ -53,7 +104,7 @@ export default function ProjectTasksFilterPanel({
       id: 'employee',
       label: 'Nhân viên',
       icon: Users,
-      count: Number(!!companyFilter) + Number(!!regionFilter) + Number(!!assigneeFilter),
+      count: Number(companyFilterActive) + Number(!!filterDealCompany) + Number(!!regionFilter) + Number(selectedAssigneeIds.length > 0),
     },
     {
       id: 'time',
@@ -62,7 +113,7 @@ export default function ProjectTasksFilterPanel({
       count: Number(!!deadlineFrom) + Number(!!deadlineTo),
     },
   ]), [
-    assigneeFilter, companyFilter, deadlineFrom, deadlineTo,
+    assigneeFilter, companyFilterActive, deadlineFrom, deadlineTo, filterDealCompany,
     progressFilter, regionFilter, riskFilter,
   ]);
 
@@ -176,6 +227,23 @@ export default function ProjectTasksFilterPanel({
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-1 bg-white [scrollbar-width:thin]">
+        {showWorkshopScope && (
+          <WorkshopScopeFields
+            canPickCompany={canPickCompany}
+            workshopCompanyPickerList={companyOptions}
+            showAllWorkshopOption={allowAllCompanies}
+            filterCompany={companyFilter}
+            onCompanyChange={setCompanyFilter}
+            showDealCompanyFilter={showDealCompanyFilter}
+            canPickDealCompany={canPickDealCompany}
+            filterDealCompany={filterDealCompany}
+            onDealCompanyChange={onDealCompanyChange}
+            clientCompaniesWorkshopId={clientCompaniesWorkshopId}
+            clientCrmDealOptions={clientCrmDealOptions}
+            clientExternalDealOptions={clientExternalDealOptions}
+            selectedDealCompanyLabel={selectedDealCompanyLabel}
+          />
+        )}
         {tab === 'status' && (
           <div className="py-2 space-y-3">
             <label className="block">
@@ -203,34 +271,109 @@ export default function ProjectTasksFilterPanel({
 
         {tab === 'employee' && (
           <div className="py-2 space-y-3">
+            {!showWorkshopScope && (
             <label className="block">
-              <span className={LABEL_CLS}>Công ty</span>
-              <select value={companyFilter} onChange={(event) => setCompanyFilter(event.target.value)} className={SELECT_CLS}>
-                <option value="">Tất cả công ty</option>
-                {(companyOptions || [])
-                  .slice()
-                  .sort((a, b) => String(a.short_name || a.name || '').localeCompare(String(b.short_name || b.name || ''), 'vi'))
-                  .map((company) => (
-                    <option key={company.id} value={company.id}>{company.short_name || company.name}</option>
-                  ))}
-              </select>
+              <span className={LABEL_CLS}>{companyFieldLabel}</span>
+              {canPickCompany && (companyOptions || []).length > 0 ? (
+                <select value={companyFilter} onChange={(event) => setCompanyFilter(event.target.value)} className={SELECT_CLS}>
+                  {allowAllCompanies && <option value="">{allCompaniesLabel}</option>}
+                  {(companyOptions || [])
+                    .slice()
+                    .sort((a, b) => String(a.short_name || a.name || '').localeCompare(String(b.short_name || b.name || ''), 'vi'))
+                    .map((company) => (
+                      <option key={company.id} value={company.id}>{company.short_name || company.name}</option>
+                    ))}
+                </select>
+              ) : (
+                <div className={`${FIELD_CLS} flex items-center bg-indigo-50/80 border-indigo-200 text-indigo-900 cursor-default truncate`}>
+                  {lockedCompanyLabel || 'Công ty của bạn'}
+                </div>
+              )}
             </label>
+            )}
             <label className="block">
               <span className={LABEL_CLS}>Khu vực</span>
               <select value={regionFilter} onChange={(event) => setRegionFilter(event.target.value)} className={SELECT_CLS}>
                 <option value="">Tất cả khu vực</option>
-                {(regionOptions || []).map((region) => (
-                  <option key={region.id} value={region.id}>{region.name}</option>
-                ))}
+                <option value={WORK_UNIFIED_REGION_NONE}>
+                  {allowAllCompanies ? 'Chưa gán khu vực' : 'Chưa gán khu vực (NV & pipeline)'}
+                </option>
+                {(regionOptions || []).map((region) => {
+                  const company = (companyOptions || []).find((item) => String(item.id) === String(region.company_id || ''));
+                  const suffix = !companyFilter && (company?.short_name || company?.name);
+                  return (
+                    <option key={region.id} value={region.id}>
+                      {region.name}{suffix ? ` — ${suffix}` : ''}
+                    </option>
+                  );
+                })}
               </select>
             </label>
-            <label className="block">
-              <span className={LABEL_CLS}>Người phụ trách</span>
-              <select value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)} className={SELECT_CLS}>
-                <option value="">Tất cả nhân viên</option>
-                {assigneeOptions.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
-              </select>
-            </label>
+            <div>
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <span className={`${LABEL_CLS} mb-0`}>Người phụ trách</span>
+                <span className="text-[10px] font-semibold text-violet-700 tabular-nums">
+                  {selectedAssigneeIds.length ? `${selectedAssigneeIds.length} đã chọn` : 'Có thể chọn nhiều'}
+                </span>
+              </div>
+              <div className="relative mb-1.5">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400 pointer-events-none" />
+                <input
+                  type="search"
+                  value={staffQuery}
+                  onChange={(event) => setStaffQuery(event.target.value)}
+                  placeholder="Tìm tên nhân viên…"
+                  className={`${FIELD_CLS} pl-8`}
+                />
+              </div>
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <button
+                  type="button"
+                  onClick={selectVisible}
+                  disabled={!visibleAssignees.length}
+                  className="h-6 px-2 rounded-md border border-violet-200 bg-white text-[10px] font-semibold text-violet-700 hover:bg-violet-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Chọn đang hiện
+                </button>
+                <button
+                  type="button"
+                  onClick={() => emitAssignees([])}
+                  disabled={!selectedAssigneeIds.length}
+                  className="h-6 px-2 rounded-md border border-violet-200 bg-white text-[10px] font-semibold text-violet-700 hover:bg-violet-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Bỏ chọn
+                </button>
+              </div>
+              <div className="max-h-48 overflow-y-auto rounded-md border border-violet-200 bg-white divide-y divide-violet-50 [scrollbar-width:thin]">
+                {!assigneeOptions?.length ? (
+                  <p className="px-2.5 py-3 text-[11px] text-slate-400 text-center">Không có nhân viên trong phạm vi đã chọn.</p>
+                ) : !visibleAssignees.length ? (
+                  <p className="px-2.5 py-3 text-[11px] text-slate-400 text-center">Không khớp từ khóa tìm.</p>
+                ) : (
+                  visibleAssignees.map((person) => {
+                    const checked = selectedSet.has(String(person.id));
+                    const suffix = !companyFilter && person.company_name ? person.company_name : '';
+                    return (
+                      <label
+                        key={person.id}
+                        className={`flex items-center gap-2 px-2 py-1.5 cursor-pointer ${checked ? 'bg-violet-50' : 'hover:bg-slate-50'}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleAssignee(person.id)}
+                          className="h-3.5 w-3.5 rounded border-violet-300 text-violet-600 focus:ring-violet-400"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-xs font-medium text-slate-800 truncate">{person.name}</span>
+                          {suffix ? <span className="block text-[10px] text-slate-400 truncate">{suffix}</span> : null}
+                        </span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+            </div>
           </div>
         )}
 

@@ -7,6 +7,7 @@ import { formatDate, formatVND } from '../lib/utils';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import ResponsiveTable from '../components/ResponsiveTable';
 import { WorkUnifiedOpenTabProvider, workUnifiedPath } from '../components/WorkUnifiedOpenTabMenu';
+import KanbanGotoProjectTasksBtn from '../components/KanbanGotoProjectTasksBtn';
 import {
   RefreshCw, Plus, FileText, Package, ChevronLeft, ChevronRight,
   List, LayoutGrid, Clock, Phone, Calendar, EyeOff, Eye, X, Search, Users,
@@ -26,10 +27,11 @@ const PAGE_SIZE = 20;
 
 const KANBAN_COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#ef4444', '#06b6d4', '#ec4899', '#6366f1'];
 
-/** Gom hạn Work Unified — khớp Deadline SX: Quá hạn / Hôm nay / tuần / tháng / sau tháng này. */
+/** Gom hạn Work Unified: Quá hạn / Hôm nay / Ngày mai / tuần / tháng / sau tháng này. */
 const WU_DEADLINE_BUCKETS = [
   { key: 'overdue', label: 'Quá hạn', color: '#dc2626' },
   { key: 'today', label: 'Hôm nay', color: '#ea580c' },
+  { key: 'tomorrow', label: 'Ngày mai', color: '#f59e0b' },
   { key: 'this_week', label: 'Tuần này', color: '#d97706' },
   { key: 'next_week', label: 'Tuần sau', color: '#0891b2' },
   { key: 'this_month', label: 'Tháng này', color: '#0d9488' },
@@ -56,6 +58,7 @@ function resolveWuDeadlineBucket(it, todayMs = Date.now()) {
   const diffDays = Math.floor((startOfLocalDay(t).getTime() - today.getTime()) / 86400000);
   if (diffDays < 0) return 'overdue';
   if (diffDays === 0) return 'today';
+  if (diffDays === 1) return 'tomorrow';
   const dow = today.getDay() === 0 ? 7 : today.getDay();
   const daysToEndOfWeek = 7 - dow;
   if (diffDays <= daysToEndOfWeek) return 'this_week';
@@ -92,6 +95,37 @@ function shortDate(v) {
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return '';
   return `${d.getDate()}/${d.getMonth() + 1}`;
+}
+
+const CAL_NAME_PREFIX_RE = /^(?:\[FB Lead\]|\[FB\]|CT\s*-|TỦ BẾP\s*-|GCCK-|ks\s+(?:tủ bếp\s+)?)/i;
+const CAL_TRAILING_PHONE_RE = /\s*[-–]?\s*(?:\+?84|0)\d[\d\s.]{7,}\s*$/;
+
+/** Tên ngắn trên ô lịch: khách hàng, không thì đoạn nhận diện (Anh/Chị…) — không nhét SĐT/địa chỉ. */
+function calendarScanTitle(ev) {
+  const customer = String(ev?.customerName || '').trim();
+  if (customer) return customer;
+  let name = String(ev?.name || '').trim();
+  if (!name) return '';
+  name = name.replace(CAL_NAME_PREFIX_RE, '').trim();
+  name = name.replace(CAL_TRAILING_PHONE_RE, '').trim();
+  const segs = name.split(/\s+[-–]\s+/).map((s) => s.trim()).filter(Boolean);
+  if (segs[0] && /^(anh|chị|chú|cô|bác|em)\b/i.test(segs[0])) return segs[0];
+  return segs[0] || name;
+}
+
+function shortPersonName(name) {
+  const raw = String(name || '').trim();
+  if (!raw) return '';
+  const parts = raw.split(/\s+/);
+  if (parts.length <= 2) return raw;
+  return parts.slice(-2).join(' ');
+}
+
+function calendarMilestoneLabel(ev, calendarMode) {
+  if (ev?.tone === 'delivery') return 'Giao';
+  if (ev?.tone === 'install') return 'Lắp';
+  if (calendarMode === 'sx') return '';
+  return ev?.label || '';
 }
 
 function initials(name) {
@@ -146,11 +180,12 @@ function WorkKanbanCard({ it, variant = 'default' }) {
     ].filter(Boolean);
     const innerBits = [it.current_stage_label, people[0]].filter(Boolean);
     return (
+      <div className="relative rounded-lg border border-gray-100 bg-white shadow-sm hover:shadow-md hover:border-gray-200 transition-shadow">
       <Link
         to={workUnifiedPath(it.id)}
         data-wu-open-tab={it.id}
         title="Chuột phải để mở tab mới"
-        className="block rounded-lg border border-gray-100 bg-white px-2.5 py-2 shadow-sm hover:shadow-md hover:border-gray-200 transition-shadow space-y-1.5"
+        className="block px-2.5 py-2 space-y-1.5 pr-[5.5rem]"
       >
         <div className="min-w-0">
           <p className="text-[11px] font-bold text-violet-700 truncate">{it.code}</p>
@@ -176,15 +211,24 @@ function WorkKanbanCard({ it, variant = 'default' }) {
           </p>
         )}
       </Link>
+      <KanbanGotoProjectTasksBtn
+        asLink
+        moduleKey="management"
+        projectId={it.id}
+        code={it.code}
+        className="absolute top-2 right-2 z-10"
+      />
+      </div>
     );
   }
 
   return (
+    <div className="relative rounded-lg border border-gray-100 bg-white shadow-sm hover:shadow-md hover:border-gray-200 transition-shadow">
     <Link
       to={workUnifiedPath(it.id)}
       data-wu-open-tab={it.id}
       title="Chuột phải để mở tab mới"
-      className="block rounded-lg border border-gray-100 bg-white px-2.5 py-2 shadow-sm hover:shadow-md hover:border-gray-200 transition-shadow space-y-1"
+      className="block px-2.5 py-2 space-y-1 pr-[5.5rem]"
     >
       <div className="flex items-center gap-1.5 min-w-0">
         <span className="text-xs font-bold text-violet-700 truncate">{it.code}</span>
@@ -221,6 +265,14 @@ function WorkKanbanCard({ it, variant = 'default' }) {
         ) : null}
       </div>
     </Link>
+      <KanbanGotoProjectTasksBtn
+        asLink
+        moduleKey="management"
+        projectId={it.id}
+        code={it.code}
+        className="absolute top-2 right-2 z-10"
+      />
+    </div>
   );
 }
 
@@ -365,7 +417,7 @@ function CalendarDayFeed({ activeDay, isExplicitSelection, events, onClear, onSh
                   <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">Quá hạn</span>
                 )}
               </div>
-              <p className="text-sm font-semibold text-gray-800 line-clamp-1" title={ev.name}>{ev.name}</p>
+              <p className="text-sm font-semibold text-gray-800 line-clamp-2" title={ev.name}>{ev.name}</p>
               {(ev.dealCode || ev.stageLabel) && (
                 <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5 min-w-0">
                   <FileText className="h-3 w-3 shrink-0 text-gray-400" />
@@ -376,6 +428,18 @@ function CalendarDayFeed({ activeDay, isExplicitSelection, events, onClear, onSh
                 <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5 min-w-0">
                   <Phone className="h-3 w-3 shrink-0 text-gray-400" />
                   <span className="truncate">{[ev.customerName, ev.customerPhone].filter(Boolean).join(' · ')}</span>
+                </p>
+              )}
+              {(ev.productionDeadline || ev.deliveryDate || ev.installDate) && (
+                <p className="text-xs text-gray-600 flex items-center gap-1 mt-0.5 min-w-0">
+                  <Clock className="h-3 w-3 shrink-0 text-gray-400" />
+                  <span className="truncate">
+                    {[
+                      ev.productionDeadline && `Hạn SX ${shortDate(ev.productionDeadline)}`,
+                      ev.deliveryDate && `Giao ${shortDate(ev.deliveryDate)}`,
+                      ev.installDate && `Lắp ${shortDate(ev.installDate)}`,
+                    ].filter(Boolean).join(' · ')}
+                  </span>
                 </p>
               )}
               {ev.person && (
@@ -781,6 +845,9 @@ export default function WorkUnifiedOverviewPage() {
           customerName: it.customer_name,
           customerPhone: it.customer_phone,
           stageLabel: it.current_stage_label,
+          productionDeadline: it.production_deadline,
+          deliveryDate: it.delivery_date,
+          installDate: it.install_date,
           tone,
           overdue: dateStr < todayStr,
         });
@@ -1188,20 +1255,30 @@ export default function WorkUnifiedOverviewPage() {
                               {cell.day}
                             </div>
                             <div className="space-y-1 flex-1">
-                              {shown.map((ev) => (
+                              {shown.map((ev) => {
+                                const scan = calendarScanTitle(ev);
+                                const who = shortPersonName(ev.person);
+                                const mile = calendarMilestoneLabel(ev, calendarMode);
+                                const line2 = [scan, who].filter(Boolean).join(' · ');
+                                return (
                                 <CalendarEventLink
                                   key={ev.id}
                                   ev={ev}
                                   className={`block rounded-md border px-1 py-0.5 hover:brightness-95 transition-[filter] ${calendarToneClass(ev)}`}
-                                  title={[ev.code, ev.name, ev.label, ev.stageLabel, ev.person, 'Chuột phải: mở tab mới'].filter(Boolean).join(' — ')}
+                                  title={[ev.code, ev.name, ev.label, ev.stageLabel, ev.person, ev.customerPhone, 'Chuột phải: mở tab mới'].filter(Boolean).join(' — ')}
                                 >
                                   <div className="flex items-center justify-between gap-0.5">
                                     <span className="text-[9px] font-extrabold font-mono truncate">{ev.code}</span>
-                                    <span className="text-[8px] font-bold uppercase opacity-90 shrink-0">{ev.label}</span>
+                                    {mile ? (
+                                      <span className="text-[8px] font-bold uppercase opacity-90 shrink-0">{mile}</span>
+                                    ) : null}
                                   </div>
-                                  <p className="text-[9px] font-semibold leading-tight line-clamp-2 opacity-95">{ev.name}</p>
+                                  {line2 ? (
+                                    <p className="text-[9px] font-semibold leading-tight truncate opacity-95" title={line2}>{line2}</p>
+                                  ) : null}
                                 </CalendarEventLink>
-                              ))}
+                                );
+                              })}
                               {more > 0 && (
                                 <div className="text-[9px] text-center font-semibold text-slate-500 bg-slate-50 rounded border border-slate-200 py-0.5">
                                   +{more} mốc nữa

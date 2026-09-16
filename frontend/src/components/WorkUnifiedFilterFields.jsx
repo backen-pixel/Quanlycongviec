@@ -78,10 +78,13 @@ function mapEmployeesForCompany(users, companyId, companies) {
 }
 
 /** Load NV theo 1 công ty, hoặc gộp mọi công ty trong list (admin «Tất cả công ty»). */
-export async function loadWorkUnifiedEmployees({ companyId, companies = [], canPickCompany = false }) {
+export async function loadWorkUnifiedEmployees({
+  companyId, companies = [], canPickCompany = false, forModule = 'all',
+}) {
+  const moduleKey = forModule || 'all';
   if (companyId) {
     const { data } = await api.get('/crm/employees-by-company', {
-      params: { for_module: 'all', company_id: companyId },
+      params: { for_module: moduleKey, company_id: companyId },
     });
     return mapEmployeesForCompany(data?.users, companyId, companies);
   }
@@ -94,7 +97,7 @@ export async function loadWorkUnifiedEmployees({ companyId, companies = [], canP
     const results = await Promise.all(chunk.map(async (cid) => {
       try {
         const { data } = await api.get('/crm/employees-by-company', {
-          params: { for_module: 'all', company_id: cid },
+          params: { for_module: moduleKey, company_id: cid },
         });
         return { cid, users: data?.users || [] };
       } catch {

@@ -346,7 +346,7 @@ const SX_MENU_GROUPS = [
     title: '3. Setup xưởng',
     emoji: '📦',
     items: [
-      { to: '/sx/dashboard', icon: FolderKanban, label: 'Deal vào xưởng' },
+      { to: '/sx/dashboard', icon: FolderKanban, label: 'Dashboard' },
       { to: '/crm/facebook', icon: MessageCircle, label: 'Facebook', socialInboxAccess: true },
       { to: '/sx/pipeline-settings', icon: Settings, label: 'Pipeline xưởng' },
       { to: '/sx/regions', icon: MapPin, label: 'Khu vực', adminOnly: true },
@@ -617,7 +617,8 @@ function SideLink({
     if (moduleContext) storeModule(moduleContext);
   };
   const prefetchIfProjectTasks = () => {
-    if (String(to || '').includes('project-tasks')) prefetchCompanies(api);
+    if (String(to || '').includes('/sx/project-tasks')) prefetchCompanies(api, { forModule: 'production' });
+    else if (String(to || '').includes('project-tasks')) prefetchCompanies(api);
   };
   const link = (
     <NavLink

@@ -1,5 +1,188 @@
 # Nhật ký công việc AI
 
+## 2026-09-16 11:20 — Mũi tên cuộn trang Quản lý nhiệm vụ
+
+- AI: Cursor. Board hạn nhiệm vụ dùng cùng chrome mũi tên Dashboard
+  Kanban. File: `ProjectTasksOverviewPage.jsx`.
+
+## 2026-09-16 11:05 — Nút Nhiệm vụ trên thẻ Kanban
+
+- AI: Cursor. Đưa nút quản lý nhiệm vụ lên đầu thẻ, gắn nhãn «Nhiệm vụ».
+  SX, VC, Work Unified. File: `KanbanGotoProjectTasksBtn.jsx`,
+  `ProductionDashboard.jsx`, `LogisticsDashboard.jsx`,
+  `WorkUnifiedOverviewPage.jsx`.
+
+## 2026-09-16 10:25 — Thêm cột nhỏ ngay thẻ cột chính
+
+- AI: Cursor. Nút Thêm cột nhỏ trong từng thẻ (và thẻ nét đứt).
+  POST `/production/pipeline-stages` nhận `group_sort`. File:
+  `ProductionPipelineSettingsPage.jsx`, `production.js`.
+
+## 2026-09-16 10:15 — Kéo cột nhỏ giữa các cột chính
+
+- AI: Cursor. Setup pipeline: thả cột nhỏ vào danh sách bên trong thẻ
+  cột chính (không chỉ viền thẻ). Phân biệt kéo cột nhỏ vs kéo thứ tự
+  cột chính. File: `ProductionPipelineSettingsPage.jsx`.
+
+## 2026-09-16 09:25 — Setup pipeline quanh cột chính
+
+- AI: Cursor. Trang Pipeline xưởng: tab Cột chính (bảng thẻ), Cột nhỏ,
+  Cài đặt. Công ty + phân loại trên cùng. File:
+  `ProductionPipelineSettingsPage.jsx`.
+
+## 2026-09-16 09:00 — Thêm cột Đóng gói HCB (Tủ bếp)
+
+- AI: Cursor. Chèn cột pipeline «Đóng gói» Tủ bếp (trước KCS).
+  Cửa/Cánh kính giữ «Vệ sinh đóng gói». SQL 616 primary+backup.
+  File: `616_hcb_dong_goi_pipeline_column.sql`.
+
+## 2026-09-16 08:50 — Hiện cột lớn Đóng gói HCB
+
+- AI: Cursor. Gộp 1 cột nhỏ vẫn hiện tên cột lớn. Tủ bếp gán
+  `dong_goi` cho «ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG». File: `sxGopCot.js`,
+  `ProductionDashboard.jsx`, `615_hcb_tubep_dong_goi_group_key.sql`.
+
+## 2026-09-15 16:40 — Tự thêm tab Kanban xưởng
+
+- AI: Cursor. Nút + Tab trên setup cột lớn; `board_tab` lưu tên tab
+  tự đặt. Dashboard lặp các tab có cột (Sản xuất + Công nợ + tab mới).
+  File: `sxTachCongNo.js`, `ProductionPipelineSettingsPage.jsx`,
+  `ProductionDashboard.jsx`, `production.js`.
+
+## 2026-09-15 16:20 — Cột lớn theo tab Sản xuất / Công nợ
+
+- AI: Cursor. Settings Gộp cột + khối Cột pipeline có switcher
+  Sản xuất / Công nợ như Dashboard. Tạo/chuyển cột lớn gắn
+  `board_tab` — Kanban hiện đúng tab. SQL 614 primary+backup.
+  File: `614_production_pipeline_board_tab.sql`, `sxTachCongNo.js`,
+  `ProductionPipelineSettingsPage.jsx`, `productionPipelineSchema.js`,
+  `workshopKanban.js`, `production.js`.
+
+## 2026-09-15 16:05 — Form thêm cột lớn trên tab Cột pipeline
+
+- AI: Cursor. Cùng form Thêm cột lớn trên tab Cột pipeline (khối
+  violet «Cột lớn — giai đoạn nối tiếp»). File:
+  `ProductionPipelineSettingsPage.jsx`.
+
+## 2026-09-15 15:30 — Form thêm cột lớn trên tab Gộp cột
+
+- AI: Cursor. Khối «Cột lớn đang dùng» có form tạo cột lớn: tên,
+  chip gợi ý, checkbox cột pipeline. File:
+  `ProductionPipelineSettingsPage.jsx`.
+
+## 2026-09-15 15:15 — Ô Cột lớn: dropdown tên tiếng Việt
+
+- AI: Cursor. Bảng gán cột lớn bỏ input+datalist slug. Dropdown
+  nhãn «Tiếp nhận»…, lưu khi chọn, mục «+ Tên mới…». File:
+  `ProductionPipelineSettingsPage.jsx`, `sxGopCot.js`.
+
+## 2026-09-15 15:00 — Gộp cột: kéo thứ tự + sửa tên tại chỗ
+
+- AI: Cursor. Tab Gộp cột đổi lưới 3 cột thành danh sách: kéo /
+  ↑↓ đổi thứ tự cột lớn, ô tên lưu khi blur, hiện cột nhỏ, lọc NV.
+  Cột `group_sort` (SQL 613, primary + backup). File:
+  `ProductionPipelineSettingsPage.jsx`, `sxGopCot.js`,
+  `productionPipelineSchema.js`, `workshopKanban.js`, `production.js`.
+
+## 2026-09-15 14:40 — Đóng gói sau Hoàn thiện (Gộp cột)
+
+- AI: Cursor. Lưới Gộp cột + Kanban gộp: `dong_goi` luôn sau
+  `hoan_thien`. File: `sxGopCot.js`, `ProductionPipelineSettingsPage.jsx`.
+
+## 2026-09-15 14:20 — Cột lớn Đóng gói (HCB Cửa/Cánh kính)
+
+- AI: Cursor. Tách «Vệ sinh đóng gói» khỏi Hoàn thiện → `dong_goi`.
+  File: `612_hcb_dong_goi_group_key.sql`, `sxGopCot.js`,
+  `sxWorkshopSchedule.js`, `ProductionPipelineSettingsPage.jsx`.
+  Chạy: `node scripts/run-migration-612.js`.
+
+## 2026-09-15 14:15 — CRM: nút Zalo Đã gửi
+
+- AI: Cursor. Chi tiết deal: nút Gửi Zalo → **Đã gửi Zalo** sau khi
+  gửi thành công; đọc lại từ `crm_zalo_stage_sends`. File:
+  `LeadDetail.jsx`, `leadLifecycle.js`, `helpersBundle.js`.
+  Đã kiểm DEAL-2026-1549 (Nam test) hiện Đã gửi; deal chưa gửi
+  vẫn Gửi Zalo. Không bấm gửi thật trên deal khách.
+
+## 2026-09-15 13:45 — Pipeline xưởng: lọc + NV cột lớn
+
+- AI: Cursor. Tab Gộp cột: lọc Công ty/Loại; gán người chịu trách
+  nhiệm cột lớn (default_staff primary). File:
+  `ProductionPipelineSettingsPage.jsx`, `ProductionDashboard.jsx`,
+  `sxStageStaff.js`.
+
+## 2026-09-15 13:25 — Lịch Work Unified: chip đủ nhận diện
+
+- AI: Cursor. Ô ngày: mã + khách/tên ngắn · NV. Panel ngày: thêm
+  Hạn SX / Giao / Lắp. File: `WorkUnifiedOverviewPage.jsx`.
+
+## 2026-09-15 13:15 — Work Unified Deadline: cột Ngày mai
+
+- AI: Cursor. Board Deadline thêm bucket `tomorrow` (label Ngày mai)
+  giữa Hôm nay và Tuần này. File: `WorkUnifiedOverviewPage.jsx`.
+
+## 2026-09-15 11:25 — Thanh nhiệm vụ: chỉ tìm kiếm
+
+- AI: Cursor. Bỏ chip «Sản xuất · N»; thanh còn ô tìm, lọc từng chữ.
+  File: `ProjectTasksOverviewPage.jsx`.
+
+## 2026-09-15 11:20 — Thẻ nhiệm vụ → Giao việc + Nhật ký
+
+- AI: Cursor. Thẻ `/sx/project-tasks` mở `/sx/assignments?project_id=`;
+  nút **Công việc** (tab tasks dự án), không phải nhật ký.
+  File: `ProjectTasksOverviewPage.jsx`, `CRMAssignmentsPage.jsx`,
+  `assignmentSourceLink.js`.
+
+## 2026-09-15 10:55 — Bộ lọc nhiệm vụ = Phạm vi xưởng Dashboard
+
+- AI: Cursor. Panel `/sx/project-tasks` dùng `WorkshopScopeFields` (xưởng +
+  công ty đặt hàng). API `deal_company_id`. File:
+  `ProjectTasksOverviewPage.jsx`, `ProjectTasksFilterPanel.jsx`,
+  `WorkshopDashboardFilterPanel.jsx`, `workTasks.js`.
+
+## 2026-09-15 10:52 — Menu SX: Dashboard
+
+- AI: Cursor. Nhãn sidebar `/sx/dashboard` «Deal vào xưởng» → Dashboard.
+  File: `Sidebar.jsx`.
+
+## 2026-09-15 10:50 — Bộ lọc nhiệm vụ SX theo Dashboard
+
+- AI: Cursor. `/sx/project-tasks` dùng xưởng `for_module=production`
+  (Metalla/HCB/Phúc Đạt), KV+NV `for_module=production`, đồng bộ
+  `sx_dash_filters_v1`. File: `ProjectTasksOverviewPage.jsx`,
+  `ProjectTasksFilterPanel.jsx`, `crossWorkshopProduction.js`,
+  `WorkUnifiedFilterFields.jsx`, `Sidebar.jsx`.
+
+## 2026-09-15 10:35 — Tắt NextGo trên HST mặc định
+
+- AI: Cursor. `is_active=false` cho công ty nguồn
+  `87479a83-1145-43b7-b090-3e40812cb5a9` (tenant default).
+  Primary: `freeze-nextgo-source.js --apply`. Backup: MCP SQL.
+  Clone HST nextgo không đổi. Cache `/companies` ~120s.
+
+## 2026-09-15 10:15 — Bộ lọc NV: NV theo CT / khu vực
+
+- AI: Cursor. Danh sách người phụ trách lọc theo công ty và khu vực
+  (`crm_region_ids`). File: `ProjectTasksOverviewPage.jsx`,
+  `ProjectTasksFilterPanel.jsx`.
+
+## 2026-09-15 10:08 — Bộ lọc NV: chọn nhiều nhân viên
+
+- AI: Cursor. Người phụ trách trên panel nhiệm vụ dự án là checkbox,
+  chọn 1 hoặc nhiều. File: `ProjectTasksFilterPanel.jsx`,
+  `ProjectTasksOverviewPage.jsx`.
+
+## 2026-09-15 09:50 — Bộ lọc NV dự án: công ty / khu vực / nhân viên
+
+- AI: Cursor. Panel bộ lọc `/sx/project-tasks` nạp đủ CT/KV/NV; khu vực
+  SX lấy từ deal của dự án. File: `ProjectTasksOverviewPage.jsx`,
+  `ProjectTasksFilterPanel.jsx`, `workTasks.js`.
+
+## 2026-09-15 09:41 — Kanban SX: nút NV to, tách riêng
+
+- AI: Cursor. Nút quản lý nhiệm vụ trên thẻ Kanban xưởng 32px, nền tím,
+  nằm riêng khỏi cụm icon nhỏ. File: `ProductionDashboard.jsx`.
+
 ## 2026-09-15 09:22 — Push main: Zalo nút gửi + FE local
 
 - AI: Cursor. Push `main`: nút Gửi Zalo mọi cột, tắt tự gửi; Work Unified

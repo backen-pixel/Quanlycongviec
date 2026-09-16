@@ -19,6 +19,7 @@ export const SX_NHAN_COT_LON = {
   duyet: 'Duyệt',
   gia_cong: 'Gia công',
   hoan_thien: 'Hoàn thiện',
+  dong_goi: 'Đóng gói',
   cong_no: 'Công nợ',
 };
 
@@ -29,9 +30,61 @@ export function nhanCotLon(key) {
   return SX_NHAN_COT_LON[k] || k;
 }
 
+/** Đưa tên tiếng Việt về slug sẵn có (`Tiếp nhận` → `tiep_nhan`); tên tự đặt giữ nguyên. */
+export function khoaCotLonTuNhan(ten) {
+  const t = String(ten || '').trim();
+  if (!t) return '';
+  if (SX_NHAN_COT_LON[t]) return t;
+  const hit = Object.entries(SX_NHAN_COT_LON).find(([, v]) => v === t);
+  return hit ? hit[0] : t;
+}
+
 export function khoaNhom(stage) {
   const k = String(stage?.group_key || '').trim();
   return k || `__rieng__${stage?.id}`;
+}
+
+/** Số thứ tự cột lớn do user đặt (`group_sort`). Null = chưa tùy chỉnh. */
+export function thuTuNhom(g) {
+  if (Number.isFinite(Number(g?.thuTu)) && Number(g.thuTu) > 0) return Number(g.thuTu);
+  const ds = Array.isArray(g?.ds) ? g.ds : (Array.isArray(g?.cotNho) ? g.cotNho : []);
+  const nums = ds
+    .map((x) => Number(x?.group_sort))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  return nums.length ? Math.min(...nums) : null;
+}
+
+/**
+ * Thứ tự cột lớn: `group_sort` nếu đã tùy chỉnh trên trang Cài đặt pipeline.
+ * Chưa đặt thì xếp theo order_index cột nhỏ — riêng Đóng gói luôn sau Hoàn thiện
+ * (cột «Vệ sinh đóng gói» có thể đứng trước «Chờ giao hàng»).
+ */
+export function sapXepNhomCotLon(nhom) {
+  const ds = Array.isArray(nhom) ? nhom : [];
+  const withThuTu = ds.map((g) => ({ ...g, thuTu: thuTuNhom(g) }));
+  const hasCustom = withThuTu.some((g) => Number.isFinite(g.thuTu) && g.thuTu > 0);
+  if (hasCustom) {
+    return withThuTu.sort((a, b) => {
+      const aRieng = String(a.key || '').startsWith('__rieng__');
+      const bRieng = String(b.key || '').startsWith('__rieng__');
+      if (!aRieng && !bRieng) {
+        const ta = Number.isFinite(a.thuTu) && a.thuTu > 0 ? a.thuTu : 9999;
+        const tb = Number.isFinite(b.thuTu) && b.thuTu > 0 ? b.thuTu : 9999;
+        if (ta !== tb) return ta - tb;
+      }
+      return Number(a?.moc ?? 9999) - Number(b?.moc ?? 9999);
+    });
+  }
+  const mocHt = withThuTu.find((g) => g.key === 'hoan_thien');
+  const mocHoanThien = mocHt != null ? Number(mocHt.moc) : null;
+  const mocHienThi = (g) => {
+    const m = Number(g?.moc ?? 9999);
+    if (g?.key === 'dong_goi' && mocHoanThien != null && m <= mocHoanThien) {
+      return mocHoanThien + 0.5;
+    }
+    return m;
+  };
+  return [...withThuTu].sort((a, b) => mocHienThi(a) - mocHienThi(b));
 }
 
 /** Gom stage theo group_key; cột lớn xếp theo order_index nhỏ nhất. */
@@ -46,18 +99,17 @@ export function gomCotTheoNhom(pipeline) {
     }
     nhom[chiMuc.get(key)].cotNho.push(stage);
   });
-  return nhom
-    .map((g) => ({
-      ...g,
-      nhan: nhanCotLon(g.key) || g.cotNho[0]?.name || 'Khác',
-      riengLe: g.cotNho.length === 1,
-      soDuAn: g.cotNho.reduce((a, c) => a + (c.items?.length || 0), 0),
-      // Xếp theo order_index NHỎ NHẤT chứ không theo thứ tự gặp: board Cánh kính có nhóm
-      // xen kẽ — «vệ sinh đóng gói» (cột 7) thuộc Hoàn thiện, «thu tiền» (cột 8) thuộc
-      // Công nợ — xếp theo thứ tự gặp sẽ ra sai giai đoạn.
-      moc: Math.min(...g.cotNho.map((c) => Number(c?.order_index ?? 9999))),
-    }))
-    .sort((a, b) => a.moc - b.moc);
+  return sapXepNhomCotLon(nhom.map((g) => ({
+    ...g,
+    nhan: nhanCotLon(g.key) || g.cotNho[0]?.name || 'Khác',
+    riengLe: String(g.key || '').startsWith('__rieng__'),
+    chiMotCot: !String(g.key || '').startsWith('__rieng__') && g.cotNho.length === 1,
+    soDuAn: g.cotNho.reduce((a, c) => a + (c.items?.length || 0), 0),
+    // Xếp theo order_index NHỎ NHẤT chứ không theo thứ tự gặp: board Cánh kính có nhóm
+    // xen kẽ — «vệ sinh đóng gói» (cột 7) thuộc Hoàn thiện, «thu tiền» (cột 8) thuộc
+    // Công nợ — xếp theo thứ tự gặp sẽ ra sai giai đoạn.
+    moc: Math.min(...g.cotNho.map((c) => Number(c?.order_index ?? 9999))),
+  })));
 }
 
 /** Có đáng bật nút Gộp không — chỉ khi thật sự có nhóm nhiều hơn 1 cột. */
@@ -67,12 +119,17 @@ export function coTheGopCot(pipeline) {
 
 /**
  * Trả về mảng pipeline đã gộp để đưa thẳng vào KanbanView.
- * Nhóm đang mở (hoặc chỉ có 1 cột) giữ nguyên các cột nhỏ; nhóm đang thu thành 1 cột ảo.
+ * Nhóm đang mở giữ nguyên các cột nhỏ; nhóm đang thu thành 1 cột ảo.
+ * Cột lớn chỉ có 1 cột nhỏ: giữ cột thật (kéo thả được) nhưng hiện tên cột lớn.
  */
 export function gopPipeline(pipeline, nhomDangMo) {
   const mo = nhomDangMo instanceof Set ? nhomDangMo : new Set(nhomDangMo || []);
   return gomCotTheoNhom(pipeline).flatMap((g) => {
     if (g.riengLe) return g.cotNho;
+    if (g.chiMotCot) {
+      const c = g.cotNho[0] || {};
+      return [{ ...c, name: g.nhan }];
+    }
     if (mo.has(g.key)) {
       // Nhóm ĐANG MỞ: giữ nguyên cột nhỏ nhưng gắn dấu để KanbanView bọc chúng
       // vào một khung CỘT LỚN (giai đoạn nối tiếp) — bên trong là việc song song.

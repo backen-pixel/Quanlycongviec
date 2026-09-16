@@ -35,6 +35,35 @@ export function assignmentsPathForModule(pageModule) {
   return '/crm/assignments';
 }
 
+export function projectDetailPathForModule(pageModule, projectId) {
+  const id = String(projectId || '').trim();
+  if (!id) return null;
+  const mod = normalizeAssignmentPageModule(pageModule);
+  if (mod === 'logistics') return `/vc/projects/${id}`;
+  if (mod === 'production') return `/sx/projects/${id}`;
+  return `/sx/projects/${id}`;
+}
+
+export function projectLogsHref(projectId) {
+  const id = String(projectId || '').trim();
+  if (!id) return null;
+  return `/management/project-logs?project_id=${encodeURIComponent(id)}`;
+}
+
+/** Lọc Giao việc đúng một dự án (`?project_id=` + nhãn mã TB). */
+export function assignmentsHrefForProject(pageModule, { projectId, projectCode, leadId } = {}) {
+  const path = assignmentsPathForModule(pageModule);
+  const qs = new URLSearchParams();
+  const pid = String(projectId || '').trim();
+  const code = String(projectCode || '').trim();
+  const lid = String(leadId || '').trim();
+  if (pid) qs.set('project_id', pid);
+  if (code) qs.set('project', code);
+  if (lid && !pid) qs.set('lead_id', lid);
+  const s = qs.toString();
+  return s ? `${path}?${s}` : path;
+}
+
 /** URL mở đúng nhiệm vụ nguồn — luôn theo module trang Giao việc hiện tại. */
 export function buildAssignmentSourceHref(item, pageModule = 'crm') {
   const lead = item?.lead;

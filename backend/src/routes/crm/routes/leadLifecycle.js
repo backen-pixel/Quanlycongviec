@@ -637,6 +637,21 @@ r.get('/leads/:id/detail', async (req, res) => {
     } catch (_) {
       data.source_customer_deal = null;
     }
+    try {
+      const { data: zaloSends } = await supabase
+        .from('crm_zalo_stage_sends')
+        .select('msg_id, error_message, tracking_id, stage_id, updated_at')
+        .eq('lead_id', canonicalId)
+        .order('updated_at', { ascending: false })
+        .limit(20);
+      const row = (zaloSends || []).find((s) => s && String(s.msg_id || '').trim());
+      data.zalo_oa_sent = !!row;
+      data.zalo_oa_send = row || null;
+    } catch (e) {
+      console.warn('[crm/leads/:id/detail] zalo_oa_send:', e.message);
+      data.zalo_oa_sent = false;
+      data.zalo_oa_send = null;
+    }
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });

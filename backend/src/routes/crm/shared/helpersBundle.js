@@ -704,13 +704,19 @@ async function executeZaloDealStageNotify({
   }
 
   const { data: prevSend } = await supabase.from('crm_zalo_stage_sends')
-    .select('msg_id, error_message')
+    .select('msg_id, error_message, updated_at')
     .eq('lead_id', leadId)
     .eq('stage_id', stageId)
     .maybeSingle();
   if (!force && prevSend?.msg_id) {
     console.log('[Zalo OA] Đã gửi thành công trước đó cho lead+stage này');
-    return { ok: true, skipped: true, reason: 'already_sent', msg_id: prevSend.msg_id };
+    return {
+      ok: true,
+      skipped: true,
+      reason: 'already_sent',
+      msg_id: prevSend.msg_id,
+      updated_at: prevSend.updated_at || null,
+    };
   }
   /* Có error_message nhưng không msg_id → lần trước thất bại: cho gửi lại (sửa template/SĐT không cần xóa DB). */
 

@@ -3,19 +3,37 @@ import {
 } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
-  AlertTriangle, Bell, Building2, CalendarClock, CalendarDays, CalendarOff, Clock3, Factory, Loader2, RefreshCw, Search, Sun, Target, Truck, X,
+  AlertTriangle, Bell, CalendarClock, CalendarDays, CalendarOff, ClipboardList, Clock3, Factory, Loader2, RefreshCw, Search, Sun, Target, Truck, X,
 } from 'lucide-react';
 import api from '../lib/api';
 import { canSendTaskRemind, getDeepLink } from '../components/UnifiedTaskRow';
 import { AdvFilterButton } from '../components/SearchInlineFilterChips';
 import ProjectTasksFilterPanel from '../components/ProjectTasksFilterPanel';
+import {
+  filterWorkUnifiedStaff,
+  loadWorkUnifiedEmployees,
+  normalizeWorkUnifiedUserIds,
+  WORK_UNIFIED_REGION_NONE,
+} from '../components/WorkUnifiedFilterFields';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
+import WorkshopPipelineKanbanScroll from '../components/WorkshopPipelineKanbanScroll';
 import { useAuth } from '../lib/auth';
-import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
+import { isAdminLike, isCompanyScopedAdmin, isSystemAdmin } from '../lib/adminRole';
 import { peekCompaniesPrefetch, prefetchCompanies } from '../lib/companiesPrefetch';
 import { resolveDefaultCrmAdminCompanyId, setStoredCrmFilterCompanyId } from '../lib/crmCompanyFilter';
+import {
+  canPickWorkshopCompany,
+  isMetallaOrHucabiCompany,
+  isMetallaOrHucabiCompanyId,
+  patchSxDashPersisted,
+  productionCreateCompanyOptions,
+  readSxDashPersisted,
+  shouldShowDealCompanyFilter,
+  workshopCompanyPickerList,
+} from '../lib/crossWorkshopProduction';
 import { crmDeadlineBucketFromTs } from '../lib/crmLeadDeadlineDisplay';
 import { avatarColor, formatDate, getStaffInitials } from '../lib/utils';
+import { assignmentsHrefForProject } from '../lib/assignmentSourceLink';
 
 const MODULES = [
   { key: 'crm', label: 'CRM', icon: Target, kinds: new Set(['CRM-Deal', 'CRM-Lead']) },
@@ -103,15 +121,25 @@ function projectLabel(task) {
   return code || name || task?.lead_title || 'Chưa gắn dự án';
 }
 
+function assignmentPageModuleOf(task) {
+  const moduleKey = task?._module?.key || '';
+  if (moduleKey === 'vc') return 'logistics';
+  if (moduleKey === 'crm') return 'crm';
+  return 'production';
+}
+
 function overviewCardHref(task) {
   const projectId = String(task?.project_id || '').trim();
-  const moduleKey = task?._module?.key || '';
+  const pageModule = assignmentPageModuleOf(task);
   if (projectId) {
-    if (moduleKey === 'vc') return `/vc/projects/${projectId}`;
-    if (moduleKey === 'crm' && task.lead_id) return `/crm/leads/${task.lead_id}`;
-    return `/sx/projects/${projectId}`;
+    return assignmentsHrefForProject(pageModule, {
+      projectId,
+      projectCode: String(task?.project_code || '').trim(),
+    });
   }
-  if (task?.lead_id) return `/crm/leads/${task.lead_id}`;
+  if (task?.lead_id) {
+    return assignmentsHrefForProject(pageModule, { leadId: task.lead_id });
+  }
   return getDeepLink(task);
 }
 
@@ -216,21 +244,35 @@ const TaskCard = memo(function TaskCard({ task, canRemind, showModule }) {
       data-project-task-card={task.id}
       className={`rounded-lg border border-gray-100 bg-white p-2.5 shadow-sm hover:border-blue-200 hover:shadow transition-all ${href ? 'cursor-pointer' : ''}`}
     >
-      {href ? <Link to={href} className="block">{body}</Link> : body}
+      {href ? (
+        <Link to={href} className="block" title="Mở Giao việc Sản xuất của dự án">{body}</Link>
+      ) : body}
       <div className="mt-2 pt-2 border-t border-gray-50 min-h-7 flex items-center gap-2">
         {href ? <Link to={href} className="flex items-center gap-1.5 min-w-0 flex-1">{personRow}</Link> : personRow}
-        {canRemind && (
-          <button
-            type="button"
-            onClick={handleRemind}
-            disabled={reminding || reminded || !task.category_id}
-            className="ml-auto inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 text-[10px] font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-default disabled:opacity-60"
-            title="Gửi thông báo nhắc người chịu trách nhiệm hoàn thành danh mục này"
-          >
-            {reminding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bell className="h-3 w-3" />}
-            {reminded ? 'Đã nhắc' : reminding ? 'Đang gửi' : 'Nhắc'}
-          </button>
-        )}
+        <div className="ml-auto flex items-center gap-1 shrink-0">
+          {href && (
+            <Link
+              to={href}
+              className="inline-flex h-7 items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 text-[10px] font-semibold text-indigo-800 hover:bg-indigo-100"
+              title="Giao việc Sản xuất của dự án"
+            >
+              <ClipboardList className="h-3 w-3" />
+              Công việc
+            </Link>
+          )}
+          {canRemind && (
+            <button
+              type="button"
+              onClick={handleRemind}
+              disabled={reminding || reminded || !task.category_id}
+              className="inline-flex h-7 items-center gap-1 rounded-md border border-amber-200 bg-amber-50 px-2 text-[10px] font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-default disabled:opacity-60"
+              title="Gửi thông báo nhắc người chịu trách nhiệm hoàn thành danh mục này"
+            >
+              {reminding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Bell className="h-3 w-3" />}
+              {reminded ? 'Đã nhắc' : reminding ? 'Đang gửi' : 'Nhắc'}
+            </button>
+          )}
+        </div>
       </div>
     </article>
   );
@@ -277,7 +319,16 @@ const KanbanColumn = memo(function KanbanColumn({
   );
 });
 
-function defaultCompanyId(list, user, canPickCompany) {
+function defaultCompanyId(list, user, canPickCompany, workshopMode = false) {
+  if (workshopMode) {
+    const saved = String(readSxDashPersisted()?.filterCompany || '').trim();
+    if (saved && list.some((company) => String(company.id) === saved)) return saved;
+    const preferred = list.find((company) => isMetallaOrHucabiCompany(company));
+    if (preferred?.id) return String(preferred.id);
+    const ownId = user?.company_id != null ? String(user.company_id).trim() : '';
+    if (ownId && list.some((company) => String(company.id) === ownId)) return ownId;
+    return list[0]?.id ? String(list[0].id) : '';
+  }
   if (canPickCompany) return resolveDefaultCrmAdminCompanyId(list) || (list[0]?.id ? String(list[0].id) : '');
   const ownId = user?.company_id != null ? String(user.company_id).trim() : '';
   if (ownId && list.some((company) => String(company.id) === ownId)) return ownId;
@@ -289,10 +340,14 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = isAdminLike(user);
   const isCompanyScoped = isCompanyScopedAdmin(user);
-  const canPickCompany = isAdmin && !isCompanyScoped;
   const fixedModuleKey = MODULES.some((module) => module.key === fixedModule) ? fixedModule : '';
+  const workshopMode = fixedModuleKey === 'sx';
+  const companiesModule = workshopMode ? 'production' : '';
+  const staffFilterModule = workshopMode ? 'production' : 'all';
+  const canPickCompany = workshopMode
+    ? canPickWorkshopCompany(user, isAdmin, isCompanyScoped)
+    : (isAdmin && !isCompanyScoped);
   const fixedModuleConfig = MODULES.find((module) => module.key === fixedModuleKey) || null;
-  const FixedModuleIcon = fixedModuleConfig?.icon;
   const moduleParam = searchParams.get('module') || 'all';
   const projectFilter = String(searchParams.get('project') || '').trim();
   const projectCodeParam = String(searchParams.get('code') || '').trim();
@@ -306,9 +361,11 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     || (moduleParam === 'all' || MODULES.some((m) => m.key === moduleParam) ? moduleParam : 'all');
   const [tasks, setTasks] = useState([]);
   const [stats, setStats] = useState({ total: 0, warning: 0, overdue: 0, by_module: {} });
-  const [companies, setCompanies] = useState(() => peekCompaniesPrefetch() || []);
-  const [companiesReady, setCompaniesReady] = useState(() => !!(peekCompaniesPrefetch() || []).length);
+  const [companies, setCompanies] = useState(() => peekCompaniesPrefetch(companiesModule) || []);
+  const [companiesReady, setCompaniesReady] = useState(() => !!(peekCompaniesPrefetch(companiesModule) || []).length);
   const [filterOptions, setFilterOptions] = useState({ companies: [], regions: [] });
+  const [regions, setRegions] = useState([]);
+  const [staffUsers, setStaffUsers] = useState([]);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -316,35 +373,50 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
   const [riskFilter, setRiskFilter] = useState('all');
   const [progressFilter, setProgressFilter] = useState('all');
   const [companyFilter, setCompanyFilter] = useState(() => {
-    const prefetched = peekCompaniesPrefetch() || [];
-    return defaultCompanyId(prefetched, user, canPickCompany);
+    const prefetched = peekCompaniesPrefetch(companiesModule) || [];
+    return defaultCompanyId(prefetched, user, canPickCompany, workshopMode);
   });
   const [regionFilter, setRegionFilter] = useState('');
-  const [assigneeFilter, setAssigneeFilter] = useState('');
+  const [assigneeFilter, setAssigneeFilter] = useState([]);
   const [deadlineFrom, setDeadlineFrom] = useState('');
   const [deadlineTo, setDeadlineTo] = useState('');
+  const [filterDealCompany, setFilterDealCompany] = useState(() => (
+    workshopMode ? String(readSxDashPersisted()?.filterDealCompany || '') : ''
+  ));
+  const [clientCompaniesForDeal, setClientCompaniesForDeal] = useState([]);
   const canRemind = canSendTaskRemind(user);
   const applyCompany = useCallback((value) => {
     const next = String(value || '');
     setCompanyFilter(next);
     setRegionFilter('');
-    if (canPickCompany && next) setStoredCrmFilterCompanyId(next);
+    setAssigneeFilter([]);
+    if (workshopMode) {
+      patchSxDashPersisted({ filterCompany: next, filterAllWorkshops: !next });
+    } else if (canPickCompany && next) {
+      setStoredCrmFilterCompanyId(next);
+    }
     if (projectFilter) {
       const nextParams = new URLSearchParams(searchParams);
       nextParams.delete('project');
       nextParams.delete('code');
       setSearchParams(nextParams, { replace: true });
     }
-  }, [canPickCompany, projectFilter, searchParams, setSearchParams]);
+  }, [canPickCompany, projectFilter, searchParams, setSearchParams, workshopMode]);
+
+  const applyDealCompany = useCallback((value) => {
+    const next = String(value || '');
+    setFilterDealCompany(next);
+    if (workshopMode) patchSxDashPersisted({ filterDealCompany: next });
+  }, [workshopMode]);
 
   useEffect(() => {
     let cancelled = false;
-    prefetchCompanies(api).then((list) => {
+    prefetchCompanies(api, { forModule: companiesModule }).then((list) => {
       if (cancelled) return;
       setCompanies(list);
       setCompanyFilter((prev) => {
         if (prev && list.some((company) => String(company.id) === String(prev))) return prev;
-        return defaultCompanyId(list, user, canPickCompany);
+        return defaultCompanyId(list, user, canPickCompany, workshopMode);
       });
       setCompaniesReady(true);
     }).catch(() => {
@@ -354,10 +426,68 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       }
     });
     return () => { cancelled = true; };
-  }, [canPickCompany, user]);
+  }, [canPickCompany, companiesModule, user, workshopMode]);
+
+  const showDealCompanyFilter = workshopMode && shouldShowDealCompanyFilter(user, companies);
+  const canPickDealCompany = workshopMode && isSystemAdmin(user) && showDealCompanyFilter;
+  const clientCompaniesWorkshopId = useMemo(() => {
+    if (!workshopMode) return '';
+    if (companyFilter && isMetallaOrHucabiCompanyId(companyFilter, companies, user)) {
+      return String(companyFilter);
+    }
+    const opts = productionCreateCompanyOptions(companies);
+    return opts[0]?.id ? String(opts[0].id) : String(companyFilter || '');
+  }, [workshopMode, companyFilter, companies, user]);
+  const dealCompanyOptions = clientCompaniesForDeal;
+  const clientCrmDealOptions = useMemo(
+    () => dealCompanyOptions.filter((c) => c.client_company_id),
+    [dealCompanyOptions],
+  );
+  const clientExternalDealOptions = useMemo(
+    () => dealCompanyOptions.filter((c) => !c.client_company_id),
+    [dealCompanyOptions],
+  );
+  const resolvedDealCompanyPick = useMemo(() => {
+    if (!filterDealCompany) return null;
+    return dealCompanyOptions.find((c) => String(c.id) === String(filterDealCompany)) || null;
+  }, [filterDealCompany, dealCompanyOptions]);
+  const dealCompanyParam = useMemo(() => {
+    if (!workshopMode) return '';
+    if (resolvedDealCompanyPick?.client_company_id) return String(resolvedDealCompanyPick.client_company_id);
+    if (filterDealCompany && !String(filterDealCompany).startsWith('ext:')) return String(filterDealCompany);
+    return '';
+  }, [workshopMode, resolvedDealCompanyPick, filterDealCompany]);
+  const selectedDealCompanyLabel = resolvedDealCompanyPick?.short_name
+    || resolvedDealCompanyPick?.name
+    || '';
+
+  useEffect(() => {
+    const cid = String(clientCompaniesWorkshopId || '').trim();
+    if (!cid) {
+      setClientCompaniesForDeal([]);
+      return undefined;
+    }
+    let cancelled = false;
+    api.get('/production/client-companies', { params: { company_id: cid } })
+      .then((res) => {
+        if (!cancelled) setClientCompaniesForDeal(Array.isArray(res.data?.items) ? res.data.items : []);
+      })
+      .catch(() => {
+        if (!cancelled) setClientCompaniesForDeal([]);
+      });
+    return () => { cancelled = true; };
+  }, [clientCompaniesWorkshopId]);
+
+  useEffect(() => {
+    if (!filterDealCompany || !dealCompanyOptions.length || !isSystemAdmin(user)) return;
+    if (!dealCompanyOptions.some((c) => String(c.id) === String(filterDealCompany))) {
+      applyDealCompany('');
+    }
+  }, [dealCompanyOptions, filterDealCompany, user, applyDealCompany]);
 
   const load = useCallback(async () => {
     if (!companiesReady) return;
+    if (workshopMode && !projectFilter && !companyFilter) return;
     setLoading(true);
     setError('');
     try {
@@ -365,6 +495,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       if (fixedModuleKey) params.module = fixedModuleKey;
       if (projectFilter) params.project_id = projectFilter;
       else if (companyFilter) params.company_id = companyFilter;
+      if (workshopMode && dealCompanyParam) params.deal_company_id = dealCompanyParam;
       const res = await api.get('/work-tasks/project-overview', { params });
       setTasks(res.data?.tasks || []);
       setStats(res.data?.stats || { total: 0, warning: 0, overdue: 0, by_module: {} });
@@ -374,7 +505,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     } finally {
       setLoading(false);
     }
-  }, [companiesReady, companyFilter, fixedModuleKey, projectFilter]);
+  }, [companiesReady, companyFilter, dealCompanyParam, fixedModuleKey, projectFilter, workshopMode]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -390,48 +521,98 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       .filter((task) => task._module);
   }, [tasks]);
 
-  const assigneeOptions = useMemo(() => {
-    const byId = new Map();
-    prepared.forEach((task) => {
-      const id = String(task.effective_assignee_id || '');
-      const name = task.effective_assignee_name || task.assignee_name;
-      if (id && name) byId.set(id, name);
-    });
-    return [...byId.entries()]
-      .map(([id, name]) => ({ id, name }))
-      .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
-  }, [prepared]);
-  const moduleScopedTasks = useMemo(() => (
-    activeModule === 'all'
-      ? prepared
-      : prepared.filter((task) => task._module.key === activeModule)
-  ), [activeModule, prepared]);
   const companyOptions = useMemo(() => {
     const fromPrefetch = companies.length ? companies : (filterOptions.companies || []);
-    return [...fromPrefetch].sort((a, b) => (
+    const list = workshopMode
+      ? workshopCompanyPickerList({
+        companies: fromPrefetch,
+        user,
+        isAdmin,
+        isCompanyScopedAdmin: isCompanyScoped,
+      })
+      : fromPrefetch;
+    return [...list].sort((a, b) => (
       String(a.short_name || a.name || '').localeCompare(String(b.short_name || b.name || ''), 'vi')
     ));
-  }, [companies, filterOptions.companies]);
-  const regionOptions = useMemo(() => {
-    const availableIds = new Set(
-      moduleScopedTasks.map((task) => String(task.region_id || '')).filter(Boolean),
-    );
-    return (filterOptions.regions || [])
-      .filter((region) => availableIds.has(String(region.id)))
-      .filter((region) => !companyFilter || String(region.company_id || '') === companyFilter)
-      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'vi'));
-  }, [companyFilter, filterOptions.regions, moduleScopedTasks]);
+  }, [companies, filterOptions.companies, isAdmin, isCompanyScoped, user, workshopMode]);
+  const staffCompanyId = canPickCompany
+    ? companyFilter
+    : String(user?.company_id || companyFilter || '');
 
   useEffect(() => {
-    if (regionFilter && !regionOptions.some((region) => String(region.id) === regionFilter)) {
+    let cancelled = false;
+    const params = {};
+    if (staffCompanyId) params.company_id = staffCompanyId;
+    else if (!workshopMode && canPickCompany && companies.length > 0) {
+      params.company_ids = companies.map((company) => company.id).join(',');
+    } else {
+      setRegions([]);
+      return undefined;
+    }
+    if (staffFilterModule !== 'all') params.for_module = staffFilterModule;
+    api.get('/crm/company-regions', { params })
+      .then((res) => {
+        if (cancelled) return;
+        setRegions((Array.isArray(res.data) ? res.data : []).filter((region) => region.is_active !== false));
+      })
+      .catch(() => {
+        if (!cancelled) setRegions([]);
+      });
+    return () => { cancelled = true; };
+  }, [canPickCompany, companies, staffCompanyId, staffFilterModule, workshopMode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadWorkUnifiedEmployees({
+      companyId: staffCompanyId,
+      companies: companyOptions,
+      canPickCompany: workshopMode ? false : canPickCompany,
+      forModule: staffFilterModule,
+    }).then((list) => {
+      if (!cancelled) setStaffUsers(list);
+    }).catch(() => {
+      if (!cancelled) setStaffUsers([]);
+    });
+    return () => { cancelled = true; };
+  }, [canPickCompany, companyOptions, staffCompanyId, staffFilterModule, workshopMode]);
+
+  const assigneeOptions = useMemo(() => (
+    filterWorkUnifiedStaff(staffUsers, {
+      companyId: companyFilter,
+      regionId: regionFilter,
+    })
+      .map((userRow) => ({
+        id: String(userRow.id),
+        name: String(userRow.full_name || '').trim(),
+        company_name: userRow.company_name || '',
+      }))
+      .filter((person) => person.id && person.name)
+      .sort((a, b) => a.name.localeCompare(b.name, 'vi'))
+  ), [companyFilter, regionFilter, staffUsers]);
+  const regionOptions = useMemo(() => {
+    const source = regions.length ? regions : (filterOptions.regions || []);
+    return source
+      .filter((region) => !companyFilter || String(region.company_id || '') === companyFilter)
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'vi'));
+  }, [companyFilter, filterOptions.regions, regions]);
+
+  useEffect(() => {
+    if (
+      regionFilter
+      && regionFilter !== WORK_UNIFIED_REGION_NONE
+      && !regionOptions.some((region) => String(region.id) === regionFilter)
+    ) {
       setRegionFilter('');
     }
   }, [regionFilter, regionOptions]);
 
   useEffect(() => {
-    setRegionFilter('');
-    setAssigneeFilter('');
-  }, [companyFilter]);
+    const selected = normalizeWorkUnifiedUserIds(assigneeFilter);
+    if (!selected.length || !assigneeOptions.length) return;
+    const allowed = new Set(assigneeOptions.map((person) => String(person.id)));
+    const next = selected.filter((id) => allowed.has(String(id)));
+    if (next.length !== selected.length) setAssigneeFilter(next);
+  }, [assigneeFilter, assigneeOptions]);
 
   const normalizedQuery = query.trim().toLowerCase();
   const visibleTasks = useMemo(() => prepared.filter((task) => {
@@ -442,19 +623,29 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       Number(task.child_completed || 0) <= 0
       || Number(task.child_completed || 0) >= Number(task.child_total || 0)
     )) return false;
-    if (regionFilter && String(task.region_id || '') !== regionFilter) return false;
-    if (assigneeFilter && String(task.effective_assignee_id || '') !== assigneeFilter) return false;
+    if (companyFilter && task.company_id && String(task.company_id) !== companyFilter) return false;
+    if (regionFilter === WORK_UNIFIED_REGION_NONE) {
+      if (task.region_id) return false;
+    } else if (regionFilter && String(task.region_id || '') !== regionFilter) return false;
+    const selectedAssignees = normalizeWorkUnifiedUserIds(assigneeFilter);
+    if (selectedAssignees.length) {
+      const taskPeople = new Set([
+        task.effective_assignee_id, task.assignee_id, task.module_owner_id,
+      ].map((id) => String(id || '')).filter(Boolean));
+      if (!selectedAssignees.some((id) => taskPeople.has(id))) return false;
+    }
     if (projectFilter && String(task.project_id || '') !== projectFilter) return false;
     const deadlineMs = task.deadline ? new Date(task.deadline).getTime() : null;
     if (deadlineFrom && (!deadlineMs || deadlineMs < new Date(`${deadlineFrom}T00:00:00`).getTime())) return false;
     if (deadlineTo && (!deadlineMs || deadlineMs > new Date(`${deadlineTo}T23:59:59.999`).getTime())) return false;
     if (!normalizedQuery) return true;
-    return [
+    const hay = [
       task.title, task.project_code, task.project_name, task.lead_title,
       task.assignee_name, task.effective_assignee_name, task.company_name, task.region_name,
-    ].filter(Boolean).join(' ').toLowerCase().includes(normalizedQuery);
+    ].filter(Boolean).join(' ').toLowerCase();
+    return normalizedQuery.split(/\s+/).filter(Boolean).every((token) => hay.includes(token));
   }), [
-    activeModule, assigneeFilter, deadlineFrom, deadlineTo, normalizedQuery,
+    activeModule, assigneeFilter, companyFilter, deadlineFrom, deadlineTo, normalizedQuery,
     prepared, progressFilter, projectFilter, regionFilter, riskFilter,
   ]);
 
@@ -470,11 +661,28 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     ...Object.fromEntries(COLUMNS.map((column) => [column.key, tasksByBucket[column.key]?.length || 0])),
   }), [tasksByBucket, visibleTasks.length]);
 
+  const selectedCompany = companyOptions
+    .find((company) => String(company.id) === companyFilter);
+  const selectedRegion = regionOptions
+    .find((region) => String(region.id) === regionFilter);
+  const lockedCompanyLabel = selectedCompany?.short_name
+    || selectedCompany?.name
+    || 'Công ty của bạn';
+  const companyFilterActive = canPickCompany
+    && companyFilter !== defaultCompanyId(companyOptions, user, canPickCompany, workshopMode);
+  const selectedAssignees = useMemo(() => {
+    const ids = normalizeWorkUnifiedUserIds(assigneeFilter);
+    const byId = new Map(assigneeOptions.map((person) => [String(person.id), person]));
+    return ids.map((id) => byId.get(id) || { id, name: id });
+  }, [assigneeFilter, assigneeOptions]);
+
   const activeAdvancedFilters = [
     riskFilter !== 'all',
     progressFilter !== 'all',
+    companyFilterActive,
+    !!filterDealCompany,
     !!regionFilter,
-    !!assigneeFilter,
+    selectedAssignees.length > 0,
     !!deadlineFrom,
     !!deadlineTo,
     !!projectFilter,
@@ -490,8 +698,10 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
   const resetAdvancedFilters = () => {
     setRiskFilter('all');
     setProgressFilter('all');
-    applyCompany(defaultCompanyId(companyOptions, user, canPickCompany));
-    setAssigneeFilter('');
+    applyCompany(defaultCompanyId(companyOptions, user, canPickCompany, workshopMode));
+    applyDealCompany('');
+    setAssigneeFilter([]);
+    setRegionFilter('');
     setDeadlineFrom('');
     setDeadlineTo('');
     if (projectFilter) clearProjectFilter();
@@ -503,12 +713,6 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     setSearchParams(next, { replace: true });
   };
 
-  const selectedCompany = companyOptions
-    .find((company) => String(company.id) === companyFilter);
-  const selectedRegion = (filterOptions.regions || [])
-    .find((region) => String(region.id) === regionFilter);
-  const selectedAssignee = assigneeOptions
-    .find((person) => String(person.id) === assigneeFilter);
   const projectChipLabel = projectCodeParam
     || prepared.find((task) => String(task.project_id || '') === projectFilter)?.project_code
     || projectFilter;
@@ -538,21 +742,32 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       label: `Tiến độ: ${progressFilter === 'not_started' ? 'Chưa bắt đầu' : 'Đang làm'}`,
       clear: () => setProgressFilter('all'),
     },
-    canPickCompany && companyFilter && companyFilter !== defaultCompanyId(companyOptions, user, canPickCompany) && {
+    companyFilterActive && {
       key: 'company',
-      label: `Công ty: ${selectedCompany?.short_name || selectedCompany?.name || companyFilter}`,
-      clear: () => applyCompany(defaultCompanyId(companyOptions, user, canPickCompany)),
+      label: companyFilter
+        ? `${workshopMode ? 'Xưởng' : 'Công ty'}: ${selectedCompany?.short_name || selectedCompany?.name || companyFilter}`
+        : 'Công ty: Tất cả',
+      clear: () => applyCompany(defaultCompanyId(companyOptions, user, canPickCompany, workshopMode)),
+    },
+    filterDealCompany && showDealCompanyFilter && {
+      key: 'deal-company',
+      label: `Đặt hàng: ${selectedDealCompanyLabel || filterDealCompany}`,
+      clear: () => applyDealCompany(''),
     },
     regionFilter && {
       key: 'region',
-      label: `Khu vực: ${selectedRegion?.name || regionFilter}`,
+      label: regionFilter === WORK_UNIFIED_REGION_NONE
+        ? 'Khu vực: Chưa gán'
+        : `Khu vực: ${selectedRegion?.name || regionFilter}`,
       clear: () => setRegionFilter(''),
     },
-    assigneeFilter && {
-      key: 'assignee',
-      label: `Nhân viên: ${selectedAssignee?.name || assigneeFilter}`,
-      clear: () => setAssigneeFilter(''),
-    },
+    ...selectedAssignees.map((person) => ({
+      key: `assignee:${person.id}`,
+      label: `Nhân viên: ${person.name}`,
+      clear: () => setAssigneeFilter((prev) => (
+        normalizeWorkUnifiedUserIds(prev).filter((id) => String(id) !== String(person.id))
+      )),
+    })),
     deadlineFrom && {
       key: 'deadline-from',
       label: `Hạn từ: ${formatDate(deadlineFrom)}`,
@@ -586,21 +801,6 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {canPickCompany && companyOptions.length > 0 && (
-              <div className="relative">
-                <Building2 className="h-4 w-4 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                <select
-                  value={companyFilter}
-                  onChange={(event) => applyCompany(event.target.value)}
-                  className="h-9 pl-8 pr-3 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
-                >
-                  <option value="">Tất cả công ty</option>
-                  {companyOptions.map((company) => (
-                    <option key={company.id} value={company.id}>{company.short_name || company.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
             <AdvFilterButton
               open={filtersOpen}
               active={activeAdvancedFilters > 0}
@@ -661,9 +861,22 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
           setRiskFilter={setRiskFilter}
           progressFilter={progressFilter}
           setProgressFilter={setProgressFilter}
+          canPickCompany={canPickCompany}
+          lockedCompanyLabel={lockedCompanyLabel}
+          companyFilterActive={companyFilterActive}
           companyFilter={companyFilter}
           setCompanyFilter={applyCompany}
           companyOptions={companyOptions}
+          allowAllCompanies={!workshopMode}
+          showWorkshopScope={workshopMode}
+          showDealCompanyFilter={showDealCompanyFilter}
+          canPickDealCompany={canPickDealCompany}
+          filterDealCompany={filterDealCompany}
+          onDealCompanyChange={applyDealCompany}
+          clientCompaniesWorkshopId={clientCompaniesWorkshopId}
+          clientCrmDealOptions={clientCrmDealOptions}
+          clientExternalDealOptions={clientExternalDealOptions}
+          selectedDealCompanyLabel={selectedDealCompanyLabel}
           regionFilter={regionFilter}
           setRegionFilter={setRegionFilter}
           regionOptions={regionOptions}
@@ -695,14 +908,8 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
         ))}
       </div>
 
-      <div className="rounded-xl border border-gray-100 bg-white p-3 shadow-sm flex items-center gap-3 flex-wrap">
-        {fixedModuleConfig ? (
-          <div className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-semibold text-blue-700">
-            {FixedModuleIcon && <FixedModuleIcon className="h-3.5 w-3.5" />}
-            {fixedModuleConfig.label} · {visibleStats.total}
-          </div>
-        ) : (
-          <div className="flex items-center gap-1.5 overflow-x-auto">
+      {!fixedModuleConfig && (
+        <div className="flex items-center gap-1.5 overflow-x-auto">
           {[{ key: 'all', label: 'Tất cả module' }, ...MODULES].map((module) => {
             const Icon = module.icon;
             const count = module.key === 'all' ? stats.total : (stats.by_module?.[module.key] || 0);
@@ -722,16 +929,35 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
               </button>
             );
           })}
-          </div>
-        )}
-        <div className="relative flex-1 min-w-[220px] max-w-md ml-auto">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+        </div>
+      )}
+
+      <div className="rounded-xl border border-gray-100 bg-white p-3 shadow-sm">
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Tìm nhiệm vụ hoặc dự án…"
-            className="w-full h-9 pl-9 pr-3 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-blue-200"
+            placeholder="Bấm vào đây, gõ từng chữ để tìm mã TB, dự án, khách, SĐT…"
+            className="w-full h-10 pl-9 pr-24 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-300"
           />
+          <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1">
+            {normalizedQuery ? (
+              <span className="text-[11px] font-semibold tabular-nums text-slate-500">
+                {visibleStats.total}
+              </span>
+            ) : null}
+            {query ? (
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                className="p-1 rounded text-slate-400 hover:text-slate-700 cursor-pointer"
+                aria-label="Xóa tìm kiếm"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -744,18 +970,23 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
               : 'Đang tải nhiệm vụ dự án đang hoạt động…'}
         </div>
       ) : (
-        <div className="flex gap-3 overflow-x-auto pb-1 items-start [scrollbar-width:thin]">
-          {COLUMNS.map((column) => (
-            <KanbanColumn
-              key={column.key}
-              column={column}
-              tasks={tasksByBucket[column.key] || []}
-              focused={focusRisk === column.key}
-              canRemind={canRemind}
-              showModule={!fixedModuleKey}
-            />
-          ))}
-        </div>
+        <WorkshopPipelineKanbanScroll
+          cardSelector="[data-project-task-card]"
+          columnScrollMode="off"
+        >
+          <div className="flex min-w-max gap-3 items-start px-0.5">
+            {COLUMNS.map((column) => (
+              <KanbanColumn
+                key={column.key}
+                column={column}
+                tasks={tasksByBucket[column.key] || []}
+                focused={focusRisk === column.key}
+                canRemind={canRemind}
+                showModule={!fixedModuleKey}
+              />
+            ))}
+          </div>
+        </WorkshopPipelineKanbanScroll>
       )}
     </div>
   );

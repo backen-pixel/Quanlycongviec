@@ -145,7 +145,8 @@ async function enrichTaskModuleOwners(rows, {
 
   const projectIds = [...new Set(tasks.map((t) => t.project_id).filter(Boolean).map(String))];
   const leadIds = [...new Set(tasks.map((t) => t.lead_id).filter(Boolean).map(String))];
-  const [projects, leads, productionStaff] = await Promise.all([
+  const leadColumns = 'id, assigned_to, lead_owner_id, project_id, company_id, region_id';
+  const [projects, leadsFromIds, leadsByProject, productionStaff] = await Promise.all([
     providedProjects
       ? Promise.resolve(providedProjects)
       : projectIds.length
@@ -165,9 +166,21 @@ async function enrichTaskModuleOwners(rows, {
       : leadIds.length
       ? fetchAllByIdsParallel({
         table: 'crm_leads',
-        columns: 'id, assigned_to, lead_owner_id, project_id, company_id, region_id',
+        columns: leadColumns,
         key: 'id',
         ids: leadIds,
+        tune: (q) => q.order('id'),
+      })
+      : Promise.resolve([]),
+    // NV SX/VC thường không có lead_id; khu vực nằm trên deal gắn project_id.
+    providedLeads
+      ? Promise.resolve([])
+      : projectIds.length
+      ? fetchAllByIdsParallel({
+        table: 'crm_leads',
+        columns: leadColumns,
+        key: 'project_id',
+        ids: projectIds,
         tune: (q) => q.order('id'),
       })
       : Promise.resolve([]),
@@ -186,8 +199,28 @@ async function enrichTaskModuleOwners(rows, {
       : Promise.resolve([]),
   ]);
 
+  const leads = [];
+  const seenLeadIds = new Set();
+  for (const lead of [...(leadsFromIds || []), ...(leadsByProject || [])]) {
+    const id = String(lead?.id || '');
+    if (!id || seenLeadIds.has(id)) continue;
+    seenLeadIds.add(id);
+    leads.push(lead);
+  }
+
   const projectById = new Map((projects || []).map((p) => [String(p.id), p]));
-  const leadById = new Map((leads || []).map((l) => [String(l.id), l]));
+  const leadById = new Map(leads.map((l) => [String(l.id), l]));
+  const leadByProjectId = new Map();
+  leads.forEach((lead) => {
+    const pid = String(lead.project_id || '');
+    if (!pid) return;
+    const existing = leadByProjectId.get(pid);
+    if (!existing) {
+      leadByProjectId.set(pid, lead);
+      return;
+    }
+    if (!existing.region_id && lead.region_id) leadByProjectId.set(pid, lead);
+  });
   const companyIds = [...new Set((projects || []).map((p) => p.company_id).filter(Boolean).map(String))];
   const handoverRows = companyIds.length
     ? await fetchAllByIdsParallel({
@@ -289,7 +322,8 @@ async function enrichTaskModuleOwners(rows, {
     task.effective_assignee_name = visibleAssigneeId
       ? (nameById.get(visibleAssigneeId) || null)
       : (task.module_owner_name || null);
-    task.region_id = lead?.region_id || null;
+    const leadFromProject = task.project_id ? leadByProjectId.get(String(task.project_id)) : null;
+    task.region_id = lead?.region_id || leadFromProject?.region_id || null;
   }
   return tasks;
 }
@@ -494,8 +528,13 @@ async function finishProjectOverview(res, tasks, preloaded = null) {
     tasks,
     stats,
     filter_options: {
-      companies,
-      regions,
+      companies: preloaded?.companies?.length
+        ? (preloaded.companies.filter((row) => companyIds.includes(String(row.id))))
+        : companies,
+      // Đủ khu vực của các công ty đang có nhiệm vụ — không chỉ những KV đã gắn trên thẻ.
+      regions: preloaded?.regions?.length
+        ? preloaded.regions.filter((row) => companyIds.includes(String(row.company_id || '')))
+        : regions,
     },
   });
 }
@@ -504,6 +543,7 @@ r.get('/project-overview', async (req, res) => {
   try {
     const requestedProjectId = String(req.query.project_id || '').trim();
     const requestedCompany = String(req.query.company_id || '').trim();
+    const requestedDealCompany = String(req.query.deal_company_id || '').trim();
     const effectiveCompany = isSystemAdmin(req.user)
       ? (requestedCompany || null)
       : (req.user?.company_id || null);
@@ -569,7 +609,7 @@ r.get('/project-overview', async (req, res) => {
       needsVcStages
         ? supabase.from('logistics_pipeline_stages').select('id, name, order_index, bucket_slug')
         : Promise.resolve({ data: [], error: null }),
-      needsCrmLeads && projectIds.length
+      projectIds.length
         ? fetchAllByIdsParallel({
           table: 'crm_leads',
           columns: `
@@ -612,6 +652,15 @@ r.get('/project-overview', async (req, res) => {
 
     const sxStageById = new Map((sxStagesRes.data || []).map((stage) => [String(stage.id), stage]));
     const sxStagesList = sxStagesRes.data || [];
+    if (requestedDealCompany) {
+      const dealProjectIds = new Set(
+        (leads || [])
+          .filter((lead) => String(lead.company_id || '') === requestedDealCompany)
+          .map((lead) => String(lead.project_id || ''))
+          .filter(Boolean),
+      );
+      activeProjects = activeProjects.filter((project) => dealProjectIds.has(String(project.id)));
+    }
     const projectById = new Map(activeProjects.map((project) => [String(project.id), project]));
     const vcStageById = new Map((vcStagesRes.data || []).map((stage) => [String(stage.id), stage]));
     const productionProjectIds = activeProjects
@@ -741,7 +790,7 @@ r.get('/project-overview', async (req, res) => {
       .sort((a, b) => String(a.unified_id).localeCompare(String(b.unified_id)));
     await enrichTaskModuleOwners(childTasks, {
       projects: activeProjects,
-      leads: needsCrmLeads ? leads : null,
+      leads,
       productionStaff: productionStaffRows,
     });
 

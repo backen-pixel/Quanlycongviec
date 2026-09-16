@@ -1,6 +1,288 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-15 09:22 (UTC+7)
+Cập nhật: 2026-09-16 11:20 (UTC+7)
+
+## Quản lý nhiệm vụ — mũi tên cuộn Kanban
+
+Trạng thái: **FE local.**
+
+Trang `/sx/project-tasks` (và VC/CRM/tổng quan cùng component): mép
+trái/phải có mũi tên cuộn ngang giống Dashboard Kanban.
+
+Hoàn tác: revert `ProjectTasksOverviewPage.jsx`.
+
+## Kanban — nút Nhiệm vụ nổi trên thẻ
+
+Trạng thái: **FE local.**
+
+Thẻ SX / VC / Work Unified: nút **Nhiệm vụ** (chữ + icon) trên đầu
+thẻ, mở trang Quản lý nhiệm vụ của đúng dự án. Không còn icon ẩn
+dưới chân thẻ.
+
+Hoàn tác: revert `KanbanGotoProjectTasksBtn.jsx`,
+`ProductionDashboard.jsx`, `LogisticsDashboard.jsx`,
+`WorkUnifiedOverviewPage.jsx`.
+
+## Pipeline xưởng — thêm cột nhỏ trong thẻ cột chính
+
+Trạng thái: **FE + BE local.**
+
+Mỗi thẻ cột chính có nút **Thêm cột nhỏ**: nhập tên, tạo cột pipeline
+gắn sẵn `group_key` + tab đang chọn. POST nhận `group_sort`.
+
+Hoàn tác: revert `ProductionPipelineSettingsPage.jsx`, `production.js`.
+
+## Pipeline xưởng — kéo cột nhỏ giữa cột chính
+
+Trạng thái: **FE local.**
+
+Tab **Cột chính**: kéo cột nhỏ từ thẻ này sang thẻ kia (kể cả thả
+vào danh sách bên trong). Payload `nho:`/`lon:` + ref để không mất
+drop khi `dragEnd` chạy trước. Không đổi `order_index` cột nhỏ.
+
+Hoàn tác: revert `ProductionPipelineSettingsPage.jsx`.
+
+## Pipeline xưởng — trang setup cột chính
+
+Trạng thái: **FE local.**
+
+Trang `/sx/pipeline-settings` mặc định tab **Cột chính**: bảng thẻ
+theo tab Dashboard (Sản xuất / Công nợ). Cột chưa setup hiện thẻ
+nét đứt. Kéo cột nhỏ vào thẻ để gán. Tab **Cột nhỏ** / **Cài đặt**
+tách chi tiết và giờ deadline + NV.
+
+Hoàn tác: revert `ProductionPipelineSettingsPage.jsx`.
+
+## HCB — cột pipeline Đóng gói đủ loại
+
+Trạng thái: **DB primary/backup SQL 616.**
+
+Tủ bếp: cột Kanban **Đóng gói** (trước KCS), `group_key=dong_goi`,
+`is_packaging_done`. Cửa / Cánh kính giữ «Vệ sinh đóng gói».
+«ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG» trả về Hoàn thiện.
+
+Hoàn tác: SQL trong `616_hcb_dong_goi_pipeline_column.sql`.
+
+## HCB — hiện cột lớn Đóng gói đủ loại
+
+Trạng thái: **FE + DB primary/backup.**
+
+Kanban gộp: cột lớn chỉ 1 cột nhỏ vẫn hiện tên lớn (Đóng gói).
+Tủ bếp có cột pipeline Đóng gói (616); Cửa / Cánh kính từ 612.
+
+Hoàn tác: SQL trong `615_hcb_tubep_dong_goi_group_key.sql`; revert
+`sxGopCot.js`, `ProductionDashboard.jsx`.
+
+## Pipeline xưởng — tự thêm tab Kanban
+
+Trạng thái: **FE + BE local.**
+
+Nút **+ Tab** cạnh Sản xuất / Công nợ: đặt tên tab mới, gán cột lớn
+vào tab đó. Dashboard hiện mọi tab có cột. `board_tab` nhận tên tự
+đặt (không chỉ sx/cong_no). Tab trống xóa bằng ×.
+
+Hoàn tác: revert `sxTachCongNo.js`, `ProductionPipelineSettingsPage.jsx`,
+`ProductionDashboard.jsx`, `production.js`.
+
+## Pipeline xưởng — cột lớn theo tab Sản xuất / Công nợ
+
+Trạng thái: **FE + BE local; DB primary/backup `board_tab`.**
+
+Setup cột lớn chọn tab **Sản xuất** hoặc **Công nợ** (giống
+Dashboard). Cột gán vào tab nào thì Kanban hiện đúng tab đó.
+Cột `board_tab` (SQL 614). Cánh kính/Cửa: bấm «→ Công nợ» nếu
+muốn tách tab (mặc định vẫn trên Sản xuất như cũ).
+
+Hoàn tác: SQL `database/614_production_pipeline_board_tab.sql`;
+revert `sxTachCongNo.js`, `ProductionPipelineSettingsPage.jsx`,
+`productionPipelineSchema.js`, `workshopKanban.js`, `production.js`.
+
+## Pipeline xưởng — thêm cột lớn cả 2 tab
+
+Trạng thái: **FE local.**
+
+Form **Thêm cột lớn** (tên + chip + chọn cột pipeline) có trên tab
+Gộp cột và tab Cột pipeline.
+
+Hoàn tác: revert `ProductionPipelineSettingsPage.jsx`.
+
+## Pipeline xưởng — thêm cột lớn ngay danh sách
+
+Trạng thái: **FE local.**
+
+Khối «Cột lớn đang dùng»: form **Thêm cột lớn** (tên + chip gợi ý
++ chọn cột pipeline đưa vào). Không cần gán từng dòng bảng dưới.
+
+Hoàn tác: revert `ProductionPipelineSettingsPage.jsx`.
+
+## Pipeline xưởng — ô Cột lớn thành dropdown
+
+Trạng thái: **FE local.**
+
+Bảng Gộp cột (và form sửa cột): chọn **Tiếp nhận / Hoàn thiện…**
+thay vì gõ slug `tiep_nhan`. Lưu ngay khi chọn; «+ Tên mới…» nếu
+cần tên khác.
+
+Hoàn tác: revert `ProductionPipelineSettingsPage.jsx`, `sxGopCot.js`.
+
+## Pipeline xưởng — sắp xếp + sửa cột lớn dễ hơn
+
+Trạng thái: **FE + BE local; DB primary/backup đã có `group_sort`.**
+
+Tab «Gộp cột»: cột lớn thành danh sách (kéo / ↑↓), sửa tên ngay trên
+thẻ, hiện cột nhỏ bên trong, lọc NV. Thứ tự lưu `group_sort` — không
+đổi `order_index` cột nhỏ. Kanban gộp đọc cùng thứ tự.
+
+Hoàn tác: SQL `database/613_production_pipeline_group_sort.sql`;
+revert `sxGopCot.js`, `ProductionPipelineSettingsPage.jsx`,
+`productionPipelineSchema.js`, `workshopKanban.js`, `production.js`.
+
+## Pipeline xưởng — cột lớn Đóng gói
+
+Trạng thái: **FE + DB primary/backup đã chạy.**
+
+HCB Cửa + Cánh kính: «Vệ sinh đóng gói» ra cột lớn **Đóng gói**.
+Thứ tự lưới/Kanban gộp: **Hoàn thiện rồi Đóng gói** (không theo
+order_index cột nhỏ).
+
+Hoàn tác: SQL trong `database/612_hcb_dong_goi_group_key.sql`;
+revert `sxGopCot.js`, `sxWorkshopSchedule.js` (FE+BE),
+`ProductionPipelineSettingsPage.jsx`.
+
+## CRM — nút Zalo chi tiết: Đã gửi + lưu DB
+
+Trạng thái: **FE + BE local, chưa commit.**
+
+Nút **Gửi Zalo** trên chi tiết deal: gửi xong đổi **Đã gửi Zalo** (xanh).
+Mở lại deal vẫn giữ trạng thái từ `crm_zalo_stage_sends` (`msg_id`).
+Bấm lại thì hỏi gửi lần nữa. API `GET /crm/leads/:id/detail` thêm
+`zalo_oa_sent` / `zalo_oa_send`.
+
+Hoàn tác: revert `LeadDetail.jsx`, `leadLifecycle.js`, `helpersBundle.js`.
+
+## Pipeline xưởng — lọc công ty/loại + NV cột lớn
+
+Trạng thái: **FE local, chưa commit.**
+
+Tab «Gộp cột» có bộ lọc Công ty + Loại (không phải sang tab Cột
+pipeline). Mỗi cột lớn có ô **Người chịu trách nhiệm** — gán NV
+chính cho mọi cột nhỏ trong nhóm. Kanban gộp hiện tên NV trên
+cột lớn.
+
+Hoàn tác: revert `ProductionPipelineSettingsPage.jsx`,
+`ProductionDashboard.jsx`, `sxStageStaff.js`.
+
+## Work Unified — chip lịch: mã + khách + NV
+
+Trạng thái: **FE local, chưa commit.**
+
+Ô ngày trên Lịch chỉ còn mã TB, khách/tên ngắn, NV phụ trách.
+Lịch SX không lặp chữ «Hạn SX» (đã có màu). Bấm ngày: tên đầy đủ,
+SĐT, công đoạn, cả 3 hạn SX/Giao/Lắp.
+
+Hoàn tác: revert `WorkUnifiedOverviewPage.jsx`.
+
+## Work Unified — cột Deadline «Ngày mai»
+
+Trạng thái: **FE local, chưa commit.**
+
+Board Deadline `/management/work-unified` thêm cột **Ngày mai**
+(hạn đúng ngày kế tiếp), nằm giữa Hôm nay và Tuần này.
+
+Hoàn tác: revert `WorkUnifiedOverviewPage.jsx`.
+
+## SX — thanh chip module → ô tìm từng chữ
+
+Trạng thái: **FE local, chưa commit.**
+
+Thanh «Sản xuất · 770» trên `/sx/project-tasks` thành ô tìm kiếm
+full-width; gõ từng chữ là lọc board ngay.
+
+Hoàn tác: revert `ProjectTasksOverviewPage.jsx`.
+
+## SX — thẻ nhiệm vụ → Giao việc + Nhật ký
+
+Trạng thái: **FE + BE local, chưa commit.**
+
+Bấm thẻ hoặc nút **Công việc** trên `/sx/project-tasks` mở
+**Giao việc Sản xuất** lọc đúng dự án (`?project_id=`). Board hiện
+giao việc + nhiệm vụ pipeline của dự án đó.
+
+Hoàn tác: revert `ProjectTasksOverviewPage.jsx`, `CRMAssignmentsPage.jsx`,
+`ProjectConstructionLogsPage.jsx`, `assignmentSourceLink.js`,
+`crmAssignments.js`.
+
+## SX — bộ lọc nhiệm vụ = Phạm vi xưởng Dashboard
+
+Trạng thái: **FE + BE local, chưa commit.**
+
+Panel `/sx/project-tasks` dùng đúng khối «Phạm vi xưởng» của Dashboard:
+Công ty sản xuất (xưởng) + Công ty đặt hàng (CRM + ngoài).
+`GET /work-tasks/project-overview` nhận `deal_company_id`.
+
+Hoàn tác: revert `ProjectTasksOverviewPage.jsx`, `ProjectTasksFilterPanel.jsx`,
+`WorkshopDashboardFilterPanel.jsx`, `workTasks.js`.
+
+## Menu SX — Deal vào xưởng → Dashboard
+
+Trạng thái: **FE local, chưa commit.**
+
+Mục ghim `/sx/dashboard` đổi nhãn «Deal vào xưởng» → **Dashboard**.
+
+Hoàn tác: revert `Sidebar.jsx`.
+
+## SX — bộ lọc nhiệm vụ dự án = Dashboard xưởng
+
+Trạng thái: **FE local, chưa commit.**
+
+`/sx/project-tasks` lấy công ty / khu vực / NV như Dashboard SX:
+`/companies?for_module=production`, không còn NextGo/VPT CRM.
+Mặc định xưởng theo `sx_dash_filters_v1` (HCB/Metalla), không «Tất cả công ty».
+
+Hoàn tác: revert `ProjectTasksOverviewPage.jsx`, `ProjectTasksFilterPanel.jsx`,
+`crossWorkshopProduction.js`, `WorkUnifiedFilterFields.jsx`, `Sidebar.jsx`.
+
+## NextGo — tắt công ty cũ trên HST mặc định
+
+Trạng thái: **đã chạy DB primary + backup.** Không đổi code.
+
+`Công Ty TNHH Bao Bì NextGo` trên tenant `default`
+(`87479a83-1145-43b7-b090-3e40812cb5a9`) → `is_active=false`.
+Ẩn khỏi `/api/companies` (CRM/SX/VC dropdown). Dữ liệu không xóa.
+
+HST `nextgo` clone (`842cff41-…`) vẫn `is_active=true`.
+
+Hoàn tác: `NEXTGO_CUTOVER=YES node scripts/freeze-nextgo-source.js --unfreeze --apply`
+(và `UPDATE companies SET is_active=true` trên backup).
+
+## SX — bộ lọc NV: NV theo công ty / khu vực
+
+Trạng thái: **FE local, chưa commit.**
+
+Danh sách người phụ trách trên panel `/sx/project-tasks` chỉ còn NV
+của công ty đang chọn, và (nếu chọn khu vực) NV gắn khu vực đó.
+
+Hoàn tác: revert `ProjectTasksOverviewPage.jsx`, `ProjectTasksFilterPanel.jsx`.
+
+## SX — bộ lọc NV: chọn nhiều nhân viên
+
+Trạng thái: **FE local, chưa commit.**
+
+Tab Nhân viên trên `/sx/project-tasks` chọn 1 hoặc nhiều người phụ
+trách (checkbox + tìm). Board hiện task của bất kỳ người đã chọn.
+
+Hoàn tác: revert `ProjectTasksFilterPanel.jsx`, `ProjectTasksOverviewPage.jsx`.
+
+## SX — bộ lọc NV: công ty / khu vực / nhân viên
+
+Trạng thái: **FE + BE local, chưa commit.**
+
+Bộ lọc nâng cao `/sx/project-tasks` mở tab Nhân viên, nạp đủ khu vực
+(`company-regions`) và nhân viên (`employees-by-company`). Khu vực NV SX
+lấy từ deal gắn `project_id` (trước chỉ có khi task có `lead_id`).
+
+Hoàn tác: revert `ProjectTasksOverviewPage.jsx`,
+`ProjectTasksFilterPanel.jsx`, `workTasks.js`.
 
 ## Zalo — tắt tự gửi, nút Gửi Zalo mọi cột deal
 
@@ -132,17 +414,17 @@ Hoàn tác: revert `CRMTasksTab.jsx` (`sxPlanGroups`).
 
 Trạng thái: **local, chưa commit.**
 
-Thẻ trên `/sx/project-tasks` mở `/sx/projects/:id` (không còn nhảy CRM lead
-khi nhóm lấy source crm_task).
+Thẻ trên `/sx/project-tasks` mở Giao việc của dự án (`?project_id=`).
+Chi tiết dự án `/sx/projects/:id` vẫn mở từ dải trên trang Giao việc.
 
 Hoàn tác: revert `overviewCardHref` trong `ProjectTasksOverviewPage.jsx`.
 
 ## Kanban SX — nút mở quản lý nhiệm vụ theo dự án
 
-Trạng thái: **local, chưa commit.**
+Trạng thái: **FE local, chưa commit.**
 
-Nút ô vuông trên thẻ Kanban xưởng mở `/sx/project-tasks?project=…` và chỉ
-hiện nhiệm vụ của đúng dự án đó (chip «Dự án: mã»).
+Nút ô vuông trên thẻ Kanban xưởng mở `/sx/project-tasks?project=…`.
+Nút to hơn (32px), nền tím, nằm riêng bên trái cụm icon nhỏ.
 
 Hoàn tác: revert `ProductionDashboard.jsx` (nút thẻ), `ProjectTasksOverviewPage.jsx`.
 

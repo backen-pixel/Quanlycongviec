@@ -25,6 +25,10 @@ let pipelineRequiresDeadlineColumnAvailable = true;
 /** Cột deadline_group (migration 523) — nhóm DL theo kế hoạch lắp */
 let pipelineDeadlineGroupColumnAvailable = true;
 let pipelineGroupKeyColumnAvailable = true;
+/** Cột group_sort (migration 613) — thứ tự hiển thị cột lớn khi gộp */
+let pipelineGroupSortColumnAvailable = true;
+/** Cột board_tab (migration 614) — tab Dashboard Sản xuất / Công nợ */
+let pipelineBoardTabColumnAvailable = true;
 /** Cột converts_workshop_type / target_workshop_type_id (migration 303) */
 let pipelineSwitchWorkshopTypeColumnAvailable = true;
 let pipelineTargetWorkshopTypeJoinAvailable = true;
@@ -248,6 +252,36 @@ function markPipelineGroupKeyColumnMissing() {
   pipelineGroupKeyColumnAvailable = false;
 }
 
+function isPipelineGroupSortMissingError(err) {
+  if (!err || !pipelineGroupSortColumnAvailable) return false;
+  const s = String(err.message || err.details || err.hint || '').toLowerCase();
+  return s.includes('group_sort') && (s.includes('does not exist') || s.includes('could not find'));
+}
+
+function markPipelineGroupSortColumnMissing() {
+  if (pipelineGroupSortColumnAvailable) {
+    console.warn(
+      '[production_pipeline_stages] Cột group_sort chưa tồn tại. Chạy database/613_production_pipeline_group_sort.sql trên Supabase.',
+    );
+  }
+  pipelineGroupSortColumnAvailable = false;
+}
+
+function isPipelineBoardTabMissingError(err) {
+  if (!err || !pipelineBoardTabColumnAvailable) return false;
+  const s = String(err.message || err.details || err.hint || '').toLowerCase();
+  return s.includes('board_tab') && (s.includes('does not exist') || s.includes('could not find'));
+}
+
+function markPipelineBoardTabColumnMissing() {
+  if (pipelineBoardTabColumnAvailable) {
+    console.warn(
+      '[production_pipeline_stages] Cột board_tab chưa tồn tại. Chạy database/614_production_pipeline_board_tab.sql trên Supabase.',
+    );
+  }
+  pipelineBoardTabColumnAvailable = false;
+}
+
 function isPipelineSwitchWorkshopTypeMissingError(err) {
   if (!err || !pipelineSwitchWorkshopTypeColumnAvailable) return false;
   const s = String(err.message || err.details || err.hint || '').toLowerCase();
@@ -323,6 +357,8 @@ function buildPipelineStageSelect() {
   const reqDl = pipelineRequiresDeadlineColumnAvailable ? 'requires_deadline, ' : '';
   const dlGroup = pipelineDeadlineGroupColumnAvailable ? 'deadline_group, ' : '';
   const gKey = pipelineGroupKeyColumnAvailable ? 'group_key, ' : '';
+  const gSort = pipelineGroupSortColumnAvailable ? 'group_sort, ' : '';
+  const gTab = pipelineBoardTabColumnAvailable ? 'board_tab, ' : '';
   const sw = pipelineSwitchWorkshopTypeColumnAvailable ? 'converts_workshop_type, ' : '';
   let twt = '';
   if (pipelineSwitchWorkshopTypeColumnAvailable) {
@@ -344,7 +380,7 @@ function buildPipelineStageSelect() {
       t = 'crm_target_stage_id, ';
     }
   }
-  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, is_packaging_done, ${h}${sw}${twt}${pp}${kpi}${reqDl}${dlGroup}${gKey}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
+  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, is_packaging_done, ${h}${sw}${twt}${pp}${kpi}${reqDl}${dlGroup}${gKey}${gSort}${gTab}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
 }
 
 /** Áp dụng retry khi SELECT 1 cột pipeline (embed / cột thiếu). */
@@ -396,6 +432,18 @@ async function fetchProductionPipelineStageById(supabase, stageId) {
     markPipelineDeadlineGroupColumnMissing();
     ({ data, error } = await run());
   }
+  if (error && isPipelineGroupKeyMissingError(error)) {
+    markPipelineGroupKeyColumnMissing();
+    ({ data, error } = await run());
+  }
+  if (error && isPipelineGroupSortMissingError(error)) {
+    markPipelineGroupSortColumnMissing();
+    ({ data, error } = await run());
+  }
+  if (error && isPipelineBoardTabMissingError(error)) {
+    markPipelineBoardTabColumnMissing();
+    ({ data, error } = await run());
+  }
   if (error && isPipelineSwitchWorkshopTypeMissingError(error)) {
     markPipelineSwitchWorkshopTypeColumnMissing();
     ({ data, error } = await run());
@@ -419,6 +467,8 @@ const INSERT_COLUMN_RETRIES = [
   [isPipelineRequiresDeadlineMissingError, markPipelineRequiresDeadlineColumnMissing],
   [isPipelineDeadlineGroupMissingError, markPipelineDeadlineGroupColumnMissing],
   [isPipelineGroupKeyMissingError, markPipelineGroupKeyColumnMissing],
+  [isPipelineGroupSortMissingError, markPipelineGroupSortColumnMissing],
+  [isPipelineBoardTabMissingError, markPipelineBoardTabColumnMissing],
   [isPipelineSwitchWorkshopTypeMissingError, markPipelineSwitchWorkshopTypeColumnMissing],
   [isPipelineWorkshopTypeMissingError, markPipelineWorkshopTypeColumnMissing],
   [isCrmTargetStageMissingError, markCrmTargetStageColumnMissing],
@@ -484,6 +534,8 @@ function stripHandoverFields(obj) {
   if (!pipelineRequiresDeadlineColumnAvailable) delete o.requires_deadline;
   if (!pipelineDeadlineGroupColumnAvailable) delete o.deadline_group;
   if (!pipelineGroupKeyColumnAvailable) delete o.group_key;
+  if (!pipelineGroupSortColumnAvailable) delete o.group_sort;
+  if (!pipelineBoardTabColumnAvailable) delete o.board_tab;
   if (!pipelineSwitchWorkshopTypeColumnAvailable) {
     delete o.converts_workshop_type;
     delete o.is_switch_workshop_type;
@@ -508,6 +560,8 @@ function _resetForTests() {
   pipelineRequiresDeadlineColumnAvailable = true;
   pipelineDeadlineGroupColumnAvailable = true;
   pipelineGroupKeyColumnAvailable = true;
+  pipelineGroupSortColumnAvailable = true;
+  pipelineBoardTabColumnAvailable = true;
   pipelineSwitchWorkshopTypeColumnAvailable = true;
   pipelineTargetWorkshopTypeJoinAvailable = true;
 }
@@ -535,6 +589,11 @@ module.exports = {
   markPipelineRequiresDeadlineColumnMissing,
   isPipelineDeadlineGroupMissingError,
   isPipelineGroupKeyMissingError,
+  isPipelineGroupSortMissingError,
+  isPipelineBoardTabMissingError,
+  markPipelineGroupKeyColumnMissing,
+  markPipelineGroupSortColumnMissing,
+  markPipelineBoardTabColumnMissing,
   markPipelineDeadlineGroupColumnMissing,
   isPipelineSwitchWorkshopTypeMissingError,
   markPipelineSwitchWorkshopTypeColumnMissing,

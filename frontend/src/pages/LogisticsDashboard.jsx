@@ -28,6 +28,7 @@ import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
 import KanbanCardOptionsMenu from '../components/KanbanCardOptionsMenu';
+import KanbanGotoProjectTasksBtn from '../components/KanbanGotoProjectTasksBtn';
 import {
   useKanbanColumnTheme, KANBAN_CARDS_BODY_CLASS, UI_KANBAN_FIXED_CLASS,
   KANBAN_BOARD_COLUMN_RAILS_CLASS, KANBAN_COLUMN_RAIL_CLASS,
@@ -2031,16 +2032,19 @@ const KanbanCard = memo(function KanbanCard({
       )}
 
       <div className="flex items-start justify-between pr-7 mb-2 gap-1.5">
-        <p className="text-xs font-semibold text-orange-600">{item.code}</p>
-        {tempLocked && (
-          <span
-            className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold uppercase tracking-wide text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 px-1.5 py-0.5 rounded leading-tight"
-            title={VC_TEMP_LOCK_MSG}
-          >
-            <Lock className="h-2.5 w-2.5" aria-hidden />
-            Tạm
-          </span>
-        )}
+        <p className="text-xs font-semibold text-orange-600 min-w-0 truncate">{item.code}</p>
+        <div className="flex items-center gap-1 shrink-0">
+          {tempLocked && (
+            <span
+              className="inline-flex items-center gap-0.5 text-[9px] font-bold uppercase tracking-wide text-fuchsia-800 bg-fuchsia-50 border border-fuchsia-200 px-1.5 py-0.5 rounded leading-tight"
+              title={VC_TEMP_LOCK_MSG}
+            >
+              <Lock className="h-2.5 w-2.5" aria-hidden />
+              Tạm
+            </span>
+          )}
+          <KanbanGotoProjectTasksBtn asLink moduleKey="vc" projectId={item.id} code={item.code} />
+        </div>
       </div>
 
       <div className="flex items-start gap-1.5 min-w-0 mb-2">
@@ -2156,18 +2160,6 @@ const KanbanCard = memo(function KanbanCard({
               <Phone className="h-3 w-3" />
             </a>
           )}
-          <button
-            type="button"
-            data-vc-quick-btn
-            title="Công việc"
-            onClick={(e) => { e.stopPropagation(); goTab('tasks'); }}
-            className="relative h-5 w-5 inline-flex items-center justify-center rounded-full text-orange-500 hover:text-orange-700 hover:bg-orange-50 cursor-pointer"
-          >
-            <CheckSquare className="h-3 w-3" />
-            {totalTasks > 0 && doneTasks < totalTasks && (
-              <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-amber-500" />
-            )}
-          </button>
           <button
             type="button"
             data-vc-quick-btn

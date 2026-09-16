@@ -111,6 +111,10 @@ const {
   markPipelineCollectedRevenueColumnMissing,
   isPipelineRequiresDeadlineMissingError,
   markPipelineRequiresDeadlineColumnMissing,
+  isPipelineGroupSortMissingError,
+  markPipelineGroupSortColumnMissing,
+  isPipelineBoardTabMissingError,
+  markPipelineBoardTabColumnMissing,
   stripHandoverFields,
   fetchProductionPipelineStageById,
   insertProductionPipelineStageRow,
@@ -195,6 +199,15 @@ async function assertWorkshopTypeForCompany(workshopTypeId, companyId) {
     err.status = 400;
     throw err;
   }
+}
+
+function normalizeBoardTabValue(raw) {
+  const t = String(raw == null ? '' : raw).trim().replace(/\s+/g, ' ');
+  if (!t) return 'sx';
+  const lower = t.toLowerCase();
+  if (lower === 'sx' || lower === 'san_xuat') return 'sx';
+  if (lower === 'cong_no') return 'cong_no';
+  return t.slice(0, 80);
 }
 
 function parseProductionStageKpiBody(b) {
@@ -805,6 +818,17 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
     if (isIntake) {
       insertPayload.deadline_group = null;
       insertPayload.requires_deadline = false;
+    } else {
+      if (b.group_key !== undefined) {
+        insertPayload.group_key = String(b.group_key || '').trim() || null;
+      }
+      if (b.group_sort !== undefined) {
+        const n = Number(b.group_sort);
+        insertPayload.group_sort = Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+      }
+      if (b.board_tab !== undefined) {
+        insertPayload.board_tab = normalizeBoardTabValue(b.board_tab);
+      }
     }
 
     const data = await insertProductionPipelineStageRow(supabase, insertPayload);
@@ -859,9 +883,16 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
     ['name', 'color', 'icon', 'order_index', 'is_active', 'workflow_stage_id', 'bucket_slug',
       'is_handover_to_logistics', 'converts_workshop_type', 'target_workshop_type_id',
       'crm_sync_type', 'crm_target_stage_id', 'progress_percent',
-      'workshop_type_id', 'is_packaging_done', 'group_key'].forEach((f) => {
+      'workshop_type_id', 'is_packaging_done', 'group_key', 'group_sort', 'board_tab'].forEach((f) => {
       if (b[f] !== undefined) update[f] = f === 'is_packaging_done' ? !!b[f] : b[f];
     });
+    if (update.group_sort !== undefined) {
+      const n = Number(update.group_sort);
+      update.group_sort = Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+    }
+    if (update.board_tab !== undefined) {
+      update.board_tab = normalizeBoardTabValue(update.board_tab);
+    }
     if (b.is_switch_workshop_type !== undefined && b.converts_workshop_type === undefined) {
       update.converts_workshop_type = b.is_switch_workshop_type;
     }
@@ -1086,10 +1117,33 @@ r.put('/pipeline-stages-reorder', requirePermission('projects', 'edit'), async (
     }
     for (const s of stages) {
       if (!s?.id) continue;
-      const { error } = await supabase
+      const patch = {};
+      if (s.order_index != null && s.order_index !== '') patch.order_index = s.order_index;
+      if (s.group_sort != null && s.group_sort !== '') patch.group_sort = s.group_sort;
+      if (s.board_tab != null && s.board_tab !== '') patch.board_tab = normalizeBoardTabValue(s.board_tab);
+      if (!Object.keys(patch).length) continue;
+      let { error } = await supabase
         .from('production_pipeline_stages')
-        .update({ order_index: s.order_index })
+        .update(patch)
         .eq('id', s.id);
+      if (error && isPipelineGroupSortMissingError(error)) {
+        markPipelineGroupSortColumnMissing();
+        delete patch.group_sort;
+        if (!Object.keys(patch).length) continue;
+        ({ error } = await supabase
+          .from('production_pipeline_stages')
+          .update(patch)
+          .eq('id', s.id));
+      }
+      if (error && isPipelineBoardTabMissingError(error)) {
+        markPipelineBoardTabColumnMissing();
+        delete patch.board_tab;
+        if (!Object.keys(patch).length) continue;
+        ({ error } = await supabase
+          .from('production_pipeline_stages')
+          .update(patch)
+          .eq('id', s.id));
+      }
       if (error) throw error;
     }
     await invalidateProductionPipelineCache();

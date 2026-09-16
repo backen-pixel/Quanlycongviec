@@ -204,6 +204,7 @@ const SX_GROUP_KEY_DEADLINE = {
   duyet: 'planning',
   gia_cong: 'cabinet',
   hoan_thien: 'finishing',
+  dong_goi: 'packing',
   cong_no: null,
 };
 

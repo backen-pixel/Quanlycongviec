@@ -125,7 +125,6 @@ export default {
   "Dashboard xưởng": "Workshop dashboard",
   "Drive Sản xuất": "Production drive",
   "3. Setup xưởng": "3. Workshop setup",
-  "Deal vào xưởng": "Deals in workshop",
   "Pipeline xưởng": "Workshop pipeline",
   "Khu vực": "Regions",
   "Bộ mẫu nhiệm vụ xưởng": "Workshop task templates",

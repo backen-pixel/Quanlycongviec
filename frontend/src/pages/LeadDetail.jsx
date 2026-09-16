@@ -23,7 +23,7 @@ import api from '../lib/api';
 import { compressImage } from '../lib/compressImage';
 import { consumeCrmLeadDetailPrefetch } from '../lib/crmLeadDetailPrefetch';
 import { getSocket } from '../lib/socket';
-import { formatVND, formatDate, getFileEmoji } from '../lib/utils';
+import { formatVND, formatDate, formatDateTime, getFileEmoji } from '../lib/utils';
 import { depositInstallmentsForForm, aggregateDepositFromInstallments } from '../lib/quotationTermsDisplay';
 import CRMTasksTab from '../components/CRMTasksTab';
 import { pickSurveyFillFormTask, hasFilledFormData, normalizeFormConfig } from '../lib/taskFillForm';
@@ -457,6 +457,8 @@ export default function LeadDetail() {
   const [savingLeadTitle, setSavingLeadTitle] = useState(false);
   const [approvalForm, setApprovalForm] = useState({ type: 'drawing', title: '', note: '' });
   const [zaloQuickSendLoading, setZaloQuickSendLoading] = useState(false);
+  const [zaloOaSent, setZaloOaSent] = useState(false);
+  const [zaloOaSentAt, setZaloOaSentAt] = useState(null);
   const [movingStage, setMovingStage] = useState(false);
   const [blockingModal, setBlockingModal] = useState(null);
   /** Cột yêu cầu deadline khi đổi stage từ trang chi tiết */
@@ -1172,6 +1174,8 @@ export default function LeadDetail() {
       ]);
       if (seq !== loadSeqRef.current) return;
       setLead(leadRes);
+      setZaloOaSent(!!leadRes?.zalo_oa_sent);
+      setZaloOaSentAt(leadRes?.zalo_oa_send?.updated_at || null);
       setPipelineConfig(pipelineRes?.data || null);
       setLeadTitleDraft(leadRes?.title || '');
       setCustomer(leadRes?.customer);
@@ -1499,6 +1503,9 @@ export default function LeadDetail() {
   /** Một bước: điền template từ deal (cấu trúc lưu trên server / Cài đặt Pipeline) + gửi Zalo */
   const quickSendZaloOa = useCallback(async () => {
     if (!id) return;
+    if (zaloOaSent) {
+      if (!window.confirm('Đã gửi Zalo thành công cho deal này. Gửi lại lần nữa?')) return;
+    }
     setZaloQuickSendLoading(true);
     try {
       const { data: fillRes } = await api.post(`/crm/leads/${id}/zalo-template-fill`, {});
@@ -1511,15 +1518,23 @@ export default function LeadDetail() {
         const { data } = await api.post(`/crm/leads/${id}/zalo-notify-send`, { force, template_data: filled });
         return data;
       };
-      let sendRes = await postSend(false);
-      if (sendRes?.skipped && sendRes?.reason === 'already_sent') {
-        if (!window.confirm('Đã gửi Zalo thành công cho giai đoạn này. Gửi lại lần nữa?')) return;
+      let sendRes = await postSend(!!zaloOaSent);
+      if (!zaloOaSent && sendRes?.skipped && sendRes?.reason === 'already_sent') {
+        if (!window.confirm('Đã gửi Zalo thành công cho giai đoạn này. Gửi lại lần nữa?')) {
+          setZaloOaSent(true);
+          setZaloOaSentAt(sendRes?.updated_at || new Date().toISOString());
+          return;
+        }
         sendRes = await postSend(true);
       }
       if (sendRes?.ok && !sendRes?.skipped) {
-        alert('Đã gửi tin Zalo OA tới khách hàng.');
+        setZaloOaSent(true);
+        setZaloOaSentAt(new Date().toISOString());
         load({ silent: true });
-      } else if (sendRes?.skipped && sendRes?.reason && sendRes?.reason !== 'already_sent') {
+      } else if (sendRes?.skipped && sendRes?.reason === 'already_sent') {
+        setZaloOaSent(true);
+        setZaloOaSentAt(sendRes?.updated_at || new Date().toISOString());
+      } else if (sendRes?.skipped && sendRes?.reason) {
         alert(sendRes.message || sendRes.reason || 'Đã bỏ qua gửi Zalo');
       } else if (!sendRes?.ok) {
         alert(sendRes?.hint_vi || sendRes?.message || JSON.stringify(sendRes || {}));
@@ -1529,7 +1544,7 @@ export default function LeadDetail() {
     } finally {
       setZaloQuickSendLoading(false);
     }
-  }, [id, load]);
+  }, [id, load, zaloOaSent]);
 
   const navigateToCrmDealFocused = (dealId) => {
     persistCrmPipelineUiNow();
@@ -3144,11 +3159,23 @@ export default function LeadDetail() {
               data-tour="lead-send-zalo-oa"
               disabled={zaloQuickSendLoading}
               onClick={() => quickSendZaloOa()}
-              title="Điền mẫu từ deal và gửi tin Zalo OA (không tự gửi khi kéo cột)"
-              className="h-9 px-3 bg-[#0068FF] hover:bg-[#0056d4] text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              title={
+                zaloOaSent
+                  ? `Đã gửi Zalo OA${zaloOaSentAt ? ` · ${formatDateTime(zaloOaSentAt)}` : ''}. Bấm để gửi lại.`
+                  : 'Điền mẫu từ deal và gửi tin Zalo OA (không tự gửi khi kéo cột)'
+              }
+              className={`h-9 px-3 rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50 ${
+                zaloOaSent && !zaloQuickSendLoading
+                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100'
+                  : 'bg-[#0068FF] hover:bg-[#0056d4] text-white'
+              }`}
             >
-              {zaloQuickSendLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
-              Gửi Zalo
+              {zaloQuickSendLoading
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : zaloOaSent
+                  ? <CheckCircle2 className="h-4 w-4" />
+                  : <MessageCircle className="h-4 w-4" />}
+              {zaloQuickSendLoading ? 'Đang gửi…' : zaloOaSent ? 'Đã gửi Zalo' : 'Gửi Zalo'}
             </button>
           )}
           {lead?.type === 'deal' && (!lead?.project_id || canEditSxVcSchedule) ? (

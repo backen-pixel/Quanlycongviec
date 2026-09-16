@@ -46,6 +46,7 @@ import {
   isProductionAssignmentsPage,
   isLogisticsAssignmentsPage,
   normalizeAssignmentPageModule,
+  projectDetailPathForModule,
 } from '../lib/assignmentSourceLink';
 import CommentDisplayHiddenBanner, { useCommentShowOnScreenEnabled } from '../components/CommentDisplayHiddenBanner';
 import TaskFillFormModal from '../components/TaskFillFormModal';
@@ -1564,8 +1565,19 @@ export default function CRMAssignmentsPage({
   const [searchParams, setSearchParams] = useSearchParams();
   const isAdmin = ['admin', 'manager', 'sales_admin'].includes(user?.role);
   const uid = String(user?.id || '');
-  const canManageTask = useCallback((t) => canManageAssignmentAccess(t, user), [user]);
-  const canMoveTask = useCallback((t) => canMoveAssignment(t, user), [user]);
+  const canManageTask = useCallback((t) => (
+    t?._fromCrmTask ? false : canManageAssignmentAccess(t, user)
+  ), [user]);
+  const canMoveTask = useCallback((t) => (
+    t?._fromCrmTask ? false : canMoveAssignment(t, user)
+  ), [user]);
+
+  const filterProjectId = String(searchParams.get('project_id') || '').trim();
+  const filterProjectLabel = String(searchParams.get('project') || '').trim();
+  const filterLeadId = String(searchParams.get('lead_id') || '').trim();
+  const projectDetailHref = filterProjectId
+    ? projectDetailPathForModule(assignmentModule, filterProjectId)
+    : null;
 
   const [pageTab, setPageTab] = useState(() => (
     String(searchParams.get('pageTab') || '').toLowerCase() === 'private' ? 'private' : 'assignments'
@@ -1613,7 +1625,7 @@ export default function CRMAssignmentsPage({
   // chỉ lọc "Gấp" trước đó).
   const loadSeqRef = useRef(0);
 
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(() => String(searchParams.get('project') || '').trim());
   const [privateSearch, setPrivateSearch] = useState('');
   const [searchDebounced, setSearchDebounced] = useState('');
   const [filterAssignee, setFilterAssignee] = useState('');
@@ -1825,16 +1837,20 @@ export default function CRMAssignmentsPage({
   /** Bộ tham số lọc hiện hành — dùng chung cho mọi lượt nạp (chỉ số / thẻ / nạp đủ). */
   const buildListParams = useCallback(() => {
     const params = {};
-    if (isAdmin && filterCompanyId) params.company_id = filterCompanyId;
-    if (isAdmin && filterDepartmentId) params.department_id = filterDepartmentId;
-    if (filterAssignee) params.assignee_id = filterAssignee;
-    else if (!isAdmin && uid) params.assignee_id = uid;
+    if (isAdmin && filterCompanyId && !filterProjectId) params.company_id = filterCompanyId;
+    if (isAdmin && filterDepartmentId && !filterProjectId) params.department_id = filterDepartmentId;
+    if (filterAssignee && !filterProjectId) params.assignee_id = filterAssignee;
+    else if (!isAdmin && uid && !filterProjectId) params.assignee_id = uid;
     if (filterStatus) params.status = filterStatus;
     if (filterPriority) params.priority = filterPriority;
-    if (searchDebounced) params.q = searchDebounced;
-    if (assignmentModule) params.assignment_module = assignmentModule;
+    if (searchDebounced && !(filterProjectId && searchDebounced === filterProjectLabel)) {
+      params.q = searchDebounced;
+    }
+    if (assignmentModule && !filterProjectId) params.assignment_module = assignmentModule;
+    if (filterProjectId) params.project_id = filterProjectId;
+    else if (filterLeadId) params.lead_id = filterLeadId;
     return params;
-  }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, searchDebounced, assignmentModule, uid]);
+  }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, searchDebounced, assignmentModule, uid, filterProjectId, filterLeadId, filterProjectLabel]);
 
   /** Tham số của lượt load ĐANG hiệu lực — để nạp thêm thẻ theo cột lúc người dùng cuộn. */
   const listParamsRef = useRef({});
@@ -2071,14 +2087,18 @@ export default function CRMAssignmentsPage({
   const refreshStats = useCallback(async () => {
     try {
       const params = {};
-      if (isAdmin && filterCompanyId) params.company_id = filterCompanyId;
-      if (isAdmin && filterDepartmentId) params.department_id = filterDepartmentId;
-      if (filterAssignee) params.assignee_id = filterAssignee;
-      else if (!isAdmin && uid) params.assignee_id = uid;
+      if (isAdmin && filterCompanyId && !filterProjectId) params.company_id = filterCompanyId;
+      if (isAdmin && filterDepartmentId && !filterProjectId) params.department_id = filterDepartmentId;
+      if (filterAssignee && !filterProjectId) params.assignee_id = filterAssignee;
+      else if (!isAdmin && uid && !filterProjectId) params.assignee_id = uid;
       if (filterStatus) params.status = filterStatus;
       if (filterPriority) params.priority = filterPriority;
-      if (searchDebounced) params.q = searchDebounced;
-      if (assignmentModule) params.assignment_module = assignmentModule;
+      if (searchDebounced && !(filterProjectId && searchDebounced === filterProjectLabel)) {
+        params.q = searchDebounced;
+      }
+      if (assignmentModule && !filterProjectId) params.assignment_module = assignmentModule;
+      if (filterProjectId) params.project_id = filterProjectId;
+      else if (filterLeadId) params.lead_id = filterLeadId;
       const { data: s } = await api.get(`${apiBase}/stats`, { params });
       if (s && typeof s.total === 'number') {
         setServerStats({
@@ -2090,7 +2110,7 @@ export default function CRMAssignmentsPage({
         });
       }
     } catch { /* giữ KPI cũ */ }
-  }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, searchDebounced, apiBase, assignmentModule, uid]);
+  }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, searchDebounced, apiBase, assignmentModule, uid, filterProjectId, filterLeadId, filterProjectLabel]);
 
   useEffect(() => { void load({ soft: true }); }, [load]);
 
@@ -2142,6 +2162,36 @@ export default function CRMAssignmentsPage({
       return p;
     }, { replace: true });
   }, [setSearchParams]);
+
+  const clearProjectScope = useCallback(() => {
+    setSearch('');
+    setSearchParams((prev) => {
+      const p = new URLSearchParams(prev);
+      p.delete('project_id');
+      p.delete('project');
+      p.delete('lead_id');
+      return p;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  useEffect(() => {
+    if (filterProjectId && filterProjectLabel) setSearch(filterProjectLabel);
+  }, [filterProjectId, filterProjectLabel]);
+
+  const openAssignmentItem = useCallback((item) => {
+    if (item?._fromCrmTask) {
+      const pid = filterProjectId || item.lead?.project_id;
+      const base = projectDetailPathForModule(assignmentModule, pid);
+      if (base && item.crm_task_id) {
+        const qs = new URLSearchParams();
+        qs.set('tab', 'tasks');
+        qs.set('crm_task', String(item.crm_task_id));
+        navigate(`${base}?${qs.toString()}`);
+        return;
+      }
+    }
+    setViewingItem(item);
+  }, [assignmentModule, filterProjectId, navigate]);
 
   useEffect(() => {
     const onSetTab = (e) => {
@@ -2552,6 +2602,10 @@ export default function CRMAssignmentsPage({
   const filterSelectCls = `${filterFieldCls} cursor-pointer appearance-none pr-7`;
   const filterLabelCls = `text-[10px] font-semibold uppercase tracking-wide mb-1 block ${theme.filterLabel}`;
   const displayTitle = theme.shortTitle || String(pageTitle || '').replace(/^[^\wÀ-ỹ]+/, '').trim() || 'Giao việc';
+  const scopedProjectLabel = filterProjectLabel
+    || items.find((t) => t.lead?.project_code)?.lead?.project_code
+    || items.find((t) => t.lead?.title)?.lead?.title
+    || '';
   const spinBorder = theme.mod === 'logistics' ? 'border-orange-600' : theme.mod === 'production' ? 'border-indigo-600' : 'border-violet-600';
   const searchBoxCls = searchFocused
     ? theme.searchFocus
@@ -2726,6 +2780,32 @@ export default function CRMAssignmentsPage({
             </div>
           </div>
         </div>
+
+        {(filterProjectId || filterLeadId) && pageTab === 'assignments' ? (
+          <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-teal-100 bg-teal-50/80">
+            <span className="text-xs font-semibold text-teal-900">
+              {filterProjectId
+                ? `Giao việc của ${scopedProjectLabel || 'dự án này'}`
+                : 'Giao việc của deal đang chọn'}
+            </span>
+            {projectDetailHref ? (
+              <Link
+                to={projectDetailHref}
+                className="h-7 px-2 rounded-md border border-teal-200 bg-white text-[11px] font-semibold text-teal-800 hover:bg-teal-100 inline-flex items-center"
+              >
+                Chi tiết dự án
+              </Link>
+            ) : null}
+            <button
+              type="button"
+              onClick={clearProjectScope}
+              className="h-7 px-2 rounded-md border border-slate-200 bg-white text-[11px] font-medium text-slate-600 hover:bg-slate-50 inline-flex items-center gap-1 cursor-pointer"
+            >
+              <X className="h-3 w-3" />
+              Bỏ lọc dự án
+            </button>
+          </div>
+        ) : null}
 
         {pageTab === 'assignments' && (
           <>
@@ -3141,7 +3221,7 @@ export default function CRMAssignmentsPage({
             setCreateForSharedWorkspace(false);
             setShowItemModal(true);
           }}
-          onOpenCard={(t) => setViewingItem(t)}
+          onOpenCard={openAssignmentItem}
           onEditCard={(t) => {
             if (!canManageTask(t)) return;
             setEditingItem(t);
@@ -3165,7 +3245,7 @@ export default function CRMAssignmentsPage({
       {view === 'status' && (
         <StatusBoardView
           itemsByStatus={itemsByStatus}
-          onOpen={(t) => setViewingItem(t)}
+          onOpen={openAssignmentItem}
           onEdit={(t) => { if (!canManageTask(t)) return; setEditingItem(t); setShowItemModal(true); }}
           onDelete={removeItem}
           onUpdate={updateItem}
@@ -3177,7 +3257,7 @@ export default function CRMAssignmentsPage({
       {view === 'list' && (
         <ListView
           items={items}
-          onOpen={(t) => setViewingItem(t)}
+          onOpen={openAssignmentItem}
           onEdit={(t) => { if (!canManageTask(t)) return; setEditingItem(t); setShowItemModal(true); }}
           onDelete={removeItem}
           onUpdate={updateItem}
@@ -3203,7 +3283,7 @@ export default function CRMAssignmentsPage({
           groups={plannerGroups}
           viewScope={viewScope}
           personalColumns={personalPlannerCols}
-          onOpen={(t) => setViewingItem(t)}
+          onOpen={openAssignmentItem}
           onEdit={(t) => { if (!canManageTask(t)) return; setEditingItem(t); setShowItemModal(true); }}
           onDelete={removeItem}
           onUpdate={updateItem}
@@ -3220,7 +3300,7 @@ export default function CRMAssignmentsPage({
         <DeadlineView
           groups={deadlineGroups}
           personalColumns={personalDeadlineCols}
-          onOpen={(t) => setViewingItem(t)}
+          onOpen={openAssignmentItem}
           onEdit={(t) => { if (!canManageTask(t)) return; setEditingItem(t); setShowItemModal(true); }}
           onDelete={removeItem}
           onUpdate={updateItem}
