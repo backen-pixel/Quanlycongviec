@@ -234,7 +234,7 @@ function WorkKanbanColumn({ col, variant = 'default' }) {
   return (
     <div
       data-col-slug={col.slug}
-      className={`flex flex-col flex-shrink-0 h-full min-h-[28rem] rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden ${
+      className={`flex flex-col flex-shrink-0 h-full rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden ${
         variant === 'deadline' ? 'w-[280px]' : 'w-[260px]'
       }`}
     >
@@ -845,17 +845,22 @@ export default function WorkUnifiedOverviewPage() {
   // ~313px, danh sách chỉ còn ~454px cho 1.287px nội dung → xem được rất ít dòng.
   return (
     <WorkUnifiedOpenTabProvider>
+    {/* Dưới lg khung app có thanh trên `pt-12` (48px) cộng `pt-3` của vùng nội dung (12px) → trừ
+        3.75rem; từ lg trở lên thanh đó là `lg:pt-0` nên chỉ trừ 0.75rem. Trừ thiếu thì đáy cột
+        Kanban tụt khỏi màn hình và bị cắt. */}
     <div className={`flex flex-col gap-3 w-full pb-3 ${
       viewMode === 'list'
-        ? 'min-h-[calc(100vh-0.75rem)]'
-        : 'h-[calc(100vh-0.75rem)] max-h-[calc(100vh-0.75rem)] overflow-hidden'
+        ? 'min-h-[calc(100vh-3.75rem)] lg:min-h-[calc(100vh-0.75rem)]'
+        : 'h-[calc(100vh-3.75rem)] max-h-[calc(100vh-3.75rem)] lg:h-[calc(100vh-0.75rem)] lg:max-h-[calc(100vh-0.75rem)] overflow-hidden'
     }`}>
-      <div className="shrink-0">
-        <h1 className="text-xl font-bold" style={{ color: '#111827' }}>Work Unified</h1>
-        <p className="text-sm mt-0.5" style={{ color: '#6b7280' }}>
-          Danh sách toàn bộ dự án của {companyName}, xuyên suốt từ lúc chốt khách hàng đến khi bàn giao
-        </p>
-      </div>
+      {viewMode === 'list' && (
+        <div className="shrink-0">
+          <h1 className="text-xl font-bold" style={{ color: '#111827' }}>Work Unified</h1>
+          <p className="text-sm mt-0.5" style={{ color: '#6b7280' }}>
+            Danh sách toàn bộ dự án của {companyName}, xuyên suốt từ lúc chốt khách hàng đến khi bàn giao
+          </p>
+        </div>
+      )}
 
       <div className="sticky top-0 z-30 shrink-0 flex items-center justify-between flex-wrap gap-2 rounded-xl border border-gray-100 bg-white px-3 py-2.5 shadow-sm">
         <div ref={searchBoxRef} className="relative flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem]">
@@ -989,6 +994,9 @@ export default function WorkUnifiedOverviewPage() {
         </div>
       </div>
 
+      {/* Chỉ hiện ở Danh sách: các view khoá chiều cao (Kanban/Deadline/Planner/Lịch) cần chỗ cho
+          nội dung, mà hàng tab ngay dưới đã có đúng 4 con số này kèm cùng chức năng lọc. */}
+      {viewMode === 'list' && (
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 shrink-0">
         {[
           { key: 'all', label: 'Đang thực hiện', value: stats.total, valueCls: 'text-gray-900' },
@@ -1009,6 +1017,7 @@ export default function WorkUnifiedOverviewPage() {
           </button>
         ))}
       </div>
+      )}
 
       <div ref={resultsCardRef} className="rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden flex-1 min-h-0 flex flex-col">
         <div className="flex items-center justify-between gap-2 p-2 border-b border-gray-100 flex-wrap shrink-0">
@@ -1237,7 +1246,7 @@ export default function WorkUnifiedOverviewPage() {
             ) : displayItems.length === 0 ? (
               <div className="px-4 py-8 text-center text-gray-400 text-sm">{emptyResultsMessage}</div>
             ) : (
-              <div ref={viewMode === 'kanban' ? kanbanBoardRef : undefined} className="flex gap-3 overflow-x-auto h-full min-h-[28rem] items-stretch">
+              <div ref={viewMode === 'kanban' ? kanbanBoardRef : undefined} className="flex gap-3 overflow-x-auto h-full items-stretch">
                 {(viewMode === 'kanban' ? kanbanColumns : viewMode === 'deadline' ? deadlineColumns : plannerColumns).map((col) => (
                   <WorkKanbanColumn key={col.slug} col={col} variant={viewMode === 'deadline' ? 'deadline' : 'default'} />
                 ))}
