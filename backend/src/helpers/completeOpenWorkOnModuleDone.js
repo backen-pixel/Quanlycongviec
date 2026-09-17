@@ -812,6 +812,47 @@ async function finalizeHcbCanhKinhOnSxDone({ projectIds = [], leadIds = [] } = {
   };
 }
 
+const INSTALL_CLOCK_STATUSES = ['shipping', 'installing', 'producing'];
+
+/**
+ * CRM đã qua cột Lắp đặt: tắt hạn lắp.
+ * CSKH/bảo hành → status warranty (giữ dự án, không còn quá hạn lắp).
+ * Cột Hoàn thành CRM → đóng việc VC + mọi hạn còn lại.
+ */
+async function closeInstallDeadlineWhenCrmPastInstallation({
+  projectId = null,
+  leadId = null,
+  crmCompleted = false,
+} = {}) {
+  const pid = projectId ? String(projectId).trim() : '';
+  const lid = leadId ? String(leadId).trim() : '';
+  if (!pid && !lid) return { ok: false };
+
+  if (crmCompleted) {
+    const done = await completeOpenWorkOnModuleDone({
+      module: 'project_final',
+      projectIds: pid ? [pid] : [],
+      leadIds: lid ? [lid] : [],
+    });
+    const marked = pid ? await markProjectsCompleted([pid]) : 0;
+    return { ok: true, mode: 'completed', ...done, projects_completed: marked };
+  }
+
+  if (!pid) return { ok: true, mode: 'warranty', updated: 0 };
+  const nowIso = new Date().toISOString();
+  const { data, error } = await supabase
+    .from('projects')
+    .update({ status: 'warranty', updated_at: nowIso })
+    .eq('id', pid)
+    .in('status', INSTALL_CLOCK_STATUSES)
+    .select('id');
+  if (error) {
+    console.warn('[completeOpenWork] close install → warranty:', error.message);
+    return { ok: false, error: error.message };
+  }
+  return { ok: true, mode: 'warranty', updated: (data || []).length };
+}
+
 module.exports = {
   isCrmCompletedStage,
   isLogisticsCompletedColumn,
@@ -820,6 +861,7 @@ module.exports = {
   workshopTaskMatchesModule,
   completeOpenWorkOnModuleDone,
   clearAllProjectDeadlinesOnInstallationDone,
+  closeInstallDeadlineWhenCrmPastInstallation,
   finalizeHcbCanhKinhOnSxDone,
   HCB_CANH_KINH_DONE_REASON,
 };

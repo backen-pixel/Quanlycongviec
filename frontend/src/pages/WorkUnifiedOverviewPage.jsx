@@ -2,14 +2,14 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
+import { isAdminLike, isCompanyScopedAdmin, isWorkProductionModuleAdmin } from '../lib/adminRole';
 import { formatDate, formatVND } from '../lib/utils';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import ResponsiveTable from '../components/ResponsiveTable';
 import { WorkUnifiedOpenTabProvider, workUnifiedPath } from '../components/WorkUnifiedOpenTabMenu';
 import KanbanGotoProjectTasksBtn from '../components/KanbanGotoProjectTasksBtn';
 import {
-  RefreshCw, Plus, FileText, Package, ChevronLeft, ChevronRight,
+  RefreshCw, Plus, FileText, Package, ChevronLeft, ChevronRight, Bell,
   List, LayoutGrid, Clock, Phone, Calendar, EyeOff, Eye, X, Search, Users,
 } from 'lucide-react';
 import SearchInlineFilterChips, { SearchClearButton, AdvFilterButton, searchGroupClass } from '../components/SearchInlineFilterChips';
@@ -494,6 +494,10 @@ export default function WorkUnifiedOverviewPage() {
   const [searchFocused, setSearchFocused] = useState(false);
   const [users, setUsers] = useState([]);
   const [regions, setRegions] = useState([]);
+  const [remindingProgress, setRemindingProgress] = useState(false);
+  const [remindedProgress, setRemindedProgress] = useState(false);
+  const [remindingProjectId, setRemindingProjectId] = useState('');
+  const [remindedProjectId, setRemindedProjectId] = useState('');
   const searchBoxRef = useRef(null);
   const resultsCardRef = useRef(null);
   const kanbanBoardRef = useRef(null);
@@ -646,12 +650,30 @@ export default function WorkUnifiedOverviewPage() {
 
   useEffect(() => { setPage(1); }, [stageFilter, forecastFilter, companyId, debouncedSearch, filterUserIds, filterRegionId, rangeFrom, rangeTo]);
 
+  const canRemindProgress = isWorkProductionModuleAdmin(user);
+
   const listPaging = viewMode === 'list'
     && !filterUserIds.length
     && !filterRegionId
     && !debouncedSearch
     && !rangeFrom
     && !rangeTo;
+
+  const workUnifiedQueryParams = useCallback(() => {
+    const params = {};
+    if (stageFilter) params.stage = stageFilter;
+    if (effectiveCompanyIdForUsers) params.company_id = effectiveCompanyIdForUsers;
+    else if (canPickCompany && companyId) params.company_id = companyId;
+    if (debouncedSearch) params.search = debouncedSearch;
+    if (filterUserIds.length) params.user_ids = filterUserIds.join(',');
+    if (filterRegionId) params.region_id = filterRegionId;
+    if (rangeFrom) params.date_from = rangeFrom;
+    if (rangeTo) params.date_to = rangeTo;
+    return params;
+  }, [
+    stageFilter, effectiveCompanyIdForUsers, canPickCompany, companyId,
+    debouncedSearch, filterUserIds, filterRegionId, rangeFrom, rangeTo,
+  ]);
 
   const load = useCallback(async () => {
     const gen = ++loadGenRef.current;
@@ -694,6 +716,62 @@ export default function WorkUnifiedOverviewPage() {
   ]);
 
   useEffect(() => { load(); }, [load]);
+
+  const summarizeProgressRemind = (payload) => {
+    const sent = Number(payload?.sent || 0);
+    const skippedToday = Number(payload?.skipped_today || 0);
+    const skippedPeople = Number(payload?.skipped_no_people || 0);
+    const failed = Number(payload?.failed || 0);
+    const bits = [`Đã gửi ${sent} bình luận nhắc tiến độ`];
+    if (skippedToday) bits.push(`${skippedToday} dự án đã nhắc hôm nay`);
+    if (skippedPeople) bits.push(`${skippedPeople} dự án chưa có người chịu trách nhiệm`);
+    if (failed) bits.push(`${failed} lỗi`);
+    if (payload?.truncated) bits.push('chỉ gửi tối đa 80 dự án/lần');
+    return `${bits.join('. ')}.`;
+  };
+
+  const handleRemindProgress = async (projectIds = null) => {
+    const ids = Array.isArray(projectIds) ? projectIds.filter(Boolean) : [];
+    const isOne = ids.length === 1;
+    const n = isOne ? 1 : Number(stats.late || 0);
+    if (!n) {
+      alert('Không có dự án trễ hạn để nhắc.');
+      return;
+    }
+    const ok = window.confirm(
+      isOne
+        ? 'Gửi nhắc cập nhật tiến độ vào Bình luận và @ người chịu trách nhiệm (tab Thành viên)?'
+        : `Gửi nhắc cập nhật tiến độ vào Bình luận của ${n} dự án trễ hạn?\n\nNgười chịu trách nhiệm (tab Thành viên) sẽ được @mention. Ai chưa có trên tab sẽ được thêm vai trò Chịu trách nhiệm.\nMỗi dự án chỉ nhắc 1 lần/ngày.`,
+    );
+    if (!ok) return;
+    if (isOne) setRemindingProjectId(ids[0]);
+    else setRemindingProgress(true);
+    try {
+      const res = await api.post(
+        '/management/work-unified/remind-progress',
+        ids.length ? { project_ids: ids } : {},
+        { params: workUnifiedQueryParams() },
+      );
+      const sent = Number(res.data?.sent || 0);
+      if (!sent) {
+        alert(res.data?.message || res.data?.error || 'Không gửi được nhắc. Có thể đã nhắc hôm nay hoặc chưa có người chịu trách nhiệm.');
+        return;
+      }
+      if (isOne) {
+        setRemindedProjectId(ids[0]);
+        window.setTimeout(() => setRemindedProjectId((cur) => (cur === ids[0] ? '' : cur)), 4000);
+      } else {
+        setRemindedProgress(true);
+        window.setTimeout(() => setRemindedProgress(false), 4000);
+      }
+      alert(summarizeProgressRemind(res.data));
+    } catch (e) {
+      alert(e?.response?.data?.error || e?.response?.data?.message || 'Không gửi được nhắc cập nhật tiến độ');
+    } finally {
+      if (isOne) setRemindingProjectId('');
+      else setRemindingProgress(false);
+    }
+  };
 
   /**
    * Có dữ liệu mới (đổi filter/trang/company/view...) và có kết quả → tự cuộn tới khung
@@ -1017,6 +1095,26 @@ export default function WorkUnifiedOverviewPage() {
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Làm mới
           </button>
+          {canRemindProgress && (
+            <button
+              type="button"
+              onClick={() => handleRemindProgress()}
+              disabled={loading || remindingProgress || !stats.late}
+              title="Gửi bình luận nhắc cập nhật tiến độ tới người chịu trách nhiệm của các dự án trễ hạn"
+              className={`inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg border cursor-pointer disabled:opacity-50 disabled:cursor-default ${
+                remindedProgress
+                  ? 'bg-amber-50 text-amber-800 border-amber-200'
+                  : 'bg-white text-amber-800 border-amber-200 hover:bg-amber-50'
+              }`}
+            >
+              <Bell className={`h-4 w-4 ${remindingProgress ? 'animate-pulse' : ''}`} />
+              {remindedProgress
+                ? 'Đã nhắc tiến độ'
+                : remindingProgress
+                  ? 'Đang gửi…'
+                  : `Nhắc tiến độ${stats.late ? ` (${stats.late})` : ''}`}
+            </button>
+          )}
           <Link
             to="/projects/create"
             className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
@@ -1398,8 +1496,29 @@ export default function WorkUnifiedOverviewPage() {
                 header: 'Trạng thái',
                 cellClassName: 'px-4 py-3 align-top',
                 cell: (it) => (
-                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${FORECAST_BADGE_CLS[it.forecast]}`}>
-                    {forecastLabel(it)}
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${FORECAST_BADGE_CLS[it.forecast]}`}>
+                      {forecastLabel(it)}
+                    </span>
+                    {canRemindProgress && it.forecast === 'late' && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleRemindProgress([it.id]);
+                        }}
+                        disabled={!!remindingProjectId || !!remindingProgress || remindedProjectId === it.id}
+                        title="Nhắc cập nhật tiến độ vào bình luận và tab Thành viên"
+                        className={`inline-flex items-center justify-center h-7 w-7 rounded-md border cursor-pointer disabled:cursor-default ${
+                          remindedProjectId === it.id
+                            ? 'bg-amber-50 text-amber-800 border-amber-200'
+                            : 'bg-white text-amber-700 border-amber-200 hover:bg-amber-50'
+                        }`}
+                      >
+                        <Bell className={`h-3.5 w-3.5 ${remindingProjectId === it.id ? 'animate-pulse' : ''}`} />
+                      </button>
+                    )}
                   </span>
                 ),
               },

@@ -1,6 +1,44 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-16 16:05 (UTC+7)
+Cập nhật: 2026-09-17 11:05 (UTC+7)
+
+## CRM stepper — qua Lắp đặt thì hết hạn lắp
+
+Trạng thái: **FE+BE local.**
+
+Kéo deal CRM sang cột **sau Lắp đặt** (CSKH / bảo hành / nghiệm thu /
+Hoàn thành): tắt hạn lắp. `install_date` giữ. CSKH → `projects.status=warranty`
+(vẫn hiện Work Unified). Hoàn thành CRM → đóng việc VC + mọi hạn còn lại.
+
+Hoàn tác: revert `crmDealStageGate.js` (BE+FE), `moduleDeadlinePolicy.js`
+(BE+FE), `completeOpenWorkOnModuleDone.js`, `leadLifecycle.js`,
+`management.js` (`warranty` trong danh sách Work Unified).
+
+## Work Unified — nhắc cập nhật tiến độ dự án quá hạn
+
+Trạng thái: **FE+BE local. Đã gửi 36/36 dự án trễ hạn VPT hôm nay.**
+
+Nút **Nhắc tiến độ** trên `/management/work-unified` (và chuông từng dòng
+trễ hạn): ghi bình luận `@` người chịu trách nhiệm, thêm họ vào tab
+Thành viên (vai trò Chịu trách nhiệm) nếu chưa có. Mỗi dự án 1 lần/ngày,
+tối đa 80 dự án/lần. Gửi song song 5 dự án; proxy Vite `/api` 180s.
+
+Hoàn tác: revert `workUnifiedProgressReminder.js`, `management.js`
+(POST `/work-unified/remind-progress`), `WorkUnifiedOverviewPage.jsx`.
+
+## Deadline — 1 hạn theo vòng đời CRM → SX → lắp
+
+Trạng thái: **FE+BE local + SQL 619 đã chạy primary/backup.**
+
+Một lúc chỉ đếm một hạn. Đã dọn dữ liệu chồng:
+- CRM Thua/Thắng: xóa hạn thẻ + hạn NV mở (không xóa việc).
+- Deal đã lập SX: xóa hạn CRM (thẻ + NV CRM, giữ NV sx_/vc_).
+- SX đã giao / bàn giao VC: xóa `sx_kanban_deadline_at` + `production_deadline`.
+- Giữ `install_date` / `delivery_date` / `production_finish_date`.
+
+Hoàn tác: snapshot `backend/uploads/_lifecycle_deadline_sync_*.json`;
+revert `moduleDeadlinePolicy.js` (BE+FE), `crmLeadDeadlineDisplay.js`,
+`leadsList.js`, `619_sync_lifecycle_deadlines.sql`.
 
 ## Cảnh báo hạn — bật/tắt từng API
 

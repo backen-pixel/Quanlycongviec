@@ -3,6 +3,7 @@ import { endOfVnCalendarDayAfterEntered } from './vnDate';
 import { companyWorkEndMsFromRaw } from './companyDeadlineClock';
 import {
   DEADLINE_MODULE,
+  crmHandedToProduction,
   resolveEffectiveModuleDeadline,
 } from './moduleDeadlinePolicy';
 
@@ -59,6 +60,7 @@ export function shouldHideCrmKanbanDeadlineOnCard(item, stage) {
   if (crmLeadMissingPhone(item)) return true;
   const st = stage || item?.stage;
   if (isCrmPipelineStageNoDeadline(st)) return true;
+  if (crmHandedToProduction(item, st)) return true;
   return false;
 }
 
@@ -234,7 +236,8 @@ export function resolveCrmLeadDeadlineViewSource(item, stage, config) {
 export function resolveCrmLeadDeadlineBucketSource(item, stage, config) {
   const st = stage || item?._stage || item?.stage;
   const hasPhone = crmLeadHasPhone(item);
-  if (!hasPhone || item?.deadline_disabled_at || isCrmPipelineStageNoDeadline(st)) {
+  if (!hasPhone || item?.deadline_disabled_at || isCrmPipelineStageNoDeadline(st)
+    || crmHandedToProduction(item, st)) {
     return { deadlineTs: null, source: null, forcedNoDeadline: true };
   }
   void config;

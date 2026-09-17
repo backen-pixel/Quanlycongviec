@@ -14,6 +14,7 @@ const { createAdditionalCustomerDeal } = require('../../../helpers/projectOrderF
 const {
   isCrmCompletedStage,
   completeOpenWorkOnModuleDone,
+  closeInstallDeadlineWhenCrmPastInstallation,
 } = require('../../../helpers/completeOpenWorkOnModuleDone');
 const { deleteExclusiveProjectsForLeads } = require('../../../helpers/deleteExclusiveProjectsForLeads');
 const { invalidateCrmDeadlineSnapshots } = require('../../../helpers/crmDeadlineSnapshotCache');
@@ -2386,7 +2387,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
         .maybeSingle()
       : { data: null };
 
-    const { loadWonAnchorOrderForPipeline } = require('../../../helpers/crmDealStageGate');
+    const { loadWonAnchorOrderForPipeline, isCrmStagePastInstallation } = require('../../../helpers/crmDealStageGate');
     const wonAnchorOrder = await loadWonAnchorOrderForPipeline(stage?.pipeline_id || lead?.pipeline_id || null);
     const stageGate = assertDealCrmManualStageChange(lead, stage, prevStageForGate, { wonAnchorOrder });
     if (!stageGate.ok) {
@@ -2633,6 +2634,29 @@ r.patch('/leads/:id/stage', async (req, res) => {
         }
       } catch (ensureErr) {
         console.warn('[crm/stage] ensureMissingCrmTasksForPipelineStage:', ensureErr.message);
+      }
+    }
+
+    if (isStageChange && stage_id && lead?.project_id && !stage?.is_lost) {
+      try {
+        const pipeId = stage.pipeline_id || lead.pipeline_id;
+        let pipeStages = [];
+        if (pipeId) {
+          const { data: ps } = await supabase
+            .from('crm_pipeline_stages')
+            .select('id, name, order_index, is_won, is_lost, sync_role, counts_as_completed_revenue, canonical_slug')
+            .eq('pipeline_id', pipeId);
+          pipeStages = ps || [];
+        }
+        if (isCrmStagePastInstallation(stage, pipeStages)) {
+          await closeInstallDeadlineWhenCrmPastInstallation({
+            projectId: lead.project_id,
+            leadId: req.params.id,
+            crmCompleted: isCrmCompletedStage(stage),
+          });
+        }
+      } catch (installErr) {
+        console.warn('[crm/stage] close install deadline:', installErr.message);
       }
     }
 

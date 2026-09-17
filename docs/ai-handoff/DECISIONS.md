@@ -11,9 +11,12 @@
 
 - Deadline phải được giải quyết qua policy chung, không thêm chuỗi `COALESCE` hoặc thứ tự ưu
   tiên riêng rải rác trong route/component mới.
-- Hoàn thành CRM chỉ ảnh hưởng CRM; hoàn thành SX chỉ ảnh hưởng SX.
-- Hoàn thành VC thông thường chỉ ảnh hưởng VC; bước hoàn thành dự án cuối mới dọn deadline
-  toàn dự án.
+- Một deal/dự án **chỉ một hạn đang đếm**:
+  - CRM (chưa lập SX) → hạn CRM.
+  - Đưa sang sản xuất (`project_id` / cột Đang SX) → hết hạn CRM, chỉ hạn SX.
+  - SX giao hàng / bàn giao VC / cột Đã giao → hết hạn SX, chuyển hạn lắp.
+  - Lắp xong (cột VC Hoàn thành / `status=completed`) → không còn hạn nào.
+- Ngày giao/lắp giữ làm lịch sử; không xóa khi hết hạn hiệu lực.
 - API bổ sung trường dẫn xuất nhưng giữ các trường cũ để tương thích giao diện.
 - Không thêm cột DB chỉ để lưu `effective_deadline_*`; đây là dữ liệu dẫn xuất.
 

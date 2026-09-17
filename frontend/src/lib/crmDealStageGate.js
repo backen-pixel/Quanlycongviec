@@ -191,6 +191,34 @@ export function classifyCrmPostWonManagedKind(stage) {
   return null;
 }
 
+/**
+ * Cột CRM đã qua Lắp đặt (CSKH / bảo hành / hoàn thành / cột sau lắp theo order_index).
+ * Hạn lắp không còn đếm khi deal đứng ở đây.
+ */
+export function isCrmStagePastInstallation(stage, pipelineStages = []) {
+  if (!stage || stage.is_lost) return false;
+  if (stage.is_won) return false;
+  if (stage.counts_as_completed_revenue) return true;
+  const slug = String(stage.canonical_slug || stage.slug || '').toLowerCase().trim();
+  if (slug === 'completed' || slug === 'done') return true;
+  const n = normalizeStageNameFold(stage.name);
+  if (n === 'hoan thanh' || n.startsWith('hoan thanh ')) return true;
+
+  const kind = classifyCrmPostWonManagedKind(stage);
+  if (kind === 'vc_installation') return false;
+  if (kind === 'vc_customer_care') return true;
+  if (kind === 'sx_production' || kind === 'sx_completed' || kind === 'vc_delivery') return false;
+
+  const installOrders = (Array.isArray(pipelineStages) ? pipelineStages : [])
+    .filter((s) => classifyCrmPostWonManagedKind(s) === 'vc_installation')
+    .map((s) => Number(s.order_index))
+    .filter((x) => Number.isFinite(x));
+  if (!installOrders.length) return false;
+  const order = Number(stage.order_index);
+  if (!Number.isFinite(order)) return false;
+  return order > Math.max(...installOrders);
+}
+
 function badgeNameFold(badge) {
   return normalizeStageNameFold(badge?.name);
 }

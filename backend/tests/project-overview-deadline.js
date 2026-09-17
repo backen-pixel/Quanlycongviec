@@ -37,8 +37,19 @@ const sxWhenVcLinked = resolveOverviewGroupDeadline({
   },
   openChildren: [],
 });
-assert.ok(sxWhenVcLinked);
-assert.equal(String(sxWhenVcLinked).slice(0, 10), '2026-09-16');
+assert.equal(sxWhenVcLinked, null);
+
+const vcAfterSxGiao = resolveOverviewGroupDeadline({
+  lane: 'logistics',
+  project: {
+    status: 'shipping',
+    logistics_company_id: 'vc-co',
+    install_date: '2026-09-18T07:00:00.000Z',
+  },
+  openChildren: [],
+});
+assert.ok(vcAfterSxGiao);
+assert.equal(String(vcAfterSxGiao).slice(0, 10), '2026-09-18');
 
 const sxDoneColumn = resolveOverviewGroupDeadline({
   lane: 'production',
@@ -52,6 +63,7 @@ const vcDeadline = resolveOverviewGroupDeadline({
   lane: 'logistics',
   project: {
     status: 'shipping',
+    logistics_company_id: 'vc-co',
     install_date: '2026-09-18T07:00:00.000Z',
     delivery_date: '2026-09-18',
   },

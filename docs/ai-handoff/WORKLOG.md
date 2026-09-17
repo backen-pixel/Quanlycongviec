@@ -1,5 +1,46 @@
 # Nhật ký công việc AI
 
+## 2026-09-17 11:05 — Gửi nhắc tất cả dự án trễ hạn Work Unified
+
+- AI: Cursor. Bấm **Nhắc tiến độ (36)** VPT: 36 bình luận @ người chịu
+  trách nhiệm. Proxy Vite cắt ~120s nên UI báo lỗi dù BE vẫn gửi nốt.
+  Sửa: gửi song song 5; timeout `/api` 180s.
+- Test: `node tests/work-unified-progress-reminder.test.js`.
+
+## 2026-09-17 10:50 — Qua cột Lắp đặt CRM thì hết hạn lắp
+
+- AI: Cursor. PATCH stage CRM sau Lắp đặt tắt hạn lắp (CSKH → warranty;
+  Hoàn thành → project_final). File: `crmDealStageGate.js`,
+  `moduleDeadlinePolicy.js`, `completeOpenWorkOnModuleDone.js`,
+  `leadLifecycle.js`, `management.js`.
+- Test: `node tests/module-deadline-policy.test.js`.
+
+## 2026-09-17 10:40 — Nhắc tiến độ dự án quá hạn trên Work Unified
+
+- AI: Cursor. Nút Nhắc tiến độ gửi bình luận @ người chịu trách nhiệm
+  (tab Thành viên) cho dự án `forecast=late`. File:
+  `workUnifiedProgressReminder.js`, `management.js`,
+  `WorkUnifiedOverviewPage.jsx`, test `work-unified-progress-reminder.test.js`.
+- Test: `node tests/work-unified-progress-reminder.test.js` OK.
+
+## 2026-09-17 10:10 — Dọn hạn chồng theo vòng đời CRM → SX → lắp
+
+- AI: Cursor. SQL 619 đã chạy primary + backup. Xóa hạn CRM trên
+  Thua/Thắng và deal đã lập SX; xóa hạn SX sau giao/bàn giao VC.
+  Không đụng ngày giao/lắp. Script:
+  `backend/scripts/sync-lifecycle-deadlines.js`.
+- Primary trước→sau: thẻ mất 634→0, NV mất 768→0, hạn SX sau giao 13→0.
+- Backup: 409/744/2 → 0.
+
+## 2026-09-17 09:40 — Một hạn theo vòng đời CRM → SX → lắp
+
+- AI: Cursor. Policy: CRM lập SX thì hết hạn CRM; SX giao/bàn giao VC thì
+  hết hạn SX và đếm hạn lắp; lắp xong thì hết hạn. File:
+  `moduleDeadlinePolicy.js` (BE+FE), `crmLeadDeadlineDisplay.js`,
+  `leadsList.js`, test, `DECISIONS.md` AI-002.
+- Test: `node tests/module-deadline-policy.test.js`,
+  `node tests/project-overview-deadline.js` OK.
+
 ## 2026-09-16 16:05 — Bật/tắt từng API cảnh báo hạn
 
 - AI: Cursor. Cột công tắc trên bảng API đã cấu hình; tắt thì cron
