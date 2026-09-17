@@ -1034,7 +1034,16 @@ r.get('/profile/:userId', async (req, res) => {
   }
 });
 
-/** PATCH /api/internal-social/profile/me — đổi avatar / ảnh bìa / tiểu sử */
+function normalizeSelfPhone(raw) {
+  const compact = String(raw || '').trim().replace(/[\s.\-()]/g, '');
+  if (!compact) return { phone: null };
+  if (!/^\+?[0-9]{8,15}$/.test(compact)) {
+    return { error: 'Số điện thoại không hợp lệ (8–15 chữ số).' };
+  }
+  return { phone: compact };
+}
+
+/** PATCH /api/internal-social/profile/me — đổi avatar / ảnh bìa / tiểu sử / họ tên / SĐT */
 r.patch('/profile/me', async (req, res) => {
   try {
     const me = req.user.userId || req.user.id;
@@ -1058,6 +1067,11 @@ r.patch('/profile/me', async (req, res) => {
       }
       update.full_name = raw;
     }
+    if (req.body?.phone !== undefined) {
+      const parsed = normalizeSelfPhone(req.body.phone);
+      if (parsed.error) return res.status(400).json({ error: parsed.error });
+      update.phone = parsed.phone;
+    }
     if (!Object.keys(update).length) {
       return res.status(400).json({ error: 'Không có thay đổi.' });
     }
@@ -1066,7 +1080,7 @@ r.patch('/profile/me', async (req, res) => {
       .from('users')
       .update(update)
       .eq('id', me)
-      .select('id, full_name, email, avatar, cover_url, bio')
+      .select('id, full_name, email, phone, avatar, cover_url, bio')
       .single();
     if (error) {
       const msg = String(error.message || '').toLowerCase();

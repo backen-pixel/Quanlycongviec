@@ -1,6 +1,17 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-17 11:05 (UTC+7)
+Cập nhật: 2026-09-17 11:45 (UTC+7)
+
+## Trang cá nhân — cập nhật họ tên + SĐT
+
+Trạng thái: **FE+BE local.**
+
+Card **Thông tin** trên `/social/u/:id`: nút **Cập nhật** (chủ hồ sơ)
+sửa họ tên và số điện thoại. PATCH `/internal-social/profile/me` nhận
+`phone`.
+
+Hoàn tác: revert `EditMyNameModal.jsx`, `SocialProfilePage.jsx`,
+`internalSocial.js`.
 
 ## CRM stepper — qua Lắp đặt thì hết hạn lắp
 

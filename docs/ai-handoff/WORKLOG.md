@@ -1,5 +1,11 @@
 # Nhật ký công việc AI
 
+## 2026-09-17 11:45 — Trang cá nhân: cập nhật họ tên và SĐT
+
+- AI: Cursor. Nút **Cập nhật** trên card Thông tin. PATCH profile/me
+  nhận `phone`. File: `EditMyNameModal.jsx`, `SocialProfilePage.jsx`,
+  `internalSocial.js`.
+
 ## 2026-09-17 11:05 — Gửi nhắc tất cả dự án trễ hạn Work Unified
 
 - AI: Cursor. Bấm **Nhắc tiến độ (36)** VPT: 36 bình luận @ người chịu
