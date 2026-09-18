@@ -609,10 +609,14 @@ r.get('/leads/:id/detail', async (req, res) => {
       data.interacted_at = null;
     }
     try {
-      const { resolveLeadInboxChannel } = require('../../../helpers/crmLeadInboxChannel');
-      data.inbox_channel = await resolveLeadInboxChannel(supabase, canonicalId, data);
+      const { resolveLeadInboxChannels } = require('../../../helpers/crmLeadInboxChannel');
+      const { channels, primary } = await resolveLeadInboxChannels(supabase, canonicalId, data, req.user);
+      // inbox_channel giữ nguyên cho chỗ cũ; inbox_channels để hiện nhiều tab chat
+      data.inbox_channel = primary;
+      data.inbox_channels = channels;
     } catch (e) {
       data.inbox_channel = null;
+      data.inbox_channels = [];
     }
     try {
       const { listDealProductionProjects } = require('../../../helpers/autoDealWonProject');

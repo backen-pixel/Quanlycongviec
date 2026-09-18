@@ -450,6 +450,16 @@ app.use('/api/facebook', facebookRouter);
 const zaloRouter = require('./routes/zalo');
 zaloRouter._ioRef = io;
 app.use('/api/zalo', zaloRouter);
+// Chép ảnh/tệp Zalo về kho công ty. Việc nền, tách khỏi luồng nhận tin vì tải
+// tệp chậm hơn ghi cơ sở dữ liệu hàng chục lần.
+setInterval(() => {
+  require('./helpers/zaloAttachmentCopy').processPending(5)
+    .catch((e) => console.warn('[Zalo đính kèm] vòng nền:', e.message));
+}, 20000);
+
+const zaloBridgeRouter = require('./routes/zaloBridge');
+zaloBridgeRouter._ioRef = io;
+app.use('/api/zalo-bridge', zaloBridgeRouter);
 // Inject io reference for realtime fb_message events
 app.use('/api/production', require('./routes/production'));
 try { app.use('/api/production/backup-sync', require('./routes/productionBackupSync')); } catch (e) { console.warn('⚠️ production backup-sync route failed:', e.message); }

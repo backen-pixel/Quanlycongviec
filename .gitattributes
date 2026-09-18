@@ -1,0 +1,17 @@
+# Chuẩn hoá line ending: repo luôn giữ LF, tránh việc máy Windows commit CRLF
+# làm mọi file hiện "đã sửa" trong diff.
+* text=auto eol=lf
+
+# Tệp nhị phân — không đụng vào
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.xlsx binary
+*.xls binary
+*.zip binary
+*.woff binary
+*.woff2 binary
+*.ttf binary

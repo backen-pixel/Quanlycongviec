@@ -900,12 +900,20 @@ export default function LeadDetail() {
     return () => { cancelled = true; };
   }, [lead?.company_id, user?.company_id]);
 
-  /** Chỉ hiện tab inbox đúng nguồn tạo lead (facebook | zalo). */
-  const inboxChannel = useMemo(() => {
-    const ch = String(lead?.inbox_channel || '').trim().toLowerCase();
-    if (ch === 'facebook' || ch === 'zalo') return ch;
-    return null;
-  }, [lead?.inbox_channel]);
+  /**
+   * Các tab inbox được hiện. Một lead có thể có nhiều kênh cùng lúc —
+   * Facebook, Zalo OA, Zalo cá nhân — nên đây là danh sách, không phải một giá trị.
+   */
+  const inboxChannels = useMemo(() => {
+    const allowed = ['facebook', 'zalo', 'zalo_personal'];
+    const list = Array.isArray(lead?.inbox_channels) ? lead.inbox_channels : [];
+    const fromList = list.map((c) => String(c).trim().toLowerCase()).filter((c) => allowed.includes(c));
+    if (fromList.length) return fromList;
+    const one = String(lead?.inbox_channel || '').trim().toLowerCase();
+    return allowed.includes(one) ? [one] : [];
+  }, [lead?.inbox_channels, lead?.inbox_channel]);
+
+  const inboxChannel = inboxChannels[0] || null;
 
   /** Mở đúng tab từ URL (?tab=chat|facebook|calls|voice_crm|approvals|…) — app mobile / liên kết ngoài. */
   useEffect(() => {
@@ -930,6 +938,7 @@ export default function LeadDetail() {
       'notes',
       'facebook',
       'zalo',
+      'zalo_personal',
       'team',
       'comments',
       'activities',
@@ -967,10 +976,9 @@ export default function LeadDetail() {
       setSearchParams(next, { replace: true });
       return;
     }
-    if (t === 'facebook' || t === 'zalo') {
+    if (t === 'facebook' || t === 'zalo' || t === 'zalo_personal') {
       if (!lead || String(lead.id) !== String(id)) return;
-      const ch = inboxChannel;
-      setActiveTab(ch === 'facebook' || ch === 'zalo' ? ch : 'tasks');
+      setActiveTab(inboxChannels.includes(t) ? t : (inboxChannel || 'tasks'));
       const next = new URLSearchParams(searchParams);
       next.delete('tab');
       setSearchParams(next, { replace: true });
@@ -983,7 +991,7 @@ export default function LeadDetail() {
     const next = new URLSearchParams(searchParams);
     next.delete('tab');
     setSearchParams(next, { replace: true });
-  }, [id, searchParams, setSearchParams, lead, inboxChannel]);
+  }, [id, searchParams, setSearchParams, lead, inboxChannels, inboxChannel]);
 
   const loadDealExcelQuotations = useCallback(() => {
     if (!id) return;
@@ -1331,10 +1339,11 @@ export default function LeadDetail() {
 
   useEffect(() => {
     if (!lead) return;
-    if ((activeTab === 'facebook' || activeTab === 'zalo') && activeTab !== inboxChannel) {
+    const chatTabs = ['facebook', 'zalo', 'zalo_personal'];
+    if (chatTabs.includes(activeTab) && !inboxChannels.includes(activeTab)) {
       setActiveTab(inboxChannel || 'tasks');
     }
-  }, [lead?.id, inboxChannel, activeTab]);
+  }, [lead?.id, inboxChannels, inboxChannel, activeTab]);
 
   useEffect(() => {
     if (lead?.type === 'deal' && activeTab === 'deal_scores' && !isDealHoanThanhForZalo) {
@@ -1367,6 +1376,7 @@ export default function LeadDetail() {
       'lead-tab-notes': 'notes',
       'lead-tab-facebook': 'facebook',
       'lead-tab-zalo': 'zalo',
+      'lead-tab-zalo-personal': 'zalo_personal',
       'lead-tab-team': 'team',
       'lead-tab-comments': 'comments',
       'lead-tab-voice': 'voice_crm',
@@ -4154,10 +4164,13 @@ export default function LeadDetail() {
                   </span>
                 )}
               </button>
-              {inboxChannel === 'facebook' && (
+              {inboxChannels.includes('facebook') && (
               <button
                 type="button"
                 data-tour="lead-tab-facebook"
+                role="tab"
+                aria-selected={activeTab === 'facebook'}
+                aria-label="Facebook"
                 onClick={() => setActiveTab('facebook')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'facebook'
@@ -4168,10 +4181,13 @@ export default function LeadDetail() {
                 📘 Facebook
               </button>
               )}
-              {inboxChannel === 'zalo' && (
+              {inboxChannels.includes('zalo') && (
               <button
                 type="button"
                 data-tour="lead-tab-zalo"
+                role="tab"
+                aria-selected={activeTab === 'zalo'}
+                aria-label="Zalo"
                 onClick={() => setActiveTab('zalo')}
                 className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
                   activeTab === 'zalo'
@@ -4180,6 +4196,23 @@ export default function LeadDetail() {
                 }`}
               >
                 💬 Zalo OA
+              </button>
+              )}
+              {inboxChannels.includes('zalo_personal') && (
+              <button
+                type="button"
+                data-tour="lead-tab-zalo-personal"
+                role="tab"
+                aria-selected={activeTab === 'zalo_personal'}
+                aria-label="Zalo cá nhân"
+                onClick={() => setActiveTab('zalo_personal')}
+                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  activeTab === 'zalo_personal'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                📱 Zalo cá nhân
               </button>
               )}
               <button
@@ -5011,7 +5044,9 @@ export default function LeadDetail() {
               ) : activeTab === 'facebook' ? (
                 <FacebookChatTab leadId={id} companyId={lead?.company_id} />
               ) : activeTab === 'zalo' ? (
-                <ZaloChatTab leadId={id} />
+                <ZaloChatTab leadId={id} kind="oa" />
+              ) : activeTab === 'zalo_personal' ? (
+                <ZaloChatTab leadId={id} kind="personal" leadPhone={lead?.customer?.phone || lead?.phone || null} />
               ) : activeTab === 'team' ? (
                 <LeadMembersTab
                   leadId={id}
