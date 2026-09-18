@@ -1,6 +1,46 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-17 11:45 (UTC+7)
+Cập nhật: 2026-09-18 13:30 (UTC+7)
+
+## Migration Zalo cá nhân + Guide Assistant — CHƯA CHẠY, ĐANG CHẶN
+
+Trạng thái: **code xong, build đạt; migration chưa chạy ở bất kỳ môi trường nào.**
+
+9 migration cần chạy (phải gọi ĐÚNG TÊN FILE — số bị trùng, xem bên dưới):
+
+- Zalo cá nhân: `558_zalo_personal_bridge`, `559_zalo_gateway`,
+  `560_zalo_personal_lead_matching`, `561_zalo_personal_ownership`,
+  `562_zalo_expected_phone`, `563_zalo_attachment_storage`,
+  `564_storage_bucket_attachments`, `565_zalo_attachment_serve`
+- Guide Assistant: `602_guide_assistant_en` (672 dòng, 33 lệnh DDL, có
+  DROP FUNCTION / DROP INDEX / DROP TRIGGER / ALTER TABLE DROP CONSTRAINT)
+
+**Cảnh báo số migration trùng.** Mỗi số 558–565 có HAI file khác nhau, một của
+Zalo và một của main (`558_crm_leads_rpc_tenant_scope`,
+`559_crm_filter_summary_kanban_tenant_scope`,
+`560_projects_sx_kanban_column_composite_index`,
+`561_sx_kanban_stage_page_ids_rpc`, `562_crm_leads_page_ids_fast_path`,
+`563_hcb_truong_trong_thanh_all_projects`,
+`564_sx_kanban_column_counts_no_division`,
+`565_rescan_clear_deadlines_on_completed`). Toàn repo có 60+ số bị trùng — vấn
+đề sẵn có, không phải mới. Đừng bao giờ nói "chạy 558–565".
+
+**Bằng chứng DB đang ở schema cũ.** `npm run guide:check` báo:
+`column guide_knowledge.discarded_at does not exist` → bảng `guide_knowledge`
+ĐÃ tồn tại nhưng thiếu cột mà 602 thêm. Kho kiến thức trợ lý sẽ không nạp được
+cho tới khi 602 chạy.
+
+**Hai thứ đang chặn:**
+1. Môi trường thử nghiệm không còn. AI-003 buộc xác nhận trên môi trường thử
+   trước production, nhưng dự án DEV đã mất: pooler phân giải được
+   (54.177.55.191) nhưng tenant `postgres.xfql…` không tồn tại, host DIRECT
+   không phân giải, REST endpoint không gọi được.
+2. Quyền: phiên làm việc này bị chặn kết nối database production
+   (classifier trả "Production Reads").
+
+**Khi chạy phải chạy CẢ primary VÀ backup** — có failover/replication, tiền lệ
+ghi trong mục HCB: "602 kéo thẻ Tủ bếp đúng cột (primary + backup)".
+
 
 ## Trang cá nhân — cập nhật họ tên + SĐT
 

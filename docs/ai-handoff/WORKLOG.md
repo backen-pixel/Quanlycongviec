@@ -1,5 +1,41 @@
 # Nhật ký công việc AI
 
+## 2026-09-18 13:30 — Dựng lại repo: main + copilotkit + Zalo cá nhân
+
+- AI: Claude. Nhánh `feat/zalo-personal`.
+- Bối cảnh: thư mục làm việc trước đó KHÔNG phải git repo, đã phân kỳ khỏi
+  remote. Dựng lại thành repo thật trên nền `origin/main` (a98226a9).
+- Commit:
+  - `99bb3de7` ghép tính năng Zalo cá nhân (5 điểm móc, 15 file mới,
+    dịch vụ ngoài `zalo-bridge/`).
+  - `d4da30aa` merge `origin/copilotkit` (Guide Assistant + CopilotKit).
+    Giải 3 xung đột: `ViewModeDropdownMenu.jsx` giữ cả `extra` (main) và
+    `guideRegion` (copilotkit); `CRMTasksTab.jsx` giữ điều kiện
+    `!sxPlanGroups` của main + thuộc tính `data-guide-*` của copilotkit;
+    `LeadDetail.jsx` nút "Gửi Zalo OA" do hai bên thêm độc lập sau điểm
+    chung — lấy bản main vì có theo dõi `zaloOaSent`/`zaloOaSentAt`.
+  - `d56ec0e7` sinh lại `screenRegistry.js` + `screens.json` theo tên nhóm
+    menu của main ("3. Setup xưởng", trước là "3. Điều hành xưởng").
+- `crmLeadInboxChannel.js` phải export SONG SONG hai thế hệ:
+  `resolveLeadInboxChannels` (mới, cho `zalo_personal`) và
+  `resolveLeadInboxLinks` (cũ, `projectDealBundle.js` + `/leads/:id/inbox-links`
+  vẫn dùng). KHÔNG dựng hàm cũ từ hàm mới: hàm mới bật `zalo_personal` chỉ cần
+  lead có số di động VN hợp lệ dù chưa có hội thoại → tab Zalo hiện sai trên
+  trang dự án.
+- Kiểm thử đã chạy: `npm install` backend+frontend (9 gói mới của CopilotKit/
+  AI SDK); `vite build` ĐẠT (exit 0, 2m40s, cần
+  `NODE_OPTIONS=--max-old-space-size=6144`, heap 2 GB mặc định bị OOM);
+  `node --check` toàn bộ `backend/src` sạch; quét cú pháp 769 file frontend
+  sạch; chuỗi `build:frontend` (generate-registry → check-drift →
+  sync-screenshots-deploy) cả 3 exit 0.
+- CHƯA xác minh: migration chưa chạy ở bất kỳ môi trường nào (xem CURRENT.md).
+  Chưa khởi động backend — `server.js` có `setInterval` 20s gọi
+  `zaloAttachmentCopy.processPending(5)` GHI vào Supabase, `.env` trỏ môi
+  trường thật. Nhánh chưa push.
+- `backend/src/config/aiProvider.js` (bản làm việc cũ) KHÔNG có trên nhánh
+  remote nào; đã mất khỏi cây source. Backup toàn bộ trạng thái trước khi thay:
+  `/home/bizmind/local-20260918-1137.tar.gz`.
+
 ## 2026-09-17 11:45 — Trang cá nhân: cập nhật họ tên và SĐT
 
 - AI: Cursor. Nút **Cập nhật** trên card Thông tin. PATCH profile/me
