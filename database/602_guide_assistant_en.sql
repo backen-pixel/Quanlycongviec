@@ -101,6 +101,10 @@ SELECT pg_temp.rename_col('guide_experiences', 'bo_ly_do',  'discard_reason');
 DO $$
 BEGIN
   IF to_regclass('public.guide_experiences') IS NOT NULL THEN
+    -- fail_count là cột MỚI, không phải cột cũ đổi tên, nên khối đổi tên ở trên không dựng
+    -- được nó. Bảng đã tồn tại thì `CREATE TABLE IF NOT EXISTS` bên dưới bị bỏ qua, và
+    -- `COMMENT ON COLUMN ...fail_count` sẽ làm cả migration đổ. Thêm tay ở đây.
+    ALTER TABLE public.guide_experiences ADD COLUMN IF NOT EXISTS fail_count INT NOT NULL DEFAULT 0;
     ALTER TABLE public.guide_experiences ALTER COLUMN source SET DEFAULT 'auto';
     UPDATE public.guide_experiences SET source = 'auto' WHERE source = 'tu_dong';
     UPDATE public.guide_experiences
