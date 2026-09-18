@@ -198,8 +198,11 @@ const { pipeOrgOverviewReportPdf } = require('../../../helpers/orgOverviewReport
 
 const ZALO_APP_SETTING_KEY = 'zalo_oa_notify';
 
+/** Admin HST / admin công ty / platform — không bắt company_id trên JWT. */
 function userIsAdmin(role) {
-  return normalizeCrmUserRole(role) === 'admin';
+  const r = normalizeCrmUserRole(role);
+  if (r === 'platform_admin') return true;
+  return userSeesAllCrmLeads(r);
 }
 
 function companyRegionExtraColumnsMissing(error) {
@@ -410,6 +413,9 @@ async function enforceCommercialDocCompanyOnWrite(req, res, payloadCompanyId, en
 function requireUserCompanyId(req, res) {
   const cid = req.user?.company_id;
   if (cid) return cid;
+  if (isSystemAdmin(req.user) || isPlatformAdmin(req.user) || userIsAdmin(req.user?.role)) {
+    return null;
+  }
   res.status(400).json({ error: 'Thiếu company_id của user. Vui lòng đăng xuất/đăng nhập lại hoặc gán company cho tài khoản.' });
   return null;
 }
@@ -423,6 +429,9 @@ async function requireUserCompanyIdResolved(req, res) {
     if (cid) req.user.company_id = cid;
   }
   if (!cid) {
+    if (isSystemAdmin(req.user) || isPlatformAdmin(req.user) || userIsAdmin(req.user?.role)) {
+      return null;
+    }
     res.status(400).json({ error: 'Thiếu company_id của user. Vui lòng đăng xuất/đăng nhập lại hoặc gán company cho tài khoản.' });
     return null;
   }

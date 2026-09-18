@@ -1,5 +1,52 @@
 # Nhật ký công việc AI
 
+## 2026-09-18 14:35 — CRM Kanban 400 thiếu company_id trên production
+
+- AI: Cursor. Production `userIsAdmin === admin` nên JWT `ecosystem_admin`
+  bị 400. Deploy helpersBundle + adminRole BE/FE + crmAccessRoles.
+
+## 2026-09-18 14:30 — Xóa Linh Tây Ninh + Vân Long Xuyên
+
+- AI: Cursor. Xóa 2 công ty inactive (0 lead/project) trên primary+backup.
+  Gỡ `user_companies`; giữ unit/dự án thật. Sync HST chỉ gắn công ty active.
+- `admin@tubep.vn` còn 5 công ty.
+
+## 2026-09-18 14:20 — Gắn mọi công ty HST cho admin hệ thống
+
+- AI: Cursor. `user_companies` đủ công ty tenant cho ecosystem_admin.
+  Không set `users.company_id`. File: `hstAdminCompanies.js`, login `/me`,
+  tạo công ty, Users POST/PUT, SQL 621.
+- `admin@tubep.vn`: 7 công ty.
+
+## 2026-09-18 14:10 — Admin HST không bắt company_id trên CRM
+
+- AI: Cursor. `userIsAdmin` thiếu `ecosystem_admin` nên JWT mới bị 400
+  «Thiếu company_id của user». File: `helpersBundle.js`.
+- Test: `node -e` userIsAdmin('ecosystem_admin') === true.
+
+## 2026-09-18 11:50 — Role quản trị hệ sinh thái (ecosystem_admin)
+
+- AI: Cursor. Thêm enum `ecosystem_admin`, gán `admin@tubep.vn`.
+  Helper BE/FE coi role này là admin HST (không `platform_admin`).
+  File: `620_user_role_ecosystem_admin.sql`, `adminRole.js`, UsersPage,
+  `crmAccessRoles.js`, `facebook.js`.
+- Test: `node tests/facebook-lead-chat-scope.test.js`, `npm run test:role-enum`.
+- Cần đăng nhập lại để JWT nhận role mới.
+
+## 2026-09-18 11:35 — Admin HST xem hội thoại Facebook trên deal
+
+- AI: Cursor. Admin cả hệ sinh thái (`admin` + `tenant_id`, không khoá
+  công ty) xem thread deal trong HST dù Page chưa map công ty. File:
+  `facebook.js`, test `facebook-lead-chat-scope.test.js`.
+- Test: `node tests/facebook-lead-chat-scope.test.js`.
+
+## 2026-09-18 11:25 — Admin hệ thống xem hội thoại Facebook trên deal
+
+- AI: Cursor. 403 vì lọc Page theo đúng công ty deal. Admin hệ thống
+  dùng phạm vi tenant (hoặc all) + cho thread đã gắn lead. File:
+  `facebook.js`, `FacebookChatTab.jsx`, test `facebook-lead-chat-scope.test.js`.
+- Test: `node tests/facebook-lead-chat-scope.test.js`.
+
 ## 2026-09-17 11:45 — Trang cá nhân: cập nhật họ tên và SĐT
 
 - AI: Cursor. Nút **Cập nhật** trên card Thông tin. PATCH profile/me

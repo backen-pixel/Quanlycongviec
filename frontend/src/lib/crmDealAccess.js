@@ -2,13 +2,20 @@
  * CRM phạm vi xem lead/deal/khu vực — khớp backend crmAccessRoles.js + crmRegionScope.js.
  */
 const CRM_DEAL_VIEW_ALL_ROLES = new Set([
+  'ecosystem_admin',
   'admin',
   'superadmin',
   'super_admin',
   'administrator',
 ]);
 
-const CRM_LEAD_VIEW_ALL_ROLES = new Set(['admin', 'superadmin', 'super_admin', 'administrator']);
+const CRM_LEAD_VIEW_ALL_ROLES = new Set([
+  'ecosystem_admin',
+  'admin',
+  'superadmin',
+  'super_admin',
+  'administrator',
+]);
 
 export function normalizeCrmUserRole(role) {
   return String(role ?? '').trim().toLowerCase();
@@ -43,9 +50,11 @@ export function userSeesAllCrmDealsScoped(user) {
 /** Admin hệ thống / admin công ty / sales_admin — chọn mọi khu vực trong công ty ở bộ lọc. */
 export function userCanPickAnyCrmRegionInCompany(user) {
   if (userSeesAllCrmLeads(user?.role)) {
+    const r = normalizeCrmUserRole(user?.role);
+    if (r === 'ecosystem_admin') return true;
     const hasCompany = !!(user?.company_id != null && String(user.company_id).trim());
     if (!hasCompany) return true;
-    return normalizeCrmUserRole(user?.role) === 'admin';
+    return r === 'admin';
   }
   const r = normalizeCrmUserRole(user?.role);
   return r === 'sales_admin' || r === 'crm_production_admin';

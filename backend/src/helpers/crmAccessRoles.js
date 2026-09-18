@@ -1,6 +1,7 @@
 /** Deal: admin hệ thống / superadmin xem toàn (theo phạm vi API); NV chỉ deal assigned_to.
  *  Không gồm manager/director — KPI pipeline chỉ theo deal được giao, tránh nhầm với tổng công ty. */
 const CRM_DEAL_VIEW_ALL_ROLES = new Set([
+  'ecosystem_admin',
   'admin',
   'superadmin',
   'super_admin',
@@ -8,19 +9,27 @@ const CRM_DEAL_VIEW_ALL_ROLES = new Set([
 ]);
 
 /** Lead: chỉ admin hệ thống xem hết; NV chỉ lead assigned_to / lead_owner_id. */
-const CRM_LEAD_VIEW_ALL_ROLES = new Set(['admin', 'superadmin', 'super_admin', 'administrator']);
+const CRM_LEAD_VIEW_ALL_ROLES = new Set([
+  'ecosystem_admin',
+  'admin',
+  'superadmin',
+  'super_admin',
+  'administrator',
+]);
 
 function normalizeCrmUserRole(role) {
   return String(role ?? '').trim().toLowerCase();
 }
 
 /**
- * Admin hệ thống CRM: role `admin`, không gắn `company_id` (legacy hoặc admin cao nhất HST).
+ * Admin hệ thống CRM: `ecosystem_admin`, hoặc `admin` không gắn `company_id`.
  * Phạm vi công ty do tenantGate / resolveCompanyScopeForRequest trên từng route.
  * @param {{ role?: string, company_id?: string | null, tenant_id?: string | null }} user — JWT / req.user
  */
 function isCrmSystemAdminUser(user) {
-  return normalizeCrmUserRole(user?.role) === 'admin' && !(user?.company_id != null && String(user.company_id).trim() !== '');
+  const r = normalizeCrmUserRole(user?.role);
+  if (r === 'ecosystem_admin') return true;
+  return r === 'admin' && !(user?.company_id != null && String(user.company_id).trim() !== '');
 }
 
 /**
