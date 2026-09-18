@@ -2,45 +2,51 @@
 
 Cập nhật: 2026-09-18 13:30 (UTC+7)
 
-## Migration Zalo cá nhân + Guide Assistant — CHƯA CHẠY, ĐANG CHẶN
+## Migration Zalo cá nhân + Guide Assistant — ĐÃ THỬ LOCAL, chờ production
 
-Trạng thái: **code xong, build đạt; migration chưa chạy ở bất kỳ môi trường nào.**
+Trạng thái: **9/9 ĐẠT trên Postgres local; CHƯA chạy production.**
 
-9 migration cần chạy (phải gọi ĐÚNG TÊN FILE — số bị trùng, xem bên dưới):
+Đã thoả AI-003 bằng Postgres 16.15 + pgvector chạy docker trên máy (dự án
+Supabase DEV đã mất — tenant `postgres.xfql…` không tồn tại).
 
-- Zalo cá nhân: `558_zalo_personal_bridge`, `559_zalo_gateway`,
-  `560_zalo_personal_lead_matching`, `561_zalo_personal_ownership`,
-  `562_zalo_expected_phone`, `563_zalo_attachment_storage`,
-  `564_storage_bucket_attachments`, `565_zalo_attachment_serve`
-- Guide Assistant: `602_guide_assistant_en` (672 dòng, 33 lệnh DDL, có
-  DROP FUNCTION / DROP INDEX / DROP TRIGGER / ALTER TABLE DROP CONSTRAINT)
+Cách dựng môi trường thử (tái lập được):
+- `docker run -d --name qlcv-pg -e POSTGRES_PASSWORD=... -p 55432:5432 pgvector/pgvector:pg16`
+- extension cần: `pg_trgm`, `vector`, `pgcrypto` (559 dùng `gen_random_bytes`)
+- phải stub `storage.buckets` — 564/565 ghi vào schema `storage` của Supabase
+- bảng tiền đề sinh từ `docs/database/DATABASE_SCHEMA.md`: users, companies,
+  crm_leads, customers, crm_sources, zalo_oa_accounts, zalo_contacts,
+  zalo_messages (nới lỏng: bỏ FK/NOT NULL, enum về text)
+- schema guide CŨ lấy từ backup `/home/bizmind/local-20260918-1137.tar.gz`
+  (migration 554/555/556) để diễn đúng đường nâng cấp của 602
 
-**Cảnh báo số migration trùng.** Mỗi số 558–565 có HAI file khác nhau, một của
-Zalo và một của main (`558_crm_leads_rpc_tenant_scope`,
+**Đã tìm và sửa một lỗi thật trong 602** (commit `0450a908`): thiếu
+`ADD COLUMN fail_count`, khiến migration ĐỔ ở dòng COMMENT khi bảng
+`guide_experiences` đã tồn tại ở schema cũ — đúng tình trạng của DB thật.
+
+Kết quả thử:
+- 8 migration Zalo: ĐẠT, idempotent (chạy 2 lần không nhân đôi dữ liệu),
+  tạo 5 bảng + 9 cột trên `zalo_oa_accounts`, 565 lật `attachments.public=false`
+- 602 trên schema cũ CÓ dữ liệu: ĐẠT, giữ bản ghi, đổi tên cột giữ giá trị,
+  JSON `tom_tat`→`summary` đúng, `source` `tu_dong`→`auto` đúng
+- 602 chạy lần 2 và trên DB sạch: ĐẠT
+- trọn bộ 9 theo thứ tự trên DB mới: **9/9 ĐẠT**
+
+CHƯA xác minh: hành vi trên dữ liệu thật khối lượng lớn; RLS/policy của
+Supabase; `storage.buckets` thật (local chỉ là bảng stub).
+
+**Khi chạy production phải chạy CẢ primary VÀ backup** — có failover; tiền lệ
+ở mục HCB: "602 kéo thẻ Tủ bếp đúng cột (primary + backup)". `.env` KHÔNG có
+`SUPABASE_ACCESS_TOKEN` nên không dùng được Management API như CLAUDE.md gợi ý.
+
+**Gọi migration theo ĐÚNG TÊN FILE.** Mỗi số 558–565 có HAI file khác nhau,
+một của Zalo và một của main (`558_crm_leads_rpc_tenant_scope`,
 `559_crm_filter_summary_kanban_tenant_scope`,
 `560_projects_sx_kanban_column_composite_index`,
 `561_sx_kanban_stage_page_ids_rpc`, `562_crm_leads_page_ids_fast_path`,
 `563_hcb_truong_trong_thanh_all_projects`,
 `564_sx_kanban_column_counts_no_division`,
-`565_rescan_clear_deadlines_on_completed`). Toàn repo có 60+ số bị trùng — vấn
-đề sẵn có, không phải mới. Đừng bao giờ nói "chạy 558–565".
-
-**Bằng chứng DB đang ở schema cũ.** `npm run guide:check` báo:
-`column guide_knowledge.discarded_at does not exist` → bảng `guide_knowledge`
-ĐÃ tồn tại nhưng thiếu cột mà 602 thêm. Kho kiến thức trợ lý sẽ không nạp được
-cho tới khi 602 chạy.
-
-**Hai thứ đang chặn:**
-1. Môi trường thử nghiệm không còn. AI-003 buộc xác nhận trên môi trường thử
-   trước production, nhưng dự án DEV đã mất: pooler phân giải được
-   (54.177.55.191) nhưng tenant `postgres.xfql…` không tồn tại, host DIRECT
-   không phân giải, REST endpoint không gọi được.
-2. Quyền: phiên làm việc này bị chặn kết nối database production
-   (classifier trả "Production Reads").
-
-**Khi chạy phải chạy CẢ primary VÀ backup** — có failover/replication, tiền lệ
-ghi trong mục HCB: "602 kéo thẻ Tủ bếp đúng cột (primary + backup)".
-
+`565_rescan_clear_deadlines_on_completed`). Toàn repo 60+ số trùng — vấn đề
+sẵn có. Đừng bao giờ nói "chạy 558–565".
 
 ## Trang cá nhân — cập nhật họ tên + SĐT
 

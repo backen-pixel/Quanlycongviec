@@ -1,5 +1,27 @@
 # Nhật ký công việc AI
 
+## 2026-09-18 14:10 — Thử 9 migration trên Postgres local; sửa lỗi 602
+
+- AI: Claude. Nhánh `feat/zalo-personal`.
+- Dự án Supabase DEV đã mất nên dựng Postgres 16.15 + pgvector bằng docker
+  trên máy để thoả AI-003, không dùng cloud.
+- Cần: `pg_trgm`, `vector`, `pgcrypto`; stub `storage.buckets`; bảng tiền đề
+  sinh từ `docs/database/DATABASE_SCHEMA.md`; schema guide CŨ lấy từ backup.
+- **Tìm được lỗi thật trong `602_guide_assistant_en.sql`** — thiếu
+  `ADD COLUMN fail_count`, migration ĐỔ ở `COMMENT ON COLUMN` khi
+  `guide_experiences` đang ở schema cũ. Sẽ đổ y hệt trên production. Sửa ở
+  commit `0450a908`, đặt trong khối `DO` có guard và SAU khối rename nên an
+  toàn cả khi schema cũ có `that_bai`.
+- Kiểm thử đã chạy: 8 migration Zalo ĐẠT + idempotent; 602 ĐẠT trên schema cũ
+  có dữ liệu (giữ bản ghi, JSON `tom_tat`→`summary`, `tu_dong`→`auto`), ĐẠT
+  khi chạy lần 2, ĐẠT trên DB sạch; trọn bộ 9 theo thứ tự trên DB mới 9/9 ĐẠT.
+- CHƯA xác minh: dữ liệu thật khối lượng lớn, RLS/policy Supabase,
+  `storage.buckets` thật (local là bảng stub). Chưa chạy production.
+- Đã cài 9 dependency của CopilotKit/AI SDK; `vite build` ĐẠT (exit 0, 2m40s,
+  cần `NODE_OPTIONS=--max-old-space-size=6144`). Chuỗi `build:frontend`
+  (generate-registry → check-drift → sync-screenshots-deploy) cả 3 exit 0;
+  đã sinh lại registry theo tên nhóm menu của main (commit `d56ec0e7`).
+
 ## 2026-09-18 13:30 — Dựng lại repo: main + copilotkit + Zalo cá nhân
 
 - AI: Claude. Nhánh `feat/zalo-personal`.
