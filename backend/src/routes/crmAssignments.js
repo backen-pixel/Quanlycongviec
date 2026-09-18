@@ -131,7 +131,7 @@ r.use((req, res, next) => {
   next();
 });
 
-const ADMIN_ROLES = new Set(['admin', 'manager', 'sales_admin', 'crm_production_admin']);
+const ADMIN_ROLES = new Set(['ecosystem_admin', 'admin', 'manager', 'sales_admin', 'crm_production_admin']);
 const isAdmin = (req) => ADMIN_ROLES.has(String(req.user?.role || '').toLowerCase());
 /** NV gắn công ty — xem giao việc trong phạm vi công ty (tab Tất cả mobile VC). */
 function canViewCompanyWideAssignments(req) {

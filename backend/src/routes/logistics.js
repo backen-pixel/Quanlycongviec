@@ -2155,7 +2155,7 @@ r.put('/handover-settings/:companyId', requirePermission('projects', 'edit'), as
 // ─── Thùng rác VC (soft delete) ─────────────────────────────────────────────
 // Migration: database/242_vc_soft_delete.sql
 
-const VC_ADMIN_ROLES = new Set(['admin', 'superadmin', 'super_admin']);
+const VC_ADMIN_ROLES = new Set(['ecosystem_admin', 'admin', 'superadmin', 'super_admin']);
 function isVcAdmin(user) { return VC_ADMIN_ROLES.has(user?.role); }
 
 const VC_TRASH_SELECT = `id, code, name, status, priority, deadline, created_at, company_id, logistics_company_id,

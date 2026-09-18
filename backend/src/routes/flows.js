@@ -571,7 +571,7 @@ r.post('/resolve-by-modules', async (req, res) => {
 
 r.post('/', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role))
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền' });
 
     const { name, description, color, icon, is_default, steps, edges, conditions } = req.body;
@@ -608,7 +608,7 @@ r.post('/', async (req, res) => {
 // ═══ UPDATE flow ═══
 r.put('/:id', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role))
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền' });
 
     const { name, description, color, icon, is_default, is_active } = req.body;
@@ -633,7 +633,7 @@ r.put('/:id', async (req, res) => {
 // ═══ DELETE flow — xóa hẳn khi chưa dự án nào dùng; đang dùng thì yêu cầu tắt ═══
 r.delete('/:id', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role))
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền' });
 
     const { count } = await supabase.from('projects')
@@ -659,7 +659,7 @@ r.delete('/:id', async (req, res) => {
 // ═══ UPDATE STEPS (replace all) ═══
 r.put('/:id/steps', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role))
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền' });
 
     const { steps, edges, conditions } = req.body;
@@ -695,7 +695,7 @@ r.put('/:id/steps', async (req, res) => {
 // dry_run mặc định true: tính đủ nội dung nhưng không gửi, để xem trước trên canvas.
 r.post('/:id/run-actions', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role))
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền' });
 
     const dryRun = req.body?.dry_run !== false;
@@ -727,7 +727,7 @@ r.post('/:id/run-actions', async (req, res) => {
 // ═══ CLONE flow ═══
 r.post('/:id/clone', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role))
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền' });
 
     const { data: src } = await supabase.from('workflow_flows')

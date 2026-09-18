@@ -3,6 +3,7 @@ import { ArrowLeft, ChevronDown, ChevronUp, Download, Filter, Loader2, RefreshCw
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isSystemAdmin } from '../lib/adminRole';
 import { exportSharedWorkspaceReportExcel } from '../lib/sharedWorkspaceReportExcel';
 import SharedWorkspaceReportAnalysis from '../components/SharedWorkspaceReportAnalysis';
 
@@ -126,8 +127,8 @@ export default function SharedWorkspaceAssignmentsReportPage() {
   ));
   const [analysis, setAnalysis] = useState(null);
 
-  const elevated = ['admin', 'manager', 'sales_admin', 'crm_production_admin'].includes(user?.role);
-  const systemAdmin = user?.role === 'admin' && !user?.company_id;
+  const elevated = ['ecosystem_admin', 'admin', 'manager', 'sales_admin', 'crm_production_admin'].includes(user?.role);
+  const systemAdmin = isSystemAdmin(user);
 
   const requestParams = useMemo(() => {
     const params = { limit: PAGE_SIZE, offset: page * PAGE_SIZE };

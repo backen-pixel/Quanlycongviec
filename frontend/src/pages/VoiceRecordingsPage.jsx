@@ -21,7 +21,7 @@ function toLocalISODate(d) {
 
 function isVoiceRecordingsAdmin(role) {
   const x = String(role ?? '').toLowerCase().trim();
-  return ['admin', 'superadmin', 'super_admin', 'administrator'].includes(x);
+  return ['ecosystem_admin', 'admin', 'superadmin', 'super_admin', 'administrator'].includes(x);
 }
 
 function isVoiceRegionAdmin(user) {

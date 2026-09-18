@@ -49,7 +49,7 @@ r.use(auth);
 
 function isVoiceRecordingsAdmin(role) {
   const r = String(role ?? '').toLowerCase().trim();
-  return ['admin', 'superadmin', 'super_admin', 'administrator'].includes(r);
+  return ['ecosystem_admin', 'admin', 'superadmin', 'super_admin', 'administrator'].includes(r);
 }
 
 const UPLOAD_ROOT = path.join(__dirname, '../../uploads/voice_recordings');

@@ -196,7 +196,7 @@ function StatCard({ icon: Icon, accent, label, value, descriptor, descriptorTone
 
 export default function KpiMonthlyScorecard() {
   const { user } = useAuth();
-  const isManager = ['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator', 'region_admin'].includes(String(user?.role || '').toLowerCase());
+  const isManager = ['ecosystem_admin', 'admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator', 'region_admin'].includes(String(user?.role || '').toLowerCase());
   const [periodStart, setPeriodStart] = useState(getDefaultPeriodStart());
   const [filter, setFilter] = useState({ companyId: '', departmentId: '', q: '', role: '' });
   const [loading, setLoading] = useState(false);

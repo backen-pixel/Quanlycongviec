@@ -9,6 +9,7 @@ import { Activity, Building2, ChevronDown, ExternalLink, History, Laptop, Layout
 import { useScopeFilter } from '../shared/hooks/useScopeFilter';
 
 const ROLE_LABELS = {
+  ecosystem_admin: 'Quản trị HST',
   admin: 'Admin',
   manager: 'Quản lý',
   region_admin: 'Admin KV',
@@ -459,7 +460,7 @@ export default function ActiveUsersPage() {
 
   const isAdmin = useMemo(() => {
     const role = String(user?.role || '').toLowerCase();
-    return ['admin', 'super_admin', 'owner', 'region_admin'].includes(role);
+    return ['ecosystem_admin', 'admin', 'super_admin', 'owner', 'region_admin'].includes(role);
   }, [user?.role]);
 
   const refetchRegions = useCallback(async () => {

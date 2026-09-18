@@ -1,5 +1,9 @@
 # Nhật ký công việc AI
 
+## 2026-09-18 14:38 — Push nốt ecosystem_admin + gắn công ty HST
+
+- AI: Cursor. Đẩy quyền role mới, Facebook HST, sync `user_companies`.
+
 ## 2026-09-18 14:35 — CRM Kanban 400 thiếu company_id trên production
 
 - AI: Cursor. Production `userIsAdmin === admin` nên JWT `ecosystem_admin`

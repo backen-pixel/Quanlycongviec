@@ -17,7 +17,7 @@ const MODULE_OPTIONS = [
   { key: 'projects', label: 'Dự án / Thiết kế' },
 ];
 
-const ADMIN_ROLES = new Set(['admin', 'manager', 'director', 'supervisor']);
+const ADMIN_ROLES = new Set(['ecosystem_admin', 'admin', 'manager', 'director', 'supervisor']);
 
 function roleToModule(role) {
   const r = String(role || '').toLowerCase();

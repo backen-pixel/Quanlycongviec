@@ -34,7 +34,7 @@ const USER_ROLE_ENUM = new Set([
   'designer', 'director', 'driver', 'installer', 'logistics_admin',
   'manager', 'platform_admin', 'production', 'production_admin',
   'production_staff', 'region_admin', 'sales', 'sales_admin',
-  'staff', 'super_admin', 'superadmin', 'supervisor',
+  'staff', 'super_admin', 'superadmin', 'supervisor', 'ecosystem_admin',
 ]);
 
 const SRC = path.join(__dirname, '..', 'src');

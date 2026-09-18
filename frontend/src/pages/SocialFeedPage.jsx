@@ -97,7 +97,7 @@ function uploadSocialFile(file) {
 
 function canModerate(role) {
   const r = String(role || '').toLowerCase();
-  return ['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator', 'region_admin'].includes(r);
+  return ['ecosystem_admin', 'admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator', 'region_admin'].includes(r);
 }
 
 function AuthorProfileLink({ user, className = '', style, children }) {

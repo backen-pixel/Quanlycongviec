@@ -76,11 +76,11 @@ function withRelatedCompanyMeta(metadata, relatedCompanyIds, primaryCompanyId) {
 }
 
 /**
- * Admin hệ thống (role admin, không company_id) + platform_admin.
+ * Admin hệ thống (ecosystem_admin / admin không company_id) + platform_admin.
  */
 async function getSystemAdminUserIds(opts = {}) {
   const activeOnly = opts.activeOnly !== false;
-  let q = supabase.from('users').select('id, company_id, role').in('role', ['admin', 'platform_admin']);
+  let q = supabase.from('users').select('id, company_id, role').in('role', ['ecosystem_admin', 'admin', 'platform_admin']);
   if (activeOnly) q = q.eq('is_active', true);
   const { data, error } = await q;
   if (error) {
@@ -109,7 +109,7 @@ async function getCompanyScopedRoleUserIds(companyId, roles, opts = {}) {
   const roleSet = new Set(roleList);
 
   const queryRoles = includeSystemAdmins
-    ? [...new Set([...roleList, 'admin', 'platform_admin'])]
+    ? [...new Set([...roleList, 'ecosystem_admin', 'admin', 'platform_admin'])]
     : roleList;
 
   let q = supabase.from('users').select('id, company_id, role').in('role', queryRoles);
@@ -168,7 +168,7 @@ async function getCompanyScopedRoleUserIds(companyId, roles, opts = {}) {
  * @returns {Promise<string[]>}
  */
 async function getCompanyScopedAdminIds(companyId, opts = {}) {
-  return getCompanyScopedRoleUserIds(companyId, ['admin'], opts);
+    const users = await getCompanyScopedRoleUserIds(companyId, ['ecosystem_admin', 'admin'], opts);
 }
 
 /**

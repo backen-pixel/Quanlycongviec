@@ -60,7 +60,7 @@ r.get('/:id', async (req, res) => {
 // ═══ CREATE team ═══
 r.post('/', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
     const { name, short_name, department_id, leader_id, description, color } = req.body;
     if (!name || !department_id) return res.status(400).json({ error: 'Cần tên và phòng ban' });
 
@@ -81,7 +81,7 @@ r.post('/', async (req, res) => {
 // ═══ UPDATE team ═══
 r.put('/:id', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
     const update = { updated_at: new Date().toISOString() };
     ['name', 'short_name', 'department_id', 'leader_id', 'description', 'color', 'is_active'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
@@ -96,7 +96,7 @@ r.put('/:id', async (req, res) => {
 // ═══ DELETE (soft) — also sync ecosystem ═══
 r.delete('/:id', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
 
     // Get team members before deleting
     const { data: team } = await supabase.from('teams').select('id,name,department_id').eq('id', req.params.id).single();
@@ -121,7 +121,7 @@ r.delete('/:id', async (req, res) => {
 // ═══ ADD MEMBER(S) to team — supports single user_id or array user_ids ═══
 r.post('/:id/members', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
 
     // Support both single user_id and array user_ids
     const { user_id, user_ids } = req.body;
@@ -160,7 +160,7 @@ r.post('/:id/members', async (req, res) => {
 // ═══ REMOVE MEMBER from team ═══
 r.delete('/:id/members/:userId', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
 
     // Clear team_id on user (keep department_id)
     const { data: beforeOrg } = await supabase.from('users').select('department_id, team_id').eq('id', req.params.userId).maybeSingle();

@@ -546,7 +546,7 @@ r.put('/:deptId/messages/:msgId', async (req, res) => {
 r.delete('/:deptId/messages/:msgId', async (req, res) => {
   try {
     let q = supabase.from('department_messages').delete().eq('id', req.params.msgId);
-    if (!['admin', 'manager'].includes(req.user.role)) q = q.eq('sender_id', req.user.userId);
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) q = q.eq('sender_id', req.user.userId);
     await q;
     res.json({ message: 'Đã xóa' });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
@@ -555,7 +555,7 @@ r.delete('/:deptId/messages/:msgId', async (req, res) => {
 // PIN/UNPIN message (admin/manager only)
 r.put('/:deptId/messages/:msgId/pin', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
     const { is_pinned } = req.body;
     const { data } = await supabase.from('department_messages')
       .update({ is_pinned }).eq('id', req.params.msgId).select().single();
@@ -661,7 +661,7 @@ r.get('/:id/chat/available-users', async (req, res) => {
 // POST /:id/chat/participants — add user to dept chat (update dept_id)
 r.post('/:id/chat/participants', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
     const { user_id } = req.body;
     if (!user_id) return res.status(400).json({ error: 'Thiếu user_id' });
 
@@ -693,7 +693,7 @@ r.post('/:id/chat/participants', async (req, res) => {
 // DELETE /:id/chat/participants/:userId — remove from dept chat
 r.delete('/:id/chat/participants/:userId', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
     await supabase.from('users').update({ department_id: null }).eq('id', req.params.userId).eq('department_id', req.params.id);
     try { await removeUserFromEcosystem(req.params.userId, req.params.id); } catch {}
 

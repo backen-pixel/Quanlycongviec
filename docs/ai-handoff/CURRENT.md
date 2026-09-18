@@ -1,11 +1,11 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-18 14:35 (UTC+7)
+Cập nhật: 2026-09-18 14:38 (UTC+7)
 
 ## CRM Kanban — 400 thiếu company_id (admin HST)
 
 Nguyên nhân: production `userIsAdmin` chỉ `admin`, JWT đã là `ecosystem_admin`.
-Đã nhận role mới + không bắt `users.company_id`. Cần deploy backend+frontend.
+Đã nhận role mới + không bắt `users.company_id`. Đang đẩy nốt quyền HST / Facebook / user_companies.
 
 ## Đã xóa Linh Tây Ninh + Vân Long Xuyên
 

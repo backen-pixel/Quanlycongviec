@@ -12,7 +12,7 @@ async function resolveSystemAdminUserIds() {
     .from('users')
     .select('id, full_name, role, company_id, is_active')
     .eq('is_active', true)
-    .in('role', ['admin', 'platform_admin']);
+    .in('role', ['ecosystem_admin', 'admin', 'platform_admin']);
   if (error) throw new Error(error.message);
   return (data || [])
     .filter((u) => {

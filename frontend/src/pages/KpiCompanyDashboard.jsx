@@ -206,7 +206,7 @@ function UserDetailModal({ user, definitions, onClose }) {
 export default function KpiCompanyDashboard() {
   const { user: currentUser } = useAuth();
   const role = String(currentUser?.role || '').toLowerCase();
-  const isManagerStrict = ['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator', 'region_admin'].includes(role);
+  const isManagerStrict = ['ecosystem_admin', 'admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator', 'region_admin'].includes(role);
   const canViewDashboard =
     isManagerStrict
     || (role === 'sales_admin' && currentUser?.company_id != null && String(currentUser.company_id).trim() !== '');

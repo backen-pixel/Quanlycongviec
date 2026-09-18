@@ -230,7 +230,7 @@ export default function AccountingDashboard() {
   const totalPages = Math.max(1, Math.ceil(total / limit));
   const companyLabel = clientCompany?.short_name || clientCompany?.name || 'Công ty';
 
-  if (!isAccountingUser(user) && user?.role !== 'admin' && user?.role !== 'manager' && user?.role !== 'sales_admin' && user?.role !== 'platform_admin') {
+  if (!isAccountingUser(user) && user?.role !== 'admin' && user?.role !== 'ecosystem_admin' && user?.role !== 'manager' && user?.role !== 'sales_admin' && user?.role !== 'platform_admin') {
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 p-6 text-center">
         <p className="text-amber-800 font-medium">Module Kế toán chỉ dành cho tài khoản kế toán công ty hoặc admin.</p>

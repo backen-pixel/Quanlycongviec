@@ -74,7 +74,7 @@ function isTenantBootstrapAdmin(user) {
 
   const noCompany = user?.company_id == null || String(user.company_id).trim() === '';
 
-  return hasTenant && role === 'admin' && noCompany;
+  return hasTenant && (role === 'admin' || role === 'ecosystem_admin') && noCompany;
 
 }
 
@@ -84,7 +84,7 @@ function isTenantSetupAdmin(user) {
 
   const role = String(user?.role ?? '').trim().toLowerCase();
 
-  return !!(user?.tenant_id && role === 'admin');
+  return !!(user?.tenant_id && (role === 'admin' || role === 'ecosystem_admin'));
 
 }
 
