@@ -13,6 +13,7 @@ import {
   UserPlus,
   Pin,
   Filter,
+  Sparkles,
 } from 'lucide-react';
 import OnlineStatusDot, { getUserPresence } from './OnlineStatusDot';
 import {
@@ -62,12 +63,17 @@ function avatarUrl(publicFileUrl, av) {
   return publicFileUrl(av.trim()) || null;
 }
 
+/** Ký tự đầu của một từ, tính theo KÝ TỰ NGƯỜI ĐỌC — `s[0]` cắt đôi emoji thành ký tự hỏng. */
+function kyTuDau(tu) {
+  return [...String(tu || '')][0] || '';
+}
+
 function initialsOf(name) {
   if (!name) return '?';
   const parts = String(name).trim().split(/\s+/);
   if (!parts.length) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  if (parts.length === 1) return kyTuDau(parts[0]).toUpperCase();
+  return (kyTuDau(parts[0]) + kyTuDau(parts[parts.length - 1])).toUpperCase();
 }
 
 const AVATAR_GRADIENTS = [
@@ -122,7 +128,7 @@ function DockAvatar({
           onError={() => setImgFailed(true)}
         />
       ) : (
-        initialsOf(label).slice(0, 2)
+        [...initialsOf(label)].slice(0, 2).join('')
       )}
       {children}
     </span>
@@ -263,6 +269,8 @@ export default function MessengerQuickChatDock({
   onOnlineOnlyChange,
   staffRows,
   staffLoading,
+  aiContacts,
+  onPickAiContact,
   recentConversations,
   groupConversations,
   onItemClick,
@@ -616,6 +624,54 @@ export default function MessengerQuickChatDock({
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-4 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+              {/* Trợ lý AI đứng ĐẦU danh sách và luôn hiện, kể cả khi chưa gõ tìm — người dùng
+                  chọn nó y như chọn một đồng nghiệp. Bấm vào là mở đúng cuộc 1-1 với bot
+                  (POST /messenger/direct, cùng direct_pair_key với phía server nên không đẻ
+                  ra cuộc thứ hai). Lọc theo ô tìm để không cản khi người dùng đang tìm người. */}
+              {(aiContacts || [])
+                .filter((b) => {
+                  const f = panelSearch.trim().toLowerCase();
+                  return !f || String(b.full_name || '').toLowerCase().includes(f);
+                })
+                .length > 0 && (
+                <section>
+                  <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">
+                    <Sparkles className="h-3 w-3" /> Trợ lý AI
+                  </h3>
+                  <ul className="space-y-1">
+                    {(aiContacts || [])
+                      .filter((b) => {
+                        const f = panelSearch.trim().toLowerCase();
+                        return !f || String(b.full_name || '').toLowerCase().includes(f);
+                      })
+                      .map((b) => (
+                        <li key={b.id}>
+                          <button
+                            type="button"
+                            onClick={() => onPickAiContact?.(b)}
+                            className="w-full text-left px-2.5 py-2 rounded-2xl hover:bg-[#7C3AED]/5 flex items-center gap-2.5 transition group"
+                          >
+                            <DockAvatar src={b.avatar} name={b.full_name} size="sm" publicFileUrl={publicFileUrl}>
+                              {/* Chấm tím thay cho chấm online: bot luôn sẵn sàng, không có
+                                  trạng thái hoạt động để hiển thị. */}
+                              <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-white bg-[#7C3AED]" />
+                            </DockAvatar>
+                            <span className="min-w-0 flex-1">
+                              <span className="text-sm font-medium text-slate-800 block truncate">
+                                {b.full_name}
+                              </span>
+                              <span className="text-[11px] text-slate-500 block truncate">
+                                {b.mo_ta || 'Trợ lý AI'}
+                              </span>
+                            </span>
+                            <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-[#7C3AED] shrink-0" />
+                          </button>
+                        </li>
+                      ))}
+                  </ul>
+                </section>
+              )}
+
               {panelSearch.trim() && (
                 <section>
                   <h3 className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">

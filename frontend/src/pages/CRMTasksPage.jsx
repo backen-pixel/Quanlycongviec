@@ -236,7 +236,7 @@ export default function CRMTasksPage() {
       </div>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3" data-guide-khu-vuc="Chỉ số công việc">
         {[
           {
             label: 'Tổng',
@@ -337,6 +337,7 @@ export default function CRMTasksPage() {
         <div
           className="bg-white rounded-xl border divide-y overflow-y-auto"
           style={{ maxHeight: '640px' }}
+          data-guide-khu-vuc="Danh sách công việc"
         >
           {filtered.length === 0 ? (
             <p className="text-center text-sm text-gray-400 py-8">Không có công việc</p>
@@ -346,7 +347,7 @@ export default function CRMTasksPage() {
 
       {/* DEADLINE VIEW */}
       {viewMode === 'deadline' && (
-        <div className="space-y-3">
+        <div className="space-y-3" data-guide-khu-vuc="Chế độ xem Deadline">
           {[
             { key: 'overdue', label: '🔴 Quá hạn', tasks: deadlineGroups.overdue, color: 'border-red-300 bg-red-50' },
             { key: 'today', label: '🟡 Hôm nay', tasks: deadlineGroups.today, color: 'border-amber-300 bg-amber-50' },
@@ -354,7 +355,7 @@ export default function CRMTasksPage() {
             { key: 'later', label: '⚪ Sau đó', tasks: deadlineGroups.later, color: 'border-gray-200 bg-gray-50' },
             { key: 'noDeadline', label: '⏳ Chưa có hạn', tasks: deadlineGroups.noDeadline, color: 'border-gray-200 bg-gray-50' },
           ].filter(g => g.tasks.length > 0).map(group => (
-            <div key={group.key} className={`border rounded-xl ${group.color}`}>
+            <div key={group.key} className={`border rounded-xl ${group.color}`} data-guide-khu-vuc={group.label}>
               <div className="px-4 py-2 font-semibold text-sm flex items-center justify-between">
                 <span>{group.label} <span className="text-gray-400 font-normal">({group.tasks.length})</span></span>
                 {group.tasks.length > 10 && (
@@ -374,9 +375,9 @@ export default function CRMTasksPage() {
 
       {/* PLANNER VIEW */}
       {viewMode === 'planner' && (
-        <div className="space-y-3">
+        <div className="space-y-3" data-guide-khu-vuc="Chế độ xem Planner">
           {plannerGroups.assignees.map(group => (
-            <div key={group.user.id} className="border rounded-xl">
+            <div key={group.user.id} className="border rounded-xl" data-guide-khu-vuc={group.user.full_name || 'Nhân viên'}>
               <div className="flex items-center gap-2 px-4 py-3 bg-gray-50 rounded-t-xl">
                 <div className="h-7 w-7 rounded-full bg-blue-500 flex items-center justify-center text-white text-xs font-bold">{group.user.full_name?.charAt(0)}</div>
                 <span className="text-sm font-semibold">{group.user.full_name}</span>
@@ -391,7 +392,7 @@ export default function CRMTasksPage() {
             </div>
           ))}
           {plannerGroups.unassigned.length > 0 && (
-            <div className="border rounded-xl border-dashed">
+            <div className="border rounded-xl border-dashed" data-guide-khu-vuc="Chưa giao">
               <div className="px-4 py-3 bg-gray-50 rounded-t-xl text-sm font-semibold text-gray-500">Chưa giao ({plannerGroups.unassigned.length})</div>
               <div
                 className="bg-white rounded-b-xl overflow-y-auto"

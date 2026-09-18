@@ -153,7 +153,7 @@ export default function CrmBlockedPhonesPage() {
       </form>
 
       <div className="bg-white rounded-xl border overflow-hidden">
-        <div className="overflow-x-auto">
+        <div data-guide-khu-vuc="Danh sách SĐT bị chặn" className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gradient-to-r from-slate-700 to-slate-800 text-left text-xs text-white uppercase tracking-wide">

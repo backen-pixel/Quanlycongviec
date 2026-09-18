@@ -86,37 +86,170 @@ function buildFallbackReply(payload) {
   return lines.join('\n');
 }
 
+// ─── PHẠM VI CÔNG TY + ĐẾM THẬT ─────────────────────────────────────────
+/**
+ * Trợ lý này trước đây đọc thẳng toàn bộ bảng (không lọc công ty) rồi in ĐỘ DÀI MẢNG — vốn đã
+ * bị `.limit()` cắt — ra như số TỔNG. Đã đo được hậu quả: admin công ty Vạn Phú Thành hỏi
+ * "báo cáo công ty Vạn Phú Thành" nhận về "Dự án: 100 tổng" (thực tế 552 toàn hệ thống, 2 của
+ * công ty đó), "Nhiệm vụ: 500 tổng" (thực tế 13.882) và tổng tiền đơn hàng của TẤT CẢ công ty.
+ * Vừa sai số vừa lộ dữ liệu chéo công ty.
+ *
+ * Ba helper dưới đây để không lặp lại cả hai lỗi đó:
+ *  - `scopeCompany`  : company_id CHỈ lấy từ JWT đã verify (`req.user`), không bao giờ lấy từ
+ *                      body/query do client gửi lên — trường đó người dùng sửa được.
+ *  - `countExact`    : đếm ở DB bằng `count: 'exact', head: true` (không tải rows, không bị cắt
+ *                      trang). Trả `null` khi lỗi để chỗ gọi in "—" chứ không in 0 giả.
+ *  - `fetchAllPaged` : chỉ dùng khi BẮT BUỘC phải cộng tiền; tải theo trang và trả `truncated`
+ *                      để chỗ gọi in "≥ N" thay vì in một con số sai.
+ */
+const PAGE_SIZE = 1000; // trần mỗi trang của PostgREST (db-max-rows)
+const MAX_SUM_ROWS = 20000; // trần an toàn khi phải tải rows để cộng tiền
+
+function scopeCompany(req) {
+  const companyId = req?.user?.company_id ? String(req.user.company_id) : null;
+  // Không có company_id = admin hệ thống → được xem toàn bộ (giữ đúng hành vi isSystemAdmin).
+  return { companyId, allCompanies: !companyId };
+}
+
+/** Lọc theo công ty cho bảng CÓ cột company_id. */
+function byCompany(q, scope, col = 'company_id') {
+  return scope.companyId ? q.eq(col, scope.companyId) : q;
+}
+
+/**
+ * Lọc theo công ty cho bảng KHÔNG có company_id, đi qua khoá ngoại.
+ * `tasks` chỉ có project_id, `payment_records` chỉ có invoice_id/order_id — nên phải nhờ
+ * embed `!inner` của PostgREST. Dùng `.in('project_id', [...])` thay thế là không được: một
+ * công ty có tới 416 dự án, URL sẽ vượt giới hạn.
+ */
+function byCompanyVia(q, scope, embed) {
+  return scope.companyId ? q.eq(`${embed}.company_id`, scope.companyId) : q;
+}
+
+/**
+ * Cột select cho truy vấn đếm/tải có lọc qua embed — chỉ thêm embed khi thật sự cần lọc.
+ *
+ * CHỈ dùng khi select CHƯA có embed nào của bảng đó. Nếu select đã có (kể cả dưới dạng alias
+ * như `project:projects(code)`) thì thêm embed thứ hai làm PostgREST **bỏ qua** bộ lọc
+ * `<bảng>.company_id` trong im lặng — xem ghi chú ở nhánh 'overdue'. Trường hợp đó phải lọc
+ * trên chính embed đã có, theo tên alias.
+ */
+function withEmbed(cols, scope, embed) {
+  return scope.companyId ? `${cols},${embed}!inner(company_id)` : cols;
+}
+
+async function countExact(build) {
+  try {
+    const { count, error } = await build();
+    if (error) return null;
+    return count ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchAllPaged(build, { max = MAX_SUM_ROWS } = {}) {
+  const rows = [];
+  for (let from = 0; from < max; from += PAGE_SIZE) {
+    let res;
+    try {
+      res = await build().range(from, from + PAGE_SIZE - 1);
+    } catch (e) {
+      return { rows, truncated: true, error: e };
+    }
+    if (res.error) return { rows, truncated: true, error: res.error };
+    const batch = res.data || [];
+    rows.push(...batch);
+    if (batch.length < PAGE_SIZE) return { rows, truncated: false };
+  }
+  return { rows, truncated: true };
+}
+
+/**
+ * `payment_records` không có company_id, cũng không có project_id — chỉ có invoice_id/order_id.
+ * Nên phải lấy hai đường (qua hoá đơn, qua đơn hàng) rồi hợp nhất theo id: dùng một mình
+ * `invoices!inner` sẽ mất các phiếu chỉ gắn order, và ngược lại.
+ */
+async function fetchPaymentRecords(scope) {
+  if (!scope.companyId) {
+    return fetchAllPaged(() => supabase.from('payment_records').select('id,amount,created_at'));
+  }
+  const [viaInvoice, viaOrder] = await Promise.all([
+    fetchAllPaged(() => byCompanyVia(
+      supabase.from('payment_records').select(withEmbed('id,amount,created_at', scope, 'invoices')), scope, 'invoices')),
+    fetchAllPaged(() => byCompanyVia(
+      supabase.from('payment_records').select(withEmbed('id,amount,created_at', scope, 'orders')), scope, 'orders')),
+  ]);
+  const byId = new Map();
+  [...viaInvoice.rows, ...viaOrder.rows].forEach((p) => byId.set(p.id, p));
+  return { rows: [...byId.values()], truncated: viaInvoice.truncated || viaOrder.truncated };
+}
+
+/** In số: `null` → "—"; bị cắt trang → "≥ N" để không bao giờ khẳng định một con số sai. */
+function num(value, truncated = false) {
+  if (value === null || value === undefined) return '—';
+  const s = fmt(value);
+  return truncated ? `≥ ${s}` : s;
+}
+
+/** Dòng "Phạm vi" cho mọi báo cáo — người đọc phải biết số này của ai. */
+async function scopeLabel(scope) {
+  if (!scope.companyId) {
+    const n = await countExact(() => supabase.from('companies').select('id', { count: 'exact', head: true }));
+    return n === null ? 'Toàn hệ thống' : `Toàn hệ thống (${n} công ty)`;
+  }
+  try {
+    const { data } = await supabase.from('companies').select('name').eq('id', scope.companyId).maybeSingle();
+    return (data?.name || '').trim() || 'Công ty của bạn';
+  } catch {
+    return 'Công ty của bạn';
+  }
+}
+
 // ─── CONTEXT BUILDER ────────────────────────────────────────────────────
-async function buildContext(userId) {
+async function buildContext(userId, scope = { companyId: null, allCompanies: true }) {
   const results = await Promise.all([
-    supabase.from('projects').select('id,code,name,status,estimated_value,current_stage_id,customer_id').eq('status','active').order('created_at',{ascending:false}).limit(20),
+    byCompany(supabase.from('projects').select('id,code,name,status,estimated_value,current_stage_id,customer_id').eq('status','active'), scope).order('created_at',{ascending:false}).limit(20),
     supabase.from('tasks').select('id,title,status,priority,due_date,project_id,assignee_id').eq('assignee_id',userId).neq('status','done').order('due_date').limit(30),
-    supabase.from('customers').select('id,full_name,phone').order('full_name').limit(100),
+    byCompany(supabase.from('customers').select('id,full_name,phone'), scope).order('full_name').limit(100),
     supabase.from('workflow_stages').select('id,name,slug,order_index').is('company_id',null).eq('is_active',true).order('order_index'),
-    supabase.from('users').select('id,full_name,email,role').limit(50),
+    byCompany(supabase.from('users').select('id,full_name,email,role'), scope).limit(50),
     supabase.from('workflow_flows').select('id,name').order('name'),
   ]);
-  
+
   // CRM tables may not exist yet - safe queries
   let leads = { data: [] }, orders = { data: [] }, invoices = { data: [] };
-  try { leads = await supabase.from('crm_leads').select('id,code,title,estimated_value,stage_id,customer_id,stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name,is_won,is_lost)').is('actual_close_date',null).order('created_at',{ascending:false}).limit(20); } catch {}
-  try { orders = await supabase.from('orders').select('id,code,total,status,paid_amount').neq('status','delivered').neq('status','cancelled').limit(20); } catch {}
-  try { invoices = await supabase.from('invoices').select('id,code,total,paid_amount,payment_status').neq('payment_status','paid').limit(20); } catch {}
+  try { leads = await byCompany(supabase.from('crm_leads').select('id,code,title,estimated_value,stage_id,customer_id,stage:crm_pipeline_stages!crm_leads_stage_id_fkey(name,is_won,is_lost)').is('actual_close_date',null), scope).order('created_at',{ascending:false}).limit(20); } catch {}
+  try { orders = await byCompany(supabase.from('orders').select('id,code,total,status,paid_amount').neq('status','delivered').neq('status','cancelled'), scope).limit(20); } catch {}
+  try { invoices = await byCompany(supabase.from('invoices').select('id,code,total,paid_amount,payment_status').neq('payment_status','paid'), scope).limit(20); } catch {}
 
   const tasks = results[1].data || [];
   const overdueTasks = tasks.filter(t => t.due_date && new Date(t.due_date) < new Date());
   const unpaidInvoices = (invoices.data || []).filter(i => i.payment_status !== 'paid');
-  const totalDebt = unpaidInvoices.reduce((s, i) => s + ((i.total||0) - (i.paid_amount||0)), 0);
+
+  // Bốn con số dưới đây được HIỂN THỊ như số tổng (greeting / suggest / help / context của
+  // OpenAI), nên phải đếm thật ở DB — không lấy độ dài của mấy mảng `.limit(20)` ở trên.
+  // `totalDebt` cũng vậy: cộng trên TOÀN BỘ hoá đơn chưa thu, không phải 20 cái đầu.
+  const [activeProjects, openLeads, pendingOrders, unpaidInvoiceCount, debtRes] = await Promise.all([
+    countExact(() => byCompany(supabase.from('projects').select('id', { count: 'exact', head: true }).eq('status','active'), scope)),
+    countExact(() => byCompany(supabase.from('crm_leads').select('id', { count: 'exact', head: true }).is('actual_close_date',null), scope)),
+    countExact(() => byCompany(supabase.from('orders').select('id', { count: 'exact', head: true }).neq('status','delivered').neq('status','cancelled'), scope)),
+    countExact(() => byCompany(supabase.from('invoices').select('id', { count: 'exact', head: true }).neq('payment_status','paid'), scope)),
+    fetchAllPaged(() => byCompany(supabase.from('invoices').select('total,paid_amount').neq('payment_status','paid'), scope)),
+  ]);
+  const totalDebt = debtRes.rows.reduce((s, i) => s + ((i.total||0) - (i.paid_amount||0)), 0);
 
   return {
-    activeProjects: (results[0].data||[]).length,
+    scope,
+    activeProjects: activeProjects ?? (results[0].data||[]).length,
     myTasks: tasks.length,
     overdueTasks: overdueTasks.length,
     overdueTasksList: overdueTasks.slice(0,5).map(t => t.title),
-    openLeads: (leads.data||[]).length,
-    pendingOrders: (orders.data||[]).length,
-    unpaidInvoices: unpaidInvoices.length,
+    openLeads: openLeads ?? (leads.data||[]).length,
+    pendingOrders: pendingOrders ?? (orders.data||[]).length,
+    unpaidInvoices: unpaidInvoiceCount ?? unpaidInvoices.length,
     totalDebt,
+    totalDebtPartial: debtRes.truncated,
     customers: (results[2].data||[]).map(c => ({ id:c.id, name:c.full_name, phone:c.phone })),
     stages: (results[3].data||[]).map(s => ({ id:s.id, name:s.name, slug:s.slug })),
     users: (results[4].data||[]).map(u => ({ id:u.id, name:u.full_name, email:u.email, role:u.role })),
@@ -550,7 +683,7 @@ r.post('/chat', async (req, res) => {
         });
       }
       try {
-        const ctx = await buildContext(req.user.userId);
+        const ctx = await buildContext(req.user.userId, scopeCompany(req));
         const extra = formatCrmKpiLedgerCoachAppend(context_pack.payload);
         const aiResp = await callOpenAI(apiKey, message, conversation, ctx, extra, {
           maxTokens: 1400,
@@ -573,7 +706,7 @@ r.post('/chat', async (req, res) => {
         });
       }
       try {
-        const ctx = await buildContext(req.user.userId);
+        const ctx = await buildContext(req.user.userId, scopeCompany(req));
         const extra = formatKpiDefinitionExplainAppend(context_pack.payload);
         const aiResp = await callOpenAI(apiKey, message, conversation, ctx, extra, {
           maxTokens: 1100,
@@ -586,7 +719,7 @@ r.post('/chat', async (req, res) => {
       }
     }
 
-    const ctx = await buildContext(req.user.userId);
+    const ctx = await buildContext(req.user.userId, scopeCompany(req));
 
     // ── CHECK WIZARD STATE (multi-step creation) ──
     const lastAssistant = [...conversation].reverse().find(m => m.role === 'assistant');
@@ -652,76 +785,127 @@ r.post('/chat', async (req, res) => {
     }
 
     if (intent.action === 'report') {
-      // Deep statistics
-      const [allProjects, allTasks, revenueData] = await Promise.all([
-        supabase.from('projects').select('id,code,name,status,estimated_value,created_at').order('created_at',{ascending:false}).limit(100),
-        supabase.from('tasks').select('id,status,due_date').limit(500),
-        supabase.from('orders').select('id,total,status,paid_amount').limit(200),
+      const scope = ctx.scope;
+      const nowIso = new Date().toISOString();
+      const thisMonth = new Date(); thisMonth.setDate(1); thisMonth.setHours(0,0,0,0);
+      const monthIso = thisMonth.toISOString();
+
+      /** Đếm nhiệm vụ. `tasks` không có company_id → lọc qua embed projects. */
+      const taskCount = (extra) => countExact(() => {
+        const q = byCompanyVia(
+          supabase.from('tasks').select(withEmbed('id', scope, 'projects'), { count: 'exact', head: true }),
+          scope, 'projects',
+        );
+        return extra ? extra(q) : q;
+      });
+
+      const [
+        projRes, orderRes,
+        tTotal, tDone, tOverdue,
+        pTotal, pNewThisMonth,
+      ] = await Promise.all([
+        // Cần cộng estimated_value + đếm theo status → buộc phải tải rows, nhưng tải HẾT
+        // theo trang thay vì cắt ở 100 dòng đầu.
+        fetchAllPaged(() => byCompany(supabase.from('projects').select('status,estimated_value,created_at'), scope)),
+        fetchAllPaged(() => byCompany(supabase.from('orders').select('total,paid_amount,created_at'), scope)),
+        taskCount(null),
+        taskCount((q) => q.eq('status', 'done')),
+        taskCount((q) => q.neq('status', 'done').not('due_date', 'is', null).lt('due_date', nowIso)),
+        countExact(() => byCompany(supabase.from('projects').select('id', { count: 'exact', head: true }), scope)),
+        countExact(() => byCompany(supabase.from('projects').select('id', { count: 'exact', head: true }).gte('created_at', monthIso), scope)),
       ]);
-      const projects = allProjects.data || [];
-      const tasks = allTasks.data || [];
-      const orders = revenueData.data || [];
+
+      const projects = projRes.rows;
+      const orders = orderRes.rows;
 
       const pByStatus = {};
       projects.forEach(p => { pByStatus[p.status] = (pByStatus[p.status]||0) + 1; });
       const totalValue = projects.reduce((s,p) => s + (p.estimated_value||0), 0);
 
-      const tDone = tasks.filter(t => t.status === 'done').length;
-      const tOverdue = tasks.filter(t => t.status !== 'done' && t.due_date && new Date(t.due_date) < new Date()).length;
-      const tRate = tasks.length ? Math.round(tDone/tasks.length*100) : 0;
+      const tRate = tTotal ? Math.round((tDone||0)/tTotal*100) : null;
+      const tRemain = (tTotal !== null && tDone !== null) ? tTotal - tDone : null;
 
       const totalRevenue = orders.reduce((s,o) => s + (o.total||0), 0);
       const totalPaid = orders.reduce((s,o) => s + (o.paid_amount||0), 0);
-
-      // This month
-      const thisMonth = new Date(); thisMonth.setDate(1); thisMonth.setHours(0,0,0,0);
-      const newThisMonth = projects.filter(p => new Date(p.created_at) >= thisMonth).length;
       const revenueThisMonth = orders.filter(o => new Date(o.created_at) >= thisMonth).reduce((s,o) => s + (o.total||0), 0);
 
-      return res.json({ reply: `📊 **BÁO CÁO TỔNG HỢP**\n\n🏗️ **Dự án:** ${projects.length} tổng\n${Object.entries(pByStatus).map(([k,v]) => `   • ${k}: ${v}`).join('\n')}\n   💰 Tổng giá trị: ${fmt(totalValue)}đ\n   📈 Mới tháng này: ${newThisMonth}\n\n📋 **Nhiệm vụ:** ${tasks.length} tổng\n   ✅ Hoàn thành: ${tDone} (${tRate}%)\n   🔴 Quá hạn: ${tOverdue}\n   ⏳ Còn lại: ${tasks.length - tDone}\n\n💰 **Doanh thu:**\n   📦 Tổng ĐH: ${fmt(totalRevenue)}đ\n   ✅ Đã thu: ${fmt(totalPaid)}đ\n   ❗ Còn nợ: ${fmt(totalRevenue - totalPaid)}đ\n   📈 Tháng này: ${fmt(revenueThisMonth)}đ\n\n🎯 **CRM:**\n   • ${ctx.openLeads} lead đang mở\n   • ${ctx.pendingOrders} ĐH đang xử lý\n   • ${ctx.unpaidInvoices} HĐ chưa thu` });
+      const label = await scopeLabel(scope);
+      const statusLines = Object.entries(pByStatus).map(([k,v]) => `   • ${k}: ${fmt(v)}`).join('\n');
+      const moneyNote = orderRes.truncated ? '\n   ⚠️ Số đơn hàng vượt trần đọc — các mốc tiền là TỐI THIỂU, chưa đủ.' : '';
+
+      return res.json({ reply: `📊 **BÁO CÁO TỔNG HỢP**\n🏢 Phạm vi: **${label}**\n\n🏗️ **Dự án:** ${num(pTotal)}\n${statusLines}\n   💰 Tổng giá trị: ${num(totalValue, projRes.truncated)}đ\n   📈 Mới tháng này: ${num(pNewThisMonth)}\n\n📋 **Nhiệm vụ:** ${num(tTotal)}\n   ✅ Hoàn thành: ${num(tDone)}${tRate === null ? '' : ` (${tRate}%)`}\n   🔴 Quá hạn: ${num(tOverdue)}\n   ⏳ Còn lại: ${num(tRemain)}\n\n💰 **Doanh thu:**\n   📦 Tổng ĐH: ${num(totalRevenue, orderRes.truncated)}đ\n   ✅ Đã thu: ${num(totalPaid, orderRes.truncated)}đ\n   ❗ Còn nợ: ${num(totalRevenue - totalPaid, orderRes.truncated)}đ\n   📈 Tháng này: ${num(revenueThisMonth, orderRes.truncated)}đ${moneyNote}\n\n🎯 **CRM:**\n   • ${num(ctx.openLeads)} lead đang mở\n   • ${num(ctx.pendingOrders)} ĐH đang xử lý\n   • ${num(ctx.unpaidInvoices)} HĐ chưa thu` });
     }
 
     if (intent.action === 'overdue') {
-      // Detailed overdue report
-      const [overdueProj, overdueTasks] = await Promise.all([
-        supabase.from('projects').select('id,code,name,install_date,design_deadline').neq('status','completed').neq('status','cancelled').or('install_date.lt.'+new Date().toISOString()+',design_deadline.lt.'+new Date().toISOString()).limit(20),
-        supabase.from('tasks').select('id,title,due_date,assignee:users!tasks_assignee_id_fkey(full_name),project:projects(code)').neq('status','done').lt('due_date',new Date().toISOString()).order('due_date').limit(20),
+      // Detailed overdue report — danh sách chỉ lấy 20 dòng đầu, nên SỐ LƯỢNG phải đếm riêng
+      // ở DB (trước đây in `op.length` = đúng cái trần 20 đó ra như tổng số quá hạn).
+      const scope = ctx.scope;
+      const nowIso = new Date().toISOString();
+      const overdueProjFilter = (q) => q
+        .neq('status','completed').neq('status','cancelled')
+        .or('install_date.lt.'+nowIso+',design_deadline.lt.'+nowIso);
+      const overdueTaskFilter = (q) => q.neq('status','done').lt('due_date',nowIso);
+
+      // BẪY ĐÃ TRẢ GIÁ: select này vốn đã có embed `project:projects(code)`. Nếu thêm embed
+      // THỨ HAI cùng bảng (`projects!inner(company_id)`) thì PostgREST **bỏ qua** bộ lọc
+      // `projects.company_id` — không lỗi, không cảnh báo, HTTP 206 kèm dữ liệu công ty khác.
+      // Đã đo: admin Vạn Phú Thành nhận về 13 nhiệm vụ quá hạn của Công ty Nhôm Kính Phúc Đạt,
+      // trong khi truy vấn đếm (chỉ có một embed) trả đúng 0. Phải lọc TRÊN CHÍNH embed đã có,
+      // gọi theo tên alias `project`.
+      const taskListSelect = scope.companyId
+        ? 'id,title,due_date,assignee:users!tasks_assignee_id_fkey(full_name),project:projects!inner(code,company_id)'
+        : 'id,title,due_date,assignee:users!tasks_assignee_id_fkey(full_name),project:projects(code)';
+      const scopeTaskList = (q) => (scope.companyId ? q.eq('project.company_id', scope.companyId) : q);
+
+      const [overdueProj, overdueTasks, opCount, otCount] = await Promise.all([
+        overdueProjFilter(byCompany(supabase.from('projects').select('id,code,name,install_date,design_deadline'), scope)).limit(20),
+        overdueTaskFilter(scopeTaskList(supabase.from('tasks').select(taskListSelect))).order('due_date').limit(20),
+        countExact(() => overdueProjFilter(byCompany(supabase.from('projects').select('id', { count: 'exact', head: true }), scope))),
+        countExact(() => overdueTaskFilter(byCompanyVia(
+          supabase.from('tasks').select(withEmbed('id', scope, 'projects'), { count: 'exact', head: true }),
+          scope, 'projects',
+        ))),
       ]);
       const op = overdueProj.data || [];
       const ot = overdueTasks.data || [];
+      const label = await scopeLabel(scope);
 
-      let reply = '⚠️ **BÁO CÁO QUÁ HẠN**\n\n';
+      let reply = `⚠️ **BÁO CÁO QUÁ HẠN**\n🏢 Phạm vi: **${label}**\n\n`;
 
       if (op.length) {
-        reply += `🏗️ **${op.length} DA quá deadline:**\n`;
+        reply += `🏗️ **${num(opCount ?? op.length)} DA quá deadline:**\n`;
         op.slice(0,10).forEach(p => {
           const date = p.install_date || p.design_deadline;
           reply += `• ${p.code}: ${p.name} (hạn: ${new Date(date).toLocaleDateString('vi')})\n`;
         });
+        if ((opCount ?? op.length) > 10) reply += `   … còn ${num((opCount ?? op.length) - 10)} DA nữa\n`;
         reply += '\n';
       }
 
       if (ot.length) {
-        reply += `📋 **${ot.length} NV quá hạn:**\n`;
+        reply += `📋 **${num(otCount ?? ot.length)} NV quá hạn:**\n`;
         ot.slice(0,10).forEach(t => {
           reply += `• ${t.project?.code || '—'}: ${t.title} — ${t.assignee?.full_name || '?'} (hạn: ${new Date(t.due_date).toLocaleDateString('vi')})\n`;
         });
+        if ((otCount ?? ot.length) > 10) reply += `   … còn ${num((otCount ?? ot.length) - 10)} NV nữa\n`;
         reply += '\n';
       }
 
-      if (!op.length && !ot.length) reply = '✅ Không có gì quá hạn! 👏';
+      if (!op.length && !ot.length) reply = `✅ Không có gì quá hạn trong phạm vi **${label}**! 👏`;
       return res.json({ reply });
     }
 
     if (intent.action === 'revenue') {
-      const [orders, invoices, payments] = await Promise.all([
-        supabase.from('orders').select('id,code,total,status,paid_amount,customer_name,created_at').order('created_at',{ascending:false}).limit(100),
-        supabase.from('invoices').select('id,code,total,paid_amount,payment_status,customer_name').limit(100),
-        supabase.from('payment_records').select('id,amount,payment_method,created_at').order('created_at',{ascending:false}).limit(50),
+      const scope = ctx.scope;
+      const [orderRes, invRes, payRes, orderCount] = await Promise.all([
+        fetchAllPaged(() => byCompany(supabase.from('orders').select('total,created_at'), scope)),
+        fetchAllPaged(() => byCompany(supabase.from('invoices').select('code,total,paid_amount,payment_status,customer_name'), scope)),
+        fetchPaymentRecords(scope),
+        countExact(() => byCompany(supabase.from('orders').select('id', { count: 'exact', head: true }), scope)),
       ]);
-      const allOrders = orders.data || [];
-      const allInv = invoices.data || [];
-      const allPay = payments.data || [];
+      const allOrders = orderRes.rows;
+      const allInv = invRes.rows;
+      const allPay = payRes.rows;
 
       const totalRevenue = allOrders.reduce((s,o) => s + (o.total||0), 0);
       const totalPaid = allInv.reduce((s,i) => s + (i.paid_amount||0), 0);
@@ -735,7 +919,12 @@ r.post('/chat', async (req, res) => {
       // Top 5 unpaid
       const unpaid = allInv.filter(i => i.payment_status !== 'paid').sort((a,b) => ((b.total||0)-(b.paid_amount||0)) - ((a.total||0)-(a.paid_amount||0)));
 
-      let reply = `💰 **BÁO CÁO DOANH THU**\n\n📦 Tổng ĐH: **${fmt(totalRevenue)}đ** (${allOrders.length} đơn)\n✅ Đã thu: **${fmt(totalPaid)}đ**\n❗ Công nợ: **${fmt(totalDebt)}đ**\n\n📈 **Tháng này:**\n• ĐH mới: ${fmt(revenueMonth)}đ\n• Thu tiền: ${fmt(paidMonth)}đ`;
+      const label = await scopeLabel(scope);
+      let reply = `💰 **BÁO CÁO DOANH THU**\n🏢 Phạm vi: **${label}**\n\n📦 Tổng ĐH: **${num(totalRevenue, orderRes.truncated)}đ** (${num(orderCount ?? allOrders.length, orderCount === null && orderRes.truncated)} đơn)\n✅ Đã thu: **${num(totalPaid, invRes.truncated)}đ**\n❗ Công nợ: **${num(totalDebt, invRes.truncated)}đ**\n\n📈 **Tháng này:**\n• ĐH mới: ${num(revenueMonth, orderRes.truncated)}đ\n• Thu tiền: ${num(paidMonth, payRes.truncated)}đ`;
+
+      if (orderRes.truncated || invRes.truncated || payRes.truncated) {
+        reply += `\n\n⚠️ Dữ liệu vượt trần đọc (${fmt(MAX_SUM_ROWS)} dòng) — các mốc tiền là TỐI THIỂU, chưa đủ. Xem trang Báo cáo để có số đầy đủ.`;
+      }
 
       if (unpaid.length) {
         reply += `\n\n🔴 **Top công nợ:**`;
@@ -751,12 +940,16 @@ r.post('/chat', async (req, res) => {
       return res.json({ reply: `👋 Chào! Tôi giúp gì?\n\n• ${ctx.myTasks} NV (${ctx.overdueTasks} quá hạn)\n• ${ctx.openLeads} lead\n• ${ctx.unpaidInvoices} HĐ chưa thu` });
     }
 
+    // Hai nhánh dưới in DANH SÁCH đã bị cắt trang, nên nhãn phải là "hiển thị N" chứ không
+    // phải "(N)" — đọc "(N)" người dùng hiểu là tổng số, mà đó chỉ là số dòng lấy về.
     if (intent.action === 'list_customers') {
-      return res.json({ reply: `👥 **KH (${ctx.customers.length}):**\n\n${ctx.customers.slice(0,20).map(c => `• ${c.name}${c.phone ? ' — '+c.phone : ''}`).join('\n')}` });
+      const total = await countExact(() => byCompany(supabase.from('customers').select('id', { count: 'exact', head: true }), ctx.scope));
+      const shown = ctx.customers.slice(0,20);
+      return res.json({ reply: `👥 **KH — hiển thị ${shown.length}/${num(total ?? ctx.customers.length)}:**\n\n${shown.map(c => `• ${c.name}${c.phone ? ' — '+c.phone : ''}`).join('\n')}` });
     }
 
     if (intent.action === 'list_projects') {
-      return res.json({ reply: `🏗️ **DA đang chạy (${ctx.projects.length}):**\n\n${ctx.projects.map(p => `• ${p.code}: ${p.name}`).join('\n')}` });
+      return res.json({ reply: `🏗️ **DA đang chạy — hiển thị ${ctx.projects.length}/${num(ctx.activeProjects)}:**\n\n${ctx.projects.map(p => `• ${p.code}: ${p.name}`).join('\n')}` });
     }
 
     if (intent.action === 'help') {
@@ -867,7 +1060,7 @@ r.get('/me/briefing', async (req, res) => {
     let source = 'fallback';
     if (apiKey) {
       try {
-        const ctx = await buildContext(userId);
+        const ctx = await buildContext(userId, scopeCompany(req));
         const extra = formatPersonalBriefingAppend(payload);
         const userPrompt =
           'Phân tích dữ liệu cá nhân của tôi (tasks/KPI/CSKH trong context_pack) và liệt kê việc nên làm hôm nay theo định dạng yêu cầu.';
@@ -898,7 +1091,7 @@ r.get('/me/briefing', async (req, res) => {
 // ─── SUGGESTIONS ────────────────────────────────────────────────────────
 r.get('/suggestions', async (req, res) => {
   try {
-    const ctx = await buildContext(req.user.userId);
+    const ctx = await buildContext(req.user.userId, scopeCompany(req));
     const suggestions = [];
     if (ctx.overdueTasks) suggestions.push({ priority:'high', icon:'🔴', message:`${ctx.overdueTasks} NV quá hạn`, action:'/work/unified' });
     if (ctx.unpaidInvoices) suggestions.push({ priority:'medium', icon:'💰', message:`${ctx.unpaidInvoices} HĐ chưa thu (${fmt(ctx.totalDebt)}đ)`, action:'/crm/invoices' });
@@ -912,7 +1105,7 @@ r.post('/execute', async (req, res) => {
   try {
     const { action, data } = req.body;
     if (!ACTIONS[action]) return res.status(400).json({ error: 'Action không hỗ trợ: ' + action });
-    const ctx = await buildContext(req.user.userId);
+    const ctx = await buildContext(req.user.userId, scopeCompany(req));
     const result = await ACTIONS[action](data, req.user.userId, ctx);
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }

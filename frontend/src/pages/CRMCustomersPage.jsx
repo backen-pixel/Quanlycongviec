@@ -180,7 +180,7 @@ export default function CRMCustomersPage() {
       </div>
 
       {/* Customer List */}
-      <div className="space-y-3">
+      <div className="space-y-3" data-guide-khu-vuc="Danh sách khách hàng">
         {sorted.map(c => (
           <div key={c.id} className="bg-white rounded-xl border overflow-hidden">
             <div onClick={() => loadDetail(c.id)} className="p-4 flex items-center gap-4 cursor-pointer hover:bg-gray-50 transition-colors">
@@ -215,7 +215,7 @@ export default function CRMCustomersPage() {
                   <button onClick={() => navigate(`/crm?new_lead=1&customer_id=${c.id}`)} className="h-7 px-3 bg-blue-600 text-white rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer"><Plus className="h-3 w-3" /> Tạo Lead</button>
                 </div>
                 {/* Timeline */}
-                <div className="relative">
+                <div className="relative" data-guide-khu-vuc="Lịch sử giao dịch">
                   <div className="absolute left-3 top-0 bottom-0 w-0.5 bg-gray-200" />
                   <div className="space-y-2">
                     {buildTimeline(detail).map((item, i) => (

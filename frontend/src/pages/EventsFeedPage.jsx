@@ -1109,7 +1109,7 @@ export default function EventsFeedPage({
             </Link>
           )}
           {/* View toggle */}
-          <div className="flex bg-gray-100 rounded-lg p-0.5" data-tour="events-view-toggle">
+          <div className="flex bg-gray-100 rounded-lg p-0.5" data-tour="events-view-toggle" data-guide-khu-vuc="Chế độ xem sự kiện">
           <button
             type="button"
             data-tour="events-view-calendar"
@@ -1445,7 +1445,13 @@ export default function EventsFeedPage({
                 currentUser={currentUser}
               />
             ) : !(isProjectAggregate && view === 'calendar') && !(isEmbeddedProject && view === 'calendar') ? (
-              <div className={isProjectAggregate ? 'flex-1 min-h-0 flex flex-col' : ''}>
+              // Tên CỐ ĐỊNH cho trợ lý: tiêu đề hiển thị kèm số đếm ("Feed sự kiện(293 sự kiện)") nên tên
+              // đoán đổi theo từng lần lọc, gọi theo tên cũ là trượt. Số sự kiện đi riêng qua so-muc.
+              <div
+                className={isProjectAggregate ? 'flex-1 min-h-0 flex flex-col' : ''}
+                data-guide-khu-vuc="Feed sự kiện"
+                data-guide-so-muc={events.length}
+              >
                 <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
                   <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
                     <List className="h-4 w-4 text-gray-500" /> Feed sự kiện
@@ -2241,9 +2247,14 @@ function CalendarView({
           </div>
 
           <div className={fillViewport ? 'flex-1 min-h-0 overflow-y-auto [scrollbar-width:thin] flex flex-col' : ''}>
-          {/* Calendar grid */}
+          {/* Calendar grid — khai là MỘT khu vực cho trợ lý hướng dẫn. Không khai thì mỗi ô ngày có từ
+              2 sự kiện trở lên bị bộ dò nhận thành một khu vực vô danh riêng ("Khu vực 4 (không có tiêu
+              đề)" = ô ngày 2), chiếm hết trần 15 khu vực của trang. Tên kèm tháng/năm để trợ lý biết
+              lịch đang mở tháng nào; số mục là số NGÀY của tháng. */}
           <div
             className={`grid grid-cols-7 gap-1 ${fillViewport ? 'flex-1 min-h-[min(520px,55vh)] auto-rows-fr' : ''}`}
+            data-guide-khu-vuc={`Lịch sự kiện tháng ${month}/${year}`}
+            data-guide-so-muc={daysInMonth}
           >
             {cells.map((day, i) => {
               const dayEvents = day ? (eventsByDay[day] || []) : [];
@@ -2261,9 +2272,12 @@ function CalendarView({
                 );
               }
               return (
+                // Mục của khu vực lịch tháng cho trợ lý: nhãn "Ngày 2/8" đứng đầu dòng khi đọc sâu, và
+                // đếm đủ 31 ngày dù ô đang chọn / hôm nay mang class khác (xem pageRegions.js).
                 <div
                   key={i}
                   role="presentation"
+                  data-guide-muc={`Ngày ${day}/${month}`}
                   className={`group relative rounded-lg border flex flex-col overflow-hidden transition cursor-pointer ${
                     fillViewport ? 'min-h-0' : ''
                   } ${
@@ -2482,7 +2496,7 @@ function EventListView({
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" data-guide-khu-vuc="Danh sách sự kiện" data-guide-so-muc={events.length}>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <h2 className="text-sm font-semibold text-gray-700 flex items-center gap-2">
           <Table2 className="h-4 w-4 text-gray-500" /> Danh sách sự kiện
@@ -2758,7 +2772,7 @@ function MonthlyStaffReport({
   const monthLabel = new Date(year, month - 1, 1).toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' });
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden" data-tour="events-monthly-report">
+    <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden" data-tour="events-monthly-report" data-guide-khu-vuc="Báo cáo tháng sự kiện">
       <div className="px-4 py-3 border-b border-gray-100 bg-slate-50/80 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <button

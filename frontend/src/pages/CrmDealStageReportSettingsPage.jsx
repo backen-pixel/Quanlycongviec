@@ -176,7 +176,7 @@ export default function CrmDealStageReportSettingsPage() {
       )}
 
       {companyId && !loading && sortStages.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div data-guide-khu-vuc="Phân loại cột báo cáo Deal" className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
           <table className="min-w-full text-sm">
             <thead>
               <tr className="bg-slate-50 text-left text-slate-600 border-b border-slate-200">

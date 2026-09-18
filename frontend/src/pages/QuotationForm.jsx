@@ -542,7 +542,7 @@ export default function QuotationForm() {
     <div className="space-y-4 w-full">
       <SaveToast status={saveStatus} message={saveMsg} onDone={() => setSaveStatus('idle')} />
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between" data-guide-khu-vuc="Tiêu đề & thao tác báo giá">
         <div className="flex items-center gap-3">
           <button onClick={() => navigate(returnTo || '/crm/quotations')} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
           <div>
@@ -637,7 +637,7 @@ export default function QuotationForm() {
       )}
 
       {/* Customer Info - MISA style */}
-      <div className="bg-white rounded-xl border p-4">
+      <div className="bg-white rounded-xl border p-4" data-guide-khu-vuc="Liên kết deal & khách hàng">
         <h2 className="text-sm font-bold mb-3" style={{ color: '#000000' }}>Liên kết deal & khách hàng</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="md:col-span-2">
@@ -710,7 +710,7 @@ export default function QuotationForm() {
         onOpenDescription={(idx, item) => setDescPopup({ idx, name: item.name, description: item.description })}
       >
         {/* Totals - per-group breakdown + overall */}
-        <div className="flex justify-end mt-4">
+        <div className="flex justify-end mt-4" data-guide-khu-vuc="Tổng tiền báo giá">
           <div className="w-[420px] space-y-2">
             {/* Per-group after-CK totals */}
             {calcs.groupOrder.length > 0 && calcs.groupOrder.map(group => {
@@ -886,7 +886,7 @@ export default function QuotationForm() {
       )}
 
       {/* Terms */}
-      <div className="bg-white rounded-xl border p-4">
+      <div className="bg-white rounded-xl border p-4" data-guide-khu-vuc="Điều khoản báo giá">
         <h2 className="text-sm font-bold mb-3" style={{ color: '#000000' }}>Điều khoản</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -1008,7 +1008,7 @@ export default function QuotationForm() {
       </div>
 
       {isEdit && (
-        <div className="bg-white rounded-xl border p-4">
+        <div className="bg-white rounded-xl border p-4" data-guide-khu-vuc="Lịch sử chỉnh sửa báo giá">
           <h2 className="text-sm font-bold mb-3 flex items-center gap-2" style={{ color: '#000000' }}>
             <History className="h-4 w-4 text-slate-600" /> Lịch sử chỉnh sửa báo giá
           </h2>

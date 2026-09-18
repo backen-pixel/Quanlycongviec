@@ -799,7 +799,7 @@ function SheetTab({ departmentId, ownUserId, filterParams }) {
         </div>
 
         {/* Dải thống kê + sheet tuần gần đây */}
-        <div className="px-4 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-2">
+        <div className="px-4 py-2.5 flex flex-wrap items-center gap-x-5 gap-y-2" data-guide-khu-vuc="Thống kê tuần">
           <span className="flex items-center gap-1.5 text-sm text-gray-600">
             <span className="font-bold text-gray-900 text-base">{tasks.length}</span> nhiệm vụ
           </span>
@@ -1259,7 +1259,7 @@ function CalendarTab({ departmentId, ownUserId, filterParams }) {
 
       {/* Panel chi tiết ngày: trình bày đầy đủ thông tin từng nhiệm vụ */}
       {selectedDay && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden" data-guide-khu-vuc="Chi tiết nhiệm vụ trong ngày">
           <div className="flex items-center justify-between px-4 py-3 bg-indigo-50/60 border-b border-indigo-100">
             <div className="text-base font-bold text-gray-800">
               Nhiệm vụ ngày {fmtDMY(selectedDay)} <span className="text-indigo-600">({selectedTasks.length})</span>

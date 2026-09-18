@@ -955,7 +955,7 @@ export default function CrmFollowUpCarePage() {
 
   return (
     <div className="space-y-5 max-w-[1400px] mx-auto px-3 sm:px-4 pb-10">
-      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+      <div data-guide-khu-vuc="Tiêu đề & thao tác CSKH" className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <CalendarClock className="h-7 w-7 text-emerald-600 shrink-0" />
@@ -984,7 +984,7 @@ export default function CrmFollowUpCarePage() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+      <div data-guide-khu-vuc="Bộ lọc CSKH" className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-gray-100 bg-gray-50/80">
           <div className="flex items-center gap-2 text-xs font-semibold text-gray-500 uppercase tracking-wide">
             <Filter className="h-4 w-4" /> Bộ lọc
@@ -1221,7 +1221,7 @@ export default function CrmFollowUpCarePage() {
         )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-3 text-sm">
+      <div data-guide-khu-vuc="Tóm tắt danh sách CSKH" className="flex flex-wrap items-center gap-3 text-sm">
         <span className="text-gray-600">
           Hiển thị <strong>{filtered.length}</strong>
           {total != null && ` / tổng server ${total}`} lead/deal
@@ -1275,6 +1275,7 @@ export default function CrmFollowUpCarePage() {
               rowKey={(row) => row.id}
               cardClassName="mx-3"
               tableClassName="min-w-full"
+              khuVuc="Danh sách lead/deal CSKH"
               columns={[
                 {
                   key: 'lead',

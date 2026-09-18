@@ -127,7 +127,7 @@ export default function QuotationsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between" data-guide-khu-vuc="Tiêu đề & nút tạo báo giá">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2" style={{ color: '#000000' }}><FileText className="h-6 w-6 text-blue-600" /> Báo giá</h1>
           <p className="text-sm text-gray-500 mt-1">{summary.total} báo giá · {formatVND(summary.value)}{summary.orphan > 0 ? ` · ${summary.orphan} chưa gắn deal` : ''}</p>
@@ -139,7 +139,7 @@ export default function QuotationsPage() {
       </div>
 
       {/* Status tabs */}
-      <div className="flex gap-2 overflow-x-auto">
+      <div className="flex gap-2 overflow-x-auto" data-guide-khu-vuc="Lọc theo trạng thái báo giá">
         <button onClick={() => setStatusFilter('')} className={`px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer ${!statusFilter ? 'bg-blue-600 text-white border-blue-600' : 'hover:bg-gray-50'}`}>Tất cả ({summary.total})</button>
         {Object.entries(STATUS_MAP).map(([k, v]) => summary[k] > 0 && (
           <button key={k} onClick={() => setStatusFilter(statusFilter === k ? '' : k)} className={`px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer whitespace-nowrap ${statusFilter === k ? 'bg-blue-600 text-white border-blue-600' : STATUS_COLORS[k]}`}>{v} ({summary[k]})</button>
@@ -154,7 +154,7 @@ export default function QuotationsPage() {
 
       <div className="bg-white rounded-xl border p-6">
         {/* Filters */}
-        <div className="flex flex-wrap items-center gap-3 mb-5">
+        <div className="flex flex-wrap items-center gap-3 mb-5" data-guide-khu-vuc="Tìm kiếm & bộ lọc báo giá">
           <div className="relative flex-1 min-w-[200px] max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm mã, tên, KH, mã deal..." className="w-full h-10 pl-10 pr-3 border rounded-lg text-sm" />
@@ -189,6 +189,7 @@ export default function QuotationsPage() {
 
         <div
           className="overflow-auto rounded-lg border border-gray-200 [scrollbar-width:thin]"
+          data-guide-khu-vuc="Danh sách báo giá"
           style={{ maxHeight: 'calc(100vh - 360px)', minHeight: 240 }}
         >
           <table className="w-full text-sm">

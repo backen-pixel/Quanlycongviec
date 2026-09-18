@@ -365,7 +365,7 @@ export default function KpiCompanyDashboard() {
           </div>
 
           {tab === 'table' && (
-            <div className="overflow-x-auto rounded-xl border border-gray-100 bg-white">
+            <div data-guide-khu-vuc="Bảng KPI nhân viên" className="overflow-x-auto rounded-xl border border-gray-100 bg-white">
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 text-xs uppercase text-gray-700">
                   <tr>
@@ -510,7 +510,7 @@ export default function KpiCompanyDashboard() {
           {tab === 'trend' && (
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
               <KpiTrendLineChart trend={data.trend} />
-              <div className="rounded-xl border border-gray-100 bg-white p-3">
+              <div data-guide-khu-vuc="Top & Bottom 5" className="rounded-xl border border-gray-100 bg-white p-3">
                 <h3 className="mb-3 flex items-center gap-1.5 text-sm font-semibold text-gray-900">
                   <Trophy className="h-4 w-4 text-amber-600" /> Top & Bottom 5
                 </h3>
@@ -542,7 +542,7 @@ export default function KpiCompanyDashboard() {
 
           {tab === 'alerts' && (
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-              <div className="rounded-xl border border-red-100 bg-white">
+              <div data-guide-khu-vuc="Lead quá SLA" className="rounded-xl border border-red-100 bg-white">
                 <div className="flex items-center gap-2 border-b bg-red-50 px-3 py-2">
                   <AlertTriangle className="h-4 w-4 text-red-600" />
                   <h3 className="text-sm font-semibold">Lead quá SLA ({stats.leads_over_sla_total})</h3>
@@ -563,7 +563,7 @@ export default function KpiCompanyDashboard() {
                 </div>
               </div>
 
-              <div className="rounded-xl border border-amber-100 bg-white">
+              <div data-guide-khu-vuc="Task quá deadline" className="rounded-xl border border-amber-100 bg-white">
                 <div className="flex items-center gap-2 border-b bg-amber-50 px-3 py-2">
                   <Clock className="h-4 w-4 text-amber-600" />
                   <h3 className="text-sm font-semibold">Task quá deadline ({stats.tasks_overdue_total})</h3>
@@ -580,7 +580,7 @@ export default function KpiCompanyDashboard() {
                 </div>
               </div>
 
-              <div className="rounded-xl border border-purple-100 bg-white lg:col-span-2">
+              <div data-guide-khu-vuc="NV đang nghỉ phép hôm nay" className="rounded-xl border border-purple-100 bg-white lg:col-span-2">
                 <div className="flex items-center gap-2 border-b bg-purple-50 px-3 py-2">
                   <UserMinus className="h-4 w-4 text-purple-600" />
                   <h3 className="text-sm font-semibold">NV đang nghỉ phép hôm nay ({stats.on_leave_today_count})</h3>

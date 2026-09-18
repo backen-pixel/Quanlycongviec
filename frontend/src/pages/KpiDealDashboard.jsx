@@ -348,7 +348,7 @@ export default function KpiDealDashboard() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+            <div data-guide-khu-vuc="Phễu Deal trong tháng" className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
               <div className="flex items-center gap-2 mb-3">
                 <TrendingUp className="w-4 h-4 text-emerald-600" />
                 <h3 className="font-semibold text-sm text-gray-900">Phễu Deal trong tháng</h3>
@@ -364,7 +364,7 @@ export default function KpiDealDashboard() {
               </ResponsiveContainer>
             </div>
 
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+            <div data-guide-khu-vuc="Deal sắp quá SLA" className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
               <div className="flex items-center gap-2 mb-3">
                 <AlertTriangle className="w-4 h-4 text-amber-600" />
                 <h3 className="font-semibold text-sm text-gray-900">
@@ -409,7 +409,7 @@ export default function KpiDealDashboard() {
           </div>
 
           {/* ── Tổng điểm từng Deal (CRM Ledger) ── */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
+          <div data-guide-khu-vuc="Tổng điểm từng Deal (CRM Ledger)" className="bg-white rounded-xl shadow-sm border border-gray-100 p-4">
             <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
               <div className="flex items-center gap-2">
                 <Award className="w-4 h-4 text-purple-600" />

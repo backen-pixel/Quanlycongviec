@@ -104,10 +104,21 @@ export default defineConfig({
     target: 'es2020',
     sourcemap: false,
     chunkSizeWarningLimit: 1200,
+    modulePreload: {
+      // Trợ lý hướng dẫn (CopilotKit) chỉ tải khi bấm nút ✨ (xem features/guide/AppGuideCopilot.jsx).
+      // Không loại vendor-copilotkit khỏi modulePreload thì Vite chèn <link modulepreload> vào
+      // index.html cho MỌI vendor chunk → trình duyệt tải ~vài trăm KB ngay ở trang login dù
+      // chưa ai mở trợ lý.
+      resolveDependencies: (_file, deps) => deps.filter((d) => !d.includes('vendor-copilotkit')),
+    },
     rollupOptions: {
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return undefined;
+          // So bằng ĐƯỜNG DẪN PACKAGE THẬT, không phải includes('@copilotkit') — chuỗi
+          // ".../@copilotkit/react-core/node_modules/lucide-react/..." cũng "chứa" @copilotkit,
+          // nên includes() thẳng sẽ hút nhầm cả lucide-react vào chunk trợ lý.
+          if (/node_modules[\\/]@copilotkit[\\/]/.test(id) || /node_modules[\\/]@ag-ui[\\/]/.test(id)) return 'vendor-copilotkit';
           if (id.includes('xlsx')) return 'vendor-xlsx';
           if (id.includes('exceljs')) return 'vendor-exceljs';
           if (id.includes('recharts') || id.includes('d3-')) return 'vendor-charts';

@@ -14,6 +14,9 @@ export default function AnchoredDropdownMenu({
   matchAnchorWidth = false,
   children,
   'data-tour': dataTour,
+  /** Tên khu vực cho Trợ lý hướng dẫn (`data-guide-khu-vuc`). Menu vẽ qua portal ra ngoài `<main>`,
+   *  không khai thì trợ lý thấy các lựa chọn nhưng không biết chúng thuộc menu nào. */
+  guideRegion,
 }) {
   const menuRef = useRef(null);
   const [pos, setPos] = useState({ top: 0, left: 0, width: undefined, ready: false });
@@ -73,6 +76,7 @@ export default function AnchoredDropdownMenu({
     <div
       ref={menuRef}
       data-tour={dataTour || undefined}
+      data-guide-khu-vuc={guideRegion || undefined}
       className={`ui-solid-white fixed z-[99990] border border-slate-200 bg-white shadow-xl ${fitContent ? 'w-max' : ''} ${className}`}
       style={{
         top: pos.top,

@@ -465,7 +465,7 @@ export default function CrmStaffLeadDealReport() {
 
   return (
     <div className="min-w-0 max-w-[1600px] mx-auto space-y-5 pb-8 rounded-3xl border border-indigo-100/50 bg-gradient-to-br from-slate-50 via-indigo-50/35 to-cyan-50/40 p-4 md:p-6 shadow-sm">
-      <div className="rounded-2xl bg-gradient-to-br from-indigo-600 via-blue-600 to-cyan-600 p-[1px] shadow-lg shadow-indigo-500/20">
+      <div data-guide-khu-vuc="Tiêu đề & xuất báo cáo" className="rounded-2xl bg-gradient-to-br from-indigo-600 via-blue-600 to-cyan-600 p-[1px] shadow-lg shadow-indigo-500/20">
         <div className="rounded-2xl bg-gradient-to-br from-slate-900/95 via-indigo-900/90 to-slate-900/95 px-5 py-5 text-white">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
@@ -514,7 +514,7 @@ export default function CrmStaffLeadDealReport() {
         </div>
       </div>
 
-      <div className="rounded-2xl bg-white/80 backdrop-blur border border-indigo-100 shadow-md shadow-indigo-500/5 p-4 md:p-5 space-y-3">
+      <div data-guide-khu-vuc="Bộ lọc báo cáo nhân viên" className="rounded-2xl bg-white/80 backdrop-blur border border-indigo-100 shadow-md shadow-indigo-500/5 p-4 md:p-5 space-y-3">
         <div className="flex flex-wrap items-end gap-4">
           <div className="flex flex-col gap-1 min-w-[min(100%,280px)]">
             <span className="text-xs font-semibold text-gray-600 flex items-center gap-1.5">
@@ -620,7 +620,10 @@ export default function CrmStaffLeadDealReport() {
       )}
 
       {!loading && rows.length > 0 && (
-        <div className={`grid grid-cols-2 ${typeView === 'lead' ? 'md:grid-cols-2' : 'md:grid-cols-4'} gap-3`}>
+        <div
+          className={`grid grid-cols-2 ${typeView === 'lead' ? 'md:grid-cols-2' : 'md:grid-cols-4'} gap-3`}
+          data-guide-khu-vuc="Chỉ số tổng quan theo nhân viên"
+        >
           {typeView !== 'deal' && (
             <div className="rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50 to-white p-4 shadow-sm">
               <div className="flex items-center gap-2 text-indigo-700 text-xs font-semibold uppercase tracking-wide">
@@ -674,7 +677,7 @@ export default function CrmStaffLeadDealReport() {
       {loading ? (
         <div className="text-center py-16 text-gray-400">Đang tải báo cáo…</div>
       ) : (
-        <div className="rounded-2xl border border-indigo-100/80 bg-white overflow-x-auto shadow-lg shadow-indigo-500/10 ring-1 ring-indigo-500/5">
+        <div data-guide-khu-vuc="Bảng hiệu suất nhân viên" className="rounded-2xl border border-indigo-100/80 bg-white overflow-x-auto shadow-lg shadow-indigo-500/10 ring-1 ring-indigo-500/5">
           <table className={`w-full text-sm ${typeView === 'all' ? 'min-w-[1100px]' : 'min-w-[760px]'}`}>
             <thead>
               <tr className="bg-gradient-to-r from-indigo-600 via-blue-600 to-cyan-600 text-left text-[11px] uppercase tracking-wider text-white shadow-inner">
@@ -849,7 +852,7 @@ export default function CrmStaffLeadDealReport() {
                   </div>
 
                   {/* Hàng 1: tổng quan (KHÔNG trùng lặp) */}
-                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3" data-guide-khu-vuc="Tổng quan pipeline nhân viên">
                     <div className="rounded-xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-3 shadow-sm">
                       <p className="text-[10px] font-bold uppercase tracking-wide text-blue-800">Tổng giá trị</p>
                       <p className="mt-1 text-lg font-bold text-slate-900 leading-tight">
@@ -894,7 +897,7 @@ export default function CrmStaffLeadDealReport() {
                             Σ 4 nhóm = {sum4} {sumOk ? '✓' : `(≠ ${dealTot} deal)`}
                           </span>
                         </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3" data-guide-khu-vuc="Phân bổ deal theo giai đoạn">
                           <div className="rounded-xl border border-green-200 bg-gradient-to-br from-green-50 to-white p-3 shadow-sm">
                             <p className="text-[10px] font-bold uppercase tracking-wide text-green-900">Hoàn thành</p>
                             <p className="text-[9px] text-green-800/90 leading-tight mt-0.5">Xong HĐ, thu tiền (slug completed)</p>
@@ -944,7 +947,7 @@ export default function CrmStaffLeadDealReport() {
                       <strong>Đang triển khai</strong> = sau ký HĐ, trước hoàn thành. <strong>Chưa chốt</strong> = giai đoạn deal trước ký HĐ (slug designing…).{' '}
                       <strong>Ròng (ký HĐ − thua)</strong> theo cờ <code className="rounded bg-slate-100 px-0.5">is_won</code>.
                     </p>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3" data-guide-khu-vuc="Kết quả tiền theo giai đoạn">
                       <div className="rounded-xl border border-emerald-200 bg-white/90 p-3">
                         <p className="text-[10px] font-bold uppercase text-emerald-900">Hoàn thành (thu tiền)</p>
                         <p className="mt-1 text-lg font-bold text-emerald-800 tabular-nums">

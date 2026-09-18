@@ -1,0 +1,37 @@
+# Build context — chỉ để lại thứ cần cho build. Không có file này, context kéo theo
+# node_modules + backend/uploads (69 MB) + 3 app mobile, build chậm và image phình vô ích.
+
+**/node_modules
+**/.git
+**/.vite
+**/dist
+**/.DS_Store
+
+# Ảnh/file người dùng tải lên — chạy runtime bằng VOLUME, không nhét vào image.
+# (Ngoại lệ: uploads/knowledge-screenshots ở gốc repo là ảnh bài học, build cần — xem !… bên dưới)
+backend/uploads
+uploads/*
+!uploads/knowledge-screenshots
+
+# Ứng dụng di động, không liên quan tới web
+crm-mobile
+crm-mobile-v2
+demo-mobile
+mobile
+mobile-shared
+sketchup-plugin
+
+# Dump / tài liệu / file tạm
+database
+docs
+*.dump
+*.pdf
+*.xlsx
+*.log
+.idea
+.vscode
+.claude
+
+# Bí mật: KHÔNG bake vào image. Truyền lúc chạy bằng env_file (xem docker-compose.yml).
+**/.env
+**/.env.*

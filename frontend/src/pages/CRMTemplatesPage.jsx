@@ -1025,7 +1025,7 @@ export default function CRMTemplatesPage() {
   return (
     <div className="space-y-5 max-w-4xl">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div data-guide-khu-vuc="Tiêu đề bộ mẫu CRM" className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">📋 Bộ nhiệm vụ mẫu CRM</h1>
           <p className="text-sm text-gray-500">
@@ -1048,7 +1048,7 @@ export default function CRMTemplatesPage() {
       </div>
 
       {/* Company + Pipeline picker */}
-      <div className="rounded-xl border bg-white p-3 flex flex-wrap items-center gap-3">
+      <div data-guide-khu-vuc="Chọn công ty & pipeline" className="rounded-xl border bg-white p-3 flex flex-wrap items-center gap-3">
         <div className="flex items-center gap-2 text-xs font-semibold text-gray-600 uppercase tracking-wide">
           <Building2 className="h-4 w-4 text-blue-600" /> Phạm vi áp dụng
         </div>
@@ -1203,7 +1203,7 @@ export default function CRMTemplatesPage() {
       )}
 
       {/* Tab Lead / Deal */}
-      <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+      <div data-guide-khu-vuc="Tab Lead / Deal" className="flex gap-1 bg-gray-100 rounded-xl p-1">
         {[
           { key: 'deal', label: '🤝 Deal', desc: 'Quy trình xử lý Deal' },
           { key: 'lead', label: '📞 Lead', desc: 'Quy trình tư vấn Lead' },
@@ -1219,7 +1219,7 @@ export default function CRMTemplatesPage() {
       </div>
 
       {/* Stages preview — chỉnh sửa trực tiếp khi đang xem pipeline thật của công ty */}
-      <div className={`rounded-xl p-4 border ${
+      <div data-guide-khu-vuc="Các giai đoạn" className={`rounded-xl p-4 border ${
         stagesSource === 'pipeline' ? 'bg-gradient-to-r from-emerald-50 to-teal-50 border-emerald-200'
           : stagesSource === 'company' ? 'bg-gradient-to-r from-emerald-50/60 to-blue-50 border-emerald-100'
           : 'bg-gradient-to-r from-blue-50 to-purple-50 border-blue-100'
@@ -1383,7 +1383,7 @@ export default function CRMTemplatesPage() {
 
       {/* Add Template Form */}
       {showAddTpl && (
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
+        <div data-guide-khu-vuc="Thêm bộ mẫu" className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
           <h3 className="text-sm font-semibold text-blue-800">
             Tạo bộ mẫu mới ({activeTab === 'deal' ? 'Deal' : 'Lead'})
             {isPipelineMode

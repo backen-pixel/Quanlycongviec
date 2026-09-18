@@ -25,6 +25,12 @@ import { useIsMobile } from '../hooks/useIsMobile';
  * - `secondary`    : hiện ngay dưới tiêu đề, cũng không kèm nhãn (vd. tên khách hàng).
  * - `hideOnMobile` : bỏ hẳn khỏi thẻ — dùng cho cột phụ gây rối trên màn nhỏ.
  * - `align`        : 'left' | 'right' | 'center' (chỉ ảnh hưởng dạng bảng).
+ *
+ * `khuVuc` — tên khu vực cho bản đồ của trợ lý hướng dẫn (`data-guide-khu-vuc`, xem
+ * `features/guide/lib/pageRegions.js`). Ở nhánh mobile, bảng đổi thành các thẻ <div> anh em —
+ * khi chỉ còn 1 dòng thì bộ dò tự động không gom được (dưới ngưỡng 2), và khi rỗng thì hàm này
+ * trả về mỗi một dòng <p>, không có gì để bộ dò bám vào — cả hai ca đều biến mất khỏi bản đồ dù
+ * đang hiển thị/đã hiển thị bảng. Truyền `khuVuc` để khu vực này LUÔN có mặt bất kể số dòng.
  */
 export default function ResponsiveTable({
   rows = [],
@@ -37,12 +43,15 @@ export default function ResponsiveTable({
   cardClassName = '',
   /** Danh sách class độ rộng cho <colgroup> — giữ nguyên bố cục cột sẵn có trên desktop. */
   colWidths = null,
+  khuVuc,
 }) {
   const isMobile = useIsMobile();
   const keyOf = (row, i) => (rowKey ? rowKey(row) : (row?.id ?? i));
 
   if (!rows.length) {
-    return <p className="text-sm text-slate-400 py-6 text-center">{empty}</p>;
+    return (
+      <p className="text-sm text-slate-400 py-6 text-center" data-guide-khu-vuc={khuVuc}>{empty}</p>
+    );
   }
 
   if (isMobile) {
@@ -51,7 +60,7 @@ export default function ResponsiveTable({
     const rest = columns.filter((c) => !c.primary && !c.secondary && !c.hideOnMobile);
 
     return (
-      <div className={`space-y-2 ${className}`}>
+      <div className={`space-y-2 ${className}`} data-guide-khu-vuc={khuVuc}>
         {rows.map((row, i) => {
           const clickable = typeof onRowClick === 'function';
           return (
@@ -93,7 +102,7 @@ export default function ResponsiveTable({
   }
 
   return (
-    <div className={`overflow-x-auto ${className}`}>
+    <div className={`overflow-x-auto ${className}`} data-guide-khu-vuc={khuVuc}>
       <table className={`w-full text-sm ${tableClassName}`}>
         {colWidths && (
           <colgroup>

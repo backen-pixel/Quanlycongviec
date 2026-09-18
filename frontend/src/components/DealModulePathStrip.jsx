@@ -64,6 +64,7 @@ export default function DealModulePathStrip({
   return (
     <nav
       data-tour="deal-module-path-strip"
+      data-guide-khu-vuc="Luồng module dự án"
       aria-label="Module dự án"
       className={`inline-flex max-w-full items-center gap-1 sm:gap-1.5 rounded-xl border border-slate-200 bg-slate-50/90 px-2 py-1.5 shadow-sm overflow-x-auto [scrollbar-width:thin] ${className}`.trim()}
     >

@@ -155,10 +155,12 @@ async function countSocialUnread(req, socialCompanyId) {
       .select('id')
       .eq('is_active', true);
     if (error) throw error;
-    let unread = 0;
-    for (const c of companies || []) {
-      unread += await countSocialUnreadForCompany(me, c.id, true);
-    }
+    // Chạy song song thay vì tuần tự — với N công ty, tuần tự tốn N lần round-trip DB
+    // (~300-400ms/lần khi DB ở xa, ví dụ us-west-1) cộng dồn, có thể lên tới nhiều giây.
+    const counts = await Promise.all(
+      (companies || []).map((c) => countSocialUnreadForCompany(me, c.id, true)),
+    );
+    const unread = counts.reduce((sum, n) => sum + n, 0);
     return { unread };
   }
 
@@ -169,15 +171,14 @@ async function countSocialUnread(req, socialCompanyId) {
 }
 
 async function countReleaseNotesUnread(userId) {
-  const { data: published } = await supabase.from('release_notes').select('id').eq('is_published', true);
+  // 2 truy vấn độc lập (không phụ thuộc kết quả nhau) — chạy song song thay vì tuần tự.
+  const [{ data: published }, { data: readData }] = await Promise.all([
+    supabase.from('release_notes').select('id').eq('is_published', true),
+    supabase.from('release_note_reads').select('release_note_id').eq('user_id', userId),
+  ]);
   const pubIds = (published || []).map((n) => n.id);
   if (!pubIds.length) return { unread: 0 };
 
-  const { data: readData } = await supabase
-    .from('release_note_reads')
-    .select('release_note_id')
-    .eq('user_id', userId)
-    .in('release_note_id', pubIds);
   const readSet = new Set((readData || []).map((r) => r.release_note_id));
   return { unread: pubIds.filter((id) => !readSet.has(id)).length };
 }
@@ -269,7 +270,11 @@ async function runAppHeartbeat(req, { socialCompanyId, fresh = false, badges = t
     throw err;
   }
 
-  const pingResult = await recordUserPing(uid, { companyId: req.user?.company_id || null });
+  // Ping và badges độc lập nhau — chạy song song thay vì chờ ping xong mới tính badges.
+  const [pingResult, badgesResult] = await Promise.all([
+    recordUserPing(uid, { companyId: req.user?.company_id || null }),
+    badges ? fetchHeartbeatBadges(req, { socialCompanyId, fresh }) : Promise.resolve(null),
+  ]);
   const out = {
     ok: pingResult.persisted !== false,
     ping: {
@@ -280,7 +285,7 @@ async function runAppHeartbeat(req, { socialCompanyId, fresh = false, badges = t
 
   if (!badges) return out;
 
-  out.badges = await fetchHeartbeatBadges(req, { socialCompanyId, fresh });
+  out.badges = badgesResult;
   out.badges_ttl_sec = Math.round(BADGE_CACHE_MS / 1000);
   return out;
 }

@@ -231,7 +231,10 @@ function QuoteCloseValueBarChart({ data, title }) {
   };
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50/80 to-indigo-50/30 p-4 md:p-5 shadow-sm">
+    <div
+      className="rounded-2xl border border-slate-200 bg-gradient-to-br from-white via-slate-50/80 to-indigo-50/30 p-4 md:p-5 shadow-sm"
+      data-guide-khu-vuc={title || 'Xếp hạng GT báo giá vs GT chốt'}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
         <div className="min-w-0">
           {title && <p className="text-sm font-bold text-slate-900">{title}</p>}
@@ -335,7 +338,10 @@ function QuoteCloseCountBarChart({ data, title }) {
   };
 
   return (
-    <div className="rounded-2xl border border-teal-200/80 bg-gradient-to-br from-white via-teal-50/40 to-cyan-50/50 p-4 md:p-5 shadow-sm">
+    <div
+      className="rounded-2xl border border-teal-200/80 bg-gradient-to-br from-white via-teal-50/40 to-cyan-50/50 p-4 md:p-5 shadow-sm"
+      data-guide-khu-vuc={title || 'Xếp hạng số deal BG vs chốt'}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
         <div className="min-w-0">
           {title && <p className="text-sm font-bold text-slate-900">{title}</p>}
@@ -2031,7 +2037,7 @@ export default function CrmOrgOverviewReport() {
         </div>
       ) : displayData ? (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 [&>*]:min-w-0">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 [&>*]:min-w-0" data-guide-khu-vuc="Chỉ số SLA và giá trị">
             {typeView !== 'deal' && (
               <KpiCard
                 label="QH SLA Lead"
@@ -2108,7 +2114,7 @@ export default function CrmOrgOverviewReport() {
             />
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 [&>*]:min-w-0">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 [&>*]:min-w-0" data-guide-khu-vuc="Chỉ số Lead/Deal/Pipeline">
             {typeView !== 'deal' && (
               <KpiCard label="Lead" value={summary.lead_count ?? 0} compare={compare} compareKey="lead_count" accent="border-blue-200 bg-blue-50" />
             )}
@@ -2183,7 +2189,7 @@ export default function CrmOrgOverviewReport() {
                 BG = deal ở cột Báo giá trở về sau · Chốt = thắng + sau thắng + hoàn thành (cùng một chỉ số) · Tăng trưởng so với kỳ trước
               </p>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-8 gap-3 [&>*]:min-w-0">
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-8 gap-3 [&>*]:min-w-0" data-guide-khu-vuc="Chỉ số báo giá và chốt đơn">
             <KpiCard
               label="Tổng báo giá"
               value={summary.quote_deal_count ?? 0}

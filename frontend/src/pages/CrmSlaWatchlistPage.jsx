@@ -267,7 +267,7 @@ export default function CrmSlaWatchlistPage() {
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-        <div className="overflow-x-auto">
+        <div data-guide-khu-vuc="Danh sách Lead/Deal quá SLA" className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">
               <tr>

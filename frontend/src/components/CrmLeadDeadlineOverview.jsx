@@ -254,7 +254,7 @@ export default function CrmLeadDeadlineOverview({ lead, onChanged }) {
 
   return (
     <>
-    <div className={`rounded-lg border p-2.5 my-1.5 ${
+    <div data-guide-khu-vuc="Deadline đang áp dụng" className={`rounded-lg border p-2.5 my-1.5 ${
       allDisabled ? 'border-slate-300 bg-slate-50' : 'border-amber-200 bg-amber-50/40'
     }`}>
       <div className="flex items-start gap-2">

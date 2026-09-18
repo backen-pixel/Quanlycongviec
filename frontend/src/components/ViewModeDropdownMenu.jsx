@@ -37,6 +37,7 @@ export default function ViewModeDropdownMenu({
   onSelect,
   theme = 'violet',
   extra = null,
+  guideRegion = 'Menu chế độ xem khác',
 }) {
   const t = THEMES[theme] || THEMES.violet;
 
@@ -48,6 +49,7 @@ export default function ViewModeDropdownMenu({
       align="right"
       fitContent
       data-tour="crm-view-mode-menu"
+      guideRegion={guideRegion}
       className={`rounded-xl py-1.5 px-1 ${t.shell}`}
     >
       <div className={`mb-1 rounded-lg border px-2.5 py-1.5 ${t.header}`}>
