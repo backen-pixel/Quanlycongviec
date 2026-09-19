@@ -38,6 +38,7 @@ export default function PlatformUsersPage() {
   useEffect(() => { loadUsers(); }, [loadUsers]);
 
   const ROLE_COLORS = {
+    ecosystem_admin: 'bg-rose-50 text-rose-800',
     admin: 'bg-red-50 text-red-700',
     sales_admin: 'bg-orange-50 text-orange-700',
     platform_admin: 'bg-teal-50 text-teal-700',

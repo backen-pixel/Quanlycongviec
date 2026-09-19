@@ -24,12 +24,14 @@ const { checkUserLimit } = require('../helpers/tenantLimits');
 const {
   canCreateStaff,
   isSystemAdmin,
+  isStrictAdmin,
   isElevatedStaffRole,
   hasCompanyId,
   isAdminLike,
   normalizeRole,
 } = require('../helpers/adminRole');
 const { fillStaffFormFromPrompt } = require('../helpers/aiStaffFormFill');
+const { syncHstAdminUserCompanies } = require('../helpers/hstAdminCompanies');
 
 /** Công ty của actor: company_id hoặc lấy từ phòng ban. */
 async function resolveActorCompanyId(actorRow) {
@@ -190,7 +192,7 @@ r.get('/stages', async (req, res) => {
     }
 
     // Admin/Manager thấy tất cả
-    if (['admin', 'manager'].includes(role)) {
+    if (['ecosystem_admin', 'admin', 'manager'].includes(role)) {
       return res.json({ stages: allStages || [] });
     }
 
@@ -244,7 +246,7 @@ r.get('/stages', async (req, res) => {
 r.get('/my-stages', async (req, res) => {
   try {
     const role = req.user.role;
-    if (['admin', 'manager'].includes(role)) {
+    if (['ecosystem_admin', 'admin', 'manager'].includes(role)) {
       const { data } = await supabase.from('workflow_stages').select('*').eq('is_active', true).order('order_index');
       return res.json({ stages: data || [], allAccess: true });
     }
@@ -342,7 +344,7 @@ r.get('/locations', responseCache({ ttl: 30, scope: 'role', tags: ['users', 'pre
   try {
     let { company_id: companyId, department_id: departmentId, search } = req.query;
     const role = req.user.role;
-    const elevated = ['admin', 'manager', 'region_admin'].includes(role);
+    const elevated = ['ecosystem_admin', 'admin', 'manager', 'region_admin'].includes(role);
     if (!elevated && req.user.company_id) {
       companyId = companyId || req.user.company_id;
     }
@@ -969,7 +971,10 @@ r.post('/', async (req, res) => {
     const password = b.password || 'tubep123';
     const hash = await bcrypt.hash(password, 12);
 
-    const isSystemAdminFlag = b.is_system_admin === true || b.role === 'admin' || b.role === 'platform_admin';
+    const isSystemAdminFlag = b.is_system_admin === true
+      || b.role === 'admin'
+      || b.role === 'platform_admin'
+      || b.role === 'ecosystem_admin';
     const hasModuleRolesPayload = b.module_roles !== undefined && b.module_roles !== null;
     const moduleRolesMap = hasModuleRolesPayload
       ? normalizeModuleRolesMap(b.module_roles)
@@ -978,7 +983,10 @@ r.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Chọn ít nhất một module và role tương ứng' });
     }
     const derivedRole = hasModuleRolesPayload
-      ? derivePrimaryRole(moduleRolesMap, { isSystemAdmin: isSystemAdminFlag })
+      ? derivePrimaryRole(moduleRolesMap, {
+        isSystemAdmin: isSystemAdminFlag,
+        companyId: scopedCompanyId || b.company_id,
+      })
       : (b.role || 'staff');
     const derivedDrive = hasModuleRolesPayload
       ? deriveDriveModule(moduleRolesMap, b.drive_module)
@@ -1112,6 +1120,18 @@ r.post('/', async (req, res) => {
     } catch (syncErr) {
       console.warn('[users POST] syncUserOrgToEcosystem:', syncErr.message);
     }
+    try {
+      if (data?.id) {
+        await syncHstAdminUserCompanies({
+          id: data.id,
+          role: data.role,
+          company_id: insertObj.company_id || null,
+          tenant_id: insertObj.tenant_id || req.user?.tenant_id || null,
+        });
+      }
+    } catch (hstErr) {
+      console.warn('[users POST] syncHstAdminUserCompanies:', hstErr.message);
+    }
 
     res.status(201).json({ user: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
@@ -1125,7 +1145,7 @@ r.put('/:id', async (req, res) => {
     if (!(await assertUserInRequestTenant(req, res, targetId))) return;
     const { data: beforeOrg } = await supabase
       .from('users')
-      .select('department_id, team_id, drive_module, role')
+      .select('department_id, team_id, drive_module, role, company_id')
       .eq('id', targetId)
       .maybeSingle();
     const update = { updated_at: new Date().toISOString() };
@@ -1138,7 +1158,10 @@ r.put('/:id', async (req, res) => {
       update.drive_module = inferDriveModuleForNewUser({ role: b.role });
     }
 
-    const isSystemAdminFlag = b.is_system_admin === true || b.role === 'admin' || b.role === 'platform_admin';
+    const isSystemAdminFlag = b.is_system_admin === true
+      || b.role === 'admin'
+      || b.role === 'platform_admin'
+      || b.role === 'ecosystem_admin';
     const hasModuleRolesPayload = b.module_roles !== undefined && b.module_roles !== null;
     let syncedModuleRoles = null;
     if (hasModuleRolesPayload) {
@@ -1151,6 +1174,7 @@ r.put('/:id', async (req, res) => {
           grantedBy: req.user?.userId || req.user?.id || null,
           isSystemAdmin: isSystemAdminFlag,
           explicitDrive: b.drive_module,
+          companyId: b.company_id || beforeOrg?.company_id,
         });
         update.role = syncedModuleRoles.primaryRole;
         update.drive_module = syncedModuleRoles.driveModule;
@@ -1245,6 +1269,16 @@ r.put('/:id', async (req, res) => {
     } catch (syncErr) {
       console.warn('[users PUT] syncUserOrgToEcosystem:', syncErr.message);
     }
+    try {
+      const { data: afterUser } = await supabase
+        .from('users')
+        .select('id, role, company_id, tenant_id')
+        .eq('id', targetId)
+        .maybeSingle();
+      if (afterUser) await syncHstAdminUserCompanies(afterUser);
+    } catch (hstErr) {
+      console.warn('[users PUT] syncHstAdminUserCompanies:', hstErr.message);
+    }
 
     res.json({ user: data });
   } catch (e) {
@@ -1272,7 +1306,7 @@ r.delete('/:id', async (req, res) => {
 // Triển khai qua Postgres function `delete_user_hard` (xem migration 275).
 r.delete('/:id/permanent', async (req, res) => {
   try {
-    if (req.user.role !== 'admin') {
+    if (!isStrictAdmin(req.user)) {
       return res.status(403).json({ error: 'Chỉ admin mới được xóa vĩnh viễn' });
     }
     const targetId = req.params.id;
@@ -1288,12 +1322,12 @@ r.delete('/:id/permanent', async (req, res) => {
       .single();
     if (tErr || !target) return res.status(404).json({ error: 'Không tìm thấy nhân viên' });
 
-    // Cảnh báo nếu xóa admin cuối cùng
-    if (target.role === 'admin') {
+    // Cảnh báo nếu xóa admin cuối cùng (admin công ty / ecosystem_admin)
+    if (target.role === 'admin' || target.role === 'ecosystem_admin') {
       const { count } = await supabase
         .from('users')
         .select('id', { count: 'exact', head: true })
-        .eq('role', 'admin')
+        .eq('role', target.role)
         .eq('is_active', true);
       if ((count || 0) <= 1) {
         return res.status(400).json({ error: 'Không thể xóa admin cuối cùng còn hoạt động' });

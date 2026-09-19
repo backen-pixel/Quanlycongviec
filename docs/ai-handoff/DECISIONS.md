@@ -39,6 +39,14 @@
 - Nguồn UUID: `87479a83-1145-43b7-b090-3e40812cb5a9`. Không dùng clone cùng DB.
 - Import đích chỉ qua `NEXTGO_SUPABASE_*` khác URL nguồn.
 
+## AI-007 — Role quản trị hệ sinh thái
+
+- `ecosystem_admin`: quản trị toàn HST (mọi công ty trong tenant). TenantGate
+  vẫn bắt buộc. Không gán `platform_admin` cho admin HST.
+- `platform_admin`: SaaS toàn nền tảng, bỏ tenant — chỉ vận hành nền tảng.
+- `admin` + `company_id`: admin một công ty. `admin` không `company_id`:
+  legacy tương đương HST, ưu tiên chuyển sang `ecosystem_admin`.
+
 ## AI-004 — Ranh giới file khi hai AI chạy song song
 
 - Vùng «chính sách deadline» thuộc Cursor; vùng «trang tổng quan nhiệm vụ» thuộc Claude.

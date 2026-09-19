@@ -272,7 +272,7 @@ r.get('/', requirePermission('projects', 'view'), async (req, res) => {
       .eq('id', userId)
       .single();
     
-    const isPrivileged = ['admin', 'manager', 'director'].includes(userData?.role);
+    const isPrivileged = ['ecosystem_admin', 'admin', 'manager', 'director'].includes(userData?.role);
     
     if (!canViewAll && !isPrivileged) {
       // Get projects where user is assigned to tasks

@@ -45,7 +45,7 @@ export default function EcosystemPage() {
     () => localStorage.getItem(WIZARD_DISMISS_KEY) === '1',
   );
   const [orgConfigured, setOrgConfigured] = useState(false);
-  const isAdmin = ['admin', 'manager'].includes(user?.role);
+  const isAdmin = ['ecosystem_admin', 'admin', 'manager'].includes(user?.role);
 
   const dismissWizard = useCallback(() => {
     try {

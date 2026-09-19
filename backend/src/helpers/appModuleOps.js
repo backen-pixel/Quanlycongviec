@@ -194,7 +194,7 @@ async function notifyModuleTransfer(req, {
   // Company admins / staff of the module company (best-effort)
   if (moduleRow.company_id || record.company_id) {
     const cid = moduleRow.company_id || record.company_id;
-    const users = await getCompanyScopedRoleUserIds(cid, ['admin', 'manager', 'sales_admin']);
+    const users = await getCompanyScopedRoleUserIds(cid, ['ecosystem_admin', 'admin', 'manager', 'sales_admin']);
     users.forEach((id) => targets.add(String(id)));
   }
 

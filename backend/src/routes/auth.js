@@ -7,6 +7,7 @@ const { auth } = require('../middleware/auth');
 const { logAuthEvent } = require('../helpers/authEventLog');
 const { buildAuthSessionForUser } = require('../helpers/authSession');
 const { assertTenantActive } = require('../helpers/tenantScope');
+const { syncHstAdminUserCompanies } = require('../helpers/hstAdminCompanies');
 const {
   getGoogleLoginClientId,
   isGoogleLoginEnabled,
@@ -595,6 +596,11 @@ r.get('/me', auth, async (req, res) => {
       userRow = u2 ? { ...u2, drive_module: null } : null;
     }
     if (!userRow) return res.status(404).json({ error: 'User not found' });
+    try {
+      await syncHstAdminUserCompanies(userRow);
+    } catch (syncErr) {
+      console.warn('[auth/me] syncHstAdminUserCompanies:', syncErr.message);
+    }
     let company_id = userRow.company_id || null;
     if (!company_id && userRow.department_id) {
       const { data: dept } = await supabase.from('departments').select('company_id').eq('id', userRow.department_id).single();

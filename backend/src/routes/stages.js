@@ -10,7 +10,7 @@ const r = Router();
 // ═══════════════════════════════════════════
 
 function requireStageAdmin(req, res) {
-  if (!['admin', 'manager'].includes(req.user.role)) {
+  if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) {
     res.status(403).json({ error: 'Không có quyền' });
     return false;
   }
@@ -47,7 +47,7 @@ r.get('/customer-statuses', auth, async (req, res) => {
 
 r.post('/customer-statuses', auth, async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role))
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền' });
     const { name, slug, color, icon, description, order_index } = req.body;
     if (!name || !slug) return res.status(400).json({ error: 'Cần name và slug' });
@@ -66,7 +66,7 @@ r.post('/customer-statuses', auth, async (req, res) => {
 
 r.put('/customer-statuses/:csId', auth, async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role))
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền' });
     const { name, slug, color, icon, description, is_active } = req.body;
     const update = {};
@@ -85,7 +85,7 @@ r.put('/customer-statuses/:csId', auth, async (req, res) => {
 
 r.delete('/customer-statuses/:csId', auth, async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role))
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền' });
     const { error } = await supabase.from('customer_statuses').delete().eq('id', req.params.csId);
     if (error) throw error;
@@ -105,7 +105,7 @@ r.get('/status-mapping', auth, async (req, res) => {
 
 r.put('/status-mapping', auth, async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role))
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền' });
     const { mappings } = req.body;
     if (!Array.isArray(mappings)) return res.status(400).json({ error: 'Cần mảng mappings' });
@@ -128,7 +128,7 @@ r.put('/status-mapping', auth, async (req, res) => {
 // GET /stages — all stages
 r.get('/', auth, async (req, res) => {
   try {
-    const isAdmin = ['admin', 'manager'].includes(req.user.role);
+    const isAdmin = ['ecosystem_admin', 'admin', 'manager'].includes(req.user.role);
     const { company_id } = req.query;
     // Chỉ chặn khi cố đọc workflow của công ty khác — không ép lọc theo company user
     // (19 giai đoạn mặc định company_id=null vẫn phải hiện cho mọi công ty).

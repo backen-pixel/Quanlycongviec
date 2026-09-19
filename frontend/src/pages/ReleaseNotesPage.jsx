@@ -86,7 +86,7 @@ export default function ReleaseNotesPage() {
   const [loginPopupOff, setLoginPopupOff] = useState(() => isLoginPopupDisabled());
   const { refresh: refreshUnread } = useReleaseNotesUnread();
   const currentUser = user || JSON.parse(localStorage.getItem('user') || '{}');
-  const isAdmin = ['admin', 'sales_admin', 'manager'].includes(currentUser.role);
+  const isAdmin = ['ecosystem_admin', 'admin', 'sales_admin', 'manager'].includes(currentUser.role);
 
   useEffect(() => {
     setExpandedBuiltinId((cur) => {

@@ -10,6 +10,8 @@ const { responseCache, invalidateTags } = require('../middleware/responseCache')
 const { enforceTenantContext } = require('../middleware/tenantGate');
 const { addTenantFilter, companyInTenantContext, invalidateTenantCache } = require('../helpers/tenantScope');
 const { checkCompanyLimit } = require('../helpers/tenantLimits');
+const { isSystemAdmin } = require('../helpers/adminRole');
+const { syncHstAdminUserCompanies, attachCompanyToTenantHstAdmins } = require('../helpers/hstAdminCompanies');
 
 const r = Router();
 r.use(auth);
@@ -158,6 +160,19 @@ r.get('/', responseCache({ ttl: 120, scope: 'user', tags: ['orgtree'] }), async 
 // ═══ GET COMPANIES OF CURRENT USER ═══
 r.get('/my/list', responseCache({ ttl: 120, scope: 'user', tags: ['orgtree'] }), async (req, res) => {
   try {
+    if (isSystemAdmin(req.user) && req.user?.tenant_id) {
+      await syncHstAdminUserCompanies({
+        id: req.user.userId || req.user.id,
+        role: req.user.role,
+        company_id: req.user.company_id,
+        tenant_id: req.user.tenant_id,
+      });
+      let q = supabase.from('companies').select('*').eq('tenant_id', req.user.tenant_id)
+        .or('is_active.eq.true,is_active.is.null').order('name');
+      const { data, error } = await q;
+      if (error) throw error;
+      return res.json({ companies: data || [] });
+    }
     const { data } = await supabase.from('user_companies')
       .select('company:companies(*)')
       .eq('user_id', req.user.userId);
@@ -195,7 +210,7 @@ r.get('/:id', async (req, res) => {
 // ═══ CREATE COMPANY ═══
 r.post('/', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
     if (req.tenantContext?.enforced) {
       const limit = await checkCompanyLimit(req.tenantContext.tenantId);
       if (!limit.ok) return res.status(400).json({ error: limit.error });
@@ -221,6 +236,10 @@ r.post('/', async (req, res) => {
     const { data, error } = await supabase.from('companies').insert(insertRow).select().single();
     if (error) throw error;
 
+    if (req.user?.tenant_id) {
+      await attachCompanyToTenantHstAdmins(req.user.tenant_id, data.id);
+    }
+
     if (rawIds.length) {
       await replaceCompanyDivisionLinks(data.id, rawIds, primaryDiv);
     }
@@ -240,7 +259,7 @@ r.post('/', async (req, res) => {
 // ═══ UPDATE COMPANY ═══
 r.put('/:id', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
     if (!companyInTenantContext(req, req.params.id)) return denyCompanyAccess(res);
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
@@ -289,7 +308,7 @@ r.get('/:id/employees', async (req, res) => {
 // ═══ ADD EMPLOYEE TO COMPANY ═══
 r.post('/:id/employees', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
     if (!companyInTenantContext(req, req.params.id)) return denyCompanyAccess(res);
     const { user_id, is_primary } = req.body;
     const { data, error } = await supabase.from('user_companies').insert({
@@ -306,7 +325,7 @@ r.post('/:id/employees', async (req, res) => {
 // ═══ REMOVE EMPLOYEE FROM COMPANY ═══
 r.delete('/:companyId/employees/:userId', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
     if (!companyInTenantContext(req, req.params.companyId)) return denyCompanyAccess(res);
     await supabase.from('user_companies').delete()
       .eq('company_id', req.params.companyId).eq('user_id', req.params.userId);
@@ -317,7 +336,7 @@ r.delete('/:companyId/employees/:userId', async (req, res) => {
 // ═══ DELETE COMPANY ═══
 r.delete('/:id', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) return res.status(403).json({ error: 'Không có quyền' });
     if (!companyInTenantContext(req, req.params.id)) return denyCompanyAccess(res);
     const companyId = req.params.id;
     const { data: company } = await supabase.from('companies').select('name').eq('id', companyId).single();

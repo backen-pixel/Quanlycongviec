@@ -63,6 +63,7 @@ const DRIVE_PRIORITY = ['crm', 'production', 'logistics', 'accounting', 'purchas
 
 /** Ưu tiên derive users.role (cao → thấp). */
 const PRIMARY_ROLE_PRIORITY = [
+  'ecosystem_admin',
   'admin',
   'platform_admin',
   'superadmin',
@@ -131,7 +132,10 @@ function normalizeModuleRolesMap(input) {
  * @param {{ isSystemAdmin?: boolean }} [opts]
  */
 function derivePrimaryRole(moduleRoles, opts = {}) {
-  if (opts.isSystemAdmin) return 'admin';
+  if (opts.isSystemAdmin) {
+    const hasCo = opts.companyId != null && String(opts.companyId).trim() !== '';
+    return hasCo ? 'admin' : 'ecosystem_admin';
+  }
   const roles = Object.values(moduleRoles || {}).map(normalizeRoleName).filter(Boolean);
   if (!roles.length) return 'staff';
   for (const p of PRIMARY_ROLE_PRIORITY) {
@@ -186,10 +190,11 @@ async function syncUserModuleRoles(userId, moduleRolesInput, {
   grantedBy = null,
   isSystemAdmin = false,
   explicitDrive = null,
+  companyId = null,
 } = {}) {
   if (!userId) throw new Error('Thiếu user_id');
   const map = normalizeModuleRolesMap(moduleRolesInput);
-  const primaryRole = derivePrimaryRole(map, { isSystemAdmin });
+  const primaryRole = derivePrimaryRole(map, { isSystemAdmin, companyId });
   const driveModule = deriveDriveModule(map, explicitDrive);
 
   const existing = await listUserModuleRoles(userId);

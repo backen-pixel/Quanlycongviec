@@ -1,18 +1,21 @@
 /**
  * Helper phân loại quyền admin.
  *
- * Hai role được coi là "admin-like":
+ * Role admin-like:
+ *  - `ecosystem_admin`  — quản trị toàn hệ sinh thái (mọi công ty trong tenant). Không vượt tenant.
  *  - `admin`            — quản trị viên hệ thống / công ty (tuỳ có company_id).
  *  - `sales_admin`      — quản trị viên Kinh doanh, LUÔN có company_id và bị khoá phạm vi.
+ *  - `platform_admin`   — SaaS toàn nền tảng (bỏ tenant). Không dùng cho admin HST.
  *
  * Quy tắc dùng:
  *  - isAdminLike          : gating "có quyền thao tác admin" (mở UI/route admin, tạo/sửa/xoá).
  *                           Phạm vi dữ liệu vẫn được khoá ở tầng route khi user có company_id.
- *  - isSystemAdmin        : admin hệ thống — `admin` không gắn company_id (legacy hoặc admin cao nhất HST).
- *                           Khác `platform_admin` (toàn nền tảng SaaS). Phạm vi dữ liệu do tenantGate xử lý.
- *                           `sales_admin` không bao giờ qualify.
+ *  - isEcosystemAdmin     : role `ecosystem_admin` — cao nhất trong HST, vẫn bị tenantGate.
+ *  - isSystemAdmin        : ecosystem_admin, hoặc `admin` không gắn company_id (legacy).
+ *                           Khác `platform_admin` (toàn nền tảng SaaS).
  *  - isLegacySystemAdmin  : admin hệ thống legacy (không tenant_id) — chỉ dùng khi cần phạm vi toàn server cũ.
  *  - isCompanyScopedAdmin : admin-like + có company_id (admin công ty hoặc sales_admin).
+ *                           ecosystem_admin không bao giờ bị khoá 1 công ty.
  */
 
 function normalizeRole(role) {
@@ -31,18 +34,25 @@ function isPlatformAdmin(user) {
   return normalizeRole(user?.role) === 'platform_admin';
 }
 
+/** Quản trị toàn hệ sinh thái — cao hơn admin công ty, thấp hơn platform_admin. */
+function isEcosystemAdmin(user) {
+  return normalizeRole(user?.role) === 'ecosystem_admin';
+}
+
 function isAdminLike(user) {
   const r = normalizeRole(user?.role);
-  return r === 'admin' || r === 'sales_admin' || r === 'platform_admin';
+  return r === 'admin' || r === 'sales_admin' || r === 'platform_admin' || r === 'ecosystem_admin';
 }
 
-/** Chỉ true với role `admin` (hệ thống hoặc admin công ty). */
+/** Role `admin` hoặc `ecosystem_admin` (thùng rác, xóa cứng). Không gồm sales_admin. */
 function isStrictAdmin(user) {
-  return normalizeRole(user?.role) === 'admin';
+  const r = normalizeRole(user?.role);
+  return r === 'admin' || r === 'ecosystem_admin';
 }
 
-/** Admin cao nhất trong HST (có tenant_id, không company_id). */
+/** Admin cao nhất trong HST (ecosystem_admin, hoặc admin không khoá công ty). */
 function isTenantAdmin(user) {
+  if (isEcosystemAdmin(user) && hasTenantId(user)) return true;
   return normalizeRole(user?.role) === 'admin' && hasTenantId(user) && !hasCompanyId(user);
 }
 
@@ -52,10 +62,12 @@ function isLegacySystemAdmin(user) {
 }
 
 function isSystemAdmin(user) {
+  if (isEcosystemAdmin(user)) return true;
   return normalizeRole(user?.role) === 'admin' && !hasCompanyId(user);
 }
 
 function isCompanyScopedAdmin(user) {
+  if (isEcosystemAdmin(user)) return false;
   return isAdminLike(user) && hasCompanyId(user);
 }
 
@@ -174,10 +186,10 @@ function canCreateStaff(user) {
   return canManageDepartments(user);
 }
 
-/** Role không được tự tạo admin hệ thống / nền tảng khi không phải admin hệ thống. */
+/** Role không được tự tạo admin hệ thống / HST / nền tảng khi không phải admin hệ thống. */
 function isElevatedStaffRole(role) {
   const r = normalizeRole(role);
-  return r === 'admin' || r === 'platform_admin';
+  return r === 'admin' || r === 'platform_admin' || r === 'ecosystem_admin';
 }
 
 module.exports = {
@@ -185,6 +197,7 @@ module.exports = {
   hasCompanyId,
   hasTenantId,
   isPlatformAdmin,
+  isEcosystemAdmin,
   isAdminLike,
   isStrictAdmin,
   isTenantAdmin,

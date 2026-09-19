@@ -36,7 +36,8 @@ async function main() {
   assert(!map.accounting, 'reject invalid accounting role');
   assert(derivePrimaryRole(map) === 'production_staff', `primary got ${derivePrimaryRole(map)}`);
   assert(deriveDriveModule(map) === 'crm', 'drive prefers crm');
-  assert(derivePrimaryRole(map, { isSystemAdmin: true }) === 'admin', 'system admin');
+  assert(derivePrimaryRole(map, { isSystemAdmin: true }) === 'ecosystem_admin', 'hst admin');
+  assert(derivePrimaryRole(map, { isSystemAdmin: true, companyId: 'co-1' }) === 'admin', 'company admin');
   console.log('PASS unit');
 
   console.log('\n--- db: pick a user with module roles ---');

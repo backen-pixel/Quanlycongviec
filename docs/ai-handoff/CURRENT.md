@@ -1,6 +1,58 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-18 13:30 (UTC+7)
+Cập nhật: 2026-09-18 14:38 (UTC+7)
+
+## CRM Kanban — 400 thiếu company_id (admin HST)
+
+Nguyên nhân: production `userIsAdmin` chỉ `admin`, JWT đã là `ecosystem_admin`.
+Đã nhận role mới + không bắt `users.company_id`. Đang đẩy nốt quyền HST / Facebook / user_companies.
+
+## Đã xóa Linh Tây Ninh + Vân Long Xuyên
+
+Trạng thái: **đã xóa primary + backup.** Hai công ty inactive, không lead/project.
+Admin HST còn 5 công ty. Sync HST chỉ gắn công ty `is_active`.
+
+## Admin HST — gắn mọi công ty trong hệ sinh thái
+
+Trạng thái: **FE+BE local + SQL 621 đã chạy primary/backup.**
+
+Admin hệ thống (`ecosystem_admin` / `admin` không `company_id`) được thêm
+vào `user_companies` với **mọi công ty đang hoạt động của tenant**.
+`users.company_id` vẫn null. Tạo công ty mới cũng gắn các admin HST.
+`admin@tubep.vn` hiện 5 công ty.
+
+Hoàn tác: xóa `user_companies` của user đó; revert `hstAdminCompanies.js`.
+
+## CRM — admin HST không bắt company_id
+
+Trạng thái: **BE local.**
+
+`userIsAdmin` gồm `ecosystem_admin` (và alias superadmin). Admin hệ thống
+không gắn công ty không còn 400 «Thiếu company_id của user».
+
+Hoàn tác: revert `helpersBundle.js` (`userIsAdmin`, `requireUserCompanyId*`).
+
+## Role `ecosystem_admin` — quản trị hệ sinh thái
+
+Trạng thái: **FE+BE local + SQL 620 đã chạy primary/backup.**
+
+Role cao nhất trong HST (mọi công ty trong tenant), **không** phải
+`platform_admin` (SaaS vượt tenant). Đã gán `admin@tubep.vn`
+(Admin Hệ Thống). JWT cũ còn `admin` đến khi đăng nhập lại.
+
+Hoàn tác: `UPDATE users SET role='admin' WHERE email='admin@tubep.vn'`;
+không xóa được giá trị enum. Revert helper `adminRole.js`.
+
+## Facebook — admin hệ sinh thái xem hội thoại deal
+
+Trạng thái: **FE+BE local.**
+
+Admin cả HST (`admin` không `company_id`, có `tenant_id`) xem tab Facebook
+trên mọi deal trong HST, kể cả Page chưa gán/gán lệch công ty. Deal ngoài
+HST vẫn 403. NV/admin một công ty giữ lọc Page.
+
+Hoàn tác: revert `facebook.js` (`isFacebookHstAdmin`,
+`contactAllowedOnLeadThread`), `FacebookChatTab.jsx`.
 
 ## Migration Zalo cá nhân + Guide Assistant — ĐÃ THỬ LOCAL, chờ production
 
@@ -47,6 +99,7 @@ một của Zalo và một của main (`558_crm_leads_rpc_tenant_scope`,
 `564_sx_kanban_column_counts_no_division`,
 `565_rescan_clear_deadlines_on_completed`). Toàn repo 60+ số trùng — vấn đề
 sẵn có. Đừng bao giờ nói "chạy 558–565".
+
 
 ## Trang cá nhân — cập nhật họ tên + SĐT
 

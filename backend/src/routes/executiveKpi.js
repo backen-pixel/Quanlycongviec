@@ -8,7 +8,7 @@ const { supabase } = require('../config/supabase');
 const r = Router();
 r.use(auth);
 
-const EXEC_ROLES = new Set(['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator']);
+const EXEC_ROLES = new Set(['ecosystem_admin', 'admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator']);
 
 function canExecutive(role) {
   return EXEC_ROLES.has(String(role || '').trim().toLowerCase());

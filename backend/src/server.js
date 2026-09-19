@@ -344,7 +344,7 @@ app.get('/api/metrics', (req, res) => {
     const token = (req.headers.authorization || '').replace('Bearer ', '');
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
     const decoded = jwt_verify.verify(token, config.jwtSecret);
-    if (!['admin', 'manager'].includes(decoded?.role)) return res.status(403).json({ error: 'Forbidden' });
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(decoded?.role)) return res.status(403).json({ error: 'Forbidden' });
     res.json({ ...getSnapshot(), socket: getSocketMetricsSnapshot(io) });
   } catch { res.status(401).json({ error: 'Invalid token' }); }
 });

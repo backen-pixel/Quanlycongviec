@@ -97,7 +97,7 @@ export default function DrivePage() {
   const lockedModule = (searchParams.get('module') || '').toLowerCase() || null;
   const myModuleKey = (user?.drive_module || 'other').toLowerCase();
   const scopeModuleKey = lockedModule || myModuleKey;
-  const isAdmin = ['admin', 'sales_admin', 'manager'].includes(user?.role);
+  const isAdmin = ['ecosystem_admin', 'admin', 'sales_admin', 'manager'].includes(user?.role);
   const systemAdmin = isSystemAdmin(user);
   const view = params.view || null; // recent|starred|shared|trash
   const rootIdParam = params.rootId || null;

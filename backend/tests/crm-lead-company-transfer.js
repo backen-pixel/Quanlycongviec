@@ -9,8 +9,9 @@ const originalLoad = Module._load;
 const stubs = {
   '../config/supabase': { supabase: createFakeSupabase() },
   './adminRole': {
-    isAdminLike: (u) => ['admin', 'sales_admin', 'platform_admin'].includes(String(u?.role || '')),
-    isSystemAdmin: (u) => u?.role === 'admin' && !u?.company_id,
+    isAdminLike: (u) => ['admin', 'sales_admin', 'platform_admin', 'ecosystem_admin'].includes(String(u?.role || '')),
+    isSystemAdmin: (u) => u?.role === 'ecosystem_admin' || (u?.role === 'admin' && !u?.company_id),
+    isEcosystemAdmin: (u) => u?.role === 'ecosystem_admin',
     isPlatformAdmin: (u) => u?.role === 'platform_admin',
   },
   './tenantScope': {

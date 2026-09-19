@@ -618,7 +618,7 @@ function resolveCreateCompanyId(req, res) {
 
 function canModerate(req) {
   const role = String(req.user?.role || '').toLowerCase();
-  return ['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator', 'region_admin'].includes(role);
+  return ['ecosystem_admin', 'admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator', 'region_admin'].includes(role);
 }
 
 async function fetchUsersByIds(ids) {
