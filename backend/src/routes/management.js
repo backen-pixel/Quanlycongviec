@@ -5,12 +5,16 @@ const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { isAdminLike } = require('../helpers/adminRole');
+const { isManagerLike } = require('../helpers/unifiedTasksQuery');
+const { remindWorkUnifiedOverdueProgress, MAX_REMIND_ITEMS } = require('../helpers/workUnifiedProgressReminder');
 const { getWonDealProjectIds, ensureHasCrmDealColumn } = require('../helpers/workshopKanban');
 const { fetchAllByIds, fetchAllByIdsParallel, fetchAllPagesParallel } = require('../helpers/supabaseFetchAll');
 const {
   buildProjectDealBundle,
   isProjectDeliveryStageRow,
   buildDeliveryFlow,
+  collapseDeliveryDisplayStages,
+  displaySlugForDeliveryFlow,
   DEFAULT_DELIVERY_STAGES,
 } = require('../helpers/projectDealBundle');
 const { sortProjectCrmDeals } = require('../helpers/workshopCrmDeals');
@@ -31,6 +35,7 @@ const { responseCache } = require('../middleware/responseCache');
 const { PROJECTS_LIST_TAG } = require('../middleware/projectsCacheInvalidation');
 const { MODULE, resolveModuleDeadline } = require('../helpers/moduleDeadlinePolicy');
 const { classifyProjectForecast } = require('../helpers/projectForecast');
+const { attachInstallEventDatesToProjects } = require('../helpers/createPlannedVcLdEvents');
 const { orgReportDealIsClosedWon, loadDealKhSplitContext } = require('../helpers/crmDealKhSplit');
 const {
   WORK_UNIFIED_UUID_RE,
@@ -93,7 +98,7 @@ const WORK_UNIFIED_PROJECT_COLUMNS = `
         id, code, name, status, deadline, estimated_value, production_value, deposit_amount, collected_amount,
         customer_id, current_stage_id, install_date, delivery_date, production_deadline,
         project_manager_id, sales_person_id, production_person_id, company_id, logistics_company_id,
-        workshop_type_id, sx_kanban_column_id,
+        workshop_type_id, sx_kanban_column_id, vc_kanban_column_id,
         customer:customers(id, full_name, phone),
         current_stage:workflow_stages(id, name, slug, color, order_index),
         project_manager:users!projects_project_manager_id_fkey(id, full_name),
@@ -113,7 +118,7 @@ const WORK_UNIFIED_PROJECT_COLUMNS_LITE = `
         id, code, name, status, deadline, install_date, delivery_date, production_deadline,
         customer_id, current_stage_id,
         project_manager_id, sales_person_id, production_person_id, company_id, logistics_company_id,
-        workshop_type_id, sx_kanban_column_id
+        workshop_type_id, sx_kanban_column_id, vc_kanban_column_id
       `;
 
 /** Như trên nhưng thêm tên khách — chỉ cần khi có tham số `search` (tìm theo tên KH). */
@@ -749,7 +754,7 @@ r.get('/overview', async (req, res) => {
 });
 
 const WORK_OVERVIEW_ACTIVE_STATUSES = [
-  'consulting', 'designing', 'quoting', 'contract_signed', 'producing', 'shipping', 'installing',
+  'consulting', 'designing', 'quoting', 'contract_signed', 'producing', 'shipping', 'installing', 'warranty',
 ];
 
 /** Dự án/deal từ lúc ký HĐ — không gồm tư vấn/thiết kế/báo giá và không gồm lead. */
@@ -1231,15 +1236,17 @@ async function queryWorkUnifiedList(req, opts = {}) {
     }
   }
 
-  const projects = [...projectsById.values()];
+  let projects = [...projectsById.values()];
   const projectIds = projects.map((p) => p.id);
   const workshopTypeIds = [...new Set(projects.map((p) => p.workshop_type_id).filter(Boolean))];
   const sxColumnIds = [...new Set(projects.map((p) => p.sx_kanban_column_id).filter(Boolean))];
+  const vcColumnIds = [...new Set(projects.map((p) => p.vc_kanban_column_id).filter(Boolean))];
   const dealsForProject = new Map();
   const workshopTypeById = new Map();
   const sxStageById = new Map();
+  const vcStageById = new Map();
   if (projectIds.length) {
-    const [deals, linksOrNull, workshopTypes, sxStages] = await Promise.all([
+    const [deals, linksOrNull, workshopTypes, sxStages, vcStages, withInstallEvents] = await Promise.all([
       fetchAllByIdsParallel({
         table: 'crm_leads',
         columns: scanDealColumns,
@@ -1274,9 +1281,23 @@ async function queryWorkUnifiedList(req, opts = {}) {
           ids: sxColumnIds,
         })
         : Promise.resolve([]),
+      vcColumnIds.length
+        ? fetchAllByIdsParallel({
+          table: 'logistics_pipeline_stages',
+          columns: 'id, name, bucket_slug',
+          key: 'id',
+          ids: vcColumnIds,
+        })
+        : Promise.resolve([]),
+      attachInstallEventDatesToProjects(projects).catch((e) => {
+        console.warn('[work-unified] attach install events:', e.message);
+        return projects;
+      }),
     ]);
     (workshopTypes || []).forEach((w) => { if (w?.id) workshopTypeById.set(String(w.id), w); });
     (sxStages || []).forEach((s) => { if (s?.id) sxStageById.set(String(s.id), s); });
+    (vcStages || []).forEach((s) => { if (s?.id) vcStageById.set(String(s.id), s); });
+    if (Array.isArray(withInstallEvents) && withInstallEvents.length) projects = withInstallEvents;
     const dealById = new Map();
     (deals || []).forEach((d) => {
       if (d?.id) dealById.set(String(d.id), d);
@@ -1337,12 +1358,15 @@ async function queryWorkUnifiedList(req, opts = {}) {
     const progressPct = flow.length
       ? Math.round(((doneSteps + (currentStep ? 0.35 : 0)) / flow.length) * 100)
       : 0;
-    const commitmentDate = p.install_date || p.delivery_date || p.production_deadline || p.deadline || null;
     const workshopType = p.workshop_type || workshopTypeById.get(String(p.workshop_type_id || '')) || null;
     const sxStage = sxStageById.get(String(p.sx_kanban_column_id || '')) || p.sx_pipeline_stage || null;
+    const vcStage = vcStageById.get(String(p.vc_kanban_column_id || '')) || p.vc_pipeline_stage || null;
+    const logisticsDeadline = resolveModuleDeadline(MODULE.LOGISTICS, p, { stage: vcStage });
+    const commitmentDate = logisticsDeadline.raw || null;
     const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitmentDate, {
       project: { ...p, workshop_type: workshopType },
       sxStage,
+      vcStage,
     });
     const allDeals = dealMap.get(String(p.id)) || [];
     const scopedDeals = scopeIdSet.size
@@ -1484,7 +1508,10 @@ async function queryWorkUnifiedList(req, opts = {}) {
   const items = (projects || []).map((p) => buildItem(p, dealsForProject));
 
   let filtered = items;
-  if (stageFilter) filtered = filtered.filter((it) => it.current_stage_slug === stageFilter);
+  if (stageFilter) {
+    const slug = displaySlugForDeliveryFlow(stageFilter);
+    filtered = filtered.filter((it) => it.current_stage_slug === slug);
+  }
   if (searchQ) {
     filtered = filtered.filter((it) => {
       const hay = [it.code, it.name, it.customer_name, it.deal_code, it.deal_title]
@@ -1694,7 +1721,7 @@ r.get('/work-unified', responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_L
 
     res.json({
       company_id: primaryCompanyIdFromScope(wu.scope),
-      stages: wu.deliveryStages.map((st) => ({ slug: st.slug, label: st.name })),
+      stages: collapseDeliveryDisplayStages(wu.deliveryStages).map((st) => ({ slug: st.slug, label: st.name })),
       stats: wu.stats,
       items: pageItems,
       total,
@@ -1702,6 +1729,66 @@ r.get('/work-unified', responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_L
   } catch (e) {
     console.error('[management/work-unified]', e);
     res.status(500).json({ error: e.message || 'Lỗi tải tổng quan dự án' });
+  }
+});
+
+// POST /api/management/work-unified/remind-progress
+// Nhắc cập nhật tiến độ các dự án trễ hạn: bình luận @ người chịu trách nhiệm
+// và thêm họ vào tab Thành viên (vai trò Chịu trách nhiệm) nếu chưa có. 1 lần/ngày.
+r.post('/work-unified/remind-progress', async (req, res) => {
+  try {
+    if (!isManagerLike(req.user)) {
+      return res.status(403).json({ error: 'Chỉ quản lý mới gửi được nhắc cập nhật tiến độ' });
+    }
+    const actorId = String(req.user.userId || req.user.id || '').trim();
+    if (!actorId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const wu = await queryWorkUnifiedList(req, { forceLite: true });
+    if (denyScope(res, wu.scope)) return;
+
+    const requested = [...new Set(
+      (Array.isArray(req.body?.project_ids) ? req.body.project_ids : [])
+        .map((id) => String(id || '').trim())
+        .filter((id) => WORK_UNIFIED_UUID_RE.test(id)),
+    )];
+    let late = (wu.filtered || []).filter((it) => it.forecast === 'late');
+    if (requested.length) {
+      const want = new Set(requested);
+      late = late.filter((it) => want.has(String(it.id)));
+    }
+    if (!late.length) {
+      return res.status(400).json({
+        error: requested.length
+          ? 'Các dự án đã chọn không còn trễ hạn trong bộ lọc hiện tại'
+          : 'Không có dự án trễ hạn để nhắc',
+      });
+    }
+
+    const actorName = req.user.full_name || req.user.email || 'Quản lý';
+    const result = await remindWorkUnifiedOverdueProgress(req, {
+      items: late,
+      actorId,
+      actorName,
+      maxItems: MAX_REMIND_ITEMS,
+    });
+    if (!result.sent && result.skipped_today === result.attempted) {
+      return res.json({
+        ...result,
+        message: 'Hôm nay đã nhắc các dự án này rồi. Mỗi dự án chỉ nhắc 1 lần/ngày.',
+      });
+    }
+    if (!result.sent && !result.skipped_today) {
+      return res.status(400).json({
+        ...result,
+        error: result.skipped_no_people
+          ? 'Chưa có người chịu trách nhiệm trên các dự án này. Gán phụ trách ở tab Thành viên trước khi nhắc.'
+          : 'Không gửi được nhắc cập nhật tiến độ',
+      });
+    }
+    res.json(result);
+  } catch (e) {
+    console.error('[management/work-unified/remind-progress]', e);
+    res.status(500).json({ error: e.message || 'Không gửi được nhắc cập nhật tiến độ' });
   }
 });
 

@@ -3,9 +3,10 @@
  * Ưu tiên dữ liệu dẫn xuất từ backend; fallback giữ cùng thứ tự khi API cũ chưa trả field.
  */
 
-import { companyWorkEndMsFromRaw } from './companyDeadlineClock';
+import { companyWorkEndMsFromRaw, vnYmdFromTs } from './companyDeadlineClock';
 import { effectivePipelineStageSlaDays } from './crmPipelineSla';
 import { endOfVnCalendarDayAfterEntered } from './vnDate';
+import { isCrmStagePastInstallation } from './crmDealStageGate';
 
 export const DEADLINE_MODULE = Object.freeze({
   CRM: 'crm',
@@ -38,12 +39,71 @@ function result(raw, source, item) {
   return { raw, source, deadlineTs, deadlineAt: new Date(deadlineTs).toISOString() };
 }
 
+function ymdFromDeadlineRaw(raw) {
+  if (raw == null || raw === '') return null;
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const ts = new Date(s).getTime();
+  if (!Number.isFinite(ts)) return null;
+  return vnYmdFromTs(ts);
+}
+
+function collectInstallYmds(item) {
+  const occ = Array.isArray(item?.install_occurrence_dates) ? item.install_occurrence_dates : [];
+  const ymds = [...new Set(occ.map(ymdFromDeadlineRaw).filter(Boolean))].sort();
+  if (ymds.length) return ymds;
+  const one = ymdFromDeadlineRaw(item?.install_date);
+  return one ? [one] : [];
+}
+
+function activeInstallCommitmentRaw(item, nowMs = Date.now()) {
+  const ymds = collectInstallYmds(item);
+  if (!ymds.length) return null;
+  const today = vnYmdFromTs(nowMs);
+  const next = today ? ymds.find((y) => y >= today) : null;
+  const ymd = next || ymds[ymds.length - 1];
+  if (item?.install_date && ymdFromDeadlineRaw(item.install_date) === ymd) return item.install_date;
+  return ymd;
+}
+
 function crmTerminal(stage) {
   if (!stage) return false;
   if (stage.is_won || stage.is_lost || stage.counts_as_completed_revenue) return true;
   const slug = String(stage.canonical_slug || stage.slug || '').toLowerCase();
   return ['won', 'lost', 'completed', 'done'].includes(slug)
     || ['won', 'lost'].includes(String(stage.deal_report_bucket || '').toLowerCase());
+}
+
+function crmHandedToProduction(item, stage) {
+  if (!item) return false;
+  if (item.project_id || item.linked_project?.id || item.linked_project) return true;
+  const st = stage || item.stage || item._stage || null;
+  const slug = String(st?.canonical_slug || st?.slug || '').toLowerCase();
+  if (['producing', 'production', 'shipping', 'installing', 'installation'].includes(slug)) {
+    return true;
+  }
+  const name = foldVi(st?.name);
+  return name.includes('dang san xuat')
+    || name.includes('dang lap dat')
+    || name.includes('van chuyen');
+}
+
+function sxStageOf(item) {
+  return item?.sx_pipeline_stage || item?.sx_kanban_column || item?.sx_stage || null;
+}
+
+function isSxReleasedToInstall(item, sxStage) {
+  if (!item) return false;
+  if (sxShipped(item)) return true;
+  const st = String(item.status || '');
+  if (['shipping', 'installing', 'warranty', 'completed'].includes(st)) return true;
+  const col = sxStage || sxStageOf(item);
+  if (sxDone(col)) return true;
+  if (col?.is_handover_to_logistics) return true;
+  const name = foldVi(col?.name);
+  return name.includes('da giao')
+    || name.includes('giao xong')
+    || name.includes('ban giao');
 }
 
 function hasPhone(item) {
@@ -67,14 +127,20 @@ function sxShipped(item) {
 }
 
 function logisticsDone(item, stage) {
-  if (item?.status === 'completed') return true;
+  if (item?.status === 'completed' || item?.status === 'warranty') return true;
   const slug = String(stage?.bucket_slug || stage?.slug || '').toLowerCase();
   const name = foldVi(stage?.name);
-  return ['completed', 'done', 'install_completed'].includes(slug)
+  if (['completed', 'done', 'install_completed'].includes(slug)
     || name === 'hoan thanh'
     || name === 'hoan thien'
     || name.startsWith('hoan thanh ')
-    || name.startsWith('hoan thien ');
+    || name.startsWith('hoan thien ')) {
+    return true;
+  }
+  return isCrmStagePastInstallation(
+    item?.crm_stage || item?.stage || item?._stage,
+    item?.pipeline_stages || item?.crm_pipeline_stages || [],
+  );
 }
 
 function fromBackend(item, moduleKey) {
@@ -87,13 +153,16 @@ function fromBackend(item, moduleKey) {
   return picked || { raw: null, source: null, deadlineTs: null, deadlineAt: null };
 }
 
+export { crmHandedToProduction, isSxReleasedToInstall };
+
 export function resolveEffectiveModuleDeadline(moduleKey, item, stage = null) {
   const backend = fromBackend(item, moduleKey);
   if (backend) return backend;
   const key = String(moduleKey || '').toLowerCase();
 
   if (key === DEADLINE_MODULE.CRM) {
-    if (!item || item.deadline_disabled_at || item.is_interacted || !hasPhone(item) || crmTerminal(stage)) {
+    if (!item || item.deadline_disabled_at || !hasPhone(item)
+      || crmTerminal(stage) || crmHandedToProduction(item, stage)) {
       return { raw: null, source: null, deadlineTs: null, deadlineAt: null };
     }
     const direct = result(item.crm_next_open_task_deadline, 'task', item)
@@ -114,23 +183,22 @@ export function resolveEffectiveModuleDeadline(moduleKey, item, stage = null) {
   }
 
   if (key === DEADLINE_MODULE.PRODUCTION) {
-    if (!item || item.status === 'completed' || sxDone(stage) || stage?.sla_days === 0
-      || stage?.sla_days === '0' || sxShipped(item)) {
+    if (!item || item.status === 'completed' || isSxReleasedToInstall(item, stage)
+      || stage?.sla_days === 0 || stage?.sla_days === '0') {
       return { raw: null, source: null, deadlineTs: null, deadlineAt: null };
     }
     return result(item.sx_kanban_deadline_at, 'sx_kanban', item)
       || result(item.production_finish_date, 'production_finish', item)
       || result(item.production_deadline, 'production', item)
-      || result(item.delivery_date, 'delivery', item)
       || result(item.deadline, 'project', item)
       || { raw: null, source: null, deadlineTs: null, deadlineAt: null };
   }
 
   if (key === DEADLINE_MODULE.LOGISTICS) {
-    if (!item || logisticsDone(item, stage)) {
+    if (!item || logisticsDone(item, stage) || !isSxReleasedToInstall(item, sxStageOf(item))) {
       return { raw: null, source: null, deadlineTs: null, deadlineAt: null };
     }
-    return result(item.install_date, 'install', item)
+    return result(activeInstallCommitmentRaw(item), 'install', item)
       || result(item.delivery_date, 'delivery', item)
       || result(item.deadline, 'project', item)
       || { raw: null, source: null, deadlineTs: null, deadlineAt: null };

@@ -10,6 +10,120 @@ export const SX_FILTER_SELECT_CLS = `${SX_FILTER_FIELD_CLS} cursor-pointer appea
 export const SX_FILTER_LABEL_CLS =
   'text-[10px] font-semibold text-violet-800/90 uppercase tracking-wide mb-1 block';
 
+export function WorkshopScopeFields({
+  canPickCompany = false,
+  workshopCompanyPickerList = [],
+  showAllWorkshopOption = false,
+  filterCompany = '',
+  onCompanyChange,
+  showVptSxWorkshopFilter = false,
+  sxWorkshopFilterOptions = [],
+  filterSxWorkshopCompany = '',
+  setFilterSxWorkshopCompany,
+  setFilterWorkTypeId,
+  showDealCompanyFilter = false,
+  canPickDealCompany = false,
+  filterDealCompany = '',
+  onDealCompanyChange,
+  clientCompaniesWorkshopId = '',
+  clientCrmDealOptions = [],
+  clientExternalDealOptions = [],
+  selectedDealCompanyLabel = '',
+}) {
+  const showScope = (
+    (canPickCompany && workshopCompanyPickerList.length > 0)
+    || showDealCompanyFilter
+    || (showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0)
+  );
+  if (!showScope) return null;
+  return (
+    <div className="py-2 border-b border-violet-100/80">
+      <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-3 space-y-2">
+        <p className="text-[11px] font-bold text-violet-800 uppercase tracking-wide">Phạm vi xưởng</p>
+        <div className="grid grid-cols-1 gap-2">
+          {canPickCompany && workshopCompanyPickerList.length > 0 && (
+            <div className="min-w-0">
+              <label className={SX_FILTER_LABEL_CLS}>
+                <Factory className="inline h-3 w-3 mr-0.5" />
+                Công ty sản xuất (xưởng)
+              </label>
+              <select
+                value={filterCompany}
+                onChange={(e) => onCompanyChange(e.target.value)}
+                className={SX_FILTER_SELECT_CLS}
+              >
+                {showAllWorkshopOption && <option value="">Tất cả xưởng</option>}
+                {workshopCompanyPickerList.map((c) => (
+                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0 && (
+            <div className="min-w-0">
+              <label className={SX_FILTER_LABEL_CLS}>SX tại (xưởng thực hiện)</label>
+              <select
+                value={filterSxWorkshopCompany}
+                onChange={(e) => {
+                  setFilterSxWorkshopCompany(e.target.value);
+                  setFilterWorkTypeId?.('');
+                }}
+                className={SX_FILTER_SELECT_CLS}
+              >
+                <option value="">Tất cả xưởng SX</option>
+                {sxWorkshopFilterOptions.map((c) => (
+                  <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {showDealCompanyFilter && (
+            <div className="min-w-0">
+              <label className={SX_FILTER_LABEL_CLS}>
+                <Building2 className="inline h-3 w-3 mr-0.5" />
+                Công ty đặt hàng
+              </label>
+              {canPickDealCompany ? (
+                <select
+                  value={filterDealCompany}
+                  onChange={(e) => onDealCompanyChange(e.target.value)}
+                  disabled={!clientCompaniesWorkshopId}
+                  className={`${SX_FILTER_SELECT_CLS} disabled:opacity-60 disabled:cursor-not-allowed`}
+                >
+                  <option value="">
+                    {clientCompaniesWorkshopId ? 'Tất cả công ty đặt hàng' : '-- Chọn xưởng trước --'}
+                  </option>
+                  {clientCrmDealOptions.length > 0 && (
+                    <optgroup label="Công ty CRM">
+                      {clientCrmDealOptions.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.short_name || c.name}
+                          {c.source === 'workshop' ? ' · đã liên kết' : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {clientExternalDealOptions.length > 0 && (
+                    <optgroup label="Danh mục công ty ngoài">
+                      {clientExternalDealOptions.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              ) : (
+                <span className={`${SX_FILTER_FIELD_CLS} flex items-center truncate text-indigo-900`}>
+                  {selectedDealCompanyLabel || '—'}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Panel bộ lọc nổi (kéo thả) — đồng bộ UX với CRM Dashboard.
  */
@@ -151,92 +265,26 @@ export default function WorkshopDashboardFilterPanel({
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-1 bg-white [scrollbar-width:thin]">
-        {(canPickCompany && workshopCompanyPickerList.length > 0 || showDealCompanyFilter || (showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0)) && (
-          <div className="py-2 border-b border-violet-100/80">
-            <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-3 space-y-2">
-              <p className="text-[11px] font-bold text-violet-800 uppercase tracking-wide">Phạm vi xưởng</p>
-              <div className="grid grid-cols-1 gap-2">
-                {canPickCompany && workshopCompanyPickerList.length > 0 && (
-                  <div className="min-w-0">
-                    <label className={SX_FILTER_LABEL_CLS}>
-                      <Factory className="inline h-3 w-3 mr-0.5" />
-                      Công ty sản xuất (xưởng)
-                    </label>
-                    <select
-                      value={filterCompany}
-                      onChange={(e) => onCompanyChange(e.target.value)}
-                      className={SX_FILTER_SELECT_CLS}
-                    >
-                      {showAllWorkshopOption && <option value="">Tất cả xưởng</option>}
-                      {workshopCompanyPickerList.map((c) => (
-                        <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                {showVptSxWorkshopFilter && sxWorkshopFilterOptions.length > 0 && (
-                  <div className="min-w-0">
-                    <label className={SX_FILTER_LABEL_CLS}>SX tại (xưởng thực hiện)</label>
-                    <select
-                      value={filterSxWorkshopCompany}
-                      onChange={(e) => {
-                        setFilterSxWorkshopCompany(e.target.value);
-                        setFilterWorkTypeId('');
-                      }}
-                      className={SX_FILTER_SELECT_CLS}
-                    >
-                      <option value="">Tất cả xưởng SX</option>
-                      {sxWorkshopFilterOptions.map((c) => (
-                        <option key={c.id} value={c.id}>{c.short_name || c.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                {showDealCompanyFilter && (
-                  <div className="min-w-0">
-                    <label className={SX_FILTER_LABEL_CLS}>
-                      <Building2 className="inline h-3 w-3 mr-0.5" />
-                      Công ty đặt hàng
-                    </label>
-                    {canPickDealCompany ? (
-                      <select
-                        value={filterDealCompany}
-                        onChange={(e) => onDealCompanyChange(e.target.value)}
-                        disabled={!clientCompaniesWorkshopId}
-                        className={`${SX_FILTER_SELECT_CLS} disabled:opacity-60 disabled:cursor-not-allowed`}
-                      >
-                        <option value="">
-                          {clientCompaniesWorkshopId ? 'Tất cả công ty đặt hàng' : '-- Chọn xưởng trước --'}
-                        </option>
-                        {clientCrmDealOptions.length > 0 && (
-                          <optgroup label="Công ty CRM">
-                            {clientCrmDealOptions.map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.short_name || c.name}
-                                {c.source === 'workshop' ? ' · đã liên kết' : ''}
-                              </option>
-                            ))}
-                          </optgroup>
-                        )}
-                        {clientExternalDealOptions.length > 0 && (
-                          <optgroup label="Danh mục công ty ngoài">
-                            {clientExternalDealOptions.map((c) => (
-                              <option key={c.id} value={c.id}>{c.name}</option>
-                            ))}
-                          </optgroup>
-                        )}
-                      </select>
-                    ) : (
-                      <span className={`${SX_FILTER_FIELD_CLS} flex items-center truncate text-indigo-900`}>
-                        {selectedDealCompanyLabel || '—'}
-                      </span>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+        <WorkshopScopeFields
+          canPickCompany={canPickCompany}
+          workshopCompanyPickerList={workshopCompanyPickerList}
+          showAllWorkshopOption={showAllWorkshopOption}
+          filterCompany={filterCompany}
+          onCompanyChange={onCompanyChange}
+          showVptSxWorkshopFilter={showVptSxWorkshopFilter}
+          sxWorkshopFilterOptions={sxWorkshopFilterOptions}
+          filterSxWorkshopCompany={filterSxWorkshopCompany}
+          setFilterSxWorkshopCompany={setFilterSxWorkshopCompany}
+          setFilterWorkTypeId={setFilterWorkTypeId}
+          showDealCompanyFilter={showDealCompanyFilter}
+          canPickDealCompany={canPickDealCompany}
+          filterDealCompany={filterDealCompany}
+          onDealCompanyChange={onDealCompanyChange}
+          clientCompaniesWorkshopId={clientCompaniesWorkshopId}
+          clientCrmDealOptions={clientCrmDealOptions}
+          clientExternalDealOptions={clientExternalDealOptions}
+          selectedDealCompanyLabel={selectedDealCompanyLabel}
+        />
 
         {tab === 'employee' && (
           <div className="py-2.5">

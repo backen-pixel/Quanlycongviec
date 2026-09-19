@@ -121,6 +121,50 @@ export function canPickWorkshopCompany(user, isAdmin, isCompanyScopedAdmin) {
   return isCrossWorkshopProductionViewer(user);
 }
 
+/** Cùng danh sách xưởng với Dashboard SX (không gồm deal CRM / NextGo CRM). */
+export function workshopCompanyPickerList({
+  companies = [],
+  user,
+  isAdmin = false,
+  isCompanyScopedAdmin = false,
+} = {}) {
+  const userCompanyId = user?.company_id ? String(user.company_id) : '';
+  if (isCompanyScopedAdmin && userCompanyId) {
+    return workshopCompaniesForCrossViewer(companies, user);
+  }
+  if (isAdmin && !isCompanyScopedAdmin) {
+    return companies || [];
+  }
+  const staffWs = resolveStaffWorkshopCompanyId(user, companies);
+  if (staffWs) {
+    const own = (companies || []).find((c) => String(c.id) === staffWs);
+    return own ? [own] : [{ id: staffWs, name: staffWs, short_name: staffWs }];
+  }
+  return workshopCompaniesForCrossViewer(companies, user);
+}
+
+export const LS_SX_DASH_FILTERS = 'sx_dash_filters_v1';
+
+export function readSxDashPersisted() {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(LS_SX_DASH_FILTERS);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    return data && typeof data === 'object' ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+export function patchSxDashPersisted(patch) {
+  if (typeof window === 'undefined') return;
+  try {
+    const current = readSxDashPersisted() || {};
+    localStorage.setItem(LS_SX_DASH_FILTERS, JSON.stringify({ ...current, ...patch }));
+  } catch { /* ignore */ }
+}
+
 /** NV sản xuất gắn xưởng HCB/Metalla (không phải NV CRM xem chéo). */
 export function isWorkshopProductionStaff(user) {
   return isProductionAdmin(user) || isProductionStaff(user);

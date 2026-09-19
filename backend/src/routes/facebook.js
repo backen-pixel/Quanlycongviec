@@ -5,7 +5,7 @@ const r = express.Router();
 const { supabase } = require('../config/supabase');
 const { fetchAllPagesParallel } = require('../helpers/supabaseFetchAll');
 const axios = require('axios');
-const { isAdminLike, isSystemAdmin, hasCompanyId } = require('../helpers/adminRole');
+const { isAdminLike, isSystemAdmin, isTenantAdmin, isEcosystemAdmin, hasCompanyId } = require('../helpers/adminRole');
 const { companyInTenantContext, isTenantScopeEnforced } = require('../helpers/tenantScope');
 const { attachTenantContext } = require('../middleware/tenantGate');
 const { runIfLeader, tryAcquireLeader, renewLeader, releaseLeader } = require('../helpers/cronLeader');
@@ -4107,18 +4107,13 @@ async function resolveFacebookPageScope(req, res, opts = {}) {
       pageIds: rows.filter((p) => p.default_company_id && String(p.default_company_id) === String(socialCid)).map((p) => p.page_id),
     };
   }
-  if (isSystemAdmin(req.user) || (isAdminLike(req.user) && !hasCompanyId(req.user))) {
+  if (isFacebookHstAdmin(req.user)) {
     if (forcedLeadCompanyId && isTenantScopeEnforced(req) && !companyInTenantContext(req, forcedLeadCompanyId)) {
       res.status(403).json({ error: 'Không có quyền truy cập công ty này', code: 'tenant_company_denied' });
       return null;
     }
-    if (forcedLeadCompanyId) {
-      return {
-        mode: 'filter',
-        companyId: forcedLeadCompanyId,
-        pageIds: rows.filter((p) => String(p.default_company_id || '') === forcedLeadCompanyId).map((p) => p.page_id),
-      };
-    }
+    // Admin hệ thống: không thu hẹp Page theo công ty deal — Page gán lệch / chưa
+    // gán default_company_id vẫn xem được hội thoại đã gắn lead (tenant vẫn chặn).
     const co = req.query.company_id && String(req.query.company_id).trim();
     if (co) {
       if (isTenantScopeEnforced(req) && !companyInTenantContext(req, co)) {
@@ -4150,12 +4145,31 @@ async function resolveFacebookPageScope(req, res, opts = {}) {
   };
 }
 
+function isFacebookHstAdmin(user) {
+  // Admin cả hệ sinh thái: ecosystem_admin, hoặc admin không khoá 1 công ty.
+  return isEcosystemAdmin(user) || isTenantAdmin(user) || isSystemAdmin(user) || (isAdminLike(user) && !hasCompanyId(user));
+}
+
 function contactAllowedByFacebookScope(scope, contact) {
-  if (!scope || !contact?.page_id) return false;
+  if (!scope) return false;
   if (scope.mode === 'all') return true;
+  if (!contact?.page_id) return false;
   if (!Array.isArray(scope.pageIds)) return false;
   const pid = String(contact.page_id);
   return scope.pageIds.some((p) => String(p) === pid);
+}
+
+/**
+ * Admin HST đã mở được deal trong hệ sinh thái → xem hội thoại đã gắn deal,
+ * kể cả Page chưa gán / gán lệch default_company_id.
+ */
+function contactAllowedOnLeadThread(req, scope, contact, lead) {
+  if (contactAllowedByFacebookScope(scope, contact)) return true;
+  if (!isFacebookHstAdmin(req.user) || !contact || !lead) return false;
+  if (isTenantScopeEnforced(req) && lead.company_id && !companyInTenantContext(req, lead.company_id)) {
+    return false;
+  }
+  return true;
 }
 
 // ── GET /api/facebook/page-sources ───────────────────────────────────────
@@ -5101,7 +5115,7 @@ r.get('/leads/:leadId/messages', authMiddleware, async (req, res) => {
     }
 
     if (contact) {
-      if (!contactAllowedByFacebookScope(scope, contact)) {
+      if (!contactAllowedOnLeadThread(req, scope, contact, lead)) {
         return res.status(403).json({ error: 'Không có quyền xem hội thoại Facebook của Page này' });
       }
       const { data } = await supabase.from('facebook_messages')
@@ -5119,7 +5133,12 @@ r.get('/leads/:leadId/messages', authMiddleware, async (req, res) => {
       .order('created_at', { ascending: true })
       .limit(200);
     const rows = fallback || [];
-    if (rows.length && rows[0]?.contact && !contactAllowedByFacebookScope(scope, rows[0].contact)) {
+    if (rows.length && rows[0]?.contact && !contactAllowedOnLeadThread(
+      req,
+      scope,
+      { ...rows[0].contact, lead_id: lead.id },
+      lead,
+    )) {
       return res.status(403).json({ error: 'Không có quyền xem hội thoại Facebook của Page này' });
     }
     return res.json(rows);

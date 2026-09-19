@@ -8,6 +8,7 @@ import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { canManageWorkshopProjectFiles, isDealResponsibleUser } from '../lib/fileOwnership';
 import { fetchPipelineStagesById, filterSxPipelineStagesForWorkshopType, sortAndDedupePipelineStages } from '../lib/crmPipelineStages';
+import { gomCotTheoNhom } from '../lib/sxGopCot';
 import { formatDateTime, formatVND, PRIORITY_LABELS, TASK_PRIORITY_COLORS as PRIORITY_COLORS } from '../lib/utils';
 import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetimeLocal';
 import { taskBelongsToVcSubTab, isInstallLogisticsPipelineStage } from '../lib/workshopTaskScope';
@@ -118,6 +119,7 @@ function normalizeSxStageText(raw) {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
     .trim();
 }
 
@@ -152,7 +154,9 @@ function buildLegacySxSlugToStageId(stages) {
   for (const s of stages || []) {
     if (!s?.id) continue;
     const slug = sxSlugForPipelineStage(s);
-    if (slug && !map.has(slug)) map.set(slug, s.id);
+    if (slug && !map.has(slug)) map.set(slug, String(s.id));
+    const bucket = String(s.bucket_slug || '').trim();
+    if (bucket) map.set(`sx_${bucket}`, String(s.id));
   }
   return map;
 }
@@ -161,20 +165,65 @@ function buildLegacySxSlugToStageId(stages) {
 function resolveSxTaskProductionStageId(task, sxStages) {
   const stages = sxStages || [];
   const validIds = new Set(stages.map((s) => String(s.id)));
-  const pid = task?.production_pipeline_stage_id;
-  // Đã gắn cột pipeline: không fallback slug sang phân loại khác (vd. đầu vào → data đầu ra).
-  if (pid) return validIds.has(String(pid)) ? pid : null;
+  const pid = String(task?.production_pipeline_stage_id || task?.production_stage_id || '').trim();
+  if (pid && validIds.has(pid)) return pid;
+
+  const titleN = normalizeSxStageText(task?.title);
+  if (titleN) {
+    const exact = stages.find((s) => validIds.has(String(s.id)) && normalizeSxStageText(s.name) === titleN);
+    if (exact) return String(exact.id);
+  }
 
   const legacyMap = buildLegacySxSlugToStageId(stages);
   const slug = String(task?.stage_slug || '').trim();
-  if (slug && legacyMap.has(slug)) return legacyMap.get(slug);
-  // sx_pl_<8 ký tự đầu UUID> — slug do backend gán khi gen nhiệm vụ SX
+  if (slug && legacyMap.has(slug)) return String(legacyMap.get(slug));
   if (slug.startsWith('sx_pl_')) {
     const prefix = slug.slice(6);
     const hit = stages.find((s) => s?.id && String(s.id).startsWith(prefix));
-    if (hit && validIds.has(String(hit.id))) return hit.id;
+    if (hit && validIds.has(String(hit.id))) return String(hit.id);
   }
   return null;
+}
+
+/** Gán mỗi nhiệm vụ SX vào đúng một cột: tên cột → id cột → slug. */
+function assignSxTasksToStages(tasks, stages) {
+  const list = stages || [];
+  const byId = new Map(list.map((s) => [String(s.id), []]));
+  const claimed = new Set();
+  const byNameLen = [...list].sort((a, b) => String(b?.name || '').length - String(a?.name || '').length);
+
+  for (const stage of byNameLen) {
+    const id = String(stage.id);
+    const nameN = normalizeSxStageText(stage.name);
+    if (!nameN || !byId.has(id)) continue;
+    for (const t of tasks || []) {
+      if (!t?.id || claimed.has(t.id)) continue;
+      if (normalizeSxStageText(t.title) === nameN) {
+        byId.get(id).push(t);
+        claimed.add(t.id);
+      }
+    }
+  }
+
+  for (const t of tasks || []) {
+    if (!t?.id || claimed.has(t.id)) continue;
+    const pid = String(t.production_pipeline_stage_id || t.production_stage_id || '').trim();
+    if (pid && byId.has(pid)) {
+      byId.get(pid).push(t);
+      claimed.add(t.id);
+    }
+  }
+
+  for (const t of tasks || []) {
+    if (!t?.id || claimed.has(t.id)) continue;
+    const key = resolveSxTaskProductionStageId(t, list);
+    if (key && byId.has(String(key))) {
+      byId.get(String(key)).push(t);
+      claimed.add(t.id);
+    }
+  }
+
+  return byId;
 }
 
 /** Gom nhiệm vụ VC/LĐ (bảng tasks hoặc crm_tasks vc_*) vào cột logistics_pipeline_stages.id */
@@ -588,6 +637,9 @@ export default function CRMTasksTab({
   /** Tab VC/LĐ khi taskScope=logistics: shipping | install | all */
   initialVcAreaTab = null,
   onVcAreaTabChange = null,
+  /** Trạng thái việc song song (project_substage_status) — khớp stepper */
+  sxTrangThaiO: sxTrangThaiOProp = null,
+  onDoiTrangThai = null,
   /** LeadDetail: tăng token → mở phiếu khảo sát (show_fill_form) */
   openFillFormToken = 0,
   /** Báo meta phiếu KS lên header LeadDetail */
@@ -720,9 +772,10 @@ export default function CRMTasksTab({
         }
       } else if (showSxTasksInUi) {
         list = tasks.filter((t) => isSxStageSlug(t.stage_slug) || t.production_pipeline_stage_id);
-        // Chỉ hiển thị nhiệm vụ thuộc pipeline phân loại hiện tại (vd. Data đầu ra — không lẫn Đầu vào).
         if (projectWorkshopTypeId && sxPipelineStages.length > 0) {
-          list = list.filter((t) => sxTaskBelongsToPipeline(t, sxPipelineStages));
+          list = list.filter((t) => (
+            sxTaskBelongsToPipeline(t, sxPipelineStages) || isSxStageSlug(t.stage_slug)
+          ));
         }
       } else {
         list = tasks.filter((t) => !isSxStageSlug(t.stage_slug) && !t.production_pipeline_stage_id);
@@ -913,6 +966,10 @@ export default function CRMTasksTab({
   const [ensuringMissingSx, setEnsuringMissingSx] = useState(false);
   const [viewMode, setViewMode] = useState('list'); // list, deadline, planner, calendar
   const [expandedStages, setExpandedStages] = useState({});
+  const [expandedPlanGroups, setExpandedPlanGroups] = useState({});
+  const [expandedPlanChildTasks, setExpandedPlanChildTasks] = useState({});
+  const [localTrangThaiO, setLocalTrangThaiO] = useState({});
+  const sxTrangThaiO = sxTrangThaiOProp && typeof sxTrangThaiOProp === 'object' ? sxTrangThaiOProp : localTrangThaiO;
   const [bulkCompleting, setBulkCompleting] = useState(false);
   const [showAdd, setShowAdd] = useState(null); // stage_slug
   const [newTask, setNewTask] = useState({ title: '', priority: 'medium', deadline: '', assignee_id: '', supervisor_id: '' });
@@ -1674,8 +1731,8 @@ export default function CRMTasksTab({
 
   const completeTasksBulk = async (taskList, confirmMessage) => {
     const toComplete = taskList.filter((t) => t.status !== 'completed');
-    if (!toComplete.length) return;
-    if (!window.confirm(confirmMessage)) return;
+    if (!toComplete.length) return true;
+    if (!window.confirm(confirmMessage)) return false;
     const prevTasks = tasks;
     const ids = new Set(toComplete.map((t) => t.id));
     setBulkCompleting(true);
@@ -1696,15 +1753,63 @@ export default function CRMTasksTab({
         && (dateChecklist.delivery_date || projectDates.delivery_date)
         && toComplete.some((t) => t.clears_delivery_deadline_on_complete);
       if (shouldClear) await clearProjectDeliveryDeadline();
+      return true;
     } catch (e) {
       setTasks(prevTasks);
       alert(e.response?.data?.error || 'Lỗi khi đánh dấu hoàn thành hàng loạt');
+      return false;
     } finally {
       setBulkCompleting(false);
       try {
         await loadTasks({ silent: true });
       } catch (_) { /* ignore */ }
     }
+  };
+
+  const doiTrangThaiCot = useCallback(async (stageId, tt) => {
+    if (onDoiTrangThai) {
+      await onDoiTrangThai(stageId, tt);
+      return;
+    }
+    const pid = linkedProjectId;
+    if (!pid || !stageId) return;
+    const k = String(stageId);
+    let truoc;
+    setLocalTrangThaiO((prev) => {
+      truoc = prev[k];
+      return { ...prev, [k]: tt };
+    });
+    try {
+      await api.put('/production/substage-status', {
+        project_id: pid,
+        stage_id: k,
+        trang_thai: tt,
+      });
+    } catch (e) {
+      setLocalTrangThaiO((prev) => {
+        const next = { ...prev };
+        if (truoc === undefined) delete next[k];
+        else next[k] = truoc;
+        return next;
+      });
+      alert(e.response?.data?.error || 'Không đánh dấu được cột');
+    }
+  }, [onDoiTrangThai, linkedProjectId]);
+
+  const tichHoanThanhCot = async (stage, stageTasks) => {
+    const stageId = String(stage?.id || '');
+    const hasOpen = (stageTasks || []).some((t) => t.status !== 'completed');
+    const tt = sxTrangThaiO[stageId] || 'chua';
+    const allDone = (stageTasks || []).length > 0
+      && (stageTasks || []).every((t) => t.status === 'completed');
+    const cotXong = tt === 'xong' || allDone;
+    if (hasOpen) {
+      const n = stageTasks.filter((t) => t.status !== 'completed').length;
+      const ok = await completeTasksBulk(stageTasks, `Đánh dấu hoàn thành ${n} nhiệm vụ trong «${stage.name}»?`);
+      if (ok && stageId) await doiTrangThaiCot(stageId, 'xong');
+      return;
+    }
+    if (stageId) await doiTrangThaiCot(stageId, cotXong ? 'chua' : 'xong');
   };
 
   const deleteTask = async (taskId) => {
@@ -2106,12 +2211,9 @@ export default function CRMTasksTab({
         }
       });
     } else if (useSxPipelineTaskUi || (isSxOrderTaskFlow && sxPipelineStages.length > 0)) {
-      uiTasks.forEach((t) => {
-        const key = resolveSxTaskProductionStageId(t, sxPipelineStages);
-        if (key && map[key] !== undefined) map[key].push(t);
-        else if (key) {
-          map[key] = [t];
-        }
+      const assigned = assignSxTasksToStages(uiTasks, sxPipelineStages);
+      assigned.forEach((arr, id) => {
+        map[id] = arr;
       });
     } else if (usePipelineKeys) {
       uiTasks.forEach((t) => {
@@ -2136,6 +2238,30 @@ export default function CRMTasksTab({
     });
     return map;
   }, [uiTasks, STAGES, useVcPipelineTaskUi, showLogisticsWorkshopInUi, vcPipelineStagesAsUiStages, vcPipelineStages, embeddedVcKanbanStages, useSxPipelineTaskUi, isSxOrderTaskFlow, sxPipelineStages, usePipelineTaskUi, isLegacyCrmTaskSet, pipelineStages, leadCurrentStageId, leadType]);
+
+  /** Cột lớn (cha) → cột nhỏ (con); ẩn nhiệm vụ (cháu) — khớp PipelineStepper. */
+  const sxPlanGroups = useMemo(() => {
+    if (!useSxPipelineTaskUi || !sxPipelineStages.length) return null;
+    return gomCotTheoNhom(sxPipelineStages).map((g) => {
+      const children = (g.cotNho || []).map((stage) => {
+        const slug = String(stage.id);
+        const stageTasks = tasksByStage[slug] || [];
+        return {
+          slug,
+          stage,
+          stageTasks,
+          completed: stageTasks.filter((t) => t.status === 'completed').length,
+        };
+      });
+      return {
+        key: g.key,
+        nhan: g.nhan,
+        children,
+        completed: children.reduce((n, c) => n + c.completed, 0),
+        total: children.reduce((n, c) => n + c.stageTasks.length, 0),
+      };
+    });
+  }, [useSxPipelineTaskUi, sxPipelineStages, tasksByStage]);
 
   /** Khóa giai đoạn — dùng khi sắp xếp kéo thả trong tab Công việc deal. */
   const getTaskStageKey = useCallback((task) => {
@@ -2428,7 +2554,7 @@ export default function CRMTasksTab({
   const [attLightboxIndex, setAttLightboxIndex] = useState(null);
   const [attLightboxItems, setAttLightboxItems] = useState([]);
 
-  if (loading) return <div className="flex items-center justify-center py-8"><div className="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full" /></div>;
+  if (loading && !sxPlanGroups) return <div className="flex items-center justify-center py-8"><div className="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full" /></div>;
 
   const loadAttachments = async (task) => {
     const taskId = task.id;
@@ -4678,8 +4804,161 @@ export default function CRMTasksTab({
         </div>
       )}
 
+      {/* LIST VIEW — SX: cha = cột lớn, con = cột nhỏ, ẩn cháu (nhiệm vụ) */}
+      {!isSharedWorkspace && viewMode === 'list' && sxPlanGroups && (
+        <div className="space-y-3">
+          {loading && (
+            <p className="text-[11px] text-gray-400 px-1">Đang tải số liệu nhiệm vụ…</p>
+          )}
+          {sxPlanGroups.map((g) => {
+            const expanded = expandedPlanGroups[g.key] !== false;
+            const groupTasks = g.children.flatMap((c) => c.stageTasks);
+            const groupOpenCount = g.children.filter((c) => expandedPlanChildTasks[c.slug]).length;
+            const groupTasksOpen = groupOpenCount > 0;
+            return (
+              <div key={g.key} className="border rounded-lg overflow-hidden">
+                <div className="flex items-stretch gap-1 px-2 py-1.5 bg-violet-50/80 border-b border-violet-100">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedPlanGroups((p) => ({ ...p, [g.key]: !expanded }))}
+                    className="flex flex-1 min-w-0 items-center gap-2 px-1 py-1 rounded-md hover:bg-violet-100/80 cursor-pointer text-left"
+                  >
+                    {expanded
+                      ? <ChevronDown className="h-3.5 w-3.5 text-violet-400 shrink-0" />
+                      : <ChevronRight className="h-3.5 w-3.5 text-violet-400 shrink-0" />}
+                    <span className="text-sm font-bold uppercase tracking-wide text-violet-900 truncate">{g.nhan}</span>
+                    <span className="ml-auto text-[10px] text-violet-700 tabular-nums shrink-0">
+                      {g.children.length} cột
+                      {g.total > 0 ? ` · ${g.completed}/${g.total}` : ''}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !groupTasksOpen;
+                      setExpandedPlanChildTasks((p) => {
+                        const n = { ...p };
+                        g.children.forEach((c) => { n[c.slug] = next; });
+                        return n;
+                      });
+                      if (next) setExpandedPlanGroups((prev) => ({ ...prev, [g.key]: true }));
+                    }}
+                    className={`shrink-0 self-center flex items-center gap-1 text-[10px] font-semibold px-2 py-1.5 rounded-md cursor-pointer ${
+                      groupTasksOpen
+                        ? 'text-violet-900 bg-white border border-violet-300'
+                        : 'text-violet-800 bg-violet-100/80 hover:bg-violet-100 border border-violet-200'
+                    }`}
+                    title={groupTasksOpen ? 'Ẩn công việc trong nhóm này' : 'Hiện công việc thuộc các cột trong nhóm này'}
+                  >
+                    <ListChecks className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">{groupTasksOpen ? 'Ẩn việc' : 'Hiện việc'}</span>
+                  </button>
+                  {groupTasks.some((t) => t.status !== 'completed') && (
+                    <button
+                      type="button"
+                      disabled={bulkCompleting}
+                      onClick={() => {
+                        const n = groupTasks.filter((t) => t.status !== 'completed').length;
+                        void completeTasksBulk(groupTasks, `Đánh dấu hoàn thành ${n} nhiệm vụ trong «${g.nhan}»?`);
+                      }}
+                      className="shrink-0 self-center flex items-center gap-1 text-[10px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-1.5 rounded-md disabled:opacity-50 cursor-pointer"
+                      title="Hoàn thành mọi việc chưa xong trong nhóm này"
+                    >
+                      <CheckCircle2 className="h-3.5 w-3.5" />
+                      <span className="hidden sm:inline">Xong hết</span>
+                    </button>
+                  )}
+                  {g.total > 0 && g.completed === g.total && (
+                    <span className="shrink-0 self-center text-emerald-600" title="Đã xong hết">
+                      <CheckCircle2 className="h-4 w-4" />
+                    </span>
+                  )}
+                </div>
+                {expanded && (
+                  <div className="px-2 py-1.5 space-y-0.5">
+                    {g.children.map((c) => {
+                      const tasksOpen = !!expandedPlanChildTasks[c.slug];
+                      const taskBundles = groupStageTasksByBundle(c.slug, c.stageTasks);
+                      return (
+                        <div key={c.slug} className="rounded-md">
+                          <div className="flex items-stretch gap-1">
+                            <button
+                              type="button"
+                              onClick={() => setExpandedPlanChildTasks((p) => ({ ...p, [c.slug]: !p[c.slug] }))}
+                              className="flex flex-1 min-w-0 items-center gap-2 py-1.5 px-2 rounded-md hover:bg-violet-50/70 cursor-pointer text-left"
+                              title={tasksOpen ? 'Ẩn công việc cột này' : 'Hiện công việc thuộc cột này'}
+                            >
+                              {tasksOpen
+                                ? <ChevronDown className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                                : <ChevronRight className="h-3.5 w-3.5 text-gray-400 shrink-0" />}
+                              <span className="text-sm shrink-0">{c.stage.icon || '📋'}</span>
+                              <span className="text-sm font-medium text-gray-800 truncate flex-1">{c.stage.name}</span>
+                              <span className="text-[10px] text-gray-400 tabular-nums shrink-0">
+                                {c.completed}/{c.stageTasks.length}
+                              </span>
+                              {c.stageTasks.length > 0 && (
+                                <div className="w-12 h-1.5 bg-gray-200 rounded-full overflow-hidden shrink-0">
+                                  <div
+                                    className="h-full bg-emerald-500 rounded-full"
+                                    style={{ width: `${c.stageTasks.length ? (c.completed / c.stageTasks.length) * 100 : 0}%` }}
+                                  />
+                                </div>
+                              )}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={bulkCompleting}
+                              onClick={() => { void tichHoanThanhCot(c.stage, c.stageTasks); }}
+                              className={`shrink-0 self-center flex items-center justify-center h-7 w-7 rounded-md cursor-pointer disabled:opacity-50 ${
+                                (sxTrangThaiO[String(c.stage.id)] === 'xong'
+                                  || (c.stageTasks.length > 0 && c.completed === c.stageTasks.length))
+                                  ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200'
+                                  : 'text-gray-400 bg-white hover:bg-emerald-50 hover:text-emerald-600 border border-gray-200'
+                              }`}
+                              title={
+                                (sxTrangThaiO[String(c.stage.id)] === 'xong'
+                                  || (c.stageTasks.length > 0 && c.completed === c.stageTasks.length))
+                                  ? 'Bỏ tích hoàn thành cột này'
+                                  : 'Tích hoàn thành cột này'
+                              }
+                            >
+                              {(sxTrangThaiO[String(c.stage.id)] === 'xong'
+                                || (c.stageTasks.length > 0 && c.completed === c.stageTasks.length))
+                                ? <CheckCircle2 className="h-4 w-4" />
+                                : <Circle className="h-4 w-4" />}
+                            </button>
+                          </div>
+                          {tasksOpen && (
+                            <div className="pl-5 pr-1 pb-1.5">
+                              {c.stageTasks.length === 0 ? (
+                                <p className="text-[11px] text-gray-400 px-2 py-1">Chưa có công việc thuộc cột này</p>
+                              ) : taskBundles.map((bundle) => (
+                                <div key={bundle.key} className={bundle.label ? 'mb-1' : ''}>
+                                  {bundle.label && (
+                                    <p className="text-[10px] font-semibold text-gray-500 px-2 py-1 flex items-center gap-1.5">
+                                      <ListChecks className="h-3 w-3 text-amber-600" />
+                                      {bundle.label}
+                                      <span className="text-gray-400 font-normal">({bundle.tasks.length})</span>
+                                    </p>
+                                  )}
+                                  {bundle.tasks.map((t) => renderTaskRow(t))}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* LIST VIEW — tab Công việc thông thường */}
-      {!isSharedWorkspace && viewMode === 'list' && (
+      {!isSharedWorkspace && viewMode === 'list' && !sxPlanGroups && (
         // Khai số nhóm thật: nhóm đang thu gọn vẫn là một nhóm, bộ dò DOM không đếm chắc được.
         <div className="space-y-3" data-guide-khu-vuc="Nhóm việc theo giai đoạn" data-guide-so-muc={listStagesToRender.length}>
           {listStagesToRender.map(stage => {

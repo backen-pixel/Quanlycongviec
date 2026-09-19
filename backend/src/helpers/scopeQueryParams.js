@@ -16,7 +16,7 @@ function trimOrNull(v) {
  * @param {string[]} [opts.elevatedRoles] — role được chọn công ty tự do
  */
 function parseScopeFromQuery(req, opts = {}) {
-  const elevatedRoles = opts.elevatedRoles || ['admin', 'manager', 'region_admin', 'super_admin', 'owner'];
+  const elevatedRoles = opts.elevatedRoles || ['ecosystem_admin', 'admin', 'manager', 'region_admin', 'super_admin', 'owner'];
   const role = String(req.user?.role || '').toLowerCase();
   const elevated = elevatedRoles.includes(role) || req.user?.is_system_admin;
 

@@ -83,7 +83,8 @@ export default function FacebookChatTab({ leadId, companyId }) {
     })
       .then(async (r) => {
         if (r.status === 403) {
-          setLoadError('forbidden');
+          const body = await r.json().catch(() => null);
+          setLoadError(body?.error || 'forbidden');
           setMessages([]);
           setContact(null);
           return;
@@ -241,10 +242,12 @@ export default function FacebookChatTab({ leadId, companyId }) {
     );
   }
 
-  if (loadError === 'forbidden') {
+  if (loadError && loadError !== 'error') {
     return (
       <div className="text-center text-amber-700 py-8 px-4 text-sm">
-        Bạn không có quyền xem hội thoại Facebook của deal này (không thuộc Page / công ty được phép).
+        {loadError === 'forbidden'
+          ? 'Bạn không có quyền xem hội thoại Facebook của deal này (không thuộc Page / công ty được phép).'
+          : loadError}
       </div>
     );
   }

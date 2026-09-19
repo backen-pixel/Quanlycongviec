@@ -29,7 +29,7 @@ import {
   ClipboardCheck,
 } from 'lucide-react';
 
-const EXEC_ROLES = ['admin', 'manager', 'director', 'supervisor'];
+const EXEC_ROLES = ['ecosystem_admin', 'admin', 'manager', 'director', 'supervisor'];
 
 const PIE_COLORS = ['#2563eb', '#059669', '#d97706', '#7c3aed', '#db2777', '#0d9488', '#ea580c'];
 

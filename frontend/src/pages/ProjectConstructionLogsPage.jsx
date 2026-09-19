@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Download, History, Loader2, RefreshCw, Search, X } from 'lucide-react';
+import { Download, History, Loader2, RefreshCw, Search, X, ClipboardList } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
 import { exportProjectConstructionLogsExcel } from '../lib/projectConstructionLogsExcel';
+import {
+  assignmentsHrefForProject,
+  projectDetailPathForModule,
+} from '../lib/assignmentSourceLink';
 import {
   WORK_UNIFIED_REGION_NONE,
   filterWorkUnifiedStaff,
@@ -458,6 +462,24 @@ export default function ProjectConstructionLogsPage() {
             >
               Mở Work Unified
             </Link>
+            <Link
+              to={assignmentsHrefForProject('production', {
+                projectId: project.id,
+                projectCode: project.code,
+              })}
+              className="text-teal-700 hover:underline text-xs inline-flex items-center gap-1"
+            >
+              <ClipboardList className="h-3 w-3" />
+              Giao việc Sản xuất
+            </Link>
+            {projectDetailPathForModule('production', project.id) ? (
+              <Link
+                to={projectDetailPathForModule('production', project.id)}
+                className="text-teal-700 hover:underline text-xs"
+              >
+                Chi tiết dự án
+              </Link>
+            ) : null}
           </div>
         )}
 

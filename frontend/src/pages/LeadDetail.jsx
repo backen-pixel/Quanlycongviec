@@ -23,7 +23,7 @@ import api from '../lib/api';
 import { compressImage } from '../lib/compressImage';
 import { consumeCrmLeadDetailPrefetch } from '../lib/crmLeadDetailPrefetch';
 import { getSocket } from '../lib/socket';
-import { formatVND, formatDate, getFileEmoji } from '../lib/utils';
+import { formatVND, formatDate, formatDateTime, getFileEmoji } from '../lib/utils';
 import { depositInstallmentsForForm, aggregateDepositFromInstallments } from '../lib/quotationTermsDisplay';
 import CRMTasksTab from '../components/CRMTasksTab';
 import { pickSurveyFillFormTask, hasFilledFormData, normalizeFormConfig } from '../lib/taskFillForm';
@@ -481,6 +481,8 @@ export default function LeadDetail() {
   const [savingLeadTitle, setSavingLeadTitle] = useState(false);
   const [approvalForm, setApprovalForm] = useState({ type: 'drawing', title: '', note: '' });
   const [zaloQuickSendLoading, setZaloQuickSendLoading] = useState(false);
+  const [zaloOaSent, setZaloOaSent] = useState(false);
+  const [zaloOaSentAt, setZaloOaSentAt] = useState(null);
   const [movingStage, setMovingStage] = useState(false);
   const [blockingModal, setBlockingModal] = useState(null);
   /** Cột yêu cầu deadline khi đổi stage từ trang chi tiết */
@@ -922,12 +924,20 @@ export default function LeadDetail() {
     return () => { cancelled = true; };
   }, [lead?.company_id, user?.company_id]);
 
-  /** Chỉ hiện tab inbox đúng nguồn tạo lead (facebook | zalo). */
-  const inboxChannel = useMemo(() => {
-    const ch = String(lead?.inbox_channel || '').trim().toLowerCase();
-    if (ch === 'facebook' || ch === 'zalo') return ch;
-    return null;
-  }, [lead?.inbox_channel]);
+  /**
+   * Các tab inbox được hiện. Một lead có thể có nhiều kênh cùng lúc —
+   * Facebook, Zalo OA, Zalo cá nhân — nên đây là danh sách, không phải một giá trị.
+   */
+  const inboxChannels = useMemo(() => {
+    const allowed = ['facebook', 'zalo', 'zalo_personal'];
+    const list = Array.isArray(lead?.inbox_channels) ? lead.inbox_channels : [];
+    const fromList = list.map((c) => String(c).trim().toLowerCase()).filter((c) => allowed.includes(c));
+    if (fromList.length) return fromList;
+    const one = String(lead?.inbox_channel || '').trim().toLowerCase();
+    return allowed.includes(one) ? [one] : [];
+  }, [lead?.inbox_channels, lead?.inbox_channel]);
+
+  const inboxChannel = inboxChannels[0] || null;
 
   /** Mở đúng tab từ URL (?tab=chat|facebook|calls|voice_crm|approvals|…) — app mobile / liên kết ngoài. */
   useEffect(() => {
@@ -952,6 +962,7 @@ export default function LeadDetail() {
       'notes',
       'facebook',
       'zalo',
+      'zalo_personal',
       'team',
       'comments',
       'activities',
@@ -989,10 +1000,9 @@ export default function LeadDetail() {
       setSearchParams(next, { replace: true });
       return;
     }
-    if (t === 'facebook' || t === 'zalo') {
+    if (t === 'facebook' || t === 'zalo' || t === 'zalo_personal') {
       if (!lead || String(lead.id) !== String(id)) return;
-      const ch = inboxChannel;
-      setActiveTab(ch === 'facebook' || ch === 'zalo' ? ch : 'tasks');
+      setActiveTab(inboxChannels.includes(t) ? t : (inboxChannel || 'tasks'));
       const next = new URLSearchParams(searchParams);
       next.delete('tab');
       setSearchParams(next, { replace: true });
@@ -1005,7 +1015,7 @@ export default function LeadDetail() {
     const next = new URLSearchParams(searchParams);
     next.delete('tab');
     setSearchParams(next, { replace: true });
-  }, [id, searchParams, setSearchParams, lead, inboxChannel]);
+  }, [id, searchParams, setSearchParams, lead, inboxChannels, inboxChannel]);
 
   const loadDealExcelQuotations = useCallback(() => {
     if (!id) return;
@@ -1196,6 +1206,8 @@ export default function LeadDetail() {
       ]);
       if (seq !== loadSeqRef.current) return;
       setLead(leadRes);
+      setZaloOaSent(!!leadRes?.zalo_oa_sent);
+      setZaloOaSentAt(leadRes?.zalo_oa_send?.updated_at || null);
       setPipelineConfig(pipelineRes?.data || null);
       setLeadTitleDraft(leadRes?.title || '');
       setCustomer(leadRes?.customer);
@@ -1351,10 +1363,11 @@ export default function LeadDetail() {
 
   useEffect(() => {
     if (!lead) return;
-    if ((activeTab === 'facebook' || activeTab === 'zalo') && activeTab !== inboxChannel) {
+    const chatTabs = ['facebook', 'zalo', 'zalo_personal'];
+    if (chatTabs.includes(activeTab) && !inboxChannels.includes(activeTab)) {
       setActiveTab(inboxChannel || 'tasks');
     }
-  }, [lead?.id, inboxChannel, activeTab]);
+  }, [lead?.id, inboxChannels, inboxChannel, activeTab]);
 
   useEffect(() => {
     if (lead?.type === 'deal' && activeTab === 'deal_scores' && !isDealHoanThanhForZalo) {
@@ -1387,6 +1400,7 @@ export default function LeadDetail() {
       'lead-tab-notes': 'notes',
       'lead-tab-facebook': 'facebook',
       'lead-tab-zalo': 'zalo',
+      'lead-tab-zalo-personal': 'zalo_personal',
       'lead-tab-team': 'team',
       'lead-tab-comments': 'comments',
       'lead-tab-voice': 'voice_crm',
@@ -1474,6 +1488,18 @@ export default function LeadDetail() {
     [lead?.type, stagesDeal, stagesLead],
   );
 
+  const workshopProgress = useMemo(() => {
+    if (!lead || lead.type !== 'deal') return null;
+    const list = Array.isArray(lead.production_projects) ? lead.production_projects : [];
+    const pp = list.find((p) => p.is_primary) || list[0] || null;
+    return {
+      sx_pipeline_stage: resolveSxProgressMeta(pp, lead).stage || lead.sx_pipeline_stage || null,
+      vc_pipeline_stage: resolveVcProgressMeta(pp, lead).stage || lead.vc_pipeline_stage || null,
+      stage: lead.stage || null,
+      project_status: pp?.status || lead.linked_project?.status || null,
+    };
+  }, [lead]);
+
   const handleDownloadAllDocuments = useCallback(async () => {
     if (downloadingDocsZip || documentsTabTotal === 0) return;
     setDownloadingDocsZip(true);
@@ -1522,7 +1548,10 @@ export default function LeadDetail() {
 
   /** Một bước: điền template từ deal (cấu trúc lưu trên server / Cài đặt Pipeline) + gửi Zalo */
   const quickSendZaloOa = useCallback(async () => {
-    if (!id || !isDealHoanThanhForZalo) return;
+    if (!id) return;
+    if (zaloOaSent) {
+      if (!window.confirm('Đã gửi Zalo thành công cho deal này. Gửi lại lần nữa?')) return;
+    }
     setZaloQuickSendLoading(true);
     try {
       const { data: fillRes } = await api.post(`/crm/leads/${id}/zalo-template-fill`, {});
@@ -1535,15 +1564,23 @@ export default function LeadDetail() {
         const { data } = await api.post(`/crm/leads/${id}/zalo-notify-send`, { force, template_data: filled });
         return data;
       };
-      let sendRes = await postSend(false);
-      if (sendRes?.skipped && sendRes?.reason === 'already_sent') {
-        if (!window.confirm('Đã gửi Zalo thành công cho giai đoạn này. Gửi lại lần nữa?')) return;
+      let sendRes = await postSend(!!zaloOaSent);
+      if (!zaloOaSent && sendRes?.skipped && sendRes?.reason === 'already_sent') {
+        if (!window.confirm('Đã gửi Zalo thành công cho giai đoạn này. Gửi lại lần nữa?')) {
+          setZaloOaSent(true);
+          setZaloOaSentAt(sendRes?.updated_at || new Date().toISOString());
+          return;
+        }
         sendRes = await postSend(true);
       }
       if (sendRes?.ok && !sendRes?.skipped) {
-        alert('Đã gửi tin Zalo OA tới khách hàng.');
+        setZaloOaSent(true);
+        setZaloOaSentAt(new Date().toISOString());
         load({ silent: true });
-      } else if (sendRes?.skipped && sendRes?.reason && sendRes?.reason !== 'already_sent') {
+      } else if (sendRes?.skipped && sendRes?.reason === 'already_sent') {
+        setZaloOaSent(true);
+        setZaloOaSentAt(sendRes?.updated_at || new Date().toISOString());
+      } else if (sendRes?.skipped && sendRes?.reason) {
         alert(sendRes.message || sendRes.reason || 'Đã bỏ qua gửi Zalo');
       } else if (!sendRes?.ok) {
         alert(sendRes?.hint_vi || sendRes?.message || JSON.stringify(sendRes || {}));
@@ -1553,7 +1590,7 @@ export default function LeadDetail() {
     } finally {
       setZaloQuickSendLoading(false);
     }
-  }, [id, isDealHoanThanhForZalo, load]);
+  }, [id, load, zaloOaSent]);
 
   const navigateToCrmDealFocused = (dealId) => {
     persistCrmPipelineUiNow();
@@ -3162,17 +3199,29 @@ export default function LeadDetail() {
           >
             📥 Import Excel
           </button>
-          {lead?.type === 'deal' && isDealHoanThanhForZalo && (
+          {lead.type === 'deal' && (
             <button
               type="button"
               data-tour="lead-send-zalo-oa"
               disabled={zaloQuickSendLoading}
               onClick={() => quickSendZaloOa()}
-              title="Điền mẫu từ deal (cấu trúc trong Cài đặt Pipeline → Zalo OA) và gửi tin Zalo OA"
-              className="h-9 px-3 bg-[#0068FF] hover:bg-[#0056d4] text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              title={
+                zaloOaSent
+                  ? `Đã gửi Zalo OA${zaloOaSentAt ? ` · ${formatDateTime(zaloOaSentAt)}` : ''}. Bấm để gửi lại.`
+                  : 'Điền mẫu từ deal và gửi tin Zalo OA (không tự gửi khi kéo cột)'
+              }
+              className={`h-9 px-3 rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50 ${
+                zaloOaSent && !zaloQuickSendLoading
+                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100'
+                  : 'bg-[#0068FF] hover:bg-[#0056d4] text-white'
+              }`}
             >
-              {zaloQuickSendLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <MessageCircle className="h-4 w-4" />}
-              Gửi Zalo
+              {zaloQuickSendLoading
+                ? <Loader2 className="h-4 w-4 animate-spin" />
+                : zaloOaSent
+                  ? <CheckCircle2 className="h-4 w-4" />
+                  : <MessageCircle className="h-4 w-4" />}
+              {zaloQuickSendLoading ? 'Đang gửi…' : zaloOaSent ? 'Đã gửi Zalo' : 'Gửi Zalo'}
             </button>
           )}
           {lead?.type === 'deal' && (!lead?.project_id || canEditSxVcSchedule) ? (
@@ -3859,6 +3908,7 @@ export default function LeadDetail() {
           currentStageName={lead.stage?.name}
           onMoveToStage={moveStage}
           visitedStageIds={visitedStageIds}
+          workshopProgress={workshopProgress}
         />
       </div>
 
@@ -4161,7 +4211,7 @@ export default function LeadDetail() {
                   </span>
                 )}
               </button>
-              {inboxChannel === 'facebook' && (
+              {inboxChannels.includes('facebook') && (
               <button
                 type="button"
                 data-tour="lead-tab-facebook"
@@ -4178,7 +4228,7 @@ export default function LeadDetail() {
                 📘 Facebook
               </button>
               )}
-              {inboxChannel === 'zalo' && (
+              {inboxChannels.includes('zalo') && (
               <button
                 type="button"
                 data-tour="lead-tab-zalo"
@@ -4193,6 +4243,23 @@ export default function LeadDetail() {
                 }`}
               >
                 💬 Zalo OA
+              </button>
+              )}
+              {inboxChannels.includes('zalo_personal') && (
+              <button
+                type="button"
+                data-tour="lead-tab-zalo-personal"
+                role="tab"
+                aria-selected={activeTab === 'zalo_personal'}
+                aria-label="Zalo cá nhân"
+                onClick={() => setActiveTab('zalo_personal')}
+                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  activeTab === 'zalo_personal'
+                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                📱 Zalo cá nhân
               </button>
               )}
               <button
@@ -5036,7 +5103,9 @@ export default function LeadDetail() {
               ) : activeTab === 'facebook' ? (
                 <FacebookChatTab leadId={id} companyId={lead?.company_id} />
               ) : activeTab === 'zalo' ? (
-                <ZaloChatTab leadId={id} />
+                <ZaloChatTab leadId={id} kind="oa" />
+              ) : activeTab === 'zalo_personal' ? (
+                <ZaloChatTab leadId={id} kind="personal" leadPhone={lead?.customer?.phone || lead?.phone || null} />
               ) : activeTab === 'team' ? (
                 <LeadMembersTab
                   leadId={id}

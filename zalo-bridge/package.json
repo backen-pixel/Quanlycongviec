@@ -1,0 +1,21 @@
+{
+  "name": "zalo-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cầu nối tài khoản Zalo cá nhân → hộp thư CRM (chạy tại máy công ty)",
+  "main": "src/supervisor.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/supervisor.js",
+    "probe:selectors": "node src/transports/probeSelectors.js"
+  },
+  "dependencies": {
+    "zca-js": "2.2.0"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.49.0"
+  }
+}

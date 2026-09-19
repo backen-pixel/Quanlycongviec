@@ -290,7 +290,7 @@ function normalizeAllowedCompanyIds(input) {
 // POST /api/settings/api-keys — tạo key mới
 r.post('/api-keys', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) {
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Chỉ admin/manager mới tạo được API key' });
     }
     const {
@@ -376,7 +376,7 @@ r.post('/api-keys', async (req, res) => {
 // PATCH /api/settings/api-keys/:id — cập nhật tên / assigned_to / region / category
 r.patch('/api-keys/:id', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) {
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Chỉ admin/manager mới sửa được API key' });
     }
     const cur = await findKeyById(req.params.id);
@@ -459,7 +459,7 @@ r.patch('/api-keys/:id', async (req, res) => {
 // POST /api/settings/api-keys/:id/rotate — rotate key (trả giá trị đầy đủ 1 lần)
 r.post('/api-keys/:id/rotate', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) {
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Chỉ admin/manager mới rotate được API key' });
     }
     const cur = await findKeyById(req.params.id);
@@ -574,7 +574,7 @@ r.delete('/call-ringtone', async (req, res) => {
 // DELETE /api/settings/api-keys/:id — xóa / thu hồi key
 r.delete('/api-keys/:id', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role)) {
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role)) {
       return res.status(403).json({ error: 'Chỉ admin/manager mới xóa được API key' });
     }
     const cur = await findKeyById(req.params.id);

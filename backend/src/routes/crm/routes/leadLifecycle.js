@@ -14,6 +14,7 @@ const { createAdditionalCustomerDeal } = require('../../../helpers/projectOrderF
 const {
   isCrmCompletedStage,
   completeOpenWorkOnModuleDone,
+  closeInstallDeadlineWhenCrmPastInstallation,
 } = require('../../../helpers/completeOpenWorkOnModuleDone');
 const { deleteExclusiveProjectsForLeads } = require('../../../helpers/deleteExclusiveProjectsForLeads');
 const { invalidateCrmDeadlineSnapshots } = require('../../../helpers/crmDeadlineSnapshotCache');
@@ -608,10 +609,14 @@ r.get('/leads/:id/detail', async (req, res) => {
       data.interacted_at = null;
     }
     try {
-      const { resolveLeadInboxChannel } = require('../../../helpers/crmLeadInboxChannel');
-      data.inbox_channel = await resolveLeadInboxChannel(supabase, canonicalId, data);
+      const { resolveLeadInboxChannels } = require('../../../helpers/crmLeadInboxChannel');
+      const { channels, primary } = await resolveLeadInboxChannels(supabase, canonicalId, data, req.user);
+      // inbox_channel giữ nguyên cho chỗ cũ; inbox_channels để hiện nhiều tab chat
+      data.inbox_channel = primary;
+      data.inbox_channels = channels;
     } catch (e) {
       data.inbox_channel = null;
+      data.inbox_channels = [];
     }
     try {
       const { listDealProductionProjects } = require('../../../helpers/autoDealWonProject');
@@ -636,6 +641,21 @@ r.get('/leads/:id/detail', async (req, res) => {
       }
     } catch (_) {
       data.source_customer_deal = null;
+    }
+    try {
+      const { data: zaloSends } = await supabase
+        .from('crm_zalo_stage_sends')
+        .select('msg_id, error_message, tracking_id, stage_id, updated_at')
+        .eq('lead_id', canonicalId)
+        .order('updated_at', { ascending: false })
+        .limit(20);
+      const row = (zaloSends || []).find((s) => s && String(s.msg_id || '').trim());
+      data.zalo_oa_sent = !!row;
+      data.zalo_oa_send = row || null;
+    } catch (e) {
+      console.warn('[crm/leads/:id/detail] zalo_oa_send:', e.message);
+      data.zalo_oa_sent = false;
+      data.zalo_oa_send = null;
     }
     res.json(data);
   } catch (e) {
@@ -2371,7 +2391,7 @@ r.patch('/leads/:id/stage', async (req, res) => {
         .maybeSingle()
       : { data: null };
 
-    const { loadWonAnchorOrderForPipeline } = require('../../../helpers/crmDealStageGate');
+    const { loadWonAnchorOrderForPipeline, isCrmStagePastInstallation } = require('../../../helpers/crmDealStageGate');
     const wonAnchorOrder = await loadWonAnchorOrderForPipeline(stage?.pipeline_id || lead?.pipeline_id || null);
     const stageGate = assertDealCrmManualStageChange(lead, stage, prevStageForGate, { wonAnchorOrder });
     if (!stageGate.ok) {
@@ -2564,6 +2584,19 @@ r.patch('/leads/:id/stage', async (req, res) => {
       }
     }
 
+    if (isStageChange && stage_id) {
+      try {
+        const { applyCrmStageDefaultMembersToDeal } = require('../../../helpers/crmPipelineStageMembers');
+        await applyCrmStageDefaultMembersToDeal({
+          dealId: req.params.id,
+          stageId: stage_id,
+          addedBy: req.user?.userId || null,
+        });
+      } catch (crmMemErr) {
+        console.warn('[crm/stage] auto members:', crmMemErr.message);
+      }
+    }
+
     // Bổ sung nhiệm vụ CRM thiếu theo bộ mẫu của cột đích (chỉ thêm phần chưa có).
     // Cột hoàn thành: không gen thêm NV — đóng hết NV + deadline CRM còn mở.
     let taskWriteLeadId = req.params.id;
@@ -2605,6 +2638,29 @@ r.patch('/leads/:id/stage', async (req, res) => {
         }
       } catch (ensureErr) {
         console.warn('[crm/stage] ensureMissingCrmTasksForPipelineStage:', ensureErr.message);
+      }
+    }
+
+    if (isStageChange && stage_id && lead?.project_id && !stage?.is_lost) {
+      try {
+        const pipeId = stage.pipeline_id || lead.pipeline_id;
+        let pipeStages = [];
+        if (pipeId) {
+          const { data: ps } = await supabase
+            .from('crm_pipeline_stages')
+            .select('id, name, order_index, is_won, is_lost, sync_role, counts_as_completed_revenue, canonical_slug')
+            .eq('pipeline_id', pipeId);
+          pipeStages = ps || [];
+        }
+        if (isCrmStagePastInstallation(stage, pipeStages)) {
+          await closeInstallDeadlineWhenCrmPastInstallation({
+            projectId: lead.project_id,
+            leadId: req.params.id,
+            crmCompleted: isCrmCompletedStage(stage),
+          });
+        }
+      } catch (installErr) {
+        console.warn('[crm/stage] close install deadline:', installErr.message);
       }
     }
 
@@ -4299,7 +4355,13 @@ r.post('/leads/:id/sx-handover', async (req, res) => {
       handoverProjectId,
       pcv.company.id,
       projRow?.workshop_type_id || null,
+      { primaryOnly: true },
     );
+    // Bổ sung cho ĐỦ đội theo setup phân loại — chỉ thêm, không xoá ai.
+    try {
+      const { bosungDoiTheoSetup } = require('../../../helpers/productionWorkshopTypeStaff');
+      await bosungDoiTheoSetup(handoverProjectId, pcv.company.id, projRow?.workshop_type_id || null);
+    } catch (e) { console.warn('[handover-sx] bo sung doi:', e.message); }
     const leadHandoverPatch = {
       sx_handover_at: now,
       sx_handover_confirmed_by: uid,

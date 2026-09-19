@@ -219,7 +219,12 @@ function scheduleWorkshopIntakeBackground({
         if (workshopTypeId) {
           await applyWorkshopTypeDefaultStaffToProject(projectId, companyId, workshopTypeId, {
             allowFallback: staffAllowFallback !== false,
+            primaryOnly: true,
           });
+          // Bổ sung cho ĐỦ đội theo setup phân loại (chỉ thêm, không xoá ai).
+          // primaryOnly ở trên chỉ ghi 1 người; công ty muốn đủ đội thì bước này kéo nốt.
+          const { bosungDoiTheoSetup } = require('./productionWorkshopTypeStaff');
+          await bosungDoiTheoSetup(projectId, companyId, workshopTypeId);
         }
       } catch (e) {
         console.warn('[workshop-intake/bg] default staff:', e.message);

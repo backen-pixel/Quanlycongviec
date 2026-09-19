@@ -2,13 +2,14 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
+import { isAdminLike, isCompanyScopedAdmin, isWorkProductionModuleAdmin } from '../lib/adminRole';
 import { formatDate, formatVND } from '../lib/utils';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import ResponsiveTable from '../components/ResponsiveTable';
 import { WorkUnifiedOpenTabProvider, workUnifiedPath } from '../components/WorkUnifiedOpenTabMenu';
+import KanbanGotoProjectTasksBtn from '../components/KanbanGotoProjectTasksBtn';
 import {
-  RefreshCw, Plus, FileText, Package, ChevronLeft, ChevronRight,
+  RefreshCw, Plus, FileText, Package, ChevronLeft, ChevronRight, Bell,
   List, LayoutGrid, Clock, Phone, Calendar, EyeOff, Eye, X, Search, Users,
 } from 'lucide-react';
 import SearchInlineFilterChips, { SearchClearButton, AdvFilterButton, searchGroupClass } from '../components/SearchInlineFilterChips';
@@ -26,10 +27,11 @@ const PAGE_SIZE = 20;
 
 const KANBAN_COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#ef4444', '#06b6d4', '#ec4899', '#6366f1'];
 
-/** Gom hạn Work Unified — khớp Deadline SX: Quá hạn / Hôm nay / tuần / tháng / sau tháng này. */
+/** Gom hạn Work Unified: Quá hạn / Hôm nay / Ngày mai / tuần / tháng / sau tháng này. */
 const WU_DEADLINE_BUCKETS = [
   { key: 'overdue', label: 'Quá hạn', color: '#dc2626' },
   { key: 'today', label: 'Hôm nay', color: '#ea580c' },
+  { key: 'tomorrow', label: 'Ngày mai', color: '#f59e0b' },
   { key: 'this_week', label: 'Tuần này', color: '#d97706' },
   { key: 'next_week', label: 'Tuần sau', color: '#0891b2' },
   { key: 'this_month', label: 'Tháng này', color: '#0d9488' },
@@ -56,6 +58,7 @@ function resolveWuDeadlineBucket(it, todayMs = Date.now()) {
   const diffDays = Math.floor((startOfLocalDay(t).getTime() - today.getTime()) / 86400000);
   if (diffDays < 0) return 'overdue';
   if (diffDays === 0) return 'today';
+  if (diffDays === 1) return 'tomorrow';
   const dow = today.getDay() === 0 ? 7 : today.getDay();
   const daysToEndOfWeek = 7 - dow;
   if (diffDays <= daysToEndOfWeek) return 'this_week';
@@ -87,17 +90,42 @@ function forecastLabel(it) {
   return 'Chưa có hạn';
 }
 
-const MODULE_BADGE_CLS = {
-  crm: 'bg-emerald-600 text-white',
-  sx: 'bg-orange-600 text-white',
-  vc: 'bg-amber-600 text-white',
-};
-
 function shortDate(v) {
   if (!v) return '';
   const d = new Date(v);
   if (Number.isNaN(d.getTime())) return '';
   return `${d.getDate()}/${d.getMonth() + 1}`;
+}
+
+const CAL_NAME_PREFIX_RE = /^(?:\[FB Lead\]|\[FB\]|CT\s*-|TỦ BẾP\s*-|GCCK-|ks\s+(?:tủ bếp\s+)?)/i;
+const CAL_TRAILING_PHONE_RE = /\s*[-–]?\s*(?:\+?84|0)\d[\d\s.]{7,}\s*$/;
+
+/** Tên ngắn trên ô lịch: khách hàng, không thì đoạn nhận diện (Anh/Chị…) — không nhét SĐT/địa chỉ. */
+function calendarScanTitle(ev) {
+  const customer = String(ev?.customerName || '').trim();
+  if (customer) return customer;
+  let name = String(ev?.name || '').trim();
+  if (!name) return '';
+  name = name.replace(CAL_NAME_PREFIX_RE, '').trim();
+  name = name.replace(CAL_TRAILING_PHONE_RE, '').trim();
+  const segs = name.split(/\s+[-–]\s+/).map((s) => s.trim()).filter(Boolean);
+  if (segs[0] && /^(anh|chị|chú|cô|bác|em)\b/i.test(segs[0])) return segs[0];
+  return segs[0] || name;
+}
+
+function shortPersonName(name) {
+  const raw = String(name || '').trim();
+  if (!raw) return '';
+  const parts = raw.split(/\s+/);
+  if (parts.length <= 2) return raw;
+  return parts.slice(-2).join(' ');
+}
+
+function calendarMilestoneLabel(ev, calendarMode) {
+  if (ev?.tone === 'delivery') return 'Giao';
+  if (ev?.tone === 'install') return 'Lắp';
+  if (calendarMode === 'sx') return '';
+  return ev?.label || '';
 }
 
 function initials(name) {
@@ -121,14 +149,18 @@ function WorkUnifiedListProjectLink({ it }) {
   );
 }
 
-function WorkKanbanCard({ it }) {
-  const modules = [
-    it.has_crm && { key: 'crm', label: 'CRM' },
-    it.has_sx && { key: 'sx', label: 'SX' },
-    it.has_vc && { key: 'vc', label: 'VC' },
-  ].filter(Boolean);
-  const isMultiModule = modules.length >= 2;
+function deadlineDateTone(raw, forecast) {
+  if (!raw) return 'text-gray-400';
+  const t = new Date(raw);
+  if (!Number.isFinite(t.getTime())) return 'text-gray-400';
+  const today = startOfLocalDay(new Date());
+  const diff = Math.floor((startOfLocalDay(t).getTime() - today.getTime()) / 86400000);
+  if (diff < 0 || forecast === 'late') return 'text-red-600';
+  if (diff === 0 || forecast === 'at_risk') return 'text-amber-600';
+  return 'text-gray-800';
+}
 
+function WorkKanbanCard({ it, variant = 'default' }) {
   const people = [it.person1_name, it.person2_name].filter(Boolean);
 
   const dateBits = [];
@@ -140,20 +172,66 @@ function WorkKanbanCard({ it }) {
   const atRisk = it.forecast === 'at_risk';
   const dateTone = overdue ? 'text-red-600' : atRisk ? 'text-amber-600' : 'text-gray-500';
 
+  if (variant === 'deadline') {
+    const dateRows = [
+      it.production_deadline && { key: 'sx', label: 'Hạn SX', raw: it.production_deadline, chip: 'bg-emerald-50 text-emerald-800' },
+      it.delivery_date && { key: 'giao', label: 'Giao', raw: it.delivery_date, chip: 'bg-amber-50 text-amber-800' },
+      it.install_date && { key: 'lap', label: 'Lắp', raw: it.install_date, chip: 'bg-violet-50 text-violet-800' },
+    ].filter(Boolean);
+    const innerBits = [it.current_stage_label, people[0]].filter(Boolean);
+    return (
+      <div className="relative rounded-lg border border-gray-100 bg-white shadow-sm hover:shadow-md hover:border-gray-200 transition-shadow">
+      <Link
+        to={workUnifiedPath(it.id)}
+        data-wu-open-tab={it.id}
+        title="Chuột phải để mở tab mới"
+        className="block px-2.5 py-2 space-y-1.5 pr-[5.5rem]"
+      >
+        <div className="min-w-0">
+          <p className="text-[11px] font-bold text-violet-700 truncate">{it.code}</p>
+          <p className="text-sm font-bold text-gray-900 leading-snug line-clamp-2" title={it.name}>{it.name}</p>
+        </div>
+        {dateRows.length > 0 ? (
+          <div className="space-y-1">
+            {dateRows.map((row) => (
+              <div key={row.key} className="flex items-center justify-between gap-2">
+                <span className={`shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded ${row.chip}`}>{row.label}</span>
+                <span className={`text-sm font-bold tabular-nums ${deadlineDateTone(row.raw, it.forecast)}`}>
+                  {shortDate(row.raw)}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-[11px] text-gray-400">Chưa có hạn SX / giao / lắp</p>
+        )}
+        {innerBits.length > 0 && (
+          <p className="text-[11px] text-gray-600 leading-snug line-clamp-2" title={innerBits.join(' · ')}>
+            {innerBits.join(' · ')}
+          </p>
+        )}
+      </Link>
+      <KanbanGotoProjectTasksBtn
+        asLink
+        moduleKey="management"
+        projectId={it.id}
+        code={it.code}
+        className="absolute top-2 right-2 z-10"
+      />
+      </div>
+    );
+  }
+
   return (
+    <div className="relative rounded-lg border border-gray-100 bg-white shadow-sm hover:shadow-md hover:border-gray-200 transition-shadow">
     <Link
       to={workUnifiedPath(it.id)}
       data-wu-open-tab={it.id}
       title="Chuột phải để mở tab mới"
-      className="block rounded-lg border border-gray-100 bg-white px-2.5 py-2 shadow-sm hover:shadow-md hover:border-gray-200 transition-shadow space-y-1"
+      className="block px-2.5 py-2 space-y-1 pr-[5.5rem]"
     >
       <div className="flex items-center gap-1.5 min-w-0">
         <span className="text-xs font-bold text-violet-700 truncate">{it.code}</span>
-        {isMultiModule && (
-          <span className="shrink-0 text-[9px] font-semibold px-1 py-0.5 rounded-full bg-violet-50 text-violet-700 whitespace-nowrap">
-            ĐA MODULE
-          </span>
-        )}
       </div>
       <p className="text-xs font-bold text-gray-900 leading-snug line-clamp-1" title={it.name}>{it.name}</p>
       {(it.deal_code || people[0]) && (
@@ -181,22 +259,25 @@ function WorkKanbanCard({ it }) {
               {initials(people[0])}
             </span>
           )}
-          {modules.map((m) => (
-            <span key={m.key} className={`text-[9px] font-bold px-1 py-0.5 rounded ${MODULE_BADGE_CLS[m.key]}`}>
-              {m.label}
-            </span>
-          ))}
         </div>
         {it.value ? (
           <span className="text-xs font-bold text-emerald-600 whitespace-nowrap shrink-0">{formatVND(it.value)}</span>
         ) : null}
       </div>
     </Link>
+      <KanbanGotoProjectTasksBtn
+        asLink
+        moduleKey="management"
+        projectId={it.id}
+        code={it.code}
+        className="absolute top-2 right-2 z-10"
+      />
+    </div>
   );
 }
 
 /** 1 cột Kanban — tự quản ref cuộn riêng để ảo hoá (@tanstack/react-virtual) khi cột có nhiều thẻ (>=8). */
-function WorkKanbanColumn({ col }) {
+function WorkKanbanColumn({ col, variant = 'default' }) {
   const scrollRef = useRef(null);
   // Chỉ mount KanbanColumnVirtualList sau khi scrollRef đã gắn vào DOM (tick kế tiếp) —
   // tránh useVirtualizer khởi tạo lúc scrollRef.current còn null, khiến getVirtualItems() rỗng.
@@ -205,7 +286,9 @@ function WorkKanbanColumn({ col }) {
   return (
     <div
       data-col-slug={col.slug}
-      className="flex flex-col flex-shrink-0 w-[260px] h-full min-h-[28rem] rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden"
+      className={`flex flex-col flex-shrink-0 h-full rounded-xl border border-gray-100 bg-gray-50/70 overflow-hidden ${
+        variant === 'deadline' ? 'w-[280px]' : 'w-[260px]'
+      }`}
     >
       <div className="h-1 w-full shrink-0" style={{ backgroundColor: col.color }} aria-hidden />
       <div className="flex items-center justify-between gap-2 px-3 py-2 bg-white border-b border-gray-100 shrink-0">
@@ -233,7 +316,7 @@ function WorkKanbanColumn({ col }) {
             items={col.items}
             columnScrollRef={scrollRef}
             compact
-            renderCard={(it) => <WorkKanbanCard it={it} />}
+            renderCard={(it) => <WorkKanbanCard it={it} variant={variant} />}
           />
         ) : null}
       </div>
@@ -334,7 +417,7 @@ function CalendarDayFeed({ activeDay, isExplicitSelection, events, onClear, onSh
                   <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">Quá hạn</span>
                 )}
               </div>
-              <p className="text-sm font-semibold text-gray-800 line-clamp-1" title={ev.name}>{ev.name}</p>
+              <p className="text-sm font-semibold text-gray-800 line-clamp-2" title={ev.name}>{ev.name}</p>
               {(ev.dealCode || ev.stageLabel) && (
                 <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5 min-w-0">
                   <FileText className="h-3 w-3 shrink-0 text-gray-400" />
@@ -347,19 +430,23 @@ function CalendarDayFeed({ activeDay, isExplicitSelection, events, onClear, onSh
                   <span className="truncate">{[ev.customerName, ev.customerPhone].filter(Boolean).join(' · ')}</span>
                 </p>
               )}
-              <div className="flex items-center gap-2 flex-wrap mt-1.5">
-                {ev.modules.map((m) => (
-                  <span
-                    key={m}
-                    className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
-                      m === 'CRM' ? 'bg-emerald-600 text-white' : m === 'SX' ? 'bg-orange-600 text-white' : 'bg-amber-600 text-white'
-                    }`}
-                  >
-                    {m}
+              {(ev.productionDeadline || ev.deliveryDate || ev.installDate) && (
+                <p className="text-xs text-gray-600 flex items-center gap-1 mt-0.5 min-w-0">
+                  <Clock className="h-3 w-3 shrink-0 text-gray-400" />
+                  <span className="truncate">
+                    {[
+                      ev.productionDeadline && `Hạn SX ${shortDate(ev.productionDeadline)}`,
+                      ev.deliveryDate && `Giao ${shortDate(ev.deliveryDate)}`,
+                      ev.installDate && `Lắp ${shortDate(ev.installDate)}`,
+                    ].filter(Boolean).join(' · ')}
                   </span>
-                ))}
-                {ev.person && <span className="text-xs text-gray-500">· {ev.person}</span>}
-              </div>
+                </p>
+              )}
+              {ev.person && (
+                <div className="flex items-center gap-2 flex-wrap mt-1.5">
+                  <span className="text-xs text-gray-500">{ev.person}</span>
+                </div>
+              )}
             </CalendarEventLink>
           ))}
         </div>
@@ -407,6 +494,10 @@ export default function WorkUnifiedOverviewPage() {
   const [searchFocused, setSearchFocused] = useState(false);
   const [users, setUsers] = useState([]);
   const [regions, setRegions] = useState([]);
+  const [remindingProgress, setRemindingProgress] = useState(false);
+  const [remindedProgress, setRemindedProgress] = useState(false);
+  const [remindingProjectId, setRemindingProjectId] = useState('');
+  const [remindedProjectId, setRemindedProjectId] = useState('');
   const searchBoxRef = useRef(null);
   const resultsCardRef = useRef(null);
   const kanbanBoardRef = useRef(null);
@@ -559,6 +650,31 @@ export default function WorkUnifiedOverviewPage() {
 
   useEffect(() => { setPage(1); }, [stageFilter, forecastFilter, companyId, debouncedSearch, filterUserIds, filterRegionId, rangeFrom, rangeTo]);
 
+  const canRemindProgress = isWorkProductionModuleAdmin(user);
+
+  const listPaging = viewMode === 'list'
+    && !filterUserIds.length
+    && !filterRegionId
+    && !debouncedSearch
+    && !rangeFrom
+    && !rangeTo;
+
+  const workUnifiedQueryParams = useCallback(() => {
+    const params = {};
+    if (stageFilter) params.stage = stageFilter;
+    if (effectiveCompanyIdForUsers) params.company_id = effectiveCompanyIdForUsers;
+    else if (canPickCompany && companyId) params.company_id = companyId;
+    if (debouncedSearch) params.search = debouncedSearch;
+    if (filterUserIds.length) params.user_ids = filterUserIds.join(',');
+    if (filterRegionId) params.region_id = filterRegionId;
+    if (rangeFrom) params.date_from = rangeFrom;
+    if (rangeTo) params.date_to = rangeTo;
+    return params;
+  }, [
+    stageFilter, effectiveCompanyIdForUsers, canPickCompany, companyId,
+    debouncedSearch, filterUserIds, filterRegionId, rangeFrom, rangeTo,
+  ]);
+
   const load = useCallback(async () => {
     const gen = ++loadGenRef.current;
     setLoading(true);
@@ -566,7 +682,10 @@ export default function WorkUnifiedOverviewPage() {
     try {
       const params = {};
       if (stageFilter) params.stage = stageFilter;
-      if (forecastFilter !== 'all') params.forecast = forecastFilter;
+      // KPI luôn tính trên bộ lọc (công ty / NV / KV / hạn / tìm / công đoạn),
+      // không gồm tab Đúng tiến độ / Nguy cơ / Trễ. Chỉ gửi forecast khi phân
+      // trang danh sách — để lấy đúng trang. Các view khác lọc forecast trên client.
+      if (listPaging && forecastFilter !== 'all') params.forecast = forecastFilter;
       if (effectiveCompanyIdForUsers) params.company_id = effectiveCompanyIdForUsers;
       else if (canPickCompany && companyId) params.company_id = companyId;
       if (debouncedSearch) params.search = debouncedSearch;
@@ -576,12 +695,6 @@ export default function WorkUnifiedOverviewPage() {
       if (rangeTo) params.date_to = rangeTo;
       // Danh sách không phân trang khi đang lọc NV/KV/hạn/tìm — trả đủ dòng
       // để số trên thẻ = số dòng bảng. Không lọc thì vẫn 20/trang.
-      const listPaging = viewMode === 'list'
-        && !filterUserIds.length
-        && !filterRegionId
-        && !debouncedSearch
-        && !rangeFrom
-        && !rangeTo;
       if (listPaging) {
         params.page = page;
         params.page_size = PAGE_SIZE;
@@ -596,11 +709,69 @@ export default function WorkUnifiedOverviewPage() {
       if (gen === loadGenRef.current) setLoading(false);
     }
   }, [
-    stageFilter, forecastFilter, canPickCompany, companyId, effectiveCompanyIdForUsers,
-    debouncedSearch, filterUserIds, filterRegionId, rangeFrom, rangeTo, viewMode, page,
+    stageFilter,
+    listPaging && forecastFilter !== 'all' ? forecastFilter : 'all',
+    canPickCompany, companyId, effectiveCompanyIdForUsers,
+    debouncedSearch, filterUserIds, filterRegionId, rangeFrom, rangeTo, viewMode, page, listPaging,
   ]);
 
   useEffect(() => { load(); }, [load]);
+
+  const summarizeProgressRemind = (payload) => {
+    const sent = Number(payload?.sent || 0);
+    const skippedToday = Number(payload?.skipped_today || 0);
+    const skippedPeople = Number(payload?.skipped_no_people || 0);
+    const failed = Number(payload?.failed || 0);
+    const bits = [`Đã gửi ${sent} bình luận nhắc tiến độ`];
+    if (skippedToday) bits.push(`${skippedToday} dự án đã nhắc hôm nay`);
+    if (skippedPeople) bits.push(`${skippedPeople} dự án chưa có người chịu trách nhiệm`);
+    if (failed) bits.push(`${failed} lỗi`);
+    if (payload?.truncated) bits.push('chỉ gửi tối đa 80 dự án/lần');
+    return `${bits.join('. ')}.`;
+  };
+
+  const handleRemindProgress = async (projectIds = null) => {
+    const ids = Array.isArray(projectIds) ? projectIds.filter(Boolean) : [];
+    const isOne = ids.length === 1;
+    const n = isOne ? 1 : Number(stats.late || 0);
+    if (!n) {
+      alert('Không có dự án trễ hạn để nhắc.');
+      return;
+    }
+    const ok = window.confirm(
+      isOne
+        ? 'Gửi nhắc cập nhật tiến độ vào Bình luận và @ người chịu trách nhiệm (tab Thành viên)?'
+        : `Gửi nhắc cập nhật tiến độ vào Bình luận của ${n} dự án trễ hạn?\n\nNgười chịu trách nhiệm (tab Thành viên) sẽ được @mention. Ai chưa có trên tab sẽ được thêm vai trò Chịu trách nhiệm.\nMỗi dự án chỉ nhắc 1 lần/ngày.`,
+    );
+    if (!ok) return;
+    if (isOne) setRemindingProjectId(ids[0]);
+    else setRemindingProgress(true);
+    try {
+      const res = await api.post(
+        '/management/work-unified/remind-progress',
+        ids.length ? { project_ids: ids } : {},
+        { params: workUnifiedQueryParams() },
+      );
+      const sent = Number(res.data?.sent || 0);
+      if (!sent) {
+        alert(res.data?.message || res.data?.error || 'Không gửi được nhắc. Có thể đã nhắc hôm nay hoặc chưa có người chịu trách nhiệm.');
+        return;
+      }
+      if (isOne) {
+        setRemindedProjectId(ids[0]);
+        window.setTimeout(() => setRemindedProjectId((cur) => (cur === ids[0] ? '' : cur)), 4000);
+      } else {
+        setRemindedProgress(true);
+        window.setTimeout(() => setRemindedProgress(false), 4000);
+      }
+      alert(summarizeProgressRemind(res.data));
+    } catch (e) {
+      alert(e?.response?.data?.error || e?.response?.data?.message || 'Không gửi được nhắc cập nhật tiến độ');
+    } finally {
+      if (isOne) setRemindingProjectId('');
+      else setRemindingProgress(false);
+    }
+  };
 
   /**
    * Có dữ liệu mới (đổi filter/trang/company/view...) và có kết quả → tự cuộn tới khung
@@ -629,12 +800,6 @@ export default function WorkUnifiedOverviewPage() {
     () => (filterUserIds.length ? rawItems.filter((it) => workUnifiedRowMatchesStaff(it, filterUserIds)) : rawItems),
     [rawItems, filterUserIds],
   );
-  const listPaging = viewMode === 'list'
-    && !filterUserIds.length
-    && !filterRegionId
-    && !debouncedSearch
-    && !rangeFrom
-    && !rangeTo;
   const statsFromItems = useMemo(() => {
     const s = { total: items.length, on_track: 0, at_risk: 0, late: 0 };
     items.forEach((it) => {
@@ -645,14 +810,20 @@ export default function WorkUnifiedOverviewPage() {
     return s;
   }, [items]);
   const apiStats = data?.stats || { total: 0, on_track: 0, at_risk: 0, late: 0 };
+  // Khi API chưa lọc NV đủ, đếm lại từ dòng đã khớp NV — chỉ khi đang có đủ tập
+  // (không phân trang / không cắt forecast trên server).
   const clientTightened = filterUserIds.length > 0 && items.length !== rawItems.length;
-  const stats = clientTightened ? statsFromItems : apiStats;
+  const stats = clientTightened || !listPaging ? statsFromItems : apiStats;
+  const displayItems = useMemo(() => {
+    if (forecastFilter === 'all' || listPaging) return items;
+    return items.filter((it) => it.forecast === forecastFilter);
+  }, [items, forecastFilter, listPaging]);
   const totalFiltered = listPaging
-    ? (data?.total ?? items.length)
-    : (clientTightened || forecastFilter === 'all' ? items.length : (data?.total ?? items.length));
+    ? (data?.total ?? displayItems.length)
+    : displayItems.length;
   const totalPages = Math.max(1, Math.ceil(totalFiltered / PAGE_SIZE));
   const pageStart = (page - 1) * PAGE_SIZE;
-  const pageItems = items;
+  const pageItems = displayItems;
 
   const kanbanColumns = useMemo(() => {
     const bySlug = new Map();
@@ -660,7 +831,7 @@ export default function WorkUnifiedOverviewPage() {
       bySlug.set(s.slug, { slug: s.slug, label: s.label, color: KANBAN_COLORS[i % KANBAN_COLORS.length], items: [] });
     });
     const unassigned = { slug: '__none', label: 'Chưa xác định', color: '#9ca3af', items: [] };
-    items.forEach((it) => {
+    displayItems.forEach((it) => {
       const col = it.current_stage_slug && bySlug.get(it.current_stage_slug);
       if (col) col.items.push(it);
       else unassigned.items.push(it);
@@ -668,7 +839,7 @@ export default function WorkUnifiedOverviewPage() {
     const cols = Array.from(bySlug.values());
     if (unassigned.items.length) cols.push(unassigned);
     return cols;
-  }, [stages, items]);
+  }, [stages, displayItems]);
 
   const deadlineColumns = useMemo(() => {
     const out = WU_DEADLINE_BUCKETS.map((b) => ({
@@ -678,7 +849,7 @@ export default function WorkUnifiedOverviewPage() {
       items: [],
     }));
     const byKey = new Map(out.map((c) => [c.slug, c]));
-    items.forEach((it) => {
+    displayItems.forEach((it) => {
       const key = resolveWuDeadlineBucket(it);
       (byKey.get(key) || byKey.get('none')).items.push(it);
     });
@@ -686,12 +857,12 @@ export default function WorkUnifiedOverviewPage() {
       col.items.sort((a, b) => String(wuDeadlineRaw(a) || '').localeCompare(String(wuDeadlineRaw(b) || '')));
     });
     return out;
-  }, [items]);
+  }, [displayItems]);
 
   const plannerColumns = useMemo(() => {
     const map = new Map();
     const unassigned = { slug: '__none', label: 'Chưa gán', color: '#9ca3af', items: [] };
-    items.forEach((it) => {
+    displayItems.forEach((it) => {
       const name = String(it.assignee_name || it.person1_name || '').trim();
       if (!name) {
         unassigned.items.push(it);
@@ -710,7 +881,7 @@ export default function WorkUnifiedOverviewPage() {
     const cols = Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label, 'vi'));
     if (unassigned.items.length) cols.push(unassigned);
     return cols;
-  }, [items]);
+  }, [displayItems]);
 
   /**
    * Đang tìm kiếm ở view Kanban → dự án khớp có thể nằm ở cột đã cuộn khuất bên phải.
@@ -735,8 +906,7 @@ export default function WorkUnifiedOverviewPage() {
       return s.length >= 10 ? s.substring(0, 10) : null;
     };
     const todayStr = dayKey(new Date().toISOString());
-    items.forEach((it) => {
-      const modules = [it.has_crm && 'CRM', it.has_sx && 'SX', it.has_vc && 'VC'].filter(Boolean);
+    displayItems.forEach((it) => {
       const person = it.person1_name || it.person2_name || null;
       const addEvent = (kind, label, at, tone) => {
         const dateStr = dayKey(at);
@@ -748,12 +918,14 @@ export default function WorkUnifiedOverviewPage() {
           code: it.code,
           name: it.name,
           label,
-          modules,
           person,
           dealCode: it.deal_code,
           customerName: it.customer_name,
           customerPhone: it.customer_phone,
           stageLabel: it.current_stage_label,
+          productionDeadline: it.production_deadline,
+          deliveryDate: it.delivery_date,
+          installDate: it.install_date,
           tone,
           overdue: dateStr < todayStr,
         });
@@ -768,7 +940,7 @@ export default function WorkUnifiedOverviewPage() {
     const order = { deadline: 0, delivery: 1, install: 2 };
     map.forEach((list) => list.sort((a, b) => (order[a.tone] ?? 9) - (order[b.tone] ?? 9)));
     return map;
-  }, [items, calendarMode]);
+  }, [displayItems, calendarMode]);
 
   const calendarWeeks = useMemo(() => {
     const y = calMonth.getFullYear();
@@ -818,17 +990,22 @@ export default function WorkUnifiedOverviewPage() {
   // ~313px, danh sách chỉ còn ~454px cho 1.287px nội dung → xem được rất ít dòng.
   return (
     <WorkUnifiedOpenTabProvider>
+    {/* Dưới lg khung app có thanh trên `pt-12` (48px) cộng `pt-3` của vùng nội dung (12px) → trừ
+        3.75rem; từ lg trở lên thanh đó là `lg:pt-0` nên chỉ trừ 0.75rem. Trừ thiếu thì đáy cột
+        Kanban tụt khỏi màn hình và bị cắt. */}
     <div className={`flex flex-col gap-3 w-full pb-3 ${
       viewMode === 'list'
-        ? 'min-h-[calc(100vh-0.75rem)]'
-        : 'h-[calc(100vh-0.75rem)] max-h-[calc(100vh-0.75rem)] overflow-hidden'
+        ? 'min-h-[calc(100vh-3.75rem)] lg:min-h-[calc(100vh-0.75rem)]'
+        : 'h-[calc(100vh-3.75rem)] max-h-[calc(100vh-3.75rem)] lg:h-[calc(100vh-0.75rem)] lg:max-h-[calc(100vh-0.75rem)] overflow-hidden'
     }`}>
-      <div className="shrink-0">
-        <h1 className="text-xl font-bold" style={{ color: '#111827' }}>Work Unified</h1>
-        <p className="text-sm mt-0.5" style={{ color: '#6b7280' }}>
-          Danh sách toàn bộ dự án của {companyName}, xuyên suốt từ lúc chốt khách hàng đến khi bàn giao
-        </p>
-      </div>
+      {viewMode === 'list' && (
+        <div className="shrink-0">
+          <h1 className="text-xl font-bold" style={{ color: '#111827' }}>Work Unified</h1>
+          <p className="text-sm mt-0.5" style={{ color: '#6b7280' }}>
+            Danh sách toàn bộ dự án của {companyName}, xuyên suốt từ lúc chốt khách hàng đến khi bàn giao
+          </p>
+        </div>
+      )}
 
       <div className="sticky top-0 z-30 shrink-0 flex items-center justify-between flex-wrap gap-2 rounded-xl border border-gray-100 bg-white px-3 py-2.5 shadow-sm">
         <div ref={searchBoxRef} className="relative flex-1 min-w-0 max-w-none sm:max-w-[22rem] lg:max-w-[28rem]">
@@ -918,6 +1095,26 @@ export default function WorkUnifiedOverviewPage() {
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
             Làm mới
           </button>
+          {canRemindProgress && (
+            <button
+              type="button"
+              onClick={() => handleRemindProgress()}
+              disabled={loading || remindingProgress || !stats.late}
+              title="Gửi bình luận nhắc cập nhật tiến độ tới người chịu trách nhiệm của các dự án trễ hạn"
+              className={`inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg border cursor-pointer disabled:opacity-50 disabled:cursor-default ${
+                remindedProgress
+                  ? 'bg-amber-50 text-amber-800 border-amber-200'
+                  : 'bg-white text-amber-800 border-amber-200 hover:bg-amber-50'
+              }`}
+            >
+              <Bell className={`h-4 w-4 ${remindingProgress ? 'animate-pulse' : ''}`} />
+              {remindedProgress
+                ? 'Đã nhắc tiến độ'
+                : remindingProgress
+                  ? 'Đang gửi…'
+                  : `Nhắc tiến độ${stats.late ? ` (${stats.late})` : ''}`}
+            </button>
+          )}
           <Link
             to="/projects/create"
             className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
@@ -962,9 +1159,12 @@ export default function WorkUnifiedOverviewPage() {
         </div>
       </div>
 
+      {/* Chỉ hiện ở Danh sách: các view khoá chiều cao (Kanban/Deadline/Planner/Lịch) cần chỗ cho
+          nội dung, mà hàng tab ngay dưới đã có đúng 4 con số này kèm cùng chức năng lọc. */}
+      {viewMode === 'list' && (
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 shrink-0">
         {[
-          { key: 'all', label: 'Đang thực hiện', value: forecastFilter === 'all' ? totalFiltered : stats.total, valueCls: 'text-gray-900' },
+          { key: 'all', label: 'Đang thực hiện', value: stats.total, valueCls: 'text-gray-900' },
           { key: 'on_track', label: 'Đúng tiến độ', value: stats.on_track, valueCls: 'text-emerald-600' },
           { key: 'at_risk', label: 'Nguy cơ trễ', value: stats.at_risk, valueCls: 'text-amber-600' },
           { key: 'late', label: 'Trễ hạn', value: stats.late, valueCls: 'text-red-600' },
@@ -982,6 +1182,7 @@ export default function WorkUnifiedOverviewPage() {
           </button>
         ))}
       </div>
+      )}
 
       <div ref={resultsCardRef} className="rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden flex-1 min-h-0 flex flex-col">
         <div className="flex items-center justify-between gap-2 p-2 border-b border-gray-100 flex-wrap shrink-0">
@@ -995,7 +1196,7 @@ export default function WorkUnifiedOverviewPage() {
                   forecastFilter === t.key ? 'bg-emerald-600 text-white' : 'text-gray-600 hover:bg-gray-50'
                 }`}
               >
-                {t.label} · {t.key === 'all' ? (forecastFilter === 'all' ? totalFiltered : stats.total) : stats[t.key] || 0}
+                {t.label} · {t.key === 'all' ? stats.total : stats[t.key] || 0}
               </button>
             ))}
           </div>
@@ -1152,34 +1353,30 @@ export default function WorkUnifiedOverviewPage() {
                               {cell.day}
                             </div>
                             <div className="space-y-1 flex-1">
-                              {shown.map((ev) => (
+                              {shown.map((ev) => {
+                                const scan = calendarScanTitle(ev);
+                                const who = shortPersonName(ev.person);
+                                const mile = calendarMilestoneLabel(ev, calendarMode);
+                                const line2 = [scan, who].filter(Boolean).join(' · ');
+                                return (
                                 <CalendarEventLink
                                   key={ev.id}
                                   ev={ev}
                                   className={`block rounded-md border px-1 py-0.5 hover:brightness-95 transition-[filter] ${calendarToneClass(ev)}`}
-                                  title={[ev.code, ev.name, ev.label, ev.stageLabel, ev.modules.join(' · '), ev.person, 'Chuột phải: mở tab mới'].filter(Boolean).join(' — ')}
+                                  title={[ev.code, ev.name, ev.label, ev.stageLabel, ev.person, ev.customerPhone, 'Chuột phải: mở tab mới'].filter(Boolean).join(' — ')}
                                 >
                                   <div className="flex items-center justify-between gap-0.5">
                                     <span className="text-[9px] font-extrabold font-mono truncate">{ev.code}</span>
-                                    <span className="text-[8px] font-bold uppercase opacity-90 shrink-0">{ev.label}</span>
+                                    {mile ? (
+                                      <span className="text-[8px] font-bold uppercase opacity-90 shrink-0">{mile}</span>
+                                    ) : null}
                                   </div>
-                                  <p className="text-[9px] font-semibold leading-tight line-clamp-2 opacity-95">{ev.name}</p>
-                                  {ev.modules.length > 0 && (
-                                    <div className="flex items-center gap-0.5 mt-0.5 flex-wrap">
-                                      {ev.modules.map((m) => (
-                                        <span
-                                          key={m}
-                                          className={`text-[7px] font-extrabold px-0.5 rounded ${
-                                            m === 'CRM' ? 'bg-emerald-100 text-emerald-800' : m === 'SX' ? 'bg-orange-100 text-orange-800' : 'bg-amber-100 text-amber-900'
-                                          }`}
-                                        >
-                                          {m}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  )}
+                                  {line2 ? (
+                                    <p className="text-[9px] font-semibold leading-tight truncate opacity-95" title={line2}>{line2}</p>
+                                  ) : null}
                                 </CalendarEventLink>
-                              ))}
+                                );
+                              })}
                               {more > 0 && (
                                 <div className="text-[9px] text-center font-semibold text-slate-500 bg-slate-50 rounded border border-slate-200 py-0.5">
                                   +{more} mốc nữa
@@ -1221,12 +1418,12 @@ export default function WorkUnifiedOverviewPage() {
           <div className="p-3 flex-1 min-h-0">
             {loading ? (
               <div className="px-4 py-8 text-center text-gray-400 text-sm">Đang tải...</div>
-            ) : items.length === 0 ? (
+            ) : displayItems.length === 0 ? (
               <div className="px-4 py-8 text-center text-gray-400 text-sm">{emptyResultsMessage}</div>
             ) : (
-              <div ref={viewMode === 'kanban' ? kanbanBoardRef : undefined} className="flex gap-3 overflow-x-auto h-full min-h-[28rem] items-stretch">
+              <div ref={viewMode === 'kanban' ? kanbanBoardRef : undefined} className="flex gap-3 overflow-x-auto h-full items-stretch">
                 {(viewMode === 'kanban' ? kanbanColumns : viewMode === 'deadline' ? deadlineColumns : plannerColumns).map((col) => (
-                  <WorkKanbanColumn key={col.slug} col={col} />
+                  <WorkKanbanColumn key={col.slug} col={col} variant={viewMode === 'deadline' ? 'deadline' : 'default'} />
                 ))}
               </div>
             )}
@@ -1299,8 +1496,29 @@ export default function WorkUnifiedOverviewPage() {
                 header: 'Trạng thái',
                 cellClassName: 'px-4 py-3 align-top',
                 cell: (it) => (
-                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${FORECAST_BADGE_CLS[it.forecast]}`}>
-                    {forecastLabel(it)}
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full whitespace-nowrap ${FORECAST_BADGE_CLS[it.forecast]}`}>
+                      {forecastLabel(it)}
+                    </span>
+                    {canRemindProgress && it.forecast === 'late' && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleRemindProgress([it.id]);
+                        }}
+                        disabled={!!remindingProjectId || !!remindingProgress || remindedProjectId === it.id}
+                        title="Nhắc cập nhật tiến độ vào bình luận và tab Thành viên"
+                        className={`inline-flex items-center justify-center h-7 w-7 rounded-md border cursor-pointer disabled:cursor-default ${
+                          remindedProjectId === it.id
+                            ? 'bg-amber-50 text-amber-800 border-amber-200'
+                            : 'bg-white text-amber-700 border-amber-200 hover:bg-amber-50'
+                        }`}
+                      >
+                        <Bell className={`h-3.5 w-3.5 ${remindingProjectId === it.id ? 'animate-pulse' : ''}`} />
+                      </button>
+                    )}
                   </span>
                 ),
               },
@@ -1326,12 +1544,12 @@ export default function WorkUnifiedOverviewPage() {
             <p className="text-xs text-gray-500">
               {listPaging ? (
                 <>
-                  Hiển thị <span className="font-medium text-gray-700">{pageStart + 1}-{pageStart + items.length}</span> trong tổng số{' '}
+                  Hiển thị <span className="font-medium text-gray-700">{pageStart + 1}-{pageStart + displayItems.length}</span> trong tổng số{' '}
                   <span className="font-medium text-gray-700">{totalFiltered}</span> dự án
                 </>
               ) : (
                 <>
-                  <span className="font-medium text-gray-700">{items.length}</span> dự án
+                  <span className="font-medium text-gray-700">{displayItems.length}</span> dự án
                 </>
               )}
             </p>

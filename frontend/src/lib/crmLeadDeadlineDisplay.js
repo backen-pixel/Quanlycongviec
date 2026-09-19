@@ -3,6 +3,7 @@ import { endOfVnCalendarDayAfterEntered } from './vnDate';
 import { companyWorkEndMsFromRaw } from './companyDeadlineClock';
 import {
   DEADLINE_MODULE,
+  crmHandedToProduction,
   resolveEffectiveModuleDeadline,
 } from './moduleDeadlinePolicy';
 
@@ -50,15 +51,16 @@ export function crmLeadMissingPhone(item) {
 /**
  * Ẩn badge deadline / quá hạn trên thẻ Kanban khi:
  * - lead/deal chưa có SĐT
- * - user tick «đã tương tác»
+ * - đã tắt hạn ở chi tiết
  * - cột Thắng/Thua/Hoàn thành doanh thu
+ * Tick «đã tương tác» chỉ là đánh dấu cá nhân — không ẩn hạn / không đẩy khỏi Deadline.
  */
 export function shouldHideCrmKanbanDeadlineOnCard(item, stage) {
   if (item?.deadline_disabled_at) return true;
   if (crmLeadMissingPhone(item)) return true;
-  if (item?.is_interacted) return true;
   const st = stage || item?.stage;
   if (isCrmPipelineStageNoDeadline(st)) return true;
+  if (crmHandedToProduction(item, st)) return true;
   return false;
 }
 
@@ -234,7 +236,8 @@ export function resolveCrmLeadDeadlineViewSource(item, stage, config) {
 export function resolveCrmLeadDeadlineBucketSource(item, stage, config) {
   const st = stage || item?._stage || item?.stage;
   const hasPhone = crmLeadHasPhone(item);
-  if (!hasPhone || item?.is_interacted || item?.deadline_disabled_at || isCrmPipelineStageNoDeadline(st)) {
+  if (!hasPhone || item?.deadline_disabled_at || isCrmPipelineStageNoDeadline(st)
+    || crmHandedToProduction(item, st)) {
     return { deadlineTs: null, source: null, forcedNoDeadline: true };
   }
   void config;

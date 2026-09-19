@@ -1235,7 +1235,13 @@ async function runAutoCreateProjectFromWonDeal({
       projectId,
       coCheck.company.id,
       validatedWorkshopTypeId,
+      { primaryOnly: true },
     );
+    // Bổ sung cho ĐỦ đội theo setup phân loại — chỉ thêm, không xoá ai.
+    try {
+      const { bosungDoiTheoSetup } = require('./productionWorkshopTypeStaff');
+      await bosungDoiTheoSetup(projectId, coCheck.company.id, validatedWorkshopTypeId);
+    } catch (e) { console.warn('[auto-project] bo sung doi:', e.message); }
     const staffIds = await loadProjectProductionStaffUserIds(projectId);
     notifyStaff = staffIds.length ? staffIds : (primaryStaffId ? [primaryStaffId] : []);
     mentionStaffIds = [...notifyStaff];
@@ -1276,6 +1282,16 @@ async function runAutoCreateProjectFromWonDeal({
       await ensureLeadMembersFromProjectStaff(dealId);
     } catch (syncErr) {
       console.warn('[auto-project] ensure lead members:', syncErr.message);
+    }
+    try {
+      const { applyCrmStageDefaultMembersToDeal } = require('./crmPipelineStageMembers');
+      await applyCrmStageDefaultMembersToDeal({
+        dealId,
+        stageId: deal.stage_id,
+        addedBy: userId || null,
+      });
+    } catch (crmMemErr) {
+      console.warn('[auto-project] CRM stage members:', crmMemErr.message);
     }
   }
 

@@ -205,6 +205,7 @@ export const avatarColor = (name) => {
 
 // ── ROLE → STAGE MAPPING (frontend fallback) ──
 export const ROLE_LABELS = {
+  ecosystem_admin: 'Quản trị hệ sinh thái',
   admin: 'Quản trị viên', manager: 'Quản lý', sales: 'Kinh doanh',
   designer: 'Thiết kế', production: 'Sản xuất', production_staff: 'NV Sản xuất (Admin CV+SX)',
   production_admin: 'Admin Sản xuất', crm_production_staff: 'NV CRM + Admin SX',
@@ -213,6 +214,7 @@ export const ROLE_LABELS = {
 };
 
 export const ROLE_STAGE_MAP = {
+  ecosystem_admin: ['consulting','design','quotation','contract','production','delivery','customer-care'],
   admin: ['consulting','design','quotation','contract','production','delivery','customer-care'],
   manager: ['consulting','design','quotation','contract','production','delivery','customer-care'],
   sales: ['consulting','quotation','contract'],

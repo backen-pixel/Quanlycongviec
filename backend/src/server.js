@@ -344,7 +344,7 @@ app.get('/api/metrics', (req, res) => {
     const token = (req.headers.authorization || '').replace('Bearer ', '');
     if (!token) return res.status(401).json({ error: 'Unauthorized' });
     const decoded = jwt_verify.verify(token, config.jwtSecret);
-    if (!['admin', 'manager'].includes(decoded?.role)) return res.status(403).json({ error: 'Forbidden' });
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(decoded?.role)) return res.status(403).json({ error: 'Forbidden' });
     res.json({ ...getSnapshot(), socket: getSocketMetricsSnapshot(io) });
   } catch { res.status(401).json({ error: 'Invalid token' }); }
 });
@@ -460,6 +460,16 @@ app.use('/api/facebook', facebookRouter);
 const zaloRouter = require('./routes/zalo');
 zaloRouter._ioRef = io;
 app.use('/api/zalo', zaloRouter);
+// Chép ảnh/tệp Zalo về kho công ty. Việc nền, tách khỏi luồng nhận tin vì tải
+// tệp chậm hơn ghi cơ sở dữ liệu hàng chục lần.
+setInterval(() => {
+  require('./helpers/zaloAttachmentCopy').processPending(5)
+    .catch((e) => console.warn('[Zalo đính kèm] vòng nền:', e.message));
+}, 20000);
+
+const zaloBridgeRouter = require('./routes/zaloBridge');
+zaloBridgeRouter._ioRef = io;
+app.use('/api/zalo-bridge', zaloBridgeRouter);
 // Inject io reference for realtime fb_message events
 app.use('/api/production', require('./routes/production'));
 try { app.use('/api/production/backup-sync', require('./routes/productionBackupSync')); } catch (e) { console.warn('⚠️ production backup-sync route failed:', e.message); }

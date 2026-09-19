@@ -3,18 +3,259 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { Settings, Plus, Trash2, Save, ChevronRight, ChevronDown, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft, Search, Wrench, Eye, EyeOff } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, ChevronRight, ChevronDown, ChevronUp, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft, Search, Wrench, Eye, EyeOff, Layers, GripVertical } from 'lucide-react';
 import WorkshopTypeSettingsSection from '../components/WorkshopTypeSettingsSection';
 import { isPipelineStageSlaDisabled } from '../lib/crmPipelineSla';
 import { SX_DEADLINE_GROUPS, sxDeadlineGroupMeta } from '../lib/sxWorkshopSchedule';
+import { nhanCotLon, sapXepNhomCotLon, khoaCotLonTuNhan } from '../lib/sxGopCot';
+import { sxGroupPrimaryOwnerId } from '../lib/sxStageStaff';
+import { tabKanbanCot, tabKanbanNhom, khoaTabKanban, nhanTabKanban, dsTabKanban, laTabCoDinh, TAB_SX, TAB_CONG_NO } from '../lib/sxTachCongNo';
+
+/**
+ * Cột lớn (giai đoạn NỐI TIẾP) — ghi thẳng TÊN vào production_pipeline_stages.group_key.
+ * Không còn danh sách cứng: mỗi công ty tự đặt tên cột lớn của mình. Các cột nhỏ cùng một
+ * tên = việc SONG SONG bên trong giai đoạn đó. Dưới đây chỉ là gợi ý cho pipeline mới tinh.
+ */
+const SX_COT_LON_GOI_Y = ['Tiếp nhận', 'Kế hoạch', 'Duyệt', 'Gia công', 'Hoàn thiện', 'Đóng gói', 'Công nợ'];
+const SX_COT_LON_GOI_Y_TAB = {
+  sx: ['Tiếp nhận', 'Kế hoạch', 'Duyệt', 'Gia công', 'Hoàn thiện', 'Đóng gói'],
+  cong_no: ['Công nợ'],
+};
 
 const INTAKE = 'won_pending';
 const LS_SX_PIPE_COMPANY = 'sx_pipeline_settings_company_id';
 const LS_SX_PIPE_TYPE = 'sx_pipeline_settings_type_key';
+const LS_SX_BOARD_TABS = 'sx_pipeline_board_tabs_v1';
 const COLORS = ['#0f766e', '#14b8a6', '#5eead4', '#64748b', '#3B82F6', '#8B5CF6', '#F59E0B', '#10B981'];
 const ICONS = ['🏭', '🚚', '🤝', '⏳', '📋', '✅', '🎯', '🔧', '📦'];
 const GLOBAL_TYPE_KEY = 'global';
 const STALE_PIPELINE_STAGE_MSG = 'Cột pipeline không còn tồn tại (cấu hình đã đổi). Danh sách sẽ được tải lại.';
+const COT_LON_MOI = '__moi__';
+
+function CotLonPicker({ value, options, onChange, className, title }) {
+  const key = String(value || '').trim();
+  const known = (options || []).some((o) => o.key === key);
+  return (
+    <select
+      value={key}
+      onChange={(e) => {
+        const v = e.target.value;
+        if (v === COT_LON_MOI) {
+          const nhap = window.prompt('Tên cột lớn mới:', nhanCotLon(key) || '');
+          if (nhap === null) return;
+          onChange(nhap.trim());
+          return;
+        }
+        onChange(v);
+      }}
+      className={className}
+      title={title}
+    >
+      <option value="">— Đứng riêng —</option>
+      {(options || []).map((o) => (
+        <option key={o.key} value={o.key}>{o.label}</option>
+      ))}
+      {key && !known && <option value={key}>{nhanCotLon(key) || key}</option>}
+      <option value={COT_LON_MOI}>+ Tên mới…</option>
+    </select>
+  );
+}
+
+function FormThemCotLon({ ten, setTen, ids, setIds, busy, onSubmit, disabled, chips = [], stages = [], placeholder = 'Tên cột lớn — vd. Gia công' }) {
+  return (
+    <div className="mt-2 rounded-lg border border-dashed border-violet-300 bg-violet-50/40 px-3 py-2.5 space-y-2">
+      <p className="text-[11px] font-bold uppercase tracking-wide text-violet-800 inline-flex items-center gap-1">
+        <Plus className="h-3.5 w-3.5" /> Thêm cột chính
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          value={ten}
+          onChange={(e) => setTen(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); onSubmit(); } }}
+          placeholder={placeholder}
+          className="h-9 min-w-[12rem] flex-1 rounded-md border border-violet-200 bg-white px-2 text-sm"
+        />
+        <button
+          type="button"
+          disabled={busy || disabled}
+          onClick={onSubmit}
+          className="inline-flex h-9 items-center gap-1 rounded-md bg-violet-600 px-3 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50 cursor-pointer"
+        >
+          {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+          Thêm
+        </button>
+      </div>
+      {chips.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {chips.map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTen(t)}
+              className={`rounded-full border px-2 py-0.5 text-[11px] cursor-pointer ${
+                String(ten || '').trim() === t
+                  ? 'border-violet-500 bg-violet-100 text-violet-900'
+                  : 'border-violet-200 bg-white text-violet-700 hover:bg-violet-50'
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      )}
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-violet-700">Đưa cột pipeline vào</p>
+      <div className="flex flex-wrap gap-x-3 gap-y-1.5 max-h-36 overflow-y-auto">
+        {stages.map((st) => {
+          const id = String(st.id);
+          const checked = ids.has(id);
+          const gk = String(st.group_key || '').trim();
+          return (
+            <label
+              key={st.id}
+              className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[12px] cursor-pointer select-none ${
+                checked
+                  ? 'border-violet-400 bg-white text-violet-900'
+                  : 'border-transparent bg-white/70 text-gray-700 hover:bg-white'
+              }`}
+            >
+              <input
+                type="checkbox"
+                className="rounded border-gray-300 text-violet-600 focus:ring-violet-500"
+                checked={checked}
+                onChange={() => {
+                  setIds((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(id)) next.delete(id);
+                    else next.add(id);
+                    return next;
+                  });
+                }}
+              />
+              <span>{st.icon || '📋'} {st.name}</span>
+              {gk ? (
+                <span className="text-[10px] text-violet-500">{nhanCotLon(gk) || gk}</span>
+              ) : (
+                <span className="text-[10px] text-gray-400">chưa gán</span>
+              )}
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function FormThemCotNho({ mo, ten, setTen, busy, onMo, onHuy, onSubmit }) {
+  if (!mo) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onMo(); }}
+        className="w-full inline-flex items-center justify-center gap-1 rounded-md border border-dashed border-violet-300 bg-white px-2 py-1.5 text-[11px] font-semibold text-violet-700 hover:bg-violet-50 cursor-pointer"
+      >
+        <Plus className="h-3 w-3" /> Thêm cột nhỏ
+      </button>
+    );
+  }
+  return (
+    <form
+      onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); onSubmit(); }}
+      className="flex items-center gap-1"
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <input
+        autoFocus
+        value={ten}
+        onChange={(e) => setTen(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); onHuy(); }
+        }}
+        placeholder="Tên cột nhỏ"
+        className="min-w-0 flex-1 h-7 rounded-md border border-violet-300 bg-white px-1.5 text-[12px]"
+      />
+      <button
+        type="submit"
+        disabled={busy || !String(ten || '').trim()}
+        className="h-7 shrink-0 rounded-md bg-violet-600 px-2 text-[11px] font-semibold text-white hover:bg-violet-700 disabled:opacity-50 cursor-pointer inline-flex items-center"
+      >
+        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Thêm'}
+      </button>
+    </form>
+  );
+}
+
+function docTabThem(companyId, typeKey) {
+  try {
+    const map = JSON.parse(localStorage.getItem(LS_SX_BOARD_TABS) || '{}');
+    const arr = map[`${companyId || ''}:${typeKey || ''}`];
+    return Array.isArray(arr)
+      ? arr.map(khoaTabKanban).filter((k) => k && k !== TAB_SX)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function ghiTabThem(companyId, typeKey, keys) {
+  try {
+    const map = JSON.parse(localStorage.getItem(LS_SX_BOARD_TABS) || '{}') || {};
+    map[`${companyId || ''}:${typeKey || ''}`] = (keys || []).filter((k) => k && k !== TAB_SX);
+    localStorage.setItem(LS_SX_BOARD_TABS, JSON.stringify(map));
+  } catch { /* private mode */ }
+}
+
+function mauTabDangChon(key) {
+  if (key === TAB_SX) return 'bg-indigo-600 text-white shadow-sm';
+  if (key === TAB_CONG_NO) return 'bg-amber-600 text-white shadow-sm';
+  return 'bg-teal-600 text-white shadow-sm';
+}
+
+function TabKanbanSwitcher({ value, onChange, tabs = [], onAdd, onXoa }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-slate-200 bg-white p-0.5 shadow-inner">
+        {(tabs || []).map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => onChange(t.key)}
+            className={`h-8 rounded-md px-3 text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer transition-all ${
+              value === t.key ? mauTabDangChon(t.key) : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`}
+          >
+            {t.key === TAB_SX ? <Factory className="h-3.5 w-3.5" /> : t.key === TAB_CONG_NO ? <Banknote className="h-3.5 w-3.5" /> : <Layers className="h-3.5 w-3.5" />}
+            {t.label}
+            <span className={`rounded-full px-1.5 text-[10px] font-bold tabular-nums ${
+              value === t.key ? 'bg-white/25 text-white' : 'bg-slate-100 text-slate-500'
+            }`}>
+              {t.so}
+            </span>
+            {onXoa && !laTabCoDinh(t.key) && !(t.so > 0) ? (
+              <span
+                role="button"
+                title="Xóa tab trống"
+                onClick={(e) => { e.stopPropagation(); onXoa(t.key); }}
+                className="ml-0.5 text-[13px] leading-none opacity-70 hover:opacity-100"
+              >
+                ×
+              </span>
+            ) : null}
+          </button>
+        ))}
+      </div>
+      {onAdd ? (
+        <button
+          type="button"
+          onClick={onAdd}
+          title="Thêm tab Dashboard"
+          className="inline-flex h-8 items-center gap-1 rounded-md border border-dashed border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-600 hover:border-teal-400 hover:bg-teal-50 hover:text-teal-800 cursor-pointer"
+        >
+          <Plus className="h-3.5 w-3.5" /> Tab
+        </button>
+      ) : null}
+    </div>
+  );
+}
 
 function isMissingProductionStage(e) {
   return e?.response?.status === 404;
@@ -26,6 +267,8 @@ export default function ProductionPipelineSettingsPage() {
   const [companies, setCompanies] = useState([]);
   const [settingsCompanyId, setSettingsCompanyId] = useState('');
   const [stages, setStages] = useState([]);
+  /** Tab của trang: 'gop' = cột chính, 'cot' = cột nhỏ, 'cai' = cài đặt công ty. */
+  const [tabTrang, setTabTrang] = useState('gop');
   const [workflowStages, setWorkflowStages] = useState([]);
   const [crmStages, setCrmStages] = useState([]);
   const [workshopTypes, setWorkshopTypes] = useState([]);
@@ -53,7 +296,8 @@ export default function ProductionPipelineSettingsPage() {
   const [typeStaffUsers, setTypeStaffUsers] = useState([]);
   const [typeStaffLoading, setTypeStaffLoading] = useState(false);
   const [typeStaffSaving, setTypeStaffSaving] = useState(false);
-  const [staffConfigOpen, setStaffConfigOpen] = useState(false);
+  const [staffConfigOpen, setStaffConfigOpen] = useState(true);
+  const [gopOwnerSavingKey, setGopOwnerSavingKey] = useState('');
   const [stageStaffFilterCompanyId, setStageStaffFilterCompanyId] = useState('');
   const [stageStaffFilterDivisionId, setStageStaffFilterDivisionId] = useState('');
   const [stageStaffDivisions, setStageStaffDivisions] = useState([]);
@@ -84,6 +328,8 @@ export default function ProductionPipelineSettingsPage() {
     counts_as_collected_revenue: false,
     requires_deadline: false,
     deadline_group: '',
+    group_key: '',
+    board_tab: 'sx',
     auto_add_members_on_enter: false,
     stage_staff_user_ids: [],
     stage_staff_primary_user_id: '',
@@ -129,6 +375,11 @@ export default function ProductionPipelineSettingsPage() {
   }, [load]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    setTabThem(docTabThem(settingsCompanyId, selectedTypeKey));
+    setGopTabKanban(TAB_SX);
+  }, [settingsCompanyId, selectedTypeKey]);
 
   useEffect(() => {
     if (!settingsCompanyId) return undefined;
@@ -818,6 +1069,8 @@ export default function ProductionPipelineSettingsPage() {
     counts_as_collected_revenue: !!form.counts_as_collected_revenue,
     requires_deadline: !!form.requires_deadline,
     deadline_group: form.deadline_group || null,
+    group_key: form.group_key || null,
+    board_tab: khoaTabKanban(form.board_tab),
   });
 
   const requestEdit = (stage) => {
@@ -849,6 +1102,8 @@ export default function ProductionPipelineSettingsPage() {
       counts_as_collected_revenue: false,
       requires_deadline: false,
       deadline_group: '',
+    group_key: '',
+      board_tab: 'sx',
       auto_add_members_on_enter: false,
       stage_staff_user_ids: [],
       stage_staff_primary_user_id: '',
@@ -886,6 +1141,8 @@ export default function ProductionPipelineSettingsPage() {
       counts_as_collected_revenue: !!stage.counts_as_collected_revenue,
       requires_deadline: !!stage.requires_deadline,
       deadline_group: stage.deadline_group || '',
+      group_key: stage.group_key || '',
+      board_tab: tabKanbanCot(stage),
       auto_add_members_on_enter: !!stage.auto_add_members_on_enter,
       stage_staff_user_ids: (stage.default_staff?.user_ids || []).map(String),
       stage_staff_primary_user_id: stage.default_staff?.primary_user_id ? String(stage.default_staff.primary_user_id) : '',
@@ -1179,6 +1436,21 @@ export default function ProductionPipelineSettingsPage() {
   /** Kéo thả sắp xếp pipeline xưởng — cùng phân loại đang chọn. */
   const [draggingId, setDraggingId] = useState(null);
   const [dragOverId, setDragOverId] = useState(null);
+  const [gopDragKey, setGopDragKey] = useState(null);
+  const [gopOverKey, setGopOverKey] = useState(null);
+  const [keoCotNhoId, setKeoCotNhoId] = useState(null);
+  const keoPayloadRef = useRef(null);
+  const vuaKeoRef = useRef(false);
+  const [gopStaffQuery, setGopStaffQuery] = useState('');
+  const [gopThemTen, setGopThemTen] = useState('');
+  const [gopThemIds, setGopThemIds] = useState(() => new Set());
+  const [gopThemBusy, setGopThemBusy] = useState(false);
+  const [gopThemNhoKey, setGopThemNhoKey] = useState('');
+  const [gopThemNhoTen, setGopThemNhoTen] = useState('');
+  const [gopThemNhoBusy, setGopThemNhoBusy] = useState(false);
+  /** Tab Dashboard mà cột lớn đang setup */
+  const [gopTabKanban, setGopTabKanban] = useState(TAB_SX);
+  const [tabThem, setTabThem] = useState([]);
 
   const handleDragStart = (e, stage) => {
     if (stage.bucket_slug === INTAKE) {
@@ -1224,14 +1496,459 @@ export default function ProductionPipelineSettingsPage() {
   };
 
   const sorted = [...stages].sort((a, b) => a.order_index - b.order_index);
+
+  /** Các cột lớn đang dùng trong pipeline này + số cột nhỏ song song bên trong. */
+  const cotLonDaCo = useMemo(() => {
+    const m = new Map();
+    (stages || []).forEach((st) => {
+      const k = String(st.group_key || '').trim();
+      if (!k) return;
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(st);
+    });
+    return sapXepNhomCotLon([...m.entries()].map(([key, ds]) => ({
+      key,
+      ds,
+      moc: Math.min(...ds.map((x) => Number(x.order_index ?? 9999))),
+    })));
+  }, [stages]);
+
+  const cotLonTheoTab = useMemo(
+    () => cotLonDaCo.filter((g) => tabKanbanNhom(g.ds) === gopTabKanban),
+    [cotLonDaCo, gopTabKanban],
+  );
+
+  const soCotNhoTheoTab = useMemo(() => {
+    const m = {};
+    (stages || []).forEach((st) => {
+      if (st.bucket_slug === INTAKE) return;
+      const k = tabKanbanCot(st);
+      m[k] = (m[k] || 0) + 1;
+    });
+    return m;
+  }, [stages]);
+
+  const dsTabSetup = useMemo(
+    () => dsTabKanban(stages, tabThem).map((t) => ({ ...t, so: soCotNhoTheoTab[t.key] || 0 })),
+    [stages, tabThem, soCotNhoTheoTab],
+  );
+
+  /** Gợi ý cho ô «Cột lớn»: nhóm đang dùng trên tab hiện tại, rồi bộ tên mặc định của tab. */
+  const luaChonCotLon = useMemo(() => {
+    const ra = cotLonTheoTab.map((g) => ({ key: g.key, label: nhanCotLon(g.key) || g.key }));
+    const used = new Set(ra.map((x) => x.key));
+    const usedLabels = new Set(ra.map((x) => x.label));
+    (SX_COT_LON_GOI_Y_TAB[gopTabKanban] || []).forEach((t) => {
+      if (usedLabels.has(t)) return;
+      const slug = khoaCotLonTuNhan(t);
+      if (used.has(slug)) return;
+      used.add(slug);
+      ra.push({ key: slug, label: t });
+    });
+    return ra;
+  }, [cotLonTheoTab, gopTabKanban]);
+
+  const luaChonCotLonTatCa = useMemo(() => {
+    const ra = cotLonDaCo.map((g) => ({
+      key: g.key,
+      label: `${nhanCotLon(g.key) || g.key} (${nhanTabKanban(tabKanbanNhom(g.ds))})`,
+    }));
+    const used = new Set(ra.map((x) => x.key));
+    const usedLabels = new Set(ra.map((x) => x.label));
+    SX_COT_LON_GOI_Y.forEach((t) => {
+      if (usedLabels.has(t) || ra.some((x) => x.label.startsWith(`${t} (`))) return;
+      const slug = khoaCotLonTuNhan(t);
+      if (used.has(slug)) return;
+      used.add(slug);
+      ra.push({ key: slug, label: t });
+    });
+    return ra;
+  }, [cotLonDaCo]);
+
+  const chipCotLonChuaDung = useMemo(() => (
+    (SX_COT_LON_GOI_Y_TAB[gopTabKanban] || []).filter((t) => !cotLonTheoTab.some((g) => (
+      (nhanCotLon(g.key) || g.key) === t || g.key === khoaCotLonTuNhan(t)
+    )))
+  ), [cotLonTheoTab, gopTabKanban]);
+
+  const cotNhoTheoTab = useMemo(
+    () => sorted.filter((st) => st.bucket_slug !== INTAKE && tabKanbanCot(st) === gopTabKanban),
+    [sorted, gopTabKanban],
+  );
+
+  const cotNhoChuaGan = useMemo(
+    () => cotNhoTheoTab.filter((st) => !String(st.group_key || '').trim()),
+    [cotNhoTheoTab],
+  );
+
+  /** Gán cột nhỏ vào một cột lớn — lưu ngay, cập nhật lạc quan rồi đồng bộ lại nếu lỗi. */
+  const datCotLon = async (stageId, ten) => {
+    const nhap = String(ten || '').trim();
+    const nhom = cotLonDaCo.find((g) => g.key === nhap || (nhanCotLon(g.key) || g.key) === nhap);
+    const moi = nhom ? nhom.key : khoaCotLonTuNhan(nhap);
+    const sorts = nhom
+      ? nhom.ds.map((x) => Number(x.group_sort)).filter((n) => Number.isFinite(n) && n > 0)
+      : [];
+    const group_sort = sorts.length ? Math.min(...sorts) : null;
+    const board_tab = moi
+      ? (nhom ? tabKanbanNhom(nhom.ds) : gopTabKanban)
+      : undefined;
+    setStages((prev) => prev.map((x) => (
+      String(x.id) === String(stageId)
+        ? {
+          ...x,
+          group_key: moi || null,
+          group_sort: moi ? group_sort : null,
+          ...(board_tab ? { board_tab } : {}),
+        }
+        : x
+    )));
+    try {
+      await api.put(`/production/pipeline-stages/${stageId}`, {
+        group_key: moi || null,
+        group_sort: moi ? group_sort : null,
+        ...(board_tab ? { board_tab } : {}),
+      });
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không lưu được cột lớn');
+      await load();
+    }
+  };
+
+  const persistCotLonOrder = async (nextGroups) => {
+    if (reorderBusy) return;
+    const patch = nextGroups.flatMap((g, i) => g.ds.map((st) => ({
+      id: st.id,
+      group_sort: i + 1,
+    })));
+    if (!patch.length) return;
+    const prevStages = stages;
+    const orderMap = new Map(patch.map((p) => [String(p.id), p.group_sort]));
+    setReorderBusy(true);
+    setStages((prev) => prev.map((s) => {
+      const n = orderMap.get(String(s.id));
+      return n != null ? { ...s, group_sort: n } : s;
+    }));
+    try {
+      await api.put('/production/pipeline-stages-reorder', { stages: patch });
+      await load();
+    } catch (err) {
+      setStages(prevStages);
+      if (isMissingProductionStage(err)) {
+        await recoverMissingStage();
+        return;
+      }
+      alert('Lỗi sắp xếp cột lớn: ' + (err.response?.data?.error || err.message));
+      await load();
+    } finally {
+      setReorderBusy(false);
+    }
+  };
+
+  const moveCotLon = async (key, dir) => {
+    const list = [...cotLonTheoTab];
+    const idx = list.findIndex((g) => g.key === key);
+    const to = idx + dir;
+    if (idx < 0 || to < 0 || to >= list.length) return;
+    const next = [...list];
+    [next[idx], next[to]] = [next[to], next[idx]];
+    await persistCotLonOrder(next);
+  };
+
+  const chuyenTabCotLon = async (ds, tab) => {
+    const moi = khoaTabKanban(tab);
+    if (!ds?.length) return;
+    try {
+      await Promise.all(ds.map((st) => api.put(`/production/pipeline-stages/${st.id}`, { board_tab: moi })));
+      await load();
+      setGopTabKanban(moi);
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không chuyển được tab');
+      await load();
+    }
+  };
+
+  const themTabKanban = () => {
+    const nhap = window.prompt('Tên tab mới (vd. Giao hàng):', '');
+    if (nhap == null) return;
+    const key = khoaTabKanban(nhap);
+    if (!key) return;
+    if (key === TAB_SX) {
+      setGopTabKanban(TAB_SX);
+      return;
+    }
+    setTabThem((prev) => {
+      if (prev.includes(key) || key === TAB_CONG_NO) return prev;
+      const next = [...prev, key];
+      ghiTabThem(settingsCompanyId, selectedTypeKey, next);
+      return next;
+    });
+    setGopTabKanban(key);
+  };
+
+  const xoaTabThem = (key) => {
+    if (laTabCoDinh(key)) return;
+    if ((soCotNhoTheoTab[key] || 0) > 0) {
+      alert('Chuyển hết cột sang tab khác trước khi xóa tab này.');
+      return;
+    }
+    setTabThem((prev) => {
+      const next = prev.filter((k) => k !== key);
+      ghiTabThem(settingsCompanyId, selectedTypeKey, next);
+      return next;
+    });
+    if (gopTabKanban === key) setGopTabKanban(TAB_SX);
+  };
+
+  const luuTenCotLon = async (key, ds, tenMoi) => {
+    const cu = nhanCotLon(key) || key;
+    const moi = String(tenMoi || '').trim();
+    if (!moi || moi === key || moi === cu) return;
+    try {
+      await Promise.all(ds.map((st) => api.put(`/production/pipeline-stages/${st.id}`, { group_key: moi })));
+      await load();
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không đổi được tên cột lớn');
+      await load();
+    }
+  };
+
+  const doiTenCotLon = async (key, ds) => {
+    const cu = nhanCotLon(key) || key;
+    const nhap = window.prompt(`Đổi tên cột lớn «${cu}» thành:`, cu);
+    if (nhap === null) return;
+    await luuTenCotLon(key, ds, nhap);
+  };
+
+  const boCotLon = async (key, ds) => {
+    const ten = nhanCotLon(key) || key;
+    if (!window.confirm(`Tách ${ds.length} cột nhỏ ra khỏi «${ten}»?\n\nỞ chế độ Gộp cột trên Kanban, chúng sẽ hiện thành từng cột riêng thay vì nằm song song trong một cột lớn.`)) return;
+    try {
+      await Promise.all(ds.map((st) => api.put(`/production/pipeline-stages/${st.id}`, { group_key: null })));
+      await load();
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không tách được cột lớn');
+    }
+  };
+
+  const taoCotLon = async () => {
+    const tenNhap = String(gopThemTen || '').trim();
+    const ten = khoaCotLonTuNhan(tenNhap);
+    const ids = [...gopThemIds].map(String).filter(Boolean);
+    if (!ten) {
+      alert('Nhập tên cột lớn');
+      return;
+    }
+    if (!ids.length) {
+      alert('Chọn ít nhất một cột pipeline để đưa vào cột lớn này');
+      return;
+    }
+    const idSet = new Set(ids);
+    const existing = cotLonTheoTab.find((g) => (
+      g.key === ten || g.key === tenNhap || (nhanCotLon(g.key) || g.key) === tenNhap
+    ));
+    const keyMoi = existing?.key || ten;
+    const dsMoi = sorted.filter((st) => idSet.has(String(st.id)) && st.bucket_slug !== INTAKE);
+    if (!dsMoi.length) {
+      alert('Cột pipeline đã chọn không còn hợp lệ — tải lại trang rồi thử lại.');
+      return;
+    }
+    const next = [];
+    for (const g of cotLonTheoTab) {
+      if (g.key === keyMoi) continue;
+      const ds = g.ds.filter((st) => !idSet.has(String(st.id)));
+      if (ds.length) next.push({ ...g, ds });
+    }
+    const dsNhom = existing
+      ? [...existing.ds.filter((st) => !idSet.has(String(st.id))), ...dsMoi]
+      : dsMoi;
+    next.push({ key: keyMoi, ds: dsNhom });
+    setGopThemBusy(true);
+    try {
+      await Promise.all(dsMoi.map((st) => api.put(`/production/pipeline-stages/${st.id}`, {
+        group_key: keyMoi,
+        board_tab: gopTabKanban,
+      })));
+      await persistCotLonOrder(next);
+      setGopThemTen('');
+      setGopThemIds(new Set());
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không tạo được cột lớn');
+      await load();
+    } finally {
+      setGopThemBusy(false);
+    }
+  };
+
+  const taoCotNhoTrongCotLon = async (tenCotLon) => {
+    const ten = String(gopThemNhoTen || '').trim();
+    if (!ten) {
+      alert('Nhập tên cột nhỏ');
+      return;
+    }
+    if (!settingsCompanyId || !selectedTypeKey) {
+      alert('Chọn công ty và phân loại trước');
+      return;
+    }
+    const nhom = cotLonDaCo.find((g) => g.key === tenCotLon || (nhanCotLon(g.key) || g.key) === tenCotLon);
+    const moi = nhom ? nhom.key : khoaCotLonTuNhan(tenCotLon);
+    let group_sort;
+    if (nhom) {
+      const sorts = nhom.ds.map((x) => Number(x.group_sort)).filter((n) => Number.isFinite(n) && n > 0);
+      group_sort = sorts.length ? Math.min(...sorts) : cotLonTheoTab.length + 1;
+    } else {
+      const sorts = cotLonTheoTab.flatMap((g) => (
+        g.ds.map((x) => Number(x.group_sort)).filter((n) => Number.isFinite(n) && n > 0)
+      ));
+      group_sort = (sorts.length ? Math.max(...sorts) : cotLonTheoTab.length) + 1;
+    }
+    const mau = nhom?.ds?.find((st) => st.bucket_slug !== INTAKE) || nhom?.ds?.[0];
+    setGopThemNhoBusy(true);
+    try {
+      await api.post('/production/pipeline-stages', {
+        name: ten,
+        color: mau?.color || COLORS[stages.length % COLORS.length],
+        icon: ICONS[stages.length % ICONS.length],
+        company_id: settingsCompanyId,
+        workshop_type_id: currentWorkshopTypeId,
+        group_key: moi,
+        group_sort,
+        board_tab: gopTabKanban,
+        is_active: true,
+      });
+      setGopThemNhoTen('');
+      setGopThemNhoKey('');
+      await load();
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không tạo được cột nhỏ');
+    } finally {
+      setGopThemNhoBusy(false);
+    }
+  };
+
+  const staffPayloadForPrimary = (st, primaryUserId) => {
+    const ds = st?.default_staff || {};
+    const ids = (Array.isArray(ds.user_ids) ? ds.user_ids : (ds.users || []).map((u) => u.id))
+      .map((id) => String(id || '').trim())
+      .filter(Boolean);
+    const uid = primaryUserId ? String(primaryUserId) : '';
+    const user_ids = uid ? (ids.includes(uid) ? ids : [uid, ...ids]) : ids;
+    return {
+      user_ids,
+      primary_user_id: uid || user_ids[0] || null,
+      logistics_person_id: ds.logistics_person_id || ds.logistics_person?.id || null,
+      installer_person_id: ds.installer_person_id || ds.installer_person?.id || null,
+    };
+  };
+
+  const datNguoiCotLon = async (key, ds, userId) => {
+    setGopOwnerSavingKey(key);
+    try {
+      await Promise.all(ds.map((st) => api.put(`/production/pipeline-stages/${st.id}`, {
+        default_staff: staffPayloadForPrimary(st, userId),
+      })));
+      await load();
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không gán được người chịu trách nhiệm cột lớn');
+      await load();
+    } finally {
+      setGopOwnerSavingKey('');
+    }
+  };
   const editingIntake = editId && sorted.find((s) => s.id === editId)?.bucket_slug === INTAKE;
 
+  const docKeoPayload = (e) => {
+    let raw = '';
+    try { raw = String(e?.dataTransfer?.getData('text/plain') || ''); } catch { raw = ''; }
+    if (raw.startsWith('nho:')) return { loai: 'nho', id: raw.slice(4) };
+    if (raw.startsWith('lon:')) return { loai: 'lon', id: raw.slice(4) };
+    const fromRef = keoPayloadRef.current;
+    if (fromRef?.loai && fromRef.id) return fromRef;
+    if (!raw) return null;
+    const laCotNho = sorted.some((x) => String(x.id) === String(raw));
+    return { loai: laCotNho ? 'nho' : 'lon', id: raw };
+  };
+
+  const batDauKeoCotNho = (e, st) => {
+    if (st.bucket_slug === INTAKE) {
+      e.preventDefault();
+      return;
+    }
+    const payload = { loai: 'nho', id: String(st.id) };
+    keoPayloadRef.current = payload;
+    vuaKeoRef.current = false;
+    setKeoCotNhoId(String(st.id));
+    setGopDragKey(null);
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', `nho:${st.id}`); } catch { /* ignore */ }
+  };
+
+  const ketThucKeo = () => {
+    vuaKeoRef.current = Date.now();
+    window.setTimeout(() => {
+      keoPayloadRef.current = null;
+      setKeoCotNhoId(null);
+      setGopDragKey(null);
+      setGopOverKey(null);
+    }, 0);
+  };
+
+  const choPhepTha = (e, tenCotLon) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    if (tenCotLon && gopOverKey !== tenCotLon) setGopOverKey(tenCotLon);
+  };
+
+  const thaVaoCotChinh = async (e, tenCotLon) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const payload = docKeoPayload(e);
+    setGopOverKey(null);
+    if (!payload || !tenCotLon) return;
+    if (payload.loai === 'lon') {
+      const fromKey = payload.id;
+      keoPayloadRef.current = null;
+      setGopDragKey(null);
+      if (fromKey && fromKey !== tenCotLon) {
+        const list = [...cotLonTheoTab];
+        const fromIdx = list.findIndex((x) => x.key === fromKey);
+        const toIdx = list.findIndex((x) => x.key === tenCotLon);
+        if (fromIdx >= 0 && toIdx >= 0 && fromIdx !== toIdx) {
+          const next = [...list];
+          const [moved] = next.splice(fromIdx, 1);
+          next.splice(toIdx, 0, moved);
+          await persistCotLonOrder(next);
+        }
+      }
+      return;
+    }
+    const id = payload.id;
+    keoPayloadRef.current = null;
+    setKeoCotNhoId(null);
+    vuaKeoRef.current = Date.now();
+    if (!id) return;
+    const st = sorted.find((x) => String(x.id) === String(id));
+    if (!st || st.bucket_slug === INTAKE) return;
+    if (String(st.group_key || '').trim() === String(tenCotLon)) return;
+    await datCotLon(id, tenCotLon);
+  };
+
+  const bamSauKhiKeo = (fn) => {
+    const t = Number(vuaKeoRef.current) || 0;
+    if (t && Date.now() - t < 400) return;
+    fn();
+  };
+
   return (
-    <div className="space-y-4 w-full max-w-[1400px]">
+    <div className="space-y-3 w-full max-w-[1400px]">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Factory className="h-7 w-7 text-teal-600" />
-          <h1 className="text-xl font-bold text-gray-900">Pipeline xưởng</h1>
+        <div className="flex items-center gap-2 min-w-0">
+          <Factory className="h-7 w-7 text-teal-600 shrink-0" />
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold text-gray-900 leading-tight">Setup pipeline xưởng</h1>
+            <p className="text-[11px] text-gray-500">Cột chính trên Dashboard · kéo cột nhỏ vào đúng giai đoạn</p>
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Link
@@ -1250,303 +1967,340 @@ export default function ProductionPipelineSettingsPage() {
         </div>
       </div>
 
-      {/* Stepper: Công ty → Phân loại → Pipeline */}
-      <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
-        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full ${settingsCompanyId ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}`}>
-          1. Công ty {settingsCompanyId ? '✓' : '·'}
-        </span>
-        <span className="text-gray-300">→</span>
-        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full ${
-          !settingsCompanyId
-            ? 'bg-gray-50 text-gray-400 border border-gray-200'
-            : selectedTypeKey
-              ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-              : 'bg-amber-50 text-amber-800 border border-amber-200'
-        }`}>
-          2. Phân loại {selectedTypeKey ? '✓' : '·'}
-        </span>
-        <span className="text-gray-300">→</span>
-        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full ${stepReady ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-gray-50 text-gray-400 border border-gray-200'}`}>
-          3. Pipeline
-        </span>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-3 p-3 rounded-xl border border-teal-200 bg-white shadow-sm">
-        <Building2 className="h-5 w-5 text-teal-600 shrink-0" />
-        <div className="flex-1 min-w-[200px]">
-          <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Công ty</p>
-          {isAdmin ? (
-            <select
-              value={settingsCompanyId}
-              onChange={(e) => setSettingsCompanyId(e.target.value)}
-              className="mt-1 w-full max-w-md h-9 px-2 border border-gray-200 rounded-lg text-sm bg-white"
-            >
-              {companies.map((c) => (
-                <option key={c.id} value={c.id}>{c.short_name || c.name || c.id}</option>
-              ))}
-            </select>
-          ) : (
-            <p className="mt-1 text-sm font-medium text-gray-900">{settingsCompanyLabel || 'Theo tài khoản'}</p>
-          )}
-        </div>
-      </div>
-
-      {settingsCompanyId && (
-        <div className="rounded-xl border border-rose-200 bg-white p-4 shadow-sm space-y-3">
-          <div className="flex items-start gap-2.5">
-            <Clock className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
-            <div className="min-w-0">
-              <h2 className="text-sm font-bold text-gray-900">Giờ deadline xưởng &amp; SLA kính</h2>
-              <p className="text-[11px] text-gray-600 mt-0.5 leading-snug max-w-2xl">
-                Deadline cột Kanban lưu lúc giờ này (mặc định 17:30). Loại phát sinh (kính, đá, phụ kiện…) và SLA từng loại cấu hình tại{' '}
-                <Link to="/management/error-types" className="text-rose-700 underline hover:text-rose-900">
-                  Quản lý → Loại lỗi / hạn PS
-                </Link>
-                . Giờ deadline xưởng vẫn dùng cho loại «trong ngày».
+      <div className="rounded-xl border border-teal-200 bg-white px-3 py-2.5 shadow-sm space-y-2">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-[180px]">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Công ty</p>
+            {isAdmin ? (
+              <select
+                value={settingsCompanyId}
+                onChange={(e) => setSettingsCompanyId(e.target.value)}
+                className="mt-1 h-9 w-full min-w-[12rem] rounded-lg border border-gray-200 bg-white px-2 text-sm"
+              >
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>{c.short_name || c.name || c.id}</option>
+                ))}
+              </select>
+            ) : (
+              <p className="mt-1 text-sm font-medium text-gray-900">{settingsCompanyLabel || 'Theo tài khoản'}</p>
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Phân loại</p>
+            {typesLoading ? (
+              <p className="mt-1 text-xs text-gray-400 inline-flex items-center gap-1">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang tải…
               </p>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <label className="text-[11px] font-semibold text-slate-600">
-              Giờ deadline trong ngày
-              <input
-                type="time"
-                value={scheduleCfg.default_deadline_time}
-                onChange={(e) => setScheduleCfg((p) => ({ ...p, default_deadline_time: e.target.value }))}
-                disabled={scheduleCfgLoading}
-                className="mt-1 w-full h-9 px-2 border border-rose-200 rounded-lg text-sm bg-white"
-              />
-            </label>
-            <label className="text-[11px] font-semibold text-slate-600">
-              Mốc «trưa báo» (kính có sơn)
-              <input
-                type="time"
-                value={scheduleCfg.glass_cutoff_time}
-                onChange={(e) => setScheduleCfg((p) => ({ ...p, glass_cutoff_time: e.target.value }))}
-                disabled={scheduleCfgLoading}
-                className="mt-1 w-full h-9 px-2 border border-rose-200 rounded-lg text-sm bg-white"
-              />
-            </label>
-            <label className="text-[11px] font-semibold text-slate-600">
-              Kính cường lực (ngày LV)
-              <input
-                type="number"
-                min={1}
-                max={30}
-                value={scheduleCfg.tempered_glass_days}
-                onChange={(e) => setScheduleCfg((p) => ({ ...p, tempered_glass_days: Number(e.target.value) || 3 }))}
-                disabled={scheduleCfgLoading}
-                className="mt-1 w-full h-9 px-2 border border-rose-200 rounded-lg text-sm bg-white"
-              />
-            </label>
-          </div>
-          <button
-            type="button"
-            onClick={saveScheduleConfig}
-            disabled={scheduleCfgSaving || scheduleCfgLoading}
-            className="h-9 px-3.5 rounded-lg bg-rose-600 text-white text-xs font-semibold hover:bg-rose-700 disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
-          >
-            {scheduleCfgSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-            Lưu giờ deadline
-          </button>
-        </div>
-      )}
-
-      {settingsCompanyId && (
-        <div className="rounded-xl border border-indigo-200 bg-gradient-to-r from-indigo-50/70 to-white p-4 shadow-sm space-y-4">
-          <div className="flex flex-wrap items-start justify-between gap-2">
-            <div className="flex items-start gap-2.5 min-w-0">
-              <UserCircle className="h-5 w-5 text-indigo-600 shrink-0 mt-0.5" />
-              <div>
-                <h2 className="text-sm font-bold text-gray-900">Nhân viên mặc định theo phân loại</h2>
-                <p className="text-[11px] text-gray-600 mt-0.5 leading-snug max-w-2xl">
-                  Mỗi phân loại có <strong className="font-semibold text-indigo-800">phụ trách chính riêng</strong> và danh sách NV tham gia.
-                  Khi dự án vào xưởng, hệ thống gán đúng đội theo phân loại — phụ trách chính hiển thị trên dự án và deal CRM.
-                  Nếu phân loại chưa cấu hình, dùng người dự phòng bên dưới.
-                </p>
+            ) : (
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => setSelectedTypeKey(GLOBAL_TYPE_KEY)}
+                  className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer ${
+                    selectedTypeKey === GLOBAL_TYPE_KEY
+                      ? 'bg-teal-600 text-white border-teal-600'
+                      : 'bg-white text-teal-700 border-teal-200 hover:bg-teal-50'
+                  }`}
+                >
+                  <Globe className="h-3.5 w-3.5" /> Bộ chung
+                </button>
+                {workshopTypes.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setSelectedTypeKey(String(t.id))}
+                    className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer ${
+                      String(selectedTypeKey) === String(t.id)
+                        ? 'bg-teal-600 text-white border-teal-600'
+                        : 'bg-white text-gray-700 border-gray-200 hover:bg-teal-50'
+                    } ${t.is_active === false ? 'opacity-60' : ''}`}
+                  >
+                    <span>{t.icon || '📦'}</span>
+                    <span>{t.name}</span>
+                  </button>
+                ))}
               </div>
-            </div>
-            <div className="flex flex-wrap gap-2 shrink-0 items-center">
-              <Link
-                to="/sx/regions"
-                className="text-[11px] font-medium text-indigo-700 hover:text-indigo-900 border border-indigo-200 rounded-lg px-2.5 py-1.5 bg-white"
-              >
-                Khu vực →
-              </Link>
-              <Link
-                to="/sx/handover-settings"
-                className="text-[11px] font-medium text-indigo-700 hover:text-indigo-900 border border-indigo-200 rounded-lg px-2.5 py-1.5 bg-white"
-              >
-                Đội SX & phân công mẫu →
-              </Link>
-              <button
-                type="button"
-                onClick={() => setStaffConfigOpen((v) => !v)}
-                className="text-[11px] font-semibold text-indigo-800 border border-indigo-300 rounded-lg px-2.5 py-1.5 bg-white hover:bg-indigo-50 inline-flex items-center gap-1 cursor-pointer"
-              >
-                {staffConfigOpen ? 'Thu gọn' : 'Cấu hình NV'}
-                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${staffConfigOpen ? 'rotate-180' : ''}`} />
-              </button>
-            </div>
+            )}
           </div>
+        </div>
+      </div>
 
-          {staffConfigOpen && (
-          <>
-          {(typeStaffLoading || intakeAssigneeLoading) ? (
-            <div className="flex items-center gap-2 text-xs text-gray-500 py-1">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang tải nhân sự…
-            </div>
+      <div className="flex flex-wrap gap-1 border-b border-gray-200">
+        {[
+          { id: 'gop', nhan: 'Cột chính', Icon: Layers },
+          { id: 'cot', nhan: 'Cột nhỏ', Icon: ListChecks },
+          { id: 'cai', nhan: 'Cài đặt', Icon: Settings },
+        ].map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTabTrang(t.id)}
+            className={`inline-flex items-center gap-1.5 px-3 py-2 text-sm font-semibold border-b-2 -mb-px cursor-pointer transition-colors ${
+              tabTrang === t.id
+                ? 'border-teal-600 text-teal-700'
+                : 'border-transparent text-gray-500 hover:text-gray-800'
+            }`}
+          >
+            <t.Icon className="h-4 w-4" /> {t.nhan}
+          </button>
+        ))}
+      </div>
+
+      {tabTrang === 'gop' && (
+        <div className="space-y-3">
+          {!stepReady ? (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+              Chọn <strong>công ty</strong> và <strong>phân loại</strong> phía trên để setup cột chính.
+            </p>
+          ) : loading ? (
+            <div className="flex items-center justify-center py-16 text-gray-400 gap-2">
+              <Loader2 className="h-5 w-5 animate-spin" /> Đang tải cột chính…
+          </div>
           ) : (
             <>
-              {(workshopTypes.length === 0) ? (
-                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                  Chưa có phân loại xưởng — thêm phân loại ở cột phải hoặc bấm «Tủ bếp + Cánh kính».
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  {typeStaffUserList.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={selectAllTypeStaffEverywhere}
-                        className="text-[11px] font-medium text-indigo-700 hover:text-indigo-900 border border-indigo-200 rounded-lg px-2.5 py-1 bg-white cursor-pointer"
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="space-y-1">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-violet-800 inline-flex items-center gap-1.5">
+                    <Layers className="h-3.5 w-3.5" />
+                    Cột chính trên Dashboard
+                  </p>
+                  <p className="text-[12px] text-gray-600">
+                    Mỗi thẻ = một giai đoạn nối tiếp. Cột nhỏ bên trong chạy song song.
+                    Kéo cột nhỏ từ thẻ này sang thẻ kia để gán. Thứ tự thẻ = thứ tự Kanban gộp.
+                  </p>
+                </div>
+                <TabKanbanSwitcher
+                  value={gopTabKanban}
+                  onChange={setGopTabKanban}
+                  tabs={dsTabSetup}
+                  onAdd={themTabKanban}
+                  onXoa={xoaTabThem}
+                />
+          </div>
+
+          {stages.some((st) => !st.workshop_type_id && String(st.group_key || '').trim()) && (
+            <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[12px] leading-relaxed text-rose-800">
+                  <strong>Cảnh báo:</strong> có cột <strong>Bộ chung</strong> đang gán cột chính — sẽ áp cho mọi phân loại.
+                  Chuyển cột về đúng loại ở tab <strong>Cột nhỏ</strong> nếu muốn setup riêng.
+            </p>
+          )}
+
+              <div className="flex gap-3 overflow-x-auto pb-2 pt-1 snap-x">
+                {cotLonTheoTab.map((g, gi) => {
+                  const ownerId = sxGroupPrimaryOwnerId(g.ds);
+                  const busy = gopOwnerSavingKey === g.key;
+                  const tenHien = nhanCotLon(g.key) || g.key;
+                  const dangKeoNho = Boolean(keoCotNhoId || keoPayloadRef.current?.loai === 'nho');
+                  const isOver = (gopOverKey === g.key && ((gopDragKey && gopDragKey !== g.key) || dangKeoNho));
+                  return (
+                    <div
+                      key={g.key}
+                      onDragOver={(e) => choPhepTha(e, g.key)}
+                      onDragLeave={(e) => {
+                        if (!e.currentTarget.contains(e.relatedTarget) && gopOverKey === g.key) {
+                          setGopOverKey(null);
+                        }
+                      }}
+                      onDrop={(e) => thaVaoCotChinh(e, g.key)}
+                      className={`snap-start w-[240px] shrink-0 rounded-xl border bg-white shadow-sm flex flex-col max-h-[28rem] ${
+                        isOver ? 'border-violet-500 ring-2 ring-violet-200' : 'border-violet-200'
+                      } ${gopDragKey === g.key ? 'opacity-60' : ''}`}
+                    >
+                      <div className="flex items-center gap-1 px-2 pt-2 pb-1">
+                        <span
+                          draggable={!reorderBusy}
+                          onDragStart={(e) => {
+                            keoPayloadRef.current = { loai: 'lon', id: g.key };
+                            setGopDragKey(g.key);
+                            setKeoCotNhoId(null);
+                            e.dataTransfer.effectAllowed = 'move';
+                            try { e.dataTransfer.setData('text/plain', `lon:${g.key}`); } catch { /* ignore */ }
+                          }}
+                          onDragEnd={ketThucKeo}
+                          title="Kéo để đổi thứ tự cột chính"
+                          className="inline-flex h-7 w-5 shrink-0 cursor-grab items-center justify-center rounded text-violet-400 hover:bg-violet-50 active:cursor-grabbing"
+                        >
+                          <GripVertical className="h-4 w-4" />
+                        </span>
+                        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-600 text-[11px] font-bold text-white">
+                          {gi + 1}
+                        </span>
+                        <input
+                          defaultValue={tenHien}
+                          key={`${g.key}:${tenHien}`}
+                          onBlur={(e) => { luuTenCotLon(g.key, g.ds, e.target.value); }}
+                          onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                          className="min-w-0 flex-1 rounded-md border border-violet-200 bg-violet-50/50 px-1.5 h-7 text-[13px] font-bold text-violet-950"
+                          title="Tên cột chính — Enter để lưu"
+                        />
+                      </div>
+                      <p className="px-3 text-[10px] text-violet-500">
+                        {g.ds.length} cột nhỏ{g.ds.length > 1 ? ' · song song' : ''}
+                      </p>
+                      <div
+                        className="flex-1 overflow-y-auto px-2 py-1.5 space-y-1 min-h-[6rem]"
+                        onDragOver={(e) => choPhepTha(e, g.key)}
+                        onDrop={(e) => thaVaoCotChinh(e, g.key)}
                       >
-                        Chọn tất cả (mọi phân loại)
-                      </button>
+                        {g.ds.map((st) => (
+                          <button
+                            key={st.id}
+                            type="button"
+                            draggable
+                            onDragStart={(e) => batDauKeoCotNho(e, st)}
+                            onDragEnd={ketThucKeo}
+                            onDragOver={(e) => choPhepTha(e, g.key)}
+                            onDrop={(e) => thaVaoCotChinh(e, g.key)}
+                            onClick={() => bamSauKhiKeo(() => { setTabTrang('cot'); requestEdit(st); })}
+                            className={`w-full text-left rounded-md border px-2 py-1.5 text-[12px] font-medium text-gray-800 cursor-grab active:cursor-grabbing ${
+                              String(keoCotNhoId) === String(st.id)
+                                ? 'border-violet-400 bg-violet-100 opacity-70'
+                                : 'border-gray-100 bg-slate-50 hover:border-violet-300 hover:bg-violet-50'
+                            }`}
+                            title="Kéo sang cột chính khác · bấm để sửa cột nhỏ"
+                          >
+                            <span className="mr-1">{st.icon || '📋'}</span>
+                            {st.name}
+                          </button>
+                        ))}
+                        {g.ds.length === 0 && gopThemNhoKey !== g.key && (
+                          <p className="text-[11px] text-gray-400 px-1 py-2 text-center pointer-events-none">Kéo cột nhỏ vào đây</p>
+                        )}
+                        <FormThemCotNho
+                          mo={gopThemNhoKey === g.key}
+                          ten={gopThemNhoTen}
+                          setTen={setGopThemNhoTen}
+                          busy={gopThemNhoBusy}
+                          onMo={() => { setGopThemNhoKey(g.key); setGopThemNhoTen(''); }}
+                          onHuy={() => { setGopThemNhoKey(''); setGopThemNhoTen(''); }}
+                          onSubmit={() => taoCotNhoTrongCotLon(g.key)}
+                        />
+                      </div>
+                      <div className="border-t border-violet-100 px-2 py-1.5 space-y-1">
+                        <select
+                          value={ownerId}
+                          disabled={busy || typeStaffLoading}
+                          onChange={(e) => datNguoiCotLon(g.key, g.ds, e.target.value)}
+                          className="h-7 w-full rounded border border-indigo-200 bg-white px-1 text-[11px] disabled:bg-gray-50"
+                          title="Người chịu trách nhiệm cột chính"
+                        >
+                          <option value="">— NV phụ trách —</option>
+                          {typeStaffUserList.map((u) => (
+                            <option key={u.id} value={String(u.id)}>{u.full_name || u.email || u.id}</option>
+                          ))}
+                        </select>
+                        <div className="flex items-center gap-1">
+            <select
+                            value={gopTabKanban}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              if (v === '__moi__') {
+                                const nhap = window.prompt('Tên tab mới (vd. Giao hàng):', '');
+                                if (nhap == null) return;
+                                const key = khoaTabKanban(nhap);
+                                if (!key) return;
+                                if (key !== TAB_SX && key !== TAB_CONG_NO) {
+                                  setTabThem((prev) => {
+                                    if (prev.includes(key)) return prev;
+                                    const next = [...prev, key];
+                                    ghiTabThem(settingsCompanyId, selectedTypeKey, next);
+                                    return next;
+                                  });
+                                }
+                                chuyenTabCotLon(g.ds, key);
+                                return;
+                              }
+                              if (v !== gopTabKanban) chuyenTabCotLon(g.ds, v);
+                            }}
+                            title="Tab Dashboard"
+                            className="h-7 min-w-0 flex-1 rounded border border-slate-200 bg-white px-1 text-[11px] text-slate-600 cursor-pointer"
+                          >
+                            {dsTabSetup.map((t) => (
+                              <option key={t.key} value={t.key}>{t.label}</option>
+                            ))}
+                            <option value="__moi__">+ Tab mới…</option>
+            </select>
+          <button
+            type="button"
+                            onClick={() => boCotLon(g.key, g.ds)}
+                            className="h-7 shrink-0 rounded px-1.5 text-[11px] text-rose-500 hover:bg-rose-50 cursor-pointer"
+          >
+                            Tách
+          </button>
+        </div>
+              </div>
+            </div>
+                  );
+                })}
+
+                {chipCotLonChuaDung.map((t) => (
+                  <div
+                    key={`empty-${t}`}
+                    onDragOver={(e) => choPhepTha(e, t)}
+                    onDrop={(e) => thaVaoCotChinh(e, t)}
+                    className="snap-start w-[220px] shrink-0 rounded-xl border-2 border-dashed border-violet-300 bg-violet-50/40 px-3 py-3 flex flex-col items-stretch gap-2"
+                  >
+                    <p className="text-[13px] font-bold text-violet-800 inline-flex items-center gap-1">
+                      <Plus className="h-4 w-4" /> {t}
+                    </p>
+                    <p className="text-[11px] text-violet-600 leading-snug">
+                      Chưa setup trên {selectedTypeLabel || 'loại này'}. Thêm cột nhỏ tại đây, hoặc kéo một cột sẵn có vào.
+                    </p>
+                    <FormThemCotNho
+                      mo={gopThemNhoKey === `empty:${t}`}
+                      ten={gopThemNhoTen}
+                      setTen={setGopThemNhoTen}
+                      busy={gopThemNhoBusy}
+                      onMo={() => { setGopThemNhoKey(`empty:${t}`); setGopThemNhoTen(''); }}
+                      onHuy={() => { setGopThemNhoKey(''); setGopThemNhoTen(''); }}
+                      onSubmit={() => taoCotNhoTrongCotLon(t)}
+                    />
+            </div>
+                ))}
+          </div>
+
+              {cotNhoChuaGan.length > 0 && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <p className="text-[11px] font-bold uppercase tracking-wide text-slate-600 mb-1.5">
+                    Cột nhỏ chưa gán cột chính ({cotNhoChuaGan.length}) — kéo vào thẻ phía trên
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {cotNhoChuaGan.map((st) => (
                       <button
+                        key={st.id}
                         type="button"
-                        onClick={clearAllTypeStaff}
-                        className="text-[11px] font-medium text-gray-600 hover:text-gray-800 border border-gray-200 rounded-lg px-2.5 py-1 bg-white cursor-pointer"
+                        draggable
+                        onDragStart={(e) => batDauKeoCotNho(e, st)}
+                        onDragEnd={ketThucKeo}
+                        onClick={() => bamSauKhiKeo(() => { setTabTrang('cot'); requestEdit(st); })}
+                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[12px] font-medium text-slate-800 hover:border-violet-400 cursor-grab active:cursor-grabbing"
                       >
-                        Bỏ chọn tất cả
+                        {st.icon || '📋'} {st.name}
                       </button>
-                    </div>
-                  )}
-                  {typeStaffUserList.length === 0 ? (
-                    <p className="text-xs text-gray-500">Chưa có nhân viên thuộc công ty này.</p>
-                  ) : (
-                    workshopTypes.map((t) => {
-                      const users = typeStaffUserList;
-                      const selected = typeStaffDefaults[String(t.id)] || [];
-                      const primaryId = typeStaffPrimary[String(t.id)] || '';
-                      const primaryOptions = selected.length
-                        ? users.filter((u) => selected.includes(String(u.id)))
-                        : users;
-                      const allSelected = users.length > 0 && users.every((u) => selected.includes(String(u.id)));
-                      return (
-                        <div key={t.id} className="rounded-lg border border-indigo-100 bg-white/80 p-3">
-                          <div className="flex flex-wrap items-center gap-2 mb-2">
-                            <p className="text-xs font-bold text-gray-800 flex items-center gap-2 min-w-0">
-                              <Tags className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
-                              {t.name}
-                              {selected.length > 0 && (
-                                <span className="text-[10px] font-medium text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
-                                  {selected.length}/{users.length} NV
-                                </span>
-                              )}
-                            </p>
-                            <button
-                              type="button"
-                              onClick={() => (allSelected ? clearTypeStaffForType(t.id) : selectAllTypeStaffForType(t.id))}
-                              className="ml-auto text-[10px] font-medium text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded px-2 py-0.5 bg-indigo-50/50 cursor-pointer shrink-0"
-                            >
-                              {allSelected ? 'Bỏ chọn' : 'Chọn tất cả'}
-                            </button>
+                    ))}
                           </div>
-                          <label className="flex flex-col gap-1 mb-2 max-w-sm">
-                            <span className="text-[10px] font-semibold text-indigo-700 uppercase tracking-wide">Phụ trách chính ★</span>
-                            <select
-                              value={primaryId}
-                              onChange={(e) => setTypeStaffPrimaryForType(t.id, e.target.value)}
-                              className="h-8 px-2 border border-indigo-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-300"
-                            >
-                              <option value="">— Chọn phụ trách cho {t.name} —</option>
-                              {primaryOptions.map((u) => (
-                                <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
-                              ))}
-                            </select>
-                          </label>
-                          <p className="text-[10px] text-gray-500 mb-1.5">Đội tham gia (chọn nhiều):</p>
-                          <div className="flex flex-wrap gap-x-4 gap-y-1.5 max-h-32 overflow-y-auto">
-                            {users.map((u) => {
-                              const checked = selected.includes(String(u.id));
-                              const isPrimary = String(u.id) === String(primaryId);
-                              return (
-                                <label
-                                  key={`${t.id}-${u.id}`}
-                                  className={`inline-flex items-center gap-1.5 text-xs cursor-pointer select-none px-2 py-1 rounded-md border transition-colors ${
-                                    isPrimary
-                                      ? 'bg-amber-50 border-amber-300 text-amber-900 ring-1 ring-amber-200'
-                                      : checked
-                                        ? 'bg-indigo-50 border-indigo-200 text-indigo-900'
-                                        : 'bg-gray-50/50 border-transparent text-gray-700 hover:bg-gray-100'
-                                  }`}
-                                >
-                                  <input
-                                    type="checkbox"
-                                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                                    checked={checked}
-                                    onChange={() => toggleTypeStaffUser(t.id, u.id)}
-                                  />
-                                  <span>{u.full_name || u.email}{isPrimary ? ' ★' : ''}</span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
                 </div>
               )}
 
-              <div className="flex flex-wrap items-end gap-2 pt-1 border-t border-indigo-100">
-                <label className="flex flex-col gap-1 flex-1 min-w-[240px] max-w-md">
-                  <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Dự phòng (khi phân loại chưa gán NV)</span>
-                  <select
-                    value={intakeAssigneeId}
-                    onChange={(e) => setIntakeAssigneeId(e.target.value)}
-                    className="h-9 px-2.5 border border-gray-200 rounded-lg text-sm bg-white"
-                  >
-                    <option value="">— Chưa chọn (admin công ty) —</option>
-                    {(typeStaffUserList).map((u) => (
-                      <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1 flex-1 min-w-[240px] max-w-md">
-                  <span className="text-[10px] font-semibold text-violet-700 uppercase tracking-wide">Quản lý giao hàng (xác nhận bàn giao VC)</span>
-                  <select
-                    value={deliveryConfirmUserId}
-                    onChange={(e) => setDeliveryConfirmUserId(e.target.value)}
-                    className="h-9 px-2.5 border border-violet-200 rounded-lg text-sm bg-white"
-                  >
-                    <option value="">— Dùng phụ trách SX của dự án —</option>
-                    {(typeStaffUserList).map((u) => (
-                      <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
-                    ))}
-                  </select>
-                  <span className="text-[10px] text-gray-500">Người được bấm «Xác nhận» phía Xưởng trên thẻ bàn giao VC/LĐ.</span>
-                </label>
-                <button
-                  type="button"
-                  disabled={typeStaffSaving}
-                  onClick={() => saveTypeStaffDefaults()}
-                  className="h-9 px-3.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
-                >
-                  {typeStaffSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-                  Lưu cấu hình NV
-                </button>
-              </div>
-            </>
-          )}
+              <FormThemCotLon
+                ten={gopThemTen}
+                setTen={setGopThemTen}
+                ids={gopThemIds}
+                setIds={setGopThemIds}
+                busy={gopThemBusy}
+                onSubmit={taoCotLon}
+                disabled={!settingsCompanyId || !selectedTypeKey}
+                chips={chipCotLonChuaDung}
+                stages={cotNhoTheoTab}
+                placeholder={gopTabKanban === TAB_CONG_NO ? 'Tên cột chính — vd. Công nợ' : 'Tên cột chính — vd. Đóng gói'}
+              />
           </>
           )}
         </div>
       )}
 
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)] gap-4 items-start">
-      <div className="space-y-4 min-w-0">
+      {tabTrang === 'cot' && (
+      <div className="space-y-4">
 
       {/* Bước 2: Chọn Phân loại */}
       {settingsCompanyId && (
@@ -1556,12 +2310,7 @@ export default function ProductionPipelineSettingsPage() {
             <p className="text-sm font-semibold text-teal-900">Phân loại</p>
             <button
               type="button"
-              onClick={() => {
-                const el = document.getElementById('sx-workshop-type-section');
-                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                el?.classList.add('ring-2', 'ring-teal-400', 'rounded-xl');
-                setTimeout(() => el?.classList.remove('ring-2', 'ring-teal-400'), 1200);
-              }}
+              onClick={() => setTabTrang('cai')}
               className="ml-auto h-7 px-2.5 border border-gray-200 bg-white text-gray-700 rounded-md text-[11px] font-medium hover:bg-gray-50 inline-flex items-center gap-1.5 cursor-pointer"
               title="Thêm / sửa / xóa phân loại"
             >
@@ -1869,6 +2618,107 @@ export default function ProductionPipelineSettingsPage() {
             );
           })()}
 
+          <div className="border-t bg-violet-50/70 px-4 py-2.5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <p className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-violet-800">
+                <Layers className="h-3 w-3" /> Cột lớn — giai đoạn nối tiếp
+              </p>
+              <p className="text-[10px] text-violet-500">
+                  Setup vào tab nào thì Dashboard hiện đúng tab đó.
+              </p>
+            </div>
+              <TabKanbanSwitcher
+                value={gopTabKanban}
+                onChange={setGopTabKanban}
+                tabs={dsTabSetup}
+                onAdd={themTabKanban}
+                onXoa={xoaTabThem}
+              />
+            </div>
+            {cotLonTheoTab.length === 0 ? (
+              <p className="mt-1.5 text-[11px] text-violet-500">
+                Chưa có cột lớn trên tab {nhanTabKanban(gopTabKanban)}.
+              </p>
+            ) : (
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {cotLonTheoTab.map((g) => (
+                  <span
+                    key={g.key}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-violet-300 bg-white px-2 py-1 text-[11px]"
+                    title={g.ds.map((x) => x.name).join(' · ')}
+                  >
+                    <strong className="text-violet-900">{nhanCotLon(g.key) || g.key}</strong>
+                    <span className="rounded-full bg-violet-100 px-1.5 text-[10px] font-bold tabular-nums text-violet-700">
+                      {g.ds.length}
+                    </span>
+                    <span className="text-[10px] text-violet-400">
+                      {g.ds.length > 1 ? 'việc song song' : 'chỉ 1 cột'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => doiTenCotLon(g.key, g.ds)}
+                      title="Đổi tên cột lớn (đổi cho tất cả cột nhỏ bên trong)"
+                      className="rounded px-1 text-violet-500 hover:bg-violet-100 hover:text-violet-800 cursor-pointer"
+                    >
+                      Đổi tên
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => boCotLon(g.key, g.ds)}
+                      title="Tách hết cột nhỏ ra khỏi cột lớn này"
+                      className="rounded px-1 text-rose-500 hover:bg-rose-50 hover:text-rose-700 cursor-pointer"
+                    >
+                      Tách
+                    </button>
+                    <select
+                      value={gopTabKanban}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v === '__moi__') {
+                          const nhap = window.prompt('Tên tab mới (vd. Giao hàng):', '');
+                          if (nhap == null) return;
+                          const key = khoaTabKanban(nhap);
+                          if (!key) return;
+                          if (key !== TAB_SX && key !== TAB_CONG_NO) {
+                            setTabThem((prev) => {
+                              if (prev.includes(key)) return prev;
+                              const next = [...prev, key];
+                              ghiTabThem(settingsCompanyId, selectedTypeKey, next);
+                              return next;
+                            });
+                          }
+                          chuyenTabCotLon(g.ds, key);
+                          return;
+                        }
+                        if (v !== gopTabKanban) chuyenTabCotLon(g.ds, v);
+                      }}
+                      title="Chuyển cột lớn sang tab Dashboard khác"
+                      className="h-6 max-w-[7.5rem] rounded border border-violet-200 bg-white px-1 text-[10px] text-slate-600 cursor-pointer"
+                    >
+                      {dsTabSetup.map((t) => (
+                        <option key={t.key} value={t.key}>{t.label}</option>
+                      ))}
+                      <option value="__moi__">+ Tab mới…</option>
+                    </select>
+                  </span>
+                ))}
+              </div>
+            )}
+            <FormThemCotLon
+              ten={gopThemTen}
+              setTen={setGopThemTen}
+              ids={gopThemIds}
+              setIds={setGopThemIds}
+              busy={gopThemBusy}
+              onSubmit={taoCotLon}
+              disabled={!settingsCompanyId || !selectedTypeKey}
+              chips={chipCotLonChuaDung}
+              stages={sorted.filter((st) => st.bucket_slug !== INTAKE)}
+              placeholder={gopTabKanban === TAB_CONG_NO ? 'Tên cột lớn — vd. Công nợ' : 'Tên cột lớn — vd. Gia công'}
+            />
+          </div>
+
           <div className="border-t">
             <div className="px-4 py-2 bg-slate-50 border-b text-[10px] text-slate-600 leading-snug">
               <p className="font-semibold text-slate-800 mb-1">Nhóm deadline (theo kế hoạch từ ngày lắp)</p>
@@ -1962,6 +2812,16 @@ export default function ProductionPipelineSettingsPage() {
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-indigo-50 text-indigo-700 border border-indigo-200">
                           <Tags className="h-2.5 w-2.5" />
                           {workshopTypes.find((t) => String(t.id) === String(s.workshop_type_id))?.name || 'Loại đã xóa'}
+                        </span>
+                      )}
+                      {String(s.group_key || '').trim() && (
+                        <span
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-bold bg-violet-600 text-white"
+                          title="Cột chính (giai đoạn nối tiếp) mà cột này thuộc về"
+                        >
+                          <Layers className="h-3 w-3" />
+                          {nhanCotLon(s.group_key)}
+                          <span className="font-medium opacity-80">· {nhanTabKanban(tabKanbanCot(s))}</span>
                         </span>
                       )}
                       {s.crm_target_stage && (
@@ -2272,6 +3132,47 @@ export default function ProductionPipelineSettingsPage() {
                       />
                       <Clock className="h-3.5 w-3.5 text-rose-600" /> Bắt buộc đặt deadline khi kéo thẻ tới cột
                     </label>
+                    <div className="flex items-center gap-2 text-xs text-violet-950 bg-violet-50 px-2 py-1 rounded-lg border border-violet-200">
+                      <span className="font-semibold whitespace-nowrap">Cột lớn</span>
+                      <CotLonPicker
+                        value={form.group_key || ''}
+                        options={luaChonCotLonTatCa}
+                        onChange={(v) => setForm((f) => ({ ...f, group_key: v }))}
+                        className="h-8 px-2 border border-violet-200 rounded-md text-sm bg-white min-w-[14rem] cursor-pointer"
+                        title="Tên giai đoạn nối tiếp mà cột này thuộc về. Các cột cùng một tên = việc SONG SONG. Đứng riêng = cột tự thành một cột Kanban."
+                      />
+                      <span className="font-semibold whitespace-nowrap">Hiện trên</span>
+                      <select
+                        value={khoaTabKanban(form.board_tab)}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v === '__moi__') {
+                            const nhap = window.prompt('Tên tab mới (vd. Giao hàng):', '');
+                            if (nhap == null) return;
+                            const key = khoaTabKanban(nhap);
+                            if (!key) return;
+                            if (key !== TAB_SX && key !== TAB_CONG_NO) {
+                              setTabThem((prev) => {
+                                if (prev.includes(key)) return prev;
+                                const next = [...prev, key];
+                                ghiTabThem(settingsCompanyId, selectedTypeKey, next);
+                                return next;
+                              });
+                            }
+                            setForm((f) => ({ ...f, board_tab: key }));
+                            return;
+                          }
+                          setForm((f) => ({ ...f, board_tab: v }));
+                        }}
+                        className="h-8 px-2 border border-violet-200 rounded-md text-sm bg-white cursor-pointer"
+                        title="Tab Dashboard xưởng mà cột này thuộc về"
+                      >
+                        {dsTabSetup.map((t) => (
+                          <option key={t.key} value={t.key}>{t.label}</option>
+                        ))}
+                        <option value="__moi__">+ Tab mới…</option>
+                      </select>
+                    </div>
                     <div className="flex items-center gap-2 text-xs text-indigo-950 bg-indigo-50 px-2 py-1 rounded-lg border border-indigo-200">
                       <span className="font-semibold whitespace-nowrap">Nhóm deadline</span>
                       <select
@@ -2684,7 +3585,266 @@ export default function ProductionPipelineSettingsPage() {
         </div>
       )}
 
-      </div>{/* /left column */}
+      </div>
+      )}
+
+      {tabTrang === 'cai' && (
+      <div className="space-y-4">
+
+      
+      {settingsCompanyId && (
+        <div className="rounded-xl border border-rose-200 bg-white p-4 shadow-sm space-y-3">
+          <div className="flex items-start gap-2.5">
+            <Clock className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
+            <div className="min-w-0">
+              <h2 className="text-sm font-bold text-gray-900">Giờ deadline xưởng &amp; SLA kính</h2>
+              <p className="text-[11px] text-gray-600 mt-0.5 leading-snug max-w-2xl">
+                Deadline cột Kanban lưu lúc giờ này (mặc định 17:30). Loại phát sinh (kính, đá, phụ kiện…) và SLA từng loại cấu hình tại{' '}
+                <Link to="/management/error-types" className="text-rose-700 underline hover:text-rose-900">
+                  Quản lý → Loại lỗi / hạn PS
+                </Link>
+                . Giờ deadline xưởng vẫn dùng cho loại «trong ngày».
+              </p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <label className="text-[11px] font-semibold text-slate-600">
+              Giờ deadline trong ngày
+              <input
+                type="time"
+                value={scheduleCfg.default_deadline_time}
+                onChange={(e) => setScheduleCfg((p) => ({ ...p, default_deadline_time: e.target.value }))}
+                disabled={scheduleCfgLoading}
+                className="mt-1 w-full h-9 px-2 border border-rose-200 rounded-lg text-sm bg-white"
+              />
+            </label>
+            <label className="text-[11px] font-semibold text-slate-600">
+              Mốc «trưa báo» (kính có sơn)
+              <input
+                type="time"
+                value={scheduleCfg.glass_cutoff_time}
+                onChange={(e) => setScheduleCfg((p) => ({ ...p, glass_cutoff_time: e.target.value }))}
+                disabled={scheduleCfgLoading}
+                className="mt-1 w-full h-9 px-2 border border-rose-200 rounded-lg text-sm bg-white"
+              />
+            </label>
+            <label className="text-[11px] font-semibold text-slate-600">
+              Kính cường lực (ngày LV)
+              <input
+                type="number"
+                min={1}
+                max={30}
+                value={scheduleCfg.tempered_glass_days}
+                onChange={(e) => setScheduleCfg((p) => ({ ...p, tempered_glass_days: Number(e.target.value) || 3 }))}
+                disabled={scheduleCfgLoading}
+                className="mt-1 w-full h-9 px-2 border border-rose-200 rounded-lg text-sm bg-white"
+              />
+            </label>
+          </div>
+          <button
+            type="button"
+            onClick={saveScheduleConfig}
+            disabled={scheduleCfgSaving || scheduleCfgLoading}
+            className="h-9 px-3.5 rounded-lg bg-rose-600 text-white text-xs font-semibold hover:bg-rose-700 disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
+          >
+            {scheduleCfgSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+            Lưu giờ deadline
+          </button>
+        </div>
+      )}
+
+      {settingsCompanyId && (
+        <div className="rounded-xl border border-indigo-200 bg-gradient-to-r from-indigo-50/70 to-white p-4 shadow-sm space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="flex items-start gap-2.5 min-w-0">
+              <UserCircle className="h-5 w-5 text-indigo-600 shrink-0 mt-0.5" />
+              <div>
+                <h2 className="text-sm font-bold text-gray-900">Nhân viên mặc định theo phân loại</h2>
+                <p className="text-[11px] text-gray-600 mt-0.5 leading-snug max-w-2xl">
+                  Mỗi phân loại có <strong className="font-semibold text-indigo-800">phụ trách chính riêng</strong> và danh sách NV tham gia.
+                  Khi dự án vào xưởng, hệ thống gán đúng đội theo phân loại — phụ trách chính hiển thị trên dự án và deal CRM.
+                  Nếu phân loại chưa cấu hình, dùng người dự phòng bên dưới.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2 shrink-0 items-center">
+              <Link
+                to="/sx/regions"
+                className="text-[11px] font-medium text-indigo-700 hover:text-indigo-900 border border-indigo-200 rounded-lg px-2.5 py-1.5 bg-white"
+              >
+                Khu vực →
+              </Link>
+              <Link
+                to="/sx/handover-settings"
+                className="text-[11px] font-medium text-indigo-700 hover:text-indigo-900 border border-indigo-200 rounded-lg px-2.5 py-1.5 bg-white"
+              >
+                Đội SX & phân công mẫu →
+              </Link>
+              <button
+                type="button"
+                onClick={() => setStaffConfigOpen((v) => !v)}
+                className="text-[11px] font-semibold text-indigo-800 border border-indigo-300 rounded-lg px-2.5 py-1.5 bg-white hover:bg-indigo-50 inline-flex items-center gap-1 cursor-pointer"
+              >
+                {staffConfigOpen ? 'Thu gọn' : 'Cấu hình NV'}
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform ${staffConfigOpen ? 'rotate-180' : ''}`} />
+              </button>
+            </div>
+          </div>
+
+          {staffConfigOpen && (
+          <>
+          {(typeStaffLoading || intakeAssigneeLoading) ? (
+            <div className="flex items-center gap-2 text-xs text-gray-500 py-1">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Đang tải nhân sự…
+            </div>
+          ) : (
+            <>
+              {(workshopTypes.length === 0) ? (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  Chưa có phân loại xưởng — thêm phân loại ở cột phải hoặc bấm «Tủ bếp + Cánh kính».
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {typeStaffUserList.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={selectAllTypeStaffEverywhere}
+                        className="text-[11px] font-medium text-indigo-700 hover:text-indigo-900 border border-indigo-200 rounded-lg px-2.5 py-1 bg-white cursor-pointer"
+                      >
+                        Chọn tất cả (mọi phân loại)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={clearAllTypeStaff}
+                        className="text-[11px] font-medium text-gray-600 hover:text-gray-800 border border-gray-200 rounded-lg px-2.5 py-1 bg-white cursor-pointer"
+                      >
+                        Bỏ chọn tất cả
+                      </button>
+                    </div>
+                  )}
+                  {typeStaffUserList.length === 0 ? (
+                    <p className="text-xs text-gray-500">Chưa có nhân viên thuộc công ty này.</p>
+                  ) : (
+                    workshopTypes.map((t) => {
+                      const users = typeStaffUserList;
+                      const selected = typeStaffDefaults[String(t.id)] || [];
+                      const primaryId = typeStaffPrimary[String(t.id)] || '';
+                      const primaryOptions = selected.length
+                        ? users.filter((u) => selected.includes(String(u.id)))
+                        : users;
+                      const allSelected = users.length > 0 && users.every((u) => selected.includes(String(u.id)));
+                      return (
+                        <div key={t.id} className="rounded-lg border border-indigo-100 bg-white/80 p-3">
+                          <div className="flex flex-wrap items-center gap-2 mb-2">
+                            <p className="text-xs font-bold text-gray-800 flex items-center gap-2 min-w-0">
+                              <Tags className="h-3.5 w-3.5 text-indigo-500 shrink-0" />
+                              {t.name}
+                              {selected.length > 0 && (
+                                <span className="text-[10px] font-medium text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
+                                  {selected.length}/{users.length} NV
+                                </span>
+                              )}
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => (allSelected ? clearTypeStaffForType(t.id) : selectAllTypeStaffForType(t.id))}
+                              className="ml-auto text-[10px] font-medium text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded px-2 py-0.5 bg-indigo-50/50 cursor-pointer shrink-0"
+                            >
+                              {allSelected ? 'Bỏ chọn' : 'Chọn tất cả'}
+                            </button>
+                          </div>
+                          <label className="flex flex-col gap-1 mb-2 max-w-sm">
+                            <span className="text-[10px] font-semibold text-indigo-700 uppercase tracking-wide">Phụ trách chính ★</span>
+                            <select
+                              value={primaryId}
+                              onChange={(e) => setTypeStaffPrimaryForType(t.id, e.target.value)}
+                              className="h-8 px-2 border border-indigo-200 rounded-lg text-xs bg-white focus:ring-2 focus:ring-indigo-300"
+                            >
+                              <option value="">— Chọn phụ trách cho {t.name} —</option>
+                              {primaryOptions.map((u) => (
+                                <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <p className="text-[10px] text-gray-500 mb-1.5">Đội tham gia (chọn nhiều):</p>
+                          <div className="flex flex-wrap gap-x-4 gap-y-1.5 max-h-32 overflow-y-auto">
+                            {users.map((u) => {
+                              const checked = selected.includes(String(u.id));
+                              const isPrimary = String(u.id) === String(primaryId);
+                              return (
+                                <label
+                                  key={`${t.id}-${u.id}`}
+                                  className={`inline-flex items-center gap-1.5 text-xs cursor-pointer select-none px-2 py-1 rounded-md border transition-colors ${
+                                    isPrimary
+                                      ? 'bg-amber-50 border-amber-300 text-amber-900 ring-1 ring-amber-200'
+                                      : checked
+                                        ? 'bg-indigo-50 border-indigo-200 text-indigo-900'
+                                        : 'bg-gray-50/50 border-transparent text-gray-700 hover:bg-gray-100'
+                                  }`}
+                                >
+                                  <input
+                                    type="checkbox"
+                                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                    checked={checked}
+                                    onChange={() => toggleTypeStaffUser(t.id, u.id)}
+                                  />
+                                  <span>{u.full_name || u.email}{isPrimary ? ' ★' : ''}</span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-end gap-2 pt-1 border-t border-indigo-100">
+                <label className="flex flex-col gap-1 flex-1 min-w-[240px] max-w-md">
+                  <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Dự phòng (khi phân loại chưa gán NV)</span>
+                  <select
+                    value={intakeAssigneeId}
+                    onChange={(e) => setIntakeAssigneeId(e.target.value)}
+                    className="h-9 px-2.5 border border-gray-200 rounded-lg text-sm bg-white"
+                  >
+                    <option value="">— Chưa chọn (admin công ty) —</option>
+                    {(typeStaffUserList).map((u) => (
+                      <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 flex-1 min-w-[240px] max-w-md">
+                  <span className="text-[10px] font-semibold text-violet-700 uppercase tracking-wide">Quản lý giao hàng (xác nhận bàn giao VC)</span>
+                  <select
+                    value={deliveryConfirmUserId}
+                    onChange={(e) => setDeliveryConfirmUserId(e.target.value)}
+                    className="h-9 px-2.5 border border-violet-200 rounded-lg text-sm bg-white"
+                  >
+                    <option value="">— Dùng phụ trách SX của dự án —</option>
+                    {(typeStaffUserList).map((u) => (
+                      <option key={u.id} value={u.id}>{u.full_name || u.email}</option>
+                    ))}
+                  </select>
+                  <span className="text-[10px] text-gray-500">Người được bấm «Xác nhận» phía Xưởng trên thẻ bàn giao VC/LĐ.</span>
+                </label>
+                <button
+                  type="button"
+                  disabled={typeStaffSaving}
+                  onClick={() => saveTypeStaffDefaults()}
+                  className="h-9 px-3.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 disabled:opacity-50 inline-flex items-center gap-1.5 cursor-pointer"
+                >
+                  {typeStaffSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                  Lưu cấu hình NV
+                </button>
+              </div>
+            </>
+          )}
+          </>
+          )}
+        </div>
+      )}
 
       <aside className="xl:sticky xl:top-3 space-y-3 min-w-0">
         <div id="sx-workshop-type-section" className="scroll-mt-4 transition shadow-sm rounded-xl">
@@ -2697,7 +3857,9 @@ export default function ProductionPipelineSettingsPage() {
           />
         </div>
       </aside>
-      </div>{/* /grid */}
+      </div>
+      )}
+
     </div>
   );
 }

@@ -7,7 +7,7 @@ const {
   buildAssignmentNotificationInsert,
 } = require('./crmAssignmentNotifications');
 
-const ADMIN_ROLES = new Set(['admin', 'manager', 'sales_admin', 'crm_production_admin']);
+const ADMIN_ROLES = new Set(['ecosystem_admin', 'admin', 'manager', 'sales_admin', 'crm_production_admin']);
 const isAdmin = (req) => ADMIN_ROLES.has(String(req.user?.role || '').toLowerCase());
 
 const ASSIGNMENT_SELECT = `

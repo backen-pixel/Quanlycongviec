@@ -308,7 +308,7 @@ export default function KnowledgeLibraryPage() {
   const [lockToast, setLockToast] = useState(null);
   const navigate = useNavigate();
   const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
-  const isAdmin = ['admin', 'sales_admin', 'manager'].includes(currentUser.role);
+  const isAdmin = ['ecosystem_admin', 'admin', 'sales_admin', 'manager'].includes(currentUser.role);
 
   useEffect(() => {
     loadCategories();

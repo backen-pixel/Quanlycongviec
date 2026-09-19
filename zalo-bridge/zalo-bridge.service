@@ -1,0 +1,28 @@
+# Cài đặt (systemd --user, cần phiên đồ hoạ cho transport playwright):
+#   mkdir -p ~/.config/systemd/user
+#   cp zalo-bridge.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now zalo-bridge
+#   loginctl enable-linger $USER      # chạy tiếp khi chưa ai đăng nhập
+#
+# Xem log:  journalctl --user -u zalo-bridge -f
+
+[Unit]
+Description=Bridge Zalo ca nhan -> CRM
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/bizmind/Quanlycongviec/zalo-bridge
+# Node cài qua nvm, KHÔNG nằm ở /usr/bin. Nâng cấp Node thì sửa lại dòng này.
+ExecStart=/home/bizmind/.nvm/versions/node/v24.20.0/bin/node src/supervisor.js
+Environment=NODE_ENV=production
+Environment=DISPLAY=:0
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

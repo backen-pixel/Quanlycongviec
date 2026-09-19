@@ -911,7 +911,7 @@ export const SCREEN_REGISTRY = [
   {
     "path": "/sx/handover-settings",
     "label": "Bàn giao CRM → SX (nâng cao)",
-    "menu": "Sản xuất → 3. Điều hành xưởng"
+    "menu": "Sản xuất → 3. Setup xưởng"
   },
   {
     "path": "/sx/pipeline",
@@ -921,7 +921,7 @@ export const SCREEN_REGISTRY = [
   {
     "path": "/sx/pipeline-settings",
     "label": "Pipeline xưởng",
-    "menu": "Sản xuất → 3. Điều hành xưởng"
+    "menu": "Sản xuất → 3. Setup xưởng"
   },
   {
     "path": "/sx/project-tasks",
@@ -936,12 +936,12 @@ export const SCREEN_REGISTRY = [
   {
     "path": "/sx/regions",
     "label": "Khu vực",
-    "menu": "Sản xuất → 3. Điều hành xưởng"
+    "menu": "Sản xuất → 3. Setup xưởng"
   },
   {
     "path": "/sx/task-templates",
     "label": "Bộ mẫu nhiệm vụ xưởng",
-    "menu": "Sản xuất → 3. Điều hành xưởng"
+    "menu": "Sản xuất → 3. Setup xưởng"
   },
   {
     "path": "/sx/trash",
@@ -1131,7 +1131,7 @@ export const MODULE_INDEX = [
       "1. Học tập",
       "1. Tổng quan",
       "4. Hỗ trợ",
-      "3. Điều hành xưởng"
+      "3. Setup xưởng"
     ]
   },
   {

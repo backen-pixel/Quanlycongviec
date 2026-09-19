@@ -5,7 +5,9 @@ const {
   deadlineState,
   projectDeadlinePatchOnModuleDone,
   resolveModuleDeadline,
+  activeInstallCommitmentRaw,
 } = require('../src/helpers/moduleDeadlinePolicy');
+const { isCrmStagePastInstallation } = require('../src/helpers/crmDealStageGate');
 const {
   crmTaskMatchesModule,
   workshopTaskMatchesModule,
@@ -44,7 +46,6 @@ assert.equal(resolveModuleDeadline(MODULE.CRM, {
 for (const hidden of [
   { phone: null },
   { phone: '1', deadline_disabled_at: future(0) },
-  { phone: '1', is_interacted: true },
 ]) {
   assert.equal(resolveModuleDeadline(MODULE.CRM, {
     ...crmBase,
@@ -52,6 +53,11 @@ for (const hidden of [
     customer: null,
   }, { stage: { sla_days: 7 } }).deadlineAt, null);
 }
+assert.equal(resolveModuleDeadline(MODULE.CRM, {
+  ...crmBase,
+  phone: '1',
+  is_interacted: true,
+}, { stage: { sla_days: 7 } }).source, 'task');
 assert.equal(resolveModuleDeadline(MODULE.CRM, crmBase, {
   stage: { is_won: true, sla_days: 7 },
 }).deadlineAt, null);
@@ -77,12 +83,117 @@ assert.equal(resolveModuleDeadline(MODULE.PRODUCTION, {
   ...sx,
   logistics_company_id: 'linked',
 }).deadlineAt, null);
+assert.equal(resolveModuleDeadline(MODULE.PRODUCTION, {
+  ...sx,
+  logistics_company_id: 'linked',
+}, { forDisplay: true }).deadlineAt, null);
+
+// CRM đã đưa sang SX → hết hạn CRM, chỉ còn 1 hạn sản xuất.
+assert.equal(resolveModuleDeadline(MODULE.CRM, {
+  ...crmBase,
+  project_id: 'p1',
+}, { stage: { sla_days: 7 } }).deadlineAt, null);
+assert.equal(resolveModuleDeadline(MODULE.PRODUCTION, sx).source, 'sx_kanban');
+assert.equal(resolveModuleDeadline(MODULE.LOGISTICS, {
+  ...sx,
+  install_date: future(6),
+}).deadlineAt, null);
+
+// SX giao hàng / bàn giao VC → hết hạn SX, chuyển hạn lắp.
+assert.equal(resolveModuleDeadline(MODULE.PRODUCTION, {
+  ...sx,
+  status: 'shipping',
+  logistics_company_id: 'vc1',
+  install_date: future(6),
+}).deadlineAt, null);
+assert.equal(resolveModuleDeadline(MODULE.LOGISTICS, {
+  ...sx,
+  status: 'shipping',
+  logistics_company_id: 'vc1',
+  install_date: future(6),
+}).source, 'install');
+assert.equal(resolveModuleDeadline(MODULE.PRODUCTION, sx, {
+  stage: { name: 'ĐƠN HÀNG ĐÃ GIAO' },
+}).deadlineAt, null);
+assert.equal(resolveModuleDeadline(MODULE.LOGISTICS, {
+  ...sx,
+  install_date: future(6),
+  sx_pipeline_stage: { name: 'ĐƠN HÀNG ĐÃ GIAO' },
+}).source, 'install');
 
 // VC/LĐ: lắp -> giao -> hạn chung; hoàn thành thì tắt.
-const vc = { status: 'shipping', install_date: future(1), delivery_date: future(2), deadline: future(3) };
+const vc = {
+  status: 'shipping',
+  logistics_company_id: 'vc1',
+  install_date: future(1),
+  delivery_date: future(2),
+  deadline: future(3),
+};
 assert.equal(resolveModuleDeadline(MODULE.LOGISTICS, vc).source, 'install');
 assert.equal(resolveModuleDeadline(MODULE.LOGISTICS, { ...vc, install_date: null }).source, 'delivery');
 assert.equal(resolveModuleDeadline(MODULE.LOGISTICS, { ...vc, status: 'completed' }).deadlineAt, null);
+
+const todayYmd = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+const [y, m, d] = todayYmd.split('-').map(Number);
+const nextYmd = new Date(Date.UTC(y, m - 1, d + 5)).toISOString().slice(0, 10);
+assert.equal(
+  activeInstallCommitmentRaw({
+    install_date: past(30),
+    install_occurrence_dates: [String(past(30)).slice(0, 10), nextYmd],
+  }).slice(0, 10),
+  nextYmd,
+);
+assert.equal(
+  String(activeInstallCommitmentRaw({
+    install_date: past(30),
+    install_occurrence_dates: [String(past(30)).slice(0, 10)],
+  })).slice(0, 10),
+  String(past(30)).slice(0, 10),
+);
+assert.equal(
+  resolveModuleDeadline(MODULE.LOGISTICS, {
+    status: 'installing',
+    logistics_company_id: 'vc1',
+    install_date: past(30),
+    install_occurrence_dates: [String(past(30)).slice(0, 10), nextYmd],
+  }).raw.slice(0, 10),
+  nextYmd,
+);
+assert.equal(
+  resolveModuleDeadline(MODULE.LOGISTICS, {
+    status: 'installing',
+    logistics_company_id: 'vc1',
+    install_date: past(30),
+  }, { stage: { name: 'Hoàn thành', bucket_slug: 'completed' } }).deadlineAt,
+  null,
+);
+
+// CRM qua Lắp đặt → hết hạn lắp (giữ install_date).
+assert.equal(
+  resolveModuleDeadline(MODULE.LOGISTICS, {
+    status: 'installing',
+    logistics_company_id: 'vc1',
+    install_date: past(30),
+    crm_stage: { name: 'Chăm sóc khách hàng', sync_role: 'vc_customer_care' },
+  }).deadlineAt,
+  null,
+);
+assert.equal(
+  resolveModuleDeadline(MODULE.LOGISTICS, {
+    status: 'warranty',
+    logistics_company_id: 'vc1',
+    install_date: past(30),
+  }).deadlineAt,
+  null,
+);
+assert.ok(
+  resolveModuleDeadline(MODULE.LOGISTICS, {
+    status: 'installing',
+    logistics_company_id: 'vc1',
+    install_date: past(30),
+    crm_stage: { name: 'Lắp đặt', sync_role: 'vc_installation' },
+  }).deadlineAt,
+);
 
 // DATE-only dùng giờ kết thúc công ty 17:30 VN.
 assert.equal(
@@ -124,6 +235,7 @@ const linked = {
 };
 const sxBefore = resolveModuleDeadline(MODULE.PRODUCTION, linked.project).deadlineAt;
 const vcBefore = resolveModuleDeadline(MODULE.LOGISTICS, linked.project).deadlineAt;
+assert.equal(vcBefore, null);
 const crmChanged = resolveModuleDeadline(MODULE.CRM, {
   ...linked.crm,
   crm_next_open_task_deadline: future(8),
@@ -153,5 +265,16 @@ assert.equal(resolveModuleDeadline(MODULE.PRODUCTION, finalProject).deadlineAt, 
 assert.equal(resolveModuleDeadline(MODULE.LOGISTICS, finalProject).deadlineAt, null);
 assert.equal(finalProject.delivery_date, linked.project.delivery_date);
 assert.equal(finalProject.install_date, linked.project.install_date);
+
+const pipe = [
+  { name: 'Đang sản xuất', sync_role: 'sx_production', order_index: 10 },
+  { name: 'Lắp đặt', sync_role: 'vc_installation', order_index: 20 },
+  { name: 'Nghiệm thu', order_index: 30 },
+  { name: 'Chăm sóc khách hàng', sync_role: 'vc_customer_care', order_index: 40 },
+];
+assert.equal(isCrmStagePastInstallation(pipe[1], pipe), false);
+assert.equal(isCrmStagePastInstallation(pipe[2], pipe), true);
+assert.equal(isCrmStagePastInstallation(pipe[3], pipe), true);
+assert.equal(isCrmStagePastInstallation({ name: 'Đã ký HĐ', is_won: true }, pipe), false);
 
 console.log('module-deadline-policy: OK');

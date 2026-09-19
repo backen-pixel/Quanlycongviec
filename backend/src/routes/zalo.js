@@ -10,6 +10,8 @@ const { supabase } = require('../config/supabase');
 const { auth: authMiddleware } = require('../middleware/auth');
 const { isSystemAdmin } = require('../helpers/adminRole');
 const { resolveCrmSocialInboxCompanyId } = require('../helpers/crmSocialInboxScope');
+const { canUsePersonalAccount, pickAccountForUser, listUsableAccounts, describePersonalAvailability } = require('../helpers/zaloPersonalAccess');
+const { findContactsForLead } = require('../helpers/zaloLeadConversations');
 const { extractContactInfo } = require('../helpers/facebookPhoneExtract');
 const { createLeadFromZaloContact, runZaloBatchExtractPhones, runZaloBatchCreateLeads, extractFromZaloContact, syncZaloContactProfile, runZaloBatchRefreshProfiles, isPlaceholderZaloDisplayName, applyZaloDisplayNameToCustomer, normalizeZaloModuleKey, normalizeZaloTargetType, resolveZaloModuleKeyForOa, resolveZaloCreateType, applyZaloOaRoutingToLead, runZaloBatchApplyOaRouting, ensureZaloLeadAutoTasks } = require('../helpers/zaloBatchTools');
 const {
@@ -76,6 +78,19 @@ async function getOaConfig(oaId) {
   return data;
 }
 
+/**
+ * Tra tài khoản theo oa_id, KHÔNG lọc is_active.
+ *
+ * getOaConfig() lọc is_active nên tài khoản đang tắt trả về null, và mọi chỗ
+ * kiểm "có phải Zalo cá nhân không" đều trượt rồi rơi xuống đường Zalo OA —
+ * người dùng nhận thông báo về token OA trong khi họ đang ở tab cá nhân.
+ */
+async function getAccountAny(oaId) {
+  const { data } = await supabase.from('zalo_oa_accounts')
+    .select('*').eq('oa_id', String(oaId || '')).maybeSingle();
+  return data || null;
+}
+
 async function getOaConfigWithValidToken(oaId) {
   const oaConfig = await getOaConfig(oaId);
   if (!oaConfig) return null;
@@ -120,6 +135,82 @@ async function sendZaloCsWithToken(oaConfig, { userId, text }) {
     }
   }
   return result;
+}
+
+const BRIDGE_STALE_MS = 5 * 60 * 1000;
+
+/**
+ * Gửi tin từ CRM qua tài khoản Zalo cá nhân.
+ * Tin được ghi ngay vào hộp thư (trạng thái chờ) rồi xếp hàng cho bridge gửi,
+ * nên nhân viên thấy phản hồi tức thì và không mất tin khi bridge rớt tạm.
+ */
+async function sendViaPersonalBridge(req, res, { contact, account, text }) {
+  if (!contact.lead_id) {
+    return res.status(400).json({ error: 'Hội thoại chưa gắn lead nên chưa gửi được' });
+  }
+
+  // Cổng đang chết thì VẪN nhận tin và xếp hàng đợi, không từ chối.
+  // Từ chối là nhân viên mất công gõ lại; xếp hàng thì cổng sống lại là gửi đi,
+  // và giao diện hiện rõ tin đang chờ chứ không giả vờ đã gửi xong.
+  const lastSeen = account.bridge_last_seen_at ? new Date(account.bridge_last_seen_at).getTime() : 0;
+  const stale = !lastSeen || Date.now() - lastSeen > BRIDGE_STALE_MS;
+  const bridgeDown = stale || account.bridge_status === 'need_qr';
+  const bridgeNote = account.bridge_status === 'need_qr'
+    ? 'Zalo cá nhân đã đăng xuất — cần quét lại mã QR trên máy công ty'
+    : 'Máy công ty đang không chạy';
+
+  const now = new Date().toISOString();
+  const { data: saved, error: msgErr } = await supabase.from('zalo_messages').insert({
+    contact_id: contact.id,
+    lead_id: contact.lead_id,
+    event_name: 'personal_send_text',
+    direction: 'outbound',
+    message_type: 'text',
+    content: text,
+    sent_by: req.user?.id || null,
+    metadata: { source: 'personal_bridge', delivered: false },
+  }).select().single();
+
+  if (msgErr) return res.status(500).json({ error: msgErr.message });
+
+  const { data: queued, error: qErr } = await supabase.from('zalo_outbox').insert({
+    oa_id: contact.oa_id,
+    contact_id: contact.id,
+    message_id: saved.id,
+    thread_id: contact.user_id,
+    thread_type: 'user',
+    content: text,
+    requested_by: req.user?.id || null,
+  }).select('id').single();
+
+  if (qErr) {
+    await supabase.from('zalo_messages').delete().eq('id', saved.id);
+    return res.status(500).json({ error: qErr.message });
+  }
+
+  await supabase.from('zalo_contacts').update({
+    last_message_at: now,
+    last_message_preview: text.slice(0, 100),
+    updated_at: now,
+  }).eq('id', contact.id);
+
+  try {
+    r._ioRef?.emit('zalo_message', {
+      contact_id: contact.id,
+      lead_id: contact.lead_id,
+      message: saved,
+      contact,
+    });
+  } catch (_) { /* ignore */ }
+
+  return res.json({
+    ok: true,
+    message: saved,
+    pending: true,
+    outbox_id: queued.id,
+    bridge_down: bridgeDown,
+    bridge_note: bridgeDown ? bridgeNote : null,
+  });
 }
 
 async function getOrCreateContact(oaId, userId, displayName, avatarUrl) {
@@ -586,6 +677,32 @@ function contactAllowedByZaloScope(scope, contact) {
   return Array.isArray(scope.oaIds) && scope.oaIds.includes(String(contact.oa_id));
 }
 
+
+/**
+ * Những oa_id cá nhân mà người này KHÔNG được xem.
+ *
+ * Trang Hộp thư và các endpoint danh sách lọc theo phạm vi công ty, không biết
+ * gì về quyền sở hữu Zalo cá nhân — nên phải loại thẳng ở đây, nếu không nhân
+ * viên mở hộp thư là đọc được chat của đồng nghiệp.
+ */
+async function blockedPersonalOaIds(user) {
+  const { data } = await supabase.from('zalo_oa_accounts')
+    .select('*').eq('account_kind', 'personal');
+  return (data || [])
+    .filter((a) => !canUsePersonalAccount(user, a).ok)
+    .map((a) => a.oa_id);
+}
+
+/** Chặn thao tác lên một hội thoại cá nhân không thuộc về người này. */
+async function guardContactAccess(req, res, contact) {
+  const account = await getAccountAny(contact.oa_id);
+  if (account?.account_kind !== 'personal') return true;
+  const allowed = canUsePersonalAccount(req.user, account);
+  if (allowed.ok) return true;
+  res.status(403).json({ error: allowed.reason });
+  return false;
+}
+
 function buildZaloContactsQuery(scope, query) {
   const { oa_id, search, has_lead } = query;
   let q = supabase.from('zalo_contacts')
@@ -617,11 +734,19 @@ function sanitizeZaloAccountForApi(row) {
   delete safe.refresh_token;
   delete safe.access_token;
   delete safe.secret_key;
+  // bridge_token là mật khẩu của bridge Zalo cá nhân — không bao giờ trả ra API
+  delete safe.bridge_token;
+  // Ảnh QR = quyền đăng nhập vào tài khoản Zalo đó. Chỉ lấy qua endpoint riêng
+  // dành cho admin, không đi kèm danh sách tài khoản.
+  delete safe.qr_image;
   return {
     ...safe,
+    has_qr: !!row.qr_image,
+    qr_updated_at: row.qr_updated_at || null,
     access_token_set: !!row.access_token,
     refresh_token_set: !!row.refresh_token,
     has_secret_key: !!row.secret_key,
+    bridge_token_set: !!row.bridge_token,
     n8n_trigger: buildOaN8nTriggerUrls(row),
   };
 }
@@ -920,7 +1045,9 @@ r.get('/contacts', authMiddleware, async (req, res) => {
     const limit = Math.min(parseInt(rawLimit, 10) || 200, 200);
     const offset = Math.max(parseInt(rawOffset, 10) || 0, 0);
 
-    const q = buildZaloContactsQuery(scope, { oa_id, search, has_lead });
+    let q = buildZaloContactsQuery(scope, { oa_id, search, has_lead });
+    const blocked = await blockedPersonalOaIds(req.user);
+    if (blocked.length) q = q.not('oa_id', 'in', `(${blocked.map((id) => `"${id}"`).join(',')})`);
     const { data, error, count } = await q.range(offset, offset + limit - 1);
     if (error) throw error;
 
@@ -950,6 +1077,7 @@ r.get('/contacts/:id', authMiddleware, async (req, res) => {
       .maybeSingle();
     if (error) throw error;
     if (!contact) return res.status(404).json({ error: 'Không tìm thấy liên hệ' });
+    if (!await guardContactAccess(req, res, contact)) return;
     if (!contactAllowedByZaloScope(scope, contact)) {
       return res.status(403).json({ error: 'Không có quyền xem liên hệ này' });
     }
@@ -973,6 +1101,7 @@ r.put('/contacts/:id', authMiddleware, async (req, res) => {
     if (!contactAllowedByZaloScope(scope, prev)) {
       return res.status(403).json({ error: 'Không có quyền' });
     }
+    if (!await guardContactAccess(req, res, prev)) return;
     const update = { updated_at: new Date().toISOString() };
     ['display_name', 'phone', 'email', 'lead_id', 'customer_id'].forEach((f) => {
       if (req.body[f] !== undefined) update[f] = req.body[f] || null;
@@ -999,6 +1128,7 @@ r.delete('/contacts/:id', authMiddleware, async (req, res) => {
     if (!contactAllowedByZaloScope(scope, prev)) {
       return res.status(403).json({ error: 'Không có quyền' });
     }
+    if (!await guardContactAccess(req, res, prev)) return;
     await supabase.from('zalo_messages').delete().eq('contact_id', req.params.id);
     await supabase.from('zalo_contacts').delete().eq('id', req.params.id);
     res.json({ success: true });
@@ -1013,8 +1143,18 @@ r.post('/contacts/:id/sync-profile', authMiddleware, async (req, res) => {
     if (!scope) return;
     const { data: contact } = await supabase.from('zalo_contacts').select('*').eq('id', req.params.id).maybeSingle();
     if (!contact) return res.status(404).json({ error: 'Không tìm thấy liên hệ' });
+    if (!await guardContactAccess(req, res, contact)) return;
     if (!contactAllowedByZaloScope(scope, contact)) {
       return res.status(403).json({ error: 'Không có quyền' });
+    }
+
+    const baseAccount = await getAccountAny(contact.oa_id);
+    if (baseAccount?.account_kind === 'personal') {
+      // Đồng bộ hồ sơ chạy bằng API của Zalo OA. Tài khoản cá nhân không có
+      // token OA — tên và avatar lấy từ chính lúc cổng tra số / nhận tin.
+      return res.status(400).json({
+        error: 'Hội thoại Zalo cá nhân không dùng được đồng bộ hồ sơ của OA',
+      });
     }
 
     const oaConfig = await getOaConfigWithValidToken(contact.oa_id);
@@ -1049,6 +1189,7 @@ r.post('/contacts/:id/apply-oa-routing', authMiddleware, async (req, res) => {
     if (!scope) return;
     const { data: contact } = await supabase.from('zalo_contacts').select('*').eq('id', req.params.id).maybeSingle();
     if (!contact) return res.status(404).json({ error: 'Không tìm thấy liên hệ' });
+    if (!await guardContactAccess(req, res, contact)) return;
     if (!contactAllowedByZaloScope(scope, contact)) {
       return res.status(403).json({ error: 'Không có quyền' });
     }
@@ -1088,6 +1229,7 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
     if (!scope) return;
     const { data: contact } = await supabase.from('zalo_contacts').select('*').eq('id', req.params.id).maybeSingle();
     if (!contact) return res.status(404).json({ error: 'Không tìm thấy liên hệ' });
+    if (!await guardContactAccess(req, res, contact)) return;
     if (!contactAllowedByZaloScope(scope, contact)) {
       return res.status(403).json({ error: 'Không có quyền' });
     }
@@ -1133,6 +1275,7 @@ r.put('/contacts/:id/link-lead', authMiddleware, async (req, res) => {
     if (!contactAllowedByZaloScope(scope, prev)) {
       return res.status(403).json({ error: 'Không có quyền' });
     }
+    if (!await guardContactAccess(req, res, prev)) return;
     const { data: contactRow } = await supabase.from('zalo_contacts')
       .select('id, display_name, user_id, customer_id')
       .eq('id', req.params.id)
@@ -1168,6 +1311,7 @@ r.get('/contacts/:id/messages', authMiddleware, async (req, res) => {
     if (!scope) return;
     const { data: contact } = await supabase.from('zalo_contacts').select('*').eq('id', req.params.id).single();
     if (!contact) return res.status(404).json({ error: 'Không tìm thấy liên hệ' });
+    if (!await guardContactAccess(req, res, contact)) return;
     if (scope.mode === 'filter' && !scope.oaIds.includes(String(contact.oa_id))) {
       return res.status(403).json({ error: 'Không có quyền' });
     }
@@ -1191,6 +1335,20 @@ r.post('/contacts/:id/messages', authMiddleware, async (req, res) => {
 
     const { data: contact } = await supabase.from('zalo_contacts').select('*').eq('id', req.params.id).single();
     if (!contact) return res.status(404).json({ error: 'Không tìm thấy liên hệ' });
+    if (!await guardContactAccess(req, res, contact)) return;
+
+    // Tài khoản Zalo cá nhân: không có CS API — xếp vào hàng đợi cho bridge gửi.
+    const baseConfig = await getAccountAny(contact.oa_id);
+    if (baseConfig?.account_kind === 'personal') {
+      if (!baseConfig.is_active) {
+        return res.status(400).json({
+          error: `Tài khoản Zalo cá nhân “${baseConfig.oa_name || baseConfig.oa_id}” đang tắt. Quản trị viên bật lại trong trang quản trị của máy công ty.`,
+        });
+      }
+      const allowed = canUsePersonalAccount(req.user, baseConfig);
+      if (!allowed.ok) return res.status(403).json({ error: allowed.reason });
+      return sendViaPersonalBridge(req, res, { contact, account: baseConfig, text });
+    }
 
     const oaConfig = await getOaConfigWithValidToken(contact.oa_id);
     if (!oaConfig || (!oaConfig.access_token && !oaConfig.refresh_token)) {
@@ -1232,18 +1390,114 @@ r.post('/contacts/:id/messages', authMiddleware, async (req, res) => {
   }
 });
 
+/**
+ * Chọn hội thoại đúng kênh: 'personal' = Zalo cá nhân, 'oa' = Zalo OA,
+ * bỏ trống = hội thoại có tin mới nhất (giữ nguyên hành vi cũ).
+ */
+async function pickContactByKind(contacts, kind, user = null) {
+  if (!contacts.length) return null;
+
+  const newest = (list) => [...list].sort((a, b) =>
+    new Date(b.last_message_at || 0) - new Date(a.last_message_at || 0))[0] || null;
+
+  const wanted = String(kind || '').trim().toLowerCase();
+  if (wanted !== 'personal' && wanted !== 'oa') return newest(contacts);
+
+  const oaIds = [...new Set(contacts.map((c) => c.oa_id))];
+  const { data: accounts } = await supabase.from('zalo_oa_accounts')
+    .select('*').in('oa_id', oaIds);
+
+  const byOa = new Map((accounts || []).map((a) => [a.oa_id, a]));
+
+  const matched = contacts.filter((c) => {
+    const acc = byOa.get(c.oa_id);
+    const accKind = acc?.account_kind || 'oa';
+    if (accKind !== wanted) return false;
+    // Hội thoại Zalo cá nhân chỉ hiện cho người được dùng tài khoản đó
+    if (accKind === 'personal' && user) return canUsePersonalAccount(user, acc).ok;
+    return true;
+  });
+
+  return newest(matched);
+}
+
+/**
+ * Gắn tình trạng gửi cho từng tin đi.
+ *
+ * Tin của Zalo cá nhân đi qua hàng đợi nên có độ trễ và có thể hỏng. Không hiện
+ * trạng thái thì nhân viên tưởng đã gửi xong trong khi tin nằm chết ở hàng đợi.
+ */
+async function attachDeliveryStatus(messages, contact) {
+  const outboundIds = messages.filter((m) => m.direction === 'outbound').map((m) => m.id);
+  if (!outboundIds.length) return messages.map((m) => ({ ...m, contact }));
+
+  const { data: queued } = await supabase
+    .from('zalo_outbox')
+    .select('id, message_id, status, attempts, last_error')
+    .in('message_id', outboundIds);
+
+  const byMessage = new Map((queued || []).map((q) => [q.message_id, q]));
+
+  return messages.map((m) => {
+    const q = byMessage.get(m.id);
+    return {
+      ...m,
+      contact,
+      delivery: q ? {
+        outbox_id: q.id,
+        status: q.status,           // pending | sending | sent | failed
+        attempts: q.attempts,
+        error: q.last_error,
+      } : null,
+    };
+  });
+}
+
 r.get('/leads/:leadId/messages', authMiddleware, async (req, res) => {
   try {
-    const { data: contacts } = await supabase.from('zalo_contacts')
-      .select('*').eq('lead_id', req.params.leadId).limit(1);
-    const contact = contacts?.[0];
-    if (!contact) return res.json([]);
+    // Một khách có thể có nhiều lead nhưng chỉ một hội thoại Zalo. Tra theo cả
+    // khách hàng và số điện thoại, không chỉ theo lead này.
+    const { data: lead } = await supabase.from('crm_leads')
+      .select('id, phone, customer_id, customer:customers(id, phone)')
+      .eq('id', req.params.leadId)
+      .maybeSingle();
+
+    const contacts = lead ? await findContactsForLead(supabase, lead) : [];
+
+    // Một lead có thể có cả hội thoại Zalo OA lẫn Zalo cá nhân. Hai cửa sổ chat
+    // là hai kênh riêng, không được trộn tin của nhau.
+    const contact = await pickContactByKind(contacts || [], req.query.kind, req.user);
+    // Hội thoại vừa tạo thì chưa có tin nào. Vẫn phải trả về `contact`, nếu không
+    // giao diện tưởng chưa có hội thoại và quay lại màn hình "tìm khách".
+    if (!contact) return res.json({ contact: null, messages: [] });
     const { data } = await supabase.from('zalo_messages')
       .select('*, contact:zalo_contacts(id, display_name, avatar_url, user_id, oa_id)')
       .eq('contact_id', contact.id)
       .order('created_at', { ascending: true });
-    const list = (data || []).map((m) => ({ ...m, contact }));
-    res.json(list);
+
+    const list = await attachDeliveryStatus(data || [], contact);
+
+    // Giao diện cần biết hội thoại này đi qua tài khoản nào, để hiện đúng kênh
+    // và đúng cặp số: số khách ↔ số Zalo của mình.
+    const { data: acc } = await supabase.from('zalo_oa_accounts')
+      .select('oa_id, oa_name, account_kind, account_phone, bridge_status, owner_user_id, owner:users!zalo_oa_accounts_owner_user_id_fkey(id, full_name)')
+      .eq('oa_id', contact.oa_id)
+      .maybeSingle();
+
+    res.json({
+      contact,
+      messages: list,
+      account: acc ? {
+        oa_id: acc.oa_id,
+        oa_name: acc.oa_name,
+        account_kind: acc.account_kind || 'oa',
+        account_phone: acc.account_phone,
+        bridge_status: acc.bridge_status,
+        // Tên người sở hữu số — hữu ích hơn tên tài khoản, vì tên tài khoản
+        // thường bị đặt trùng chính số điện thoại
+        owner_name: acc.owner?.full_name || null,
+      } : null,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1359,6 +1613,400 @@ r.post('/auto-tool/start', authMiddleware, (_req, res) => {
 r.post('/auto-tool/stop', authMiddleware, (_req, res) => {
   zaloAutoTool.stop();
   res.json({ ok: true, state: zaloAutoTool.getState() });
+});
+
+/**
+ * Trả tệp đính kèm đã chép về kho.
+ *
+ * Đi qua CRM thay vì link công khai của Supabase để: cùng gốc với trang (không
+ * bị chặn nội dung hỗn hợp), và quan trọng hơn — kiểm quyền, vì ảnh khách hàng
+ * không được để ai có link cũng xem.
+ */
+r.get('/messages/:id/attachment', authMiddleware, async (req, res) => {
+  try {
+    const { data: msg } = await supabase.from('zalo_messages')
+      .select('id, contact_id, stored_path, stored_bucket, attachment_name, message_type')
+      .eq('id', req.params.id)
+      .maybeSingle();
+
+    if (!msg?.stored_path) return res.status(404).json({ error: 'Không có tệp đã lưu' });
+
+    const { data: contact } = await supabase.from('zalo_contacts')
+      .select('*').eq('id', msg.contact_id).maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'Không tìm thấy hội thoại' });
+    if (!await guardContactAccess(req, res, contact)) return;
+
+    const { downloadStorageObject } = require('../helpers/storageUpload');
+    const blob = await downloadStorageObject(msg.stored_bucket || 'attachments', msg.stored_path);
+    if (!blob) return res.status(404).json({ error: 'Tệp không còn trong kho' });
+
+    const buffer = Buffer.from(await blob.arrayBuffer());
+    const name = msg.attachment_name || `zalo-${msg.message_type || 'file'}`;
+
+    res.setHeader('Content-Type', blob.type || 'application/octet-stream');
+    res.setHeader('Content-Length', buffer.length);
+    // Đệm ngắn: đủ để cuộn qua lại không tải lại, nhưng không giấu lỗi hàng giờ
+    // trong bộ nhớ đệm trình duyệt khi đang dò sự cố.
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    // Ảnh xem trực tiếp; tệp khác thì tải về kèm đúng tên
+    res.setHeader(
+      'Content-Disposition',
+      `${['image', 'sticker', 'gif'].includes(msg.message_type) ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(name)}`,
+    );
+    res.end(buffer);
+  } catch (e) {
+    console.error('[Zalo đính kèm] phục vụ tệp:', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══ ZALO CÁ NHÂN — tình trạng tích hợp ═══════════════════════
+
+/**
+ * Vì sao người đang đăng nhập chưa dùng được Zalo cá nhân.
+ * Giao diện dùng cái này để nói thẳng lý do thay vì ẩn tab đi.
+ */
+r.get('/personal/status', authMiddleware, async (req, res) => {
+  try {
+    const status = await describePersonalAvailability(req.user);
+    res.json({
+      ok: true,
+      ...status,
+      account: status.account ? {
+        oa_id: status.account.oa_id,
+        oa_name: status.account.oa_name,
+        account_phone: status.account.account_phone,
+        bridge_status: status.account.bridge_status,
+      } : null,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══ ZALO CÁ NHÂN — gửi lại tin hỏng ══════════════════════════
+
+/**
+ * Đưa một tin gửi hỏng trở lại hàng đợi.
+ *
+ * Tin hỏng 3 lần thì dừng để khỏi quay vòng vô ích, nhưng phải có đường cho
+ * người bấm gửi lại — thường lỗi là do cổng rớt mạng hoặc phiên Zalo hết hạn,
+ * sửa xong là gửi được.
+ */
+r.post('/personal/messages/:messageId/retry', authMiddleware, async (req, res) => {
+  try {
+    const { data: msg } = await supabase.from('zalo_messages')
+      .select('id, contact_id, direction, content')
+      .eq('id', req.params.messageId)
+      .maybeSingle();
+
+    if (!msg) return res.status(404).json({ error: 'Không tìm thấy tin nhắn' });
+    if (msg.direction !== 'outbound') return res.status(400).json({ error: 'Chỉ gửi lại được tin đi' });
+
+    const { data: contact } = await supabase.from('zalo_contacts')
+      .select('*').eq('id', msg.contact_id).maybeSingle();
+    if (!contact) return res.status(404).json({ error: 'Không tìm thấy hội thoại' });
+
+    const account = await getAccountAny(contact.oa_id);
+    if (account?.account_kind !== 'personal') {
+      return res.status(400).json({ error: 'Chỉ áp dụng cho Zalo cá nhân' });
+    }
+    if (!account.is_active) {
+      return res.status(400).json({
+        error: `Tài khoản Zalo cá nhân “${account.oa_name || account.oa_id}” đang tắt — bật lại rồi mới gửi lại được.`,
+      });
+    }
+    const allowedRetry = canUsePersonalAccount(req.user, account);
+    if (!allowedRetry.ok) return res.status(403).json({ error: allowedRetry.reason });
+
+    const now = new Date().toISOString();
+    const { data: existing } = await supabase.from('zalo_outbox')
+      .select('id, status').eq('message_id', msg.id).maybeSingle();
+
+    if (existing) {
+      if (existing.status === 'sent') {
+        return res.status(400).json({ error: 'Tin này đã gửi thành công rồi' });
+      }
+      await supabase.from('zalo_outbox').update({
+        status: 'pending', attempts: 0, last_error: null, claimed_at: null, updated_at: now,
+      }).eq('id', existing.id);
+      return res.json({ ok: true, outbox_id: existing.id, requeued: true });
+    }
+
+    // Không còn hàng đợi (bị dọn) thì xếp lại từ nội dung đã lưu
+    const { data: created, error } = await supabase.from('zalo_outbox').insert({
+      oa_id: contact.oa_id,
+      contact_id: contact.id,
+      message_id: msg.id,
+      thread_id: contact.user_id,
+      thread_type: 'user',
+      content: msg.content,
+      requested_by: req.user?.id || null,
+    }).select('id').single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, outbox_id: created.id, requeued: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══ ZALO CÁ NHÂN — khớp lead theo số điện thoại ══════════════
+
+/**
+ * Nhân viên mở tab Zalo cá nhân của một lead chưa có hội thoại → tạo yêu cầu
+ * tra cứu ĐÚNG MỘT số. Cổng sẽ hỏi Zalo số đó thuộc tài khoản nào.
+ *
+ * Cố tình làm theo yêu cầu từng số, không quét hàng loạt: dò số điện thoại
+ * hàng loạt là hành vi khiến Zalo khoá tài khoản.
+ */
+r.post('/personal/leads/:leadId/resolve', authMiddleware, async (req, res) => {
+  try {
+    const { data: lead } = await supabase.from('crm_leads')
+      .select('id, phone, customer_id, customer:customers(id, phone)')
+      .eq('id', req.params.leadId)
+      .maybeSingle();
+
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead' });
+
+    const raw = lead.customer?.phone || lead.phone;
+    const phone = formatVnPhoneLocal0From84(normalizeVnPhoneTo84(raw));
+    if (!phone) return res.status(400).json({ error: 'Lead chưa có số điện thoại hợp lệ' });
+
+    // Đã có hội thoại rồi thì khỏi tra — kể cả hội thoại thuộc lead khác của
+    // cùng khách này. Tra lại số đã biết vừa tốn lượt vừa tăng rủi ro bị khoá.
+    const existing = await findContactsForLead(supabase, lead);
+    if (existing.length) {
+      return res.json({ ok: true, already_linked: true, contact_id: existing[0].id });
+    }
+
+    // Nhắn từ ĐÚNG số Zalo của người đang thao tác — không mượn số người khác
+    const account = await pickAccountForUser(req.user, String(req.body?.oa_id || '').trim() || null);
+    if (!account) {
+      return res.status(400).json({
+        error: 'Bạn chưa có tài khoản Zalo cá nhân nào đang chạy. Số Zalo phải trùng số điện thoại trong hồ sơ nhân viên của bạn.',
+      });
+    }
+    const allowedResolve = canUsePersonalAccount(req.user, account);
+    if (!allowedResolve.ok) return res.status(403).json({ error: allowedResolve.reason });
+
+    // Hạn mức theo giờ — chặn biến việc này thành quét hàng loạt
+    const since = new Date(Date.now() - 3600_000).toISOString();
+    const { count } = await supabase.from('zalo_link_requests')
+      .select('id', { count: 'exact', head: true })
+      .eq('oa_id', account.oa_id)
+      .gte('created_at', since);
+
+    const limit = account.lookup_hourly_limit ?? 30;
+    if ((count || 0) >= limit) {
+      return res.status(429).json({
+        error: `Đã tra ${count}/${limit} số trong một giờ qua. Chờ sang giờ sau — tra quá nhiều số dễ bị Zalo khoá tài khoản.`,
+      });
+    }
+
+    const { data: pending } = await supabase.from('zalo_link_requests')
+      .select('id, status').eq('oa_id', account.oa_id).eq('phone', phone)
+      .eq('status', 'pending').maybeSingle();
+    if (pending) return res.json({ ok: true, request: pending, queued: true });
+
+    const { data: created, error } = await supabase.from('zalo_link_requests').insert({
+      oa_id: account.oa_id,
+      lead_id: lead.id,
+      phone,
+      requested_by: req.user?.id || null,
+    }).select('id, status, phone').single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, request: created, queued: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Kết quả tra cứu gần nhất của một lead, để giao diện hiện trạng thái. */
+r.get('/personal/leads/:leadId/resolve', authMiddleware, async (req, res) => {
+  try {
+    const { data } = await supabase.from('zalo_link_requests')
+      .select('id, status, phone, zalo_uid, error, created_at, done_at')
+      .eq('lead_id', req.params.leadId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    res.json({ ok: true, request: data || null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══ ZALO CÁ NHÂN — quản trị cổng & tài khoản ═════════════════
+
+/** Ảnh QR để quét từ xa. Chỉ admin — xem được QR là đăng nhập được. */
+r.get('/personal/accounts/:id/qr', authMiddleware, async (req, res) => {
+  try {
+    if (!isSystemAdmin(req.user) && req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Chỉ quản trị viên xem được mã QR' });
+    }
+
+    const { data } = await supabase.from('zalo_oa_accounts')
+      .select('oa_id, oa_name, qr_image, qr_updated_at, bridge_status')
+      .eq('id', req.params.id)
+      .eq('account_kind', 'personal')
+      .maybeSingle();
+
+    if (!data) return res.status(404).json({ error: 'Không tìm thấy tài khoản' });
+    if (!data.qr_image) {
+      return res.status(404).json({ error: 'Chưa có mã QR — máy công ty chỉ đẩy lên khi cần đăng nhập lại' });
+    }
+
+    res.json({
+      ok: true,
+      oa_id: data.oa_id,
+      oa_name: data.oa_name,
+      image: data.qr_image,
+      updated_at: data.qr_updated_at,
+      bridge_status: data.bridge_status,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Ra lệnh cho máy công ty: đăng xuất, khởi động lại, đăng nhập lại. */
+r.post('/personal/accounts/:id/command', authMiddleware, async (req, res) => {
+  try {
+    if (!isSystemAdmin(req.user) && req.user?.role !== 'admin') {
+      return res.status(403).json({ error: 'Chỉ quản trị viên ra lệnh được' });
+    }
+
+    const command = String(req.body?.command || '').trim();
+    if (!['logout', 'restart', 'relogin'].includes(command)) {
+      return res.status(400).json({ error: 'Lệnh không hợp lệ' });
+    }
+
+    const { data: account } = await supabase.from('zalo_oa_accounts')
+      .select('id, oa_id, gateway_id')
+      .eq('id', req.params.id)
+      .eq('account_kind', 'personal')
+      .maybeSingle();
+
+    if (!account) return res.status(404).json({ error: 'Không tìm thấy tài khoản' });
+    if (!account.gateway_id) return res.status(400).json({ error: 'Tài khoản chưa gắn với máy nào' });
+
+    const { data: cmd, error } = await supabase.from('zalo_gateway_commands').insert({
+      gateway_id: account.gateway_id,
+      oa_id: account.oa_id,
+      command,
+      requested_by: req.user?.id || null,
+    }).select('id, command, status').single();
+
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, command: cmd });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Danh sách máy công ty + số tài khoản đang giữ. */
+r.get('/personal/gateways', authMiddleware, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('zalo_gateways')
+      .select('id, name, description, is_active, last_seen_at, agent_version, host_info')
+      .order('created_at');
+
+    if (error) return res.status(500).json({ error: error.message });
+
+    const { data: accounts } = await supabase
+      .from('zalo_oa_accounts')
+      .select('gateway_id')
+      .eq('account_kind', 'personal');
+
+    const counts = {};
+    (accounts || []).forEach((a) => {
+      if (a.gateway_id) counts[a.gateway_id] = (counts[a.gateway_id] || 0) + 1;
+    });
+
+    res.json({
+      ok: true,
+      gateways: (data || []).map((g) => ({ ...g, account_count: counts[g.id] || 0 })),
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ═══ ZALO CÁ NHÂN — hội thoại chờ gắn lead ════════════════════
+// Tin nhắn của TK cá nhân chỉ được lưu sau khi hội thoại gắn vào một lead.
+// Trước đó chỉ có tên + thời điểm ở đây để nhân viên bấm gắn.
+
+r.get('/personal/pending-threads', authMiddleware, async (req, res) => {
+  try {
+    let q = supabase.from('zalo_personal_pending_threads')
+      .select('*')
+      .eq('dismissed', false)
+      .order('last_message_at', { ascending: false, nullsFirst: false })
+      .limit(Math.min(Number(req.query.limit) || 100, 500));
+
+    if (req.query.oa_id) q = q.eq('oa_id', String(req.query.oa_id));
+
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, threads: data || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/** Gắn hội thoại chờ vào một lead → tạo zalo_contacts, từ giờ tin nhắn được lưu. */
+r.post('/personal/pending-threads/:id/link-lead', authMiddleware, async (req, res) => {
+  try {
+    const leadId = String(req.body?.lead_id || '').trim();
+    if (!leadId) return res.status(400).json({ error: 'Thiếu lead_id' });
+
+    const { data: thread } = await supabase.from('zalo_personal_pending_threads')
+      .select('*').eq('id', req.params.id).maybeSingle();
+    if (!thread) return res.status(404).json({ error: 'Không tìm thấy hội thoại' });
+
+    const { data: lead } = await supabase.from('crm_leads')
+      .select('id, customer_id').eq('id', leadId).maybeSingle();
+    if (!lead) return res.status(404).json({ error: 'Không tìm thấy lead' });
+
+    const { data: contact, error: upErr } = await supabase.from('zalo_contacts')
+      .upsert({
+        oa_id: thread.oa_id,
+        user_id: thread.thread_id,
+        display_name: thread.display_name || `Zalo ${String(thread.thread_id).slice(-6)}`,
+        avatar_url: thread.avatar_url || null,
+        phone: thread.phone || null,
+        lead_id: lead.id,
+        customer_id: lead.customer_id || null,
+        last_message_at: thread.last_message_at,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'oa_id,user_id' })
+      .select().single();
+
+    if (upErr) return res.status(500).json({ error: upErr.message });
+
+    await supabase.from('zalo_personal_pending_threads')
+      .update({ dismissed: true, updated_at: new Date().toISOString() })
+      .eq('id', thread.id);
+
+    res.json({ ok: true, contact });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/personal/pending-threads/:id/dismiss', authMiddleware, async (req, res) => {
+  try {
+    const { error } = await supabase.from('zalo_personal_pending_threads')
+      .update({ dismissed: true, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 module.exports = r;

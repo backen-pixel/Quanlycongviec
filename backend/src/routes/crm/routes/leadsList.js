@@ -12,6 +12,7 @@ const {
 const { isLostOrCancelledPipelineStage } = require('../../../helpers/crmLostPipelineStage');
 const { computeDashboardDealKpisFromStageAggregates } = require('../../../helpers/crmDealDashboardKpis');
 const { companyWorkEndMsFromRaw } = require('../../../helpers/companyDeadlineClock');
+const { crmHandedToProduction } = require('../../../helpers/moduleDeadlinePolicy');
 const {
   CRM_DEADLINE_SNAPSHOT_TTL_MS,
   crmDeadlineSnapshotCache,
@@ -919,7 +920,8 @@ function crmDeadlineTsForRow(row, stage, config) {
   const hasPhone = !!String(
     row?.display_phone || row?.phone || row?.customer?.phone || '',
   ).trim();
-  if (!hasPhone || row?.is_interacted || row?.deadline_disabled_at || crmDeadlineStageExcluded(stage)) return null;
+  if (!hasPhone || row?.deadline_disabled_at || crmDeadlineStageExcluded(stage)) return null;
+  if (crmHandedToProduction(row, stage)) return null;
 
   // NV trước Setup: hạn user vừa ghi vào Setup chỉ có hiệu lực sau khi đã sync NV đang đếm.
   for (const field of ['crm_next_open_task_deadline', 'kanban_deadline_at']) {

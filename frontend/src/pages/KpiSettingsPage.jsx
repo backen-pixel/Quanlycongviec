@@ -1844,7 +1844,7 @@ function CrmTaskBundleTab({ companyId, variant = 'full', roleFilter = '' }) {
 // ═════════════════════════════════════════════════════════════════════════════
 export default function KpiSettingsPage() {
   const { user } = useAuth();
-  const isManager = ['admin', 'manager', 'director', 'supervisor', 'superadmin'].includes(String(user?.role || '').toLowerCase());
+  const isManager = ['ecosystem_admin', 'admin', 'manager', 'director', 'supervisor', 'superadmin'].includes(String(user?.role || '').toLowerCase());
   const [tab, setTab] = useState('definitions');
   const [companies, setCompanies] = useState([]);
   const [settingsCompanyId, setSettingsCompanyId] = useState('');

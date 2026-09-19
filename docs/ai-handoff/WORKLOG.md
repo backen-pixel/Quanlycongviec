@@ -1,6 +1,746 @@
 # Nhật ký công việc AI
 
-## 2026-09-11 10:05 — HCB Tủ bếp: Kanban tới Hoàn thiện
+## 2026-09-18 14:38 — Push nốt ecosystem_admin + gắn công ty HST
+
+- AI: Cursor. Đẩy quyền role mới, Facebook HST, sync `user_companies`.
+
+## 2026-09-18 14:35 — CRM Kanban 400 thiếu company_id trên production
+
+- AI: Cursor. Production `userIsAdmin === admin` nên JWT `ecosystem_admin`
+  bị 400. Deploy helpersBundle + adminRole BE/FE + crmAccessRoles.
+
+## 2026-09-18 14:30 — Xóa Linh Tây Ninh + Vân Long Xuyên
+
+- AI: Cursor. Xóa 2 công ty inactive (0 lead/project) trên primary+backup.
+  Gỡ `user_companies`; giữ unit/dự án thật. Sync HST chỉ gắn công ty active.
+- `admin@tubep.vn` còn 5 công ty.
+
+## 2026-09-18 14:20 — Gắn mọi công ty HST cho admin hệ thống
+
+- AI: Cursor. `user_companies` đủ công ty tenant cho ecosystem_admin.
+  Không set `users.company_id`. File: `hstAdminCompanies.js`, login `/me`,
+  tạo công ty, Users POST/PUT, SQL 621.
+- `admin@tubep.vn`: 7 công ty.
+
+## 2026-09-18 14:10 — Admin HST không bắt company_id trên CRM
+
+- AI: Cursor. `userIsAdmin` thiếu `ecosystem_admin` nên JWT mới bị 400
+  «Thiếu company_id của user». File: `helpersBundle.js`.
+- Test: `node -e` userIsAdmin('ecosystem_admin') === true.
+
+## 2026-09-18 11:50 — Role quản trị hệ sinh thái (ecosystem_admin)
+
+- AI: Cursor. Thêm enum `ecosystem_admin`, gán `admin@tubep.vn`.
+  Helper BE/FE coi role này là admin HST (không `platform_admin`).
+  File: `620_user_role_ecosystem_admin.sql`, `adminRole.js`, UsersPage,
+  `crmAccessRoles.js`, `facebook.js`.
+- Test: `node tests/facebook-lead-chat-scope.test.js`, `npm run test:role-enum`.
+- Cần đăng nhập lại để JWT nhận role mới.
+
+## 2026-09-18 11:35 — Admin HST xem hội thoại Facebook trên deal
+
+- AI: Cursor. Admin cả hệ sinh thái (`admin` + `tenant_id`, không khoá
+  công ty) xem thread deal trong HST dù Page chưa map công ty. File:
+  `facebook.js`, test `facebook-lead-chat-scope.test.js`.
+- Test: `node tests/facebook-lead-chat-scope.test.js`.
+
+## 2026-09-18 11:25 — Admin hệ thống xem hội thoại Facebook trên deal
+
+- AI: Cursor. 403 vì lọc Page theo đúng công ty deal. Admin hệ thống
+  dùng phạm vi tenant (hoặc all) + cho thread đã gắn lead. File:
+  `facebook.js`, `FacebookChatTab.jsx`, test `facebook-lead-chat-scope.test.js`.
+- Test: `node tests/facebook-lead-chat-scope.test.js`.
+
+## 2026-09-18 14:10 — Thử 9 migration trên Postgres local; sửa lỗi 602
+
+- AI: Claude. Nhánh `feat/zalo-personal`.
+- Dự án Supabase DEV đã mất nên dựng Postgres 16.15 + pgvector bằng docker
+  trên máy để thoả AI-003, không dùng cloud.
+- Cần: `pg_trgm`, `vector`, `pgcrypto`; stub `storage.buckets`; bảng tiền đề
+  sinh từ `docs/database/DATABASE_SCHEMA.md`; schema guide CŨ lấy từ backup.
+- **Tìm được lỗi thật trong `602_guide_assistant_en.sql`** — thiếu
+  `ADD COLUMN fail_count`, migration ĐỔ ở `COMMENT ON COLUMN` khi
+  `guide_experiences` đang ở schema cũ. Sẽ đổ y hệt trên production. Sửa ở
+  commit `0450a908`, đặt trong khối `DO` có guard và SAU khối rename nên an
+  toàn cả khi schema cũ có `that_bai`.
+- Kiểm thử đã chạy: 8 migration Zalo ĐẠT + idempotent; 602 ĐẠT trên schema cũ
+  có dữ liệu (giữ bản ghi, JSON `tom_tat`→`summary`, `tu_dong`→`auto`), ĐẠT
+  khi chạy lần 2, ĐẠT trên DB sạch; trọn bộ 9 theo thứ tự trên DB mới 9/9 ĐẠT.
+- CHƯA xác minh: dữ liệu thật khối lượng lớn, RLS/policy Supabase,
+  `storage.buckets` thật (local là bảng stub). Chưa chạy production.
+- Đã cài 9 dependency của CopilotKit/AI SDK; `vite build` ĐẠT (exit 0, 2m40s,
+  cần `NODE_OPTIONS=--max-old-space-size=6144`). Chuỗi `build:frontend`
+  (generate-registry → check-drift → sync-screenshots-deploy) cả 3 exit 0;
+  đã sinh lại registry theo tên nhóm menu của main (commit `d56ec0e7`).
+
+## 2026-09-18 13:30 — Dựng lại repo: main + copilotkit + Zalo cá nhân
+
+- AI: Claude. Nhánh `feat/zalo-personal`.
+- Bối cảnh: thư mục làm việc trước đó KHÔNG phải git repo, đã phân kỳ khỏi
+  remote. Dựng lại thành repo thật trên nền `origin/main` (a98226a9).
+- Commit:
+  - `99bb3de7` ghép tính năng Zalo cá nhân (5 điểm móc, 15 file mới,
+    dịch vụ ngoài `zalo-bridge/`).
+  - `d4da30aa` merge `origin/copilotkit` (Guide Assistant + CopilotKit).
+    Giải 3 xung đột: `ViewModeDropdownMenu.jsx` giữ cả `extra` (main) và
+    `guideRegion` (copilotkit); `CRMTasksTab.jsx` giữ điều kiện
+    `!sxPlanGroups` của main + thuộc tính `data-guide-*` của copilotkit;
+    `LeadDetail.jsx` nút "Gửi Zalo OA" do hai bên thêm độc lập sau điểm
+    chung — lấy bản main vì có theo dõi `zaloOaSent`/`zaloOaSentAt`.
+  - `d56ec0e7` sinh lại `screenRegistry.js` + `screens.json` theo tên nhóm
+    menu của main ("3. Setup xưởng", trước là "3. Điều hành xưởng").
+- `crmLeadInboxChannel.js` phải export SONG SONG hai thế hệ:
+  `resolveLeadInboxChannels` (mới, cho `zalo_personal`) và
+  `resolveLeadInboxLinks` (cũ, `projectDealBundle.js` + `/leads/:id/inbox-links`
+  vẫn dùng). KHÔNG dựng hàm cũ từ hàm mới: hàm mới bật `zalo_personal` chỉ cần
+  lead có số di động VN hợp lệ dù chưa có hội thoại → tab Zalo hiện sai trên
+  trang dự án.
+- Kiểm thử đã chạy: `npm install` backend+frontend (9 gói mới của CopilotKit/
+  AI SDK); `vite build` ĐẠT (exit 0, 2m40s, cần
+  `NODE_OPTIONS=--max-old-space-size=6144`, heap 2 GB mặc định bị OOM);
+  `node --check` toàn bộ `backend/src` sạch; quét cú pháp 769 file frontend
+  sạch; chuỗi `build:frontend` (generate-registry → check-drift →
+  sync-screenshots-deploy) cả 3 exit 0.
+- CHƯA xác minh: migration chưa chạy ở bất kỳ môi trường nào (xem CURRENT.md).
+  Chưa khởi động backend — `server.js` có `setInterval` 20s gọi
+  `zaloAttachmentCopy.processPending(5)` GHI vào Supabase, `.env` trỏ môi
+  trường thật. Nhánh chưa push.
+- `backend/src/config/aiProvider.js` (bản làm việc cũ) KHÔNG có trên nhánh
+  remote nào; đã mất khỏi cây source. Backup toàn bộ trạng thái trước khi thay:
+  `/home/bizmind/local-20260918-1137.tar.gz`.
+
+
+## 2026-09-17 11:45 — Trang cá nhân: cập nhật họ tên và SĐT
+
+- AI: Cursor. Nút **Cập nhật** trên card Thông tin. PATCH profile/me
+  nhận `phone`. File: `EditMyNameModal.jsx`, `SocialProfilePage.jsx`,
+  `internalSocial.js`.
+
+## 2026-09-17 11:05 — Gửi nhắc tất cả dự án trễ hạn Work Unified
+
+- AI: Cursor. Bấm **Nhắc tiến độ (36)** VPT: 36 bình luận @ người chịu
+  trách nhiệm. Proxy Vite cắt ~120s nên UI báo lỗi dù BE vẫn gửi nốt.
+  Sửa: gửi song song 5; timeout `/api` 180s.
+- Test: `node tests/work-unified-progress-reminder.test.js`.
+
+## 2026-09-17 10:50 — Qua cột Lắp đặt CRM thì hết hạn lắp
+
+- AI: Cursor. PATCH stage CRM sau Lắp đặt tắt hạn lắp (CSKH → warranty;
+  Hoàn thành → project_final). File: `crmDealStageGate.js`,
+  `moduleDeadlinePolicy.js`, `completeOpenWorkOnModuleDone.js`,
+  `leadLifecycle.js`, `management.js`.
+- Test: `node tests/module-deadline-policy.test.js`.
+
+## 2026-09-17 10:40 — Nhắc tiến độ dự án quá hạn trên Work Unified
+
+- AI: Cursor. Nút Nhắc tiến độ gửi bình luận @ người chịu trách nhiệm
+  (tab Thành viên) cho dự án `forecast=late`. File:
+  `workUnifiedProgressReminder.js`, `management.js`,
+  `WorkUnifiedOverviewPage.jsx`, test `work-unified-progress-reminder.test.js`.
+- Test: `node tests/work-unified-progress-reminder.test.js` OK.
+
+## 2026-09-17 10:10 — Dọn hạn chồng theo vòng đời CRM → SX → lắp
+
+- AI: Cursor. SQL 619 đã chạy primary + backup. Xóa hạn CRM trên
+  Thua/Thắng và deal đã lập SX; xóa hạn SX sau giao/bàn giao VC.
+  Không đụng ngày giao/lắp. Script:
+  `backend/scripts/sync-lifecycle-deadlines.js`.
+- Primary trước→sau: thẻ mất 634→0, NV mất 768→0, hạn SX sau giao 13→0.
+- Backup: 409/744/2 → 0.
+
+## 2026-09-17 09:40 — Một hạn theo vòng đời CRM → SX → lắp
+
+- AI: Cursor. Policy: CRM lập SX thì hết hạn CRM; SX giao/bàn giao VC thì
+  hết hạn SX và đếm hạn lắp; lắp xong thì hết hạn. File:
+  `moduleDeadlinePolicy.js` (BE+FE), `crmLeadDeadlineDisplay.js`,
+  `leadsList.js`, test, `DECISIONS.md` AI-002.
+- Test: `node tests/module-deadline-policy.test.js`,
+  `node tests/project-overview-deadline.js` OK.
+
+## 2026-09-16 16:05 — Bật/tắt từng API cảnh báo hạn
+
+- AI: Cursor. Cột công tắc trên bảng API đã cấu hình; tắt thì cron
+  không gửi API đó. File: `ProjectDeadlineDispatchPage.jsx`,
+  `dashboard.js`, `projectDeadlineDispatch.js`.
+
+## 2026-09-16 16:00 — Bật/tắt cảnh báo hạn + gán hạn nhiệm vụ
+
+- AI: Cursor. Trang `/management/project-deadlines` thêm công tắc
+  cảnh báo Zalo toàn hệ thống và gán hạn module vào việc trống.
+  File: `ProjectDeadlineDispatchPage.jsx`, `dashboard.js`,
+  `projectDeadlineDispatch.js`, `workTasks.js`.
+
+## 2026-09-16 15:40 — Ghi hạn module vào việc con trống trên tổng quan NV
+
+- AI: Cursor. Việc mở chưa có `due_date`/`deadline` được ghi hạn module
+  khi tải `/work-tasks/project-overview`. Mẫu xưởng mới cũng nhận hạn
+  lúc tạo. File: `projectOverviewDeadline.js`, `workTasks.js`,
+  `workshopApplyTemplates.js`.
+
+## 2026-09-16 15:25 — Tổng quan NV: hạn thẻ theo deadline module
+
+- AI: Cursor. Thẻ `/sx/project-tasks` lấy hạn module (SX / VC-LĐ / CRM)
+  theo lane nhóm việc; việc con không hạn không còn đẩy thẻ vào
+  «Chưa có hạn» nếu dự án đã có hạn xưởng/lắp/deal. File:
+  `workTasks.js`, `projectOverviewDeadline.js`, `moduleDeadlinePolicy.js`,
+  `tests/project-overview-deadline.js`.
+
+## 2026-09-16 14:20 — Stepper CRM tích ✓ khi SX/VC đã kéo tới
+
+- AI: Cursor. Cột Sản xuất / VC / Hoàn thành trên thanh tiến độ deal
+  không còn trống nếu module xưởng/VC đã vào cột tương ứng (kể cả khi
+  thẻ CRM chưa kéo theo). Bỏ rule cũ «không bao giờ ✓ cột SX/VC».
+  File: `PipelineStepper.jsx`, `crmDealStageGate.js`, `LeadDetail.jsx`,
+  `WorkUnifiedProjectDetailPage.jsx`.
+
+## 2026-09-16 13:40 — Hạn Work Unified = buổi lắp VC-LĐ còn lại
+
+- AI: Cursor. Bỏ chống chế «SX đã giao + VC Tiếp nhận thì không trễ».
+  Trước khi sửa `routes/management.js`: `queryWorkUnifiedList` /
+  `buildItem` dùng `resolveModuleDeadline(logistics)` sau khi gắn
+  sự kiện lắp. Hạn = buổi lắp gần nhất ≥ hôm nay (đang lắp vẫn theo
+  lịch VC); hết buổi thì ngày cuối — quá hạn nếu chưa Hoàn thành.
+  File: `moduleDeadlinePolicy.js` (BE+FE), `projectForecast.js`,
+  `management.js`, `projectDealBundle.js`, test deadline + forecast.
+
+## 2026-09-16 13:30 — Work Unified: không trễ khi SX đã giao, VC còn Tiếp nhận
+
+- AI: Cursor. Trước khi sửa `routes/management.js` (vùng dùng chung):
+  `classifyProjectForecast` + `queryWorkUnifiedList` (`buildItem`).
+  Bỏ tính Trễ hạn ngày lắp khi cột SX đã giao/hoàn thành/chốt công nợ
+  và VC còn Tiếp nhận (`delivery_pending`) hoặc chưa có cột VC.
+  Đơn đã vào giao/lắp VC vẫn trễ nếu hạn lắp quá khứ.
+  File: `projectForecast.js`, `management.js`, `projectDealBundle.js`,
+  `project-forecast-gcck.js`.
+
+## 2026-09-16 12:10 — CRM Pipeline tự thêm thành viên theo cột
+
+- AI: Cursor. Setup trên `/crm/pipeline-settings`: tick «Tự thêm thành
+  viên CRM khi vào cột», chọn NV (forModule=all, gồm kế toán). Áp khi
+  kéo Kanban, lập KH SX, gắn VC-LĐ. SQL 618 + seed Vân cột Đã ký HĐ
+  Phúc Đạt. Bỏ hardcode ALWAYS_PHUCDAT.
+  File: `PipelineSettingsPage.jsx`, `pipelines.js`,
+  `crmPipelineStageMembers.js`, `leadLifecycle.js`, `autoDealWonProject.js`,
+  `618_crm_pipeline_stage_default_members.sql`.
+
+## 2026-09-16 11:55 — Phúc Đạt mặc định thêm NV Vân vào deal SX/VC
+
+- AI: Cursor. Deal Phúc Đạt: tự thêm Hoàng Thị Phượng Vân vào tab
+  Thành viên khi lập kế hoạch SX và khi gắn VC-LĐ. SQL 617 backfill
+  38 deal đang chạy (ký HĐ → hóa đơn, không gồm hoàn thành).
+  File: `dealParticipantProduction.js`, `vcHandoverDealMembers.js`,
+  `productionWorkshopTypeStaff.js`, `617_phucdat_van_signed_deal_members.sql`.
+
+## 2026-09-16 11:50 — HCB Cánh kính hoàn thành SX tắt hạn toàn dự án
+
+- AI: Cursor. Cột Hoàn thành Cánh kính HCB đóng hết NV còn mở + tắt
+  deadline CRM/SX/VC (status completed) để bên khác không quá hạn.
+  File: `completeOpenWorkOnModuleDone.js`, `clearCompletedProjectDeadlines.js`,
+  `projectForecast.js`. Test: `project-forecast-gcck.js`.
+
+## 2026-09-16 11:20 — Mũi tên cuộn trang Quản lý nhiệm vụ
+
+- AI: Cursor. Board hạn nhiệm vụ dùng cùng chrome mũi tên Dashboard
+  Kanban. File: `ProjectTasksOverviewPage.jsx`.
+
+## 2026-09-16 11:05 — Nút Nhiệm vụ trên thẻ Kanban
+
+- AI: Cursor. Đưa nút quản lý nhiệm vụ lên đầu thẻ, gắn nhãn «Nhiệm vụ».
+  SX, VC, Work Unified. File: `KanbanGotoProjectTasksBtn.jsx`,
+  `ProductionDashboard.jsx`, `LogisticsDashboard.jsx`,
+  `WorkUnifiedOverviewPage.jsx`.
+
+## 2026-09-16 10:25 — Thêm cột nhỏ ngay thẻ cột chính
+
+- AI: Cursor. Nút Thêm cột nhỏ trong từng thẻ (và thẻ nét đứt).
+  POST `/production/pipeline-stages` nhận `group_sort`. File:
+  `ProductionPipelineSettingsPage.jsx`, `production.js`.
+
+## 2026-09-16 10:15 — Kéo cột nhỏ giữa các cột chính
+
+- AI: Cursor. Setup pipeline: thả cột nhỏ vào danh sách bên trong thẻ
+  cột chính (không chỉ viền thẻ). Phân biệt kéo cột nhỏ vs kéo thứ tự
+  cột chính. File: `ProductionPipelineSettingsPage.jsx`.
+
+## 2026-09-16 09:25 — Setup pipeline quanh cột chính
+
+- AI: Cursor. Trang Pipeline xưởng: tab Cột chính (bảng thẻ), Cột nhỏ,
+  Cài đặt. Công ty + phân loại trên cùng. File:
+  `ProductionPipelineSettingsPage.jsx`.
+
+## 2026-09-16 09:00 — Thêm cột Đóng gói HCB (Tủ bếp)
+
+- AI: Cursor. Chèn cột pipeline «Đóng gói» Tủ bếp (trước KCS).
+  Cửa/Cánh kính giữ «Vệ sinh đóng gói». SQL 616 primary+backup.
+  File: `616_hcb_dong_goi_pipeline_column.sql`.
+
+## 2026-09-16 08:50 — Hiện cột lớn Đóng gói HCB
+
+- AI: Cursor. Gộp 1 cột nhỏ vẫn hiện tên cột lớn. Tủ bếp gán
+  `dong_goi` cho «ĐƠN HÀNG ĐÃ CHUẨN BỊ XONG». File: `sxGopCot.js`,
+  `ProductionDashboard.jsx`, `615_hcb_tubep_dong_goi_group_key.sql`.
+
+## 2026-09-15 16:40 — Tự thêm tab Kanban xưởng
+
+- AI: Cursor. Nút + Tab trên setup cột lớn; `board_tab` lưu tên tab
+  tự đặt. Dashboard lặp các tab có cột (Sản xuất + Công nợ + tab mới).
+  File: `sxTachCongNo.js`, `ProductionPipelineSettingsPage.jsx`,
+  `ProductionDashboard.jsx`, `production.js`.
+
+## 2026-09-15 16:20 — Cột lớn theo tab Sản xuất / Công nợ
+
+- AI: Cursor. Settings Gộp cột + khối Cột pipeline có switcher
+  Sản xuất / Công nợ như Dashboard. Tạo/chuyển cột lớn gắn
+  `board_tab` — Kanban hiện đúng tab. SQL 614 primary+backup.
+  File: `614_production_pipeline_board_tab.sql`, `sxTachCongNo.js`,
+  `ProductionPipelineSettingsPage.jsx`, `productionPipelineSchema.js`,
+  `workshopKanban.js`, `production.js`.
+
+## 2026-09-15 16:05 — Form thêm cột lớn trên tab Cột pipeline
+
+- AI: Cursor. Cùng form Thêm cột lớn trên tab Cột pipeline (khối
+  violet «Cột lớn — giai đoạn nối tiếp»). File:
+  `ProductionPipelineSettingsPage.jsx`.
+
+## 2026-09-15 15:30 — Form thêm cột lớn trên tab Gộp cột
+
+- AI: Cursor. Khối «Cột lớn đang dùng» có form tạo cột lớn: tên,
+  chip gợi ý, checkbox cột pipeline. File:
+  `ProductionPipelineSettingsPage.jsx`.
+
+## 2026-09-15 15:15 — Ô Cột lớn: dropdown tên tiếng Việt
+
+- AI: Cursor. Bảng gán cột lớn bỏ input+datalist slug. Dropdown
+  nhãn «Tiếp nhận»…, lưu khi chọn, mục «+ Tên mới…». File:
+  `ProductionPipelineSettingsPage.jsx`, `sxGopCot.js`.
+
+## 2026-09-15 15:00 — Gộp cột: kéo thứ tự + sửa tên tại chỗ
+
+- AI: Cursor. Tab Gộp cột đổi lưới 3 cột thành danh sách: kéo /
+  ↑↓ đổi thứ tự cột lớn, ô tên lưu khi blur, hiện cột nhỏ, lọc NV.
+  Cột `group_sort` (SQL 613, primary + backup). File:
+  `ProductionPipelineSettingsPage.jsx`, `sxGopCot.js`,
+  `productionPipelineSchema.js`, `workshopKanban.js`, `production.js`.
+
+## 2026-09-15 14:40 — Đóng gói sau Hoàn thiện (Gộp cột)
+
+- AI: Cursor. Lưới Gộp cột + Kanban gộp: `dong_goi` luôn sau
+  `hoan_thien`. File: `sxGopCot.js`, `ProductionPipelineSettingsPage.jsx`.
+
+## 2026-09-15 14:20 — Cột lớn Đóng gói (HCB Cửa/Cánh kính)
+
+- AI: Cursor. Tách «Vệ sinh đóng gói» khỏi Hoàn thiện → `dong_goi`.
+  File: `612_hcb_dong_goi_group_key.sql`, `sxGopCot.js`,
+  `sxWorkshopSchedule.js`, `ProductionPipelineSettingsPage.jsx`.
+  Chạy: `node scripts/run-migration-612.js`.
+
+## 2026-09-15 14:15 — CRM: nút Zalo Đã gửi
+
+- AI: Cursor. Chi tiết deal: nút Gửi Zalo → **Đã gửi Zalo** sau khi
+  gửi thành công; đọc lại từ `crm_zalo_stage_sends`. File:
+  `LeadDetail.jsx`, `leadLifecycle.js`, `helpersBundle.js`.
+  Đã kiểm DEAL-2026-1549 (Nam test) hiện Đã gửi; deal chưa gửi
+  vẫn Gửi Zalo. Không bấm gửi thật trên deal khách.
+
+## 2026-09-15 13:45 — Pipeline xưởng: lọc + NV cột lớn
+
+- AI: Cursor. Tab Gộp cột: lọc Công ty/Loại; gán người chịu trách
+  nhiệm cột lớn (default_staff primary). File:
+  `ProductionPipelineSettingsPage.jsx`, `ProductionDashboard.jsx`,
+  `sxStageStaff.js`.
+
+## 2026-09-15 13:25 — Lịch Work Unified: chip đủ nhận diện
+
+- AI: Cursor. Ô ngày: mã + khách/tên ngắn · NV. Panel ngày: thêm
+  Hạn SX / Giao / Lắp. File: `WorkUnifiedOverviewPage.jsx`.
+
+## 2026-09-15 13:15 — Work Unified Deadline: cột Ngày mai
+
+- AI: Cursor. Board Deadline thêm bucket `tomorrow` (label Ngày mai)
+  giữa Hôm nay và Tuần này. File: `WorkUnifiedOverviewPage.jsx`.
+
+## 2026-09-15 11:25 — Thanh nhiệm vụ: chỉ tìm kiếm
+
+- AI: Cursor. Bỏ chip «Sản xuất · N»; thanh còn ô tìm, lọc từng chữ.
+  File: `ProjectTasksOverviewPage.jsx`.
+
+## 2026-09-15 11:20 — Thẻ nhiệm vụ → Giao việc + Nhật ký
+
+- AI: Cursor. Thẻ `/sx/project-tasks` mở `/sx/assignments?project_id=`;
+  nút **Công việc** (tab tasks dự án), không phải nhật ký.
+  File: `ProjectTasksOverviewPage.jsx`, `CRMAssignmentsPage.jsx`,
+  `assignmentSourceLink.js`.
+
+## 2026-09-15 10:55 — Bộ lọc nhiệm vụ = Phạm vi xưởng Dashboard
+
+- AI: Cursor. Panel `/sx/project-tasks` dùng `WorkshopScopeFields` (xưởng +
+  công ty đặt hàng). API `deal_company_id`. File:
+  `ProjectTasksOverviewPage.jsx`, `ProjectTasksFilterPanel.jsx`,
+  `WorkshopDashboardFilterPanel.jsx`, `workTasks.js`.
+
+## 2026-09-15 10:52 — Menu SX: Dashboard
+
+- AI: Cursor. Nhãn sidebar `/sx/dashboard` «Deal vào xưởng» → Dashboard.
+  File: `Sidebar.jsx`.
+
+## 2026-09-15 10:50 — Bộ lọc nhiệm vụ SX theo Dashboard
+
+- AI: Cursor. `/sx/project-tasks` dùng xưởng `for_module=production`
+  (Metalla/HCB/Phúc Đạt), KV+NV `for_module=production`, đồng bộ
+  `sx_dash_filters_v1`. File: `ProjectTasksOverviewPage.jsx`,
+  `ProjectTasksFilterPanel.jsx`, `crossWorkshopProduction.js`,
+  `WorkUnifiedFilterFields.jsx`, `Sidebar.jsx`.
+
+## 2026-09-15 10:35 — Tắt NextGo trên HST mặc định
+
+- AI: Cursor. `is_active=false` cho công ty nguồn
+  `87479a83-1145-43b7-b090-3e40812cb5a9` (tenant default).
+  Primary: `freeze-nextgo-source.js --apply`. Backup: MCP SQL.
+  Clone HST nextgo không đổi. Cache `/companies` ~120s.
+
+## 2026-09-15 10:15 — Bộ lọc NV: NV theo CT / khu vực
+
+- AI: Cursor. Danh sách người phụ trách lọc theo công ty và khu vực
+  (`crm_region_ids`). File: `ProjectTasksOverviewPage.jsx`,
+  `ProjectTasksFilterPanel.jsx`.
+
+## 2026-09-15 10:08 — Bộ lọc NV: chọn nhiều nhân viên
+
+- AI: Cursor. Người phụ trách trên panel nhiệm vụ dự án là checkbox,
+  chọn 1 hoặc nhiều. File: `ProjectTasksFilterPanel.jsx`,
+  `ProjectTasksOverviewPage.jsx`.
+
+## 2026-09-15 09:50 — Bộ lọc NV dự án: công ty / khu vực / nhân viên
+
+- AI: Cursor. Panel bộ lọc `/sx/project-tasks` nạp đủ CT/KV/NV; khu vực
+  SX lấy từ deal của dự án. File: `ProjectTasksOverviewPage.jsx`,
+  `ProjectTasksFilterPanel.jsx`, `workTasks.js`.
+
+## 2026-09-15 09:41 — Kanban SX: nút NV to, tách riêng
+
+- AI: Cursor. Nút quản lý nhiệm vụ trên thẻ Kanban xưởng 32px, nền tím,
+  nằm riêng khỏi cụm icon nhỏ. File: `ProductionDashboard.jsx`.
+
+## 2026-09-15 09:22 — Push main: Zalo nút gửi + FE local
+
+- AI: Cursor. Push `main`: nút Gửi Zalo mọi cột, tắt tự gửi; Work Unified
+  bỏ chip module; menu 3. Setup xưởng; tab gộp cột pipeline SX.
+
+## 2026-09-15 09:08 — Nút Gửi Zalo mọi cột deal
+
+- AI: Cursor. Nút hiện trên mọi deal, không cần cột Hoàn thành. API
+  fill/send thủ công bỏ chặn cột. Tự gửi khi kéo cột vẫn tắt.
+- File: `LeadDetail.jsx`, `taxonomy.js`, `helpersBundle.js`.
+
+## 2026-09-15 09:05 — Tắt tự gửi Zalo khi kéo cột
+
+- AI: Cursor. `maybeSendZaloOnDealStageEnter` no-op. Ẩn toggle Zalo
+  trên pipeline. Nút **Gửi Zalo** trên chi tiết deal giữ nguyên.
+- File: `helpersBundle.js`, `PipelineSettingsPage.jsx`, `LeadDetail.jsx`.
+
+## 2026-09-15 08:58 — Pipeline Zalo: hiện token từ OA accounts
+
+- AI: Cursor. Tab Cài đặt Pipeline → Zalo OA hiện nguồn
+  `zalo_oa_accounts` (tự refresh). PUT/preview dùng token hiệu lực.
+- File: `taxonomy.js`, `PipelineSettingsPage.jsx`.
+
+## 2026-09-15 08:50 — CRM: hiện lại nút Gửi Zalo OA
+
+- AI: Cursor. Header chi tiết deal (cột Hoàn thành) hiện lại nút **Gửi Zalo**.
+- File: `LeadDetail.jsx`.
+
+## 2026-09-15 08:40 — Work Unified: bỏ chip CRM/SX/VC
+
+- AI: Cursor. Thẻ Kanban/Deadline không hiện badge module. Calendar
+  bỏ chip tương tự. File: `WorkUnifiedOverviewPage.jsx`.
+
+## 2026-09-14 16:46 — Nhóm menu 3. Setup xưởng
+
+- AI: Cursor. Sidebar SX: «3. Điều hành xưởng» → **3. Setup xưởng**.
+- File: `Sidebar.jsx`, `dictionary.en.js`.
+
+## 2026-09-14 16:30 — Zalo ZNS dùng token OA hiệu lực
+
+- AI: Cursor. `getZaloAccessTokenHieuLuc` đọc `zalo_oa_accounts` rồi mới
+  dự phòng `app_settings`. File: `zaloTokenHieuLuc.js`, `helpersBundle.js`,
+  `taxonomy.js`.
+
+## 2026-09-14 16:00 — Fix build Render: GiaVonExcelModal
+
+- AI: Cursor. Commit `frontend/src/components/GiaVonExcelModal.jsx` vì trang
+  mẫu nhiệm vụ đã import, deploy thiếu file.
+
+## 2026-09-14 14:55 — Chi tiết SX: ẩn tab Sự cố
+
+- AI: Cursor. Ẩn nút tab «Sự cố» trên `ProductionDetail`; URL cũ
+  `?tab=incidents` không còn trong `DEAL_TAB_KEYS` nên về tab Công việc.
+- File: `ProductionDetail.jsx`.
+
+## 2026-09-14 14:30 — Cánh kính/Cửa: bỏ yêu cầu hoàn thành việc trước khi kéo
+
+- AI: Cursor. Gate nhiệm vụ không còn chặn kéo cột Cánh kính và Cửa (BE + SQL 611
+  tắt `blocks_stage_advance` mọi mẫu/task hai loại). Tủ bếp giữ nguyên.
+- File: `workshopStageAdvanceGate.js`, `database/611_hcb_canh_kinh_cua_khong_chan_keo.sql`.
+
+## 2026-09-14 14:20 — Cánh kính: kéo Tiếp nhận sang sản xuất
+
+- AI: Cursor. Quản lý Nguyễn Nhật không kéo được vì 3 crm_tasks Tiếp nhận
+  (Tiếp nhận thông tin / Chốt yêu cầu KT / Vẽ kế hoạch) `blocks_stage_advance`.
+- Tắt cờ chặn Cánh kính+Cửa cột Tiếp nhận. Kanban SX mở `BlockingTasksAlertModal`.
+- File: `database/610_hcb_canh_kinh_tiep_nhan_khong_chan_keo.sql`, `ProductionDashboard.jsx`.
+
+## 2026-09-14 14:15 — Bình luận: hết nút tải file trùng
+
+- AI: Cursor. Tin hệ thống 📎 vừa link tên file vừa chip Paperclip — 1 file
+  hiện 2 chỗ tải. Pill chỉ còn «tên»; chip/preview là chỗ tải duy nhất.
+- File: `CommentsPanels.jsx`. DB TB-2026-817 không nhân đôi bản ghi.
+
+## 2026-09-14 14:05 — HCB: đủ thành viên mặc định trên dự án
+
+- AI: Cursor. CRM→SX HCB không còn `primaryOnly` — copy đủ NV setup phân loại.
+  SQL 609 bổ sung đội đang thiếu (không đổi phụ trách chính). File:
+  `productionWorkshopTypeStaff.js`, `database/609_hcb_fill_workshop_type_staff.sql`.
+- RPC: `node scripts/run-migration-609.js` primary + backup, incomplete = 0.
+
+## 2026-09-14 13:55 — Cánh kính HCB: hiện lại cột thanh toán
+
+- AI: Cursor. Cột Đợi thanh toán (8 thẻ) vẫn còn trên DB nhưng `group_key=cong_no`
+  nên Kanban SX đẩy sang tab Công nợ. Gỡ group_key Cánh kính/Cửa; Tủ bếp không đổi.
+- File: `database/608_hcb_canh_kinh_hien_cot_thanh_toan.sql`, `sxTachCongNo.js`.
+
+## 2026-09-14 13:35 — Tab Công việc SX: Xong hết + hiện việc
+
+- AI: Cursor. Cột lớn/cột nhỏ trên tab Công việc: nút hoàn thành hàng loạt
+  và nút hiện/ẩn danh sách nhiệm vụ thuộc cột đó.
+- File: `CRMTasksTab.jsx`.
+
+## 2026-09-14 12:20 — NV xưởng dùng hạn kế hoạch SX
+
+- AI: Cursor. API project-overview gắn deadline kế hoạch (tính từ ngày lắp)
+  vào nhóm nhiệm vụ khi task chưa có hạn; cột con kế thừa hạn nhóm cha.
+- File: `workTasks.js`, `sxInstallPlanKanbanDeadline.js`, `sxWorkshopSchedule.js`,
+  `ProductionDetail.jsx`, `production.js`, `projects.js`.
+
+## 2026-09-14 12:00 — Kanban SX: nút nhiệm vụ theo dự án
+
+- AI: Cursor. Thẻ Kanban xưởng thêm nút CheckSquare → `/sx/project-tasks?project=`.
+  Trang quản lý NV lọc đúng dự án, chip có thể bỏ lọc.
+- File: `ProductionDashboard.jsx`, `ProjectTasksOverviewPage.jsx`.
+
+## 2026-09-14 11:36 — Deadline Work Unified: thẻ gọn
+
+- AI: Cursor. View Deadline lược ĐA MODULE / deal / SĐT / CRM·SX·VC.
+  Hiện rõ Hạn SX, Giao, Lắp từng dòng + công đoạn · NV. File:
+  `WorkUnifiedOverviewPage.jsx`.
+
+## 2026-09-14 11:28 — Quản lý NV xưởng: cột theo hạn
+
+- AI: Cursor. Trang `/sx/project-tasks` đổi 3 cột rủi hạn thành 6 cột:
+  Quá hạn, Hôm nay, Ngày mai, Trong tuần, Tuần sau, Chưa có hạn.
+- Thẻ trong cột: mã + hạn trên cùng, tên việc, dự án, thanh tiến độ, người phụ trách.
+- File: `ProjectTasksOverviewPage.jsx`, `ProjectTasksFilterPanel.jsx`.
+
+## 2026-09-14 11:30 — Hạn + NV phụ trách trên cột gộp
+
+- AI: Cursor. Phân tích deadline chi tiết SX theo cột gộp; ô ma trận hiện hạn từ ngày lắp
+  và người setup ở Cài đặt pipeline. `sxKanbanStages` thêm `deadline_group` + `default_staff`.
+
+## 2026-09-14 10:28 — Chi tiết: tích hoàn thành trên vòng tròn tiến độ
+
+- AI: Cursor. `PipelineStepper`: vòng tròn việc song song = tích xong / bỏ tích.
+  Việc đã xong hiện ✓ và đếm n/m trên cột lớn. Tên cột vẫn chuyển thẻ Kanban.
+
+## 2026-09-14 10:20 — HCB Tủ bếp: tách Ban thành phẩm
+
+- AI: Cursor. Mở cột Ban thành phẩm thành Chuẩn bị vật tư / Đặt kính / Sơn.
+- 3 đơn (TB-2026-839, 841, 842) ở lại Chuẩn bị vật tư.
+- File: `database/607_hcb_tubep_split_ban_thanh_pham.sql`. RPC primary OK; backup cần 604 rồi 607.
+
+## 2026-09-14 10:05 — Work Unified: số KPI ổn định khi đổi tab tiến độ
+
+- AI: Cursor. Tab Tất cả / Đúng tiến độ / Nguy cơ / Trễ đang refetch và trộn
+  `totalFiltered` (danh sách đã cắt) với `stats.total` (đôi khi chưa cùng lọc NV)
+  → 34 nhảy 79. KPI luôn lấy `stats` của tập chưa cắt forecast; tab lọc trên client
+  (trừ danh sách phân trang). File: `frontend/src/pages/WorkUnifiedOverviewPage.jsx`.
+
+## 2026-09-12 11:35 — Ô Đang làm ma trận SX hiện tên dự án
+
+- AI: Cursor. `SxMaTranSongSong` ghi `item.name` / tiêu đề deal dưới nhãn Đang làm và Xong.
+
+## 2026-09-12 10:55 — Deadline không ẩn vì «đã tương tác»
+
+- AI: Cursor. Admin Q2 (`adminq2@vpt.net`) không thấy LEAD-2026-279 ở Deadline
+  vì cờ per-user `is_interacted` (06/06) bị dùng như «không có hạn».
+- Đã tách: tick vẫn hiện, hạn vẫn tính (NV → setup → SLA).
+- File: `moduleDeadlinePolicy` BE/FE, `crmLeadDeadlineDisplay.js`, `leadsList.js`,
+  `dailyReportMetrics.js`, `database/606_crm_deadline_not_hidden_by_interacted.sql`.
+- Test: `node tests/module-deadline-policy.test.js` OK.
+- RPC: đã chạy `node scripts/run-migration-606.js` (primary + backup).
+
+## 2026-09-12 09:30 — Xóa 2 đơn Cửa Phúc Đạt của Minh (không đụng xưởng khác)
+
+- AI: Cursor. Đã chạy `--apply` trên DB primary.
+- Xóa: `TB-2026-767` + `DEAL-2026-1401` (Anh Tám); `TB-2026-337` + `DEAL-2026-440` (Anh Hường).
+- Không xóa: Metalla `TB-2026-740`, HCB `TB-2026-754/755/764/765/827` và deal `LEAD-2026-1252`, `DEAL-2026-1398/1399/1511`.
+- Script: `backend/scripts/delete-phucdat-minh-two-orders.js`.
+
+## 2026-09-12 09:20 — Kanban gộp cột cho dashboard SX (cột lớn nối tiếp / cột nhỏ song song)
+
+- AI thực hiện: Claude, theo yêu cầu anh B.A. Chưa commit (`.git/index.lock` vẫn chặn).
+- **Quyết định kiến trúc:** KHÔNG sửa bảng Kanban cũ trong `ProductionDashboard.jsx` (5.957 dòng,
+  kéo-thả + lọc + đồng bộ cuộn + highlight tìm kiếm). Làm **chế độ xem thứ 7** đứng cạnh →
+  rủi ro với bảng đang chạy bằng 0, bật/tắt bằng một nút.
+- **DB — `database/604_production_pipeline_group_key.sql` (ĐÃ CHẠY):**
+  thêm `production_pipeline_stages.group_key`, nullable. NULL = cột tự đứng riêng nên các công ty
+  khác không đổi gì. Backfill board Tủ bếp HCB theo đúng logic migration 588:
+  `tiep_nhan` 1 cột/8 dự án · `ke_hoach` 1/0 · `duyet` 1/0 · `gia_cong` 4/19 · `hoan_thien` 4/89 ·
+  `cong_no` 5/215.
+- **Backend:**
+  - `helpers/productionPipelineSchema.js` — thêm `group_key` vào `buildPipelineStageSelect()` theo
+    đúng khuôn cột tùy chọn sẵn có: cờ `pipelineGroupKeyColumnAvailable` + `isPipelineGroupKeyMissingError`
+    + `markPipelineGroupKeyColumnMissing`, đăng ký vào bảng retry. DB chưa có cột thì tự bỏ qua, không vỡ.
+  - `routes/production.js` — thêm `group_key` vào danh sách field được sửa ở `PUT /pipeline-stages/:id`,
+    để sau này gom nhóm lại được từ màn Cài đặt pipeline.
+- **Frontend:**
+  - `components/SxGroupedKanban.jsx` (mới) — thu lại: mỗi cột lớn là một cột Kanban gộp thẻ của các
+    cột nhỏ. Mở ra: lưới, **mỗi dự án đúng một hàng ngang**, thẻ neo trái, các ô phải là từng cột nhỏ.
+    Mặc định **thu hết** đúng yêu cầu «dashboard mở lên thì thu các cột vào».
+  - `pages/ProductionDashboard.jsx` — thêm view mode `grouped` (nhãn «Gộp cột», icon `Layers`) vào
+    `WS_DASH_VIEW_MODES` + `SX_VIEW_MODES`, render `<SxGroupedKanban pipeline={filteredKanbanPipeline}>`.
+    Dùng lại đúng dữ liệu đã lọc của Kanban nên mọi bộ lọc hiện có vẫn ăn.
+- **GIỚI HẠN đã ghi rõ trên giao diện:** mỗi hàng chỉ sáng ĐÚNG MỘT ô, vì `projects.sx_kanban_column_id`
+  chỉ lưu được một cột cho mỗi dự án. Muốn nhiều ô cùng sáng («thùng xong + nhôm đang làm») phải thêm
+  bảng `project_substage_status(project_id, stage_id, trang_thai, nguoi_lam, xong_luc)` — CHƯA LÀM,
+  đây mới là phần việc lớn, không phải phần giao diện.
+- Còn treo chờ anh B.A quyết: (1) `cong_no` 215 dự án có nên là cột lớn thứ 6 không; (2) hai cột lớn
+  `ke_hoach` và `duyet` đang 0 dự án — giữ hay bỏ.
+- Kiểm thử: parse bằng `@babel/parser` của chính Vite — 2/2 đạt; `node --check` đạt cho 2 file backend.
+  CHƯA chạy thử trên trình duyệt.
+
+---
+
+## 2026-09-12 08:35 — Chuẩn bị trả tiến độ SX của HCB về đúng ngày 10/09
+
+- AI thực hiện: Claude. **CHƯA ghi gì vào bảng `projects`** — mới sao lưu + soạn script.
+- Yêu cầu của anh B.A: trả tiến độ SX các dự án HCB về đúng vị trí ngày 10/09, **bỏ qua** dự án
+  người đã kéo tay sau đó.
+- **Phân biệt được «người kéo»:** `sx_pipeline_stage_entered_at` còn nguyên — route kéo thẻ
+  (`PATCH /production/projects/:id/stage`) luôn ghi mốc này, còn 588 / 599 / 602 đều KHÔNG ghi.
+  Hiện có **49 dự án** mốc >= 10/09 → được bảo vệ. Đáng chú ý 34 cái rơi vào 11/09 16:43–17:24,
+  tức ngay sau khi 602 chạy lúc 14:25 — anh em đã kéo tay sửa lại board.
+- **Vị trí thật ngày 10/09 KHÔNG còn trong DB.** Đã loại trừ 5 nguồn: `activity_logs` (trống),
+  `stage_transitions` (chỉ ghi bàn giao VC, from/to đều NULL — route kéo thẻ SX không ghi vào đây),
+  `_bak_20260911_hcb_projects` (chụp SAU 588), `QLCV_Backup` (cũng hậu-588, thiếu 43 dự án),
+  `crm_daily_report_snapshots` (chỉ có metric CRM `deal_*`/`lead_*`, không có cột SX).
+  → **Chỉ còn đường Point-in-Time Recovery** về mốc trước `2026-09-11 02:46 UTC`.
+- **Đã chuẩn bị sẵn:**
+  - `_bak_20260912_hcb_projects` — 509 dòng, ảnh chụp trạng thái hôm nay trước mọi thay đổi.
+  - `_restore_hcb_sx_10_09` — bảng rỗng chờ nạp (project_code, ten_cot_ngay_10_09).
+  - `database/603a_xuat_tien_do_10_09_tu_ban_PITR.sql` — chạy TRÊN bản PITR, sinh ra các câu INSERT.
+  - `database/603_hcb_tra_tien_do_ve_10_09.sql` — script áp dụng, **chưa chạy**.
+- **Điểm kỹ thuật quan trọng:** phải khớp lại theo **TÊN cột**, không theo id. 588 đã DELETE 7 cột,
+  599/600/601 dựng lại nên chúng mang id MỚI — `sx_kanban_column_id` trong bản PITR là id cũ đã chết.
+  603 khớp tên trong phạm vi đúng công ty + đúng `workshop_type_id` của từng dự án, và **dừng lại
+  không ghi gì** nếu có bất kỳ tên cột nào không khớp được.
+- Câu hoàn tác nằm ở cuối file 603.
+
+---
+
+## 2026-09-11 12:10 — Lệnh «/» trong ô bình luận + rà chức năng thông báo nhiệm vụ phát sinh
+
+- AI thực hiện: Claude. Chưa commit (`.git/index.lock` vẫn chặn).
+- **Rà soát (đo trên production):**
+  - Thông báo giao việc: ĐÚNG — 12/12 nhiệm vụ phát sinh có `crm_assignment_assigned`, số thông báo khớp số người nhận.
+  - Bình luận tự động @mention: ĐÚNG. `postSharedWorkspaceAssignmentMentionComment` vào từ commit
+    `9a21fd75` (08/09 16:15) nên 11/12 nhiệm vụ cũ không có bình luận — do có TRƯỚC tính năng, không phải lỗi.
+    Nhiệm vụ duy nhất sau mốc đó (11/09 03:51) chạy đủ: bình luận + 2 thông báo mention.
+  - **LỖI THẬT:** vai trò `primary` («Chịu trách nhiệm chính») không được ghi cho ai **từ 21/08/2026**.
+    Mốc đổi rất gắt: 20/08 primary 52 / executor 11 → 21/08 14/62 → 22/08 trở đi **0**.
+    30 ngày qua: 1.751 nhiệm vụ, 1.891 lượt gán, **0 primary**.
+    Nguyên nhân: `frontend/src/lib/assignmentAssignRoles.js` `DEFAULT_ASSIGN_ROLE = 'executor'` và backend
+    `normalizeAssignRole(raw, fallback = 'executor')`. Hệ quả: bình luận tag tất cả ngang nhau, và
+    `getPrimaryAssignee()` rơi về `ids[0]` — một người ngẫu nhiên. CHƯA SỬA, chờ anh B.A duyệt.
+- **Đã làm — lệnh «/» trong ô bình luận:**
+  - `lib/crmCommentMentions.js`: thêm `getActiveSlashState()` + `filterSlashCommands()`. «/» chỉ kích hoạt
+    khi đứng đầu dòng hoặc sau khoảng trắng — nếu không thì URL `https://…` và ngày `12/9` đều bật nhầm bảng lệnh.
+  - `components/crmCommentMentionUi.jsx`: prop `slashCommands` + `onSlashCommand`; bảng chọn dựng đúng kiểu
+    bảng @mention (mũi tên, Enter/Tab chọn, Esc đóng); chọn xong tự xóa đoạn «/từ-khóa». «/» và «@» loại trừ nhau.
+  - `components/CommentsPanels.jsx`: chuyển 2 prop qua `CommentThread` → composer; placeholder thêm
+    gợi ý «· / tạo công việc».
+  - `pages/WorkUnifiedProjectDetailPage.jsx`: khai báo 2 lệnh «Công việc» / «Phát sinh».
+- **Tạo tại chỗ (anh B.A yêu cầu):** thêm `components/CommentSlashTaskForm.jsx` — form gọn bật ngay
+  trên ô bình luận khi chọn lệnh, không rời trang. Trường: tiêu đề, khối phân công, loại phát sinh
+  (+ khối gây lỗi nếu là lỗi nhân viên), hạn xử lý, chọn người nhận dạng chip.
+  Gửi thẳng `POST /crm/leads/:id/assignments` — **cùng endpoint với form Giao việc đầy đủ**, nên dùng lại
+  nguyên luồng đã kiểm chứng: thông báo từng người nhận + tự đăng bình luận @mention + đồng bộ `crm_tasks`.
+  **Form này LUÔN gửi `assignee_roles` với đúng một người `primary`** (nút ★) — vá tại chỗ lỗ hổng
+  «không ai chịu trách nhiệm» cho mọi nhiệm vụ tạo bằng đường này. Lỗi gốc ở mặc định hệ thống vẫn còn.
+- Kiểm thử: `node --check` đạt cho file .js; JSX kiểm tra cân bằng thẻ/ngoặc ở vùng sửa. 4 file đều thống nhất
+  CRLF (0 dòng LF lẻ). CHƯA chạy thử trên trình duyệt.
+
+---
+
+## 2026-09-11 14:25 — HCB Tủ bếp kéo thẻ đúng tiến trình
+
+- 602: theo status / ngày giao-lắp / bàn giao VC. Không đụng cột công nợ.
+- Primary: ĐÃ GIAO 70, Mai giao 2, Chuẩn bị xong 3, KCS 9, Ban TP 22.
+
+## 2026-09-11 14:20 — CRM thêm SX: chỉ phụ trách chính
+
+- Trước: CRM→SX ghi cả NV mặc định phân loại, fallback thì cả NV SX công ty.
+- Nay: chỉ 1 người chịu trách nhiệm chính; người đó (và phụ trách CRM/VC)
+  thêm NV qua chi tiết SX hoặc tab Thành viên.
+- API `POST /projects/:id/production-staff`, `DELETE .../production-staff/:userId`.
+
+## 2026-09-11 14:05 — HCB Cánh kính + Cửa trả pipeline cũ
+
+- User: kế hoạch 5 cột chưa thực hiện — khôi phục kính/cửa như trước 589.
+- Migration `601_hcb_kinh_cua_restore_pipeline.sql` primary + backup.
+
+## 2026-09-11 13:55 — Luồng tổng quan: Giao nhận
+
+- Đổi nhãn bước đã gộp từ «Giao hàng» → **Giao nhận**.
+
+## 2026-09-11 13:50 — HCB Tủ bếp hoàn tác 5 cột (kế hoạch chưa làm)
+
+- User yêu cầu trả pipeline 15 cột Tủ bếp; công nợ kéo về board Tủ bếp.
+- Migration `600_hcb_tubep_restore_pipeline.sql` primary + backup.
+
+## 2026-09-11 13:45 — Hồ sơ liên thông theo module
+
+- Chip CRM / SX / VC trên Work Unified chỉ hiện khi dự án có module đó.
+- Panel Hồ sơ liên thông thêm địa chỉ, khu vực, giai đoạn, phân loại xưởng,
+  phụ trách, ngày lắp; ẩn khối VC nếu chưa vào vận chuyển/lắp đặt.
+
+## 2026-09-11 13:35 — Báo cáo phát sinh: phân tích + bài học
+
+- Tab Phân tích trên `/management/shared-workspace-report`: theo tuần, tháng,
+  bộ phận, dự án/deal, nhân viên, loại phát sinh + thẻ bài học rút kinh nghiệm.
+- API `GET /crm/assignments/shared-workspace-report` trả thêm `analysis`
+  (tính trên toàn bộ dữ liệu đã lọc, không chỉ trang hiện tại).
+- Excel thêm sheet tuần/tháng/bộ phận/dự án/nhân viên/bài học.
+
+## 2026-09-11 13:40 — Tổng quan: cụm nhiệm vụ theo dự án đang mở
+
+- Panel Tổng quan lấy cùng cụm với trang Quản lý nhiệm vụ, lọc `project_id`.
+- `GET /work-tasks/project-overview?project_id=` không lọc NV theo nhân viên.
+
+## 2026-09-11 13:30 — Luồng tổng quan gộp Giao hàng
+
+- User chọn 3 thẻ: Chuẩn bị vật tư / Giao hàng / Lắp đặt → gộp thành «Giao hàng».
+- `buildDeliveryFlow` collapse slug materials+delivery+installation.
+- Work Unified `stages` + lọc `stage=` theo cùng map.
+
+## 2026-09-11 13:25 — HCB: hạn Kanban từ ngày lắp + bộ mẫu 5 cột
+
+- User: «hiện chỉ là kế hoạch» — panel chưa ghi hạn thẻ; Tủ bếp vẫn pipeline cũ (588 no-op).
+- 599 gom Tủ bếp 5 cột (ILIKE KCS). 598 gắn bộ theo cột; backfill hạn 123 thẻ primary.
+- Kéo cột / đổi ngày lắp ghi `sx_kanban_deadline_at`.
+
+## 2026-09-11 10:00 — HCB Cánh kính/Cửa cùng mẫu 5 cột
+
+- User báo board vẫn pipeline cũ: lọc «Tất cả» / Cánh kính còn cột Hoàn thành, Chờ giao…
+- 589 đổi Cánh kính + Cửa giống Tủ bếp; công nợ trùng đã gom. F5 Kanban SX.
 
 - Pipeline Tủ bếp: Tiếp nhận, Kế hoạch, Duyệt, Gia công (6 việc), Hoàn thiện.
 - Công nợ tách phân loại riêng; giao/lắp ở VC/LĐ.

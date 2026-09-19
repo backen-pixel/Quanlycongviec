@@ -3,15 +3,15 @@ import { createPortal } from 'react-dom';
 import api from '../lib/api';
 import Modal from '../components/Modal';
 import { useAuth } from '../lib/auth';
-import { canCreateStaff, isSystemAdmin, hasCompanyId } from '../lib/adminRole';
+import { canCreateStaff, isSystemAdmin, isStrictAdmin, hasCompanyId } from '../lib/adminRole';
 import { Plus, Search, Mail, Phone, Trash2, Edit, Users as UsersIcon, MoreVertical, Building2, Layers, UsersRound, Shield, MapPin, Camera, AlertTriangle, ChevronLeft, ChevronRight, UserRound, Sparkles, Loader2 } from 'lucide-react';
 import { formatDate, getInitials, avatarColor } from '../lib/utils';
 import PermissionCatalogPanel, { cascadeTierDraft } from '../components/permissions/PermissionCatalogPanel';
 import PermissionAccessSummary from '../components/permissions/PermissionAccessSummary';
 import PermissionProjectScopePanel from '../components/permissions/PermissionProjectScopePanel';
 
-const ROLES = { admin: 'Admin', manager: 'Quản lý', region_admin: 'Admin khu vực', sales_admin: 'Sales Admin', sales: 'Kinh doanh (SAE)', designer: 'Thiết kế', production: 'Sản xuất', production_staff: 'NV Sản xuất (Admin CV+SX)', production_admin: 'Admin Sản xuất', crm_production_staff: 'NV CRM + Admin SX', crm_production_admin: 'Admin CRM + Sản xuất', logistics_admin: 'Admin Lắp đặt', driver: 'Tài xế', installer: 'Lắp đặt', customer_care: 'CSKH', accounting: 'Kế toán', staff: 'Nhân viên' };
-const ROLE_COLORS = { admin: 'bg-red-100 text-red-700', manager: 'bg-purple-100 text-purple-700', region_admin: 'bg-rose-100 text-rose-800', sales_admin: 'bg-indigo-100 text-indigo-700', sales: 'bg-blue-100 text-blue-700', designer: 'bg-pink-100 text-pink-700', production: 'bg-orange-100 text-orange-700', production_staff: 'bg-teal-100 text-teal-800', production_admin: 'bg-orange-200 text-orange-900', crm_production_staff: 'bg-sky-100 text-sky-800', crm_production_admin: 'bg-violet-100 text-violet-800', logistics_admin: 'bg-amber-100 text-amber-800', installer: 'bg-cyan-100 text-cyan-700', customer_care: 'bg-green-100 text-green-700', driver: 'bg-amber-100 text-amber-700', accounting: 'bg-emerald-100 text-emerald-800', staff: 'bg-gray-100 text-gray-600' };
+const ROLES = { ecosystem_admin: 'Quản trị HST', admin: 'Admin', manager: 'Quản lý', region_admin: 'Admin khu vực', sales_admin: 'Sales Admin', sales: 'Kinh doanh (SAE)', designer: 'Thiết kế', production: 'Sản xuất', production_staff: 'NV Sản xuất (Admin CV+SX)', production_admin: 'Admin Sản xuất', crm_production_staff: 'NV CRM + Admin SX', crm_production_admin: 'Admin CRM + Sản xuất', logistics_admin: 'Admin Lắp đặt', driver: 'Tài xế', installer: 'Lắp đặt', customer_care: 'CSKH', accounting: 'Kế toán', staff: 'Nhân viên' };
+const ROLE_COLORS = { ecosystem_admin: 'bg-rose-200 text-rose-900', admin: 'bg-red-100 text-red-700', manager: 'bg-purple-100 text-purple-700', region_admin: 'bg-rose-100 text-rose-800', sales_admin: 'bg-indigo-100 text-indigo-700', sales: 'bg-blue-100 text-blue-700', designer: 'bg-pink-100 text-pink-700', production: 'bg-orange-100 text-orange-700', production_staff: 'bg-teal-100 text-teal-800', production_admin: 'bg-orange-200 text-orange-900', crm_production_staff: 'bg-sky-100 text-sky-800', crm_production_admin: 'bg-violet-100 text-violet-800', logistics_admin: 'bg-amber-100 text-amber-800', installer: 'bg-cyan-100 text-cyan-700', customer_care: 'bg-green-100 text-green-700', driver: 'bg-amber-100 text-amber-700', accounting: 'bg-emerald-100 text-emerald-800', staff: 'bg-gray-100 text-gray-600' };
 
 /** Role theo module — mỗi module chỉ chọn 1 role trong danh sách này. */
 const MODULE_ROLE_OPTIONS = {
@@ -33,13 +33,16 @@ const MODULE_DEFAULT_ROLE = {
 };
 
 const PRIMARY_ROLE_PRIORITY = [
-  'admin', 'platform_admin', 'sales_admin', 'crm_production_admin', 'production_admin',
+  'ecosystem_admin', 'admin', 'platform_admin', 'sales_admin', 'crm_production_admin', 'production_admin',
   'logistics_admin', 'crm_production_staff', 'production_staff', 'region_admin', 'manager',
   'accounting', 'production', 'sales', 'designer', 'customer_care', 'driver', 'installer', 'staff',
 ];
 
-function derivePrimaryRoleFromModules(moduleRoles = {}, isSystemAdminFlag = false) {
-  if (isSystemAdminFlag) return 'admin';
+function derivePrimaryRoleFromModules(moduleRoles = {}, isSystemAdminFlag = false, companyId = null) {
+  if (isSystemAdminFlag) {
+    const hasCo = companyId != null && String(companyId).trim() !== '';
+    return hasCo ? 'admin' : 'ecosystem_admin';
+  }
   const roles = Object.values(moduleRoles || {}).filter(Boolean);
   for (const p of PRIMARY_ROLE_PRIORITY) {
     if (roles.includes(p)) return p;
@@ -50,7 +53,7 @@ function derivePrimaryRoleFromModules(moduleRoles = {}, isSystemAdminFlag = fals
 /** Suy map module→role từ 1 role hệ thống (AI fill / backfill UI). */
 function inferModuleRolesFromPrimaryRole(role) {
   const r = String(role || '').toLowerCase();
-  if (!r || r === 'admin' || r === 'platform_admin') return {};
+  if (!r || r === 'admin' || r === 'platform_admin' || r === 'ecosystem_admin') return {};
   if (r === 'crm_production_staff' || r === 'crm_production_admin') {
     return { crm: r, production: r };
   }
@@ -62,7 +65,7 @@ function inferModuleRolesFromPrimaryRole(role) {
 }
 
 /** Vai trò CRM thấy dữ liệu cả công ty (không bị khóa theo khu vực JWT). */
-const COMPANY_WIDE_CRM_ROLES = new Set(['admin', 'sales_admin', 'crm_production_admin']);
+const COMPANY_WIDE_CRM_ROLES = new Set(['ecosystem_admin', 'admin', 'sales_admin', 'crm_production_admin']);
 
 function inferCrmScopeMode(role, regionIds) {
   if (role === 'region_admin') return 'regions';
@@ -316,7 +319,7 @@ const employeeCardClass =
 
 export default function UsersPage() {
   const { user: currentUser } = useAuth();
-  const isAdmin = currentUser?.role === 'admin';
+  const isAdmin = isStrictAdmin(currentUser);
   const canAddStaff = canCreateStaff(currentUser);
   /** Admin/NV gắn công ty — khóa danh sách theo đúng công ty đó (admin hệ thống không khóa). */
   const lockedCompanyId = (!isSystemAdmin(currentUser) && hasCompanyId(currentUser))
@@ -1114,9 +1117,9 @@ export function StaffFormModal({
         setForm(mapUserToForm(user));
         const mr = user.module_roles && typeof user.module_roles === 'object' ? user.module_roles : {};
         setModuleRoles(mr);
-        setIsSystemAdminFlag(user.role === 'admin' || user.role === 'platform_admin');
+        setIsSystemAdminFlag(user.role === 'admin' || user.role === 'platform_admin' || user.role === 'ecosystem_admin');
         setCrmScopeMode(inferCrmScopeMode(
-          derivePrimaryRoleFromModules(mr, user.role === 'admin'),
+          derivePrimaryRoleFromModules(mr, user.role === 'admin' || user.role === 'ecosystem_admin', user.company_id),
           user.crm_region_ids,
         ));
         const companyId = user.department?.company_id;
@@ -1335,7 +1338,7 @@ export function StaffFormModal({
         setPermTouched(false);
         setForm((f) => ({
           ...f,
-          role: derivePrimaryRoleFromModules(next, isSystemAdminFlag),
+          role: derivePrimaryRoleFromModules(next, isSystemAdminFlag, selCompany || lockedCompanyId),
         }));
       });
       return next;
@@ -1349,7 +1352,7 @@ export function StaffFormModal({
         setPermTouched(false);
         setForm((f) => ({
           ...f,
-          role: derivePrimaryRoleFromModules(next, isSystemAdminFlag),
+          role: derivePrimaryRoleFromModules(next, isSystemAdminFlag, selCompany || lockedCompanyId),
         }));
         if (role === 'region_admin') setCrmScopeMode('regions');
         else if (COMPANY_WIDE_CRM_ROLES.has(role)) setCrmScopeMode('company');
@@ -1393,7 +1396,7 @@ export function StaffFormModal({
     const roles = [
       ...new Set([
         ...Object.values(moduleRoles || {}),
-        ...(isSystemAdminFlag ? ['admin'] : []),
+        ...(isSystemAdminFlag ? ['ecosystem_admin', 'admin'] : []),
       ]),
     ].filter(Boolean);
     if (!roles.length) {
@@ -1612,7 +1615,7 @@ export function StaffFormModal({
         team_id: fields.team_id || '',
         crm_region_ids: Array.isArray(fields.crm_region_ids) ? fields.crm_region_ids : f.crm_region_ids,
       }));
-      if (role === 'admin' || role === 'platform_admin') {
+      if (role === 'admin' || role === 'platform_admin' || role === 'ecosystem_admin') {
         setIsSystemAdminFlag(true);
       } else {
         setIsSystemAdminFlag(false);
@@ -1677,7 +1680,7 @@ export function StaffFormModal({
         setLoading(false);
         return;
       }
-      const derivedRole = derivePrimaryRoleFromModules(moduleRoles, isSystemAdminFlag);
+      const derivedRole = derivePrimaryRoleFromModules(moduleRoles, isSystemAdminFlag, selCompany || lockedCompanyId);
       const payload = { ...form, role: derivedRole };
       if (!payload.password) delete payload.password;
       if (editUserId) delete payload.email;
@@ -1883,18 +1886,18 @@ export function StaffFormModal({
                 setIsSystemAdminFlag(on);
                 setForm((f) => ({
                   ...f,
-                  role: derivePrimaryRoleFromModules(moduleRoles, on),
+                  role: derivePrimaryRoleFromModules(moduleRoles, on, selCompany || lockedCompanyId),
                 }));
                 setPermTouched(false);
               }}
               className="rounded border-gray-300 text-red-600 focus:ring-red-500"
             />
-            <span>Admin hệ thống <span className="text-xs text-gray-500">(không gắn module nghiệp vụ)</span></span>
+            <span>Quản trị hệ sinh thái <span className="text-xs text-gray-500">(toàn HST, không gắn module nghiệp vụ)</span></span>
           </label>
         )}
         {Object.keys(moduleRoles).length > 0 && (
           <p className="text-xs text-gray-500">
-            Vai trò hệ thống (JWT): <span className="font-medium text-gray-800">{ROLES[derivePrimaryRoleFromModules(moduleRoles, isSystemAdminFlag)] || derivePrimaryRoleFromModules(moduleRoles, isSystemAdminFlag)}</span>
+            Vai trò hệ thống (JWT): <span className="font-medium text-gray-800">{ROLES[derivePrimaryRoleFromModules(moduleRoles, isSystemAdminFlag, selCompany || lockedCompanyId)] || derivePrimaryRoleFromModules(moduleRoles, isSystemAdminFlag, selCompany || lockedCompanyId)}</span>
           </p>
         )}
 

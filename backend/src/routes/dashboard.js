@@ -456,9 +456,29 @@ r.get('/project-deadlines/configs', async (req, res) => {
   try {
     const { isCrmModuleAdmin } = require('../helpers/adminRole');
     if (!isCrmModuleAdmin(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được xem cấu hình này' });
-    const { listProfiles } = require('../jobs/projectDeadlineDispatch');
+    const { listProfiles, getDispatchMeta } = require('../jobs/projectDeadlineDispatch');
     const configs = await listProfiles();
-    res.json({ configs });
+    const meta = await getDispatchMeta();
+    res.json({ configs, ...meta });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PUT /dashboard/project-deadlines/settings — bật/tắt cảnh báo + gán hạn vào nhiệm vụ
+r.put('/project-deadlines/settings', async (req, res) => {
+  try {
+    const { isCrmModuleAdmin } = require('../helpers/adminRole');
+    if (!isCrmModuleAdmin(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được lưu cấu hình này' });
+    const { patchDispatchMeta } = require('../jobs/projectDeadlineDispatch');
+    const patch = {};
+    if (req.body?.enabled !== undefined) patch.enabled = req.body.enabled === true || req.body.enabled === '1';
+    if (req.body?.stamp_open_task_deadlines !== undefined) {
+      patch.stamp_open_task_deadlines = req.body.stamp_open_task_deadlines === true
+        || req.body.stamp_open_task_deadlines === '1';
+    }
+    const meta = await patchDispatchMeta(patch);
+    res.json(meta);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -483,6 +503,7 @@ r.post('/project-deadlines/configs', async (req, res) => {
       status: req.body?.status,
       days_ahead: req.body?.days_ahead,
       zalo_enabled: req.body?.zalo_enabled,
+      enabled: req.body?.enabled,
       zalo_bot_token: req.body?.zalo_bot_token,
       zalo_chat_id: req.body?.zalo_chat_id,
     });
@@ -511,6 +532,7 @@ r.put('/project-deadlines/configs/:id', async (req, res) => {
       status: req.body?.status,
       days_ahead: req.body?.days_ahead,
       zalo_enabled: req.body?.zalo_enabled,
+      enabled: req.body?.enabled,
       zalo_bot_token: req.body?.zalo_bot_token,
       zalo_chat_id: req.body?.zalo_chat_id,
     }, { id: req.params.id });

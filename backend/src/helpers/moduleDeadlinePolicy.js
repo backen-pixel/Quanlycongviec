@@ -18,6 +18,7 @@ const {
   projectLooksShippedForOverdue,
   isSxPipelineStageNoDeadline,
 } = require('./crmPipelineSla');
+const { isCrmStagePastInstallation } = require('./crmDealStageGate');
 
 const MODULE = Object.freeze({
   CRM: 'crm',
@@ -68,6 +69,42 @@ function isCrmTerminalStage(stage) {
   return ['won', 'lost'].includes(String(stage.deal_report_bucket || '').toLowerCase());
 }
 
+/** Deal đã lập SX / đang ở cột CRM sản xuất-lắp → hết hạn CRM, chỉ còn hạn xưởng. */
+function crmHandedToProduction(item, stage) {
+  if (!item) return false;
+  if (item.project_id || item.linked_project?.id || item.linked_project) return true;
+  const st = stage || item.stage || item._stage || null;
+  const slug = String(st?.canonical_slug || st?.slug || '').toLowerCase();
+  if (['producing', 'production', 'shipping', 'installing', 'installation'].includes(slug)) {
+    return true;
+  }
+  const name = foldVi(st?.name);
+  return name.includes('dang san xuat')
+    || name.includes('dang lap dat')
+    || name.includes('van chuyen');
+}
+
+function sxStageOf(item) {
+  return item?.sx_pipeline_stage || item?.sx_kanban_column || item?.sx_stage || null;
+}
+
+/**
+ * SX đã giao / bàn giao VC: hết quá hạn sản xuất, bắt đầu quá hạn lắp (nếu có ngày lắp).
+ */
+function isSxReleasedToInstall(item, sxStage) {
+  if (!item) return false;
+  if (projectLooksShippedForOverdue(item)) return true;
+  const st = String(item.status || '');
+  if (['shipping', 'installing', 'warranty', 'completed'].includes(st)) return true;
+  const col = sxStage || sxStageOf(item);
+  if (isSxPipelineStageNoDeadline(col)) return true;
+  if (col?.is_handover_to_logistics) return true;
+  const name = foldVi(col?.name);
+  return name.includes('da giao')
+    || name.includes('giao xong')
+    || name.includes('ban giao');
+}
+
 function isLogisticsFinalStage(stage) {
   if (!stage) return false;
   const slug = String(stage.bucket_slug || stage.slug || '').toLowerCase().trim();
@@ -77,6 +114,22 @@ function isLogisticsFinalStage(stage) {
     || name === 'hoan thien'
     || name.startsWith('hoan thanh ')
     || name.startsWith('hoan thien ');
+}
+
+function crmStageOf(item) {
+  return item?.crm_stage || item?.stage || item?._stage || item?.crm_pipeline_stage || null;
+}
+
+/** Hạn lắp đã xong: VC Hoàn thành, bảo hành/CSKH, hoặc CRM đã qua cột Lắp đặt. */
+function isInstallDeadlineClosed(item, logisticsStage) {
+  if (!item) return true;
+  const st = String(item.status || '');
+  if (st === 'completed' || st === 'warranty') return true;
+  if (isLogisticsFinalStage(logisticsStage)) return true;
+  return isCrmStagePastInstallation(
+    crmStageOf(item),
+    item.pipeline_stages || item.crm_pipeline_stages || [],
+  );
 }
 
 function companyRef(item) {
@@ -105,9 +158,43 @@ function candidate(raw, source, item) {
   };
 }
 
+function ymdFromDeadlineRaw(raw) {
+  if (raw == null || raw === '') return null;
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const ts = new Date(s).getTime();
+  if (!Number.isFinite(ts)) return null;
+  return vnYmdFromTs(ts);
+}
+
+/** Mọi ngày lắp trên sự kiện VC (occurrence) hoặc install_date. */
+function collectInstallYmds(item) {
+  const occ = Array.isArray(item?.install_occurrence_dates) ? item.install_occurrence_dates : [];
+  const ymds = [...new Set(occ.map(ymdFromDeadlineRaw).filter(Boolean))].sort();
+  if (ymds.length) return ymds;
+  const one = ymdFromDeadlineRaw(item?.install_date);
+  return one ? [one] : [];
+}
+
+/**
+ * Hạn VC/LĐ khi đang lắp: buổi còn lại gần nhất (≥ hôm nay VN).
+ * Hết buổi thì lấy ngày cuối — quá hạn nếu chưa Hoàn thành.
+ */
+function activeInstallCommitmentRaw(item, nowMs = Date.now()) {
+  const ymds = collectInstallYmds(item);
+  if (!ymds.length) return null;
+  const today = vnYmdFromTs(nowMs);
+  const next = today ? ymds.find((y) => y >= today) : null;
+  const ymd = next || ymds[ymds.length - 1];
+  if (item?.install_date && ymdFromDeadlineRaw(item.install_date) === ymd) return item.install_date;
+  return ymd;
+}
+
 function resolveCrmDeadline(item, stage) {
-  if (!item || item.deadline_disabled_at || item.is_interacted) return null;
-  if (crmLeadMissingPhone(item) || isCrmTerminalStage(stage)) return null;
+  if (!item || item.deadline_disabled_at) return null;
+  if (crmLeadMissingPhone(item) || isCrmTerminalStage(stage) || crmHandedToProduction(item, stage)) {
+    return null;
+  }
 
   const task = candidate(item.crm_next_open_task_deadline, 'task', item);
   if (task) return task;
@@ -128,23 +215,21 @@ function resolveCrmDeadline(item, stage) {
   return candidate(item.expected_close_date, 'expected_close', item);
 }
 
-function resolveProductionDeadline(item, stage) {
+function resolveProductionDeadline(item, stage, opts = {}) {
+  void opts;
   if (!item || item.status === 'completed') return null;
-  if (isSxPipelineStageNoDeadline(stage)
-    || shouldIgnoreSxOrderDeliveryOverdue(stage)
-    || projectLooksShippedForOverdue(item)) {
-    return null;
-  }
+  if (isSxReleasedToInstall(item, stage)) return null;
+  if (shouldIgnoreSxOrderDeliveryOverdue(stage) || isSxPipelineStageNoDeadline(stage)) return null;
   return candidate(item.sx_kanban_deadline_at, 'sx_kanban', item)
     || candidate(item.production_finish_date, 'production_finish', item)
     || candidate(item.production_deadline, 'production', item)
-    || candidate(item.delivery_date, 'delivery', item)
     || candidate(item.deadline, 'project', item);
 }
 
 function resolveLogisticsDeadline(item, stage) {
-  if (!item || item.status === 'completed' || isLogisticsFinalStage(stage)) return null;
-  return candidate(item.install_date, 'install', item)
+  if (!item || isInstallDeadlineClosed(item, stage)) return null;
+  if (!isSxReleasedToInstall(item, sxStageOf(item))) return null;
+  return candidate(activeInstallCommitmentRaw(item), 'install', item)
     || candidate(item.delivery_date, 'delivery', item)
     || candidate(item.deadline, 'project', item);
 }
@@ -165,7 +250,7 @@ function resolveModuleDeadline(moduleKey, item, opts = {}) {
   const stage = stageOf(item, opts.stage, key);
   let picked = null;
   if (key === MODULE.CRM) picked = resolveCrmDeadline(item, stage);
-  else if (key === MODULE.PRODUCTION) picked = resolveProductionDeadline(item, stage);
+  else if (key === MODULE.PRODUCTION) picked = resolveProductionDeadline(item, stage, opts);
   else if (key === MODULE.LOGISTICS) picked = resolveLogisticsDeadline(item, stage);
   const state = deadlineState(picked?.deadlineTs ?? null, opts.nowMs);
   return {
@@ -230,7 +315,10 @@ module.exports = {
   MODULE,
   PROJECT_DEADLINE_FIELDS_BY_COMPLETION,
   isCrmTerminalStage,
+  crmHandedToProduction,
+  isSxReleasedToInstall,
   isLogisticsFinalStage,
+  isInstallDeadlineClosed,
   deadlineTsFromRaw,
   deadlineState,
   deadlineBucket,
@@ -238,6 +326,7 @@ module.exports = {
   resolveCrmDeadline,
   resolveProductionDeadline,
   resolveLogisticsDeadline,
+  activeInstallCommitmentRaw,
   withEffectiveModuleDeadline,
   projectDeadlinePatchOnModuleDone,
 };

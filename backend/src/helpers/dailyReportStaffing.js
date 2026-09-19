@@ -19,6 +19,7 @@ function guessRoleKey(user, departmentName = '') {
   if (/thiết\s*kế|thiet\s*ke|design/.test(dept)) return 'design_survey';
   if (
     role === 'admin'
+    || role === 'ecosystem_admin'
     || role === 'manager'
     || role === 'platform_admin'
     || role === 'crm_production_admin'

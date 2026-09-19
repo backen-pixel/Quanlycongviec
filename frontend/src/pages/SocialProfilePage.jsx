@@ -633,7 +633,7 @@ export default function SocialProfilePage() {
                       type="button"
                       onClick={() => setNameOpen(true)}
                       className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/30 backdrop-blur"
-                      title="Đổi tên"
+                      title="Cập nhật thông tin cá nhân"
                     >
                       <Pencil className="h-4 w-4" />
                     </button>
@@ -710,18 +710,34 @@ export default function SocialProfilePage() {
                 <InfoIcon className="h-5 w-5 text-purple-600" />
               </div>
               <div className="flex-1 min-w-0 space-y-1.5">
-                <h3 className="text-base font-bold text-gray-900 mb-1.5">Thông tin</h3>
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <h3 className="text-base font-bold text-gray-900">Thông tin</h3>
+                  {isOwner && (
+                    <button
+                      type="button"
+                      onClick={() => setNameOpen(true)}
+                      className="inline-flex items-center gap-1 text-xs text-indigo-600 hover:text-indigo-700 font-semibold cursor-pointer"
+                    >
+                      <Pencil className="h-3.5 w-3.5" /> Cập nhật
+                    </button>
+                  )}
+                </div>
                 {profile.email && (
                   <p className="flex items-center gap-2 text-sm text-gray-700">
                     <Mail className="h-3.5 w-3.5 text-gray-400 shrink-0" />
                     <span className="truncate">{profile.email}</span>
                   </p>
                 )}
-                {profile.phone && (
-                  <p className="flex items-center gap-2 text-sm text-gray-700">
-                    <Phone className="h-3.5 w-3.5 text-gray-400 shrink-0" /> {profile.phone}
-                  </p>
-                )}
+                <p className="flex items-center gap-2 text-sm text-gray-700">
+                  <Phone className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                  {profile.phone ? (
+                    <span>{profile.phone}</span>
+                  ) : (
+                    <span className="text-gray-500 italic">
+                      {isOwner ? 'Chưa có số điện thoại. Nhấn "Cập nhật" để thêm.' : 'Chưa có số điện thoại.'}
+                    </span>
+                  )}
+                </p>
                 {profile.created_at && (
                   <p className="flex items-center gap-2 text-sm text-gray-600">
                     <Calendar className="h-3.5 w-3.5 text-gray-400 shrink-0" /> Tham gia: {new Date(profile.created_at).toLocaleDateString('vi-VN')}
@@ -989,14 +1005,19 @@ export default function SocialProfilePage() {
       />
 
       <EditMyNameModal
+        key={nameOpen ? 'profile-info' : 'profile-info-idle'}
         open={nameOpen && isOwner}
         initialName={profile?.full_name || ''}
+        initialPhone={profile?.phone || ''}
         onClose={() => setNameOpen(false)}
         onSaved={async (saved) => {
-          const nextName = saved?.full_name;
-          if (nextName) {
-            setProfile((p) => (p ? { ...p, full_name: nextName } : p));
-          }
+          setProfile((p) => (p ? {
+            ...p,
+            ...(saved?.full_name != null ? { full_name: saved.full_name } : {}),
+            ...(saved && Object.prototype.hasOwnProperty.call(saved, 'phone')
+              ? { phone: saved.phone || null }
+              : {}),
+          } : p));
           await refreshUser();
         }}
       />

@@ -10,6 +10,7 @@ const {
 const { listDealProductionProjects } = require('./autoDealWonProject');
 const { sortProjectCrmDeals } = require('./workshopCrmDeals');
 const { classifyProjectForecast } = require('./projectForecast');
+const { MODULE, resolveModuleDeadline } = require('./moduleDeadlinePolicy');
 
 const DONE = new Set(['completed', 'done']);
 const IN_PROGRESS = new Set(['in_progress', 'doing', 'active', 'processing']);
@@ -247,11 +248,57 @@ const DEFAULT_DELIVERY_STAGES = [
   { slug: 'measure', name: 'Đo đạc', order_index: 4 },
   { slug: 'production', name: 'Sản xuất', order_index: 5 },
   { slug: 'materials', name: 'Chuẩn bị vật tư', order_index: 6 },
-  { slug: 'delivery', name: 'Giao hàng', order_index: 7 },
+  { slug: 'delivery', name: 'Giao nhận', order_index: 7 },
   { slug: 'installation', name: 'Lắp đặt', order_index: 8 },
   { slug: 'acceptance', name: 'Nghiệm thu', order_index: 9 },
   { slug: 'warranty', name: 'Bảo hành', order_index: 10 },
 ];
+
+/** Vật tư + giao hàng + lắp đặt = 1 bước «Giao nhận» trên luồng tổng quan. */
+const DELIVERY_FLOW_MERGE_SLUGS = new Set(['materials', 'delivery', 'installation']);
+
+function displaySlugForDeliveryFlow(slug) {
+  const s = String(slug || '');
+  return DELIVERY_FLOW_MERGE_SLUGS.has(s) ? 'delivery' : s;
+}
+
+function collapseDeliveryDisplayStages(stages) {
+  const sorted = [...(stages || [])].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+  const out = [];
+  let merged = null;
+  for (const st of sorted) {
+    const slug = String(st.slug || '');
+    if (DELIVERY_FLOW_MERGE_SLUGS.has(slug)) {
+      if (!merged) {
+        merged = {
+          ...st,
+          slug: 'delivery',
+          name: 'Giao nhận',
+          color: st.color || '#3B82F6',
+          merged_slugs: [slug],
+          merged_ids: st.id ? [st.id] : [],
+        };
+        out.push(merged);
+      } else {
+        merged.merged_slugs.push(slug);
+        if (st.id) merged.merged_ids.push(st.id);
+        if (slug === 'delivery') {
+          merged.id = st.id;
+          merged.color = st.color || merged.color;
+          merged.order_index = st.order_index;
+          if (st.icon) merged.icon = st.icon;
+        }
+      }
+      continue;
+    }
+    out.push({
+      ...st,
+      merged_slugs: slug ? [slug] : [],
+      merged_ids: st.id ? [st.id] : [],
+    });
+  }
+  return out;
+}
 
 function isProjectDeliveryStageRow(s) {
   if (!s || s.is_active === false) return false;
@@ -354,19 +401,28 @@ async function loadProjectCommentCount(leadId, projectId) {
   }
 }
 
+function stageMatchesProject(st, project) {
+  if (!st) return false;
+  const curId = project?.current_stage_id;
+  if (curId) {
+    if (String(st.id) === String(curId)) return true;
+    if ((st.merged_ids || []).some((id) => String(id) === String(curId))) return true;
+  }
+  const curSlug = displaySlugForDeliveryFlow(project?.current_stage?.slug);
+  if (curSlug && (st.slug === curSlug || (st.merged_slugs || []).includes(String(project?.current_stage?.slug || '')))) {
+    return true;
+  }
+  return false;
+}
+
 function resolveDeliveryCurrentIndex(project, stages) {
   if (!stages.length) return 0;
-  if (project?.current_stage_id) {
-    const byId = stages.findIndex((st) => String(st.id) === String(project.current_stage_id));
-    if (byId >= 0) return byId;
-  }
-  const curSlug = project?.current_stage?.slug;
-  if (curSlug) {
-    const bySlug = stages.findIndex((st) => st.slug === curSlug);
-    if (bySlug >= 0) return bySlug;
-  }
-  const mapped = PROJECT_STATUS_TO_STAGE_SLUG[String(project?.status || '').toLowerCase()] || 'order';
-  const byMapped = stages.findIndex((st) => st.slug === mapped);
+  const byMatch = stages.findIndex((st) => stageMatchesProject(st, project));
+  if (byMatch >= 0) return byMatch;
+  const mapped = displaySlugForDeliveryFlow(
+    PROJECT_STATUS_TO_STAGE_SLUG[String(project?.status || '').toLowerCase()] || 'order',
+  );
+  const byMapped = stages.findIndex((st) => st.slug === mapped || (st.merged_slugs || []).includes(mapped));
   return byMapped >= 0 ? byMapped : 0;
 }
 
@@ -379,21 +435,26 @@ function buildDeliveryFlow({
   projectHref,
   pipelines,
 }) {
-  const stages = (deliveryStages || []).length
+  const raw = (deliveryStages || []).length
     ? [...deliveryStages].sort((a, b) => (a.order_index || 0) - (b.order_index || 0))
     : DEFAULT_DELIVERY_STAGES;
+  const stages = collapseDeliveryDisplayStages(raw);
 
   const currentIdx = resolveDeliveryCurrentIndex(project, stages);
   const sxStage = pipelines?.sx || null;
   const vcStage = pipelines?.vc || null;
   const crmStage = pipelines?.crm || null;
+  const liveSlug = String(project?.current_stage?.slug || '');
 
   return stages.map((st, i) => {
     let status = 'pending';
     if (i < currentIdx) status = 'done';
     else if (i === currentIdx) status = 'current';
 
-    const module = STAGE_SLUG_TO_MODULE[st.slug] || 'workflow';
+    const liveIsMaterials = status === 'current' && liveSlug === 'materials';
+    const module = liveIsMaterials
+      ? 'production'
+      : (STAGE_SLUG_TO_MODULE[st.slug] || 'workflow');
     const href = module === 'crm' ? crmHref
       : module === 'production' ? sxHref
         : module === 'logistics' ? vcHref
@@ -401,7 +462,8 @@ function buildDeliveryFlow({
 
     let stage_name = null;
     if (status === 'current') {
-      if (module === 'production' && sxStage?.name) stage_name = sxStage.name;
+      if (liveIsMaterials && sxStage?.name) stage_name = sxStage.name;
+      else if (module === 'production' && sxStage?.name) stage_name = sxStage.name;
       else if (module === 'logistics' && vcStage?.name) stage_name = vcStage.name;
       else if (module === 'crm' && crmStage?.name) stage_name = crmStage.name;
       else stage_name = st.name;
@@ -471,12 +533,12 @@ function buildProjectOverview({
     ? Math.round(flowPct * 0.55 + taskPctVal * 0.45)
     : flowPct;
 
-  const commitmentRaw = project?.install_date || project?.delivery_date
-    || project?.production_deadline || project?.deadline || null;
-  const commitment_date = commitmentRaw ? String(commitmentRaw).slice(0, 10) : null;
+  const logisticsDeadline = resolveModuleDeadline(MODULE.LOGISTICS, project, { stage: vcStage });
+  const commitment_date = logisticsDeadline.raw || null;
   const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitment_date, {
     project,
     sxStage,
+    vcStage,
   });
 
   const budgetTotal = Number(
@@ -608,6 +670,14 @@ function buildProjectOverview({
   };
 
   const customer = project?.customer || primaryLead?.customer || null;
+  const addressBits = [
+    customer?.address || primaryLead?.install_address || null,
+    customer?.district || null,
+    customer?.city || null,
+  ].filter(Boolean);
+  const crmStageName = crmStage?.name && !crmStage.empty ? crmStage.name : null;
+  const sxStageName = sxStage?.name && !sxStage.empty ? sxStage.name : null;
+  const vcStageName = vcStage?.name && !vcStage.empty ? vcStage.name : null;
 
   return {
     progress_pct,
@@ -630,8 +700,18 @@ function buildProjectOverview({
     },
     // Hồ sơ liên thông — CRM/SX/VC quy về cùng 1 dự án.
     customer_name: customer?.full_name || null,
-    customer_phone: customer?.phone || null,
+    customer_phone: customer?.phone || primaryLead?.phone || null,
+    customer_address: addressBits.length ? addressBits.join(', ') : null,
+    region_name: primaryLead?.region?.name || null,
     company_name: project?.company?.short_name || project?.company?.name || null,
+    workshop_type_name: project?.workshop_type?.name || null,
+    crm_stage_name: crmStageName,
+    sx_stage_name: sxStageName,
+    vc_stage_name: vcStageName,
+    sx_href: sxHref,
+    vc_href: vcHref,
+    install_date: project?.install_date ? String(project.install_date).slice(0, 10) : null,
+    delivery_date: project?.delivery_date ? String(project.delivery_date).slice(0, 10) : null,
     deal_ref: primaryLead ? { code: primaryLead.code, title: primaryLead.title, href: crmHref } : null,
     production_ref: projectId ? { code: project?.code, href: sxHref } : null,
   };
@@ -648,7 +728,7 @@ const PROJECT_BUNDLE_SELECT_CORE = `
   logistics_person:users!projects_logistics_person_id_fkey(id, full_name),
   installation_person:users!projects_installation_person_id_fkey(id, full_name),
   company:companies!projects_company_id_fkey(id, name, short_name),
-  customer:customers(id, full_name, phone)
+  customer:customers(id, full_name, phone, address, district, city)
 `;
 
 /**
@@ -704,7 +784,7 @@ async function fetchProjectForBundle(projectId, opts = {}) {
         current_stage:workflow_stages(id, name, slug, color, order_index),
         workshop_type:workshop_project_types!projects_workshop_type_id_fkey(id, name),
         company:companies!projects_company_id_fkey(id, name, short_name),
-        customer:customers(id, full_name, phone)
+        customer:customers(id, full_name, phone, address, district, city)
       `)
       .eq('id', projectId)
       .maybeSingle();
@@ -758,9 +838,11 @@ async function buildProjectDealBundle(projectId, opts = {}) {
 const LEAD_BUNDLE_SELECT = `
   id, code, title, type, estimated_value, company_id, project_id, customer_id, parent_lead_id, created_at,
   assigned_to, lead_owner_id, stage_id, pipeline_id, description, lead_type_id,
+  install_address, region_id,
   stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon, is_won, order_index),
-  customer:customers(id, full_name, phone, source),
+  customer:customers(id, full_name, phone, address, district, city, source),
   source:crm_sources(id, name),
+  region:company_regions(id, name),
   assignee:users!crm_leads_assigned_to_fkey(id, full_name),
   lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name)
 `;
@@ -770,7 +852,15 @@ const LEAD_REF_SELECT = 'id, type, project_id, title, estimated_value, customer_
 async function hydrateLeadsByIds(ids) {
   const uniq = [...new Set((ids || []).filter(Boolean).map(String))];
   if (!uniq.length) return [];
-  const { data } = await supabase.from('crm_leads').select(LEAD_BUNDLE_SELECT).in('id', uniq);
+  let { data, error } = await supabase.from('crm_leads').select(LEAD_BUNDLE_SELECT).in('id', uniq);
+  if (error) {
+    const fallback = LEAD_BUNDLE_SELECT
+      .replace(', install_address, region_id,', ',')
+      .replace('  region:company_regions(id, name),\n', '')
+      .replace('address, district, city, source', 'phone, source');
+    const retry = await supabase.from('crm_leads').select(fallback).in('id', uniq);
+    data = retry.data;
+  }
   const byId = new Map((data || []).map((l) => [String(l.id), l]));
   return uniq.map((id) => byId.get(id)).filter(Boolean);
 }
@@ -883,6 +973,13 @@ function pickBestLeadForProject(project, candidates) {
 
 async function buildProjectDealBundleWithProject(project, user, opts = {}) {
   const projectId = project.id;
+  try {
+    const { attachInstallEventDatesToProjects } = require('./createPlannedVcLdEvents');
+    const attached = await attachInstallEventDatesToProjects([project]);
+    if (attached?.[0]) Object.assign(project, attached[0]);
+  } catch (e) {
+    console.warn('[bundle] attach install events:', e.message);
+  }
   const lite = !!opts.lite;
   const mark = (label, t0) => {
     if (!opts.profile) return;
@@ -1402,6 +1499,29 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
   const currentPp = production_projects.find((p) => String(p.project_id) === String(projectId))
     || production_projects[0]
     || null;
+
+  const rowInVc = (row) => {
+    if (!row) return false;
+    if (row.vc_temp_staged) return false;
+    return !!(row.logistics_company_id || row.vc_kanban_column_id || row.vc_pipeline_stage?.id);
+  };
+  overview.modules = {
+    crm: !!primaryLead,
+    sx: !!projectId,
+    vc: rowInVc(project) || production_projects.some(rowInVc),
+  };
+  if (currentPp?.workshop_type_name && !overview.workshop_type_name) {
+    overview.workshop_type_name = currentPp.workshop_type_name;
+  }
+  overview.vc_company_name = currentPp?.logistics_company_name || null;
+  overview.sx_company_name = currentPp?.company_name
+    || project?.company?.short_name
+    || project?.company?.name
+    || null;
+  if (!overview.modules.vc) {
+    overview.vc_stage_name = null;
+    overview.owners = { ...overview.owners, vc: null };
+  }
   if (currentPp) {
     if (pipelines.sx) {
       pipelines.sx.company_label = pipelines.sx.company_label || currentPp.company_name || null;
@@ -1479,6 +1599,8 @@ module.exports = {
   isProjectDeliveryStageRow,
   buildDeliveryFlow,
   resolveDeliveryCurrentIndex,
+  collapseDeliveryDisplayStages,
+  displaySlugForDeliveryFlow,
   PROJECT_STATUS_TO_STAGE_SLUG,
   DEFAULT_DELIVERY_STAGES,
 };

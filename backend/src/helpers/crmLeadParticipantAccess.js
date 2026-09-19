@@ -32,11 +32,19 @@ async function userIsLinkedProjectParticipant(supabase, userId, projectId) {
     if (!String(e.message || '').includes('project_production_staff')) throw e;
   }
 
-  const { data: proj } = await supabase
+  let sel = await supabase
     .from('projects')
-    .select('production_person_id, responsible_person_id, sales_person_id, designer_id, project_manager_id, supervisor_id')
+    .select('production_person_id, responsible_person_id, sales_person_id, designer_id, project_manager_id, supervisor_id, logistics_person_id, installer_person_id, installation_person_id')
     .eq('id', projectId)
     .maybeSingle();
+  if (sel.error && /column/i.test(String(sel.error.message || ''))) {
+    sel = await supabase
+      .from('projects')
+      .select('production_person_id, responsible_person_id, sales_person_id, designer_id, project_manager_id, supervisor_id, logistics_person_id, installer_person_id')
+      .eq('id', projectId)
+      .maybeSingle();
+  }
+  const proj = sel.data;
   if (!proj) return false;
 
   const teamIds = [
@@ -46,6 +54,9 @@ async function userIsLinkedProjectParticipant(supabase, userId, projectId) {
     proj.designer_id,
     proj.project_manager_id,
     proj.supervisor_id,
+    proj.logistics_person_id,
+    proj.installer_person_id,
+    proj.installation_person_id,
   ].filter(Boolean).map(String);
   return teamIds.includes(uid);
 }

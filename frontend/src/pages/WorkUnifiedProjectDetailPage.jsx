@@ -13,7 +13,7 @@ import WorkUnifiedFilterPanel, {
   workUnifiedUserFilterChips,
 } from '../components/WorkUnifiedFilterFields';
 import { WorkUnifiedOpenTabProvider, workUnifiedPath } from '../components/WorkUnifiedOpenTabMenu';
-import ProjectOverviewPanel from '../components/ProjectOverviewPanel';
+import ProjectOverviewPanel, { resolveOverviewModules } from '../components/ProjectOverviewPanel';
 import WorkshopPlacementsPanel from '../components/WorkshopPlacementsPanel';
 import { PipelineChip, withPipelineProgress, displayPipelineStageName } from '../components/ProjectDealSyncPanel';
 import PipelineStepper from '../components/PipelineStepper';
@@ -28,6 +28,7 @@ import UnifiedTaskRow from '../components/UnifiedTaskRow';
 import UnifiedTaskHistoryTimeline from '../components/UnifiedTaskHistoryTimeline';
 import WorkTaskExtrasPanel from '../components/WorkTaskExtrasPanel';
 import ProjectSharedWorkspaceTab from '../components/ProjectSharedWorkspaceTab';
+import CommentSlashTaskForm from '../components/CommentSlashTaskForm';
 import { LeadMembersTab } from '../components/LeadChatTabs';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import { pickPrimarySxCrmDeal } from '../lib/sxProjectComments';
@@ -50,6 +51,27 @@ import {
   CheckCircle2, X as XIcon, MessageCircle, Loader2, Package, Truck, RefreshCw, Search, FolderOpen, Image as ImageIcon,
   Bell, Eye,
 } from 'lucide-react';
+
+/**
+ * Lệnh nhanh gõ «/» ngay trong ô bình luận (tab Bình luận).
+ * Chọn một lệnh sẽ bật form tạo nhiệm vụ gọn ngay trên ô nhập, không rời trang.
+ */
+const COMMENT_SLASH_COMMANDS = [
+  {
+    id: 'task',
+    label: 'Công việc',
+    emoji: '✅',
+    keywords: 'cong viec task viec',
+    hint: 'Tạo ngay tại đây — giao cho thành viên deal',
+  },
+  {
+    id: 'phat_sinh',
+    label: 'Phát sinh',
+    emoji: '⚠️',
+    keywords: 'phat sinh loi su co',
+    hint: 'Tạo ngay tại đây — chọn loại phát sinh và người chịu trách nhiệm',
+  },
+];
 
 const SECONDARY_TABS = [
   { key: 'tasks', label: 'Công việc' },
@@ -1131,6 +1153,67 @@ function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, sy
     }
   };
 
+  // ── Việc song song của từng track SX (project_substage_status — migration 605) ──
+  // Cùng nguồn dữ liệu với bảng Kanban và trang chi tiết SX, nên tick ở đâu cũng khớp.
+  const [ttSongSong, setTtSongSong] = useState({});
+  const sxNhomKey = useMemo(() => {
+    const ds = sxTracks.length ? sxTracks : [{ projectId, stages: sxStages }];
+    return ds
+      .map((t) => {
+        const ids = (t.stages || [])
+          .filter((st) => String(st?.group_key || '').trim())
+          .map((st) => String(st.id));
+        return ids.length && t.projectId ? `${t.projectId}::${ids.join(',')}` : '';
+      })
+      .filter(Boolean)
+      .join('|');
+  }, [sxTracks, sxStages, projectId]);
+
+  useEffect(() => {
+    if (!sxNhomKey) { setTtSongSong({}); return undefined; }
+    let song = true;
+    (async () => {
+      const ra = {};
+      await Promise.all(sxNhomKey.split('|').map(async (phan) => {
+        const [pid, ids] = phan.split('::');
+        if (!pid || !ids) return;
+        try {
+          const { data } = await api.get('/production/substage-status', {
+            params: { stage_ids: ids, project_id: pid },
+          });
+          const m = {};
+          (data?.rows || []).forEach((rw) => { m[String(rw.stage_id)] = rw.trang_thai || 'chua'; });
+          ra[String(pid)] = m;
+        } catch {
+          ra[String(pid)] = {};
+        }
+      }));
+      if (song) setTtSongSong(ra);
+    })();
+    return () => { song = false; };
+  }, [sxNhomKey]);
+
+  const doiTrangThaiSongSong = useCallback(async (pid, stageId, tt) => {
+    const p = String(pid);
+    const k = String(stageId);
+    let truoc;
+    setTtSongSong((prev) => {
+      truoc = prev[p]?.[k];
+      return { ...prev, [p]: { ...(prev[p] || {}), [k]: tt } };
+    });
+    try {
+      await api.put('/production/substage-status', { project_id: p, stage_id: k, trang_thai: tt });
+    } catch (e) {
+      // Trả đúng giá trị cũ — không đoán, tránh hiện sai trạng thái sản xuất.
+      setTtSongSong((prev) => {
+        const cua = { ...(prev[p] || {}) };
+        if (truoc === undefined) delete cua[k]; else cua[k] = truoc;
+        return { ...prev, [p]: cua };
+      });
+      alert(e?.response?.data?.error || 'Không lưu được trạng thái việc song song');
+    }
+  }, []);
+
   const crmCurrentId = pipelineCurrentId(
     crmStages,
     liveCrmStageId || crmLead?.stage_id || lead?.stage_id,
@@ -1168,6 +1251,12 @@ function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, sy
           currentStageName={crmLead?.stage?.name || lead?.stage?.name || pipelines?.crm?.name}
           visitedStageIds={visitedStageIds}
           stageDates={crmStageDates}
+          workshopProgress={{
+            sx_pipeline_stage: crmLead?.sx_pipeline_stage || pipelines?.sx || null,
+            vc_pipeline_stage: crmLead?.vc_pipeline_stage || pipelines?.vc || null,
+            stage: crmLead?.stage || pipelines?.crm || null,
+            project_status: project?.status || null,
+          }}
           onMoveToStage={moving ? undefined : moveCrm}
         />
       </ModuleStepperBlock>
@@ -1209,6 +1298,9 @@ function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, sy
               linearProgress
               stageDates={workshopStageDateMap(stages, track.row, currentId)}
               onMoveToStage={moving ? undefined : (stageId) => moveSx(stageId, pid)}
+              nhomSongSong={stages.some((st) => String(st?.group_key || '').trim())}
+              trangThaiO={ttSongSong[String(pid)] || null}
+              onDoiTrangThai={moving ? undefined : ((stageId, tt) => doiTrangThaiSongSong(pid, stageId, tt))}
             />
           </ModuleStepperBlock>
         );
@@ -2312,6 +2404,9 @@ function WorkUnifiedProjectDetailInner() {
     setActiveTab(allowed.has(tabFromUrl) ? tabFromUrl : 'overview');
   }, [id, tabFromUrl]);
 
+  // Lệnh «/» trong ô bình luận: null = đóng, 'task' | 'phat_sinh' = đang mở form tạo.
+  const [slashTaskKind, setSlashTaskKind] = useState(null);
+
   const selectTab = (key) => {
     setActiveTab(key);
     const next = new URLSearchParams(searchParams);
@@ -2414,6 +2509,36 @@ function WorkUnifiedProjectDetailInner() {
     overview.owners?.vc,
   );
 
+  const mods = resolveOverviewModules(overview);
+  const pipeChips = [
+    mods.crm ? {
+      label: 'CRM',
+      moduleKey: 'crm',
+      stage: crmPipe,
+      href: effectiveLeadId ? `/crm/leads/${effectiveLeadId}` : null,
+      title: 'Mở chi tiết CRM — cùng giai đoạn và tiến độ NV',
+    } : null,
+    mods.sx ? {
+      label: 'Sản xuất',
+      moduleKey: 'sx',
+      stage: sxPipe,
+      href: `/sx/projects/${id}`,
+      title: 'Mở chi tiết Sản xuất — cùng cột kanban SX',
+    } : null,
+    mods.vc ? {
+      label: 'VC / LĐ',
+      moduleKey: 'vc',
+      stage: vcPipe,
+      href: `/vc/projects/${id}`,
+      title: 'Mở chi tiết VC/LĐ — cùng cột kanban vận chuyển',
+    } : null,
+  ].filter(Boolean);
+  const pipeGridCls = pipeChips.length <= 1
+    ? 'grid grid-cols-1 gap-2'
+    : pipeChips.length === 2
+      ? 'grid grid-cols-1 sm:grid-cols-2 gap-2'
+      : 'grid grid-cols-1 sm:grid-cols-3 gap-2';
+
   return (
     <div className="h-full min-h-0 overflow-y-auto px-4 md:px-6 py-3 space-y-5">
       <div className="flex items-center gap-2 text-xs text-gray-400 flex-wrap">
@@ -2497,29 +2622,20 @@ function WorkUnifiedProjectDetailInner() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-        <PipelineChip
-          label="CRM"
-          moduleKey="crm"
-          stage={crmPipe}
-          href={effectiveLeadId ? `/crm/leads/${effectiveLeadId}` : null}
-          title="Mở chi tiết CRM — cùng giai đoạn và tiến độ NV"
-        />
-        <PipelineChip
-          label="Sản xuất"
-          moduleKey="sx"
-          stage={sxPipe}
-          href={`/sx/projects/${id}`}
-          title="Mở chi tiết Sản xuất — cùng cột kanban SX"
-        />
-        <PipelineChip
-          label="VC / LĐ"
-          moduleKey="vc"
-          stage={vcPipe}
-          href={`/vc/projects/${id}`}
-          title="Mở chi tiết VC/LĐ — cùng cột kanban vận chuyển"
-        />
-      </div>
+      {pipeChips.length > 0 && (
+        <div className={pipeGridCls}>
+          {pipeChips.map((chip) => (
+            <PipelineChip
+              key={chip.moduleKey}
+              label={chip.label}
+              moduleKey={chip.moduleKey}
+              stage={chip.stage}
+              href={chip.href}
+              title={chip.title}
+            />
+          ))}
+        </div>
+      )}
 
       {(workshopPlacements.placed.length > 0 || workshopPlacements.received_from.length > 0) && (
         <WorkshopPlacementsPanel
@@ -2563,6 +2679,7 @@ function WorkUnifiedProjectDetailInner() {
       {activeTab === 'overview' && (
         <ProjectOverviewPanel
           overview={overview}
+          projectId={id}
           lead={primaryLead}
           leadId={effectiveLeadId}
           onReload={() => load({ silent: true, noCache: true })}
@@ -2611,7 +2728,21 @@ function WorkUnifiedProjectDetailInner() {
             {' '}(Ghi chú &amp; file) — nếu đẩy hết vào đây, tiến trình Sales trên công việc sẽ mất.
           </div>
           {effectiveLeadId ? (
-            <CrmLeadCommentsPanel leadId={effectiveLeadId} forModule="projects" onCountChange={setCommentCount} />
+            <CrmLeadCommentsPanel
+              leadId={effectiveLeadId}
+              forModule="projects"
+              onCountChange={setCommentCount}
+              slashCommands={COMMENT_SLASH_COMMANDS}
+              onSlashCommand={(cmd) => setSlashTaskKind(cmd.id === 'phat_sinh' ? 'phat_sinh' : 'task')}
+              slashFormSlot={slashTaskKind ? (
+                <CommentSlashTaskForm
+                  leadId={effectiveLeadId}
+                  kind={slashTaskKind}
+                  onCancel={() => setSlashTaskKind(null)}
+                  onCreated={() => { setSlashTaskKind(null); load(); }}
+                />
+              ) : null}
+            />
           ) : (
             <ProjectCommentsPanel projectId={id} onCountChange={setCommentCount} />
           )}

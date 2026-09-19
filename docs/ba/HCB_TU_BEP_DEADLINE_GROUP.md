@@ -30,7 +30,9 @@ Tính **ngược** từ ngày lắp đặt:
 | Gia công | `D−5` → `D−4` |
 | Kế hoạch SX | `tiếp nhận` → `D−6` |
 
-Code tham chiếu: `frontend/src/lib/sxWorkshopSchedule.js` → `buildSxInstallBackPlan()`, `SX_DEADLINE_GROUPS`.
+Code tham chiếu: `frontend/src/lib/sxWorkshopSchedule.js` và `backend/src/helpers/sxWorkshopSchedule.js` → `buildSxInstallBackPlan()`.
+Backend ghi hạn thẻ: `sxInstallPlanKanbanDeadline.js` (kéo cột Kanban SX + đổi ngày lắp).
+Bộ mẫu 5 cột: `database/598_hcb_sx_column_templates.sql`.
 
 Setup UI: **Cài đặt pipeline SX** → mỗi cột chọn **Nhóm deadline** (hoặc tick nhiều cột → **Gán nhóm DL**).
 

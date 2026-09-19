@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const { supabase } = require('../config/supabase');
 const config = require('../config');
+const { syncHstAdminUserCompanies } = require('./hstAdminCompanies');
 
 async function resolveCompanyId(user) {
   let company_id = user.company_id || null;
@@ -48,6 +49,11 @@ async function buildAuthSessionForUser(user, opts = {}) {
     || `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   const company_id = await resolveCompanyId(user);
   const crm_region_ids = await resolveCrmRegionIds(user.id);
+  try {
+    await syncHstAdminUserCompanies(user);
+  } catch (e) {
+    console.warn('[authSession] syncHstAdminUserCompanies:', e.message);
+  }
   const token = jwt.sign({
     userId: user.id,
     email: user.email,

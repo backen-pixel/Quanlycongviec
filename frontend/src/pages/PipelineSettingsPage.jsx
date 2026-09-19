@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import api from '../lib/api';
-import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, MessageCircle, Loader2, Calendar, CheckCircle2, Clock, Factory, Search, X, TrendingUp, RotateCcw, UserCircle, AlertTriangle } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, GripVertical, ChevronRight, Trophy, XCircle, Eye, EyeOff, Loader2, Calendar, CheckCircle2, Clock, Factory, Search, X, TrendingUp, RotateCcw, UserCircle, AlertTriangle, Users } from 'lucide-react';
 import {
   IconSettings,
   IconTags,
@@ -19,7 +19,6 @@ import {
   IconClock,
   IconPercentage,
   IconCalendar,
-  IconMessage,
   IconRotateClockwise,
   IconChevronRight,
   IconChevronDown,
@@ -86,6 +85,17 @@ const ZALO_TEST_PRESETS = [
 const ZALO_TEST_DEFAULT = ZALO_TEST_PRESETS[0];
 
 /** Key gửi lên Zalo — value rỗng; server điền từ deal. Lưu qua API, dùng cho nút «Gửi Zalo» trên chi tiết deal. */
+function zaloNotifyTokenSourceText(s) {
+  const src = String(s?.token_source || '');
+  if (src === 'zalo_oa_accounts') {
+    return s.token_oa_id
+      ? `Đang lấy từ bảng Zalo OA accounts · OA ${s.token_oa_id} (tự refresh)`
+      : 'Đang lấy từ bảng Zalo OA accounts (tự refresh)';
+  }
+  if (src === 'app_settings_du_phong') return 'Chưa lấy được OA — đang dùng token dán trong cấu hình này';
+  return 'Chưa có access token';
+}
+
 const DEFAULT_ZALO_TEMPLATE_STRUCTURE_DISPLAY = `{
   "ten_san_pham": "",
   "order_code": "",
@@ -240,9 +250,12 @@ function StageStatusBadges({ stage, linkedSx, linkedVc, syncRoleLabels }) {
   if (s.requires_deadline && !s.is_won && !s.is_lost) {
     badges.push({ key: 'deadline', cls: 'bg-rose-50 text-rose-700 border-rose-200', icon: IconCalendar, text: 'Deadline' });
   }
-  if (s.send_zalo_on_enter) badges.push({ key: 'zalo', cls: 'bg-sky-50 text-sky-800 border-sky-200', icon: IconMessage, text: 'Zalo' });
   if (s.create_event_on_enter) badges.push({ key: 'event', cls: 'bg-emerald-50 text-emerald-800 border-emerald-200', icon: IconCalendar, text: 'Sự kiện' });
   if (s.apply_default_assignee_on_enter) badges.push({ key: 'assignee', cls: 'bg-indigo-50 text-indigo-800 border-indigo-200', icon: IconUser, text: 'Chuyển PT' });
+  if (s.auto_add_members_on_enter) {
+    const n = Array.isArray(s.default_members?.user_ids) ? s.default_members.user_ids.length : 0;
+    badges.push({ key: 'members', cls: 'bg-teal-50 text-teal-800 border-teal-200', icon: Users, text: n ? `TV ${n}` : 'TV' });
+  }
   if (s.allow_revert_to_lead) badges.push({ key: 'revert', cls: 'bg-amber-50 text-amber-800 border-amber-200', icon: IconRotateClockwise, text: 'Trả Lead' });
   if (s.is_revert_to_lead_target) badges.push({ key: 'revert-target', cls: 'bg-amber-50 text-amber-800 border-amber-200', icon: IconRotateClockwise, text: 'Nhận Lead trả về' });
   if (s.sync_role) {
@@ -303,6 +316,9 @@ export default function PipelineSettingsPage() {
     requires_deadline: false,
     apply_default_assignee_on_enter: false,
     default_assignee_user_id: '',
+    auto_add_members_on_enter: false,
+    default_member_user_ids: [],
+    default_member_users: [],
   });
   const isAdmin = isAdminLike(user);
   const [companies, setCompanies] = useState([]);
@@ -831,18 +847,6 @@ export default function PipelineSettingsPage() {
     setZaloTestSending(false);
   };
 
-  const toggleZaloColumn = async (stage) => {
-    if (stage.pipeline_type !== 'deal') return;
-    const next = !stage.send_zalo_on_enter;
-    try {
-      await mutateStage(
-        stage.id,
-        () => api.put(`/crm/pipeline-stages/${stage.id}`, { send_zalo_on_enter: next }),
-        next ? 'Đã bật gửi Zalo khi vào cột' : 'Đã tắt gửi Zalo khi vào cột',
-      );
-    } catch { /* toast đã hiện */ }
-  };
-
   const toggleCreateEventColumn = async (stage) => {
     if (stage.pipeline_type !== 'deal') return;
     const next = !stage.create_event_on_enter;
@@ -1116,6 +1120,9 @@ export default function PipelineSettingsPage() {
       is_revert_to_lead_target: false,
       apply_default_assignee_on_enter: false,
       default_assignee_user_id: '',
+      auto_add_members_on_enter: false,
+      default_member_user_ids: [],
+      default_member_users: [],
     });
   };
 
@@ -1142,6 +1149,11 @@ export default function PipelineSettingsPage() {
       is_revert_to_lead_target: !!stage.is_revert_to_lead_target,
       apply_default_assignee_on_enter: !!stage.apply_default_assignee_on_enter,
       default_assignee_user_id: stage.default_assignee_user_id || '',
+      auto_add_members_on_enter: !!stage.auto_add_members_on_enter,
+      default_member_user_ids: Array.isArray(stage.default_members?.user_ids)
+        ? stage.default_members.user_ids.map(String)
+        : [],
+      default_member_users: Array.isArray(stage.default_members?.users) ? stage.default_members.users : [],
     });
   };
 
@@ -1150,9 +1162,13 @@ export default function PipelineSettingsPage() {
     if (form.apply_default_assignee_on_enter && !form.default_assignee_user_id) {
       return showToast('Chọn người phụ trách trước khi bật «Chuyển người phụ trách».', 'err');
     }
+    if (form.auto_add_members_on_enter && !(form.default_member_user_ids || []).length) {
+      return showToast('Chọn nhân viên CRM trước khi bật «Tự thêm thành viên».', 'err');
+    }
     if (!selectedPipelineId) return showToast('Chọn pipeline trước', 'err');
     try {
       const payload = { ...form, pipeline_type: adding, pipeline_id: selectedPipelineId };
+      delete payload.default_member_users;
       if (payload.default_probability === '') delete payload.default_probability;
       if (payload.sla_days === '' || payload.sla_days == null) delete payload.sla_days;
       else payload.sla_days = Number(payload.sla_days);
@@ -1170,8 +1186,12 @@ export default function PipelineSettingsPage() {
     if (form.apply_default_assignee_on_enter && !form.default_assignee_user_id) {
       return showToast('Chọn người phụ trách trước khi bật «Chuyển người phụ trách».', 'err');
     }
+    if (form.auto_add_members_on_enter && !(form.default_member_user_ids || []).length) {
+      return showToast('Chọn nhân viên CRM trước khi bật «Tự thêm thành viên».', 'err');
+    }
     try {
       const payload = { ...form };
+      delete payload.default_member_users;
       if (payload.default_probability === '') payload.default_probability = null;
       if (payload.sla_days === '' || payload.sla_days == null) payload.sla_days = null;
       else payload.sla_days = Number(payload.sla_days);
@@ -1600,19 +1620,6 @@ export default function PipelineSettingsPage() {
                   >
                     <Calendar className="h-3 w-3" />
                     Sự kiện
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => toggleZaloColumn(s)}
-                    className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
-                      s.send_zalo_on_enter
-                        ? 'bg-sky-100 text-sky-800 border-sky-300'
-                        : 'bg-gray-50 text-gray-400 border-gray-200 hover:border-sky-200'
-                    }`}
-                    title="Khi deal kéo vào cột này: gửi tin Zalo OA (khuyến nghị chỉ bật trên cột tên «Hoàn thành»; cần bật OA + token/template)"
-                  >
-                    <MessageCircle className="h-3 w-3" />
-                    Zalo
                   </button>
                   {!s.is_won && (
                     <button
@@ -2396,8 +2403,8 @@ export default function PipelineSettingsPage() {
               title="Zalo OA — cấu hình chung"
               subtitle={
                 zaloSettings?.enabled
-                  ? `Đang bật · Template ${zaloSettings?.template_id || '566121'} · Token ${zaloSettings?.has_token ? 'đã lưu' : 'chưa có'}`
-                  : 'Đang tắt · Bấm để mở cấu hình token, template, gửi thử'
+                  ? `Đang bật · Template ${zaloSettings?.template_id || '566121'} · ${zaloNotifyTokenSourceText(zaloSettings)}`
+                  : 'Đang tắt · Bấm để mở cấu hình template, gửi thử — token lấy từ Zalo OA accounts'
               }
               icon={IconMessageCircle}
               iconClassName="text-sky-600"
@@ -2412,14 +2419,15 @@ export default function PipelineSettingsPage() {
                     <ToggleSwitch
                       checked={!!zaloSettings?.enabled}
                       onChange={(v) => saveZaloMaster({ enabled: v })}
-                      title="Gửi Zalo khi deal vào cột đã bật Zalo"
+                      title="Cho phép gửi Zalo OA bằng nút trên chi tiết deal"
                     />
                   </div>
                 )
               }
             >
               <p className="text-[11px] text-gray-500 leading-relaxed">
-                Lưu access_token từ Zalo Cloud. Template mặc định <strong className="text-sky-700">566121</strong> — bật «Zalo» trên cột Deal «Hoàn thành» ở tab Giai đoạn.
+                Access token lấy tự động từ bảng <strong className="text-sky-800">zalo_oa_accounts</strong> (trang Zalo OA, tự refresh).
+                Template mặc định <strong className="text-sky-700">566121</strong> — gửi bằng nút «Gửi Zalo» trên chi tiết deal (mọi cột). Không tự gửi khi kéo cột.
               </p>
               <div className="rounded-lg border border-sky-200 bg-sky-50/40 p-3 space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2458,13 +2466,17 @@ export default function PipelineSettingsPage() {
                     <option value="1">1 — Gửi thường</option>
                     <option value="3">3 — Vượt hạn mức (OA whitelist)</option>
                   </select>
-                  <label className="text-[10px] font-bold text-gray-700 uppercase tracking-wide">Access token</label>
+                  <label className="text-[10px] font-bold text-gray-700 uppercase tracking-wide">Access token (tuỳ chọn ghi đè)</label>
                   <input
                     type="password"
                     value={zaloTestToken}
                     onChange={(e) => setZaloTestToken(e.target.value)}
                     className={`w-full h-8 px-2 rounded-lg text-xs ${FIELD_KEY}`}
-                    placeholder={zaloSettings?.has_token ? '•••• đã lưu — nhập mới để thay' : 'Dán access_token'}
+                    placeholder={
+                      zaloSettings?.token_source === 'zalo_oa_accounts'
+                        ? 'Để trống — đang dùng token OA (tự refresh)'
+                        : (zaloSettings?.has_token ? '•••• dự phòng đã lưu — nhập mới để thay' : 'Dán access_token nếu chưa có OA')
+                    }
                     autoComplete="off"
                   />
                   <button
@@ -2475,7 +2487,9 @@ export default function PipelineSettingsPage() {
                     <IconDeviceFloppy className="w-3.5 h-3.5" stroke={2} />
                     Lưu cấu hình
                   </button>
-                  <p className="text-[10px] text-gray-400">Token đã lưu: {zaloSettings?.has_token ? 'Có' : 'Chưa'}</p>
+                  <p className={`text-[10px] ${zaloSettings?.has_token ? 'text-emerald-700' : 'text-gray-400'}`}>
+                    {zaloNotifyTokenSourceText(zaloSettings)}
+                  </p>
                 </div>
                 <div className="space-y-2 rounded-lg p-3 border border-gray-200 bg-gray-50/30">
                   <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Gửi thử API</p>
@@ -2969,17 +2983,6 @@ function StageForm({
           </label>
         )}
         {pipelineType === 'deal' && (
-          <label className="flex items-center gap-2 text-xs cursor-pointer text-sky-800 bg-sky-50 px-2 py-1 rounded-lg border border-sky-200">
-            <input
-              type="checkbox"
-              checked={!!form.send_zalo_on_enter}
-              onChange={(e) => setForm((f) => ({ ...f, send_zalo_on_enter: e.target.checked }))}
-              className="rounded border-sky-400"
-            />
-            <MessageCircle className="h-3.5 w-3.5" /> Tự gửi Zalo OA khi deal vào cột này
-          </label>
-        )}
-        {pipelineType === 'deal' && (
           <label className="flex items-center gap-2 text-xs cursor-pointer text-emerald-900 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200">
             <input
               type="checkbox"
@@ -3071,6 +3074,82 @@ function StageForm({
                 />
                 {!assigneeCompanyId && (
                   <p className="text-[10px] text-amber-700 mt-1">Chọn công ty pipeline trước khi gán NV.</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        {pipelineType === 'deal' && !form.is_lost && (
+          <div className="w-full space-y-2 p-3 rounded-lg border border-teal-200 bg-teal-50/50">
+            <label className="flex items-start gap-2 text-xs cursor-pointer">
+              <input
+                type="checkbox"
+                checked={!!form.auto_add_members_on_enter}
+                onChange={(e) => setForm((f) => ({ ...f, auto_add_members_on_enter: e.target.checked }))}
+                className="mt-0.5 rounded border-teal-400 accent-teal-600"
+              />
+              <span>
+                <span className="flex items-center gap-1 font-semibold text-teal-800">
+                  <Users className="h-3.5 w-3.5" /> Tự thêm thành viên CRM khi vào cột
+                </span>
+                <span className="block text-[10px] text-teal-700/90 mt-0.5 leading-snug">
+                  Mỗi lần deal vào cột này (kể cả lúc lập kế hoạch SX / VC-LĐ), NV đã chọn được thêm vào tab Thành viên.
+                  Không đổi người phụ trách CRM.
+                </span>
+              </span>
+            </label>
+            {(form.auto_add_members_on_enter || (form.default_member_user_ids || []).length > 0) && (
+              <div className="pl-1 space-y-2 max-w-md">
+                {(form.default_member_user_ids || []).length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {(form.default_member_user_ids || []).map((uid) => {
+                      const u = (form.default_member_users || []).find((x) => String(x.id) === String(uid));
+                      const label = u?.full_name || u?.email || 'NV CRM';
+                      return (
+                        <span
+                          key={uid}
+                          className="inline-flex items-center gap-1 max-w-[200px] truncate rounded-full bg-white border border-teal-200 px-2 py-0.5 text-[10px] text-teal-800"
+                          title={label}
+                        >
+                          {label}
+                          <button
+                            type="button"
+                            className="text-teal-500 hover:text-teal-800 cursor-pointer"
+                            onClick={() => setForm((f) => ({
+                              ...f,
+                              default_member_user_ids: (f.default_member_user_ids || []).filter((id) => String(id) !== String(uid)),
+                              default_member_users: (f.default_member_users || []).filter((x) => String(x.id) !== String(uid)),
+                            }))}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                <label className="text-[10px] font-semibold text-teal-700 uppercase tracking-wide block">
+                  Thêm nhân viên
+                </label>
+                <EmployeePicker
+                  companyId={assigneeCompanyId || undefined}
+                  forModule="all"
+                  value={null}
+                  onChange={(uid) => {
+                    if (!uid) return;
+                    setForm((f) => {
+                      const ids = f.default_member_user_ids || [];
+                      if (ids.some((id) => String(id) === String(uid))) return f;
+                      return { ...f, default_member_user_ids: [...ids, String(uid)] };
+                    });
+                  }}
+                  placeholder="Chọn NV CRM…"
+                  size="sm"
+                  disabled={!assigneeCompanyId}
+                  displayFullName
+                />
+                {!assigneeCompanyId && (
+                  <p className="text-[10px] text-amber-700">Chọn công ty pipeline trước khi gán NV.</p>
                 )}
               </div>
             )}

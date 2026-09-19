@@ -84,9 +84,9 @@ export default defineConfig({
       },
       '/api': {
         target: 'http://127.0.0.1:4000',
-        // Giám sát Supabase probe storage ~15–25s — tránh proxy cắt sớm
-        timeout: 120_000,
-        proxyTimeout: 120_000,
+        // Nhắc tiến độ hàng loạt / giám sát Supabase — tránh proxy cắt sớm
+        timeout: 180_000,
+        proxyTimeout: 180_000,
       },
       '/uploads': {
         target: 'http://127.0.0.1:4000',

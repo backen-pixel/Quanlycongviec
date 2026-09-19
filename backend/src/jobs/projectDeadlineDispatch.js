@@ -138,6 +138,7 @@ function normalizeProfile(raw, fallbackName = 'Mặc định') {
     status: base.status,
     days_ahead: base.days_ahead,
     zalo_enabled: !!zaloEnabled,
+    enabled: v.enabled !== false,
     zalo_bot_token: sanitizeBotToken(v.zalo_bot_token || v.bot_token),
     zalo_chat_id: String(v.zalo_chat_id || v.chat_id || '').trim(),
     created_at: v.created_at || now,
@@ -155,6 +156,7 @@ function publicProfile(p) {
     modules: p.modules || [],
     status: p.status || 'overdue',
     days_ahead: p.days_ahead ?? 0,
+    enabled: p.enabled !== false,
     zalo_enabled: !!p.zalo_enabled,
     zalo_chat_id: p.zalo_chat_id || '',
     zalo_bot_token_set: !!token,
@@ -191,12 +193,14 @@ async function loadStore() {
     webhook_url: String(root.webhook_url || '').trim(),
     webhook_secret: String(root.webhook_secret || '').trim(),
     enabled: root.enabled !== false,
+    stamp_open_task_deadlines: root.stamp_open_task_deadlines !== false,
   };
 }
 
 async function saveStore(store) {
   const value = {
     enabled: store.enabled !== false,
+    stamp_open_task_deadlines: store.stamp_open_task_deadlines !== false,
     profiles: (store.profiles || []).map((p) => normalizeProfile(p)),
     zalo_bot_token: sanitizeBotToken(store.zalo_bot_token),
     zalo_chat_id: String(store.zalo_chat_id || '').trim(),
@@ -227,6 +231,33 @@ async function saveStore(store) {
 async function listProfiles() {
   const store = await loadStore();
   return store.profiles.map(publicProfile);
+}
+
+function publicDispatchMeta(store) {
+  return {
+    enabled: store.enabled !== false,
+    stamp_open_task_deadlines: store.stamp_open_task_deadlines !== false,
+  };
+}
+
+async function getDispatchMeta() {
+  const store = await loadStore();
+  return publicDispatchMeta(store);
+}
+
+async function patchDispatchMeta(partial = {}) {
+  const store = await loadStore();
+  if (partial.enabled !== undefined) store.enabled = !!partial.enabled;
+  if (partial.stamp_open_task_deadlines !== undefined) {
+    store.stamp_open_task_deadlines = !!partial.stamp_open_task_deadlines;
+  }
+  await saveStore(store);
+  return publicDispatchMeta(store);
+}
+
+async function isStampOpenTaskDeadlinesEnabled() {
+  const store = await loadStore();
+  return store.stamp_open_task_deadlines !== false;
 }
 
 async function getProfile(id) {
@@ -263,6 +294,7 @@ async function upsertProfile(input = {}, { id = null } = {}) {
     zalo_bot_token: keepToken ? (prev?.zalo_bot_token || '') : input.zalo_bot_token,
     zalo_chat_id: input.zalo_chat_id !== undefined ? input.zalo_chat_id : (prev?.zalo_chat_id || ''),
     zalo_enabled: input.zalo_enabled !== undefined ? input.zalo_enabled : (prev?.zalo_enabled ?? false),
+    enabled: input.enabled !== undefined ? input.enabled : (prev?.enabled ?? true),
     created_at: prev?.created_at || now,
     updated_at: now,
   });
@@ -346,6 +378,10 @@ async function saveDispatchConfig(partial = {}) {
     store.zalo_bot_token = sanitizeBotToken(partial.zalo_bot_token);
   }
   if (partial.zalo_chat_id !== undefined) store.zalo_chat_id = String(partial.zalo_chat_id || '').trim();
+  if (partial.enabled !== undefined) store.enabled = !!partial.enabled;
+  if (partial.stamp_open_task_deadlines !== undefined) {
+    store.stamp_open_task_deadlines = !!partial.stamp_open_task_deadlines;
+  }
   await saveStore(store);
   return loadStoredConfig();
 }
@@ -522,7 +558,7 @@ async function dispatchDueNotifications(opts = {}) {
   const profiles = store.profiles || [];
   for (const raw of profiles) {
     const profile = normalizeProfile(raw);
-    if (!profile.zalo_enabled) continue;
+    if (profile.enabled === false || !profile.zalo_enabled) continue;
     const token = sanitizeBotToken(profile.zalo_bot_token || store.zalo_bot_token);
     const chatIds = normalizeChatIds(profile.zalo_chat_id || store.zalo_chat_id);
     const url = zaloSendUrl(token);
@@ -714,7 +750,7 @@ async function runOnce(opts = {}) {
   let failed = 0;
   let skipped = 0;
   for (const p of profiles) {
-    if (!opts.force && !p.zalo_enabled) {
+    if (!opts.force && (p.enabled === false || !p.zalo_enabled)) {
       skipped += 1;
       continue;
     }
@@ -957,6 +993,9 @@ module.exports = {
   loadStoredConfig,
   saveDispatchConfig,
   publicConfig,
+  getDispatchMeta,
+  patchDispatchMeta,
+  isStampOpenTaskDeadlinesEnabled,
   listProfiles,
   getProfile,
   upsertProfile,

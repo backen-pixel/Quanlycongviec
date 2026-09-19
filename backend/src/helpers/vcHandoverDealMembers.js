@@ -11,7 +11,7 @@ const {
   resolveLogisticsHandoverInstallerUserId,
   resolveLogisticsHandoverConfirmUserId,
 } = require('./logisticsHandoverSettings');
-const { extraAlwaysWorkshopStaffUserIds } = require('./dealParticipantProduction');
+const { extraAlwaysWorkshopStaffUserIds, ensureDealProductionAutoParticipants } = require('./dealParticipantProduction');
 
 /** Toàn bộ user đang active của công ty VC/LĐ (dùng khi cần blast — mặc định không). */
 async function listActiveCompanyUserIds(companyId) {
@@ -246,10 +246,12 @@ async function afterVcCompanySelected({
   /** true = đẩy project sang shipping (bàn giao VC). false = chỉ gắn CT + NV phụ trách. */
   assertShippingStatus = true,
 }) {
+  let dealExtraIds = [...(extraUserIds || [])];
+
   const responsibleIds = await listLogisticsResponsibleUserIds(logisticsCompanyId, {
     logisticsPersonId,
     installerPersonId,
-    extraUserIds,
+    extraUserIds: dealExtraIds,
   });
   let memberIds = [...responsibleIds];
   if (addAllCompanyUsers) {
@@ -294,6 +296,29 @@ async function afterVcCompanySelected({
     if (resolvedInstaller) patch.installer_person_id = resolvedInstaller;
     const { error: pe } = await supabase.from('projects').update(patch).eq('id', projectId);
     if (pe) console.warn('[vcHandoverDealMembers] project assert:', pe.message);
+  }
+
+  if (sourceLeadId) {
+    try {
+      await ensureDealProductionAutoParticipants({ dealId: sourceLeadId, addedBy: actorUserId || null });
+    } catch (e) {
+      console.warn('[vcHandoverDealMembers] auto production members:', e.message);
+    }
+    try {
+      const { data: src } = await supabase
+        .from('crm_leads')
+        .select('stage_id')
+        .eq('id', sourceLeadId)
+        .maybeSingle();
+      const { applyCrmStageDefaultMembersToDeal } = require('./crmPipelineStageMembers');
+      await applyCrmStageDefaultMembersToDeal({
+        dealId: sourceLeadId,
+        stageId: src?.stage_id,
+        addedBy: actorUserId || null,
+      });
+    } catch (e) {
+      console.warn('[vcHandoverDealMembers] CRM stage members:', e.message);
+    }
   }
 
   return {

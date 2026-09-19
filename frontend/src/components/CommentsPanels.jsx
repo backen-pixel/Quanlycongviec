@@ -108,6 +108,7 @@ function isCommentOwner(comment, user) {
   return String(comment.user_id || '') === String(uid);
 }
 
+/** Tên file trong tin hệ thống — không gắn nút tải (chip/preview bên dưới mới là chỗ tải). */
 function renderSystemCommentBody(text) {
   if (!text) return null;
   const parts = [];
@@ -129,32 +130,11 @@ function renderSystemCommentBody(text) {
           </strong>,
         );
       } else {
-        const href = pubUrl(url);
-        if (isImageFileName(label)) {
-          parts.push(
-            <a key={m.index} href={href} target="_blank" rel="noopener noreferrer"
-              className="font-semibold text-blue-600 hover:underline">
-              {`«${label}»`}
-            </a>,
-          );
-        } else {
-          parts.push(
-            <button
-              key={m.index}
-              type="button"
-              className="font-semibold text-blue-600 hover:underline inline p-0 m-0 bg-transparent border-0 cursor-pointer"
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                downloadUploadFile(url, label || 'tai-lieu').catch((err) => {
-                  alert(err?.message || 'Không tải được file');
-                });
-              }}
-            >
-              {`«${label}»`}
-            </button>,
-          );
-        }
+        parts.push(
+          <strong key={m.index} className="font-semibold text-[#050505]">
+            {`«${label}»`}
+          </strong>,
+        );
       }
     } else {
       parts.push(<strong key={m.index} className="font-semibold text-[#050505]">{`«${inner}»`}</strong>);
@@ -1321,11 +1301,12 @@ function useCommentPasteUpload(onFilesUploaded) {
   return { handlePasteFiles, uploadingPaste, pasteProgress };
 }
 
-function commentComposerPlaceholder(replyTo, user, { withPasteHint = false, withMentionHint = false } = {}) {
+function commentComposerPlaceholder(replyTo, user, { withPasteHint = false, withMentionHint = false, withSlashHint = false } = {}) {
   if (replyTo) return `Trả lời ${replyTo.name}…`;
   const who = user?.full_name || user?.email || 'bạn';
   let text = `Bình luận với tư cách ${who}…`;
   if (withMentionHint) text += ' (@ nhắc thành viên)';
+  if (withSlashHint) text += ' · / tạo công việc';
   if (withPasteHint) text += ' · Ctrl+V dán ảnh/file';
   return text;
 }
@@ -2438,6 +2419,9 @@ function CommentThread({
   onThreadScroll,
   newCommentCount = 0,
   onScrollToNewComments,
+  slashCommands = [],
+  onSlashCommand,
+  slashFormSlot = null,
   quickReplyTemplates = [],
   onVcSelect,
   onVcSchedule,
@@ -2513,6 +2497,7 @@ function CommentThread({
   const composerPlaceholder = commentComposerPlaceholder(replyTo, user, {
     withPasteHint: enableAttachments,
     withMentionHint: enableMentions,
+    withSlashHint: (slashCommands || []).length > 0,
   });
 
   const renderBranch = (parentKey, depth) => {
@@ -2889,6 +2874,7 @@ function CommentThread({
                 />
               </div>
             ) : null}
+            {slashFormSlot ? <div className="px-3 pt-2">{slashFormSlot}</div> : null}
             {enableMentions ? (
               <CrmCommentMentionComposer
                 user={user}
@@ -2903,6 +2889,8 @@ function CommentThread({
                 placeholder={composerPlaceholder}
                 quickReplyTemplates={quickReplyTemplates}
                 onQuickReply={(text) => setBody(text)}
+                slashCommands={slashCommands}
+                onSlashCommand={onSlashCommand}
               />
             ) : (
               <FbCrmCommentComposer
@@ -2940,6 +2928,9 @@ export function CrmLeadCommentsPanel({
   onUnreadCountChange,
   quickReplyTemplates = [],
   forModule = null,
+  slashCommands = [],
+  onSlashCommand,
+  slashFormSlot = null,
 }) {
   const showOnScreen = useCommentShowOnScreenEnabled();
   const { user } = useAuth();
@@ -3290,6 +3281,9 @@ export function CrmLeadCommentsPanel({
 
   return (
     <CommentThread
+      slashCommands={slashCommands}
+      onSlashCommand={onSlashCommand}
+      slashFormSlot={slashFormSlot}
       comments={comments}
       loading={loading}
       loadError={loadError}

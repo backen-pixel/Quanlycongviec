@@ -270,11 +270,17 @@ r.delete('/lead-types/:id', async (req, res) => {
 r.get('/zalo-notify-settings', async (_req, res) => {
   try {
     const s = await getZaloNotifySettings();
+    const { getZaloAccessTokenHieuLuc } = require('../../../helpers/zaloTokenHieuLuc');
+    const tokenHieuLuc = await getZaloAccessTokenHieuLuc(s);
     res.json({
       enabled: s.enabled,
       template_id: s.template_id,
       sending_mode: s.sending_mode,
-      has_token: !!(s.access_token && s.access_token.length > 8),
+      has_token: !!(tokenHieuLuc.token && tokenHieuLuc.token.length > 8),
+      // Cho giao diện biết token đang lấy từ đâu: zalo_oa_accounts (tự xoay vòng)
+      // hay bản dự phòng trong app_settings.
+      token_source: tokenHieuLuc.nguon,
+      token_oa_id: tokenHieuLuc.oa_id || '',
       merge_template_data: s.merge_template_data || {},
       template_structure: s.template_structure,
     });
@@ -308,11 +314,15 @@ r.put('/zalo-notify-settings', async (req, res) => {
       next.access_token = String(req.body.access_token).trim();
     }
     await upsertZaloNotifySettings(next);
+    const { getZaloAccessTokenHieuLuc } = require('../../../helpers/zaloTokenHieuLuc');
+    const tokenHieuLuc = await getZaloAccessTokenHieuLuc(next);
     res.json({
       enabled: next.enabled,
       template_id: next.template_id,
       sending_mode: next.sending_mode,
-      has_token: !!(next.access_token && next.access_token.length > 8),
+      has_token: !!(tokenHieuLuc.token && tokenHieuLuc.token.length > 8),
+      token_source: tokenHieuLuc.nguon,
+      token_oa_id: tokenHieuLuc.oa_id || '',
       merge_template_data: next.merge_template_data || {},
       template_structure: next.template_structure,
     });
@@ -322,7 +332,10 @@ r.put('/zalo-notify-settings', async (req, res) => {
 r.post('/zalo-notify-test', async (req, res) => {
   try {
     const s = await getZaloNotifySettings();
-    const token = (req.body.access_token && String(req.body.access_token).trim()) || s.access_token;
+    // Ưu tiên token gửi kèm; không có thì lấy token hiệu lực từ zalo_oa_accounts.
+    const { getZaloAccessTokenHieuLuc } = require('../../../helpers/zaloTokenHieuLuc');
+    const tokenHieuLuc = await getZaloAccessTokenHieuLuc(s);
+    const token = (req.body.access_token && String(req.body.access_token).trim()) || tokenHieuLuc.token;
     const tid = (req.body.template_id && String(req.body.template_id).trim()) || s.template_id;
     if (!token || !tid) {
       return res.status(400).json({ error: 'Cần access_token và template_id (lưu trong cấu hình hoặc gửi kèm body)' });
@@ -359,12 +372,6 @@ r.get('/leads/:id/zalo-notify-preview', async (req, res) => {
       .select('id, name, is_won, send_zalo_on_enter, pipeline_type')
       .eq('id', lead.stage_id)
       .single();
-    if (!isDealStageHoanThanhForZalo(stage)) {
-      return res.status(400).json({
-        error:
-          'Chỉ hiển thị khi deal đang ở cột «Hoàn thành» (tên giai đoạn deal chứa «Hoàn thành»). Thêm cột này trong Cài đặt Pipeline → Deal và kéo deal vào đó.',
-      });
-    }
 
     const settings = await getZaloNotifySettings();
     const plZalo = await fetchCrmPipelineZaloSlice(lead.pipeline_id);
@@ -381,16 +388,18 @@ r.get('/leads/:id/zalo-notify-preview', async (req, res) => {
       .eq('stage_id', lead.stage_id)
       .maybeSingle();
 
-    const hasToken = !!(settings.access_token && settings.access_token.length > 8);
+    const { getZaloAccessTokenHieuLuc } = require('../../../helpers/zaloTokenHieuLuc');
+    const tokenHieuLuc = await getZaloAccessTokenHieuLuc(settings);
+    const hasToken = !!(tokenHieuLuc.token && tokenHieuLuc.token.length > 8);
     const eligible = !!(settings.enabled && hasToken && normalized);
 
     res.json({
       eligible,
       stage: {
-        id: stage.id,
-        name: stage.name,
-        is_won: !!stage.is_won,
-        send_zalo_on_enter: !!stage.send_zalo_on_enter,
+        id: stage?.id || lead.stage_id,
+        name: stage?.name || '',
+        is_won: !!stage?.is_won,
+        send_zalo_on_enter: !!stage?.send_zalo_on_enter,
       },
       zalo_app: {
         enabled: settings.enabled,
@@ -398,7 +407,9 @@ r.get('/leads/:id/zalo-notify-preview', async (req, res) => {
         effective_template_id: effectiveTemplateId,
         sending_mode: settings.sending_mode || '1',
         has_access_token: hasToken,
-        access_token_preview: hasToken ? maskZaloAccessTokenPreview(settings.access_token) : '',
+        access_token_preview: hasToken ? maskZaloAccessTokenPreview(tokenHieuLuc.token) : '',
+        token_source: tokenHieuLuc.nguon,
+        token_oa_id: tokenHieuLuc.oa_id || '',
         merge_template_data: settings.merge_template_data || {},
       },
       pipeline_zalo: {
@@ -434,9 +445,9 @@ r.get('/leads/:id/zalo-notify-preview', async (req, res) => {
         : null,
       hints: {
         pipeline_toggle:
-          'Trên Cài đặt Pipeline → Deal: bật nút «Zalo» trên cột «Hoàn thành» để tự gửi khi kéo deal vào cột đó (mỗi deal + cột tối đa 1 lần thành công).',
+          'Tự gửi khi kéo cột đã tắt. Dùng nút «Gửi Zalo» trên chi tiết deal (mọi cột).',
         settings:
-          'access_token (bắt buộc) + Zalo OA chung. Theo từng pipeline CRM: chỉnh template_id / merge JSON — ghi đè chung cho deal thuộc pipeline đó (Cài đặt Pipeline → «Zalo theo pipeline»).',
+          'Access token lấy từ bảng zalo_oa_accounts (tự refresh). Ô dán token trên Cài đặt Pipeline chỉ là ghi đè / dự phòng. Theo từng pipeline CRM: chỉnh template_id / merge JSON (Cài đặt Pipeline → «Zalo theo pipeline»).',
         after_failed_send:
           'Nếu lần trước Zalo báo lỗi (chưa có msg_id): sửa cấu hình/template rồi bấm «Gửi thông báo Zalo» lại — không cần xóa bản ghi.',
         phone_normalize:
@@ -457,14 +468,6 @@ r.post('/leads/:id/zalo-template-fill', async (req, res) => {
       .single();
     if (!lead) return res.status(404).json({ error: 'Không tìm thấy' });
     if (lead.type !== 'deal') return res.status(400).json({ error: 'Chỉ áp dụng cho deal' });
-
-    const { data: stage } = await supabase.from('crm_pipeline_stages')
-      .select('id, name, pipeline_type')
-      .eq('id', lead.stage_id)
-      .single();
-    if (!isDealStageHoanThanhForZalo(stage)) {
-      return res.status(400).json({ error: 'Chỉ dùng khi deal đang ở cột «Hoàn thành»' });
-    }
 
     const settings = await getZaloNotifySettings();
     const plZalo = await fetchCrmPipelineZaloSlice(lead.pipeline_id);
@@ -503,14 +506,11 @@ r.post('/leads/:id/zalo-notify-send', async (req, res) => {
       .select('id, name, is_won, pipeline_type')
       .eq('id', lead.stage_id)
       .single();
-    if (!isDealStageHoanThanhForZalo(stage)) {
-      return res.status(400).json({ error: 'Chỉ gửi được khi deal đang ở cột «Hoàn thành»' });
-    }
 
     const out = await executeZaloDealStageNotify({
       leadId,
       stageId: lead.stage_id,
-      pipelineType: stage.pipeline_type,
+      pipelineType: stage?.pipeline_type || 'deal',
       sendZaloOnEnter: true,
       allowWithoutStageFlag: true,
       force,

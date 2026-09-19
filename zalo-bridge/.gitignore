@@ -1,0 +1,10 @@
+node_modules/
+.env
+sessions/
+spool/
+qr/
+accounts.cache.json
+spool.jsonl
+qr.png
+chrome-profile/
+*.log

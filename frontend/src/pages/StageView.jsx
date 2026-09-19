@@ -230,7 +230,7 @@ export default function StageView() {
 
   const stageName = STAGE_NAMES[slug] || slug;
   const allowedSlugs = ROLE_STAGE_MAP[user?.role] || [];
-  const isAdmin = ['admin', 'manager'].includes(user?.role);
+  const isAdmin = ['ecosystem_admin', 'admin', 'manager'].includes(user?.role);
   const canInteract = isAdmin || allowedSlugs.includes(slug);
   const nextStageName = STAGE_NAMES[NEXT_SLUG[slug]];
 

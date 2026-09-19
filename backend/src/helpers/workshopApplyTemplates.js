@@ -1,5 +1,6 @@
 const { supabase } = require('../config/supabase');
 const { getWorkshopStageMap } = require('./workshopKanban');
+const { MODULE, resolveModuleDeadline } = require('./moduleDeadlinePolicy');
 const {
   applyWorkshopTemplateWorkshopTypeScopeForProject,
   isWorkshopTplWorkshopTypeMissingError,
@@ -304,7 +305,11 @@ async function fetchActiveWorkshopTemplatesForArea(workshopArea, companyId, opts
 async function applyWorkshopTemplateToProject(projectId, templateId, userId, opts = {}) {
   let { data: project } = await supabase
     .from('projects')
-    .select('id, company_id, logistics_company_id')
+    .select(`
+      id, company_id, logistics_company_id, status,
+      sx_kanban_deadline_at, production_finish_date, production_deadline,
+      delivery_date, deadline, install_date, sx_kanban_column_id, vc_kanban_column_id
+    `)
     .eq('id', projectId)
     .maybeSingle();
   if (!project?.id) {
@@ -372,6 +377,17 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId, opt
     ? (project.logistics_company_id || project.company_id || null)
     : null;
 
+  const moduleKey = tpl.workshop_area === 'logistics' ? MODULE.LOGISTICS : MODULE.PRODUCTION;
+  let moduleDueIso = null;
+  try {
+    const { isStampOpenTaskDeadlinesEnabled } = require('../jobs/projectDeadlineDispatch');
+    if (await isStampOpenTaskDeadlinesEnabled()) {
+      moduleDueIso = resolveModuleDeadline(moduleKey, project, { forDisplay: true }).deadlineAt || null;
+    }
+  } catch (stampErr) {
+    console.warn('[workshop-template] module deadline:', stampErr.message);
+  }
+
   const staged = [];
   for (const item of items) {
     const guessedSlug = guessStageSlugForTemplateItemTitle(tpl.workshop_area, item.title);
@@ -381,7 +397,7 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId, opt
       const bucket = guessLogisticsPipelineBucketFromTitle(item.title);
       logisticsPipelineStageId = await resolveLogisticsPipelineStageIdByBucket(bucket, logisticsCompanyId);
     }
-    staged.push({ item, guessedSlug, stageId, dueDate: null, logisticsPipelineStageId });
+    staged.push({ item, guessedSlug, stageId, dueDate: moduleDueIso, logisticsPipelineStageId });
   }
 
   const distinctStageIds = [...new Set(staged.map((s) => s.stageId).filter(Boolean))];

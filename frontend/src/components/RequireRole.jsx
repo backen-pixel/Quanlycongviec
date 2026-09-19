@@ -3,7 +3,7 @@ import { useAuth } from '../lib/auth';
 import { isCrmModuleAdmin, canAccessCrmSocialInbox, isPlatformAdmin } from '../lib/adminRole';
 
 /** Giám đốc / quản lý / admin KV / sales_admin xem KPI & báo cáo nhân viên — khớp backend CRM report */
-const EXEC_ROLES = ['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'region_admin', 'sales_admin', 'crm_production_admin'];
+const EXEC_ROLES = ['ecosystem_admin', 'admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'region_admin', 'sales_admin', 'crm_production_admin'];
 
 /**
  * Trang KPI Giám đốc và báo cáo cấp cao

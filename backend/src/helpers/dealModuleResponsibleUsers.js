@@ -3,6 +3,7 @@
  * tab Thành viên, roster xưởng, người phụ trách CRM/SX/VC.
  */
 const { supabase } = require('../config/supabase');
+const { isAdminLike, isProductionAdmin } = require('./adminRole');
 
 function uniqIds(values) {
   return [...new Set((values || []).filter(Boolean).map(String))];
@@ -153,9 +154,51 @@ async function collectProjectEventParticipantIds({ leadId = null, projectId = nu
   };
 }
 
+/**
+ * Admin / phụ trách chính CRM·SX·VC / NV is_primary trên đội SX được thêm người vào dự án.
+ */
+async function userCanManageProjectTeam(user, { projectId = null, leadId = null } = {}) {
+  if (!user) return false;
+  if (isAdminLike(user) || isProductionAdmin(user)) return true;
+  const uid = String(user.userId || user.id || '');
+  if (!uid || (!projectId && !leadId)) return false;
+
+  const owners = await collectDealModuleResponsibleUserIds({ leadId, projectId });
+  if (owners.userIds.includes(uid)) return true;
+
+  const pid = owners.projectId || projectId;
+  if (pid) {
+    try {
+      const { data } = await supabase
+        .from('project_production_staff')
+        .select('user_id')
+        .eq('project_id', pid)
+        .eq('is_primary', true);
+      if ((data || []).some((r) => String(r.user_id) === uid)) return true;
+    } catch (_) { /* ignore */ }
+  }
+
+  const lid = owners.leadId || leadId;
+  if (lid) {
+    try {
+      const { data } = await supabase
+        .from('lead_members')
+        .select('user_id')
+        .eq('lead_id', lid)
+        .eq('user_id', uid)
+        .eq('role', 'responsible')
+        .limit(1)
+        .maybeSingle();
+      if (data) return true;
+    } catch (_) { /* ignore */ }
+  }
+  return false;
+}
+
 module.exports = {
   collectDealModuleResponsibleUserIds,
   collectProjectEventParticipantIds,
+  userCanManageProjectTeam,
   isInstallationEventType,
   shouldInviteAllModuleOwners,
   ALL_MODULE_OWNER_EVENT_TYPES,

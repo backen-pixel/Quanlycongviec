@@ -79,7 +79,10 @@ function pickProductionTemplatesForWorkshopType(allRows, workshopTypeId) {
     (t) => t.workshop_type_id && String(t.workshop_type_id) === wkt,
   );
   const defaults = typed.filter((t) => t.is_default);
-  return defaults.length ? defaults : typed;
+  if (defaults.length) return defaults;
+  // Tạo dự án: không đổ hết bộ gắn từng cột (Gia công/Hoàn thiện…) — các bộ đó kích hoạt khi vào cột.
+  const unbound = typed.filter((t) => !t.production_stage_id);
+  return unbound.length ? unbound : typed;
 }
 
 /**

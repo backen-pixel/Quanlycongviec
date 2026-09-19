@@ -191,6 +191,34 @@ export function classifyCrmPostWonManagedKind(stage) {
   return null;
 }
 
+/**
+ * Cột CRM đã qua Lắp đặt (CSKH / bảo hành / hoàn thành / cột sau lắp theo order_index).
+ * Hạn lắp không còn đếm khi deal đứng ở đây.
+ */
+export function isCrmStagePastInstallation(stage, pipelineStages = []) {
+  if (!stage || stage.is_lost) return false;
+  if (stage.is_won) return false;
+  if (stage.counts_as_completed_revenue) return true;
+  const slug = String(stage.canonical_slug || stage.slug || '').toLowerCase().trim();
+  if (slug === 'completed' || slug === 'done') return true;
+  const n = normalizeStageNameFold(stage.name);
+  if (n === 'hoan thanh' || n.startsWith('hoan thanh ')) return true;
+
+  const kind = classifyCrmPostWonManagedKind(stage);
+  if (kind === 'vc_installation') return false;
+  if (kind === 'vc_customer_care') return true;
+  if (kind === 'sx_production' || kind === 'sx_completed' || kind === 'vc_delivery') return false;
+
+  const installOrders = (Array.isArray(pipelineStages) ? pipelineStages : [])
+    .filter((s) => classifyCrmPostWonManagedKind(s) === 'vc_installation')
+    .map((s) => Number(s.order_index))
+    .filter((x) => Number.isFinite(x));
+  if (!installOrders.length) return false;
+  const order = Number(stage.order_index);
+  if (!Number.isFinite(order)) return false;
+  return order > Math.max(...installOrders);
+}
+
 function badgeNameFold(badge) {
   return normalizeStageNameFold(badge?.name);
 }
@@ -244,6 +272,68 @@ export function workshopReadyForCrmPostWonStage(item, targetStage) {
     return false;
   }
   return true;
+}
+
+function vcLooksCompleted(vc) {
+  const slug = String(vc?.bucket_slug || vc?.slug || '').toLowerCase();
+  if (['completed', 'done', 'install_completed'].includes(slug)) return true;
+  const n = normalizeStageNameFold(vc?.name);
+  return n === 'hoan thanh' || n.startsWith('hoan thanh ')
+    || n === 'hoan thien' || n.startsWith('hoan thien ');
+}
+
+function sxHasEnteredWorkshop(sx) {
+  if (!sx?.id) return false;
+  return String(sx.bucket_slug || '').toLowerCase() !== 'won_pending';
+}
+
+function vcLeftIntake(vc) {
+  if (!vc?.id) return false;
+  const slug = String(vc.bucket_slug || '').toLowerCase();
+  if (slug === 'delivery_pending') return false;
+  const n = normalizeStageNameFold(vc.name);
+  if (n === 'tiep nhan' || n.startsWith('tiep nhan ')) return false;
+  return true;
+}
+
+/**
+ * Stepper CRM: cột SX/VC/Hoàn thành được ✓ khi module xưởng/VC đã kéo tới
+ * (hoặc qua) giai đoạn đó — kể cả khi thẻ CRM chưa kéo theo.
+ * Không dùng cho chặn kéo tay (vẫn `workshopReadyForCrmPostWonStage`).
+ */
+export function workshopReachedCrmStepperStage(item, stage) {
+  if (!item || !stage || stage.is_lost) return false;
+  if (isCrmCompletedRevenueStage(stage)) {
+    const st = String(item.project_status || '').toLowerCase();
+    if (st === 'completed' || st === 'done') return true;
+    return vcLooksCompleted(item.vc_pipeline_stage);
+  }
+  const kind = classifyCrmPostWonManagedKind(stage);
+  if (!kind) return false;
+  if (workshopReadyForCrmPostWonStage(item, stage)) return true;
+  const sx = item.sx_pipeline_stage;
+  const vc = item.vc_pipeline_stage;
+  const sxN = normalizeStageNameFold(sx?.name);
+  const vcN = normalizeStageNameFold(vc?.name);
+  const vcSlug = String(vc?.bucket_slug || '').toLowerCase();
+
+  if (kind === 'sx_production') return sxHasEnteredWorkshop(sx);
+  if (kind === 'sx_completed') {
+    if (sx?.counts_as_collected_revenue || sx?.counts_as_completed_revenue) return true;
+    return sxN.includes('da giao') || sxN.includes('hoan thanh')
+      || sxN.includes('dong goi') || sxN.includes('chot cong no') || sxN.includes('giao xong');
+  }
+  if (kind === 'vc_delivery') return vcLeftIntake(vc) || vcLooksCompleted(vc);
+  if (kind === 'vc_installation') {
+    if (vcSlug === 'installation' || vcN.includes('lap dat')) return true;
+    return vcLooksCompleted(vc);
+  }
+  if (kind === 'vc_customer_care') {
+    if (vcSlug === 'warranty' || vcSlug === 'customer_care' || vcSlug === 'customer-care') return true;
+    if (vcN.includes('cham soc') || vcN.includes('bao hanh') || vcN.includes('cskh')) return true;
+    return vcLooksCompleted(vc);
+  }
+  return false;
 }
 
 function postWonManualBlockMessage(kind, item) {

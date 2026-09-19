@@ -1722,6 +1722,10 @@ export default function CRMDashboard() {
   const loadSeqRef = useRef(0);
   /** Mọi request ghi vào Kanban phải thuộc đúng thế hệ bộ lọc hiện tại. */
   const kanbanRequestGenerationRef = useRef(0);
+  /** Bản state song song với ref trên — đổi giá trị để ép KanbanView tải lại trang đầu
+   * cho các cột đang hiện, phòng trường hợp lượt tải trước đó bị huỷ giữa chừng do đổi
+   * bộ lọc/tab quá nhanh (cột còn trống dù đếm tổng vẫn đúng, không tự hồi nếu không đổi). */
+  const [kanbanRequestGeneration, setKanbanRequestGeneration] = useState(0);
   const loadMoreSeqRef = useRef(0);
   /** Đổi bộ lọc: không cho cache của scope mới ghi đè board cũ trước khi API thành công. */
   const preserveKanbanDuringFilterRef = useRef(false);
@@ -3039,6 +3043,7 @@ export default function CRMDashboard() {
   /** Giữ Kanban hiện tại trong lúc tải bộ lọc mới; vô hiệu hóa mọi request của bộ lọc cũ. */
   const resetKanbanForFilterChange = useCallback((opts = {}) => {
     kanbanRequestGenerationRef.current += 1;
+    setKanbanRequestGeneration(kanbanRequestGenerationRef.current);
     loadSeqRef.current += 1;
     inactiveKanbanLoadSeqRef.current += 1;
     loadMoreSeqRef.current += 1;
@@ -9337,6 +9342,7 @@ export default function CRMDashboard() {
               explicitExpectedKv={explicitExpectedKvStages}
               wonStage={dealKhSplitEnabled && pipelineType === 'deal' ? wonStage : null}
               onLoadStagePages={handleLoadStagePages}
+              requestGeneration={kanbanRequestGeneration}
               scrollLoad={kanbanScrollLoad}
               stageCounts={pipelineType === 'lead' ? pipelineStageCounts.lead : pipelineStageCounts.deal}
               stageValueSums={pipelineType !== 'lead' && !kpiUsesClientOnlyFilters ? (pipelinePhoneTotals.deal?.valueSums || null) : null}
@@ -11817,6 +11823,7 @@ function KanbanView({
   explicitExpectedKv,
   wonStage,
   onLoadStagePages,
+  requestGeneration = 0,
   scrollLoad,
   stageCounts,
   stageValueSums = null,
@@ -12130,7 +12137,10 @@ function KanbanView({
       onLoadStagePages(ids, { ensureInitial: true });
     }, 180);
     return undefined;
-  }, [mountedStageKey, onLoadStagePages]);
+    // requestGeneration: đổi bộ lọc/tab quá nhanh có thể huỷ giữa chừng lượt tải trang đầu
+    // của thế hệ cũ (cột hiện trống dù đếm tổng vẫn đúng) — thế hệ mới phải tự tải lại,
+    // không chỉ dựa vào mountedStageKey (chuỗi id cột có thể giữ nguyên giữa 2 thế hệ).
+  }, [mountedStageKey, onLoadStagePages, requestGeneration]);
 
   return (
     <WorkshopPipelineKanbanScroll

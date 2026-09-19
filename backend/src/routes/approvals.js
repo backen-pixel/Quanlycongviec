@@ -11,7 +11,7 @@ const {
 const { getCompanyScopedRoleUserIds } = require('../helpers/notifications');
 
 async function getApprovalAdminNotifyIds(companyId, excludeIds = []) {
-  const ids = await getCompanyScopedRoleUserIds(companyId, ['admin', 'sales_admin', 'manager']);
+  const ids = await getCompanyScopedRoleUserIds(companyId, ['ecosystem_admin', 'admin', 'sales_admin', 'manager']);
   const ex = new Set((excludeIds || []).filter(Boolean).map(String));
   return ids.filter((id) => id && !ex.has(String(id)));
 }
@@ -292,7 +292,7 @@ r.get('/rules', async (req, res) => {
 // PUT update rule for a stage
 r.put('/rules/:stageId', async (req, res) => {
   try {
-    if (!['admin', 'manager'].includes(req.user.role))
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền' });
 
     const { approval_mode, auto_condition, auto_conditions, description } = req.body;
@@ -596,7 +596,7 @@ r.post('/:approvalId/decide', async (req, res) => {
   try {
     const { action, reject_reason, approve_notes } = req.body; // action: 'approve' | 'reject'
 
-    if (!['admin', 'manager'].includes(req.user.role))
+    if (!['ecosystem_admin', 'admin', 'manager'].includes(req.user.role))
       return res.status(403).json({ error: 'Không có quyền duyệt' });
 
     if (action === 'reject' && !reject_reason?.trim())

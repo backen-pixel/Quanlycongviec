@@ -538,6 +538,7 @@ r.post('/leads/:id/tasks/ensure-missing-sx', async (req, res) => {
           leadRow.project_id,
           projRow?.company_id || templateSourceCompanyId,
           projRow?.workshop_type_id || null,
+          { skipIfStaffExists: true, primaryOnly: true },
         );
       } catch (staffErr) {
         console.warn('[crm/ensure-sx] apply default staff:', staffErr.message);
@@ -775,6 +776,7 @@ r.post('/leads/:id/tasks/generate-production-template', async (req, res) => {
             leadProj.project_id,
             projRow?.company_id || templateSourceCompanyId,
             projRow?.workshop_type_id || null,
+            { skipIfStaffExists: true, primaryOnly: true },
           );
         } catch (staffErr) {
           console.warn('[crm/gen-sx] apply default staff:', staffErr.message);

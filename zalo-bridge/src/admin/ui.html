@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cổng Zalo — máy công ty</title>
+<style>
+  /* Bảng điều khiển chạy trên máy công ty. Không tải font hay thư viện từ
+     Internet: khi mạng hỏng thì đây chính là lúc cần mở trang này nhất. */
+  :root {
+    --bg:#EDF1F5; --panel:#fff; --panel-2:#F6F9FB; --field:#fff;
+    --ink:#0F1E2B; --ink-2:#32495D; --muted:#6B8299;
+    --line:#D3DFE9; --line-2:#E6EDF3;
+    --accent:#0057D6; --accent-ink:#fff; --accent-soft:#E2EDFC;
+    --ok:#12704A; --ok-bg:#D8F0E4; --ok-dot:#1BA46A;
+    --warn:#8D5206; --warn-bg:#FBEAD2; --warn-dot:#E0910F;
+    --stop:#A32A24; --stop-bg:#FADDDA; --stop-dot:#D9443A;
+    --off:#55697C; --off-bg:#E4EAF0; --off-dot:#8C9FB1;
+    --mono: ui-monospace, "SFMono-Regular", "Cascadia Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#080F16; --panel:#111C26; --panel-2:#16232F; --field:#0C161F;
+      --ink:#E9F1F8; --ink-2:#B6C8D8; --muted:#7F94A8;
+      --line:#233341; --line-2:#1A2733;
+      --accent:#5AA2FF; --accent-ink:#04121F; --accent-soft:#132840;
+      --ok:#5FD2A0; --ok-bg:#0E2A1F; --ok-dot:#2FBE84;
+      --warn:#EBB264; --warn-bg:#2B2012; --warn-dot:#D9970F;
+      --stop:#F5928A; --stop-bg:#2E1614; --stop-dot:#E05147;
+      --off:#8397AA; --off-bg:#182430; --off-dot:#5E7387;
+    }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1060px;margin:0 auto;padding:22px 20px 72px}
+
+  /* ── Thanh trên ─────────────────────────────────── */
+  .top{
+    display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;
+    padding-bottom:16px;border-bottom:1px solid var(--line);
+  }
+  .brand{display:flex;align-items:center;gap:11px}
+  .brand .mark{
+    width:34px;height:34px;border-radius:9px;background:var(--accent);color:var(--accent-ink);
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:15px;flex:none;
+  }
+  .brand h1{font-size:17px;margin:0;letter-spacing:-.01em;line-height:1.25}
+  .brand .sub{font-size:12px;color:var(--muted);font-family:var(--mono)}
+
+  .link-state{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .chip{
+    display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;
+    padding:5px 11px;border-radius:999px;white-space:nowrap;
+  }
+  .chip.ok{background:var(--ok-bg);color:var(--ok)}
+  .chip.bad{background:var(--stop-bg);color:var(--stop)}
+  .chip.idle{background:var(--off-bg);color:var(--off)}
+  .dot{width:7px;height:7px;border-radius:50%;flex:none}
+  .dot.ok{background:var(--ok-dot)} .dot.bad{background:var(--stop-dot)}
+  .dot.warn{background:var(--warn-dot)} .dot.off{background:var(--off-dot)}
+  .hoststat{font-size:12px;color:var(--muted);font-family:var(--mono)}
+
+  /* ── Tab ────────────────────────────────────────── */
+  nav{display:flex;gap:2px;margin:18px 0 20px;border-bottom:1px solid var(--line)}
+  nav button{
+    appearance:none;background:none;border:0;border-bottom:2px solid transparent;
+    color:var(--muted);font:inherit;font-weight:600;font-size:14px;
+    padding:9px 15px;cursor:pointer;margin-bottom:-1px;border-radius:6px 6px 0 0;
+  }
+  nav button:hover{color:var(--ink-2);background:var(--panel-2)}
+  nav button[aria-selected="true"]{color:var(--accent);border-bottom-color:var(--accent);background:none}
+  nav button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+  nav .count{
+    font-family:var(--mono);font-size:11px;margin-left:6px;padding:1px 6px;
+    border-radius:999px;background:var(--panel-2);color:var(--muted);
+  }
+
+  /* ── Thẻ tài khoản ──────────────────────────────── */
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px;align-items:start}
+  .acct{
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    overflow:hidden;display:flex;flex-direction:column;
+  }
+  .acct .stripe{height:3px;background:var(--off-dot)}
+  .acct.online .stripe{background:var(--ok-dot)}
+  .acct.need_qr .stripe{background:var(--warn-dot)}
+  .acct.error .stripe{background:var(--stop-dot)}
+  .acct.tat{opacity:.72}
+  .acct.tat .stripe{background:repeating-linear-gradient(90deg,var(--off-dot) 0 6px,transparent 6px 12px)}
+  .acct .pad{padding:15px 17px}
+
+  .acct h3{font-size:15.5px;margin:0;display:flex;align-items:center;gap:8px;line-height:1.3}
+  .acct .phone{font-family:var(--mono);font-size:13px;color:var(--ink-2);margin-top:3px}
+  .acct .oaid{font-family:var(--mono);font-size:11px;color:var(--muted);word-break:break-all;margin-top:2px}
+
+  .badge{
+    display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:700;
+    letter-spacing:.04em;text-transform:uppercase;padding:3px 9px;border-radius:999px;
+  }
+  .badge.online{background:var(--ok-bg);color:var(--ok)}
+  .badge.need_qr{background:var(--warn-bg);color:var(--warn)}
+  .badge.error{background:var(--stop-bg);color:var(--stop)}
+  .badge.offline,.badge.tat{background:var(--off-bg);color:var(--off)}
+
+  .facts{
+    display:grid;grid-template-columns:1fr 1fr;gap:1px;margin-top:14px;
+    background:var(--line-2);border:1px solid var(--line-2);border-radius:8px;overflow:hidden;
+  }
+  .facts div{background:var(--panel-2);padding:8px 10px}
+  .facts dt{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin:0}
+  .facts dd{margin:2px 0 0;font-size:13px;font-weight:600;color:var(--ink-2);font-variant-numeric:tabular-nums}
+  .facts dd.warnish{color:var(--warn)}
+
+  .note{font-size:12.5px;color:var(--ink-2);margin:12px 0 0;line-height:1.5}
+
+  .acts{display:flex;gap:7px;flex-wrap:wrap;padding:12px 17px;border-top:1px solid var(--line-2);background:var(--panel-2)}
+  button.mini{
+    appearance:none;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;
+    padding:5px 11px;border-radius:7px;border:1px solid var(--line);
+    background:var(--panel);color:var(--ink-2);
+  }
+  button.mini:hover{border-color:var(--accent);color:var(--accent)}
+  button.mini.danger:hover{border-color:var(--stop);color:var(--stop)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+  button.primary:hover{opacity:.92;color:var(--accent-ink)}
+
+  /* ── Khung quét QR ──────────────────────────────── */
+  .qrbox{
+    margin:14px 0 0;padding:16px;border-radius:10px;text-align:center;
+    background:var(--warn-bg);border:1px solid var(--warn-dot);
+  }
+  .qrbox .sheet{
+    background:#fff;border-radius:8px;padding:12px;display:inline-block;line-height:0;
+    box-shadow:0 1px 3px rgba(0,0,0,.12);
+  }
+  .qrbox img{width:190px;height:190px;display:block;image-rendering:pixelated}
+  .qrbox ol{
+    margin:12px 0 0;padding:0;list-style:none;text-align:left;display:inline-block;
+    font-size:12.5px;color:var(--warn);line-height:1.7;
+  }
+  .qrbox ol li{counter-increment:s}
+  .qrbox ol li::before{
+    content:counter(s);display:inline-flex;align-items:center;justify-content:center;
+    width:16px;height:16px;border-radius:50%;background:var(--warn-dot);color:#fff;
+    font-size:10px;font-weight:700;margin-right:7px;vertical-align:1px;
+  }
+  .qrbox ol{counter-reset:s}
+  .qrbox .tick{font-size:11px;color:var(--warn);opacity:.75;margin:10px 0 0;font-family:var(--mono)}
+
+  /* ── Bảng / biểu mẫu ────────────────────────────── */
+  .panel{
+    background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:20px 22px;max-width:640px;
+  }
+  .panel h2{font-size:16.5px;margin:0 0 4px}
+  .panel p.sub{color:var(--muted);font-size:13.5px;margin:0 0 18px;line-height:1.55}
+  label{display:block;margin-bottom:15px;font-size:13.5px;font-weight:600;color:var(--ink-2)}
+  label .opt{font-weight:400;color:var(--muted)}
+  input[type=text],input[type=password]{
+    display:block;width:100%;margin-top:6px;padding:9px 11px;
+    background:var(--field);color:var(--ink);
+    border:1px solid var(--line);border-radius:8px;font:inherit;font-size:14px;
+  }
+  input[type=text].mono{font-family:var(--mono);font-size:13px}
+  input:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:var(--accent)}
+  .check{display:flex;align-items:flex-start;gap:9px;font-weight:400;color:var(--ink-2)}
+  .check input{margin-top:4px;flex:none}
+  .row{display:flex;gap:9px;flex-wrap:wrap;margin-top:4px}
+
+  .msg{margin-top:15px;padding:11px 14px;border-radius:9px;font-size:13.5px;line-height:1.5}
+  .msg.ok{background:var(--ok-bg);color:var(--ok)}
+  .msg.err{background:var(--stop-bg);color:var(--stop)}
+  .msg.warn{background:var(--warn-bg);color:var(--warn)}
+  .msg:empty{display:none}
+
+  .health{
+    margin-top:18px;border:1px solid var(--line);border-radius:10px;overflow:hidden;
+  }
+  .health .hrow{
+    display:flex;justify-content:space-between;gap:14px;padding:9px 14px;
+    font-size:13px;border-bottom:1px solid var(--line-2);background:var(--panel-2);
+  }
+  .health .hrow:last-child{border-bottom:0}
+  .health .hrow span:first-child{color:var(--muted)}
+  .health .hrow span:last-child{font-family:var(--mono);color:var(--ink-2);font-weight:600}
+
+  .empty{
+    background:var(--panel);border:1px dashed var(--line);border-radius:12px;
+    padding:38px 24px;text-align:center;color:var(--muted);
+  }
+  .empty strong{display:block;color:var(--ink-2);font-size:15px;margin-bottom:6px}
+
+  footer{margin-top:26px;font-size:12px;color:var(--muted);display:flex;gap:14px;flex-wrap:wrap}
+  [hidden]{display:none!important}
+  @media (prefers-reduced-motion: reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">
+      <div class="mark">Z</div>
+      <div>
+        <h1>Cổng Zalo cá nhân</h1>
+        <div class="sub" id="hostname">đang tải…</div>
+      </div>
+    </div>
+    <div class="link-state">
+      <span class="chip idle" id="crmchip"><span class="dot off"></span><span id="crmchiptext">kiểm tra CRM…</span></span>
+      <span class="hoststat" id="hoststat"></span>
+    </div>
+  </header>
+
+  <nav role="tablist">
+    <button role="tab" id="tab-accounts" aria-selected="true" onclick="show('accounts')">
+      Tài khoản<span class="count" id="cnt-acct">0</span>
+    </button>
+    <button role="tab" id="tab-add" aria-selected="false" onclick="show('add')">Thêm tài khoản</button>
+    <button role="tab" id="tab-conn" aria-selected="false" onclick="show('conn')">Kết nối CRM</button>
+  </nav>
+
+  <!-- ── Tài khoản ───────────────────────────────── -->
+  <section id="panel-accounts">
+    <div id="grid" class="grid"></div>
+    <div class="msg" id="acc-msg"></div>
+  </section>
+
+  <!-- ── Thêm tài khoản ──────────────────────────── -->
+  <section id="panel-add" hidden>
+    <form class="panel" onsubmit="addAccount(event)">
+      <h2>Thêm tài khoản Zalo</h2>
+      <p class="sub">
+        Tạo xong, tài khoản hiện ngay ở tab Tài khoản kèm mã QR. Quét một lần là xong —
+        những lần sau máy tự đăng nhập lại.
+      </p>
+
+      <label>Mã tài khoản
+        <span class="opt">— định danh nội bộ, không đổi được về sau</span>
+        <input type="text" class="mono" id="new-oaid" placeholder="personal:nv-hoa" required
+               pattern="[A-Za-z0-9_:.\-]+" autocomplete="off">
+      </label>
+      <label>Tên hiển thị
+        <span class="opt">— đổi lại được bất cứ lúc nào</span>
+        <input type="text" id="new-name" placeholder="Zalo Hoà — Kinh doanh" required autocomplete="off">
+      </label>
+      <label>Số điện thoại của tài khoản Zalo
+        <span class="opt">— rất nên điền: mã QR là mã chung, ai quét cũng vào được ô này</span>
+        <input type="text" class="mono" id="new-phone" placeholder="0912345678" autocomplete="off">
+      </label>
+      <label class="check">
+        <input type="checkbox" id="new-auto">
+        <span>Tự tạo lead từ mọi hội thoại
+          <span class="opt"><br>Bỏ trống: chỉ lưu nội dung của hội thoại đã gắn lead.
+          Bật: mọi tin nhắn 1-1 của số này đều vào CRM và tự sinh lead.</span></span>
+      </label>
+
+      <div class="row">
+        <button type="submit" class="mini primary">Thêm tài khoản</button>
+      </div>
+      <div class="msg" id="add-msg"></div>
+
+      <div class="msg warn" style="margin-top:18px">
+        Sau khi quét QR, nhớ điền số điện thoại của tài khoản Zalo này vào hồ sơ nhân viên
+        trong CRM. Không khớp được chủ sở hữu thì tài khoản chạy nhưng không ai dùng được.
+      </div>
+    </form>
+  </section>
+
+  <!-- ── Kết nối CRM ─────────────────────────────── -->
+  <section id="panel-conn" hidden>
+    <form class="panel" onsubmit="saveSettings(event)">
+      <h2>Kết nối tới CRM</h2>
+      <p class="sub">
+        CRM chạy trên VPS ở nước ngoài. Máy này chủ động gọi lên đó — không mở cổng nào ra
+        Internet, không cần IP tĩnh. Mọi dữ liệu đi qua API của CRM, không nối thẳng cơ sở dữ liệu.
+      </p>
+
+      <label>Địa chỉ CRM
+        <span class="opt">— phải là https:// vì khoá đi qua Internet</span>
+        <input type="text" class="mono" id="crm-url" placeholder="https://erp.vanphuthanh.net"
+               autocomplete="off" required>
+      </label>
+      <label>Khoá máy
+        <span class="opt">— để trống nếu không đổi</span>
+        <input type="password" class="mono" id="crm-token" placeholder="••••••••" autocomplete="off">
+      </label>
+
+      <div class="row">
+        <button type="submit" class="mini primary">Lưu &amp; khởi động lại</button>
+        <button type="button" class="mini" onclick="testConn()">Kiểm tra kết nối</button>
+      </div>
+      <div class="msg" id="conn-msg"></div>
+
+      <div class="health" id="health"></div>
+    </form>
+  </section>
+
+  <footer>
+    <span id="tick">—</span>
+    <span id="source"></span>
+  </footer>
+</div>
+
+<script>
+const LABEL = { online:'đang chạy', need_qr:'cần quét QR', error:'lỗi', offline:'chưa chạy' };
+let tab = 'accounts';
+let settingsLoaded = false;
+
+const esc = (s) => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function show(name){
+  tab = name;
+  for (const t of ['accounts','add','conn']) {
+    document.getElementById('panel-'+t).hidden = (t !== name);
+    document.getElementById('tab-'+t).setAttribute('aria-selected', String(t === name));
+  }
+}
+
+function msg(id, text, kind){
+  const el = document.getElementById(id);
+  el.className = 'msg ' + (kind || '');
+  el.textContent = text || '';
+}
+
+async function api(path, opts = {}){
+  const res = await fetch(path, {
+    ...opts,
+    headers:{ 'X-Admin':'1', ...(opts.body?{'Content-Type':'application/json'}:{}) , ...(opts.headers||{}) },
+  });
+  const data = await res.json().catch(()=>({}));
+  if (!res.ok) throw new Error(data.error || ('Lỗi '+res.status));
+  return data;
+}
+
+function ago(iso){
+  if (!iso) return '—';
+  const s = Math.round((Date.now() - new Date(iso).getTime())/1000);
+  if (s < 60) return s + ' giây trước';
+  if (s < 3600) return Math.round(s/60) + ' phút trước';
+  return Math.round(s/3600) + ' giờ trước';
+}
+
+// ── Vẽ ───────────────────────────────────────────
+
+function renderTop(d){
+  const h = d.host || {};
+  document.getElementById('hostname').textContent = h.hostname || '';
+  document.getElementById('hoststat').textContent =
+    `${h.workers||0} cụm · RAM trống ${h.free_mem_mb||0} MB · tải ${h.load1||'?'}`;
+  document.getElementById('source').textContent = d.source ? ('CRM: ' + d.source) : '';
+
+  const hz = d.crm_health || {};
+  const chip = document.getElementById('crmchip');
+  const txt = document.getElementById('crmchiptext');
+  const fresh = hz.lastOkAt && (Date.now() - new Date(hz.lastOkAt).getTime()) < 120000;
+  chip.className = 'chip ' + (fresh ? 'ok' : (hz.lastError ? 'bad' : 'idle'));
+  chip.firstElementChild.className = 'dot ' + (fresh ? 'ok' : (hz.lastError ? 'bad' : 'off'));
+  txt.textContent = fresh
+    ? `CRM ${hz.latencyMs != null ? hz.latencyMs + ' ms' : 'đã kết nối'}`
+    : (hz.lastError ? 'CRM mất kết nối' : 'chưa liên lạc CRM');
+}
+
+function renderAccounts(d){
+  const live = new Map((d.accounts||[]).map(a => [a.oa_id, a]));
+  // Trộn: dữ liệu sống đè lên dữ liệu từ CRM, NHƯNG không để null/undefined
+  // xoá mất giá trị đã có — lúc tiến trình con vừa bật, nhiều trường còn rỗng.
+  const rows = (d.registry||[]).map(r => {
+    const out = { ...r };
+    for (const [k, v] of Object.entries(live.get(r.oa_id) || {})) {
+      if (v !== null && v !== undefined) out[k] = v;
+    }
+    return out;
+  });
+  document.getElementById('cnt-acct').textContent = rows.length;
+
+  const grid = document.getElementById('grid');
+  if (!rows.length){
+    grid.innerHTML = `<div class="empty" style="grid-column:1/-1">
+      <strong>Chưa có tài khoản Zalo nào</strong>
+      Mở tab “Thêm tài khoản” để kết nối số Zalo đầu tiên.</div>`;
+    return;
+  }
+
+  grid.innerHTML = rows.map(a => {
+    const off = a.is_active === false;
+    const st = off ? 'tat' : (a.status || 'offline');
+    const label = off ? 'đã tắt' : (LABEL[st] || st);
+    const owner = a.owner_name
+      ? esc(a.owner_name)
+      : '<span style="color:var(--warn)">chưa gán</span>';
+
+    return `
+    <article class="acct ${esc(off?'tat':st)}">
+      <div class="stripe"></div>
+      <div class="pad">
+        <h3>${esc(a.oa_name || 'Không tên')} <span class="badge ${esc(st)}">${esc(label)}</span></h3>
+        ${a.account_phone ? `<div class="phone">${esc(a.account_phone)}</div>` : ''}
+        <div class="oaid">${esc(a.oa_id)}</div>
+
+        <dl class="facts">
+          <div><dt>Chủ sở hữu</dt><dd class="${a.owner_name?'':'warnish'}">${owner}</dd></div>
+          <div><dt>Tin chờ đẩy</dt><dd>${Number(a.pending||0)}</dd></div>
+          <div><dt>Kênh</dt><dd>${esc(a.transport || '—')}</dd></div>
+          <div><dt>Chốt số</dt><dd class="${a.expected_phone?'':'warnish'}">${a.expected_phone ? esc(a.expected_phone) : 'chưa chốt'}</dd></div>
+        </dl>
+
+        ${off
+          ? `<p class="note" style="color:var(--off)">Đang tắt — không nhận và không gửi tin. Phiên đăng nhập vẫn giữ, bật lại là chạy tiếp.</p>`
+          : (a.note ? `<p class="note">${esc(a.note)}</p>` : '')}
+
+        ${a.qr ? `
+        <div class="qrbox">
+          <div class="sheet"><img src="data:image/png;base64,${a.qr}" alt="Mã QR đăng nhập Zalo"></div>
+          <ol>
+            <li>Mở Zalo trên điện thoại</li>
+            <li>Bấm biểu tượng QR cạnh ô tìm kiếm</li>
+            <li>Quét mã này rồi bấm Đồng ý</li>
+          </ol>
+          <p class="tick">Mã tự đổi khi hết hạn — cứ để trang mở</p>
+        </div>` : ''}
+      </div>
+
+      <div class="acts">
+        <button class="mini" onclick="renameAccount('${esc(a.oa_id)}','${esc(a.oa_name||'')}')">Đổi tên</button>
+        <button class="mini ${off?'primary':''}" onclick="toggleField('${esc(a.oa_id)}','is_active',${off})">${off?'Bật lại':'Tắt'}</button>
+        ${off?'':`<button class="mini" onclick="toggleField('${esc(a.oa_id)}','auto_create_lead',${!a.auto_create_lead})">
+          ${a.auto_create_lead?'Ngưng tự tạo lead':'Bật tự tạo lead'}</button>`}
+        <button class="mini danger" onclick="removeAccount('${esc(a.oa_id)}','${esc(a.oa_name||'')}')">Xoá</button>
+      </div>
+    </article>`;
+  }).join('');
+}
+
+function renderHealth(d){
+  const h = d.crm_health || {};
+  document.getElementById('health').innerHTML = `
+    <div class="hrow"><span>Địa chỉ</span><span>${esc(h.baseUrl||'chưa đặt')}</span></div>
+    <div class="hrow"><span>Lần gọi thành công cuối</span><span>${esc(ago(h.lastOkAt))}</span></div>
+    <div class="hrow"><span>Độ trễ</span><span>${h.latencyMs!=null?h.latencyMs+' ms':'—'}</span></div>
+    <div class="hrow"><span>Số lần gọi</span><span>${Number(h.okCount||0)} ok · ${Number(h.errorCount||0)} lỗi</span></div>
+    ${h.lastError?`<div class="hrow"><span>Lỗi gần nhất</span><span style="color:var(--stop)">${esc(h.lastError)}</span></div>`:''}`;
+}
+
+function fillSettings(s){
+  if (!s) return;
+  document.getElementById('crm-url').value = s.crm.baseUrl || '';
+  document.getElementById('crm-token').placeholder = s.crm.hasToken ? s.crm.gatewayToken : 'chưa đặt';
+}
+
+// ── Thao tác ─────────────────────────────────────
+
+async function addAccount(ev){
+  ev.preventDefault();
+  msg('add-msg','Đang thêm…');
+  try{
+    await api('/api/accounts',{method:'POST',body:JSON.stringify({
+      oa_id: document.getElementById('new-oaid').value.trim(),
+      oa_name: document.getElementById('new-name').value.trim(),
+      expected_phone: document.getElementById('new-phone').value.trim() || null,
+      auto_create_lead: document.getElementById('new-auto').checked,
+    })});
+    document.getElementById('new-oaid').value='';
+    document.getElementById('new-name').value='';
+    document.getElementById('new-phone').value='';
+    document.getElementById('new-auto').checked=false;
+    msg('add-msg','Đã thêm. Mở tab Tài khoản để quét mã QR — mã hiện sau vài giây.','ok');
+    tick();
+  }catch(e){ msg('add-msg', e.message, 'err'); }
+}
+
+async function renameAccount(oaId, oldName){
+  const name = prompt('Tên hiển thị mới:', oldName);
+  if (name == null || !name.trim()) return;
+  try{
+    await api('/api/accounts/'+encodeURIComponent(oaId),{method:'PATCH',body:JSON.stringify({oa_name:name.trim()})});
+    msg('acc-msg','Đã đổi tên.','ok'); tick();
+  }catch(e){ msg('acc-msg', e.message, 'err'); }
+}
+
+async function toggleField(oaId, field, value){
+  try{
+    await api('/api/accounts/'+encodeURIComponent(oaId),{method:'PATCH',body:JSON.stringify({[field]:value})});
+    msg('acc-msg','Đã cập nhật.','ok'); tick();
+  }catch(e){ msg('acc-msg', e.message, 'err'); }
+}
+
+async function removeAccount(oaId, name){
+  if(!confirm(`XOÁ HẲN "${name||oaId}"?\n\nKhác với "Tắt": xoá là mất phiên đăng nhập, phải quét lại mã QR từ đầu nếu muốn dùng lại.\nMuốn tạm dừng thì bấm "Tắt" — bật lại được ngay, không phải quét QR.\n\nHộp thư và lead đã có trong CRM vẫn giữ nguyên.`)) return;
+  try{
+    await api('/api/accounts/'+encodeURIComponent(oaId),{method:'DELETE'});
+    msg('acc-msg','Đã xoá.','ok'); tick();
+  }catch(e){ msg('acc-msg', e.message, 'err'); }
+}
+
+async function saveSettings(ev){
+  ev.preventDefault();
+  msg('conn-msg','Đang lưu…');
+  try{
+    const d = await api('/api/settings',{method:'POST',body:JSON.stringify({crm:{
+      baseUrl: document.getElementById('crm-url').value.trim(),
+      gatewayToken: document.getElementById('crm-token').value.trim(),
+    }})});
+    fillSettings(d.settings);
+    document.getElementById('crm-token').value='';
+    msg('conn-msg','Đã lưu và khởi động lại các cụm. Bấm Kiểm tra kết nối để chắc chắn.','ok');
+  }catch(e){ msg('conn-msg', e.message, 'err'); }
+}
+
+async function testConn(){
+  msg('conn-msg','Đang kiểm tra…');
+  try{
+    const d = await api('/api/settings/test',{method:'POST',body:JSON.stringify({})});
+    msg('conn-msg', d.ok ? ('Kết nối được — '+d.detail) : ('Không kết nối được — '+d.error), d.ok?'ok':'err');
+    tick();
+  }catch(e){ msg('conn-msg', e.message, 'err'); }
+}
+
+// ── Vòng cập nhật ────────────────────────────────
+
+async function tick(){
+  try{
+    const d = await (await fetch('/api/state')).json();
+    renderTop(d);
+    renderAccounts(d);
+    renderHealth(d);
+    if (!settingsLoaded){ fillSettings(d.settings); settingsLoaded = true; }
+    document.getElementById('tick').textContent = 'cập nhật ' + new Date().toLocaleTimeString('vi-VN');
+  }catch(e){
+    document.getElementById('tick').textContent = 'mất kết nối tới bộ điều phối';
+  }
+}
+
+tick();
+setInterval(() => { if (tab !== 'add') tick(); }, 5000);
+</script>
+</body>
+</html>

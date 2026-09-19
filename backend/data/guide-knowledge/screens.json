@@ -3633,7 +3633,7 @@
   {
     "path": "/sx/handover-settings",
     "label": "Bàn giao CRM → SX (nâng cao)",
-    "menu": "Sản xuất → 3. Điều hành xưởng",
+    "menu": "Sản xuất → 3. Setup xưởng",
     "needs_admin": false,
     "redirect": false,
     "summary": "Bàn giao CRM → Sản xuất (nâng cao) — chọn công ty sản xuất, pipeline xưởng nhận, đội SX mặc định gán vào dự án, bộ mẫu và người nhận theo từng mục việc sx_*.",
@@ -3682,7 +3682,7 @@
   {
     "path": "/sx/pipeline-settings",
     "label": "Pipeline xưởng",
-    "menu": "Sản xuất → 3. Điều hành xưởng",
+    "menu": "Sản xuất → 3. Setup xưởng",
     "needs_admin": false,
     "redirect": false,
     "summary": "Cấu hình pipeline xưởng — thêm/sửa/xóa cột theo phân loại (Tủ bếp, Cánh kính, B2B…) hoặc bộ chung, kéo sắp xếp, gán nhóm deadline, gắn bộ mẫu nhiệm vụ và cấu hình NV theo cột; cột «chờ vào xưởng» cố định ở đầu.",
@@ -3753,7 +3753,7 @@
   {
     "path": "/sx/regions",
     "label": "Khu vực",
-    "menu": "Sản xuất → 3. Điều hành xưởng",
+    "menu": "Sản xuất → 3. Setup xưởng",
     "needs_admin": true,
     "redirect": false,
     "summary": "Khu vực sản xuất — khai báo khu vực/xưởng của công ty sản xuất để gán dự án và phân quyền nhân viên theo khu vực.",
@@ -3766,7 +3766,7 @@
   {
     "path": "/sx/task-templates",
     "label": "Bộ mẫu nhiệm vụ xưởng",
-    "menu": "Sản xuất → 3. Điều hành xưởng",
+    "menu": "Sản xuất → 3. Setup xưởng",
     "needs_admin": false,
     "redirect": false,
     "summary": "Bộ mẫu nhiệm vụ xưởng — cây công đoạn theo phân loại (Sản xuất thùng, Sản xuất alu, Hoàn thiện, Đóng gói, Giao hàng…) với các bước Tiếp nhận, Thiết kế, Vật tư, Gia công, Lắp ráp, QC, Dán nhãn & bàn giao kho.",

@@ -73,7 +73,22 @@ const CUA_STAGES = [
   { name: 'Nợ quá hạn',               color: '#DC2626', icon: '⚠️' },
 ];
 
-// Cửa: dùng pipeline riêng (11 cột cũ).
+function isHcbCompanyRow(company) {
+  const blob = `${company?.short_name || ''} ${company?.name || ''}`.toLowerCase();
+  return blob.includes('hcb') || blob.includes('hucabi');
+}
+
+const HCB_SHORT_STAGES = [
+  { name: 'Tiếp nhận', color: '#6366F1', icon: '📥' },
+  { name: 'Kế hoạch', color: '#8B5CF6', icon: '📐' },
+  { name: 'Duyệt', color: '#0EA5E9', icon: '✔️' },
+  { name: 'Gia công', color: '#EA580C', icon: '🏭' },
+  { name: 'Hoàn thiện', color: '#16A34A', icon: '✅' },
+];
+
+function looksLikeShortSxPipeline(existingNames) {
+  return existingNames.has('gia công') && existingNames.has('hoàn thiện') && existingNames.has('duyệt');
+}
 
 const PRESETS = [
   { typeName: 'Tủ bếp',    typeOrder: 100, baseOrder: 1000, stages: TUBEP_STAGES },
@@ -146,6 +161,12 @@ async function insertPipelineStage(supabase, payload) {
 async function ensureKitchenAndGlassDefaults(supabase, companyId) {
   if (!companyId) throw new Error('Thiếu company_id');
 
+  let isHcb = false;
+  try {
+    const { data: co } = await supabase.from('companies').select('short_name, name').eq('id', companyId).maybeSingle();
+    isHcb = isHcbCompanyRow(co);
+  } catch { /* ignore */ }
+
   // workflow_stage 'production' để mọi cột map vào (giống pipeline-settings UI)
   let productionWorkflowStageId = null;
   try {
@@ -175,6 +196,37 @@ async function ensureKitchenAndGlassDefaults(supabase, companyId) {
       .eq('workshop_type_id', typeRes.id);
     const normStageName = (raw) => String(raw || '').toLowerCase().replace(/,+\s*$/, '').trim();
     const existingNames = new Set((existingRows || []).map((r) => normStageName(r.name)));
+    if (looksLikeShortSxPipeline(existingNames)) {
+      let i = 0;
+      for (const s of HCB_SHORT_STAGES) {
+        i += 1;
+        const sNorm = normStageName(s.name);
+        if (existingNames.has(sNorm)) {
+          stats.stages.skipped += 1;
+          continue;
+        }
+        const inserted = await insertPipelineStage(supabase, {
+          name: s.name,
+          color: s.color,
+          icon: s.icon,
+          order_index: i,
+          is_active: true,
+          workflow_stage_id: productionWorkflowStageId,
+          bucket_slug: null,
+          is_handover_to_logistics: sNorm === 'hoàn thiện',
+          crm_sync_type: 'production',
+          company_id: companyId,
+          workshop_type_id: typeRes.id,
+        });
+        stats.stages.inserted += 1;
+        stats.stages.insertedNames.push(`${preset.typeName} → ${inserted?.name || s.name}`);
+      }
+      continue;
+    }
+    if (isHcb) {
+      stats.stages.skipped += preset.stages.length;
+      continue;
+    }
     // HCB (và xưởng đã gom): đừng seed lại 6 cột cũ khi đã có «Ban thành phẩm».
     const hasBanThanhPham = existingNames.has('ban thành phẩm');
     const mergedIntoBanThanhPham = new Set([

@@ -105,6 +105,32 @@ export function getActiveMentionState(text, cursorPos) {
   return { active: true, start: at, query: between };
 }
 
+/**
+ * Lệnh nhanh bằng «/» trong ô bình luận.
+ * Chỉ kích hoạt khi «/» đứng đầu dòng hoặc ngay sau khoảng trắng — nếu không thì
+ * mọi URL (https://…) và mọi ngày kiểu 12/9 đều sẽ bật nhầm bảng lệnh.
+ */
+export function getActiveSlashState(text, cursorPos) {
+  const raw = String(text || '');
+  const pos = cursorPos ?? raw.length;
+  const before = raw.slice(0, pos);
+  const at = before.lastIndexOf('/');
+  if (at === -1) return { active: false, start: 0, query: '' };
+  const prev = at > 0 ? before[at - 1] : '\n';
+  if (prev !== '\n' && prev !== ' ' && prev !== '\t') return { active: false, start: at, query: '' };
+  const between = before.slice(at + 1);
+  if (/\s/.test(between)) return { active: false, start: at, query: '' };
+  return { active: true, start: at, query: between };
+}
+
+/** Lọc danh sách lệnh theo phần gõ sau «/» — bỏ dấu, không phân biệt hoa thường. */
+export function filterSlashCommands(commands, query) {
+  const list = Array.isArray(commands) ? commands : [];
+  const q = normalizeMentionSearch(query || '');
+  if (!q) return list;
+  return list.filter((c) => normalizeMentionSearch(`${c?.label || ''} ${c?.keywords || ''}`).includes(q));
+}
+
 export function buildMentionPickerItems({ text, cursorPos, members, currentUserId }) {
   const { active, start, query } = getActiveMentionState(text, cursorPos);
   if (!active) return { open: false, start: 0, items: [], query: '' };

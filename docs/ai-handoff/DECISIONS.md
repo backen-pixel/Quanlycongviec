@@ -11,9 +11,12 @@
 
 - Deadline phải được giải quyết qua policy chung, không thêm chuỗi `COALESCE` hoặc thứ tự ưu
   tiên riêng rải rác trong route/component mới.
-- Hoàn thành CRM chỉ ảnh hưởng CRM; hoàn thành SX chỉ ảnh hưởng SX.
-- Hoàn thành VC thông thường chỉ ảnh hưởng VC; bước hoàn thành dự án cuối mới dọn deadline
-  toàn dự án.
+- Một deal/dự án **chỉ một hạn đang đếm**:
+  - CRM (chưa lập SX) → hạn CRM.
+  - Đưa sang sản xuất (`project_id` / cột Đang SX) → hết hạn CRM, chỉ hạn SX.
+  - SX giao hàng / bàn giao VC / cột Đã giao → hết hạn SX, chuyển hạn lắp.
+  - Lắp xong (cột VC Hoàn thành / `status=completed`) → không còn hạn nào.
+- Ngày giao/lắp giữ làm lịch sử; không xóa khi hết hạn hiệu lực.
 - API bổ sung trường dẫn xuất nhưng giữ các trường cũ để tương thích giao diện.
 - Không thêm cột DB chỉ để lưu `effective_deadline_*`; đây là dữ liệu dẫn xuất.
 
@@ -35,6 +38,14 @@
 - Chuẩn bị dump/script được phép; **không cắt** (freeze, webhook, ẩn UI) cho đến khi người dùng ra lệnh.
 - Nguồn UUID: `87479a83-1145-43b7-b090-3e40812cb5a9`. Không dùng clone cùng DB.
 - Import đích chỉ qua `NEXTGO_SUPABASE_*` khác URL nguồn.
+
+## AI-007 — Role quản trị hệ sinh thái
+
+- `ecosystem_admin`: quản trị toàn HST (mọi công ty trong tenant). TenantGate
+  vẫn bắt buộc. Không gán `platform_admin` cho admin HST.
+- `platform_admin`: SaaS toàn nền tảng, bỏ tenant — chỉ vận hành nền tảng.
+- `admin` + `company_id`: admin một công ty. `admin` không `company_id`:
+  legacy tương đương HST, ưu tiên chuyển sang `ecosystem_admin`.
 
 ## AI-004 — Ranh giới file khi hai AI chạy song song
 

@@ -3,7 +3,9 @@ import { ArrowLeft, ChevronDown, ChevronUp, Download, Filter, Loader2, RefreshCw
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isSystemAdmin } from '../lib/adminRole';
 import { exportSharedWorkspaceReportExcel } from '../lib/sharedWorkspaceReportExcel';
+import SharedWorkspaceReportAnalysis from '../components/SharedWorkspaceReportAnalysis';
 
 const MODULE_LABELS = { crm: 'CRM', production: 'Sản xuất', logistics: 'VC/LĐ' };
 const SOURCE_LABELS = {
@@ -120,9 +122,13 @@ export default function SharedWorkspaceAssignmentsReportPage() {
   const [filtersOpen, setFiltersOpen] = useState(() => (
     localStorage.getItem('sharedWorkspaceReportFiltersOpen') !== '0'
   ));
+  const [view, setView] = useState(() => (
+    localStorage.getItem('sharedWorkspaceReportView') === 'list' ? 'list' : 'analysis'
+  ));
+  const [analysis, setAnalysis] = useState(null);
 
-  const elevated = ['admin', 'manager', 'sales_admin', 'crm_production_admin'].includes(user?.role);
-  const systemAdmin = user?.role === 'admin' && !user?.company_id;
+  const elevated = ['ecosystem_admin', 'admin', 'manager', 'sales_admin', 'crm_production_admin'].includes(user?.role);
+  const systemAdmin = isSystemAdmin(user);
 
   const requestParams = useMemo(() => {
     const params = { limit: PAGE_SIZE, offset: page * PAGE_SIZE };
@@ -139,10 +145,12 @@ export default function SharedWorkspaceAssignmentsReportPage() {
       const { data } = await api.get('/crm/assignments/shared-workspace-report', { params: requestParams });
       setRows(Array.isArray(data?.rows) ? data.rows : []);
       setSummary(data?.summary || {});
+      setAnalysis(data?.analysis || null);
       setTotal(Number(data?.total) || 0);
     } catch (err) {
       setRows([]);
       setSummary({});
+      setAnalysis(null);
       setTotal(0);
       setError(err.response?.data?.error || err.message || 'Không tải được báo cáo');
     } finally {
@@ -230,6 +238,7 @@ export default function SharedWorkspaceAssignmentsReportPage() {
       await exportSharedWorkspaceReportExcel({
         rows: data?.rows || [],
         summary: data?.summary || {},
+        analysis: data?.analysis || {},
         filters,
       });
     } catch (err) {
@@ -254,7 +263,29 @@ export default function SharedWorkspaceAssignmentsReportPage() {
           </Link>
           <div className="min-w-0 flex-1">
             <h1 className="text-lg font-bold text-slate-900">Báo cáo nhiệm vụ phát sinh</h1>
-            <p className="text-xs text-slate-500">Các nhiệm vụ được tạo trong Không gian chung</p>
+            <p className="text-xs text-slate-500">Phân tích theo tuần / tháng, bộ phận, dự án, nhân viên và bài học rút kinh nghiệm</p>
+          </div>
+          <div className="flex rounded-lg border border-slate-200 p-0.5">
+            <button
+              type="button"
+              onClick={() => {
+                setView('analysis');
+                localStorage.setItem('sharedWorkspaceReportView', 'analysis');
+              }}
+              className={`h-9 rounded-md px-3 text-sm font-semibold ${view === 'analysis' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+            >
+              Phân tích
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setView('list');
+                localStorage.setItem('sharedWorkspaceReportView', 'list');
+              }}
+              className={`h-9 rounded-md px-3 text-sm font-semibold ${view === 'list' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`}
+            >
+              Danh sách
+            </button>
           </div>
           {elevated && (
             <Link
@@ -284,12 +315,14 @@ export default function SharedWorkspaceAssignmentsReportPage() {
           </button>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-7">
           <StatCard label="Tổng phát sinh" value={summary.total} />
           <StatCard label="Chưa làm" value={summary.pending} tone="amber" />
           <StatCard label="Đang làm" value={summary.in_progress} tone="blue" />
           <StatCard label="Hoàn thành" value={summary.completed} tone="green" />
           <StatCard label="Quá hạn" value={summary.overdue} tone="red" />
+          <StatCard label="Từ khách hàng" value={summary.customer_request} tone="blue" />
+          <StatCard label="Lỗi nhân viên" value={summary.employee_error} tone="red" />
         </div>
 
         <form onSubmit={applyFilters} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -375,6 +408,20 @@ export default function SharedWorkspaceAssignmentsReportPage() {
           )}
         </form>
 
+        {view === 'analysis' && (
+          <div>
+            {error && <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+            {loading && !analysis ? (
+              <div className="rounded-2xl border border-slate-200 bg-white py-16 text-center text-slate-500 shadow-sm">
+                <Loader2 className="mx-auto mb-2 h-6 w-6 animate-spin" />Đang phân tích phát sinh…
+              </div>
+            ) : (
+              <SharedWorkspaceReportAnalysis analysis={analysis} />
+            )}
+          </div>
+        )}
+
+        {view === 'list' && (
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
           {error && <div className="border-b border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
           <div className="overflow-x-auto">
@@ -446,6 +493,7 @@ export default function SharedWorkspaceAssignmentsReportPage() {
             </div>
           </div>
         </div>
+        )}
       </div>
     </div>
   );

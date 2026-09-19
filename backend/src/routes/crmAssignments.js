@@ -27,6 +27,7 @@ const {
   applyAssignmentStatusColumn,
   alignAssignmentColumnStatus,
   alignAssignmentStatusFromCrmTask,
+  columnIdForTaskStatus,
 } = require('../helpers/crmTaskAssignmentSync');
 const {
   syncAssignmentFileToTask,
@@ -130,7 +131,7 @@ r.use((req, res, next) => {
   next();
 });
 
-const ADMIN_ROLES = new Set(['admin', 'manager', 'sales_admin', 'crm_production_admin']);
+const ADMIN_ROLES = new Set(['ecosystem_admin', 'admin', 'manager', 'sales_admin', 'crm_production_admin']);
 const isAdmin = (req) => ADMIN_ROLES.has(String(req.user?.role || '').toLowerCase());
 /** NV gắn công ty — xem giao việc trong phạm vi công ty (tab Tất cả mobile VC). */
 function canViewCompanyWideAssignments(req) {
@@ -445,6 +446,125 @@ async function attachIndexCrmTaskStatus(rows) {
   rows.forEach((r) => {
     if (r.crm_task_id) r.crm_task = byId.get(String(r.crm_task_id)) || null;
   });
+}
+
+const ASSIGN_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const NO_MATCH_UUID = '00000000-0000-0000-0000-000000000000';
+
+async function fetchLeadIdsForProject(projectId) {
+  const pid = String(projectId || '').trim();
+  if (!ASSIGN_UUID_RE.test(pid)) return [];
+  const { data } = await supabase
+    .from('crm_leads')
+    .select('id')
+    .eq('project_id', pid)
+    .limit(500);
+  return [...new Set((data || []).map((row) => row.id).filter(Boolean))];
+}
+
+function skipAssignModuleForProject(query = {}) {
+  return ASSIGN_UUID_RE.test(String(query.project_id || '').trim());
+}
+
+function normalizeTaskStatusForAssignment(status) {
+  const s = String(status || 'pending').toLowerCase();
+  if (s === 'done' || s === 'completed') return 'completed';
+  if (s === 'doing' || s === 'in_progress') return 'in_progress';
+  if (s === 'cancelled' || s === 'canceled') return 'cancelled';
+  return 'pending';
+}
+
+/** Nhiệm vụ pipeline của dự án chưa có bản giao việc — hiện khi lọc ?project_id=. */
+async function mergeProjectCrmTaskAssignments(rows, leadIds, {
+  columnId = '',
+  indexOnly = false,
+  columns = [],
+} = {}) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!leadIds?.length) return list;
+  const have = new Set(list.map((r) => String(r.crm_task_id || '')).filter(Boolean));
+  const { data: tasks } = await supabase
+    .from('crm_tasks')
+    .select('id, title, description, lead_id, status, priority, deadline, created_at, updated_at, completed_at')
+    .in('lead_id', leadIds)
+    .limit(500);
+  const missing = (tasks || []).filter((t) => !have.has(String(t.id)));
+  if (!missing.length) return list;
+
+  const { data: leads } = await supabase
+    .from('crm_leads')
+    .select('id, code, title, type, project_id')
+    .in('id', leadIds);
+  const leadById = new Map((leads || []).map((l) => [String(l.id), l]));
+  const wantCol = String(columnId || '');
+  const extra = [];
+  missing.forEach((t) => {
+    const status = normalizeTaskStatusForAssignment(t.status);
+    const col = columnIdForTaskStatus(columns, status) || null;
+    if (wantCol === '__none__' && col) return;
+    if (wantCol && wantCol !== '__none__' && String(col || '') !== wantCol) return;
+    const lead = leadById.get(String(t.lead_id)) || null;
+    if (indexOnly) {
+      extra.push({
+        id: `task:${t.id}`,
+        column_id: col,
+        lead_id: t.lead_id,
+        crm_task_id: t.id,
+        assignee_id: null,
+        assignee_ids: [],
+        priority: t.priority || 'medium',
+        status,
+        deadline: t.deadline || null,
+        created_at: t.created_at,
+        completed_at: t.completed_at || null,
+        _fromCrmTask: true,
+      });
+      return;
+    }
+    extra.push({
+      id: `task:${t.id}`,
+      _fromCrmTask: true,
+      company_id: null,
+      executor_company_id: null,
+      column_id: col,
+      lead_id: t.lead_id,
+      crm_task_id: t.id,
+      assignment_module: 'production',
+      title: t.title,
+      description: t.description || null,
+      assignee_id: null,
+      assignee_ids: [],
+      created_by_id: null,
+      priority: t.priority || 'medium',
+      status,
+      deadline: t.deadline || null,
+      position: 0,
+      created_at: t.created_at,
+      updated_at: t.updated_at,
+      completed_at: t.completed_at || null,
+      assignee: null,
+      created_by: null,
+      company: null,
+      executor_company: null,
+      lead,
+    });
+  });
+  return extra.length ? list.concat(extra) : list;
+}
+
+async function applyLeadOrProjectFilter(q, query = {}) {
+  const leadId = String(query.lead_id || '').trim();
+  if (leadId && ASSIGN_UUID_RE.test(leadId)) {
+    q = q.eq('lead_id', leadId);
+  } else {
+    const projectId = String(query.project_id || '').trim();
+    if (projectId && ASSIGN_UUID_RE.test(projectId)) {
+      const ids = await fetchLeadIdsForProject(projectId);
+      q = ids.length ? q.in('lead_id', ids) : q.eq('lead_id', NO_MATCH_UUID);
+    }
+  }
+  // Không return builder trần từ async — PostgREST thenable, await sẽ chạy query.
+  return { q };
 }
 
 /** Sanitize + resolve lead_ids khớp mã TB / deal / tên / SĐT để tìm nhiệm vụ. */
@@ -868,7 +988,7 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
       // không bao giờ có thẻ để vẽ.
       if (String(req.query.column_id || '') === '__none__') q = q.is('column_id', null);
       else if (req.query.column_id) q = q.eq('column_id', req.query.column_id);
-      if (req.query.lead_id) q = q.eq('lead_id', String(req.query.lead_id).trim());
+      ({ q } = await applyLeadOrProjectFilter(q, req.query));
       if (overdueFlag === '1' || overdueFlag === 'true') {
         const startIso = vnStartOfTodayIso();
         q = q
@@ -876,7 +996,7 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
           .not('deadline', 'is', null)
           .lt('deadline', startIso);
       }
-      if (!skipModule && isValidAssignModuleFilter(moduleFilter)) {
+      if (!skipModule && !skipAssignModuleForProject(req.query) && isValidAssignModuleFilter(moduleFilter)) {
         q = q.eq('assignment_module', moduleFilter);
       }
       if (req.query.q) {
@@ -910,24 +1030,33 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
       }
       if (idxErr) throw idxErr;
       const rows = idxRows || [];
-      // Từ điển user kèm theo để thống kê nhân viên có nhãn đúng, không phải tra sang danh
+      // Từ điển user kèm theo để thống kê nhân viên tra tên ở đây, không phải tra sang danh
       // sách `users` của trang (danh sách đó lọc theo công ty nên thiếu người liên công ty
       // → sẽ hiện "Không rõ").
+      const cols = await getSharedColumnsCached();
       const [users] = await Promise.all([
         attachIndexAssigneeIds(rows),
         attachIndexCrmTaskStatus(rows),
       ]);
       alignAssignmentStatusFromCrmTask(rows);
-      await alignAssignmentColumnStatus(rows, await getSharedColumnsCached());
+      await alignAssignmentColumnStatus(rows, cols);
       // `crm_task` chỉ là nguyên liệu để căn ở trên — client không dùng, bỏ cho nhẹ.
       rows.forEach((r) => { delete r.crm_task; });
+      const projectLeadIds = skipAssignModuleForProject(req.query)
+        ? await fetchLeadIdsForProject(req.query.project_id)
+        : [];
+      const indexRowsOut = await mergeProjectCrmTaskAssignments(rows, projectLeadIds, {
+        columnId: req.query.column_id,
+        indexOnly: true,
+        columns: cols,
+      });
       return res.json({
-        index: rows,
+        index: indexRowsOut,
         dict: { users },
         offset: pageOffset,
         limit: pageLimit,
-        total_returned: rows.length,
-        has_more: pageLimit != null ? rows.length >= pageLimit : false,
+        total_returned: indexRowsOut.length,
+        has_more: pageLimit != null ? indexRowsOut.length >= pageLimit : false,
       });
     }
 
@@ -979,17 +1108,24 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
     // Phải chạy SAU attach: nó đọc `a.crm_task` do attachCrmTaskMeta gắn vào.
     alignAssignmentStatusFromCrmTask(rows);
     await alignAssignmentColumnStatus(rows, await getSharedColumnsCached());
+    const projectLeadIds = skipAssignModuleForProject(req.query)
+      ? await fetchLeadIdsForProject(req.query.project_id)
+      : [];
+    const outRows = await mergeProjectCrmTaskAssignments(rows, projectLeadIds, {
+      columnId: req.query.column_id,
+      columns: await getSharedColumnsCached(),
+    });
     const meta = {
-      has_more: pageLimit != null ? rows.length >= pageLimit : false,
+      has_more: pageLimit != null ? outRows.length >= pageLimit : false,
       offset: pageOffset,
       limit: pageLimit,
-      total_returned: rows.length,
+      total_returned: outRows.length,
     };
     if (wantsDictPayload(req.query)) {
-      const packed = packAssignmentsWithDict(rows);
+      const packed = packAssignmentsWithDict(outRows);
       return res.json({ ...packed, ...meta });
     }
-    res.json({ assignments: rows, ...meta });
+    res.json({ assignments: outRows, ...meta });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi tải nhiệm vụ' }); }
 });
 
@@ -1385,10 +1521,11 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
           q = q.or(`company_id.eq.${companyId},executor_company_id.eq.${companyId}`);
         }
       }
-      if (!skipModule && isValidAssignModuleFilter(moduleFilter)) {
+      if (!skipModule && !skipAssignModuleForProject(req.query) && isValidAssignModuleFilter(moduleFilter)) {
         q = q.eq('assignment_module', moduleFilter);
       }
       if (priorityFilter) q = q.eq('priority', priorityFilter);
+      ({ q } = await applyLeadOrProjectFilter(q, req.query));
       if (searchQ) {
         ({ q } = await applyAssignmentSearchQuery(q, searchQ));
       }
@@ -1404,7 +1541,7 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
       if (error && /executor_company_id/.test(error.message || '') && isAdmin(req) && req.query.company_id) {
         let qExec = supabase.from('crm_assignments').select('id', { count: 'exact', head: true })
           .eq('company_id', req.query.company_id);
-        if (!opts.skipModule && isValidAssignModuleFilter(moduleFilter)) {
+        if (!opts.skipModule && !skipAssignModuleForProject(req.query) && isValidAssignModuleFilter(moduleFilter)) {
           qExec = qExec.eq('assignment_module', moduleFilter);
         }
         if (statsIdFilter) qExec = qExec.in('id', statsIdFilter);
@@ -1422,12 +1559,26 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
 
     // Enum DB chỉ: pending | in_progress | completed | cancelled (không có done/doing).
     // stats_rev=4 — đếm đủ + department_id; web KPI không còn phụ thuộc list cắt 1000.
-    const [total, completed, inProgress, overdue] = await Promise.all([
+    let [total, completed, inProgress, overdue] = await Promise.all([
       countExact((q) => q),
       countExact((q) => q.eq('status', 'completed')),
       countExact((q) => q.eq('status', 'in_progress')),
       countExact((q) => q.neq('status', 'completed').lt('deadline', nowIso)),
     ]);
+    if (skipAssignModuleForProject(req.query)) {
+      const leadIds = await fetchLeadIdsForProject(req.query.project_id);
+      const extras = await mergeProjectCrmTaskAssignments([], leadIds, {
+        columns: await getSharedColumnsCached(),
+      });
+      extras.forEach((t) => {
+        total += 1;
+        if (t.status === 'completed') completed += 1;
+        else if (t.status === 'in_progress') inProgress += 1;
+        if (t.status !== 'completed' && t.deadline && new Date(t.deadline) < new Date(nowIso)) {
+          overdue += 1;
+        }
+      });
+    }
     const pending = Math.max(0, total - completed - inProgress);
 
     res.json({

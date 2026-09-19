@@ -51,6 +51,8 @@ const {
   productionOwnerCandidateIds,
 } = require('../helpers/projectOverviewCategory');
 const { assertProjectAccessible } = require('../helpers/projectAccessScope');
+const { attachInstallEventDatesToProjects } = require('../helpers/createPlannedVcLdEvents');
+const { resolveOverviewGroupDeadline, stampOpenChildModuleDeadlines, collectOpenChildDeadlineStamps } = require('../helpers/projectOverviewDeadline');
 const {
   isCrmCompletedStage,
   isLogisticsCompletedColumn,
@@ -143,7 +145,8 @@ async function enrichTaskModuleOwners(rows, {
 
   const projectIds = [...new Set(tasks.map((t) => t.project_id).filter(Boolean).map(String))];
   const leadIds = [...new Set(tasks.map((t) => t.lead_id).filter(Boolean).map(String))];
-  const [projects, leads, productionStaff] = await Promise.all([
+  const leadColumns = 'id, assigned_to, lead_owner_id, project_id, company_id, region_id';
+  const [projects, leadsFromIds, leadsByProject, productionStaff] = await Promise.all([
     providedProjects
       ? Promise.resolve(providedProjects)
       : projectIds.length
@@ -163,9 +166,21 @@ async function enrichTaskModuleOwners(rows, {
       : leadIds.length
       ? fetchAllByIdsParallel({
         table: 'crm_leads',
-        columns: 'id, assigned_to, lead_owner_id, project_id, company_id, region_id',
+        columns: leadColumns,
         key: 'id',
         ids: leadIds,
+        tune: (q) => q.order('id'),
+      })
+      : Promise.resolve([]),
+    // NV SX/VC thường không có lead_id; khu vực nằm trên deal gắn project_id.
+    providedLeads
+      ? Promise.resolve([])
+      : projectIds.length
+      ? fetchAllByIdsParallel({
+        table: 'crm_leads',
+        columns: leadColumns,
+        key: 'project_id',
+        ids: projectIds,
         tune: (q) => q.order('id'),
       })
       : Promise.resolve([]),
@@ -184,8 +199,28 @@ async function enrichTaskModuleOwners(rows, {
       : Promise.resolve([]),
   ]);
 
+  const leads = [];
+  const seenLeadIds = new Set();
+  for (const lead of [...(leadsFromIds || []), ...(leadsByProject || [])]) {
+    const id = String(lead?.id || '');
+    if (!id || seenLeadIds.has(id)) continue;
+    seenLeadIds.add(id);
+    leads.push(lead);
+  }
+
   const projectById = new Map((projects || []).map((p) => [String(p.id), p]));
-  const leadById = new Map((leads || []).map((l) => [String(l.id), l]));
+  const leadById = new Map(leads.map((l) => [String(l.id), l]));
+  const leadByProjectId = new Map();
+  leads.forEach((lead) => {
+    const pid = String(lead.project_id || '');
+    if (!pid) return;
+    const existing = leadByProjectId.get(pid);
+    if (!existing) {
+      leadByProjectId.set(pid, lead);
+      return;
+    }
+    if (!existing.region_id && lead.region_id) leadByProjectId.set(pid, lead);
+  });
   const companyIds = [...new Set((projects || []).map((p) => p.company_id).filter(Boolean).map(String))];
   const handoverRows = companyIds.length
     ? await fetchAllByIdsParallel({
@@ -287,7 +322,8 @@ async function enrichTaskModuleOwners(rows, {
     task.effective_assignee_name = visibleAssigneeId
       ? (nameById.get(visibleAssigneeId) || null)
       : (task.module_owner_name || null);
-    task.region_id = lead?.region_id || null;
+    const leadFromProject = task.project_id ? leadByProjectId.get(String(task.project_id)) : null;
+    task.region_id = lead?.region_id || leadFromProject?.region_id || null;
   }
   return tasks;
 }
@@ -492,15 +528,22 @@ async function finishProjectOverview(res, tasks, preloaded = null) {
     tasks,
     stats,
     filter_options: {
-      companies,
-      regions,
+      companies: preloaded?.companies?.length
+        ? (preloaded.companies.filter((row) => companyIds.includes(String(row.id))))
+        : companies,
+      // Đủ khu vực của các công ty đang có nhiệm vụ — không chỉ những KV đã gắn trên thẻ.
+      regions: preloaded?.regions?.length
+        ? preloaded.regions.filter((row) => companyIds.includes(String(row.company_id || '')))
+        : regions,
     },
   });
 }
 
 r.get('/project-overview', async (req, res) => {
   try {
+    const requestedProjectId = String(req.query.project_id || '').trim();
     const requestedCompany = String(req.query.company_id || '').trim();
+    const requestedDealCompany = String(req.query.deal_company_id || '').trim();
     const effectiveCompany = isSystemAdmin(req.user)
       ? (requestedCompany || null)
       : (req.user?.company_id || null);
@@ -514,26 +557,45 @@ r.get('/project-overview', async (req, res) => {
      */
     const lookupsPromise = Promise.all([
       fetchAllPages(() => supabase.from('crm_pipeline_stages').select('id, name, order_index').order('id')),
-      fetchAllPages(() => supabase.from('workshop_task_templates').select('id, name, workshop_area, order_index').order('id')),
+      fetchAllPages(() => supabase.from('workshop_task_templates').select('id, name, workshop_area, order_index, production_stage_id').order('id')),
       fetchAllPages(() => supabase.from('companies').select('id, name, short_name').order('id')),
       fetchAllPages(() => supabase.from('company_regions').select('id, company_id, name, code').order('id')),
     ]);
 
-    const projects = await fetchAllPages(() => {
-      let q = supabase
-        .from('projects')
-        .select(`
-          id, status, company_id, sx_kanban_column_id, vc_kanban_column_id,
+    const PROJECT_OVERVIEW_PROJECT_SELECT = `
+          id, status, company_id, sx_kanban_column_id, vc_kanban_column_id, logistics_company_id,
           project_manager_id, sales_person_id, responsible_person_id,
-          production_person_id, logistics_person_id, installer_person_id, installation_person_id
-        `)
-        .order('id');
-      if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
-      return q;
-    });
-    const activeProjects = (projects || []).filter((project) => (
-      !['completed', 'cancelled', 'canceled'].includes(String(project.status || '').toLowerCase())
-    ));
+          production_person_id, logistics_person_id, installer_person_id, installation_person_id,
+          deadline, production_deadline, production_finish_date, sx_kanban_deadline_at,
+          delivery_date, install_date, sx_reception_date, created_at, sx_schedule_slip_days
+        `;
+    let activeProjects;
+    if (requestedProjectId) {
+      const access = await assertProjectAccessible(req, res, requestedProjectId, {
+        operation: 'READ',
+        mode: 'company',
+      });
+      if (!access) return;
+      const { data: one, error: oneErr } = await supabase
+        .from('projects')
+        .select(PROJECT_OVERVIEW_PROJECT_SELECT)
+        .eq('id', requestedProjectId)
+        .maybeSingle();
+      if (oneErr) throw oneErr;
+      activeProjects = one ? [one] : [];
+    } else {
+      const projects = await fetchAllPages(() => {
+        let q = supabase
+          .from('projects')
+          .select(PROJECT_OVERVIEW_PROJECT_SELECT)
+          .order('id');
+        if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
+        return q;
+      });
+      activeProjects = (projects || []).filter((project) => (
+        !['completed', 'cancelled', 'canceled'].includes(String(project.status || '').toLowerCase())
+      ));
+    }
     const projectIds = activeProjects.map((project) => project.id).filter(Boolean);
 
     const needsCrmLeads = !requestedModule || requestedModule === 'crm';
@@ -542,19 +604,20 @@ r.get('/project-overview', async (req, res) => {
     const [sxStagesRes, vcStagesRes, leads] = await Promise.all([
       needsSxStages
         ? supabase.from('production_pipeline_stages').select(
-          'id, name, order_index, bucket_slug, is_handover_to_logistics, counts_as_completed_revenue, counts_as_collected_revenue',
+          'id, name, order_index, bucket_slug, is_handover_to_logistics, counts_as_completed_revenue, counts_as_collected_revenue, deadline_group, group_key, company_id',
         )
         : Promise.resolve({ data: [], error: null }),
       needsVcStages
         ? supabase.from('logistics_pipeline_stages').select('id, name, order_index, bucket_slug')
         : Promise.resolve({ data: [], error: null }),
-      needsCrmLeads && projectIds.length
+      projectIds.length
         ? fetchAllByIdsParallel({
           table: 'crm_leads',
           columns: `
             id, project_id, company_id, region_id, assigned_to, lead_owner_id,
+            phone, kanban_deadline_at, stage_entered_at, expected_close_date, deadline_disabled_at,
             stage:crm_pipeline_stages!crm_leads_stage_id_fkey(
-              id, name, canonical_slug, is_won, is_lost, counts_as_completed_revenue
+              id, name, canonical_slug, is_won, is_lost, counts_as_completed_revenue, sla_days, deal_report_bucket
             )
           `,
           key: 'project_id',
@@ -590,6 +653,17 @@ r.get('/project-overview', async (req, res) => {
     if (vcStagesRes.error) throw vcStagesRes.error;
 
     const sxStageById = new Map((sxStagesRes.data || []).map((stage) => [String(stage.id), stage]));
+    if (requestedDealCompany) {
+      const dealProjectIds = new Set(
+        (leads || [])
+          .filter((lead) => String(lead.company_id || '') === requestedDealCompany)
+          .map((lead) => String(lead.project_id || ''))
+          .filter(Boolean),
+      );
+      activeProjects = activeProjects.filter((project) => dealProjectIds.has(String(project.id)));
+    }
+    const projectById = new Map(activeProjects.map((project) => [String(project.id), project]));
+    const leadById = new Map((leads || []).map((lead) => [String(lead.id), lead]));
     const vcStageById = new Map((vcStagesRes.data || []).map((stage) => [String(stage.id), stage]));
     const productionProjectIds = activeProjects
       .filter((project) => !isProductionTaskTerminalStage(sxStageById.get(String(project.sx_kanban_column_id || ''))))
@@ -604,8 +678,9 @@ r.get('/project-overview', async (req, res) => {
     const tuneTaskQuery = (q, { kinds, leadScoped = false } = {}) => {
       q = applyPrimaryLeadOnly(q, leadScoped);
       if (kinds?.length) q = q.in('task_kind', kinds);
-      if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
-      if (!isManagerLike(req.user)) q = applyEmployeeScope(q, req.user.userId);
+      if (!requestedProjectId && effectiveCompany) q = q.eq('company_id', effectiveCompany);
+      // Trang dự án đang mở: lấy đủ cụm của hồ sơ. Trang quản lý nhiệm vụ: vẫn lọc NV.
+      if (!requestedProjectId && !isManagerLike(req.user)) q = applyEmployeeScope(q, req.user.userId);
       return q.order('unified_id');
     };
     // Nhân sự SX chỉ cần danh sách dự án — đã biết từ trước lượt đọc nhiệm vụ. Trước đây
@@ -657,6 +732,12 @@ r.get('/project-overview', async (req, res) => {
 
     // Dùng lại lượt đọc đã khởi động ở trên — không đọc lần hai.
     const productionStaffPromise = staffPromiseEarly;
+    const installEventsPromise = (!requestedModule || requestedModule === 'vc') && activeProjects.length
+      ? attachInstallEventDatesToProjects(activeProjects).catch((e) => {
+        console.warn('[work-tasks] attach install events:', e.message);
+        return activeProjects;
+      })
+      : Promise.resolve(activeProjects);
 
     /**
      * Chi tiết nhiệm vụ (để suy ra hạng mục) chỉ cần id của chính nhóm nhiệm vụ đó, nên
@@ -694,9 +775,14 @@ r.get('/project-overview', async (req, res) => {
         : [];
     });
 
-    const [crmTasks, productionTasks, logisticsTasks, productionStaffRows] = await Promise.all([
-      crmTasksPromise, productionTasksPromise, logisticsTasksPromise, productionStaffPromise,
+    const [crmTasks, productionTasks, logisticsTasks, productionStaffRows, projectsWithInstall] = await Promise.all([
+      crmTasksPromise, productionTasksPromise, logisticsTasksPromise, productionStaffPromise, installEventsPromise,
     ]);
+    if (Array.isArray(projectsWithInstall) && projectsWithInstall.length) {
+      projectsWithInstall.forEach((project) => {
+        if (project?.id) projectById.set(String(project.id), project);
+      });
+    }
 
     const merged = new Map();
     [...crmTasks, ...productionTasks, ...logisticsTasks].forEach((task) => {
@@ -717,7 +803,7 @@ r.get('/project-overview', async (req, res) => {
       .sort((a, b) => String(a.unified_id).localeCompare(String(b.unified_id)));
     await enrichTaskModuleOwners(childTasks, {
       projects: activeProjects,
-      leads: needsCrmLeads ? leads : null,
+      leads,
       productionStaff: productionStaffRows,
     });
 
@@ -776,16 +862,24 @@ r.get('/project-overview', async (req, res) => {
       groupMap.get(groupKey).children.push(task);
     });
 
+    const stampRows = [];
     const tasks = [...groupMap.values()].map((group) => {
       const completedChildren = group.children.filter((task) => terminalStatuses.has(String(task.status || '').toLowerCase()));
       const openChildren = group.children.filter((task) => !terminalStatuses.has(String(task.status || '').toLowerCase()));
       if (!openChildren.length) return null;
       const first = openChildren[0] || group.children[0];
       const assigned = openChildren.find((task) => task.effective_assignee_id) || null;
-      const deadlines = openChildren
-        .map((task) => task.deadline)
-        .filter(Boolean)
-        .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+      const project = projectById.get(String(first.project_id || '')) || null;
+      const lead = leadById.get(String(first.lead_id || '')) || null;
+      const deadline = resolveOverviewGroupDeadline({
+        lane: group.lane,
+        project,
+        lead,
+        sxStage: project ? sxStageById.get(String(project.sx_kanban_column_id || '')) : null,
+        vcStage: project ? vcStageById.get(String(project.vc_kanban_column_id || '')) : null,
+        openChildren,
+      });
+      stampRows.push(...collectOpenChildDeadlineStamps(deadline, openChildren));
       return {
         unified_id: `group:${group.key}`,
         source: first.source,
@@ -802,7 +896,7 @@ r.get('/project-overview', async (req, res) => {
         project_code: first.project_code,
         project_name: first.project_name,
         lead_title: first.lead_title,
-        deadline: deadlines[0] || null,
+        deadline,
         child_completed: completedChildren.length,
         child_total: group.children.length,
         assignee_id: assigned?.effective_assignee_id || null,
@@ -813,6 +907,16 @@ r.get('/project-overview', async (req, res) => {
         effective_assignee_name: assigned?.effective_assignee_name || first.module_owner_name || null,
       };
     }).filter(Boolean);
+    if (stampRows.length) {
+      try {
+        const { isStampOpenTaskDeadlinesEnabled } = require('../jobs/projectDeadlineDispatch');
+        if (await isStampOpenTaskDeadlinesEnabled()) {
+          await stampOpenChildModuleDeadlines(stampRows);
+        }
+      } catch (stampErr) {
+        console.warn('[work-tasks] stamp module deadline:', stampErr.message);
+      }
+    }
     return finishProjectOverview(res, tasks, { companies: allCompanies, regions: allRegions });
   } catch (e) {
     console.error('[work-tasks] project-overview:', e);

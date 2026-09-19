@@ -43,6 +43,8 @@ import {
   resolveSxPlanInstallYmd,
   resolveSxReceptionYmd,
   SX_INSTALL_BACK_PLAN_RULES,
+  sxGroupPlanSlice,
+  sxStagePlanSlice,
 } from '../lib/sxWorkshopSchedule';
 import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
@@ -60,6 +62,8 @@ import CrmChatNotesPanel from '../components/CrmChatNotesPanel';
 import FacebookChatTab from '../components/FacebookChatTab';
 import ZaloChatTab from '../components/ZaloChatTab';
 import PipelineStepper from '../components/PipelineStepper';
+import { gomCotTheoNhom } from '../lib/sxGopCot';
+import { sxStagePrimaryOwnerName } from '../lib/sxStageStaff';
 import { OverlayPortal } from '../components/Modal';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
@@ -79,7 +83,7 @@ import { driveLinksCountByEntity } from '../lib/drive';
 import { canManageWorkshopProjectFiles } from '../lib/fileOwnership';
 
 /** Cùng tên tab với LeadDetail (chi tiết deal) — bỏ calls; facebook/zalo chỉ hiện khi có liên kết inbox */
-const DEAL_TAB_KEYS = new Set(['tasks', 'shared-workspace', 'documents', 'notes', 'comments', 'team', 'approvals', 'incidents', 'procurement', 'facebook', 'zalo']);
+const DEAL_TAB_KEYS = new Set(['tasks', 'shared-workspace', 'documents', 'notes', 'comments', 'team', 'approvals', 'procurement', 'facebook', 'zalo']);
 const LEGACY_TAB_MAP = {
   timeline: 'comments',
   'crm-notes': 'notes',
@@ -297,6 +301,7 @@ function WorkshopInfoPanel({
   crmDeal = null,
   onDealUpdate,
   isVC = false,
+  pipelineStages = [],
 }) {
   const [editing, setEditing] = useState(null);
   const [draft, setDraft] = useState('');
@@ -373,6 +378,22 @@ function WorkshopInfoPanel({
     }),
     [planInstallYmd, receptionYmd, project?.sx_schedule_slip_days],
   );
+
+  const groupedDeadlineRows = useMemo(() => {
+    if (isVC || !installBackPlan || !(pipelineStages || []).length) return [];
+    return gomCotTheoNhom(pipelineStages).map((g) => {
+      const parentSlice = sxGroupPlanSlice(installBackPlan, g);
+      return {
+        ...g,
+        slice: parentSlice,
+        cotNho: g.cotNho.map((s) => ({
+          stage: s,
+          owner: sxStagePrimaryOwnerName(s),
+          slice: parentSlice || sxStagePlanSlice(installBackPlan, s, g),
+        })),
+      };
+    });
+  }, [isVC, installBackPlan, pipelineStages]);
 
   const formatPlanRange = (startYmd, endYmd) => {
     if (!startYmd && !endYmd) return '—';
@@ -718,26 +739,85 @@ function WorkshopInfoPanel({
                 </ul>
               </div>
               <div className="overflow-hidden rounded-md border border-indigo-100 bg-white divide-y divide-indigo-50">
-                {[
-                  installBackPlan.planning,
-                  installBackPlan.cabinet,
-                  installBackPlan.finishing,
-                  installBackPlan.packing,
-                ].map((stage) => (
-                  <div key={stage.key} className="flex items-start justify-between gap-2 px-2 py-1.5 text-[11px]">
+                {groupedDeadlineRows.length > 0 ? (
+                  groupedDeadlineRows.map((g) => {
+                    const groupSlice = g.slice
+                      || (g.cotNho.map((x) => x.slice).filter(Boolean)[0] || null);
+                    return (
+                      <div key={g.key} className="px-2 py-1.5 space-y-1">
+                        <div className="flex items-start justify-between gap-2 text-[11px]">
+                          <div className="min-w-0">
+                            <p className="font-semibold text-slate-800">{g.nhan}</p>
+                            {groupSlice ? (
+                              <p className="text-[10px] text-slate-500 tabular-nums">
+                                {formatPlanRange(groupSlice.startYmd, groupSlice.endYmd)}
+                                {g.cotNho.length > 1 ? ' · song song' : ''}
+                              </p>
+                            ) : (
+                              <p className="text-[10px] text-slate-400">Chưa gán nhóm deadline</p>
+                            )}
+                          </div>
+                          {groupSlice ? (
+                            <span className="shrink-0 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-800 tabular-nums">
+                              {groupSlice.daysFixed != null
+                                ? `${groupSlice.daysFixed} ngày`
+                                : (groupSlice.days != null ? `${groupSlice.days} ngày` : '')}
+                            </span>
+                          ) : null}
+                        </div>
+                        {g.cotNho.length > 1 || g.cotNho.some((x) => x.owner) ? (
+                          <ul className="space-y-0.5">
+                            {g.cotNho.map((x) => (
+                              <li key={x.stage.id} className="flex items-baseline justify-between gap-1.5 text-[10px] leading-snug">
+                                <span className="min-w-0 truncate text-slate-700" title={x.stage.name}>
+                                  {x.stage.name}
+                                </span>
+                                <span className="shrink-0 max-w-[46%] truncate text-right text-indigo-800 font-medium" title={x.owner || 'Chưa setup người phụ trách cột'}>
+                                  {x.owner || '—'}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
+                    );
+                  })
+                ) : (
+                  [
+                    installBackPlan.planning,
+                    installBackPlan.cabinet,
+                    installBackPlan.finishing,
+                    installBackPlan.packing,
+                  ].map((stage) => (
+                    <div key={stage.key} className="flex items-start justify-between gap-2 px-2 py-1.5 text-[11px]">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-800">{stage.label}</p>
+                        <p className="text-[10px] text-slate-500 tabular-nums">
+                          {formatPlanRange(stage.startYmd, stage.endYmd)}
+                        </p>
+                      </div>
+                      <span className="shrink-0 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-800 tabular-nums">
+                        {stage.daysFixed != null
+                          ? `${stage.daysFixed} ngày`
+                          : (stage.days != null ? `${stage.days} ngày` : 'Phần còn lại')}
+                      </span>
+                    </div>
+                  ))
+                )}
+                {groupedDeadlineRows.length > 0 && installBackPlan.packing
+                  && !groupedDeadlineRows.some((g) => g.cotNho.some((x) => x.slice?.key === 'packing')) ? (
+                  <div className="flex items-start justify-between gap-2 px-2 py-1.5 text-[11px]">
                     <div className="min-w-0">
-                      <p className="font-semibold text-slate-800">{stage.label}</p>
+                      <p className="font-semibold text-slate-800">Giao hàng (VC/LĐ)</p>
                       <p className="text-[10px] text-slate-500 tabular-nums">
-                        {formatPlanRange(stage.startYmd, stage.endYmd)}
+                        {formatPlanRange(installBackPlan.packing.startYmd, installBackPlan.packing.endYmd)}
                       </p>
                     </div>
                     <span className="shrink-0 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-800 tabular-nums">
-                      {stage.daysFixed != null
-                        ? `${stage.daysFixed} ngày`
-                        : (stage.days != null ? `${stage.days} ngày` : 'Phần còn lại')}
+                      {installBackPlan.packing.daysFixed} ngày
                     </span>
                   </div>
-                ))}
+                ) : null}
                 <div className="flex items-start justify-between gap-2 px-2 py-1.5 text-[11px] bg-blue-50/80">
                   <div className="min-w-0">
                     <p className="font-semibold text-blue-900">Ngày lắp đặt</p>
@@ -1677,6 +1757,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   /** Danh sách thô từ GET /tasks?project_id= — dùng khi không có deal CRM để vẫn hiển thị nhiệm vụ xưởng */
   const [workshopTasksForProject, setWorkshopTasksForProject] = useState([]);
   const [savingProductionOwner, setSavingProductionOwner] = useState(false);
+  const [addStaffUserId, setAddStaffUserId] = useState('');
+  const [savingStaff, setSavingStaff] = useState(false);
   const [vcTeams, setVcTeams] = useState([]);
   const [savingTeamAssign, setSavingTeamAssign] = useState(false);
   const [showAddCrmActivity, setShowAddCrmActivity] = useState(false);
@@ -2610,6 +2692,38 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     setSavingProductionOwner(false);
   }, [project?.id, refreshProjectSilently, moduleKey, MOD.label]);
 
+  const addProductionStaff = useCallback(async (userId) => {
+    if (!project?.id || !userId) return;
+    setSavingStaff(true);
+    try {
+      const { data } = await api.post(`/projects/${project.id}/production-staff`, { user_ids: [userId] });
+      setAddStaffUserId('');
+      if (Array.isArray(data?.production_staff)) {
+        setProject((prev) => (prev ? { ...prev, production_staff: data.production_staff } : prev));
+      }
+      await refreshProjectSilently();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Không thêm được nhân viên vào dự án');
+    }
+    setSavingStaff(false);
+  }, [project?.id, refreshProjectSilently]);
+
+  const removeProductionStaff = useCallback(async (userId) => {
+    if (!project?.id || !userId) return;
+    if (!confirm('Gỡ nhân viên này khỏi đội dự án?')) return;
+    setSavingStaff(true);
+    try {
+      const { data } = await api.delete(`/projects/${project.id}/production-staff/${userId}`);
+      if (Array.isArray(data?.production_staff)) {
+        setProject((prev) => (prev ? { ...prev, production_staff: data.production_staff } : prev));
+      }
+      await refreshProjectSilently();
+    } catch (e) {
+      alert(e.response?.data?.error || 'Không gỡ được nhân viên');
+    }
+    setSavingStaff(false);
+  }, [project?.id, refreshProjectSilently]);
+
   const setVcTeamAssign = useCallback(async (field, value) => {
     if (!project?.id || moduleKey !== 'vc') return;
     setSavingTeamAssign(true);
@@ -2621,6 +2735,57 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     }
     setSavingTeamAssign(false);
   }, [project?.id, moduleKey, refreshProjectSilently]);
+
+  // ── VIỆC SONG SONG của riêng dự án này (project_substage_status — migration 605) ──
+  // Đặt hook ở đây, TRƯỚC mấy nhánh return sớm (loadError / loading) bên dưới,
+  // nếu để sau thì hook thành có điều kiện và React sẽ vỡ thứ tự hook.
+  const [sxTrangThaiO, setSxTrangThaiO] = useState({});
+  const sxNhomStageIds = useMemo(() => {
+    if (moduleKey === 'vc') return '';
+    return (project?.sxKanbanStages || [])
+      .filter((st) => String(st?.group_key || '').trim())
+      .map((st) => String(st.id))
+      .join(',');
+  }, [moduleKey, project?.sxKanbanStages]);
+
+  useEffect(() => {
+    if (!sxNhomStageIds || !id) { setSxTrangThaiO({}); return undefined; }
+    let song = true;
+    (async () => {
+      try {
+        const { data } = await api.get('/production/substage-status', {
+          params: { stage_ids: sxNhomStageIds, project_id: id },
+        });
+        if (!song) return;
+        const m = {};
+        (data?.rows || []).forEach((rw) => { m[String(rw.stage_id)] = rw.trang_thai || 'chua'; });
+        setSxTrangThaiO(m);
+      } catch {
+        if (song) setSxTrangThaiO({});
+      }
+    })();
+    return () => { song = false; };
+  }, [sxNhomStageIds, id]);
+
+  const doiTrangThaiO = useCallback(async (stageId, tt) => {
+    if (!id || !stageId) return;
+    const k = String(stageId);
+    let truoc;
+    setSxTrangThaiO((prev) => { truoc = prev[k]; return { ...prev, [k]: tt }; });
+    try {
+      await api.put('/production/substage-status', {
+        project_id: id, stage_id: k, trang_thai: tt,
+      });
+    } catch (e) {
+      // Trả đúng giá trị cũ — không đoán, tránh hiện sai trạng thái sản xuất.
+      setSxTrangThaiO((prev) => {
+        const next = { ...prev };
+        if (truoc === undefined) delete next[k]; else next[k] = truoc;
+        return next;
+      });
+      alert(e?.response?.data?.error || 'Không lưu được trạng thái việc song song');
+    }
+  }, [id]);
 
   const saveCrmActivity = async () => {
     const dealId = project?.crmDeals?.[0]?.id;
@@ -3141,6 +3306,18 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         ? (crmDealTaskSummary.total || 0)
         : (productionTaskSummary.total || 0);
   const taskUsers = safeTaskUsers;
+  const uidSelf = String(user?.id || user?.userId || '');
+  const canManageTeam = !!(uidSelf && (
+    isAdminLike(user)
+    || isProductionAdmin(user)
+    || String(project?.production_person_id || project?.production_person?.id || '') === uidSelf
+    || String(project?.logistics_person_id || project?.logistics_person?.id || '') === uidSelf
+    || (project?.production_staff || []).some((u) => u?.is_primary && String(u.id) === uidSelf)
+    || (primaryCrmDeal && (
+      String(primaryCrmDeal.assigned_to || '') === uidSelf
+      || String(primaryCrmDeal.lead_owner_id || '') === uidSelf
+    ))
+  ));
   const documentsForZipTotal = safeProjectDocs.length + visibleCrmSharedDocs.length + safeTaskFiles.length;
 
   const handleDownloadAllDocuments = async () => {
@@ -3361,6 +3538,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         currentStageId={currentStageId}
         onMoveToStage={moveStage}
         linearProgress
+        nhomSongSong={moduleKey !== 'vc' && safePipelineStages.some((st) => String(st?.group_key || '').trim())}
+        trangThaiO={sxTrangThaiO}
+        onDoiTrangThai={doiTrangThaiO}
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
@@ -3368,6 +3548,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         <div className="lg:col-span-1 space-y-4">
           <WorkshopInfoPanel
             project={project}
+            pipelineStages={safePipelineStages}
             onUpdate={() => {
               refreshProjectSilently();
               loadWorkshopPlacements();
@@ -3438,20 +3619,61 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               ) : (
                 <PersonCard label="Phụ trách chính" person={project.production_person} />
               )}
-              {moduleKey !== 'vc' && (project.production_staff?.length > 0) && (
-                <div className="pl-2">
-                  <p className="text-[10px] text-gray-400 uppercase font-medium mb-1">Đội SX ({project.production_staff.length})</p>
+              {moduleKey !== 'vc' && (
+                <div className="pl-2 space-y-1.5">
+                  <p className="text-[10px] text-gray-400 uppercase font-medium">
+                    Đội SX ({project.production_staff?.length || 0})
+                  </p>
                   <div className="flex flex-wrap gap-1">
-                    {project.production_staff.map((u) => (
+                    {(project.production_staff || []).map((u) => (
                       <span
                         key={u.id}
-                        className={`text-[11px] px-2 py-0.5 rounded ${u.is_primary ? 'bg-indigo-100 text-indigo-800 font-medium' : 'bg-gray-100 text-gray-700'}`}
+                        className={`inline-flex items-center gap-0.5 text-[11px] px-2 py-0.5 rounded ${u.is_primary ? 'bg-indigo-100 text-indigo-800 font-medium' : 'bg-gray-100 text-gray-700'}`}
                         title={u.is_primary ? 'Phụ trách chính' : undefined}
                       >
                         {u.full_name}{u.is_primary ? ' ★' : ''}
+                        {canManageTeam && !u.is_primary && (
+                          <button
+                            type="button"
+                            onClick={() => removeProductionStaff(u.id)}
+                            disabled={savingStaff}
+                            className="ml-0.5 text-gray-400 hover:text-red-600 cursor-pointer disabled:opacity-50"
+                            title="Gỡ khỏi dự án"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
                       </span>
                     ))}
+                    {!(project.production_staff || []).length && (
+                      <span className="text-[11px] text-gray-400">Chưa có NV — CRM chỉ gắn phụ trách chính</span>
+                    )}
                   </div>
+                  {canManageTeam && (
+                    <div className="flex gap-1.5">
+                      <select
+                        value={addStaffUserId}
+                        onChange={(e) => setAddStaffUserId(e.target.value)}
+                        disabled={savingStaff}
+                        className="flex-1 h-8 px-2 border border-gray-200 rounded-lg text-xs bg-white disabled:opacity-60"
+                      >
+                        <option value="">— Thêm NV vào dự án —</option>
+                        {taskUsers
+                          .filter((u) => !(project.production_staff || []).some((s) => String(s.id) === String(u.id)))
+                          .map((u) => (
+                            <option key={u.id} value={u.id}>{u.full_name}</option>
+                          ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => addProductionStaff(addStaffUserId)}
+                        disabled={!addStaffUserId || savingStaff}
+                        className="h-8 px-2 bg-indigo-600 text-white rounded-lg text-xs font-medium cursor-pointer disabled:opacity-50 inline-flex items-center gap-1"
+                      >
+                        <Users className="h-3 w-3" /> Thêm
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
               <div className="pl-2">
@@ -3572,9 +3794,6 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               {crmLeadId && inboxLinks.zalo && tabBtn('zalo', '💬 Zalo OA')}
               {tabBtn('comments', `💬 Bình luận${commentCount > 0 ? ` (${commentCount})` : ''}`)}
               {crmLeadId && tabBtn('history', '🕘 Lịch sử')}
-              {tabBtn('incidents', incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length > 0
-                ? `⚠️ Sự cố (${incidents.filter(i => i.status === 'open' || i.status === 'in_progress').length})`
-                : '⚠️ Sự cố')}
               {moduleKey !== 'vc' && tabBtn('procurement', '📦 Vật tư / Mua hàng')}
               {tabBtn('team', teamTabLabel)}
               {moduleKey !== 'vc' && tabBtn('approvals', '✅ Gửi duyệt')}
@@ -3652,8 +3871,10 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     sxTemplateCompanyId={project?.company_id || project?.company?.id || null}
                     dealResponsible={primaryCrmDeal}
                     workshopProject={project}
+                    sxTrangThaiO={sxTrangThaiO}
+                    onDoiTrangThai={doiTrangThaiO}
                   />
-                ) : scopedWorkshopTasksForTab.length > 0 ? (
+                ) : scopedWorkshopTasksForTab.length ? (
                   <WorkshopTasksFallbackPanel
                     tasks={scopedWorkshopTasksForTab}
                     moduleLabel={MOD.label}

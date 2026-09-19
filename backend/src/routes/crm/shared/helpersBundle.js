@@ -198,8 +198,11 @@ const { pipeOrgOverviewReportPdf } = require('../../../helpers/orgOverviewReport
 
 const ZALO_APP_SETTING_KEY = 'zalo_oa_notify';
 
+/** Admin HST / admin công ty / platform — không bắt company_id trên JWT. */
 function userIsAdmin(role) {
-  return normalizeCrmUserRole(role) === 'admin';
+  const r = normalizeCrmUserRole(role);
+  if (r === 'platform_admin') return true;
+  return userSeesAllCrmLeads(r);
 }
 
 function companyRegionExtraColumnsMissing(error) {
@@ -410,6 +413,9 @@ async function enforceCommercialDocCompanyOnWrite(req, res, payloadCompanyId, en
 function requireUserCompanyId(req, res) {
   const cid = req.user?.company_id;
   if (cid) return cid;
+  if (isSystemAdmin(req.user) || isPlatformAdmin(req.user) || userIsAdmin(req.user?.role)) {
+    return null;
+  }
   res.status(400).json({ error: 'Thiếu company_id của user. Vui lòng đăng xuất/đăng nhập lại hoặc gán company cho tài khoản.' });
   return null;
 }
@@ -423,6 +429,9 @@ async function requireUserCompanyIdResolved(req, res) {
     if (cid) req.user.company_id = cid;
   }
   if (!cid) {
+    if (isSystemAdmin(req.user) || isPlatformAdmin(req.user) || userIsAdmin(req.user?.role)) {
+      return null;
+    }
     res.status(400).json({ error: 'Thiếu company_id của user. Vui lòng đăng xuất/đăng nhập lại hoặc gán company cho tài khoản.' });
     return null;
   }
@@ -469,6 +478,8 @@ async function getZaloNotifySettings() {
     template_structure,
   };
 }
+
+const { getZaloAccessTokenHieuLuc } = require('../../../helpers/zaloTokenHieuLuc');
 
 async function upsertZaloNotifySettings(nextVal) {
   const { error } = await supabase.from('app_settings').upsert(
@@ -673,7 +684,7 @@ async function fetchCrmPipelineZaloSlice(pipelineId) {
 /**
  * Gửi Zalo OA theo cấu hình app_settings + template deal.
  * @param {object} opts
- * @param {boolean} [opts.allowWithoutStageFlag] — true: gửi từ nút thủ công (deal ở cột Hoàn thành), không cần send_zalo_on_enter
+ * @param {boolean} [opts.allowWithoutStageFlag] — true: gửi từ nút thủ công, không cần send_zalo_on_enter / cột Hoàn thành
  * @param {boolean} [opts.force] — đã gửi OK trước đó (có msg_id): gửi thêm lần nữa. Lần gửi lỗi (không msg_id) luôn cho thử lại không cần force.
  * @param {Record<string,string>|null} [opts.templateDataOverride] — gửi đúng object này làm template_data (đã điền từ deal / sửa tay); bỏ qua pickDealZaloTemplatePayload.
  */
@@ -694,19 +705,27 @@ async function executeZaloDealStageNotify({
   }
 
   const settings = await getZaloNotifySettings();
-  if (!settings.enabled || !settings.access_token) {
-    console.log('[Zalo OA] Bỏ qua — tắt chức năng hoặc thiếu token');
+  // Token lấy từ zalo_oa_accounts (tự xoay vòng), không dùng bản chép trong app_settings.
+  const tokenHieuLuc = await getZaloAccessTokenHieuLuc(settings);
+  if (!settings.enabled || !tokenHieuLuc.token) {
+    console.log('[Zalo OA] Bỏ qua — tắt chức năng hoặc thiếu token (nguồn:', tokenHieuLuc.nguon, ')');
     return { ok: false, skipped: true, reason: 'zalo_not_configured' };
   }
 
   const { data: prevSend } = await supabase.from('crm_zalo_stage_sends')
-    .select('msg_id, error_message')
+    .select('msg_id, error_message, updated_at')
     .eq('lead_id', leadId)
     .eq('stage_id', stageId)
     .maybeSingle();
   if (!force && prevSend?.msg_id) {
     console.log('[Zalo OA] Đã gửi thành công trước đó cho lead+stage này');
-    return { ok: true, skipped: true, reason: 'already_sent', msg_id: prevSend.msg_id };
+    return {
+      ok: true,
+      skipped: true,
+      reason: 'already_sent',
+      msg_id: prevSend.msg_id,
+      updated_at: prevSend.updated_at || null,
+    };
   }
   /* Có error_message nhưng không msg_id → lần trước thất bại: cho gửi lại (sửa template/SĐT không cần xóa DB). */
 
@@ -723,7 +742,7 @@ async function executeZaloDealStageNotify({
     .select('id, name, pipeline_type')
     .eq('id', stageId)
     .maybeSingle();
-  if (!isDealStageHoanThanhForZalo(zaloStageMeta)) {
+  if (!allowWithoutStageFlag && !isDealStageHoanThanhForZalo(zaloStageMeta)) {
     console.log('[Zalo OA] Bỏ qua — không phải cột Hoàn thành');
     return { ok: false, skipped: true, reason: 'not_hoan_thanh_stage' };
   }
@@ -762,7 +781,7 @@ async function executeZaloDealStageNotify({
   }
 
   const result = await sendZaloTemplateMessage({
-    accessToken: settings.access_token,
+    accessToken: tokenHieuLuc.token,
     phone: normalizedForSend,
     templateId,
     templateData,
@@ -806,16 +825,9 @@ async function executeZaloDealStageNotify({
   };
 }
 
-/** Gửi Zalo khi deal vào cột có send_zalo_on_enter (chạy nền, không chặn response) */
-async function maybeSendZaloOnDealStageEnter({ leadId, stageId, pipelineType, sendZaloOnEnter }) {
-  await executeZaloDealStageNotify({
-    leadId,
-    stageId,
-    pipelineType,
-    sendZaloOnEnter,
-    allowWithoutStageFlag: false,
-    force: false,
-  });
+/** Trước đây tự gửi Zalo khi deal vào cột send_zalo_on_enter. Đã tắt — chỉ gửi bằng nút «Gửi Zalo» trên chi tiết deal. */
+async function maybeSendZaloOnDealStageEnter() {
+  return { ok: false, skipped: true, reason: 'auto_send_disabled' };
 }
 const { onLeadWon = async () => null, onOrderConfirmed = async () => null, onQuotationAccepted = async () => null, onProjectCompleted = async () => null, getProjectCRMSummary = async () => ({}), getOverdueFollowUps = async () => [], getStaleLeads = async () => [], createProjectFromLead = async () => null } = autoFlowFns;
 
@@ -7117,6 +7129,7 @@ module.exports = {
   SURVEY_EVENT_TYPES,
   XLSX,
   ZALO_APP_SETTING_KEY,
+  getZaloAccessTokenHieuLuc,
   crmSchemaCompat,
   addPhoneToAutoLeadBlocklist,
   aggregateCrmCommentReactions,

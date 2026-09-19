@@ -1,7 +1,10 @@
 /**
  * Tiến độ hạn cam kết trên tổng quan dự án (Work Unified / chi tiết).
  * GCCK (Cánh kính) đã sang cột SX «Hoàn thành» không còn tính trễ theo ngày lắp.
+ * Các loại khác: hạn bàn giao = deadline VC/LĐ đang chạy (buổi lắp còn lại).
  */
+
+const { isHucabiCompany } = require('./companyDeadlineClock');
 
 function foldVi(s) {
   return String(s || '')
@@ -28,7 +31,24 @@ function isGcckProject(project) {
 function isGcckSxCompleted(sxStage) {
   if (!sxStage) return false;
   const n = foldVi(sxStage.name);
-  return n.includes('hoan thanh') || n.includes('da giao') || n.includes('giao xong');
+  return n.includes('hoan thanh') || n.includes('hoan thien') || n.includes('da giao') || n.includes('giao xong');
+}
+
+/** HCB + phân loại Cánh kính (hoặc mã GCCK-). */
+function isHcbCanhKinhProject(project) {
+  if (!isGcckProject(project)) return false;
+  return isHucabiCompany(project.company_id || project.company);
+}
+
+/**
+ * Cột SX «Hoàn thành» / Đã thu — không gồm «Đợi thanh toán» (Đã công)
+ * hay «Chờ giao hàng».
+ */
+function isSxHoanThanhColumn(col) {
+  if (!col) return false;
+  if (col.counts_as_collected_revenue) return true;
+  const n = foldVi(col.name);
+  return n === 'hoan thanh' || n.startsWith('hoan thanh ');
 }
 
 function shouldSkipGcckInstallOverdue(project, sxStage) {
@@ -54,5 +74,7 @@ module.exports = {
   classifyProjectForecast,
   isGcckProject,
   isGcckSxCompleted,
+  isHcbCanhKinhProject,
+  isSxHoanThanhColumn,
   shouldSkipGcckInstallOverdue,
 };

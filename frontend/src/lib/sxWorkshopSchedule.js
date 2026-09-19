@@ -214,7 +214,7 @@ export const SX_INSTALL_BACK_PLAN_RULES = [
   'Tính ngược từ ngày lắp đặt trên kế hoạch VC/LĐ (ngày lịch).',
   'Giao hàng: 1 ngày (ngay trước ngày lắp) — board VC/LĐ.',
   'Hoàn thiện SX: 2 ngày (trước giao hàng). Ngày hoàn thiện = lắp − 2.',
-  'Gia công (vật tư, kính, sơn, thùng, alu, cánh): 2 ngày trước hoàn thiện.',
+  'Gia công: các cột gộp (vật tư, kính, sơn, thùng, alu, cánh) chạy song song trong cùng 2 ngày trước hoàn thiện.',
   'Kế hoạch SX (tiếp nhận → duyệt): ngày còn lại từ tiếp nhận xưởng đến hết ngày trước gia công.',
 ];
 
@@ -352,4 +352,76 @@ export function buildSxInstallBackPlan(installYmd, { startYmd = null, slipDays =
       minHintDays: 1,
     },
   };
+}
+
+export function endYmdForDeadlineGroup(plan, group) {
+  const key = String(group || '').trim();
+  if (!plan || !key) return '';
+  return String(plan[key]?.endYmd || '').slice(0, 10);
+}
+
+/** Kế hoạch lắp của một dự án (cùng công thức hạn Kanban). */
+export function sxInstallPlanForProject(project) {
+  const installYmd = resolveSxPlanInstallYmd(project);
+  if (!installYmd) return null;
+  const startYmd = ymdFromUnknownDate(project?.sx_reception_date)
+    || ymdFromUnknownDate(project?.created_at);
+  return buildSxInstallBackPlan(installYmd, {
+    startYmd,
+    slipDays: project?.sx_schedule_slip_days || 0,
+  });
+}
+
+/** Khi cột chưa gán deadline_group, suy từ group_key (Kanban gộp). */
+export const SX_GROUP_KEY_DEADLINE = {
+  tiep_nhan: 'planning',
+  ke_hoach: 'planning',
+  duyet: 'planning',
+  gia_cong: 'cabinet',
+  hoan_thien: 'finishing',
+  dong_goi: 'packing',
+  cong_no: null,
+};
+
+export function sxStageDeadlineGroup(stage, siblingStages = null) {
+  const raw = String(stage?.deadline_group || '').trim();
+  if (raw) return raw;
+  const k = String(stage?.group_key || '').trim();
+  if (k && Object.prototype.hasOwnProperty.call(SX_GROUP_KEY_DEADLINE, k)) {
+    return SX_GROUP_KEY_DEADLINE[k] || '';
+  }
+  if (k && Array.isArray(siblingStages)) {
+    const sib = siblingStages.find((s) => (
+      String(s?.group_key || '').trim() === k && String(s?.deadline_group || '').trim()
+    ));
+    if (sib) return String(sib.deadline_group).trim();
+  }
+  return '';
+}
+
+/** Nhóm hạn của cột lớn — mọi cột con song song dùng chung. */
+export function sxGroupDeadlineGroup(group) {
+  const k = String(group?.key || '').trim();
+  if (k && Object.prototype.hasOwnProperty.call(SX_GROUP_KEY_DEADLINE, k)) {
+    return SX_GROUP_KEY_DEADLINE[k] || '';
+  }
+  const stages = group?.cotNho || [];
+  for (const s of stages) {
+    const raw = String(s?.deadline_group || '').trim();
+    if (raw) return raw;
+  }
+  return '';
+}
+
+export function sxGroupPlanSlice(plan, group) {
+  const key = sxGroupDeadlineGroup(group);
+  if (!plan || !key || !plan[key]) return null;
+  return plan[key];
+}
+
+/** Khoảng hạn của một cột nhỏ — ưu tiên hạn cột cha (nhóm song song). */
+export function sxStagePlanSlice(plan, stage, parentGroup = null) {
+  const key = (parentGroup ? sxGroupDeadlineGroup(parentGroup) : '') || sxStageDeadlineGroup(stage);
+  if (!plan || !key || !plan[key]) return null;
+  return plan[key];
 }
