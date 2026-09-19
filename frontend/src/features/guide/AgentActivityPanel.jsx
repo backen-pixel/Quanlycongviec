@@ -26,6 +26,7 @@ import GuidePageKnowledge from './GuidePageKnowledge';
 import { useAgent, useCopilotKit } from '@copilotkit/react-core/v2';
 import { deriveAgentActions, countRealActions } from './lib/agentActions';
 import { FULL_ACCESS } from './lib/guideAccess';
+import { fullAccessStillOn, onFullAccessChange } from './lib/guideUiFlags';
 import { REGION_MAP_CONTEXT, parseRegionMap } from './lib/regionTools';
 import GuideRegionMap from './GuideRegionMap';
 import api from '../../lib/api';
@@ -133,16 +134,38 @@ function useContextSnapshot(copilotkit, active) {
  * "đã đi qua những đâu". Gộp vào một endpoint thì mỗi lần mở tab Chi phí lại kéo thêm dữ liệu
  * không dùng, và ngược lại.
  */
-function useFlow(threadId, active, tick) {
+/**
+ * `running` LÀ KHOÁ NẠP LẠI QUAN TRỌNG NHẤT — không phải `tick`.
+ *
+ * Bản trước chỉ nạp lại khi `actions.length` đổi, tức khi có thêm một bước tool. Nhưng thủ thư,
+ * ghi kinh nghiệm và sắc mặt đều chạy SAU bước tool cuối cùng, lúc `actions.length` đã đứng yên
+ * — nên chúng không bao giờ tự hiện ra. Đã đo trên màn hình thật: server trả về sự kiện, sơ đồ
+ * không có node nào cho nó, và chỉ hiện sau khi bấm sang tab khác rồi quay lại.
+ *
+ * Nên nạp thêm một nhịp TRỄ sau khi lượt chạy xong. 2,5 giây là vì client còn phải POST
+ * `/experience` rồi server mới gọi thủ thư — hỏi ngay lúc `isRunning` tắt thì vẫn sớm.
+ */
+function useFlow(threadId, active, tick, running) {
   const [data, setData] = useState(null);
+  const wasRunning = useRef(false);
+
   useEffect(() => {
     if (!active || !threadId) return undefined;
     let cancelled = false;
-    api.get('/copilotkit/debug/flow', { params: { thread_id: threadId } })
-      .then((r) => { if (!cancelled) setData(r.data?.events || []); })
-      .catch(() => { if (!cancelled) setData([]); });
-    return () => { cancelled = true; };
-  }, [threadId, active, tick]);
+    let timer = null;
+
+    const load = () => api.get('/copilotkit/debug/flow', { params: { thread_id: threadId } })
+      .then((r) => { if (!cancelled) setData({ events: r.data?.events || [], layers: r.data?.layers || [] }); })
+      .catch(() => { if (!cancelled) setData({ events: [], layers: [] }); });
+
+    load();
+    // Vừa chuyển từ ĐANG CHẠY sang XONG → còn sự kiện về muộn, hỏi lại một nhịp nữa.
+    if (wasRunning.current && !running) timer = setTimeout(load, 2500);
+    wasRunning.current = !!running;
+
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [threadId, active, tick, running]);
+
   return data;
 }
 
@@ -180,9 +203,18 @@ function num(n) {
   return Number(n || 0).toLocaleString('vi-VN');
 }
 
-/** Chỉ dẫn hệ thống thật — nạp một lần, lười (chỉ khi mở tab Ngữ cảnh). */
-function useSystemPrompt(active) {
+/**
+ * Chỉ dẫn hệ thống thật — nạp lười (chỉ khi mở tab Ngữ cảnh), và NẠP LẠI khi quyền đổi.
+ *
+ * Bản trước nạp đúng MỘT lần cho cả phiên. Hệ quả: tắt toàn quyền ở cài đặt xong, mở tab Ngữ
+ * cảnh vẫn thấy nguyên bộ chỉ dẫn chế độ toàn quyền cũ — bảng soi lỗi mà lại nói sai về chính
+ * thứ nó sinh ra để soi. Nay `quyen` nằm trong danh sách phụ thuộc nên đổi là hỏi lại.
+ */
+function useSystemPrompt(active, quyen) {
   const [state, setState] = useState({ status: 'idle', data: null, error: null });
+
+  // Quyền đổi → vứt bản đã nạp, để effect dưới hỏi lại từ đầu.
+  useEffect(() => { setState({ status: 'idle', data: null, error: null }); }, [quyen]);
 
   useEffect(() => {
     if (!active || state.status !== 'idle') return;
@@ -190,7 +222,7 @@ function useSystemPrompt(active) {
     // PHẢI gửi kèm cờ chế độ. Server nay trả bản chỉ dẫn ĐÚNG CHẾ ĐỘ (xem helpers/guidePrompt.js);
     // thiếu header thì nó rơi về bản chế độ đọc và bảng này báo sai số ký tự — đã tái hiện: bật
     // toàn quyền, panel vẫn hiện 9.165 trong khi bản thật gửi đi là 11.516.
-    api.get('/copilotkit/debug/prompt', { headers: { 'x-guide-full-access': FULL_ACCESS ? '1' : '0' } })
+    api.get('/copilotkit/debug/prompt', { headers: { 'x-guide-full-access': quyen ? '1' : '0' } })
       .then((res) => setState({ status: 'done', data: res.data, error: null }))
       .catch((e) => setState({
         status: 'error',
@@ -199,7 +231,7 @@ function useSystemPrompt(active) {
           ? 'Chỉ admin xem được chỉ dẫn hệ thống trên bản production.'
           : (e?.message || 'Không tải được'),
       }));
-  }, [active, state.status]);
+  }, [active, state.status, quyen]);
 
   return state;
 }
@@ -317,7 +349,13 @@ const NODE_STYLE = {
   learn: { icon: '📚', color: '#34d399' },
   experience_write: { icon: '💾', color: '#34d399' },
   tool: { icon: '🔧', color: '#38bdf8' },
-  model: { icon: '💭', color: 'currentColor' },
+  model: { icon: '💭', color: '#a78bfa' },
+  // Ba khoá dưới đây từng THIẾU, nên node tương ứng rơi về icon '•' và màu mặc định — nhìn
+  // giống hệt một loại sự kiện không ai biết tên. Thêm vào cùng lúc với chúng ở guideFlow.js.
+  greeting: { icon: '👋', color: '#94a3b8' },
+  mood: { icon: '🙂', color: '#fb923c' },
+  embed_backfill: { icon: '🧩', color: '#94a3b8' },
+  edge: { icon: '•', color: 'currentColor' },
 };
 
 function eventText(e) {
@@ -382,132 +420,233 @@ function eventText(e) {
  * `measureText` cho mỗi dòng ở mỗi lần render, mà sai số của phép ước lượng chỉ khiến một ô cao
  * thừa một dòng — không đáng đánh đổi.
  */
-const DIAGRAM_W = 300;
-const PAD = 10;
-const TEXT_W = DIAGRAM_W - PAD * 2 - 26; // 26 = chỗ cho icon
-const CHARS_PER_LINE = Math.floor(TEXT_W / 5.6);
-const CHARS_PER_SUBLINE = Math.floor(TEXT_W / 4.9); // chữ phụ nhỏ hơn nên lọt nhiều hơn
-const LINE_H = 14;
-const SUBLINE_H = 12;
-const O_PAD = 8;
-const GAP2 = 16; // chỗ cho mũi tên giữa hai ô
+/* ─────────── Dựng dòng thời gian ───────────
+ *
+ * ĐÃ BỎ sơ đồ SVG tự vẽ ô. Lý do không phải thẩm mỹ: SVG `<text>` không tự xuống dòng, nên bản
+ * cũ phải TỰ ngắt chữ theo số ký tự ước lượng rồi TỰ cộng chiều cao từng ô trước khi vẽ. Mỗi
+ * nhãn dài bất thường là một lần đoán sai. HTML xuống dòng sẵn, bỏ được cả hai phép đoán.
+ *
+ * Bố cục ba cột: MỐC GIÂY · RÂY GRAPH · NHÃN.
+ *
+ * Rây graph là chỗ duy nhất thể hiện được SONG SONG mà không tốn chiều ngang — bảng này rộng
+ * 288px. Quy ước:
+ *   chấm đặc   = có chạy
+ *   chấm rỗng  = tầng có tồn tại nhưng KHÔNG chạy ở lượt này (xem `layers` của /debug/flow)
+ *   nhánh tách ra mà KHÔNG nhập lại = bắn rồi bỏ, không ai await (sắc mặt, bù vector)
+ *   đoạn đứt nét trên mạch chính    = khoảng trống sau khi lượt đã trả lời xong
+ */
+const ROW_H = 34;
+const RAIL_W = 46;
+const LANE_X = [14, 32];
 
-function wrapText(text, perLine) {
-  const from = String(text || '').split(/\s+/).filter(Boolean);
-  const out = [];
-  let d = '';
-  for (const t of from) {
-    if (!d) { d = t; continue; }
-    if ((d + ' ' + t).length <= perLine) d += ' ' + t;
-    else { out.push(d); d = t; }
+/** Mốc giây tương đối, một chữ số thập phân — đủ để thấy chỗ tốn thời gian, không rối mắt. */
+function relSec(ms, t0) {
+  if (!Number.isFinite(ms) || !Number.isFinite(t0)) return '';
+  return `${((ms - t0) / 1000).toFixed(1)}s`.replace('.', ',');
+}
+
+function msOf(v) {
+  const t = v ? new Date(v).getTime() : NaN;
+  return Number.isFinite(t) ? t : NaN;
+}
+
+/**
+ * Ghép BA nguồn vốn không nhìn thấy nhau thành một danh sách dòng:
+ *   · `actions` — bước tool, từ luồng message CopilotKit (đúng thứ tự, KHÔNG có mốc thời gian)
+ *   · `events`  — sự kiện middleware phía server (có `at`, có `ms`, có `phase`/`lane`)
+ *   · `usage`   — từng lời gọi model (có `started_at` và `ms` kể từ bản vá sổ tiền)
+ *
+ * Mốc thời gian của bước tool lấy theo lời gọi model ĐÃ YÊU CẦU nó, vì `actions` không mang mốc
+ * nào. Đây là phép xấp xỉ có chủ ý và nó đúng theo thứ tự: model xin gọi tool xong thì tool mới
+ * chạy. Lấy giờ của client ra so với giờ server thì mới là sai — hai đồng hồ khác nhau.
+ */
+function buildRows(actions, events, usage) {
+  const first = actions.map((x) => x.type).lastIndexOf('turn');
+  const steps = actions.slice(first + 1).filter((x) => x.type === 'tool');
+
+  const calls = Array.isArray(usage?.calls)
+    ? [...usage.calls].sort((a, b) => msOf(a.at) - msOf(b.at))
+    : [];
+
+  const evs = [...(events || [])].sort((a, b) => (a.seq || 0) - (b.seq || 0));
+  const side = evs.filter((e) => e.lane === 'side');
+  const main = evs.filter((e) => e.lane !== 'side');
+
+  const t0 = Math.min(
+    ...[
+      calls.length ? (msOf(calls[0].started_at) || msOf(calls[0].at)) : NaN,
+      main.length ? main[0].at : NaN,
+    ].filter(Number.isFinite),
+  );
+
+  const rows = [];
+  const push = (r) => rows.push({ ...r, key: `r${rows.length}` });
+
+  push({ kind: 'edge', name: 'Câu hỏi của người dùng', t: Number.isFinite(t0) ? t0 : NaN });
+
+  for (const e of main.filter((x) => x.phase === 'pre')) {
+    const c = eventText(e);
+    push({ kind: e.type, name: c.name, sub: c.sub, t: e.at, state: 'ok' });
   }
-  if (d) out.push(d);
-  return out.length ? out : [''];
-}
 
-function buildDiagram(nodes) {
-  let y = 4;
-  const o = nodes.map((n) => {
-    const lines = wrapText(n.name, CHARS_PER_LINE);
-    const subLines = n.sub ? wrapText(n.sub, CHARS_PER_SUBLINE) : [];
-    const h = O_PAD * 2 + lines.length * LINE_H + subLines.length * SUBLINE_H;
-    const item = { ...n, lines, subLines, y, h };
-    y += h + GAP2;
-    return item;
+  steps.forEach((b, i) => {
+    const call = calls[i];
+    const tok = call?.token?.input_tokens;
+    push({
+      kind: 'model',
+      name: 'Model suy luận',
+      sub: [`bước ${i + 1}`, tok ? `${num(tok)} tok` : null, call?.ms ? `${(call.ms / 1000).toFixed(1)}s` : null]
+        .filter(Boolean).join(' · '),
+      t: call ? (msOf(call.started_at) || msOf(call.at)) : NaN,
+      state: 'ok',
+    });
+    push({
+      kind: 'tool',
+      name: b.label,
+      sub: b.detail || '',
+      t: call ? msOf(call.at) : NaN,
+      state: b.status === 'done' ? 'ok' : b.status === 'error' ? 'err' : 'warn',
+    });
+    for (const e of main.filter((x) => x.phase === 'step' && (Number(x.steps) || 0) === i + 1)) {
+      const c = eventText(e);
+      push({ kind: e.type, name: c.name, sub: c.sub, t: e.at, state: 'warn' });
+    }
   });
-  return { o, cao: Math.max(y - GAP2 + 4, 20) };
+
+  push({ kind: 'edge', name: 'Trả lời người dùng', t: calls.length ? msOf(calls[calls.length - 1].at) : NaN });
+
+  const post = main.filter((x) => x.phase === 'post');
+  if (post.length) {
+    push({ kind: 'divider', name: 'sau khi lượt kết thúc' });
+    for (const e of post) {
+      const c = eventText(e);
+      push({ kind: e.type, name: c.name, sub: c.sub, t: e.at, state: 'ok' });
+    }
+  }
+
+  return { rows, side, t0 };
 }
 
-function FlowTab({ actions, events }) {
+/**
+ * Nhánh song song trên rây: từ dòng thứ 1 xuống tới dòng có mốc giây GẦN NHẤT với lúc nó xong.
+ *
+ * Không vẽ theo chiều cao tỉ lệ thời gian, vì rây này cố ý cho mọi dòng cao bằng nhau (thời
+ * lượng đọc ở cột giây). Neo vào dòng gần nhất là cách giữ đúng quan hệ "nó kết thúc quãng
+ * này" mà không phải giãn rây.
+ */
+function sideSpan(side, rows) {
+  const start = side.find((e) => e.state === 'start');
+  const done = side.find((e) => e.state === 'done' || e.state === 'failed');
+  if (!start) return null;
+  const endAt = done ? done.at : null;
+  let endRow = 2;
+  if (endAt) {
+    let best = Infinity;
+    rows.forEach((r, i) => {
+      if (!Number.isFinite(r.t)) return;
+      const d = Math.abs(r.t - endAt);
+      if (d < best) { best = d; endRow = i; }
+    });
+  }
+  return { endRow: Math.max(endRow, 2), done: done, failed: done?.state === 'failed', ms: done?.ms ?? null };
+}
+
+function FlowTab({ actions, events, usage, layers }) {
   if (events === null) return <p className="guide-act__empty">Đang tải…</p>;
 
-  // Chỉ lấy lượt HỎI CUỐI CÙNG: sơ đồ để soi một lượt, không phải cả buổi.
-  const first = actions.map((x) => x.type).lastIndexOf('turn');
-  const step = actions.slice(first + 1).filter((x) => x.type === 'tool');
-  if (!step.length && !events.length) {
+  const { rows, side } = buildRows(actions, events, usage);
+  if (rows.length <= 2 && !events.length) {
     return <p className="guide-act__empty">Chưa có lượt nào để vẽ. Hỏi trợ lý một câu.</p>;
   }
 
-  const turnStart = events.filter((e) => e.type === 'experience');
-  const byStep = new Map();
-  for (const e of events) {
-    if (e.type === 'experience') continue;
-    const n = Number(e.steps) || 0;
-    if (!byStep.has(n)) byStep.set(n, []);
-    byStep.get(n).push(e);
-  }
-
-  const nodes = [];
-  const add = (loai, name, sub, trangThai) => nodes.push({ loai, name, sub, trangThai });
-
-  add('model', 'Câu hỏi của người dùng', '', 'ok');
-  for (const e of turnStart) { const c = eventText(e); add('experience', c.name, c.sub, 'ok'); }
-  for (const e of byStep.get(0) || []) { const c = eventText(e); add(e.type, c.name, c.sub, 'canh'); }
-
-  step.forEach((b, i) => {
-    add('model', 'Model suy luận', `bước ${i + 1}`, 'ok');
-    add('tool', b.label, b.detail || '', b.status === 'done' ? 'ok' : 'loi');
-    for (const e of byStep.get(i + 1) || []) { const c = eventText(e); add(e.type, c.name, c.sub, 'canh'); }
-  });
-  add('model', 'Trả lời người dùng', '', 'ok');
-
-  const { o, cao } = buildDiagram(nodes);
-  const summary = `Sơ đồ luồng một lượt hỏi: ${nodes.map((n) => n.name).join(' → ')}`;
+  const t0row = rows.find((r) => Number.isFinite(r.t));
+  const t0 = t0row ? t0row.t : NaN;
+  const span = sideSpan(side, rows);
+  const h = rows.length * ROW_H;
+  const summary = `Sơ đồ luồng một lượt hỏi: ${rows.filter((r) => r.kind !== 'divider').map((r) => r.name).join(' → ')}`;
 
   return (
     <div className="guide-flow">
-      <svg
-        className="guide-flow__svg"
-        viewBox={`0 0 ${DIAGRAM_W} ${cao}`}
-        width="100%"
-        height={cao}
-        role="img"
-        aria-label={summary}
-      >
-        <defs>
-          {/* Mũi tên dùng currentColor để đổi theo nền sáng/tối của bảng. */}
-          <marker id="guide-flow-ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
-          </marker>
-        </defs>
+      <div className="guide-flow__legend">
+        <span><i style={{ background: NODE_STYLE.model.color }} />model</span>
+        <span><i style={{ background: NODE_STYLE.tool.color }} />tool</span>
+        <span><i style={{ background: NODE_STYLE.experience.color }} />server</span>
+        {span ? <span><i className="guide-flow__hollow" />song song</span> : null}
+      </div>
 
-        {o.map((n, i) => {
-          const color = NODE_STYLE[n.loai]?.color || 'currentColor';
-          const err = n.trangThai === 'loi';
-          const warn = n.trangThai === 'canh';
-          const bg = err ? 'rgba(248,113,113,.12)' : warn ? 'rgba(251,191,36,.10)' : 'transparent';
-          const dashed = n.loai === 'model' ? '5 4' : undefined;
-          let y2 = n.y + O_PAD + 10;
-          return (
-            <g key={`${n.name}-${i}`}>
-              <rect
-                x={PAD} y={n.y} width={DIAGRAM_W - PAD * 2} height={n.h} rx="7"
-                fill={bg} stroke={color} strokeWidth={err ? 1.6 : 1}
-                strokeDasharray={dashed} opacity={n.loai === 'model' ? 0.75 : 1}
+      <div className="guide-flow__grid" style={{ height: h }}>
+        <svg className="guide-flow__rail" width={RAIL_W} height={h} role="img" aria-label={summary}>
+          {rows.map((r, i) => {
+            if (r.kind === 'divider') {
+              return <line key={`l${i}`} x1={LANE_X[0]} y1={i * ROW_H} x2={LANE_X[0]} y2={(i + 1) * ROW_H}
+                stroke="currentColor" strokeWidth="2" strokeDasharray="3 4" opacity=".4" />;
+            }
+            if (i === rows.length - 1) return null;
+            return <line key={`l${i}`} x1={LANE_X[0]} y1={i * ROW_H + ROW_H / 2} x2={LANE_X[0]} y2={(i + 1) * ROW_H + ROW_H / 2}
+              stroke="currentColor" strokeWidth="2" opacity=".4" />;
+          })}
+
+          {span ? (
+            <>
+              <path
+                d={`M${LANE_X[0]} ${ROW_H / 2 + ROW_H} C${LANE_X[0]} ${ROW_H * 1.8}, ${LANE_X[1]} ${ROW_H * 1.6}, ${LANE_X[1]} ${ROW_H * 2.1} L${LANE_X[1]} ${span.endRow * ROW_H + ROW_H / 2}`}
+                stroke={span.failed ? NODE_STYLE.step_guard.color : NODE_STYLE.experience.color}
+                strokeWidth="2" fill="none" opacity=".85"
               />
-              <text x={PAD + 9} y={n.y + O_PAD + 11} fontSize="12">{NODE_STYLE[n.loai]?.icon || '•'}</text>
-              {n.lines.map((d, k) => {
-                const y = y2 + k * LINE_H;
-                return (
-                  <text key={`t${k}`} x={PAD + 26} y={y} fontSize="11.5" fontWeight="600" fill="currentColor">{d}</text>
-                );
-              })}
-              {n.subLines.map((d, k) => {
-                const y = y2 + n.lines.length * LINE_H + k * SUBLINE_H;
-                return (
-                  <text key={`p${k}`} x={PAD + 26} y={y} fontSize="10" fill="currentColor" opacity=".62">{d}</text>
-                );
-              })}
-              {i < o.length - 1 ? (
-                <line
-                  x1={DIAGRAM_W / 2} y1={n.y + n.h} x2={DIAGRAM_W / 2} y2={n.y + n.h + GAP2 - 3}
-                  stroke="currentColor" strokeWidth="1.2" opacity=".45" markerEnd="url(#guide-flow-ar)"
-                />
-              ) : null}
-            </g>
-          );
-        })}
-      </svg>
+              <circle cx={LANE_X[1]} cy={span.endRow * ROW_H + ROW_H / 2} r="4.5" fill="none" strokeWidth="2"
+                stroke={span.failed ? NODE_STYLE.step_guard.color : NODE_STYLE.experience.color} />
+            </>
+          ) : null}
+
+          {rows.map((r, i) => {
+            if (r.kind === 'divider') return null;
+            const color = NODE_STYLE[r.kind]?.color || 'currentColor';
+            const hollow = r.state === 'off';
+            return (
+              <circle
+                key={`d${i}`} cx={LANE_X[0]} cy={i * ROW_H + ROW_H / 2} r={hollow ? 4.5 : 5}
+                fill={hollow ? 'none' : color} stroke={color} strokeWidth={hollow ? 2 : 0}
+                opacity={r.kind === 'edge' ? 0.55 : 1}
+              />
+            );
+          })}
+        </svg>
+
+        <ul className="guide-flow__rows">
+          {rows.map((r, i) => {
+            if (r.kind === 'divider') {
+              return <li key={r.key} className="guide-flow__sep" style={{ height: ROW_H }}><span>{r.name}</span></li>;
+            }
+            return (
+              <li key={r.key} className={`guide-flow__row${r.state === 'err' ? ' guide-flow__row--err' : ''}`} style={{ height: ROW_H }}>
+                <span className="guide-flow__t">{relSec(r.t, t0)}</span>
+                <span className="guide-flow__name" title={r.sub ? `${r.name} — ${r.sub}` : r.name}>
+                  {r.name}
+                  {r.sub ? <em>{r.sub}</em> : null}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+
+      {span ? (
+        <p className="guide-flow__side">
+          Sắc mặt — subagent chạy song song{span.ms ? `, ${(span.ms / 1000).toFixed(1)}s` : ''}
+          {span.failed ? ', hỏng' : ', không ai chờ'}
+        </p>
+      ) : null}
+
+      {Array.isArray(layers) && layers.length ? (
+        <div className="guide-flow__layers">
+          <p>Tầng</p>
+          <div>
+            {layers.map((l) => (
+              <span key={l.key} className={l.bat ? 'on' : 'off'} title={l.vi_sao}>{l.ten}</span>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -672,7 +811,14 @@ export default function AgentActivityPanel() {
 
   const contextActive = !hidden && tab === 'context';
   const ctxEntries = useContextSnapshot(copilotkit, contextActive);
-  const prompt = useSystemPrompt(contextActive);
+  /**
+   * Quyền SỐNG — cả nhãn trên tiêu đề lẫn lời gọi `/debug/prompt` đều theo nó, không theo hằng
+   * `FULL_ACCESS` lúc mount. Thu quyền giữa phiên thì bảng phải nói đúng ngay, vì đây chính là
+   * chỗ người ta mở ra để kiểm tra xem núm cài đặt có ăn hay không.
+   */
+  const [quyenSong, setQuyenSong] = useState(() => FULL_ACCESS && fullAccessStillOn());
+  useEffect(() => onFullAccessChange(() => setQuyenSong(FULL_ACCESS && fullAccessStillOn())), []);
+  const prompt = useSystemPrompt(contextActive, quyenSong);
 
   const actions = useMemo(
     () => deriveAgentActions(agent?.messages, !!agent?.isRunning, { fullAccess: FULL_ACCESS }),
@@ -684,7 +830,7 @@ export default function AgentActivityPanel() {
   // Poll khi bảng đang mở (bất kể tab nào) để chip chi phí ở tiêu đề luôn có số. `actions.length`
   // làm khoá nạp lại: usage chỉ tồn tại SAU khi lượt chạy xong, đúng lúc dòng thời gian dài ra.
   const usage = useUsage(agent?.threadId, !hidden, actions.length);
-  const events = useFlow(agent?.threadId, !hidden && tab === 'flow', actions.length);
+  const flow = useFlow(agent?.threadId, !hidden && tab === 'flow', actions.length, agent?.isRunning);
 
   // Việc mới luôn ở đáy → tự cuộn xuống, giống khung chat. Không cuộn khi người dùng đang mở
   // một khối dữ liệu thô để đọc: giật xuống đáy giữa lúc đọc là mất chỗ.
@@ -749,8 +895,16 @@ export default function AgentActivityPanel() {
       <div className="guide-act__head">
         <span className="guide-act__headmain">
           <span className="guide-act__title">Hành động của trợ lý</span>
-          {/* Chế độ toàn quyền cho phép trợ lý bấm cả nút Xoá — phải nhìn thấy được là đang bật. */}
-          {FULL_ACCESS ? <span className="guide-act__mode" title="Trợ lý được bấm/điền/điều hướng thật trên trang">toàn quyền</span> : null}
+          {/* Chế độ toàn quyền cho phép trợ lý bấm cả nút Xoá — phải nhìn thấy được là đang bật.
+              Đọc cờ SỐNG chứ không chỉ hằng lúc mount: tắt núm ở cài đặt thì nhóm tool vẫn còn
+              đăng ký trong tab này (xem `guardFullAccessTool`), nhưng chúng đã bị khoá — nhãn
+              phải nói đúng cái đang có hiệu lực, không nói cái lúc tải trang. */}
+          {quyenSong
+            ? <span className="guide-act__mode" title="Trợ lý được bấm/điền/điều hướng thật trên trang">toàn quyền</span>
+            : null}
+          {FULL_ACCESS && !quyenSong
+            ? <span className="guide-act__mode guide-act__mode--off" title="Đã tắt ở cài đặt trợ lý — tool thao tác đã bị khoá, tải lại trang để gỡ hẳn">đã khoá</span>
+            : null}
           {usage?.total?.usd ? (
             <span className="guide-act__cost" title={`${usage.call_count} lần gọi model · ≈ ${vnd(usage.total.vnd)}`}>
               {usd(usage.total.usd)}
@@ -833,7 +987,7 @@ export default function AgentActivityPanel() {
               // mỗi lần đổi trang. Ẩn bằng CSS thì nó vẫn hỏi, chỉ là không ai nhìn thấy.
               <GuidePageKnowledge />
             ) : tab === 'flow' ? (
-              <FlowTab actions={actions} events={events} />
+              <FlowTab actions={actions} events={flow?.events ?? null} layers={flow?.layers} usage={usage} />
             ) : tab === 'context' ? (
               <ContextTab entries={ctxEntries} prompt={prompt} actions={actions} />
             ) : tab === 'cost' ? (

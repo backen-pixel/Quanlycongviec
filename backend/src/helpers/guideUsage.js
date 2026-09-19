@@ -210,8 +210,14 @@ function readUsage(threadId) {
 function createCollector() {
   const calls = [];
   return {
-    add(usage, providerMetadata, modelId) {
-      calls.push({ usage, providerMetadata, modelId, at: Date.now() });
+    /**
+     * `startedAt` là mốc GỌI, `at` là mốc XONG. Bản trước chỉ có `at`, nên sổ này nói được
+     * "lời gọi thứ ba kết thúc lúc 12,4 giây" mà không nói được nó chạy bao lâu — và không có
+     * cặp bắt đầu/kết thúc thì không cách nào biết đoạn nào chồng lên đoạn nào. Đúng thứ biểu
+     * đồ song song cần.
+     */
+    add(usage, providerMetadata, modelId, startedAt) {
+      calls.push({ usage, providerMetadata, modelId, at: Date.now(), startedAt: startedAt || null });
     },
     /** Chốt sổ: ghi từng bước vào sổ của thread. */
     /**
@@ -231,6 +237,8 @@ function createCollector() {
         const cost = computeCost(b.modelId || modelId, token, at);
         appendRecord(threadId, {
           at: new Date(at).toISOString(),
+          started_at: b.startedAt ? new Date(b.startedAt).toISOString() : null,
+          ms: b.startedAt ? at - b.startedAt : null,
           run_id: runId || null,
           turn_no: turnNo || null,
           step_no: i + 1,
@@ -258,12 +266,15 @@ function createCollector() {
 function createUsageMiddleware(collector, modelId) {
   return {
     wrapStream: async ({ doStream }) => {
+      // Đóng mốc TRƯỚC `doStream()`: chính lời gọi đó là chỗ bắt tay mạng, để sau nó là đã mất
+      // phần đắt nhất của một lời gọi nguội.
+      const startedAt = Date.now();
       const { stream, ...rest } = await doStream();
       const tapStream = new TransformStream({
         transform(chunk, controller) {
           if (chunk?.type === 'finish') {
             try {
-              collector.add(chunk.usage, chunk.providerMetadata, modelId);
+              collector.add(chunk.usage, chunk.providerMetadata, modelId, startedAt);
             } catch { /* đếm tiền không bao giờ được làm chết câu trả lời */ }
           }
           controller.enqueue(chunk);

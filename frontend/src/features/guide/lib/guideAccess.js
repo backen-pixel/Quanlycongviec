@@ -1,3 +1,5 @@
+import { serverFullAccess } from './guideUiFlags';
+
 /**
  * Công tắc CHẾ ĐỘ TOÀN QUYỀN của trợ lý.
  *
@@ -10,10 +12,12 @@
  * trợ lý có quyền bấm Xoá trên dữ liệu thật của khách. Mặc định vì thế là: BẬT khi chạy dev
  * (`vite dev`), TẮT khi build production — trừ khi có người cố ý đặt VITE_GUIDE_FULL_ACCESS=1.
  *
- * Ba nguồn, ưu tiên từ trên xuống:
+ * Bốn nguồn, ưu tiên từ trên xuống:
+ *  0. núm `full_access` trên /settings/tro-ly-huong-dan, khi nó TẮT → tắt, không ai lật được.
  *  1. localStorage `guide.fullAccess` = '1' | '0'  → bật/tắt ngay, không cần restart Vite.
- *  2. env `VITE_GUIDE_FULL_ACCESS` = '1'|'true' | '0'|'false'  → chốt theo build.
- *  3. mặc định: `import.meta.env.DEV`.
+ *  2. chính núm đó khi nó BẬT (soi qua localStorage — xem guideUiSettings.js).
+ *  3. env `VITE_GUIDE_FULL_ACCESS` = '1'|'true' | '0'|'false'  → chốt theo build.
+ *  4. mặc định: `import.meta.env.DEV`.
  *
  * `FULL_ACCESS` đọc MỘT LẦN lúc import và không đổi trong suốt vòng đời trang. Đó là điều kiện
  * để mount tool theo nhánh (`{FULL_ACCESS ? <A/> : <B/>}`) mà không phá thứ tự hook của React:
@@ -32,9 +36,24 @@ function fromStorage() {
 }
 
 function resolve() {
+  /**
+   * CÔNG TẮC MÁY CHỦ ĐỨNG TRƯỚC MỌI THỨ KHI NÓ NÓI "TẮT".
+   *
+   * Thứ tự cũ (localStorage → env → DEV) đúng khi cờ này chỉ là tiện ích lúc thử nghiệm. Từ
+   * khi nó thành một núm trên /settings/tro-ly-huong-dan thì ý nghĩa đổi hẳn: người quản trị
+   * bấm TẮT là quyết định cho CẢ HỆ THỐNG. Để một dòng còn sót trong localStorage của một máy
+   * lật lại quyết định đó là biến núm kia thành thứ trang trí.
+   *
+   * Chiều ngược lại KHÔNG đối xứng, cố ý: máy chủ BẬT thì công tắc cục bộ vẫn tắt được. Nới
+   * quyền phải khó, thu quyền phải dễ.
+   */
+  if (serverFullAccess() === false) return false;
+
   const ls = fromStorage();
   if (ls === '1') return true;
   if (ls === '0') return false;
+
+  if (serverFullAccess() === true) return true;
 
   const env = import.meta.env?.VITE_GUIDE_FULL_ACCESS;
   if (env === '1' || env === 'true') return true;

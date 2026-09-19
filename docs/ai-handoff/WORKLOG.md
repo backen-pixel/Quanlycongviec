@@ -1,5 +1,228 @@
 # Nhật ký công việc AI
 
+## 2026-09-19 19:30 — Quản trị xoá được kinh nghiệm (2 lỗi)
+
+- AI: Claude Code. Anh B.A. báo bấm thùng rác ở tab Kinh nghiệm không ăn.
+  Truy ra HAI lỗi độc lập.
+- **Lỗi 1 — `window.prompt`**: `GuideExperienceTab.discard()` bắt lý do bằng
+  `window.prompt` rồi `return` IM LẶNG khi rỗng. Chrome hiện ô "Ngăn trang này
+  tạo thêm hộp thoại" sau vài dialog; tick vào là `prompt()` trả `null` ngay,
+  nút thành bấm-không-ăn, KHÔNG log KHÔNG toast. Đã tái hiện đúng triệu chứng.
+  Vá: ô nhập lý do ngay trong hàng (Enter để xác nhận, Esc để huỷ), vẫn BẮT
+  BUỘC nhập lý do.
+- **Lỗi 2 — admin hệ thống không với tới kho công ty**: cả 3 endpoint dùng
+  `req.user?.company_id || 'chung'`, mà admin hệ thống có `company_id = null`
+  → luôn ra `'chung'`. Đo được: 55 bản ở `chung` (hiện dưới nhãn SAI là "Công
+  ty"), 26 bản của Công ty Nhôm Kính Phúc Đạt thì không xem/bỏ/khôi phục được.
+  Vá: `resolveStore(req, asked)` một chỗ duy nhất + `experience.listStores()`
+  + `/experience/list?store=` trả `stores[]` kèm TÊN công ty. Ranh giới giữ
+  nguyên: admin một công ty vẫn chỉ với tới kho của họ và `chung`, xin kho
+  khác thì LÙI về kho mình chứ không báo lỗi (báo lỗi là xác nhận kho đó tồn tại).
+- Lỗi 3 (của chính bản vá, đã sửa): `call()` gọi `load()` trống nên sau khi bỏ
+  thì nhảy về kho mặc định. Nay `load(store)`.
+- **Đã kiểm chứng**: bộ chuyển kho hiện "Chung (55)" + "Công ty Nhôm Kính Phúc
+  Đạt (26)"; bấm thùng rác KHÔNG gọi `window.prompt` (đếm = 0); bỏ một bản ghi
+  TRONG kho công ty thành công rồi khôi phục. Hiện 0 bản đang ở trạng thái đã bỏ
+  ở cả hai kho.
+- Ghi chú: "xoá" ở đây là XOÁ MỀM (`discarded_at` + lý do), khôi phục được —
+  đúng thiết kế sẵn có, chưa làm xoá cứng.
+
+## 2026-09-19 18:20 — Tab Ngữ cảnh cũng phải theo cờ sống
+
+- AI: Claude Code. Anh B.A. báo tiếp: tab "Ngữ cảnh" vẫn không đổi sau khi tắt
+  toàn quyền. Đúng — còn HAI nguồn nữa đọc hằng `FULL_ACCESS` lúc mount.
+- Nguồn 1 (nặng): khối `useAgentContext` "Quyền của bạn" — thứ GỬI LÊN MODEL.
+  Thu quyền giữa phiên mà vẫn khai `full_access: true` thì model được bảo là
+  được phép, gọi tool, rồi ăn chặn từ `guardFullAccessTool`. Nói một đằng chặn
+  một nẻo khiến nó thử đi thử lại.
+- Nguồn 2: `useSystemPrompt` nạp đúng MỘT lần cho cả phiên, nên bảng soi lỗi
+  hiện bộ chỉ dẫn cũ.
+- Vá: thêm `onFullAccessChange()` vào guideUiFlags.js; AppGuideCopilotPanel
+  dựng khối quyền từ `FULL_ACCESS && quyenConHieuLuc` và thêm `note` phân biệt
+  "bản này vốn chỉ đọc" với "vừa bị thu quyền giữa phiên"; header
+  `x-guide-full-access` gửi theo cờ sống; `useSystemPrompt(active, quyen)` nạp
+  lại khi quyền đổi.
+- **Đã kiểm chứng, KHÔNG tải lại trang**: tắt núm từ nơi khác → sau ~60s
+  nhãn "toàn quyền" → "ĐÃ KHOÁ"; Chỉ dẫn hệ thống 17.361 → 12.673 ký tự;
+  khối "Quyền của bạn" đổi sang `full_access: false` kèm note giải thích.
+- Đã trả núm về BẬT (kiểm bằng `/ui-settings`).
+- Ghi chú vận hành: núm trợ lý KHÔNG nằm ở `app_settings` mà ở tệp
+  `backend/uploads/guide-memory/settings.json` (volume Docker). Migration 604
+  mới chỉ GIEO dữ liệu, `guideSettings.js` vẫn đọc tệp — đúng như phần "còn
+  phải làm gì" ở cuối 604. Lưu giá trị BẰNG mặc định thì key bị xoá khỏi tệp,
+  nên đừng hoảng khi không thấy `full_access` trong đó.
+
+## 2026-09-19 17:10 — Vá lỗ "tắt toàn quyền mà tab đang mở vẫn toàn quyền"
+
+- AI: Claude Code. Anh B.A. báo: tắt `full_access` rồi mà bảng Hành động vẫn
+  hiện "toàn quyền". Kiểm lại: ĐÚNG, và không chỉ cái nhãn.
+- Nguyên nhân: bản trước chỉ khoá lúc MOUNT. `FULL_ACCESS` là hằng đọc một lần
+  lúc tải trang, nên tab đang mở giữ nguyên nhóm tool đã đăng ký — trợ lý vẫn
+  bấm nút và điền form thật. Máy chủ đã chuyển chế độ đọc nhưng tay client vẫn
+  hoạt động.
+- Vá 1 — `guardFullAccessTool()` trong AppGuideCopilotPanel.jsx: khoá ở cửa
+  CHẠY, không đụng tập tool đã đăng ký. Áp cho 5 tool của nhóm toàn quyền
+  (`read_page_state`, `find_on_page`, `click_element`, `fill_field`,
+  `navigate_to_page`). Trả `{ok:false, reason:'full_access_off'}` để model đọc
+  được và nói lại, thay vì thử lại rồi bỏ cuộc.
+- Vá 2 — `fullAccessStillOn()` trong guideUiFlags.js: đọc bản sao cờ MỖI LẦN
+  gọi, khác hẳn hằng `FULL_ACCESS`.
+- Vá 3 — nhịp dò 60 giây trong AppGuideCopilot.jsx. Không có nó thì bản sao cờ
+  chỉ được ghi lúc tải trang, nên tab của NGƯỜI KHÁC vẫn mang cờ cũ. Tab khác
+  cùng trình duyệt thì không cần (localStorage dùng chung). 60s là trần thời
+  gian trễ của việc THU quyền.
+- Vá 4 — nhãn trên bảng đọc cờ sống: "toàn quyền" → "đã khoá" (gạch ngang).
+- **Đã kiểm chứng**: tab mở sẵn ở chế độ toàn quyền, tắt núm từ nơi khác,
+  KHÔNG tải lại → sau <70s nhãn tự đổi sang "đã khoá", bản sao cờ 1→0, và câu
+  "mở giúp tôi trang phòng ban" không làm trang chuyển. Đã trả núm về BẬT.
+- CHƯA cô lập được riêng nhánh `full_access_off` của client, vì lúc đó máy chủ
+  cũng đã ở chế độ đọc nên model không gọi tool thao tác nữa. Hai lớp cùng
+  đóng — đúng ý đồ, nhưng nghĩa là phép thử không tách được từng lớp.
+
+## 2026-09-19 15:40 — Hai công tắc quyền trợ lý ở màn hình cài đặt
+
+- AI: Claude Code. Thêm nhóm **"Quyền & hiển thị"** vào /settings/tro-ly-huong-dan:
+  `full_access` (trợ lý tự bấm nút hay chỉ đọc) và `show_activity_panel`
+  (bày/ẩn bảng Hành động). Trước đó cả hai chỉ chỉnh được lúc BUILD
+  (`VITE_GUIDE_FULL_ACCESS`, `VITE_GUIDE_DEV_PANEL` trong Dockerfile).
+- Màn hình cài đặt dựng từ lược đồ backend nên chỉ cần thêm field ở
+  `guideSettings.js` + group mới; UI tự có.
+- `isFullAccess()` trong copilotkit.js nay CHẶN ĐÈ header `x-guide-full-access`:
+  tắt ở cài đặt là tắt thật, không đợi client tải lại và client không lật được.
+- `/ui-settings` trả thêm 2 cờ (kênh công khai, whitelist tay).
+- Client: `guideUiFlags.js` (KHÔNG import gì — tránh vòng import) giữ bản sao
+  localStorage; `guideUiSettings.js` lo fetch. `guideAccess.resolve()` nay
+  ưu tiên: máy chủ TẮT → tắt; rồi mới tới localStorage/env/DEV. Bất đối xứng
+  cố ý: nới quyền phải khó, thu quyền phải dễ.
+- `loadGuideUiSettings()` gọi từ `AppGuideCopilot` (luôn mount) chứ KHÔNG từ
+  khung lazy — nếu không, máy chưa từng dùng trợ lý sẽ không có cờ và
+  `FULL_ACCESS` rơi về mặc định build.
+- Sau khi bấm Lưu: `refreshGuideUiSettings()` chạy ngay (bảng Hành động
+  ẩn/hiện tức thì), và báo "tải lại trang" khi cờ toàn quyền vừa đổi.
+- **Đã kiểm chứng end-to-end**: tắt `full_access` → `/debug/prompt` chuyển sang
+  "chế độ đọc"; tắt `show_activity_panel` → bảng biến mất; bật lại → hiện lại.
+  Đã trả cả hai về BẬT sau khi thử.
+- Một cái bẫy đã đo và tránh được: `vite build` trên máy đọc
+  `frontend/.env.production` (VITE_API_URL → Render). Dockerfile không dính vì
+  `.dockerignore` loại `**/.env.*`. Build tay PHẢI dùng `--mode docker`.
+- CHƯA commit; container vẫn là code nướng trong image + `docker cp`.
+
+## 2026-09-19 13:30 — Vá tab Luồng của trợ lý + đo thời lượng
+
+- AI: Claude Code. Năm tệp: `guideFlow.js`, `guideUsage.js`, `guideExperience.js`,
+  `routes/guide/copilotkit.js`, `AgentActivityPanel.jsx` (+ `appGuideCopilot.css`).
+- `guideFlow`: thêm bảng `EVENT_META` (pha pre/step/post, làn main/side) và `seq`.
+  Sự kiện không gửi `steps` KHÔNG còn rơi vào nhóm 0 và bị vẽ trước bước 1.
+- `guideUsage`: thêm `started_at` + `ms` cho mỗi lời gọi model (mốc đóng trước
+  `doStream()`). Trước đó chỉ có `at` lúc xong → không tính được thời lượng.
+- Ghi sổ luồng cho hai làn chạy song song chưa từng được ghi: `mood.inferMood`
+  và `backfillVectors` (mỗi cái 2 mốc: start + done/failed kèm `ms`).
+- `/debug/flow` trả thêm `layers[]` — tầng nào bật/tắt và vì sao. Đây là vá cho
+  chỗ "tắt" và "hỏng" cho ra cùng một màn hình trống.
+- `useFlow` nạp lại theo `agent.isRunning` + một nhịp trễ 2,5s sau khi lượt xong.
+  Trước đó chỉ theo `actions.length` nên sự kiện sau lượt không bao giờ tự hiện.
+- Tab Luồng đổi từ sơ đồ SVG tự ngắt chữ sang **rây graph + dòng thời gian**:
+  cột giây · rây (chấm đặc = chạy, rỗng = không chạy, nhánh tách không nhập lại
+  = bắn rồi bỏ) · nhãn. Thêm dải chip "Tầng".
+- **Đã kiểm chứng trên app thật**: hỏi "trang báo giá nằm ở đâu" → dòng
+  "Không ghi kinh nghiệm" hiện ĐÚNG dưới mốc "sau khi lượt kết thúc" mà không
+  phải bấm sang tab khác; chip hiện `Nạp đầu lượt(off)`, `Sắc mặt(off)`.
+- Số mới lộ ra: model bước 1 mất **20,7 giây / 13.232 token vào** cho một câu
+  hỏi tầm thường. Chưa điều tra.
+- CHƯA commit. Container chạy code nướng trong image — đã `docker cp` để thử;
+  muốn thật thì phải `docker compose build`.
+
+## 2026-09-19 10:30 — Chạy 603 + nhúng vector toàn kho kiến thức (primary)
+
+- AI: Claude Code. `603_guide_knowledge_vectors.sql` trên **primary**
+  (self-hosted `localhost:8000`), exit 0 — thêm `embedding vector(1536)`,
+  `embedding_model`, `embedding_hash`, `embedded_at` + index
+  `idx_guide_kb_need_embed`. Sau đó `NOTIFY pgrst, 'reload schema'`.
+- Nhúng bằng CHÍNH hàm của app (`knowledge.backfillVectorsNow`) chạy qua
+  `docker exec beppro node -e`, không viết mã nhúng riêng — để vân tay và
+  `STORE_ID` khớp tuyệt đối với đường chạy thật.
+- Kết quả: **334/334 mục có vector**, 1 công thức duy nhất
+  `text-embedding-3-small|nd1`, `vector_dims = 1536`, 0 mục sót.
+- Kiểm chứng ngữ nghĩa: "làm sao tạo báo giá mới cho khách" →
+  `/crm/quotations/new` 0.6827, `/crm/quotations/:id` 0.6207,
+  `/crm/quotations` 0.6086 (ngưỡng đang đặt 0.39).
+- 4 tệp JSON trong `backend/data/guide-knowledge` ĐÃ nằm sẵn trong DB từ
+  trước (cột `source` giữ đúng tên tệp) — không phải nạp lại.
+- Phát hiện: DB có `/work/unified` mà `screens.json` không còn → hàng cũ sót
+  lại của đợt sinh registry trước. Trùng khớp với kết quả quét (trang này
+  không có `<main>`). Nghi route chết, CHƯA xử lý.
+- **CHƯA chạy backup** — vẫn chưa nối được, xem mục 602/604 hôm nay.
+
+## 2026-09-19 — Zalo cá nhân: đính kèm, quyền sở hữu, canh phiên
+
+- AI: Claude Code. Xác minh 8 migration Zalo ĐÃ áp dụng trên primary
+  (`localhost:8000`): 5 bảng mới, `owner_user_id`/`expected_phone` trên
+  `zalo_oa_accounts`, `stored_url`/`stored_path` trên `zalo_messages`,
+  bucket `attachments` tồn tại và `public=false`. **Backup vẫn chưa chạy.**
+
+- **Đính kèm ≤ 10 MB chép về kho.** `helpers/zaloAttachmentCopy.js` + vòng nền
+  20 giây. Chạy thật: ảnh 217.020 byte vào bucket, byte đầu `FF D8` — JPEG
+  thật; tệp khai 25 MB → `too_large` không tải. Video 11 MB thật của người dùng
+  ra đúng `too_large`, hiện tên + dung lượng, mở được từ Zalo.
+
+- **Sửa lỗi nghiêm trọng do chính bản vá gây ra:** lần đầu lưu URL công khai
+  Supabase (`http://localhost:8000/...`) làm ảnh KHÔNG hiện — trang chạy HTTPS
+  chặn nội dung HTTP, và máy ngoài không tới được. Bucket lại để công khai,
+  ai có link cũng xem được ảnh khách. Đổi sang lưu `stored_path` + phục vụ qua
+  `/api/zalo/messages/:id/attachment` có kiểm quyền; 565 lật `public=false`.
+  Xác minh: không token → 401.
+
+- **Ảnh vỡ dù tải thành công.** Log cho thấy 200 / 217.020 byte nhưng gọi hai
+  lần → component gỡ/gắn lại, mà cleanup của `useEffect` thu hồi blob URL ngay
+  dưới chân thẻ `<img>`. Chuyển sang bộ nhớ đệm blob cấp module, gộp yêu cầu
+  trùng, giới hạn 60 ảnh. Cũng giảm `Cache-Control` từ 86400s xuống 300s vì
+  bộ đệm 24 giờ giấu mất lỗi trong lúc dò.
+
+- **Quyền sở hữu theo số điện thoại**, gom vào `helpers/zaloPersonalAccess.js`.
+  Chủ dự án chọn mức chặt nhất: KHÔNG cửa sau cho admin, chỉ chủ sở hữu xem và
+  gửi. Trước bản vá 29/139 user (gồm 7 `sales_admin`) đi vòng qua được.
+  Vá thêm lỗ hổng trang Hộp thư: `/contacts` lọc theo công ty nhưng không theo
+  chủ sở hữu → nhân viên đọc được chat đồng nghiệp. Kiểm: 253/253 với chủ,
+  249/253 với admin.
+
+- **Cổng: watchdog phiên Zalo.** Gặp ca thật phiên chết 67 phút mà tiến trình
+  vẫn sống nên bộ điều phối không dựng lại; sau đó Zalo từ chối hẳn phiên.
+  Thêm canh gác 90 giây dựng lại transport theo từng tài khoản. Cũng sửa:
+  lỗi MẠNG khi nạp phiên thử lại 4 lần thay vì vứt phiên bắt quét QR.
+
+- **Tắt ≠ Xoá.** `loadRegistry()` từng lọc `is_active` nên tắt xong thẻ biến
+  mất khỏi trang quản trị, không còn chỗ bật lại. Tách `runnable()` cho phần
+  cấp tiến trình; trang quản trị vẽ từ danh sách đầy đủ.
+
+- **Mã QR là mã chung** — ai quét cũng chiếm được ô đó. Thêm `expected_phone`
+  (migration 562): lệch số thì huỷ phiên ngay, không lưu gì.
+
+- Giao diện: dựng lại trang quản trị cổng (3 tab, khung QR lớn, sức khoẻ
+  đường truyền), tách nhãn Zalo OA khỏi Zalo cá nhân (luật cửa sổ 7 ngày là
+  của OA, không áp dụng cho cá nhân), hiển thị hai chiều số khách ⇄ số mình.
+
+- CHƯA làm: sticker cá nhân chỉ có `{id,catId,type}` nên không hiện được ảnh
+  (cần `getStickersDetail`); cảnh báo chủ động khi tin hỏng / phiên rớt;
+  backend chưa đọc cờ `auto_create_lead`; 728 ảnh cũ chưa chép ngược.
+
+## 2026-09-19 09:40 — Chạy 602 + 604 (guide) trên primary
+
+- AI: Claude Code. `602_guide_assistant_en.sql` và
+  `604_guide_assistant_settings_to_db.sql` chạy trên **primary** — stack
+  Supabase self-hosted ở `localhost:8000` (container `supabase-db`), psql
+  `--single-transaction -v ON_ERROR_STOP=1`. Cả hai exit 0.
+- 602 đi đúng nhánh "CSDL BẢN CŨ": thêm `guide_quota_turn`, `guide_chat_log`,
+  6 hàm `guide_*`, cột `fail_count`. Dữ liệu giữ nguyên (78 kinh nghiệm);
+  `guide_knowledge` 317 → 334 do seed danh mục màn hình.
+- 604 chèn 1 hàng `app_settings.key='guide_assistant'` (quota 30). Hành vi
+  CHƯA đổi — `guideSettings.js` vẫn đọc tệp JSON; 3 việc còn lại ghi ở cuối
+  file 604.
+- **CHƯA chạy backup** (`atcfpgxkgbszglrelfgr`): host direct chỉ ra IPv6
+  → "Network is unreachable"; qua pooler → "password authentication failed".
+  **Hai DB đang lệch schema.**
+- Backup trước khi chạy: `pg_dump` các bảng `guide_*` + `app_settings`
+  (1,5 MB) trong scratchpad phiên.
+
 ## 2026-09-18 14:38 — Push nốt ecosystem_admin + gắn công ty HST
 
 - AI: Cursor. Đẩy quyền role mới, Facebook HST, sync `user_companies`.

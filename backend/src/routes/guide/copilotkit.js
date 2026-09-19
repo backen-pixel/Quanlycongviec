@@ -48,7 +48,7 @@ const { BuiltInAgent, defineTool } = require('@copilotkit/runtime/v2');
 const { z } = require('zod');
 const Anthropic = require('@anthropic-ai/sdk');
 const { auth } = require('../../middleware/auth');
-const { isAdminLike } = require('../../helpers/adminRole');
+const { isAdminLike, isSystemAdmin } = require('../../helpers/adminRole');
 const { searchKnowledgeHybrid, vectorStatus, findTransient, stripLiveState } = require('../../helpers/guideKnowledge');
 const { SYSTEM_PROMPT, buildPrompt } = require('../../helpers/guidePrompt');
 const { createCollector, createUsageMiddleware, readUsage, listThreads } = require('../../helpers/guideUsage');
@@ -724,12 +724,29 @@ async function addExperienceToInput(input, user, session, moodOn) {
    * reject sẽ thành unhandled rejection, và Node ≥15 thì cái đó GIẾT TIẾN TRÌNH.
    */
   if (moodOn) {
+    /*
+     * GHI SỔ LUỒNG cho subagent này — trước bản này nó KHÔNG ghi gì cả.
+     *
+     * Đây là thứ DUY NHẤT trong cả lượt thật sự chạy song song (bắn rồi bỏ, không ai `await`),
+     * nên nó cũng là làn song song duy nhất mà bảng Luồng có để vẽ. Không ghi thì người soi
+     * nhìn sơ đồ và kết luận lượt hỏi chạy tuần tự từ đầu tới cuối — sai, và sai theo hướng
+     * khiến người ta đi tối ưu nhầm chỗ.
+     *
+     * Ghi HAI lần: lúc bắn và lúc xong kèm `ms`. Một mốc thì chỉ vẽ được cái chấm, hai mốc mới
+     * vẽ được đoạn chồng lấn.
+     */
+    const moodKey = session?.key || '';
+    const moodStart = Date.now();
+    flowLog.record(moodKey, 'mood', { state: 'start' });
     mood.inferMood({
-    threadId: session?.key || '',
+    threadId: moodKey,
     turn: realTurnCount(messages),
     question: question,
     history: recentQuestions(messages, question),
-    }, callMoodModel).catch(() => { /* đã nuốt bên trong; đây là lưới cuối */ });
+    }, callMoodModel).then(
+      (r) => flowLog.record(moodKey, 'mood', { state: 'done', ms: Date.now() - moodStart, mood: r?.mood || null }),
+      () => flowLog.record(moodKey, 'mood', { state: 'failed', ms: Date.now() - moodStart }),
+    ).catch(() => { /* đã nuốt bên trong; đây là lưới cuối */ });
   }
 
   /**
@@ -833,10 +850,21 @@ function experienceMiddleware(user, session, moodOn) {
  * (xem helpers/guidePrompt.js — cắt được 34% chỉ dẫn ở chế độ đọc).
  *
  * Chỉ nhận đúng chuỗi '1'. Thiếu header, header lạ, hay bất kỳ giá trị nào khác → chế độ ĐỌC,
- * tức bản dè dặt hơn. Đây KHÔNG phải kiểm soát quyền: quyền thật nằm ở chỗ client có mount tool
- * hay không, header này chỉ chọn văn bản mô tả cho khớp.
+ * tức bản dè dặt hơn.
+ *
+ * NÚM `full_access` CHẶN ĐÈ LÊN HEADER, và đây là phần mới.
+ *
+ * Trước bản này, chú thích ở đây nói đúng cho thời điểm đó: header chỉ chọn văn bản, quyền thật
+ * nằm ở chỗ client có mount tool hay không. Nhưng từ khi công tắc nằm trên màn hình cài đặt thì
+ * người quản trị bấm TẮT với ý "trợ lý không được tự bấm nữa" — mà client thì vẫn là trình
+ * duyệt của người dùng: tab đang mở còn giữ hằng `FULL_ACCESS` cũ, và header vẫn gửi '1' cho tới
+ * khi họ tải lại trang. Chưa kể header do client đặt thì client sửa được.
+ *
+ * Nên tắt ở đây phải là tắt THẬT: server gửi bộ luật chế độ đọc ngay từ lượt kế tiếp, không đợi
+ * ai tải lại gì. Hai lớp cùng khoá một cửa, lớp nào chặt hơn thì thắng.
  */
 function isFullAccess(req) {
+  if (!settings.get('full_access')) return false;
   return req.get?.('x-guide-full-access') === '1';
 }
 
@@ -1388,7 +1416,19 @@ r.get('/settings', (req, res) => {
  */
 r.get('/ui-settings', (_req, res) => {
   res.set('Cache-Control', 'no-store'); // admin đổi bộ xong, lần tải kế tiếp phải thấy ngay
-  return res.json({ mascot_set: settings.get('mascot_set') });
+  return res.json({
+    mascot_set: settings.get('mascot_set'),
+    /**
+     * Hai cờ dưới đây quyết định client dựng gì, nên client phải đọc được TRƯỚC khi dựng.
+     *
+     * Vô hại khi lộ: `full_access` chỉ nói trợ lý có được tự bấm nút hay không — bản thân nó
+     * không cấp thêm quyền nào, vì mọi thao tác vẫn đi qua đúng giao diện và đúng phân quyền
+     * của chính người dùng đó. `show_activity_panel` chỉ là bày hay ẩn một bảng mà các endpoint
+     * nuôi nó đều đã chặn `isAdminLike`.
+     */
+    full_access: !!settings.get('full_access'),
+    show_activity_panel: settings.get('show_activity_panel') !== false,
+  });
 });
 
 /**
@@ -2040,14 +2080,71 @@ r.post('/knowledge/sync', async (req, res) => {
  * Kho gộp chung theo công ty và được tiêm vào ngữ cảnh của mọi người trong công ty đó, nên đọc
  * nhầm kho của công ty khác là lộ đường đi nội bộ của họ.
  */
-r.get('/experience/list', (req, res) => {
+/**
+ * KHO NÀO ĐƯỢC PHÉP ĐỤNG TỚI — một chỗ duy nhất, dùng chung cho cả xem, bỏ và khôi phục.
+ *
+ * Bản trước mỗi endpoint tự viết `req.user?.company_id || 'chung'`. Hai hệ quả, cả hai đều đã
+ * đo được:
+ *
+ *  1. Admin HỆ THỐNG (`company_id = null`) luôn rơi vào `'chung'`, nên kho của từng công ty
+ *     không ai xem hay dọn được. Trong khi đó chính là người duy nhất có quyền làm việc đó.
+ *  2. Nhãn trên giao diện nói ngược: tab "Công ty" thật ra đang hiện kho `'chung'`.
+ *
+ * Ranh giới giữ nguyên như cũ và vẫn chặt: admin của MỘT công ty chỉ với tới kho công ty đó và
+ * kho `'chung'`. Kho gộp theo công ty được tiêm vào ngữ cảnh của mọi người trong công ty đó,
+ * nên đọc nhầm kho của công ty khác là lộ đường đi nội bộ của họ.
+ */
+function resolveStore(req, asked) {
+  const xin = String(asked || '').trim();
+  const cua_toi = req.user?.company_id || null;
+
+  if (isSystemAdmin(req.user)) {
+    // Admin hệ thống: chọn kho nào cũng được, mặc định `'chung'`.
+    return xin || 'chung';
+  }
+  if (!xin || xin === 'chung') return 'chung';
+  // Admin một công ty: xin kho khác kho của mình → lùi về kho của mình, KHÔNG báo lỗi.
+  // Báo lỗi ở đây là xác nhận "kho đó có tồn tại", tức rò một mẩu thông tin không cần rò.
+  return xin === cua_toi ? xin : (cua_toi || 'chung');
+}
+
+r.get('/experience/list', async (req, res) => {
   if (!isAdminLike(req.user)) return res.status(403).json({ error: 'admin_only' });
-  const company = req.user?.company_id || 'chung';
+  const company = resolveStore(req, req.query.store);
+
+  /**
+   * Danh sách kho chỉ trả cho admin hệ thống. Admin một công ty không cần — họ chỉ có hai kho
+   * và giao diện tự biết, còn biết TÊN các công ty khác thì không phục vụ việc gì của họ.
+   */
+  let stores = null;
+  if (isSystemAdmin(req.user)) {
+    stores = experience.listStores();
+    const ids = stores.map((x) => x.id).filter((x) => x !== 'chung');
+    if (ids.length) {
+      // Một lượt hỏi tên công ty, để giao diện không phải bày UUID cho người đọc.
+      try {
+        // `require` tại chỗ: tệp này nạp rất sớm và không cần client Supabase ở đường nóng nào
+        // khác — kéo nó lên đầu tệp chỉ để một nhánh hiếm dùng là buộc mọi lượt hỏi trả phí nạp.
+        // eslint-disable-next-line global-require
+        const { supabase } = require('../../config/supabase');
+        const { data } = await supabase.from('companies').select('id,name').in('id', ids);
+        const ten = new Map((data || []).map((x) => [x.id, x.name]));
+        stores = stores.map((x) => ({ ...x, name: x.id === 'chung' ? 'Chung' : (ten.get(x.id) || x.id) }));
+      } catch {
+        stores = stores.map((x) => ({ ...x, name: x.id === 'chung' ? 'Chung' : x.id }));
+      }
+    } else {
+      stores = stores.map((x) => ({ ...x, name: 'Chung' }));
+    }
+  }
+
   return res.json({
     company: company,
     list: experience.listAll(company),
     // Bản của kho 'chung' — người chưa có company_id ghi vào đó, và admin cần thấy cả hai.
     shared_store: company === 'chung' ? [] : experience.listAll('chung'),
+    stores: stores,
+    can_pick_store: isSystemAdmin(req.user),
     storage: require('../../helpers/guideExperienceDb').status(),
     on: experience.isEnabled(),
   });
@@ -2056,7 +2153,7 @@ r.get('/experience/list', (req, res) => {
 r.post('/experience/discard', (req, res) => {
   if (!isAdminLike(req.user)) return res.status(403).json({ error: 'admin_only' });
   const { code, reason, store } = req.body || {};
-  const company = store === 'chung' ? 'chung' : (req.user?.company_id || 'chung');
+  const company = resolveStore(req, store);
   const result = experience.discardExperience({ company, code, reason });
   return res.status(result.discarded ? 200 : 400).json({ ok: !!result.discarded, ...result });
 });
@@ -2064,7 +2161,7 @@ r.post('/experience/discard', (req, res) => {
 r.post('/experience/restore', (req, res) => {
   if (!isAdminLike(req.user)) return res.status(403).json({ error: 'admin_only' });
   const { code, store } = req.body || {};
-  const company = store === 'chung' ? 'chung' : (req.user?.company_id || 'chung');
+  const company = resolveStore(req, store);
   const result = experience.restoreExperience({ company: company, code });
   return res.status(result.ok ? 200 : 400).json(result);
 });
@@ -2122,7 +2219,59 @@ r.get('/debug/flow', (req, res) => {
   }
   // Mặc định CHỈ lượt hỏi mới nhất — sơ đồ để soi một lượt. `?all=1` khi cần lần lại cả buổi.
   const all = req.query.all === '1';
-  return res.json({ events: flowLog.read(req.query.thread_id, { all: all }) });
+  return res.json({
+    events: flowLog.read(req.query.thread_id, { all: all }),
+    /**
+     * TẦNG NÀO ĐANG TẮT — trả kèm, không để bảng tự đoán.
+     *
+     * Đây là chỗ vá một hiểu nhầm đã xảy ra thật khi soi bảng này: sơ đồ không có node "dò kinh
+     * nghiệm" và người đọc kết luận là ghi sổ hỏng, trong khi sự thật là `experience_prime_turn`
+     * đang tắt nên tầng đó KHÔNG CHẠY — không có gì để ghi.
+     *
+     * "Tắt" và "hỏng" cho ra cùng một màn hình trống, nên màn hình trống là câu trả lời tồi.
+     * Mỗi mục nói rõ BA thứ: bật hay không, vì sao, và chỉnh ở đâu.
+     */
+    layers: [
+      {
+        key: 'experience_prime_turn',
+        ten: 'Nạp đầu lượt',
+        bat: !!settings.get('experience_prime_turn'),
+        vi_sao: settings.get('experience_prime_turn')
+          ? 'dò kho kinh nghiệm ở mọi lượt'
+          : 'tắt trong cấu hình — kho chỉ can thiệp khi cứu hộ nổ',
+      },
+      {
+        key: 'rescue',
+        ten: 'Cứu hộ',
+        bat: experience.ENABLED && experience.isEnabled(),
+        vi_sao: 'chỉ nổ khi có tín hiệu bí giữa chuỗi (cần ≥3 bước tool)',
+      },
+      {
+        key: 'step_guard',
+        ten: 'Trần bước',
+        bat: true,
+        vi_sao: 'chỉ nhắc khi gần trần ' + maxSteps() + ' bước',
+      },
+      {
+        key: 'semantic',
+        ten: 'Tra ngữ nghĩa',
+        bat: !!settings.get('semantic_enabled'),
+        vi_sao: settings.get('semantic_enabled') ? 'lấp chỗ trống khi từ khoá chưa đủ' : 'tắt trong cấu hình',
+      },
+      {
+        key: 'learn',
+        ten: 'Thủ thư',
+        bat: librarian.status().on !== false,
+        vi_sao: 'chạy sau lượt, chỉ với lượt được chấm là đáng học',
+      },
+      {
+        key: 'mood',
+        ten: 'Sắc mặt',
+        bat: mood.status().on,
+        vi_sao: 'subagent chạy song song, không ai chờ kết quả',
+      },
+    ],
+  });
 });
 
 /**

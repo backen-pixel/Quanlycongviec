@@ -1,6 +1,6 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-18 14:38 (UTC+7)
+Cập nhật: 2026-09-19 10:30 (UTC+7)
 
 ## CRM Kanban — 400 thiếu company_id (admin HST)
 
@@ -54,9 +54,20 @@ HST vẫn 403. NV/admin một công ty giữ lọc Page.
 Hoàn tác: revert `facebook.js` (`isFacebookHstAdmin`,
 `contactAllowedOnLeadThread`), `FacebookChatTab.jsx`.
 
-## Migration Zalo cá nhân + Guide Assistant — ĐÃ THỬ LOCAL, chờ production
+## Migration Zalo cá nhân + Guide Assistant — 602/604 ĐÃ CHẠY PRIMARY
 
-Trạng thái: **9/9 ĐẠT trên Postgres local; CHƯA chạy production.**
+Trạng thái: **9/9 ĐẠT trên Postgres local. 602 + 604 đã chạy PRIMARY
+(2026-09-19); BACKUP CHƯA chạy → hai DB lệch schema.**
+
+**Cập nhật 2026-09-19:** cả 8 migration Zalo ĐÃ chạy trên primary
+(`localhost:8000`) — xác minh bằng schema: 5 bảng mới có đủ, `zalo_oa_accounts`
+có `owner_user_id`/`expected_phone`, `zalo_messages` có `stored_url`/`stored_path`,
+bucket `attachments` tồn tại và `public=false`. **BACKUP vẫn CHƯA chạy.**
+
+Primary hiện là stack Supabase self-hosted `localhost:8000`, không phải
+dự án cloud. Backup `atcfpgxkgbszglrelfgr` không nối được từ máy này:
+direct host chỉ phân giải IPv6 (Network is unreachable), pooler báo
+password authentication failed. Phải xử lý trước khi coi là xong.
 
 Đã thoả AI-003 bằng Postgres 16.15 + pgvector chạy docker trên máy (dự án
 Supabase DEV đã mất — tenant `postgres.xfql…` không tồn tại).
@@ -100,6 +111,76 @@ một của Zalo và một của main (`558_crm_leads_rpc_tenant_scope`,
 `565_rescan_clear_deadlines_on_completed`). Toàn repo 60+ số trùng — vấn đề
 sẵn có. Đừng bao giờ nói "chạy 558–565".
 
+
+## Zalo cá nhân — đính kèm, quyền sở hữu, canh phiên
+
+Trạng thái: **chạy thật trên primary.** Bổ sung sau khi 8 migration đã áp dụng.
+
+### Đính kèm: chép về kho, ngưỡng 10 MB
+
+`helpers/zaloAttachmentCopy.js` + vòng nền 20 giây trong `server.js`.
+Ảnh/tệp/video/thoại ≤ 10 MB được tải từ link Zalo rồi đưa vào bucket
+`attachments`; sticker cố ý BỎ QUA (chỉ là hình vui). Quá ngưỡng thì
+`attachment_status='too_large'`, giữ `attachment_name` + `attachment_size`
+để nhân viên biết khách gửi gì, vẫn mở được link Zalo.
+
+Chặn quá cỡ ba lớp: dung lượng Zalo khai sẵn → header `content-length` →
+đo lại buffer sau khi tải (máy chủ có thể không khai).
+
+**Không lưu URL công khai của Supabase.** URL đó mang `localhost:8000` nên
+trình duyệt chặn (trang chạy HTTPS qua `crm.beppro.io.vn`) và máy ngoài không
+tới được; nó cũng công khai với bất kỳ ai có link. Thay vào đó lưu
+`stored_path` + `stored_bucket`, phục vụ qua `GET /api/zalo/messages/:id/attachment`
+có `authMiddleware` + `guardContactAccess`. Migration 565 lật bucket về
+`public=false`.
+
+Thẻ `<img>` không gửi được header xác thực → `components/ZaloAttachment.jsx`
+tải bằng `fetch` rồi dựng blob URL, có **bộ nhớ đệm dùng chung cấp module**.
+Bẫy đã vấp: thu hồi blob URL trong cleanup của `useEffect` làm ảnh vỡ, vì danh
+sách tin vẽ lại mỗi vài giây khiến component gỡ/gắn liên tục.
+
+### Quyền sở hữu theo số điện thoại
+
+`helpers/zaloPersonalAccess.js` là **cửa duy nhất** kiểm quyền Zalo cá nhân.
+Tài khoản Zalo thuộc về nhân viên có `users.phone` trùng `account_phone` —
+số này do cổng tự báo từ `fetchAccountInfo`, không ai nhập tay.
+
+**Không có cửa sau cho admin** (quyết định của chủ dự án): chỉ chủ sở hữu xem
+và gửi được; `share_mode='team'` là lối thoát cho số tổng đài dùng chung.
+Admin vẫn quản lý tài khoản (thêm/xoá/đăng xuất/QR) qua đường riêng.
+
+Chặn ở 5 điểm: gửi tin, gửi lại, tra số, xem hội thoại, hiện tab. **Và ở
+trang Hộp thư** (`/contacts`, 9 endpoint `/contacts/:id/*`) qua
+`blockedPersonalOaIds` + `guardContactAccess` — nếu quên chỗ này thì nhân
+viên mở hộp thư là đọc được chat của đồng nghiệp.
+
+`getOaConfig()` lọc `is_active=true` nên tài khoản TẮT trả về null và mọi
+kiểm "có phải cá nhân không" đều trượt rồi rơi xuống đường OA. Dùng
+`getAccountAny()` cho các chỗ quyết định loại tài khoản.
+
+### Cổng: canh phiên Zalo, không chỉ canh tiến trình
+
+`zalo-bridge/src/account.js` có watchdog: mất kết nối Zalo > 90 giây thì dựng
+lại transport cho RIÊNG tài khoản đó. Bộ điều phối chỉ canh TIẾN TRÌNH chết —
+đã gặp ca phiên Zalo chết 67 phút mà tiến trình vẫn sống, không ai biết.
+
+Nạp lại phiên khi lỗi MẠNG thì thử lại 4 lần (giãn 5→20 giây), chỉ khi Zalo
+thật sự từ chối mới quay về quét QR. Trước đó một lần chập mạng là mất phiên oan.
+
+`loadRegistry()` trả danh sách ĐẦY ĐỦ gồm tài khoản tắt (trang quản trị vẽ từ
+đây); `runnable()` mới lọc `is_active` để cấp tiến trình. Lọc sớm thì "Tắt"
+biến thành "Xoá" trước mắt người dùng.
+
+### Giới hạn đã biết
+
+- Sticker Zalo cá nhân chỉ trả `{id, catId, type}`, KHÔNG có URL. Muốn hiện
+  phải gọi thêm `getStickersDetail(id)` — chưa làm.
+- `findUser` mã lỗi **216** = số không có Zalo (hoặc khách tắt "cho phép tìm
+  qua số"). Hai tình huống KHÔNG phân biệt được.
+- Chưa có cảnh báo chủ động khi tin gửi hỏng hoặc phiên rớt.
+- Cờ `auto_create_lead` có nút bấm nhưng backend CHƯA đọc.
+- `FRONTEND_URL` trong `backend/.env` còn trỏ `erp.vanphuthanh.net`; địa chỉ
+  thật là `https://crm.beppro.io.vn` (tunnel → localhost:4000).
 
 ## Trang cá nhân — cập nhật họ tên + SĐT
 

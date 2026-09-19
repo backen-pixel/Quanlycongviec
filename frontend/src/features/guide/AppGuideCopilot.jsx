@@ -16,6 +16,8 @@ import { EVENT_OPEN, EVENT_ASK_BAR } from './lib/openGuide';
 import GuideAskBar from './GuideAskBar';
 import './appGuideCopilot.css';
 
+import { loadGuideUiSettings, refreshGuideUiSettings } from './lib/guideUiSettings';
+
 const AppGuideCopilotPanel = lazy(() => import('./AppGuideCopilotPanel'));
 
 export default function AppGuideCopilot() {
@@ -48,6 +50,39 @@ export default function AppGuideCopilot() {
     const toggle = (e) => { if (e?.detail?.show !== false) setMounted(true); };
     window.addEventListener(EVENT_ASK_BAR, toggle);
     return () => window.removeEventListener(EVENT_ASK_BAR, toggle);
+  }, []);
+
+  /**
+   * HỎI CỜ QUYỀN Ở ĐÂY, KHÔNG Ở TRONG KHUNG LAZY.
+   *
+   * Khung trợ lý chỉ mount khi người dùng mở ô hỏi. Nếu để lời gọi này nằm trong đó thì một
+   * trình duyệt chưa từng dùng trợ lý sẽ KHÔNG có bản sao cờ, và `FULL_ACCESS` rơi về mặc định
+   * lúc build — tức bản Docker nội bộ mặc định BẬT. Người quản trị đã tắt toàn quyền mà máy đó
+   * vẫn mount nhóm tool tự-bấm-nút: đúng cái mà núm kia sinh ra để chặn.
+   *
+   * Máy chủ vẫn chặn lớp hai (xem `isFullAccess` trong copilotkit.js) nên không có ca nào trợ lý
+   * thật sự vượt quyền. Nhưng để client mount sai rồi dựa vào lớp sau đỡ là để dành một quả lỗi
+   * cho lần ai đó sửa lớp sau.
+   *
+   * Giá phải trả: một GET nhỏ mỗi lần tải trang cho mọi người đăng nhập. `/ui-settings` trả đúng
+   * ba trường và đặt `no-store`.
+   */
+  useEffect(() => {
+    loadGuideUiSettings();
+    /**
+     * DÒ LẠI MỖI PHÚT — không phải để cho đẹp, mà vì nếu không thì "tắt" chỉ có tác dụng với
+     * người bấm nút.
+     *
+     * `guardFullAccessTool` khoá tool theo bản sao cờ trong localStorage. Bản sao đó chỉ được
+     * ghi lúc tải trang, nên một tab đang mở của NGƯỜI KHÁC vẫn mang cờ cũ và trợ lý ở đó vẫn
+     * bấm nút thật — đúng cái mà núm tắt sinh ra để chặn. Tab khác CÙNG trình duyệt thì không
+     * cần nhịp này (localStorage dùng chung, đọc lại là thấy ngay), nhưng máy khác thì cần.
+     *
+     * Một phút là trần thời gian trễ tối đa của việc thu quyền. Đổi lại là một GET nhỏ mỗi phút
+     * cho mỗi người đang mở app — `/ui-settings` trả ba trường và đặt `no-store`.
+     */
+    const id = setInterval(() => { refreshGuideUiSettings(); }, 60_000);
+    return () => clearInterval(id);
   }, []);
 
   if (!user) return null;

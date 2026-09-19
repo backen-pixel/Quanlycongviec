@@ -57,6 +57,9 @@ const book = new Map(); // threadId -> [event]
  */
 const currentTurn = new Map();
 
+/** Số thứ tự toàn cục, chỉ để xếp ổn định trong cùng một pha — xem `record`. */
+let seq = 0;
+
 function setTurn(threadId, n) {
   const key = String(threadId || '').trim();
   if (!key) return;
@@ -80,9 +83,38 @@ function turnOf(threadId) {
 }
 
 /**
+ * PHA và LÀN của từng loại sự kiện — ĐỂ Ở ĐÂY, không để bên vẽ tự đoán.
+ *
+ * Bản trước bên client suy ra vị trí bằng `Number(e.steps) || 0`, nên MỌI sự kiện không gửi
+ * `steps` đều rơi vào nhóm 0 và bị vẽ TRƯỚC bước 1. Đã đo trên màn hình thật: thủ thư và ghi
+ * máy móc — hai việc chạy SAU khi lượt đã trả lời xong — hiện ra ngay sau câu hỏi, tức sơ đồ
+ * kể ngược dòng thời gian. Sửa ở chỗ gọi thì phải nhớ ở 14 nơi và nơi thứ 15 viết sau lại
+ * quên; sửa ở đây thì một bảng lo hết.
+ *
+ *   pha 'pre'   — trước bước tool đầu tiên
+ *   pha 'step'  — giữa chuỗi, vị trí đọc từ `steps`
+ *   pha 'post'  — sau khi lượt đã trả lời xong
+ *
+ *   làn 'main'  — nằm trên mạch chính, có ai đó chờ kết quả
+ *   làn 'side'  — bắn rồi bỏ, không ai `await`; bên vẽ tách thành nhánh riêng và KHÔNG nhập lại
+ */
+const EVENT_META = {
+  experience: { phase: 'pre', lane: 'main' },
+  greeting: { phase: 'pre', lane: 'main' },
+  rescue: { phase: 'step', lane: 'main' },
+  step_guard: { phase: 'step', lane: 'main' },
+  mood: { phase: 'pre', lane: 'side' },
+  embed_backfill: { phase: 'pre', lane: 'side' },
+  learn: { phase: 'post', lane: 'main' },
+  experience_write: { phase: 'post', lane: 'main' },
+};
+
+/**
  * @param {string} threadId
- * @param {string} type  'experience' | 'embed' | 'rescue' | 'step_guard' | 'learn' | 'experience_write'
- * @param {object} detail  type-specific fields — keep them SHORT, this is what the UI renders
+ * @param {string} type  khoá trong EVENT_META ở trên
+ * @param {object} detail  type-specific fields — keep them SHORT, this is what the UI renders.
+ *   `phase` / `lane` truyền vào sẽ ĐÈ mặc định của bảng (dùng khi một loại chạy ở hai chỗ).
+ *   `ms` là thời lượng, gửi khi đo được — bên vẽ cần nó để xếp thanh theo trục thời gian.
  */
 function record(threadId, type, detail = {}) {
   const key = String(threadId || '').trim();
@@ -100,7 +132,23 @@ function record(threadId, type, detail = {}) {
       currentTurn.delete(oldest);
     }
   }
-  list.push({ at: Date.now(), turn: currentTurn.get(key) || 1, type, ...detail });
+  const meta = EVENT_META[type] || { phase: 'step', lane: 'main' };
+  /*
+   * `seq` tăng đều toàn tiến trình. Hai sự kiện cùng pha thì thứ tự vẽ quyết định bằng con số
+   * này chứ không bằng `at`: `Date.now()` có độ phân giải mili-giây, mà thủ thư với ghi máy móc
+   * nối nhau trong cùng một nhịp nên trùng mốc là chuyện thường — trùng mốc thì `sort` không
+   * ổn định và hai dòng đổi chỗ ngẫu nhiên giữa hai lần vẽ.
+   */
+  seq += 1;
+  list.push({
+    at: Date.now(),
+    seq: seq,
+    turn: currentTurn.get(key) || 1,
+    type,
+    phase: meta.phase,
+    lane: meta.lane,
+    ...detail,
+  });
   if (list.length > MAX_PER_TURN) list.shift();
 }
 
@@ -129,4 +177,4 @@ function clear(threadId) {
   currentTurn.delete(key);
 }
 
-module.exports = { record, read, clear, setTurn, turnOf, MAX_PER_TURN };
+module.exports = { record, read, clear, setTurn, turnOf, MAX_PER_TURN, EVENT_META };

@@ -1244,14 +1244,40 @@
  */
 .guide-flow { padding: 6px 4px 12px; }
 
-.guide-flow__svg {
-  display: block;
-  max-width: 100%;
-  height: auto;
-  /* SVG kế thừa cỡ chữ của bảng nếu không chốt — chốt lại để phép ước lượng bề rộng khi ngắt
-     dòng (KY_TU_MOI_DONG) không sai khi người dùng phóng to chữ toàn app. */
-  font-family: inherit;
+.guide-flow__legend { display: flex; flex-wrap: wrap; gap: 10px; margin: 0 2px 8px; font-size: 10.5px; opacity: .72; }
+.guide-flow__legend span { display: inline-flex; align-items: center; gap: 4px; }
+.guide-flow__legend i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.guide-flow__hollow { background: transparent !important; border: 1.5px solid currentColor; }
+
+/* Rây và danh sách dòng PHẢI cao bằng nhau từng dòng một, nếu không chấm sẽ lệch khỏi nhãn.
+   Vì thế chiều cao dòng chốt bằng ROW_H truyền từ JS xuống inline style, không đặt ở đây —
+   một chỗ giữ con số, không phải hai. */
+.guide-flow__grid { position: relative; display: flex; align-items: flex-start; }
+.guide-flow__rail { flex: none; overflow: visible; }
+.guide-flow__rows { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 0; }
+
+.guide-flow__row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.guide-flow__row--err .guide-flow__name { color: #f87171; }
+.guide-flow__t { flex: none; width: 34px; text-align: right; font-size: 10px; opacity: .5; font-variant-numeric: tabular-nums; }
+.guide-flow__name {
+  min-width: 0; font-size: 11.5px; line-height: 1.25;
+  /* Một dòng, cắt đuôi — nhãn đầy đủ nằm ở `title`. Cho nhãn xuống dòng thì chiều cao dòng
+     khác nhau và rây lệch ngay; đây là cái giá cố ý của việc chốt ROW_H. */
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.guide-flow__name em { font-style: normal; opacity: .55; margin-left: 5px; font-size: 10px; }
+
+.guide-flow__sep { display: flex; align-items: center; gap: 6px; font-size: 10px; opacity: .45; }
+.guide-flow__sep::after { content: ''; flex: 1; height: 1px; background: currentColor; opacity: .3; }
+
+.guide-flow__side { margin: 6px 2px 0; font-size: 10.5px; opacity: .6; }
+
+.guide-flow__layers { margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(148,163,184,.22); }
+.guide-flow__layers > p { margin: 0 0 5px; font-size: 10px; opacity: .5; }
+.guide-flow__layers > div { display: flex; flex-wrap: wrap; gap: 4px; }
+.guide-flow__layers span { font-size: 10px; padding: 2px 7px; border-radius: 999px; cursor: help; }
+.guide-flow__layers .on { background: rgba(52,211,153,.14); color: #34d399; }
+.guide-flow__layers .off { background: rgba(148,163,184,.16); opacity: .75; }
 
 /* ── Tab Ngữ cảnh: bản đồ khu vực có nút CHI TIẾT ──
    Nút "Chi tiết" gọi đúng hàm mà tool `read_region` của trợ lý gọi (lib/regionTools.js), nên
@@ -1331,3 +1357,34 @@
   text-overflow: ellipsis;
 }
 .guide-act__table th { background: rgba(99, 102, 241, 0.07); font-weight: 600; }
+
+/* ── Nhắc tải lại khi quyền trợ lý vừa đổi ──
+   Nổi ở góc dưới bên trái, chỗ ít đè lên nội dung nhất và không trùng chỗ nhân vật (phải) hay
+   nút chat của CopilotKit (phải dưới). Bấm vào là tải lại luôn — nhắc mà bắt người ta tự tìm
+   phím F5 thì phần lớn sẽ bỏ qua. */
+.guide-reload-hint {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 1150;
+  max-width: 260px;
+  padding: 9px 13px;
+  border: 1px solid rgba(251, 191, 36, .45);
+  border-radius: 10px;
+  background: #422006;
+  color: #fde68a;
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+}
+.guide-reload-hint:hover { background: #57320a; }
+
+/* Toàn quyền đã bị tắt ở cài đặt nhưng tab này chưa tải lại: nhóm tool còn đăng ký, đã bị khoá
+   ở cửa chạy (`guardFullAccessTool`). Nhãn phải khác hẳn nhãn "toàn quyền" đang bật, nếu không
+   người soi đọc lướt sẽ tưởng vẫn bật. */
+.guide-act__mode--off {
+  background: rgba(148, 163, 184, .18) !important;
+  color: #cbd5e1 !important;
+  text-decoration: line-through;
+}

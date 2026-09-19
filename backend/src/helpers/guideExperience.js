@@ -1004,6 +1004,31 @@ function discardExperience({ company = 'chung', code, reason: reasonText } = {})
  *
  * Không phân trang: trần 300 bản mỗi công ty, và toàn bộ kho đã nằm sẵn trong RAM.
  */
+/**
+ * LIỆT KÊ MỌI KHO đang có trong bộ nhớ — chỉ dành cho admin hệ thống.
+ *
+ * Kho kinh nghiệm chia theo `company_id`, còn người không gắn công ty ghi vào kho `'chung'`.
+ * Trước bản này không có đường nào hỏi "có những kho nào": mọi endpoint đều suy ra kho từ
+ * `req.user.company_id`, nên admin hệ thống (company_id = null) vĩnh viễn chỉ chạm tới `'chung'`
+ * và kho của từng công ty thành vùng không ai quản trị được — đã đo: 55 bản ở `'chung'` nhìn
+ * thấy, 26 bản của một công ty thì không xem, không bỏ, không khôi phục được.
+ */
+function listStores() {
+  const store = read();
+  return Object.keys(store)
+    .map((id) => {
+      const records = store[id] || [];
+      return {
+        id: id,
+        count: records.length,
+        discarded: records.filter((x) => x.discarded_at).length,
+      };
+    })
+    .filter((x) => x.count > 0)
+    // `'chung'` lên đầu, còn lại theo số bản ghi giảm dần — kho to là kho đáng soi trước.
+    .sort((a, b) => (a.id === 'chung' ? -1 : b.id === 'chung' ? 1 : b.count - a.count));
+}
+
 function listAll(company) {
   const records = read()[String(company || 'chung')] || [];
   return records
@@ -1418,8 +1443,20 @@ async function findCombined(question, { company = 'chung', path: path = '', turn
     return keywords.map((x) => ({ ...x, _tang: 'keywords' }));
   }
 
-  // Bù vector ở nền cho lần sau; KHÔNG chờ — lần này thiếu vector thì chỉ đơn giản là ít ứng viên.
-  backfillVectors(company).catch(() => {});
+  /*
+   * Bù vector ở nền cho lần sau; KHÔNG chờ — lần này thiếu vector thì chỉ đơn giản là ít ứng viên.
+   *
+   * Ghi sổ luồng vì đây là làn chạy song song thứ hai (sau subagent sắc mặt). Nó tốn mạng và
+   * tốn tiền embedding, nên để nó vô hình trên bảng Luồng là giấu đúng loại chi phí mà người
+   * soi đang đi tìm.
+   */
+  const bfKey = turn;
+  const bfStart = Date.now();
+  flowLog.record(bfKey, 'embed_backfill', { state: 'start' });
+  backfillVectors(company).then(
+    (n) => flowLog.record(bfKey, 'embed_backfill', { state: 'done', ms: Date.now() - bfStart, embedded: typeof n === 'number' ? n : null }),
+    () => flowLog.record(bfKey, 'embed_backfill', { state: 'failed', ms: Date.now() - bfStart }),
+  ).catch(() => {});
 
   const beforeEmbed = Date.now();
   const semantic = await findBySemantics(topic, {
@@ -1922,6 +1959,7 @@ module.exports = {
   discardExperience,
   restoreExperience,
   listAll,
+  listStores,
   shortCode,
   findExperience,
   findBySemantics,

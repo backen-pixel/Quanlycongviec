@@ -14,6 +14,7 @@
  * nhét được số vô lý vào.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { refreshGuideUiSettings } from '../features/guide/lib/guideUiSettings';
 import { createPortal } from 'react-dom';
 import {
   Loader2, Save, RotateCcw, AlertTriangle, Info, Coins, Brain,
@@ -124,6 +125,24 @@ export default function GuideAssistantSettingsTab({ showToast }) {
     setFieldErrors({});
     try {
       const { data } = await api.put('/copilotkit/settings', form);
+      /**
+       * Hai núm ở nhóm "Quyền & hiển thị" điều khiển thứ đang chạy NGAY TRÊN TRANG NÀY (bảng
+       * Hành động dán cạnh khung chat). Không hỏi lại thì người vừa bấm Lưu vẫn thấy nguyên
+       * trạng thái cũ và tưởng nút không ăn.
+       */
+      refreshGuideUiSettings()
+        .then((doiToanQuyen) => {
+          /**
+           * Đổi toàn quyền thì PHẢI nói, không được lưu im lặng.
+           *
+           * Phía máy chủ có hiệu lực ngay, nhưng phía client thì `FULL_ACCESS` là hằng đọc một
+           * lần lúc tải trang (xem guideAccess.js) — nên tab đang mở vẫn mount đúng nhóm tool cũ
+           * cho tới khi tải lại. Người vừa bấm TẮT mà thấy trợ lý vẫn tự bấm nút sẽ kết luận là
+           * núm hỏng, trong khi nó đã ăn ở chỗ quan trọng nhất.
+           */
+          if (doiToanQuyen) showToast?.('Đã đổi quyền trợ lý — tải lại trang để áp dụng trên máy này', 'warn');
+        })
+        .catch(() => { /* hỏi lại thất bại thì lần tải trang sau vẫn đúng */ });
       setSaved(data.value);
       setForm(data.value);
       // Áp bộ nhân vật NGAY trên máy người vừa lưu: nhân vật sống ở khung trợ lý toàn cục, không

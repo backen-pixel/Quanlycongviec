@@ -76,6 +76,8 @@ import {
 import AgentActivityPanel from './AgentActivityPanel';
 import GuideMascot from './GuideMascot';
 import { loadMascotSet, useMascotSet } from './lib/useMascotSet';
+import { loadGuideUiSettings } from './lib/guideUiSettings';
+import { serverShowPanel, onShowPanelChange, fullAccessStillOn, onFullAccessChange } from './lib/guideUiFlags';
 import GuideAskBridge from './GuideAskBridge';
 import GuideExperienceRecorder from './GuideExperienceRecorder';
 import GuideChatPersist from './GuideChatPersist';
@@ -122,6 +124,35 @@ function guardTool(name, handler) {
       console.error(`[guide] tool ${name} lỗi:`, e);
       return { ok: false, reason: 'tool_error', loi: e?.message || String(e) };
     }
+  };
+}
+
+/**
+ * CỔNG CHẠY cho nhóm tool toàn quyền — khoá theo cờ SỐNG, không theo cờ lúc mount.
+ *
+ * Đây là chỗ vá một lỗ đã đo trên máy thật: tắt "Chế độ toàn quyền" ở /settings/tro-ly-huong-dan
+ * thì máy chủ chuyển sang bộ luật chế độ đọc NGAY, nhưng tab đang mở vẫn giữ nguyên nhóm tool
+ * đã mount từ lúc tải trang — nên trợ lý vẫn bấm nút, vẫn điền form thật. Núm tắt rồi mà tay
+ * vẫn hoạt động.
+ *
+ * KHÔNG sửa bằng cách cho `FULL_ACCESS` đổi giữa chừng: hằng đó quyết định nhánh mount, đổi nó
+ * là đổi tập tool đăng ký với CopilotKit ngay giữa một lượt hỏi. Khoá ở cửa CHẠY thì tập tool
+ * không đụng tới, chỉ là gọi tới nơi thì bị từ chối.
+ *
+ * Trả về một object có `reason` rõ ràng thay vì ném lỗi, để model đọc được và nói lại cho người
+ * dùng thay vì thử lại ba lần rồi bỏ cuộc.
+ */
+function guardFullAccessTool(name, handler) {
+  const inner = guardTool(name, handler);
+  return async (args, ctx) => {
+    if (!fullAccessStillOn()) {
+      return {
+        ok: false,
+        reason: 'full_access_off',
+        loi: 'Chế độ toàn quyền đã bị tắt trong cài đặt trợ lý. Hãy chỉ đường cho người dùng tự thao tác.',
+      };
+    }
+    return inner(args, ctx);
   };
 }
 
@@ -211,9 +242,21 @@ function GuideCopilotTools() {
    * trang này" khiến cả model lẫn người đọc bảng Ngữ cảnh tưởng quyền được cấp theo từng màn
    * hình, rồi đi tìm một cơ chế phân quyền theo trang vốn không tồn tại.
    */
+  /**
+   * CỜ SỐNG, không phải hằng lúc mount.
+   *
+   * `FULL_ACCESS` quyết định nhóm tool nào được ĐĂNG KÝ và buộc phải cố định cả phiên. Nhưng
+   * khối ngữ cảnh dưới đây là thứ ta NÓI VỚI MODEL nó được làm gì — câu đó phải đúng ở từng
+   * lượt hỏi. Thu quyền giữa phiên mà vẫn khai "full_access: true" thì model đi gọi tool rồi
+   * ăn chặn từ `guardFullAccessTool`, và nó sẽ thử lại vì ngữ cảnh bảo là được phép.
+   */
+  const [quyenConHieuLuc, setQuyenConHieuLuc] = useState(() => fullAccessStillOn());
+  useEffect(() => onFullAccessChange(() => setQuyenConHieuLuc(fullAccessStillOn())), []);
+  const toanQuyenSong = FULL_ACCESS && quyenConHieuLuc;
+
   useAgentContext({
     description: 'Quyền của bạn (trợ lý) trong phiên này — do bản triển khai quyết định, không đổi theo trang',
-    value: FULL_ACCESS
+    value: toanQuyenSong
       ? {
         full_access: true,
         can_click_buttons: true,
@@ -238,6 +281,15 @@ function GuideCopilotTools() {
         can_fill_fields: false,
         can_navigate_without_confirm: false,
         can_read_visible_data: false,
+        /**
+         * Phân biệt "bản này vốn chỉ đọc" với "vừa bị thu quyền giữa phiên". Với model thì hai
+         * ca hành xử như nhau, nhưng với người soi bảng Ngữ cảnh thì khác hẳn: ca thứ hai giải
+         * thích vì sao tab đang mở lại khác với cài đặt họ vừa bấm.
+         */
+        ...(FULL_ACCESS ? {
+          note: 'Toàn quyền vừa bị TẮT trong cài đặt trợ lý giữa phiên này. Mọi tool thao tác đã'
+            + ' bị khoá. Hãy chỉ đường cho người dùng tự bấm.',
+        } : {}),
       },
   });
 
@@ -425,7 +477,7 @@ function GuideFullAccessTools() {
     parameters: z.object({
       include_table: z.boolean().optional().describe('true (mặc định) để đọc cả bảng dữ liệu; false nếu chỉ cần bộ lọc, đỡ tốn token.'),
     }),
-    handler: guardTool(TOOL.read_page_state, async ({ include_table }) => {
+    handler: guardFullAccessTool(TOOL.read_page_state, async ({ include_table }) => {
       const waited = await waitForPageReady({ minMs: 0, maxMs: 6000 });
       const state = readPageState({ include_table: include_table !== false });
       return { ...state, page_wait: waited, note: `${state.note || ''} ${waitNote(waited)}`.trim() };
@@ -439,7 +491,7 @@ function GuideFullAccessTools() {
     parameters: z.object({
       keyword: z.string().describe('Chuỗi cần tìm, không cần dấu và không cần đúng hoa thường, ví dụ "linh".'),
     }),
-    handler: guardTool(TOOL.find_on_page, async ({ keyword }) => {
+    handler: guardFullAccessTool(TOOL.find_on_page, async ({ keyword }) => {
       const waited = await waitForPageReady({ minMs: 0, maxMs: 6000 });
       return { ...searchOnPage(keyword), page_wait: waited };
     }),
@@ -452,7 +504,7 @@ function GuideFullAccessTools() {
     parameters: z.object({
       label: z.string().describe('Nhãn nút ("Áp dụng", "Lưu", "Xoá") hoặc tiêu đề thẻ bản ghi ("Tủ bếp Chị Nhật Linh").'),
     }),
-    handler: guardTool(TOOL.click_element, async ({ label }) => clickByLabel(label)),
+    handler: guardFullAccessTool(TOOL.click_element, async ({ label }) => clickByLabel(label)),
     render: ({ args, status, result }) => <ClickResultCard args={args} status={status} result={result} />,
   }, []);
 
@@ -463,7 +515,7 @@ function GuideFullAccessTools() {
       label: z.string().describe('Nhãn của trường, ví dụ "Công ty", "Từ ngày", "Tìm kiếm".'),
       value: z.string().describe('Giá trị cần đặt. Chuỗi rỗng "" để xoá trắng ô nhập / bỏ chọn.'),
     }),
-    handler: guardTool(TOOL.fill_field, async ({ label, value }) => setFieldByLabel(label, value)),
+    handler: guardFullAccessTool(TOOL.fill_field, async ({ label, value }) => setFieldByLabel(label, value)),
     render: ({ args, status, result }) => <FillFieldCard args={args} status={status} result={result} />,
   }, []);
 
@@ -471,7 +523,7 @@ function GuideFullAccessTools() {
     name: TOOL.navigate_to_page,
     description: 'Chuyển người dùng sang một trang khác trong hệ thống NGAY, không cần xác nhận. Sau khi chuyển, trang mới có thể còn đang nạp — muốn đọc số liệu ở đó thì gọi tiếp read_page_state hoặc read_screen_metrics.',
     parameters: NAV_PARAMS,
-    handler: guardTool(TOOL.navigate_to_page, async ({ path }) => {
+    handler: guardFullAccessTool(TOOL.navigate_to_page, async ({ path }) => {
       // Vẫn chặn đường dẫn không có trong sổ đăng ký màn hình: điều hướng bừa chỉ dẫn tới trang
       // 404, và model sẽ tưởng tính năng đó không tồn tại.
       if (!isNavigablePath(path)) {
@@ -540,6 +592,25 @@ export default function AppGuideCopilotPanel() {
   useEffect(() => { loadMascotSet(); }, []);
 
   /**
+   * Hai công tắc trên màn hình cài đặt: toàn quyền và bày/ẩn bảng Hành động.
+   *
+   * `hienBang` áp dụng NGAY vì bảng là một component mount/unmount trọn gói. Cờ toàn quyền thì
+   * KHÔNG — nó chỉ vào sổ để lần tải trang sau đọc, xem guideUiSettings.js. Khi nó vừa đổi thì
+   * hàm dưới trả về `true`, và ta nói thẳng cho người dùng biết phải tải lại; im lặng ở đây là
+   * để họ bấm tắt rồi ngồi xem trợ lý tiếp tục tự bấm nút mà không hiểu vì sao.
+   */
+  const [hienBang, setHienBang] = useState(() => serverShowPanel());
+  const [canTaiLai, setCanTaiLai] = useState(false);
+  useEffect(() => {
+    const huy = onShowPanelChange(setHienBang);
+    loadGuideUiSettings().then((doiToanQuyen) => {
+      setHienBang(serverShowPanel());
+      if (doiToanQuyen) setCanTaiLai(true);
+    });
+    return huy;
+  }, []);
+
+  /**
    * PHẢI ĐĂNG KÝ NGHE ĐỔI BỘ NHÂN VẬT, dù ở đây không vẽ nhân vật.
    *
    * `loadMascotSet()` hỏi máy chủ BẤT ĐỒNG BỘ. Không nghe thì component này chỉ render một lần,
@@ -604,7 +675,10 @@ export default function AppGuideCopilotPanel() {
       // ngay bên dưới, nên prompt và tool không thể lệch nhau.
       headers={{
         Authorization: `Bearer ${token || ''}`,
-        'x-guide-full-access': FULL_ACCESS ? '1' : '0',
+        // Cờ SỐNG: thu quyền giữa phiên thì lượt hỏi kế tiếp phải gửi đúng chế độ, không đợi
+        // ai tải lại trang. Máy chủ vẫn tự chặn thêm một lớp (`isFullAccess`), nhưng gửi đúng
+        // ngay từ đây thì bộ chỉ dẫn model nhận được cũng đúng luôn.
+        'x-guide-full-access': (FULL_ACCESS && fullAccessStillOn()) ? '1' : '0',
         // Quyen xoa la co RIENG. Thieu header nay thi prompt van day model rang no duoc
         // xoa, trong khi tang thao tac da chan — model se bam, bi tu choi, roi bao cao sai
         // voi nguoi dung la 'da xoa xong'.
@@ -638,7 +712,16 @@ export default function AppGuideCopilotPanel() {
           sau `!hidden` (`useUsage`, `useFlow`, `useContextSnapshot`). Đóng thì nó không gọi một
           API nào. Đó là lý do ở đây mount được, trong khi với người dùng thường thì vẫn KHÔNG
           mount — họ không có quyền đọc mấy endpoint đó, mở ra chỉ nhận 403. */}
-      {(DEV_PANEL || IS_ADMIN_ROLE.includes(user?.role)) ? <AgentActivityPanel /> : null}
+      {hienBang && (DEV_PANEL || IS_ADMIN_ROLE.includes(user?.role)) ? <AgentActivityPanel /> : null}
+      {canTaiLai ? (
+        <button
+          type="button"
+          className="guide-reload-hint"
+          onClick={() => window.location.reload()}
+        >
+          Quyền của trợ lý vừa đổi — tải lại trang để áp dụng
+        </button>
+      ) : null}
       {/* Nhân vật hệ thống — cũng cần useAgent(), nên cũng phải nằm trong provider. Nó KHÔNG
           thay khung chat: khung chat vẫn mở như cũ, nhân vật diễn ở ngoài. */}
       <GuideMascot />

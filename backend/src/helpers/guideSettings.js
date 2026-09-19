@@ -589,9 +589,48 @@ const FIELDS = [
       + 'OPENAI_API_KEY RIÊNG, không đi theo nhà cung cấp của trợ lý chính — thiếu key thì tính '
       + 'năng tự tắt, không báo lỗi và không ảnh hưởng câu trả lời.',
   },
+
+  /* ── Quyền & hiển thị ── */
+  /**
+   * TOÀN QUYỀN — trước bản này chỉ chỉnh được lúc BUILD (`VITE_GUIDE_FULL_ACCESS` trong
+   * Dockerfile), nên muốn tắt là phải dựng lại image. Đưa vào đây để tắt được ngay khi cần.
+   *
+   * HAI LỚP, và phải hiểu rõ lớp nào làm gì:
+   *   · client đọc núm này để quyết định mount NHÓM TOOL nào (tự bấm / chỉ đọc);
+   *   · server đọc chính núm này để chặn lại, vì header `x-guide-full-access` do client gửi
+   *     thì client sửa được. Tắt ở đây là tắt THẬT, không phải tắt giao diện.
+   *
+   * Đổi núm này CẦN TẢI LẠI TRANG mới có tác dụng phía client: `FULL_ACCESS` là hằng đọc một
+   * lần lúc import, và nhánh mount tool dựa vào nó — đổi giữa chừng là đổi thứ tự hook của
+   * React. Phía server thì có hiệu lực ngay từ lượt hỏi kế tiếp.
+   */
+  {
+    key: 'full_access',
+    group: 'quyen',
+    label: 'Chế độ toàn quyền (trợ lý tự bấm nút, tự điền, tự điều hướng)',
+    type: 'boolean',
+    default: () => boolEnv('GUIDE_TOAN_QUYEN', true),
+    description: 'BẬT: trợ lý đọc được giá trị thật đang hiển thị và tự thao tác trên trang thay '
+      + 'người dùng — không hỏi xác nhận từng bước. TẮT: trợ lý chỉ ĐỌC khung giao diện và chỉ '
+      + 'chỗ, mọi thao tác vẫn do người dùng tự bấm. Quyền XOÁ tách riêng và luôn tắt mặc định, '
+      + 'không nằm trong núm này. Phía client cần TẢI LẠI TRANG mới đổi; phía server có hiệu lực '
+      + 'ngay từ lượt hỏi kế tiếp, kể cả khi trình duyệt còn gửi cờ cũ.',
+  },
+  {
+    key: 'show_activity_panel',
+    group: 'quyen',
+    label: 'Hiện bảng "Hành động của trợ lý"',
+    type: 'boolean',
+    default: () => true,
+    description: 'Bảng dán cạnh khung chat, bày tham số và kết quả thô của từng tool, nguyên văn '
+      + 'suy luận của model, sơ đồ luồng, số token và tiền từng lượt. Hữu ích khi soi lỗi, nhưng '
+      + 'với người dùng thường thì vừa rối vừa lộ nội bộ. TẮT thì bảng biến mất và nhịp poll '
+      + '/debug/usage chạy nền cũng dừng theo. Chỉ tài khoản admin mới thấy bảng này dù có bật.',
+  },
 ];
 
 const GROUPS = [
+  { id: 'quyen', name: 'Quyền & hiển thị' },
   { id: 'model', name: 'Nhà cung cấp & model' },
   { id: 'quota', name: 'Hạn mức mỗi người / ngày' },
   { id: 'cost', name: 'Tính toán chi phí' },
