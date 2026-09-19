@@ -57,6 +57,7 @@ const experience = require('../../helpers/guideExperience');
 const stepGuard = require('../../helpers/guideStepGuard');
 const flowLog = require('../../helpers/guideFlow');
 const intent = require('../../helpers/guideIntent');
+const greeting = require('../../helpers/guideGreeting');
 const mood = require('../../helpers/guideMood');
 const librarian = require('../../helpers/guideLearn');
 const quota = require('../../helpers/guideQuota');
@@ -976,6 +977,48 @@ function buildAgent(user, toanQuyen, choXoa, moodOn) {
   const session = { key: '' };
 
   /**
+   * LƯỢT CHÀO HỎI — gỡ tool và gỡ suy luận, để model chỉ còn việc viết một câu.
+   *
+   * "hi" hiện vẫn là một lượt đầy đủ: model đọc trọn prompt, được phép nghĩ, được phép gọi
+   * `search_knowledge_base` để tra xem "hi" là màn hình nào. Tốn vài giây và đôi khi tốn cả một
+   * bước tool, để trả về đúng một câu chào.
+   *
+   * VẪN ĐỂ MODEL VIẾT câu chào chứ không trả lời soạn cứng: câu cứng thì lần nào cũng y hệt và lộ
+   * ngay là máy, còn tự dựng một luồng SSE giả ở giữa là chép lại phần dễ hỏng nhất của thư viện
+   * để tiết kiệm đúng lời gọi rẻ nhất trong ngày.
+   *
+   * ĐẶT ĐẦU danh sách middleware: gỡ tool rồi thì chặn bước không còn gì để làm, và cứu hộ cũng
+   * không thể nổ (nó cần ≥3 bước tool).
+   */
+  const greetingMiddleware = {
+    transformParams: async ({ params }) => {
+      const prompt = Array.isArray(params?.prompt) ? params.prompt : null;
+      if (!prompt) return params;
+
+      // Câu hỏi THẬT gần nhất — bỏ qua mọi khối ta tự chèn, cùng phép nhận diện với cứu hộ.
+      const moc = experience.measureStuckSignals(prompt);
+      if (!greeting.isGreeting(moc.question)) return params;
+
+      flowLog.record(session.key, 'greeting', { skipped_tools: true });
+      return {
+        ...params,
+        // Cùng hình dạng mà nấc chặn của `guideStepGuard` đang dùng — provider đã hiểu dạng này.
+        toolChoice: { type: 'none' },
+        /**
+         * Bỏ suy luận cho riêng lượt này. Xoá hẳn `providerOptions` chứ không sửa từng khoá: bốn
+         * nhánh cấu hình suy luận có hình dạng khác nhau theo nhà cung cấp (xem `reasoningOptions`),
+         * và ở đây ta không cần giữ khoá nào trong số đó — một câu chào thì không có gì để nghĩ.
+         */
+        providerOptions: undefined,
+        prompt: [...prompt, {
+          role: 'user',
+          content: [{ type: 'text', text: `${CONTEXT_BLOCK_MARKER}\n\n${greeting.LOI_NHAC}` }],
+        }],
+      };
+    },
+  };
+
+  /**
    * Ý ĐỊNH CHO CỨU HỘ — cùng một bộ đệm với đầu lượt, nên thường không tốn gì.
    *
    * Số lượt lấy từ `flowLog.turnOf`, KHÔNG phải `latestFor`. Hai phép này khác nhau ở đúng chỗ
@@ -1019,6 +1062,8 @@ function buildAgent(user, toanQuyen, choXoa, moodOn) {
      * Usage đo SAU CÙNG, để con số phản ánh đúng cái thật sự gửi đi (gồm cả khối cứu hộ).
      */
     middleware: [
+      // ĐẦU TIÊN: gỡ tool cho lượt chào hỏi thì ba middleware dưới không còn gì để làm.
+      greetingMiddleware,
       ...(experience.ENABLED ? [experience.createRescueMiddleware(user, CONTEXT_BLOCK_MARKER, session, getRescueIntent)] : []),
       stepGuard.createStepGuardMiddleware(CONTEXT_BLOCK_MARKER, session),
       // Điểm cắt cache là cơ chế RIÊNG của Anthropic (`cache_control` trên từng khối nội dung).

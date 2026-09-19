@@ -885,6 +885,12 @@
   padding: 6px;
   border-radius: 999px;
   width: auto;
+  /* LÙI VÀO THANH MENU khi thu gọn (`--agb-thu` do GuideAskBar.jsx đo). Chỉ đổi `left`, nên
+     `transition: left` sẵn có lo phần trượt ra/vào; mở lại là về `--agb-trai` như cũ. */
+  left: var(--agb-thu, var(--agb-trai, 24px));
+  /* Đứng trên nền menu tối: viền và bóng sáng hơn để không chìm mất. */
+  border-color: rgba(255, 255, 255, 0.5);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.35);
 }
 .app-guide-askbar--collapsed .app-guide-askbar__input,
 .app-guide-askbar--collapsed .app-guide-askbar__history,
@@ -905,6 +911,35 @@
 .app-guide-askbar__send {
   transition: opacity 0.22s ease, width 0.28s ease, flex-basis 0.28s ease;
 }
+
+/* ── Nhãn lúc thu gọn ──
+   Mặc định ĐÓNG như mọi thứ khác trong thanh: rộng 0, mờ hẳn. Chỉ bung ra khi cụm đang thu gọn
+   VÀ menu đủ rộng (`--co-nhan` do GuideAskBar.jsx gắn). Cùng kiểu chuyển động với ô nhập nên
+   đóng/mở nhìn là một động tác, không phải hai thứ rời nhau. */
+.app-guide-askbar__nhan {
+  width: 0;
+  opacity: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  flex: 0 0 auto;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1;
+  color: #4338ca;
+  letter-spacing: 0.1px;
+  /* Chữ cũng bấm được: người ta nhắm vào cả viên thuốc chứ không nhắm riêng khuôn mặt 40px.
+     Lúc thanh đã mở, nhãn rộng 0 nên không có gì để bấm nhầm. */
+  cursor: pointer;
+  user-select: none;
+  transition: opacity 0.22s ease, width 0.28s ease, padding 0.28s ease;
+}
+.app-guide-askbar--co-nhan .app-guide-askbar__nhan {
+  width: auto;
+  opacity: 1;
+  padding: 0 10px 0 8px;
+}
+/* Có nhãn thì không còn là quả bóng tròn: viên thuốc bọc cả mặt lẫn chữ. */
+.app-guide-askbar--co-nhan { padding-right: 2px; }
 
 /* Nút tròn bọc ngoài ảnh đại diện — lối vào thường trực khi nhân vật đã tan. */
 .app-guide-askbar__avatar-button {

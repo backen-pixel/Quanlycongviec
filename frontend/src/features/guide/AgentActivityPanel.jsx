@@ -355,6 +355,15 @@ function eventText(e) {
       e.candidates != null ? `${e.candidates} ứng viên` : null].filter(Boolean).join(' · ');
     return { name: label, sub };
   }
+  /**
+   * LƯỢT CHÀO HỎI — phải hiện, vì nó giải thích vì sao lượt này không có bước nào.
+   *
+   * Không có dòng này thì người soi nhìn một lượt trống trơn rồi tưởng trợ lý hỏng, trong khi đó
+   * là đường tắt cố ý: gỡ tool, gỡ suy luận, để model chỉ viết một câu chào.
+   */
+  if (e.type === 'greeting') {
+    return { name: 'Lượt chào hỏi — bỏ tool và suy luận', sub: 'trả lời thẳng, không tra cứu' };
+  }
   if (e.type === 'experience_write') {
     return {
       name: e.saved ? 'Ghi kinh nghiệm (máy móc)' : 'Không ghi kinh nghiệm',

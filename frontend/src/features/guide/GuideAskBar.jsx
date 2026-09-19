@@ -41,6 +41,45 @@ function sidebarLeft() {
   return Math.max(LEFT_MARGIN, (main ? main.getBoundingClientRect().left : 0) + LEFT_MARGIN);
 }
 
+/** Bề ngang cả cụm lúc thu gọn: nút tròn 40px + 6px đệm mỗi bên. */
+const COLLAPSED_W = 52;
+
+/**
+ * CHỖ ĐẬU LÚC THU GỌN: LÙI HẲN VÀO THANH MENU.
+ *
+ * Thu gọn rồi mà vẫn đứng ở mép trái vùng nội dung thì quả bóng che mất cột đầu của bảng và
+ * nút đầu tiên của mọi thanh công cụ dưới đáy — nó chỉ là lối vào, không đáng chiếm chỗ của
+ * nội dung. Lùi vào giữa thanh menu (vùng từ 0 tới mép trái `<main>`): menu là dải trang trí,
+ * mất một ô ở đáy không sao. Mở ô nhập thì nó trở lại `sidebarLeft()` như cũ.
+ *
+ * Không có menu (màn hẹp, menu trượt ra ngoài) thì không có chỗ mà lùi — giữ nguyên lề cũ.
+ */
+function dockLeft() {
+  if (typeof document === 'undefined') return LEFT_MARGIN;
+  const bar = menuWidth();
+  if (bar < COLLAPSED_W + 8) return LEFT_MARGIN;
+  // Menu đủ rộng để chứa cả nhãn thì nép sát mép trái như mọi mục menu khác — căn giữa lúc này
+  // đẩy nhãn thò ra ngoài menu. Menu hẹp (dải icon 60px) không có nhãn nên căn giữa cho cân.
+  if (bar >= LABEL_ROOM) return 10;
+  return Math.max(6, Math.round((bar - COLLAPSED_W) / 2));
+}
+
+/** Bề ngang thanh menu = mép trái vùng nội dung. */
+function menuWidth() {
+  if (typeof document === 'undefined') return 0;
+  const main = document.querySelector('main');
+  return main ? main.getBoundingClientRect().left : 0;
+}
+
+/**
+ * HẸP HƠN NGẦN NÀY THÌ KHÔNG HIỆN NHÃN.
+ *
+ * Nút tròn không tự nói nó là cái gì: đứng một mình trong menu, nó chỉ là một khuôn mặt lạ giữa
+ * các mục có chữ. Nhãn "Trợ lý hướng dẫn" chỉ có chỗ khi menu đang mở (240px); ở dải icon 60px
+ * mà vẫn vẽ thì cả viên thuốc tràn sang đè lên nội dung — đúng thứ việc lùi vào menu vừa tránh.
+ */
+const LABEL_ROOM = 190;
+
 /**
  * KHUNG CHAT DÁN MÉP PHẢI CHIẾM BAO NHIÊU BỀ NGANG.
  *
@@ -77,6 +116,8 @@ export default function GuideAskBar() {
   const [running, setRunning] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [left, setLeft] = useState(sidebarLeft);
+  const [dock, setDock] = useState(dockLeft);
+  const [labelled, setLabelled] = useState(() => menuWidth() >= LABEL_ROOM);
   const [right, setRight] = useState(0);
   const oRef = useRef(null);
 
@@ -97,7 +138,12 @@ export default function GuideAskBar() {
    * `resize` thì thanh hỏi đứng lại chỗ cũ, hoặc thò vào dưới menu.
    */
   useEffect(() => {
-    const measure = () => { setLeft(sidebarLeft()); setRight(sidebarRight()); };
+    const measure = () => {
+      setLeft(sidebarLeft());
+      setDock(dockLeft());
+      setLabelled(menuWidth() >= LABEL_ROOM);
+      setRight(sidebarRight());
+    };
     measure();
     window.addEventListener('resize', measure);
     const main = document.querySelector('main');
@@ -165,8 +211,8 @@ export default function GuideAskBar() {
 
   return (
     <div
-      className={`app-guide-askbar${open ? '' : ' app-guide-askbar--collapsed'}`}
-      style={{ '--agb-trai': `${left}px`, '--agb-phai': `${right}px` }}
+      className={`app-guide-askbar${open ? '' : ' app-guide-askbar--collapsed'}${(!open && labelled) ? ' app-guide-askbar--co-nhan' : ''}`}
+      style={{ '--agb-trai': `${left}px`, '--agb-thu': `${dock}px`, '--agb-phai': `${right}px` }}
     >
       {/* Nút tròn: vừa là mặt nhân vật, vừa là nút bật/tắt ô nhập. */}
       <button
@@ -184,6 +230,16 @@ export default function GuideAskBar() {
           draggable="false"
         />
       </button>
+
+      {/* NHÃN — chỉ có lúc thu gọn, và chỉ khi menu đủ rộng để chứa (xem LABEL_ROOM).
+          `aria-hidden`: nút tròn đã có `aria-label` đầy đủ, đọc thêm lần nữa là thừa. */}
+      <span
+        className="app-guide-askbar__nhan"
+        aria-hidden="true"
+        onClick={() => toggleAskBar()}
+      >
+        Trợ lý hướng dẫn
+      </span>
 
       {/* Giữ trong DOM cả lúc thu gọn để còn animation trượt ra, và để `focus()` có chỗ bám. */}
       <textarea
