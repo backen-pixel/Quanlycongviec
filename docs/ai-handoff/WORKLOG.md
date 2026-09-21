@@ -1,5 +1,10 @@
 # Nhật ký công việc AI
 
+## 2026-09-21 13:20 — Đơn hàng: điền khách hàng trên danh sách
+
+- AI: Cursor. Cột Khách hàng `/crm/orders` bấm để nhập tên/SĐT/địa chỉ thay vì `-`.
+- File: `OrdersPage.jsx`, `commercialDocs.js` (`ORDER_LIST_SELECT`).
+
 ## 2026-09-21 09:35 — CRM Deadline luôn hiện hạn (gỡ ẩn SĐT / đã SX)
 
 - AI: Cursor. Gỡ ẩn hạn CRM khi thiếu SĐT hoặc đã có `project_id`. Badge `0/1` là loaded/total server; FE không còn đẩy thẻ sang «Không hạn» vì hai điều kiện đó.

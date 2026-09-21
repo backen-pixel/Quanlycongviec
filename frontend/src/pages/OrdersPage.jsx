@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { formatVND, formatDate } from '../lib/utils';
-import { Search, ShoppingCart, Calendar, Download, Trash2, Loader2, AlertTriangle, Briefcase, Link2 } from 'lucide-react';
+import { Search, ShoppingCart, Calendar, Download, Trash2, Loader2, AlertTriangle, Briefcase, Link2, User } from 'lucide-react';
 import LinkCrmDealModal from '../components/LinkCrmDealModal';
 
 const ORDER_STATUS = { draft: 'Nháp', confirmed: 'Xác nhận', processing: 'Đang SX', shipped: 'Đang giao', delivered: 'Đã giao', cancelled: 'Đã hủy' };
@@ -23,10 +23,57 @@ export default function OrdersPage() {
   const [paySavingId, setPaySavingId] = useState(null);
   const [linkTarget, setLinkTarget] = useState(null);
   const [orphanFilter, setOrphanFilter] = useState('');
+  const [customerEditId, setCustomerEditId] = useState(null);
+  const [customerDraft, setCustomerDraft] = useState({ name: '', phone: '', address: '' });
+  const [customerSavingId, setCustomerSavingId] = useState(null);
+  const customerEditRef = useRef(null);
   const navigate = useNavigate();
 
   useEffect(() => { load(); }, []);
   const load = async () => { setLoading(true); const { data } = await api.get('/crm/orders', { params: { limit: 500 } }); setOrders(data || []); setLoading(false); };
+
+  useEffect(() => {
+    if (!customerEditId) return undefined;
+    const onDown = (e) => {
+      if (customerEditRef.current && !customerEditRef.current.contains(e.target)) {
+        setCustomerEditId(null);
+      }
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [customerEditId]);
+
+  const openCustomerEdit = (order) => {
+    setCustomerEditId(order.id);
+    setCustomerDraft({
+      name: order.customer_name || order.customer?.full_name || '',
+      phone: order.customer_phone || order.customer?.phone || '',
+      address: order.customer_address || order.customer?.address || '',
+    });
+  };
+
+  const saveCustomer = async (orderId) => {
+    const name = String(customerDraft.name || '').trim();
+    const phone = String(customerDraft.phone || '').trim();
+    const address = String(customerDraft.address || '').trim();
+    setCustomerSavingId(orderId);
+    try {
+      await api.put(`/crm/orders/${orderId}`, {
+        customer_name: name || null,
+        customer_phone: phone || null,
+        customer_address: address || null,
+      });
+      setOrders((prev) => prev.map((row) => (
+        String(row.id) === String(orderId)
+          ? { ...row, customer_name: name || null, customer_phone: phone || null, customer_address: address || null }
+          : row
+      )));
+      setCustomerEditId(null);
+    } catch (e) {
+      alert(e.response?.data?.error || 'Không lưu được thông tin khách hàng');
+    }
+    setCustomerSavingId(null);
+  };
 
   const patchOrder = async (id, body, setBusy) => {
     setBusy(id);
@@ -46,7 +93,14 @@ export default function OrdersPage() {
     if (orphanFilter === 'exclude' && !o.lead_id) return false;
     if (dateFrom && o.created_at < dateFrom) return false;
     if (dateTo && o.created_at > dateTo + 'T23:59:59') return false;
-    if (search) { const s = search.toLowerCase(); return (o.code||'').toLowerCase().includes(s) || (o.title||'').toLowerCase().includes(s) || (o.customer_name||'').toLowerCase().includes(s); }
+    if (search) {
+      const s = search.toLowerCase();
+      return (o.code || '').toLowerCase().includes(s)
+        || (o.title || '').toLowerCase().includes(s)
+        || (o.customer_name || '').toLowerCase().includes(s)
+        || (o.customer?.full_name || '').toLowerCase().includes(s)
+        || (o.customer_phone || '').toLowerCase().includes(s);
+    }
     return true;
   });
 
@@ -134,7 +188,63 @@ export default function OrdersPage() {
             <tr key={o.id} className="border-b hover:bg-slate-200/70 transition-colors cursor-pointer" onClick={() => navigate(`/crm/orders/${o.id}`)}>
               <td className="py-3 px-3 font-bold text-emerald-600">{o.code}</td>
               <td className="py-3 px-3 font-medium">{o.title || '-'}</td>
-              <td className="py-3 px-3 text-gray-600">{o.customer_name || o.customer?.full_name || '-'}</td>
+              <td className="py-3 px-3 text-gray-600 relative" onClick={e => e.stopPropagation()}>
+                {customerEditId === o.id ? (
+                  <form
+                    ref={customerEditRef}
+                    className="absolute z-30 left-0 top-1 w-72 rounded-xl border border-emerald-200 bg-white p-3 shadow-xl space-y-2"
+                    onSubmit={(e) => { e.preventDefault(); saveCustomer(o.id); }}
+                  >
+                    <p className="text-[11px] font-semibold text-emerald-800">Thông tin khách hàng</p>
+                    <input
+                      autoFocus
+                      value={customerDraft.name}
+                      onChange={(e) => setCustomerDraft((d) => ({ ...d, name: e.target.value }))}
+                      placeholder="Tên khách hàng"
+                      className="w-full h-8 px-2 border rounded-lg text-sm"
+                    />
+                    <input
+                      value={customerDraft.phone}
+                      onChange={(e) => setCustomerDraft((d) => ({ ...d, phone: e.target.value }))}
+                      placeholder="Số điện thoại"
+                      className="w-full h-8 px-2 border rounded-lg text-sm"
+                    />
+                    <input
+                      value={customerDraft.address}
+                      onChange={(e) => setCustomerDraft((d) => ({ ...d, address: e.target.value }))}
+                      placeholder="Địa chỉ"
+                      className="w-full h-8 px-2 border rounded-lg text-sm"
+                    />
+                    <div className="flex justify-end gap-1.5">
+                      <button type="button" onClick={() => setCustomerEditId(null)} className="h-7 px-2 text-xs text-gray-500 hover:bg-gray-50 rounded-lg cursor-pointer">Hủy</button>
+                      <button type="submit" disabled={customerSavingId === o.id} className="h-7 px-2.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg cursor-pointer disabled:opacity-60">
+                        {customerSavingId === o.id ? 'Đang lưu…' : 'Lưu'}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => openCustomerEdit(o)}
+                    className="text-left w-full min-h-[2.5rem] rounded-md px-1 -mx-1 hover:bg-emerald-50 cursor-pointer"
+                    title="Sửa thông tin khách hàng"
+                  >
+                    {(o.customer_name || o.customer?.full_name) ? (
+                      <span className="block">
+                        <span className="flex items-center gap-1 font-medium text-gray-800">
+                          <User className="h-3 w-3 text-gray-400 shrink-0" />
+                          {o.customer_name || o.customer?.full_name}
+                        </span>
+                        {(o.customer_phone || o.customer?.phone) && (
+                          <span className="block text-[11px] text-gray-500 pl-4">{o.customer_phone || o.customer.phone}</span>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="text-emerald-700 text-xs font-semibold">+ Thêm khách hàng</span>
+                    )}
+                  </button>
+                )}
+              </td>
               <td className="py-3 px-3 text-xs" onClick={e => e.stopPropagation()}>
                 {o.lead?.code ? (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono">

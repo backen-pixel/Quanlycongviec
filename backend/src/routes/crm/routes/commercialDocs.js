@@ -27,12 +27,12 @@ const QUOTATION_LIST_SELECT_NO_REGION =
   'company:companies!quotations_company_id_fkey(id, name, short_name), ' +
   'lead:crm_leads!quotations_lead_id_fkey(id, code, title, type)';
 const ORDER_LIST_SELECT =
-  'id, code, title, customer_id, customer_name, total, status, payment_status, created_at, created_by, company_id, lead_id, quotation_id, ' +
-  'customer:customers(id, full_name, phone), creator:users!orders_created_by_fkey(id, full_name), ' +
+  'id, code, title, customer_id, customer_name, customer_phone, customer_address, total, status, payment_status, created_at, created_by, company_id, lead_id, quotation_id, ' +
+  'customer:customers(id, full_name, phone, address), creator:users!orders_created_by_fkey(id, full_name), ' +
   'lead:crm_leads!orders_lead_id_fkey(id, code, title, type)';
 const ORDER_LIST_SELECT_NO_LEAD =
-  'id, code, title, customer_id, customer_name, total, status, payment_status, created_at, created_by, company_id, lead_id, quotation_id, ' +
-  'customer:customers(id, full_name, phone), creator:users!orders_created_by_fkey(id, full_name)';
+  'id, code, title, customer_id, customer_name, customer_phone, customer_address, total, status, payment_status, created_at, created_by, company_id, lead_id, quotation_id, ' +
+  'customer:customers(id, full_name, phone, address), creator:users!orders_created_by_fkey(id, full_name)';
 const INVOICE_LIST_SELECT =
   'id, code, title, customer_id, customer_name, total, paid_amount, payment_status, created_at, created_by, company_id, lead_id, misa_status, misa_invoice_no, ' +
   'customer:customers(id, full_name, phone), creator:users!invoices_created_by_fkey(id, full_name)';

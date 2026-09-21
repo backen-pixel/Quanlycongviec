@@ -1,6 +1,15 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-21 09:35 (UTC+7)
+Cập nhật: 2026-09-21 13:20 (UTC+7)
+
+## Đơn hàng — điền khách hàng trên danh sách
+
+Trạng thái: **FE+BE local.**
+
+Cột Khách hàng trên `/crm/orders` không còn `-` chết: bấm để nhập tên / SĐT / địa chỉ, Lưu qua `PUT /crm/orders/:id`.
+API list trả thêm `customer_phone`, `customer_address`.
+
+Hoàn tác: revert `OrdersPage.jsx`, `ORDER_LIST_SELECT` trong `commercialDocs.js`.
 
 ## CRM Deadline — luôn hiện hạn trên Kanban
 
