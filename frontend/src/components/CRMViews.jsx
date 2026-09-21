@@ -849,7 +849,7 @@ export function DeadlineView({
       let bucket = localOverride[String(it.id)];
       const viewPicked = resolveCrmLeadDeadlineViewSource(it, it._stage, cfg);
       const bucketPicked = resolveCrmLeadDeadlineBucketSource(it, it._stage, cfg);
-      // Hiển thị hạn trên thẻ: ưu tiên view (ẩn khi không SĐT / đã tương tác…).
+      // Hiển thị hạn trên thẻ: ưu tiên view (chỉ ẩn khi tắt hạn / cột terminal).
       // Gom cột: ưu tiên stamp server (bucket-pages) để khớp badge; còn lại khớp BE.
       const ts = viewPicked.deadlineTs ?? bucketPicked.deadlineTs;
       const source = viewPicked.source ?? bucketPicked.source;

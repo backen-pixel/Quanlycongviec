@@ -1,5 +1,49 @@
 # Nhật ký công việc AI
 
+## 2026-09-21 09:35 — CRM Deadline luôn hiện hạn (gỡ ẩn SĐT / đã SX)
+
+- AI: Cursor. Gỡ ẩn hạn CRM khi thiếu SĐT hoặc đã có `project_id`. Badge `0/1` là loaded/total server; FE không còn đẩy thẻ sang «Không hạn» vì hai điều kiện đó.
+- File: `crmLeadDeadlineDisplay.js`, `moduleDeadlinePolicy.js` (FE+BE), `leadsList.js`, `CrmLeadDeadlineOverview.jsx`, `LeadDetail.jsx`, `628_crm_deadline_always_show.sql`, `DECISIONS.md` AI-002.
+- Test: `node tests/module-deadline-policy.test.js`. SQL 628 đã chạy primary + backup.
+
+## 2026-09-19 15:05 — CRM setup chi phí dùng nút Báo giá có sẵn
+
+- AI: Cursor. Không tạo nút tích CRM mới: `ensureCrmQuotationCostType` lấy nút Upload Excel Báo giá, gắn loại `bao_gia` / `doanhthu.bao_gia`. Tab CRM ẩn form «Thêm nút tích». Báo giá doanh thu vẫn đẩy giá vốn dòng vào `crm.product_cogs`.
+- File: `costHub.js`, `costLedger.js`, `AccountingCostSetupPage.jsx`.
+- Test: `node tests/cost-ledger.test.js`. Phúc Đạt 183 NV đã gắn.
+
+## 2026-09-19 08:50 — Loại chi phí + Excel + công thức
+
+- AI: Cursor. Tạo loại chi phí theo module, gắn bộ mẫu; checkbox setup công việc bắt upload Excel; công thức `excel.a - (excel.b + excel.c)` nhiều công thức; tab Kế toán upload Excel.
+- File: `624_cost_types_excel.sql`, `costLedger.js`, `costHub.js`, `AccountingCostSetupPage.jsx`, template SX/CRM, `CostExcelUpload.jsx`, `WorkUnifiedProjectDetailPage.jsx`.
+- Test: `node tests/cost-ledger.test.js`.
+
+## 2026-09-18 16:40 — Setup chi phí: module + toán tử
+
+- AI: Cursor. Trang setup: bật module vào sổ, ghép công thức bằng +, −, ×, / (dropdown).
+- File: `AccountingCostSetupPage.jsx`, `costFormulaTerms.js`.
+
+## 2026-09-18 16:20 — Setup chi phí chọn công ty + khu vực
+
+- AI: Cursor. Admin HST chọn công ty/khu vực trên `/management/cost-setup`.
+  Khu vực clone mặc định toàn công ty rồi chỉnh riêng (`region_id`, SQL 623).
+- File: `623_cost_hub_region.sql`, `costLedger.js`, `costHub.js`, `AccountingCostSetupPage.jsx`.
+
+## 2026-09-18 15:55 — Setup chi phí ở module Dự án + tab Kế toán Work Unified
+
+- AI: Cursor. Gắn setup công thức vào nhóm **3. Thiết lập** (`/management/cost-setup`).
+  Tab chi tiết Work Unified đổi **Kế toán** (`?tab=ketoan`) — sổ giá vốn / lợi nhuận
+  + dòng tiền. API `GET /projects/:id/cost-summary`.
+- File: `Sidebar.jsx`, `App.jsx`, `sidebarModuleContext.js`, `AccountingCostSetupPage.jsx`,
+  `WorkUnifiedProjectDetailPage.jsx`, `projects.js`.
+
+## 2026-09-18 14:55 — Sổ chi phí + setup công thức theo module
+
+- AI: Cursor. Sổ `/ketoan/chi-phi`, setup công thức, ledger `cost_entries`.
+- File: `622_cost_hub.sql`, `costLedger.js`, `costExpr.js`, `costHub.js`, 2 trang Kế toán, adapter SX/PO/VC/CRM COGS.
+- Test: `node tests/cost-ledger.test.js`.
+- SQL 622 đã chạy primary + backup.
+
 ## 2026-09-18 14:38 — Push nốt ecosystem_admin + gắn công ty HST
 
 - AI: Cursor. Đẩy quyền role mới, Facebook HST, sync `user_companies`.

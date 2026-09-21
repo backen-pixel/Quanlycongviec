@@ -9,7 +9,6 @@ import {
   CRM_DEADLINE_SOURCE_META,
   resolveCrmLeadDeadlineViewSource,
   getPipelineStageSlaDeadlineTs,
-  crmLeadMissingPhone,
   shouldHideCrmKanbanDeadlineOnCard,
   isCrmPipelineStageNoDeadline,
   formatCrmRemainingMs,
@@ -143,7 +142,7 @@ export default function CrmLeadDeadlineOverview({ lead, onChanged }) {
   );
 
   const hidden = shouldHideCrmKanbanDeadlineOnCard(lead, stage);
-  const slaDays = crmLeadMissingPhone(lead) ? null : effectivePipelineStageSlaDays(stage?.sla_days);
+  const slaDays = effectivePipelineStageSlaDays(stage?.sla_days);
   const slaTs = getPipelineStageSlaDeadlineTs(lead?.stage_entered_at, stage, lead);
 
   if (isCrmPipelineStageNoDeadline(stage)) return null;
@@ -372,7 +371,7 @@ export default function CrmLeadDeadlineOverview({ lead, onChanged }) {
             </div>
           ) : hidden ? (
             <p className="text-sm text-slate-500 italic">
-              Không hiển thị trên Dashboard (chưa có SĐT, đã tương tác, hoặc cột không theo dõi hạn).
+              Không hiển thị trên Dashboard (cột Thắng/Thua/Hoàn thành doanh thu).
             </p>
           ) : resolved.deadlineTs == null ? (
             <p className="text-sm text-gray-400 italic">Không có hạn — sẽ nằm cột «Không hạn» trên Dashboard.</p>

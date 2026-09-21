@@ -900,7 +900,6 @@ function deadlineStageExcluded(stage) {
 /** Cùng thứ tự ưu tiên với màn Deadline (crmDeadlineTsForRow). */
 function deadlineTsForLead(row) {
   if (row?.deadline_disabled_at) return null;
-  if (!crmLeadHasPhone(row)) return null;
   if (deadlineStageExcluded(row.stage)) return null;
 
   for (const field of ['crm_next_open_task_deadline', 'kanban_deadline_at']) {

@@ -43,16 +43,17 @@ assert.equal(resolveModuleDeadline(MODULE.CRM, {
   stage_entered_at: null,
 }, { stage: { sla_days: 7 } }).source, 'expected_close');
 
-for (const hidden of [
-  { phone: null },
-  { phone: '1', deadline_disabled_at: future(0) },
-]) {
-  assert.equal(resolveModuleDeadline(MODULE.CRM, {
-    ...crmBase,
-    ...hidden,
-    customer: null,
-  }, { stage: { sla_days: 7 } }).deadlineAt, null);
-}
+assert.equal(resolveModuleDeadline(MODULE.CRM, {
+  ...crmBase,
+  phone: null,
+  customer: null,
+}, { stage: { sla_days: 7 } }).source, 'task');
+assert.equal(resolveModuleDeadline(MODULE.CRM, {
+  ...crmBase,
+  phone: '1',
+  deadline_disabled_at: future(0),
+  customer: null,
+}, { stage: { sla_days: 7 } }).deadlineAt, null);
 assert.equal(resolveModuleDeadline(MODULE.CRM, {
   ...crmBase,
   phone: '1',
@@ -88,11 +89,11 @@ assert.equal(resolveModuleDeadline(MODULE.PRODUCTION, {
   logistics_company_id: 'linked',
 }, { forDisplay: true }).deadlineAt, null);
 
-// CRM đã đưa sang SX → hết hạn CRM, chỉ còn 1 hạn sản xuất.
+// CRM đã đưa sang SX: hạn CRM vẫn hiện (không ẩn vì project_id).
 assert.equal(resolveModuleDeadline(MODULE.CRM, {
   ...crmBase,
   project_id: 'p1',
-}, { stage: { sla_days: 7 } }).deadlineAt, null);
+}, { stage: { sla_days: 7 } }).source, 'task');
 assert.equal(resolveModuleDeadline(MODULE.PRODUCTION, sx).source, 'sx_kanban');
 assert.equal(resolveModuleDeadline(MODULE.LOGISTICS, {
   ...sx,

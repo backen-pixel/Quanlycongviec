@@ -13,7 +13,6 @@ const {
 const { endOfCalendarDayAfterEntered } = require('./crmReportDateBounds');
 const {
   effectivePipelineStageSlaDays,
-  crmLeadMissingPhone,
   shouldIgnoreSxOrderDeliveryOverdue,
   projectLooksShippedForOverdue,
   isSxPipelineStageNoDeadline,
@@ -192,9 +191,7 @@ function activeInstallCommitmentRaw(item, nowMs = Date.now()) {
 
 function resolveCrmDeadline(item, stage) {
   if (!item || item.deadline_disabled_at) return null;
-  if (crmLeadMissingPhone(item) || isCrmTerminalStage(stage) || crmHandedToProduction(item, stage)) {
-    return null;
-  }
+  if (isCrmTerminalStage(stage)) return null;
 
   const task = candidate(item.crm_next_open_task_deadline, 'task', item);
   if (task) return task;

@@ -3,7 +3,6 @@ import { endOfVnCalendarDayAfterEntered } from './vnDate';
 import { companyWorkEndMsFromRaw } from './companyDeadlineClock';
 import {
   DEADLINE_MODULE,
-  crmHandedToProduction,
   resolveEffectiveModuleDeadline,
 } from './moduleDeadlinePolicy';
 
@@ -41,26 +40,22 @@ export function crmLeadHasPhone(item) {
 }
 
 /**
- * Lead «chưa có số» để bỏ deadline/quá hạn trên thẻ.
- * Khớp backend `crmDeadlineTsForRow`: display_phone || phone || customer.phone.
+ * Lead chưa có SĐT (display_phone || phone || customer.phone).
+ * Không còn dùng để ẩn deadline trên Kanban.
  */
 export function crmLeadMissingPhone(item) {
   return !crmLeadHasPhone(item);
 }
 
 /**
- * Ẩn badge deadline / quá hạn trên thẻ Kanban khi:
- * - lead/deal chưa có SĐT
- * - đã tắt hạn ở chi tiết
- * - cột Thắng/Thua/Hoàn thành doanh thu
- * Tick «đã tương tác» chỉ là đánh dấu cá nhân — không ẩn hạn / không đẩy khỏi Deadline.
+ * Ẩn badge deadline trên thẻ chỉ khi user tắt hạn ở chi tiết, hoặc cột
+ * Thắng/Thua/Hoàn thành doanh thu (không còn theo dõi hạn).
+ * Không ẩn vì thiếu SĐT, đã có project SX, hay tick «đã tương tác».
  */
 export function shouldHideCrmKanbanDeadlineOnCard(item, stage) {
   if (item?.deadline_disabled_at) return true;
-  if (crmLeadMissingPhone(item)) return true;
   const st = stage || item?.stage;
   if (isCrmPipelineStageNoDeadline(st)) return true;
-  if (crmHandedToProduction(item, st)) return true;
   return false;
 }
 
@@ -108,10 +103,9 @@ export function getCrmDeadlineSourceMeta(source) {
  * Hạn SLA cột.
  * @param {string} stageEnteredAt
  * @param {object} stage
- * @param {object} [leadItem] — nếu truyền và chưa có SĐT → null (tắt SLA)
+ * @param {object} [leadItem]
  */
 export function getPipelineStageSlaDeadlineTs(stageEnteredAt, stage, leadItem) {
-  if (leadItem != null && crmLeadMissingPhone(leadItem)) return null;
   if (!stageEnteredAt || !stage) return null;
   if (isCrmPipelineStageNoDeadline(stage)) return null;
   const slaDays = effectivePipelineStageSlaDays(stage.sla_days);
@@ -235,9 +229,7 @@ export function resolveCrmLeadDeadlineViewSource(item, stage, config) {
  */
 export function resolveCrmLeadDeadlineBucketSource(item, stage, config) {
   const st = stage || item?._stage || item?.stage;
-  const hasPhone = crmLeadHasPhone(item);
-  if (!hasPhone || item?.deadline_disabled_at || isCrmPipelineStageNoDeadline(st)
-    || crmHandedToProduction(item, st)) {
+  if (item?.deadline_disabled_at || isCrmPipelineStageNoDeadline(st)) {
     return { deadlineTs: null, source: null, forcedNoDeadline: true };
   }
   void config;

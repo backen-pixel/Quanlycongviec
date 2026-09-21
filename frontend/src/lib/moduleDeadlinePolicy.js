@@ -106,11 +106,6 @@ function isSxReleasedToInstall(item, sxStage) {
     || name.includes('ban giao');
 }
 
-function hasPhone(item) {
-  return [item?.display_phone, item?.phone, item?.customer?.phone]
-    .some((v) => v != null && String(v).trim());
-}
-
 function sxDone(stage) {
   if (!stage) return false;
   if (stage.counts_as_completed_revenue || stage.counts_as_collected_revenue) return true;
@@ -161,8 +156,7 @@ export function resolveEffectiveModuleDeadline(moduleKey, item, stage = null) {
   const key = String(moduleKey || '').toLowerCase();
 
   if (key === DEADLINE_MODULE.CRM) {
-    if (!item || item.deadline_disabled_at || !hasPhone(item)
-      || crmTerminal(stage) || crmHandedToProduction(item, stage)) {
+    if (!item || item.deadline_disabled_at || crmTerminal(stage)) {
       return { raw: null, source: null, deadlineTs: null, deadlineAt: null };
     }
     const direct = result(item.crm_next_open_task_deadline, 'task', item)

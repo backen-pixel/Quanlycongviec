@@ -1,6 +1,61 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-18 14:38 (UTC+7)
+Cập nhật: 2026-09-21 09:35 (UTC+7)
+
+## CRM Deadline — luôn hiện hạn trên Kanban
+
+Trạng thái: **FE+BE local + SQL 628 đã chạy primary/backup.**
+
+Badge `0/1` trên cột Deadline là số thẻ đã tải / tổng server, không phải nút ẩn hạn.
+Hai điều kiện cũ đẩy thẻ sang «Không hạn» trong khi server vẫn đếm 1:
+
+1. **Chưa có SĐT** (`display_phone` / `phone` / `customer.phone` trống)
+2. **Đã lập SX** (`project_id` / cột Đang SX / Đang lắp / Vận chuyển)
+
+Đã gỡ cả hai. Hạn CRM vẫn hiện sau khi có dự án SX. Chỉ còn ẩn khi user tắt hạn
+(`deadline_disabled_at`) hoặc cột Thắng/Thua/Hoàn thành doanh thu.
+SQL **628 đã chạy primary + backup** (RPC `crm_deadline_bucket_counts` /
+`crm_deadline_bucket_page_ids` không còn NULL hạn vì thiếu SĐT).
+
+Hoàn tác: revert `crmLeadDeadlineDisplay.js`, `moduleDeadlinePolicy.js` (FE+BE),
+`leadsList.js` `crmDeadlineTsForRow`, `CrmLeadDeadlineOverview.jsx`, `LeadDetail.jsx`.
+
+## Setup chi phí — CRM lấy nút Báo giá có sẵn
+
+Trạng thái: **FE+BE local.**
+
+Trang setup không bắt tạo nút tích mới cho CRM. Mở `/management/cost-setup` tự lấy
+nút **Upload Excel Báo giá** đã có trên nhiệm vụ CRM: tạo loại `bao_gia` (doanh thu,
+biến `doanhthu.bao_gia`), bật cờ trên bộ mẫu «Báo giá», gắn `cost_type_id` vào
+nhiệm vụ đang có nút. Phúc Đạt: 183 NV đã gắn.
+
+Hoàn tác: xóa `cost_types` code `bao_gia`; gỡ `cost_type_id` / cờ trên mẫu CRM;
+revert `costHub.js` (`ensureCrmQuotationCostType`), `costLedger.js` (fallback +
+giữ `crm.product_cogs`), `AccountingCostSetupPage.jsx`.
+
+## Loại chi phí + Excel + công thức
+
+Trạng thái: **FE+BE local; SQL 624 (chạy script `run-migration-624.js`).**
+
+Setup `/management/cost-setup` (và `/ketoan/chi-phi/setup`): tạo **loại chi phí**, chỉ định module (SX/VC/CRM/…), gắn bộ mẫu công việc.
+Setup công việc SX/VC/CRM: checkbox **Bắt upload Excel** theo loại.
+Tab Kế toán Work Unified: upload Excel → sổ `excel.<mã>`; công thức ví dụ `excel.nvl - (excel.vc + excel.crm)`. Nhiều công thức. Hoàn thành NV bị chặn nếu chưa có file.
+
+Hoàn tác: revert 624 + `costHub` types/excel, `CostExcelUpload`, checkbox trên template pages; bảng 624 để đó.
+
+## Sổ chi phí + công thức theo module
+
+Trạng thái: **FE+BE local + SQL 622/623 đã chạy primary/backup.**
+
+Kế toán có `/ketoan/chi-phi` (sổ) và `/ketoan/chi-phi/setup` (nhóm / nguồn auto-push / công thức AST).
+Module Dự án (Work Unified): **Setup công thức chi phí** tại `/management/cost-setup` (nhóm 3. Thiết lập).
+Trang setup: **module nào vào sổ** (bật/tắt) + ghép công thức bằng **+ − × /** (không cần gõ biến). Chọn công ty/khu vực.
+Tab chi tiết Work Unified **Kế toán** — giá vốn / lợi nhuận / nguồn + dòng tiền. API `GET /projects/:id/cost-summary` dùng công thức theo khu vực deal.
+Module đẩy dòng lên `cost_entries` (idempotent): chi phí xưởng, phát sinh SX, PO, phí VC (`projects.logistics_cost`), COGS dòng BG/ĐH (`cost_price`).
+Công thức mặc định: Giá vốn = `entries.total`; Lợi nhuận gộp = `crm.doanh_thu - gia_von`.
+Chi tiết deal Kế toán thêm khối «Chi phí theo nguồn».
+
+Hoàn tác: revert route `costHub.js`, helper `costLedger.js` / `costExpr.js`, 2 trang FE, menu, adapter trong `projects.js` / `purchasing.js` / `commercialDocs.js`; bảng 622 để đó.
 
 ## CRM Kanban — 400 thiếu company_id (admin HST)
 

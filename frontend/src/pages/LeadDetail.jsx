@@ -50,7 +50,6 @@ import CrmDeadlineModal from '../components/CrmDeadlineModal';
 import CrmStageAssigneeModal from '../components/CrmStageAssigneeModal';
 import { stageNeedsAssigneeConfirm } from '../lib/crmStageAssigneeConfirm';
 import CrmLeadDeadlineOverview from '../components/CrmLeadDeadlineOverview';
-import { crmLeadMissingPhone } from '../lib/crmLeadDeadlineDisplay';
 import SxCompanyPickList from '../components/SxCompanyPickList';
 import SxMultiTargetPicker, {
   validateSxTargets,
@@ -7385,10 +7384,9 @@ function LeadInfoPanel({
           type="date" />
       )}
 
-      {/* Deadline thẻ (kanban_deadline_at) — ẩn khi deal đã Thắng / chưa có SĐT */}
+      {/* Deadline thẻ (kanban_deadline_at) — ẩn khi deal đã Thắng hoặc user tắt hạn */}
       {!lead?.stage?.is_won
         && !lead?.stage?.counts_as_completed_revenue
-        && !crmLeadMissingPhone(lead)
         && !lead?.deadline_disabled_at && (
       <div className="rounded-lg border border-rose-200 bg-rose-50/50 p-2.5 my-1.5">
         <div className="flex items-start gap-2">
