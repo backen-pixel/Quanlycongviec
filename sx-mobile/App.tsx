@@ -2,7 +2,7 @@ import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/
 import { ShareIntentProvider } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AppState, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import BootLoadingScreen, { BOOT_BG } from './src/components/BootLoadingScreen';
@@ -83,6 +83,8 @@ function AppShell() {
   const { colors, isDark } = useTheme();
   const [otaPhase, setOtaPhase] = useState<'checking' | 'downloading' | 'none'>('checking');
   const bubbleInitialState = useMemo(() => getBubbleChatInitialNavState(), []);
+  /** Chỉ áp dụng deep-link bong bóng lần mở app đầu — không tái dùng sau đổi tài khoản. */
+  const bootNavUsedRef = useRef(false);
   const [bubbleOverlayUi, setBubbleOverlayUi] = useState(
     () => isBubbleChatNavState(bubbleInitialState) || hasPendingBubbleChat(),
   );
@@ -141,7 +143,27 @@ function AppShell() {
   }, [token, loading]);
 
   useEffect(() => {
-    if (!token) setNavReady(false);
+    if (!token) {
+      setNavReady(false);
+      return undefined;
+    }
+    // Logout đặt navReady=false nhưng container cũ vẫn ready — onReady không
+    // chạy lần 2. Đổi tài khoản sẽ kẹt «Đang tải giao diện…» nếu không sync lại.
+    if (navigationRef.isReady()) {
+      setNavReady(true);
+      return undefined;
+    }
+    const started = Date.now();
+    const timer = setInterval(() => {
+      if (navigationRef.isReady()) {
+        clearInterval(timer);
+        setNavReady(true);
+      } else if (Date.now() - started > 4000) {
+        clearInterval(timer);
+        setNavReady(true);
+      }
+    }, 40);
+    return () => clearInterval(timer);
   }, [token]);
 
   const navTheme = useMemo(
@@ -182,10 +204,14 @@ function AppShell() {
       bubbleOverlayUi ? styles.rootTransparent : { backgroundColor: colors.bg },
     ]}>
       <NavigationContainer
+        key={token ? 'authed' : 'guest'}
         ref={navigationRef}
         theme={navTheme}
-        initialState={bubbleInitialState}
-        onReady={() => setNavReady(true)}
+        initialState={!bootNavUsedRef.current && token ? bubbleInitialState : undefined}
+        onReady={() => {
+          bootNavUsedRef.current = true;
+          setNavReady(true);
+        }}
       >
         <RootNavigator />
         <CallScreen />
