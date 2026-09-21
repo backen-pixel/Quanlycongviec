@@ -11,7 +11,9 @@ import WorkUnifiedFilterPanel, {
   WORK_UNIFIED_TIME_PRESETS,
   getWorkUnifiedPresetDateRange,
 } from '../components/WorkUnifiedFilterFields';
-import { RefreshCw, AlertTriangle, CalendarDays, CircleAlert } from 'lucide-react';
+import {
+  RefreshCw, AlertTriangle, CalendarDays, CircleAlert, ChevronRight,
+} from 'lucide-react';
 
 const WEEKDAY_LABELS = ['Chủ nhật', 'Thứ Hai', 'Thứ Ba', 'Thứ Tư', 'Thứ Năm', 'Thứ Sáu', 'Thứ Bảy'];
 
@@ -57,33 +59,44 @@ function formatDeltaPct(curr, prev) {
 }
 
 const LIST_PAGE = 7;
+// "Dự án cần chú ý" chỉ điểm danh vài dự án gấp nhất (API đã sắp sẵn theo mức trễ) — xem đầy
+// đủ thì vào Work Unified. Thẻ được thả `self-start` nên cao đúng bằng ngần này dòng.
+const AT_RISK_TOP = 10;
 
 function PersonChip({ name }) {
   const short = formatStaffDisplayName(name);
   if (!short) {
-    return <span className="text-[11px] text-gray-400">Chưa gán</span>;
+    return <span className="text-[10px] text-gray-400">Chưa gán</span>;
   }
   return (
     <span className="inline-flex items-center gap-1 min-w-0 max-w-[7.25rem]" title={name}>
       <span
-        className="h-5 w-5 shrink-0 rounded-full text-[9px] font-semibold text-white flex items-center justify-center leading-none"
+        className="h-4 w-4 shrink-0 rounded-full text-[8px] font-semibold text-white flex items-center justify-center leading-none"
         style={{ backgroundColor: avatarColor(name) }}
       >
         {getStaffInitials(name)}
       </span>
-      <span className="truncate text-[11px] text-gray-500">{short}</span>
+      <span className="truncate text-[10px] text-gray-500">{short}</span>
     </span>
   );
 }
 
-function DelayBadge({ days, warning }) {
-  if (warning) {
-    return (
-      <span className="inline-flex text-[10px] font-semibold tracking-wide px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-700">
-        Sắp hạn
-      </span>
-    );
+function PersonAvatarOnly({ name }) {
+  if (!formatStaffDisplayName(name)) {
+    return <span className="h-4 w-4 rounded-full border border-dashed border-gray-300" title="Chưa gán" />;
   }
+  return (
+    <span
+      className="h-4 w-4 rounded-full text-[8px] font-semibold text-white flex items-center justify-center leading-none"
+      style={{ backgroundColor: avatarColor(name) }}
+      title={name}
+    >
+      {getStaffInitials(name)}
+    </span>
+  );
+}
+
+function DelayBadge({ days }) {
   if (!(days > 0)) return null;
   return (
     <span className="inline-flex text-[10px] font-semibold tabular-nums px-1.5 py-0.5 rounded-md bg-red-50 text-red-600">
@@ -92,36 +105,147 @@ function DelayBadge({ days, warning }) {
   );
 }
 
-function OverviewRow({ href, title, subtitle, titleCls, delay, warning, personName, accent }) {
+/** Dòng một công việc trong nhóm dự án — gói gọn trong một dòng: nhãn trễ và người phụ trách
+ *  nằm ngang cùng hàng với tên việc. */
+function TaskRow({ href, title, delay, personName, accent }) {
   const inner = (
-    <div className="flex items-start gap-2.5 px-2.5 py-2 rounded-lg hover:bg-gray-50 min-w-0 transition-colors">
-      <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${accent || 'bg-gray-300'}`} />
-      <div className="flex-1 min-w-0">
-        <p className={`text-sm font-medium truncate leading-5 ${titleCls || 'text-gray-900'}`}>{title}</p>
-        {subtitle ? (
-          <p className="text-[12px] text-gray-500 truncate mt-0.5 leading-4">{subtitle}</p>
-        ) : null}
-      </div>
-      <div className="shrink-0 flex flex-col items-end gap-1 pt-0.5">
-        <DelayBadge days={delay} warning={warning} />
+    <div className="flex items-center gap-2 px-2.5 py-1 rounded-md hover:bg-gray-50 min-w-0 transition-colors">
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${accent || 'bg-gray-300'}`} />
+      <p className="flex-1 min-w-0 text-[13px] truncate leading-4 text-gray-800">{title}</p>
+      <span className="shrink-0 flex items-center gap-1.5">
+        <DelayBadge days={delay} />
         <PersonChip name={personName} />
-      </div>
+      </span>
     </div>
   );
   if (!href) return inner;
   return <Link to={href} className="block">{inner}</Link>;
 }
 
-function taskProjectSubtitle(task) {
-  const code = String(task?.project_code || '').trim();
-  const name = String(task?.project_name || '').trim();
-  if (code && name) return `Dự án ${code} · ${name}`;
-  if (code) return `Dự án ${code}`;
-  if (name) return `Dự án ${name}`;
-  return task?.lead_title ? `Deal/Lead · ${task.lead_title}` : '';
+/** Dòng dự án cần chú ý. Cả thẻ toàn dự án trễ nên mọi điểm nhấn đều lặp lại 10 lần và
+ *  triệt tiêu nhau — bỏ chấm màu, bỏ nền viên thuốc của nhãn trễ, bỏ chữ "Trễ" lặp, hạ mã dự
+ *  án xuống mức phụ. Chỉ TÊN dự án giữ màu đậm để mắt bám vào một thứ duy nhất.
+ *  Nhãn trễ và avatar vẫn nằm trong cột bề rộng cố định để thẳng hàng giữa các dòng. */
+function AtRiskProjectRow({ href, code, name, delay, warning, personName }) {
+  return (
+    <Link
+      to={href}
+      title={code && name ? `${code} · ${name}` : (code || name)}
+      className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-md hover:bg-gray-50 transition-colors"
+    >
+      {/* Không hiện mã dự án: cả cột lặp y hệt tiền tố "TB-2026-", chiếm chỗ làm tên bị cắt.
+          Mã vẫn còn ở tooltip và trên trang chi tiết khi bấm vào.
+          Cho tên tràn 2 dòng — tên dự án ở đây trung bình 46 ký tự, một dòng không đủ. */}
+      <span className="flex-1 min-w-0 line-clamp-2 text-[13px] leading-4 text-gray-800">
+        {name || code}
+      </span>
+      <span className="w-10 shrink-0 text-right text-[11px] font-semibold tabular-nums">
+        {warning ? (
+          <span className="text-amber-600">Sắp</span>
+        ) : delay > 0 ? (
+          <span className="text-rose-600">{delay}n</span>
+        ) : null}
+      </span>
+      <span className="w-5 shrink-0 flex justify-center">
+        <PersonAvatarOnly name={personName} />
+      </span>
+    </Link>
+  );
 }
 
-function OverviewCard({ icon, iconWrap, title, titleHref, count, countCls, loading, empty, children, footer }) {
+function taskDelayDays(task) {
+  if (!task?.deadline) return 0;
+  return Math.max(0, Math.round((Date.now() - new Date(task.deadline).getTime()) / 86400000));
+}
+
+/** Gom việc theo dự án — một dự án thường có hàng chục việc, để phẳng thì tên dự án lặp lại
+ *  ở từng dòng. Nhóm giữ nguyên thứ tự việc do API trả về (đã sắp theo hạn). */
+function groupTasksByProject(tasks) {
+  const groups = new Map();
+  for (const t of tasks || []) {
+    const key = String(t?.project_id || t?.project_code || t?.lead_id || '__khong_du_an__');
+    let g = groups.get(key);
+    if (!g) {
+      const code = String(t?.project_code || '').trim();
+      const name = String(t?.project_name || '').trim();
+      g = {
+        key,
+        code,
+        name: name || String(t?.lead_title || '').trim(),
+        href: getDeepLink(t),
+        tasks: [],
+        maxDelay: 0,
+      };
+      groups.set(key, g);
+    }
+    g.tasks.push(t);
+    g.maxDelay = Math.max(g.maxDelay, taskDelayDays(t));
+  }
+  return [...groups.values()];
+}
+
+const GROUP_PEEK = 2;
+
+function TaskProjectGroup({ group, accent, showDelay, expanded, onToggle }) {
+  const { code, name, tasks } = group;
+  const shown = expanded ? tasks : tasks.slice(0, GROUP_PEEK);
+  const rest = tasks.length - shown.length;
+  const label = code && name ? `${code} · ${name}` : (code || name || 'Chưa gắn dự án');
+  return (
+    <div className="mb-0.5 last:mb-0">
+      <button
+        type="button"
+        onClick={onToggle}
+        title={label}
+        className="w-full flex items-center gap-1.5 px-2 py-1 rounded-md hover:bg-gray-50 text-left cursor-pointer transition-colors"
+      >
+        <ChevronRight
+          className={`h-3 w-3 shrink-0 text-gray-400 transition-transform ${expanded ? 'rotate-90' : ''}`}
+        />
+        <span className="flex-1 min-w-0 truncate text-[11.5px] font-semibold text-gray-700">
+          {code ? <span className="text-violet-700">{code}</span> : null}
+          {code && name ? <span className="text-gray-300"> · </span> : null}
+          {name ? <span className="font-medium text-gray-600">{name}</span> : null}
+          {!code && !name ? 'Chưa gắn dự án' : null}
+        </span>
+        {showDelay && group.maxDelay > 0 ? <DelayBadge days={group.maxDelay} /> : null}
+        <span className="shrink-0 text-[10px] font-bold tabular-nums px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600">
+          {tasks.length}
+        </span>
+      </button>
+      <div className="pl-3">
+        {shown.map((t) => {
+          // Cả nhóm thường chung một hạn — chỉ gắn nhãn trễ cho việc lệch so với nhóm,
+          // tránh lặp đúng con số của tiêu đề nhóm ở từng dòng.
+          const d = taskDelayDays(t);
+          return (
+            <TaskRow
+              key={t.unified_id}
+              href={getDeepLink(t)}
+              title={t.title}
+              delay={showDelay && d !== group.maxDelay ? d : 0}
+              personName={t.assignee_name || t.effective_assignee_name}
+              accent={accent}
+            />
+          );
+        })}
+        {rest > 0 ? (
+          <button
+            type="button"
+            onClick={onToggle}
+            className="w-full text-left text-[10.5px] font-medium text-blue-600 hover:text-blue-800 px-2.5 py-0.5 cursor-pointer"
+          >
+            + {rest} việc nữa
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function OverviewCard({
+  icon, iconWrap, title, titleHref, count, countCls, loading, empty, children, footer,
+}) {
   const titleContent = (
     <>
       <span className={`h-7 w-7 rounded-lg flex items-center justify-center shrink-0 ${iconWrap}`}>
@@ -130,8 +254,11 @@ function OverviewCard({ icon, iconWrap, title, titleHref, count, countCls, loadi
       <h2 className="text-sm font-semibold text-gray-800 truncate">{title}</h2>
     </>
   );
+  // KHÔNG đặt `h-full`: hai thẻ xếp dọc ở cột phải mà đều đòi 100% chiều cao cột thì flex chia
+  // đôi, thẻ nào nội dung vượt phần được chia sẽ bị `overflow-hidden` cắt mất dòng cuối (thấy
+  // rõ khi mở rộng một nhóm). Để thẻ cao theo nội dung là vừa đủ.
   return (
-    <div className="rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden flex flex-col h-full">
+    <div className="rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden flex flex-col">
       <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-50">
         {titleHref ? (
           <Link to={titleHref} className="flex items-center gap-2 min-w-0 hover:opacity-75">
@@ -158,17 +285,33 @@ function OverviewCard({ icon, iconWrap, title, titleHref, count, countCls, loadi
   );
 }
 
-function LoadMoreBtn({ shown, total, onMore }) {
-  if (shown >= total) return null;
-  const rest = total - shown;
+/** `onLess` chỉ truyền khi danh sách đang mở rộng — có tải thêm thì phải có đường thu lại. */
+function LoadMoreBtn({ shown, total, onMore, onLess, unit = 'mục' }) {
+  const rest = Math.max(0, total - shown);
+  const canLess = typeof onLess === 'function';
+  if (rest <= 0 && !canLess) return null;
+  const btnCls = 'flex-1 text-xs font-medium py-2 cursor-pointer transition-colors';
   return (
-    <button
-      type="button"
-      onClick={(e) => { e.preventDefault(); onMore(); }}
-      className="w-full text-xs font-medium text-blue-600 hover:text-blue-800 hover:bg-blue-50/70 py-2 border-t border-gray-50 cursor-pointer"
-    >
-      Tải thêm · {rest} mục
-    </button>
+    <div className="flex items-stretch border-t border-gray-50 divide-x divide-gray-50">
+      {rest > 0 ? (
+        <button
+          type="button"
+          onClick={(e) => { e.preventDefault(); onMore(); }}
+          className={`${btnCls} text-blue-600 hover:text-blue-800 hover:bg-blue-50/70`}
+        >
+          Tải thêm · {rest} {unit}
+        </button>
+      ) : null}
+      {canLess ? (
+        <button
+          type="button"
+          onClick={(e) => { e.preventDefault(); onLess(); }}
+          className={`${btnCls} text-gray-500 hover:text-gray-700 hover:bg-gray-50`}
+        >
+          Thu gọn
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -189,11 +332,24 @@ export default function WorkOverviewPage() {
   const [overview, setOverview] = useState(null);
   const [todayTasks, setTodayTasks] = useState([]);
   const [overdueTasks, setOverdueTasks] = useState([]);
-  const [showProjects, setShowProjects] = useState(LIST_PAGE);
+  const [atRiskShown, setAtRiskShown] = useState(AT_RISK_TOP);
   const [showToday, setShowToday] = useState(LIST_PAGE);
   const [showOverdue, setShowOverdue] = useState(LIST_PAGE);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Admin công ty phải đợi biết công ty của mình rồi mới gọi — nếu không sẽ gọi API nặng này
+  // hai lần: một lần không phạm vi, rồi lại một lần nữa khi companyId được gán.
+  const [companiesLoaded, setCompaniesLoaded] = useState(false);
+  // Nhóm dự án đang mở hết việc (khóa dạng `today:<id>` / `overdue:<id>`).
+  const [openGroups, setOpenGroups] = useState(() => new Set());
+  const toggleGroup = useCallback((key) => {
+    setOpenGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
 
   const lockedCompanyLabel = useMemo(() => {
     const cid = user?.company_id != null ? String(user.company_id).trim() : '';
@@ -212,13 +368,15 @@ export default function WorkOverviewPage() {
       const list = Array.isArray(res.data) ? res.data : (res.data?.companies || []);
       setCompanies(list);
       // Admin hệ thống: mặc định mọi công ty (khớp Work Unified). Admin công ty: khóa CT của họ.
-      if (canPickCompany) return;
-      const own = user?.company_id
-        ? list.find((c) => String(c.id) === String(user.company_id))
-        : null;
-      if (own?.id) setCompanyId((prev) => prev || own.id);
-      else if (list.length > 0) setCompanyId((prev) => prev || list[0].id);
-    }).catch(() => setCompanies([]));
+      if (!canPickCompany) {
+        const own = user?.company_id
+          ? list.find((c) => String(c.id) === String(user.company_id))
+          : null;
+        if (own?.id) setCompanyId((prev) => prev || own.id);
+        else if (list.length > 0) setCompanyId((prev) => prev || list[0].id);
+      }
+      setCompaniesLoaded(true);
+    }).catch(() => { setCompanies([]); setCompaniesLoaded(true); });
   }, [canPickCompany, user?.company_id]);
 
   useEffect(() => {
@@ -268,12 +426,19 @@ export default function WorkOverviewPage() {
     }
   }, [canPickCompany, companyId, filterRegionId, rangeFrom, rangeTo]);
 
-  useEffect(() => { load(); }, [load]);
+  const scopeReady = canPickCompany || companiesLoaded;
+  useEffect(() => { if (scopeReady) load(); }, [load, scopeReady]);
   useEffect(() => {
-    setShowProjects(LIST_PAGE);
+    setAtRiskShown(AT_RISK_TOP);
     setShowToday(LIST_PAGE);
     setShowOverdue(LIST_PAGE);
   }, [companyId, filterRegionId, rangeFrom, rangeTo]);
+
+  const atRiskAll = overview?.projects_at_risk || [];
+  const atRiskRows = atRiskAll.slice(0, atRiskShown);
+
+  const todayGroups = useMemo(() => groupTasksByProject(todayTasks), [todayTasks]);
+  const overdueGroups = useMemo(() => groupTasksByProject(overdueTasks), [overdueTasks]);
 
   const companyName = useMemo(() => {
     if (canPickCompany) {
@@ -543,6 +708,9 @@ export default function WorkOverviewPage() {
       </div>
 
       <div className="grid md:grid-cols-2 gap-4 md:items-stretch">
+        {/* self-start: thoát khỏi `items-stretch` của lưới để thẻ chỉ cao bằng nội dung —
+            nếu để lưới kéo cho bằng cột phải thì lại hở một mảng trống lớn bên dưới. */}
+        <div className="md:self-start">
         <OverviewCard
           icon={<AlertTriangle className="h-3.5 w-3.5" />}
           iconWrap="bg-rose-50 text-rose-600"
@@ -550,29 +718,30 @@ export default function WorkOverviewPage() {
           count={(overview?.projects_at_risk || []).length}
           countCls="bg-rose-50 text-rose-700"
           loading={loading && !overview}
-          empty={(overview?.projects_at_risk || []).length === 0 ? 'Không có dự án quá hạn hoặc nguy cơ trễ.' : null}
+          empty={atRiskAll.length === 0 ? 'Không có dự án quá hạn hoặc nguy cơ trễ.' : null}
           footer={(
             <LoadMoreBtn
-              shown={showProjects}
-              total={(overview?.projects_at_risk || []).length}
-              onMore={() => setShowProjects((n) => n + LIST_PAGE)}
+              shown={atRiskShown}
+              total={atRiskAll.length}
+              unit="dự án"
+              onMore={() => setAtRiskShown((n) => n + AT_RISK_TOP)}
+              onLess={atRiskShown > AT_RISK_TOP ? () => setAtRiskShown(AT_RISK_TOP) : undefined}
             />
           )}
         >
-          {(overview?.projects_at_risk || []).slice(0, showProjects).map((p) => (
-            <OverviewRow
+          {atRiskRows.map((p) => (
+            <AtRiskProjectRow
               key={p.id}
               href={`/management/work-unified/${p.id}`}
-              title={p.code}
-              titleCls="text-violet-700"
-              subtitle={p.name}
+              code={p.code}
+              name={p.name}
               delay={p.risk?.level === 'overdue' ? Math.abs(p.days_left) : 0}
               warning={p.risk?.level === 'warning'}
               personName={p.owner_name}
-              accent={p.risk?.level === 'overdue' ? 'bg-rose-500' : 'bg-amber-400'}
             />
           ))}
         </OverviewCard>
+        </div>
 
         <div className="space-y-4 flex flex-col">
           <OverviewCard
@@ -586,19 +755,19 @@ export default function WorkOverviewPage() {
             footer={(
               <LoadMoreBtn
                 shown={showToday}
-                total={todayTasks.length}
+                total={todayGroups.length}
+                unit="dự án"
                 onMore={() => setShowToday((n) => n + LIST_PAGE)}
               />
             )}
           >
-            {todayTasks.slice(0, showToday).map((t) => (
-              <OverviewRow
-                key={t.unified_id}
-                href={getDeepLink(t)}
-                title={t.title}
-                subtitle={taskProjectSubtitle(t)}
-                personName={t.assignee_name || t.effective_assignee_name}
+            {todayGroups.slice(0, showToday).map((g) => (
+              <TaskProjectGroup
+                key={g.key}
+                group={g}
                 accent="bg-sky-400"
+                expanded={openGroups.has(`today:${g.key}`)}
+                onToggle={() => toggleGroup(`today:${g.key}`)}
               />
             ))}
           </OverviewCard>
@@ -615,27 +784,22 @@ export default function WorkOverviewPage() {
             footer={(
               <LoadMoreBtn
                 shown={showOverdue}
-                total={overdueTasks.length}
+                total={overdueGroups.length}
+                unit="dự án"
                 onMore={() => setShowOverdue((n) => n + LIST_PAGE)}
               />
             )}
           >
-            {overdueTasks.slice(0, showOverdue).map((t) => {
-              const delay = t.deadline
-                ? Math.max(0, Math.round((Date.now() - new Date(t.deadline).getTime()) / 86400000))
-                : 0;
-              return (
-                <OverviewRow
-                  key={t.unified_id}
-                  href={getDeepLink(t)}
-                  title={t.title}
-                  subtitle={taskProjectSubtitle(t)}
-                  delay={delay}
-                  personName={t.assignee_name || t.effective_assignee_name}
-                  accent="bg-red-500"
-                />
-              );
-            })}
+            {overdueGroups.slice(0, showOverdue).map((g) => (
+              <TaskProjectGroup
+                key={g.key}
+                group={g}
+                accent="bg-red-500"
+                showDelay
+                expanded={openGroups.has(`overdue:${g.key}`)}
+                onToggle={() => toggleGroup(`overdue:${g.key}`)}
+              />
+            ))}
           </OverviewCard>
         </div>
       </div>

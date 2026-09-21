@@ -12,6 +12,7 @@ const {
   resolveLogisticsHandoverConfirmUserId,
 } = require('./logisticsHandoverSettings');
 const { collectProjectEventParticipantIds } = require('./dealModuleResponsibleUsers');
+const { fetchAllByIdsParallel } = require('./supabaseFetchAll');
 
 async function resolveEventTypeBySlugs(slugs) {
   for (const slug of slugs) {
@@ -514,12 +515,6 @@ async function syncProjectInstallDateFromInstallationEvent(event) {
   return { ok: true, projectId, install_date: installIso };
 }
 
-function chunkIds(arr, size = 80) {
-  const out = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
-
 /**
  * Gắn ngày sự kiện lắp đặt vào list dự án VC (lịch Deadline / Lịch).
  * Ưu tiên occurrence_dates của sự kiện; fallback start_time.
@@ -530,57 +525,49 @@ async function attachInstallEventDatesToProjects(projects) {
   if (!ids.length) return list;
 
   const byProject = new Map();
+  // Các khúc id phải chạy CÙNG LÚC: trước đây `for ... await` từng khúc 80 id, 709 dự án
+  // thành 9 lượt nối đuôi ≈ 1,2s — chiếm gần 1/4 thời gian tải Tổng quan công việc.
+  const readEvents = (withOccurrence) => fetchAllByIdsParallel({
+    table: 'crm_events',
+    columns: withOccurrence
+      ? 'project_id, start_time, occurrence_dates, status'
+      : 'project_id, start_time, status',
+    key: 'project_id',
+    ids,
+    idChunk: 80,
+    tune: (q) => q.eq('event_type', 'installation').neq('status', 'cancelled'),
+  });
+  let rows;
   try {
-    for (const part of chunkIds(ids, 80)) {
-      const { data, error } = await supabase
-        .from('crm_events')
-        .select('project_id, start_time, occurrence_dates, status')
-        .in('project_id', part)
-        .eq('event_type', 'installation')
-        .neq('status', 'cancelled');
-      if (error) {
-        if (/occurrence_dates/i.test(String(error.message || ''))) {
-          const retry = await supabase
-            .from('crm_events')
-            .select('project_id, start_time, status')
-            .in('project_id', part)
-            .eq('event_type', 'installation')
-            .neq('status', 'cancelled');
-          for (const ev of retry.data || []) {
-            const pid = ev?.project_id ? String(ev.project_id) : '';
-            if (!pid) continue;
-            const ymd = vnDayKey(ev.start_time);
-            const prev = byProject.get(pid) || { ymds: [], startTime: null };
-            if (ymd && !prev.ymds.includes(ymd)) prev.ymds.push(ymd);
-            if (!prev.startTime && ev.start_time) prev.startTime = ev.start_time;
-            prev.ymds.sort();
-            byProject.set(pid, prev);
-          }
-          continue;
-        }
-        console.warn('[planned-vc-ld-events] attach install dates:', error.message);
-        break;
-      }
-      for (const ev of data || []) {
-        const pid = ev?.project_id ? String(ev.project_id) : '';
-        if (!pid) continue;
-        const occ = normalizeOccurrenceYmds(ev.occurrence_dates);
-        const ymds = occ.length ? occ : (vnDayKey(ev.start_time) ? [vnDayKey(ev.start_time)] : []);
-        if (!ymds.length) continue;
-        const prev = byProject.get(pid) || { ymds: [], startTime: null };
-        for (const y of ymds) {
-          if (!prev.ymds.includes(y)) prev.ymds.push(y);
-        }
-        if (ev.start_time && (!prev.startTime || String(ev.start_time) < String(prev.startTime))) {
-          prev.startTime = ev.start_time;
-        }
-        prev.ymds.sort();
-        byProject.set(pid, prev);
-      }
-    }
+    rows = await readEvents(true);
   } catch (err) {
-    console.warn('[planned-vc-ld-events] attach install dates:', err.message);
-    return list;
+    if (/occurrence_dates/i.test(String(err?.message || ''))) {
+      try {
+        rows = await readEvents(false);
+      } catch (retryErr) {
+        console.warn('[planned-vc-ld-events] attach install dates:', retryErr.message);
+        return list;
+      }
+    } else {
+      console.warn('[planned-vc-ld-events] attach install dates:', err.message);
+      return list;
+    }
+  }
+  for (const ev of rows || []) {
+    const pid = ev?.project_id ? String(ev.project_id) : '';
+    if (!pid) continue;
+    const occ = normalizeOccurrenceYmds(ev.occurrence_dates);
+    const ymds = occ.length ? occ : (vnDayKey(ev.start_time) ? [vnDayKey(ev.start_time)] : []);
+    if (!ymds.length) continue;
+    const prev = byProject.get(pid) || { ymds: [], startTime: null };
+    for (const y of ymds) {
+      if (!prev.ymds.includes(y)) prev.ymds.push(y);
+    }
+    if (ev.start_time && (!prev.startTime || String(ev.start_time) < String(prev.startTime))) {
+      prev.startTime = ev.start_time;
+    }
+    prev.ymds.sort();
+    byProject.set(pid, prev);
   }
 
   if (!byProject.size) return list;

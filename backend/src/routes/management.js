@@ -18,6 +18,7 @@ const {
   DEFAULT_DELIVERY_STAGES,
 } = require('../helpers/projectDealBundle');
 const { sortProjectCrmDeals } = require('../helpers/workshopCrmDeals');
+const { crmStagesCache } = require('../helpers/crmTaxonomyCache');
 const {
   listCrmLinkedProjectIds,
   projectHasCrmDealInCompanies,
@@ -884,12 +885,17 @@ r.get('/work-overview', async (req, res) => {
     const customersFrom = dateFrom
       ? `${dateFrom}T00:00:00+07:00`
       : firstDayThisMonth.toISOString();
-    const { data: signedStages } = await supabase
-      .from('crm_pipeline_stages')
-      .select('id, is_won, is_lost, canonical_slug, deal_report_bucket, name');
-    const signedStageIds = (signedStages || [])
-      .filter((st) => dealHasSignedContract({ type: 'deal', stage: st }, { wonStageOrderByPipe: {} }))
-      .map((st) => st.id);
+    // Danh sách stage "đã ký hợp đồng" chỉ đổi khi sửa pipeline — dùng cache taxonomy
+    // (đã có sẵn invalidate ở `invalidatePipelinesAndStages`) thay vì quét cả bảng mỗi lần gọi.
+    const signedStageIds = await crmStagesCache.getOrFetch('signed-contract-stage-ids', async () => {
+      const { data, error } = await supabase
+        .from('crm_pipeline_stages')
+        .select('id, is_won, is_lost, canonical_slug, deal_report_bucket, name');
+      if (error) throw error;
+      return (data || [])
+        .filter((st) => dealHasSignedContract({ type: 'deal', stage: st }, { wonStageOrderByPipe: {} }))
+        .map((st) => st.id);
+    });
     let newCustomersQ = supabase.from('crm_leads').select('*', { count: 'exact', head: true })
       .eq('type', 'deal').gte('created_at', customersFrom);
     if (signedStageIds.length) newCustomersQ = newCustomersQ.in('stage_id', signedStageIds.slice(0, 200));
@@ -943,21 +949,9 @@ r.get('/work-overview', async (req, res) => {
         return (a.days_remaining ?? 0) - (b.days_remaining ?? 0);
       })
       .slice(0, 50);
-    const atRiskHydrated = await wu.hydratePage(atRiskLite);
-    const projectsAtRisk = atRiskHydrated.map((it) => {
-      const late = it.forecast === 'late';
-      return {
-        id: it.id,
-        code: it.code,
-        name: it.name,
-        deadline: it.deadline,
-        days_left: it.days_remaining,
-        owner_name: it.assignee_name || it.person1_name || null,
-        risk: late
-          ? { level: 'overdue', label: `Trễ hạn ${it.delay_days || 0} ngày` }
-          : { level: 'warning', label: 'Nguy cơ trễ' },
-      };
-    });
+    // Hydrate "dự án cần chú ý" và đọc nhiệm vụ đều chỉ cần `wu.filtered` — cho chạy cùng lúc
+    // rồi chờ chung ở dưới, thay vì hydrate xong mới bắt đầu đọc nhiệm vụ.
+    const atRiskHydratedP = wu.hydratePage(atRiskLite);
 
     const projectsActive = wu.stats?.total || 0;
 
@@ -985,7 +979,8 @@ r.get('/work-overview', async (req, res) => {
     const signedLeadIds = [...new Set(
       (wu.filtered || []).flatMap((it) => it.signed_lead_ids || []),
     )];
-    const [todayRaw, overdueRaw] = await Promise.all([
+    const [atRiskHydrated, todayRaw, overdueRaw] = await Promise.all([
+      atRiskHydratedP,
       fetchPostContractOverviewTasks({
         projectIds,
         leadIds: signedLeadIds,
@@ -1001,6 +996,20 @@ r.get('/work-overview', async (req, res) => {
         deadlineLte: `${overdueToYmd}T23:59:59+07:00`,
       }),
     ]);
+    const projectsAtRisk = atRiskHydrated.map((it) => {
+      const late = it.forecast === 'late';
+      return {
+        id: it.id,
+        code: it.code,
+        name: it.name,
+        deadline: it.deadline,
+        days_left: it.days_remaining,
+        owner_name: it.assignee_name || it.person1_name || null,
+        risk: late
+          ? { level: 'overdue', label: `Trễ hạn ${it.delay_days || 0} ngày` }
+          : { level: 'warning', label: 'Nguy cơ trễ' },
+      };
+    });
     todayRaw.sort((a, b) => String(a.deadline || '').localeCompare(String(b.deadline || '')));
     overdueRaw.sort((a, b) => String(a.deadline || '').localeCompare(String(b.deadline || '')));
     const [todayTasks, overdueTaskItems] = await Promise.all([
@@ -1200,7 +1209,10 @@ async function queryWorkUnifiedList(req, opts = {}) {
     : (searchQ ? WORK_UNIFIED_PROJECT_COLUMNS_LITE_SEARCH : WORK_UNIFIED_PROJECT_COLUMNS_LITE);
   const scanDealColumns = useLite ? WORK_UNIFIED_DEAL_COLUMNS_LITE : WORK_UNIFIED_DEAL_COLUMNS;
 
-  const [stageRowsRes, ownedProjects] = await Promise.all([
+  const scopedCompanyIds = scopeCompanyIdList(scope);
+  // `listCrmLinkedProjectIds` chỉ cần `scope`, không cần dự án đọc xong — chạy cùng lượt với
+  // hai truy vấn kia thay vì chờ chúng (trước đây nối đuôi, tốn thêm ~350ms).
+  const [stageRowsRes, ownedProjects, linkedIds] = await Promise.all([
     supabase
       .from('workflow_stages')
       .select('id, name, slug, color, order_index, is_active, company_id')
@@ -1212,17 +1224,16 @@ async function queryWorkUnifiedList(req, opts = {}) {
         .in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
       return applyProjectScopeFilter(pq, scope);
     }),
+    scopedCompanyIds.length ? listCrmLinkedProjectIds(scopedCompanyIds) : Promise.resolve([]),
   ]);
   const stages = (stageRowsRes?.data || []).filter(isProjectDeliveryStageRow);
   const deliveryStages = stages.length ? stages : DEFAULT_DELIVERY_STAGES;
 
-  const scopedCompanyIds = scopeCompanyIdList(scope);
   const scopeIdSet = new Set(scopedCompanyIds);
   const projectsById = new Map();
   (ownedProjects || []).forEach((p) => { if (p?.id) projectsById.set(String(p.id), p); });
 
   if (scopedCompanyIds.length) {
-    const linkedIds = await listCrmLinkedProjectIds(scopedCompanyIds);
     const missing = linkedIds.filter((id) => !projectsById.has(String(id)));
     if (missing.length) {
       const extra = await fetchAllByIdsParallel({
