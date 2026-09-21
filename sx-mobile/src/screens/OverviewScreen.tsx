@@ -185,10 +185,9 @@ export default function OverviewScreen() {
 
   const companyOptions = useMemo(() => {
     if (sysAdmin) {
-      return [
-        { id: '', label: 'Tất cả công ty' },
-        ...companies.map((c) => ({ id: String(c.id), label: c.name })),
-      ];
+      // Không có «tất cả công ty»: mỗi công ty một pipeline riêng, gộp lại thì
+      // số liệu theo giai đoạn không còn nghĩa.
+      return companies.map((c) => ({ id: String(c.id), label: c.name }));
     }
     const ownId = lockedCompanyId
       || (user?.company_id ? String(user.company_id) : '');
@@ -204,12 +203,12 @@ export default function OverviewScreen() {
 
   const workshopLabel = useMemo(() => {
     if (!filterCompany) {
-      return canPickCompany ? 'Tất cả công ty' : (companyOptions[0]?.label || 'Công ty');
+      return companyOptions[0]?.label || 'Công ty';
     }
     return companyOptions.find((o) => o.id === filterCompany)?.label
       || companies.find((c) => String(c.id) === String(filterCompany))?.name
       || 'Công ty';
-  }, [filterCompany, canPickCompany, companyOptions, companies]);
+  }, [filterCompany, companyOptions, companies]);
 
   const persistCompanyFilter = useCallback(async (companyId: string) => {
     const snap = (await loadKanbanFilters().catch(() => null)) || {};
@@ -252,9 +251,17 @@ export default function OverviewScreen() {
         if (companyId && companyId !== (snap?.filterCompany || '')) {
           await persistCompanyFilter(companyId);
         }
-      } else if (companyId) {
-        const exists = companyList.some((c) => String(c.id) === String(companyId));
-        if (!exists) companyId = '';
+      } else if (companyList.length) {
+        // Admin hệ thống: luôn neo vào một công ty cụ thể (mặc định công ty đầu
+        // danh sách) — bỏ «tất cả công ty» vì pipeline mỗi công ty một khác.
+        // Danh sách rỗng = fetchCompanies lỗi: giữ nguyên lựa chọn đã lưu, vì
+        // để companyId rỗng sẽ khiến API gộp dữ liệu mọi công ty.
+        const exists = Boolean(companyId)
+          && companyList.some((c) => String(c.id) === String(companyId));
+        if (!exists) companyId = String(companyList[0].id);
+        if (companyId !== (snap?.filterCompany || '')) {
+          await persistCompanyFilter(companyId);
+        }
       }
 
       if (seq !== loadSeqRef.current) return;
@@ -408,7 +415,8 @@ export default function OverviewScreen() {
         && String(prevExt?.catalogId || '') === String(nextExt?.catalogId || '');
       if (same) return;
       externalDealFilterRef.current = nextExt;
-      setFilterCompany(String(snap.filterCompany || ''));
+      const nextCo = String(snap.filterCompany || '');
+      if (nextCo) setFilterCompany(nextCo);
       void load(getCachedBoard(nextFilters) ? 'silent' : 'init');
     });
     return unsub;
@@ -416,6 +424,8 @@ export default function OverviewScreen() {
 
   const onSelectCompany = useCallback(async (id: string) => {
     setCompanyPickerOpen(false);
+    // Công ty là phạm vi bắt buộc — rỗng sẽ khiến API gộp mọi công ty.
+    if (!id) return;
     if (!sysAdmin) return;
     setFilterCompany(id);
     await persistCompanyFilter(id);

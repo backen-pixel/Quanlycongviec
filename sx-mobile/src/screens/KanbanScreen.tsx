@@ -424,7 +424,8 @@ export default function KanbanScreen() {
 
   const currentBoardFilters = useCallback((): BoardFilters => {
     const companyId = filterCompanyRef.current || undefined;
-    // Chỉ lọc phân loại khi đã chọn 1 xưởng — «Tất cả xưởng» khớp Overview (không gửi workshop_type_id).
+    // Chỉ lọc phân loại khi đã có xưởng — khớp Overview (không gửi workshop_type_id).
+    // Xưởng chỉ rỗng trong khoảnh khắc trước khi neo về xưởng mặc định.
     const workshopTypeId = companyId
       ? (filterWorkTypeIdRef.current && filterWorkTypeIdRef.current !== 'none'
         ? filterWorkTypeIdRef.current
@@ -542,7 +543,7 @@ export default function KanbanScreen() {
       const nextCo = String(snap.filterCompany || '');
       const nextDeal = String(snap.filterDealCompany || '');
       const nextType = String(snap.filterWorkTypeId || '');
-      setFilterCompany((prev) => (prev === nextCo ? prev : nextCo));
+      if (nextCo) setFilterCompany((prev) => (prev === nextCo ? prev : nextCo));
       setFilterDealCompany((prev) => (prev === nextDeal ? prev : nextDeal));
       setFilterWorkTypeId((prev) => (prev === nextType ? prev : nextType));
     });
@@ -785,11 +786,17 @@ export default function KanbanScreen() {
         allCompaniesRef.current = fromApi;
       }
     }
-    const base = showWorkshopPicker
-      ? [{ id: '', label: 'Tất cả xưởng' }, ...fromApi.map((c) => ({ id: c.id, label: c.name }))]
-      : fromApi.map((c) => ({ id: c.id, label: c.name }));
-    return base;
+    // Không có «tất cả xưởng»: mỗi công ty một pipeline riêng nên board gộp
+    // nhiều xưởng sẽ dồn dự án vào các giai đoạn không thuộc về chúng.
+    return fromApi.map((c) => ({ id: c.id, label: c.name }));
   }, [companies, board.projects, workshopCompanyPickerList, showWorkshopPicker]);
+
+  // Xưởng là phạm vi bắt buộc — neo về xưởng đầu danh sách nếu chưa chọn.
+  useEffect(() => {
+    if (!filtersHydrated || filterCompany) return;
+    const first = companyOptions[0]?.id;
+    if (first) setFilterCompany(String(first));
+  }, [filtersHydrated, filterCompany, companyOptions]);
 
   const dealCompanyPickerOptions = useMemo(() => {
     if (!showDealCompanyFilter) return [];
@@ -836,11 +843,11 @@ export default function KanbanScreen() {
 
   const scopeFilterCount = useMemo(() => {
     let n = 0;
-    if (filterCompany) n += 1;
+    // Xưởng luôn có giá trị (phạm vi bắt buộc) nên không tính là bộ lọc.
     if (filterDealCompany && canPickDealCompany) n += 1;
     if (filterWorkTypeId) n += 1;
     return n;
-  }, [filterCompany, filterDealCompany, filterWorkTypeId, canPickDealCompany]);
+  }, [filterDealCompany, filterWorkTypeId, canPickDealCompany]);
 
   const selectedWorkshopLabel = companyOptions.find((o) => o.id === filterCompany)?.label;
 
@@ -960,6 +967,8 @@ export default function KanbanScreen() {
   const useWorkTypeDropdown = realChoiceCount(workTypeOptions) >= DROPDOWN_MIN_CHOICES;
 
   const applyWorkshopFilter = useCallback((id: string) => {
+    // Xưởng là phạm vi bắt buộc — rỗng sẽ khiến API gộp mọi công ty.
+    if (!id) return;
     setFilterCompany(id);
     setFilterWorkTypeId('');
     setFilterPersonId('');
@@ -996,13 +1005,6 @@ export default function KanbanScreen() {
     }
     // Các mục nhiều option → dropdown chip riêng (không lặp clear-chip)
     // Thứ tự clear-chip: Xưởng → Đặt hàng → Phụ trách → Phân loại
-    if (!useWorkshopDropdown && filterCompany) {
-      chips.push({
-        key: 'ws',
-        label: selectedWorkshopLabel || 'Xưởng',
-        onClear: () => applyWorkshopFilter(''),
-      });
-    }
     if (!useDealDropdown && filterDealCompany && canPickDealCompany) {
       chips.push({
         key: 'deal',
@@ -1058,10 +1060,10 @@ export default function KanbanScreen() {
       chips.push({
         key: 'dd-ws',
         prefix: 'Xưởng',
-        label: filterCompany ? (selectedWorkshopLabel || 'Xưởng') : 'Tất cả',
-        active: !!filterCompany,
+        // Xưởng là phạm vi bắt buộc: luôn có giá trị, không cho xóa.
+        label: selectedWorkshopLabel || 'Xưởng',
+        active: true,
         onOpen: () => setQuickPicker('workshop'),
-        onClear: filterCompany ? () => applyWorkshopFilter('') : undefined,
       });
     }
     if (useDealDropdown) {
@@ -1509,14 +1511,14 @@ export default function KanbanScreen() {
     [displayStages, projectsByStage],
   );
   const filterActive = search.trim().length > 0 || quickFilter !== 'all'
-    || !!filterCompany || !!filterDealCompany || !!filterWorkTypeId
+    || !!filterDealCompany || !!filterWorkTypeId
     || !!filterPhone || !!filterPersonId;
 
   const resetFilters = useCallback(() => {
     setSearchInput('');
     setSearch('');
     setQuickFilter('all');
-    setFilterCompany('');
+    // Không reset xưởng: đây là phạm vi bắt buộc, không phải bộ lọc.
     setFilterDealCompany('');
     setFilterWorkTypeId('');
     setFilterPhone('');

@@ -1,6 +1,6 @@
 /**
  * Giảm dung lượng APK release:
- * - nén .so (legacy packaging)
+ * - .so không nén, map thẳng từ APK (khởi động nhanh, ít tốn bộ nhớ máy)
  * - R8 minify + shrink resources
  * - nén JS bundle
  * - tắt Fresco GIF (app không dùng GIF)
@@ -8,7 +8,7 @@
 const { withGradleProperties } = require('@expo/config-plugins');
 
 const PROPS = {
-  'expo.useLegacyPackaging': 'true',
+  'expo.useLegacyPackaging': 'false',
   'android.enableMinifyInReleaseBuilds': 'true',
   'android.enableShrinkResourcesInReleaseBuilds': 'true',
   'android.enableBundleCompression': 'true',

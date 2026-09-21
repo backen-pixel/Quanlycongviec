@@ -116,7 +116,7 @@ function Set-Arm64OnlyApk {
 
   # Đồng bộ tối ưu dung lượng (khớp plugins/withApkSizeOptimizations.js)
   $sizeProps = @{
-    'expo.useLegacyPackaging' = 'true'
+    'expo.useLegacyPackaging' = 'false'
     'android.enableMinifyInReleaseBuilds' = 'true'
     'android.enableShrinkResourcesInReleaseBuilds' = 'true'
     'android.enableBundleCompression' = 'true'
@@ -143,7 +143,7 @@ function Set-Arm64OnlyApk {
   if (-not $written) {
     Write-Host '>> WARN: could not rewrite gradle.properties (locked) — using existing file'
   } else {
-    Write-Host '>> APK size opts: minify+shrink+legacyPackaging+bundleCompression, gif off'
+    Write-Host '>> APK opts: minify+shrink+bundleCompression, .so uncompressed, gif off'
   }
 }
 

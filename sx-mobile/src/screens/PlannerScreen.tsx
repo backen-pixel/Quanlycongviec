@@ -461,9 +461,7 @@ export default function PlannerScreen() {
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
           <Text style={styles.title}>Planner</Text>
-          <Text style={styles.subtitle}>
-            {isSystemAdmin ? 'Tất cả công ty' : 'Sắp xếp & phân bổ dự án sản xuất'}
-          </Text>
+          <Text style={styles.subtitle}>Sắp xếp & phân bổ dự án sản xuất</Text>
         </View>
         <Pressable
           style={[styles.filterBtn, activeFilterCount > 0 && styles.filterBtnActive]}

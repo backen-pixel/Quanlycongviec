@@ -695,10 +695,9 @@ export default function WorkScreen() {
 
   const companyOptions = useMemo(() => {
     if (canPickCompany) {
-      return [
-        { id: '', label: 'Tất cả công ty' },
-        ...companies.map((c) => ({ id: String(c.id), label: c.name })),
-      ];
+      // Không có «tất cả công ty»: pipeline mỗi công ty một khác nên số liệu
+      // gộp sẽ sai.
+      return companies.map((c) => ({ id: String(c.id), label: c.name }));
     }
     const ownId = user?.company_id ? String(user.company_id) : '';
     if (ownId) {
@@ -712,7 +711,7 @@ export default function WorkScreen() {
   }, [canPickCompany, companies, user]);
 
   const companyLabel = useMemo(() => {
-    if (!filterCompany) return canPickCompany ? 'Tất cả công ty' : (companyOptions[0]?.label || 'Công ty');
+    if (!filterCompany) return companyOptions[0]?.label || 'Công ty';
     return companyOptions.find((o) => o.id === filterCompany)?.label
       || companies.find((c) => String(c.id) === String(filterCompany))?.name
       || 'Công ty';
@@ -917,15 +916,22 @@ export default function WorkScreen() {
         const ownId = user?.company_id ? String(user.company_id) : '';
         if (ownId) companyId = ownId;
         else if (!companyId && companyList[0]?.id) companyId = String(companyList[0].id);
-      } else if (companyId) {
-        const exists = companyList.some((c) => String(c.id) === String(companyId));
-        if (!exists) companyId = '';
+      } else if (companyList.length) {
+        // Luôn neo vào một công ty cụ thể (mặc định công ty đầu danh sách).
+        // Danh sách rỗng = fetchCompanies lỗi: giữ nguyên lựa chọn đã lưu, vì
+        // để companyId rỗng sẽ khiến API gộp dữ liệu mọi công ty.
+        const exists = Boolean(companyId)
+          && companyList.some((c) => String(c.id) === String(companyId));
+        if (!exists) companyId = String(companyList[0].id);
+        if (companyId !== (snap?.filterCompany || '')) {
+          void persistCompanyFilter(companyId);
+        }
       }
       setFilterCompany(companyId);
       setFiltersReady(true);
     })();
     return () => { cancelled = true; };
-  }, [canPickCompany, user?.company_id]);
+  }, [canPickCompany, user?.company_id, persistCompanyFilter]);
 
   // Đồng bộ công ty khi Overview/Kanban đổi (cùng sx_kanban_filters_v1).
   useEffect(() => {
@@ -1033,6 +1039,8 @@ export default function WorkScreen() {
   });
 
   const onSelectCompany = useCallback(async (id: string) => {
+    // Công ty là phạm vi bắt buộc — rỗng sẽ khiến API gộp mọi công ty.
+    if (!id) return;
     if (!canPickCompany && user?.company_id && id !== String(user.company_id)) return;
     setFilterCompany(id);
     setQuickPicker(null);
@@ -1310,7 +1318,7 @@ export default function WorkScreen() {
     if (statusFilter !== 'all') n += 1;
     if (teamView && scope === 'mine') n += 1;
     if (showAssignee && assigneeFilter !== 'all') n += 1;
-    if (canPickCompany && filterCompany) n += 1;
+    // Công ty luôn có giá trị (phạm vi bắt buộc) nên không tính là bộ lọc.
     return n;
   }, [
     search,
@@ -1319,8 +1327,6 @@ export default function WorkScreen() {
     scope,
     showAssignee,
     assigneeFilter,
-    canPickCompany,
-    filterCompany,
   ]);
 
   type ActiveChip = { key: string; label: string; onClear: () => void };
@@ -1335,13 +1341,6 @@ export default function WorkScreen() {
       });
     }
     // Phạm vi Đội/Tôi + trạng thái chọn nhanh trên hàng chip — không lặp active-chip
-    if (!useCompanyDropdown && filterCompany && canPickCompany) {
-      chips.push({
-        key: 'company',
-        label: companyLabel,
-        onClear: () => { void onSelectCompany(''); },
-      });
-    }
     if (!useAssigneeDropdown && showAssignee && assigneeFilter !== 'all') {
       chips.push({
         key: 'assignee',
@@ -1378,10 +1377,10 @@ export default function WorkScreen() {
       chips.push({
         key: 'dd-company',
         prefix: 'Công ty',
-        label: filterCompany ? companyLabel : 'Tất cả',
-        active: !!filterCompany,
+        // Công ty là phạm vi bắt buộc: luôn có giá trị, không cho xóa.
+        label: companyLabel,
+        active: true,
         onOpen: () => setQuickPicker('company'),
-        onClear: filterCompany ? () => { void onSelectCompany(''); } : undefined,
       });
     }
     if (useAssigneeDropdown) {
@@ -1412,8 +1411,8 @@ export default function WorkScreen() {
     setStatusFilter('all');
     setScope(teamView ? 'team' : 'mine');
     setAssigneeFilter('all');
-    if (canPickCompany) void onSelectCompany('');
-  }, [teamView, canPickCompany, onSelectCompany]);
+    // Không reset công ty: đây là phạm vi bắt buộc, không phải bộ lọc.
+  }, [teamView]);
 
   const toggleStatus = async (task: WorkTask) => {
     if (updatingRef.current) return;
