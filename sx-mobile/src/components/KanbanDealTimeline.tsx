@@ -85,6 +85,9 @@ function resolveMode(
   return 'producing';
 }
 
+/** Bề rộng thanh tiến độ dùng chung: đo một lần, mọi thẻ sau dùng lại. */
+let cachedTrackW = 0;
+
 function KanbanDealTimeline({ project, isDelivered }: KanbanDealTimelineProps) {
   const { colors, isDark } = useTheme();
   const today = useMemo(() => startOfDay(new Date()), []);
@@ -93,9 +96,15 @@ function KanbanDealTimeline({ project, isDelivered }: KanbanDealTimelineProps) {
   const delivery = parseDay(project.delivery_date);
   const mode = resolveMode(today, order, deadline, delivery, isDelivered);
 
-  const [trackW, setTrackW] = useState(0);
+  // Mọi thẻ rộng như nhau nên chỉ thẻ ĐẦU TIÊN cần đo. Trước đây mỗi thẻ khởi tạo
+  // trackW = 0, mà cả thanh tiến độ bị chặn bởi `trackW > 0` — nghĩa là từng thẻ
+  // render hai lần và chớp một nhịp thiếu thanh tiến độ khi cuộn.
+  const [trackW, setTrackW] = useState(() => cachedTrackW);
   const onTrackLayout = (e: LayoutChangeEvent) => {
-    setTrackW(e.nativeEvent.layout.width);
+    const w = Math.round(e.nativeEvent.layout.width);
+    if (w <= 0) return;
+    cachedTrackW = w;
+    setTrackW((prev) => (prev === w ? prev : w));
   };
 
   const styles = useMemo(

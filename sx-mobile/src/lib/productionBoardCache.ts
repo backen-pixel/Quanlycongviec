@@ -41,6 +41,14 @@ export const SUMMARY_CACHE_FRESH_MS = BOARD_CACHE_FRESH_MS;
 /** Snapshot đĩa vẫn dùng để hiện UI (sau đó refresh nền). */
 const DISK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const DISK_MAX_PROJECTS = 2500;
+/** Trần số board giữ trong RAM — chặn cache phình khi user đảo qua nhiều bộ lọc. */
+const RAM_MAX_ENTRIES = 6;
+/**
+ * Trần theo TỔNG số dự án đang giữ, không phải theo số board. Sáu board nhỏ thì
+ * vô hại, nhưng sáu board 2.000 dự án ≈ 490 MB (đo được ~41 KB/dự án trên máy
+ * thật) — đủ để Android giết app trên máy 2–3 GB RAM.
+ */
+const RAM_MAX_PROJECTS = 3000;
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let hydratePromise: Promise<void> | null = null;
@@ -121,6 +129,29 @@ export function invalidateCachedBoardSummary(filters: BoardFilters = {}): void {
   summaryCache.delete(boardCacheKey(filters));
 }
 
+/**
+ * Bỏ bớt key cũ nhất cho tới khi thỏa cả hai trần. `keepKey` luôn được giữ, kể cả
+ * khi một mình nó đã vượt trần — nếu không thì board vừa tải xong sẽ bị xóa ngay.
+ */
+function enforceCacheLimits(keepKey: string): void {
+  const evictable = [...cache.entries()]
+    .filter(([k]) => k !== keepKey)
+    .sort((a, b) => a[1].at - b[1].at);
+  let entries = cache.size;
+  let projects = 0;
+  cache.forEach((e) => { projects += e.board.projects.length || 0; });
+  while (
+    evictable.length
+    && (entries > RAM_MAX_ENTRIES || projects > RAM_MAX_PROJECTS)
+  ) {
+    const victim = evictable.shift();
+    if (!victim) break;
+    cache.delete(victim[0]);
+    entries -= 1;
+    projects -= victim[1].board.projects.length || 0;
+  }
+}
+
 export type SetCachedBoardOptions = {
   /** false = partial / abort / truncated — giữ UI nhưng không fresh, không ghi disk. */
   complete?: boolean;
@@ -150,18 +181,13 @@ export function setCachedBoard(
       at: prev?.complete ? prev.at : 0,
       complete: false,
     });
+    // Nhánh này trước đây bỏ qua dọn dẹp — board partial vẫn chiếm RAM như thường.
+    enforceCacheLimits(key);
     return;
   }
 
   cache.set(key, { board, at: Date.now(), complete: true });
-  // Giới hạn RAM: giữ tối đa 6 key mới nhất.
-  if (cache.size > 6) {
-    const ranked = [...cache.entries()].sort((a, b) => a[1].at - b[1].at);
-    while (ranked.length > 6) {
-      const oldest = ranked.shift();
-      if (oldest) cache.delete(oldest[0]);
-    }
-  }
+  enforceCacheLimits(key);
   schedulePersist(key);
 }
 
