@@ -870,17 +870,33 @@ r.get('/work-overview', async (req, res) => {
     const regionProjectIds = regionScope && !regionScope.none ? regionScope.projectIds : null;
     const regionEmptyProjects = Array.isArray(regionProjectIds) && regionProjectIds.length === 0;
 
-    const applyRegionProjectIn = (q) => {
-      if (regionEmptyProjects) return q.eq('id', '00000000-0000-0000-0000-000000000000');
-      if (regionProjectIds) return q.in('id', regionProjectIds.slice(0, 500));
-      return q;
+    const TREND_COLUMNS = 'id, estimated_value, created_at, status';
+    // Một chỗ duy nhất định nghĩa điều kiện, dùng cho cả hai đường đọc bên dưới.
+    const tuneTrend = (q) => applyProjectScopeFilter(
+      q
+        .gte('created_at', sixMonthsAgoStart.toISOString())
+        .not('status', 'in', '(new,consulting,designing,quoting)'),
+      scope,
+    );
+    /**
+     * `.in()` bị giới hạn bởi độ dài URL nên trước đây cắt danh sách khu vực còn
+     * 500 id — khu vực đông hơn thế thì biểu đồ 6 tháng âm thầm thiếu dự án, không
+     * báo lỗi gì. Nay chia khúc và đọc song song để giữ đủ danh sách.
+     */
+    const readTrend = async () => {
+      if (regionEmptyProjects) return { data: [] };
+      if (!regionProjectIds) {
+        return tuneTrend(supabase.from('projects').select(TREND_COLUMNS));
+      }
+      const rows = await fetchAllByIdsParallel({
+        table: 'projects',
+        columns: TREND_COLUMNS,
+        key: 'id',
+        ids: regionProjectIds,
+        tune: tuneTrend,
+      });
+      return { data: rows };
     };
-
-    let trendQ = supabase.from('projects').select('id, estimated_value, created_at, status')
-      .gte('created_at', sixMonthsAgoStart.toISOString())
-      .not('status', 'in', '(new,consulting,designing,quoting)');
-    trendQ = applyProjectScopeFilter(trendQ, scope);
-    trendQ = applyRegionProjectIn(trendQ);
 
     const customersFrom = dateFrom
       ? `${dateFrom}T00:00:00+07:00`
@@ -907,7 +923,7 @@ r.get('/work-overview', async (req, res) => {
 
     const [wu, trendRes, newCustomersRes] = await Promise.all([
       queryWorkUnifiedList(req, { forceLite: true, postContract: true }),
-      trendQ, newCustomersQ,
+      readTrend(), newCustomersQ,
     ]);
     if (wu.scope && denyScope(res, wu.scope)) return;
 
@@ -1590,13 +1606,14 @@ r.get('/work-unified/search', async (req, res) => {
 
     let regionProjectIds = null;
     if (regionId) {
-      const { data: leads, error: leadErr } = await supabase
+      // Trước đây `.limit(800)`: khu vực nhiều lead hơn thế thì tìm kiếm âm thầm
+      // bỏ sót dự án. Đọc hết qua phân trang — khớp cách /work-overview vẫn làm
+      // trong resolveWorkRegionScope.
+      const leads = await fetchAllPagesParallel(() => supabase
         .from('crm_leads')
         .select('project_id')
         .eq('region_id', regionId)
-        .not('project_id', 'is', null)
-        .limit(800);
-      if (leadErr) throw leadErr;
+        .not('project_id', 'is', null));
       regionProjectIds = [...new Set((leads || []).map((l) => l.project_id).filter(Boolean))];
       if (!regionProjectIds.length) return res.json({ items: [] });
     }
@@ -1607,36 +1624,64 @@ r.get('/work-unified/search', async (req, res) => {
         project_manager_id, sales_person_id, production_person_id,
         customer:customers(full_name)
       `;
-    let query = supabase
-      .from('projects')
-      .select(searchSelect)
-      .or(`code.ilike."${like}",name.ilike."${like}"`)
-      .in('status', WORK_OVERVIEW_ACTIVE_STATUSES)
-      .order('code', { ascending: false })
-      .limit(hasExtra ? 60 : 8);
-    query = applyProjectScopeFilter(query, scope);
-    if (regionProjectIds) query = query.in('id', regionProjectIds);
-    const { data, error } = await query;
-    if (error) throw error;
-
-    let rows = data || [];
-    const extraIds = await listCrmLinkedProjectIds(scopeCompanyIdList(scope));
-    if (extraIds.length) {
-      const have = new Set(rows.map((p) => String(p.id)));
-      const missing = extraIds.filter((id) => !have.has(String(id)));
-      if (missing.length) {
-        let extraQ = supabase
+    const searchLimit = hasExtra ? 60 : 8;
+    const SEARCH_ID_CHUNK = 300;
+    const SEARCH_CHUNK_CONCURRENCY = 4;
+    /**
+     * Tìm kiếm dự án, có thể giới hạn theo một danh sách id.
+     * Danh sách id dài sẽ vỡ giới hạn độ dài URL của `.in()`, nên chia khúc và gộp
+     * kết quả — trước đây chỗ này cắt cứng ở 500 id và âm thầm bỏ sót dự án.
+     */
+    const runProjectSearch = async (restrictIds, { applyScope }) => {
+      const build = (ids) => {
+        let sq = supabase
           .from('projects')
           .select(searchSelect)
           .or(`code.ilike."${like}",name.ilike."${like}"`)
           .in('status', WORK_OVERVIEW_ACTIVE_STATUSES)
-          .in('id', missing.slice(0, 500))
           .order('code', { ascending: false })
-          .limit(hasExtra ? 60 : 8);
-        if (regionProjectIds) extraQ = extraQ.in('id', regionProjectIds);
-        const extraRes = await extraQ;
-        if (extraRes.error) throw extraRes.error;
-        (extraRes.data || []).forEach((p) => {
+          .limit(searchLimit);
+        if (applyScope) sq = applyProjectScopeFilter(sq, scope);
+        if (ids) sq = sq.in('id', ids);
+        return sq;
+      };
+      if (!restrictIds) {
+        const { data, error } = await build(null);
+        if (error) throw error;
+        return data || [];
+      }
+      const chunks = [];
+      for (let i = 0; i < restrictIds.length; i += SEARCH_ID_CHUNK) {
+        chunks.push(restrictIds.slice(i, i + SEARCH_ID_CHUNK));
+      }
+      const out = [];
+      for (let i = 0; i < chunks.length; i += SEARCH_CHUNK_CONCURRENCY) {
+        const batch = chunks.slice(i, i + SEARCH_CHUNK_CONCURRENCY);
+        const results = await Promise.all(batch.map((ids) => build(ids)));
+        for (const { data, error } of results) {
+          if (error) throw error;
+          out.push(...(data || []));
+        }
+      }
+      // Mỗi khúc tự áp `limit` nên gộp lại có thể vượt — sắp lại rồi cắt một lần.
+      out.sort((a, b) => String(b.code || '').localeCompare(String(a.code || '')));
+      return out.slice(0, searchLimit);
+    };
+
+    let rows = await runProjectSearch(regionProjectIds, { applyScope: true });
+    const extraIds = await listCrmLinkedProjectIds(scopeCompanyIdList(scope));
+    if (extraIds.length) {
+      const have = new Set(rows.map((p) => String(p.id)));
+      let missing = extraIds.filter((id) => !have.has(String(id)));
+      if (regionProjectIds) {
+        // Trước đây hai `.in('id', …)` chồng nhau để giao danh sách; giờ chia khúc
+        // nên phải tự giao ở đây.
+        const regionSet = new Set(regionProjectIds.map(String));
+        missing = missing.filter((id) => regionSet.has(String(id)));
+      }
+      if (missing.length) {
+        const extraRows = await runProjectSearch(missing, { applyScope: false });
+        extraRows.forEach((p) => {
           if (!have.has(String(p.id))) {
             have.add(String(p.id));
             rows.push(p);
@@ -1644,13 +1689,16 @@ r.get('/work-unified/search', async (req, res) => {
         });
       }
     }
-    if (regionNone) {
-      const { data: withRegionLeads } = await supabase
-        .from('crm_leads')
-        .select('project_id')
-        .not('region_id', 'is', null)
-        .not('project_id', 'is', null)
-        .limit(2000);
+    if (regionNone && rows.length) {
+      // Trước đây quét cả bảng rồi cắt ở 2000 dòng: vừa sai (dự án thứ 2001 bị coi
+      // nhầm là "chưa gán") vừa nặng. Chỉ cần hỏi đúng số dự án đang xét (tối đa 60).
+      const withRegionLeads = await fetchAllByIds({
+        table: 'crm_leads',
+        columns: 'project_id',
+        key: 'project_id',
+        ids: rows.map((p) => p.id),
+        tune: (q) => q.not('region_id', 'is', null),
+      });
       const withRegion = new Set((withRegionLeads || []).map((l) => String(l.project_id)));
       rows = rows.filter((p) => !withRegion.has(String(p.id)));
     }
