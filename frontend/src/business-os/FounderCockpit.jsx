@@ -67,6 +67,8 @@ const METRIC_LABELS = {
   active_people: 'Nhân sự hoạt động',
   active_projects: 'Dự án hoạt động',
   blocked: 'Bị chặn',
+  cancelled: 'Đã hủy',
+  closed: 'Đã đóng (gồm hủy)',
   completed: 'Hoàn thành',
   done: 'Đã hoàn thành',
   due: 'Đến hạn trong kỳ',
@@ -359,7 +361,7 @@ function PlanningSection({ planning }) {
 }
 
 function WorkloadCapacitySection({ workload, capacity }) {
-  const workloadMetrics = pickMetrics(workload, ['total', 'open', 'overdue', 'done']);
+  const workloadMetrics = pickMetrics(workload, ['total', 'open', 'overdue', 'done', 'cancelled']);
   const capacityMetrics = pickMetrics(capacity, [
     'active_people',
     'open_work',

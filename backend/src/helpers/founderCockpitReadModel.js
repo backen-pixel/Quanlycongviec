@@ -293,14 +293,18 @@ function freshness(
 
 function summarizeWorkRows(rows = [], now = new Date()) {
   const byModule = { crm: 0, production: 0, logistics: 0, assignment: 0, personal: 0, other: 0 };
-  const byStatus = { pending: 0, in_progress: 0, done: 0, other: 0 };
+  const byStatus = { pending: 0, in_progress: 0, done: 0, cancelled: 0, other: 0 };
   let open = 0;
   let overdue = 0;
   let done = 0;
+  let cancelled = 0;
   for (const row of rows) {
     const status = text(row.status).toLowerCase();
     const isDone = DONE_STATUSES.includes(status);
-    if (isDone) {
+    if (status === 'cancelled') {
+      cancelled += 1;
+      byStatus.cancelled += 1;
+    } else if (isDone) {
       done += 1;
       byStatus.done += 1;
     } else {
@@ -318,6 +322,8 @@ function summarizeWorkRows(rows = [], now = new Date()) {
     open,
     overdue,
     done,
+    cancelled,
+    closed: done + cancelled,
     by_module: byModule,
     by_status: byStatus,
     source_updated_at: maxTimestamp(rows, ['updated_at', 'completed_at', 'created_at']),
@@ -336,11 +342,23 @@ function mergeWorkSummaries(entries = []) {
       byStatus[key] = (byStatus[key] || 0) + (Number(count) || 0);
     }
   }
+  // Older injected readers may include cancelled work in done. Without the
+  // separate cancellation field neither completion count is trustworthy.
+  const hasCancellationCounts = values.every((value) => (
+    Number.isSafeInteger(value.cancelled) && value.cancelled >= 0
+    && Number.isSafeInteger(value.done) && value.done >= 0
+  ));
+  const done = hasCancellationCounts ? sumField(values, 'done') : null;
+  const cancelled = hasCancellationCounts ? sumField(values, 'cancelled') : null;
+  byStatus.done = done;
+  byStatus.cancelled = cancelled;
   return {
     total: sumField(values, 'total'),
     open: sumField(values, 'open'),
     overdue: sumField(values, 'overdue'),
-    done: sumField(values, 'done'),
+    done,
+    cancelled,
+    closed: cancelled == null ? null : done + cancelled,
     by_module: byModule,
     by_status: byStatus,
   };
@@ -1259,7 +1277,7 @@ async function loadFounderCockpit({
   }
 
   const workload = selectedWorkloadPacket.ok ? mergeWorkSummaries(selectedWorkloadPacket.values) : {
-    total: null, open: null, overdue: null, done: null, by_module: {}, by_status: {},
+    total: null, open: null, overdue: null, done: null, cancelled: null, closed: null, by_module: {}, by_status: {},
   };
   const crm = crmPacket.ok ? aggregateCrm(crmPacket.values) : {
     lead_count: null, deal_count: null, customer_order_count: null, closed_won_count: null,
@@ -1392,7 +1410,7 @@ async function loadFounderCockpit({
       ...planningRanges[key],
       status: deriveModuleStatus([packet]),
       metrics: packet.ok ? mergeWorkSummaries(packet.values) : {
-        total: null, open: null, overdue: null, done: null, by_module: {}, by_status: {},
+        total: null, open: null, overdue: null, done: null, cancelled: null, closed: null, by_module: {}, by_status: {},
       },
       freshness: combineFreshness([packet], generatedAt, {
         datasetId: `planning_${key}`,
