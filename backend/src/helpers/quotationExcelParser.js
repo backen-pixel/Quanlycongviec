@@ -218,6 +218,17 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
         if (label === 'STT' || label === 'TT') {
           if (cm.stt === undefined) cm.stt = ci;
         } else if (
+          label.includes('GIÁ VỐN') || label.includes('GIA VON') ||
+          label.includes('GIÁ GỐC') || label.includes('GIA GOC') ||
+          label.includes('GIÁ NHẬP') || label.includes('GIÁ GIA CÔNG') ||
+          label.includes('CHI PHÍ') || label.includes('CHI PHI') ||
+          label === 'VỐN' || label === 'VON'
+        ) {
+          // Cột GIÁ VỐN của mẫu báo giá — hiểu là ĐƠN GIÁ vốn (một đơn vị), vì sổ chi phí
+          // nhân lại với SỐ LƯỢNG (costLedger.lineCogsAmount). Phải đứng TRƯỚC nhánh
+          // 'ĐƠN GIÁ' / 'THÀNH TIỀN' kẻo header 'ĐƠN GIÁ VỐN' bị nhánh kia giữ mất.
+          if (cm.cost_price === undefined) cm.cost_price = ci;
+        } else if (
           (label.includes('HẠNG MỤC') || label.includes('TÊN HÀNG') ||
            label.includes('TÊN SẢN PHẨM') || label === 'TÊN SP' || label.includes('NỘI DUNG'))
           && !label.includes('DIỄN GIẢI') && !label.includes('MÔ TẢ') && !label.includes('CHI TIẾT')
@@ -795,6 +806,9 @@ async function parseQuotationExcelBuffer(buffer, options = {}) {
         height: colMap.height !== undefined ? (parseVietnameseMeasure(row[colMap.height]) ?? null) : null,
         quantity: colMap.quantity !== undefined ? (parseVietnameseMeasure(row[colMap.quantity]) ?? 1) : 1,
         unit_price: rowUnitPrice,
+        cost_price: colMap.cost_price !== undefined
+          ? (parseExcelMoneyFromMappedColumn(row, colMap.cost_price) || null)
+          : null,
         amount: parsedAmount,
         vat_rate: colMap.vat_rate !== undefined ? parseFloat(row[colMap.vat_rate]) || 0 : 0,
         notes: notesCell,

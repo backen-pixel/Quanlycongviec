@@ -77,6 +77,20 @@ assert.equal(resolveModuleDeadline(MODULE.PRODUCTION, {
   ...sx,
   sx_kanban_deadline_at: null,
 }).source, 'production_finish');
+assert.equal(resolveModuleDeadline(MODULE.PRODUCTION, {
+  ...sx,
+  sx_kanban_deadline_at: null,
+  production_finish_date: null,
+}).source, 'production');
+assert.equal(resolveModuleDeadline(MODULE.PRODUCTION, {
+  ...sx,
+  sx_kanban_deadline_at: null,
+  production_finish_date: null,
+  production_deadline: null,
+}).source, 'delivery');
+assert.equal(resolveModuleDeadline(MODULE.PRODUCTION, sx, {
+  stage: { is_handover_to_logistics: true, name: 'KT KCS SẢN PHẨM, TÍNH CN' },
+}).source, 'sx_kanban');
 assert.equal(resolveModuleDeadline(MODULE.PRODUCTION, sx, {
   stage: { sla_days: 0 },
 }).deadlineAt, null);

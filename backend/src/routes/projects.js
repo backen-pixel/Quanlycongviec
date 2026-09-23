@@ -906,6 +906,96 @@ r.get('/:id/cashflow', async (req, res) => {
   }
 });
 
+/** Sổ chi phí + công thức (tab Kế toán Work Unified). Xem được nếu đã vào được dự án. */
+r.get('/:id/cost-summary', async (req, res) => {
+  try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { mode: 'sensitive' }))) return;
+    const {
+      ensureCompanyCostSetup,
+      resolveSetupForProject,
+      loadActiveEntriesForProjects,
+      summarizeProject,
+    } = require('../helpers/costLedger');
+    const { data: project } = await supabase
+      .from('projects')
+      .select('id, code, name, company_id, workshop_type_id, production_value, logistics_cost, estimated_value, status, created_at')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!project) return res.status(404).json({ error: 'Không tìm thấy dự án' });
+    if (!project.company_id) return res.status(400).json({ error: 'Dự án thiếu công ty — chưa gán sổ chi phí' });
+    const { data: deal } = await supabase
+      .from('crm_leads')
+      .select('id, project_id, estimated_value, code, title, type, region_id')
+      .eq('project_id', project.id)
+      .eq('type', 'deal')
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    const setup = await resolveSetupForProject(project.company_id, deal?.region_id || null);
+    const entries = await loadActiveEntriesForProjects([project.id]);
+    const summary = await summarizeProject({ project, deal, setup, entries });
+    const { listCostExcelForProject } = require('../helpers/costLedger');
+    const excel_uploads = await listCostExcelForProject(project.id).catch(() => []);
+    res.json({
+      ...summary,
+      cost_types: setup.types || [],
+      type_links: setup.type_links || [],
+      excel_uploads,
+    });
+  } catch (e) {
+    console.error('[projects/:id/cost-summary]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải sổ chi phí dự án' });
+  }
+});
+
+r.get('/:id/cost-excel', async (req, res) => {
+  try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { mode: 'sensitive' }))) return;
+    const { listCostExcelForProject } = require('../helpers/costLedger');
+    const uploads = await listCostExcelForProject(req.params.id);
+    res.json({ uploads });
+  } catch (e) {
+    res.status(500).json({ error: e.message || 'Lỗi tải Excel chi phí' });
+  }
+});
+
+r.post('/:id/cost-excel', async (req, res) => {
+  try {
+    if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE', mode: 'sensitive' }))) return;
+    const b = req.body || {};
+    if (!b.cost_type_id) return res.status(400).json({ error: 'Thiếu loại chi phí' });
+    const { data: project } = await supabase
+      .from('projects')
+      .select('id, company_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!project?.company_id) return res.status(404).json({ error: 'Không tìm thấy dự án' });
+    const { data: typeRow } = await supabase.from('cost_types').select('*').eq('id', b.cost_type_id).maybeSingle();
+    if (!typeRow) return res.status(404).json({ error: 'Không tìm thấy loại chi phí' });
+    const { data: deal } = await supabase
+      .from('crm_leads')
+      .select('id')
+      .eq('project_id', project.id)
+      .eq('type', 'deal')
+      .limit(1)
+      .maybeSingle();
+    const { upsertCostExcel } = require('../helpers/costLedger');
+    const upload = await upsertCostExcel({
+      companyId: project.company_id,
+      projectId: project.id,
+      leadId: deal?.id || null,
+      costType: typeRow,
+      amount: b.amount,
+      fileName: b.file_name,
+      rowCount: b.row_count,
+      actorUserId: req.user.userId,
+    });
+    res.json(upload);
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'Lỗi lưu Excel chi phí' });
+  }
+});
+
 /** Ghi nhận chi phí trên dự án (vật tư phát sinh, v.v.) */
 r.post('/:id/expenses', async (req, res) => {
   try {
@@ -932,6 +1022,11 @@ r.post('/:id/expenses', async (req, res) => {
       throw error;
     }
     await logActivity(req.user.userId, 'created', 'project_expense', data.id, `Chi phí dự án ${pid}: ${amount}`);
+    try {
+      const { safeCost, syncProjectExpense } = require('../helpers/costLedger');
+      const { data: proj } = await supabase.from('projects').select('id, company_id').eq('id', pid).maybeSingle();
+      await safeCost(() => syncProjectExpense(data, proj, { actorUserId: req.user.userId }), 'project.expense');
+    } catch (_) { /* ignore */ }
     res.status(201).json(data);
   } catch (e) {
     console.error(e);
@@ -1595,6 +1690,13 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
       });
     }
 
+    // Dự án mới có chi phí xưởng / phí VC thì đẩy luôn vào sổ chi phí — trước đây chỉ
+    // PUT /projects/:id mới sync, nên dự án tạo kèm production_value không bao giờ vào sổ.
+    try {
+      const { safeCost, syncProjectCostFields } = require('../helpers/costLedger');
+      await safeCost(() => syncProjectCostFields(data, { actorUserId: req.user.userId }), 'project.create');
+    } catch (_) { /* ignore */ }
+
     try {
       const tid = await resolveTenantIdForQuota(req, data.company_id || projectCompanyId);
       if (tid) invalidateTenantUsageCache(tid);
@@ -1964,6 +2066,12 @@ r.post('/create-with-flow', requirePermission('projects', 'create'), async (req,
     }
     if (!project) throw lastFlowErr || new Error('Không tạo dự án: trùng mã code');
 
+    // Đường tạo dự án theo luồng (flow) — cũng phải vào sổ chi phí như đường POST /projects.
+    try {
+      const { safeCost, syncProjectCostFields } = require('../helpers/costLedger');
+      await safeCost(() => syncProjectCostFields(project, { actorUserId: req.user.userId }), 'project.create.flow');
+    } catch (_) { /* ignore */ }
+
     const projectId = project.id;
     const projectStart = new Date();
     let allCreatedTasks = [];
@@ -2286,7 +2394,7 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
     if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE' }))) return;
     const b = req.body;
     const update = { updated_at: new Date().toISOString() };
-    const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','production_value','deposit_amount','collected_amount','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','pickup_at','pickup_notes','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files','deadline','notes','supervisor_id','production_deadline','production_note','workshop_type_id','order_date','delivery_date','production_finish_date','logistics_company_id','vc_notes'];
+    const fields = ['name','description','status','customer_id','kitchen_type','material','install_address','estimated_value','production_value','logistics_cost','deposit_amount','collected_amount','final_value','priority','sales_person_id','designer_id','project_manager_id','design_deadline','production_start_date','install_date','pickup_at','pickup_notes','consulting_person_id','design_person_id','quotation_person_id','contract_person_id','production_person_id','shipping_person_id','installation_person_id','care_person_id','quotation_files','deadline','notes','supervisor_id','production_deadline','production_note','workshop_type_id','order_date','delivery_date','production_finish_date','logistics_company_id','vc_notes'];
     const dateFields = ['deadline', 'design_deadline', 'production_start_date', 'install_date', 'pickup_at', 'production_deadline', 'order_date', 'delivery_date', 'production_finish_date'];
     fields.forEach(f => { if (b[f] !== undefined) update[f] = b[f]; });
     dateFields.forEach((f) => { if (update[f] === '') update[f] = null; });
@@ -2345,7 +2453,7 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
     if (error && error.message?.includes('column')) {
       // Remove fields that may not exist yet (need migration)
       const safeCopy = { ...update };
-      ['deadline', 'notes', 'order_date', 'delivery_date', 'production_finish_date', 'deposit_amount', 'collected_amount', 'vc_notes'].forEach(f => delete safeCopy[f]);
+      ['deadline', 'notes', 'order_date', 'delivery_date', 'production_finish_date', 'deposit_amount', 'collected_amount', 'vc_notes', 'logistics_cost'].forEach(f => delete safeCopy[f]);
       ({ data, error } = await supabase.from('projects').update(safeCopy).eq('id', req.params.id).select(`*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`).single());
     }
     if (error) throw error;
@@ -2701,6 +2809,13 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
     const deadlineFields = ['deadline', 'design_deadline', 'production_deadline', 'order_date', 'delivery_date', 'production_finish_date', 'install_date'];
     if (deadlineFields.some((f) => b[f] !== undefined)) {
       try { require('../jobs/projectDeadlineDispatch').triggerAfterDeadlineChange(); } catch (_) { /* ignore */ }
+    }
+
+    if (b.production_value !== undefined || b.logistics_cost !== undefined) {
+      try {
+        const { safeCost, syncProjectCostFields } = require('../helpers/costLedger');
+        await safeCost(() => syncProjectCostFields(data, { actorUserId: req.user.userId }), 'project.put');
+      } catch (_) { /* ignore */ }
     }
 
     res.json({ project: { ...data, production_staff } });

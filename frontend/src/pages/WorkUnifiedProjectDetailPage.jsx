@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
 import api from '../lib/api';
 import { getSocket, connectSocket } from '../lib/socket';
 import { isAdminLike, isCompanyScopedAdmin, isWorkProductionModuleAdmin } from '../lib/adminRole';
+import { isAccountingUser } from '../lib/crossWorkshopProduction';
 import SearchInlineFilterChips, { SearchClearButton, AdvFilterButton, searchGroupClass } from '../components/SearchInlineFilterChips';
 import WorkUnifiedFilterPanel, {
   WORK_UNIFIED_TIME_PRESETS,
@@ -29,6 +30,7 @@ import UnifiedTaskHistoryTimeline from '../components/UnifiedTaskHistoryTimeline
 import WorkTaskExtrasPanel from '../components/WorkTaskExtrasPanel';
 import ProjectSharedWorkspaceTab from '../components/ProjectSharedWorkspaceTab';
 import CommentSlashTaskForm from '../components/CommentSlashTaskForm';
+import CostExcelUpload from '../components/CostExcelUpload';
 import { LeadMembersTab } from '../components/LeadChatTabs';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import { pickPrimarySxCrmDeal } from '../lib/sxProjectComments';
@@ -78,7 +80,7 @@ const SECONDARY_TABS = [
   { key: 'shared', label: 'Không gian chung' },
   { key: 'progress', label: 'Tiến độ' },
   { key: 'documents', label: 'Tài liệu' },
-  { key: 'finance', label: 'Chi phí' },
+  { key: 'finance', label: 'Kế toán' },
   { key: 'acceptance', label: 'Nghiệm thu' },
   { key: 'chat', label: 'Bình luận' },
   { key: 'history', label: 'Lịch sử' },
@@ -1755,24 +1757,128 @@ const FINANCE_FLOW_CLS = {
 };
 
 function FinanceTab({ projectId }) {
+  const { user } = useAuth();
+  const canOpenSetup = isAdminLike(user) || isWorkProductionModuleAdmin(user) || isAccountingUser(user);
   const [state, setState] = useState({ loading: true, error: '', data: null });
+  const [cost, setCost] = useState({ loading: true, error: '', data: null });
+  const loadCost = useCallback(() => {
+    setCost((s) => ({ ...s, loading: true }));
+    api.get(`/projects/${projectId}/cost-summary`)
+      .then((res) => setCost({ loading: false, error: '', data: res.data }))
+      .catch((e) => setCost({ loading: false, error: e?.response?.data?.error || 'Chưa có sổ chi phí', data: null }));
+  }, [projectId]);
   useEffect(() => {
     let cancelled = false;
     api.get(`/projects/${projectId}/cashflow`)
       .then((res) => { if (!cancelled) setState({ loading: false, error: '', data: res.data }); })
       .catch((e) => { if (!cancelled) setState({ loading: false, error: e?.response?.data?.error || 'Không có quyền xem chi phí của dự án này', data: null }); });
+    loadCost();
     return () => { cancelled = true; };
-  }, [projectId]);
+  }, [projectId, loadCost]);
 
-  if (state.loading) return <Section title="Chi phí"><EmptyNote>Đang tải...</EmptyNote></Section>;
-  if (state.error) return <Section title="Chi phí"><EmptyNote>{state.error}</EmptyNote></Section>;
+  const src = cost.data?.by_source || {};
+  const formulas = cost.data?.formulas || [];
+  const entries = cost.data?.entries || [];
+  const sourceLabel = {
+    'sx.production_value': 'Chi phí xưởng',
+    'sx.project_expense': 'Phát sinh SX',
+    'purchasing.po': 'Mua hàng',
+    'vc.shipping': 'Phí VC / lắp',
+    'crm.product_cogs': 'Giá vốn CRM',
+    'crm.manual': 'Nhập tay CRM',
+    'ketoan.manual': 'Nhập tay Kế toán',
+  };
+
+  if (state.loading && cost.loading) return <Section title="Kế toán"><EmptyNote>Đang tải...</EmptyNote></Section>;
+  if (state.error && cost.error) return <Section title="Kế toán"><EmptyNote>{state.error || cost.error}</EmptyNote></Section>;
   const { summary, timeline } = state.data || {};
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-bold text-slate-900">Kế toán dự án</h3>
+        <div className="flex items-center gap-2">
+          {canOpenSetup && (
+            <Link to="/management/cost-setup" className="text-xs font-semibold text-teal-700 hover:underline">
+              Setup công thức
+            </Link>
+          )}
+          <Link to="/ketoan/chi-phi" className="text-xs font-semibold text-indigo-700 hover:underline">
+            Mở sổ chi phí
+          </Link>
+        </div>
+      </div>
+
+      {cost.loading ? (
+        <EmptyNote>Đang tải sổ chi phí…</EmptyNote>
+      ) : cost.error ? (
+        <p className="text-sm text-amber-700">{cost.error}</p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Section title="Doanh thu"><p className="text-lg font-bold text-indigo-700">{formatVND(cost.data?.revenue || 0)}</p></Section>
+            <Section title="Giá vốn"><p className="text-lg font-bold text-orange-700">{formatVND(cost.data?.gia_von || 0)}</p></Section>
+            <Section title="Lợi nhuận gộp">
+              <p className={`text-lg font-bold ${(cost.data?.loi_nhuan_gop || 0) < 0 ? 'text-red-600' : 'text-emerald-700'}`}>
+                {formatVND(cost.data?.loi_nhuan_gop || 0)}
+              </p>
+            </Section>
+            <Section title="Chi phí sổ"><p className="text-lg font-bold text-gray-800">{formatVND(cost.data?.cost_total || 0)}</p></Section>
+          </div>
+          {formulas.length > 0 && (
+            <Section title="Công thức">
+              <div className="grid sm:grid-cols-2 gap-2">
+                {formulas.map((f) => (
+                  <div key={f.code} className="flex items-baseline justify-between gap-2 text-sm">
+                    <span className="text-gray-600">{f.name}</span>
+                    <span className="font-semibold tabular-nums">{formatVND(f.value || 0)}</span>
+                  </div>
+                ))}
+              </div>
+            </Section>
+          )}
+          {(cost.data?.cost_types || []).length > 0 && (
+            <Section title="File Excel chi phí">
+              <p className="text-xs text-gray-500 mb-2">
+                Chọn file có cột tiền (Thành tiền, Chi phí, Tổng…). Hệ thống cộng cột đó và đưa vào công thức.
+              </p>
+              <CostExcelUpload
+                projectId={projectId}
+                costTypes={cost.data.cost_types}
+                uploads={cost.data.excel_uploads || []}
+                onUploaded={loadCost}
+              />
+            </Section>
+          )}
+          <Section title="Chi phí theo nguồn">
+            <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-2 text-sm">
+              {['sx.production_value', 'sx.project_expense', 'purchasing.po', 'vc.shipping', 'crm.product_cogs'].map((k) => (
+                <div key={k} className="flex justify-between gap-2 rounded-lg border border-slate-100 px-3 py-2">
+                  <span className="text-gray-600">{sourceLabel[k]}</span>
+                  <span className="font-semibold tabular-nums">{formatVND(src[k] || 0)}</span>
+                </div>
+              ))}
+            </div>
+            {entries.length > 0 && (
+              <div className="mt-3 divide-y divide-gray-50">
+                {entries.map((e) => (
+                  <div key={e.id} className="flex items-center justify-between gap-3 py-2">
+                    <div className="min-w-0">
+                      <p className="text-sm text-gray-800 truncate">{sourceLabel[e.source_key] || e.source_key}</p>
+                      <p className="text-xs text-gray-400 truncate">{e.note || e.entry_date || ''}</p>
+                    </div>
+                    <p className="text-sm font-semibold tabular-nums text-red-700">{formatVND(e.amount)}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Section>
+        </>
+      )}
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Section title="Đã thu"><p className="text-lg font-bold text-emerald-700">{formatVND(summary?.payments_recorded_sum || 0)}</p></Section>
-        <Section title="Chi phí"><p className="text-lg font-bold text-red-700">{formatVND(summary?.expenses_sum || 0)}</p></Section>
+        <Section title="Chi phí ghi nhận"><p className="text-lg font-bold text-red-700">{formatVND(summary?.expenses_sum || 0)}</p></Section>
         <Section title="Còn phải thu"><p className="text-lg font-bold text-amber-700">{formatVND(summary?.remaining_to_collect || 0)}</p></Section>
         <Section title="Chênh lệch thu/chi"><p className="text-lg font-bold text-gray-800">{formatVND(summary?.net_cash_vs_expenses || 0)}</p></Section>
       </div>
@@ -1781,7 +1887,7 @@ function FinanceTab({ projectId }) {
           <EmptyNote>Chưa có giao dịch nào ghi nhận cho dự án này.</EmptyNote>
         ) : (
           <div className="divide-y divide-gray-50">
-            {timeline.map((t) => (
+            {(timeline || []).map((t) => (
               <div key={t.id} className="flex items-center justify-between gap-3 py-2.5">
                 <div className="min-w-0">
                   <p className="text-sm text-gray-800 truncate">{t.title}</p>
@@ -2216,7 +2322,7 @@ function WorkUnifiedProjectDetailInner() {
   const [error, setError] = useState('');
   const tabFromUrl = searchParams.get('tab') || 'overview';
   const groupFromUrl = searchParams.get('group') || '';
-  const [activeTab, setActiveTab] = useState(() => tabFromUrl);
+  const [activeTab, setActiveTab] = useState(() => (tabFromUrl === 'ketoan' ? 'finance' : tabFromUrl));
   const [messagingId, setMessagingId] = useState(null);
   const [companyUsers, setCompanyUsers] = useState([]);
   const [commentCount, setCommentCount] = useState(0);
@@ -2400,8 +2506,9 @@ function WorkUnifiedProjectDetailInner() {
   }, [id, load]);
 
   useEffect(() => {
+    const raw = tabFromUrl === 'ketoan' ? 'finance' : tabFromUrl;
     const allowed = new Set(['overview', ...SECONDARY_TABS.map((t) => t.key), 'team']);
-    setActiveTab(allowed.has(tabFromUrl) ? tabFromUrl : 'overview');
+    setActiveTab(allowed.has(raw) ? raw : 'overview');
   }, [id, tabFromUrl]);
 
   // Lệnh «/» trong ô bình luận: null = đóng, 'task' | 'phat_sinh' = đang mở form tạo.
@@ -2411,7 +2518,7 @@ function WorkUnifiedProjectDetailInner() {
     setActiveTab(key);
     const next = new URLSearchParams(searchParams);
     if (!key || key === 'overview') next.delete('tab');
-    else next.set('tab', key);
+    else next.set('tab', key === 'finance' ? 'ketoan' : key);
     if (key !== 'tasks') next.delete('group');
     const qs = next.toString();
     navigate({ search: qs ? `?${qs}` : '' }, { replace: true });

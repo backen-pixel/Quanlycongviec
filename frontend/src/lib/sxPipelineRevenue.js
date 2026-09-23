@@ -279,6 +279,10 @@ function startOfLocalDay(d) {
  * Bucket deadline view SX — khớp ProductionDeadlineView.
  * Nguồn hạn do adapter chung chọn: hạn thẻ → hoàn thiện/hạn SX → giao → hạn chung.
  */
+const SX_DEADLINE_BUCKET_KEYS = new Set([
+  'overdue', 'today', 'this_week', 'next_week', 'this_month', 'later', 'none',
+]);
+
 export function resolveSxDeadlineBucket(item, todayMs = Date.now(), stage = null) {
   const resolved = resolveEffectiveModuleDeadline(
     DEADLINE_MODULE.PRODUCTION,
@@ -288,14 +292,17 @@ export function resolveSxDeadlineBucket(item, todayMs = Date.now(), stage = null
   const raw = resolved.raw;
   const t = resolved.deadlineTs;
   const source = resolved.source;
+  const serverBucket = String(item?._deadline_bucket || item?.deadline_bucket || '').trim();
+  if (SX_DEADLINE_BUCKET_KEYS.has(serverBucket)) {
+    return { bucket: serverBucket, ts: t, source };
+  }
   if (!raw || t == null || !Number.isFinite(t)) return { bucket: 'none', ts: null, source: null };
   const today = startOfLocalDay(new Date(todayMs));
   const dayMs = 86400000;
   const diffDays = Math.floor((startOfLocalDay(t).getTime() - today.getTime()) / dayMs);
   const st = stage || item?.sx_pipeline_stage;
   const ignoreOverdue = shouldIgnoreSxOrderDeliveryOverdue(st)
-    || isSxPipelineStageNoDeadline(st)
-    || projectIsShipped(item);
+    || isSxPipelineStageNoDeadline(st);
   if (diffDays < 0) {
     if (ignoreOverdue) {
       return { bucket: 'later', ts: t, source };
@@ -362,9 +369,10 @@ export function computeSxRevenueKpis(projects, stages) {
       debtRevenue += resolveSxProjectRemaining(p);
       debtCount += 1;
     }
-    if (projectIsProducing(p, st)) producing += 1;
-    if (projectIsAwaitingDelivery(p, st)) awaitingDelivery += 1;
-    if (projectIsShipped(p)) shipped += 1;
+    const kpiKey = sxColumnStageKpiKey(col);
+    if (kpiKey === 'producing') producing += 1;
+    else if (kpiKey === 'awaiting_delivery') awaitingDelivery += 1;
+    else if (kpiKey === 'shipped') shipped += 1;
     // Quá hạn KPI = cột «Quá hạn» của Deadline view
     if (!shouldHideSxKanbanDeadlineOnCard(p, col)
       && resolveSxDeadlineBucket(p, nowMs, col).bucket === 'overdue') {
@@ -415,9 +423,23 @@ export function isSxDeliveredStage(stage) {
   return name.includes('da giao') || name.includes('giao xong');
 }
 
-/** Cột không theo dõi deadline (Đã giao / Đã công / Đã thu / Hoàn thành). */
+/** KPI Đang SX / Chờ VC / Đã VC — tick dashboard_kpi trên cột; chưa tick thì suy từ cờ bàn giao / tên. */
+export function sxColumnStageKpiKey(stage) {
+  if (!stage || stage.bucket_slug === INTAKE_BUCKET) return null;
+  const explicit = String(stage.dashboard_kpi || '').trim();
+  if (explicit === 'producing' || explicit === 'awaiting_delivery' || explicit === 'shipped') {
+    return explicit;
+  }
+  if (stage.is_handover_to_logistics) return 'awaiting_delivery';
+  if (isSxDeliveredStage(stage)) return 'shipped';
+  if (stage.counts_as_completed_revenue || stage.counts_as_collected_revenue) return null;
+  return 'producing';
+}
+
+/** Cột không theo dõi deadline (Tắt hạn / Đã giao / Đã công / Đã thu). */
 export function isSxPipelineStageNoDeadline(stage) {
-  return isSxDeliveredStage(stage)
+  return !!stage?.clears_deadline
+    || isSxDeliveredStage(stage)
     || isSxPipelineStageCompletedRevenue(stage)
     || isSxPipelineStageCollectedRevenue(stage);
 }
@@ -648,6 +670,7 @@ export function buildSxPipelineStageMeta(col) {
     counts_as_completed_revenue: col.counts_as_completed_revenue,
     counts_as_collected_revenue: col.counts_as_collected_revenue,
     requires_deadline: col.requires_deadline,
+    clears_deadline: col.clears_deadline,
     auto_add_members_on_enter: col.auto_add_members_on_enter,
     bucket_slug: col.bucket_slug,
     is_handover_to_logistics: col.is_handover_to_logistics,

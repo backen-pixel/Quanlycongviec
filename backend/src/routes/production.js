@@ -235,6 +235,14 @@ function parseProductionStageKpiBody(b) {
   if (b.requires_deadline !== undefined) {
     out.requires_deadline = b.requires_deadline == null ? null : !!b.requires_deadline;
   }
+  if (b.clears_deadline !== undefined) {
+    out.clears_deadline = b.clears_deadline == null ? null : !!b.clears_deadline;
+  }
+  if (b.dashboard_kpi !== undefined) {
+    const raw = b.dashboard_kpi == null || b.dashboard_kpi === '' ? null : String(b.dashboard_kpi).trim();
+    const allowed = new Set(['producing', 'awaiting_delivery', 'shipped']);
+    out.dashboard_kpi = raw && allowed.has(raw) ? raw : null;
+  }
   if (b.deadline_group !== undefined) {
     const raw = b.deadline_group == null || b.deadline_group === '' ? null : String(b.deadline_group).trim();
     const allowed = new Set(['planning', 'cabinet', 'finishing', 'packing']);
@@ -259,10 +267,11 @@ async function touchProjectSxPipelineStageEnteredAt(projectId, targetColId, curr
   }
 }
 
-/** Cột «Đã giao» / «Đã công» / «Đã thu» — tắt hết deadline SX. */
+/** Cột «Tắt hạn» / «Đã giao» / «Đã công» / «Đã thu» — tắt hết deadline SX. */
 function isSxColumnClearsDeadlines(col) {
   return !!(
-    col?.counts_as_completed_revenue
+    col?.clears_deadline
+    || col?.counts_as_completed_revenue
     || col?.counts_as_collected_revenue
     || isSxDeliveredStage(col)
   );
@@ -818,6 +827,8 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
     if (isIntake) {
       insertPayload.deadline_group = null;
       insertPayload.requires_deadline = false;
+      insertPayload.clears_deadline = false;
+      insertPayload.dashboard_kpi = null;
     } else {
       if (b.group_key !== undefined) {
         insertPayload.group_key = String(b.group_key || '').trim() || null;
@@ -899,8 +910,12 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
     Object.assign(update, parseProductionStageKpiBody(b));
     const enablingCompletedRevenue = b.counts_as_completed_revenue === true;
     const enablingCollectedRevenue = b.counts_as_collected_revenue === true;
-    if (enablingCompletedRevenue || enablingCollectedRevenue) {
+    const enablingClearsDeadline = b.clears_deadline === true;
+    if (enablingCompletedRevenue || enablingCollectedRevenue || enablingClearsDeadline) {
       update.requires_deadline = false;
+    }
+    if (b.requires_deadline === true) {
+      update.clears_deadline = false;
     }
     if (existingRow?.bucket_slug === INTAKE_BUCKET) {
       update.workflow_stage_id = null;
@@ -917,6 +932,8 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
       delete update.counts_as_completed_revenue;
       delete update.counts_as_collected_revenue;
       delete update.requires_deadline;
+      delete update.clears_deadline;
+      delete update.dashboard_kpi;
       delete update.deadline_group;
     }
     if (update.bucket_slug && update.bucket_slug !== INTAKE_BUCKET) {
@@ -960,6 +977,13 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
     }
 
     let u = stripHandoverFields(mapSwitchWorkshopTypeBodyToDb({ ...update }));
+    if (enablingClearsDeadline && u.clears_deadline === undefined) {
+      return res.status(400).json({ error: 'Chưa chạy migration 629 (cột Tắt hạn).' });
+    }
+    const settingDashboardKpi = b.dashboard_kpi !== undefined && b.dashboard_kpi;
+    if (settingDashboardKpi && u.dashboard_kpi === undefined) {
+      return res.status(400).json({ error: 'Chưa chạy migration 630 (cột KPI Dashboard).' });
+    }
     const tryUpdate = () => supabase
       .from('production_pipeline_stages')
       .update(u)
@@ -1006,7 +1030,7 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
         console.warn('[production] auto_add_members_on_enter update:', flagErr.message);
       }
     }
-    if (enablingCompletedRevenue || enablingCollectedRevenue || isSxDeliveredStage(data)) {
+    if (enablingCompletedRevenue || enablingCollectedRevenue || enablingClearsDeadline || isSxDeliveredStage(data)) {
       try {
         await clearSxKanbanDeadlinesForPipelineColumn(req.params.id);
       } catch (clearErr) {
@@ -2513,7 +2537,7 @@ r.get('/deadline-bucket-page', requirePermission('projects', 'view'), async (req
 
     const migration300Cols = 'order_date, delivery_date,';
     const kanbanSelect = `
-      id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, ${migration300Cols} created_at, status, company_id,
+      id, code, name, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, ${migration300Cols} production_finish_date, sx_kanban_deadline_at, created_at, status, company_id,
       production_deadline, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id, vc_handover_status, vc_temp_staged,
       current_stage_id, workshop_type_id,
       current_stage:workflow_stages(id, slug, name, color, icon),
@@ -2589,7 +2613,15 @@ r.get('/deadline-bucket-page', requirePermission('projects', 'view'), async (req
     const dealDepositMap = await loadDealDepositByProjectIds(withUserFlags.map((p) => p.id).filter(Boolean));
     const projectsOut = attachSxFinanceToProjects(withUserFlags, dealDepositMap);
     const byId = new Map(projectsOut.map((p) => [String(p.id), p]));
-    const ordered = pageMeta.ids.map((id) => byId.get(String(id))).filter(Boolean);
+    const ordered = pageMeta.ids.map((id) => {
+      const row = byId.get(String(id));
+      if (!row) return null;
+      return {
+        ...row,
+        _deadline_bucket: pageMeta.bucket,
+        deadline_bucket: pageMeta.bucket,
+      };
+    }).filter(Boolean);
 
     res.json({
       projects: ordered,
@@ -3427,7 +3459,7 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       const colId = String(pipelineStageId);
       let { data: colRow } = await supabase
         .from('production_pipeline_stages')
-        .select('id, name, workflow_stage_id, bucket_slug, crm_target_stage_id, requires_deadline, deadline_group, group_key, counts_as_completed_revenue, counts_as_collected_revenue')
+        .select('id, name, workflow_stage_id, bucket_slug, crm_target_stage_id, requires_deadline, clears_deadline, deadline_group, group_key, counts_as_completed_revenue, counts_as_collected_revenue')
         .eq('id', colId)
         .maybeSingle();
       if (!colRow) {
@@ -4881,10 +4913,50 @@ r.get('/task-templates', requirePermission('projects', 'view'), async (req, res)
       ...t,
       items: [...(t.items || [])].sort((a, b) => (a.order_index || 0) - (b.order_index || 0)),
     }));
+    try {
+      const { listTemplateCostTypeIds } = require('../helpers/costLedger');
+      const linkMap = await listTemplateCostTypeIds('workshop', rows.map((t) => t.id));
+      rows.forEach((t) => { t.cost_excel_type_ids = linkMap[String(t.id)] || []; });
+    } catch (linkErr) {
+      rows.forEach((t) => { t.cost_excel_type_ids = t.cost_excel_type_ids || []; });
+    }
     res.json(rows);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: e.message });
+  }
+});
+
+r.get('/cost-types', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const company_id = effectiveWorkshopCompanyId(req, req.query.company_id);
+    if (!company_id) return res.json([]);
+    const { listCostTypesForCompany } = require('../helpers/costLedger');
+    const moduleKey = req.query.workshop_area === 'logistics'
+      ? 'logistics'
+      : (req.query.workshop_area === 'production' ? 'production' : null);
+    const rows = await listCostTypesForCompany(company_id, { moduleKey });
+    res.json(rows);
+  } catch (e) {
+    res.json([]);
+  }
+});
+
+r.put('/task-templates/:id/cost-excel-types', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const { data: tpl } = await supabase
+      .from('workshop_task_templates')
+      .select('id, company_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    const { assertCompanyOwnedRow } = require('../helpers/projectAccessScope');
+    if (!assertCompanyOwnedRow(req, res, tpl, { label: 'mẫu nhiệm vụ' })) return;
+    const { setTemplateCostTypes } = require('../helpers/costLedger');
+    const ids = Array.isArray(req.body?.cost_type_ids) ? req.body.cost_type_ids : [];
+    const links = await setTemplateCostTypes('workshop', req.params.id, ids);
+    res.json({ cost_excel_type_ids: ids.filter(Boolean), links });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'Lỗi gắn Excel chi phí' });
   }
 });
 
@@ -5322,6 +5394,8 @@ r.post('/task-templates/:tplId/items', requirePermission('projects', 'edit'), as
         || (Array.isArray(b.required_evidence_file_types) && b.required_evidence_file_types.length > 0),
       required_evidence_file_types: Array.isArray(b.required_evidence_file_types) ? b.required_evidence_file_types : [],
       requires_quick_verdict: !!b.requires_quick_verdict,
+      require_cost_excel: !!b.require_cost_excel,
+      cost_type_id: b.cost_type_id || null,
       ...giaVonPatch(b),
       ...templateItemAssigneePatch(b),
     };
@@ -5357,6 +5431,10 @@ r.post('/task-templates/:tplId/items', requirePermission('projects', 'edit'), as
         code: 'db_migration_default_assignee_ids',
       });
     }
+    if (error && /require_cost_excel|cost_type_id/.test(error.message || '')) {
+      const { require_cost_excel: _r, cost_type_id: _c, ...legacy } = insertRow;
+      ({ data, error } = await supabase.from('workshop_task_template_items').insert(legacy).select().single());
+    }
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) {
@@ -5378,7 +5456,8 @@ r.put('/task-templates/:tplId/items/:itemId', requirePermission('projects', 'edi
     ['title', 'description', 'priority', 'deadline_days', 'order_index', 'checklist',
       'default_allowed_companies', 'default_allowed_departments', 'executor_company_id', 'blocks_stage_advance',
       'clears_delivery_deadline_on_complete',
-      'completion_requires_file_or_note', 'required_evidence_file_types', 'requires_quick_verdict'].forEach((f) => {
+      'completion_requires_file_or_note', 'required_evidence_file_types', 'requires_quick_verdict',
+      'require_cost_excel', 'cost_type_id'].forEach((f) => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
     Object.assign(update, giaVonPatch(req.body));
@@ -5425,6 +5504,15 @@ r.put('/task-templates/:tplId/items/:itemId', requirePermission('projects', 'edi
         error: 'Database chưa có cột default_assignee_ids (migration 331). Chạy database/331_template_item_default_assignee_ids.sql trên Supabase rồi thử lại.',
         code: 'db_migration_default_assignee_ids',
       });
+    }
+    if (error && /require_cost_excel|cost_type_id/.test(error.message || '')) {
+      const { require_cost_excel: _r, cost_type_id: _c, ...legacy } = update;
+      ({ data, error } = await supabase
+        .from('workshop_task_template_items')
+        .update(legacy)
+        .eq('id', req.params.itemId)
+        .select()
+        .single());
     }
     if (error) throw error;
     res.json(data);

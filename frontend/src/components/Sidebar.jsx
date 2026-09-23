@@ -156,6 +156,7 @@ const CONGVIEC_MENU_GROUPS = [
     items: [
       { to: '/work/flows', icon: GitBranch, label: 'Setup luồng', adminOnly: true },
       { to: '/management/shared-workspace-settings', icon: UserCog, label: 'Setup phát sinh', adminOnly: true },
+      { to: '/management/cost-setup', icon: Calculator, label: 'Setup công thức chi phí', adminOnly: true },
     ],
   },
 ];
@@ -428,6 +429,8 @@ const KETOAN_MENU_GROUPS = [
     items: [
       { to: '/ketoan/dashboard', icon: LayoutDashboard, label: 'Tổng hợp deal SX', end: true },
       { to: '/ketoan/bank-accounts', icon: CreditCard, label: 'Tài khoản NH' },
+      { to: '/ketoan/chi-phi', icon: Calculator, label: 'Chi phí dự án' },
+      { to: '/ketoan/chi-phi/setup', icon: Settings, label: 'Công thức chi phí' },
       { to: '/crm/quotations', icon: FileText, label: 'Báo giá' },
       { to: '/crm/orders', icon: ShoppingCart, label: 'Đơn hàng' },
       { to: '/crm/invoices', icon: Receipt, label: 'Hóa đơn' },

@@ -829,11 +829,18 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
   try {
     const b = req.body;
     if (b.status === 'completed') {
-      const { data: prior, error: pErr } = await supabase
+      let { data: prior, error: pErr } = await supabase
         .from('crm_tasks')
-        .select('id,status,notes,stage_slug,production_pipeline_stage_id,completion_requires_file_or_note, required_evidence_file_types, requires_quick_verdict, quick_verdict, quick_verdict_reason, completion_requires_customer_note, completion_requires_customer_contact')
+        .select('id,status,notes,stage_slug,production_pipeline_stage_id,completion_requires_file_or_note, required_evidence_file_types, requires_quick_verdict, quick_verdict, quick_verdict_reason, completion_requires_customer_note, completion_requires_customer_contact, require_cost_excel, cost_type_id, form_data, lead_id')
         .eq('id', req.params.taskId)
         .maybeSingle();
+      if (pErr && /require_cost_excel|cost_type_id/.test(String(pErr.message || ''))) {
+        ({ data: prior, error: pErr } = await supabase
+          .from('crm_tasks')
+          .select('id,status,notes,stage_slug,production_pipeline_stage_id,completion_requires_file_or_note, required_evidence_file_types, requires_quick_verdict, quick_verdict, quick_verdict_reason, completion_requires_customer_note, completion_requires_customer_contact, form_data, lead_id')
+          .eq('id', req.params.taskId)
+          .maybeSingle());
+      }
       if (pErr) throw pErr;
       if (prior && prior.status !== 'completed' && crmTaskRequiresCompletionEvidence(prior) && !skipSxWorkQuickComplete(b, prior)) {
         const ok = await crmTaskMeetsCompletionRequirements(supabase, req.params.taskId, prior);
@@ -853,6 +860,22 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
             code: 'crm_task_completion_requires_evidence',
             missing_file_types: typed.missing || [],
           });
+        }
+      }
+      if (prior && prior.status !== 'completed') {
+        try {
+          const { assertCrmTaskCostExcel } = require('../../../helpers/costLedger');
+          const { data: leadRow } = await supabase
+            .from('crm_leads')
+            .select('project_id')
+            .eq('id', req.params.leadId)
+            .maybeSingle();
+          const check = await assertCrmTaskCostExcel(prior, leadRow?.project_id);
+          if (!check.ok) {
+            return res.status(400).json({ error: check.error, code: 'cost_excel_required' });
+          }
+        } catch (excelErr) {
+          console.warn('[crm-tasks] cost excel gate:', excelErr.message);
         }
       }
     }

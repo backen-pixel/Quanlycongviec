@@ -67,6 +67,60 @@ const {
 const { emitLogisticsKanbanChangedImmediate } = require('../helpers/workshopIntakeNotify');
 const { computeVcOverviewKpis } = require('../helpers/vcOverviewKpis');
 
+const VC_DASHBOARD_KPI_KEYS = new Set(['shipping', 'installing', 'warranty', 'completed']);
+
+function isVcKpiColumnMissing(err) {
+  const s = String(err?.message || err?.details || err?.hint || '').toLowerCase();
+  return (s.includes('clears_deadline') || s.includes('dashboard_kpi'))
+    && (s.includes('does not exist') || s.includes('could not find'));
+}
+
+function isVcGroupColumnMissing(err) {
+  const s = String(err?.message || err?.details || err?.hint || '').toLowerCase();
+  return (s.includes('group_key') || s.includes('group_sort'))
+    && (s.includes('does not exist') || s.includes('could not find'));
+}
+
+function parseLogisticsStageKpiBody(b) {
+  const out = {};
+  if (!b || typeof b !== 'object') return out;
+  if (b.clears_deadline !== undefined) out.clears_deadline = !!b.clears_deadline;
+  if (b.dashboard_kpi !== undefined) {
+    const raw = b.dashboard_kpi == null || b.dashboard_kpi === '' ? null : String(b.dashboard_kpi).trim();
+    out.dashboard_kpi = raw && VC_DASHBOARD_KPI_KEYS.has(raw) ? raw : null;
+  }
+  return out;
+}
+
+function parseLogisticsStageGroupBody(b) {
+  const out = {};
+  if (!b || typeof b !== 'object') return out;
+  if (b.group_key !== undefined) {
+    const raw = b.group_key == null ? '' : String(b.group_key).trim();
+    out.group_key = raw || null;
+    if (!out.group_key) out.group_sort = null;
+  }
+  if (b.group_sort !== undefined) {
+    const n = Number(b.group_sort);
+    out.group_sort = Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+  }
+  return out;
+}
+
+function stripVcOptionalStageCols(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const {
+    crm_target_stage_id: _t,
+    is_temp_install_staging: _s,
+    clears_deadline: _c,
+    dashboard_kpi: _k,
+    group_key: _g,
+    group_sort: _gs,
+    ...rest
+  } = obj;
+  return rest;
+}
+
 const r = Router();
 r.use(auth);
 
@@ -155,12 +209,12 @@ const IS_VC_DELETED_AT_MISSING = (err) =>
 const IS_VC_DELETE_REASON_MISSING = (err) =>
   !!err && String(err.message || '').toLowerCase().includes('vc_delete_reason');
 
-const VC_SELECT_FULL = `id, company_id, name, color, icon, order_index, is_active, progress_percent, workflow_stage_id, bucket_slug, crm_sync_type, is_handover_to_install, is_temp_install_staging,
+const VC_SELECT_FULL = `id, company_id, name, color, icon, order_index, is_active, progress_percent, workflow_stage_id, bucket_slug, crm_sync_type, is_handover_to_install, is_temp_install_staging, clears_deadline, dashboard_kpi, group_key, group_sort,
       crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index),
       workflow_stage:workflow_stages(id, slug, name, color, icon)`;
 
 /** Khi DB chưa có cột company_id — truy vấn không lọc theo công ty */
-const VC_SELECT_NO_COMPANY = `id, name, color, icon, order_index, is_active, progress_percent, workflow_stage_id, bucket_slug, crm_sync_type, is_handover_to_install, is_temp_install_staging,
+const VC_SELECT_NO_COMPANY = `id, name, color, icon, order_index, is_active, progress_percent, workflow_stage_id, bucket_slug, crm_sync_type, is_handover_to_install, is_temp_install_staging, clears_deadline, dashboard_kpi, group_key, group_sort,
       crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index),
       workflow_stage:workflow_stages(id, slug, name, color, icon)`;
 
@@ -214,7 +268,7 @@ async function loadLogisticsPipelineRows(includeInactive = false, companyId = nu
     if (error && isLogisticsCompanyIdMissing(error)) {
       return loadLogisticsPipelineRows(includeInactive, companyId, true);
     }
-    if (error && (error.message?.includes('progress_percent') || error.message?.includes('is_handover_to_install') || error.message?.includes('is_temp_install_staging'))) {
+    if (error && (error.message?.includes('progress_percent') || error.message?.includes('is_handover_to_install') || error.message?.includes('is_temp_install_staging') || isVcKpiColumnMissing(error) || isVcGroupColumnMissing(error))) {
       const slim = legacyUnscoped
         ? 'id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index), workflow_stage:workflow_stages(id, slug, name, color, icon)'
         : 'id, company_id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index), workflow_stage:workflow_stages(id, slug, name, color, icon)';
@@ -231,6 +285,10 @@ async function loadLogisticsPipelineRows(includeInactive = false, companyId = nu
           ...r,
           is_handover_to_install: !!r.is_handover_to_install,
           is_temp_install_staging: !!r.is_temp_install_staging,
+          clears_deadline: !!r.clears_deadline,
+          dashboard_kpi: r.dashboard_kpi || null,
+          group_key: r.group_key || null,
+          group_sort: r.group_sort ?? null,
         }));
       }
       if (error && isLogisticsCompanyIdMissing(error)) {
@@ -546,6 +604,14 @@ function buildLogisticsPipelineSummary(stages, projects) {
     color: s.color,
     icon: s.icon,
     bucket_slug: s.bucket_slug,
+    crm_sync_type: s.crm_sync_type || null,
+    is_handover_to_install: !!s.is_handover_to_install,
+    is_temp_install_staging: !!s.is_temp_install_staging,
+    clears_deadline: !!s.clears_deadline,
+    dashboard_kpi: s.dashboard_kpi || null,
+    group_key: s.group_key || null,
+    group_sort: s.group_sort ?? null,
+    progress_percent: s.progress_percent ?? null,
     count: projects.filter((p) => p.vc_kanban_column_id === s.id).length,
     value: projects
       .filter((p) => p.vc_kanban_column_id === s.id)
@@ -599,20 +665,26 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
       crm_target_stage_id: isIntakeRow ? null : (b.crm_target_stage_id || null),
       is_temp_install_staging: isIntakeRow ? false : !!b.is_temp_install_staging,
       company_id: insertCompanyId || null,
+      clears_deadline: false,
+      dashboard_kpi: null,
+      ...parseLogisticsStageGroupBody(b),
     };
     // Mỗi công ty chỉ giữ một cột «lắp đặt tạm»
     if (insertPayload.is_temp_install_staging) {
       await clearOtherTempInstallStages(insertCompanyId, null);
     }
-    const vcSelect = 'id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, workflow_stage:workflow_stages(id, slug, name, color, icon)';
+    const vcSelect = 'id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, is_handover_to_install, is_temp_install_staging, clears_deadline, dashboard_kpi, group_key, group_sort, workflow_stage:workflow_stages(id, slug, name, color, icon)';
     let { data, error } = await supabase
       .from(VC_PIPELINE_TABLE)
       .insert(insertPayload)
       .select(`${vcSelect}, crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index)`)
       .single();
     // Graceful: crm_target_stage_id / is_temp_install_staging column may not exist yet
-    if (error && (error.message?.includes('crm_target_stage_id') || error.message?.includes('is_temp_install_staging'))) {
-      const { crm_target_stage_id: _t, is_temp_install_staging: _s, ...payloadWithout } = insertPayload;
+    if (error && (error.message?.includes('crm_target_stage_id') || error.message?.includes('is_temp_install_staging') || isVcKpiColumnMissing(error) || isVcGroupColumnMissing(error))) {
+      if (isVcGroupColumnMissing(error) && (b.group_key !== undefined || b.group_sort !== undefined)) {
+        return res.status(400).json({ error: 'Chưa chạy migration 632 (cột lớn / cột nhỏ).' });
+      }
+      const payloadWithout = stripVcOptionalStageCols(insertPayload);
       const r2 = await supabase.from(VC_PIPELINE_TABLE).insert(payloadWithout).select(vcSelect).single();
       data = r2.data; error = r2.error;
     }
@@ -637,12 +709,17 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
       'is_temp_install_staging'].forEach((f) => {
       if (b[f] !== undefined) update[f] = b[f];
     });
+    Object.assign(update, parseLogisticsStageKpiBody(b), parseLogisticsStageGroupBody(b));
     if (existingRow?.bucket_slug === INTAKE_BUCKET) {
       update.workflow_stage_id = null;
       update.crm_sync_type = null;
       update.crm_target_stage_id = null;
       update.is_handover_to_install = false;
       update.is_temp_install_staging = false;
+      delete update.clears_deadline;
+      delete update.dashboard_kpi;
+      delete update.group_key;
+      delete update.group_sort;
     }
     if (update.is_temp_install_staging !== undefined) {
       update.is_temp_install_staging = !!update.is_temp_install_staging;
@@ -659,7 +736,7 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
     if (update.bucket_slug && update.bucket_slug !== INTAKE_BUCKET && update.bucket_slug !== 'installation') {
       return res.status(400).json({ error: 'bucket_slug không hợp lệ' });
     }
-    const vcSelect = 'id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, workflow_stage:workflow_stages(id, slug, name, color, icon)';
+    const vcSelect = 'id, name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, is_handover_to_install, is_temp_install_staging, clears_deadline, dashboard_kpi, group_key, group_sort, workflow_stage:workflow_stages(id, slug, name, color, icon)';
     let { data, error } = await supabase
       .from(VC_PIPELINE_TABLE)
       .update(update)
@@ -667,8 +744,16 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
       .select(`${vcSelect}, crm_target_stage_id, crm_target_stage:crm_pipeline_stages(id, name, color, icon, order_index)`)
       .single();
     // Graceful: crm_target_stage_id / is_temp_install_staging column may not exist yet
-    if (error && (error.message?.includes('crm_target_stage_id') || error.message?.includes('is_temp_install_staging'))) {
-      const { crm_target_stage_id: _t, is_temp_install_staging: _s, ...updateWithout } = update;
+    if (error && (error.message?.includes('crm_target_stage_id') || error.message?.includes('is_temp_install_staging') || isVcKpiColumnMissing(error) || isVcGroupColumnMissing(error))) {
+      if (isVcKpiColumnMissing(error) && (b.clears_deadline !== undefined || (b.dashboard_kpi !== undefined && b.dashboard_kpi))) {
+        return res.status(400).json({
+          error: 'Chưa chạy migration 631 (cột Tắt hạn / KPI Dashboard VC).',
+        });
+      }
+      if (isVcGroupColumnMissing(error) && (b.group_key !== undefined || b.group_sort !== undefined)) {
+        return res.status(400).json({ error: 'Chưa chạy migration 632 (cột lớn / cột nhỏ).' });
+      }
+      const updateWithout = stripVcOptionalStageCols(update);
       const r2 = await supabase.from(VC_PIPELINE_TABLE).update(updateWithout).eq('id', req.params.id).select(vcSelect).single();
       data = r2.data; error = r2.error;
     }
@@ -701,7 +786,21 @@ r.put('/pipeline-stages-reorder', requirePermission('projects', 'edit'), async (
   try {
     const { stages } = req.body;
     for (const s of stages || []) {
-      await supabase.from(VC_PIPELINE_TABLE).update({ order_index: s.order_index }).eq('id', s.id);
+      if (!s?.id) continue;
+      const patch = {};
+      if (s.order_index != null && s.order_index !== '') patch.order_index = s.order_index;
+      if (s.group_sort !== undefined) {
+        const n = Number(s.group_sort);
+        patch.group_sort = Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+      }
+      if (!Object.keys(patch).length) continue;
+      let { error } = await supabase.from(VC_PIPELINE_TABLE).update(patch).eq('id', s.id);
+      if (error && isVcGroupColumnMissing(error)) {
+        delete patch.group_sort;
+        if (!Object.keys(patch).length) continue;
+        ({ error } = await supabase.from(VC_PIPELINE_TABLE).update(patch).eq('id', s.id));
+      }
+      if (error) throw error;
     }
     res.json({ message: 'Đã sắp xếp lại' });
   } catch (e) {
@@ -823,17 +922,14 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
     const enrichedVc = await enrichProjectsForLogistics(projects, company_id);
     const enhanced = filterOutSxOnlyVcGhosts(withLogisticsTaskStats(enrichedVc, sortedKanban));
 
-    const overdueCount = enhanced.filter((p) =>
-      p.deadline && new Date(p.deadline) < new Date() && p.status !== 'completed'
-    ).length;
-
+    const overview = computeVcOverviewKpis(enhanced, sortedKanban);
     const kpis = {
       total_projects: enhanced.length,
-      shipping: enhanced.filter((p) => p.status === 'shipping' || p.current_stage?.slug === 'delivery').length,
-      installing: enhanced.filter((p) => p.status === 'installing' || p.current_stage?.slug === 'installation').length,
-      warranty: enhanced.filter((p) => p.status === 'warranty' || p.current_stage?.slug === 'customer-care').length,
-      completed: enhanced.filter((p) => p.status === 'completed').length,
-      overdue: overdueCount,
+      shipping: (overview.intake || 0) + (overview.shipping || 0) + (overview.delivered || 0),
+      installing: (overview.installing || 0) + (overview.acceptance || 0),
+      warranty: overview.warranty || 0,
+      completed: overview.completed || 0,
+      overdue: overview.overdue || 0,
       total_value: enhanced.reduce((s, p) => s + (p.estimated_value || 0), 0),
       avg_progress: enhanced.length
         ? Math.round(enhanced.reduce((s, p) => s + (p.progress || 0), 0) / enhanced.length)
@@ -1509,6 +1605,9 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
           workflow_stage_id: c.workflow_stage_id || c.workflow_stage?.id,
           slug: c.workflow_stage?.slug,
           is_handover_to_install: c.is_handover_to_install ?? false,
+          progress_percent: c.progress_percent ?? null,
+          group_key: c.group_key || null,
+          group_sort: c.group_sort ?? null,
         })),
       },
     });

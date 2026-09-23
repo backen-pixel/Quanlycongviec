@@ -594,6 +594,22 @@ async function createWorkshopIntakeOrder(opts) {
     staffAllowFallback,
   });
 
+  // Đơn tạo thẳng trên Kanban SX thường đã có production_value ngay từ đầu →
+  // đẩy vào sổ chi phí luôn, kẻo phải chờ ai đó sửa dự án mới sync.
+  try {
+    const { safeCost, syncProjectCostFields } = require('./costLedger');
+    await safeCost(async () => {
+      // insertWorkshopProject chỉ select id/code/name → phải đọc lại company_id +
+      // production_value, kẻo syncProjectCostFields thoát sớm và không ghi dòng nào.
+      const { data: prow } = await supabase
+        .from('projects')
+        .select('id, company_id, production_value, logistics_cost, created_at')
+        .eq('id', projectId)
+        .maybeSingle();
+      if (prow) await syncProjectCostFields(prow, { actorUserId: userId });
+    }, 'workshop-intake.cost');
+  } catch (_) { /* ignore */ }
+
   const timing = timer.done();
   console.info('[workshop-intake] timing', {
     deal_code: deal.code,

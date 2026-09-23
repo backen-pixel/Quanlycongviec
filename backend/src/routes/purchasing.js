@@ -29,6 +29,14 @@ const PO_SELECT = `
   items:purchase_order_items(*)
 `;
 
+function pingPoCost(po, userId) {
+  if (!po) return;
+  try {
+    const { safeCost, syncPurchaseOrder } = require('../helpers/costLedger');
+    safeCost(() => syncPurchaseOrder(po, { actorUserId: userId }), 'purchasing.po');
+  } catch (_) { /* ignore */ }
+}
+
 function resolveCompanyId(req, override) {
   if (isSystemAdmin(req.user) && override && String(override).trim()) {
     return String(override).trim();
@@ -481,6 +489,7 @@ r.post('/orders', requirePermission('mua_hang_orders', 'edit'), async (req, res)
       .select(PO_SELECT)
       .eq('id', po.id)
       .single();
+    pingPoCost(full || po, req.user?.userId || req.user?.id);
     res.status(201).json(full || po);
   } catch (e) {
     console.error('[purchasing] create order', e);
@@ -549,6 +558,7 @@ r.put('/orders/:id', requirePermission('mua_hang_orders', 'edit'), async (req, r
       .select(PO_SELECT)
       .eq('id', req.params.id)
       .single();
+    pingPoCost(full, req.user?.userId || req.user?.id);
     res.json(full);
   } catch (e) {
     console.error('[purchasing] update order', e);
@@ -574,6 +584,7 @@ r.post('/orders/:id/submit', requirePermission('mua_hang_orders', 'edit'), async
       .select(PO_SELECT)
       .single();
     if (error) throw error;
+    pingPoCost(data, req.user?.userId || req.user?.id);
     res.json(data);
   } catch (e) {
     console.error('[purchasing] submit order', e);
@@ -611,6 +622,7 @@ r.post('/orders/:id/status', requirePermission('mua_hang_orders', 'edit'), async
       .select(PO_SELECT)
       .single();
     if (error) throw error;
+    pingPoCost(data, req.user?.userId || req.user?.id);
     res.json(data);
   } catch (e) {
     console.error('[purchasing] status order', e);
@@ -624,6 +636,22 @@ r.delete('/orders/:id', requirePermission('mua_hang_orders', 'edit'), async (req
     if (!existing) return;
     const { error } = await supabase.from('purchase_orders').delete().eq('id', req.params.id);
     if (error) throw error;
+    try {
+      const { safeCost, voidCostEntry } = require('../helpers/costLedger');
+      const { data: entry } = await supabase
+        .from('cost_entries')
+        .select('id')
+        .eq('source_table', 'purchase_orders')
+        .eq('source_row_id', req.params.id)
+        .eq('source_key', 'purchasing.po')
+        .maybeSingle();
+      if (entry?.id) {
+        await safeCost(() => voidCostEntry(entry.id, {
+          reason: 'Xóa PO',
+          actorUserId: req.user?.userId || req.user?.id,
+        }), 'purchasing.po.delete');
+      }
+    } catch (_) { /* ignore */ }
     res.json({ ok: true });
   } catch (e) {
     console.error('[purchasing] delete order', e);

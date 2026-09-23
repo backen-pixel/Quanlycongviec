@@ -61,6 +61,7 @@ function mapQuotationItemsToOrderRows(qItems, orderId) {
     vat_amount: qi.vat_amount ?? 0,
     tax_amount: qi.tax_amount ?? qi.vat_amount ?? 0,
     total: qi.total ?? 0,
+    cost_price: qi.cost_price ?? null,
     dimensions: qi.dimensions || null,
     material: qi.material || null,
     color: qi.color || null,

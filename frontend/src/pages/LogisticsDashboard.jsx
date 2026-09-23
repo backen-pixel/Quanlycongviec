@@ -19,9 +19,11 @@ import {
   Package, Users, LayoutGrid, List, Plus,
   CheckSquare, UserCheck, Loader2, Wrench, ShieldCheck,
   Filter, Clock, Layers, Trash2, Settings, BarChart3,
-  ChevronDown, ChevronUp, MessageSquare, Phone, ExternalLink, Lock,
+  ChevronDown, ChevronUp, ChevronRight, MessageSquare, Phone, ExternalLink, Lock,
 } from 'lucide-react';
 import { LogisticsListView, LogisticsPlannerView, LogisticsCalendarView, LogisticsDeadlineView, resolveVcDeadlineRaw } from '../components/LogisticsViews';
+import { DEADLINE_MODULE, resolveEffectiveModuleDeadline } from '../lib/moduleDeadlinePolicy';
+import { vcColumnDashboardKpiKey, isVcPipelineStageNoDeadline } from '../lib/vcPipelineKpi';
 import { getCalendarMonthRange } from '../components/dashboard/DashboardMonthCalendar';
 import NewLogisticsProjectModal from '../components/NewLogisticsProjectModal';
 import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../components/WorkshopPipelineKanbanScroll';
@@ -47,6 +49,7 @@ import {
   applyWorkshopProjectRenamePatches,
 } from '../lib/workshopPipelineStorage';
 import { VC_TEMP_LOCK_MSG, isVcTempColumnLocked } from '../lib/projectLogistics';
+import { gopPipeline, coTheGopCot, docVcGopCot, ghiVcGopCot, nhanCotLon } from '../lib/sxGopCot';
 
 const INTAKE_BUCKET = 'delivery_pending';
 
@@ -156,6 +159,8 @@ export default function LogisticsDashboard() {
   const { user } = useAuth();
   const isAdmin = isAdminLike(user);
   const crossWorkshopViewer = isCrossWorkshopProductionViewer(user);
+  const [vcGopCot, setVcGopCot] = useState(() => docVcGopCot(JSON.parse(localStorage.getItem('user') || 'null')));
+  const [vcNhomDangMo, setVcNhomDangMo] = useState(() => new Set());
 
   const [kpis, setKpis] = useState(null);
   const [projects, setProjects] = useState([]);
@@ -704,6 +709,21 @@ export default function LogisticsDashboard() {
     [filteredKanbanPipeline],
   );
 
+  const vcGopDuoc = useMemo(() => coTheGopCot(filteredKanbanPipeline), [filteredKanbanPipeline]);
+  const boardKanbanPipeline = useMemo(
+    () => (vcGopCot && vcGopDuoc ? gopPipeline(filteredKanbanPipeline, vcNhomDangMo) : filteredKanbanPipeline),
+    [vcGopCot, vcGopDuoc, vcNhomDangMo, filteredKanbanPipeline],
+  );
+  const toggleVcNhom = useCallback((key) => {
+    if (!key) return;
+    setVcNhomDangMo((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
   /** Từ chi tiết: cuộn tới thẻ vừa xem (cần đặt sau filteredKanbanPipeline) */
   useEffect(() => {
     if (loading) return;
@@ -737,6 +757,7 @@ export default function LogisticsDashboard() {
   }, [loading, viewMode, filteredKanbanPipeline]);
 
   const handleMoveStage = useCallback(async (projectId, targetCol) => {
+    if (targetCol?.__cotGop) return;
     const isIntake = targetCol?.bucket_slug === INTAKE_BUCKET || String(targetCol?.id || '').startsWith('__vc_');
 
     // Chưa bàn giao thật (đang ở cột lắp đặt tạm) → không cho kéo sang cột khác
@@ -978,17 +999,26 @@ export default function LogisticsDashboard() {
     const list = (kanbanPipeline || []).flatMap((s) => (s.items || []).map((p) => ({
       ...p,
       stageName: s.name,
+      _stage: s,
     })));
+    const now = Date.now();
     return list
-      .filter((p) => p.deadline && new Date(p.deadline) < new Date() && p.status !== 'completed')
-      .map((p) => ({
-        id: p.id,
-        code: p.code || `#${p.id}`,
-        title: p.name || '',
-        customerName: p.customer?.full_name || '',
-        stageName: p.stageName || '',
-        overdueMs: Date.now() - new Date(p.deadline).getTime(),
-      }))
+      .filter((p) => {
+        if (isVcPipelineStageNoDeadline(p._stage)) return false;
+        const d = resolveEffectiveModuleDeadline(DEADLINE_MODULE.LOGISTICS, p, p._stage);
+        return d?.deadlineTs != null && d.deadlineTs < now;
+      })
+      .map((p) => {
+        const d = resolveEffectiveModuleDeadline(DEADLINE_MODULE.LOGISTICS, p, p._stage);
+        return {
+          id: p.id,
+          code: p.code || `#${p.id}`,
+          title: p.name || '',
+          customerName: p.customer?.full_name || '',
+          stageName: p.stageName || '',
+          overdueMs: now - (d.deadlineTs || now),
+        };
+      })
       .sort((a, b) => b.overdueMs - a.overdueMs);
   }, [kanbanPipeline]);
 
@@ -1022,22 +1052,39 @@ export default function LogisticsDashboard() {
     });
   }, []);
 
-  /** KPI toàn pipeline VC + Lắp đặt. */
+  /** KPI toàn pipeline VC + Lắp đặt — đếm theo cột (tick Dashboard), không theo status thẻ. */
   const tabKpis = useMemo(() => {
-    const list = kanbanPipeline.flatMap((s) => s.items || []);
-    const overdue = list.filter(
-      (p) => p.deadline && new Date(p.deadline) < new Date() && p.status !== 'completed',
-    ).length;
+    let shipping = 0;
+    let installing = 0;
+    let warranty = 0;
+    let completed = 0;
+    let overdue = 0;
+    let progressSum = 0;
+    let total = 0;
+    const now = Date.now();
+    for (const s of kanbanPipeline || []) {
+      const key = vcColumnDashboardKpiKey(s);
+      for (const p of s.items || []) {
+        total += 1;
+        progressSum += p.progress || 0;
+        if (key === 'installing') installing += 1;
+        else if (key === 'warranty') warranty += 1;
+        else if (key === 'completed') completed += 1;
+        else shipping += 1;
+        if (!isVcPipelineStageNoDeadline(s)) {
+          const d = resolveEffectiveModuleDeadline(DEADLINE_MODULE.LOGISTICS, p, s);
+          if (d?.deadlineTs != null && d.deadlineTs < now) overdue += 1;
+        }
+      }
+    }
     return {
-      total: list.length,
-      shipping: list.filter((p) => p.status === 'shipping' || p.current_stage?.slug === 'delivery').length,
-      installing: list.filter((p) => p.status === 'installing' || p.current_stage?.slug === 'installation').length,
-      warranty: list.filter((p) => p.status === 'warranty' || p.current_stage?.slug === 'customer-care').length,
-      completed: list.filter((p) => p.status === 'completed').length,
+      total,
+      shipping,
+      installing,
+      warranty,
+      completed,
       overdue,
-      avgProgress: list.length
-        ? Math.round(list.reduce((s, p) => s + (p.progress || 0), 0) / list.length)
-        : 0,
+      avgProgress: total ? Math.round(progressSum / total) : 0,
     };
   }, [kanbanPipeline]);
 
@@ -1313,6 +1360,43 @@ export default function LogisticsDashboard() {
                       setViewMode(id);
                       setShowViewModeMenu(false);
                     }}
+                    extra={viewMode === 'kanban' && vcGopDuoc ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setVcGopCot((v) => {
+                            const next = !v;
+                            ghiVcGopCot(user, next);
+                            return next;
+                          });
+                          setShowViewModeMenu(false);
+                        }}
+                        title={vcGopCot
+                          ? 'Đang gộp — bấm để tách lại từng cột nhỏ'
+                          : 'Gộp các cột nhỏ vào giai đoạn lớn; bấm tên cột lớn để mở việc song song'}
+                        className={`group flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-xs font-semibold cursor-pointer transition-all ${
+                          vcGopCot
+                            ? 'bg-violet-600 text-white shadow-sm'
+                            : 'text-slate-700 hover:bg-orange-50 hover:text-orange-900'
+                        }`}
+                      >
+                        <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md ${
+                          vcGopCot ? 'bg-white/20 text-white' : 'bg-violet-100 text-violet-600'
+                        }`}
+                        >
+                          <Layers className="h-3.5 w-3.5" />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block whitespace-nowrap">{vcGopCot ? 'Đang gộp' : 'Gộp cột'}</span>
+                          <span className={`block text-[10px] font-medium mt-0.5 leading-snug ${
+                            vcGopCot ? 'text-white/80' : 'text-slate-500'
+                          }`}
+                          >
+                            {vcGopCot ? 'Tách lại từng cột nhỏ' : 'Gom việc song song vào cột lớn'}
+                          </span>
+                        </span>
+                      </button>
+                    ) : null}
                   />
                 </div>
               </div>
@@ -1617,9 +1701,10 @@ export default function LogisticsDashboard() {
       )}
 
       {viewMode === 'kanban' && (
-        <KanbanView pipeline={filteredKanbanPipeline} onMoveStage={handleMoveStage} onDelete={handleDeleteCard}
+        <KanbanView pipeline={boardKanbanPipeline} onMoveStage={handleMoveStage} onDelete={handleDeleteCard}
           calculateDays={calculateDays} selectedIds={selectedIds} onToggleSelect={toggleSelect}
-          onSelectColumn={selectColumn} columnScrollMode={kanbanColumnScrollMode} />
+          onSelectColumn={selectColumn} columnScrollMode={kanbanColumnScrollMode}
+          onToggleGroup={vcGopCot ? toggleVcNhom : undefined} />
       )}
       {viewMode === 'list' && <LogisticsListView pipeline={filteredKanbanPipeline} calculateDays={calculateDays} />}
       {viewMode === 'planner' && <LogisticsPlannerView pipeline={filteredKanbanPipeline} />}
@@ -1795,7 +1880,7 @@ function KPICard({ icon, iconBgColor, iconColor, label, value, compact }) {
 const KanbanStageCard = memo(function KanbanStageCard({
   stage, items, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect, onSelectColumn,
   columnIndex = 0, pipelineStages = [],
-  columnScrollMode = 'unified', boardScrollRef = null,
+  columnScrollMode = 'unified', boardScrollRef = null, onToggleGroup,
 }) {
   const [isOverColumn, setIsOverColumn] = useState(false);
   const containerRef = useRef(null);
@@ -1821,9 +1906,9 @@ const KanbanStageCard = memo(function KanbanStageCard({
 
   return (
     <div
-      onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setIsOverColumn(true); }}
-      onDragLeave={(e) => { if (e.target === e.currentTarget) setIsOverColumn(false); }}
-      onDrop={(e) => { e.preventDefault(); setIsOverColumn(false); const pid = e.dataTransfer.getData('projectId'); if (pid) onMoveStage(pid, stage); }}
+      onDragOver={stage.__cotGop ? undefined : (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setIsOverColumn(true); }}
+      onDragLeave={stage.__cotGop ? undefined : (e) => { if (e.target === e.currentTarget) setIsOverColumn(false); }}
+      onDrop={stage.__cotGop ? undefined : (e) => { e.preventDefault(); setIsOverColumn(false); const pid = e.dataTransfer.getData('projectId'); if (pid) onMoveStage(pid, stage); }}
       className={`flex flex-col flex-shrink-0 w-[17rem] max-[420px]:w-[15rem] rounded-lg transition-all duration-200 kanban-column-surface ${KANBAN_COLUMN_RAIL_CLASS} ${
         perColumnScroll ? 'h-full self-stretch overflow-x-visible overflow-y-hidden' : 'overflow-visible kanban-unified-scroll-column'
       } ${isOverColumn ? 'ring-2 ring-orange-500 ring-dashed' : ''}`}
@@ -1833,17 +1918,46 @@ const KanbanStageCard = memo(function KanbanStageCard({
     >
       <div
         ref={headerRef}
-        className={`${perColumnScroll ? 'shrink-0' : 'sticky top-0 kanban-column-header-sticky'} z-10 px-3 py-2.5 border-b rounded-t-md transition-all kanban-column-surface`}
+        className={`${perColumnScroll ? 'shrink-0' : 'sticky top-0 kanban-column-header-sticky'} z-10 px-3 py-2.5 border-b rounded-t-md transition-all kanban-column-surface ${
+          stage.__cotGop && onToggleGroup ? 'cursor-pointer' : ''
+        }`}
         style={{
           backgroundColor: isOverColumn ? columnTheme.dropBg : columnTheme.headerBg,
           borderColor: columnTheme.border,
           boxShadow: columnTheme.headerShadow,
         }}
+        role={stage.__cotGop && onToggleGroup ? 'button' : undefined}
+        tabIndex={stage.__cotGop && onToggleGroup ? 0 : undefined}
+        title={stage.__cotGop
+          ? `Bấm để mở ${stage.__soCotNho || ''} việc song song bên trong`
+          : undefined}
+        onClick={stage.__cotGop && onToggleGroup ? () => {
+          const key = stage.__groupKey || String(stage.id || '').replace(/^grp:/, '');
+          if (key) onToggleGroup(key);
+        } : undefined}
+        onKeyDown={stage.__cotGop && onToggleGroup ? (e) => {
+          if (e.key !== 'Enter' && e.key !== ' ') return;
+          e.preventDefault();
+          const key = stage.__groupKey || String(stage.id || '').replace(/^grp:/, '');
+          if (key) onToggleGroup(key);
+        } : undefined}
       >
         <div className="flex items-center justify-between gap-1.5 mb-1.5 min-w-0">
           <div className="flex items-center gap-1.5 min-w-0">
-            <span className="text-base shrink-0 leading-none">{stage.icon || '📦'}</span>
+            {stage.__cotGop ? (
+              <ChevronRight className="h-3.5 w-3.5 shrink-0 text-black/70" aria-hidden />
+            ) : (
+              <span className="text-base shrink-0 leading-none">{stage.icon || '📦'}</span>
+            )}
             <h3 className="text-sm font-semibold truncate leading-snug kanban-stage-title" style={{ color: '#000000' }} title={stage.name}>{stage.name}</h3>
+            {stage.__cotGop && (
+              <span
+                className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-violet-100 text-violet-800 border border-violet-200"
+                title={`${stage.__soCotNho || ''} việc song song`}
+              >
+                {stage.__soCotNho || ''} cột nhỏ
+              </span>
+            )}
             {stage.is_handover_to_install && !isInstallVcStage(stage) && (
               <span
                 className="shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-800 border border-teal-200"
@@ -2196,10 +2310,38 @@ const KanbanCard = memo(function KanbanCard({
   );
 });
 
+function bocNhomCotLong(entries, veNhom) {
+  const list = (entries || []).filter(Boolean);
+  if (!list.some((e) => e && e.stage && e.stage.__nhomKey)) return list.map((e) => e.node);
+  const ra = [];
+  let cum = null;
+  const xaCum = () => {
+    if (!cum) return;
+    ra.push(veNhom(cum));
+    cum = null;
+  };
+  list.forEach((e) => {
+    const st = (e && e.stage) || {};
+    const key = st.__nhomKey || '';
+    if (!key) { xaCum(); ra.push(e.node); return; }
+    if (cum && cum.key === key) { cum.nodes.push(e.node); return; }
+    xaCum();
+    cum = {
+      key,
+      nhan: st.__nhomNhan || nhanCotLon(key) || 'Giai đoạn',
+      soCot: st.__nhomSoCot || 1,
+      soDuAn: st.__nhomSoDuAn || 0,
+      nodes: [e.node],
+    };
+  });
+  xaCum();
+  return ra;
+}
+
 // Kanban View Container
 function KanbanView({
   pipeline, onMoveStage, onDelete, calculateDays, selectedIds, onToggleSelect, onSelectColumn,
-  columnScrollMode = 'unified',
+  columnScrollMode = 'unified', onToggleGroup,
 }) {
   const boardScrollRef = useRef(null);
   const pipelineStages = useMemo(
@@ -2214,22 +2356,51 @@ function KanbanView({
       scrollContainerRef={boardScrollRef}
     >
       <div className={`flex min-w-max items-stretch gap-2.5 ${KANBAN_BOARD_COLUMN_RAILS_CLASS} ${perColumnScroll ? 'h-full' : ''} ${UI_KANBAN_FIXED_CLASS}`}>
-        {pipeline.map((stage, columnIndex) => (
-          <KanbanStageCard
-            key={stage.id || stage.slug}
-            columnIndex={columnIndex}
-            stage={stage}
-            items={stage.items}
-            onMoveStage={onMoveStage}
-            onDelete={onDelete}
-            calculateDays={calculateDays}
-            selectedIds={selectedIds}
-            onToggleSelect={onToggleSelect}
-            onSelectColumn={onSelectColumn}
-            pipelineStages={pipelineStages}
-            columnScrollMode={columnScrollMode}
-            boardScrollRef={boardScrollRef}
-          />
+        {bocNhomCotLong((pipeline || []).map((stage, columnIndex) => ({
+          stage,
+          node: (
+            <KanbanStageCard
+              key={stage.id || stage.slug}
+              columnIndex={columnIndex}
+              stage={stage}
+              items={stage.items}
+              onMoveStage={onMoveStage}
+              onDelete={onDelete}
+              calculateDays={calculateDays}
+              selectedIds={selectedIds}
+              onToggleSelect={onToggleSelect}
+              onSelectColumn={onSelectColumn}
+              pipelineStages={pipelineStages}
+              columnScrollMode={columnScrollMode}
+              boardScrollRef={boardScrollRef}
+              onToggleGroup={onToggleGroup}
+            />
+          ),
+        })), (nhom) => (
+          <div
+            key={`nhom:${nhom.key}`}
+            className="flex flex-col flex-shrink-0 self-stretch rounded-2xl border border-violet-200 bg-gradient-to-b from-violet-50 to-white p-2 shadow-[0_1px_3px_rgba(76,29,149,0.08)]"
+          >
+            <button
+              type="button"
+              onClick={() => onToggleGroup?.(nhom.key)}
+              className="mb-2 flex items-center gap-1.5 rounded-lg px-1.5 py-1 text-left cursor-pointer hover:bg-violet-100/70"
+              title="Thu lại thành một cột lớn"
+            >
+              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-violet-500" />
+              <Layers className="h-3.5 w-3.5 shrink-0 text-violet-500" />
+              <span className="text-[12.5px] font-bold uppercase tracking-[0.08em] text-violet-900">{nhom.nhan}</span>
+              <span className="rounded-full bg-violet-600 px-1.5 py-px text-[10px] font-bold tabular-nums text-white">
+                {nhom.soDuAn}
+              </span>
+              <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-500 ring-1 ring-violet-200">
+                {nhom.soCot} việc song song
+              </span>
+            </button>
+            <div className={`flex items-stretch gap-2.5 ${perColumnScroll ? 'min-h-0 flex-1' : ''}`}>
+              {nhom.nodes}
+            </div>
+          </div>
         ))}
       </div>
     </WorkshopPipelineKanbanScroll>

@@ -1,5 +1,26 @@
 # Quyết định dùng chung giữa Cursor, Claude và các AI
 
+## AI-010 — Cột lớn / cột nhỏ VC/LĐ giống SX
+
+- `group_key` trên `logistics_pipeline_stages` = cột lớn (giai đoạn nối tiếp); cột nhỏ cùng key chạy song song.
+- NULL = cột đứng riêng — công ty chưa setup vẫn Kanban phẳng.
+- Không hardcode tên cột; không seed group_key. User tự gán ở `/vc/pipeline-settings` tab Cột chính.
+- Dashboard Gộp cột dùng chung `gopPipeline` với SX. Stepper chi tiết bật `nhomSongSong` khi có group_key.
+
+## AI-009 — KPI Dashboard VC/LĐ map theo cột pipeline
+
+- Ô Đang VC / Đang LĐ / BH / Hoàn thành đếm theo cột Kanban, không theo `projects.status`.
+- Mỗi công ty tự gán cột → ô bằng nút tích `dashboard_kpi` trên `/vc/pipeline-settings`.
+- Chưa tick: suy từ cột LĐ / bảo hành / hoàn thành / còn lại = đang VC.
+- `clears_deadline` tắt quá hạn trên cột; không xóa ngày lắp (lịch sử).
+
+## AI-008 — KPI Dashboard SX map theo cột pipeline
+
+- Ô Đang SX / Chờ VC / Đã VC đếm theo cột Kanban, không theo `logistics_company_id`.
+- Mỗi công ty tự gán cột → ô bằng nút tích `dashboard_kpi` trên `/sx/pipeline-settings`.
+- Chưa tick: suy từ cờ bàn giao VC / tên «đã giao» / cột SX còn lại.
+- Không hardcode tên cột; tick trên cột thắng heuristic.
+
 ## AI-001 — Nguồn chuẩn và cách bàn giao
 
 - Code, migration và tài liệu canonical trong `docs/` là nguồn chuẩn.

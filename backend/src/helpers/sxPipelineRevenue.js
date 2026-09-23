@@ -5,11 +5,25 @@
 const {
   shouldIgnoreSxOrderDeliveryOverdue,
   isSxPipelineStageNoDeadline,
+  isSxDeliveredStage,
 } = require('./crmPipelineSla');
 const { crmReportDayKeyVn, crmReportTodayYmdVn } = require('./crmReportDateBounds');
 
 const INTAKE_BUCKET = 'won_pending';
 const VC_SHIPPED_STATUSES = new Set(['shipping', 'installing', 'warranty', 'completed']);
+
+/** KPI Đang SX / Chờ VC / Đã VC — tick dashboard_kpi trên cột; chưa tick thì suy từ cờ bàn giao / tên. */
+function sxColumnStageKpiKey(stage) {
+  if (!stage || stage.bucket_slug === INTAKE_BUCKET) return null;
+  const explicit = String(stage.dashboard_kpi || '').trim();
+  if (explicit === 'producing' || explicit === 'awaiting_delivery' || explicit === 'shipped') {
+    return explicit;
+  }
+  if (stage.is_handover_to_logistics) return 'awaiting_delivery';
+  if (isSxDeliveredStage(stage)) return 'shipped';
+  if (stage.counts_as_completed_revenue || stage.counts_as_collected_revenue) return null;
+  return 'producing';
+}
 
 function projectLooksShipped(project) {
   if (project?.logistics_company_id || project?.logistics_company?.id || project?.vc_kanban_column_id) {
@@ -23,7 +37,11 @@ function projectLooksShipped(project) {
 function isSxDeadlineViewOverdue(project, stage, todayMs = Date.now()) {
   if (isSxPipelineStageNoDeadline(stage)) return false;
   if (projectLooksShipped(project)) return false;
-  const raw = project?.delivery_date || project?.production_deadline || project?.deadline;
+  const raw = project?.sx_kanban_deadline_at
+    || project?.production_finish_date
+    || project?.production_deadline
+    || project?.delivery_date
+    || project?.deadline;
   if (!raw) return false;
   const dueKey = crmReportDayKeyVn(raw);
   if (!dueKey) return false;
@@ -185,9 +203,10 @@ function computeSxRevenueKpis(projects, stages, dealProbByProjectId = {}) {
       debtRevenue += resolveSxProjectRemaining(p);
       debtCount += 1;
     }
-    if (projectIsProducing(p, st)) producing += 1;
-    if (projectIsAwaitingDelivery(p, st)) awaitingDelivery += 1;
-    if (projectIsShipped(p)) shipped += 1;
+    const kpiKey = sxColumnStageKpiKey(col);
+    if (kpiKey === 'producing') producing += 1;
+    else if (kpiKey === 'awaiting_delivery') awaitingDelivery += 1;
+    else if (kpiKey === 'shipped') shipped += 1;
     if (isSxDeadlineViewOverdue(p, col)) overdue += 1;
     if (col && col.bucket_slug !== INTAKE_BUCKET && val > 0) {
       const prob = resolveSxProjectProbability(p, col, dealProbByProjectId[String(p.id)]);
@@ -229,6 +248,7 @@ module.exports = {
   projectIsProducing,
   projectIsAwaitingDelivery,
   projectIsShipped,
+  sxColumnStageKpiKey,
   resolveSxProjectProbability,
   isSxDeadlineViewOverdue,
   computeSxRevenueKpis,

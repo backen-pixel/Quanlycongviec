@@ -119,6 +119,8 @@ function isDoneCol(s: KanbanStage): boolean {
   const slug = String(s.bucket_slug || s.slug || '').toLowerCase();
   return (
     slug === 'completed'
+    || slug === 'done'
+    || slug === 'install_completed'
     || name.includes('hoàn thành')
     || name.includes('hoàn tất')
     || name.includes('hoàn thiện')
@@ -171,8 +173,12 @@ export type VcStageBucket =
   | 'acceptance'
   | 'completed';
 
-/** Phân loại cột Kanban — khớp đếm KPI Tổng quan / pill Dự án. */
+/** Phân loại cột Kanban — khớp đếm KPI Tổng quan / pill Dự án. Tick dashboard_kpi thắng heuristic. */
 export function kpiBucketForStage(stage: KanbanStage): VcStageBucket {
+  const explicit = String(stage?.dashboard_kpi || '').trim();
+  if (explicit === 'shipping' || explicit === 'installing' || explicit === 'warranty' || explicit === 'completed') {
+    return explicit;
+  }
   if (isDoneCol(stage)) return 'completed';
   if (isAcceptanceCol(stage)) return 'acceptance';
   if (isWarrantyCol(stage)) return 'warranty';
@@ -210,9 +216,12 @@ export function computeVcBoardKpis(
   if (stages.length) {
     const stageById = new Map(stages.map((s) => [String(s.id), s]));
     for (const p of projects) {
-      if (projectIsDeadlineOverdue(p, nowMs)) overdue += 1;
       const colId = String(p.resolved_column_id || p.vc_kanban_column_id || '');
       const stage = colId ? stageById.get(colId) : undefined;
+      const skipOverdue = !!stage?.clears_deadline
+        || String(stage?.dashboard_kpi || '') === 'completed'
+        || isDoneCol(stage);
+      if (!skipOverdue && projectIsDeadlineOverdue(p, nowMs)) overdue += 1;
 
       if (!stage) {
         const status = String(p.status || '');

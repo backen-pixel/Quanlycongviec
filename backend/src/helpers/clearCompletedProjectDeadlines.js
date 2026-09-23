@@ -257,13 +257,23 @@ async function loadSxDoneColumnIds() {
 }
 
 async function loadSxDeadlineClearColumnIds() {
-  const rows = await fetchAllRows(
-    'production_pipeline_stages',
-    'id, name, bucket_slug, counts_as_completed_revenue, counts_as_collected_revenue',
-  );
+  let rows;
+  try {
+    rows = await fetchAllRows(
+      'production_pipeline_stages',
+      'id, name, bucket_slug, counts_as_completed_revenue, counts_as_collected_revenue, clears_deadline',
+    );
+  } catch (e) {
+    if (!/clears_deadline/.test(String(e.message || ''))) throw e;
+    rows = await fetchAllRows(
+      'production_pipeline_stages',
+      'id, name, bucket_slug, counts_as_completed_revenue, counts_as_collected_revenue',
+    );
+  }
   return uniqIds(rows
     .filter((c) => (
-      c.counts_as_completed_revenue
+      c.clears_deadline
+      || c.counts_as_completed_revenue
       || c.counts_as_collected_revenue
       || isSxDeliveredStage(c)
     ))

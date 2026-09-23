@@ -97,6 +97,32 @@ function crmTemplateMatchesEntityType(templatePipelineType, entityType) {
   return !pt || pt === 'both' || pt === et;
 }
 
+async function applyCostExcelLinksToItems(items, tplIds) {
+  if (!items?.length || !tplIds?.length) return items || [];
+  let map = {};
+  try {
+    const { listTemplateCostTypeIds } = require('./costLedger');
+    map = await listTemplateCostTypeIds('crm', tplIds);
+  } catch (e) {
+    console.warn('[AUTO-TASK] cost type links:', e.message);
+    return items;
+  }
+  return items.map((item) => {
+    const linked = map[String(item.template_id)] || [];
+    if (!linked.length && !item.require_cost_excel && !item.cost_type_id) return item;
+    const ids = [...new Set([item.cost_type_id, ...linked].filter(Boolean))];
+    const form = (item.form_data && typeof item.form_data === 'object' && !Array.isArray(item.form_data))
+      ? item.form_data
+      : {};
+    return {
+      ...item,
+      require_cost_excel: !!item.require_cost_excel || !!item.cost_type_id || linked.length > 0,
+      cost_type_id: item.cost_type_id || linked[0] || null,
+      form_data: { ...form, _cost_excel_type_ids: ids },
+    };
+  });
+}
+
 /** Pipeline CRM của lead/deal: pipeline_id → khu vực → mặc định công ty. */
 async function resolvePipelineIdForLead(lead) {
   if (lead?.pipeline_id) return lead.pipeline_id;
@@ -150,12 +176,16 @@ function buildTaskInsertsFromTemplates(templates, allItems, userId, leadId) {
       requires_quick_verdict: !!item.requires_quick_verdict,
       blocks_stage_advance: !!item.blocks_stage_advance,
       show_excel_quotation_upload: !!item.show_excel_quotation_upload,
+      require_cost_excel: !!item.require_cost_excel,
+      cost_type_id: item.cost_type_id || null,
       auto_upload_attachments_to_drive: !!item.auto_upload_attachments_to_drive,
       show_fill_form: !!item.show_fill_form,
       form_config: (item.form_config && typeof item.form_config === 'object' && !Array.isArray(item.form_config))
         ? item.form_config
         : {},
-      form_data: {},
+      form_data: (item.form_data && typeof item.form_data === 'object' && !Array.isArray(item.form_data))
+        ? item.form_data
+        : {},
       assignee_id: primaryTemplateItemAssigneeId(item),
       default_allowed_companies: item.default_allowed_companies || null,
       default_allowed_departments: item.default_allowed_departments || null,
@@ -290,7 +320,8 @@ async function autoGenCrmTasksForNewLead(leadId, userId, req = null) {
     return 0;
   }
 
-  const inserts = buildTaskInsertsFromTemplates(templates, allItems, actorId, leadId);
+  const itemsWithExcel = await applyCostExcelLinksToItems(allItems, tplIds);
+  const inserts = buildTaskInsertsFromTemplates(templates, itemsWithExcel, actorId, leadId);
   if (!inserts.length) return 0;
 
   const tplMap = {};
@@ -588,12 +619,16 @@ function buildCrmTaskInsertFromTemplateItem(item, tpl, leadId, pipelineStageId, 
     requires_quick_verdict: !!item.requires_quick_verdict,
     blocks_stage_advance: !!item.blocks_stage_advance,
     show_excel_quotation_upload: !!item.show_excel_quotation_upload,
+    require_cost_excel: !!item.require_cost_excel,
+    cost_type_id: item.cost_type_id || null,
     auto_upload_attachments_to_drive: !!item.auto_upload_attachments_to_drive,
     show_fill_form: !!item.show_fill_form,
     form_config: (item.form_config && typeof item.form_config === 'object' && !Array.isArray(item.form_config))
       ? item.form_config
       : {},
-    form_data: {},
+    form_data: (item.form_data && typeof item.form_data === 'object' && !Array.isArray(item.form_data))
+      ? item.form_data
+      : {},
     assignee_id: primaryTemplateItemAssigneeId(item),
     default_allowed_companies: item.default_allowed_companies || null,
     default_allowed_departments: item.default_allowed_departments || null,
@@ -723,10 +758,11 @@ async function ensureMissingCrmTasksForPipelineStage({ leadId, pipelineStageId, 
     };
   }
 
+  const itemsWithExcel = await applyCostExcelLinksToItems(allItems, tplIds);
   const tplMap = {};
   matchedTemplates.forEach((t) => { tplMap[t.id] = t; });
   const dedupedItems = dedupeTemplateItemsForInsert(
-    allItems,
+    itemsWithExcel,
     tplMap,
     pipelineStageId,
     `ensure lead=${leadId} stage=${pipelineStageId}`,

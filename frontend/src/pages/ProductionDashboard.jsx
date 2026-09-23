@@ -77,6 +77,7 @@ import {
   shouldHideSxKanbanDeadlineOnCard,
   shouldIgnoreSxOrderDeliveryOverdue,
   getSxOrderDeliveryDateUrgency,
+  sxColumnStageKpiKey,
   TEMP_SX_FREE_DRAG,
 } from '../lib/sxPipelineRevenue';
 import { isProjectAlreadyInLogistics, sxCardLogisticsProgress } from '../lib/projectLogistics';
@@ -125,10 +126,19 @@ function readSxStageKpisCache(cacheKey) {
     const all = JSON.parse(sessionStorage.getItem(LS_SX_STAGE_KPIS) || '{}');
     const hit = all[cacheKey];
     if (!hit || typeof hit !== 'object') return null;
+    const revenue = hit.revenue && typeof hit.revenue === 'object' ? hit.revenue : null;
     return {
       producing: Number(hit.producing) || 0,
       awaiting_delivery: Number(hit.awaiting_delivery) || 0,
       shipped: Number(hit.shipped) || 0,
+      revenue: revenue
+        ? {
+          debt_count: Number(revenue.debt_count) || 0,
+          debt_revenue: Number(revenue.debt_revenue) || 0,
+          collected_count: Number(revenue.collected_count) || 0,
+          collected_revenue: Number(revenue.collected_revenue) || 0,
+        }
+        : null,
     };
   } catch {
     return null;
@@ -143,6 +153,14 @@ function writeSxStageKpisCache(cacheKey, kpis) {
       producing: Number(kpis.producing) || 0,
       awaiting_delivery: Number(kpis.awaiting_delivery) || 0,
       shipped: Number(kpis.shipped) || 0,
+      revenue: kpis.revenue && typeof kpis.revenue === 'object'
+        ? {
+          debt_count: Number(kpis.revenue.debt_count) || 0,
+          debt_revenue: Number(kpis.revenue.debt_revenue) || 0,
+          collected_count: Number(kpis.revenue.collected_count) || 0,
+          collected_revenue: Number(kpis.revenue.collected_revenue) || 0,
+        }
+        : null,
       ts: Date.now(),
     };
     const keys = Object.keys(all);
@@ -169,6 +187,26 @@ function readSxColumnCountsCache(cacheKey) {
   } catch {
     return null;
   }
+}
+
+function parseSxRevenueKpis(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  return {
+    debt_count: Number(raw.debt_count) || 0,
+    debt_revenue: Number(raw.debt_revenue) || 0,
+    collected_count: Number(raw.collected_count) || 0,
+    collected_revenue: Number(raw.collected_revenue) || 0,
+  };
+}
+
+/** Đếm thẻ theo cờ cột — cùng nguồn badge tab (pipelineStageCounts + filter loại). */
+function countSxColumnsByFlag(stages, counts, predicate) {
+  let n = 0;
+  for (const st of Array.isArray(stages) ? stages : []) {
+    if (!predicate(st)) continue;
+    n += Number(counts?.[String(st.id)]) || 0;
+  }
+  return n;
 }
 
 function writeSxColumnCountsCache(cacheKey, counts) {
@@ -593,6 +631,8 @@ export default function ProductionDashboard() {
   /** KPI Đang SX / Chờ VC / Đã VC từ summary — cùng phạm vi Tổng/Quá hạn (không lệch khi lọc công ty). */
   // Không seed từ snapshot board (đếm thẻ cục bộ) — tránh flash số sai rồi summary ghi đè.
   const [summaryStageKpis, setSummaryStageKpis] = useState(null);
+  /** KPI Công nợ / Đã thu từ summary — cùng filter loại/xưởng, không đếm thẻ đã load. */
+  const [summaryRevenueKpis, setSummaryRevenueKpis] = useState(null);
   /** true khi đang chờ summary=1 — KPI filter-scoped hiện '…', không giữ số công ty/filter trước. */
   const [summaryKpisPending, setSummaryKpisPending] = useState(true);
   /** Seq đã áp summary total — tránh projectPage ghi đè total bằng số list lệch. */
@@ -1089,8 +1129,10 @@ export default function ProductionDashboard() {
       if (cachedStageKpis) {
         // Hit cache đúng filter này → hiện liền (cùng key); summary sẽ xác nhận.
         setSummaryStageKpis(cachedStageKpis);
+        setSummaryRevenueKpis(cachedStageKpis.revenue || null);
       } else {
         setSummaryStageKpis(null);
+        setSummaryRevenueKpis(null);
       }
       // Badge cột: hydrate tổng từ cache ngay — không đợi summary rồi mới hiện / cộng dồn theo thẻ.
       const cachedColCounts = readSxColumnCountsCache(stageKpiCacheKey);
@@ -1118,15 +1160,18 @@ export default function ProductionDashboard() {
           : {};
         setDeadlineBucketCounts(dlCounts);
         const sk = data?.stage_kpis && typeof data.stage_kpis === 'object' ? data.stage_kpis : null;
+        const nextRevenue = parseSxRevenueKpis(data?.revenue_kpis);
         const nextKpis = {
           producing: Number(sk?.producing) || 0,
           awaiting_delivery: Number(sk?.awaiting_delivery) || 0,
           shipped: Number(sk?.shipped) || 0,
+          revenue: nextRevenue,
         };
         const summaryTotal = Number(data?.total) || 0;
         summaryTotalSeqRef.current = seq;
         // Một lần ghi đè đồng bộ — không để list page ghi total lệch sau đó.
         setSummaryStageKpis(nextKpis);
+        setSummaryRevenueKpis(nextRevenue);
         writeSxStageKpisCache(stageKpiCacheKey, nextKpis);
         setProjectPageState((prev) => ({ ...prev, total: summaryTotal }));
         setSummaryKpisPending(false);
@@ -1808,8 +1853,19 @@ export default function ProductionDashboard() {
           for (const row of incoming) {
             const id = String(row?.id || '');
             if (!id) continue;
-            if (!byId.has(id)) {
-              byId.set(id, row);
+            const stamp = {
+              _deadline_bucket: row._deadline_bucket || key,
+              deadline_bucket: row.deadline_bucket || key,
+            };
+            const prev = byId.get(id);
+            if (!prev) {
+              byId.set(id, { ...row, ...stamp });
+              changed = true;
+              continue;
+            }
+            if (prev._deadline_bucket !== stamp._deadline_bucket
+              || prev.deadline_bucket !== stamp.deadline_bucket) {
+              byId.set(id, { ...prev, ...stamp });
               changed = true;
             }
           }
@@ -2951,21 +3007,82 @@ export default function ProductionDashboard() {
     // - Có summaryStageKpis (cache đúng filter / server) → hiện số đó.
     // - Đang chờ, chưa có số → '…' — không đếm card, không giữ số công ty cũ.
     // - Filter chỉ client → đếm card đã load.
+    const hasColumnCounts = !!(pipelineStageCounts && Object.keys(pipelineStageCounts).length);
+    // Cùng nguồn badge cột: pipelineStageCounts + cờ cột (bàn giao VC / đã giao / đang SX).
+    const producingFromColumns = countSxColumnsByFlag(
+      pipeline,
+      pipelineStageCounts,
+      (s) => sxColumnStageKpiKey(s) === 'producing',
+    );
+    const awaitingFromColumns = countSxColumnsByFlag(
+      pipeline,
+      pipelineStageCounts,
+      (s) => sxColumnStageKpiKey(s) === 'awaiting_delivery',
+    );
+    const shippedFromColumns = countSxColumnsByFlag(
+      pipeline,
+      pipelineStageCounts,
+      (s) => sxColumnStageKpiKey(s) === 'shipped',
+    );
     const producingCount = canUseServerTotal
-      ? (summaryStageKpis
-        ? (Number(summaryStageKpis.producing) || 0)
-        : (summaryKpisPending ? '…' : revenue.producing))
+      ? (hasColumnCounts
+        ? producingFromColumns
+        : (summaryStageKpis
+          ? (Number(summaryStageKpis.producing) || 0)
+          : (summaryKpisPending ? '…' : revenue.producing)))
       : revenue.producing;
     const awaitingCount = canUseServerTotal
-      ? (summaryStageKpis
-        ? (Number(summaryStageKpis.awaiting_delivery) || 0)
-        : (summaryKpisPending ? '…' : revenue.awaitingDelivery))
+      ? (hasColumnCounts
+        ? awaitingFromColumns
+        : (summaryStageKpis
+          ? (Number(summaryStageKpis.awaiting_delivery) || 0)
+          : (summaryKpisPending ? '…' : revenue.awaitingDelivery)))
       : revenue.awaitingDelivery;
     const shippedCount = canUseServerTotal
-      ? (summaryStageKpis
-        ? (Number(summaryStageKpis.shipped) || 0)
-        : (summaryKpisPending ? '…' : revenue.shipped))
+      ? (hasColumnCounts
+        ? shippedFromColumns
+        : (summaryStageKpis
+          ? (Number(summaryStageKpis.shipped) || 0)
+          : (summaryKpisPending ? '…' : revenue.shipped)))
       : revenue.shipped;
+    const debtCountFromColumns = countSxColumnsByFlag(
+      pipeline,
+      pipelineStageCounts,
+      (s) => s?.counts_as_completed_revenue && !s?.counts_as_collected_revenue,
+    );
+    const collectedCountFromColumns = countSxColumnsByFlag(
+      pipeline,
+      pipelineStageCounts,
+      (s) => !!s?.counts_as_collected_revenue,
+    );
+    const debtCount = canUseServerTotal
+      ? (summaryRevenueKpis
+        ? (Number(summaryRevenueKpis.debt_count) || 0)
+        : (summaryKpisPending
+          ? '…'
+          : hasColumnCounts
+            ? debtCountFromColumns
+            : revenue.debtCount))
+      : revenue.debtCount;
+    const collectedCount = canUseServerTotal
+      ? (summaryRevenueKpis
+        ? (Number(summaryRevenueKpis.collected_count) || 0)
+        : (summaryKpisPending
+          ? '…'
+          : hasColumnCounts
+            ? collectedCountFromColumns
+            : revenue.collectedCount))
+      : revenue.collectedCount;
+    const debtRevenueValue = canUseServerTotal
+      ? (summaryRevenueKpis
+        ? (Number(summaryRevenueKpis.debt_revenue) || 0)
+        : (summaryKpisPending ? '…' : revenue.debtRevenue))
+      : revenue.debtRevenue;
+    const collectedRevenueValue = canUseServerTotal
+      ? (summaryRevenueKpis
+        ? (Number(summaryRevenueKpis.collected_revenue) || 0)
+        : (summaryKpisPending ? '…' : revenue.collectedRevenue))
+      : revenue.collectedRevenue;
     if (!list.length && !summaryStageKpis && !hasServerOverdue) {
       return {
         total: accurateTotal, producing: producingCount, awaiting_delivery: awaitingCount, shipped: shippedCount, completed: 0,
@@ -2974,10 +3091,10 @@ export default function ProductionDashboard() {
         intake_pending: 0, delivering: 0, customer_care: 0,
         won_revenue_value: 0,
         completed_revenue_value: 0,
-        collected_revenue_value: 0,
-        debt_revenue_value: 0,
-        debt_count: 0,
-        collected_count: 0,
+        collected_revenue_value: collectedRevenueValue === '…' ? '…' : 0,
+        debt_revenue_value: debtRevenueValue === '…' ? '…' : 0,
+        debt_count: debtCount,
+        collected_count: collectedCount,
         weighted_pipeline_value: 0,
         column_sla_overdue: 0,
       };
@@ -2997,17 +3114,17 @@ export default function ProductionDashboard() {
         : 0,
       won_revenue_value: revenue.wonRevenue,
       completed_revenue_value: revenue.completedRevenue,
-      collected_revenue_value: revenue.collectedRevenue,
-      debt_revenue_value: revenue.debtRevenue,
-      debt_count: revenue.debtCount,
-      collected_count: revenue.collectedCount,
+      collected_revenue_value: collectedRevenueValue,
+      debt_revenue_value: debtRevenueValue,
+      debt_count: debtCount,
+      collected_count: collectedCount,
       weighted_pipeline_value: revenue.weightedPipeline,
       column_sla_overdue: deadlineOverdueCount,
     };
   }, [
     scopeProjects, pipeline, filteredKanbanPipeline, projectPageState.total,
-    deadlineBucketCounts, summaryStageKpis, summaryKpisPending,
-    deferredPersonName, filterRegion, filterPhone, dealCompanyExternalFilter,
+    deadlineBucketCounts, summaryStageKpis, summaryRevenueKpis, summaryKpisPending,
+    pipelineStageCounts, deferredPersonName, filterRegion, filterPhone, dealCompanyExternalFilter,
   ]);
 
   const togglePinFlag = useCallback(async (item, next) => {
@@ -4211,14 +4328,26 @@ export default function ProductionDashboard() {
             <KPICard
               accent="bg-amber-500"
               label="Công nợ"
-              value={(scopeKpis.debt_count > 0 || scopeKpis.debt_revenue_value > 0) ? formatVND(scopeKpis.debt_revenue_value || 0) : '—'}
-              descriptor={scopeKpis.debt_count > 0 ? `${scopeKpis.debt_count} dự án · đã công, chưa thu` : 'đã công, chưa thu'}
+              value={scopeKpis.debt_revenue_value === '…' || scopeKpis.debt_count === '…'
+                ? '…'
+                : (scopeKpis.debt_count > 0 || scopeKpis.debt_revenue_value > 0)
+                  ? formatVND(scopeKpis.debt_revenue_value || 0)
+                  : '—'}
+              descriptor={typeof scopeKpis.debt_count === 'number' && scopeKpis.debt_count > 0
+                ? `${scopeKpis.debt_count} dự án · đã công, chưa thu`
+                : 'đã công, chưa thu'}
             />
             <KPICard
               accent="bg-emerald-600"
               label="Đã thu"
-              value={(scopeKpis.collected_count > 0 || scopeKpis.collected_revenue_value > 0) ? formatVND(scopeKpis.collected_revenue_value || 0) : '—'}
-              descriptor={scopeKpis.collected_count > 0 ? `${scopeKpis.collected_count} dự án · theo cột pipeline` : 'theo cột pipeline'}
+              value={scopeKpis.collected_revenue_value === '…' || scopeKpis.collected_count === '…'
+                ? '…'
+                : (scopeKpis.collected_count > 0 || scopeKpis.collected_revenue_value > 0)
+                  ? formatVND(scopeKpis.collected_revenue_value || 0)
+                  : '—'}
+              descriptor={typeof scopeKpis.collected_count === 'number' && scopeKpis.collected_count > 0
+                ? `${scopeKpis.collected_count} dự án · theo cột pipeline`
+                : 'theo cột pipeline'}
             />
           </div>
         </div>

@@ -9,6 +9,8 @@ const { applyProductionCompanyScopeFilter } = require('./crossCompanyWorkspace')
 const { applyWorkshopProjectVisibilityScope } = require('./dealParticipantProduction');
 const { applySxKanbanRowScope, WORKSHOP_STATUSES, getResolvedKanbanStages } = require('./workshopKanban');
 const { isHucabiSameDayPastWorkEnd } = require('./companyDeadlineClock');
+const { isSxPipelineStageNoDeadline } = require('./crmPipelineSla');
+const { sxColumnStageKpiKey } = require('./sxPipelineRevenue');
 
 const VN_TZ = 'Asia/Ho_Chi_Minh';
 const SX_KANBAN_COL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -80,7 +82,9 @@ function diffCalendarDays(ymdA, ymdB) {
 }
 
 /**
- * Bucket Deadline SX — khớp frontend resolveSxDeadlineBucket + shouldHide (bỏ card Đã công).
+ * Bucket Deadline SX — khớp frontend resolveSxDeadlineBucket + shouldHide.
+ * Đã giao / Đã công / Đã thu / đã sang VC: không còn hạn SX (delivery_date là lịch sử).
+ * Cột chờ bàn giao chưa giao thật vẫn đếm quá hạn.
  * @returns {string|null} null = ẩn khỏi Deadline view
  */
 function rowLooksShipped(row) {
@@ -89,15 +93,23 @@ function rowLooksShipped(row) {
   return status === 'installing' || status === 'warranty' || status === 'completed';
 }
 
+function sxDeadlineRaw(row) {
+  return row?.sx_kanban_deadline_at
+    || row?.production_finish_date
+    || row?.production_deadline
+    || row?.delivery_date
+    || row?.deadline
+    || null;
+}
+
 function resolveSxDeadlineBucketKey(row, stage, todayYmd, companyOrId, nowMs = Date.now()) {
-  if (stage?.counts_as_completed_revenue) return null;
-  const raw = row?.delivery_date || row?.production_deadline || row?.deadline;
+  if (isSxPipelineStageNoDeadline(stage)) return null;
+  if (rowLooksShipped(row)) return null;
+  const raw = sxDeadlineRaw(row);
   const ymd = toVnDeadlineYmd(raw);
   if (!ymd) return 'none';
   const diffDays = diffCalendarDays(ymd, todayYmd);
-  const ignoreOverdue = isSlaDisabled(stage?.sla_days)
-    || !!stage?.counts_as_collected_revenue
-    || rowLooksShipped(row);
+  const ignoreOverdue = isSlaDisabled(stage?.sla_days);
   if (diffDays < 0) {
     if (ignoreOverdue) return 'later';
     return 'overdue';
@@ -129,9 +141,12 @@ async function loadStageFlagsById(companyId, workshopTypeId) {
     for (const s of stages || []) {
       if (!s?.id) continue;
       map.set(String(s.id), {
+        name: s.name || '',
         counts_as_completed_revenue: !!s.counts_as_completed_revenue,
         counts_as_collected_revenue: !!s.counts_as_collected_revenue,
+        clears_deadline: !!s.clears_deadline,
         is_handover_to_logistics: !!s.is_handover_to_logistics,
+        dashboard_kpi: s.dashboard_kpi || null,
         bucket_slug: s.bucket_slug || null,
         sla_days: s.sla_days,
       });
@@ -147,21 +162,24 @@ function emptyStageKpis() {
   return { producing: 0, awaiting_delivery: 0, shipped: 0 };
 }
 
-/** Khớp sxPipelineRevenue projectIsShipped / awaiting / producing.
- *  `sx_intake` là field enrich (không phải cột DB) — suy từ null column / won_pending. */
+function emptyRevenueKpis() {
+  return { debt_count: 0, debt_revenue: 0, collected_count: 0, collected_revenue: 0 };
+}
+
+function sxRowProductionValue(row) {
+  const n = Number(row?.production_value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function sxRowDeposit(row) {
+  const n = Number(row?.deposit_amount);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+/** KPI Đang SX / Chờ VC / Đã VC — tick dashboard_kpi trên cột; chưa tick thì suy. */
 function classifyRowStageKpi(row, stage) {
-  const status = String(row?.status || '');
-  const shipped = !!(row?.logistics_company_id || row?.vc_kanban_column_id)
-    || status === 'installing'
-    || status === 'warranty'
-    || status === 'completed';
-  if (shipped) return 'shipped';
-  if (stage?.is_handover_to_logistics) return 'awaiting_delivery';
-  // Intake / chờ vào xưởng — khớp enrich `sx_intake` trên list.
-  if (!row?.sx_kanban_column_id || stage?.bucket_slug === 'won_pending') return null;
-  if (stage?.counts_as_completed_revenue) return null;
-  if (stage?.counts_as_collected_revenue) return null;
-  return 'producing';
+  if (!row?.sx_kanban_column_id) return null;
+  return sxColumnStageKpiKey(stage);
 }
 
 /**
@@ -288,14 +306,17 @@ async function thinScanSummary(ctx, opts = {}) {
   const counts = {};
   const deadline_counts = emptyDeadlineCounts();
   const stage_kpis = emptyStageKpis();
+  const revenue_kpis = emptyRevenueKpis();
   let total = 0;
   let cursor = 0;
   const todayYmd = formatVnYmd(new Date());
   const stageById = opts.stageById || await loadStageFlagsById(ctx.company_id, ctx.workshop_type_id);
   // logistics/status/vc — KPI Đang SX / Chờ VC / Đã VC (toàn filter).
+  // production_value/deposit — KPI Công nợ / Đã thu cùng phạm vi lọc loại.
   // Không select `sx_intake` (field enrich, không phải cột DB → 500 summary).
-  let selectCols = 'id, company_id, sx_kanban_column_id, delivery_date, production_deadline, deadline, status, logistics_company_id, vc_kanban_column_id';
+  let selectCols = 'id, company_id, sx_kanban_column_id, sx_kanban_deadline_at, production_finish_date, delivery_date, production_deadline, deadline, status, logistics_company_id, vc_kanban_column_id, production_value, deposit_amount';
   let omitVcCol = false;
+  let omitFinanceCols = false;
 
   while (cursor < MAX) {
     let q = supabase.from('projects').select(selectCols);
@@ -307,20 +328,28 @@ async function thinScanSummary(ctx, opts = {}) {
         values: {},
         deadline_counts: emptyDeadlineCounts(),
         stage_kpis: emptyStageKpis(),
+        revenue_kpis: emptyRevenueKpis(),
       };
     }
     q = applied.query.order('id', { ascending: true }).range(cursor, cursor + PAGE - 1);
     let { data, error } = await q;
     if (error && !omitVcCol && String(error.message || '').includes('vc_kanban_column_id')) {
       omitVcCol = true;
-      selectCols = 'id, company_id, sx_kanban_column_id, delivery_date, production_deadline, deadline, status, logistics_company_id';
+      selectCols = selectCols.split(', ').filter((c) => c !== 'vc_kanban_column_id').join(', ');
+      continue;
+    }
+    if (error && !omitFinanceCols && /production_value|deposit_amount/.test(String(error.message || ''))) {
+      omitFinanceCols = true;
+      selectCols = selectCols.split(', ').filter((c) => c !== 'production_value' && c !== 'deposit_amount').join(', ');
       continue;
     }
     // Phòng cột enrich/legacy lỡ select — bỏ và thử lại.
     if (error && /sx_intake|column .* does not exist/i.test(String(error.message || ''))) {
       const msg = String(error.message || '');
-      if (msg.includes('sx_intake')) {
-        selectCols = selectCols.split(', ').filter((c) => c !== 'sx_intake').join(', ');
+      const drop = ['sx_intake', 'sx_kanban_deadline_at', 'production_finish_date']
+        .filter((c) => msg.includes(c) && selectCols.includes(c));
+      if (drop.length) {
+        selectCols = selectCols.split(', ').filter((c) => !drop.includes(c)).join(', ');
         continue;
       }
     }
@@ -342,11 +371,18 @@ async function thinScanSummary(ctx, opts = {}) {
       if (kpiKey && Object.prototype.hasOwnProperty.call(stage_kpis, kpiKey)) {
         stage_kpis[kpiKey] += 1;
       }
+      if (stage?.counts_as_collected_revenue) {
+        revenue_kpis.collected_count += 1;
+        revenue_kpis.collected_revenue += sxRowProductionValue(row);
+      } else if (stage?.counts_as_completed_revenue) {
+        revenue_kpis.debt_count += 1;
+        revenue_kpis.debt_revenue += Math.max(0, sxRowProductionValue(row) - sxRowDeposit(row));
+      }
     }
     if (batch.length < PAGE) break;
     cursor += batch.length;
   }
-  return { total, counts, values: {}, deadline_counts, stage_kpis };
+  return { total, counts, values: {}, deadline_counts, stage_kpis, revenue_kpis };
 }
 
 async function headCountTotalOnly(ctx) {
@@ -384,6 +420,7 @@ async function loadSxKanbanColumnSummary(ctx) {
     values: {},
     deadline_counts: emptyDeadlineCounts(),
     stage_kpis: emptyStageKpis(),
+    revenue_kpis: emptyRevenueKpis(),
   };
 
   if (restrictIds !== null && restrictIds !== undefined && !restrictIds.length) {
@@ -409,6 +446,7 @@ async function loadSxKanbanColumnSummary(ctx) {
         ...columnResult,
         deadline_counts: scanned.deadline_counts || emptyDeadlineCounts(),
         stage_kpis: scanned.stage_kpis || emptyStageKpis(),
+        revenue_kpis: scanned.revenue_kpis || emptyRevenueKpis(),
       };
     }
     return scanned;
@@ -421,6 +459,7 @@ async function loadSxKanbanColumnSummary(ctx) {
         values: {},
         deadline_counts: emptyDeadlineCounts(),
         stage_kpis: emptyStageKpis(),
+        revenue_kpis: emptyRevenueKpis(),
       };
     }
     throw scanErr;
@@ -464,7 +503,7 @@ async function loadSxDeadlineBucketPage(ctx, { bucket, offset = 0, limit = 24 } 
   const todayYmd = formatVnYmd(new Date());
   const entries = [];
   let cursor = 0;
-  let selectCols = 'id, company_id, sx_kanban_column_id, delivery_date, production_deadline, deadline';
+  let selectCols = 'id, company_id, sx_kanban_column_id, sx_kanban_deadline_at, production_finish_date, delivery_date, production_deadline, deadline, status, logistics_company_id, vc_kanban_column_id';
 
   while (cursor < MAX) {
     let q = supabase.from('projects').select(selectCols);
@@ -485,7 +524,7 @@ async function loadSxDeadlineBucketPage(ctx, { bucket, offset = 0, limit = 24 } 
       const stage = colId ? stageById.get(colId) : null;
       const b = resolveSxDeadlineBucketKey(row, stage, todayYmd, row.company_id || fullCtx.company_id);
       if (b !== bucketKey) continue;
-      const ymd = toVnDeadlineYmd(row?.delivery_date || row?.production_deadline || row?.deadline) || '9999-99-99';
+      const ymd = toVnDeadlineYmd(sxDeadlineRaw(row)) || '9999-99-99';
       entries.push({ id: String(row.id), ymd });
     }
     if (batch.length < PAGE) break;

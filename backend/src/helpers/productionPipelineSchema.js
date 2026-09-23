@@ -22,6 +22,10 @@ let pipelineKpiSlaColumnsAvailable = true;
 let pipelineCollectedRevenueColumnAvailable = true;
 /** Cột requires_deadline (migration 288) — tắt nếu DB chưa migrate */
 let pipelineRequiresDeadlineColumnAvailable = true;
+/** Cột clears_deadline (migration 629) — kéo thẻ vào cột thì tắt hạn SX */
+let pipelineClearsDeadlineColumnAvailable = true;
+/** Cột dashboard_kpi (migration 630) — gán cột vào ô KPI Dashboard */
+let pipelineDashboardKpiColumnAvailable = true;
 /** Cột deadline_group (migration 523) — nhóm DL theo kế hoạch lắp */
 let pipelineDeadlineGroupColumnAvailable = true;
 let pipelineGroupKeyColumnAvailable = true;
@@ -221,6 +225,36 @@ function markPipelineRequiresDeadlineColumnMissing() {
   pipelineRequiresDeadlineColumnAvailable = false;
 }
 
+function isPipelineClearsDeadlineMissingError(err) {
+  if (!err || !pipelineClearsDeadlineColumnAvailable) return false;
+  const s = String(err.message || err.details || err.hint || '').toLowerCase();
+  return s.includes('clears_deadline') && (s.includes('does not exist') || s.includes('could not find'));
+}
+
+function markPipelineClearsDeadlineColumnMissing() {
+  if (pipelineClearsDeadlineColumnAvailable) {
+    console.warn(
+      '[production_pipeline_stages] Cột clears_deadline chưa tồn tại. Chạy database/629_production_pipeline_clears_deadline.sql trên Supabase.',
+    );
+  }
+  pipelineClearsDeadlineColumnAvailable = false;
+}
+
+function isPipelineDashboardKpiMissingError(err) {
+  if (!err || !pipelineDashboardKpiColumnAvailable) return false;
+  const s = String(err.message || err.details || err.hint || '').toLowerCase();
+  return s.includes('dashboard_kpi') && (s.includes('does not exist') || s.includes('could not find'));
+}
+
+function markPipelineDashboardKpiColumnMissing() {
+  if (pipelineDashboardKpiColumnAvailable) {
+    console.warn(
+      '[production_pipeline_stages] Cột dashboard_kpi chưa tồn tại. Chạy database/630_production_pipeline_dashboard_kpi.sql trên Supabase.',
+    );
+  }
+  pipelineDashboardKpiColumnAvailable = false;
+}
+
 function isPipelineDeadlineGroupMissingError(err) {
   if (!err || !pipelineDeadlineGroupColumnAvailable) return false;
   const s = String(err.message || err.details || err.hint || '').toLowerCase();
@@ -355,6 +389,8 @@ function buildPipelineStageSelect() {
   const kpiCollected = pipelineCollectedRevenueColumnAvailable ? 'counts_as_collected_revenue, ' : '';
   const kpi = `${kpi287}${kpiCollected}`;
   const reqDl = pipelineRequiresDeadlineColumnAvailable ? 'requires_deadline, ' : '';
+  const clrDl = pipelineClearsDeadlineColumnAvailable ? 'clears_deadline, ' : '';
+  const dashKpi = pipelineDashboardKpiColumnAvailable ? 'dashboard_kpi, ' : '';
   const dlGroup = pipelineDeadlineGroupColumnAvailable ? 'deadline_group, ' : '';
   const gKey = pipelineGroupKeyColumnAvailable ? 'group_key, ' : '';
   const gSort = pipelineGroupSortColumnAvailable ? 'group_sort, ' : '';
@@ -380,7 +416,7 @@ function buildPipelineStageSelect() {
       t = 'crm_target_stage_id, ';
     }
   }
-  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, is_packaging_done, ${h}${sw}${twt}${pp}${kpi}${reqDl}${dlGroup}${gKey}${gSort}${gTab}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
+  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, is_packaging_done, ${h}${sw}${twt}${pp}${kpi}${reqDl}${clrDl}${dashKpi}${dlGroup}${gKey}${gSort}${gTab}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
 }
 
 /** Áp dụng retry khi SELECT 1 cột pipeline (embed / cột thiếu). */
@@ -428,6 +464,14 @@ async function fetchProductionPipelineStageById(supabase, stageId) {
     markPipelineRequiresDeadlineColumnMissing();
     ({ data, error } = await run());
   }
+  if (error && isPipelineClearsDeadlineMissingError(error)) {
+    markPipelineClearsDeadlineColumnMissing();
+    ({ data, error } = await run());
+  }
+  if (error && isPipelineDashboardKpiMissingError(error)) {
+    markPipelineDashboardKpiColumnMissing();
+    ({ data, error } = await run());
+  }
   if (error && isPipelineDeadlineGroupMissingError(error)) {
     markPipelineDeadlineGroupColumnMissing();
     ({ data, error } = await run());
@@ -465,6 +509,8 @@ const INSERT_COLUMN_RETRIES = [
   [isPipelineCollectedRevenueMissingError, markPipelineCollectedRevenueColumnMissing],
   [isPipelineKpiSlaMissingError, markPipelineKpiSlaColumnMissing],
   [isPipelineRequiresDeadlineMissingError, markPipelineRequiresDeadlineColumnMissing],
+  [isPipelineClearsDeadlineMissingError, markPipelineClearsDeadlineColumnMissing],
+  [isPipelineDashboardKpiMissingError, markPipelineDashboardKpiColumnMissing],
   [isPipelineDeadlineGroupMissingError, markPipelineDeadlineGroupColumnMissing],
   [isPipelineGroupKeyMissingError, markPipelineGroupKeyColumnMissing],
   [isPipelineGroupSortMissingError, markPipelineGroupSortColumnMissing],
@@ -532,6 +578,8 @@ function stripHandoverFields(obj) {
     delete o.counts_as_collected_revenue;
   }
   if (!pipelineRequiresDeadlineColumnAvailable) delete o.requires_deadline;
+  if (!pipelineClearsDeadlineColumnAvailable) delete o.clears_deadline;
+  if (!pipelineDashboardKpiColumnAvailable) delete o.dashboard_kpi;
   if (!pipelineDeadlineGroupColumnAvailable) delete o.deadline_group;
   if (!pipelineGroupKeyColumnAvailable) delete o.group_key;
   if (!pipelineGroupSortColumnAvailable) delete o.group_sort;
@@ -558,6 +606,8 @@ function _resetForTests() {
   pipelineKpiSlaColumnsAvailable = true;
   pipelineCollectedRevenueColumnAvailable = true;
   pipelineRequiresDeadlineColumnAvailable = true;
+  pipelineClearsDeadlineColumnAvailable = true;
+  pipelineDashboardKpiColumnAvailable = true;
   pipelineDeadlineGroupColumnAvailable = true;
   pipelineGroupKeyColumnAvailable = true;
   pipelineGroupSortColumnAvailable = true;
@@ -587,6 +637,10 @@ module.exports = {
   markPipelineCollectedRevenueColumnMissing,
   isPipelineRequiresDeadlineMissingError,
   markPipelineRequiresDeadlineColumnMissing,
+  isPipelineClearsDeadlineMissingError,
+  markPipelineClearsDeadlineColumnMissing,
+  isPipelineDashboardKpiMissingError,
+  markPipelineDashboardKpiColumnMissing,
   isPipelineDeadlineGroupMissingError,
   isPipelineGroupKeyMissingError,
   isPipelineGroupSortMissingError,

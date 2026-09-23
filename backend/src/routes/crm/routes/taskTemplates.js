@@ -135,6 +135,18 @@ r.get('/tasks/planner', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+async function attachCrmTemplateCostTypes(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!list.length) return list;
+  try {
+    const { listTemplateCostTypeIds } = require('../../../helpers/costLedger');
+    const linkMap = await listTemplateCostTypeIds('crm', list.map((t) => t.id));
+    return list.map((t) => ({ ...t, cost_excel_type_ids: linkMap[String(t.id)] || [] }));
+  } catch {
+    return list.map((t) => ({ ...t, cost_excel_type_ids: t.cost_excel_type_ids || [] }));
+  }
+}
+
 r.get('/task-templates', async (req, res) => {
   try {
     // Tham số:
@@ -212,12 +224,41 @@ r.get('/task-templates', async (req, res) => {
           .eq('is_active', true)
           .order('order_index');
         if (fbErr) throw fbErr;
-        return res.json(fbData || []);
+        return res.json(await attachCrmTemplateCostTypes(fbData || []));
       }
       throw error;
     }
-    res.json(data || []);
+    res.json(await attachCrmTemplateCostTypes(data || []));
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+r.get('/cost-types', async (req, res) => {
+  try {
+    const companyId = req.query.company_id ? String(req.query.company_id).trim() : null;
+    if (!companyId) return res.json([]);
+    const { listCostTypesForCompany } = require('../../../helpers/costLedger');
+    const rows = await listCostTypesForCompany(companyId, { moduleKey: 'crm' });
+    res.json(rows);
+  } catch (e) {
+    res.json([]);
+  }
+});
+
+r.put('/task-templates/:id/cost-excel-types', async (req, res) => {
+  try {
+    const { data: tpl } = await supabase
+      .from('crm_task_templates')
+      .select('id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!tpl) return res.status(404).json({ error: 'Không tìm thấy bộ mẫu' });
+    const { setTemplateCostTypes } = require('../../../helpers/costLedger');
+    const ids = Array.isArray(req.body?.cost_type_ids) ? req.body.cost_type_ids : [];
+    const links = await setTemplateCostTypes('crm', req.params.id, ids);
+    res.json({ cost_excel_type_ids: ids.filter(Boolean), links });
+  } catch (e) {
+    res.status(400).json({ error: e.message || 'Lỗi gắn Excel chi phí' });
+  }
 });
 
 r.post('/task-templates', async (req, res) => {
@@ -502,6 +543,8 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
       requires_quick_verdict: !!b.requires_quick_verdict,
       blocks_stage_advance: !!b.blocks_stage_advance,
       show_excel_quotation_upload: !!b.show_excel_quotation_upload,
+      require_cost_excel: !!b.require_cost_excel,
+      cost_type_id: b.cost_type_id || null,
       auto_upload_attachments_to_drive: !!b.auto_upload_attachments_to_drive,
       show_fill_form: !!b.show_fill_form,
       form_config: (b.form_config && typeof b.form_config === 'object' && !Array.isArray(b.form_config))
@@ -535,7 +578,7 @@ r.post('/task-templates/:tplId/items', async (req, res) => {
 r.put('/task-templates/:tplId/items/:itemId', async (req, res) => {
   try {
     const update = {};
-    ['title', 'description', 'priority', 'deadline_days', 'deadline_hours', 'deadline_minutes', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'default_shared_to_project', 'default_allowed_share_modules', 'executor_company_id', 'completion_requires_file_or_note', 'required_evidence_file_types', 'completion_requires_customer_note', 'completion_requires_customer_contact', 'requires_quick_verdict', 'blocks_stage_advance', 'show_excel_quotation_upload', 'auto_upload_attachments_to_drive', 'show_fill_form', 'form_config'].forEach(f => {
+    ['title', 'description', 'priority', 'deadline_days', 'deadline_hours', 'deadline_minutes', 'order_index', 'checklist', 'default_allowed_companies', 'default_allowed_departments', 'default_shared_to_project', 'default_allowed_share_modules', 'executor_company_id', 'completion_requires_file_or_note', 'required_evidence_file_types', 'completion_requires_customer_note', 'completion_requires_customer_contact', 'requires_quick_verdict', 'blocks_stage_advance', 'show_excel_quotation_upload', 'auto_upload_attachments_to_drive', 'show_fill_form', 'form_config', 'require_cost_excel', 'cost_type_id'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
     ['deadline_days', 'deadline_hours', 'deadline_minutes'].forEach((f) => {

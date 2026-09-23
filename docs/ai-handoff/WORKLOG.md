@@ -1,5 +1,93 @@
 # Nhật ký công việc AI
 
+## 2026-09-22 15:25 — VC/LĐ: cột lớn / cột nhỏ + tiến trình như SX
+
+- AI: Cursor. `logistics_pipeline_stages.group_key` + `group_sort` (SQL 632). Tab Cột chính trên `/vc/pipeline-settings`; Gộp cột trên `/vc/dashboard`; stepper chi tiết VC gom theo cột lớn. Không seed group_key live.
+- File: `database/632_logistics_pipeline_group_key.sql`, `logistics.js`, `sxGopCot.js`, `LogisticsPipelineSettingsPage.jsx`, `LogisticsDashboard.jsx`, `ProductionDetail.jsx`, `tests/vc-pipeline-group.test.js`.
+- Test: `node tests/vc-pipeline-group.test.js`.
+
+## 2026-09-22 14:45 — VC/LĐ: KPI theo cột + Tắt hạn + bộ mẫu ít bấm
+
+- AI: Cursor. Pipeline `/vc/pipeline-settings` thêm tick Đang VC / Đang LĐ / BH / Xong và Tắt hạn (SQL 631). Dashboard đếm theo cột, không theo status thẻ. Tích không reload. `/vc/task-templates` layout cột như SX.
+- File: `database/631_logistics_pipeline_dashboard_kpi.sql`, `logistics.js`, `vcOverviewKpis.js`, `moduleDeadlinePolicy.js` (FE+BE), `LogisticsPipelineSettingsPage.jsx`, `LogisticsDashboard.jsx`, `LogisticsViews.jsx`, `WorkshopTaskTemplatesPage.jsx`, `vcPipelineKpi.js`, `vc-mobile/src/lib/vcBoardKpis.ts`, `tests/vc-column-stage-kpi.test.js`.
+- Test: `node tests/vc-column-stage-kpi.test.js`.
+
+## 2026-09-22 13:50 — Bộ mẫu SX: gắn theo cột, ít bấm
+
+- AI: Cursor. Bỏ wizard Công ty→Phân loại→Pipeline. Chip loại + danh sách cột; mỗi cột hiện bộ đã gắn và nút + Gắn. Select chuyển cột trên thẻ.
+- File: `frontend/src/pages/WorkshopTaskTemplatesPage.jsx`.
+
+## 2026-09-22 11:50 — Gán cột pipeline vào ô Dashboard
+
+- AI: Cursor. Nút tích Đang SX / Chờ VC / Đã VC trên setup pipeline; mỗi công ty map cột vào ô KPI Dashboard. Cột `dashboard_kpi` (SQL 630). Chưa tick thì tự suy như cũ.
+- File: `database/630_production_pipeline_dashboard_kpi.sql`, `productionPipelineSchema.js`, `production.js`, `sxPipelineRevenue.js` (FE+BE), `sxKanbanSummary.js`, `workshopKanban.js`, `ProductionPipelineSettingsPage.jsx`, `tests/sx-column-stage-kpi.test.js`.
+
+## 2026-09-22 11:35 — KPI SX theo cờ cột Kanban
+
+- AI: Cursor. Đang SX / Chờ VC / Đã VC đếm theo cột (handover / đã giao), không theo đã gán VC trên dự án.
+- File: `sxKanbanSummary.js`, `sxPipelineRevenue.js` (FE+BE), `ProductionDashboard.jsx`, `tests/sx-column-stage-kpi.test.js`.
+
+## 2026-09-22 11:25 — Thứ tự Cột nhỏ theo cột chính
+
+- AI: Cursor. Kéo cột nhỏ/cột chính ghi `order_index` 1…N theo trái→phải, trên→dưới; tab Cột nhỏ đổi số thứ tự theo.
+- File: `ProductionPipelineSettingsPage.jsx`.
+
+## 2026-09-22 11:10 — Kéo cột nhỏ lên xuống trong cột chính
+
+- AI: Cursor. Tab Cột chính: kéo cột nhỏ lên/xuống trong thẻ đổi `order_index`; tab Cột nhỏ và Kanban gộp theo thứ tự đó. PUT reorder, không `load()` cả trang.
+- File: `ProductionPipelineSettingsPage.jsx`, `sxGopCot.js`.
+
+## 2026-09-22 10:40 — Tích cột pipeline không tải lại trang
+
+- AI: Cursor. Nút Công / Thu / Deadline / Tắt hạn / Bỏ quá hạn / Ẩn cập nhật hàng tại chỗ (optimistic + PUT), không `load()` cả trang.
+- File: `ProductionPipelineSettingsPage.jsx`.
+
+## 2026-09-22 10:30 — Nút Tắt hạn trên cột pipeline SX
+
+- AI: Cursor. Cột nhỏ có nút **Tắt hạn**; cột được tích thì kéo thẻ vào sẽ xóa hạn SX và không hiện quá hạn. Flag `clears_deadline` (SQL 629).
+- File: `database/629_production_pipeline_clears_deadline.sql`, `productionPipelineSchema.js`, `production.js`, `clearCompletedProjectDeadlines.js`, `crmPipelineSla.js`, `sxKanbanSummary.js`, `workshopKanban.js`, `sxPipelineRevenue.js`, `moduleDeadlinePolicy.js` (FE+BE), `ProductionPipelineSettingsPage.jsx`, tests.
+- Test: `node tests/sx-deadline-bucket.test.js`, `sx-delivered-overdue-guard.js`; trình duyệt HCB Tủ bếp Cột nhỏ — hàng «Tiếp nhận đơn hàng về SX» có nút Tắt hạn. Không bật cờ trên cột live.
+
+## 2026-09-22 10:05 — Deadline SX: hiện Quá hạn, Đã giao không đếm lịch sử
+
+- AI: Cursor. Cột Quá hạn «Đã tải 0/2»: gỡ ẩn handover-only; cột Đã giao không đếm `delivery_date` lịch sử. TB-2026-771 hiện; TB-2026-791 hết hạn SX.
+- File: `moduleDeadlinePolicy.js` (FE+BE), `sxKanbanSummary.js`, `sxPipelineRevenue.js` (FE+BE), `ProductionViews.jsx`, `ProductionDashboard.jsx`, `production.js`, `tests/sx-deadline-bucket.test.js`.
+- Test: `node tests/module-deadline-policy.test.js`, `sx-deadline-bucket.test.js`; trình duyệt `/sx/dashboard` HCB Tủ bếp Deadline — Quá hạn 1 thẻ TB-2026-771.
+
+## 2026-09-22 10:00 — KPI SX theo bộ lọc phân loại
+
+- AI: Cursor. Công nợ/Đã thu dashboard SX lấy `revenue_kpis` từ summary (cùng `workshop_type_id`), không đếm thẻ đã load.
+- File: `sxKanbanSummary.js`, `ProductionDashboard.jsx`.
+- Test: HCB Tủ bếp → Công nợ 215 / 35.047.380đ; Cánh kính → 175 tổng, Công nợ 6, Đã thu 162.
+
+## 2026-09-22 09:50 — PDF HCB khoanh đỏ nút, từng bước
+
+- AI: Cursor. Ảnh live khoanh số 1–19 (Pipeline, popup Sửa, Dashboard, menu Gộp, Quản lý nhiệm vụ, Giao việc). PDF viết lại theo bước bấm.
+- File: `docs/ba/guides/huong-dan-hcb-gop-nhiem-vu/` + `bao-cao/Huong-dan_HCB_Gop-cot-va-Nhiem-vu.pdf`.
+
+## 2026-09-22 09:35 — PDF hướng dẫn HCB gộp cột + nhiệm vụ + công việc
+
+- AI: Cursor. Guide 8 trang: Pipeline Cột chính HCB Tủ bếp, Dashboard gộp + nút Nhiệm vụ, Quản lý nhiệm vụ + nút Công việc, Giao việc TB-2026-787.
+- File: `docs/ba/guides/huong-dan-hcb-gop-nhiem-vu/` (PDF, print HTML, 5 PNG, generate-pdf.mjs); bản sao `bao-cao/Huong-dan_HCB_Gop-cot-va-Nhiem-vu.pdf`.
+
+## 2026-09-22 09:16 — Popup sửa cột nhỏ trên tab Cột chính
+
+- AI: Cursor. Nút **Sửa** trên `/sx/pipeline-settings` tab Cột chính mở form trong popup, không chuyển tab.
+- File: `ProductionPipelineSettingsPage.jsx`.
+- Test: HCB Tủ bếp — Sửa «Thiết kế & lập kế hoạch NVL» và «Chuẩn bị vật tư»; Hủy đóng, vẫn ở Cột chính.
+
+## 2026-09-21 14:50 — Ẩn phân tích hạn SX + nút Sửa cột nhỏ pipeline
+
+- AI: Cursor. Gỡ khối «Kế hoạch SX (tính từ ngày lắp)» khỏi `WorkshopInfoPanel`. Tab Cột chính pipeline: nút **Sửa** trên từng cột nhỏ.
+- File: `ProductionDetail.jsx`, `ProductionPipelineSettingsPage.jsx`.
+- Test: `/sx/projects/2587e50d-…` không còn khối indigo; `/sx/pipeline-settings` HCB Cánh kính — Sửa «Chuẩn bị Vật tư» mở form.
+
+## 2026-09-21 14:15 — Setup chi phí: lưới nút tích
+
+- AI: Cursor. Vùng «Nút tích» thành lưới thẻ (chọn thẻ → gắn nhiệm vụ), nhiệm vụ 2 cột; bỏ bảng tổng hợp + chuỗi 6 bước.
+- File: `AccountingCostSetupPage.jsx`.
+- Test: trình duyệt `/management/cost-setup` Phúc Đạt — thẻ Báo giá CRM, lưới nhiệm vụ, tab SX trống + form thêm nút.
+
 ## 2026-09-21 13:20 — Đơn hàng: điền khách hàng trên danh sách
 
 - AI: Cursor. Cột Khách hàng `/crm/orders` bấm để nhập tên/SĐT/địa chỉ thay vì `-`.

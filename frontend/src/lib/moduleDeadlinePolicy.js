@@ -96,19 +96,16 @@ function isSxReleasedToInstall(item, sxStage) {
   if (!item) return false;
   if (sxShipped(item)) return true;
   const st = String(item.status || '');
-  if (['shipping', 'installing', 'warranty', 'completed'].includes(st)) return true;
+  if (['installing', 'warranty', 'completed'].includes(st)) return true;
   const col = sxStage || sxStageOf(item);
   if (sxDone(col)) return true;
-  if (col?.is_handover_to_logistics) return true;
   const name = foldVi(col?.name);
-  return name.includes('da giao')
-    || name.includes('giao xong')
-    || name.includes('ban giao');
+  return name.includes('da giao') || name.includes('giao xong');
 }
 
 function sxDone(stage) {
   if (!stage) return false;
-  if (stage.counts_as_completed_revenue || stage.counts_as_collected_revenue) return true;
+  if (stage.clears_deadline || stage.counts_as_completed_revenue || stage.counts_as_collected_revenue) return true;
   const slug = String(stage.bucket_slug || stage.slug || '').toLowerCase();
   const name = foldVi(stage.name);
   return ['delivered', 'delivery_done', 'completed', 'done'].includes(slug)
@@ -123,6 +120,8 @@ function sxShipped(item) {
 
 function logisticsDone(item, stage) {
   if (item?.status === 'completed' || item?.status === 'warranty') return true;
+  if (stage?.clears_deadline) return true;
+  if (String(stage?.dashboard_kpi || '').trim() === 'completed') return true;
   const slug = String(stage?.bucket_slug || stage?.slug || '').toLowerCase();
   const name = foldVi(stage?.name);
   if (['completed', 'done', 'install_completed'].includes(slug)
@@ -184,6 +183,7 @@ export function resolveEffectiveModuleDeadline(moduleKey, item, stage = null) {
     return result(item.sx_kanban_deadline_at, 'sx_kanban', item)
       || result(item.production_finish_date, 'production_finish', item)
       || result(item.production_deadline, 'production', item)
+      || result(item.delivery_date, 'delivery', item)
       || result(item.deadline, 'project', item)
       || { raw: null, source: null, deadlineTs: null, deadlineAt: null };
   }

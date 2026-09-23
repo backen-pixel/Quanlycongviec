@@ -1279,11 +1279,15 @@ function DeadlineCard({ item, goProject }) {
       <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px]">
         <span className="text-gray-500">
           {item._deadlineTs ? formatDate(item._deadlineTs) : '—'}
-          {item._deadlineSource === 'production_deadline'
+          {item._deadlineSource === 'production_finish'
+            ? ' · Hoàn thiện'
+            : item._deadlineSource === 'production' || item._deadlineSource === 'production_deadline'
             ? ' · Giao xưởng'
-            : item._deadlineSource === 'delivery_date'
+            : item._deadlineSource === 'delivery' || item._deadlineSource === 'delivery_date'
             ? ' · Giao hàng'
-            : item._deadlineSource === 'deadline'
+            : item._deadlineSource === 'sx_kanban'
+            ? ' · Hạn thẻ'
+            : item._deadlineSource === 'project' || item._deadlineSource === 'deadline'
             ? ' · Deadline'
             : ''}
         </span>
@@ -1321,7 +1325,9 @@ export function ProductionDeadlineView({
     SX_DEADLINE_BUCKETS.forEach((b) => { out[b.key] = []; });
     pipeline.forEach((s) => {
       s.items.forEach((item) => {
-        if (shouldHideSxKanbanDeadlineOnCard(item, s)) return;
+        const serverBucket = String(item._deadline_bucket || item.deadline_bucket || '').trim();
+        // Đã giao/hoàn thành ẩn hạn — trừ khi server đang đếm đúng bucket Quá hạn.
+        if (shouldHideSxKanbanDeadlineOnCard(item, s) && serverBucket !== 'overdue') return;
         let { bucket, ts, source } = resolveSxDeadlineBucket(item, todayMs, s);
         const ovr = localOverride[String(item.id)];
         if (ovr) {

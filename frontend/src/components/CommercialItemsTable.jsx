@@ -119,7 +119,7 @@ export default function CommercialItemsTable({
       </div>
 
       <div className="overflow-x-auto border rounded-lg" style={{ maxHeight: '65vh' }}>
-        <table className="min-w-[2320px] w-full text-xs">
+        <table className="min-w-[2440px] w-full text-xs">
           <thead className="sticky top-0 z-10">
             <tr className="bg-gray-50 text-[10px] text-gray-500 uppercase tracking-wider">
               <th rowSpan={2} className="py-2.5 px-1.5 text-left align-bottom" style={{width:36}}>STT</th>
@@ -132,6 +132,7 @@ export default function CommercialItemsTable({
               <th rowSpan={2} className="py-2.5 px-1.5 text-right align-bottom whitespace-nowrap" style={{width:85}} title="Diện tích thực tế = Ngang × Cao">DT Thực</th>
               <th rowSpan={2} className="py-2.5 px-1.5 text-right align-bottom whitespace-nowrap" style={{width:50}}>SL</th>
               <th rowSpan={2} className="py-2.5 px-1.5 text-right align-bottom whitespace-nowrap" style={{width:120}}>Đơn giá</th>
+              <th rowSpan={2} className="py-2.5 px-1.5 text-right align-bottom whitespace-nowrap" style={{width:110}} title="Giá vốn dòng — đẩy lên sổ chi phí">Giá vốn</th>
               <th rowSpan={2} className="py-2.5 px-1.5 text-right align-bottom whitespace-nowrap" style={{width:50}}>% Chiết Khấu</th>
               <th rowSpan={2} className="py-2.5 px-1.5 text-right align-bottom whitespace-nowrap" style={{width:120}} title="Đơn giá đã trừ %CK — chỉ để đối chiếu">Đơn Giá Sau CK</th>
               <th rowSpan={2} className="py-2.5 px-1.5 text-right align-bottom whitespace-nowrap" style={{width:100}}>Số Tiền CK</th>
@@ -154,7 +155,7 @@ export default function CommercialItemsTable({
               if (item.row_type === 'section') return (
                 <React.Fragment key={idx}>
                   <tr className="bg-indigo-50 border-b border-indigo-200">
-                    <td colSpan={21} className="py-1.5 px-2">
+                    <td colSpan={22} className="py-1.5 px-2">
                       <input
                         value={item.name}
                         onChange={e => updateItem(idx, 'name', e.target.value)}
@@ -183,7 +184,7 @@ export default function CommercialItemsTable({
                   const isMixed = curGroupCK === null;
                   return (
                     <tr className="bg-indigo-50">
-                      <td colSpan={22} className="py-2 px-3">
+                      <td colSpan={23} className="py-2 px-3">
                         <div className="flex items-center justify-between gap-3 flex-wrap">
                           <span className="font-bold text-indigo-800 text-sm">{currentGroupName}</span>
                           <div className="flex items-center gap-2 text-xs">
@@ -269,6 +270,7 @@ export default function CommercialItemsTable({
                   </td>
                   <td className="py-1 px-1"><NumericInput value={item.quantity} onChange={v => updateItem(idx, 'quantity', v)} placeholder="1" className={`${cellCls} text-right`} /></td>
                   <td className="py-1 px-1"><NumericInput value={item.unit_price} onChange={v => updateItem(idx, 'unit_price', v)} placeholder="0" className={`${cellCls} text-right`} /></td>
+                  <td className="py-1 px-1"><NumericInput value={item.cost_price || ''} onChange={v => updateItem(idx, 'cost_price', v)} placeholder="0" title="Giá vốn (COGS) — sổ chi phí" allowEmpty className={`${cellCls} text-right`} /></td>
                   <td className="py-1 px-1"><NumericInput value={item.discount_percent || 0} onChange={v => updateItem(idx, 'discount_percent', v)} className={`${cellCls} text-right`} /></td>
                   <td className="py-1 px-1 text-right text-xs text-gray-500 whitespace-nowrap" title="Đơn giá đã trừ %CK — chỉ để đối chiếu, không dùng để tính Thành tiền">
                     {item.is_freebie || item.notes === 'HỖ TRỢ' ? <span className="text-gray-300">—</span> : formatVND(row.unit_price_after_discount || 0)}
@@ -347,14 +349,14 @@ export default function CommercialItemsTable({
                 {isLastInGroup && gd && (
                   <>
                     <tr className="bg-indigo-50/70">
-                      <td colSpan={15} className="py-2 px-3 text-right text-sm font-bold text-indigo-800">
+                      <td colSpan={16} className="py-2 px-3 text-right text-sm font-bold text-indigo-800">
                         Tổng {currentGroupName.replace(/^[IVXLCDM]+\.\s*/, '').split(/\s*[-–]\s*/)[0]}:
                       </td>
                       <td className="py-2 px-2 text-right text-sm font-bold text-indigo-800">{formatVND(gd.subtotal)}</td>
                       <td colSpan={6}></td>
                     </tr>
                     <tr className="bg-indigo-50/70">
-                      <td colSpan={15} className="py-2 px-3 text-right text-sm font-bold text-red-600">
+                      <td colSpan={16} className="py-2 px-3 text-right text-sm font-bold text-red-600">
                         Chiết khấu nhóm:
                         {gd.subtotal > 0 && (
                           <span className="ml-2 text-[11px] font-medium text-red-500/80">
@@ -375,7 +377,7 @@ export default function CommercialItemsTable({
                       <td colSpan={6}></td>
                     </tr>
                     <tr className="bg-indigo-100/60">
-                      <td colSpan={15} className="py-2 px-3 text-right text-sm font-bold text-indigo-900">
+                      <td colSpan={16} className="py-2 px-3 text-right text-sm font-bold text-indigo-900">
                         Tổng sau CK:
                       </td>
                       <td className="py-1.5 px-1">

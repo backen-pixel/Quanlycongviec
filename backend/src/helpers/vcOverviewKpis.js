@@ -8,6 +8,13 @@
 const INTAKE_BUCKET = 'delivery_pending';
 const { MODULE, resolveModuleDeadline } = require('./moduleDeadlinePolicy');
 
+const DASHBOARD_KPI_KEYS = new Set(['shipping', 'installing', 'warranty', 'completed']);
+
+function explicitDashboardKpi(stage) {
+  const raw = String(stage?.dashboard_kpi || '').trim();
+  return DASHBOARD_KPI_KEYS.has(raw) ? raw : null;
+}
+
 function colName(stage) {
   return String(stage?.name || '').toLowerCase();
 }
@@ -126,6 +133,8 @@ function isDoneCol(stage) {
   const slug = String(stage?.bucket_slug || stage?.slug || '').toLowerCase();
   return (
     slug === 'completed'
+    || slug === 'done'
+    || slug === 'install_completed'
     || name.includes('hoàn thành')
     || name.includes('hoàn tất')
     || name.includes('hoàn thiện')
@@ -133,8 +142,10 @@ function isDoneCol(stage) {
   );
 }
 
-/** Phân loại cột → bucket KPI. Mirror kpiBucketForStage (mobile). */
+/** Phân loại cột → bucket KPI. Tick dashboard_kpi thắng heuristic. Mirror mobile. */
 function kpiBucketForStage(stage) {
+  const explicit = explicitDashboardKpi(stage);
+  if (explicit) return explicit;
   if (isDoneCol(stage)) return 'completed';
   if (isAcceptanceCol(stage)) return 'acceptance';
   if (isWarrantyCol(stage)) return 'warranty';
@@ -143,6 +154,22 @@ function kpiBucketForStage(stage) {
   if (isInstallCol(stage)) return 'installing';
   if (isShippingCol(stage)) return 'shipping';
   return 'shipping';
+}
+
+/** 4 ô Dashboard web: Đang VC / Đang LĐ / BH / Hoàn thành. */
+function vcColumnDashboardKpiKey(stage) {
+  const bucket = kpiBucketForStage(stage);
+  if (bucket === 'completed') return 'completed';
+  if (bucket === 'warranty') return 'warranty';
+  if (bucket === 'installing' || bucket === 'acceptance') return 'installing';
+  return 'shipping';
+}
+
+function isVcPipelineStageNoDeadline(stage) {
+  if (!stage) return false;
+  if (stage.clears_deadline) return true;
+  if (explicitDashboardKpi(stage) === 'completed') return true;
+  return isDoneCol(stage);
 }
 
 function projectIsDeadlineOverdue(project, todayMs, stage = null) {
@@ -177,7 +204,7 @@ function computeVcOverviewKpis(projects, stages = []) {
   for (const p of list) {
     const colId = String(p.vc_kanban_column_id || '');
     const stage = colId && cols.length ? stageById.get(colId) : undefined;
-    if (projectIsDeadlineOverdue(p, nowMs, stage)) overdue += 1;
+    if (!isVcPipelineStageNoDeadline(stage) && projectIsDeadlineOverdue(p, nowMs, stage)) overdue += 1;
 
     if (!stage) {
       // Không map được cột → suy theo status (giống nhánh fallback của client).
@@ -222,6 +249,8 @@ function computeVcOverviewKpis(projects, stages = []) {
 module.exports = {
   computeVcOverviewKpis,
   kpiBucketForStage,
+  vcColumnDashboardKpiKey,
+  isVcPipelineStageNoDeadline,
   isInstallCol,
   projectIsDeadlineOverdue,
 };

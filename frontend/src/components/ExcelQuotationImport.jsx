@@ -82,7 +82,7 @@ function resolveEffectiveDiscountPercent(item) {
  * Từ kết quả parse-excel → payload nội bộ (form + dòng hàng) để đổ vào trang sửa báo giá.
  * (Logic giữ đồng bộ với tính spec_factor / CK / freebie như bản tạo trực tiếp cũ.)
  */
-export function buildQuotationDraftFromPreview(preview, file, user, leadId, sourceFile = null, docType = 'quotation') {
+export function buildQuotationDraftFromPreview(preview, file, user, leadId, sourceFile = null, docType = 'quotation', taskId = null) {
   const itemsPayload = preview.items
     .filter((i) => !i.is_group)
     .map((i) => {
@@ -152,6 +152,7 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
         unit: i.unit || 'bộ',
         quantity: qty,
         unit_price: price,
+        cost_price: i.cost_price != null && i.cost_price !== '' ? i.cost_price : '',
         spec_factor: specFactor,
         discount_percent: itemDiscount,
         vat_rate: i.vat_rate || 0,
@@ -247,6 +248,9 @@ export function buildQuotationDraftFromPreview(preview, file, user, leadId, sour
       customer_phone: preview.customer_phone || '',
       customer_address: preview.customer_address || '',
       lead_id: leadId || '',
+      // Nhớ nhiệm vụ đã bấm nút «Upload Excel Báo giá» — sổ chi phí dựa vào đây để biết
+      // giá vốn của báo giá này thuộc nút tích nào (chỉ báo giá mới có cột source_task_id).
+      ...(docType === 'quotation' && taskId ? { source_task_id: taskId } : {}),
       ...(isInvoice ? { due_date: todayISO } : { valid_until: todayISO }),
       discount_type: 'amount',
       discount_value: computedDiscount,
@@ -511,7 +515,7 @@ export default function ExcelQuotationImport({
     setSaving(true);
     try {
       const resolvedLead = effectiveLeadId || '';
-      const draft = buildQuotationDraftFromPreview(preview, file, user, resolvedLead, sourceFile, docType);
+      const draft = buildQuotationDraftFromPreview(preview, file, user, resolvedLead, sourceFile, docType, taskId);
       const payload = { version: 1, ...draft };
       const draftKey = cfg.draftKey;
 

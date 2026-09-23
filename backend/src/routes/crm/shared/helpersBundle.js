@@ -5901,6 +5901,7 @@ function buildProcessedCommercialItems(items) {
       product_id: item.product_id || null, product_code: item.product_code || null,
       name, description: item.description || null,
       unit: item.unit || 'bộ', quantity: item.quantity || 1, unit_price: item.unit_price || 0,
+      cost_price: item.cost_price != null && item.cost_price !== '' ? Number(item.cost_price) || 0 : null,
       spec_factor: specFactor || null, standard_area: item.standard_area || null,
       height: item.height || null, width: item.width || null, length: item.length || null, weight: item.weight || null,
       discount_percent: item.discount_percent || 0, discount_amount: discountAmount,

@@ -40,7 +40,7 @@ export function applyItemFieldUpdate(item, field, val) {
   return next;
 }
 
-export const makeEmptyItem = () => ({ name: '', description: '', unit: 'bộ', quantity: 1, unit_price: 0, discount_percent: 0, vat_rate: 0, dimensions: '', material: '', color: '', spec_factor: 0, group_name: '', standard_area: 0 });
+export const makeEmptyItem = () => ({ name: '', description: '', unit: 'bộ', quantity: 1, unit_price: 0, cost_price: '', discount_percent: 0, vat_rate: 0, dimensions: '', material: '', color: '', spec_factor: 0, group_name: '', standard_area: 0 });
 export const makeSectionRow = () => ({ row_type: 'section', name: 'Phần mới', notes: '__SECTION__' });
 
 /**
@@ -187,6 +187,7 @@ export function restoreServerItems(serverItems, { useTotalFallback = true } = {}
       product_id: i.product_id, promo_code: i.promo_code || '', is_promo: i.is_promo || false,
       spec_factor: i.spec_factor || 0, group_name: i.group_name || '',
       standard_area: i.standard_area || 0,
+      cost_price: i.cost_price ?? '',
       lock_amount: isLocked,
       imported_amount: isLocked ? stored : undefined,
       imported_discount_amount: keepDiscountAmount ? storedDiscount : undefined,
@@ -203,6 +204,7 @@ export function mapExcelDraftItems(draftItems, { includeImportedDiscount = true 
     unit: i.unit || 'bộ',
     quantity: i.quantity ?? 1,
     unit_price: i.unit_price ?? 0,
+    cost_price: i.cost_price ?? '',
     discount_percent: i.discount_percent ?? 0,
     vat_rate: i.vat_rate ?? 0,
     height: i.height ?? '',
@@ -236,7 +238,7 @@ export function buildItemFromProduct(p) {
   return {
     product_id: p.id, name: p.name, description: p.description || '',
     product_code: p.code || '', unit: p.unit || 'bộ',
-    quantity: 1, unit_price: p.base_price || 0, discount_percent: 0,
+    quantity: 1, unit_price: p.base_price || 0, cost_price: p.cost_price || '', discount_percent: 0,
     vat_rate: p.vat_rate || 0,
     length: dimNgang, width: dimSau, height: dimCao, weight: '',
     dimensions: JSON.stringify(dim), material: p.material || '', color: p.color || '',
@@ -259,6 +261,7 @@ export function productPatchForItem(p, it) {
     product_id: p.id, name: p.name, description: p.description || it.description,
     product_code: p.code || it.product_code, unit: p.unit || it.unit,
     unit_price: p.base_price || it.unit_price,
+    cost_price: p.cost_price != null && p.cost_price !== '' ? p.cost_price : it.cost_price,
     vat_rate: p.vat_rate || it.vat_rate,
     dimensions: p.dimensions || it.dimensions,
     material: p.material || it.material,

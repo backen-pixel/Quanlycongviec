@@ -8,6 +8,7 @@ import EvidenceFileTypesPicker from '../components/EvidenceFileTypesPicker';
 import TemplateItemAssigneePicker from '../components/TemplateItemAssigneePicker';
 import DocumentShareModulePicker from '../components/DocumentShareModulePicker';
 import TaskFillFormBuilder from '../components/TaskFillFormBuilder';
+import { CostTypeItemSelect, CostTypeTemplateChecks } from '../components/CostTypeRequireBox';
 import { parseShareModules, cleanShareModulesForApi, shareModuleLabels } from '../lib/documentShareScope';
 import { templateItemAssigneeIds, templateItemAssigneeCount } from '../lib/templateItemAssignees';
 import { formatEvidenceTypesShort, normalizeEvidenceFileTypes, checklistItemRequiresEvidence } from '../lib/evidenceFileTypes';
@@ -119,6 +120,7 @@ export default function CRMTemplatesPage() {
   const [divisions, setDivisions] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [users, setUsers] = useState([]);
+  const [costTypes, setCostTypes] = useState([]);
 
   // ── Chọn pipeline thật theo công ty ──
   // Mặc định: chọn công ty của user (nếu có) để page mở ra ở chế độ Pipeline ngay.
@@ -253,13 +255,17 @@ export default function CRMTemplatesPage() {
       const tplParams = selectedPipelineId
         ? { pipeline_id: selectedPipelineId, scope: 'pipeline' }
         : (selectedCompanyId ? { company_id: selectedCompanyId, scope: 'pipeline' } : {});
-      const [tplRes, compRes, deptRes, divRes] = await Promise.all([
+      const [tplRes, compRes, deptRes, divRes, typesRes] = await Promise.all([
         api.get('/crm/task-templates', { params: tplParams }),
         api.get('/companies', { params: { for_module: 'crm' } }).catch(() => ({ data: [] })),
         api.get('/departments').catch(() => ({ data: [] })),
         api.get('/divisions').catch(() => ({ data: { divisions: [] } })),
+        selectedCompanyId
+          ? api.get('/crm/cost-types', { params: { company_id: selectedCompanyId } }).catch(() => ({ data: [] }))
+          : Promise.resolve({ data: [] }),
       ]);
       setTemplates(tplRes.data || []);
+      setCostTypes(Array.isArray(typesRes.data) ? typesRes.data : []);
       const compList = compRes.data?.companies || compRes.data || [];
       setCompanies(compList);
       setDivisions(divRes.data?.divisions || []);
@@ -743,6 +749,20 @@ export default function CRMTemplatesPage() {
       alert(e.response?.data?.error || 'Lỗi cập nhật mục mẫu');
       load();
       throw e;
+    }
+  };
+
+  const toggleTplCostType = async (tpl, type, on) => {
+    const current = (tpl.cost_excel_type_ids || []).map(String);
+    const next = on
+      ? [...new Set([...current, String(type.id)])]
+      : current.filter((id) => id !== String(type.id));
+    setTemplates((list) => list.map((t) => (t.id === tpl.id ? { ...t, cost_excel_type_ids: next } : t)));
+    try {
+      await api.put(`/crm/task-templates/${tpl.id}/cost-excel-types`, { cost_type_ids: next });
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi gắn Excel chi phí');
+      load();
     }
   };
 
@@ -1490,6 +1510,8 @@ export default function CRMTemplatesPage() {
                           setItemShareModules={setItemShareModules}
                           isPipelineMode={isPipelineMode} pipelineStages={pipelineStages}
                           companyPipelinesAll={companyPipelinesAll} activeTab={activeTab}
+                          costTypes={costTypes}
+                          onToggleTplCostType={toggleTplCostType}
                         />
                       )}
                     </SortableItem>
@@ -1532,6 +1554,7 @@ function TemplateCard({
   updateTemplateItemFields,
   isPipelineMode = false, pipelineStages = [],
   companyPipelinesAll = [], activeTab = 'deal',
+  costTypes = [], onToggleTplCostType,
 }) {
   const [editingItemId, setEditingItemId] = useState(null);
   const [editingAssignee, setEditingAssignee] = useState({});
@@ -1555,6 +1578,8 @@ function TemplateCard({
     executor_company_id: '',
     default_assignee_id: '',
     default_assignee_ids: [],
+    require_cost_excel: false,
+    cost_type_id: '',
   });
 
   const sortedItems = [...(tpl.items || [])].sort((a, b) => a.order_index - b.order_index);
@@ -1611,6 +1636,8 @@ function TemplateCard({
       executor_company_id: item.executor_company_id || '',
       default_assignee_id: templateItemAssigneeIds(item)[0] || '',
       default_assignee_ids: templateItemAssigneeIds(item),
+      require_cost_excel: !!item.require_cost_excel,
+      cost_type_id: item.cost_type_id || '',
     });
   };
 
@@ -1639,6 +1666,8 @@ function TemplateCard({
         executor_company_id: itemEditForm.executor_company_id || null,
         default_assignee_ids: templateItemAssigneeIds(itemEditForm),
         default_assignee_id: templateItemAssigneeIds(itemEditForm)[0] || null,
+        require_cost_excel: !!itemEditForm.require_cost_excel,
+        cost_type_id: itemEditForm.require_cost_excel ? (itemEditForm.cost_type_id || null) : null,
       });
       setEditingItemId(null);
     } catch { /* alert trong updateTemplateItemFields */ }
@@ -1823,6 +1852,11 @@ function TemplateCard({
       {/* Items with drag & drop */}
       {expanded && (
         <div className="px-4 py-2 space-y-1">
+          <CostTypeTemplateChecks
+            types={costTypes}
+            selectedIds={tpl.cost_excel_type_ids || []}
+            onToggle={(type, on) => onToggleTplCostType?.(tpl, type, on)}
+          />
           <DndContext sensors={sensors} collisionDetection={closestCenter}
             onDragEnd={(e) => handleItemDragEnd(e, tpl.id)}>
             <SortableContext items={sortedItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
@@ -1905,6 +1939,14 @@ function TemplateCard({
                             title="Hiển thị nút Upload Excel Báo giá ở tab Nhiệm vụ"
                           >
                             <FileSpreadsheet className="h-2.5 w-2.5" /> Excel BG
+                          </span>
+                        )}
+                        {(item.require_cost_excel || item.cost_type_id) && (
+                          <span
+                            className="text-[9px] bg-teal-100 text-teal-800 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
+                            title="Hoàn thành nhiệm vụ này bắt buộc đã upload Excel loại chi phí"
+                          >
+                            <FileSpreadsheet className="h-2.5 w-2.5" /> Excel CP
                           </span>
                         )}
                         {item.show_fill_form && (
@@ -2169,6 +2211,12 @@ function TemplateCard({
                               <MessageSquare className="h-3 w-3 text-sky-600" />
                               Ghi chú nhanh Đủ/Chưa
                             </label>
+                            <CostTypeItemSelect
+                              types={costTypes}
+                              requireExcel={!!itemEditForm.require_cost_excel}
+                              costTypeId={itemEditForm.cost_type_id}
+                              onChange={(patch) => setItemEditForm((f) => ({ ...f, ...patch }))}
+                            />
                             <span className="flex-1" />
                             <button type="button" onClick={() => setEditingItemId(null)} className="h-8 px-3 rounded-lg text-xs font-medium bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 cursor-pointer">
                               Hủy

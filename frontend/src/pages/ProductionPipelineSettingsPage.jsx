@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { Settings, Plus, Trash2, Save, ChevronRight, ChevronDown, ChevronUp, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft, Search, Wrench, Eye, EyeOff, Layers, GripVertical } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, ChevronRight, ChevronDown, ChevronUp, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft, Search, Wrench, Eye, EyeOff, Layers, GripVertical, Pencil, X, Ban } from 'lucide-react';
 import WorkshopTypeSettingsSection from '../components/WorkshopTypeSettingsSection';
 import { isPipelineStageSlaDisabled } from '../lib/crmPipelineSla';
 import { SX_DEADLINE_GROUPS, sxDeadlineGroupMeta } from '../lib/sxWorkshopSchedule';
@@ -23,6 +24,11 @@ const SX_COT_LON_GOI_Y_TAB = {
 };
 
 const INTAKE = 'won_pending';
+const DASHBOARD_KPI_TICKS = [
+  { key: 'producing', label: 'Đang SX', title: 'Đếm vào ô «Đang sản xuất» trên Dashboard' },
+  { key: 'awaiting_delivery', label: 'Chờ VC', title: 'Đếm vào ô «Chờ vận chuyển» trên Dashboard' },
+  { key: 'shipped', label: 'Đã VC', title: 'Đếm vào ô «Đã vận chuyển» trên Dashboard' },
+];
 const LS_SX_PIPE_COMPANY = 'sx_pipeline_settings_company_id';
 const LS_SX_PIPE_TYPE = 'sx_pipeline_settings_type_key';
 const LS_SX_BOARD_TABS = 'sx_pipeline_board_tabs_v1';
@@ -327,6 +333,8 @@ export default function ProductionPipelineSettingsPage() {
     counts_as_completed_revenue: false,
     counts_as_collected_revenue: false,
     requires_deadline: false,
+    clears_deadline: false,
+    dashboard_kpi: '',
     deadline_group: '',
     group_key: '',
     board_tab: 'sx',
@@ -1068,6 +1076,8 @@ export default function ProductionPipelineSettingsPage() {
     counts_as_completed_revenue: !!form.counts_as_completed_revenue,
     counts_as_collected_revenue: !!form.counts_as_collected_revenue,
     requires_deadline: !!form.requires_deadline,
+    clears_deadline: !!form.clears_deadline,
+    dashboard_kpi: form.dashboard_kpi || null,
     deadline_group: form.deadline_group || null,
     group_key: form.group_key || null,
     board_tab: khoaTabKanban(form.board_tab),
@@ -1101,6 +1111,8 @@ export default function ProductionPipelineSettingsPage() {
       counts_as_completed_revenue: false,
       counts_as_collected_revenue: false,
       requires_deadline: false,
+      clears_deadline: false,
+      dashboard_kpi: '',
       deadline_group: '',
     group_key: '',
       board_tab: 'sx',
@@ -1140,6 +1152,8 @@ export default function ProductionPipelineSettingsPage() {
       counts_as_completed_revenue: !!stage.counts_as_completed_revenue,
       counts_as_collected_revenue: !!stage.counts_as_collected_revenue,
       requires_deadline: !!stage.requires_deadline,
+      clears_deadline: !!stage.clears_deadline,
+      dashboard_kpi: stage.dashboard_kpi || '',
       deadline_group: stage.deadline_group || '',
       group_key: stage.group_key || '',
       board_tab: tabKanbanCot(stage),
@@ -1271,79 +1285,107 @@ export default function ProductionPipelineSettingsPage() {
     }
   };
 
-  const toggleActive = async (stage) => {
-    const next = stage.is_active === false;
-    setStages((prev) => prev.map((s) => (s.id === stage.id ? { ...s, is_active: next } : s)));
+  const patchStageLocal = (id, patch) => {
+    setStages((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  };
+
+  const saveStageFlags = async (stage, patch) => {
+    const rollback = {};
+    for (const k of Object.keys(patch)) rollback[k] = stage[k];
+    patchStageLocal(stage.id, patch);
     try {
-      await api.put(`/production/pipeline-stages/${stage.id}`, { is_active: next });
-      await load();
+      const { data } = await api.put(`/production/pipeline-stages/${stage.id}`, patch);
+      if (data && typeof data === 'object') {
+        const synced = {};
+        for (const k of Object.keys(patch)) {
+          if (data[k] !== undefined) synced[k] = data[k];
+        }
+        if (Object.keys(synced).length) patchStageLocal(stage.id, synced);
+      }
     } catch (e) {
-      setStages((prev) => prev.map((s) => (s.id === stage.id ? { ...s, is_active: stage.is_active } : s)));
+      patchStageLocal(stage.id, rollback);
       if (isMissingProductionStage(e)) {
         await recoverMissingStage();
-        return;
+        return false;
       }
+      throw e;
+    }
+    return true;
+  };
+
+  const toggleActive = async (stage) => {
+    try {
+      await saveStageFlags(stage, { is_active: stage.is_active === false });
+    } catch (e) {
       alert(e?.response?.data?.error || e?.message || 'Không cập nhật được trạng thái cột');
     }
   };
 
   const toggleSlaColumn = async (stage) => {
-    const turningOff = !isPipelineStageSlaDisabled(stage.sla_days);
     try {
-      await api.put(`/production/pipeline-stages/${stage.id}`, {
-        sla_days: turningOff ? 0 : null,
+      await saveStageFlags(stage, {
+        sla_days: isPipelineStageSlaDisabled(stage.sla_days) ? null : 0,
       });
-      load();
     } catch (e) {
-      if (isMissingProductionStage(e)) {
-        await recoverMissingStage();
-        return;
-      }
       alert(e.response?.data?.error || 'Lỗi');
     }
   };
 
   const toggleRequiresDeadlineColumn = async (stage) => {
     try {
-      await api.put(`/production/pipeline-stages/${stage.id}`, {
-        requires_deadline: !stage.requires_deadline,
+      const next = !stage.requires_deadline;
+      await saveStageFlags(stage, {
+        requires_deadline: next,
+        ...(next ? { clears_deadline: false } : {}),
       });
-      load();
     } catch (e) {
-      if (isMissingProductionStage(e)) {
-        await recoverMissingStage();
-        return;
-      }
       alert(e.response?.data?.error || 'Lỗi');
+    }
+  };
+
+  const toggleClearsDeadlineColumn = async (stage) => {
+    try {
+      const next = !stage.clears_deadline;
+      await saveStageFlags(stage, {
+        clears_deadline: next,
+        ...(next ? { requires_deadline: false } : {}),
+      });
+    } catch (e) {
+      const msg = e.response?.data?.error || e.message || 'Lỗi';
+      alert(msg.includes('clears_deadline') ? 'Chưa chạy migration 629 (cột Tắt hạn).' : msg);
+    }
+  };
+
+  const toggleDashboardKpiColumn = async (stage, key) => {
+    try {
+      const next = stage.dashboard_kpi === key ? null : key;
+      await saveStageFlags(stage, { dashboard_kpi: next });
+    } catch (e) {
+      const msg = e.response?.data?.error || e.message || 'Lỗi';
+      alert(msg.includes('dashboard_kpi') ? 'Chưa chạy migration 630 (cột KPI Dashboard).' : msg);
     }
   };
 
   const toggleCompletedRevenueColumn = async (stage) => {
     try {
-      await api.put(`/production/pipeline-stages/${stage.id}`, {
-        counts_as_completed_revenue: !stage.counts_as_completed_revenue,
+      const next = !stage.counts_as_completed_revenue;
+      await saveStageFlags(stage, {
+        counts_as_completed_revenue: next,
+        ...(next ? { requires_deadline: false } : {}),
       });
-      load();
     } catch (e) {
-      if (isMissingProductionStage(e)) {
-        await recoverMissingStage();
-        return;
-      }
       alert(e.response?.data?.error || 'Lỗi');
     }
   };
 
   const toggleCollectedRevenueColumn = async (stage) => {
     try {
-      await api.put(`/production/pipeline-stages/${stage.id}`, {
-        counts_as_collected_revenue: !stage.counts_as_collected_revenue,
+      const next = !stage.counts_as_collected_revenue;
+      await saveStageFlags(stage, {
+        counts_as_collected_revenue: next,
+        ...(next ? { requires_deadline: false } : {}),
       });
-      load();
     } catch (e) {
-      if (isMissingProductionStage(e)) {
-        await recoverMissingStage();
-        return;
-      }
       const msg = e.response?.data?.error || e.message || 'Lỗi';
       alert(msg.includes('counts_as_collected') || msg.includes('296')
         ? `${msg}\n\nChạy migration database/296_production_pipeline_collected_revenue.sql trên Supabase.`
@@ -1394,19 +1436,22 @@ export default function ProductionPipelineSettingsPage() {
     }
   };
 
-  const persistStagesReorder = async (newList) => {
-    if (reorderBusy) return;
-    const reorder = newList.map((s, i) => ({ id: s.id, order_index: i + 1 }));
+  const persistStageOrderPatch = async (patch) => {
+    if (reorderBusy || !patch.length) return;
     const prevStages = stages;
-    const orderMap = new Map(newList.map((s, i) => [String(s.id), i + 1]));
+    const byId = new Map(patch.map((p) => [String(p.id), p]));
     setReorderBusy(true);
     setStages((prev) => prev.map((s) => {
-      const nextOrder = orderMap.get(String(s.id));
-      return nextOrder != null ? { ...s, order_index: nextOrder } : s;
+      const hit = byId.get(String(s.id));
+      if (!hit) return s;
+      return {
+        ...s,
+        ...(hit.order_index != null && hit.order_index !== '' ? { order_index: hit.order_index } : {}),
+        ...(hit.group_sort != null && hit.group_sort !== '' ? { group_sort: hit.group_sort } : {}),
+      };
     }));
     try {
-      await api.put('/production/pipeline-stages-reorder', { stages: reorder });
-      await load();
+      await api.put('/production/pipeline-stages-reorder', { stages: patch });
     } catch (err) {
       setStages(prevStages);
       if (isMissingProductionStage(err)) {
@@ -1414,10 +1459,13 @@ export default function ProductionPipelineSettingsPage() {
         return;
       }
       alert('Lỗi sắp xếp: ' + (err.response?.data?.error || err.message));
-      await load();
     } finally {
       setReorderBusy(false);
     }
+  };
+
+  const persistStagesReorder = async (newList) => {
+    await persistStageOrderPatch(newList.map((s, i) => ({ id: s.id, order_index: i + 1 })));
   };
 
   const moveStage = async (stage, dir) => {
@@ -1439,6 +1487,8 @@ export default function ProductionPipelineSettingsPage() {
   const [gopDragKey, setGopDragKey] = useState(null);
   const [gopOverKey, setGopOverKey] = useState(null);
   const [keoCotNhoId, setKeoCotNhoId] = useState(null);
+  const [gopOverNhoId, setGopOverNhoId] = useState(null);
+  const [gopOverNhoViTri, setGopOverNhoViTri] = useState('truoc');
   const keoPayloadRef = useRef(null);
   const vuaKeoRef = useRef(false);
   const [gopStaffQuery, setGopStaffQuery] = useState('');
@@ -1495,7 +1545,7 @@ export default function ProductionPipelineSettingsPage() {
     await persistStagesReorder(newList);
   };
 
-  const sorted = [...stages].sort((a, b) => a.order_index - b.order_index);
+  const sorted = [...stages].sort((a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0));
 
   /** Các cột lớn đang dùng trong pipeline này + số cột nhỏ song song bên trong. */
   const cotLonDaCo = useMemo(() => {
@@ -1508,7 +1558,7 @@ export default function ProductionPipelineSettingsPage() {
     });
     return sapXepNhomCotLon([...m.entries()].map(([key, ds]) => ({
       key,
-      ds,
+      ds: [...ds].sort((a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0)),
       moc: Math.min(...ds.map((x) => Number(x.order_index ?? 9999))),
     })));
   }, [stages]);
@@ -1532,6 +1582,36 @@ export default function ProductionPipelineSettingsPage() {
     () => dsTabKanban(stages, tabThem).map((t) => ({ ...t, so: soCotNhoTheoTab[t.key] || 0 })),
     [stages, tabThem, soCotNhoTheoTab],
   );
+
+  /** Thứ tự tab Cột nhỏ = intake → cột chính (trái→phải) → cột nhỏ trong thẻ (trên→dưới). */
+  const xayDanhSachCotNhoTheoCotChinh = (allStages, groups) => {
+    const used = new Set();
+    const out = [];
+    const take = (st) => {
+      const id = String(st?.id || '');
+      if (!id || used.has(id)) return;
+      used.add(id);
+      out.push(st);
+    };
+    const byOrder = (a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0);
+    [...(allStages || [])].filter((s) => s.bucket_slug === INTAKE).sort(byOrder).forEach(take);
+    const tabKeys = dsTabKanban(allStages, tabThem).map((t) => t.key);
+    const byTab = new Map();
+    (groups || []).forEach((g) => {
+      const tab = tabKanbanNhom(g.ds);
+      if (!byTab.has(tab)) byTab.set(tab, []);
+      byTab.get(tab).push(g);
+    });
+    tabKeys.forEach((tab) => {
+      (byTab.get(tab) || []).forEach((g) => (g.ds || []).forEach(take));
+    });
+    byTab.forEach((gs, tab) => {
+      if (tabKeys.includes(tab)) return;
+      gs.forEach((g) => (g.ds || []).forEach(take));
+    });
+    [...(allStages || [])].filter((s) => !used.has(String(s.id))).sort(byOrder).forEach(take);
+    return out;
+  };
 
   /** Gợi ý cho ô «Cột lớn»: nhóm đang dùng trên tab hiện tại, rồi bộ tên mặc định của tab. */
   const luaChonCotLon = useMemo(() => {
@@ -1617,32 +1697,30 @@ export default function ProductionPipelineSettingsPage() {
 
   const persistCotLonOrder = async (nextGroups) => {
     if (reorderBusy) return;
-    const patch = nextGroups.flatMap((g, i) => g.ds.map((st) => ({
-      id: st.id,
-      group_sort: i + 1,
-    })));
-    if (!patch.length) return;
-    const prevStages = stages;
-    const orderMap = new Map(patch.map((p) => [String(p.id), p.group_sort]));
-    setReorderBusy(true);
-    setStages((prev) => prev.map((s) => {
-      const n = orderMap.get(String(s.id));
-      return n != null ? { ...s, group_sort: n } : s;
-    }));
-    try {
-      await api.put('/production/pipeline-stages-reorder', { stages: patch });
-      await load();
-    } catch (err) {
-      setStages(prevStages);
-      if (isMissingProductionStage(err)) {
-        await recoverMissingStage();
+    const tabSet = new Set(nextGroups.map((g) => g.key));
+    const groupsForFlatten = [];
+    let inserted = false;
+    cotLonDaCo.forEach((g) => {
+      if (tabSet.has(g.key)) {
+        if (!inserted) {
+          nextGroups.forEach((x) => groupsForFlatten.push(x));
+          inserted = true;
+        }
         return;
       }
-      alert('Lỗi sắp xếp cột lớn: ' + (err.response?.data?.error || err.message));
-      await load();
-    } finally {
-      setReorderBusy(false);
-    }
+      groupsForFlatten.push(g);
+    });
+    if (!inserted) nextGroups.forEach((x) => groupsForFlatten.push(x));
+    const newList = xayDanhSachCotNhoTheoCotChinh(stages, groupsForFlatten);
+    const byId = new Map();
+    newList.forEach((s, i) => byId.set(String(s.id), { id: s.id, order_index: i + 1 }));
+    nextGroups.forEach((g, i) => {
+      (g.ds || []).forEach((st) => {
+        const cur = byId.get(String(st.id)) || { id: st.id };
+        byId.set(String(st.id), { ...cur, group_sort: i + 1 });
+      });
+    });
+    await persistStageOrderPatch([...byId.values()]);
   };
 
   const moveCotLon = async (key, dir) => {
@@ -1856,6 +1934,24 @@ export default function ProductionPipelineSettingsPage() {
     }
   };
   const editingIntake = editId && sorted.find((s) => s.id === editId)?.bucket_slug === INTAKE;
+  const isPopupSua = tabTrang === 'gop' && !!editId && !adding;
+
+  useEffect(() => {
+    if (!isPopupSua) return undefined;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e) => {
+      if (e.key === 'Escape' && !saving) {
+        setEditId(null);
+        setAdding(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [isPopupSua, saving]);
 
   const docKeoPayload = (e) => {
     let raw = '';
@@ -1890,7 +1986,15 @@ export default function ProductionPipelineSettingsPage() {
       setKeoCotNhoId(null);
       setGopDragKey(null);
       setGopOverKey(null);
+      setGopOverNhoId(null);
     }, 0);
+  };
+
+  const viTriThaCotNho = (e) => {
+    const el = e.currentTarget;
+    if (!el?.getBoundingClientRect) return 'truoc';
+    const rect = el.getBoundingClientRect();
+    return (e.clientY - rect.top) < rect.height / 2 ? 'truoc' : 'sau';
   };
 
   const choPhepTha = (e, tenCotLon) => {
@@ -1898,6 +2002,65 @@ export default function ProductionPipelineSettingsPage() {
     e.stopPropagation();
     e.dataTransfer.dropEffect = 'move';
     if (tenCotLon && gopOverKey !== tenCotLon) setGopOverKey(tenCotLon);
+  };
+
+  const choPhepThaCotNho = (e, st) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    if (String(keoCotNhoId) === String(st.id)) return;
+    const viTri = viTriThaCotNho(e);
+    if (gopOverNhoId !== st.id) setGopOverNhoId(st.id);
+    if (gopOverNhoViTri !== viTri) setGopOverNhoViTri(viTri);
+    const key = String(st.group_key || '').trim();
+    if (key && gopOverKey !== key) setGopOverKey(key);
+  };
+
+  /** Kéo cột nhỏ lên/xuống trong cùng cột chính — đổi order_index (tab Cột nhỏ theo). */
+  const datCotNhoVaoHang = async (sourceId, targetSt, viTri) => {
+    if (reorderBusy) return;
+    const srcId = String(sourceId || '');
+    const targetKey = String(targetSt?.group_key || '').trim();
+    if (!srcId || !targetKey || srcId === String(targetSt.id)) return;
+
+    const list = [...stages].sort((a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0));
+    const moved = list.find((s) => String(s.id) === srcId);
+    if (!moved || moved.bucket_slug === INTAKE || targetSt.bucket_slug === INTAKE) return;
+
+    const sourceKey = String(moved.group_key || '').trim();
+    const members = list.filter((s) => (
+      String(s.group_key || '').trim() === targetKey && String(s.id) !== srcId
+    ));
+    const tIdx = members.findIndex((s) => String(s.id) === String(targetSt.id));
+    const insertAt = tIdx < 0 ? members.length : (viTri === 'sau' ? tIdx + 1 : tIdx);
+    members.splice(insertAt, 0, { ...moved, group_key: targetKey });
+
+    const groups = cotLonDaCo.map((g) => {
+      if (g.key === targetKey) return { ...g, ds: members };
+      if (sourceKey && g.key === sourceKey) {
+        return { ...g, ds: g.ds.filter((s) => String(s.id) !== srcId) };
+      }
+      return g;
+    });
+    const stagesForFlatten = sourceKey === targetKey
+      ? stages
+      : stages.map((s) => (String(s.id) === srcId ? { ...s, group_key: targetKey } : s));
+    if (sourceKey !== targetKey) await datCotLon(srcId, targetKey);
+    await persistStagesReorder(xayDanhSachCotNhoTheoCotChinh(stagesForFlatten, groups));
+  };
+
+  const thaVaoCotNho = async (e, targetSt) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const viTri = viTriThaCotNho(e);
+    const payload = docKeoPayload(e);
+    setGopOverNhoId(null);
+    setGopOverKey(null);
+    if (!payload || payload.loai !== 'nho' || !targetSt) return;
+    keoPayloadRef.current = null;
+    setKeoCotNhoId(null);
+    vuaKeoRef.current = Date.now();
+    await datCotNhoVaoHang(payload.id, targetSt, viTri);
   };
 
   const thaVaoCotChinh = async (e, tenCotLon) => {
@@ -1938,6 +2101,10 @@ export default function ProductionPipelineSettingsPage() {
     const t = Number(vuaKeoRef.current) || 0;
     if (t && Date.now() - t < 400) return;
     fn();
+  };
+
+  const suaCotNho = (st) => {
+    bamSauKhiKeo(() => { requestEdit(st); });
   };
 
   return (
@@ -2066,7 +2233,8 @@ export default function ProductionPipelineSettingsPage() {
                   </p>
                   <p className="text-[12px] text-gray-600">
                     Mỗi thẻ = một giai đoạn nối tiếp. Cột nhỏ bên trong chạy song song.
-                    Kéo cột nhỏ từ thẻ này sang thẻ kia để gán. Thứ tự thẻ = thứ tự Kanban gộp.
+                    Kéo cột nhỏ <strong>lên xuống</strong> trong thẻ để đổi thứ tự (tab Cột nhỏ đổi theo).
+                    Kéo sang thẻ khác để gán. Thứ tự thẻ = thứ tự Kanban gộp.
                   </p>
                 </div>
                 <TabKanbanSwitcher
@@ -2142,27 +2310,52 @@ export default function ProductionPipelineSettingsPage() {
                         onDragOver={(e) => choPhepTha(e, g.key)}
                         onDrop={(e) => thaVaoCotChinh(e, g.key)}
                       >
-                        {g.ds.map((st) => (
-                          <button
+                        {g.ds.map((st) => {
+                          const dangKeoDong = String(keoCotNhoId) === String(st.id);
+                          const dangThaDong = String(gopOverNhoId) === String(st.id) && !dangKeoDong;
+                          return (
+                          <div
                             key={st.id}
-                            type="button"
-                            draggable
-                            onDragStart={(e) => batDauKeoCotNho(e, st)}
-                            onDragEnd={ketThucKeo}
-                            onDragOver={(e) => choPhepTha(e, g.key)}
-                            onDrop={(e) => thaVaoCotChinh(e, g.key)}
-                            onClick={() => bamSauKhiKeo(() => { setTabTrang('cot'); requestEdit(st); })}
-                            className={`w-full text-left rounded-md border px-2 py-1.5 text-[12px] font-medium text-gray-800 cursor-grab active:cursor-grabbing ${
-                              String(keoCotNhoId) === String(st.id)
+                            onDragOver={(e) => choPhepThaCotNho(e, st)}
+                            onDragLeave={(e) => {
+                              if (!e.currentTarget.contains(e.relatedTarget) && String(gopOverNhoId) === String(st.id)) {
+                                setGopOverNhoId(null);
+                              }
+                            }}
+                            onDrop={(e) => thaVaoCotNho(e, st)}
+                            className={`flex items-center gap-0.5 rounded-md border ${
+                              dangKeoDong
                                 ? 'border-violet-400 bg-violet-100 opacity-70'
-                                : 'border-gray-100 bg-slate-50 hover:border-violet-300 hover:bg-violet-50'
+                                : dangThaDong
+                                  ? `border-violet-400 bg-violet-50 ${gopOverNhoViTri === 'sau' ? 'border-b-[3px] border-b-violet-600' : 'border-t-[3px] border-t-violet-600'}`
+                                  : 'border-gray-100 bg-slate-50 hover:border-violet-300 hover:bg-violet-50'
                             }`}
-                            title="Kéo sang cột chính khác · bấm để sửa cột nhỏ"
                           >
-                            <span className="mr-1">{st.icon || '📋'}</span>
-                            {st.name}
-                          </button>
-                        ))}
+                            <button
+                              type="button"
+                              draggable={!reorderBusy}
+                              onDragStart={(e) => batDauKeoCotNho(e, st)}
+                              onDragEnd={ketThucKeo}
+                              onClick={() => suaCotNho(st)}
+                              className="min-w-0 flex-1 text-left px-2 py-1.5 text-[12px] font-medium text-gray-800 cursor-grab active:cursor-grabbing"
+                              title="Kéo lên xuống để đổi thứ tự, hoặc sang cột chính khác"
+                            >
+                              <span className="mr-1">{st.icon || '📋'}</span>
+                              {st.name}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => { e.preventDefault(); e.stopPropagation(); requestEdit(st); }}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              className="shrink-0 mr-0.5 h-7 px-1.5 rounded text-[10px] font-semibold text-violet-700 hover:bg-white inline-flex items-center gap-0.5"
+                              title="Sửa cột nhỏ"
+                            >
+                              <Pencil className="h-3 w-3" />
+                              Sửa
+                            </button>
+                          </div>
+                          );
+                        })}
                         {g.ds.length === 0 && gopThemNhoKey !== g.key && (
                           <p className="text-[11px] text-gray-400 px-1 py-2 text-center pointer-events-none">Kéo cột nhỏ vào đây</p>
                         )}
@@ -2266,17 +2459,32 @@ export default function ProductionPipelineSettingsPage() {
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     {cotNhoChuaGan.map((st) => (
-                      <button
+                      <div
                         key={st.id}
-                        type="button"
-                        draggable
-                        onDragStart={(e) => batDauKeoCotNho(e, st)}
-                        onDragEnd={ketThucKeo}
-                        onClick={() => bamSauKhiKeo(() => { setTabTrang('cot'); requestEdit(st); })}
-                        className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-[12px] font-medium text-slate-800 hover:border-violet-400 cursor-grab active:cursor-grabbing"
+                        className="inline-flex items-center gap-0.5 rounded-lg border border-slate-200 bg-white"
                       >
-                        {st.icon || '📋'} {st.name}
-                      </button>
+                        <button
+                          type="button"
+                          draggable
+                          onDragStart={(e) => batDauKeoCotNho(e, st)}
+                          onDragEnd={ketThucKeo}
+                          onClick={() => suaCotNho(st)}
+                          className="inline-flex items-center gap-1 px-2 py-1 text-[12px] font-medium text-slate-800 cursor-grab active:cursor-grabbing"
+                          title="Kéo vào thẻ cột chính"
+                        >
+                          {st.icon || '📋'} {st.name}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); requestEdit(st); }}
+                          onMouseDown={(e) => e.stopPropagation()}
+                          className="shrink-0 mr-0.5 h-6 px-1.5 rounded text-[10px] font-semibold text-violet-700 hover:bg-violet-50 inline-flex items-center gap-0.5"
+                          title="Sửa cột nhỏ"
+                        >
+                          <Pencil className="h-3 w-3" />
+                          Sửa
+                        </button>
+                      </div>
                     ))}
                           </div>
                 </div>
@@ -2299,12 +2507,12 @@ export default function ProductionPipelineSettingsPage() {
         </div>
       )}
 
-      {tabTrang === 'cot' && (
-      <div className="space-y-4">
+      {(tabTrang === 'cot' || isPopupSua) && (
+      <div className={isPopupSua ? '' : 'space-y-4'}>
 
       {/* Bước 2: Chọn Phân loại */}
       {settingsCompanyId && (
-        <div className="rounded-xl border border-teal-200 bg-white shadow-sm">
+        <div className={`rounded-xl border border-teal-200 bg-white shadow-sm ${isPopupSua ? 'hidden' : ''}`}>
           <div className="flex items-center gap-2 px-3 py-2 border-b bg-teal-50/60">
             <Tags className="h-4 w-4 text-teal-700" />
             <p className="text-sm font-semibold text-teal-900">Phân loại</p>
@@ -2389,8 +2597,8 @@ export default function ProductionPipelineSettingsPage() {
           <Loader2 className="h-5 w-5 animate-spin" /> Đang tải...
         </div>
       ) : (
-        <div className="bg-white rounded-xl border overflow-hidden">
-          <div className="flex items-center justify-between p-4 border-b bg-gradient-to-r from-teal-50 to-white">
+        <div className={isPopupSua ? 'contents' : 'bg-white rounded-xl border overflow-hidden'}>
+          <div className={`flex items-center justify-between p-4 border-b bg-gradient-to-r from-teal-50 to-white ${isPopupSua ? 'hidden' : ''}`}>
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl flex items-center justify-center text-white font-bold text-sm bg-teal-600">
                 <Settings className="h-5 w-5" />
@@ -2432,7 +2640,7 @@ export default function ProductionPipelineSettingsPage() {
             </div>
           </div>
 
-          <div className="p-4 border-b">
+          <div className={`p-4 border-b ${isPopupSua ? 'hidden' : ''}`}>
             <div className="flex items-center gap-1 overflow-x-auto pb-2">
               {sorted.map((s, i) => (
                 <div key={s.id} className="flex items-center shrink-0">
@@ -2469,7 +2677,7 @@ export default function ProductionPipelineSettingsPage() {
             const sxRoleStages = crmStages.filter((cs) => !cs.is_lost && !cs.is_won && cs.sync_role === 'sx_production');
             const triggerCount = eligibleCols.filter((s) => s.crm_sync_type === 'production').length;
             return (
-              <div className="border-t bg-amber-50/50 px-4 py-2.5 flex flex-wrap items-center gap-3">
+              <div className={`border-t bg-amber-50/50 px-4 py-2.5 flex flex-wrap items-center gap-3 ${isPopupSua ? 'hidden' : ''}`}>
                 <label className="flex items-center gap-1.5 text-xs font-semibold text-gray-700 cursor-pointer">
                   <input
                     type="checkbox"
@@ -2618,7 +2826,7 @@ export default function ProductionPipelineSettingsPage() {
             );
           })()}
 
-          <div className="border-t bg-violet-50/70 px-4 py-2.5">
+          <div className={`border-t bg-violet-50/70 px-4 py-2.5 ${isPopupSua ? 'hidden' : ''}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
               <p className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-violet-800">
@@ -2719,7 +2927,7 @@ export default function ProductionPipelineSettingsPage() {
             />
           </div>
 
-          <div className="border-t">
+          <div className={`border-t ${isPopupSua ? 'hidden' : ''}`}>
             <div className="px-4 py-2 bg-slate-50 border-b text-[10px] text-slate-600 leading-snug">
               <p className="font-semibold text-slate-800 mb-1">Nhóm deadline (theo kế hoạch từ ngày lắp)</p>
               <div className="flex flex-wrap gap-1.5">
@@ -2890,6 +3098,26 @@ export default function ProductionPipelineSettingsPage() {
                           ⏰ DL bắt buộc
                         </span>
                       )}
+                      {!isIntake && s.clears_deadline && (
+                        <span className="bg-slate-100 text-slate-800 border border-slate-300 px-1.5 py-0.5 rounded font-medium">
+                          ⛔ Đã tắt hạn
+                        </span>
+                      )}
+                      {!isIntake && s.dashboard_kpi === 'producing' && (
+                        <span className="bg-sky-50 text-sky-800 border border-sky-200 px-1.5 py-0.5 rounded font-medium">
+                          🏭 Đang SX
+                        </span>
+                      )}
+                      {!isIntake && s.dashboard_kpi === 'awaiting_delivery' && (
+                        <span className="bg-orange-50 text-orange-800 border border-orange-200 px-1.5 py-0.5 rounded font-medium">
+                          🚚 Chờ VC
+                        </span>
+                      )}
+                      {!isIntake && s.dashboard_kpi === 'shipped' && (
+                        <span className="bg-blue-50 text-blue-800 border border-blue-200 px-1.5 py-0.5 rounded font-medium">
+                          📦 Đã VC
+                        </span>
+                      )}
                       {!isIntake && groupMeta && (
                         <span className={`border px-1.5 py-0.5 rounded font-medium ${groupMeta.className}`}>
                           📅 {groupMeta.shortLabel}
@@ -2912,9 +3140,33 @@ export default function ProductionPipelineSettingsPage() {
                       )}
                     </p>
                   </div>
-                  <div className="flex items-center gap-1 shrink-0">
+                  <div className="flex flex-wrap items-center gap-1 shrink-0">
                     {!isIntake && (
                       <>
+                        {DASHBOARD_KPI_TICKS.map((t) => (
+                          <button
+                            key={t.key}
+                            type="button"
+                            onClick={() => toggleDashboardKpiColumn(s, t.key)}
+                            className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                              s.dashboard_kpi === t.key
+                                ? t.key === 'producing'
+                                  ? 'bg-sky-100 text-sky-800 border-sky-300'
+                                  : t.key === 'awaiting_delivery'
+                                    ? 'bg-orange-100 text-orange-800 border-orange-300'
+                                    : 'bg-blue-100 text-blue-800 border-blue-300'
+                                : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-sky-300 hover:text-sky-700'
+                            }`}
+                            title={
+                              s.dashboard_kpi === t.key
+                                ? `${t.title} — nhấn để bỏ (về tự suy)`
+                                : t.title
+                            }
+                          >
+                            {t.key === 'producing' ? <Factory className="h-3 w-3" /> : t.key === 'awaiting_delivery' ? <Truck className="h-3 w-3" /> : <CheckCircle2 className="h-3 w-3" />}
+                            {t.label}
+                          </button>
+                        ))}
                         <button
                           type="button"
                           onClick={() => toggleCompletedRevenueColumn(s)}
@@ -2960,6 +3212,23 @@ export default function ProductionPipelineSettingsPage() {
                         </button>
                         <button
                           type="button"
+                          onClick={() => toggleClearsDeadlineColumn(s)}
+                          className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                            s.clears_deadline
+                              ? 'bg-slate-800 text-white border-slate-800'
+                              : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-slate-400 hover:text-slate-800'
+                          }`}
+                          title={
+                            s.clears_deadline
+                              ? 'Đang tắt deadline khi kéo thẻ tới cột này. Nhấn để bỏ.'
+                              : 'Bật: kéo thẻ vào cột này sẽ xóa hạn SX và không còn hiện quá hạn.'
+                          }
+                        >
+                          <Ban className="h-3 w-3" />
+                          {s.clears_deadline ? 'Đã tắt hạn' : 'Tắt hạn'}
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => toggleSlaColumn(s)}
                         className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
                           isPipelineStageSlaDisabled(s.sla_days)
@@ -3002,8 +3271,19 @@ export default function ProductionPipelineSettingsPage() {
             })}
           </div>
 
-          {(adding || editId) && (
-            <div className="p-4 border-t bg-teal-50/50 space-y-3">
+          {(adding || editId) && ((el) => (isPopupSua ? createPortal(el, document.body) : el))(
+            <div
+              className={isPopupSua
+                ? 'fixed inset-0 z-[80] flex items-start justify-center bg-black/40 p-3 sm:p-6 overflow-y-auto'
+                : 'p-4 border-t bg-teal-50/50 space-y-3'}
+              onClick={isPopupSua && !saving ? () => { setEditId(null); setAdding(false); } : undefined}
+            >
+              <div
+                className={isPopupSua
+                  ? 'w-full max-w-3xl my-4 rounded-xl border border-teal-200 bg-white shadow-2xl p-4 space-y-3'
+                  : 'contents'}
+                onClick={isPopupSua ? (e) => e.stopPropagation() : undefined}
+              >
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-sm font-bold text-gray-900">
                   {adding ? (
@@ -3012,15 +3292,28 @@ export default function ProductionPipelineSettingsPage() {
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1.5 text-indigo-800">
-                      <Save className="h-4 w-4" /> Sửa cột: {form.name || '…'}
+                      <Pencil className="h-4 w-4" /> Sửa cột nhỏ: {form.name || '…'}
                     </span>
                   )}
                 </p>
+                <div className="flex items-center gap-2">
                 {adding && (
                   <span className="text-[10px] text-teal-700 bg-teal-100 border border-teal-200 px-2 py-0.5 rounded-full">
                     Nhấn «Tạo cột» để thêm — không phải «Lưu» cột cũ
                   </span>
                 )}
+                {isPopupSua && (
+                  <button
+                    type="button"
+                    onClick={() => { setEditId(null); setAdding(false); }}
+                    disabled={saving}
+                    className="h-8 w-8 inline-flex items-center justify-center rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 hover:text-gray-800 cursor-pointer disabled:opacity-50"
+                    title="Đóng"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+                </div>
               </div>
               <div>
                 <label className="text-[10px] font-medium text-gray-500 block mb-1">Tên cột *</label>
@@ -3127,11 +3420,53 @@ export default function ProductionPipelineSettingsPage() {
                       <input
                         type="checkbox"
                         checked={!!form.requires_deadline}
-                        onChange={(e) => setForm((f) => ({ ...f, requires_deadline: e.target.checked }))}
+                        onChange={(e) => setForm((f) => ({
+                          ...f,
+                          requires_deadline: e.target.checked,
+                          ...(e.target.checked ? { clears_deadline: false } : {}),
+                        }))}
                         className="rounded border-rose-400"
                       />
                       <Clock className="h-3.5 w-3.5 text-rose-600" /> Bắt buộc đặt deadline khi kéo thẻ tới cột
                     </label>
+                    <label className="flex items-center gap-2 text-xs cursor-pointer text-slate-900 bg-slate-50 px-2 py-1 rounded-lg border border-slate-200">
+                      <input
+                        type="checkbox"
+                        checked={!!form.clears_deadline}
+                        onChange={(e) => setForm((f) => ({
+                          ...f,
+                          clears_deadline: e.target.checked,
+                          ...(e.target.checked ? { requires_deadline: false } : {}),
+                        }))}
+                        className="rounded border-slate-400"
+                      />
+                      <Ban className="h-3.5 w-3.5 text-slate-700" /> Tắt deadline khi kéo thẻ tới cột
+                    </label>
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-sky-950 bg-sky-50 px-2 py-1 rounded-lg border border-sky-200">
+                      <span className="font-semibold whitespace-nowrap">Ô Dashboard</span>
+                      <label className="flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="dashboard_kpi"
+                          checked={!form.dashboard_kpi}
+                          onChange={() => setForm((f) => ({ ...f, dashboard_kpi: '' }))}
+                          className="accent-sky-600"
+                        />
+                        Tự suy
+                      </label>
+                      {DASHBOARD_KPI_TICKS.map((t) => (
+                        <label key={t.key} className="flex items-center gap-1 cursor-pointer" title={t.title}>
+                          <input
+                            type="radio"
+                            name="dashboard_kpi"
+                            checked={form.dashboard_kpi === t.key}
+                            onChange={() => setForm((f) => ({ ...f, dashboard_kpi: t.key }))}
+                            className="accent-sky-600"
+                          />
+                          {t.label}
+                        </label>
+                      ))}
+                    </div>
                     <div className="flex items-center gap-2 text-xs text-violet-950 bg-violet-50 px-2 py-1 rounded-lg border border-violet-200">
                       <span className="font-semibold whitespace-nowrap">Cột lớn</span>
                       <CotLonPicker
@@ -3574,11 +3909,12 @@ export default function ProductionPipelineSettingsPage() {
                   Hủy
                 </button>
               </div>
+              </div>
             </div>
           )}
 
           {!adding && !editId && !hasIntake && (
-            <div className="p-3 text-xs text-amber-700 bg-amber-50 border-t border-amber-100">
+            <div className={`p-3 text-xs text-amber-700 bg-amber-50 border-t border-amber-100 ${isPopupSua ? 'hidden' : ''}`}>
               Chưa có cột «deal thắng» — cần tạo cột với <code>bucket_slug: &apos;won_pending&apos;</code>.
             </div>
           )}

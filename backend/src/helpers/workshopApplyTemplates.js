@@ -202,6 +202,74 @@ async function resolveLogisticsPipelineStageId(workflowStageId, companyId) {
 }
 
 /**
+ * Lọc bộ mẫu theo KHU VỰC của dự án (migration 625).
+ *
+ * region_id NULL = áp cho mọi khu vực, và 109 bộ mẫu hiện có đều NULL — nên hàm này
+ * phải KHÔNG làm gì và KHÔNG tốn thêm truy vấn trong trường hợp thường gặp. Cách làm:
+ * hỏi một lần mỗi công ty (nhớ 60 giây) xem công ty đó có bộ mẫu nào gắn khu vực không;
+ * chưa có thì trả nguyên danh sách. Cột chưa tồn tại (DB cũ) cũng rơi vào nhánh này.
+ */
+const CACHE_KHU_VUC_TTL_MS = 60 * 1000;
+const cacheCoBoMauKhuVuc = new Map();
+
+async function congTyCoBoMauGanKhuVuc(companyId) {
+  const key = String(companyId || '');
+  const luu = cacheCoBoMauKhuVuc.get(key);
+  if (luu && Date.now() - luu.luc < CACHE_KHU_VUC_TTL_MS) return luu.co;
+  let co = false;
+  try {
+    let q = supabase
+      .from('workshop_task_templates')
+      .select('id')
+      .not('region_id', 'is', null)
+      .limit(1);
+    q = companyId ? q.eq('company_id', companyId) : q.is('company_id', null);
+    const { data, error } = await q;
+    if (error) co = false;
+    else co = (data || []).length > 0;
+  } catch (_) {
+    co = false;
+  }
+  cacheCoBoMauKhuVuc.set(key, { co, luc: Date.now() });
+  return co;
+}
+
+/** Khu vực của dự án = khu vực của deal gắn dự án đó (nguồn duy nhất đang dùng). */
+async function khuVucCuaDuAn(projectId) {
+  if (!projectId) return null;
+  const { data } = await supabase
+    .from('crm_leads')
+    .select('region_id')
+    .eq('project_id', projectId)
+    .eq('type', 'deal')
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  return data?.region_id || null;
+}
+
+async function locBoMauTheoKhuVuc(templates, { companyId, projectId } = {}) {
+  const ds = templates || [];
+  if (!ds.length || !projectId) return ds;
+  if (!(await congTyCoBoMauGanKhuVuc(companyId))) return ds;
+
+  const { data: ganKhuVuc } = await supabase
+    .from('workshop_task_templates')
+    .select('id, region_id')
+    .in('id', ds.map((t) => t.id))
+    .not('region_id', 'is', null);
+  if (!ganKhuVuc?.length) return ds;
+
+  const khuVucTheoBo = new Map(ganKhuVuc.map((x) => [String(x.id), String(x.region_id)]));
+  const khuVucDuAn = await khuVucCuaDuAn(projectId);
+  return ds.filter((t) => {
+    const rid = khuVucTheoBo.get(String(t.id));
+    if (!rid) return true;                       // bộ mẫu dùng chung mọi khu vực
+    return khuVucDuAn && String(khuVucDuAn) === rid;
+  });
+}
+
+/**
  * Danh sách bộ mẫu đang bật cho khu SX / VC–LĐ.
  * Ưu tiên theo company; khi có stageId chỉ lấy bộ gắn stage đó + Global (stage_id NULL).
  */
@@ -248,7 +316,7 @@ async function fetchActiveWorkshopTemplatesForArea(workshopArea, companyId, opts
     if (prodErr && !isWorkshopTplWorkshopTypeMissingError(prodErr)) {
       console.warn('[workshop-templates] production scoped list:', prodErr.message);
     }
-    return prodRows || [];
+    return locBoMauTheoKhuVuc(prodRows || [], { companyId: cid, projectId: opts.projectId });
   }
 
   let templates = [];
@@ -296,7 +364,7 @@ async function fetchActiveWorkshopTemplatesForArea(workshopArea, companyId, opts
       templates = globalRows || [];
     }
   }
-  return templates;
+  return locBoMauTheoKhuVuc(templates, { companyId: cid, projectId: opts.projectId });
 }
 
 /**
@@ -355,6 +423,15 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId, opt
   if (ie) return { ok: false, error: ie.message, statusCode: 500 };
   if (!items?.length) {
     return { ok: false, error: 'Bộ mẫu trống', statusCode: 400 };
+  }
+
+  let linkedTypeIds = [];
+  try {
+    const { listTemplateCostTypeIds } = require('./costLedger');
+    const map = await listTemplateCostTypeIds('workshop', [templateId]);
+    linkedTypeIds = map[String(templateId)] || [];
+  } catch (linkErr) {
+    console.warn('[workshop-template] cost type links:', linkErr.message);
   }
 
   const { bySlug } = await getWorkshopStageMap();
@@ -438,6 +515,9 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId, opt
         workshop_template_item_id: s.item.id,
         guessed_stage_slug: s.guessedSlug,
         workshop_area: tpl.workshop_area,
+        require_cost_excel: !!s.item.require_cost_excel || !!s.item.cost_type_id || linkedTypeIds.length > 0,
+        cost_type_id: s.item.cost_type_id || linkedTypeIds[0] || null,
+        cost_excel_type_ids: [...new Set([s.item.cost_type_id, ...linkedTypeIds].filter(Boolean))],
         ...(s.logisticsPipelineStageId ? { logistics_pipeline_stage_id: s.logisticsPipelineStageId } : {}),
       },
     };
@@ -573,8 +653,8 @@ async function applyDefaultWorkshopTemplatesForNewProject(projectId, userId) {
         ? await resolveLogisticsPipelineStageId(currentStageId, cidForArea)
         : null;
       const stageOpts = area === 'production'
-        ? { workshopTypeId }
-        : { logisticsStageId };
+        ? { workshopTypeId, projectId }
+        : { logisticsStageId, projectId };
 
       const templates = await fetchActiveWorkshopTemplatesForArea(area, cidForArea, stageOpts);
       if (!templates.length) {
@@ -654,8 +734,8 @@ async function applyAllActiveWorkshopTemplatesForArea(projectId, userId, {
   }
 
   const stageOpts = area === 'production'
-    ? { workshopTypeId: proj.workshop_type_id || null }
-    : { logisticsStageId: logStageId };
+    ? { workshopTypeId: proj.workshop_type_id || null, projectId }
+    : { logisticsStageId: logStageId, projectId };
 
   const templates = await fetchActiveWorkshopTemplatesForArea(area, cid, stageOpts);
   if (!templates.length) {

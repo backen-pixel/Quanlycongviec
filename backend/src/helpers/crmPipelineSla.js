@@ -63,7 +63,8 @@ function isSxDeliveredStage(stage) {
 
 function isSxPipelineStageNoDeadline(stage) {
   return !!(
-    stage?.counts_as_completed_revenue
+    stage?.clears_deadline
+    || stage?.counts_as_completed_revenue
     || stage?.counts_as_collected_revenue
     || isSxDeliveredStage(stage)
   );

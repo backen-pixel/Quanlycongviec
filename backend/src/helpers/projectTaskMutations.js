@@ -136,9 +136,22 @@ async function updateProjectTask(req, taskId, body) {
   if (update.status === 'done') update.completed_at = new Date().toISOString();
   if (update.status === 'in_progress' && !b.start_date) update.start_date = new Date().toISOString();
 
-  const { data: old, error: oldErr } = await supabase.from('tasks').select('status,assignee_id,title,created_by_id,project_id').eq('id', taskId).maybeSingle();
+  const { data: old, error: oldErr } = await supabase.from('tasks').select('status,assignee_id,title,created_by_id,project_id,metadata').eq('id', taskId).maybeSingle();
   if (oldErr) return { error: oldErr.message, status: 500 };
   if (!old) return { error: 'Không tìm thấy nhiệm vụ', status: 404 };
+
+  if (update.status === 'done' && old.status !== 'done' && old.project_id) {
+    try {
+      const { assertWorkshopTaskCostExcel } = require('./costLedger');
+      const check = await assertWorkshopTaskCostExcel({
+        ...old,
+        metadata: (update.metadata && typeof update.metadata === 'object') ? update.metadata : old.metadata,
+      });
+      if (!check.ok) return { error: check.error, status: 400, code: 'cost_excel_required' };
+    } catch (excelErr) {
+      console.warn('[tasks] cost excel gate:', excelErr.message);
+    }
+  }
 
   let { data, error } = await supabase.from('tasks').update(update).eq('id', taskId).select().maybeSingle();
   if (error && /(blocks_stage_advance|production_stage_id|notes|file_note_recorded)/i.test(String(error.message || ''))) {

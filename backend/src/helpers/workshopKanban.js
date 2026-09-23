@@ -845,6 +845,8 @@ function enrichOneSxProject(project, sortedStages, wonSet, leadMeta = null) {
       counts_as_completed_revenue: matchedCol.counts_as_completed_revenue,
       counts_as_collected_revenue: matchedCol.counts_as_collected_revenue,
       requires_deadline: matchedCol.requires_deadline,
+      clears_deadline: matchedCol.clears_deadline,
+      dashboard_kpi: matchedCol.dashboard_kpi || null,
       bucket_slug: matchedCol.bucket_slug,
     } : null,
     sx_pipeline_stage_entered_at: project.sx_pipeline_stage_entered_at ?? null,
@@ -930,6 +932,8 @@ function buildPipelineSummary(sortedStages, enhancedProjects) {
     counts_as_completed_revenue: col.counts_as_completed_revenue ?? null,
     counts_as_collected_revenue: col.counts_as_collected_revenue ?? null,
     requires_deadline: col.requires_deadline ?? false,
+    clears_deadline: col.clears_deadline ?? false,
+    dashboard_kpi: col.dashboard_kpi || null,
     count: enhancedProjects.filter((p) => p.sx_kanban_column_id === col.id).length,
     total_value: enhancedProjects
       .filter((p) => p.sx_kanban_column_id === col.id)

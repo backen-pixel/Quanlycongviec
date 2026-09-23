@@ -10,6 +10,8 @@ import { Plus, Trash2, Save, ChevronDown, ChevronRight, Edit2, X, CheckSquare, G
 import EvidenceFileTypesPicker from '../components/EvidenceFileTypesPicker';
 import GiaVonExcelModal from '../components/GiaVonExcelModal';
 import TemplateItemAssigneePicker from '../components/TemplateItemAssigneePicker';
+import { CostTypeItemSelect, CostTypeTemplateChecks } from '../components/CostTypeRequireBox';
+import { workshopAreaToCostModule } from '../lib/costTypeModules';
 import { templateItemAssigneeIds, templateItemAssigneeCount } from '../lib/templateItemAssignees';
 import { formatEvidenceTypesShort, normalizeEvidenceFileTypes, checklistItemRequiresEvidence } from '../lib/evidenceFileTypes';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
@@ -27,6 +29,14 @@ const ALL_WORKSHOP_AREAS = [
   { slug: 'production', label: '🏭 Sản xuất', icon: '🏭', color: '#0f766e' },
   { slug: 'logistics', label: '🔧 Lắp đặt', icon: '🔧', color: '#14b8a6' },
 ];
+const LS_TPL_COMPANY_SX = 'sx_task_tpl_company_id';
+const LS_TPL_COMPANY_VC = 'vc_task_tpl_company_id';
+const LS_TPL_TYPE = 'sx_task_tpl_type_key';
+const GLOBAL_STAGE = 'global';
+
+function readLs(key) {
+  try { return localStorage.getItem(key) || ''; } catch { return ''; }
+}
 
 // ═══ Sortable Item component ═══
 function SortableItem({ id, children }) {
@@ -69,14 +79,24 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
   const [companies, setCompanies] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [users, setUsers] = useState([]);
-  const [selectedCompanyId, setSelectedCompanyId] = useState('');
+  const [selectedCompanyId, setSelectedCompanyId] = useState(() => {
+    const area = fixedArea || initialArea || '';
+    return readLs(area === 'logistics' ? LS_TPL_COMPANY_VC : LS_TPL_COMPANY_SX);
+  });
+  const [addToStageKey, setAddToStageKey] = useState(GLOBAL_STAGE);
+  const [colQuery, setColQuery] = useState('');
+  const [expandedCols, setExpandedCols] = useState({});
   // Phân loại = workshop_project_types (Cửa, Tủ bếp, ...) — CHỈ áp dụng cho khu vực Sản xuất.
   const [workshopTypes, setWorkshopTypes] = useState([]);
-  const [selectedWorkshopTypeKey, setSelectedWorkshopTypeKey] = useState(''); // '' chưa chọn | 'global' | uuid
+  const [selectedWorkshopTypeKey, setSelectedWorkshopTypeKey] = useState(() => {
+    const s = readLs(LS_TPL_TYPE);
+    return s && s !== 'global' ? s : '';
+  }); // '' chưa chọn | 'global' | uuid
   const [pipelineStages, setPipelineStages] = useState([]);
   const [selectedStageKey, setSelectedStageKey] = useState('');
   const [seedingNine, setSeedingNine] = useState(false);
   const [bundleSetting, setBundleSetting] = useState(false);
+  const [costTypes, setCostTypes] = useState([]);
   const companyDefaultResolvedRef = useRef(false);
   const isLogisticsFixed = fixedArea === 'logistics' || activeTab === 'logistics';
 
@@ -148,14 +168,14 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  // SX: Công ty + Phân loại + Pipeline. VC: Công ty + Pipeline.
+  // SX: Công ty + phân loại. VC: Công ty. Không bắt chọn từng cột pipeline.
   const canLoadTemplates = !!selectedCompanyId
     && !!activeTab
-    && (usesWorkshopType ? !!selectedWorkshopTypeKey : true)
-    && (usesPipelineSidebar ? !!selectedStageKey : true);
+    && (usesWorkshopType ? !!selectedWorkshopTypeKey : true);
 
   const load = async () => {
-    setLoading(true);
+    const firstPaint = companies.length === 0;
+    if (firstPaint) setLoading(true);
     try {
       const compModule = activeTab === 'logistics' ? 'logistics' : 'production';
       const userParams = selectedCompanyId ? { company_id: selectedCompanyId } : {};
@@ -171,7 +191,9 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
       if (!companyDefaultResolvedRef.current) {
         companyDefaultResolvedRef.current = true;
         if (!selectedCompanyId) {
-          const coListForPick = isAdmin ? coList : productionWorkshopFilterCompanies(coList);
+          const coListForPick = isAdmin || activeTab === 'logistics'
+            ? coList
+            : productionWorkshopFilterCompanies(coList);
           const fromUser = user?.company_id ? String(user.company_id) : '';
           const userWorkshop = isMetallaOrHucabiCompanyId(fromUser, coList) ? fromUser : '';
           const phucDat = isAdmin ? findDefaultAdminCrmCompanyPhucDat(coList) : '';
@@ -187,61 +209,108 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
           workshop_area: fixedArea || activeTab,
           company_id: selectedCompanyId,
           ...(usesWorkshopType ? workshopTypePayloadForTpl() : {}),
-          ...(usesPipelineSidebar ? stageFilterParams() : {}),
         };
-        const { data } = await api.get('/production/task-templates', { params });
+        const [{ data }, typesRes] = await Promise.all([
+          api.get('/production/task-templates', { params }),
+          api.get('/production/cost-types', {
+            params: { company_id: selectedCompanyId, workshop_area: fixedArea || activeTab },
+          }).catch(() => ({ data: [] })),
+        ]);
         setTemplates(data || []);
-        const exp = {};
-        (data || []).forEach((t) => { exp[t.id] = true; });
-        setExpanded(exp);
+        setCostTypes(Array.isArray(typesRes.data) ? typesRes.data : []);
+        setExpanded({});
       } else {
         setTemplates([]);
+        setCostTypes([]);
       }
     } catch {}
     setLoading(false);
   };
-  useEffect(() => { load(); }, [selectedCompanyId, activeTab, fixedArea, selectedStageKey, selectedWorkshopTypeKey]);
+  useEffect(() => { load(); }, [selectedCompanyId, activeTab, fixedArea, selectedWorkshopTypeKey]);
 
-  // Đổi công ty/khu vực → reset phân loại (+ pipeline VC); nạp lại danh sách phân loại.
   useEffect(() => {
-    setSelectedWorkshopTypeKey('');
-    setSelectedStageKey('');
+    if (selectedCompanyId) {
+      try {
+        localStorage.setItem(
+          (fixedArea === 'logistics' || activeTab === 'logistics') ? LS_TPL_COMPANY_VC : LS_TPL_COMPANY_SX,
+          selectedCompanyId,
+        );
+      } catch { /* ignore */ }
+    }
+  }, [selectedCompanyId]);
+
+  useEffect(() => {
+    if (selectedWorkshopTypeKey) {
+      try { localStorage.setItem(LS_TPL_TYPE, selectedWorkshopTypeKey); } catch { /* ignore */ }
+    }
+  }, [selectedWorkshopTypeKey]);
+
+  const prevCompanyRef = useRef(selectedCompanyId);
+  useEffect(() => {
+    const prev = prevCompanyRef.current;
+    prevCompanyRef.current = selectedCompanyId;
+    if (prev && String(prev) !== String(selectedCompanyId)) {
+      setSelectedWorkshopTypeKey('');
+    }
     setPipelineStages([]);
     loadWorkshopTypes();
   }, [selectedCompanyId, activeTab]);
 
-  // Nạp cột pipeline khi đủ điều kiện (VC: công ty; SX: công ty + phân loại).
+  useEffect(() => {
+    if (!usesWorkshopType) return;
+    if (!selectedCompanyId) {
+      if (selectedWorkshopTypeKey) setSelectedWorkshopTypeKey('');
+      return;
+    }
+    if (!workshopTypes.length) return;
+    const inList = workshopTypes.some((t) => String(t.id) === String(selectedWorkshopTypeKey));
+    if (inList || selectedWorkshopTypeKey === 'global') return;
+    const saved = readLs(LS_TPL_TYPE);
+    if (saved && saved !== 'global' && workshopTypes.some((t) => String(t.id) === String(saved))) {
+      setSelectedWorkshopTypeKey(saved);
+      return;
+    }
+    setSelectedWorkshopTypeKey(String(workshopTypes[0].id));
+  }, [selectedCompanyId, activeTab, usesWorkshopType, workshopTypes, selectedWorkshopTypeKey]);
+
   useEffect(() => {
     if (usesPipelineSidebar) loadPipelineStages();
     else setPipelineStages([]);
   }, [selectedCompanyId, activeTab, selectedWorkshopTypeKey, usesPipelineSidebar]);
 
-  useEffect(() => {
-    if (usesPipelineSidebar) setSelectedStageKey('');
-  }, [selectedWorkshopTypeKey, usesPipelineSidebar]);
-
   const filteredTemplates = templates.filter((t) => t.workshop_area === (fixedArea || activeTab));
 
-  const stagePayloadForTpl = () => {
-    if (usesWorkshopType && usesPipelineSidebar) {
-      return {
-        production_stage_id: selectedStageKey === 'global' ? null : selectedStageKey,
-        logistics_stage_id: null,
-      };
+  const stagePayloadForTpl = (stageKey = addToStageKey) => {
+    const key = stageKey || GLOBAL_STAGE;
+    const colId = key === GLOBAL_STAGE ? null : key;
+    if (activeTab === 'logistics' || fixedArea === 'logistics') {
+      return { logistics_stage_id: colId, production_stage_id: null };
     }
-    if (usesWorkshopType) {
-      return { production_stage_id: null, logistics_stage_id: null };
+    return { production_stage_id: colId, logistics_stage_id: null };
+  };
+
+  const tplStageKey = (tpl) => {
+    if (activeTab === 'logistics' || fixedArea === 'logistics') {
+      return tpl.logistics_stage_id ? String(tpl.logistics_stage_id) : GLOBAL_STAGE;
     }
-    if (activeTab === 'logistics') {
-      return {
-        logistics_stage_id: selectedStageKey === 'global' ? null : selectedStageKey,
-        production_stage_id: null,
-      };
+    return tpl.production_stage_id ? String(tpl.production_stage_id) : GLOBAL_STAGE;
+  };
+
+  const assignTemplateToStage = async (tpl, stageKey) => {
+    const payload = stagePayloadForTpl(stageKey);
+    setTemplates((prev) => prev.map((t) => (t.id === tpl.id ? { ...t, ...payload } : t)));
+    try {
+      await api.put(`/production/task-templates/${tpl.id}`, {
+        name: tpl.name,
+        workshop_area: tpl.workshop_area,
+        company_id: selectedCompanyId || null,
+        ...payload,
+        ...workshopTypePayloadForTpl(),
+      });
+    } catch (e) {
+      alert(e.response?.data?.error || 'Không chuyển được cột');
+      load();
     }
-    return {
-      production_stage_id: selectedStageKey === 'global' ? null : selectedStageKey,
-      logistics_stage_id: null,
-    };
   };
 
   const norm = (s) => String(s || '')
@@ -402,6 +471,20 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
       alert(e.response?.data?.error || 'Lỗi cập nhật mục mẫu');
       load();
       throw e;
+    }
+  };
+
+  const toggleTplCostType = async (tpl, type, on) => {
+    const current = (tpl.cost_excel_type_ids || []).map(String);
+    const next = on
+      ? [...new Set([...current, String(type.id)])]
+      : current.filter((id) => id !== String(type.id));
+    setTemplates((list) => list.map((t) => (t.id === tpl.id ? { ...t, cost_excel_type_ids: next } : t)));
+    try {
+      await api.put(`/production/task-templates/${tpl.id}/cost-excel-types`, { cost_type_ids: next });
+    } catch (e) {
+      alert(e.response?.data?.error || 'Lỗi gắn Excel chi phí');
+      load();
     }
   };
 
@@ -788,20 +871,103 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
     </div>
   );
 
-  const stageDisplay = usesPipelineSidebar && selectedStageKey
-    ? (selectedPipelineStage
-      ? { label: selectedPipelineStage.name, icon: selectedPipelineStage.icon || '📌', color: selectedPipelineStage.color || '#0f766e' }
-      : { label: 'Bộ mẫu chung (Global)', icon: '🌐', color: '#64748b' })
-    : (usesWorkshopType
-      ? (selectedWorkshopTypeKey === 'global'
-        ? { label: 'Mọi phân loại', icon: '🌐', color: '#64748b' }
-        : { label: selectedWorkshopType?.name || 'Phân loại', icon: selectedWorkshopType?.icon || '📦', color: selectedWorkshopType?.color || '#0f766e' })
-      : { label: 'Bộ mẫu chung (Global)', icon: '🌐', color: '#64748b' });
-
   const stageTpls = [...filteredTemplates].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
   const isProductionTypeBundle = usesWorkshopType && selectedWorkshopTypeKey && selectedWorkshopTypeKey !== 'global';
   const bundleAllDefault = isProductionTypeBundle && stageTpls.length > 0 && stageTpls.every((t) => t.is_default);
   const bundleTaskCount = stageTpls.reduce((n, t) => n + (t.items?.length || 0), 0);
+
+  const pipelineColumns = [
+    { id: GLOBAL_STAGE, name: 'Bộ mẫu chung', icon: '🌐', color: '#64748b' },
+    ...pipelineStages.map((s) => ({
+      id: String(s.id),
+      name: s.name,
+      icon: s.icon || '📌',
+      color: s.color || '#0f766e',
+    })),
+  ];
+  const colQ = colQuery.trim().toLowerCase();
+  const visibleColumns = pipelineColumns.filter((col) => {
+    if (!colQ) return true;
+    if (col.name.toLowerCase().includes(colQ)) return true;
+    return stageTpls.some((t) => tplStageKey(t) === col.id && String(t.name || '').toLowerCase().includes(colQ));
+  });
+
+  const startAddForColumn = (stageKey) => {
+    const key = stageKey || GLOBAL_STAGE;
+    setAddToStageKey(key);
+    setShowAddTpl(true);
+    setNewTpl({ name: '', workshop_area: fixedArea || activeTab });
+    setExpandedCols((p) => ({ ...p, [key]: true }));
+  };
+
+  const isColOpen = (id, hasTpls) => expandedCols[id] ?? hasTpls;
+  const toggleCol = (id, hasTpls) => {
+    setExpandedCols((p) => ({ ...p, [id]: !(p[id] ?? hasTpls) }));
+  };
+
+  const renderTplCards = (colTpls, colMeta) => (
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleTemplateDragEnd}>
+      <SortableContext items={colTpls.map((t) => t.id)} strategy={verticalListSortingStrategy}>
+        <div className="space-y-2">
+          {colTpls.map((tpl) => (
+            <SortableItem key={tpl.id} id={tpl.id}>
+              {({ dragHandleProps, isDragging }) => (
+                <TemplateCard
+                  tpl={tpl}
+                  stage={colMeta}
+                  isDragging={isDragging}
+                  dragHandleProps={dragHandleProps}
+                  fixedArea={fixedArea}
+                  expanded={expanded[tpl.id]}
+                  onToggleExpand={() => setExpanded((p) => ({ ...p, [tpl.id]: !p[tpl.id] }))}
+                  editingTpl={editingTpl}
+                  setEditingTpl={setEditingTpl}
+                  onMoGiaVon={() => setGiaVonTpl(tpl)}
+                  updateTemplate={updateTemplate}
+                  toggleDefault={toggleDefault}
+                  deleteTemplate={deleteTemplate}
+                  newItem={newItem}
+                  setNewItem={setNewItem}
+                  addItem={addItem}
+                  deleteItem={deleteItem}
+                  editingChecklist={editingChecklist}
+                  setEditingChecklist={setEditingChecklist}
+                  newCheckItem={newCheckItem}
+                  setNewCheckItem={setNewCheckItem}
+                  addChecklistItem={addChecklistItem}
+                  removeChecklistItem={removeChecklistItem}
+                  updateChecklistItem={updateChecklistItem}
+                  sensors={sensors}
+                  handleItemDragEnd={handleItemDragEnd}
+                  handleChecklistDragEnd={handleChecklistDragEnd}
+                  handleCardDragEnd={handleCardDragEnd}
+                  templates={templates}
+                  setTemplates={setTemplates}
+                  updateItemChecklist={updateItemChecklist}
+                  updateTemplateItemFields={updateTemplateItemFields}
+                  editingVisibility={editingVisibility}
+                  setEditingVisibility={setEditingVisibility}
+                  companies={companies}
+                  departments={departments}
+                  users={users}
+                  defaultCompanyId={selectedCompanyId}
+                  toggleItemCompany={toggleItemCompany}
+                  toggleItemDept={toggleItemDept}
+                  pipelineStages={pipelineStages}
+                  activeTab={activeTab}
+                  costTypes={costTypes.filter((t) => t.module_key === workshopAreaToCostModule(fixedArea || activeTab))}
+                  onToggleTplCostType={toggleTplCostType}
+                  onAssignStage={assignTemplateToStage}
+                />
+              )}
+            </SortableItem>
+          ))}
+        </div>
+      </SortableContext>
+    </DndContext>
+  );
+
+  const accent = isLogisticsFixed ? 'orange' : 'teal';
 
   return (
     <div className="space-y-5 max-w-6xl">
@@ -813,36 +979,37 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
         />
       )}
       {/* Header */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold text-gray-900">
             {fixedArea === 'production'
-              ? '📋 Bộ nhiệm vụ mẫu Sản xuất'
+              ? 'Bộ nhiệm vụ mẫu Sản xuất'
               : fixedArea === 'logistics'
-                ? '📋 Bộ nhiệm vụ VC'
-                : '📋 Bộ nhiệm vụ mẫu xưởng'}
+                ? 'Bộ nhiệm vụ mẫu VC / LĐ'
+                : 'Bộ nhiệm vụ mẫu xưởng'}
           </h1>
-          <p className="text-sm text-gray-500">
-            {fixedArea === 'production'
-              ? <>Gắn từng <strong>bộ nhiệm vụ</strong> vào <strong>cột pipeline</strong> (một cột có thể nhiều bộ). Khi thẻ chuyển sang cột đó, hệ thống tự sinh nhiệm vụ và gán NV theo cấu hình <Link to="/sx/handover-settings" className="text-blue-600 hover:underline">Bàn giao CRM → SX</Link>.</>
-              : fixedArea === 'logistics'
-                ? <>Phân theo cột pipeline <strong>Vận chuyển / Lắp đặt</strong>. Khi dự án sang cột tương ứng, hệ thống áp bộ mẫu của cột + Global.</>
-                : <>Phân theo <strong>cột pipeline</strong> của công ty đã chọn. Khi tạo dự án mới, hệ thống áp một lần các bộ mẫu của cột hiện tại + Global.</>}
-            {' '}Ngày hẹn trên từng nhiệm vụ do nhân viên tự đặt.
+          <p className="text-xs text-gray-500 mt-0.5">
+            Gắn bộ vào cột pipeline — thẻ vào cột thì tự sinh việc.
+            {fixedArea === 'production' && (
+              <> {' '}<Link to="/sx/handover-settings" className="text-blue-600 hover:underline">Bàn giao CRM → SX</Link></>
+            )}
+            {fixedArea === 'logistics' && (
+              <> {' '}<Link to="/vc/pipeline-settings" className="text-orange-600 hover:underline">Pipeline Lắp đặt</Link></>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {!fixedArea && (
-            <div className="inline-flex bg-gray-100 rounded-lg p-0.5" title="Phân loại bộ mẫu">
+            <div className="inline-flex bg-gray-100 rounded-lg p-0.5">
               {[
-                { key: 'production', label: '🏭 Sản xuất' },
-                { key: 'logistics',  label: '🔧 Lắp đặt' },
+                { key: 'production', label: '🏭 SX' },
+                { key: 'logistics',  label: '🔧 Lắp' },
               ].map((a) => (
                 <button
                   key={a.key}
                   type="button"
                   onClick={() => setActiveTab(a.key)}
-                  className={`h-8 px-3 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                  className={`h-8 px-3 rounded-md text-xs font-medium cursor-pointer ${
                     activeTab === a.key ? 'bg-white shadow-sm text-blue-700' : 'text-gray-600 hover:text-gray-900'
                   }`}
                 >
@@ -855,11 +1022,10 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
             <select
               value={selectedCompanyId}
               onChange={(e) => setSelectedCompanyId(e.target.value)}
-              className="h-9 px-3 rounded-lg border text-sm bg-white"
-              title={fixedArea === 'logistics' ? 'Chọn công ty VC' : 'Chọn công ty sản xuất (xưởng)'}
+              className="h-9 px-3 rounded-lg border text-sm bg-white min-w-[10rem]"
             >
-              <option value="">— Chọn công ty —</option>
-              {(isAdmin ? companies : productionWorkshopFilterCompanies(companies)).map((c) => (
+              <option value="">— Công ty —</option>
+              {(isAdmin || isLogisticsFixed ? companies : productionWorkshopFilterCompanies(companies)).map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.short_name || c.name}
                 </option>
@@ -870,408 +1036,186 @@ export default function WorkshopTaskTemplatesPage({ initialArea = 'production', 
             to={fixedArea === 'logistics' ? '/vc/dashboard' : '/sx/dashboard'}
             className={`text-sm font-medium ${fixedArea === 'logistics' ? 'text-orange-600 hover:text-orange-800' : 'text-blue-600 hover:text-blue-800'}`}
           >
-            ← Dashboard {fixedArea === 'logistics' ? 'VC' : 'xưởng'}
+            ← Dashboard
           </Link>
           {activeTab === 'production' && isAdmin && selectedCompanyId && (
             <button
               type="button"
               onClick={ensureNineProductionTemplates}
               disabled={seedingNine}
-              className="h-9 px-3 rounded-lg text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 cursor-pointer"
-              title="Chuẩn hoá đủ 9 bộ mẫu SX cho phân loại đang chọn"
+              className="h-9 px-3 rounded-lg text-xs font-semibold bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-60 cursor-pointer"
             >
-              {seedingNine ? '…' : '🏭'} Chuẩn hoá 9 bộ SX
+              {seedingNine ? '…' : 'Chuẩn hoá 9 bộ'}
             </button>
           )}
           <button
-            onClick={() => {
-              if (!selectedCompanyId) { alert('Chọn công ty trước.'); return; }
-              if (!activeTab) { alert('Chọn phân loại Sản xuất / VC trước.'); return; }
-              if (usesWorkshopType && !selectedWorkshopTypeKey) { alert('Chọn phân loại dự án (Cửa / Tủ bếp / …) trước.'); return; }
-              if (usesPipelineSidebar && !selectedStageKey) { alert('Chọn pipeline (hoặc "Bộ mẫu chung") trước.'); return; }
-              setShowAddTpl(true);
-              setNewTpl({ name: '', workshop_area: fixedArea || activeTab });
-            }}
+            type="button"
+            onClick={() => startAddForColumn(addToStageKey || GLOBAL_STAGE)}
             disabled={!canLoadTemplates}
-            className={`h-9 px-4 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer disabled:bg-gray-300 disabled:cursor-not-allowed ${
+            className={`h-9 px-3 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer disabled:bg-gray-300 disabled:cursor-not-allowed ${
               fixedArea === 'logistics' ? 'bg-orange-600 hover:bg-orange-700' : 'bg-blue-600 hover:bg-blue-700'
             }`}
-            title={!canLoadTemplates
-              ? (usesWorkshopType
-                ? 'Chọn Công ty → Phân loại trước'
-                : 'Chọn Công ty → Pipeline trước')
-              : 'Thêm bộ mẫu mới'}
           >
-            <Plus className="h-4 w-4" /> Thêm bộ mẫu
+            <Plus className="h-4 w-4" /> Thêm bộ
           </button>
         </div>
       </div>
 
-      {/* Stepper — SX: Công ty → Phân loại → Bộ mẫu. VC: Công ty → Pipeline → Bộ mẫu. */}
-      <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
-        <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${selectedCompanyId ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'}`}>
-          <span className="font-semibold">1.</span> Công ty
-          {selectedCompanyId ? <span>✓</span> : <span>·</span>}
-        </span>
-        {usesWorkshopType && (
-          <>
-            <span className="text-gray-300">→</span>
-            <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${selectedWorkshopTypeKey ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : (selectedCompanyId ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-gray-50 text-gray-400 border border-gray-200')}`}>
-              <span className="font-semibold">2.</span> Phân loại
-              {selectedWorkshopTypeKey ? <span>✓</span> : <span>·</span>}
-            </span>
-          </>
-        )}
-        {usesPipelineSidebar && (
-          <>
-            <span className="text-gray-300">→</span>
-            <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${selectedStageKey ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : ((usesWorkshopType ? selectedWorkshopTypeKey : selectedCompanyId) ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-gray-50 text-gray-400 border border-gray-200')}`}>
-              <span className="font-semibold">{usesWorkshopType ? '3.' : '2.'}</span> Pipeline
-              {selectedStageKey ? <span>✓</span> : <span>·</span>}
-            </span>
-          </>
-        )}
-        <span className="text-gray-300">→</span>
-        <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full ${canLoadTemplates ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-gray-50 text-gray-400 border border-gray-200'}`}>
-          <span className="font-semibold">{usesWorkshopType && usesPipelineSidebar ? '4.' : (usesWorkshopType || usesPipelineSidebar ? '3.' : '2.')}</span> Bộ mẫu
-        </span>
-      </div>
-
-      {!selectedCompanyId && (
-        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          <strong>Bước 1:</strong> Chọn <strong>Công ty</strong> ở góc phải header để bắt đầu cấu hình.
-        </div>
-      )}
-
-      <div className="flex flex-col lg:flex-row gap-4">
-        {/* Sidebar: phân loại + pipeline stages */}
-        <aside className="lg:w-56 shrink-0 space-y-3">
-          {!fixedArea && (
-            <div className={`space-y-1 ${!selectedCompanyId ? 'opacity-60 pointer-events-none' : ''}`}>
-              <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider px-2 flex items-center gap-1">
-                <span className="font-semibold">2.</span> Khu vực xưởng
-              </p>
-              {ALL_WORKSHOP_AREAS.map((a) => (
-                <button
-                  key={a.slug}
-                  type="button"
-                  onClick={() => setActiveTab(a.slug)}
-                  disabled={!selectedCompanyId}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 cursor-pointer border disabled:cursor-not-allowed ${
-                    activeTab === a.slug
-                      ? 'border-teal-600 bg-teal-50 text-teal-900 font-medium'
-                      : 'border-transparent bg-white text-gray-700 hover:bg-gray-50'
-                  }`}
-                >
-                  <span className="shrink-0">{a.icon}</span>
-                  <span className="truncate">{a.label.replace(/^\W+\s*/, '')}</span>
-                </button>
-              ))}
-            </div>
-          )}
-          {usesWorkshopType && (
-            <div className={`space-y-1 ${!selectedCompanyId ? 'opacity-60 pointer-events-none' : ''}`}>
-              <p className="text-[10px] font-bold uppercase tracking-wider px-2 mb-1 flex items-center gap-1 text-gray-500">
-                <span className="font-semibold">2.</span> Phân loại
-                {selectedWorkshopType && (
-                  <span className="ml-auto text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-teal-100 text-teal-700">
-                    {workshopTypes.length} loại
-                  </span>
-                )}
-              </p>
-              <button
-                type="button"
-                onClick={() => setSelectedWorkshopTypeKey('global')}
-                disabled={!selectedCompanyId}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 cursor-pointer disabled:cursor-not-allowed ${
-                  selectedWorkshopTypeKey === 'global' ? 'bg-slate-900 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                }`}
-                title="Bộ mẫu áp dụng cho mọi phân loại (workshop_type_id = NULL)"
-              >
-                <Globe className="h-4 w-4 shrink-0" />
-                <span className="truncate">Tất cả phân loại</span>
-              </button>
-              {workshopTypes.map((wt) => {
-                const active = String(selectedWorkshopTypeKey) === String(wt.id);
-                return (
-                  <button
-                    key={wt.id}
-                    type="button"
-                    onClick={() => setSelectedWorkshopTypeKey(wt.id)}
-                    className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 cursor-pointer border ${
-                      active
-                        ? 'border-teal-600 bg-teal-50 text-teal-900 font-medium'
-                        : 'border-transparent bg-white text-gray-700 hover:bg-gray-50'
-                    }`}
-                    style={!active && wt.color ? { borderLeft: `3px solid ${wt.color}` } : {}}
-                  >
-                    <span className="shrink-0">{wt.icon || '📦'}</span>
-                    <span className="truncate">{wt.name}</span>
-                  </button>
-                );
-              })}
-              {selectedCompanyId && workshopTypes.length === 0 && (
-                <p className="text-xs text-gray-400 px-2 py-2">
-                  Công ty này chưa có phân loại — cấu hình ở <Link to="/sx/pipeline-settings" className="text-blue-600 hover:underline">Cài đặt pipeline</Link>.
-                </p>
-              )}
-            </div>
-          )}
-          {usesPipelineSidebar && (
-          <div className={`space-y-1 ${!selectedCompanyId || !activeTab ? 'opacity-60 pointer-events-none' : ''}`}>
-          <p className="text-[10px] font-bold uppercase tracking-wider px-2 mb-1 flex items-center gap-1"
-             style={{ color: activeTab ? (isLogisticsFixed ? '#c2410c' : '#0f766e') : '#9ca3af' }}>
-            <MapPin className="h-3 w-3" />
-            <span className="font-semibold">{usesWorkshopType ? '3.' : '2.'}</span> Pipeline
-            {activeTab && (
-              <span
-                className="ml-auto text-[9px] font-semibold px-1.5 py-0.5 rounded-full"
-                style={{
-                  backgroundColor: isLogisticsFixed ? '#f9731620' : '#0f766e20',
-                  color: isLogisticsFixed ? '#c2410c' : '#0f766e',
-                }}
-              >
-                {isLogisticsFixed ? '🚚 VC / LĐ' : '🏭 SX'}
-              </span>
-            )}
-          </p>
+      {usesWorkshopType && selectedCompanyId && (
+        <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
-            onClick={() => setSelectedStageKey('global')}
-            disabled={!activeTab}
-            className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 cursor-pointer disabled:cursor-not-allowed ${
-              selectedStageKey === 'global' ? 'bg-slate-900 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            onClick={() => setSelectedWorkshopTypeKey('global')}
+            className={`h-8 px-3 rounded-full text-xs font-medium border cursor-pointer ${
+              selectedWorkshopTypeKey === 'global'
+                ? 'bg-slate-900 text-white border-slate-900'
+                : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'
             }`}
           >
-            <Globe className="h-4 w-4 shrink-0" />
-            <span className="truncate">Bộ mẫu chung</span>
+            Tất cả loại
           </button>
-          {pipelineStages.map((st) => {
-            const active = String(selectedStageKey) === String(st.id);
-            const activeBorder = isLogisticsFixed ? 'border-orange-600 bg-orange-50 text-orange-900' : 'border-teal-600 bg-teal-50 text-teal-900';
-            const isLd = isLogisticsFixed && isInstallVcStage(st);
+          {workshopTypes.map((wt) => {
+            const active = String(selectedWorkshopTypeKey) === String(wt.id);
             return (
               <button
-                key={st.id}
+                key={wt.id}
                 type="button"
-                onClick={() => setSelectedStageKey(st.id)}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm flex items-center gap-2 cursor-pointer border ${
+                onClick={() => setSelectedWorkshopTypeKey(wt.id)}
+                className={`h-8 px-3 rounded-full text-xs font-medium border cursor-pointer ${
                   active
-                    ? `${activeBorder} font-medium`
-                    : 'border-transparent bg-white text-gray-700 hover:bg-gray-50'
+                    ? 'bg-teal-600 text-white border-teal-600'
+                    : 'bg-white text-gray-700 border-gray-200 hover:border-teal-300'
                 }`}
-                style={!active && st.color ? { borderLeft: `3px solid ${st.color}` } : {}}
               >
-                <span className="shrink-0">{st.icon || '📌'}</span>
-                <span className="truncate flex-1 min-w-0">{st.name}</span>
-                {isLd && (
-                  <span className="shrink-0 text-[9px] font-semibold px-1 py-0.5 rounded bg-amber-100 text-amber-800">LĐ</span>
-                )}
+                {wt.icon ? `${wt.icon} ` : ''}{wt.name}
               </button>
             );
           })}
-          {selectedCompanyId && activeTab && pipelineStages.length === 0 && (
-            <p className="text-xs text-gray-400 px-2 py-2">
-              Chưa có cột pipeline — cấu hình tại{' '}
-              <Link to={isLogisticsFixed ? '/vc/pipeline-settings' : '/sx/pipeline-settings'} className={isLogisticsFixed ? 'text-orange-600 hover:underline' : 'text-blue-600 hover:underline'}>
-                Cài đặt pipeline
-              </Link>.
-            </p>
-          )}
-          </div>
-          )}
-        </aside>
+        </div>
+      )}
 
-        <div className="flex-1 min-w-0 space-y-4">
-        {!canLoadTemplates && selectedCompanyId && (
-          <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">
-            {!activeTab
-              ? '👉 Chọn khu vực xưởng (Sản xuất / Lắp đặt) ở thanh bên trái.'
-              : (usesWorkshopType && !selectedWorkshopTypeKey)
-                ? '👉 Chọn phân loại dự án (Cửa / Tủ bếp / …) hoặc "Tất cả phân loại" ở thanh bên trái.'
-                : '👉 Chọn pipeline / "Bộ mẫu chung" ở thanh bên trái để cấu hình bộ nhiệm vụ.'}
-          </div>
-        )}
-      {/* Add Template Form */}
       {showAddTpl && (
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
-          <h3 className="text-sm font-semibold text-blue-800">
-            Tạo bộ mẫu mới (
-            {isLogisticsFixed
-              ? 'Lắp đặt'
-              : (activeTab === 'logistics' ? 'Lắp đặt' : 'Sản xuất')}
-            )
-          </h3>
-          <div className="flex gap-2">
-            <input value={newTpl.name} onChange={e => setNewTpl(p => ({...p, name: e.target.value}))}
-              placeholder="Tên bộ mẫu..." className="flex-1 h-9 px-3 rounded-lg border text-sm outline-none focus:ring-2 focus:ring-blue-500" autoFocus
-              onKeyDown={e => e.key === 'Enter' && createTemplate()} />
-            {!fixedArea && (
-              <select value={newTpl.workshop_area} onChange={e => setNewTpl(p => ({...p, workshop_area: e.target.value}))}
-                className="h-9 px-3 rounded-lg border text-sm bg-white">
-                {ALL_WORKSHOP_AREAS.map(s => <option key={s.slug} value={s.slug}>{s.icon} {s.label}</option>)}
-              </select>
-            )}
-            <button onClick={createTemplate} className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm cursor-pointer hover:bg-blue-700">Tạo</button>
-            <button onClick={() => setShowAddTpl(false)} className="h-9 px-3 bg-gray-100 rounded-lg text-sm cursor-pointer">Hủy</button>
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              value={newTpl.name}
+              onChange={(e) => setNewTpl((p) => ({ ...p, name: e.target.value }))}
+              placeholder="Tên bộ mẫu…"
+              className="flex-1 min-w-[12rem] h-9 px-3 rounded-lg border text-sm outline-none focus:ring-2 focus:ring-blue-500"
+              autoFocus
+              onKeyDown={(e) => e.key === 'Enter' && createTemplate()}
+            />
+            <select
+              value={addToStageKey}
+              onChange={(e) => setAddToStageKey(e.target.value)}
+              className="h-9 px-2 rounded-lg border text-sm bg-white max-w-[16rem]"
+            >
+              {pipelineColumns.map((c) => (
+                <option key={c.id} value={c.id}>{c.icon} {c.name}</option>
+              ))}
+            </select>
+            <button type="button" onClick={createTemplate} className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm cursor-pointer hover:bg-blue-700">Tạo</button>
+            <button type="button" onClick={() => setShowAddTpl(false)} className="h-9 px-3 bg-white border rounded-lg text-sm cursor-pointer">Hủy</button>
           </div>
+          <p className="text-[11px] text-blue-800/80">Bộ mới gắn vào cột đang chọn trên danh sách.</p>
         </div>
       )}
 
       {canLoadTemplates && isProductionTypeBundle && stageTpls.length > 0 && (
-        <div className={`rounded-xl border p-4 flex flex-wrap items-center gap-3 ${
+        <div className={`rounded-xl border px-3 py-2 flex flex-wrap items-center gap-2 ${
           bundleAllDefault ? 'border-amber-300 bg-amber-50/80' : 'border-teal-200 bg-teal-50/60'
         }`}>
-          <div className="flex items-start gap-3 min-w-0 flex-1">
-            <div className={`shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${
-              bundleAllDefault ? 'bg-amber-100 text-amber-700' : 'bg-teal-100 text-teal-700'
-            }`}>
-              <Star className={`h-5 w-5 ${bundleAllDefault ? 'fill-amber-500 text-amber-500' : ''}`} />
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-gray-900">
-                Bộ mặc định khi tạo deal Sản xuất — {selectedWorkshopType?.name}
-              </p>
-              <p className="text-xs text-gray-600 mt-0.5">
-                {stageTpls.length} bộ mẫu · {bundleTaskCount} nhiệm vụ
-                {bundleAllDefault
-                  ? ' · Đang được dùng tự động khi có deal SX thuộc phân loại này'
-                  : ' · Chưa đặt làm bộ mặc định — deal SX có thể lấy nhầm bộ mẫu khác'}
-              </p>
-              <ul className="mt-2 text-[11px] text-gray-500 space-y-0.5">
-                {stageTpls.map((t) => (
-                  <li key={t.id} className="flex items-center gap-2">
-                    <span className={t.is_default ? 'text-amber-600' : 'text-gray-400'}>
-                      {t.is_default ? '★' : '○'}
-                    </span>
-                    <span className="truncate">{t.name}</span>
-                    <span className="text-gray-400 shrink-0">({t.items?.length || 0} NV)</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {bundleAllDefault ? (
-              <>
-                <span className="text-xs font-medium text-amber-800 bg-amber-100 px-2.5 py-1 rounded-full">
-                  Đang là bộ mặc định
-                </span>
-                <button
-                  type="button"
-                  onClick={clearDefaultBundle}
-                  disabled={bundleSetting}
-                  className="h-9 px-3 rounded-lg text-xs font-medium border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 cursor-pointer disabled:opacity-60"
-                >
-                  Bỏ mặc định
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                onClick={setDefaultBundle}
-                disabled={bundleSetting}
-                className="h-9 px-4 rounded-lg text-sm font-medium bg-teal-600 text-white hover:bg-teal-700 cursor-pointer disabled:opacity-60 flex items-center gap-1.5"
-              >
-                <Star className="h-4 w-4" />
-                {bundleSetting ? 'Đang lưu…' : 'Đặt bộ mặc định deal SX'}
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-
-      {canLoadTemplates && (
-        <h2 className="text-sm font-bold mb-2 flex items-center gap-2 flex-wrap" style={{ color: stageDisplay.color }}>
-          {stageDisplay.icon} {stageDisplay.label}
-          {usesWorkshopType && selectedWorkshopTypeKey && (
-            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-teal-100 text-teal-800 border border-teal-200">
-              {selectedWorkshopTypeKey === 'global' ? '🌐 Mọi phân loại' : (selectedWorkshopType?.name || 'Phân loại')}
-            </span>
+          <Star className={`h-4 w-4 shrink-0 ${bundleAllDefault ? 'fill-amber-500 text-amber-500' : 'text-teal-600'}`} />
+          <p className="text-xs text-gray-700 flex-1 min-w-[12rem]">
+            {stageTpls.length} bộ · {bundleTaskCount} việc
+            {bundleAllDefault ? ' · đang là mặc định deal SX' : ' · chưa đặt mặc định'}
+          </p>
+          {bundleAllDefault ? (
+            <button type="button" onClick={clearDefaultBundle} disabled={bundleSetting} className="h-8 px-3 rounded-lg text-xs border bg-white cursor-pointer disabled:opacity-60">
+              Bỏ mặc định
+            </button>
+          ) : (
+            <button type="button" onClick={setDefaultBundle} disabled={bundleSetting} className="h-8 px-3 rounded-lg text-xs font-medium bg-teal-600 text-white cursor-pointer disabled:opacity-60">
+              Đặt mặc định
+            </button>
           )}
-          <span className="text-gray-400 font-normal">({stageTpls.length} bộ mẫu)</span>
-        </h2>
-      )}
-
-      {canLoadTemplates && stageTpls.length === 0 && (
-        <div className="border-2 border-dashed rounded-xl p-4 text-center text-gray-400 text-xs mb-3">
-          Chưa có bộ mẫu cho phân loại này — Nhấn &quot;Thêm bộ mẫu&quot; để tạo
         </div>
       )}
 
       {canLoadTemplates && (
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleTemplateDragEnd}>
-        <SortableContext items={stageTpls.map((t) => t.id)} strategy={verticalListSortingStrategy}>
-          <div className="space-y-2 mb-4">
-            {stageTpls.map((tpl) => (
-              <SortableItem key={tpl.id} id={tpl.id}>
-                {({ dragHandleProps, isDragging }) => (
-                  <TemplateCard
-                    tpl={tpl}
-                    stage={stageDisplay}
-                    isDragging={isDragging}
-                    dragHandleProps={dragHandleProps}
-                    fixedArea={fixedArea}
-                    expanded={expanded[tpl.id]}
-                    onToggleExpand={() => setExpanded((p) => ({ ...p, [tpl.id]: !p[tpl.id] }))}
-                    editingTpl={editingTpl}
-                    setEditingTpl={setEditingTpl}
-                    onMoGiaVon={() => setGiaVonTpl(tpl)}
-                    updateTemplate={updateTemplate}
-                    toggleDefault={toggleDefault}
-                    deleteTemplate={deleteTemplate}
-                    newItem={newItem}
-                    setNewItem={setNewItem}
-                    addItem={addItem}
-                    deleteItem={deleteItem}
-                    editingChecklist={editingChecklist}
-                    setEditingChecklist={setEditingChecklist}
-                    newCheckItem={newCheckItem}
-                    setNewCheckItem={setNewCheckItem}
-                    addChecklistItem={addChecklistItem}
-                    removeChecklistItem={removeChecklistItem}
-                    updateChecklistItem={updateChecklistItem}
-                    sensors={sensors}
-                    handleItemDragEnd={handleItemDragEnd}
-                    handleChecklistDragEnd={handleChecklistDragEnd}
-                    handleCardDragEnd={handleCardDragEnd}
-                    templates={templates}
-                    setTemplates={setTemplates}
-                    updateItemChecklist={updateItemChecklist}
-                    updateTemplateItemFields={updateTemplateItemFields}
-                    editingVisibility={editingVisibility}
-                    setEditingVisibility={setEditingVisibility}
-                    companies={companies}
-                    departments={departments}
-                    users={users}
-                    defaultCompanyId={selectedCompanyId}
-                    toggleItemCompany={toggleItemCompany}
-                    toggleItemDept={toggleItemDept}
-                    pipelineStages={pipelineStages}
-                    activeTab={activeTab}
-                  />
-                )}
-              </SortableItem>
-            ))}
-          </div>
-        </SortableContext>
-      </DndContext>
+        <div className="flex items-center gap-2">
+          <input
+            value={colQuery}
+            onChange={(e) => setColQuery(e.target.value)}
+            placeholder="Tìm cột hoặc tên bộ…"
+            className="h-8 flex-1 min-w-[10rem] px-3 rounded-lg border text-sm"
+          />
+          <span className="text-[11px] text-gray-400 shrink-0">
+            {stageTpls.length} bộ / {pipelineStages.length} cột
+          </span>
+        </div>
       )}
 
-      {canLoadTemplates && filteredTemplates.length === 0 && !loading && (
-        <div className="text-center py-8">
-          <p className="text-gray-400 mb-2">📭 Chưa có bộ mẫu{usesWorkshopType ? ' cho phân loại này' : ' cho cột này'}</p>
-          <button
-            type="button"
-            onClick={() => { setShowAddTpl(true); setNewTpl({ name: '', workshop_area: fixedArea || activeTab }); }}
-            className="h-9 px-4 bg-blue-600 text-white rounded-lg text-sm font-medium cursor-pointer hover:bg-blue-700"
-          >
-            <Plus className="h-4 w-4 inline mr-1" /> Tạo bộ mẫu đầu tiên
-          </button>
+      {!selectedCompanyId && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Chọn công ty trên thanh trên để xem cột và bộ mẫu.
         </div>
       )}
+
+      {canLoadTemplates && (
+        <div className="space-y-2">
+          {visibleColumns.map((col) => {
+            const colTpls = stageTpls.filter((t) => tplStageKey(t) === col.id);
+            const taskN = colTpls.reduce((n, t) => n + (t.items?.length || 0), 0);
+            const open = isColOpen(col.id, colTpls.length > 0);
+            const colMeta = { label: col.name, icon: col.icon, color: col.color };
+            return (
+              <section key={col.id} className="border rounded-xl bg-white overflow-hidden">
+                <div className="flex items-center gap-1 pr-2">
+                  <button
+                    type="button"
+                    onClick={() => toggleCol(col.id, colTpls.length > 0)}
+                    className="flex-1 min-w-0 flex items-center gap-2 px-3 py-2 text-left cursor-pointer hover:bg-gray-50"
+                  >
+                    {open ? <ChevronDown className="h-4 w-4 text-gray-400 shrink-0" /> : <ChevronRight className="h-4 w-4 text-gray-400 shrink-0" />}
+                    <span className="w-1.5 h-6 rounded-full shrink-0" style={{ backgroundColor: col.color }} />
+                    <span className="shrink-0">{col.icon}</span>
+                    <span className="text-sm font-semibold truncate">{col.name}</span>
+                    <span className="text-[11px] text-gray-400 shrink-0">
+                      {colTpls.length} bộ · {taskN} việc
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => startAddForColumn(col.id)}
+                    className={`h-7 px-2 rounded-lg text-[11px] font-medium border cursor-pointer shrink-0 ${
+                      accent === 'orange'
+                        ? 'border-orange-200 text-orange-800 hover:bg-orange-50'
+                        : 'border-teal-200 text-teal-800 hover:bg-teal-50'
+                    }`}
+                  >
+                    + Gắn
+                  </button>
+                </div>
+                {open && (
+                  <div className="border-t px-2 py-2 bg-gray-50/60">
+                    {colTpls.length === 0 ? (
+                      <p className="text-xs text-gray-400 px-2 py-1">Chưa gắn bộ — bấm + Gắn</p>
+                    ) : renderTplCards(colTpls, colMeta)}
+                  </div>
+                )}
+              </section>
+            );
+          })}
+          {visibleColumns.length === 0 && (
+            <p className="text-sm text-gray-400 text-center py-6">
+              {pipelineStages.length === 0
+                ? <>Chưa có cột pipeline — cấu hình tại <Link to={isLogisticsFixed ? '/vc/pipeline-settings' : '/sx/pipeline-settings'} className="text-blue-600 hover:underline">Pipeline {isLogisticsFixed ? 'Lắp đặt' : 'xưởng'}</Link>.</>
+                : 'Không khớp tìm kiếm.'}
+            </p>
+          )}
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -1288,6 +1232,7 @@ function TemplateCard({
   companies, departments, users = [], defaultCompanyId = '', toggleItemCompany, toggleItemDept,
   updateTemplateItemFields,
   pipelineStages = [], activeTab = 'production',
+  costTypes = [], onToggleTplCostType, onAssignStage,
 }) {
   const tplArea = fixedArea || tpl.workshop_area || activeTab || 'production';
   const showPipelineUi = tplArea === 'logistics' || tplArea === 'production';
@@ -1306,6 +1251,7 @@ function TemplateCard({
     blocks_stage_advance: false, clears_delivery_deadline_on_complete: false,
     completion_requires_file_or_note: false, required_evidence_file_types: [],
     requires_quick_verdict: false, executor_company_id: '', default_assignee_id: '', default_assignee_ids: [],
+    require_cost_excel: false, cost_type_id: '',
   });
 
   const sortedItems = [...(tpl.items || [])].sort((a, b) => a.order_index - b.order_index);
@@ -1340,6 +1286,8 @@ function TemplateCard({
       executor_company_id: item.executor_company_id || '',
       default_assignee_id: templateItemAssigneeIds(item)[0] || '',
       default_assignee_ids: templateItemAssigneeIds(item),
+      require_cost_excel: !!item.require_cost_excel,
+      cost_type_id: item.cost_type_id || '',
     });
   };
 
@@ -1363,6 +1311,8 @@ function TemplateCard({
         executor_company_id: itemEditForm.executor_company_id || null,
         default_assignee_ids: templateItemAssigneeIds(itemEditForm),
         default_assignee_id: templateItemAssigneeIds(itemEditForm)[0] || null,
+        require_cost_excel: !!itemEditForm.require_cost_excel,
+        cost_type_id: itemEditForm.require_cost_excel ? (itemEditForm.cost_type_id || null) : null,
       });
       setEditingItemId(null);
     } catch { /* alert trong updateTemplateItemFields */ }
@@ -1463,20 +1413,25 @@ function TemplateCard({
           <div className="flex-1 flex items-center gap-2 cursor-pointer min-w-0" onClick={onToggleExpand}>
             {expanded ? <ChevronDown className="h-4 w-4 text-gray-400 shrink-0" /> : <ChevronRight className="h-4 w-4 text-gray-400 shrink-0" />}
             <span className="text-sm font-semibold flex-1 truncate" title={tpl.name}>{tpl.name}</span>
-            {showPipelineUi && (tplStageRow ? (
-              <span
-                className="text-[10px] bg-teal-50 text-teal-800 border border-teal-200 px-2 py-0.5 rounded-full font-medium flex items-center gap-1 shrink-0"
-                style={tplStageRow.color ? { borderLeft: `3px solid ${tplStageRow.color}` } : {}}
-                title={`Bộ mẫu áp dụng cho cột pipeline: ${tplStageRow.name}`}
+            {showPipelineUi && (
+              <select
+                value={tplStageId || ''}
+                onClick={(e) => e.stopPropagation()}
+                onChange={(e) => {
+                  e.stopPropagation();
+                  onAssignStage?.(tpl, e.target.value || 'global');
+                }}
+                className="h-6 max-w-[10rem] text-[10px] rounded-full border border-teal-200 bg-teal-50 text-teal-800 px-1.5 cursor-pointer shrink-0"
+                title="Chuyển bộ sang cột khác"
               >
-                <MapPin className="h-2.5 w-2.5" />{tplStageRow.icon || '📌'} {tplStageRow.name}
-              </span>
-            ) : (
-              <span className="text-[10px] bg-gray-100 text-gray-500 border border-gray-200 px-2 py-0.5 rounded-full font-medium flex items-center gap-1 shrink-0"
-                title="Bộ mẫu chung — áp cho mọi cột trong khu vực này">
-                <Globe className="h-2.5 w-2.5" /> Bộ mẫu chung
-              </span>
-            ))}
+                <option value="">🌐 Bộ mẫu chung</option>
+                {(pipelineStages || []).map((st) => (
+                  <option key={st.id} value={st.id}>
+                    {(st.icon || '📌')} {st.name}
+                  </option>
+                ))}
+              </select>
+            )}
             {blockingItemsCount > 0 && (
               <span className="text-[10px] bg-amber-100 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-full font-semibold flex items-center gap-0.5 shrink-0"
                 title={`Có ${blockingItemsCount} nhiệm vụ chặn chuyển giai đoạn — deal phải hoàn thành tất cả các nhiệm vụ này trước khi chuyển cột pipeline.`}>
@@ -1519,6 +1474,11 @@ function TemplateCard({
             <Link to="/sx/handover-settings" className="text-teal-700 hover:underline">Bàn giao CRM → SX</Link>
             {' '}theo công ty nếu đã cấu hình.
           </p>
+          <CostTypeTemplateChecks
+            types={costTypes}
+            selectedIds={tpl.cost_excel_type_ids || []}
+            onToggle={(type, on) => onToggleTplCostType?.(tpl, type, on)}
+          />
           <DndContext sensors={sensors} collisionDetection={closestCenter}
             onDragEnd={(e) => handleCardDragEnd(e, tpl.id)}>
             <SortableContext items={sortedItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
@@ -1596,6 +1556,14 @@ function TemplateCard({
                             title="Ghi chú nhanh: phải chọn Đã đủ / Chưa (+ lý do) trước khi hoàn thành hoặc chuyển giai đoạn"
                           >
                             ✓ Đủ/Chưa
+                          </span>
+                        )}
+                        {(item.require_cost_excel || item.cost_type_id) && (
+                          <span
+                            className="text-[9px] bg-teal-100 text-teal-800 px-1.5 py-0.5 rounded-full font-medium flex items-center gap-0.5"
+                            title="Hoàn thành nhiệm vụ này bắt buộc đã upload Excel loại chi phí"
+                          >
+                            <FileSpreadsheet className="h-2.5 w-2.5" /> Excel CP
                           </span>
                         )}
                         <button type="button" onClick={() => toggleItemBlocking(item)}
@@ -1748,6 +1716,12 @@ function TemplateCard({
                               />
                               <MessageSquare className="h-3 w-3" /> Ghi chú nhanh Đủ/Chưa
                             </label>
+                            <CostTypeItemSelect
+                              types={costTypes}
+                              requireExcel={!!itemEditForm.require_cost_excel}
+                              costTypeId={itemEditForm.cost_type_id}
+                              onChange={(patch) => setItemEditForm((f) => ({ ...f, ...patch }))}
+                            />
                             <span className="flex-1" />
                             <button type="button" onClick={() => setEditingItemId(null)} className="h-8 px-3 rounded-lg text-xs font-medium bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 cursor-pointer">
                               Hủy

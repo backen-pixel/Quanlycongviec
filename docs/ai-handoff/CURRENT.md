@@ -1,6 +1,142 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-21 13:20 (UTC+7)
+Cập nhật: 2026-09-22 15:25 (UTC+7)
+
+## Pipeline VC/LĐ — cột lớn / cột nhỏ + tiến trình như SX
+
+Trạng thái: **FE+BE local + SQL 632 đã chạy primary/backup.**
+
+`/vc/pipeline-settings` có tab **Cột chính** (kéo cột nhỏ vào giai đoạn nối tiếp) và **Cột nhỏ**. Dashboard `/vc/dashboard` có **Gộp cột** (menu chế độ xem) khi đã gán `group_key`. Chi tiết dự án VC dùng `PipelineStepper` nhóm song song như SX.
+
+Cột `logistics_pipeline_stages.group_key` + `group_sort`. Không gán sẵn nhóm cho công ty nào. Tick việc song song trên stepper VC chưa ghi `project_substage_status` (FK đang trỏ pipeline SX) — click vòng tròn = chuyển cột.
+
+Hoàn tác: revert schema/route/UI; `DROP COLUMN logistics_pipeline_stages.group_key, group_sort`.
+
+## Pipeline VC/LĐ — Tắt hạn + ô Dashboard (Đang VC / Đang LĐ / BH / Xong)
+
+Trạng thái: **FE+BE local + SQL 631 đã chạy primary/backup.**
+
+`/vc/pipeline-settings`: mỗi cột có nút **Đang VC / Đang LĐ / BH / Xong** và **Tắt hạn**. Tích cập nhật đúng hàng, không reload trang. Dashboard `/vc/dashboard` đếm 4 ô KPI **theo cột** (tick thắng heuristic tên/cờ). Cột Tắt hạn / Hoàn thành không đếm quá hạn.
+
+Cột `logistics_pipeline_stages.clears_deadline` + `dashboard_kpi` (`shipping` | `installing` | `warranty` | `completed` | null). Chưa tick thì suy như cũ (cột LĐ / bảo hành / hoàn thành / còn lại = đang VC). Không gắn cứng tên cột.
+
+Bộ mẫu `/vc/task-templates` dùng layout ít bấm như SX (công ty + danh sách cột + Gắn).
+
+Hoàn tác: revert schema/route/UI/KPI helpers; `DROP COLUMN logistics_pipeline_stages.clears_deadline, dashboard_kpi`.
+
+## Bộ mẫu nhiệm vụ SX — gắn theo cột, ít bấm
+
+Trạng thái: **FE local.**
+
+`/sx/task-templates`: bỏ wizard 4 bước + sidebar. Chọn công ty + chip phân loại là thấy **mọi cột pipeline** kèm bộ đã gắn. `+ Gắn` trên cột; đổi cột bằng select trên thẻ bộ. Nhớ công ty/loại (localStorage).
+
+Hoàn tác: revert `WorkshopTaskTemplatesPage.jsx`.
+
+## Pipeline xưởng — gán cột vào ô Dashboard (Đang SX / Chờ VC / Đã VC)
+
+Trạng thái: **FE+BE local + SQL 630.**
+
+Mỗi cột nhỏ trên `/sx/pipeline-settings` có nút **Đang SX / Chờ VC / Đã VC**. Tích = đếm vào ô KPI tương ứng trên Dashboard (theo công ty + phân loại). Nhấn lại để bỏ (về tự suy). Form sửa cột có radio «Ô Dashboard».
+
+Cột `production_pipeline_stages.dashboard_kpi` (`producing` | `awaiting_delivery` | `shipped` | null). `sxColumnStageKpiKey` ưu tiên tick; chưa tick thì giữ heuristic cũ (bàn giao VC / tên đã giao / còn lại = đang SX). Không gắn cứng tên cột — mỗi công ty tự map.
+
+Hoàn tác: revert schema/route/UI/KPI helpers; `DROP COLUMN production_pipeline_stages.dashboard_kpi`.
+
+## Dashboard SX — KPI theo cờ cột Kanban
+
+Trạng thái: **FE+BE local.**
+
+Thanh KPI `/sx/dashboard` (Đang sản xuất / Chờ VC / Đã VC) đếm thẻ **theo cột đang đứng**:
+- Chờ vận chuyển = cột tích bàn giao VC
+- Đã vận chuyển = cột Đã giao
+- Đang sản xuất = cột SX còn lại (không intake, không công/thu)
+
+Không còn đếm `logistics_company_id` (thẻ vẫn ở cột SX thì vẫn là Đang SX). Công nợ / Đã thu / Quá hạn giữ theo cột như cũ.
+
+Hoàn tác: revert `sxKanbanSummary.js`, `sxPipelineRevenue.js` (FE+BE), `ProductionDashboard.jsx`.
+
+## Pipeline xưởng — kéo cột nhỏ lên xuống trong cột chính
+
+Trạng thái: **FE local.**
+
+Tab Cột chính `/sx/pipeline-settings`: kéo cột nhỏ lên/xuống (hoặc kéo cột chính) ghi lại `order_index` 1…N
+theo trái→phải / trên→dưới. Tab **Cột nhỏ** (số thứ tự 1, 2, 3…) đổi theo đúng thứ tự đó. Không reload trang.
+
+Hoàn tác: revert `ProductionPipelineSettingsPage.jsx`, `sxGopCot.js`.
+
+## Pipeline xưởng — nút Tắt hạn trên cột nhỏ
+
+Trạng thái: **FE+BE local + SQL 629 đã chạy primary/backup.**
+
+Mỗi cột nhỏ trên `/sx/pipeline-settings` (tab Cột nhỏ) có nút **Tắt hạn** cạnh Deadline / Bỏ quá hạn.
+Cột được tích: khi kéo thẻ tới cột đó, BE xóa hạn SX (`sx_kanban_deadline_at`, `production_deadline`, `production_finish_date`) và Kanban không còn đếm quá hạn.
+Bật Tắt hạn cũng xóa hạn các dự án đang nằm trong cột; loại trừ với **Deadline** bắt buộc.
+Tích Công / Thu / Deadline / Tắt hạn / Bỏ quá hạn / Ẩn **cập nhật đúng hàng** (PUT + state), không `load()` cả danh sách — trang không nháy «Đang tải».
+
+Không bật sẵn trên «Tiếp nhận đơn hàng về SX» — admin tự tích cột muốn tắt hạn (vd. Đã giao).
+
+Hoàn tác: revert `ProductionPipelineSettingsPage.jsx`, `production.js`, `productionPipelineSchema.js`, `clearCompletedProjectDeadlines.js`, `crmPipelineSla.js`, `sxKanbanSummary.js`, `workshopKanban.js`, `sxPipelineRevenue.js`, `moduleDeadlinePolicy.js` (FE+BE); `DROP COLUMN production_pipeline_stages.clears_deadline`.
+
+## Deadline SX — cột Quá hạn trống dù đếm 2
+
+Trạng thái: **FE+BE local.**
+
+Cột Deadline «Quá hạn» đếm 2 nhưng «Đã tải 0/2»:
+1. **TB-2026-791** cột ĐÃ GIAO — `delivery_date` lịch sử, hạn SX đã null. Server vẫn đếm quá hạn vì không nhận cột Đã giao.
+2. **TB-2026-771** cột chờ bàn giao VC — hạn hoàn thiện 18/9 đã qua, chưa giao thật. FE ẩn vì `is_handover_to_logistics`.
+
+Đã giao / đã công / đã thu / đã sang VC: hết hạn SX (deadline hiểu đã xong). Chờ VC chưa giao: hiện Quá hạn.
+Kiểm tra HCB: 0 dự án done còn `production_deadline` / `sx_kanban_deadline_at`; 67 còn `delivery_date` (lịch sử, không đếm).
+
+Hoàn tác: revert `moduleDeadlinePolicy.js` (FE+BE), `sxKanbanSummary.js`, `sxPipelineRevenue.js` (FE+BE), `ProductionViews.jsx`, `ProductionDashboard.jsx`, `production.js`.
+
+## Dashboard SX — KPI theo bộ lọc phân loại
+
+Trạng thái: **FE+BE local.**
+
+KPI Công nợ / Đã thu trên `/sx/dashboard` lấy tổng server cùng filter xưởng + phân loại
+(không còn đếm 40 thẻ đã load). Đổi Tủ bếp ↔ Cánh kính thì số dự án và tiền đổi theo loại.
+
+Hoàn tác: revert `sxKanbanSummary.js`, `ProductionDashboard.jsx`.
+
+## PDF hướng dẫn HCB — gộp cột + nhiệm vụ + công việc
+
+Trạng thái: **docs local.** Ảnh live khoanh đỏ số 1–19, hướng dẫn từng bước bấm.
+
+- `docs/ba/guides/huong-dan-hcb-gop-nhiem-vu/HUONG_DAN_HCB_GOP_NHIEM_VU.pdf`
+- Bản sao: `bao-cao/Huong-dan_HCB_Gop-cot-va-Nhiem-vu.pdf`
+- Xuất lại: `node docs/ba/guides/huong-dan-hcb-gop-nhiem-vu/generate-pdf.mjs`
+
+Hoàn tác: xóa thư mục guide + file trong `bao-cao/`.
+
+## Pipeline xưởng — Sửa cột nhỏ mở popup
+
+Trạng thái: **FE local.**
+
+Tab Cột chính `/sx/pipeline-settings`: nút **Sửa** mở popup ngay trên tab (không nhảy sang Cột nhỏ).
+Đóng bằng ×, Hủy, hoặc bấm nền. Tab Cột nhỏ vẫn sửa inline như cũ.
+
+Hoàn tác: revert `ProductionPipelineSettingsPage.jsx`.
+
+## Chi tiết SX — ẩn phân tích hạn + pipeline nút Sửa cột nhỏ
+
+Trạng thái: **FE local.**
+
+Panel Thông tin chi tiết dự án SX **không còn khối** «Kế hoạch SX (tính từ ngày lắp)».
+Trang `/sx/pipeline-settings` tab Cột chính: mỗi cột nhỏ có nút **Sửa** ngay trên dòng
+(mở form tab Cột nhỏ). Cột chưa gán cũng có nút Sửa.
+
+Hoàn tác: revert `ProductionDetail.jsx`, `ProductionPipelineSettingsPage.jsx`.
+
+## Setup chi phí — lưới nút tích
+
+Trạng thái: **FE local.**
+
+Vùng «Nút tích» trên `/management/cost-setup` đổi từ bảng + danh sách dọc sang **lưới thẻ**:
+mỗi nút tích một thẻ (tên, biến, số nhiệm vụ). Chọn thẻ mới hiện panel gắn nhiệm vụ;
+nhiệm vụ xếp lưới 2 cột. Form thêm nút nằm trong ô nét đứt của lưới.
+
+Hoàn tác: revert `AccountingCostSetupPage.jsx`.
 
 ## Đơn hàng — điền khách hàng trên danh sách
 

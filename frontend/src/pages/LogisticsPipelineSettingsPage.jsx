@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  Building2, CheckCircle2, ChevronRight, EyeOff, GripVertical, Info, ListChecks, Loader2,
+  Building2, CheckCircle2, ChevronRight, Clock, EyeOff, GripVertical, Info, Layers, ListChecks, Loader2,
   Pencil, Plus, RefreshCw, Save, Settings, Trash2, Truck, UserCircle, Wrench,
 } from 'lucide-react';
+import { VC_DASHBOARD_KPI_TICKS } from '../lib/vcPipelineKpi';
+import { gomCotTheoNhom, nhanCotLon, khoaCotLonTuNhan } from '../lib/sxGopCot';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
@@ -15,9 +17,51 @@ const COLORS = ['#f97316', '#ea580c', '#d97706', '#fb923c', '#0f766e', '#3B82F6'
 const ICONS = ['📦', '🚚', '🔧', '🤝', '📋', '✅', '🎯', '⏳'];
 
 const SETTINGS_TABS = [
-  { id: 'stages', label: 'Giai đoạn', Icon: ListChecks },
+  { id: 'gop', label: 'Cột chính', Icon: Layers },
+  { id: 'stages', label: 'Cột nhỏ', Icon: ListChecks },
   { id: 'handover', label: 'Bàn giao SX→VC', Icon: UserCircle },
 ];
+
+const VC_COT_LON_GOI_Y = ['Giao hàng', 'Lắp đặt', 'Bảo hành', 'Hoàn thành'];
+
+function FormThemCotNho({ mo, ten, setTen, busy, onMo, onHuy, onSubmit }) {
+  if (!mo) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onMo(); }}
+        className="w-full inline-flex items-center justify-center gap-1 rounded-md border border-dashed border-violet-300 bg-white px-2 py-1.5 text-[11px] font-semibold text-violet-700 hover:bg-violet-50 cursor-pointer"
+      >
+        <Plus className="h-3 w-3" /> Thêm cột nhỏ
+      </button>
+    );
+  }
+  return (
+    <form
+      onSubmit={(e) => { e.preventDefault(); e.stopPropagation(); onSubmit(); }}
+      className="flex items-center gap-1"
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      <input
+        autoFocus
+        value={ten}
+        onChange={(e) => setTen(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') { e.preventDefault(); onHuy(); }
+        }}
+        placeholder="Tên cột nhỏ"
+        className="min-w-0 flex-1 h-7 rounded-md border border-violet-300 bg-white px-1.5 text-[12px]"
+      />
+      <button
+        type="submit"
+        disabled={busy || !String(ten || '').trim()}
+        className="h-7 shrink-0 rounded-md bg-violet-600 px-2 text-[11px] font-semibold text-white hover:bg-violet-700 disabled:opacity-50 cursor-pointer inline-flex items-center"
+      >
+        {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Thêm'}
+      </button>
+    </form>
+  );
+}
 
 function PipelineMiniFlowBar({ stages, className = '' }) {
   const list = (stages || []).filter((s) => s.is_active !== false);
@@ -59,8 +103,30 @@ function StageBadges({ stage }) {
   if (s.is_temp_install_staging) {
     badges.push({ key: 'temp', cls: 'bg-fuchsia-50 text-fuchsia-800 border-fuchsia-200', text: '🔧 Lắp đặt tạm' });
   }
+  if (s.clears_deadline) {
+    badges.push({ key: 'no-dl', cls: 'bg-slate-100 text-slate-700 border-slate-300', text: 'Tắt hạn' });
+  }
+  if (s.dashboard_kpi === 'shipping') {
+    badges.push({ key: 'kpi-ship', cls: 'bg-orange-50 text-orange-800 border-orange-200', text: '🚚 Đang VC' });
+  }
+  if (s.dashboard_kpi === 'installing') {
+    badges.push({ key: 'kpi-ins', cls: 'bg-amber-50 text-amber-800 border-amber-200', text: '🔧 Đang LĐ' });
+  }
+  if (s.dashboard_kpi === 'warranty') {
+    badges.push({ key: 'kpi-wh', cls: 'bg-teal-50 text-teal-800 border-teal-200', text: '🛡 BH' });
+  }
+  if (s.dashboard_kpi === 'completed') {
+    badges.push({ key: 'kpi-done', cls: 'bg-green-50 text-green-800 border-green-200', text: '✅ Xong' });
+  }
   if (s.progress_percent != null && s.progress_percent !== '') {
     badges.push({ key: 'pct', cls: 'bg-violet-50 text-violet-700 border-violet-200', text: `${s.progress_percent}%` });
+  }
+  if (String(s.group_key || '').trim()) {
+    badges.push({
+      key: 'gop',
+      cls: 'bg-violet-100 text-violet-800 border-violet-300',
+      text: `Cột chính · ${nhanCotLon(s.group_key) || s.group_key}`,
+    });
   }
   if (!s.is_active) {
     badges.push({ key: 'hidden', cls: 'bg-orange-50 text-orange-700 border-orange-200', text: 'Ẩn' });
@@ -95,13 +161,24 @@ export default function LogisticsPipelineSettingsPage() {
   const [settingsCompanyId, setSettingsCompanyId] = useState('');
   const [stages, setStages] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('stages');
+  const [activeTab, setActiveTab] = useState('gop');
   const [adding, setAdding] = useState(false);
   const [saving, setSaving] = useState(false);
   const [reorderBusy, setReorderBusy] = useState(false);
   const [editId, setEditId] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
   const [dragOverId, setDragOverId] = useState(null);
+  const [gopThemNhoKey, setGopThemNhoKey] = useState('');
+  const [gopThemNhoTen, setGopThemNhoTen] = useState('');
+  const [gopThemNhoBusy, setGopThemNhoBusy] = useState(false);
+  const [gopThemTen, setGopThemTen] = useState('');
+  const [gopOverKey, setGopOverKey] = useState(null);
+  const [gopOverNhoId, setGopOverNhoId] = useState(null);
+  const [gopOverNhoViTri, setGopOverNhoViTri] = useState('truoc');
+  const [gopDragKey, setGopDragKey] = useState(null);
+  const [keoCotNhoId, setKeoCotNhoId] = useState(null);
+  const keoPayloadRef = useRef(null);
+  const vuaKeoRef = useRef(0);
   const [handoverLoading, setHandoverLoading] = useState(false);
   const [handoverSaving, setHandoverSaving] = useState(false);
   const [handoverUsers, setHandoverUsers] = useState([]);
@@ -117,6 +194,8 @@ export default function LogisticsPipelineSettingsPage() {
     crm_target_stage_id: '',
     progress_percent: '',
     is_temp_install_staging: false,
+    clears_deadline: false,
+    dashboard_kpi: '',
   });
 
   const settingsCompanyLabel = useMemo(() => {
@@ -242,6 +321,8 @@ export default function LogisticsPipelineSettingsPage() {
       crm_target_stage_id: '',
       progress_percent: '',
       is_temp_install_staging: false,
+      clears_deadline: false,
+      dashboard_kpi: '',
     });
   };
 
@@ -257,7 +338,33 @@ export default function LogisticsPipelineSettingsPage() {
       crm_target_stage_id: stage.crm_target_stage_id || '',
       progress_percent: stage.progress_percent ?? '',
       is_temp_install_staging: !!stage.is_temp_install_staging,
+      clears_deadline: !!stage.clears_deadline,
+      dashboard_kpi: stage.dashboard_kpi || '',
     });
+  };
+
+  const patchStageLocal = (id, patch) => {
+    setStages((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)));
+  };
+
+  const saveStageFlags = async (stage, patch) => {
+    const rollback = {};
+    for (const k of Object.keys(patch)) rollback[k] = stage[k];
+    patchStageLocal(stage.id, patch);
+    try {
+      const { data } = await api.put(`/logistics/pipeline-stages/${stage.id}`, patch);
+      if (data && typeof data === 'object') {
+        const synced = {};
+        for (const k of Object.keys(patch)) {
+          if (data[k] !== undefined) synced[k] = data[k];
+        }
+        if (Object.keys(synced).length) patchStageLocal(stage.id, synced);
+      }
+    } catch (e) {
+      patchStageLocal(stage.id, rollback);
+      throw e;
+    }
+    return true;
   };
 
   const saveNew = async () => {
@@ -275,6 +382,8 @@ export default function LogisticsPipelineSettingsPage() {
         crm_sync_type: hardTarget ? null : (form.crm_sync_type || null),
         crm_target_stage_id: hardTarget,
         is_temp_install_staging: !!form.is_temp_install_staging,
+        clears_deadline: !!form.clears_deadline,
+        dashboard_kpi: form.dashboard_kpi || null,
         bucket_slug: null,
         company_id: settingsCompanyId,
       });
@@ -303,6 +412,8 @@ export default function LogisticsPipelineSettingsPage() {
         crm_sync_type: intakeRow || hardTarget ? null : (form.crm_sync_type || null),
         crm_target_stage_id: hardTarget,
         is_temp_install_staging: intakeRow ? false : !!form.is_temp_install_staging,
+        clears_deadline: intakeRow ? false : !!form.clears_deadline,
+        dashboard_kpi: intakeRow ? null : (form.dashboard_kpi || null),
       });
       setEditId(null);
       setAdding(false);
@@ -330,8 +441,7 @@ export default function LogisticsPipelineSettingsPage() {
 
   const toggleActive = async (stage) => {
     try {
-      await api.put(`/logistics/pipeline-stages/${stage.id}`, { is_active: !stage.is_active });
-      await load({ silent: true });
+      await saveStageFlags(stage, { is_active: stage.is_active === false });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật');
     }
@@ -341,11 +451,10 @@ export default function LogisticsPipelineSettingsPage() {
     const isOn = String(stage.bucket_slug || '').toLowerCase().includes('install')
       || isInstallVcStage(stage);
     try {
-      await api.put(`/logistics/pipeline-stages/${stage.id}`, {
+      await saveStageFlags(stage, {
         bucket_slug: isOn ? null : 'installation',
         is_handover_to_install: false,
       });
-      await load({ silent: true });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật cột Lắp đặt');
     }
@@ -355,12 +464,13 @@ export default function LogisticsPipelineSettingsPage() {
     if (stage.bucket_slug === INTAKE) {
       return alert('Cột tiếp nhận là nơi dự án vào khi bàn giao thật — không dùng làm cột lắp đặt tạm.');
     }
-    const turningOn = !stage.is_temp_install_staging;
     try {
-      await api.put(`/logistics/pipeline-stages/${stage.id}`, {
-        is_temp_install_staging: turningOn,
-      });
-      await load({ silent: true });
+      await saveStageFlags(stage, { is_temp_install_staging: !stage.is_temp_install_staging });
+      if (!stage.is_temp_install_staging) {
+        setStages((prev) => prev.map((s) => (
+          String(s.id) === String(stage.id) ? s : { ...s, is_temp_install_staging: false }
+        )));
+      }
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật cột lắp đặt tạm');
     }
@@ -372,33 +482,61 @@ export default function LogisticsPipelineSettingsPage() {
       return alert('Cột Lắp đặt không cần cờ «Chuyển LĐ» — chỉ gắn trên cột trước Lắp đặt.');
     }
     try {
-      await api.put(`/logistics/pipeline-stages/${stage.id}`, {
-        is_handover_to_install: !stage.is_handover_to_install,
-      });
-      await load({ silent: true });
+      await saveStageFlags(stage, { is_handover_to_install: !stage.is_handover_to_install });
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật chuyển LĐ');
     }
   };
 
-  const persistStagesReorder = async (newList) => {
-    if (reorderBusy) return;
-    const reorder = newList.map((s, i) => ({ id: s.id, order_index: i + 1 }));
+  const toggleClearsDeadlineColumn = async (stage) => {
+    try {
+      await saveStageFlags(stage, { clears_deadline: !stage.clears_deadline });
+    } catch (e) {
+      const msg = e.response?.data?.error || e.message || 'Lỗi';
+      alert(msg.includes('clears_deadline') || msg.includes('631')
+        ? 'Chưa chạy migration 631 (cột Tắt hạn).'
+        : msg);
+    }
+  };
+
+  const toggleDashboardKpiColumn = async (stage, key) => {
+    try {
+      const next = stage.dashboard_kpi === key ? null : key;
+      await saveStageFlags(stage, { dashboard_kpi: next });
+    } catch (e) {
+      const msg = e.response?.data?.error || e.message || 'Lỗi';
+      alert(msg.includes('dashboard_kpi') || msg.includes('631')
+        ? 'Chưa chạy migration 631 (cột KPI Dashboard).'
+        : msg);
+    }
+  };
+
+  const persistStageOrderPatch = async (patch) => {
+    if (reorderBusy || !patch.length) return;
     const prevStages = stages;
-    const orderMap = new Map(newList.map((s, i) => [String(s.id), i + 1]));
+    const byId = new Map(patch.map((p) => [String(p.id), p]));
     setReorderBusy(true);
     setStages((prev) => prev.map((s) => {
-      const nextOrder = orderMap.get(String(s.id));
-      return nextOrder != null ? { ...s, order_index: nextOrder } : s;
+      const hit = byId.get(String(s.id));
+      if (!hit) return s;
+      return {
+        ...s,
+        ...(hit.order_index != null && hit.order_index !== '' ? { order_index: hit.order_index } : {}),
+        ...(hit.group_sort !== undefined ? { group_sort: hit.group_sort } : {}),
+      };
     }));
     try {
-      await api.put('/logistics/pipeline-stages-reorder', { stages: reorder });
+      await api.put('/logistics/pipeline-stages-reorder', { stages: patch });
     } catch (err) {
       setStages(prevStages);
       alert('Lỗi sắp xếp: ' + (err.response?.data?.error || err.message));
     } finally {
       setReorderBusy(false);
     }
+  };
+
+  const persistStagesReorder = async (newList) => {
+    await persistStageOrderPatch(newList.map((s, i) => ({ id: s.id, order_index: i + 1 })));
   };
 
   const moveStage = async (stage, dir) => {
@@ -546,6 +684,42 @@ export default function LogisticsPipelineSettingsPage() {
           </label>
         )}
         {!editingIntake && (
+          <div className="space-y-1.5 p-2.5 rounded-lg bg-orange-50 border border-orange-200">
+            <p className="text-[10px] font-semibold text-orange-900">Ô Dashboard</p>
+            <label className="flex items-center gap-2 text-[11px] cursor-pointer">
+              <input
+                type="radio"
+                name="dashboard_kpi"
+                checked={!form.dashboard_kpi}
+                onChange={() => setForm((f) => ({ ...f, dashboard_kpi: '' }))}
+                className="border-gray-300"
+              />
+              Tự suy
+            </label>
+            {VC_DASHBOARD_KPI_TICKS.map((t) => (
+              <label key={t.key} className="flex items-center gap-2 text-[11px] cursor-pointer">
+                <input
+                  type="radio"
+                  name="dashboard_kpi"
+                  checked={form.dashboard_kpi === t.key}
+                  onChange={() => setForm((f) => ({ ...f, dashboard_kpi: t.key }))}
+                  className="border-gray-300"
+                />
+                {t.label}
+              </label>
+            ))}
+            <label className="flex items-center gap-2 text-[11px] cursor-pointer pt-1 border-t border-orange-100">
+              <input
+                type="checkbox"
+                checked={!!form.clears_deadline}
+                onChange={(e) => setForm((f) => ({ ...f, clears_deadline: e.target.checked }))}
+                className="rounded border-gray-300"
+              />
+              Tắt hạn — cột không đếm quá hạn
+            </label>
+          </div>
+        )}
+        {!editingIntake && (
           <div className="space-y-1.5 p-2.5 rounded-lg bg-blue-50 border border-blue-200">
             <label className="text-[10px] font-semibold text-blue-800 block">
               Trigger CRM khi project vào cột
@@ -594,6 +768,526 @@ export default function LogisticsPipelineSettingsPage() {
     );
   };
 
+  const cotLonDaCo = useMemo(() => (
+    gomCotTheoNhom(sorted)
+      .filter((g) => !g.riengLe)
+      .map((g) => ({ key: g.key, ds: g.cotNho }))
+  ), [sorted]);
+
+  const cotNhoChuaGan = useMemo(
+    () => sorted.filter((st) => st.bucket_slug !== INTAKE && !String(st.group_key || '').trim()),
+    [sorted],
+  );
+
+  const xayDanhSachCotNhoTheoCotChinh = (allStages, groups) => {
+    const used = new Set();
+    const out = [];
+    const take = (st) => {
+      const id = String(st?.id || '');
+      if (!id || used.has(id)) return;
+      used.add(id);
+      out.push(st);
+    };
+    const byOrder = (a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0);
+    [...(allStages || [])].filter((s) => s.bucket_slug === INTAKE).sort(byOrder).forEach(take);
+    (groups || []).forEach((g) => (g.ds || []).forEach(take));
+    [...(allStages || [])].filter((s) => !used.has(String(s.id))).sort(byOrder).forEach(take);
+    return out;
+  };
+
+  const datCotLon = async (stageId, ten) => {
+    const nhap = String(ten || '').trim();
+    const nhom = cotLonDaCo.find((g) => g.key === nhap || (nhanCotLon(g.key) || g.key) === nhap);
+    const moi = nhom ? nhom.key : khoaCotLonTuNhan(nhap);
+    const sorts = nhom
+      ? nhom.ds.map((x) => Number(x.group_sort)).filter((n) => Number.isFinite(n) && n > 0)
+      : [];
+    const group_sort = sorts.length ? Math.min(...sorts) : null;
+    setStages((prev) => prev.map((x) => (
+      String(x.id) === String(stageId)
+        ? { ...x, group_key: moi || null, group_sort: moi ? group_sort : null }
+        : x
+    )));
+    try {
+      await api.put(`/logistics/pipeline-stages/${stageId}`, {
+        group_key: moi || null,
+        group_sort: moi ? group_sort : null,
+      });
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không lưu được cột lớn');
+      await load({ silent: true });
+    }
+  };
+
+  const persistCotLonOrder = async (nextGroups) => {
+    if (reorderBusy) return;
+    const newList = xayDanhSachCotNhoTheoCotChinh(stages, nextGroups);
+    const byId = new Map();
+    newList.forEach((s, i) => byId.set(String(s.id), { id: s.id, order_index: i + 1 }));
+    nextGroups.forEach((g, i) => {
+      (g.ds || []).forEach((st) => {
+        const cur = byId.get(String(st.id)) || { id: st.id };
+        byId.set(String(st.id), { ...cur, group_sort: i + 1 });
+      });
+    });
+    await persistStageOrderPatch([...byId.values()]);
+  };
+
+  const luuTenCotLon = async (key, ds, tenMoi) => {
+    const cu = nhanCotLon(key) || key;
+    const moi = String(tenMoi || '').trim();
+    if (!moi || moi === key || moi === cu) return;
+    try {
+      await Promise.all(ds.map((st) => api.put(`/logistics/pipeline-stages/${st.id}`, { group_key: moi })));
+      await load({ silent: true });
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không đổi được tên cột lớn');
+      await load({ silent: true });
+    }
+  };
+
+  const boCotLon = async (key, ds) => {
+    const ten = nhanCotLon(key) || key;
+    if (!window.confirm(`Tách ${ds.length} cột nhỏ ra khỏi «${ten}»?\n\nỞ chế độ Gộp cột trên Kanban, chúng sẽ hiện thành từng cột riêng.`)) return;
+    try {
+      await Promise.all(ds.map((st) => api.put(`/logistics/pipeline-stages/${st.id}`, { group_key: null })));
+      await load({ silent: true });
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không tách được cột lớn');
+    }
+  };
+
+  const taoCotNhoTrongCotLon = async (tenCotLon) => {
+    const ten = String(gopThemNhoTen || '').trim();
+    if (!ten) {
+      alert('Nhập tên cột nhỏ');
+      return;
+    }
+    if (!settingsCompanyId) {
+      alert('Chọn công ty trước');
+      return;
+    }
+    const nhom = cotLonDaCo.find((g) => g.key === tenCotLon || (nhanCotLon(g.key) || g.key) === tenCotLon);
+    const moi = nhom ? nhom.key : khoaCotLonTuNhan(tenCotLon);
+    let group_sort;
+    if (nhom) {
+      const sorts = nhom.ds.map((x) => Number(x.group_sort)).filter((n) => Number.isFinite(n) && n > 0);
+      group_sort = sorts.length ? Math.min(...sorts) : cotLonDaCo.length + 1;
+    } else {
+      const sorts = cotLonDaCo.flatMap((g) => (
+        g.ds.map((x) => Number(x.group_sort)).filter((n) => Number.isFinite(n) && n > 0)
+      ));
+      group_sort = (sorts.length ? Math.max(...sorts) : cotLonDaCo.length) + 1;
+    }
+    const mau = nhom?.ds?.[0];
+    setGopThemNhoBusy(true);
+    try {
+      await api.post('/logistics/pipeline-stages', {
+        name: ten,
+        color: mau?.color || COLORS[stages.length % COLORS.length],
+        icon: ICONS[stages.length % ICONS.length],
+        company_id: settingsCompanyId,
+        group_key: moi,
+        group_sort,
+        is_active: true,
+      });
+      setGopThemNhoTen('');
+      setGopThemNhoKey('');
+      if (gopThemTen && moi === khoaCotLonTuNhan(gopThemTen)) setGopThemTen('');
+      await load({ silent: true });
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không tạo được cột nhỏ');
+    } finally {
+      setGopThemNhoBusy(false);
+    }
+  };
+
+  const docKeoPayload = (e) => {
+    let raw = '';
+    try { raw = String(e?.dataTransfer?.getData('text/plain') || ''); } catch { raw = ''; }
+    if (raw.startsWith('nho:')) return { loai: 'nho', id: raw.slice(4) };
+    if (raw.startsWith('lon:')) return { loai: 'lon', id: raw.slice(4) };
+    const fromRef = keoPayloadRef.current;
+    if (fromRef?.loai && fromRef.id) return fromRef;
+    if (!raw) return null;
+    const laCotNho = sorted.some((x) => String(x.id) === String(raw));
+    return { loai: laCotNho ? 'nho' : 'lon', id: raw };
+  };
+
+  const batDauKeoCotNho = (e, st) => {
+    if (st.bucket_slug === INTAKE) {
+      e.preventDefault();
+      return;
+    }
+    const payload = { loai: 'nho', id: String(st.id) };
+    keoPayloadRef.current = payload;
+    vuaKeoRef.current = false;
+    setKeoCotNhoId(String(st.id));
+    setGopDragKey(null);
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', `nho:${st.id}`); } catch { /* ignore */ }
+  };
+
+  const ketThucKeo = () => {
+    vuaKeoRef.current = Date.now();
+    window.setTimeout(() => {
+      keoPayloadRef.current = null;
+      setKeoCotNhoId(null);
+      setGopDragKey(null);
+      setGopOverKey(null);
+      setGopOverNhoId(null);
+    }, 0);
+  };
+
+  const viTriThaCotNho = (e) => {
+    const el = e.currentTarget;
+    if (!el?.getBoundingClientRect) return 'truoc';
+    const rect = el.getBoundingClientRect();
+    return (e.clientY - rect.top) < rect.height / 2 ? 'truoc' : 'sau';
+  };
+
+  const choPhepTha = (e, tenCotLon) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    if (tenCotLon && gopOverKey !== tenCotLon) setGopOverKey(tenCotLon);
+  };
+
+  const choPhepThaCotNho = (e, st) => {
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = 'move';
+    if (String(keoCotNhoId) === String(st.id)) return;
+    const viTri = viTriThaCotNho(e);
+    if (gopOverNhoId !== st.id) setGopOverNhoId(st.id);
+    if (gopOverNhoViTri !== viTri) setGopOverNhoViTri(viTri);
+    const key = String(st.group_key || '').trim();
+    if (key && gopOverKey !== key) setGopOverKey(key);
+  };
+
+  const datCotNhoVaoHang = async (sourceId, targetSt, viTri) => {
+    if (reorderBusy) return;
+    const srcId = String(sourceId || '');
+    const targetKey = String(targetSt?.group_key || '').trim();
+    if (!srcId || !targetKey || srcId === String(targetSt.id)) return;
+
+    const list = [...stages].sort((a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0));
+    const moved = list.find((s) => String(s.id) === srcId);
+    if (!moved || moved.bucket_slug === INTAKE || targetSt.bucket_slug === INTAKE) return;
+
+    const sourceKey = String(moved.group_key || '').trim();
+    const members = list.filter((s) => (
+      String(s.group_key || '').trim() === targetKey && String(s.id) !== srcId
+    ));
+    const tIdx = members.findIndex((s) => String(s.id) === String(targetSt.id));
+    const insertAt = tIdx < 0 ? members.length : (viTri === 'sau' ? tIdx + 1 : tIdx);
+    members.splice(insertAt, 0, { ...moved, group_key: targetKey });
+
+    const groups = cotLonDaCo.map((g) => {
+      if (g.key === targetKey) return { ...g, ds: members };
+      if (sourceKey && g.key === sourceKey) {
+        return { ...g, ds: g.ds.filter((s) => String(s.id) !== srcId) };
+      }
+      return g;
+    });
+    const stagesForFlatten = sourceKey === targetKey
+      ? stages
+      : stages.map((s) => (String(s.id) === srcId ? { ...s, group_key: targetKey } : s));
+    if (sourceKey !== targetKey) await datCotLon(srcId, targetKey);
+    await persistStagesReorder(xayDanhSachCotNhoTheoCotChinh(stagesForFlatten, groups));
+  };
+
+  const thaVaoCotNho = async (e, targetSt) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const viTri = viTriThaCotNho(e);
+    const payload = docKeoPayload(e);
+    setGopOverNhoId(null);
+    setGopOverKey(null);
+    if (!payload || payload.loai !== 'nho' || !targetSt) return;
+    keoPayloadRef.current = null;
+    setKeoCotNhoId(null);
+    vuaKeoRef.current = Date.now();
+    await datCotNhoVaoHang(payload.id, targetSt, viTri);
+  };
+
+  const thaVaoCotChinh = async (e, tenCotLon) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const payload = docKeoPayload(e);
+    setGopOverKey(null);
+    if (!payload || !tenCotLon) return;
+    if (payload.loai === 'lon') {
+      const fromKey = payload.id;
+      keoPayloadRef.current = null;
+      setGopDragKey(null);
+      if (fromKey && fromKey !== tenCotLon) {
+        const list = [...cotLonDaCo];
+        const fromIdx = list.findIndex((x) => x.key === fromKey);
+        const toIdx = list.findIndex((x) => x.key === tenCotLon);
+        if (fromIdx >= 0 && toIdx >= 0 && fromIdx !== toIdx) {
+          const next = [...list];
+          const [moved] = next.splice(fromIdx, 1);
+          next.splice(toIdx, 0, moved);
+          await persistCotLonOrder(next);
+        }
+      }
+      return;
+    }
+    const id = payload.id;
+    keoPayloadRef.current = null;
+    setKeoCotNhoId(null);
+    vuaKeoRef.current = Date.now();
+    if (!id) return;
+    const st = sorted.find((x) => String(x.id) === String(id));
+    if (!st || st.bucket_slug === INTAKE) return;
+    if (String(st.group_key || '').trim() === String(tenCotLon)) return;
+    await datCotLon(id, tenCotLon);
+  };
+
+  const bamSauKhiKeo = (fn) => {
+    const t = Number(vuaKeoRef.current) || 0;
+    if (t && Date.now() - t < 400) return;
+    fn();
+  };
+
+  const renderGopPanel = () => (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="space-y-1">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-violet-800 inline-flex items-center gap-1.5">
+            <Layers className="h-3.5 w-3.5" />
+            Cột chính trên Dashboard VC/LĐ
+          </p>
+          <p className="text-[12px] text-gray-600">
+            Mỗi thẻ = một giai đoạn nối tiếp. Cột nhỏ bên trong chạy song song.
+            Kéo cột nhỏ lên xuống trong thẻ để đổi thứ tự. Kéo sang thẻ khác để gán.
+          </p>
+        </div>
+      </div>
+
+      <div className="flex gap-3 overflow-x-auto pb-2 pt-1 snap-x">
+        {cotLonDaCo.map((g, gi) => {
+          const tenHien = nhanCotLon(g.key) || g.key;
+          const dangKeoNho = Boolean(keoCotNhoId || keoPayloadRef.current?.loai === 'nho');
+          const isOver = (gopOverKey === g.key && ((gopDragKey && gopDragKey !== g.key) || dangKeoNho));
+          return (
+            <div
+              key={g.key}
+              onDragOver={(e) => choPhepTha(e, g.key)}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget) && gopOverKey === g.key) {
+                  setGopOverKey(null);
+                }
+              }}
+              onDrop={(e) => thaVaoCotChinh(e, g.key)}
+              className={`snap-start w-[240px] shrink-0 rounded-xl border bg-white shadow-sm flex flex-col max-h-[28rem] ${
+                isOver ? 'border-violet-500 ring-2 ring-violet-200' : 'border-violet-200'
+              } ${gopDragKey === g.key ? 'opacity-60' : ''}`}
+            >
+              <div className="flex items-center gap-1 px-2 pt-2 pb-1">
+                <span
+                  draggable={!reorderBusy}
+                  onDragStart={(e) => {
+                    keoPayloadRef.current = { loai: 'lon', id: g.key };
+                    setGopDragKey(g.key);
+                    setKeoCotNhoId(null);
+                    e.dataTransfer.effectAllowed = 'move';
+                    try { e.dataTransfer.setData('text/plain', `lon:${g.key}`); } catch { /* ignore */ }
+                  }}
+                  onDragEnd={ketThucKeo}
+                  title="Kéo để đổi thứ tự cột chính"
+                  className="inline-flex h-7 w-5 shrink-0 cursor-grab items-center justify-center rounded text-violet-400 hover:bg-violet-50 active:cursor-grabbing"
+                >
+                  <GripVertical className="h-4 w-4" />
+                </span>
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-600 text-[11px] font-bold text-white">
+                  {gi + 1}
+                </span>
+                <input
+                  defaultValue={tenHien}
+                  key={`${g.key}:${tenHien}`}
+                  onBlur={(e) => { luuTenCotLon(g.key, g.ds, e.target.value); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                  className="min-w-0 flex-1 rounded-md border border-violet-200 bg-violet-50/50 px-1.5 h-7 text-[13px] font-bold text-violet-950"
+                  title="Tên cột chính — Enter để lưu"
+                />
+              </div>
+              <p className="px-3 text-[10px] text-violet-500">
+                {g.ds.length} cột nhỏ{g.ds.length > 1 ? ' · song song' : ''}
+              </p>
+              <div
+                className="flex-1 overflow-y-auto px-2 py-1.5 space-y-1 min-h-[6rem]"
+                onDragOver={(e) => choPhepTha(e, g.key)}
+                onDrop={(e) => thaVaoCotChinh(e, g.key)}
+              >
+                {g.ds.map((st) => {
+                  const dangKeoDong = String(keoCotNhoId) === String(st.id);
+                  const dangThaDong = String(gopOverNhoId) === String(st.id) && !dangKeoDong;
+                  return (
+                    <div
+                      key={st.id}
+                      onDragOver={(e) => choPhepThaCotNho(e, st)}
+                      onDragLeave={(e) => {
+                        if (!e.currentTarget.contains(e.relatedTarget) && String(gopOverNhoId) === String(st.id)) {
+                          setGopOverNhoId(null);
+                        }
+                      }}
+                      onDrop={(e) => thaVaoCotNho(e, st)}
+                      className={`flex items-center gap-0.5 rounded-md border ${
+                        dangKeoDong
+                          ? 'border-violet-400 bg-violet-100 opacity-70'
+                          : dangThaDong
+                            ? `border-violet-400 bg-violet-50 ${gopOverNhoViTri === 'sau' ? 'border-b-[3px] border-b-violet-600' : 'border-t-[3px] border-t-violet-600'}`
+                            : 'border-gray-100 bg-slate-50 hover:border-violet-300 hover:bg-violet-50'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        draggable={!reorderBusy}
+                        onDragStart={(e) => batDauKeoCotNho(e, st)}
+                        onDragEnd={ketThucKeo}
+                        onClick={() => bamSauKhiKeo(() => requestEdit(st))}
+                        className="min-w-0 flex-1 text-left px-2 py-1.5 text-[12px] font-medium text-gray-800 cursor-grab active:cursor-grabbing"
+                        title="Kéo lên xuống để đổi thứ tự, hoặc sang cột chính khác"
+                      >
+                        <span className="mr-1">{st.icon || '📋'}</span>
+                        {st.name}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); requestEdit(st); }}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="shrink-0 mr-0.5 h-7 px-1.5 rounded text-[10px] font-semibold text-violet-700 hover:bg-white inline-flex items-center gap-0.5"
+                        title="Sửa cột nhỏ"
+                      >
+                        <Pencil className="h-3 w-3" />
+                        Sửa
+                      </button>
+                    </div>
+                  );
+                })}
+                {g.ds.length === 0 && gopThemNhoKey !== g.key && (
+                  <p className="text-[11px] text-gray-400 px-1 py-2 text-center pointer-events-none">Kéo cột nhỏ vào đây</p>
+                )}
+                <FormThemCotNho
+                  mo={gopThemNhoKey === g.key}
+                  ten={gopThemNhoTen}
+                  setTen={setGopThemNhoTen}
+                  busy={gopThemNhoBusy}
+                  onMo={() => { setGopThemNhoKey(g.key); setGopThemNhoTen(''); }}
+                  onHuy={() => { setGopThemNhoKey(''); setGopThemNhoTen(''); }}
+                  onSubmit={() => taoCotNhoTrongCotLon(g.key)}
+                />
+              </div>
+              <div className="border-t border-violet-100 px-2 py-1.5">
+                <button
+                  type="button"
+                  onClick={() => boCotLon(g.key, g.ds)}
+                  className="h-7 w-full rounded px-1.5 text-[11px] text-rose-500 hover:bg-rose-50 cursor-pointer"
+                >
+                  Tách
+                </button>
+              </div>
+            </div>
+          );
+        })}
+
+        <div
+          onDragOver={(e) => choPhepTha(e, '__moi__')}
+          onDrop={async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const ten = String(gopThemTen || '').trim() || window.prompt('Tên cột lớn mới:', '');
+            if (!ten) return;
+            const payload = docKeoPayload(e);
+            setGopOverKey(null);
+            if (payload?.loai === 'nho' && payload.id) {
+              await datCotLon(payload.id, ten);
+              setGopThemTen('');
+            }
+          }}
+          className={`snap-start w-[220px] shrink-0 rounded-xl border-2 border-dashed px-3 py-3 flex flex-col items-stretch gap-2 ${
+            gopOverKey === '__moi__' ? 'border-violet-500 bg-violet-100/70' : 'border-violet-300 bg-violet-50/40'
+          }`}
+        >
+          <p className="text-[13px] font-bold text-violet-800 inline-flex items-center gap-1">
+            <Plus className="h-4 w-4" /> Cột lớn mới
+          </p>
+          <input
+            value={gopThemTen}
+            onChange={(e) => setGopThemTen(e.target.value)}
+            placeholder="Tên cột lớn"
+            className="h-8 rounded-md border border-violet-200 bg-white px-2 text-[12px]"
+          />
+          <div className="flex flex-wrap gap-1">
+            {VC_COT_LON_GOI_Y.filter((t) => !cotLonDaCo.some((g) => (
+              (nhanCotLon(g.key) || g.key) === t || g.key === khoaCotLonTuNhan(t)
+            ))).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={() => setGopThemTen(t)}
+                className={`rounded-full border px-2 py-0.5 text-[10px] cursor-pointer ${
+                  String(gopThemTen || '').trim() === t
+                    ? 'border-violet-500 bg-violet-100 text-violet-900'
+                    : 'border-violet-200 bg-white text-violet-700 hover:bg-violet-50'
+                }`}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-violet-600 leading-snug">
+            Kéo cột nhỏ vào đây, hoặc thêm cột nhỏ mới.
+          </p>
+          <FormThemCotNho
+            mo={gopThemNhoKey === '__moi__'}
+            ten={gopThemNhoTen}
+            setTen={setGopThemNhoTen}
+            busy={gopThemNhoBusy}
+            onMo={() => { setGopThemNhoKey('__moi__'); setGopThemNhoTen(''); }}
+            onHuy={() => { setGopThemNhoKey(''); setGopThemNhoTen(''); }}
+            onSubmit={() => {
+              const ten = String(gopThemTen || '').trim();
+              if (!ten) {
+                alert('Nhập tên cột lớn trước');
+                return;
+              }
+              taoCotNhoTrongCotLon(ten);
+            }}
+          />
+        </div>
+      </div>
+
+      {cotNhoChuaGan.length > 0 && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+          <p className="text-[11px] font-bold uppercase tracking-wide text-slate-600 mb-1.5">
+            Cột nhỏ chưa gán — kéo vào một cột chính
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {cotNhoChuaGan.map((st) => (
+              <button
+                key={st.id}
+                type="button"
+                draggable={!reorderBusy}
+                onDragStart={(e) => batDauKeoCotNho(e, st)}
+                onDragEnd={ketThucKeo}
+                onClick={() => bamSauKhiKeo(() => requestEdit(st))}
+                className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[12px] font-medium text-slate-800 cursor-grab hover:border-violet-300"
+              >
+                <span>{st.icon || '📋'}</span>
+                {st.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {(adding || editId) && renderStageForm()}
+    </div>
+  );
+
   const renderPipelinePanel = () => {
     const list = sorted;
 
@@ -609,7 +1303,7 @@ export default function LogisticsPipelineSettingsPage() {
                 <h2 className="text-xs font-semibold text-gray-900">
                   Pipeline Lắp đặt
                 </h2>
-                <p className="text-[10px] text-gray-400">{list.length} giai đoạn · một luồng Kanban</p>
+                <p className="text-[10px] text-gray-400">{list.length} cột nhỏ · một luồng Kanban</p>
               </div>
             </div>
             <button
@@ -715,7 +1409,7 @@ export default function LogisticsPipelineSettingsPage() {
                   </div>
                   <StageBadges stage={s} />
                 </div>
-                <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end max-w-[280px] border-l border-gray-200 pl-1.5 ml-1">
+                <div className="flex items-center gap-1 shrink-0 flex-wrap justify-end max-w-[min(100%,22rem)] border-l border-gray-200 pl-1.5 ml-1">
                   {!isIntake && (
                     <>
                       {!onInstallCol && (
@@ -747,6 +1441,36 @@ export default function LogisticsPipelineSettingsPage() {
                           : 'Bật để dự án nằm tạm ở cột này ngay khi Sale setup kế hoạch SX & VC/LĐ'}
                       >
                         LĐ tạm
+                      </button>
+                      {VC_DASHBOARD_KPI_TICKS.map((t) => (
+                        <button
+                          key={t.key}
+                          type="button"
+                          onClick={() => toggleDashboardKpiColumn(s, t.key)}
+                          className={pillBtn(
+                            s.dashboard_kpi === t.key,
+                            t.key === 'completed'
+                              ? 'bg-green-100 text-green-900 border-green-300'
+                              : t.key === 'warranty'
+                                ? 'bg-teal-100 text-teal-900 border-teal-300'
+                                : t.key === 'installing'
+                                  ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                  : 'bg-orange-100 text-orange-900 border-orange-300',
+                          )}
+                          title={t.title}
+                        >
+                          {t.label}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => toggleClearsDeadlineColumn(s)}
+                        className={pillBtn(!!s.clears_deadline, 'bg-slate-200 text-slate-900 border-slate-400')}
+                        title={s.clears_deadline
+                          ? 'Đang tắt hạn: cột không đếm quá hạn VC/LĐ'
+                          : 'Tắt hạn trên cột này — không hiện quá hạn'}
+                      >
+                        <Clock className="h-3 w-3" /> {s.clears_deadline ? 'Đã tắt hạn' : 'Tắt hạn'}
                       </button>
                     </>
                   )}
@@ -977,6 +1701,8 @@ export default function LogisticsPipelineSettingsPage() {
             <Loader2 className="w-6 h-6 animate-spin" />
             Đang tải giai đoạn…
           </div>
+        ) : activeTab === 'gop' ? (
+          renderGopPanel()
         ) : (
           renderPipelinePanel()
         )}

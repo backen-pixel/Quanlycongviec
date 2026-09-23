@@ -88,20 +88,18 @@ function sxStageOf(item) {
 }
 
 /**
- * SX đã giao / bàn giao VC: hết quá hạn sản xuất, bắt đầu quá hạn lắp (nếu có ngày lắp).
+ * SX đã giao / đã sang VC thật: hết hạn sản xuất, bắt đầu hạn lắp.
+ * Cột chờ bàn giao (is_handover_to_logistics) chưa giao — vẫn giữ hạn SX để hiện Quá hạn.
  */
 function isSxReleasedToInstall(item, sxStage) {
   if (!item) return false;
   if (projectLooksShippedForOverdue(item)) return true;
   const st = String(item.status || '');
-  if (['shipping', 'installing', 'warranty', 'completed'].includes(st)) return true;
+  if (['installing', 'warranty', 'completed'].includes(st)) return true;
   const col = sxStage || sxStageOf(item);
   if (isSxPipelineStageNoDeadline(col)) return true;
-  if (col?.is_handover_to_logistics) return true;
   const name = foldVi(col?.name);
-  return name.includes('da giao')
-    || name.includes('giao xong')
-    || name.includes('ban giao');
+  return name.includes('da giao') || name.includes('giao xong');
 }
 
 function isLogisticsFinalStage(stage) {
@@ -124,6 +122,8 @@ function isInstallDeadlineClosed(item, logisticsStage) {
   if (!item) return true;
   const st = String(item.status || '');
   if (st === 'completed' || st === 'warranty') return true;
+  if (logisticsStage?.clears_deadline) return true;
+  if (String(logisticsStage?.dashboard_kpi || '').trim() === 'completed') return true;
   if (isLogisticsFinalStage(logisticsStage)) return true;
   return isCrmStagePastInstallation(
     crmStageOf(item),
@@ -220,6 +220,7 @@ function resolveProductionDeadline(item, stage, opts = {}) {
   return candidate(item.sx_kanban_deadline_at, 'sx_kanban', item)
     || candidate(item.production_finish_date, 'production_finish', item)
     || candidate(item.production_deadline, 'production', item)
+    || candidate(item.delivery_date, 'delivery', item)
     || candidate(item.deadline, 'project', item);
 }
 

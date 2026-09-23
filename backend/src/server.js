@@ -455,6 +455,7 @@ app.use('/api/production', require('./routes/production'));
 try { app.use('/api/production/backup-sync', require('./routes/productionBackupSync')); } catch (e) { console.warn('⚠️ production backup-sync route failed:', e.message); }
 app.use('/api/logistics', require('./routes/logistics'));
 app.use('/api/accounting', require('./routes/accounting'));
+try { app.use('/api/cost-hub', require('./routes/costHub')); } catch (e) { console.warn('⚠️ Cost hub route failed:', e.message); }
 app.use('/api/workshop', require('./routes/workshopTypes'));
 app.use('/api/workshop-teams', require('./routes/workshopTeams'));
 try { app.use('/api/procurement', require('./routes/procurement')); } catch (e) { console.warn('⚠️ Procurement Lite route failed:', e.message); }

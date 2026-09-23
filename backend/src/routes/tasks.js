@@ -242,7 +242,17 @@ r.patch('/:id/status', async (req, res) => {
     if (update.status === 'done') update.completed_at = new Date().toISOString();
     if (update.status === 'in_progress') update.start_date = update.start_date || new Date().toISOString();
 
-    const { data: old } = await supabase.from('tasks').select('status,title,created_by_id,assignee_id').eq('id', req.params.id).single();
+    const { data: old } = await supabase.from('tasks').select('status,title,created_by_id,assignee_id,project_id,metadata').eq('id', req.params.id).single();
+
+    if (update.status === 'done' && old?.status !== 'done' && old?.project_id) {
+      try {
+        const { assertWorkshopTaskCostExcel } = require('../helpers/costLedger');
+        const check = await assertWorkshopTaskCostExcel(old);
+        if (!check.ok) return res.status(400).json({ error: check.error, code: 'cost_excel_required' });
+      } catch (excelErr) {
+        console.warn('[tasks] cost excel gate:', excelErr.message);
+      }
+    }
 
     const { data, error } = await supabase.from('tasks').update(update).eq('id', req.params.id).select().single();
     if (error) throw error;

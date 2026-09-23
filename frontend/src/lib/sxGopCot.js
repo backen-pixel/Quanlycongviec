@@ -1,8 +1,9 @@
 /**
- * Gộp / tách cột Kanban sản xuất.
+ * Gộp / tách cột Kanban sản xuất và VC/LĐ.
  *
  * Cột lớn = giai đoạn NỐI TIẾP, cột nhỏ bên trong = việc SONG SONG.
- * Nhóm lấy từ `production_pipeline_stages.group_key` (database/604).
+ * SX: `production_pipeline_stages.group_key` (database/604).
+ * VC: `logistics_pipeline_stages.group_key` (database/632).
  * Cột chưa gán group_key tự đứng riêng → công ty chưa cấu hình thấy bảng y như cũ.
  *
  * Không dựng giao diện riêng: chỉ biến đổi mảng pipeline rồi đưa vào đúng KanbanView,
@@ -11,7 +12,7 @@
 
 /**
  * Tên cột lớn: người dùng tự đặt ở trang Cài đặt pipeline — `group_key` CHÍNH LÀ tên hiển thị.
- * Bảng dưới chỉ để dịch đẹp mấy khoá slug có sẵn từ migration 604; khoá tự đặt hiện nguyên văn.
+ * Bảng dưới chỉ để dịch đẹp mấy khoá slug có sẵn; khoá tự đặt hiện nguyên văn.
  */
 export const SX_NHAN_COT_LON = {
   tiep_nhan: 'Tiếp nhận',
@@ -23,19 +24,28 @@ export const SX_NHAN_COT_LON = {
   cong_no: 'Công nợ',
 };
 
+export const VC_NHAN_COT_LON = {
+  giao_hang: 'Giao hàng',
+  lap_dat: 'Lắp đặt',
+  bao_hanh: 'Bảo hành',
+  hoan_thanh: 'Hoàn thành',
+};
+
+const NHAN_COT_LON = { ...SX_NHAN_COT_LON, ...VC_NHAN_COT_LON };
+
 /** Nhãn hiển thị của một cột lớn. Khoá `__rieng__…` là cột đứng một mình → không có nhãn. */
 export function nhanCotLon(key) {
   const k = String(key || '').trim();
   if (!k || k.startsWith('__rieng__')) return '';
-  return SX_NHAN_COT_LON[k] || k;
+  return NHAN_COT_LON[k] || k;
 }
 
 /** Đưa tên tiếng Việt về slug sẵn có (`Tiếp nhận` → `tiep_nhan`); tên tự đặt giữ nguyên. */
 export function khoaCotLonTuNhan(ten) {
   const t = String(ten || '').trim();
   if (!t) return '';
-  if (SX_NHAN_COT_LON[t]) return t;
-  const hit = Object.entries(SX_NHAN_COT_LON).find(([, v]) => v === t);
+  if (NHAN_COT_LON[t]) return t;
+  const hit = Object.entries(NHAN_COT_LON).find(([, v]) => v === t);
   return hit ? hit[0] : t;
 }
 
@@ -99,17 +109,18 @@ export function gomCotTheoNhom(pipeline) {
     }
     nhom[chiMuc.get(key)].cotNho.push(stage);
   });
-  return sapXepNhomCotLon(nhom.map((g) => ({
-    ...g,
-    nhan: nhanCotLon(g.key) || g.cotNho[0]?.name || 'Khác',
-    riengLe: String(g.key || '').startsWith('__rieng__'),
-    chiMotCot: !String(g.key || '').startsWith('__rieng__') && g.cotNho.length === 1,
-    soDuAn: g.cotNho.reduce((a, c) => a + (c.items?.length || 0), 0),
-    // Xếp theo order_index NHỎ NHẤT chứ không theo thứ tự gặp: board Cánh kính có nhóm
-    // xen kẽ — «vệ sinh đóng gói» (cột 7) thuộc Hoàn thiện, «thu tiền» (cột 8) thuộc
-    // Công nợ — xếp theo thứ tự gặp sẽ ra sai giai đoạn.
-    moc: Math.min(...g.cotNho.map((c) => Number(c?.order_index ?? 9999))),
-  })));
+  return sapXepNhomCotLon(nhom.map((g) => {
+    const cotNho = [...g.cotNho].sort((a, b) => (Number(a?.order_index) || 0) - (Number(b?.order_index) || 0));
+    return {
+      ...g,
+      cotNho,
+      nhan: nhanCotLon(g.key) || cotNho[0]?.name || 'Khác',
+      riengLe: String(g.key || '').startsWith('__rieng__'),
+      chiMotCot: !String(g.key || '').startsWith('__rieng__') && cotNho.length === 1,
+      soDuAn: cotNho.reduce((a, c) => a + (c.items?.length || 0), 0),
+      moc: Math.min(...cotNho.map((c) => Number(c?.order_index ?? 9999))),
+    };
+  }));
 }
 
 /** Có đáng bật nút Gộp không — chỉ khi thật sự có nhóm nhiều hơn 1 cột. */
@@ -195,5 +206,28 @@ export function ghiSxGopCot(user, value) {
     const map = JSON.parse(localStorage.getItem(LS_SX_GOP_COT) || '{}') || {};
     map[String(user.id)] = !!value;
     localStorage.setItem(LS_SX_GOP_COT, JSON.stringify(map));
+  } catch { /* ignore */ }
+}
+
+const LS_VC_GOP_COT = 'vc_gop_cot_pref_v1';
+
+export function docVcGopCot(user) {
+  try {
+    if (user?.id) {
+      const map = JSON.parse(localStorage.getItem(LS_VC_GOP_COT) || '{}');
+      if (map && Object.prototype.hasOwnProperty.call(map, String(user.id))) {
+        return !!map[String(user.id)];
+      }
+    }
+  } catch { /* ignore */ }
+  return false;
+}
+
+export function ghiVcGopCot(user, value) {
+  if (!user?.id) return;
+  try {
+    const map = JSON.parse(localStorage.getItem(LS_VC_GOP_COT) || '{}') || {};
+    map[String(user.id)] = !!value;
+    localStorage.setItem(LS_VC_GOP_COT, JSON.stringify(map));
   } catch { /* ignore */ }
 }

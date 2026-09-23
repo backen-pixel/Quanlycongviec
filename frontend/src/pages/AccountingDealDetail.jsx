@@ -201,6 +201,8 @@ export default function AccountingDealDetail() {
   const [convertQuoteId, setConvertQuoteId] = useState(null);
   const [docStatusSavingId, setDocStatusSavingId] = useState(null);
 
+  const [costSummary, setCostSummary] = useState(null);
+
   const adminParams = useMemo(() => {
     if (isAccountingUser(user)) return {};
     const cid = user?.company_id || bundle?.client_company?.id;
@@ -241,6 +243,15 @@ export default function AccountingDealDetail() {
   const quotations = bundle?.quotations || [];
   const orders = bundle?.orders || [];
   const invoices = bundle?.invoices || [];
+
+  useEffect(() => {
+    if (!project?.id) { setCostSummary(null); return; }
+    let cancelled = false;
+    api.get(`/cost-hub/projects/${project.id}/summary`, { params: adminParams })
+      .then(({ data }) => { if (!cancelled) setCostSummary(data); })
+      .catch(() => { if (!cancelled) setCostSummary(null); });
+    return () => { cancelled = true; };
+  }, [project?.id, adminParams]);
 
   const docBlockData = { quotation: quotations, order: orders, invoice: invoices };
 
@@ -562,6 +573,37 @@ export default function AccountingDealDetail() {
           sub={`${invoices.length} hóa đơn`}
         />
       </div>
+
+      {costSummary && (
+        <div className="rounded-xl border border-teal-200 bg-teal-50/40 p-4">
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <p className="text-sm font-bold text-teal-900">Chi phí theo nguồn</p>
+            <Link to="/ketoan/chi-phi" className="text-xs font-semibold text-teal-700 hover:underline">Mở sổ chi phí</Link>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div>
+              <p className="text-[11px] uppercase text-gray-500 font-semibold">Giá vốn</p>
+              <p className="text-lg font-extrabold tabular-nums">{formatVND(costSummary.gia_von || 0)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase text-gray-500 font-semibold">Lợi nhuận gộp</p>
+              <p className={`text-lg font-extrabold tabular-nums ${(costSummary.loi_nhuan_gop || 0) < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{formatVND(costSummary.loi_nhuan_gop || 0)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase text-gray-500 font-semibold">Xưởng</p>
+              <p className="text-lg font-extrabold tabular-nums">{formatVND(costSummary.by_source?.['sx.production_value'] || 0)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase text-gray-500 font-semibold">Mua hàng + VC + COGS</p>
+              <p className="text-lg font-extrabold tabular-nums">{formatVND(
+                (costSummary.by_source?.['purchasing.po'] || 0)
+                + (costSummary.by_source?.['vc.shipping'] || 0)
+                + (costSummary.by_source?.['crm.product_cogs'] || 0)
+              )}</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 p-1 rounded-xl w-fit">

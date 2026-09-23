@@ -212,6 +212,8 @@ const HopCungDesignWizardPage = lazyWithRetry(() => import('./pages/calc/HopCung
 const AccountingDashboard = lazyWithRetry(() => import('./pages/AccountingDashboard'));
 const AccountingDealDetail = lazyWithRetry(() => import('./pages/AccountingDealDetail'));
 const AccountingBankAccountsPage = lazyWithRetry(() => import('./pages/AccountingBankAccountsPage'));
+const AccountingCostHubPage = lazyWithRetry(() => import('./pages/AccountingCostHubPage'));
+const AccountingCostSetupPage = lazyWithRetry(() => import('./pages/AccountingCostSetupPage'));
 const AccountingLayout = lazyWithRetry(() => import('./layouts/AccountingLayout'));
 const PurchasingLayout = lazyWithRetry(() => import('./layouts/PurchasingLayout'));
 const PurchasingInboxPage = lazyWithRetry(() => import('./pages/PurchasingInboxPage'));
@@ -486,6 +488,7 @@ export default function App() {
             <Route path="/management/shared-workspace-report" element={<SharedWorkspaceAssignmentsReportPage />} />
             <Route path="/management/project-logs" element={<Suspense fallback={<PageLoader />}><ProjectConstructionLogsPage /></Suspense>} />
             <Route path="/management/shared-workspace-settings" element={<RequireCrmElevated><SharedWorkspaceErrorTypesPage /></RequireCrmElevated>} />
+            <Route path="/management/cost-setup" element={<Suspense fallback={<PageLoader />}><AccountingCostSetupPage backTo="/management/work-unified" backLabel="Work Unified" /></Suspense>} />
             <Route path="/work/flows" element={<Suspense fallback={<PageLoader />}><ModuleFlowSetupPage /></Suspense>} />
             <Route path="/projects" element={<Navigate to="/management/work-unified" replace state={{ moduleContext: 'congviec' }} />} />
             <Route path="/projects/create" element={<CreateProject />} />
@@ -652,6 +655,8 @@ export default function App() {
             <Route path="/ketoan" element={<AccountingLayout />}>
               <Route index element={<Navigate to="dashboard" replace />} />
               <Route path="dashboard" element={<AccountingDashboard />} />
+              <Route path="chi-phi/setup" element={<AccountingCostSetupPage />} />
+              <Route path="chi-phi" element={<AccountingCostHubPage />} />
               <Route path="deals/:leadId" element={<AccountingDealDetail />} />
               <Route path="bank-accounts" element={<AccountingBankAccountsPage />} />
             </Route>

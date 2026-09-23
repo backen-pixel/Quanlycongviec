@@ -9,6 +9,7 @@ import {
   DEADLINE_MODULE,
   resolveEffectiveModuleDeadline,
 } from '../lib/moduleDeadlinePolicy';
+import { isVcPipelineStageNoDeadline } from '../lib/vcPipelineKpi';
 
 // ─── List View ───────────────────────────────────────────────────────────────
 export function LogisticsListView({ pipeline, calculateDays }) {
@@ -192,8 +193,8 @@ function startOfDay(d) {
 }
 
 /** Deadline VC/LĐ = ngày lắp (sự kiện lắp đặt / install_date), không dùng hạn SX. */
-export function resolveVcDeadlineRaw(item) {
-  const resolved = resolveEffectiveModuleDeadline(DEADLINE_MODULE.LOGISTICS, item);
+export function resolveVcDeadlineRaw(item, stage = null) {
+  const resolved = resolveEffectiveModuleDeadline(DEADLINE_MODULE.LOGISTICS, item, stage);
   return { raw: resolved.raw, source: resolved.source };
 }
 
@@ -227,8 +228,7 @@ function isoOnVcDateKey(ymd, sourceIso) {
 
 function shouldHideVcDeadlineCard(item, stage) {
   if (item?.status === 'completed') return true;
-  const slug = String(stage?.bucket_slug || stage?.slug || '').toLowerCase();
-  return slug === 'completed' || slug === 'done' || slug === 'install_completed';
+  return isVcPipelineStageNoDeadline(stage);
 }
 
 const VC_CAL_MODES = [

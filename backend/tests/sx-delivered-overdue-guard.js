@@ -31,6 +31,9 @@ for (const stage of deliveredStages) {
   }, stage), false);
 }
 
+assert.equal(isSxPipelineStageNoDeadline({ name: 'Tiếp nhận', clears_deadline: true }), true);
+assert.equal(isSxPipelineStageNoDeadline({ name: 'Tiếp nhận' }), false);
+
 for (const stage of [
   { name: 'Đang giao' },
   { name: 'Đóng gói chờ giao hàng' },
