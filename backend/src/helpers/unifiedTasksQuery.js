@@ -81,8 +81,8 @@ function resolveModuleKey(task) {
 function buildUnifiedTasksBaseQuery(user, {
   assignee_id, company_id, date_from, date_to, lead_id, assignee_lead_ids,
   status, task_kind, q: searchQ, open_only,
-} = {}) {
-  let q = supabase.from('unified_tasks_v').select('unified_id, task_kind, source, status, deadline, assignee_id, lead_id');
+} = {}, selectOptions = {}) {
+  let q = supabase.from('unified_tasks_v').select('unified_id, task_kind, source, status, deadline, assignee_id, lead_id', selectOptions);
 
   const effectiveCompany = company_id || (!isSystemAdmin(user) ? user?.company_id : null);
   if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
@@ -164,24 +164,28 @@ async function fetchUnifiedTasksSummary(user, opts = {}) {
   const assignee_lead_ids = opts.lead_id
     ? []
     : await resolveAssigneeLeadScope(opts.assignee_id, opts.company_id || (!isSystemAdmin(user) ? user?.company_id : null));
-  let q = buildUnifiedTasksBaseQuery(user, { ...opts, assignee_lead_ids });
+  let q = buildUnifiedTasksBaseQuery(user, { ...opts, assignee_lead_ids }, { count: 'exact' });
   q = q.limit(3000);
-  const { data, error } = await q;
+  const { data, error, count } = await q;
   if (error) throw error;
 
   const rows = data || [];
   const now = Date.now();
   const byModule = { crm: 0, production: 0, logistics: 0, assignment: 0, personal: 0, other: 0 };
-  const byStatus = { pending: 0, in_progress: 0, done: 0, other: 0 };
+  const byStatus = { pending: 0, in_progress: 0, done: 0, cancelled: 0, other: 0 };
   let open = 0;
   let overdue = 0;
   let done = 0;
+  let cancelled = 0;
   const countOpenOnly = opts.open_only === '1' || opts.open_only === true || opts.open_only === 'true';
 
   for (const t of rows) {
     const st = String(t.status || '').toLowerCase();
     const isDone = DONE_STATUSES.includes(st);
-    if (isDone) {
+    if (st === 'cancelled') {
+      cancelled += 1;
+      byStatus.cancelled += 1;
+    } else if (isDone) {
       done += 1;
       byStatus.done += 1;
     } else {
@@ -199,11 +203,29 @@ async function fetchUnifiedTasksSummary(user, opts = {}) {
     else byModule.other += 1;
   }
 
+  // Counts describe returned view rows, not distinct business tasks. A source
+  // row limit or a capped assignee scope must never imply full coverage.
+  const hasExactRowCount = Number.isSafeInteger(count) && count >= rows.length;
+  const usesAssigneeLeadScope = !opts.lead_id && !!opts.assignee_id;
+  const assigneeScopeMayBeCapped = usesAssigneeLeadScope
+    && assignee_lead_ids.length >= ASSIGNEE_LEAD_IDS_MAX;
+  const viewRowsMayBeCapped = hasExactRowCount ? count > rows.length : rows.length >= 3000;
+  // The lead lookup has no exact count; even fewer than 500 IDs may have
+  // been limited by the server. Only the explicit lead filter bypasses it.
+  const coverage = assigneeScopeMayBeCapped || viewRowsMayBeCapped ? 'PARTIAL'
+    : hasExactRowCount && !usesAssigneeLeadScope ? 'EXACT' : 'UNKNOWN';
   return {
     total: rows.length,
     open,
     overdue,
     done,
+    cancelled,
+    closed: done + cancelled,
+    coverage,
+    count_basis: 'UNIFIED_VIEW_ROWS',
+    count_relation: coverage === 'EXACT' ? 'eq' : coverage === 'PARTIAL' ? 'gte' : 'unknown',
+    source_total_rows: hasExactRowCount ? count : null,
+    assignee_scope_complete: assigneeScopeMayBeCapped ? false : null,
     by_module: byModule,
     by_status: byStatus,
   };
