@@ -6,14 +6,15 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).Path
 $deps = (Resolve-Path $DependencyBackend).Path
-$baseline = '34e2862469163a089372950289d834891d1a1daa'
+$baseline = '48b6735669d5b2b9e0544d87801d1504e1b75e22'
 $expected = [ordered]@{
-  'backend/src/routes/workTasks.js' = '8da9724f7a189d5e648a98a5704ec882d0a4165c8cae2ad3dcc40a5d2f5037a7'
-  'backend/src/helpers/unifiedTasksQuery.js' = 'f8c924497085306c6ba08d90027fa4e664a22f13c62eb45093430c6b90a01e41'
+  'backend/src/routes/workTasks.js' = 'e501e27641a89f76ce45252b08c1955f717b16145b7c016ff006699f1134f144'
+  'backend/src/helpers/unifiedTasksQuery.js' = '1b764006a1e544ea0f7e0f423ce06b2549838ab729af0e2e3729132d4e5671a2'
   'backend/src/middleware/auth.js' = '24e429610b942cd6ca16e376dfa2a9c86b8cc2df296ec36d0211754a00eabb6c'
   'backend/src/middleware/tenantGate.js' = '3f4d82161843c14f28c252bf54c14e074eb7908c829130eb2faeda17185d63cd'
   'backend/src/helpers/tenantScope.js' = '06eed21a0a751ec84a0e67ce8a6fb3b5a2c2178b2e93225ea39426a615fc7adf'
   'backend/src/helpers/adminRole.js' = '124c567eb16c99bcc9c2ebaa2a7c380b6ecf893b1af26a022c441225f51a9b43'
+  'backend/src/helpers/crmTaskAttachmentCounts.js' = '5ee2bcde741c41b72ea0c3e88be79eb3a9b4a8b6cfd4e07030d20a4b920920e6'
 }
 foreach ($f in $expected.Keys) {
   $actual = (Get-FileHash -Algorithm SHA256 (Join-Path $repo $f)).Hash.ToLower()
@@ -37,7 +38,7 @@ $meta = [ordered]@{
   repository_head=$head; repository_tree=$tree; branch=$branch; git_status=$status;
   repository_root=$repo; dependency_backend=$deps; started_at=[DateTime]::UtcNow.ToString('o');
   source_sha256=$expected; persistence='SYNTHETIC_HTTP_FIXTURE_NOT_SQL';
-  source_binding='Exact Windows file hashes of six candidate application modules; ancestry baseline is provenance only, current HEAD and working status are recorded';
+  source_binding='Exact Windows file hashes of seven candidate application modules; ancestry baseline is provenance only, current HEAD and working status are recorded';
   isolation='Fresh process environment; Node filesystem/child-process permissions; explicit VM imports and loopback HTTP origins. Not an OS network sandbox.'
 }
 [IO.File]::WriteAllText((Join-Path $out 'launch.json'), ($meta | ConvertTo-Json -Depth 8), $utf8)

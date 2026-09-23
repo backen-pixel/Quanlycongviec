@@ -41,14 +41,15 @@ async function fetchLeadIdsForAssignee(assigneeId, companyId, maxIds = ASSIGNEE_
 }
 
 /** Lead/deal options cho dropdown lọc — theo NV phụ trách. */
-async function fetchLeadOptionsForAssignee(assigneeId, companyId, maxRows = 300) {
-  if (!assigneeId) return [];
+async function fetchLeadOptionsForAssignee(assigneeId, companyId, maxRows = 300, tenantCompanyIds = null) {
+  if (!assigneeId || tenantCompanyIds?.length === 0) return [];
   let q = supabase.from('crm_leads')
     .select('id, title, type, code')
     .or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`)
     .order('updated_at', { ascending: false })
     .limit(maxRows);
   if (companyId) q = q.eq('company_id', companyId);
+  if (tenantCompanyIds !== null) q = q.in('company_id', tenantCompanyIds);
   const { data, error } = await q;
   if (error) throw error;
   return (data || []).map((r) => ({
@@ -68,6 +69,19 @@ function applyAssigneeFilter(q, assigneeId, leadIds = []) {
   return q.eq('assignee_id', assigneeId);
 }
 
+// A client company filter may narrow an unbound administrator's scope, but
+// cannot replace the company assigned to a company-scoped account.
+function resolveWorkTaskCompanyScope(user, requestedCompany) {
+  const actorCompany = !isSystemAdmin(user) ? user?.company_id : null;
+  if (actorCompany && requestedCompany && String(requestedCompany) !== String(actorCompany)) {
+    const error = new Error('Không có quyền xem công việc công ty khác');
+    error.statusCode = 403;
+    error.code = 'company_scope_denied';
+    throw error;
+  }
+  return requestedCompany || actorCompany || null;
+}
+
 function resolveModuleKey(task) {
   const kind = String(task?.task_kind || '');
   const source = String(task?.source || '');
@@ -83,9 +97,9 @@ function buildUnifiedTasksBaseQuery(user, {
   assignee_id, company_id, date_from, date_to, lead_id, assignee_lead_ids,
   status, task_kind, q: searchQ, open_only,
 } = {}, selectOptions = {}) {
+  const effectiveCompany = resolveWorkTaskCompanyScope(user, company_id);
   let q = supabase.from('unified_tasks_v').select('unified_id, task_kind, source, status, deadline, assignee_id, lead_id', selectOptions);
 
-  const effectiveCompany = company_id || (!isSystemAdmin(user) ? user?.company_id : null);
   if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
 
   if (lead_id) {
@@ -163,7 +177,7 @@ async function resolveAssigneeLeadScope(assignee_id, company_id, tenantCompanyId
 
 // Only auth's verified request context may grant a tenant scope. Keep it
 // separate from client filters, and retain legacy/platform/system semantics.
-function summaryTenantCompanyIds(user, tenantContext) {
+function resolveTenantCompanyIds(user, tenantContext) {
   const role = String(user?.role || '').trim().toLowerCase();
   const needsTenantScope = !!user?.tenant_id && role !== 'platform_admin' && role !== 'system';
   const deny = () => {
@@ -185,11 +199,12 @@ function summaryTenantCompanyIds(user, tenantContext) {
 }
 
 async function fetchUnifiedTasksSummary(user, opts = {}, tenantContext = null) {
-  const tenantCompanyIds = summaryTenantCompanyIds(user, tenantContext);
+  const tenantCompanyIds = resolveTenantCompanyIds(user, tenantContext);
+  const effectiveCompany = resolveWorkTaskCompanyScope(user, opts.company_id);
   const emptyTenant = tenantCompanyIds?.length === 0;
   const assignee_lead_ids = opts.lead_id
     ? []
-    : await resolveAssigneeLeadScope(opts.assignee_id, opts.company_id || (!isSystemAdmin(user) ? user?.company_id : null), tenantCompanyIds);
+    : await resolveAssigneeLeadScope(opts.assignee_id, effectiveCompany, tenantCompanyIds);
   let result = { data: [], error: null, count: 0 };
   if (!emptyTenant) {
     let q = buildUnifiedTasksBaseQuery(user, { ...opts, assignee_lead_ids }, { count: 'exact' });
@@ -269,10 +284,12 @@ module.exports = {
   applyEmployeeScope,
   applyOpenOnlyFilter,
   applyAssigneeFilter,
+  resolveWorkTaskCompanyScope,
   resolveModuleKey,
   fetchLeadIdsForAssignee,
   fetchLeadOptionsForAssignee,
   resolveAssigneeLeadScope,
+  resolveTenantCompanyIds,
   buildUnifiedTasksBaseQuery,
   countUnifiedOpenTasks,
   countUnifiedOverdueTasks,

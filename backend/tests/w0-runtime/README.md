@@ -1,101 +1,118 @@
 # W0: môi trường HTTP thử riêng
 
-Phạm vi: chuẩn bị và chạy tuyến `GET /api/work-tasks/summary` của bản sửa
-phạm vi tenant kế thừa commit `34e2862469163a089372950289d834891d1a1daa`,
-với dữ liệu hoàn toàn tổng hợp. Hash mã hiện tại được khóa trong launcher.
-Đây là môi trường kiểm thử HTTP tích hợp có nguồn dữ liệu mô phỏng, không phải
-bản ứng dụng đầy đủ, staging SQL, hay giấy phép đưa vào vận hành.
+Phạm vi hiện tại: bốn tuyến GET `/api/work-tasks/summary`, `/api/work-tasks`,
+`/api/work-tasks/lead-options` và `/api/work-tasks/by-project/:projectId`.
+Bản sửa kế thừa commit `48b6735669d5b2b9e0544d87801d1504e1b75e22`.
+Hash byte Windows của mã hiện tại được khóa trong launcher.
+Đây là HTTP tích hợp với dữ liệu tổng hợp, không phải ứng dụng đầy đủ,
+PostgreSQL/PostgREST thật, staging SQL hoặc giấy phép đưa vào vận hành.
 
-## Thành phần
+## Thành phần và giới hạn
 
-- Express, jsonwebtoken và Supabase SDK thật; phiên bản phải khớp lockfile.
-- Sáu module ứng dụng thật: route workTasks, unifiedTasksQuery, auth, tenantGate,
-  tenantScope và adminRole. Loader giới hạn import; không đọc cấu hình ứng dụng.
-- Hai máy chủ tạm thời chỉ bind `127.0.0.1`: API và nguồn dữ liệu HTTP mô phỏng.
-- Tài khoản/công ty/tenant/công việc và khóa ký JWT chỉ dùng cho lượt thử.
-- TTL cache, nhật ký xác thực là bộ nhớ thử; các helper ghi/notification bị chặn.
-- Chỉ mở GET summary ở harness. Không đổi chính sách Founder-local.
+- Express, jsonwebtoken và Supabase SDK thật; phiên bản khớp lockfile.
+- Bảy module ứng dụng thật: workTasks, unifiedTasksQuery, auth, tenantGate,
+  tenantScope, adminRole và crmTaskAttachmentCounts. Loader giới hạn import,
+  không đọc cấu hình ứng dụng, token hoặc `.env` thật.
+- Hai server tạm chỉ bind `127.0.0.1`: API và HTTP mô phỏng PostgREST.
+- Tài khoản, công ty, tenant, công việc và khóa JWT chỉ dùng cho lượt thử.
+- TTL cache và nhật ký xác thực nằm trong bộ nhớ; helper ghi/notification bị chặn.
+- Harness chỉ mở bốn GET trên; project ID phải là UUID. Không đổi chính sách
+  Founder-local. Nguồn mô phỏng chỉ cho GET, kể cả khi SDK gọi RPC đọc bằng POST:
+  POST đó bị chặn trước mạng, helper thật chuyển sang fallback GET.
+  Nhánh RPC thành công chưa được chứng minh.
+- Node permission giới hạn đọc/ghi tệp và chặn tiến trình con. Fetch chỉ cho
+  origin nguồn mô phỏng, chặn redirect. Đây không phải tường lửa hệ điều hành.
 
 ## Chạy trên laptop
 
-Từ PowerShell, chạy file trong nhánh `codex/w0-summary-fix-20260923`:
+Từ PowerShell, trên nhánh `codex/w0-summary-fix-20260923`:
 
 ```powershell
 & 'C:/Users/HUNG/Documents/ChatGPT/sourse thật/_tmp_business-ai-os-w0-summary-fix-20260923/backend/tests/w0-runtime/run-runtime-smoke.ps1' -DependencyBackend 'C:/Users/HUNG/Documents/ChatGPT/sourse thật/_tmp_business-ai-os-founder-local-v1/backend'
 ```
 
-`DependencyBackend` chỉ cung cấp thư viện đã có trong `node_modules`; mã ứng dụng
-được lấy từ nhánh sửa. Không cài package, không dùng server hoặc `.env` của checkout
-cung cấp thư viện. Runner đối chiếu phiên bản thư viện với lockfile nhánh sửa.
+DependencyBackend chỉ cung cấp thư viện trong node_modules; mã ứng dụng lấy từ
+nhánh sửa. Không cài package, không dùng server hoặc `.env` checkout cung cấp
+thư viện. Launcher kiểm SHA-256 bảy module, nhánh và commit tổ tiên trước chạy;
+commit tổ tiên chỉ là nguồn gốc, không thay thế hash mã thực tế.
 
-Launcher kiểm tra SHA-256 byte Windows của sáu module, commit gốc và nhánh trước khi
-chạy. Mỗi lần tạo thư mục bằng chứng riêng dưới
-`%LOCALAPPDATA%/BusinessAIOS/w0-runtime-evidence/`, gồm metadata đầu/cuối, stdout,
-stderr và kết quả JSON. Trước lần thử, git có thể có bản sửa chưa commit;
-trạng thái đó được ghi nhận. Thay đổi mã ứng dụng sẽ bị từ chối cho tới khi có
-ràng buộc phiên bản mới được rà soát.
+Mỗi lượt tạo thư mục riêng dưới
+`%LOCALAPPDATA%/BusinessAIOS/w0-runtime-evidence/`, ghi HEAD, tree, git status,
+metadata đầu/cuối, stdout, stderr và JSON đầy đủ. Bản sửa chưa commit được ghi
+rõ. Node nhận môi trường mới; launcher giới hạn 90 giây và chỉ dừng tiến trình
+con của lượt thử khi hết hạn. Runner chờ server đóng và kiểm tra cổng/socket.
 
-Tiến trình Node nhận môi trường mới, không kế thừa token/cấu hình của shell. Node
-permission chỉ cho đọc nguồn/thư viện và ghi thư mục bằng chứng, không cho tạo
-tiến trình con. Việc chặn mạng dựa trên loader và fetch giới hạn origin của
-harness, không phải tường lửa ở mức hệ điều hành.
+## Quyền và hợp đồng dữ liệu
 
-## Đọc kết quả
+Bốn đường đọc dùng tenant context đã được middleware xác minh, tách khỏi query
+của người gọi. Thiếu/sai context trả 403 `tenant_scope_unverified` trước đọc dữ
+liệu. Tenant không có công ty trả dữ liệu rỗng, không thực hiện truy vấn rộng.
+Bộ lọc tenant IN đi vào cả công việc, exact count, tìm lead theo người phụ trách,
+lead-options, tìm lead dự án và hai nhánh lấy công việc dự án.
 
-- PASS từng ca là bằng chứng HTTP/JWT/SDK và mã route trên dữ liệu mô phỏng.
-- FAIL nghiệp vụ/quyền là điều kiện chưa đạt, không đổi thành PASS vì môi trường
-  dựng thành công. Không bỏ ca sai hoặc sửa fixture để che kết quả.
-- Runner đóng server trong phần dọn dẹp; launcher giới hạn thời gian 90 giây và
-  chỉ dừng tiến trình con do nó tạo nếu hết giờ.
-- Kết quả chưa chứng minh SQL view, RLS, schema/migration, UI trình duyệt, dữ liệu
-  thật, tốc độ vận hành, đăng nhập thật hay toàn bộ hệ thống Business AI OS.
+Tài khoản bị giới hạn công ty không thể thay bằng `company_id` khác qua query:
+trả 403 `company_scope_denied`. Quản trị viên không gắn công ty vẫn có thể chọn
+công ty hợp lệ trong phạm vi tenant. Giữ hạn chế assignee/creator của nhân viên.
+List chuẩn hóa khoảng trắng tìm kiếm giống summary; các bộ lọc giao cắt nhau.
 
-## Hoàn tác và bước sau
+By-project giữ `progress.completed` và `progress.total`, bổ sung `cancelled`
+và `closed`. Completed chỉ tính done/completed; cancelled không tính hoàn thành.
+Giữ loại trùng theo unified_id. Lỗi tìm lead dự án được báo lỗi thay vì âm thầm
+coi như không có lead; helper này còn dùng trong reminder nên reminder cũng
+sẽ dừng khi truy vấn lead thất bại. Không mở thêm quyền ghi/notification.
+Việc thiếu tên assignee vẫn giữ fallback cũ.
 
-Đợt dựng môi trường ban đầu chỉ thêm ba file harness. Bản sửa tenant hiện tại
-thay đổi hai file sản phẩm (unifiedTasksQuery.js và workTasks.js), hai bộ unit
-test và ba file harness/tài liệu. Không đổi SQL, quyền hệ thống hoặc service.
-Sau khi chạy không có dịch vụ được giữ nền. Nếu cần hoàn tác, revert đúng
-commit sửa tenant trên nhánh thử; giữ lại bằng chứng. Việc revert sẽ khôi phục
-lỗi phạm vi đã tái hiện, nên bản đã revert không được coi là đủ điều kiện dùng
-vận hành. Không xóa checkout nguồn hoặc chỉ bỏ kiểm thử để che lỗi.
+## Bằng chứng thực thi 23/09/2026
 
-Để kiểm chứng dữ liệu thật ở môi trường thử: chuẩn bị PostgreSQL/PostgREST hoặc
-Supabase riêng có danh tính test rõ ràng; dựng schema/view từ migration được
-duyệt và nạp dữ liệu giả. Không lấy URL/key vận hành để lấp chỗ trống. Kiểm chứng
-UI cần bản frontend đúng nguồn và tuyến dữ liệu thử tương ứng. Laptop đang
-kết nối chưa có Docker/WSL/PostgreSQL được xác nhận sẵn.
+LAPTOP-25460QND, Node 22.20.0:
 
+| Lượt | Mã nguồn | Kết quả | Run ID |
+| --- | --- | --- | --- |
+| Tái hiện trước sửa | Sản phẩm gốc 48b6735, harness mở rộng | 26/42 PASS, 16 FAIL, exit 1 | 20260923T061455971Z-549e4f64 |
+| Sau sửa | Mã sửa khóa bằng hash, cùng harness | 42/42 PASS, exit 0 | 20260923T061654926Z-304f7a44 |
+| Hồi quy offline | Bộ 122 ca cũ + 23 ca biên mới | 145/145 PASS, exit 0 | Ghi kèm thư mục lượt sau sửa |
 
-## Bản sửa phạm vi tenant — W0-HTTP-TENANT-01
+Không có ca bỏ qua/cancel. Lượt RED có 16 ca chưa đạt, không có nghĩa là 16 lỗi
+độc lập. Những ví dụ tái hiện: list trả 6 thay vì 5 dòng; lead-options trả 3 thay
+vì 2 lead; completed dự án là 3 thay vì 2; tài khoản công ty A có thể lọc công ty B.
+Ca nhân viên còn kiểm cả bộ lọc được gửi, không chỉ số lượng kết quả.
 
-Route summary truyền riêng `req.tenantContext` từ auth vào helper. Với người dùng
-thuộc tenant, thiếu ngữ cảnh đã xác minh hoặc ngữ cảnh sai định dạng/khác tenant
-sẽ trả 403 trước khi truy vấn dữ liệu. Danh sách công ty được xác minh bổ sung
-bộ lọc IN vào cả công việc (kể cả exact count) và tra lead người phụ trách.
-Danh sách công ty rỗng trả số liệu 0, không truy vấn rộng. Bộ lọc công ty/nhân viên
-hiện có vẫn được giao cắt; tham số query không cấp quyền.
+23 ca mới trong `backend/tests/work-tasks-read-scope.test.js` kiểm context thiếu/
+sai/rỗng, giả mạo query, lỗi tìm lead, lọc hai nhánh, loại trùng và quyền công ty
+trên cả bốn tuyến. Đây là route/helper thật với transport, auth và role test
+doubles; HTTP harness bổ sung bằng JWT, middleware và SDK thật. 23 ca này nằm
+trong tổng 145, không cộng lại. Bảy hash sản phẩm và runner được ghi trong JSON.
 
-Các ca HTTP bổ sung kiểm tra quản trị viên T1 chỉ thấy A+B, chọn B, chỉ định C bị
-403, lọc người phụ trách, tenant rỗng, giả mạo query, lead ngoài tenant và hành vi
-legacy/platform/system. Ca tái hiện cũ yêu cầu 5 dòng (thay vì 6) được giữ nguyên.
+Lượt RED đóng cổng 62693/62694; GREEN đóng cổng 62714/62715. Mọi socket sở hữu
+đều đóng. Warning Express về Promise-like handler qua VM được giữ trong stderr;
+không đổi kết quả ca thử. Không để dịch vụ thử chạy nền.
 
-Phạm vi đóng lỗi chỉ là GET `/api/work-tasks/summary` và tra lead bên trong nó.
-Các tuyến list, lead-options, by-project, heartbeat và consumer trực tiếp khác
-cần kiểm tra quyền riêng; không suy ra toàn bộ ứng dụng đã cách ly tenant.
-Tenant không có công ty được phép trả tổng 0 và coverage EXACT cho tập dữ liệu
-được phép truy cập, kể cả có lọc người phụ trách: tập này đã được xác minh rỗng,
-không thực hiện tra lead. Các phạm vi người phụ trách khác vẫn giữ UNKNOWN khi
-chưa có bằng chứng đầy đủ về tra lead.
+## Phạm vi chưa chứng minh và bước sau
 
-## Kết quả thực thi ngày 23/09/2026
+- Chưa chạy SQL view/RLS/schema/migration hoặc UI trình duyệt thật.
+- Summary/list đếm dòng của unified_tasks_v, không khẳng định số việc nghiệp vụ
+  duy nhất khi SQL view nhân dòng. By-project vẫn dùng liên kết legacy
+  crm_leads.project_id; chưa chứng minh đầy đủ N:N của migration 502.
+- Hai helper đếm heartbeat và các đường đọc/ghi khác chưa thuộc đợt này.
+- UI consumer đã được đọc để kiểm tra giữ hợp đồng completed/total; đó không
+  phải nghiệm thu hiển thị trình duyệt hoặc bản frontend đang vận hành.
+- Laptop có node_modules và dist của checkout cũ, nhưng candidate chưa có
+  frontend build. Không dùng dist cũ làm bằng chứng cho mã hiện tại.
+- Kiểm tra 06:18 UTC: laptop không tìm thấy Docker/PostgreSQL trên PATH; WSL
+  báo chưa cài. Chưa có cấu hình DB test được xác minh. Alias openclaw-pc có
+  trong SSH config nhưng `ssh -G openclaw-pc` kết thúc 255, không có diagnostic;
+  chưa xác minh được kết nối máy bàn từ phiên này.
 
-Trên LAPTOP-25460QND, Node 22.20.0:
+Bước tiếp theo: xác minh máy thử truy cập được, chuẩn bị PostgreSQL/PostgREST
+hoặc Supabase riêng có danh tính test rõ ràng; dựng schema/view từ nguồn đã rà
+soát và nạp dữ liệu giả. Sau đó chạy ca quyền với SQL thật và frontend đúng
+commit. Không lấy URL/key vận hành để lấp chỗ trống hoặc chạy lại hàng loạt
+migration cũ trên dữ liệu đang dùng.
 
-- HTTP/JWT/SDK với dữ liệu giả: 23/23 PASS, exit 0; giữ ca tái hiện 5 dòng.
-- Kiểm thử hồi quy cô lập: 122/122 PASS, không bỏ qua ca nào, exit 0.
-- Run ID: `20260923T053030702Z-6d08822e`; hai cổng 61175/61176 đã đóng,
-  toàn bộ socket được xác nhận đóng. Chi tiết nằm trong thư mục bằng chứng
-  dưới `%LOCALAPPDATA%/BusinessAIOS/w0-runtime-evidence/`.
-- Mã lúc thử được xác nhận bằng hash; commit cuối và kiểm tra hậu chạy được
-  ghi trong báo cáo bàn giao. Không suy rộng kết quả sang SQL/RLS hoặc UI thật.
+## Hoàn tác
+
+Đợt này sửa hai file sản phẩm, bổ sung một file unit test và cập nhật ba file
+harness/tài liệu. Không sửa SQL, hệ thống quyền, dịch vụ vận hành hoặc checkout
+gốc. Commit cuối được ghi trong báo cáo bàn giao. Nếu cần hoàn tác, revert
+đúng commit trên nhánh thử; giữ bằng chứng. Revert phục hồi lỗi đã tái hiện,
+vì vậy không coi bản đã revert là đủ điều kiện triển khai. Chưa push/merge/deploy.

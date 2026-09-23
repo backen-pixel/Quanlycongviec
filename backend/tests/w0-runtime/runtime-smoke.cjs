@@ -66,11 +66,14 @@ const I = Object.freeze({
   lead: '44444444-4444-4444-8444-444444444444',
   leadB: '55555555-5555-4555-8555-555555555555',
   foreignLead: '66666666-6666-4666-8666-666666666666',
+  project: '14141414-1414-4414-8414-141414141414',
+  otherProject: '15151515-1515-4515-8515-151515151515',
 });
 const sourceHashes = {};
 const reads = [];
 const fixtureRejections = [];
 const transportRejections = [];
+const blockedReadRpcFallbacks = [];
 const forbiddenCalls = [];
 const authEvents = [];
 const routeErrors = [];
@@ -81,14 +84,17 @@ const secrets = { jwt: crypto.randomBytes(48).toString('hex') };
 const startedAt = new Date().toISOString();
 const uuid = (n) => `99999999-9999-4999-8999-${String(n).padStart(12, '0')}`;
 function row(status, n, extra = {}) {
-  return { unified_id: `task:${uuid(n)}`, source: 'task', task_kind: 'SX', status,
+  return { unified_id: `task:${uuid(n)}`, source: 'task', source_id: uuid(n), project_id: I.project, task_kind: 'SX', status,
+    description: null, priority: 'normal', completed_at: null, created_at: '2098-01-01T00:00:00Z',
+    updated_at: `2099-01-${String(n % 28 + 1).padStart(2, '0')}T00:00:00Z`,
+    project_code: 'FIXTURE-P', project_name: 'Synthetic project', lead_title: 'Synthetic lead',
     deadline: '2099-01-15', title: 'Fixture task', company_id: I.companyA,
     assignee_id: I.employee, created_by_id: I.manager, lead_id: I.lead, ...extra };
 }
 function baseline() {
   return [row('done', 1), row('completed', 2, { assignee_id: I.manager }),
     row('cancelled', 3), row('pending', 4),
-    row('pending', 5, { company_id: I.companyB, lead_id: I.leadB }),
+    row('pending', 5, { company_id: I.companyB, lead_id: I.leadB, project_id: I.otherProject }),
     row('pending', 6, { company_id: I.companyC, lead_id: I.foreignLead, title: 'Outside tenant synthetic sentinel' })];
 }
 let taskRows = baseline();
@@ -106,18 +112,23 @@ const tables = {
     { id: I.platformAdmin, tenant_id: null, company_id: null, department_id: null },
     { id: I.legacyAdmin, tenant_id: null, company_id: null, department_id: null }],
   user_company_regions: [],
+  crm_tasks: [{ id: uuid(71), notes: 'Allowed synthetic notes' }, { id: uuid(72), notes: 'Foreign synthetic notes' }],
+  crm_task_attachments: [{ task_id: uuid(71), doc_type: 'file' }, { task_id: uuid(71), doc_type: 'task_note' }, { task_id: uuid(72), doc_type: 'file' }],
   crm_leads: [
-    { id: I.lead, company_id: I.companyA, assigned_to: I.employee, lead_owner_id: I.manager },
-    { id: I.leadB, company_id: I.companyB, assigned_to: I.employee, lead_owner_id: I.manager },
-    { id: I.foreignLead, company_id: I.companyC, assigned_to: I.employee, lead_owner_id: I.manager },
+    { id: I.lead, company_id: I.companyA, assigned_to: I.employee, lead_owner_id: I.manager, project_id: I.project, title: 'Allowed A', type: 'lead', code: 'LA', updated_at: '2099-01-01' },
+    { id: I.leadB, company_id: I.companyB, assigned_to: I.employee, lead_owner_id: I.manager, project_id: I.project, title: 'Allowed B', type: 'deal', code: 'LB', updated_at: '2099-01-02' },
+    { id: I.foreignLead, company_id: I.companyC, assigned_to: I.employee, lead_owner_id: I.manager, project_id: I.project, title: 'Foreign sentinel', type: 'lead', code: 'LC', updated_at: '2099-01-03' },
   ],
 };
+for (const user of tables.users) user.full_name = user.id === I.employee ? 'Synthetic Employee' : 'Synthetic Manager';
 const columns = {
   tenants: new Set(['id', 'tier', 'max_users', 'max_companies', 'subscription_start', 'subscription_end', 'is_active']),
   companies: new Set(['id', 'tenant_id']),
-  users: new Set(['id', 'tenant_id', 'company_id', 'department_id']),
+  users: new Set(['id', 'tenant_id', 'company_id', 'department_id', 'full_name']),
   user_company_regions: new Set(['user_id', 'region_id']),
-  crm_leads: new Set(['id', 'company_id', 'assigned_to', 'lead_owner_id']),
+  crm_leads: new Set(['id', 'company_id', 'assigned_to', 'lead_owner_id', 'project_id', 'title', 'type', 'code', 'updated_at']),
+  crm_tasks: new Set(['id', 'notes']),
+  crm_task_attachments: new Set(['task_id', 'doc_type']),
   unified_tasks_v: new Set(Object.keys(row('pending', 1))),
 };
 function splitTop(text) {
@@ -165,7 +176,7 @@ function fixtureHandler(req, res) {
     assert.ok(match && Object.hasOwn(columns, match[1]), 'Unsupported fixture resource');
     const table = match[1];
     let data = (table === 'unified_tasks_v' ? taskRows : tables[table]).slice();
-    let selected = null, limit = Infinity;
+    let selected = null, limit = Infinity, offset = 0, order = [];
     for (const [key, value] of url.searchParams) {
       if (key === 'select') {
         selected = value.split(',').map((x) => x.trim());
@@ -174,6 +185,16 @@ function fixtureHandler(req, res) {
         assert.match(value, /^\d+$/);
         limit = Number(value);
         assert.ok(limit <= 5000, 'Excessive fixture limit');
+      } else if (key === 'offset') {
+        assert.match(value, /^\d+$/);
+        offset = Number(value);
+        assert.ok(offset <= 50000, 'Excessive fixture offset');
+      } else if (key === 'order') {
+        order = value.split(',').map((term) => {
+          const match = /^([a-z_]+)\.(asc|desc)$/.exec(term);
+          assert.ok(match && columns[table].has(match[1]), 'Unsupported order');
+          return { column: match[1], direction: match[2] === 'asc' ? 1 : -1 };
+        });
       } else if (key === 'or') {
         assert.ok(value.startsWith('(') && value.endsWith(')'), 'Malformed or');
         const alternatives = splitTop(value.slice(1, -1)).map((part) => {
@@ -186,11 +207,18 @@ function fixtureHandler(req, res) {
     }
     assert.ok(selected, 'Select must be explicit');
     const count = data.length;
-    const sliced = data.slice(0, limit).map((r) => Object.fromEntries(selected.map((key) => [key, r[key] ?? null])));
+    if (order.length) data.sort((a, b) => {
+      for (const item of order) {
+        const compared = String(a[item.column] ?? '').localeCompare(String(b[item.column] ?? ''));
+        if (compared) return compared * item.direction;
+      }
+      return 0;
+    });
+    const sliced = data.slice(offset, offset + limit).map((r) => Object.fromEntries(selected.map((key) => [key, r[key] ?? null])));
     const countRequested = String(req.headers.prefer || '').split(',').some((x) => x.trim() === 'count=exact');
     reads.push({ table, query: [...url.searchParams], count_requested: countRequested, matched: count, returned: sliced.length });
     res.setHeader('Content-Type', 'application/json');
-    if (countRequested) res.setHeader('Content-Range', sliced.length ? `0-${sliced.length - 1}/${count}` : `*/${count}`);
+    if (countRequested) res.setHeader('Content-Range', sliced.length ? `${offset}-${offset + sliced.length - 1}/${count}` : `*/${count}`);
     if (String(req.headers.accept || '').includes('application/vnd.pgrst.object+json')) {
       assert.ok(sliced.length <= 1, 'Multiple rows for singular response');
       res.end(JSON.stringify(sliced[0] || null));
@@ -254,7 +282,14 @@ async function main() {
         throw new Error('Transport destination outside assigned fixture');
       }
       const method = String(init.method || input?.method || 'GET').toUpperCase();
-      if (method !== 'GET') { transportRejections.push('non_read_method'); throw new Error('Transport permits GET only'); }
+      if (method !== 'GET') {
+        if (method === 'POST' && url.pathname === '/rest/v1/rpc/crm_task_attachment_counts_by_tasks') {
+          // This known read RPC is still denied before networking; the actual
+          // enrichment helper exercises its existing GET fallback instead.
+          blockedReadRpcFallbacks.push({ path: url.pathname, method, network_sent: false });
+        } else transportRejections.push('non_read_method');
+        throw new Error('Transport permits GET only');
+      }
       return nativeFetch(input, { ...init, method, redirect: 'error', signal: AbortSignal.timeout(5000) });
     };
     const supabase = createClient(fixtureOrigin, 'synthetic-local-key-not-a-credential', {
@@ -277,6 +312,7 @@ async function main() {
       './tenantGate': tenantGate,
     });
     const helper = load('src/helpers/unifiedTasksQuery.js', { '../config/supabase': { supabase }, './adminRole': adminRole });
+    const attachmentCounts = load('src/helpers/crmTaskAttachmentCounts.js', {});
     const router = load('src/routes/workTasks.js', {
       express, '../middleware/auth': authModule, '../config/supabase': { supabase }, '../helpers/adminRole': adminRole,
       '../helpers/projectTaskMutations': deniedExports(['createProjectTask', 'updateProjectTask', 'deleteProjectTask', 'addProjectTaskComment', 'toggleProjectTaskChecklist']),
@@ -285,14 +321,16 @@ async function main() {
       '../helpers/crmTaskLeadAccess': deniedExports(['assertCrmTaskLeadAccess', 'loadLeadForTaskAccess']),
       '../helpers/notifications': deniedExports(['createNotification']),
       '../helpers/crmKanbanDeadlineHistory': deniedExports(['mergeDeadlineHistoryIntoUnified']),
-      '../helpers/crmTaskAttachmentCounts': deniedExports(['enrichUnifiedCrmTasks']),
+      '../helpers/crmTaskAttachmentCounts': attachmentCounts,
       '../helpers/unifiedTasksQuery': helper,
     });
     const app = express();
     app.disable('x-powered-by');
     app.use((req, res, next) => {
       if (req.method !== 'GET') return res.status(405).json({ code: 'TEST_READ_ONLY' });
-      if (req.path !== '/api/work-tasks/summary') return res.status(404).json({ code: 'TEST_ROUTE_NOT_ALLOWED' });
+      const allowedRead = ['/api/work-tasks', '/api/work-tasks/', '/api/work-tasks/summary', '/api/work-tasks/lead-options'].includes(req.path)
+        || /^\/api\/work-tasks\/by-project\/[0-9a-f-]{36}$/.test(req.path);
+      if (!allowedRead) return res.status(404).json({ code: 'TEST_ROUTE_NOT_ALLOWED' });
       return next();
     });
     app.use('/api/work-tasks', router);
@@ -448,10 +486,206 @@ async function main() {
           assert.deepEqual(new URLSearchParams(read.query).getAll('company_id'), companyFilter);
         }
       });
+      await runTest('List tenant scope excludes foreign rows and agrees with summary exact count', async () => {
+        const bearer = token(tenantAdminClaims()); const before = reads.length;
+        const list = await request({ route: '/api/work-tasks', bearer });
+        const summary = await request({ bearer });
+        assert.equal(list.status, 200); assert.equal(summary.status, 200);
+        assert.equal(list.body.total, 5); assert.equal(list.body.tasks.length, 5);
+        assert.equal(list.body.total, summary.body.source_total_rows);
+        assert.ok(list.body.tasks.every((t) => [I.companyA, I.companyB].includes(t.company_id)));
+        for (const read of reads.slice(before).filter((x) => x.table === 'unified_tasks_v')) assertTenantCompanyFilter(read);
+        assert.ok(list.body.tasks.every((t) => t.assignee_name === 'Synthetic Employee' || t.assignee_name === 'Synthetic Manager'));
+      });
+      await runTest('List pagination preserves scoped exact total and does not duplicate pages', async () => {
+        const bearer = token(tenantAdminClaims()); const all = [];
+        for (const page of [1, 2, 3]) {
+          const before = reads.length;
+          const r = await request({ route: '/api/work-tasks', bearer, query: { page, page_size: 2 } });
+          assert.equal(r.status, 200); assert.equal(r.body.total, 5);
+          assert.equal(r.body.page, page); assert.equal(r.body.page_size, 2);
+          assert.equal(r.body.tasks.length, page < 3 ? 2 : 1);
+          const read = reads.slice(before).find((x) => x.table === 'unified_tasks_v');
+          const query = new URLSearchParams(read.query);
+          assert.equal(query.get('offset'), String((page - 1) * 2)); assert.equal(query.get('limit'), '2');
+          assert.equal(query.get('order'), 'updated_at.desc'); assert.equal(read.count_requested, true);
+          assertTenantCompanyFilter(read); all.push(...r.body.tasks);
+        }
+        assert.equal(new Set(all.map((t) => t.unified_id)).size, 5);
+        assert.deepEqual(all.map((t) => t.source_id), [5, 4, 3, 2, 1].map(uuid));
+      });
+      await runTest('List employee scope keeps company and assignee-or-creator restrictions', async () => {
+        const bearer = token(claims({ userId: I.employee, role: 'employee' })); const before = reads.length;
+        const r = await request({ route: '/api/work-tasks', bearer });
+        assert.equal(r.status, 200); assert.equal(r.body.total, 3);
+        assert.deepEqual(r.body.tasks.map((t) => t.source_id), [4, 3, 1].map(uuid));
+        const read = reads.slice(before).find((x) => x.table === 'unified_tasks_v');
+        const query = new URLSearchParams(read.query); assertTenantCompanyFilter(read);
+        assert.ok(query.getAll('company_id').includes(`eq.${I.companyA}`));
+        assert.equal(query.get('or'), `(assignee_id.eq.${I.employee},created_by_id.eq.${I.employee})`);
+      });
+      await runTest('List assignee resolution scopes both lead discovery and returned rows', async () => {
+        const before = reads.length;
+        const r = await request({ route: '/api/work-tasks', bearer: token(tenantAdminClaims()), query: { assignee_id: I.employee } });
+        assert.equal(r.status, 200); assert.equal(r.body.total, 5);
+        const leadReads = reads.slice(before).filter((x) => x.table === 'crm_leads');
+        const taskReads = reads.slice(before).filter((x) => x.table === 'unified_tasks_v');
+        assert.equal(leadReads.length, 1); assert.equal(taskReads.length, 1);
+        assertTenantCompanyFilter(leadReads[0]); assertTenantCompanyFilter(taskReads[0]);
+        assert.equal(leadReads[0].matched, 2);
+      });
+      await runTest('Explicit foreign lead cannot expose a task through list', async () => {
+        const r = await request({ route: '/api/work-tasks', bearer: token(tenantAdminClaims()), query: { lead_id: I.foreignLead } });
+        assert.equal(r.status, 200); assert.equal(r.body.total, 0); assert.deepEqual(r.body.tasks, []);
+      });
+      await runTest('List and summary agree for shared status date text company and open filters', async () => {
+        const bearer = token(tenantAdminClaims());
+        for (const query of [
+          { status: 'pending', task_kind: 'SX', q: 'Fixture', date_from: '2099-01-01', date_to: '2099-02-01', open_only: 'true' },
+          { company_id: I.companyB },
+          { lead_id: I.lead, status: 'completed' },
+        ]) {
+          const list = await request({ route: '/api/work-tasks', bearer, query }); const summary = await request({ bearer, query });
+          assert.equal(list.status, 200); assert.equal(summary.status, 200);
+          assert.equal(list.body.total, summary.body.source_total_rows); assert.equal(list.body.tasks.length, summary.body.total);
+          assert.equal(list.body.tasks.filter((t) => ['done', 'completed'].includes(t.status)).length, summary.body.done);
+        }
+      });
+      await runTest('List source project and module filters remain conjunctive with tenant scope', async () => {
+        const before = reads.length;
+        const r = await request({ route: '/api/work-tasks', bearer: token(tenantAdminClaims()), query: { source: 'task', project_id: I.project, module_key: 'production' } });
+        assert.equal(r.status, 200); assert.equal(r.body.total, 4);
+        const read = reads.slice(before).find((x) => x.table === 'unified_tasks_v'); const query = new URLSearchParams(read.query);
+        assertTenantCompanyFilter(read); assert.equal(query.get('source'), 'eq.task');
+        assert.equal(query.get('project_id'), `eq.${I.project}`); assert.equal(query.get('task_kind'), 'in.(SX,Dự án)');
+      });
+      await runTest('Lead options tenant administrator sees only the two permitted companies', async () => {
+        const before = reads.length;
+        const r = await request({ route: '/api/work-tasks/lead-options', bearer: token(tenantAdminClaims()), query: { assignee_id: I.employee } });
+        assert.equal(r.status, 200); assert.equal(r.body.leads.length, 2);
+        assert.deepEqual(r.body.leads.map((l) => l.id), [I.leadB, I.lead]);
+        const read = reads.slice(before).find((x) => x.table === 'crm_leads'); assertTenantCompanyFilter(read);
+        assert.equal(new URLSearchParams(read.query).get('order'), 'updated_at.desc');
+      });
+      await runTest('Lead options retains selected company and manager company restrictions', async () => {
+        for (const { bearer, query, lead } of [
+          { bearer: token(tenantAdminClaims()), query: { assignee_id: I.employee, company_id: I.companyB }, lead: I.leadB },
+          { bearer: token(), query: { assignee_id: I.employee }, lead: I.lead },
+        ]) {
+          const before = reads.length; const r = await request({ route: '/api/work-tasks/lead-options', bearer, query });
+          assert.equal(r.status, 200); assert.deepEqual(r.body.leads.map((l) => l.id), [lead]);
+          assertTenantCompanyFilter(reads.slice(before).find((x) => x.table === 'crm_leads'));
+        }
+      });
+      await runTest('Lead options without assignee returns empty without lead data read', async () => {
+        const before = reads.length; const r = await request({ route: '/api/work-tasks/lead-options', bearer: token(tenantAdminClaims()) });
+        assert.equal(r.status, 200); assert.deepEqual(r.body.leads, []);
+        assert.equal(reads.slice(before).some((x) => x.table === 'crm_leads'), false);
+      });
+      await runTest('By-project bounds lead discovery and both task branches to the verified tenant', async () => {
+        const before = reads.length;
+        const r = await request({ route: `/api/work-tasks/by-project/${I.project}`, bearer: token(tenantAdminClaims()) });
+        assert.equal(r.status, 200); assert.equal(r.body.project_id, I.project);
+        assert.equal(r.body.tasks.length, 5); assert.equal(r.body.progress.total, 5);
+        assert.equal(new Set(r.body.tasks.map((t) => t.unified_id)).size, 5, 'Project and lead branch overlap must be de-duplicated');
+        assert.ok(r.body.tasks.some((t) => t.company_id === I.companyB), 'Permitted task reached via lead branch must remain visible');
+        assert.ok(r.body.tasks.every((t) => [I.companyA, I.companyB].includes(t.company_id)));
+        const scopedReads = reads.slice(before).filter((x) => ['crm_leads', 'unified_tasks_v'].includes(x.table));
+        assert.equal(scopedReads.length, 3); for (const read of scopedReads) assertTenantCompanyFilter(read);
+        const branches = scopedReads.filter((x) => x.table === 'unified_tasks_v');
+        assert.ok(branches.some((x) => new URLSearchParams(x.query).get('project_id') === `eq.${I.project}`));
+        assert.ok(branches.some((x) => new URLSearchParams(x.query).get('lead_id') === `in.(${I.lead},${I.leadB})`));
+      });
+      await runTest('By-project completion excludes cancelled work', async () => {
+        const r = await request({ route: `/api/work-tasks/by-project/${I.project}`, bearer: token(tenantAdminClaims()) });
+        assert.equal(r.status, 200); assert.equal(r.body.progress.completed, 2);
+        assert.equal(r.body.progress.completed, r.body.tasks.filter((t) => ['done', 'completed'].includes(t.status)).length);
+        assert.equal(r.body.tasks.filter((t) => t.status === 'cancelled').length, 1);
+      });
+      await runTest('By-project employee access preserves company and own-work scope on both branches', async () => {
+        const before = reads.length;
+        const r = await request({ route: `/api/work-tasks/by-project/${I.project}`, bearer: token(claims({ userId: I.employee, role: 'employee' })) });
+        assert.equal(r.status, 200); assert.equal(r.body.tasks.length, 3); assert.equal(r.body.progress.completed, 1);
+        assert.ok(r.body.tasks.every((t) => t.company_id === I.companyA && (t.assignee_id === I.employee || t.created_by_id === I.employee)));
+        const taskReads = reads.slice(before).filter((x) => x.table === 'unified_tasks_v'); assert.equal(taskReads.length, 2);
+        for (const read of taskReads) { assertTenantCompanyFilter(read); assert.ok(new URLSearchParams(read.query).getAll('company_id').includes(`eq.${I.companyA}`)); }
+      });
+      await runTest('Empty tenant short-circuits list options and project without reading domain data', async () => {
+        const bearer = token(claims({ userId: I.emptyAdmin, role: 'admin', tenant_id: I.emptyTenant, company_id: null }));
+        for (const route of ['/api/work-tasks', '/api/work-tasks/lead-options', `/api/work-tasks/by-project/${I.project}`]) {
+          const before = reads.length; const r = await request({ route, bearer, query: { assignee_id: I.employee } });
+          assert.equal(r.status, 200); assert.deepEqual(r.body.tasks || r.body.leads, []);
+          if (route === '/api/work-tasks') assert.equal(r.body.total, 0);
+          if (route.includes('/by-project/')) { assert.equal(r.body.progress.total, 0); assert.equal(r.body.progress.completed, 0); }
+          assert.equal(reads.slice(before).some((x) => ['crm_leads', 'unified_tasks_v', 'crm_tasks', 'crm_task_attachments'].includes(x.table)), false);
+        }
+      });
+      await runTest('Forged tenant query values cannot broaden any of the three additional read paths', async () => {
+        const bearer = token(tenantAdminClaims());
+        const query = { assignee_id: I.employee, tenantContext: JSON.stringify({ enforced: true, tenantId: I.otherTenant, companyIds: [I.companyC] }), tenantCompanyIds: I.companyC, companyIds: I.companyC };
+        for (const { route, expected } of [
+          { route: '/api/work-tasks', expected: 5 },
+          { route: '/api/work-tasks/lead-options', expected: 2 },
+          { route: `/api/work-tasks/by-project/${I.project}`, expected: 5 },
+        ]) {
+          const before = reads.length; const r = await request({ route, bearer, query }); assert.equal(r.status, 200);
+          assert.equal((r.body.tasks || r.body.leads).length, expected);
+          for (const read of reads.slice(before).filter((x) => ['crm_leads', 'unified_tasks_v'].includes(x.table))) assertTenantCompanyFilter(read);
+        }
+      });
+      await runTest('Additional read paths reject missing auth and explicit foreign company before domain reads', async () => {
+        for (const route of ['/api/work-tasks', '/api/work-tasks/lead-options', `/api/work-tasks/by-project/${I.project}`]) {
+          let before = reads.length; assert.equal((await request({ route, bearer: null })).status, 401); assert.equal(reads.length, before);
+          before = reads.length; const r = await request({ route, bearer: token(tenantAdminClaims()), query: { company_id: I.companyC, assignee_id: I.employee } });
+          assert.equal(r.status, 403); assert.equal(r.body.code, 'tenant_company_denied');
+          assert.equal(reads.slice(before).some((x) => ['crm_leads', 'unified_tasks_v'].includes(x.table)), false);
+        }
+      });
+      await runTest('Company-bound sales admin cannot switch to sibling company on any read path', async () => {
+        const bearer = token(claims({ role: 'sales_admin' }));
+        for (const route of ['/api/work-tasks/summary', '/api/work-tasks', '/api/work-tasks/lead-options', `/api/work-tasks/by-project/${I.project}`]) {
+          const before = reads.length;
+          const r = await request({ route, bearer, query: { company_id: I.companyB, assignee_id: I.employee } });
+          assert.equal(r.status, 403, `${route} must reject company override before domain reads`);
+          assert.equal(r.body.code, 'company_scope_denied');
+          assert.equal(reads.slice(before).some((x) => ['crm_leads', 'unified_tasks_v'].includes(x.table)), false);
+        }
+      });
+      await runTest('Company-bound sales admin retains permitted own-company read behavior', async () => {
+        const bearer = token(claims({ role: 'sales_admin' }));
+        for (const { route, expected } of [
+          { route: '/api/work-tasks/summary', expected: 4 },
+          { route: '/api/work-tasks', expected: 4 },
+          { route: '/api/work-tasks/lead-options', expected: 1 },
+          { route: `/api/work-tasks/by-project/${I.project}`, expected: 4 },
+        ]) {
+          const r = await request({ route, bearer, query: { company_id: I.companyA, assignee_id: I.employee } });
+          assert.equal(r.status, 200);
+          assert.equal(r.body.tasks ? r.body.tasks.length : r.body.leads ? r.body.leads.length : r.body.total, expected);
+        }
+      });
+      await runTest('Actual CRM enrichment uses GET fallback only for permitted list task IDs', async () => {
+        taskRows = [row('pending', 71, { source: 'crm_task', unified_id: `crm_task:${uuid(71)}`, task_kind: 'CRM-Lead' }),
+          row('pending', 72, { source: 'crm_task', unified_id: `crm_task:${uuid(72)}`, task_kind: 'CRM-Lead', company_id: I.companyC, lead_id: I.foreignLead })];
+        try {
+          const before = reads.length; const blockedBefore = blockedReadRpcFallbacks.length;
+          const r = await request({ route: '/api/work-tasks', bearer: token(tenantAdminClaims()) });
+          assert.equal(r.status, 200); assert.equal(r.body.total, 1); assert.equal(r.body.tasks.length, 1);
+          const task = r.body.tasks[0]; assert.equal(task.source_id, uuid(71));
+          assert.equal(task.notes, 'Allowed synthetic notes'); assert.equal(task.file_count, 1); assert.equal(task.note_count, 1);
+          assert.ok(blockedReadRpcFallbacks.length > blockedBefore, 'Actual helper must attempt and fall back from blocked RPC');
+          const extraReads = reads.slice(before).filter((x) => ['crm_tasks', 'crm_task_attachments'].includes(x.table));
+          assert.equal(extraReads.length, 2);
+          for (const read of extraReads) {
+            const query = new URLSearchParams(read.query); assert.equal(query.get(read.table === 'crm_tasks' ? 'id' : 'task_id'), `in.(${uuid(71)})`);
+          }
+        } finally { taskRows = baseline(); }
+      });
       await runTest('Test-only request boundary rejects write methods and unrelated routes', async () => {
         const before = reads.length;
         for (const method of ['POST', 'PATCH', 'DELETE']) assert.equal((await request({ method })).status, 405);
-        assert.equal((await request({ route: '/api/work-tasks' })).status, 404); assert.equal(reads.length, before);
+        assert.equal((await request({ route: '/api/work-tasks/history' })).status, 404);
+        assert.equal((await request({ route: `/api/work-tasks/by-project/${I.project}/remind-complete` })).status, 404); assert.equal(reads.length, before);
       });
       await runTest('SDK transport rejects external destination and write before network', async () => {
         const before = reads.length;
@@ -496,10 +730,10 @@ async function main() {
       result: fatal || failed ? 'FAIL' : 'PASS', fatal, tests_passed: tests.length - failed, tests_failed: failed,
       scope: { http: 'REAL_LOOPBACK', jwt: 'REAL_JSONWEBTOKEN', sdk: 'REAL_SUPABASE_JS', auth_and_tenant_middleware: 'CANDIDATE_SOURCE', persistence: 'SIMULATED_IN_MEMORY_POSTGREST', sql_rls: 'NOT_TESTED', production: 'NOT_CONNECTED', frontend: 'NOT_TESTED' },
       substitutions: ['explicit in-memory config jwtSecret', 'in-memory TTL cache without Redis', 'auth event log in memory', 'mutation and notification imports fail closed', 'synthetic persistence endpoint'],
-      limitations: ['Harness mounts only summary route behind an additional test boundary; full application bootstrap is not exercised.', 'Fixture is a bounded query interpreter, not PostgreSQL, PostgREST or Supabase Auth.', 'Token verification uses an ephemeral test signing key; existing users, sessions and credential configuration are not exercised.', 'Network restriction applies to the SDK custom fetch and the explicit harness clients, not an operating-system firewall.'],
+      limitations: ['Harness mounts only summary, list, lead-options and UUID by-project GET routes behind an additional test boundary; full application bootstrap is not exercised.', 'Fixture is a bounded query interpreter, not PostgreSQL, PostgREST or Supabase Auth.', 'Token verification uses an ephemeral test signing key; existing users, sessions and credential configuration are not exercised.', 'CRM enrichment read RPC POST is intentionally blocked before networking; only its actual GET fallback is exercised.', 'Network restriction applies to the SDK custom fetch and the explicit harness clients, not an operating-system firewall.'],
       source_sha256: sourceHashes, runner_sha256: runnerHash, candidate_backend_lock_sha256: lockHash, dependencies: versions, node_version: process.version,
       source_repo: args.repo, dependency_root: args.deps, tests, fixture_reads: reads,
-      auth_events: authEvents, forbidden_calls: forbiddenCalls, fixture_rejections: fixtureRejections, transport_rejections: transportRejections,
+      auth_events: authEvents, forbidden_calls: forbiddenCalls, fixture_rejections: fixtureRejections, transport_rejections: transportRejections, blocked_read_rpc_fallbacks: blockedReadRpcFallbacks,
       cleanup: servers.map((entry, n) => ({ kind: n === 0 ? 'fixture' : 'app', port: entry.port, stopped: entry.closed, close_events_drained: entry.close_events_drained, close_error: entry.close_error, sockets_remaining: entry.sockets.size })),
     };
     fs.mkdirSync(args.output, { recursive: true });

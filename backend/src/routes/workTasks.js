@@ -38,6 +38,8 @@ const {
   applyAssigneeFilter,
   fetchLeadOptionsForAssignee,
   resolveAssigneeLeadScope,
+  resolveTenantCompanyIds,
+  resolveWorkTaskCompanyScope,
   fetchUnifiedTasksSummary,
 } = require('../helpers/unifiedTasksQuery');
 
@@ -206,7 +208,7 @@ r.get('/summary', async (req, res) => {
     }, req.tenantContext);
     res.json(summary);
   } catch (e) {
-    if (e.statusCode === 403 && e.code === 'tenant_scope_unverified') {
+    if (e.statusCode === 403 && ['tenant_scope_unverified', 'company_scope_denied'].includes(e.code)) {
       return res.status(403).json({ error: e.message, code: e.code });
     }
     console.error('[work-tasks] summary:', e);
@@ -218,11 +220,15 @@ r.get('/summary', async (req, res) => {
 r.get('/lead-options', async (req, res) => {
   try {
     const { assignee_id, company_id } = req.query;
+    const tenantCompanyIds = resolveTenantCompanyIds(req.user, req.tenantContext);
+    const effectiveCompany = resolveWorkTaskCompanyScope(req.user, company_id);
     if (!assignee_id) return res.json({ leads: [] });
-    const effectiveCompany = company_id || (!isSystemAdmin(req.user) ? req.user?.company_id : null);
-    const leads = await fetchLeadOptionsForAssignee(assignee_id, effectiveCompany || null);
+    const leads = await fetchLeadOptionsForAssignee(assignee_id, effectiveCompany || null, 300, tenantCompanyIds);
     res.json({ leads });
   } catch (e) {
+    if (e.statusCode === 403 && ['tenant_scope_unverified', 'company_scope_denied'].includes(e.code)) {
+      return res.status(403).json({ error: e.message, code: e.code });
+    }
     console.error('[work-tasks] lead-options:', e);
     res.status(500).json({ error: e.message || 'Lỗi tải lead/deal' });
   }
@@ -236,6 +242,11 @@ r.get('/', async (req, res) => {
       date_from, date_to, company_id, open_only, module_key, lead_id,
     } = req.query;
     const { page, pageSize, from, to } = parsePagination(req);
+    const tenantCompanyIds = resolveTenantCompanyIds(req.user, req.tenantContext);
+    const effectiveCompany = resolveWorkTaskCompanyScope(req.user, company_id);
+    if (tenantCompanyIds?.length === 0) {
+      return res.json({ tasks: [], total: 0, page, page_size: pageSize });
+    }
 
     let q = supabase.from('unified_tasks_v').select(TASK_SELECT, { count: 'exact' })
       .order('updated_at', { ascending: false });
@@ -246,19 +257,19 @@ r.get('/', async (req, res) => {
       else if (sources.length > 1) q = q.in('source', sources);
     }
     if (project_id) q = q.eq('project_id', project_id);
-    const effectiveCompany = company_id || (!isSystemAdmin(req.user) ? req.user?.company_id : null);
     if (lead_id) {
       q = q.eq('lead_id', lead_id);
     } else if (assignee_id) {
-      const assigneeLeadIds = await resolveAssigneeLeadScope(assignee_id, effectiveCompany || null);
+      const assigneeLeadIds = await resolveAssigneeLeadScope(assignee_id, effectiveCompany || null, tenantCompanyIds);
       q = applyAssigneeFilter(q, assignee_id, assigneeLeadIds);
     }
     if (status) q = q.eq('status', status);
     if (task_kind) q = q.eq('task_kind', task_kind);
-    if (searchQ) q = q.ilike('title', `%${searchQ}%`);
+    const search = String(searchQ || '').trim();
+    if (search) q = q.ilike('title', `%${search}%`);
     if (date_from) q = q.gte('deadline', date_from);
     if (date_to) q = q.lte('deadline', date_to);
-    if (open_only === '1' || open_only === 'true') q = applyOpenOnlyFilter(q);
+    if (open_only === '1' || open_only === true || open_only === 'true') q = applyOpenOnlyFilter(q);
 
     const MODULE_KIND_FILTER = {
       crm: ['CRM-Deal', 'CRM-Lead'],
@@ -272,9 +283,10 @@ r.get('/', async (req, res) => {
     }
 
     if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
+    if (tenantCompanyIds !== null) q = q.in('company_id', tenantCompanyIds);
 
     if (!isManagerLike(req.user)) {
-      q = applyEmployeeScope(q, req.user.userId);
+      q = applyEmployeeScope(q, req.user.userId || req.user.id);
     }
 
     q = q.range(from, to);
@@ -292,6 +304,9 @@ r.get('/', async (req, res) => {
     }
     res.json({ tasks, total: count ?? tasks.length ?? 0, page, page_size: pageSize });
   } catch (e) {
+    if (e.statusCode === 403 && ['tenant_scope_unverified', 'company_scope_denied'].includes(e.code)) {
+      return res.status(403).json({ error: e.message, code: e.code });
+    }
     console.error('[work-tasks] list:', e);
     res.status(500).json({ error: e.message || 'Lỗi tải danh sách' });
   }
@@ -301,17 +316,28 @@ r.get('/', async (req, res) => {
 r.get('/by-project/:projectId', async (req, res) => {
   try {
     const projectId = req.params.projectId;
-    const leadIds = await getLeadIdsForProject(projectId);
+    const tenantCompanyIds = resolveTenantCompanyIds(req.user, req.tenantContext);
+    const emptyTenant = tenantCompanyIds?.length === 0;
+    const effectiveCompany = resolveWorkTaskCompanyScope(req.user, req.query.company_id);
+    const leadIds = await getLeadIdsForProject(projectId, effectiveCompany || null, tenantCompanyIds);
 
-    let qProject = supabase.from('unified_tasks_v').select(TASK_SELECT).eq('project_id', projectId);
-    if (!isManagerLike(req.user)) qProject = applyEmployeeScope(qProject, req.user.userId);
-    const { data: projectTasks, error: e1 } = await qProject;
-    if (e1) throw e1;
+    let projectTasks = [];
+    if (!emptyTenant) {
+      let qProject = supabase.from('unified_tasks_v').select(TASK_SELECT).eq('project_id', projectId);
+      if (effectiveCompany) qProject = qProject.eq('company_id', effectiveCompany);
+      if (tenantCompanyIds !== null) qProject = qProject.in('company_id', tenantCompanyIds);
+      if (!isManagerLike(req.user)) qProject = applyEmployeeScope(qProject, req.user.userId || req.user.id);
+      const { data: pt, error: e1 } = await qProject;
+      if (e1) throw e1;
+      projectTasks = pt || [];
+    }
 
     let crmTasks = [];
     if (leadIds.length) {
       let qCrm = supabase.from('unified_tasks_v').select(TASK_SELECT).in('lead_id', leadIds);
-      if (!isManagerLike(req.user)) qCrm = applyEmployeeScope(qCrm, req.user.userId);
+      if (effectiveCompany) qCrm = qCrm.eq('company_id', effectiveCompany);
+      if (tenantCompanyIds !== null) qCrm = qCrm.in('company_id', tenantCompanyIds);
+      if (!isManagerLike(req.user)) qCrm = applyEmployeeScope(qCrm, req.user.userId || req.user.id);
       const { data: ct, error: e2 } = await qCrm;
       if (e2) throw e2;
       crmTasks = ct || [];
@@ -346,23 +372,32 @@ r.get('/by-project/:projectId', async (req, res) => {
     });
 
     const all = data || [];
-    const doneStatuses = new Set(['done', 'completed', 'cancelled']);
-    const completed = all.filter((t) => doneStatuses.has(t.status)).length;
+    const doneStatuses = new Set(['done', 'completed']);
+    const completed = all.filter((t) => doneStatuses.has(String(t.status || '').toLowerCase())).length;
+    const cancelled = all.filter((t) => String(t.status || '').toLowerCase() === 'cancelled').length;
 
     res.json({
       project_id: projectId,
       groups,
-      progress: { completed, total: all.length },
+      progress: { completed, cancelled, closed: completed + cancelled, total: all.length },
       tasks: all,
     });
   } catch (e) {
+    if (e.statusCode === 403 && ['tenant_scope_unverified', 'company_scope_denied'].includes(e.code)) {
+      return res.status(403).json({ error: e.message, code: e.code });
+    }
     console.error('[work-tasks] by-project:', e);
     res.status(500).json({ error: e.message || 'Lỗi' });
   }
 });
 
-async function getLeadIdsForProject(projectId) {
-  const { data } = await supabase.from('crm_leads').select('id').eq('project_id', projectId);
+async function getLeadIdsForProject(projectId, companyId = null, tenantCompanyIds = null) {
+  if (tenantCompanyIds?.length === 0) return [];
+  let q = supabase.from('crm_leads').select('id').eq('project_id', projectId);
+  if (companyId) q = q.eq('company_id', companyId);
+  if (tenantCompanyIds !== null) q = q.in('company_id', tenantCompanyIds);
+  const { data, error } = await q;
+  if (error) throw error;
   return (data || []).map((l) => l.id);
 }
 
