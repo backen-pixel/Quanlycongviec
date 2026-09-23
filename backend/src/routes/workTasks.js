@@ -203,9 +203,12 @@ r.get('/summary', async (req, res) => {
     const summary = await fetchUnifiedTasksSummary(req.user, {
       assignee_id, company_id, date_from, date_to, lead_id,
       status, task_kind, q, open_only,
-    });
+    }, req.tenantContext);
     res.json(summary);
   } catch (e) {
+    if (e.statusCode === 403 && e.code === 'tenant_scope_unverified') {
+      return res.status(403).json({ error: e.message, code: e.code });
+    }
     console.error('[work-tasks] summary:', e);
     res.status(500).json({ error: e.message || 'Lỗi tải tổng hợp' });
   }

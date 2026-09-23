@@ -53,13 +53,19 @@ const I = Object.freeze({
   tenant: '11111111-1111-4111-8111-111111111111',
   otherTenant: '22222222-2222-4222-8222-222222222222',
   inactiveTenant: '33333333-3333-4333-8333-333333333333',
+  emptyTenant: '77777777-7777-4777-8777-777777777777',
   companyA: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
   companyB: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
   companyC: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
   manager: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
   employee: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
   admin: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+  emptyAdmin: '88888888-8888-4888-8888-888888888888',
+  platformAdmin: '12121212-1212-4212-8212-121212121212',
+  legacyAdmin: '13131313-1313-4313-8313-131313131313',
   lead: '44444444-4444-4444-8444-444444444444',
+  leadB: '55555555-5555-4555-8555-555555555555',
+  foreignLead: '66666666-6666-4666-8666-666666666666',
 });
 const sourceHashes = {};
 const reads = [];
@@ -82,21 +88,29 @@ function row(status, n, extra = {}) {
 function baseline() {
   return [row('done', 1), row('completed', 2, { assignee_id: I.manager }),
     row('cancelled', 3), row('pending', 4),
-    row('pending', 5, { company_id: I.companyB }),
-    row('pending', 6, { company_id: I.companyC, title: 'Outside tenant synthetic sentinel' })];
+    row('pending', 5, { company_id: I.companyB, lead_id: I.leadB }),
+    row('pending', 6, { company_id: I.companyC, lead_id: I.foreignLead, title: 'Outside tenant synthetic sentinel' })];
 }
 let taskRows = baseline();
 const tables = {
   tenants: [
     { id: I.tenant, tier: 'test', max_users: 10, max_companies: 2, subscription_start: null, subscription_end: null, is_active: true },
     { id: I.inactiveTenant, tier: 'test', max_users: 10, max_companies: 1, subscription_start: null, subscription_end: null, is_active: false },
+    { id: I.emptyTenant, tier: 'test', max_users: 10, max_companies: 2, subscription_start: null, subscription_end: null, is_active: true },
   ],
   companies: [{ id: I.companyA, tenant_id: I.tenant }, { id: I.companyB, tenant_id: I.tenant }, { id: I.companyC, tenant_id: I.otherTenant }],
   users: [{ id: I.manager, tenant_id: I.tenant, company_id: I.companyA, department_id: null },
     { id: I.employee, tenant_id: I.tenant, company_id: I.companyA, department_id: null },
-    { id: I.admin, tenant_id: I.tenant, company_id: null, department_id: null }],
+    { id: I.admin, tenant_id: I.tenant, company_id: null, department_id: null },
+    { id: I.emptyAdmin, tenant_id: I.emptyTenant, company_id: null, department_id: null },
+    { id: I.platformAdmin, tenant_id: null, company_id: null, department_id: null },
+    { id: I.legacyAdmin, tenant_id: null, company_id: null, department_id: null }],
   user_company_regions: [],
-  crm_leads: [{ id: I.lead, company_id: I.companyA, assigned_to: I.employee, lead_owner_id: I.manager }],
+  crm_leads: [
+    { id: I.lead, company_id: I.companyA, assigned_to: I.employee, lead_owner_id: I.manager },
+    { id: I.leadB, company_id: I.companyB, assigned_to: I.employee, lead_owner_id: I.manager },
+    { id: I.foreignLead, company_id: I.companyC, assigned_to: I.employee, lead_owner_id: I.manager },
+  ],
 };
 const columns = {
   tenants: new Set(['id', 'tier', 'max_users', 'max_companies', 'subscription_start', 'subscription_end', 'is_active']),
@@ -286,6 +300,12 @@ async function main() {
     appOrigin = await listen(http.createServer(app));
     const claims = (overrides = {}) => ({ userId: I.manager, role: 'manager', tenant_id: I.tenant, company_id: I.companyA, crm_region_ids: [], ...overrides });
     const token = (payload = claims(), opts = {}) => jwt.sign(payload, secrets.jwt, { algorithm: 'HS256', expiresIn: '10m', ...opts });
+    const tenantAdminClaims = () => claims({ userId: I.admin, role: 'admin', company_id: null });
+    const tenantCompanyFilter = `in.(${I.companyA},${I.companyB})`;
+    function assertTenantCompanyFilter(read) {
+      assert.ok(read, 'Expected an actual fixture read');
+      assert.ok(new URLSearchParams(read.query).getAll('company_id').includes(tenantCompanyFilter), 'Verified tenant companies must be serialized as an additional IN filter');
+    }
     async function request({ query = {}, bearer = token(), method = 'GET', route = '/api/work-tasks/summary' } = {}) {
       assert.equal(stopping, false, 'Harness cancelled');
       const url = new URL(route, appOrigin);
@@ -321,6 +341,8 @@ async function main() {
         assert.deepEqual(Object.fromEntries(['total', 'done', 'cancelled', 'closed', 'open'].map((k) => [k, r.body[k]])), { total: 4, done: 2, cancelled: 1, closed: 3, open: 1 });
         assert.equal(r.body.coverage, 'EXACT'); assert.equal(r.body.source_total_rows, 4);
         const read = reads.at(-1); assert.equal(read.count_requested, true); assert.equal(read.matched, 4);
+        assertTenantCompanyFilter(read);
+        assert.ok(new URLSearchParams(read.query).getAll('company_id').includes(`eq.${I.companyA}`), 'Manager company filter must remain in addition to tenant scope');
       });
       await runTest('Company lookup through SDK fills a signed token missing company claim', async () => {
         const payload = claims(); delete payload.company_id;
@@ -356,6 +378,75 @@ async function main() {
         const payload = claims({ userId: I.admin, role: 'admin' }); delete payload.company_id;
         const r = await request({ bearer: token(payload) }); assert.equal(r.status, 200);
         assert.equal(r.body.total, 5, 'Expected only 5 rows in the verified tenant; foreign-tenant synthetic sentinel must be excluded');
+        assert.equal(r.body.source_total_rows, 5); assert.equal(r.body.coverage, 'EXACT');
+        const read = reads.at(-1); assert.equal(read.table, 'unified_tasks_v');
+        assert.equal(read.count_requested, true); assert.equal(read.matched, 5); assertTenantCompanyFilter(read);
+      });
+      await runTest('Tenant administrator can select company B within verified tenant', async () => {
+        const r = await request({ bearer: token(tenantAdminClaims()), query: { company_id: I.companyB } });
+        assert.equal(r.status, 200); assert.equal(r.body.total, 1); assert.equal(r.body.source_total_rows, 1);
+        const read = reads.at(-1); assertTenantCompanyFilter(read);
+        assert.ok(new URLSearchParams(read.query).getAll('company_id').includes(`eq.${I.companyB}`));
+        assert.equal(read.count_requested, true); assert.equal(read.matched, 1);
+      });
+      await runTest('Tenant administrator assignee lookup scopes both leads and task count over HTTP', async () => {
+        const before = reads.length;
+        const r = await request({ bearer: token(tenantAdminClaims()), query: { assignee_id: I.employee } });
+        assert.equal(r.status, 200); assert.equal(r.body.total, 5); assert.equal(r.body.source_total_rows, 5); assert.equal(r.body.coverage, 'UNKNOWN');
+        const newReads = reads.slice(before);
+        const leadReads = newReads.filter((x) => x.table === 'crm_leads');
+        const taskReads = newReads.filter((x) => x.table === 'unified_tasks_v');
+        assert.equal(leadReads.length, 1); assert.equal(taskReads.length, 1);
+        assertTenantCompanyFilter(leadReads[0]); assertTenantCompanyFilter(taskReads[0]);
+        assert.equal(leadReads[0].matched, 2, 'Foreign assignee lead must be excluded before task lookup');
+        assert.equal(taskReads[0].count_requested, true); assert.equal(taskReads[0].matched, 5);
+        const leadQuery = new URLSearchParams(leadReads[0].query);
+        assert.equal(leadQuery.get('or'), `(assigned_to.eq.${I.employee},lead_owner_id.eq.${I.employee})`);
+        const taskQuery = new URLSearchParams(taskReads[0].query);
+        assert.equal(taskQuery.get('or'), `(assignee_id.eq.${I.employee},lead_id.in.(${I.lead},${I.leadB}))`);
+      });
+      await runTest('Active tenant with no companies returns empty summary without lead or task reads', async () => {
+        const bearer = token(claims({ userId: I.emptyAdmin, role: 'admin', tenant_id: I.emptyTenant, company_id: null }));
+        for (const query of [{}, { assignee_id: I.employee }]) {
+          const before = reads.length;
+          const r = await request({ bearer, query });
+          assert.equal(r.status, 200);
+          for (const key of ['total', 'done', 'cancelled', 'closed', 'open', 'source_total_rows']) assert.equal(r.body[key], 0, `${key} must be zero for empty verified tenant`);
+          assert.equal(reads.slice(before).some((x) => x.table === 'crm_leads' || x.table === 'unified_tasks_v'), false);
+        }
+      });
+      await runTest('Forged query tenantContext and companyIds cannot broaden trusted tenant scope', async () => {
+        const forged = { enforced: true, tenantId: I.otherTenant, companyIds: [I.companyC] };
+        const r = await request({ bearer: token(tenantAdminClaims()), query: {
+          companyIds: [I.companyA, I.companyB, I.companyC].join(','),
+          tenantCompanyIds: I.companyC,
+          tenantContext: JSON.stringify(forged),
+          trustedTenantContext: JSON.stringify(forged),
+        } });
+        assert.equal(r.status, 200); assert.equal(r.body.total, 5); assert.equal(r.body.source_total_rows, 5);
+        const read = reads.at(-1); assertTenantCompanyFilter(read);
+        assert.deepEqual(new URLSearchParams(read.query).getAll('company_id'), [tenantCompanyFilter]);
+      });
+      await runTest('Explicit foreign lead intersects verified companies and returns zero rows', async () => {
+        const before = reads.length;
+        const r = await request({ bearer: token(tenantAdminClaims()), query: { lead_id: I.foreignLead, assignee_id: I.employee } });
+        assert.equal(r.status, 200); assert.equal(r.body.total, 0); assert.equal(r.body.source_total_rows, 0); assert.equal(r.body.coverage, 'EXACT');
+        assert.equal(reads.slice(before).some((x) => x.table === 'crm_leads'), false);
+        const read = reads.at(-1); assertTenantCompanyFilter(read);
+        assert.equal(new URLSearchParams(read.query).get('lead_id'), `eq.${I.foreignLead}`);
+        assert.equal(read.count_requested, true); assert.equal(read.matched, 0);
+      });
+      await runTest('Platform legacy and system roles preserve their existing access behavior', async () => {
+        for (const { payload, expectedCount, companyFilter } of [
+          { payload: claims({ userId: I.platformAdmin, role: 'platform_admin', tenant_id: null, company_id: null }), expectedCount: 6, companyFilter: [] },
+          { payload: claims({ userId: I.legacyAdmin, role: 'admin', tenant_id: null, company_id: null }), expectedCount: 6, companyFilter: [] },
+          { payload: claims({ role: 'system' }), expectedCount: 4, companyFilter: [`eq.${I.companyA}`] },
+        ]) {
+          const r = await request({ bearer: token(payload) });
+          assert.equal(r.status, 200); assert.equal(r.body.total, expectedCount); assert.equal(r.body.source_total_rows, expectedCount); assert.equal(r.body.coverage, 'EXACT');
+          const read = reads.at(-1); assert.equal(read.count_requested, true); assert.equal(read.matched, expectedCount);
+          assert.deepEqual(new URLSearchParams(read.query).getAll('company_id'), companyFilter);
+        }
       });
       await runTest('Test-only request boundary rejects write methods and unrelated routes', async () => {
         const before = reads.length;

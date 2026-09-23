@@ -27,13 +27,14 @@ function applyOpenOnlyFilter(q) {
 const ASSIGNEE_LEAD_IDS_MAX = 500;
 
 /** Lead/deal mà NV là phụ trách (assigned_to hoặc lead_owner_id). */
-async function fetchLeadIdsForAssignee(assigneeId, companyId, maxIds = ASSIGNEE_LEAD_IDS_MAX) {
-  if (!assigneeId) return [];
+async function fetchLeadIdsForAssignee(assigneeId, companyId, maxIds = ASSIGNEE_LEAD_IDS_MAX, tenantCompanyIds = null) {
+  if (!assigneeId || tenantCompanyIds?.length === 0) return [];
   let q = supabase.from('crm_leads')
     .select('id')
-    .or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`)
-    .limit(maxIds);
+    .or(`assigned_to.eq.${assigneeId},lead_owner_id.eq.${assigneeId}`);
   if (companyId) q = q.eq('company_id', companyId);
+  if (tenantCompanyIds !== null) q = q.in('company_id', tenantCompanyIds);
+  q = q.limit(maxIds);
   const { data, error } = await q;
   if (error) throw error;
   return (data || []).map((r) => r.id);
@@ -155,18 +156,47 @@ async function countUnifiedOverdueTasks(user, opts = {}) {
   return count || 0;
 }
 
-async function resolveAssigneeLeadScope(assignee_id, company_id) {
+async function resolveAssigneeLeadScope(assignee_id, company_id, tenantCompanyIds = null) {
   if (!assignee_id) return [];
-  return fetchLeadIdsForAssignee(assignee_id, company_id || null);
+  return fetchLeadIdsForAssignee(assignee_id, company_id || null, ASSIGNEE_LEAD_IDS_MAX, tenantCompanyIds);
 }
 
-async function fetchUnifiedTasksSummary(user, opts = {}) {
+// Only auth's verified request context may grant a tenant scope. Keep it
+// separate from client filters, and retain legacy/platform/system semantics.
+function summaryTenantCompanyIds(user, tenantContext) {
+  const role = String(user?.role || '').trim().toLowerCase();
+  const needsTenantScope = !!user?.tenant_id && role !== 'platform_admin' && role !== 'system';
+  const deny = () => {
+    const error = new Error('Chưa xác minh được phạm vi dữ liệu hệ sinh thái');
+    error.statusCode = 403;
+    error.code = 'tenant_scope_unverified';
+    throw error;
+  };
+  if (tenantContext?.enforced !== true) {
+    if (needsTenantScope) deny();
+    return null;
+  }
+  if (!user?.tenant_id || String(tenantContext.tenantId || '') !== String(user.tenant_id)
+    || !Array.isArray(tenantContext.companyIds)
+    || tenantContext.companyIds.some((id) => typeof id !== 'string' || !id.trim())) {
+    deny();
+  }
+  return [...new Set(tenantContext.companyIds)];
+}
+
+async function fetchUnifiedTasksSummary(user, opts = {}, tenantContext = null) {
+  const tenantCompanyIds = summaryTenantCompanyIds(user, tenantContext);
+  const emptyTenant = tenantCompanyIds?.length === 0;
   const assignee_lead_ids = opts.lead_id
     ? []
-    : await resolveAssigneeLeadScope(opts.assignee_id, opts.company_id || (!isSystemAdmin(user) ? user?.company_id : null));
-  let q = buildUnifiedTasksBaseQuery(user, { ...opts, assignee_lead_ids }, { count: 'exact' });
-  q = q.limit(3000);
-  const { data, error, count } = await q;
+    : await resolveAssigneeLeadScope(opts.assignee_id, opts.company_id || (!isSystemAdmin(user) ? user?.company_id : null), tenantCompanyIds);
+  let result = { data: [], error: null, count: 0 };
+  if (!emptyTenant) {
+    let q = buildUnifiedTasksBaseQuery(user, { ...opts, assignee_lead_ids }, { count: 'exact' });
+    if (tenantCompanyIds !== null) q = q.in('company_id', tenantCompanyIds);
+    result = await q.limit(3000);
+  }
+  const { data, error, count } = result;
   if (error) throw error;
 
   const rows = data || [];
@@ -206,7 +236,9 @@ async function fetchUnifiedTasksSummary(user, opts = {}) {
   // Counts describe returned view rows, not distinct business tasks. A source
   // row limit or a capped assignee scope must never imply full coverage.
   const hasExactRowCount = Number.isSafeInteger(count) && count >= rows.length;
-  const usesAssigneeLeadScope = !opts.lead_id && !!opts.assignee_id;
+  // With no authorized companies the accessible set is provably empty; no
+  // assignee lookup was performed and there is no truncated lead scope.
+  const usesAssigneeLeadScope = !emptyTenant && !opts.lead_id && !!opts.assignee_id;
   const assigneeScopeMayBeCapped = usesAssigneeLeadScope
     && assignee_lead_ids.length >= ASSIGNEE_LEAD_IDS_MAX;
   const viewRowsMayBeCapped = hasExactRowCount ? count > rows.length : rows.length >= 3000;

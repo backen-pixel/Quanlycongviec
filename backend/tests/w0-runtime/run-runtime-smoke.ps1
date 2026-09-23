@@ -6,10 +6,10 @@ $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../../..')).Path
 $deps = (Resolve-Path $DependencyBackend).Path
-$baseline = '8f2513c7b21adf0ab18e905a08f02b71e9585ca6'
+$baseline = '34e2862469163a089372950289d834891d1a1daa'
 $expected = [ordered]@{
-  'backend/src/routes/workTasks.js' = '97584db2af59a4db690d251e7906b231b51f67288791eec164f771f61ae4a696'
-  'backend/src/helpers/unifiedTasksQuery.js' = 'c8190cc9540c180b705f090b5356371186e72ef696e7bd9a8d41424a0ce45c7b'
+  'backend/src/routes/workTasks.js' = '8da9724f7a189d5e648a98a5704ec882d0a4165c8cae2ad3dcc40a5d2f5037a7'
+  'backend/src/helpers/unifiedTasksQuery.js' = 'f8c924497085306c6ba08d90027fa4e664a22f13c62eb45093430c6b90a01e41'
   'backend/src/middleware/auth.js' = '24e429610b942cd6ca16e376dfa2a9c86b8cc2df296ec36d0211754a00eabb6c'
   'backend/src/middleware/tenantGate.js' = '3f4d82161843c14f28c252bf54c14e074eb7908c829130eb2faeda17185d63cd'
   'backend/src/helpers/tenantScope.js' = '06eed21a0a751ec84a0e67ce8a6fb3b5a2c2178b2e93225ea39426a615fc7adf'
@@ -37,7 +37,7 @@ $meta = [ordered]@{
   repository_head=$head; repository_tree=$tree; branch=$branch; git_status=$status;
   repository_root=$repo; dependency_backend=$deps; started_at=[DateTime]::UtcNow.ToString('o');
   source_sha256=$expected; persistence='SYNTHETIC_HTTP_FIXTURE_NOT_SQL';
-  source_binding='Exact Windows file hashes of six application modules at baseline; harness files may be added on the same branch';
+  source_binding='Exact Windows file hashes of six candidate application modules; ancestry baseline is provenance only, current HEAD and working status are recorded';
   isolation='Fresh process environment; Node filesystem/child-process permissions; explicit VM imports and loopback HTTP origins. Not an OS network sandbox.'
 }
 [IO.File]::WriteAllText((Join-Path $out 'launch.json'), ($meta | ConvertTo-Json -Depth 8), $utf8)

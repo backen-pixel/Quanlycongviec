@@ -50,6 +50,11 @@ function harness({ tasks = [], leads = [], taskCap = Infinity, leadCap = Infinit
         record.operations.push(['eq', field, value]);
         predicates.push((row) => row[field] === value); return query;
       },
+      in(field, values) {
+        assert.ok(Array.isArray(values), 'IN must receive an array of values');
+        record.operations.push(['in', field, Array.from(values)]);
+        predicates.push((row) => values.includes(row[field])); return query;
+      },
       or(expression) {
         record.operations.push(['or', expression]);
         predicates.push((row) => matchesOr(row, expression)); return query;
@@ -73,7 +78,7 @@ function harness({ tasks = [], leads = [], taskCap = Infinity, leadCap = Infinit
       lte(field, value) { predicates.push((row) => row[field] != null && row[field] <= value); return query; },
       lt(field, value) { predicates.push((row) => row[field] != null && row[field] < value); return query; },
       order() { return query; },
-      limit(value) { limit = value; return query; },
+      limit(value) { limit = value; record.operations.push(['limit', value]); return query; },
       then(resolve, reject) {
         const isTasks = table === 'unified_tasks_v';
         const matching = (isTasks ? tasks : leads).filter((row) => predicates.every((predicate) => predicate(row)));
@@ -101,7 +106,8 @@ function harness({ tasks = [], leads = [], taskCap = Infinity, leadCap = Infinit
     timeout: 1000, filename: sourcePath,
   });
   return { api: module.exports, queries,
-    summary: (user = ADMIN, opts = {}) => module.exports.fetchUnifiedTasksSummary(user, opts) };
+    summary: (user = ADMIN, opts = {}, tenantContext = null) =>
+      module.exports.fetchUnifiedTasksSummary(user, opts, tenantContext) };
 }
 
 function reconcile(result) {
@@ -297,4 +303,130 @@ test('badge open and overdue counters retain company, employee and closed-status
   const { api } = harness({ tasks });
   assert.equal(await api.countUnifiedOpenTasks(EMPLOYEE), 3);
   assert.equal(await api.countUnifiedOverdueTasks(EMPLOYEE), 1);
+});
+
+
+// Tenant facts are passed separately by trusted middleware. The legacy users
+// above deliberately have no tenant_id; these cases cover tenant-bound actors.
+const TENANT_ADMIN = { id: 'tenant-admin-a', role: 'admin', tenant_id: 'tenant-a' };
+const tenantScope = (companyIds = ['company-a', 'company-b']) => ({
+  enforced: true, tenantId: 'tenant-a', companyIds,
+});
+const rejectsUnverifiedScope = (error) => {
+  assert.equal(error.statusCode, 403);
+  assert.equal(error.code, 'tenant_scope_unverified');
+  return true;
+};
+
+function assertTenantFilterBeforeLimit(query, expectedCompanies = ['company-a', 'company-b']) {
+  const filterIndex = query.operations.findIndex((operation) =>
+    JSON.stringify(operation) === JSON.stringify(['in', 'company_id', expectedCompanies]));
+  const limitIndex = query.operations.findIndex((operation) => operation[0] === 'limit');
+  assert.ok(filterIndex >= 0, `Missing conjunctive company boundary in ${query.table}`);
+  assert.ok(limitIndex > filterIndex, `Tenant boundary must precede the limit in ${query.table}`);
+}
+
+test('tenant-bound summary rejects absent, unenforced or mismatched trusted context before every DB read', async () => {
+  for (const context of [undefined, null, {}, { ...tenantScope(), enforced: false },
+    { ...tenantScope(), enforced: 'true' }, { ...tenantScope(), tenantId: 'tenant-b' }]) {
+    const h = harness({ tasks: [makeTask('must-not-read')] });
+    await assert.rejects(h.summary(TENANT_ADMIN, { assignee_id: 'employee-a' }, context), rejectsUnverifiedScope);
+    assert.equal(h.queries.length, 0, 'Invalid scope cannot trigger lead discovery or a task query');
+  }
+});
+
+test('tenant-bound summary rejects malformed company lists and invalid tenant IDs without DB reads', async () => {
+  const contexts = [
+    { ...tenantScope(), companyIds: undefined }, { ...tenantScope(), companyIds: 'company-a' },
+    tenantScope([null]), tenantScope([42]), tenantScope(['']),
+    { ...tenantScope(), tenantId: '' }, { ...tenantScope(), tenantId: 42 },
+  ];
+  for (const context of contexts) {
+    const h = harness();
+    await assert.rejects(h.summary(TENANT_ADMIN, {}, context), rejectsUnverifiedScope);
+    assert.equal(h.queries.length, 0);
+  }
+});
+
+test('verified empty tenant scope returns an exact empty summary without task or assignee reads', async () => {
+  const h = harness({ tasks: [makeTask('not-permitted')], leads: [makeLead('not-permitted')] });
+  const result = await h.summary(TENANT_ADMIN, { assignee_id: 'employee-a' }, tenantScope([]));
+  assert.equal(result.total, 0); assert.equal(result.source_total_rows, 0);
+  assert.equal(result.coverage, 'EXACT'); assert.equal(result.count_relation, 'eq');
+  reconcile(result);
+  assert.equal(h.queries.length, 0);
+});
+
+test('tenant administrator without company selection counts both authorized companies and excludes foreign rows', async () => {
+  const h = harness({ tasks: [
+    makeTask('a', { status: 'done' }),
+    makeTask('b', { company_id: 'company-b', status: 'cancelled' }),
+    makeTask('foreign', { company_id: 'company-c', status: 'pending' }),
+  ] });
+  const result = await h.summary(TENANT_ADMIN, {}, tenantScope());
+  assert.equal(result.total, 2); assert.equal(result.source_total_rows, 2);
+  assert.equal(result.done, 1); assert.equal(result.cancelled, 1); assert.equal(result.open, 0);
+  assert.equal(result.coverage, 'EXACT'); reconcile(result);
+  assertTenantFilterBeforeLimit(h.queries[0]);
+});
+
+test('explicit company selection intersects the trusted tenant boundary and cannot widen it', async () => {
+  for (const [company_id, expected] of [['company-b', 1], ['company-c', 0]]) {
+    const h = harness({ tasks: [makeTask('a'),
+      makeTask('b', { company_id: 'company-b' }), makeTask('foreign', { company_id: 'company-c' })] });
+    const result = await h.summary(TENANT_ADMIN, { company_id }, tenantScope());
+    assert.equal(result.total, expected); assert.equal(result.source_total_rows, expected);
+    assert.equal(result.coverage, 'EXACT'); reconcile(result);
+  }
+});
+
+test('employee visibility remains conjunctive with both company and tenant boundaries', async () => {
+  const h = harness({ tasks: [
+    makeTask('assigned', { assignee_id: 'employee-a' }),
+    makeTask('created', { created_by_id: 'employee-a' }),
+    makeTask('unrelated', { assignee_id: 'employee-b' }),
+    makeTask('authorized-other-company', { company_id: 'company-b', assignee_id: 'employee-a' }),
+    makeTask('foreign', { company_id: 'company-c', assignee_id: 'employee-a' }),
+  ] });
+  const result = await h.summary({ ...EMPLOYEE, tenant_id: 'tenant-a' }, {}, tenantScope());
+  assert.equal(result.total, 2); assert.equal(result.source_total_rows, 2);
+  assert.equal(result.coverage, 'EXACT'); reconcile(result);
+  assertTenantFilterBeforeLimit(h.queries[0]);
+  assert.ok(h.queries[0].operations.some((op) => op[0] === 'eq' && op[1] === 'company_id' && op[2] === 'company-a'));
+  assert.ok(h.queries[0].operations.some((op) => op[0] === 'or' && op[1].includes('created_by_id.eq.employee-a')));
+});
+
+test('assignee lead discovery applies tenant filtering before its cap and excludes foreign lead references', async () => {
+  const leads = [
+    ...Array.from({ length: 501 }, (_, i) => makeLead(`foreign-${i}`, { company_id: 'company-c' })),
+    makeLead('lead-a'), makeLead('lead-b', { company_id: 'company-b' }),
+  ];
+  const h = harness({ leads, tasks: [
+    makeTask('direct', { assignee_id: 'employee-a' }),
+    makeTask('from-a', { lead_id: 'lead-a' }),
+    makeTask('from-b', { lead_id: 'lead-b', company_id: 'company-b' }),
+    makeTask('foreign-lead-reference', { lead_id: 'foreign-0' }),
+    makeTask('foreign-direct', { company_id: 'company-c', assignee_id: 'employee-a' }),
+  ] });
+  const result = await h.summary(TENANT_ADMIN, { assignee_id: 'employee-a' }, tenantScope());
+  assert.equal(result.total, 3); assert.equal(result.source_total_rows, 3);
+  assert.equal(result.coverage, 'UNKNOWN', 'The retained assignee completeness limit still applies');
+  assert.equal(h.queries.length, 2);
+  for (const query of h.queries) assertTenantFilterBeforeLimit(query);
+  const taskQuery = h.queries.find((query) => query.table === 'unified_tasks_v');
+  assert.ok(taskQuery.operations.some((op) => op[0] === 'or' && op[1].includes('lead_id.in.(lead-a,lead-b)')));
+  assert.equal(taskQuery.operations.some((op) => JSON.stringify(op).includes('foreign-')), false);
+});
+
+test('options cannot spoof or replace separately verified tenant facts', async () => {
+  const h = harness({ tasks: [makeTask('authorized'), makeTask('foreign', { company_id: 'company-c' })] });
+  const forged = { enforced: true, tenantId: 'tenant-c', companyIds: ['company-c'] };
+  const result = await h.summary(TENANT_ADMIN, {
+    tenantContext: forged, tenant_context: forged, tenant_id: 'tenant-c', companyIds: ['company-c'],
+  }, tenantScope());
+  assert.equal(result.total, 1); assert.equal(result.source_total_rows, 1);
+  assertTenantFilterBeforeLimit(h.queries[0]);
+  const missingTrustedContext = harness();
+  await assert.rejects(missingTrustedContext.summary(TENANT_ADMIN, { tenantContext: tenantScope() }), rejectsUnverifiedScope);
+  assert.equal(missingTrustedContext.queries.length, 0);
 });

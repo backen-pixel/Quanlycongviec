@@ -100,8 +100,8 @@ function harness(responses) {
   return {
     reads,
     loggedErrors,
-    async request(query = {}, user = manager) {
-      const req = { query, user };
+    async request(query = {}, user = manager, tenantContext = null) {
+      const req = { query, user, tenantContext };
       const res = {
         statusCode: 200,
         status(code) { this.statusCode = code; return this; },
@@ -220,4 +220,45 @@ test('summary cannot claim completeness when the transport omits its total count
   assert.equal(res.body.coverage, 'UNKNOWN');
   assert.equal(res.body.source_total_rows, null);
   assert.equal(res.body.count_relation, 'unknown');
+});
+
+
+const tenantAdmin = { userId: 'tenant-admin-fixture', role: 'admin', tenant_id: 'tenant-fixture' };
+const verifiedTenantContext = {
+  enforced: true, tenantId: 'tenant-fixture', companyIds: ['company-fixture', 'company-second-fixture'],
+};
+
+test('summary route passes middleware tenant context separately from caller-controlled query options', async () => {
+  const h = harness([{ table: 'unified_tasks_v', data: [row('done')], count: 1 }]);
+  const res = await h.request({
+    tenantContext: { enforced: true, tenantId: 'foreign-tenant', companyIds: ['foreign-company'] },
+    companyIds: ['foreign-company'], tenant_id: 'foreign-tenant',
+  }, tenantAdmin, verifiedTenantContext);
+  assert.equal(res.statusCode, 200);
+  hasCall(h.reads[0], ['in', 'company_id', verifiedTenantContext.companyIds]);
+  assert.equal(h.reads[0].calls.some((call) => JSON.stringify(call).includes('foreign-')), false);
+  assert.equal(res.body.done, 1);
+});
+
+test('summary route returns 403 with a scope error code for missing, unenforced or mismatched middleware context', async () => {
+  for (const context of [null, { ...verifiedTenantContext, enforced: false },
+    { ...verifiedTenantContext, tenantId: 'another-tenant' }]) {
+    const h = harness([]);
+    const res = await h.request({ tenantContext: verifiedTenantContext }, tenantAdmin, context);
+    assert.equal(res.statusCode, 403);
+    assert.equal(res.body.code, 'tenant_scope_unverified');
+    assert.equal(typeof res.body.error, 'string');
+    assert.ok(res.body.error.length > 0);
+    assert.equal(h.reads.length, 0, 'Rejected context must not reach a database transport');
+  }
+});
+
+test('summary route returns zero accessible work for an empty verified tenant without reading the source', async () => {
+  const h = harness([]);
+  const res = await h.request({ assignee_id: 'employee-fixture' }, tenantAdmin,
+    { ...verifiedTenantContext, companyIds: [] });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.total, 0); assert.equal(res.body.source_total_rows, 0);
+  assert.equal(res.body.coverage, 'EXACT');
+  assert.equal(h.reads.length, 0);
 });
