@@ -1,6 +1,16 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-22 15:25 (UTC+7)
+Cập nhật: 2026-09-24 13:10 (UTC+7)
+
+## Nhiệm vụ và tiến độ — một tích cho cả hai bên
+
+Trạng thái: **FE+BE local. SQL 635 chưa chạy** (cần chạy để tích cột VC/LĐ lưu được).
+
+Tab Công việc và `PipelineStepper` dùng chung trạng thái cột. Cột đã đi qua hiện tích ở cả hai nơi. Bấm vòng tròn trên tiến độ hoặc nút tích trên nhiệm vụ thì bên kia đổi theo. Bấm tên cột trên tiến độ vẫn chuyển thẻ. Tab VC/LĐ có cùng danh sách cột lớn / cột nhỏ và nút «Tích hoàn thành cột này».
+
+Hoàn tác: revert `cotTienDo.js`, `PipelineStepper.jsx`, `CRMTasksTab.jsx`, `ProductionDetail.jsx`, `production.js`; `ALTER TABLE project_substage_status DROP COLUMN logistics_stage_id`.
+
+## Pipeline VC/LĐ — cột lớn / cột nhỏ + tiến trình như SX
 
 ## Pipeline VC/LĐ — cột lớn / cột nhỏ + tiến trình như SX
 

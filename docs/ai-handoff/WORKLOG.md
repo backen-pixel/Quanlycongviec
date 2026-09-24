@@ -1,5 +1,10 @@
 # Nhật ký công việc AI
 
+## 2026-09-24 13:10 — Nhiệm vụ và tiến độ dùng chung một tích
+
+- AI: Cursor. Tích cột trên tab Công việc và vòng tròn PipelineStepper đọc/ghi cùng `project_substage_status`. Cột đã đi qua hiện tích cả hai bên. VC/LĐ có danh sách cột lớn và nút hoàn thành cột. SQL 635 thêm `logistics_stage_id` — chưa chạy.
+- File: `cotTienDo.js`, `PipelineStepper.jsx`, `CRMTasksTab.jsx`, `ProductionDetail.jsx`, `production.js`, `database/635_vc_substage_status.sql`.
+
 ## 2026-09-22 15:25 — VC/LĐ: cột lớn / cột nhỏ + tiến trình như SX
 
 - AI: Cursor. `logistics_pipeline_stages.group_key` + `group_sort` (SQL 632). Tab Cột chính trên `/vc/pipeline-settings`; Gộp cột trên `/vc/dashboard`; stepper chi tiết VC gom theo cột lớn. Không seed group_key live.

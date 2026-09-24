@@ -28,6 +28,7 @@
 import { sortAndDedupePipelineStages, pipelineStageSortKey } from '../lib/crmPipelineStages';
 import { workshopReachedCrmStepperStage } from '../lib/crmDealStageGate';
 import { nhanCotLon } from '../lib/sxGopCot';
+import { trangThaiCotHien } from '../lib/cotTienDo';
 
 const NHAN_TT = { chua: 'Chưa tới', dang: 'Đang làm', xong: 'Xong' };
 const NHAN_TT_NGAN = { chua: 'Chưa', dang: 'Đang làm', xong: 'Xong' };
@@ -70,8 +71,13 @@ export default function PipelineStepper({
     return false;
   };
 
-  /** Trạng thái một việc song song: lấy từ bảng, chưa có dòng thì suy từ cột đang đứng. */
-  const ttCua = (s) => (trangThaiO?.[String(s.id)] || (String(s.id) === curId ? 'dang' : 'chua'));
+  /** Cùng luật với nút «Tích hoàn thành cột» ở tab nhiệm vụ. */
+  const ttCua = (s, i) => {
+    const past = stageIsPast(s, i);
+    const here = String(s.id) === curId;
+    if (!trangThaiO) return here ? 'dang' : (past ? 'xong' : 'chua');
+    return trangThaiCotHien({ raw: trangThaiO[String(s.id)], past, here });
+  };
 
   /** Một bước trên stepper cổ điển — dùng cho CRM và cho pipeline chưa gán cột lớn. */
   const veBuoc = (s, i) => {
@@ -189,7 +195,7 @@ export default function PipelineStepper({
             const cuoiCum = g.buoc[g.buoc.length - 1];
             const buocSau = sortedStages[cuoiCum.i + 1];
             const noiXanh = buocSau ? stageIsPast(buocSau, cuoiCum.i + 1) : false;
-            const xongHet = nhieu && g.buoc.every(({ s }) => ttCua(s) === 'xong');
+            const xongHet = nhieu && g.buoc.every(({ s, i }) => ttCua(s, i) === 'xong');
             const dau = g.buoc[0];
             const soloPast = !nhieu && stageIsPast(dau.s, dau.i);
             const soloHere = !nhieu && String(dau.s.id) === curId;
@@ -225,7 +231,7 @@ export default function PipelineStepper({
                     </span>
                     {nhieu && (
                       <span className="ml-auto whitespace-nowrap text-[9.5px] text-gray-400">
-                        {g.buoc.filter(({ s }) => ttCua(s) === 'xong').length}/{g.buoc.length} xong
+                        {g.buoc.filter(({ s, i }) => ttCua(s, i) === 'xong').length}/{g.buoc.length} xong
                       </span>
                     )}
                   </div>
@@ -237,8 +243,8 @@ export default function PipelineStepper({
                         className="absolute left-[15px] top-4 bottom-4 w-0.5 rounded bg-violet-200"
                         aria-hidden="true"
                       />
-                      {g.buoc.map(({ s }) => {
-                        const tt = ttCua(s);
+                      {g.buoc.map(({ s, i }) => {
+                        const tt = ttCua(s, i);
                         const here = String(s.id) === curId;
                         return (
                           <div key={s.id} className="relative flex items-center gap-2">
@@ -286,20 +292,28 @@ export default function PipelineStepper({
                     </div>
                   ) : (
                     <div className="flex items-center gap-2 px-2.5 py-2.5">
-                      {veCham(
-                        dau.s,
-                        soloPast ? 'xong' : soloHere ? 'dang' : 'chua',
-                        false,
-                        true,
-                      )}
-                      <span
-                        className={`min-w-0 flex-1 text-[11.5px] leading-tight ${
-                          soloHere ? 'font-semibold text-gray-900' : soloPast ? 'text-emerald-700' : 'text-gray-500'
-                        }`}
-                        title={dau.s.name}
-                      >
-                        {dau.s.name}
-                      </span>
+                      {(() => {
+                        const tt = ttCua(dau.s, dau.i);
+                        const xong = tt === 'xong';
+                        return (
+                          <>
+                            {veCham(dau.s, tt, false, true, { checkable: !!onDoiTrangThai })}
+                            <button
+                              type="button"
+                              onClick={() => onMoveToStage?.(dau.s.id)}
+                              disabled={!onMoveToStage}
+                              className={`min-w-0 flex-1 text-left text-[11.5px] leading-tight ${
+                                onMoveToStage ? 'cursor-pointer hover:underline' : 'cursor-default'
+                              } ${
+                                soloHere ? 'font-semibold text-gray-900' : xong ? 'text-emerald-700' : 'text-gray-500'
+                              }`}
+                              title={onMoveToStage ? `${dau.s.name} — bấm tên để chuyển thẻ sang cột này` : dau.s.name}
+                            >
+                              {dau.s.name}
+                            </button>
+                          </>
+                        );
+                      })()}
                     </div>
                   )}
 

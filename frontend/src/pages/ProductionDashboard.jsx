@@ -2669,18 +2669,21 @@ export default function ProductionDashboard() {
   }, [sxTachTab]);
   const sxCoNhieuTab = sxCacTabKhac.length > 0;
   const sxTabHienTai = (sxTab === TAB_SX || sxCacTabKhac.some((t) => t.key === sxTab)) ? sxTab : TAB_SX;
-  const sxPipelineTab = sxTabHienTai === TAB_SX
-    ? sxCotSanXuat
-    : (sxCacTabKhac.find((t) => t.key === sxTabHienTai)?.cot || sxCotSanXuat);
+  // Không gộp cột: Sản xuất và Công nợ nằm chung một bảng. Bật Gộp cột thì tách tab lại.
+  const sxPipelineTab = !sxGopCot
+    ? filteredKanbanPipeline
+    : (sxTabHienTai === TAB_SX
+      ? sxCotSanXuat
+      : (sxCacTabKhac.find((t) => t.key === sxTabHienTai)?.cot || sxCotSanXuat));
   sxPipelineTabRef.current = sxPipelineTab;
 
-  // Gộp cột chỉ có nghĩa ở tab Sản xuất — gộp 5 cột công nợ thành một cột thì hết gì để xem.
-  const sxCacNhom = useMemo(() => gomCotTheoNhom(sxPipelineTab), [sxPipelineTab]);
-  const sxGopDuoc = useMemo(
-    () => sxTabHienTai !== TAB_CONG_NO && coTheGopCot(sxPipelineTab),
-    [sxTabHienTai, sxPipelineTab],
+  // Gộp cột chỉ gom cột sản xuất — không gộp các cột công nợ thành một.
+  const sxCacNhom = useMemo(
+    () => gomCotTheoNhom(sxGopCot ? sxCotSanXuat : sxPipelineTab),
+    [sxGopCot, sxCotSanXuat, sxPipelineTab],
   );
-  const sxGopDangBat = sxGopCot && sxGopDuoc;
+  const sxGopDuoc = useMemo(() => coTheGopCot(sxCotSanXuat), [sxCotSanXuat]);
+  const sxGopDangBat = sxGopCot && sxGopDuoc && sxTabHienTai !== TAB_CONG_NO;
   const sxPipelineHienThi = useMemo(
     () => (sxGopDangBat ? gopPipeline(sxPipelineTab, sxNhomDangMo) : sxPipelineTab),
     [sxGopDangBat, sxNhomDangMo, sxPipelineTab],
@@ -4353,7 +4356,7 @@ export default function ProductionDashboard() {
         </div>
       </div>
 
-      {viewMode === 'kanban' && sxCoNhieuTab && (
+      {viewMode === 'kanban' && sxCoNhieuTab && sxGopCot && (
         <div className="flex flex-wrap items-center gap-2 px-1">
           <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-slate-200 bg-white/90 p-0.5 shadow-inner">
             <button

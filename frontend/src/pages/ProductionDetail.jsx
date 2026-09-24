@@ -2584,12 +2584,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   // nếu để sau thì hook thành có điều kiện và React sẽ vỡ thứ tự hook.
   const [sxTrangThaiO, setSxTrangThaiO] = useState({});
   const sxNhomStageIds = useMemo(() => {
-    if (moduleKey === 'vc') return '';
-    return (project?.sxKanbanStages || [])
-      .filter((st) => String(st?.group_key || '').trim())
-      .map((st) => String(st.id))
-      .join(',');
-  }, [moduleKey, project?.sxKanbanStages]);
+    const stages = moduleKey === 'vc' ? project?.vcKanbanStages : project?.sxKanbanStages;
+    return (stages || []).map((st) => String(st.id)).filter(Boolean).join(',');
+  }, [moduleKey, project?.sxKanbanStages, project?.vcKanbanStages]);
 
   useEffect(() => {
     if (!sxNhomStageIds || !id) { setSxTrangThaiO({}); return undefined; }
@@ -2597,18 +2594,25 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     (async () => {
       try {
         const { data } = await api.get('/production/substage-status', {
-          params: { stage_ids: sxNhomStageIds, project_id: id },
+          params: {
+            stage_ids: sxNhomStageIds,
+            project_id: id,
+            pipeline: moduleKey === 'vc' ? 'logistics' : 'production',
+          },
         });
         if (!song) return;
         const m = {};
-        (data?.rows || []).forEach((rw) => { m[String(rw.stage_id)] = rw.trang_thai || 'chua'; });
+        (data?.rows || []).forEach((rw) => {
+          const sid = moduleKey === 'vc' ? rw.logistics_stage_id : rw.stage_id;
+          if (sid) m[String(sid)] = rw.trang_thai || 'chua';
+        });
         setSxTrangThaiO(m);
       } catch {
         if (song) setSxTrangThaiO({});
       }
     })();
     return () => { song = false; };
-  }, [sxNhomStageIds, id]);
+  }, [sxNhomStageIds, id, moduleKey]);
 
   const doiTrangThaiO = useCallback(async (stageId, tt) => {
     if (!id || !stageId) return;
@@ -2617,7 +2621,10 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     setSxTrangThaiO((prev) => { truoc = prev[k]; return { ...prev, [k]: tt }; });
     try {
       await api.put('/production/substage-status', {
-        project_id: id, stage_id: k, trang_thai: tt,
+        project_id: id,
+        stage_id: k,
+        trang_thai: tt,
+        pipeline: moduleKey === 'vc' ? 'logistics' : 'production',
       });
     } catch (e) {
       // Trả đúng giá trị cũ — không đoán, tránh hiện sai trạng thái sản xuất.
@@ -2628,7 +2635,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       });
       alert(e?.response?.data?.error || 'Không lưu được trạng thái việc song song');
     }
-  }, [id]);
+  }, [id, moduleKey]);
 
   const saveCrmActivity = async () => {
     const dealId = project?.crmDeals?.[0]?.id;
@@ -3382,8 +3389,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         onMoveToStage={moveStage}
         linearProgress
         nhomSongSong={safePipelineStages.some((st) => String(st?.group_key || '').trim())}
-        trangThaiO={moduleKey === 'vc' ? null : sxTrangThaiO}
-        onDoiTrangThai={moduleKey === 'vc' ? null : doiTrangThaiO}
+        trangThaiO={sxTrangThaiO}
+        onDoiTrangThai={doiTrangThaiO}
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
@@ -3666,6 +3673,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     vcTemplateCompanyId={project?.logistics_company_id || project?.logistics_company?.id || null}
                     dealResponsible={primaryCrmDeal}
                     workshopProject={project}
+                    sxTrangThaiO={sxTrangThaiO}
+                    onDoiTrangThai={doiTrangThaiO}
                     initialVcAreaTab={vcSubTab || undefined}
                     onVcAreaTabChange={(tab) => {
                       setSearchParams((prev) => {

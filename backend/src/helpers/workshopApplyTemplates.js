@@ -450,6 +450,12 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId, opt
     ? (opts.productionStageId ?? tpl.production_stage_id ?? null)
     : null;
 
+  // VC/LĐ: cột của task = cột mà bộ mẫu được gắn (opts đè bộ mẫu).
+  // Chỉ khi bộ mẫu không gắn cột nào mới đoán theo tiêu đề (tương thích dữ liệu cũ).
+  const logisticsStageIdForTask = tpl.workshop_area === 'logistics'
+    ? (opts.logisticsStageId ?? tpl.logistics_stage_id ?? null)
+    : null;
+
   const logisticsCompanyId = tpl.workshop_area === 'logistics'
     ? (project.logistics_company_id || project.company_id || null)
     : null;
@@ -471,8 +477,11 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId, opt
     const stageId = resolveStageIdBySlug(guessedSlug) || fallbackStageId;
     let logisticsPipelineStageId = null;
     if (tpl.workshop_area === 'logistics') {
-      const bucket = guessLogisticsPipelineBucketFromTitle(item.title);
-      logisticsPipelineStageId = await resolveLogisticsPipelineStageIdByBucket(bucket, logisticsCompanyId);
+      logisticsPipelineStageId = logisticsStageIdForTask;
+      if (!logisticsPipelineStageId) {
+        const bucket = guessLogisticsPipelineBucketFromTitle(item.title);
+        logisticsPipelineStageId = await resolveLogisticsPipelineStageIdByBucket(bucket, logisticsCompanyId);
+      }
     }
     staged.push({ item, guessedSlug, stageId, dueDate: moduleDueIso, logisticsPipelineStageId });
   }
@@ -760,7 +769,7 @@ async function applyAllActiveWorkshopTemplatesForArea(projectId, userId, {
     }
     const applyOpts = area === 'production'
       ? {}
-      : {};
+      : { logisticsStageId: tpl.logistics_stage_id || logStageId || null };
     const r0 = await applyWorkshopTemplateToProject(projectId, tid, userId, applyOpts);
     if (!r0.ok) return { ok: false, error: r0.error, template_id: tid, template_name: tpl.name || null };
     created_tasks += r0.count || 0;

@@ -1233,10 +1233,14 @@ r.get('/substage-status', requirePermission('projects', 'view'), async (req, res
     if (!ids.length) return res.json({ rows: [] });
     if (ids.length > 200) return res.status(400).json({ error: 'Tối đa 200 cột mỗi lần đọc' });
     const projectId = String(req.query.project_id || '').trim();
+    const logistics = String(req.query.pipeline || '') === 'logistics';
+    const cols = logistics
+      ? 'project_id, stage_id, logistics_stage_id, trang_thai, nguoi_lam, bat_dau_luc, xong_luc, ghi_chu, updated_at'
+      : 'project_id, stage_id, trang_thai, nguoi_lam, bat_dau_luc, xong_luc, ghi_chu, updated_at';
     let q = supabase
       .from('project_substage_status')
-      .select('project_id, stage_id, trang_thai, nguoi_lam, bat_dau_luc, xong_luc, ghi_chu, updated_at')
-      .in('stage_id', ids);
+      .select(cols)
+      .in(logistics ? 'logistics_stage_id' : 'stage_id', ids);
     // Trang chi tiet chi xem mot du an -> khong keo ve ca cot.
     if (projectId) q = q.eq('project_id', projectId);
     const { data, error } = await q;
@@ -1254,6 +1258,7 @@ r.put('/substage-status', requireProductionKanbanEdit(), async (req, res) => {
     const projectId = String(req.body?.project_id || '').trim();
     const stageId = String(req.body?.stage_id || '').trim();
     const trangThai = String(req.body?.trang_thai || '').trim();
+    const logistics = String(req.body?.pipeline || '') === 'logistics';
     if (!projectId || !stageId) return res.status(400).json({ error: 'Thiếu project_id hoặc stage_id' });
     if (!PSS_TRANG_THAI.has(trangThai)) {
       return res.status(400).json({ error: 'trang_thai phải là chua / dang / xong' });
@@ -1262,16 +1267,19 @@ r.put('/substage-status', requireProductionKanbanEdit(), async (req, res) => {
     const { assertProjectAccessible } = require('../helpers/projectAccessScope');
     if (!(await assertProjectAccessible(req, res, projectId, { operation: 'WRITE' }))) return;
 
+    const stageTable = logistics ? 'logistics_pipeline_stages' : 'production_pipeline_stages';
     const [{ data: stage, error: stErr }, { data: prj, error: pjErr }] = await Promise.all([
-      supabase.from('production_pipeline_stages').select('id, company_id, group_key').eq('id', stageId).maybeSingle(),
-      supabase.from('projects').select('id, company_id').eq('id', projectId).maybeSingle(),
+      supabase.from(stageTable).select('id, company_id').eq('id', stageId).maybeSingle(),
+      supabase.from('projects').select('id, company_id, logistics_company_id').eq('id', projectId).maybeSingle(),
     ]);
     if (stErr) throw stErr;
     if (pjErr) throw pjErr;
     if (!stage) return res.status(404).json({ error: 'Không thấy cột' });
     if (!prj) return res.status(404).json({ error: 'Không thấy dự án' });
-    // Chặn ghi chéo hệ sinh thái: cột phải cùng công ty với dự án.
-    if (stage.company_id && prj.company_id && String(stage.company_id) !== String(prj.company_id)) {
+    const projectCompanyId = logistics
+      ? (prj.logistics_company_id || prj.company_id)
+      : prj.company_id;
+    if (stage.company_id && projectCompanyId && String(stage.company_id) !== String(projectCompanyId)) {
       return res.status(403).json({ error: 'Cột không thuộc công ty của dự án' });
     }
 
@@ -1279,7 +1287,7 @@ r.put('/substage-status', requireProductionKanbanEdit(), async (req, res) => {
       .from('project_substage_status')
       .select('id, bat_dau_luc, nguoi_lam')
       .eq('project_id', projectId)
-      .eq('stage_id', stageId)
+      .eq(logistics ? 'logistics_stage_id' : 'stage_id', stageId)
       .maybeSingle();
     if (cuErr && !isSubstageTableMissing(cuErr)) throw cuErr;
 
@@ -1289,9 +1297,10 @@ r.put('/substage-status', requireProductionKanbanEdit(), async (req, res) => {
       : (req.body.nguoi_lam || null);
 
     const row = {
-      company_id: prj.company_id || stage.company_id || null,
+      company_id: projectCompanyId || stage.company_id || null,
       project_id: projectId,
-      stage_id: stageId,
+      stage_id: logistics ? null : stageId,
+      logistics_stage_id: logistics ? stageId : null,
       trang_thai: trangThai,
       nguoi_lam: nguoiLam,
       // Giữ mốc bắt đầu cũ; chỉ đặt mới khi lần đầu chuyển khỏi 'chua'.
@@ -1302,10 +1311,11 @@ r.put('/substage-status', requireProductionKanbanEdit(), async (req, res) => {
     };
     if (req.body?.ghi_chu !== undefined) row.ghi_chu = req.body.ghi_chu || null;
 
-    const { data, error } = await supabase
-      .from('project_substage_status')
-      .upsert(row, { onConflict: 'project_id,stage_id' })
-      .select('project_id, stage_id, trang_thai, nguoi_lam, bat_dau_luc, xong_luc, ghi_chu, updated_at')
+    const write = cu?.id
+      ? supabase.from('project_substage_status').update(row).eq('id', cu.id)
+      : supabase.from('project_substage_status').insert(row);
+    const { data, error } = await write
+      .select('project_id, stage_id, logistics_stage_id, trang_thai, nguoi_lam, bat_dau_luc, xong_luc, ghi_chu, updated_at')
       .maybeSingle();
     if (error) throw error;
     res.json({ row: data || row });

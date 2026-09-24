@@ -7,8 +7,9 @@ import { connectSocket, getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
 import { canManageWorkshopProjectFiles, isDealResponsibleUser } from '../lib/fileOwnership';
-import { fetchPipelineStagesById, filterSxPipelineStagesForWorkshopType, sortAndDedupePipelineStages } from '../lib/crmPipelineStages';
+import { fetchPipelineStagesById, filterSxPipelineStagesForWorkshopType, pipelineStageSortKey, sortAndDedupePipelineStages } from '../lib/crmPipelineStages';
 import { gomCotTheoNhom } from '../lib/sxGopCot';
+import { cotDaTich } from '../lib/cotTienDo';
 import { formatDateTime, formatVND, PRIORITY_LABELS, TASK_PRIORITY_COLORS as PRIORITY_COLORS } from '../lib/utils';
 import { isoToDatetimeLocalValue, datetimeLocalValueToIso } from '../lib/datetimeLocal';
 import { taskBelongsToVcSubTab, isInstallLogisticsPipelineStage } from '../lib/workshopTaskScope';
@@ -1784,6 +1785,7 @@ export default function CRMTasksTab({
         project_id: pid,
         stage_id: k,
         trang_thai: tt,
+        pipeline: isLogisticsScope ? 'logistics' : 'production',
       });
     } catch (e) {
       setLocalTrangThaiO((prev) => {
@@ -1794,15 +1796,37 @@ export default function CRMTasksTab({
       });
       alert(e.response?.data?.error || 'Không đánh dấu được cột');
     }
-  }, [onDoiTrangThai, linkedProjectId]);
+  }, [onDoiTrangThai, linkedProjectId, isLogisticsScope]);
+
+  const cotPipeline = isLogisticsScope
+    ? (vcPipelineStages.length ? vcPipelineStages : (embeddedVcKanbanStages || []))
+    : sxPipelineStages;
+  const kanbanColumnId = isLogisticsScope
+    ? workshopProject?.vc_kanban_column_id
+    : workshopProject?.sx_kanban_column_id;
+
+  const stageDaQua = useCallback((stage) => {
+    if (!kanbanColumnId || !stage || !cotPipeline.length) return false;
+    const curIdx = cotPipeline.findIndex((s) => String(s.id) === String(kanbanColumnId));
+    if (curIdx < 0) return false;
+    const i = cotPipeline.findIndex((s) => String(s.id) === String(stage.id));
+    return pipelineStageSortKey(stage, i < 0 ? 0 : i) < pipelineStageSortKey(cotPipeline[curIdx], curIdx);
+  }, [kanbanColumnId, cotPipeline]);
+
+  const cotNayDaTich = useCallback((stage, stageTasks) => {
+    const allTasksDone = (stageTasks || []).length > 0
+      && (stageTasks || []).every((t) => t.status === 'completed');
+    return cotDaTich({
+      raw: sxTrangThaiO[String(stage?.id || '')],
+      past: stageDaQua(stage),
+      allTasksDone,
+    });
+  }, [sxTrangThaiO, stageDaQua]);
 
   const tichHoanThanhCot = async (stage, stageTasks) => {
     const stageId = String(stage?.id || '');
     const hasOpen = (stageTasks || []).some((t) => t.status !== 'completed');
-    const tt = sxTrangThaiO[stageId] || 'chua';
-    const allDone = (stageTasks || []).length > 0
-      && (stageTasks || []).every((t) => t.status === 'completed');
-    const cotXong = tt === 'xong' || allDone;
+    const cotXong = cotNayDaTich(stage, stageTasks);
     if (hasOpen) {
       const n = stageTasks.filter((t) => t.status !== 'completed').length;
       const ok = await completeTasksBulk(stageTasks, `Đánh dấu hoàn thành ${n} nhiệm vụ trong «${stage.name}»?`);
@@ -2241,8 +2265,20 @@ export default function CRMTasksTab({
 
   /** Cột lớn (cha) → cột nhỏ (con); ẩn nhiệm vụ (cháu) — khớp PipelineStepper. */
   const sxPlanGroups = useMemo(() => {
-    if (!useSxPipelineTaskUi || !sxPipelineStages.length) return null;
-    return gomCotTheoNhom(sxPipelineStages).map((g) => {
+    const vcMode = !!(useVcPipelineTaskUi && (vcPipelineStages.length || embeddedVcKanbanStages?.length));
+    const sxMode = !!(useSxPipelineTaskUi && sxPipelineStages.length);
+    if (!vcMode && !sxMode) return null;
+    let stages = vcMode
+      ? (vcPipelineStages.length ? vcPipelineStages : embeddedVcKanbanStages)
+      : sxPipelineStages;
+    if (vcMode && (vcAreaTab === 'shipping' || vcAreaTab === 'install')) {
+      stages = (stages || []).filter((raw) => {
+        const install = isInstallLogisticsPipelineStage(raw);
+        return vcAreaTab === 'install' ? install : !install;
+      });
+    }
+    if (!stages?.length) return null;
+    return gomCotTheoNhom(stages).map((g) => {
       const children = (g.cotNho || []).map((stage) => {
         const slug = String(stage.id);
         const stageTasks = tasksByStage[slug] || [];
@@ -2261,7 +2297,20 @@ export default function CRMTasksTab({
         total: children.reduce((n, c) => n + c.stageTasks.length, 0),
       };
     });
-  }, [useSxPipelineTaskUi, sxPipelineStages, tasksByStage]);
+  }, [useSxPipelineTaskUi, sxPipelineStages, useVcPipelineTaskUi, vcPipelineStages, embeddedVcKanbanStages, vcAreaTab, tasksByStage]);
+
+  useEffect(() => {
+    if (!sxPlanGroups) return undefined;
+    sxPlanGroups.forEach((g) => {
+      g.children.forEach((c) => {
+        const id = String(c.stage.id);
+        const allDone = c.stageTasks.length > 0 && c.completed === c.stageTasks.length;
+        const raw = sxTrangThaiO[id];
+        if (allDone && raw !== 'xong' && raw !== 'chua') void doiTrangThaiCot(id, 'xong');
+      });
+    });
+    return undefined;
+  }, [sxPlanGroups, sxTrangThaiO, doiTrangThaiCot]);
 
   /** Khóa giai đoạn — dùng khi sắp xếp kéo thả trong tab Công việc deal. */
   const getTaskStageKey = useCallback((task) => {
@@ -4910,20 +4959,17 @@ export default function CRMTasksTab({
                               disabled={bulkCompleting}
                               onClick={() => { void tichHoanThanhCot(c.stage, c.stageTasks); }}
                               className={`shrink-0 self-center flex items-center justify-center h-7 w-7 rounded-md cursor-pointer disabled:opacity-50 ${
-                                (sxTrangThaiO[String(c.stage.id)] === 'xong'
-                                  || (c.stageTasks.length > 0 && c.completed === c.stageTasks.length))
+                                cotNayDaTich(c.stage, c.stageTasks)
                                   ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200'
                                   : 'text-gray-400 bg-white hover:bg-emerald-50 hover:text-emerald-600 border border-gray-200'
                               }`}
                               title={
-                                (sxTrangThaiO[String(c.stage.id)] === 'xong'
-                                  || (c.stageTasks.length > 0 && c.completed === c.stageTasks.length))
+                                cotNayDaTich(c.stage, c.stageTasks)
                                   ? 'Bỏ tích hoàn thành cột này'
                                   : 'Tích hoàn thành cột này'
                               }
                             >
-                              {(sxTrangThaiO[String(c.stage.id)] === 'xong'
-                                || (c.stageTasks.length > 0 && c.completed === c.stageTasks.length))
+                              {cotNayDaTich(c.stage, c.stageTasks)
                                 ? <CheckCircle2 className="h-4 w-4" />
                                 : <Circle className="h-4 w-4" />}
                             </button>
