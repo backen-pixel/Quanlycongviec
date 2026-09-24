@@ -27,7 +27,12 @@ const {
 const {
   messengerEventOccurredAt,
   saveMessengerAdAttribution,
+  buildPhoneAttributionReadiness,
 } = require('../helpers/facebookMessengerCampaignAttribution');
+const {
+  facebookAppSecretConfigured,
+  verifyFacebookWebhookSignature,
+} = require('../helpers/facebookWebhookSignature');
 const { isPhoneBlockedForFacebookAutoLead } = require('../helpers/crmAutoLeadPhoneBlocklist');
 const { deleteLeadIfAllowedForRescan, deleteOrphanCustomerIfAllowed } = require('../helpers/facebookLeadDeleteWhenNoPhone');
 const { reconcileInboundPhoneAfterScan, phonesEqualDigits } = require('../helpers/facebookInboundPhoneReconcile');
@@ -77,6 +82,7 @@ function parseMaxContactsLinkCleanup(raw) {
 const FB_DISABLE_WEBHOOK_LOGS = ['1', 'true', 'yes', 'on'].includes(
   String(process.env.FB_DISABLE_WEBHOOK_LOGS || '').toLowerCase(),
 );
+let hasWarnedFacebookWebhookSignatureNotConfigured = false;
 
 /** Tắt gọi Graph/ui-avatars lấy avatar khách — chỉ resolve tên qua Conversations API. Bật lại: FB_FETCH_PROFILE_PIC=1 */
 const FB_FETCH_PROFILE_PIC = ['1', 'true', 'yes', 'on'].includes(
@@ -3443,9 +3449,23 @@ r.get('/webhook', async (req, res) => {
 // ── WEBHOOK RECEIVE (POST) ───────────────────────────────────
 
 r.post('/webhook', async (req, res) => {
+  const signature = verifyFacebookWebhookSignature({
+    rawBody: req.rawBodyBuffer || req.rawBody,
+    signature: req.get('x-hub-signature-256'),
+  });
+  if (signature.configured && !signature.valid) {
+    console.warn('[FB] Rejected webhook with invalid X-Hub-Signature-256');
+    return res.sendStatus(401);
+  }
+  if (!signature.configured && !hasWarnedFacebookWebhookSignatureNotConfigured) {
+    hasWarnedFacebookWebhookSignatureNotConfigured = true;
+    console.warn('[FB] FB_APP_SECRET is not configured; accepting legacy unsigned webhook. Ads automation remains disabled.');
+  }
+
   const body = req.body;
-  
-  // Luôn trả 200 ngay để Facebook không retry
+
+  // Keep the legacy quick acknowledgement: durable delivery is not implemented yet,
+  // so campaign pause/reopen automation must remain disabled.
   res.sendStatus(200);
 
   // Ghi log vào DB
@@ -4494,6 +4514,21 @@ r.get('/ads/phone-attribution', authMiddleware, async (req, res) => {
       return res.status(400).json({ error: 'campaign_ids phải có từ 1 đến 100 ID.' });
     }
 
+    let mappingQuery = supabase
+      .from('facebook_ad_campaign_mappings')
+      .select('campaign_id, page_id')
+      .in('campaign_id', campaignIds);
+    if (Array.isArray(pageIds)) mappingQuery = mappingQuery.in('page_id', pageIds);
+    const { data: mappings, error: mappingError } = await mappingQuery;
+    if (mappingError) throw mappingError;
+
+    const readiness = buildPhoneAttributionReadiness({
+      campaignIds,
+      mappedCampaignIds: (mappings || []).map((row) => row.campaign_id),
+      appSecretConfigured: facebookAppSecretConfigured(),
+      // The legacy webhook ACKs before durable processing. Keep Ads actions fail-closed.
+      durableWebhookDelivery: false,
+    });
     const { data, error } = await supabase.rpc('fb_campaign_phone_numbers_in_range', {
       p_page_ids: pageIds,
       p_campaign_ids: campaignIds,
@@ -4502,19 +4537,83 @@ r.get('/ads/phone-attribution', authMiddleware, async (req, res) => {
     });
     if (error) throw error;
 
-    const phoneByCampaign = Object.fromEntries(
-      (data || []).map((row) => [String(row.campaign_id), Number(row.phone_contacts) || 0]),
-    );
+    const phoneByCampaign = Object.fromEntries(campaignIds.map((campaignId) => [campaignId, 0]));
+    for (const row of data || []) {
+      phoneByCampaign[String(row.campaign_id)] = Number(row.phone_contacts) || 0;
+    }
     return res.json({
       date,
       timezone: 'Asia/Ho_Chi_Minh',
       campaign_ids: campaignIds,
       phone_by_campaign: phoneByCampaign,
-      attribution_ready: true,
+      attribution_ready: readiness.trackingReady,
+      tracking_ready: readiness.trackingReady,
+      automation_ready: readiness.automationReady,
+      missing_campaign_mapping_ids: readiness.missingCampaignMappingIds,
+      blocking_reasons: readiness.blockingReasons,
+      attribution_policy: readiness.policy,
     });
   } catch (e) {
     console.error('[FB attribution] report:', e.message);
-    return res.status(500).json({ error: 'Không thể đọc SĐT theo chiến dịch.', detail: e.message });
+    return res.status(503).json({
+      error: 'Không thể đọc SĐT theo chiến dịch.',
+      detail: e.message,
+      attribution_ready: false,
+      tracking_ready: false,
+      automation_ready: false,
+      blocking_reasons: ['crm_attribution_read_failed'],
+    });
+  }
+});
+
+// ── Exclude one authorised E2E phone message from campaign reporting ─────
+r.post('/ads/phone-attribution/test-exclusions', authMiddleware, async (req, res) => {
+  try {
+    if (!isAdminLike(req.user)) {
+      return res.status(403).json({ error: 'Chỉ admin được loại trừ SĐT kiểm thử.' });
+    }
+    const messageId = String(req.body?.facebook_message_id || '').trim();
+    if (!messageId) return res.status(400).json({ error: 'Cần facebook_message_id.' });
+
+    const { data: message, error: messageError } = await supabase
+      .from('facebook_messages')
+      .select('id, contact_id, direction, detected_phone')
+      .eq('id', messageId)
+      .maybeSingle();
+    if (messageError) throw messageError;
+    if (!message) return res.status(404).json({ error: 'Không tìm thấy tin nhắn Messenger.' });
+    if (message.direction !== 'inbound' || !String(message.detected_phone || '').trim()) {
+      return res.status(400).json({ error: 'Chỉ loại trừ tin nhắn vào có SĐT đã phát hiện.' });
+    }
+
+    const { data: contact, error: contactError } = await supabase
+      .from('facebook_contacts')
+      .select('id, page_id')
+      .eq('id', message.contact_id)
+      .maybeSingle();
+    if (contactError) throw contactError;
+    if (!contact) return res.status(404).json({ error: 'Không tìm thấy liên hệ Messenger.' });
+
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+    if (!contactAllowedByFacebookScope(scope, contact)) {
+      return res.status(403).json({ error: 'Không có quyền loại trừ tin nhắn của Page này.' });
+    }
+
+    const { error: exclusionError } = await supabase
+      .from('facebook_messenger_phone_exclusions')
+      .upsert({
+        facebook_message_id: message.id,
+        contact_id: contact.id,
+        page_id: String(contact.page_id),
+        reason: 'e2e_test',
+        excluded_by: String(req.user?.id || req.user?.email || 'unknown'),
+      }, { onConflict: 'facebook_message_id' });
+    if (exclusionError) throw exclusionError;
+    return res.json({ success: true, facebook_message_id: message.id, reason: 'e2e_test' });
+  } catch (e) {
+    console.error('[FB attribution] exclude E2E phone:', e.message);
+    return res.status(503).json({ error: 'Không thể loại trừ SĐT kiểm thử.', detail: e.message });
   }
 });
 

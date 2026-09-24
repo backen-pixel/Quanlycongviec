@@ -42,7 +42,65 @@ async function saveMessengerAdAttribution({ supabase, pageId, contactId, event }
   return campaignId;
 }
 
+const VPT_DAILY_PHONE_ATTRIBUTION_POLICY = Object.freeze({
+  timezone: 'Asia/Ho_Chi_Minh',
+  referral_window: 'same_vietnam_day',
+  referral_must_precede_phone: true,
+  excludes_explicit_e2e_tests: true,
+});
+
+function vietnamCalendarDate(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: VPT_DAILY_PHONE_ATTRIBUTION_POLICY.timezone,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function isReferralEligibleForDailyPhone({ referralOccurredAt, phoneOccurredAt }) {
+  const referral = new Date(referralOccurredAt);
+  const phone = new Date(phoneOccurredAt);
+  if (Number.isNaN(referral.getTime()) || Number.isNaN(phone.getTime())) return false;
+  return referral.getTime() <= phone.getTime()
+    && vietnamCalendarDate(referral) === vietnamCalendarDate(phone);
+}
+
+function uniqueText(values) {
+  return [...new Set((values || []).map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
+function buildPhoneAttributionReadiness({
+  campaignIds,
+  mappedCampaignIds,
+  appSecretConfigured,
+  durableWebhookDelivery = false,
+}) {
+  const requestedCampaignIds = uniqueText(campaignIds);
+  const mapped = new Set(uniqueText(mappedCampaignIds));
+  const missingCampaignMappingIds = requestedCampaignIds.filter((id) => !mapped.has(id));
+  const blockingReasons = [];
+  if (missingCampaignMappingIds.length) blockingReasons.push('missing_campaign_mapping');
+  if (!appSecretConfigured) blockingReasons.push('fb_app_secret_not_configured');
+  if (!durableWebhookDelivery) blockingReasons.push('webhook_delivery_not_durable');
+  // An unsigned webhook can forge campaign attribution, so it is not tracking-ready.
+  const trackingReady = missingCampaignMappingIds.length === 0 && Boolean(appSecretConfigured);
+  return {
+    trackingReady,
+    automationReady: trackingReady && blockingReasons.length === 0,
+    missingCampaignMappingIds,
+    blockingReasons,
+    policy: VPT_DAILY_PHONE_ATTRIBUTION_POLICY,
+  };
+}
+
 module.exports = {
   messengerEventOccurredAt,
   saveMessengerAdAttribution,
+  VPT_DAILY_PHONE_ATTRIBUTION_POLICY,
+  vietnamCalendarDate,
+  isReferralEligibleForDailyPhone,
+  buildPhoneAttributionReadiness,
 };

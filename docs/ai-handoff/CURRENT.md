@@ -4,13 +4,15 @@ Cập nhật: 2026-09-24 (UTC+7)
 
 ## VPT01 — ghi nhận SĐT Messenger theo chiến dịch quảng cáo
 
-Trạng thái: **đã hoàn tất mã nguồn và đẩy nhánh `codex/vpt-messenger-attribution-20260924` (commit `b955e58b`); chưa triển khai Production.**
+Trạng thái: **nhánh `codex/vpt-messenger-attribution-20260924` đã có tracking gốc (`b955e58b`) và bản vá an toàn bổ sung; chưa triển khai Production.**
 
-Đã thêm migration 591, webhook ghi `messaging_referrals`, timestamp sự kiện, SĐT phát hiện trực tiếp từ tin nhắn vào và API tổng hợp số điện thoại theo campaign/ngày. Mapping có sẵn 30 quảng cáo thuộc 10 chiến dịch VPT01. Kiểm thử syntax, helper, mapping migration, API docs và `git diff --check` đều đạt.
+Tracking gốc dùng migration 591: `messaging_referrals` → `ad_id` → campaign, timestamp sự kiện, SĐT phát hiện trực tiếp từ tin nhắn vào và báo cáo theo ngày. Bản vá kế tiếp dùng migration 636 (không sửa lịch sử 591): khóa quyền trực tiếp vào bảng/RPC attribution, giới hạn referral cùng Page/cùng ngày Việt Nam và trước SĐT, đồng thời cho phép admin loại trừ đúng một tin E2E qua `POST /api/facebook/ads/phone-attribution/test-exclusions`.
 
-Điều kiện bắt buộc trước khi bật lịch tự động: chạy migration 591, phát hành backend, đăng ký Meta webhook `messaging_referrals`, rồi xác minh một tin nhắn thật có SĐT trả về đúng campaign qua `GET /api/facebook/ads/phone-attribution`. Khi endpoint đã kiểm chứng, lịch sẽ: mỗi giờ dừng campaign chi từ 50.000đ mà ngày đó chưa có SĐT; 00:00 `Asia/Ho_Chi_Minh` chỉ mở lại campaign do chính quy tắc đã dừng.
+Chính sách báo cáo ngày: chỉ ghi nhận SĐT khi cùng contact có referral mapped trong **cùng ngày `Asia/Ho_Chi_Minh`**, cùng Page và referral xảy ra trước hoặc đúng lúc tin SĐT. Khách quay lại tự nhiên hoặc referral qua 00:00 không được gán vào campaign; đó là lựa chọn thận trọng cho quy tắc chi tiêu hằng ngày, không tuyên bố attribution đa ngày chính xác.
 
-Không deploy Production trực tiếp theo quy định repo. Hoàn tác: revert commit `b955e58b`; migration 591 chỉ thêm bảng/cột/RPC mới.
+Webhook Facebook nay có thể xác thực `X-Hub-Signature-256` nếu cấu hình `FB_APP_SECRET`; không có biến này, Messenger cũ vẫn nhận để tránh gián đoạn nhưng `attribution_ready=false`. Dù có secret, `automation_ready=false` vì webhook hiện ACK trước khi xử lý và chưa có hàng đợi/receipt bền vững. **Không bật lịch dừng 50.000đ hoặc mở lại 00:00 cho đến khi delivery durable được triển khai và kiểm thử.**
+
+Để phát hành tracking an toàn: chạy 591 rồi 636, deploy backend, cấu hình `FB_APP_SECRET`, đăng ký `messaging_referrals`, dùng tài khoản Messenger mới bấm từ một quảng cáo và gửi SĐT test. Xác minh API trả đúng campaign; loại trừ tin E2E trước khi dùng báo cáo ngày. Không deploy Production trực tiếp theo quy định repo.
 
 ## Nhiệm vụ và tiến độ — một tích cho cả hai bên
 
