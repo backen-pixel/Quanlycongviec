@@ -1300,7 +1300,6 @@ r.put('/substage-status', requireProductionKanbanEdit(), async (req, res) => {
       company_id: projectCompanyId || stage.company_id || null,
       project_id: projectId,
       stage_id: logistics ? null : stageId,
-      logistics_stage_id: logistics ? stageId : null,
       trang_thai: trangThai,
       nguoi_lam: nguoiLam,
       // Giữ mốc bắt đầu cũ; chỉ đặt mới khi lần đầu chuyển khỏi 'chua'.
@@ -1309,18 +1308,26 @@ r.put('/substage-status', requireProductionKanbanEdit(), async (req, res) => {
       updated_by: req.user?.userId || null,
       updated_at: now,
     };
+    if (logistics) row.logistics_stage_id = stageId;
     if (req.body?.ghi_chu !== undefined) row.ghi_chu = req.body.ghi_chu || null;
 
+    const selectCols = logistics
+      ? 'project_id, stage_id, logistics_stage_id, trang_thai, nguoi_lam, bat_dau_luc, xong_luc, ghi_chu, updated_at'
+      : 'project_id, stage_id, trang_thai, nguoi_lam, bat_dau_luc, xong_luc, ghi_chu, updated_at';
     const write = cu?.id
       ? supabase.from('project_substage_status').update(row).eq('id', cu.id)
       : supabase.from('project_substage_status').insert(row);
     const { data, error } = await write
-      .select('project_id, stage_id, logistics_stage_id, trang_thai, nguoi_lam, bat_dau_luc, xong_luc, ghi_chu, updated_at')
+      .select(selectCols)
       .maybeSingle();
     if (error) throw error;
     res.json({ row: data || row });
   } catch (e) {
     if (isSubstageTableMissing(e)) {
+      const msg = String(e?.message || '');
+      if (/logistics_stage_id/i.test(msg)) {
+        return res.status(503).json({ error: 'Chưa chạy migration 635 (logistics_stage_id)' });
+      }
       return res.status(503).json({ error: 'Chưa chạy migration 605 (project_substage_status)' });
     }
     console.error('[production/substage-status PUT]', e.message);

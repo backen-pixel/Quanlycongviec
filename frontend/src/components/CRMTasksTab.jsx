@@ -1767,9 +1767,9 @@ export default function CRMTasksTab({
     }
   };
 
-  const doiTrangThaiCot = useCallback(async (stageId, tt) => {
+  const doiTrangThaiCot = useCallback(async (stageId, tt, opts) => {
     if (onDoiTrangThai) {
-      await onDoiTrangThai(stageId, tt);
+      await onDoiTrangThai(stageId, tt, opts);
       return;
     }
     const pid = linkedProjectId;
@@ -1794,7 +1794,7 @@ export default function CRMTasksTab({
         else next[k] = truoc;
         return next;
       });
-      alert(e.response?.data?.error || 'Không đánh dấu được cột');
+      if (!opts?.silent) alert(e.response?.data?.error || 'Không đánh dấu được cột');
     }
   }, [onDoiTrangThai, linkedProjectId, isLogisticsScope]);
 
@@ -2306,7 +2306,7 @@ export default function CRMTasksTab({
         const id = String(c.stage.id);
         const allDone = c.stageTasks.length > 0 && c.completed === c.stageTasks.length;
         const raw = sxTrangThaiO[id];
-        if (allDone && raw !== 'xong' && raw !== 'chua') void doiTrangThaiCot(id, 'xong');
+        if (allDone && raw !== 'xong' && raw !== 'chua') void doiTrangThaiCot(id, 'xong', { silent: true });
       });
     });
     return undefined;

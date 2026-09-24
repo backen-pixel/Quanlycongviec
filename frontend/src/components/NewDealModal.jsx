@@ -66,6 +66,17 @@ export default function NewDealModal({
 }) {
   const isProduction = variant === 'production';
   const ringClass = isProduction ? 'focus:ring-blue-400' : 'focus:ring-purple-400';
+  const draftKey = `qlcv-new-deal-draft:${variant}:${currentUser?.id || 'me'}`;
+  const savedDraft = useMemo(() => {
+    try {
+      const raw = sessionStorage.getItem(draftKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch {
+      return null;
+    }
+  }, [draftKey]);
   const isAdmin = isAdminLike(currentUser);
   const canPickCompany = isAdmin || (isProduction && allowProductionCompanyPick);
   const companySelectOptions = useMemo(() => {
@@ -74,7 +85,7 @@ export default function NewDealModal({
     }
     return companies || [];
   }, [isProduction, allowProductionCompanyPick, productionCompanyOptions, companies]);
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState(() => ({
     title: '',
     customer_name: '',
     customer_phone: '',
@@ -92,16 +103,27 @@ export default function NewDealModal({
     description: '',
     external_company_name: '',
     referrer_name: '',
-  });
+    ...(savedDraft?.formData && typeof savedDraft.formData === 'object' ? savedDraft.formData : {}),
+  }));
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
   const [modalSources, setModalSources] = useState([]);
   const [modalRegions, setModalRegions] = useState([]);
   const [referrers, setReferrers] = useState([]);
-  const [referrerPick, setReferrerPick] = useState('');
+  const [referrerPick, setReferrerPick] = useState(() => savedDraft?.referrerPick || '');
   const [modalWorkTypes, setModalWorkTypes] = useState([]);
   const [clientCompanies, setClientCompanies] = useState([]);
-  const [clientCompanyPick, setClientCompanyPick] = useState('');
+  const [clientCompanyPick, setClientCompanyPick] = useState(() => savedDraft?.clientCompanyPick || '');
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(draftKey, JSON.stringify({ formData, referrerPick, clientCompanyPick }));
+    } catch { /* private mode */ }
+  }, [draftKey, formData, referrerPick, clientCompanyPick]);
+
+  const discardDraft = () => {
+    try { sessionStorage.removeItem(draftKey); } catch { /* ignore */ }
+  };
 
   const requiresClientCompany = useMemo(() => {
     if (!isProduction || !formData.company_id) return false;
@@ -286,25 +308,25 @@ export default function NewDealModal({
   }, [defaultCompanyId, allowProductionCompanyPick, formData.company_id]);
 
   useEffect(() => {
-    if (!formData.lead_type_id) return;
+    if (!formData.lead_type_id || !visibleLeadTypes.length) return;
     const ok = visibleLeadTypes.some((t) => String(t.id) === String(formData.lead_type_id));
     if (!ok) setFormData((prev) => ({ ...prev, lead_type_id: '' }));
   }, [formData.company_id, visibleLeadTypes, formData.lead_type_id]);
 
   useEffect(() => {
-    if (!formData.workshop_type_id) return;
+    if (!formData.workshop_type_id || !visibleWorkTypes.length) return;
     const ok = visibleWorkTypes.some((t) => String(t.id) === String(formData.workshop_type_id));
     if (!ok) setFormData((prev) => ({ ...prev, workshop_type_id: '' }));
   }, [formData.company_id, visibleWorkTypes, formData.workshop_type_id, clientCompanyIdForWorkshopTypes]);
 
   useEffect(() => {
-    if (!formData.source_id) return;
+    if (!formData.source_id || !modalSources.length) return;
     const ok = modalSources.some((s) => String(s.id) === String(formData.source_id));
     if (!ok) setFormData((prev) => ({ ...prev, source_id: '' }));
   }, [modalSources, formData.source_id]);
 
   useEffect(() => {
-    if (!formData.region_id) return;
+    if (!formData.region_id || !modalRegions.length) return;
     const ok = modalRegions.some((r) => String(r.id) === String(formData.region_id));
     if (!ok) setFormData((prev) => ({ ...prev, region_id: '' }));
   }, [modalRegions, formData.region_id]);
@@ -426,6 +448,7 @@ export default function NewDealModal({
           reloadMs,
           clientTotalMs,
         }));
+        discardDraft();
         onClose();
         return;
       }
@@ -455,6 +478,7 @@ export default function NewDealModal({
       });
 
       onSuccess?.(deal);
+      discardDraft();
       onClose();
     } catch (err) {
       alert(err.response?.data?.error || (isProduction ? 'Lỗi tạo đơn xưởng' : 'Lỗi tạo Deal'));
@@ -480,10 +504,17 @@ export default function NewDealModal({
 
   // Portal ra body — tránh bị Sidebar (z-30) đè vì modal nằm trong cột main (z-10)
   return createPortal(
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[10050] p-4">
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[10050] p-4"
+      onMouseDown={(e) => {
+        if (saving || e.target !== e.currentTarget) return;
+        onClose();
+      }}
+    >
       <div
         data-tour="new-deal-modal"
         className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl flex overflow-hidden max-h-[92vh]"
+        onMouseDown={(e) => e.stopPropagation()}
       >
 
         <div className="flex-1 flex flex-col min-w-0 border-r border-gray-100">

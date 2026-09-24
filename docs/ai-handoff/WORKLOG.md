@@ -1,5 +1,11 @@
 # Nhật ký công việc AI
 
+## 2026-09-24 14:20 — Hết cảnh báo migration 605 khi mở dự án SX đã xong
+
+- AI: Cursor. PUT trạng thái cột Sản xuất không còn gửi/đọc `logistics_stage_id`. Đồng bộ ngầm «cột xong» không bật `alert`. Thiếu cột 635 báo đúng migration 635.
+- File: `backend/src/routes/production.js`, `frontend/src/pages/ProductionDetail.jsx`, `frontend/src/components/CRMTasksTab.jsx`.
+- Test: `node --check backend/src/routes/production.js`. Chưa deploy lên Render.
+
 ## 2026-09-24 13:10 — Nhiệm vụ và tiến độ dùng chung một tích
 
 - AI: Cursor. Tích cột trên tab Công việc và vòng tròn PipelineStepper đọc/ghi cùng `project_substage_status`. Cột đã đi qua hiện tích cả hai bên. VC/LĐ có danh sách cột lớn và nút hoàn thành cột. SQL 635 thêm `logistics_stage_id` — chưa chạy.

@@ -1,6 +1,16 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-24 13:10 (UTC+7)
+Cập nhật: 2026-09-24 14:20 (UTC+7)
+
+## Cảnh báo «Chưa chạy migration 605» khi mở dự án SX đã xong việc
+
+Trạng thái: **FE+BE local, chưa deploy.**
+
+Mở tab Công việc của dự án đã xong hết việc thì hệ thống tự ghi «cột xong». Câu ghi luôn gửi `logistics_stage_id` (cột của migration 635). Database live chưa có cột đó nên PostgREST báo schema cache, API trả nhầm «Chưa chạy migration 605», và hộp thoại hiện lên.
+
+Sửa: ghi/đọc Sản xuất không đụng `logistics_stage_id`. Chỉ pipeline logistics mới ghi cột đó. Đồng bộ ngầm không bật hộp thoại; bấm tích tay vẫn báo lỗi thật. VC/LĐ vẫn cần chạy SQL 635 thì tích mới lưu được.
+
+Hoàn tác: revert `production.js`, `ProductionDetail.jsx`, `CRMTasksTab.jsx`.
 
 ## Nhiệm vụ và tiến độ — một tích cho cả hai bên
 

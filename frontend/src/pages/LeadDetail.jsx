@@ -20,6 +20,7 @@ import { isAdminLike, isProductionStaff, isProductionAdmin, isLogisticsAdmin } f
 import { canUserDeleteCrmLeadDeal } from '../lib/crmPipelineDeletePermission';
 import { isDealResponsibleUser } from '../lib/fileOwnership';
 import api from '../lib/api';
+import { clearFormDraft, readFormDraft, useFormDraft } from '../lib/formDraft';
 import { compressImage } from '../lib/compressImage';
 import { consumeCrmLeadDetailPrefetch } from '../lib/crmLeadDetailPrefetch';
 import { getSocket } from '../lib/socket';
@@ -6303,22 +6304,32 @@ function DocumentRow({ doc, onDelete, onOpenImage, readOnlyWorkshop = false, can
 }
 
 function AddActivityModal({ leadId, onClose, onSave }) {
-  const [form, setForm] = useState({ type: 'call', title: '', description: '', outcome: '', duration_minutes: '' });
+  const draftKey = `qlcv-form-draft:activity:${leadId || 'new'}`;
+  const saved = useMemo(() => readFormDraft(draftKey), [draftKey]);
+  const [form, setForm] = useState(() => ({
+    type: 'call', title: '', description: '', outcome: '', duration_minutes: '',
+    ...(saved?.form || {}),
+  }));
   const [saving, setSaving] = useState(false);
+  useFormDraft(draftKey, { form });
 
   const save = async () => {
     if (!form.title) return alert('Nhập tiêu đề');
     setSaving(true);
     try {
       await api.post(`/crm/leads/${leadId}/activities`, form);
+      clearFormDraft(draftKey);
       onSave();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
     setSaving(false);
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md p-6">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onMouseDown={(e) => { if (!saving && e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-white rounded-2xl w-full max-w-md p-6" onMouseDown={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold">Thêm hoạt động</h2>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded"><X className="h-5 w-5" /></button>
@@ -6353,9 +6364,12 @@ function AddActivityModal({ leadId, onClose, onSave }) {
 }
 
 function AddDocumentModal({ onClose, onSave }) {
-  const [name, setName] = useState('');
-  const [docType, setDocType] = useState('requirement');
-  const [notes, setNotes] = useState('');
+  const draftKey = 'qlcv-form-draft:lead-document';
+  const saved = useMemo(() => readFormDraft(draftKey), [draftKey]);
+  const [name, setName] = useState(() => saved?.name || '');
+  const [docType, setDocType] = useState(() => saved?.docType || 'requirement');
+  const [notes, setNotes] = useState(() => saved?.notes || '');
+  useFormDraft(draftKey, { name, docType, notes });
   const [companies, setCompanies] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [allowedCompanies, setAllowedCompanies] = useState([]);
@@ -6383,8 +6397,11 @@ function AddDocumentModal({ onClose, onSave }) {
   const hasRestriction = allowedCompanies.length > 0 || allowedDepts.length > 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-white rounded-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onMouseDown={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold">📝 Thêm tài liệu văn bản</h2>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded cursor-pointer"><X className="h-5 w-5" /></button>
@@ -6464,6 +6481,7 @@ function AddDocumentModal({ onClose, onSave }) {
             onClick={() => {
               if (!name.trim()) return alert('Nhập tên tài liệu');
               if (!notes.trim()) return alert('Nhập nội dung');
+              clearFormDraft(draftKey);
               onSave(name, docType, notes, allowedDepts.length > 0 ? allowedDepts : null, allowedCompanies.length > 0 ? allowedCompanies : null);
             }}
             className="flex-1 h-9 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium cursor-pointer"

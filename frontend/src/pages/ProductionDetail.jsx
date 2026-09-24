@@ -2614,7 +2614,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     return () => { song = false; };
   }, [sxNhomStageIds, id, moduleKey]);
 
-  const doiTrangThaiO = useCallback(async (stageId, tt) => {
+  const doiTrangThaiO = useCallback(async (stageId, tt, opts) => {
     if (!id || !stageId) return;
     const k = String(stageId);
     let truoc;
@@ -2627,13 +2627,12 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         pipeline: moduleKey === 'vc' ? 'logistics' : 'production',
       });
     } catch (e) {
-      // Trả đúng giá trị cũ — không đoán, tránh hiện sai trạng thái sản xuất.
       setSxTrangThaiO((prev) => {
         const next = { ...prev };
         if (truoc === undefined) delete next[k]; else next[k] = truoc;
         return next;
       });
-      alert(e?.response?.data?.error || 'Không lưu được trạng thái việc song song');
+      if (!opts?.silent) alert(e?.response?.data?.error || 'Không lưu được trạng thái việc song song');
     }
   }, [id, moduleKey]);
 

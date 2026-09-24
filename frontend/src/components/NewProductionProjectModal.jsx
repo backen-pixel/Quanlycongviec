@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { clearFormDraft, readFormDraft, useFormDraft } from '../lib/formDraft';
 import { X, Search } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -10,14 +11,18 @@ export default function NewProductionProjectModal({ onClose, onCreated }) {
   const { user } = useAuth();
   const [workTypes, setWorkTypes] = useState([]);
   const [flowId, setFlowId] = useState('');
-  const [formData, setFormData] = useState({
+  const draftKey = `qlcv-form-draft:new-sx-project:${user?.id || 'me'}`;
+  const saved = useMemo(() => readFormDraft(draftKey), [draftKey]);
+  const [formData, setFormData] = useState(() => ({
     name: '',
     estimated_value: '',
     priority: 'medium',
     deadline: '',
     production_person_id: '',
     workshop_type_id: '',
-  });
+    ...(saved?.formData || {}),
+  }));
+  useFormDraft(draftKey, { formData });
   const [customerSearch, setCustomerSearch] = useState('');
   const [customerResults, setCustomerResults] = useState([]);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
@@ -73,6 +78,7 @@ export default function NewProductionProjectModal({ onClose, onCreated }) {
         flow_id: flowId || null,
         status: 'producing',
       });
+      clearFormDraft(draftKey);
       onCreated?.(data?.project || data);
       onClose();
     } catch (err) {
@@ -82,8 +88,11 @@ export default function NewProductionProjectModal({ onClose, onCreated }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onMouseDown={(e) => { if (!saving && e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onMouseDown={(e) => e.stopPropagation()}>
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <div>
