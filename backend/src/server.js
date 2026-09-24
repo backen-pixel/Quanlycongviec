@@ -386,6 +386,11 @@ const { invalidateProjectsListOnWrite } = require('./middleware/projectsCacheInv
   '/api/stages',         // routes/stages.js
   '/api/workshop-teams', // routes/workshopTeams.js
   '/api/assistant',      // routes/assistant.js
+  // Tạo/sửa/xoá nhiệm vụ dự án. Thiếu prefix này thì số "việc hôm nay / quá hạn" trên
+  // /management/work-overview và /work-unified đứng yên tới hết TTL sau khi sửa nhiệm vụ.
+  // 8 route ghi ở đây đều là mutation thật, không có endpoint truy vấn tần suất cao nên
+  // thêm vào không làm cache bị xoá liên tục.
+  '/api/work-tasks',     // routes/workTasks.js
 ].forEach((prefix) => app.use(prefix, invalidateProjectsListOnWrite));
 
 // Routes

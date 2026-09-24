@@ -134,7 +134,17 @@ function getActiveTarget() {
   return _activeTarget;
 }
 
+// Bật SUPABASE_TRACE=1 để in từng lượt gọi PostgREST (mốc bắt đầu + thời lượng). Dùng khi
+// tìm xem một endpoint đang xếp hàng bao nhiêu vòng đi–về nối tiếp.
+const SUPABASE_TRACE = process.env.SUPABASE_TRACE === '1';
+const _traceT0 = Date.now();
+function _traceLabel(u) {
+  const q = String(u).split('/rest/v1/')[1] || String(u);
+  return q.length > 160 ? q.slice(0, 160) + '…' : q;
+}
+
 async function sharedFetch(url, init) {
+  const _tStart = SUPABASE_TRACE ? Date.now() : 0;
   const attempts = 4;
   const baseMs = 300;
   let lastErr;
@@ -144,6 +154,9 @@ async function sharedFetch(url, init) {
   for (let i = 0; i < attempts; i++) {
     try {
       const res = await undiciFetch(rewriteUrlForActive(url), { ...init, dispatcher: supabaseDispatcher });
+      if (SUPABASE_TRACE) {
+        console.log(`[pgrst] t0=${_tStart - _traceT0} +${Date.now() - _tStart}ms ${(init && init.method) || 'GET'} ${_traceLabel(originalUrl)}`);
+      }
       if (originalUrl.startsWith(primaryBase) && _activeTarget === 'primary') {
         try {
           const { maybeEnqueueRestReplication } = require('../helpers/supabaseReplication');
