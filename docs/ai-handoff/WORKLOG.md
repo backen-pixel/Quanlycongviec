@@ -1340,3 +1340,13 @@
 ---
 
 Khi bắt đầu phiên mới, thêm mục mới lên đầu file, ngay dưới tiêu đề.
+
+
+## 2026-09-24 — VPT Messenger attribution / response preparation
+
+Feature branch feat/vpt-messenger-attribution-20260924. Added referral capture,
+company/Page scoped paginated evidence export, migration 633 and tested SLA helper.
+NOT deployed; migration/end-to-end/SLA queue not verified. Three personal saved
+replies saved in live CRM; no messages sent. Creative rollback deferred until
+old video/flow is recovered. See VPT_MESSENGER_20260924.md for files, gates, tests
+and rollback. No edits to main or unrelated working tree.

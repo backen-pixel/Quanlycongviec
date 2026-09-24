@@ -1,3 +1,4 @@
+const { captureMessengerAdTouch } = require('../helpers/facebookAdAttribution');
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const config = require('../config');
@@ -3514,6 +3515,11 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
     : (event.recipient?.name || null);
   const contact = await getOrCreateContact(pageId, partnerPsid, senderLabel);
   if (!contact) return;
+  // Opt-in per Page; failures must not interrupt receipt of customer messages.
+  if (String(process.env.FB_AD_ATTRIBUTION_PAGE_IDS || '').split(',').map(x => x.trim()).includes(String(pageId))) {
+    try { await captureMessengerAdTouch(supabase, pageId, event, contact.id); }
+    catch (e) { console.error('[FB] Ad attribution capture failed', e.code || 'CAPTURE_FAILED'); }
+  }
 
   if (isPlaceholderFacebookName(contact.fb_name)) {
     void tryResolveMessengerDisplayName(pageId, partnerPsid, contact.id, io, contact);
@@ -4440,6 +4446,50 @@ r.delete('/pages/:id', authMiddleware, async (req, res) => {
 });
 
 // ── Contacts (danh sách chat FB) ─────────────────────────────
+
+// Read-only, paginated evidence export. Scope uses the existing tenant/company guard.
+r.get('/ad-attribution', authMiddleware, async (req, res) => {
+  try {
+    if (!req.query.company_id || !req.query.page_id) return res.status(400).json({ error: 'Cần company_id và page_id' });
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+    const pageId = String(req.query.page_id);
+    if (String(scope.companyId) !== String(req.query.company_id) ||
+        !contactAllowedByFacebookScope(scope, { page_id: pageId })) {
+      return res.status(403).json({ error: 'Không có quyền xem nguồn quảng cáo này' });
+    }
+    const from = String(req.query.from || '');
+    const to = String(req.query.to || '');
+    const validDate = s => /^\d{4}-\d{2}-\d{2}$/.test(s) && Number.isFinite(Date.parse(s)) && new Date(s).toISOString().slice(0,10) === s;
+    if (!validDate(from) || !validDate(to) || from > to || Date.parse(to) - Date.parse(from) > 90*86400000)
+      return res.status(400).json({ error: 'Khoảng ngày hợp lệ tối đa 91 ngày' });
+    const offset = Number(req.query.offset || 0);
+    if (!Number.isSafeInteger(offset) || offset < 0) return res.status(400).json({ error: 'offset không hợp lệ' });
+    const { data, error } = await supabase.from('facebook_ad_touches')
+      .select('event_key,contact_id,page_id,ad_id,occurred_at,evidence_source,verification_status,contact:facebook_contacts!inner(page_id,lead_id)')
+      .eq('company_id', String(scope.companyId)).eq('page_id', pageId).eq('contact.page_id', pageId)
+      .gte('occurred_at', vnDateStartIso(from)).lte('occurred_at', vnDateEndIso(to))
+      .order('occurred_at', { ascending: true }).order('event_key', { ascending: true })
+      .range(offset, offset + 499);
+    if (error) throw error;
+    // Validate lead ownership separately: a later contact re-link must not leak another company.
+    const leadIds = [...new Set((data || []).map(x => x.contact?.lead_id).filter(Boolean))];
+    const allowedLeads = new Set();
+    for (let i = 0; i < leadIds.length; i += 100) {
+      const { data: leads, error: leadErr } = await supabase.from('crm_leads').select('id')
+        .eq('company_id', String(scope.companyId)).in('id', leadIds.slice(i,i+100));
+      if (leadErr) throw leadErr;
+      (leads || []).forEach(x => allowedLeads.add(x.id));
+    }
+    const rows = (data || []).map(({contact, ...row}) => ({...row,
+      lead_id: allowedLeads.has(contact?.lead_id) ? contact.lead_id : null}));
+    res.set('Cache-Control', 'no-store');
+    return res.json({ rows, grain: 'referral_event', offset, next_offset: rows.length === 500 ? offset + 500 : null,
+      qualification: 'UNKNOWN', revenue_attribution: 'UNKNOWN' });
+  } catch (e) {
+    return res.status(500).json({ error: 'Không đọc được dữ liệu đối soát quảng cáo', code: e.code || 'ATTRIBUTION_READ_FAILED' });
+  }
+});
 
 r.get('/contacts', authMiddleware, async (req, res) => {
   try {
