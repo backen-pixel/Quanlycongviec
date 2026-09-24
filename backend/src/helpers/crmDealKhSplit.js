@@ -60,7 +60,9 @@ async function loadDealKhSplitContext(leads) {
   }
   const { data: stages, error } = await supabase
     .from('crm_pipeline_stages')
-    .select('id, pipeline_id, order_index, is_won, is_lost, canonical_slug, deal_report_bucket, pipeline_type')
+    // `name`: `dealHasSignedContract` dò chữ "ký hợp đồng" trong tên cột khi các cờ khác đều
+    // không khớp — thiếu nó thì nơi gọi phải tự đọc lại bảng stage một lượt nữa.
+    .select('id, pipeline_id, order_index, is_won, is_lost, canonical_slug, deal_report_bucket, pipeline_type, name')
     .in('pipeline_id', [...pipelineIds]);
   if (error) throw new Error(error.message);
   const stageMap = Object.create(null);

@@ -126,7 +126,9 @@ const WORK_UNIFIED_PROJECT_COLUMNS_LITE = `
 const WORK_UNIFIED_PROJECT_COLUMNS_LITE_SEARCH = `${WORK_UNIFIED_PROJECT_COLUMNS_LITE}, customer:customers(full_name)`;
 
 /** Cột deal nhẹ — bỏ embed company_regions; bộ lọc khu vực chỉ dùng `region_id` phẳng. */
-const WORK_UNIFIED_DEAL_COLUMNS_LITE = 'id, code, title, type, project_id, company_id, parent_lead_id, created_at, assigned_to, lead_owner_id, region_id, stage_id';
+// `pipeline_id` đi kèm sẵn để `loadDealKhSplitContext` suy ra pipeline ngay từ deal, khỏi
+// phải đọc trước crm_pipeline_stages theo stage_id chỉ để lấy pipeline (bớt một lượt chờ).
+const WORK_UNIFIED_DEAL_COLUMNS_LITE = 'id, code, title, type, project_id, company_id, parent_lead_id, created_at, assigned_to, lead_owner_id, region_id, stage_id, pipeline_id';
 
 /** Cột deal đầy đủ — cần `crm_region` + tên NV deal để cột «Người phụ trách» khớp bộ lọc NV. */
 const WORK_UNIFIED_DEAL_COLUMNS = `${WORK_UNIFIED_DEAL_COLUMNS_LITE}, crm_region:company_regions(id, name, company_id), assignee:users!crm_leads_assigned_to_fkey(id, full_name), lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name)`;
@@ -794,12 +796,57 @@ async function attachOverviewTaskAssignees(tasks) {
   }));
 }
 
-async function fetchPostContractOverviewTasks({
+/** Số dòng việc thực sự hiển thị trên mỗi thẻ của trang Tổng quan công việc. */
+const OVERVIEW_TASK_LIMIT = 50;
+
+/** Phạm vi công ty dạng mảng cho RPC — khớp `applyCompanyScopeFilter`; null = không giới hạn. */
+function overviewScopeCompanyIds(scope) {
+  if (!scope?.ok) return null;
+  if (scope.companyId) return [String(scope.companyId)];
+  if (scope.companyIds?.length) return scope.companyIds.map(String);
+  return null;
+}
+
+/**
+ * Đếm tổng + lấy N việc gần hạn nhất, gộp hai nhánh project/lead NGAY TRONG DATABASE
+ * (migration 629). Trước đây kéo hết vài trăm dòng về Node chỉ để đếm rồi cắt 50.
+ * Chưa chạy migration thì tự lùi về đường cũ nên không vỡ.
+ * @returns {Promise<{rows: object[], total: number}>}
+ */
+async function fetchPostContractOverviewTasks(args) {
+  const pids = [...new Set((args.projectIds || []).filter(Boolean).map(String))];
+  const lids = [...new Set((args.leadIds || []).filter(Boolean).map(String))];
+  if (!pids.length && !lids.length) return { rows: [], total: 0 };
+
+  if (!args.deadlineLt) {
+    try {
+      const { data, error } = await supabase.rpc('work_overview_tasks', {
+        p_project_ids: pids,
+        p_lead_ids: lids,
+        p_company_ids: overviewScopeCompanyIds(args.scope),
+        p_deadline_gte: args.deadlineGte || null,
+        p_deadline_lte: args.deadlineLte || null,
+        p_limit: OVERVIEW_TASK_LIMIT,
+      });
+      if (error) throw error;
+      const rows = (data || []).map(({ total_count: _t, ...r }) => r);
+      return { rows, total: data?.length ? Number(data[0].total_count) || 0 : 0 };
+    } catch (e) {
+      // Chỉ lùi khi function chưa tồn tại; lỗi khác phải ném ra để còn biết mà sửa.
+      const msg = String(e?.message || '');
+      if (!/work_overview_tasks/.test(msg) || !/(does not exist|Could not find)/i.test(msg)) throw e;
+      console.warn('[work-overview] chua co RPC work_overview_tasks, dung duong cu');
+    }
+  }
+  return fetchPostContractOverviewTasksViaQueries(args);
+}
+
+async function fetchPostContractOverviewTasksViaQueries({
   projectIds, leadIds, scope, deadlineGte, deadlineLte, deadlineLt,
 }) {
   const pids = [...new Set((projectIds || []).filter(Boolean).map(String))];
   const lids = [...new Set((leadIds || []).filter(Boolean).map(String))];
-  if (!pids.length && !lids.length) return [];
+  if (!pids.length && !lids.length) return { rows: [], total: 0 };
 
   const tune = (q, leadScoped) => {
     let t = applyOpenOnlyFilter(applyPrimaryLeadOnly(q, !!leadScoped))
@@ -819,25 +866,29 @@ async function fetchPostContractOverviewTasks({
       if (!seen.has(k)) seen.set(k, row);
     }
   };
-  if (pids.length) {
-    merge(await fetchAllByIdsParallel({
+  // Hai lượt quét độc lập nhau — chạy cùng lúc thay vì nối đuôi. Vẫn merge theo đúng thứ tự
+  // cũ (project trước, lead sau) vì `merge` giữ bản gặp đầu tiên cho mỗi unified_id.
+  const [byProject, byLead] = await Promise.all([
+    pids.length ? fetchAllByIdsParallel({
       table: 'unified_tasks_v',
       columns: OVERVIEW_TASK_SELECT,
       key: 'project_id',
       ids: pids,
       tune: (q) => tune(q, false),
-    }));
-  }
-  if (lids.length) {
-    merge(await fetchAllByIdsParallel({
+    }) : Promise.resolve([]),
+    lids.length ? fetchAllByIdsParallel({
       table: 'unified_tasks_v',
       columns: OVERVIEW_TASK_SELECT,
       key: 'lead_id',
       ids: lids,
       tune: (q) => tune(q, true),
-    }));
-  }
-  return [...seen.values()];
+    }) : Promise.resolve([]),
+  ]);
+  merge(byProject);
+  merge(byLead);
+  const all = [...seen.values()];
+  all.sort((a, b) => String(a.deadline || '').localeCompare(String(b.deadline || '')));
+  return { rows: all.slice(0, OVERVIEW_TASK_LIMIT), total: all.length };
 }
 
 // GET /api/management/work-overview — KPI + dự án cần chú ý lấy cùng tập Work Unified
@@ -912,18 +963,43 @@ r.get('/work-overview', async (req, res) => {
         .filter((st) => dealHasSignedContract({ type: 'deal', stage: st }, { wonStageOrderByPipe: {} }))
         .map((st) => st.id);
     });
-    let newCustomersQ = supabase.from('crm_leads').select('*', { count: 'exact', head: true })
-      .eq('type', 'deal').gte('created_at', customersFrom);
-    if (signedStageIds.length) newCustomersQ = newCustomersQ.in('stage_id', signedStageIds.slice(0, 200));
-    else newCustomersQ = newCustomersQ.eq('id', '00000000-0000-0000-0000-000000000000');
-    if (dateTo) newCustomersQ = newCustomersQ.lte('created_at', `${dateTo}T23:59:59+07:00`);
-    newCustomersQ = applyCompanyScopeFilter(newCustomersQ, scope);
-    if (regionScope?.none) newCustomersQ = newCustomersQ.is('region_id', null);
-    else if (regionScope?.regionId) newCustomersQ = newCustomersQ.eq('region_id', regionScope.regionId);
+    const NEW_CUSTOMERS_STAGE_CHUNK = 200;
+    const buildNewCustomersQ = (stageIds) => {
+      let q = supabase.from('crm_leads').select('*', { count: 'exact', head: true })
+        .eq('type', 'deal').gte('created_at', customersFrom)
+        .in('stage_id', stageIds);
+      if (dateTo) q = q.lte('created_at', `${dateTo}T23:59:59+07:00`);
+      q = applyCompanyScopeFilter(q, scope);
+      if (regionScope?.none) q = q.is('region_id', null);
+      else if (regionScope?.regionId) q = q.eq('region_id', regionScope.regionId);
+      return q;
+    };
+    /**
+     * `.in()` bị giới hạn bởi độ dài URL nên trước đây cắt danh sách stage còn 200 —
+     * hệ thống nhiều công ty/pipeline hơn thế thì "khách hàng mới" âm thầm đếm thiếu,
+     * không báo lỗi gì. Nay chia khúc rồi cộng dồn: mỗi deal chỉ thuộc đúng một stage
+     * nên các khúc rời nhau, cộng lại không đếm trùng.
+     */
+    const readNewCustomers = async () => {
+      if (!signedStageIds.length) return { count: 0 };
+      const chunks = [];
+      for (let i = 0; i < signedStageIds.length; i += NEW_CUSTOMERS_STAGE_CHUNK) {
+        chunks.push(signedStageIds.slice(i, i + NEW_CUSTOMERS_STAGE_CHUNK));
+      }
+      let total = 0;
+      for (let i = 0; i < chunks.length; i += 4) {
+        const res = await Promise.all(chunks.slice(i, i + 4).map((ids) => buildNewCustomersQ(ids)));
+        for (const { count, error } of res) {
+          if (error) throw error;
+          total += count || 0;
+        }
+      }
+      return { count: total };
+    };
 
     const [wu, trendRes, newCustomersRes] = await Promise.all([
       queryWorkUnifiedList(req, { forceLite: true, postContract: true }),
-      readTrend(), newCustomersQ,
+      readTrend(), readNewCustomers(),
     ]);
     if (wu.scope && denyScope(res, wu.scope)) return;
 
@@ -995,7 +1071,7 @@ r.get('/work-overview', async (req, res) => {
     const signedLeadIds = [...new Set(
       (wu.filtered || []).flatMap((it) => it.signed_lead_ids || []),
     )];
-    const [atRiskHydrated, todayRaw, overdueRaw] = await Promise.all([
+    const [atRiskHydrated, todayRes, overdueRes] = await Promise.all([
       atRiskHydratedP,
       fetchPostContractOverviewTasks({
         projectIds,
@@ -1026,19 +1102,18 @@ r.get('/work-overview', async (req, res) => {
           : { level: 'warning', label: 'Nguy cơ trễ' },
       };
     });
-    todayRaw.sort((a, b) => String(a.deadline || '').localeCompare(String(b.deadline || '')));
-    overdueRaw.sort((a, b) => String(a.deadline || '').localeCompare(String(b.deadline || '')));
+    // Đã sắp theo hạn và cắt sẵn đúng số dòng cần hiện (RPC hoặc đường lui đều vậy).
     const [todayTasks, overdueTaskItems] = await Promise.all([
-      attachOverviewTaskAssignees(todayRaw.slice(0, 50)),
-      attachOverviewTaskAssignees(overdueRaw.slice(0, 50)),
+      attachOverviewTaskAssignees(todayRes.rows),
+      attachOverviewTaskAssignees(overdueRes.rows),
     ]);
 
     res.json({
       company_id: primaryCompanyIdFromScope(scope),
       projects_active: projectsActive,
       new_customers_this_month: newCustomersRes.count || 0,
-      overdue_tasks: overdueRaw.length,
-      today_task_count: todayRaw.length,
+      overdue_tasks: overdueRes.total,
+      today_task_count: todayRes.total,
       today_tasks: todayTasks,
       overdue_task_items: overdueTaskItems,
       revenue_this_month: revenuePeriod,
@@ -1360,18 +1435,9 @@ async function queryWorkUnifiedList(req, opts = {}) {
   if (opts.postContract && projectIds.length) {
     const allLoadedDeals = [...dealsForProject.values()].flat().filter(Boolean);
     try {
-      const stageIds = [...new Set(allLoadedDeals.map((d) => d.stage_id).filter(Boolean))];
-      if (stageIds.length) {
-        const { data: stRows } = await supabase
-          .from('crm_pipeline_stages')
-          .select('id, pipeline_id, order_index, is_won, is_lost, canonical_slug, deal_report_bucket, pipeline_type, name')
-          .in('id', stageIds);
-        const stById = Object.create(null);
-        (stRows || []).forEach((s) => { if (s?.id) stById[s.id] = s; });
-        allLoadedDeals.forEach((d) => {
-          if (d.stage_id && stById[d.stage_id]) d.stage = stById[d.stage_id];
-        });
-      }
+      // Không đọc riêng crm_pipeline_stages theo stage_id nữa: `loadDealKhSplitContext` đã lấy
+      // TOÀN BỘ stage của các pipeline đó (tập cha), và `dealHasSignedContract` tự tra
+      // `khCtx.stageMap[deal.stage_id]` khi deal chưa gắn sẵn `stage`.
       khCtx = await loadDealKhSplitContext(allLoadedDeals);
     } catch (e) {
       console.warn('[work-unified] signed-contract stages:', e.message);

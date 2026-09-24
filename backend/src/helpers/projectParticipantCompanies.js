@@ -175,34 +175,37 @@ async function listCrmLinkedProjectIds(companyIds) {
   const ids = [...new Set((companyIds || []).filter(Boolean).map(String))];
   if (!ids.length) return [];
 
-  const deals = await fetchAllPagesParallel(() => supabase
+  // Chỉ cần project_id, nên bỏ hẳn các deal chưa gắn dự án (đa số) thay vì đọc mọi deal.
+  const directP = fetchAllPagesParallel(() => supabase
     .from('crm_leads')
-    .select('id, project_id')
+    .select('project_id')
     .eq('type', 'deal')
-    .in('company_id', ids));
+    .in('company_id', ids)
+    .not('project_id', 'is', null));
+
+  // Lọc junction THẲNG theo công ty của deal qua khoá ngoại, khỏi phải đọc trước toàn bộ
+  // deal rồi mới tra theo hàng nghìn deal_id — nhờ vậy hai truy vấn chạy song song được.
+  const linkedP = fetchAllPagesParallel(() => supabase
+    .from('crm_deal_projects')
+    .select('project_id, crm_leads!inner(company_id)')
+    .in('crm_leads.company_id', ids))
+    .catch(async (e) => {
+      // Thiếu bảng/khoá ngoại ở môi trường nào đó → quay về cách cũ: deal trước, junction sau.
+      if (String(e?.message || '').includes('crm_deal_projects')) return [];
+      console.warn('[crmLinkedProjects] junction embed:', e.message);
+      const deals = await fetchAllPagesParallel(() => supabase
+        .from('crm_leads').select('id').eq('type', 'deal').in('company_id', ids));
+      const dealIds = (deals || []).map((d) => d.id).filter(Boolean);
+      if (!dealIds.length) return [];
+      return fetchAllByIdsParallel({
+        table: 'crm_deal_projects', columns: 'project_id', key: 'deal_id', ids: dealIds,
+      }).catch(() => []);
+    });
+
+  const [direct, linked] = await Promise.all([directP, linkedP]);
   const projectIds = new Set();
-  const dealIds = [];
-  (deals || []).forEach((d) => {
-    if (d?.id) dealIds.push(d.id);
-    if (d?.project_id) projectIds.add(String(d.project_id));
-  });
-  if (dealIds.length) {
-    try {
-      const links = await fetchAllByIdsParallel({
-        table: 'crm_deal_projects',
-        columns: 'project_id',
-        key: 'deal_id',
-        ids: dealIds,
-      });
-      (links || []).forEach((r) => {
-        if (r?.project_id) projectIds.add(String(r.project_id));
-      });
-    } catch (e) {
-      if (!String(e.message || '').includes('crm_deal_projects')) {
-        console.warn('[crmLinkedProjects] junction:', e.message);
-      }
-    }
-  }
+  for (const d of direct || []) if (d?.project_id) projectIds.add(String(d.project_id));
+  for (const r of linked || []) if (r?.project_id) projectIds.add(String(r.project_id));
   return [...projectIds];
 }
 
