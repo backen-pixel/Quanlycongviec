@@ -1,4 +1,4 @@
-import { useEffect, useState, Children } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, Children } from 'react';
 import { Link } from 'react-router-dom';
 import {
   CheckCircle2, Circle, AlertTriangle, Calendar, Wallet, Target,
@@ -10,6 +10,9 @@ import { formatVND, formatDate, getInitials, avatarColor } from '../lib/utils';
 import DealProductionProjectsPanel from './DealProductionProjectsPanel';
 
 const CLUSTER_WARNING_MS = 3 * 24 * 60 * 60 * 1000;
+
+/** Số cụm nhiệm vụ hiện trong khung; vượt số này thì cuộn. */
+const CLUSTER_VISIBLE_ROWS = 7;
 
 function clusterModuleLabel(task) {
   const kind = String(task?.task_kind || '');
@@ -248,6 +251,28 @@ export default function ProjectOverviewPanel({
 
   const nowMs = Date.now();
   const clusterRows = projectId ? clusters : critical_tasks;
+
+  // Chiều cao mỗi hàng không cố định (hàng không có nhiệm vụ con thì thiếu thanh tiến độ),
+  // nên chốt bằng px sẽ lệch. Đo vị trí hàng thứ 9 rồi cắt đúng ở đó.
+  const clusterScrollRef = useRef(null);
+  const [clusterMaxH, setClusterMaxH] = useState(null);
+  useLayoutEffect(() => {
+    const box = clusterScrollRef.current;
+    if (!box) return undefined;
+    const measure = () => {
+      const rows = box.querySelectorAll('tbody > tr');
+      if (rows.length <= CLUSTER_VISIBLE_ROWS) { setClusterMaxH(null); return; }
+      const cut = rows[CLUSTER_VISIBLE_ROWS];
+      const top = cut.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+      setClusterMaxH(top > 0 ? Math.round(top) : null);
+    };
+    measure();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    // Đổi bề rộng cột → tên xuống dòng → hàng cao lên, phải đo lại.
+    const ro = new ResizeObserver(measure);
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, [clusterRows]);
   const clusterSummary = projectId
     ? {
       total: clusterStats?.total ?? clusters.length,
@@ -392,7 +417,11 @@ export default function ProjectOverviewPanel({
           ) : clusterRows.length === 0 ? (
             <p className="text-sm text-slate-400 py-4 text-center">Không có cụm nhiệm vụ mở</p>
           ) : (
-            <div className="overflow-x-auto max-h-[280px] overflow-y-auto">
+            <div
+              ref={clusterScrollRef}
+              className="overflow-x-auto overflow-y-auto"
+              style={clusterMaxH ? { maxHeight: clusterMaxH } : undefined}
+            >
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-[11px] uppercase tracking-wide text-slate-400 border-b border-slate-100">
