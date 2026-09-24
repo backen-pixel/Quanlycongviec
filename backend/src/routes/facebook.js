@@ -22,6 +22,10 @@ const {
   validateVnSubscriberPhoneStored,
   analyzeStoredPhoneIssue,
 } = require('../helpers/facebookPhoneExtract');
+const {
+  messengerEventOccurredAt,
+  saveMessengerAdAttribution,
+} = require('../helpers/facebookMessengerCampaignAttribution');
 const { isPhoneBlockedForFacebookAutoLead } = require('../helpers/crmAutoLeadPhoneBlocklist');
 const { deleteLeadIfAllowedForRescan, deleteOrphanCustomerIfAllowed } = require('../helpers/facebookLeadDeleteWhenNoPhone');
 const { reconcileInboundPhoneAfterScan, phonesEqualDigits } = require('../helpers/facebookInboundPhoneReconcile');
@@ -3505,6 +3509,15 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
   }
 
   console.log(`[FB] 👤 Contact: ${contact.fb_name || 'Unknown'} (ID: ${contact.id})`);
+  const attributedCampaignId = await saveMessengerAdAttribution({
+    supabase,
+    pageId,
+    contactId: contact.id,
+    event,
+  });
+  if (attributedCampaignId) {
+    console.log(`[FB attribution] campaign=${attributedCampaignId}, contact=${contact.id}`);
+  }
 
   // Log kết quả xử lý vào DB
   if (!FB_DISABLE_WEBHOOK_LOGS) {
@@ -3563,7 +3576,12 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
     console.log(`[FB] 💬 Message type: ${messageType}, content: ${content?.substring(0, 50)}${content?.length > 50 ? '...' : ''}`);
     console.log(`[FB] 📎 Attachment: ${attachmentUrl || 'None'}`);
 
-    // Save message — dùng upsert để tránh duplicate
+    // Save message — dùng upsert để tránh duplicate.
+    const { occurredAt: facebookOccurredAt } = messengerEventOccurredAt(event);
+    const messageMetadata = {};
+    if (msg.attachments) messageMetadata.attachments = msg.attachments;
+    if (event.referral) messageMetadata.referral = event.referral;
+
     const insertData = {
       contact_id: contact.id,
       lead_id: contact.lead_id,
@@ -3573,7 +3591,8 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
       content,
       attachment_url: attachmentUrl,
       attachment_type: attachmentType,
-      metadata: msg.attachments ? { attachments: msg.attachments } : null,
+      facebook_occurred_at: facebookOccurredAt,
+      metadata: Object.keys(messageMetadata).length ? messageMetadata : null,
     };
 
     // Upsert: nếu fb_message_id đã tồn tại thì bỏ qua (onConflict ignore)
@@ -3646,6 +3665,15 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
         if (extractedPhone || extractedAddress) {
           console.log(`[FB] 📞 Detected — phone: ${extractedPhone || 'N/A'}, address: ${extractedAddress || 'N/A'}`);
         }
+      }
+
+      // Lưu đúng mốc khách gửi SĐT, tách khỏi SĐT cũ của customer/contact.
+      if (extractedPhone) {
+        const { error: phoneEventErr } = await supabase
+          .from('facebook_messages')
+          .update({ detected_phone: extractedPhone })
+          .eq('id', savedMsg.id);
+        if (phoneEventErr) console.warn('[FB attribution] phone event:', phoneEventErr.message);
       }
 
       // Auto-create lead nếu chưa có — theo cấu hình auto-lead-config (gồm công ty mặc định trong tab Setup)
@@ -4309,6 +4337,57 @@ r.delete('/pages/:id', authMiddleware, async (req, res) => {
     await supabase.from('facebook_pages').delete().eq('id', req.params.id);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── SĐT Messenger theo chiến dịch Click-to-Messenger ─────────
+r.get('/ads/phone-attribution', authMiddleware, async (req, res) => {
+  try {
+    const date = String(req.query.date || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ error: 'date phải có dạng YYYY-MM-DD theo giờ Việt Nam.' });
+    }
+
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+    const requestedPageId = String(req.query.page_id || '').trim();
+    let pageIds = scope.mode === 'filter' ? scope.pageIds : null;
+    if (requestedPageId) {
+      if (scope.mode === 'filter' && !scope.pageIds.includes(requestedPageId)) {
+        return res.status(403).json({ error: 'Không có quyền xem Page này' });
+      }
+      pageIds = [requestedPageId];
+    }
+
+    const campaignIds = String(req.query.campaign_ids || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+    if (!campaignIds.length || campaignIds.length > 100) {
+      return res.status(400).json({ error: 'campaign_ids phải có từ 1 đến 100 ID.' });
+    }
+
+    const { data, error } = await supabase.rpc('fb_campaign_phone_numbers_in_range', {
+      p_page_ids: pageIds,
+      p_campaign_ids: campaignIds,
+      p_from: vnDateStartIso(date),
+      p_to: vnDateEndIso(date),
+    });
+    if (error) throw error;
+
+    const phoneByCampaign = Object.fromEntries(
+      (data || []).map((row) => [String(row.campaign_id), Number(row.phone_contacts) || 0]),
+    );
+    return res.json({
+      date,
+      timezone: 'Asia/Ho_Chi_Minh',
+      campaign_ids: campaignIds,
+      phone_by_campaign: phoneByCampaign,
+      attribution_ready: true,
+    });
+  } catch (e) {
+    console.error('[FB attribution] report:', e.message);
+    return res.status(500).json({ error: 'Không thể đọc SĐT theo chiến dịch.', detail: e.message });
+  }
 });
 
 // ── Contacts (danh sách chat FB) ─────────────────────────────
