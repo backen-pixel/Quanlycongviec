@@ -20,7 +20,7 @@ export function isCrmPipelineStageCompletedRevenue(stage) {
   return !!stage?.counts_as_completed_revenue;
 }
 
-/** Cột không theo dõi deadline (Thắng / Thua / Hoàn thành doanh thu). */
+/** Cột không theo dõi deadline: tích Thắng / Thua / Hoàn thành trong setup cột. */
 export function isCrmPipelineStageNoDeadline(stage) {
   return isCrmPipelineStageWon(stage)
     || isCrmPipelineStageLost(stage)

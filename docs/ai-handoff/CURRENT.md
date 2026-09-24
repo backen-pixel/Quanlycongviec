@@ -1,6 +1,28 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-24 14:20 (UTC+7)
+Cập nhật: 2026-09-25 00:35 (UTC+7)
+
+## Tắt deadline khi vào cột mốc
+
+Trạng thái: **BE local.**
+
+CRM vào cột Hoàn thành: tắt deadline CRM (`deadline_disabled_at`). Sản xuất vào cột tích VC/LĐ: xóa hạn SX. VC/LĐ vào cột Xong/Hoàn thành: ghi nhận tắt hạn lắp. Cả ba ghi dòng bình luận và dòng lịch sử «Đã tắt deadline do chuyển trạng thái».
+
+## Bình luận — lệnh `/` theo module
+
+## Bình luận — lệnh `/` theo module
+
+Trạng thái: **FE local.**
+
+Lệnh cột «Hoàn thành» (hoặc cột thắng) chỉ hiện với người thuộc đúng khối: CRM / Sản xuất / VC-LĐ. Admin hệ thống vẫn thấy đủ. `/Đã giao` và `/Đã lắp` ai cũng thấy, cả hai chuyển cột VC/LĐ «đã lắp» (cột tên Lắp đặt / Lắp xong nếu chưa có cột Đã lắp). Deal chưa có dự án thì báo, không chuyển im lặng.
+
+## Bình luận — gõ `/` để chuyển tiến độ
+
+Trạng thái: **FE local.**
+
+Ô bình luận (Work Unified, chi tiết SX/VC, chi tiết CRM): gõ `/` rồi tên cột, ví dụ `/Lắp xong`, `/Đã giao`. Chọn cột là chuyển Kanban đúng module và ghi dòng «Đã chuyển tiến độ …». Cột đang đứng, bàn giao VC, đổi phân loại, nhiệm vụ chặn, cột bắt hạn: không chuyển im lặng.
+
+Hoàn tác: revert `commentProgressSlash.js`, `crmCommentMentions.js`, `crmCommentMentionUi.jsx`, `CommentsPanels.jsx`, `WorkUnifiedProjectDetailPage.jsx`, `ProductionDetail.jsx`, `LeadDetail.jsx`.
 
 ## Cảnh báo «Chưa chạy migration 605» khi mở dự án SX đã xong việc
 

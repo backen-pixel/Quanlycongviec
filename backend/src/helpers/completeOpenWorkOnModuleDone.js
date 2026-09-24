@@ -40,7 +40,7 @@ function isCrmCompletedStage(stage) {
   if (stage.counts_as_completed_revenue) return true;
   const slug = String(stage.canonical_slug || stage.slug || '').toLowerCase().trim();
   if (slug === 'completed' || slug === 'done') return true;
-  const name = foldVi(stage.name);
+  const name = foldVi(stage.name).replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
   return name === 'hoan thanh' || name.startsWith('hoan thanh ');
 }
 

@@ -1327,7 +1327,7 @@ export function ProductionDeadlineView({
       s.items.forEach((item) => {
         const serverBucket = String(item._deadline_bucket || item.deadline_bucket || '').trim();
         // Đã giao/hoàn thành ẩn hạn — trừ khi server đang đếm đúng bucket Quá hạn.
-        if (shouldHideSxKanbanDeadlineOnCard(item, s) && serverBucket !== 'overdue') return;
+        if (shouldHideSxKanbanDeadlineOnCard(item, s)) return;
         let { bucket, ts, source } = resolveSxDeadlineBucket(item, todayMs, s);
         const ovr = localOverride[String(item.id)];
         if (ovr) {

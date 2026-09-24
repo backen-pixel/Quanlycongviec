@@ -1301,14 +1301,9 @@ function useCommentPasteUpload(onFilesUploaded) {
   return { handlePasteFiles, uploadingPaste, pasteProgress };
 }
 
-function commentComposerPlaceholder(replyTo, user, { withPasteHint = false, withMentionHint = false, withSlashHint = false } = {}) {
+function commentComposerPlaceholder(replyTo) {
   if (replyTo) return `Trả lời ${replyTo.name}…`;
-  const who = user?.full_name || user?.email || 'bạn';
-  let text = `Bình luận với tư cách ${who}…`;
-  if (withMentionHint) text += ' (@ nhắc thành viên)';
-  if (withSlashHint) text += ' · / tạo công việc';
-  if (withPasteHint) text += ' · Ctrl+V dán ảnh/file';
-  return text;
+  return 'Bình luận…';
 }
 
 function formatVcDateTime(iso) {
@@ -2494,11 +2489,8 @@ function CommentThread({
     handleCommentFilePaste(e, onPasteFiles);
   }, [enableAttachments, onPasteFiles]);
 
-  const composerPlaceholder = commentComposerPlaceholder(replyTo, user, {
-    withPasteHint: enableAttachments,
-    withMentionHint: enableMentions,
-    withSlashHint: (slashCommands || []).length > 0,
-  });
+  const slashList = slashCommands || [];
+  const composerPlaceholder = commentComposerPlaceholder(replyTo);
 
   const renderBranch = (parentKey, depth) => {
     const list = commentsByParent.get(parentKey) || [];
@@ -2875,8 +2867,9 @@ function CommentThread({
               </div>
             ) : null}
             {slashFormSlot ? <div className="px-3 pt-2">{slashFormSlot}</div> : null}
-            {enableMentions ? (
+            {(enableMentions || slashList.length > 0) ? (
               <CrmCommentMentionComposer
+                allowPrivate={enableMentions}
                 user={user}
                 members={members}
                 value={bodyField}
@@ -3404,7 +3397,12 @@ export function CrmLeadHistoryPanel({ leadId, forModule = null }) {
 }
 
 /** Bình luận dự án sản xuất — realtime qua socket `project:comment` */
-export function ProjectCommentsPanel({ projectId, onCountChange }) {
+export function ProjectCommentsPanel({
+  projectId,
+  onCountChange,
+  slashCommands = [],
+  onSlashCommand,
+}) {
   const showOnScreen = useCommentShowOnScreenEnabled();
   const { user } = useAuth();
   const activeProjectId = showOnScreen ? projectId : null;
@@ -3630,6 +3628,8 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
 
   return (
     <CommentThread
+      slashCommands={slashCommands}
+      onSlashCommand={onSlashCommand}
       comments={comments}
       loading={loading}
       user={user}

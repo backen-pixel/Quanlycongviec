@@ -42,6 +42,8 @@ import {
   resolveSxPlanInstallYmd,
   resolveSxReceptionYmd,
 } from '../lib/sxWorkshopSchedule';
+import { isSxPipelineStageNoDeadline } from '../lib/sxPipelineRevenue';
+import { isVcPipelineStageNoDeadline } from '../lib/vcPipelineKpi';
 import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
   FileUp, Edit2, Save, ChevronDown, Trash2, Send, Paperclip,
@@ -70,6 +72,7 @@ import { buildCrmLeadDocTaskSections, normalizeCrmChecklist } from '../lib/crmTa
 import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 import { buildSxPipelineStageMeta, projectIsShipped, resolveSxDisplayColumnId, TEMP_SX_FREE_DRAG } from '../lib/sxPipelineRevenue';
 import { CrmLeadCommentsPanel, CrmLeadHistoryPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
+import { useCommentProgressSlash } from '../lib/commentProgressSlash';
 import SharedCRMNotes from '../components/SharedCRMNotes';
 import DriveAttachments from '../components/drive/DriveAttachments';
 import ProjectProcurementTab from '../components/ProjectProcurementTab';
@@ -295,6 +298,7 @@ function WorkshopInfoPanel({
   crmDeal = null,
   onDealUpdate,
   isVC = false,
+  currentStage = null,
 }) {
   const [editing, setEditing] = useState(null);
   const [draft, setDraft] = useState('');
@@ -356,12 +360,18 @@ function WorkshopInfoPanel({
     [project?.install_occurrence_dates, project?.install_date, project?.delivery_date],
   );
 
+  const stageForDeadline = currentStage
+    || (isVC
+      ? (project?.vc_pipeline_stage || project?.logistics_pipeline_stage)
+      : (project?.sx_pipeline_stage || project?.sx_kanban_column));
+  const sxDeadlineOff = !isVC && isSxPipelineStageNoDeadline(stageForDeadline);
+  const vcDeadlineOff = isVC && isVcPipelineStageNoDeadline(stageForDeadline);
   const finishTone = workshopScheduleTone(
-    remainingSxWorkingDaysTo(productionFinishDate, { receptionYmd, holidayIndex }),
+    sxDeadlineOff ? null : remainingSxWorkingDaysTo(productionFinishDate, { receptionYmd, holidayIndex }),
     'finish',
   );
   const installTone = workshopScheduleTone(
-    remainingSxWorkingDaysTo(planInstallYmd || deliveryDate, { receptionYmd, holidayIndex }),
+    vcDeadlineOff ? null : remainingSxWorkingDaysTo(planInstallYmd || deliveryDate, { receptionYmd, holidayIndex }),
     'install',
   );
   const pickupDateObj = pickupAt ? new Date(pickupAt) : null;
@@ -370,7 +380,7 @@ function WorkshopInfoPanel({
     && pickupDateObj < new Date(Date.now() + 3 * 86400000);
 
   const installDateObj = installDate ? new Date(installDate) : null;
-  const deliveredDone = projectIsShipped(project) || project?.status === 'completed';
+  const deliveredDone = projectIsShipped(project) || project?.status === 'completed' || vcDeadlineOff;
   const installOverdue = !deliveredDone
     && installDateObj
     && !Number.isNaN(installDateObj.getTime())
@@ -3021,6 +3031,27 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     input.click();
   };
 
+  const slashLeadId = project
+    ? (resolveSxProjectLeadId({
+      crm_lead_id: project.crm_lead_id,
+      crm_deals: project.crmDeals || project.crm_deals,
+    }) || fallbackDealIdForTasks)
+    : null;
+  const progressSlash = useCommentProgressSlash({
+    enabled: !!project?.id,
+    modules: moduleKey === 'vc' ? ['vc'] : ['sx'],
+    projectId: project?.id || null,
+    leadId: slashLeadId,
+    companyId: moduleKey === 'vc'
+      ? (project?.logistics_company_id || project?.logistics_company?.id || project?.company_id || project?.company?.id || null)
+      : (project?.company_id || project?.company?.id || null),
+    workshopTypeId: project?.workshop_type_id || project?.workshop_type?.id || null,
+    logisticsCompanyId: project?.logistics_company_id || project?.logistics_company?.id || null,
+    sxStageId: project?.sx_kanban_column_id || null,
+    vcStageId: project?.vc_kanban_column_id || null,
+    project,
+  });
+
   if (loadError) {
     const isDealNoProject = loadError.kind === 'deal_without_project';
     const isBroken = loadError.kind === 'broken_project_link';
@@ -3142,6 +3173,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     crm_lead_id: project.crm_lead_id,
     crm_deals: project.crmDeals || project.crm_deals,
   }) || fallbackDealIdForTasks;
+  const progressSlashCmds = progressSlash.commands;
   const dealLeadFromUrl = searchParams.get('deal_lead');
   const tasksLeadId = dealLeadFromUrl || crmLeadId;
   const focusCrmTaskId = searchParams.get('crm_task');
@@ -3397,6 +3429,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         <div className="lg:col-span-1 space-y-4">
           <WorkshopInfoPanel
             project={project}
+            currentStage={safePipelineStages.find((s) => String(s.id) === String(currentStageId)) || null}
             onUpdate={() => {
               refreshProjectSilently();
               loadWorkshopPlacements();
@@ -4129,7 +4162,18 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               {activeTab === 'comments' && (
                 project?.id
                   ? (crmLeadId
-                    ? <CrmLeadCommentsPanel leadId={crmLeadId} forModule={workshopShareMod} onCountChange={setCommentCount} />
+                    ? (
+                      <CrmLeadCommentsPanel
+                        leadId={crmLeadId}
+                        forModule={workshopShareMod}
+                        onCountChange={setCommentCount}
+                        slashCommands={progressSlashCmds}
+                        onSlashCommand={async (cmd) => {
+                          const res = await progressSlash.run(cmd);
+                          if (res?.ok) refreshProjectSilently?.();
+                        }}
+                      />
+                    )
                     : <ProjectCommentsPanel projectId={project.id} onCountChange={setCommentCount} />)
                   : <p className="text-sm text-gray-500 text-center py-8">Chưa có dữ liệu để bình luận.</p>
               )}

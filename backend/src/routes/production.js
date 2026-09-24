@@ -269,12 +269,7 @@ async function touchProjectSxPipelineStageEnteredAt(projectId, targetColId, curr
 
 /** Cột «Tắt hạn» / «Đã giao» / «Đã công» / «Đã thu» — tắt hết deadline SX. */
 function isSxColumnClearsDeadlines(col) {
-  return !!(
-    col?.clears_deadline
-    || col?.counts_as_completed_revenue
-    || col?.counts_as_collected_revenue
-    || isSxDeliveredStage(col)
-  );
+  return !!(col?.clears_deadline || col?.is_handover_to_logistics);
 }
 
 /** Alias cũ — dùng khi bật cờ hoàn thành trên cột. */
@@ -3476,7 +3471,7 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       const colId = String(pipelineStageId);
       let { data: colRow } = await supabase
         .from('production_pipeline_stages')
-        .select('id, name, workflow_stage_id, bucket_slug, crm_target_stage_id, requires_deadline, clears_deadline, deadline_group, group_key, counts_as_completed_revenue, counts_as_collected_revenue')
+        .select('id, name, workflow_stage_id, bucket_slug, crm_target_stage_id, requires_deadline, clears_deadline, is_handover_to_logistics, deadline_group, group_key, counts_as_completed_revenue, counts_as_collected_revenue')
         .eq('id', colId)
         .maybeSingle();
       if (!colRow) {
@@ -3697,6 +3692,23 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
           await clearSxSchedulesOnCompletedForProjects([id]);
         } catch (clearErr) {
           console.warn('[production] clear SX schedules on completed column:', clearErr.message);
+        }
+        const hadSxDeadline = !!(
+          project?.sx_kanban_deadline_at
+          || project?.production_deadline
+          || project?.production_finish_date
+        );
+        if (colRow?.is_handover_to_logistics && hadSxDeadline) {
+          try {
+            const { turnOffSxDeadlineOnVcHandover } = require('../helpers/stageMoveDeadlineOff');
+            await turnOffSxDeadlineOnVcHandover(req, {
+              projectId: id,
+              stage: colRow,
+              hadDeadline: true,
+            });
+          } catch (noticeErr) {
+            console.warn('[production] deadline-off notice:', noticeErr.message);
+          }
         }
       }
 

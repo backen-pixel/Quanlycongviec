@@ -30,6 +30,7 @@ import UnifiedTaskHistoryTimeline from '../components/UnifiedTaskHistoryTimeline
 import WorkTaskExtrasPanel from '../components/WorkTaskExtrasPanel';
 import ProjectSharedWorkspaceTab from '../components/ProjectSharedWorkspaceTab';
 import CommentSlashTaskForm from '../components/CommentSlashTaskForm';
+import { useCommentProgressSlash } from '../lib/commentProgressSlash';
 import CostExcelUpload from '../components/CostExcelUpload';
 import { LeadMembersTab } from '../components/LeadChatTabs';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
@@ -65,6 +66,7 @@ const COMMENT_SLASH_COMMANDS = [
     emoji: '✅',
     keywords: 'cong viec task viec',
     hint: 'Tạo ngay tại đây — giao cho thành viên deal',
+    groupLabel: 'Tạo nhanh',
   },
   {
     id: 'phat_sinh',
@@ -72,6 +74,7 @@ const COMMENT_SLASH_COMMANDS = [
     emoji: '⚠️',
     keywords: 'phat sinh loi su co',
     hint: 'Tạo ngay tại đây — chọn loại phát sinh và người chịu trách nhiệm',
+    groupLabel: 'Tạo nhanh',
   },
 ];
 
@@ -2513,6 +2516,20 @@ function WorkUnifiedProjectDetailInner() {
 
   // Lệnh «/» trong ô bình luận: null = đóng, 'task' | 'phat_sinh' = đang mở form tạo.
   const [slashTaskKind, setSlashTaskKind] = useState(null);
+  const progressProject = bundle?.project || null;
+  const progressLead = bundle?.primary_lead || null;
+  const { commands: progressSlashCmds, run: runProgressSlash } = useCommentProgressSlash({
+    enabled: !!progressProject?.id,
+    modules: ['sx', 'vc'],
+    projectId: progressProject?.id || null,
+    leadId: progressLead?.id || bundle?.lead_id || null,
+    companyId: progressProject?.company_id || progressProject?.company?.id || null,
+    workshopTypeId: progressProject?.workshop_type_id || progressProject?.workshop_type?.id || null,
+    logisticsCompanyId: progressProject?.logistics_company_id || progressProject?.logistics_company?.id || null,
+    sxStageId: progressProject?.sx_kanban_column_id || null,
+    vcStageId: progressProject?.vc_kanban_column_id || null,
+    project: progressProject,
+  });
 
   const selectTab = (key) => {
     setActiveTab(key);
@@ -2839,8 +2856,15 @@ function WorkUnifiedProjectDetailInner() {
               leadId={effectiveLeadId}
               forModule="projects"
               onCountChange={setCommentCount}
-              slashCommands={COMMENT_SLASH_COMMANDS}
-              onSlashCommand={(cmd) => setSlashTaskKind(cmd.id === 'phat_sinh' ? 'phat_sinh' : 'task')}
+              slashCommands={[...COMMENT_SLASH_COMMANDS, ...progressSlashCmds]}
+              onSlashCommand={async (cmd) => {
+                if (cmd?.kind === 'stage') {
+                  const res = await runProgressSlash(cmd);
+                  if (res?.ok) load({ silent: true, noCache: true });
+                  return;
+                }
+                setSlashTaskKind(cmd.id === 'phat_sinh' ? 'phat_sinh' : 'task');
+              }}
               slashFormSlot={slashTaskKind ? (
                 <CommentSlashTaskForm
                   leadId={effectiveLeadId}

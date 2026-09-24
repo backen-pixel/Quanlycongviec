@@ -9,6 +9,7 @@ export function normalizeMentionSearch(s) {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -119,8 +120,23 @@ export function getActiveSlashState(text, cursorPos) {
   const prev = at > 0 ? before[at - 1] : '\n';
   if (prev !== '\n' && prev !== ' ' && prev !== '\t') return { active: false, start: at, query: '' };
   const between = before.slice(at + 1);
-  if (/\s/.test(between)) return { active: false, start: at, query: '' };
-  return { active: true, start: at, query: between };
+  if (between.includes('\n')) return { active: false, start: at, query: '' };
+  // Tên cột có dấu cách: «/Lắp xong», «/Đã giao». Khoảng trắng ngay sau «/» bỏ qua.
+  return { active: true, start: at, query: between.replace(/^\s+/, '') };
+}
+
+function slashMatchRank(cmd, q) {
+  const compact = (s) => String(s || '').replace(/\s+/g, '');
+  const label = normalizeMentionSearch(cmd?.label || '');
+  const blob = normalizeMentionSearch(`${cmd?.label || ''} ${cmd?.keywords || ''}`);
+  const qc = compact(q);
+  const labelHit = label.includes(q) || (qc && compact(label).includes(qc));
+  const blobHit = blob.includes(q) || (qc && compact(blob).includes(qc));
+  if (!labelHit && !blobHit) return -1;
+  if (label === q || compact(label) === qc) return 0;
+  if (label.startsWith(q) || compact(label).startsWith(qc)) return 1;
+  if (labelHit) return 2;
+  return 3;
 }
 
 /** Lọc danh sách lệnh theo phần gõ sau «/» — bỏ dấu, không phân biệt hoa thường. */
@@ -128,7 +144,11 @@ export function filterSlashCommands(commands, query) {
   const list = Array.isArray(commands) ? commands : [];
   const q = normalizeMentionSearch(query || '');
   if (!q) return list;
-  return list.filter((c) => normalizeMentionSearch(`${c?.label || ''} ${c?.keywords || ''}`).includes(q));
+  return list
+    .map((c, index) => ({ c, index, rank: slashMatchRank(c, q) }))
+    .filter((row) => row.rank >= 0)
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((row) => row.c);
 }
 
 export function buildMentionPickerItems({ text, cursorPos, members, currentUserId }) {

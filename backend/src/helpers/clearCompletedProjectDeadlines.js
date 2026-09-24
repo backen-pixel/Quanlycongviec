@@ -261,7 +261,7 @@ async function loadSxDeadlineClearColumnIds() {
   try {
     rows = await fetchAllRows(
       'production_pipeline_stages',
-      'id, name, bucket_slug, counts_as_completed_revenue, counts_as_collected_revenue, clears_deadline',
+      'id, clears_deadline, is_handover_to_logistics',
     );
   } catch (e) {
     if (!/clears_deadline/.test(String(e.message || ''))) throw e;
@@ -271,29 +271,26 @@ async function loadSxDeadlineClearColumnIds() {
     );
   }
   return uniqIds(rows
-    .filter((c) => (
-      c.clears_deadline
-      || c.counts_as_completed_revenue
-      || c.counts_as_collected_revenue
-      || isSxDeliveredStage(c)
-    ))
+    .filter((c) => c.clears_deadline || c.is_handover_to_logistics)
     .map((c) => c.id));
 }
 
 async function loadVcDoneColumnIds() {
   const rows = await fetchAllRows(
     'logistics_pipeline_stages',
-    'id, name, bucket_slug',
+    'id, clears_deadline, dashboard_kpi',
   );
-  return uniqIds(rows.filter((c) => isLogisticsCompletedColumn(c)).map((c) => c.id));
+  return uniqIds(rows
+    .filter((c) => c.clears_deadline || String(c.dashboard_kpi || '') === 'completed')
+    .map((c) => c.id));
 }
 
 async function loadCrmDoneStageIds() {
   const rows = await fetchAllRows(
     'crm_pipeline_stages',
-    'id, name, canonical_slug, counts_as_completed_revenue',
+    'id, counts_as_completed_revenue',
   );
-  return uniqIds(rows.filter((s) => isCrmCompletedStage(s)).map((s) => s.id));
+  return uniqIds(rows.filter((s) => s.counts_as_completed_revenue).map((s) => s.id));
 }
 
 async function collectIdsByColumn(table, selectCol, column, colIds) {
@@ -355,10 +352,10 @@ async function clearCrmCompletedLeadDeadlines(leadIds) {
     let { error } = await supabase
       .from('crm_leads')
       .update({
+        deadline_disabled_at: nowIso,
+        deadline_disabled_reason: 'Đã tắt deadline vì đang ở cột tích tắt hạn',
         kanban_deadline_at: null,
-        kanban_deadline_reason: null,
-        expected_close_date: null,
-        next_follow_up: null,
+        kanban_deadline_reason: 'Đã tắt deadline vì đang ở cột tích tắt hạn',
         updated_at: nowIso,
       })
       .in('id', part);

@@ -6,8 +6,6 @@
 import { companyWorkEndMsFromRaw, vnYmdFromTs } from './companyDeadlineClock';
 import { effectivePipelineStageSlaDays } from './crmPipelineSla';
 import { endOfVnCalendarDayAfterEntered } from './vnDate';
-import { isCrmStagePastInstallation } from './crmDealStageGate';
-
 export const DEADLINE_MODULE = Object.freeze({
   CRM: 'crm',
   PRODUCTION: 'production',
@@ -104,13 +102,7 @@ function isSxReleasedToInstall(item, sxStage) {
 }
 
 function sxDone(stage) {
-  if (!stage) return false;
-  if (stage.clears_deadline || stage.counts_as_completed_revenue || stage.counts_as_collected_revenue) return true;
-  const slug = String(stage.bucket_slug || stage.slug || '').toLowerCase();
-  const name = foldVi(stage.name);
-  return ['delivered', 'delivery_done', 'completed', 'done'].includes(slug)
-    || name.includes('da giao')
-    || name.includes('giao xong');
+  return !!stage?.clears_deadline || !!stage?.is_handover_to_logistics;
 }
 
 function sxShipped(item) {
@@ -118,23 +110,10 @@ function sxShipped(item) {
   return ['installing', 'warranty', 'completed'].includes(String(item?.status || ''));
 }
 
-function logisticsDone(item, stage) {
-  if (item?.status === 'completed' || item?.status === 'warranty') return true;
-  if (stage?.clears_deadline) return true;
-  if (String(stage?.dashboard_kpi || '').trim() === 'completed') return true;
-  const slug = String(stage?.bucket_slug || stage?.slug || '').toLowerCase();
-  const name = foldVi(stage?.name);
-  if (['completed', 'done', 'install_completed'].includes(slug)
-    || name === 'hoan thanh'
-    || name === 'hoan thien'
-    || name.startsWith('hoan thanh ')
-    || name.startsWith('hoan thien ')) {
-    return true;
-  }
-  return isCrmStagePastInstallation(
-    item?.crm_stage || item?.stage || item?._stage,
-    item?.pipeline_stages || item?.crm_pipeline_stages || [],
-  );
+function logisticsDone(_item, stage) {
+  if (!stage) return false;
+  if (stage.clears_deadline) return true;
+  return String(stage.dashboard_kpi || '').trim() === 'completed';
 }
 
 function fromBackend(item, moduleKey) {
@@ -176,8 +155,7 @@ export function resolveEffectiveModuleDeadline(moduleKey, item, stage = null) {
   }
 
   if (key === DEADLINE_MODULE.PRODUCTION) {
-    if (!item || item.status === 'completed' || isSxReleasedToInstall(item, stage)
-      || stage?.sla_days === 0 || stage?.sla_days === '0') {
+    if (!item || sxDone(stage) || stage?.sla_days === 0 || stage?.sla_days === '0') {
       return { raw: null, source: null, deadlineTs: null, deadlineAt: null };
     }
     return result(item.sx_kanban_deadline_at, 'sx_kanban', item)

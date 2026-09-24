@@ -134,9 +134,9 @@ export function vcColumnDashboardKpiKey(stage) {
   return 'shipping';
 }
 
+/** Cột không theo dõi deadline: tích Tắt hạn hoặc ô Dashboard «Xong». */
 export function isVcPipelineStageNoDeadline(stage) {
   if (!stage) return false;
   if (stage.clears_deadline) return true;
-  if (explicitDashboardKpi(stage) === 'completed') return true;
-  return isDoneCol(stage);
+  return explicitDashboardKpi(stage) === 'completed';
 }

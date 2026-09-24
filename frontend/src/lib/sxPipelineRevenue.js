@@ -436,12 +436,9 @@ export function sxColumnStageKpiKey(stage) {
   return 'producing';
 }
 
-/** Cột không theo dõi deadline (Tắt hạn / Đã giao / Đã công / Đã thu). */
+/** Cột không theo dõi deadline: tích Tắt hạn hoặc tích VC/LĐ trong setup cột. */
 export function isSxPipelineStageNoDeadline(stage) {
-  return !!stage?.clears_deadline
-    || isSxDeliveredStage(stage)
-    || isSxPipelineStageCompletedRevenue(stage)
-    || isSxPipelineStageCollectedRevenue(stage);
+  return !!stage?.clears_deadline || !!stage?.is_handover_to_logistics;
 }
 
 /** Ẩn badge deadline trên thẻ Kanban SX khi đã giao hoặc hoàn thành. */
