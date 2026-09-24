@@ -1,5 +1,12 @@
 # Nhật ký công việc AI
 
+## 2026-09-24 — VPT01: attribution SĐT Messenger theo campaign
+
+- AI: Codex. Nhánh `codex/vpt-messenger-attribution-20260924`, commit `b955e58b`; chưa deploy Production theo quy định repo.
+- Đã thêm: `database/591_facebook_messenger_campaign_phone_attribution.sql`, helper attribution Messenger, endpoint `GET /api/facebook/ads/phone-attribution`, mapping 30 ads cho 10 campaign VPT01 và API docs.
+- Test đạt: `node --check` hai file backend; helper timestamp/referral; migration mapping 30 quảng cáo; API-doc generator; `git diff --check`.
+- Cần trước khi chạy lịch: migration 591 + release backend + Meta subscribe `messaging_referrals` + thử tin nhắn thật có SĐT để xác minh số được gắn vào campaign. Sau đó lịch giờ/00:00 mới được bật, fail-closed khi CRM hoặc Meta không đọc được dữ liệu.
+
 ## 2026-09-24 13:10 — Nhiệm vụ và tiến độ dùng chung một tích
 
 - AI: Cursor. Tích cột trên tab Công việc và vòng tròn PipelineStepper đọc/ghi cùng `project_substage_status`. Cột đã đi qua hiện tích cả hai bên. VC/LĐ có danh sách cột lớn và nút hoàn thành cột. SQL 635 thêm `logistics_stage_id` — chưa chạy.

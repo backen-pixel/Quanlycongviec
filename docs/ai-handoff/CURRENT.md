@@ -1,6 +1,16 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-24 13:10 (UTC+7)
+Cập nhật: 2026-09-24 (UTC+7)
+
+## VPT01 — ghi nhận SĐT Messenger theo chiến dịch quảng cáo
+
+Trạng thái: **đã hoàn tất mã nguồn và đẩy nhánh `codex/vpt-messenger-attribution-20260924` (commit `b955e58b`); chưa triển khai Production.**
+
+Đã thêm migration 591, webhook ghi `messaging_referrals`, timestamp sự kiện, SĐT phát hiện trực tiếp từ tin nhắn vào và API tổng hợp số điện thoại theo campaign/ngày. Mapping có sẵn 30 quảng cáo thuộc 10 chiến dịch VPT01. Kiểm thử syntax, helper, mapping migration, API docs và `git diff --check` đều đạt.
+
+Điều kiện bắt buộc trước khi bật lịch tự động: chạy migration 591, phát hành backend, đăng ký Meta webhook `messaging_referrals`, rồi xác minh một tin nhắn thật có SĐT trả về đúng campaign qua `GET /api/facebook/ads/phone-attribution`. Khi endpoint đã kiểm chứng, lịch sẽ: mỗi giờ dừng campaign chi từ 50.000đ mà ngày đó chưa có SĐT; 00:00 `Asia/Ho_Chi_Minh` chỉ mở lại campaign do chính quy tắc đã dừng.
+
+Không deploy Production trực tiếp theo quy định repo. Hoàn tác: revert commit `b955e58b`; migration 591 chỉ thêm bảng/cột/RPC mới.
 
 ## Nhiệm vụ và tiến độ — một tích cho cả hai bên
 
