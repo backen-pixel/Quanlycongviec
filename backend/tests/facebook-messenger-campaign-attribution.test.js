@@ -7,7 +7,9 @@ const {
   vietnamCalendarDate,
   isReferralEligibleForDailyPhone,
   buildPhoneAttributionReadiness,
+  saveMessengerAdAttribution,
 } = require('../src/helpers/facebookMessengerCampaignAttribution');
+const { vnDateStartIso, vnNextDateStartIso } = require('../src/helpers/facebookContactActivity');
 const {
   facebookWebhookSignatureIsValid,
   verifyFacebookWebhookSignature,
@@ -23,6 +25,13 @@ const facebookRoute = fs.readFileSync(path.join(repoRoot, 'backend', 'src', 'rou
 assert.equal(VPT_DAILY_PHONE_ATTRIBUTION_POLICY.timezone, 'Asia/Ho_Chi_Minh');
 assert.equal(vietnamCalendarDate('2026-09-24T16:59:00.000Z'), '2026-09-24');
 assert.equal(vietnamCalendarDate('2026-09-24T17:01:00.000Z'), '2026-09-25');
+const reportDayStart = new Date(vnDateStartIso('2026-09-24'));
+const reportDayExclusiveEnd = new Date(vnNextDateStartIso('2026-09-24'));
+assert.equal(reportDayExclusiveEnd.toISOString(), '2026-09-24T17:00:00.000Z');
+assert(new Date('2026-09-24T16:59:59.999Z') < reportDayExclusiveEnd,
+  'the final VN millisecond remains inside the exclusive reporting window');
+assert.equal(new Date('2026-09-24T17:00:00.000Z').getTime(), reportDayExclusiveEnd.getTime());
+assert.equal(reportDayExclusiveEnd.getTime() - reportDayStart.getTime(), 24 * 60 * 60 * 1000);
 
 assert.equal(isReferralEligibleForDailyPhone({
   referralOccurredAt: '2026-09-24T14:00:00.000Z',
@@ -83,6 +92,38 @@ assert.equal(
   true,
 );
 
+async function capturedAttribution(event) {
+  const writes = [];
+  const supabase = {
+    from(table) {
+      if (table === 'facebook_ad_campaign_mappings') {
+        return {
+          select: () => ({
+            eq: () => ({
+              eq: () => ({ maybeSingle: async () => ({ data: { campaign_id: 'c1' }, error: null }) }),
+            }),
+          }),
+        };
+      }
+      if (table === 'facebook_messenger_ad_attributions') {
+        return {
+          upsert: async (payload) => {
+            writes.push(payload);
+            return { error: null };
+          },
+        };
+      }
+      throw new Error(`unexpected table: ${table}`);
+    },
+  };
+  const campaignId = await saveMessengerAdAttribution({
+    supabase, pageId: 'page-1', contactId: 'contact-1', event,
+  });
+  assert.equal(campaignId, 'c1');
+  assert.equal(writes.length, 1);
+  return writes[0];
+}
+
 [
   'ALTER TABLE public.facebook_ad_campaign_mappings ENABLE ROW LEVEL SECURITY;',
   'ALTER TABLE public.facebook_messenger_ad_attributions ENABLE ROW LEVEL SECURITY;',
@@ -97,10 +138,28 @@ assert.equal(
 [
   "const phoneByCampaign = Object.fromEntries(campaignIds.map((campaignId) => [campaignId, 0]));",
   'automation_ready: readiness.automationReady',
+  'p_to: vnNextDateStartIso(date),',
   "blocking_reasons: ['crm_attribution_read_failed']",
   "r.post('/ads/phone-attribution/test-exclusions', authMiddleware",
   'if (!isAdminLike(req.user))',
   'contactAllowedByFacebookScope(scope, contact)',
 ].forEach((required) => assert(facebookRoute.includes(required), `missing route contract: ${required}`));
 
-console.log('facebook-messenger-campaign-attribution: ok');
+Promise.all([
+  capturedAttribution({
+    timestamp: 1727190000000,
+    referral: { ad_id: 'top-level-ad', source: 'ADS' },
+  }),
+  capturedAttribution({
+    timestamp: 1727190000000,
+    postback: { referral: { ad_id: 'nested-postback-ad', source: 'ADS' } },
+  }),
+]).then(([topLevel, nestedPostback]) => {
+  assert.equal(topLevel.fb_ad_id, 'top-level-ad');
+  assert.equal(nestedPostback.fb_ad_id, 'nested-postback-ad');
+  assert.equal(nestedPostback.referral.ad_id, 'nested-postback-ad');
+  console.log('facebook-messenger-campaign-attribution: ok');
+}).catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

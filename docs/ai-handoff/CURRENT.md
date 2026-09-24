@@ -8,7 +8,7 @@ Trạng thái: **nhánh `codex/vpt-messenger-attribution-20260924` đã có trac
 
 Tracking gốc dùng migration 591: `messaging_referrals` → `ad_id` → campaign, timestamp sự kiện, SĐT phát hiện trực tiếp từ tin nhắn vào và báo cáo theo ngày. Bản vá kế tiếp dùng migration 636 (không sửa lịch sử 591): khóa quyền trực tiếp vào bảng/RPC attribution, giới hạn referral cùng Page/cùng ngày Việt Nam và trước SĐT, đồng thời cho phép admin loại trừ đúng một tin E2E qua `POST /api/facebook/ads/phone-attribution/test-exclusions`.
 
-Chính sách báo cáo ngày: chỉ ghi nhận SĐT khi cùng contact có referral mapped trong **cùng ngày `Asia/Ho_Chi_Minh`**, cùng Page và referral xảy ra trước hoặc đúng lúc tin SĐT. Khách quay lại tự nhiên hoặc referral qua 00:00 không được gán vào campaign; đó là lựa chọn thận trọng cho quy tắc chi tiêu hằng ngày, không tuyên bố attribution đa ngày chính xác.
+Chính sách báo cáo ngày: chỉ ghi nhận SĐT khi cùng contact có referral mapped trong **cùng ngày `Asia/Ho_Chi_Minh`**, cùng Page và referral xảy ra trước hoặc đúng lúc tin SĐT. Khoảng truy vấn là `[00:00, 00:00 ngày kế tiếp)`, nên vẫn gồm cả `23:59:59.999`. Khách quay lại tự nhiên hoặc referral qua 00:00 không được gán vào campaign; đó là lựa chọn thận trọng cho quy tắc chi tiêu hằng ngày, không tuyên bố attribution đa ngày chính xác.
 
 Webhook Facebook nay có thể xác thực `X-Hub-Signature-256` nếu cấu hình `FB_APP_SECRET`; không có biến này, Messenger cũ vẫn nhận để tránh gián đoạn nhưng `attribution_ready=false`. Dù có secret, `automation_ready=false` vì webhook hiện ACK trước khi xử lý và chưa có hàng đợi/receipt bền vững. **Không bật lịch dừng 50.000đ hoặc mở lại 00:00 cho đến khi delivery durable được triển khai và kiểm thử.**
 

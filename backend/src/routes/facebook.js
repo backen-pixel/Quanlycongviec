@@ -16,6 +16,7 @@ const {
   enrichContactActivityFields,
   vnDateStartIso,
   vnDateEndIso,
+  vnNextDateStartIso,
 } = require('../helpers/facebookContactActivity');
 const {
   extractContactInfo,
@@ -4533,7 +4534,8 @@ r.get('/ads/phone-attribution', authMiddleware, async (req, res) => {
       p_page_ids: pageIds,
       p_campaign_ids: campaignIds,
       p_from: vnDateStartIso(date),
-      p_to: vnDateEndIso(date),
+      // The RPC uses `< p_to`; use next VN midnight so 23:59:59.999 is included.
+      p_to: vnNextDateStartIso(date),
     });
     if (error) throw error;
 

@@ -8,7 +8,13 @@ function messengerEventOccurredAt(event) {
 }
 
 async function saveMessengerAdAttribution({ supabase, pageId, contactId, event }) {
-  const referral = event?.referral;
+  // `messaging_referrals` is normally top-level; a new-thread Postback can nest it.
+  // Prefer a top-level referral carrying an ad_id, otherwise retain the nested shape.
+  const topLevelReferral = event?.referral;
+  const nestedPostbackReferral = event?.postback?.referral;
+  const referral = String(topLevelReferral?.ad_id || '').trim()
+    ? topLevelReferral
+    : (nestedPostbackReferral || topLevelReferral);
   const adId = referral?.ad_id != null ? String(referral.ad_id).trim() : '';
   if (!adId) return null;
 
