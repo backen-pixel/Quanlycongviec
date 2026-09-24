@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Building2, Calendar, ChevronDown, Eye, Factory, FileText, Loader2, Plus, Truck, X } from 'lucide-react';
 import api from '../lib/api';
+import AnchoredDropdownMenu from './AnchoredDropdownMenu';
 import { useAuth } from '../lib/auth';
 import { displayPipelineStageName } from './ProjectDealSyncPanel';
 import { TEMP_SX_FREE_DRAG } from '../lib/sxPipelineRevenue';
@@ -192,14 +193,9 @@ function PipelineProgress({
   const [moving, setMoving] = useState(false);
   const boxRef = useRef(null);
 
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDoc = (e) => {
-      if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
+  // Không tự bắt click-ngoài nữa: menu render qua portal nên nằm ngoài boxRef, effect cũ sẽ
+  // đóng menu ngay ở mousedown khiến click chọn cột không bao giờ tới nơi.
+  // AnchoredDropdownMenu đã loại trừ cả nút neo lẫn thân menu.
 
   const loadStages = async () => {
     const kind = isVc ? 'vc' : 'sx';
@@ -359,7 +355,14 @@ function PipelineProgress({
       </button>
       {companyRow}
       {open ? (
-        <div className="absolute z-30 left-0 right-0 mt-1 max-h-64 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+        <AnchoredDropdownMenu
+          open={open}
+          onClose={() => setOpen(false)}
+          anchorRef={boxRef}
+          align="left"
+          matchAnchorWidth
+          className="max-h-64 overflow-y-auto rounded-lg"
+        >
           {loading ? (
             <p className="px-3 py-2 text-[11px] text-gray-400">Đang tải cột…</p>
           ) : !stages.length ? (
@@ -385,7 +388,7 @@ function PipelineProgress({
               </button>
             );
           })}
-        </div>
+        </AnchoredDropdownMenu>
       ) : null}
     </div>
   );
