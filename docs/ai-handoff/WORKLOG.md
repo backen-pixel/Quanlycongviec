@@ -1,5 +1,11 @@
 # Nhật ký công việc AI
 
+## 2026-09-25 13:50 — Đặt xưởng khác: admin Metalla thấy HCB
+
+- AI: Cursor. Modal «Đặt xưởng khác» của admin xưởng bị trống vì danh sách công ty SX khóa đúng một xưởng rồi bị loại khỏi form. Thêm `include_peer_workshops=1` chỉ cho modal này.
+- File: `backend/src/routes/companies.js`, `frontend/src/pages/ProductionDetail.jsx`.
+- Test: `node --check` companies.js. Chưa bấm đặt đơn thật.
+
 ## 2026-09-25 09:36 — Bình luận: dòng chuyển trạng thái nổi bật + thông báo
 
 - AI: Cursor. Lệnh `/` chuyển cột ghi dòng tím trong khung Bình luận và thông báo «Đã chuyển trạng thái». Work Unified có hộp hướng dẫn ở đầu tab Bình luận.

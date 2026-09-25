@@ -1,6 +1,14 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-25 09:36 (UTC+7)
+Cập nhật: 2026-09-25 13:50 (UTC+7)
+
+## Đặt xưởng khác — admin Metalla/HCB thấy xưởng kia
+
+Trạng thái: **FE+BE local.**
+
+Admin công ty xưởng (Toại / Metalla) mở «Đặt xưởng khác» bị trống vì `GET /companies?for_module=production` chỉ trả xưởng của họ, rồi giao diện loại đúng xưởng dự án nguồn. Modal gọi thêm `include_peer_workshops=1` để thấy HCB (và xưởng SX khác). Bảng Kanban vẫn chỉ một xưởng.
+
+Hoàn tác: revert `companies.js`, `ProductionDetail.jsx`.
 
 ## Bình luận — dòng chuyển trạng thái nổi bật
 

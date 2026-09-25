@@ -1646,6 +1646,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
   // Đặt xưởng khác (Metalla → HCB …)
   const [placeSxOpen, setPlaceSxOpen] = useState(false);
+  const [placeSxLoading, setPlaceSxLoading] = useState(false);
   const [placeSxCompanies, setPlaceSxCompanies] = useState([]);
   const [placeSxTargets, setPlaceSxTargets] = useState([]);
   const [placeSxBusy, setPlaceSxBusy] = useState(false);
@@ -2281,15 +2282,22 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const openPlaceSxModal = useCallback(async () => {
     setPlaceSxErr('');
     setPlaceSxTargets([]);
+    setPlaceSxCompanies([]);
+    setPlaceSxLoading(true);
     setPlaceSxOpen(true);
     try {
-      const { data } = await api.get('/companies', { params: { for_module: 'production' } });
+      // include_peer_workshops: admin xưởng Metalla/HCB vẫn thấy xưởng kia để đặt đơn.
+      const { data } = await api.get('/companies', {
+        params: { for_module: 'production', include_peer_workshops: '1' },
+      });
       const sourceCid = String(project?.company_id || project?.company?.id || '');
       const list = (data?.companies || data || []).filter((c) => String(c.id) !== sourceCid);
       setPlaceSxCompanies(list);
     } catch (_) {
       setPlaceSxCompanies([]);
       setPlaceSxErr('Không tải được danh sách công ty SX');
+    } finally {
+      setPlaceSxLoading(false);
     }
   }, [project?.company_id, project?.company?.id]);
 
@@ -4366,9 +4374,13 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           </div>
         </div>
         <div className="px-6 py-4 overflow-y-auto flex-1 min-h-0">
-          {placeSxCompanies.length === 0 ? (
+          {placeSxLoading ? (
+            <p className="text-sm text-gray-500 inline-flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" /> Đang tải danh sách công ty SX…
+            </p>
+          ) : placeSxCompanies.length === 0 ? (
             <p className="text-sm text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-              Không còn công ty SX khác để đặt (hoặc đang tải danh sách).
+              Không còn công ty SX khác để đặt.
             </p>
           ) : (
             <SxMultiTargetPicker
