@@ -1053,6 +1053,10 @@ export default function ProductionDashboard() {
     deadlineBucketLoadingRef.current.clear();
     setDeadlineBucketLoading({});
     setDeadlineBucketMeta({});
+    if (opts.replaceList) {
+      setProjects([]);
+      projectsRef.current = [];
+    }
     setProjectPageState((prev) => ({ ...prev, hasMore: false, loading: false }));
     // Giữ pipelineStageCounts cũ đến khi summary=1 về — badge cột hiện tổng ngay, không cộng dần theo thẻ tải.
     // KPI server (Tổng/Quá hạn/Đang SX…) gắn với filter hiện tại — không giữ số công ty cũ.
@@ -1286,22 +1290,26 @@ export default function ProductionDashboard() {
         });
         // Quay từ chi tiết: không ghi đè list đang có bằng [] (API lỗi tạm / race).
         // Bootstrap về sau loadMore cột: không xóa thẻ đã tải (board trống dù KPI còn số).
+        const replaceList = !!opts.replaceList;
         if (projectList.length === 0) {
           setProjects((prev) => {
+            if (replaceList) return [];
             if (Array.isArray(prev) && prev.length > 0
               && (silent || returningFromDetail || columnFetchTouchSeqRef.current === seq)) {
               return prev;
             }
             return applyWorkshopProjectRenamePatches(projectList);
           });
+          if (replaceList) projectsRef.current = [];
         } else {
           let next = applyPendingStageMoves(
             applyWorkshopProjectRenamePatches(projectList),
             pendingStageMovesRef.current,
           );
           // Silent / cùng seq với column-fetch / quay detail: giữ thẻ đã tải thêm theo cột.
+          // Đổi bộ lọc (replaceList): bỏ thẻ filter cũ.
           const existing = projectsRef.current || [];
-          if (existing.length && (
+          if (!replaceList && existing.length && (
             silent
             || returningFromDetail
             || columnFetchTouchSeqRef.current === seq
@@ -1813,6 +1821,7 @@ export default function ProductionDashboard() {
     const state = deadlineBucketPageRef.current[key] || { nextOffset: 0, hasMore: true };
     if (state.hasMore === false) return;
 
+    const seqAtStart = loadSeqRef.current;
     deadlineBucketLoadingRef.current.add(key);
     setDeadlineBucketLoading((prev) => ({ ...prev, [key]: true }));
     try {
@@ -1844,6 +1853,7 @@ export default function ProductionDashboard() {
         },
       });
 
+      if (seqAtStart !== loadSeqRef.current) return;
       const incoming = Array.isArray(data?.projects) ? data.projects : [];
       if (incoming.length) {
         setProjects((prev) => {
@@ -1995,7 +2005,12 @@ export default function ProductionDashboard() {
     const silent = hydrateSilent || firstLoadedRef.current;
     // Sau lần đầu / hydrate snapshot: silent; đổi filter: bustCache.
     // Dùng loadRef — không phụ thuộc identity `load` (tránh fire trùng khi chỉ đổi closure).
-    loadRef.current({ silent, bustCache: silent && !hydrateSilent });
+    // Đổi bộ lọc: thay list, không gộp thẻ của filter trước (Deadline sẽ tải lại bucket).
+    loadRef.current({
+      silent,
+      bustCache: silent && !hydrateSilent,
+      replaceList: !hydrateSilent && firstLoadedRef.current,
+    });
   }, [dataLoadReady, projectsLoadKey]);
 
   /** Tránh spinner vô hạn — chỉ unstick UI, không gọi load chồng request đang chạy. */
