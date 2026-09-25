@@ -15,6 +15,45 @@ function noticeBody(moduleLabel, stageName) {
   return `${NOTICE} (${moduleLabel}${where}).`;
 }
 
+async function notifySystemAdminsDeadlineOff(req, { projectId, leadId, moduleLabel, stageName }) {
+  try {
+    const { getSystemAdminUserIds } = require('./notifications');
+    const { ensureDmGroupWithBot, insertGroupBotMessage } = require('./aiBotSender');
+    let label = '';
+    if (projectId) {
+      const { data: project } = await supabase
+        .from('projects')
+        .select('code, name')
+        .eq('id', projectId)
+        .maybeSingle();
+      if (project) label = [project.code, project.name].filter(Boolean).join(' — ');
+    }
+    if (!label && leadId) {
+      const { data: lead } = await supabase
+        .from('crm_leads')
+        .select('code, title')
+        .eq('id', leadId)
+        .maybeSingle();
+      if (lead) label = [lead.code, lead.title].filter(Boolean).join(' — ');
+    }
+    const content = [
+      'Hệ thống đã tắt deadline vì chuyển tới cột có tích tắt hạn.',
+      `Module: ${moduleLabel || '—'}`,
+      `Cột: ${stageName || '—'}`,
+      `Dự án: ${label || '—'}`,
+    ].join('\n');
+    const adminIds = await getSystemAdminUserIds({ activeOnly: true });
+    const io = req?.app?.get?.('io') || null;
+    for (const adminId of adminIds) {
+      const groupId = await ensureDmGroupWithBot(adminId);
+      if (!groupId) continue;
+      await insertGroupBotMessage(groupId, content, io, { name: 'AI Assistant' });
+    }
+  } catch (err) {
+    console.warn('[stageMoveDeadlineOff] admin bot:', err.message);
+  }
+}
+
 async function postDeadlineOffNotice(req, { leadId, projectId, moduleLabel, stageName }) {
   const body = noticeBody(moduleLabel, stageName);
   await logDealActivityComment(req, { leadId, projectId, body, commentType: null });
@@ -92,6 +131,12 @@ async function turnOffCrmDeadlineOnCompletedStage(req, { leadId, stage }) {
     moduleLabel: 'CRM',
     stageName: stage?.name,
   });
+  await notifySystemAdminsDeadlineOff(req, {
+    projectId: lead.project_id,
+    leadId,
+    moduleLabel: 'CRM',
+    stageName: stage?.name,
+  });
   return { cleared: true };
 }
 
@@ -100,13 +145,81 @@ function sxColumnIsVcHandover(stage) {
   return stage?.is_handover_to_logistics === true;
 }
 
+async function disableLinkedDealDeadlines(req, { projectId, moduleLabel, stageName }) {
+  if (!projectId) return { cleared: false };
+  const { data: leads, error } = await supabase
+    .from('crm_leads')
+    .select('id, company_id, project_id, stage_id, deadline_disabled_at, kanban_deadline_at')
+    .eq('project_id', projectId);
+  if (error) {
+    console.warn('[stageMoveDeadlineOff] linked leads:', error.message);
+    return { cleared: false };
+  }
+  const targets = (leads || []).filter((lead) => !lead.deadline_disabled_at);
+  if (!targets.length) return { cleared: false };
+  let turnedOff = 0;
+
+  const now = new Date().toISOString();
+  const reason = NOTICE;
+  const body = noticeBody(moduleLabel, stageName);
+  for (const lead of targets) {
+    const { error: updErr } = await supabase
+      .from('crm_leads')
+      .update({
+        deadline_disabled_at: now,
+        deadline_disabled_reason: reason,
+        deadline_disabled_by: req.user?.userId || null,
+        kanban_deadline_at: null,
+        kanban_deadline_reason: reason,
+        updated_at: now,
+      })
+      .eq('id', lead.id);
+    if (updErr) {
+      console.warn('[stageMoveDeadlineOff] disable lead:', updErr.message);
+      continue;
+    }
+    try {
+      await supabase.from('crm_lead_deadline_history').insert({
+        lead_id: lead.id,
+        stage_id: lead.stage_id || null,
+        old_deadline_at: lead.kanban_deadline_at || null,
+        new_deadline_at: null,
+        reason,
+        source: 'stage_move',
+        changed_by: req.user?.userId || null,
+      });
+    } catch (histErr) {
+      console.warn('[stageMoveDeadlineOff] disable history:', histErr.message);
+    }
+    await logDealActivityComment(req, { leadId: lead.id, projectId, body, commentType: null });
+    await logDealActivityComment(req, { leadId: lead.id, projectId, body, commentType: 'system' });
+    turnedOff += 1;
+  }
+  if (turnedOff) {
+    await notifySystemAdminsDeadlineOff(req, {
+      projectId,
+      leadId: targets[0]?.id,
+      moduleLabel,
+      stageName,
+    });
+  }
+  return { cleared: turnedOff > 0 };
+}
+
 async function turnOffSxDeadlineOnVcHandover(req, { projectId, stage, hadDeadline }) {
-  if (!projectId || !sxColumnIsVcHandover(stage) || !hadDeadline) return { cleared: false };
-  await postDeadlineOffNotice(req, {
+  if (!projectId || !sxColumnIsVcHandover(stage)) return { cleared: false };
+  const disabled = await disableLinkedDealDeadlines(req, {
     projectId,
     moduleLabel: 'Sản xuất',
     stageName: stage?.name,
   });
+  if (!disabled.cleared && hadDeadline) {
+    await postDeadlineOffNotice(req, {
+      projectId,
+      moduleLabel: 'Sản xuất',
+      stageName: stage?.name,
+    });
+  }
   return { cleared: true };
 }
 
@@ -190,12 +303,26 @@ async function turnOnDeadlineOnVcIncident(req, { projectId, stage }) {
 }
 
 async function turnOffVcDeadlineOnCompletedColumn(req, { projectId, stage, hadDeadline }) {
-  if (!projectId || !vcColumnTurnsOffDeadline(stage) || !hadDeadline) return { cleared: false };
-  await postDeadlineOffNotice(req, {
+  if (!projectId || !vcColumnTurnsOffDeadline(stage)) return { cleared: false };
+  const now = new Date().toISOString();
+  const { error: projErr } = await supabase
+    .from('projects')
+    .update({ deadline: null, updated_at: now })
+    .eq('id', projectId);
+  if (projErr) console.warn('[stageMoveDeadlineOff] vc project deadline:', projErr.message);
+
+  const disabled = await disableLinkedDealDeadlines(req, {
     projectId,
     moduleLabel: 'VC/LĐ',
     stageName: stage?.name,
   });
+  if (!disabled.cleared && hadDeadline) {
+    await postDeadlineOffNotice(req, {
+      projectId,
+      moduleLabel: 'VC/LĐ',
+      stageName: stage?.name,
+    });
+  }
   return { cleared: true };
 }
 
@@ -204,6 +331,7 @@ module.exports = {
   sxColumnIsVcHandover,
   vcColumnTurnsOffDeadline,
   turnOffCrmDeadlineOnCompletedStage,
+  disableLinkedDealDeadlines,
   turnOffSxDeadlineOnVcHandover,
   turnOffVcDeadlineOnCompletedColumn,
   vcColumnIsIncident,

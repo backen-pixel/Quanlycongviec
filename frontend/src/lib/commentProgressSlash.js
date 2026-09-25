@@ -93,13 +93,21 @@ function alertMoveError(e, fallback) {
   alert(body.error || e?.message || fallback);
 }
 
+export const STAGE_MOVE_COMMENT_PREFIX = '➡️ Đã chuyển trạng thái';
+
+/** Dòng bình luận nổi + thông báo thành viên khi lệnh «/» chuyển cột. */
 async function postMovedComment(leadId, moduleLabel, stageName) {
-  if (!leadId) return;
+  if (!leadId) return null;
+  const body = `${STAGE_MOVE_COMMENT_PREFIX} ${moduleLabel} sang «${stageName}»`;
   try {
-    await api.post(`/crm/leads/${leadId}/comments`, {
-      body: `Đã chuyển tiến độ ${moduleLabel} sang «${stageName}»`,
+    const r = await api.post(`/crm/leads/${leadId}/comments`, {
+      body,
+      comment_type: 'stage_move',
     });
-  } catch { /* chuyển cột đã xong — thiếu dòng bình luận không hoàn tác */ }
+    return r.data || null;
+  } catch { /* chuyển cột đã xong — thiếu dòng bình luận không hoàn tác */
+    return null;
+  }
 }
 
 /** Chọn một cột từ lệnh «/». Trả handled=true khi đây là lệnh tiến độ. */
@@ -189,6 +197,7 @@ export function useCommentProgressSlash({
   sxStageId = null,
   vcStageId = null,
   project = null,
+  responsibleUserId = null,
 }) {
   const { user } = useAuth();
   const [commands, setCommands] = useState([]);
@@ -298,8 +307,16 @@ export function useCommentProgressSlash({
         if (base) {
           const moveLabel = displayPipelineStageName(sharedTarget);
           shared.push(
-            { ...base, id: `shared:da-giao:${base.stageId}`, label: 'Đã giao', keywords: 'da giao', hint: 'Chuyển VC/LĐ sang đã lắp', moveLabel },
-            { ...base, id: `shared:da-lap:${base.stageId}`, label: 'Đã lắp', keywords: 'da lap lap xong', hint: 'Chuyển VC/LĐ sang đã lắp', moveLabel },
+            { ...base, id: `shared:da-giao:${base.stageId}`, label: 'Đã giao', keywords: 'da giao', hint: 'Chuyển cột đã giao', moveLabel },
+            {
+              ...base,
+              id: `shared:lap-xong:${base.stageId}`,
+              label: 'Lắp xong',
+              keywords: 'lap xong da lap hoan thanh du an',
+              hint: 'Người phụ trách gõ để hoàn thành dự án',
+              moveLabel,
+              requiresResponsible: true,
+            },
           );
         }
       }
@@ -325,6 +342,15 @@ export function useCommentProgressSlash({
     pipelineId, leadType, crmStageId, sxStageId, vcStageId, user,
   ]);
 
-  const run = useCallback((cmd) => runStageSlashCommand(cmd), []);
+  const run = useCallback((cmd) => {
+    if (cmd?.requiresResponsible && responsibleUserId) {
+      const me = String(user?.userId || user?.id || '');
+      if (!me || me !== String(responsibleUserId)) {
+        alert('Chỉ người phụ trách được gõ /Lắp xong để hoàn thành dự án.');
+        return Promise.resolve({ handled: true, ok: false });
+      }
+    }
+    return runStageSlashCommand(cmd);
+  }, [responsibleUserId, user]);
   return { commands, run };
 }

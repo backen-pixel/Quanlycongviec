@@ -276,13 +276,9 @@ function startOfLocalDay(d) {
 }
 
 /**
- * Bucket deadline view SX — khớp ProductionDeadlineView.
- * Nguồn hạn do adapter chung chọn: hạn thẻ → hoàn thiện/hạn SX → giao → hạn chung.
+ * Bucket deadline view SX — theo ngày hạn đang lưu.
+ * Nguồn hạn: hạn thẻ → hoàn thiện/hạn SX → giao → hạn chung.
  */
-const SX_DEADLINE_BUCKET_KEYS = new Set([
-  'overdue', 'today', 'this_week', 'next_week', 'this_month', 'later', 'none',
-]);
-
 export function resolveSxDeadlineBucket(item, todayMs = Date.now(), stage = null) {
   const resolved = resolveEffectiveModuleDeadline(
     DEADLINE_MODULE.PRODUCTION,
@@ -292,29 +288,16 @@ export function resolveSxDeadlineBucket(item, todayMs = Date.now(), stage = null
   const raw = resolved.raw;
   const t = resolved.deadlineTs;
   const source = resolved.source;
-  const serverBucket = String(item?._deadline_bucket || item?.deadline_bucket || '').trim();
-  if (SX_DEADLINE_BUCKET_KEYS.has(serverBucket)) {
-    return { bucket: serverBucket, ts: t, source };
-  }
   if (!raw || t == null || !Number.isFinite(t)) return { bucket: 'none', ts: null, source: null };
   const today = startOfLocalDay(new Date(todayMs));
   const dayMs = 86400000;
   const diffDays = Math.floor((startOfLocalDay(t).getTime() - today.getTime()) / dayMs);
-  const st = stage || item?.sx_pipeline_stage;
-  const ignoreOverdue = shouldIgnoreSxOrderDeliveryOverdue(st)
-    || isSxPipelineStageNoDeadline(st);
   if (diffDays < 0) {
-    if (ignoreOverdue) {
-      return { bucket: 'later', ts: t, source };
-    }
     return { bucket: 'overdue', ts: t, source };
   }
   if (diffDays === 0) {
     const companyRef = item?.company_id || item?.company;
-    if (
-      isHucabiSameDayPastWorkEnd(raw, companyRef, todayMs)
-      && !ignoreOverdue
-    ) {
+    if (isHucabiSameDayPastWorkEnd(raw, companyRef, todayMs)) {
       return { bucket: 'overdue', ts: t, source };
     }
     return { bucket: 'today', ts: t, source };
@@ -333,7 +316,6 @@ export function countSxDeadlineViewOverdue(pipelineColumns, todayMs = Date.now()
   let n = 0;
   for (const col of Array.isArray(pipelineColumns) ? pipelineColumns : []) {
     for (const item of col.items || []) {
-      if (shouldHideSxKanbanDeadlineOnCard(item, col)) continue;
       if (resolveSxDeadlineBucket(item, todayMs, col).bucket === 'overdue') n += 1;
     }
   }
@@ -374,8 +356,7 @@ export function computeSxRevenueKpis(projects, stages) {
     else if (kpiKey === 'awaiting_delivery') awaitingDelivery += 1;
     else if (kpiKey === 'shipped') shipped += 1;
     // Quá hạn KPI = cột «Quá hạn» của Deadline view
-    if (!shouldHideSxKanbanDeadlineOnCard(p, col)
-      && resolveSxDeadlineBucket(p, nowMs, col).bucket === 'overdue') {
+    if (resolveSxDeadlineBucket(p, nowMs, col).bucket === 'overdue') {
       overdue += 1;
     }
     if (col && col.bucket_slug !== INTAKE_BUCKET && val > 0) {
@@ -442,9 +423,8 @@ export function isSxPipelineStageNoDeadline(stage) {
 }
 
 /** Ẩn badge deadline trên thẻ Kanban SX khi đã giao hoặc hoàn thành. */
-export function shouldHideSxKanbanDeadlineOnCard(item, stage) {
-  const st = stage || item?.sx_pipeline_stage;
-  return isSxPipelineStageNoDeadline(st);
+export function shouldHideSxKanbanDeadlineOnCard() {
+  return false;
 }
 
 /**
@@ -464,9 +444,6 @@ export function getSxOrderDeliveryDateUrgency(dateIso, stage, companyOrId = null
   if (!dateIso) return null;
   const dd = new Date(dateIso);
   if (Number.isNaN(dd.getTime())) return null;
-  if (shouldIgnoreSxOrderDeliveryOverdue(stage)) {
-    return { level: 'ok', overdue: false, soon: false };
-  }
   // Quá hạn = trước hôm nay, hoặc HCB cùng ngày sau 17:30.
   let overdue = startOfLocalDay(dd).getTime() < startOfLocalDay(new Date()).getTime();
   if (!overdue && isHucabiSameDayPastWorkEnd(dateIso, companyOrId)) overdue = true;
@@ -490,7 +467,6 @@ export function isSxProjectDeliveryDateOverdue(project, stage) {
 /** SLA cột pipeline SX — null nếu không áp dụng. */
 export function getSxPipelineStageSlaTone(stageEnteredAt, stage, companyOrId = null) {
   if (!stageEnteredAt || !stage) return null;
-  if (isSxPipelineStageNoDeadline(stage)) return null;
   if (stage.bucket_slug === INTAKE_BUCKET) return null;
   const slaDays = effectivePipelineStageSlaDays(stage.sla_days);
   if (slaDays == null) return null;

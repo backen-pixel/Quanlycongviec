@@ -52,10 +52,7 @@ export function crmLeadMissingPhone(item) {
  * Thắng/Thua/Hoàn thành doanh thu (không còn theo dõi hạn).
  * Không ẩn vì thiếu SĐT, đã có project SX, hay tick «đã tương tác».
  */
-export function shouldHideCrmKanbanDeadlineOnCard(item, stage) {
-  if (item?.deadline_disabled_at) return true;
-  const st = stage || item?.stage;
-  if (isCrmPipelineStageNoDeadline(st)) return true;
+export function shouldHideCrmKanbanDeadlineOnCard() {
   return false;
 }
 
@@ -107,7 +104,6 @@ export function getCrmDeadlineSourceMeta(source) {
  */
 export function getPipelineStageSlaDeadlineTs(stageEnteredAt, stage, leadItem) {
   if (!stageEnteredAt || !stage) return null;
-  if (isCrmPipelineStageNoDeadline(stage)) return null;
   const slaDays = effectivePipelineStageSlaDays(stage.sla_days);
   if (slaDays == null) return null;
   // Khớp backend: cuối ngày lịch VN sau slaDays (HCB = 17:30).
@@ -229,9 +225,6 @@ export function resolveCrmLeadDeadlineViewSource(item, stage, config) {
  */
 export function resolveCrmLeadDeadlineBucketSource(item, stage, config) {
   const st = stage || item?._stage || item?.stage;
-  if (item?.deadline_disabled_at || isCrmPipelineStageNoDeadline(st)) {
-    return { deadlineTs: null, source: null, forcedNoDeadline: true };
-  }
   void config;
   const resolved = resolveEffectiveModuleDeadline(DEADLINE_MODULE.CRM, item, st);
   return {

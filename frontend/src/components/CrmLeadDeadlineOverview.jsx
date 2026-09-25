@@ -10,7 +10,6 @@ import {
   resolveCrmLeadDeadlineViewSource,
   getPipelineStageSlaDeadlineTs,
   shouldHideCrmKanbanDeadlineOnCard,
-  isCrmPipelineStageNoDeadline,
   formatCrmRemainingMs,
   getCrmDeadlineUrgencyFromTs,
   getCrmDeadlineUrgencyBadgeClass,
@@ -144,8 +143,6 @@ export default function CrmLeadDeadlineOverview({ lead, onChanged }) {
   const hidden = shouldHideCrmKanbanDeadlineOnCard(lead, stage);
   const slaDays = effectivePipelineStageSlaDays(stage?.sla_days);
   const slaTs = getPipelineStageSlaDeadlineTs(lead?.stage_entered_at, stage, lead);
-
-  if (isCrmPipelineStageNoDeadline(stage)) return null;
 
   const kanbanLabel = formatDeadlineIso(lead?.kanban_deadline_at);
   const taskLabel = formatDeadlineIso(lead?.crm_next_open_task_deadline);

@@ -9,7 +9,6 @@ const { applyProductionCompanyScopeFilter } = require('./crossCompanyWorkspace')
 const { applyWorkshopProjectVisibilityScope } = require('./dealParticipantProduction');
 const { applySxKanbanRowScope, WORKSHOP_STATUSES, getResolvedKanbanStages } = require('./workshopKanban');
 const { isHucabiSameDayPastWorkEnd } = require('./companyDeadlineClock');
-const { isSxPipelineStageNoDeadline } = require('./crmPipelineSla');
 const { sxColumnStageKpiKey } = require('./sxPipelineRevenue');
 
 const VN_TZ = 'Asia/Ho_Chi_Minh';
@@ -46,10 +45,6 @@ function isMissingRpcError(err) {
     || err?.code === '42883';
 }
 
-function isSlaDisabled(slaDaysRaw) {
-  return slaDaysRaw === 0 || slaDaysRaw === '0';
-}
-
 /** YYYY-MM-DD theo lịch VN. */
 function formatVnYmd(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', {
@@ -81,18 +76,7 @@ function diffCalendarDays(ymdA, ymdB) {
   return Math.round((Date.UTC(ya, ma - 1, da) - Date.UTC(yb, mb - 1, db)) / 86400000);
 }
 
-/**
- * Bucket Deadline SX — khớp frontend resolveSxDeadlineBucket + shouldHide.
- * Đã giao / Đã công / Đã thu / đã sang VC: không còn hạn SX (delivery_date là lịch sử).
- * Cột chờ bàn giao chưa giao thật vẫn đếm quá hạn.
- * @returns {string|null} null = ẩn khỏi Deadline view
- */
-function rowLooksShipped(row) {
-  if (row?.logistics_company_id || row?.vc_kanban_column_id) return true;
-  const status = String(row?.status || '');
-  return status === 'installing' || status === 'warranty' || status === 'completed';
-}
-
+/** Bucket Deadline SX theo ngày hạn đang lưu. Không ngày thì cột «Không hạn». */
 function sxDeadlineRaw(row) {
   return row?.sx_kanban_deadline_at
     || row?.production_finish_date
@@ -103,21 +87,14 @@ function sxDeadlineRaw(row) {
 }
 
 function resolveSxDeadlineBucketKey(row, stage, todayYmd, companyOrId, nowMs = Date.now()) {
-  if (isSxPipelineStageNoDeadline(stage)) return null;
-  if (rowLooksShipped(row)) return null;
+  void stage;
   const raw = sxDeadlineRaw(row);
   const ymd = toVnDeadlineYmd(raw);
   if (!ymd) return 'none';
   const diffDays = diffCalendarDays(ymd, todayYmd);
-  const ignoreOverdue = isSlaDisabled(stage?.sla_days);
-  if (diffDays < 0) {
-    if (ignoreOverdue) return 'later';
-    return 'overdue';
-  }
+  if (diffDays < 0) return 'overdue';
   if (diffDays === 0) {
-    if (!ignoreOverdue && isHucabiSameDayPastWorkEnd(raw, companyOrId || row?.company_id, nowMs)) {
-      return 'overdue';
-    }
+    if (isHucabiSameDayPastWorkEnd(raw, companyOrId || row?.company_id, nowMs)) return 'overdue';
     return 'today';
   }
   const [y, m, d] = todayYmd.split('-').map(Number);

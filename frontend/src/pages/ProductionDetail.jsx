@@ -42,8 +42,6 @@ import {
   resolveSxPlanInstallYmd,
   resolveSxReceptionYmd,
 } from '../lib/sxWorkshopSchedule';
-import { isSxPipelineStageNoDeadline } from '../lib/sxPipelineRevenue';
-import { isVcPipelineStageNoDeadline } from '../lib/vcPipelineKpi';
 import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
   FileUp, Edit2, Save, ChevronDown, Trash2, Send, Paperclip,
@@ -360,12 +358,8 @@ function WorkshopInfoPanel({
     [project?.install_occurrence_dates, project?.install_date, project?.delivery_date],
   );
 
-  const stageForDeadline = currentStage
-    || (isVC
-      ? (project?.vc_pipeline_stage || project?.logistics_pipeline_stage)
-      : (project?.sx_pipeline_stage || project?.sx_kanban_column));
-  const sxDeadlineOff = !isVC && isSxPipelineStageNoDeadline(stageForDeadline);
-  const vcDeadlineOff = isVC && isVcPipelineStageNoDeadline(stageForDeadline);
+  const sxDeadlineOff = false;
+  const vcDeadlineOff = false;
   const finishTone = workshopScheduleTone(
     sxDeadlineOff ? null : remainingSxWorkingDaysTo(productionFinishDate, { receptionYmd, holidayIndex }),
     'finish',

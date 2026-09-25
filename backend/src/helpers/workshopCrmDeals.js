@@ -1,7 +1,7 @@
 const { supabase } = require('../config/supabase');
 
 const CRM_DEALS_LIST_EMBED = `
-  id, code, title, type, parent_lead_id, region_id, created_at, assigned_to, lead_owner_id, external_company_name,
+  id, code, title, type, parent_lead_id, region_id, created_at, assigned_to, lead_owner_id, external_company_name, deadline_disabled_at,
   install_address,
   crm_region:company_regions!crm_leads_region_id_fkey(id, name, code),
   assignee:users!crm_leads_assigned_to_fkey(id, full_name, avatar),
@@ -12,7 +12,7 @@ const CRM_DEALS_LIST_EMBED = `
 
 /** Mobile Kanban: không avatar / pipeline stage — payload nhỏ khi 200–1000 dự án/trang. */
 const CRM_DEALS_LIST_EMBED_LITE = `
-  id, title, type, parent_lead_id, created_at, region_id, project_id, assigned_to, lead_owner_id, external_company_name,
+  id, title, type, parent_lead_id, created_at, region_id, project_id, assigned_to, lead_owner_id, external_company_name, deadline_disabled_at,
   crm_region:company_regions!crm_leads_region_id_fkey(id, name),
   assignee:users!crm_leads_assigned_to_fkey(id, full_name),
   lead_owner:users!crm_leads_lead_owner_id_fkey(id, full_name)
@@ -213,10 +213,11 @@ async function attachCrmDealsToProjects(projects, opts = {}) {
     }
   }
 
-  return list.map((p) => ({
-    ...p,
-    crm_deals: sortProjectCrmDeals(byProject.get(String(p.id)) || p.crm_deals || []),
-  }));
+  return list.map((p) => {
+    const crm_deals = sortProjectCrmDeals(byProject.get(String(p.id)) || p.crm_deals || []);
+    const deadline_disabled_at = crm_deals.find((d) => d?.deadline_disabled_at)?.deadline_disabled_at || p.deadline_disabled_at || null;
+    return { ...p, crm_deals, deadline_disabled_at };
+  });
 }
 
 async function batchLoadUsersByIds(ids) {

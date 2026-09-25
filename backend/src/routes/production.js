@@ -3697,18 +3697,25 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
           project?.sx_kanban_deadline_at
           || project?.production_deadline
           || project?.production_finish_date
+          || project?.deadline
         );
-        if (colRow?.is_handover_to_logistics && hadSxDeadline) {
-          try {
+        try {
+          const { disableLinkedDealDeadlines } = require('../helpers/stageMoveDeadlineOff');
+          const disabled = await disableLinkedDealDeadlines(req, {
+            projectId: id,
+            moduleLabel: 'Sản xuất',
+            stageName: colRow?.name,
+          });
+          if (!disabled.cleared && hadSxDeadline && colRow?.is_handover_to_logistics) {
             const { turnOffSxDeadlineOnVcHandover } = require('../helpers/stageMoveDeadlineOff');
             await turnOffSxDeadlineOnVcHandover(req, {
               projectId: id,
               stage: colRow,
               hadDeadline: true,
             });
-          } catch (noticeErr) {
-            console.warn('[production] deadline-off notice:', noticeErr.message);
           }
+        } catch (noticeErr) {
+          console.warn('[production] deadline-off notice:', noticeErr.message);
         }
       }
 

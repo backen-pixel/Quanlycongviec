@@ -134,7 +134,7 @@ export function resolveEffectiveModuleDeadline(moduleKey, item, stage = null) {
   const key = String(moduleKey || '').toLowerCase();
 
   if (key === DEADLINE_MODULE.CRM) {
-    if (!item || item.deadline_disabled_at || crmTerminal(stage)) {
+    if (!item) {
       return { raw: null, source: null, deadlineTs: null, deadlineAt: null };
     }
     const direct = result(item.crm_next_open_task_deadline, 'task', item)
@@ -155,7 +155,7 @@ export function resolveEffectiveModuleDeadline(moduleKey, item, stage = null) {
   }
 
   if (key === DEADLINE_MODULE.PRODUCTION) {
-    if (!item || sxDone(stage) || stage?.sla_days === 0 || stage?.sla_days === '0') {
+    if (!item) {
       return { raw: null, source: null, deadlineTs: null, deadlineAt: null };
     }
     return result(item.sx_kanban_deadline_at, 'sx_kanban', item)
@@ -167,7 +167,7 @@ export function resolveEffectiveModuleDeadline(moduleKey, item, stage = null) {
   }
 
   if (key === DEADLINE_MODULE.LOGISTICS) {
-    if (!item || logisticsDone(item, stage) || !isSxReleasedToInstall(item, sxStageOf(item))) {
+    if (!item || !isSxReleasedToInstall(item, sxStageOf(item))) {
       return { raw: null, source: null, deadlineTs: null, deadlineAt: null };
     }
     return result(activeInstallCommitmentRaw(item), 'install', item)

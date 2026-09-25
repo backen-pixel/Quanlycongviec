@@ -74,7 +74,6 @@ import {
   getSxPipelineStageSlaTone,
   resolveSxDisplayColumnId,
   projectLockedOnSxKanban,
-  shouldHideSxKanbanDeadlineOnCard,
   shouldIgnoreSxOrderDeliveryOverdue,
   getSxOrderDeliveryDateUrgency,
   sxColumnStageKpiKey,
@@ -5485,7 +5484,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   const leadCreatedAt = primaryDeal?.created_at || item.created_at || null;
   const columnEnteredAt = item.sx_pipeline_stage_entered_at || item.stage_entered_at || item.updated_at || item.created_at || null;
   const sxStage = stage || item.sx_pipeline_stage;
-  const hideColumnDeadline = shouldHideSxKanbanDeadlineOnCard(item, sxStage);
+  const hideColumnDeadline = false;
   const columnSlaTone = hideColumnDeadline
     ? null
     : getSxPipelineStageSlaTone(item.sx_pipeline_stage_entered_at, sxStage, item.company_id || item.company);

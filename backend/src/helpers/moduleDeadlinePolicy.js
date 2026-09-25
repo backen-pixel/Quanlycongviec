@@ -184,8 +184,7 @@ function activeInstallCommitmentRaw(item, nowMs = Date.now()) {
 }
 
 function resolveCrmDeadline(item, stage) {
-  if (!item || item.deadline_disabled_at) return null;
-  if (isCrmTerminalStage(stage)) return null;
+  if (!item) return null;
 
   const task = candidate(item.crm_next_open_task_deadline, 'task', item);
   if (task) return task;
@@ -209,7 +208,6 @@ function resolveCrmDeadline(item, stage) {
 function resolveProductionDeadline(item, stage, opts = {}) {
   void opts;
   if (!item) return null;
-  if (shouldIgnoreSxOrderDeliveryOverdue(stage) || isSxPipelineStageNoDeadline(stage)) return null;
   return candidate(item.sx_kanban_deadline_at, 'sx_kanban', item)
     || candidate(item.production_finish_date, 'production_finish', item)
     || candidate(item.production_deadline, 'production', item)
@@ -218,7 +216,7 @@ function resolveProductionDeadline(item, stage, opts = {}) {
 }
 
 function resolveLogisticsDeadline(item, stage) {
-  if (!item || isInstallDeadlineClosed(item, stage)) return null;
+  if (!item) return null;
   if (!isSxReleasedToInstall(item, sxStageOf(item))) return null;
   return candidate(activeInstallCommitmentRaw(item), 'install', item)
     || candidate(item.delivery_date, 'delivery', item)

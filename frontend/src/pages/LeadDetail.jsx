@@ -51,7 +51,6 @@ import CrmDeadlineModal from '../components/CrmDeadlineModal';
 import CrmStageAssigneeModal from '../components/CrmStageAssigneeModal';
 import { stageNeedsAssigneeConfirm } from '../lib/crmStageAssigneeConfirm';
 import CrmLeadDeadlineOverview from '../components/CrmLeadDeadlineOverview';
-import { isCrmPipelineStageNoDeadline } from '../lib/crmLeadDeadlineDisplay';
 import SxCompanyPickList from '../components/SxCompanyPickList';
 import SxMultiTargetPicker, {
   validateSxTargets,
@@ -7436,9 +7435,6 @@ function LeadInfoPanel({
           type="date" />
       )}
 
-      {/* Deadline thẻ — ẩn khi cột Thắng/Thua/Hoàn thành hoặc đã tắt hạn */}
-      {!isCrmPipelineStageNoDeadline(lead?.stage)
-        && !lead?.deadline_disabled_at && (
       <div className="rounded-lg border border-rose-200 bg-rose-50/50 p-2.5 my-1.5">
         <div className="flex items-start gap-2">
           <span className="text-sm mt-0.5">⏰</span>
@@ -7516,13 +7512,9 @@ function LeadInfoPanel({
           </div>
         )}
       </div>
-      )}
 
-      {!lead?.stage?.is_won && !lead?.stage?.counts_as_completed_revenue && (
-        <CrmLeadDeadlineOverview lead={lead} onChanged={onUpdate} />
-      )}
+      <CrmLeadDeadlineOverview lead={lead} onChanged={onUpdate} />
 
-      {!lead?.stage?.is_won && !lead?.stage?.counts_as_completed_revenue && (
       <CrmDeadlineModal
         open={deadlineModalOpen}
         title={lead?.kanban_deadline_at ? 'Sửa hạn đang hiện trên thẻ' : 'Đặt deadline thẻ'}
@@ -7540,7 +7532,6 @@ function LeadInfoPanel({
         onClose={() => { if (!deadlineBusy) setDeadlineModalOpen(false); }}
         onConfirm={saveKanbanDeadline}
       />
-      )}
 
       {lead?.lost_reason && (
         <div className="flex items-start gap-2 py-1.5 px-1">
