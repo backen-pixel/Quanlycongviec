@@ -1,6 +1,14 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-25 00:35 (UTC+7)
+Cập nhật: 2026-09-25 09:36 (UTC+7)
+
+## Bình luận — dòng chuyển trạng thái nổi bật
+
+Trạng thái: **FE+BE local.**
+
+Gõ `/` chuyển cột ghi dòng tím «➡️ Đã chuyển trạng thái …» ngay trong khung Bình luận và gửi thông báo «Đã chuyển trạng thái» cho thành viên. Đầu tab Bình luận (Work Unified) có hộp tím hướng dẫn lệnh `/`.
+
+Hoàn tác: revert `commentProgressSlash.js`, `CommentsPanels.jsx`, `WorkUnifiedProjectDetailPage.jsx`, `leadComments.js`, `dealCommentNotifications.js`.
 
 ## Tắt deadline khi vào cột mốc
 

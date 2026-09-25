@@ -110,10 +110,15 @@ function sxShipped(item) {
   return ['installing', 'warranty', 'completed'].includes(String(item?.status || ''));
 }
 
-function logisticsDone(_item, stage) {
+function logisticsDone(item, stage) {
   if (!stage) return false;
+  const name = foldVi(stage.name);
+  if (name.includes('phat sinh')) return false;
   if (stage.clears_deadline) return true;
-  return String(stage.dashboard_kpi || '').trim() === 'completed';
+  if (String(stage.dashboard_kpi || '').trim() === 'completed') return true;
+  const from = item?.install_deadline_closes_at_order;
+  if (from != null && stage.order_index != null && Number(stage.order_index) >= Number(from)) return true;
+  return false;
 }
 
 function fromBackend(item, moduleKey) {
@@ -167,7 +172,8 @@ export function resolveEffectiveModuleDeadline(moduleKey, item, stage = null) {
   }
 
   if (key === DEADLINE_MODULE.LOGISTICS) {
-    if (!item || !isSxReleasedToInstall(item, sxStageOf(item))) {
+    const logisticsStage = stage || item?.vc_pipeline_stage || item?.logistics_pipeline_stage || null;
+    if (!item || logisticsDone(item, logisticsStage) || !isSxReleasedToInstall(item, sxStageOf(item))) {
       return { raw: null, source: null, deadlineTs: null, deadlineAt: null };
     }
     return result(activeInstallCommitmentRaw(item), 'install', item)

@@ -9,6 +9,19 @@ export const NEXTGO_COMPANY_ID = '87479a83-1145-43b7-b090-3e40812cb5a9';
 
 export const BUILTIN_UPDATES = [
   {
+    id: '2026-09-binh-luan-chuyen-trang-thai',
+    version: '2.5.1',
+    category: 'feature',
+    publishedAt: '2026-09-25T02:36:00.000Z',
+    title: 'Bình luận — gõ / để làm nhanh',
+    content: `Trong tab **Bình luận**, gõ \`/\`:
+
+- **/Công việc** — tạo việc
+- **/Phát sinh** — ghi phát sinh
+- **/Đã giao** — chuyển cột đã giao
+- Người phụ trách gõ **/Lắp xong** để hoàn thành dự án. Cả nhóm thấy dòng tím và nhận thông báo.`,
+  },
+  {
     id: '2026-08-huong-dan-ban-giao-sx-crm-vc',
     version: '2.5.0',
     category: 'guide',

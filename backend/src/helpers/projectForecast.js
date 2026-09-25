@@ -56,6 +56,19 @@ function shouldSkipGcckInstallOverdue(project, sxStage) {
     && isGcckSxCompleted(sxStage || project?.sx_pipeline_stage || project?.sx_kanban_column);
 }
 
+/** Trễ / nguy cơ lấy đúng hạn module (CRM, SX, VC/LĐ), không thêm điều kiện riêng. */
+function forecastFromModuleDeadline(resolved) {
+  if (!resolved?.deadlineAt || resolved.state === 'none') {
+    return { forecast: 'unknown', days_remaining: null, delay_days: 0 };
+  }
+  const daysRemaining = Math.round((Number(resolved.remainingMs) || 0) / 86400000);
+  if (resolved.state === 'overdue') {
+    return { forecast: 'late', days_remaining: daysRemaining, delay_days: Math.abs(daysRemaining) };
+  }
+  if (daysRemaining <= 3) return { forecast: 'at_risk', days_remaining: daysRemaining, delay_days: 2 };
+  return { forecast: 'on_track', days_remaining: daysRemaining, delay_days: 0 };
+}
+
 /** on_track | at_risk | late | unknown */
 function classifyProjectForecast(commitmentDate, opts = {}) {
   if (!commitmentDate) return { forecast: 'unknown', days_remaining: null, delay_days: 0 };
@@ -72,6 +85,7 @@ function classifyProjectForecast(commitmentDate, opts = {}) {
 
 module.exports = {
   classifyProjectForecast,
+  forecastFromModuleDeadline,
   isGcckProject,
   isGcckSxCompleted,
   isHcbCanhKinhProject,

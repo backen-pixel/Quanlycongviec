@@ -2,7 +2,8 @@
  * Hạn thẻ tổng quan nhiệm vụ dự án = hạn module (CRM / SX / VC-LĐ)
  * theo lane của nhóm việc. Việc con trống hạn được ghi cùng hạn module.
  */
-const { MODULE, resolveModuleDeadline } = require('./moduleDeadlinePolicy');
+const { MODULE, resolveModuleDeadline, isInstallDeadlineClosed } = require('./moduleDeadlinePolicy');
+const { isSxPipelineStageNoDeadline } = require('./crmPipelineSla');
 
 const STAMP_TABLE = Object.freeze({
   task: { table: 'tasks', column: 'due_date' },
@@ -51,6 +52,10 @@ function resolveOverviewGroupDeadline({
     stage = sxStage || project?.sx_pipeline_stage || null;
   }
   const resolved = resolveModuleDeadline(moduleKey, item, { stage, forDisplay: true });
+  const deadlineOff = moduleKey === MODULE.LOGISTICS
+    ? isInstallDeadlineClosed(item, stage)
+    : moduleKey === MODULE.PRODUCTION && isSxPipelineStageNoDeadline(stage);
+  if (deadlineOff) return null;
   return resolved.deadlineAt || childDeadline || null;
 }
 

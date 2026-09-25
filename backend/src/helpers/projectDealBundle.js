@@ -9,7 +9,7 @@ const {
 } = require('./documentShareScope');
 const { listDealProductionProjects } = require('./autoDealWonProject');
 const { sortProjectCrmDeals } = require('./workshopCrmDeals');
-const { classifyProjectForecast } = require('./projectForecast');
+const { forecastFromModuleDeadline } = require('./projectForecast');
 const { MODULE, resolveModuleDeadline } = require('./moduleDeadlinePolicy');
 
 const DONE = new Set(['completed', 'done']);
@@ -533,13 +533,18 @@ function buildProjectOverview({
     ? Math.round(flowPct * 0.55 + taskPctVal * 0.45)
     : flowPct;
 
-  const logisticsDeadline = resolveModuleDeadline(MODULE.LOGISTICS, project, { stage: vcStage });
-  const commitment_date = logisticsDeadline.raw || null;
-  const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitment_date, {
-    project,
-    sxStage,
-    vcStage,
-  });
+  const currentFlow = flow.find((st) => st.status === 'current');
+  const projectForDeadline = {
+    ...project,
+    install_deadline_closes_at_order: project?.install_deadline_closes_at_order ?? null,
+  };
+  const activeDeadline = currentFlow?.module === 'production'
+    ? resolveModuleDeadline(MODULE.PRODUCTION, projectForDeadline, { stage: sxStage })
+    : currentFlow?.module === 'crm'
+      ? { deadlineAt: null, state: 'none', remainingMs: null, raw: null }
+      : resolveModuleDeadline(MODULE.LOGISTICS, projectForDeadline, { stage: vcStage });
+  const commitment_date = activeDeadline.raw || null;
+  const { forecast, days_remaining, delay_days } = forecastFromModuleDeadline(activeDeadline);
 
   const budgetTotal = Number(
     project?.production_value
@@ -554,7 +559,6 @@ function buildProjectOverview({
     pct: budgetTotal > 0 ? Math.round((budgetSpent / budgetTotal) * 1000) / 10 : null,
   };
 
-  const currentFlow = flow.find((st) => st.status === 'current');
   const status_label = project?.current_stage?.name
     || currentFlow?.label
     || sxStage?.name
@@ -1014,13 +1018,13 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
         .order('created_at', { ascending: false }),
     project.sx_kanban_column_id
       ? supabase.from('production_pipeline_stages')
-        .select('id, name, color, icon, bucket_slug, is_handover_to_logistics')
+        .select('id, name, color, icon, bucket_slug, is_handover_to_logistics, clears_deadline')
         .eq('id', project.sx_kanban_column_id)
         .maybeSingle()
       : Promise.resolve({ data: null }),
     project.vc_kanban_column_id
       ? supabase.from('logistics_pipeline_stages')
-        .select('id, name, color, icon, bucket_slug')
+        .select('id, name, color, icon, bucket_slug, order_index, clears_deadline, dashboard_kpi, company_id')
         .eq('id', project.vc_kanban_column_id)
         .maybeSingle()
       : Promise.resolve({ data: null }),
@@ -1453,6 +1457,17 @@ async function buildProjectDealBundleWithProject(project, user, opts = {}) {
       stage_name: t.stage_name || bySlug[t.stage_slug]?.name || null,
       stage_color: bySlug[t.stage_slug]?.color || null,
     }));
+  }
+
+  if (project?.logistics_company_id && project.install_deadline_closes_at_order == null) {
+    const { data: closeRows } = await supabase
+      .from('logistics_pipeline_stages')
+      .select('order_index')
+      .eq('company_id', project.logistics_company_id)
+      .eq('clears_deadline', true)
+      .eq('is_active', true);
+    const orders = (closeRows || []).map((r) => Number(r.order_index)).filter(Number.isFinite);
+    if (orders.length) project.install_deadline_closes_at_order = Math.min(...orders);
   }
 
   const overview = buildProjectOverview({

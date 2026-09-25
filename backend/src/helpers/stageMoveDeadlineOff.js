@@ -68,7 +68,22 @@ async function turnOffCrmDeadlineOnCompletedStage(req, { leadId, stage }) {
     .select('id, company_id, project_id, stage_id, kanban_deadline_at, deadline_disabled_at')
     .eq('id', leadId)
     .maybeSingle();
-  if (error || !lead || lead.deadline_disabled_at) return { cleared: false };
+  if (error || !lead) return { cleared: false };
+
+  if (lead.project_id) {
+    try {
+      const { clearAllProjectDeadlinesOnInstallationDone } = require('./completeOpenWorkOnModuleDone');
+      await clearAllProjectDeadlinesOnInstallationDone({
+        projectIds: [lead.project_id],
+        leadIds: [leadId],
+        reason: 'CRM kéo vào cột Hoàn thành',
+      });
+    } catch (clearErr) {
+      console.warn('[stageMoveDeadlineOff] clear all modules:', clearErr.message);
+    }
+  }
+
+  if (lead.deadline_disabled_at) return { cleared: true };
 
   const now = new Date().toISOString();
   const reason = NOTICE;

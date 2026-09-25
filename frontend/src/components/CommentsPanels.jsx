@@ -62,6 +62,12 @@ function isSystemComment(body) {
   return SYSTEM_COMMENT_PREFIXES.some((p) => trimmed.startsWith(p));
 }
 
+function isStageMoveComment(comment, body) {
+  if (comment?.comment_type === 'stage_move') return true;
+  const text = String(body || '').trim();
+  return text.startsWith('➡️') && text.includes('Đã chuyển trạng thái');
+}
+
 function isImageFileName(name) {
   return /\.(jpg|jpeg|png|gif|webp|bmp|svg|heic|heif)$/i.test(name || '');
 }
@@ -1301,8 +1307,9 @@ function useCommentPasteUpload(onFilesUploaded) {
   return { handlePasteFiles, uploadingPaste, pasteProgress };
 }
 
-function commentComposerPlaceholder(replyTo) {
+function commentComposerPlaceholder(replyTo, hasSlash) {
   if (replyTo) return `Trả lời ${replyTo.name}…`;
+  if (hasSlash) return 'Bình luận… Gõ / — Công việc, Phát sinh, Đã giao. Phụ trách: /Lắp xong';
   return 'Bình luận…';
 }
 
@@ -2490,7 +2497,7 @@ function CommentThread({
   }, [enableAttachments, onPasteFiles]);
 
   const slashList = slashCommands || [];
-  const composerPlaceholder = commentComposerPlaceholder(replyTo);
+  const composerPlaceholder = commentComposerPlaceholder(replyTo, slashList.length > 0);
 
   const renderBranch = (parentKey, depth) => {
     const list = commentsByParent.get(parentKey) || [];
@@ -2508,6 +2515,20 @@ function CommentThread({
             onConfirm={onVcConfirm}
             onReschedule={onVcReschedule}
           />
+        );
+      }
+
+      if (isStageMoveComment(c, bodyText) && depth === 0) {
+        const who = c.user?.full_name || 'Thành viên';
+        return (
+          <div key={c.id} className="mx-2 my-2 rounded-lg border-2 border-violet-400 bg-violet-50 px-3 py-2.5 shadow-sm">
+            <p className="text-[13px] font-bold leading-snug text-violet-950 break-words">{bodyText}</p>
+            <p className="mt-1 text-[11px] font-medium text-violet-700">
+              {who}
+              <span className="mx-1 text-violet-400">·</span>
+              <span title={formatCrmCommentFullDateTime(c.created_at)}>{formatCrmFbRelativeTime(c.created_at)}</span>
+            </p>
+          </div>
         );
       }
 

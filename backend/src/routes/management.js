@@ -35,7 +35,7 @@ const { resolveWorkRegionScope } = require('../helpers/workRegionFilter');
 const { responseCache } = require('../middleware/responseCache');
 const { PROJECTS_LIST_TAG } = require('../middleware/projectsCacheInvalidation');
 const { MODULE, resolveModuleDeadline } = require('../helpers/moduleDeadlinePolicy');
-const { classifyProjectForecast } = require('../helpers/projectForecast');
+const { forecastFromModuleDeadline } = require('../helpers/projectForecast');
 const { attachInstallEventDatesToProjects } = require('../helpers/createPlannedVcLdEvents');
 const { orgReportDealIsClosedWon, loadDealKhSplitContextCached } = require('../helpers/crmDealKhSplit');
 const {
@@ -1400,8 +1400,11 @@ async function queryWorkUnifiedList(req, opts = {}) {
   const workshopTypeById = new Map();
   const sxStageById = new Map();
   const vcStageById = new Map();
+  const installCloseOrderByCompany = new Map();
+  const crmCompletedStageIds = new Set();
   if (projectIds.length) {
-    const [deals, linksOrNull, workshopTypes, sxStages, vcStages, withInstallEvents] = await Promise.all([
+    const logisticsCompanyIds = [...new Set(projects.map((p) => p.logistics_company_id).filter(Boolean))];
+    const [deals, linksOrNull, workshopTypes, sxStages, vcStages, withInstallEvents, installCloseRes, crmDoneStagesRes] = await Promise.all([
       fetchAllByIdsParallel({
         table: 'crm_leads',
         columns: scanDealColumns,
@@ -1434,7 +1437,7 @@ async function queryWorkUnifiedList(req, opts = {}) {
       sxColumnIds.length
         ? fetchAllByIdsParallel({
           table: 'production_pipeline_stages',
-          columns: 'id, name, bucket_slug, counts_as_completed_revenue, counts_as_collected_revenue',
+          columns: 'id, name, bucket_slug, clears_deadline, is_handover_to_logistics, counts_as_completed_revenue, counts_as_collected_revenue',
           key: 'id',
           ids: sxColumnIds,
         })
@@ -1442,7 +1445,7 @@ async function queryWorkUnifiedList(req, opts = {}) {
       vcColumnIds.length
         ? fetchAllByIdsParallel({
           table: 'logistics_pipeline_stages',
-          columns: 'id, name, bucket_slug',
+          columns: 'id, name, bucket_slug, order_index, clears_deadline, dashboard_kpi',
           key: 'id',
           ids: vcColumnIds,
         })
@@ -1451,7 +1454,27 @@ async function queryWorkUnifiedList(req, opts = {}) {
         console.warn('[work-unified] attach install events:', e.message);
         return projects;
       }),
+      logisticsCompanyIds.length
+        ? supabase.from('logistics_pipeline_stages')
+          .select('company_id, order_index')
+          .eq('clears_deadline', true)
+          .eq('is_active', true)
+          .in('company_id', logisticsCompanyIds)
+        : Promise.resolve({ data: [] }),
+      supabase.from('crm_pipeline_stages')
+        .select('id')
+        .or('counts_as_completed_revenue.eq.true,canonical_slug.eq.completed,canonical_slug.eq.done'),
     ]);
+    for (const row of crmDoneStagesRes?.data || []) {
+      if (row?.id) crmCompletedStageIds.add(String(row.id));
+    }
+    for (const row of installCloseRes?.data || []) {
+      const order = Number(row.order_index);
+      if (!Number.isFinite(order)) continue;
+      const cid = String(row.company_id);
+      const prev = installCloseOrderByCompany.get(cid);
+      if (prev == null || order < prev) installCloseOrderByCompany.set(cid, order);
+    }
     (workshopTypes || []).forEach((w) => { if (w?.id) workshopTypeById.set(String(w.id), w); });
     (sxStages || []).forEach((s) => { if (s?.id) sxStageById.set(String(s.id), s); });
     (vcStages || []).forEach((s) => { if (s?.id) vcStageById.set(String(s.id), s); });
@@ -1490,13 +1513,22 @@ async function queryWorkUnifiedList(req, opts = {}) {
     const workshopType = p.workshop_type || workshopTypeById.get(String(p.workshop_type_id || '')) || null;
     const sxStage = sxStageById.get(String(p.sx_kanban_column_id || '')) || p.sx_pipeline_stage || null;
     const vcStage = vcStageById.get(String(p.vc_kanban_column_id || '')) || p.vc_pipeline_stage || null;
-    const logisticsDeadline = resolveModuleDeadline(MODULE.LOGISTICS, p, { stage: vcStage });
-    const commitmentDate = logisticsDeadline.raw || null;
-    const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitmentDate, {
-      project: { ...p, workshop_type: workshopType },
-      sxStage,
-      vcStage,
-    });
+    const closesAt = installCloseOrderByCompany.get(String(p.logistics_company_id || '')) ?? null;
+    const crmDone = (dealMap.get(String(p.id)) || []).some((d) => crmCompletedStageIds.has(String(d.stage_id || '')));
+    const projectForDeadline = {
+      ...p,
+      workshop_type: workshopType,
+      install_deadline_closes_at_order: closesAt,
+      crm_completed_deadlines_off: crmDone,
+    };
+    const currentModule = currentStep?.module;
+    const activeDeadline = currentModule === 'production'
+      ? resolveModuleDeadline(MODULE.PRODUCTION, projectForDeadline, { stage: sxStage })
+      : currentModule === 'crm'
+        ? { deadlineAt: null, state: 'none', remainingMs: null, raw: null }
+        : resolveModuleDeadline(MODULE.LOGISTICS, projectForDeadline, { stage: vcStage });
+    const commitmentDate = activeDeadline.raw || null;
+    const { forecast, days_remaining, delay_days } = forecastFromModuleDeadline(activeDeadline);
     const allDeals = dealMap.get(String(p.id)) || [];
     const scopedDeals = scopeIdSet.size
       ? allDeals.filter((d) => scopeIdSet.has(String(d.company_id)))
