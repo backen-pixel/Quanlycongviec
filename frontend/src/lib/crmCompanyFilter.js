@@ -173,6 +173,18 @@ export function crmCompanyDisplayName(companies, companyId, fallback = 'Công ty
   return label || fallback;
 }
 
+const NEXTGO_TENANT_ID = 'e37fac98-acd2-4675-84f4-285b65e423b1';
+
+/** HST Phúc Đạt không hiện NextGo. HST NextGo và phiên chưa có tenant_id giữ nguyên. */
+export function omitNextGoOutsideOwnTenant(companies, user) {
+  const tid = String(user?.tenant_id || '');
+  if (!tid || tid === NEXTGO_TENANT_ID) return companies || [];
+  return (companies || []).filter((c) => {
+    const label = `${c?.name || ''} ${c?.short_name || ''}`.toLowerCase();
+    return !label.includes('nextgo');
+  });
+}
+
 /** Sắp xếp dropdown công ty CRM: Phúc Đạt → Vạn Phú Thành → còn lại (Metalla/NextGo cuối).
  * Tránh Metalla (0 lead) đứng đầu danh sách.
  */
@@ -206,6 +218,15 @@ export function resolveDefaultCrmAdminCompanyId(companies) {
     if (!isLikelyEmptyCrmLeadCompany(hit)) return String(stored);
   }
   return findDefaultAdminCrmCompanyPhucDat(companies) || (companies[0]?.id ? String(companies[0].id) : '');
+}
+
+/** Một công ty trong danh sách: ưu tiên id gợi ý, rồi Phúc Đạt, rồi phần tử đầu. */
+export function pickDefaultCompanyId(companies, { preferredId = '' } = {}) {
+  const list = Array.isArray(companies) ? companies : [];
+  if (!list.length) return '';
+  const preferred = preferredId != null ? String(preferredId).trim() : '';
+  if (preferred && list.some((c) => String(c.id) === preferred)) return preferred;
+  return findDefaultAdminCrmCompanyPhucDat(list) || (list[0]?.id ? String(list[0].id) : '');
 }
 
 /**

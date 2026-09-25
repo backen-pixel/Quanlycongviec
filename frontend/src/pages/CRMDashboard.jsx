@@ -67,6 +67,7 @@ import {
   normalizeCrmFilterCompanies,
   resolvePipelineForCompanyRegion,
   setStoredCrmFilterCompanyId,
+  omitNextGoOutsideOwnTenant,
   sortCrmCompaniesForAdminFilter,
 } from '../lib/crmCompanyFilter';
 import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
@@ -1271,6 +1272,8 @@ export default function CRMDashboard() {
   const [filterCustomerCompany, setFilterCustomerCompany] = useState(() => P?.filterCustomerCompany ?? '');
   const [crmReferrers, setCrmReferrers] = useState([]);
   const companyFilterFromLsRef = useRef(false);
+  /** Admin hệ thống tự chọn công ty trong ô lọc — không kéo về Phúc Đạt. */
+  const crmCompanyChosenByUserRef = useRef(false);
   const leadTypeFilterFromLsRef = useRef(false);
   const [filterPhone, setFilterPhone] = useState(() => {
     if (snapshotHasProperty(P, 'filterPhone')) {
@@ -2188,8 +2191,8 @@ export default function CRMDashboard() {
 
   /** Sắp xếp dropdown công ty — Phúc Đạt / VPT trước, Metalla/NextGo cuối. */
   const companiesForFilter = useMemo(
-    () => sortCrmCompaniesForAdminFilter(companies),
-    [companies],
+    () => sortCrmCompaniesForAdminFilter(omitNextGoOutsideOwnTenant(companies, user)),
+    [companies, user],
   );
 
   /**
@@ -2506,11 +2509,18 @@ export default function CRMDashboard() {
   useEffect(() => {
     if (deferFilterPruneRef.current) return;
     if (!isAdmin || isCompanyScopedAdmin || !companies?.length) return;
-    const stillValid = filterCompany
-      && companies.some((c) => String(c.id) === String(filterCompany));
+    if (crmCompanyChosenByUserRef.current) return;
+    const hit = companies.find((c) => String(c.id) === String(filterCompany));
+    // Admin hệ thống không có company_id. Phiên cũ hay kẹt Metalla/NextGo (không phải CRM).
+    const stuckOnWorkshop = !!(hit && isLikelyEmptyCrmLeadCompany(hit));
+    const stillValid = filterCompany && hit && !stuckOnWorkshop;
     if (stillValid || !defaultCrmCompanyId) return;
-    setFilterCompany(defaultCrmCompanyId);
-    setStoredCrmFilterCompanyId(defaultCrmCompanyId);
+    const next = stuckOnWorkshop
+      ? (findDefaultAdminCrmCompanyPhucDat(companies) || defaultCrmCompanyId)
+      : defaultCrmCompanyId;
+    if (!next || String(next) === String(filterCompany)) return;
+    setFilterCompany(String(next));
+    setStoredCrmFilterCompanyId(String(next));
   }, [isAdmin, isCompanyScopedAdmin, filterCompany, companies, defaultCrmCompanyId]);
 
   // Reset stage filter if it doesn't exist in current company pipeline stages
@@ -4776,7 +4786,17 @@ export default function CRMDashboard() {
     if (snapshotHasProperty(snap, 'filterAssignee')) setFilterAssignee(snap.filterAssignee ?? '');
     if (snapshotHasProperty(snap, 'assigneeListSearch')) setAssigneeListSearch(snap.assigneeListSearch ?? '');
     if (snapshotHasProperty(snap, 'filterAssigneeName')) setFilterAssigneeName(snap.filterAssigneeName ?? '');
-    if (snapshotHasProperty(snap, 'filterCompany')) setFilterCompany(snap.filterCompany ?? '');
+    if (snapshotHasProperty(snap, 'filterCompany')) {
+      let nextId = snap.filterCompany ?? '';
+      if (isAdmin && !isCompanyScopedAdmin && companies.length) {
+        const hit = companies.find((c) => String(c.id) === String(nextId));
+        if (!nextId || (hit && isLikelyEmptyCrmLeadCompany(hit))) {
+          nextId = findDefaultAdminCrmCompanyPhucDat(companies) || '';
+        }
+      }
+      setFilterCompany(nextId);
+      if (nextId) setStoredCrmFilterCompanyId(nextId);
+    }
     if (snapshotHasProperty(snap, 'filterSource')) setFilterSource(snap.filterSource ?? '');
     if (snapshotHasProperty(snap, 'filterStage')) setFilterStage(snap.filterStage ?? '');
     if (snapshotHasProperty(snap, 'filterRegion')) setFilterRegion(snap.filterRegion ?? '');
@@ -4820,6 +4840,9 @@ export default function CRMDashboard() {
     users.length,
     employeeFilterListByRegion.length,
     companyRegions.length,
+    companies,
+    isAdmin,
+    isCompanyScopedAdmin,
   ]);
 
   // ── Computed: nguồn thông minh - non-FB giữ nguyên, FB → [FB] Tên Page ──
@@ -8474,6 +8497,7 @@ export default function CRMDashboard() {
                       <select
                         value={filterCompany}
                         onChange={(e) => {
+                          crmCompanyChosenByUserRef.current = true;
                           const v = e.target.value;
                           patchCrmFilters({
                             filterCompany: v,
