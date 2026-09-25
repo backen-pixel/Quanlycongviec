@@ -2996,15 +2996,7 @@ export default function ProductionDashboard() {
         : (summaryKpisPending ? '…' : list.length))
       : list.length;
     // KPI Quá hạn = tổng server (toàn filter); đang pending → '…' (không giữ overdue filter cũ).
-    const serverOverdue = Number(deadlineBucketCounts?.overdue);
-    const hasServerOverdue = canUseServerTotal
-      && deadlineBucketCounts
-      && Object.prototype.hasOwnProperty.call(deadlineBucketCounts, 'overdue');
-    const deadlineOverdueCount = canUseServerTotal
-      ? (hasServerOverdue
-        ? serverOverdue
-        : (summaryKpisPending ? '…' : countSxDeadlineViewOverdue(filteredKanbanPipeline)))
-      : countSxDeadlineViewOverdue(filteredKanbanPipeline);
+    const deadlineOverdueCount = countSxDeadlineViewOverdue(filteredKanbanPipeline);
     // Cùng nguồn summary=1 với Tổng/Quá hạn.
     // - Có summaryStageKpis (cache đúng filter / server) → hiện số đó.
     // - Đang chờ, chưa có số → '…' — không đếm card, không giữ số công ty cũ.
@@ -3085,7 +3077,7 @@ export default function ProductionDashboard() {
         ? (Number(summaryRevenueKpis.collected_revenue) || 0)
         : (summaryKpisPending ? '…' : revenue.collectedRevenue))
       : revenue.collectedRevenue;
-    if (!list.length && !summaryStageKpis && !hasServerOverdue) {
+    if (!list.length && !summaryStageKpis) {
       return {
         total: accurateTotal, producing: producingCount, awaiting_delivery: awaitingCount, shipped: shippedCount, completed: 0,
         overdue: deadlineOverdueCount,

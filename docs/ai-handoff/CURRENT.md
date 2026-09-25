@@ -1,6 +1,16 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-25 13:50 (UTC+7)
+Cập nhật: 2026-09-25 16:20 (UTC+7)
+
+## Deadline SX — Quá hạn khớp cột và KPI
+
+Trạng thái: **FE+BE local, chưa push.**
+
+Cột đã «Tắt hạn» hoặc bàn giao VC không còn vào bucket Quá hạn (server summary + trang bucket, và client). KPI «Quá hạn» và số trên cột Deadline đếm cùng các thẻ đang hiện, không lấy tổng server đã gắn cứng bucket.
+
+Hoàn tác: revert `sxKanbanSummary.js`, `sxPipelineRevenue.js`, `moduleDeadlinePolicy.js`, `ProductionViews.jsx`, `ProductionDashboard.jsx`.
+
+## Đặt xưởng khác — admin Metalla/HCB thấy xưởng kia
 
 ## Đặt xưởng khác — admin Metalla/HCB thấy xưởng kia
 

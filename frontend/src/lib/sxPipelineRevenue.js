@@ -277,12 +277,9 @@ function startOfLocalDay(d) {
 
 /**
  * Bucket deadline view SX — theo ngày hạn đang lưu.
+ * Cột đã tắt hạn / bàn giao VC không vào Quá hạn.
  * Nguồn hạn: hạn thẻ → hoàn thiện/hạn SX → giao → hạn chung.
  */
-const SX_SERVER_BUCKETS = new Set([
-  'overdue', 'today', 'this_week', 'next_week', 'this_month', 'later', 'none',
-]);
-
 function sxDeadlineYmd(raw) {
   if (raw == null || raw === '') return null;
   const s = String(raw).trim();
@@ -299,6 +296,10 @@ function diffVnCalendarDays(ymdA, ymdB) {
 }
 
 export function resolveSxDeadlineBucket(item, todayMs = Date.now(), stage = null) {
+  const stageRef = stage || item?.sx_pipeline_stage || null;
+  if (stageRef?.clears_deadline || stageRef?.is_handover_to_logistics) {
+    return { bucket: 'none', ts: null, source: null };
+  }
   const resolved = resolveEffectiveModuleDeadline(
     DEADLINE_MODULE.PRODUCTION,
     item,
@@ -307,8 +308,6 @@ export function resolveSxDeadlineBucket(item, todayMs = Date.now(), stage = null
   const raw = resolved.raw;
   const t = resolved.deadlineTs;
   const source = resolved.source;
-  const stamped = String(item?._deadline_bucket || item?.deadline_bucket || '').trim();
-  if (SX_SERVER_BUCKETS.has(stamped)) return { bucket: stamped, ts: t, source };
   const ymd = sxDeadlineYmd(raw);
   const todayYmd = vnYmdFromTs(todayMs);
   if (!ymd || !todayYmd) return { bucket: 'none', ts: null, source: null };

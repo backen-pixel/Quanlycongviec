@@ -10,6 +10,7 @@ const { applyWorkshopProjectVisibilityScope } = require('./dealParticipantProduc
 const { applySxKanbanRowScope, WORKSHOP_STATUSES, getResolvedKanbanStages } = require('./workshopKanban');
 const { isHucabiSameDayPastWorkEnd } = require('./companyDeadlineClock');
 const { sxColumnStageKpiKey } = require('./sxPipelineRevenue');
+const { isSxPipelineStageNoDeadline } = require('./crmPipelineSla');
 
 const VN_TZ = 'Asia/Ho_Chi_Minh';
 const SX_KANBAN_COL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -87,7 +88,7 @@ function sxDeadlineRaw(row) {
 }
 
 function resolveSxDeadlineBucketKey(row, stage, todayYmd, companyOrId, nowMs = Date.now()) {
-  void stage;
+  if (isSxPipelineStageNoDeadline(stage)) return 'none';
   const raw = sxDeadlineRaw(row);
   const ymd = toVnDeadlineYmd(raw);
   if (!ymd) return 'none';

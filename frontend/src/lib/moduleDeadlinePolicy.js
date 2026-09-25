@@ -163,6 +163,10 @@ export function resolveEffectiveModuleDeadline(moduleKey, item, stage = null) {
     if (!item) {
       return { raw: null, source: null, deadlineTs: null, deadlineAt: null };
     }
+    const sxStage = stage || sxStageOf(item);
+    if (sxDone(sxStage)) {
+      return { raw: null, source: null, deadlineTs: null, deadlineAt: null };
+    }
     return result(item.sx_kanban_deadline_at, 'sx_kanban', item)
       || result(item.production_finish_date, 'production_finish', item)
       || result(item.production_deadline, 'production', item)
