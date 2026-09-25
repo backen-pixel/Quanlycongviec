@@ -760,7 +760,7 @@ function DeadlineBucketColumn({
   const busyRef = useRef(false);
   const itemsLen = items.length;
   const serverN = Number(serverTotal);
-  const displayTotal = Number.isFinite(serverN) ? Math.max(serverN, itemsLen) : itemsLen;
+  const displayTotal = Number.isFinite(serverN) ? serverN : itemsLen;
   const hasMoreLocal = visibleCount < itemsLen;
   const hasMoreServer = Number.isFinite(serverN) && itemsLen < serverN;
   const columnLoading = Boolean(loadingMore && hasMoreServer);

@@ -3,7 +3,7 @@
  */
 
 import { effectivePipelineStageSlaDays, isPipelineStageSlaDisabled } from './crmPipelineSla';
-import { isHucabiCompany, isHucabiSameDayPastWorkEnd } from './companyDeadlineClock';
+import { isHucabiCompany, isHucabiSameDayPastWorkEnd, vnYmdFromTs } from './companyDeadlineClock';
 import { endOfVnCalendarDayAfterEntered } from './vnDate';
 import {
   DEADLINE_MODULE,
@@ -279,6 +279,25 @@ function startOfLocalDay(d) {
  * Bucket deadline view SX — theo ngày hạn đang lưu.
  * Nguồn hạn: hạn thẻ → hoàn thiện/hạn SX → giao → hạn chung.
  */
+const SX_SERVER_BUCKETS = new Set([
+  'overdue', 'today', 'this_week', 'next_week', 'this_month', 'later', 'none',
+]);
+
+function sxDeadlineYmd(raw) {
+  if (raw == null || raw === '') return null;
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})[T\s]/);
+  if (m && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(s.slice(10))) return m[1];
+  return vnYmdFromTs(s);
+}
+
+function diffVnCalendarDays(ymdA, ymdB) {
+  const [ya, ma, da] = ymdA.split('-').map(Number);
+  const [yb, mb, db] = ymdB.split('-').map(Number);
+  return Math.round((Date.UTC(ya, ma - 1, da) - Date.UTC(yb, mb - 1, db)) / 86400000);
+}
+
 export function resolveSxDeadlineBucket(item, todayMs = Date.now(), stage = null) {
   const resolved = resolveEffectiveModuleDeadline(
     DEADLINE_MODULE.PRODUCTION,
@@ -288,13 +307,13 @@ export function resolveSxDeadlineBucket(item, todayMs = Date.now(), stage = null
   const raw = resolved.raw;
   const t = resolved.deadlineTs;
   const source = resolved.source;
-  if (!raw || t == null || !Number.isFinite(t)) return { bucket: 'none', ts: null, source: null };
-  const today = startOfLocalDay(new Date(todayMs));
-  const dayMs = 86400000;
-  const diffDays = Math.floor((startOfLocalDay(t).getTime() - today.getTime()) / dayMs);
-  if (diffDays < 0) {
-    return { bucket: 'overdue', ts: t, source };
-  }
+  const stamped = String(item?._deadline_bucket || item?.deadline_bucket || '').trim();
+  if (SX_SERVER_BUCKETS.has(stamped)) return { bucket: stamped, ts: t, source };
+  const ymd = sxDeadlineYmd(raw);
+  const todayYmd = vnYmdFromTs(todayMs);
+  if (!ymd || !todayYmd) return { bucket: 'none', ts: null, source: null };
+  const diffDays = diffVnCalendarDays(ymd, todayYmd);
+  if (diffDays < 0) return { bucket: 'overdue', ts: t, source };
   if (diffDays === 0) {
     const companyRef = item?.company_id || item?.company;
     if (isHucabiSameDayPastWorkEnd(raw, companyRef, todayMs)) {
@@ -302,12 +321,15 @@ export function resolveSxDeadlineBucket(item, todayMs = Date.now(), stage = null
     }
     return { bucket: 'today', ts: t, source };
   }
-  const dow = today.getDay() === 0 ? 7 : today.getDay();
+  const [y, m, d] = todayYmd.split('-').map(Number);
+  const dowUtc = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  const dow = dowUtc === 0 ? 7 : dowUtc;
   const daysToEndOfWeek = 7 - dow;
   if (diffDays <= daysToEndOfWeek) return { bucket: 'this_week', ts: t, source };
   if (diffDays <= daysToEndOfWeek + 7) return { bucket: 'next_week', ts: t, source };
-  const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getTime();
-  if (t <= endOfMonth) return { bucket: 'this_month', ts: t, source };
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const endYmd = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+  if (ymd <= endYmd) return { bucket: 'this_month', ts: t, source };
   return { bucket: 'later', ts: t, source };
 }
 
