@@ -105,7 +105,7 @@ async function postMovedComment(leadId, moduleLabel, stageName) {
 /** Chọn một cột từ lệnh «/». Trả handled=true khi đây là lệnh tiến độ. */
 export async function runStageSlashCommand(cmd) {
   if (!cmd || cmd.kind !== 'stage') return { handled: false };
-  if (cmd.current) {
+  if (cmd.current && !cmd.reenableDeadline) {
     alert(`Đang ở cột «${cmd.label}»`);
     return { handled: true, ok: false };
   }
@@ -133,7 +133,7 @@ export async function runStageSlashCommand(cmd) {
       await postMovedComment(cmd.leadId, 'Sản xuất', cmd.label);
     } else if (cmd.module === 'vc') {
       if (!cmd.projectId) {
-        alert('Deal chưa có dự án VC/LĐ — chưa chuyển được trạng thái đã lắp.');
+        alert('Deal chưa có dự án VC/LĐ — chưa chuyển được trạng thái.');
         return { handled: true, ok: false };
       }
       if (project.vc_temp_staged && String(cmd.stageId) !== String(project.vc_kanban_column_id || '')) {
@@ -284,6 +284,7 @@ export function useCommentProgressSlash({
         n.includes('da lap') || n.includes('lap xong') || n.includes('lap dat')
       ));
       const giaoStage = findStage(vcStages, (n) => n.includes('da giao') || n.includes('giao xong'));
+      const incidentStage = findStage(vcStages, (n) => n.includes('phat sinh'));
       const sharedTarget = lapStage || giaoStage;
       const shared = [];
       const ctx = {
@@ -300,6 +301,20 @@ export function useCommentProgressSlash({
             { ...base, id: `shared:da-giao:${base.stageId}`, label: 'Đã giao', keywords: 'da giao', hint: 'Chuyển VC/LĐ sang đã lắp', moveLabel },
             { ...base, id: `shared:da-lap:${base.stageId}`, label: 'Đã lắp', keywords: 'da lap lap xong', hint: 'Chuyển VC/LĐ sang đã lắp', moveLabel },
           );
+        }
+      }
+      if (incidentStage) {
+        const base = stageCommand({ module: 'vc', stage: incidentStage, groupLabel: 'Dùng chung', ...ctx });
+        if (base) {
+          shared.push({
+            ...base,
+            id: `shared:phat-sinh:${base.stageId}`,
+            label: 'Phát sinh',
+            keywords: 'phat sinh',
+            hint: 'Chuyển VC/LĐ sang phát sinh và bật lại deadline',
+            moveLabel: displayPipelineStageName(incidentStage),
+            reenableDeadline: true,
+          });
         }
       }
       setCommands([...shared, ...gated]);

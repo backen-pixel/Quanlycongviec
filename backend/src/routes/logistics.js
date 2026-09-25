@@ -1924,7 +1924,11 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
           .maybeSingle();
         targetCol = data;
       }
-      const { vcColumnTurnsOffDeadline, turnOffVcDeadlineOnCompletedColumn } = require('../helpers/stageMoveDeadlineOff');
+      const {
+        vcColumnTurnsOffDeadline,
+        turnOffVcDeadlineOnCompletedColumn,
+        turnOnDeadlineOnVcIncident,
+      } = require('../helpers/stageMoveDeadlineOff');
       const vcDoneCol = !!(targetCol && effectiveVcStageId && (
         isLogisticsCompletedColumn(targetCol) || vcColumnTurnsOffDeadline(targetCol)
       ));
@@ -1950,6 +1954,11 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
           }
         }
       } else if (targetCol && effectiveVcStageId) {
+        try {
+          await turnOnDeadlineOnVcIncident(req, { projectId: id, stage: targetCol });
+        } catch (onErr) {
+          console.warn('[logistics/stage] deadline-on incident:', onErr.message);
+        }
         const logCo = project.logistics_company_id || project.company_id || null;
         const out = await applyAllActiveWorkshopTemplatesForArea(id, userId, {
           workshopArea: 'logistics',

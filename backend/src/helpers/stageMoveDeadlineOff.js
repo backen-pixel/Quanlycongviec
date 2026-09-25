@@ -8,6 +8,7 @@ const { logDealActivityComment } = require('./projectFileActivity');
 const { logKanbanDeadlineUnifiedHistory } = require('./crmKanbanDeadlineHistory');
 
 const NOTICE = 'Đã tắt deadline do chuyển trạng thái';
+const ON_NOTICE = 'Đã bật lại deadline do chuyển trạng thái';
 
 function noticeBody(moduleLabel, stageName) {
   const where = stageName ? ` sang «${stageName}»` : '';
@@ -116,6 +117,78 @@ function vcColumnTurnsOffDeadline(stage) {
   return String(stage.dashboard_kpi || '').trim() === 'completed';
 }
 
+function foldVi(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd');
+}
+
+/** Cột VC «Phát sinh» — lệnh /phát sinh chuyển vào đây và bật lại deadline. */
+function vcColumnIsIncident(stage) {
+  return foldVi(stage?.name).includes('phat sinh');
+}
+
+async function turnOnDeadlineOnVcIncident(req, { projectId, stage }) {
+  if (!projectId || !vcColumnIsIncident(stage)) return { enabled: false };
+  const { data: leads, error } = await supabase
+    .from('crm_leads')
+    .select('id, company_id, project_id, stage_id, deadline_disabled_at')
+    .eq('project_id', projectId);
+  if (error) {
+    console.warn('[stageMoveDeadlineOff] incident leads:', error.message);
+    return { enabled: false };
+  }
+  const targets = (leads || []).filter((lead) => lead.deadline_disabled_at);
+  if (!targets.length) return { enabled: false };
+
+  const now = new Date().toISOString();
+  const stageName = stage?.name || 'Phát sinh';
+  const body = `${ON_NOTICE} (VC/LĐ sang «${stageName}»).`;
+  for (const lead of targets) {
+    const { error: updErr } = await supabase
+      .from('crm_leads')
+      .update({
+        deadline_disabled_at: null,
+        deadline_disabled_reason: null,
+        deadline_disabled_by: null,
+        updated_at: now,
+      })
+      .eq('id', lead.id);
+    if (updErr) {
+      console.warn('[stageMoveDeadlineOff] incident on:', updErr.message);
+      continue;
+    }
+    try {
+      await supabase.from('crm_lead_deadline_history').insert({
+        lead_id: lead.id,
+        stage_id: lead.stage_id || null,
+        old_deadline_at: null,
+        new_deadline_at: null,
+        reason: ON_NOTICE,
+        source: 'stage_move',
+        changed_by: req.user?.userId || null,
+      });
+    } catch (histErr) {
+      console.warn('[stageMoveDeadlineOff] incident history:', histErr.message);
+    }
+    await logDealActivityComment(req, {
+      leadId: lead.id,
+      projectId,
+      body,
+      commentType: null,
+    });
+    await logDealActivityComment(req, {
+      leadId: lead.id,
+      projectId,
+      body,
+      commentType: 'system',
+    });
+  }
+  return { enabled: true };
+}
+
 async function turnOffVcDeadlineOnCompletedColumn(req, { projectId, stage, hadDeadline }) {
   if (!projectId || !vcColumnTurnsOffDeadline(stage) || !hadDeadline) return { cleared: false };
   await postDeadlineOffNotice(req, {
@@ -133,4 +206,6 @@ module.exports = {
   turnOffCrmDeadlineOnCompletedStage,
   turnOffSxDeadlineOnVcHandover,
   turnOffVcDeadlineOnCompletedColumn,
+  vcColumnIsIncident,
+  turnOnDeadlineOnVcIncident,
 };
