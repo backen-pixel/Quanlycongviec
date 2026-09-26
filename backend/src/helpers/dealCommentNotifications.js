@@ -206,13 +206,15 @@ async function notifyDealCommentParticipants(req, notifyMultiple, leadId, sender
   const senderAvatar = commentRow?.user?.avatar || '';
   const preview = buildCommentPreview(commentRow?.body);
   const label = ctx.leadTitle || ctx.leadCode || 'Lead/Deal';
+  const stageMove = commentRow?.comment_type === 'stage_move'
+    || String(commentRow?.body || '').includes('Đã chuyển trạng thái');
 
   await notifyMultiple(
     req,
     ids,
     'comment_added',
-    `${label} · Bình luận mới`,
-    `${senderName} vừa bình luận: ${preview}`,
+    stageMove ? `${label} · Đã chuyển trạng thái` : `${label} · Bình luận mới`,
+    stageMove ? `${senderName}: ${preview}` : `${senderName} vừa bình luận: ${preview}`,
     'lead',
     leadId,
     buildDealCommentMetadata(ctx, commentRow, senderName, senderAvatar, { mentioned: false }),

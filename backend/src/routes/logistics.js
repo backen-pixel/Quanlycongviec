@@ -1731,7 +1731,7 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
     if (vc_stage_id) {
       let { data: vcRow } = await supabase
         .from(VC_PIPELINE_TABLE)
-        .select('id, name, crm_sync_type, crm_target_stage_id, workflow_stage_id, bucket_slug, is_handover_to_install')
+        .select('id, name, crm_sync_type, crm_target_stage_id, workflow_stage_id, bucket_slug, is_handover_to_install, dashboard_kpi, clears_deadline')
         .eq('id', vc_stage_id)
         .maybeSingle();
       if (!vcRow) {
@@ -1924,7 +1924,16 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
           .maybeSingle();
         targetCol = data;
       }
-      if (targetCol && effectiveVcStageId && isLogisticsCompletedColumn(targetCol)) {
+      const {
+        vcColumnTurnsOffDeadline,
+        turnOffVcDeadlineOnCompletedColumn,
+        turnOnDeadlineOnVcIncident,
+      } = require('../helpers/stageMoveDeadlineOff');
+      const vcDoneCol = !!(targetCol && effectiveVcStageId && (
+        isLogisticsCompletedColumn(targetCol) || vcColumnTurnsOffDeadline(targetCol)
+      ));
+      const vcColChanged = String(project.vc_kanban_column_id || '') !== String(effectiveVcStageId || '');
+      if (vcDoneCol) {
         try {
           await completeOpenWorkOnModuleDone({
             module: 'project_final',
@@ -1933,7 +1942,23 @@ r.patch('/projects/:id/stage', requirePermission('projects', 'edit'), async (req
         } catch (doneErr) {
           console.warn('[logistics/stage] complete VC/LĐ work on completed column:', doneErr.message);
         }
+        if (vcColChanged) {
+          try {
+            await turnOffVcDeadlineOnCompletedColumn(req, {
+              projectId: id,
+              stage: targetCol,
+              hadDeadline: !!(project.install_date || project.delivery_date || project.deadline),
+            });
+          } catch (noticeErr) {
+            console.warn('[logistics/stage] deadline-off notice:', noticeErr.message);
+          }
+        }
       } else if (targetCol && effectiveVcStageId) {
+        try {
+          await turnOnDeadlineOnVcIncident(req, { projectId: id, stage: targetCol });
+        } catch (onErr) {
+          console.warn('[logistics/stage] deadline-on incident:', onErr.message);
+        }
         const logCo = project.logistics_company_id || project.company_id || null;
         const out = await applyAllActiveWorkshopTemplatesForArea(id, userId, {
           workshopArea: 'logistics',

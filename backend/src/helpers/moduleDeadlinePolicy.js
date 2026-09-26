@@ -17,8 +17,6 @@ const {
   projectLooksShippedForOverdue,
   isSxPipelineStageNoDeadline,
 } = require('./crmPipelineSla');
-const { isCrmStagePastInstallation } = require('./crmDealStageGate');
-
 const MODULE = Object.freeze({
   CRM: 'crm',
   PRODUCTION: 'production',
@@ -39,8 +37,11 @@ const PROJECT_DEADLINE_FIELDS_BY_COMPLETION = Object.freeze({
     'deadline',
     'production_deadline',
     'design_deadline',
+    'production_finish_date',
     'sx_kanban_deadline_at',
     'sx_kanban_deadline_reason',
+    'install_date',
+    'delivery_date',
   ],
 });
 
@@ -88,8 +89,8 @@ function sxStageOf(item) {
 }
 
 /**
- * SX đã giao / đã sang VC thật: hết hạn sản xuất, bắt đầu hạn lắp.
- * Cột chờ bàn giao (is_handover_to_logistics) chưa giao — vẫn giữ hạn SX để hiện Quá hạn.
+ * SX đã giao / đã sang VC thật: bắt đầu tính hạn lắp.
+ * Hạn sản xuất tắt riêng khi cột có tích VC/LĐ hoặc Tắt hạn.
  */
 function isSxReleasedToInstall(item, sxStage) {
   if (!item) return false;
@@ -102,33 +103,42 @@ function isSxReleasedToInstall(item, sxStage) {
   return name.includes('da giao') || name.includes('giao xong');
 }
 
+function stageNameKey(stage) {
+  return foldVi(stage?.name).replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+function isNamedDoneStage(stage) {
+  const name = stageNameKey(stage);
+  return name === 'hoan thanh' || name.startsWith('hoan thanh ')
+    || name === 'hoan thien' || name.startsWith('hoan thien ');
+}
+
 function isLogisticsFinalStage(stage) {
   if (!stage) return false;
   const slug = String(stage.bucket_slug || stage.slug || '').toLowerCase().trim();
   if (['completed', 'done', 'install_completed'].includes(slug)) return true;
-  const name = foldVi(stage.name);
-  return name === 'hoan thanh'
-    || name === 'hoan thien'
-    || name.startsWith('hoan thanh ')
-    || name.startsWith('hoan thien ');
+  return isNamedDoneStage(stage);
 }
 
-function crmStageOf(item) {
-  return item?.crm_stage || item?.stage || item?._stage || item?.crm_pipeline_stage || null;
+function isPhatSinhStage(stage) {
+  return foldVi(stage?.name).includes('phat sinh');
 }
 
-/** Hạn lắp đã xong: VC Hoàn thành, bảo hành/CSKH, hoặc CRM đã qua cột Lắp đặt. */
+/**
+ * Hạn lắp tắt khi đang đứng ở cột đã tích Tắt hạn,
+ * hoặc đã đi qua cột đó (cột Lắp đã tích). Cột Phát sinh mở lại hạn.
+ * Việc còn mở không tự tạo thêm hạn.
+ */
 function isInstallDeadlineClosed(item, logisticsStage) {
   if (!item) return true;
-  const st = String(item.status || '');
-  if (st === 'completed' || st === 'warranty') return true;
-  if (logisticsStage?.clears_deadline) return true;
-  if (String(logisticsStage?.dashboard_kpi || '').trim() === 'completed') return true;
-  if (isLogisticsFinalStage(logisticsStage)) return true;
-  return isCrmStagePastInstallation(
-    crmStageOf(item),
-    item.pipeline_stages || item.crm_pipeline_stages || [],
-  );
+  if (!logisticsStage) return false;
+  if (isPhatSinhStage(logisticsStage)) return false;
+  if (logisticsStage.clears_deadline) return true;
+  if (String(logisticsStage.dashboard_kpi || '').trim() === 'completed') return true;
+  const from = item.install_deadline_closes_at_order;
+  const order = logisticsStage.order_index;
+  if (from != null && order != null && Number(order) >= Number(from)) return true;
+  return false;
 }
 
 function companyRef(item) {
@@ -190,8 +200,7 @@ function activeInstallCommitmentRaw(item, nowMs = Date.now()) {
 }
 
 function resolveCrmDeadline(item, stage) {
-  if (!item || item.deadline_disabled_at) return null;
-  if (isCrmTerminalStage(stage)) return null;
+  if (!item) return null;
 
   const task = candidate(item.crm_next_open_task_deadline, 'task', item);
   if (task) return task;
@@ -214,9 +223,10 @@ function resolveCrmDeadline(item, stage) {
 
 function resolveProductionDeadline(item, stage, opts = {}) {
   void opts;
-  if (!item || item.status === 'completed') return null;
-  if (isSxReleasedToInstall(item, stage)) return null;
-  if (shouldIgnoreSxOrderDeliveryOverdue(stage) || isSxPipelineStageNoDeadline(stage)) return null;
+  if (!item) return null;
+  if (item.crm_completed_deadlines_off) return null;
+  const sxStage = stage || sxStageOf(item);
+  if (isSxPipelineStageNoDeadline(sxStage)) return null;
   return candidate(item.sx_kanban_deadline_at, 'sx_kanban', item)
     || candidate(item.production_finish_date, 'production_finish', item)
     || candidate(item.production_deadline, 'production', item)
@@ -225,7 +235,11 @@ function resolveProductionDeadline(item, stage, opts = {}) {
 }
 
 function resolveLogisticsDeadline(item, stage) {
-  if (!item || isInstallDeadlineClosed(item, stage)) return null;
+  if (!item) return null;
+  if (item.crm_completed_deadlines_off) return null;
+  const logisticsStage = stage || item.vc_pipeline_stage || item.logistics_pipeline_stage || null;
+  // Cột lắp đã tích Tắt hạn: ngày lắp và việc còn mở không còn tính quá hạn.
+  if (isInstallDeadlineClosed(item, logisticsStage)) return null;
   if (!isSxReleasedToInstall(item, sxStageOf(item))) return null;
   return candidate(activeInstallCommitmentRaw(item), 'install', item)
     || candidate(item.delivery_date, 'delivery', item)

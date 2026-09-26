@@ -20,6 +20,7 @@ import { isAdminLike, isProductionStaff, isProductionAdmin, isLogisticsAdmin } f
 import { canUserDeleteCrmLeadDeal } from '../lib/crmPipelineDeletePermission';
 import { isDealResponsibleUser } from '../lib/fileOwnership';
 import api from '../lib/api';
+import { clearFormDraft, readFormDraft, useFormDraft } from '../lib/formDraft';
 import { compressImage } from '../lib/compressImage';
 import { consumeCrmLeadDetailPrefetch } from '../lib/crmLeadDetailPrefetch';
 import { getSocket } from '../lib/socket';
@@ -77,6 +78,7 @@ import Modal, { OverlayPortal } from '../components/Modal';
 import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
 import LeadKpiLedgerPanel from '../components/LeadKpiLedgerPanel';
 import { CrmLeadCommentsPanel, CrmLeadHistoryPanel } from '../components/CommentsPanels';
+import { useCommentProgressSlash } from '../lib/commentProgressSlash';
 import { CRM_DEAL_COMMENT_QUICK_REPLIES } from '../lib/crmCommentMentions';
 import { TASK_ATTACHMENT_FILE_ACCEPT } from '../lib/attachmentFileIcon';
 import DriveAttachments from '../components/drive/DriveAttachments';
@@ -343,6 +345,33 @@ export default function LeadDetail() {
   const [crmTasks, setCrmTasks] = useState([]);
   const [stagesLead, setStagesLead] = useState([]);
   const [stagesDeal, setStagesDeal] = useState([]);
+  const leadProject = lead?.project || null;
+  const progressModules = ['crm'];
+  if (lead?.project_id && (leadProject?.company_id || lead?.company_id)) progressModules.push('sx');
+  if (lead?.project_id && (leadProject?.logistics_company_id || leadProject?.company_id || lead?.company_id)) {
+    progressModules.push('vc');
+  }
+  const { commands: progressSlashCmds, run: runProgressSlash } = useCommentProgressSlash({
+    enabled: !!lead?.id,
+    modules: progressModules,
+    projectId: lead?.project_id || null,
+    leadId: lead?.id || null,
+    companyId: leadProject?.company_id || lead?.company_id || null,
+    workshopTypeId: leadProject?.workshop_type_id || lead?.workshop_type_id || null,
+    logisticsCompanyId: leadProject?.logistics_company_id || null,
+    pipelineId: lead?.pipeline_id || null,
+    leadType: lead?.type || 'deal',
+    crmStageId: lead?.stage_id || null,
+    sxStageId: leadProject?.sx_kanban_column_id || lead?.sx_pipeline_stage_id || lead?.sx_pipeline_stage?.id || null,
+    vcStageId: leadProject?.vc_kanban_column_id || lead?.vc_pipeline_stage_id || lead?.vc_pipeline_stage?.id || null,
+    project: leadProject || {
+      id: lead?.project_id,
+      company_id: lead?.company_id,
+      logistics_company_id: lead?.logistics_company_id,
+      vc_temp_staged: lead?.vc_temp_staged,
+      vc_kanban_column_id: lead?.vc_kanban_column_id,
+    },
+  });
   /** Các giai đoạn deal đã từng vào — stepper tích ✓ theo lịch sử (không chỉ order_index). */
   const [visitedStageIds, setVisitedStageIds] = useState(() => new Set());
   const [headerLeadTypes, setHeaderLeadTypes] = useState([]);
@@ -4047,14 +4076,14 @@ export default function LeadDetail() {
         <div className="lg:col-span-3 space-y-4 min-w-0">
           {/* Tab Switcher */}
           <div className="bg-white rounded-xl border" data-tour="lead-detail-tabs">
-            <div className="flex border-b">
+            <div className="flex flex-wrap gap-1 p-2 border-b bg-slate-50/80">
               <button
                 type="button"
                 data-tour="lead-tab-tasks"
                 onClick={() => setActiveTab('tasks')}
-                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium whitespace-nowrap transition-colors hover:bg-white ${
                   activeTab === 'tasks'
-                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    ? 'bg-white text-blue-700 shadow-sm ring-1 ring-blue-200'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
                 title="Nhiệm vụ CRM (pipeline deal / lead)"
@@ -4065,9 +4094,9 @@ export default function LeadDetail() {
                 type="button"
                 data-tour="lead-tab-shared"
                 onClick={() => setActiveTab('shared-workspace')}
-                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium whitespace-nowrap transition-colors hover:bg-white ${
                   activeTab === 'shared-workspace'
-                    ? 'text-indigo-600 border-b-2 border-indigo-600'
+                    ? 'bg-white text-indigo-700 shadow-sm ring-1 ring-indigo-200'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
                 title="Phân công thành viên deal và nhiệm vụ giao chéo công ty"
@@ -4076,80 +4105,20 @@ export default function LeadDetail() {
               </button>
               <button
                 type="button"
-                data-tour="lead-tab-orders"
-                onClick={() => setActiveTab('purchase_orders')}
-                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
-                  activeTab === 'purchase_orders'
-                    ? 'text-amber-700 border-b-2 border-amber-500'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-                title="Lệnh đặt hàng của deal — lọc theo trạng thái"
-              >
-                🛒 Đặt hàng
-                {dealPurchaseOrders.length > 0 && (
-                  <span className={`absolute top-1 right-1.5 min-w-[1.15rem] h-[1.15rem] px-1 rounded-full text-[10px] font-bold leading-none flex items-center justify-center ${
-                    activeTab === 'purchase_orders' ? 'bg-amber-500 text-white' : 'bg-amber-100 text-amber-800'
-                  }`}>
-                    {dealPurchaseOrders.length}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
                 data-tour="lead-tab-documents"
                 onClick={() => setActiveTab('documents')}
-                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium whitespace-nowrap transition-colors hover:bg-white ${
                   activeTab === 'documents'
-                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    ? 'bg-white text-blue-700 shadow-sm ring-1 ring-blue-200'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
                 📋 Tài liệu
                 {documentsTabTotal > 0 && (
-                  <span className={`absolute top-1 right-1.5 min-w-[1.15rem] h-[1.15rem] px-1 rounded-full text-[10px] font-bold leading-none flex items-center justify-center ${
+                  <span className={`min-w-[1.15rem] h-[1.15rem] px-1 rounded-full text-[10px] font-bold leading-none flex items-center justify-center ${
                     activeTab === 'documents' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'
                   }`}>
                     {documentsTabTotal}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                data-tour="lead-tab-drive"
-                onClick={() => setActiveTab('drive')}
-                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
-                  activeTab === 'drive'
-                    ? 'text-blue-600 border-b-2 border-blue-600'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-                title="File trên Google Drive đã gắn vào lead/deal này"
-              >
-                ☁️ Drive
-                {driveFileCount > 0 && (
-                  <span className={`absolute top-1 right-1.5 min-w-[1.15rem] h-[1.15rem] px-1 rounded-full text-[10px] font-bold leading-none flex items-center justify-center ${
-                    activeTab === 'drive' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'
-                  }`}>
-                    {driveFileCount}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                data-tour="lead-tab-notes"
-                onClick={() => setActiveTab('notes')}
-                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
-                  activeTab === 'notes'
-                    ? 'text-blue-600 border-b-2 border-blue-600'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-                title="Ghi chú và lịch sử hoạt động"
-              >
-                📝 Ghi chú & HĐ
-                {activities.length > 0 && (
-                  <span className={`absolute top-1 right-1.5 min-w-[1.15rem] h-[1.15rem] px-1 rounded-full text-[10px] font-bold leading-none flex items-center justify-center ${
-                    activeTab === 'notes' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'
-                  }`}>
-                    {activities.length}
                   </span>
                 )}
               </button>
@@ -4158,9 +4127,9 @@ export default function LeadDetail() {
                 type="button"
                 data-tour="lead-tab-facebook"
                 onClick={() => setActiveTab('facebook')}
-                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium whitespace-nowrap transition-colors hover:bg-white ${
                   activeTab === 'facebook'
-                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    ? 'bg-white text-blue-700 shadow-sm ring-1 ring-blue-200'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
@@ -4172,9 +4141,9 @@ export default function LeadDetail() {
                 type="button"
                 data-tour="lead-tab-zalo"
                 onClick={() => setActiveTab('zalo')}
-                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium whitespace-nowrap transition-colors hover:bg-white ${
                   activeTab === 'zalo'
-                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    ? 'bg-white text-blue-700 shadow-sm ring-1 ring-blue-200'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
@@ -4185,13 +4154,14 @@ export default function LeadDetail() {
                 type="button"
                 data-tour="lead-tab-team"
                 onClick={() => setActiveTab('team')}
-                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium whitespace-nowrap transition-colors hover:bg-white ${
                   activeTab === 'team'
-                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    ? 'bg-white text-blue-700 shadow-sm ring-1 ring-blue-200'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
-                <span className="inline-flex flex-col items-center gap-0.5">
+                <span className="inline-flex items-center gap-1.5">
+                  <span>👥 Thành viên</span>
                   {(memberModuleCounts.crm > 0 || memberModuleCounts.production > 0 || memberModuleCounts.logistics > 0) && (
                     <span className="inline-flex items-center gap-0.5" title="Số thành viên theo khối CRM / SX / VC">
                       <span className="min-w-[1.15rem] h-[1.15rem] px-1 rounded text-[10px] font-bold leading-[1.15rem] text-center bg-blue-100 text-blue-700" title={`CRM: ${memberModuleCounts.crm}`}>
@@ -4205,22 +4175,21 @@ export default function LeadDetail() {
                       </span>
                     </span>
                   )}
-                  <span>👥 Thành viên</span>
                 </span>
               </button>
               <button
                 type="button"
                 data-tour="lead-tab-comments"
                 onClick={() => setActiveTab('comments')}
-                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium whitespace-nowrap transition-colors hover:bg-white ${
                   activeTab === 'comments'
-                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    ? 'bg-white text-blue-700 shadow-sm ring-1 ring-blue-200'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
                 💬 Bình luận
                 {commentCount > 0 && (
-                  <span className={`absolute top-1 right-1.5 min-w-[1.15rem] h-[1.15rem] px-1 rounded-full text-[10px] font-bold leading-none flex items-center justify-center ${
+                  <span className={`min-w-[1.15rem] h-[1.15rem] px-1 rounded-full text-[10px] font-bold leading-none flex items-center justify-center ${
                     activeTab === 'comments' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'
                   }`}>
                     {commentCount}
@@ -4231,9 +4200,9 @@ export default function LeadDetail() {
                 type="button"
                 data-tour="lead-tab-history"
                 onClick={() => setActiveTab('history')}
-                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium whitespace-nowrap transition-colors hover:bg-white ${
                   activeTab === 'history'
-                    ? 'text-blue-600 border-b-2 border-blue-600'
+                    ? 'bg-white text-blue-700 shadow-sm ring-1 ring-blue-200'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
@@ -4243,9 +4212,9 @@ export default function LeadDetail() {
                 type="button"
                 data-tour="lead-tab-voice"
                 onClick={() => setActiveTab('voice_crm')}
-                className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all inline-flex items-center justify-center gap-1 ${
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium whitespace-nowrap transition-colors hover:bg-white ${
                   activeTab === 'voice_crm'
-                    ? 'text-violet-600 border-b-2 border-violet-600'
+                    ? 'bg-white text-violet-700 shadow-sm ring-1 ring-violet-200'
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
@@ -4257,9 +4226,9 @@ export default function LeadDetail() {
                   type="button"
                   data-tour="lead-tab-scores"
                   onClick={() => setActiveTab('deal_scores')}
-                  className={`relative flex-1 py-3 px-4 text-sm font-medium transition-all ${
+                  className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium whitespace-nowrap transition-colors hover:bg-white ${
                     activeTab === 'deal_scores'
-                      ? 'text-blue-600 border-b-2 border-blue-600'
+                      ? 'bg-white text-blue-700 shadow-sm ring-1 ring-blue-200'
                       : 'text-gray-600 hover:text-gray-900'
                   }`}
                   title="Chỉ hiện sau khi deal ở cột Hoàn thành"
@@ -4267,6 +4236,66 @@ export default function LeadDetail() {
                   ⭐ Điểm chéo & KH
                 </button>
               )}
+              <button
+                type="button"
+                data-tour="lead-tab-orders"
+                onClick={() => setActiveTab('purchase_orders')}
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium whitespace-nowrap transition-colors hover:bg-white ${
+                  activeTab === 'purchase_orders'
+                    ? 'bg-white text-amber-800 shadow-sm ring-1 ring-amber-200'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+                title="Lệnh đặt hàng của deal — lọc theo trạng thái"
+              >
+                🛒 Đặt hàng
+                {dealPurchaseOrders.length > 0 && (
+                  <span className={`min-w-[1.15rem] h-[1.15rem] px-1 rounded-full text-[10px] font-bold leading-none flex items-center justify-center ${
+                    activeTab === 'purchase_orders' ? 'bg-amber-500 text-white' : 'bg-amber-100 text-amber-800'
+                  }`}>
+                    {dealPurchaseOrders.length}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                data-tour="lead-tab-drive"
+                onClick={() => setActiveTab('drive')}
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium whitespace-nowrap transition-colors hover:bg-white ${
+                  activeTab === 'drive'
+                    ? 'bg-white text-blue-700 shadow-sm ring-1 ring-blue-200'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+                title="File trên Google Drive đã gắn vào lead/deal này"
+              >
+                ☁️ Drive
+                {driveFileCount > 0 && (
+                  <span className={`min-w-[1.15rem] h-[1.15rem] px-1 rounded-full text-[10px] font-bold leading-none flex items-center justify-center ${
+                    activeTab === 'drive' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    {driveFileCount}
+                  </span>
+                )}
+              </button>
+              <button
+                type="button"
+                data-tour="lead-tab-notes"
+                onClick={() => setActiveTab('notes')}
+                className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium whitespace-nowrap transition-colors hover:bg-white ${
+                  activeTab === 'notes'
+                    ? 'bg-white text-blue-700 shadow-sm ring-1 ring-blue-200'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+                title="Ghi chú và lịch sử hoạt động"
+              >
+                📝 Ghi chú & HĐ
+                {activities.length > 0 && (
+                  <span className={`min-w-[1.15rem] h-[1.15rem] px-1 rounded-full text-[10px] font-bold leading-none flex items-center justify-center ${
+                    activeTab === 'notes' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'
+                  }`}>
+                    {activities.length}
+                  </span>
+                )}
+              </button>
             </div>
 
             {/* Tab Content */}
@@ -5025,6 +5054,11 @@ export default function LeadDetail() {
                     leadId={id}
                     onCountChange={setCommentCount}
                     quickReplyTemplates={lead?.type === 'deal' ? CRM_DEAL_COMMENT_QUICK_REPLIES : []}
+                    slashCommands={progressSlashCmds}
+                    onSlashCommand={async (cmd) => {
+                      const res = await runProgressSlash(cmd);
+                      if (res?.ok) loadRef.current?.({ silent: true });
+                    }}
                   />
                 </div>
               ) : activeTab === 'history' ? (
@@ -6303,22 +6337,32 @@ function DocumentRow({ doc, onDelete, onOpenImage, readOnlyWorkshop = false, can
 }
 
 function AddActivityModal({ leadId, onClose, onSave }) {
-  const [form, setForm] = useState({ type: 'call', title: '', description: '', outcome: '', duration_minutes: '' });
+  const draftKey = `qlcv-form-draft:activity:${leadId || 'new'}`;
+  const saved = useMemo(() => readFormDraft(draftKey), [draftKey]);
+  const [form, setForm] = useState(() => ({
+    type: 'call', title: '', description: '', outcome: '', duration_minutes: '',
+    ...(saved?.form || {}),
+  }));
   const [saving, setSaving] = useState(false);
+  useFormDraft(draftKey, { form });
 
   const save = async () => {
     if (!form.title) return alert('Nhập tiêu đề');
     setSaving(true);
     try {
       await api.post(`/crm/leads/${leadId}/activities`, form);
+      clearFormDraft(draftKey);
       onSave();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
     setSaving(false);
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-md p-6">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onMouseDown={(e) => { if (!saving && e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-white rounded-2xl w-full max-w-md p-6" onMouseDown={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold">Thêm hoạt động</h2>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded"><X className="h-5 w-5" /></button>
@@ -6353,9 +6397,12 @@ function AddActivityModal({ leadId, onClose, onSave }) {
 }
 
 function AddDocumentModal({ onClose, onSave }) {
-  const [name, setName] = useState('');
-  const [docType, setDocType] = useState('requirement');
-  const [notes, setNotes] = useState('');
+  const draftKey = 'qlcv-form-draft:lead-document';
+  const saved = useMemo(() => readFormDraft(draftKey), [draftKey]);
+  const [name, setName] = useState(() => saved?.name || '');
+  const [docType, setDocType] = useState(() => saved?.docType || 'requirement');
+  const [notes, setNotes] = useState(() => saved?.notes || '');
+  useFormDraft(draftKey, { name, docType, notes });
   const [companies, setCompanies] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [allowedCompanies, setAllowedCompanies] = useState([]);
@@ -6383,8 +6430,11 @@ function AddDocumentModal({ onClose, onSave }) {
   const hasRestriction = allowedCompanies.length > 0 || allowedDepts.length > 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-white rounded-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onMouseDown={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-bold">📝 Thêm tài liệu văn bản</h2>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded cursor-pointer"><X className="h-5 w-5" /></button>
@@ -6464,6 +6514,7 @@ function AddDocumentModal({ onClose, onSave }) {
             onClick={() => {
               if (!name.trim()) return alert('Nhập tên tài liệu');
               if (!notes.trim()) return alert('Nhập nội dung');
+              clearFormDraft(draftKey);
               onSave(name, docType, notes, allowedDepts.length > 0 ? allowedDepts : null, allowedCompanies.length > 0 ? allowedCompanies : null);
             }}
             className="flex-1 h-9 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium cursor-pointer"
@@ -7384,10 +7435,6 @@ function LeadInfoPanel({
           type="date" />
       )}
 
-      {/* Deadline thẻ (kanban_deadline_at) — ẩn khi deal đã Thắng hoặc user tắt hạn */}
-      {!lead?.stage?.is_won
-        && !lead?.stage?.counts_as_completed_revenue
-        && !lead?.deadline_disabled_at && (
       <div className="rounded-lg border border-rose-200 bg-rose-50/50 p-2.5 my-1.5">
         <div className="flex items-start gap-2">
           <span className="text-sm mt-0.5">⏰</span>
@@ -7465,13 +7512,9 @@ function LeadInfoPanel({
           </div>
         )}
       </div>
-      )}
 
-      {!lead?.stage?.is_won && !lead?.stage?.counts_as_completed_revenue && (
-        <CrmLeadDeadlineOverview lead={lead} onChanged={onUpdate} />
-      )}
+      <CrmLeadDeadlineOverview lead={lead} onChanged={onUpdate} />
 
-      {!lead?.stage?.is_won && !lead?.stage?.counts_as_completed_revenue && (
       <CrmDeadlineModal
         open={deadlineModalOpen}
         title={lead?.kanban_deadline_at ? 'Sửa hạn đang hiện trên thẻ' : 'Đặt deadline thẻ'}
@@ -7489,7 +7532,6 @@ function LeadInfoPanel({
         onClose={() => { if (!deadlineBusy) setDeadlineModalOpen(false); }}
         onConfirm={saveKanbanDeadline}
       />
-      )}
 
       {lead?.lost_reason && (
         <div className="flex items-start gap-2 py-1.5 px-1">

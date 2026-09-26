@@ -6,8 +6,6 @@
 import { companyWorkEndMsFromRaw, vnYmdFromTs } from './companyDeadlineClock';
 import { effectivePipelineStageSlaDays } from './crmPipelineSla';
 import { endOfVnCalendarDayAfterEntered } from './vnDate';
-import { isCrmStagePastInstallation } from './crmDealStageGate';
-
 export const DEADLINE_MODULE = Object.freeze({
   CRM: 'crm',
   PRODUCTION: 'production',
@@ -104,13 +102,7 @@ function isSxReleasedToInstall(item, sxStage) {
 }
 
 function sxDone(stage) {
-  if (!stage) return false;
-  if (stage.clears_deadline || stage.counts_as_completed_revenue || stage.counts_as_collected_revenue) return true;
-  const slug = String(stage.bucket_slug || stage.slug || '').toLowerCase();
-  const name = foldVi(stage.name);
-  return ['delivered', 'delivery_done', 'completed', 'done'].includes(slug)
-    || name.includes('da giao')
-    || name.includes('giao xong');
+  return !!stage?.clears_deadline || !!stage?.is_handover_to_logistics;
 }
 
 function sxShipped(item) {
@@ -119,22 +111,14 @@ function sxShipped(item) {
 }
 
 function logisticsDone(item, stage) {
-  if (item?.status === 'completed' || item?.status === 'warranty') return true;
-  if (stage?.clears_deadline) return true;
-  if (String(stage?.dashboard_kpi || '').trim() === 'completed') return true;
-  const slug = String(stage?.bucket_slug || stage?.slug || '').toLowerCase();
-  const name = foldVi(stage?.name);
-  if (['completed', 'done', 'install_completed'].includes(slug)
-    || name === 'hoan thanh'
-    || name === 'hoan thien'
-    || name.startsWith('hoan thanh ')
-    || name.startsWith('hoan thien ')) {
-    return true;
-  }
-  return isCrmStagePastInstallation(
-    item?.crm_stage || item?.stage || item?._stage,
-    item?.pipeline_stages || item?.crm_pipeline_stages || [],
-  );
+  if (!stage) return false;
+  const name = foldVi(stage.name);
+  if (name.includes('phat sinh')) return false;
+  if (stage.clears_deadline) return true;
+  if (String(stage.dashboard_kpi || '').trim() === 'completed') return true;
+  const from = item?.install_deadline_closes_at_order;
+  if (from != null && stage.order_index != null && Number(stage.order_index) >= Number(from)) return true;
+  return false;
 }
 
 function fromBackend(item, moduleKey) {
@@ -155,7 +139,7 @@ export function resolveEffectiveModuleDeadline(moduleKey, item, stage = null) {
   const key = String(moduleKey || '').toLowerCase();
 
   if (key === DEADLINE_MODULE.CRM) {
-    if (!item || item.deadline_disabled_at || crmTerminal(stage)) {
+    if (!item) {
       return { raw: null, source: null, deadlineTs: null, deadlineAt: null };
     }
     const direct = result(item.crm_next_open_task_deadline, 'task', item)
@@ -176,8 +160,11 @@ export function resolveEffectiveModuleDeadline(moduleKey, item, stage = null) {
   }
 
   if (key === DEADLINE_MODULE.PRODUCTION) {
-    if (!item || item.status === 'completed' || isSxReleasedToInstall(item, stage)
-      || stage?.sla_days === 0 || stage?.sla_days === '0') {
+    if (!item) {
+      return { raw: null, source: null, deadlineTs: null, deadlineAt: null };
+    }
+    const sxStage = stage || sxStageOf(item);
+    if (sxDone(sxStage)) {
       return { raw: null, source: null, deadlineTs: null, deadlineAt: null };
     }
     return result(item.sx_kanban_deadline_at, 'sx_kanban', item)
@@ -189,7 +176,8 @@ export function resolveEffectiveModuleDeadline(moduleKey, item, stage = null) {
   }
 
   if (key === DEADLINE_MODULE.LOGISTICS) {
-    if (!item || logisticsDone(item, stage) || !isSxReleasedToInstall(item, sxStageOf(item))) {
+    const logisticsStage = stage || item?.vc_pipeline_stage || item?.logistics_pipeline_stage || null;
+    if (!item || logisticsDone(item, logisticsStage) || !isSxReleasedToInstall(item, sxStageOf(item))) {
       return { raw: null, source: null, deadlineTs: null, deadlineAt: null };
     }
     return result(activeInstallCommitmentRaw(item), 'install', item)

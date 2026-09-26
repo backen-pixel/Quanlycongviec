@@ -1,5 +1,22 @@
 # Nhật ký công việc AI
 
+## 2026-09-26 — Codex: cập nhật PR #2 theo main, phục hồi durable, đóng lỗi review
+
+- Phạm vi: Messenger attribution; main `a458a192`, head gốc `78c1ffa3`. Ghép 15 commit main; giải quyết hai conflict docs, giữ nguyên thay đổi khác. Phục hồi gói durable bằng manifest/ghép ba chiều; không dùng commit snapshot.
+- File chính: helpers `facebookMessengerCampaignAttribution`, `facebookMessengerReceipts`, `facebookWebhookSignature`, `facebookContactActivity`; route `facebook.js`, `server.js`; migrations 591/636 (kế thừa), 637/638 (gói phục hồi), **639 mới**; 6 file test; tài liệu review và API hai endpoint.
+- Sửa lỗi: timestamp không hợp lệ, lỗi ghi bị nuốt, signed replay/evidence, SQL same-day và tie, capability version gate, quyền sửa tin đã xác thực, queue health/số đếm sai không biến thành zero. Không sửa các migration lịch sử.
+- Test: 4 bộ Node PASS; SQL queue/mappings 39 + verified/role/trigger 49 = **88 assertion PASS** trên PGlite 0.3.14/PostgreSQL 17.5; JS syntax và diff CRLF PASS.
+- Mốc: mã sẵn sàng review; chưa merge/deploy/migration thật. Chưa CI/staging/concurrency nhiều kết nối; giữ CRM retry-safety/live-E2E blockers, Ads automation OFF. Google R0 chưa được đặt; CRM browser chưa có phiên đọc hồ sơ khách thật.
+- Hướng dẫn phát hành/rollback: `VPT_MESSENGER_REVIEW_20260926.md`. Rollback bằng tắt cờ/deploy bản ổn định, giữ receipt để điều tra; không xóa dữ liệu hoặc nới quyền.
+
+## 2026-09-24 — VPT durable Messenger attribution (Codex)
+
+- Bổ sung helper receipt, worker và tích hợp webhook/server; mặc định OFF, chữ ký + Page allowlist bắt buộc. Persist trước ACK, lease renewal/reclaim/retry, repair phone/time/message-link khi replay; không lặp CRM create/auto-reply.
+- Migration 637 service-role-only; migration 638 ánh xạ ba ad A/B/control của campaign 120251591865910435. Không bật quảng cáo, không sửa migration lịch sử, không deploy.
+- Reviewer phát hiện CRM tạo lead chưa idempotent; đã giới hạn replay, ghi rõ receipt.done chỉ đảm bảo attribution. API hard-block `crm_linkage_not_retry_safe` và `messenger_live_e2e_not_verified`.
+- Tests đạt: `facebook-messenger-receipts.test.js`, attribution test, lead-chat-scope test, syntax checks; 39 SQL assertions PostgreSQL17.5/PGlite. Chưa thử DB thật/nhiều kết nối/live Messenger. Cấu hình, rollback và KPI gaps ở VPT_MESSENGER_RECEIPTS_RELEASE_20260924.md.
+
+
 ## 2026-09-24 — VPT01: hardening attribution SĐT Messenger trước phát hành
 
 - AI: Codex. Bổ sung an toàn trên nhánh `codex/vpt-messenger-attribution-20260924`; chưa deploy Production.
@@ -16,6 +33,47 @@
 - Đã thêm: `database/591_facebook_messenger_campaign_phone_attribution.sql`, helper attribution Messenger, endpoint `GET /api/facebook/ads/phone-attribution`, mapping 30 ads cho 10 campaign VPT01 và API docs.
 - Test đạt: `node --check` hai file backend; helper timestamp/referral; migration mapping 30 quảng cáo; API-doc generator; `git diff --check`.
 - Cần trước khi chạy lịch: migration 591 + release backend + Meta subscribe `messaging_referrals` + thử tin nhắn thật có SĐT để xác minh số được gắn vào campaign. Sau đó lịch giờ/00:00 mới được bật, fail-closed khi CRM hoặc Meta không đọc được dữ liệu.
+
+## 2026-09-25 16:20 — Deadline SX: Quá hạn theo tắt hạn
+
+- AI: Cursor. Thẻ ở cột tắt hạn vẫn bị đếm Quá hạn vì bucket tin hạn giao và stamp server. KPI và tiêu đề cột lấy tổng đó nên lệch thẻ đang hiện.
+- File: `sxKanbanSummary.js`, `sxPipelineRevenue.js`, `moduleDeadlinePolicy.js`, `ProductionViews.jsx`, `ProductionDashboard.jsx`.
+- Test: `resolveSxDeadlineBucketKey` — TB-2026-493 (Đã giao) = none; TB-2026-920 và TB-2026-934 (hạn thẻ 25/09 17:30) = today. Chưa reload bảng Deadline trên trình duyệt.
+
+## 2026-09-25 13:50 — Đặt xưởng khác: admin Metalla thấy HCB
+
+- AI: Cursor. Modal «Đặt xưởng khác» của admin xưởng bị trống vì danh sách công ty SX khóa đúng một xưởng rồi bị loại khỏi form. Thêm `include_peer_workshops=1` chỉ cho modal này.
+- File: `backend/src/routes/companies.js`, `frontend/src/pages/ProductionDetail.jsx`.
+- Test: `node --check` companies.js. Chưa bấm đặt đơn thật.
+
+## 2026-09-25 09:36 — Bình luận: dòng chuyển trạng thái nổi bật + thông báo
+
+- AI: Cursor. Lệnh `/` chuyển cột ghi dòng tím trong khung Bình luận và thông báo «Đã chuyển trạng thái». Work Unified có hộp hướng dẫn ở đầu tab Bình luận.
+- File: `commentProgressSlash.js`, `CommentsPanels.jsx`, `WorkUnifiedProjectDetailPage.jsx`, `leadComments.js`, `dealCommentNotifications.js`.
+- Test: tab Bình luận dự án TB-2026-493 hiện hộp tím và ô nhập «Gõ / để chuyển trạng thái». Chưa bấm chuyển cột trên deal thật.
+
+## 2026-09-25 00:35 — Tắt deadline khi chuyển tới cột mốc
+
+- AI: Cursor. CRM cột Hoàn thành, SX cột tích VC/LĐ, VC/LĐ cột Xong: tự tắt deadline module đó. Bình luận và lịch sử ghi «Đã tắt deadline do chuyển trạng thái».
+- File: `backend/src/helpers/stageMoveDeadlineOff.js`, `production.js`, `logistics.js`, `leadLifecycle.js`.
+- Test: `node --check` các file trên. Chưa kéo thẻ trên deal thật.
+
+## 2026-09-25 00:20 — Lệnh / hoàn thành theo module, đã giao/đã lắp dùng chung
+
+- AI: Cursor. Cột Hoàn thành CRM/SX/VC chỉ người đúng khối mới thấy. `/Đã giao` và `/Đã lắp` ai cũng có, cả hai chuyển VC/LĐ sang cột lắp (Lắp đặt / Đã lắp / Lắp xong).
+- File: `frontend/src/lib/commentProgressSlash.js`, `frontend/src/pages/ProductionDetail.jsx`.
+- Test: menu `/` trên deal Tố Nga hiện nhóm Dùng chung «Đã giao», «Đã lắp». Deal chưa có dự án nên chưa bấm chuyển cột.
+
+## 2026-09-24 23:30 — Bình luận: / chuyển tiến độ
+
+- AI: Cursor. Gõ `/` trong bình luận hiện cột pipeline. `/Lắp xong`, `/Đã giao` (có dấu cách, không dấu) chuyển cột SX hoặc VC/LĐ và ghi một dòng bình luận.
+- File: `commentProgressSlash.js`, `crmCommentMentions.js`, `crmCommentMentionUi.jsx`, `CommentsPanels.jsx`, `WorkUnifiedProjectDetailPage.jsx`, `ProductionDetail.jsx`, `LeadDetail.jsx`.
+
+## 2026-09-24 14:20 — Hết cảnh báo migration 605 khi mở dự án SX đã xong
+
+- AI: Cursor. PUT trạng thái cột Sản xuất không còn gửi/đọc `logistics_stage_id`. Đồng bộ ngầm «cột xong» không bật `alert`. Thiếu cột 635 báo đúng migration 635.
+- File: `backend/src/routes/production.js`, `frontend/src/pages/ProductionDetail.jsx`, `frontend/src/components/CRMTasksTab.jsx`.
+- Test: `node --check backend/src/routes/production.js`. Chưa deploy lên Render.
 
 ## 2026-09-24 13:10 — Nhiệm vụ và tiến độ dùng chung một tích
 

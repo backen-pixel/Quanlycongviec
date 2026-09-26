@@ -534,7 +534,8 @@ async function attachInstallEventDatesToProjects(projects) {
       : 'project_id, start_time, status',
     key: 'project_id',
     ids,
-    idChunk: 80,
+    // Để khúc theo mặc định (500 id) thay vì 80: 768 dự án từ 10 khúc → 2 khúc, tức 1 đợt
+    // thay vì 3. Cùng lô id này các truy vấn khác trong request vẫn dùng 500 không sao.
     tune: (q) => q.eq('event_type', 'installation').neq('status', 'cancelled'),
   });
   let rows;

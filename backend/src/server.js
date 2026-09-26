@@ -391,6 +391,11 @@ const { invalidateProjectsListOnWrite } = require('./middleware/projectsCacheInv
   '/api/stages',         // routes/stages.js
   '/api/workshop-teams', // routes/workshopTeams.js
   '/api/assistant',      // routes/assistant.js
+  // Tạo/sửa/xoá nhiệm vụ dự án. Thiếu prefix này thì số "việc hôm nay / quá hạn" trên
+  // /management/work-overview và /work-unified đứng yên tới hết TTL sau khi sửa nhiệm vụ.
+  // 8 route ghi ở đây đều là mutation thật, không có endpoint truy vấn tần suất cao nên
+  // thêm vào không làm cache bị xoá liên tục.
+  '/api/work-tasks',     // routes/workTasks.js
 ].forEach((prefix) => app.use(prefix, invalidateProjectsListOnWrite));
 
 // Routes
@@ -1365,6 +1370,13 @@ server.listen(config.port, () => {
     require('./jobs/driveSync').start();
   } catch (e) {
     console.warn('[drive-sync] Failed to start:', e.message);
+  }
+
+  // Opt-in durable Messenger receipts (migrations 637/639 + signed webhook + Page allowlist).
+  try {
+    require('./routes/facebook').startMessengerReceiptWorker();
+  } catch (e) {
+    console.warn('[FB receipts] Failed to start:', e.message);
   }
 
   // Worker STT ghi âm Lead tiềm năng (OpenAI Whisper) — disable: VOICE_STT_CRON_DISABLED=1

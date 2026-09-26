@@ -8,7 +8,7 @@ const { isCrmCompanyAdminUser } = require('../helpers/crmAccessRoles');
 const { isMetallaOrHucabiCompanyIdSync } = require('../helpers/dealParticipantProduction');
 const { responseCache, invalidateTags } = require('../middleware/responseCache');
 const { enforceTenantContext } = require('../middleware/tenantGate');
-const { addTenantFilter, companyInTenantContext, invalidateTenantCache } = require('../helpers/tenantScope');
+const { addTenantFilter, companyInTenantContext, invalidateTenantCache, isPlatformAdmin } = require('../helpers/tenantScope');
 const { checkCompanyLimit } = require('../helpers/tenantLimits');
 const { isSystemAdmin } = require('../helpers/adminRole');
 const { syncHstAdminUserCompanies, attachCompanyToTenantHstAdmins } = require('../helpers/hstAdminCompanies');
@@ -142,16 +142,30 @@ r.get('/', responseCache({ ttl: 120, scope: 'user', tags: ['orgtree'] }), async 
       }
     }
     // Admin CRM theo công ty: CRM khóa 1 công ty.
-    // Admin xưởng Metalla/Hucabi: SX/VC cũng chỉ thấy xưởng mình (không lẫn HCB ↔ Metalla).
+    // Admin xưởng Metalla/Hucabi: SX/VC cũng chỉ thấy xưởng mình (không lẫn HCB ↔ Metalla trên bảng).
+    // include_peer_workshops=1: modal «Đặt xưởng khác» cần thấy xưởng còn lại (Metalla ↔ HCB).
     // Admin CRM (vd. VPT): SX/VC vẫn hiện đủ xưởng trong khối để chọn.
+    const includePeerWorkshops = String(req.query.include_peer_workshops || '') === '1'
+      && (mod === 'production' || mod === 'logistics');
     if (isCrmCompanyAdminUser(req.user)) {
       const only = String(req.user.company_id).trim();
       const ownIsWorkshop = isMetallaOrHucabiCompanyIdSync(only);
       if (mod !== 'production' && mod !== 'logistics') {
         list = list.filter((c) => c && String(c.id) === only);
-      } else if (ownIsWorkshop) {
+      } else if (ownIsWorkshop && !includePeerWorkshops) {
         list = list.filter((c) => c && String(c.id) === only);
       }
+    }
+    // NextGo chỉ thuộc HST riêng. HST Phúc Đạt (default) không hiện công ty NextGo.
+    const NEXTGO_TENANT_ID = 'e37fac98-acd2-4675-84f4-285b65e423b1';
+    const viewerTenant = String(req.user?.tenant_id || '');
+    if (!isPlatformAdmin(req.user) && viewerTenant && viewerTenant !== NEXTGO_TENANT_ID) {
+      list = list.filter((c) => {
+        if (!c) return false;
+        if (String(c.tenant_id || '') === NEXTGO_TENANT_ID) return false;
+        const label = `${c.name || ''} ${c.short_name || ''}`.toLowerCase();
+        return !label.includes('nextgo');
+      });
     }
     res.json({ companies: list });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }

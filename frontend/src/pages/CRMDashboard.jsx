@@ -26,6 +26,7 @@ import KanbanCardOptionsMenu from '../components/KanbanCardOptionsMenu';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import EmployeePicker from '../components/EmployeePicker';
 import NewDealModal from '../components/NewDealModal';
+import { clearFormDraft, readFormDraft, useFormDraft } from '../lib/formDraft';
 import {
   loadCrmPipelineSnapshot,
   saveCrmPipelineSnapshot,
@@ -66,6 +67,7 @@ import {
   normalizeCrmFilterCompanies,
   resolvePipelineForCompanyRegion,
   setStoredCrmFilterCompanyId,
+  omitNextGoOutsideOwnTenant,
   sortCrmCompaniesForAdminFilter,
 } from '../lib/crmCompanyFilter';
 import { isCrmCompanyAdmin } from '../lib/crmAdminScope';
@@ -1270,6 +1272,8 @@ export default function CRMDashboard() {
   const [filterCustomerCompany, setFilterCustomerCompany] = useState(() => P?.filterCustomerCompany ?? '');
   const [crmReferrers, setCrmReferrers] = useState([]);
   const companyFilterFromLsRef = useRef(false);
+  /** Admin hệ thống tự chọn công ty trong ô lọc — không kéo về Phúc Đạt. */
+  const crmCompanyChosenByUserRef = useRef(false);
   const leadTypeFilterFromLsRef = useRef(false);
   const [filterPhone, setFilterPhone] = useState(() => {
     if (snapshotHasProperty(P, 'filterPhone')) {
@@ -2187,8 +2191,8 @@ export default function CRMDashboard() {
 
   /** Sắp xếp dropdown công ty — Phúc Đạt / VPT trước, Metalla/NextGo cuối. */
   const companiesForFilter = useMemo(
-    () => sortCrmCompaniesForAdminFilter(companies),
-    [companies],
+    () => sortCrmCompaniesForAdminFilter(omitNextGoOutsideOwnTenant(companies, user)),
+    [companies, user],
   );
 
   /**
@@ -2505,11 +2509,18 @@ export default function CRMDashboard() {
   useEffect(() => {
     if (deferFilterPruneRef.current) return;
     if (!isAdmin || isCompanyScopedAdmin || !companies?.length) return;
-    const stillValid = filterCompany
-      && companies.some((c) => String(c.id) === String(filterCompany));
+    if (crmCompanyChosenByUserRef.current) return;
+    const hit = companies.find((c) => String(c.id) === String(filterCompany));
+    // Admin hệ thống không có company_id. Phiên cũ hay kẹt Metalla/NextGo (không phải CRM).
+    const stuckOnWorkshop = !!(hit && isLikelyEmptyCrmLeadCompany(hit));
+    const stillValid = filterCompany && hit && !stuckOnWorkshop;
     if (stillValid || !defaultCrmCompanyId) return;
-    setFilterCompany(defaultCrmCompanyId);
-    setStoredCrmFilterCompanyId(defaultCrmCompanyId);
+    const next = stuckOnWorkshop
+      ? (findDefaultAdminCrmCompanyPhucDat(companies) || defaultCrmCompanyId)
+      : defaultCrmCompanyId;
+    if (!next || String(next) === String(filterCompany)) return;
+    setFilterCompany(String(next));
+    setStoredCrmFilterCompanyId(String(next));
   }, [isAdmin, isCompanyScopedAdmin, filterCompany, companies, defaultCrmCompanyId]);
 
   // Reset stage filter if it doesn't exist in current company pipeline stages
@@ -4775,7 +4786,17 @@ export default function CRMDashboard() {
     if (snapshotHasProperty(snap, 'filterAssignee')) setFilterAssignee(snap.filterAssignee ?? '');
     if (snapshotHasProperty(snap, 'assigneeListSearch')) setAssigneeListSearch(snap.assigneeListSearch ?? '');
     if (snapshotHasProperty(snap, 'filterAssigneeName')) setFilterAssigneeName(snap.filterAssigneeName ?? '');
-    if (snapshotHasProperty(snap, 'filterCompany')) setFilterCompany(snap.filterCompany ?? '');
+    if (snapshotHasProperty(snap, 'filterCompany')) {
+      let nextId = snap.filterCompany ?? '';
+      if (isAdmin && !isCompanyScopedAdmin && companies.length) {
+        const hit = companies.find((c) => String(c.id) === String(nextId));
+        if (!nextId || (hit && isLikelyEmptyCrmLeadCompany(hit))) {
+          nextId = findDefaultAdminCrmCompanyPhucDat(companies) || '';
+        }
+      }
+      setFilterCompany(nextId);
+      if (nextId) setStoredCrmFilterCompanyId(nextId);
+    }
     if (snapshotHasProperty(snap, 'filterSource')) setFilterSource(snap.filterSource ?? '');
     if (snapshotHasProperty(snap, 'filterStage')) setFilterStage(snap.filterStage ?? '');
     if (snapshotHasProperty(snap, 'filterRegion')) setFilterRegion(snap.filterRegion ?? '');
@@ -4819,6 +4840,9 @@ export default function CRMDashboard() {
     users.length,
     employeeFilterListByRegion.length,
     companyRegions.length,
+    companies,
+    isAdmin,
+    isCompanyScopedAdmin,
   ]);
 
   // ── Computed: nguồn thông minh - non-FB giữ nguyên, FB → [FB] Tên Page ──
@@ -8473,6 +8497,7 @@ export default function CRMDashboard() {
                       <select
                         value={filterCompany}
                         onChange={(e) => {
+                          crmCompanyChosenByUserRef.current = true;
                           const v = e.target.value;
                           patchCrmFilters({
                             filterCompany: v,
@@ -12204,7 +12229,9 @@ function KanbanView({
 // New Lead Modal - Auto create customer
 function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultCompanyId, currentUser }) {
   const isAdmin = isAdminLike(currentUser);
-  const [formData, setFormData] = useState({
+  const draftKey = `qlcv-form-draft:new-lead:${currentUser?.id || 'me'}`;
+  const savedDraft = useMemo(() => readFormDraft(draftKey), [draftKey]);
+  const [formData, setFormData] = useState(() => ({
     title: '',
     customer_name: '',
     customer_phone: '',
@@ -12217,12 +12244,14 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
     estimated_value: 0,
     probability: 50,
     assigned_to: currentUser?.id || '',
-  });
+    ...(savedDraft?.formData && typeof savedDraft.formData === 'object' ? savedDraft.formData : {}),
+  }));
   const [saving, setSaving] = useState(false);
   const [modalSources, setModalSources] = useState([]);
   const [modalRegions, setModalRegions] = useState([]);
   const [referrers, setReferrers] = useState([]);
-  const [referrerPick, setReferrerPick] = useState('');
+  const [referrerPick, setReferrerPick] = useState(() => savedDraft?.referrerPick || '');
+  useFormDraft(draftKey, { formData, referrerPick });
 
   const visibleLeadTypes = useMemo(() => {
     const cid = String(formData.company_id || '');
@@ -12314,19 +12343,19 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
 
   // Reset lead_type when company changes
   useEffect(() => {
-    if (!formData.lead_type_id) return;
+    if (!formData.lead_type_id || !visibleLeadTypes.length) return;
     const ok = visibleLeadTypes.some((t) => String(t.id) === String(formData.lead_type_id));
     if (!ok) setFormData((prev) => ({ ...prev, lead_type_id: '' }));
   }, [formData.company_id, visibleLeadTypes, formData.lead_type_id]);
 
   useEffect(() => {
-    if (!formData.source_id) return;
+    if (!formData.source_id || !modalSources.length) return;
     const ok = modalSources.some((s) => String(s.id) === String(formData.source_id));
     if (!ok) setFormData((prev) => ({ ...prev, source_id: '' }));
   }, [modalSources, formData.source_id]);
 
   useEffect(() => {
-    if (!formData.region_id) return;
+    if (!formData.region_id || !modalRegions.length) return;
     const ok = modalRegions.some((r) => String(r.id) === String(formData.region_id));
     if (!ok) setFormData((prev) => ({ ...prev, region_id: '' }));
   }, [modalRegions, formData.region_id]);
@@ -12372,6 +12401,7 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
         probability: parseInt(formData.probability) || 50,
         referrer_name: resolvedReferrerName || null,
       });
+      clearFormDraft(draftKey);
       onSuccess?.();
       onClose();
     } catch (e) {
@@ -12389,10 +12419,17 @@ function NewLeadModal({ onClose, onSuccess, leadTypes, companies, type, defaultC
 
   // Portal ra body — tránh bị Sidebar (z-30) đè vì modal nằm trong cột main (z-10)
   return createPortal(
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[10050] p-4">
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[10050] p-4"
+      onMouseDown={(e) => {
+        if (saving || e.target !== e.currentTarget) return;
+        onClose();
+      }}
+    >
       <div
         data-tour="new-lead-modal"
         className="bg-white rounded-2xl w-full max-w-4xl shadow-2xl flex overflow-hidden max-h-[92vh]"
+        onMouseDown={(e) => e.stopPropagation()}
       >
 
         {/* ── LEFT: Form ── */}

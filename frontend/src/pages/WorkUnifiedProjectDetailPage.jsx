@@ -29,7 +29,9 @@ import UnifiedTaskRow from '../components/UnifiedTaskRow';
 import UnifiedTaskHistoryTimeline from '../components/UnifiedTaskHistoryTimeline';
 import WorkTaskExtrasPanel from '../components/WorkTaskExtrasPanel';
 import ProjectSharedWorkspaceTab from '../components/ProjectSharedWorkspaceTab';
+import ProjectSummaryReportTab from '../components/ProjectSummaryReportTab';
 import CommentSlashTaskForm from '../components/CommentSlashTaskForm';
+import { useCommentProgressSlash } from '../lib/commentProgressSlash';
 import CostExcelUpload from '../components/CostExcelUpload';
 import { LeadMembersTab } from '../components/LeadChatTabs';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
@@ -65,6 +67,7 @@ const COMMENT_SLASH_COMMANDS = [
     emoji: '✅',
     keywords: 'cong viec task viec',
     hint: 'Tạo ngay tại đây — giao cho thành viên deal',
+    groupLabel: 'Tạo nhanh',
   },
   {
     id: 'phat_sinh',
@@ -72,6 +75,7 @@ const COMMENT_SLASH_COMMANDS = [
     emoji: '⚠️',
     keywords: 'phat sinh loi su co',
     hint: 'Tạo ngay tại đây — chọn loại phát sinh và người chịu trách nhiệm',
+    groupLabel: 'Tạo nhanh',
   },
 ];
 
@@ -84,6 +88,7 @@ const SECONDARY_TABS = [
   { key: 'acceptance', label: 'Nghiệm thu' },
   { key: 'chat', label: 'Bình luận' },
   { key: 'history', label: 'Lịch sử' },
+  { key: 'tongket', label: 'Tổng kết' },
 ];
 /** Chỉ hiện khi dự án có deal CRM gắn kèm (cần leadId để tải thành viên). */
 const TEAM_TAB = { key: 'team', label: 'Thành viên' };
@@ -2513,6 +2518,30 @@ function WorkUnifiedProjectDetailInner() {
 
   // Lệnh «/» trong ô bình luận: null = đóng, 'task' | 'phat_sinh' = đang mở form tạo.
   const [slashTaskKind, setSlashTaskKind] = useState(null);
+  const progressProject = bundle?.project || null;
+  const progressLeadId = pickPrimarySxCrmDeal(bundle?.leads)?.id
+    || bundle?.primary_lead?.id
+    || bundle?.lead_id
+    || null;
+  const progressFlow = (bundle?.overview?.flow || []).find((s) => s.status === 'current');
+  const progressOwnerKey = progressFlow?.module === 'production' ? 'sx' : progressFlow?.module === 'logistics' ? 'vc' : 'crm';
+  const progressOwnerId = bundle?.overview?.owners?.[progressOwnerKey]?.id
+    || bundle?.overview?.owners?.vc?.id
+    || bundle?.overview?.owners?.sx?.id
+    || null;
+  const { commands: progressSlashCmds, run: runProgressSlash } = useCommentProgressSlash({
+    enabled: !!progressProject?.id,
+    modules: ['sx', 'vc'],
+    projectId: progressProject?.id || null,
+    leadId: progressLeadId,
+    companyId: progressProject?.company_id || progressProject?.company?.id || null,
+    workshopTypeId: progressProject?.workshop_type_id || progressProject?.workshop_type?.id || null,
+    logisticsCompanyId: progressProject?.logistics_company_id || progressProject?.logistics_company?.id || null,
+    sxStageId: progressProject?.sx_kanban_column_id || null,
+    vcStageId: progressProject?.vc_kanban_column_id || null,
+    project: progressProject,
+    responsibleUserId: progressOwnerId,
+  });
 
   const selectTab = (key) => {
     setActiveTab(key);
@@ -2795,6 +2824,7 @@ function WorkUnifiedProjectDetailInner() {
         />
       )}
       {activeTab === 'tasks' && <TasksTab projectId={id} initialGroup={groupFromUrl} />}
+      {activeTab === 'tongket' && <ProjectSummaryReportTab projectId={id} />}
       {activeTab === 'shared' && (
         <ProjectSharedWorkspaceTab
           projectId={id}
@@ -2834,13 +2864,29 @@ function WorkUnifiedProjectDetailInner() {
             </button>
             {' '}(Ghi chú &amp; file) — nếu đẩy hết vào đây, tiến trình Sales trên công việc sẽ mất.
           </div>
+          <div className="mx-4 mb-1 rounded-lg border-2 border-violet-400 bg-violet-50 px-3 py-2.5 text-[13px] leading-relaxed text-violet-950 shadow-sm">
+            <p className="font-bold">Gõ / trong bình luận</p>
+            <p className="mt-0.5">
+              <span className="font-semibold">/Công việc</span> tạo việc · <span className="font-semibold">/Phát sinh</span> ghi phát sinh · <span className="font-semibold">/Đã giao</span> chuyển cột đã giao.
+            </p>
+            <p className="mt-1 font-semibold">
+              Người phụ trách phải gõ <span className="font-mono">/Lắp xong</span> để hoàn thành dự án. Cả nhóm thấy dòng tím và nhận thông báo.
+            </p>
+          </div>
           {effectiveLeadId ? (
             <CrmLeadCommentsPanel
               leadId={effectiveLeadId}
               forModule="projects"
               onCountChange={setCommentCount}
-              slashCommands={COMMENT_SLASH_COMMANDS}
-              onSlashCommand={(cmd) => setSlashTaskKind(cmd.id === 'phat_sinh' ? 'phat_sinh' : 'task')}
+              slashCommands={[...COMMENT_SLASH_COMMANDS, ...progressSlashCmds]}
+              onSlashCommand={async (cmd) => {
+                if (cmd?.kind === 'stage') {
+                  const res = await runProgressSlash(cmd);
+                  if (res?.ok) load({ silent: true, noCache: true });
+                  return;
+                }
+                setSlashTaskKind(cmd.id === 'phat_sinh' ? 'phat_sinh' : 'task');
+              }}
               slashFormSlot={slashTaskKind ? (
                 <CommentSlashTaskForm
                   leadId={effectiveLeadId}

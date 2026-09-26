@@ -9,8 +9,6 @@ import {
   DEADLINE_MODULE,
   resolveEffectiveModuleDeadline,
 } from '../lib/moduleDeadlinePolicy';
-import { isVcPipelineStageNoDeadline } from '../lib/vcPipelineKpi';
-
 // ─── List View ───────────────────────────────────────────────────────────────
 export function LogisticsListView({ pipeline, calculateDays }) {
   const navigate = useNavigate();
@@ -226,9 +224,8 @@ function isoOnVcDateKey(ymd, sourceIso) {
   return `${ymd}T${hm}:00+07:00`;
 }
 
-function shouldHideVcDeadlineCard(item, stage) {
-  if (item?.status === 'completed') return true;
-  return isVcPipelineStageNoDeadline(stage);
+function shouldHideVcDeadlineCard() {
+  return false;
 }
 
 const VC_CAL_MODES = [

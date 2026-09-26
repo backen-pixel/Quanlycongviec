@@ -1048,6 +1048,24 @@ r.get('/latest-comments', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── TỔNG KẾT VÒNG ĐỜI DỰ ÁN ──
+// Phục vụ tab "Tổng kết" ở chi tiết dự án: mốc, giai đoạn, nhiệm vụ, thao tác, phát sinh.
+r.get('/:id/tong-ket', async (req, res) => {
+  try {
+    if (!(await assertProjectAccessible(req, res, req.params.id))) return;
+    const { buildProjectSummaryReport } = require('../helpers/projectSummaryReport');
+    const result = await buildProjectSummaryReport(req.params.id);
+    if (!result?.ok) {
+      return res.status(result?.statusCode || 500).json({ error: result?.error || 'Lỗi tải tổng kết dự án' });
+    }
+    const { ok: _ok, ...payload } = result;
+    res.json(payload);
+  } catch (e) {
+    console.error('[projects/:id/tong-ket]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải tổng kết dự án' });
+  }
+});
+
 // ─── GET PROJECT DETAIL ──
 // Không requirePermission('projects','view'): tab đơn/nhiệm vụ trên deal cần tải project — chỉ cần auth.
 r.get('/:id', async (req, res) => {

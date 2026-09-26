@@ -1,18 +1,76 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-24 (UTC+7)
+Cập nhật: 2026-09-26 (UTC+7)
 
-## VPT01 — ghi nhận SĐT Messenger theo chiến dịch quảng cáo
+## VPT01 — CRM attribution PR #2 sẵn sàng review mã
 
-Trạng thái: **nhánh `codex/vpt-messenger-attribution-20260924` đã có tracking gốc (`b955e58b`) và bản vá an toàn bổ sung; chưa triển khai Production.**
+Đã ghép `main` tại `a458a192` (15 commit), phục hồi gói durable còn thiếu và sửa các lỗi phát hiện khi review. Chưa merge hoặc triển khai Production.
 
-Tracking gốc dùng migration 591: `messaging_referrals` → `ad_id` → campaign, timestamp sự kiện, SĐT phát hiện trực tiếp từ tin nhắn vào và báo cáo theo ngày. Bản vá kế tiếp dùng migration 636 (không sửa lịch sử 591): khóa quyền trực tiếp vào bảng/RPC attribution, giới hạn referral cùng Page/cùng ngày Việt Nam và trước SĐT, đồng thời cho phép admin loại trừ đúng một tin E2E qua `POST /api/facebook/ads/phone-attribution/test-exclusions`.
+Webhook nhận có chữ ký trước khi ghi receipt/ACK, xử lý lại sau lỗi, lưu phone/time cùng tin nhắn; migration 637/638 cho queue/mapping và **639** cho bằng chứng xác thực, quyền bảo vệ dữ liệu, referral cùng ngày VN và loại tie mơ hồ. API kiểm tra phiên bản schema; lỗi/thiếu dữ liệu không bị coi là 0 khách. Dữ liệu cũ không tự chuyển thành đã xác thực.
 
-Chính sách báo cáo ngày: chỉ ghi nhận SĐT khi cùng contact có referral mapped trong **cùng ngày `Asia/Ho_Chi_Minh`**, cùng Page và referral xảy ra trước hoặc đúng lúc tin SĐT. Khoảng truy vấn là `[00:00, 00:00 ngày kế tiếp)`, nên vẫn gồm cả `23:59:59.999`. Khách quay lại tự nhiên hoặc referral qua 00:00 không được gán vào campaign; đó là lựa chọn thận trọng cho quy tắc chi tiêu hằng ngày, không tuyên bố attribution đa ngày chính xác.
+Kiểm thử offline đạt: 4 bộ Node (attribution, receipt/handler, API report, Page/tenant scope); **88 kiểm tra SQL** (39 queue/mapping + 49 verified report/ACL/trigger) trên PGlite 0.3.14 / PostgreSQL 17.5. Cú pháp JS và diff đạt. Chưa có CI GitHub, staging hoặc nhiều kết nối PostgreSQL thật.
 
-Webhook Facebook nay có thể xác thực `X-Hub-Signature-256` nếu cấu hình `FB_APP_SECRET`; không có biến này, Messenger cũ vẫn nhận để tránh gián đoạn nhưng `attribution_ready=false`. Dù có secret, `automation_ready=false` vì webhook hiện ACK trước khi xử lý và chưa có hàng đợi/receipt bền vững. **Không bật lịch dừng 50.000đ hoặc mở lại 00:00 cho đến khi delivery durable được triển khai và kiểm thử.**
+`automation_ready=false`, `crm_acceptance_verified=false`; giữ blocker `crm_linkage_not_retry_safe` và `messenger_live_e2e_not_verified`. Luồng legacy tạo/liên kết lead chưa được nghiệm thu giao dịch xuyên suốt; không bật quảng cáo/automation từ số đếm này. **Google R0 chưa có bằng chứng khách thật.**
 
-Để phát hành tracking an toàn: chạy 591 rồi 636, deploy backend, cấu hình `FB_APP_SECRET`, đăng ký `messaging_referrals`, dùng tài khoản Messenger mới bấm từ một quảng cáo và gửi SĐT test. Xác minh API trả đúng campaign; loại trừ tin E2E trước khi dùng báo cáo ngày. Không deploy Production trực tiếp theo quy định repo.
+File thay đổi, lệnh test, migration theo đúng tên, rollback và các điều kiện còn mở: [VPT_MESSENGER_REVIEW_20260926.md](./VPT_MESSENGER_REVIEW_20260926.md).
+
+## Deadline SX — Quá hạn khớp cột và KPI
+
+Trạng thái: **FE+BE local, chưa push.**
+
+Cột đã «Tắt hạn» hoặc bàn giao VC không còn vào bucket Quá hạn (server summary + trang bucket, và client). KPI «Quá hạn» và số trên cột Deadline đếm cùng các thẻ đang hiện, không lấy tổng server đã gắn cứng bucket.
+
+Hoàn tác: revert `sxKanbanSummary.js`, `sxPipelineRevenue.js`, `moduleDeadlinePolicy.js`, `ProductionViews.jsx`, `ProductionDashboard.jsx`.
+
+## Đặt xưởng khác — admin Metalla/HCB thấy xưởng kia
+
+## Đặt xưởng khác — admin Metalla/HCB thấy xưởng kia
+
+Trạng thái: **FE+BE local.**
+
+Admin công ty xưởng (Toại / Metalla) mở «Đặt xưởng khác» bị trống vì `GET /companies?for_module=production` chỉ trả xưởng của họ, rồi giao diện loại đúng xưởng dự án nguồn. Modal gọi thêm `include_peer_workshops=1` để thấy HCB (và xưởng SX khác). Bảng Kanban vẫn chỉ một xưởng.
+
+Hoàn tác: revert `companies.js`, `ProductionDetail.jsx`.
+
+## Bình luận — dòng chuyển trạng thái nổi bật
+
+Trạng thái: **FE+BE local.**
+
+Gõ `/` chuyển cột ghi dòng tím «➡️ Đã chuyển trạng thái …» ngay trong khung Bình luận và gửi thông báo «Đã chuyển trạng thái» cho thành viên. Đầu tab Bình luận (Work Unified) có hộp tím hướng dẫn lệnh `/`.
+
+Hoàn tác: revert `commentProgressSlash.js`, `CommentsPanels.jsx`, `WorkUnifiedProjectDetailPage.jsx`, `leadComments.js`, `dealCommentNotifications.js`.
+
+## Tắt deadline khi vào cột mốc
+
+Trạng thái: **BE local.**
+
+CRM vào cột Hoàn thành: tắt deadline CRM (`deadline_disabled_at`). Sản xuất vào cột tích VC/LĐ: xóa hạn SX. VC/LĐ vào cột Xong/Hoàn thành: ghi nhận tắt hạn lắp. Cả ba ghi dòng bình luận và dòng lịch sử «Đã tắt deadline do chuyển trạng thái».
+
+## Bình luận — lệnh `/` theo module
+
+## Bình luận — lệnh `/` theo module
+
+Trạng thái: **FE local.**
+
+Lệnh cột «Hoàn thành» (hoặc cột thắng) chỉ hiện với người thuộc đúng khối: CRM / Sản xuất / VC-LĐ. Admin hệ thống vẫn thấy đủ. `/Đã giao` và `/Đã lắp` ai cũng thấy, cả hai chuyển cột VC/LĐ «đã lắp» (cột tên Lắp đặt / Lắp xong nếu chưa có cột Đã lắp). Deal chưa có dự án thì báo, không chuyển im lặng.
+
+## Bình luận — gõ `/` để chuyển tiến độ
+
+Trạng thái: **FE local.**
+
+Ô bình luận (Work Unified, chi tiết SX/VC, chi tiết CRM): gõ `/` rồi tên cột, ví dụ `/Lắp xong`, `/Đã giao`. Chọn cột là chuyển Kanban đúng module và ghi dòng «Đã chuyển tiến độ …». Cột đang đứng, bàn giao VC, đổi phân loại, nhiệm vụ chặn, cột bắt hạn: không chuyển im lặng.
+
+Hoàn tác: revert `commentProgressSlash.js`, `crmCommentMentions.js`, `crmCommentMentionUi.jsx`, `CommentsPanels.jsx`, `WorkUnifiedProjectDetailPage.jsx`, `ProductionDetail.jsx`, `LeadDetail.jsx`.
+
+## Cảnh báo «Chưa chạy migration 605» khi mở dự án SX đã xong việc
+
+Trạng thái: **FE+BE local, chưa deploy.**
+
+Mở tab Công việc của dự án đã xong hết việc thì hệ thống tự ghi «cột xong». Câu ghi luôn gửi `logistics_stage_id` (cột của migration 635). Database live chưa có cột đó nên PostgREST báo schema cache, API trả nhầm «Chưa chạy migration 605», và hộp thoại hiện lên.
+
+Sửa: ghi/đọc Sản xuất không đụng `logistics_stage_id`. Chỉ pipeline logistics mới ghi cột đó. Đồng bộ ngầm không bật hộp thoại; bấm tích tay vẫn báo lỗi thật. VC/LĐ vẫn cần chạy SQL 635 thì tích mới lưu được.
+
+Hoàn tác: revert `production.js`, `ProductionDetail.jsx`, `CRMTasksTab.jsx`.
 
 ## Nhiệm vụ và tiến độ — một tích cho cả hai bên
 

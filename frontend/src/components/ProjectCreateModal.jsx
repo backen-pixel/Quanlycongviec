@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { clearFormDraft, readFormDraft, useFormDraft } from '../lib/formDraft';
 import api from '../lib/api';
 import Modal from './Modal';
 import { FileUploadButton, FilePreview } from './FileUpload';
@@ -8,7 +9,10 @@ import {
 } from 'lucide-react';
 
 export default function ProjectCreateModal({ open, onClose, onCreated }) {
-  const [form, setForm] = useState({});
+  const draftKey = 'qlcv-form-draft:project-create';
+  const saved = useMemo(() => readFormDraft(draftKey), [draftKey]);
+  const [form, setForm] = useState(() => saved?.form || { name: '', description: '', customer_id: '', install_address: '', estimated_value: '', priority: 'medium' });
+  useFormDraft(draftKey, { form });
   const [customers, setCustomers] = useState([]);
   const [flows, setFlows] = useState([]);
   const [selectedFlow, setSelectedFlow] = useState(null);
@@ -24,7 +28,6 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
 
   useEffect(() => {
     if (!open) return;
-    setForm({ name: '', description: '', customer_id: '', install_address: '', estimated_value: '', priority: 'medium' });
     setSelectedFlow(null);
     setFlowDetail(null);
     setQuotationFiles([]);
@@ -117,6 +120,7 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
         quotation_files: quotationFiles,
       };
       await api.post('/projects/create-with-flow', payload);
+      clearFormDraft(draftKey);
       onCreated?.();
       onClose();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi tạo dự án'); }

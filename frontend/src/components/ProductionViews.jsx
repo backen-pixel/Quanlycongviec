@@ -13,7 +13,7 @@ import { CommentBubbleContextMenu } from './ImageCopyContextMenu';
 import { publicFileUrl as pubUrl, downloadUploadFile } from '../lib/publicFileUrl';
 import { FilePreview, FileUploadButton } from './FileUpload';
 import { HIDE_PRODUCTION_DEAL_VALUES } from '../lib/hideProductionDealValues';
-import { shouldHideSxKanbanDeadlineOnCard, resolveSxDeadlineBucket } from '../lib/sxPipelineRevenue';
+import { resolveSxDeadlineBucket } from '../lib/sxPipelineRevenue';
 import { companyDeadlineIsoFromYmd } from '../lib/companyDeadlineClock';
 import { formatStaffDisplayName, getStaffInitials } from '../lib/utils';
 import { resolveSxProjectLeadId, resolveSxProjectLeadIdAsync } from '../lib/sxProjectComments';
@@ -760,7 +760,7 @@ function DeadlineBucketColumn({
   const busyRef = useRef(false);
   const itemsLen = items.length;
   const serverN = Number(serverTotal);
-  const displayTotal = Number.isFinite(serverN) ? Math.max(serverN, itemsLen) : itemsLen;
+  const displayTotal = itemsLen;
   const hasMoreLocal = visibleCount < itemsLen;
   const hasMoreServer = Number.isFinite(serverN) && itemsLen < serverN;
   const columnLoading = Boolean(loadingMore && hasMoreServer);
@@ -1325,9 +1325,6 @@ export function ProductionDeadlineView({
     SX_DEADLINE_BUCKETS.forEach((b) => { out[b.key] = []; });
     pipeline.forEach((s) => {
       s.items.forEach((item) => {
-        const serverBucket = String(item._deadline_bucket || item.deadline_bucket || '').trim();
-        // Đã giao/hoàn thành ẩn hạn — trừ khi server đang đếm đúng bucket Quá hạn.
-        if (shouldHideSxKanbanDeadlineOnCard(item, s) && serverBucket !== 'overdue') return;
         let { bucket, ts, source } = resolveSxDeadlineBucket(item, todayMs, s);
         const ovr = localOverride[String(item.id)];
         if (ovr) {

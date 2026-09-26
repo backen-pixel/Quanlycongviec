@@ -8,6 +8,7 @@ const {
   isReferralEligibleForDailyPhone,
   buildPhoneAttributionReadiness,
   saveMessengerAdAttribution,
+  messengerEventOccurredAt,
 } = require('../src/helpers/facebookMessengerCampaignAttribution');
 const { vnDateStartIso, vnNextDateStartIso } = require('../src/helpers/facebookContactActivity');
 const {
@@ -51,7 +52,7 @@ const noDataButMapped = buildPhoneAttributionReadiness({
   mappedCampaignIds: ['c1', 'c2'],
   appSecretConfigured: true,
 });
-assert.equal(noDataButMapped.trackingReady, true, 'zero phones is distinct from an unavailable report');
+assert.equal(noDataButMapped.trackingReady, false, 'mapping alone cannot prove complete signed delivery');
 assert.equal(noDataButMapped.automationReady, false);
 assert.deepEqual(noDataButMapped.missingCampaignMappingIds, []);
 assert(noDataButMapped.blockingReasons.includes('webhook_delivery_not_durable'));
@@ -72,9 +73,19 @@ assert.equal(missingMap.trackingReady, false);
 assert.equal(missingMap.automationReady, false);
 assert.deepEqual(missingMap.missingCampaignMappingIds, ['c2']);
 
+const queueOnly = buildPhoneAttributionReadiness({
+  campaignIds: ['c1'], mappedCampaignIds: ['c1'],
+  appSecretConfigured: true, durableWebhookDelivery: true,
+});
+assert.equal(queueOnly.automationReady, false);
+assert.equal(queueOnly.trackingReady, true, 'complete signed delivery may report a legitimate zero');
+assert(queueOnly.blockingReasons.includes('messenger_live_e2e_not_verified'));
+assert(queueOnly.blockingReasons.includes('crm_linkage_not_retry_safe'));
+
 const fullyReadyContract = buildPhoneAttributionReadiness({
   campaignIds: ['c1'], mappedCampaignIds: ['c1'],
   appSecretConfigured: true, durableWebhookDelivery: true,
+  liveE2eVerified: true, crmLinkageRetrySafe: true,
 });
 assert.equal(fullyReadyContract.automationReady, true);
 const rawBody = '{"object":"page","entry":[]}';
@@ -124,6 +135,73 @@ async function capturedAttribution(event) {
   return writes[0];
 }
 
+for (const timestamp of [undefined, null, 0, -1, '', 'bad', true, {}, [], [123], 1.5,
+  Number.MAX_SAFE_INTEGER, 1e30, Infinity, '1.2', ' 123 ']) {
+  assert.deepEqual(messengerEventOccurredAt({ timestamp }), { timestampMs: null, occurredAt: null });
+  assert.throws(() => messengerEventOccurredAt({ timestamp }, { strict: true }),
+    /messenger_event_timestamp_invalid/);
+}
+const preciseEventTime = 1790300000123;
+assert.deepEqual(messengerEventOccurredAt({ timestamp: String(preciseEventTime) }, { strict: true }), {
+  timestampMs: preciseEventTime,
+  occurredAt: new Date(preciseEventTime).toISOString(),
+});
+
+async function assertPersistenceFailuresAndTrust() {
+  const writes = [];
+  let mappingError = null;
+  let writeError = null;
+  const supabase = {
+    from(table) {
+      if (table === 'facebook_ad_campaign_mappings') return {
+        select: () => ({ eq: () => ({ eq: () => ({
+          maybeSingle: async () => ({ data: mappingError ? null : { campaign_id: 'c1' }, error: mappingError }),
+        }) }) }),
+      };
+      if (table === 'facebook_messenger_ad_attributions') return {
+        upsert: async (payload, options) => {
+          writes.push({ payload, options });
+          return { error: writeError };
+        },
+      };
+      throw new Error(`unexpected table: ${table}`);
+    },
+  };
+  const args = { supabase, pageId: 'page-1', contactId: 'contact-1',
+    event: { timestamp: preciseEventTime, referral: { ad_id: 'a1', source: 'ADS' } } };
+  assert.equal(await saveMessengerAdAttribution(args), 'c1');
+  assert.equal(Object.hasOwn(writes[0].payload, 'signature_verified'), false,
+    'legacy ingestion neither sets nor downgrades trust');
+  assert.equal(writes[0].options.ignoreDuplicates, true);
+  assert.equal(await saveMessengerAdAttribution({ ...args, strict: true }), 'c1');
+  assert.equal(writes[1].payload.signature_verified, true);
+  assert.equal(writes[1].options.ignoreDuplicates, false, 'signed replay upgrades identical legacy key');
+  mappingError = { message: 'synthetic mapping failure' };
+  await assert.rejects(saveMessengerAdAttribution({ ...args, strict: true }), /messenger_mapping_read_failed/);
+  assert.equal(writes.length, 2, 'mapping failure does not persist a misleading unassigned event');
+  const originalWarn = console.warn;
+  try {
+    console.warn = () => {};
+    assert.equal(await saveMessengerAdAttribution(args), null, 'legacy mapping failure is not reported as success');
+  } finally {
+    console.warn = originalWarn;
+  }
+  mappingError = null;
+  writeError = { message: 'synthetic persistence failure' };
+  await assert.rejects(saveMessengerAdAttribution({ ...args, strict: true }), /messenger_attribution_write_failed/);
+  try {
+    console.warn = () => {};
+    assert.equal(await saveMessengerAdAttribution(args), null, 'legacy write failure is not reported as success');
+  } finally {
+    console.warn = originalWarn;
+  }
+  const beforeInvalid = writes.length;
+  assert.equal(await saveMessengerAdAttribution({ ...args, event: { referral: { ad_id: 'a1' } } }), null);
+  await assert.rejects(saveMessengerAdAttribution({ ...args, strict: true,
+    event: { timestamp: 1e30, referral: { ad_id: 'a1' } } }), /messenger_event_timestamp_invalid/);
+  assert.equal(writes.length, beforeInvalid, 'invalid event time cannot create attribution');
+}
+
 [
   'ALTER TABLE public.facebook_ad_campaign_mappings ENABLE ROW LEVEL SECURITY;',
   'ALTER TABLE public.facebook_messenger_ad_attributions ENABLE ROW LEVEL SECURITY;',
@@ -154,6 +232,7 @@ Promise.all([
     timestamp: 1727190000000,
     postback: { referral: { ad_id: 'nested-postback-ad', source: 'ADS' } },
   }),
+  assertPersistenceFailuresAndTrust(),
 ]).then(([topLevel, nestedPostback]) => {
   assert.equal(topLevel.fb_ad_id, 'top-level-ad');
   assert.equal(nestedPostback.fb_ad_id, 'nested-postback-ad');

@@ -229,6 +229,9 @@ r.post('/leads/:id/comments', async (req, res) => {
 
     const insertRow = { lead_id: leadId, user_id: userId, body, parent_id: parentId };
     if (attachments.length) insertRow.attachments = attachments;
+    if (String(req.body?.comment_type || '') === 'stage_move') {
+      insertRow.comment_type = 'stage_move';
+    }
 
     // Bình luận riêng tư: chỉ người được chọn (+ tác giả, + admin) thấy.
     const rawVisibility = String(req.body?.visibility || '').toLowerCase();
@@ -252,6 +255,7 @@ r.post('/leads/:id/comments', async (req, res) => {
     if (error && (String(error.message || '').includes('metadata') || String(error.message || '').includes('comment_type'))) {
       const fallbackRow = { ...insertRow };
       delete fallbackRow.metadata;
+      if (String(error.message || '').includes('comment_type')) delete fallbackRow.comment_type;
       ({ data, error } = await supabase
         .from('crm_lead_comments')
         .insert(fallbackRow)

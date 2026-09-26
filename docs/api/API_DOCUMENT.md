@@ -2,9 +2,9 @@
 
 Tài liệu **đầy đủ** các HTTP endpoint được khai báo trong Express routes.
 
-- Cập nhật: **2026-09-24**
-- Số mount `/api/*` trong `server.js`: **79**
-- Số endpoint (method + path) quét được: **1533**
+- Cập nhật: **2026-08-20**
+- Số mount `/api/*` trong `server.js`: **74**
+- Số endpoint (method + path) quét được: **1440**
 - Nguồn: `backend/src/server.js` + `backend/src/routes/**/*.js`
 - Regenerate: `node docs/api/generate-api-doc.js`
 
@@ -43,7 +43,6 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 - `/api/companies`
 - `/api/company-processes`
 - `/api/company-templates`
-- `/api/cost-hub`
 - `/api/crm`
 - `/api/crm/assignments`
 - `/api/crm/daily-reports`
@@ -61,7 +60,6 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 - `/api/events`
 - `/api/external`
 - `/api/facebook`
-- `/api/facebook/webhook`
 - `/api/flows`
 - `/api/heartbeat`
 - `/api/integrations/stringee`
@@ -70,7 +68,6 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 - `/api/kpi`
 - `/api/logistics`
 - `/api/management`
-- `/api/management/project-logs`
 - `/api/mcp`
 - `/api/messenger`
 - `/api/permissions`
@@ -80,14 +77,12 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 - `/api/production/backup-sync`
 - `/api/products`
 - `/api/projects`
-- `/api/public`
 - `/api/purchasing`
 - `/api/push`
 - `/api/release-notes`
 - `/api/saas`
 - `/api/saas/payment`
 - `/api/settings`
-- `/api/share`
 - `/api/stages`
 - `/api/tasks`
 - `/api/teams`
@@ -109,18 +104,6 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 ---
 
 ## 3. Toàn bộ endpoints theo prefix
-
-### `/api/?` (7)
-
-| Method | Path đầy đủ | File |
-|---|---|---|
-| GET | `/api/?/` | `projectConstructionLogs.js` |
-| GET | `/api/?/:token` | `shareLinks.js` |
-| PATCH | `/api/?/:token` | `shareLinks.js` |
-| POST | `/api/?/:token/revoke` | `shareLinks.js` |
-| POST | `/api/?/comment-images` | `shareLinks.js` |
-| GET | `/api/?/share/:token` | `publicShare.js` |
-| GET | `/api/?/share/:token/file/:index` | `publicShare.js` |
 
 ### `/api/accounting` (20)
 
@@ -433,49 +416,13 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | GET | `/api/company-templates/units/:unitId/template-sets` | `companyTemplates.js` |
 | POST | `/api/company-templates/units/:unitId/template-sets` | `companyTemplates.js` |
 
-### `/api/cost-hub` (31)
-
-| Method | Path đầy đủ | File |
-|---|---|---|
-| POST | `/api/cost-hub/backfill` | `costHub.js` |
-| POST | `/api/cost-hub/categories` | `costHub.js` |
-| PUT | `/api/cost-hub/categories/:id` | `costHub.js` |
-| GET | `/api/cost-hub/diagnostics` | `costHub.js` |
-| GET | `/api/cost-hub/entries` | `costHub.js` |
-| POST | `/api/cost-hub/entries` | `costHub.js` |
-| POST | `/api/cost-hub/entries/:id/void` | `costHub.js` |
-| GET | `/api/cost-hub/excel` | `costHub.js` |
-| POST | `/api/cost-hub/excel` | `costHub.js` |
-| GET | `/api/cost-hub/export` | `costHub.js` |
-| POST | `/api/cost-hub/formulas` | `costHub.js` |
-| PUT | `/api/cost-hub/formulas/:id` | `costHub.js` |
-| POST | `/api/cost-hub/preview-formula` | `costHub.js` |
-| POST | `/api/cost-hub/preview-formula-run` | `costHub.js` |
-| GET | `/api/cost-hub/projects` | `costHub.js` |
-| GET | `/api/cost-hub/projects/:id/summary` | `costHub.js` |
-| GET | `/api/cost-hub/setup` | `costHub.js` |
-| PUT | `/api/cost-hub/sources/:id` | `costHub.js` |
-| GET | `/api/cost-hub/type-usage` | `costHub.js` |
-| POST | `/api/cost-hub/types` | `costHub.js` |
-| DELETE | `/api/cost-hub/types/:id` | `costHub.js` |
-| PUT | `/api/cost-hub/types/:id` | `costHub.js` |
-| PUT | `/api/cost-hub/types/:id/templates` | `costHub.js` |
-| GET | `/api/cost-hub/work-items` | `costHub.js` |
-| DELETE | `/api/cost-hub/work-items/:kind/:id` | `costHub.js` |
-| PUT | `/api/cost-hub/work-items/:kind/:id` | `costHub.js` |
-| GET | `/api/cost-hub/work-scopes` | `costHub.js` |
-| GET | `/api/cost-hub/work-templates` | `costHub.js` |
-| POST | `/api/cost-hub/work-templates` | `costHub.js` |
-| GET | `/api/cost-hub/work-templates/:kind/:id/items` | `costHub.js` |
-| POST | `/api/cost-hub/work-templates/:kind/:id/items` | `costHub.js` |
-
 ### `/api/crm` (1)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
 | GET | `/api/crm/io` | `crm/shared/helpersBundle.js` |
 
-### `/api/crm/assignments` (30)
+### `/api/crm/assignments` (29)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
@@ -505,7 +452,6 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | GET | `/api/crm/assignments/schedules` | `crmAssignments.js` |
 | DELETE | `/api/crm/assignments/schedules/:sid` | `crmAssignments.js` |
 | POST | `/api/crm/assignments/schedules/:sid/files` | `crmAssignments.js` |
-| GET | `/api/crm/assignments/shared-workspace-report` | `crmAssignments.js` |
 | GET | `/api/crm/assignments/shared-workspace-tasks` | `crmAssignments.js` |
 | GET | `/api/crm/assignments/stats` | `crmAssignments.js` |
 | GET | `/api/crm/assignments/unread-count` | `crmAssignments.js` |
@@ -555,7 +501,7 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | PATCH | `/api/crm/dept-plans/tasks/:id` | `crmDeptPlans.js` |
 | POST | `/api/crm/dept-plans/tasks/import` | `crmDeptPlans.js` |
 
-### `/api/crm/executive` (257)
+### `/api/crm/executive` (243)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
@@ -576,7 +522,6 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | PATCH | `/api/crm/executive/company-regions/:id` | `crm` |
 | POST | `/api/crm/executive/company-regions/:id/regeocode` | `crm` |
 | GET | `/api/crm/executive/contract-signed-revenue` | `crm` |
-| GET | `/api/crm/executive/cost-types` | `crm` |
 | GET | `/api/crm/executive/customers` | `crm` |
 | POST | `/api/crm/executive/customers` | `crm` |
 | GET | `/api/crm/executive/customers-overview` | `crm` |
@@ -593,11 +538,6 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | GET | `/api/crm/executive/deals/spawn-source-ids` | `crm` |
 | PUT | `/api/crm/executive/documents/:docId/visibility` | `crm` |
 | GET | `/api/crm/executive/employees-by-company` | `crm` |
-| GET | `/api/crm/executive/error-types` | `crm` |
-| POST | `/api/crm/executive/error-types` | `crm` |
-| DELETE | `/api/crm/executive/error-types/:id` | `crm` |
-| PUT | `/api/crm/executive/error-types/:id` | `crm` |
-| PUT | `/api/crm/executive/error-types/:id/staff` | `crm` |
 | GET | `/api/crm/executive/filter-summary` | `crm` |
 | DELETE | `/api/crm/executive/followup-care/dismiss` | `crm` |
 | POST | `/api/crm/executive/followup-care/dismiss` | `crm` |
@@ -619,7 +559,6 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | GET | `/api/crm/executive/kanban-bootstrap` | `crm` |
 | GET | `/api/crm/executive/kanban-rows` | `crm` |
 | POST | `/api/crm/executive/kanban-stage-pages` | `crm` |
-| POST | `/api/crm/executive/kpi-ledger-total` | `crm` |
 | GET | `/api/crm/executive/lead-care-marks` | `crm` |
 | DELETE | `/api/crm/executive/lead-comments/:cid` | `crm` |
 | PATCH | `/api/crm/executive/lead-comments/:cid` | `crm` |
@@ -670,7 +609,6 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | POST | `/api/crm/executive/leads/:id/documents` | `crm` |
 | DELETE | `/api/crm/executive/leads/:id/documents/:docId` | `crm` |
 | POST | `/api/crm/executive/leads/:id/documents/bulk` | `crm` |
-| GET | `/api/crm/executive/leads/:id/inbox-links` | `crm` |
 | DELETE | `/api/crm/executive/leads/:id/interacted` | `crm` |
 | POST | `/api/crm/executive/leads/:id/interacted` | `crm` |
 | GET | `/api/crm/executive/leads/:id/members` | `crm` |
@@ -721,7 +659,6 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | POST | `/api/crm/executive/leads/merge-selected` | `crm` |
 | GET | `/api/crm/executive/leads/picker` | `crm` |
 | GET | `/api/crm/executive/leads/scan-duplicates` | `crm` |
-| GET | `/api/crm/executive/leads/search-suggest` | `crm` |
 | GET | `/api/crm/executive/leads/stage-counts` | `crm` |
 | POST | `/api/crm/executive/leads/stage-history-summary` | `crm` |
 | GET | `/api/crm/executive/ledger-net-by-leads` | `crm` |
@@ -734,10 +671,6 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | PUT | `/api/crm/executive/orders/:id` | `crm` |
 | POST | `/api/crm/executive/orders/:id/create-invoice` | `crm` |
 | GET | `/api/crm/executive/orders/:id/pdf` | `crm` |
-| GET | `/api/crm/executive/phat-sinh-kinds` | `crm` |
-| POST | `/api/crm/executive/phat-sinh-kinds` | `crm` |
-| DELETE | `/api/crm/executive/phat-sinh-kinds/:id` | `crm` |
-| PUT | `/api/crm/executive/phat-sinh-kinds/:id` | `crm` |
 | GET | `/api/crm/executive/pipeline-stages` | `crm` |
 | POST | `/api/crm/executive/pipeline-stages` | `crm` |
 | PUT | `/api/crm/executive/pipeline-stages-reorder` | `crm` |
@@ -804,7 +737,6 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | POST | `/api/crm/executive/task-templates` | `crm` |
 | DELETE | `/api/crm/executive/task-templates/:id` | `crm` |
 | PUT | `/api/crm/executive/task-templates/:id` | `crm` |
-| PUT | `/api/crm/executive/task-templates/:id/cost-excel-types` | `crm` |
 | POST | `/api/crm/executive/task-templates/:tplId/items` | `crm` |
 | DELETE | `/api/crm/executive/task-templates/:tplId/items/:itemId` | `crm` |
 | PUT | `/api/crm/executive/task-templates/:tplId/items/:itemId` | `crm` |
@@ -830,7 +762,7 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | GET | `/api/customers/:id/interactions` | `customers.js` |
 | POST | `/api/customers/:id/interactions` | `customers.js` |
 
-### `/api/dashboard` (35)
+### `/api/dashboard` (24)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
@@ -855,17 +787,6 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | GET | `/api/dashboard/notifications/mutes` | `dashboard.js` |
 | PUT | `/api/dashboard/notifications/read-all` | `dashboard.js` |
 | GET | `/api/dashboard/overview` | `dashboard.js` |
-| GET | `/api/dashboard/project-deadlines` | `dashboard.js` |
-| GET | `/api/dashboard/project-deadlines/config` | `dashboard.js` |
-| PUT | `/api/dashboard/project-deadlines/config` | `dashboard.js` |
-| GET | `/api/dashboard/project-deadlines/configs` | `dashboard.js` |
-| POST | `/api/dashboard/project-deadlines/configs` | `dashboard.js` |
-| DELETE | `/api/dashboard/project-deadlines/configs/:id` | `dashboard.js` |
-| PUT | `/api/dashboard/project-deadlines/configs/:id` | `dashboard.js` |
-| POST | `/api/dashboard/project-deadlines/configs/:id/send` | `dashboard.js` |
-| POST | `/api/dashboard/project-deadlines/configs/:id/test` | `dashboard.js` |
-| POST | `/api/dashboard/project-deadlines/run` | `dashboard.js` |
-| PUT | `/api/dashboard/project-deadlines/settings` | `dashboard.js` |
 | GET | `/api/dashboard/team` | `dashboard.js` |
 | GET | `/api/dashboard/timeline` | `dashboard.js` |
 | GET | `/api/dashboard/workload` | `dashboard.js` |
@@ -1023,7 +944,7 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | GET | `/api/ecosystem/units/:unitId/users` | `ecosystem.js` |
 | POST | `/api/ecosystem/units/members` | `ecosystem.js` |
 
-### `/api/events` (17)
+### `/api/events` (16)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
@@ -1042,10 +963,9 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | DELETE | `/api/events/event-types/:id` | `events.js` |
 | PUT | `/api/events/event-types/:id` | `events.js` |
 | GET | `/api/events/map` | `events.js` |
-| GET | `/api/events/module-owners` | `events.js` |
 | GET | `/api/events/overview` | `events.js` |
 
-### `/api/external` (15)
+### `/api/external` (13)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
@@ -1057,15 +977,13 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | POST | `/api/external/oauth/token` | `external.js` |
 | GET | `/api/external/ping` | `external.js` |
 | GET | `/api/external/pipelines` | `external.js` |
-| GET | `/api/external/project-deadlines` | `external.js` |
-| POST | `/api/external/project-deadlines/run` | `external.js` |
 | GET | `/api/external/regions` | `external.js` |
 | GET | `/api/external/source-categories` | `external.js` |
 | GET | `/api/external/sources` | `external.js` |
 | GET | `/api/external/stages` | `external.js` |
 | GET | `/api/external/users` | `external.js` |
 
-### `/api/facebook` (87)
+### `/api/facebook` (86)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
@@ -1131,7 +1049,6 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | POST | `/api/facebook/lead-scan/run` | `facebook.js` |
 | GET | `/api/facebook/leads/:leadId/messages` | `facebook.js` |
 | POST | `/api/facebook/migrate` | `facebook.js` |
-| GET | `/api/facebook/page-new-senders` | `facebook.js` |
 | GET | `/api/facebook/page-sources` | `facebook.js` |
 | GET | `/api/facebook/pages` | `facebook.js` |
 | POST | `/api/facebook/pages` | `facebook.js` |
@@ -1331,22 +1248,14 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | DELETE | `/api/logistics/trash/:id` | `logistics.js` |
 | POST | `/api/logistics/trash/:id/restore` | `logistics.js` |
 
-### `/api/management` (12)
+### `/api/management` (4)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
 | GET | `/api/management/by-project/:projectId` | `management.js` |
-| GET | `/api/management/crm-overview` | `management.js` |
 | GET | `/api/management/deals` | `management.js` |
 | GET | `/api/management/deals/:leadId` | `management.js` |
 | GET | `/api/management/overview` | `management.js` |
-| GET | `/api/management/production-overview` | `management.js` |
-| GET | `/api/management/production-overview/:projectId` | `management.js` |
-| GET | `/api/management/purchasing-overview` | `management.js` |
-| GET | `/api/management/work-overview` | `management.js` |
-| GET | `/api/management/work-unified` | `management.js` |
-| POST | `/api/management/work-unified/remind-progress` | `management.js` |
-| GET | `/api/management/work-unified/search` | `management.js` |
 
 ### `/api/mcp` (9)
 
@@ -1465,12 +1374,11 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | DELETE | `/api/procurement/suppliers/:id` | `procurement.js` |
 | PUT | `/api/procurement/suppliers/:id` | `procurement.js` |
 
-### `/api/production` (60)
+### `/api/production` (55)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
 | GET | `/api/production/client-companies` | `production.js` |
-| GET | `/api/production/cost-types` | `production.js` |
 | GET | `/api/production/dashboard` | `production.js` |
 | GET | `/api/production/deadline-bucket-page` | `production.js` |
 | GET | `/api/production/external-companies` | `production.js` |
@@ -1512,14 +1420,10 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | PATCH | `/api/production/projects/:projectId/incidents/:incidentId` | `production.js` |
 | GET | `/api/production/schedule-config` | `production.js` |
 | PUT | `/api/production/schedule-config` | `production.js` |
-| GET | `/api/production/substage-status` | `production.js` |
-| PUT | `/api/production/substage-status` | `production.js` |
 | GET | `/api/production/task-templates` | `production.js` |
 | POST | `/api/production/task-templates` | `production.js` |
 | DELETE | `/api/production/task-templates/:id` | `production.js` |
 | PUT | `/api/production/task-templates/:id` | `production.js` |
-| PUT | `/api/production/task-templates/:id/cost-excel-types` | `production.js` |
-| PUT | `/api/production/task-templates/:tplId/gia-von` | `production.js` |
 | POST | `/api/production/task-templates/:tplId/items` | `production.js` |
 | DELETE | `/api/production/task-templates/:tplId/items/:itemId` | `production.js` |
 | PUT | `/api/production/task-templates/:tplId/items/:itemId` | `production.js` |
@@ -1583,7 +1487,7 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | GET | `/api/products/export` | `products.js` |
 | POST | `/api/products/import` | `products.js` |
 
-### `/api/projects` (54)
+### `/api/projects` (49)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
@@ -1604,9 +1508,6 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | PUT | `/api/projects/:id/comments/:commentId/reaction` | `projects.js` |
 | PATCH | `/api/projects/:id/comments/read` | `projects.js` |
 | GET | `/api/projects/:id/comments/read-receipts` | `projects.js` |
-| GET | `/api/projects/:id/cost-excel` | `projects.js` |
-| POST | `/api/projects/:id/cost-excel` | `projects.js` |
-| GET | `/api/projects/:id/cost-summary` | `projects.js` |
 | GET | `/api/projects/:id/documents` | `projects.js` |
 | DELETE | `/api/projects/:id/documents/:docId` | `projects.js` |
 | PUT | `/api/projects/:id/documents/:docId/share-crm` | `projects.js` |
@@ -1622,8 +1523,6 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | POST | `/api/projects/:id/orders/:orderId/push-to-production` | `projects.js` |
 | POST | `/api/projects/:id/orders/push-to-logistics-bulk` | `projects.js` |
 | POST | `/api/projects/:id/orders/push-to-production-bulk` | `projects.js` |
-| POST | `/api/projects/:id/production-staff` | `projects.js` |
-| DELETE | `/api/projects/:id/production-staff/:userId` | `projects.js` |
 | GET | `/api/projects/:id/products` | `projects.js` |
 | POST | `/api/projects/:id/products` | `projects.js` |
 | DELETE | `/api/projects/:id/products/:ppId` | `projects.js` |
@@ -1745,7 +1644,7 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | GET | `/api/stages/status-mapping` | `stages.js` |
 | PUT | `/api/stages/status-mapping` | `stages.js` |
 
-### `/api/tasks` (29)
+### `/api/tasks` (28)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
@@ -1773,7 +1672,6 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | DELETE | `/api/tasks/:taskId/time-logs/:logId` | `tasks.js` |
 | PUT | `/api/tasks/checklists/:clId` | `tasks.js` |
 | GET | `/api/tasks/io` | `tasks.js` |
-| POST | `/api/tasks/lite-by-projects` | `tasks.js` |
 | GET | `/api/tasks/my` | `tasks.js` |
 | GET | `/api/tasks/overdue` | `tasks.js` |
 | GET | `/api/tasks/planner/board` | `tasks.js` |
@@ -1881,7 +1779,7 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | PUT | `/api/users/sidebar-menu-pins` | `users.js` |
 | GET | `/api/users/stages` | `users.js` |
 
-### `/api/vc-handover` (5)
+### `/api/vc-handover` (6)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
@@ -1889,6 +1787,7 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | PATCH | `/api/vc-handover/comments/:cid/reschedule` | `vcHandover.js` |
 | PATCH | `/api/vc-handover/comments/:cid/schedule` | `vcHandover.js` |
 | PATCH | `/api/vc-handover/comments/:cid/select` | `vcHandover.js` |
+| GET | `/api/vc-handover/io` | `vcHandover.js` |
 | POST | `/api/vc-handover/projects/:id/request` | `vcHandover.js` |
 
 ### `/api/voice-recordings` (15)
@@ -1911,7 +1810,7 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | POST | `/api/voice-recordings/scan-duplicates` | `voiceRecordings.js` |
 | POST | `/api/voice-recordings/scan-metadata-phones` | `voiceRecordings.js` |
 
-### `/api/work-tasks` (15)
+### `/api/work-tasks` (10)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
@@ -1920,14 +1819,9 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | DELETE | `/api/work-tasks/:source/:id` | `workTasks.js` |
 | PATCH | `/api/work-tasks/:source/:id` | `workTasks.js` |
 | POST | `/api/work-tasks/:source/:id/comment` | `workTasks.js` |
-| POST | `/api/work-tasks/:source/:id/remind-complete` | `workTasks.js` |
 | GET | `/api/work-tasks/by-project/:projectId` | `workTasks.js` |
-| POST | `/api/work-tasks/by-project/:projectId/remind-complete` | `workTasks.js` |
 | GET | `/api/work-tasks/history` | `workTasks.js` |
 | GET | `/api/work-tasks/lead-options` | `workTasks.js` |
-| GET | `/api/work-tasks/project-overview` | `workTasks.js` |
-| GET | `/api/work-tasks/project-overview-summary` | `workTasks.js` |
-| POST | `/api/work-tasks/project-overview/remind-complete` | `workTasks.js` |
 | GET | `/api/work-tasks/summary` | `workTasks.js` |
 | POST | `/api/work-tasks/task/:id/checklists/:cid/toggle` | `workTasks.js` |
 
@@ -2010,7 +1904,6 @@ Xem header `backend/src/routes/external.js`.
 | GET | /api/external/users | — |
 | GET | /api/external/ping | — |
 | GET | /api/external/leads/stats | — |
-| GET | /api/external/project-deadlines | query days_ahead, status=all\|overdue\|upcoming, module=all\|crm\|production\|logistics, company_id?, responsible_user_id?, limit |
 
 ---
 

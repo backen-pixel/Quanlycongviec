@@ -2598,6 +2598,12 @@ r.patch('/leads/:id/stage', async (req, res) => {
     let taskWriteLeadId = req.params.id;
     if (isStageChange && stage_id && isCrmCompletedStage(stage)) {
       try {
+        const { turnOffCrmDeadlineOnCompletedStage } = require('../../../helpers/stageMoveDeadlineOff');
+        await turnOffCrmDeadlineOnCompletedStage(req, { leadId: req.params.id, stage });
+      } catch (offErr) {
+        console.warn('[crm/stage] deadline off on completed:', offErr.message);
+      }
+      try {
         const done = await completeOpenWorkOnModuleDone({
           module: 'crm',
           leadIds: [req.params.id],

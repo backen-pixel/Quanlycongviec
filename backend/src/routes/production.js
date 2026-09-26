@@ -269,12 +269,7 @@ async function touchProjectSxPipelineStageEnteredAt(projectId, targetColId, curr
 
 /** Cột «Tắt hạn» / «Đã giao» / «Đã công» / «Đã thu» — tắt hết deadline SX. */
 function isSxColumnClearsDeadlines(col) {
-  return !!(
-    col?.clears_deadline
-    || col?.counts_as_completed_revenue
-    || col?.counts_as_collected_revenue
-    || isSxDeliveredStage(col)
-  );
+  return !!(col?.clears_deadline || col?.is_handover_to_logistics);
 }
 
 /** Alias cũ — dùng khi bật cờ hoàn thành trên cột. */
@@ -1300,7 +1295,6 @@ r.put('/substage-status', requireProductionKanbanEdit(), async (req, res) => {
       company_id: projectCompanyId || stage.company_id || null,
       project_id: projectId,
       stage_id: logistics ? null : stageId,
-      logistics_stage_id: logistics ? stageId : null,
       trang_thai: trangThai,
       nguoi_lam: nguoiLam,
       // Giữ mốc bắt đầu cũ; chỉ đặt mới khi lần đầu chuyển khỏi 'chua'.
@@ -1309,18 +1303,26 @@ r.put('/substage-status', requireProductionKanbanEdit(), async (req, res) => {
       updated_by: req.user?.userId || null,
       updated_at: now,
     };
+    if (logistics) row.logistics_stage_id = stageId;
     if (req.body?.ghi_chu !== undefined) row.ghi_chu = req.body.ghi_chu || null;
 
+    const selectCols = logistics
+      ? 'project_id, stage_id, logistics_stage_id, trang_thai, nguoi_lam, bat_dau_luc, xong_luc, ghi_chu, updated_at'
+      : 'project_id, stage_id, trang_thai, nguoi_lam, bat_dau_luc, xong_luc, ghi_chu, updated_at';
     const write = cu?.id
       ? supabase.from('project_substage_status').update(row).eq('id', cu.id)
       : supabase.from('project_substage_status').insert(row);
     const { data, error } = await write
-      .select('project_id, stage_id, logistics_stage_id, trang_thai, nguoi_lam, bat_dau_luc, xong_luc, ghi_chu, updated_at')
+      .select(selectCols)
       .maybeSingle();
     if (error) throw error;
     res.json({ row: data || row });
   } catch (e) {
     if (isSubstageTableMissing(e)) {
+      const msg = String(e?.message || '');
+      if (/logistics_stage_id/i.test(msg)) {
+        return res.status(503).json({ error: 'Chưa chạy migration 635 (logistics_stage_id)' });
+      }
       return res.status(503).json({ error: 'Chưa chạy migration 605 (project_substage_status)' });
     }
     console.error('[production/substage-status PUT]', e.message);
@@ -3469,7 +3471,7 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       const colId = String(pipelineStageId);
       let { data: colRow } = await supabase
         .from('production_pipeline_stages')
-        .select('id, name, workflow_stage_id, bucket_slug, crm_target_stage_id, requires_deadline, clears_deadline, deadline_group, group_key, counts_as_completed_revenue, counts_as_collected_revenue')
+        .select('id, name, workflow_stage_id, bucket_slug, crm_target_stage_id, requires_deadline, clears_deadline, is_handover_to_logistics, deadline_group, group_key, counts_as_completed_revenue, counts_as_collected_revenue')
         .eq('id', colId)
         .maybeSingle();
       if (!colRow) {
@@ -3690,6 +3692,30 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
           await clearSxSchedulesOnCompletedForProjects([id]);
         } catch (clearErr) {
           console.warn('[production] clear SX schedules on completed column:', clearErr.message);
+        }
+        const hadSxDeadline = !!(
+          project?.sx_kanban_deadline_at
+          || project?.production_deadline
+          || project?.production_finish_date
+          || project?.deadline
+        );
+        try {
+          const { disableLinkedDealDeadlines } = require('../helpers/stageMoveDeadlineOff');
+          const disabled = await disableLinkedDealDeadlines(req, {
+            projectId: id,
+            moduleLabel: 'Sản xuất',
+            stageName: colRow?.name,
+          });
+          if (!disabled.cleared && hadSxDeadline && colRow?.is_handover_to_logistics) {
+            const { turnOffSxDeadlineOnVcHandover } = require('../helpers/stageMoveDeadlineOff');
+            await turnOffSxDeadlineOnVcHandover(req, {
+              projectId: id,
+              stage: colRow,
+              hadDeadline: true,
+            });
+          }
+        } catch (noticeErr) {
+          console.warn('[production] deadline-off notice:', noticeErr.message);
         }
       }
 

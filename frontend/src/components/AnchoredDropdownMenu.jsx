@@ -27,8 +27,21 @@ export default function AnchoredDropdownMenu({
       : (menuRef.current?.offsetWidth || (minWidth ? parseFloat(minWidth) * 16 : 168));
     let left = align === 'right' ? rect.right - menuW : rect.left;
     left = Math.max(8, Math.min(left, window.innerWidth - menuW - 8));
+
+    // Nút neo nằm thấp trong trang thì menu tràn xuống dưới mép màn hình — lật lên trên khi
+    // phía trên rộng chỗ hơn. Dùng chiều cao đang render (tôn trọng max-h của chính menu) nên
+    // không có chuyện đo đi đo lại dao động.
+    const GAP = 4;
+    const menuH = menuRef.current?.offsetHeight || 0;
+    let top = rect.bottom + GAP;
+    const choDuoi = window.innerHeight - rect.bottom - GAP;
+    const choTren = rect.top - GAP;
+    if (menuH && menuH > choDuoi && choTren > choDuoi) {
+      top = Math.max(8, rect.top - GAP - menuH);
+    }
+
     setPos({
-      top: rect.bottom + 4,
+      top,
       left,
       width: matchAnchorWidth ? rect.width : undefined,
       ready: true,

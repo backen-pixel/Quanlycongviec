@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { clearFormDraft, readFormDraft, useFormDraft } from '../lib/formDraft';
 import api from '../lib/api';
 import Modal from './Modal';
 import { FileUploadButton, FilePreview } from './FileUpload';
@@ -6,8 +7,11 @@ import { ChevronDown, ChevronRight, Building2, Users } from 'lucide-react';
 
 export default function TaskCreateModal({ open, onClose, onCreated, projectId, stageId, project }) {
   // ── Form state ──
-  const [form, setForm] = useState({ title: '', description: '', priority: 'medium', assignee_id: '', due_date: '', estimated_hours: '' });
-  const [checklists, setChecklists] = useState([]);
+  const draftKey = 'qlcv-form-draft:task-create';
+  const saved = useMemo(() => readFormDraft(draftKey), [draftKey]);
+  const [form, setForm] = useState(() => saved?.form || { title: '', description: '', priority: 'medium', assignee_id: '', due_date: '', estimated_hours: '' });
+  const [checklists, setChecklists] = useState(() => saved?.checklists || []);
+  useFormDraft(draftKey, { form, checklists });
   const [newCheck, setNewCheck] = useState('');
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -31,8 +35,6 @@ export default function TaskCreateModal({ open, onClose, onCreated, projectId, s
   // ── Load on open ──
   useEffect(() => {
     if (!open) return;
-    setForm({ title: '', description: '', priority: 'medium', assignee_id: '', due_date: '', estimated_hours: '' });
-    setChecklists([]);
     setFiles([]);
     setSelectedDivision('');
     setSelectedCompany('');
@@ -157,6 +159,7 @@ export default function TaskCreateModal({ open, onClose, onCreated, projectId, s
       console.log('Payload:', payload);
       const response = await api.post('/tasks', payload);
       console.log('Task created:', response.data);
+      clearFormDraft(draftKey);
       onCreated?.();
       onClose();
     } catch (e) {

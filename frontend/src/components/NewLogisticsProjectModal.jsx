@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { clearFormDraft, readFormDraft, useFormDraft } from '../lib/formDraft';
 import { X, Search } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -8,9 +9,13 @@ export default function NewLogisticsProjectModal({ onClose }) {
   const { user } = useAuth();
   const [workTypes, setWorkTypes] = useState([]);
   const [flowId, setFlowId] = useState('');
-  const [formData, setFormData] = useState({
+  const draftKey = `qlcv-form-draft:new-vc-project:${user?.id || 'me'}`;
+  const saved = useMemo(() => readFormDraft(draftKey), [draftKey]);
+  const [formData, setFormData] = useState(() => ({
     name: '', estimated_value: '', priority: 'medium', deadline: '', logistics_person_id: '', workshop_type_id: '',
-  });
+    ...(saved?.formData || {}),
+  }));
+  useFormDraft(draftKey, { formData });
   const [customerSearch, setCustomerSearch] = useState('');
   const [customerResults, setCustomerResults] = useState([]);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
@@ -67,6 +72,7 @@ export default function NewLogisticsProjectModal({ onClose }) {
         flow_id: flowId || null,
         status: 'shipping',
       });
+      clearFormDraft(draftKey);
       onClose();
     } catch (err) {
       setError(err.response?.data?.error || 'Lỗi tạo dự án');
@@ -75,8 +81,11 @@ export default function NewLogisticsProjectModal({ onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      onMouseDown={(e) => { if (!saving && e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onMouseDown={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <div>
             <h2 className="text-lg font-bold text-gray-900">🔧 Tạo dự án lắp đặt mới</h2>

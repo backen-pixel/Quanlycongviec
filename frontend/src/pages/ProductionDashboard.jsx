@@ -74,7 +74,6 @@ import {
   getSxPipelineStageSlaTone,
   resolveSxDisplayColumnId,
   projectLockedOnSxKanban,
-  shouldHideSxKanbanDeadlineOnCard,
   shouldIgnoreSxOrderDeliveryOverdue,
   getSxOrderDeliveryDateUrgency,
   sxColumnStageKpiKey,
@@ -1054,6 +1053,10 @@ export default function ProductionDashboard() {
     deadlineBucketLoadingRef.current.clear();
     setDeadlineBucketLoading({});
     setDeadlineBucketMeta({});
+    if (opts.replaceList) {
+      setProjects([]);
+      projectsRef.current = [];
+    }
     setProjectPageState((prev) => ({ ...prev, hasMore: false, loading: false }));
     // Giữ pipelineStageCounts cũ đến khi summary=1 về — badge cột hiện tổng ngay, không cộng dần theo thẻ tải.
     // KPI server (Tổng/Quá hạn/Đang SX…) gắn với filter hiện tại — không giữ số công ty cũ.
@@ -1287,22 +1290,26 @@ export default function ProductionDashboard() {
         });
         // Quay từ chi tiết: không ghi đè list đang có bằng [] (API lỗi tạm / race).
         // Bootstrap về sau loadMore cột: không xóa thẻ đã tải (board trống dù KPI còn số).
+        const replaceList = !!opts.replaceList;
         if (projectList.length === 0) {
           setProjects((prev) => {
+            if (replaceList) return [];
             if (Array.isArray(prev) && prev.length > 0
               && (silent || returningFromDetail || columnFetchTouchSeqRef.current === seq)) {
               return prev;
             }
             return applyWorkshopProjectRenamePatches(projectList);
           });
+          if (replaceList) projectsRef.current = [];
         } else {
           let next = applyPendingStageMoves(
             applyWorkshopProjectRenamePatches(projectList),
             pendingStageMovesRef.current,
           );
           // Silent / cùng seq với column-fetch / quay detail: giữ thẻ đã tải thêm theo cột.
+          // Đổi bộ lọc (replaceList): bỏ thẻ filter cũ.
           const existing = projectsRef.current || [];
-          if (existing.length && (
+          if (!replaceList && existing.length && (
             silent
             || returningFromDetail
             || columnFetchTouchSeqRef.current === seq
@@ -1814,6 +1821,7 @@ export default function ProductionDashboard() {
     const state = deadlineBucketPageRef.current[key] || { nextOffset: 0, hasMore: true };
     if (state.hasMore === false) return;
 
+    const seqAtStart = loadSeqRef.current;
     deadlineBucketLoadingRef.current.add(key);
     setDeadlineBucketLoading((prev) => ({ ...prev, [key]: true }));
     try {
@@ -1845,6 +1853,7 @@ export default function ProductionDashboard() {
         },
       });
 
+      if (seqAtStart !== loadSeqRef.current) return;
       const incoming = Array.isArray(data?.projects) ? data.projects : [];
       if (incoming.length) {
         setProjects((prev) => {
@@ -1996,7 +2005,12 @@ export default function ProductionDashboard() {
     const silent = hydrateSilent || firstLoadedRef.current;
     // Sau lần đầu / hydrate snapshot: silent; đổi filter: bustCache.
     // Dùng loadRef — không phụ thuộc identity `load` (tránh fire trùng khi chỉ đổi closure).
-    loadRef.current({ silent, bustCache: silent && !hydrateSilent });
+    // Đổi bộ lọc: thay list, không gộp thẻ của filter trước (Deadline sẽ tải lại bucket).
+    loadRef.current({
+      silent,
+      bustCache: silent && !hydrateSilent,
+      replaceList: !hydrateSilent && firstLoadedRef.current,
+    });
   }, [dataLoadReady, projectsLoadKey]);
 
   /** Tránh spinner vô hạn — chỉ unstick UI, không gọi load chồng request đang chạy. */
@@ -2997,15 +3011,7 @@ export default function ProductionDashboard() {
         : (summaryKpisPending ? '…' : list.length))
       : list.length;
     // KPI Quá hạn = tổng server (toàn filter); đang pending → '…' (không giữ overdue filter cũ).
-    const serverOverdue = Number(deadlineBucketCounts?.overdue);
-    const hasServerOverdue = canUseServerTotal
-      && deadlineBucketCounts
-      && Object.prototype.hasOwnProperty.call(deadlineBucketCounts, 'overdue');
-    const deadlineOverdueCount = canUseServerTotal
-      ? (hasServerOverdue
-        ? serverOverdue
-        : (summaryKpisPending ? '…' : countSxDeadlineViewOverdue(filteredKanbanPipeline)))
-      : countSxDeadlineViewOverdue(filteredKanbanPipeline);
+    const deadlineOverdueCount = countSxDeadlineViewOverdue(filteredKanbanPipeline);
     // Cùng nguồn summary=1 với Tổng/Quá hạn.
     // - Có summaryStageKpis (cache đúng filter / server) → hiện số đó.
     // - Đang chờ, chưa có số → '…' — không đếm card, không giữ số công ty cũ.
@@ -3086,7 +3092,7 @@ export default function ProductionDashboard() {
         ? (Number(summaryRevenueKpis.collected_revenue) || 0)
         : (summaryKpisPending ? '…' : revenue.collectedRevenue))
       : revenue.collectedRevenue;
-    if (!list.length && !summaryStageKpis && !hasServerOverdue) {
+    if (!list.length && !summaryStageKpis) {
       return {
         total: accurateTotal, producing: producingCount, awaiting_delivery: awaitingCount, shipped: shippedCount, completed: 0,
         overdue: deadlineOverdueCount,
@@ -5485,7 +5491,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   const leadCreatedAt = primaryDeal?.created_at || item.created_at || null;
   const columnEnteredAt = item.sx_pipeline_stage_entered_at || item.stage_entered_at || item.updated_at || item.created_at || null;
   const sxStage = stage || item.sx_pipeline_stage;
-  const hideColumnDeadline = shouldHideSxKanbanDeadlineOnCard(item, sxStage);
+  const hideColumnDeadline = false;
   const columnSlaTone = hideColumnDeadline
     ? null
     : getSxPipelineStageSlaTone(item.sx_pipeline_stage_entered_at, sxStage, item.company_id || item.company);

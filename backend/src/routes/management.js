@@ -35,9 +35,9 @@ const { resolveWorkRegionScope } = require('../helpers/workRegionFilter');
 const { responseCache } = require('../middleware/responseCache');
 const { PROJECTS_LIST_TAG } = require('../middleware/projectsCacheInvalidation');
 const { MODULE, resolveModuleDeadline } = require('../helpers/moduleDeadlinePolicy');
-const { classifyProjectForecast } = require('../helpers/projectForecast');
+const { forecastFromModuleDeadline } = require('../helpers/projectForecast');
 const { attachInstallEventDatesToProjects } = require('../helpers/createPlannedVcLdEvents');
-const { orgReportDealIsClosedWon, loadDealKhSplitContext } = require('../helpers/crmDealKhSplit');
+const { orgReportDealIsClosedWon, loadDealKhSplitContextCached } = require('../helpers/crmDealKhSplit');
 const {
   WORK_UNIFIED_UUID_RE,
   parseWorkUnifiedUserIds,
@@ -783,16 +783,26 @@ function overviewTaskAllowed(t) {
   return true;
 }
 
-async function attachOverviewTaskAssignees(tasks) {
-  const ids = [...new Set((tasks || []).map((t) => t.assignee_id).filter(Boolean).map(String))];
-  if (!ids.length) return tasks || [];
+/**
+ * Tên người nhận việc cho NHIỀU danh sách việc trong một lượt tra.
+ * Từ migration 630 chính RPC đã trả kèm `assignee_name`, nên chỉ còn phải tra cho những dòng
+ * thiếu (đường lui bằng truy vấn thường, hoặc DB chưa chạy 630) — thường là không dòng nào.
+ */
+async function overviewAssigneeNames(taskLists) {
+  const ids = [...new Set(taskLists.flat()
+    .filter((t) => t && t.assignee_id && t.assignee_name === undefined)
+    .map((t) => String(t.assignee_id)))];
+  if (!ids.length) return new Map();
   const users = await fetchAllByIds({
     table: 'users', columns: 'id, full_name', key: 'id', ids,
   });
-  const names = new Map((users || []).map((u) => [String(u.id), u.full_name]));
+  return new Map((users || []).map((u) => [String(u.id), u.full_name]));
+}
+
+function withAssigneeNames(tasks, names) {
   return (tasks || []).map((t) => ({
     ...t,
-    assignee_name: names.get(String(t.assignee_id || '')) || null,
+    assignee_name: t.assignee_name ?? (names.get(String(t.assignee_id || '')) || null),
   }));
 }
 
@@ -892,7 +902,11 @@ async function fetchPostContractOverviewTasksViaQueries({
 }
 
 // GET /api/management/work-overview — KPI + dự án cần chú ý lấy cùng tập Work Unified
-r.get('/work-overview', async (req, res) => {
+// responseCache: đọc rất nặng — còn 4 đợt gọi DB nối tiếp sau khi gộp, ~1,4s ở máy dev.
+// Cùng khuôn với /work-unified ngay dưới: scope 'user' vì phạm vi dữ liệu phụ thuộc quyền
+// (getCompanyScope), tag PROJECTS_LIST_TAG để MỌI thay đổi dự án/nhiệm vụ xoá cache ngay —
+// nên số liệu vẫn tức thời, TTL 20s chỉ là lưới an toàn cho đường ghi nào còn sót.
+r.get('/work-overview', responseCache({ ttl: 20, scope: 'user', tags: [PROJECTS_LIST_TAG] }), async (req, res) => {
   try {
     const scope = getCompanyScope(req, req.query.company_id);
     if (denyScope(res, scope)) return;
@@ -1034,11 +1048,19 @@ r.get('/work-overview', async (req, res) => {
     // Dự án cần chú ý — cùng tập + forecast với Work Unified (late / at_risk).
     const atRiskLite = (wu.filtered || [])
       .filter((it) => it.forecast === 'late' || it.forecast === 'at_risk')
+      // `days_remaining` làm tròn theo ngày nên rất nhiều dự án bằng điểm nhau; phải có tiêu
+      // chí phụ, không thì thứ tự ăn theo thứ tự đọc dữ liệu và top 50 đổi người mỗi lần đổi
+      // cách truy vấn (thậm chí giữa hai lần tải). Hạn sớm hơn lên trước, cuối cùng chốt theo
+      // id cho tuyệt đối ổn định.
       .sort((a, b) => {
         const ao = a.forecast === 'late' ? 0 : 1;
         const bo = b.forecast === 'late' ? 0 : 1;
         if (ao !== bo) return ao - bo;
-        return (a.days_remaining ?? 0) - (b.days_remaining ?? 0);
+        const dr = (a.days_remaining ?? 0) - (b.days_remaining ?? 0);
+        if (dr) return dr;
+        const dl = String(a.deadline || '').localeCompare(String(b.deadline || ''));
+        if (dl) return dl;
+        return String(a.id || '').localeCompare(String(b.id || ''));
       })
       .slice(0, 50);
     // Hydrate "dự án cần chú ý" và đọc nhiệm vụ đều chỉ cần `wu.filtered` — cho chạy cùng lúc
@@ -1071,22 +1093,26 @@ r.get('/work-overview', async (req, res) => {
     const signedLeadIds = [...new Set(
       (wu.filtered || []).flatMap((it) => it.signed_lead_ids || []),
     )];
-    const [atRiskHydrated, todayRes, overdueRes] = await Promise.all([
-      atRiskHydratedP,
-      fetchPostContractOverviewTasks({
-        projectIds,
-        leadIds: signedLeadIds,
-        scope,
-        deadlineGte: `${dueFrom}T00:00:00+07:00`,
-        deadlineLte: `${dueTo}T23:59:59+07:00`,
-      }),
-      fetchPostContractOverviewTasks({
-        projectIds,
-        leadIds: signedLeadIds,
-        scope,
-        ...(dateFrom ? { deadlineGte: `${dateFrom}T00:00:00+07:00` } : {}),
-        deadlineLte: `${overdueToYmd}T23:59:59+07:00`,
-      }),
+    const todayP = fetchPostContractOverviewTasks({
+      projectIds,
+      leadIds: signedLeadIds,
+      scope,
+      deadlineGte: `${dueFrom}T00:00:00+07:00`,
+      deadlineLte: `${dueTo}T23:59:59+07:00`,
+    });
+    const overdueP = fetchPostContractOverviewTasks({
+      projectIds,
+      leadIds: signedLeadIds,
+      scope,
+      ...(dateFrom ? { deadlineGte: `${dateFrom}T00:00:00+07:00` } : {}),
+      deadlineLte: `${overdueToYmd}T23:59:59+07:00`,
+    });
+    // Tra tên người nhận việc chỉ cần kết quả hai RPC — nối thẳng vào chúng thay vì chờ cả
+    // lượt hydrate «Dự án cần chú ý» xong, và gộp hai danh sách vào MỘT truy vấn users.
+    const namesP = Promise.all([todayP, overdueP])
+      .then(([a, b]) => overviewAssigneeNames([a.rows || [], b.rows || []]));
+    const [atRiskHydrated, todayRes, overdueRes, assigneeNames] = await Promise.all([
+      atRiskHydratedP, todayP, overdueP, namesP,
     ]);
     const projectsAtRisk = atRiskHydrated.map((it) => {
       const late = it.forecast === 'late';
@@ -1103,10 +1129,8 @@ r.get('/work-overview', async (req, res) => {
       };
     });
     // Đã sắp theo hạn và cắt sẵn đúng số dòng cần hiện (RPC hoặc đường lui đều vậy).
-    const [todayTasks, overdueTaskItems] = await Promise.all([
-      attachOverviewTaskAssignees(todayRes.rows),
-      attachOverviewTaskAssignees(overdueRes.rows),
-    ]);
+    const todayTasks = withAssigneeNames(todayRes.rows, assigneeNames);
+    const overdueTaskItems = withAssigneeNames(overdueRes.rows, assigneeNames);
 
     res.json({
       company_id: primaryCompanyIdFromScope(scope),
@@ -1278,6 +1302,37 @@ r.get('/crm-overview', async (req, res) => {
  * Cùng tập dự án + bộ lọc với GET /work-unified (kèm deal CRM đặt xưởng khác).
  * `forceLite`: quét cột nhẹ (trang Tổng quan công việc) — hydrate sau cho đúng dòng cần hiện.
  */
+/**
+ * Dự án có deal CRM thuộc `companyIds` — đọc trực tiếp bảng projects qua khoá ngoại (kể cả
+ * junction crm_deal_projects), nên không cần biết trước danh sách id. Nếu môi trường nào đó
+ * chưa có junction/khoá ngoại thì lùi về đường cũ: lấy id trước rồi đọc dự án theo id.
+ */
+async function fetchLinkedProjects(columns, companyIds) {
+  const statusIn = (q) => q.in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
+  const viaDeal = fetchAllPagesParallel(() => statusIn(supabase.from('projects')
+    .select(`${columns}, crm_leads!inner(company_id, type)`))
+    .eq('crm_leads.type', 'deal')
+    .in('crm_leads.company_id', companyIds));
+  const viaJunction = fetchAllPagesParallel(() => statusIn(supabase.from('projects')
+    .select(`${columns}, crm_deal_projects!inner(crm_leads!inner(company_id))`))
+    .in('crm_deal_projects.crm_leads.company_id', companyIds))
+    // Junction chưa migrate ở môi trường nào đó thì coi như không có; lỗi khác để nổi lên
+    // cho nhánh lùi bên dưới xử lý, khỏi âm thầm mất dự án.
+    .catch((e) => {
+      if (String(e?.message || '').includes('crm_deal_projects')) return [];
+      throw e;
+    });
+  try {
+    const [a, b] = await Promise.all([viaDeal, viaJunction]);
+    return [...(a || []), ...(b || [])];
+  } catch (e) {
+    console.warn('[work-unified] linked projects embed:', e.message);
+    const ids = await listCrmLinkedProjectIds(companyIds);
+    if (!ids.length) return [];
+    return fetchAllByIdsParallel({ table: 'projects', columns, key: 'id', ids, tune: statusIn });
+  }
+}
+
 async function queryWorkUnifiedList(req, opts = {}) {
   const scope = getCompanyScope(req, req.query.company_id);
   if (!scope?.ok) return { scope };
@@ -1303,7 +1358,7 @@ async function queryWorkUnifiedList(req, opts = {}) {
   const scopedCompanyIds = scopeCompanyIdList(scope);
   // `listCrmLinkedProjectIds` chỉ cần `scope`, không cần dự án đọc xong — chạy cùng lượt với
   // hai truy vấn kia thay vì chờ chúng (trước đây nối đuôi, tốn thêm ~350ms).
-  const [stageRowsRes, ownedProjects, linkedIds] = await Promise.all([
+  const [stageRowsRes, ownedProjects, linkedProjects] = await Promise.all([
     supabase
       .from('workflow_stages')
       .select('id, name, slug, color, order_index, is_active, company_id')
@@ -1315,7 +1370,11 @@ async function queryWorkUnifiedList(req, opts = {}) {
         .in('status', WORK_OVERVIEW_ACTIVE_STATUSES);
       return applyProjectScopeFilter(pq, scope);
     }),
-    scopedCompanyIds.length ? listCrmLinkedProjectIds(scopedCompanyIds) : Promise.resolve([]),
+    // Dự án gắn deal CRM nhưng lọt ra ngoài applyProjectScopeFilter (SX/VC thuộc xưởng khác)
+    // vẫn phải có mặt. Đọc THẲNG bảng projects qua khoá ngoại thay vì lấy danh sách id trước
+    // rồi mới đọc dự án: bỏ được cả một đợt chờ (~300ms) vì hai truy vấn này không phụ thuộc
+    // gì, chạy ngay cùng lượt quét. Đã đối chiếu: cho đúng cùng tập dự án như cách cũ.
+    scopedCompanyIds.length ? fetchLinkedProjects(scanProjectColumns, scopedCompanyIds) : Promise.resolve([]),
   ]);
   const stages = (stageRowsRes?.data || []).filter(isProjectDeliveryStageRow);
   const deliveryStages = stages.length ? stages : DEFAULT_DELIVERY_STAGES;
@@ -1324,19 +1383,13 @@ async function queryWorkUnifiedList(req, opts = {}) {
   const projectsById = new Map();
   (ownedProjects || []).forEach((p) => { if (p?.id) projectsById.set(String(p.id), p); });
 
-  if (scopedCompanyIds.length) {
-    const missing = linkedIds.filter((id) => !projectsById.has(String(id)));
-    if (missing.length) {
-      const extra = await fetchAllByIdsParallel({
-        table: 'projects',
-        columns: scanProjectColumns,
-        key: 'id',
-        ids: missing,
-        tune: (q) => q.in('status', WORK_OVERVIEW_ACTIVE_STATUSES),
-      });
-      (extra || []).forEach((p) => { if (p?.id) projectsById.set(String(p.id), p); });
-    }
-  }
+  // Phần lớn là bản trùng với lượt quét — chỉ nhận dự án chưa có, và bỏ nhánh embed dùng để
+  // lọc (crm_leads / crm_deal_projects) để dòng project giống hệt dòng của lượt quét.
+  (linkedProjects || []).forEach((p) => {
+    if (!p?.id || projectsById.has(String(p.id))) return;
+    const { crm_leads: _l, crm_deal_projects: _d, ...row } = p;
+    projectsById.set(String(p.id), row);
+  });
 
   let projects = [...projectsById.values()];
   const projectIds = projects.map((p) => p.id);
@@ -1347,8 +1400,11 @@ async function queryWorkUnifiedList(req, opts = {}) {
   const workshopTypeById = new Map();
   const sxStageById = new Map();
   const vcStageById = new Map();
+  const installCloseOrderByCompany = new Map();
+  const crmCompletedStageIds = new Set();
   if (projectIds.length) {
-    const [deals, linksOrNull, workshopTypes, sxStages, vcStages, withInstallEvents] = await Promise.all([
+    const logisticsCompanyIds = [...new Set(projects.map((p) => p.logistics_company_id).filter(Boolean))];
+    const [deals, linksOrNull, workshopTypes, sxStages, vcStages, withInstallEvents, installCloseRes, crmDoneStagesRes] = await Promise.all([
       fetchAllByIdsParallel({
         table: 'crm_leads',
         columns: scanDealColumns,
@@ -1356,11 +1412,14 @@ async function queryWorkUnifiedList(req, opts = {}) {
         ids: projectIds,
         tune: (q) => q.eq('type', 'deal'),
       }),
+      // Lấy luôn dòng deal qua embed thay vì chỉ deal_id rồi phải đọc crm_leads một lượt nữa:
+      // bỏ được một vòng đi–về nối đuôi (~135ms) ở giữa đường tới hạn.
       fetchAllByIdsParallel({
         table: 'crm_deal_projects',
-        columns: 'deal_id, project_id',
+        columns: `project_id, deal:crm_leads!inner(${scanDealColumns})`,
         key: 'project_id',
         ids: projectIds,
+        tune: (q) => q.eq('deal.type', 'deal'),
       }).catch((e) => {
         if (!String(e.message || '').includes('crm_deal_projects')) {
           console.warn('[work-unified] junction deals:', e.message);
@@ -1378,7 +1437,7 @@ async function queryWorkUnifiedList(req, opts = {}) {
       sxColumnIds.length
         ? fetchAllByIdsParallel({
           table: 'production_pipeline_stages',
-          columns: 'id, name, bucket_slug, counts_as_completed_revenue, counts_as_collected_revenue',
+          columns: 'id, name, bucket_slug, clears_deadline, is_handover_to_logistics, counts_as_completed_revenue, counts_as_collected_revenue',
           key: 'id',
           ids: sxColumnIds,
         })
@@ -1386,7 +1445,7 @@ async function queryWorkUnifiedList(req, opts = {}) {
       vcColumnIds.length
         ? fetchAllByIdsParallel({
           table: 'logistics_pipeline_stages',
-          columns: 'id, name, bucket_slug',
+          columns: 'id, name, bucket_slug, order_index, clears_deadline, dashboard_kpi',
           key: 'id',
           ids: vcColumnIds,
         })
@@ -1395,7 +1454,27 @@ async function queryWorkUnifiedList(req, opts = {}) {
         console.warn('[work-unified] attach install events:', e.message);
         return projects;
       }),
+      logisticsCompanyIds.length
+        ? supabase.from('logistics_pipeline_stages')
+          .select('company_id, order_index')
+          .eq('clears_deadline', true)
+          .eq('is_active', true)
+          .in('company_id', logisticsCompanyIds)
+        : Promise.resolve({ data: [] }),
+      supabase.from('crm_pipeline_stages')
+        .select('id')
+        .or('counts_as_completed_revenue.eq.true,canonical_slug.eq.completed,canonical_slug.eq.done'),
     ]);
+    for (const row of crmDoneStagesRes?.data || []) {
+      if (row?.id) crmCompletedStageIds.add(String(row.id));
+    }
+    for (const row of installCloseRes?.data || []) {
+      const order = Number(row.order_index);
+      if (!Number.isFinite(order)) continue;
+      const cid = String(row.company_id);
+      const prev = installCloseOrderByCompany.get(cid);
+      if (prev == null || order < prev) installCloseOrderByCompany.set(cid, order);
+    }
     (workshopTypes || []).forEach((w) => { if (w?.id) workshopTypeById.set(String(w.id), w); });
     (sxStages || []).forEach((s) => { if (s?.id) sxStageById.set(String(s.id), s); });
     (vcStages || []).forEach((s) => { if (s?.id) vcStageById.set(String(s.id), s); });
@@ -1405,40 +1484,20 @@ async function queryWorkUnifiedList(req, opts = {}) {
       if (d?.id) dealById.set(String(d.id), d);
       attachDealToProjectMap(dealsForProject, d.project_id, d);
     });
-    try {
-      const links = linksOrNull;
-      const missingDealIds = [...new Set((links || [])
-        .map((r) => r.deal_id)
-        .filter((id) => id && !dealById.has(String(id)))
-        .map(String))];
-      if (missingDealIds.length) {
-        const extraDeals = await fetchAllByIdsParallel({
-          table: 'crm_leads',
-          columns: scanDealColumns,
-          key: 'id',
-          ids: missingDealIds,
-          tune: (q) => q.eq('type', 'deal'),
-        });
-        (extraDeals || []).forEach((d) => { if (d?.id) dealById.set(String(d.id), d); });
-      }
-      (links || []).forEach((r) => {
-        attachDealToProjectMap(dealsForProject, r.project_id, dealById.get(String(r.deal_id)));
-      });
-    } catch (e) {
-      if (!String(e.message || '').includes('crm_deal_projects')) {
-        console.warn('[work-unified] junction deals:', e.message);
-      }
-    }
+    (linksOrNull || []).forEach((r) => {
+      const d = r.deal;
+      if (d?.id && !dealById.has(String(d.id))) dealById.set(String(d.id), d);
+      attachDealToProjectMap(dealsForProject, r.project_id, d);
+    });
   }
 
   let khCtx = { stageMap: {}, wonStageOrderByPipe: {}, dealKhSplitAvailable: false };
   if (opts.postContract && projectIds.length) {
     const allLoadedDeals = [...dealsForProject.values()].flat().filter(Boolean);
     try {
-      // Không đọc riêng crm_pipeline_stages theo stage_id nữa: `loadDealKhSplitContext` đã lấy
-      // TOÀN BỘ stage của các pipeline đó (tập cha), và `dealHasSignedContract` tự tra
-      // `khCtx.stageMap[deal.stage_id]` khi deal chưa gắn sẵn `stage`.
-      khCtx = await loadDealKhSplitContext(allLoadedDeals);
+      // Cùng kết quả với loadDealKhSplitContext nhưng lấy stage từ cache taxonomy thay vì bắn
+      // truy vấn riêng mỗi request — bỏ một vòng đi–về PostgREST khỏi đường tới hạn.
+      khCtx = await loadDealKhSplitContextCached(allLoadedDeals);
     } catch (e) {
       console.warn('[work-unified] signed-contract stages:', e.message);
     }
@@ -1454,13 +1513,22 @@ async function queryWorkUnifiedList(req, opts = {}) {
     const workshopType = p.workshop_type || workshopTypeById.get(String(p.workshop_type_id || '')) || null;
     const sxStage = sxStageById.get(String(p.sx_kanban_column_id || '')) || p.sx_pipeline_stage || null;
     const vcStage = vcStageById.get(String(p.vc_kanban_column_id || '')) || p.vc_pipeline_stage || null;
-    const logisticsDeadline = resolveModuleDeadline(MODULE.LOGISTICS, p, { stage: vcStage });
-    const commitmentDate = logisticsDeadline.raw || null;
-    const { forecast, days_remaining, delay_days } = classifyProjectForecast(commitmentDate, {
-      project: { ...p, workshop_type: workshopType },
-      sxStage,
-      vcStage,
-    });
+    const closesAt = installCloseOrderByCompany.get(String(p.logistics_company_id || '')) ?? null;
+    const crmDone = (dealMap.get(String(p.id)) || []).some((d) => crmCompletedStageIds.has(String(d.stage_id || '')));
+    const projectForDeadline = {
+      ...p,
+      workshop_type: workshopType,
+      install_deadline_closes_at_order: closesAt,
+      crm_completed_deadlines_off: crmDone,
+    };
+    const currentModule = currentStep?.module;
+    const activeDeadline = currentModule === 'production'
+      ? resolveModuleDeadline(MODULE.PRODUCTION, projectForDeadline, { stage: sxStage })
+      : currentModule === 'crm'
+        ? { deadlineAt: null, state: 'none', remainingMs: null, raw: null }
+        : resolveModuleDeadline(MODULE.LOGISTICS, projectForDeadline, { stage: vcStage });
+    const commitmentDate = activeDeadline.raw || null;
+    const { forecast, days_remaining, delay_days } = forecastFromModuleDeadline(activeDeadline);
     const allDeals = dealMap.get(String(p.id)) || [];
     const scopedDeals = scopeIdSet.size
       ? allDeals.filter((d) => scopeIdSet.has(String(d.company_id)))
@@ -1562,8 +1630,13 @@ async function queryWorkUnifiedList(req, opts = {}) {
         ids,
         tune: (q) => q.eq('type', 'deal'),
       }),
+      // Kèm luôn dòng deal qua embed, khỏi phải đọc crm_leads một lượt nữa sau khi có deal_id.
       fetchAllByIdsParallel({
-        table: 'crm_deal_projects', columns: 'deal_id, project_id', key: 'project_id', ids,
+        table: 'crm_deal_projects',
+        columns: `project_id, deal:crm_leads!inner(${WORK_UNIFIED_DEAL_COLUMNS})`,
+        key: 'project_id',
+        ids,
+        tune: (q) => q.eq('deal.type', 'deal'),
       }).catch(() => []),
     ]);
     const pageDealMap = new Map();
@@ -1572,22 +1645,10 @@ async function queryWorkUnifiedList(req, opts = {}) {
       if (d?.id) dealById.set(String(d.id), d);
       attachDealToProjectMap(pageDealMap, d.project_id, d);
     });
-    const missingDealIds = [...new Set((fullLinks || [])
-      .map((r) => r.deal_id)
-      .filter((id) => id && !dealById.has(String(id)))
-      .map(String))];
-    if (missingDealIds.length) {
-      const extra = await fetchAllByIdsParallel({
-        table: 'crm_leads',
-        columns: WORK_UNIFIED_DEAL_COLUMNS,
-        key: 'id',
-        ids: missingDealIds,
-        tune: (q) => q.eq('type', 'deal'),
-      });
-      (extra || []).forEach((d) => { if (d?.id) dealById.set(String(d.id), d); });
-    }
     (fullLinks || []).forEach((r) => {
-      attachDealToProjectMap(pageDealMap, r.project_id, dealById.get(String(r.deal_id)));
+      const d = r.deal;
+      if (d?.id && !dealById.has(String(d.id))) dealById.set(String(d.id), d);
+      attachDealToProjectMap(pageDealMap, r.project_id, d);
     });
 
     const fullById = new Map();

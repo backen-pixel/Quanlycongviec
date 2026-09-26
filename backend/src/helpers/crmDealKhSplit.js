@@ -72,6 +72,52 @@ async function loadDealKhSplitContext(leads) {
   return { stageMap, wonStageOrderByPipe, dealKhSplitAvailable };
 }
 
+const KH_SPLIT_STAGE_COLUMNS =
+  'id, pipeline_id, order_index, is_won, is_lost, canonical_slug, deal_report_bucket, pipeline_type, name';
+
+/** Cả bảng crm_pipeline_stages (chỉ ~222 dòng) qua cache taxonomy. */
+async function getAllKhSplitStages() {
+  const { crmStagesCache } = require('./crmTaxonomyCache');
+  return crmStagesCache.getOrFetch('khsplit:all', async () => {
+    const { data, error } = await supabase
+      .from('crm_pipeline_stages')
+      .select(KH_SPLIT_STAGE_COLUMNS);
+    if (error) throw new Error(error.message);
+    return data || [];
+  });
+}
+
+/**
+ * Y HỆT loadDealKhSplitContext về kết quả, nhưng không bắn truy vấn riêng cho mỗi request:
+ * đọc cả bảng stage một lần rồi giữ trong crmStagesCache (mọi chỗ sửa pipeline/stage đều đã
+ * gọi invalidatePipelinesAndStages), sau đó lọc lại đúng tập pipeline của lô lead truyền vào.
+ *
+ * Phải lọc chứ không dùng thẳng bản đầy đủ: có deal mang pipeline_id lệch với pipeline thật
+ * của stage_id nó trỏ tới, nên map rộng hơn sẽ đổi kết quả dealHasSignedContract của chúng.
+ * Lọc 222 dòng trong JS tốn ~0ms, đổi lại bỏ được một vòng đi–về PostgREST (~150ms).
+ */
+async function loadDealKhSplitContextCached(leads) {
+  const pipelineIds = new Set();
+  for (const l of leads || []) {
+    const pid = l.stage?.pipeline_id || l.pipeline_id;
+    if (pid) pipelineIds.add(String(pid));
+  }
+  if (!pipelineIds.size) {
+    return { stageMap: {}, wonStageOrderByPipe: {}, dealKhSplitAvailable: false };
+  }
+  const stages = await getAllKhSplitStages();
+  const stageMap = Object.create(null);
+  for (const s of stages || []) {
+    if (s?.pipeline_id && pipelineIds.has(String(s.pipeline_id))) stageMap[s.id] = s;
+  }
+  const wonStageOrderByPipe = buildWonStageOrderByPipeline(stageMap);
+  return {
+    stageMap,
+    wonStageOrderByPipe,
+    dealKhSplitAvailable: Object.keys(wonStageOrderByPipe).length > 0,
+  };
+}
+
 function resolveLeadStage(lead, stageMap) {
   const embedded = lead.stage || null;
   if (embedded?.order_index != null && embedded?.pipeline_id) return embedded;
@@ -164,6 +210,7 @@ module.exports = {
   orgReportDealSplitBuckets,
   orgReportDealIsClosedWon,
   loadDealKhSplitContext,
+  loadDealKhSplitContextCached,
   classifyDealRowForKhSplit,
   aggregateDealKhSplitMetrics,
   aggregateOpenDealKhSplitMetrics,

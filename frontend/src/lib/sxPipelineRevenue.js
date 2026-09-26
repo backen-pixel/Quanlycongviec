@@ -3,7 +3,7 @@
  */
 
 import { effectivePipelineStageSlaDays, isPipelineStageSlaDisabled } from './crmPipelineSla';
-import { isHucabiCompany, isHucabiSameDayPastWorkEnd } from './companyDeadlineClock';
+import { isHucabiCompany, isHucabiSameDayPastWorkEnd, vnYmdFromTs } from './companyDeadlineClock';
 import { endOfVnCalendarDayAfterEntered } from './vnDate';
 import {
   DEADLINE_MODULE,
@@ -276,14 +276,30 @@ function startOfLocalDay(d) {
 }
 
 /**
- * Bucket deadline view SX — khớp ProductionDeadlineView.
- * Nguồn hạn do adapter chung chọn: hạn thẻ → hoàn thiện/hạn SX → giao → hạn chung.
+ * Bucket deadline view SX — theo ngày hạn đang lưu.
+ * Cột đã tắt hạn / bàn giao VC không vào Quá hạn.
+ * Nguồn hạn: hạn thẻ → hoàn thiện/hạn SX → giao → hạn chung.
  */
-const SX_DEADLINE_BUCKET_KEYS = new Set([
-  'overdue', 'today', 'this_week', 'next_week', 'this_month', 'later', 'none',
-]);
+function sxDeadlineYmd(raw) {
+  if (raw == null || raw === '') return null;
+  const s = String(raw).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})[T\s]/);
+  if (m && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(s.slice(10))) return m[1];
+  return vnYmdFromTs(s);
+}
+
+function diffVnCalendarDays(ymdA, ymdB) {
+  const [ya, ma, da] = ymdA.split('-').map(Number);
+  const [yb, mb, db] = ymdB.split('-').map(Number);
+  return Math.round((Date.UTC(ya, ma - 1, da) - Date.UTC(yb, mb - 1, db)) / 86400000);
+}
 
 export function resolveSxDeadlineBucket(item, todayMs = Date.now(), stage = null) {
+  const stageRef = stage || item?.sx_pipeline_stage || null;
+  if (stageRef?.clears_deadline || stageRef?.is_handover_to_logistics) {
+    return { bucket: 'none', ts: null, source: null };
+  }
   const resolved = resolveEffectiveModuleDeadline(
     DEADLINE_MODULE.PRODUCTION,
     item,
@@ -292,39 +308,27 @@ export function resolveSxDeadlineBucket(item, todayMs = Date.now(), stage = null
   const raw = resolved.raw;
   const t = resolved.deadlineTs;
   const source = resolved.source;
-  const serverBucket = String(item?._deadline_bucket || item?.deadline_bucket || '').trim();
-  if (SX_DEADLINE_BUCKET_KEYS.has(serverBucket)) {
-    return { bucket: serverBucket, ts: t, source };
-  }
-  if (!raw || t == null || !Number.isFinite(t)) return { bucket: 'none', ts: null, source: null };
-  const today = startOfLocalDay(new Date(todayMs));
-  const dayMs = 86400000;
-  const diffDays = Math.floor((startOfLocalDay(t).getTime() - today.getTime()) / dayMs);
-  const st = stage || item?.sx_pipeline_stage;
-  const ignoreOverdue = shouldIgnoreSxOrderDeliveryOverdue(st)
-    || isSxPipelineStageNoDeadline(st);
-  if (diffDays < 0) {
-    if (ignoreOverdue) {
-      return { bucket: 'later', ts: t, source };
-    }
-    return { bucket: 'overdue', ts: t, source };
-  }
+  const ymd = sxDeadlineYmd(raw);
+  const todayYmd = vnYmdFromTs(todayMs);
+  if (!ymd || !todayYmd) return { bucket: 'none', ts: null, source: null };
+  const diffDays = diffVnCalendarDays(ymd, todayYmd);
+  if (diffDays < 0) return { bucket: 'overdue', ts: t, source };
   if (diffDays === 0) {
     const companyRef = item?.company_id || item?.company;
-    if (
-      isHucabiSameDayPastWorkEnd(raw, companyRef, todayMs)
-      && !ignoreOverdue
-    ) {
+    if (isHucabiSameDayPastWorkEnd(raw, companyRef, todayMs)) {
       return { bucket: 'overdue', ts: t, source };
     }
     return { bucket: 'today', ts: t, source };
   }
-  const dow = today.getDay() === 0 ? 7 : today.getDay();
+  const [y, m, d] = todayYmd.split('-').map(Number);
+  const dowUtc = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  const dow = dowUtc === 0 ? 7 : dowUtc;
   const daysToEndOfWeek = 7 - dow;
   if (diffDays <= daysToEndOfWeek) return { bucket: 'this_week', ts: t, source };
   if (diffDays <= daysToEndOfWeek + 7) return { bucket: 'next_week', ts: t, source };
-  const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getTime();
-  if (t <= endOfMonth) return { bucket: 'this_month', ts: t, source };
+  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const endYmd = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+  if (ymd <= endYmd) return { bucket: 'this_month', ts: t, source };
   return { bucket: 'later', ts: t, source };
 }
 
@@ -333,7 +337,6 @@ export function countSxDeadlineViewOverdue(pipelineColumns, todayMs = Date.now()
   let n = 0;
   for (const col of Array.isArray(pipelineColumns) ? pipelineColumns : []) {
     for (const item of col.items || []) {
-      if (shouldHideSxKanbanDeadlineOnCard(item, col)) continue;
       if (resolveSxDeadlineBucket(item, todayMs, col).bucket === 'overdue') n += 1;
     }
   }
@@ -374,8 +377,7 @@ export function computeSxRevenueKpis(projects, stages) {
     else if (kpiKey === 'awaiting_delivery') awaitingDelivery += 1;
     else if (kpiKey === 'shipped') shipped += 1;
     // Quá hạn KPI = cột «Quá hạn» của Deadline view
-    if (!shouldHideSxKanbanDeadlineOnCard(p, col)
-      && resolveSxDeadlineBucket(p, nowMs, col).bucket === 'overdue') {
+    if (resolveSxDeadlineBucket(p, nowMs, col).bucket === 'overdue') {
       overdue += 1;
     }
     if (col && col.bucket_slug !== INTAKE_BUCKET && val > 0) {
@@ -436,18 +438,14 @@ export function sxColumnStageKpiKey(stage) {
   return 'producing';
 }
 
-/** Cột không theo dõi deadline (Tắt hạn / Đã giao / Đã công / Đã thu). */
+/** Cột không theo dõi deadline: tích Tắt hạn hoặc tích VC/LĐ trong setup cột. */
 export function isSxPipelineStageNoDeadline(stage) {
-  return !!stage?.clears_deadline
-    || isSxDeliveredStage(stage)
-    || isSxPipelineStageCompletedRevenue(stage)
-    || isSxPipelineStageCollectedRevenue(stage);
+  return !!stage?.clears_deadline || !!stage?.is_handover_to_logistics;
 }
 
 /** Ẩn badge deadline trên thẻ Kanban SX khi đã giao hoặc hoàn thành. */
-export function shouldHideSxKanbanDeadlineOnCard(item, stage) {
-  const st = stage || item?.sx_pipeline_stage;
-  return isSxPipelineStageNoDeadline(st);
+export function shouldHideSxKanbanDeadlineOnCard() {
+  return false;
 }
 
 /**
@@ -467,9 +465,6 @@ export function getSxOrderDeliveryDateUrgency(dateIso, stage, companyOrId = null
   if (!dateIso) return null;
   const dd = new Date(dateIso);
   if (Number.isNaN(dd.getTime())) return null;
-  if (shouldIgnoreSxOrderDeliveryOverdue(stage)) {
-    return { level: 'ok', overdue: false, soon: false };
-  }
   // Quá hạn = trước hôm nay, hoặc HCB cùng ngày sau 17:30.
   let overdue = startOfLocalDay(dd).getTime() < startOfLocalDay(new Date()).getTime();
   if (!overdue && isHucabiSameDayPastWorkEnd(dateIso, companyOrId)) overdue = true;
@@ -493,7 +488,6 @@ export function isSxProjectDeliveryDateOverdue(project, stage) {
 /** SLA cột pipeline SX — null nếu không áp dụng. */
 export function getSxPipelineStageSlaTone(stageEnteredAt, stage, companyOrId = null) {
   if (!stageEnteredAt || !stage) return null;
-  if (isSxPipelineStageNoDeadline(stage)) return null;
   if (stage.bucket_slug === INTAKE_BUCKET) return null;
   const slaDays = effectivePipelineStageSlaDays(stage.sla_days);
   if (slaDays == null) return null;

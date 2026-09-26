@@ -1,13 +1,19 @@
-function messengerEventOccurredAt(event) {
-  const timestampMs = Number(event?.timestamp);
-  if (Number.isFinite(timestampMs) && timestampMs > 0) {
+function messengerEventOccurredAt(event, { strict = false } = {}) {
+  const rawTimestamp = event?.timestamp;
+  const supportedType = typeof rawTimestamp === 'number'
+    || (typeof rawTimestamp === 'string' && /^\d+$/.test(rawTimestamp));
+  const timestampMs = supportedType ? Number(rawTimestamp) : NaN;
+  if (Number.isSafeInteger(timestampMs) && timestampMs > 0
+      && !Number.isNaN(new Date(timestampMs).getTime())) {
     return { timestampMs, occurredAt: new Date(timestampMs).toISOString() };
   }
-  const now = Date.now();
-  return { timestampMs: now, occurredAt: new Date(now).toISOString() };
+  if (strict) throw new Error('messenger_event_timestamp_invalid');
+  // Preserve legacy message ingestion without inventing when an event happened.
+  // Reports exclude messages/referrals without a valid provider timestamp.
+  return { timestampMs: null, occurredAt: null };
 }
 
-async function saveMessengerAdAttribution({ supabase, pageId, contactId, event }) {
+async function saveMessengerAdAttribution({ supabase, pageId, contactId, event, strict = false }) {
   // `messaging_referrals` is normally top-level; a new-thread Postback can nest it.
   // Prefer a top-level referral carrying an ad_id, otherwise retain the nested shape.
   const topLevelReferral = event?.referral;
@@ -18,14 +24,19 @@ async function saveMessengerAdAttribution({ supabase, pageId, contactId, event }
   const adId = referral?.ad_id != null ? String(referral.ad_id).trim() : '';
   if (!adId) return null;
 
-  const { timestampMs, occurredAt } = messengerEventOccurredAt(event);
+  const { timestampMs, occurredAt } = messengerEventOccurredAt(event, { strict });
+  if (occurredAt === null) return null;
   const { data: mapping, error: mappingErr } = await supabase
     .from('facebook_ad_campaign_mappings')
     .select('campaign_id')
     .eq('fb_ad_id', adId)
     .eq('page_id', String(pageId))
     .maybeSingle();
-  if (mappingErr) console.warn('[FB attribution] mapping:', mappingErr.message);
+  if (mappingErr && strict) throw new Error('messenger_mapping_read_failed', { cause: mappingErr });
+  if (mappingErr) {
+    console.warn('[FB attribution] mapping:', mappingErr.message);
+    return null;
+  }
 
   const campaignId = mapping?.campaign_id || null;
   const { error: attributionErr } = await supabase
@@ -40,11 +51,18 @@ async function saveMessengerAdAttribution({ supabase, pageId, contactId, event }
       referral,
       attributed_at: occurredAt,
       fb_event_timestamp_ms: timestampMs,
+      ...(strict ? { signature_verified: true } : {}),
     }, {
       onConflict: 'contact_id,page_id,fb_ad_id,fb_event_timestamp_ms',
-      ignoreDuplicates: true,
+      // A signed replay may upgrade the identical legacy event to trusted.
+      // Legacy delivery must neither overwrite nor downgrade signed evidence.
+      ignoreDuplicates: !strict,
     });
-  if (attributionErr) console.warn('[FB attribution] insert:', attributionErr.message);
+  if (attributionErr && strict) throw new Error('messenger_attribution_write_failed', { cause: attributionErr });
+  if (attributionErr) {
+    console.warn('[FB attribution] insert:', attributionErr.message);
+    return null;
+  }
   return campaignId;
 }
 
@@ -83,6 +101,9 @@ function buildPhoneAttributionReadiness({
   mappedCampaignIds,
   appSecretConfigured,
   durableWebhookDelivery = false,
+  liveE2eVerified = false,
+  crmLinkageRetrySafe = false,
+  receiptBlockingReason = null,
 }) {
   const requestedCampaignIds = uniqueText(campaignIds);
   const mapped = new Set(uniqueText(mappedCampaignIds));
@@ -90,9 +111,13 @@ function buildPhoneAttributionReadiness({
   const blockingReasons = [];
   if (missingCampaignMappingIds.length) blockingReasons.push('missing_campaign_mapping');
   if (!appSecretConfigured) blockingReasons.push('fb_app_secret_not_configured');
-  if (!durableWebhookDelivery) blockingReasons.push('webhook_delivery_not_durable');
-  // An unsigned webhook can forge campaign attribution, so it is not tracking-ready.
-  const trackingReady = missingCampaignMappingIds.length === 0 && Boolean(appSecretConfigured);
+  if (!durableWebhookDelivery) blockingReasons.push(receiptBlockingReason || 'webhook_delivery_not_durable');
+  if (!liveE2eVerified) blockingReasons.push('messenger_live_e2e_not_verified');
+  if (!crmLinkageRetrySafe) blockingReasons.push('crm_linkage_not_retry_safe');
+  // Counts cannot support decisions while signed delivery is missing or the
+  // receipt queue still has incomplete events.
+  const trackingReady = missingCampaignMappingIds.length === 0
+    && Boolean(appSecretConfigured) && Boolean(durableWebhookDelivery);
   return {
     trackingReady,
     automationReady: trackingReady && blockingReasons.length === 0,

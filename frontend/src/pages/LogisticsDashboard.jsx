@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { LogisticsListView, LogisticsPlannerView, LogisticsCalendarView, LogisticsDeadlineView, resolveVcDeadlineRaw } from '../components/LogisticsViews';
 import { DEADLINE_MODULE, resolveEffectiveModuleDeadline } from '../lib/moduleDeadlinePolicy';
-import { vcColumnDashboardKpiKey, isVcPipelineStageNoDeadline } from '../lib/vcPipelineKpi';
+import { vcColumnDashboardKpiKey } from '../lib/vcPipelineKpi';
 import { getCalendarMonthRange } from '../components/dashboard/DashboardMonthCalendar';
 import NewLogisticsProjectModal from '../components/NewLogisticsProjectModal';
 import WorkshopPipelineKanbanScroll, { useWorkshopKanbanScrollLayout } from '../components/WorkshopPipelineKanbanScroll';
@@ -1004,7 +1004,6 @@ export default function LogisticsDashboard() {
     const now = Date.now();
     return list
       .filter((p) => {
-        if (isVcPipelineStageNoDeadline(p._stage)) return false;
         const d = resolveEffectiveModuleDeadline(DEADLINE_MODULE.LOGISTICS, p, p._stage);
         return d?.deadlineTs != null && d.deadlineTs < now;
       })
@@ -1071,10 +1070,8 @@ export default function LogisticsDashboard() {
         else if (key === 'warranty') warranty += 1;
         else if (key === 'completed') completed += 1;
         else shipping += 1;
-        if (!isVcPipelineStageNoDeadline(s)) {
-          const d = resolveEffectiveModuleDeadline(DEADLINE_MODULE.LOGISTICS, p, s);
-          if (d?.deadlineTs != null && d.deadlineTs < now) overdue += 1;
-        }
+        const d = resolveEffectiveModuleDeadline(DEADLINE_MODULE.LOGISTICS, p, s);
+        if (d?.deadlineTs != null && d.deadlineTs < now) overdue += 1;
       }
     }
     return {

@@ -1,5 +1,6 @@
 /** Composer bình luận CRM có @mention thành viên lead/deal. */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Lock, Send } from 'lucide-react';
 import { FbCrmAvatar } from './crmFbCommentUi';
 import {
   CRM_MENTION_ALL_LABEL,
@@ -228,15 +229,20 @@ export function CrmCommentMentionComposer({
   return (
     <div className="relative">
       {(slashOpen && slashItems.length > 0) && (
-        <div className="absolute bottom-full left-10 right-14 z-[100] mb-1 max-h-60 overflow-y-auto rounded-xl border border-[#e4e6eb] bg-white py-1 shadow-xl ring-1 ring-black/5">
+        <div className="absolute bottom-full left-10 right-14 z-[100] mb-1 max-h-72 overflow-y-auto rounded-xl border border-[#e4e6eb] bg-white py-1 shadow-xl ring-1 ring-black/5">
           <p className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[#65676b]">
-            Tạo nhanh · Tab hoặc Enter để chọn
+            Lệnh / · Tab hoặc Enter để chọn
           </p>
           {slashItems.map((cmd, idx) => {
             const active = idx === slashPickIdx;
+            const prevGroup = idx > 0 ? slashItems[idx - 1]?.groupLabel : '';
+            const showGroup = cmd.groupLabel && cmd.groupLabel !== prevGroup;
             return (
+              <div key={cmd.id}>
+              {showGroup ? (
+                <p className="px-3 pt-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700">{cmd.groupLabel}</p>
+              ) : null}
               <button
-                key={cmd.id}
                 type="button"
                 onMouseDown={(e) => { e.preventDefault(); applySlashPick(cmd); }}
                 onMouseEnter={() => setSlashPickIdx(idx)}
@@ -250,6 +256,7 @@ export function CrmCommentMentionComposer({
                   ) : null}
                 </span>
               </button>
+              </div>
             );
           })}
         </div>
@@ -359,38 +366,62 @@ export function CrmCommentMentionComposer({
           </div>
         </div>
       )}
-      <div className="flex items-end gap-2 px-3 py-2.5 bg-white">
+      <div className="bg-white">
+        {(quickReplyTemplates.length > 0 || allowPrivate) && (
+          <div className="flex flex-wrap items-center gap-1 px-3 pt-2">
+            {quickReplyTemplates.length > 0 && (
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-[#8a8d91] shrink-0">Tin mẫu</span>
+            )}
+            {quickReplyTemplates.map((item) => {
+              const label = typeof item === 'string' ? item : (item.label || item.text || '');
+              const text = typeof item === 'string' ? item : (item.text || item.label || '');
+              if (!label) return null;
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  disabled={posting}
+                  onClick={() => {
+                    onQuickReply?.(text);
+                    onChange?.({ target: { value: text } });
+                    requestAnimationFrame(() => textareaRef.current?.focus());
+                  }}
+                  className="h-6 px-2 rounded-full bg-[#f0f2f5] text-[11px] font-medium text-[#050505] hover:bg-[#e7f3ff] disabled:opacity-50 cursor-pointer transition-colors"
+                >
+                  {label}
+                </button>
+              );
+            })}
+            {allowPrivate && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPrivateOn((v) => {
+                    const next = !v;
+                    setPrivatePickerOpen(next);
+                    if (!next) setPrivateSelectedIds(new Set());
+                    return next;
+                  });
+                }}
+                title={privateOn ? `Riêng tư (${privateSelectedIds.size}) — bấm để tắt` : 'Chỉ hiện với người được chọn'}
+                className={`ml-auto shrink-0 h-6 w-6 rounded-full border transition-colors cursor-pointer inline-flex items-center justify-center ${
+                  privateOn
+                    ? 'border-amber-400 bg-amber-100 text-amber-900 hover:bg-amber-200'
+                    : 'border-[#ccd0d5] bg-white text-[#65676b] hover:bg-[#f0f2f5]'
+                }`}
+              >
+                <Lock className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+        )}
+      <div className="flex items-end gap-2 px-3 py-2 bg-white">
         <FbCrmAvatar user={user} className="h-8 w-8 shrink-0 mb-px" />
         <div className={`flex-1 min-w-0 rounded-[22px] px-3 py-2 border transition-colors ${
           mentionAllActive
             ? 'bg-amber-100 border-amber-400 focus-within:border-amber-500 ring-1 ring-amber-300/80'
             : 'bg-[#f0f2f5] border-transparent focus-within:border-[#1877f2]/30'
         }`}>
-          {quickReplyTemplates.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5 pb-2 mb-1 border-b border-[#e4e6eb]/70">
-              <span className="text-[10px] font-semibold uppercase tracking-wide text-[#65676b] shrink-0">Tin mẫu</span>
-              {quickReplyTemplates.map((item) => {
-                const label = typeof item === 'string' ? item : (item.label || item.text || '');
-                const text = typeof item === 'string' ? item : (item.text || item.label || '');
-                if (!label) return null;
-                return (
-                  <button
-                    key={label}
-                    type="button"
-                    disabled={posting}
-                    onClick={() => {
-                      onQuickReply?.(text);
-                      onChange?.({ target: { value: text } });
-                      requestAnimationFrame(() => textareaRef.current?.focus());
-                    }}
-                    className="h-6 px-2 rounded-full border border-[#ccd0d5] bg-white text-[11px] font-medium text-[#050505] hover:bg-[#e7f3ff] hover:border-[#1877f2]/40 disabled:opacity-50 cursor-pointer transition-colors"
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          )}
           <div className="flex items-start gap-1.5">
             {attachSlot ? <div className="shrink-0 pt-0.5">{attachSlot}</div> : null}
             <textarea
@@ -464,50 +495,21 @@ export function CrmCommentMentionComposer({
             </p>
           )}
         </div>
-        {allowPrivate && (
-          <div className="shrink-0 flex flex-col items-end gap-0.5">
-            <button
-              type="button"
-              onClick={() => {
-                setPrivateOn((v) => {
-                  const next = !v;
-                  setPrivatePickerOpen(next);
-                  if (!next) setPrivateSelectedIds(new Set());
-                  return next;
-                });
-              }}
-              title={privateOn ? 'Đang bật riêng tư — bấm để tắt' : 'Chỉ hiện với người được chọn'}
-              className={`h-8 px-2 rounded-full text-[11px] font-semibold border transition-colors cursor-pointer ${
-                privateOn
-                  ? 'border-amber-400 bg-amber-100 text-amber-900 hover:bg-amber-200'
-                  : 'border-[#ccd0d5] bg-white text-[#65676b] hover:bg-[#f0f2f5]'
-              }`}
-            >
-              {privateOn ? `🔒 Riêng tư (${privateSelectedIds.size})` : '🔒 Riêng tư'}
-            </button>
-            {privateOn && (
-              <button
-                type="button"
-                onClick={() => setPrivatePickerOpen((v) => !v)}
-                className="text-[10px] font-medium text-amber-800 underline hover:text-amber-900"
-              >
-                {privatePickerOpen ? 'Đóng danh sách' : 'Chọn người nhận'}
-              </button>
-            )}
-          </div>
-        )}
         <button
           type="button"
           disabled={posting || !(canSubmit ?? String(value || '').trim())}
           onClick={handleSubmit}
-          className={`shrink-0 rounded-full px-4 py-2 text-[13px] font-semibold shadow-sm disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors ${
+          title={mentionAllActive ? 'Gửi tất cả' : (submitLabel || 'Gửi')}
+          aria-label={mentionAllActive ? 'Gửi tất cả' : (submitLabel || 'Gửi')}
+          className={`shrink-0 h-8 w-8 rounded-full shadow-sm disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer transition-colors inline-flex items-center justify-center ${
             mentionAllActive
               ? 'bg-amber-400 text-amber-950 hover:bg-amber-500'
               : 'bg-[#1877f2] text-white hover:bg-[#166fe5]'
           }`}
         >
-          {posting ? '…' : (mentionAllActive ? 'Gửi tất cả' : submitLabel)}
+          <Send className="h-3.5 w-3.5" />
         </button>
+      </div>
       </div>
     </div>
   );

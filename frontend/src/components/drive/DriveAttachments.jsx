@@ -31,6 +31,15 @@ function readViewMode() {
   try { return localStorage.getItem('drive.viewMode') || 'grid'; } catch (_) { return 'grid'; }
 }
 
+/** Thông báo đọc được từ lỗi Drive — 503 GDRIVE_NOT_CONFIGURED là trường hợp hay gặp nhất. */
+function driveErrorMessage(err) {
+  const data = err?.response?.data || {};
+  if (data.code === 'GDRIVE_NOT_CONFIGURED') {
+    return 'Google Drive chưa được cấu hình trên máy chủ này — chưa duyệt được thư mục.';
+  }
+  return data.error || err?.message || 'Không tải được tệp đính kèm.';
+}
+
 export default function DriveAttachments({ entityType, entityId, className = '', onCountChange }) {
   const [links, setLinks] = useState([]);
   const [subFolders, setSubFolders] = useState([]);
@@ -49,6 +58,7 @@ export default function DriveAttachments({ entityType, entityId, className = '',
   const [savingFolder, setSavingFolder] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkWorking, setBulkWorking] = useState(false);
+  const [loadError, setLoadError] = useState(null);
   const [moveTarget, setMoveTarget] = useState(null);
   const fileInputRef = useRef(null);
   const isFirstLoadRef = useRef(true);
@@ -102,7 +112,12 @@ export default function DriveAttachments({ entityType, entityId, className = '',
     if (!entityType || !entityId) return;
     if (!silent) setLoading(true);
     try {
-      await Promise.all([reloadLinks(), reloadBrowse()]);
+      // allSettled chứ không phải all: danh sách file đã gắn nằm trong DB của mình, còn phần
+      // duyệt thư mục phải gọi Google Drive. Drive hỏng/chưa cấu hình thì vẫn phải hiện được
+      // danh sách đã gắn, thay vì mất sạch cả hai.
+      const [linksRes, browseRes] = await Promise.allSettled([reloadLinks(), reloadBrowse()]);
+      const failed = [linksRes, browseRes].find((r) => r.status === 'rejected');
+      setLoadError(failed ? driveErrorMessage(failed.reason) : null);
     } finally {
       if (!silent) setLoading(false);
     }
@@ -532,6 +547,12 @@ export default function DriveAttachments({ entityType, entityId, className = '',
           </button>
         </div>
       )}
+
+      {loadError && !loading ? (
+        <div className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
+          {loadError}
+        </div>
+      ) : null}
 
       {loading ? (
         <div className="flex items-center justify-center py-12 text-slate-400 text-sm">

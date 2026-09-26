@@ -62,6 +62,12 @@ function isSystemComment(body) {
   return SYSTEM_COMMENT_PREFIXES.some((p) => trimmed.startsWith(p));
 }
 
+function isStageMoveComment(comment, body) {
+  if (comment?.comment_type === 'stage_move') return true;
+  const text = String(body || '').trim();
+  return text.startsWith('➡️') && text.includes('Đã chuyển trạng thái');
+}
+
 function isImageFileName(name) {
   return /\.(jpg|jpeg|png|gif|webp|bmp|svg|heic|heif)$/i.test(name || '');
 }
@@ -1301,14 +1307,10 @@ function useCommentPasteUpload(onFilesUploaded) {
   return { handlePasteFiles, uploadingPaste, pasteProgress };
 }
 
-function commentComposerPlaceholder(replyTo, user, { withPasteHint = false, withMentionHint = false, withSlashHint = false } = {}) {
+function commentComposerPlaceholder(replyTo, hasSlash) {
   if (replyTo) return `Trả lời ${replyTo.name}…`;
-  const who = user?.full_name || user?.email || 'bạn';
-  let text = `Bình luận với tư cách ${who}…`;
-  if (withMentionHint) text += ' (@ nhắc thành viên)';
-  if (withSlashHint) text += ' · / tạo công việc';
-  if (withPasteHint) text += ' · Ctrl+V dán ảnh/file';
-  return text;
+  if (hasSlash) return 'Bình luận… Gõ / — Công việc, Phát sinh, Đã giao. Phụ trách: /Lắp xong';
+  return 'Bình luận…';
 }
 
 function formatVcDateTime(iso) {
@@ -2494,11 +2496,8 @@ function CommentThread({
     handleCommentFilePaste(e, onPasteFiles);
   }, [enableAttachments, onPasteFiles]);
 
-  const composerPlaceholder = commentComposerPlaceholder(replyTo, user, {
-    withPasteHint: enableAttachments,
-    withMentionHint: enableMentions,
-    withSlashHint: (slashCommands || []).length > 0,
-  });
+  const slashList = slashCommands || [];
+  const composerPlaceholder = commentComposerPlaceholder(replyTo, slashList.length > 0);
 
   const renderBranch = (parentKey, depth) => {
     const list = commentsByParent.get(parentKey) || [];
@@ -2516,6 +2515,20 @@ function CommentThread({
             onConfirm={onVcConfirm}
             onReschedule={onVcReschedule}
           />
+        );
+      }
+
+      if (isStageMoveComment(c, bodyText) && depth === 0) {
+        const who = c.user?.full_name || 'Thành viên';
+        return (
+          <div key={c.id} className="mx-2 my-2 rounded-lg border-2 border-violet-400 bg-violet-50 px-3 py-2.5 shadow-sm">
+            <p className="text-[13px] font-bold leading-snug text-violet-950 break-words">{bodyText}</p>
+            <p className="mt-1 text-[11px] font-medium text-violet-700">
+              {who}
+              <span className="mx-1 text-violet-400">·</span>
+              <span title={formatCrmCommentFullDateTime(c.created_at)}>{formatCrmFbRelativeTime(c.created_at)}</span>
+            </p>
+          </div>
         );
       }
 
@@ -2875,8 +2888,9 @@ function CommentThread({
               </div>
             ) : null}
             {slashFormSlot ? <div className="px-3 pt-2">{slashFormSlot}</div> : null}
-            {enableMentions ? (
+            {(enableMentions || slashList.length > 0) ? (
               <CrmCommentMentionComposer
+                allowPrivate={enableMentions}
                 user={user}
                 members={members}
                 value={bodyField}
@@ -3404,7 +3418,12 @@ export function CrmLeadHistoryPanel({ leadId, forModule = null }) {
 }
 
 /** Bình luận dự án sản xuất — realtime qua socket `project:comment` */
-export function ProjectCommentsPanel({ projectId, onCountChange }) {
+export function ProjectCommentsPanel({
+  projectId,
+  onCountChange,
+  slashCommands = [],
+  onSlashCommand,
+}) {
   const showOnScreen = useCommentShowOnScreenEnabled();
   const { user } = useAuth();
   const activeProjectId = showOnScreen ? projectId : null;
@@ -3630,6 +3649,8 @@ export function ProjectCommentsPanel({ projectId, onCountChange }) {
 
   return (
     <CommentThread
+      slashCommands={slashCommands}
+      onSlashCommand={onSlashCommand}
       comments={comments}
       loading={loading}
       user={user}
