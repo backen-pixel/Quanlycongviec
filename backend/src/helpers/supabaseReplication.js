@@ -29,6 +29,31 @@ const _stats = {
 let _workerStarted = false;
 let _workerBusy = false;
 
+// Keep retry classification private; public health/status and logs must not contain
+// response bodies, customer identifiers, REST filters, or upstream error messages.
+const replicationErrors = new WeakMap();
+
+function safeReplicationError(err) {
+  const known = err && typeof err === 'object' ? replicationErrors.get(err) : null;
+  if (known) return known.diagnostic;
+  return 'Replication operation failed';
+}
+
+function backupRequestError(status, text) {
+  const body = parseJsonBody(text);
+  const code = typeof body?.code === 'string'
+    && /^(?:[0-9][0-9A-Z]{4}|(?:F0|HV|P0|XX)[0-9A-Z]{3}|PGRST[0-9]{3})$/.test(body.code)
+    ? body.code : null;
+  const httpStatus = Number.isInteger(status) && status >= 100 && status <= 599 ? status : null;
+  const diagnostic = `Backup request failed${httpStatus ? ` → ${httpStatus}` : ''}${code ? ` (code ${code})` : ''}`;
+  const err = new Error(diagnostic);
+  replicationErrors.set(err, {
+    diagnostic,
+    deferrable: isDeferrableReplicationError(`→ ${status} ${text}`),
+  });
+  return err;
+}
+
 function trimBase(url) {
   return String(url || '').replace(/\/+$/, '');
 }
@@ -86,10 +111,10 @@ async function backupFetchWithGrantRetry(fetchFn) {
     const { applyBackupSchemaGrants } = require('./backupSchemaGrants');
     await applyBackupSchemaGrants({
       force: true,
-      onLog: (m) => console.warn('[replication]', m),
+      onLog: () => console.warn('[replication] backup schema grant update'),
     });
   } catch (e) {
-    console.warn('[replication] grants failed:', e.message);
+    console.warn('[replication] grants failed:', safeReplicationError(e));
     return { res, text };
   }
   res = await fetchFn();
@@ -153,8 +178,15 @@ function primaryHeaders() {
 }
 
 function parseFkMissingFromError(errOrText) {
-  const text = String(errOrText?.message || errOrText || '');
-  const m = text.match(/Key \(([^)]+)\)=\(([^)]+)\) is not present in table "([^"]+)"/);
+  let text = String(errOrText?.message || errOrText || '').trim();
+  const parsed = parseJsonBody(text);
+  if (parsed && typeof parsed === 'object') {
+    if (Array.isArray(parsed) || (parsed.code != null && parsed.code !== '23503')) return null;
+    text = typeof parsed.details === 'string' ? parsed.details.trim() : '';
+  }
+  // Only the existing single-column, single-value FK form is supported. In
+  // particular, do not turn composite/ambiguous keys into an id lookup.
+  const m = text.match(/^Key \(([A-Za-z_][A-Za-z0-9_]{0,62})\)=\(([^\s(),"'\\\x00-\x1f\x7f]{1,256})\) is not present in table "([A-Za-z_][A-Za-z0-9_]{0,62})"\.?$/);
   if (!m) return null;
   return { childColumn: m[1], parentId: m[2], parentTable: m[3] };
 }
@@ -468,7 +500,7 @@ async function upsertCrmLeadOnBackup(row, depth = 0) {
     }
   }
 
-  throw new Error(`backup upsert crm_leads → ${res.status} ${text.slice(0, 200)}`);
+  throw backupRequestError(res.status, text);
 }
 
 /** Upsert facebook_contacts theo (page_id, psid) — tránh 409 khi backup có uuid khác primary. */
@@ -508,7 +540,7 @@ async function upsertFacebookContactOnBackup(row, depth = 0) {
 
   const rowToWrite = await ensureFacebookContactParents(row, depth);
 
-  const upsertRes = await backupFetchWithGrantRetry(() => undiciFetch(
+  const { res: upsertRes, text } = await backupFetchWithGrantRetry(() => undiciFetch(
     `${backupBase}/rest/v1/facebook_contacts?on_conflict=page_id,psid`,
     {
       method: 'POST',
@@ -520,7 +552,7 @@ async function upsertFacebookContactOnBackup(row, depth = 0) {
       body: JSON.stringify(rowToWrite),
       dispatcher: supabaseDispatcher,
     },
-  )).then(({ res }) => res);
+  ));
 
   if (upsertRes.ok) {
     const saved = await upsertRes.json().catch(() => null);
@@ -528,7 +560,6 @@ async function upsertFacebookContactOnBackup(row, depth = 0) {
     return savedRow?.id || row.id || null;
   }
 
-  const text = await upsertRes.text().catch(() => '');
   const fk = parseFkMissingFromError(text);
   if (fk && depth < 6) {
     await ensureRowOnBackup(fk.parentTable, fk.parentId, depth + 1);
@@ -561,10 +592,10 @@ async function upsertFacebookContactOnBackup(row, depth = 0) {
       await ensureRowOnBackup(patchFk.parentTable, patchFk.parentId, depth + 1);
       return upsertFacebookContactOnBackup(row, depth + 1);
     }
-    throw new Error(`backup upsert facebook_contacts → ${patchRes.status} ${patchText.slice(0, 200)}`);
+    throw backupRequestError(patchRes.status, patchText);
   }
 
-  throw new Error(`backup upsert facebook_contacts → ${upsertRes.status} ${text.slice(0, 200)}`);
+  throw backupRequestError(upsertRes.status, text);
 }
 
 async function ensureFacebookContactOnBackup(primaryContactId, depth = 0) {
@@ -616,7 +647,7 @@ async function postRowToBackup(table, row, depth = 0) {
   }
 
   const backupBase = trimBase(config.supabaseBackupUrl);
-  const res = await backupFetchWithGrantRetry(() => undiciFetch(
+  const { res, text } = await backupFetchWithGrantRetry(() => undiciFetch(
     `${backupBase}/rest/v1/${table}?on_conflict=id`,
     {
       method: 'POST',
@@ -628,9 +659,8 @@ async function postRowToBackup(table, row, depth = 0) {
       body: JSON.stringify(payload),
       dispatcher: supabaseDispatcher,
     },
-  )).then(({ res: r }) => r);
+  ));
   if (res.ok) return;
-  const text = await res.text().catch(() => '');
   const fk = parseFkMissingFromError(text);
   if (fk && depth < 4) {
     await ensureRowOnBackup(fk.parentTable, fk.parentId, depth + 1);
@@ -662,7 +692,7 @@ async function postRowToBackup(table, row, depth = 0) {
     );
     if (patchRes.ok) return;
   }
-  throw new Error(`backup upsert ${table} → ${res.status} ${text.slice(0, 200)}`);
+  throw backupRequestError(res.status, text);
 }
 
 async function ensureRowOnBackup(table, id, depth = 0) {
@@ -727,6 +757,8 @@ async function redisPushTail(job) {
 }
 
 function isDeferrableReplicationError(err) {
+  const known = err && typeof err === 'object' ? replicationErrors.get(err) : null;
+  if (known) return known.deferrable;
   const msg = String(err?.message || err || '');
   return /→ 409\b|42501|permission denied|Grant the required privileges/i.test(msg)
     || /"code":"23503"|foreign key|is not present in table|PGRST116|→ 406\b|→ 404\b|contains 0 rows|"code":"23505"|duplicate key/i.test(msg);
@@ -735,7 +767,7 @@ function isDeferrableReplicationError(err) {
 async function requeueReplicationJob(job, err) {
   const retry = (job.retry || 0) + 1;
   if (retry > 12) {
-    console.warn('[supabase-replication] bỏ job sau 12 lần:', job.path || job.bucket, err?.message);
+    console.warn('[supabase-replication] bỏ job sau 12 lần:', safeReplicationError(err));
     return;
   }
   const next = { ...job, retry, deferred_at: new Date().toISOString() };
@@ -792,7 +824,7 @@ function maybeEnqueueRestReplication(originalUrl, init, response) {
   };
 
   void redisPush(job).then(() => { _stats.enqueued += 1; }).catch((e) => {
-    console.warn('[supabase-replication] enqueue failed:', e.message);
+    console.warn('[supabase-replication] enqueue failed:', safeReplicationError(e));
   });
 }
 
@@ -815,7 +847,7 @@ function replicateStorageUpload({ bucket, storagePath, mimetype, upsert = true }
   };
 
   void redisPush(job).then(() => { _stats.enqueued += 1; }).catch((e) => {
-    console.warn('[supabase-replication] storage enqueue failed:', e.message);
+    console.warn('[supabase-replication] storage enqueue failed:', safeReplicationError(e));
   });
 }
 
@@ -900,7 +932,7 @@ async function applyRestJob(job) {
   ) {
     return;
   }
-  throw new Error(`backup ${method} ${path} → ${res.status} ${text.slice(0, 200)}`);
+  throw backupRequestError(res.status, text);
 }
 
 async function applyStorageJob(job) {
@@ -944,7 +976,7 @@ async function drainReplicationQueue({ maxJobs = 100, force = false } = {}) {
     } catch (e) {
       failed += 1;
       _stats.failed += 1;
-      _stats.last_error = e.message;
+      _stats.last_error = safeReplicationError(e);
       await requeueReplicationJob(job, e);
     }
   }
@@ -968,9 +1000,9 @@ async function workerTickBatch() {
         processed += 1;
       } catch (e) {
         _stats.failed += 1;
-        _stats.last_error = e.message;
+        _stats.last_error = safeReplicationError(e);
         if ((job.retry || 0) < 3) {
-          console.warn('[supabase-replication] apply failed:', job.type, job.path || job.bucket, e.message);
+          console.warn('[supabase-replication] apply failed:', safeReplicationError(e));
         }
         await requeueReplicationJob(job, e);
         if (!isDeferrableReplicationError(e)) break;
