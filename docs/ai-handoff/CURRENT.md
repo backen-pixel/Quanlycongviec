@@ -8,7 +8,7 @@ Cập nhật: 2026-09-26 (UTC+7)
 
 Webhook nhận có chữ ký trước khi ghi receipt/ACK, xử lý lại sau lỗi, lưu phone/time cùng tin nhắn; migration 637/638 cho queue/mapping và **639** cho bằng chứng xác thực, quyền bảo vệ dữ liệu, referral cùng ngày VN và loại tie mơ hồ. API kiểm tra phiên bản schema; lỗi/thiếu dữ liệu không bị coi là 0 khách. Dữ liệu cũ không tự chuyển thành đã xác thực.
 
-Kiểm thử offline đạt: 4 bộ Node (attribution, receipt/handler, API report, Page/tenant scope); **88 kiểm tra SQL** (39 queue/mapping + 49 verified report/ACL/trigger) trên PGlite 0.3.14 / PostgreSQL 17.5. Cú pháp JS và diff đạt. Chưa có CI GitHub, staging hoặc nhiều kết nối PostgreSQL thật.
+Kiểm thử offline đạt: 4 bộ Node (attribution, receipt/handler, API report, Page/tenant scope); **88 kiểm tra SQL** (39 queue/mapping + 49 verified report/ACL/trigger) trên PGlite 0.3.14 / PostgreSQL 17.5. Bổ sung **124 kiểm tra trên PostgreSQL 17.6 thật** trong cluster mới cô lập: 4 kết nối độc lập, 3 worker đồng thời, 12 vòng tranh nhận, redelivery, rollback, forced lease expiry/reclaim, token cũ và verified report/trigger. Cluster đã dừng sạch. Chưa có CI GitHub, staging schema đầy đủ hoặc thử crash tiến trình thật.
 
 `automation_ready=false`, `crm_acceptance_verified=false`; giữ blocker `crm_linkage_not_retry_safe` và `messenger_live_e2e_not_verified`. Luồng legacy tạo/liên kết lead chưa được nghiệm thu giao dịch xuyên suốt; không bật quảng cáo/automation từ số đếm này. **Google R0 chưa có bằng chứng khách thật.**
 

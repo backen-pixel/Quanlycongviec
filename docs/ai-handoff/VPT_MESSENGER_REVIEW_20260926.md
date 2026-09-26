@@ -39,12 +39,22 @@ PGLITE_TEST_MODULE=/tmp/vpt-attribution-test/node_modules/@electric-sql/pglite n
 
 Đã thực thi trên PGlite 0.3.14 / PostgreSQL 17.5: **39** kiểm tra queue/mapping và **49** kiểm tra report/capability/quyền/trigger dữ liệu xác thực (**88** tổng cộng). Cả hai bộ SQL chạy migration hai lần để kiểm tra khả năng chạy lặp. Kiểm tra cú pháp các JavaScript thay đổi và diff với `core.whitespace=cr-at-eol` (giữ CRLF của route) cũng đạt.
 
-Không có bằng chứng CI GitHub hoặc staging. PostgreSQL nhiều kết nối chưa chạy: môi trường local không cài được server do giới hạn UID/GID; không thay đổi kiểm soát quyền để vượt giới hạn. PGlite không thay thế kiểm thử concurrency thực tế.
+Kiểm thử nhiều kết nối đã chạy tiếp trên **PostgreSQL 17.6 thật**, trong cluster mới cô lập trên WSL Ubuntu 24.04 của DESKTOP-UFJU8SP: **124 kiểm tra đạt**, 4 kết nối DB độc lập, 3 worker tranh nhận việc qua 12 vòng. Bộ test gồm giao webhook trùng đồng thời, rollback claim/finish, thứ tự từng hội thoại, lease hết hạn cưỡng bức/nhận lại và từ chối token cũ, report xác thực, trigger chống sửa giả. Chỉ dùng fixture tổng hợp; cluster đã dừng sạch sau kiểm thử. SHA-256 file test đã chạy: `c6bb011c7d324071baf578aae3968ee6739181ff7c066b46fbc5214579cb9d43`.
+
+Để chạy lại, chuẩn bị **cluster local mới**, database rỗng có tên bắt đầu `vpt_messenger_test_`, user có quyền tạo role/migration, cổng riêng khác 5432; không dùng một database rỗng bên trong cluster nghiệp vụ. Sau khi cài dependencies backend:
+
+```bash
+VPT_MESSENGER_TEST_URL='postgres://test_owner@127.0.0.1:56437/vpt_messenger_test_pr2' node backend/tests/facebook-messenger-concurrency.test.js
+```
+
+Script từ chối host ngoài loopback, cổng mặc định, tên DB khác prefix, query override và DB có bảng/view/sequence trong public. Trước khi tạo role, script còn từ chối cluster có database khác ngoài postgres/database test hoặc có role ngoài các role hệ thống/owner hiện tại. Người chạy chịu trách nhiệm tạo và dừng cluster riêng. Không nạp `.env` của ứng dụng.
+
+Chưa có bằng chứng CI GitHub, staging với schema đầy đủ hoặc thử crash tiến trình thật. Kiểm thử lease hết hạn cưỡng bức/rollback không thay thế các phần đó; 124 kiểm tra này cũng không nghiệm thu giao dịch tạo lead/customer.
 
 ## Điều kiện phát hành còn mở
 
-1. Review mã và xác nhận staging riêng cùng phiên bản backend/schema. Chạy kiểm thử nhiều kết nối, crash/reclaim và các quyền thực tế của DB.
-2. Luồng cũ tạo customer/lead và gắn contact chưa có giao dịch/idempotency xuyên suốt. Không bật `crmLinkageRetrySafe`; receipt `done` chỉ chứng minh phần sự kiện/attribution đã xong. Không tự tạo lại lead ở replay khi chưa rõ lần trước đã ghi đến đâu.
+1. Review mã và xác nhận staging riêng cùng phiên bản backend/schema. Kiểm thử nhiều kết nối cô lập đã đạt; còn crash tiến trình và các quyền/schema thực tế của staging. Ngày 26/09 Render chuyển về trang đăng nhập nên chưa xác minh được deploy SHA hoặc staging.
+2. Luồng cũ tạo customer/lead và gắn contact chưa có giao dịch/idempotency xuyên suốt. Không bật `crmLinkageRetrySafe`; receipt `done` chỉ chứng minh phần sự kiện/attribution đã xong. Không tự tạo lại lead ở replay khi chưa rõ lần trước đã ghi đến đâu. Review tiếp xác nhận cả luồng tự tạo và route tạo lead thủ công đều có nhiều lần ghi rời rạc; khóa trong bộ nhớ không bao phủ nhiều process. Phần tiếp theo cần core transaction chung với khóa contact + khóa nguồn bền vững, kiểm tra lease trong transaction và outbox cho side effect; không mở rộng PR này sang viết lại nghiệp vụ tạo lead khi chưa đối chiếu staging.
 3. Kiểm thử Messenger từ quảng cáo thực tế bằng cuộc hội thoại được phép; xác minh referral → ad → campaign → số điện thoại → contact/lead, rồi loại trừ đúng tin TEST. Không bật `liveE2eVerified` từ kiểm thử offline.
 4. Quy tắc chi 50.000đ/không có số và mở lại 00:00, Facebook A/B và các thay đổi ngân sách vẫn chưa được kích hoạt bởi PR này.
 

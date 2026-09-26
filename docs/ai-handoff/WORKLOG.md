@@ -1,5 +1,14 @@
 # Nhật ký công việc AI
 
+## 2026-09-26 — Codex: bổ sung bằng chứng PostgreSQL nhiều kết nối cho PR #2
+
+- PR #2 đã xuất bản và Ready for review tại head `4b5a5a9f`; phiên này bổ sung test và tài liệu, không đổi runtime code/migration.
+- File mới: `backend/tests/facebook-messenger-concurrency.test.js`; cập nhật CURRENT, WORKLOG và VPT_MESSENGER_REVIEW_20260926. Test chỉ cho loopback/cổng riêng/database `vpt_messenger_test_*` rỗng, không đọc application `.env`.
+- Kết quả: **124 kiểm tra PASS** trên PostgreSQL 17.6, cluster mới riêng trong WSL Ubuntu 24.04; 4 backend DB độc lập, 3 worker, 12 vòng. Bao gồm giao trùng, rollback claim/finish, ordering, lease hết hạn cưỡng bức/reclaim/token cũ, report xác thực và trigger. SHA-256 test: `c6bb011c7d324071baf578aae3968ee6739181ff7c066b46fbc5214579cb9d43`. Dừng sạch cluster sau test; không chạm DB nghiệp vụ.
+- Giới hạn: chưa crash tiến trình thật, staging schema đầy đủ hoặc CI GitHub. Review xác nhận tạo customer/lead thủ công và tự động còn các lần ghi rời rạc; giữ blocker retry-safety và live-E2E, không mở rộng sang đổi nghiệp vụ trong PR này.
+- Google R0 vẫn chưa được nghiệm thu: CRM/Render cần phiên đăng nhập. Remarketing vẫn PAUSED; tệp V1 30 ngày có ID `9477312690`, Display size 0 và chưa được gắn vào nhóm `201935341601` (nhóm đang gắn 3 tệp cũ). Không đổi Ads trước R0.
+- Rollback phần bổ sung: bỏ file test/mục tài liệu mới; không có SQL/runtime cần rollback. Hướng dẫn phát hành chính giữ tại VPT_MESSENGER_REVIEW_20260926.md.
+
 ## 2026-09-26 — Codex: cập nhật PR #2 theo main, phục hồi durable, đóng lỗi review
 
 - Phạm vi: Messenger attribution; main `a458a192`, head gốc `78c1ffa3`. Ghép 15 commit main; giải quyết hai conflict docs, giữ nguyên thay đổi khác. Phục hồi gói durable bằng manifest/ghép ba chiều; không dùng commit snapshot.
