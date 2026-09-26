@@ -983,10 +983,12 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | GET | `/api/external/stages` | `external.js` |
 | GET | `/api/external/users` | `external.js` |
 
-### `/api/facebook` (84)
+### `/api/facebook` (86)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
+| GET | `/api/facebook/ads/phone-attribution` | `facebook.js` |
+| POST | `/api/facebook/ads/phone-attribution/test-exclusions` | `facebook.js` |
 | GET | `/api/facebook/analytics` | `facebook.js` |
 | GET | `/api/facebook/audit-phone-sync` | `facebook.js` |
 | GET | `/api/facebook/auto-lead-config` | `facebook.js` |

@@ -176,9 +176,10 @@ const UPLOAD_BODY_LIMIT = '256mb';
 const STANDARD_BODY_LIMIT = '2mb';
 const largeBodyRoutes = ['/api/upload', '/api/voice-recordings', '/api/external', '/api/mcp', '/api/messenger'];
 
-/** Zalo OA webhook — giữ rawBody để verify X-ZEvent-Signature */
-app.use('/api/zalo/webhook', express.raw({ type: '*/*', limit: '1mb' }), (req, res, next) => {
+/** Social webhooks need their exact raw body for provider signature validation. */
+function parseSignedWebhookRawBody(req, res, next) {
   if (req.method === 'POST' && Buffer.isBuffer(req.body)) {
+    req.rawBodyBuffer = req.body;
     req.rawBody = req.body.toString('utf8');
     try {
       req.body = JSON.parse(req.rawBody);
@@ -187,10 +188,14 @@ app.use('/api/zalo/webhook', express.raw({ type: '*/*', limit: '1mb' }), (req, r
     }
   }
   next();
-});
+}
+
+app.use('/api/zalo/webhook', express.raw({ type: '*/*', limit: '1mb' }), parseSignedWebhookRawBody);
+app.use('/api/facebook/webhook', express.raw({ type: '*/*', limit: '1mb' }), parseSignedWebhookRawBody);
 
 app.use((req, res, next) => {
-  if (req.path === '/api/zalo/webhook' && req.method === 'POST' && req.rawBody != null) {
+  if ((req.path === '/api/zalo/webhook' || req.path === '/api/facebook/webhook')
+    && req.method === 'POST' && req.rawBody != null) {
     return next();
   }
   const isLarge = largeBodyRoutes.some((p) => req.path.startsWith(p));
@@ -1365,6 +1370,13 @@ server.listen(config.port, () => {
     require('./jobs/driveSync').start();
   } catch (e) {
     console.warn('[drive-sync] Failed to start:', e.message);
+  }
+
+  // Opt-in durable Messenger receipts (migrations 637/639 + signed webhook + Page allowlist).
+  try {
+    require('./routes/facebook').startMessengerReceiptWorker();
+  } catch (e) {
+    console.warn('[FB receipts] Failed to start:', e.message);
   }
 
   // Worker STT ghi âm Lead tiềm năng (OpenAI Whisper) — disable: VOICE_STT_CRON_DISABLED=1

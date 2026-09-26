@@ -1,5 +1,57 @@
 # Nhật ký công việc AI
 
+## 2026-09-26 — Codex: chuẩn bị kiểm tra catalog staging chỉ đọc
+
+- Thêm `backend/scripts/verify-messenger-staging-schema.js` và `backend/tests/facebook-messenger-staging-preflight.test.js`; không đổi runtime/migration, không kết nối DB nghiệp vụ, chưa commit/publish trong bước chuẩn bị này.
+- Công cụ yêu cầu khai báo đích staging chính xác; TLS verify-full cho host ngoài local; không đọc application `.env`; dùng startup read-only và `BEGIN ... READ ONLY`, rollback sau kiểm tra. Chỉ đọc catalog, không gọi RPC ứng dụng. Output không có hostname rõ, URL, credentials, nội dung RPC hoặc thông báo lỗi DB nguyên văn.
+- **28 kiểm tra PASS** trên PGlite cô lập (26 ban đầu + 2 trường hợp URI-decoding lỗi); kiểm tra quyền kế thừa/Public, body RPC cũ/đã đổi, trigger tắt/chỉ mục thiếu, cột thiếu, rollback khi đọc lỗi và từ chối cấu hình không hợp lệ trước khi kết nối. Thiếu cấu hình staging trả `unknown`, exit 2.
+- Chưa chạy helper lên staging thật: Render vẫn ở đăng nhập, chưa xác minh latest live deploy SHA hoặc DB staging. Catalog pass chỉ là kiểm tra phần contract đã liệt kê, không nghiệm thu schema toàn bộ, crash process, giao dịch customer/lead hoặc Messenger thật; các cờ nghiệm thu/automation luôn false.
+- CRM VPT đã đăng nhập được; đối soát mới theo dấu form V1: 3 lead TEST, 0 deal, chưa có lead thật đủ bằng chứng R0. Giữ các gate quảng cáo theo kế hoạch.
+- Rollback: bỏ hai file mới và các đoạn tài liệu bổ sung; không có thay đổi dữ liệu, SQL hoặc runtime phải hoàn tác. Hướng dẫn chạy và giới hạn ở `VPT_MESSENGER_REVIEW_20260926.md`.
+
+## 2026-09-26 — Codex: bổ sung bằng chứng PostgreSQL nhiều kết nối cho PR #2
+
+- PR #2 đã xuất bản và Ready for review tại head `4b5a5a9f`; phiên này bổ sung test và tài liệu, không đổi runtime code/migration.
+- File mới: `backend/tests/facebook-messenger-concurrency.test.js`; cập nhật CURRENT, WORKLOG và VPT_MESSENGER_REVIEW_20260926. Test chỉ cho loopback/cổng riêng/database `vpt_messenger_test_*` rỗng, không đọc application `.env`.
+- Kết quả: **124 kiểm tra PASS** trên PostgreSQL 17.6, cluster mới riêng trong WSL Ubuntu 24.04; 4 backend DB độc lập, 3 worker, 12 vòng. Bao gồm giao trùng, rollback claim/finish, ordering, lease hết hạn cưỡng bức/reclaim/token cũ, report xác thực và trigger. SHA-256 test: `c6bb011c7d324071baf578aae3968ee6739181ff7c066b46fbc5214579cb9d43`. Dừng sạch cluster sau test; không chạm DB nghiệp vụ.
+- Giới hạn: chưa crash tiến trình thật, staging schema đầy đủ hoặc CI GitHub. Review xác nhận tạo customer/lead thủ công và tự động còn các lần ghi rời rạc; giữ blocker retry-safety và live-E2E, không mở rộng sang đổi nghiệp vụ trong PR này.
+- Google R0 vẫn chưa được nghiệm thu: CRM/Render cần phiên đăng nhập. Remarketing vẫn PAUSED; tệp V1 30 ngày có ID `9477312690`, Display size 0 và chưa được gắn vào nhóm `201935341601` (nhóm đang gắn 3 tệp cũ). Không đổi Ads trước R0.
+- Rollback phần bổ sung: bỏ file test/mục tài liệu mới; không có SQL/runtime cần rollback. Hướng dẫn phát hành chính giữ tại VPT_MESSENGER_REVIEW_20260926.md.
+
+## 2026-09-26 — Codex: cập nhật PR #2 theo main, phục hồi durable, đóng lỗi review
+
+- Phạm vi: Messenger attribution; main `a458a192`, head gốc `78c1ffa3`. Ghép 15 commit main; giải quyết hai conflict docs, giữ nguyên thay đổi khác. Phục hồi gói durable bằng manifest/ghép ba chiều; không dùng commit snapshot.
+- File chính: helpers `facebookMessengerCampaignAttribution`, `facebookMessengerReceipts`, `facebookWebhookSignature`, `facebookContactActivity`; route `facebook.js`, `server.js`; migrations 591/636 (kế thừa), 637/638 (gói phục hồi), **639 mới**; 6 file test; tài liệu review và API hai endpoint.
+- Sửa lỗi: timestamp không hợp lệ, lỗi ghi bị nuốt, signed replay/evidence, SQL same-day và tie, capability version gate, quyền sửa tin đã xác thực, queue health/số đếm sai không biến thành zero. Không sửa các migration lịch sử.
+- Test: 4 bộ Node PASS; SQL queue/mappings 39 + verified/role/trigger 49 = **88 assertion PASS** trên PGlite 0.3.14/PostgreSQL 17.5; JS syntax và diff CRLF PASS.
+- Mốc: mã sẵn sàng review; chưa merge/deploy/migration thật. Chưa CI/staging/concurrency nhiều kết nối; giữ CRM retry-safety/live-E2E blockers, Ads automation OFF. Google R0 chưa được đặt; CRM browser chưa có phiên đọc hồ sơ khách thật.
+- Hướng dẫn phát hành/rollback: `VPT_MESSENGER_REVIEW_20260926.md`. Rollback bằng tắt cờ/deploy bản ổn định, giữ receipt để điều tra; không xóa dữ liệu hoặc nới quyền.
+
+## 2026-09-24 — VPT durable Messenger attribution (Codex)
+
+- Bổ sung helper receipt, worker và tích hợp webhook/server; mặc định OFF, chữ ký + Page allowlist bắt buộc. Persist trước ACK, lease renewal/reclaim/retry, repair phone/time/message-link khi replay; không lặp CRM create/auto-reply.
+- Migration 637 service-role-only; migration 638 ánh xạ ba ad A/B/control của campaign 120251591865910435. Không bật quảng cáo, không sửa migration lịch sử, không deploy.
+- Reviewer phát hiện CRM tạo lead chưa idempotent; đã giới hạn replay, ghi rõ receipt.done chỉ đảm bảo attribution. API hard-block `crm_linkage_not_retry_safe` và `messenger_live_e2e_not_verified`.
+- Tests đạt: `facebook-messenger-receipts.test.js`, attribution test, lead-chat-scope test, syntax checks; 39 SQL assertions PostgreSQL17.5/PGlite. Chưa thử DB thật/nhiều kết nối/live Messenger. Cấu hình, rollback và KPI gaps ở VPT_MESSENGER_RECEIPTS_RELEASE_20260924.md.
+
+
+## 2026-09-24 — VPT01: hardening attribution SĐT Messenger trước phát hành
+
+- AI: Codex. Bổ sung an toàn trên nhánh `codex/vpt-messenger-attribution-20260924`; chưa deploy Production.
+- `database/636_facebook_messenger_campaign_attribution_hardening.sql` là migration cộng dồn sau 591: bật RLS, thu hồi quyền bảng/RPC của `PUBLIC`/`anon`/`authenticated`, chỉ cấp `service_role`; thêm loại trừ một tin nhắn test E2E; báo cáo chỉ ghi nhận cùng Page, cùng ngày `Asia/Ho_Chi_Minh`, referral không sau tin SĐT, và đếm contact duy nhất.
+- Backend giữ Messenger cũ hoạt động. Nếu cấu hình `FB_APP_SECRET`, webhook kiểm tra `X-Hub-Signature-256` bằng raw body; không có secret thì nhận legacy unsigned nhưng `tracking_ready=false`. API báo tách bạch số 0 hợp lệ với lỗi DB và luôn trả `automation_ready=false` khi webhook chưa có receipt/hàng đợi bền vững.
+- Rà soát tiếp: RPC dùng cận trên exclusive là đúng 00:00 ngày VN kế tiếp, không bỏ sót `23:59:59.999`; helper attribution nhận cả `event.referral` và fallback `event.postback.referral` để ghi `ad_id` cho new-thread postback. Có test hai shape referral và biên ngày.
+- Đã thêm endpoint admin có scope Page/tenant `POST /api/facebook/ads/phone-attribution/test-exclusions` để loại trừ duy nhất tin test đã có SĐT; không trả SĐT.
+- Test local: `node --check` server/routes/helpers; `node backend/tests/facebook-messenger-campaign-attribution.test.js`; `node backend/tests/facebook-lead-chat-scope.test.js`; API docs generator. Test SQL là contract tĩnh, chưa thay thế chạy migration trên database thật.
+- Còn để vận hành: chạy 591 rồi 636, deploy backend với `FB_APP_SECRET`, subscribe `messaging_referrals`, test bằng tài khoản Messenger mới bấm từ đúng quảng cáo rồi gửi SĐT, xác nhận API/CRM và loại trừ test; tiếp tục triển khai durable webhook receipt/queue rồi mới bật rule 50.000đ/giờ và mở lại 00:00.
+
+## 2026-09-24 — VPT01: attribution SĐT Messenger theo campaign
+
+- AI: Codex. Nhánh `codex/vpt-messenger-attribution-20260924`, commit `b955e58b`; chưa deploy Production theo quy định repo.
+- Đã thêm: `database/591_facebook_messenger_campaign_phone_attribution.sql`, helper attribution Messenger, endpoint `GET /api/facebook/ads/phone-attribution`, mapping 30 ads cho 10 campaign VPT01 và API docs.
+- Test đạt: `node --check` hai file backend; helper timestamp/referral; migration mapping 30 quảng cáo; API-doc generator; `git diff --check`.
+- Cần trước khi chạy lịch: migration 591 + release backend + Meta subscribe `messaging_referrals` + thử tin nhắn thật có SĐT để xác minh số được gắn vào campaign. Sau đó lịch giờ/00:00 mới được bật, fail-closed khi CRM hoặc Meta không đọc được dữ liệu.
+
 ## 2026-09-25 16:20 — Deadline SX: Quá hạn theo tắt hạn
 
 - AI: Cursor. Thẻ ở cột tắt hạn vẫn bị đếm Quá hạn vì bucket tin hạn giao và stamp server. KPI và tiêu đề cột lấy tổng đó nên lệch thẻ đang hiện.

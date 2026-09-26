@@ -40,6 +40,15 @@ function vnDateEndIso(yyyyMmDd) {
   return `${s}T23:59:59.999+07:00`;
 }
 
+/** YYYY-MM-DD → đúng đầu ngày kế tiếp theo giờ VN, dùng làm cận trên exclusive. */
+function vnNextDateStartIso(yyyyMmDd) {
+  const start = vnDateStartIso(yyyyMmDd);
+  if (!start) return null;
+  const next = new Date(start);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString();
+}
+
 function vnDateRangeToMsBounds(fromStr, toStr) {
   const fromIso = fromStr ? vnDateStartIso(fromStr) : null;
   const toIso = toStr ? vnDateEndIso(toStr) : null;
@@ -74,6 +83,7 @@ module.exports = {
   enrichContactActivityFields,
   vnDateStartIso,
   vnDateEndIso,
+  vnNextDateStartIso,
   vnDateRangeToMsBounds,
   contactActivityInVnDateRange,
   messageCreatedAtInVnDateRange,

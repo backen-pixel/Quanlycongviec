@@ -16,6 +16,7 @@ const {
   enrichContactActivityFields,
   vnDateStartIso,
   vnDateEndIso,
+  vnNextDateStartIso,
 } = require('../helpers/facebookContactActivity');
 const {
   extractContactInfo,
@@ -24,6 +25,20 @@ const {
   validateVnSubscriberPhoneStored,
   analyzeStoredPhoneIssue,
 } = require('../helpers/facebookPhoneExtract');
+const {
+  messengerEventOccurredAt,
+  vietnamCalendarDate,
+  saveMessengerAdAttribution,
+  buildPhoneAttributionReadiness,
+} = require('../helpers/facebookMessengerCampaignAttribution');
+const {
+  facebookAppSecretConfigured,
+  verifyFacebookWebhookSignature,
+} = require('../helpers/facebookWebhookSignature');
+const {
+  durableMessengerPageIds, persistMessengerReceipts,
+  createMessengerReceiptWorker, messengerReceiptHealth,
+} = require('../helpers/facebookMessengerReceipts');
 const { isPhoneBlockedForFacebookAutoLead } = require('../helpers/crmAutoLeadPhoneBlocklist');
 const { deleteLeadIfAllowedForRescan, deleteOrphanCustomerIfAllowed } = require('../helpers/facebookLeadDeleteWhenNoPhone');
 const { reconcileInboundPhoneAfterScan, phonesEqualDigits } = require('../helpers/facebookInboundPhoneReconcile');
@@ -73,6 +88,7 @@ function parseMaxContactsLinkCleanup(raw) {
 const FB_DISABLE_WEBHOOK_LOGS = ['1', 'true', 'yes', 'on'].includes(
   String(process.env.FB_DISABLE_WEBHOOK_LOGS || '').toLowerCase(),
 );
+let hasWarnedFacebookWebhookSignatureNotConfigured = false;
 
 /** Tắt gọi Graph/ui-avatars lấy avatar khách — chỉ resolve tên qua Conversations API. Bật lại: FB_FETCH_PROFILE_PIC=1 */
 const FB_FETCH_PROFILE_PIC = ['1', 'true', 'yes', 'on'].includes(
@@ -3439,9 +3455,29 @@ r.get('/webhook', async (req, res) => {
 // ── WEBHOOK RECEIVE (POST) ───────────────────────────────────
 
 r.post('/webhook', async (req, res) => {
+  const signature = verifyFacebookWebhookSignature({
+    rawBody: req.rawBodyBuffer || req.rawBody,
+    signature: req.get('x-hub-signature-256'),
+  });
+  if (signature.configured && !signature.valid) {
+    console.warn('[FB] Rejected webhook with invalid X-Hub-Signature-256');
+    return res.sendStatus(401);
+  }
+  if (!signature.configured && !hasWarnedFacebookWebhookSignatureNotConfigured) {
+    hasWarnedFacebookWebhookSignatureNotConfigured = true;
+    console.warn('[FB] FB_APP_SECRET is not configured; accepting legacy unsigned webhook. Ads automation remains disabled.');
+  }
+
   const body = req.body;
-  
-  // Luôn trả 200 ngay để Facebook không retry
+
+  const durablePageIds = durableMessengerPageIds();
+  try {
+    await persistMessengerReceipts({ supabase, body, pageIds: durablePageIds, signatureValid: signature.valid });
+  } catch (_) {
+    // Meta may retry a non-2xx response. Never ACK a durable event that was not persisted.
+    console.error('[FB receipts] Could not persist webhook batch');
+    return res.sendStatus(503);
+  }
   res.sendStatus(200);
 
   // Ghi log vào DB
@@ -3461,7 +3497,7 @@ r.post('/webhook', async (req, res) => {
         const pageId = entry.id;
 
         // ═══ MESSENGER MESSAGES ═══
-        if (entry.messaging) {
+        if (entry.messaging && !durablePageIds.includes(String(pageId))) {
           for (const event of entry.messaging) {
             await handleMessaging(pageId, event, r._ioRef);
           }
@@ -3497,15 +3533,21 @@ function messengerPartnerPsid(pageId, event) {
   return null;
 }
 
-async function handleMessaging(pageId, event, io) {
+async function handleMessaging(pageId, event, io, options = {}) {
   const partnerPsid = messengerPartnerPsid(pageId, event);
   if (!partnerPsid) return;
   return withAsyncLock(`fb-msg:${pageId}:${partnerPsid}`, () =>
-    handleMessagingInner(pageId, event, io, partnerPsid),
+    handleMessagingInner(pageId, event, io, partnerPsid, options),
   );
 }
 
-async function handleMessagingInner(pageId, event, io, partnerPsid) {
+async function handleMessagingInner(pageId, event, io, partnerPsid, { durable = false } = {}) {
+  if (durable && event.message && !String(event.message.mid || '').trim()) {
+    throw new Error('messenger_message_id_missing');
+  }
+  if (durable && (event.message || event.referral || event.postback?.referral)) {
+    messengerEventOccurredAt(event, { strict: true });
+  }
   console.log(`\n[FB] 📨 Messenger event — partner PSID: ${partnerPsid}`);
 
   const sid = event.sender?.id != null ? String(event.sender.id).trim() : '';
@@ -3513,13 +3555,26 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
     ? (event.sender?.name || null)
     : (event.recipient?.name || null);
   const contact = await getOrCreateContact(pageId, partnerPsid, senderLabel);
-  if (!contact) return;
+  if (!contact) {
+    if (durable) throw new Error('messenger_contact_write_failed');
+    return;
+  }
 
   if (isPlaceholderFacebookName(contact.fb_name)) {
     void tryResolveMessengerDisplayName(pageId, partnerPsid, contact.id, io, contact);
   }
 
   console.log(`[FB] 👤 Contact: ${contact.fb_name || 'Unknown'} (ID: ${contact.id})`);
+  const attributedCampaignId = await saveMessengerAdAttribution({
+    supabase,
+    pageId,
+    contactId: contact.id,
+    event,
+    strict: durable,
+  });
+  if (attributedCampaignId) {
+    console.log(`[FB attribution] campaign=${attributedCampaignId}, contact=${contact.id}`);
+  }
 
   // Log kết quả xử lý vào DB
   if (!FB_DISABLE_WEBHOOK_LOGS) {
@@ -3562,7 +3617,7 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
 
     // Check duplicate — Facebook có thể gửi webhook 2 lần (~30ms)
     // Layer 1: In-memory lock (chống race condition khi 2 request song song)
-    if (msg.mid && !acquireMidLock(msg.mid)) {
+    if (!durable && msg.mid && !acquireMidLock(msg.mid)) {
       console.log(`[FB] ⏭️  In-memory lock: duplicate mid ${msg.mid}`);
       return;
     }
@@ -3578,7 +3633,13 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
     console.log(`[FB] 💬 Message type: ${messageType}, content: ${content?.substring(0, 50)}${content?.length > 50 ? '...' : ''}`);
     console.log(`[FB] 📎 Attachment: ${attachmentUrl || 'None'}`);
 
-    // Save message — dùng upsert để tránh duplicate
+    // Save message — dùng upsert để tránh duplicate.
+    const { occurredAt: facebookOccurredAt } = messengerEventOccurredAt(event, { strict: durable });
+    const messageMetadata = {};
+    if (msg.attachments) messageMetadata.attachments = msg.attachments;
+    if (event.referral) messageMetadata.referral = event.referral;
+
+    const directlyDetectedPhone = !isEcho ? extractContactInfo(content).phone : null;
     const insertData = {
       contact_id: contact.id,
       lead_id: contact.lead_id,
@@ -3588,29 +3649,54 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
       content,
       attachment_url: attachmentUrl,
       attachment_type: attachmentType,
-      metadata: msg.attachments ? { attachments: msg.attachments } : null,
+      facebook_occurred_at: facebookOccurredAt,
+      detected_phone: directlyDetectedPhone || null,
+      ...(durable ? { signature_verified: true } : {}),
+      metadata: Object.keys(messageMetadata).length ? messageMetadata : null,
     };
 
-    // Upsert: nếu fb_message_id đã tồn tại thì bỏ qua (onConflict ignore)
-    const { data: savedMsg, error: insertErr } = await supabase.from('facebook_messages')
+    // Save phone + event time atomically with the message. A retry repairs an old
+    // partial insert and resumes CRM linkage without counting unread/reply twice.
+    let { data: savedMsg, error: insertErr } = await supabase.from('facebook_messages')
       .upsert(insertData, { onConflict: 'fb_message_id', ignoreDuplicates: true })
-      .select().single();
-    
-    if (insertErr) {
-      // Nếu lỗi unique constraint → duplicate, skip
-      if (isDuplicateKeyError(insertErr)) {
-        console.log(`[FB] ⏭️  Duplicate insert blocked: ${msg.mid}`);
-        return;
-      }
-      if (isSupabaseUnavailableError(insertErr)) {
-        console.error('[FB] Supabase unavailable (message insert)');
-        return;
-      }
-      console.error('[FB] Insert error:', supabaseErrMsg(insertErr));
+      .select().maybeSingle();
+    if (insertErr && durable && !isDuplicateKeyError(insertErr)) {
+      throw new Error('messenger_message_write_failed', { cause: insertErr });
     }
-    
+    let replay = false;
+    if (!savedMsg && durable && msg.mid) {
+      const existing = await supabase.from('facebook_messages').select('*')
+        .eq('fb_message_id', msg.mid).eq('contact_id', contact.id).maybeSingle();
+      if (existing.error || !existing.data) throw new Error('messenger_message_recovery_failed');
+      savedMsg = existing.data;
+      replay = true;
+      if (savedMsg.signature_verified !== true
+          || savedMsg.detected_phone !== (directlyDetectedPhone || null)
+          || new Date(savedMsg.facebook_occurred_at).getTime() !== new Date(facebookOccurredAt).getTime()) {
+        const repair = await supabase.from('facebook_messages')
+          .update({ detected_phone: directlyDetectedPhone || null,
+            facebook_occurred_at: facebookOccurredAt, signature_verified: true })
+          .eq('id', savedMsg.id);
+        if (repair.error) throw new Error('messenger_phone_recovery_failed', { cause: repair.error });
+      }
+    }
     if (!savedMsg) {
-      console.log(`[FB] ⏭️  No row returned (duplicate upsert): ${msg.mid}`);
+      if (insertErr) console.warn('[FB] Message insert failed:', supabaseErrMsg(insertErr));
+      return;
+    }
+
+    if (replay) {
+      // Attribution/phone recovery is idempotent. Legacy auto-create is not: a
+      // previous attempt may already have inserted a lead before its link failed.
+      // Repair an existing link only; do not create another customer/lead/reply.
+      const link = await supabase.from('facebook_contacts').select('lead_id')
+        .eq('id', contact.id).maybeSingle();
+      if (link.error) throw new Error('messenger_contact_link_read_failed');
+      if (link.data?.lead_id && savedMsg.lead_id !== link.data.lead_id) {
+        const repairedLink = await supabase.from('facebook_messages')
+          .update({ lead_id: link.data.lead_id }).eq('id', savedMsg.id);
+        if (repairedLink.error) throw new Error('messenger_message_link_recovery_failed');
+      }
       return;
     }
 
@@ -3661,6 +3747,16 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
         if (extractedPhone || extractedAddress) {
           console.log(`[FB] 📞 Detected — phone: ${extractedPhone || 'N/A'}, address: ${extractedAddress || 'N/A'}`);
         }
+      }
+
+      // Lưu đúng mốc khách gửi SĐT, tách khỏi SĐT cũ của customer/contact.
+      if (extractedPhone) {
+        const { error: phoneEventErr } = await supabase
+          .from('facebook_messages')
+          .update({ detected_phone: extractedPhone })
+          .eq('id', savedMsg.id);
+        if (phoneEventErr && durable) throw new Error('messenger_phone_write_failed', { cause: phoneEventErr });
+        if (phoneEventErr) console.warn('[FB attribution] phone event:', phoneEventErr.message);
       }
 
       // Auto-create lead nếu chưa có — theo cấu hình auto-lead-config (gồm công ty mặc định trong tab Setup)
@@ -3759,8 +3855,9 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
         }
       } else {
         // Verify lead vẫn tồn tại — nếu bị xóa thì clear lead_id
-        const { data: leadCheck } = await supabase.from('crm_leads')
-          .select('id').eq('id', contact.lead_id).single();
+        const { data: leadCheck, error: leadCheckError } = await supabase.from('crm_leads')
+          .select('id').eq('id', contact.lead_id).maybeSingle();
+        if (durable && leadCheckError) throw new Error('messenger_existing_lead_read_failed');
         if (!leadCheck) {
           console.log(`[FB] 🗑️ Lead ${contact.lead_id} was deleted, clearing contact.lead_id`);
           await supabase.from('facebook_contacts').update({
@@ -4437,6 +4534,169 @@ r.delete('/pages/:id', authMiddleware, async (req, res) => {
     await supabase.from('facebook_pages').delete().eq('id', req.params.id);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── SĐT Messenger theo chiến dịch Click-to-Messenger ─────────
+r.get('/ads/phone-attribution', authMiddleware, async (req, res) => {
+  try {
+    const date = String(req.query.date || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)
+        || vietnamCalendarDate(vnDateStartIso(date)) !== date) {
+      return res.status(400).json({ error: 'date phải là ngày hợp lệ dạng YYYY-MM-DD theo giờ Việt Nam.' });
+    }
+
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+    const requestedPageId = String(req.query.page_id || '').trim();
+    let pageIds = scope.mode === 'filter' ? scope.pageIds : null;
+    if (requestedPageId) {
+      if (scope.mode === 'filter' && !scope.pageIds.includes(requestedPageId)) {
+        return res.status(403).json({ error: 'Không có quyền xem Page này' });
+      }
+      pageIds = [requestedPageId];
+    }
+
+    const campaignIds = String(req.query.campaign_ids || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+    if (!campaignIds.length || campaignIds.length > 100) {
+      return res.status(400).json({ error: 'campaign_ids phải có từ 1 đến 100 ID.' });
+    }
+
+    let mappingQuery = supabase
+      .from('facebook_ad_campaign_mappings')
+      .select('campaign_id, page_id')
+      .in('campaign_id', campaignIds);
+    if (Array.isArray(pageIds)) mappingQuery = mappingQuery.in('page_id', pageIds);
+    const { data: mappings, error: mappingError } = await mappingQuery;
+    if (mappingError) throw mappingError;
+
+    // The legacy RPC name also exists before the hardening migrations. Check the
+    // actual capability contract before interpreting an empty result as zero.
+    const capability = await supabase.rpc('fb_campaign_phone_attribution_capabilities');
+    if (capability.error || capability.data?.schema_version !== 639
+        || capability.data?.verified_events_only !== true
+        || capability.data?.same_vietnam_day !== true
+        || capability.data?.ambiguous_latest_referral_excluded !== true) {
+      return res.status(503).json({
+        error: 'Chưa xác minh được phiên bản dữ liệu attribution.',
+        attribution_ready: false, tracking_ready: false, automation_ready: false,
+        blocking_reasons: ['attribution_schema_upgrade_required'],
+      });
+    }
+    const receiptHealth = await messengerReceiptHealth({
+      supabase, pageIds: [...new Set((mappings || []).map((row) => row.page_id))],
+    });
+    const readiness = buildPhoneAttributionReadiness({
+      campaignIds,
+      mappedCampaignIds: (mappings || []).map((row) => row.campaign_id),
+      appSecretConfigured: facebookAppSecretConfigured(),
+      durableWebhookDelivery: receiptHealth.ready,
+      receiptBlockingReason: receiptHealth.reason,
+      // A healthy queue alone does not prove a real ad referral + phone reached CRM.
+      // Keep automation closed until a separate verified live E2E release gate exists.
+      liveE2eVerified: false,
+      crmLinkageRetrySafe: false,
+    });
+    const { data, error } = await supabase.rpc('fb_campaign_phone_numbers_in_range', {
+      p_page_ids: pageIds,
+      p_campaign_ids: campaignIds,
+      p_from: vnDateStartIso(date),
+      // The RPC uses `< p_to`; use next VN midnight so 23:59:59.999 is included.
+      p_to: vnNextDateStartIso(date),
+    });
+    if (error) throw error;
+
+    const phoneByCampaign = Object.fromEntries(campaignIds.map((campaignId) => [campaignId, 0]));
+    if (!Array.isArray(data)) throw new Error('Invalid attribution report response');
+    for (const row of data) {
+      const count = row.phone_contacts;
+      if (!campaignIds.includes(String(row.campaign_id))
+          || !['number', 'string'].includes(typeof count)
+          || !/^\d+$/.test(String(count)) || !Number.isSafeInteger(Number(count))) {
+        throw new Error('Invalid attribution report count');
+      }
+      phoneByCampaign[String(row.campaign_id)] = Number(count);
+    }
+    return res.json({
+      date,
+      timezone: 'Asia/Ho_Chi_Minh',
+      campaign_ids: campaignIds,
+      phone_by_campaign: phoneByCampaign,
+      attribution_ready: readiness.trackingReady,
+      tracking_ready: readiness.trackingReady,
+      automation_ready: readiness.automationReady,
+      missing_campaign_mapping_ids: readiness.missingCampaignMappingIds,
+      blocking_reasons: readiness.blockingReasons,
+      attribution_policy: readiness.policy,
+      attribution_schema_version: capability.data.schema_version,
+      metric: 'verified_messenger_contacts_with_detected_phone',
+      crm_acceptance_verified: false,
+      receipt_health: receiptHealth,
+    });
+  } catch (e) {
+    console.error('[FB attribution] report:', e.message);
+    return res.status(503).json({
+      error: 'Không thể đọc SĐT theo chiến dịch.',
+      detail: e.message,
+      attribution_ready: false,
+      tracking_ready: false,
+      automation_ready: false,
+      blocking_reasons: ['crm_attribution_read_failed'],
+    });
+  }
+});
+
+// ── Exclude one authorised E2E phone message from campaign reporting ─────
+r.post('/ads/phone-attribution/test-exclusions', authMiddleware, async (req, res) => {
+  try {
+    if (!isAdminLike(req.user)) {
+      return res.status(403).json({ error: 'Chỉ admin được loại trừ SĐT kiểm thử.' });
+    }
+    const messageId = String(req.body?.facebook_message_id || '').trim();
+    if (!messageId) return res.status(400).json({ error: 'Cần facebook_message_id.' });
+
+    const { data: message, error: messageError } = await supabase
+      .from('facebook_messages')
+      .select('id, contact_id, direction, detected_phone')
+      .eq('id', messageId)
+      .maybeSingle();
+    if (messageError) throw messageError;
+    if (!message) return res.status(404).json({ error: 'Không tìm thấy tin nhắn Messenger.' });
+    if (message.direction !== 'inbound' || !String(message.detected_phone || '').trim()) {
+      return res.status(400).json({ error: 'Chỉ loại trừ tin nhắn vào có SĐT đã phát hiện.' });
+    }
+
+    const { data: contact, error: contactError } = await supabase
+      .from('facebook_contacts')
+      .select('id, page_id')
+      .eq('id', message.contact_id)
+      .maybeSingle();
+    if (contactError) throw contactError;
+    if (!contact) return res.status(404).json({ error: 'Không tìm thấy liên hệ Messenger.' });
+
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+    if (!contactAllowedByFacebookScope(scope, contact)) {
+      return res.status(403).json({ error: 'Không có quyền loại trừ tin nhắn của Page này.' });
+    }
+
+    const { error: exclusionError } = await supabase
+      .from('facebook_messenger_phone_exclusions')
+      .upsert({
+        facebook_message_id: message.id,
+        contact_id: contact.id,
+        page_id: String(contact.page_id),
+        reason: 'e2e_test',
+        excluded_by: String(req.user?.id || req.user?.email || 'unknown'),
+      }, { onConflict: 'facebook_message_id' });
+    if (exclusionError) throw exclusionError;
+    return res.json({ success: true, facebook_message_id: message.id, reason: 'e2e_test' });
+  } catch (e) {
+    console.error('[FB attribution] exclude E2E phone:', e.message);
+    return res.status(503).json({ error: 'Không thể loại trừ SĐT kiểm thử.', detail: e.message });
+  }
 });
 
 // ── Contacts (danh sách chat FB) ─────────────────────────────
@@ -9989,5 +10249,15 @@ r.post('/contacts/:contactId/send-drive-folder', authMiddleware, async (req, res
     res.status(status).json({ error: e.message, failed: e.failed });
   }
 });
+
+// Started by server after Socket.IO is ready. DB leases remain authoritative if
+// Redis is unavailable; Redis leader election only reduces duplicate polling.
+const messengerReceiptWorker = createMessengerReceiptWorker({
+  supabase,
+  processEvent: (pageId, event, options) => handleMessaging(pageId, event, r._ioRef, options),
+  runIfLeader,
+});
+r.startMessengerReceiptWorker = () => messengerReceiptWorker.start();
+r.stopMessengerReceiptWorker = () => messengerReceiptWorker.stop();
 
 module.exports = r;
