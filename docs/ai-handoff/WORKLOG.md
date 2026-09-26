@@ -1,5 +1,14 @@
 # Nhật ký công việc AI
 
+## 2026-09-26 — Codex: chuẩn bị kiểm tra catalog staging chỉ đọc
+
+- Thêm `backend/scripts/verify-messenger-staging-schema.js` và `backend/tests/facebook-messenger-staging-preflight.test.js`; không đổi runtime/migration, không kết nối DB nghiệp vụ, chưa commit/publish trong bước chuẩn bị này.
+- Công cụ yêu cầu khai báo đích staging chính xác; TLS verify-full cho host ngoài local; không đọc application `.env`; dùng startup read-only và `BEGIN ... READ ONLY`, rollback sau kiểm tra. Chỉ đọc catalog, không gọi RPC ứng dụng. Output không có hostname rõ, URL, credentials, nội dung RPC hoặc thông báo lỗi DB nguyên văn.
+- **28 kiểm tra PASS** trên PGlite cô lập (26 ban đầu + 2 trường hợp URI-decoding lỗi); kiểm tra quyền kế thừa/Public, body RPC cũ/đã đổi, trigger tắt/chỉ mục thiếu, cột thiếu, rollback khi đọc lỗi và từ chối cấu hình không hợp lệ trước khi kết nối. Thiếu cấu hình staging trả `unknown`, exit 2.
+- Chưa chạy helper lên staging thật: Render vẫn ở đăng nhập, chưa xác minh latest live deploy SHA hoặc DB staging. Catalog pass chỉ là kiểm tra phần contract đã liệt kê, không nghiệm thu schema toàn bộ, crash process, giao dịch customer/lead hoặc Messenger thật; các cờ nghiệm thu/automation luôn false.
+- CRM VPT đã đăng nhập được; đối soát mới theo dấu form V1: 3 lead TEST, 0 deal, chưa có lead thật đủ bằng chứng R0. Giữ các gate quảng cáo theo kế hoạch.
+- Rollback: bỏ hai file mới và các đoạn tài liệu bổ sung; không có thay đổi dữ liệu, SQL hoặc runtime phải hoàn tác. Hướng dẫn chạy và giới hạn ở `VPT_MESSENGER_REVIEW_20260926.md`.
+
 ## 2026-09-26 — Codex: bổ sung bằng chứng PostgreSQL nhiều kết nối cho PR #2
 
 - PR #2 đã xuất bản và Ready for review tại head `4b5a5a9f`; phiên này bổ sung test và tài liệu, không đổi runtime code/migration.

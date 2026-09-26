@@ -12,6 +12,10 @@ Kiểm thử offline đạt: 4 bộ Node (attribution, receipt/handler, API repo
 
 `automation_ready=false`, `crm_acceptance_verified=false`; giữ blocker `crm_linkage_not_retry_safe` và `messenger_live_e2e_not_verified`. Luồng legacy tạo/liên kết lead chưa được nghiệm thu giao dịch xuyên suốt; không bật quảng cáo/automation từ số đếm này. **Google R0 chưa có bằng chứng khách thật.**
 
+Bổ sung công cụ chỉ đọc `backend/scripts/verify-messenger-staging-schema.js` và test cô lập: **28 kiểm tra đạt** (26 kiểm tra ban đầu + 2 trường hợp URL mã hóa lỗi). Công cụ đối chiếu catalog/cột/chữ ký và hash RPC/quyền/RLS/trigger/chỉ mục trong transaction read-only; không gọi RPC ứng dụng, không đọc hồ sơ khách hoặc ghi dữ liệu. Chưa chạy trên staging thật: Render vẫn yêu cầu đăng nhập, chưa xác minh deploy SHA và DB staging. Kết quả catalog đạt cũng không mở cờ nghiệm thu/automation. Không sửa runtime hoặc migration.
+
+Đối soát CRM VPT mới nhất đã đăng nhập thành công: theo dấu form V1 thấy **3 lead TEST, 0 deal**; chưa có hồ sơ thật đủ bằng chứng để đặt Google R0. Không còn coi đăng nhập CRM là blocker; Render/staging vẫn chưa xác minh.
+
 File thay đổi, lệnh test, migration theo đúng tên, rollback và các điều kiện còn mở: [VPT_MESSENGER_REVIEW_20260926.md](./VPT_MESSENGER_REVIEW_20260926.md).
 
 ## Deadline SX — Quá hạn khớp cột và KPI

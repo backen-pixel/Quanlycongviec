@@ -51,6 +51,31 @@ Script từ chối host ngoài loopback, cổng mặc định, tên DB khác pre
 
 Chưa có bằng chứng CI GitHub, staging với schema đầy đủ hoặc thử crash tiến trình thật. Kiểm thử lease hết hạn cưỡng bức/rollback không thay thế các phần đó; 124 kiểm tra này cũng không nghiệm thu giao dịch tạo lead/customer.
 
+## Công cụ đối chiếu catalog staging chỉ đọc
+
+Đã thêm `backend/scripts/verify-messenger-staging-schema.js` và `backend/tests/facebook-messenger-staging-preflight.test.js`. **28 kiểm tra cô lập đạt**: 26 kiểm tra ban đầu và 2 trường hợp URI-decoding lỗi. Không chạy lại 124 kiểm tra cũ; không kết nối staging hoặc production trong lần bổ sung này.
+
+Công cụ so sánh các bảng/cột được liệt kê, chữ ký input/output, language/volatility/security/search_path và hash body RPC với migration 637/639; kiểm tra quyền kế thừa/Public, RLS của bảng attribution, trigger bảo vệ bằng chứng và unique index lease hội thoại. Nó chỉ đọc `pg_catalog` trong `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`, không thực thi capability/report/queue RPC, không đọc dòng khách hàng hay áp migration. Không nạp application `.env`.
+
+Chỉ chạy sau khi độc lập xác minh đúng môi trường staging và phiên bản backend/DB được phép. Đặt URL bí mật bằng cơ chế bí mật của môi trường, không ghi vào repo hoặc lệnh có thể lưu vào shell history. Sau khi URL đã có trong biến `VPT_MESSENGER_PREFLIGHT_URL`:
+
+```bash
+VPT_MESSENGER_PREFLIGHT_ENV=staging \
+VPT_MESSENGER_PREFLIGHT_TARGET='hostname:port/database' \
+node backend/scripts/verify-messenger-staging-schema.js
+```
+
+Giá trị target phải khớp URL đã cấp; host ngoài local bắt buộc `?sslmode=verify-full`. Output chỉ có fingerprint của đích, contract mong đợi/quan sát và mã lỗi đã lọc; không xuất hostname rõ, URL, credentials hay nội dung hàm. Exit 0 = catalog contract đã liệt kê đạt; 1 = lệch contract; 2 = chưa xác định/lỗi. Thiếu cấu hình hoặc URI mã hóa sai bị từ chối trước khi mở kết nối. Việc khai báo `staging` không tự chứng minh môi trường là staging.
+
+Chạy test riêng:
+
+```bash
+PGLITE_TEST_MODULE=/absolute/path/to/@electric-sql/pglite \
+node backend/tests/facebook-messenger-staging-preflight.test.js
+```
+
+Giới hạn: đây không phải kiểm toán toàn bộ schema, mapping dữ liệu hay xác nhận migration đã áp đầy đủ. Không xác minh deploy SHA, project ref, crash recovery, giao dịch tạo customer/lead hoặc E2E Messenger thật. Dù catalog đạt, `deployment_identity_verified`, `staging_acceptance_verified`, `crm_acceptance_verified`, `automation_ready` đều false. Render hiện vẫn yêu cầu đăng nhập; chưa chạy helper lên staging thật. Hoàn tác phần này bằng bỏ hai file và đoạn tài liệu bổ sung; không có dữ liệu/runtime/SQL phải hoàn tác.
+
 ## Điều kiện phát hành còn mở
 
 1. Review mã và xác nhận staging riêng cùng phiên bản backend/schema. Kiểm thử nhiều kết nối cô lập đã đạt; còn crash tiến trình và các quyền/schema thực tế của staging. Ngày 26/09 Render chuyển về trang đăng nhập nên chưa xác minh được deploy SHA hoặc staging.
@@ -76,4 +101,4 @@ Rollback code: tắt cờ durable, deploy bản ổn định đã xác minh; gi�
 
 Nguồn bàn giao Google phiên bản 12 đã ghi bridge 0.2.2 LIVE trên ba trang và ba lead TEST; chúng không phải khách thật. Lần đọc Ads ngày 26/09 cho khoảng 23–26/09 chỉ thấy 5 chuyển đổi “CD zalo”, chưa có dòng form production 7789307924. Không suy từ đó rằng CRM không có khách.
 
-Phiên CRM trong trình duyệt hiện chuyển về đăng nhập; chưa đọc được hồ sơ khách thật để đối soát source/campaign/adgroup/gclid/người xử lý/trạng thái. **Chưa đặt R0**. Đây là điều kiện truy cập/dữ liệu thật, không được thay bằng một khách thử.
+Đối soát CRM mới nhất đã đăng nhập thành công và chọn đúng công ty VPT. Tìm theo dấu form V1 thấy **3 lead TEST, 0 deal**; chưa có hồ sơ thật đủ bằng chứng source/campaign/adgroup/gclid/người xử lý/trạng thái để nghiệm thu. **Chưa đặt R0**; không thay bằng khách thử và không suy kết quả tìm dấu form thành số khách toàn bộ CRM. Đăng nhập CRM không còn là blocker; xác minh Render/staging vẫn chưa hoàn tất.
