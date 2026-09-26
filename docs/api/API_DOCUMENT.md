@@ -2,9 +2,9 @@
 
 Tài liệu **đầy đủ** các HTTP endpoint được khai báo trong Express routes.
 
-- Cập nhật: **2026-08-20**
+- Kiểm kê gốc: **2026-08-20**; cập nhật loại route seed: **2026-09-26**
 - Số mount `/api/*` trong `server.js`: **74**
-- Số endpoint (method + path) quét được: **1440**
+- Số endpoint trong inventory sau khi bỏ route seed ngày 26/09/2026: **1439** (chưa quét lại toàn bộ)
 - Nguồn: `backend/src/server.js` + `backend/src/routes/**/*.js`
 - Regenerate: `node docs/api/generate-api-doc.js`
 
@@ -276,7 +276,7 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | GET | `/api/assistant/me/briefing` | `assistant.js` |
 | GET | `/api/assistant/suggestions` | `assistant.js` |
 
-### `/api/auth` (17)
+### `/api/auth` (16)
 
 | Method | Path đầy đủ | File |
 |---|---|---|
@@ -296,7 +296,6 @@ Middleware: `auth.js`, `newPermission.js`, `apiKeyAuth.js`. Client: `frontend/sr
 | POST | `/api/auth/qr/create` | `auth.js` |
 | POST | `/api/auth/qr/create-invite` | `auth.js` |
 | POST | `/api/auth/register` | `auth.js` |
-| POST | `/api/auth/reset-seed-passwords` | `auth.js` |
 
 ### `/api/auth-events` (3)
 

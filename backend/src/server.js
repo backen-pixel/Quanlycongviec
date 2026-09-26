@@ -348,18 +348,6 @@ app.post('/api/metrics/reset', (req, res) => {
   } catch { res.status(401).json({ error: 'Invalid token' }); }
 });
 
-// Seed endpoint — only run manually when needed (not on every startup)
-app.post('/api/seed-passwords', async (req, res) => {
-  try {
-    const bcrypt = require('bcryptjs');
-    const { supabase } = require('./config/supabase');
-    const seedEmails = ['admin@tubep.vn','sales@tubep.vn','designer@tubep.vn','production@tubep.vn','installer@tubep.vn','manager@tubep.vn'];
-    const hash = await bcrypt.hash('admin123', 10);
-    await supabase.from('users').update({ password: hash }).in('email', seedEmails);
-    res.json({ ok: true, message: 'Seed passwords reset' });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 /**
  * Xoá response-cache danh sách dự án (tag `projects:list`) sau mỗi request GHI vào các
  * prefix có thể sửa bảng `projects` — hoặc sửa dữ liệu mà /management/work-unified nhúng
