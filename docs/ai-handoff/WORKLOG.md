@@ -1,5 +1,11 @@
 # Nhật ký công việc AI
 
+## 2026-09-28 09:35 — Đặt xưởng khác chỉ cần ngày lấy
+
+- AI: Cursor. Đặt xưởng khác và kế hoạch CRM sang sản xuất chỉ bắt ngày lấy hàng, ngày lắp không bắt buộc.
+- File: `SxMultiTargetPicker.jsx`, `ProductionDetail.jsx`, `LeadDetail.jsx`, `CRMDashboard.jsx`, `DealProductionProjectsPanel.jsx`.
+- Test: đối chiếu mọi form kế hoạch đều truyền `schedule="pickup"`. Chưa bấm tạo dự án thật.
+
 ## 2026-09-26 — Loại HTTP seed mật khẩu, bản sửa local riêng
 
 Founder đã cho phép sửa local và kiểm thử cô lập; chưa cho phép push GitHub hoặc deploy. Nhánh `codex/remove-public-password-seed-20260926` bắt đầu từ SHA Production đã đối chiếu `a458a192e83a4d656561fc87b56f926c16c6140c`, tách khỏi nhánh draft Messenger. Gỡ cả hai handler reset mật khẩu mẫu không có auth trong `backend/src/server.js` và `backend/src/routes/auth.js`; gỡ dòng inventory API không còn hợp lệ. Không thêm seed command, không sửa DB/migration, tài khoản thật hoặc cấu hình Render.

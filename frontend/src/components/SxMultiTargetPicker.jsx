@@ -341,6 +341,8 @@ export default function SxMultiTargetPicker({
   defaultDeliveryDate = '',
   /** lead/deal id — mở lịch VC/LĐ khi chọn ngày */
   leadId = null,
+  /** 'install' = bắt ngày lắp khi có VC/lấy hàng. 'pickup' = Đặt xưởng khác: chỉ bắt ngày lấy. */
+  schedule = 'install',
 }) {
   const [holidayIndex, setHolidayIndex] = useState(() => normalizeHolidayIndex([]));
   const [logisticsCompanies, setLogisticsCompanies] = useState([]);
@@ -741,7 +743,9 @@ export default function SxMultiTargetPicker({
         </p>
       ) : (showSchedule ? (
         <p className="text-[10px] text-gray-500">
-          Ngày lắp = deadline VC/LĐ (có thể nhiều ngày) · hoàn thiện SX = deadline tổng dự án (= lắp đầu − 2) · công ty VC không bắt buộc
+          {schedule === 'pickup'
+            ? 'Chỉ cần ngày lấy hàng. Ngày lắp đặt không bắt buộc.'
+            : 'Ngày lắp = deadline VC/LĐ (có thể nhiều ngày) · hoàn thiện SX = deadline tổng dự án (= lắp đầu − 2) · công ty VC không bắt buộc'}
         </p>
       ) : null)}
       {showDates ? (
@@ -902,15 +906,20 @@ export default function SxMultiTargetPicker({
                           {row.installTime ? ` · ${row.installTime}` : ''}
                         </span>
                       ) : (
-                        <span className="inline-flex items-center rounded-md bg-amber-100 text-amber-800 border border-amber-200 px-2 py-0.5 text-[10px] font-semibold">
-                          Chưa chọn deadline lắp đặt
+                        <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold border ${
+                          schedule === 'pickup'
+                            ? 'bg-slate-100 text-slate-600 border-slate-200'
+                            : 'bg-amber-100 text-amber-800 border-amber-200'
+                        }`}
+                        >
+                          {schedule === 'pickup' ? 'Ngày lắp không bắt buộc' : 'Chưa chọn deadline lắp đặt'}
                         </span>
                       )}
                     </div>
                     <div className="space-y-2">
                       <div className="min-w-0">
                         <label className="block text-[10px] font-bold text-teal-800 mb-0.5">
-                          Ngày lắp đặt <span className="font-normal text-teal-600/80">(deadline VC/LĐ · có thể nhiều ngày)</span>
+                          Ngày lắp đặt <span className="font-normal text-teal-600/80">(deadline VC/LĐ · có thể nhiều ngày{schedule === 'pickup' ? ' · không bắt buộc' : ''})</span>
                         </label>
                         <MultiDayDatePicker
                           accent="teal"
@@ -1008,15 +1017,20 @@ export default function SxMultiTargetPicker({
                       <div className="rounded-xl border-2 border-sky-300 bg-sky-50 px-3 py-2.5 space-y-2 shadow-sm">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <p className="text-[11px] font-bold uppercase tracking-wide text-sky-900">
-                            Lấy hàng (VC)
+                            Lấy hàng (VC){schedule === 'pickup' ? <span className="text-red-500"> *</span> : null}
                           </p>
                           {row.pickupAt ? (
                             <span className="inline-flex items-center gap-1 rounded-md bg-sky-600 text-white px-2 py-1 text-[11px] font-bold tabular-nums shadow-sm">
                               Lấy hàng {formatLocalVi(row.pickupAt)}
                             </span>
                           ) : (
-                            <span className="inline-flex items-center rounded-md bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 text-[10px] font-semibold">
-                              Chưa chọn lấy hàng
+                            <span className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold border ${
+                              schedule === 'pickup'
+                                ? 'bg-amber-100 text-amber-800 border-amber-200'
+                                : 'bg-slate-100 text-slate-600 border-slate-200'
+                            }`}
+                            >
+                              {schedule === 'pickup' ? 'Chưa chọn ngày lấy' : 'Chưa chọn lấy hàng'}
                             </span>
                           )}
                         </div>
@@ -1320,7 +1334,8 @@ export default function SxMultiTargetPicker({
 }
 
 /** Validate rows trước khi submit */
-export function validateSxTargets(rows) {
+export function validateSxTargets(rows, opts = {}) {
+  const pickupOnly = opts.schedule === 'pickup';
   if (!Array.isArray(rows) || !rows.length) {
     return 'Vui lòng chọn ít nhất một công ty Sản xuất.';
   }
@@ -1351,6 +1366,12 @@ export function validateSxTargets(rows) {
     );
     const delivery = occ[0] || String(r.deliveryDate || r.delivery_date || '').trim();
     const pickup = String(r.pickupAt || r.pickup_at || '').trim();
+    if (pickupOnly) {
+      if (!pickup) {
+        return `Xưởng ${i + 1}: vui lòng nhập ngày lấy hàng.`;
+      }
+      continue;
+    }
     if (lid && !delivery) {
       return `Xưởng ${i + 1}: đã chọn công ty VC/LĐ — vui lòng nhập ngày lắp đặt.`;
     }

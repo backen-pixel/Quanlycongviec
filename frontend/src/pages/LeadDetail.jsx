@@ -1952,12 +1952,13 @@ export default function LeadDetail() {
     if (targets.length <= 1 && dealStageWonCompanyId) {
       const tid = targets[0]?.workshopTypeId || dealStageWonWorkTypeId || '';
       targets = [{
+        ...targets[0],
         companyId: targets[0]?.companyId || dealStageWonCompanyId,
         workshopTypeId: tid,
         deliveryDate: targets[0]?.deliveryDate || dealStageWonDeliveryDate || '',
       }];
     }
-    const err = validateSxTargets(targets);
+    const err = validateSxTargets(targets, { schedule: 'pickup' });
     if (err) {
       setDealStageWonErr(err);
       return;
@@ -2010,12 +2011,13 @@ export default function LeadDetail() {
     if (targets.length <= 1 && pickProjectCompanyId) {
       const tid = targets[0]?.workshopTypeId || pickProjectCompanyWorkTypeId || '';
       targets = [{
+        ...targets[0],
         companyId: targets[0]?.companyId || pickProjectCompanyId,
         workshopTypeId: tid,
         deliveryDate: targets[0]?.deliveryDate || pickProjectDeliveryDate || '',
       }];
     }
-    const err = validateSxTargets(targets);
+    const err = validateSxTargets(targets, { schedule: 'pickup' });
     if (err) {
       setPickProjectCompanyErr(err);
       return;
@@ -2039,7 +2041,7 @@ export default function LeadDetail() {
   };
 
   const submitAddSxProject = async () => {
-    const err = validateSxTargets(addSxTargets);
+    const err = validateSxTargets(addSxTargets, { schedule: 'pickup' });
     if (err) {
       setAddSxErr(err);
       return;
@@ -2341,9 +2343,9 @@ export default function LeadDetail() {
       setSxScheduleErr('Giờ lắp đặt không hợp lệ.');
       return;
     }
-    const lid = String(sxScheduleEdit.logisticsCompanyId || '').trim();
-    if (lid && !ymd) {
-      setSxScheduleErr('Đã chọn công ty VC/LĐ — vui lòng nhập ngày lắp đặt.');
+    const pickup = String(sxScheduleEdit.pickupLocal || '').trim();
+    if (!pickup) {
+      setSxScheduleErr('Vui lòng nhập ngày lấy hàng.');
       return;
     }
     setSxScheduleBusy(true);
@@ -2582,7 +2584,7 @@ export default function LeadDetail() {
       setCreateOrderErr('Nhập tên deal phát sinh');
       return;
     }
-    const sxErr = validateSxTargets(createOrderTargets);
+    const sxErr = validateSxTargets(createOrderTargets, { schedule: 'pickup' });
     if (sxErr) {
       setCreateOrderErr(sxErr);
       return;
@@ -3868,6 +3870,7 @@ export default function LeadDetail() {
                 accent="teal"
                 showDates
                 showVcSetup
+                schedule="pickup"
                 leadId={lead?.id || id}
                 disabled={addSxBusy}
                 onChange={(rows) => { setAddSxTargets(rows); setAddSxErr(''); }}
@@ -3885,7 +3888,7 @@ export default function LeadDetail() {
               </button>
               <button
                 type="button"
-                disabled={addSxBusy || !!validateSxTargets(addSxTargets)}
+                disabled={addSxBusy || !!validateSxTargets(addSxTargets, { schedule: 'pickup' })}
                 className="flex-1 h-10 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold disabled:opacity-40"
                 onClick={() => submitAddSxProject()}
               >
@@ -5559,6 +5562,7 @@ export default function LeadDetail() {
               accent="teal"
               showDates
               showVcSetup
+              schedule="pickup"
               leadId={lead?.id || id}
               disabled={createOrderSaving}
               initialRows={
@@ -5696,6 +5700,7 @@ export default function LeadDetail() {
                 accent="teal"
                 showDates
                 showVcSetup
+                schedule="pickup"
                 leadId={lead?.id || id}
                 initialRows={
                   dealStageWonTargets.length
@@ -5796,6 +5801,7 @@ export default function LeadDetail() {
                 accent="amber"
                 showDates
                 showVcSetup
+                schedule="pickup"
                 leadId={lead?.id || id}
                 initialRows={
                   dealStageWonTargets.length
@@ -7213,7 +7219,7 @@ function LeadInfoPanel({
   };
 
   const submitSxAddProjects = async () => {
-    const err = validateSxTargets(sxAddTargets);
+    const err = validateSxTargets(sxAddTargets, { schedule: 'pickup' });
     if (err) {
       setSxAddErr(err);
       return;
@@ -7951,6 +7957,7 @@ function LeadInfoPanel({
                     accent="orange"
                     showDates
                     showVcSetup
+                    schedule="pickup"
                     leadId={lead?.id}
                     disabled={sxAddBusy}
                     onChange={(rows) => { setSxAddTargets(rows); setSxAddErr(''); }}
@@ -7968,7 +7975,7 @@ function LeadInfoPanel({
                   </button>
                   <button
                     type="button"
-                    disabled={sxAddBusy || !!validateSxTargets(sxAddTargets)}
+                    disabled={sxAddBusy || !!validateSxTargets(sxAddTargets, { schedule: 'pickup' })}
                     onClick={() => submitSxAddProjects()}
                     className="flex-1 h-10 bg-orange-600 hover:bg-orange-700 text-white rounded-xl text-sm font-semibold disabled:opacity-40"
                   >

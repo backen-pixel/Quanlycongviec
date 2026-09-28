@@ -777,7 +777,7 @@ export default function DealProductionProjectsPanel({
 
   const submitAddSxProject = async () => {
     if (!dealId) return;
-    const err = validateSxTargets(addSxTargets);
+    const err = validateSxTargets(addSxTargets, { schedule: 'pickup' });
     if (err) {
       setAddSxErr(err);
       return;
@@ -1287,6 +1287,7 @@ export default function DealProductionProjectsPanel({
                 accent="teal"
                 showDates
                 showVcSetup
+                schedule="pickup"
                 leadId={dealId}
                 disabled={addSxBusy}
                 onChange={(next) => { setAddSxTargets(next); setAddSxErr(''); }}
@@ -1304,7 +1305,7 @@ export default function DealProductionProjectsPanel({
               </button>
               <button
                 type="button"
-                disabled={addSxBusy || !!validateSxTargets(addSxTargets)}
+                disabled={addSxBusy || !!validateSxTargets(addSxTargets, { schedule: 'pickup' })}
                 className="flex-1 h-10 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold disabled:opacity-40"
                 onClick={() => submitAddSxProject()}
               >

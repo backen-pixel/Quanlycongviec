@@ -6939,12 +6939,13 @@ export default function CRMDashboard() {
     if (targets.length <= 1 && dealWonProductionCompanyId) {
       const tid = targets[0]?.workshopTypeId || dealWonProductionWorkshopTypeId || '';
       targets = [{
+        ...targets[0],
         companyId: targets[0]?.companyId || dealWonProductionCompanyId,
         workshopTypeId: tid,
         deliveryDate: targets[0]?.deliveryDate || targets[0]?.delivery_date || '',
       }];
     }
-    const err = validateSxTargets(targets);
+    const err = validateSxTargets(targets, { schedule: 'pickup' });
     if (err) {
       setDealWonProductionError(err);
       return;
@@ -6998,7 +6999,7 @@ export default function CRMDashboard() {
   };
 
   const requestDealWonProduction = () => {
-    const err = validateSxTargets(dealWonSxTargets);
+    const err = validateSxTargets(dealWonSxTargets, { schedule: 'pickup' });
     if (err) {
       setDealWonProductionError(err);
       return;
@@ -9688,6 +9689,8 @@ export default function CRMDashboard() {
                 kind={dashWonLeadKind}
                 accent="teal"
                 showDates
+                showVcSetup
+                schedule="pickup"
                 disabled={dealWonConfirmWait > 0}
                 initialRows={dealWonSxTargets.length
                   ? dealWonSxTargets
@@ -9753,7 +9756,7 @@ export default function CRMDashboard() {
                 <button
                   type="button"
                   disabled={
-                    !!validateSxTargets(dealWonSxTargets)
+                    !!validateSxTargets(dealWonSxTargets, { schedule: 'pickup' })
                     || !dealWonAckChecked
                     || dealWonConfirmWait > 0
                   }
@@ -9762,7 +9765,7 @@ export default function CRMDashboard() {
                 >
                   {dealWonConfirmWait > 0
                     ? `Chuyển sau ${dealWonConfirmWait}s`
-                    : validateSxTargets(dealWonSxTargets)
+                    : validateSxTargets(dealWonSxTargets, { schedule: 'pickup' })
                       ? 'Chọn công ty + phân loại'
                       : !dealWonAckChecked
                         ? 'Tích xác nhận đã kiểm tra'

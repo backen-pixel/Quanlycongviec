@@ -2302,7 +2302,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   }, [project?.company_id, project?.company?.id]);
 
   const submitPlaceSx = useCallback(async () => {
-    const err = validateSxTargets(placeSxTargets);
+    const err = validateSxTargets(placeSxTargets, { schedule: 'pickup' });
     if (err) {
       setPlaceSxErr(err);
       return;
@@ -4364,7 +4364,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                 <h3 className="text-lg font-bold text-gray-900">Đặt xưởng khác</h3>
               </div>
               <p className="text-sm text-gray-600">
-                Chọn công ty SX + phân loại, ngày lắp / lấy hàng (VC/LĐ) và lịch sự kiện bên phải.
+                Chọn công ty SX + phân loại và ngày lấy hàng. Ngày lắp đặt không bắt buộc.
                 Hệ thống tạo dự án ở xưởng nhận, thêm NV mặc định vào thành viên deal, và gửi bình luận @ thông báo.
               </p>
             </div>
@@ -4389,6 +4389,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               accent="teal"
               showDates
               showVcSetup
+              schedule="pickup"
               leadId={crmLeadId || null}
               disabled={placeSxBusy}
               defaultDeliveryDate={String(project?.delivery_date || project?.production_deadline || '').slice(0, 10)}
@@ -4411,7 +4412,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           </button>
           <button
             type="button"
-            disabled={placeSxBusy || !!validateSxTargets(placeSxTargets) || placeSxCompanies.length === 0}
+            disabled={placeSxBusy || !!validateSxTargets(placeSxTargets, { schedule: 'pickup' }) || placeSxCompanies.length === 0}
             onClick={submitPlaceSx}
             className="flex-1 h-11 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer"
           >

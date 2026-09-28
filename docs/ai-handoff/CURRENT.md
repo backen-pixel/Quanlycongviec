@@ -1,6 +1,14 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-26 (UTC+7)
+Cập nhật: 2026-09-28 09:45 (UTC+7)
+
+## Đặt xưởng khác — chỉ bắt ngày lấy
+
+Trạng thái: **FE, đẩy main.**
+
+Đặt xưởng khác và kế hoạch CRM sang sản xuất không còn bắt ngày lắp. Thiếu ngày lấy thì không tạo được dự án.
+
+Hoàn tác: revert `SxMultiTargetPicker.jsx`, `ProductionDetail.jsx`, `LeadDetail.jsx`, `CRMDashboard.jsx`, `DealProductionProjectsPanel.jsx`.
 
 ## 2026-09-26 — Loại HTTP seed mật khẩu, bản sửa local riêng
 
