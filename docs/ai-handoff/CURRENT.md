@@ -1,6 +1,14 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-28 09:45 (UTC+7)
+Cập nhật: 2026-09-28 10:02 (UTC+7)
+
+## Chat — ẩn ghi chú panel chi tiết
+
+Trạng thái: **FE, đẩy main.**
+
+Ghi chú `//` nằm trong JSX nên hiện thành chữ trên khung chat. Đổi thành comment JSX.
+
+Hoàn tác: revert `MessengerConversationDetailPanel.jsx`.
 
 ## Đặt xưởng khác — chỉ bắt ngày lấy
 

@@ -1,5 +1,11 @@
 # Nhật ký công việc AI
 
+## 2026-09-28 10:02 — Chat không hiện ghi chú panel
+
+- AI: Cursor. Comment `//` trong JSX bị in ra khung chat. Đổi thành `{/* */}`.
+- File: `frontend/src/components/MessengerConversationDetailPanel.jsx`.
+- Test: đối chiếu diff, chưa mở hội thoại trên trình duyệt.
+
 ## 2026-09-28 09:35 — Đặt xưởng khác chỉ cần ngày lấy
 
 - AI: Cursor. Đặt xưởng khác và kế hoạch CRM sang sản xuất chỉ bắt ngày lấy hàng, ngày lắp không bắt buộc.
