@@ -760,7 +760,13 @@ function DeadlineBucketColumn({
   const busyRef = useRef(false);
   const itemsLen = items.length;
   const serverN = Number(serverTotal);
-  const displayTotal = itemsLen;
+  // Badge = tổng của server trên toàn phạm vi lọc, không phải số thẻ đã tải: cột nạp dần
+  // theo trang nên lúc mới mở chỉ có vài thẻ, hiện số đó khiến người dùng tưởng chỉ có bấy
+  // nhiêu (HCB từng hiện «Quá hạn 2» trong khi tooltip ghi «Đã tải 2/19»).
+  // Cùng quy tắc với badge cột Kanban: server = 0 mà vẫn có thẻ thì tin số thẻ.
+  const displayTotal = Number.isFinite(serverN) && !(serverN === 0 && itemsLen > 0)
+    ? serverN
+    : itemsLen;
   const hasMoreLocal = visibleCount < itemsLen;
   const hasMoreServer = Number.isFinite(serverN) && itemsLen < serverN;
   const columnLoading = Boolean(loadingMore && hasMoreServer);
