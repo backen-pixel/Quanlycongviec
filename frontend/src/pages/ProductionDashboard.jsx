@@ -247,18 +247,45 @@ const SX_KANBAN_PAGE_SIZE = 40;
 /** Số thẻ tối thiểu mỗi cột khi cột vừa vào viewport (khớp CRM ensureInitial). */
 const SX_ENSURE_INITIAL_PER_COLUMN = 12;
 
+/**
+ * Cột hứng thẻ chưa có `sx_kanban_column_id` (summary đếm vào `__none__`).
+ * Thường là cột bucket `won_pending`. Pipeline không có cột đó (HCB, Metalla) thì
+ * resolver đẩy thẻ null về CỘT ĐẦU — badge phải cộng `__none__` vào đúng cột ấy, nếu
+ * không thẻ vẫn hiện mà không được đếm: tổng các badge nhỏ hơn tổng dự án.
+ */
+function stageAbsorbsNullColumn(stage, stages) {
+  if (!stage) return false;
+  if (stage.bucket_slug === INTAKE_BUCKET) return true;
+  const list = Array.isArray(stages) ? stages : [];
+  if (!list.length) return false;
+  if (list.some((s) => s?.bucket_slug === INTAKE_BUCKET)) return false;
+  const first = [...list].sort((a, b) => (Number(a?.order_index) || 0) - (Number(b?.order_index) || 0))[0];
+  return !!first && String(first.id) === String(stage.id);
+}
+
 /** Tổng badge cột intake = UUID cột + thẻ null (`__none__`) — không dùng `??` (sẽ bỏ một phía). */
-function intakeColumnServerTotal(stage, stageCounts) {
+function intakeColumnServerTotal(stage, stageCounts, stages) {
   if (!stage || !stageCounts || typeof stageCounts !== 'object') return NaN;
   const id = String(stage.id || '');
-  if (stage.bucket_slug !== INTAKE_BUCKET) {
+  if (!stageAbsorbsNullColumn(stage, stages)) {
     return Number.isFinite(Number(stageCounts[id])) ? Number(stageCounts[id]) : NaN;
   }
   const hasId = Object.prototype.hasOwnProperty.call(stageCounts, id);
   const hasNone = Object.prototype.hasOwnProperty.call(stageCounts, '__none__');
   if (!hasId && !hasNone) return NaN;
+  // Thẻ trỏ tới cột KHÔNG thuộc pipeline đang xem (vd. cột bộ Global, hoặc cột của công ty
+  // khác sau khi chuyển xưởng) cũng rơi về cột này y như thẻ null — cộng nốt, nếu không
+  // tổng các badge vẫn thiếu đúng bằng số thẻ đó.
+  const known = new Set((Array.isArray(stages) ? stages : []).map((s) => String(s?.id || '')));
+  let orphan = 0;
+  if (known.size) {
+    for (const [key, n] of Object.entries(stageCounts)) {
+      if (key === '__none__' || known.has(key)) continue;
+      orphan += Number(n) || 0;
+    }
+  }
   // 0+0 hợp lệ (cột trống đã có summary) — không trả NaN rồi fallback đếm thẻ tải dần.
-  return (Number(stageCounts[id]) || 0) + (Number(stageCounts.__none__) || 0);
+  return (Number(stageCounts[id]) || 0) + (Number(stageCounts.__none__) || 0) + orphan;
 }
 
 /**
@@ -266,15 +293,15 @@ function intakeColumnServerTotal(stage, stageCounts) {
  * Intake: deal mới thường `sx_kanban_column_id` null (`__none__`) lẫn UUID cột —
  * chỉ lấy một phía sẽ kẹt badge kiểu 1/7 trên Render.
  */
-function resolveSxKanbanLoadColumnId(stage, stageCounts) {
-  const ids = resolveSxKanbanLoadColumnIds(stage, stageCounts);
+function resolveSxKanbanLoadColumnId(stage, stageCounts, stages) {
+  const ids = resolveSxKanbanLoadColumnIds(stage, stageCounts, stages);
   return ids[0] || '';
 }
 
-function resolveSxKanbanLoadColumnIds(stage, stageCounts) {
+function resolveSxKanbanLoadColumnIds(stage, stageCounts, stages) {
   if (!stage) return [];
   const id = String(stage.id || '');
-  if (stage.bucket_slug !== INTAKE_BUCKET) {
+  if (!stageAbsorbsNullColumn(stage, stages)) {
     return isFetchableSxKanbanColumnId(id) ? [id] : [];
   }
   const byId = Number(stageCounts?.[id]) || 0;
@@ -296,9 +323,9 @@ function expandSxKanbanLoadColumnIds(stageIds, stages, stageCounts) {
     const key = String(raw || '');
     if (!key) continue;
     const stage = list.find((s) => String(s?.id) === key)
-      || (key === '__none__' ? list.find((s) => s?.bucket_slug === INTAKE_BUCKET) : null);
+      || (key === '__none__' ? list.find((s) => stageAbsorbsNullColumn(s, list)) : null);
     const loadIds = stage
-      ? resolveSxKanbanLoadColumnIds(stage, stageCounts)
+      ? resolveSxKanbanLoadColumnIds(stage, stageCounts, list)
       : (isFetchableSxKanbanColumnId(key) ? [key] : []);
     for (const lid of loadIds) {
       if (seen.has(lid)) continue;
@@ -6566,7 +6593,7 @@ function KanbanView({
 
   const handleColumnVisibilityChange = useCallback((stageId, visible) => {
     const stage = (pipeline || []).find((s) => String(s?.id) === String(stageId));
-    const loadIds = resolveSxKanbanLoadColumnIds(stage, stageCounts);
+    const loadIds = resolveSxKanbanLoadColumnIds(stage, stageCounts, pipeline);
     const ids = loadIds.length ? loadIds : (String(stageId || '') ? [String(stageId)] : []);
     if (!ids.length) return;
     ids.forEach((loadId) => {
@@ -6726,7 +6753,7 @@ function KanbanView({
   const onLoadMoreRef = useRef(onLoadMore);
   onLoadMoreRef.current = onLoadMore;
   const mountedStageKey = renderedColumns
-    .flatMap(({ stage }) => resolveSxKanbanLoadColumnIds(stage, stageCounts))
+    .flatMap(({ stage }) => resolveSxKanbanLoadColumnIds(stage, stageCounts, pipeline))
     .filter(Boolean)
     .join('|');
   useEffect(() => {
@@ -6770,12 +6797,12 @@ function KanbanView({
       >
         {bocNhomCotLong(renderedColumns.map(({ stage, columnIndex, virtualItem }) => {
           if (!stage) return null;
-          const loadColIds = resolveSxKanbanLoadColumnIds(stage, stageCounts);
+          const loadColIds = resolveSxKanbanLoadColumnIds(stage, stageCounts, pipeline);
           const loadColId = loadColIds[0] || String(stage.id || '');
           const pageStates = loadColIds.map((id) => stagePageState?.[id] || {});
           const pageState = pageStates[0] || {};
-          const serverColTotalRaw = stage.bucket_slug === INTAKE_BUCKET
-            ? intakeColumnServerTotal(stage, stageCounts)
+          const serverColTotalRaw = stageAbsorbsNullColumn(stage, pipeline)
+            ? intakeColumnServerTotal(stage, stageCounts, pipeline)
             : Number(
               stageCounts?.[loadColId]
               ?? (loadColId === '__none__' ? stageCounts?.__none__ : undefined)
