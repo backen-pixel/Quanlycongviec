@@ -1891,7 +1891,7 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
     const projectListSelect = mobileLite
       ? `
         id, code, name, estimated_value, priority, deadline, install_date, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_529_COLS} created_at, status, company_id,
-        production_deadline, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id, vc_handover_status, vc_temp_staged,
+        production_deadline, sx_kanban_deadline_at, sx_kanban_column_id, logistics_company_id, vc_kanban_column_id, vc_handover_status, vc_temp_staged,
         current_stage_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone),
