@@ -1,0 +1,291 @@
+[
+  {
+    "section": "columns",
+    "data": [
+      {
+        "udt": "uuid",
+        "name": "id",
+        "type": "uuid",
+        "default": "gen_random_uuid()",
+        "nullable": "NO"
+      },
+      {
+        "udt": "uuid",
+        "name": "lead_id",
+        "type": "uuid",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "uuid",
+        "name": "contact_id",
+        "type": "uuid",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "uuid",
+        "name": "customer_id",
+        "type": "uuid",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "uuid",
+        "name": "company_id",
+        "type": "uuid",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "kenh",
+        "type": "text",
+        "default": null,
+        "nullable": "NO"
+      },
+      {
+        "udt": "text",
+        "name": "platform",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "fb_page_id",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "fb_ad_id",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "fb_adset_id",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "fb_campaign_id",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "fb_campaign_name",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "fb_ref",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "fb_source",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "fb_ad_title",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "fb_post_id",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "fb_form_id",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "fb_leadgen_id",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "utm_source",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "utm_medium",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "utm_campaign",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "utm_content",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "utm_term",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "gclid",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "fbclid",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "landing_url",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "referrer_url",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "fbp",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "fbc",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "client_ip",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "text",
+        "name": "user_agent",
+        "type": "text",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "timestamptz",
+        "name": "cham_dau_luc",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": "NO"
+      },
+      {
+        "udt": "jsonb",
+        "name": "raw",
+        "type": "jsonb",
+        "default": null,
+        "nullable": "YES"
+      },
+      {
+        "udt": "timestamptz",
+        "name": "created_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": "NO"
+      },
+      {
+        "udt": "timestamptz",
+        "name": "updated_at",
+        "type": "timestamp with time zone",
+        "default": "now()",
+        "nullable": "NO"
+      }
+    ]
+  },
+  {
+    "section": "constraints",
+    "data": [
+      {
+        "name": "lead_attribution_company_id_fkey",
+        "type": "f",
+        "definition": "FOREIGN KEY (company_id) REFERENCES companies(id)"
+      },
+      {
+        "name": "lead_attribution_contact_id_fkey",
+        "type": "f",
+        "definition": "FOREIGN KEY (contact_id) REFERENCES facebook_contacts(id) ON DELETE SET NULL"
+      },
+      {
+        "name": "lead_attribution_customer_id_fkey",
+        "type": "f",
+        "definition": "FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE SET NULL"
+      },
+      {
+        "name": "lead_attribution_lead_id_fkey",
+        "type": "f",
+        "definition": "FOREIGN KEY (lead_id) REFERENCES crm_leads(id) ON DELETE CASCADE"
+      },
+      {
+        "name": "lead_attribution_pkey",
+        "type": "p",
+        "definition": "PRIMARY KEY (id)"
+      }
+    ]
+  },
+  {
+    "section": "security",
+    "data": [
+      {
+        "rls": false,
+        "forced": false
+      }
+    ]
+  }
+]
