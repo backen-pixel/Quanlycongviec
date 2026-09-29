@@ -7,7 +7,14 @@ const { supabase } = require('../config/supabase');
 const { applyProjectTenantScope, isTenantScopeEnforced } = require('./tenantScope');
 const { applyProductionCompanyScopeFilter } = require('./crossCompanyWorkspace');
 const { applyWorkshopProjectVisibilityScope } = require('./dealParticipantProduction');
-const { applySxKanbanRowScope, WORKSHOP_STATUSES, getResolvedKanbanStages } = require('./workshopKanban');
+const {
+  applySxKanbanRowScope,
+  WORKSHOP_STATUSES,
+  getResolvedKanbanStages,
+  shouldForceSxHandoverColumn,
+  sxStatusComesFromColumn,
+  resolveSxHandoverColumnId,
+} = require('./workshopKanban');
 const { isHucabiSameDayPastWorkEnd } = require('./companyDeadlineClock');
 const { sxColumnStageKpiKey } = require('./sxPipelineRevenue');
 const { isSxPipelineStageNoDeadline } = require('./crmPipelineSla');
@@ -110,6 +117,30 @@ function resolveSxDeadlineBucketKey(row, stage, todayYmd, companyOrId, nowMs = D
   return 'later';
 }
 
+/**
+ * Khoá đếm của một dòng = cột NGƯỜI DÙNG NHÌN THẤY, không phải cột thô trong DB.
+ *
+ * Dự án đã sang VC mà cột lưu đứng TRƯỚC cột «Bàn giao VC» thì cả web lẫn app đều vẽ thẻ
+ * ở cột bàn giao (`resolveSxDisplayColumnId`). Đếm theo cột thô sẽ khiến badge không khớp
+ * số thẻ trong cột: HCB từng ghi «KT KCS 5» trong khi cột có 8 thẻ, còn «Hoàn thành» ghi
+ * 176 với 173 thẻ. Ba nhánh dưới đây sao đúng resolver để hai bên cùng một con số.
+ */
+function displayColumnCountKey(row, stageById, sortedStages, handoverMinOrder) {
+  const raw = row?.sx_kanban_column_id ? String(row.sx_kanban_column_id) : '__none__';
+  if (raw === '__none__') return raw;
+  const stage = stageById.get(raw) || null;
+  // Cột không thuộc pipeline đang xem — giữ nguyên khoá, UI tự gom về cột đầu.
+  if (!stage) return raw;
+  if (!shouldForceSxHandoverColumn(row, stage)) return raw;
+  // status do chính cột sinh ra (kéo vào cột Vận chuyển/CSKH) — không phải bằng chứng bàn giao.
+  if (sxStatusComesFromColumn(row, stage)) return raw;
+  // Cột lưu đã tại/sau cột bàn giao — giữ chỗ.
+  if (handoverMinOrder != null && (Number(stage.order_index) || 0) >= handoverMinOrder) return raw;
+  const preferred = stage.is_handover_to_logistics ? raw : null;
+  const ho = resolveSxHandoverColumnId(sortedStages, row, preferred);
+  return ho ? String(ho) : raw;
+}
+
 async function loadStageFlagsById(companyId, workshopTypeId) {
   try {
     const { stages } = await getResolvedKanbanStages(companyId || null, {
@@ -119,6 +150,11 @@ async function loadStageFlagsById(companyId, workshopTypeId) {
     for (const s of stages || []) {
       if (!s?.id) continue;
       map.set(String(s.id), {
+        id: s.id,
+        slug: s.slug || null,
+        workflow_stage: s.workflow_stage || null,
+        order_index: Number(s.order_index) || 0,
+        workshop_type_id: s.workshop_type_id || null,
         name: s.name || '',
         counts_as_completed_revenue: !!s.counts_as_completed_revenue,
         counts_as_collected_revenue: !!s.counts_as_collected_revenue,
@@ -289,10 +325,14 @@ async function thinScanSummary(ctx, opts = {}) {
   let cursor = 0;
   const todayYmd = formatVnYmd(new Date());
   const stageById = opts.stageById || await loadStageFlagsById(ctx.company_id, ctx.workshop_type_id);
+  // Cột đã sắp + mốc «Bàn giao VC» — dùng để quy đổi khoá đếm sang cột hiển thị.
+  const sortedStages = [...stageById.values()].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
+  const handoverOrders = sortedStages.filter((s) => s.is_handover_to_logistics).map((s) => Number(s.order_index) || 0);
+  const handoverMinOrder = handoverOrders.length ? Math.min(...handoverOrders) : null;
   // logistics/status/vc — KPI Đang SX / Chờ VC / Đã VC (toàn filter).
   // production_value/deposit — KPI Công nợ / Đã thu cùng phạm vi lọc loại.
   // Không select `sx_intake` (field enrich, không phải cột DB → 500 summary).
-  let selectCols = 'id, company_id, sx_kanban_column_id, sx_kanban_deadline_at, production_finish_date, delivery_date, production_deadline, deadline, status, logistics_company_id, vc_kanban_column_id, production_value, deposit_amount';
+  let selectCols = 'id, company_id, sx_kanban_column_id, sx_kanban_deadline_at, production_finish_date, delivery_date, production_deadline, deadline, status, logistics_company_id, vc_kanban_column_id, workshop_type_id, production_value, deposit_amount';
   let omitVcCol = false;
   let omitFinanceCols = false;
 
@@ -335,7 +375,7 @@ async function thinScanSummary(ctx, opts = {}) {
     const batch = data || [];
     for (const row of batch) {
       if (needColumnCounts) {
-        const key = row?.sx_kanban_column_id ? String(row.sx_kanban_column_id) : '__none__';
+        const key = displayColumnCountKey(row, stageById, sortedStages, handoverMinOrder);
         counts[key] = (counts[key] || 0) + 1;
       }
       total += 1;
@@ -360,7 +400,8 @@ async function thinScanSummary(ctx, opts = {}) {
     if (batch.length < PAGE) break;
     cursor += batch.length;
   }
-  return { total, counts, values: {}, deadline_counts, stage_kpis, revenue_kpis };
+  const truncated = cursor >= MAX;
+  return { total, counts, values: {}, deadline_counts, stage_kpis, revenue_kpis, truncated };
 }
 
 async function headCountTotalOnly(ctx) {
@@ -420,8 +461,15 @@ async function loadSxKanbanColumnSummary(ctx) {
   try {
     const [columnResult, scanned] = await Promise.all([rpcPromise, scanPromise]);
     if (columnResult) {
+      // RPC GROUP BY chỉ biết `sx_kanban_column_id` thô nên không phản ánh được việc ép cột
+      // «Bàn giao VC». Thin-scan dù sao cũng chạy mỗi lần (để đếm deadline/KPI) nên lấy counts
+      // của nó không tốn thêm request; chỉ bỏ qua khi nó bị cắt ở ngưỡng MAX.
+      const scanUsable = scanned && !scanned.truncated && scanned.counts
+        && Object.keys(scanned.counts).length > 0;
       return {
         ...columnResult,
+        counts: scanUsable ? scanned.counts : columnResult.counts,
+        total: scanUsable && Number.isFinite(scanned.total) ? scanned.total : columnResult.total,
         deadline_counts: scanned.deadline_counts || emptyDeadlineCounts(),
         stage_kpis: scanned.stage_kpis || emptyStageKpis(),
         revenue_kpis: scanned.revenue_kpis || emptyRevenueKpis(),
