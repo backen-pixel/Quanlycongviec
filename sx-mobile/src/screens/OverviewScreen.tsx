@@ -3,18 +3,19 @@
  * Không còn section «Thông báo mới» (chuông header mở modal).
  */
 import Ionicons from '@expo/vector-icons/Ionicons';
+import { LinearGradient } from 'expo-linear-gradient';
 import {
-  useFocusEffect,
-  useNavigation } from '@react-navigation/native';
+  GlowSpot,
+  KpiCard,
+  SectionHeader,
+  ShortcutTile,
+  type KpiStat,
+  type ShortcutAction,
+} from '../components/dashboard/DashboardParts';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import React,
-  { useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -56,6 +57,7 @@ import {
   initialsFrom,
   pickOverdueProjects,
   shortDateLabel,
+  sxProjectDeadlineRaw,
   type SxBoardKpis,
 } from '../lib/sxBoardKpis';
 import {
@@ -79,12 +81,30 @@ import { useRootNavigation } from '../navigation/useRootNavigation';
 import type { KanbanStage, ProductionProject } from '../types';
 import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
 
+/** Khoá ngày theo giờ VN (UTC+7) — để so "hôm nay" không lệch múi giờ máy. */
+function vnDayKey(iso?: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return new Date(d.getTime() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+/** "2026-09-14" → "14/09". Rỗng nếu không parse được. */
+function shortDay(iso?: string | null): string {
+  const key = vnDayKey(iso);
+  if (!key) return '';
+  return `${key.slice(8, 10)}/${key.slice(5, 7)}`;
+}
+
+/** Hai sắc spec chỉ định riêng cho KPI, không nằm trong bảng theme. */
+const KPI_CYAN = '#11C5FF';
+const KPI_PURPLE = '#A66CFF';
+
 const PAGE_HPAD = 14;
 /** Số nhóm deal trên mỗi trang preview Tổng quan (không phải số task). */
 const TASK_PAGE_SIZE = 4;
 const DEAL_PAGE_SIZE = 4;
 const PRIORITY_FETCH_LIMIT = 80;
-const KPI_CARD_WIDTH = 132;
 
 const EMPTY_KPI: SxBoardKpis = {
   total: 0,
@@ -123,16 +143,18 @@ function scopeProjectsForUser(
   return projects.filter((p) => String(p.production_person_id || '') === String(opts.userId));
 }
 
-type KpiTone = 'blue' | 'cyan' | 'muted' | 'green' | 'orange' | 'red';
 
 export default function OverviewScreen() {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
+  /** Chiều cao hero đo lúc layout — dùng để đốm sáng không tràn ra ngoài. */
+  const [heroH, setHeroH] = useState(0);
+  const heroGlowSize = Math.max(240, heroH * 2.4);
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const { unreadCount, refreshUnread } = useNotifications();
   const { unreadTotal: messageUnread } = useMessenger();
-  const { openProjectDetail, openOverdueProjects, openProjectOnBoard, openMessages, navigation: rootNav } = useRootNavigation();
+  const { openProjectDetail, openOverdueProjects, openProjectOnBoard, navigation: rootNav } = useRootNavigation();
   const tabNav = useNavigation<BottomTabNavigationProp<MainTabParamList>>();
 
   const userName = user?.full_name || user?.fullName || user?.email || 'Bạn';
@@ -140,20 +162,17 @@ export default function OverviewScreen() {
   const userId = user?.id || user?.userId || '';
   const helloLine = `Xin chào, ${nick}!`;
   const dateLabel = formatVnWeekdayDate();
+  /** Ngày hôm nay theo giờ VN — mốc so sánh mức khẩn của từng nhóm việc. */
+  const todayKey = vnDayKey(new Date().toISOString());
   const wishLine = 'Chúc bạn một ngày làm việc hiệu quả!';
-
-  const confirmLogout = useCallback(() => {
-    Alert.alert('Đăng xuất', 'Bạn chắc chắn muốn đăng xuất?', [
-      { text: 'Huỷ', style: 'cancel' },
-      { text: 'Đăng xuất', style: 'destructive', onPress: () => void logout() },
-    ]);
-  }, [logout]);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [kpis, setKpis] = useState<SxBoardKpis>(EMPTY_KPI);
   const [overdueDeals, setOverdueDeals] = useState<ProductionProject[]>([]);
   const [boardTruncated, setBoardTruncated] = useState(false);
+  /** Cột board — cần để resolve hạn hiệu lực của thẻ quá hạn (hạn thẻ ưu tiên). */
+  const [boardStages, setBoardStages] = useState<KanbanStage[]>([]);
   const [tasks, setTasks] = useState<WorkTask[]>([]);
   const skipNextFocusRefreshRef = useRef(true);
   const lastSilentAtRef = useRef(0);
@@ -283,6 +302,7 @@ export default function OverviewScreen() {
           : projects;
         const scoped = scopeProjectsForUser(dealScoped, { userId, ownOnly });
         setOverdueDeals(pickOverdueProjects(scoped, PRIORITY_FETCH_LIMIT, stages));
+        setBoardStages(stages);
         if (truncated != null) setBoardTruncated(Boolean(truncated));
         return scoped;
       };
@@ -552,76 +572,50 @@ export default function OverviewScreen() {
     [tabNav, teamView],
   );
 
-  const toneMap: Record<KpiTone, { fg: string; bg: string }> = {
-    blue: { fg: colors.primary, bg: colors.primarySoft },
-    cyan: { fg: '#38BDF8', bg: colorWithAlpha('#38BDF8', 0.18) },
-    muted: { fg: colors.textMuted, bg: colors.cardAlt },
-    green: { fg: colors.success, bg: colorWithAlpha(colors.success, 0.16) },
-    orange: { fg: colors.warning, bg: colorWithAlpha(colors.warning, 0.16) },
-    red: { fg: colors.danger, bg: colors.dangerSoft },
-  };
-
-  const kpiItems: {
-    key: string;
-    label: string;
-    value: number;
-    tone: KpiTone;
-    onPress: () => void;
-  }[] = [
-    { key: 'total', label: 'Tổng dự án', value: kpis.total, tone: 'blue', onPress: goKanban },
-    { key: 'producing', label: 'Đang sản xuất', value: kpis.producing, tone: 'cyan', onPress: goKanban },
+  const kpiItems: KpiStat[] = [
+    { key: 'total', label: 'Tổng dự án', value: kpis.total, color: colors.primary, icon: 'cube-outline', onPress: goKanban },
+    { key: 'producing', label: 'Đang sản xuất', value: kpis.producing, color: KPI_CYAN, icon: 'play-outline', onPress: goKanban },
     {
       key: 'await',
       label: 'Chờ vận chuyển',
       value: kpis.awaitingDelivery,
-      tone: 'muted',
+      color: KPI_PURPLE,
+      icon: 'pause-outline',
       onPress: goKanban,
     },
     {
       key: 'shipped',
       label: 'Đã vận chuyển',
       value: kpis.shipped,
-      tone: 'green',
+      color: colors.success,
+      icon: 'checkmark-outline',
       onPress: goKanban,
     },
     {
       key: 'done',
       label: 'Hoàn tất',
       value: kpis.completed,
-      tone: 'orange',
+      color: colors.warning,
+      icon: 'flag-outline',
       onPress: goKanban,
     },
     {
       key: 'overdue',
       label: 'Quá hạn dự án',
       value: kpis.overdue,
-      tone: 'red',
+      color: colors.danger,
+      icon: 'alert-circle-outline',
       onPress: () => { if (kpis.overdue > 0) openOverdueProjects(); else goKanban(); },
     },
   ];
 
-  const quickActions: {
-    key: string;
-    label: string;
-    icon: keyof typeof Ionicons.glyphMap;
-    color: string;
-    onPress: () => void;
-  }[] = [
-    { key: 'kanban', label: 'Dự án', icon: 'grid-outline', color: colors.primary, onPress: goKanban },
-    {
-      key: 'work',
-      label: 'Công việc',
-      icon: 'checkbox-outline',
-      color: colors.warning,
-      onPress: () => goWork('all'),
-    },
-    {
-      key: 'messages',
-      label: 'Tin nhắn',
-      icon: 'chatbubbles-outline',
-      color: '#A78BFA',
-      onPress: () => openMessages(),
-    },
+  /**
+   * Chỉ giữ nơi KHÔNG có lối vào nào khác trên màn này.
+   * Đã bỏ: Dự án / Công việc / Tin nhắn (trùng hệt thanh tab dưới), Quá hạn (đã có
+   * thẻ đỏ đầu trang và mục riêng, còn khi không quá hạn thì vào từ Menu), và
+   * Đăng xuất (thao tác hiếm, đã có trong Menu, đặt cạnh ô hay bấm dễ chạm nhầm).
+   */
+  const quickActions: ShortcutAction[] = [
     {
       key: 'planner',
       label: 'Planner',
@@ -635,13 +629,6 @@ export default function OverviewScreen() {
       icon: 'airplane-outline',
       color: '#F97316',
       onPress: () => rootNav.navigate('Leaves'),
-    },
-    {
-      key: 'overdue',
-      label: 'Quá hạn',
-      icon: 'alert-circle-outline',
-      color: colors.danger,
-      onPress: openOverdueProjects,
     },
     {
       key: 'profile',
@@ -660,21 +647,28 @@ export default function OverviewScreen() {
         else tabNav.navigate('Profile');
       },
     },
-    {
-      key: 'logout',
-      label: 'Đăng xuất',
-      icon: 'log-out-outline',
-      color: colors.danger,
-      onPress: confirmLogout,
-    },
   ];
 
   const overdueDealCount = ownOnly ? overdueDeals.length : kpis.overdue;
   const overdueTotal = overdueTaskCount + overdueDealCount;
+  /** Lẫn cả hai loại thì mới cần tách nút; một loại thì tiêu đề đã nói đủ. */
+  const bothOverdueKinds = overdueTaskCount > 0 && overdueDealCount > 0;
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      <View style={styles.hero}>
+      {/* Không phủ chuyển sắc kín bề ngang hero: nó làm cả khối sáng đều lên và
+          tạo ranh giới với nền phía dưới, đọc thành một mảng riêng. Chỉ dùng đốm
+          sáng tròn, và đặt nó nằm TRỌN trong hero (tính theo chiều cao đo được)
+          để không bị overflow cắt ngang. */}
+      <View style={styles.hero} onLayout={(e) => setHeroH(e.nativeEvent.layout.height)}>
+        {heroH > 0 ? (
+          <GlowSpot
+            size={heroGlowSize}
+            color={colors.primary}
+            intensity={isDark ? 0.018 : 0.008}
+            style={{ position: 'absolute', top: heroH - heroGlowSize - 4, right: -heroGlowSize * 0.22 }}
+          />
+        ) : null}
         <View style={styles.heroTop}>
           <View style={styles.heroIdentity}>
             <Avatar name={userName} avatarUrl={user?.avatar} size={52} color={colors.primary} />
@@ -763,41 +757,61 @@ export default function OverviewScreen() {
             <Text style={styles.muted}>Đang tải tổng quan…</Text>
           </View>
         ) : overdueTotal > 0 ? (
-          // Công việc và dự án quá hạn là hai màn khác nhau — mỗi nhóm một nút riêng,
-          // nếu gộp một nút thì nhóm còn lại không có đường nào tới được.
-          <View style={styles.alertBanner}>
+          // Công việc và dự án quá hạn là HAI MÀN khác nhau. Khi có cả hai loại thì
+          // phải giữ hai nút riêng, gộp một nút sẽ làm loại còn lại không tới được.
+          <Pressable
+            onPress={bothOverdueKinds
+              ? undefined
+              : overdueTaskCount > 0
+                ? () => goWork('overdue')
+                : openOverdueProjects}
+            disabled={bothOverdueKinds}
+            accessibilityRole={bothOverdueKinds ? undefined : 'button'}
+          >
+          <LinearGradient
+            colors={[
+              colorWithAlpha(colors.danger, isDark ? 0.42 : 0.20),
+              colorWithAlpha(colors.danger, isDark ? 0.14 : 0.06),
+            ]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.alertBanner}
+          >
             <View style={styles.alertIcon}>
               <Ionicons name="alert-circle" size={22} color={colors.danger} />
             </View>
             <View style={{ flex: 1 }}>
+              {/* Gọi đúng thứ đang có: chỉ dùng từ chung "hạng mục" khi thực sự
+                  lẫn cả hai loại, nếu không thì nói thẳng là công việc hay dự án. */}
               <Text style={styles.alertTitle}>
-                {overdueTotal} hạng mục quá hạn
+                {overdueTaskCount > 0 && overdueDealCount > 0
+                  ? `${overdueTotal} hạng mục quá hạn`
+                  : overdueTaskCount > 0
+                    ? `${overdueTaskCount} công việc quá hạn`
+                    : `${overdueDealCount} dự án quá hạn`}
               </Text>
-              <View style={styles.alertActions}>
-                {overdueTaskCount > 0 ? (
-                  <Pressable
-                    style={styles.alertChip}
-                    hitSlop={6}
-                    onPress={() => goWork('overdue')}
-                  >
+              {/* Chỉ tách chip khi lẫn CẢ HAI loại — mỗi loại mở một màn khác nhau
+                  nên phải có nút riêng. Một loại thì tiêu đề đã nói hết, chip chỉ
+                  lặp lại; khi đó cho cả thẻ bấm được. */}
+              {bothOverdueKinds ? (
+                <View style={styles.alertActions}>
+                  <Pressable style={styles.alertChip} hitSlop={6} onPress={() => goWork('overdue')}>
                     <Text style={styles.alertChipTxt}>{overdueTaskCount} công việc</Text>
                     <Ionicons name="chevron-forward" size={13} color={colors.danger} />
                   </Pressable>
-                ) : null}
-                {overdueDealCount > 0 ? (
-                  <Pressable
-                    style={styles.alertChip}
-                    hitSlop={6}
-                    onPress={openOverdueProjects}
-                  >
+                  <Pressable style={styles.alertChip} hitSlop={6} onPress={openOverdueProjects}>
                     <Text style={styles.alertChipTxt}>{overdueDealCount} dự án</Text>
                     <Ionicons name="chevron-forward" size={13} color={colors.danger} />
                   </Pressable>
-                ) : null}
-              </View>
+                </View>
+              ) : null}
               <Text style={styles.alertSub}>{workshopLabel}</Text>
             </View>
-          </View>
+            {bothOverdueKinds ? null : (
+              <Ionicons name="chevron-forward" size={20} color={colors.danger} />
+            )}
+          </LinearGradient>
+          </Pressable>
         ) : (
           <View style={styles.okBanner}>
             <Ionicons name="checkmark-circle" size={20} color={colors.success} />
@@ -805,43 +819,23 @@ export default function OverviewScreen() {
           </View>
         )}
 
-        <Text style={styles.secTitle}>Tổng quan sản xuất</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          nestedScrollEnabled
-          contentContainerStyle={styles.kpiScroll}
-        >
-          {kpiItems.map((k, idx) => {
-            const tone = toneMap[k.tone];
-            return (
-              <Pressable
-                key={k.key}
-                style={({ pressed }) => [
-                  styles.kpiCard,
-                  idx > 0 && styles.kpiCardGap,
-                  pressed && styles.pressed,
-                ]}
-                onPress={k.onPress}
-              >
-                <View style={[styles.kpiDot, { backgroundColor: tone.bg }]}>
-                  <View style={[styles.kpiDotInner, { backgroundColor: tone.fg }]} />
-                </View>
-                <Text style={[styles.kpiValue, { color: tone.fg }]}>{k.value}</Text>
-                <Text style={styles.kpiLabel} numberOfLines={2}>{k.label}</Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-
-        <View style={styles.secHead}>
-          <Text style={styles.secTitleInline}>Công việc cần làm</Text>
-          <Pressable onPress={() => goWork('all')} hitSlop={8}>
-            <Text style={styles.link}>
-              {openTasks.length > 0 ? `Tất cả (${openTasks.length})` : 'Xem công việc'}
-            </Text>
-          </Pressable>
+        <SectionHeader icon="bar-chart-outline" title="Tổng quan sản xuất" />
+        {/* Lưới 2 cột thay cho cuộn ngang: có 6 ô mà cuộn ngang chỉ lọt ~4, hai ô
+            cuối nằm ngoài rìa phải nên người dùng phải biết là có mới vuốt tới. */}
+        <View style={styles.kpiGrid}>
+          {kpiItems.map((k) => (
+            <View key={k.key} style={styles.kpiCell}>
+              <KpiCard stat={k} />
+            </View>
+          ))}
         </View>
+
+        <SectionHeader
+          icon="clipboard-outline"
+          title="Công việc cần làm"
+          actionLabel={openTasks.length > 0 ? `Tất cả (${openTasks.length})` : 'Xem công việc'}
+          onAction={() => goWork('all')}
+        />
         <View style={styles.card}>
           {previewTaskSections.length === 0 ? (
             <View style={styles.emptyRow}>
@@ -853,6 +847,22 @@ export default function OverviewScreen() {
               {previewTaskSections.map((section, sIdx) => {
                 const expanded = !!expandedTaskLeads[section.leadId];
                 const openCount = section.tasks.filter((t) => !isTaskDone(String(t.status))).length;
+                // Chấm mã hoá MỨC KHẨN theo hạn — thứ chưa có ở dòng chữ bên cạnh.
+                // (Mã hoá tiến độ thì trùng với "x/y còn lại" đã ghi rõ bằng số.)
+                const hasOverdue = section.tasks.some((t) => isTaskOverdue(t));
+                const dueKeys = section.tasks
+                  .map((t) => vnDayKey(taskDueIso(t)))
+                  .filter(Boolean)
+                  .sort();
+                const nearestDue = dueKeys[0] || '';
+                const dueToday = !hasOverdue && nearestDue === todayKey;
+                const dotColor = hasOverdue
+                  ? colors.danger
+                  : dueToday
+                    ? colors.warning
+                    : nearestDue
+                      ? colors.primary
+                      : colors.textFaint;
                 return (
                   <View key={section.leadId} style={sIdx > 0 ? styles.dealGroupGap : undefined}>
                     <Pressable
@@ -864,22 +874,36 @@ export default function OverviewScreen() {
                         size={16}
                         color={colors.textMuted}
                       />
+                      <View
+                        style={[
+                          styles.taskDot,
+                          { backgroundColor: dotColor },
+                        ]}
+                      />
                       <View style={{ flex: 1, minWidth: 0 }}>
                         <Text style={styles.dealGroupTitle} numberOfLines={1}>
                           {section.code ? `${section.code} · ` : ''}{section.title || 'Deal'}
                         </Text>
                         <Text style={styles.dealGroupMeta} numberOfLines={1}>
                           {openCount}/{section.tasks.length} còn lại
+                          {nearestDue ? ' · ' : ''}
+                          {nearestDue ? (
+                            <Text style={{ color: hasOverdue ? colors.danger : dueToday ? colors.warning : colors.textMuted }}>
+                              {hasOverdue ? 'Quá hạn ' : dueToday ? 'Hôm nay' : 'Hạn '}
+                              {dueToday ? '' : shortDay(nearestDue)}
+                            </Text>
+                          ) : null}
                           {section.customerName ? ` · ${section.customerName}` : ''}
-                          {!expanded ? ' · chạm để mở' : ''}
                         </Text>
                       </View>
                       {section.projectId ? (
                         <Pressable
-                          hitSlop={8}
+                          style={({ pressed }) => [styles.viewBtn, pressed && styles.pressed]}
+                          hitSlop={6}
                           onPress={() => openProjectDetail(String(section.projectId))}
+                          accessibilityLabel={`Xem dự án ${section.code}`}
                         >
-                          <Ionicons name="open-outline" size={16} color={colors.primary} />
+                          <Text style={styles.viewBtnTxt}>Xem</Text>
                         </Pressable>
                       ) : null}
                     </Pressable>
@@ -988,16 +1012,17 @@ export default function OverviewScreen() {
           )}
         </View>
 
-        <View style={styles.secHead}>
-          <Text style={styles.secTitleInline}>Dự án quá hạn</Text>
-          <Pressable onPress={openOverdueProjects} hitSlop={8}>
-            <Text style={styles.link}>
-              {(ownOnly ? overdueDeals.length : kpis.overdue) > 0
-                ? `Tất cả (${ownOnly ? overdueDeals.length : kpis.overdue})`
-                : 'Mở danh sách'}
-            </Text>
-          </Pressable>
-        </View>
+        <SectionHeader
+          icon="alarm-outline"
+          iconColor={colors.danger}
+          title="Dự án quá hạn"
+          actionLabel={
+            (ownOnly ? overdueDeals.length : kpis.overdue) > 0
+              ? `Tất cả (${ownOnly ? overdueDeals.length : kpis.overdue})`
+              : 'Mở danh sách'
+          }
+          onAction={openOverdueProjects}
+        />
         <View style={styles.card}>
           {previewDeals.length === 0 ? (
             <View style={styles.emptyRow}>
@@ -1029,7 +1054,7 @@ export default function OverviewScreen() {
                         : (p.customer_name || p.code)}
                     </Text>
                     <Text style={[styles.rowSub, { color: colors.danger }]} numberOfLines={1}>
-                      Hạn {shortDateLabel(p.delivery_date || p.production_deadline || p.deadline)}
+                      Hạn {shortDateLabel(sxProjectDeadlineRaw(p, boardStages))}
                     </Text>
                   </View>
                   <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
@@ -1063,29 +1088,17 @@ export default function OverviewScreen() {
                     />
                   </Pressable>
                 </View>
-              ) : !ownOnly && kpis.overdue > overdueDeals.length ? (
-                <Pressable style={styles.moreBtn} onPress={openOverdueProjects}>
-                  <Text style={styles.moreBtnTxt}>Xem tất cả trên Deadline</Text>
-                  <Ionicons name="chevron-forward" size={16} color={colors.primary} />
-                </Pressable>
               ) : null}
             </>
           )}
         </View>
 
-        <Text style={styles.secTitle}>Lối tắt</Text>
+        <SectionHeader icon="flash-outline" title="Lối tắt" />
         <View style={styles.quickGrid}>
           {quickActions.map((a) => (
-            <Pressable
-              key={a.key}
-              style={({ pressed }) => [styles.quickTile, pressed && styles.pressed]}
-              onPress={a.onPress}
-            >
-              <View style={[styles.quickIcon, { backgroundColor: a.color + '22' }]}>
-                <Ionicons name={a.icon} size={20} color={a.color} />
-              </View>
-              <Text style={styles.quickLabel} numberOfLines={1}>{a.label}</Text>
-            </Pressable>
+            <View key={a.key} style={styles.quickCell}>
+              <ShortcutTile action={a} />
+            </View>
           ))}
         </View>
       </ScrollView>
@@ -1119,6 +1132,8 @@ function createStyles(colors: AppColors) {
       paddingTop: 12,
       paddingBottom: 14,
       backgroundColor: colors.bg,
+      // Cắt đốm sáng theo khung hero để nó không tràn xuống vùng cuộn.
+      overflow: 'hidden',
     },
     heroTop: {
       flexDirection: 'row',
@@ -1236,13 +1251,13 @@ function createStyles(colors: AppColors) {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 10,
-      backgroundColor: colors.dangerSoft,
       borderRadius: Radii.lg,
       borderWidth: 1,
       borderColor: colorWithAlpha(colors.danger, 0.4),
       paddingHorizontal: 12,
       paddingVertical: 12,
       marginBottom: 14,
+      overflow: 'hidden',
     },
     alertIcon: {
       width: 36,
@@ -1280,57 +1295,23 @@ function createStyles(colors: AppColors) {
       marginBottom: 14,
     },
     okTxt: { color: colors.success, fontSize: 13.5, fontWeight: '700', flex: 1 },
-    secTitle: {
-      fontSize: 13,
-      fontWeight: '800',
-      color: colors.textMuted,
-      textTransform: 'uppercase',
-      letterSpacing: 0.6,
-      marginBottom: 10,
-      marginTop: 4,
+    // flexWrap thay cho lưới CSS; gap lo khoảng cách nên không cần margin lẻ.
+    kpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+    kpiCell: { width: '47.5%', flexGrow: 1 },
+    taskDot: {
+      width: 9,
+      height: 9,
+      borderRadius: 4.5,
     },
-    secHead: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginTop: 16,
-      marginBottom: 10,
-    },
-    secTitleInline: {
-      fontSize: 13,
-      fontWeight: '800',
-      color: colors.textMuted,
-      textTransform: 'uppercase',
-      letterSpacing: 0.6,
-    },
-    link: { color: colors.primary, fontSize: 13, fontWeight: '700' },
-    kpiScroll: {
-      paddingRight: PAGE_HPAD,
-      paddingBottom: 4,
-      alignItems: 'stretch',
-    },
-    kpiCard: {
-      width: KPI_CARD_WIDTH,
-      backgroundColor: colors.card,
-      borderRadius: Radii.lg,
-      borderWidth: 1,
-      borderColor: colors.border,
+    viewBtn: {
       paddingHorizontal: 12,
-      paddingVertical: 12,
-      minHeight: 96,
+      paddingVertical: 6,
+      borderRadius: Radii.md,
+      backgroundColor: colorWithAlpha(colors.primary, 0.14),
+      borderWidth: 1,
+      borderColor: colorWithAlpha(colors.primary, 0.35),
     },
-    kpiCardGap: { marginLeft: 10 },
-    kpiDot: {
-      width: 18,
-      height: 18,
-      borderRadius: 9,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginBottom: 8,
-    },
-    kpiDotInner: { width: 8, height: 8, borderRadius: 4 },
-    kpiValue: { fontSize: 26, fontWeight: '900', letterSpacing: -0.5 },
-    kpiLabel: { marginTop: 2, fontSize: 12, fontWeight: '700', color: colors.textMuted },
+    viewBtnTxt: { color: colors.primary, fontSize: 12, fontWeight: '800' },
     card: {
       backgroundColor: colors.card,
       borderRadius: Radii.lg,
@@ -1403,43 +1384,14 @@ function createStyles(colors: AppColors) {
     },
     pageBtnDisabled: { opacity: 0.45 },
     pageLabel: { color: colors.textMuted, fontSize: 12, fontWeight: '700', minWidth: 72, textAlign: 'center' },
-    moreBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 6,
-      paddingVertical: 12,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: colors.border,
-      backgroundColor: colors.cardAlt,
-    },
-    moreBtnTxt: { color: colors.primary, fontSize: 13, fontWeight: '800' },
     quickGrid: {
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: 10,
       marginBottom: Spacing.lg,
     },
-    quickTile: {
-      width: '22%',
-      flexGrow: 1,
-      alignItems: 'center',
-      gap: 6,
-      backgroundColor: colors.card,
-      borderRadius: Radii.lg,
-      borderWidth: 1,
-      borderColor: colors.border,
-      paddingVertical: 12,
-      paddingHorizontal: 4,
-    },
-    quickIcon: {
-      width: 40,
-      height: 40,
-      borderRadius: 12,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    quickLabel: { fontSize: 11, fontWeight: '700', color: colors.textMuted },
+    // flexWrap thay cho lưới CSS: mỗi ô chiếm 1/4 bề ngang, tự xuống hàng.
+    quickCell: { width: '22%', flexGrow: 1 },
     pressed: { opacity: 0.82 },
   });
 }

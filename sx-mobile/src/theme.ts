@@ -30,22 +30,26 @@ export type AppColors = {
 };
 
 export const darkColors: AppColors = {
-  bg: '#0E1116',
-  bgElevated: '#151A22',
-  card: '#1B212C',
-  cardAlt: '#202734',
-  border: '#2A3342',
-  borderStrong: '#39455A',
-  text: '#EEF2F8',
-  textMuted: '#9AA6BC',
-  textFaint: '#6B7689',
-  primary: '#3B82F6',
-  primaryDark: '#1D4ED8',
-  primarySoft: '#16233B',
-  success: '#22C55E',
-  warning: '#F59E0B',
-  danger: '#EF4444',
-  dangerSoft: '#2A1820',
+  // Nhóm nền ngả xanh navy thay vì xám trung tính — khớp bản thiết kế dashboard.
+  // Giữ nguyên bậc sáng tương đối giữa các token để mọi màn không bị đảo tương phản.
+  bg: '#031225',
+  bgElevated: '#04182D',
+  card: '#08223F',
+  cardAlt: '#0A2948',
+  border: '#123F6B',
+  // Suy từ border, sáng hơn một bậc — spec không nêu.
+  borderStrong: '#1B5490',
+  text: '#FFFFFF',
+  textMuted: '#8FAED0',
+  // Suy từ textMuted, mờ hơn một bậc — spec không nêu.
+  textFaint: '#5E7CA0',
+  primary: '#1688FF',
+  primaryDark: '#0879F9',
+  primarySoft: '#0A2E52',
+  success: '#16D68A',
+  warning: '#F5A524',
+  danger: '#FF4D67',
+  dangerSoft: '#2A1024',
   white: '#FFFFFF',
   valueBg: '#064E3B28',
   valueBorder: '#10B98155',
