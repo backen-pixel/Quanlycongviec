@@ -203,6 +203,8 @@ export type StageIndex = {
   handoverByWorkshop: Map<string, KanbanStage>;
   handoverGlobal: KanbanStage | null;
   handoverFirst: KanbanStage | null;
+  /** order_index nhỏ nhất trong các cột «Bàn giao VC» — null nếu board không có cột nào. */
+  handoverMinOrder: number | null;
   intake: KanbanStage | null;
   first: KanbanStage | null;
 };
@@ -213,6 +215,7 @@ export function buildStageIndex(stages: KanbanStage[]): StageIndex {
   const handoverByWorkshop = new Map<string, KanbanStage>();
   let handoverGlobal: KanbanStage | null = null;
   let handoverFirst: KanbanStage | null = null;
+  let handoverMinOrder: number | null = null;
   let intake: KanbanStage | null = null;
 
   for (const s of stages) {
@@ -226,6 +229,8 @@ export function buildStageIndex(stages: KanbanStage[]): StageIndex {
     }
     if (s.is_handover_to_logistics) {
       if (!handoverFirst) handoverFirst = s;
+      const ord = Number(s.order_index) || 0;
+      if (handoverMinOrder == null || ord < handoverMinOrder) handoverMinOrder = ord;
       const wkt = s.workshop_type_id ? String(s.workshop_type_id) : '';
       if (wkt) {
         if (!handoverByWorkshop.has(wkt)) handoverByWorkshop.set(wkt, s);
@@ -241,9 +246,20 @@ export function buildStageIndex(stages: KanbanStage[]): StageIndex {
     handoverByWorkshop,
     handoverGlobal,
     handoverFirst,
+    handoverMinOrder,
     intake,
     first: stages[0] || null,
   };
+}
+
+/** Cột đã lưu nằm tại/sau cột bàn giao VC — khớp BE `sxStoredColumnAtOrAfterHandover`. */
+function storedColumnAtOrAfterHandover(
+  pinned: KanbanStage | null | undefined,
+  index: StageIndex,
+): boolean {
+  if (!pinned) return false;
+  if (index.handoverMinOrder == null) return false;
+  return (Number(pinned.order_index) || 0) >= index.handoverMinOrder;
 }
 
 function resolveSxHandoverColumnIdIndexed(
@@ -281,6 +297,13 @@ export function resolveColumnId(
       ? index.byId.get(String(project.sx_kanban_column_id))
       : null;
     if (shouldForceSxHandoverColumn(project, pinned)) {
+      // Kéo thẻ vào cột «Vận chuyển»/«CSKH» làm status tự thành shipping/warranty. Đó không
+      // phải bằng chứng đã bàn giao VC nên giữ cột vừa kéo — khớp web/BE.
+      if (pinned && sxStatusComesFromColumn(project, pinned)) return String(pinned.id);
+      // Đã kéo sang ĐÃ GIAO / Công nợ / Đã thu tiền… tức cột lưu đứng TẠI hoặc SAU cột bàn
+      // giao VC — giữ nguyên, chỉ ép khi thẻ còn đứng trước cột đó. Thiếu chốt này thì app kéo
+      // ngược thẻ về cột «→VC» còn web giữ tại chỗ, badge hai bên lệch nhau.
+      if (storedColumnAtOrAfterHandover(pinned, index)) return String(pinned!.id);
       let preferred: string | null = null;
       if (pinned?.is_handover_to_logistics) preferred = project.sx_kanban_column_id || null;
       const handoverId = resolveSxHandoverColumnIdIndexed(index, project, preferred);
