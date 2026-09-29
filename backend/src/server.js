@@ -1747,6 +1747,9 @@ server.listen(config.port, () => {
         let lead = null;
         try {
           const r = await externalAxios.post(`http://localhost:${port}/api/crm/leads`, {
+            ...((require('./helpers/facebookMessengerReceipt').enabledPageIds().has(String(contact.page_id))
+              && require('./helpers/facebookAtomicLead').isFacebookAtomicLeadScope({ pageId: contact.page_id, companyId: page.data.default_company_id }))
+              ? { facebook_contact_id: contact.id } : {}),
             title: '[FB] ' + (contact.fb_name || 'KH Facebook'),
             customer_id: customerId || null,
             source_id: page.data.default_source_id || fbSource?.id || null,
@@ -1779,3 +1782,4 @@ server.listen(config.port, () => {
   // Tắt scanMissingLeads chạy nền ở server startup để giảm egress.
   // Lead scan tự động chỉ chạy qua công cụ /facebook/lead-scan/config với timer riêng.
 });
+

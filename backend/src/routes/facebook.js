@@ -2,6 +2,9 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const config = require('../config');
 const r = express.Router();
+const { enabledPageIds, enqueueMessengerEvents, captureMessengerReferral, linkMessengerAttribution, createMessengerReceiptWorker } = require('../helpers/facebookMessengerReceipt');
+const DURABLE_MESSENGER_PAGES = enabledPageIds();
+const { isFacebookAtomicLeadScope, createFacebookLeadOnce } = require('../helpers/facebookAtomicLead');
 const { supabase } = require('../config/supabase');
 const { fetchAllPagesParallel } = require('../helpers/supabaseFetchAll');
 const axios = require('axios');
@@ -2951,12 +2954,23 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
   } catch (e) { /* column may not exist */ }
   if (!companyId && autoLeadCfg?.default_company_id) companyId = autoLeadCfg.default_company_id;
 
+  const atomicScope = DURABLE_MESSENGER_PAGES.has(String(pageId))
+    && isFacebookAtomicLeadScope({ pageId, companyId, moduleKey, createType });
+  const atomicReuse = async (existingLeadId) => {
+    const result = await createFacebookLeadOnce(supabase, {
+      pageId, contactId: contact.id, companyId, existingLeadId,
+      leadData: { type: createType, company_id: companyId },
+    });
+    return result.lead;
+  };
+
   // ── ANTI-DUPLICATE: chỉ gộp trong phạm vi cùng page + cùng công ty ──
   const { data: freshContact } = await supabase.from('facebook_contacts')
     .select('lead_id, customer_id, psid, phone, page_id').eq('id', contact.id).single();
 
   // 1. Check contact đã có lead_id
   if (freshContact?.lead_id) {
+    if (atomicScope) return atomicReuse(freshContact.lead_id);
     return { id: freshContact.lead_id };
   }
 
@@ -2969,6 +2983,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
       .eq('company_id', companyId)
       .limit(1);
     if (existing?.length > 0) {
+      if (atomicScope) return atomicReuse(existing[0].id);
       console.log(`[FB] ⚠️  Đã có ${createType} (cùng công ty ${companyId}) cho customer ${freshContact.customer_id}, sync lead_id.`);
       await supabase.from('facebook_contacts').update({ lead_id: existing[0].id }).eq('id', contact.id);
       return { id: existing[0].id };
@@ -2984,6 +2999,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
       .not('lead_id', 'is', null)
       .limit(1);
     if (samePsid?.length > 0) {
+      if (atomicScope) return atomicReuse(samePsid[0].lead_id);
       console.log(`[FB] ⚠️  Đã có lead cho PSID trên cùng page ${freshContact.page_id}, sync lại.`);
       await supabase.from('facebook_contacts').update({ lead_id: samePsid[0].lead_id }).eq('id', contact.id);
       return { id: samePsid[0].lead_id };
@@ -3029,6 +3045,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
           .eq('company_id', companyId)
           .limit(1);
         if (existLead?.length > 0) {
+      if (atomicScope) return atomicReuse(existLead[0].id);
           console.log(`[FB] ⚠️  Đã có ${createType} cùng công ty cho SĐT ${cleanPhone}, gộp vào bản ghi ${existLead[0].id}`);
           await supabase.from('facebook_contacts').update({
             lead_id: existLead[0].id,
@@ -3042,6 +3059,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
 
   const leadIdBeforeWrite = await fetchContactLeadId(contact.id);
   if (leadIdBeforeWrite) {
+    if (atomicScope) return atomicReuse(leadIdBeforeWrite);
     return { id: leadIdBeforeWrite };
   }
 
@@ -3099,6 +3117,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
       .eq('company_id', companyId)
       .limit(1);
     if (leadForCust?.length > 0) {
+      if (atomicScope) return atomicReuse(leadForCust[0].id);
       await supabase.from('facebook_contacts').update({ lead_id: leadForCust[0].id }).eq('id', contact.id);
       return leadForCust[0];
     }
@@ -3106,6 +3125,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
 
   const leadIdBeforeInsert = await fetchContactLeadId(contact.id);
   if (leadIdBeforeInsert) {
+    if (atomicScope) return atomicReuse(leadIdBeforeInsert);
     return { id: leadIdBeforeInsert };
   }
 
@@ -3225,7 +3245,19 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     }
 
     const tryData = { ...leadData, code: tryCode };
-    const { data, error } = await supabase.from('crm_leads').insert(tryData).select().single();
+    let data, error;
+    if (atomicScope) {
+      try {
+        const result = await createFacebookLeadOnce(supabase, { pageId, contactId: contact.id, companyId, leadData: tryData });
+        if (!result.created) return result.lead;
+        data = result.lead;
+      } catch (rpcError) {
+        if (String(rpcError.code) !== '23505') throw rpcError;
+        error = rpcError;
+      }
+    } else {
+      ({ data, error } = await supabase.from('crm_leads').insert(tryData).select().single());
+    }
     if (!error) { lead = data; break; }
     lastErr = error;
     const isDup = String(error.message || '').toLowerCase().includes('duplicate')
@@ -3242,7 +3274,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
   }
 
   // Link contact → lead (và dừng sync sâu nếu cột đã có).
-  const _linkUpd = { lead_id: lead.id, updated_at: new Date().toISOString() };
+  const _linkUpd = { ...(atomicScope ? {} : { lead_id: lead.id }), updated_at: new Date().toISOString() };
   if (hasSyncPausedColumnSync()) {
     _linkUpd.sync_paused = true;
     _linkUpd.sync_pause_reason = 'lead_created';
@@ -3441,8 +3473,16 @@ r.get('/webhook', async (req, res) => {
 r.post('/webhook', async (req, res) => {
   const body = req.body;
   
-  // Luôn trả 200 ngay để Facebook không retry
+  // Only opt-in Pages enter the durable inbox. A failed write must cause Meta retry.
+  if (body.object === 'page') {
+    try {
+      await enqueueMessengerEvents(supabase, body.entry, DURABLE_MESSENGER_PAGES);
+    } catch (_) {
+      return res.sendStatus(503);
+    }
+  }
   res.sendStatus(200);
+  void messengerReceiptWorker.drain();
 
   // Ghi log vào DB
   if (!FB_DISABLE_WEBHOOK_LOGS && body.object === 'page' && body.entry) {
@@ -3461,7 +3501,7 @@ r.post('/webhook', async (req, res) => {
         const pageId = entry.id;
 
         // ═══ MESSENGER MESSAGES ═══
-        if (entry.messaging) {
+        if (entry.messaging && !DURABLE_MESSENGER_PAGES.has(String(pageId))) {
           for (const event of entry.messaging) {
             await handleMessaging(pageId, event, r._ioRef);
           }
@@ -3497,15 +3537,15 @@ function messengerPartnerPsid(pageId, event) {
   return null;
 }
 
-async function handleMessaging(pageId, event, io) {
+async function handleMessaging(pageId, event, io, durable = false) {
   const partnerPsid = messengerPartnerPsid(pageId, event);
   if (!partnerPsid) return;
   return withAsyncLock(`fb-msg:${pageId}:${partnerPsid}`, () =>
-    handleMessagingInner(pageId, event, io, partnerPsid),
+    handleMessagingInner(pageId, event, io, partnerPsid, durable),
   );
 }
 
-async function handleMessagingInner(pageId, event, io, partnerPsid) {
+async function handleMessagingInner(pageId, event, io, partnerPsid, durable = false) {
   console.log(`\n[FB] 📨 Messenger event — partner PSID: ${partnerPsid}`);
 
   const sid = event.sender?.id != null ? String(event.sender.id).trim() : '';
@@ -3513,7 +3553,8 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
     ? (event.sender?.name || null)
     : (event.recipient?.name || null);
   const contact = await getOrCreateContact(pageId, partnerPsid, senderLabel);
-  if (!contact) return;
+  if (!contact) { if (durable) throw new Error('FB_DURABLE_CONTACT_UNAVAILABLE'); return; }
+  if (durable) await captureMessengerReferral(supabase, pageId, contact.id, event);
 
   if (isPlaceholderFacebookName(contact.fb_name)) {
     void tryResolveMessengerDisplayName(pageId, partnerPsid, contact.id, io, contact);
@@ -3562,7 +3603,7 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
 
     // Check duplicate — Facebook có thể gửi webhook 2 lần (~30ms)
     // Layer 1: In-memory lock (chống race condition khi 2 request song song)
-    if (msg.mid && !acquireMidLock(msg.mid)) {
+    if (!durable && msg.mid && !acquireMidLock(msg.mid)) {
       console.log(`[FB] ⏭️  In-memory lock: duplicate mid ${msg.mid}`);
       return;
     }
@@ -3592,10 +3633,18 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
     };
 
     // Upsert: nếu fb_message_id đã tồn tại thì bỏ qua (onConflict ignore)
-    const { data: savedMsg, error: insertErr } = await supabase.from('facebook_messages')
+    let { data: savedMsg, error: insertErr } = await supabase.from('facebook_messages')
       .upsert(insertData, { onConflict: 'fb_message_id', ignoreDuplicates: true })
       .select().single();
     
+    let isReplay = false;
+    if (durable && !savedMsg && msg.mid && (!insertErr || isDuplicateKeyError(insertErr) || insertErr.code === 'PGRST116')) {
+      const replay = await supabase.from('facebook_messages').select('*')
+        .eq('fb_message_id', msg.mid).eq('contact_id', contact.id).maybeSingle();
+      if (replay.error) throw new Error('FB_DURABLE_REPLAY_READ_FAILED');
+      if (replay.data) { savedMsg = replay.data; insertErr = null; isReplay = true; }
+    }
+    if (durable && (insertErr || !savedMsg)) throw new Error('FB_DURABLE_MESSAGE_WRITE_FAILED');
     if (insertErr) {
       // Nếu lỗi unique constraint → duplicate, skip
       if (isDuplicateKeyError(insertErr)) {
@@ -3644,12 +3693,14 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
       const preview = content
         ? content.substring(0, 100)
         : (msg.attachments?.length ? '[Tệp đính kèm]' : '');
+      if (!isReplay) {
       await supabase.from('facebook_contacts').update({
         last_message_at: new Date().toISOString(),
         last_message_preview: preview,
         unread_count: (contact.unread_count || 0) + 1,
         updated_at: new Date().toISOString(),
       }).eq('id', contact.id);
+      }
 
       // ── Extract phone & address từ tin nhắn TRƯỚC khi tạo lead ──
       let extractedPhone = null;
@@ -3725,6 +3776,13 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
               reason.push('default trigger');
           }
 
+          // A deliberately blocked/invalid number is a terminal business decision,
+          // not a database outage. Do not keep retrying its accepted message.
+          if (durable && shouldCreate && (extractedPhone || contact.phone)) {
+            const requestedPhone = extractedPhone || contact.phone;
+            if (!normalizePhoneForLeadCreation(requestedPhone).ok
+              || await isPhoneBlockedForFacebookAutoLead(supabase, requestedPhone)) shouldCreate = false;
+          }
           if (shouldCreate) {
             const contactName = contact.fb_name || autoLeadCfg.default_customer_name || 'User';
 
@@ -3753,6 +3811,7 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
 
               // Notification đã được gửi trong createLeadFromFacebook() — không cần gửi lại
             } else {
+              if (durable) throw new Error('FB_DURABLE_LEAD_NOT_COMPLETED');
               console.log(`[FB] ❌ Failed to create lead`);
             }
           }
@@ -3772,7 +3831,7 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
       }
 
       // Auto-reply chỉ cho tin nhắn đầu tiên (khi vừa tạo lead)
-      if (isFirstMessage && autoLeadCfg.auto_reply_first_message) {
+      if (!isReplay && isFirstMessage && autoLeadCfg.auto_reply_first_message) {
         const page = await getPageConfig(pageId);
         if (page?.auto_reply_message) {
           await sendMessengerReply(pageId, partnerPsid, page.auto_reply_message);
@@ -3887,6 +3946,16 @@ async function handleMessagingInner(pageId, event, io, partnerPsid) {
 
       console.log(`[FB] Messenger inbound: ${contact.fb_name} → "${content.substring(0, 50)}"`);
     }
+  }
+
+  if (durable) {
+    const liveLeadId = await fetchContactLeadId(contact.id);
+    if (liveLeadId) {
+      const repaired = await supabase.from('facebook_messages').update({ lead_id: liveLeadId })
+        .eq('contact_id', contact.id).is('lead_id', null);
+      if (repaired.error) throw new Error('FB_DURABLE_MESSAGE_LINK_FAILED');
+    }
+    await linkMessengerAttribution(supabase, pageId, contact.id);
   }
 
   if (event.read) {
@@ -4728,13 +4797,22 @@ r.delete('/contacts/:id', authMiddleware, async (req, res) => {
 // Tạo lead nhanh từ contact
 r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
   try {
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
     const { data: contact } = await supabase.from('facebook_contacts')
       .select('*').eq('id', req.params.id).single();
     if (!contact) return res.status(404).json({ error: 'Contact not found' });
+    if (!contactAllowedByFacebookScope(scope, contact)) return res.status(403).json({ error: 'Không có quyền tạo Lead cho Page này' });
     if (contact.lead_id) {
       // Verify lead còn tồn tại
       const { data: existLead } = await supabase.from('crm_leads').select('id').eq('id', contact.lead_id).single();
-      if (existLead) return res.status(400).json({ error: 'Contact đã có Lead' });
+      if (existLead) {
+        if (!DURABLE_MESSENGER_PAGES.has(String(contact.page_id))) return res.status(400).json({ error: 'Contact đã có Lead' });
+        const repaired = await supabase.from('facebook_messages').update({ lead_id: existLead.id }).eq('contact_id', contact.id).is('lead_id', null);
+        if (repaired.error) throw new Error('Facebook message link failed');
+        await linkMessengerAttribution(supabase, contact.page_id, contact.id);
+        return res.status(200).json(existLead);
+      }
       // Lead đã bị xóa → clear
       await supabase.from('facebook_contacts').update({ lead_id: null }).eq('id', contact.id);
     }
@@ -4751,6 +4829,10 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
     let companyId = req.body.company_id || null;
     if (!companyId && page?.default_company_id) companyId = page.default_company_id;
     if (!companyId && autoLeadCfg?.default_company_id) companyId = autoLeadCfg.default_company_id;
+    if (DURABLE_MESSENGER_PAGES.has(String(contact.page_id))
+      && !isFacebookAtomicLeadScope({ pageId: contact.page_id, companyId, moduleKey, createType })) {
+      return res.status(409).json({ error: 'Page đang bật tiếp nhận bền vững: công ty/module/loại phải khớp cấu hình đã duyệt' });
+    }
 
     // Default lead/deal type (company-scoped): page default → auto-lead-config default (chỉ module CRM)
     let leadTypeId = null;
@@ -4858,9 +4940,12 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       if (rr.ok) manualRegionId = page.default_region_id;
     }
 
+    const manualAtomicScope = DURABLE_MESSENGER_PAGES.has(String(contact.page_id))
+      && isFacebookAtomicLeadScope({ pageId: contact.page_id, companyId, moduleKey, createType });
     // IMPORTANT: tạo lead/deal qua API CRM chuẩn để giữ đúng side-effects
     const port = process.env.PORT || 3000;
     const { data: lead } = await axios.post(`http://localhost:${port}/api/crm/${createType === 'deal' ? 'deals' : 'leads'}`, {
+      ...(manualAtomicScope ? { facebook_contact_id: contact.id } : {}),
       title: `[FB ${createType === 'deal' ? 'Deal' : 'Lead'}] ${contact.fb_name || 'KH Facebook'}`,
       customer_id: customerId || null,
       stage_id: stageId || null,
@@ -4887,9 +4972,11 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       }
     }
 
+    if (manualAtomicScope) await linkMessengerAttribution(supabase, contact.page_id, contact.id);
     // Link contact → lead + messages
-    await supabase.from('facebook_contacts').update({ lead_id: lead.id }).eq('id', contact.id);
-    await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('contact_id', contact.id);
+    if (!manualAtomicScope) await supabase.from('facebook_contacts').update({ lead_id: lead.id }).eq('id', contact.id);
+    const linkedMessages = await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('contact_id', contact.id);
+    if (manualAtomicScope && linkedMessages.error) throw new Error('Facebook message link failed; retry keeps existing Lead');
 
     console.log(`[FB] ✅ Manual ${createType} created: ${lead.code} — ${lead.title}`);
     res.status(201).json(lead);
@@ -9990,4 +10077,17 @@ r.post('/contacts/:contactId/send-drive-folder', authMiddleware, async (req, res
   }
 });
 
+// Timers do not prevent shutdown. Pending/expired receipts are recovered after restart.
+const messengerReceiptWorker = createMessengerReceiptWorker({
+  db: supabase,
+  pageIds: DURABLE_MESSENGER_PAGES,
+  processEvent: (pageId, event) => handleMessaging(pageId, event, r._ioRef, true),
+  onError: (code) => console.warn('[FB durable]', code),
+});
+if (DURABLE_MESSENGER_PAGES.size) {
+  const timer = setInterval(() => { void messengerReceiptWorker.drain(); }, 5000);
+  timer.unref();
+  setImmediate(() => { void messengerReceiptWorker.drain(); });
+}
 module.exports = r;
+

@@ -1,0 +1,57 @@
+name: VPT Messenger PostgreSQL integration
+
+# Issue #7. Synthetic database only; this workflow cannot deploy or call Meta.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/vpt-messenger-postgres.yml'
+      - 'backend/tests/facebookMessenger.postgres.test.py'
+      - 'backend/tests/fixtures/lead_attribution_runtime_*.json'
+      - 'backend/src/helpers/facebookAtomicLead.js'
+      - 'backend/src/helpers/facebookMessengerReceipt.js'
+      - 'backend/src/routes/facebook.js'
+      - 'backend/src/routes/crm/routes/leadLifecycle.js'
+      - 'backend/src/server.js'
+      - 'database/639_facebook_contact_lead_atomic.sql'
+      - 'database/640_facebook_messenger_receipts.sql'
+      - 'database/641_facebook_referral_attribution.sql'
+
+permissions:
+  contents: read
+
+jobs:
+  independent-connections:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: vpt_messenger_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: synthetic_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d vpt_messenger_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: 127.0.0.1
+      PGPORT: '5432'
+      PGDATABASE: vpt_messenger_ci
+      PGUSER: postgres
+      PGPASSWORD: synthetic_ci_only
+      VPT_ISOLATED_PG_TEST: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check required runner tools
+        run: |
+          psql --version
+          python3 --version
+      - name: Verify independent sessions, rollback and lease fencing
+        run: python3 backend/tests/facebookMessenger.postgres.test.py -v
