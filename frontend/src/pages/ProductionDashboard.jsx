@@ -3010,8 +3010,15 @@ export default function ProductionDashboard() {
         ? Number(serverTotalRaw)
         : (summaryKpisPending ? '…' : list.length))
       : list.length;
-    // KPI Quá hạn = tổng server (toàn filter); đang pending → '…' (không giữ overdue filter cũ).
-    const deadlineOverdueCount = countSxDeadlineViewOverdue(filteredKanbanPipeline);
+    // KPI Quá hạn = tổng server (toàn filter) — `deadline_counts.overdue` của summary=1.
+    // Đếm thẻ đã tải chỉ dùng khi lọc client-only hoặc chưa có summary: board tải lười theo
+    // cột nên lúc mới mở chỉ có vài chục thẻ, đếm tại chỗ sẽ báo thiếu rất nhiều (HCB từng
+    // hiện 1 trong khi thực tế 19).
+    const overdueFromCards = countSxDeadlineViewOverdue(filteredKanbanPipeline);
+    const overdueFromSummary = Number(deadlineBucketCounts?.overdue);
+    const deadlineOverdueCount = canUseServerTotal && Number.isFinite(overdueFromSummary)
+      ? overdueFromSummary
+      : overdueFromCards;
     // Cùng nguồn summary=1 với Tổng/Quá hạn.
     // - Có summaryStageKpis (cache đúng filter / server) → hiện số đó.
     // - Đang chờ, chưa có số → '…' — không đếm card, không giữ số công ty cũ.
