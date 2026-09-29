@@ -124,38 +124,54 @@ export function startOfLocalDay(d: Date): Date {
   return x;
 }
 
-/** Ẩn deadline trên thẻ / KPI — khớp `shouldHideSxKanbanDeadlineOnCard`. */
-function shouldHideDeadline(stage?: KanbanStage | null): boolean {
-  return Boolean(stage?.counts_as_completed_revenue);
-}
-
-/** Cột bỏ quá hạn — khớp `shouldIgnoreSxOrderDeliveryOverdue`. */
-function shouldIgnoreOverdue(stage?: KanbanStage | null): boolean {
-  if (!stage) return false;
-  if (stage.counts_as_completed_revenue) return true;
-  if (stage.sla_days === 0) return true;
-  return false;
+/**
+ * Cột đã tắt hạn — khớp web `sxDone` và BE `isSxPipelineStageNoDeadline`: CHỈ
+ * «Bỏ hạn» và «Bàn giao VC». Không loại theo sla_days hay «Đã công», vì KPI Quá
+ * hạn của web và summary BE cũng không loại — loại thêm thì danh sách trên app
+ * ít hơn hẳn con số KPI ngay bên cạnh.
+ */
+function stageClearsDeadline(stage?: KanbanStage | null): boolean {
+  return Boolean(stage?.clears_deadline || stage?.is_handover_to_logistics);
 }
 
 /**
- * Quá hạn KPI — khớp web `resolveSxDeadlineBucket(...).bucket === 'overdue'`
- * (+ ẩn cột «Đã công»).
+ * Hạn hiệu lực của dự án SX — khớp web `resolveEffectiveModuleDeadline(PRODUCTION)`
+ * và BE `sxDeadlineRaw`: hạn thẻ → hoàn thiện SX → hạn SX → ngày giao → hạn chung.
  */
+export function sxEffectiveDeadlineRaw(
+  p: ProductionProject,
+  stage?: KanbanStage | null,
+): string | null {
+  if (stageClearsDeadline(stage)) return null;
+  return p.sx_kanban_deadline_at
+    || p.production_finish_date
+    || p.production_deadline
+    || p.delivery_date
+    || p.deadline
+    || null;
+}
+
+/** Hạn hiệu lực khi chỉ có danh sách cột (màn hình không giữ stage của thẻ). */
+export function sxProjectDeadlineRaw(
+  p: ProductionProject,
+  stages: KanbanStage[],
+  index?: KpiStageIndex,
+): string | null {
+  return sxEffectiveDeadlineRaw(p, stageOf(p, stages, index));
+}
+
+/** Quá hạn KPI — khớp web `resolveSxDeadlineBucket(...).bucket === 'overdue'`. */
 export function projectIsDeadlineOverdue(
   p: ProductionProject,
   stages: KanbanStage[],
   index?: KpiStageIndex,
   todayMs = Date.now(),
 ): boolean {
-  if (String(p.status || '') === 'completed') return false;
-  if (projectIsShipped(p)) return false;
   const col = stageOf(p, stages, index);
-  if (shouldHideDeadline(col)) return false;
-  const raw = p.delivery_date || p.production_deadline || p.deadline;
+  const raw = sxEffectiveDeadlineRaw(p, col);
   if (!raw) return false;
   const t = new Date(raw);
   if (Number.isNaN(t.getTime())) return false;
-  if (shouldIgnoreOverdue(col)) return false;
   const today = startOfLocalDay(new Date(todayMs));
   if (startOfLocalDay(t).getTime() < today.getTime()) return true;
   return isHucabiSameDayPast1730(raw, p.company_id, todayMs);
@@ -203,6 +219,26 @@ export function computeSxBoardKpis(
   };
 }
 
+/**
+ * Id các dự án quá hạn theo đúng quy tắc KPI — build index cột một lần cho cả
+ * danh sách (lọc từng thẻ sẽ dựng lại index mỗi lần gọi).
+ */
+export function sxOverdueProjectIds(
+  projects: ProductionProject[],
+  stages: KanbanStage[],
+  todayMs = Date.now(),
+): Set<string> {
+  const index = stages.length ? buildKpiStageIndex(stages) : undefined;
+  const out = new Set<string>();
+  for (const p of projects) {
+    const hit = stages.length
+      ? projectIsDeadlineOverdue(p, stages, index, todayMs)
+      : Boolean(p.is_overdue);
+    if (hit) out.add(String(p.id));
+  }
+  return out;
+}
+
 /** Deal/dự án quá hạn (chưa hoàn tất), sắp theo hạn gần nhất — cùng logic KPI `projectIsDeadlineOverdue`. */
 export function pickOverdueProjects(
   projects: ProductionProject[],
@@ -213,12 +249,13 @@ export function pickOverdueProjects(
   const nowMs = Date.now();
   return projects
     .filter((p) => {
-      if (String(p.status || '') === 'completed') return false;
       if (stages.length) return projectIsDeadlineOverdue(p, stages, index, nowMs);
       return Boolean(p.is_overdue);
     })
     .map((p) => {
-      const raw = p.delivery_date || p.production_deadline || p.deadline;
+      const raw = stages.length
+        ? sxProjectDeadlineRaw(p, stages, index)
+        : (p.sx_kanban_deadline_at || p.production_finish_date || p.production_deadline || p.delivery_date || p.deadline);
       const ts = raw ? startOfLocalDay(new Date(raw)).getTime() : Infinity;
       return { p, ts: Number.isFinite(ts) ? ts : Infinity };
     })
@@ -245,7 +282,9 @@ export function pickSoonProjects(
     } else if (p.is_overdue) {
       continue;
     }
-    const raw = p.delivery_date || p.production_deadline || p.deadline;
+    const raw = stages.length
+      ? sxProjectDeadlineRaw(p, stages, index)
+      : (p.sx_kanban_deadline_at || p.production_finish_date || p.production_deadline || p.delivery_date || p.deadline);
     const ts = raw ? startOfLocalDay(new Date(raw)).getTime() : NaN;
     if (!Number.isFinite(ts)) continue;
     const diff = Math.floor((ts - now) / dayMs);

@@ -14,6 +14,8 @@ export type KanbanStage = {
   workflow_stage_id?: string | null;
   workshop_type_id?: string | null;
   is_handover_to_logistics?: boolean;
+  /** Cột «Bỏ hạn» — thẻ ở đây không tính quá hạn (khớp web/BE). */
+  clears_deadline?: boolean;
   counts_as_completed_revenue?: boolean;
   counts_as_collected_revenue?: boolean;
   /** null = mặc định; 0 = bỏ quá hạn ngày giao/deadline. */
@@ -35,6 +37,10 @@ export type ProductionProject = {
   priority?: string | null;
   deadline?: string | null;
   production_deadline?: string | null;
+  /** Hạn đặt riêng trên thẻ Kanban SX — ưu tiên cao nhất khi tính quá hạn. */
+  sx_kanban_deadline_at?: string | null;
+  /** Ngày hoàn thiện SX — ưu tiên sau hạn thẻ. */
+  production_finish_date?: string | null;
   order_date?: string | null;
   delivery_date?: string | null;
   created_at?: string | null;

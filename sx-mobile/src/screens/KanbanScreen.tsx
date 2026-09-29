@@ -59,6 +59,7 @@ import {
   countsAsCompletedRevenue,
   projectIsAwaitingDelivery,
   projectIsShipped,
+  sxOverdueProjectIds,
 } from '../lib/sxBoardKpis';
 import {
   isMetallaOrHucabiCompanyId,
@@ -890,6 +891,16 @@ export default function KanbanScreen() {
   /** Index cột 1 lần / board update — tránh O(n×stages) khi regroup. */
   const stageIndex = useMemo(() => buildStageIndex(stages), [stages]);
 
+  /**
+   * «Quá hạn» của bộ lọc nhanh dùng đúng quy tắc KPI (cột Deadline) chứ không
+   * dùng cờ `is_overdue` của thẻ: cờ thẻ bỏ qua cột tắt SLA nên danh sách mở từ
+   * KPI Quá hạn sẽ ít hơn hẳn con số hiển thị.
+   */
+  const overdueIds = useMemo(
+    () => (quickFilter === 'overdue' ? sxOverdueProjectIds(board.projects, stages) : null),
+    [quickFilter, board.projects, stages],
+  );
+
   const filteredProjects = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return board.projects.filter((p) => {
@@ -898,7 +909,7 @@ export default function KanbanScreen() {
         if (!hay.includes(needle)) return false;
       }
       if (quickFilter === 'mine' && String(p.production_person_id || '') !== String(myId || '')) return false;
-      if (quickFilter === 'overdue' && !p.is_overdue) return false;
+      if (quickFilter === 'overdue' && !overdueIds?.has(String(p.id))) return false;
       if (quickFilter === 'today' && !isToday(p.production_deadline || p.deadline)) return false;
       if (filterPhone === 'has' && !String(p.customer_phone || '').trim()) return false;
       if (filterPhone === 'no' && String(p.customer_phone || '').trim()) return false;
@@ -921,6 +932,7 @@ export default function KanbanScreen() {
     board.projects,
     search,
     quickFilter,
+    overdueIds,
     myId,
     filterWorkTypeId,
     dealCompanyExternalFilter,
