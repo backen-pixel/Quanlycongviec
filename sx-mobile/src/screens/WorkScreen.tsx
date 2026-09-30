@@ -642,6 +642,8 @@ export default function WorkScreen() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [assignOpen, setAssignOpen] = useState(false);
   const updatingRef = useRef(false);
+  /** Mỗi lần mở sheet file tăng 1 — phản hồi về trễ của việc trước bị bỏ, không ghi đè việc đang mở. */
+  const attachSeqRef = useRef(0);
   const loadSeqRef = useRef(0);
   const chipSeqRef = useRef(0);
   const tasksLenRef = useRef(0);
@@ -1097,13 +1099,32 @@ export default function WorkScreen() {
     );
   }, [uploadMediaForTask]);
 
+  /** Đóng sheet: tăng seq để phản hồi đang chờ không bật lại sheet với file của việc cũ. */
+  const closeAttachSheet = useCallback(() => {
+    attachSeqRef.current += 1;
+    setAttachSheet(null);
+  }, []);
+
   const openAttachSheet = useCallback(async (task: WorkTask) => {
+    const seq = ++attachSeqRef.current;
     setAttachSheet({ task, files: [], loading: true });
     try {
       const files = await fetchWorkTaskAttachments(task);
-      setAttachSheet({ task, files, loading: false });
+      // Người dùng đã mở việc khác trong lúc chờ → bỏ kết quả này, nếu không ảnh của
+      // việc cũ sẽ nằm dưới tiêu đề việc mới.
+      if (seq !== attachSeqRef.current) return;
+      setAttachSheet((prev) => (
+        prev && String(prev.task.id) === String(task.id)
+          ? { task: prev.task, files, loading: false }
+          : prev
+      ));
     } catch (e) {
-      setAttachSheet({ task, files: [], loading: false });
+      if (seq !== attachSeqRef.current) return;
+      setAttachSheet((prev) => (
+        prev && String(prev.task.id) === String(task.id)
+          ? { task: prev.task, files: [], loading: false }
+          : prev
+      ));
       Alert.alert('Không tải được file', formatApiError(e));
     }
   }, []);
@@ -1858,9 +1879,9 @@ export default function WorkScreen() {
         visible={!!attachSheet}
         transparent
         animationType="slide"
-        onRequestClose={() => setAttachSheet(null)}
+        onRequestClose={() => closeAttachSheet()}
       >
-        <Pressable style={styles.attachModalBackdrop} onPress={() => setAttachSheet(null)}>
+        <Pressable style={styles.attachModalBackdrop} onPress={() => closeAttachSheet()}>
           <Pressable style={styles.attachModalCard} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.attachModalTitle} numberOfLines={2}>
               {attachSheet?.task.title || 'File đính kèm'}
@@ -1915,7 +1936,7 @@ export default function WorkScreen() {
             <View style={styles.attachModalActions}>
               <TapHighlight
                 style={styles.attachModalBtn}
-                onPress={() => setAttachSheet(null)}
+                onPress={() => closeAttachSheet()}
               >
                 <Text style={styles.attachModalBtnTxt}>Đóng</Text>
               </TapHighlight>
@@ -1923,7 +1944,7 @@ export default function WorkScreen() {
                 style={[styles.attachModalBtn, styles.attachModalBtnPrimary]}
                 onPress={() => {
                   const t = attachSheet?.task;
-                  setAttachSheet(null);
+                  closeAttachSheet();
                   if (t) void pickFileForTask(t);
                 }}
               >
