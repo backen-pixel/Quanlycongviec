@@ -478,10 +478,6 @@ function createStyles(colors: AppColors, bottomInset: number) {
       borderColor: colorWithAlpha(colors.primary, 0.45),
       backgroundColor: colorWithAlpha(colors.primary, 0.12),
     },
-    attachIconBtnVideo: {
-      borderColor: colorWithAlpha('#A855F7', 0.45),
-      backgroundColor: colorWithAlpha('#A855F7', 0.12),
-    },
     mediaRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -646,6 +642,8 @@ export default function WorkScreen() {
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [assignOpen, setAssignOpen] = useState(false);
   const updatingRef = useRef(false);
+  /** Mỗi lần mở sheet file tăng 1 — phản hồi về trễ của việc trước bị bỏ, không ghi đè việc đang mở. */
+  const attachSeqRef = useRef(0);
   const loadSeqRef = useRef(0);
   const chipSeqRef = useRef(0);
   const tasksLenRef = useRef(0);
@@ -1101,13 +1099,32 @@ export default function WorkScreen() {
     );
   }, [uploadMediaForTask]);
 
+  /** Đóng sheet: tăng seq để phản hồi đang chờ không bật lại sheet với file của việc cũ. */
+  const closeAttachSheet = useCallback(() => {
+    attachSeqRef.current += 1;
+    setAttachSheet(null);
+  }, []);
+
   const openAttachSheet = useCallback(async (task: WorkTask) => {
+    const seq = ++attachSeqRef.current;
     setAttachSheet({ task, files: [], loading: true });
     try {
       const files = await fetchWorkTaskAttachments(task);
-      setAttachSheet({ task, files, loading: false });
+      // Người dùng đã mở việc khác trong lúc chờ → bỏ kết quả này, nếu không ảnh của
+      // việc cũ sẽ nằm dưới tiêu đề việc mới.
+      if (seq !== attachSeqRef.current) return;
+      setAttachSheet((prev) => (
+        prev && String(prev.task.id) === String(task.id)
+          ? { task: prev.task, files, loading: false }
+          : prev
+      ));
     } catch (e) {
-      setAttachSheet({ task, files: [], loading: false });
+      if (seq !== attachSeqRef.current) return;
+      setAttachSheet((prev) => (
+        prev && String(prev.task.id) === String(task.id)
+          ? { task: prev.task, files: [], loading: false }
+          : prev
+      ));
       Alert.alert('Không tải được file', formatApiError(e));
     }
   }, []);
@@ -1195,29 +1212,6 @@ export default function WorkScreen() {
     );
   }, [uploadMediaForTask]);
 
-  const captureVideoForTask = useCallback(async (task: WorkTask) => {
-    const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert('Quyền camera', 'Cần quyền camera để quay video.');
-      return;
-    }
-    const shot = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['videos'],
-      videoMaxDuration: 120,
-      quality: 0.7,
-    });
-    if (shot.canceled || !shot.assets?.[0]) return;
-    const a = shot.assets[0];
-    await uploadMediaForTask(
-      task,
-      {
-        uri: a.uri,
-        name: a.fileName || `video_${Date.now()}.mp4`,
-        mime: a.mimeType || 'video/mp4',
-      },
-      'Video đã đính kèm vào công việc.',
-    );
-  }, [uploadMediaForTask]);
 
   const assigneeOptions = useMemo(() => collectAssigneeOptions(tasks), [tasks]);
 
@@ -1559,14 +1553,6 @@ export default function WorkScreen() {
               >
                 <Ionicons name="camera" size={18} color={colors.primary} />
               </TapHighlight>
-              <TapHighlight
-                style={[styles.attachIconBtn, styles.attachIconBtnVideo]}
-                onPress={() => void captureVideoForTask(task)}
-                disabled={busy}
-                pressStyle={{ opacity: 0.8 }}
-              >
-                <Ionicons name="videocam" size={18} color="#A855F7" />
-              </TapHighlight>
               {task.lead?.project_id ? (
                 <TapHighlight
                   style={[styles.openLink, { flexShrink: 1 }]}
@@ -1893,9 +1879,9 @@ export default function WorkScreen() {
         visible={!!attachSheet}
         transparent
         animationType="slide"
-        onRequestClose={() => setAttachSheet(null)}
+        onRequestClose={() => closeAttachSheet()}
       >
-        <Pressable style={styles.attachModalBackdrop} onPress={() => setAttachSheet(null)}>
+        <Pressable style={styles.attachModalBackdrop} onPress={() => closeAttachSheet()}>
           <Pressable style={styles.attachModalCard} onPress={(e) => e.stopPropagation()}>
             <Text style={styles.attachModalTitle} numberOfLines={2}>
               {attachSheet?.task.title || 'File đính kèm'}
@@ -1950,7 +1936,7 @@ export default function WorkScreen() {
             <View style={styles.attachModalActions}>
               <TapHighlight
                 style={styles.attachModalBtn}
-                onPress={() => setAttachSheet(null)}
+                onPress={() => closeAttachSheet()}
               >
                 <Text style={styles.attachModalBtnTxt}>Đóng</Text>
               </TapHighlight>
@@ -1958,7 +1944,7 @@ export default function WorkScreen() {
                 style={[styles.attachModalBtn, styles.attachModalBtnPrimary]}
                 onPress={() => {
                   const t = attachSheet?.task;
-                  setAttachSheet(null);
+                  closeAttachSheet();
                   if (t) void pickFileForTask(t);
                 }}
               >
