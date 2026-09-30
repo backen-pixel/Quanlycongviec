@@ -478,10 +478,6 @@ function createStyles(colors: AppColors, bottomInset: number) {
       borderColor: colorWithAlpha(colors.primary, 0.45),
       backgroundColor: colorWithAlpha(colors.primary, 0.12),
     },
-    attachIconBtnVideo: {
-      borderColor: colorWithAlpha('#A855F7', 0.45),
-      backgroundColor: colorWithAlpha('#A855F7', 0.12),
-    },
     mediaRow: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -1195,29 +1191,6 @@ export default function WorkScreen() {
     );
   }, [uploadMediaForTask]);
 
-  const captureVideoForTask = useCallback(async (task: WorkTask) => {
-    const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) {
-      Alert.alert('Quyền camera', 'Cần quyền camera để quay video.');
-      return;
-    }
-    const shot = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['videos'],
-      videoMaxDuration: 120,
-      quality: 0.7,
-    });
-    if (shot.canceled || !shot.assets?.[0]) return;
-    const a = shot.assets[0];
-    await uploadMediaForTask(
-      task,
-      {
-        uri: a.uri,
-        name: a.fileName || `video_${Date.now()}.mp4`,
-        mime: a.mimeType || 'video/mp4',
-      },
-      'Video đã đính kèm vào công việc.',
-    );
-  }, [uploadMediaForTask]);
 
   const assigneeOptions = useMemo(() => collectAssigneeOptions(tasks), [tasks]);
 
@@ -1558,14 +1531,6 @@ export default function WorkScreen() {
                 pressStyle={{ opacity: 0.8 }}
               >
                 <Ionicons name="camera" size={18} color={colors.primary} />
-              </TapHighlight>
-              <TapHighlight
-                style={[styles.attachIconBtn, styles.attachIconBtnVideo]}
-                onPress={() => void captureVideoForTask(task)}
-                disabled={busy}
-                pressStyle={{ opacity: 0.8 }}
-              >
-                <Ionicons name="videocam" size={18} color="#A855F7" />
               </TapHighlight>
               {task.lead?.project_id ? (
                 <TapHighlight
