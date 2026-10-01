@@ -63,7 +63,6 @@ import {
 } from '../lib/sxBoardKpis';
 import {
   isMetallaOrHucabiCompanyId,
-  isSystemAdmin,
   productionCreateCompanyOptions,
   projectMatchesDealCompanyExternalFilter,
   resolveDealCompanyExternalFilter,
@@ -72,6 +71,7 @@ import {
   workshopCompaniesForCrossViewer,
   type ClientCompanyOption,
 } from '../lib/productionFilters';
+import { canSeeAllWorkshopCompanies, isSystemAdmin } from '../lib/roles';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
 import { useTheme } from '../context/ThemeContext';
@@ -328,7 +328,7 @@ export default function KanbanScreen() {
   const filterWorkTypeIdRef = useRef('');
   const isFirstMount = useRef(true);
 
-  const isAdmin = user?.role === 'admin';
+  const isAdmin = canSeeAllWorkshopCompanies(user);
   const isSysAdmin = isSystemAdmin(user);
   const showDealCompanyFilter = useMemo(
     () => shouldShowDealCompanyFilter(user, companies),
@@ -568,7 +568,7 @@ export default function KanbanScreen() {
   useEffect(() => { filterWorkTypeIdRef.current = filterWorkTypeId; }, [filterWorkTypeId]);
 
   // Chờ phân loại sẵn sàng trước khi load board — chỉ khi đã chọn 1 xưởng.
-  // filterWorkTypeId rỗng = «Tất cả» (hợp lệ), không cần chờ auto-chọn loại.
+  // Không còn «Tất cả»: rỗng chỉ là trạng thái tạm trước khi effect trên chọn loại đầu.
   const boardFiltersReady = useMemo(() => {
     if (!filtersHydrated) return false;
     if (!filterCompany) return true;
@@ -739,9 +739,9 @@ export default function KanbanScreen() {
   }, [companyForTypes, dealCompanyParam]);
 
   /**
-   * Đồng bộ phân loại với xưởng đang chọn (khớp web):
-   * - Đổi xưởng / mất danh sách → xóa lọc phân loại không còn hợp lệ
-   * - Không tự ép chọn loại đầu (để «Tất cả» / Xóa chip hoạt động)
+   * Đồng bộ phân loại với xưởng đang chọn (khớp web `ProductionDashboard`):
+   * không còn «Tất cả» — rỗng hoặc loại không thuộc xưởng hiện hành → loại đầu tiên.
+   * «Chưa phân loại» (none) giữ nguyên. Chưa tải được workTypes thì không đụng lọc đã lưu.
    */
   useEffect(() => {
     if (workTypesCompanyId !== companyForTypes) return;
@@ -751,15 +751,12 @@ export default function KanbanScreen() {
       return;
     }
 
-    if (!workTypes.length) {
-      if (filterWorkTypeId && filterWorkTypeId !== 'none') setFilterWorkTypeId('');
-      return;
-    }
+    if (!workTypes.length) return;
 
-    if (!filterWorkTypeId || filterWorkTypeId === 'none') return;
+    if (filterWorkTypeId === 'none') return;
 
     const stillExists = workTypes.some((w) => String(w.id) === String(filterWorkTypeId));
-    if (!stillExists) setFilterWorkTypeId('');
+    if (!stillExists) setFilterWorkTypeId(String(workTypes[0].id));
   }, [
     workTypes,
     workTypesCompanyId,
@@ -853,8 +850,8 @@ export default function KanbanScreen() {
   const selectedWorkshopLabel = companyOptions.find((o) => o.id === filterCompany)?.label;
 
   const workTypeOptions = useMemo(
+    // Bỏ «Tất cả» — khớp web: KPI và cột luôn theo đúng một loại xưởng.
     () => [
-      { id: '', label: 'Tất cả' },
       { id: 'none', label: 'Chưa phân loại' },
       ...workTypes.map((t) => ({ id: t.id, label: t.name })),
     ],
