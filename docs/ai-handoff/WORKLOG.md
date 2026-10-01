@@ -17,6 +17,11 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Nhật ký công việc AI
 
+## 2026-10-01 14:50 — Tích và kéo nhiệm vụ trên Giao việc SX
+
+- AI: Cursor. Thẻ nhiệm vụ của dự án chỉ hiện vòng tròn, không tích và không kéo được. Nay quản trị tích hoặc kéo để đổi giai đoạn.
+- File: `CRMAssignmentsPage.jsx`, `assignmentManageAccess.js`.
+
 ## 2026-10-01 14:45 — Mắt tìm Giao việc mở chi tiết đúng module
 
 - AI: Cursor. Nút mắt trong ô tìm luôn nhảy sang deal CRM. Nay theo module đang đứng: SX mở dự án sản xuất, VC mở dự án lắp đặt, CRM vẫn mở deal.

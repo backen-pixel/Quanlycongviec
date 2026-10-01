@@ -17,7 +17,13 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-10-01 14:45 (UTC+7)
+Cập nhật: 2026-10-01 14:50 (UTC+7)
+
+## Giao việc SX — tích và kéo nhiệm vụ của dự án
+
+Trạng thái: **FE local, đã xem trên `/sx/assignments?project_id=`.**
+
+Thẻ nhiệm vụ pipeline khi lọc một dự án tích được (Đang làm / Hoàn thành) và kéo sang cột. Quản trị hệ sinh thái cũng kéo được giao việc người khác tạo. Đã bấm Đang làm trên «Tiếp nhập thông tin dự án» của TB-2026-760 rồi trả lại Chưa làm.
 
 ## Giao việc — mắt tìm kiếm mở chi tiết đúng module
 

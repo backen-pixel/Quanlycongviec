@@ -1,11 +1,12 @@
 /** Khớp backend/src/helpers/assignmentManageAccess.js */
+import { isSystemAdmin } from './adminRole';
 
 function hasCompanyId(value) {
   return value != null && String(value).trim() !== '';
 }
 
 export function isSystemAdminUser(user) {
-  return String(user?.role || '').toLowerCase() === 'admin' && !hasCompanyId(user?.company_id);
+  return isSystemAdmin(user);
 }
 
 function isAdminLikeUser(user) {

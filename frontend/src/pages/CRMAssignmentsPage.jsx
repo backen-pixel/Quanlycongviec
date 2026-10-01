@@ -1613,9 +1613,10 @@ export default function CRMAssignmentsPage({
   const canManageTask = useCallback((t) => (
     t?._fromCrmTask ? false : canManageAssignmentAccess(t, user)
   ), [user]);
-  const canMoveTask = useCallback((t) => (
-    t?._fromCrmTask ? false : canMoveAssignment(t, user)
-  ), [user]);
+  const canMoveTask = useCallback((t) => {
+    if (t?._fromCrmTask) return isAdmin;
+    return canMoveAssignment(t, user);
+  }, [user, isAdmin]);
 
   const filterProjectId = String(searchParams.get('project_id') || '').trim();
   const filterProjectLabel = String(searchParams.get('project') || '').trim();
@@ -2523,8 +2524,60 @@ export default function CRMAssignmentsPage({
       alert(e.response?.data?.error || e.message || 'Không xóa được nhiệm vụ');
     }
   };
+  const statusForAssignmentColumn = (columnId) => {
+    if (!columnId || columnId === '__none__') return 'pending';
+    const col = columns.find((c) => String(c.id) === String(columnId));
+    if (!col) return 'pending';
+    if (col.is_done_column) return 'completed';
+    if (col.is_in_progress_column || (col.position ?? 0) >= 1) return 'in_progress';
+    return 'pending';
+  };
+  const columnIdForStatus = (status) => {
+    if (!columns.length) return null;
+    if (status === 'completed') {
+      return columns.find((c) => c.is_done_column)?.id ?? columns[columns.length - 1]?.id ?? null;
+    }
+    if (status === 'in_progress') {
+      const flagged = columns.find((c) => c.is_in_progress_column);
+      if (flagged) return flagged.id;
+      return columns.find((c) => !c.is_done_column && (c.position ?? 0) >= 1)?.id ?? columns[0]?.id ?? null;
+    }
+    return columns.find((c) => !c.is_done_column)?.id ?? columns[0]?.id ?? null;
+  };
+  const savePipelineTaskProgress = async (task, { status, column_id } = {}) => {
+    const taskId = String(task.crm_task_id || String(task.id || '').replace(/^task:/, '')).trim();
+    const leadId = String(task.lead_id || task.lead?.id || '').trim();
+    if (!taskId || !leadId) {
+      alert('Không mở được nhiệm vụ để đổi giai đoạn.');
+      return;
+    }
+    const nextStatus = status || statusForAssignmentColumn(column_id);
+    await api.put(`/crm/leads/${leadId}/tasks/${taskId}`, { status: nextStatus });
+    const nextColumn = column_id !== undefined ? column_id : columnIdForStatus(nextStatus);
+    const updated = {
+      status: nextStatus,
+      column_id: nextColumn,
+      completed_at: nextStatus === 'completed' ? new Date().toISOString() : null,
+    };
+    setItems((prev) => prev.map((t) => (String(t.id) === String(task.id) ? { ...t, ...updated } : t)));
+    patchIndexRow(task.id, updated);
+    setViewingItem((prev) => (prev && String(prev.id) === String(task.id) ? { ...prev, ...updated } : prev));
+    void refreshStats();
+  };
   const updateItem = async (id, patch) => {
     const task = items.find((t) => String(t.id) === String(id));
+    if (task?._fromCrmTask) {
+      if (!canMoveTask(task)) {
+        alert('Chỉ người tạo hoặc người được giao mới được cập nhật tiến độ công việc này.');
+        return;
+      }
+      try {
+        await savePipelineTaskProgress(task, { status: patch?.status, column_id: patch?.column_id });
+      } catch (e) {
+        alert(e.response?.data?.error || e.message || 'Không cập nhật được nhiệm vụ');
+      }
+      return;
+    }
     const progressKeys = new Set(['status', 'column_id', 'position']);
     const progressOnly = patch && Object.keys(patch).every((k) => progressKeys.has(k));
     if (progressOnly && task && !canMoveTask(task)) {
@@ -2548,6 +2601,18 @@ export default function CRMAssignmentsPage({
   };
   const moveItem = async (id, column_id, position) => {
     const task = items.find((t) => String(t.id) === String(id));
+    if (task?._fromCrmTask) {
+      if (!canMoveTask(task)) {
+        alert('Chỉ người tạo hoặc người được giao mới được di chuyển công việc này.');
+        return;
+      }
+      try {
+        await savePipelineTaskProgress(task, { column_id });
+      } catch (e) {
+        alert(e.response?.data?.error || e.message || 'Không di chuyển được nhiệm vụ');
+      }
+      return;
+    }
     if (task && !canMoveTask(task)) {
       alert('Chỉ người tạo hoặc người được giao mới được di chuyển công việc này.');
       return;
