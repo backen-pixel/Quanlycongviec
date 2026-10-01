@@ -24,6 +24,7 @@ import {
   projectMatchesDealCompanyExternalFilter,
 } from '../lib/productionFilters';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
+import { lockedCompanyIdFor } from '../lib/roles';
 import { formatMoneyAmount, Radii, Spacing, stageColor, colorWithAlpha } from '../theme';
 import type { PersonalPlanner, ProductionBoard, ProductionProject } from '../types';
 
@@ -43,8 +44,7 @@ export default function PlannerScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const isSystemAdmin = user?.role === 'admin' && !user?.company_id;
-  const lockedCompanyId = isSystemAdmin ? undefined : (user?.company_id || undefined);
+  const lockedCompanyId = lockedCompanyIdFor(user);
   const [sharedBoardFilters, setSharedBoardFilters] = useState(() =>
     boardFiltersFromSharedSnap(null, { companyIdOverride: lockedCompanyId }),
   );

@@ -163,15 +163,8 @@ function mapAssignmentToWorkTask(raw: Record<string, unknown>): WorkTask {
   };
 }
 
-/** Khớp role admin trang Giao việc SX trên web. */
-export function canViewTeamWork(user?: AuthUserLite | null): boolean {
-  const role = String(user?.role || '').trim().toLowerCase();
-  return role === 'admin'
-    || role === 'manager'
-    || role === 'sales_admin'
-    || role === 'crm_production_admin'
-    || role === 'production_admin';
-}
+/** Khớp role admin trang Giao việc SX trên web. Đã dọn về `lib/roles.ts`. */
+export { canViewTeamWork } from './roles';
 
 export function isTaskPending(status: string): boolean {
   const s = String(status || 'pending').toLowerCase();

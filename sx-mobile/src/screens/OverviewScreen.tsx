@@ -46,8 +46,10 @@ import {
   fetchCompanies,
   fetchProductionBoard,
   fetchProductionBoardSummary,
+  fetchWorkshopTypes,
   isAbortError,
   type CompanyOption,
+  type WorkshopTypeOption,
 } from '../lib/productionApi';
 import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
@@ -69,7 +71,6 @@ import {
   isTaskDone,
   isTaskInProgress,
   isTaskOverdue,
-  isTaskPending,
   statusPillLabel,
   taskDueIso,
   workTaskFocusCrmId,
@@ -119,10 +120,6 @@ const EMPTY_KPI: SxBoardKpis = {
 function firstName(full: string): string {
   const parts = full.trim().split(/\s+/).filter(Boolean);
   return parts[parts.length - 1] || full || 'bạn';
-}
-
-function isOpenWorkTask(t: WorkTask): boolean {
-  return isTaskPending(t.status) || isTaskInProgress(t.status);
 }
 
 function pageSlice<T>(items: T[], page: number, pageSize: number): T[] {
@@ -183,6 +180,13 @@ export default function OverviewScreen() {
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [filterCompany, setFilterCompany] = useState('');
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
+  const [typePickerOpen, setTypePickerOpen] = useState(false);
+  /** true = loại hiện tại do app tự chọn, được phép nhảy tiếp nếu rỗng. */
+  const autoPickedTypeRef = useRef(false);
+  /** Các loại đã thử trong công ty này — chặn nhảy vòng tròn. */
+  const triedTypeIdsRef = useRef<Set<string>>(new Set());
+  const [workTypes, setWorkTypes] = useState<WorkshopTypeOption[]>([]);
+  const [filterWorkTypeId, setFilterWorkTypeId] = useState('');
   const [notifOpen, setNotifOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const boardFiltersRef = useRef<ReturnType<typeof boardFiltersFromSharedSnap>>({});
@@ -253,6 +257,7 @@ export default function OverviewScreen() {
     try {
       const snap = await loadKanbanFilters().catch(() => null);
       let companyId = snap?.filterCompany || '';
+      setFilterWorkTypeId(String(snap?.filterWorkTypeId || ''));
 
       let companyList = companiesRef.current;
       if (mode !== 'silent' || !companyList.length) {
@@ -442,6 +447,88 @@ export default function OverviewScreen() {
     return unsub;
   }, [load]);
 
+  /** Danh sách loại xưởng của công ty đang chọn — không có «Tất cả», khớp web. */
+  const workTypeOptions = useMemo(
+    () => [
+      { id: 'none', label: 'Chưa phân loại' },
+      ...workTypes.map((t) => ({ id: t.id, label: t.name })),
+    ],
+    [workTypes],
+  );
+
+  const workTypeLabel = useMemo(
+    () => workTypeOptions.find((o) => o.id === filterWorkTypeId)?.label || 'Phân loại',
+    [workTypeOptions, filterWorkTypeId],
+  );
+
+  useEffect(() => {
+    // Đổi công ty → quên các loại đã thử của công ty cũ.
+    triedTypeIdsRef.current = new Set();
+    autoPickedTypeRef.current = false;
+    if (!filterCompany) {
+      setWorkTypes([]);
+      return;
+    }
+    let cancelled = false;
+    void fetchWorkshopTypes(filterCompany, null)
+      .then((list) => { if (!cancelled) setWorkTypes(list); })
+      .catch(() => { if (!cancelled) setWorkTypes([]); });
+    return () => { cancelled = true; };
+  }, [filterCompany]);
+
+  /**
+   * Đặt phân loại: lưu vào bộ lọc dùng chung RỒI tải lại.
+   * Chỉ setState là chip đổi mà dữ liệu giữ nguyên — khi đó số Tổng quan vẫn
+   * của «mọi phân loại» trong khi chip đã ghi tên một loại, tức hiển thị sai.
+   */
+  const applyWorkType = useCallback(async (id: string) => {
+    setFilterWorkTypeId(id);
+    await saveKanbanFilters({ filterWorkTypeId: id }).catch(() => {});
+    void load('refresh');
+  }, [load]);
+
+  // Không có «Tất cả»: rỗng hoặc loại không thuộc công ty hiện hành → loại đầu tiên.
+  // «Chưa phân loại» giữ nguyên. Chưa tải được danh sách thì không đụng lọc đã lưu.
+  useEffect(() => {
+    if (!filterCompany || !workTypes.length) return;
+    if (filterWorkTypeId === 'none') return;
+    if (workTypes.some((w) => String(w.id) === String(filterWorkTypeId))) return;
+    autoPickedTypeRef.current = true;
+    void applyWorkType(String(workTypes[0].id));
+  }, [workTypes, filterCompany, filterWorkTypeId, applyWorkType]);
+
+  /**
+   * Loại ĐẦU TIÊN chưa chắc có dữ liệu — Metalla có 84 dự án nhưng tất cả nằm ở
+   * «Data đầu ra», còn «Data đầu vào» rỗng, nên tự chọn loại đầu sẽ ra bảng trắng.
+   * API loại xưởng không trả số lượng nên không biết trước; tải xong mà rỗng thì
+   * nhảy sang loại kế tiếp. Chỉ áp dụng cho lựa chọn TỰ ĐỘNG — người dùng tự chọn
+   * một loại rỗng thì tôn trọng, không nhảy lung tung dưới tay họ.
+   */
+  useEffect(() => {
+    if (!autoPickedTypeRef.current) return;
+    if (loading || !filterCompany || workTypes.length < 2) return;
+    if (!filterWorkTypeId || filterWorkTypeId === 'none') return;
+    if (kpis.total > 0) {
+      autoPickedTypeRef.current = false;
+      return;
+    }
+    triedTypeIdsRef.current.add(String(filterWorkTypeId));
+    const next = workTypes.find((w) => !triedTypeIdsRef.current.has(String(w.id)));
+    if (!next) {
+      autoPickedTypeRef.current = false;
+      return;
+    }
+    void applyWorkType(String(next.id));
+  }, [loading, kpis.total, filterWorkTypeId, workTypes, filterCompany, applyWorkType]);
+
+  const onSelectWorkType = useCallback(async (id: string) => {
+    setTypePickerOpen(false);
+    if (!id || id === filterWorkTypeId) return;
+    // Người dùng tự chọn — kể cả loại rỗng cũng giữ nguyên, không tự nhảy.
+    autoPickedTypeRef.current = false;
+    await applyWorkType(id);
+  }, [filterWorkTypeId, applyWorkType]);
+
   const onSelectCompany = useCallback(async (id: string) => {
     setCompanyPickerOpen(false);
     // Công ty là phạm vi bắt buộc — rỗng sẽ khiến API gộp mọi công ty.
@@ -522,20 +609,16 @@ export default function OverviewScreen() {
   const overdueTasksAll = useMemo(() => tasks.filter((t) => isTaskOverdue(t)), [tasks]);
   const overdueTaskCount = overdueTasksAll.length;
 
-  /** Chưa làm + Đang làm — ưu tiên quá hạn trước (giống CRM). */
-  const openTasks = useMemo(() => {
-    const open = tasks.filter(isOpenWorkTask);
-    return open.slice().sort((a, b) => {
-      const ao = isTaskOverdue(a) ? 0 : 1;
-      const bo = isTaskOverdue(b) ? 0 : 1;
-      if (ao !== bo) return ao - bo;
+  /** Chỉ việc QUÁ HẠN — hạn cũ nhất lên trước. */
+  const overdueTasks = useMemo(() => (
+    overdueTasksAll.slice().sort((a, b) => {
       const ad = taskDueIso(a) || '';
       const bd = taskDueIso(b) || '';
       return ad.localeCompare(bd);
-    });
-  }, [tasks]);
+    })
+  ), [overdueTasksAll]);
 
-  const openTaskSections = useMemo(() => groupTasksByDeal(openTasks), [openTasks]);
+  const openTaskSections = useMemo(() => groupTasksByDeal(overdueTasks), [overdueTasks]);
 
   const taskPages = totalPagesOf(openTaskSections.length, TASK_PAGE_SIZE);
   const dealPages = totalPagesOf(overdueDeals.length, DEAL_PAGE_SIZE);
@@ -739,17 +822,34 @@ export default function OverviewScreen() {
           </View>
         ) : null}
 
-        <Pressable
-          style={styles.scopeChip}
-          onPress={() => { if (canPickCompany) setCompanyPickerOpen(true); }}
-          disabled={!canPickCompany}
-        >
-          <Ionicons name="business-outline" size={14} color={colors.primary} />
-          <Text style={styles.scopeChipTxt} numberOfLines={1}>{workshopLabel}</Text>
-          {canPickCompany ? (
-            <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
+        <View style={styles.scopeRow}>
+          <Pressable
+            style={styles.scopeChip}
+            onPress={() => { if (canPickCompany) setCompanyPickerOpen(true); }}
+            disabled={!canPickCompany}
+            accessibilityRole="button"
+            accessibilityLabel={`Lọc công ty: ${workshopLabel}`}
+          >
+            <Ionicons name="business-outline" size={14} color={colors.primary} />
+            <Text style={styles.scopeChipTxt} numberOfLines={1}>{workshopLabel}</Text>
+            {canPickCompany ? (
+              <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
+            ) : null}
+          </Pressable>
+
+          {workTypeOptions.length > 1 ? (
+            <Pressable
+              style={styles.scopeChip}
+              onPress={() => setTypePickerOpen(true)}
+              accessibilityRole="button"
+              accessibilityLabel={`Lọc phân loại: ${workTypeLabel}`}
+            >
+              <Ionicons name="layers-outline" size={14} color={colors.primary} />
+              <Text style={styles.scopeChipTxt} numberOfLines={1}>{workTypeLabel}</Text>
+              <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
+            </Pressable>
           ) : null}
-        </Pressable>
+        </View>
 
         {loading && !refreshing && kpis.total === 0 && overdueTotal === 0 ? (
           <View style={styles.inlineLoad}>
@@ -831,16 +931,17 @@ export default function OverviewScreen() {
         </View>
 
         <SectionHeader
-          icon="clipboard-outline"
-          title="Công việc cần làm"
-          actionLabel={openTasks.length > 0 ? `Tất cả (${openTasks.length})` : 'Xem công việc'}
-          onAction={() => goWork('all')}
+          icon="alarm-outline"
+          iconColor={colors.danger}
+          title="Công việc quá hạn"
+          actionLabel={overdueTaskCount > 0 ? `Tất cả (${overdueTaskCount})` : 'Xem công việc'}
+          onAction={() => goWork(overdueTaskCount > 0 ? 'overdue' : 'all')}
         />
         <View style={styles.card}>
           {previewTaskSections.length === 0 ? (
             <View style={styles.emptyRow}>
               <Ionicons name="checkbox-outline" size={20} color={colors.textFaint} />
-              <Text style={styles.emptyTxt}>Không có việc chưa làm / đang làm</Text>
+              <Text style={styles.emptyTxt}>Không có công việc quá hạn</Text>
             </View>
           ) : (
             <>
@@ -1120,6 +1221,15 @@ export default function OverviewScreen() {
         onSelect={(id) => { void onSelectCompany(id); }}
         onClose={() => setCompanyPickerOpen(false)}
       />
+
+      <FilterPickerModal
+        visible={typePickerOpen}
+        title="Chọn phân loại"
+        options={workTypeOptions}
+        selectedId={filterWorkTypeId}
+        onSelect={(id) => { void onSelectWorkType(id); }}
+        onClose={() => setTypePickerOpen(false)}
+      />
     </View>
   );
 }
@@ -1190,12 +1300,19 @@ function createStyles(colors: AppColors) {
     },
     badgeText: { color: colors.white, fontSize: 9, fontWeight: '800' },
     content: { paddingHorizontal: PAGE_HPAD, paddingTop: 8 },
+    scopeRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginBottom: 12,
+    },
     scopeChip: {
       flexDirection: 'row',
       alignItems: 'center',
       alignSelf: 'flex-start',
       gap: 6,
-      marginBottom: 12,
+      flexShrink: 1,
       paddingHorizontal: 10,
       paddingVertical: 7,
       borderRadius: Radii.full,

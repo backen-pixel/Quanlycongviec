@@ -135,20 +135,17 @@ function stageClearsDeadline(stage?: KanbanStage | null): boolean {
 }
 
 /**
- * Hạn hiệu lực của dự án SX — khớp web `resolveEffectiveModuleDeadline(PRODUCTION)`
- * và BE `sxDeadlineRaw`: hạn thẻ → hoàn thiện SX → hạn SX → ngày giao → hạn chung.
+ * Hạn hiệu lực của dự án SX — khớp BE `sxDeadlineRaw` (commit c272a759):
+ * CHỈ lấy deadline đặt trên thẻ. Không có hạn thẻ thì không vào cột hạn nào.
+ * Trước đây còn rơi sang hoàn thiện SX → hạn SX → ngày giao → hạn chung; web và BE
+ * đã bỏ, app phải bỏ theo nếu không số «Quá hạn» hai bên lệch nhau.
  */
 export function sxEffectiveDeadlineRaw(
   p: ProductionProject,
   stage?: KanbanStage | null,
 ): string | null {
   if (stageClearsDeadline(stage)) return null;
-  return p.sx_kanban_deadline_at
-    || p.production_finish_date
-    || p.production_deadline
-    || p.delivery_date
-    || p.deadline
-    || null;
+  return p.sx_kanban_deadline_at || null;
 }
 
 /** Hạn hiệu lực khi chỉ có danh sách cột (màn hình không giữ stage của thẻ). */
@@ -255,7 +252,7 @@ export function pickOverdueProjects(
     .map((p) => {
       const raw = stages.length
         ? sxProjectDeadlineRaw(p, stages, index)
-        : (p.sx_kanban_deadline_at || p.production_finish_date || p.production_deadline || p.delivery_date || p.deadline);
+        : (p.sx_kanban_deadline_at || null);
       const ts = raw ? startOfLocalDay(new Date(raw)).getTime() : Infinity;
       return { p, ts: Number.isFinite(ts) ? ts : Infinity };
     })
@@ -284,7 +281,7 @@ export function pickSoonProjects(
     }
     const raw = stages.length
       ? sxProjectDeadlineRaw(p, stages, index)
-      : (p.sx_kanban_deadline_at || p.production_finish_date || p.production_deadline || p.delivery_date || p.deadline);
+      : (p.sx_kanban_deadline_at || null);
     const ts = raw ? startOfLocalDay(new Date(raw)).getTime() : NaN;
     if (!Number.isFinite(ts)) continue;
     const diff = Math.floor((ts - now) / dayMs);

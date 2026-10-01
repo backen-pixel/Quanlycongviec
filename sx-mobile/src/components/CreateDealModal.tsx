@@ -28,6 +28,7 @@ import {
   type RegionOption,
   type WorkshopTypeOption,
 } from '../lib/productionApi';
+import { canPickAnyCompany, canSeeAllRegions } from '../lib/roles';
 import { HIT_TARGET, Radii, Spacing, colorWithAlpha } from '../theme';
 
 import SpinningLoader from './SpinningLoader';
@@ -63,7 +64,7 @@ function formatVnd(n: number): string {
 export default function CreateDealModal({ visible, user, onClose, onCreated }: Props) {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const isSystemAdmin = user?.role === 'admin' && !user?.company_id;
+  const isSystemAdmin = canPickAnyCompany(user);
 
   const [step, setStep] = useState<1 | 2>(1);
   const [title, setTitle] = useState('');
@@ -420,8 +421,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
         const assigned = Array.isArray(user?.crm_region_ids)
           ? user!.crm_region_ids!.map(String).filter(Boolean)
           : [];
-        const isFullCompanyAdmin =
-          isSystemAdmin || user?.role === 'admin' || user?.role === 'sales_admin';
+        const isFullCompanyAdmin = canSeeAllRegions(user);
         const reg = assigned.length > 0 && !isFullCompanyAdmin
           ? regAll.filter((r) => assigned.includes(r.id))
           : regAll;
@@ -444,8 +444,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
     return () => { cancelled = true; };
   }, [visible, companyId, isSystemAdmin, user?.crm_region_ids, user?.role]);
 
-  const isFullCompanyAdmin =
-    isSystemAdmin || user?.role === 'admin' || user?.role === 'sales_admin';
+  const isFullCompanyAdmin = canSeeAllRegions(user);
 
   const companyName = companies.find((c) => c.id === companyId)?.name
     || (user?.company_id && String(user.company_id) === companyId ? 'Công ty của bạn' : '');

@@ -22,7 +22,7 @@ import { useNotifications } from '../context/NotificationContext';
 import { useMessenger } from '../context/MessengerContext';
 import { useTheme } from '../context/ThemeContext';
 import { fetchCompanies, type CompanyOption } from '../lib/productionApi';
-import { isSystemAdmin } from '../lib/productionFilters';
+import { isSystemAdmin, roleLabel } from '../lib/roles';
 import { ensureNotificationPermission } from '../lib/pushRegistration';
 import type { MainTabParamList } from '../navigation/MainTabs';
 import type { RootStackParamList } from '../navigation/RootNavigator';
@@ -30,16 +30,6 @@ import { useRootNavigation } from '../navigation/useRootNavigation';
 import { Radii, Spacing, colorWithAlpha } from '../theme';
 
 export const SX_OPEN_CREATE_DEAL = 'sx_open_create_deal';
-
-function roleLabel(user: { role?: string | null; company_id?: string | null } | null): string {
-  if (!user?.role) return 'Nhân viên';
-  if (isSystemAdmin(user)) return 'Quản trị hệ thống';
-  if (user.role === 'admin') return 'Quản trị viên';
-  if (user.role === 'sales_admin') return 'Sales Admin';
-  if (user.role === 'production_admin') return 'Quản trị SX';
-  if (user.role === 'production_staff') return 'Nhân viên SX';
-  return String(user.role);
-}
 
 type MgmtItem = {
   key: string;
