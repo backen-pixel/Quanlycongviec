@@ -1,0 +1,62 @@
+{
+  "source": "Parent read-only runtime catalog verification 2026-09-29; schema metadata only",
+  "unique_indexes": [
+    {
+      "columns": [
+        "id"
+      ],
+      "primary": true
+    },
+    {
+      "columns": [
+        "lead_id"
+      ],
+      "predicate": "lead_id IS NOT NULL"
+    },
+    {
+      "columns": [
+        "contact_id"
+      ],
+      "predicate": "contact_id IS NOT NULL AND lead_id IS NULL"
+    }
+  ],
+  "rls": false,
+  "table_privileges": {
+    "anon": [
+      "SELECT",
+      "INSERT",
+      "UPDATE",
+      "DELETE",
+      "TRUNCATE",
+      "REFERENCES",
+      "TRIGGER"
+    ],
+    "authenticated": [
+      "SELECT",
+      "INSERT",
+      "UPDATE",
+      "DELETE",
+      "TRUNCATE",
+      "REFERENCES",
+      "TRIGGER"
+    ],
+    "service_role": [
+      "SELECT",
+      "INSERT",
+      "UPDATE",
+      "DELETE",
+      "TRUNCATE",
+      "REFERENCES",
+      "TRIGGER"
+    ],
+    "postgres": [
+      "SELECT",
+      "INSERT",
+      "UPDATE",
+      "DELETE",
+      "TRUNCATE",
+      "REFERENCES",
+      "TRIGGER"
+    ]
+  }
+}

@@ -60,6 +60,7 @@ export function useWorkshopStaffFilter({
   forModule,
   persisted = null,
   aggregateWhenUnscoped = false,
+  preserveCompanyOnReset = false,
 }) {
   const isCompanyScopedAdmin = isCrmCompanyAdmin(user);
   const crossWorkshopViewer = isCrossWorkshopProductionViewer(user);
@@ -284,8 +285,10 @@ export function useWorkshopStaffFilter({
     setFilterPersonId('');
     setFilterPersonName('');
     setAssigneeListSearch('');
-    if (aggregateWhenUnscoped || (isAdmin && !isCompanyScopedAdmin)) setFilterCompany('');
-  }, [isAdmin, isCompanyScopedAdmin, aggregateWhenUnscoped, setFilterCompany]);
+    if (!preserveCompanyOnReset && (aggregateWhenUnscoped || (isAdmin && !isCompanyScopedAdmin))) {
+      setFilterCompany('');
+    }
+  }, [isAdmin, isCompanyScopedAdmin, aggregateWhenUnscoped, preserveCompanyOnReset, setFilterCompany]);
 
   const onCompanyChange = useCallback((companyId) => {
     setFilterCompany(companyId);

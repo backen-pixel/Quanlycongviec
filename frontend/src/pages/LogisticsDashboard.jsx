@@ -232,6 +232,7 @@ export default function LogisticsDashboard() {
     setFilterCompany,
     forModule: 'logistics',
     persisted: P0,
+    preserveCompanyOnReset: true,
   });
 
   const {

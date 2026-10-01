@@ -1210,9 +1210,9 @@ function ProductionPlannerPersonal({ allItems, goProject }) {
 }
 
 /**
- * Deadline view — gom dự án theo `production_deadline` (ưu tiên) hoặc `deadline`
- * vào các bucket cố định: Quá hạn / Hôm nay / Tuần này / Tuần sau / Tháng này /
- * Sau tháng này / Chưa có. Layout grid columns giống Kanban để quen mắt.
+ * Deadline view — chỉ thẻ đã đặt deadline (`sx_kanban_deadline_at`).
+ * Thẻ chưa đặt deadline không hiện. Cột: Quá hạn / Hôm nay / Tuần này / Tuần sau /
+ * Tháng này / Sau tháng này.
  */
 const SX_DEADLINE_BUCKETS = [
   { key: 'overdue',   label: 'Quá hạn',         color: '#dc2626', accent: 'bg-red-50 border-red-200' },
@@ -1221,7 +1221,6 @@ const SX_DEADLINE_BUCKETS = [
   { key: 'next_week', label: 'Tuần sau',        color: '#0891b2', accent: 'bg-cyan-50 border-cyan-200' },
   { key: 'this_month',label: 'Tháng này',       color: '#0d9488', accent: 'bg-teal-50 border-teal-200' },
   { key: 'later',     label: 'Sau tháng này',   color: '#475569', accent: 'bg-slate-50 border-slate-200' },
-  { key: 'none',      label: 'Chưa có deadline', color: '#9ca3af', accent: 'bg-gray-50 border-gray-200' },
 ];
 
 function startOfDay(d) {
@@ -1325,7 +1324,7 @@ export function ProductionDeadlineView({
   const [dragOverKey, setDragOverKey] = useState(null);
   const [savingId, setSavingId] = useState(null);
 
-  const todayMs = Date.now();
+  const todayMs = useMemo(() => Date.now(), []);
   const grouped = useMemo(() => {
     const out = {};
     SX_DEADLINE_BUCKETS.forEach((b) => { out[b.key] = []; });
@@ -1338,6 +1337,7 @@ export function ProductionDeadlineView({
           ts = ovr.ts;
           source = ovr.source;
         }
+        if (!out[bucket]) return;
         out[bucket].push({ ...item, _stage: s, _deadlineTs: ts, _deadlineSource: source });
       });
     });
@@ -1361,21 +1361,45 @@ export function ProductionDeadlineView({
     onLoadBucketMore(bucketKey);
   }, [onLoadBucketMore]);
 
+  const groupedRef = useRef(grouped);
+  groupedRef.current = grouped;
+  const bucketTotalsRef = useRef(bucketTotals);
+  bucketTotalsRef.current = bucketTotals;
+  const bucketPageStateRef = useRef(bucketPageState);
+  bucketPageStateRef.current = bucketPageState;
+  const bucketLoadingRef = useRef(bucketLoading);
+  bucketLoadingRef.current = bucketLoading;
+  const onLoadBucketMoreRef = useRef(onLoadBucketMore);
+  onLoadBucketMoreRef.current = onLoadBucketMore;
+
+  const bucketLoadSig = SX_DEADLINE_BUCKETS.map((b) => {
+    const serverN = Number(bucketTotals?.[b.key]);
+    const localN = grouped[b.key]?.length || 0;
+    const more = bucketPageState?.[b.key]?.hasMore === false ? 0 : 1;
+    const busy = bucketLoading?.[b.key] ? 1 : 0;
+    return `${b.key}:${Number.isFinite(serverN) ? serverN : ''}:${localN}:${more}:${busy}`;
+  }).join('|');
+
   // Mở Deadline: lần lượt tải trang bucket còn thiếu (1 request tại một thời điểm).
+  // Không phụ thuộc object grouped — parent vẽ lại liên tục sẽ hủy timeout trước khi kịp gọi.
   useEffect(() => {
-    if (typeof onLoadBucketMore !== 'function') return undefined;
-    if (Object.values(bucketLoading || {}).some(Boolean)) return undefined;
-    const next = SX_DEADLINE_BUCKETS.find((b) => {
-      const serverN = Number(bucketTotals?.[b.key]);
-      const localN = grouped[b.key]?.length || 0;
-      if (!Number.isFinite(serverN) || serverN <= 0 || localN >= serverN) return false;
-      if (bucketPageState?.[b.key]?.hasMore === false) return false;
-      return true;
-    });
-    if (!next) return undefined;
-    const t = window.setTimeout(() => { onLoadBucketMore(next.key); }, 120);
+    const t = window.setTimeout(() => {
+      if (typeof onLoadBucketMoreRef.current !== 'function') return;
+      if (Object.values(bucketLoadingRef.current || {}).some(Boolean)) return;
+      const totals = bucketTotalsRef.current || {};
+      const groups = groupedRef.current || {};
+      const pageState = bucketPageStateRef.current || {};
+      const next = SX_DEADLINE_BUCKETS.find((b) => {
+        const serverN = Number(totals[b.key]);
+        const localN = groups[b.key]?.length || 0;
+        if (!Number.isFinite(serverN) || serverN <= 0 || localN >= serverN) return false;
+        if (pageState[b.key]?.hasMore === false) return false;
+        return true;
+      });
+      if (next) onLoadBucketMoreRef.current(next.key);
+    }, 180);
     return () => window.clearTimeout(t);
-  }, [bucketTotals, grouped, onLoadBucketMore, bucketLoading, bucketPageState]);
+  }, [bucketLoadSig]);
 
   const handleDrop = async (toBucket) => {
     const id = draggingId;
@@ -1392,20 +1416,10 @@ export function ProductionDeadlineView({
     if (!target) return;
 
     const newDate = targetDateForSxBucket(toBucket);
-    // Quyết định trường nào để cập nhật:
-    // - Đã có production_deadline → cập nhật production_deadline
-    // - Có deadline (chưa có production_deadline) → cập nhật deadline
-    // - Chưa có gì → mặc định ghi vào production_deadline
-    const fieldKey = target.production_deadline
-      ? 'production_deadline'
-      : target.deadline
-        ? 'deadline'
-        : 'production_deadline';
-
     const newTs = newDate
       ? new Date(companyDeadlineIsoFromYmd(newDate, target.company_id || target.company) || `${newDate}T00:00:00`).getTime()
       : null;
-    const newSource = newDate ? fieldKey : null;
+    const newSource = newDate ? 'sx_kanban' : null;
 
     setLocalOverride((prev) => ({
       ...prev,
@@ -1413,7 +1427,12 @@ export function ProductionDeadlineView({
     }));
     setSavingId(id);
     try {
-      await api.put(`/projects/${id}`, { [fieldKey]: newDate });
+      await api.patch(`/production/projects/${id}/kanban-deadline`, {
+        sx_kanban_deadline_at: newDate
+          ? (companyDeadlineIsoFromYmd(newDate, target.company_id || target.company) || `${newDate}T00:00:00`)
+          : null,
+        reason: 'Kéo thẻ trên bảng Deadline',
+      });
     } catch (e) {
       alert(e?.response?.data?.error || 'Lỗi cập nhật deadline');
       setLocalOverride((prev) => {
@@ -1427,7 +1446,7 @@ export function ProductionDeadlineView({
   };
 
   if (totalCount === 0) {
-    return <p className="text-center text-gray-400 py-12 text-sm">Không có dự án xưởng</p>;
+    return <p className="text-center text-gray-400 py-12 text-sm">Không có thẻ đã đặt deadline</p>;
   }
 
   return (

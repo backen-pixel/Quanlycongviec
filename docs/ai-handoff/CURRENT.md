@@ -1,6 +1,39 @@
+# Current candidate handoff
+
+## 2026-09-29 — VPT Messenger durable intake, local candidate only
+
+Issue #7: https://github.com/backen-pixel/Quanlycongviec/issues/7. Base: `413e8f575b5b611b25a50980564d754b7bfcf211`. Founder requested finishing the Messenger A2/B trial. No remote commit, PR, migration, live test or deployment performed by this workstream.
+
+Opt-in Page 409741855550833: persist Messenger event before ACK, retry with DB lease/token; extract referral even without message; exact ad→campaign mapping; reuse existing lead_attribution; delayed Lead linking. Auto/manual/legacy scan share atomic contact→Lead RPC for this Page and CRM Lead type. Unique nullable crm_leads.facebook_contact_id and contact row lock guard retry/concurrent creation. Existing customer/phone reuse also uses the same RPC. Other Pages remain unchanged unless explicitly opted in.
+
+Files: two sanitized runtime schema/index/ACL fixtures; routes/facebook.js, routes/crm/routes/leadLifecycle.js, server.js (legacy scan identity), helpers/facebookAtomicLead.js, helpers/facebookMessengerReceipt.js, migrations639–641, five test files, config example and review notes. Applied migrations are unchanged. 636–638 reserved from the older unmerged package, unavailable locally (Library helper retried twice, HTTP502).
+
+Tests: Node handler VM + helper tests and real isolated PGlite SQL; no application .env, full server import, production DB or message sends. See VPT_MESSENGER_REVIEW_20260929.md for exact commands and gates. Source-backed baseline failed ACK/retry regression tests; candidate passes 40/40 local tests. SQL tests are one PGlite connection, not multi-session PostgreSQL staging.
+
+Runtime schema/FKs/unique indexes are now compared and represented by schema-only test fixtures. Existing attribution ACL is broad with RLS=false; no global ACL is changed. New raw/ref/source/message/phone/PSID data stays only in protected receipts, attribution gets numeric IDs and event keys. Unresolved before activation: multi-session Postgres CI + controlled staging fault/restart tests; deploy SHA/API health; Meta messaging_referrals subscription; real referral→phone→Lead→campaign E2E. Runtime historical 7 ad rows sharing one timestamp do not prove current writer. No automation for budget stop/resume or ad activation in this patch.
+
+Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_MESSENGER_PAGE_IDS and reverting backend. Keep evidence and additive identity columns. Never delete historical leads/contacts/attribution to roll back. Notifications/tasks after commit are not guaranteed exactly once; customer creation remains outside Lead transaction and can leave an unused customer during a race. Cross-contact shared Lead retains original first-touch attribution and this contact's pending evidence.
+
+
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-28 10:02 (UTC+7)
+Cập nhật: 2026-10-01 09:40 (UTC+7)
+
+## Build Render — thiếu hook useDefaultCompanyOnce
+
+Trạng thái: **đẩy main.**
+
+`ProductionDashboard.jsx` đã import hook này. File `frontend/src/hooks/useDefaultCompanyOnce.js` được bổ sung để Vite resolve được.
+
+Hoàn tác: revert file hook đó; dashboard sẽ gãy build nếu import còn.
+
+## Dashboard SX — bỏ «Tất cả», Deadline theo hạn thẻ
+
+Trạng thái: **FE+BE, đẩy main.**
+
+Bộ lọc phân loại trên `/sx/dashboard` giữ lại. Bỏ mục «Tất cả» / «Tất cả loại». Không chọn loại thì tự đứng ở loại đầu tiên của xưởng. «Chưa phân loại» vẫn chọn được. Cột Deadline và KPI quá hạn chỉ lấy `sx_kanban_deadline_at`.
+
+Hoàn tác: revert `ProductionDashboard.jsx`, `WorkshopDashboardFilterPanel.jsx`, `ProductionViews.jsx`, `sxPipelineRevenue.js`, `sxKanbanSummary.js`, `production.js`.
 
 ## Chat — ẩn ghi chú panel chi tiết
 
@@ -30,7 +63,7 @@ Hoàn tác local bằng đảo commit này nếu cần, nhưng đưa route cũ t
 
 ## Deadline SX — Quá hạn khớp cột và KPI
 
-Trạng thái: **FE+BE local, chưa push.**
+Trạng thái: **đã gồm trong mục dashboard 2026-10-01.**
 
 Cột đã «Tắt hạn» hoặc bàn giao VC không còn vào bucket Quá hạn (server summary + trang bucket, và client). KPI «Quá hạn» và số trên cột Deadline đếm cùng các thẻ đang hiện, không lấy tổng server đã gắn cứng bucket.
 
@@ -1486,3 +1519,4 @@ Kèm 2 việc chặn khác: thu quyền `EXECUTE` của 4 hàm mới khỏi `ano
 - Tiếp tục kiểm thử tích hợp và hồi quy giao diện SX/VC-LĐ với dữ liệu thật.
 - Xác nhận cache/socket cập nhật đúng khi đổi deadline từ một màn hình và quan sát ở màn hình khác.
 - Không tự ý commit các file tạm, upload, lock hoặc thay đổi `.idea` đang tồn tại trong working tree.
+

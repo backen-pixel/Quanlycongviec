@@ -9,8 +9,8 @@ assert.equal(
     { name: 'ĐƠN HÀNG ĐÃ GIAO' },
     today,
   ),
-  null,
-  'Cột Đã giao không đếm delivery_date lịch sử là quá hạn',
+  'none',
+  'Chưa đặt deadline trên thẻ thì không vào Quá hạn',
 );
 
 assert.equal(
@@ -23,37 +23,27 @@ assert.equal(
     { name: 'KT KCS SẢN PHẨM, TÍNH CN', is_handover_to_logistics: true },
     today,
   ),
+  'none',
+  'Chỉ có hạn hoàn thiện, chưa đặt deadline thẻ',
+);
+
+assert.equal(
+  resolveSxDeadlineBucketKey(
+    { sx_kanban_deadline_at: '2026-09-17T10:30:00Z', status: 'producing' },
+    { name: 'Sản xuất' },
+    today,
+  ),
   'overdue',
-  'Chờ bàn giao chưa giao thật vẫn hiện Quá hạn',
+  'Thẻ đã đặt deadline quá ngày thì vào Quá hạn',
 );
 
 assert.equal(
   resolveSxDeadlineBucketKey(
-    { delivery_date: '2026-09-17', status: 'producing', logistics_company_id: 'vc1' },
-    { name: 'Sản xuất' },
-    today,
-  ),
-  null,
-  'Đã sang VC thì hết hạn SX',
-);
-
-assert.equal(
-  resolveSxDeadlineBucketKey(
-    { delivery_date: '2026-09-17', status: 'completed' },
-    { name: 'Sản xuất' },
-    today,
-  ),
-  null,
-  'status completed hết hạn SX',
-);
-
-assert.equal(
-  resolveSxDeadlineBucketKey(
-    { production_finish_date: '2026-09-18', status: 'producing' },
+    { sx_kanban_deadline_at: '2026-09-18T10:30:00Z', production_finish_date: '2026-10-01', status: 'producing' },
     { name: 'Tiếp nhận đơn hàng về SX', clears_deadline: true },
     today,
   ),
-  null,
+  'none',
   'Cột Tắt hạn không đếm quá hạn',
 );
 
@@ -63,7 +53,8 @@ assert.equal(
     { name: 'Sản xuất' },
     today,
   ),
-  'overdue',
+  'none',
+  'Ngày hoàn thiện không thay deadline thẻ',
 );
 
 console.log('sx-deadline-bucket: OK');
