@@ -46,9 +46,9 @@ import { loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '..
 import { REALTIME_TASK } from '../lib/realtimeModes';
 import { fetchCompanies, type CompanyOption } from '../lib/productionApi';
 import {
-  isSystemAdmin,
   workshopCompaniesForCrossViewer,
 } from '../lib/productionFilters';
+import { canSeeAllWorkshopCompanies } from '../lib/roles';
 import type { MainTabParamList } from '../navigation/MainTabs';
 import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
 import {
@@ -604,8 +604,7 @@ export default function WorkScreen() {
   const userId = user?.id || user?.userId || '';
   const userName = user?.full_name || user?.fullName || 'Bạn';
   const teamView = canViewTeamWork(user);
-  const isAdminLike = user?.role === 'admin' || isSystemAdmin(user);
-  const canPickCompany = Boolean(isAdminLike);
+  const canPickCompany = canSeeAllWorkshopCompanies(user);
   const assignAdmin = isAssignmentsAdmin(user?.role);
   const ownCompanyId = user?.company_id ? String(user.company_id) : '';
 

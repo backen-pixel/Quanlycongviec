@@ -25,6 +25,7 @@ import {
   type DealMemberRole,
 } from '../../lib/leadMembersApi';
 import FilterPickerModal from '../FilterPickerModal';
+import { canPickAnyCompany } from '../../lib/roles';
 import TapHighlight from '../TapHighlight';
 import { HIT_TARGET, Radii, Spacing, type AppColors } from '../../theme';
 
@@ -55,7 +56,7 @@ export default function AddDealMembersSheet({
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => makeStyles(colors), [colors]);
 
-  const isSysAdmin = user?.role === 'admin' && !user?.company_id;
+  const isSysAdmin = canPickAnyCompany(user);
 
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [companyId, setCompanyId] = useState('');
