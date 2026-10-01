@@ -3,7 +3,7 @@
  * Ba cách nhìn: theo Chiến dịch / theo Quảng cáo / theo Page.
  * Tên chiến dịch đặt tay tại đây cho tới khi nối Marketing API.
  */
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import api from '../lib/api';
 
 const TAB = [
@@ -240,6 +240,7 @@ function KhungMarketing({ trangThai, onXong }) {
 }
 
 export default function AdAnalyticsPage() {
+  const reportRequestId = useRef(0);
   const [tab, setTab] = useState('campaigns');
   const [tongQuan, setTongQuan] = useState(null);
   const [rows, setRows] = useState([]);
@@ -305,23 +306,34 @@ export default function AdAnalyticsPage() {
   }, []);
 
   const tai = useCallback(async () => {
+    const requestId = ++reportRequestId.current;
+    const isCurrent = () => requestId === reportRequestId.current;
     setDangTai(true);
     setLoi('');
+    // A new filter invalidates the previous snapshot immediately.
+    setTongQuan(null);
+    setRows([]);
+    setNhanXet([]);
+    setTomTat(null);
+    setTinhLuc(null);
     try {
       const tq = await api.get('/ad-analytics/summary', { params });
+      if (!isCurrent()) return;
+      const ds = await api.get(tab === 'insights'
+        ? '/ad-analytics/insights' : `/ad-analytics/${tab}`, { params });
+      if (!isCurrent()) return;
+      // Commit one consistent report only after both reads succeed.
       setTongQuan(tq.data || null);
       if (tab === 'insights') {
-        const ds = await api.get('/ad-analytics/insights', { params });
         setNhanXet(ds.data?.data || []);
         setTomTat(ds.data?.tom_tat || null);
         setTinhLuc(ds.data?.tinh_luc || null);
         setRows([]);
       } else {
-        const ds = await api.get(`/ad-analytics/${tab}`, { params });
         setRows(ds.data?.data || []);
       }
     } catch (e) {
-      // Xóa snapshot cũ: lỗi tải không phải số 0 và không phải dữ liệu kỳ mới.
+      if (!isCurrent()) return;
       setTongQuan(null);
       setRows([]);
       setNhanXet([]);
@@ -329,7 +341,7 @@ export default function AdAnalyticsPage() {
       setTinhLuc(null);
       setLoi(e?.response?.data?.error || 'Không tải được dữ liệu quảng cáo');
     } finally {
-      setDangTai(false);
+      if (isCurrent()) setDangTai(false);
     }
   }, [tab, params]);
 
@@ -353,7 +365,10 @@ export default function AdAnalyticsPage() {
     return () => { huy = true; };
   }, []);
 
-  useEffect(() => { tai(); }, [tai]);
+  useEffect(() => {
+    tai();
+    return () => { reportRequestId.current += 1; };
+  }, [tai]);
   useEffect(() => { taiMkt(); }, [taiMkt]);
 
   const luuTen = useCallback(async (adId) => {
@@ -693,8 +708,12 @@ export default function AdAnalyticsPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((g, i) => {
-                const khoa = g.ad_id || g.page_id || g.campaign_name || `r${i}`;
+              {rows.map((g) => {
+                const khoa = tab === 'campaigns'
+                  ? (g.campaign_id ? `campaign:${g.campaign_id}`
+                    : g.campaign_name ? `name:${g.campaign_name}`
+                      : `ads:${[...(g.ad_ids || [])].sort().join(',')}`)
+                  : `${tab}:${g.ad_id || g.page_id || 'unknown'}`;
                 return (
                   <tr key={khoa} className="border-t border-gray-100 hover:bg-gray-50/70">
                     {tab === 'ads' && (
@@ -715,6 +734,10 @@ export default function AdAnalyticsPage() {
                             <span className="ml-2 text-[12px] font-normal text-gray-500">{g.so_quang_cao} QC</span>
                           </span>
                         )
+                      )}
+
+                      {tab === 'campaigns' && g.campaign_id && (
+                        <div className="mt-0.5 font-mono text-[11px] text-gray-500">{g.campaign_id}</div>
                       )}
 
                       {tab === 'ads' && (

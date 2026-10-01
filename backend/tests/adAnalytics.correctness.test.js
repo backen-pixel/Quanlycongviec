@@ -142,7 +142,7 @@ test('UI: a failed read clears earlier figures instead of presenting them as cur
   const start = uiSource.indexOf(begin); assert.notEqual(start, -1);
   const finish = uiSource.indexOf(end, start); assert.notEqual(finish, -1);
   const body = uiSource.slice(start + begin.length, finish); const state = {};
-  const scope = { api: { get: async () => { throw { response: { data: { error: 'Unavailable' } } }; } }, params: {}, tab: 'ads' };
+  const scope = { api: { get: async () => { throw { response: { data: { error: 'Unavailable' } } }; } }, params: {}, tab: 'ads', reportRequestId: { current: 0 } };
   for (const name of ['setDangTai', 'setLoi', 'setTongQuan', 'setRows', 'setNhanXet', 'setTomTat', 'setTinhLuc']) scope[name] = (v) => { state[name] = plain(v); };
   await vm.runInNewContext(`(async () => {${body}})()`, scope);
   assert.equal(state.setTongQuan, null); assert.deepEqual(state.setRows, []); assert.deepEqual(state.setNhanXet, []);
