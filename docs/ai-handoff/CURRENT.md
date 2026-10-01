@@ -1,3 +1,17 @@
+# 2026-10-01 — Business AI OS V1.1 / chặng 0
+
+Trạng thái: **gói tài liệu PASS kiểm tra và review Agent độc lập; chờ merge, chưa mở chặng 1**. Founder yêu cầu triển khai kế hoạch; phạm vi đang mở là chặng 0.
+
+- [Kiến trúc và mục lục](../architecture/README.md); [lộ trình/gói chặng 1](../architecture/BUSINESS_AI_OS_V1_1_ROADMAP.md); [sổ quyết định Founder](FOUNDER_DECISIONS_ARCHITECTURE_V1_1_20261001.md).
+- Baseline main: 0db11ce1adb0fb89fc87529036e495a62d58fce7; [đối chiếu hiện trạng](ARCHITECTURE_V1_1_EVIDENCE_20261001.md).
+- CRM giữ việc trước bán; Work Unified giữ sau bán; không gom toàn bộ crm_tasks. Chưa triển khai thay đổi runtime/schema/quyền.
+- PR #16 vẫn draft/open; PR #19 head e16c885ae7c2305645be02a1227bf378cb59137f vẫn open/chưa merge, nghiệm thu vận hành HOLD. Hồ sơ cũ bên dưới không phải trạng thái cập nhật của các PR đó.
+- Chặng tiếp chưa mở: cần gói C1-01…08, target được phép và dữ liệu đầu vào nghiệm thu; xem roadmap. Không tự chạy ứng dụng/GET hoặc SQL thật.
+- [Review độc lập](ARCHITECTURE_V1_1_INDEPENDENT_REVIEW_20261001.md): PASS trong phạm vi tài liệu; không phải GitHub/human approval hoặc nghiệm thu production.
+- Hoàn tác tài liệu: revert đúng commit của gói; giữ lịch sử bàn giao. Không có tác động DB để hoàn tác.
+
+---
+
 # Current candidate handoff
 
 ## 2026-09-29 — VPT Messenger durable intake, local candidate only

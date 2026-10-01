@@ -1,3 +1,11 @@
+# 2026-10-01 — Chặng 0 / bộ kiến trúc Business AI OS V1.1
+
+Theo kế hoạch Founder yêu cầu triển khai: soạn kiến trúc, roadmap, bản đồ ownership, sổ quyết định và ADR; gắn vào mục lục/AGENTS/CLAUDE. Đã đối chiếu 31 bản nguồn với blob Git, main 0db11ce1adb0fb89fc87529036e495a62d58fce7; phát hiện lõi Order hiện có, task xưởng trong crm_tasks, hỗ trợ đa xưởng/đa đợt, giới hạn flowRuntime và 54 nhóm số SQL trùng.
+
+Hồ sơ: [bằng chứng](ARCHITECTURE_V1_1_EVIDENCE_20261001.md), [lộ trình](../architecture/BUSINESS_AI_OS_V1_1_ROADMAP.md). Gói chỉ sửa tài liệu/hướng dẫn; không code runtime, migration, config, quyền, CI, lịch hoặc quảng cáo. Kiểm tra liên kết/phạm vi/bảo toàn lịch sử và [review độc lập](ARCHITECTURE_V1_1_INDEPENDENT_REVIEW_20261001.md) PASS; không suy test phần mềm từ kiểm tra này. Prefix mới giữ nguyên toàn bộ nội dung lịch sử phía sau.
+
+---
+
 # Candidate worklog
 
 ## 2026-09-29 — VPT Messenger durable intake, local candidate only
