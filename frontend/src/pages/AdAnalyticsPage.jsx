@@ -321,6 +321,12 @@ export default function AdAnalyticsPage() {
         setRows(ds.data?.data || []);
       }
     } catch (e) {
+      // Xóa snapshot cũ: lỗi tải không phải số 0 và không phải dữ liệu kỳ mới.
+      setTongQuan(null);
+      setRows([]);
+      setNhanXet([]);
+      setTomTat(null);
+      setTinhLuc(null);
       setLoi(e?.response?.data?.error || 'Không tải được dữ liệu quảng cáo');
     } finally {
       setDangTai(false);
@@ -404,7 +410,7 @@ export default function AdAnalyticsPage() {
         <div>
           <h1 className="text-xl font-bold text-gray-900">Hiệu quả quảng cáo Facebook</h1>
           <p className="mt-0.5 text-[13px] text-gray-500">
-            Lead đến từ quảng cáo nào, chất lượng ra sao, chốt được bao nhiêu.
+            Lead đến từ quảng cáo nào, chất lượng ra sao, chốt được bao nhiêu. Mỗi Lead tính một lần trong từng nhóm; không cộng các nhóm để suy số khách duy nhất.
           </p>
         </div>
       </div>
@@ -527,7 +533,11 @@ export default function AdAnalyticsPage() {
         </div>
       )}
 
-      {tab === 'insights' ? (
+      {loi && !tongQuan ? (
+        <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+          Dữ liệu chưa xác minh. Hãy tải lại; chưa thể kết luận có 0 Lead.
+        </div>
+      ) : tab === 'insights' ? (
         dangTai ? (
           <div className="py-14 text-center text-sm text-gray-500">
             <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-gray-200 border-t-blue-600" />

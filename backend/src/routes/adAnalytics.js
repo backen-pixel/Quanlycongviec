@@ -70,6 +70,29 @@ async function congTyLoc(req) {
 }
 
 /** Nạp quy kết + lead + điểm, gom theo khoá. */
+async function docLeadBatBuoc(query) {
+  try {
+    const result = await query;
+    if (result?.error || !Array.isArray(result?.data)) throw new Error('Invalid CRM read');
+    return result.data;
+  } catch {
+    // Lỗi đọc không được biến thành báo cáo 0 Lead; không giữ lỗi upstream.
+    const error = new Error('Chưa đọc được dữ liệu CRM. Vui lòng tải lại báo cáo.');
+    error.code = 'AD_ANALYTICS_CRM_UNAVAILABLE';
+    throw error;
+  }
+}
+
+function traLoiBaoCao(res, error) {
+  const crmUnavailable = error?.code === 'AD_ANALYTICS_CRM_UNAVAILABLE';
+  return res.status(crmUnavailable ? 503 : 500).json({
+    error: crmUnavailable ? 'Chưa đọc được dữ liệu CRM. Vui lòng tải lại báo cáo.'
+      : 'Chưa tải được dữ liệu quảng cáo. Vui lòng thử lại.',
+    code: crmUnavailable ? 'AD_ANALYTICS_CRM_UNAVAILABLE' : 'AD_ANALYTICS_READ_FAILED',
+    data_status: 'UNKNOWN',
+  });
+}
+
 async function napDuLieu(req) {
   const tu = isoNgay(req.query.from);
   const den = isoNgay(req.query.to, true);
@@ -93,8 +116,8 @@ async function napDuLieu(req) {
   const dsCT = await congTyLoc(req);
 
   const [leadRows, diemRows, catRows, pageRows] = await Promise.all([
-    supabase.from('crm_leads').select('id, type, actual_close_date, estimated_value, company_id, created_at')
-      .in('id', ids).then((x) => x.data || [], () => []),
+    docLeadBatBuoc(supabase.from('crm_leads').select('id, type, actual_close_date, estimated_value, company_id, created_at')
+      .in('id', ids)),
     supabase.from('lead_quality_scores').select('lead_id, diem, nhan')
       .in('lead_id', ids).then((x) => x.data || [], () => []),
     supabase.from('fb_ad_catalog').select('ad_id, ad_name, adset_name, campaign_id, campaign_name, nguon')
@@ -160,12 +183,13 @@ function oTrong() {
     leads: 0,
     by_label: { rac: 0, lanh: 0, am: 0, nong: 0, da_chot: 0 },
     _sum: 0, _n: 0, deals: 0, closed: 0, revenue: 0,
+    _leadIds: new Set(), _paidLeadIds: new Set(),
   };
 }
 
 function chot(g) {
   const chatLuong = (g.by_label.am || 0) + (g.by_label.nong || 0) + (g.by_label.da_chot || 0);
-  const { _sum, _n, ...rest } = g;
+  const { _sum, _n, _leadIds, _paidLeadIds, ...rest } = g;
   return {
     ...rest,
     avg_score: _n ? Math.round(_sum / _n) : null,
@@ -180,6 +204,10 @@ function chot(g) {
 }
 
 function congDon(g, l, d) {
+  // Một hồ sơ nhiều touchpoint vẫn chỉ tính một lần trong từng nhóm.
+  const leadId = String(l.id);
+  if (g._leadIds.has(leadId)) return;
+  g._leadIds.add(leadId);
   g.leads += 1;
   if (d) {
     g.by_label[d.nhan] = (g.by_label[d.nhan] || 0) + 1;
@@ -215,8 +243,7 @@ r.get('/summary', async (req, res) => {
         : 'Chi tiêu và ROAS chưa có — cần khai báo tài khoản quảng cáo và token Marketing API.',
     });
   } catch (e) {
-    console.error('[ad-analytics/summary]', e);
-    res.status(500).json({ error: e.message });
+    traLoiBaoCao(res, e);
   }
 });
 
@@ -257,8 +284,7 @@ r.get('/ads', async (req, res) => {
       .sort((x, y) => y.leads - x.leads);
     res.json({ data, total: data.length });
   } catch (e) {
-    console.error('[ad-analytics/ads]', e);
-    res.status(500).json({ error: e.message });
+    traLoiBaoCao(res, e);
   }
 });
 
@@ -266,18 +292,20 @@ r.get('/campaigns', async (req, res) => {
   try {
     const { rows, mLead, mDiem, mCat, mChiTieu } = await napDuLieu(req);
     const gom = new Map();
-    let chuaDatTen = 0;
+    const chuaDatTen = new Set();
     for (const a of rows) {
       if (!a.fb_ad_id) continue;
       const l = mLead.get(String(a.lead_id));
       if (!l) continue;
       const c = mCat.get(String(a.fb_ad_id)) || {};
       const ten = c.campaign_name || null;
-      const k = ten || `__chua_dat_ten__${a.fb_ad_id}`;
-      if (!ten) chuaDatTen += 1;
+      const campaignId = c.campaign_id || a.fb_campaign_id || null;
+      const k = campaignId ? `id:${campaignId}`
+        : ten ? `name:${ten}` : `ad:${a.fb_ad_id}`;
+      if (!ten) chuaDatTen.add(String(l.id));
       if (!gom.has(k)) {
         gom.set(k, {
-          campaign_id: c.campaign_id || null,
+          campaign_id: campaignId,
           campaign_name: ten,
           chua_dat_ten: !ten,
           ad_ids: new Set(),
@@ -293,10 +321,9 @@ r.get('/campaigns', async (req, res) => {
         { ...chot(g), ad_ids: [...g.ad_ids], so_quang_cao: g.ad_ids.size }, g.ad_ids, mChiTieu,
       ))
       .sort((x, y) => y.leads - x.leads);
-    res.json({ data, total: data.length, lead_chua_dat_ten_chien_dich: chuaDatTen });
+    res.json({ data, total: data.length, lead_chua_dat_ten_chien_dich: chuaDatTen.size });
   } catch (e) {
-    console.error('[ad-analytics/campaigns]', e);
-    res.status(500).json({ error: e.message });
+    traLoiBaoCao(res, e);
   }
 });
 
@@ -316,7 +343,11 @@ r.get('/pages', async (req, res) => {
         });
       }
       const g = gom.get(k);
-      if (a.fb_ad_id) { g.co_ad_id += 1; g.ad_ids.add(String(a.fb_ad_id)); }
+      if (a.fb_ad_id) {
+        g._paidLeadIds.add(String(l.id));
+        g.co_ad_id = g._paidLeadIds.size;
+        g.ad_ids.add(String(a.fb_ad_id));
+      }
       congDon(g, l, mDiem.get(String(a.lead_id)));
     }
     const data = [...gom.values()]
@@ -325,7 +356,7 @@ r.get('/pages', async (req, res) => {
       .sort((x, y) => y.leads - x.leads);
     res.json({ data, total: data.length });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    traLoiBaoCao(res, e);
   }
 });
 
