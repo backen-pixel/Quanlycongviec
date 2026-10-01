@@ -6,6 +6,7 @@ on:
       - 'frontend/src/pages/AdAnalyticsPage.jsx'
       - 'backend/tests/adAnalytics.correctness.test.js'
       - 'backend/tests/adAnalytics.ui-state.test.js'
+      - 'backend/tests/adAnalytics.action-lifecycle.test.js'
       - '.github/workflows/marketing-report-correctness.yml'
   workflow_dispatch:
 permissions:
@@ -29,4 +30,5 @@ jobs:
           node --check backend/src/routes/adAnalytics.js
           node --check backend/tests/adAnalytics.correctness.test.js
           node --check backend/tests/adAnalytics.ui-state.test.js
-          node --test --test-reporter=tap backend/tests/adAnalytics.correctness.test.js backend/tests/adAnalytics.ui-state.test.js
+          node --check backend/tests/adAnalytics.action-lifecycle.test.js
+          node --test --test-reporter=tap backend/tests/adAnalytics.correctness.test.js backend/tests/adAnalytics.ui-state.test.js backend/tests/adAnalytics.action-lifecycle.test.js

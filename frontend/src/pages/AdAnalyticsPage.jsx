@@ -241,6 +241,7 @@ function KhungMarketing({ trangThai, onXong }) {
 
 export default function AdAnalyticsPage() {
   const reportRequestId = useRef(0);
+  const refreshReportRef = useRef(null);
   const [tab, setTab] = useState('campaigns');
   const [tongQuan, setTongQuan] = useState(null);
   const [rows, setRows] = useState([]);
@@ -366,8 +367,12 @@ export default function AdAnalyticsPage() {
   }, []);
 
   useEffect(() => {
+    refreshReportRef.current = tai;
     tai();
-    return () => { reportRequestId.current += 1; };
+    return () => {
+      refreshReportRef.current = null;
+      reportRequestId.current += 1;
+    };
   }, [tai]);
   useEffect(() => { taiMkt(); }, [taiMkt]);
 
@@ -378,7 +383,7 @@ export default function AdAnalyticsPage() {
       await api.put(`/ad-analytics/ads/${adId}`, { campaign_name: tenMoi.trim() });
       setDangSua(null);
       setTenMoi('');
-      await tai();
+      await refreshReportRef.current?.();
     } catch (e) {
       setLoi(e?.response?.data?.error || 'Không lưu được tên chiến dịch');
     } finally {
@@ -393,7 +398,7 @@ export default function AdAnalyticsPage() {
       await api.post('/ad-analytics/ads/bulk-name', { ad_ids: [...chon], campaign_name: tenLo.trim() });
       setChon(new Set());
       setTenLo('');
-      await tai();
+      await refreshReportRef.current?.();
     } catch (e) {
       setLoi(e?.response?.data?.error || 'Không đặt tên hàng loạt được');
     } finally {
@@ -405,7 +410,7 @@ export default function AdAnalyticsPage() {
     setDangChayLai(true);
     try {
       await api.post('/ad-analytics/insights/run', {});
-      await tai();
+      await refreshReportRef.current?.();
     } catch (e) {
       setLoi(e?.response?.data?.error || 'Không chạy lại được phân tích');
     } finally {
@@ -521,7 +526,7 @@ export default function AdAnalyticsPage() {
         </>
       )}
 
-      <KhungMarketing trangThai={mkt} onXong={async () => { await taiMkt(); await tai(); }} />
+      <KhungMarketing trangThai={mkt} onXong={async () => { await taiMkt(); await refreshReportRef.current?.(); }} />
 
       <div className="flex flex-wrap items-center gap-1.5 border-b border-gray-200">
         {TAB.map((t) => (
