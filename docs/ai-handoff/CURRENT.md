@@ -17,7 +17,13 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-10-01 14:50 (UTC+7)
+Cập nhật: 2026-10-01 14:55 (UTC+7)
+
+## Dashboard SX — hết lỗi filterBusy
+
+Trạng thái: **FE local, đã mở `/sx/dashboard`.**
+
+`filterBusy` được khai báo sau hiệu ứng tự chọn phân loại nên trang vỡ. Đã đưa khai báo lên trước. Trang hiện «Đã lọc xong · 14 thẻ».
 
 ## Giao việc SX — tích và kéo nhiệm vụ của dự án
 

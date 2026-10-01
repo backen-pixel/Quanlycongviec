@@ -17,6 +17,11 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Nhật ký công việc AI
 
+## 2026-10-01 14:55 — Sửa dashboard SX vỡ vì filterBusy
+
+- AI: Cursor. `/sx/dashboard` báo Cannot access filterBusy before initialization vì biến được dùng trước khi khai báo.
+- File: `ProductionDashboard.jsx`.
+
 ## 2026-10-01 14:50 — Tích và kéo nhiệm vụ trên Giao việc SX
 
 - AI: Cursor. Thẻ nhiệm vụ của dự án chỉ hiện vòng tròn, không tích và không kéo được. Nay quản trị tích hoặc kéo để đổi giai đoạn.
