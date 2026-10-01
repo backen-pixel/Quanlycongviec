@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "kind": "implementation_backlog_not_runtime_state",
+  "issue": 15,
+  "updatedDate": "2026-10-01",
+  "scope": "VPT pilot; actual tenant/company IDs resolved by authorized backend adapters",
+  "authority": "Founder direction permits controlled implementation; existing repository release rules remain",
+  "jobs": [
+    {
+      "id": "MKT-BOS-M0",
+      "goal": "Reviewable module boundary, pure evidence contract and synthetic tests",
+      "ownerRole": "Engineering",
+      "state": "IN_PROGRESS",
+      "evidence": ["backend/tests/marketingEvidenceContract.test.js", "docs/adr/0015-marketing-business-os-boundary.md"],
+      "nextAction": "Review exact PR head and CI; not production acceptance",
+      "dependsOn": []
+    },
+    {
+      "id": "MKT-BOS-M1",
+      "goal": "Version-pinned read adapter on approved target and correct CRM recipient/scope",
+      "ownerRole": "Integration + Security",
+      "state": "NOT_STARTED",
+      "evidence": [],
+      "nextAction": "Re-read current deployment/schema/config and reconcile PR8/PR14; inventory existing schedulers and writer ownership",
+      "dependsOn": ["MKT-BOS-M0"]
+    },
+    {
+      "id": "MKT-BOS-M2",
+      "goal": "Source-to-CRM end-to-end proof and shadow reconciliation",
+      "ownerRole": "QA + Sales Admin",
+      "state": "NOT_STARTED",
+      "evidence": [],
+      "nextAction": "Controlled test with permitted data: correct company/recipient, duplicate/retry, timestamps and source proof",
+      "dependsOn": ["MKT-BOS-M1"]
+    },
+    {
+      "id": "MKT-BOS-M3",
+      "goal": "Controlled rollout without parallel CRM, duplicated schedules or lost evidence",
+      "ownerRole": "Release owner",
+      "state": "NOT_STARTED",
+      "evidence": [],
+      "nextAction": "Review/staging/targeted release authorization; verify readback and rollback; no ad change inferred",
+      "dependsOn": ["MKT-BOS-M2"]
+    }
+  ],
+  "neverInfer": ["merge means live", "deploy means E2E accepted", "UTM proves paid click", "unknown means zero", "chat memory is system of record"]
+}
