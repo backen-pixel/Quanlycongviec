@@ -3,7 +3,7 @@
  */
 
 import { effectivePipelineStageSlaDays, isPipelineStageSlaDisabled } from './crmPipelineSla';
-import { isHucabiCompany, isHucabiSameDayPastWorkEnd, vnYmdFromTs } from './companyDeadlineClock';
+import { companyWorkEndMsFromRaw, isHucabiCompany, isHucabiSameDayPastWorkEnd, vnYmdFromTs } from './companyDeadlineClock';
 import { endOfVnCalendarDayAfterEntered } from './vnDate';
 import {
   DEADLINE_MODULE,
@@ -276,9 +276,9 @@ function startOfLocalDay(d) {
 }
 
 /**
- * Bucket deadline view SX — theo ngày hạn đang lưu.
+ * Bucket deadline view SX — chỉ deadline đã đặt trên thẻ (`sx_kanban_deadline_at`).
+ * Ngày hoàn thiện / giao / hạn chung không đưa thẻ vào bảng Deadline.
  * Cột đã tắt hạn / bàn giao VC không vào Quá hạn.
- * Nguồn hạn: hạn thẻ → hoàn thiện/hạn SX → giao → hạn chung.
  */
 function sxDeadlineYmd(raw) {
   if (raw == null || raw === '') return null;
@@ -300,21 +300,20 @@ export function resolveSxDeadlineBucket(item, todayMs = Date.now(), stage = null
   if (stageRef?.clears_deadline || stageRef?.is_handover_to_logistics) {
     return { bucket: 'none', ts: null, source: null };
   }
-  const resolved = resolveEffectiveModuleDeadline(
-    DEADLINE_MODULE.PRODUCTION,
-    item,
-    stage || item?.sx_pipeline_stage,
-  );
-  const raw = resolved.raw;
-  const t = resolved.deadlineTs;
-  const source = resolved.source;
+  const raw = item?.sx_kanban_deadline_at;
+  if (raw == null || String(raw).trim() === '') {
+    return { bucket: 'none', ts: null, source: null };
+  }
+  const companyRef = item?.company_id || item?.company;
+  const parsed = companyWorkEndMsFromRaw(raw, companyRef) ?? new Date(raw).getTime();
+  const t = Number.isFinite(parsed) ? parsed : null;
+  const source = 'sx_kanban';
   const ymd = sxDeadlineYmd(raw);
   const todayYmd = vnYmdFromTs(todayMs);
   if (!ymd || !todayYmd) return { bucket: 'none', ts: null, source: null };
   const diffDays = diffVnCalendarDays(ymd, todayYmd);
   if (diffDays < 0) return { bucket: 'overdue', ts: t, source };
   if (diffDays === 0) {
-    const companyRef = item?.company_id || item?.company;
     if (isHucabiSameDayPastWorkEnd(raw, companyRef, todayMs)) {
       return { bucket: 'overdue', ts: t, source };
     }

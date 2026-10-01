@@ -4,6 +4,8 @@ import api from '../lib/api';
 import { getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isSystemAdmin, isProductionAdmin, isProductionStaff } from '../lib/adminRole';
+import { pickDefaultCompanyId } from '../lib/crmCompanyFilter';
+import { useDefaultCompanyOnce } from '../hooks/useDefaultCompanyOnce';
 import {
   canPickWorkshopCompany,
   isCrossWorkshopProductionViewer,
@@ -856,6 +858,7 @@ export default function ProductionDashboard() {
     dealCompanyFilter: filterDealCompany,
     forModule: 'production',
     persisted: P0,
+    preserveCompanyOnReset: true,
   });
 
   const {
@@ -899,6 +902,11 @@ export default function ProductionDashboard() {
     () => dealCompanyOptions.filter((c) => !c.client_company_id),
     [dealCompanyOptions],
   );
+
+  useDefaultCompanyOnce(filterDealCompany, setFilterDealCompany, clientCrmDealOptions, {
+    enabled: showDealCompanyFilter && isSystemAdmin(user),
+    preferredId: user?.company_id || '',
+  });
 
   const resolvedDealCompanyPick = useMemo(() => {
     if (!filterDealCompany) return null;
@@ -1022,6 +1030,11 @@ export default function ProductionDashboard() {
     () => sxWorkshopFilterCompanies(companies, user),
     [companies, user],
   );
+
+  useDefaultCompanyOnce(filterSxWorkshopCompany, setFilterSxWorkshopCompany, sxWorkshopFilterOptions, {
+    enabled: showVptSxWorkshopFilter,
+    preferredId: user?.company_id || '',
+  });
 
   const companyForTypes = useMemo(() => resolveWorkshopCompanyForTypes({
     filterCompany: companyParam || filterCompany,
@@ -2355,22 +2368,16 @@ export default function ProductionDashboard() {
     return () => { cancelled = true; };
   }, [companyForTypes, dealCompanyParam]);
 
-  // Giữ «Tất cả» (rỗng) / «Chưa phân loại»; chỉ reset khi UUID loại không còn thuộc công ty hiện hành.
+  // Không còn «Tất cả». Rỗng hoặc loại không thuộc công ty hiện hành → loại đầu tiên.
+  // «Chưa phân loại» (none) giữ nguyên. Chưa có workTypes thì không đụng filter đã lưu.
   useEffect(() => {
-    // Chỉ resolve khi workTypes đã đúng công ty hiện hành — tránh "nhảy" sang loại của công ty cũ.
     if (workTypesCompanyId !== companyForTypes) return;
-    // companyForTypes rỗng chỉ là trạng thái tạm lúc mới mount (localStorage đã khôi phục filterCompany
-    // nhưng `companies` từ API chưa kịp tải) — không xoá filterWorkTypeId đã lưu vì lý do này, kẻo
-    // mất lọc «Phân loại» mỗi lần vào chi tiết dự án rồi quay ra (component remount).
     if (!companyForTypes) return;
-    if (!Array.isArray(workTypes) || workTypes.length === 0) {
-      if (filterWorkTypeId && filterWorkTypeId !== 'none') setFilterWorkTypeId('');
-      return;
-    }
-    if (!filterWorkTypeId || filterWorkTypeId === 'none') return;
-
+    if (!Array.isArray(workTypes) || workTypes.length === 0) return;
+    if (filterWorkTypeId === 'none') return;
     const stillExists = workTypes.some((w) => String(w.id) === String(filterWorkTypeId));
-    if (!stillExists) setFilterWorkTypeId('');
+    if (stillExists) return;
+    setFilterWorkTypeId(String(workTypes[0].id));
   }, [workTypes, workTypesCompanyId, companyForTypes, filterWorkTypeId]);
 
 
@@ -3663,10 +3670,11 @@ export default function ProductionDashboard() {
     setFilterWorkTypeId('');
     setShowOrphanColumn(false);
     setFilterSxWorkshopCompany('');
-    if (isSystemAdmin(user)) setFilterDealCompany('');
-    if (isAdmin && !isCompanyScopedAdmin) setFilterAllWorkshops(true);
+    if (isSystemAdmin(user)) {
+      setFilterDealCompany(pickDefaultCompanyId(clientCrmDealOptions, { preferredId: user?.company_id || '' }));
+    }
     resetStaffFilters();
-  }, [resetStaffFilters, handleTimePresetChange, user, isAdmin, isCompanyScopedAdmin]);
+  }, [resetStaffFilters, handleTimePresetChange, user, isSystemAdmin, clientCrmDealOptions]);
 
   const openSxFilterPanel = useCallback(() => {
     setShowAdvFilter((open) => !open);
@@ -3878,18 +3886,6 @@ export default function ProductionDashboard() {
     return () => window.clearTimeout(t);
   }, [filterBusy, firstLoaded]);
 
-  const workTypeFilterLabel = useMemo(() => {
-    if (!companyForTypes || !workTypes.length) return '';
-    const co = (companies || []).find((x) => String(x.id) === String(companyForTypes));
-    const coLabel = workshopCompanyDisplayName(co);
-    if (filterWorkTypeId === 'none') return coLabel ? `${coLabel} · Chưa phân loại` : 'Chưa phân loại';
-    if (filterWorkTypeId) {
-      const name = workTypes.find((wt) => String(wt.id) === String(filterWorkTypeId))?.name || 'Phân loại';
-      return coLabel ? `${coLabel} · ${name}` : name;
-    }
-    return coLabel ? `${coLabel} · Tất cả phân loại` : 'Tất cả phân loại';
-  }, [companyForTypes, workTypes, filterWorkTypeId, companies]);
-
   const workTypeCompanyPrefix = useMemo(() => {
     const workshops = (workshopCompanyPickerList || []).filter((c) => (
       isMetallaOrHucabiCompanyId(c.id, companies, user)
@@ -4077,30 +4073,25 @@ export default function ProductionDashboard() {
                       ? 'border-amber-300 bg-amber-50/80'
                       : filterWorkTypeId === 'none'
                         ? 'border-amber-300 bg-amber-50'
-                        : filterWorkTypeId
-                          ? 'border-teal-300 bg-teal-50'
-                          : 'border-violet-300 bg-violet-50'
+                        : 'border-teal-300 bg-teal-50'
                   }`}
-                  title={filterBusy ? 'Đang áp dụng bộ lọc phân loại…' : `Đang xem: ${workTypeFilterLabel}`}
+                  title={filterBusy ? 'Đang áp dụng bộ lọc phân loại…' : 'Phân loại đang xem'}
                 >
                   {filterBusy ? (
                     <Loader2 className="h-3 w-3 shrink-0 animate-spin text-amber-600" />
                   ) : (
                     <Layers className={`h-3 w-3 shrink-0 ${
-                      filterWorkTypeId === 'none' ? 'text-amber-600'
-                      : filterWorkTypeId ? 'text-teal-700' : 'text-violet-600'
+                      filterWorkTypeId === 'none' ? 'text-amber-600' : 'text-teal-700'
                     }`} />
                   )}
                   <select
-                    value={filterWorkTypeId}
+                    value={filterWorkTypeId === 'none' ? 'none' : (filterWorkTypeId || workTypes[0]?.id || '')}
                     onChange={(e) => setFilterWorkTypeId(e.target.value)}
                     disabled={filterBusy && !firstLoaded}
                     className={`h-6 text-[11px] bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[13.5rem] sm:max-w-[11rem] font-semibold ${
-                      filterWorkTypeId === 'none' ? 'text-amber-700'
-                      : filterWorkTypeId ? 'text-teal-800' : 'text-violet-800'
+                      filterWorkTypeId === 'none' ? 'text-amber-700' : 'text-teal-800'
                     }`}
                   >
-                    <option value="">Phân loại: Tất cả{workTypeCompanyPrefix ? ` (${workTypeCompanyPrefix})` : ''}</option>
                     <option value="none">Chưa phân loại</option>
                     {workTypes.map((wt) => (
                       <option key={wt.id} value={wt.id}>
@@ -4108,21 +4099,6 @@ export default function ProductionDashboard() {
                       </option>
                     ))}
                   </select>
-                  {!filterBusy && !filterWorkTypeId && (
-                    <span title="Đang xem tất cả phân loại" className="inline-flex">
-                      <CheckCircle2 className="h-3 w-3 shrink-0 text-violet-500" />
-                    </span>
-                  )}
-                  {filterWorkTypeId && !filterBusy && (
-            <button
-              type="button"
-                      onClick={() => setFilterWorkTypeId('')}
-                      className="p-0.5 rounded hover:bg-white/70 cursor-pointer"
-                      title="Về Tất cả phân loại"
-            >
-                      <X className="h-3 w-3" />
-            </button>
-          )}
                 </div>
               )}
               <div className="inline-flex items-center gap-0.5 p-0.5 rounded-lg bg-white/90 border border-slate-200 shadow-inner">
@@ -4597,6 +4573,7 @@ export default function ProductionDashboard() {
             setFilterWorkTypeId={setFilterWorkTypeId}
             workTypes={workTypes}
             companyForTypes={companyForTypes}
+            allowAllWorkTypes={false}
             priorityFilter={priorityFilter}
             setPriorityFilter={setPriorityFilter}
             filterPhone={filterPhone}

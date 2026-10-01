@@ -182,6 +182,7 @@ export default function WorkshopDashboardFilterPanel({
   setFilterWorkTypeId,
   workTypes,
   companyForTypes,
+  allowAllWorkTypes = true,
   priorityFilter,
   setPriorityFilter,
   filterPhone,
@@ -343,7 +344,10 @@ export default function WorkshopDashboardFilterPanel({
                   onChange={(e) => setFilterWorkTypeId(e.target.value)}
                   className={SX_FILTER_SELECT_CLS}
                 >
-                  <option value="">{workTypes.length === 0 ? 'Chưa cấu hình' : 'Tất cả loại'}</option>
+                  {allowAllWorkTypes && (
+                    <option value="">{workTypes.length === 0 ? 'Chưa cấu hình' : 'Tất cả loại'}</option>
+                  )}
+                  {!allowAllWorkTypes && workTypes.length === 0 && <option value="">Chưa cấu hình</option>}
                   <option value="none">Chưa phân loại</option>
                   {workTypes.map((wt) => (
                     <option key={wt.id} value={wt.id}>{wt.name}</option>

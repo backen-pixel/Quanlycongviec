@@ -17,7 +17,15 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-28 10:02 (UTC+7)
+Cập nhật: 2026-10-01 09:35 (UTC+7)
+
+## Dashboard SX — bỏ «Tất cả», Deadline theo hạn thẻ
+
+Trạng thái: **FE+BE, đẩy main.**
+
+Bộ lọc phân loại trên `/sx/dashboard` giữ lại. Bỏ mục «Tất cả» / «Tất cả loại». Không chọn loại thì tự đứng ở loại đầu tiên của xưởng. «Chưa phân loại» vẫn chọn được. Cột Deadline và KPI quá hạn chỉ lấy `sx_kanban_deadline_at`.
+
+Hoàn tác: revert `ProductionDashboard.jsx`, `WorkshopDashboardFilterPanel.jsx`, `ProductionViews.jsx`, `sxPipelineRevenue.js`, `sxKanbanSummary.js`, `production.js`.
 
 ## Chat — ẩn ghi chú panel chi tiết
 
@@ -47,7 +55,7 @@ Hoàn tác local bằng đảo commit này nếu cần, nhưng đưa route cũ t
 
 ## Deadline SX — Quá hạn khớp cột và KPI
 
-Trạng thái: **FE+BE local, chưa push.**
+Trạng thái: **đã gồm trong mục dashboard 2026-10-01.**
 
 Cột đã «Tắt hạn» hoặc bàn giao VC không còn vào bucket Quá hạn (server summary + trang bucket, và client). KPI «Quá hạn» và số trên cột Deadline đếm cùng các thẻ đang hiện, không lấy tổng server đã gắn cứng bucket.
 

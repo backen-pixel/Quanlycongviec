@@ -17,6 +17,18 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Nhật ký công việc AI
 
+## 2026-10-01 09:35 — SX: giữ lọc phân loại, Deadline chỉ theo hạn thẻ
+
+- AI: Cursor. `/sx/dashboard` bỏ mục «Tất cả» / «Tất cả loại»; không chọn thì đứng ở loại đầu của xưởng. «Chưa phân loại» vẫn chọn được. Cột Deadline và KPI quá hạn chỉ tính `sx_kanban_deadline_at`, không lấy ngày hoàn thiện / giao / hạn chung.
+- File: `ProductionDashboard.jsx`, `WorkshopDashboardFilterPanel.jsx`, `ProductionViews.jsx`, `sxPipelineRevenue.js`, `useWorkshopStaffFilter.js`, `LogisticsDashboard.jsx`, `sxKanbanSummary.js`, `production.js`, `projectDeadlineExport.js`, `tests/sx-deadline-bucket.test.js`.
+- Test: trình duyệt `/sx/dashboard` — select còn «Chưa phân loại» và loại của xưởng, không còn «Tất cả». `node tests/sx-deadline-bucket.test.js` in `sx-deadline-bucket: OK`.
+
+## 2026-10-01 08:45 — SX dashboard bỏ dropdown Phân loại: Tất cả
+
+- AI: Cursor. Gỡ select phân loại trên thanh đầu `/sx/dashboard`. KPI và badge cột vẫn theo bộ lọc xưởng; phân loại cụ thể còn trong panel bộ lọc.
+- File: `frontend/src/pages/ProductionDashboard.jsx`.
+- Test: HMR Vite đã nhận file. Trình duyệt MCP không có phiên đăng nhập nên chưa bấm được board đã login. Ghi chú này bị thay bởi mục 09:35: bộ lọc phân loại được giữ, chỉ bỏ nút Tất cả.
+
 ## 2026-09-28 10:02 — Chat không hiện ghi chú panel
 
 - AI: Cursor. Comment `//` trong JSX bị in ra khung chat. Đổi thành `{/* */}`.

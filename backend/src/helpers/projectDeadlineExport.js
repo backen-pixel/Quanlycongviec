@@ -588,7 +588,7 @@ async function listProjectDeadlineNotifications(opts = {}) {
     ),
     fetchByIds(
       'logistics_pipeline_stages',
-      'id, name, bucket_slug',
+      'id, name, bucket_slug, clears_deadline, dashboard_kpi',
       'id',
       projects.map((p) => p.vc_kanban_column_id),
     ),

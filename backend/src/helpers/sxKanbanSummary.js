@@ -84,14 +84,9 @@ function diffCalendarDays(ymdA, ymdB) {
   return Math.round((Date.UTC(ya, ma - 1, da) - Date.UTC(yb, mb - 1, db)) / 86400000);
 }
 
-/** Bucket Deadline SX theo ngày hạn đang lưu. Không ngày thì cột «Không hạn». */
+/** Bucket Deadline SX chỉ theo deadline đã đặt trên thẻ. Không có thì không vào các cột hạn. */
 function sxDeadlineRaw(row) {
-  return row?.sx_kanban_deadline_at
-    || row?.production_finish_date
-    || row?.production_deadline
-    || row?.delivery_date
-    || row?.deadline
-    || null;
+  return row?.sx_kanban_deadline_at || null;
 }
 
 function resolveSxDeadlineBucketKey(row, stage, todayYmd, companyOrId, nowMs = Date.now()) {
