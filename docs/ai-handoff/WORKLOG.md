@@ -17,6 +17,112 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Nhật ký công việc AI
 
+## 2026-10-01 14:45 — Mắt tìm Giao việc mở chi tiết đúng module
+
+- AI: Cursor. Nút mắt trong ô tìm luôn nhảy sang deal CRM. Nay theo module đang đứng: SX mở dự án sản xuất, VC mở dự án lắp đặt, CRM vẫn mở deal.
+- File: `CRMAssignmentsPage.jsx`.
+
+## 2026-10-01 14:40 — Hạn lịch 7 ngày và tiến độ việc nhỏ trên quản lý nhiệm vụ SX
+
+- AI: Cursor. Cột Quá hạn trống vì không lấy lịch lắp. Hạn thẻ nay theo lịch 7 ngày lùi từ ngày lắp. Tiến độ thẻ cộng nhiệm vụ SX cùng tên đã xong; danh mục chỉ hết khi việc nhỏ bên trong xong.
+- File: `projectOverviewDeadline.js`, `workTasks.js`.
+
+## 2026-10-01 14:30 — Quá hạn quản lý nhiệm vụ SX theo hạn của việc
+
+- AI: Cursor. Cột Quá hạn đếm danh mục theo hạn giao hàng và hạn việc xưởng, nên lệch với nhiệm vụ và giao việc. Chỉ còn tính hạn riêng của nhiệm vụ và giao việc. Đã xem trang: Quá hạn 0, Chưa có hạn 807.
+- File: `projectOverviewDeadline.js`.
+
+## 2026-10-01 14:08 — Số ghi chú và file trên thẻ Giao việc
+
+- AI: Cursor. Thẻ Kanban có nút ghi chú nhưng không cho biết đã có bao nhiêu file hay ghi chú. Hiện số ngay trên nút khi có.
+- File: `CRMAssignmentsPage.jsx`, `crmTaskAssignmentSync.js`.
+
+## 2026-10-01 14:05 — Giao việc SX không lọc thì hiện mọi việc
+
+- AI: Cursor. Trang Giao việc Sản xuất coi quản trị hệ sinh thái như nhân viên thường nên chỉ lấy việc của đúng tài khoản đó và ra 0. Giờ không chọn bộ lọc thì hiện toàn bộ giao việc sản xuất.
+- File: `CRMAssignmentsPage.jsx`.
+
+## 2026-10-01 13:55 — Tải nhiệm vụ nhỏ song song khi mở dự án
+
+- AI: Cursor. Cột nhỏ trên chi tiết dự án chờ hết spinner dự án, rồi tải lại dự án, rồi mới lấy nhiệm vụ. Giờ tab Công việc gọi tasks ngay khi có dự án, cùng lúc với lead.
+- File: `ProductionDetail.jsx`, `CRMTasksTab.jsx`, `crmTasks.js`, `production.js` (`task-bootstrap`).
+
+## 2026-10-01 13:42 — Ghi chú và file trên thẻ Giao việc
+
+- AI: Cursor. Thẻ Kanban Giao việc của nhiệm vụ xưởng không có chỗ nộp ghi chú và file như chi tiết nhiệm vụ. Thêm nút mở cùng khối ghi chú và đính kèm.
+- File: `CRMAssignmentsPage.jsx`, `WorkTaskExtrasPanel.jsx`, `crmAssignments.js`.
+
+## 2026-10-01 13:32 — Thông tin dự án dưới thống kê Giao việc SX
+
+- AI: Cursor. Lọc Giao việc theo dự án chưa cho biết đó là dự án nào ngoài mã trên dải trên. Thêm khối tóm tắt ngay dưới «Số việc theo nhân viên».
+- File: `CRMAssignmentsPage.jsx`, `crmAssignments.js`.
+
+## 2026-10-01 13:20 — Giao việc SX theo dự án chỉ tính nhiệm vụ xưởng
+
+- AI: Cursor. Board `/sx/assignments?project_id=` đang gộp cả nhiệm vụ deal CRM. Giữ lọc module sản xuất và chỉ bổ sung nhiệm vụ pipeline `sx_`.
+- File: `CRMAssignmentsPage.jsx`, `crmAssignments.js`.
+
+## 2026-10-01 13:15 — Bấm thẻ quản lý NV xưởng vào dự án
+
+- AI: Cursor. Thẻ Kanban `/sx/project-tasks` trước đó mở Giao việc. Bấm thân thẻ hoặc người phụ trách giờ mở chi tiết dự án. Nút Công việc giữ lối vào Giao việc đã lọc dự án.
+- File: `ProjectTasksOverviewPage.jsx`.
+
+## 2026-10-01 12:00 — Gỡ Trương Trọng Thành khỏi đội dự án
+
+- AI: Cursor. Bỏ khỏi danh sách tự gắn HCB. Xóa đội SX, thành viên deal, NV mặc định, và các ô phụ trách đang trỏ user này trên primary và backup. Không xóa tài khoản.
+- File: `dealParticipantProduction.js`, `database/647_remove_truong_trong_thanh_assignments.sql`.
+
+## 2026-10-01 11:53 — Nút Quá hạn trên thẻ VC/LĐ
+
+- AI: Cursor. Thẻ quá hạn lắp chỉ đổi màu chip. Thêm nút đỏ «Quá hạn» kèm ngày trên thẻ, và chữ «Quá hạn» trên nút đếm ở thanh công cụ.
+- File: `LogisticsDashboard.jsx`.
+
+## 2026-10-01 11:48 — Thẻ Kanban VC/LĐ hiện mốc thời gian
+
+- AI: Cursor. Thẻ vận chuyển chỉ có tuổi dự án tương đối, trong khi thẻ sản xuất đã hiện ngày tạo, ngày lắp và hạn xưởng. Thêm cùng các mốc đó lên thẻ VC/LĐ, kèm ngày lấy hàng và tô vàng khi ngày lắp SX lệch ngày lắp CRM/LĐ.
+- File: `LogisticsDashboard.jsx`, `logistics.js`.
+
+## 2026-10-01 11:40 — Bảng ngày lắp / ngày lấy hàng trong Sự kiện
+
+- AI: Cursor. Lịch lắp và lấy hàng của deal CRM với dự án sản xuất / lắp đặt nằm rải trên từng màn. Thêm bảng kiểu Excel trong Sự kiện, một dòng một dự án, tô vàng khi ngày lắp SX lệch ngày lắp CRM/LĐ.
+- File: `installScheduleSheet.js`, `events.js`, `EventsInstallSchedulePage.jsx`, `EventsFeedPage.jsx`, `App.jsx`.
+
+## 2026-10-01 11:20 — Sửa ngày trong chi tiết thì hạn thẻ Kanban đổi theo
+
+- AI: Cursor. Ngày lắp SX từng ghi `production_deadline` bằng chính ngày lắp, và hạn thẻ không tính lại khi còn `install_date` / lịch nhiều buổi cũ hoặc lý do deadline tay. Giờ sửa một ô ngày lắp cập nhật ô kia, hoàn thiện = lắp − 2, và hạn thẻ theo nhóm cột từ ngày vừa sửa.
+- File: `ProductionDetail.jsx`, `projects.js`, `projectDeliveryDates.js`, `sxInstallPlanKanbanDeadline.js`.
+
+## 2026-10-01 11:15 — Gán NV cột lớn cho Tủ bếp và Cánh kính HCB
+
+- AI: Cursor. Gán cùng người với Cửa: Tiếp nhận và Kế hoạch = Sang Thiết Kế VPT 1, Duyệt = Nguyễn Nhật, Gia công = Nguyễn Minh Nhựt, Hoàn thiện và Đóng gói = Hòa Bảo. Phân loại Công nợ không có cột pipeline.
+
+## 2026-10-01 11:10 — Ô phụ trách cột lớn hiện đúng người đã gán
+
+- AI: Cursor. Tủ bếp chưa gán NV trên từng cột; phụ trách chính của phân loại là Sang Thiết Kế (`company_id` null) nên không có trong danh sách NV HCB, ô chọn kẹt «— NV phụ trách —». API giờ trả thêm user đã gán dù khác công ty. Cột chưa có NV riêng thì hiện phụ trách chính của phân loại.
+- File: `frontend/src/pages/ProductionPipelineSettingsPage.jsx`, `backend/src/routes/production.js`.
+
+## 2026-10-01 11:00 — Hiện người phụ trách trên cột lớn setup pipeline
+
+- AI: Cursor. Thẻ cột chính hiện tên NV đã gán (`default_staff` của các cột nhỏ). Ô chọn thêm người đó nếu họ không có trong danh sách NV phân loại, nên không còn kẹt ở «— NV phụ trách —».
+- File: `frontend/src/pages/ProductionPipelineSettingsPage.jsx`. Đã xem trên HCB / Cửa: Tiếp nhận và Kế hoạch = Sang Thiết Kế VPT 1, Duyệt = Nguyễn Nhật, Gia công = Nguyễn Minh Nhựt, Hoàn thiện và Đóng gói = Hòa Bảo.
+
+## 2026-10-01 10:40 — Xóa bản trùng NextGo ở công ty cũ, không chép sang HST NextGo
+
+- AI: Cursor. Xóa thêm 230 lead công ty cũ trùng mã hoặc trùng tiêu đề với HST NextGo. Không insert lead/dự án mới vào HST NextGo. Giữ 8 lead Zalo không có bản trên NextGo. HST NextGo vẫn 890 lead, 2.442 hội thoại, 19.469 tin.
+- Script: `backend/scripts/purge-nextgo-dup-from-default.js`.
+
+## 2026-10-01 10:30 — Gỡ lead Facebook NextGo khỏi HST mặc định
+
+- AI: Cursor. Trên DB primary, xóa 365 lead nguồn Facebook còn ở công ty NextGo cũ `87479a83` (HST mặc định). Hội thoại, tin nhắn, page và 890 lead HST NextGo giữ nguyên. Nguồn CRM `[FB:1102202982968909]` của công ty cũ đã xóa. Deal `DEAL-2026-998` không có bản trên HST NextGo nên chỉ còn bị gỡ khỏi HST mặc định.
+- Script: `backend/scripts/purge-nextgo-fb-from-default.js`. Biên bản: `backend/uploads/_purge_nextgo_fb_from_default_primary_2026-10-01T03-29-42-615Z.json`.
+- Backup chưa chạy: công ty HST NextGo trên backup có 0 lead, 524 lead FB vẫn nằm ở công ty cũ. Xóa bên đó sẽ mất bản duy nhất.
+
+## 2026-10-01 09:50 — Nút tích Chuyển công nợ trên setup pipeline xưởng
+
+- AI: Cursor. Tab Cột nhỏ: nút «Chuyển công nợ» gán `board_tab` sang tab Công nợ hoặc trả về Sản xuất. Form sửa cột có ô tích tương ứng.
+- File: `frontend/src/pages/ProductionPipelineSettingsPage.jsx`.
+- Test: trình duyệt `/sx/pipeline-settings` HCB Tủ bếp, tab Cột nhỏ — nút hiện cạnh Tắt hạn. Form sửa «Tiếp nhận đơn hàng về SX» có checkbox «Chuyển công nợ», đã Hủy không lưu. Cột bộ chung VPT bấm nút báo không có quyền sửa cột toàn hệ thống (đúng quyền cũ).
+
 ## 2026-10-01 09:40 — Sửa build: thêm hook useDefaultCompanyOnce
 
 - AI: Cursor. Render fail vì `ProductionDashboard.jsx` import `useDefaultCompanyOnce` nhưng file chưa được commit.

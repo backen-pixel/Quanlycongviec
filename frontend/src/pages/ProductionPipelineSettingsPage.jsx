@@ -4,12 +4,12 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { Settings, Plus, Trash2, Save, ChevronRight, ChevronDown, ChevronUp, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft, Search, Wrench, Eye, EyeOff, Layers, GripVertical, Pencil, X, Ban } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, ChevronRight, ChevronDown, ChevronUp, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft, Search, Wrench, Eye, EyeOff, Layers, GripVertical, Pencil, X, Ban, Receipt } from 'lucide-react';
 import WorkshopTypeSettingsSection from '../components/WorkshopTypeSettingsSection';
 import { isPipelineStageSlaDisabled } from '../lib/crmPipelineSla';
 import { SX_DEADLINE_GROUPS, sxDeadlineGroupMeta } from '../lib/sxWorkshopSchedule';
 import { nhanCotLon, sapXepNhomCotLon, khoaCotLonTuNhan } from '../lib/sxGopCot';
-import { sxGroupPrimaryOwnerId } from '../lib/sxStageStaff';
+import { sxGroupPrimaryOwner, sxGroupPrimaryOwnerId } from '../lib/sxStageStaff';
 import { tabKanbanCot, tabKanbanNhom, khoaTabKanban, nhanTabKanban, dsTabKanban, laTabCoDinh, TAB_SX, TAB_CONG_NO } from '../lib/sxTachCongNo';
 
 /**
@@ -1356,6 +1356,16 @@ export default function ProductionPipelineSettingsPage() {
     }
   };
 
+  const toggleChuyenCongNo = async (stage) => {
+    try {
+      const dangOCongNo = tabKanbanCot(stage) === TAB_CONG_NO;
+      await saveStageFlags(stage, { board_tab: dangOCongNo ? TAB_SX : TAB_CONG_NO });
+    } catch (e) {
+      const msg = e.response?.data?.error || e.message || 'Lỗi';
+      alert(msg.includes('board_tab') ? 'Chưa chạy migration 614 (tab Kanban).' : msg);
+    }
+  };
+
   const toggleDashboardKpiColumn = async (stage, key) => {
     try {
       const next = stage.dashboard_kpi === key ? null : key;
@@ -2255,7 +2265,21 @@ export default function ProductionPipelineSettingsPage() {
 
               <div className="flex gap-3 overflow-x-auto pb-2 pt-1 snap-x">
                 {cotLonTheoTab.map((g, gi) => {
-                  const ownerId = sxGroupPrimaryOwnerId(g.ds);
+                  const ownerCot = sxGroupPrimaryOwnerId(g.ds);
+                  const typePrimaryId = selectedTypeKey && selectedTypeKey !== GLOBAL_TYPE_KEY
+                    ? String(typeStaffPrimary[String(selectedTypeKey)] || '')
+                    : '';
+                  const ownerId = ownerCot || typePrimaryId;
+                  const ownerUser = sxGroupPrimaryOwner(g.ds);
+                  const ownerTrongDs = typeStaffUserList.some((u) => String(u.id) === String(ownerId));
+                  const ownerTuDs = typeStaffUserList.find((u) => String(u.id) === String(ownerId));
+                  const ownerName = String(
+                    ownerUser?.full_name
+                    || ownerUser?.email
+                    || ownerTuDs?.full_name
+                    || ownerTuDs?.email
+                    || '',
+                  ).trim();
                   const busy = gopOwnerSavingKey === g.key;
                   const tenHien = nhanCotLon(g.key) || g.key;
                   const dangKeoNho = Boolean(keoCotNhoId || keoPayloadRef.current?.loai === 'nho');
@@ -2304,6 +2328,12 @@ export default function ProductionPipelineSettingsPage() {
                       </div>
                       <p className="px-3 text-[10px] text-violet-500">
                         {g.ds.length} cột nhỏ{g.ds.length > 1 ? ' · song song' : ''}
+                      </p>
+                      <p
+                        className={`px-3 pb-0.5 truncate text-[11px] ${ownerName ? 'font-semibold text-indigo-800' : 'italic text-slate-400'}`}
+                        title={ownerName ? `Phụ trách cột lớn: ${ownerName}` : 'Chưa gán người chịu trách nhiệm cột chính'}
+                      >
+                        {ownerName ? `Phụ trách: ${ownerName}` : 'Chưa gán NV phụ trách'}
                       </p>
                       <div
                         className="flex-1 overflow-y-auto px-2 py-1.5 space-y-1 min-h-[6rem]"
@@ -2378,6 +2408,9 @@ export default function ProductionPipelineSettingsPage() {
                           title="Người chịu trách nhiệm cột chính"
                         >
                           <option value="">— NV phụ trách —</option>
+                          {ownerId && !ownerTrongDs && (
+                            <option value={String(ownerId)}>{ownerName || 'NV đã gán'}</option>
+                          )}
                           {typeStaffUserList.map((u) => (
                             <option key={u.id} value={String(u.id)}>{u.full_name || u.email || u.id}</option>
                           ))}
@@ -3103,6 +3136,11 @@ export default function ProductionPipelineSettingsPage() {
                           ⛔ Đã tắt hạn
                         </span>
                       )}
+                      {!isIntake && tabKanbanCot(s) === TAB_CONG_NO && (
+                        <span className="bg-amber-50 text-amber-900 border border-amber-200 px-1.5 py-0.5 rounded font-medium">
+                          → Công nợ
+                        </span>
+                      )}
                       {!isIntake && s.dashboard_kpi === 'producing' && (
                         <span className="bg-sky-50 text-sky-800 border border-sky-200 px-1.5 py-0.5 rounded font-medium">
                           🏭 Đang SX
@@ -3240,6 +3278,23 @@ export default function ProductionPipelineSettingsPage() {
                         <Clock className="h-3 w-3" />
                         {isPipelineStageSlaDisabled(s.sla_days) ? 'Đã bỏ QH' : 'Bỏ quá hạn'}
                       </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleChuyenCongNo(s)}
+                          className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                            tabKanbanCot(s) === TAB_CONG_NO
+                              ? 'bg-amber-100 text-amber-900 border-amber-300'
+                              : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-amber-300 hover:text-amber-800'
+                          }`}
+                          title={
+                            tabKanbanCot(s) === TAB_CONG_NO
+                              ? 'Cột đang ở tab Công nợ. Nhấn để đưa về tab Sản xuất.'
+                              : 'Đưa cột này sang tab Công nợ trên Kanban xưởng.'
+                          }
+                        >
+                          <Receipt className="h-3 w-3" />
+                          {tabKanbanCot(s) === TAB_CONG_NO ? 'Đã chuyển CN' : 'Chuyển công nợ'}
+                        </button>
                       </>
                     )}
                     <button
@@ -3441,6 +3496,18 @@ export default function ProductionPipelineSettingsPage() {
                         className="rounded border-slate-400"
                       />
                       <Ban className="h-3.5 w-3.5 text-slate-700" /> Tắt deadline khi kéo thẻ tới cột
+                    </label>
+                    <label className="flex items-center gap-2 text-xs cursor-pointer text-amber-950 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200">
+                      <input
+                        type="checkbox"
+                        checked={khoaTabKanban(form.board_tab) === TAB_CONG_NO}
+                        onChange={(e) => setForm((f) => ({
+                          ...f,
+                          board_tab: e.target.checked ? TAB_CONG_NO : TAB_SX,
+                        }))}
+                        className="rounded border-amber-400"
+                      />
+                      <Receipt className="h-3.5 w-3.5 text-amber-700" /> Chuyển công nợ
                     </label>
                     <div className="flex flex-wrap items-center gap-2 text-xs text-sky-950 bg-sky-50 px-2 py-1 rounded-lg border border-sky-200">
                       <span className="font-semibold whitespace-nowrap">Ô Dashboard</span>

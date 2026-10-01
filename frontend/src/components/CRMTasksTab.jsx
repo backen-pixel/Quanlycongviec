@@ -645,6 +645,8 @@ export default function CRMTasksTab({
   openFillFormToken = 0,
   /** Báo meta phiếu KS lên header LeadDetail */
   onSurveyFillMetaChange = null,
+  /** Promise<task[]|null> — bắt đầu cùng lúc với GET chi tiết dự án */
+  prefetchedTasks = null,
 }) {
   const { user } = useAuth();
   const canManageDeal = workshopProject
@@ -1121,26 +1123,89 @@ export default function CRMTasksTab({
     const fetchId = ++loadTasksSeqRef.current;
     if (!silent) setLoading(true);
     try {
-      const leadRes = await api.get(`/crm/leads/${leadId}`).catch(() => ({ data: null }));
-      const linkedProject = leadRes?.data?.linked_project || null;
-      const projectId = linkedProjectIdProp || leadRes?.data?.project_id || linkedProject?.id || null;
-      let sxWkt = embeddedWorkshopTypeId
+      const knownWkt = embeddedWorkshopTypeId
+        || workshopProject?.workshop_type_id
+        || workshopProject?.workshop_type?.id
+        || null;
+      const knownCompany = sxTemplateCompanyId
+        || workshopProject?.company_id
+        || workshopProject?.company?.id
+        || null;
+      const knownProjectId = linkedProjectIdProp || workshopProject?.id || null;
+      const skipProjectRefetch = !!(
+        knownProjectId
+        && (knownWkt || (Array.isArray(embeddedSxKanbanStages) && embeddedSxKanbanStages.length))
+      );
+
+      const publishTasks = (rows) => {
+        if (fetchId !== loadTasksSeqRef.current || fetchScope !== taskCompanyScope) return;
+        const displayTasks = (rows || []).map((t) => (
+          fetchScope === 'shared' ? t : { ...t, shared_view: undefined }
+        ));
+        setTasks(displayTasks);
+        const stagesExp = {};
+        displayTasks.forEach((t) => {
+          const k = t.logistics_pipeline_stage_id || t.production_pipeline_stage_id || t.pipeline_stage_id || t.stage_slug;
+          if (k) stagesExp[k] = true;
+        });
+        setExpandedStages(stagesExp);
+        setLoading(false);
+      };
+
+      const leadPromise = api.get(`/crm/leads/${leadId}`).catch(() => ({ data: null }));
+      const earlyTaskParams = {
+        task_scope: taskScope,
+        task_company_scope: taskCompanyScope,
+        ...(knownWkt ? { workshop_type_id: knownWkt } : {}),
+        ...(knownCompany ? { owner_company_id: knownCompany } : {}),
+      };
+      const prefetchedResult = prefetchedTasks
+        ? prefetchedTasks.then((rows) => (Array.isArray(rows) ? { data: rows } : null)).catch(() => null)
+        : null;
+      const earlyTasksPromise = prefetchedResult
+        || (skipProjectRefetch
+          ? api.get(`/crm/leads/${leadId}/tasks`, { params: earlyTaskParams })
+          : null);
+      if (earlyTasksPromise) {
+        void Promise.resolve(earlyTasksPromise).then((res) => {
+          if (res?.data) publishTasks(res.data);
+        }).catch(() => {});
+      }
+
+      if (skipProjectRefetch) {
+        if (workshopProject) applyProjectDateFields(workshopProject);
+        if (knownProjectId) setLinkedProjectId(knownProjectId);
+        if (knownWkt) setProjectWorkshopTypeId(String(knownWkt));
+      }
+
+      const leadRes = await leadPromise;
+      if (fetchId !== loadTasksSeqRef.current || fetchScope !== taskCompanyScope) return;
+      const linkedProject = leadRes?.data?.linked_project || workshopProject || null;
+      const projectId = knownProjectId || leadRes?.data?.project_id || linkedProject?.id || null;
+      let sxWkt = knownWkt
         || linkedProject?.workshop_type_id
         || linkedProject?.workshop_type?.id
         || null;
-      const projCtx = await loadLinkedProjectDates(projectId, linkedProject);
-      if (projCtx.workshopTypeId) sxWkt = projCtx.workshopTypeId;
-      if (sxWkt) setProjectWorkshopTypeId(String(sxWkt));
-
-      const taskParams = {
-        task_scope: taskScope,
-        task_company_scope: taskCompanyScope,
-        ...(sxWkt ? { workshop_type_id: sxWkt } : {}),
-        ...((sxTemplateCompanyId || leadRes?.data?.company_id)
-          ? { owner_company_id: sxTemplateCompanyId || leadRes?.data?.company_id }
-          : {}),
-      };
-      const tasksRes = await api.get(`/crm/leads/${leadId}/tasks`, { params: taskParams });
+      let projCtx = { workshopTypeId: sxWkt, sxKanbanStages: embeddedSxKanbanStages || null };
+      let tasksRes = earlyTasksPromise ? await earlyTasksPromise : null;
+      if (!tasksRes) {
+        if (!skipProjectRefetch) {
+          projCtx = await loadLinkedProjectDates(projectId, linkedProject);
+          if (projCtx.workshopTypeId) sxWkt = projCtx.workshopTypeId;
+          if (sxWkt) setProjectWorkshopTypeId(String(sxWkt));
+        }
+        const taskParams = skipProjectRefetch ? earlyTaskParams : {
+          task_scope: taskScope,
+          task_company_scope: taskCompanyScope,
+          ...(sxWkt ? { workshop_type_id: sxWkt } : {}),
+          ...((sxTemplateCompanyId || leadRes?.data?.company_id)
+            ? { owner_company_id: sxTemplateCompanyId || leadRes?.data?.company_id }
+            : {}),
+        };
+        tasksRes = await api.get(`/crm/leads/${leadId}/tasks`, { params: taskParams });
+      }
+      if (fetchId !== loadTasksSeqRef.current || fetchScope !== taskCompanyScope) return;
+      publishTasks(tasksRes.data);
 
       // Lấy pipeline_id của lead → load pipeline_stages thật
       // Một số task đã được auto-gen với pipeline_stage_id thuộc pipeline khác (deal cũ
@@ -1248,20 +1313,6 @@ export default function CRMTasksTab({
       } else {
         setTemplates([]);
       }
-
-      const displayTasks = (tasksRes.data || []).map((t) => (
-        fetchScope === 'shared' ? t : { ...t, shared_view: undefined }
-      ));
-      if (fetchId !== loadTasksSeqRef.current || fetchScope !== taskCompanyScope) return;
-      setTasks(displayTasks);
-
-      // Auto-expand stages that have tasks
-      const stagesExp = {};
-      displayTasks.forEach((t) => {
-        const k = t.logistics_pipeline_stage_id || t.production_pipeline_stage_id || t.pipeline_stage_id || t.stage_slug;
-        if (k) stagesExp[k] = true;
-      });
-      setExpandedStages(stagesExp);
     } catch (e) { console.error(e); }
     finally {
       if (fetchId === loadTasksSeqRef.current && fetchScope === taskCompanyScope) {

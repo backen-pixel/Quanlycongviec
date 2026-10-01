@@ -154,7 +154,8 @@ const corsExternalApi = cors({
   maxAge: CORS_PREFLIGHT_MAX_AGE,
 });
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api/external') || req.path.startsWith('/api/mcp')) {
+  if (req.path.startsWith('/api/external') || req.path.startsWith('/api/mcp')
+    || req.path.startsWith('/api/partner')) {
     return corsExternalApi(req, res, next);
   }
   return corsMainApp(req, res, next);
@@ -174,7 +175,7 @@ app.use(morgan(isProd ? 'tiny' : 'dev'));
 // Upload routes need large bodies; everything else stays small to bound memory.
 const UPLOAD_BODY_LIMIT = '256mb';
 const STANDARD_BODY_LIMIT = '2mb';
-const largeBodyRoutes = ['/api/upload', '/api/voice-recordings', '/api/external', '/api/mcp', '/api/messenger'];
+const largeBodyRoutes = ['/api/upload', '/api/voice-recordings', '/api/external', '/api/mcp', '/api/partner', '/api/messenger'];
 
 /** Zalo OA webhook — giữ rawBody để verify X-ZEvent-Signature */
 app.use('/api/zalo/webhook', express.raw({ type: '*/*', limit: '1mb' }), (req, res, next) => {
@@ -244,6 +245,7 @@ app.use('/api/auth', (req, res, next) => {
 });
 app.use('/api/external', externalLimiter);
 app.use('/api/mcp', mcpIpBurstLimiter, mcpIpWindowLimiter);
+app.use('/api/partner', externalLimiter);
 
 // Friendly JSON parse error — đặc biệt cho /api/external/* (webhook bên thứ 3)
 app.use((err, req, res, next) => {
@@ -390,6 +392,10 @@ app.use('/api/users', require('./routes/users'));
 app.use('/api/projects', require('./routes/projects'));
 app.use('/api/tasks', require('./routes/tasks'));
 app.use('/api/work-tasks', require('./routes/workTasks'));
+// Cổng ĐỌC cho đối tác quảng cáo / web ngoài — khoá riêng, IP allowlist, mức PII theo khoá
+try { app.use('/api/partner/v1', require('./routes/partner')); } catch (e) { console.warn('⚠️ Partner route failed:', e.message); }
+// Phân tích hiệu quả quảng cáo Facebook (nội bộ)
+try { app.use('/api/ad-analytics', require('./routes/adAnalytics')); } catch (e) { console.warn('⚠️ Ad analytics route failed:', e.message); }
 app.use('/api/management/project-logs', require('./routes/projectConstructionLogs'));
 app.use('/api/management', require('./routes/management'));
 app.use('/api/customers', require('./routes/customers'));
@@ -1236,6 +1242,14 @@ server.listen(config.port, () => {
   // — disable: NOTIFICATION_RETENTION_DISABLED=1, đổi số ngày: NOTIFICATION_RETENTION_DAYS
   try { require('./jobs/notificationRetentionCron').start(); } catch (e) { console.warn('[notification-retention] Failed to start:', e.message); }
   try { require('./jobs/logRetentionCron').start(); } catch (e) { console.warn('[log-retention] Failed to start:', e.message); }
+
+  // Cron chấm điểm chất lượng lead: 30 phút/lần, toàn bộ vào 03:00 Chủ nhật
+  // — phục vụ cổng đối tác /api/partner (disable: LEAD_QUALITY_CRON_DISABLED=1)
+  try { require('./jobs/leadQualityScoring').start(); } catch (e) { console.warn('[cham-diem-lead] Failed to start:', e.message); }
+
+  // Cron phân tích hiệu quả quảng cáo Facebook: 60 phút/lần (disable: AD_ANALYSIS_CRON_DISABLED=1)
+  try { require('./jobs/adAnalysisRunner').start(); } catch (e) { console.warn('[phan-tich-qc] Failed to start:', e.message); }
+  try { require('./jobs/fbMarketingSyncRunner').start(); } catch (e) { console.warn('[dong-bo-qc] Failed to start:', e.message); }
 
   // Cron CSKH: nhắc chăm lại lead lúc 8h30 & 13h30 VN (disable bằng CSKH_CRON_DISABLED=1)
   try { require('./jobs/cskhReminder').start(io); } catch (e) { console.warn('[cskh-cron] Failed to start:', e.message); }

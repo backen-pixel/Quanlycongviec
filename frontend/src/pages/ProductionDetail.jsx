@@ -431,12 +431,11 @@ function WorkshopInfoPanel({
       }
 
       const projectPatch = { [field]: payloadValue };
-      // Đổi ngày lắp → tự cập nhật hoàn thiện SX = lắp − 2 (cuối công đoạn hoàn thiện).
+      // Đổi ngày lắp → hoàn thiện SX và hạn xưởng = lắp − 2. Không ghi production_deadline = ngày lắp.
       if (field === 'delivery_date') {
-        projectPatch.production_deadline = payloadValue;
-        projectPatch.production_finish_date = payloadValue
-          ? (addCalendarDaysYmd(payloadValue, -2) || null)
-          : null;
+        const finish = payloadValue ? (addCalendarDaysYmd(payloadValue, -2) || null) : null;
+        projectPatch.production_finish_date = finish;
+        projectPatch.production_deadline = finish;
       }
       await api.put(`/projects/${project.id}`, projectPatch);
 
@@ -2113,19 +2112,37 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     load();
   }, [id]);
 
+  const sxTasksPrefetchRef = useRef(null);
+
   const load = async () => {
     setLoading(true);
     setLoadError(null);
+    if (moduleKey !== 'vc') {
+      const projectId = String(id);
+      const promise = api.get(`/production/projects/${projectId}/task-bootstrap`).then(async (boot) => {
+        const leadId = boot.data?.lead_id;
+        if (!leadId) return null;
+        const { data } = await api.get(`/crm/leads/${leadId}/tasks`, {
+          params: {
+            task_scope: 'production',
+            task_company_scope: 'own',
+            ...(boot.data?.workshop_type_id ? { workshop_type_id: boot.data.workshop_type_id } : {}),
+            ...(boot.data?.company_id ? { owner_company_id: boot.data.company_id } : {}),
+          },
+        });
+        return Array.isArray(data) ? data : [];
+      }).catch(() => null);
+      sxTasksPrefetchRef.current = { projectId, promise };
+    } else {
+      sxTasksPrefetchRef.current = null;
+    }
     const timeoutMs = 30_000;
     const timeout = new Promise((_, reject) => {
       window.setTimeout(() => reject(new Error('Timeout tải dự án — vui lòng thử lại')), timeoutMs);
     });
     try {
-      const [projRes, tasksRes] = await Promise.race([
-        Promise.all([
-          api.get(`${MOD.apiPrefix}/projects/${id}`),
-          api.get('/tasks', { params: { project_id: id } }).catch(() => ({ data: { tasks: [] } })),
-        ]),
+      const projRes = await Promise.race([
+        api.get(`${MOD.apiPrefix}/projects/${id}`),
         timeout,
       ]);
       const proj = normalizeWorkshopProjectDetail(projRes.data?.project);
@@ -2134,36 +2151,43 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         navigate(`${MOD.routePrefix}/projects/${proj.id}`, { replace: true });
         return;
       }
-      const list = tasksRes.data?.tasks || tasksRes.data || [];
-      setWorkshopTasksForProject(Array.isArray(list) ? list : []);
-      const scopedTasks = pickWorkshopTasksForSummary(list);
-      const total = scopedTasks.length;
-      const completed = scopedTasks.filter((t) => t.status === 'done').length;
-      const percent = total ? Math.round((completed / total) * 100) : 0;
-      setProductionTaskSummary({ total, completed, percent });
-      setProject(proj ? { ...proj, productionTaskProgress: percent } : proj);
+      setProject(proj || null);
       if (Array.isArray(proj?.crmSharedNotes) && proj.crmSharedNotes.length) {
         setCrmActivities(proj.crmSharedNotes);
       }
       if (Array.isArray(proj?.[MOD.stagesKey]) && proj[MOD.stagesKey].length) {
         setProductionStages(proj[MOD.stagesKey]);
       }
-      let dealIdForTasks = proj?.crmDeals?.[0]?.id || null;
-      setFallbackDealIdForTasks(null);
-      try {
-        if (!dealIdForTasks && proj?.id) {
-          // Fallback giống tab Đơn hàng: tìm deal đơn (fulfillment) theo orders của dự án để gen/hiển thị sx_*.
-          const { data: ordData } = await api.get(`/projects/${proj.id}/orders`).catch(() => ({ data: null }));
-          const orders = ordData?.orders || [];
-          const fid = orders.find((o) => o?.fulfillment_lead_id)?.fulfillment_lead_id || null;
-          if (fid) {
-            dealIdForTasks = String(fid);
-            setFallbackDealIdForTasks(dealIdForTasks);
-          }
-        }
-      } catch (_) { /* ignore */ }
-      await fetchCrmDealTaskSummary(dealIdForTasks);
       if (proj?.incidents) setIncidents(proj.incidents);
+      // Hiện chi tiết ngay để tab Công việc tải nhiệm vụ nhỏ song song, không chờ thêm GET tasks.
+      setLoading(false);
+      void (async () => {
+        try {
+          const tasksRes = await api.get('/tasks', { params: { project_id: id } }).catch(() => ({ data: { tasks: [] } }));
+          const list = tasksRes.data?.tasks || tasksRes.data || [];
+          setWorkshopTasksForProject(Array.isArray(list) ? list : []);
+          const scopedTasks = pickWorkshopTasksForSummary(list);
+          const total = scopedTasks.length;
+          const completed = scopedTasks.filter((t) => t.status === 'done').length;
+          const percent = total ? Math.round((completed / total) * 100) : 0;
+          setProductionTaskSummary({ total, completed, percent });
+          setProject((prev) => (prev && String(prev.id) === String(id)
+            ? { ...prev, productionTaskProgress: percent }
+            : prev));
+        } catch (_) { /* ignore */ }
+      })();
+      const dealIdForTasks = proj?.crmDeals?.[0]?.id || null;
+      setFallbackDealIdForTasks(null);
+      if (!dealIdForTasks && proj?.id) {
+        void (async () => {
+          try {
+            const { data: ordData } = await api.get(`/projects/${proj.id}/orders`).catch(() => ({ data: null }));
+            const orders = ordData?.orders || [];
+            const fid = orders.find((o) => o?.fulfillment_lead_id)?.fulfillment_lead_id || null;
+            if (fid) setFallbackDealIdForTasks(String(fid));
+          } catch (_) { /* ignore */ }
+        })();
+      }
       loadProjectDocs(id);
       loadTaskFiles(id);
       loadProjectActivities(id);
@@ -3758,6 +3782,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                     workshopProject={project}
                     sxTrangThaiO={sxTrangThaiO}
                     onDoiTrangThai={doiTrangThaiO}
+                    prefetchedTasks={
+                      sxTasksPrefetchRef.current?.projectId === String(project?.id)
+                        ? sxTasksPrefetchRef.current.promise
+                        : null
+                    }
                   />
                 ) : scopedWorkshopTasksForTab.length ? (
                   <WorkshopTasksFallbackPanel

@@ -5,6 +5,11 @@ const {
   resolveOverviewGroupDeadline,
   collectOpenChildDeadlineStamps,
   bucketStampRows,
+  indexSxCrmCompletion,
+  workshopChildDone,
+  deadlineGroupForWorkshopChild,
+  sxInstallPlanDeadlineIso,
+  earliestSxPlanDeadline,
 } = require('../src/helpers/projectOverviewDeadline');
 
 assert.equal(moduleKeyForOwnerLane('sales'), 'crm');
@@ -24,8 +29,33 @@ const sxDeadline = resolveOverviewGroupDeadline({
   },
   openChildren: [{ deadline: null }],
 });
-assert.ok(sxDeadline);
-assert.equal(String(sxDeadline).slice(0, 10), '2026-09-16');
+assert.equal(sxDeadline, null);
+
+const sxWorkshopDueIgnored = resolveOverviewGroupDeadline({
+  lane: 'production',
+  project: {
+    status: 'producing',
+    production_deadline: '2026-09-16',
+    delivery_date: '2026-09-18',
+  },
+  openChildren: [{ source: 'task', deadline: '2026-09-12T10:30:00.000Z' }],
+});
+assert.equal(sxWorkshopDueIgnored, null);
+
+const sxFromCrmTask = resolveOverviewGroupDeadline({
+  lane: 'production',
+  project: {
+    status: 'producing',
+    production_deadline: '2026-09-16',
+    delivery_date: '2026-09-18',
+  },
+  openChildren: [
+    { source: 'task', deadline: '2026-09-01T10:30:00.000Z' },
+    { source: 'crm_task', deadline: '2026-09-12T10:30:00.000Z' },
+    { source: 'crm_assignment', deadline: '2026-09-20T10:30:00.000Z' },
+  ],
+});
+assert.equal(sxFromCrmTask, '2026-09-12T10:30:00.000Z');
 
 const sxWhenVcLinked = resolveOverviewGroupDeadline({
   lane: 'production',
@@ -101,5 +131,41 @@ assert.equal(stamps[0].source, 'task');
 assert.equal(stamps[0].id, 'a');
 assert.equal(stamps[1].source, 'crm_task');
 assert.equal(bucketStampRows(stamps).length, 2);
+
+const planProject = {
+  company_id: '18c2563f-3495-498d-8199-23200c9f420e',
+  install_date: '2026-10-03T07:00:00.000Z',
+  sx_reception_date: '2026-09-11',
+  sx_schedule_slip_days: 0,
+};
+assert.equal(sxInstallPlanDeadlineIso(planProject, 'planning'), '2026-09-27T17:30:00.000+07:00');
+assert.equal(sxInstallPlanDeadlineIso(planProject, 'cabinet'), '2026-09-29T17:30:00.000+07:00');
+assert.equal(
+  earliestSxPlanDeadline(planProject, ['cabinet', 'planning']),
+  '2026-09-27T17:30:00.000+07:00',
+);
+assert.equal(sxInstallPlanDeadlineIso(planProject, ''), null);
+
+const leadProject = new Map([['lead-1', 'proj-1']]);
+const crmIndex = indexSxCrmCompletion([
+  { lead_id: 'lead-1', title: 'Sơn', status: 'completed', stage_slug: 'sx_gia_cong', production_pipeline_stage_id: 'stage-cabinet' },
+  { lead_id: 'lead-1', title: 'Vẽ và lên kế hoạch sản xuất', status: 'pending', stage_slug: 'sx_tiep_nhan', production_pipeline_stage_id: 'stage-plan' },
+  { lead_id: 'lead-1', title: 'Ngoài xưởng', status: 'completed', stage_slug: 'deal_new' },
+], leadProject);
+assert.equal(workshopChildDone({ project_id: 'proj-1', title: 'Sơn', status: 'todo' }, crmIndex), true);
+assert.equal(workshopChildDone({ project_id: 'proj-1', title: 'Vẽ và lên kế hoạch sản xuất', status: 'todo' }, crmIndex), false);
+assert.equal(workshopChildDone({ project_id: 'proj-1', title: 'Ngoài xưởng', status: 'todo' }, crmIndex), false);
+const stages = new Map([
+  ['stage-plan', { id: 'stage-plan', group_key: 'tiep_nhan', deadline_group: null }],
+  ['stage-cabinet', { id: 'stage-cabinet', group_key: 'gia_cong', deadline_group: 'cabinet' }],
+]);
+assert.equal(
+  deadlineGroupForWorkshopChild({ project_id: 'proj-1', title: 'Vẽ và lên kế hoạch sản xuất' }, crmIndex, stages),
+  'planning',
+);
+assert.equal(
+  deadlineGroupForWorkshopChild({ project_id: 'proj-1', title: 'Sơn' }, crmIndex, stages),
+  'cabinet',
+);
 
 console.log('project-overview-deadline: OK');

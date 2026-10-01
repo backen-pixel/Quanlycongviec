@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike, normalizeRole } from '../lib/adminRole';
+import { useDefaultCompanyOnce } from '../hooks/useDefaultCompanyOnce';
 import { formatDate } from '../lib/utils';
 import { unpackAssignmentsDict } from '../lib/assignmentDictPayload';
 import {
@@ -29,6 +31,7 @@ import {
   SubmitFilesCompact,
   StagedAttachmentsSection,
 } from '../components/crm/CrmAssignmentFiles';
+import { CrmTaskNotesFilesPanel } from '../components/WorkTaskExtrasPanel';
 import {
   loadPersonalColumns,
   savePersonalColumns,
@@ -666,6 +669,7 @@ function AssignQuickFilterPanel({
   filterStatus, setFilterStatus,
   filterPriority, setFilterPriority,
   onSeeAllStaff, loadingMore = false, userDict = null,
+  projectScope = null, projectHref = '',
 }) {
   // Trên mobile panel này nằm TRÊN bảng Kanban; để mở sẵn (cao ~455px) sẽ đẩy bảng xuống
   // quá sâu. Mặc định thu gọn ở màn hẹp, giống cách dải KPI đang làm.
@@ -848,6 +852,45 @@ function AssignQuickFilterPanel({
               </button>
             )}
           </div>
+          {projectScope ? (
+            <div className="border-t border-slate-100 px-3 py-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Dự án đang lọc
+              </p>
+              <p className="mt-1.5 text-[12px] font-semibold text-teal-800 truncate" title={projectScope.code || ''}>
+                {projectScope.code || 'Chưa có mã'}
+              </p>
+              {projectScope.name ? (
+                <p className="mt-0.5 text-[11px] leading-snug text-slate-800 line-clamp-3" title={projectScope.name}>
+                  {projectScope.name}
+                </p>
+              ) : null}
+              {[projectScope.company_name, projectScope.region_name].filter(Boolean).length ? (
+                <p className="mt-1 text-[10px] text-slate-500 truncate">
+                  {[projectScope.company_name, projectScope.region_name].filter(Boolean).join(' · ')}
+                </p>
+              ) : null}
+              {projectScope.phone ? (
+                <p className="text-[10px] text-slate-500 truncate">{projectScope.phone}</p>
+              ) : null}
+              {projectScope.install_date ? (
+                <p className="text-[10px] text-slate-500">Lắp {formatDate(projectScope.install_date)}</p>
+              ) : null}
+              {projectScope.production_person_name ? (
+                <p className="text-[10px] text-slate-600 truncate" title={projectScope.production_person_name}>
+                  Phụ trách: {projectScope.production_person_name}
+                </p>
+              ) : null}
+              {projectHref ? (
+                <Link
+                  to={projectHref}
+                  className={`mt-1.5 inline-flex text-[11px] font-semibold ${theme.activeText} hover:underline`}
+                >
+                  Mở dự án
+                </Link>
+              ) : null}
+            </div>
+          ) : null}
         </>
     </aside>
   );
@@ -1563,7 +1606,9 @@ export default function CRMAssignmentsPage({
   const { user } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const isAdmin = ['admin', 'manager', 'sales_admin'].includes(user?.role);
+  const isAdmin = isAdminLike(user)
+    || normalizeRole(user?.role) === 'manager'
+    || normalizeRole(user?.role) === 'crm_production_admin';
   const uid = String(user?.id || '');
   const canManageTask = useCallback((t) => (
     t?._fromCrmTask ? false : canManageAssignmentAccess(t, user)
@@ -1633,6 +1678,10 @@ export default function CRMAssignmentsPage({
   const [filterStatus, setFilterStatus] = useState('');
   const [filterCompanyId, setFilterCompanyId] = useState(() => {
     try { return localStorage.getItem(LS_COMPANY) || ''; } catch { return ''; }
+  });
+  useDefaultCompanyOnce(filterCompanyId, setFilterCompanyId, companies, {
+    enabled: isAdmin && !!user?.company_id,
+    preferredId: user?.company_id || '',
   });
   const [filterDepartmentId, setFilterDepartmentId] = useState(() => {
     try { return localStorage.getItem(LS_DEPARTMENT) || ''; } catch { return ''; }
@@ -1846,7 +1895,10 @@ export default function CRMAssignmentsPage({
     if (searchDebounced && !(filterProjectId && searchDebounced === filterProjectLabel)) {
       params.q = searchDebounced;
     }
-    if (assignmentModule && !filterProjectId) params.assignment_module = assignmentModule;
+    // Lọc theo dự án trên Giao việc SX vẫn giữ module xưởng — không kéo nhiệm vụ CRM/VC.
+    if (assignmentModule && (!filterProjectId || assignmentModule === 'production')) {
+      params.assignment_module = assignmentModule;
+    }
     if (filterProjectId) params.project_id = filterProjectId;
     else if (filterLeadId) params.lead_id = filterLeadId;
     return params;
@@ -1944,6 +1996,7 @@ export default function CRMAssignmentsPage({
         inProgress: s.in_progress || 0,
         completed: s.completed || 0,
         overdue: s.overdue || 0,
+        project: s.project || null,
       } : null);
       setSchedules(schedRes.data?.schedules || []);
 
@@ -2096,7 +2149,9 @@ export default function CRMAssignmentsPage({
       if (searchDebounced && !(filterProjectId && searchDebounced === filterProjectLabel)) {
         params.q = searchDebounced;
       }
-      if (assignmentModule && !filterProjectId) params.assignment_module = assignmentModule;
+      if (assignmentModule && (!filterProjectId || assignmentModule === 'production')) {
+        params.assignment_module = assignmentModule;
+      }
       if (filterProjectId) params.project_id = filterProjectId;
       else if (filterLeadId) params.lead_id = filterLeadId;
       const { data: s } = await api.get(`${apiBase}/stats`, { params });
@@ -2107,6 +2162,7 @@ export default function CRMAssignmentsPage({
           inProgress: s.in_progress || 0,
           completed: s.completed || 0,
           overdue: s.overdue || 0,
+          project: s.project || null,
         });
       }
     } catch { /* giữ KPI cũ */ }
@@ -2641,11 +2697,19 @@ export default function CRMAssignmentsPage({
     if (match) setViewingItem(match);
   }, [items]);
 
-  const openDealSuggestDetail = useCallback((dealId) => {
+  const openDealSuggestDetail = useCallback((deal) => {
     setSearchSuggestDismissed(true);
     setSearchFocused(false);
-    navigate(`/crm/leads/${dealId}`);
-  }, [navigate]);
+    const mod = normalizeAssignmentPageModule(assignmentModule);
+    if (mod === 'production' || mod === 'logistics') {
+      const match = items.find((t) => String(t.lead?.id || t.lead_id) === String(deal?.id));
+      const projectId = deal?.project_id || match?.lead?.project_id || match?.project_id;
+      const path = projectDetailPathForModule(mod, projectId);
+      if (path) navigate(path);
+      return;
+    }
+    if (deal?.id) navigate(`/crm/leads/${deal.id}`);
+  }, [navigate, assignmentModule, items]);
 
   if (loading) {
     return (
@@ -2785,7 +2849,9 @@ export default function CRMAssignmentsPage({
           <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-teal-100 bg-teal-50/80">
             <span className="text-xs font-semibold text-teal-900">
               {filterProjectId
-                ? `Giao việc của ${scopedProjectLabel || 'dự án này'}`
+                ? (assignmentModule === 'production'
+                  ? `Nhiệm vụ xưởng của ${scopedProjectLabel || 'dự án này'}`
+                  : `Giao việc của ${scopedProjectLabel || 'dự án này'}`)
                 : 'Giao việc của deal đang chọn'}
             </span>
             {projectDetailHref ? (
@@ -2878,7 +2944,7 @@ export default function CRMAssignmentsPage({
                           <span className={`font-bold ${theme.suggestCount}`}>{dealSuggestResults.length}</span>
                           {' '}deal cho &ldquo;{search.trim()}&rdquo;
                           <span className={`block text-[10px] font-normal mt-0.5 ${theme.suggestHeaderMuted}`}>
-                            Chọn dòng để lọc nhiệm vụ · biểu tượng mắt để mở deal
+                            Chọn dòng để lọc nhiệm vụ · biểu tượng mắt để mở chi tiết {assignmentModule === 'production' ? 'dự án sản xuất' : assignmentModule === 'logistics' ? 'dự án lắp đặt' : 'deal'}
                             {dealSuggestResults.length > 10 ? ' · Hiển thị 10 kết quả đầu' : ''}
                           </span>
                         </>
@@ -2925,11 +2991,13 @@ export default function CRMAssignmentsPage({
                         </button>
                         <button
                           type="button"
-                          title="Mở chi tiết deal"
-                          aria-label={`Mở chi tiết ${deal.code || deal.title || deal.id}`}
+                          title={assignmentModule === 'production' ? 'Mở chi tiết dự án' : assignmentModule === 'logistics' ? 'Mở chi tiết dự án lắp đặt' : 'Mở chi tiết deal'}
+                          aria-label={assignmentModule === 'production' || assignmentModule === 'logistics'
+                            ? `Mở chi tiết dự án ${deal.project_code || deal.code || deal.title || deal.id}`
+                            : `Mở chi tiết ${deal.code || deal.title || deal.id}`}
                           className={`shrink-0 flex items-center justify-center px-2.5 border-l border-slate-100 text-slate-400 transition-colors cursor-pointer ${theme.suggestEye}`}
                           onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => openDealSuggestDetail(deal.id)}
+                          onClick={() => openDealSuggestDetail(deal)}
                         >
                           <Eye className="h-4 w-4" />
                         </button>
@@ -3207,6 +3275,8 @@ export default function CRMAssignmentsPage({
           filterPriority={filterPriority}
           setFilterPriority={setFilterPriority}
           loadingMore={loadingMore}
+          projectScope={filterProjectId ? (serverStats?.project || null) : null}
+          projectHref={filterProjectId ? (projectDetailHref || '') : ''}
         />
         <div className="min-w-0 flex-1 w-full">
         <KanbanView
@@ -3629,6 +3699,13 @@ function KanbanView({
 function Card({ task, canManage, canMove, onDragStart, onOpen, onEdit, onDelete, onUpdate }) {
   const pri = PRIORITY_MAP[task.priority] || PRIORITY_MAP.medium;
   const overdue = task.deadline && new Date(task.deadline) < new Date() && task.status !== 'completed';
+  const [notesOpen, setNotesOpen] = useState(false);
+  const notesLeadId = task.lead?.id || task.lead_id || task.crm_task?.lead_id || '';
+  const notesTaskId = task.crm_task_id || '';
+  const canNotes = !!(notesLeadId && notesTaskId);
+  const fileCount = Number(task.file_count ?? task.crm_task?.file_count) || 0;
+  const savedNoteCount = Number(task.note_count ?? task.crm_task?.note_count) || 0;
+  const noteCount = savedNoteCount + (String(task.crm_task?.notes || '').trim() ? 1 : 0);
   return (
     <div
       draggable={!!canMove}
@@ -3683,7 +3760,43 @@ function Card({ task, canManage, canMove, onDragStart, onOpen, onEdit, onDelete,
               </span>
             )}
             <AssigneeStack assignees={task.assignees} fallback={task.assignee} />
+            {canNotes && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setNotesOpen((open) => !open); }}
+                className={`inline-flex items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold cursor-pointer ${
+                  notesOpen
+                    ? 'border-blue-300 bg-blue-50 text-blue-700'
+                    : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-blue-200 hover:text-blue-700'
+                }`}
+                title="Ghi chú & file"
+              >
+                <Paperclip className="h-3 w-3" />
+                Ghi chú & file
+                {fileCount > 0 && (
+                  <span className="tabular-nums">{fileCount} file</span>
+                )}
+                {noteCount > 0 && (
+                  <span className="inline-flex items-center gap-0.5 tabular-nums">
+                    <MessageSquare className="h-2.5 w-2.5" />
+                    {noteCount}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
+          {notesOpen && canNotes && (
+            <div
+              className="mt-2 border-t border-slate-100 pt-2"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <CrmTaskNotesFilesPanel
+                leadId={notesLeadId}
+                taskId={notesTaskId}
+                notes={task.crm_task?.notes || ''}
+              />
+            </div>
+          )}
         </div>
         {canManage && (
           <div className="opacity-0 group-hover:opacity-100 flex flex-col gap-0.5">
@@ -5457,7 +5570,9 @@ function CommentSection({ assignmentId }) {
   const showOnScreen = useCommentShowOnScreenEnabled();
   const { apiBase } = useAssignmentsPageContext();
   const { user } = useAuth();
-  const isAdmin = ['admin', 'manager', 'sales_admin'].includes(user?.role);
+  const isAdmin = isAdminLike(user)
+    || normalizeRole(user?.role) === 'manager'
+    || normalizeRole(user?.role) === 'crm_production_admin';
   const [comments, setComments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState('');

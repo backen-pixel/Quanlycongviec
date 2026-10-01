@@ -48,6 +48,7 @@ import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
   applyWorkshopProjectRenamePatches,
 } from '../lib/workshopPipelineStorage';
+import { formatDate } from '../lib/utils';
 import { VC_TEMP_LOCK_MSG, isVcTempColumnLocked } from '../lib/projectLogistics';
 import { gopPipeline, coTheGopCot, docVcGopCot, ghiVcGopCot, nhanCotLon } from '../lib/sxGopCot';
 
@@ -1144,7 +1145,7 @@ export default function LogisticsDashboard() {
                     ref={overdueTriggerRef}
                     type="button"
                     onClick={() => setShowOverduePopover((v) => !v)}
-                    className={`relative inline-flex items-center justify-center h-7 w-7 rounded-md border cursor-pointer transition-colors ${
+                    className={`relative inline-flex items-center justify-center gap-1 h-7 px-2 rounded-md border cursor-pointer transition-colors ${
                       showOverduePopover
                         ? 'border-red-400 bg-red-100 text-red-700'
                         : 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100'
@@ -1154,7 +1155,8 @@ export default function LogisticsDashboard() {
                     title={`${overdueItems.length} dự án quá hạn — bấm để xem danh sách`}
                   >
                     <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2.5} />
-                    <span className="absolute -top-1 -right-1 min-w-[15px] h-[15px] px-0.5 rounded-full bg-red-600 text-white text-[8px] font-bold flex items-center justify-center tabular-nums leading-none">
+                    <span className="text-[11px] font-bold whitespace-nowrap">Quá hạn</span>
+                    <span className="min-w-[15px] h-[15px] px-0.5 rounded-full bg-red-600 text-white text-[8px] font-bold flex items-center justify-center tabular-nums leading-none">
                       {overdueItems.length > 99 ? '99+' : overdueItems.length}
                     </span>
                   </button>
@@ -2021,6 +2023,57 @@ const KanbanStageCard = memo(function KanbanStageCard({
   );
 });
 
+function vcYmd(raw) {
+  const m = String(raw || '').match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : '';
+}
+
+function vcHasClock(raw) {
+  const m = String(raw || '').match(/T(\d{2}):(\d{2})/);
+  if (!m) return false;
+  return !(m[1] === '00' && m[2] === '00');
+}
+
+function formatVcWhen(raw) {
+  if (!raw) return '';
+  if (!vcHasClock(raw)) return formatDate(raw);
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return '';
+  const hm = d.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  return `${formatDate(raw)} ${hm}`;
+}
+
+function vcDateUrgency(raw) {
+  if (!raw) return 'normal';
+  const ts = new Date(raw).getTime();
+  if (!Number.isFinite(ts)) return 'normal';
+  const diff = ts - Date.now();
+  if (diff < 0) return 'overdue';
+  if (diff <= 3 * 86400000) return 'soon';
+  return 'normal';
+}
+
+const VC_DATE_TONE = {
+  overdue: 'bg-red-50 text-red-700 border-red-200',
+  soon: 'bg-amber-50 text-amber-800 border-amber-200',
+  normal: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+};
+
+function VcDateChip({ label, value, title, tone = 'normal', icon = null, className = '' }) {
+  if (!value) return null;
+  const text = formatVcWhen(value);
+  if (!text) return null;
+  return (
+    <span
+      className={`inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium border tabular-nums ${className || VC_DATE_TONE[tone] || VC_DATE_TONE.normal}`}
+      title={title || `${label}: ${text}`}
+    >
+      {icon}
+      {label ? `${label}: ` : ''}{text}
+    </span>
+  );
+}
+
 // Kanban Card
 const KanbanCard = memo(function KanbanCard({
   item, stage, calculateDays, isSelected, onToggleSelect, onDelete, onMoveStage, pipelineStages = [],
@@ -2051,6 +2104,9 @@ const KanbanCard = memo(function KanbanCard({
   const deals = Array.isArray(item.crm_deals) ? item.crm_deals : [];
   const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
   const cardTitle = (primaryDeal?.title || '').trim() || item.name || '';
+  const leadCreatedAt = primaryDeal?.created_at || item.created_at || null;
+  const vcDeadline = resolveEffectiveModuleDeadline(DEADLINE_MODULE.LOGISTICS, item, stage);
+  const vcOverdue = vcDeadline?.deadlineTs != null && vcDeadline.deadlineTs < Date.now();
   const crmAssignee = primaryDeal?.assignee || primaryDeal?.lead_owner || item.sales_person || null;
   const sxAssignee = item.production_person || null;
   const vcAssignee = item.logistics_person || null;
@@ -2144,7 +2200,17 @@ const KanbanCard = memo(function KanbanCard({
       )}
 
       <div className="flex items-start justify-between pr-7 mb-2 gap-1.5">
-        <p className="text-xs font-semibold text-orange-600 min-w-0 truncate">{item.code}</p>
+        <div className="flex items-center gap-1.5 min-w-0">
+          <p className="text-xs font-semibold text-orange-600 min-w-0 truncate">{item.code}</p>
+          {leadCreatedAt && (
+            <span
+              className="text-[10px] text-gray-500 tabular-nums shrink-0"
+              title={`Tạo lead: ${formatDate(leadCreatedAt)}`}
+            >
+              {formatDate(leadCreatedAt)}
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-1 shrink-0">
           {tempLocked && (
             <span
@@ -2177,6 +2243,71 @@ const KanbanCard = memo(function KanbanCard({
         </p>
       )}
 
+      {(() => {
+        const installDay = vcYmd(item.install_date);
+        const deliveryDay = vcYmd(item.delivery_date);
+        const finishRaw = item.production_deadline || item.production_finish_date || null;
+        const installMismatch = !!(installDay && deliveryDay && installDay !== deliveryDay);
+        const showTimes = vcOverdue || item.order_date || item.pickup_at || item.install_date || item.delivery_date || finishRaw;
+        if (!showTimes) return null;
+        return (
+          <div className="flex flex-wrap items-center gap-1 mb-2">
+            {vcOverdue && (
+              <span
+                className="inline-flex items-center gap-1 rounded-md border border-red-700 bg-red-600 px-2 py-1 text-[11px] font-bold text-white tabular-nums"
+                title={`Quá hạn lắp đặt: ${formatDate(vcDeadline.deadlineAt || vcDeadline.raw)}`}
+              >
+                <AlertTriangle className="h-3 w-3 shrink-0" strokeWidth={2.6} />
+                Quá hạn {formatDate(vcDeadline.deadlineAt || vcDeadline.raw)}
+              </span>
+            )}
+            <VcDateChip
+              label="Đặt"
+              value={item.order_date}
+              title={item.order_date ? `Ngày đặt hàng: ${formatDate(item.order_date)}` : ''}
+              className="bg-indigo-50 text-indigo-700 border-indigo-100"
+              icon={<Calendar className="h-2.5 w-2.5 shrink-0" strokeWidth={2.4} />}
+            />
+            <VcDateChip
+              label="Lấy"
+              value={item.pickup_at}
+              title={item.pickup_at ? `Ngày lấy hàng: ${formatVcWhen(item.pickup_at)}` : ''}
+              tone={vcDateUrgency(item.pickup_at)}
+              icon={<Package className="h-2.5 w-2.5 shrink-0" strokeWidth={2.4} />}
+            />
+            <VcDateChip
+              label="Lắp"
+              value={item.install_date}
+              title={item.install_date ? `Ngày lắp CRM / Lắp đặt: ${formatVcWhen(item.install_date)}` : ''}
+              tone={installMismatch ? 'soon' : vcDateUrgency(item.install_date)}
+              icon={<Wrench className="h-2.5 w-2.5 shrink-0" strokeWidth={2.4} />}
+            />
+            <VcDateChip
+              label="Lắp SX"
+              value={item.delivery_date}
+              title={`Ngày lắp sản xuất: ${formatDate(item.delivery_date)}${installMismatch ? ' · lệch ngày lắp CRM / Lắp đặt' : ''}`}
+              tone={installMismatch ? 'soon' : vcDateUrgency(item.delivery_date)}
+              icon={<Truck className="h-2.5 w-2.5 shrink-0" strokeWidth={2.4} />}
+            />
+            {finishRaw && (
+              <span
+                className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${
+                  vcDateUrgency(finishRaw) === 'overdue'
+                    ? 'bg-red-600 text-white border-red-700'
+                    : vcDateUrgency(finishRaw) === 'soon'
+                      ? 'bg-amber-100 text-amber-800 border-amber-300'
+                      : 'bg-slate-100 text-slate-600 border-slate-200'
+                }`}
+                title={`Hoàn thiện / giao xưởng: ${formatDate(finishRaw)}`}
+              >
+                <span aria-hidden>🏭</span>
+                {formatDate(finishRaw)}
+              </span>
+            )}
+          </div>
+        );
+      })()}
+
       {(item.customer?.full_name || item.customer?.phone) && (
         <div className="space-y-0.5 mb-2">
           {item.customer?.full_name && <p className="text-xs text-gray-600 truncate">👤 {item.customer.full_name}</p>}
@@ -2199,7 +2330,13 @@ const KanbanCard = memo(function KanbanCard({
             <p className="text-[10px] text-gray-400"><span className="text-gray-500">Phụ trách:</span> —</p>
           )}
         </div>
-        <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded whitespace-nowrap shrink-0">{calculateDays(item.created_at)}</span>
+        <span
+          className="inline-flex items-center gap-0.5 text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded whitespace-nowrap shrink-0"
+          title={item.created_at ? `Tạo dự án: ${formatDate(item.created_at)} · ${calculateDays(item.created_at)}` : ''}
+        >
+          <Clock className="h-2.5 w-2.5" />
+          {item.created_at ? formatDate(item.created_at) : '—'}
+        </span>
       </div>
 
       {item.deadline && (

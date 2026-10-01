@@ -1075,7 +1075,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
     const orFilter = buildLogisticsScopeFilter(stageIds);
     if (!orFilter) return res.json({ projects: [], total: 0, page: parsedPage, totalPages: 1 });
 
-    const selectFull = `id, code, name, estimated_value, priority, deadline, install_date, delivery_date, pickup_at, created_at, status, notes, vc_notes, vc_temp_staged, company_id, logistics_company_id,
+    const selectFull = `id, code, name, estimated_value, priority, deadline, order_date, install_date, delivery_date, pickup_at, production_deadline, production_finish_date, created_at, status, notes, vc_notes, vc_temp_staged, company_id, logistics_company_id,
         current_stage_id, vc_kanban_column_id, workshop_type_id,
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone),
@@ -1087,7 +1087,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
         sales_person:users!projects_sales_person_id_fkey(id, full_name),
         workshop_type:workshop_project_types(id, name, applies_to),
         ${TASKS_EMBED}`;
-    const selectLite = `id, code, name, estimated_value, deadline, install_date, delivery_date, pickup_at, created_at, status, vc_temp_staged, company_id, logistics_company_id,
+    const selectLite = `id, code, name, estimated_value, deadline, order_date, install_date, delivery_date, pickup_at, production_deadline, production_finish_date, created_at, status, vc_temp_staged, company_id, logistics_company_id,
         current_stage_id, vc_kanban_column_id, workshop_type_id,
         logistics_person_id, installer_person_id, production_person_id, sales_person_id,
         current_stage:workflow_stages(id, slug, name),

@@ -451,6 +451,57 @@ async function attachIndexCrmTaskStatus(rows) {
 const ASSIGN_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const NO_MATCH_UUID = '00000000-0000-0000-0000-000000000000';
 
+/** Tóm tắt dự án khi Giao việc lọc ?project_id= — hiện dưới thống kê nhân viên. */
+async function loadAssignmentProjectScope(projectId) {
+  const pid = String(projectId || '').trim();
+  if (!ASSIGN_UUID_RE.test(pid)) return null;
+  try {
+    const { data: project, error } = await supabase
+      .from('projects')
+      .select(`
+        id, code, name, install_date,
+        company:companies!projects_company_id_fkey(short_name, name),
+        customer:customers(full_name, phone),
+        production_person:users!projects_production_person_id_fkey(full_name)
+      `)
+      .eq('id', pid)
+      .maybeSingle();
+    if (error) throw error;
+    if (!project) return null;
+    const { data: lead } = await supabase
+      .from('crm_leads')
+      .select('code, title, phone, region_id')
+      .eq('project_id', pid)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    let regionName = null;
+    if (lead?.region_id) {
+      const { data: region } = await supabase
+        .from('company_regions')
+        .select('name')
+        .eq('id', lead.region_id)
+        .maybeSingle();
+      regionName = region?.name || null;
+    }
+    const phone = String(lead?.phone || project.customer?.phone || '').trim();
+    return {
+      id: project.id,
+      code: project.code || null,
+      name: lead?.title || project.name || project.customer?.full_name || null,
+      deal_code: lead?.code || null,
+      company_name: project.company?.short_name || project.company?.name || null,
+      region_name: regionName,
+      phone: phone || null,
+      install_date: project.install_date || null,
+      production_person_name: project.production_person?.full_name || null,
+    };
+  } catch (err) {
+    console.warn('[crm/assignments] project scope:', err?.message || err);
+    return null;
+  }
+}
+
 async function fetchLeadIdsForProject(projectId) {
   const pid = String(projectId || '').trim();
   if (!ASSIGN_UUID_RE.test(pid)) return [];
@@ -466,6 +517,19 @@ function skipAssignModuleForProject(query = {}) {
   return ASSIGN_UUID_RE.test(String(query.project_id || '').trim());
 }
 
+/** Lọc ?project_id= vẫn giữ module trên Giao việc SX — không kéo giao việc CRM/VC. */
+function shouldApplyAssignModuleFilter(query, moduleFilter, { skipModule = false } = {}) {
+  if (skipModule || !isValidAssignModuleFilter(moduleFilter)) return false;
+  if (!skipAssignModuleForProject(query)) return true;
+  return String(moduleFilter || '').trim().toLowerCase() === 'production';
+}
+
+/** Nhiệm vụ pipeline của xưởng — cùng quy tắc task_scope=production. */
+function isWorkshopProductionCrmTask(task) {
+  const slug = String(task?.stage_slug || '');
+  return slug.startsWith('sx_') || !!task?.production_pipeline_stage_id;
+}
+
 function normalizeTaskStatusForAssignment(status) {
   const s = String(status || 'pending').toLowerCase();
   if (s === 'done' || s === 'completed') return 'completed';
@@ -479,16 +543,22 @@ async function mergeProjectCrmTaskAssignments(rows, leadIds, {
   columnId = '',
   indexOnly = false,
   columns = [],
+  assignmentModule = '',
 } = {}) {
   const list = Array.isArray(rows) ? rows : [];
   if (!leadIds?.length) return list;
+  const moduleKey = String(assignmentModule || '').trim().toLowerCase();
   const have = new Set(list.map((r) => String(r.crm_task_id || '')).filter(Boolean));
   const { data: tasks } = await supabase
     .from('crm_tasks')
-    .select('id, title, description, lead_id, status, priority, deadline, created_at, updated_at, completed_at')
+    .select('id, title, description, lead_id, status, priority, deadline, created_at, updated_at, completed_at, stage_slug, production_pipeline_stage_id, notes')
     .in('lead_id', leadIds)
     .limit(500);
-  const missing = (tasks || []).filter((t) => !have.has(String(t.id)));
+  const missing = (tasks || []).filter((t) => {
+    if (have.has(String(t.id))) return false;
+    if (moduleKey === 'production' && !isWorkshopProductionCrmTask(t)) return false;
+    return true;
+  });
   if (!missing.length) return list;
 
   const { data: leads } = await supabase
@@ -547,6 +617,7 @@ async function mergeProjectCrmTaskAssignments(rows, leadIds, {
       company: null,
       executor_company: null,
       lead,
+      crm_task: { id: t.id, notes: t.notes || '', lead_id: t.lead_id },
     });
   });
   return extra.length ? list.concat(extra) : list;
@@ -996,7 +1067,7 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
           .not('deadline', 'is', null)
           .lt('deadline', startIso);
       }
-      if (!skipModule && !skipAssignModuleForProject(req.query) && isValidAssignModuleFilter(moduleFilter)) {
+      if (shouldApplyAssignModuleFilter(req.query, moduleFilter, { skipModule })) {
         q = q.eq('assignment_module', moduleFilter);
       }
       if (req.query.q) {
@@ -1049,6 +1120,7 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
         columnId: req.query.column_id,
         indexOnly: true,
         columns: cols,
+        assignmentModule: moduleFilter,
       });
       return res.json({
         index: indexRowsOut,
@@ -1114,6 +1186,7 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
     const outRows = await mergeProjectCrmTaskAssignments(rows, projectLeadIds, {
       columnId: req.query.column_id,
       columns: await getSharedColumnsCached(),
+      assignmentModule: moduleFilter,
     });
     const meta = {
       has_more: pageLimit != null ? outRows.length >= pageLimit : false,
@@ -1521,7 +1594,7 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
           q = q.or(`company_id.eq.${companyId},executor_company_id.eq.${companyId}`);
         }
       }
-      if (!skipModule && !skipAssignModuleForProject(req.query) && isValidAssignModuleFilter(moduleFilter)) {
+      if (shouldApplyAssignModuleFilter(req.query, moduleFilter, { skipModule })) {
         q = q.eq('assignment_module', moduleFilter);
       }
       if (priorityFilter) q = q.eq('priority', priorityFilter);
@@ -1541,7 +1614,7 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
       if (error && /executor_company_id/.test(error.message || '') && isAdmin(req) && req.query.company_id) {
         let qExec = supabase.from('crm_assignments').select('id', { count: 'exact', head: true })
           .eq('company_id', req.query.company_id);
-        if (!opts.skipModule && !skipAssignModuleForProject(req.query) && isValidAssignModuleFilter(moduleFilter)) {
+        if (shouldApplyAssignModuleFilter(req.query, moduleFilter, { skipModule: opts.skipModule })) {
           qExec = qExec.eq('assignment_module', moduleFilter);
         }
         if (statsIdFilter) qExec = qExec.in('id', statsIdFilter);
@@ -1567,10 +1640,15 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
     ]);
     if (skipAssignModuleForProject(req.query)) {
       const leadIds = await fetchLeadIdsForProject(req.query.project_id);
-      const extras = await mergeProjectCrmTaskAssignments([], leadIds, {
+      let linkedQ = supabase.from('crm_assignments').select('crm_task_id');
+      ({ q: linkedQ } = await applyStatsFilters(linkedQ));
+      const { data: linked } = await linkedQ.not('crm_task_id', 'is', null).limit(500);
+      const extras = await mergeProjectCrmTaskAssignments(linked || [], leadIds, {
         columns: await getSharedColumnsCached(),
+        assignmentModule: moduleFilter,
       });
       extras.forEach((t) => {
+        if (!t._fromCrmTask) return;
         total += 1;
         if (t.status === 'completed') completed += 1;
         else if (t.status === 'in_progress') inProgress += 1;
@@ -1580,6 +1658,9 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
       });
     }
     const pending = Math.max(0, total - completed - inProgress);
+    const project = skipAssignModuleForProject(req.query)
+      ? await loadAssignmentProjectScope(req.query.project_id)
+      : null;
 
     res.json({
       pending,
@@ -1587,6 +1668,7 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
       completed,
       overdue,
       total,
+      project,
       stats_rev: 4,
     });
   } catch (e) {

@@ -2793,6 +2793,48 @@ function isWorkshopTypeColumnError(err) {
   return m.includes('workshop_type_id');
 }
 
+function pickBootstrapDeal(rows) {
+  const list = (rows || []).filter(Boolean);
+  const typed = list.filter((d) => String(d.type || '') === 'deal');
+  const pool = typed.length ? typed : list;
+  const roots = pool.filter((d) => d.parent_lead_id == null || String(d.parent_lead_id).trim() === '');
+  const preferred = roots.length ? roots : pool;
+  return [...preferred].sort((a, b) => {
+    const ca = String(a.created_at || '');
+    const cb = String(b.created_at || '');
+    if (ca !== cb) return ca.localeCompare(cb);
+    return String(a.id || '').localeCompare(String(b.id || ''));
+  })[0] || null;
+}
+
+/** Nhẹ: mã deal + loại xưởng để tab Công việc tải nhiệm vụ nhỏ song song với GET chi tiết. */
+r.get('/projects/:id/task-bootstrap', requirePermission('projects', 'view'), async (req, res) => {
+  try {
+    const { data: project, error } = await supabase
+      .from('projects')
+      .select('id, company_id, workshop_type_id')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!project) return res.status(404).json({ error: 'Không tìm thấy dự án' });
+    const { data: leads, error: leadErr } = await supabase
+      .from('crm_leads')
+      .select('id, type, parent_lead_id, created_at')
+      .eq('project_id', project.id)
+      .order('created_at', { ascending: true })
+      .limit(30);
+    if (leadErr) throw leadErr;
+    const deal = pickBootstrapDeal(leads);
+    res.json({
+      lead_id: deal?.id || null,
+      company_id: project.company_id || null,
+      workshop_type_id: project.workshop_type_id || null,
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) => {
   try {
     const { id } = req.params;
@@ -6080,6 +6122,27 @@ r.get('/workshop-type-staff-defaults/:companyId', requirePermission('projects', 
     const defaults = formatDefaultsForApi(staffMap);
 
     const users = await loadUsersForProductionCompany(companyId);
+    const knownUserIds = new Set(users.map((u) => String(u.id)));
+    const missingStaffIds = [...new Set(
+      [...staffMap.values()].flatMap((block) => [
+        ...(block.userIds || []),
+        block.primaryUserId,
+      ].filter(Boolean).map(String)),
+    )].filter((id) => !knownUserIds.has(id));
+    if (missingStaffIds.length) {
+      const { data: extraUsers } = await supabase
+        .from('users')
+        .select('id, full_name, email, role, department:departments!users_department_id_fkey(id, name, company_id)')
+        .in('id', missingStaffIds)
+        .eq('is_active', true);
+      for (const u of extraUsers || []) {
+        if (u?.id && !knownUserIds.has(String(u.id))) {
+          users.push(u);
+          knownUserIds.add(String(u.id));
+        }
+      }
+      users.sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || ''), 'vi'));
+    }
 
     res.json({
       users,

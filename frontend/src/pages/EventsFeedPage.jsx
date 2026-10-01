@@ -1095,6 +1095,12 @@ export default function EventsFeedPage({
             </div>
           )}
           <Link
+            to={forcedModule === 'production' ? '/sx/events/schedule' : forcedModule === 'logistics' ? '/vc/events/schedule' : '/crm/events/schedule'}
+            className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg text-sm font-semibold border border-emerald-200 bg-emerald-50 text-emerald-900 shadow-sm hover:bg-emerald-100 hover:border-emerald-300 transition-colors"
+          >
+            <Table2 className="h-4 w-4 text-emerald-700 shrink-0" /> Bảng lắp / lấy hàng
+          </Link>
+          <Link
             to="/crm/leaves"
             className="h-9 px-3 inline-flex items-center gap-1.5 rounded-lg text-sm font-semibold border border-purple-200 bg-purple-50 text-purple-800 shadow-sm hover:bg-purple-100 hover:border-purple-300 transition-colors"
           >

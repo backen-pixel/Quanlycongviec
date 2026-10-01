@@ -17,7 +17,135 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-10-01 09:40 (UTC+7)
+Cập nhật: 2026-10-01 14:45 (UTC+7)
+
+## Giao việc — mắt tìm kiếm mở chi tiết đúng module
+
+Trạng thái: **FE local, đã xem trên `/sx/assignments`.**
+
+Nút mắt trong gợi ý tìm không còn luôn mở deal CRM. Đang ở Sản xuất thì mở chi tiết dự án SX; đang ở Lắp đặt thì mở dự án VC; đang ở CRM thì vẫn mở deal. Đã bấm DEAL-2026-1148 từ Giao việc SX và vào `/sx/projects/797f9136-bfdb-4a57-80b4-0e55fb0321da`.
+
+## Quản lý nhiệm vụ SX — hạn lịch 7 ngày và tiến độ việc nhỏ
+
+Trạng thái: **BE local, đã xem trên `/sx/project-tasks`.**
+
+Hạn thẻ lấy từ lịch 7 ngày tính lùi theo ngày lắp, theo nhóm của việc còn mở. Danh mục chỉ rời bảng khi các việc nhỏ bên trong đã xong. Số trên thẻ cộng việc xưởng đã xong với nhiệm vụ SX cùng tên đã hoàn thành. Đã xem: Quá hạn 34, Hôm nay 3, Ngày mai 8; thẻ có tiến độ kiểu 1/2, 1/7, 3/4.
+
+Hoàn tác: revert `resolveOverviewGroupDeadline` trong `projectOverviewDeadline.js`.
+
+
+
+## Thẻ Giao việc — hiện số ghi chú và file
+
+Trạng thái: **FE+BE local.**
+
+Nút **Ghi chú & file** trên thẻ Kanban hiện số file và số ghi chú khi nhiệm vụ đã có. Không có thì nút giữ nguyên, không hiện số 0.
+
+Hoàn tác: revert nút trong `Card` của `CRMAssignmentsPage.jsx` và `note_count` trong `crmTaskAssignmentSync.js`.
+
+## Giao việc SX — không lọc thì hiện mọi việc
+
+Trạng thái: **FE local.**
+
+Tài khoản quản trị hệ sinh thái mở `/sx/assignments` không còn bị khóa vào đúng người đang đăng nhập. Không chọn công ty, nhân viên, trạng thái hay ưu tiên thì bảng hiện toàn bộ giao việc sản xuất.
+
+Hoàn tác: revert `isAdmin` trong `CRMAssignmentsPage.jsx`.
+
+## Chi tiết dự án — tải nhiệm vụ nhỏ song song
+
+Trạng thái: **FE+BE local.**
+
+Mở `/sx/projects/:id` hiện chi tiết ngay khi có dự án. `GET /production/projects/:id/task-bootstrap` lấy mã deal song song với chi tiết, rồi gọi nhiệm vụ xưởng ngay — cột nhỏ (`4/4`) không chờ tải lại cả dự án. API tasks chạy đếm file và gán người song song.
+
+Hoàn tác: revert `load()` trong `ProductionDetail.jsx`, `loadTasks` trong `CRMTasksTab.jsx`, và `GET /crm/leads/:id/tasks` trong `crmTasks.js`.
+
+## Thẻ Giao việc — ghi chú và file như chi tiết nhiệm vụ
+
+Trạng thái: **FE+BE local.**
+
+Thẻ Kanban có nhiệm vụ pipeline có nút **Ghi chú & file**. Mở ra cùng ô ghi chú, ghi chú đính kèm và upload file như tab Nhiệm vụ trên deal.
+
+Hoàn tác: revert nút trên `Card` trong `CRMAssignmentsPage.jsx` và `CrmTaskNotesFilesPanel` trong `WorkTaskExtrasPanel.jsx`.
+
+## Giao việc SX — thông tin dự án dưới thống kê nhân viên
+
+Trạng thái: **FE+BE local.**
+
+Khi mở `/sx/assignments?project_id=`, cột lọc nhanh hiện khối **Dự án đang lọc** ngay dưới «Số việc theo nhân viên»: mã, tên, công ty, khu vực, ngày lắp, người phụ trách xưởng.
+
+Hoàn tác: revert khối `projectScope` trong `CRMAssignmentsPage.jsx` và `loadAssignmentProjectScope` trong `crmAssignments.js`.
+
+## Giao việc SX theo dự án — chỉ nhiệm vụ xưởng
+
+Trạng thái: **FE+BE local.**
+
+`/sx/assignments?project_id=` chỉ đếm và hiện nhiệm vụ xưởng (`stage_slug` `sx_` hoặc có cột pipeline SX). Nhiệm vụ deal CRM (báo giá, bản vẽ, hợp đồng) không vào board này.
+
+Hoàn tác: revert `CRMAssignmentsPage.jsx` và `crmAssignments.js`.
+
+## Quản lý NV xưởng — bấm thẻ mở dự án
+
+Trạng thái: **FE local.**
+
+Bấm thân thẻ hoặc tên người phụ trách trên `/sx/project-tasks` (và bản VC) mở chi tiết dự án `/sx/projects/:id` hoặc `/vc/projects/:id`. Nút **Công việc** vẫn mở Giao việc đã lọc đúng dự án. Thẻ CRM mở lead/deal.
+
+Hoàn tác: revert `overviewProjectHref` trong `ProjectTasksOverviewPage.jsx`.
+
+## Gỡ Trương Trọng Thành khỏi đội dự án
+
+Trạng thái: **đã chạy primary + backup.** Tài khoản admin giữ nguyên, primary vẫn tắt.
+
+Đã xóa khỏi đội SX, thành viên deal, NV mặc định phân loại, người phụ trách sản xuất / vận chuyển / lắp đặt. Code không còn tự gắn lại vào HCB.
+
+Hoàn tác: khôi phục từ bản trước 647; revert `dealParticipantProduction.js`. File `database/647_remove_truong_trong_thanh_assignments.sql`.
+
+## Kanban VC/LĐ — hiện mốc thời gian như thẻ sản xuất
+
+Trạng thái: **FE+BE local.**
+
+Thẻ Kanban `/vc/dashboard` hiện ngày tạo lead cạnh mã, các mốc Đặt / Lấy / Lắp / Lắp SX, và hạn hoàn thiện xưởng (🏭). Lắp và Lắp SX tô vàng khi lệch ngày. Thẻ quá hạn lắp có nút đỏ **Quá hạn** kèm ngày. Thanh công cụ có nút **Quá hạn** với số lượng. Chân thẻ hiện ngày tạo dự án.
+
+Hoàn tác: revert `LogisticsDashboard.jsx` và hai dòng select trong `GET /logistics/projects` ở `logistics.js`.
+
+## Sự kiện — bảng ngày lắp và ngày lấy hàng
+
+Trạng thái: **FE+BE local.**
+
+Trang Sự kiện có nút **Bảng lắp / lấy hàng** (`/crm/events/schedule`, và bản SX `/sx/events/schedule`, VC `/vc/events/schedule`). Bảng một dòng một dự án: ngày lấy hàng, ngày lắp CRM/LĐ, ngày lắp SX, hoàn thiện SX. Ô vàng khi ngày lắp SX lệch ngày lắp CRM/LĐ. Xuất Excel.
+
+Hoàn tác: gỡ route `GET /events/install-schedule`, `EventsInstallSchedulePage.jsx`, và nút trên `EventsFeedPage.jsx`.
+
+## Deadline — sửa ngày trong chi tiết thì hạn thẻ đổi theo
+
+Trạng thái: **FE+BE local.**
+
+Sửa Ngày lắp trên SX hoặc VC ghi cả hai mốc cùng một ngày, hoàn thiện = lắp − 2, và tính lại `sx_kanban_deadline_at` từ đúng ngày vừa sửa. Không còn giữ hạn cũ khi lý do thẻ là tay, hoặc khi lịch lắp cũ đè ngày mới. Cột tắt hạn / bàn giao VC thì xóa hạn thẻ. Sửa riêng ngày hoàn thiện chỉ đổi hạn thẻ khi cột thuộc nhóm hoàn thiện hoặc chưa gán nhóm.
+
+Hoàn tác: revert `ProductionDetail.jsx`, `projects.js`, `projectDeliveryDates.js`, `sxInstallPlanKanbanDeadline.js`.
+
+## Pipeline xưởng — hiện NV phụ trách cột lớn
+
+Trạng thái: **đã ghi DB primary** cho Tủ bếp và Cánh kính. Phần hiện tên trên ô chọn vẫn là FE + API local.
+
+Cửa, Tủ bếp và Cánh kính: Tiếp nhận và Kế hoạch = Sang Thiết Kế VPT 1, Duyệt = Nguyễn Nhật, Gia công = Nguyễn Minh Nhựt, Hoàn thiện và Đóng gói = Hòa Bảo. Phân loại Công nợ không có cột pipeline.
+
+Hoàn tác dữ liệu: xóa `production_pipeline_stage_default_staff` vừa thêm trên cột Tủ bếp và Cánh kính. Cửa giữ nguyên. Hoàn tác giao diện: revert `ProductionPipelineSettingsPage.jsx` và đoạn bổ sung user trong `GET /production/workshop-type-staff-defaults` ở `production.js`.
+
+## Facebook NextGo — gỡ khỏi HST mặc định
+
+Trạng thái: **đã chạy DB primary.** Backup chưa đụng.
+
+365 lead nguồn page NextGo trên công ty cũ `87479a83` (HST mặc định) đã xóa, kèm nguồn CRM cũ. Thêm 230 lead trùng mã hoặc trùng tiêu đề với HST NextGo cũng đã xóa, không chép sang HST NextGo. Page, 2.442 hội thoại, 19.469 tin và 890 lead HST NextGo giữ nguyên. Công ty cũ còn 8 lead Zalo chưa có bản trên NextGo.
+
+Hoàn tác: không có file dump từng dòng. Bản trên HST NextGo vẫn là bản đang dùng.
+
+## Pipeline xưởng — nút tích Chuyển công nợ
+
+Trạng thái: **FE local.**
+
+Tab Cột nhỏ trên `/sx/pipeline-settings`: mỗi cột có nút **Chuyển công nợ**. Bật thì `board_tab=cong_no` (Kanban sang tab Công nợ). Tắt thì về tab Sản xuất. Form sửa cột có ô tích cùng tên.
+
+Hoàn tác: revert `ProductionPipelineSettingsPage.jsx`.
 
 ## Build Render — thiếu hook useDefaultCompanyOnce
 
@@ -936,12 +1064,11 @@ Hoàn tác: revert `CRMTasksTab.jsx` (`sxPlanGroups`).
 
 ## Quản lý NV xưởng — bấm thẻ vào chi tiết dự án
 
-Trạng thái: **local, chưa commit.**
+Trạng thái: **đã đổi (2026-10-01).**
 
-Thẻ trên `/sx/project-tasks` mở Giao việc của dự án (`?project_id=`).
-Chi tiết dự án `/sx/projects/:id` vẫn mở từ dải trên trang Giao việc.
+Thân thẻ mở chi tiết dự án. Nút Công việc vẫn vào Giao việc `?project_id=`.
 
-Hoàn tác: revert `overviewCardHref` trong `ProjectTasksOverviewPage.jsx`.
+Hoàn tác: revert `overviewProjectHref` trong `ProjectTasksOverviewPage.jsx`.
 
 ## Kanban SX — nút mở quản lý nhiệm vụ theo dự án
 

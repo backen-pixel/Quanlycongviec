@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
+import { pickDefaultCompanyId } from '../lib/crmCompanyFilter';
+import { useDefaultCompanyOnce } from '../hooks/useDefaultCompanyOnce';
 import { formatStaffDisplayName, getStaffInitials, avatarColor } from '../lib/utils';
 import { getDeepLink } from '../components/UnifiedTaskRow';
 import SearchInlineFilterChips, { AdvFilterButton, searchGroupClass } from '../components/SearchInlineFilterChips';
@@ -363,6 +365,11 @@ export default function WorkOverviewPage() {
     return cid || '';
   }, [canPickCompany, companyId, user?.company_id]);
 
+  useDefaultCompanyOnce(companyId, setCompanyId, companies, {
+    enabled: canPickCompany,
+    preferredId: user?.company_id || '',
+  });
+
   useEffect(() => {
     api.get('/companies', { params: { for_module: 'crm' } }).then((res) => {
       const list = Array.isArray(res.data) ? res.data : (res.data?.companies || []);
@@ -463,7 +470,7 @@ export default function WorkOverviewPage() {
       chips.push({
         key: 'company',
         label: c?.short_name || c?.name || 'Công ty',
-        onClear: () => setCompanyId(''),
+        onClear: () => setCompanyId(pickDefaultCompanyId(companies, { preferredId: user?.company_id || '' })),
       });
     }
     if (filterRegionId === WORK_UNIFIED_REGION_NONE) {
@@ -494,7 +501,7 @@ export default function WorkOverviewPage() {
   const clearOverviewFilters = () => {
     setFilterRegionId('');
     handleTimePresetChange('');
-    if (canPickCompany) setCompanyId('');
+    if (canPickCompany) setCompanyId(pickDefaultCompanyId(companies, { preferredId: user?.company_id || '' }));
   };
 
   const now = useMemo(() => new Date(), []);

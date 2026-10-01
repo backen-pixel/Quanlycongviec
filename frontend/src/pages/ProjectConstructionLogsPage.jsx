@@ -4,6 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
+import { useDefaultCompanyOnce } from '../hooks/useDefaultCompanyOnce';
 import { exportProjectConstructionLogsExcel } from '../lib/projectConstructionLogsExcel';
 import {
   assignmentsHrefForProject,
@@ -125,6 +126,11 @@ export default function ProjectConstructionLogsPage() {
       setCompanies(list);
     }).catch(() => setCompanies([]));
   }, []);
+
+  useDefaultCompanyOnce(companyId, setCompanyId, companies, {
+    enabled: canPickCompany,
+    preferredId: user?.company_id || '',
+  });
 
   useEffect(() => {
     let cancelled = false;

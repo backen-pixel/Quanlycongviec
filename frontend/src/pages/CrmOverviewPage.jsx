@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCompanyScopedAdmin } from '../lib/adminRole';
+import { useDefaultCompanyOnce } from '../hooks/useDefaultCompanyOnce';
 import { getInitials, avatarColor, formatDate } from '../lib/utils';
 import { RefreshCw, Building2, Plus, ChevronLeft, ChevronRight } from 'lucide-react';
 
@@ -43,6 +44,11 @@ export default function CrmOverviewPage() {
       setCompanies(list);
     }).catch(() => setCompanies([]));
   }, []);
+
+  useDefaultCompanyOnce(companyId, setCompanyId, companies, {
+    enabled: canPickCompany,
+    preferredId: user?.company_id || '',
+  });
 
   useEffect(() => { setPage(1); }, [status, companyId]);
 

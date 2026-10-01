@@ -90,10 +90,48 @@ function productionFinishPatchFromInstallOrDelivery(body) {
   return productionFinishPatchFromDelivery(body);
 }
 
+function ymdOf(raw) {
+  if (raw == null || raw === '') return '';
+  const m = String(raw).trim().match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : '';
+}
+
+/**
+ * Ô «Ngày lắp» trên SX (delivery_date) và trên VC (install_date) là một mốc.
+ * Sửa một ô thì ghi ô kia cùng ngày, kèm occurrence một ngày, để hạn thẻ
+ * không còn bám install_date / lịch nhiều buổi cũ.
+ * Bỏ qua khi request đã gửi cả hai ngày, hoặc đã gửi install_occurrence_dates.
+ */
+function installAnchorPatchFromBody(body) {
+  if (!body) return null;
+  const hasInstall = body.install_date !== undefined;
+  const hasDelivery = body.delivery_date !== undefined;
+  if (!hasInstall && !hasDelivery) return null;
+  if (hasInstall && hasDelivery) return null;
+  if (body.install_occurrence_dates !== undefined || body.installOccurrenceDates !== undefined) {
+    return null;
+  }
+
+  const source = hasInstall ? body.install_date : body.delivery_date;
+  if (source == null || source === '') {
+    const cleared = { install_occurrence_dates: [] };
+    if (hasDelivery) cleared.install_date = null;
+    if (hasInstall) cleared.delivery_date = null;
+    return cleared;
+  }
+  const ymd = ymdOf(source);
+  if (!ymd) return null;
+  const patch = { install_occurrence_dates: [ymd] };
+  if (hasDelivery) patch.install_date = `${ymd}T14:00:00+07:00`;
+  if (hasInstall) patch.delivery_date = ymd;
+  return patch;
+}
+
 module.exports = {
   parseDateOnlyParts,
   addCalendarDays,
   subtractCalendarDays,
   productionFinishPatchFromDelivery,
   productionFinishPatchFromInstallOrDelivery,
+  installAnchorPatchFromBody,
 };

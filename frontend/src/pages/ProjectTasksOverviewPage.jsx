@@ -33,7 +33,7 @@ import {
 } from '../lib/crossWorkshopProduction';
 import { crmDeadlineBucketFromTs } from '../lib/crmLeadDeadlineDisplay';
 import { avatarColor, formatDate, getStaffInitials } from '../lib/utils';
-import { assignmentsHrefForProject } from '../lib/assignmentSourceLink';
+import { assignmentsHrefForProject, projectDetailPathForModule } from '../lib/assignmentSourceLink';
 
 const MODULES = [
   { key: 'crm', label: 'CRM', icon: Target, kinds: new Set(['CRM-Deal', 'CRM-Lead']) },
@@ -122,7 +122,7 @@ function assignmentPageModuleOf(task) {
   return 'production';
 }
 
-function overviewCardHref(task) {
+function overviewAssignmentsHref(task) {
   const projectId = String(task?.project_id || '').trim();
   const pageModule = assignmentPageModuleOf(task);
   if (projectId) {
@@ -134,13 +134,30 @@ function overviewCardHref(task) {
   if (task?.lead_id) {
     return assignmentsHrefForProject(pageModule, { leadId: task.lead_id });
   }
+  return null;
+}
+
+function overviewProjectHref(task) {
+  const projectId = String(task?.project_id || '').trim();
+  const pageModule = assignmentPageModuleOf(task);
+  if (pageModule === 'crm' && task?.lead_id) return `/crm/leads/${task.lead_id}`;
+  if (projectId) return projectDetailPathForModule(pageModule, projectId);
+  if (task?.lead_id) return `/crm/leads/${task.lead_id}`;
   return getDeepLink(task);
+}
+
+function overviewProjectLinkTitle(task) {
+  const pageModule = assignmentPageModuleOf(task);
+  if (pageModule === 'logistics') return 'Mở dự án Lắp đặt';
+  if (pageModule === 'crm') return 'Mở lead / deal';
+  return 'Mở dự án';
 }
 
 const TaskCard = memo(function TaskCard({ task, canRemind, showModule }) {
   const [reminding, setReminding] = useState(false);
   const [reminded, setReminded] = useState(false);
-  const href = overviewCardHref(task);
+  const href = overviewProjectHref(task);
+  const assignmentsHref = overviewAssignmentsHref(task);
   const responsibleName = task.assignee_name || task.effective_assignee_name || '';
   const module = task._module;
   const bucket = COLUMN_BY_KEY[task._bucket] || COLUMN_BY_KEY.no_deadline;
@@ -239,16 +256,16 @@ const TaskCard = memo(function TaskCard({ task, canRemind, showModule }) {
       className={`rounded-lg border border-gray-100 bg-white p-2.5 shadow-sm hover:border-blue-200 hover:shadow transition-all ${href ? 'cursor-pointer' : ''}`}
     >
       {href ? (
-        <Link to={href} className="block" title="Mở Giao việc Sản xuất của dự án">{body}</Link>
+        <Link to={href} className="block" title={overviewProjectLinkTitle(task)}>{body}</Link>
       ) : body}
       <div className="mt-2 pt-2 border-t border-gray-50 min-h-7 flex items-center gap-2">
-        {href ? <Link to={href} className="flex items-center gap-1.5 min-w-0 flex-1">{personRow}</Link> : personRow}
+        {href ? <Link to={href} className="flex items-center gap-1.5 min-w-0 flex-1" title={overviewProjectLinkTitle(task)}>{personRow}</Link> : personRow}
         <div className="ml-auto flex items-center gap-1 shrink-0">
-          {href && (
+          {assignmentsHref && (
             <Link
-              to={href}
+              to={assignmentsHref}
               className="inline-flex h-7 items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50 px-2 text-[10px] font-semibold text-indigo-800 hover:bg-indigo-100"
-              title="Giao việc Sản xuất của dự án"
+              title="Giao việc của dự án"
             >
               <ClipboardList className="h-3 w-3" />
               Công việc

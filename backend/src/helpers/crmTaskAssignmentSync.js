@@ -373,6 +373,7 @@ async function attachCrmTaskMetaToAssignmentsWithRows(list, taskRows, taskIds, p
     };
     // Linked CRM task: luôn ưu tiên count từ attachments (tránh file_count=0 trên assignment che mất).
     a.file_count = files;
+    a.note_count = notes;
     a.attachment_count = files + notes;
   });
   return list;
