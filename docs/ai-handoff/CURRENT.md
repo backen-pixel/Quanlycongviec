@@ -17,7 +17,15 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-10-01 09:35 (UTC+7)
+Cập nhật: 2026-10-01 09:40 (UTC+7)
+
+## Build Render — thiếu hook useDefaultCompanyOnce
+
+Trạng thái: **đẩy main.**
+
+`ProductionDashboard.jsx` đã import hook này. File `frontend/src/hooks/useDefaultCompanyOnce.js` được bổ sung để Vite resolve được.
+
+Hoàn tác: revert file hook đó; dashboard sẽ gãy build nếu import còn.
 
 ## Dashboard SX — bỏ «Tất cả», Deadline theo hạn thẻ
 

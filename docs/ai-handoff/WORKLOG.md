@@ -17,6 +17,11 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Nhật ký công việc AI
 
+## 2026-10-01 09:40 — Sửa build: thêm hook useDefaultCompanyOnce
+
+- AI: Cursor. Render fail vì `ProductionDashboard.jsx` import `useDefaultCompanyOnce` nhưng file chưa được commit.
+- File: `frontend/src/hooks/useDefaultCompanyOnce.js`.
+
 ## 2026-10-01 09:35 — SX: giữ lọc phân loại, Deadline chỉ theo hạn thẻ
 
 - AI: Cursor. `/sx/dashboard` bỏ mục «Tất cả» / «Tất cả loại»; không chọn thì đứng ở loại đầu của xưởng. «Chưa phân loại» vẫn chọn được. Cột Deadline và KPI quá hạn chỉ tính `sx_kanban_deadline_at`, không lấy ngày hoàn thiện / giao / hạn chung.
