@@ -9,7 +9,9 @@
     "web": "expo start --web",
     "prebuild:android": "expo prebuild --platform android --no-install",
     "build:apk": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/build-apk.ps1",
-    "tsc": "tsc --noEmit"
+    "tsc": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@config-plugins/react-native-webrtc": "13.0.0",
@@ -47,8 +49,10 @@
   "devDependencies": {
     "@babel/core": "^7.29.7",
     "@types/react": "~19.1.0",
+    "@vitest/coverage-v8": "^5.0.2",
     "babel-preset-expo": "~54.0.11",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "vitest": "^5.0.2"
   },
   "overrides": {
     "expo-font": "14.0.12"
