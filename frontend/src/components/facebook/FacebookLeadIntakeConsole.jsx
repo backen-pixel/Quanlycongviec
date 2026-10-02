@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../../lib/api';
+import FacebookLegacyReview from './FacebookLegacyReview';
 
 const labels = { PENDING: 'Chờ xử lý', LEASED: 'Đang xử lý', DONE: 'Đã vào CRM', REVIEW: 'Cần kiểm tra' };
 const explanations = {
@@ -34,11 +35,12 @@ function CompanyConsole({ companyId }) {
   const [cursor, setCursor] = useState(''), [history, setHistory] = useState([]), [refresh, setRefresh] = useState(0);
   const [selected, setSelected] = useState(null), [reason, setReason] = useState(''), [confirmed, setConfirmed] = useState(false);
   const [saving, setSaving] = useState(false), [notice, setNotice] = useState(''), [uncertain, setUncertain] = useState(false);
+  const [legacy, setLegacy] = useState(null), [legacyBusy, setLegacyBusy] = useState(false);
   const generation = useRef(0), alive = useRef(false), writing = useRef(false), command = useRef(null);
   useEffect(() => {
     alive.current = true;
     const seq = ++generation.current, controller = new AbortController();
-    setLoading(true); setData(null); setError(''); setSelected(null); setReason(''); setConfirmed(false); command.current = null; setUncertain(false);
+    setLoading(true); setData(null); setError(''); setSelected(null); setLegacy(null); setLegacyBusy(false); setReason(''); setConfirmed(false); command.current = null; setUncertain(false);
     api.get('/facebook/lead-intake/console', { params: { companyId, ...(cursor ? { cursor } : {}) }, signal: controller.signal, timeout: 15000 })
       .then(({ data: next }) => {
         if (!alive.current || generation.current !== seq) return;
@@ -51,10 +53,10 @@ function CompanyConsole({ companyId }) {
   }, [companyId, cursor, refresh]);
 
   function reload() { setCursor(''); setHistory([]); setRefresh(n => n + 1); }
-  function choose(item) { command.current = null; setSelected(item); setReason(''); setConfirmed(false); setNotice(''); setUncertain(false); }
+  function choose(item) { setLegacy(null); command.current = null; setSelected(item); setReason(''); setConfirmed(false); setNotice(''); setUncertain(false); }
   async function recover(event) {
     event.preventDefault();
-    if (writing.current || !selected || !data?.recoveryEnabled || (!command.current && (!confirmed || reason.trim().length < 20))) return;
+    if (writing.current || legacyBusy || !selected || !data?.recoveryEnabled || (!command.current && (!confirmed || reason.trim().length < 20))) return;
     if (!command.current) command.current = { companyId, requestId: crypto.randomUUID(), command: { receiptId: selected.id, expectedVersion: selected.version, bindingRevision: selected.currentBindingRevision, reason: reason.trim() } };
     const payload = command.current, seq = generation.current;
     writing.current = true; setSaving(true); setNotice('');
@@ -78,7 +80,7 @@ function CompanyConsole({ companyId }) {
   return <section className="h-full overflow-y-auto bg-gray-50 p-4 sm:p-6" aria-label="Tiếp nhận khách từ biểu mẫu Facebook">
     <div className="flex flex-wrap items-start justify-between gap-3">
       <div><h2 className="text-lg font-semibold text-gray-900">Tiếp nhận khách từ biểu mẫu</h2><p className="mt-1 text-sm text-gray-600">Theo dõi khách đã vào CRM và xử lý những lần nhận chưa hoàn tất.</p></div>
-      <button type="button" className={button} onClick={reload} disabled={saving || loading || uncertain}>Tải lại</button>
+      <button type="button" className={button} onClick={reload} disabled={saving || loading || uncertain || legacyBusy}>Tải lại</button>
     </div>
     <p className="my-4 rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">Số đã vào CRM là số lần nhận thành công. Chi phí 250.000 đồng/khách chỉ được đánh giá sau khi xác minh khách hợp lệ, không trùng và có nguồn quảng cáo.</p>
     {loading && <p role="status">Đang đọc hàng chờ…</p>}
@@ -96,7 +98,9 @@ function CompanyConsole({ companyId }) {
         <div className="flex flex-wrap justify-between gap-2"><strong>{binding(item)?.pageName || `Page ${item.pageId}`} · Biểu mẫu {item.formId}</strong><span className="text-sm">{labels[item.state] || 'Cần kiểm tra'}</span></div>
         <p className="mt-1 text-xs text-gray-500">Nhận lúc {date(item.receivedAt)} · Đã thử {item.attempts} lần</p>
         <p className="mt-2 text-sm">{item.failureCode ? explanations[item.failureCode] || 'Chưa hoàn tất nhận khách; cần kiểm tra trước khi thử lại.' : 'Đang chờ hệ thống xử lý.'}</p>
-        {item.retryBlock ? <p className="mt-2 text-sm text-gray-600">{blocks[item.retryBlock] || 'Cần đối soát riêng trước khi tiếp tục.'}</p> : <button type="button" className={`${button} mt-3`} disabled={!data.recoveryEnabled || saving || uncertain} onClick={() => choose(item)}>Xem và thử lại</button>}
+        {item.retryBlock ? <p className="mt-2 text-sm text-gray-600">{blocks[item.retryBlock] || 'Cần đối soát riêng trước khi tiếp tục.'}</p> : <button type="button" className={`${button} mt-3`} disabled={!data.recoveryEnabled || saving || uncertain || legacyBusy} onClick={() => choose(item)}>Xem và thử lại</button>}
+        {item.retryBlock === 'LEGACY_RECONCILIATION_REQUIRED' && data.legacyReviewEnabled && <button type="button" className={`${button} mt-3`} disabled={saving || uncertain || legacyBusy} onClick={() => { setSelected(null); setLegacy(item); }}>Đối soát hồ sơ cũ</button>}
+        {legacy?.id === item.id && <FacebookLegacyReview key={`${companyId}:${item.id}`} companyId={companyId} receipt={legacy} onBusy={setLegacyBusy} onClose={() => setLegacy(null)} onDone={() => { setLegacy(null); setLegacyBusy(false); setNotice('Đã nối nguồn vào hồ sơ khách cũ, giữ nguyên lịch sử CRM.'); reload(); }} />}
         {selected?.id === item.id && <form onSubmit={recover} className="mt-4 space-y-3 rounded-lg bg-gray-50 p-3">
           <p className="text-sm">Cấu hình đã nhận: {item.bindingRevision ?? 'chưa có'} → dùng bản {item.currentBindingRevision}. Người nhận: <strong>{binding(item)?.ownerName}</strong>; khu vực: <strong>{binding(item)?.regionName}</strong>.</p>
           <label className="block text-sm">Lý do thử lại và việc đã kiểm tra (ít nhất 20 ký tự)<textarea className="mt-1 block w-full rounded-lg border bg-white p-2" rows={3} maxLength={2000} value={reason} disabled={saving || uncertain} onChange={e => setReason(e.target.value)} /></label>
@@ -105,7 +109,7 @@ function CompanyConsole({ companyId }) {
           {!uncertain && <button type="button" className={`${button} ml-2`} disabled={saving} onClick={() => setSelected(null)}>Hủy</button>}
         </form>}
       </li>)}</ul>}
-      <div className="mt-4 flex gap-3"><button type="button" className={button} disabled={!history.length || saving || uncertain} onClick={() => { setCursor(history.at(-1)); setHistory(h => h.slice(0, -1)); }}>Trang trước</button><button type="button" className={button} disabled={!data.nextCursor || saving || uncertain} onClick={() => { setHistory(h => [...h, cursor]); setCursor(data.nextCursor); }}>Trang tiếp</button></div>
+      <div className="mt-4 flex gap-3"><button type="button" className={button} disabled={!history.length || saving || uncertain || legacyBusy} onClick={() => { setCursor(history.at(-1)); setHistory(h => h.slice(0, -1)); }}>Trang trước</button><button type="button" className={button} disabled={!data.nextCursor || saving || uncertain || legacyBusy} onClick={() => { setHistory(h => [...h, cursor]); setCursor(data.nextCursor); }}>Trang tiếp</button></div>
     </>}
   </section>;
 }

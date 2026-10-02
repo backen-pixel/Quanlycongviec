@@ -1,3 +1,11 @@
+## 2026-10-02 — Facebook legacy source adoption (in validation)
+
+Base8394ed1. Added a default-off review flow for recovered Facebook receipts whose legacy Lead/Customer mappings agree. Server verifies fresh provider contact, prepares an expiring exact-context proposal, then a current admin can attach immutable source evidence to the existing CRM. No CRM/history/identity overwrite or automatic qualification. Version changes, wrong scope, expired evidence and retries are checked transactionally. Partial/conflicting legacy mappings remain exceptions; this does not prove full source coverage or actual CPQL.
+
+Local17 contact/HTTP tests PASS; PostgreSQL, full build, UI and independent review pending. See [contract](vpt-marketing-automation/FACEBOOK_LEGACY_RECONCILIATION.md). No live migration, feature enablement, merge, deployment or ad change. Full goal ACTIVE.
+
+---
+
 ## Hiện hành 02/10/2026 — Dashboard đã có đối soát Facebook–CRM
 
 PR22 runtime5ff846 đã nối kết quả kiểm kê nguồn vào kỳ đo: tách lượt gửi đã khớp CRM, đang chờ, cần review, thiếu bằng chứng và lượt gửi CRM biết nhưng chưa quét thấy. Có nút khôi phục với gửi lại cùng yêu cầu khi mất phản hồi; nhãn phân biệt lượt gửi với khách duy nhất. Review độc lập PASS; PostgreSQL17, Node22 489, cả10 job automation/full build và trình duyệt dữ liệu giả PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/FACEBOOK_CRM_RECONCILIATION_REVIEW.md).

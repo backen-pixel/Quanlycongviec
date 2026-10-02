@@ -36,6 +36,8 @@ on:
       - 'database/655_marketing_lead_trial.sql'
       - 'database/656_facebook_lead_census.sql'
       - 'database/657_marketing_census_reconciliation.sql'
+      - 'database/658_facebook_legacy_reconciliation.sql'
+      - 'frontend/src/components/facebook/FacebookLegacyReview.jsx'
       - 'backend/tests/facebookLeadCensus*.js'
       - '.github/workflows/vpt-marketing-automation.yml'
   workflow_dispatch:
@@ -55,7 +57,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - run: node --test backend/tests/marketingAutomation.test.js backend/tests/marketingAutomation.leads.test.js backend/tests/marketingAutomation.reports.test.js backend/tests/marketingAutomation.spend.test.js backend/tests/marketingAutomation.spend.integration.test.js backend/tests/adAnalytics.correctness.test.js backend/tests/adAnalytics.ui-state.test.js backend/tests/adAnalytics.action-lifecycle.test.js backend/tests/crmLeadQuality.test.js backend/tests/crmLeadIdentity.test.js backend/tests/crmLeadIdentity.service.test.js backend/tests/crmLeadIdentity.review.test.js backend/tests/marketingAutomation.trial.test.js backend/tests/facebookLeadIntake.test.js backend/tests/facebookLeadIntake.integration.test.js backend/tests/facebookLeadIntake.admin.test.js backend/tests/facebookLeadCensus.test.js backend/tests/marketingAutomation.reconciliation.test.js
+      - run: node --test backend/tests/marketingAutomation.test.js backend/tests/marketingAutomation.leads.test.js backend/tests/marketingAutomation.reports.test.js backend/tests/marketingAutomation.spend.test.js backend/tests/marketingAutomation.spend.integration.test.js backend/tests/adAnalytics.correctness.test.js backend/tests/adAnalytics.ui-state.test.js backend/tests/adAnalytics.action-lifecycle.test.js backend/tests/crmLeadQuality.test.js backend/tests/crmLeadIdentity.test.js backend/tests/crmLeadIdentity.service.test.js backend/tests/crmLeadIdentity.review.test.js backend/tests/marketingAutomation.trial.test.js backend/tests/facebookLeadIntake.test.js backend/tests/facebookLeadIntake.integration.test.js backend/tests/facebookLeadIntake.admin.test.js backend/tests/facebookLeadCensus.test.js backend/tests/marketingAutomation.reconciliation.test.js backend/tests/facebookLeadIntake.legacy.test.js
   postgres:
     runs-on: ubuntu-latest
     timeout-minutes: 10

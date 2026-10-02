@@ -20,7 +20,7 @@ function createIntakeAdmin({db,isPrimary,env=process.env}){
    if(error){const status=error.code==='42501'?403:['40001','23505'].includes(error.code)?409:['22023','22P02'].includes(error.code)?400:503;
     return res.status(status).json({error:status===409?'Hồ sơ hoặc cấu hình đã thay đổi, hoặc cần đối soát riêng. Hãy tải lại.':'Chưa thực hiện được trong phạm vi hiện tại.'});}
    if(data===null||data===undefined)throw Error('missing result');
-   return res.json(operation==='console'?{...data,recoveryEnabled:env.VPT_FB_LEAD_RECOVERY==='1'}:data);
+   return res.json(operation==='console'?{...data,recoveryEnabled:env.VPT_FB_LEAD_RECOVERY==='1',legacyReviewEnabled:env.VPT_FB_LEGACY_REVIEW==='1'}:data);
   }catch{return res.status(503).json({error:'Nguồn tiếp nhận tạm thời chưa sẵn sàng.'});}
  };
 }
