@@ -1,3 +1,9 @@
+# Hồ sơ lịch sử — đã được F-13/F-14 thay thế
+
+Phương án A/B14/21 triệu, KPI/ngân sách chưa chốt và cách bố trí nhân sự bên dưới là snapshot trước khi Founder giao triển khai kế hoạch tự động hóa. **Kế hoạch hiện hành: một đợt tối đa100 triệu/30 ngày; chỉ tiêu trước mắt250.000 đồng/khách hợp lệ;300 khách tương ứng75 triệu;7% doanh thu đánh giá sau.** Không dùng snapshot này làm yêu cầu duyệt lại quyết định mới. Xem [kế hoạch hiện hành](https://github.com/backen-pixel/Quanlycongviec/blob/codex/vpt-marketing-automation-20261002/docs/architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md) và [mã/bằng chứng/phần còn thiếu](https://github.com/backen-pixel/Quanlycongviec/blob/codex/vpt-marketing-automation-20261002/docs/ai-handoff/vpt-marketing-automation/README.md).
+
+---
+
 # Ưu tiên Marketing đa kênh — VPT, 02/10/2026
 
 Trạng thái: **Founder đã chốt ưu tiên tạo khách hàng trước**. Phân bổ ngân sách, thứ tự thử kênh và tiêu chí định lượng dưới đây là **đề xuất để duyệt**, chưa là quyền chi thêm hoặc phát hành. Kiến trúc V1.1 và mục tiêu dài hạn VPT–Metala giữ nguyên.
