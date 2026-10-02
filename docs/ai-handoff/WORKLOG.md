@@ -1,3 +1,9 @@
+## 2026-10-02 — Measured cohort and dashboard integration
+
+Base0a106ab. Added versioned30-day measurement configuration and a single-statement database report joining spend, source/receipt, current qualification and identity; added observed-cohort dashboard. Global trial-ID ownership is serialized, old customer history retained, and equal-time acquisition ambiguity stays unresolved. CPQL remains unavailable until provider census/reconciliation is connected; this is explicitly the next dependency, not final success. Local25 tests PASS; isolated PG/build/browser/independent final review pending. See [contract](vpt-marketing-automation/MEASURED_COHORT.md). Default-off; no live change. Full four-part goal active.
+
+---
+
 ## 2026-10-02 — Identity review verified; next is the measured cohort
 
 Implementation5d9a093: independent review PASS, local89 PASS; Node18/22 each410 PASS; isolated PostgreSQL identity27 PASS/0 FAIL/0 SKIP; full frontend and all automation/report/Messenger jobs SUCCESS. Follow-up96451de adds only combined-migration intake coverage:650–654 applied twice, intake/recovery31 PASS, all8jobs SUCCESS. Synthetic browser passed scope/source invalidation and ambiguous request retry. See [exact evidence and limits](vpt-marketing-automation/CRM_IDENTITY_OPERATIONS_REVIEW.md). No live changes. Full goal active: trial/source/qualified unique cohort + spend/CPQL, binding/legacy disposition, AI/calendar/dashboard and Founder release acceptance remain unfinished.

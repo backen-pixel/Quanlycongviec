@@ -6,6 +6,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import api from '../lib/api';
 import MarketingSpendCoverage from '../components/marketing/MarketingSpendCoverage';
+import MarketingLeadTrial from '../components/marketing/MarketingLeadTrial';
 
 const TAB = [
   { key: 'insights', nhan: 'Nhận xét tự động' },
@@ -542,6 +543,7 @@ export default function AdAnalyticsPage() {
         Chưa dùng số liệu này để tự tăng ngân sách hoặc kết luận đạt 250.000 đồng/khách hay 7% doanh thu.
       </div>
 
+      <MarketingLeadTrial companyId={congTy} />
       <MarketingSpendCoverage companyId={congTy} from={tuNgay} to={denNgay} refresh={spendRefresh} syncing={spendSyncing} />
 
       <KhungMarketing trangThai={mkt} companyId={congTy} onSyncStart={() => setSpendSyncing(true)} onSyncFinish={() => { setSpendSyncing(false); setSpendRefresh(n => n + 1); }} onXong={async () => { await taiMkt(); await refreshReportRef.current?.(); }} />
@@ -851,3 +853,4 @@ export default function AdAnalyticsPage() {
     </div>
   );
 }
+

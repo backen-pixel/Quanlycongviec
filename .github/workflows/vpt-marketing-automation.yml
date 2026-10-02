@@ -17,6 +17,7 @@ on:
       - 'backend/src/routes/crm/routes/leadQuality.js'
       - 'backend/src/routes/crm/routes/leadIdentity.js'
       - 'backend/src/routes/crm/routes/identityReview.js'
+      - 'backend/src/routes/crm/routes/marketingTrials.js'
       - 'backend/tests/crmLeadQuality*.js'
       - 'backend/tests/crmLeadIdentity*.js'
       - 'backend/src/helpers/adInsights.js'
@@ -32,6 +33,7 @@ on:
       - 'database/650_crm_lead_qualification.sql'
       - 'database/651_crm_lead_identity.sql'
       - 'database/654_crm_identity_review.sql'
+      - 'database/655_marketing_lead_trial.sql'
       - '.github/workflows/vpt-marketing-automation.yml'
   workflow_dispatch:
 permissions:
@@ -50,7 +52,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - run: node --test backend/tests/marketingAutomation.test.js backend/tests/marketingAutomation.leads.test.js backend/tests/marketingAutomation.reports.test.js backend/tests/marketingAutomation.spend.test.js backend/tests/marketingAutomation.spend.integration.test.js backend/tests/adAnalytics.correctness.test.js backend/tests/adAnalytics.ui-state.test.js backend/tests/adAnalytics.action-lifecycle.test.js backend/tests/crmLeadQuality.test.js backend/tests/crmLeadIdentity.test.js backend/tests/crmLeadIdentity.service.test.js backend/tests/crmLeadIdentity.review.test.js backend/tests/facebookLeadIntake.test.js backend/tests/facebookLeadIntake.integration.test.js backend/tests/facebookLeadIntake.admin.test.js
+      - run: node --test backend/tests/marketingAutomation.test.js backend/tests/marketingAutomation.leads.test.js backend/tests/marketingAutomation.reports.test.js backend/tests/marketingAutomation.spend.test.js backend/tests/marketingAutomation.spend.integration.test.js backend/tests/adAnalytics.correctness.test.js backend/tests/adAnalytics.ui-state.test.js backend/tests/adAnalytics.action-lifecycle.test.js backend/tests/crmLeadQuality.test.js backend/tests/crmLeadIdentity.test.js backend/tests/crmLeadIdentity.service.test.js backend/tests/crmLeadIdentity.review.test.js backend/tests/marketingAutomation.trial.test.js backend/tests/facebookLeadIntake.test.js backend/tests/facebookLeadIntake.integration.test.js backend/tests/facebookLeadIntake.admin.test.js
   postgres:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -216,3 +218,33 @@ jobs:
         env:
           FB_INTAKE_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/fb_intake_test
         run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/facebookLeadIntake.postgres.test.js
+
+  marketing-trial-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: marketing_trial_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated_test_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --prefix "$RUNNER_TEMP/vpt-pg" --ignore-scripts --no-audit --no-fund pg@8.19.0
+      - name: Whole account trial, source, qualification, identity and concurrent snapshot
+        env:
+          MARKETING_TRIAL_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/marketing_trial_test
+        run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/marketingAutomation.trial.postgres.test.js
