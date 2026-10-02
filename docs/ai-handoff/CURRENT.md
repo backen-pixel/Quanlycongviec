@@ -17,7 +17,27 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-10-01 14:55 (UTC+7)
+Cập nhật: 2026-10-02 11:10 (UTC+7)
+
+## Không gian chung — không nhận nhiệm vụ mẫu xưởng
+
+Trạng thái: **BE local, đã thử trên DB.**
+
+Sửa hoặc áp bộ mẫu xưởng không còn tạo giao việc. Tab Không gian chung không liệt kê nhiệm vụ `sx_pl_…` / `vc_…`. Phát sinh `sx_shared` vẫn tạo giao việc. Đã gọi sync trên «Chốt công nợ»: bỏ qua, số giao việc trước và sau đều 0.
+
+Hoàn tác: revert `workshopPipelineTask.js` và chỗ gọi trong `crmTaskAssignmentSync.js`, `crmSequentialAssignment.js`, `sharedWorkspaceInbox.js`.
+
+## Hạn thẻ SX — sửa ngày lắp thì hạn chạy theo
+
+Trạng thái: **BE local, đã thử trên TB-2026-978 rồi trả lại ngày cũ.**
+
+`projects` không có cột `install_occurrence_dates`. Lần tính lại hạn trước đó đọc cột này nên lỗi và hạn thẻ giữ nguyên. Nay sửa ngày lắp ghi `install_date` cùng ngày, và tính lại `sx_kanban_deadline_at` từ ngày đó. Thử đổi ngày lắp TB-2026-978 từ 07/10 sang 14/10: hạn thẻ từ 03/10 sang 08/10, sau đó đã ghi lại đúng dữ liệu cũ.
+
+## Module SX — phát sinh, giai đoạn, bàn giao VC, hạn thẻ
+
+Trạng thái: **FE+BE local.** Chưa chạy `database/648_sx_phat_sinh_order.sql` (MCP primary chỉ đọc).
+
+Đơn phát sinh là project con (`source_project_id`), nút trên chi tiết SX. Cột phát sinh là cờ pipeline, không đẩy CRM. Kéo cột chỉ ghi `sx_kanban_column_id` trừ cột bàn giao VC hoặc cột đã gán KPI. Bàn giao VC bắt cột tiếp nhận của đúng công ty VC. Hạn thẻ dashboard ghi lại từ lịch 7 ngày của việc nhỏ còn mở.
 
 ## Dashboard SX — hết lỗi filterBusy
 

@@ -17,6 +17,23 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Nhật ký công việc AI
 
+## 2026-10-02 11:10 — Không chép nhiệm vụ mẫu xưởng sang Không gian chung
+
+- AI: Cursor. Lưu hoặc áp bộ mẫu `sx_`/`vc_` từng tạo `crm_assignments`. Nay bỏ qua nhiệm vụ mẫu; phát sinh (`sx_shared`, `customer_request`) vẫn tạo giao việc.
+- File: `workshopPipelineTask.js`, `crmTaskAssignmentSync.js`, `crmSequentialAssignment.js`, `sharedWorkspaceInbox.js`, `tests/workshop-template-no-assignment.js`.
+- Thử: unit test ok. Gọi sync thật trên «Chốt công nợ» (`sx_pl_6723a412`) — bỏ qua, số giao việc trước/sau = 0. Việc mở kế tiếp của deal là «Thông tin khác hàng», không phải Phôi.
+
+## 2026-10-02 09:55 — Sửa ngày lắp thì hạn thẻ SX chạy theo
+
+- AI: Cursor. Tính lại hạn thẻ bị lỗi vì đọc cột `install_occurrence_dates` không có trên `projects`, nên sửa ngày lắp mà `sx_kanban_deadline_at` đứng yên.
+- File: `projectDeliveryDates.js`, `sxCardPlanDeadline.js`, `projects.js`.
+- Thử TB-2026-978: ngày lắp 07/10 → 14/10, hạn 03/10 → 08/10, rồi trả dữ liệu cũ.
+
+## 2026-10-01 15:50 — Hướng sửa 4 việc module SX
+
+- AI: Cursor. Đơn phát sinh, khóa giai đoạn khi kéo cột, bàn giao VC vào đúng pipeline, hạn thẻ theo lịch 7 ngày.
+- SQL chưa chạy: `database/648_sx_phat_sinh_order.sql`.
+
 ## 2026-10-01 14:55 — Sửa dashboard SX vỡ vì filterBusy
 
 - AI: Cursor. `/sx/dashboard` báo Cannot access filterBusy before initialization vì biến được dùng trước khi khai báo.

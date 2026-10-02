@@ -9,6 +9,7 @@
 const { supabase } = require('../config/supabase');
 const { isAdminLike } = require('./adminRole');
 const { hasCrossCompanyDelegation } = require('./crossCompanyWorkspace');
+const { isWorkshopPipelineSlug } = require('./workshopPipelineTask');
 
 const MODULES = new Set(['crm', 'production', 'logistics']);
 
@@ -71,6 +72,7 @@ function taskSyncRole(task) {
 /** Nhiệm vụ thuộc module trang Giao việc, phạm vi own (không phải slug không gian chung). */
 function taskMatchesPrivateModule(task, mod) {
   const slug = String(task?.stage_slug || '').toLowerCase();
+  if (isWorkshopPipelineSlug(slug)) return false;
   if (sharedSlugsForModule(mod).includes(slug)) return false;
   const syncRole = taskSyncRole(task);
 
