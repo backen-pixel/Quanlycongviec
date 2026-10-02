@@ -70,7 +70,7 @@ async function readVerifiedLead({receipt,context,version,fetchImpl=fetch,now=Dat
   fetchedAt:new Date(now).toISOString(),graphVersion:version};
  return {proof,contact:mapContact(lead.field_data,context.fieldMap)};
 }
-function createLeadIntake({db,isPrimary,pages=pagesFromEnv(),secret=()=>process.env.VPT_FACEBOOK_APP_SECRET,version=()=>process.env.VPT_META_GRAPH_VERSION,readSource=readVerifiedLead,onError=()=>{}}){
+function createLeadIntake({db,isPrimary,pages=pagesFromEnv(),secret=()=>process.env.VPT_FACEBOOK_APP_SECRET,version=()=>process.env.VPT_META_GRAPH_VERSION,readSource=readVerifiedLead,onError=()=>{},isPaused=()=>process.env.VPT_FB_LEAD_INTAKE_WORKER_PAUSED==='1'}){
  let draining=false;
  async function rpc(name,args){
   if(isPrimary()!==true)throw fail('PRIMARY_ONLY_REQUIRED');
@@ -87,14 +87,17 @@ function createLeadIntake({db,isPrimary,pages=pagesFromEnv(),secret=()=>process.
   return {enabled:true,accepted:events.length};
  }
  async function drain(){
-  if(draining||!pages.size)return;draining=true;
+  if(draining||!pages.size||isPaused())return;draining=true;
   try{
    for(let i=0;i<20;i++){
+    if(isPaused())break;
     const token=randomUUID(),rows=await rpc('marketing_fb_lead_claim',{p_pages:[...pages],p_token:token});
     const receipt=Array.isArray(rows)?rows[0]:rows;if(!receipt)break;
     try{
      const context=await rpc('marketing_fb_lead_context',{p_id:receipt.id,p_token:token});
+     if(isPaused())break;
      const result=await readSource({receipt,context,version:version()});
+     if(isPaused())break;
      await rpc('crm_accept_facebook_lead',{p_id:receipt.id,p_token:token,p_context_version:context.contextVersion,p_proof:result.proof,p_contact:result.contact});
     }catch(e){
      const known=new Set(['SOURCE_CONFIG','PROVIDER_UNAVAILABLE','PROVIDER_SCOPE_MISMATCH','CONFLICTING_PAID_SOURCE','INVALID_PROVIDER_FIELDS','AMBIGUOUS_CONTACT','INVALID_CONTACT']);

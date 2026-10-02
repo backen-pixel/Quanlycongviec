@@ -19,6 +19,7 @@ import AutoToolPanelInline from '../components/AutoToolPanel';
 import FacebookPageTokenReminderBanner, { FacebookPageTokenReminderRow } from '../components/FacebookPageTokenReminderBanner';
 import { computeFacebookPageTokenReminder, FB_PAGE_TOKEN_REMINDER_DAYS } from '../lib/facebookPageTokenReminder';
 import FacebookImageSetsSettings from '../components/facebook/FacebookImageSetsSettings';
+import FacebookLeadIntakeConsole from '../components/facebook/FacebookLeadIntakeConsole';
 import FacebookImageSetPicker from '../components/facebook/FacebookImageSetPicker';
 import { patchCrmDashboardCacheLeadFields } from '../lib/crmDashboardCache';
 
@@ -301,6 +302,7 @@ export default function FacebookPage() {
     { id: 'contacts', label: 'Danh bạ', icon: Users },
     { id: 'analytics', label: 'Phân tích', icon: BarChart3 },
     { id: 'lead-ads', label: 'Lead Ads', icon: FileText, badge: stats?.lead_ads_today },
+    ...(isAdmin ? [{ id: 'lead-intake', label: 'Tiếp nhận biểu mẫu', icon: FileText }] : []),
     { id: 'comments', label: 'Bình luận', icon: MessageSquare, badge: stats?.comments_today },
     { id: 'auto-lead', label: 'Tự động', icon: UserPlus },
     ...(isAdmin ? [{ id: 'auto-companies', label: 'Auto công ty', icon: Activity }] : []),
@@ -412,6 +414,7 @@ export default function FacebookPage() {
         {tab === 'contacts' && <ContactsTab fbCompanyQs={fbCompanyQs} companyId={effectiveCompanyFilter} isAdmin={isAdmin} />}
         {tab === 'analytics' && <AnalyticsTab fbCompanyQs={fbCompanyQs} />}
         {tab === 'lead-ads' && <LeadAdsTab />}
+        {tab === 'lead-intake' && isAdmin && <FacebookLeadIntakeConsole companyId={effectiveCompanyFilter || null} />}
         {tab === 'comments' && <CommentsTab />}
         {tab === 'settings' && <SettingsTab onPagesChanged={loadFbTokenSummary} fbCompanyQs={fbCompanyQs} />}
         {tab === 'auto-lead' && <AutoLeadTab />}
@@ -5643,3 +5646,4 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
     </div>
   );
 }
+
