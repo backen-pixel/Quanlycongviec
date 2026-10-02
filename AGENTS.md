@@ -25,7 +25,9 @@ Repo: **Quanlycongviec** (CRM–ERP tủ bếp). UI text tiếng Việt.
 ## Quy tắc làm việc
 
 - Chỉ làm đúng Issue / phạm vi được giao.
-- Không sửa `main` trực tiếp; không deploy production.
+- Không sửa `main` trực tiếp; chuẩn bị thay đổi trên nhánh riêng.
+- Chỉ triển khai production khi người dùng đã giao quyền triển khai cho đúng tác vụ. Trong phạm vi đã giao, tiếp tục theo quyền đó; không coi tài liệu này là quyền triển khai mới hoặc quyền thay đổi công ty, môi trường, dữ liệu, ngân sách hay business rules ngoài phạm vi.
+- Trước phát hành: xác minh đúng repo/commit, công ty và môi trường đích; có PR hoặc diff để xem xét, các kiểm tra bắt buộc đạt, bản sao lưu phù hợp và phương án rollback. Sau phát hành: đọc lại phiên bản đang chạy và kiểm tra hành vi thuộc phạm vi; chưa đủ bằng chứng thì ghi rõ phần chưa nghiệm thu. Không dùng trạng thái merge hoặc healthcheck để thay cho nghiệm thu schema, cấu hình và luồng khách.
 - Không sửa migration SQL đã chạy — chỉ thêm file số mới.
 - Không dùng / commit secret production (`.env`, token).
 - Backend là nguồn business rules.
