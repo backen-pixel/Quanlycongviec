@@ -1,3 +1,11 @@
+## Hiện hành 02/10/2026 — Đối soát Facebook–CRM trên dashboard
+
+[Phần đối soát mới](FACEBOOK_CRM_RECONCILIATION.md) đã nối lượt gửi Facebook với tiếp nhận và hồ sơ CRM, chỉ ra chỗ thiếu/mâu thuẫn, đồng thời cho phép yêu cầu khôi phục qua tuyến đã kiểm quyền. Lượt gửi được tách rõ khỏi khách duy nhất. Runtime5ff846 qua review độc lập, PostgreSQL, toàn bộ kiểm tra tự động và trình duyệt dữ liệu giả; [bằng chứng](FACEBOOK_CRM_RECONCILIATION_REVIEW.md).
+
+PR22 vẫn nháp/chưa phát hành. Chưa chứng minh đầy đủ phạm vi nguồn và hồ sơ legacy nên chưa có CPQL đủ căn cứ; AI tư vấn/lịch khảo sát và vận hành thật còn việc. Mục tiêu250.000 đồng/khách, trần100 triệu một đợt30 ngày và80/20 giữ nguyên; không mở chi từ kiểm thử này. Các mục sau giữ lịch sử.
+
+---
+
 ## Hiện hành 02/10/2026 — Đã kiểm thử khôi phục khách Facebook bị sót
 
 Bản1625f66 bổ sung [kiểm kê nguồn và khôi phục tiếp nhận](FACEBOOK_SOURCE_RECONCILIATION.md): tìm khách bị sót, lưu tiến độ, chạy lại sau lỗi và chống tạo trùng trong CRM. Review độc lập, PostgreSQL và toàn bộ kiểm tra tự động PASS. Xem [bằng chứng đúng phiên bản](FACEBOOK_SOURCE_RECONCILIATION_REVIEW.md).

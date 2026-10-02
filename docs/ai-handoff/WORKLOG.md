@@ -1,3 +1,13 @@
+## Hiện hành 02/10/2026 — Dashboard đã có đối soát Facebook–CRM
+
+PR22 runtime5ff846 đã nối kết quả kiểm kê nguồn vào kỳ đo: tách lượt gửi đã khớp CRM, đang chờ, cần review, thiếu bằng chứng và lượt gửi CRM biết nhưng chưa quét thấy. Có nút khôi phục với gửi lại cùng yêu cầu khi mất phản hồi; nhãn phân biệt lượt gửi với khách duy nhất. Review độc lập PASS; PostgreSQL17, Node22 489, cả10 job automation/full build và trình duyệt dữ liệu giả PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/FACEBOOK_CRM_RECONCILIATION_REVIEW.md).
+
+Chưa phát hành hoặc mở đợt chi. Kết quả chỉ bao phủ lượt gửi đã kiểm kê và hồ sơ tiếp nhận có bằng chứng; còn phải hoàn tất phạm vi nguồn, hồ sơ legacy và cùng kỳ chi tiêu trước khi xác nhận chi phí/khách. AI chăm khách/lịch khảo sát và nghiệm thu thực tế vẫn chưa hoàn tất. Mục tiêu250.000 đồng/khách hợp lệ; trần100 triệu một đợt30 ngày gồmFacebook, TP.HCM/Cần Thơ80/20 giữ nguyên. Mục tiêu toàn hệ thống vẫn IN PROGRESS.
+
+Các mục phía dưới giữ lịch sử theo phiên bản.
+
+---
+
 ## 2026-10-02 — Reconciliation review and UI terminology
 
 Runtime808a307 passed independent review, all10 automation jobs, census PostgreSQL17 cases and Node22 489 cases. Synthetic browser checks passed dropped-response same-key retry, refresh persistence, wrong-company replies, pending-write control locking and company switching. Reviewer P3 is addressed: census figures are labeled form submissions, distinct from unique qualified customers. The existing trial save button is also disabled during recovery. Final head CI and review of this UI delta remain to be recorded; no live action.
