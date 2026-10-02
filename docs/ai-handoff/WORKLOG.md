@@ -1,3 +1,9 @@
+## 2026-10-02 — Identity review verified; next is the measured cohort
+
+Implementation5d9a093: independent review PASS, local89 PASS; Node18/22 each410 PASS; isolated PostgreSQL identity27 PASS/0 FAIL/0 SKIP; full frontend and all automation/report/Messenger jobs SUCCESS. Follow-up96451de adds only combined-migration intake coverage:650–654 applied twice, intake/recovery31 PASS, all8jobs SUCCESS. Synthetic browser passed scope/source invalidation and ambiguous request retry. See [exact evidence and limits](vpt-marketing-automation/CRM_IDENTITY_OPERATIONS_REVIEW.md). No live changes. Full goal active: trial/source/qualified unique cohort + spend/CPQL, binding/legacy disposition, AI/calendar/dashboard and Founder release acceptance remain unfinished.
+
+---
+
 ## 2026-10-02 — Company-wide identity review and exception UI
 
 Base PR22 301db0d. Added exact-contact inventory, explicit DISTINCT/revoke, whole-group reconfirmation, historical detach/restore safeguards and operator review card. All writes remain scoped, versioned, audited and default-off; no CRM deletion or live change. Local89 tests PASS. Isolated PostgreSQL, full build, browser and final review pending. See [contract and release limits](vpt-marketing-automation/CRM_IDENTITY_OPERATIONS.md). Identity completeness is not paid qualification; trial/source/cohort, AI/calendar, dashboard and release acceptance remain unfinished. Full goal active.

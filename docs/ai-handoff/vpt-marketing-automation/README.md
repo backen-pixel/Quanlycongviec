@@ -1,3 +1,11 @@
+## Hiện hành 02/10/2026 — tiếp tục mục tiêu Marketing–Sales
+
+Đã có các increment trong PR22: [chi tiêu có đối soát](SPEND_INTEGRATION.md), [nhu cầu khách có bằng chứng](CRM_QUALIFICATION.md), [tiếp nhận Facebook bền vững](FACEBOOK_LEAD_INTAKE.md), [hàng chờ và khôi phục](FACEBOOK_INTAKE_CONSOLE.md), [rà khách trùng và quyết định khác khách](CRM_IDENTITY_OPERATIONS.md). Xem [bằng chứng rà khách](CRM_IDENTITY_OPERATIONS_REVIEW.md) và [CURRENT](../CURRENT.md) cho phiên bản/trạng thái mới nhất. Mọi phần vẫn nằm trong PR nháp, chưa phát hành.
+
+Bước kế tiếp: cấu hình kỳ đo/tài khoản và nối đầy đủ bằng chứng nguồn, chất lượng, khách duy nhất với tổng chi; sau đó AI tư vấn/bàn giao/lịch và dashboard. Chưa có CPQL thực tế hoặc nghiệm thu đa kênh. 250.000 đồng là mục tiêu cho khách hợp lệ duy nhất có nguồn trả phí; không đếm raw form hoặc nhóm identity thay thế. Các mục bên dưới giữ bằng chứng lịch sử theo từng increment.
+
+---
+
 CRM increment: [qualification evidence](CRM_QUALIFICATION.md), default-off; see exact-head review/validation gates.
 
 ## Continuation: Facebook source integration, 02/10/2026
