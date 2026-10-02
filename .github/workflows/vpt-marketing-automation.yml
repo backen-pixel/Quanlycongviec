@@ -16,6 +16,7 @@ on:
       - 'backend/src/routes/crm/index.js'
       - 'backend/src/routes/crm/routes/leadQuality.js'
       - 'backend/src/routes/crm/routes/leadIdentity.js'
+      - 'backend/src/routes/crm/routes/identityReview.js'
       - 'backend/tests/crmLeadQuality*.js'
       - 'backend/tests/crmLeadIdentity*.js'
       - 'backend/src/helpers/adInsights.js'
@@ -30,6 +31,7 @@ on:
       - 'database/649_marketing_spend_evidence.sql'
       - 'database/650_crm_lead_qualification.sql'
       - 'database/651_crm_lead_identity.sql'
+      - 'database/654_crm_identity_review.sql'
       - '.github/workflows/vpt-marketing-automation.yml'
   workflow_dispatch:
 permissions:
@@ -48,7 +50,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - run: node --test backend/tests/marketingAutomation.test.js backend/tests/marketingAutomation.leads.test.js backend/tests/marketingAutomation.reports.test.js backend/tests/marketingAutomation.spend.test.js backend/tests/marketingAutomation.spend.integration.test.js backend/tests/adAnalytics.correctness.test.js backend/tests/adAnalytics.ui-state.test.js backend/tests/adAnalytics.action-lifecycle.test.js backend/tests/crmLeadQuality.test.js backend/tests/crmLeadIdentity.test.js backend/tests/crmLeadIdentity.service.test.js backend/tests/facebookLeadIntake.test.js backend/tests/facebookLeadIntake.integration.test.js backend/tests/facebookLeadIntake.admin.test.js
+      - run: node --test backend/tests/marketingAutomation.test.js backend/tests/marketingAutomation.leads.test.js backend/tests/marketingAutomation.reports.test.js backend/tests/marketingAutomation.spend.test.js backend/tests/marketingAutomation.spend.integration.test.js backend/tests/adAnalytics.correctness.test.js backend/tests/adAnalytics.ui-state.test.js backend/tests/adAnalytics.action-lifecycle.test.js backend/tests/crmLeadQuality.test.js backend/tests/crmLeadIdentity.test.js backend/tests/crmLeadIdentity.service.test.js backend/tests/crmLeadIdentity.review.test.js backend/tests/facebookLeadIntake.test.js backend/tests/facebookLeadIntake.integration.test.js backend/tests/facebookLeadIntake.admin.test.js
   postgres:
     runs-on: ubuntu-latest
     timeout-minutes: 10

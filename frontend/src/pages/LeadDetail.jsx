@@ -28,6 +28,7 @@ import { formatVND, formatDate, formatDateTime, getFileEmoji } from '../lib/util
 import { depositInstallmentsForForm, aggregateDepositFromInstallments } from '../lib/quotationTermsDisplay';
 import CRMTasksTab from '../components/CRMTasksTab';
 import LeadQualityCard from '../components/marketing/LeadQualityCard';
+import LeadIdentityReviewCard from '../components/marketing/LeadIdentityReviewCard';
 import { pickSurveyFillFormTask, hasFilledFormData, normalizeFormConfig } from '../lib/taskFillForm';
 import DealSharedWorkspaceTab from '../components/DealSharedWorkspaceTab';
 import CrmTaskDocumentsPanel from '../components/CrmTaskDocumentsPanel';
@@ -4306,7 +4307,10 @@ export default function LeadDetail() {
             {/* Tab Content */}
             <div className="p-5">
               {activeTab === 'quality' ? (
+                <>
                 <LeadQualityCard leadId={id} companyId={lead?.company_id} revisionKey={JSON.stringify([lead?.updated_at, lead?.region_id, lead?.assigned_to, lead?.lead_owner_id, lead?.title, lead?.description, lead?.lead_type_id, lead?.phone, lead?.email, lead?.install_address, customer?.updated_at, customer?.company_id, customer?.full_name, customer?.phone, customer?.email, customer?.address, customer?.city])} />
+                {(isAdminUser || user?.role === 'sales_admin') && <LeadIdentityReviewCard leadId={id} companyId={lead?.company_id} revisionKey={JSON.stringify([lead?.updated_at, lead?.company_id, lead?.customer_id, lead?.phone, lead?.email, lead?.title, customer?.id, customer?.updated_at, customer?.company_id, customer?.full_name, customer?.phone, customer?.email])} />}
+                </>
               ) : activeTab === 'tasks' ? (
                 <>
                 <CRMTasksTab
@@ -8792,4 +8796,5 @@ function RevertToLeadModal({ leadId, lead, onClose, onSuccess }) {
     </div>
   );
 }
+
 
