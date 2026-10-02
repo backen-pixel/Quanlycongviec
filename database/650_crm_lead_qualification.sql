@@ -37,7 +37,7 @@ BEGIN
     WHEN 'crm_leads' THEN ARRAY['company_id','customer_id','region_id','assigned_to','lead_owner_id','title','description','lead_type_id','phone','email','install_address']
     WHEN 'customers' THEN ARRAY['company_id','full_name','phone','email','address','city']
     WHEN 'company_regions' THEN ARRAY['company_id','is_active','name','code']
-    WHEN 'users' THEN ARRAY['company_id','is_active'] END;
+    WHEN 'users' THEN ARRAY['company_id','tenant_id','is_active'] END;
   SELECT jsonb_object_agg(k,to_jsonb(OLD)->k) INTO before_data FROM unnest(keys) k;
   IF TG_OP='UPDATE' THEN SELECT jsonb_object_agg(k,to_jsonb(NEW)->k) INTO after_data FROM unnest(keys) k; END IF;
   IF TG_OP='DELETE' OR before_data IS DISTINCT FROM after_data THEN
@@ -70,7 +70,7 @@ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pu
 DECLARE
   l public.crm_leads%ROWTYPE; u public.users%ROWTYPE; c public.companies%ROWTYPE;
   customer_json jsonb := '{}'::jsonb; region_json jsonb := '{}'::jsonb;
-  assignee_json jsonb := '{}'::jsonb; lj jsonb; uj jsonb; cj jsonb;
+  assignee_json jsonb := '{}'::jsonb; tenant_json jsonb; lj jsonb; uj jsonb; cj jsonb;
   allowed boolean := false; ready boolean := false; assigned_region boolean; fingerprint jsonb; contact text; versions jsonb;
 BEGIN
   IF p_actor_id IS NULL OR p_company_id IS NULL OR p_lead_id IS NULL THEN RAISE EXCEPTION 'invalid context' USING ERRCODE='22023'; END IF;
@@ -83,6 +83,10 @@ BEGIN
   SELECT * INTO c FROM public.companies WHERE id=p_company_id FOR SHARE;
   IF NOT FOUND THEN RAISE EXCEPTION 'company missing' USING ERRCODE='42501'; END IF;
   lj:=to_jsonb(l); uj:=to_jsonb(u); cj:=to_jsonb(c);
+  IF cj->>'tenant_id' IS NOT NULL THEN
+    SELECT to_jsonb(x) INTO tenant_json FROM public.tenants x WHERE x.id=(cj->>'tenant_id')::uuid FOR SHARE;
+    IF NOT FOUND OR tenant_json->>'is_active' IS DISTINCT FROM 'true' THEN RAISE EXCEPTION 'tenant inactive' USING ERRCODE='42501'; END IF;
+  END IF;
   IF cj->>'is_active'='false' OR lj->>'type' NOT IN ('lead','deal') THEN RAISE EXCEPTION 'unsupported context' USING ERRCODE='42501'; END IF;
   -- Same-company responsible staff; company admin. Ecosystem access requires
   -- a current matching tenant, not a tenant list cached inside a JWT.
@@ -92,7 +96,7 @@ BEGIN
       PERFORM 1 FROM public.user_company_regions WHERE user_id=u.id AND region_id=l.region_id FOR SHARE;
       allowed:=FOUND;
     END IF;
-    IF uj->>'tenant_id' IS NOT NULL AND cj->>'tenant_id' IS NOT NULL AND uj->>'tenant_id' IS DISTINCT FROM cj->>'tenant_id' THEN allowed:=false; END IF;
+    IF uj->>'tenant_id' IS DISTINCT FROM cj->>'tenant_id' THEN allowed:=false; END IF;
   ELSIF u.role::text='platform_admin' THEN allowed:=true;
   ELSIF u.role::text='ecosystem_admin' OR (u.role::text='admin' AND u.company_id IS NULL) THEN
     allowed:=uj->>'tenant_id' IS NOT NULL AND uj->>'tenant_id'=cj->>'tenant_id';
@@ -108,6 +112,7 @@ BEGIN
   assigned_region:=FOUND;
   contact:=coalesce(nullif(btrim(customer_json->>'phone'),''),nullif(btrim(lj->>'phone'),''),'');
   ready:=assigned_region AND coalesce(region_json->>'is_active'='true',false) AND coalesce(assignee_json->>'is_active'='true',false)
+    AND assignee_json->>'tenant_id' IS NOT DISTINCT FROM cj->>'tenant_id'
     AND (length(regexp_replace(contact,'[^0-9]','','g')) BETWEEN 8 AND 15
       OR coalesce(nullif(customer_json->>'email',''),lj->>'email','') ~ '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$');
   fingerprint:=jsonb_build_object(
@@ -115,7 +120,7 @@ BEGIN
       'assigned',l.assigned_to,'owner',l.lead_owner_id,'title',lj->'title','description',lj->'description',
       'product',lj->'lead_type_id','phone',lj->'phone','email',lj->'email','address',lj->'install_address'),
     'customer',jsonb_build_object('company',customer_json->'company_id','name',customer_json->'full_name','phone',customer_json->'phone','email',customer_json->'email','address',customer_json->'address','city',customer_json->'city'),
-    'regionActive',region_json->'is_active','assigneeActive',assignee_json->'is_active','assigneeCompany',assignee_json->'company_id','assignedRegion',assigned_region);
+    'regionActive',region_json->'is_active','assigneeActive',assignee_json->'is_active','assigneeCompany',assignee_json->'company_id','assigneeTenant',assignee_json->'tenant_id','companyTenant',cj->'tenant_id','assignedRegion',assigned_region);
   INSERT INTO public.crm_lead_quality_source_versions(entity,entity_id)
     SELECT entity,entity_id FROM (VALUES ('crm_leads',l.id),('customers',l.customer_id),('company_regions',l.region_id),('users',l.assigned_to)) x(entity,entity_id)
     WHERE entity_id IS NOT NULL ON CONFLICT DO NOTHING;

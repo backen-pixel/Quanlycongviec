@@ -4306,7 +4306,7 @@ export default function LeadDetail() {
             {/* Tab Content */}
             <div className="p-5">
               {activeTab === 'quality' ? (
-                <LeadQualityCard leadId={id} companyId={lead?.company_id} revisionKey={lead?.updated_at} />
+                <LeadQualityCard leadId={id} companyId={lead?.company_id} revisionKey={JSON.stringify([lead?.updated_at, lead?.region_id, lead?.assigned_to, lead?.lead_owner_id, lead?.title, lead?.description, lead?.lead_type_id, lead?.phone, lead?.email, lead?.install_address, customer?.updated_at, customer?.company_id, customer?.full_name, customer?.phone, customer?.email, customer?.address, customer?.city])} />
               ) : activeTab === 'tasks' ? (
                 <>
                 <CRMTasksTab
