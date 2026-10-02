@@ -27,6 +27,6 @@ The rest of the goal remains: actual receiver/backup/calendar bindings; AI verif
 
 ## Evidence / rollback
 
-Local47 graph/service/router tests PASS. PostgreSQL16 CI (fresh isolated database only) covers links/chains/triangles, unlink/replay, concurrent identity/qualification, current permissions, contact A→B→A, deletion and transfer. Verify the published run and independent review before relying on them; initially pending. No frontend change or browser test in this increment.
+Local47 graph/service/router tests PASS. PostgreSQL16 CI (fresh isolated database only) covers links/chains/triangles, unlink/replay, concurrent identity/qualification, current permissions, contact A→B→A, deletion and transfer. Verified implementation e434f4e: independent review PASS; isolated PostgreSQL identity 14 PASS/0 FAIL/0 SKIP, Node 18/22 each 303 PASS, existing PG and full frontend build PASS. The separate reviewer checked the published code and read the PG log. See [exact versions, logs and limits](CRM_IDENTITY_REVIEW.md). No frontend change or browser test in this increment.
 
 No real DB migration/flag/customer/ad/budget/message changes, no merge/deploy. Rollback disables the new feature and keeps nodes, edges, audit and invalidation triggers. Do not re-enable old evidence after removing invalidation tracking. Legacy destructive merge is not repaired by this increment and must not be used for the trial's identity resolution.
