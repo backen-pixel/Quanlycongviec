@@ -1,6 +1,6 @@
 # Facebook legacy source reconciliation
 
-2026-10-02; baseline PR22 `8394ed15c45c303dd1be30721f154912fee4dce9`. Risk HIGH: company scope, customer identity, provider credentials and measurement. In validation; not a release decision.
+2026-10-02; baseline PR22 `8394ed15c45c303dd1be30721f154912fee4dce9`. Risk HIGH: company scope, customer identity, provider credentials and measurement. Implementation and synthetic validation PASS at runtime0d41/test2d90; [exact evidence](FACEBOOK_LEGACY_RECONCILIATION_REVIEW.md). Not a release decision.
 
 ## Operator result
 

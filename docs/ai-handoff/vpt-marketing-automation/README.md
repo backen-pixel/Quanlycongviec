@@ -1,3 +1,5 @@
+**Hiện hành02/10/2026:** nối nguồn Facebook vào hồ sơ CRM cũ đã có luồng review và kiểm thử. Runtime0d41d343, fixture2d90f5c; không tạo khách mới hoặc sửa lịch sử. [Hợp đồng](FACEBOOK_LEGACY_RECONCILIATION.md) · [Review và bằng chứng](FACEBOOK_LEGACY_RECONCILIATION_REVIEW.md). Chưa đủ toàn bộ nguồn/chi tiêu/AI care/lịch khảo sát/UAT để hoàn thành mục tiêu hoặc phát hành.
+
 ## Hiện hành 02/10/2026 — Đối soát Facebook–CRM trên dashboard
 
 [Phần đối soát mới](FACEBOOK_CRM_RECONCILIATION.md) đã nối lượt gửi Facebook với tiếp nhận và hồ sơ CRM, chỉ ra chỗ thiếu/mâu thuẫn, đồng thời cho phép yêu cầu khôi phục qua tuyến đã kiểm quyền. Lượt gửi được tách rõ khỏi khách duy nhất. Runtime5ff846 qua review độc lập, PostgreSQL, toàn bộ kiểm tra tự động và trình duyệt dữ liệu giả; [bằng chứng](FACEBOOK_CRM_RECONCILIATION_REVIEW.md).
