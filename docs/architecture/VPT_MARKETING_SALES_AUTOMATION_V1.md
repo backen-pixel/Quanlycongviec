@@ -1,13 +1,18 @@
-# VPT Marketing–Sales tự động hóa — V1
+# VPT Marketing–Sales tự động hóa — V1, cập nhật đo Lead V2
 
 **Founder đã duyệt kế hoạch và giao triển khai ngày 02/10/2026.** Đây là nguồn kế hoạch chung trong repo; không phải chứng nhận hệ thống đã phát hành. Thay phương án ngân sách A/B 14/21 triệu và phương án thuê thường xuyên đội quảng cáo/nội dung. Quyết định nền Business AI OS V1.1 tại PR #20 giữ nguyên.
+
+## Quyết định cập nhật trong lúc triển khai — đo Lead trước
+
+Founder yêu cầu: “tạm thời đo bằng lead nha. có kha nagw 250000 trên 1 lead cho dễ”. Chỉ tiêu vận hành trước mắt là **250.000 đồng/khách hợp lệ** theo định nghĩa khách đã chốt trong kế hoạch. Đây là mức mục tiêu thử, chưa có bằng chứng đạt hoặc cam kết kết quả. Không cần chờ kết nối kế toán để nghiệm thu giai đoạn Lead; chỉ số 7% giữ để đánh giá sau, chưa dùng cho tối ưu hiện tại. Trần 100 triệu/30 ngày, vùng 80/20, quyền tự điều chỉnh và quyền phát hành giữ nguyên. 300 khách × 250.000 đồng = 75 triệu; nếu dùng hết trần 100 triệu thì cần ít nhất 400 khách hợp lệ để đạt mục tiêu chi phí. Các phép tính này không tự nâng mục tiêu sản lượng, ngân sách hoặc quyền chi.
 
 ## Mục tiêu và cách đo
 
 - Toàn bộ sản phẩm VPT, khách mua để sử dụng; Facebook, website, Google, TikTok, ChatGPT Ads, Zalo OA + Ads. Chuẩn bị đủ sáu kênh trước mở rộng; không buộc mọi kênh tiêu tiền đồng thời.
 - Trial một lần: **tối đa 100.000.000 VND trong 30 ngày**, gồm Facebook đang chạy. Không tự gia hạn hoặc cộng thêm 100 triệu mỗi tháng. Chiến dịch thật vẫn theo trạng thái hiện hữu tới khi có gói chuyển đổi/phát hành cụ thể.
 - HCM 80 triệu, Cần Thơ 20 triệu. Khởi điểm Google 35, Facebook 30, TikTok 20, Zalo 10, ChatGPT 5 triệu; mỗi kênh chia 80/20. Website/OA là điểm nhận/chăm khách.
-- Chỉ tiêu chính: tiền quảng cáo / doanh thu quy kết quảng cáo **được kế toán ghi nhận, chưa VAT, sau giảm/hủy/điều chỉnh** <=7%. Tiền đã thu, giá trị đơn và giá trị deal ước tính là ba số riêng.
+- Chỉ tiêu hiện tại: toàn bộ tiền quảng cáo của đợt thử / số khách hợp lệ khác nhau, có bằng chứng nguồn trả phí, mục tiêu <=250.000 đồng. Báo cáo riêng khách mới nhận/chờ xác minh/không hợp lệ; không dùng lượt gửi form hoặc nhãn ấm/nóng làm mẫu số. Thiếu chi tiêu hoặc dữ liệu xác minh thì UNKNOWN, không kết luận đạt mục tiêu.
+- Chỉ tiêu doanh thu giữ cho giai đoạn sau: tiền quảng cáo / doanh thu quy kết quảng cáo **được kế toán ghi nhận, chưa VAT, sau giảm/hủy/điều chỉnh** <=7%. Tiền đã thu, giá trị đơn và giá trị deal ước tính là ba số riêng.
 - 100 triệu chi đủ cần 1.428.571.429 VND doanh thu đủ điều kiện. Tủ bếp Founder ước 80–150 triệu/đơn, 1–3 tháng chốt; tương đương khoảng 10–18 đơn nếu giá trị đó là doanh thu đủ điều kiện. Không áp giá trị tủ bếp cho phụ kiện/sản phẩm khác.
 - 300 khách hợp lệ là chỉ tiêu phụ; không chi thêm để đạt số lượng. Khách phải khác nhau, nhu cầu phù hợp, trong vùng phục vụ, liên hệ dùng được, có bằng chứng nguồn trả phí; nhãn ấm/nóng AI không tự chứng minh khách hợp lệ.
 - Theo nhóm khách của đợt chi: kiểm mốc 30/60/90 ngày sau tiếp nhận; khoảng ngày120 từ mở thử mới đủ90 ngày theo dõi cả nhóm. Đơn chưa ghi nhận tiếp tục theo dõi. Không lấy doanh thu khách cũ làm đẹp kết quả; không đòi doanh thu đủ trong30 ngày chi.
@@ -26,8 +31,8 @@ Codex khảo sát, xây, kiểm thử và đóng gói. Claude Code hỗ trợ kh
 
 Nội dung → quảng cáo → Lead → tư vấn → khảo sát → người chốt đơn → doanh thu → tối ưu. Giữ Express/React/Supabase/Render, CRM canonical, Domain giữ luật và Application Service điều phối. AI chỉ qua tool/service có quyền, không ghi DB trực tiếp. Workflow phải bền vững trước khi điều phối tác động.
 
-1. **Dữ liệu/quyền:** kiểm kê sáu kênh, quyền thật, library sản phẩm/chính sách/giá/ảnh/bản quyền, lịch khảo sát, nguồn kế toán, người nhận ngoại lệ, dự toán và trần API riêng.
-2. **Đo lường:** nối sự kiện chống trùng → Lead → khảo sát → Order/chứng từ → recognized postings và điều chỉnh; audit, scope, độ mới và độ đầy đủ phải rõ.
+1. **Dữ liệu/quyền:** kiểm kê sáu kênh, quyền thật, library sản phẩm/chính sách/giá/ảnh/bản quyền, lịch khảo sát, người nhận ngoại lệ (nguồn kế toán xác định ở giai đoạn đo doanh thu), dự toán và trần API riêng.
+2. **Đo lường:** trước mắt nối toàn bộ chi quảng cáo → sự kiện chống trùng → khách CRM đã đối soát trùng liên kênh → trạng thái xác minh → khảo sát. Kế toán/Order/recognized postings và điều chỉnh là phần tiếp theo; thiếu kế toán chỉ khóa phép đo doanh thu. Audit, scope, độ mới và độ đầy đủ phải rõ.
 3. **Nội dung/ads:** mỗi nhóm sản phẩm hai thông điệp, hai mẫu ảnh, một video. Lịch đầu: ba video ngắn, ba bài ảnh, một hướng dẫn/công trình mỗi tuần và chuyển thể theo kênh. Cải thiện website hiện có, landing/form/điện thoại/Zalo và success tracking. Ảnh minh họa không giả công trình thật; không tạo đánh giá/giá/cam kết không nguồn. Phần kênh chưa có công cụ được đưa hàng chờ thao tác, không giả lập thành tự động.
 4. **Chăm khách:** AI hỏi sản phẩm/địa bàn/nhu cầu/ngân sách/thời gian, lưu có nguồn; slot khảo sát thực và khách xác nhận trước đặt. Bàn giao có hội thoại/ảnh/tóm tắt/người nhận. Opt-out/human takeover dừng AI; thiếu nguồn chuyển người. Người phản hồi trong15 phút làm việc08–20 hằng ngày, có dự phòng.
 5. **Nghiệm thu/thử:** review riêng, isolated PostgreSQL, UAT đúng phiên bản, gói ảnh hưởng/rollback/quyết định phát hành; trial30 ngày rồi theo dõi nhóm khách dài hơn chu kỳ chi.
@@ -44,7 +49,7 @@ Gói3/4 song song sau contracts/quyền. Ước6–8 tuần cũ phải rà lại
 
 ## Giao tiếp và nghiệm thu
 
-Intake: source/event ID, time, product, region, contact, paid evidence. Care: conversation/consent/calendar slot+version/handoff owner. Finance projection: accounting source, immutable posted line+version, signed net exVAT, recognition time, adjustment reference, Order/Lead và source coverage. Commands: actor/company/action/policy version/content hash/idempotency/provider receipt/audit; outcome phân biệt denied/pending/unknown/success.
+Intake: source/event ID, time, product, region, contact, paid evidence. Care: conversation/consent/calendar slot+version/handoff owner. Lead projection: canonicalLeadId sau đối soát trùng trong CRM, bằng chứng nguồn đầu tiên, xác minh liên hệ/nhu cầu/vùng phục vụ, người hoặc bộ quy tắc xác minh, thời điểm và coverage. Không mặc định raw crm_leads.id/platform Lead ID là khách duy nhất. Finance projection giai đoạn sau: accounting source, immutable posted line+version, signed net exVAT, recognition time, adjustment reference, Order/Lead và source coverage. Commands: actor/company/action/policy version/content hash/idempotency/provider receipt/audit; outcome phân biệt denied/pending/unknown/success.
 
 Test: đúng/sai công ty/quyền và thu hồi; lặp/đồng thời/crash/restart; sai giá/không nguồn/prompt injection; slot trùng, opt-out, người tiếp quản; adjustment và attribution đến muộn; tiền tệ/lỗi/thiếu trang; toàn bộ chi kể cả zero-Lead;7ngày/10khách/10%/48h/80-20/cap/dừng; DB thật cô lập và UAT phiên bản. Dashboard phân biệt deal estimate/order/revenue/cash, chi phí AI/người và trạng thái chưa xác minh.
 

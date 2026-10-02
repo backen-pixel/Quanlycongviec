@@ -504,10 +504,10 @@ export default function AdAnalyticsPage() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <OSoLieu nhan="Lead từ quảng cáo" giaTri={fmtSo(tongQuan.tu_quang_cao?.leads)}
               phu={`${tongQuan.so_quang_cao} quảng cáo · ${tongQuan.ti_le_biet_quang_cao}% lead biết nguồn QC`} />
-            <OSoLieu nhan="Lead chất lượng" giaTri={fmtSo(tongQuan.tu_quang_cao?.quality_leads)}
+            <OSoLieu nhan="Lead được gắn nhãn ấm/nóng" giaTri={fmtSo(tongQuan.tu_quang_cao?.quality_leads)}
               phu={`${tongQuan.tu_quang_cao?.quality_rate || 0}% · rác ${tongQuan.tu_quang_cao?.junk_rate || 0}%`}
               mau="text-amber-700" />
-            <OSoLieu nhan="Đơn đã chốt" giaTri={fmtSo(tongQuan.tu_quang_cao?.closed)}
+            <OSoLieu nhan="Deal đã đánh dấu chốt" giaTri={fmtSo(tongQuan.tu_quang_cao?.closed)}
               phu={`tỉ lệ chốt ${tongQuan.tu_quang_cao?.close_rate || 0}%`} mau="text-emerald-700" />
             <OSoLieu nhan="Giá trị deal chốt (ước tính)" giaTri={fmtTien(tongQuan.tu_quang_cao?.closed_estimated_value)}
               phu={tongQuan.co_chi_tieu
@@ -527,10 +527,11 @@ export default function AdAnalyticsPage() {
       )}
 
       <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
-        <b>Doanh thu kế toán và hiệu quả quảng cáo: chưa xác minh.</b>{' '}
+        <b>Mục tiêu thử: 250.000 đồng/khách hợp lệ. Chi phí thực tế: chưa đủ dữ liệu.</b>{' '}
+        Khách hợp lệ được loại trùng, xác minh nhu cầu, vùng phục vụ và thông tin liên hệ; nhãn ấm/nóng chưa thay việc xác minh này.
         Giá trị deal là ước tính, chưa phải doanh thu ghi nhận hay tiền đã thu.
         Chi tiêu trên bảng chỉ gồm quảng cáo đã liên kết Lead; có thể thiếu quảng cáo chưa tạo khách.
-        Chưa dùng số liệu này để tự tăng ngân sách hoặc kết luận đạt mục tiêu 7%.
+        Chưa dùng số liệu này để tự tăng ngân sách hoặc kết luận đạt 250.000 đồng/khách hay 7% doanh thu.
       </div>
 
       <KhungMarketing trangThai={mkt} onXong={async () => { await taiMkt(); await refreshReportRef.current?.(); }} />

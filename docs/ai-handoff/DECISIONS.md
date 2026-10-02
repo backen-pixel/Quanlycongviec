@@ -1,6 +1,6 @@
 # 2026-10-02 — VPT Marketing–Sales execution mandate
 
-Founder explicitly requested implementation of [the approved plan](../architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md).100m VND is a single30-day trial, not recurring monthly.7% means ad spend/recognized net paid-attributed revenue. AI advises/books surveys; humans final quote/close. See implementation README for unfinished release gates. Historic decisions below remain unchanged.
+Founder explicitly requested implementation of [the approved plan](../architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md).100m VND is a single30-day trial, not recurring monthly.Later in the same task Founder chose interim250,000 VND per qualified paid Lead;300 at target implies75m, while100m remains a one-time cap. Finance integration is deferred and must not block Lead-only preparation.7% remains a later revenue evaluation, not achieved by cheap Leads. AI advises/books surveys; humans final quote/close. See implementation README for unfinished release gates. Historic decisions below remain unchanged.
 
 ---
 

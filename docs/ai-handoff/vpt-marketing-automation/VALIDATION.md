@@ -1,9 +1,24 @@
-# Validation — implementation candidate
+# Validation — VPT Marketing–Sales candidate
 
-Source: PR19 e16c885ae7c2305645be02a1227bf378cb59137f; approved plan02/10. Local Node24,131 unit/regression cases passed before publication. Node test runner child spawn returned EPERM; same tests ran in-process with node:test. This is not an approval-review rejection or a production test.
+Ngày02/10/2026. PR22 stacked trên PR19 `e16c885ae7c2305645be02a1227bf378cb59137f`. Không phải production acceptance.
 
-Tests cover domain boundaries, synthetic accounting projection, content source guards, opt-out/handoff, uncertain provider/commit result, backup write rejection and53 prior report/UI logic regressions (two estimate assertions updated to corrected semantics), plus MCP/insight financial regression. They do not prove real auth, channel API capabilities, financial completeness, atomic budget reservations, calendar availability or autonomous runtime.
+## Kết quả đã có
 
-PostgreSQL workflow uses a fresh loopback-only database named marketing_automation_test, no live credentials; migration reapply, denied anon/authenticated access, RLS deny-all, wrong scope/version/action,12 concurrent idempotent submits, changed-content conflict, revoked/expired grants, concurrent claim, terminal idempotency and crash recovery. Local PostgreSQL is unavailable; record CI results on final head separately.
+- **163/163 unit/regression PASS** ở candidate đo Lead V2, Node24 cục bộ; reviewer chạy độc lập cùng163 case. Bao gồm25 case đo Lead mới,53 regression PR19 kế thừa (hai assertion estimate sửa đúng nghĩa), historical financial ranking, MCP/insights và domain/command controls. Không skipped.
+- CI phiên bản trước khi thêm Lead V2: `1315a0fc09ac83d2616719e514c092993d57c7b6`, [run36976273696](https://github.com/backen-pixel/Quanlycongviec/actions/runs/36976273696) PASS Node18/22 và PostgreSQL16; [report regression36976273695](https://github.com/backen-pixel/Quanlycongviec/actions/runs/36976273695) PASS. CI này chưa thay bằng chứng cho delta Lead V2; đọc checks trên head mới trước merge.
+- **Browser synthetic smoke PASS:** biên dịch component React đã sửa với API giả, CSS fixture; mở loopback4182 bằng công cụ trình duyệt được hỗ trợ. Thấy mục tiêu250.000/khách, số115 triệu gắn nhãn estimate, nhãnấm/nóng tách khỏi hợp lệ; bật lỗi CRM rồi tải lại làm mất số liệu cũ, hiện UNKNOWN thay0. Nhật ký không có lỗiJS. CSP `connect-src 'none'`, không đăng nhập/CRM/khách thật. Đây không phải full app build, mobile UAT hoặc test auth thật.
+- Review độc lập code/domain/SQL/report/UI PASS trong phạm vi runtime đang tắt; [chi tiết](INDEPENDENT_REVIEW.md). Fullplan, adapters và release vẫn IN PROGRESS/HOLD.
 
-Independent reviewer report and CI/browser observations are appended after execution. Until then the full plan/UAT/release status is IN PROGRESS/HOLD, not DONE.
+## PostgreSQL cô lập
+
+Workflow tạo PostgreSQL16 mới trên loopback, database `marketing_automation_test`, không dùng credentials thật. Kiểm reapply migration, anon/authenticated bị từ chối, RLS không lộ hàng, sai company/version/action, grant malformed/NULL,12 concurrent duplicate submits, conflict đổi nội dung, thu hồi/hết hạn grant, claim đồng thời, idempotent terminal và phục hồi RUNNING thành UNKNOWN không replay.
+
+Máy cục bộ chưa có PostgreSQL binary. Kiểm xử lý đồng thời của queue không chứng minh atomic budget reservation, calendar slot hoặc takeover barrier — các phần đó chưa được triển khai. Không áp migration648 lên DB thật.
+
+## Giới hạn còn lại
+
+Nguồn toàn bộ spend/qualification/CRM canonical chưa bind, nên không có CPQL thật hoặc bằng chứng đạt250k. Số lượng ID trong fixture không chứng minh khả năng gộp cùng khách giữa Facebook/Google; xem [hợp đồng adapter](LEAD_MEASUREMENT_CONTRACT.md). Nguồn kế toán hoãn theo Founder; không chặn giai đoạn Lead nhưng chưa được báo7% doanh thu.
+
+Runtime command service chưa mount/khởi chạy, chưa nối API nhà cung cấp hoặc model, chưa có grant thật. Chưa hoàn tất sáu kênh, thư viện tài sản, lịch khảo sát/roster, dừng và đổi ngân sách thật, chi phí API, gói phát hành. Không dùng unit tests để suy quyền sản xuất hoặc hiệu quả kinh doanh.
+
+Local Node child test-runner/esbuild từng gặp spawn EPERM. Unit chạy cùng process với node:test; esbuild chạy qua cơ chế escalation được chấp thuận. Không có auto-review rejection trong đợt này, không truy cập tài khoản thật bằng đường thay thế.

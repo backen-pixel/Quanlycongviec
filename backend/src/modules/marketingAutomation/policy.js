@@ -2,7 +2,8 @@
 
 const DAY = 86400000;
 const APPROVED_PLAN = Object.freeze({
-  version: 'VPT-MS-20261002-v1', currency: 'VND', trialDays: 30,
+  version: 'VPT-MS-20261002-v2', currency: 'VND', trialDays: 30,
+  primaryMetric: 'COST_PER_QUALIFIED_PAID_LEAD', targetQualifiedLeadCostVnd: 250000,
   trialCapVnd: 100000000, targetRatio: 0.07, targetRevenueVnd: 1428571429,
   regionCapsVnd: Object.freeze({ hcm: 80000000, can_tho: 20000000 }),
   channelCapsVnd: Object.freeze({ google: 35000000, facebook: 30000000, tiktok: 20000000, zalo: 10000000, chatgpt: 5000000 }),
