@@ -1,3 +1,39 @@
+## 2026-10-02 — F-13/F-14: Marketing tự động, đo Lead trước
+
+Founder đã giao triển khai kế hoạch thay phương án A/B/nhân sự cũ, rồi chuyển phép đo trước mắt sang250.000 đồng/khách hợp lệ. Trần một đợt100 triệu/30 ngày và80/20 giữ nguyên;300 khách tương ứng75 triệu, không buộc tiêu hết.7% doanh thu đánh giá sau; không chặn giai đoạn Lead vì chưa nối kế toán.
+
+[PR22](https://github.com/backen-pixel/Quanlycongviec/pull/22) chứa bản sửa báo cáo và nền domain/queue đang tắt, [kế hoạch](https://github.com/backen-pixel/Quanlycongviec/blob/codex/vpt-marketing-automation-20261002/docs/architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md) và [trạng thái triển khai](https://github.com/backen-pixel/Quanlycongviec/blob/codex/vpt-marketing-automation-20261002/docs/ai-handoff/vpt-marketing-automation/README.md). Các adapter dữ liệu thật, atomic budget/slot, tài sản/nội dung và UAT chưa hoàn tất. Không merge/deploy/đổi ads/DB thật. PR20 là hồ sơ kiến trúc; PR19 vẫn là dependency của PR22. Xem validation đúng phiên bản trong PR22, không suy tất cả hệ thống PASS.
+
+F-13/F-14 là quyết định mới, F-12 và nhật ký dưới đây giữ lịch sử theo thời điểm. Các gate kiến trúc/Factory và sources đồng bộ giữ nguyên.
+
+---
+
+# 2026-10-02 — Ưu tiên Marketing đa kênh để có khách
+
+Founder đã chốt F-12: làm Marketing đa kênh và CRM tiếp nhận/chăm sóc trước các phát triển chuyên sâu sau bán. Các kênh: Facebook, website, Google, ChatGPT Ads, TikTok, Zalo. [Gói ưu tiên và ngân sách đề xuất](MARKETING_MULTICHANNEL_PRIORITY_20261002.md).
+
+- Đã cập nhật roadmap và ghi quyết định mới; kiến trúc V1.1 và kiểm soát giữ nguyên. Gói media A: 14 triệu/14 ngày; B: 21 triệu/14 ngày có quỹ thử một kênh mới — cả hai **CHỜ DUYỆT**, không tự chi thêm.
+- Hồ sơ Facebook ghi đã đăng bộ được duyệt ngày 01/10, lần cuối đang xử lý; chưa đọc lại trạng thái phân phối. Không dùng brief cũ “chờ duyệt” để phủ nhận phê duyệt đã có.
+- Gói trợ lý Marketing–CRM ở PR #21 phục vụ tuyến này, chưa là điều kiện phải hoàn thành để tạo khách; runtime chưa triển khai theo hồ sơ gói.
+- Còn thiếu danh mục URL/tài khoản của kênh mới, đầu mối Marketing/Sales Admin, baseline chất lượng khách và phép đo. Nội dung, tiêu chí và các gói triển khai cụ thể tiếp tục được chuẩn bị trong phạm vi ưu tiên mới.
+- [Review phần cập nhật](MARKETING_PRIORITY_REVIEW_20261002.md); không chạy runtime hoặc sửa quảng cáo/DB trong phiên này. Lịch sử bên dưới giữ nguyên theo thời điểm ghi.
+
+---
+
+# 2026-10-01 — Business AI OS V1.1 / chặng 0
+
+Trạng thái: **gói tài liệu PASS kiểm tra và review Agent độc lập; chờ merge, chưa mở chặng 1**. Founder yêu cầu triển khai kế hoạch; phạm vi đang mở là chặng 0.
+
+- [Kiến trúc và mục lục](../architecture/README.md); [lộ trình/gói chặng 1](../architecture/BUSINESS_AI_OS_V1_1_ROADMAP.md); [sổ quyết định Founder](FOUNDER_DECISIONS_ARCHITECTURE_V1_1_20261001.md).
+- Baseline main: 0db11ce1adb0fb89fc87529036e495a62d58fce7; [đối chiếu hiện trạng](ARCHITECTURE_V1_1_EVIDENCE_20261001.md).
+- CRM giữ việc trước bán; Work Unified giữ sau bán; không gom toàn bộ crm_tasks. Chưa triển khai thay đổi runtime/schema/quyền.
+- PR #16 vẫn draft/open; PR #19 head e16c885ae7c2305645be02a1227bf378cb59137f vẫn open/chưa merge, nghiệm thu vận hành HOLD. Hồ sơ cũ bên dưới không phải trạng thái cập nhật của các PR đó.
+- Chặng tiếp chưa mở: cần gói C1-01…08, target được phép và dữ liệu đầu vào nghiệm thu; xem roadmap. Không tự chạy ứng dụng/GET hoặc SQL thật.
+- [Review độc lập](ARCHITECTURE_V1_1_INDEPENDENT_REVIEW_20261001.md): PASS trong phạm vi tài liệu; không phải GitHub/human approval hoặc nghiệm thu production.
+- Hoàn tác tài liệu: revert đúng commit của gói; giữ lịch sử bàn giao. Không có tác động DB để hoàn tác.
+
+---
+
 # Current candidate handoff
 
 ## 2026-09-29 — VPT Messenger durable intake, local candidate only
