@@ -1,3 +1,9 @@
+## Hiện hành — nền chăm khách (02/10/2026)
+
+Runtime73fa7c68 và review/kiểm thử đã PASS trong phạm vi tiếp nhận, dừng liên hệ và tiếp quản. [Phạm vi](FACEBOOK_CUSTOMER_CARE.md) · [Bằng chứng](FACEBOOK_CUSTOMER_CARE_REVIEW.md). Mặc định tắt; chưa có AI gửi tin, UI care, lịch khảo sát hoặc nghiệm thu vận hành. Các bản bên dưới là lịch sử theo phiên bản.
+
+---
+
 **Hiện hành02/10/2026:** nối nguồn Facebook vào hồ sơ CRM cũ đã có luồng review và kiểm thử. Runtime0d41d343, fixture2d90f5c; không tạo khách mới hoặc sửa lịch sử. [Hợp đồng](FACEBOOK_LEGACY_RECONCILIATION.md) · [Review và bằng chứng](FACEBOOK_LEGACY_RECONCILIATION_REVIEW.md). Chưa đủ toàn bộ nguồn/chi tiêu/AI care/lịch khảo sát/UAT để hoàn thành mục tiêu hoặc phát hành.
 
 ## Hiện hành 02/10/2026 — Đối soát Facebook–CRM trên dashboard

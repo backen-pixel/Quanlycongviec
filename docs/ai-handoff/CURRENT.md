@@ -1,6 +1,10 @@
-## 2026-10-02 — Durable customer-care control (in validation)
+## Hiện hành 02/10/2026 — Nền tiếp nhận và tiếp quản chăm khách đã kiểm thử
 
-+Base203a1fd. SQL659, signed Messenger intake and admin control API persist explicit opt-out/human requests, current CRM routing and audited takeover. Enrolled Pages are receive/review-only and legacy in-app sending is blocked; no live flag was enabled. Local18 cases PASS. Isolated PostgreSQL and independent follow-up pending. See [scope, limits and rollback](vpt-marketing-automation/FACEBOOK_CUSTOMER_CARE.md). AI advice, controlled dispatch, survey booking, operator UI and live acceptance remain unfinished; goal ACTIVE.
+Bản73fa7c68 bổ sung hộp thư chăm khách bền vững: xác thực tin nguồn, lưu yêu cầu ngừng liên hệ/gặp người, đối chiếu người nhận CRM và tiếp quản có audit. Review độc lập PASS; local64, PostgreSQL60 (16 care mới), Node22 529 và cả10 job/full build PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/FACEBOOK_CUSTOMER_CARE_REVIEW.md).
+
+Page được chọn thử chỉ nhận/rà hội thoại; toàn bộ đường gửi Messenger cũ trong ứng dụng bị chặn trên Page đó. Mặc định tắt và chưa bật thật. Chưa có màn hình vận hành care, AI tư vấn/gửi tin, lịch khảo sát hay nghiệm thu thực tế. Mục tiêu250.000 đồng/khách hợp lệ; chưa có kết quả thực tế chứng minh đạt. Full goal ACTIVE; không mở đợt chi hoặc phát hành.
+
+Các mục sau là lịch sử theo phiên bản.
 
 ---
 
