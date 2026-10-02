@@ -378,12 +378,15 @@ r.get('/insights', async (req, res) => {
     if (error) throw new Error(error.message);
     let rows = (data || []).map(x => ({
       ...x,
+      ...((Array.isArray(x.nhan_xet) ? x.nhan_xet : []).some(n => ['doanh_thu_cao', 'lo_von'].includes(n.ma))
+        ? { xep_hang: 'can_xem', diem_uu_tien: 0, analysis_status: 'STALE_FINANCIAL_BASIS' } : {}),
       so_lieu: { ...x.so_lieu, closed_estimated_value: x.so_lieu?.closed_estimated_value ?? x.so_lieu?.revenue ?? null,
         revenue: null, roas: null, doanh_thu_moi_lead: null, revenue_status: 'UNKNOWN', eligible_for_budget_optimization: false },
       nhan_xet: (Array.isArray(x.nhan_xet) ? x.nhan_xet : []).filter(n => !['doanh_thu_cao', 'lo_von'].includes(n.ma)),
     }));
     if (dsCT) rows = rows.filter((x) => dsCT.includes(String(x.so_lieu?.company_id || '')));
     if (pageId) rows = rows.filter((x) => String(x.so_lieu?.page_id || '') === pageId);
+    rows.sort((a, b) => (Number(b.diem_uu_tien) || 0) - (Number(a.diem_uu_tien) || 0));
 
     const nen = rows.length
       ? (() => {

@@ -74,6 +74,19 @@ function harness(tables, fault = null) {
   } };
 }
 function bucket(url, response) { return url === '/summary' ? response.body.tu_quang_cao : response.body.data[0]; }
+test('cached financial ranking loses its stale priority before insight sorting', async () => {
+  const f = fixture();
+  f.fb_ad_analysis = [
+    { ad_id: 'financial', xep_hang: 'kem', diem_uu_tien: 100, nhan_xet: [{ ma: 'lo_von' }], so_lieu: { company_id: 'company-one', revenue: 1000, roas: 2 } },
+    { ad_id: 'quality', xep_hang: 'can_xem', diem_uu_tien: 10, nhan_xet: [{ ma: 'nhieu_rac' }], so_lieu: { company_id: 'company-one' } },
+  ];
+  const r = await harness(f).run('/insights'); assert.equal(r.code, 200);
+  assert.equal(r.body.data[0].ad_id, 'quality');
+  const stale = r.body.data[1];
+  assert.equal(stale.analysis_status, 'STALE_FINANCIAL_BASIS'); assert.equal(stale.xep_hang, 'can_xem'); assert.equal(stale.diem_uu_tien, 0);
+  assert.deepEqual(stale.nhan_xet, []); assert.equal(stale.so_lieu.revenue, null); assert.equal(stale.so_lieu.roas, null);
+  assert.equal(stale.so_lieu.closed_estimated_value, 1000); assert.equal(stale.so_lieu.eligible_for_budget_optimization, false);
+});
 for (const url of paths) {
   test(`${url}: unique Lead, Deal and order value despite duplicate attribution`, async () => {
     const h = harness(fixture()); const r = await h.run(url);

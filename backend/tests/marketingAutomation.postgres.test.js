@@ -23,6 +23,10 @@ test('isolated PostgreSQL: ACL, duplicate concurrency, atomic audit and interrup
     await db.query("INSERT INTO public.marketing_automation_grants(company_id,actor_id,policy_version,actions,expires_at) VALUES($1,$2,'v1',ARRAY['sales.reply'],now()+interval '1 hour')",[company,actor]);
     const admission='SELECT public.marketing_automation_enqueue($1,$2,$3,$4,$5,$6,$7) AS c';
     const args=(key='same',cid=company,payload={text:'approved'})=>[cid,actor,'v1','sales.reply',key,'a'.repeat(64),payload];
+    await t.test('malformed grant cannot turn NULL membership into authorization',async()=>{
+      for(const actions of [['sales.reply',null],[],['unknown.action']])
+        await assert.rejects(db.query('UPDATE public.marketing_automation_grants SET actions=$1',[actions]),e=>e.code==='23514');
+    });
     await t.test('anon/authenticated cannot call privileged RPC or write/read tables',async()=>{
       for(const role of ['anon','authenticated']){
         await db.query('SET ROLE '+role);

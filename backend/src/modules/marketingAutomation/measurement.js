@@ -11,10 +11,10 @@ function measureTrial(s) {
   if (![s.spend, s.recognitions, s.attribution, s.accountIds].every(Array.isArray) || !s.accountIds.length) return unknown('MISSING_SOURCE');
   const leads = new Map();
   for (const a of s.attribution) {
-    if (a.companyId !== s.companyId || a.trialId !== s.trialId || !a.leadId || !a.orderId || !a.evidenceId || a.policyVersion !== 'FIRST_VERIFIED_PAID_LEAD_V1' || !s.accountIds.includes(a.accountId) || !instant(a.leadCreatedAt) || Date.parse(a.leadCreatedAt) < Date.parse(s.start) || Date.parse(a.leadCreatedAt) >= Date.parse(s.end)) return unknown('INVALID_ATTRIBUTION');
+    if (a.companyId !== s.companyId || a.trialId !== s.trialId || !a.leadId || !a.orderId || !a.evidenceId || a.policyVersion !== 'FIRST_VERIFIED_PAID_LEAD_V1' || !s.accountIds.includes(a.accountId) || !instant(a.leadCreatedAt) || Date.parse(a.leadCreatedAt) < Date.parse(s.start) || Date.parse(a.leadCreatedAt) >= Date.parse(s.end) || Date.parse(a.leadCreatedAt) > Date.parse(s.asOf)) return unknown('INVALID_ATTRIBUTION');
     const identity = JSON.stringify([a.leadId, a.accountId, a.evidenceId, a.leadCreatedAt]);
-    if (leads.has(a.orderId) && leads.get(a.orderId) !== identity) return unknown('CONFLICTING_ORDER_ATTRIBUTION');
-    leads.set(a.orderId, identity);
+    if (leads.has(a.orderId) && leads.get(a.orderId).identity !== identity) return unknown('CONFLICTING_ORDER_ATTRIBUTION');
+    leads.set(a.orderId, { identity, createdAt: Date.parse(a.leadCreatedAt) });
   }
   let spend = 0; let revenue = 0;
   const seen = new Map();
@@ -30,6 +30,7 @@ function measureTrial(s) {
   for (const row of s.recognitions) {
     if (row.companyId !== s.companyId || row.currency !== 'VND' || !row.sourceSystem || !row.documentId || !row.lineId || !row.version || !row.confirmedBy || !row.orderId || !instant(row.recognizedAt) || Date.parse(row.recognizedAt) > Date.parse(s.asOf) || row.status !== 'POSTED' || !Number.isSafeInteger(row.netExVatVnd)) return unknown('INVALID_RECOGNITION');
     if (row.netExVatVnd < 0 && !row.adjustmentOf) return unknown('UNLINKED_ADJUSTMENT');
+    if (leads.has(row.orderId) && Date.parse(row.recognizedAt) < leads.get(row.orderId).createdAt) return unknown('REVENUE_PRECEDES_ACQUISITION');
     const key = JSON.stringify([row.sourceSystem, row.documentId, row.lineId]);
     const fingerprint = JSON.stringify([row.version, row.orderId, row.netExVatVnd, row.recognizedAt, row.adjustmentOf || null]);
     if (postings.has(key) && postings.get(key) !== fingerprint) return unknown('CONFLICTING_POSTING_VERSION');

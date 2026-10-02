@@ -6,6 +6,7 @@ function decideCare(c) {
   if (!c || !instant(c.now) || !c.companyId || c.companyId !== c.authorizedCompanyId || c.delegationActive !== true) return denied('UNAUTHORIZED');
   if (c.optedOut === true) return denied('OPTED_OUT');
   if (c.humanActive === true || c.requestedHuman === true) return { status: 'HANDOFF', send: false, reason: 'HUMAN_TAKEOVER', deadline: humanDeadline(c.now) };
+  if (['optedOut', 'humanActive', 'requestedHuman'].some(key => typeof c[key] !== 'boolean')) return { status: 'HANDOFF', send: false, reason: 'CONSENT_OR_TAKEOVER_UNKNOWN', deadline: humanDeadline(c.now) };
   if (!['advise', 'qualify', 'remind', 'book_survey'].includes(c.action)) return denied('OUTSIDE_SALES_AUTHORITY');
   if (c.channelSendAllowed !== true || c.factsVerified !== true) return { status: 'HANDOFF', send: false, reason: 'SOURCE_OR_CHANNEL_NOT_READY', deadline: humanDeadline(c.now) };
   if (c.action === 'book_survey' && (c.customerConfirmed !== true || c.slotAvailable !== true || !c.slotVersion)) return denied('BOOKING_NOT_CONFIRMED');
@@ -16,7 +17,7 @@ function decideCare(c) {
 // drafts remain drafts until their claims/template are approved.
 function renderApprovedContent({ template, facts, companyId, now, channel }) {
   const reject = reason => ({ status: 'PENDING_APPROVAL', reason, text: null });
-  if (!template || !instant(now) || template.companyId !== companyId || template.status !== 'APPROVED' || !template.version || !template.approvedBy || !instant(template.expiresAt) || Date.parse(template.expiresAt) <= Date.parse(now) || !template.channels?.includes(channel)) return reject('TEMPLATE_NOT_APPROVED');
+  if (typeof companyId !== 'string' || !companyId.trim() || !template || !instant(now) || template.companyId !== companyId || template.status !== 'APPROVED' || !template.version || !template.approvedBy || !instant(template.expiresAt) || Date.parse(template.expiresAt) <= Date.parse(now) || !template.channels?.includes(channel)) return reject('TEMPLATE_NOT_APPROVED');
   if (typeof template.text !== 'string' || !Array.isArray(facts) || !Array.isArray(template.factIds)) return reject('INVALID_CONTENT');
   const values = new Map();
   for (const id of template.factIds) {

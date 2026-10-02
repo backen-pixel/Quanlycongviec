@@ -5,7 +5,8 @@ CREATE TABLE IF NOT EXISTS public.marketing_automation_grants (
   company_id uuid NOT NULL REFERENCES public.companies(id),
   actor_id uuid NOT NULL,
   policy_version text NOT NULL,
-  actions text[] NOT NULL,
+  actions text[] NOT NULL CHECK (cardinality(actions) > 0 AND array_position(actions,NULL) IS NULL
+    AND actions <@ ARRAY['content.publish','sales.reply','survey.reserve','ads.pause','ads.budget_move']::text[]),
   expires_at timestamptz NOT NULL,
   revoked_at timestamptz,
   PRIMARY KEY (company_id, actor_id)
@@ -50,14 +51,14 @@ BEGIN
   SELECT * INTO g FROM public.marketing_automation_grants
     WHERE company_id=p_company AND actor_id=p_actor FOR UPDATE;
   IF NOT FOUND OR g.revoked_at IS NOT NULL OR g.expires_at <= clock_timestamp()
-    OR g.policy_version <> p_version OR NOT (p_action = ANY(g.actions)) THEN
+    OR g.policy_version IS DISTINCT FROM p_version OR (p_action = ANY(g.actions)) IS NOT TRUE THEN
     RAISE EXCEPTION 'AUTOMATION_UNAUTHORIZED' USING ERRCODE='42501';
   END IF;
   SELECT * INTO c FROM public.marketing_automation_commands
     WHERE company_id=p_company AND idempotency_key=p_key;
   IF FOUND THEN
-    IF c.actor_id <> p_actor OR c.policy_version <> p_version OR c.action <> p_action
-       OR c.request_digest <> p_digest OR c.payload <> p_payload THEN
+    IF c.actor_id IS DISTINCT FROM p_actor OR c.policy_version IS DISTINCT FROM p_version OR c.action IS DISTINCT FROM p_action
+       OR c.request_digest IS DISTINCT FROM p_digest OR c.payload IS DISTINCT FROM p_payload THEN
       RAISE EXCEPTION 'IDEMPOTENCY_CONFLICT' USING ERRCODE='22023';
     END IF;
     RETURN to_jsonb(c);
@@ -88,7 +89,7 @@ CREATE OR REPLACE FUNCTION public.marketing_automation_finish(p_id uuid,p_compan
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
 DECLARE c public.marketing_automation_commands%ROWTYPE;
 BEGIN
-  IF p_state NOT IN ('SUCCEEDED','DENIED','UNKNOWN','MANUAL_REQUIRED') THEN RAISE EXCEPTION 'INVALID_RESULT'; END IF;
+  IF p_state IS NULL OR p_state NOT IN ('SUCCEEDED','DENIED','UNKNOWN','MANUAL_REQUIRED') THEN RAISE EXCEPTION 'INVALID_RESULT'; END IF;
   SELECT * INTO c FROM public.marketing_automation_commands WHERE id=p_id AND company_id=p_company FOR UPDATE;
   IF NOT FOUND THEN RAISE EXCEPTION 'COMMAND_NOT_FOUND'; END IF;
   IF c.state=p_state AND c.result=p_result THEN RETURN to_jsonb(c); END IF;
