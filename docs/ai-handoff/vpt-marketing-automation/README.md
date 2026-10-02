@@ -1,8 +1,8 @@
-## Hiện hành 02/10/2026 — tiếp tục mục tiêu Marketing–Sales
+## Hiện hành 02/10/2026 — Dashboard kỳ đo đã kiểm thử, chưa mở chạy thật
 
-Đã có các increment trong PR22: [chi tiêu có đối soát](SPEND_INTEGRATION.md), [nhu cầu khách có bằng chứng](CRM_QUALIFICATION.md), [tiếp nhận Facebook bền vững](FACEBOOK_LEAD_INTAKE.md), [hàng chờ và khôi phục](FACEBOOK_INTAKE_CONSOLE.md), [rà khách trùng và quyết định khác khách](CRM_IDENTITY_OPERATIONS.md). Xem [bằng chứng rà khách](CRM_IDENTITY_OPERATIONS_REVIEW.md) và [CURRENT](../CURRENT.md) cho phiên bản/trạng thái mới nhất. Mọi phần vẫn nằm trong PR nháp, chưa phát hành.
+PR22 đã nối [tiền chi](SPEND_INTEGRATION.md), [nhu cầu có bằng chứng](CRM_QUALIFICATION.md), [tiếp nhận Facebook](FACEBOOK_LEAD_INTAKE.md), [hàng chờ/khôi phục](FACEBOOK_INTAKE_CONSOLE.md), [rà khách trùng](CRM_IDENTITY_OPERATIONS.md) vào [cấu hình kỳ đo và dashboard](MEASURED_COHORT.md). Bản af14635 qua review độc lập, kiểm thử PostgreSQL, full build và trình duyệt dữ liệu giả. Xem [bằng chứng và giới hạn](MEASURED_COHORT_REVIEW.md), [CURRENT](../CURRENT.md). Mọi phần còn trong PR nháp, chưa phát hành.
 
-Bước kế tiếp: cấu hình kỳ đo/tài khoản và nối đầy đủ bằng chứng nguồn, chất lượng, khách duy nhất với tổng chi; sau đó AI tư vấn/bàn giao/lịch và dashboard. Chưa có CPQL thực tế hoặc nghiệm thu đa kênh. 250.000 đồng là mục tiêu cho khách hợp lệ duy nhất có nguồn trả phí; không đếm raw form hoặc nhóm identity thay thế. Các mục bên dưới giữ bằng chứng lịch sử theo từng increment.
+Dashboard tách tiền chi, khách đã xác minh, khách chờ và ngoại lệ. **Chưa đối soát đủ với nguồn Facebook nên chưa có CPQL thực tế hoặc kết luận đạt250.000 đồng/khách.** Bước tiếp theo là đối soát đầy đủ nguồn và xử lý các hồ sơ thiếu; sau đó AI tư vấn, bàn giao, lịch khảo sát và các kênh tiếp theo.100triệu vẫn là trần một đợt30ngày; chưa bắt đầu đợt thử. Các mục phía dưới giữ snapshot lịch sử, không thay trạng thái hiện hành này.
 
 ---
 

@@ -22,7 +22,7 @@ Provider census/reconciliation has not been connected. Webhook receipts are not 
 
 ## Validation and release
 
-Local25 domain/service cases PASS at initial entry. PostgreSQL suite applies649–655 twice on an isolated fixture and tests rights, cross-company race, all-account spend, read-only/parity, prior customer history, stale/rejected quality, consistent concurrent reads and retained source. Full build, browser and final independent review are pending at this initial entry. Record exact versions/results in MEASURED_COHORT_REVIEW.md before claiming acceptance. Fixtures do not replace real schema, role, account, provider or Sales UAT.
+At runtime revision af14635, local25 domain/service cases PASS, isolated PostgreSQL trial13 PASS/0 SKIP with649–655 applied twice, Node22 435 PASS, full build and synthetic browser PASS. Separate reviewer PASS for this increment. The UI blocks configuration saves while reports load and preserves exact requests on uncertain responses. See [exact version, evidence and limits](MEASURED_COHORT_REVIEW.md). Fixtures do not replace real schema, role, account, provider or Sales UAT.
 
 Before release: verify current schema and migration numbering, volume/performance and backup/restore; resolve trial dates/accounts, provider permissions/coverage, history exceptions and actual survey roster. Then prepare Founder release approval. Disable the new report flag to stop these API/UI paths; preserve configuration, audit and original source evidence. No rollback deletes accepted records or opens unsafe access. Existing Facebook intake pause/cutover requirements remain applicable.
 
