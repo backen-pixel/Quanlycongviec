@@ -3,6 +3,12 @@ const assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 module.exports=async function legacyCases(t,{db,peers,query,config,admin,sales,company,other,region,setup,commit,dropQueue}){
  // Upgrade the old fixture to migration42's full mapping and uniqueness shape.
  await db.query('ALTER TABLE facebook_lead_ads ADD COLUMN customer_id uuid; ALTER TABLE facebook_contacts ADD COLUMN customer_id uuid; ALTER TABLE facebook_contacts ADD UNIQUE(page_id,psid)');
+ // Older regression cases deliberately left tombstones. NOT VALID preserves
+ // those fixtures while enforcing migration42's FKs on all new legacy cases.
+ await db.query(`ALTER TABLE facebook_lead_ads ADD FOREIGN KEY(lead_id) REFERENCES crm_leads(id) ON DELETE SET NULL NOT VALID;
+  ALTER TABLE facebook_lead_ads ADD FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE SET NULL NOT VALID;
+  ALTER TABLE facebook_contacts ADD FOREIGN KEY(lead_id) REFERENCES crm_leads(id) ON DELETE SET NULL NOT VALID;
+  ALTER TABLE facebook_contacts ADD FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE SET NULL NOT VALID;`);
  const context=id=>query('marketing_fb_legacy_context',[admin,company,id]);
  const row=id=>db.query('SELECT to_jsonb(r) r FROM marketing_fb_lead_receipts r WHERE id=$1',[id]).then(x=>x.rows[0].r);
  const make=async()=>{
@@ -46,7 +52,7 @@ module.exports=async function legacyCases(t,{db,peers,query,config,admin,sales,c
   for(const variant of ['missing','partial','conflict','wrongPage','wrongForm','foreign']){const item=await make();
    if(variant==='missing')await db.query('DELETE FROM facebook_contacts WHERE psid=$1',['leadad_'+item.r.leadgen_id]);
    if(variant==='partial')await db.query('UPDATE facebook_lead_ads SET customer_id=NULL WHERE leadgen_id=$1',[item.r.leadgen_id]);
-   if(variant==='conflict')await db.query('UPDATE facebook_contacts SET lead_id=$1 WHERE psid=$2',[randomUUID(),'leadad_'+item.r.leadgen_id]);
+   if(variant==='conflict'){const otherItem=await make();await db.query('UPDATE facebook_contacts SET lead_id=$1 WHERE psid=$2',[otherItem.lead,'leadad_'+item.r.leadgen_id]);}
    if(variant==='wrongPage')await db.query("UPDATE facebook_lead_ads SET page_id='999' WHERE leadgen_id=$1",[item.r.leadgen_id]);
    if(variant==='wrongForm')await db.query("UPDATE facebook_lead_ads SET form_id='999' WHERE leadgen_id=$1",[item.r.leadgen_id]);
    if(variant==='foreign')await db.query('UPDATE customers SET company_id=$1 WHERE id=$2',[other,item.customer]);
@@ -57,7 +63,7 @@ module.exports=async function legacyCases(t,{db,peers,query,config,admin,sales,c
   for(const variant of ['contact','history','legacyABA','crmABA']){const item=await make(),p=await propose(item);
    if(variant==='contact')await db.query("UPDATE customers SET phone='0901234568' WHERE id=$1",[item.customer]);
    if(variant==='history')await db.query("UPDATE crm_leads SET description='New customer requirements' WHERE id=$1",[item.lead]);
-   if(variant==='legacyABA'){await db.query('UPDATE facebook_contacts SET lead_id=$1 WHERE psid=$2',[randomUUID(),'leadad_'+item.r.leadgen_id]);await db.query('UPDATE facebook_contacts SET lead_id=$1 WHERE psid=$2',[item.lead,'leadad_'+item.r.leadgen_id]);}
+   if(variant==='legacyABA'){const otherItem=await make();await db.query('UPDATE facebook_contacts SET lead_id=$1 WHERE psid=$2',[otherItem.lead,'leadad_'+item.r.leadgen_id]);await db.query('UPDATE facebook_contacts SET lead_id=$1 WHERE psid=$2',[item.lead,'leadad_'+item.r.leadgen_id]);}
    if(variant==='crmABA'){await db.query("UPDATE customers SET phone='0901234568' WHERE id=$1",[item.customer]);await db.query("UPDATE customers SET phone='0901234567' WHERE id=$1",[item.customer]);}
    await assert.rejects(apply(p),e=>e.code==='40001');assert.equal((await row(item.r.id)).state,'REVIEW');
   }
@@ -89,7 +95,7 @@ module.exports=async function legacyCases(t,{db,peers,query,config,admin,sales,c
   assert.equal((await row(item.r.id)).state,'REVIEW');assert.equal((await db.query('SELECT count(*)::int n FROM crm_lead_source_evidence WHERE receipt_id=$1',[item.r.id])).rows[0].n,0);
  });
  await t.test('deleted CRM remains an exception and cannot be recreated by review or intake',async()=>{
-  const item=await make(),p=await propose(item),n=await count('crm_leads');await db.query('DELETE FROM crm_leads WHERE id=$1',[item.lead]);await assert.rejects(apply(p),e=>e.code==='P0002');assert.equal(await count('crm_leads'),n-1);assert.equal((await row(item.r.id)).state,'REVIEW');
+  const item=await make(),p=await propose(item),n=await count('crm_leads');await db.query('DELETE FROM crm_leads WHERE id=$1',[item.lead]);await assert.rejects(apply(p),e=>e.code==='40001');assert.equal(await count('crm_leads'),n-1);assert.equal((await row(item.r.id)).state,'REVIEW');
  });
  await dropQueue();
 };
