@@ -106,7 +106,7 @@ BEGIN
  IF jsonb_typeof(p_chunk) IS DISTINCT FROM 'object' OR jsonb_typeof(p_chunk->'rows') IS DISTINCT FROM 'array' OR jsonb_array_length(p_chunk->'rows')>100 OR (p_chunk->>'graphVersion'~'^v[0-9]{2,3}\.0$') IS NOT TRUE OR NOT(p_chunk?'next') THEN RAISE EXCEPTION 'invalid census chunk' USING ERRCODE='22023';END IF;
  nxt:=p_chunk->>'next';
  IF nxt IS NOT NULL AND(length(nxt) NOT BETWEEN 1 AND 2048 OR nxt~'[\r\n]' OR nxt IS NOT DISTINCT FROM q.cursor_after OR q.cursors ? nxt) THEN RAISE EXCEPTION 'cursor loop' USING ERRCODE='22023';END IF;
- IF q.chunks>=1000 OR (SELECT count(*) FROM public.marketing_fb_census_items WHERE run_id=r.id)+jsonb_array_length(p_chunk->'rows')>50000 OR (SELECT count(*) FROM public.marketing_fb_census_forms WHERE run_id=r.id)+jsonb_array_length(p_chunk->'rows')>5000 THEN RAISE EXCEPTION 'census capacity exceeded' USING ERRCODE='54000';END IF;
+ IF q.chunks>=1000 OR (q.kind='LEADS' AND (SELECT count(*) FROM public.marketing_fb_census_items WHERE run_id=r.id)+jsonb_array_length(p_chunk->'rows')>50000) OR (q.kind='FORMS' AND (SELECT count(*) FROM public.marketing_fb_census_forms WHERE run_id=r.id)+jsonb_array_length(p_chunk->'rows')>5000) THEN RAISE EXCEPTION 'census capacity exceeded' USING ERRCODE='54000';END IF;
  IF (SELECT count(*) FROM jsonb_array_elements(p_chunk->'rows'))<>(SELECT count(DISTINCT value->>'id') FROM jsonb_array_elements(p_chunk->'rows')) THEN RAISE EXCEPTION 'duplicate chunk row' USING ERRCODE='22023';END IF;
  FOR x IN SELECT value FROM jsonb_array_elements(p_chunk->'rows') ORDER BY value->>'id' LOOP
   IF (x->>'id'~'^[0-9]{1,32}$') IS NOT TRUE THEN RAISE EXCEPTION 'invalid provider id' USING ERRCODE='22023';END IF;
