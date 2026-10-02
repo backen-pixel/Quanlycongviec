@@ -1,3 +1,15 @@
+## 2026-10-02 — MCRM-D0 v1: khảo sát và thiết kế thử nghiệm trợ lý Marketing–CRM
+
+- AI thực hiện: Codex; reviewer phiên riêng theo hồ sơ VALIDATION.
+- Yêu cầu Founder: thực hiện bước khảo sát/đóng gói đã đề xuất cho trợ lý Marketing–CRM.
+- Đã làm: nguồn mã có SHA, phạm vi/owner/gate, 4 tool contract, mẫu báo cáo/fixture, target còn thiếu và 26 case chưa chạy.
+- File thay đổi: thư mục `docs/ai-handoff/marketing-crm-assistant/`, liên kết README và mục trạng thái CURRENT/WORKLOG này.
+- Kiểm chứng và kết luận review: [VALIDATION](./marketing-crm-assistant/VALIDATION.md); kiểm tài liệu/fixture không thay kiểm ứng dụng.
+- Chưa làm: implementation runtime, OpenAI API, DB/Meta/CRM thật, merge/deploy. Không dùng báo cáo giả làm chỉ số vận hành.
+- Bước tiếp: chốt target/người nghiệm thu/policy; mở đúng gói implementation sau khảo sát. Hoàn tác gói này bằng revert commit tài liệu.
+
+---
+
 # Candidate worklog
 
 ## 2026-09-29 — VPT Messenger durable intake, local candidate only

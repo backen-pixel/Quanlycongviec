@@ -1,0 +1,175 @@
+{
+  "repository": "backen-pixel/Quanlycongviec",
+  "base": "0db11ce1adb0fb89fc87529036e495a62d58fce7",
+  "tree": "f9d33069dc9058be4cf312f4013f477915ef6954",
+  "checked_date": "2026-10-02",
+  "scope": "Fetched files for targeted static review, not a full audit.",
+  "files": [
+    {
+      "path": "AGENTS.md",
+      "sha": "64f840cd60d4750202685e69ce292920229a140e",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/package.json",
+      "sha": "b939c02763f982512fb37bbd97b09ab4deee8236",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "docs/ai-handoff/README.md",
+      "sha": "7b6c1b21c13641f84ea9b2b09ddeb22931366bd1",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "docs/ai-handoff/CURRENT.md",
+      "sha": "b987f8e98dcac5d1784627057c559c90a47bcd8a",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "docs/ai-handoff/DECISIONS.md",
+      "sha": "07254110642edec820280b3e2e230fc6e5a1ab9a",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "docs/ai-handoff/WORKLOG.md",
+      "sha": "32ebb1efe56cb482901143271d043cbcdd985f28",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/routes/facebook.js",
+      "sha": "a30780a5a78c45e1ae750df933826464621a2f79",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/routes/adAnalytics.js",
+      "sha": "76ed3b3e79b27feab55f4ec941e0bd57160df05d",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/helpers/facebookAtomicLead.js",
+      "sha": "339f2e9319a93dff3a99b61adb3184cd06bed47c",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/helpers/facebookMessengerReceipt.js",
+      "sha": "7f22549ecfc2d47616032e8f890c08650adf12d6",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/helpers/fbMarketingSync.js",
+      "sha": "ddc83ae2a0dff1462c2032d6e3e4d50ded7042bc",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/routes/crm/routes/crmTasks.js",
+      "sha": "17240d2b19fbdb8c5bc23a8e22e6463c6bb5df0a",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/helpers/mcpGateway.js",
+      "sha": "035c29ea9b331054af255b83fbf3f3e18fb93946",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/routes/mcp.js",
+      "sha": "ee77f70196983b89f6df70f84af0345c7cd5c8bf",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/middleware/auth.js",
+      "sha": "7ca72c8b25e3996461a82342069bba76a69e2657",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/middleware/tenantGate.js",
+      "sha": "6afdd287d98583aa99dcf05fb7cb608e708c1e92",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/helpers/aiReportTools.js",
+      "sha": "76b1dbe32a6d9c232fda4a819c0e60e6f8f06e5b",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/helpers/aiChatSessionContext.js",
+      "sha": "1dd48ba9dccd3802f4d639b1427d23a0cd1af2f5",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/routes/aiChatBot.js",
+      "sha": "fb2acbeca758f155e644f883c5e3c7cdc8f7aae6",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "database/639_facebook_contact_lead_atomic.sql",
+      "sha": "8154ffba82403798c111565e8309fb771454c24a",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "database/640_facebook_messenger_receipts.sql",
+      "sha": "77f7ebc030292b2e86dee0be516ad21979e9dc6a",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "database/641_facebook_referral_attribution.sql",
+      "sha": "5c9cb8cb93bb638adec6b2814a6255359b237cb9",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "database/644_fb_marketing_sync.sql",
+      "sha": "f505e9668d959d73fb285b4d1ecca61b51127ce3",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/helpers/mcpCrmReadBridge.js",
+      "sha": "3de02440be48e745ad2a840772303766f004bac6",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/helpers/mcpAdsBridge.js",
+      "sha": "588e30736395f9487c37c1565cb51364aa11a699",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/helpers/aiConversation.js",
+      "sha": "04d49e5b4998316f33fad690dd70b820f18db30f",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/routes/crm/routes/leadComments.js",
+      "sha": "633404ebc437162364462357bc6692e5b5a2c74a",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/helpers/crmTaskLeadAccess.js",
+      "sha": "6bd51b67013510fee8ec9ad446ec4a2604e72c5f",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "database/42_facebook_integration.sql",
+      "sha": "8a169e88c19019a03f5ced86ab5cf03773cf70b1",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "database/638_lead_attribution_quality_partner.sql",
+      "sha": "9be928f8f185ebbc27d8a7cae9fcd14f14ad3430",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/helpers/leadAttribution.js",
+      "sha": "a80dabcf719f39618a0dee9baa1462a9b8bc3b6e",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/routes/crm/routes/leadLifecycle.js",
+      "sha": "756e41ad31d95f0971fdb936dbf03387dff6bc3a",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    },
+    {
+      "path": "backend/src/helpers/mcpAudit.js",
+      "sha": "975434d076ac6202dd9605c3434e436e83177bd5",
+      "ref": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+    }
+  ]
+}
+

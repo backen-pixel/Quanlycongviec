@@ -1,3 +1,15 @@
+## 2026-10-02 — Trợ lý Marketing–CRM: hồ sơ khảo sát MCRM-D0 v1
+
+- Phạm vi được giao: khảo sát mã và chuẩn bị thử nghiệm; gói tại [marketing-crm-assistant/README.md](./marketing-crm-assistant/README.md).
+- Đã làm: bản đồ 33 file nguồn tại main `0db11ce1adb0fb89fc87529036e495a62d58fce7`, 4 hợp đồng công cụ đề xuất, báo cáo dữ liệu giả, 26 kịch bản runtime và 8 đầu việc có owner/gate.
+- Phát hiện cần xử lý trước pilot: đọc chi tiết Lead có thể ghi `lead_seen_by`; sổ attribution không đủ chứng minh mọi intake đã vào CRM; đường đọc Ads MCP có xử lý lỗi riêng cần rà lại.
+- Kiểm chứng hồ sơ và review: [VALIDATION.md](./marketing-crm-assistant/VALIDATION.md). Không quy kết phát hiện tĩnh thành sự cố production đã xảy ra.
+- Agent/API/DB/runtime: chưa chạy; 26 kịch bản NOT_RUN; nghiệm thu dữ liệu thật/phát hành HOLD. Còn thiếu Sales Admin cụ thể, target môi trường và policy tiếp nhận/chăm sóc.
+- PR #19 và #20: đã kiểm metadata ngày 02/10, vẫn open/unmerged tại SHA ghi trong gói; chưa thay baseline hoặc release.
+- Các mục cũ bên dưới giữ nguyên như lịch sử tại thời điểm ghi; không tự là xác nhận hiện trạng.
+
+---
+
 # Current candidate handoff
 
 ## 2026-09-29 — VPT Messenger durable intake, local candidate only
