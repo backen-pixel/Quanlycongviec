@@ -6,6 +6,10 @@ const { enabledPageIds, enqueueMessengerEvents, captureMessengerReferral, linkMe
 const DURABLE_MESSENGER_PAGES = enabledPageIds();
 const { isFacebookAtomicLeadScope, createFacebookLeadOnce } = require('../helpers/facebookAtomicLead');
 const { supabase } = require('../config/supabase');
+const { createLeadIntake } = require('../modules/marketingAutomation/facebookLeadIntake');
+const intakeRouterState = require('../config/supabaseRouter');
+const leadIntakePrimary = () => !intakeRouterState.isFailoverEnabled() && intakeRouterState.getActiveTarget() === 'primary';
+const facebookLeadIntake = createLeadIntake({ db: supabase, isPrimary: leadIntakePrimary, onError: code => console.warn('[FB Lead intake]', code) });
 const { fetchAllPagesParallel } = require('../helpers/supabaseFetchAll');
 const axios = require('axios');
 const {
@@ -3484,6 +3488,9 @@ r.get('/webhook', async (req, res) => {
 // ── WEBHOOK RECEIVE (POST) ───────────────────────────────────
 
 r.post('/webhook', async (req, res) => {
+  // Authenticate original bytes and persist opt-in Lead Ads before ANY legacy side effect.
+  try { await facebookLeadIntake.receive(req); }
+  catch (e) { return res.sendStatus(e.code === 'INVALID_SIGNATURE' ? 403 : ['INVALID_ENVELOPE','ENVELOPE_LIMIT'].includes(e.code) ? 400 : 503); }
   const body = req.body;
   
   // Only opt-in Pages enter the durable inbox. A failed write must cause Meta retry.
@@ -3496,6 +3503,7 @@ r.post('/webhook', async (req, res) => {
   }
   res.sendStatus(200);
   void messengerReceiptWorker.drain();
+  void facebookLeadIntake.drain();
 
   // Ghi log vào DB
   if (!FB_DISABLE_WEBHOOK_LOGS && body.object === 'page' && body.entry) {
@@ -4008,6 +4016,7 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
 // ── HANDLE LEAD ADS ──────────────────────────────────────────
 
 async function handleLeadGen(pageId, value) {
+  if (facebookLeadIntake.pages.has(String(pageId))) return; // durable worker exclusively owns opt-in Page forms
   const leadgenId = value.leadgen_id;
   const formId = value.form_id;
   
@@ -10162,6 +10171,11 @@ r.post('/contacts/:contactId/send-drive-folder', authMiddleware, async (req, res
 });
 
 // Timers do not prevent shutdown. Pending/expired receipts are recovered after restart.
+if (facebookLeadIntake.pages.size) {
+  const intakeTimer = setInterval(() => { void facebookLeadIntake.drain(); }, 5000);
+  intakeTimer.unref();
+  setImmediate(() => { void facebookLeadIntake.drain(); });
+}
 const messengerReceiptWorker = createMessengerReceiptWorker({
   db: supabase,
   pageIds: DURABLE_MESSENGER_PAGES,
@@ -10176,6 +10190,8 @@ if (DURABLE_MESSENGER_PAGES.size) {
 // ═══════════════════════════════════════════════════════════════
 // ĐIỀU KHIỂN TRƯỜNG WEBHOOK (xem page nào đang nhận gì, bật/tắt tại chỗ)
 // ═══════════════════════════════════════════════════════════════
+
+r.use('/lead-intake', authMiddleware, require('./facebookLeadIntakeAdmin'));
 
 r.get('/webhook-fields', authMiddleware, async (req, res) => {
   try {

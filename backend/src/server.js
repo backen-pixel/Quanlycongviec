@@ -196,7 +196,7 @@ app.use((req, res, next) => {
   }
   const isLarge = largeBodyRoutes.some((p) => req.path.startsWith(p));
   const limit = isLarge ? UPLOAD_BODY_LIMIT : STANDARD_BODY_LIMIT;
-  express.json({ limit })(req, res, (err) => {
+  express.json({ limit, verify: require('./modules/marketingAutomation/facebookLeadIntake').captureFacebookRawBody })(req, res, (err) => {
     if (err) return next(err);
     express.urlencoded({ extended: true, limit })(req, res, next);
   });

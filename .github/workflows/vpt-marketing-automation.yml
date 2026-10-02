@@ -3,6 +3,11 @@ on:
   pull_request:
     paths:
       - 'backend/src/modules/marketingAutomation/**'
+      - 'backend/src/server.js'
+      - 'backend/src/routes/facebook.js'
+      - 'backend/src/routes/facebookLeadIntakeAdmin.js'
+      - 'backend/tests/facebookLeadIntake*.js'
+      - 'database/652_facebook_lead_intake.sql'
       - 'backend/src/modules/crmLeadQuality/**'
       - 'backend/src/modules/crmLeadIdentity/**'
       - 'backend/src/routes/crm/index.js'
@@ -40,7 +45,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - run: node --test backend/tests/marketingAutomation.test.js backend/tests/marketingAutomation.leads.test.js backend/tests/marketingAutomation.reports.test.js backend/tests/marketingAutomation.spend.test.js backend/tests/marketingAutomation.spend.integration.test.js backend/tests/adAnalytics.correctness.test.js backend/tests/adAnalytics.ui-state.test.js backend/tests/adAnalytics.action-lifecycle.test.js backend/tests/crmLeadQuality.test.js backend/tests/crmLeadIdentity.test.js backend/tests/crmLeadIdentity.service.test.js
+      - run: node --test backend/tests/marketingAutomation.test.js backend/tests/marketingAutomation.leads.test.js backend/tests/marketingAutomation.reports.test.js backend/tests/marketingAutomation.spend.test.js backend/tests/marketingAutomation.spend.integration.test.js backend/tests/adAnalytics.correctness.test.js backend/tests/adAnalytics.ui-state.test.js backend/tests/adAnalytics.action-lifecycle.test.js backend/tests/crmLeadQuality.test.js backend/tests/crmLeadIdentity.test.js backend/tests/crmLeadIdentity.service.test.js backend/tests/facebookLeadIntake.test.js backend/tests/facebookLeadIntake.integration.test.js
   postgres:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -177,3 +182,32 @@ jobs:
         working-directory: frontend
         env:
           NODE_OPTIONS: --max-old-space-size=4096
+  facebook-lead-intake-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: fb_intake_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated_test_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --prefix "$RUNNER_TEMP/vpt-pg" --ignore-scripts --no-audit --no-fund pg@8.19.0
+      - name: Signed Lead Ads intake, CRM transaction, permissions and leases
+        env:
+          FB_INTAKE_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/fb_intake_test
+        run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/facebookLeadIntake.postgres.test.js
