@@ -20,4 +20,6 @@ Ranh giới: canonicalLeadId phải do CRM đối soát khách trùng liên kên
 
 ## Cổng chưa đạt
 
+Review tài liệu cuối cũng PASS: reviewer rà11 tệp kế hoạch/hợp đồng/README/bàn giao và5 thay đổi PR20; xác nhận F-13/F-14, kế toán hoãn không chặn Lead, nguồn canonical sau CRM dedup, trạng thái IN PROGRESS/HOLD và bảo toàn lịch sử. PR20 bản cập nhật `248b1eaef220e5468ce9c18d3592025293b09611` đã công bố; Builder đối chiếu5 file Git blob hash không sai khác.
+
 Trusted context/adapters/DB thật, atomic ngân sách/lịch/takeover, thư viện tài sản, đủ sáu kênh và UAT không thuộc PASS này. Phát hành HOLD. Hồ sơ cổng và phần còn thiếu nằm tại README; nội dung review luôn phải đọc cùng phiên bản mã và CI tương ứng.
