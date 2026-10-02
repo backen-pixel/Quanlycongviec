@@ -27,6 +27,7 @@ import { getSocket } from '../lib/socket';
 import { formatVND, formatDate, formatDateTime, getFileEmoji } from '../lib/utils';
 import { depositInstallmentsForForm, aggregateDepositFromInstallments } from '../lib/quotationTermsDisplay';
 import CRMTasksTab from '../components/CRMTasksTab';
+import LeadQualityCard from '../components/marketing/LeadQualityCard';
 import { pickSurveyFillFormTask, hasFilledFormData, normalizeFormConfig } from '../lib/taskFillForm';
 import DealSharedWorkspaceTab from '../components/DealSharedWorkspaceTab';
 import CrmTaskDocumentsPanel from '../components/CrmTaskDocumentsPanel';
@@ -4301,9 +4302,12 @@ export default function LeadDetail() {
               </button>
             </div>
 
+            <button type="button" onClick={() => setActiveTab('quality')} aria-pressed={activeTab === 'quality'} className="mx-5 mt-3 rounded-lg border px-3 py-2 text-sm text-blue-800">Xác nhận nhu cầu khách</button>
             {/* Tab Content */}
             <div className="p-5">
-              {activeTab === 'tasks' ? (
+              {activeTab === 'quality' ? (
+                <LeadQualityCard leadId={id} companyId={lead?.company_id} revisionKey={lead?.updated_at} />
+              ) : activeTab === 'tasks' ? (
                 <>
                 <CRMTasksTab
                   leadId={id}

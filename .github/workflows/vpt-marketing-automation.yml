@@ -3,15 +3,21 @@ on:
   pull_request:
     paths:
       - 'backend/src/modules/marketingAutomation/**'
+      - 'backend/src/modules/crmLeadQuality/**'
+      - 'backend/src/routes/crm/index.js'
+      - 'backend/src/routes/crm/routes/leadQuality.js'
+      - 'backend/tests/crmLeadQuality*.js'
       - 'backend/src/helpers/adInsights.js'
       - 'backend/src/helpers/mcpAdsBridge.js'
       - 'backend/src/helpers/fbMarketingSync.js'
       - 'backend/src/routes/adAnalytics.js'
       - 'frontend/src/pages/AdAnalyticsPage.jsx'
+      - 'frontend/src/pages/LeadDetail.jsx'
       - 'frontend/src/components/marketing/**'
       - 'backend/tests/marketingAutomation*.js'
       - 'database/648_marketing_automation_command_queue.sql'
       - 'database/649_marketing_spend_evidence.sql'
+      - 'database/650_crm_lead_qualification.sql'
       - '.github/workflows/vpt-marketing-automation.yml'
   workflow_dispatch:
 permissions:
@@ -30,7 +36,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
-      - run: node --test backend/tests/marketingAutomation.test.js backend/tests/marketingAutomation.leads.test.js backend/tests/marketingAutomation.reports.test.js backend/tests/marketingAutomation.spend.test.js backend/tests/marketingAutomation.spend.integration.test.js backend/tests/adAnalytics.correctness.test.js backend/tests/adAnalytics.ui-state.test.js backend/tests/adAnalytics.action-lifecycle.test.js
+      - run: node --test backend/tests/marketingAutomation.test.js backend/tests/marketingAutomation.leads.test.js backend/tests/marketingAutomation.reports.test.js backend/tests/marketingAutomation.spend.test.js backend/tests/marketingAutomation.spend.integration.test.js backend/tests/adAnalytics.correctness.test.js backend/tests/adAnalytics.ui-state.test.js backend/tests/adAnalytics.action-lifecycle.test.js backend/tests/crmLeadQuality.test.js
   postgres:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -90,6 +96,35 @@ jobs:
         env:
           MARKETING_SPEND_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/marketing_spend_test
         run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/marketingAutomation.spend.postgres.test.js
+  crm-quality-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: crm_quality_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated_test_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --prefix "$RUNNER_TEMP/vpt-pg" --ignore-scripts --no-audit --no-fund pg@8.19.0
+      - name: CRM qualification, current permissions and concurrent changes
+        env:
+          CRM_QUALITY_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/crm_quality_test
+        run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/crmLeadQuality.postgres.test.js
   frontend-build:
     runs-on: ubuntu-latest
     timeout-minutes: 15
