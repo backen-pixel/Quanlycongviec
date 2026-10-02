@@ -1,3 +1,9 @@
+## Hiện hành — màn hình chăm khách (02/10/2026)
+
+Runtime52741b81 đã qua review, kiểm thử cơ sở dữ liệu và trình duyệt dữ liệu giả. [Phạm vi](FACEBOOK_CARE_CONSOLE.md) · [Bằng chứng](FACEBOOK_CARE_CONSOLE_REVIEW.md). Màn hình có hàng chờ, lịch sử và tiếp quản/ngừng liên hệ; AI tư vấn/gửi tin và lịch khảo sát vẫn chưa hoàn tất. Mặc định tắt, chưa phát hành. Các mục phía dưới giữ lịch sử.
+
+---
+
 ## Hiện hành — nền chăm khách (02/10/2026)
 
 Runtime73fa7c68 và review/kiểm thử đã PASS trong phạm vi tiếp nhận, dừng liên hệ và tiếp quản. [Phạm vi](FACEBOOK_CUSTOMER_CARE.md) · [Bằng chứng](FACEBOOK_CUSTOMER_CARE_REVIEW.md). Mặc định tắt; chưa có AI gửi tin, UI care, lịch khảo sát hoặc nghiệm thu vận hành. Các bản bên dưới là lịch sử theo phiên bản.
