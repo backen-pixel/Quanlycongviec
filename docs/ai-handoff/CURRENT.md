@@ -17,7 +17,13 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-10-02 11:55 (UTC+7)
+Cập nhật: 2026-10-02 13:56 (UTC+7)
+
+## CRM — nút BC theo tổ chức cho quản trị HST
+
+Trạng thái: **FE+BE, đưa lên main.**
+
+Tài khoản `ecosystem_admin` mở nhóm KPI & báo cáo nhưng không thấy **BC theo tổ chức**, vì sidebar chỉ tính executive với `admin` / `manager` / `director` / `supervisor` / `sales_admin` / `crm_production_admin`. Menu và `RequireExecutive` nay dùng chung `isCrmExecutive`. API báo cáo tổ chức cũng nhận `ecosystem_admin` và `crm_production_admin` là báo cáo đầy đủ, không còn thu về đúng một người.
 
 ## Không gian chung — bộ lọc giống Giao việc
 

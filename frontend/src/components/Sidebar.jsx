@@ -1,7 +1,7 @@
 import { NavLink, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { persistCrmPipelineUiNow } from '../lib/crmPipelineStorage';
 import { useAuth } from '../lib/auth';
-import { isAdminLike, isPlatformAdmin, isCrmModuleAdmin, isStrictAdmin, isWorkProductionModuleAdmin, canAccessCrmSocialInbox } from '../lib/adminRole';
+import { isAdminLike, isPlatformAdmin, isCrmModuleAdmin, isCrmExecutive, isStrictAdmin, isWorkProductionModuleAdmin, canAccessCrmSocialInbox } from '../lib/adminRole';
 import NotificationCenter from './NotificationCenter';
 import SidebarTooltip from './SidebarTooltip';
 import { getInitials, avatarColor } from '../lib/utils';
@@ -915,7 +915,7 @@ export default function Sidebar() {
   /** Sidebar CRM: admin CRM (hệ thống, sales_admin, admin CRM+SX) thấy đủ mục cài đặt CRM. */
   const isCrmMenuAdmin = isCrmModuleAdmin(user);
   const canAccessSocialInbox = canAccessCrmSocialInbox(user);
-  const isExecutive = ['admin', 'manager', 'director', 'supervisor', 'sales_admin', 'crm_production_admin'].includes(user?.role);
+  const isExecutive = isCrmExecutive(user);
   const [searchParams] = useSearchParams();
   const [activeModule, setActiveModule] = useState(() => readStoredModule() || 'crm');
   const [customAppModules, setCustomAppModules] = useState([]);

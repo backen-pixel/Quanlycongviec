@@ -17,6 +17,12 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Nhật ký công việc AI
 
+## 2026-10-02 13:56 — Hiện BC theo tổ chức cho quản trị HST
+
+- AI: Cursor. Sidebar CRM ẩn mục `executiveOnly` với role `ecosystem_admin`.
+- File: `adminRole.js`, `Sidebar.jsx`, `RequireRole.jsx`, `helpersBundle.js`.
+- Menu và quyền vào trang dùng chung `isCrmExecutive`. API org-overview coi quản trị HST là báo cáo đầy đủ.
+
 ## 2026-10-02 11:55 — Bộ lọc Không gian chung giống Giao việc
 
 - AI: Cursor. Tab Không gian chung trước đó chỉ lọc trạng thái và ưu tiên.
