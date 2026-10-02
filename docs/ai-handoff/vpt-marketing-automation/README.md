@@ -1,3 +1,11 @@
+## Hiện hành 02/10/2026 — Đã kiểm thử khôi phục khách Facebook bị sót
+
+Bản1625f66 bổ sung [kiểm kê nguồn và khôi phục tiếp nhận](FACEBOOK_SOURCE_RECONCILIATION.md): tìm khách bị sót, lưu tiến độ, chạy lại sau lỗi và chống tạo trùng trong CRM. Review độc lập, PostgreSQL và toàn bộ kiểm tra tự động PASS. Xem [bằng chứng đúng phiên bản](FACEBOOK_SOURCE_RECONCILIATION_REVIEW.md).
+
+PR22 vẫn là bản nháp, chưa phát hành. Chưa có bằng chứng đầy đủ về phạm vi nguồn Facebook nên chưa kết luận đạt250.000 đồng/khách. Tiếp theo: chốt phạm vi đối soát và các hồ sơ thiếu; sau đó AI tư vấn, bàn giao và lịch khảo sát.100 triệu là trần một đợt30 ngày, chưa mở đợt thử. Các mục phía dưới giữ lịch sử.
+
+---
+
 ## Hiện hành 02/10/2026 — Dashboard kỳ đo đã kiểm thử, chưa mở chạy thật
 
 PR22 đã nối [tiền chi](SPEND_INTEGRATION.md), [nhu cầu có bằng chứng](CRM_QUALIFICATION.md), [tiếp nhận Facebook](FACEBOOK_LEAD_INTAKE.md), [hàng chờ/khôi phục](FACEBOOK_INTAKE_CONSOLE.md), [rà khách trùng](CRM_IDENTITY_OPERATIONS.md) vào [cấu hình kỳ đo và dashboard](MEASURED_COHORT.md). Bản af14635 qua review độc lập, kiểm thử PostgreSQL, full build và trình duyệt dữ liệu giả. Xem [bằng chứng và giới hạn](MEASURED_COHORT_REVIEW.md), [CURRENT](../CURRENT.md). Mọi phần còn trong PR nháp, chưa phát hành.

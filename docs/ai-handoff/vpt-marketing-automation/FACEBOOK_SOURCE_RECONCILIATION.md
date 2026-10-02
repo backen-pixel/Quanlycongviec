@@ -20,7 +20,7 @@ Next: establish complete Page/account/entrypoint coverage against authoritative 
 
 ## Verification and rollback
 
-29 local adapter/worker/HTTP cases PASS. PostgreSQL656 applies twice with649–655 and exercises replay, parallel workers, missed-notification recovery through actual CRM intake, restart, Page ownership/configuration changes and lease expiration after blocked reads/writes. Final CI/review results will be recorded in FACEBOOK_SOURCE_RECONCILIATION_REVIEW.md before claiming acceptance. No new UI behavior in this increment; prior dashboard tests remain scoped to af14635.
+29 local adapter/worker/HTTP cases PASS. PostgreSQL656 applies twice with649–655 and exercises replay, parallel workers, missed-notification recovery through actual CRM intake, restart, Page ownership/configuration changes and lease expiration after blocked reads/writes. Runtime1625f66 passed independent review; census PostgreSQL11PASS, Node18/22 each464PASS, all10 automation jobs/full build and report/Messenger regressions SUCCESS. See [exact-version evidence and limits](FACEBOOK_SOURCE_RECONCILIATION_REVIEW.md). No new UI behavior in this increment; prior dashboard tests remain scoped to af14635.
 
 Before real activation: verify actual schema, migration numbering, backup/restore, App/Pages/lead retrieval permissions, throughput and operational fixtures, then include this feature in the Founder release package. Disable the census flag to stop new provider reads/publication; keep intake receiving already-authorized notifications and preserve all run/receipt/source evidence. Do not delete data or restore unsafe permissions.
 
