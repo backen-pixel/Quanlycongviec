@@ -11,6 +11,8 @@ const { createLeadCensus } = require('../modules/marketingAutomation/facebookLea
 const intakeRouterState = require('../config/supabaseRouter');
 const leadIntakePrimary = () => !intakeRouterState.isFailoverEnabled() && intakeRouterState.getActiveTarget() === 'primary';
 const facebookLeadIntake = createLeadIntake({ db: supabase, isPrimary: leadIntakePrimary, onError: code => console.warn('[FB Lead intake]', code) });
+const { createCustomerCare } = require('../modules/marketingAutomation/facebookCustomerCare');
+const facebookCustomerCare = createCustomerCare({ db: supabase, isPrimary: leadIntakePrimary });
 const facebookLeadCensus = createLeadCensus({ db: supabase, isPrimary: leadIntakePrimary, pages: facebookLeadIntake.pages, onError: code => console.warn('[FB Lead census]', code) });
 const { fetchAllPagesParallel } = require('../helpers/supabaseFetchAll');
 const axios = require('axios');
@@ -3347,6 +3349,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
 }
 
 async function sendMessengerReply(pageId, psid, text) {
+  facebookCustomerCare.assertLegacySendAllowed(pageId);
   const page = await getPageConfig(pageId);
   if (!page?.access_token) return null;
 
@@ -3367,6 +3370,7 @@ async function sendMessengerReply(pageId, psid, text) {
 
 // Gửi attachment (image/file/audio/video) qua URL
 async function sendMessengerAttachment(pageId, psid, type, url) {
+  facebookCustomerCare.assertLegacySendAllowed(pageId);
   const page = await getPageConfig(pageId);
   if (!page?.access_token) return null;
 
@@ -3392,6 +3396,7 @@ async function sendMessengerAttachment(pageId, psid, type, url) {
 
 /** Upload buffer thẳng lên Facebook — FB không cần tải lại từ URL public. */
 async function uploadMessengerAttachmentBuffer(pageId, accessToken, buffer, type, filename, mimetype) {
+  facebookCustomerCare.assertLegacySendAllowed(pageId);
   const form = new FormData();
   form.append('message', JSON.stringify({
     attachment: { type, payload: { is_reusable: true } },
@@ -3415,6 +3420,7 @@ async function uploadMessengerAttachmentBuffer(pageId, accessToken, buffer, type
 }
 
 async function sendMessengerAttachmentById(pageId, psid, type, attachmentId, accessToken) {
+  facebookCustomerCare.assertLegacySendAllowed(pageId);
   const resp = await fetch(`https://graph.facebook.com/v19.0/${pageId}/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -3437,6 +3443,7 @@ async function sendMessengerAttachmentById(pageId, psid, type, attachmentId, acc
 
 /** Sender tái dùng page token — gửi ảnh Drive nhanh (URL cache hoặc buffer trực tiếp). */
 async function createMessengerImageSender(contact) {
+  facebookCustomerCare.assertLegacySendAllowed(contact.page_id);
   const page = await getPageConfig(contact.page_id);
   if (!page?.access_token) return null;
   const pageId = contact.page_id;
@@ -3490,6 +3497,8 @@ r.get('/webhook', async (req, res) => {
 // ── WEBHOOK RECEIVE (POST) ───────────────────────────────────
 
 r.post('/webhook', async (req, res) => {
+  try { await facebookCustomerCare.receive(req); }
+  catch (e) { return res.sendStatus(e.code === 'INVALID_SIGNATURE' ? 403 : ['INVALID_ENVELOPE', 'ENVELOPE_LIMIT'].includes(e.code) ? 400 : 503); }
   // Authenticate original bytes and persist opt-in Lead Ads before ANY legacy side effect.
   try { await facebookLeadIntake.receive(req); }
   catch (e) { return res.sendStatus(e.code === 'INVALID_SIGNATURE' ? 403 : ['INVALID_ENVELOPE','ENVELOPE_LIMIT'].includes(e.code) ? 400 : 503); }
@@ -3865,7 +3874,7 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
       }
 
       // Auto-reply chỉ cho tin nhắn đầu tiên (khi vừa tạo lead)
-      if (!isReplay && isFirstMessage && autoLeadCfg.auto_reply_first_message) {
+      if (!facebookCustomerCare.isEnrolled(pageId) && !isReplay && isFirstMessage && autoLeadCfg.auto_reply_first_message) {
         const page = await getPageConfig(pageId);
         if (page?.auto_reply_message) {
           await sendMessengerReply(pageId, partnerPsid, page.auto_reply_message);
@@ -10193,6 +10202,7 @@ if (DURABLE_MESSENGER_PAGES.size) {
 // ĐIỀU KHIỂN TRƯỜNG WEBHOOK (xem page nào đang nhận gì, bật/tắt tại chỗ)
 // ═══════════════════════════════════════════════════════════════
 
+r.use('/customer-care', authMiddleware, require('./facebookCustomerCare'));
 r.use('/lead-intake', authMiddleware, require('./facebookLeadIntakeAdmin'));
 
 r.get('/webhook-fields', authMiddleware, async (req, res) => {

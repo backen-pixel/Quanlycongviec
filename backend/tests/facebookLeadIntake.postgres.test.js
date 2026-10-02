@@ -64,5 +64,6 @@ test('isolated PostgreSQL Facebook Lead Ads intake',{skip:!dsn},async t=>{
   await t.test('status is company-scoped and has no provider secrets/contact PII',async()=>{const r=await query('marketing_fb_lead_status',[admin,company]);assert.equal(r.uniquePaidCoverage,'INCOMPLETE');assert.ok(r.receiptCounts.DONE>0);const text=JSON.stringify(r);assert.equal(text.includes('page-test-token'),false);assert.equal(text.includes('0901234567'),false);await assert.rejects(query('marketing_fb_lead_status',[admin,other]),e=>e.code==='42501');});
   await require('./facebookLeadIntake.console.cases')(t,{db,peers,query,enqueue,lease,bind,config,admin,sales,company,other,region,commit,setup,dropQueue});
   await require('./facebookLeadIntake.legacy.cases')(t,{db,peers,query,config,admin,sales,company,other,region,setup,commit,dropQueue});
+  await require('./facebookCustomerCare.cases')(t,{db,peers,query,admin,sales,company,other,region});
  }finally{await Promise.all(peers.map(x=>x.end()));await db.end();}
 });

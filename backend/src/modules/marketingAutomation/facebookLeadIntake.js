@@ -4,7 +4,7 @@ const numeric=x=>typeof x==='string'&&/^[0-9]{1,32}$/.test(x);
 const fail=code=>Object.assign(new Error(code),{code});
 const pagesFromEnv=(env=process.env)=>new Set(String(env.VPT_FB_LEAD_INTAKE_PAGES||'').split(',').map(x=>x.trim()).filter(numeric));
 function captureFacebookRawBody(req,_res,buffer){
- if(pagesFromEnv().size&&req.method==='POST'&&String(req.originalUrl||req.url||'').split('?')[0].replace(/\/+$/,'').toLowerCase()==='/api/facebook/webhook')req.facebookRawBody=Buffer.from(buffer);
+ if((pagesFromEnv().size||String(process.env.VPT_FB_CARE_PAGES||'').split(',').some(x=>numeric(x.trim())))&&req.method==='POST'&&String(req.originalUrl||req.url||'').split('?')[0].replace(/\/+$/,'').toLowerCase()==='/api/facebook/webhook')req.facebookRawBody=Buffer.from(buffer);
 }
 function verifySignature(raw,signature,secret){
  if(!Buffer.isBuffer(raw)||typeof secret!=='string'||secret.length<16||typeof signature!=='string'||!/^sha256=[a-f0-9]{64}$/.test(signature))return false;

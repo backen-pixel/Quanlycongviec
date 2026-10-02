@@ -1,3 +1,9 @@
+## 2026-10-02 — Durable customer-care control (in validation)
+
++Base203a1fd. SQL659, signed Messenger intake and admin control API persist explicit opt-out/human requests, current CRM routing and audited takeover. Enrolled Pages are receive/review-only and legacy in-app sending is blocked; no live flag was enabled. Local18 cases PASS. Isolated PostgreSQL and independent follow-up pending. See [scope, limits and rollback](vpt-marketing-automation/FACEBOOK_CUSTOMER_CARE.md). AI advice, controlled dispatch, survey booking, operator UI and live acceptance remain unfinished; goal ACTIVE.
+
+---
+
 ## Hiện hành 02/10/2026 — Đối soát khách Facebook cũ đã kiểm thử
 
 Runtime0d41d343 bổ sung cách nối nguồn Facebook đã xác minh vào đúng Lead/Customer cũ qua bản đối soát có thời hạn; giữ nguyên lịch sử và phân công CRM. Bản2d90f5c tăng độ sát của fixture với khóa ngoại dữ liệu cũ. Local82, PostgreSQL44, Node22 506, cả10 job automation/full frontend build và trình duyệt dữ liệu giả PASS; review độc lập runtime PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/FACEBOOK_LEGACY_RECONCILIATION_REVIEW.md).
