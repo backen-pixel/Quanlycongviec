@@ -1,3 +1,9 @@
+## 2026-10-02 — Reconciliation review and UI terminology
+
+Runtime808a307 passed independent review, all10 automation jobs, census PostgreSQL17 cases and Node22 489 cases. Synthetic browser checks passed dropped-response same-key retry, refresh persistence, wrong-company replies, pending-write control locking and company switching. Reviewer P3 is addressed: census figures are labeled form submissions, distinct from unique qualified customers. The existing trial save button is also disabled during recovery. Final head CI and review of this UI delta remain to be recorded; no live action.
+
+---
+
 ## 2026-10-02 — Connect census results to the trial dashboard (in validation)
 
 Baseline PR22 730c388. Add read-only SQL657 census inventory to the same trial snapshot, compare enumerated IDs in both directions against receipt/source/CRM evidence, and expose recovery status plus scoped same-request retry in the dashboard. Local79 cases PASS (25 new reconciliation cases plus existing25 trial and29 census). Isolated PostgreSQL, whole-app build, synthetic browser and independent review are pending on this increment. No live change or complete CPQL claim; exhaustive provider coverage and other full-goal work remain.
