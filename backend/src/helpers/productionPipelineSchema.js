@@ -33,6 +33,8 @@ let pipelineGroupKeyColumnAvailable = true;
 let pipelineGroupSortColumnAvailable = true;
 /** Cột board_tab (migration 614) — tab Dashboard Sản xuất / Công nợ */
 let pipelineBoardTabColumnAvailable = true;
+/** Cột is_phat_sinh (migration 648) — cột đơn phát sinh */
+let pipelinePhatSinhColumnAvailable = true;
 /** Cột converts_workshop_type / target_workshop_type_id (migration 303) */
 let pipelineSwitchWorkshopTypeColumnAvailable = true;
 let pipelineTargetWorkshopTypeJoinAvailable = true;
@@ -307,6 +309,19 @@ function isPipelineBoardTabMissingError(err) {
   return s.includes('board_tab') && (s.includes('does not exist') || s.includes('could not find'));
 }
 
+function isPipelinePhatSinhMissingError(err) {
+  if (!err || !pipelinePhatSinhColumnAvailable) return false;
+  const s = String(err.message || err.details || err.hint || '').toLowerCase();
+  return s.includes('is_phat_sinh') && (s.includes('does not exist') || s.includes('could not find') || s.includes('schema cache'));
+}
+
+function markPipelinePhatSinhColumnMissing() {
+  if (pipelinePhatSinhColumnAvailable) {
+    console.warn('[production_pipeline_stages] Cột is_phat_sinh chưa có. Chạy database/648_sx_phat_sinh_order.sql.');
+  }
+  pipelinePhatSinhColumnAvailable = false;
+}
+
 function markPipelineBoardTabColumnMissing() {
   if (pipelineBoardTabColumnAvailable) {
     console.warn(
@@ -395,6 +410,7 @@ function buildPipelineStageSelect() {
   const gKey = pipelineGroupKeyColumnAvailable ? 'group_key, ' : '';
   const gSort = pipelineGroupSortColumnAvailable ? 'group_sort, ' : '';
   const gTab = pipelineBoardTabColumnAvailable ? 'board_tab, ' : '';
+  const phatSinh = pipelinePhatSinhColumnAvailable ? 'is_phat_sinh, ' : '';
   const sw = pipelineSwitchWorkshopTypeColumnAvailable ? 'converts_workshop_type, ' : '';
   let twt = '';
   if (pipelineSwitchWorkshopTypeColumnAvailable) {
@@ -416,7 +432,7 @@ function buildPipelineStageSelect() {
       t = 'crm_target_stage_id, ';
     }
   }
-  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, is_packaging_done, ${h}${sw}${twt}${pp}${kpi}${reqDl}${clrDl}${dashKpi}${dlGroup}${gKey}${gSort}${gTab}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
+  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, is_packaging_done, ${h}${sw}${twt}${pp}${kpi}${reqDl}${clrDl}${dashKpi}${dlGroup}${gKey}${gSort}${gTab}${phatSinh}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
 }
 
 /** Áp dụng retry khi SELECT 1 cột pipeline (embed / cột thiếu). */
@@ -488,6 +504,10 @@ async function fetchProductionPipelineStageById(supabase, stageId) {
     markPipelineBoardTabColumnMissing();
     ({ data, error } = await run());
   }
+  if (error && isPipelinePhatSinhMissingError(error)) {
+    markPipelinePhatSinhColumnMissing();
+    ({ data, error } = await run());
+  }
   if (error && isPipelineSwitchWorkshopTypeMissingError(error)) {
     markPipelineSwitchWorkshopTypeColumnMissing();
     ({ data, error } = await run());
@@ -515,6 +535,7 @@ const INSERT_COLUMN_RETRIES = [
   [isPipelineGroupKeyMissingError, markPipelineGroupKeyColumnMissing],
   [isPipelineGroupSortMissingError, markPipelineGroupSortColumnMissing],
   [isPipelineBoardTabMissingError, markPipelineBoardTabColumnMissing],
+  [isPipelinePhatSinhMissingError, markPipelinePhatSinhColumnMissing],
   [isPipelineSwitchWorkshopTypeMissingError, markPipelineSwitchWorkshopTypeColumnMissing],
   [isPipelineWorkshopTypeMissingError, markPipelineWorkshopTypeColumnMissing],
   [isCrmTargetStageMissingError, markCrmTargetStageColumnMissing],
@@ -584,6 +605,7 @@ function stripHandoverFields(obj) {
   if (!pipelineGroupKeyColumnAvailable) delete o.group_key;
   if (!pipelineGroupSortColumnAvailable) delete o.group_sort;
   if (!pipelineBoardTabColumnAvailable) delete o.board_tab;
+  if (!pipelinePhatSinhColumnAvailable) delete o.is_phat_sinh;
   if (!pipelineSwitchWorkshopTypeColumnAvailable) {
     delete o.converts_workshop_type;
     delete o.is_switch_workshop_type;
@@ -612,6 +634,7 @@ function _resetForTests() {
   pipelineGroupKeyColumnAvailable = true;
   pipelineGroupSortColumnAvailable = true;
   pipelineBoardTabColumnAvailable = true;
+  pipelinePhatSinhColumnAvailable = true;
   pipelineSwitchWorkshopTypeColumnAvailable = true;
   pipelineTargetWorkshopTypeJoinAvailable = true;
 }
@@ -645,6 +668,8 @@ module.exports = {
   isPipelineGroupKeyMissingError,
   isPipelineGroupSortMissingError,
   isPipelineBoardTabMissingError,
+  isPipelinePhatSinhMissingError,
+  markPipelinePhatSinhColumnMissing,
   markPipelineGroupKeyColumnMissing,
   markPipelineGroupSortColumnMissing,
   markPipelineBoardTabColumnMissing,

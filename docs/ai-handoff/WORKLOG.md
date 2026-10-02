@@ -17,6 +17,18 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Nhật ký công việc AI
 
+## 2026-10-02 15:15 — Hàng nhiệm vụ hiện tên nhân viên được gán
+
+- AI: Cursor. Dòng nhiệm vụ thu gọn (ví dụ Phôi) chỉ hiện «Chi tiết», không hiện tên người nhận.
+- File: `frontend/src/components/CRMTasksTab.jsx`.
+- Tên nhân viên hiện luôn trên hàng, không cần mở rộng. Đã xem TB-2026-963: Phôi và Cánh hiện «Thuận».
+
+## 2026-10-02 14:20 — Dashboard Hào chỉ còn dự án có việc của anh ấy
+
+- AI: Cursor. Hào hoàn thiện đang thấy mọi dự án Metalla trên dashboard SX.
+- File: `dealParticipantProduction.js`, `tests/hao-task-project-scope.js`.
+- Tài khoản `hao@metalla.com` chỉ còn dự án có nhiệm vụ CRM hoặc việc sản xuất gắn cho mình. Dự án không có việc của Hào không lên danh sách và không mở được.
+
 ## 2026-10-02 13:56 — Hiện BC theo tổ chức cho quản trị HST
 
 - AI: Cursor. Sidebar CRM ẩn mục `executiveOnly` với role `ecosystem_admin`.

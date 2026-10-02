@@ -717,6 +717,18 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
 
   const outbox = createCrmTaskOutbox({ taskId, leadId, op: 'update' });
   outbox.enqueue('assignment_sync', runAssignmentSync);
+  if (b.status !== undefined && (String(data.stage_slug || '').startsWith('sx_') || data.production_pipeline_stage_id)) {
+    outbox.enqueue('sx_card_deadline', async () => {
+      const { data: leadRow } = await supabase
+        .from('crm_leads')
+        .select('project_id')
+        .eq('id', data.lead_id || leadId)
+        .maybeSingle();
+      if (!leadRow?.project_id) return;
+      const { syncSxCardDeadline } = require('./sxCardPlanDeadline');
+      await syncSxCardDeadline(leadRow.project_id);
+    });
+  }
   outbox.enqueue('notify_assignees', runNotifyAddedAssignees);
   const sideEffects = await outbox.drain();
 

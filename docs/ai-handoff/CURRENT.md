@@ -17,7 +17,23 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-10-02 13:56 (UTC+7)
+Cập nhật: 2026-10-02 15:15 (UTC+7)
+
+## Hàng nhiệm vụ — hiện nhân viên được gán
+
+Trạng thái: **FE local, đã xem trên TB-2026-963.**
+
+Dòng nhiệm vụ thu gọn hiện tên người nhận cạnh ngày hẹn. Phôi và Cánh hiện «Thuận» mà không cần bấm Chi tiết.
+
+Hoàn tác: revert nhánh `assignees.map` trong `renderTaskRow` của `CRMTasksTab.jsx`.
+
+## Dashboard SX — Hào chỉ thấy dự án có việc của mình
+
+Trạng thái: **BE local.**
+
+`hao@metalla.com` không còn thấy toàn bộ dự án Metalla. Danh sách và trang chi tiết chỉ gồm dự án có `crm_tasks` hoặc `tasks` gắn cho anh ấy. Nhân viên sản xuất khác không đổi.
+
+Hoàn tác: bỏ `hao@metalla.com` khỏi `TASK_SCOPED_PRODUCTION_EMAILS` trong `dealParticipantProduction.js`.
 
 ## CRM — nút BC theo tổ chức cho quản trị HST
 

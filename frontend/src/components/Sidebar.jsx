@@ -224,7 +224,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
       { to: '/crm/kpi/scorecard', icon: ClipboardCheck, label: 'Scorecard KPI tháng', executiveOnly: true },
       { to: '/crm/kpi/settings', icon: Settings, label: 'Cấu hình KPI Tủ bếp', executiveOnly: true },
       { to: '/crm/reports', icon: BarChart3, label: 'Báo cáo', adminOnly: true },
-      { to: '/crm/ad-analytics', icon: Megaphone, label: 'Hiệu quả quảng cáo FB', adminOnly: true },
+      { to: '/crm/facebook?tab=ad-campaigns', icon: Megaphone, label: 'Hiệu quả quảng cáo FB', adminOnly: true },
       { to: '/management/project-logs', icon: History, label: 'Nhật ký công trình' },
       { to: '/crm/reports/org-overview', icon: Building2, label: 'BC theo tổ chức', executiveOnly: true },
       { to: '/crm/reports/staff-lead-deal', icon: Users, label: 'BC Lead/Deal theo NV', executiveOnly: true },
