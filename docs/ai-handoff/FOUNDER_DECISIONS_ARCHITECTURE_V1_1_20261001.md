@@ -45,3 +45,13 @@ Các mặc định diễn giải để tránh lỗi được ghi trong V1.1: ph�
 ## Cách ghi quyết định tiếp theo
 
 Mỗi quyết định ghi người quyết định, ngày, phiên bản/phạm vi, hành động cho phép và các gate còn lại. Thay quyết định dùng ADR kế tiếp; không sửa lời duyệt trước thành nội dung mới. Approval chỉ áp dụng đúng hành động/phạm vi; không suy từ việc tài liệu có tên “chuẩn”, nằm trên main hoặc test PASS.
+
+## F-12 — 02/10/2026: ưu tiên Marketing đa kênh để có khách
+
+- Người quyết định: Founder, chỉ đạo trực tiếp trong task Founder Control Center sau khi xem kiến trúc V1.1.
+- Nguồn: “anh muốn hoàn thiện hệ thống marketing đa kênh trước. túc là ưu tiên để có khách hàng về”. Kênh bổ sung được Founder nêu: “website, Google, ads chatgpt TikTok, zalo”. Ngân sách: “Lập phương án tăng ngân sách để anh duyệt”.
+- **Đã chốt:** ưu tiên thu hút/tiếp nhận/chăm sóc khách đa kênh trước phát triển chuyên sâu sau bán. Kiến trúc V1.1, ownership, quyền và đích dài hạn VPT–Metala giữ nguyên. Mở công việc chuẩn bị lộ trình/gói Marketing; kiểm soát liên quan vẫn là điều kiện cho kết nối và ghi dữ liệu thật.
+- **Được giao:** đối chiếu kênh, chuẩn bị kế hoạch triển khai và phương án tăng ngân sách để Founder duyệt. Tận dụng phê duyệt Facebook đã có trong phạm vi của nó.
+- **Chưa chốt:** phân bổ A/B, ngân sách chi thêm, lịch chạy/địa bàn/tài khoản cụ thể của kênh mới, KPI/SLA, người Marketing/Sales Admin và cấu hình tracking. Không suy việc liệt kê kênh thành xác minh tài khoản hoặc hiệu quả.
+- Hồ sơ đề xuất: [Marketing đa kênh](MARKETING_MULTICHANNEL_PRIORITY_20261002.md). Hướng ưu tiên này cập nhật F-11 và thứ tự roadmap; không hủy F-01…F-10, không tự merge/release/mở quyền AI/DB thật.
+- Lần cập nhật chỉ sửa tài liệu; approval chi tiền và phát hành vẫn gắn đúng gói cụ thể. Không đổi nghĩa các phê duyệt trước.

@@ -1,3 +1,15 @@
+# 2026-10-02 — Ưu tiên Marketing đa kênh để có khách
+
+Founder đã chốt F-12: làm Marketing đa kênh và CRM tiếp nhận/chăm sóc trước các phát triển chuyên sâu sau bán. Các kênh: Facebook, website, Google, ChatGPT Ads, TikTok, Zalo. [Gói ưu tiên và ngân sách đề xuất](MARKETING_MULTICHANNEL_PRIORITY_20261002.md).
+
+- Đã cập nhật roadmap và ghi quyết định mới; kiến trúc V1.1 và kiểm soát giữ nguyên. Gói media A: 14 triệu/14 ngày; B: 21 triệu/14 ngày có quỹ thử một kênh mới — cả hai **CHỜ DUYỆT**, không tự chi thêm.
+- Hồ sơ Facebook ghi đã đăng bộ được duyệt ngày 01/10, lần cuối đang xử lý; chưa đọc lại trạng thái phân phối. Không dùng brief cũ “chờ duyệt” để phủ nhận phê duyệt đã có.
+- Gói trợ lý Marketing–CRM ở PR #21 phục vụ tuyến này, chưa là điều kiện phải hoàn thành để tạo khách; runtime chưa triển khai theo hồ sơ gói.
+- Còn thiếu danh mục URL/tài khoản của kênh mới, đầu mối Marketing/Sales Admin, baseline chất lượng khách và phép đo. Nội dung, tiêu chí và các gói triển khai cụ thể tiếp tục được chuẩn bị trong phạm vi ưu tiên mới.
+- [Review phần cập nhật](MARKETING_PRIORITY_REVIEW_20261002.md); không chạy runtime hoặc sửa quảng cáo/DB trong phiên này. Lịch sử bên dưới giữ nguyên theo thời điểm ghi.
+
+---
+
 # 2026-10-01 — Business AI OS V1.1 / chặng 0
 
 Trạng thái: **gói tài liệu PASS kiểm tra và review Agent độc lập; chờ merge, chưa mở chặng 1**. Founder yêu cầu triển khai kế hoạch; phạm vi đang mở là chặng 0.
