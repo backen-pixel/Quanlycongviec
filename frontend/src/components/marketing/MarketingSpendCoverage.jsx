@@ -50,6 +50,7 @@ function Coverage({ companyId, from, to }) {
 
 export default function MarketingSpendCoverage({ companyId, from, to, refresh, syncing }) {
   if (!companyId) return <section aria-label="Chi tiêu Facebook đã đối soát" className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">Chọn một công ty để kiểm tra toàn bộ chi tiêu Facebook của công ty đó.</section>;
+  if (!from || !to) return <section aria-label="Chi tiêu Facebook đã đối soát" className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">Chọn ngày bắt đầu và kết thúc để kiểm tra đủ chi tiêu Facebook trong kỳ.</section>;
   if (syncing) return <section aria-label="Chi tiêu Facebook đã đối soát" aria-live="polite" className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">Đang đồng bộ chi tiêu Facebook. Số cũ được ẩn trong lúc kiểm tra.</section>;
   // Remount on scope change: previous company figures cannot flash while the
   // effect for a new company/date range is waiting to execute.
