@@ -1,3 +1,9 @@
+## 2026-10-02 — CRM qualification increment verified
+
+Implementation7079b266: independent code review PASS, all three P2 findings closed. Node18/22 combined256 tests PASS; isolated PostgreSQL16 CRM21PASS/0SKIP; full frontend build PASS. Supported browser on real component with synthetic wrapper covered changed Customer context, delayed save across Lead switch, read/write failure and recovery. CI uses PR merge ref369436b containing this head. See [review and limits](vpt-marketing-automation/CRM_QUALIFICATION_REVIEW.md). No real migration, merge/deploy or release. Full goal remains active; canonical identity/paid source/cohort, AI intake/handoff/calendar and dashboard are unfinished.
+
+---
+
 ## 2026-10-02 — CRM qualification evidence (goal continues)
 
 Base PR22 ec53daf. Implemented CRM human confirmation/exception panel, authenticated service and append-only migration650. Fresh database authorization, concurrency/idempotency and monotonic invalidation preserve evidence without silently reviving it when source edits are reverted. Default-off, primary-only; no real database/customer/ad changes. Local35 service/router tests pass; exact-head PostgreSQL/build/browser and independent review remain to be verified.

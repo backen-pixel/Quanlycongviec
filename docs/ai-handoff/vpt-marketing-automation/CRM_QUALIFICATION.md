@@ -25,7 +25,9 @@ Still required for the full objective: non-destructive cross-channel identity li
 
 ## Validation
 
+Verified implementation head7079b266: independent review PASS after closing three P2 findings; Node18/22 combined256 tests PASS; PostgreSQL16 CRM21PASS/0SKIP; whole frontend build and synthetic-only supported-browser checks PASS within the scopes in [the review evidence](CRM_QUALIFICATION_REVIEW.md). CI used the PR merge ref containing this head. No live UAT/release claim. A later docs-only commit does not change these code blobs.
+
 - 18 downloaded CRM/UI/migration source blobs verified at ec53daf; support files also compared to the same Git tree before publication.
 - Local service + actual-router tests:35 PASS. This is not SQL/runtime authorization proof.
 - New PostgreSQL16 CI exercises table/function ACLs, two concurrent decisions, CRM edits, retries, source invalidation including A→B→A, revoked users, tenant/region scope, rollback and deletion evidence preservation. Read the exact published run before claiming PASS.
-- Whole frontend build and supported local-browser checks pending at initial publication. Independent review pending; a draft PR is not approval to release.
+- Full authenticated LeadDetail and live CRM acceptance remain pending; a draft PR is not approval to release. The local browser exercised the real component under a synthetic wrapper.
