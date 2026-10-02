@@ -14,6 +14,8 @@ r.post('/control',(req,res)=>care.handle(req,res,'control'));
 const library=createCareLibrary({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
 r.get('/library',(req,res)=>library.handle(req,res,'list'));
 r.get('/library/entry',(req,res)=>library.handle(req,res,'read'));
+r.get('/library/choices',(req,res)=>library.handle(req,res,'choices'));
+r.get('/library/history',(req,res)=>library.handle(req,res,'history'));
 r.post('/library/change',(req,res)=>library.handle(req,res,'change'));
 r.post('/library/preview',(req,res)=>library.handle(req,res,'preview'));
 module.exports=r;

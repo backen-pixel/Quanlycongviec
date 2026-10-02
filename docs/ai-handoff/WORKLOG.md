@@ -1,3 +1,9 @@
+## 2026-10-02 — Response library editor and history (in validation)
+
+Base8220688. Facebook care now has a response-library editor for drafting, exact-version approval/revocation, scoped product/region choices, literal preview and full historical paging. SQL662 only adds read selectors/history. Ambiguous writes persist the exact key/body per actor/company before POST and across remount/reload; receipts are never painted as current state. Local20 PASS; PostgreSQL4 new cases/full build/browser/final review pending. Reviewer pagination draft-loss finding fixed. [Contract](vpt-marketing-automation/CARE_LIBRARY_CONSOLE.md). No model calls or live actions; full goal ACTIVE.
+
+---
+
 ## Hiện hành 02/10/2026 — Thư viện nội dung tư vấn đã kiểm thử
 
 Runtime880f495 thêm lưu nháp, duyệt/thu hồi nội dung, lịch sử và xem trước nguyên văn theo công ty/sản phẩm/khu vực/kênh. Sửa nội dung, đổi quyền người duyệt, thay đổi nguồn hoặc hết hạn làm mất hiệu lực sử dụng. Không cấp sẵn quyền duyệt hoặc nạp dữ liệu sản phẩm thật. Review độc lập PASS; local9, PostgreSQL83 (14 library), Node22 547 và cả10 job/full build PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/CARE_LIBRARY_REVIEW.md).

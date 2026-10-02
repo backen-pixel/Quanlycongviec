@@ -1,5 +1,6 @@
 import {useEffect,useRef,useState} from 'react';
 import api from '../../lib/api';
+import CustomerCareLibrary from './CustomerCareLibrary';
 import {modes,labels,queueView,threadView,historyView,readPending,savePending,clearPending,controlAck,controlPayload} from './careConsoleState.mjs';
 const button='rounded-lg border px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed';
 const date=x=>x?new Date(x).toLocaleString('vi-VN',{timeZone:'Asia/Ho_Chi_Minh'}):'Chưa có';
@@ -7,7 +8,11 @@ const reasons={REQUEST_HUMAN:'Khách yêu cầu gặp nhân viên',OUTBOUND_ECHO
 
 export default function FacebookCustomerCareConsole({companyId,actorId}){
  if(!companyId||!actorId)return <p className="p-6 text-sm text-gray-600">Chọn một công ty để xem và xử lý hội thoại chăm khách.</p>;
- return <CareSession key={`${actorId}:${companyId}`} companyId={companyId} actorId={actorId}/>;
+ return <CareWorkspace key={`${actorId}:${companyId}`} companyId={companyId} actorId={actorId}/>;
+}
+function CareWorkspace({companyId,actorId}){
+ const [view,setView]=useState('care'),[libraryVisited,setLibraryVisited]=useState(false);
+ return <div className="flex h-full flex-col"><nav className="flex gap-2 border-b p-3" aria-label="Công cụ chăm khách"><button className={button} aria-pressed={view==='care'} onClick={()=>setView('care')}>Hội thoại</button><button className={button} aria-pressed={view==='library'} onClick={()=>{setLibraryVisited(true);setView('library');}}>Nội dung tư vấn</button></nav><div className={`min-h-0 flex-1 ${view==='care'?'':'hidden'}`}><CareSession companyId={companyId} actorId={actorId}/></div>{libraryVisited&&<div className={`min-h-0 flex-1 ${view==='library'?'':'hidden'}`}><CustomerCareLibrary companyId={companyId} actorId={actorId}/></div>}</div>;
 }
 function CareSession({companyId,actorId}){
  const [mode,setMode]=useState('HUMAN_REQUESTED'),[queue,setQueue]=useState(null),[detail,setDetail]=useState(null),[messages,setMessages]=useState([]),[before,setBefore]=useState(null);

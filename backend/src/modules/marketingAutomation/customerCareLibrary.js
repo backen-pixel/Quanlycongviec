@@ -11,21 +11,27 @@ function createCareLibrary({db,isPrimary,env=process.env,now=()=>new Date().toIS
   if(!enabled())return res.status(503).json({error:'Thư viện tư vấn chưa được mở.'});
   const body=['change','preview'].includes(operation)?req.body:req.query,actor=req.user?.userId||req.user?.id,company=body?.companyId;
   if(!uuid(actor)||!uuid(company)||(req.user?.id&&req.user?.userId&&req.user.id!==req.user.userId))return res.status(403).json({error:'Không xác định được phạm vi truy cập.'});
-  const allowed={list:['companyId','after'],read:['companyId','entryId'],change:['companyId','requestId','command'],preview:['companyId','entryId','version','channel','regionId']}[operation];
+  const allowed={list:['companyId','after'],read:['companyId','entryId'],choices:['companyId','kind','search','after'],history:['companyId','entryId','version','before'],change:['companyId','requestId','command'],preview:['companyId','entryId','version','channel','regionId']}[operation];
   if(!allowed||!body||Array.isArray(body)||Object.keys(body).some(k=>!allowed.includes(k))
-   ||(operation==='list'&&body.after!==undefined&&!uuid(body.after))
-   ||(['read','preview'].includes(operation)&&!uuid(body.entryId))
+   ||(['list','choices'].includes(operation)&&body.after!==undefined&&!uuid(body.after))
+   ||(['read','preview','history'].includes(operation)&&!uuid(body.entryId))
+   ||(operation==='choices'&&(!['product','region'].includes(body.kind)||(body.search!==undefined&&(typeof body.search!=='string'||body.search.length>100))))
+   ||(operation==='history'&&(!version(body.version)||(body.before!==undefined&&!uuid(body.before))))
    ||(operation==='change'&&(!uuid(body.requestId)||!uuid(body.command?.entryId)))
    ||(operation==='preview'&&(!version(body.version)||!uuid(body.regionId)||!channels.has(body.channel))))return res.status(400).json({error:'Yêu cầu thư viện không hợp lệ.'});
   const args={p_actor:actor,p_company:company};
   try{
    let rpc,argsExtra;
    if(operation==='list'){rpc='crm_care_library_list';argsExtra={p_after:body.after||null};}
+   else if(operation==='choices'){rpc='crm_care_library_choices';argsExtra={p_kind:body.kind,p_search:body.search||'',p_after:body.after||null};}
+   else if(operation==='history'){rpc='crm_care_library_history';argsExtra={p_entry:body.entryId,p_version:body.version,p_before:body.before||null};}
    else if(operation==='change'){rpc='crm_care_library_change';argsExtra={p_request:body.requestId,p_command:body.command};}
    else {rpc='crm_care_library_read';argsExtra={p_entry:body.entryId};}
    const {data,error}=await db.rpc(rpc,{...args,...argsExtra});
    if(error)throw fail(error.code);
-   if(!enabled()||data?.companyId!==company||(!['list'].includes(operation)&&data.entryId!==(body.entryId||body.command.entryId)))throw fail('UNAVAILABLE');
+   if(!enabled()||data?.companyId!==company||(!['list','choices'].includes(operation)&&data.entryId!==(body.entryId||body.command?.entryId)))throw fail('UNAVAILABLE');
+   if(operation==='choices'&&(data.kind!==body.kind||data.search!==(body.search||'')))throw fail('UNAVAILABLE');
+   if(operation==='history'&&(data.version!==body.version||data.historical!==true))throw fail('UNAVAILABLE');
    if(operation==='change'&&(data.requestId!==body.requestId||data.action!==body.command.action||data.entry?.companyId!==company||data.entry?.entryId!==body.command.entryId))throw fail('UNAVAILABLE');
    if(operation!=='preview')return res.json(data);
    if(data.version!==body.version)throw fail('40001');
