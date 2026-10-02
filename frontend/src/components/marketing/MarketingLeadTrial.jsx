@@ -27,7 +27,7 @@ function Trial({companyId}){
   return()=>{++seq.current;controller.abort();};
  },[companyId,selected,reload]);
  async function save(e){
-  e.preventDefault();if(saveLock.current||(!pending.current&&(!confirmed||name.trim().length<3||!since||!end)))return;
+  e.preventDefault();if(loading||saveLock.current||(!pending.current&&(!confirmed||name.trim().length<3||!since||!end)))return;
   const current=seq.current;
   if(!pending.current)pending.current={trialId:crypto.randomUUID(),requestId:crypto.randomUUID(),name:name.trim(),since,until:end,expectedRevision:0};
   saveLock.current=true;setSaving(true);setError('');
@@ -35,7 +35,7 @@ function Trial({companyId}){
   catch(e){if(seq.current===current){if([400,403,404,409].includes(e.response?.status)){pending.current=null;setUncertain(false);setError(e.response?.data?.error||'Không lưu được cấu hình; cần kiểm tra lại.');}else{setUncertain(true);setError('Chưa xác nhận được kết quả lưu. Gửi lại cùng yêu cầu để xác nhận.');}}}
   finally{saveLock.current=false;if(seq.current===current)setSaving(false);}
  }
- const locked=saving||uncertain;
+ const locked=loading||saving||uncertain;
  return <section aria-label="Khách và chi phí theo kỳ" className="rounded-xl border border-slate-200 bg-white p-4 space-y-4">
   <div className="flex flex-wrap justify-between gap-3"><div><h2 className="font-semibold">Khách và chi phí — kỳ đo</h2><p className="mt-1 text-sm text-slate-600">Theo toàn bộ tài khoản Facebook đã lưu cho kỳ này; dùng khoảng ngày riêng, không thu hẹp theo Page ở bộ lọc phía trên.</p></div><button type="button" className={button} disabled={loading||locked} onClick={()=>{setResult(null);setReload(n=>n+1);}}>Tải lại kỳ đo</button></div>
   {error&&<p role="alert" className="text-sm text-amber-800">{error}</p>}
@@ -52,6 +52,6 @@ function Trial({companyId}){
    </>}
   </>}
   <button type="button" className={button} disabled={loading||locked} onClick={()=>setCreating(v=>!v)}>{creating?'Đóng cấu hình':'Cấu hình kỳ đo mới'}</button>
-  {creating&&<form onSubmit={save} className="space-y-3 border-t pt-3"><p className="text-sm text-slate-600">Lưu phạm vi đo 30 ngày. Cấu hình này chưa mở chạy quảng cáo hoặc cấp ngân sách.</p><label className="block text-sm">Tên kỳ đo<input className="mt-1 block w-full rounded-lg border p-2" minLength={3} maxLength={120} value={name} disabled={locked} onChange={e=>{setName(e.target.value);setConfirmed(false);}}/></label><label className="block text-sm">Ngày bắt đầu<input type="date" className="ml-2 rounded-lg border p-2" value={since} disabled={locked} onChange={e=>{setSince(e.target.value);setConfirmed(false);}}/></label><p className="text-sm">Ngày cuối: {end||'Chọn ngày bắt đầu'} · Múi giờ Việt Nam.</p><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={locked} onChange={e=>setConfirmed(e.target.checked)}/>Tôi xác nhận khoảng đo và dùng tất cả tài khoản Facebook đã cấu hình của công ty.</label><button className={`${button} bg-blue-700 text-white`} disabled={saving||(!uncertain&&(!confirmed||name.trim().length<3||!end))}>{uncertain?'Xác nhận lại cùng yêu cầu':'Lưu cấu hình đo'}</button></form>}
+  {creating&&<form onSubmit={save} className="space-y-3 border-t pt-3"><p className="text-sm text-slate-600">Lưu phạm vi đo 30 ngày. Cấu hình này chưa mở chạy quảng cáo hoặc cấp ngân sách.</p><label className="block text-sm">Tên kỳ đo<input className="mt-1 block w-full rounded-lg border p-2" minLength={3} maxLength={120} value={name} disabled={locked} onChange={e=>{setName(e.target.value);setConfirmed(false);}}/></label><label className="block text-sm">Ngày bắt đầu<input type="date" className="ml-2 rounded-lg border p-2" value={since} disabled={locked} onChange={e=>{setSince(e.target.value);setConfirmed(false);}}/></label><p className="text-sm">Ngày cuối: {end||'Chọn ngày bắt đầu'} · Múi giờ Việt Nam.</p><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={locked} onChange={e=>setConfirmed(e.target.checked)}/>Tôi xác nhận khoảng đo và dùng tất cả tài khoản Facebook đã cấu hình của công ty.</label><button className={`${button} bg-blue-700 text-white`} disabled={loading||saving||(!uncertain&&(!confirmed||name.trim().length<3||!end))}>{uncertain?'Xác nhận lại cùng yêu cầu':'Lưu cấu hình đo'}</button></form>}
  </section>;
 }
