@@ -1,3 +1,9 @@
+## 2026-10-02 — Customer-care operator console (in validation)
+
+Base57de6ea. Added authenticated company queue, current-scope full transcript pagination and a Facebook care tab with current CRM recipient, durable same-request retry after refresh and operator takeover/opt-out. Queue membership/priority changes invalidate paging; errors remain unavailable rather than zero. Local27 care/console tests PASS. PostgreSQL, full build, synthetic browser and independent final review pending. [Contract](vpt-marketing-automation/FACEBOOK_CARE_CONSOLE.md). Runtime sending/delegation/AI advice and survey scheduling remain unfinished; no live flag, DB, ad or deployment change. Goal ACTIVE.
+
+---
+
 ## Hiện hành 02/10/2026 — Nền tiếp nhận và tiếp quản chăm khách đã kiểm thử
 
 Bản73fa7c68 bổ sung hộp thư chăm khách bền vững: xác thực tin nguồn, lưu yêu cầu ngừng liên hệ/gặp người, đối chiếu người nhận CRM và tiếp quản có audit. Review độc lập PASS; local64, PostgreSQL60 (16 care mới), Node22 529 và cả10 job/full build PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/FACEBOOK_CUSTOMER_CARE_REVIEW.md).

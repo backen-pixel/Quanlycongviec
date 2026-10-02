@@ -20,6 +20,7 @@ import FacebookPageTokenReminderBanner, { FacebookPageTokenReminderRow } from '.
 import { computeFacebookPageTokenReminder, FB_PAGE_TOKEN_REMINDER_DAYS } from '../lib/facebookPageTokenReminder';
 import FacebookImageSetsSettings from '../components/facebook/FacebookImageSetsSettings';
 import FacebookLeadIntakeConsole from '../components/facebook/FacebookLeadIntakeConsole';
+import FacebookCustomerCareConsole from '../components/facebook/FacebookCustomerCareConsole';
 import FacebookImageSetPicker from '../components/facebook/FacebookImageSetPicker';
 import { patchCrmDashboardCacheLeadFields } from '../lib/crmDashboardCache';
 
@@ -302,7 +303,7 @@ export default function FacebookPage() {
     { id: 'contacts', label: 'Danh bạ', icon: Users },
     { id: 'analytics', label: 'Phân tích', icon: BarChart3 },
     { id: 'lead-ads', label: 'Lead Ads', icon: FileText, badge: stats?.lead_ads_today },
-    ...(isAdmin ? [{ id: 'lead-intake', label: 'Tiếp nhận biểu mẫu', icon: FileText }] : []),
+    ...(isAdmin ? [{ id: 'lead-intake', label: 'Tiếp nhận biểu mẫu', icon: FileText }, { id: 'customer-care', label: 'Chăm khách', icon: Users }] : []),
     { id: 'comments', label: 'Bình luận', icon: MessageSquare, badge: stats?.comments_today },
     { id: 'auto-lead', label: 'Tự động', icon: UserPlus },
     ...(isAdmin ? [{ id: 'auto-companies', label: 'Auto công ty', icon: Activity }] : []),
@@ -396,7 +397,7 @@ export default function FacebookPage() {
         />
       )}
 
-      <div className="border-b bg-white px-6 flex gap-0.5 shrink-0">
+      <div className="border-b bg-white px-6 flex gap-0.5 shrink-0 overflow-x-auto">
         {tabs.map(t => (
           <button key={t.id} onClick={() => { setTab(t.id); setSearchParams(prev => { const p = new URLSearchParams(prev); p.set('tab', t.id); if (t.id !== 'inbox') p.delete('contact'); return p; }); }}
             className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-all cursor-pointer ${
@@ -415,6 +416,7 @@ export default function FacebookPage() {
         {tab === 'analytics' && <AnalyticsTab fbCompanyQs={fbCompanyQs} />}
         {tab === 'lead-ads' && <LeadAdsTab />}
         {tab === 'lead-intake' && isAdmin && <FacebookLeadIntakeConsole companyId={effectiveCompanyFilter || null} />}
+        {tab === 'customer-care' && isAdmin && <FacebookCustomerCareConsole companyId={effectiveCompanyFilter || null} actorId={user?.id || user?.userId} />}
         {tab === 'comments' && <CommentsTab />}
         {tab === 'settings' && <SettingsTab onPagesChanged={loadFbTokenSummary} fbCompanyQs={fbCompanyQs} />}
         {tab === 'auto-lead' && <AutoLeadTab />}

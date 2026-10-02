@@ -69,18 +69,23 @@ function createCustomerCare({db,isPrimary,env=process.env,now=Date.now}){
   if(!enabled())return res.status(503).json({error:'Hộp thư chăm khách chưa được mở.'});
   const actor=req.user?.userId||req.user?.id,body=operation==='control'?req.body:req.query,company=body?.companyId;
   if(!uuid(actor)||!uuid(company)||(req.user?.userId&&req.user?.id&&req.user.userId!==req.user.id))return res.status(403).json({error:'Không xác định được phạm vi truy cập.'});
-  const keys={list:['companyId','after'],read:['companyId','threadId'],control:['companyId','requestId','command']}[operation];
+  const keys={list:['companyId','after'],queue:['companyId','mode','after','afterVersion','queueVersion'],read:['companyId','threadId'],history:['companyId','threadId','before','version'],control:['companyId','requestId','command']}[operation];
   if(!keys||!body||Array.isArray(body)||Object.keys(body).some(k=>!keys.includes(k))
    ||(operation==='list'&&body.after!==undefined&&!uuid(body.after))||(operation==='read'&&!uuid(body.threadId))
+   ||(operation==='queue'&&(!['WAITING','HUMAN_REQUESTED','HUMAN_ACTIVE','OPTED_OUT'].includes(body.mode)||(body.after===undefined)!==(body.afterVersion===undefined)||(body.after===undefined)!==(body.queueVersion===undefined)||(body.after!==undefined&&(!uuid(body.after)||!/^[a-f0-9]{32}$/.test(body.afterVersion)||!/^[a-f0-9]{32}$/.test(body.queueVersion)))))
+   ||(operation==='history'&&(!uuid(body.threadId)||!uuid(body.before)||!/^[a-f0-9]{32}$/.test(body.version||'')))
    ||(operation==='control'&&(!uuid(body.requestId)||!uuid(body.command?.threadId))))return res.status(400).json({error:'Yêu cầu chăm khách không hợp lệ.'});
   const args={p_actor:actor,p_company:company};
   try{
    let result;
    if(operation==='list')result=await rpc('crm_care_list',{...args,p_after:body.after||null});
+   else if(operation==='queue')result=await rpc('crm_care_queue',{...args,p_mode:body.mode,p_after:body.after||null,p_after_version:body.afterVersion||null,p_queue_version:body.queueVersion||null});
    else if(operation==='read')result=await rpc('crm_care_read',{...args,p_thread:body.threadId});
+   else if(operation==='history')result=await rpc('crm_care_history',{...args,p_thread:body.threadId,p_before:body.before,p_version:body.version});
    else result=await rpc('crm_care_control',{...args,p_request:body.requestId,p_command:body.command});
    if(!enabled()||result?.companyId!==company)throw fail('CARE_STORAGE_UNAVAILABLE');
-   if(operation!=='list'&&result.threadId!==(body.threadId||body.command.threadId))throw fail('CARE_STORAGE_UNAVAILABLE');
+   if(!['list','queue'].includes(operation)&&result.threadId!==(body.threadId||body.command?.threadId))throw fail('CARE_STORAGE_UNAVAILABLE');
+   if(operation==='queue'&&result.mode!==body.mode)throw fail('CARE_STORAGE_UNAVAILABLE');
    return res.json(result);
   }catch(e){
    const status=e.code==='42501'?403:['40001','23505'].includes(e.code)?409:['22023','22P02'].includes(e.code)?400:503;
