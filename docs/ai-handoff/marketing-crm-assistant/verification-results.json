@@ -1,0 +1,78 @@
+{
+  "checked_at": "2026-10-02T02:17:55.015Z",
+  "kind": "DOCUMENT_AND_SYNTHETIC_FIXTURE_CONSISTENCY_ONLY",
+  "source_blobs_verified": 33,
+  "source_dump_line_endings_repaired": 0,
+  "candidate_files": 15,
+  "relative_links_checked": 19,
+  "source_citations_checked": 14,
+  "computed_fixture_metrics": {
+    "raw_deliveries": 7,
+    "unique_intakes": 6,
+    "duplicate_deliveries": 1,
+    "linked_intakes": 5,
+    "unresolved_intakes": 1,
+    "unique_linked_leads": 4,
+    "unassigned_leads": 1,
+    "invalid_owner_leads": 1,
+    "care_evidenced_leads": 1,
+    "no_care_evidence_leads": 3,
+    "care_unknown_leads": 0,
+    "acknowledgement_unknown_leads": 4,
+    "unique_leads_to_verify": 3
+  },
+  "runtime_scenarios_not_run": 26,
+  "live_acceptance": "HOLD",
+  "status": "PASS",
+  "review": {
+    "status": "PASS",
+    "reviewer": "/root/architecture_v11_review",
+    "scope": "DISCOVERY_DOCUMENTS_AND_SYNTHETIC_FIXTURE_ONLY",
+    "source_findings_checked": "S01-S12",
+    "blocking_findings": 0,
+    "runtime_scenarios_not_run": 26,
+    "live_acceptance": "HOLD"
+  },
+  "artifact_sha256": [
+    {
+      "path": "acceptance-cases.json",
+      "sha256": "b4d344b68e3bae45eb29c8e68f183d04cb54a0f036b87bf4fc89398111a4d91f"
+    },
+    {
+      "path": "fixtures/report.synthetic.json",
+      "sha256": "928e39120c5ed4fb42a42f5408d41e4888e0a99ada1e75efee3205f6c69e21e0"
+    },
+    {
+      "path": "PILOT_AND_ACCEPTANCE.md",
+      "sha256": "eba3aee5501b9b88cf8f9fe125cf7dcd7b2379e6ca24a1006c9a3a5122e24bcb"
+    },
+    {
+      "path": "README.md",
+      "sha256": "42cbdc6a2b40a126edfe06124ee127e32e09737b38ebd70e0b81abb51518d863"
+    },
+    {
+      "path": "SAMPLE_REPORT.md",
+      "sha256": "de60cf47b1fefd5c6eec72648221e8c6156bab22cddcf2ba4e075827656a1938"
+    },
+    {
+      "path": "source-manifest.json",
+      "sha256": "5b1532d4bc0c59d1f7f180d3157526e1bb8651dd050e925cf390d013483111d2"
+    },
+    {
+      "path": "SOURCE_MAP.md",
+      "sha256": "ceff770d0ad93443c64eed86e7d97c002e3d5482582fd8e1d4a9d4c0a6ce8713"
+    },
+    {
+      "path": "target-manifest.json",
+      "sha256": "f9a4570bdbb2811158bf4788dbbd07d40bce37174208b75c10b5f85f8821b2c0"
+    },
+    {
+      "path": "TOOL_CONTRACTS.md",
+      "sha256": "4c5d5630001db957a0655586f208f9094d8d8f4792a0ce4f2d473aed859a339b"
+    },
+    {
+      "path": "verify-fixture.cjs",
+      "sha256": "6e69bb2e1f91352e02c0ebd15835f5773020eb099b8820e828093c2cce415900"
+    }
+  ]
+}

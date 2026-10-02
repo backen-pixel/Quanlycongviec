@@ -1,0 +1,71 @@
+{
+  "schema_version": "mcrm-target/v1",
+  "checked_date": "2026-10-02",
+  "purpose": "Thiết kế khảo sát; không phải cấu hình triển khai",
+  "repository": {
+    "name": "backen-pixel/Quanlycongviec",
+    "base_sha": "0db11ce1adb0fb89fc87529036e495a62d58fce7"
+  },
+  "channel": {
+    "value": "lead_ads",
+    "status": "SCOPED_FROM_PRIOR_FOUNDER_REQUEST"
+  },
+  "company": {
+    "display_name": "VPT",
+    "tenant_id": null,
+    "company_id": null,
+    "status": "RUNTIME_MAPPING_UNVERIFIED"
+  },
+  "page": {
+    "candidate_id": "409741855550833",
+    "status": "CANDIDATE_FROM_REPO_HANDOFF_NOT_LIVE_VERIFIED"
+  },
+  "ad_account": {
+    "display_name": "vpt 01 - bếp vạn phú thành",
+    "id": null,
+    "status": "NAME_FROM_FOUNDER_ID_UNVERIFIED"
+  },
+  "form_id": null,
+  "campaign_id": null,
+  "ad_id": null,
+  "environment": {
+    "frontend_url": null,
+    "backend_url": null,
+    "frontend_sha": null,
+    "backend_sha": null,
+    "database_ref": null,
+    "status": "NOT_SELECTED_FOR_LIVE_TEST"
+  },
+  "business_owner": {
+    "role": "Sales Admin VPT",
+    "name": null,
+    "user_id": null,
+    "status": "AWAITING_FOUNDER_INPUT"
+  },
+  "care_policy": {
+    "version": null,
+    "approval_ref": null,
+    "status": "NOT_CONFIRMED"
+  },
+  "sla": {
+    "minutes": null,
+    "business_hours": null,
+    "timezone": "Asia/Ho_Chi_Minh",
+    "status": "NOT_CONFIRMED"
+  },
+  "api": {
+    "provider": "OpenAI",
+    "access_verified": false,
+    "credential_choice": null,
+    "cost_limit": null,
+    "status": "NOT_REQUESTED_OR_EXECUTED_IN_DISCOVERY"
+  },
+  "advertising_context": {
+    "budget_vnd_per_day": 500000,
+    "location": "Hồ Chí Minh",
+    "end_date": null,
+    "scope": "Cấu hình quảng cáo đã nêu trước; không phải chi tiêu thực, không phải ngân sách API hoặc ủy quyền tối ưu tự động."
+  },
+  "live_acceptance": "HOLD"
+}
+

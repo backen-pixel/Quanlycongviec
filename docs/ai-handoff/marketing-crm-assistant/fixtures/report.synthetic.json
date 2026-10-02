@@ -1,0 +1,182 @@
+{
+  "schema_version": "mcrm-discovery-fixture/v1",
+  "synthetic": true,
+  "purpose": "Minh họa báo cáo; không phải dữ liệu VPT hoặc kết quả Agent",
+  "scope": {
+    "tenant_ref": "DEMO-TENANT",
+    "company_ref": "DEMO-VPT",
+    "page_ref": "DEMO-PAGE",
+    "channel": "lead_ads",
+    "window_start": "2026-10-01T00:00:00+07:00",
+    "window_end": "2026-10-02T00:00:00+07:00",
+    "timezone": "Asia/Ho_Chi_Minh",
+    "as_of": "2026-10-02T08:00:00+07:00"
+  },
+  "policy": {
+    "care_version": "DEMO-CARE-v1",
+    "care_approval": "FIXTURE_ONLY",
+    "sla_version": null,
+    "rule": "Chỉ activity giả lập CUSTOMER_CONTACT_CONFIRMED do người thực hiện, có thời điểm và nguồn, được tính trong ví dụ."
+  },
+  "sources": [
+    {
+      "id": "DEMO-INTAKE",
+      "coverage": "COMPLETE",
+      "status": "OK"
+    },
+    {
+      "id": "DEMO-CRM",
+      "coverage": "COMPLETE",
+      "status": "OK"
+    },
+    {
+      "id": "DEMO-CARE",
+      "coverage": "COMPLETE",
+      "status": "OK"
+    },
+    {
+      "id": "DEMO-SPEND",
+      "coverage": "UNKNOWN",
+      "status": "ERROR",
+      "reason": "SIMULATED_SOURCE_FAILURE"
+    }
+  ],
+  "deliveries": [
+    {
+      "delivery_ref": "DEMO-D1",
+      "event_key": "DEMO-E1",
+      "lead_ref": "DEMO-L1"
+    },
+    {
+      "delivery_ref": "DEMO-D2",
+      "event_key": "DEMO-E1",
+      "lead_ref": "DEMO-L1"
+    },
+    {
+      "delivery_ref": "DEMO-D3",
+      "event_key": "DEMO-E2",
+      "lead_ref": "DEMO-L2"
+    },
+    {
+      "delivery_ref": "DEMO-D4",
+      "event_key": "DEMO-E3",
+      "lead_ref": "DEMO-L3"
+    },
+    {
+      "delivery_ref": "DEMO-D5",
+      "event_key": "DEMO-E4",
+      "lead_ref": "DEMO-L4"
+    },
+    {
+      "delivery_ref": "DEMO-D6",
+      "event_key": "DEMO-E5",
+      "lead_ref": null
+    },
+    {
+      "delivery_ref": "DEMO-D7",
+      "event_key": "DEMO-E6",
+      "lead_ref": "DEMO-L2"
+    }
+  ],
+  "leads": [
+    {
+      "lead_ref": "DEMO-L1",
+      "owner_ref": null,
+      "owner_state": "UNASSIGNED",
+      "acknowledgement_state": "UNKNOWN",
+      "care_state": "NO_EVIDENCE",
+      "care_evidence_refs": []
+    },
+    {
+      "lead_ref": "DEMO-L2",
+      "owner_ref": "DEMO-USER-A",
+      "owner_state": "VALID",
+      "acknowledgement_state": "UNKNOWN",
+      "care_state": "NO_EVIDENCE",
+      "care_evidence_refs": []
+    },
+    {
+      "lead_ref": "DEMO-L3",
+      "owner_ref": "DEMO-USER-INACTIVE",
+      "owner_state": "INVALID",
+      "acknowledgement_state": "UNKNOWN",
+      "care_state": "NO_EVIDENCE",
+      "care_evidence_refs": []
+    },
+    {
+      "lead_ref": "DEMO-L4",
+      "owner_ref": "DEMO-USER-A",
+      "owner_state": "VALID",
+      "acknowledgement_state": "UNKNOWN",
+      "care_state": "EVIDENCED",
+      "care_evidence_refs": [
+        "DEMO-ACT1"
+      ]
+    }
+  ],
+  "care_evidence": [
+    {
+      "id": "DEMO-ACT1",
+      "lead_ref": "DEMO-L4",
+      "kind": "CUSTOMER_CONTACT_CONFIRMED",
+      "actor_type": "HUMAN",
+      "actor_ref": "DEMO-USER-A",
+      "occurred_at": "2026-10-01T10:00:00+07:00",
+      "source_ref": "DEMO-CARE"
+    }
+  ],
+  "expected": {
+    "quality": "PARTIAL",
+    "raw_deliveries": 7,
+    "unique_intakes": 6,
+    "duplicate_deliveries": 1,
+    "linked_intakes": 5,
+    "unresolved_intakes": 1,
+    "unique_linked_leads": 4,
+    "unassigned_leads": 1,
+    "invalid_owner_leads": 1,
+    "care_evidenced_leads": 1,
+    "no_care_evidence_leads": 3,
+    "care_unknown_leads": 0,
+    "acknowledgement_unknown_leads": 4,
+    "unique_leads_to_verify": 3,
+    "overdue_care": {
+      "value": null,
+      "status": "UNKNOWN",
+      "reason": "SLA_NOT_APPROVED"
+    },
+    "spend_vnd": {
+      "value": null,
+      "status": "UNKNOWN",
+      "reason": "SOURCE_ERROR"
+    },
+    "cpl_vnd": {
+      "value": null,
+      "status": "UNKNOWN",
+      "reason": "SOURCE_ERROR"
+    }
+  },
+  "proposed_actions": [
+    {
+      "ref": "DEMO-E5",
+      "action": "Đối chiếu tiếp nhận chưa liên kết",
+      "mode": "PROPOSAL_ONLY"
+    },
+    {
+      "ref": "DEMO-L1",
+      "action": "Sales Admin kiểm tra phân công và bằng chứng chăm sóc",
+      "mode": "PROPOSAL_ONLY"
+    },
+    {
+      "ref": "DEMO-L2",
+      "action": "Sales Admin kiểm tra bằng chứng chăm sóc",
+      "mode": "PROPOSAL_ONLY"
+    },
+    {
+      "ref": "DEMO-L3",
+      "action": "Sales Admin kiểm tra owner không hoạt động và chăm sóc",
+      "mode": "PROPOSAL_ONLY"
+    }
+  ]
+}
+

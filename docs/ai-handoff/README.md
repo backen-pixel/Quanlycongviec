@@ -33,3 +33,7 @@ quyết định đã thống nhất, kết quả kiểm thử và phần còn l�
 - Chưa làm/rủi ro:
 - Bước tiếp theo:
 ```
+
+## Gói chuyên đề
+
+- [Trợ lý Marketing–CRM — khảo sát và thiết kế thử nghiệm MCRM-D0 v1](./marketing-crm-assistant/README.md): bản đồ nguồn, mẫu báo cáo, tool contract, nghiệm thu và phân công; chưa là Agent đang chạy.
