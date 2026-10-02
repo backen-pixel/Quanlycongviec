@@ -1,3 +1,11 @@
+## 2026-10-02 — Durable Facebook source enumeration and recovery
+
+Base775d522. Added default-off provider form/lead enumeration with fixed-host pagination, stored cursors and expiring worker leases, current company/Page/trial authority, atomic receipt recovery and a scoped start/status API. Recovered IDs go through the existing verified CRM intake; no duplicate customer shortcut. Known historical forms are scanned even when absent from the Page edge; each form's Page is checked with Meta before scanning Leads. Metadata-only evidence records expiry/undiscovered forms and never certifies full coverage.
+
+Local29 adapter/worker/HTTP cases PASS. Isolated PostgreSQL concurrency/crash/scope tests and final independent review are pending. See [contract](vpt-marketing-automation/FACEBOOK_SOURCE_RECONCILIATION.md). CPQL remains unavailable until provider-scope completeness and receipt disposition are proven; next work must connect that proof to the positive measurement path, not treat API enumeration as completion. Full Marketing–Sales goal active. No live changes.
+
+---
+
 ## 2026-10-02 — Measured cohort and dashboard verified; source reconciliation next
 
 Runtime af14635 (backend1c650): independent review PASS; local25 PASS; CI Node22 435 PASS, PostgreSQL trial13 PASS/0 FAIL/0 SKIP, all9 automation jobs and report/Messenger workflows SUCCESS; full frontend and synthetic browser PASS. Five review findings resolved, including old customer history, cross-company configuration race and loading/save UI race. See [evidence and limits](vpt-marketing-automation/MEASURED_COHORT_REVIEW.md).

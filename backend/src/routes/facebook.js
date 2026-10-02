@@ -7,9 +7,11 @@ const DURABLE_MESSENGER_PAGES = enabledPageIds();
 const { isFacebookAtomicLeadScope, createFacebookLeadOnce } = require('../helpers/facebookAtomicLead');
 const { supabase } = require('../config/supabase');
 const { createLeadIntake } = require('../modules/marketingAutomation/facebookLeadIntake');
+const { createLeadCensus } = require('../modules/marketingAutomation/facebookLeadCensus');
 const intakeRouterState = require('../config/supabaseRouter');
 const leadIntakePrimary = () => !intakeRouterState.isFailoverEnabled() && intakeRouterState.getActiveTarget() === 'primary';
 const facebookLeadIntake = createLeadIntake({ db: supabase, isPrimary: leadIntakePrimary, onError: code => console.warn('[FB Lead intake]', code) });
+const facebookLeadCensus = createLeadCensus({ db: supabase, isPrimary: leadIntakePrimary, pages: facebookLeadIntake.pages, onError: code => console.warn('[FB Lead census]', code) });
 const { fetchAllPagesParallel } = require('../helpers/supabaseFetchAll');
 const axios = require('axios');
 const {
@@ -10172,9 +10174,9 @@ r.post('/contacts/:contactId/send-drive-folder', authMiddleware, async (req, res
 
 // Timers do not prevent shutdown. Pending/expired receipts are recovered after restart.
 if (facebookLeadIntake.pages.size) {
-  const intakeTimer = setInterval(() => { void facebookLeadIntake.drain(); }, 5000);
+  const intakeTimer = setInterval(() => { void facebookLeadIntake.drain(); void facebookLeadCensus.drain(); }, 5000);
   intakeTimer.unref();
-  setImmediate(() => { void facebookLeadIntake.drain(); });
+  setImmediate(() => { void facebookLeadIntake.drain(); void facebookLeadCensus.drain(); });
 }
 const messengerReceiptWorker = createMessengerReceiptWorker({
   db: supabase,

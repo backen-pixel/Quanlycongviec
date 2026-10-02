@@ -3,6 +3,8 @@ const {Router}=require('express');
 const {supabase}=require('../../../config/supabase');
 const state=require('../../../config/supabaseRouter');
 const {createTrialService}=require('../../../modules/marketingAutomation/trialService');
+const {createCensusAdmin}=require('../../../modules/marketingAutomation/facebookLeadCensusAdmin');
+const census=createCensusAdmin({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
 const service=createTrialService({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'}),r=Router();
 async function handle(req,res,action){
  res.set('Cache-Control','no-store');
@@ -15,4 +17,6 @@ async function handle(req,res,action){
 r.get('/marketing-trials',(req,res)=>handle(req,res,'list'));
 r.post('/marketing-trials',(req,res)=>handle(req,res,'configure'));
 r.get('/marketing-trials/:trialId/report',(req,res)=>handle(req,res,'report'));
+r.get('/marketing-trials/:trialId/reconciliation',(req,res)=>census(req,res,false));
+r.post('/marketing-trials/:trialId/reconciliation',(req,res)=>census(req,res,true));
 module.exports=r;
