@@ -43,4 +43,5 @@ module.exports=async(t,{db,peers,company,other,tenant,admin,sales,bind,query})=>
   try{await blocked();await db.query("INSERT INTO facebook_pages VALUES('999',$1,true,'synthetic')",[company]);}finally{await db.query('SELECT pg_advisory_unlock(813714)');}
   try{assert.equal((await p).e?.code,'42501');}finally{await db.query(original);await db.query("DELETE FROM facebook_pages WHERE page_id='999'");}
  });
+ await require('./facebookLeadCensus.reconciliation.cases')(t,{db,peers,company,other,admin,query,trial});
 };

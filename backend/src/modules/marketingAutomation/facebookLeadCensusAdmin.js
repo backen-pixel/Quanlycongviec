@@ -12,7 +12,7 @@ function createCensusAdmin({db,isPrimary,env=process.env}){
    const {data,error}=await db.rpc(start?'marketing_fb_census_start':'marketing_fb_census_status',{p_actor:actor,p_company:company,p_trial:trial,...(start?{p_request:req.body.requestId,p_pages:[...pagesFromEnv(env)]}:{})});
    if(error){const status=error.code==='42501'?403:['40001','23505'].includes(error.code)?409:['22023','22P02'].includes(error.code)?400:503;return res.status(status).json({error:status===409?'Lượt đối soát hoặc cấu hình đã thay đổi. Hãy kiểm tra trạng thái trước khi gửi lại.':'Chưa đối soát được trong phạm vi hiện tại.'});}
    if(!data||(start?!uuid(data.id):data.companyId!==company||data.trialId!==trial))throw Error('bad result');
-   return res.status(start?202:200).json(data);
+   return res.status(start?202:200).json(start?{...data,companyId:company,trialId:trial}:data);
   }catch{return res.status(503).json({error:'Chưa xác nhận được kết quả đối soát. Kiểm tra trạng thái hoặc gửi lại cùng mã yêu cầu.'});}
  };
 }

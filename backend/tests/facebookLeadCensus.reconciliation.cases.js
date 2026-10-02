@@ -1,0 +1,26 @@
+'use strict';
+const assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+const {createLeadCensus,readCensusPage}=require('../src/modules/marketingAutomation/facebookLeadCensus');
+const {reportTrial}=require('../src/modules/marketingAutomation/trialReport');
+module.exports=async(t,{db,peers,company,other,admin,query,trial})=>{
+ const snapshot=(cid=company,c=peers[0])=>query('marketing_lead_trial_snapshot',[admin,cid,trial],c);
+ const rpc={rpc:async(name,args)=>{try{return{data:name.endsWith('_claim')?(await peers[0].query(`SELECT * FROM ${name}(${Object.keys(args).map((_,i)=>'$'+(i+1)).join(',')})`,Object.values(args))).rows:await query(name,Object.values(args))};}catch(e){return{error:{code:e.code}};}}};
+ await t.test('private reconciliation helper and snapshot reject wrong roles/company',async()=>{for(const role of ['anon','authenticated','service_role']){await db.query('SET ROLE '+role);await assert.rejects(db.query('SELECT marketing_trial_census_inventory($1,$2)',[company,trial]),e=>e.code==='42501');await db.query('RESET ROLE');}await assert.rejects(snapshot(other),e=>e.code==='42501');});
+ let receiptId,leadId,runId;
+ await t.test('real census evidence is joined to CRM in the trial snapshot',async()=>{
+  const run=await query('marketing_fb_census_start',[admin,company,trial,randomUUID(),['123']]);runId=run.id;
+  const rows=(await db.query("SELECT r.id,r.lead_id,r.leadgen_id,s.acquired_at FROM marketing_fb_lead_receipts r JOIN crm_lead_source_evidence s ON s.receipt_id=r.id WHERE r.leadgen_id IN('8101','8102') ORDER BY r.leadgen_id")).rows;assert.equal(rows.length,2);receiptId=rows[0].id;leadId=rows[0].lead_id;
+  const fetchImpl=async url=>({ok:true,json:async()=>new URL(url).pathname.endsWith('/leadgen_forms')?{data:[{id:'456',page_id:'123',status:'ACTIVE',expired_leads_count:0}]}:new URL(url).pathname.endsWith('/leads')?{data:rows.map(x=>({id:x.leadgen_id,form_id:'456',created_time:x.acquired_at.toISOString()}))}:{id:'456',page_id:'123'}});
+  await createLeadCensus({db:rpc,isPrimary:()=>true,pages:new Set(['123']),env:{VPT_FB_LEAD_CENSUS:'1',VPT_META_GRAPH_VERSION:'v24.0'},readSource:x=>readCensusPage({...x,fetchImpl})}).drain();
+  const raw=await snapshot(),result=reportTrial(raw);assert.equal(raw.providerReconciliation.run.id,run.id);assert.equal(result.reconciliation.status,'SCANNED');assert.equal(result.reconciliation.counts.enumerated,2);assert.equal(result.reconciliation.counts.receivedCrm,2);assert.equal(result.reconciliation.counts.unknownAcquiredTime,1);assert.equal(result.costPerQualifiedLeadVnd,null);assert.ok(!JSON.stringify(raw.providerReconciliation).includes('page-test-token'));
+ });
+ await t.test('reverse comparison retains known source omitted from an enumeration',async()=>{const row=(await db.query('DELETE FROM marketing_fb_census_items WHERE run_id=$1 AND receipt_id=$2 RETURNING *',[runId,receiptId])).rows[0];try{assert.equal(reportTrial(await snapshot()).reconciliation.counts.notEnumerated,1);}finally{await db.query('INSERT INTO marketing_fb_census_items(run_id,page_id,form_id,leadgen_id,acquired_at,receipt_id) VALUES($1,$2,$3,$4,$5,$6)',[row.run_id,row.page_id,row.form_id,row.leadgen_id,row.acquired_at,row.receipt_id]);}});
+ await t.test('one-statement snapshot does not mix a concurrent receipt change',async()=>{
+  const original=(await db.query("SELECT pg_get_functiondef('marketing_trial_quality_context(jsonb,jsonb,jsonb,jsonb,jsonb,boolean,jsonb)'::regprocedure) d")).rows[0].d;
+  await db.query(original.replace(/BEGIN\r?\n/,'BEGIN\n PERFORM pg_sleep(0.08);\n'));
+  try{const read=snapshot(company,peers[1]);let observed=false;for(let i=0;i<100;i++){const rows=await db.query("SELECT 1 FROM pg_stat_activity WHERE wait_event='PgSleep' AND query LIKE 'SELECT marketing_lead_trial_snapshot%'");if(rows.rowCount){observed=true;break;}await new Promise(r=>setTimeout(r,5));}assert.equal(observed,true);await db.query("UPDATE marketing_fb_lead_receipts SET state='REVIEW' WHERE id=$1",[receiptId]);assert.equal(reportTrial(await read).reconciliation.counts.receivedCrm,2);assert.equal(reportTrial(await snapshot()).reconciliation.counts.reviewRequired,1);}
+  finally{await db.query(original);await db.query("UPDATE marketing_fb_lead_receipts SET state='DONE' WHERE id=$1",[receiptId]);}
+ });
+ await t.test('deleted CRM record and changed Page invalidate healthy presentation',async()=>{await db.query('DELETE FROM crm_leads WHERE id=$1',[leadId]);assert.equal(reportTrial(await snapshot()).reconciliation.counts.missingCrm,1);await db.query("UPDATE facebook_pages SET access_token='rotated' WHERE page_id='123'");assert.equal(reportTrial(await snapshot()).reconciliation.status,'STALE');await db.query("UPDATE facebook_pages SET access_token='page-test-token' WHERE page_id='123'");});
+ await t.test('failed latest run is visible and never falls back to an older scan',async()=>{const next=await query('marketing_fb_census_start',[admin,company,trial,randomUUID(),['123']]);await db.query("UPDATE marketing_fb_census_runs SET state='FAILED',finished_at=clock_timestamp() WHERE id=$1",[next.id]);const r=reportTrial(await snapshot()).reconciliation;assert.equal(r.run.id,next.id);assert.equal(r.status,'FAILED');assert.equal(r.matchStatus,'NOT_CHECKED');});
+};

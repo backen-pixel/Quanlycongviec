@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../../lib/api';
+import FacebookSourceRecovery from './FacebookSourceRecovery';
 const button='rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:opacity-50';
 const money=n=>Number.isFinite(n)?`${n.toLocaleString('vi-VN')} đ`:'Chưa đủ dữ liệu';
 const issueNames={RECEIPT_NOT_RECONCILED:'Biểu mẫu còn chờ xử lý hoặc đối soát',IDENTITY_UNRESOLVED:'Nhóm khách còn trùng hoặc cần rà lại',EARLIER_HISTORY_UNVERIFIED:'Chưa xác minh được lịch sử trước nguồn quảng cáo',FIRST_SOURCE_AMBIGUOUS:'Nguồn đầu tiên còn mâu thuẫn',FIRST_SOURCE_OUTSIDE_ACCOUNTS:'Nguồn đầu tiên nằm ngoài tài khoản của kỳ',RECEIPT_PROOF_CONFLICT:'Hồ sơ khách chưa khớp bằng chứng nhận biểu mẫu',QUALIFICATION_CONFLICT:'Các kết luận nhu cầu trong nhóm đang mâu thuẫn',QUALIFICATION_PENDING:'Cần xác minh hoặc xác minh lại nhu cầu',SOURCE_WITHOUT_IDENTITY:'Bằng chứng nguồn không còn hồ sơ nhận diện tương ứng',PAID_SOURCE_UNVERIFIED:'Chưa chứng minh được nguồn trả phí'};
@@ -11,7 +12,8 @@ function Trial({companyId}){
  const[trials,setTrials]=useState([]),[selected,setSelected]=useState(''),[result,setResult]=useState(null),[error,setError]=useState('');
  const[loading,setLoading]=useState(true),[reload,setReload]=useState(0),[creating,setCreating]=useState(false),[saving,setSaving]=useState(false),[uncertain,setUncertain]=useState(false);
  const[name,setName]=useState(''),[since,setSince]=useState(''),[confirmed,setConfirmed]=useState(false);
- const seq=useRef(0),pending=useRef(null),saveLock=useRef(false);
+ const seq=useRef(0),pending=useRef(null),saveLock=useRef(false),recoveryRequests=useRef(new Map());
+ const[recovering,setRecovering]=useState(false);
  const end=since&&Number.isFinite(Date.parse(`${since}T00:00:00Z`))?new Date(Date.parse(`${since}T00:00:00Z`)+29*86400000).toISOString().slice(0,10):'';
  useEffect(()=>{
   const current=++seq.current,controller=new AbortController();setLoading(true);setResult(null);setError('');
@@ -27,7 +29,7 @@ function Trial({companyId}){
   return()=>{++seq.current;controller.abort();};
  },[companyId,selected,reload]);
  async function save(e){
-  e.preventDefault();if(loading||saveLock.current||(!pending.current&&(!confirmed||name.trim().length<3||!since||!end)))return;
+  e.preventDefault();if(loading||recovering||saveLock.current||(!pending.current&&(!confirmed||name.trim().length<3||!since||!end)))return;
   const current=seq.current;
   if(!pending.current)pending.current={trialId:crypto.randomUUID(),requestId:crypto.randomUUID(),name:name.trim(),since,until:end,expectedRevision:0};
   saveLock.current=true;setSaving(true);setError('');
@@ -35,7 +37,7 @@ function Trial({companyId}){
   catch(e){if(seq.current===current){if([400,403,404,409].includes(e.response?.status)){pending.current=null;setUncertain(false);setError(e.response?.data?.error||'Không lưu được cấu hình; cần kiểm tra lại.');}else{setUncertain(true);setError('Chưa xác nhận được kết quả lưu. Gửi lại cùng yêu cầu để xác nhận.');}}}
   finally{saveLock.current=false;if(seq.current===current)setSaving(false);}
  }
- const locked=loading||saving||uncertain;
+ const locked=loading||saving||uncertain||recovering;
  return <section aria-label="Khách và chi phí theo kỳ" className="rounded-xl border border-slate-200 bg-white p-4 space-y-4">
   <div className="flex flex-wrap justify-between gap-3"><div><h2 className="font-semibold">Khách và chi phí — kỳ đo</h2><p className="mt-1 text-sm text-slate-600">Theo toàn bộ tài khoản Facebook đã lưu cho kỳ này; dùng khoảng ngày riêng, không thu hẹp theo Page ở bộ lọc phía trên.</p></div><button type="button" className={button} disabled={loading||locked} onClick={()=>{setResult(null);setReload(n=>n+1);}}>Tải lại kỳ đo</button></div>
   {error&&<p role="alert" className="text-sm text-amber-800">{error}</p>}
@@ -46,6 +48,7 @@ function Trial({companyId}){
     <p className="text-sm">{result.trial.since} – {result.trial.until} · {result.trial.accountCount} tài khoản · Đọc lúc {new Date(result.asOf).toLocaleString('vi-VN')}</p>
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[['Tiền đã chi',result.spend?.status==='KNOWN_TO_DATE'?money(result.spend.spendVnd):'Chưa đủ dữ liệu'],['Khách đã xác minh',result.observed?.qualified],['Khách chờ xác minh',result.observed?.pending],['Nhóm cần đối soát',result.observed?.unresolved]].map(([label,value])=><div key={label} className="rounded-lg bg-slate-50 p-3"><p className="text-sm text-slate-600">{label}</p><p className="mt-1 text-xl font-semibold">{value??'Chưa đủ dữ liệu'}</p></div>)}</div>
     <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Số khách trên chỉ tính trong hồ sơ đã nhận và có bằng chứng. Chưa đối soát đủ với Facebook, nên chưa kết luận chi phí/khách hoặc đạt mục tiêu 250.000 đồng.</p>
+    <FacebookSourceRecovery key={result.trial.id} companyId={companyId} trialId={result.trial.id} reconciliation={result.reconciliation} pendingRequests={recoveryRequests.current} onBusy={setRecovering} onRefresh={()=>setReload(n=>n+1)} disabled={loading||saving||uncertain}/>
     <dl className="grid grid-cols-2 gap-2 text-sm"><dt>Biểu mẫu chờ xử lý/đối soát</dt><dd>{result.observed?.unprocessedForms??'—'}</dd><dt>Khách đã có trước kỳ</dt><dd>{result.observed?.existing??'—'}</dd><dt>Khách không đạt nhu cầu</dt><dd>{result.observed?.rejected??'—'}</dd><dt>Lịch khảo sát</dt><dd>Chưa nối nguồn lịch</dd></dl>
     {!!result.issues.length&&<ul className="list-disc pl-5 text-sm text-amber-800">{result.issues.map(x=><li key={x.code}>{issueNames[x.code]||'Cần kiểm tra thêm nguồn dữ liệu'}: {x.count}</li>)}</ul>}
     {result.spend?.status!=='KNOWN_TO_DATE'&&<p className="text-sm text-amber-800">Chi tiêu chưa đủ hoặc cấu hình tài khoản đã đổi. Cần kiểm tra quyền và đồng bộ đủ ngày; phần thiếu không được tính là 0.</p>}
