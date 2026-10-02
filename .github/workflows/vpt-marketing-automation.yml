@@ -1,0 +1,60 @@
+name: VPT marketing automation (isolated)
+on:
+  pull_request:
+    paths:
+      - 'backend/src/modules/marketingAutomation/**'
+      - 'backend/src/helpers/adInsights.js'
+      - 'backend/src/helpers/mcpAdsBridge.js'
+      - 'backend/src/routes/adAnalytics.js'
+      - 'frontend/src/pages/AdAnalyticsPage.jsx'
+      - 'backend/tests/marketingAutomation*.js'
+      - 'database/648_marketing_automation_command_queue.sql'
+      - '.github/workflows/vpt-marketing-automation.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  domain-and-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        node: [18, 22]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: node --test backend/tests/marketingAutomation.test.js backend/tests/marketingAutomation.reports.test.js backend/tests/adAnalytics.correctness.test.js backend/tests/adAnalytics.ui-state.test.js backend/tests/adAnalytics.action-lifecycle.test.js
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: marketing_automation_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated_test_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install test driver without lifecycle scripts
+        run: npm install --prefix "$RUNNER_TEMP/vpt-pg" --ignore-scripts --no-audit --no-fund pg@8.19.0
+      - name: PostgreSQL rights, concurrency and crash recovery
+        env:
+          MARKETING_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/marketing_automation_test
+        run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/marketingAutomation.postgres.test.js

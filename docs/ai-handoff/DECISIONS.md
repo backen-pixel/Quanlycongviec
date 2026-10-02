@@ -1,3 +1,9 @@
+# 2026-10-02 — VPT Marketing–Sales execution mandate
+
+Founder explicitly requested implementation of [the approved plan](../architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md).100m VND is a single30-day trial, not recurring monthly.7% means ad spend/recognized net paid-attributed revenue. AI advises/books surveys; humans final quote/close. See implementation README for unfinished release gates. Historic decisions below remain unchanged.
+
+---
+
 # Quyết định dùng chung giữa Cursor, Claude và các AI
 
 ## AI-010 — Cột lớn / cột nhỏ VC/LĐ giống SX

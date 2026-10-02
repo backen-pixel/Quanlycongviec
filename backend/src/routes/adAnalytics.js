@@ -174,7 +174,9 @@ function themChiTieu(o, adIds, mChiTieu) {
     hien_thi: ht,
     nhap: nh,
     cost_per_lead: o.leads ? Math.round(spend / o.leads) : null,
-    roas: spend > 0 ? Math.round((o.revenue / spend) * 100) / 100 : null,
+    roas: null,
+    spend_status: 'PARTIAL_UNVERIFIED',
+    eligible_for_budget_optimization: false,
   };
 }
 
@@ -182,7 +184,9 @@ function oTrong() {
   return {
     leads: 0,
     by_label: { rac: 0, lanh: 0, am: 0, nong: 0, da_chot: 0 },
-    _sum: 0, _n: 0, deals: 0, closed: 0, revenue: 0,
+    _sum: 0, _n: 0, deals: 0, closed: 0, revenue: null, closed_estimated_value: 0,
+    revenue_status: 'UNKNOWN', revenue_basis: 'RECOGNIZED_NET_SOURCE_NOT_CONNECTED',
+    eligible_for_budget_optimization: false,
     _leadIds: new Set(), _paidLeadIds: new Set(),
   };
 }
@@ -215,7 +219,7 @@ function congDon(g, l, d) {
     g._n += 1;
   }
   if (l.type === 'deal') g.deals += 1;
-  if (l.actual_close_date) { g.closed += 1; g.revenue += Number(l.estimated_value) || 0; }
+  if (l.actual_close_date) { g.closed += 1; g.closed_estimated_value += Number(l.estimated_value) || 0; }
 }
 
 r.get('/summary', async (req, res) => {
@@ -239,7 +243,7 @@ r.get('/summary', async (req, res) => {
       ti_le_biet_quang_cao: tong.leads ? Math.round((tuQC.leads / tong.leads) * 100) : 0,
       co_chi_tieu: coChiTieu,
       ghi_chu_chi_tieu: coChiTieu
-        ? 'Chi tiêu lấy từ Marketing API. ROAS tính trên giá trị đơn đã chốt, đơn nào để giá 0 thì không vào ROAS.'
+        ? 'Chi tiêu chỉ gồm quảng cáo có Lead được liên kết, chưa chứng minh đầy đủ. Doanh thu kế toán và ROAS chưa xác minh; không dùng để tự tăng ngân sách.'
         : 'Chi tiêu và ROAS chưa có — cần khai báo tài khoản quảng cáo và token Marketing API.',
     });
   } catch (e) {
@@ -372,7 +376,12 @@ r.get('/insights', async (req, res) => {
       .order('diem_uu_tien', { ascending: false })
       .limit(500);
     if (error) throw new Error(error.message);
-    let rows = data || [];
+    let rows = (data || []).map(x => ({
+      ...x,
+      so_lieu: { ...x.so_lieu, closed_estimated_value: x.so_lieu?.closed_estimated_value ?? x.so_lieu?.revenue ?? null,
+        revenue: null, roas: null, doanh_thu_moi_lead: null, revenue_status: 'UNKNOWN', eligible_for_budget_optimization: false },
+      nhan_xet: (Array.isArray(x.nhan_xet) ? x.nhan_xet : []).filter(n => !['doanh_thu_cao', 'lo_von'].includes(n.ma)),
+    }));
     if (dsCT) rows = rows.filter((x) => dsCT.includes(String(x.so_lieu?.company_id || '')));
     if (pageId) rows = rows.filter((x) => String(x.so_lieu?.page_id || '') === pageId);
 
@@ -380,14 +389,14 @@ r.get('/insights', async (req, res) => {
       ? (() => {
         const leads = rows.reduce((a, x) => a + (x.so_lieu?.leads || 0), 0);
         const closed = rows.reduce((a, x) => a + (x.so_lieu?.closed || 0), 0);
-        const revenue = rows.reduce((a, x) => a + (x.so_lieu?.revenue || 0), 0);
+        const closed_estimated_value = rows.reduce((a, x) => a + (x.so_lieu?.closed_estimated_value || 0), 0);
         return {
           so_quang_cao: rows.length,
           leads,
           closed,
-          revenue,
+          revenue: null, closed_estimated_value, revenue_status: 'UNKNOWN', eligible_for_budget_optimization: false,
           ti_le_chot: leads ? Math.round((closed / leads) * 100) : 0,
-          doanh_thu_moi_lead: leads ? Math.round(revenue / leads) : 0,
+          doanh_thu_moi_lead: null,
         };
       })()
       : null;

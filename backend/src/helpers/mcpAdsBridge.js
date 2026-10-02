@@ -22,7 +22,7 @@ const MCP_ADS_TOOLS = [
   },
   {
     name: 'get_campaign_performance',
-    description: 'Hiệu quả một chiến dịch: số lead, phân bố nhãn chất lượng, tỉ lệ chốt, doanh thu.',
+    description: 'Hiệu quả một chiến dịch: số lead, phân bố nhãn chất lượng, tỉ lệ chốt và giá trị ước tính của deal đã chốt; chưa có doanh thu kế toán.',
     inputSchema: {
       type: 'object',
       properties: { campaign_id: { type: 'string', description: 'ID chiến dịch Facebook' }, ...SCHEMA_KY },
@@ -150,10 +150,13 @@ async function napVaGom(apiKey, { gomTheo = 'campaign', dateFrom, dateTo, campai
         _n: 0,
         deals: 0,
         closed: 0,
-        revenue: 0,
+        revenue: null, closed_estimated_value: 0, revenue_status: 'UNKNOWN', eligible_for_budget_optimization: false,
+        _leadIds: new Set(),
       });
     }
     const g = gom.get(k);
+    if (g._leadIds.has(String(l.id))) continue;
+    g._leadIds.add(String(l.id));
     g.leads += 1;
     const d = mDiem.get(String(a.lead_id));
     if (d) {
@@ -162,12 +165,12 @@ async function napVaGom(apiKey, { gomTheo = 'campaign', dateFrom, dateTo, campai
       g._n += 1;
     }
     if (l.type === 'deal') g.deals += 1;
-    if (l.actual_close_date) { g.closed += 1; g.revenue += Number(l.estimated_value) || 0; }
+    if (l.actual_close_date) { g.closed += 1; g.closed_estimated_value += Number(l.estimated_value) || 0; }
   }
 
   return [...gom.values()].map((g) => {
     const chatLuong = (g.by_label.am || 0) + (g.by_label.nong || 0) + (g.by_label.da_chot || 0);
-    const { _sum, _n, ...rest } = g;
+    const { _sum, _n, _leadIds, ...rest } = g;
     return {
       ...rest,
       avg_score: _n ? Math.round(_sum / _n) : null,
@@ -182,7 +185,7 @@ async function napVaGom(apiKey, { gomTheo = 'campaign', dateFrom, dateTo, campai
   }).sort((a, b) => b.leads - a.leads);
 }
 
-const GHI_CHU_CHI_TIEU = 'Chi tiêu, giá mỗi lead và ROAS trả null cho tới khi nối Facebook Marketing API. '
+const GHI_CHU_CHI_TIEU = 'Doanh thu kế toán chưa được kết nối và đối soát; revenue/ROAS trả null. Giá trị ước tính deal không được dùng để tối ưu ngân sách. '
   + 'Điểm chất lượng đo độ đầy đủ thông tin và mức tương tác, KHÔNG phải xác suất chốt đơn.';
 
 async function callMcpAdsTool(name, args = {}, apiKey) {
@@ -286,9 +289,10 @@ async function callMcpAdsTool(name, args = {}, apiKey) {
         return {
           lead_id: d.id,
           code: d.code || null,
-          event_name: 'Purchase',
+          event_name: 'DealClosed',
+          measurement_status: 'ESTIMATE_ONLY', eligible_for_budget_optimization: false,
           closed_at: d.actual_close_date,
-          value: Number(d.estimated_value) || 0,
+          value: null, closed_estimated_value: Number(d.estimated_value) || 0,
           currency: 'VND',
           channel: a?.kenh || null,
           page_id: a?.fb_page_id || null,
@@ -298,7 +302,7 @@ async function callMcpAdsTool(name, args = {}, apiKey) {
         };
       }),
       total: dsLoc.length,
-      note: 'Không kèm thông tin cá nhân. Cần dữ liệu đã băm thì dùng REST /api/partner/v1/conversions.',
+      note: 'DealClosed là sự kiện CRM, không phải Purchase/doanh thu ghi nhận. Không dùng estimated_value làm giá trị chuyển đổi doanh thu.',
     };
   }
 

@@ -1,0 +1,41 @@
+# Triển khai VPT Marketing–Sales — 02/10/2026
+
+**IN PROGRESS.** [Kế hoạch Founder đã giao](../../architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md). Code baseline PR #19 `e16c885ae7c2305645be02a1227bf378cb59137f`; main `0db11ce1adb0fb89fc87529036e495a62d58fce7`. PR19/20/21 đều open/unmerged khi đối chiếu. Không merge, deploy, đổi DB thật, lịch, ads, ngân sách hoặc gửi khách trong phiên này.
+
+## Đã triển khai trong candidate
+
+- Report/insights/MCP: estimated_value thành closed_estimated_value; revenue/ROAS UNKNOWN/null. Các nhận xét dựa doanh thu giả bị bỏ; MCP DealClosed không xuất Purchase revenue. UI nêu rõ số ước tính và spend có thể thiếu ads zero-Lead.
+- Domain policy100m/30days,80/20,7-day hold,10%/48h,10qualified/group, same-product comparisons, source gates, decrease-first; không tự renew.
+- Projection calculator nhận trusted posted net exVAT và coverage từng nguồn; khử trùng, giữ doanh thu đến muộn, cộng full spend, credits signed, unknown/zero/negative rõ.
+- Care authority advise/qualify/remind/book_survey; opt-out/human takeover/channel/facts guards; human SLA08–20. Booking chỉ trả yêu cầu reserve atomically, chưa là booking đã ghi CRM.
+- Renderer nội dung theo approved template+facts+expiry+company; freeform/model output không tự được xuất bản.
+- Disabled command service+Supabase repository và migration648: durable idempotency/queue/audit, primary-only writes, no blind retry after uncertain send, reconciliation queue. Không seed grants/credentials/campaigns.
+- Unit/regression tests và PostgreSQL CI cho ACL/RLS,12 concurrent duplicates, worker claim, terminal idempotency và crash recovery.
+
+## Chưa được coi là hoàn tất
+
+| Phần | Trạng thái / dependency |
+|---|---|
+| Gói1 tài khoản | [Inventory có nguồn](INVENTORY.md); quyền kết nối không đồng nghĩa quyền runtime/capability/write |
+| Nguồn doanh thu | Chưa có nguồn recognized net và adjustments được kế toán xác nhận; không dùng paid invoice/estimated deal/meInvoice thay thế |
+| Công cụ chạy thật | Chưa bind adapter publisher/ads/messaging/calendar vào command service; mặc định disabled, chưa mount vào server hoặc chạy worker |
+| Kiểm ngân sách đồng thời | Domain có guard; atomic spend/exposure reservation và two-leg budget transfer chưa triển khai. Queue idempotency không thay bảo đảm ngân sách đồng thời |
+| Lịch khảo sát | Chưa có calendar/roster được xác nhận; atomic slot booking và chống gửi sau takeover giữa lúc thực thi còn phải nối với canonical CRM |
+| Nội dung | Chưa có asset/catalog policy được xác nhận để sinh/public các bộ ảnh/video; renderer không tự chứng nhận quyền tài sản |
+| AI/API | Chưa gọi model API, chưa có trần chi công cụ; chưa đo chất lượng/chi phí thực |
+| PostgreSQL | CI phải được đọc trên đúng commit; máy cục bộ không có PostgreSQL binary |
+| UAT/release/trial | HOLD; chưa bắt đầu30 ngày, chưa đổi Facebook hiện hữu |
+
+Runtime chỉ được nối khi có trusted server context loader, auth/company scope, released policy, fresh accounting/spend source, provider idempotency/reconciliation và các cổng tương ứng. Các boolean trong pure domain tests là dữ liệu giả do fixture cấp, không được nhận từ HTTP/model làm bằng chứng quyền.
+
+Không mở ads.budget_move hoặc survey.reserve chỉ vì queue test PASS. Financial projections là bản đọc từ Finance, không là sổ kế toán thứ hai; source confirmations không nhận từ model/body.
+
+## Thứ tự tiếp
+
+1. Xác nhận người nhận ngoại lệ/kế toán, môi trường và dataset nghiệp vụ được phép. Câu hỏi đã gửi Founder trong task; không tự đặt tên người.
+2. Nối coverage/account/campaign registry và source Finance vào projection, kiểm chứng dữ liệu cô lập và kiểm toán mapping.
+3. Xây atomic budget reservation + decrease/reconcile/increase; slot transaction+takeover barrier trước bất kỳ provider write.
+4. Bind adapters có capability/quyền thật theo từng kênh; hoàn thiện tài sản và landing. Kiểm tra full app/build/auth và UAT.
+5. Reviewer độc lập + gói phát hành để Founder quyết định. Hoàn tác bằng ngừng đường mới, giữ outbox/audit/khách; không xóa giao dịch.
+
+Compatibility: revenue/ROAS không còn là estimate; consumers phải xử lý null/status. MCP event_name chuyển Purchase→DealClosed và value→null, có closed_estimated_value. Không migration dữ liệu lịch sử để đổi số; historical insight financial comments được lọc lúc đọc.

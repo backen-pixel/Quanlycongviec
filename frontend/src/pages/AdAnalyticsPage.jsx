@@ -509,7 +509,7 @@ export default function AdAnalyticsPage() {
               mau="text-amber-700" />
             <OSoLieu nhan="Đơn đã chốt" giaTri={fmtSo(tongQuan.tu_quang_cao?.closed)}
               phu={`tỉ lệ chốt ${tongQuan.tu_quang_cao?.close_rate || 0}%`} mau="text-emerald-700" />
-            <OSoLieu nhan="Doanh thu" giaTri={fmtTien(tongQuan.tu_quang_cao?.revenue)}
+            <OSoLieu nhan="Giá trị deal chốt (ước tính)" giaTri={fmtTien(tongQuan.tu_quang_cao?.closed_estimated_value)}
               phu={tongQuan.co_chi_tieu
                 ? `chi ${fmtTien(tongQuan.tu_quang_cao?.spend)} đ · ${fmtSo(tongQuan.tu_quang_cao?.cost_per_lead)} đ/lead`
                 + `${tongQuan.tu_quang_cao?.roas != null ? ` · ROAS ${tongQuan.tu_quang_cao.roas}` : ''}`
@@ -525,6 +525,13 @@ export default function AdAnalyticsPage() {
           )}
         </>
       )}
+
+      <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+        <b>Doanh thu kế toán và hiệu quả quảng cáo: chưa xác minh.</b>{' '}
+        Giá trị deal là ước tính, chưa phải doanh thu ghi nhận hay tiền đã thu.
+        Chi tiêu trên bảng chỉ gồm quảng cáo đã liên kết Lead; có thể thiếu quảng cáo chưa tạo khách.
+        Chưa dùng số liệu này để tự tăng ngân sách hoặc kết luận đạt mục tiêu 7%.
+      </div>
 
       <KhungMarketing trangThai={mkt} onXong={async () => { await taiMkt(); await refreshReportRef.current?.(); }} />
 
@@ -659,7 +666,7 @@ export default function AdAnalyticsPage() {
                           <div><div className="text-[10px] uppercase text-gray-400">Lead</div><div className="text-base font-bold tabular-nums">{fmtSo(sl.leads)}</div></div>
                           <div><div className="text-[10px] uppercase text-gray-400">Chốt</div><div className="text-base font-bold tabular-nums text-emerald-700">{fmtSo(sl.closed)}</div></div>
                           <div><div className="text-[10px] uppercase text-gray-400">Tỉ lệ</div><div className="text-base font-bold tabular-nums">{sl.ti_le_chot || 0}%</div></div>
-                          <div><div className="text-[10px] uppercase text-gray-400">Doanh thu</div><div className="text-base font-bold tabular-nums text-teal-700">{fmtTien(sl.revenue)}</div></div>
+                          <div><div className="text-[10px] uppercase text-gray-400">Giá trị deal chốt (ước tính)</div><div className="text-base font-bold tabular-nums text-teal-700">{fmtTien(sl.closed_estimated_value)}</div></div>
                         </div>
                       </div>
 
@@ -708,7 +715,7 @@ export default function AdAnalyticsPage() {
                 <th className="px-3 py-2.5 text-right">Chất lượng</th>
                 <th className="px-3 py-2.5 text-right">Rác</th>
                 <th className="px-3 py-2.5 text-right">Chốt</th>
-                <th className="px-3 py-2.5 text-right">Doanh thu</th>
+                <th className="px-3 py-2.5 text-right">Giá trị deal chốt (ước tính)</th>
                 <th className="px-3 py-2.5 text-right">Chi tiêu</th>
               </tr>
             </thead>
@@ -801,7 +808,7 @@ export default function AdAnalyticsPage() {
                       <span className="font-semibold text-emerald-700">{fmtSo(g.closed)}</span>
                       <div className="text-[11px] text-gray-400">{g.close_rate}%</div>
                     </td>
-                    <td className="px-3 py-2.5 text-right align-top tabular-nums">{fmtTien(g.revenue)}</td>
+                    <td className="px-3 py-2.5 text-right align-top tabular-nums">{fmtTien(g.closed_estimated_value)}</td>
                     <td className="px-3 py-2.5 text-right align-top tabular-nums">
                       {g.spend == null ? (
                         <span className="text-[12px] text-gray-400">—</span>
@@ -825,7 +832,7 @@ export default function AdAnalyticsPage() {
 
       <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-[12.5px] text-gray-600">
         <b>Về cột Chi tiêu:</b> hệ thống chưa nối Facebook Marketing API nên chưa có số tiền đã tiêu,
-        do đó chưa tính được giá mỗi lead và ROAS. Cần Ad Account ID và token có quyền <code>ads_read</code>.
+        do đó chưa tính được giá mỗi lead. Doanh thu kế toán và ROAS còn cần nguồn được đối soát riêng.
         <br />
         <b>Về tên chiến dịch:</b> Facebook chỉ gửi <code>ad_id</code> và tên quảng cáo, không gửi tên chiến dịch.
         Đặt tay tại đây, hoặc nối Marketing API để tự điền.

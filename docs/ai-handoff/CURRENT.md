@@ -1,3 +1,15 @@
+## 2026-10-02 — VPT Marketing–Sales automation implementation
+
+Founder approved the one-time100m/30-day plan,80/20 geography, <=7% recognized net paid-attributed revenue, AI advice/survey booking and human final quote/close. See [approved plan](../architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md) and [implementation/remaining gates](vpt-marketing-automation/README.md). Supersedes earlier14/21m proposals and permanent agency staffing, not production release.
+
+Implemented candidate: estimated/revenue separation across report/insights/MCP/UI, strict pure domain policy/measurement/care/content controls and disabled durable command components+new migration648. Source is PR19 e16c885; no main merge. Runtime providers/context, atomic budget/slot operations and six-channel UAT remain incomplete; no live automation/ad/DB changes.
+
+Local131 tests pass. Isolated PostgreSQL CI and independent review must be read on the final published revision; this header alone is not evidence of PASS. Inventory found connected VPT Facebook/Google/GA4 and ChatGPT Ads; ChatGPT brand review pending. Canonical Finance source and human owners still need confirmation.
+
+Rollback: stop new components; revert code if needed; keep history, queue/audit and all business records.
+
+---
+
 ## 2026-10-01 — PR19 delayed-action refresh and authorized local browser verification
 
 PR #19 original head: `1d2520d2286423269adc50104185fe3cbe10bc04`. Founder authorized a local browser using synthetic data and an independent read-only reviewer agent. Real CRM configuration access and source-to-recipient acceptance remain unverified.

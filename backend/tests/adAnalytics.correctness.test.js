@@ -78,7 +78,7 @@ for (const url of paths) {
   test(`${url}: unique Lead, Deal and order value despite duplicate attribution`, async () => {
     const h = harness(fixture()); const r = await h.run(url);
     assert.equal(r.code, 200); const b = bucket(url, r);
-    assert.equal(b.leads, 1); assert.equal(b.deals, 1); assert.equal(b.closed, 1); assert.equal(b.revenue, 100);
+    assert.equal(b.leads, 1); assert.equal(b.deals, 1); assert.equal(b.closed, 1); assert.equal(b.closed_estimated_value, 100); assert.equal(b.revenue, null); assert.equal(b.roas, null); assert.equal(b.revenue_status, 'UNKNOWN'); assert.equal(b.eligible_for_budget_optimization, false);
     assert.equal(b.quality_leads, 1); assert.equal(b.avg_score, 80); assert.equal(b.cost_per_lead, 200);
     assert.doesNotMatch(JSON.stringify(r.body), /_leadIds|_paidLeadIds|lead-one/);
     if (url === '/summary') assert.equal(r.body.tat_ca.leads, 1);
@@ -135,7 +135,7 @@ test('campaigns: legacy manual grouping remains available without IDs', async ()
 test('different real leads are not collapsed; company filtering remains intact', async () => {
   const f = fixture(); f.lead_attribution.push({ ...f.lead_attribution[0], lead_id: 'lead-two' }, { ...f.lead_attribution[0], lead_id: 'other-company-lead' });
   f.crm_leads.push({ ...f.crm_leads[0], id: 'lead-two' }, { ...f.crm_leads[0], id: 'other-company-lead', company_id: 'other-company' });
-  const r = await harness(f).run('/summary'); assert.equal(r.body.tat_ca.leads, 2); assert.equal(r.body.tat_ca.revenue, 200);
+  const r = await harness(f).run('/summary'); assert.equal(r.body.tat_ca.leads, 2); assert.equal(r.body.tat_ca.closed_estimated_value, 200); assert.equal(r.body.tat_ca.revenue, null);
 });
 test('UI: a failed read clears earlier figures instead of presenting them as current', async () => {
   const begin = 'const tai = useCallback(async () => {'; const end = '}, [tab, params]);';
