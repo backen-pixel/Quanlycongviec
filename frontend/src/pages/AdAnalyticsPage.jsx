@@ -5,6 +5,7 @@
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import api from '../lib/api';
+import MarketingSpendCoverage from '../components/marketing/MarketingSpendCoverage';
 
 const TAB = [
   { key: 'insights', nhan: 'Nhận xét tự động' },
@@ -90,7 +91,7 @@ function OSoLieu({ nhan, giaTri, phu, mau = 'text-gray-900' }) {
   );
 }
 
-function KhungMarketing({ trangThai, onXong }) {
+function KhungMarketing({ trangThai, onXong, companyId, onSyncStart, onSyncFinish }) {
   const [mo, setMo] = useState(false);
   const [actId, setActId] = useState('');
   const [ten, setTen] = useState('');
@@ -116,6 +117,7 @@ function KhungMarketing({ trangThai, onXong }) {
   const thu = () => goi('thu', async () => {
     const r = await api.post('/ad-analytics/marketing/test', {
       ad_account_id: actId.trim(),
+      company_id: companyId || undefined,
       access_token: token.trim() || undefined,
     });
     const d = r.data || {};
@@ -125,6 +127,7 @@ function KhungMarketing({ trangThai, onXong }) {
   const luu = () => goi('luu', async () => {
     await api.put('/ad-analytics/marketing/account', {
       ad_account_id: actId.trim(),
+      company_id: companyId || undefined,
       ten: ten.trim() || null,
       access_token: token.trim() || undefined,
     });
@@ -134,13 +137,16 @@ function KhungMarketing({ trangThai, onXong }) {
   });
 
   const dongBo = () => goi('dongbo', async () => {
+    onSyncStart?.();
+    try {
     const r = await api.post('/ad-analytics/marketing/sync', { ngay: 30 });
     const d = r.data || {};
     const soAd = (d.ket_qua || []).reduce((s, x) => s + (x.so_ad || 0), 0);
     const hong = (d.ket_qua || []).filter((x) => !x.ok);
     if (onXong) await onXong();
     if (hong.length) return { ok: false, chu: `${hong.length} tài khoản lỗi: ${hong[0].loi}` };
-    return { ok: true, chu: `Đã kéo ${soAd} quảng cáo về, phân tích lại ${d.phan_tich_lai ?? 0} quảng cáo.` };
+    return { ok: true, chu: `Đã kéo ${soAd} quảng cáo về và cập nhật chi tiêu.` };
+    } finally { onSyncFinish?.(); }
   });
 
   return (
@@ -264,6 +270,8 @@ export default function AdAnalyticsPage() {
   const [tenLo, setTenLo] = useState('');
   const [dangLuu, setDangLuu] = useState(false);
   const [mkt, setMkt] = useState(null);
+  const [spendRefresh, setSpendRefresh] = useState(0);
+  const [spendSyncing, setSpendSyncing] = useState(false);
 
   const params = useMemo(() => {
     const p = {};
@@ -534,7 +542,9 @@ export default function AdAnalyticsPage() {
         Chưa dùng số liệu này để tự tăng ngân sách hoặc kết luận đạt 250.000 đồng/khách hay 7% doanh thu.
       </div>
 
-      <KhungMarketing trangThai={mkt} onXong={async () => { await taiMkt(); await refreshReportRef.current?.(); }} />
+      <MarketingSpendCoverage companyId={congTy} from={tuNgay} to={denNgay} refresh={spendRefresh} syncing={spendSyncing} />
+
+      <KhungMarketing trangThai={mkt} companyId={congTy} onSyncStart={() => setSpendSyncing(true)} onSyncFinish={() => { setSpendSyncing(false); setSpendRefresh(n => n + 1); }} onXong={async () => { await taiMkt(); await refreshReportRef.current?.(); }} />
 
       <div className="flex flex-wrap items-center gap-1.5 border-b border-gray-200">
         {TAB.map((t) => (

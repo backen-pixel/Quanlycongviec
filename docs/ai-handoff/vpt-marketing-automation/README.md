@@ -1,3 +1,9 @@
+## Continuation: Facebook source integration, 02/10/2026
+
+See [SPEND_INTEGRATION.md](SPEND_INTEGRATION.md) for the current integration and remaining gates. Local221 tests PASS; new PostgreSQL/full-frontend/browser evidence pending final head. Earlier results below remain historical. Full objective is IN PROGRESS; no release or actual CPQL claim.
+
+---
+
 # Triển khai VPT Marketing–Sales — 02/10/2026
 
 **IN PROGRESS.** [Kế hoạch Founder đã giao](../../architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md). Code baseline PR #19 `e16c885ae7c2305645be02a1227bf378cb59137f`; main `0db11ce1adb0fb89fc87529036e495a62d58fce7`. PR19/20/21 đều open/unmerged khi đối chiếu. Không merge, deploy, đổi DB thật, lịch, ads, ngân sách hoặc gửi khách trong phiên này.

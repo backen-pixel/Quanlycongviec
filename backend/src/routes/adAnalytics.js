@@ -520,11 +520,39 @@ r.get('/bo-loc', async (req, res) => {
   }
 });
 
+function marketingCompanyScope(req) {
+  const { accountCompanyScope } = require('../modules/marketingAutomation/accountScope');
+  return accountCompanyScope(req.user, { tenantEnforced: isTenantScopeEnforced(req), tenantCompanyIds: req.tenantCompanyIds });
+}
+function accountAllowed(scope, company) { return scope === null || (company && scope.includes(String(company))); }
+async function storedAccount(id) {
+  const r = await supabase.from('fb_ad_accounts').select('ad_account_id,company_id,tenant_id,access_token').eq('ad_account_id', id).maybeSingle();
+  if (r.error) throw new Error('ACCOUNT_SOURCE_UNAVAILABLE');
+  return r.data;
+}
+
+// Aggregate-only endpoint. Company authorization is resolved on the server.
+r.get('/marketing/spend-coverage', async (req, res) => {
+  const company = String(req.query.company_id || '');
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(company)) return res.status(400).json({ status: 'UNKNOWN', reason: 'SELECT_COMPANY', spendVnd: null });
+  try {
+    const permitted = marketingCompanyScope(req);
+    if (permitted && !permitted.includes(company)) return res.status(403).json({ status: 'UNKNOWN', reason: 'COMPANY_DENIED', spendVnd: null });
+    const { calendarDays } = require('../modules/marketingAutomation/facebookSpendSource');
+    try { calendarDays(req.query.from, req.query.to); } catch { return res.status(400).json({ status: 'UNKNOWN', reason: 'INVALID_DATE_RANGE', spendVnd: null }); }
+    const { readSpendCoverage } = require('../modules/marketingAutomation/spendCoverage');
+    const { isFailoverEnabled, getActiveTarget } = require('../config/supabaseRouter');
+    const result = await readSpendCoverage({ client: supabase, companyId: company, since: req.query.from, until: req.query.to,
+      sourceAllowed: process.env.VPT_CERTIFIED_FACEBOOK_SPEND === '1' && !isFailoverEnabled() && getActiveTarget() === 'primary' });
+    res.json(result);
+  } catch { res.status(503).json({ status: 'UNKNOWN', reason: 'SPEND_SOURCE_UNAVAILABLE', spendVnd: null }); }
+});
+
 // ─── Marketing API: khai báo tài khoản, kiểm tra, đồng bộ ────────────────────
 
 r.get('/marketing/status', async (req, res) => {
   try {
-    res.json(await daCauHinh());
+    res.json(await daCauHinh({ companyIds: marketingCompanyScope(req) }));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -533,58 +561,61 @@ r.get('/marketing/status', async (req, res) => {
 r.post('/marketing/test', async (req, res) => {
   try {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được nối Marketing API' });
-    const id = req.body?.ad_account_id;
-    let token = req.body?.access_token || null;
-    if (!token && id) {
-      const { data } = await supabase.from('fb_ad_accounts')
-        .select('access_token').eq('ad_account_id', chuanHoaActId(id)).maybeSingle();
-      token = data?.access_token || null;
-    }
-    const kq = await kiemTraKetNoi(id, token);
-    res.json({ ok: true, ...kq });
-  } catch (e) {
-    res.status(400).json({ ok: false, error: e.message });
-  }
+    const scope = marketingCompanyScope(req);
+    const id = chuanHoaActId(req.body?.ad_account_id);
+    if (!id || !/^act_[0-9]+$/.test(id)) return res.status(400).json({ error: 'Ad Account ID không hợp lệ' });
+    const existing = await storedAccount(id);
+    if (existing && !accountAllowed(scope, existing.company_id)) return res.status(403).json({ error: 'Tài khoản nằm ngoài phạm vi công ty' });
+    const company = existing ? existing.company_id : req.body?.company_id;
+    if (!accountAllowed(scope, company)) return res.status(403).json({ error: 'Tài khoản nằm ngoài phạm vi công ty' });
+    const token = req.body?.access_token || existing?.access_token;
+    const result = await kiemTraKetNoi(id, token);
+    res.json({ ok: true, ...result });
+  } catch { res.status(400).json({ ok: false, error: 'Chưa kiểm tra được kết nối tài khoản.' }); }
 });
 
 r.put('/marketing/account', async (req, res) => {
   try {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được nối Marketing API' });
-    const id = chuanHoaActId(req.body?.ad_account_id);
-    if (!id) return res.status(400).json({ error: 'Thiếu Ad Account ID' });
-
-    const bo = { ad_account_id: id, updated_at: new Date().toISOString() };
-    for (const k of ['ten', 'tenant_id', 'company_id']) {
-      if (req.body?.[k] !== undefined) bo[k] = req.body[k] || null;
+    const scope = marketingCompanyScope(req), id = chuanHoaActId(req.body?.ad_account_id);
+    if (!id || !/^act_[0-9]+$/.test(id)) return res.status(400).json({ error: 'Ad Account ID không hợp lệ' });
+    const existing = await storedAccount(id);
+    if (existing && !accountAllowed(scope, existing.company_id)) return res.status(403).json({ error: 'Tài khoản nằm ngoài phạm vi công ty' });
+    const company = req.body?.company_id || existing?.company_id;
+    if (!company || !accountAllowed(scope, company)) return res.status(403).json({ error: 'Chọn công ty trong phạm vi được phép' });
+    const owner = await supabase.from('companies').select('id,tenant_id').eq('id', company).maybeSingle();
+    if (owner.error || !owner.data) return res.status(400).json({ error: 'Chưa xác minh được công ty' });
+    if (req.body?.tenant_id !== undefined && req.body.tenant_id !== owner.data.tenant_id) return res.status(403).json({ error: 'Phạm vi hệ sinh thái không khớp công ty' });
+    const record = { ad_account_id: id, company_id: company, tenant_id: owner.data.tenant_id, updated_at: new Date().toISOString() };
+    if (req.body?.ten !== undefined) record.ten = req.body.ten == null ? null : String(req.body.ten).trim().slice(0,200) || null;
+    if (req.body?.bat !== undefined) {
+      if (typeof req.body.bat !== 'boolean') return res.status(400).json({ error: 'Trạng thái tài khoản không hợp lệ' });
+      record.bat = req.body.bat;
     }
-    if (req.body?.bat !== undefined) bo.bat = !!req.body.bat;
-    // Token chỉ ghi khi người dùng nhập mới; để trống = giữ token cũ.
-    const tokenMoi = String(req.body?.access_token || '').trim();
-    if (tokenMoi) bo.access_token = tokenMoi;
-
-    const { data, error } = await supabase.from('fb_ad_accounts')
-      .upsert(bo, { onConflict: 'ad_account_id' })
-      .select('ad_account_id, ten, tenant_id, company_id, bat, lan_dong_bo_cuoi')
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    res.json({ ok: true, tai_khoan: data });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+    const token = String(req.body?.access_token || '').trim(); if (token) record.access_token = token;
+    // Scope checked against current owner again in the write predicate. Insert
+    // never upserts an account another company created concurrently.
+    let q = supabase.from('fb_ad_accounts');
+    if (existing) {
+      q = q.update(record).eq('ad_account_id',id);
+      q = existing.company_id ? q.eq('company_id',existing.company_id) : q.is('company_id',null);
+    } else q = q.insert(record);
+    const result = await q.select('ad_account_id,ten,tenant_id,company_id,bat,lan_dong_bo_cuoi').maybeSingle();
+    if (result.error || !result.data) return res.status(409).json({ error: 'Tài khoản đã thay đổi; vui lòng tải lại.' });
+    res.json({ ok: true, tai_khoan: result.data });
+  } catch { res.status(503).json({ error: 'Chưa lưu được cấu hình tài khoản.' }); }
 });
 
 r.post('/marketing/sync', async (req, res) => {
   try {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được chạy đồng bộ' });
-    const ngay = Math.min(90, Math.max(1, Number(req.body?.ngay) || 30));
-    const kq = await dongBoTatCa({ ngay });
-    // Đồng bộ xong thì phân tích lại ngay để trang khớp số.
-    let phanTich = null;
-    try { phanTich = await chayPhanTich({ ngay: 90 }); } catch { /* không chặn */ }
-    res.json({ ok: true, ...kq, phan_tich_lai: phanTich?.da_phan_tich ?? null });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+    const companyIds = marketingCompanyScope(req);
+    if (companyIds && !companyIds.length) return res.status(403).json({ error: 'Chưa xác định được phạm vi công ty' });
+    const ngay = Math.min(90, Math.max(1, Math.floor(Number(req.body?.ngay) || 30)));
+    const result = await dongBoTatCa({ ngay, companyIds });
+    // Do not launch the global analysis writer from a company-scoped request.
+    res.json({ ok: result.ket_qua.every(x => x.ok === true), ...result, phan_tich_lai: null });
+  } catch { res.status(503).json({ error: 'Chưa đồng bộ được dữ liệu quảng cáo.' }); }
 });
 
 module.exports = r;

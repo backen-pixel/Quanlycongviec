@@ -1,3 +1,9 @@
+## Continuation: Facebook source integration, 02/10/2026
+
+See [SPEND_INTEGRATION.md](SPEND_INTEGRATION.md) for the current integration and remaining gates. Local221 tests PASS; new PostgreSQL/full-frontend/browser evidence pending final head. Earlier results below remain historical. Full objective is IN PROGRESS; no release or actual CPQL claim.
+
+---
+
 # Validation — VPT Marketing–Sales candidate
 
 Ngày02/10/2026. PR22 stacked trên PR19 `e16c885ae7c2305645be02a1227bf378cb59137f`. Không phải production acceptance.
