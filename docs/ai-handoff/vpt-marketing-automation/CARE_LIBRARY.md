@@ -25,7 +25,7 @@ Under authenticated /api/facebook/customer-care:
 Feature flag VPT_CARE_LIBRARY_ADMIN=1 plus primary target required. Flag defaults off; library does not depend on or turn on care receiving/sending. Content review does not open a trial or public rights.
 
 ## Acceptance and rollback
-Local service tests cover spoofing, wrong-scope replies, default-off/primary-only, exact receipts, expiry, revoked/draft content, audience mismatch and template substitution rejection. Isolated PostgreSQL tests cover RLS/privileges, publisher enrollment, source/version changes, grant rotation, expiry after lock waits, concurrent replay/edit, rollback, retained revocation and pagination. CI and independent final review pending at preparation.
+Local service tests cover spoofing, wrong-scope replies, default-off/primary-only, exact receipts, expiry, revoked/draft content, audience mismatch and template substitution rejection. Isolated PostgreSQL tests cover RLS/privileges, publisher enrollment, source/version changes, grant rotation, expiry after lock waits, concurrent replay/edit, rollback, retained revocation and pagination. Runtime880f495: local9, PostgreSQL83 (14 library), Node22 547, all10 automation jobs/full build and independent final review PASS. See [exact-version evidence](CARE_LIBRARY_REVIEW.md).
 
 Deployment, live publisher enrollment, production schema/performance/backup checks and actual VPT content acceptance remain separate release gates. Disable the library flag to stop app access; preserve entries/events and publisher records for evidence. Do not delete customer history or reopen unsafe privileges. No live migration, deployment, provider/account/ad change, paid AI call or trial activation was performed.
 

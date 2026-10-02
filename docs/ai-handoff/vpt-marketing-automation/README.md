@@ -1,3 +1,13 @@
+## Hiện hành 02/10/2026 — Thư viện nội dung tư vấn đã kiểm thử
+
+Runtime880f495 thêm lưu nháp, duyệt/thu hồi nội dung, lịch sử và xem trước nguyên văn theo công ty/sản phẩm/khu vực/kênh. Sửa nội dung, đổi quyền người duyệt, thay đổi nguồn hoặc hết hạn làm mất hiệu lực sử dụng. Không cấp sẵn quyền duyệt hoặc nạp dữ liệu sản phẩm thật. Review độc lập PASS; local9, PostgreSQL83 (14 library), Node22 547 và cả10 job/full build PASS. [Bằng chứng đúng phiên bản](CARE_LIBRARY_REVIEW.md).
+
+Mặc định tắt; chưa có UI biên tập, AI sử dụng/gửi tin hoặc lịch khảo sát. Phần kết nối OpenAI chờ lựa chọn khóa riêng; không gọi API trả phí. Nguồn/chi tiêu thực tế và UAT vẫn chưa hoàn tất, chưa xác nhận CPQL250.000 đồng/khách. Full goal ACTIVE; không phát hành hoặc mở đợt chi.
+
+Các mục sau giữ lịch sử theo phiên bản.
+
+---
+
 ## Hiện hành — màn hình chăm khách (02/10/2026)
 
 Runtime52741b81 đã qua review, kiểm thử cơ sở dữ liệu và trình duyệt dữ liệu giả. [Phạm vi](FACEBOOK_CARE_CONSOLE.md) · [Bằng chứng](FACEBOOK_CARE_CONSOLE_REVIEW.md). Màn hình có hàng chờ, lịch sử và tiếp quản/ngừng liên hệ; AI tư vấn/gửi tin và lịch khảo sát vẫn chưa hoàn tất. Mặc định tắt, chưa phát hành. Các mục phía dưới giữ lịch sử.
