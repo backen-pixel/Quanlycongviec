@@ -1,0 +1,34 @@
+name: Marketing report correctness (isolated)
+on:
+  pull_request:
+    paths:
+      - 'backend/src/routes/adAnalytics.js'
+      - 'frontend/src/pages/AdAnalyticsPage.jsx'
+      - 'backend/tests/adAnalytics.correctness.test.js'
+      - 'backend/tests/adAnalytics.ui-state.test.js'
+      - 'backend/tests/adAnalytics.action-lifecycle.test.js'
+      - '.github/workflows/marketing-report-correctness.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  marketing-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        node: [18, 22]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Syntax and isolated actual-handler regression tests
+        run: |
+          node --check backend/src/routes/adAnalytics.js
+          node --check backend/tests/adAnalytics.correctness.test.js
+          node --check backend/tests/adAnalytics.ui-state.test.js
+          node --check backend/tests/adAnalytics.action-lifecycle.test.js
+          node --test --test-reporter=tap backend/tests/adAnalytics.correctness.test.js backend/tests/adAnalytics.ui-state.test.js backend/tests/adAnalytics.action-lifecycle.test.js

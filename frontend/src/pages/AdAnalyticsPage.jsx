@@ -3,7 +3,7 @@
  * Ba cách nhìn: theo Chiến dịch / theo Quảng cáo / theo Page.
  * Tên chiến dịch đặt tay tại đây cho tới khi nối Marketing API.
  */
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import api from '../lib/api';
 
 const TAB = [
@@ -240,6 +240,8 @@ function KhungMarketing({ trangThai, onXong }) {
 }
 
 export default function AdAnalyticsPage() {
+  const reportRequestId = useRef(0);
+  const refreshReportRef = useRef(null);
   const [tab, setTab] = useState('campaigns');
   const [tongQuan, setTongQuan] = useState(null);
   const [rows, setRows] = useState([]);
@@ -305,25 +307,42 @@ export default function AdAnalyticsPage() {
   }, []);
 
   const tai = useCallback(async () => {
+    const requestId = ++reportRequestId.current;
+    const isCurrent = () => requestId === reportRequestId.current;
     setDangTai(true);
     setLoi('');
+    // A new filter invalidates the previous snapshot immediately.
+    setTongQuan(null);
+    setRows([]);
+    setNhanXet([]);
+    setTomTat(null);
+    setTinhLuc(null);
     try {
       const tq = await api.get('/ad-analytics/summary', { params });
+      if (!isCurrent()) return;
+      const ds = await api.get(tab === 'insights'
+        ? '/ad-analytics/insights' : `/ad-analytics/${tab}`, { params });
+      if (!isCurrent()) return;
+      // Commit one consistent report only after both reads succeed.
       setTongQuan(tq.data || null);
       if (tab === 'insights') {
-        const ds = await api.get('/ad-analytics/insights', { params });
         setNhanXet(ds.data?.data || []);
         setTomTat(ds.data?.tom_tat || null);
         setTinhLuc(ds.data?.tinh_luc || null);
         setRows([]);
       } else {
-        const ds = await api.get(`/ad-analytics/${tab}`, { params });
         setRows(ds.data?.data || []);
       }
     } catch (e) {
+      if (!isCurrent()) return;
+      setTongQuan(null);
+      setRows([]);
+      setNhanXet([]);
+      setTomTat(null);
+      setTinhLuc(null);
       setLoi(e?.response?.data?.error || 'Không tải được dữ liệu quảng cáo');
     } finally {
-      setDangTai(false);
+      if (isCurrent()) setDangTai(false);
     }
   }, [tab, params]);
 
@@ -347,7 +366,14 @@ export default function AdAnalyticsPage() {
     return () => { huy = true; };
   }, []);
 
-  useEffect(() => { tai(); }, [tai]);
+  useEffect(() => {
+    refreshReportRef.current = tai;
+    tai();
+    return () => {
+      refreshReportRef.current = null;
+      reportRequestId.current += 1;
+    };
+  }, [tai]);
   useEffect(() => { taiMkt(); }, [taiMkt]);
 
   const luuTen = useCallback(async (adId) => {
@@ -357,7 +383,7 @@ export default function AdAnalyticsPage() {
       await api.put(`/ad-analytics/ads/${adId}`, { campaign_name: tenMoi.trim() });
       setDangSua(null);
       setTenMoi('');
-      await tai();
+      await refreshReportRef.current?.();
     } catch (e) {
       setLoi(e?.response?.data?.error || 'Không lưu được tên chiến dịch');
     } finally {
@@ -372,7 +398,7 @@ export default function AdAnalyticsPage() {
       await api.post('/ad-analytics/ads/bulk-name', { ad_ids: [...chon], campaign_name: tenLo.trim() });
       setChon(new Set());
       setTenLo('');
-      await tai();
+      await refreshReportRef.current?.();
     } catch (e) {
       setLoi(e?.response?.data?.error || 'Không đặt tên hàng loạt được');
     } finally {
@@ -384,7 +410,7 @@ export default function AdAnalyticsPage() {
     setDangChayLai(true);
     try {
       await api.post('/ad-analytics/insights/run', {});
-      await tai();
+      await refreshReportRef.current?.();
     } catch (e) {
       setLoi(e?.response?.data?.error || 'Không chạy lại được phân tích');
     } finally {
@@ -404,7 +430,7 @@ export default function AdAnalyticsPage() {
         <div>
           <h1 className="text-xl font-bold text-gray-900">Hiệu quả quảng cáo Facebook</h1>
           <p className="mt-0.5 text-[13px] text-gray-500">
-            Lead đến từ quảng cáo nào, chất lượng ra sao, chốt được bao nhiêu.
+            Lead đến từ quảng cáo nào, chất lượng ra sao, chốt được bao nhiêu. Mỗi Lead tính một lần trong từng nhóm; không cộng các nhóm để suy số khách duy nhất.
           </p>
         </div>
       </div>
@@ -500,7 +526,7 @@ export default function AdAnalyticsPage() {
         </>
       )}
 
-      <KhungMarketing trangThai={mkt} onXong={async () => { await taiMkt(); await tai(); }} />
+      <KhungMarketing trangThai={mkt} onXong={async () => { await taiMkt(); await refreshReportRef.current?.(); }} />
 
       <div className="flex flex-wrap items-center gap-1.5 border-b border-gray-200">
         {TAB.map((t) => (
@@ -527,7 +553,11 @@ export default function AdAnalyticsPage() {
         </div>
       )}
 
-      {tab === 'insights' ? (
+      {loi && !tongQuan ? (
+        <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+          Dữ liệu chưa xác minh. Hãy tải lại; chưa thể kết luận có 0 Lead.
+        </div>
+      ) : tab === 'insights' ? (
         dangTai ? (
           <div className="py-14 text-center text-sm text-gray-500">
             <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-gray-200 border-t-blue-600" />
@@ -683,8 +713,12 @@ export default function AdAnalyticsPage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((g, i) => {
-                const khoa = g.ad_id || g.page_id || g.campaign_name || `r${i}`;
+              {rows.map((g) => {
+                const khoa = tab === 'campaigns'
+                  ? (g.campaign_id ? `campaign:${g.campaign_id}`
+                    : g.campaign_name ? `name:${g.campaign_name}`
+                      : `ads:${[...(g.ad_ids || [])].sort().join(',')}`)
+                  : `${tab}:${g.ad_id || g.page_id || 'unknown'}`;
                 return (
                   <tr key={khoa} className="border-t border-gray-100 hover:bg-gray-50/70">
                     {tab === 'ads' && (
@@ -705,6 +739,10 @@ export default function AdAnalyticsPage() {
                             <span className="ml-2 text-[12px] font-normal text-gray-500">{g.so_quang_cao} QC</span>
                           </span>
                         )
+                      )}
+
+                      {tab === 'campaigns' && g.campaign_id && (
+                        <div className="mt-0.5 font-mono text-[11px] text-gray-500">{g.campaign_id}</div>
                       )}
 
                       {tab === 'ads' && (
