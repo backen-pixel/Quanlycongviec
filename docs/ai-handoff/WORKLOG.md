@@ -17,6 +17,18 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Nhật ký công việc AI
 
+## 2026-10-02 11:55 — Bộ lọc Không gian chung giống Giao việc
+
+- AI: Cursor. Tab Không gian chung trước đó chỉ lọc trạng thái và ưu tiên.
+- File: `CRMAssignmentsPage.jsx`, `crmAssignments.js`, `sharedWorkspaceInbox.js`.
+- Admin chọn công ty, phòng ban hoặc nhân viên thì tải việc của đúng phạm vi đó.
+
+## 2026-10-02 11:50 — Lọc phân loại xưởng trên Giao việc Sản xuất
+
+- AI: Cursor. Giao việc Sản xuất dùng cùng ô phân loại với dashboard xưởng (Chưa phân loại / HCB · Tủ bếp / Cánh kính / Cửa).
+- File: `CRMAssignmentsPage.jsx`, `crmAssignments.js`, `sharedWorkspaceInbox.js`.
+- Thử `/sx/assignments`: Tủ bếp 11 việc, Cánh kính 0 việc. API list, stats và Không gian chung trả 200. Đã trả bộ lọc về Tủ bếp.
+
 ## 2026-10-02 11:10 — Không chép nhiệm vụ mẫu xưởng sang Không gian chung
 
 - AI: Cursor. Lưu hoặc áp bộ mẫu `sx_`/`vc_` từng tạo `crm_assignments`. Nay bỏ qua nhiệm vụ mẫu; phát sinh (`sx_shared`, `customer_request`) vẫn tạo giao việc.

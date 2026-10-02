@@ -17,7 +17,23 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-10-02 11:10 (UTC+7)
+Cập nhật: 2026-10-02 11:55 (UTC+7)
+
+## Không gian chung — bộ lọc giống Giao việc
+
+Trạng thái: **FE+BE local.**
+
+Panel bộ lọc tab Không gian chung có Công ty, Phòng ban, Nhân viên, Trạng thái, Ưu tiên — cùng các ô với tab Giao việc. Admin chọn nhân viên thì danh sách là việc của người đó.
+
+## Giao việc Sản xuất — lọc phân loại xưởng
+
+Trạng thái: **FE+BE local, đã xem trên `/sx/assignments`.**
+
+Header Giao việc Sản xuất có cùng ô phân loại với dashboard: Chưa phân loại, HCB · Tủ bếp, HCB · Cánh kính, HCB · Cửa. Lọc cả bảng Giao việc và tab Không gian chung theo `projects.workshop_type_id`. Giá trị nhớ chung với dashboard (`sx_dash_filters_v1`).
+
+Đã chọn HCB · Tủ bếp: 11 việc. HCB · Cánh kính: 0 việc. Chưa phân loại và Không gian chung trả 200. Đã trả bộ lọc về HCB · Tủ bếp.
+
+Hoàn tác: revert `workshop_type_id` trong `crmAssignments.js`, `sharedWorkspaceInbox.js`, và select trong `CRMAssignmentsPage.jsx`.
 
 ## Không gian chung — không nhận nhiệm vụ mẫu xưởng
 

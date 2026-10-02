@@ -102,7 +102,7 @@ async function loadProjectOwnerMap(projectIds) {
     const chunk = ids.slice(i, i + 200);
     const { data, error } = await supabase
       .from('projects')
-      .select('id, company_id, code, name')
+      .select('id, company_id, code, name, workshop_type_id')
       .in('id', chunk);
     if (error) throw error;
     for (const p of data || []) map.set(String(p.id), p);
@@ -309,14 +309,54 @@ const PRIVATE_TASK_SELECT_FALLBACK = `
  * Inbox «Không gian chung» — nhiệm vụ deal được giao cho user (own), nhóm theo deal.
  * @returns {{ tasks: object[], groups: object[], assignment_module: string }}
  */
-async function listPrivateDealInboxTasks(req, { assignmentModule } = {}) {
-  const mod = normalizeAssignModule(assignmentModule);
-  const uid = req.user?.userId || req.user?.id;
-  if (!uid) return { tasks: [], groups: [], assignment_module: mod };
+function taskMatchesWorkshopType(task, projectMap, filter) {
+  if (!filter) return true;
+  const projectId = task?.lead?.project_id;
+  const project = projectId ? projectMap.get(String(projectId)) : null;
+  const typeId = project?.workshop_type_id || null;
+  if (filter.mode === 'none') return !typeId;
+  return String(typeId || '') === String(filter.id);
+}
 
-  const [{ data: viaRows }, { data: directRows }] = await Promise.all([
-    supabase.from('crm_task_assignees').select('task_id').eq('user_id', uid).limit(800),
-    supabase.from('crm_tasks').select('id').eq('assignee_id', uid).not('lead_id', 'is', null).limit(800),
+function parseInboxWorkshopType(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return null;
+  if (value === 'none' || value === 'global') return { mode: 'none' };
+  return { mode: 'id', id: value };
+}
+
+async function rowsForUserChunks(userIds, run) {
+  const ids = [...new Set((userIds || []).filter(Boolean).map(String))];
+  const out = [];
+  for (let i = 0; i < ids.length; i += 80) {
+    const chunk = ids.slice(i, i + 80);
+    const { data, error } = await run(chunk);
+    if (error) throw error;
+    out.push(...(data || []));
+  }
+  return out;
+}
+
+async function listPrivateDealInboxTasks(req, { assignmentModule, workshopTypeId, userIds } = {}) {
+  const mod = normalizeAssignModule(assignmentModule);
+  const selfId = req.user?.userId || req.user?.id;
+  const subjectIds = Array.isArray(userIds)
+    ? [...new Set(userIds.filter(Boolean).map(String))]
+    : [selfId].filter(Boolean);
+  if (!subjectIds.length) return { tasks: [], groups: [], assignment_module: mod };
+
+  const [viaRows, directRows] = await Promise.all([
+    rowsForUserChunks(subjectIds, (chunk) => supabase
+      .from('crm_task_assignees')
+      .select('task_id')
+      .in('user_id', chunk)
+      .limit(800)),
+    rowsForUserChunks(subjectIds, (chunk) => supabase
+      .from('crm_tasks')
+      .select('id')
+      .in('assignee_id', chunk)
+      .not('lead_id', 'is', null)
+      .limit(800)),
   ]);
 
   const taskIdSet = new Set();
@@ -418,9 +458,18 @@ async function listPrivateDealInboxTasks(req, { assignmentModule } = {}) {
 
   // Bổ sung crm_assignments gắn deal (Giao việc) — cùng nhóm theo deal
   const crmTaskIds = new Set(tasks.map((t) => String(t.id)));
-  const [{ data: assignVia }, { data: assignDirect }] = await Promise.all([
-    supabase.from('crm_assignment_assignees').select('assignment_id').eq('user_id', uid).limit(800),
-    supabase.from('crm_assignments').select('id').eq('assignee_id', uid).not('lead_id', 'is', null).limit(800),
+  const [assignVia, assignDirect] = await Promise.all([
+    rowsForUserChunks(subjectIds, (chunk) => supabase
+      .from('crm_assignment_assignees')
+      .select('assignment_id')
+      .in('user_id', chunk)
+      .limit(800)),
+    rowsForUserChunks(subjectIds, (chunk) => supabase
+      .from('crm_assignments')
+      .select('id')
+      .in('assignee_id', chunk)
+      .not('lead_id', 'is', null)
+      .limit(800)),
   ]);
   const assignIdSet = new Set();
   (assignVia || []).forEach((r) => { if (r?.assignment_id) assignIdSet.add(String(r.assignment_id)); });
@@ -492,6 +541,20 @@ async function listPrivateDealInboxTasks(req, { assignmentModule } = {}) {
       }
     }
     tasks.sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+  }
+
+  const workshopTypeFilter = parseInboxWorkshopType(workshopTypeId);
+  if (workshopTypeFilter) {
+    const missingProjectIds = tasks
+      .map((task) => task.lead?.project_id)
+      .filter((id) => id && !projectMap.has(String(id)));
+    if (missingProjectIds.length) {
+      const extra = await loadProjectOwnerMap(missingProjectIds);
+      extra.forEach((value, key) => projectMap.set(key, value));
+    }
+    const matched = tasks.filter((task) => taskMatchesWorkshopType(task, projectMap, workshopTypeFilter));
+    tasks.length = 0;
+    tasks.push(...matched);
   }
 
   const groupMap = new Map();
