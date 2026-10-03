@@ -1,3 +1,11 @@
+## 2026-10-03 — Nhật ký trang dữ liệu Facebook đang kiểm chứng
+
+SQL672 thêm bằng chứng từng trang được collector chấp nhận, nguyên giao dịch với receipt/observation/cursor. Có giờ lease từ DB, chuỗi cursor đã băm, metadata whitelist, Graph version chung, ID duy nhất/lần xuất hiện và phát hiện prefix lịch sử thiếu. Summary của status cùng snapshot, không nâng kết luận bao phủ provider hoặc CPQL. [Hợp đồng và giới hạn](vpt-marketing-automation/CENSUS_WITNESS.md).
+
+Đang chờ PostgreSQL cô lập/review độc lập; không migration thật, Meta/CRM, chi tiền hoặc phát hành. Full goal ACTIVE. Kế tiếp đối soát phạm vi/bản xuất và chốt kỳ, lịch/chờ xử lý, nghiệm thu tuyến đầu.
+
+---
+
 ## Hiện hành 03/10/2026 — Đã kiểm thử số chi phí/khách tạm tính
 
 Candidatea8b2f9f hiển thị chi toàn tài khoản / khách Lead Ads đã xác minh và đối soát cùng kỳ, có positive1m/4=250k. Số này được ghi tạm tính; chưa khẳng định toàn đợt đạt mục tiêu. Mâu thuẫn nguồn loại nhóm khỏi khách đạt; thiếu dữ liệu hoặc nguồn/quyền đổi ẩn số; không có khách đạt không trả0đ. Cảnh báo bao phủ vẫn giữ riêng. Không migration mới.

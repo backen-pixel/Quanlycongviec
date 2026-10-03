@@ -57,6 +57,7 @@ on:
       - 'backend/tests/facebookSurveyDispatch*.js'
       - 'database/670_marketing_measurement_period.sql'
       - 'database/671_marketing_source_registry.sql'
+      - 'database/672_marketing_census_witness.sql'
       - 'database/669_crm_survey_outcomes.sql'
       - 'backend/tests/facebookSurveyOutcomes*.js'
       - 'database/668_crm_survey_handoffs.sql'

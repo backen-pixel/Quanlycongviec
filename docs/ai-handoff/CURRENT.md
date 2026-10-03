@@ -1,3 +1,11 @@
+## 2026-10-03 — Nhật ký trang dữ liệu Facebook đang kiểm chứng
+
+SQL672 thêm bằng chứng từng trang được collector chấp nhận, nguyên giao dịch với receipt/observation/cursor. Có giờ lease từ DB, chuỗi cursor đã băm, metadata whitelist, Graph version chung, ID duy nhất/lần xuất hiện và phát hiện prefix lịch sử thiếu. Summary của status cùng snapshot, không nâng kết luận bao phủ provider hoặc CPQL. [Hợp đồng và giới hạn](vpt-marketing-automation/CENSUS_WITNESS.md).
+
+Đang chờ PostgreSQL cô lập/review độc lập; không migration thật, Meta/CRM, chi tiền hoặc phát hành. Full goal ACTIVE. Kế tiếp đối soát phạm vi/bản xuất và chốt kỳ, lịch/chờ xử lý, nghiệm thu tuyến đầu.
+
+---
+
 ## Hiện hành03/10/2026 — Danh mục nguồn khách đã kiểm chứng
 
 Runtime9363535a thêm SQL671/API/editor cho phạm vi công ty/kỳ/tất cả tài khoản/Page/biểu mẫu/điểm nhận. Có revision/audit/exact retry, ngoại lệ lịch sử chưa rõ tài khoản và phát hiện cấu hình/quyền đổi. Projection cùng snapshot; không biến khai báo thành bằng chứng provider đủ hoặc quyền chi.
