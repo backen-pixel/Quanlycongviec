@@ -14,11 +14,11 @@ Checkpoint dùng các HTTP read riêng, **không giữ khóa quyền suốt giao
 
 ## Review và kiểm thử
 
-Reviewer riêng đã audit baseline và chạy bộ quyền đầu tiên. Bốn repro được sửa trong delta: Customer nguồn tác động Lead ngoài công ty; khu vực bị tắt/chuyển công ty; role NULL/rỗng; pipeline NULL bỏ qua cờ xóa. Reviewer độc lập đã chạy lại50/50 và PASS phạm vi bốn bản sửa quyền LOCAL; PostgreSQL còn chờ. Không phải PASS merge vận hành.
+Reviewer riêng đã audit baseline và chạy bộ quyền đầu tiên. Bốn repro được sửa trong delta: Customer nguồn tác động Lead ngoài công ty; khu vực bị tắt/chuyển công ty; role NULL/rỗng; pipeline NULL bỏ qua cờ xóa. Reviewer độc lập đã chạy lại50/50 và PASS phạm vi bốn bản sửa quyền LOCAL; PostgreSQL đã PASS đúng runtime bên dưới. Không phải PASS merge vận hành.
 
 Local: **50 ca mới PASS**, cộng 67 regression phone/preflight/webhook = **117 PASS, 0 FAIL, 0 SKIP**. Có test gọi route/hàm thật, ID sai, actor/tenant/company/owner/region thu hồi, read lỗi, pipeline cấm xóa, batch có nguồn không hợp lệ, request giả và cleanup không xóa cơ hội hợp lệ. Cú pháp/diff check PASS. Không có UI/model/provider call.
 
-Thêm **7 ca PostgreSQL** tại `crmLegacyMergeAccess.cases.js`, cuối bộ intake cô lập: current ownership, khác công ty cùng tenant, actor/cờ xóa bị thu hồi, Customer sai công ty, membership bị gỡ, quyền SELECT bị thu hồi và cleanup company scope. Chưa ghi là PASS trước khi đọc CI. Bộ này kiểm helper đọc quyền bằng PostgreSQL thật, **không kiểm merge nguyên tử hoặc bảo toàn lịch sử**.
+Thêm **7 ca PostgreSQL** tại `crmLegacyMergeAccess.cases.js`, cuối bộ intake cô lập: current ownership, khác công ty cùng tenant, actor/cờ xóa bị thu hồi, Customer sai công ty, membership bị gỡ, quyền SELECT bị thu hồi và cleanup company scope. Đã xác minh CI bên dưới: cả 7 ca PASS. Bộ này kiểm helper đọc quyền bằng PostgreSQL thật, **không kiểm merge nguyên tử hoặc bảo toàn lịch sử**.
 
 ## Findings bảo toàn dữ liệu còn phải khép
 
@@ -41,3 +41,16 @@ Sau đó còn creator Lead/Customer đúng công ty, dừng/chờ toàn bộ wri
 ## Hoàn tác
 
 Giữ nhánh/PR nháp và không kích hoạt tuyến mới. Không rollback bằng cách mở lại cleanup tự xóa hoặc bỏ kiểm quyền. Nếu bản này lỗi sau phát hành được duyệt, dừng thao tác merge, giữ nguồn/bằng chứng và đối soát; không xóa giao dịch hoặc mở lại quyền rộng. Không migration production trong checkpoint này.
+
+
+## Bằng chứng CI tại runtime 2cac0949
+
+Commit `2cac0949aa78bb5d281f580c55c9dfe1171e6101`, tree `cdc80123047fe7e31799dda43740303466e31c28`.
+
+- [Automation 37141807677](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37141807677): **10/10 job SUCCESS**. [Intake PostgreSQL 111257633123](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37141807677/job/111257633123): **271 PASS, 0 FAIL, 0 SKIP**, gồm 7 ca quyền mới.
+- [Node22 111257633095](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37141807677/job/111257633095): **843 + 26 + 117 PASS**, không fail/skip. Node18, các PostgreSQL regression và frontend build SUCCESS.
+- [Report 37141807634](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37141807634) và [Messenger 37141807632](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37141807632): SUCCESS.
+- Checkout CI merge `6d0af329ad6e85bfffdebafec0118e3fc7e21e26` có tree đúng runtime; parents base `e16c885ae7c2305645be02a1227bf378cb59137f` và `2cac0949` đã đối chiếu Git API.
+- Reviewer độc lập đã xác minh published helper/route blobs, cleanup không UPDATE/DELETE và tự chạy lại 50/50; đã tự đọc log CI terminal, xác minh cả 7 ca mới và kết luận **PASS checkpoint quyền/cleanup tại 2cac0949**.
+
+Kết quả này chỉ xác minh checkpoint quyền/cleanup nêu trên. Các P1 bảo toàn lịch sử, transaction và cutover vẫn OPEN/HOLD; không thay nghiệm thu triển khai thực tế hoặc Founder release.

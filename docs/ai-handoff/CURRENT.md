@@ -1,3 +1,11 @@
+## Hiện hành 04/10/2026 — Checkpoint quyền CRM đã qua PostgreSQL
+
+Runtime `2cac0949aa78bb5d281f580c55c9dfe1171e6101` kiểm actor và toàn bộ hồ sơ gộp bằng quyền hiện hành; chặn gộp Customer khác nhau chưa đủ phạm vi. Cleanup không tự xóa các cơ hội cùng khách hàng. Local 50 ca mới + 67 regression = 117/0/0; PostgreSQL 271/0/0 gồm 7 ca mới; Node22 843+26+117, cả 10 job, build/report/Messenger SUCCESS. CI merge tree khớp runtime. Reviewer độc lập đã đối chiếu published blobs và log CI, kết luận PASS đúng phạm vi quyền/cleanup.
+
+[Phạm vi, bằng chứng và findings còn mở](vpt-marketing-automation/LEGACY_CRM_MERGE_REPAIR.md). **CRM merge chưa READY**: còn giao dịch nguyên tử, receipt, bảo toàn task/tệp/chat/quyền/tiền/Project/attribution và Customer command đầy đủ. Tiếp tục khép phần này, creator company và cutover; sau đó cấu hình/nghiệm thu toàn tuyến, Founder release. Full goal ACTIVE; chưa DB thật, model/provider, chi quảng cáo hoặc phát hành.
+
+---
+
 ## Hiện hành 04/10/2026 — Đang khép quyền gộp CRM; bảo toàn lịch sử còn mở
 
 Bản làm việc trên baseline7cc7cb2 thêm kiểm actor/quyền hiện hành trên toàn bộ Lead giữ/xóa, khóa company/tenant/region, kiểm cờ xóa pipeline và chặn gộp Customer khác nhau chưa có phạm vi đầy đủ. Cleanup không còn tự xóa chỉ vì chung Customer: đọc một công ty có giới hạn, trả yêu cầu đối soát với0thay đổi. Local50ca mới+67regression=117/0/0;7ca PostgreSQL bổ sung chưa có kết quả CI ở checkpoint này.

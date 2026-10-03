@@ -314,3 +314,6 @@ Compatibility: revenue/ROAS không còn là estimate; consumers phải xử lý 
 
 
 04/10/2026: [CRM merge — quyền và findings bảo toàn](LEGACY_CRM_MERGE_REPAIR.md). Local checkpoint117/0/0; PostgreSQL/review cuối chờ. Cleanup không tự coi chung Customer là trùng. CRM merge/cutover chưa READY; full goal ACTIVE.
+
+
+Runtime 2cac0949: checkpoint quyền CRM đạt PostgreSQL 271/0/0, Node22 843+26+117, cả 10 job/build/report/Messenger SUCCESS; CI tree đã đối chiếu. [Bằng chứng và giới hạn](LEGACY_CRM_MERGE_REPAIR.md). CRM merge bảo toàn/transaction và cutover vẫn OPEN/HOLD.
