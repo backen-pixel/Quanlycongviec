@@ -12,7 +12,7 @@ Mã xác nhận và lượt gửi nằm trong schema riêng; không xuất hiệ
 
 Hàm nội bộ `crm_survey_control.book(message_id)` chỉ dùng biên nhận đã được đường tin cậy ghi vào `inbound_receipts`. Hàm đối chiếu đúng message/Page/PSID/token/hash, chờ bằng chứng SENT nếu khách xác nhận đến trước ACK, rồi kiểm lại quyền người tạo, trạng thái chăm khách, khách/người nhận, nguồn, enrollment, lịch bận và hạn xác nhận. Thay metadata hộp thư/đọc tin không làm mất hiệu lực; đổi thông tin nghiệp vụ liên quan thì phải đề xuất lại. Trạng thái từ chối cuối được lưu và replay nguyên kết quả, không làm mất nguyên nhân ban đầu.
 
-`deliveries.started_at` là mốc bắt đầu lần gửi; `sent_at` là mốc quan sát ACK, có thể sau lúc khách click. Không dùng thứ tự ACK–click để phủ nhận một xác nhận được liên kết đúng. Transport phải giữ cùng proposal/token/payload khi đối soát, không tự gửi lại nếu lần trước chưa rõ kết quả.
+`deliveries.started_at` là mốc bắt đầu lần gửi; `sent_at` là mốc quan sát ACK, có thể sau lúc khách click. Không dùng thứ tự ACK–click để phủ nhận một xác nhận được liên kết đúng. So sánh thời điểm tạo đề xuất/bắt đầu gửi ở độ chính xác mili giây của provider: cùng mili giây được chấp nhận, trước một mili giây bị từ chối. Transport phải giữ cùng proposal/token/payload khi đối soát, không tự gửi lại nếu lần trước chưa rõ kết quả.
 
 Khi hợp lệ, DB lưu trong cùng giao dịch: một event CRM, một participant là nhân viên khảo sát, tiêu thụ xác nhận, audit và hàng bàn giao PENDING. Creator của event để NULL: actor được lưu trong audit, người nhận Sales được lưu trong bàn giao; họ không tự trở thành người tham dự/bận lịch. Kết quả là `BOOKED_HANDOFF_PENDING`, chưa khẳng định người nhận đã nhận hoặc khách đã được thông báo thành công.
 
@@ -28,6 +28,6 @@ Buffer đã hứa được giữ theo booking, kể cả roster sau này giảm 
 
 ## Bằng chứng kiểm thử và hoàn tác
 
-Local có7 kiểm thử adapter; PostgreSQL/independent review được ghi khi có log đúng phiên bản. Fixture PostgreSQL owner mô phỏng riêng `deliveries` và `inbound_receipts`; đây là phép kiểm Domain, **không thay bằng chứng gửi Meta/HMAC/khách xác nhận end-to-end**. Kiểm customer metadata vs mapping, supersession, replay/từ chối, xác nhận trước ACK, hai khách tranh giờ, rollback sau event/participant/audit/handoff và expiry sau trigger chậm.
+Runtime243440d qua review độc lập PASS, local7, PostgreSQL123 (12 case mới), Node22 574 và toàn bộ10 job/full build; [bằng chứng đúng phiên bản](SURVEY_PROPOSALS_REVIEW.md). Fixture PostgreSQL owner mô phỏng riêng `deliveries` và `inbound_receipts`; đây là phép kiểm Domain, **không thay bằng chứng gửi Meta/HMAC/khách xác nhận end-to-end**. Đã kiểm customer metadata vs mapping, supersession, replay/từ chối, xác nhận trước ACK/cùng mili giây, hai khách tranh giờ, rollback sau event/participant/audit/handoff và expiry sau trigger chậm.
 
 Chưa chạy migration thật, enrollment thật, gửi tin hoặc đặt lịch thật. Hoàn tác ưu tiên dừng tiếp nhận lệnh mới, giữ proposal/receipt/booking/handoff/audit, đối soát rồi bàn giao quyền ghi; không xóa giao dịch hoặc mở lại writer cũ khi còn booking được bảo vệ. Mục tiêu toàn bộ vẫn ACTIVE.
