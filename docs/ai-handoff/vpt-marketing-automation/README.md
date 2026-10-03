@@ -1,3 +1,15 @@
+## Hiện hành 03/10/2026 — Thông báo kết quả khảo sát đã kiểm thử
+
+Candidate44d80b1 bổ sung outbox nguyên giao dịch với booking/từ chối nghiệp vụ, thông báo kết quả đúng lịch và hàng rào gửi chung với đề xuất. Không lấy receipt BLOCKED làm kết quả “chưa đặt lịch”; không gửi lại sau mất phản hồi. STOP/tiếp quản giữ nguyên, bằng chứng booking/handoff không bị xóa khi lỗi gửi.
+
+Review độc lập PASS; PostgreSQL199 (20 case outcome mới), Node22 618, cả10 job/full build và regression PASS. [Bằng chứng đúng phiên bản](SURVEY_OUTCOMES_REVIEW.md), [contract và giới hạn](SURVEY_OUTCOMES.md).
+
+Mặc định tắt, chưa Meta/CRM thật/UAT/phát hành. Còn UI đề xuất/ngoại lệ, hủy/đổi và writer lịch cũ, nội dung/nhân sự/lịch thật, nguồn–chi tiêu và CPQL đầy đủ, hiệu năng/khôi phục. Tiếp theo ưu tiên đối soát khách–chi phí và chuẩn bị nghiệm thu Facebook→CRM→dashboard. Chưa chứng minh250.000đ/khách; full goal ACTIVE, không mở đợt chi.
+
+Các mục sau giữ lịch sử theo phiên bản.
+
+---
+
 ## Hiện hành 03/10/2026 — Bàn giao khảo sát đã kiểm thử
 
 Runtimea35deef4 thêm màn hình CRM cho nhân viên nhận hồ sơ, queue/chỉ số chờ nhận, hội thoại đầy đủ và ACK đúng người nhận hiện hành. Sales owner/admin theo dõi, không ký thay. Receipt/audit nguyên giao dịch; replay sau mất phản hồi kiểm quyền mới; lịch khách xác nhận, staff ACK và trạng thái chăm khách được giữ riêng.

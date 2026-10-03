@@ -20,7 +20,7 @@ Echo outcome có namespace riêng, khớp Page/PSID/công ty/app/attempt/nội d
 
 ## Kiểm chứng và hoàn tác
 
-Local51 test worker/parser PASS. PostgreSQL cô lập và kết luận review mã cuối đang chờ; không gọi đây là nghiệm thu vận hành. Các case bao gồm nguyên giao dịch booking/outbox, bấm lặp, receipt sai sau booking, expiry độc lập, quyền/STOP/lịch thay đổi, hai claim đồng thời, mất phản hồi/late ACK, echo replay, enrollment/credential và hàng rào hai chiều.
+Local51 test worker/parser PASS. Candidate44d80b1: PostgreSQL199, Node22 618, cả10 job/full build và regression PASS; review độc lập PASS. [Bằng chứng đúng phiên bản](SURVEY_OUTCOMES_REVIEW.md). Đây chưa là nghiệm thu vận hành. Các case bao gồm nguyên giao dịch booking/outbox, bấm lặp, receipt sai sau booking, expiry độc lập, quyền/STOP/lịch thay đổi, hai claim đồng thời, mất phản hồi/late ACK, echo replay, enrollment/credential và hàng rào hai chiều.
 
 Hoàn tác vận hành: tắt OUTCOMES trước, giữ nguyên lịch, outbox/attempt và bằng chứng; không reset UNCERTAIN hoặc xóa giao dịch. Phải đối soát các attempt đang gửi trước khi mở lại. Không rollback SQL bằng xóa bảng hoặc nới quyền. Việc thu hồi quyền sau thời điểm claim không thể thu hồi HTTP đã bắt đầu; claim commit là điểm cấp quyền gửi, worker kiểm lại cờ và deadline ngay trước POST.
 

@@ -1,3 +1,15 @@
+## Hiện hành 03/10/2026 — Thông báo kết quả khảo sát đã kiểm thử
+
+Candidate44d80b1 bổ sung outbox nguyên giao dịch với booking/từ chối nghiệp vụ, thông báo kết quả đúng lịch và hàng rào gửi chung với đề xuất. Không lấy receipt BLOCKED làm kết quả “chưa đặt lịch”; không gửi lại sau mất phản hồi. STOP/tiếp quản giữ nguyên, bằng chứng booking/handoff không bị xóa khi lỗi gửi.
+
+Review độc lập PASS; PostgreSQL199 (20 case outcome mới), Node22 618, cả10 job/full build và regression PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/SURVEY_OUTCOMES_REVIEW.md), [contract và giới hạn](vpt-marketing-automation/SURVEY_OUTCOMES.md).
+
+Mặc định tắt, chưa Meta/CRM thật/UAT/phát hành. Còn UI đề xuất/ngoại lệ, hủy/đổi và writer lịch cũ, nội dung/nhân sự/lịch thật, nguồn–chi tiêu và CPQL đầy đủ, hiệu năng/khôi phục. Tiếp theo ưu tiên đối soát khách–chi phí và chuẩn bị nghiệm thu Facebook→CRM→dashboard. Chưa chứng minh250.000đ/khách; full goal ACTIVE, không mở đợt chi.
+
+Các mục sau giữ lịch sử theo phiên bản.
+
+---
+
 ## 2026-10-03 — Clarify STOP outcome evidence
 
 Follow-up1647479 passed9 jobs and fixed the obsolete-option case. PG111132283592 (CI37098181276) failed only the new STOP assertion: SQL665 retains a rejected confirmation and SQL669 retains its NOT_BOOKED intent; absence of an intent is not the STOP contract. The case now proves no booking, no provider POST, sticky OPTED_OUT and terminal HELD intent. Runtime SQL/worker remain unchanged. Revalidation pending, no live actions.
