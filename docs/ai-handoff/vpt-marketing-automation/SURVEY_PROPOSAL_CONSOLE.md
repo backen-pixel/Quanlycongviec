@@ -18,7 +18,7 @@ Giờ nhập theo Việt Nam. Option có hạn kiểm tra và không giữ chỗ
 Chuyển người/thread, unmount hoặc StrictMode vô hiệu hóa phản hồi cũ. Tải lỗi xóa dữ liệu cũ; STOP/takeover khóa đề xuất mới nhưng giữ lịch sử và khả năng đối chiếu yêu cầu cũ. HTTP40001 chỉ trả STALE_OPTION sau giao dịch rollback; UUID xung đột không được tự xóa.
 
 ## Kiểm chứng
-Local30 ca liên quan PASS; 14 ca mới cho phép chiếu/phạm vi/quyền/cờ/giờ Việt Nam/request bất biến. SQL fixture gồm8 ca mới: migration hai lần, grant nhầm, helper private, booking/outcomes, Lead/customer/contact/Page drift, STOP, uncertain barrier, snapshot đồng thời, thu hồi quyền. CI PostgreSQL16 và browser component thật/API giả chưa kết luận cho tới hồ sơ bằng chứng riêng.
+Local30 ca liên quan PASS; 14 ca mới cho phép chiếu/phạm vi/quyền/cờ/giờ Việt Nam/request bất biến. SQL fixture gồm8 ca mới: migration hai lần, grant nhầm, helper private, booking/outcomes, Lead/customer/contact/Page drift, STOP, uncertain barrier, snapshot đồng thời, thu hồi quyền. CI PostgreSQL16 đạt222/0/0, Node22 đạt842/0/0, cả10job/build và regression PASS. Review độc lập PASS; browser component thật/API giả đã kiểm StrictMode, retry/reload, STOP, phạm vi, TTL và lỗi nguồn. [Bằng chứng đúng phiên bản và giới hạn](SURVEY_PROPOSAL_CONSOLE_REVIEW.md).
 
 ## Hoàn tác / phát hành
 Ngừng cờ console để khóa đọc màn hình; nếu cần ngừng đề xuất mới, tắt cờ proposal và worker tương ứng trong gói vận hành đã duyệt. Giữ SQL679 kiểm quyền an toàn, receipt, audit và giao dịch đã tạo; không xóa dữ liệu hay khôi phục quyền cũ. Không mở DB thật, enrollment, AI provider hoặc Meta trong thay đổi này.

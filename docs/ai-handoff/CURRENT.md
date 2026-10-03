@@ -1,3 +1,13 @@
+## Hiện hành 03/10/2026 — Đề xuất lịch đã kiểm chứng
+
+Bản46c680b hoàn thiện màn hình chọn giờ trống, tạo đề xuất và đối chiếu yêu cầu cũ qua tải lại; lịch sử tách đề xuất/gửi/đặt/thông báo. Tin chưa rõ kết quả chặn tạo mới; quyền và liên kết khách được kiểm lại, STOP không tự mở chăm sóc.
+
+Review độc lập PASS; local30, intake PostgreSQL222/0/0, census88/0/0 +HTTP1/0/0, Node22 842/0/0, cả10job/build/report/Messenger SUCCESS. Browser StrictMode/API giả đã kiểm mất phản hồi, reload, STOP, phạm vi, TTL và phản hồi muộn. [Bằng chứng](vpt-marketing-automation/SURVEY_PROPOSAL_CONSOLE_REVIEW.md), [hợp đồng/hoàn tác](vpt-marketing-automation/SURVEY_PROPOSAL_CONSOLE.md).
+
+Full goal ACTIVE. Tiếp theo nghiệm thu xuyên tuyến Facebook→CRM→khảo sát→dashboard, hoàn thiện ngoại lệ gửi/lịch và chuyển đường lịch cũ; cấu hình AI/lịch/người nhận, điểm nhận khác, khôi phục và Founder release còn chờ. Chưa dữ liệu thật đạt250k hoặc phát hành. Các mục dưới là lịch sử.
+
+---
+
 ## 03/10/2026 — Đề xuất lịch qua kiểm dữ liệu; sửa bộ quan sát kiểm thử
 
 Runtime963e862 đạt intake PostgreSQL222/0/0 (8ca mới), Node22 842/0/0 và build. Census regression cũ thất bại vì observer trong transaction giữ snapshot pg_stat_activity; thêm pg_stat_clear_snapshot trước mỗi poll và thời hạn5 giây, giữ nguyên điều kiện Lock cùng assertion không ghi. Không đổi runtime hoặc quyền. Browser StrictMode và mất phản hồi/reload/retry đã xác nhận hoạt động; đang hoàn tất CI/review. Full goal ACTIVE, chưa UAT/phát hành.
