@@ -1,3 +1,13 @@
+## Hiện hành 03/10/2026 — Dashboard tư vấn/khảo sát đã kiểm chứng
+
+Runtime9c317310 thêm SQL673/API/UI báo cáo toàn công ty: nhóm cần xử lý, hội thoại, lịch sắp tới/trong giờ/qua giờ, bàn giao và ngoại lệ. Hai P2 về lịch NULL/infinity và union CARE+SURVEY đã sửa. STOP giữ nghĩa vụ khảo sát; ACK chưa phải hoàn tất. Chưa quy thuộc lịch theo kỳ quảng cáo.
+
+Review độc lập PASS; local24, PostgreSQL208/0/0 (9ca mới), Node22 721/0/0, cả10job/build và report/Messenger SUCCESS. Browser API giả kiểm lỗi nguồn/scope, STOP, lịch đổi, identity, đổi công ty/người và phản hồi muộn. [Bằng chứng đúng phiên bản](vpt-marketing-automation/OPERATIONS_DASHBOARD_REVIEW.md), [hợp đồng/hoàn tác](vpt-marketing-automation/OPERATIONS_DASHBOARD.md).
+
+Full goal ACTIVE. Tiếp theo đối soát đủ phạm vi/ID/chi tiêu/khách và chốt kỳ đo, hoàn thiện ngoại lệ vận hành rồi UAT tuyến Facebook→CRM→dashboard và trình Founder phát hành. Chưa dữ liệu thật chứng minh250k hoặc phát hành. Các mục bên dưới giữ lịch sử.
+
+---
+
 ## 2026-10-03 — Sửa ngoại lệ lịch và tổng nhóm cần xử lý
 
 Review độc lập tìm hai lỗi trong dashboard mới: lịch đã đổi nhưng thiếu giờ kết thúc làm báo cáo lỗi; tổng nhóm cần xử lý bỏ sót việc khảo sát khi hội thoại đã trả lời. Đã đưa lịch thay đổi vào ngoại lệ trước kiểm thời gian và gộp cả việc chăm khách lẫn khảo sát vào tổng nhóm. Local24 PASS, reviewer đã kiểm lại hai lỗi.

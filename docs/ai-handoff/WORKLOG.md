@@ -1,3 +1,7 @@
+## 2026-10-03 — Operations dashboard closure
+
+Runtime9c317310, treea708cac6; review độc lập PASS local24. Automation37109400042 all10 SUCCESS; intakePG111164221888=208/0/0; Node22 111164221873=721/0/0; frontend111164221891=10316modules/30.12s. Merge3d0e84813352f4c330861e59381cbd9310648612 có cùng tree, parentcandidate+basee16c885. Report37109400035/Messenger37109400033SUCCESS. Tác giả kiểm browser component thật/API giả8tình huống, đóng tab/server. Hồ sơ OPERATIONS_DASHBOARD_REVIEW.md giữ cả failurecandidate551046c và giới hạn CSS giản lược. Docs-only closure, full goalACTIVE, không live effects.
+
 ## 2026-10-03 — Operations dashboard: đóng hai phát hiện review
 
 Sửa projection để lịch changed/thiếu end_time là ngoại lệ thay vì gây503; unique waiting bao gồm union CARE+SURVEY, STOP vẫn giữ booking. Ràng buộc booking vào thread cùng lead/scope. Local24 PASS. Candidate551046c PostgreSQL chỉ lỗi3 assertion mới về vị trí trong danh sách50; đổi sang kiểm biến động aggregate, thêm NULL/infinity. Chờ CI/browser/review cuối, không thay production hoặc mở quyền.
