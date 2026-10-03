@@ -1,3 +1,13 @@
+## Hiện hành 03/10/2026 — Đã kiểm thử mốc đo tiền và khách
+
+Candidate5076b2a dùng cùng kỳ ngày Việt Nam hoàn tất cho chi tiêu và khách; khôi phục khách bị sót vẫn đến lúc bắt đầu quét, kể cả ngày đầu. Giữ metadata ngoài kỳ để đối soát webhook tới muộn, không bỏ mâu thuẫn nguồn. Dashboard tách mốc khôi phục/mốc đo và không hiển thị số0 khi chưa có ngày hoàn tất.
+
+Review độc lập PASS trong phạm vi này. Census PostgreSQL26, trial PostgreSQL13, Node22 643, cả10 job/build và report/Messenger regressions PASS; local143 PASS. Browser bằng API giả đã kiểm kỳ đo, ngày đầu, mâu thuẫn và lỗi nguồn. [Bằng chứng đúng phiên bản](MEASUREMENT_PERIOD_REVIEW.md), [hợp đồng](MEASUREMENT_PERIOD.md).
+
+Tiếp theo phải hoàn thiện registry phạm vi + provider coverage và close có bằng chứng để tính CPQL, nối lịch/chờ xử lý vào dashboard, rồi UAT và gói phát hành. Chưa chứng minh250.000đ/khách, chưa Meta/CRM thật; full goal ACTIVE. Các mục dưới đây là lịch sử theo phiên bản.
+
+---
+
 ## Continuation: Facebook source integration, 02/10/2026
 
 See [SPEND_INTEGRATION.md](SPEND_INTEGRATION.md) for the current integration and remaining gates. Local221 tests PASS. Implementation94528fa: isolated PostgreSQL16 spend10PASS/0SKIP, original command PostgreSQL PASS, Node18/22 PASS, whole frontend Vite build PASS; supported synthetic browser PASS and independent code review PASS (218 independently rerun). See [SPEND_REVIEW.md](SPEND_REVIEW.md) and [CI36983657392](https://github.com/backen-pixel/Quanlycongviec/actions/runs/36983657392). Closing UI date guard/evidence commit must be checked on its own head. Earlier results below remain historical. Full objective is IN PROGRESS; no release or actual CPQL claim.
