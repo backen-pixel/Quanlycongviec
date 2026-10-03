@@ -28,7 +28,7 @@ UI lưu request metadata + hash theo actor/company/trial trong sessionStorage tr
 
 ## Kiểm thử và triển khai
 
-Đang kiểm chứng runtime mới. Unit parser/service: bytes/hash, UTF-16LE, quoting, long IDs, timezone, precision loss, duplicate, empty, bounds, quyền/primary và response sai scope. PostgreSQL cô lập: migration hai lần, quyền kể cả broad grant, measured/traversal cutoff, same-count/different-ID, form/time conflict, duplicate/cutoff, empty, concurrent retry, current permissions, late receipt và scope đổi khi đợi khóa. Browser chỉ dữ liệu giả; chưa nghiệm thu tệp từ tài khoản thật hoặc toàn trang production.
+Runtime920e66bc đã qua review độc lập PASS; local24, PostgreSQL60 và HTTP1 đều không fail/skip; Node22 745 và cả10job/build thành công. Unit parser/service kiểm bytes/hash, UTF-16LE, quoting, long IDs, timezone, precision loss, duplicate, empty, bounds, quyền/primary và response sai scope. PostgreSQL cô lập kiểm migration hai lần, quyền kể cả broad grant, measured/traversal cutoff, same-count/different-ID, form/time conflict, duplicate/cutoff, empty, concurrent retry, current permissions, late receipt và scope đổi khi đợi khóa. Browser chỉ dữ liệu giả; chưa nghiệm thu tệp từ tài khoản thật hoặc toàn trang production. [Bằng chứng đúng phiên bản](SOURCE_EXPORT_REVIEW.md).
 
 Không migrate/đọc Meta thật, không gửi khách, không bật chi/phát hành. Hoàn tác bằng tắt flag source export, giữ evidence/audit và tất cả giao dịch CRM. Không drop hoặc đổi quyền cũ.
 

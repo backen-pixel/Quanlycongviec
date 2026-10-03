@@ -1,3 +1,7 @@
+## 2026-10-03 — Source export closure
+
+Runtime920e66bc tree dbb986a3; reviewer độc lập PASS local24. Automation37112179618 all10SUCCESS; census111172074851 PG60/0/0 +HTTP1/0/0; Node22 111172074887=745/0/0; build111172074765=10318modules/28.97s. Report37112179600/Messenger37112179556SUCCESS. Merge1ced58499b20ad255f6555cde077afec5608af0d có cùng tree, parentruntime+basee16c885. Browser tác giả kiểm lost-response/reload/stale/retry/sourceerror; tab/server đóng. Hồ sơ SOURCE_EXPORT_REVIEW.md; closure chỉdocs, full goalACTIVE, chưa Meta/UAT/phát hành/CPQLđầyđủ.
+
 ## 2026-10-03 — Source export: kiểm biên nhận lịch sử và giới hạn HTTP
 
 Candidate36793fbc cả10jobSUCCESS, censusPG59/0/0, Node22 743/0/0, frontend10.318module. Review backend/SQLPASS. Follow-up: UI ghi rõ biên nhận sau replay là lịch sử, reset đọc tệp khi reload; thêm kiểm Express2mb nhận CSV1MiB và từ chối thêm1byte, thêm barrier PG khi receipt tới sau comparison nhưng trước append. Local24PASS; browser lost-response→reload→stale đang kiểm. Chưa phát hành/đủnguồn/CPQL, full goalACTIVE.

@@ -1,3 +1,13 @@
+## Hiện hành 03/10/2026 — Đối soát bản xuất nguồn đã kiểm chứng
+
+Runtime920e66bc nối SQL674/API/UI để so CSV với tập mã/time/form đã quét đúng kỳ, giữ bằng chứng và audit bất biến. Dòng ngoài kỳ/trùng/mâu thuẫn/rỗng có trạng thái riêng; receipt mới hoặc nguồn đổi làm trạng thái cần rà lại. Server hash bytes và loại cột PII trước DB; UI giữ metadata/hash để retry và phân biệt biên nhận lịch sử với kết quả hiện hành.
+
+Review độc lập PASS; local24, PostgreSQL60/0/0 (10ca mới), HTTP1/0/0, Node22 745/0/0, cả10job/fullbuild/report/Messenger SUCCESS. Browser component thật/API giả kiểm tệp, mất phản hồi, reload, stale, exact retry và lỗi nguồn. [Bằng chứng đúng phiên bản](vpt-marketing-automation/SOURCE_EXPORT_REVIEW.md), [hợp đồng/hoàn tác](vpt-marketing-automation/SOURCE_EXPORT.md).
+
+Full goal ACTIVE. Kế tiếp hoàn thiện provenance/phạm vi thực và bản chốt phép đo với spend/identity/qualification/attribution/asOf; fingerprint hiện bảo thủ cần tinh chỉnh. Nối các nguồn khác, hoàn thiện ngoại lệ vận hành, UAT và trình Founder phát hành. MATCHED không chứng nhận đủ nguồn, đạt250k hoặc mở chi. Các mục dưới giữ lịch sử.
+
+---
+
 ## 2026-10-03 — Source export: kiểm biên nhận lịch sử và giới hạn HTTP
 
 Candidate36793fbc cả10jobSUCCESS, censusPG59/0/0, Node22 743/0/0, frontend10.318module. Review backend/SQLPASS. Follow-up: UI ghi rõ biên nhận sau replay là lịch sử, reset đọc tệp khi reload; thêm kiểm Express2mb nhận CSV1MiB và từ chối thêm1byte, thêm barrier PG khi receipt tới sau comparison nhưng trước append. Local24PASS; browser lost-response→reload→stale đang kiểm. Chưa phát hành/đủnguồn/CPQL, full goalACTIVE.
