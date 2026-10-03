@@ -5,6 +5,7 @@ import ObservedLeadCost from './ObservedLeadCost';
 import SourceRegistry from './SourceRegistry';
 import SourceExport from './SourceExport';
 import MeasurementSnapshot from './MeasurementSnapshot';
+import AccountDelivery from './AccountDelivery';
 import { observedCpqlResult } from './observedCpqlState.mjs';
 const button='rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:opacity-50';
 const money=n=>Number.isFinite(n)?`${n.toLocaleString('vi-VN')} đ`:'Chưa đủ dữ liệu';
@@ -55,6 +56,7 @@ function Trial({companyId,actorId}){
     {result.period?.status==='AVAILABLE'?<p className="text-sm text-slate-600">Tiền và khách dưới đây cùng tính từ {result.period.since} đến hết {result.period.until} theo giờ Việt Nam. Chất lượng khách được kiểm tra theo hồ sơ hiện tại.</p>:<p role="status" className="text-sm text-amber-800">Kỳ này chưa có ngày hoàn tất để đối chiếu tiền và khách.</p>}
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[['Tiền đã chi trong kỳ đối chiếu',result.spend?.status==='KNOWN_TO_DATE'?money(result.spend.spendVnd):'Chưa đủ dữ liệu'],['Khách đã xác minh',result.observed?.qualified],['Khách chờ xác minh',result.observed?.pending],['Nhóm cần đối soát',result.observed?.unresolved]].map(([label,value])=><div key={label} className="rounded-lg bg-slate-50 p-3"><p className="text-sm text-slate-600">{label}</p><p className="mt-1 text-xl font-semibold">{result.period?.status==='AVAILABLE'?(value??'Chưa đủ dữ liệu'):'Chưa có ngày hoàn tất'}</p></div>)}</div>
     <ObservedLeadCost report={result}/>
+    <AccountDelivery report={result.accountDelivery}/>
     <SourceRegistry key={result.trial.id} actorId={actorId} companyId={companyId} trialId={result.trial.id} summary={result.sourceRegistry} onRefresh={()=>setReload(n=>n+1)}/>
     <FacebookSourceRecovery key={result.trial.id} companyId={companyId} trialId={result.trial.id} reconciliation={result.reconciliation} pendingRequests={recoveryRequests.current} onBusy={setRecovering} onRefresh={()=>setReload(n=>n+1)} disabled={loading||saving||uncertain}/>
     <SourceExport companyId={companyId} actorId={actorId} trialId={result.trial.id}/>

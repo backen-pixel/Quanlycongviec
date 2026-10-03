@@ -1,3 +1,10 @@
+## 03/10/2026 — Đối soát quảng cáo đã phân phối đang kiểm chứng
+
+SQL676 nối collector ad/day và account daily/all_days trước/sau vào cùng lần lưu chi tiêu. Dashboard giữ cả quảng cáo chi bằng0 có tín hiệu và mã ad từ hồ sơ khách chưa thấy trong delivery; không dùng creative hiện tại để xác nhận đích lịch sử. Quyền hiện hành, retry bất biến và rollback nguyên giao dịch vẫn bắt buộc.
+
+Local17ca mới và79ca liên quan PASS. PostgreSQL/build/review độc lập đang chạy. [Hợp đồng, giới hạn và bước đi thẳng tới chấp nhận phạm vi/CPQL](vpt-marketing-automation/ACCOUNT_DELIVERY.md). Full goal ACTIVE. Chưa full CPQL/đạt250k, không tác động Meta/DB thật hoặc phát hành. Các mục dưới giữ lịch sử.
+
+---
 ## Hiện hành03/10/2026 — Bản lưu kết quả đo đã kiểm chứng
 
 Runtimead841ff SQL675/API/UI giữ số tiền/khách, cutoff/asOf, dependencies và nghĩa vụ còn thiếu theo account/Page/form/entrypoint. Lịch sử bất biến, retry không tạo bản mới, dữ liệu đổi được báo riêng; bỏ lease/retry và receipt đã chứng minh ngoài kỳ khỏi fingerprint liên quan. Đây là SAVED_OBSERVED_INCOMPLETE, chưa full measurement close/CPQL hoặc đạt250k.

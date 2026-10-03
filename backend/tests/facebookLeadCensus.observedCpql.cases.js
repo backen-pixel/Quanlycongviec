@@ -58,6 +58,7 @@ module.exports = async (t, { db, peers, query, tenant }) => {
     assert.equal(r.targetMetToDate, false); assert.equal(r.costPerQualifiedLeadVnd, null); assert.equal(r.allowBudgetExecution, false);
   });
   await require('./marketingAutomation.measurementSnapshot.cases')(t,{db,peers,query,cid,actor,trial,leads,qualify,date});
+  await require('./marketingAutomation.accountDelivery.cases')(t,{db,peers,query,cid,actor,trial,date});
   await t.test('provisional quotient and qualification use the same SQL snapshot during concurrent rejection', async () => {
     const original = (await db.query("SELECT pg_get_functiondef('marketing_trial_quality_context(jsonb,jsonb,jsonb,jsonb,jsonb,boolean,jsonb)'::regprocedure) d")).rows[0].d;
     await db.query(original.replace(/BEGIN\r?\n/, 'BEGIN\n PERFORM pg_sleep(0.08);\n'));
