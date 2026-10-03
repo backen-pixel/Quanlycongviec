@@ -1,3 +1,9 @@
+## 2026-10-03 — Source export: kiểm biên nhận lịch sử và giới hạn HTTP
+
+Candidate36793fbc cả10jobSUCCESS, censusPG59/0/0, Node22 743/0/0, frontend10.318module. Review backend/SQLPASS. Follow-up: UI ghi rõ biên nhận sau replay là lịch sử, reset đọc tệp khi reload; thêm kiểm Express2mb nhận CSV1MiB và từ chối thêm1byte, thêm barrier PG khi receipt tới sau comparison nhưng trước append. Local24PASS; browser lost-response→reload→stale đang kiểm. Chưa phát hành/đủnguồn/CPQL, full goalACTIVE.
+
+---
+
 ## 2026-10-03 — Đối soát bản xuất nguồn đang kiểm chứng
 
 SQL674 nối witness và digest tuple đúng cutoff vào snapshot, thêm so sánh CSV nguồn với tập quét theo ID/time/form, append-only evidence+audit, replay và invalidation khi receipt/source/phạm vi đổi. Server hash bytes, bỏ cột PII trước DB; UI chỉ giữmetadata/hash để retry. Local22 PASS; đang chờ PostgreSQL/browser/review. [Hợp đồng/hoàn tác](vpt-marketing-automation/SOURCE_EXPORT.md). MATCHED không là completeness/CPQL/quyền chi. Full goalACTIVE, chưa live effects.

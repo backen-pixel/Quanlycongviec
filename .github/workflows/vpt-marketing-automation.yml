@@ -312,8 +312,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --prefix "$RUNNER_TEMP/vpt-pg" --ignore-scripts --no-audit --no-fund pg@8.19.0
+      - run: npm install --prefix "$RUNNER_TEMP/vpt-pg" --ignore-scripts --no-audit --no-fund pg@8.19.0 express@5.2.1
       - name: Provider enumeration, crash recovery, intake and scope concurrency
         env:
           FB_CENSUS_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/fb_census_test
         run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/facebookLeadCensus.postgres.test.js
+
+      - name: Source export HTTP body limit
+        run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/marketingAutomation.sourceExport.http.test.js

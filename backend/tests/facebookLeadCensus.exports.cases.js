@@ -56,4 +56,11 @@ module.exports=async(t,{db,peers,query})=>{
   try{let blocked=false;for(let n=0;n<100;n++){const result=await db.query("SELECT count(*)::int n FROM pg_stat_activity WHERE state='active' AND wait_event_type='Lock' AND query LIKE 'SELECT marketing_source_export_record%' ");if(result.rows[0].n){blocked=true;break;}await new Promise(resolve=>setTimeout(resolve,5));}assert.ok(blocked);await db.query("UPDATE facebook_pages SET access_token='changed-during-export' WHERE page_id='674'");}finally{await db.query('COMMIT');}
   try{assert.equal((await pending).e?.code,'40001');assert.equal((await db.query('SELECT count(*)::int n FROM marketing_measurement.source_exports WHERE request_id=$1',[key])).rows[0].n,0);}finally{await db.query("UPDATE facebook_pages SET access_token='export-synthetic-private-token' WHERE page_id='674'");}
  });
+ await t.test('late receipt committed after comparison but before evidence append aborts the whole save',async()=>{
+  const c=await command(),key=randomUUID();await db.query("CREATE FUNCTION public.export_test_barrier() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_advisory_lock(674012);PERFORM pg_advisory_unlock(674012);RETURN NEW;END $$;CREATE TRIGGER export_test_barrier BEFORE INSERT ON marketing_measurement.source_exports FOR EACH ROW EXECUTE FUNCTION public.export_test_barrier()");
+  await db.query('SELECT pg_advisory_lock(674012)');const pending=save(c,key,actor,peers[1]).then(v=>({v}),e=>({e}));
+  try{let blocked=false;for(let n=0;n<100;n++){if((await db.query("SELECT count(*)::int n FROM pg_stat_activity WHERE state='active' AND wait_event_type='Lock' AND query LIKE 'SELECT marketing_source_export_record%' ")).rows[0].n){blocked=true;break;}await new Promise(resolve=>setTimeout(resolve,5));}assert.ok(blocked);await query('marketing_fb_lead_enqueue',[JSON.stringify([{pageId:'674',formId:'675',leadgenId:'674998'}]),'b'.repeat(64)],peers[2]);}
+  finally{await db.query('SELECT pg_advisory_unlock(674012)');}
+  try{assert.equal((await pending).e?.code,'40001');assert.equal((await db.query('SELECT count(*)::int n FROM marketing_measurement.source_exports WHERE request_id=$1',[key])).rows[0].n,0);}finally{await db.query('DROP TRIGGER export_test_barrier ON marketing_measurement.source_exports;DROP FUNCTION public.export_test_barrier()');}
+ });
 };

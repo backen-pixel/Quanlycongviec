@@ -20,6 +20,8 @@ Một hàng append-only là cả lệnh đã chuẩn hóa, audit, người/phạ
 
 contextVersion lấy registry+census+witness+digest receipt/source cùng một SELECT STABLE. Receipt mới ở form cũ hoặc nguồn/receipt đổi làm trạng thái hiện hành cần đối soát lại. Kiểm trước ghi và cuối transaction; khóa trial/registry hiện có. Không tuyên bố khóa phantom của mọi legacy writer; một thay đổi commit sau snapshot được phát hiện ở lần đọc kế tiếp. Đây là version nguồn, chưa là version identity/qualification/spend để chốt CPQL.
 
+Digest receipt/source hiện bao gồm mọi hàng của công ty và cả trạng thái xử lý kỹ thuật. Vì vậy khách ngoài kỳ hoặc lease thay đổi cũng có thể yêu cầu rà lại; đây là invalidation bảo thủ cho cầu nối đối soát. Trước close cuối phải giới hạn fingerprint vào dữ liệu nghiệp vụ liên quan đến kỳ và các hồ sơ chưa rõ thời điểm, không dùng nhiễu retry làm thay đổi kết luận lịch sử.
+
 Request ID toàn cục, compare người/công ty/kỳ/toàn bộ command khi retry; hiện hành phải còn quyền. Exact replay trả thời điểm/kết quả lịch sử cũ, không làm mới chứng cứ; sau thay cấu hình vẫn đọc trạng thái CURRENT/STALE_CONTEXT/STALE_AUTHORITY riêng. Thay nhân sự không sửa lịch sử. Không dùng TTL6h để xóa kết quả đã ghi.
 
 UI lưu request metadata + hash theo actor/company/trial trong sessionStorage trước POST; không lưu nội dung tệp. Mất phản hồi hoặc reload cần chọn lại cùng bytes, giữ request/context/metadata cũ. Đổi scope hủy hiệu lực phản hồi cũ. Xóa summary trước POST/read và khi lỗi; success hiển thị biên nhận lịch sử, cần tải lại để xem trạng thái hiện hành. Storage lỗi chặn POST trước gửi.
