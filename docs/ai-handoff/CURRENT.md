@@ -1,3 +1,9 @@
+## 2026-10-03 — Đóng danh mục trong lúc gửi
+
+2d53b5 đạt cả10job, gồm barrier PostgreSQL active/Lock/PgSleep. Review tiếp phát hiện khi đóng editor lúc POST chờ thì summary có thể còn cũ. Đã xóa summary trước POST; browser held-response/close/reopen/retry kiểm đúng phiên bản2 và không khôi phục kết luận cũ. Bản UI sửa cần CI/review cuối; không đổi SQL.
+
+---
+
 ## 2026-10-03 — Danh mục nguồn đã qua PostgreSQL; chốt kiểm chứng cuối
 
 Runtime50a0e14: review độc lập PASS; automation37104975047 cả10job SUCCESS, censusPG41/0/0, Node22 697/0/0, build10.314module; report/Messenger SUCCESS. UI thử đã kiểm lưu, nguồn mới, mất phản hồi/reload/đổi người/retry, lỗi nguồn và thay cấu hình. Có delta cuối: xóa summary cũ khi read lỗi/save và siết test chờ thành active + Lock/PgSleep; đang chạy lại đúng phiên bản. [Kiểm giao diện](vpt-marketing-automation/SOURCE_REGISTRY_BROWSER.md). Full goal ACTIVE, chưa provider đủ/CPQL/UAT/phát hành.

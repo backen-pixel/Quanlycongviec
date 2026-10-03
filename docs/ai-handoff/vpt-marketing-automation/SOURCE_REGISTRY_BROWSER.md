@@ -11,4 +11,6 @@ Ngày03/10/2026, root dùng trình duyệt được hỗ trợ (IAB tab20), loca
 5. Lỗi nguồn503 trên bản sửa: cả summary xác nhận và editor cũ được ẩn, có thông báo lỗi và tải lại.
 6. Cấu hình thay đổi: hiện cảnh báo cần rà lại và tài khoản khác kỳ đo; editor vẫn hiển thị hồ sơ để người có quyền đối chiếu. Không có nút mở/tăng quảng cáo.
 
-Trạng thái khi đổi kịch bản được remount; kiểm đổi người sau pending và reload đã thực hiện thật qua UI. Chưa kiểm browser response-race độc lập với server, chưa chứng minh Meta pagination/lead coverage hoặc nối hệ thống thật. Bằng chứng concurrency SQL được chạy riêng trong PostgreSQL, không thay bằng mock.
+7. Reviewer phát hiện đóng editor trong lúc POST chờ có thể giữ summary cũ. Đã xóa summary ngay sau lưu pending và trước POST. Tab21 kiểm bản sửa với mock giữ phản hồi: CURRENT → bấm lưu → summary chưa xác nhận → đóng editor → thả phản hồi → vẫn chưa xác nhận; mở lại thấy pending và retry trả đúng phiên bản2. Không tự lấy phản hồi muộn của editor đã đóng để khẳng định trạng thái mới.
+
+Trạng thái khi đổi kịch bản được remount; kiểm đổi người sau pending, reload và held-POST/close đã thực hiện thật qua UI. Chưa chứng minh mọi response-race, Meta pagination/lead coverage hoặc nối hệ thống thật. Bằng chứng concurrency SQL được chạy riêng trong PostgreSQL, không thay bằng mock. Cả tab20/21 đã đóng và server cục bộ đã dừng sau kiểm tra.

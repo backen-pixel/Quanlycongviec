@@ -49,7 +49,7 @@ function Editor({ actor, company, trial, onRefresh, onSummary }) {
     if (!request) return;
     await perform(async current => {
       try { pendingSave(sessionStorage, actor, company, trial, request); } catch { setStorageError('Không lưu được yêu cầu an toàn. Chưa gửi xác nhận.'); return; }
-      setPending(request); setReceipt(null);
+      setPending(request); setReceipt(null); onSummary(null);
       try {
         const { data } = await api.post(url, request, { params: { company_id: company }, timeout: 20000 }); if (!current()) return;
         const value = receiptResult(data, request, actor, company, trial);

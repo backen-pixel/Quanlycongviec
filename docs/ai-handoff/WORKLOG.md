@@ -1995,3 +1995,6 @@ Added SQL671/private versioned source registry, authenticated primary-only API, 
 
 ## 2026-10-03 — Registry final validation delta
 50a0e14 passed all10 jobs and independent review; census41/0/0, Node22 697/0/0, build10314 modules. Browser found stale summary after read error: clear alongside editor on load/error/save. Strengthened concurrency observation to active + Lock/PgSleep. Final rerun pending; SOURCE_REGISTRY_BROWSER.md records synthetic UI evidence.
+
+## 2026-10-03 — Held POST editor closure
+Review found closing editor before POST settles can preserve stale outer summary. Clear summary after pending is durably stored and before HTTP. Supported browser held-response/close/reopen/exact-retry passed; database unchanged. 2d53b5 all10 checks succeeded; final UI head revalidation pending.
