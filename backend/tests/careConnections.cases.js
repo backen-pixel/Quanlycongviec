@@ -4,6 +4,8 @@ const {randomUUID,createHmac,createHash}=require('node:crypto');
 const {createLeadIntake,readVerifiedLead}=require('../src/modules/marketingAutomation/facebookLeadIntake');
 const {createCustomerCare}=require('../src/modules/marketingAutomation/facebookCustomerCare');
 const {createSurveyDispatch}=require('../src/modules/marketingAutomation/facebookSurveyDispatch');
+const {createSurveyAvailability}=require('../src/modules/marketingAutomation/surveyAvailability');
+const {createSurveyProposals}=require('../src/modules/marketingAutomation/surveyProposals');
 const {reportCohortOperations}=require('../src/modules/marketingAutomation/cohortOperations');
 const {reportTrial}=require('../src/modules/marketingAutomation/trialReport');
 const {readAccountSpendWithDelivery}=require('../src/modules/marketingAutomation/facebookAccountDelivery');
@@ -198,9 +200,18 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,region,config})
    document:{calendarSource:'CRM_COMPLETE',externalCalendarCoverage:'ALL_BUSY_IN_CRM',sourceReference:'Synthetic complete busy calendar source',validUntil:new Date(end+86400000).toISOString(),bufferMinutes:0,slots:[{startsAt:new Date(start).toISOString(),endsAt:new Date(end).toISOString()}]}}]);
   await db.query("INSERT INTO crm_survey_control.ingress_pages VALUES($1,$2,true,'Synthetic signed confirmation enrollment only')",[c.page,company]);
   await db.query("INSERT INTO crm_survey_control.dispatch_pages VALUES($1,$2,'4567','v24.0',true,'Synthetic isolated dispatch enrollment only',$3,'Synthetic credential evidence only')",[c.page,company,createHash('sha256').update('synthetic').digest('hex')]);
-  const available=await query('crm_survey_availability',[admin,company,c.thread,new Date(start).toISOString(),new Date(end).toISOString()]);
+  const apiResponse=()=>({code:200,set(){return this;},status(code){this.code=code;return this;},json(body){this.body=body;return this;}});
+  const availabilityResponse=apiResponse();
+  await createSurveyAvailability({db:storage(),isPrimary:()=>true,env:{VPT_SURVEY_ADMIN:'1'}}).handle(
+   {user:{userId:admin},query:{companyId:company,threadId:c.thread,from:new Date(start).toISOString(),to:new Date(end).toISOString()}},availabilityResponse,'availability');
+  assert.equal(availabilityResponse.code,200,JSON.stringify(availabilityResponse.body));
+  const state=await import('../../frontend/src/components/facebook/surveyProposalState.mjs');
+  const available=state.availableOptions(availabilityResponse.body,company,c.thread);
   const option=available.items.find(x=>x.staffId===staff);assert.ok(option);
-  const proposal=await query('crm_survey_propose',[admin,company,randomUUID(),{threadId:c.thread,optionId:option.optionId,startsAt:new Date(option.startsAt).toISOString(),endsAt:new Date(option.endsAt).toISOString(),location:'Synthetic customer-approved location'}]);
+  const proposalResponse=apiResponse();
+  await createSurveyProposals({db:storage(),isPrimary:()=>true,env:{VPT_SURVEY_PROPOSALS:'1'}}).handle(
+   {user:{userId:admin},body:{companyId:company,requestId:randomUUID(),command:{threadId:c.thread,optionId:option.optionId,startsAt:option.startsAt,endsAt:option.endsAt,location:'Synthetic customer-approved location'}}},proposalResponse,'propose');
+  assert.equal(proposalResponse.code,200,JSON.stringify(proposalResponse.body));const proposal=proposalResponse.body;
   let sent=0,click;
   const worker=createSurveyDispatch({db:storage(),isPrimary:()=>true,env:c.env,fetchImpl:async(_url,init)=>{
    sent++;const body=JSON.parse(init.body),mid=randomUUID();

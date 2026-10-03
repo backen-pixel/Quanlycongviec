@@ -41,6 +41,13 @@ function createSurveyAvailability({db,isPrimary,env=process.env}){
    if(operation==='availability'&&!validAvailability(data,company,b.threadId))throw fail('SURVEY_STORAGE_UNAVAILABLE');
    if(operation!=='availability'&&(data.staffId!==(b.staffId||b.command.staffId)||data.regionId!==(b.regionId||b.command.regionId)||!Number.isSafeInteger(data.revision)||data.revision<0))throw fail('SURVEY_STORAGE_UNAVAILABLE');
    if(operation==='change'&&(data.requestId!==b.requestId||data.action!==b.command.action||data.accepted!==true))throw fail('SURVEY_STORAGE_UNAVAILABLE');
+   // PostgreSQL jsonb timestamps include an offset (+00:00). New proposal
+   // commands require canonical UTC Z; normalize before clients persist them.
+   // This never rewrites an already persisted command on retry.
+   if(operation==='availability')return res.json({...data,items:data.items.map(option=>({...option,
+    startsAt:new Date(option.startsAt).toISOString(),endsAt:new Date(option.endsAt).toISOString(),
+    snapshotExpiresAt:new Date(option.snapshotExpiresAt).toISOString(),sourceValidUntil:new Date(option.sourceValidUntil).toISOString(),
+   }))});
    return res.json(data);
   }catch(e){const status=e.code==='42501'?403:['40001','23505'].includes(e.code)?409:['22023','22P02','22007','22008'].includes(e.code)?400:503;
    return res.status(status).json({error:status===409?'Nguồn lịch đã thay đổi. Tải lại trước khi sửa.':'Chưa xác nhận được nguồn lịch trong phạm vi hiện tại.'});}

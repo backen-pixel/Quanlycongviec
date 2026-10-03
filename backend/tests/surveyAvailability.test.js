@@ -12,6 +12,22 @@ async function call(operation='availability',{data=good,error,env={VPT_SURVEY_AD
 test('survey source requires complete explicit calendar coverage and bounded fields',()=>{assert.equal(validCommand(command),true);for(const document of[{...command.document,externalCalendarCoverage:undefined},{...command.document,calendarSource:'UNVERIFIED'},{...command.document,bufferMinutes:181},{...command.document,slots:[]},{...command.document,slots:[{...command.document.slots[0],customerConfirmed:true}]}])assert.equal(validCommand({...command,document}),false);assert.equal(validCommand({...command,actorId:actor}),false)});
 test('survey endpoints default off and never query backup',async()=>{for(const x of[{env:{}},{primary:()=>false}]){const r=await call('availability',x);assert.equal(r.code,503);assert.equal(r.calls.length,0)}});
 test('survey availability passes only server actor and validated scoped range',async()=>{const r=await call();assert.equal(r.code,200);assert.equal(r.headers['Cache-Control'],'no-store');assert.equal(r.calls[0].name,'crm_survey_availability');assert.equal(r.calls[0].args.p_actor,actor);assert.equal(r.body.reservationMade,false)});
+
+test('PostgreSQL offset timestamps pass through actual availability API, UI state and proposal validator',async()=>{
+ const state=await import('../../frontend/src/components/facebook/surveyProposalState.mjs');
+ const proposal=require('../src/modules/marketingAutomation/surveyProposals');
+ const now=Date.now(),offset=n=>new Date(n).toISOString().replace('Z','+00:00');
+ const option={staffId:staff,regionId:region,optionId:'a'.repeat(32),version:'b'.repeat(32),startsAt:offset(now+3600000),endsAt:offset(now+7200000),snapshotExpiresAt:offset(now+30000),sourceValidUntil:offset(now+86400000)};
+ const raw={...good,status:'AVAILABLE_SNAPSHOT',items:[option]};
+ const response=await call('availability',{data:raw});assert.equal(response.code,200);
+ const selected=state.availableOptions(response.body,company,thread,now).items[0];
+ const p={actorId:actor,companyId:company,threadId:thread,requestId:request,command:{threadId:thread,optionId:selected.optionId,startsAt:selected.startsAt,endsAt:selected.endsAt,location:'Synthetic approved survey location'}};
+ const values=new Map(),storage={getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v)};
+ const saved=state.savePendingProposal(storage,p);
+ assert.equal(proposal.validCommand(saved.command),true);assert.deepEqual(state.readPendingProposal(storage,actor,company,thread),saved);
+ assert.match(saved.command.startsAt,/Z$/);assert.equal(Date.parse(saved.command.startsAt),Date.parse(option.startsAt));
+ assert.equal(Date.parse(saved.command.endsAt),Date.parse(option.endsAt));assert.equal(raw.items[0].startsAt,option.startsAt);
+});
 test('survey rejects actor ambiguity, additional rights and false confirmation input',async()=>{assert.equal((await call('availability',{user:{userId:actor,id:staff}})).code,403);for(const input of[{companyId:company,threadId:thread,actorId:staff},{companyId:company,threadId:thread,from:'tomorrow',to:'next week'},{companyId:company,threadId:thread,from:'2027-01-02T00:00:00Z',to:'2027-01-03T00:00:00Z',customerConfirmed:true}]){const r=await call('availability',{input});assert.equal(r.code,400);assert.equal(r.calls.length,0)}});
 test('survey rejects wrong scope, malformed options and invented booking success',async()=>{for(const data of[{...good,companyId:staff},{...good,threadId:staff},{...good,reservationMade:true},{...good,status:'AVAILABLE_SNAPSHOT'},{...good,status:'AVAILABLE_SNAPSHOT',items:[{staffId:staff,regionId:region}]}])assert.equal((await call('availability',{data})).code,503)});
 test('survey source change verifies exact receipt identity and uses authenticated actor',async()=>{const data={companyId:company,staffId:staff,regionId:region,revision:1,action:'SAVE',requestId:request,accepted:true,reservationMade:false};const r=await call('change',{data});assert.equal(r.code,200);assert.equal(r.calls[0].args.p_actor,actor);assert.equal(r.calls[0].args.p_request,request);assert.deepEqual(r.calls[0].args.p_command,command);assert.equal((await call('change',{data:{...data,requestId:randomUUID()}})).code,503)});
