@@ -1,3 +1,13 @@
+## Hiện hành03/10/2026 — Bản lưu kết quả đo đã kiểm chứng
+
+Runtimead841ff SQL675/API/UI giữ số tiền/khách, cutoff/asOf, dependencies và nghĩa vụ còn thiếu theo account/Page/form/entrypoint. Lịch sử bất biến, retry không tạo bản mới, dữ liệu đổi được báo riêng; bỏ lease/retry và receipt đã chứng minh ngoài kỳ khỏi fingerprint liên quan. Đây là SAVED_OBSERVED_INCOMPLETE, chưa full measurement close/CPQL hoặc đạt250k.
+
+Review độc lậpPASS. PostgreSQL71/0/0 (11ca mới), HTTP1/0/0, Node22 757/0/0, cả10job/build/report/MessengerSUCCESS. Follow-up test-only bổ sung3ca provenance, local15PASS; runtime giữ nguyên. Browser actualcomponent/APIgiả đã kiểm mất phản hồi, reload, số hiện tại/lịch sử, retry, lỗi nguồn và đổi người khi GETchậm. [Bằng chứng đúng phiên bản](vpt-marketing-automation/MEASUREMENT_SNAPSHOT_REVIEW.md), [hợp đồng/hoàn tác](vpt-marketing-automation/MEASUREMENT_SNAPSHOT.md).
+
+Full goalACTIVE. Còn hợp đồng chấp nhận bằng chứng provenance/phạm vi thực, đủ điểm nhận, đo hoàn chỉnh, ngoại lệ vận hành/AI/lịch và UAT/Founderrelease. Không có tác động thật; mục dưới giữ lịch sử.
+
+---
+
 ## 2026-10-03 — Bản lưu kết quả đo đang kiểm chứng
 
 SQL675/API/UI giữ report tính ở server, thời điểm/cutoff, dependencies và danh sách thiếu theo nguồn. Bản lịch sử không tự đổi; retry trả đúng receipt cũ; source fingerprint bỏ lease/retry và receipt đã chứng minh ngoài kỳ. Chưa full measurement close/provenance hoặc CPQL đủ nguồn.

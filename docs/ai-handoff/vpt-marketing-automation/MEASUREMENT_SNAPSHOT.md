@@ -18,7 +18,8 @@ Measurement source fingerprint dùng receipt liên quan, bỏ observations ngoà
 Raw identity/contact chỉ ở máy chủ khi tính, không persist lại. Bảng private lưu projection số liệu + evidence IDs/hashes; public history không có phone/email/name, group/member/lead IDs, raw proof, file bytes hoặc token. Không dẫn lịch sử tới hồ sơ đã chuyển công ty. Digest là dấu ràng buộc đầu vào, không phải bản sao để tái dựng liên hệ sau khi dữ liệu gốc đổi; report lịch sử không được tính lại bằng phiên bản luật mới.
 
 ## Kiểm chứng và phát hành
-Local12ca unit/service/UI-state PASS. PostgreSQL cô lập đang kiểm11ca mới: positive1m/4 cùng toàn chi tài khoản, quyền/direct/broadgrant, đồng thời/replay, quality/spend thay đổi, cùng MVCC, lease/outsideperiod, late arrival sau compare trước append, capture hết hạn và thu hồi quyền. Migration áp dụng hai lần cùng chuỗi hiện có. Full build/browser/review cuối chờ kết quả đúng commit.
+Runtimead841ff đã qua review độc lậpPASS: PostgreSQL71/0/0 (11ca mới), HTTP1/0/0, Node22 757/0/0,10/10job và fullbuild SUCCESS. Follow-up test-only bổ sung3ca provenance, local15PASS; không đổi runtime. Browser component thật/APIgiả đã kiểm lost response/reload/retry, số hiện tại và lịch sử, lỗi nguồn và phản hồi muộn sau đổi người. Migration áp dụng hai lần. [Bằng chứng đúng phiên bản](MEASUREMENT_SNAPSHOT_REVIEW.md).
+
 Không migration thật, Meta/CRM, gửi khách, chi quảng cáo hoặc phát hành. Hoàn tác bằng tắt flag measurement snapshot, giữ mọi bản lưu và audit. Nếu cần ngừng source export V2 thì tắt flag source export; không sửa migration cũ hoặc xóa evidence.
 
 ## Việc còn lại trong toàn mục tiêu

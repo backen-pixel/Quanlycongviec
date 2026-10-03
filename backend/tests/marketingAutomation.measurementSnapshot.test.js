@@ -3,6 +3,32 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const {context,receipt,id}=require('./marketingAutomation.measurementSnapshot.fixture');
 const {calculateSnapshot,projectReport,createMeasurementSnapshot}=require('../src/modules/marketingAutomation/measurementSnapshot');
 const env={VPT_MARKETING_MEASUREMENT_SNAPSHOT:'1',VPT_MARKETING_TRIAL_REPORT:'1'};
+
+function registered(){
+ const c=context(),f=c.facts,entries=[{accountId:'act_1',kind:'META_LEAD_ADS',pageId:'123',formId:'456',destination:null},{accountId:'act_2',kind:'NO_LEAD_SOURCE',pageId:null,formId:null,destination:'Synthetic no-destination declaration'}];
+ f.sourceRegistry={version:1,companyId:c.companyId,trialId:c.trialId,asOf:f.asOf,inventoryVersion:'d'.repeat(64),status:'CURRENT',
+ inventory:{trial:f.trial,accounts:f.accounts.map(a=>({id:a.ad_account_id,active:true,expiresAt:null})),pages:[{pageId:'123',active:true}],knownForms:[{pageId:'123',formId:'456',accountId:'act_1',bindingActive:true}]},
+ declaration:{revision:1,trialRevision:1,accountIds:f.trial.account_ids,entries,sourceReference:'Synthetic declared source inventory',sourceNote:'Synthetic reference with no provider coverage certification.',sourceDate:'2026-10-01',declarationDigest:'e'.repeat(64),recordedBy:c.actorId,recordedAt:f.asOf},gaps:[],providerCoverage:'UNVERIFIED',allowBudgetExecution:false};
+ return c;
+}
+test('obligations identify the exact missing Page/form and do not treat a no-lead declaration as proof',()=>{
+ const c=registered(),r=calculateSnapshot(c),x=r.obligations.find(x=>x.code==='EXPORT_MISSING');
+ assert.equal(x.accountId,'act_1');assert.equal(x.pageId,'123');assert.equal(x.formId,'456');
+ assert.ok(r.obligations.some(x=>x.code==='ZERO_SOURCE_UNVERIFIED'&&x.accountId==='act_2'));
+});
+test('matched, empty, duplicate, conflicting and stale exports remain distinct provenance obligations',()=>{
+ for(const [status,currentStatus,code]of [['MATCHED_EXPORTED_IDS','CURRENT','EXPORT_PROVENANCE_UNVERIFIED'],['EMPTY_COMPARISON','CURRENT','ZERO_SOURCE_UNVERIFIED'],['DUPLICATE_ROWS','CURRENT','EXPORT_DUPLICATES'],['DISCREPANCIES','CURRENT','EXPORT_DISCREPANCIES'],['MATCHED_EXPORTED_IDS','STALE_CONTEXT','EXPORT_CHANGED'],['MATCHED_EXPORTED_IDS','STALE_AUTHORITY','EXPORT_CHANGED']]){
+  const c=registered();c.exports=[{requestId:id(908),pageId:'123',formId:'456',status,currentStatus}];const r=calculateSnapshot(c);
+  assert.ok(r.obligations.some(x=>x.code===code&&x.evidenceId===id(908)));assert.equal(r.targetStatus,'NOT_EVALUATED');assert.equal(r.observedMeasurement.costPerQualifiedLeadVnd,250000);
+ }
+});
+test('website/Messenger and unresolved forms stay explicit instead of disappearing behind Lead Ads',()=>{
+ const c=registered();c.facts.sourceRegistry.declaration.entries.push({accountId:'act_1',kind:'WEBSITE',pageId:null,formId:null,destination:'https://synthetic.invalid/form'},{accountId:null,kind:'UNRESOLVED_FORM',pageId:'123',formId:'789',destination:'Synthetic account ownership not resolved'});
+ c.facts.sourceRegistry.declaration.entries.push({accountId:'act_1',kind:'MESSENGER',pageId:'123',formId:null,destination:null});
+ const r=calculateSnapshot(c);assert.ok(r.obligations.some(x=>x.kind==='WEBSITE'&&x.code==='ENTRYPOINT_NOT_RECONCILED'));assert.ok(r.obligations.some(x=>x.kind==='MESSENGER'&&x.code==='ENTRYPOINT_NOT_RECONCILED'));assert.ok(r.obligations.some(x=>x.formId==='789'&&x.code==='FORM_ACCOUNT_UNRESOLVED'));
+ const e={requestId:id(908),pageId:'123',formId:'456',status:'MATCHED_EXPORTED_IDS',currentStatus:'CURRENT'};c.exports=[e,e];assert.throws(()=>calculateSnapshot(c));
+});
+
 function request(c,b){return{user:{userId:c.actorId},query:{company_id:c.companyId},params:{trialId:c.trialId},body:b};}
 async function run(c,body,db,options={}){const res={statusCode:200,set(){},status(n){this.statusCode=n;return this;},json(x){this.body=x;return this;}};await createMeasurementSnapshot({db,isPrimary:()=>true,env,...options})(request(c,body),res,!!body);return res;}
 test('observed snapshot preserves 1m/4=250k and zero-lead account spend without claiming complete',()=>{
