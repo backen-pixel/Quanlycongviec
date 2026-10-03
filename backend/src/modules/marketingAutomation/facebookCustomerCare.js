@@ -68,7 +68,7 @@ function redactSurveyConfirmationPayloads(body,pages){
  return {...body,entry:body.entry.map(entry=>!pages.has(entry?.id)||!Array.isArray(entry.messaging)?entry:{...entry,messaging:entry.messaging.map(event=>{
   const original=event?.message;if(!original)return event;
   const confirmation=typeof original.quick_reply?.payload==='string'&&original.quick_reply.payload.startsWith('VPT_SURVEY_V1:');
-  const attempt=typeof original.metadata==='string'&&original.metadata.startsWith('VPT_SURVEY_SEND_V1:');
+  const attempt=typeof original.metadata==='string'&&(original.metadata.startsWith('VPT_SURVEY_SEND_V1:')||original.metadata.startsWith('VPT_SURVEY_OUTCOME_V1:'));
   if(!confirmation&&!attempt)return event;
   const message={...original};if(confirmation)delete message.quick_reply;if(attempt)delete message.metadata;
   return {...event,message};

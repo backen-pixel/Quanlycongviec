@@ -1,3 +1,11 @@
+## 2026-10-03 — Customer survey outcomes (in validation)
+
+SQL669 adds atomic BOOKED / canonical NOT_BOOKED intents, default-off outcome dispatch, current booking/authority checks, shared proposal/outcome uncertainty barrier and exact echo/ACK evidence. Ingress technical BLOCKED never negates a booking. Pre-enrollment intents stay HELD; STOP/takeover remain sticky. Local51 worker/parser tests PASS; isolated PostgreSQL and final independent review pending. [Contract, rollback and remaining gates](vpt-marketing-automation/SURVEY_OUTCOMES.md).
+
+No live migration, enrollment, Meta send, model call, ad change or release. Full goal ACTIVE; actual CPQL250k remains unproven. Still need operator exception UI, cancellation/rescheduling, legacy calendar writer transition, full source/spend data and UAT/Founder release.
+
+---
+
 ## Hiện hành 03/10/2026 — Bàn giao khảo sát đã kiểm thử
 
 Runtimea35deef4 thêm màn hình CRM cho nhân viên nhận hồ sơ, queue/chỉ số chờ nhận, hội thoại đầy đủ và ACK đúng người nhận hiện hành. Sales owner/admin theo dõi, không ký thay. Receipt/audit nguyên giao dịch; replay sau mất phản hồi kiểm quyền mới; lịch khách xác nhận, staff ACK và trạng thái chăm khách được giữ riêng.
