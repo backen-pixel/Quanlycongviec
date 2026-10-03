@@ -15,7 +15,7 @@ Acknowledgement is historical: the UI clears displayed entry and requires an aut
 No AI/provider call, final quote, order close, account permission, sending, budget or live database change is introduced. Existing customer-care console retains its behavior.
 
 ## Verification and rollback
-Local20 tests PASS (9 prior library +11 UI-state/service). PostgreSQL4 new selector/history cases, whole frontend build, actual-component synthetic browser and final independent review pending. Reviewer found a potential unsaved-draft loss on list pagination failure; fixed to preserve the editor for ordinary failures, with browser regression planned.
+Runtime979d62d: local20 PASS (9 prior library +11 UI-state/service); PostgreSQL87 PASS including4 new selector/history cases; Node22 558 PASS; all10 CI jobs and full frontend build PASS. Independent code/CI review PASS. Actual-component synthetic browser verified the pagination draft-preservation regression, save/approve/revoke, same-key retry, late/scope responses,403/409 and held writes. Native confirmation accept/dismiss is INCONCLUSIVE due browser-tool interruption and remains in UAT. See [review](CARE_LIBRARY_CONSOLE_REVIEW.md) and [browser evidence](CARE_LIBRARY_CONSOLE_BROWSER.md); do not interpret this as all browser scenarios passing.
 
 Disable VPT_CARE_LIBRARY_ADMIN to stop library API access; care receive/control flags remain separate. Keep existing entries/events/publisher enrollments; do not delete history or reopen public table writes. No production UI/signoff is claimed from simplified fixture CSS. Remaining goal work includes verified VPT content, AI consumer/delegation/dispatch, actual calendar/booking, complete operational measurement, UAT and Founder release.
 

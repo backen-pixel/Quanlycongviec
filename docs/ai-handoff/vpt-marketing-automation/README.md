@@ -1,3 +1,13 @@
+## Hiện hành 03/10/2026 — Màn hình nội dung tư vấn đã kiểm thử
+
+Runtime979d62d bổ sung biên tập nội dung, duyệt/thu hồi đúng phiên bản, chọn sản phẩm/khu vực, xem trước nguyên văn và lịch sử đầy đủ. Bản nháp được giữ khi đổi tab hoặc phân trang lỗi; yêu cầu mất phản hồi được gửi lại đúng mã qua tải lại trình duyệt. SQL662 thêm bộ chọn và lịch sử theo quyền hiện hành. Review độc lập code/CI PASS; local20, PostgreSQL87 (4 console mới), Node22 558 và cả10 job/full build PASS. [Bằng chứng](CARE_LIBRARY_CONSOLE_REVIEW.md), [kiểm tra trình duyệt và giới hạn](CARE_LIBRARY_CONSOLE_BROWSER.md). Riêng accept/dismiss của hộp xác nhận gốc chưa kết luận bằng browser automation, giữ lại cho UAT.
+
+Mặc định tắt, chưa phát hành. Nội dung VPT thật, AI sử dụng/gửi tin, lịch khảo sát, đối soát đủ nguồn/chi tiêu và UAT còn phải hoàn thiện. Chưa có CPQL thực tế chứng minh đạt250.000 đồng/khách; trần100 triệu một đợt30 ngày và80/20 giữ nguyên. Không gọi model, đổi DB thật, cấp quyền duyệt hoặc mở đợt chi. Full goal ACTIVE.
+
+Các mục sau giữ lịch sử theo phiên bản.
+
+---
+
 ## Hiện hành 02/10/2026 — Thư viện nội dung tư vấn đã kiểm thử
 
 Runtime880f495 thêm lưu nháp, duyệt/thu hồi nội dung, lịch sử và xem trước nguyên văn theo công ty/sản phẩm/khu vực/kênh. Sửa nội dung, đổi quyền người duyệt, thay đổi nguồn hoặc hết hạn làm mất hiệu lực sử dụng. Không cấp sẵn quyền duyệt hoặc nạp dữ liệu sản phẩm thật. Review độc lập PASS; local9, PostgreSQL83 (14 library), Node22 547 và cả10 job/full build PASS. [Bằng chứng đúng phiên bản](CARE_LIBRARY_REVIEW.md).
@@ -101,3 +111,4 @@ Không mở ads.budget_move hoặc survey.reserve chỉ vì queue test PASS. Lea
 5. Reviewer độc lập + gói phát hành để Founder quyết định. Hoàn tác bằng ngừng đường mới, giữ outbox/audit/khách; không xóa giao dịch.
 
 Compatibility: revenue/ROAS không còn là estimate; consumers phải xử lý null/status. MCP event_name chuyển Purchase→DealClosed và value→null, có closed_estimated_value. Không migration dữ liệu lịch sử để đổi số; historical insight financial comments được lọc lúc đọc.
+

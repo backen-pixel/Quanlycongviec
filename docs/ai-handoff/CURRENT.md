@@ -1,6 +1,10 @@
-## 2026-10-02 — Response library editor and history (in validation)
+## Hiện hành 03/10/2026 — Màn hình nội dung tư vấn đã kiểm thử
 
-Base8220688. Facebook care now has a response-library editor for drafting, exact-version approval/revocation, scoped product/region choices, literal preview and full historical paging. SQL662 only adds read selectors/history. Ambiguous writes persist the exact key/body per actor/company before POST and across remount/reload; receipts are never painted as current state. Local20 PASS; PostgreSQL4 new cases/full build/browser/final review pending. Reviewer pagination draft-loss finding fixed. [Contract](vpt-marketing-automation/CARE_LIBRARY_CONSOLE.md). No model calls or live actions; full goal ACTIVE.
+Runtime979d62d bổ sung biên tập nội dung, duyệt/thu hồi đúng phiên bản, chọn sản phẩm/khu vực, xem trước nguyên văn và lịch sử đầy đủ. Bản nháp được giữ khi đổi tab hoặc phân trang lỗi; yêu cầu mất phản hồi được gửi lại đúng mã qua tải lại trình duyệt. SQL662 thêm bộ chọn và lịch sử theo quyền hiện hành. Review độc lập code/CI PASS; local20, PostgreSQL87 (4 console mới), Node22 558 và cả10 job/full build PASS. [Bằng chứng](vpt-marketing-automation/CARE_LIBRARY_CONSOLE_REVIEW.md), [kiểm tra trình duyệt và giới hạn](vpt-marketing-automation/CARE_LIBRARY_CONSOLE_BROWSER.md). Riêng accept/dismiss của hộp xác nhận gốc chưa kết luận bằng browser automation, giữ lại cho UAT.
+
+Mặc định tắt, chưa phát hành. Nội dung VPT thật, AI sử dụng/gửi tin, lịch khảo sát, đối soát đủ nguồn/chi tiêu và UAT còn phải hoàn thiện. Chưa có CPQL thực tế chứng minh đạt250.000 đồng/khách; trần100 triệu một đợt30 ngày và80/20 giữ nguyên. Không gọi model, đổi DB thật, cấp quyền duyệt hoặc mở đợt chi. Full goal ACTIVE.
+
+Các mục sau giữ lịch sử theo phiên bản.
 
 ---
 
