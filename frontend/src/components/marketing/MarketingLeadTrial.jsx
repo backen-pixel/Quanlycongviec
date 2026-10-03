@@ -3,6 +3,7 @@ import api from '../../lib/api';
 import FacebookSourceRecovery from './FacebookSourceRecovery';
 import ObservedLeadCost from './ObservedLeadCost';
 import SourceRegistry from './SourceRegistry';
+import SourceExport from './SourceExport';
 import { observedCpqlResult } from './observedCpqlState.mjs';
 const button='rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:opacity-50';
 const money=n=>Number.isFinite(n)?`${n.toLocaleString('vi-VN')} đ`:'Chưa đủ dữ liệu';
@@ -55,6 +56,7 @@ function Trial({companyId,actorId}){
     <ObservedLeadCost report={result}/>
     <SourceRegistry key={result.trial.id} actorId={actorId} companyId={companyId} trialId={result.trial.id} summary={result.sourceRegistry} onRefresh={()=>setReload(n=>n+1)}/>
     <FacebookSourceRecovery key={result.trial.id} companyId={companyId} trialId={result.trial.id} reconciliation={result.reconciliation} pendingRequests={recoveryRequests.current} onBusy={setRecovering} onRefresh={()=>setReload(n=>n+1)} disabled={loading||saving||uncertain}/>
+    <SourceExport companyId={companyId} actorId={actorId} trialId={result.trial.id}/>
     {result.period?.status==='AVAILABLE'&&<dl className="grid grid-cols-2 gap-2 text-sm"><dt>Biểu mẫu chờ xử lý/đối soát</dt><dd>{result.observed?.unprocessedForms??'—'}</dd><dt>Lượt gửi đã chứng minh ngoài kỳ đối chiếu</dt><dd>{result.observed?.outsidePeriodForms??'—'}</dd><dt>Khách đã có trước kỳ</dt><dd>{result.observed?.existing??'—'}</dd><dt>Khách không đạt nhu cầu</dt><dd>{result.observed?.rejected??'—'}</dd><dt>Lịch khảo sát theo kỳ quảng cáo</dt><dd>Chưa quy thuộc theo kỳ; xem bảng vận hành toàn công ty phía trên</dd></dl>}
     {!!result.issues.length&&<ul className="list-disc pl-5 text-sm text-amber-800">{result.issues.map(x=><li key={x.code}>{issueNames[x.code]||'Cần kiểm tra thêm nguồn dữ liệu'}: {x.count}</li>)}</ul>}
     {result.period?.status==='AVAILABLE'&&result.spend?.status!=='KNOWN_TO_DATE'&&<p className="text-sm text-amber-800">Chi tiêu chưa đủ hoặc cấu hình tài khoản đã đổi. Cần kiểm tra quyền và đồng bộ đủ ngày; phần thiếu không được tính là 0.</p>}

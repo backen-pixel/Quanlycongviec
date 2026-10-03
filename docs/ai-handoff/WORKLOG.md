@@ -1,3 +1,9 @@
+## 2026-10-03 — Đối soát bản xuất nguồn đang kiểm chứng
+
+SQL674 nối witness và digest tuple đúng cutoff vào snapshot, thêm so sánh CSV nguồn với tập quét theo ID/time/form, append-only evidence+audit, replay và invalidation khi receipt/source/phạm vi đổi. Server hash bytes, bỏ cột PII trước DB; UI chỉ giữmetadata/hash để retry. Local22 PASS; đang chờ PostgreSQL/browser/review. [Hợp đồng/hoàn tác](vpt-marketing-automation/SOURCE_EXPORT.md). MATCHED không là completeness/CPQL/quyền chi. Full goalACTIVE, chưa live effects.
+
+---
+
 ## 2026-10-03 — Operations dashboard closure
 
 Runtime9c317310, treea708cac6; review độc lập PASS local24. Automation37109400042 all10 SUCCESS; intakePG111164221888=208/0/0; Node22 111164221873=721/0/0; frontend111164221891=10316modules/30.12s. Merge3d0e84813352f4c330861e59381cbd9310648612 có cùng tree, parentcandidate+basee16c885. Report37109400035/Messenger37109400033SUCCESS. Tác giả kiểm browser component thật/API giả8tình huống, đóng tab/server. Hồ sơ OPERATIONS_DASHBOARD_REVIEW.md giữ cả failurecandidate551046c và giới hạn CSS giản lược. Docs-only closure, full goalACTIVE, không live effects.

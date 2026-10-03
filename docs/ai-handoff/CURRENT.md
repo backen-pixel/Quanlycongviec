@@ -1,3 +1,9 @@
+## 2026-10-03 — Đối soát bản xuất nguồn đang kiểm chứng
+
+SQL674 nối witness và digest tuple đúng cutoff vào snapshot, thêm so sánh CSV nguồn với tập quét theo ID/time/form, append-only evidence+audit, replay và invalidation khi receipt/source/phạm vi đổi. Server hash bytes, bỏ cột PII trước DB; UI chỉ giữmetadata/hash để retry. Local22 PASS; đang chờ PostgreSQL/browser/review. [Hợp đồng/hoàn tác](vpt-marketing-automation/SOURCE_EXPORT.md). MATCHED không là completeness/CPQL/quyền chi. Full goalACTIVE, chưa live effects.
+
+---
+
 ## Hiện hành 03/10/2026 — Dashboard tư vấn/khảo sát đã kiểm chứng
 
 Runtime9c317310 thêm SQL673/API/UI báo cáo toàn công ty: nhóm cần xử lý, hội thoại, lịch sắp tới/trong giờ/qua giờ, bàn giao và ngoại lệ. Hai P2 về lịch NULL/infinity và union CARE+SURVEY đã sửa. STOP giữ nghĩa vụ khảo sát; ACK chưa phải hoàn tất. Chưa quy thuộc lịch theo kỳ quảng cáo.
