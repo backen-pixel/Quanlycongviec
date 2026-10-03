@@ -1,3 +1,11 @@
+## Hiện hành 04/10/2026 — Phạm vi tạo khách Facebook đã qua review và PostgreSQL
+
+Runtime `925cae0687623dc4654b81f461eb5d88dedece3b` khóa công ty Page hiện hành, Customer/Lead, quyền người nhận và actor; nguồn không bị đổi công ty; cấu hình pipeline lỗi không được tự đổi tuyến; giữ liên kết hội thoại. Local66 mới +117 regression =183 PASS. PostgreSQL281/0/0 gồm10 ca mới; Node22 843+26+183, cả10 job/build/report/Messenger SUCCESS. Reviewer độc lập đối chiếu published blobs và CI, kết luận PASS đúng phạm vi creator. [Bằng chứng, giới hạn và hoàn tác](vpt-marketing-automation/LEGACY_CREATOR_SCOPE.md).
+
+Bước tiếp: source-backfill/caller cũ và dừng/chờ khi chuyển luồng, đối soát hồ sơ ghi một phần; CRM merge/bảo toàn lịch sử và lựa chọn Founder về liên kết/gộp vẫn OPEN. Sau đó khép AI/lịch/người nhận/phạm vi đo, UAT toàn tuyến và Founder release. Full goal ACTIVE, chưa DB/model/provider/chi quảng cáo hoặc phát hành; chưa chứng minh250k thực tế. Các mục dưới là lịch sử.
+
+---
+
 ## Hiện hành 04/10/2026 — Đang khép phạm vi tạo khách Facebook
 
 Bản làm việc trên a102450 sửa creator tự động/thủ công: công ty Page hiện hành, Customer/Lead cùng phạm vi, người nhận còn quyền, nguồn không bị đổi công ty, cặp pipeline/stage và giữ liên kết hội thoại. Local 66 ca mới + 117 regression = 183 PASS. Đã bổ sung 10 ca PostgreSQL; CI và review độc lập đang chờ. [Hợp đồng, kiểm thử, giới hạn và hoàn tác](vpt-marketing-automation/LEGACY_CREATOR_SCOPE.md).

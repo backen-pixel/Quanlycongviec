@@ -1,4 +1,4 @@
-04/10/2026: [Đường tạo khách Facebook — bản sửa đang kiểm](LEGACY_CREATOR_SCOPE.md). Local183 PASS; 10 ca PostgreSQL và review đang chờ. Cutover/UAT/phát hành vẫn HOLD.
+04/10/2026: [Phạm vi tạo khách Facebook đã kiểm chứng](LEGACY_CREATOR_SCOPE.md), runtime925cae0. Local183, PostgreSQL281/0/0 gồm10 ca mới; cả10job/build/report/Messenger SUCCESS; review độc lập PASS checkpoint creator. Chuỗi HTTP/caller cũ/merge/cutover/UAT/phát hành còn OPEN.
 
 ## Hiện hành 03/10/2026 — Preflight đường ghi cũ đã kiểm PostgreSQL
 
