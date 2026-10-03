@@ -1,3 +1,11 @@
+## 03/10/2026 — Nối khảo sát và việc chờ theo nhóm quảng cáo đang kiểm chứng
+
+SQL678/API/UI nối nguồn tiếp nhận khách trả phí với tình trạng chăm sóc và lịch hiện hành trong cùng snapshot. Lịch sau kỳ vẫn được giữ; tổng khách cần xử lý loại trùng cả việc chờ xác minh, chưa nối chăm sóc và bàn giao khảo sát. STOP không tự mở lại; hồ sơ chưa quy thuộc được giữ riêng.
+
+Local20 ca mới/44 ca liên quan PASS. PostgreSQL/build/browser và review độc lập đang kiểm. Full goal ACTIVE; chưa UAT/dữ liệu thật/phát hành. [Hợp đồng và hoàn tác](COHORT_OPERATIONS.md).
+
+---
+
 ## Hiện hành 03/10/2026 — Xác nhận phạm vi CPQL đã kiểm chứng
 
 Runtime960086c nối bằng chứng đích quảng cáo lịch sử, đúng tệp nguồn, toàn bộ chi tiêu và khách hợp lệ vào kết quả có phạm vi. Phép thử 1 triệu/4 khách =250.000đ giữ cả tài khoản không tạo khách. Có thu hồi, retry lịch sử, kiểm quyền sau chờ khóa và rollback khi nguồn đổi; không mở quyền chi.

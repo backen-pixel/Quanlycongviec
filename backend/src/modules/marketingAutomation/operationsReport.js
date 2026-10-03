@@ -5,7 +5,7 @@ const date=x=>typeof x==='string'&&Number.isFinite(Date.parse(x));
 const fail=()=>{throw Object.assign(new Error('OPERATIONS_UNAVAILABLE'),{status:503});};
 const nullableId=x=>x===null||uuid(x),nullableDate=x=>x===null||date(x);
 const MODES=['WAITING','HUMAN_REQUESTED','HUMAN_ACTIVE','OPTED_OUT'];
-function reportOperations(raw){
+function projectOperations(raw){
  if(!raw||raw.policy!=='MARKETING_OPERATIONS_V1'||!uuid(raw.companyId)||!uuid(raw.actorId)||!date(raw.asOf)||raw.complete!==true||raw.aiMaySend!==false||raw.allowBudgetExecution!==false)fail();
  for(const k of ['threads','bookings'])if(!Array.isArray(raw[k])||raw[k].length>5000||new Set(raw[k].map(x=>x?.id)).size!==raw[k].length)fail();
  const identity=projectReview(raw.identity);if(identity.companyId!==raw.companyId)fail();
@@ -53,10 +53,12 @@ function reportOperations(raw){
  // and appointment facts remain available, with their own units and exceptions.
  const uniqueAvailable=unresolved.size===0&&counts.unavailableThreads===0&&counts.unavailableBookings===0;
  attention.sort((a,b)=>(a.dueAt?Date.parse(a.dueAt):Infinity)-(b.dueAt?Date.parse(b.dueAt):Infinity)||a.id.localeCompare(b.id)||a.reason.localeCompare(b.reason));
- return{policy:raw.policy,companyId:raw.companyId,actorId:raw.actorId,asOf:raw.asOf,scope:'COMPANY_MESSENGER_AND_CONFIRMED_SURVEYS',
+ const report={policy:raw.policy,companyId:raw.companyId,actorId:raw.actorId,asOf:raw.asOf,scope:'COMPANY_MESSENGER_AND_CONFIRMED_SURVEYS',
   counts,customers:{status:uniqueAvailable?'AVAILABLE':'UNRESOLVED',waiting:uniqueAvailable?waiting.size:null,booked:uniqueAvailable?booked.size:null,unresolvedGroups:unresolved.size},
   attention:attention.slice(0,50),attentionTotal:attention.length,aiMaySend:false,allowBudgetExecution:false,adCohortAttribution:false};
+ return{report,attention,waitingGroups:[...waiting],bookedGroups:[...booked]};
 }
+function reportOperations(raw){return projectOperations(raw).report;}
 function createOperationsReport({db,isPrimary,env=process.env}){
  const enabled=()=>env.VPT_MARKETING_OPERATIONS_REPORT==='1'&&isPrimary()===true;
  return async(req,res)=>{
@@ -69,4 +71,4 @@ function createOperationsReport({db,isPrimary,env=process.env}){
   }catch(e){return res.status(e.code==='42501'?403:503).json({error:'Chưa đọc được dữ liệu vận hành trong phạm vi hiện tại. Số liệu cũ đã được ẩn.'});}
  };
 }
-module.exports={reportOperations,createOperationsReport};
+module.exports={reportOperations,projectOperations,createOperationsReport};

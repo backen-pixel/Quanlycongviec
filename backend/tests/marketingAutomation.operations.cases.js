@@ -2,7 +2,7 @@
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 const {reportOperations}=require('../src/modules/marketingAutomation/operationsReport');
 module.exports=async(t,{db,peers,query,company,other,admin,sales,booked,finished,receive,incoming})=>{
- for(const file of ['649_marketing_spend_evidence.sql','655_marketing_lead_trial.sql','656_facebook_lead_census.sql','657_marketing_census_reconciliation.sql','670_marketing_measurement_period.sql','671_marketing_source_registry.sql','672_marketing_census_witness.sql','673_marketing_operations_dashboard.sql']){const sql=fs.readFileSync(path.resolve(__dirname,'../../database',file),'utf8');await db.query(sql);await db.query(sql);}
+ for(const file of ['649_marketing_spend_evidence.sql','655_marketing_lead_trial.sql','656_facebook_lead_census.sql','657_marketing_census_reconciliation.sql','670_marketing_measurement_period.sql','671_marketing_source_registry.sql','672_marketing_census_witness.sql','673_marketing_operations_dashboard.sql','674_marketing_source_export.sql','675_marketing_measurement_snapshot.sql','676_marketing_account_delivery.sql','677_marketing_scope_acceptance.sql','678_marketing_cohort_operations.sql']){const sql=fs.readFileSync(path.resolve(__dirname,'../../database',file),'utf8');await db.query(sql);await db.query(sql);}
  // Prior survey fixtures intentionally shared a phone. Give independent fake
  // customers distinct fake phones so this suite does not hit the unrelated
  // quadratic identity-candidate cap. No business data or assertions are erased.
@@ -39,7 +39,7 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,booked,finished
   const c=await fresh();const late=await incoming(c,'Synthetic latest customer question');await receive([late]);const before=thread(await read(),c);const old=await incoming(c,'Synthetic older late delivery');old.timestamp-=3600000;await receive([old]);const after=thread(await read(),c);assert.equal(Date.parse(after.lastInboundAt),Date.parse(before.lastInboundAt));await finished(c);
  });
  await t.test('one statement snapshot stays coherent while STOP arrives during the read',async()=>{
-  const c=await fresh(),original=(await db.query("SELECT pg_get_functiondef('marketing_operations_snapshot(uuid,uuid)'::regprocedure) d")).rows[0].d;
+  const c=await fresh(),original=(await db.query("SELECT pg_get_functiondef('marketing_measurement.operations_facts(uuid,uuid,jsonb)'::regprocedure) d")).rows[0].d;
   const marker='threads AS MATERIALIZED(SELECT * FROM public.crm_care_threads';assert.ok(original.includes(marker));
   const altered=original.replace(marker,()=>"threads AS MATERIALIZED(SELECT t.* FROM public.crm_care_threads t CROSS JOIN (SELECT pg_advisory_lock(673027),pg_advisory_unlock(673027)) barrier");
   await db.query(altered);await db.query('SELECT pg_advisory_lock(673027)');const pending=read().then(value=>({value}),error=>({error}));

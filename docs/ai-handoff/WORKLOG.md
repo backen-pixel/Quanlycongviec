@@ -2111,3 +2111,12 @@ Review found closing editor before POST settles can preserve stale outer summary
 ## 2026-10-03 — Source registry closure
 
 Runtime9363535a and independent review PASS. CI37105837930 all10 SUCCESS, census111154053416=41/0/0, Node22 111154053420=697/0/0, build111154053390=10314modules31.35sec. Mergeca1e35a0c6438d310cdd4841842a579660219d38 has identicalcandidate tree4bc46dc5f1470cc661ff70897b742a7335b264a0. Report37105837943/Messenger37105837923SUCCESS. Synthetic browser heldPOST-close fix validated; tabs/servers closed. EvidenceSOURCE_REGISTRY_REVIEW.md. Docs-only closure; full goalACTIVE, no live effects.
+
+## 03/10/2026 — Nối khảo sát và việc chờ theo nhóm quảng cáo đang kiểm chứng
+
+SQL678/API/UI nối nguồn tiếp nhận khách trả phí với tình trạng chăm sóc và lịch hiện hành trong cùng snapshot. Lịch sau kỳ vẫn được giữ; tổng khách cần xử lý loại trùng cả việc chờ xác minh, chưa nối chăm sóc và bàn giao khảo sát. STOP không tự mở lại; hồ sơ chưa quy thuộc được giữ riêng.
+
+Local20 ca mới/44 ca liên quan PASS. PostgreSQL/build/browser và review độc lập đang kiểm. Full goal ACTIVE; chưa UAT/dữ liệu thật/phát hành. [Hợp đồng và hoàn tác](vpt-marketing-automation/COHORT_OPERATIONS.md).
+
+---
+

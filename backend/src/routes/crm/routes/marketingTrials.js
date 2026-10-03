@@ -8,6 +8,8 @@ const measurementSnapshot=createMeasurementSnapshot({db:supabase,isPrimary:()=>!
 const scopeAcceptance=createScopeAcceptance({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
 const {createTrialService}=require('../../../modules/marketingAutomation/trialService');
 const {createOperationsReport}=require('../../../modules/marketingAutomation/operationsReport');
+const {createCohortOperations}=require('../../../modules/marketingAutomation/cohortOperations');
+const cohortOperations=createCohortOperations({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
 const operations=createOperationsReport({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
 const {createCensusAdmin}=require('../../../modules/marketingAutomation/facebookLeadCensusAdmin');
 const {createSourceExport}=require('../../../modules/marketingAutomation/sourceExport');
@@ -31,6 +33,7 @@ r.get('/marketing-trials/:trialId/measurement-snapshots',(req,res)=>measurementS
 r.post('/marketing-trials/:trialId/measurement-snapshots',(req,res)=>measurementSnapshot(req,res,true));
 r.post('/marketing-trials/:trialId/source-exports',(req,res)=>sourceExport(req,res,true));
 r.get('/marketing-operations',(req,res)=>operations(req,res));
+r.get('/marketing-trials/:trialId/operations',(req,res)=>cohortOperations(req,res));
 r.get('/marketing-trials',(req,res)=>handle(req,res,'list'));
 r.post('/marketing-trials',(req,res)=>handle(req,res,'configure'));
 r.get('/marketing-trials/:trialId/report',(req,res)=>handle(req,res,'report'));
