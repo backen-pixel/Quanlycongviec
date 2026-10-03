@@ -1,3 +1,11 @@
+## Hiện hành 03/10/2026 — Đang khép điểm nối Messenger với Lead
+
+Rà toàn tuyến phát hiện Lead Ads và hội thoại Messenger chưa có điểm nối danh tính được nghiệm thu; các ca khảo sát trước tạo sẵn liên kết. SQL680/API là bản làm việc chưa commit trên HEAD14e11d5, tắt mặc định, chưa áp DB. Local11 ca adapter PASS; đã sửa khóa quyền người phát hành và khách thiếu số điện thoại theo review. PostgreSQL, giao diện và kiểm xuyên tuyến chưa chạy cho điểm nối mới.
+
+Review runtime HOLD: còn thứ tự khóa của RPC cũ SQL639 và liên kết phục hồi qua facebook_contact_id. Khép hai điểm này, kiểm PostgreSQL rồi kiểm một khách mới từ intake qua lịch khảo sát đến dashboard, giữ đúng Lead ID và đủ chi tiêu. [Hiện trạng, tiêu chí và bước tiếp](vpt-marketing-automation/CARE_CONNECTION_ACCEPTANCE.md). Full goal ACTIVE; chưa dữ liệu thật đạt250k hoặc phát hành. Bằng chứng phần đề xuất lịch bên dưới thuộc phiên bản trước.
+
+---
+
 ## Hiện hành 03/10/2026 — Đề xuất lịch đã kiểm chứng
 
 Bản46c680b hoàn thiện màn hình chọn giờ trống, tạo đề xuất và đối chiếu yêu cầu cũ qua tải lại; lịch sử tách đề xuất/gửi/đặt/thông báo. Tin chưa rõ kết quả chặn tạo mới; quyền và liên kết khách được kiểm lại, STOP không tự mở chăm sóc.

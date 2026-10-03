@@ -1,4 +1,10 @@
-## Hiện hành 03/10/2026 — Đề xuất lịch đã kiểm chứng
+## Hiện hành 03/10/2026 — Nghiệm thu điểm nối khách đang HOLD
+
+Lead Ads tạo Lead nhưng chưa tự nối với người nhắn Messenger. SQL680/API đang triển khai cục bộ trên HEAD14e11d5; 11 ca adapter PASS, chưa kiểm PostgreSQL hoặc toàn tuyến. Review còn yêu cầu khép thứ tự khóa đường cũ và liên kết phục hồi. Xem [hiện trạng và bước tiếp](CARE_CONNECTION_ACCEPTANCE.md). Full goal ACTIVE; chưa phát hành hoặc dữ liệu thật đạt250k. Các bằng chứng đã đạt bên dưới thuộc phần đề xuất lịch trước đó.
+
+---
+
+## 03/10/2026 — Đề xuất lịch đã kiểm chứng
 
 Bản46c680b hoàn thiện màn hình chọn giờ trống, tạo đề xuất và đối chiếu yêu cầu cũ qua tải lại; lịch sử tách đề xuất/gửi/đặt/thông báo. Tin chưa rõ kết quả chặn tạo mới; quyền và liên kết khách được kiểm lại, STOP không tự mở chăm sóc.
 
