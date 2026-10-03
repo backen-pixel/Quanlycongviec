@@ -70,5 +70,6 @@ test('isolated PostgreSQL Facebook Lead Ads intake',{skip:!dsn},async t=>{
   await require('./facebookCustomerCare.libraryConsole.cases')(t,{db,peers,query,admin,sales,company,other,region});
   await require('./surveyAvailability.cases')(t,{db,peers,query,admin,sales,company,other,region});
   await require('./surveyCalendarGuard.cases')(t,{db,peers,company,other,admin,sales});
+  await require('./surveyProposals.cases')(t,{db,peers,query,company,other,admin,sales,region});
  }finally{await Promise.all(peers.map(x=>x.end()));await db.end();}
 });
