@@ -1,3 +1,9 @@
+## 2026-10-03 — Danh mục nguồn đã qua PostgreSQL; chốt kiểm chứng cuối
+
+Runtime50a0e14: review độc lập PASS; automation37104975047 cả10job SUCCESS, censusPG41/0/0, Node22 697/0/0, build10.314module; report/Messenger SUCCESS. UI thử đã kiểm lưu, nguồn mới, mất phản hồi/reload/đổi người/retry, lỗi nguồn và thay cấu hình. Có delta cuối: xóa summary cũ khi read lỗi/save và siết test chờ thành active + Lock/PgSleep; đang chạy lại đúng phiên bản. [Kiểm giao diện](vpt-marketing-automation/SOURCE_REGISTRY_BROWSER.md). Full goal ACTIVE, chưa provider đủ/CPQL/UAT/phát hành.
+
+---
+
 ## 2026-10-03 — Sửa lỗi tên biến trong SQL danh mục
 
 Candidate36048b5 đạt9/10 job/build nhưng PostgreSQL census111151084463 phát hiện tên alias k trùng biến hàm, khiến lưu danh mục bị từ chối và10 ca mới phụ thuộc thất bại. Review độc lập phát hiện cùng nhóm lỗi v/x/k. SQL671 đã dùng alias/cột rõ ràng; giữ nguyên ca nghiệm thu, chạy lại đúng bản sửa. Chưa PASS toàn gói và chưa phát hành.

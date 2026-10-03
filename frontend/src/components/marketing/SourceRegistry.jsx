@@ -6,16 +6,16 @@ const input = 'block w-full rounded border p-2';
 const statuses = { MISSING: 'Chưa xác nhận phạm vi', CURRENT: 'Danh mục còn khớp cấu hình', STALE_AUTHORITY: 'Cần người hiện có quyền xác nhận lại', STALE_CONFIGURATION: 'Cấu hình nguồn đã đổi — cần rà lại' };
 const gaps = { TRIAL_ACCOUNT_ROSTER_CHANGED: 'Danh sách tài khoản đã khác kỳ đo', ACCOUNT_UNAVAILABLE: 'Tài khoản chưa sẵn sàng', FORM_ROUTING_UNVERIFIED: 'Chưa xác minh đường nhận của biểu mẫu', FORM_ACCOUNT_UNRESOLVED: 'Chưa xác định tài khoản của biểu mẫu', ENTRYPOINT_COVERAGE_UNVERIFIED: 'Chưa đối soát đủ khách ở điểm nhận này', PAGE_UNAVAILABLE: 'Page chưa sẵn sàng', KNOWN_FORM_NOT_DECLARED: 'Có biểu mẫu đã biết chưa được khai báo' };
 export default function SourceRegistry({ actorId, companyId, trialId, summary, onRefresh }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(false), [visibleSummary, setVisibleSummary] = useState(summary);
   return <section className="rounded border p-3 space-y-3" aria-label="Phạm vi nguồn khách">
     <h3 className="font-semibold">Phạm vi nguồn khách</h3>
-    <p>{summary ? statuses[summary.status] || 'Chưa đọc được danh mục' : 'Chưa nối danh mục nguồn'}. Danh mục xác nhận phạm vi cần đo; số khách từ nền tảng vẫn cần đối soát.</p>
-    {!!summary?.gaps?.length && <ul className="list-disc pl-5 text-sm text-amber-800">{summary.gaps.map((g, n) => <li key={n}>{gaps[g.code] || 'Cần kiểm tra nguồn'}{g.accountId ? ` · ${g.accountId}` : ''}{g.pageId ? ` · Page ${g.pageId}` : ''}{g.formId ? ` · Biểu mẫu ${g.formId}` : ''}</li>)}</ul>}
+    <p>{visibleSummary ? statuses[visibleSummary.status] || 'Chưa đọc được danh mục' : 'Chưa xác nhận được danh mục hiện tại'}. Danh mục xác nhận phạm vi cần đo; số khách từ nền tảng vẫn cần đối soát.</p>
+    {!!visibleSummary?.gaps?.length && <ul className="list-disc pl-5 text-sm text-amber-800">{visibleSummary.gaps.map((g, n) => <li key={n}>{gaps[g.code] || 'Cần kiểm tra nguồn'}{g.accountId ? ` · ${g.accountId}` : ''}{g.pageId ? ` · Page ${g.pageId}` : ''}{g.formId ? ` · Biểu mẫu ${g.formId}` : ''}</li>)}</ul>}
     {uuid(actorId) && <button className={button} onClick={() => setOpen(v => !v)}>{open ? 'Đóng danh mục' : 'Xem và xác nhận danh mục nguồn'}</button>}
-    {open && uuid(actorId) && <Editor key={`${actorId}:${companyId}:${trialId}`} actor={actorId} company={companyId} trial={trialId} onRefresh={onRefresh} />}
+    {open && uuid(actorId) && <Editor key={`${actorId}:${companyId}:${trialId}`} actor={actorId} company={companyId} trial={trialId} onRefresh={onRefresh} onSummary={setVisibleSummary} />}
   </section>;
 }
-function Editor({ actor, company, trial, onRefresh }) {
+function Editor({ actor, company, trial, onRefresh, onSummary }) {
   const [registry, setRegistry] = useState(null), [entries, setEntries] = useState([]), [reference, setReference] = useState(''), [sourceDate, setSourceDate] = useState(''), [note, setNote] = useState('');
   const [confirmed, setConfirmed] = useState(false), [pending, setPending] = useState(null), [receipt, setReceipt] = useState(null), [busy, setBusy] = useState(false), [error, setError] = useState(''), [storageError, setStorageError] = useState('');
   const life = useRef(0), lock = useRef(false), url = `/crm/marketing-trials/${trial}/source-registry`;
@@ -30,14 +30,14 @@ function Editor({ actor, company, trial, onRefresh }) {
   async function perform(operation, generation = life.current) {
     if (lock.current) return; lock.current = true; setBusy(true); setError('');
     try { await operation(() => generation === life.current); }
-    catch (e) { if (generation === life.current) { setRegistry(null); setError(e.response?.data?.error || e.message || 'Chưa đọc được nguồn.'); } }
+    catch (e) { if (generation === life.current) { setRegistry(null); onSummary(null); setError(e.response?.data?.error || e.message || 'Chưa đọc được nguồn.'); } }
     finally { if (generation === life.current) { lock.current = false; setBusy(false); } }
   }
   async function load(generation) {
     await perform(async current => {
-      setRegistry(null); setConfirmed(false); setReceipt(null);
+      setRegistry(null); onSummary(null); setConfirmed(false); setReceipt(null);
       const { data } = await api.get(url, { params: { company_id: company }, timeout: 20000 }); if (!current()) return;
-      const x = registryResult(data, actor, company, trial); setRegistry(x); setEntries(initialEntries(x));
+      const x = registryResult(data, actor, company, trial); setRegistry(x); onSummary(x); setEntries(initialEntries(x));
       setReference(x.declaration?.sourceReference || ''); setSourceDate(x.declaration?.sourceDate || ''); setNote(x.declaration?.sourceNote || '');
     }, generation);
   }
@@ -53,7 +53,7 @@ function Editor({ actor, company, trial, onRefresh }) {
       try {
         const { data } = await api.post(url, request, { params: { company_id: company }, timeout: 20000 }); if (!current()) return;
         const value = receiptResult(data, request, actor, company, trial);
-        pendingClear(sessionStorage, actor, company, trial); setPending(null); setRegistry(null); setReceipt(value); setConfirmed(false);
+        pendingClear(sessionStorage, actor, company, trial); setPending(null); setRegistry(null); onSummary(null); setReceipt(value); setConfirmed(false);
         onRefresh?.();
       } catch (e) {
         if (!current()) return;

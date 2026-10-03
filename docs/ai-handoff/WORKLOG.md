@@ -1992,3 +1992,6 @@ Added SQL671/private versioned source registry, authenticated primary-only API, 
 
 ## 2026-10-03 — Source registry SQL correction
 36048b5 passed9/10 jobs; census111151084463 failed10 dependent newcases due ambiguous local/column k. Independent review identified k/v/x alias conflicts. Qualified aliases explicitly in SQL671; tests unchanged, PostgreSQL rerun pending.
+
+## 2026-10-03 — Registry final validation delta
+50a0e14 passed all10 jobs and independent review; census41/0/0, Node22 697/0/0, build10314 modules. Browser found stale summary after read error: clear alongside editor on load/error/save. Strengthened concurrency observation to active + Lock/PgSleep. Final rerun pending; SOURCE_REGISTRY_BROWSER.md records synthetic UI evidence.

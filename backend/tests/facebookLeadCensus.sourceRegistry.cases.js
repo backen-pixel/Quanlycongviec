@@ -99,11 +99,11 @@ module.exports = async (t, { db, peers, query }) => {
     const old = await command(); await query('marketing_lead_trial_set', [actor, cid, trial, randomUUID(), { name: 'Revised synthetic trial', since: date(-2), until: date(27), expectedRevision: 1 }]);
     await assert.rejects(save(old), denied('40001')); assert.equal((await read()).status, 'STALE_CONFIGURATION'); await save(await command());
   });
-  const waitFor = async pattern => { for (let n = 0; n < 150; n++) { if ((await db.query('SELECT 1 FROM pg_stat_activity WHERE pid<>pg_backend_pid() AND query LIKE $1 AND wait_event IS NOT NULL', [pattern])).rowCount) return; await new Promise(r => setTimeout(r, 5)); } assert.fail('expected observed PostgreSQL wait'); };
+  const waitFor = async (pattern, event) => { for (let n = 0; n < 150; n++) { if ((await db.query("SELECT 1 FROM pg_stat_activity WHERE pid<>pg_backend_pid() AND state='active' AND query LIKE $1 AND (wait_event=$2 OR wait_event_type=$2)", [pattern, event])).rowCount) return; await new Promise(r => setTimeout(r, 5)); } assert.fail('expected observed PostgreSQL wait'); };
   await t.test('a binding inserted while a declaration waits is detected before writing registry or audit', async () => {
     const c = await command(), key = randomUUID(); await db.query('BEGIN'); await db.query('SELECT 1 FROM marketing_lead_trials WHERE id=$1 FOR UPDATE', [trial]);
     const pending = save(c, key, actor, peers[1]).then(value => ({ value }), error => ({ error }));
-    try { await waitFor('SELECT marketing_source_registry_set%'); await bind('680'); } finally { await db.query('COMMIT'); }
+    try { await waitFor('SELECT marketing_source_registry_set%', 'Lock'); await bind('680'); } finally { await db.query('COMMIT'); }
     assert.equal((await pending).error?.code, '40001'); assert.equal((await db.query('SELECT 1 FROM marketing_measurement.source_registry_events WHERE request_id=$1', [key])).rowCount, 0);
     await db.query("DELETE FROM marketing_fb_lead_bindings WHERE page_id='345' AND form_id='680'");
   });
@@ -120,7 +120,7 @@ module.exports = async (t, { db, peers, query }) => {
     await db.query(original.replace(/BEGIN\r?\n/, 'BEGIN\n PERFORM pg_sleep(0.25);\n'));
     const reading = query('marketing_lead_trial_snapshot', [actor, cid, trial], peers[1]);
     try {
-      await waitFor('SELECT marketing_lead_trial_snapshot%'); await db.query("UPDATE facebook_pages SET access_token='rotated-registry-page' WHERE page_id='345'");
+      await waitFor('SELECT marketing_lead_trial_snapshot%', 'PgSleep'); await db.query("UPDATE facebook_pages SET access_token='rotated-registry-page' WHERE page_id='345'");
       const r = reportTrial(await reading); assert.equal(r.sourceRegistry.inventoryVersion, before.inventoryVersion); assert.equal(r.sourceRegistry.status, 'CURRENT');
       assert.equal(r.allowBudgetExecution, false); assert.equal(r.targetMetToDate, false); assert.equal(r.costPerQualifiedLeadVnd, null);
     } finally { await db.query(original); }
