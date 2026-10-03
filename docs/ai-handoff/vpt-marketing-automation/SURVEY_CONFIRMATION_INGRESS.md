@@ -24,7 +24,7 @@ Hash message hiện có được giữ nguyên để không gây xung đột khi
 
 ## Bằng chứng và giới hạn hiện tại
 
-Local31 test PASS cho care/proposal adapter; cú pháp và diff đã kiểm. Bộ PostgreSQL thêm luồng từ raw body ký giả bằng secret thử → receiver thật → PostgreSQL → event/handoff, cùng sai chữ ký/prose, STOP/echo trong batch, sai khách/token, late ACK/restart, conflict replay, thu hồi quyền/enrollment, quyền sau broad grants, đồng thời, starvation và rollback. Log PostgreSQL và verdict cuối ghi riêng khi có đúng phiên bản.
+Runtime0a97a85 qua review độc lập PASS; local31, PostgreSQL137 (14 case mới), Node22 580 và toàn bộ10 job/full build đạt. [Bằng chứng đúng phiên bản](SURVEY_CONFIRMATION_INGRESS_REVIEW.md). Bộ PostgreSQL kiểm luồng từ raw body ký bằng secret thử → receiver thật → PostgreSQL → event/handoff, cùng sai chữ ký/prose, STOP/echo trong batch, sai khách/token, late ACK/restart, conflict replay, thu hồi quyền/enrollment, quyền sau broad grants, đồng thời, starvation và rollback. Reviewer chạy riêng41 kiểm thử care/webhook/proposal đạt; chưa có nghiệm thu Meta thật.
 
 **Bằng chứng gửi từ Meta vẫn được DB owner mô phỏng trong fixture.** Kiểm thử này có thật đường HMAC/receiver/DB nhưng không phải gửi/nhận Meta ngoài thực tế. Dispatcher, thông điệp gửi chứa đúng payload, quyền pages_messaging, giới hạn cửa sổ gửi, own-send echo correlation và cơ chế reconcile sau ACK vẫn cần tích hợp. Hiện mọi outbound echo tiếp tục chuyển HUMAN_REQUESTED; chưa được mở gửi đề xuất vì echo của chính ứng dụng chưa được phân biệt.
 

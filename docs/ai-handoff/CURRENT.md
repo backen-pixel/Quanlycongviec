@@ -1,8 +1,12 @@
-## 2026-10-03 — Signed survey confirmation ingress (in validation)
+## Hiện hành 03/10/2026 — Nhận xác nhận khảo sát đã kiểm thử
 
-SQL666 and the opt-in webhook adapter preserve quick-reply confirmation evidence from authenticated raw Meta bytes, process all STOP/human/unknown-echo events before booking, and recover confirmations waiting for a late delivery receipt. Private Page enrollment starts empty. New server RPCs enforce the actual service_role even after broad public-function grants; normalized confirmation commands are not exposed through operator/AI HTTP tools.
+Runtime0a97a85 nối raw webhook có kiểm chữ ký → mã quick reply → receipt riêng → giao dịch đặt lịch; toàn bộ STOP/yêu cầu người/echo chưa rõ trong batch được xử lý trước. Có hồi phục khi ACK đến muộn, giữ kết quả cuối khi worker cũ tiếp tục và tránh hồ sơ chưa ACK làm kẹt hàng chờ. Token khảo sát được bỏ trước đường log/hàng chờ cũ.
 
-Local31 PASS; PostgreSQL and final independent review pending. Review fixes include terminal-result compare-and-set and ready-work recovery to avoid starvation; private tokens are removed before legacy logs/queues after both signed receivers run. [Scope and remaining work](vpt-marketing-automation/SURVEY_CONFIRMATION_INGRESS.md). Delivery proof is still seeded by the isolated DB owner: no outbound dispatcher, own-send echo matching, real Meta send, UAT or release. Full goal ACTIVE.
+Review độc lập PASS; PostgreSQL137 (14 case mới), Node22 580, cả10 job/full build và regression PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/SURVEY_CONFIRMATION_INGRESS_REVIEW.md), [phạm vi và phần chưa tích hợp](vpt-marketing-automation/SURVEY_CONFIRMATION_INGRESS.md).
+
+Proof gửi tin còn được DB owner mô phỏng; chưa có dispatcher, nhận diện echo của chính ứng dụng hoặc worker chạy reconcile. Enrollment rỗng, cờ mặc định tắt; chưa gửi/nhận Meta thật, UAT hoặc phát hành. Chưa có CPQL thực tế chứng minh250.000 đồng/khách. Full goal ACTIVE.
+
+Các mục sau giữ lịch sử theo phiên bản.
 
 ---
 
