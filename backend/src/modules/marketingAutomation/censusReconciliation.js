@@ -6,14 +6,14 @@ const fail=()=>{throw Object.assign(new Error('TRIAL_RECONCILIATION_UNAVAILABLE'
 
 // Pure projection of the same PostgreSQL snapshot as the trial report. A
 // matching enumerated subset never certifies provider permissions/retention.
-function reconcileCensus(raw,identity,cohort){
+function reconcileCensus(raw,identity,cohort,period,receiptPeriod){
  const census=raw.providerReconciliation;
  if(!census||census.status==='MISSING')return{status:'MISSING',matchStatus:'NOT_CHECKED',coverage:'UNVERIFIED',run:null,counts:null,issues:[],exceptions:[],cpqlReady:false};
- if(census.version!==1||census.companyId!==raw.companyId||census.trialId!==raw.trial.id||census.complete!==true)fail();
+ if(![1,2].includes(census.version)||census.companyId!==raw.companyId||census.trialId!==raw.trial.id||census.complete!==true)fail();
  const r=census.run,now=time(raw.asOf),start=time(raw.trial.since+'T00:00:00+07:00'),end=time(raw.trial.until+'T00:00:00+07:00')+86400000;
  if(!r||!uuid(r.id)||!['RUNNING','SCANNED','FAILED'].includes(r.state)||!Number.isSafeInteger(r.trialRevision)||r.trialRevision<1||typeof r.scopeCurrent!=='boolean'||!Number.isSafeInteger(r.tasksPending)||r.tasksPending<0||!Number.isFinite(time(r.startedAt))||time(r.startedAt)>now||!Number.isFinite(time(r.since))||!Number.isFinite(time(r.until))||time(r.until)<=time(r.since)||time(r.until)>now||!Array.isArray(census.items)||census.items.length>5000||!Array.isArray(census.forms)||census.forms.length>5000)fail();
  if(r.state==='SCANNED'&&(!Number.isFinite(time(r.finishedAt))||time(r.finishedAt)<time(r.startedAt)||time(r.finishedAt)>now||r.tasksPending!==0))fail();
- const counts={enumerated:census.items.length,receivedCrm:0,awaitingIntake:0,reviewRequired:0,missingReceipt:0,proofConflict:0,missingCrm:0,notEnumerated:0,unknownAcquiredTime:0,unlinkedProofs:0,undiscoveredForms:0,expiredForms:0,retentionUnknownForms:0};
+ const counts={enumerated:census.items.length,receivedCrm:0,awaitingIntake:0,reviewRequired:0,missingReceipt:0,proofConflict:0,missingCrm:0,notEnumerated:0,unknownAcquiredTime:0,outsidePeriod:0,unlinkedProofs:0,undiscoveredForms:0,expiredForms:0,retentionUnknownForms:0};
  const issues=new Map(),exceptions=[];
  function issue(code,receiptId=null){issues.set(code,(issues.get(code)||0)+1);if(exceptions.length<50)exceptions.push({code,receiptId});}
  const forms=new Set();for(const f of census.forms){const key=f.pageId+':'+f.formId;if(!numeric(f.pageId)||!numeric(f.formId)||forms.has(key)||typeof f.discovered!=='boolean'||(f.expiredLeads!==null&&(!Number.isSafeInteger(f.expiredLeads)||f.expiredLeads<0)))fail();forms.add(key);if(!f.discovered)counts.undiscoveredForms++;if(f.expiredLeads===null)counts.retentionUnknownForms++;else if(f.expiredLeads>0)counts.expiredForms++;}
@@ -33,13 +33,15 @@ function reconcileCensus(raw,identity,cohort){
   if(receipt.state!=='DONE'){const review=receipt.state==='REVIEW';counts[review?'reviewRequired':'awaitingIntake']++;issue(review?'CENSUS_REVIEW_REQUIRED':'CENSUS_INTAKE_PENDING',item.receiptId);continue;}
   if(!sourceMatches(s,item)||s.leadId!==receipt.leadId||time(s.acquiredAt)!==time(item.acquiredAt)){counts.proofConflict++;issue('CENSUS_PROOF_CONFLICT',item.receiptId);continue;}
   const member=members.get(s.leadId);
-  if(!member?.member.available||!states.has(member.group.groupId)){counts.missingCrm++;issue('CENSUS_CRM_MISSING',item.receiptId);continue;}
+  const measured=period.status==='AVAILABLE'&&time(item.acquiredAt)>=time(period.sinceAt)&&time(item.acquiredAt)<time(period.untilExclusive);
+  if(!member?.member.available||(measured&&!states.has(member.group.groupId))){counts.missingCrm++;issue('CENSUS_CRM_MISSING',item.receiptId);continue;}
   counts.receivedCrm++;
  }
  // Reverse comparison is essential: a terminated API edge is not enough if
  // a known in-period receipt or proof was omitted from that edge.
  for(const receipt of raw.receipts){
   if(seenReceipts.has(receipt.id))continue;
+  if(receiptPeriod.get(receipt.id)==='OUTSIDE'&&period.censusAligned){counts.outsidePeriod++;continue;}
   const s=sources.get(receipt.id);
   if(!sourceMatches(s,receipt)||receipt.state!=='DONE'||s.leadId!==receipt.leadId){counts.unknownAcquiredTime++;issue('CENSUS_ACQUISITION_UNPROVEN',receipt.id);}
   else if(inRange(time(s.acquiredAt))){counts.notEnumerated++;issue('CENSUS_KNOWN_ID_NOT_ENUMERATED',receipt.id);}
@@ -50,6 +52,7 @@ function reconcileCensus(raw,identity,cohort){
  if(counts.retentionUnknownForms)issue('CENSUS_RETENTION_UNVERIFIED');
  const stale=!r.scopeCurrent||r.trialRevision!==raw.trial.revision||time(r.since)!==start||time(r.until)>end;
  if(stale)issue('CENSUS_SCOPE_CHANGED');
+ if(!period.censusAligned)issue('CENSUS_PERIOD_MISMATCH');
  const status=stale?'STALE':r.state;
  const matchStatus=status==='SCANNED'?(issues.size?'DISCREPANCIES':'MATCHED_ENUMERATED'):'NOT_CHECKED';
  return{status,matchStatus,coverage:'API_ENUMERATION_ONLY',run:{id:r.id,since:r.since,until:r.until,startedAt:r.startedAt,finishedAt:r.finishedAt,state:r.state,tasksPending:r.tasksPending},counts,issues:[...issues].map(([code,count])=>({code,count})),exceptions,exceptionsTruncated:issues.size>0&&[...issues.values()].reduce((a,b)=>a+b,0)>exceptions.length,cpqlReady:false};

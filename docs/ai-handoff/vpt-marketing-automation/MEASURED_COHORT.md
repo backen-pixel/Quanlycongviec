@@ -1,3 +1,7 @@
+Current measurement-period contract: [MEASUREMENT_PERIOD.md](MEASUREMENT_PERIOD.md). SQL670 now selects completed local days and retains outside-period provider observations. The account costs and cohort share that cutoff. The original implementation below remains historical; provider coverage and positive CPQL are still outstanding.
+
+---
+
 # Measured cohort and dashboard integration
 
 Base PR22 `0a106ab09b3c17879a0a64fa82baf51a03c56575`, 2026-10-02. Risk HIGH: company scope, account costs and customer counts. This increment implements measurement configuration and an actual database report from649–654, with a dashboard. It does not complete provider coverage, open a trial or authorize spending. The full Marketing–Sales goal remains active.

@@ -2,6 +2,8 @@
 const {projectReview}=require('../crmLeadIdentity/review');
 const {summarizeSpend}=require('./spendCoverage');
 const {reconcileCensus}=require('./censusReconciliation');
+const {measurementPeriod}=require('./measurementPeriod');
+const {receiptPeriods}=require('./receiptPeriod');
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const fail=()=>{throw Object.assign(new Error('TRIAL_SNAPSHOT_UNAVAILABLE'),{status:503});};
 const time=x=>typeof x==='string'?Date.parse(x):NaN;
@@ -9,14 +11,13 @@ function reportTrial(raw){
  const t=raw?.trial;
  if(!raw||raw.complete!==true||!UUID.test(raw.companyId||'')||!t||t.company_id!==raw.companyId||!UUID.test(t.id||'')||!Number.isFinite(time(raw.asOf))||!Array.isArray(t.account_ids)||!t.account_ids.length||new Set(t.account_ids).size!==t.account_ids.length||!Number.isSafeInteger(t.revision)||t.revision<1)fail();
  for(const key of ['qualities','sources','receipts','accounts','runs'])if(!Array.isArray(raw[key])||raw[key].length>5000)fail();
- const start=time(t.since+'T00:00:00+07:00'),end=time(t.until+'T00:00:00+07:00')+86400000,now=time(raw.asOf);
- if(!Number.isFinite(start)||!Number.isFinite(end)||end-start!==30*86400000)fail();
+ const period=measurementPeriod(raw),start=time(period.sinceAt),end=period.untilExclusive?time(period.untilExclusive):start,now=time(raw.asOf);
  const identity=projectReview(raw.identity);if(identity.companyId!==raw.companyId)fail();
  const members=new Map();for(const g of identity.groups)for(const m of g.members)members.set(m.leadId,g);
  const qualities=new Map();for(const q of raw.qualities){if(!UUID.test(q.leadId||'')||q.companyId!==raw.companyId||qualities.has(q.leadId))fail();qualities.set(q.leadId,q);}
  const receipts=new Map();for(const r of raw.receipts){if(!UUID.test(r.id||'')||receipts.has(r.id)||!['PENDING','LEASED','DONE','REVIEW'].includes(r.state))fail();receipts.set(r.id,r);}
  const sources=new Map(),byGroup=new Map(),sourceReceipts=new Set();
- const counts={qualified:0,pending:0,rejected:0,unresolved:0,existing:0,organic:0,unknownSource:0,observedPaidGroups:0,receivedForms:raw.receipts.length,unprocessedForms:0,unlinkedProofs:0};
+ const counts={qualified:0,pending:0,rejected:0,unresolved:0,existing:0,organic:0,unknownSource:0,observedPaidGroups:0,receivedForms:raw.receipts.length,outsidePeriodForms:0,unprocessedForms:0,unlinkedProofs:0};
  const issues=new Map(),items=[];const issue=k=>issues.set(k,(issues.get(k)||0)+1);
  for(const s of raw.sources){
   if(!UUID.test(s.id||'')||sources.has(s.id)||s.companyId!==raw.companyId||!Number.isFinite(time(s.acquiredAt))||sourceReceipts.has(s.receiptId))fail();
@@ -27,7 +28,11 @@ function reportTrial(raw){
  }
  // Unknown acquired time cannot be filtered by delivery time or assumed outside
  // the period. Retained receipt/source history is not discarded by DETACH.
- for(const r of receipts.values())if(r.state!=='DONE'||!sourceReceipts.has(r.id)){counts.unprocessedForms++;issue('RECEIPT_NOT_RECONCILED');}
+ const receiptPeriod=receiptPeriods(raw,period);
+ for(const r of receipts.values()){
+  if(receiptPeriod.get(r.id)==='OUTSIDE'){counts.outsidePeriodForms++;continue;}
+  if(r.state!=='DONE'||!sourceReceipts.has(r.id)){counts.unprocessedForms++;issue('RECEIPT_NOT_RECONCILED');}
+ }
  const inWindow=s=>time(s.acquiredAt)>=start&&time(s.acquiredAt)<end&&time(s.acquiredAt)<=now;
  const quality=q=>{
   const e=q?.evidence;
@@ -65,14 +70,13 @@ function reportTrial(raw){
  }
  const registered=new Set(t.account_ids),current=new Set(raw.accounts.filter(a=>a.company_id===raw.companyId).map(a=>a.ad_account_id));
  const rosterMatches=registered.size===current.size&&[...registered].every(a=>current.has(a));
- const today=new Date(now+7*3600000).toISOString().slice(0,10),until=t.until<today?t.until:today;
- const spend=now<start?{status:'UNKNOWN',reason:'TRIAL_NOT_STARTED',spendVnd:null,allowBudgetExecution:false}:!rosterMatches?{status:'UNKNOWN',reason:'TRIAL_ACCOUNT_ROSTER_CHANGED',spendVnd:null,allowBudgetExecution:false}:summarizeSpend({accounts:raw.accounts,runs:raw.runs,companyId:raw.companyId,since:t.since,until,now:raw.asOf});
+ const spend=period.status!=='AVAILABLE'?{status:'UNKNOWN',reason:period.status,spendVnd:null,allowBudgetExecution:false}:!rosterMatches?{status:'UNKNOWN',reason:'TRIAL_ACCOUNT_ROSTER_CHANGED',spendVnd:null,allowBudgetExecution:false}:summarizeSpend({accounts:raw.accounts,runs:raw.runs,companyId:raw.companyId,since:period.since,until:period.until,now:raw.asOf,throughExclusive:period.untilExclusive});
  // These are current observed records, not an exhaustive provider census.
  // A later reconciliation service must supply verifiable coverage before CPQL
  // can be published. Callers cannot flip a completeness flag in this API.
- const reconciliation=reconcileCensus(raw,identity,items);
+ const reconciliation=reconcileCensus(raw,identity,items,period,receiptPeriod);
  return{companyId:raw.companyId,trial:{id:t.id,name:t.name,revision:t.revision,since:t.since,until:t.until,accountCount:t.account_ids.length},asOf:raw.asOf,
-  scope:'CONFIGURED_FACEBOOK_ACCOUNTS',spend,observed:{status:'OBSERVED_ONLY',...counts},items,
+  scope:'CONFIGURED_FACEBOOK_ACCOUNTS',period,spend,observed:{status:'OBSERVED_ONLY',...counts},items,
   issues:[...issues].map(([code,count])=>({code,count})),
   reconciliation,
   coverage:{provider:reconciliation.status==='MISSING'?'MISSING':'PARTIAL',identityPolicy:identity.policy,identityComplete:identity.deduplicationComplete,qualification:'CURRENT_OBSERVED_RECORDS',surveys:'NOT_CONNECTED'},

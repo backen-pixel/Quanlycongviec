@@ -1,3 +1,11 @@
+## 2026-10-03 — Cùng kỳ đo khách và chi tiêu (đang kiểm chứng)
+
+Base b66ce94. SQL670 lưu observation provider kể cả ngoài kỳ, chốt census tại ngày Việt Nam hoàn tất; report dùng cùng cutoff cho tiền và khách. Chi phí fetch trước cutoff không được coi là đủ; receipt tới muộn chỉ loại khỏi kỳ khi có bằng chứng đúng nguồn, giữ trạng thái và lịch sử gốc.
+
+Local140 domain/service/provider tests PASS. PostgreSQL, build và independent review đang chờ. [Hợp đồng, giới hạn và hoàn tác](vpt-marketing-automation/MEASUREMENT_PERIOD.md). Còn registry phạm vi + provider coverage, close có bằng chứng và đường positive CPQL, lịch/chờ xử lý trên dashboard và UAT. Full goal ACTIVE; chưa đạt250k, không DB/Meta thật, không mở chi/phát hành.
+
+---
+
 ## Hiện hành 03/10/2026 — Thông báo kết quả khảo sát đã kiểm thử
 
 Candidate44d80b1 bổ sung outbox nguyên giao dịch với booking/từ chối nghiệp vụ, thông báo kết quả đúng lịch và hàng rào gửi chung với đề xuất. Không lấy receipt BLOCKED làm kết quả “chưa đặt lịch”; không gửi lại sau mất phản hồi. STOP/tiếp quản giữ nguyên, bằng chứng booking/handoff không bị xóa khi lỗi gửi.

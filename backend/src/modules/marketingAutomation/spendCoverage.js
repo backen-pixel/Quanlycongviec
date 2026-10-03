@@ -5,7 +5,7 @@ const unknown = reason => ({ status: 'UNKNOWN', reason, spendVnd: null, allowBud
 
 // A server-side company-scoped read of every configured account. This is Facebook
 // source coverage, not a trial registry or a multi-channel CPQL result.
-function summarizeSpend({ accounts, runs, companyId, since, until, now }) {
+function summarizeSpend({ accounts, runs, companyId, since, until, now, throughExclusive }) {
   let dates;
   try { dates = calendarDays(since, until); } catch { return unknown('INVALID_DATE_RANGE'); }
   const time = Date.parse(now);
@@ -22,6 +22,7 @@ function summarizeSpend({ accounts, runs, companyId, since, until, now }) {
     if (r.company_id !== companyId || r.state !== 'COMPLETE' || !s || s.accountId !== account.ad_account_id || s.currency !== 'VND' || s.source !== 'META_ACCOUNT_INSIGHTS_V1') return unknown('LATEST_SYNC_NOT_COMPLETE');
     const collected = Date.parse(r.started_at);
     if (!Number.isFinite(collected) || collected > time || time - collected > MAX_AGE_MS) return unknown('SPEND_STALE');
+    if (throughExclusive !== undefined && (!Number.isFinite(Date.parse(throughExclusive)) || collected < Date.parse(throughExclusive))) return unknown('SPEND_BEFORE_PERIOD_CLOSE');
     if (r.since > since || r.until < until || s.since !== r.since || s.until !== r.until) return unknown('MISSING_DATE_COVERAGE');
     if (!Array.isArray(s.days)) return unknown('INVALID_SNAPSHOT');
     const daily = new Map();

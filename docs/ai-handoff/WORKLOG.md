@@ -1,3 +1,9 @@
+## 2026-10-03 — Measurement period alignment
+
+Changed SQL670, report period/receipt projections, spend close guard, census fixtures/tests and dashboard period labels. Whole-account spend includes zero-Lead accounts; one cutoff excludes current-day spend and post-cutoff acquisitions together. Durable outside-period metadata reconciles late receipts without mutating intake state or hiding conflicts. Added22 unit and6 isolated PostgreSQL scenarios; existing lease rollback now also asserts observation rollback. Local140 PASS; CI/review pending. See MEASUREMENT_PERIOD.md. No live writes, merge, deploy, model API or campaign actions.
+
+---
+
 ## Hiện hành 03/10/2026 — Thông báo kết quả khảo sát đã kiểm thử
 
 Candidate44d80b1 bổ sung outbox nguyên giao dịch với booking/từ chối nghiệp vụ, thông báo kết quả đúng lịch và hàng rào gửi chung với đề xuất. Không lấy receipt BLOCKED làm kết quả “chưa đặt lịch”; không gửi lại sau mất phản hồi. STOP/tiếp quản giữ nguyên, bằng chứng booking/handoff không bị xóa khi lỗi gửi.
