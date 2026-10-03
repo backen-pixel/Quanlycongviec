@@ -1,6 +1,6 @@
 ## Hiện hành 03/10/2026 — Preflight đường ghi cũ đã kiểm PostgreSQL
 
-04/10/2026: [Gói sửa quét điện thoại](LEGACY_PHONE_REPAIR.md) đang kiểm độc lập/CI: phạm vi công ty/Page hiện hành, final round theo nhóm chọn, checked reads/writes, MID chưa lưu và lịch sử bị cắt không cho cleanup.34 ca local mới PASS, 6 ca PostgreSQL mới chưa có kết quả ở thời điểm ghi. CRM merge/creator company và cutover vẫn OPEN; full goal ACTIVE, chưa vận hành thật hoặc đạt250k.
+04/10/2026: [Gói sửa quét điện thoại](LEGACY_PHONE_REPAIR.md) tại bản kiểm5a3acc6: phạm vi công ty/Page hiện hành, final round theo nhóm chọn, checked reads/writes, MID chưa lưu và lịch sử bị cắt không cho cleanup. Review độc lập PASS sau đối chiếu runtime/CI; local77, PostgreSQL264/0/0 gồm6ca mới, census88+HTTP1, Node22 843+26+67 và cả10job/build/report/Messenger SUCCESS. CRM merge/creator company và cutover vẫn OPEN; full goal ACTIVE, chưa vận hành thật hoặc đạt250k.
 
 Runtime9cdfe7d trước đó: SQL682/helper kiểm target trước ghi và giữ lịch sử message/Lead Ads/comment. PostgreSQL258/0/0 (14mới), census88+HTTP1, Node22 843+26+33 và cả10job/build/report/Messenger SUCCESS. [Bằng chứng](LEGACY_WRITE_PREFLIGHT_REVIEW.md), [hợp đồng và phần còn thiếu](LEGACY_WRITE_PREFLIGHT.md). Reviewer độc lập PASS phạm vi preflight/SQL682. Cutover vẫn HOLD: còn caller/batch, dừng/chờ, khôi phục, AI/cấu hình, đủ điểm nhận/phạm vi đo và UAT/Founder release. Chưa dữ liệu thật đạt250k; full goal ACTIVE. Các mục dưới giữ lịch sử.
 

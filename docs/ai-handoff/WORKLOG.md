@@ -1,5 +1,9 @@
 ## 04/10/2026 — Sửa caller quét điện thoại và các finding độc lập
 
+Reviewer độc lập khép **PASS phạm vi phone tại5a3acc6** sau tự đọc CI cuối, đối chiếu GitHub/runtime blob và test cohort. Khác CRLF giữa working tree và blob đã chuẩn hóa không đổi nội dung. Các finding CRM merge/company/cutover giữ OPEN.
+
+Khép lượt kiểm tại5a3acc6/tree06d78fa: automation37139914912 cả10job SUCCESS, intake111252015520264/0/0 gồm ca211 và6phonePASS; census88+HTTP1, Node22 843+26+67, Node18/build/report37139914917/Messenger37139914914SUCCESS. CImerge dad7eff66 có đúng tree và parents base+5a3acc6. Review độc lập xác minh lỗi fixture unlinkedProofs do bằng chứng now−1giờ vừa lọt kỳ đóng theo ngàyVN, đồng ý đo delta và giữ quyền/ẩn dữ liệu. [Bằng chứng đúng phiên bản](vpt-marketing-automation/LEGACY_PHONE_REPAIR.md). Các đoạn sau lưu tiến trình; cutover/CRM merge/creator company còn OPEN.
+
 Published runtime119491e/tree00a28ab; review mã PASS và local77/0/0. CI37139607314 cả9job còn lại/report/Messenger PASS, intake111251124860 fail ca211 cũ (unlinkedProofs toàn kỳ3 vs test1) nhưng6ca PG mới257–262PASS. CImerge bd4dee9f có tree đúng runtime/parents. Sửa test cohort lấy baseline rồi kiểm tăng chính xác1 sau đổi công ty Lead; giữ booked/paid2→1 và không lộ title. Runtime không đổi; đang kiểm lại CI và review riêng test. Không coi lần CI fail là nghiệm thu hoàn tất.
 
 Sửa `facebookInboundPhoneReconcile.js`, `facebookLegacyContactWrites.js`, `routes/facebook.js`; thêm `facebookLegacyPhoneRepair.test.js` và6 ca actual helper PostgreSQL trong `careLegacyWrite.cases.js`; workflow đưa các file/test mới vào regression. Không thêm migration.

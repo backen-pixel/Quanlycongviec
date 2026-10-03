@@ -1,6 +1,6 @@
-## Hiện hành 04/10/2026 — Sửa đường quét điện thoại, đang kiểm độc lập
+## Hiện hành 04/10/2026 — Đường quét điện thoại đã qua kiểm thử cô lập
 
-Runtime `119491e` khóa phạm vi công ty/Page hiện hành, giới hạn final round theo Lead đã chọn, kiểm lỗi DB và chặn đối soát khi Graph/MID/lịch sử chưa hoàn tất. Đã sửa các finding reviewer về actor A/B cùng tenant, admin thiếu tenant, cache Page, MID khóa và lịch sử bị giới hạn. Review mã PASS; local77/0/0;6ca PostgreSQL mới PASS. CI9/10job đạt; intake fail ca211 cũ do kỳ vọng unlinkedProofs toàn kỳ1 trong khi có3. Đang sửa test kiểm baseline→tăng1, giữ assertion quyền/ẩn dữ liệu; runtime không đổi. Chưa báo toàn CI PASS.
+Runtime `119491e`, bản kiểm/test fix `5a3acc6` khóa phạm vi công ty/Page hiện hành, giới hạn final round theo Lead đã chọn, kiểm lỗi DB và chặn đối soát khi Graph/MID/lịch sử chưa hoàn tất. Review độc lập PASS phạm vi phone sau đối chiếu blob/log CI; local77/0/0; PostgreSQL264/0/0 gồm6ca mới; census88+HTTP1, Node22 843+26+67 và cả10job/build/report/Messenger SUCCESS. CImerge tree đúng bản kiểm. Ca211 cũ được sửa theo baseline→tăng1 sau xác minh nền fixture theo ngày; giữ assertion quyền/ẩn dữ liệu, runtime không đổi.
 
 [Phạm vi, bằng chứng và hoàn tác](vpt-marketing-automation/LEGACY_PHONE_REPAIR.md). CRM merge/cleanup và tạo Lead/Customer đúng công ty còn OPEN; cutover, dừng/chờ đường cũ, đối soát/khôi phục, AI/lịch/người nhận/phạm vi đo và UAT/Founder release vẫn còn. Full goal ACTIVE, chưa tác động hệ thống thật hoặc có kết quả250k thực tế. Các mục dưới là lịch sử.
 
