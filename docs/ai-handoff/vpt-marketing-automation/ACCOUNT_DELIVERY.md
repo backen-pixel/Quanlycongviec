@@ -32,7 +32,7 @@ Không thêm một lớp snapshot nữa. Dùng delivery witness này cùng regis
 
 ## Kiểm thử, phát hành và hoàn tác
 
-Candidate97a9a2f: automation37117220621 cả10job/build SUCCESS, report37117220587 và Messenger37117220591 SUCCESS. Reviewer chạy độc lập90PASS nhưng tìm paging sai kiểu bị hiểu nhầm là hết trang; đã sửa và thêm6regression. Đồng thời collector mới chốt đến hết hôm qua với ca kiểm lúc qua nửa đêm Việt Nam. Local24ca mới,103ca liên quan PASS. Follow-up còn cần CI/review đúng phiên bản cuối.
+Candidate97a9a2f: automation37117220621 cả10job/build SUCCESS, report37117220587 và Messenger37117220591 SUCCESS. Reviewer chạy độc lập90PASS nhưng tìm paging sai kiểu bị hiểu nhầm là hết trang; đã sửa và thêm6regression. Đồng thời collector mới chốt đến hết hôm qua với ca kiểm lúc qua nửa đêm Việt Nam. Local24ca mới,103ca liên quan PASS. Runtime02f164b đã đạt cả10job: PostgreSQL78/0/0, HTTP1/0/0, Node22 784/0/0 và full build; report/Messenger SUCCESS. Review độc lập PASS, không còn finding chặn. [Bằng chứng đúng phiên bản](ACCOUNT_DELIVERY_REVIEW.md).
 
 Bộ PG nối collector thật với API giả qua spend RPC và trial projection, kiểm quyền/broad grant, atomicity, duplicate/concurrent retry, invalid data, quyền bị thu hồi và coherent spend/witness khi run mới commit giữa lúc đọc. Không dùng test giả để thay UAT Meta thật. UI là phần hiển thị chỉ đọc, đã qua full build; chưa nghiệm thu tài khoản hoặc trang vận hành thật.
 
