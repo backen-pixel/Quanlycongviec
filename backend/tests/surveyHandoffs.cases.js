@@ -113,4 +113,37 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,region,booked,f
   const ids=[];for(let i=0;i<53;i++){const c=await booked();await db.query('UPDATE crm_leads SET assigned_to=$2 WHERE id=$1',[c.lead,owner]);ids.push(c.proposal.proposalId);await finished(c);}
   const first=await queue(owner),next=await queue(owner,'PENDING',first.nextAfter,first.version);assert.equal(first.items.length,50);assert.equal(next.items.length,3);assert.equal(next.nextAfter,null);assert.equal(first.counts.PENDING,53);assert.deepEqual(next.counts,first.counts);assert.equal(new Set([...first.items,...next.items].map(x=>x.proposalId)).size,53);assert.ok(ids.every(id=>[...first.items,...next.items].some(x=>x.proposalId===id)));
  });
+ await t.test('ACK holds positive recipient membership through commit; revocation then prevents receipt replay',async()=>{
+  const c=await booked(),v=await read(c),key=randomUUID(),pid=(await db.query('SELECT pg_backend_pid() p')).rows[0].p;
+  await peers[0].query('BEGIN');await ack(c,v,key);let removed=false;
+  const revoke=db.query('DELETE FROM user_company_regions WHERE user_id=$1',[c.staff]).then(()=>{removed=true});
+  try{await peers[2].query('RESET ROLE');let blocked=false;for(let i=0;i<100;i++){if((await peers[2].query('SELECT wait_event_type FROM pg_stat_activity WHERE pid=$1',[pid])).rows[0]?.wait_event_type==='Lock'){blocked=true;break}await peers[2].query('SELECT pg_sleep(0.01)')}assert.equal(blocked,true);assert.equal(removed,false);}
+  finally{await peers[0].query('COMMIT');await revoke;await peers[2].query('SET ROLE service_role')}
+  await assert.rejects(ack(c,v,key),e=>e.code==='42501');await finished(c);
+ });
+ await t.test('missing membership cannot be resurrected after the locking read by a newer inventory snapshot',async()=>{
+  const c=await booked(),v=await read(c),pid=(await peers[1].query('SELECT pg_backend_pid() p')).rows[0].p;
+  const definition=(await db.query("SELECT pg_get_functiondef('crm_survey_control.handoff_inventory(uuid)'::regprocedure) value")).rows[0].value;
+  // Isolated owner-only barrier at the exact old authorization gap. The
+  // original implementation reaches it; the fixed context must reject first.
+  await db.query(definition.replace('handoff_inventory(', 'handoff_inventory_fixture('));
+  await db.query(`CREATE OR REPLACE FUNCTION crm_survey_control.handoff_inventory(p_company uuid)
+   RETURNS TABLE(proposal_id uuid,recipient_id uuid,owner_id uuid,region_id uuid,scope_ready boolean,assigned boolean,consistent boolean,version text,document jsonb)
+   LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,public AS $$ BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('synthetic-handoff-inventory-gap',0));
+    RETURN QUERY SELECT * FROM crm_survey_control.handoff_inventory_fixture(p_company);
+   END $$`);
+  await db.query('DELETE FROM user_company_regions WHERE user_id=$1',[c.staff]);
+  await db.query('BEGIN');await db.query("SELECT pg_advisory_xact_lock(hashtextextended('synthetic-handoff-inventory-gap',0))");
+  let settled=false;const outcome=ack(c,v,randomUUID(),c.staff,peers[1]).then(value=>({value}),error=>({error})).then(x=>{settled=true;return x});
+  try{
+   for(let i=0;i<100;i++){if(settled||(await db.query('SELECT wait_event_type FROM pg_stat_activity WHERE pid=$1',[pid])).rows[0]?.wait_event_type==='Lock')break;await db.query('SELECT pg_sleep(0.01)')}
+   await db.query('INSERT INTO user_company_regions VALUES($1,$2)',[c.staff,region]);await db.query('COMMIT');
+   const result=await outcome;assert.equal(result.error?.code,'42501','A later membership INSERT must not upgrade an empty locking read');
+  }finally{await db.query('ROLLBACK');await outcome;await db.query(definition);await db.query('DROP FUNCTION crm_survey_control.handoff_inventory_fixture(uuid)');await finished(c);}
+ });
+ await t.test('adding occurrence dates cannot be acknowledged as the original single confirmed appointment',async()=>{
+  const c=await booked();await finished(c);await db.query("UPDATE crm_events SET occurrence_dates=ARRAY[(start_time AT TIME ZONE 'Asia/Ho_Chi_Minh')::date+1] WHERE id=$1",[c.booking.event_id]);
+  const v=await read(c);assert.equal(v.appointmentUnchanged,false);assert.equal(v.canAcknowledge,false);await assert.rejects(ack(c,v),e=>e.code==='40001');
+ });
 };

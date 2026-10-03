@@ -54,7 +54,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $$
    AND EXISTS(SELECT 1 FROM public.crm_event_participants ep WHERE ep.event_id=e.id AND ep.user_id=h.recipient_id AND ep.status::text='confirmed'),false) still_assigned,
   coalesce(e.start_time=(p.business->>'startsAt')::timestamptz AND e.end_time=(p.business->>'endsAt')::timestamptz
    AND e.location=p.business->>'location' AND e.status::text='planned' AND e.event_type::text='site_visit' AND e.module='crm'
-   AND e.all_day=false AND parts.n=1,false) unchanged,
+   AND e.all_day=false AND cardinality(coalesce(e.occurrence_dates,'{}'::date[]))=0 AND parts.n=1,false) unchanged,
   coalesce(msg.n,0) message_count,coalesce(msg.fingerprint,'') message_fingerprint,coalesce(da.conflict,false) delivery_conflict,
   jsonb_build_object('proposalId',h.proposal_id,'companyId',h.company_id,'threadId',b.thread_id,'eventId',b.event_id,
    'state',h.state,'createdAt',h.created_at,'recipientId',h.recipient_id,'recipientName',CASE WHEN staff.company_id=p_company THEN coalesce(to_jsonb(staff)->'full_name',to_jsonb(staff)->'name') ELSE p.business->'staffName' END,
@@ -67,7 +67,7 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $$
    'messageCount',coalesce(msg.n,0),'receipt',hr.result,'bookingStatus',b.result->'status') base_document,
   jsonb_build_object('handoff',to_jsonb(h),'business',p.business,'booking',to_jsonb(b),'thread',to_jsonb(t),
    'event',to_jsonb(e),'participants',parts.fingerprint,'lead',to_jsonb(l),'customer',to_jsonb(cust),'contact',contact,
-   'staff',to_jsonb(staff),'region',to_jsonb(cr),'messages',msg.fingerprint,'conflict',da.conflict,'receipt',hr.result) fingerprint
+   'staff',to_jsonb(staff),'region',to_jsonb(cr),'membership',membership.fingerprint,'messages',msg.fingerprint,'conflict',da.conflict,'receipt',hr.result) fingerprint
  FROM crm_survey_control.handoffs h
  LEFT JOIN crm_survey_control.proposals p ON p.id=h.proposal_id
  LEFT JOIN crm_survey_control.bookings b ON b.proposal_id=h.proposal_id
@@ -81,6 +81,8 @@ LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $$
  LEFT JOIN public.crm_events e ON e.id=b.event_id
  LEFT JOIN crm_survey_control.handoff_receipts hr ON hr.proposal_id=h.proposal_id
  LEFT JOIN crm_survey_control.dispatch_attempts da ON da.proposal_id=h.proposal_id
+ LEFT JOIN LATERAL (SELECT md5(coalesce(string_agg(to_jsonb(ur)::text,',' ORDER BY ur.user_id),'')) fingerprint
+   FROM public.user_company_regions ur WHERE ur.region_id=l.region_id AND ur.user_id IN (h.recipient_id,l.assigned_to)) membership ON true
  LEFT JOIN LATERAL (SELECT count(*) n,min(fc.lead_id::text) lead_id,min(to_jsonb(fc)->>'customer_id') customer_id,
    md5(coalesce(string_agg(to_jsonb(fc)::text,',' ORDER BY fc.id),'')) fingerprint
    FROM public.facebook_contacts fc WHERE fc.page_id=t.page_id AND fc.psid=t.psid) contact ON true
@@ -98,7 +100,7 @@ $$;
 
 CREATE OR REPLACE FUNCTION crm_survey_control.handoff_context(p_actor uuid,p_company uuid,p_id uuid)
 RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,public AS $$
-DECLARE is_admin boolean;row record;thread_id uuid;
+DECLARE is_admin boolean;row record;thread_id uuid;locked_contacts jsonb;locked_region uuid;locked_recipient uuid;recipient_member boolean;
 BEGIN
  is_admin:=crm_survey_control.handoff_actor(p_actor,p_company);
  SELECT b.thread_id INTO thread_id FROM crm_survey_control.bookings b WHERE b.proposal_id=p_id AND b.company_id=p_company;
@@ -109,18 +111,31 @@ BEGIN
  PERFORM crm_survey_control.assert_ready();
  PERFORM 1 FROM crm_survey_control.handoffs WHERE proposal_id=p_id FOR UPDATE;
  PERFORM 1 FROM public.facebook_pages fp JOIN public.crm_care_threads ct ON ct.page_id=fp.page_id WHERE ct.id=thread_id FOR SHARE OF fp;
- PERFORM 1 FROM public.facebook_contacts fc JOIN public.crm_care_threads ct ON ct.page_id=fc.page_id AND ct.psid=fc.psid WHERE ct.id=thread_id FOR SHARE OF fc;
+ SELECT jsonb_agg(to_jsonb(locked)) INTO locked_contacts FROM (
+  SELECT fc.* FROM public.facebook_contacts fc JOIN public.crm_care_threads ct ON ct.page_id=fc.page_id AND ct.psid=fc.psid WHERE ct.id=thread_id FOR SHARE OF fc
+ ) locked;
+ IF coalesce(jsonb_array_length(locked_contacts),0)<>1 THEN RAISE EXCEPTION 'handoff mapping unavailable' USING ERRCODE='42501';END IF;
  PERFORM 1 FROM public.crm_leads l JOIN crm_survey_control.proposals p ON l.id=(p.business->>'leadId')::uuid WHERE p.id=p_id FOR SHARE OF l;
  PERFORM 1 FROM public.customers c JOIN public.crm_leads l ON l.customer_id=c.id JOIN crm_survey_control.proposals p ON l.id=(p.business->>'leadId')::uuid WHERE p.id=p_id FOR SHARE OF c;
  PERFORM 1 FROM public.users u JOIN crm_survey_control.handoffs h ON h.recipient_id=u.id WHERE h.proposal_id=p_id FOR SHARE OF u;
  PERFORM 1 FROM public.company_regions r JOIN crm_survey_control.proposals p ON r.id=(p.business->>'regionId')::uuid WHERE p.id=p_id FOR SHARE OF r;
- PERFORM 1 FROM public.user_company_regions ur JOIN crm_survey_control.proposals p ON ur.region_id=(p.business->>'regionId')::uuid WHERE p.id=p_id AND ur.user_id IN (p_actor,(p.business->>'staffId')::uuid) FOR SHARE OF ur;
+ SELECT (p.business->>'regionId')::uuid,h.recipient_id INTO locked_region,locked_recipient
+ FROM crm_survey_control.proposals p JOIN crm_survey_control.handoffs h ON h.proposal_id=p.id WHERE p.id=p_id;
+ -- A later INSERT must not upgrade authorization from an empty locking read.
+ -- Use the positive result of these exact row locks, held through commit.
+ IF NOT is_admin THEN
+  PERFORM 1 FROM public.user_company_regions WHERE user_id=p_actor AND region_id=locked_region FOR SHARE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'handoff membership unavailable' USING ERRCODE='42501';END IF;
+ END IF;
+ PERFORM 1 FROM public.user_company_regions WHERE user_id=locked_recipient AND region_id=locked_region FOR SHARE;
+ recipient_member:=FOUND;
  SELECT * INTO row FROM crm_survey_control.handoff_inventory(p_company) i WHERE i.proposal_id=p_id;
+ row.assigned:=coalesce(row.assigned,false) AND recipient_member;
  IF NOT FOUND OR NOT row.scope_ready OR (NOT is_admin AND (
   (p_actor=row.owner_id OR (p_actor=row.recipient_id AND row.assigned)) IS NOT TRUE
   OR NOT EXISTS(SELECT 1 FROM public.user_company_regions WHERE user_id=p_actor AND region_id=row.region_id))) THEN
   RAISE EXCEPTION 'handoff scope unavailable' USING ERRCODE='42501';END IF;
- RETURN row.document||jsonb_build_object('canAcknowledge',p_actor=row.recipient_id AND row.assigned AND row.consistent AND row.document->>'state'='PENDING','aiMaySend',false);
+ RETURN row.document||jsonb_build_object('assignmentCurrent',row.assigned,'canAcknowledge',p_actor=row.recipient_id AND row.assigned AND row.consistent AND row.document->>'state'='PENDING','aiMaySend',false);
 END $$;
 
 CREATE OR REPLACE FUNCTION public.crm_survey_handoff_queue(p_actor uuid,p_company uuid,p_state text,p_after uuid DEFAULT NULL,p_version text DEFAULT NULL)
