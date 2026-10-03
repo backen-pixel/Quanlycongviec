@@ -43,7 +43,7 @@ function createSurveyProposals({ db, isPrimary, env = process.env }) {
       return res.json(r.data);
     } catch (e) {
       const status = e.code === '42501' ? 403 : ['23505', '40001'].includes(e.code) ? 409 : ['22023', '22P02', '22007', '22008'].includes(e.code) ? 400 : 503;
-      return res.status(status).json({ error: status === 409 ? 'Thông tin khảo sát đã thay đổi. Tải lại để chọn giờ và đề xuất mới.' : 'Chưa thực hiện được đề xuất trong phạm vi hiện tại.' });
+      return res.status(status).json({ ...(e.code==='40001'?{reason:'STALE_OPTION'}:['22023','22P02','22007','22008'].includes(e.code)?{reason:'INVALID_INPUT'}:{}), error: status === 409 ? 'Thông tin khảo sát đã thay đổi. Tải lại để chọn giờ và đề xuất mới.' : 'Chưa thực hiện được đề xuất trong phạm vi hiện tại.' });
     }
   }
   // Customer confirmation and dispatch are intentionally not operator commands.
