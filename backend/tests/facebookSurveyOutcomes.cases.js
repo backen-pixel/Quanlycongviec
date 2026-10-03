@@ -49,7 +49,11 @@ module.exports=async(t,{db,peers,query,company,other,admin,region,setup,booked,f
   for(const superseded of [false,true]){
    const c=await setup(),a=await dispatched(c);await db.query("UPDATE crm_survey_control.proposals SET expires_at=clock_timestamp()-interval '1 second' WHERE id=$1",[c.proposal.proposalId]);
    await receive([await incoming(c,'Xác nhận lịch',a.payload.message.quick_replies[0].payload)]);assert.equal((await state(c))[0].kind,'NOT_BOOKED');
-   let next;if(superseded){next=await query('crm_survey_propose',[admin,company,randomUUID(),c.command]);}
+   let next;if(superseded){
+    const available=await query('crm_survey_availability',[admin,company,c.thread,new Date(c.a).toISOString(),new Date(c.b).toISOString()]);
+    const option=available.items.find(x=>x.staffId===c.staff);assert.ok(option);
+    next=await query('crm_survey_propose',[admin,company,randomUUID(),{...c.command,optionId:option.optionId}]);
+   }
    const n=await claim(c);assert.equal(n.status,superseded?'HELD':'CLAIMED');if(!superseded)assert.match(n.payload.message.text,/chưa được đặt/);
    if(next)await db.query("UPDATE crm_survey_control.proposals SET state='REJECTED' WHERE id=$1",[next.proposalId]);await finish(c);
   }
@@ -139,5 +143,20 @@ module.exports=async(t,{db,peers,query,company,other,admin,region,setup,booked,f
   const rs=await Promise.all([claim(c,randomUUID(),peers[0]),query('crm_survey_dispatch_claim',['123',p.proposalId,randomUUID(),hash],peers[1])]);
   assert.equal(rs.filter(x=>x.status==='CLAIMED').length,1);assert.equal(rs.filter(x=>x.status==='PRIOR_DELIVERY_UNCERTAIN').length,1);
   await db.query("UPDATE crm_survey_control.proposals SET state='REJECTED' WHERE id=$1 AND state='OPEN'",[p.proposalId]);await finish(otherCase);await finish(c);
+ });
+ await t.test('STOP in the same confirmation batch creates neither booking nor customer outcome',async()=>{
+  const c=await setup(),a=await dispatched(c);
+  await receive([await incoming(c,'Xác nhận lịch',a.payload.message.quick_replies[0].payload),await incoming(c,'STOP')]);
+  assert.equal((await state(c)).length,0);assert.equal((await db.query('SELECT count(*)::int n FROM crm_survey_control.bookings WHERE proposal_id=$1',[c.proposal.proposalId])).rows[0].n,0);
+  assert.equal(await mode(c),'OPTED_OUT');await db.query("UPDATE crm_survey_control.proposals SET state='REJECTED' WHERE id=$1 AND state='OPEN'",[c.proposal.proposalId]);await finish(c);
+ });
+ await t.test('recipient membership revoked while outcome claim waits blocks stale appointment text',async()=>{
+  const c=await booked();await db.query('BEGIN');await db.query('DELETE FROM user_company_regions WHERE user_id=$1 AND region_id=$2',[c.staff,region]);
+  const pending=claim(c);await db.query('SELECT pg_sleep(0.1)');await db.query('COMMIT');assert.equal((await pending).status,'HELD');assert.equal((await state(c))[0].state,'HELD');await finish(c);
+ });
+ await t.test('an unavailable first candidate is held without starving another customer notification',async()=>{
+  const bad=await booked(),good=await booked();await receive([await incoming(bad,'STOP')]);let sends=0;
+  await worker(async(_,init)=>{sends++;const p=JSON.parse(init.body);assert.equal(p.recipient.id,good.psid);return{ok:true,json:async()=>({recipient_id:good.psid,message_id:randomUUID()})};}).drain();
+  assert.equal(sends,1);assert.equal((await state(bad))[0].state,'HELD');assert.equal((await state(good))[0].state,'SENT');await finish(bad);await finish(good);
  });
 };
