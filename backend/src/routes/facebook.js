@@ -13,6 +13,8 @@ const leadIntakePrimary = () => !intakeRouterState.isFailoverEnabled() && intake
 const facebookLeadIntake = createLeadIntake({ db: supabase, isPrimary: leadIntakePrimary, onError: code => console.warn('[FB Lead intake]', code) });
 const { createCustomerCare } = require('../modules/marketingAutomation/facebookCustomerCare');
 const facebookCustomerCare = createCustomerCare({ db: supabase, isPrimary: leadIntakePrimary });
+const { createSurveyDispatch } = require('../modules/marketingAutomation/facebookSurveyDispatch');
+const facebookSurveyDispatch = createSurveyDispatch({ db: supabase, isPrimary: leadIntakePrimary, onError: code => console.warn('[FB survey]', code) });
 const facebookLeadCensus = createLeadCensus({ db: supabase, isPrimary: leadIntakePrimary, pages: facebookLeadIntake.pages, onError: code => console.warn('[FB Lead census]', code) });
 const { fetchAllPagesParallel } = require('../helpers/supabaseFetchAll');
 const axios = require('axios');
@@ -10183,6 +10185,12 @@ r.post('/contacts/:contactId/send-drive-folder', authMiddleware, async (req, res
   }
 });
 
+// Controlled survey delivery is default-off; durable recovery also runs after restart.
+if (process.env.VPT_SURVEY_CONFIRMATIONS === '1') {
+  const surveyTimer = setInterval(() => { void facebookSurveyDispatch.drain(); }, 5000);
+  surveyTimer.unref();
+  setImmediate(() => { void facebookSurveyDispatch.drain(); });
+}
 // Timers do not prevent shutdown. Pending/expired receipts are recovered after restart.
 if (facebookLeadIntake.pages.size) {
   const intakeTimer = setInterval(() => { void facebookLeadIntake.drain(); void facebookLeadCensus.drain(); }, 5000);

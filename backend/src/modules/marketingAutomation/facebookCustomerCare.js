@@ -50,6 +50,13 @@ function extractCareEvents(body,pages,now=Date.now(),{surveyConfirmations=false}
     const match=/^VPT_SURVEY_V1:([0-9a-f-]{36}):([0-9a-f-]{36})$/.exec(payload);
     if(match&&uuid(match[1])&&uuid(match[2]))row.confirmationPayload=payload;
    }
+   if(surveyConfirmations&&echo){
+    const appId=Number.isSafeInteger(m.app_id)?String(m.app_id):m.app_id;
+    // Unknown/malformed provider metadata remains an ordinary external echo.
+    // Never infer ownership from is_echo or app_id alone.
+    if(numeric(appId))row.echoAppId=appId;
+    if(typeof m.metadata==='string'&&m.metadata.length<=1000)row.echoMetadata=m.metadata;
+   }
    rows.push(row);
    if(rows.length>100)throw fail('ENVELOPE_LIMIT');
   }
@@ -59,8 +66,12 @@ function extractCareEvents(body,pages,now=Date.now(),{surveyConfirmations=false}
 function redactSurveyConfirmationPayloads(body,pages){
  if(body?.object!=='page'||!Array.isArray(body.entry))return body;
  return {...body,entry:body.entry.map(entry=>!pages.has(entry?.id)||!Array.isArray(entry.messaging)?entry:{...entry,messaging:entry.messaging.map(event=>{
-  if(typeof event?.message?.quick_reply?.payload!=='string'||!event.message.quick_reply.payload.startsWith('VPT_SURVEY_V1:'))return event;
-  const {quick_reply,...message}=event.message;return {...event,message};
+  const original=event?.message;if(!original)return event;
+  const confirmation=typeof original.quick_reply?.payload==='string'&&original.quick_reply.payload.startsWith('VPT_SURVEY_V1:');
+  const attempt=typeof original.metadata==='string'&&original.metadata.startsWith('VPT_SURVEY_SEND_V1:');
+  if(!confirmation&&!attempt)return event;
+  const message={...original};if(confirmation)delete message.quick_reply;if(attempt)delete message.metadata;
+  return {...event,message};
  })})};
 }
 function createCustomerCare({db,isPrimary,env=process.env,now=Date.now}){
