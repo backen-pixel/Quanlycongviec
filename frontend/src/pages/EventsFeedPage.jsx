@@ -1114,6 +1114,7 @@ export default function EventsFeedPage({
               <BarChart3 className="h-4 w-4 text-blue-600 shrink-0" /> Tổng quan
             </Link>
           )}
+          {!forcedModule && <Link to="/crm/events/surveys" className="h-9 px-3 inline-flex items-center rounded-lg text-sm font-semibold border border-blue-200 text-blue-800">Bàn giao khảo sát</Link>}
           {/* View toggle */}
           <div className="flex bg-gray-100 rounded-lg p-0.5" data-tour="events-view-toggle">
           <button

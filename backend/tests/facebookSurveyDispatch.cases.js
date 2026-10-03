@@ -171,4 +171,10 @@ module.exports=async(t,{db,peers,query,company,other,admin,setup,finished})=>{
   assert.equal((await ack(a,w,'conflict-'+randomUUID())).status,'CONFLICT');assert.deepEqual(await booking(c),b);
   assert.equal((await delivery(c)).provider_mid,mid);assert.equal((await delivery(c)).state,'SENT');assert.equal(await mode(c),'HUMAN_REQUESTED');await finish(c);
  });
+ return {receive,incoming,booked:async()=>{
+  const c=await setup();await worker(async(_,init)=>{const payload=JSON.parse(init.body),e=await echo(c,payload);
+   await receive([e,await incoming(c,'Xác nhận lịch',payload.message.quick_replies[0].payload)]);
+   return{ok:true,json:async()=>({recipient_id:c.psid,message_id:e.message.mid})};}).drain();
+  c.booking=await booking(c);assert.ok(c.booking,'Synthetic provider path must create booking');return c;
+ }};
 };
