@@ -1,6 +1,6 @@
 # Survey source and availability preparation
 
-2026-10-03, basec621fe6. **In validation; default-off; no booking or release.** This increment advances the scheduling part of the approved goal. It does not replace the eventual AI → customer confirmation → atomic booking → Sales handoff flow with a manual-only solution.
+2026-10-03, basec621fe6. **Runtimec0d07e6 verified; default-off; no booking or release.** This increment advances the scheduling part of the approved goal. It does not replace the eventual AI → customer confirmation → atomic booking → Sales handoff flow with a manual-only solution.
 
 ## Verified current calendar behavior
 
@@ -28,6 +28,6 @@ Authenticated parent route exposes GET `survey/roster`, POST `survey/roster/chan
 
 **Still required for actual booking:** confirmed real calendar coverage and roster; proof binding the customer's confirmation to the exact offered person/time/location/version; current authority/consent/takeover recheck; one transaction for reservation, canonical CRM event, participants, audit and handoff/outbox; same resource locks and safe mutations across all old write paths. A statement-level lock alone cannot close the legacy DELETE-participants → INSERT-participants gap. No customer message, AI right, external calendar write or claimed Sales delivery is introduced here.
 
-Verification: local9 service/contract tests PASS. Isolated PostgreSQL cases cover source rights/replay/concurrency/rollback, every person relationship, cross-company/custom events, NULL/unknown time/status, buffers and boundaries, >1000 participant events, expired/revoked source, opt-out/takeover, too many options and unavailable storage. CI/independent implementation review pending; no browser/UAT evidence claimed.
+Verification: local9 service/contract tests PASS. Isolated PostgreSQL cases cover source rights/replay/concurrency/rollback, every person relationship, cross-company/custom events, NULL/unknown time/status, buffers and boundaries, >1000 participant events, expired/revoked source, opt-out/takeover, too many options and unavailable storage. Runtime CI: PostgreSQL100 PASS including13 survey cases; Node22 567 PASS; all10 jobs/full build and report/Messenger regressions SUCCESS. Independent code review PASS; [versioned evidence](SURVEY_AVAILABILITY_REVIEW.md). No browser/UAT evidence claimed.
 
 Rollback: disable VPT_SURVEY_ADMIN, retain source/receipt history, leave the existing CRM calendar intact. No live migration or configuration change is authorized by this document. Full Marketing–Sales goal remains ACTIVE; CPQL250,000 VND is unproven operationally.
