@@ -154,7 +154,8 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,region,config})
  });
  await t.test('new paid intake Lead reaches a customer-confirmed survey and cohort without seeded links',async()=>{
   const c=await fresh(),trial=randomUUID(),staff=randomUUID(),start=Date.now()+5*86400000,end=start+3600000;
-  await query('marketing_lead_trial_set',[admin,company,trial,randomUUID(),{name:'Synthetic signed intake to survey journey',since:day,until:day,expectedRevision:0}]);
+  const since=new Date(Date.now()+7*3600000-30*86400000).toISOString().slice(0,10);
+  await query('marketing_lead_trial_set',[admin,company,trial,randomUUID(),{name:'Synthetic signed intake to survey journey',since,until:day,expectedRevision:0}]);
   const quality=await query('crm_lead_quality_read',[admin,company,c.lead]);
   await query('crm_lead_quality_record',[admin,company,c.lead,randomUUID(),quality.revision,quality.contextVersion,{status:'QUALIFIED',contactVerified:true,demandMatches:true,serviceAreaVerified:true,evidence:'Synthetic operator attests paid Lead quality for the signed journey'}]);
   const cohort=async()=>reportCohortOperations(await query('marketing_cohort_operations_snapshot',[admin,company,trial]));
@@ -179,11 +180,11 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,region,config})
   }});
   await worker.drain();assert.equal(sent,1);await c.receive([click]);await worker.drain();assert.equal(sent,1);
   const bookings=(await db.query('SELECT * FROM crm_survey_control.bookings WHERE proposal_id=$1',[proposal.proposalId])).rows;
-  assert.equal(bookings.length,1);const result=await cohort();assert.equal(result.counts.bookedGroups,1);
+  assert.equal(bookings.length,1);const result=await cohort();assert.equal(result.counts.bookedGroups,before.counts.bookedGroups+1);
   assert.ok(!result.attention.some(x=>x.leadId===c.lead&&x.reason==='CARE_CONNECTION_NOT_ESTABLISHED'));
   const handoff=await query('crm_survey_handoff_read',[staff,company,proposal.proposalId,null,null]);assert.equal(handoff.lead?.id||handoff.leadId,c.lead);
   await query('crm_survey_handoff_ack',[staff,company,randomUUID(),{proposalId:proposal.proposalId,expectedVersion:handoff.version}]);
   await c.receive([c.incoming('STOP')]);assert.equal((await query('crm_care_read',[admin,company,c.thread])).mode,'OPTED_OUT');
-  assert.equal((await cohort()).counts.bookedGroups,1);
+  assert.equal((await cohort()).counts.bookedGroups,before.counts.bookedGroups+1);
  });
 };

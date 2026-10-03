@@ -8,7 +8,7 @@ module.exports=async(t,{db,peers,query,cid,actor,trial,leads,qualify,date})=>{
  const prepare=(request=null,command=null,c=peers[0],who=actor,company=cid)=>query('marketing_scope_prepare',[who,company,trial,request,command],c);
  const record=(r,report,c=peers[0])=>query('marketing_scope_record',[actor,cid,trial,r.requestId,r.command,report,r.artifact],c);
  const count=async key=>(await db.query('SELECT count(*)::int n FROM marketing_measurement.scope_acceptances WHERE request_id=$1',[key])).rows[0].n;
- const wait=async prefix=>{for(let i=0;i<100;i++){const x=await db.query("SELECT 1 FROM pg_stat_activity WHERE state='active' AND wait_event_type='Lock' AND query LIKE $1",[prefix+'%']);if(x.rowCount)return;await new Promise(r=>setTimeout(r,5));}assert.fail('expected live blocked scope write');};
+ const wait=async prefix=>{const until=Date.now()+5000;while(Date.now()<until){await db.query('SELECT pg_stat_clear_snapshot()');const x=await db.query("SELECT 1 FROM pg_stat_activity WHERE state='active' AND wait_event_type='Lock' AND query LIKE $1",[prefix+'%']);if(x.rowCount)return;await new Promise(r=>setTimeout(r,10));}assert.fail('expected live blocked scope write');};
  const build=c=>parseRequest({requestId:randomUUID(),artifactBase64:Buffer.from('Synthetic full historical destinations; source export filters, time range and retention verified.').toString('base64'),command:{action:'ACCEPT',expectedRevision:c.revision,contextVersion:c.context.contextVersion,
   reference:'Isolated synthetic scope evidence',note:'All historical destinations and full source file provenance checked for this synthetic measurement only.',claims:[...CLAIMS],
   manifest:requirements(c.context).ads.map(ad=>({accountId:ad.accountId,adId:ad.adId,validFrom:c.context.facts.providerReconciliation.run.since,validUntil:c.context.facts.providerReconciliation.run.until,
@@ -90,10 +90,11 @@ module.exports=async(t,{db,peers,query,cid,actor,trial,leads,qualify,date})=>{
   for(const action of ['read','prepareReplay','recordReplay']){
    await db.query('BEGIN');await db.query('UPDATE companies SET is_active=NULL WHERE id=$1',[cid]);
    const pending=(action==='recordReplay'?record(original.r,original.report,peers[1]):prepare(action==='read'?null:original.r.requestId,action==='read'?null:original.r.command,peers[1])).then(v=>({v}),e=>({e}));
-   try{await wait(action==='recordReplay'?'SELECT marketing_scope_record':'SELECT marketing_scope_prepare');}
-   finally{await db.query('COMMIT');}
-   try{const r=await pending;assert.equal(r.e?.code,'42501');assert.equal(r.v,undefined);}
-   finally{await db.query('UPDATE companies SET is_active=true WHERE id=$1',[cid]);}
+   try{
+    try{await wait(action==='recordReplay'?'SELECT marketing_scope_record':'SELECT marketing_scope_prepare');}
+    finally{await db.query('COMMIT');}
+    const r=await pending;assert.equal(r.e?.code,'42501');assert.equal(r.v,undefined);
+   }finally{await pending;await db.query('UPDATE companies SET is_active=true WHERE id=$1',[cid]);}
   }
  });
 };
