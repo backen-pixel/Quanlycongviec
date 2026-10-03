@@ -178,6 +178,7 @@ REVOKE ALL ON crm_survey_control.inbound_receipts FROM PUBLIC,anon,authenticated
 
 CREATE OR REPLACE FUNCTION crm_survey_control.book(p_message uuid)
 RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+<<booking>>
 DECLARE proof crm_survey_control.inbound_receipts%ROWTYPE;p crm_survey_control.proposals%ROWTYPE;
  d crm_survey_control.deliveries%ROWTYPE;m public.crm_care_messages%ROWTYPE;existing crm_survey_control.bookings%ROWTYPE;
  context jsonb;availability jsonb;option jsonb;version text;result jsonb;event_id uuid:=gen_random_uuid();reason text;handoff jsonb;terminal jsonb;
@@ -208,12 +209,12 @@ BEGIN
  INSERT INTO crm_survey_control.confirmations(message_id,proposal_id,evidence)
  VALUES(p_message,p.id,jsonb_build_object('pageId',proof.page_id,'psid',proof.psid,'providerMid',m.provider_mid,'payloadHash',m.payload_hash)) ON CONFLICT DO NOTHING;
  IF p.state<>'OPEN' THEN reason:='PROPOSAL_NOT_OPEN';
- ELSIF p.expires_at<=clock_timestamp() OR m.sent_at<p.created_at OR m.sent_at>=p.expires_at THEN reason:='PROPOSAL_EXPIRED';
+ ELSIF p.expires_at<=clock_timestamp() OR m.sent_at<date_trunc('milliseconds',p.created_at) OR m.sent_at>=p.expires_at THEN reason:='PROPOSAL_EXPIRED';
  ELSIF d.state<>'SENT' THEN RETURN jsonb_build_object('proposalId',p.id,'status','WAITING_FOR_DELIVERY','reservationMade',false,'replayed',false);
  -- sent_at is when the transport observed the send ACK, not proof that the
  -- customer click occurred later. A signed click may reach us before that ACK.
  ELSIF d.started_at IS NULL OR d.started_at<p.created_at OR d.started_at>clock_timestamp()
-  OR d.sent_at<d.started_at OR m.sent_at<d.started_at THEN reason:='CONFIRMATION_PRECEDES_DISPATCH';
+  OR d.sent_at<d.started_at OR m.sent_at<date_trunc('milliseconds',d.started_at) THEN reason:='CONFIRMATION_PRECEDES_DISPATCH';
  END IF;
  IF reason IS NULL THEN
   BEGIN
@@ -235,7 +236,7 @@ BEGIN
  IF reason IS NOT NULL THEN
   UPDATE crm_survey_control.proposals SET state=CASE WHEN state='OPEN' THEN 'REJECTED' ELSE state END WHERE id=p.id;
   result:=jsonb_build_object('proposalId',p.id,'status','REJECTED','reason',reason,'reservationMade',false,'replayed',false);
-  UPDATE crm_survey_control.confirmations SET state='REJECTED',reason=book.reason,result=book.result WHERE message_id=p_message;
+  UPDATE crm_survey_control.confirmations SET state='REJECTED',reason=booking.reason,result=booking.result WHERE message_id=p_message;
   INSERT INTO crm_survey_control.proposal_events(proposal_id,action,source_message_id,result) VALUES(p.id,'CONFIRMATION_REJECTED',p_message,result);
   RETURN result;
  END IF;
@@ -246,7 +247,7 @@ BEGIN
  VALUES(event_id,'site_visit','Khảo sát theo lịch khách xác nhận',p.business->>'location',(p.business->>'startsAt')::timestamptz,(p.business->>'endsAt')::timestamptz,
   false,'planned',(p.business->>'leadId')::uuid,(p.business->>'customerId')::uuid,NULL,(p.business->>'staffId')::uuid,p.company_id,'crm');
  INSERT INTO public.crm_event_participants(event_id,user_id,status) VALUES(event_id,(p.business->>'staffId')::uuid,'confirmed');
- DELETE FROM crm_survey_control.crm_survey_calendar_permits x WHERE x.transaction_id=txid_current() AND x.backend_pid=pg_backend_pid() AND x.event_id=book.event_id;
+ DELETE FROM crm_survey_control.crm_survey_calendar_permits x WHERE x.transaction_id=txid_current() AND x.backend_pid=pg_backend_pid() AND x.event_id=booking.event_id;
  -- FK checks or triggers can wait. Expiry must still hold after all writes;
  -- an exception rolls back the event, participants, proof consumption and audit.
  IF p.expires_at<=clock_timestamp() THEN RAISE EXCEPTION 'survey confirmation expired during commit' USING ERRCODE='40001';END IF;
@@ -259,7 +260,7 @@ BEGIN
  VALUES(p.id,p.company_id,(p.business->>'staffId')::uuid,(p.business->>'salesOwnerId')::uuid,handoff);
  INSERT INTO crm_survey_control.proposal_events(proposal_id,action,actor_id,source_message_id,result)
  VALUES(p.id,'BOOK',p.actor_id,p_message,result);
- UPDATE crm_survey_control.confirmations SET state='CONSUMED',reason=NULL,result=book.result WHERE message_id=p_message;
+ UPDATE crm_survey_control.confirmations SET state='CONSUMED',reason=NULL,result=booking.result WHERE message_id=p_message;
  UPDATE crm_survey_control.proposals SET state='BOOKED' WHERE id=p.id;
  IF p.expires_at<=clock_timestamp() THEN RAISE EXCEPTION 'survey confirmation expired during commit' USING ERRCODE='40001';END IF;
  RETURN result;

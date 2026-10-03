@@ -135,7 +135,9 @@ module.exports = async (t, { db, peers, query, company, other, admin, sales, reg
 
   await t.test('conflicting contact Customer mapping and revoked proposer rights cannot create an event', async () => {
     const c = await setup(), id = await confirm(c);
-    await db.query('UPDATE facebook_contacts SET customer_id=$2 WHERE psid=$1', [c.psid, randomUUID()]);
+    const differentCustomer = randomUUID();
+    await db.query("INSERT INTO customers(id,full_name,phone,company_id) VALUES($1,'Different synthetic customer','0900000001',$2)", [differentCustomer, company]);
+    await db.query('UPDATE facebook_contacts SET customer_id=$2 WHERE psid=$1', [c.psid, differentCustomer]);
     assert.equal((await book(id)).status, 'REJECTED'); await finished(c);
     const d = await setup(), mid = await confirm(d);
     await db.query('UPDATE users SET is_active=false WHERE id=$1', [admin]);
@@ -189,5 +191,18 @@ module.exports = async (t, { db, peers, query, company, other, admin, sales, reg
     await query('crm_survey_roster_change', [admin, company, randomUUID(), { action: 'SAVE', staffId: c.staff, regionId: region, expectedRevision: roster.revision, reason: 'Synthetic source reduction retains old booking buffer', document: { ...roster.document, bufferMinutes: 0, slots: [{ startsAt: from, endsAt: to }] } }]);
     const view = await query('crm_survey_availability', [admin, company, c.thread, from, to]);
     assert.equal(view.items.some(x => x.staffId === c.staff), false); await finished(c);
+  });
+
+  await t.test('provider millisecond timestamps accept a same-ms click but reject an earlier dispatch', async () => {
+    for (const earlier of [false, true]) {
+      const c = await setup(), id = await confirm(c);
+      await db.query(`UPDATE crm_survey_control.proposals SET created_at=clock_timestamp()-interval '1 second' WHERE id=$1`, [c.proposal.proposalId]);
+      await db.query(`UPDATE crm_survey_control.deliveries SET started_at=date_trunc('milliseconds',clock_timestamp()-interval '100 milliseconds')+interval '900 microseconds',sent_at=clock_timestamp() WHERE proposal_id=$1`, [c.proposal.proposalId]);
+      await db.query(`UPDATE crm_care_messages SET sent_at=(SELECT date_trunc('milliseconds',started_at) FROM crm_survey_control.deliveries WHERE proposal_id=$2)-$3::interval WHERE id=$1`, [id, c.proposal.proposalId, earlier ? '1 millisecond' : '0 milliseconds']);
+      const r = await book(id);
+      assert.equal(r.status, earlier ? 'REJECTED' : 'BOOKED_HANDOFF_PENDING');
+      if (earlier) assert.equal(r.reason, 'CONFIRMATION_PRECEDES_DISPATCH');
+      await finished(c);
+    }
   });
 };
