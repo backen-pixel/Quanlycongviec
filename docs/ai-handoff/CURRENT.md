@@ -1,3 +1,21 @@
+## 04/10/2026 — Bản sửa tạo khách hàng loạt đang nghiệm thu
+
+Đã giới hạn batch theo danh sách 1–500 contact và một công ty, kiểm lại quyền/người nhận/đầu vào trước ghi, bỏ broadcast thông tin khách, giữ liên kết hội thoại và bổ sung đối soát trên giao diện khi một phần đã xử lý. Local54 ca mới (43 backend +11 UI) và183 regression =237 PASS. Đã thêm9 ca PostgreSQL cô lập; CI, browser và review cuối chưa có kết luận cho delta này.
+
+[Hợp đồng, bằng chứng và giới hạn](vpt-marketing-automation/LEGACY_BATCH_CREATION.md). Source-backfill còn OPEN; chuỗi HTTP chưa nguyên tử, còn đối soát dữ liệu ghi một phần và chuyển luồng. AI/cấu hình/lịch/người nhận, UAT toàn tuyến và Founder release còn chờ. Full goal ACTIVE; chưa đổi dữ liệu thật, phát hành hoặc chứng minh mục tiêu250k.
+
+---
+
+## 04/10/2026 — Rà batch: cần sửa trước nghiệm thu toàn tuyến
+
+Founder hỏi bước tiếp. Mục tiêu giữ nguyên: Facebook → CRM → khảo sát → dashboard, tạm đo 250.000 đồng/khách trả phí hợp lệ. Không đổi hạn mức hoặc mở kênh từ lần kiểm trạng thái này.
+
+Reviewer độc lập kết luận **HOLD cho hai route batch tại `5356e185871caad7e0473842580ada7f91e5506e`**: thiếu giới hạn công ty/quyền hiện hành, có thể ghi đè nguồn và liên kết hội thoại, ghi số điện thoại trước kiểm phạm vi, broadcast thông tin khách tới mọi kết nối. Giao diện xác nhận danh sách đang xem nhưng không gửi danh sách đó; lỗi đọc/ghi và kết quả liên kết hồ sơ cũ có thể bị báo sai. Đây là kết quả rà mã, chưa có bản sửa hoặc kiểm thử mới. [Finding và tiêu chí khép](vpt-marketing-automation/LEGACY_BATCH_SCOPE_REVIEW.md).
+
+Thứ tự tiếp: sửa hai route và giao diện theo phạm vi đã xác nhận → kiểm thử lỗi/quyền và review độc lập → khép chuyển luồng, bảo toàn lịch sử và cấu hình AI/lịch/người nhận → nghiệm thu trọn tuyến và trình Founder gói phát hành. PASS creator trước đó vẫn chỉ áp dụng phạm vi đã kiểm. Full goal ACTIVE; chưa phát hành, đổi dữ liệu thật hoặc có kết quả 250.000 đồng thực tế.
+
+---
+
 ## Hiện hành 04/10/2026 — Phạm vi tạo khách Facebook đã qua review và PostgreSQL
 
 Runtime `925cae0687623dc4654b81f461eb5d88dedece3b` khóa công ty Page hiện hành, Customer/Lead, quyền người nhận và actor; nguồn không bị đổi công ty; cấu hình pipeline lỗi không được tự đổi tuyến; giữ liên kết hội thoại. Local66 mới +117 regression =183 PASS. PostgreSQL281/0/0 gồm10 ca mới; Node22 843+26+183, cả10 job/build/report/Messenger SUCCESS. Reviewer độc lập đối chiếu published blobs và CI, kết luận PASS đúng phạm vi creator. [Bằng chứng, giới hạn và hoàn tác](vpt-marketing-automation/LEGACY_CREATOR_SCOPE.md).

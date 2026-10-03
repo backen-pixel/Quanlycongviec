@@ -146,7 +146,7 @@ async function findFacebookCreationCustomer(db,companyId,phone) {
   if(rows.length&&(!expected||normalizePhoneForLeadCreation(rows[0].phone).normalized!==expected))throw conflict();
   return rows[0]||null;
 }
-async function resolveScopedFacebookSource(db,inputPage) {
+async function resolveScopedFacebookSource(db,inputPage,{beforeWrite}={}) {
   const page=await creationPage(db,inputPage?.page_id,inputPage?.default_company_id);
   const companyId=page.default_company_id;
   if(page.default_source_id) {
@@ -159,9 +159,11 @@ async function resolveScopedFacebookSource(db,inputPage) {
     .eq('company_id',companyId).eq('name',canonicalName).limit(2));
   if(matches.length>1||matches.some(x=>x.company_id!==companyId||x.is_active!==true))throw conflict();
   // Do not retag a source belonging to another company or a shared legacy name.
+  if(!matches.length&&beforeWrite)await beforeWrite();
   const source=matches[0]||await row(db.from('crm_sources').insert({name:canonicalName,company_id:companyId,is_active:true}).select('id,company_id,is_active').single());
   if(!UUID.test(source.id||'')||source.company_id!==companyId)throw conflict();
   await creationPage(db,page.page_id,companyId);
+  if(beforeWrite)await beforeWrite();
   // Compare-and-set: never replace a concurrent explicit Page configuration.
   const {data:updated}=await checkedLegacyFacebookRows(db.from('facebook_pages').update({default_source_id:source.id})
     .eq('page_id',String(page.page_id)).eq('default_company_id',companyId).is('default_source_id',null).select('page_id'));

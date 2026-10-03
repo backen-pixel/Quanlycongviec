@@ -18,13 +18,13 @@ function database() {
   crm_pipelines:[{id:i.pipeline,company_id:i.company,is_active:true}],crm_pipeline_stages:[{id:i.stage,pipeline_id:i.pipeline,pipeline_type:'lead',is_active:true}],
   crm_sources:[{id:i.source,company_id:i.company,name:'[FB:123] Synthetic Page',is_active:true}],
   facebook_contacts:[{id:i.contact,page_id:'123',psid:'456',lead_id:null,customer_id:null,fb_name:'Synthetic customer',phone:'0901234567'}],
-  customers:[],crm_leads:[],facebook_messages:[],notifications:[],crm_lead_types:[],production_pipeline_stages:[],
+  customers:[],crm_leads:[],facebook_messages:[],notifications:[],crm_lead_types:[],production_pipeline_stages:[],app_settings:[],
  };
  let next=1000;const db={tables,reads:[],writes:[],requests:[],before:null,fail:null,allow:()=>true,
   async rpc(name,{p_scope}){return{data:{policy:'CARE_LEGACY_WRITE_CHECK_V1',scope:p_scope,allowed:db.allow(p_scope),reason:db.allow(p_scope)?'LEGACY_SCOPE':'MANAGED_PAGE',observedAt:new Date().toISOString(),reservationMade:false}};},
   from(table){
-   const item={table,action:'read',filters:[],payload:null,columns:'*'};let single=false,maximum=Infinity;
-   const q={select(columns='*'){item.columns=columns;return q;},eq(k,v){item.filters.push([k,'eq',v]);return q;},neq(k,v){item.filters.push([k,'neq',v]);return q;},
+   const item={table,action:'read',filters:[],payload:null,columns:'*'};let single=false,maximum=Infinity,countRequested=false;
+   const q={select(columns='*',options={}){item.columns=columns;countRequested=options.count==='exact';return q;},eq(k,v){item.filters.push([k,'eq',v]);return q;},neq(k,v){item.filters.push([k,'neq',v]);return q;},
     is(k,v){item.filters.push([k,'is',v]);return q;},not(k,op,v){if(op!=='is')throw Error(op);item.filters.push([k,'not',v]);return q;},
     ilike(k,v){item.filters.push([k,'ilike',v]);return q;},like(k,v){return q.ilike(k,v);},in(k,v){item.filters.push([k,'in',v]);return q;},
     order(){return q;},limit(n){maximum=n;return q;},maybeSingle(){single=true;return q;},single(){single=true;return q;},
@@ -42,7 +42,7 @@ function database() {
      if(item.action==='read'){db.reads.push(copy(item));result=rows.filter(matches).slice(0,maximum);}
      else{db.writes.push(copy(item));if(item.action==='insert'){const row={id:id(next++),...copy(item.payload)};rows.push(row);result=[row];}
       else{result=rows.filter(matches);for(const row of result)Object.assign(row,copy(item.payload));}}
-     return{data:copy(single?(result[0]||null):result)};
+     return{data:copy(single?(result[0]||null):result),...(countRequested?{count:rows.filter(matches).length}:{})};
     })().then(resolve,reject);},
    };return q;
   },
@@ -73,7 +73,7 @@ function harness(db,{atomic=false,user=null}={}) {
  vm.runInNewContext(text.slice(text.indexOf('async function resolveFacebookCrmPipelineAndStage('),text.indexOf('async function getPageConfig(')),context);
  vm.runInNewContext(text.slice(text.indexOf('async function fetchContactLeadId('),text.indexOf('async function createLeadFromFacebook('))+
   '\n'+text.slice(text.indexOf('async function createLeadFromFacebookInner('),text.indexOf('async function sendMessengerReply(')),context);
- context.resolveFacebookSourceId=page=>scope.resolveScopedFacebookSource(db,page);
+ context.resolveFacebookSourceId=(page,options)=>scope.resolveScopedFacebookSource(db,page,options);
  vm.runInNewContext(text.slice(text.indexOf("r.post('/contacts/:id/create-lead'"),text.indexOf("r.post('/contacts/:id/reconcile-inbound-phone'")),context);
  return{effects,auto:(input={id:ids.contact},extra={})=>context.createLeadFromFacebookInner('123',input,'synthetic',extra),
   manual:async(body={})=>{const res={statusCode:200,status(n){this.statusCode=n;return this;},json(value){this.body=value;return this;}};

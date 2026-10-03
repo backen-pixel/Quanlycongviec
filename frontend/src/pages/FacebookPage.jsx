@@ -1833,7 +1833,18 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
   const navigate = useNavigate();
   /** company_id để scope tool theo công ty (rỗng = toàn hệ thống cho admin; NV bị backend ép theo công ty đăng nhập). */
   const toolCompanyId = companyId != null && String(companyId).trim() !== '' ? String(companyId).trim() : undefined;
-  const { socket } = useAuth();
+  const { socket, user } = useAuth();
+  const contactScopeKey = JSON.stringify([user?.id || user?.userId, user?.role, user?.company_id, user?.tenant_id, user?.crm_region_ids, toolCompanyId, fbCompanyQs]);
+  const contactScopeRef = useRef({ key: contactScopeKey, version: 0, loaded: false, request: 0 });
+  if (contactScopeRef.current.key !== contactScopeKey) {
+    contactScopeRef.current = { key: contactScopeKey, version: contactScopeRef.current.version + 1, loaded: false, request: 0 };
+  }
+  const contactMountedRef = useRef(false);
+  const batchRunRef = useRef(0);
+  useEffect(() => {
+    contactMountedRef.current = true;
+    return () => { contactMountedRef.current = false; batchRunRef.current++; };
+  }, []);
   const [contacts, setContacts] = useState([]);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
@@ -1857,6 +1868,12 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
   const [v2DeleteLeadNoPhone, setV2DeleteLeadNoPhone] = useState(false);
   const [v2CleanupWithLead, setV2CleanupWithLead] = useState(false);
   const [meta, setMeta] = useState({ total: 0, hasMore: false, nextOffset: 0 });
+  useEffect(() => {
+    setContacts([]);
+    setMeta({ total: 0, hasMore: false, nextOffset: 0 });
+    setBatchStatus(previous => previous?.type === 'leads' ? null : previous);
+    batchRunRef.current++;
+  }, [contactScopeKey]);
 
   /** Quét SĐT sai / nghi từ link — phone-quality-scan */
   const [pqLoading, setPqLoading] = useState(false);
@@ -1983,6 +2000,10 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
   }, []);
 
   const load = useCallback((append = false) => {
+    const scope = contactScopeRef.current;
+    const request = ++scope.request;
+    scope.loaded = false;
+    const isCurrent = () => contactMountedRef.current && contactScopeRef.current === scope && scope.request === request;
     const p = new URLSearchParams();
     if (search) p.set('search', search);
     if (filter === 'has_lead') p.set('has_lead', 'true');
@@ -2000,8 +2021,9 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
       new URLSearchParams(fbCompanyQs).forEach((v, k) => p.set(k, v));
     }
     fetch(`${API}/api/facebook/contacts?${p}`, { headers: hdr() })
-      .then(r => r.ok ? r.json() : { data: [], total: 0, hasMore: false, nextOffset: 0 })
+      .then(r => { if (!r.ok) throw new Error('Chưa tải được danh sách liên hệ.'); return r.json(); })
       .then(payload => {
+        if (!isCurrent()) return;
         const rows = payload?.data || [];
         const merged = append ? [...contacts, ...rows] : rows;
         const deduped = merged.filter((item, idx, arr) => arr.findIndex(x => x.id === item.id) === idx);
@@ -2016,10 +2038,11 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
           return bp - ap;
         });
         setContacts(sorted);
+        scope.loaded = true;
         setMeta({ total: payload?.total || 0, hasMore: !!payload?.hasMore, nextOffset: payload?.nextOffset || 0 });
       })
       .catch(() => {});
-  }, [search, filter, sourceFilter, meta.nextOffset, sortContacts, fbCompanyQs]);
+  }, [search, filter, sourceFilter, meta.nextOffset, sortContacts, fbCompanyQs, contactScopeKey]);
 
   // Load DISTINCT nguồn được cấu hình ở Page setup (facebook_pages.default_source_id)
   // — chỉ những nguồn này mới có ý nghĩa khi lọc trên danh bạ FB.
@@ -2179,18 +2202,43 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
   };
 
   // Batch: tạo Lead cho contact chưa có lead
-  const batchCreateLeads = async () => {
-    const noLead = contacts.filter(c => !c.lead_id);
+  const batchCreateLeads = async (retryIds = null) => {
+    const scope = contactScopeRef.current;
+    if (!scope.loaded) return alert('Đợi danh sách của công ty hiện tại tải xong trước khi xử lý.');
+    const selectedCompanyId = toolCompanyId || user?.company_id;
+    if (!selectedCompanyId) return alert('Chọn một công ty trước khi xử lý hàng loạt.');
+    const retry = Array.isArray(retryIds);
+    if (retry && (batchStatus?.retryScopeKey !== scope.key || batchStatus?.retryScopeVersion !== scope.version)) {
+      return alert('Phạm vi đã thay đổi. Kiểm tra hồ sơ trong công ty hiện tại trước khi đối soát.');
+    }
+    const noLead = retry ? retryIds.slice(0, 500).map(id => ({ id })) : contacts.filter(c => !c.lead_id).slice(0, 500);
     if (!noLead.length) return alert('Tất cả liên hệ đã có bản ghi CRM!');
-    if (!confirm(`Tạo mới theo cài đặt Page cho ${noLead.length} liên hệ chưa có bản ghi CRM?`)) return;
+    if (!confirm(retry
+      ? `Đối soát và tiếp tục nối CRM cho ${noLead.length} liên hệ của lượt chưa hoàn tất? Hồ sơ đã có được giữ lại.`
+      : `Tạo hoặc liên kết CRM theo cài đặt Page cho ${noLead.length} liên hệ đang hiển thị? Mỗi lượt tối đa 500 liên hệ.`)) return;
+    const run = ++batchRunRef.current;
+    const isCurrent = () => contactMountedRef.current && contactScopeRef.current === scope && batchRunRef.current === run;
     setBatchStatus({ type: 'leads', loading: true, result: null });
     try {
-      const res = await fetch(`${API}/api/facebook/batch-create-leads`, { method: 'POST', headers: hdr() });
+      const res = await fetch(`${API}/api/facebook/batch-create-leads`, {
+        method: 'POST', headers: { ...hdr(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_id: selectedCompanyId, contact_ids: noLead.map(c => c.id) }),
+      });
       const data = await res.json();
-      setBatchStatus({ type: 'leads', loading: false, result: data });
-      load(); // Refresh danh sách
+      if (!isCurrent()) return;
+      const result = res.ok ? data : { ...data, error: data?.error || `Không hoàn tất xử lý (HTTP ${res.status}).` };
+      const completed = new Set((Array.isArray(data?.results) ? data.results : [])
+        .filter(item => item.status === 'linked' || item.status === 'skipped').map(item => item.contact_id));
+      const retryContactIds = !res.ok && !data?.details_withheld ? noLead.map(c => c.id).filter(id => !completed.has(id)) : [];
+      setBatchStatus({ type: 'leads', loading: false, result, retryContactIds, retryScopeKey: scope.key, retryScopeVersion: scope.version });
+      // Partial writes may exist even after an error. Reload only this same scope.
+      load(false);
     } catch (e) {
-      setBatchStatus({ type: 'leads', loading: false, result: { error: e.message } });
+      if (isCurrent()) setBatchStatus({ type: 'leads', loading: false, retryContactIds: noLead.map(c => c.id),
+        retryScopeKey: scope.key, retryScopeVersion: scope.version, result: {
+        error: 'Chưa nhận được kết quả. Kiểm tra các hồ sơ trước khi thử lại; một phần có thể đã được xử lý.',
+        reconciliation_required: true,
+      } });
     }
   };
 
@@ -2867,11 +2915,15 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
           <div className="flex items-center justify-between">
             <div>
               {batchStatus.result.error ? (
-                <span>❌ Lỗi: {batchStatus.result.error}</span>
+                <span>❌ Lỗi: {batchStatus.result.error}
+                  {batchStatus.type === 'leads' && batchStatus.result.total != null && (
+                    <span className="block mt-1">Đã nối CRM: {batchStatus.result.processed ?? 0} · Bỏ qua: {batchStatus.result.skipped ?? 0} · Cần đối soát: {batchStatus.result.failed ?? 0} · Chưa xử lý: {batchStatus.result.unprocessed ?? 0}</span>
+                  )}
+                </span>
               ) : batchStatus.type === 'sync' ? (
                 <span>✅ Đã đồng bộ <strong>{batchStatus.result.totalSynced || 0}</strong> tin nhắn mới từ <strong>{batchStatus.result.total || 0}</strong> liên hệ</span>
               ) : batchStatus.type === 'leads' ? (
-                <span>✅ Đã tạo <strong>{batchStatus.result.created || 0}</strong> Lead mới — Bỏ qua: {batchStatus.result.skipped || 0} (đã có Lead)</span>
+                <span>✅ Đã nối CRM: <strong>{batchStatus.result.processed ?? 0}</strong> · Bỏ qua theo điều kiện: {batchStatus.result.skipped ?? 0}</span>
               ) : batchStatus.type === 'dedup' ? (
                 <span>✅ {batchStatus.result.message}</span>
               ) : batchStatus.type === 'names' ? (
@@ -2921,6 +2973,12 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
             <button onClick={() => { setBatchStatus(null); setRefreshAvatarLogs([]); }} className="text-gray-400 hover:text-gray-600 cursor-pointer">✕</button>
           </div>
 
+          {batchStatus.type === 'leads' && batchStatus.retryContactIds?.length > 0 && (
+            <button type="button" className="mt-2 px-3 py-2 rounded-lg border border-current font-medium"
+              onClick={() => batchCreateLeads(batchStatus.retryContactIds)}>
+              Đối soát {batchStatus.retryContactIds.length} liên hệ chưa hoàn tất
+            </button>
+          )}
           {batchStatus.type === 'names' && refreshAvatarLogs.length > 0 && (
             <details open className="mt-3 text-xs">
               <summary className="cursor-pointer text-purple-800 font-medium hover:underline">

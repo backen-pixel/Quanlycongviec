@@ -5,6 +5,7 @@ const r = express.Router();
 const { enabledPageIds, enqueueMessengerEvents, captureMessengerReferral, linkMessengerAttribution, createMessengerReceiptWorker } = require('../helpers/facebookMessengerReceipt');
 const DURABLE_MESSENGER_PAGES = enabledPageIds();
 const { isFacebookAtomicLeadScope, createFacebookLeadOnce } = require('../helpers/facebookAtomicLead');
+const { runFacebookLeadBatch } = require('../helpers/facebookLegacyBatch');
 const { assertLegacyFacebookWriteAllowed, legacyFacebookPageMayWrite } = require('../helpers/facebookLegacyWriteScope');
 const { loadFacebookCreationContext, assertFacebookCreationTargets, assertFacebookCreationAssignment, assertFacebookCreationActor, assertFacebookCreationPipeline, findFacebookCreationCustomer, resolveScopedFacebookSource, assertFacebookCreationMessageLinks, writeFacebookCreationContact, assertFacebookCreationSource, facebookCreationScopeConflict } = require('../helpers/facebookLegacyCreationScope');
 const { deleteLegacyFacebookContact, linkLegacyFacebookContact, checkedLegacyFacebookResult, checkedLegacyFacebookRows, assertLegacyFacebookSyncSucceeded, assertLegacyContactIdsInPageScope } = require('../helpers/facebookLegacyContactWrites');
@@ -2780,8 +2781,8 @@ function leadLinkedPhoneAlreadyStored(contact, lead, cust) {
 }
 
 /** Resolve only a current same-company source; never retag historical sources. */
-async function resolveFacebookSourceId(page) {
-  return resolveScopedFacebookSource(supabase, page);
+async function resolveFacebookSourceId(page, options) {
+  return resolveScopedFacebookSource(supabase, page, options);
 }
 
 async function fetchContactLeadId(contactId) {
@@ -2792,19 +2793,19 @@ async function fetchContactLeadId(contactId) {
   return data?.lead_id || null;
 }
 
-async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
+async function createLeadFromFacebook(pageId, contact, source, extraData = {}, options = {}) {
   if (!contact?.id) return null;
   return withAsyncLock(`fb-lead:${contact.id}`, () =>
-    createLeadFromFacebookInner(pageId, contact, source, extraData),
+    createLeadFromFacebookInner(pageId, contact, source, extraData, options),
   );
 }
 
-async function createLeadFromFacebookInner(pageId, contact, source, extraData = {}) {
+async function createLeadFromFacebookInner(pageId, contact, source, extraData = {}, options = {}) {
   await assertLegacyFacebookWriteAllowed(supabase, { pageIds: [String(pageId)], contactIds: [contact.id] });
   const creationContext = await loadFacebookCreationContext(supabase, { pageId, contactId: contact.id });
   const { page, companyId, contact: freshContact } = creationContext;
   contact = freshContact;
-  const autoLeadCfg = await loadAutoLeadConfig();
+  const autoLeadCfg = options.config || await loadAutoLeadConfig();
   const moduleKey = resolveFacebookModuleKeyForPage(page);
   const createType = resolveFacebookCreateType(page);
 
@@ -2819,7 +2820,12 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     });
     const target = await assertFacebookCreationTargets(supabase, creationContext, { leadId, customerId, createType });
     await assertFacebookCreationMessageLinks(supabase, contact.id, leadId);
+    if (options.authorize) await options.authorize(creationContext, target);
     return target;
+  };
+  const writeContact = async (patch, targetLeadId = patch.lead_id || creationContext.contact.lead_id) => {
+    await checkTargets(targetLeadId, patch.customer_id || creationContext.contact.customer_id);
+    return writeFacebookCreationContact(supabase, creationContext, patch);
   };
   await checkTargets(freshContact.lead_id, freshContact.customer_id);
   const atomicReuse = async (existingLeadId) => {
@@ -2854,7 +2860,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
       await checkTargets(existing[0].id, freshContact.customer_id);
       if (atomicScope) return atomicReuse(existing[0].id);
       console.log(`[FB] ⚠️  Đã có ${createType} (cùng công ty ${companyId}) cho customer ${freshContact.customer_id}, sync lead_id.`);
-      await writeFacebookCreationContact(supabase, creationContext, { lead_id: existing[0].id });
+      await writeContact({ lead_id: existing[0].id });
       return { id: existing[0].id };
     }
   }
@@ -2872,7 +2878,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
       await checkTargets(samePsid[0].lead_id);
       if (atomicScope) return atomicReuse(samePsid[0].lead_id);
       console.log(`[FB] ⚠️  Đã có lead cho PSID trên cùng page ${freshContact.page_id}, sync lại.`);
-      await writeFacebookCreationContact(supabase, creationContext, { lead_id: samePsid[0].lead_id });
+      await writeContact({ lead_id: samePsid[0].lead_id });
       return { id: samePsid[0].lead_id };
     }
   }
@@ -2920,7 +2926,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
           await checkTargets(existLead[0].id, sameCust[0].id);
           if (atomicScope) return atomicReuse(existLead[0].id);
           console.log(`[FB] ⚠️  Đã có ${createType} cùng công ty cho SĐT ${cleanPhone}, gộp vào bản ghi ${existLead[0].id}`);
-          await writeFacebookCreationContact(supabase, creationContext, {
+          await writeContact({
             lead_id: existLead[0].id,
             customer_id: sameCust[0].id,
           });
@@ -2942,7 +2948,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
   const resolvedRegionId = await assertFacebookCreationAssignment(supabase, creationContext, creationOwnerId);
   const { pipelineId, stageId } = await resolveFacebookCrmPipelineAndStage({ page, companyId, createType, moduleKey });
   await assertFacebookCreationPipeline(supabase, creationContext, { pipelineId, stageId, createType, moduleKey });
-  const resolvedSourceId = await resolveFacebookSourceId(page);
+  const resolvedSourceId = await resolveFacebookSourceId(page, { beforeWrite: () => checkTargets(null, freshContact.customer_id) });
   await checkTargets(null, freshContact.customer_id);
 
   // Tìm/tạo customer
@@ -2958,7 +2964,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
         if (existCust?.length > 0) {
           customerId = existCust[0].id;
           await checkTargets(null, customerId);
-          await writeFacebookCreationContact(supabase, creationContext, { customer_id: customerId });
+          await writeContact({ customer_id: customerId });
           console.log(`[FB] ♻️ Reuse customer ${customerId} by phone match`);
         }
       }
@@ -2973,13 +2979,14 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
         source: 'Facebook',
         company_id: companyId,
       };
+      await checkTargets(null, freshContact.customer_id);
       const { data: customer } = await checkedLegacyFacebookResult(supabase.from('customers')
         .insert(customerData).select().single());
       if (!customer) throw facebookCreationScopeConflict();
       await checkTargets(null, customer.id);
       if (customer) {
         customerId = customer.id;
-        await writeFacebookCreationContact(supabase, creationContext, { customer_id: customer.id });
+        await writeContact({ customer_id: customer.id });
         console.log(`[FB] ✅ Customer created: ${customer.full_name} (phone: ${customer.phone || 'N/A'})`);
       }
     }
@@ -3008,7 +3015,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     if (leadForCust?.length > 0) {
       await checkTargets(leadForCust[0].id, customerId);
       if (atomicScope) return atomicReuse(leadForCust[0].id);
-      await writeFacebookCreationContact(supabase, creationContext, { lead_id: leadForCust[0].id });
+      await writeContact({ lead_id: leadForCust[0].id });
       return leadForCust[0];
     }
   }
@@ -3159,7 +3166,8 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     _linkUpd.sync_pause_reason = 'lead_created';
     _linkUpd.phone_resolved_at = new Date().toISOString();
   }
-  await writeFacebookCreationContact(supabase, creationContext, _linkUpd);
+  await writeContact(_linkUpd, lead.id);
+  await checkTargets(lead.id, customerId);
   // Nối lead_id vào dòng quy kết đã ghi lúc khách nhắn lần đầu.
   try {
     await ganLeadVaoQuyKet(contact.id, lead.id, customerId || null);
@@ -3167,6 +3175,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     console.warn('[FB] gan lead vao quy ket:', eGan.message);
   }
   if (moduleKey === 'production' && createType === 'deal' && defaultSxPipelineStageId) {
+    await checkTargets(lead.id, customerId);
     try {
       await supabase
         .from('crm_leads')
@@ -3181,6 +3190,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
   }
 
   // ── Auto-gen CRM tasks (giống logic tạo thủ công) ──
+  await checkTargets(lead.id, customerId);
   try {
     const { autoGenCrmTasksForNewLead } = require('../helpers/autoGenCrmTasks');
     const created = await autoGenCrmTasksForNewLead(lead.id, page.created_by);
@@ -3189,6 +3199,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
 
   console.log(`[FB] ${fbTitleTypeLabel} created: ${lead.code} — ${lead.title}`);
 
+  await checkTargets(lead.id, customerId);
   // Do not send customer PII to a recipient whose assignment was revoked.
   await assertFacebookCreationAssignment(supabase, creationContext, creationOwnerId);
   // Notify owner only (không gửi cho tất cả admin)
@@ -6289,183 +6300,13 @@ r.post('/sync-source-ids', authMiddleware, async (req, res) => {
 
 r.post('/batch-create-leads', authMiddleware, async (req, res) => {
   try {
-    const io = r._ioRef;
-    // Giới hạn số contact tải mỗi lần để tránh egress lớn (ENV: FB_BATCH_LEADS_CAP, mặc định 500)
-    const BATCH_CAP = Math.min(5000, Math.max(50, parseInt(process.env.FB_BATCH_LEADS_CAP || '500', 10) || 500));
-
-    // ── Tôn trọng auto-lead-config (giống webhook) để tránh tạo lead "rác" ──
-    const autoLeadCfg = await loadAutoLeadConfig();
-    const triggerMode = String(autoLeadCfg?.trigger || 'first_message');
-    if (triggerMode === 'manual') {
-      return res.json({
-        created: 0, updated: 0, skipped: 0, total: 0,
-        results: [],
-        message: 'Auto-lead trigger = manual → bỏ qua batch tạo lead',
-      });
-    }
-
-    // Lấy contacts chưa có lead — giới hạn BATCH_CAP, ưu tiên hoạt động gần nhất
-    await ensureSyncPausedColumnDetected();
-    const _useSyncPaused = hasSyncPausedColumnSync();
-    const _selectCols = _useSyncPaused
-      ? 'id, fb_name, phone, page_id, last_message_at, created_at, lead_id, sync_paused, customer_id'
-      : 'id, fb_name, phone, page_id, last_message_at, created_at, lead_id, customer_id';
-    let baseQuery = supabase.from('facebook_contacts')
-      .select(_selectCols)
-      .is('lead_id', null)
-      .order('last_message_at', { ascending: false, nullsFirst: false })
-      .order('created_at', { ascending: false })
-      .limit(BATCH_CAP);
-    if (_useSyncPaused) baseQuery = baseQuery.neq('sync_paused', true);
-    if (triggerMode === 'has_phone') {
-      baseQuery = baseQuery.not('phone', 'is', null).neq('phone', '');
-    }
-    const { data: contactsRaw, error: baseErr } = await baseQuery;
-    if (baseErr) console.error('[FB Batch] query error:', baseErr.message);
-    const contacts = sortFacebookContactsNewestFirst(contactsRaw);
-
-    if (!contacts?.length) return res.json({ created: 0, updated: 0, skipped: 0, total: 0, results: [], message: 'Không có contact nào cần xử lý' });
-
-    let created = 0, updated = 0, skipped = 0;
-    const results = [];
-    const total = contacts.length;
-
-    // Không prefetch theo .in(..).limit(K) vì LIMIT áp dụng cho cả batch → đa số contact sẽ không có tin.
-    // Thay vào đó: với mỗi contact, lấy K tin gần nhất trong DB để extract SĐT/địa chỉ.
-    const MSG_PER_CONTACT = Math.min(400, Math.max(20, parseInt(process.env.FB_CREATE_LEADS_MSG_PER_CONTACT || '120', 10) || 120));
-
-    // Cache page configs
-    const pageConfigCache = {};
-
-    // Emit start
-    if (io) io.emit('batch_progress', { type: 'create_leads', phase: 'start', total, current: 0 });
-
-    for (let i = 0; i < contacts.length; i++) {
-      const contact = contacts[i];
-      try {
-        // Verify lead chưa có (double check)
-        if (contact.lead_id) { skipped++; continue; }
-
-        // Lấy page config (cached)
-        if (!pageConfigCache[contact.page_id]) {
-          pageConfigCache[contact.page_id] = await getPageConfig(contact.page_id);
-        }
-        const page = pageConfigCache[contact.page_id];
-        if (!page || !page.is_active) {
-          results.push({ contact: contact.fb_name, status: 'skipped', reason: 'Page không active' });
-          skipped++;
-          if (io) io.emit('batch_progress', { type: 'create_leads', current: i + 1, total, name: contact.fb_name, status: 'skipped' });
-          continue;
-        }
-
-        // Extract phone/address từ pre-fetched messages
-        let extractedPhone = contact.phone || null;
-        let extractedAddress = null;
-
-        const { data: messages } = await supabase.from('facebook_messages')
-          .select('content, direction, created_at')
-          .eq('contact_id', contact.id)
-          .order('created_at', { ascending: false })
-          .limit(MSG_PER_CONTACT);
-        
-        // Chỉ tin inbound (KH FB). Không fallback quét outbound — tránh lấy SĐT từ tin page / template.
-        const inboundInfo = extractInboundContactInfo(messages || [], {});
-        if (!extractedPhone && inboundInfo.phone) extractedPhone = inboundInfo.phone;
-        if (!extractedAddress && inboundInfo.address) extractedAddress = inboundInfo.address;
-
-        // Fallback bổ sung: vẫn chỉ các tin direction === 'inbound' (phòng DB lưu sai chiều hiếm gặp thì đã xử lý ở trên).
-        for (const msg of (messages || [])) {
-          if (msg.direction !== 'inbound' || !msg.content) continue;
-          const { phone, address } = extractContactInfo(msg.content);
-          if (phone && !extractedPhone) extractedPhone = phone;
-          if (address && !extractedAddress) extractedAddress = address;
-          if (extractedPhone && extractedAddress) break;
-        }
-
-        // Cập nhật phone vào contact nếu tìm được
-        if (extractedPhone && !contact.phone) {
-          await supabase.from('facebook_contacts').update({
-            phone: extractedPhone,
-            updated_at: new Date().toISOString(),
-          }).eq('id', contact.id);
-          updated++;
-        }
-
-        // ── Gate theo autoLeadCfg.trigger (giống webhook) ──
-        if (triggerMode === 'has_phone') {
-          const finalPhone = extractedPhone || (contact.phone && String(contact.phone).trim() ? contact.phone : null);
-          if (!finalPhone) {
-            results.push({
-              contact_id: contact.id,
-              contact: contact.fb_name,
-              phone: null,
-              status: 'skipped',
-              reason: 'trigger=has_phone, chưa tìm thấy SĐT',
-            });
-            skipped++;
-            if (io) io.emit('batch_progress', { type: 'create_leads', current: i + 1, total, name: contact.fb_name, status: 'skipped' });
-            continue;
-          }
-        } else if (triggerMode === 'message_count') {
-          const threshold = Math.max(1, parseInt(autoLeadCfg?.message_count_threshold, 10) || 2);
-          const { count: msgCount } = await supabase.from('facebook_messages')
-            .select('id', { count: 'exact', head: true })
-            .eq('contact_id', contact.id)
-            .eq('direction', 'inbound');
-          if ((msgCount || 0) < threshold) {
-            results.push({
-              contact_id: contact.id,
-              contact: contact.fb_name,
-              phone: extractedPhone || null,
-              status: 'skipped',
-              reason: `trigger=message_count, ${msgCount || 0}/${threshold} tin`,
-            });
-            skipped++;
-            if (io) io.emit('batch_progress', { type: 'create_leads', current: i + 1, total, name: contact.fb_name, status: 'skipped' });
-            continue;
-          }
-        }
-
-        // Tạo lead
-        const lead = await createLeadFromFacebook(contact.page_id, contact, 'Messenger (batch)', {
-          full_name: contact.fb_name,
-          phone: extractedPhone,
-          address: extractedAddress,
-        });
-
-        if (lead) {
-          // Link messages → lead
-          await supabase.from('facebook_messages')
-            .update({ lead_id: lead.id }).eq('contact_id', contact.id);
-          
-          created++;
-          results.push({
-            contact_id: contact.id,
-            contact: contact.fb_name,
-            phone: extractedPhone || null,
-            lead_code: lead.code,
-            status: 'created',
-          });
-          if (io) io.emit('batch_progress', { type: 'create_leads', current: i + 1, total, name: contact.fb_name, status: 'created', code: lead.code, phone: extractedPhone });
-          console.log(`[FB Batch] ✅ Lead ${lead.code} — ${contact.fb_name} (phone: ${extractedPhone || 'N/A'})`);
-        } else {
-          results.push({ contact_id: contact.id, contact: contact.fb_name, status: 'failed', reason: 'createLeadFromFacebook returned null' });
-          skipped++;
-          if (io) io.emit('batch_progress', { type: 'create_leads', current: i + 1, total, name: contact.fb_name, status: 'failed' });
-        }
-      } catch (e) {
-        results.push({ contact_id: contact.id, contact: contact.fb_name, status: 'error', reason: e.message });
-        skipped++;
-        if (io) io.emit('batch_progress', { type: 'create_leads', current: i + 1, total, name: contact.fb_name, status: 'error' });
-        console.error(`[FB Batch] ❌ ${contact.fb_name}:`, e.message);
-      }
-    }
-
-    const summary = { total, created, phone_updated: updated, skipped, results };
-    if (io) io.emit('batch_done', { type: 'create_leads', ...summary });
-    console.log(`[FB Batch] Done: created=${created}, updated=${updated}, skipped=${skipped}`);
-    res.json(summary);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const result = await runFacebookLeadBatch(supabase, req, { createLead: createLeadFromFacebook });
+    return res.status(result.status).json(result.body);
+  } catch (error) {
+    return res.status([400, 403, 409, 503].includes(error.status) ? error.status : 503)
+      .json({ error: 'Chưa xử lý danh sách. Kiểm tra công ty, quyền và cấu hình trước khi thử lại.',
+        code: error.code || 'FACEBOOK_BATCH_UNAVAILABLE' });
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════
