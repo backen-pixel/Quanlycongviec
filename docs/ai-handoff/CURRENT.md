@@ -1,3 +1,9 @@
+## 2026-10-03 — Clarify STOP outcome evidence
+
+Follow-up1647479 passed9 jobs and fixed the obsolete-option case. PG111132283592 (CI37098181276) failed only the new STOP assertion: SQL665 retains a rejected confirmation and SQL669 retains its NOT_BOOKED intent; absence of an intent is not the STOP contract. The case now proves no booking, no provider POST, sticky OPTED_OUT and terminal HELD intent. Runtime SQL/worker remain unchanged. Revalidation pending, no live actions.
+
+---
+
 ## 2026-10-03 — Outcome PostgreSQL fixture follow-up
 
 Runtime57fb08b CI37097932808 passed9 jobs; Node22 618 and full frontend PASS. PostgreSQL111131579765 failed one subtest because the replacement-proposal fixture reused an obsolete availability option after confirmation changed context. The fixture now obtains the current option. Added same-batch STOP, recipient-membership revocation while waiting and queue-progress cases. Runtime SQL/worker unchanged; final PostgreSQL/review still pending. No live actions.

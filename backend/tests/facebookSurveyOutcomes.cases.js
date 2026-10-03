@@ -144,10 +144,11 @@ module.exports=async(t,{db,peers,query,company,other,admin,region,setup,booked,f
   assert.equal(rs.filter(x=>x.status==='CLAIMED').length,1);assert.equal(rs.filter(x=>x.status==='PRIOR_DELIVERY_UNCERTAIN').length,1);
   await db.query("UPDATE crm_survey_control.proposals SET state='REJECTED' WHERE id=$1 AND state='OPEN'",[p.proposalId]);await finish(otherCase);await finish(c);
  });
- await t.test('STOP in the same confirmation batch creates neither booking nor customer outcome',async()=>{
+ await t.test('STOP in the same confirmation batch prevents booking and sending while retaining the rejection intent',async()=>{
   const c=await setup(),a=await dispatched(c);
   await receive([await incoming(c,'Xác nhận lịch',a.payload.message.quick_replies[0].payload),await incoming(c,'STOP')]);
-  assert.equal((await state(c)).length,0);assert.equal((await db.query('SELECT count(*)::int n FROM crm_survey_control.bookings WHERE proposal_id=$1',[c.proposal.proposalId])).rows[0].n,0);
+  assert.deepEqual((await state(c)).map(x=>x.kind),['NOT_BOOKED']);assert.equal((await db.query('SELECT count(*)::int n FROM crm_survey_control.bookings WHERE proposal_id=$1',[c.proposal.proposalId])).rows[0].n,0);
+  let sends=0;await worker(async()=>{sends++;throw Error('STOP must not send');}).drain();assert.equal(sends,0);assert.equal((await state(c))[0].state,'HELD');
   assert.equal(await mode(c),'OPTED_OUT');await db.query("UPDATE crm_survey_control.proposals SET state='REJECTED' WHERE id=$1 AND state='OPEN'",[c.proposal.proposalId]);await finish(c);
  });
  await t.test('recipient membership revoked while outcome claim waits blocks stale appointment text',async()=>{
