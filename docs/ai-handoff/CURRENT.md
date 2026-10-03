@@ -1,3 +1,11 @@
+## 2026-10-03 — Sửa ngoại lệ lịch và tổng nhóm cần xử lý
+
+Review độc lập tìm hai lỗi trong dashboard mới: lịch đã đổi nhưng thiếu giờ kết thúc làm báo cáo lỗi; tổng nhóm cần xử lý bỏ sót việc khảo sát khi hội thoại đã trả lời. Đã đưa lịch thay đổi vào ngoại lệ trước kiểm thời gian và gộp cả việc chăm khách lẫn khảo sát vào tổng nhóm. Local24 PASS, reviewer đã kiểm lại hai lỗi.
+
+Candidate551046c đạt9/10job; PostgreSQL có3 assertion mới giả định hồ sơ luôn nằm trong50 mục đầu. Sửa kiểm tra bằng biến động tổng số việc, giữ giới hạn50 và mọi ca cũ; bổ sung NULL/infinity cho lịch thay đổi. Đang kiểm CI/browser đúng bản sửa, chưa UAT/phát hành. Full goal ACTIVE.
+
+---
+
 ## 2026-10-03 — Dashboard tư vấn/khảo sát đang kiểm chứng
 
 SQL673/API/UI thêm số liệu vận hành toàn công ty từ hội thoại Messenger và lịch khách xác nhận qua hệ thống, độc lập kỳ quảng cáo. Snapshot một câu lệnh dùng identity/handoff projection hiện có, che mapping ngoại công ty, tách hội thoại/nhóm CRM/lịch và ngoại lệ. STOP không xóa booking; ACK không phải hoàn tất khảo sát. Không thêm gửi tin/ghi lịch/quyền chi.

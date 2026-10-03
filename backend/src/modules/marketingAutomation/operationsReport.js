@@ -9,16 +9,16 @@ function reportOperations(raw){
  if(!raw||raw.policy!=='MARKETING_OPERATIONS_V1'||!uuid(raw.companyId)||!uuid(raw.actorId)||!date(raw.asOf)||raw.complete!==true||raw.aiMaySend!==false||raw.allowBudgetExecution!==false)fail();
  for(const k of ['threads','bookings'])if(!Array.isArray(raw[k])||raw[k].length>5000||new Set(raw[k].map(x=>x?.id)).size!==raw[k].length)fail();
  const identity=projectReview(raw.identity);if(identity.companyId!==raw.companyId)fail();
- const now=Date.parse(raw.asOf),members=new Map(),seenThreads=new Set(),waiting=new Set(),booked=new Set(),unresolved=new Set(),attention=[];
+ const now=Date.parse(raw.asOf),members=new Map(),seenThreads=new Map(),waiting=new Set(),booked=new Set(),unresolved=new Set(),attention=[];
  for(const g of identity.groups)for(const m of g.members)members.set(m.leadId,{group:g,member:m});
  const counts={threads:raw.threads.length,awaitingReply:0,humanRequested:0,humanActive:0,optedOut:0,overdueHumanRequests:0,
   unavailableThreads:0,unavailableOwners:0,unavailableHandlers:0,ambiguousMessageOrder:0,
   bookedAppointments:raw.bookings.length,upcoming:0,inProgress:0,pastDue:0,pendingHandoffs:0,acknowledgedHandoffs:0,changedAppointments:0,unavailableBookings:0,deliveryConflicts:0};
  function groupFor(leadId){const x=members.get(leadId);if(!x||!x.member.available||!x.group.deduplicationComplete){unresolved.add(x?.group.groupId||leadId);return null;}return x.group.groupId;}
  const title=leadId=>members.get(leadId)?.member.available?members.get(leadId).member.title:null;
- function item(kind,id,leadId,reason,dueAt=null){attention.push({kind,id,leadId,title:leadId?title(leadId):null,reason,dueAt});}
+ function item(kind,id,leadId,reason,dueAt=null){const group=leadId?groupFor(leadId):null;if(group)waiting.add(group);attention.push({kind,id,leadId,title:leadId?title(leadId):null,reason,dueAt});}
  for(const t of raw.threads){
-  if(!uuid(t.id)||typeof t.scopeReady!=='boolean'||![t.ownerReady,t.handlerReady].every(x=>typeof x==='boolean'))fail();seenThreads.add(t.id);
+  if(!uuid(t.id)||typeof t.scopeReady!=='boolean'||![t.ownerReady,t.handlerReady].every(x=>typeof x==='boolean'))fail();seenThreads.set(t.id,t);
   if(!t.scopeReady){if([t.leadId,t.mode,t.ownerId,t.claimedBy,t.regionId,t.humanDeadline,t.lastInboundAt,t.lastOutboundAt].some(x=>x!==null)||t.ownerReady||t.handlerReady)fail();counts.unavailableThreads++;item('CARE',t.id,null,'MAPPING_UNAVAILABLE');continue;}
   if(!uuid(t.leadId)||!MODES.includes(t.mode)||![t.ownerId,t.claimedBy,t.regionId].every(nullableId)||![t.humanDeadline,t.lastInboundAt,t.lastOutboundAt].every(nullableDate)||t.ownerReady!==!!t.ownerId||(t.ownerReady&&!t.regionId)||(t.handlerReady&&!t.claimedBy))fail();
   const group=groupFor(t.leadId),inbound=t.lastInboundAt?Date.parse(t.lastInboundAt):null,outbound=t.lastOutboundAt?Date.parse(t.lastOutboundAt):null;
@@ -38,11 +38,12 @@ function reportOperations(raw){
   if(!uuid(b.id)||typeof b.scopeReady!=='boolean'||![b.assigned,b.unchanged].every(x=>typeof x==='boolean'))fail();
   if(!b.scopeReady){if([b.leadId,b.threadId,b.state,b.recipientId,b.appointment,b.receipt,b.deliveryConflict].some(x=>x!==null)||b.assigned||b.unchanged)fail();counts.unavailableBookings++;item('SURVEY',b.id,null,'BOOKING_SCOPE_UNAVAILABLE');continue;}
   const a=b.appointment,r=b.receipt;
-  if(!uuid(b.leadId)||!uuid(b.threadId)||!seenThreads.has(b.threadId)||!['PENDING','ACKNOWLEDGED'].includes(b.state)||!nullableId(b.recipientId)||(b.assigned&&!b.recipientId)||typeof b.deliveryConflict!=='boolean'||!a||!date(a.startsAt)||!date(a.endsAt)||Date.parse(a.endsAt)<=Date.parse(a.startsAt)||a.timeZone!=='Asia/Ho_Chi_Minh'||!(a.status===null||typeof a.status==='string'))fail();
+  if(!uuid(b.leadId)||!uuid(b.threadId)||!seenThreads.get(b.threadId)?.scopeReady||seenThreads.get(b.threadId)?.leadId!==b.leadId||!['PENDING','ACKNOWLEDGED'].includes(b.state)||!nullableId(b.recipientId)||(b.assigned&&!b.recipientId)||typeof b.deliveryConflict!=='boolean'||!a||a.timeZone!=='Asia/Ho_Chi_Minh'||!(a.status===null||typeof a.status==='string'))fail();
   if((b.state==='ACKNOWLEDGED')!==(r!==null)||(r!==null&&(!uuid(r.actorId)||r.companyId!==raw.companyId||r.proposalId!==b.id||r.state!=='ACKNOWLEDGED'||!date(r.receivedAt)||Date.parse(r.receivedAt)>now||(b.assigned&&r.actorId!==b.recipientId))))fail();
   const group=groupFor(b.leadId);if(group)booked.add(group);
   if(b.deliveryConflict)counts.deliveryConflicts++;
   if(!b.assigned||!b.unchanged||a.status!=='planned'){counts.changedAppointments++;item('SURVEY',b.id,b.leadId,'APPOINTMENT_CHANGED');continue;}
+  if(!date(a.startsAt)||!date(a.endsAt)||Date.parse(a.endsAt)<=Date.parse(a.startsAt))fail();
   if(b.state==='PENDING'){counts.pendingHandoffs++;item('SURVEY',b.id,b.leadId,'HANDOFF_PENDING',a.startsAt);}else counts.acknowledgedHandoffs++;
   if(Date.parse(a.endsAt)<=now){counts.pastDue++;item('SURVEY',b.id,b.leadId,'RESULT_NOT_RECORDED',a.endsAt);}
   else if(Date.parse(a.startsAt)<=now)counts.inProgress++;else counts.upcoming++;

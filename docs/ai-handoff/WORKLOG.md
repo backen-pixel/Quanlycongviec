@@ -1,3 +1,7 @@
+## 2026-10-03 — Operations dashboard: đóng hai phát hiện review
+
+Sửa projection để lịch changed/thiếu end_time là ngoại lệ thay vì gây503; unique waiting bao gồm union CARE+SURVEY, STOP vẫn giữ booking. Ràng buộc booking vào thread cùng lead/scope. Local24 PASS. Candidate551046c PostgreSQL chỉ lỗi3 assertion mới về vị trí trong danh sách50; đổi sang kiểm biến động aggregate, thêm NULL/infinity. Chờ CI/browser/review cuối, không thay production hoặc mở quyền.
+
 ## 2026-10-03 — Dashboard tư vấn/khảo sát đang kiểm chứng
 
 SQL673/API/UI thêm số liệu vận hành toàn công ty từ hội thoại Messenger và lịch khách xác nhận qua hệ thống, độc lập kỳ quảng cáo. Snapshot một câu lệnh dùng identity/handoff projection hiện có, che mapping ngoại công ty, tách hội thoại/nhóm CRM/lịch và ngoại lệ. STOP không xóa booking; ACK không phải hoàn tất khảo sát. Không thêm gửi tin/ghi lịch/quyền chi.
