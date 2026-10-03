@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../../lib/api';
 import FacebookSourceRecovery from './FacebookSourceRecovery';
+import ObservedLeadCost from './ObservedLeadCost';
+import { observedCpqlResult } from './observedCpqlState.mjs';
 const button='rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:opacity-50';
 const money=n=>Number.isFinite(n)?`${n.toLocaleString('vi-VN')} đ`:'Chưa đủ dữ liệu';
 const issueNames={RECEIPT_ACQUISITION_CONFLICT:'Thời điểm hoặc định danh khách mâu thuẫn giữa các bằng chứng nguồn',RECEIPT_NOT_RECONCILED:'Biểu mẫu còn chờ xử lý hoặc đối soát',IDENTITY_UNRESOLVED:'Nhóm khách còn trùng hoặc cần rà lại',EARLIER_HISTORY_UNVERIFIED:'Chưa xác minh được lịch sử trước nguồn quảng cáo',FIRST_SOURCE_AMBIGUOUS:'Nguồn đầu tiên còn mâu thuẫn',FIRST_SOURCE_OUTSIDE_ACCOUNTS:'Nguồn đầu tiên nằm ngoài tài khoản của kỳ',RECEIPT_PROOF_CONFLICT:'Hồ sơ khách chưa khớp bằng chứng nhận biểu mẫu',QUALIFICATION_CONFLICT:'Các kết luận nhu cầu trong nhóm đang mâu thuẫn',QUALIFICATION_PENDING:'Cần xác minh hoặc xác minh lại nhu cầu',SOURCE_WITHOUT_IDENTITY:'Bằng chứng nguồn không còn hồ sơ nhận diện tương ứng',PAID_SOURCE_UNVERIFIED:'Chưa chứng minh được nguồn trả phí'};
@@ -24,6 +26,7 @@ function Trial({companyId}){
    if(!id)return;const response=await api.get(`/crm/marketing-trials/${id}/report`,{params:{company_id:companyId},signal:controller.signal,timeout:20000});
    if(seq.current!==current)return;
    if(response.data?.companyId!==companyId||response.data?.trial?.id!==id||response.data?.measurementStatus!=='INCOMPLETE'||!Array.isArray(response.data.issues))throw Error('invalid report');
+   observedCpqlResult(response.data);
    setResult(response.data);if(id!==selected)setSelected(id);
   }).catch(e=>{if(seq.current===current){setResult(null);setError(e.response?.data?.error||'Chưa đọc được kỳ đo. Số cũ được ẩn; vui lòng thử lại.');}}).finally(()=>{if(seq.current===current)setLoading(false);});
   return()=>{++seq.current;controller.abort();};
@@ -48,7 +51,7 @@ function Trial({companyId}){
     <p className="text-sm">{result.trial.since} – {result.trial.until} · {result.trial.accountCount} tài khoản · Đọc lúc {new Date(result.asOf).toLocaleString('vi-VN')}</p>
     {result.period?.status==='AVAILABLE'?<p className="text-sm text-slate-600">Tiền và khách dưới đây cùng tính từ {result.period.since} đến hết {result.period.until} theo giờ Việt Nam. Chất lượng khách được kiểm tra theo hồ sơ hiện tại.</p>:<p role="status" className="text-sm text-amber-800">Kỳ này chưa có ngày hoàn tất để đối chiếu tiền và khách.</p>}
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[['Tiền đã chi trong kỳ đối chiếu',result.spend?.status==='KNOWN_TO_DATE'?money(result.spend.spendVnd):'Chưa đủ dữ liệu'],['Khách đã xác minh',result.observed?.qualified],['Khách chờ xác minh',result.observed?.pending],['Nhóm cần đối soát',result.observed?.unresolved]].map(([label,value])=><div key={label} className="rounded-lg bg-slate-50 p-3"><p className="text-sm text-slate-600">{label}</p><p className="mt-1 text-xl font-semibold">{result.period?.status==='AVAILABLE'?(value??'Chưa đủ dữ liệu'):'Chưa có ngày hoàn tất'}</p></div>)}</div>
-    <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">Số khách trên chỉ tính trong hồ sơ đã nhận và có bằng chứng. Chưa đối soát đủ với Facebook, nên chưa kết luận chi phí/khách hoặc đạt mục tiêu 250.000 đồng.</p>
+    <ObservedLeadCost report={result}/>
     <FacebookSourceRecovery key={result.trial.id} companyId={companyId} trialId={result.trial.id} reconciliation={result.reconciliation} pendingRequests={recoveryRequests.current} onBusy={setRecovering} onRefresh={()=>setReload(n=>n+1)} disabled={loading||saving||uncertain}/>
     {result.period?.status==='AVAILABLE'&&<dl className="grid grid-cols-2 gap-2 text-sm"><dt>Biểu mẫu chờ xử lý/đối soát</dt><dd>{result.observed?.unprocessedForms??'—'}</dd><dt>Lượt gửi đã chứng minh ngoài kỳ đối chiếu</dt><dd>{result.observed?.outsidePeriodForms??'—'}</dd><dt>Khách đã có trước kỳ</dt><dd>{result.observed?.existing??'—'}</dd><dt>Khách không đạt nhu cầu</dt><dd>{result.observed?.rejected??'—'}</dd><dt>Lịch khảo sát</dt><dd>Chưa nối nguồn lịch</dd></dl>}
     {!!result.issues.length&&<ul className="list-disc pl-5 text-sm text-amber-800">{result.issues.map(x=><li key={x.code}>{issueNames[x.code]||'Cần kiểm tra thêm nguồn dữ liệu'}: {x.count}</li>)}</ul>}

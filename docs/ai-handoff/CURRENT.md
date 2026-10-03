@@ -1,3 +1,11 @@
+## 2026-10-03 — Chi phí/khách đã đối soát, tạm tính (đang kiểm chứng)
+
+Thêm observedMeasurement từ cùng snapshot: toàn bộ chi tài khoản / khách Lead Ads đã xác minh và đối soát. Có positive1m/4=250k, giữ riêng với CPQL đầy đủ và không kết luận đạt mục tiêu/mở chi. Tách lỗi hồ sơ khỏi cảnh báo bao phủ; mâu thuẫn nguồn không còn được giữ là khách đạt. UI ghi rõ phạm vi và ẩn số thiếu dữ liệu. Không migration mới.
+
+Local105 domain/UI-state tests PASS. PostgreSQL/build/independent review đang chờ. [Hợp đồng, giới hạn và hoàn tác](vpt-marketing-automation/OBSERVED_CPQL.md). Full goal ACTIVE; registry/provider completeness, lịch/chờ xử lý, Meta/UAT và phát hành còn phải hoàn thiện.
+
+---
+
 ## Hiện hành 03/10/2026 — Đã kiểm thử mốc đo tiền và khách
 
 Candidate5076b2a dùng cùng kỳ ngày Việt Nam hoàn tất cho chi tiêu và khách; khôi phục khách bị sót vẫn đến lúc bắt đầu quét, kể cả ngày đầu. Giữ metadata ngoài kỳ để đối soát webhook tới muộn, không bỏ mâu thuẫn nguồn. Dashboard tách mốc khôi phục/mốc đo và không hiển thị số0 khi chưa có ngày hoàn tất.

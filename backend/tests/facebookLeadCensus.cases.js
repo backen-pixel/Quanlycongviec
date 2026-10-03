@@ -46,4 +46,5 @@ module.exports=async(t,{db,peers,company,other,tenant,admin,sales,bind,query})=>
  });
  await require('./facebookLeadCensus.period.cases')(t,{db,peers,company,other,admin,query,trial,start,stop,claim,finish,getContext,date});
  await require('./facebookLeadCensus.reconciliation.cases')(t,{db,peers,company,other,admin,query,trial});
+ await require('./facebookLeadCensus.observedCpql.cases')(t,{db,peers,query,tenant});
 };

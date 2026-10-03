@@ -4,6 +4,7 @@ const {summarizeSpend}=require('./spendCoverage');
 const {reconcileCensus}=require('./censusReconciliation');
 const {measurementPeriod}=require('./measurementPeriod');
 const {receiptPeriods}=require('./receiptPeriod');
+const {observedCpql}=require('./observedCpql');
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const fail=()=>{throw Object.assign(new Error('TRIAL_SNAPSHOT_UNAVAILABLE'),{status:503});};
 const time=x=>typeof x==='string'?Date.parse(x):NaN;
@@ -47,7 +48,8 @@ function reportTrial(raw){
   all.sort((a,b)=>time(a.acquiredAt)-time(b.acquiredAt)||a.id.localeCompare(b.id));
   const first=all[0];acquisition=first;
   const historic=g.members.map(m=>qualities.get(m.leadId));
-  if(time(first.acquiredAt)<start||historic.some(q=>Number.isFinite(time(q?.firstKnownAt))&&time(q.firstKnownAt)<start))state='EXISTING';
+  if(all.some(s=>receiptPeriod.get(s.receiptId)==='CONFLICT')){state='UNRESOLVED';reason='RECEIPT_ACQUISITION_CONFLICT';}
+  else if(time(first.acquiredAt)<start||historic.some(q=>Number.isFinite(time(q?.firstKnownAt))&&time(q.firstKnownAt)<start))state='EXISTING';
   else if(!g.deduplicationComplete){state='UNRESOLVED';reason='IDENTITY_UNRESOLVED';}
   else if(historic.some(q=>!q||q.historyComplete!==true||!Number.isFinite(time(q.firstKnownAt)))||historic.some(q=>time(q.firstKnownAt)<time(first.acquiredAt)&&!all.some(s=>s.leadId===q.leadId&&time(s.acquiredAt)<=time(q.firstKnownAt)))){state='UNRESOLVED';reason='EARLIER_HISTORY_UNVERIFIED';}
   else if(all.some(s=>time(s.acquiredAt)===time(first.acquiredAt)&&s.id!==first.id&&(s.leadId!==first.leadId||s.proof?.accountId!==first.proof?.accountId||s.source!==first.source))){state='UNRESOLVED';reason='FIRST_SOURCE_AMBIGUOUS';}
@@ -80,6 +82,7 @@ function reportTrial(raw){
   scope:'CONFIGURED_FACEBOOK_ACCOUNTS',period,spend,observed:{status:'OBSERVED_ONLY',...counts},items,
   issues:[...issues].map(([code,count])=>({code,count})),
   reconciliation,
+  observedMeasurement:observedCpql({period,spend,counts,reconciliation,asOf:raw.asOf}),
   coverage:{provider:reconciliation.status==='MISSING'?'MISSING':'PARTIAL',identityPolicy:identity.policy,identityComplete:identity.deduplicationComplete,qualification:'CURRENT_OBSERVED_RECORDS',surveys:'NOT_CONNECTED'},
   costPerQualifiedLeadVnd:null,targetVnd:250000,targetMetToDate:false,measurementStatus:'INCOMPLETE',
   reasons:[reconciliation.status==='MISSING'?'PROVIDER_CENSUS_NOT_CONNECTED':'PROVIDER_COVERAGE_UNVERIFIED',...(counts.unprocessedForms?['RECEIPT_NOT_RECONCILED']:[]),...(counts.unresolved||counts.unlinkedProofs?['COHORT_UNRESOLVED']:[]),...(spend.status!=='KNOWN_TO_DATE'?['SPEND_UNAVAILABLE']:[])],

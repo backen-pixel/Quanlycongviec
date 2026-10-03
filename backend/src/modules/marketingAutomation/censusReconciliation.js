@@ -8,7 +8,7 @@ const fail=()=>{throw Object.assign(new Error('TRIAL_RECONCILIATION_UNAVAILABLE'
 // matching enumerated subset never certifies provider permissions/retention.
 function reconcileCensus(raw,identity,cohort,period,receiptPeriod){
  const census=raw.providerReconciliation;
- if(!census||census.status==='MISSING')return{status:'MISSING',matchStatus:'NOT_CHECKED',coverage:'UNVERIFIED',run:null,counts:null,issues:[],exceptions:[],cpqlReady:false};
+ if(!census||census.status==='MISSING')return{status:'MISSING',matchStatus:'NOT_CHECKED',recordMatchStatus:'NOT_CHECKED',coverage:'UNVERIFIED',run:null,counts:null,issues:[],coverageIssues:[],exceptions:[],cpqlReady:false};
  if(![1,2].includes(census.version)||census.companyId!==raw.companyId||census.trialId!==raw.trial.id||census.complete!==true)fail();
  const r=census.run,now=time(raw.asOf),start=time(raw.trial.since+'T00:00:00+07:00'),end=time(raw.trial.until+'T00:00:00+07:00')+86400000;
  if(!r||!uuid(r.id)||!['RUNNING','SCANNED','FAILED'].includes(r.state)||!Number.isSafeInteger(r.trialRevision)||r.trialRevision<1||typeof r.scopeCurrent!=='boolean'||!Number.isSafeInteger(r.tasksPending)||r.tasksPending<0||!Number.isFinite(time(r.startedAt))||time(r.startedAt)>now||!Number.isFinite(time(r.since))||!Number.isFinite(time(r.until))||(time(r.until)<time(r.since)||(time(r.until)===time(r.since)&&(census.version!==2||r.measurementPolicy!=='VIETNAM_CLOSED_DAY_V1')))||time(r.until)>now||!Array.isArray(census.items)||census.items.length>5000||!Array.isArray(census.forms)||census.forms.length>5000)fail();
@@ -58,6 +58,12 @@ function reconcileCensus(raw,identity,cohort,period,receiptPeriod){
  else if(!period.censusAligned)issue('CENSUS_PERIOD_MISMATCH');
  const status=stale?'STALE':r.state;
  const matchStatus=status==='SCANNED'?(issues.size?'DISCREPANCIES':'MATCHED_ENUMERATED'):'NOT_CHECKED';
- return{status,matchStatus,coverage:'API_ENUMERATION_ONLY',run:{id:r.id,since:r.since,until:r.until,startedAt:r.startedAt,finishedAt:r.finishedAt,recoveryUntil:r.recoveryUntil||r.until,state:r.state,tasksPending:r.tasksPending},counts,issues:[...issues].map(([code,count])=>({code,count})),exceptions,exceptionsTruncated:issues.size>0&&[...issues.values()].reduce((a,b)=>a+b,0)>exceptions.length,cpqlReady:false};
+ // Matching known records and proving the provider universe are distinct.
+ // Retention/undiscovered forms remain full-coverage gaps, but do not erase a
+ // factual quotient over the reconciled records that have actually arrived.
+ const coverageCodes=new Set(['CENSUS_FORM_NOT_DISCOVERED','CENSUS_EXPIRED_LEADS','CENSUS_RETENTION_UNVERIFIED']);
+ const coverageIssues=[...issues].filter(([code])=>coverageCodes.has(code)).map(([code,count])=>({code,count}));
+ const recordMatchStatus=status!=='SCANNED'?'NOT_CHECKED':[...issues.keys()].some(code=>!coverageCodes.has(code))?'DISCREPANCIES':'MATCHED_OBSERVED';
+ return{status,matchStatus,recordMatchStatus,coverage:'API_ENUMERATION_ONLY',run:{id:r.id,since:r.since,until:r.until,startedAt:r.startedAt,finishedAt:r.finishedAt,recoveryUntil:r.recoveryUntil||r.until,state:r.state,tasksPending:r.tasksPending},counts,issues:[...issues].map(([code,count])=>({code,count})),coverageIssues,exceptions,exceptionsTruncated:issues.size>0&&[...issues.values()].reduce((a,b)=>a+b,0)>exceptions.length,cpqlReady:false};
 }
 module.exports={reconcileCensus};
