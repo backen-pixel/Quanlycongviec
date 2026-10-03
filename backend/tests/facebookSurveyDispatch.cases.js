@@ -11,7 +11,7 @@ module.exports=async(t,{db,peers,query,company,other,admin,setup,finished})=>{
  // Retire old, deliberately incomplete fixtures. Never modify real data.
  await db.query("UPDATE crm_survey_control.proposals SET state='REJECTED' WHERE state='OPEN'");
  const secret='synthetic-survey-dispatch-secret',env={VPT_FB_CARE_PAGES:'123',VPT_FACEBOOK_APP_SECRET:secret,VPT_SURVEY_CONFIRMATIONS:'1',VPT_SURVEY_DISPATCH:'1'};
- const storage=client=>({rpc:async(name,args)=>{try{return{data:await query(name,Object.values(args),client)}}catch(error){return{error}}},
+ const storage=client=>({rpc:async(name,args)=>{try{return{data:await query(name,Object.values(args).map(v=>Array.isArray(v)?JSON.stringify(v):v),client)}}catch(error){return{error}}},
   from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{page_id:'123',default_company_id:company,is_active:true,access_token:pageToken}})})})})});
  const care=createCustomerCare({db:storage(peers[2]),isPrimary:()=>true,env});
  const stamp=async()=>Number((await db.query('SELECT floor(extract(epoch FROM clock_timestamp())*1000)::bigint n')).rows[0].n);
@@ -155,5 +155,20 @@ module.exports=async(t,{db,peers,query,company,other,admin,setup,finished})=>{
   const c=await setup();await db.query("UPDATE facebook_pages SET access_token='rotated-synthetic-token' WHERE page_id='123'");
   try{assert.equal((await claim(c)).status,'CREDENTIAL_CHANGED');assert.equal((await delivery(c)).state,'QUEUED');}
   finally{await db.query("UPDATE facebook_pages SET access_token=$1 WHERE page_id='123'",[pageToken]);await finish(c);}
+ });
+ await t.test('superseding a proposal cannot bypass an uncertain delivery on the same thread',async()=>{
+  const c=await setup(),w=randomUUID(),a=await claim(c,w);
+  await query('crm_survey_dispatch_result',[a.attemptId,w,{status:'UNCERTAIN',reason:'TRANSPORT_UNKNOWN'}]);
+  const available=await query('crm_survey_availability',[admin,company,c.thread,new Date(c.a).toISOString(),new Date(c.b).toISOString()]);
+  const next=await query('crm_survey_propose',[admin,company,randomUUID(),{...c.command,optionId:available.items.find(x=>x.staffId===c.staff).optionId}]);
+  assert.equal((await claim({...c,proposal:next})).status,'PRIOR_DELIVERY_UNCERTAIN');
+  assert.ok(!(await query('crm_survey_dispatch_candidates',['123',10])).includes(next.proposalId));
+  await db.query("UPDATE crm_survey_control.proposals SET state='REJECTED' WHERE id=$1",[next.proposalId]);await finish(c);
+ });
+ await t.test('conflicting late ACK keeps an already booked calendar and the original delivery evidence',async()=>{
+  const c=await setup(),w=randomUUID(),a=await claim(c,w),mid=randomUUID();await ack(a,w,mid);
+  await receive([await incoming(c,'Xác nhận lịch',a.payload.message.quick_replies[0].payload)]);const b=await booking(c);assert.ok(b);
+  assert.equal((await ack(a,w,'conflict-'+randomUUID())).status,'CONFLICT');assert.deepEqual(await booking(c),b);
+  assert.equal((await delivery(c)).provider_mid,mid);assert.equal((await delivery(c)).state,'SENT');assert.equal(await mode(c),'HUMAN_REQUESTED');await finish(c);
  });
 };

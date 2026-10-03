@@ -183,8 +183,8 @@ DECLARE a crm_survey_control.dispatch_attempts%ROWTYPE;n integer:=0;
 BEGIN
  PERFORM crm_survey_control.require_ingress_role();
  IF p_page IS NULL OR p_page !~ '^[0-9]{1,32}$' OR p_limit IS NULL OR p_limit NOT BETWEEN 1 AND 20 THEN RAISE EXCEPTION 'invalid dispatch recovery' USING ERRCODE='22023';END IF;
- FOR a IN SELECT a.* FROM crm_survey_control.dispatch_attempts a JOIN crm_survey_control.deliveries d ON d.proposal_id=a.proposal_id
-  WHERE a.page_id=p_page AND d.state='SENDING' AND a.started_at<clock_timestamp()-interval '1 minute' ORDER BY a.thread_id LIMIT p_limit LOOP
+ FOR a IN SELECT pending.* FROM crm_survey_control.dispatch_attempts pending JOIN crm_survey_control.deliveries d ON d.proposal_id=pending.proposal_id
+  WHERE pending.page_id=p_page AND d.state='SENDING' AND pending.started_at<clock_timestamp()-interval '1 minute' ORDER BY pending.thread_id LIMIT p_limit LOOP
   PERFORM public.crm_survey_dispatch_result(a.attempt_id,a.worker_id,jsonb_build_object('status','UNCERTAIN','reason','STALE_ATTEMPT'));n:=n+1;
  END LOOP;
  RETURN n;
