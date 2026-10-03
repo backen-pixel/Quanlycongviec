@@ -128,6 +128,22 @@ module.exports = async (t, { db, peers, company, other, admin, sales }) => {
     finally { await client.query('ROLLBACK'); await unenroll(); }
   });
 
+  await t.test('event update waiting for the gate observes a newly committed protected participant', async () => {
+    const id = await create();
+    const waiting = (await client.query('SELECT pg_backend_pid() p')).rows[0].p;
+    const blocker = (await db.query('SELECT pg_backend_pid() p')).rows[0].p;
+    await enroll();
+    await db.query('BEGIN');
+    await permit(id);
+    await db.query('INSERT INTO crm_event_participants(event_id,user_id) VALUES($1,$2)', [id, sales]);
+    await db.query('DELETE FROM crm_survey_control.crm_survey_calendar_permits');
+    const result = deny(client.query("UPDATE crm_events SET status='cancelled' WHERE id=$1", [id]));
+    try { await waitBlocked(waiting, blocker); } finally { await db.query('COMMIT'); }
+    try { await result; } finally { await unenroll(); }
+    assert.equal((await db.query('SELECT status FROM crm_events WHERE id=$1', [id])).rows[0].status, 'planned');
+    await client.query('DELETE FROM crm_events WHERE id=$1', [id]);
+  });
+
   await t.test('private permits are event, transaction and backend bound; GUC spoofing is ineffective', async () => {
     await enroll();
     const id = randomUUID();
