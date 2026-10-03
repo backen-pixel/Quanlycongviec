@@ -22,7 +22,9 @@ Bước tiếp theo trong phạm vi đã giao:
 1. Hoàn thiện chuyển các đường ghi cũ theo bản đồ bên dưới trước enrollment thật; không mở đồng thời hai đường ghi.
 2. Khép cấu hình AI, người nhận/lịch, phạm vi đo CPQL, ngoại lệ/khôi phục và UAT; trình Founder gói phát hành. Quyết định khóa AI còn chờ, không gọi mô hình/API trước quyết định đó.
 
-## Chuyển đường ghi cũ — kết quả khảo sát độc lập, chưa triển khai
+## Chuyển đường ghi cũ — bản đồ khảo sát ban đầu
+
+Đã bổ sung preflight ở một số caller trong runtime9cdfe7d và kiểm PostgreSQL; xem [phạm vi hiện hành](LEGACY_WRITE_PREFLIGHT.md). Danh sách bên dưới là bản đồ khảo sát ban đầu, không phải chứng nhận toàn bộ caller hoặc cutover đã xong.
 
 Các đường nhiều bước có thể ghi phụ trước khi guard mapping từ chối; phải kiểm trước bước ghi đầu tiên và xử lý việc đang chạy khi chuyển Page:
 

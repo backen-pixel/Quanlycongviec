@@ -1,8 +1,8 @@
-## Hiện hành 03/10/2026 — Đang kiểm đường ghi cũ trước chuyển đổi
+## Hiện hành 03/10/2026 — Preflight đường ghi cũ đã qua PostgreSQL
 
-Bản làm việc chưa commit trên HEADa4da197 bổ sung SQL682/helper kiểm phạm vi trước mutation ở các đường cũ, kiểm lại target vừa tìm được và dừng cleanup khi lỗi đọc/count. Đã sửa theo hai finding P1/P2 của reviewer: target phát hiện muộn và lịch sử message/Lead Ads Customer bị bỏ sót. Local26 ca mới; cộng recovery/intake là43/0/0. Reviewer độc lập khép hai finding về mã và tự chạy43/43 PASS. SQL682 chưa chạy PostgreSQL/CI; cutover vẫn HOLD, không lấy bằng chứng SQL681 dưới đây làm PASS gói mới.
+Runtime9cdfe7d/treeaf25883 bổ sung SQL682/helper kiểm phạm vi trước mutation, kiểm lại target vừa tìm được và dừng cleanup khi lỗi đọc/count. Đã khép hai finding P1/P2 về mã và kiểm cả lịch sử comment. Local43/0/0; PostgreSQL258/0/0 gồm14ca mới; census88+HTTP1, Node22 843+26+33, cả10job/build/report/Messenger SUCCESS. CImerge tree khớp runtime; reviewer độc lập PASS phạm vi preflight/SQL682 sau đối chiếu blob/log CI. [Bằng chứng](vpt-marketing-automation/LEGACY_WRITE_PREFLIGHT_REVIEW.md).
 
-[Phạm vi, bằng chứng và bước tiếp](vpt-marketing-automation/LEGACY_WRITE_PREFLIGHT.md). Đã chuẩn bị14 ca PostgreSQL, bổ sung bằng chứng comment theo schema42; đang review và chuẩn bị chạy CI. Preflight không giữ giao dịch xuyên HTTP; vẫn phải kiểm toàn bộ caller, dừng/chờ đường cũ và đối soát/khôi phục trước enrollment. Tiếp theo kiểm PostgreSQL và khép review, rồi nghiệm thu toàn tuyến Facebook→CRM→khảo sát→dashboard, trình Founder gói phát hành. Full goal ACTIVE; chưa DB thật/phát hành hoặc kết quả250k thực tế.
+[Phạm vi và bước tiếp](vpt-marketing-automation/LEGACY_WRITE_PREFLIGHT.md). Preflight không giữ giao dịch xuyên HTTP; cutover vẫn HOLD, còn kiểm toàn bộ caller, dừng/chờ đường cũ và đối soát/khôi phục trước enrollment. Sau đó khép cấu hình AI/lịch/người nhận/phạm vi đo và nghiệm thu toàn tuyến Facebook→CRM→khảo sát→dashboard, trình Founder gói phát hành. Full goal ACTIVE; chưa DB thật/phát hành hoặc kết quả250k thực tế.
 
 ---
 

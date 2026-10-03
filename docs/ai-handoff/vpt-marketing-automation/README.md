@@ -1,3 +1,9 @@
+## Hiện hành 03/10/2026 — Preflight đường ghi cũ đã kiểm PostgreSQL
+
+Runtime9cdfe7d: SQL682/helper kiểm target trước ghi và giữ lịch sử message/Lead Ads/comment. PostgreSQL258/0/0 (14mới), census88+HTTP1, Node22 843+26+33 và cả10job/build/report/Messenger SUCCESS. [Bằng chứng](LEGACY_WRITE_PREFLIGHT_REVIEW.md), [hợp đồng và phần còn thiếu](LEGACY_WRITE_PREFLIGHT.md). Reviewer độc lập PASS phạm vi preflight/SQL682. Cutover vẫn HOLD: còn caller/batch, dừng/chờ, khôi phục, AI/cấu hình, đủ điểm nhận/phạm vi đo và UAT/Founder release. Chưa dữ liệu thật đạt250k; full goal ACTIVE. Các mục dưới giữ lịch sử.
+
+---
+
 ## Hiện hành 03/10/2026 — Giao diện đối chiếu đã kiểm chứng
 
 Runtime8f42595: SQL681/API/UI tìm hồ sơ, bằng chứng, LINK/CLOSE qua reload và phân biệt mapping đầy đủ. Local26; intakePG244/0/0 (11mới), census88+HTTP1, Node22 843+26,10job/build/report/Messenger SUCCESS. Review độc lập PASS; browser component thật/API giả đã kiểm. [Bằng chứng](CARE_CONNECTION_CONSOLE_REVIEW.md), [hợp đồng/chuyển đường cũ/hoàn tác](CARE_CONNECTION_CONSOLE.md). Còn cutover, cấu hình, khôi phục, phạm vi đo và các điểm nhận/kênh khác, UAT/Founder release. Chưa dữ liệu thật đạt250k; full goal ACTIVE.

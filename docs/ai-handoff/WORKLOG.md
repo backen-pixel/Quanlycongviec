@@ -1,5 +1,7 @@
 ## 03/10/2026 — Kiểm đường ghi cũ; sửa target phát hiện muộn và đọc lỗi
 
+Đã kiểm runtime9cdfe7d/treeaf25883: intake PostgreSQL258/0/0 gồm14ca mới244–257, census88+HTTP1, Node22 843+26+33 PASS, cả10job/build/report/Messenger SUCCESS. CImergea620f9ce có tree bằng runtime, parentsbasee16c885+9cdfe7d. [Bằng chứng đúng phiên bản](vpt-marketing-automation/LEGACY_WRITE_PREFLIGHT_REVIEW.md). Reviewer độc lập đối chiếu4 blob và log CI, PASS phạm vi preflight/SQL682; cutover toàn bộ vẫn HOLD. Các đoạn dưới lưu tiến trình trước kiểm thử.
+
 Tiếp tục: bổ sung14 ca PostgreSQL `careLegacyWrite.cases.js` và runner, gồm ACL, inactive/direct/inverse/shared/source-only/message-only/Customer receipt/comment, request không hợp lệ, graph cycle/limit, enrollment chờ khóa, trigger/isolation, actual helpers và không tạo permit. SQL682 thêm Lead→Page từ comment theo schema42. Chưa chạy CI tại thời điểm ghi mục này; review delta đã giao độc lập. Không tác động DB thật.
 
 Bản làm việc trên HEADa4da197: thêm SQL682 và helpers facebookLegacyWriteScope/facebookLegacyContactWrites; cập nhật facebook.js, cleanup helper, CRM merge/duplicate, cron server và script rescan để kiểm trước mutation. Reviewer yêu cầu P1 target tìm thấy sau phone/PSID/refresh và P2 lịch sử message/Lead Ads Customer; đã sửa mã, review lại đang chờ. Cleanup không còn dùng count lỗi/null như0. Không khẳng định giao dịch nhiều HTTP nguyên tử hoặc cutover hoàn tất.
