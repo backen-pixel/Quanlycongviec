@@ -7,7 +7,7 @@ Phạm vi tăng thêm từ deabf187: SQL672 lưu từng trang collector đã ch�
 - Mỗi claim/reclaim có `lease_started_at` do DB ghi. Đây là lúc nhận quyền xử lý; không phải thời điểm Meta chụp dữ liệu. `acceptedAt` là lúc DB ghi bằng chứng, không phải chữ ký hay xác nhận từ Meta.
 - Commit giữ khóa run rồi task, kiểm lease, người thực hiện và phạm vi hiện hành. Cùng giao dịch ghi observation, receipt/item phục hồi, witness và cursor. Hết lease hoặc đổi phạm vi trước kiểm cuối làm tất cả thay đổi của chunk rollback.
 - Bằng chứng gồm run/task/ordinal, Page/form, Graph version, phạm vi cấu hình đã băm, mốc khôi phục và mốc đo cố định, cursor vào/ra đã băm, digest trang trước và metadata được whitelist. Không lưu token, URL provider, raw cursor, liên hệ hoặc trường dư của hàng provider.
-- Graph version đầu tiên được chấp nhận áp dụng cho mọi task của run. Khác version bị từ chối, kể cả tập ID không giao nhau. Khôi phục bằng run mới sau lỗi, không trộn dữ liệu API khác phiên bản.
+- Graph version là phiên bản yêu cầu của collector, lấy từ cấu hình và URL yêu cầu; chưa là version được Meta chứng thực qua header. Phiên bản đầu tiên được chấp nhận áp dụng cho mọi task của run. Khác version bị từ chối, kể cả tập ID không giao nhau. Khôi phục bằng run mới sau lỗi, không trộn dữ liệu theo cấu hình API khác phiên bản.
 - Giữ mọi lần xuất hiện giữa các trang, tách số dòng/ID duy nhất/lần lặp. Số ID là provider ID của lượt gửi theo Page/form, không phải khách CRM duy nhất hoặc khách hợp lệ.
 - Tối đa 5.000 trang/run, 100 dòng/trang; các giới hạn observation/form/task cũ vẫn giữ. Chạm giới hạn trả lỗi, không bỏ bớt trang rồi báo đủ.
 - Digest SHA-256 được tạo từ JSONB chuẩn hóa của DB. Cùng DB có thể tính lại; không là chứng thư provider hay bằng chứng chống sửa bởi chủ DB.

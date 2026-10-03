@@ -1,3 +1,13 @@
+## Hiện hành03/10/2026 — Đã kiểm chứng nhật ký trang Facebook
+
+Runtime d89e34ba thêm SQL672 ghi witness từng trang nguyên giao dịch với receipt/observation/cursor, chuỗi hash/ordinal, giờ lease DB, một Graph version yêu cầu và phát hiện lịch sử thiếu. Summary trong API trạng thái cùng snapshot; không thay UI, không chứng minh Meta đủ/CPQL/quyền chi.
+
+Review độc lập PASS; local29, censusPG50/0/0 (9ca mới), Node22 697/0/0, cả10job/build và report/Messenger SUCCESS. [Bằng chứng đúng phiên bản](CENSUS_WITNESS_REVIEW.md), [hợp đồng/hoàn tác](CENSUS_WITNESS.md).
+
+Full goal ACTIVE. Tiếp tục đối soát phạm vi/tập ID thực và chốt kỳ có bằng chứng, lịch/chờ xử lý, các nghĩa vụ AI/vận hành/UAT/Founderrelease. Chưa dữ liệu Meta thật hoặc đạt250k, chưa phát hành. Các mục dưới giữ lịch sử từng phiên bản.
+
+---
+
 ## 03/10/2026 — Source registry validated
 
 Runtime9363535a adds declared business scope with revision/current authority/audit/exact retry, all accounts and known-form exceptions, and an operator editor. Independent review PASS; local129, censusPG41/0/0, Node22 697/0/0, all10 jobs/build and report/Messenger SUCCESS. Synthetic browser includes lost-response/reload/actor switch and heldPOST/editor close. [Evidence](SOURCE_REGISTRY_REVIEW.md), [contract](SOURCE_REGISTRY.md), [browser](SOURCE_REGISTRY_BROWSER.md). Full goal ACTIVE: provider witness/actual export reconciliation/measurement close, survey and pending dashboard, real configuration/UAT/Founder release still required. No actual Meta access or operational changes.
