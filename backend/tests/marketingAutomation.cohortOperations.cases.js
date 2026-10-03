@@ -41,8 +41,10 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,booked,finished
    finally{await db.query("UPDATE facebook_contacts SET lead_id=$2 WHERE page_id='123' AND psid=$1",[b.psid,b.lead]);}
   });
   await t.test('foreign Lead mapping hides foreign title and removes it from paid attribution',async()=>{
+   const before=reportCohortOperations(await read());
+   assert.equal(before.counts.bookedGroups,2);assert.equal(before.counts.observedPaidGroups,2);
    await db.query("UPDATE crm_leads SET company_id=$2,title='PRIVATE CROSS COMPANY' WHERE id=$1",[b.lead,other]);
-   try{const r=reportCohortOperations(await read());assert.equal(r.counts.bookedGroups,1);assert.equal(r.counts.observedPaidGroups,1);assert.ok(!JSON.stringify(r).includes('PRIVATE CROSS COMPANY'));assert.equal(r.excluded.unlinkedProofs,1);}
+   try{const r=reportCohortOperations(await read());assert.equal(r.counts.bookedGroups,1);assert.equal(r.counts.observedPaidGroups,1);assert.ok(!JSON.stringify(r).includes('PRIVATE CROSS COMPANY'));assert.equal(r.excluded.unlinkedProofs,before.excluded.unlinkedProofs+1);}
    finally{await db.query("UPDATE crm_leads SET company_id=$2,title='Synthetic survey' WHERE id=$1",[b.lead,company]);await qualify(b.lead);}
   });
   await t.test('one MVCC snapshot does not mix a concurrent qualification change and STOP with prior cohort facts',async()=>{

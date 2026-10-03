@@ -1,5 +1,7 @@
 ## 04/10/2026 — Sửa caller quét điện thoại và các finding độc lập
 
+Published runtime119491e/tree00a28ab; review mã PASS và local77/0/0. CI37139607314 cả9job còn lại/report/Messenger PASS, intake111251124860 fail ca211 cũ (unlinkedProofs toàn kỳ3 vs test1) nhưng6ca PG mới257–262PASS. CImerge bd4dee9f có tree đúng runtime/parents. Sửa test cohort lấy baseline rồi kiểm tăng chính xác1 sau đổi công ty Lead; giữ booked/paid2→1 và không lộ title. Runtime không đổi; đang kiểm lại CI và review riêng test. Không coi lần CI fail là nghiệm thu hoàn tất.
+
 Sửa `facebookInboundPhoneReconcile.js`, `facebookLegacyContactWrites.js`, `routes/facebook.js`; thêm `facebookLegacyPhoneRepair.test.js` và6 ca actual helper PostgreSQL trong `careLegacyWrite.cases.js`; workflow đưa các file/test mới vào regression. Không thêm migration.
 
 Đã giới hạn company actor trước tenant-wide membership, đọc Page owner hiện hành, chặn admin HST thiếu tenant; kiểm all IDs trước quality apply, intersection page_id; checked reads/writes và final round chỉ nhận ID của nhóm chọn. Review phát hiện MID khóa chưa lưu và history cap vẫn có thể dẫn tới cleanup: sửa kiểm row đúng contact, trạng thái partial, số tin đã lưu trước lỗi và cửa sổ501/801 chặn kết luận không có số.34 ca mới local PASS. PostgreSQL và review cuối chưa chốt tại thời điểm ghi; [hợp đồng/hoàn tác](vpt-marketing-automation/LEGACY_PHONE_REPAIR.md).

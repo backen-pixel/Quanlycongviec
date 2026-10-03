@@ -14,9 +14,11 @@ Baseline `a972c030e5065d3d8d8135d4ee22e59a87c9d160`. Tiếp nối [SQL682/prefli
 
 ## Kiểm chứng
 
+Runtime `119491ed2e25256a441ddfd400e68ab9a39816aa`, tree `00a28ab5a7ea36b5377fa8d957da9cb328bd0b99`. CImerge `bd4dee9f3546641b866396dfcf376eaa8023c591` có cùng tree và đúng parents base/runtime. [Run37139607314](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37139607314): 9/10job đạt; [intake111251124860](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37139607314/job/111251124860) đạt6ca mới257–262 nhưng fail ca báo cáo cũ211 (unlinkedProofs toàn kỳ bằng3, test kỳ vọng1). Không báo toàn CI PASS. Sửa test đọc baseline trước khi đổi công ty của Lead và kiểm đúng tăng1; vẫn giữ yêu cầu booked/paid giảm2→1, ẩn tiêu đề ngoài công ty. Runtime giữ nguyên; đang kiểm lại.
+
 - `facebookLegacyPhoneRepair.test.js`: **34 ca mới PASS local**; chạy actual helper/function/route với adapter giả, không gọi Meta/model. Bao gồm actual company resolver, Page đổi chủ, thiếu tenant, actor sai công ty, lỗi đọc/ghi, MID lock, phân trang và cửa sổ không đầy đủ.
 - Cùng scope/webhook recovery/intake integration: **77 PASS/0 FAIL/0 SKIP local**.
-- `careLegacyWrite.cases.js` thêm **6 ca PostgreSQL cô lập**: managed Page không ghi; lỗi đọc không clear; lỗi Customer dừng trước Lead; positive cleanup; cửa sổ801 không xóa; mixed Page selection bị từ chối. Chưa có kết quả CI ở thời điểm tạo hồ sơ này.
+- `careLegacyWrite.cases.js` thêm **6 ca PostgreSQL cô lập PASS** trong job trên: managed Page không ghi; lỗi đọc không clear; lỗi Customer dừng trước Lead; positive cleanup; cửa sổ801 không xóa; mixed Page selection bị từ chối. Toàn bộ intake chưa PASS do ca211.
 - Review độc lập **PASS mã delta** sau sửa tenant actor, cache Page, MID pending và history cap. Reviewer tự chạy34/34 ca mới và43/43 regression; đã đọc6ca PostgreSQL. Kết luận runtime còn chờ CI.
 
 ## Giới hạn và việc còn lại

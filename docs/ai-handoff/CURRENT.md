@@ -1,6 +1,6 @@
 ## Hiện hành 04/10/2026 — Sửa đường quét điện thoại, đang kiểm độc lập
 
-Delta trên baseline `a972c03` khóa phạm vi công ty/Page hiện hành, giới hạn final round theo Lead đã chọn, kiểm lỗi DB và chặn đối soát khi Graph/MID/lịch sử chưa hoàn tất. Đã sửa các finding reviewer về actor A/B cùng tenant, admin thiếu tenant, cache Page, MID khóa và lịch sử bị giới hạn. Local34 ca mới PASS; 6 ca PostgreSQL mới đang chuẩn bị CI; chưa kết luận runtime.
+Runtime `119491e` khóa phạm vi công ty/Page hiện hành, giới hạn final round theo Lead đã chọn, kiểm lỗi DB và chặn đối soát khi Graph/MID/lịch sử chưa hoàn tất. Đã sửa các finding reviewer về actor A/B cùng tenant, admin thiếu tenant, cache Page, MID khóa và lịch sử bị giới hạn. Review mã PASS; local77/0/0;6ca PostgreSQL mới PASS. CI9/10job đạt; intake fail ca211 cũ do kỳ vọng unlinkedProofs toàn kỳ1 trong khi có3. Đang sửa test kiểm baseline→tăng1, giữ assertion quyền/ẩn dữ liệu; runtime không đổi. Chưa báo toàn CI PASS.
 
 [Phạm vi, bằng chứng và hoàn tác](vpt-marketing-automation/LEGACY_PHONE_REPAIR.md). CRM merge/cleanup và tạo Lead/Customer đúng công ty còn OPEN; cutover, dừng/chờ đường cũ, đối soát/khôi phục, AI/lịch/người nhận/phạm vi đo và UAT/Founder release vẫn còn. Full goal ACTIVE, chưa tác động hệ thống thật hoặc có kết quả250k thực tế. Các mục dưới là lịch sử.
 
