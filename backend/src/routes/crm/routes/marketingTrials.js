@@ -1,9 +1,11 @@
 'use strict';
 const {Router}=require('express');
+const {createScopeAcceptance}=require('../../../modules/marketingAutomation/scopeAcceptance');
 const {createMeasurementSnapshot}=require('../../../modules/marketingAutomation/measurementSnapshot');
 const {supabase}=require('../../../config/supabase');
 const state=require('../../../config/supabaseRouter');
 const measurementSnapshot=createMeasurementSnapshot({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
+const scopeAcceptance=createScopeAcceptance({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
 const {createTrialService}=require('../../../modules/marketingAutomation/trialService');
 const {createOperationsReport}=require('../../../modules/marketingAutomation/operationsReport');
 const operations=createOperationsReport({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
@@ -23,6 +25,8 @@ async function handle(req,res,action){
  catch(e){return res.status(e.status||503).json({error:e.status===403?'Không có quyền xem dữ liệu công ty này.':e.status===409?'Cấu hình đã thay đổi; cần tải lại.':e.status===400?'Cần tên kỳ đo và khoảng đúng 30 ngày theo giờ Việt Nam.':'Chưa đọc được đủ dữ liệu kỳ đo. Vui lòng thử lại.'});}
 }
 r.get('/marketing-trials/:trialId/source-exports',(req,res)=>sourceExport(req,res));
+r.get('/marketing-trials/:trialId/scope-acceptance',(req,res)=>scopeAcceptance(req,res));
+r.post('/marketing-trials/:trialId/scope-acceptance',(req,res)=>scopeAcceptance(req,res,true));
 r.get('/marketing-trials/:trialId/measurement-snapshots',(req,res)=>measurementSnapshot(req,res));
 r.post('/marketing-trials/:trialId/measurement-snapshots',(req,res)=>measurementSnapshot(req,res,true));
 r.post('/marketing-trials/:trialId/source-exports',(req,res)=>sourceExport(req,res,true));
