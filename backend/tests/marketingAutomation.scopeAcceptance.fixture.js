@@ -20,7 +20,7 @@ async function context(){
  }
  const request=id(920),comparison={rows:6,inPeriodRows:6,outsidePeriodRows:0,uniqueExportIds:6,duplicateRows:0,observedIds:6,matched:6,notInExport:0,notObserved:0,conflicts:0,differences:[]};
  const result={policy:'SOURCE_EXPORT_COMPARISON_V1',requestId:request,companyId:f.companyId,trialId:f.trial.id,pageId:'123',formId:'456',status:'MATCHED_EXPORTED_IDS',fileSha256:'1'.repeat(64),normalizedRowsDigest:'2'.repeat(64),
-  censusRunId:f.providerReconciliation.run.id,pagesDigest:'d'.repeat(64),registryDigest:'e'.repeat(64),sinceAt:f.providerReconciliation.run.since,untilExclusive:f.providerReconciliation.run.until,comparison};
+  censusRunId:f.providerReconciliation.run.id,pagesDigest:'d'.repeat(64),registryDigest:'e'.repeat(64),sinceAt:f.providerReconciliation.run.since,untilExclusive:f.providerReconciliation.run.until,sourceReference:'Synthetic exact source file',exportedAt:f.asOf,comparison};
  c.exports=[{requestId:request,pageId:'123',formId:'456',status:result.status,currentStatus:'CURRENT',fileSha256:result.fileSha256,normalizedRowsDigest:result.normalizedRowsDigest}];
  c.exportDetails=[{requestId:request,result}];
  return c;

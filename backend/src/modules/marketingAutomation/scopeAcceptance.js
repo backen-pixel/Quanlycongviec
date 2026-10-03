@@ -59,12 +59,13 @@ function requirements(ctx) {
   if(matches.length!==1||details.length!==1||!r||r.requestId!==e.requestId||r.policy!=='SOURCE_EXPORT_COMPARISON_V1'||e.currentStatus!=='CURRENT'||!['MATCHED_EXPORTED_IDS','EMPTY_COMPARISON'].includes(e.status)||r.status!==e.status||
    r.fileSha256!==e.fileSha256||r.normalizedRowsDigest!==e.normalizedRowsDigest||r.pageId!==entry.pageId||r.formId!==entry.formId||r.companyId!==ctx.facts.companyId||r.trialId!==ctx.facts.trial.id||
    r.censusRunId!==run?.id||r.pagesDigest!==run?.witness?.pagesDigest||r.registryDigest!==report.sourceRegistry?.declaration?.declarationDigest||
+   !text(r.sourceReference,8,500)||!timestamp(r.exportedAt)||Date.parse(r.exportedAt)<Date.parse(report.period.untilExclusive)||Date.parse(r.exportedAt)>Date.parse(report.asOf)||
    Date.parse(r.sinceAt)!==Date.parse(report.period.sinceAt)||Date.parse(r.untilExclusive)!==Date.parse(report.period.untilExclusive)||!c||
    !['rows','inPeriodRows','outsidePeriodRows','uniqueExportIds','duplicateRows','observedIds','matched','notInExport','notObserved','conflicts'].every(k=>Number.isSafeInteger(c[k])&&c[k]>=0)||
    c.rows!==c.inPeriodRows+c.outsidePeriodRows||c.inPeriodRows!==c.uniqueExportIds||
    (e.status==='EMPTY_COMPARISON')!==(c.uniqueExportIds===0)||
    c.notInExport||c.notObserved||c.conflicts||c.duplicateRows||c.uniqueExportIds!==c.observedIds||c.matched!==c.observedIds){add('EXPORT_NOT_RECONCILED',entry.key);continue;}
-  exports.push({requestId:e.requestId,fileSha256:e.fileSha256,normalizedRowsDigest:e.normalizedRowsDigest,pageId:entry.pageId,formId:entry.formId,empty:e.status==='EMPTY_COMPARISON'});
+  exports.push({requestId:e.requestId,fileSha256:e.fileSha256,normalizedRowsDigest:e.normalizedRowsDigest,pageId:entry.pageId,formId:entry.formId,sourceReference:r.sourceReference,exportedAt:r.exportedAt,empty:e.status==='EMPTY_COMPARISON'});
  }
  return {report,entries,ads,exports,gaps};
 }

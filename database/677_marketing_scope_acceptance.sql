@@ -190,7 +190,7 @@ BEGIN
    cost:=spend::numeric/qualified;
    IF jsonb_typeof(p_report->'costPerQualifiedLeadVnd') IS DISTINCT FROM 'number' OR abs((p_report->>'costPerQualifiedLeadVnd')::numeric-cost)>greatest(0.00000001,abs(cost)*0.000000000000001)
     OR p_report->>'status' IS DISTINCT FROM 'ACCEPTED_SCOPE'
-    OR p_report->>'targetStatus' IS DISTINCT FROM CASE WHEN cost<=250000 THEN 'AT_OR_BELOW_TARGET_IN_SCOPE' ELSE 'ABOVE_TARGET_IN_SCOPE' END THEN RAISE EXCEPTION 'invalid quotient' USING ERRCODE='22023';END IF;
+    OR p_report->>'targetStatus' IS DISTINCT FROM (CASE WHEN cost<=250000 THEN 'AT_OR_BELOW_TARGET_IN_SCOPE' ELSE 'ABOVE_TARGET_IN_SCOPE' END) THEN RAISE EXCEPTION 'invalid quotient' USING ERRCODE='22023';END IF;
   END IF;
   captured:=(p_report->>'asOf')::timestamptz;from_at:=(p_report->>'sinceAt')::timestamptz;until_at:=(p_report->>'untilExclusive')::timestamptz;
   IF captured IS NULL OR NOT isfinite(captured) OR captured>clock_timestamp() OR captured<clock_timestamp()-interval '60 seconds' THEN RAISE EXCEPTION 'capture expired' USING ERRCODE='40001';END IF;

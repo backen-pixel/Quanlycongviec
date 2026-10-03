@@ -23,7 +23,7 @@ function Trial({companyId,actorId}){
  const[recovering,setRecovering]=useState(false);
  const end=since&&Number.isFinite(Date.parse(`${since}T00:00:00Z`))?new Date(Date.parse(`${since}T00:00:00Z`)+29*86400000).toISOString().slice(0,10):'';
  useEffect(()=>{
-  const current=++seq.current,controller=new AbortController();setLoading(true);setResult(null);setError('');
+  const current=++seq.current,controller=new AbortController();setLoading(true);setTrials([]);setResult(null);setError('');
   api.get('/crm/marketing-trials',{params:{company_id:companyId},signal:controller.signal,timeout:20000}).then(async({data})=>{
    if(seq.current!==current)return;
    if(data?.companyId!==companyId||!Array.isArray(data.trials)||data.trials.some(t=>t.company_id!==companyId))throw Error('invalid scope');
@@ -46,6 +46,7 @@ function Trial({companyId,actorId}){
   finally{saveLock.current=false;if(seq.current===current)setSaving(false);}
  }
  const locked=loading||saving||uncertain||recovering;
+ const activeTrialId=trials.find(t=>t.id===selected)?.id||trials[0]?.id;
  return <section aria-label="Khách và chi phí theo kỳ" className="rounded-xl border border-slate-200 bg-white p-4 space-y-4">
   <div className="flex flex-wrap justify-between gap-3"><div><h2 className="font-semibold">Khách và chi phí — kỳ đo</h2><p className="mt-1 text-sm text-slate-600">Theo toàn bộ tài khoản Facebook đã lưu cho kỳ này; dùng khoảng ngày riêng, không thu hẹp theo Page ở bộ lọc phía trên.</p></div><button type="button" className={button} disabled={loading||locked} onClick={()=>{setResult(null);setReload(n=>n+1);}}>Tải lại kỳ đo</button></div>
   {error&&<p role="alert" className="text-sm text-amber-800">{error}</p>}
@@ -61,13 +62,13 @@ function Trial({companyId,actorId}){
     <SourceRegistry key={result.trial.id} actorId={actorId} companyId={companyId} trialId={result.trial.id} summary={result.sourceRegistry} onRefresh={()=>setReload(n=>n+1)}/>
     <FacebookSourceRecovery key={result.trial.id} companyId={companyId} trialId={result.trial.id} reconciliation={result.reconciliation} pendingRequests={recoveryRequests.current} onBusy={setRecovering} onRefresh={()=>setReload(n=>n+1)} disabled={loading||saving||uncertain}/>
     <SourceExport companyId={companyId} actorId={actorId} trialId={result.trial.id}/>
-    <ScopeAcceptance companyId={companyId} actorId={actorId} trialId={result.trial.id}/>
     <MeasurementSnapshot companyId={companyId} actorId={actorId} trialId={result.trial.id}/>
     {result.period?.status==='AVAILABLE'&&<dl className="grid grid-cols-2 gap-2 text-sm"><dt>Biểu mẫu chờ xử lý/đối soát</dt><dd>{result.observed?.unprocessedForms??'—'}</dd><dt>Lượt gửi đã chứng minh ngoài kỳ đối chiếu</dt><dd>{result.observed?.outsidePeriodForms??'—'}</dd><dt>Khách đã có trước kỳ</dt><dd>{result.observed?.existing??'—'}</dd><dt>Khách không đạt nhu cầu</dt><dd>{result.observed?.rejected??'—'}</dd><dt>Lịch khảo sát theo kỳ quảng cáo</dt><dd>Chưa quy thuộc theo kỳ; xem bảng vận hành toàn công ty phía trên</dd></dl>}
     {!!result.issues.length&&<ul className="list-disc pl-5 text-sm text-amber-800">{result.issues.map(x=><li key={x.code}>{issueNames[x.code]||'Cần kiểm tra thêm nguồn dữ liệu'}: {x.count}</li>)}</ul>}
     {result.period?.status==='AVAILABLE'&&result.spend?.status!=='KNOWN_TO_DATE'&&<p className="text-sm text-amber-800">Chi tiêu chưa đủ hoặc cấu hình tài khoản đã đổi. Cần kiểm tra quyền và đồng bộ đủ ngày; phần thiếu không được tính là 0.</p>}
    </>}
   </>}
+  {activeTrialId&&<ScopeAcceptance companyId={companyId} actorId={actorId} trialId={activeTrialId}/>}
   <button type="button" className={button} disabled={loading||locked} onClick={()=>setCreating(v=>!v)}>{creating?'Đóng cấu hình':'Cấu hình kỳ đo mới'}</button>
   {creating&&<form onSubmit={save} className="space-y-3 border-t pt-3"><p className="text-sm text-slate-600">Lưu phạm vi đo 30 ngày. Cấu hình này chưa mở chạy quảng cáo hoặc cấp ngân sách.</p><label className="block text-sm">Tên kỳ đo<input className="mt-1 block w-full rounded-lg border p-2" minLength={3} maxLength={120} value={name} disabled={locked} onChange={e=>{setName(e.target.value);setConfirmed(false);}}/></label><label className="block text-sm">Ngày bắt đầu<input type="date" className="ml-2 rounded-lg border p-2" value={since} disabled={locked} onChange={e=>{setSince(e.target.value);setConfirmed(false);}}/></label><p className="text-sm">Ngày cuối: {end||'Chọn ngày bắt đầu'} · Múi giờ Việt Nam.</p><label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={locked} onChange={e=>setConfirmed(e.target.checked)}/>Tôi xác nhận khoảng đo và dùng tất cả tài khoản Facebook đã cấu hình của công ty.</label><button className={`${button} bg-blue-700 text-white`} disabled={recovering||loading||saving||(!uncertain&&(!confirmed||name.trim().length<3||!end))}>{uncertain?'Xác nhận lại cùng yêu cầu':'Lưu cấu hình đo'}</button></form>}
  </section>;
