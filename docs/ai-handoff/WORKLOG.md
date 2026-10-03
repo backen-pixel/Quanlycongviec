@@ -1986,3 +1986,6 @@ Hoàn tác local bằng đảo commit này nếu cần, nhưng đưa route cũ t
 ---
 
 Khi bắt đầu phiên mới, thêm mục mới lên đầu file, ngay dưới tiêu đề.
+
+## 2026-10-03 — Source registry candidate
+Added SQL671/private versioned source registry, authenticated primary-only API, same-snapshot report projection, source editor and exact retry storage. Known historical forms remain explicit unresolved exceptions; all accounts included, no provider completeness or spend grant. Local129 PASS; PostgreSQL/build/browser/independent review pending. See vpt-marketing-automation/SOURCE_REGISTRY.md. No live effects; full goal ACTIVE.

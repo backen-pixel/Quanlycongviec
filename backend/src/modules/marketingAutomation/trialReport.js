@@ -5,6 +5,7 @@ const {reconcileCensus}=require('./censusReconciliation');
 const {measurementPeriod}=require('./measurementPeriod');
 const {receiptPeriods}=require('./receiptPeriod');
 const {observedCpql}=require('./observedCpql');
+const {projectRegistry}=require('./sourceRegistry');
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const fail=()=>{throw Object.assign(new Error('TRIAL_SNAPSHOT_UNAVAILABLE'),{status:503});};
 const time=x=>typeof x==='string'?Date.parse(x):NaN;
@@ -81,7 +82,7 @@ function reportTrial(raw){
  return{companyId:raw.companyId,trial:{id:t.id,name:t.name,revision:t.revision,since:t.since,until:t.until,accountCount:t.account_ids.length},asOf:raw.asOf,
   scope:'CONFIGURED_FACEBOOK_ACCOUNTS',period,spend,observed:{status:'OBSERVED_ONLY',...counts},items,
   issues:[...issues].map(([code,count])=>({code,count})),
-  reconciliation,
+  reconciliation,sourceRegistry:projectRegistry(raw.sourceRegistry,raw.companyId,t.id),
   observedMeasurement:observedCpql({period,spend,counts,reconciliation,asOf:raw.asOf}),
   coverage:{provider:reconciliation.status==='MISSING'?'MISSING':'PARTIAL',identityPolicy:identity.policy,identityComplete:identity.deduplicationComplete,qualification:'CURRENT_OBSERVED_RECORDS',surveys:'NOT_CONNECTED'},
   costPerQualifiedLeadVnd:null,targetVnd:250000,targetMetToDate:false,measurementStatus:'INCOMPLETE',

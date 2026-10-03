@@ -4,6 +4,8 @@ const {supabase}=require('../../../config/supabase');
 const state=require('../../../config/supabaseRouter');
 const {createTrialService}=require('../../../modules/marketingAutomation/trialService');
 const {createCensusAdmin}=require('../../../modules/marketingAutomation/facebookLeadCensusAdmin');
+const {createSourceRegistry}=require('../../../modules/marketingAutomation/sourceRegistry');
+const registry=createSourceRegistry({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
 const census=createCensusAdmin({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
 const service=createTrialService({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'}),r=Router();
 async function handle(req,res,action){
@@ -17,6 +19,8 @@ async function handle(req,res,action){
 r.get('/marketing-trials',(req,res)=>handle(req,res,'list'));
 r.post('/marketing-trials',(req,res)=>handle(req,res,'configure'));
 r.get('/marketing-trials/:trialId/report',(req,res)=>handle(req,res,'report'));
+r.get('/marketing-trials/:trialId/source-registry',(req,res)=>registry(req,res));
+r.post('/marketing-trials/:trialId/source-registry',(req,res)=>registry(req,res,true));
 r.get('/marketing-trials/:trialId/reconciliation',(req,res)=>census(req,res,false));
 r.post('/marketing-trials/:trialId/reconciliation',(req,res)=>census(req,res,true));
 module.exports=r;

@@ -1,3 +1,11 @@
+## 2026-10-03 — Danh mục nguồn khách đang kiểm chứng
+
+SQL671/API/giao diện bổ sung phạm vi công ty/kỳ/tất cả tài khoản/Page/biểu mẫu/điểm nhận, xác nhận có phiên bản và lịch sử. Giữ ngoại lệ biểu mẫu lịch sử chưa rõ tài khoản; không suy không có điểm nhận từ số khách bằng0. Lưu nguyên giao dịch, retry đúng yêu cầu; thay cấu hình/quyền làm danh mục stale. Projection cùng snapshot báo cáo, không nâng provider completeness/CPQL/quyền chi.
+
+Local129 PASS; PostgreSQL/build/browser/review độc lập đang chờ. [Phạm vi, kiểm thử và hoàn tác](vpt-marketing-automation/SOURCE_REGISTRY.md). Chưa phát hành/Meta/UAT thật; full goal ACTIVE. Phần đã kiểm chứng trước đó giữ bên dưới.
+
+---
+
 ## Hiện hành 03/10/2026 — Đã kiểm thử số chi phí/khách tạm tính
 
 Candidatea8b2f9f hiển thị chi toàn tài khoản / khách Lead Ads đã xác minh và đối soát cùng kỳ, có positive1m/4=250k. Số này được ghi tạm tính; chưa khẳng định toàn đợt đạt mục tiêu. Mâu thuẫn nguồn loại nhóm khỏi khách đạt; thiếu dữ liệu hoặc nguồn/quyền đổi ẩn số; không có khách đạt không trả0đ. Cảnh báo bao phủ vẫn giữ riêng. Không migration mới.
