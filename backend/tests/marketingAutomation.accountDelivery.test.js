@@ -35,6 +35,22 @@ test('missing version and upstream failure are bounded without secrets',async()=
  const f=provider();await assert.rejects(readAccountSpendWithDelivery({...f.input,version:undefined}),/INVALID_DELIVERY_CONTEXT/);assert.equal(f.calls.length,0);
  await assert.rejects(readAccountSpendWithDelivery({...f.input,fetchImpl:async()=>{throw Error('synthetic secret');}}),e=>e.message==='FACEBOOK_READ_FAILED');
 });
+for(const paging of ['malformed',[],false,{cursors:false},{cursors:null},{cursors:[]}])test('malformed paging '+JSON.stringify(paging)+' is not evidence of traversal',async()=>{
+ const f=provider({mutate:b=>({...b,paging})});await assert.rejects(readAccountSpendWithDelivery(f.input),/INVALID_DELIVERY_PAGING/);assert.equal(f.calls.length,2);
+});
+test('enabled delivery worker closes at Vietnam midnight; disabled legacy worker preserves its declared current-day scope',async()=>{
+ const fs=require('node:fs'),vm=require('node:vm'),source=fs.readFileSync(require('node:path').join(__dirname,'../src/modules/marketingAutomation/facebookSpendSync.js'),'utf8');
+ for(const enabled of [true,false])for(const [now,closedDay,today]of [['2026-10-02T16:59:59Z','2026-10-01','2026-10-02'],['2026-10-02T17:00:00Z','2026-10-02','2026-10-03']]){
+  const calls=[],reads=[],mod={exports:{}},db={rpc:async(name,args)=>{calls.push({name,args});return{data:{id:1,deliveryEvidence:{runId:1,payloadDigest:'a'.repeat(64)}}};}};
+  vm.runInNewContext(source,{module:mod,process:{env:{VPT_MARKETING_ACCOUNT_DELIVERY:enabled?'1':'0',VPT_META_GRAPH_VERSION:'v24.0'}},Date,require:id=>{
+   if(id==='../../config/supabaseRouter')return{supabase:db,isFailoverEnabled:()=>false,getActiveTarget:()=> 'primary'};
+   if(id==='./facebookSpendSource')return{...require('../src/modules/marketingAutomation/facebookSpendSource'),readAccountSpend:async args=>{reads.push({legacy:true,...args});return{};}};
+   if(id==='./facebookAccountDelivery')return{readAccountSpendWithDelivery:async args=>{reads.push(args);return{delivery:{}};}};throw Error(id);
+  }});
+  assert.equal((await mod.exports.syncConfiguredAccount({ad_account_id:'act_1',company_id:'a',access_token:'synthetic'},{days:1,now})).status,'COMPLETE');
+  const expected=enabled?closedDay:today;assert.equal(calls[0].args.p_until,expected);assert.equal(calls[0].args.p_since,expected);assert.equal(reads[0].until,expected);assert.equal(reads[0].since,expected);assert.equal(reads[0].version,enabled?'v24.0':undefined);
+ }
+});
 async function facts(){const f=context().facts;f.accountDelivery=[];for(const a of f.trial.account_ids){const snapshot=await readAccountSpendWithDelivery(provider({account:a,until:'2026-10-02'}).input),run=f.runs.find(x=>x.ad_account_id===a);run.snapshot={...snapshot};delete run.snapshot.delivery;f.accountDelivery.push({companyId:f.companyId,accountId:a,runId:run.id,payload:snapshot.delivery,payloadDigest:'f'.repeat(64),recordedAt:f.asOf});}return f;}
 test('real trial projection retains both account costs, reports zero-spend ads and never certifies historical destinations',async()=>{
  const f=await facts(),r=reportTrial(f);assert.equal(r.accountDelivery.accounts.length,2);assert.equal(r.accountDelivery.accounts[1].spendVnd,500000);assert.equal(r.accountDelivery.accounts[0].zeroSpendWithSignals,1);assert.equal(r.accountDelivery.accounts[0].status,'RECONCILED_DELIVERY');assert.equal(r.costPerQualifiedLeadVnd,null);assert.equal(r.allowBudgetExecution,false);assert.ok(!JSON.stringify(r.accountDelivery).includes('090123'));

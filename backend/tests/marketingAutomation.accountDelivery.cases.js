@@ -41,4 +41,16 @@ module.exports=async(t,{db,peers,query,cid,actor,trial,date})=>{
   try{await assert.rejects(finish(run,snapshots.act_171));assert.equal((await db.query('SELECT state FROM marketing_spend_sync_runs WHERE id=$1',[run.id])).rows[0].state,'RUNNING');}finally{await db.query('DROP TRIGGER delivery_test_fail ON marketing_measurement.account_delivery_evidence;DROP FUNCTION public.delivery_test_fail()');}
   await finish(run,snapshots.act_171);
  });
+ await t.test('report reads spend and delivery in one snapshot while a new complete run commits',async()=>{
+  const original=(await db.query("SELECT pg_get_functiondef('marketing_trial_quality_context(jsonb,jsonb,jsonb,jsonb,jsonb,boolean,jsonb)'::regprocedure) d")).rows[0].d;
+  await db.query(original.replace(/BEGIN\r?\n/,'BEGIN\n PERFORM pg_sleep(0.08);\n'));
+  const reading=query('marketing_lead_trial_snapshot',[actor,cid,trial],peers[1]);
+  try{
+   let waiting=false;for(let i=0;i<100;i++){const x=await db.query("SELECT 1 FROM pg_stat_activity WHERE state='active' AND wait_event='PgSleep' AND query LIKE 'SELECT marketing_lead_trial_snapshot%'");if(x.rowCount){waiting=true;break;}await new Promise(r=>setTimeout(r,5));}assert.equal(waiting,true);
+   const f=provider({account:'act_171',since,until,mutate:b=>{b.data.forEach(r=>{if(r.spend==='500000')r.spend='600000';});return b;}});
+   const changed=await readAccountSpendWithDelivery({...f.input,now:new Date().toISOString()});await finish(await start(),changed);
+   const old=reportTrial(await reading);assert.equal(old.accountDelivery.accounts[0].spendVnd,500000);assert.equal(old.spend.spendVnd,1000000);
+   const current=reportTrial(await read());assert.equal(current.accountDelivery.accounts[0].spendVnd,600000);assert.equal(current.spend.spendVnd,1100000);
+  }finally{await reading.catch(()=>{});await db.query(original);await finish(await start(),snapshots.act_171);}
+ });
 };

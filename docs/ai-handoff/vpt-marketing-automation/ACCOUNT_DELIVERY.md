@@ -12,7 +12,7 @@ Mỗi request dựng lại từ account/kỳ/version cố định, chỉ lấy c
 
 ## Lưu trữ và quyền
 
-- `VPT_MARKETING_ACCOUNT_DELIVERY=1` chọn collector mới trong worker chi tiêu hiện có; còn cần `VPT_CERTIFIED_FACEBOOK_SPEND=1` và `VPT_META_GRAPH_VERSION`. Mọi cờ tiếp tục mặc định tắt. Không có kết nối Meta mới trong quá trình triển khai.
+- `VPT_MARKETING_ACCOUNT_DELIVERY=1` chọn collector mới trong worker chi tiêu hiện có; còn cần `VPT_CERTIFIED_FACEBOOK_SPEND=1` và `VPT_META_GRAPH_VERSION`. Collector mới và spend run đều dùng khoảng ngày kết thúc hết hôm qua theo giờ Việt Nam, tránh biến động hôm nay làm hỏng đối soát ngày đã khép. Không công bố dữ liệu hôm nay trong khoảng này; collector cũ khi tắt flag giữ phạm vi trước đó. Mọi cờ tiếp tục mặc định tắt. Không có kết nối Meta mới trong quá trình triển khai.
 - Bảng private `marketing_measurement.account_delivery_evidence` gắn một lần với spend run, có payload và digest tính trong DB. Wrapper `marketing_spend_finish` kiểm lại account/công ty/quyền trước cả retry. Validator tiền cũ giữ riêng và có kiểm role bên trong; browser không được quyền ghi.
 - SQL kiểm số nguyên, khoảng ngày, duplicate/metadata conflict, tổng ad/day và witness counts. Collector chịu trách nhiệm bằng chứng những request đã đọc; service_role là ranh giới tin cậy, không phải chữ ký mật mã từ Meta.
 - Lưu tiền và witness cùng giao dịch, retry cùng nội dung trả cùng kết quả; đổi/bỏ witness của run đã hoàn tất bị từ chối. Lỗi append làm cả tiền và witness rollback. Lần chạy mới lỗi không dùng lại danh sách ad cũ.
@@ -32,6 +32,8 @@ Không thêm một lớp snapshot nữa. Dùng delivery witness này cùng regis
 
 ## Kiểm thử, phát hành và hoàn tác
 
-Local collector/projection/service17PASS; PostgreSQL cô lập, build và review độc lập đang chờ tại lúc lập tài liệu. Bộ PG nối collector thật với API giả qua spend RPC và trial projection, kiểm quyền/broad grant, atomicity, duplicate/concurrent retry, invalid data và quyền bị thu hồi. Không dùng test giả để thay UAT Meta thật.
+Candidate97a9a2f: automation37117220621 cả10job/build SUCCESS, report37117220587 và Messenger37117220591 SUCCESS. Reviewer chạy độc lập90PASS nhưng tìm paging sai kiểu bị hiểu nhầm là hết trang; đã sửa và thêm6regression. Đồng thời collector mới chốt đến hết hôm qua với ca kiểm lúc qua nửa đêm Việt Nam. Local24ca mới,103ca liên quan PASS. Follow-up còn cần CI/review đúng phiên bản cuối.
+
+Bộ PG nối collector thật với API giả qua spend RPC và trial projection, kiểm quyền/broad grant, atomicity, duplicate/concurrent retry, invalid data, quyền bị thu hồi và coherent spend/witness khi run mới commit giữa lúc đọc. Không dùng test giả để thay UAT Meta thật. UI là phần hiển thị chỉ đọc, đã qua full build; chưa nghiệm thu tài khoản hoặc trang vận hành thật.
 
 Hoàn tác: tắt flag delivery để dừng thu mới, giữ bằng chứng cũ; dashboard tiếp tục thể hiện thiếu witness ở lần chi tiêu mới nếu chỉ dùng collector cũ. Có thể tắt cả certified spend nếu cần ngừng đường mới. Không xóa tiền, lịch sử, khách hoặc mở quyền DB cũ. Chưa merge/migration thật/Meta send/ad change/trial activation.

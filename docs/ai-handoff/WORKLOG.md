@@ -1,3 +1,10 @@
+## 03/10/2026 — Đối soát phân phối đã qua PostgreSQL; sửa theo review
+
+Candidate97a9a2f đạt cả10job/build và report/Messenger. Review độc lập phát hiện paging sai kiểu có thể bị hiểu nhầm là hết trang; đã từ chối và bổ sung6regression. Worker delivery cũng chốt tới hết hôm qua theo giờ Việt Nam, giữ đúng phạm vi run thay vì bị số hôm nay biến động làm hỏng kỳ đã khép. Thêm PG concurrent spend/witness snapshot.
+
+Local24ca mới,103ca liên quan PASS. Đang kiểm CI/review bản sửa cuối; [hợp đồng và đường tiếp tới acceptance/CPQL](vpt-marketing-automation/ACCOUNT_DELIVERY.md). Full goal ACTIVE, chưa phát hành/Meta thật/đạt250k.
+
+---
 ## 03/10/2026 — Đối soát quảng cáo đã phân phối đang kiểm chứng
 
 SQL676 nối collector ad/day và account daily/all_days trước/sau vào cùng lần lưu chi tiêu. Dashboard giữ cả quảng cáo chi bằng0 có tín hiệu và mã ad từ hồ sơ khách chưa thấy trong delivery; không dùng creative hiện tại để xác nhận đích lịch sử. Quyền hiện hành, retry bất biến và rollback nguyên giao dịch vẫn bắt buộc.

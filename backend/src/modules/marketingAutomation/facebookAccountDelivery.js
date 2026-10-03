@@ -30,6 +30,8 @@ async function readPages(base, token, fetchImpl, label) {
       return Object.fromEntries(base.searchParams.get('fields').split(',').map(k => [k, row[k]]));
     });
     rows.push(...page); chain = digest([chain, ordinal, page]);
+    if (body.paging !== undefined && body.paging !== null && (typeof body.paging !== 'object' || Array.isArray(body.paging))) fail('INVALID_DELIVERY_PAGING');
+    if (body.paging?.cursors !== undefined && (body.paging.cursors === null || typeof body.paging.cursors !== 'object' || Array.isArray(body.paging.cursors))) fail('INVALID_DELIVERY_PAGING');
     const next = body.paging?.next;
     if (next === undefined || next === null) return { rows, witness: { label, pages: ordinal, rows: rows.length, digest: chain } };
     let parsed; try { parsed = new URL(next); } catch { fail('UNSAFE_DELIVERY_PAGING'); }
