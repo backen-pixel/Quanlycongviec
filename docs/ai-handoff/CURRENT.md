@@ -1,3 +1,13 @@
+## Hiện hành 03/10/2026 — Đã kiểm thử số chi phí/khách tạm tính
+
+Candidatea8b2f9f hiển thị chi toàn tài khoản / khách Lead Ads đã xác minh và đối soát cùng kỳ, có positive1m/4=250k. Số này được ghi tạm tính; chưa khẳng định toàn đợt đạt mục tiêu. Mâu thuẫn nguồn loại nhóm khỏi khách đạt; thiếu dữ liệu hoặc nguồn/quyền đổi ẩn số; không có khách đạt không trả0đ. Cảnh báo bao phủ vẫn giữ riêng. Không migration mới.
+
+Independent review PASS. Local105, Node22 673, censusPG30 (4ca mới), cả10job/fullbuild và report/Messenger SUCCESS. Browser actualcomponents với API giả đã kiểm6trạng thái. [Bằng chứng đúng phiên bản](vpt-marketing-automation/OBSERVED_CPQL_REVIEW.md), [hợp đồng](vpt-marketing-automation/OBSERVED_CPQL.md).
+
+Full goal ACTIVE. Còn registry/provider coverage, measurement close, lịch/chờ xử lý, Meta/UAT/Founderrelease và các nghĩa vụ vận hành đã ghi. Không mở chi hay phát hành;250k chưa phải kết quả kinh doanh thật. Các mục sau giữ lịch sử theo phiên bản.
+
+---
+
 ## 2026-10-03 — Chi phí/khách đã đối soát, tạm tính (đang kiểm chứng)
 
 Thêm observedMeasurement từ cùng snapshot: toàn bộ chi tài khoản / khách Lead Ads đã xác minh và đối soát. Có positive1m/4=250k, giữ riêng với CPQL đầy đủ và không kết luận đạt mục tiêu/mở chi. Tách lỗi hồ sơ khỏi cảnh báo bao phủ; mâu thuẫn nguồn không còn được giữ là khách đạt. UI ghi rõ phạm vi và ẩn số thiếu dữ liệu. Không migration mới.

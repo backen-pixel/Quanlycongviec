@@ -8,7 +8,7 @@
 
 ## Điều kiện và cách tính
 
-- Tiền và thời điểm tiếp nhận khách cùng khoảng ngày Việt Nam đã hoàn tất; chất lượng/nhận diện dùng hồ sơ hiện tại tại `asOf`.
+- Tiền và thời điểm phát sinh khách theo provider cùng khoảng ngày Việt Nam đã hoàn tất; chất lượng/nhận diện dùng hồ sơ hiện tại tại `asOf`. Không dùng thời điểm webhook tới (`receivedAt`) làm thời điểm phát sinh khách.
 - Có lượt census hiện hành `SCANNED`, đúng phạm vi/kỳ; tất cả hồ sơ nguồn đã biết phải khớp hai chiều với CRM. Lượt quét quá 6 giờ cần làm mới, cùng giới hạn tuổi nguồn đang áp dụng cho chi tiêu.
 - Không có hồ sơ nhận chưa xử lý, nguồn mâu thuẫn, nguồn không rõ, nhận diện chưa giải quyết hoặc bằng chứng không liên kết. Mâu thuẫn thời gian nguồn làm nhóm khách `UNRESOLVED`, không giữ trong số khách đạt.
 - `recordMatchStatus` tách đối soát hồ sơ khỏi vấn đề bao phủ. Biểu mẫu cũ không xuất hiện, dữ liệu đã hết hạn hoặc chưa biết retention vẫn hiển thị cảnh báo và chặn CPQL đầy đủ; chúng không xóa phép chia trên các hồ sơ đã khớp.

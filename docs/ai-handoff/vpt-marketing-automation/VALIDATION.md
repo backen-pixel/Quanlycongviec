@@ -1,3 +1,9 @@
+## 03/10/2026 — Observed CPQL validated
+
+Runtimea8b2f9f adds provisional whole-account spend per reconciled qualified Lead. Independent review/local105/Node22 673/censusPG30/fullbuild allPASS. No migration; no full-target attainment or release. [Evidence](OBSERVED_CPQL_REVIEW.md), [contract and remaining work](OBSERVED_CPQL.md). Full goal ACTIVE.
+
+---
+
 ## Hiện hành 03/10/2026 — Đã kiểm thử mốc đo tiền và khách
 
 Candidate5076b2a dùng cùng kỳ ngày Việt Nam hoàn tất cho chi tiêu và khách; khôi phục khách bị sót vẫn đến lúc bắt đầu quét, kể cả ngày đầu. Giữ metadata ngoài kỳ để đối soát webhook tới muộn, không bỏ mâu thuẫn nguồn. Dashboard tách mốc khôi phục/mốc đo và không hiển thị số0 khi chưa có ngày hoàn tất.
