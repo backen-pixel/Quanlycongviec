@@ -28,6 +28,13 @@ test('first trial day has no full-day result and never reports zero cost', () =>
   const f = fixture(); f.asOf = '2026-10-01T16:59:59Z'; const r = reportTrial(f);
   assert.equal(r.period.status, 'NO_CLOSED_DAY'); assert.equal(r.spend.spendVnd, null); assert.equal(r.observed.qualified, 0);
 });
+test('a first-day recovery scan has an empty measurement interval without failing the dashboard', () => {
+  const f = scanned(); f.asOf = '2026-10-01T12:00:00Z';
+  Object.assign(f.providerReconciliation.run, { until: '2026-09-30T17:00:00Z', recoveryUntil: '2026-10-01T10:00:00Z', startedAt: '2026-10-01T10:00:00Z', finishedAt: '2026-10-01T11:00:00Z', measurementPolicy: 'VIETNAM_CLOSED_DAY_V1' });
+  f.providerReconciliation.items = [];
+  const r = reportTrial(f); assert.equal(r.period.status, 'NO_CLOSED_DAY'); assert.equal(r.spend.spendVnd, null);
+  assert.ok(r.reconciliation.issues.some(x => x.code === 'CENSUS_NO_CLOSED_DAY')); assert.equal(r.observed.qualified, 0);
+});
 test('a new Vietnam day starts at 17 UTC, with an exclusive customer upper boundary', () => {
   const f = fixture(); f.asOf = '2026-10-01T17:00:00Z'; f.runs.forEach(r => r.started_at = f.asOf);
   f.sources[0].acquiredAt = f.sources[0].proof.acquiredAt = f.asOf;
@@ -77,7 +84,16 @@ test('conflicting receipt form and observation cannot be used as an outside-peri
 });
 test('conflicting existing source proof cannot be hidden by old provider timestamp', () => {
   const f = scanned(), row = outside(f); f.sources.push({ ...f.sources[0], id: id(851), receiptId: row.id });
-  assert.equal(reportTrial(f).observed.unprocessedForms, 1); assert.equal(reportTrial(f).reconciliation.counts.unknownAcquiredTime, 1);
+  assert.equal(reportTrial(f).observed.unprocessedForms, 1); assert.equal(reportTrial(f).reconciliation.counts.proofConflict, 1);
+});
+test('a DONE receipt with two different out-of-period acquisition proofs stays a visible conflict', () => {
+  const f = scanned(), source = f.sources[0];
+  source.acquiredAt = source.proof.acquiredAt = '2026-09-01T00:00:00Z';
+  f.providerReconciliation.items.shift();
+  f.providerReconciliation.observations.push({ ...source.proof, acquiredAt: '2026-09-02T00:00:00Z', observedAt: '2026-10-01T18:30:00Z', graphVersion: 'v24.0' });
+  const r = reportTrial(f); assert.equal(r.observed.unprocessedForms, 1); assert.equal(r.observed.outsidePeriodForms, 0);
+  assert.equal(r.reconciliation.matchStatus, 'DISCREPANCIES'); assert.equal(r.reconciliation.counts.proofConflict, 1);
+  assert.ok(r.issues.some(x => x.code === 'RECEIPT_ACQUISITION_CONFLICT'));
 });
 test('delivery date alone never dismisses a pending receipt', () => {
   const f = scanned(), row = outside(f); row.receivedAt = '2020-01-01T00:00:00Z'; f.providerReconciliation.observations = [];

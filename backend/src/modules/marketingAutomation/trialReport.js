@@ -30,6 +30,7 @@ function reportTrial(raw){
  // the period. Retained receipt/source history is not discarded by DETACH.
  const receiptPeriod=receiptPeriods(raw,period);
  for(const r of receipts.values()){
+  if(receiptPeriod.get(r.id)==='CONFLICT'){counts.unprocessedForms++;issue('RECEIPT_ACQUISITION_CONFLICT');continue;}
   if(receiptPeriod.get(r.id)==='OUTSIDE'){counts.outsidePeriodForms++;continue;}
   if(r.state!=='DONE'||!sourceReceipts.has(r.id)){counts.unprocessedForms++;issue('RECEIPT_NOT_RECONCILED');}
  }

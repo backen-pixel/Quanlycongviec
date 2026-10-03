@@ -11,7 +11,7 @@ function reconcileCensus(raw,identity,cohort,period,receiptPeriod){
  if(!census||census.status==='MISSING')return{status:'MISSING',matchStatus:'NOT_CHECKED',coverage:'UNVERIFIED',run:null,counts:null,issues:[],exceptions:[],cpqlReady:false};
  if(![1,2].includes(census.version)||census.companyId!==raw.companyId||census.trialId!==raw.trial.id||census.complete!==true)fail();
  const r=census.run,now=time(raw.asOf),start=time(raw.trial.since+'T00:00:00+07:00'),end=time(raw.trial.until+'T00:00:00+07:00')+86400000;
- if(!r||!uuid(r.id)||!['RUNNING','SCANNED','FAILED'].includes(r.state)||!Number.isSafeInteger(r.trialRevision)||r.trialRevision<1||typeof r.scopeCurrent!=='boolean'||!Number.isSafeInteger(r.tasksPending)||r.tasksPending<0||!Number.isFinite(time(r.startedAt))||time(r.startedAt)>now||!Number.isFinite(time(r.since))||!Number.isFinite(time(r.until))||time(r.until)<=time(r.since)||time(r.until)>now||!Array.isArray(census.items)||census.items.length>5000||!Array.isArray(census.forms)||census.forms.length>5000)fail();
+ if(!r||!uuid(r.id)||!['RUNNING','SCANNED','FAILED'].includes(r.state)||!Number.isSafeInteger(r.trialRevision)||r.trialRevision<1||typeof r.scopeCurrent!=='boolean'||!Number.isSafeInteger(r.tasksPending)||r.tasksPending<0||!Number.isFinite(time(r.startedAt))||time(r.startedAt)>now||!Number.isFinite(time(r.since))||!Number.isFinite(time(r.until))||(time(r.until)<time(r.since)||(time(r.until)===time(r.since)&&(census.version!==2||r.measurementPolicy!=='VIETNAM_CLOSED_DAY_V1')))||time(r.until)>now||!Array.isArray(census.items)||census.items.length>5000||!Array.isArray(census.forms)||census.forms.length>5000)fail();
  if(r.state==='SCANNED'&&(!Number.isFinite(time(r.finishedAt))||time(r.finishedAt)<time(r.startedAt)||time(r.finishedAt)>now||r.tasksPending!==0))fail();
  const counts={enumerated:census.items.length,receivedCrm:0,awaitingIntake:0,reviewRequired:0,missingReceipt:0,proofConflict:0,missingCrm:0,notEnumerated:0,unknownAcquiredTime:0,outsidePeriod:0,unlinkedProofs:0,undiscoveredForms:0,expiredForms:0,retentionUnknownForms:0};
  const issues=new Map(),exceptions=[];
@@ -29,6 +29,7 @@ function reconcileCensus(raw,identity,cohort,period,receiptPeriod){
   seenIds.add(key);seenReceipts.add(item.receiptId);
   const receipt=receipts.get(item.receiptId),s=sources.get(item.receiptId);
   if(!receipt){counts.missingReceipt++;issue('CENSUS_RECEIPT_MISSING',item.receiptId);continue;}
+  if(receiptPeriod.get(receipt.id)==='CONFLICT'){counts.proofConflict++;issue('CENSUS_ACQUISITION_CONFLICT',receipt.id);continue;}
   if(receipt.pageId!==item.pageId||receipt.formId!==item.formId||receipt.leadgenId!==item.leadgenId){counts.proofConflict++;issue('CENSUS_RECEIPT_CONFLICT',item.receiptId);continue;}
   if(receipt.state!=='DONE'){const review=receipt.state==='REVIEW';counts[review?'reviewRequired':'awaitingIntake']++;issue(review?'CENSUS_REVIEW_REQUIRED':'CENSUS_INTAKE_PENDING',item.receiptId);continue;}
   if(!sourceMatches(s,item)||s.leadId!==receipt.leadId||time(s.acquiredAt)!==time(item.acquiredAt)){counts.proofConflict++;issue('CENSUS_PROOF_CONFLICT',item.receiptId);continue;}
@@ -41,6 +42,7 @@ function reconcileCensus(raw,identity,cohort,period,receiptPeriod){
  // a known in-period receipt or proof was omitted from that edge.
  for(const receipt of raw.receipts){
   if(seenReceipts.has(receipt.id))continue;
+  if(receiptPeriod.get(receipt.id)==='CONFLICT'){counts.proofConflict++;issue('CENSUS_ACQUISITION_CONFLICT',receipt.id);continue;}
   if(receiptPeriod.get(receipt.id)==='OUTSIDE'&&period.censusAligned){counts.outsidePeriod++;continue;}
   const s=sources.get(receipt.id);
   if(!sourceMatches(s,receipt)||receipt.state!=='DONE'||s.leadId!==receipt.leadId){counts.unknownAcquiredTime++;issue('CENSUS_ACQUISITION_UNPROVEN',receipt.id);}
@@ -52,9 +54,10 @@ function reconcileCensus(raw,identity,cohort,period,receiptPeriod){
  if(counts.retentionUnknownForms)issue('CENSUS_RETENTION_UNVERIFIED');
  const stale=!r.scopeCurrent||r.trialRevision!==raw.trial.revision||time(r.since)!==start||time(r.until)>end;
  if(stale)issue('CENSUS_SCOPE_CHANGED');
- if(!period.censusAligned)issue('CENSUS_PERIOD_MISMATCH');
+ if(period.status==='NO_CLOSED_DAY')issue('CENSUS_NO_CLOSED_DAY');
+ else if(!period.censusAligned)issue('CENSUS_PERIOD_MISMATCH');
  const status=stale?'STALE':r.state;
  const matchStatus=status==='SCANNED'?(issues.size?'DISCREPANCIES':'MATCHED_ENUMERATED'):'NOT_CHECKED';
- return{status,matchStatus,coverage:'API_ENUMERATION_ONLY',run:{id:r.id,since:r.since,until:r.until,startedAt:r.startedAt,finishedAt:r.finishedAt,state:r.state,tasksPending:r.tasksPending},counts,issues:[...issues].map(([code,count])=>({code,count})),exceptions,exceptionsTruncated:issues.size>0&&[...issues.values()].reduce((a,b)=>a+b,0)>exceptions.length,cpqlReady:false};
+ return{status,matchStatus,coverage:'API_ENUMERATION_ONLY',run:{id:r.id,since:r.since,until:r.until,startedAt:r.startedAt,finishedAt:r.finishedAt,recoveryUntil:r.recoveryUntil||r.until,state:r.state,tasksPending:r.tasksPending},counts,issues:[...issues].map(([code,count])=>({code,count})),exceptions,exceptionsTruncated:issues.size>0&&[...issues.values()].reduce((a,b)=>a+b,0)>exceptions.length,cpqlReady:false};
 }
 module.exports={reconcileCensus};

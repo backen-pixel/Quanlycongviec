@@ -30,7 +30,9 @@ function receiptPeriods(raw, period) {
       ['PAID', 'ORGANIC', 'UNKNOWN'].includes(s.source) && s.proof.source === s.source;
     let stamp = validSource ? time(s.acquiredAt) : NaN;
     // A conflicting proof/envelope must not be discarded as an old receipt.
-    if (o && (o.formId !== r.formId || (s && (!validSource || time(s.acquiredAt) !== time(o.acquiredAt))))) stamp = NaN;
+    if (o && (o.formId !== r.formId || (s && (!validSource || time(s.acquiredAt) !== time(o.acquiredAt))))) {
+      result.set(r.id, 'CONFLICT'); continue;
+    }
     else if (o) stamp = time(o.acquiredAt);
     const known = Number.isFinite(stamp) && stamp <= time(raw.asOf);
     result.set(r.id, !known || period.status !== 'AVAILABLE' ? 'UNKNOWN' :

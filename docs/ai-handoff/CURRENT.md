@@ -1,3 +1,15 @@
+## 2026-10-03 — Preserve same-day customer recovery
+
+Independent review also found that using the measured cutoff for intake delayed missing today's webhooks. SQL670 now preserves the original recovery until_at and separately stores measurement_until_at. Day-one recovery remains available; its report is NO_CLOSED_DAY. Snapshot filters only measured items while all recovery items/observations stay durable. Added first-day census→real intake→CRM with fake provider, exact cutoff, future trial denial and persisted pre-midnight replay tests. Unit24 period cases PASS; final CI/review pending. Full goal remains ACTIVE, no live effects.
+
+---
+
+## 2026-10-03 — Measurement reconciliation follow-up
+
+efcf783 passed9/10 automation jobs, including census PostgreSQL and full build. Trial PostgreSQL111138267777 failed6 cases because its acquisition fixture remained in today's excluded interval and expected both days' spend. Fixture now uses yesterday acquisition and500k closed-day cost. Independent review found DONE source/observation timestamps disagreeing outside the period could disappear; report and reverse reconciliation now retain an explicit acquisition conflict. Added regression and legacy partial-day PostgreSQL case. Revalidation pending; no live actions.
+
+---
+
 ## 2026-10-03 — Cùng kỳ đo khách và chi tiêu (đang kiểm chứng)
 
 Base b66ce94. SQL670 lưu observation provider kể cả ngoài kỳ, chốt census tại ngày Việt Nam hoàn tất; report dùng cùng cutoff cho tiền và khách. Chi phí fetch trước cutoff không được coi là đủ; receipt tới muộn chỉ loại khỏi kỳ khi có bằng chứng đúng nguồn, giữ trạng thái và lịch sử gốc.

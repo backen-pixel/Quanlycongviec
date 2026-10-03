@@ -4,6 +4,7 @@ BEGIN;
 CREATE SCHEMA IF NOT EXISTS marketing_measurement;
 REVOKE ALL ON SCHEMA marketing_measurement FROM PUBLIC,anon,authenticated,service_role;
 ALTER TABLE public.marketing_fb_census_runs ADD COLUMN IF NOT EXISTS measurement_policy text;
+ALTER TABLE public.marketing_fb_census_runs ADD COLUMN IF NOT EXISTS measurement_until_at timestamptz;
 CREATE TABLE IF NOT EXISTS marketing_measurement.census_observations(
  run_id uuid NOT NULL REFERENCES public.marketing_fb_census_runs(id),
  page_id text NOT NULL,form_id text NOT NULL,leadgen_id text NOT NULL,
@@ -34,10 +35,13 @@ BEGIN
  IF jsonb_array_length(s->'pages') NOT BETWEEN 1 AND 100 THEN RAISE EXCEPTION 'page inventory unavailable' USING ERRCODE='22023';END IF;
  -- A Page may have been inserted after the earlier row locks were acquired.
  IF EXISTS(SELECT 1 FROM jsonb_array_elements(s->'pages')x WHERE (x->>'active'='true' AND x->>'tokenVersion'<>md5('') AND (x->>'id')=ANY(p_pages)) IS NOT TRUE) THEN RAISE EXCEPTION 'page inventory not enabled' USING ERRCODE='42501';END IF;
- end_at:=least((t.until+1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh',date_trunc('day',clock_timestamp() AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh');
- IF end_at<=t.since::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh' THEN RAISE EXCEPTION 'no completed Vietnam day in trial' USING ERRCODE='22023';END IF;
- INSERT INTO public.marketing_fb_census_runs(company_id,trial_id,trial_revision,actor_id,request_id,scope,since_at,until_at,measurement_policy)
- VALUES(p_company,p_trial,t.revision,p_actor,p_request,s,t.since::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh',end_at,'VIETNAM_CLOSED_DAY_V1') RETURNING * INTO r;
+ -- Recovery keeps its original operational boundary, including today's leads.
+ -- Measurement alone stops at the most recent completed Vietnam day.
+ end_at:=least((t.until+1)::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh',clock_timestamp());
+ IF end_at<=t.since::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh' THEN RAISE EXCEPTION 'trial not started' USING ERRCODE='22023';END IF;
+ INSERT INTO public.marketing_fb_census_runs(company_id,trial_id,trial_revision,actor_id,request_id,scope,since_at,until_at,measurement_policy,measurement_until_at)
+ VALUES(p_company,p_trial,t.revision,p_actor,p_request,s,t.since::timestamp AT TIME ZONE 'Asia/Ho_Chi_Minh',end_at,'VIETNAM_CLOSED_DAY_V1',
+  least(end_at,date_trunc('day',end_at AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh')) RETURNING * INTO r;
  INSERT INTO public.marketing_fb_census_tasks(run_id,page_id,kind) SELECT r.id,x->>'id','FORMS' FROM jsonb_array_elements(s->'pages')x;
  -- Preserve archived/previously observed forms even if omitted from the edge.
  INSERT INTO public.marketing_fb_census_forms(run_id,page_id,form_id)
@@ -71,8 +75,8 @@ BEGIN
   ELSE
    stamp:=(x->>'acquiredAt')::timestamptz;
    IF stamp IS NULL OR NOT isfinite(stamp) OR stamp>clock_timestamp() THEN RAISE EXCEPTION 'invalid acquisition time' USING ERRCODE='22023';END IF;
-   -- Keep all enumerated timestamps, including records outside this closed
-   -- period. No contact fields and no fabricated CRM receipt for old records.
+   -- Keep all enumerated timestamps, including records outside the measured
+   -- period. Recover through the original fixed operational until_at below.
    SELECT * INTO observation FROM marketing_measurement.census_observations
     WHERE run_id=r.id AND page_id=q.page_id AND leadgen_id=x->>'id';
    IF FOUND AND(observation.form_id<>q.form_id OR observation.acquired_at<>stamp OR observation.graph_version<>p_chunk->>'graphVersion') THEN
@@ -100,14 +104,15 @@ END $$;
 CREATE OR REPLACE FUNCTION public.marketing_trial_census_inventory(p_company uuid,p_trial uuid)
 RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path=pg_catalog,public AS $$
  WITH latest AS(SELECT * FROM public.marketing_fb_census_runs WHERE company_id=p_company AND trial_id=p_trial ORDER BY started_at DESC,id DESC LIMIT 1),
- items AS(SELECT i.* FROM public.marketing_fb_census_items i JOIN latest r ON r.id=i.run_id ORDER BY i.page_id,i.leadgen_id LIMIT 5001),
+ items AS(SELECT i.* FROM public.marketing_fb_census_items i JOIN latest r ON r.id=i.run_id
+   WHERE i.acquired_at<coalesce(r.measurement_until_at,r.until_at) ORDER BY i.page_id,i.leadgen_id LIMIT 5001),
  observations AS(SELECT o.* FROM marketing_measurement.census_observations o JOIN latest r ON r.id=o.run_id
    WHERE EXISTS(SELECT 1 FROM public.marketing_fb_lead_receipts x WHERE x.company_id=p_company AND x.page_id=o.page_id AND x.leadgen_id=o.leadgen_id)
    ORDER BY o.page_id,o.leadgen_id LIMIT 5001),
  forms AS(SELECT f.* FROM public.marketing_fb_census_forms f JOIN latest r ON r.id=f.run_id ORDER BY f.page_id,f.form_id LIMIT 5001)
  SELECT coalesce((SELECT jsonb_build_object('version',2,'companyId',p_company,'trialId',p_trial,'status','AVAILABLE',
   'complete',(SELECT count(*)<=5000 FROM items) AND(SELECT count(*)<=5000 FROM forms) AND(SELECT count(*)<=5000 FROM observations),
-  'run',jsonb_build_object('id',r.id,'state',r.state,'trialRevision',r.trial_revision,'since',r.since_at,'until',r.until_at,'startedAt',r.started_at,'finishedAt',r.finished_at,
+  'run',jsonb_build_object('id',r.id,'state',r.state,'trialRevision',r.trial_revision,'since',r.since_at,'until',coalesce(r.measurement_until_at,r.until_at),'recoveryUntil',r.until_at,'startedAt',r.started_at,'finishedAt',r.finished_at,
    'measurementPolicy',r.measurement_policy,'scopeCurrent',r.scope=public.marketing_fb_census_scope(p_company,p_trial),'tasksPending',(SELECT count(*) FROM public.marketing_fb_census_tasks WHERE run_id=r.id AND state<>'DONE')),
   'items',coalesce((SELECT jsonb_agg(jsonb_build_object('pageId',page_id,'formId',form_id,'leadgenId',leadgen_id,'acquiredAt',acquired_at,'receiptId',receipt_id) ORDER BY page_id,leadgen_id) FROM items),'[]'::jsonb),
   'observations',coalesce((SELECT jsonb_agg(jsonb_build_object('pageId',page_id,'formId',form_id,'leadgenId',leadgen_id,'acquiredAt',acquired_at,'observedAt',observed_at,'graphVersion',graph_version) ORDER BY page_id,leadgen_id) FROM observations),'[]'::jsonb),

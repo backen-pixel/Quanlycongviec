@@ -1,3 +1,15 @@
+## 2026-10-03 — Preserve same-day customer recovery
+
+Independent review also found that using the measured cutoff for intake delayed missing today's webhooks. SQL670 now preserves the original recovery until_at and separately stores measurement_until_at. Day-one recovery remains available; its report is NO_CLOSED_DAY. Snapshot filters only measured items while all recovery items/observations stay durable. Added first-day census→real intake→CRM with fake provider, exact cutoff, future trial denial and persisted pre-midnight replay tests. Unit24 period cases PASS; final CI/review pending. Full goal remains ACTIVE, no live effects.
+
+---
+
+## 2026-10-03 — Fix hidden outside-period conflicts
+
+Independent reviewer CHANGES_REQUESTED on efcf783: valid DONE source and census observation could disagree outside the period without an issue. Added CONFLICT disposition and explicit report/reconciliation warnings, regression, and UI labels. Trial PG fixture updated for the new closed-day contract; added historical NULL-policy/partial-day PostgreSQL coverage. Local23 period cases PASS, final CI/review pending. Full goal ACTIVE.
+
+---
+
 ## 2026-10-03 — Measurement period alignment
 
 Changed SQL670, report period/receipt projections, spend close guard, census fixtures/tests and dashboard period labels. Whole-account spend includes zero-Lead accounts; one cutoff excludes current-day spend and post-cutoff acquisitions together. Durable outside-period metadata reconciles late receipts without mutating intake state or hiding conflicts. Added22 unit and6 isolated PostgreSQL scenarios; existing lease rollback now also asserts observation rollback. Local140 PASS; CI/review pending. See MEASUREMENT_PERIOD.md. No live writes, merge, deploy, model API or campaign actions.
