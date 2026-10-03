@@ -311,3 +311,6 @@ Không mở ads.budget_move hoặc survey.reserve chỉ vì queue test PASS. Lea
 
 Compatibility: revenue/ROAS không còn là estimate; consumers phải xử lý null/status. MCP event_name chuyển Purchase→DealClosed và value→null, có closed_estimated_value. Không migration dữ liệu lịch sử để đổi số; historical insight financial comments được lọc lúc đọc.
 
+
+
+04/10/2026: [CRM merge — quyền và findings bảo toàn](LEGACY_CRM_MERGE_REPAIR.md). Local checkpoint117/0/0; PostgreSQL/review cuối chờ. Cleanup không tự coi chung Customer là trùng. CRM merge/cutover chưa READY; full goal ACTIVE.

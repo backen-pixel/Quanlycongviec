@@ -3703,13 +3703,11 @@ async function mergeCustomerIntoTarget(sb, targetId, sourceId) {
  * includeSecondaryData=false: chỉ xóa bản ghi phụ, không chuyển tài liệu/nhiệm vụ/báo giá/… sang bản giữ (dữ liệu gắn lead đó cascade theo DB).
  */
 async function executeLeadMerge(keepId, deleteIds, options = {}) {
-  const { finalTitle, mergeCustomers = false, includeSecondaryData = true } = options;
-  const idsToDelete = [...new Set((deleteIds || []).filter((id) => id && String(id) !== String(keepId)))];
-  if (!keepId || !idsToDelete.length) {
-    const err = new Error('keep_id và ít nhất một delete_id là bắt buộc');
-    err.status = 400;
-    throw err;
-  }
+  const { finalTitle, mergeCustomers = false, includeSecondaryData = true, request } = options;
+  const access = await require('../../../helpers/crmLegacyMergeAccess').assertLegacyLeadMergeAccess(
+    supabase, request, keepId, deleteIds, { mergeCustomers });
+  keepId = access.keepId;
+  const idsToDelete = access.deleteIds;
 
   await assertLegacyFacebookWriteAllowed(supabase, { leadIds: [keepId, ...idsToDelete] });
 

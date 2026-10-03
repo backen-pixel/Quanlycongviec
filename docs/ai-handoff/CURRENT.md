@@ -1,3 +1,10 @@
+## Hiện hành 04/10/2026 — Đang khép quyền gộp CRM; bảo toàn lịch sử còn mở
+
+Bản làm việc trên baseline7cc7cb2 thêm kiểm actor/quyền hiện hành trên toàn bộ Lead giữ/xóa, khóa company/tenant/region, kiểm cờ xóa pipeline và chặn gộp Customer khác nhau chưa có phạm vi đầy đủ. Cleanup không còn tự xóa chỉ vì chung Customer: đọc một công ty có giới hạn, trả yêu cầu đối soát với0thay đổi. Local50ca mới+67regression=117/0/0;7ca PostgreSQL bổ sung chưa có kết quả CI ở checkpoint này.
+
+Reviewer phát hiện mất task/tệp/chat/quyền/tiền/Project/attribution trong thân merge cũ. **CRM merge chưa READY, cutover HOLD**; kiểm quyền không chứng minh giao dịch nguyên tử hoặc bảo toàn dữ liệu. [Phạm vi, findings, kiểm thử và bước triển khai](vpt-marketing-automation/LEGACY_CRM_MERGE_REPAIR.md). Full goal ACTIVE; không DB thật/model/provider/chi quảng cáo/phát hành. Các mục dưới là lịch sử.
+
+---
 ## Hiện hành 04/10/2026 — Đường quét điện thoại đã qua kiểm thử cô lập
 
 Runtime `119491e`, bản kiểm/test fix `5a3acc6` khóa phạm vi công ty/Page hiện hành, giới hạn final round theo Lead đã chọn, kiểm lỗi DB và chặn đối soát khi Graph/MID/lịch sử chưa hoàn tất. Review độc lập PASS phạm vi phone sau đối chiếu blob/log CI; local77/0/0; PostgreSQL264/0/0 gồm6ca mới; census88+HTTP1, Node22 843+26+67 và cả10job/build/report/Messenger SUCCESS. CImerge tree đúng bản kiểm. Ca211 cũ được sửa theo baseline→tăng1 sau xác minh nền fixture theo ngày; giữ assertion quyền/ẩn dữ liệu, runtime không đổi.

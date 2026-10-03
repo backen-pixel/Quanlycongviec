@@ -2218,3 +2218,12 @@ Local20 ca mới/44 ca liên quan PASS. PostgreSQL/build/browser và review đ�
 03/10/2026 cohort3486c59: review mã/local44/Node22 828/build PASS; browser component thật/API giả PASS. PG ca chờ khóa không quan sát được phiên khác bằng service_role; sửa observer sang owner thử + pg_stat_clear_snapshot, giữ nguyên SQL/runtime. Chờ CI mới.
 
 03/10/2026 — Cohort3f8a565: PostgreSQL214/0/0, Node22 828/0/0, cả10job và build/report/Messenger SUCCESS; merge tree bằng HEAD đã xác minh. Local44/review mã/browser giả PASS. Đã lưu [bằng chứng](vpt-marketing-automation/COHORT_OPERATIONS_REVIEW.md). Không phát hành; goal ACTIVE, bước tiếp xử lý đề xuất/gửi lịch và ngoại lệ vận hành.
+
+
+## Hiện hành 04/10/2026 — Đang khép quyền gộp CRM; bảo toàn lịch sử còn mở
+
+Bản làm việc trên baseline7cc7cb2 thêm kiểm actor/quyền hiện hành trên toàn bộ Lead giữ/xóa, khóa company/tenant/region, kiểm cờ xóa pipeline và chặn gộp Customer khác nhau chưa có phạm vi đầy đủ. Cleanup không còn tự xóa chỉ vì chung Customer: đọc một công ty có giới hạn, trả yêu cầu đối soát với0thay đổi. Local50ca mới+67regression=117/0/0;7ca PostgreSQL bổ sung chưa có kết quả CI ở checkpoint này.
+
+Reviewer phát hiện mất task/tệp/chat/quyền/tiền/Project/attribution trong thân merge cũ. **CRM merge chưa READY, cutover HOLD**; kiểm quyền không chứng minh giao dịch nguyên tử hoặc bảo toàn dữ liệu. [Phạm vi, findings, kiểm thử và bước triển khai](vpt-marketing-automation/LEGACY_CRM_MERGE_REPAIR.md). Full goal ACTIVE; không DB thật/model/provider/chi quảng cáo/phát hành. Các mục dưới là lịch sử.
+
+---

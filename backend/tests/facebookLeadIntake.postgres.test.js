@@ -81,5 +81,6 @@ test('isolated PostgreSQL Facebook Lead Ads intake',{skip:!dsn},async t=>{
   const connectionFixtures=await require('./careConnections.cases')(t,{db,peers,query,company,other,admin,sales,region,config});
   await require('./careConnections.console.cases')(t,{db,peers,query,company,other,admin,sales,region,...connectionFixtures});
   await require('./careLegacyWrite.cases')(t,{db,peers,query,company,admin,sales,region,...connectionFixtures});
+  await require('./crmLegacyMergeAccess.cases')(t,{db,peers,company,other,admin,sales,region,pipeline});
  }finally{await Promise.all(peers.map(x=>x.end()));await db.end();}
 });
