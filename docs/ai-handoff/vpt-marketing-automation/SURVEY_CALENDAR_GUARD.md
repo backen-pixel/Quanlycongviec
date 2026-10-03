@@ -40,6 +40,6 @@ Phần tiếp theo: đề xuất có phiên bản gắn đúng người–giờ�
 
 ## Kiểm thử và hoàn tác
 
-`backend/tests/surveyCalendarGuard.cases.js` chạy sau bộ khảo sát trên PostgreSQL16 cô lập. Bao phủ quyền sau GRANTS_SQL backup thật, old/new quan hệ khác công ty, xóa rồi thêm người tham gia, mixed-statement rollback, hai chiều chờ enrollment, snapshot REPEATABLE READ, permit sai transaction/event, giả GUC, cascade, replica mode và readiness khi trigger/quyền sai. Kết quả CI/review được ghi riêng khi có bằng chứng.
+`backend/tests/surveyCalendarGuard.cases.js` chạy sau bộ khảo sát trên PostgreSQL16 cô lập. Bao phủ quyền sau GRANTS_SQL backup thật, old/new quan hệ khác công ty, xóa rồi thêm người tham gia, mixed-statement rollback, hai chiều chờ enrollment, snapshot REPEATABLE READ, permit sai transaction/event, giả GUC, cascade, replica mode và readiness khi trigger/quyền sai. Kết quả:111 PASS/0FAIL/0SKIP gồm11 guard cases trên PostgreSQL16, review độc lập PASS; [bằng chứng đúng phiên bản](SURVEY_CALENDAR_GUARD_REVIEW.md).
 
 Không hoàn tác bằng xóa enrollment/permit hoặc tắt trigger khi đã có lịch do tuyến mới tạo. Dừng nhận lệnh mới, giữ lịch/audit/bằng chứng, đối soát và bàn giao lại quyền ghi có kiểm soát. Trong bản chưa enroll này, migration bổ sung chưa cho phép gọi đặt lịch từ ứng dụng.
