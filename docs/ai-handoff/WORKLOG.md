@@ -2122,3 +2122,5 @@ Local20 ca mới/44 ca liên quan PASS. PostgreSQL/build/browser và review đ�
 
 
 03/10/2026 cohort3486c59: review mã/local44/Node22 828/build PASS; browser component thật/API giả PASS. PG ca chờ khóa không quan sát được phiên khác bằng service_role; sửa observer sang owner thử + pg_stat_clear_snapshot, giữ nguyên SQL/runtime. Chờ CI mới.
+
+03/10/2026 — Cohort3f8a565: PostgreSQL214/0/0, Node22 828/0/0, cả10job và build/report/Messenger SUCCESS; merge tree bằng HEAD đã xác minh. Local44/review mã/browser giả PASS. Đã lưu [bằng chứng](vpt-marketing-automation/COHORT_OPERATIONS_REVIEW.md). Không phát hành; goal ACTIVE, bước tiếp xử lý đề xuất/gửi lịch và ngoại lệ vận hành.

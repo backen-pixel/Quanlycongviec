@@ -1,8 +1,10 @@
-## 03/10/2026 — Nối khảo sát và việc chờ theo nhóm quảng cáo đang kiểm chứng
+## Hiện hành 03/10/2026 — Đã nối khảo sát và việc chờ theo nhóm quảng cáo
 
-SQL678/API/UI nối nguồn tiếp nhận khách trả phí với tình trạng chăm sóc và lịch hiện hành trong cùng snapshot. Lịch sau kỳ vẫn được giữ; tổng khách cần xử lý loại trùng cả việc chờ xác minh, chưa nối chăm sóc và bàn giao khảo sát. STOP không tự mở lại; hồ sơ chưa quy thuộc được giữ riêng.
+Bản3f8a565 nối nhóm khách trả phí với chăm sóc/lịch hiện hành trong cùng snapshot. Lịch sau kỳ vẫn giữ; tổng khách cần xử lý loại trùng cả việc chờ xác minh, chưa nối chăm sóc và bàn giao khảo sát. STOP không tự mở lại; hồ sơ chưa quy thuộc hiển thị riêng.
 
-Local20 ca mới/44 ca liên quan, Node22 828/0/0 và frontend build PASS. Reviewer mã PASS; browser giả đã kiểm. PostgreSQL đạt5/6 ca mới; đang sửa observer của ca chờ khóa và chạy lại, runtime giữ nguyên. Full goal ACTIVE; chưa UAT/dữ liệu thật/phát hành. [Hợp đồng và hoàn tác](vpt-marketing-automation/COHORT_OPERATIONS.md).
+Local20 ca mới/44 ca liên quan, PostgreSQL214/0/0 (6 ca mới), Node22 828/0/0 và cả10 job/build/report/Messenger SUCCESS. Reviewer mã PASS; browser component thật/API giả đã kiểm lỗi nguồn, STOP, phản hồi cũ và lỗi report cha. [Bằng chứng đúng phiên bản](vpt-marketing-automation/COHORT_OPERATIONS_REVIEW.md), [hợp đồng/hoàn tác](vpt-marketing-automation/COHORT_OPERATIONS.md).
+
+Full goal ACTIVE. Còn UI xử lý đề xuất/gửi lịch và ngoại lệ, điểm nhận/kênh khác, cấu hình AI/lịch/người nhận, UAT và Founder release. Chưa dữ liệu thật đạt250k hoặc phát hành. Các mục dưới giữ lịch sử.
 
 ---
 
