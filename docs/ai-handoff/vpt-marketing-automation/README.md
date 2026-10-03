@@ -1,6 +1,6 @@
-## Hiện hành 03/10/2026 — Giao diện đối chiếu đang kiểm chứng
+## Hiện hành 03/10/2026 — Giao diện đối chiếu đã kiểm chứng
 
-SQL681/API/UI đang làm việc trênHEAD1dce6d2: tìm hồ sơ, bằng chứng, LINK/CLOSE qua reload và phân biệt mapping đầy đủ. Local26 PASS;11 caPG mới chưa chạy, browser/build/review cuối còn chờ. [Hợp đồng và bước tiếp](CARE_CONNECTION_CONSOLE.md). Chưa commit/phát hành hoặc dữ liệu thật đạt250k; full goal ACTIVE. Các bằng chứng dưới thuộc phiên bản trước.
+Runtime8f42595: SQL681/API/UI tìm hồ sơ, bằng chứng, LINK/CLOSE qua reload và phân biệt mapping đầy đủ. Local26; intakePG244/0/0 (11mới), census88+HTTP1, Node22 843+26,10job/build/report/Messenger SUCCESS. Review độc lập PASS; browser component thật/API giả đã kiểm. [Bằng chứng](CARE_CONNECTION_CONSOLE_REVIEW.md), [hợp đồng/chuyển đường cũ/hoàn tác](CARE_CONNECTION_CONSOLE.md). Còn cutover, cấu hình, khôi phục, phạm vi đo và các điểm nhận/kênh khác, UAT/Founder release. Chưa dữ liệu thật đạt250k; full goal ACTIVE.
 
 ---
 

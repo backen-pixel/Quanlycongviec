@@ -1,6 +1,6 @@
-# Đối chiếu hồ sơ khách — bản làm việc
+# Đối chiếu hồ sơ khách — hợp đồng và nghiệm thu
 
-Ngày 03/10/2026. Thay đổi cục bộ trên HEAD `1dce6d2321857ae24d0696efcba1592d1620ce62`, chưa commit hoặc phát hành. Không dùng kết quả PostgreSQL233 của SQL680 để chứng nhận SQL681.
+Ngày03/10/2026. Runtime `8f42595e1a895d8c997ccdf11b946f9617ff38ad` đã kiểm PostgreSQL244, build và component thật/API giả. Review độc lập PASS phạm vi SQL681/API/UI. [Bằng chứng đúng phiên bản](CARE_CONNECTION_CONSOLE_REVIEW.md). Chưa UAT hoặc phát hành.
 
 ## Thay đổi
 
@@ -13,16 +13,14 @@ Ngày 03/10/2026. Thay đổi cục bộ trên HEAD `1dce6d2321857ae24d0696efcba
 
 ## Kiểm chứng và phần còn chờ
 
-Local26 ca API/state PASS; syntax backend/test và diff được kiểm. Reviewer độc lập đã tìm hai P2 (tenant NULL và mapping thiếu/mâu thuẫn); bản làm việc đã sửa, kết luận cuối cần kiểm lại. Không coi unit tests là browser hoặc PostgreSQL.
+Local26 ca API/state PASS; syntax backend/test và diff được kiểm. Reviewer độc lập đã tìm hai P2 (tenantNULL và mapping thiếu/mâu thuẫn), xác nhận đã khép và PASS đúng runtime. Browser do bên triển khai kiểm riêng; không coi unit tests là browser hoặc PostgreSQL.
 
-Đã viết11 ca PostgreSQL mới vào `careConnections.console.cases.js`, nối sau SQL680: chạy migration hai lần, giữ version cũ, tìm kiếm literal/có giới hạn, quyền và tenant, mapping cũ một phần/mâu thuẫn, đóng lặp, lệnh đến muộn, rollback, hai thứ tự cạnh tranh LINK/CLOSE, STOP, actual API qua frontend state. **Chưa chạy các ca này.** Workflow đã nhận migration/component/test mới.
+11ca PostgreSQL mới trong `careConnections.console.cases.js` đã PASS, nối sau SQL680: chạy migration hai lần, giữ version cũ, tìm kiếm literal/có giới hạn, quyền và tenant, mapping cũ một phần/mâu thuẫn, đóng lặp, lệnh đến muộn, rollback, hai thứ tự cạnh tranh LINK/CLOSE, STOP, actual API qua frontend state. Workflow nhận migration/component/test mới; tổng intake244/0/0.
 
 Bước tiếp theo trong phạm vi đã giao:
 
-1. Chạy PostgreSQL16 cô lập và build; sửa lỗi rồi lấy kết luận review đúng phiên bản.
-2. Kiểm component thật trên trình duyệt dữ liệu giả: tìm/chọn, mất phản hồi, reload, giữ UUID/command, CLOSE không quay lại LINK, đổi người/hội thoại, quyền mất, phản hồi cũ, mapping một phần và mâu thuẫn. Chưa đăng nhập CRM thật.
-3. Hoàn thiện chuyển các đường ghi cũ theo bản đồ bên dưới trước enrollment thật; không mở đồng thời hai đường ghi.
-4. Khép cấu hình AI, người nhận/lịch, phạm vi đo CPQL, ngoại lệ/khôi phục và UAT; trình Founder gói phát hành. Quyết định khóa AI còn chờ, không gọi mô hình/API trước quyết định đó.
+1. Hoàn thiện chuyển các đường ghi cũ theo bản đồ bên dưới trước enrollment thật; không mở đồng thời hai đường ghi.
+2. Khép cấu hình AI, người nhận/lịch, phạm vi đo CPQL, ngoại lệ/khôi phục và UAT; trình Founder gói phát hành. Quyết định khóa AI còn chờ, không gọi mô hình/API trước quyết định đó.
 
 ## Chuyển đường ghi cũ — kết quả khảo sát độc lập, chưa triển khai
 

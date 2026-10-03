@@ -1,5 +1,7 @@
 # Bằng chứng điểm nối khách và ca khảo sát
 
+Follow-up runtime8f42595 đã bổ sung và kiểm giao diện tìm/chọn/đối chiếu, đóng yêu cầu chưa rõ kết quả. [Bằng chứng SQL681/API/UI mới](CARE_CONNECTION_CONSOLE_REVIEW.md). Các kết quả b4e2def và giới hạn ở thời điểm đó bên dưới giữ nguyên.
+
 Runtime được kiểm: `b4e2def38d2cfb165f94d55004e56ac5e9a682ba`, tree `4eb3574f33403ae5b11441c19dbc72e8d98a1b6b`. SQL680/API từ ebbda5b; b4e2def bổ sung sửa API timestamp. Follow-up 692baf6/207a8c9 sửa và mở rộng ca kiểm. Không có tác động DB/Meta thật.
 
 ## Kết quả đúng phiên bản

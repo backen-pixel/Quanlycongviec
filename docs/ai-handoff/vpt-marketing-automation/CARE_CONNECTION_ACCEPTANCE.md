@@ -30,7 +30,7 @@ Giữ khóa quyền người phát hành Page tới lúc ghi; từ chối hàng 
 
 ## Phần cần hoàn tất trước vận hành
 
-1. Màn hình chọn Lead, đọc bằng chứng và xác nhận; giữ yêu cầu chưa rõ kết quả qua tải lại, không bắt người vận hành gõ UUID.
+1. Màn hình chọn Lead, đọc bằng chứng và xác nhận đã khép ở runtime8f42595; giữ yêu cầu chưa rõ kết quả qua tải lại và CLOSE, không gõ UUID. [Bằng chứng SQL681/API/UI](CARE_CONNECTION_CONSOLE_REVIEW.md). Đây là kiểm kỹ thuật, UAT vận hành còn chờ.
 2. Chuyển các đường gọi ứng dụng cũ trước khi enrollment Page: tạo khách tự động/thủ công, sửa liên kết và xóa contact/message. Guard DB từ chối mapping sai nhưng không chứng nhận các bước ghi phụ qua nhiều HTTP call là nguyên tử. Tạm dừng đường cũ và xử lý việc đang chạy khi chuyển; kiểm hồi quy cả Page chưa chuyển.
 3. Đo tác động gate toàn cục trên INSERT Lead và thay đổi inverse, đối soát dữ liệu cũ, kiểm khôi phục và ngoại lệ vận hành. Không mở hai đường ghi cho cùng nhóm dữ liệu.
 4. Nối cấu hình AI, dữ liệu tư vấn, lịch khảo sát và người nhận đã xác nhận; lựa chọn khóa AI đang chờ, không gọi mô hình/API trước quyết định đó. Hoàn tất phạm vi CPQL, các điểm nhận và kênh còn lại.

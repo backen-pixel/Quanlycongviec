@@ -1,10 +1,10 @@
-## Hiện hành 03/10/2026 — Giao diện đối chiếu khách đang kiểm chứng
+## Hiện hành 03/10/2026 — Giao diện đối chiếu khách đã kiểm chứng
 
-Bản làm việc trên HEAD1dce6d2 bổ sung SQL681/API/UI tìm hồ sơ, xác nhận bằng chứng và đóng yêu cầu chưa rõ kết quả. LINK/CLOSE giữ nguyên yêu cầu qua reload; đóng trước thì chặn lệnh đến muộn, đã ghi thì giữ liên kết. Đã sửa hai P2 từ review: tenant cảhaiNULL và mapping một phần/mâu thuẫn không được báo hoàn tất.
+Runtime8f42595 bổ sung SQL681/API/UI tìm hồ sơ, xác nhận bằng chứng và đóng yêu cầu chưa rõ kết quả. LINK/CLOSE giữ nguyên yêu cầu qua reload; đóng trước thì chặn lệnh đến muộn, đã ghi thì giữ liên kết. Hai P2 tenant cảhaiNULL và mapping một phần/mâu thuẫn đã khép.
 
-Local26 ca API/state PASS; đã viết11 ca PostgreSQL nhưng chưa chạy, browser/build và kết luận review cuối còn chờ. Chưa commit hoặc áp DB. [Hợp đồng, bản đồ đường ghi cũ và bước tiếp](vpt-marketing-automation/CARE_CONNECTION_CONSOLE.md). Bằng chứng233PG bên dưới chỉ thuộcSQL680.
+Local26, PostgreSQL244/0/0 (11ca mới), census88+HTTP1, Node22 843+26 PASS, cả10job/build/report/Messenger SUCCESS. Reviewer độc lập PASS SQL681/API/UI; browser component thật/API giả kiểm mất phản hồi, reload, CLOSE, quyền và phản hồi muộn. [Bằng chứng](vpt-marketing-automation/CARE_CONNECTION_CONSOLE_REVIEW.md), [hợp đồng và bản đồ đường ghi cũ](vpt-marketing-automation/CARE_CONNECTION_CONSOLE.md).
 
-Full goal ACTIVE. Ưu tiên khép Facebook→CRM→khảo sát và đo đúng250k/khách hợp lệ, rồi UAT/Founder release trước mở kênh tiếp. Chưa dữ liệu thật đạt250k hoặc phát hành. Các mục dưới là lịch sử.
+Full goal ACTIVE. Tiếp theo chuyển các đường gọi cũ trước enrollment, đối soát/khôi phục và khép AI/lịch/người nhận/phạm vi đo, rồi UAT/Founder release trước mở kênh tiếp. Chưa dữ liệu thật đạt250k hoặc phát hành. Các mục dưới là lịch sử.
 
 ---
 

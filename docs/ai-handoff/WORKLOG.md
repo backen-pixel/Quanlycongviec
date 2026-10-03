@@ -1,3 +1,9 @@
+## 03/10/2026 — Đã kiểm giao diện đối chiếu và yêu cầu chưa rõ kết quả
+
+Runtime8f42595/tree642d6628: PostgreSQL244/0/0 gồm11ca mới, census88+HTTP1, Node22 843+26 và10job/build/report/Messenger SUCCESS. CImerge01ad39a2 được xác minh tree bằng runtime. Reviewer độc lập PASS SQL681/API/UI sau khép hai P2; browser component thật/API giả xác nhận LINK/CLOSE qua reload và phạm vi người/hội thoại. [Bằng chứng đúng phiên bản](vpt-marketing-automation/CARE_CONNECTION_CONSOLE_REVIEW.md). Chưa UAT/đường ghi cũ/DB thật/phát hành; full goal ACTIVE.
+
+---
+
 ## 03/10/2026 — Tiếp tục giao diện đối chiếu và yêu cầu chưa rõ kết quả
 
 Thay đổi trên HEAD1dce6d2: SQL681, careConnections service/routes, CareConnections component/state và tích hợp console; thêm15 unit/API/state ca (26 cùng11 cũ),11 PG ca chưa chạy, cập nhật runner/workflow. Hai P2 review tenantNULL và mapping chưa đầy đủ đã sửa bằng cùng policy tenant và `mappingComplete`; version document SQL680 giữ nguyên. Local26 PASS, kiểm syntax/diff; chưa PostgreSQL681/browser/build hoặc review cuối, chưa commit/DB thật/phát hành.
