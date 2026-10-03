@@ -1,0 +1,349 @@
+name: VPT marketing automation (isolated)
+on:
+  pull_request:
+    paths:
+      - 'backend/src/modules/marketingAutomation/**'
+      - 'backend/src/server.js'
+      - 'backend/src/routes/facebook.js'
+      - 'backend/src/routes/facebookLeadIntakeAdmin.js'
+      - 'backend/tests/facebookLeadIntake*.js'
+      - 'database/652_facebook_lead_intake.sql'
+      - 'database/653_facebook_lead_intake_console.sql'
+      - 'frontend/src/pages/FacebookPage.jsx'
+      - 'frontend/src/components/facebook/FacebookLeadIntakeConsole.jsx'
+      - 'backend/src/modules/crmLeadQuality/**'
+      - 'backend/src/modules/crmLeadIdentity/**'
+      - 'backend/src/routes/crm/index.js'
+      - 'backend/src/routes/crm/routes/leadQuality.js'
+      - 'backend/src/routes/crm/routes/leadIdentity.js'
+      - 'backend/src/routes/crm/routes/identityReview.js'
+      - 'backend/src/routes/crm/routes/marketingTrials.js'
+      - 'backend/tests/crmLeadQuality*.js'
+      - 'backend/tests/crmLeadIdentity*.js'
+      - 'backend/src/helpers/adInsights.js'
+      - 'backend/src/helpers/mcpAdsBridge.js'
+      - 'backend/src/helpers/fbMarketingSync.js'
+      - 'backend/src/routes/adAnalytics.js'
+      - 'frontend/src/pages/AdAnalyticsPage.jsx'
+      - 'frontend/src/pages/LeadDetail.jsx'
+      - 'frontend/src/components/marketing/**'
+      - 'backend/tests/marketingAutomation*.js'
+      - 'database/648_marketing_automation_command_queue.sql'
+      - 'database/649_marketing_spend_evidence.sql'
+      - 'database/650_crm_lead_qualification.sql'
+      - 'database/651_crm_lead_identity.sql'
+      - 'database/654_crm_identity_review.sql'
+      - 'database/655_marketing_lead_trial.sql'
+      - 'database/656_facebook_lead_census.sql'
+      - 'database/657_marketing_census_reconciliation.sql'
+      - 'database/658_facebook_legacy_reconciliation.sql'
+      - 'frontend/src/components/facebook/FacebookLegacyReview.jsx'
+      - 'backend/tests/facebookLeadCensus*.js'
+      - 'backend/tests/facebookCustomerCare*.js'
+      - 'backend/src/routes/facebookCustomerCare.js'
+      - 'database/659_crm_customer_care.sql'
+      - 'database/660_crm_customer_care_console.sql'
+      - 'database/661_crm_care_library.sql'
+      - 'database/662_crm_care_library_console.sql'
+      - 'database/663_crm_survey_availability.sql'
+      - 'backend/tests/surveyAvailability*.js'
+      - 'database/664_crm_survey_calendar_guard.sql'
+      - 'backend/tests/surveyCalendarGuard*.js'
+      - 'database/665_crm_survey_proposals.sql'
+      - 'backend/tests/surveyProposals*.js'
+      - 'database/666_crm_survey_confirmation_ingress.sql'
+      - 'backend/tests/surveyConfirmationIngress*.js'
+      - 'database/667_crm_survey_dispatch.sql'
+      - 'backend/tests/facebookSurveyDispatch*.js'
+      - 'database/670_marketing_measurement_period.sql'
+      - 'database/671_marketing_source_registry.sql'
+      - 'database/672_marketing_census_witness.sql'
+      - 'database/673_marketing_operations_dashboard.sql'
+      - 'database/674_marketing_source_export.sql'
+      - 'database/675_marketing_measurement_snapshot.sql'
+      - 'database/676_marketing_account_delivery.sql'
+      - 'database/677_marketing_scope_acceptance.sql'
+      - 'database/678_marketing_cohort_operations.sql'
+      - 'database/679_survey_proposal_console.sql'
+      - 'database/680_crm_care_connection.sql'
+      - 'database/681_crm_care_connection_choices.sql'
+      - 'database/682_crm_care_legacy_write_check.sql'
+      - 'backend/src/helpers/facebookLegacy*.js'
+      - 'backend/src/helpers/facebookLeadDeleteWhenNoPhone.js'
+      - 'backend/src/helpers/facebookInboundPhoneReconcile.js'
+      - 'backend/src/routes/crm/shared/helpersBundle.js'
+      - 'backend/src/routes/crm/routes/leadDuplicates.js'
+      - 'backend/scripts/rescan-fb-inbound-phones.js'
+      - 'backend/tests/facebookLegacyWriteScope.test.js'
+      - 'backend/tests/facebookLegacyPhoneRepair.test.js'
+      - 'backend/tests/facebookLegacyCreationScope*.js'
+      - 'backend/tests/facebookLegacyBatch*.js'
+      - 'backend/src/helpers/crmLegacyMergeAccess.js'
+      - 'backend/tests/crmLegacyMergeAccess*.js'
+      - 'backend/tests/careLegacyWrite.cases.js'
+      - 'backend/tests/facebookWebhookRecovery.test.js'
+      - 'backend/tests/careConnections*.js'
+      - 'frontend/src/components/facebook/CareConnections.jsx'
+      - 'frontend/src/components/facebook/careConnectionState.mjs'
+      - 'database/669_crm_survey_outcomes.sql'
+      - 'backend/tests/facebookSurveyOutcomes*.js'
+      - 'database/668_crm_survey_handoffs.sql'
+      - 'backend/tests/surveyHandoffs*.js'
+      - 'frontend/src/components/facebook/SurveyHandoffs.jsx'
+      - 'frontend/src/components/facebook/surveyHandoffState.mjs'
+      - 'frontend/src/pages/SurveyHandoffsPage.jsx'
+      - 'frontend/src/pages/EventsFeedPage.jsx'
+      - 'frontend/src/App.jsx'
+      - 'frontend/src/components/facebook/CustomerCareLibrary.jsx'
+      - 'frontend/src/components/facebook/careLibraryState.mjs'
+      - 'frontend/src/components/facebook/FacebookCustomerCareConsole.jsx'
+      - 'frontend/src/components/facebook/careConsoleState.mjs'
+      - '.github/workflows/vpt-marketing-automation.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  domain-and-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        node: [18, 22]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: node --test backend/tests/marketingAutomation.test.js backend/tests/marketingAutomation.leads.test.js backend/tests/marketingAutomation.reports.test.js backend/tests/marketingAutomation.spend.test.js backend/tests/marketingAutomation.spend.integration.test.js backend/tests/adAnalytics.correctness.test.js backend/tests/adAnalytics.ui-state.test.js backend/tests/adAnalytics.action-lifecycle.test.js backend/tests/crmLeadQuality.test.js backend/tests/crmLeadIdentity.test.js backend/tests/crmLeadIdentity.service.test.js backend/tests/crmLeadIdentity.review.test.js backend/tests/marketingAutomation.trial.test.js backend/tests/facebookLeadIntake.test.js backend/tests/facebookLeadIntake.integration.test.js backend/tests/facebookLeadIntake.admin.test.js backend/tests/facebookLeadCensus.test.js backend/tests/marketingAutomation.reconciliation.test.js backend/tests/marketingAutomation.period.test.js backend/tests/marketingAutomation.observedCpql.test.js backend/tests/marketingAutomation.sourceRegistry.test.js backend/tests/marketingAutomation.operations.test.js backend/tests/marketingAutomation.cohortOperations.test.js backend/tests/marketingAutomation.sourceExport.test.js backend/tests/marketingAutomation.measurementSnapshot.test.js backend/tests/marketingAutomation.accountDelivery.test.js backend/tests/marketingAutomation.scopeAcceptance.test.js backend/tests/facebookLeadIntake.legacy.test.js backend/tests/facebookCustomerCare.test.js backend/tests/facebookCustomerCare.console.test.js backend/tests/facebookCustomerCare.library.test.js backend/tests/facebookCustomerCare.libraryConsole.test.js backend/tests/surveyAvailability.test.js backend/tests/surveyProposals.test.js backend/tests/surveyProposalConsole.test.js backend/tests/facebookSurveyDispatch.test.js backend/tests/facebookSurveyOutcomes.test.js backend/tests/surveyHandoffs.test.js backend/tests/surveyHandoffs.ui-state.test.js
+      - run: node --test backend/tests/careConnections.test.js backend/tests/careConnections.console.test.js
+      - run: node --test backend/tests/facebookLegacyWriteScope.test.js backend/tests/facebookLegacyPhoneRepair.test.js backend/tests/facebookWebhookRecovery.test.js backend/tests/crmLegacyMergeAccess.test.js backend/tests/facebookLegacyCreationScope.test.js backend/tests/facebookLegacyBatch.test.js backend/tests/facebookLegacyBatch.ui.test.js
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: marketing_automation_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated_test_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install test driver without lifecycle scripts
+        run: npm install --prefix "$RUNNER_TEMP/vpt-pg" --ignore-scripts --no-audit --no-fund pg@8.19.0
+      - name: PostgreSQL rights, concurrency and crash recovery
+        env:
+          MARKETING_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/marketing_automation_test
+        run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/marketingAutomation.postgres.test.js
+  spend-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: marketing_spend_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated_test_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --prefix "$RUNNER_TEMP/vpt-pg" --ignore-scripts --no-audit --no-fund pg@8.19.0
+      - name: Spend publication, rights and parallel runs
+        env:
+          MARKETING_SPEND_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/marketing_spend_test
+        run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/marketingAutomation.spend.postgres.test.js
+  crm-quality-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: crm_quality_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated_test_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --prefix "$RUNNER_TEMP/vpt-pg" --ignore-scripts --no-audit --no-fund pg@8.19.0
+      - name: CRM qualification, current permissions and concurrent changes
+        env:
+          CRM_QUALITY_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/crm_quality_test
+        run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/crmLeadQuality.postgres.test.js
+  crm-identity-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: crm_identity_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated_test_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --prefix "$RUNNER_TEMP/vpt-pg" --ignore-scripts --no-audit --no-fund pg@8.19.0
+      - name: CRM identity graph, source changes and concurrent writes
+        env:
+          CRM_IDENTITY_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/crm_identity_test
+        run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/crmLeadIdentity.postgres.test.js
+  frontend-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+        working-directory: frontend
+      - name: Build entire frontend without deployment preparation scripts
+        run: npm exec -- vite build
+        working-directory: frontend
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+  facebook-lead-intake-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: fb_intake_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated_test_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --prefix "$RUNNER_TEMP/vpt-pg" --ignore-scripts --no-audit --no-fund pg@8.19.0
+      - name: Signed Lead Ads intake, CRM transaction, permissions and leases
+        env:
+          FB_INTAKE_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/fb_intake_test
+        run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/facebookLeadIntake.postgres.test.js
+
+  marketing-trial-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: marketing_trial_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated_test_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --prefix "$RUNNER_TEMP/vpt-pg" --ignore-scripts --no-audit --no-fund pg@8.19.0
+      - name: Whole account trial, source, qualification, identity and concurrent snapshot
+        env:
+          MARKETING_TRIAL_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/marketing_trial_test
+        run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/marketingAutomation.trial.postgres.test.js
+
+  facebook-lead-census-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: fb_census_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated_test_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --prefix "$RUNNER_TEMP/vpt-pg" --ignore-scripts --no-audit --no-fund pg@8.19.0 express@5.2.1
+      - name: Provider enumeration, crash recovery, intake and scope concurrency
+        env:
+          FB_CENSUS_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/fb_census_test
+        run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/facebookLeadCensus.postgres.test.js
+
+      - name: Source export HTTP body limit
+        run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/marketingAutomation.sourceExport.http.test.js

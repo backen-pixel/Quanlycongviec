@@ -1,0 +1,23 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
+const {createIntakeAdmin}=require('../src/modules/marketingAutomation/facebookLeadIntakeAdmin');
+const {createLeadIntake}=require('../src/modules/marketingAutomation/facebookLeadIntake');
+const actor=randomUUID(),company=randomUUID(),key=randomUUID();
+const request=()=>({user:{userId:actor},query:{companyId:company},body:{companyId:company,requestId:key,command:{receiptId:randomUUID()}}});
+function harness({primary=true,env={VPT_FB_LEAD_INTAKE_ADMIN:'1',VPT_FB_LEAD_RECOVERY:'1'},result={data:{companyId:company}},throws=false}={}){
+ const calls=[],res={statusCode:200,headers:{},set(k,v){this.headers[k]=v;return this},status(n){this.statusCode=n;return this},json(body){this.body=body;return this}};
+ const handle=createIntakeAdmin({isPrimary:()=>primary,env,db:{rpc:async(...a)=>{calls.push(a);if(throws)throw Error('private token');return result}}});return{calls,res,run:(req=request(),operation='console')=>handle(req,res,operation)};
+}
+for(const opts of [{env:{}},{primary:false},{env:{VPT_FB_LEAD_INTAKE_ADMIN:'0'} }])test('admin disabled or nonprimary never calls database '+JSON.stringify(opts),async()=>{const h=harness(opts);await h.run();assert.equal(h.res.statusCode,503);assert.equal(h.calls.length,0);});
+test('recovery separately default off while console remains readable',async()=>{const h=harness({env:{VPT_FB_LEAD_INTAKE_ADMIN:'1'}});await h.run();assert.equal(h.res.body.recoveryEnabled,false);await h.run(request(),'recover');assert.equal(h.res.statusCode,503);assert.equal(h.calls.length,1);});
+for(const change of [r=>delete r.user,r=>r.user.id=randomUUID(),r=>r.query.companyId='',r=>r.query.companyId=['a','b']])test('invalid actor or company never reaches RPC '+change.toString(),async()=>{const h=harness(),r=request();change(r);await h.run(r);assert.equal(h.res.statusCode,403);assert.equal(h.calls.length,0);});
+test('console takes actor only from session and cursor scoped by DB',async()=>{const h=harness(),r=request(),cursor=randomUUID();r.query={companyId:company,cursor,actor:randomUUID()};await h.run(r);assert.deepEqual(h.calls[0],['marketing_fb_lead_console',{p_actor:actor,p_company:company,p_after:cursor}]);assert.equal(h.res.headers['Cache-Control'],'no-store');assert.equal(h.res.body.recoveryEnabled,true);});
+test('invalid cursor rejected before database',async()=>{const h=harness(),r=request();r.query.cursor='bad';await h.run(r);assert.equal(h.res.statusCode,400);assert.equal(h.calls.length,0);});
+test('recover uses authenticated actor and exact request body',async()=>{const h=harness(),r=request();await h.run(r,'recover');assert.deepEqual(h.calls[0],['marketing_fb_lead_recover',{p_actor:actor,p_company:company,p_request:key,p_command:r.body.command}]);});
+for(const change of [r=>r.body.actor=randomUUID(),r=>r.body.requestId='bad',r=>r.body.companyId=null])test('body scope/key tampering refused '+change.toString(),async()=>{const h=harness(),r=request();change(r);await h.run(r,'recover');assert.ok([400,403].includes(h.res.statusCode));assert.equal(h.calls.length,0);});
+for(const [code,status] of [['42501',403],['40001',409],['23505',409],['22023',400],['22P02',400],['XX000',503]])test('sanitized database error '+code,async()=>{const h=harness({result:{error:{code,message:'private token'}}});await h.run();assert.equal(h.res.statusCode,status);assert.equal(JSON.stringify(h.res.body).includes('private'),false);});
+test('network failure and null database result are unavailable, never success',async()=>{for(const opts of [{throws:true},{result:{data:null}}]){const h=harness(opts);await h.run();assert.equal(h.res.statusCode,503);}});
+test('worker paused keeps ownership and does not claim',async()=>{let calls=0;const w=createLeadIntake({pages:new Set(['123']),isPrimary:()=>true,isPaused:()=>true,db:{rpc:async()=>{calls++;return{data:[]}}}});await w.drain();assert.equal(calls,0);assert.equal(w.pages.has('123'),true);});
+for(const at of ['context','provider'])test('pause during '+at+' never commits or releases receipt into legacy',async()=>{
+ let paused=false;const calls=[];const w=createLeadIntake({pages:new Set(['123']),isPrimary:()=>true,isPaused:()=>paused,readSource:async()=>{if(at==='provider')paused=true;return{proof:{},contact:{}}},db:{rpc:async(name)=>{calls.push(name);if(name==='marketing_fb_lead_context'&&at==='context')paused=true;return{data:name==='marketing_fb_lead_claim'?[{id:randomUUID()}]:{contextVersion:'v'}}}}});await w.drain();assert.equal(calls.includes('crm_accept_facebook_lead'),false);assert.equal(calls.includes('marketing_fb_lead_retry'),false);assert.equal(w.pages.has('123'),true);
+});

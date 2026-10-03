@@ -1,0 +1,27 @@
+# Facebook source enumeration and receipt recovery
+
+Base PR22 `775d5224b89d7360b07215a9245d3fa7517ecc97`, 2026-10-02. Risk HIGH: provider credentials, source identity and company routing. This increment advances source reconciliation by discovering missed notifications and recovering them through verified intake. It does not certify an exhaustive paid cohort, actualCPQL, live readiness or the full goal.
+
+## Behavior
+
+An authenticated operator starts a scan for an existing measurement period with a requestUUID. PostgreSQL checks current authority, records every company Page and the trial revision, and rejects inactive/missing-token/not-enabled Pages. The recorded upper acquisition bound is the earlier of trial end and scan start; later arrivals belong to a subsequent scan. Configuration changes invalidate the recorded scope. Another request cannot start a concurrent active scan of the same company/trial; an uncertain HTTP reply is retried with the same requestUUID.
+
+The worker enumerates the Page's form edge and each form's lead edge. Known forms from bindings/receipts are retained even when the Page edge omits them. It validates each form's Page through the provider before reading leads; archived/deleted status is never silently filtered. Pagination uses an opaque cursor rebuilt on a fixed Graph host/path; provider nextURLs are validated but never followed, credentials stay in headers. Errors, loops, oversized chunks and limits stop the scan with an explicit failed state.
+
+Migration656 stores run, task, cursor, form metadata and acquisition IDs privately. A60second lease fences every chunk; expiration after Page/receipt lock waits rolls back both receipt evidence and cursor. Successful chunks atomically enqueue any missed IDs through652's durable receipt function. The existing intake then verifies paid source/contact/routing and writes CRM. Retrying a chunk, webhook or worker does not create another receipt/customer. A worker can resume an expired lease at its persisted cursor. A failed scan is retained and retried through a new scan request; the status endpoint shows the latest run, never falls back to an older success.
+
+Endpoints under authenticated CRM: GET/POST `/marketing-trials/:trialId/reconciliation?company_id=...`. POST accepts only `requestId`; no client scope, cursor, token or completeness flag. Start/status errors are sanitized and no-store. The worker is attached to the existing intake timer, separately default-off with `VPT_FB_LEAD_CENSUS=1`; selected intakePages, primaryDB, and intake pause still gate it. No flag or credential is enabled by this change.
+
+## Meaning and remaining work
+
+`SCANNED` means the enumerated API edges reached their end within the recorded scope. It is **API_ENUMERATION_ONLY**, with `cpqlReady=false`. Permissions can hide forms, retention can remove old rows, and there may be Pages not registered locally or other lead entrypoints. SDK method availability does not establish those operational facts. Status preserves undiscovered known forms, expired-form counts, pending tasks and received IDs awaiting intake.
+
+Next: establish complete Page/account/entrypoint coverage against authoritative provider inventory, retention and operational evidence; reconcile all received/proven/missing/legacy/orphan IDs with durable dispositions; align spend and qualified unique cohort to one measured interval; then verify the positive1m/4qualified=250k report and all incomplete/error cases. The dashboard's observed counts still do not claim that result. AI care/calendar and multi-channel rollout remain part of the active full goal.
+
+## Verification and rollback
+
+29 local adapter/worker/HTTP cases PASS. PostgreSQL656 applies twice with649–655 and exercises replay, parallel workers, missed-notification recovery through actual CRM intake, restart, Page ownership/configuration changes and lease expiration after blocked reads/writes. Runtime1625f66 passed independent review; census PostgreSQL11PASS, Node18/22 each464PASS, all10 automation jobs/full build and report/Messenger regressions SUCCESS. See [exact-version evidence and limits](FACEBOOK_SOURCE_RECONCILIATION_REVIEW.md). No new UI behavior in this increment; prior dashboard tests remain scoped to af14635.
+
+Before real activation: verify actual schema, migration numbering, backup/restore, App/Pages/lead retrieval permissions, throughput and operational fixtures, then include this feature in the Founder release package. Disable the census flag to stop new provider reads/publication; keep intake receiving already-authorized notifications and preserve all run/receipt/source evidence. Do not delete data or restore unsafe permissions.
+
+Primary references inspected: Meta's official [Page SDK](https://raw.githubusercontent.com/facebook/facebook-python-business-sdk/main/facebook_business/adobjects/page.py) defines the leadgen_forms edge; [LeadgenForm SDK](https://raw.githubusercontent.com/facebook/facebook-python-business-sdk/main/facebook_business/adobjects/leadgenform.py) defines leads, page_id, status and expired_leads_count; [Lead SDK](https://raw.githubusercontent.com/facebook/facebook-python-business-sdk/main/facebook_business/adobjects/lead.py) defines ID, form and acquisition time. Meta developer guide/reference pages returned429/unavailable during this inspection. Retention and exhaustive access were not inferred from third-party search results.

@@ -1,3 +1,642 @@
+## 04/10/2026 — Bản sửa tạo khách hàng loạt đang nghiệm thu
+
+Đã giới hạn batch theo danh sách 1–500 contact và một công ty, kiểm lại quyền/người nhận/đầu vào trước ghi, bỏ broadcast thông tin khách, giữ liên kết hội thoại và bổ sung đối soát trên giao diện khi một phần đã xử lý. Local54 ca mới (43 backend +11 UI) và183 regression =237 PASS. Đã thêm9 ca PostgreSQL cô lập; CI, browser và review cuối chưa có kết luận cho delta này.
+
+[Hợp đồng, bằng chứng và giới hạn](vpt-marketing-automation/LEGACY_BATCH_CREATION.md). Source-backfill còn OPEN; chuỗi HTTP chưa nguyên tử, còn đối soát dữ liệu ghi một phần và chuyển luồng. AI/cấu hình/lịch/người nhận, UAT toàn tuyến và Founder release còn chờ. Full goal ACTIVE; chưa đổi dữ liệu thật, phát hành hoặc chứng minh mục tiêu250k.
+
+---
+
+## 04/10/2026 — Rà batch: cần sửa trước nghiệm thu toàn tuyến
+
+Founder hỏi bước tiếp. Mục tiêu giữ nguyên: Facebook → CRM → khảo sát → dashboard, tạm đo 250.000 đồng/khách trả phí hợp lệ. Không đổi hạn mức hoặc mở kênh từ lần kiểm trạng thái này.
+
+Reviewer độc lập kết luận **HOLD cho hai route batch tại `5356e185871caad7e0473842580ada7f91e5506e`**: thiếu giới hạn công ty/quyền hiện hành, có thể ghi đè nguồn và liên kết hội thoại, ghi số điện thoại trước kiểm phạm vi, broadcast thông tin khách tới mọi kết nối. Giao diện xác nhận danh sách đang xem nhưng không gửi danh sách đó; lỗi đọc/ghi và kết quả liên kết hồ sơ cũ có thể bị báo sai. Đây là kết quả rà mã, chưa có bản sửa hoặc kiểm thử mới. [Finding và tiêu chí khép](vpt-marketing-automation/LEGACY_BATCH_SCOPE_REVIEW.md).
+
+Thứ tự tiếp: sửa hai route và giao diện theo phạm vi đã xác nhận → kiểm thử lỗi/quyền và review độc lập → khép chuyển luồng, bảo toàn lịch sử và cấu hình AI/lịch/người nhận → nghiệm thu trọn tuyến và trình Founder gói phát hành. PASS creator trước đó vẫn chỉ áp dụng phạm vi đã kiểm. Full goal ACTIVE; chưa phát hành, đổi dữ liệu thật hoặc có kết quả 250.000 đồng thực tế.
+
+---
+
+## Hiện hành 04/10/2026 — Phạm vi tạo khách Facebook đã qua review và PostgreSQL
+
+Runtime `925cae0687623dc4654b81f461eb5d88dedece3b` khóa công ty Page hiện hành, Customer/Lead, quyền người nhận và actor; nguồn không bị đổi công ty; cấu hình pipeline lỗi không được tự đổi tuyến; giữ liên kết hội thoại. Local66 mới +117 regression =183 PASS. PostgreSQL281/0/0 gồm10 ca mới; Node22 843+26+183, cả10 job/build/report/Messenger SUCCESS. Reviewer độc lập đối chiếu published blobs và CI, kết luận PASS đúng phạm vi creator. [Bằng chứng, giới hạn và hoàn tác](vpt-marketing-automation/LEGACY_CREATOR_SCOPE.md).
+
+Bước tiếp: source-backfill/caller cũ và dừng/chờ khi chuyển luồng, đối soát hồ sơ ghi một phần; CRM merge/bảo toàn lịch sử và lựa chọn Founder về liên kết/gộp vẫn OPEN. Sau đó khép AI/lịch/người nhận/phạm vi đo, UAT toàn tuyến và Founder release. Full goal ACTIVE, chưa DB/model/provider/chi quảng cáo hoặc phát hành; chưa chứng minh250k thực tế. Các mục dưới là lịch sử.
+
+---
+
+## Hiện hành 04/10/2026 — Đang khép phạm vi tạo khách Facebook
+
+Bản làm việc trên a102450 sửa creator tự động/thủ công: công ty Page hiện hành, Customer/Lead cùng phạm vi, người nhận còn quyền, nguồn không bị đổi công ty, cặp pipeline/stage và giữ liên kết hội thoại. Local 66 ca mới + 117 regression = 183 PASS. Đã bổ sung 10 ca PostgreSQL; CI và review độc lập đang chờ. [Hợp đồng, kiểm thử, giới hạn và hoàn tác](vpt-marketing-automation/LEGACY_CREATOR_SCOPE.md).
+
+Chuỗi HTTP cũ chưa là một giao dịch nguyên tử; CRM merge/bảo toàn lịch sử, cutover, cấu hình AI/lịch/người nhận, nghiệm thu và Founder release vẫn OPEN. Full goal ACTIVE. Chưa dữ liệu thật, quyền AI, chi quảng cáo hoặc phát hành. Các mục dưới là lịch sử.
+
+---
+
+## 04/10/2026 — Sửa caller quét điện thoại và các finding độc lập
+
+Reviewer độc lập khép **PASS phạm vi phone tại5a3acc6** sau tự đọc CI cuối, đối chiếu GitHub/runtime blob và test cohort. Khác CRLF giữa working tree và blob đã chuẩn hóa không đổi nội dung. Các finding CRM merge/company/cutover giữ OPEN.
+
+Khép lượt kiểm tại5a3acc6/tree06d78fa: automation37139914912 cả10job SUCCESS, intake111252015520264/0/0 gồm ca211 và6phonePASS; census88+HTTP1, Node22 843+26+67, Node18/build/report37139914917/Messenger37139914914SUCCESS. CImerge dad7eff66 có đúng tree và parents base+5a3acc6. Review độc lập xác minh lỗi fixture unlinkedProofs do bằng chứng now−1giờ vừa lọt kỳ đóng theo ngàyVN, đồng ý đo delta và giữ quyền/ẩn dữ liệu. [Bằng chứng đúng phiên bản](vpt-marketing-automation/LEGACY_PHONE_REPAIR.md). Các đoạn sau lưu tiến trình; cutover/CRM merge/creator company còn OPEN.
+
+Published runtime119491e/tree00a28ab; review mã PASS và local77/0/0. CI37139607314 cả9job còn lại/report/Messenger PASS, intake111251124860 fail ca211 cũ (unlinkedProofs toàn kỳ3 vs test1) nhưng6ca PG mới257–262PASS. CImerge bd4dee9f có tree đúng runtime/parents. Sửa test cohort lấy baseline rồi kiểm tăng chính xác1 sau đổi công ty Lead; giữ booked/paid2→1 và không lộ title. Runtime không đổi; đang kiểm lại CI và review riêng test. Không coi lần CI fail là nghiệm thu hoàn tất.
+
+Sửa `facebookInboundPhoneReconcile.js`, `facebookLegacyContactWrites.js`, `routes/facebook.js`; thêm `facebookLegacyPhoneRepair.test.js` và6 ca actual helper PostgreSQL trong `careLegacyWrite.cases.js`; workflow đưa các file/test mới vào regression. Không thêm migration.
+
+Đã giới hạn company actor trước tenant-wide membership, đọc Page owner hiện hành, chặn admin HST thiếu tenant; kiểm all IDs trước quality apply, intersection page_id; checked reads/writes và final round chỉ nhận ID của nhóm chọn. Review phát hiện MID khóa chưa lưu và history cap vẫn có thể dẫn tới cleanup: sửa kiểm row đúng contact, trạng thái partial, số tin đã lưu trước lỗi và cửa sổ501/801 chặn kết luận không có số.34 ca mới local PASS. PostgreSQL và review cuối chưa chốt tại thời điểm ghi; [hợp đồng/hoàn tác](vpt-marketing-automation/LEGACY_PHONE_REPAIR.md).
+
+Giữ finding CRM merge quyền/FK và manual/automatic creator company OPEN, không coi gói này hoàn tất cutover. Chưa DB/Meta/model/budget thật, merge hoặc release; full goal ACTIVE. Phiên trước chủ yếu kiểm trạng thái, nay có thay đổi mã và ca hồi quy trực tiếp khép các đường lỗi đã xác minh.
+
+---
+
+## 03/10/2026 — Trả lời bước tiếp và ghi nhận audit mở rộng
+
+Đọc CURRENT/DECISIONS, đối chiếu HEAD `a972c030e5065d3d8d8135d4ee22e59a87c9d160` và 3 file local đang sửa: `backend/src/helpers/facebookInboundPhoneReconcile.js`, `backend/src/helpers/facebookLegacyContactWrites.js`, `backend/src/routes/facebook.js`. Không thay đổi mã thêm trong lần kiểm trạng thái này.
+
+Reviewer độc lập `/root/architecture_v11_review` trả CHANGES_REQUESTED cho cutover: vòng batch/final-round thiếu preflight/phạm vi; phone-quality/date-scan và CRM merge/cleanup thiếu quyền actor; đọc lỗi có thể dẫn tới cleanup; lỗi chuyển FK bị bỏ qua trước xóa nguồn. Finding reconcile đang sửa chưa có review kết luận. Rà tiếp route reconcile và pipeline cho thấy Graph lỗi vẫn có thể đi tiếp sang trích/đối soát; cần ca hồi quy và sửa trước nghiệm thu. Có đường HTTP/timer trong mã không đồng nghĩa đã bật trong vận hành.
+
+Chạy lại `facebookLegacyWriteScope.test.js`, `facebookWebhookRecovery.test.js`, `facebookLeadIntake.integration.test.js`: **43 PASS/0 FAIL/0 SKIP**; cú pháp cả 3 file local và diff check bỏ khác biệt CRLF PASS. Đây là regression hiện có, không chứng nhận delta đối soát điện thoại, PostgreSQL mới, cutover hoặc UAT. CURRENT cập nhật giới hạn và thứ tự tiếp tục. Không tác động DB/Meta thật, gọi model, thay ngân sách, merge hoặc phát hành; full goal ACTIVE.
+
+---
+
+## 03/10/2026 — Kiểm đường ghi cũ; sửa target phát hiện muộn và đọc lỗi
+
+Đã kiểm runtime9cdfe7d/treeaf25883: intake PostgreSQL258/0/0 gồm14ca mới244–257, census88+HTTP1, Node22 843+26+33 PASS, cả10job/build/report/Messenger SUCCESS. CImergea620f9ce có tree bằng runtime, parentsbasee16c885+9cdfe7d. [Bằng chứng đúng phiên bản](vpt-marketing-automation/LEGACY_WRITE_PREFLIGHT_REVIEW.md). Reviewer độc lập đối chiếu4 blob và log CI, PASS phạm vi preflight/SQL682; cutover toàn bộ vẫn HOLD. Các đoạn dưới lưu tiến trình trước kiểm thử.
+
+Tiếp tục: bổ sung14 ca PostgreSQL `careLegacyWrite.cases.js` và runner, gồm ACL, inactive/direct/inverse/shared/source-only/message-only/Customer receipt/comment, request không hợp lệ, graph cycle/limit, enrollment chờ khóa, trigger/isolation, actual helpers và không tạo permit. SQL682 thêm Lead→Page từ comment theo schema42. Chưa chạy CI tại thời điểm ghi mục này; review delta đã giao độc lập. Không tác động DB thật.
+
+Bản làm việc trên HEADa4da197: thêm SQL682 và helpers facebookLegacyWriteScope/facebookLegacyContactWrites; cập nhật facebook.js, cleanup helper, CRM merge/duplicate, cron server và script rescan để kiểm trước mutation. Reviewer yêu cầu P1 target tìm thấy sau phone/PSID/refresh và P2 lịch sử message/Lead Ads Customer; đã sửa mã, review lại đang chờ. Cleanup không còn dùng count lỗi/null như0. Không khẳng định giao dịch nhiều HTTP nguyên tử hoặc cutover hoàn tất.
+
+Thêm26 ca facebookLegacyWriteScope actual helper/function/handler; cập nhật dependency fixture facebookWebhookRecovery, giữ assertion ACK/retry. Cùng intake integration43PASS/0FAIL/0SKIP local; reviewer độc lập tự chạy43/43 PASS và khép hai finding về mã, không còn finding chặn trong delta. Workflow thêm test/trigger. Syntax10 file JS và diff check có tính CRLF PASS. SQL682 chưa chạy PostgreSQL/CI; bản sửa chưa commit, cutover vẫn HOLD. [Hồ sơ](vpt-marketing-automation/LEGACY_WRITE_PREFLIGHT.md). CURRENT cập nhật đúng trạng thái; chưa DB thật/model/provider/budget/release, full goal ACTIVE.
+
+---
+
+## 03/10/2026 — Đã kiểm giao diện đối chiếu và yêu cầu chưa rõ kết quả
+
+Runtime8f42595/tree642d6628: PostgreSQL244/0/0 gồm11ca mới, census88+HTTP1, Node22 843+26 và10job/build/report/Messenger SUCCESS. CImerge01ad39a2 được xác minh tree bằng runtime. Reviewer độc lập PASS SQL681/API/UI sau khép hai P2; browser component thật/API giả xác nhận LINK/CLOSE qua reload và phạm vi người/hội thoại. [Bằng chứng đúng phiên bản](vpt-marketing-automation/CARE_CONNECTION_CONSOLE_REVIEW.md). Chưa UAT/đường ghi cũ/DB thật/phát hành; full goal ACTIVE.
+
+---
+
+## 03/10/2026 — Tiếp tục giao diện đối chiếu và yêu cầu chưa rõ kết quả
+
+Thay đổi trên HEAD1dce6d2: SQL681, careConnections service/routes, CareConnections component/state và tích hợp console; thêm15 unit/API/state ca (26 cùng11 cũ),11 PG ca chưa chạy, cập nhật runner/workflow. Hai P2 review tenantNULL và mapping chưa đầy đủ đã sửa bằng cùng policy tenant và `mappingComplete`; version document SQL680 giữ nguyên. Local26 PASS, kiểm syntax/diff; chưa PostgreSQL681/browser/build hoặc review cuối, chưa commit/DB thật/phát hành.
+
+[CARE_CONNECTION_CONSOLE.md](vpt-marketing-automation/CARE_CONNECTION_CONSOLE.md) lưu hợp đồng, phần còn chờ, hoàn tác và bản đồ đường ghi cũ từ review độc lập. Tiếp theo kiểm PostgreSQL/browser, review đúng phiên bản và khép ứng dụng cũ trước enrollment. Full goal ACTIVE,250k là mục tiêu chưa phải kết quả thực tế.
+
+---
+
+## Hiện hành 03/10/2026 — Đã kiểm điểm nối khách và hành trình khảo sát
+
+Runtime b4e2def nối Lead mới từ intake với hội thoại bằng xác nhận có bằng chứng; bảo vệ đường cũ và liên kết phục hồi. Ca giả đi qua actual API, xác nhận lịch, bàn giao và cohort; tổng chi giữ cả tài khoản không tạo khách. Sửa lỗi timestamp SQL→API khiến giao diện không tạo được đề xuất; yêu cầu đã lưu giữ nguyên khi retry.
+
+Review độc lập PASS phạm vi SQL/API và ca giả. Local42; PostgreSQL intake233/0/0 (11ca mới), census88/0/0+HTTP1/0/0, Node22 843+11 PASS; cả10job/build/report/Messenger SUCCESS. [Bằng chứng](vpt-marketing-automation/CARE_CONNECTION_REVIEW.md), [hợp đồng và phần còn thiếu](vpt-marketing-automation/CARE_CONNECTION_ACCEPTANCE.md).
+
+Full goal ACTIVE. Tiếp theo hoàn thiện giao diện liên kết, chuyển đường gọi ứng dụng cũ và ngoại lệ/khôi phục; cấu hình AI/lịch/người nhận, các điểm nhận/kênh khác, đủ phạm vi đo và UAT/Founder release vẫn còn. Chưa chứng minh đạt250k bằng dữ liệu thật hoặc phát hành. Các mục dưới là lịch sử.
+
+---
+
+## 03/10/2026 — Đang khép điểm nối Messenger với Lead
+
+Rà toàn tuyến phát hiện Lead Ads và hội thoại Messenger chưa có điểm nối danh tính được nghiệm thu; các ca khảo sát trước tạo sẵn liên kết. SQL680/API là bản làm việc chưa commit trên HEAD14e11d5, tắt mặc định, chưa áp DB. Local11 ca adapter PASS; đã sửa khóa quyền người phát hành và khách thiếu số điện thoại theo review. PostgreSQL, giao diện và kiểm xuyên tuyến chưa chạy cho điểm nối mới.
+
+Review runtime HOLD: còn thứ tự khóa của RPC cũ SQL639 và liên kết phục hồi qua facebook_contact_id. Khép hai điểm này, kiểm PostgreSQL rồi kiểm một khách mới từ intake qua lịch khảo sát đến dashboard, giữ đúng Lead ID và đủ chi tiêu. [Hiện trạng, tiêu chí và bước tiếp](vpt-marketing-automation/CARE_CONNECTION_ACCEPTANCE.md). Full goal ACTIVE; chưa dữ liệu thật đạt250k hoặc phát hành. Bằng chứng phần đề xuất lịch bên dưới thuộc phiên bản trước.
+
+---
+
+## Hiện hành 03/10/2026 — Đề xuất lịch đã kiểm chứng
+
+Bản46c680b hoàn thiện màn hình chọn giờ trống, tạo đề xuất và đối chiếu yêu cầu cũ qua tải lại; lịch sử tách đề xuất/gửi/đặt/thông báo. Tin chưa rõ kết quả chặn tạo mới; quyền và liên kết khách được kiểm lại, STOP không tự mở chăm sóc.
+
+Review độc lập PASS; local30, intake PostgreSQL222/0/0, census88/0/0 +HTTP1/0/0, Node22 842/0/0, cả10job/build/report/Messenger SUCCESS. Browser StrictMode/API giả đã kiểm mất phản hồi, reload, STOP, phạm vi, TTL và phản hồi muộn. [Bằng chứng](vpt-marketing-automation/SURVEY_PROPOSAL_CONSOLE_REVIEW.md), [hợp đồng/hoàn tác](vpt-marketing-automation/SURVEY_PROPOSAL_CONSOLE.md).
+
+Full goal ACTIVE. Tiếp theo nghiệm thu xuyên tuyến Facebook→CRM→khảo sát→dashboard, hoàn thiện ngoại lệ gửi/lịch và chuyển đường lịch cũ; cấu hình AI/lịch/người nhận, điểm nhận khác, khôi phục và Founder release còn chờ. Chưa dữ liệu thật đạt250k hoặc phát hành. Các mục dưới là lịch sử.
+
+---
+
+## 03/10/2026 — Đề xuất lịch qua kiểm dữ liệu; sửa bộ quan sát kiểm thử
+
+Runtime963e862 đạt intake PostgreSQL222/0/0 (8ca mới), Node22 842/0/0 và build. Census regression cũ thất bại vì observer trong transaction giữ snapshot pg_stat_activity; thêm pg_stat_clear_snapshot trước mỗi poll và thời hạn5 giây, giữ nguyên điều kiện Lock cùng assertion không ghi. Không đổi runtime hoặc quyền. Browser StrictMode và mất phản hồi/reload/retry đã xác nhận hoạt động; đang hoàn tất CI/review. Full goal ACTIVE, chưa UAT/phát hành.
+
+---
+
+## 03/10/2026 — Màn hình đề xuất lịch đang nghiệm thu
+
+SQL679/API/UI bổ sung tìm giờ trống, tạo đề xuất, lưu yêu cầu để đối chiếu khi mất phản hồi và lịch sử tách gửi/đặt/thông báo kết quả. Chặn đề xuất mới nếu còn tin đang gửi hoặc chưa rõ kết quả; replay phải giữ nguyên yêu cầu và kiểm quyền/phạm vi hiện hành. Giờ lịch sử không thay thế lịch hiện hành ở hồ sơ bàn giao.
+
+Local30 ca liên quan PASS (14 mới). Đã sửa P2 StrictMode từ review và tách fixture QUEUED khỏi lượt drain của ca booking. PostgreSQL/browser/review cuối đang chờ. [Hợp đồng và hoàn tác](vpt-marketing-automation/SURVEY_PROPOSAL_CONSOLE.md). Full goal ACTIVE; còn cấu hình AI/lịch/người nhận, điểm nhận và kênh khác, UAT và Founder release. Chưa phát hành hoặc dữ liệu thật đạt250k.
+
+---
+
+## Hiện hành 03/10/2026 — Xác nhận phạm vi CPQL đã kiểm chứng
+
+Runtime960086c nối bằng chứng đích quảng cáo lịch sử, đúng tệp nguồn, toàn bộ chi tiêu và khách hợp lệ vào kết quả có phạm vi. Phép thử 1 triệu/4 khách =250.000đ giữ cả tài khoản không tạo khách. Có thu hồi, retry lịch sử, kiểm quyền sau chờ khóa và rollback khi nguồn đổi; không mở quyền chi.
+
+Review độc lập PASS. Local24 ca mới/63 ca liên quan; PostgreSQL88/0/0 (10 ca mới), HTTP1/0/0, Node22 808/0/0, cả10job/build/report/Messenger SUCCESS. Browser dữ liệu giả kiểm mất phản hồi→reload→đúng/sai tệp→retry, stale/current, đổi người và thu hồi trong màn hình report lỗi. [Bằng chứng đúng phiên bản](vpt-marketing-automation/SCOPE_ACCEPTANCE_REVIEW.md), [hợp đồng/hoàn tác](vpt-marketing-automation/SCOPE_ACCEPTANCE.md).
+
+Full goal ACTIVE. Còn các điểm nhận chưa nối, quy thuộc khảo sát/chờ xử lý theo nhóm quảng cáo, thiết lập AI/lịch/ngoại lệ và UAT/Founder release. Chưa dữ liệu thật đạt250k, chưa chứng minh toàn bộ Meta/đa kênh, chưa phát hành. Các mục dưới giữ lịch sử.
+
+---
+
+## 03/10/2026 — Xác nhận phạm vi CPQL đang kiểm chứng
+
+SQL677/API/UI nối bằng chứng đích quảng cáo lịch sử, tệp nguồn đã đối soát và toàn bộ chi tiêu với khách hợp lệ; kết quả 250k chỉ áp dụng phạm vi đã xác nhận. Có thu hồi, retry bất biến, kiểm quyền sau chờ khóa và rollback khi nguồn đổi. Không mở quyền chi hoặc kết luận toàn bộ kênh.
+
+Local24 ca mới /63 ca liên quan PASS. Hai P2 từ review (metadata chiến dịch và quyền sau chờ khóa) đã sửa; đang kiểm PostgreSQL/build/browser và review cuối. [Hợp đồng/hoàn tác](vpt-marketing-automation/SCOPE_ACCEPTANCE.md). Full goal ACTIVE; chưa dữ liệu thật/UAT/phát hành. Các mục dưới giữ lịch sử.
+
+---
+
+## Hiện hành 03/10/2026 — Đối soát quảng cáo đã phân phối được kiểm chứng
+
+Runtime02f164b nối collector ad/day và account daily/all_days trước/sau vào cùng giao dịch lưu chi tiêu. Dashboard giữ quảng cáo chi bằng0 có tín hiệu và mã ad có trong nguồn khách nhưng chưa thấy trong delivery. Kỳ collector mới kết thúc hết hôm qua theo giờ Việt Nam; lỗi phân trang hoặc số liệu thay đổi không được công bố thành công.
+
+Review độc lập PASS; local24ca mới/103ca liên quan, PostgreSQL78/0/0 (7ca mới), HTTP1/0/0, Node22 784/0/0 và cả10job/build/report/Messenger SUCCESS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/ACCOUNT_DELIVERY_REVIEW.md), [hợp đồng và hoàn tác](vpt-marketing-automation/ACCOUNT_DELIVERY.md).
+
+Full goal ACTIVE. Bước tiếp: dùng delivery witness + registry + source exports để chấp nhận bằng chứng đích lịch sử/nguồn xuất và trả CPQL có phạm vi ngay trong cùng luồng; không thêm một lớp snapshot. Còn các điểm nhận khác, AI/lịch/ngoại lệ và UAT/Founder release. Chưa full CPQL/đạt250k, chưa tác động Meta/DB thật hoặc phát hành. Các mục dưới giữ lịch sử.
+
+---
+## 03/10/2026 — Đối soát phân phối đã qua PostgreSQL; sửa theo review
+
+Candidate97a9a2f đạt cả10job/build và report/Messenger. Review độc lập phát hiện paging sai kiểu có thể bị hiểu nhầm là hết trang; đã từ chối và bổ sung6regression. Worker delivery cũng chốt tới hết hôm qua theo giờ Việt Nam, giữ đúng phạm vi run thay vì bị số hôm nay biến động làm hỏng kỳ đã khép. Thêm PG concurrent spend/witness snapshot.
+
+Local24ca mới,103ca liên quan PASS. Đang kiểm CI/review bản sửa cuối; [hợp đồng và đường tiếp tới acceptance/CPQL](vpt-marketing-automation/ACCOUNT_DELIVERY.md). Full goal ACTIVE, chưa phát hành/Meta thật/đạt250k.
+
+---
+## 03/10/2026 — Đối soát quảng cáo đã phân phối đang kiểm chứng
+
+SQL676 nối collector ad/day và account daily/all_days trước/sau vào cùng lần lưu chi tiêu. Dashboard giữ cả quảng cáo chi bằng0 có tín hiệu và mã ad từ hồ sơ khách chưa thấy trong delivery; không dùng creative hiện tại để xác nhận đích lịch sử. Quyền hiện hành, retry bất biến và rollback nguyên giao dịch vẫn bắt buộc.
+
+Local17ca mới và79ca liên quan PASS. PostgreSQL/build/review độc lập đang chạy. [Hợp đồng, giới hạn và bước đi thẳng tới chấp nhận phạm vi/CPQL](vpt-marketing-automation/ACCOUNT_DELIVERY.md). Full goal ACTIVE. Chưa full CPQL/đạt250k, không tác động Meta/DB thật hoặc phát hành. Các mục dưới giữ lịch sử.
+
+---
+## Hiện hành03/10/2026 — Bản lưu kết quả đo đã kiểm chứng
+
+Runtimead841ff SQL675/API/UI giữ số tiền/khách, cutoff/asOf, dependencies và nghĩa vụ còn thiếu theo account/Page/form/entrypoint. Lịch sử bất biến, retry không tạo bản mới, dữ liệu đổi được báo riêng; bỏ lease/retry và receipt đã chứng minh ngoài kỳ khỏi fingerprint liên quan. Đây là SAVED_OBSERVED_INCOMPLETE, chưa full measurement close/CPQL hoặc đạt250k.
+
+Review độc lậpPASS. PostgreSQL71/0/0 (11ca mới), HTTP1/0/0, Node22 757/0/0, cả10job/build/report/MessengerSUCCESS. Follow-up test-only bổ sung3ca provenance, local15PASS; runtime giữ nguyên. Browser actualcomponent/APIgiả đã kiểm mất phản hồi, reload, số hiện tại/lịch sử, retry, lỗi nguồn và đổi người khi GETchậm. [Bằng chứng đúng phiên bản](vpt-marketing-automation/MEASUREMENT_SNAPSHOT_REVIEW.md), [hợp đồng/hoàn tác](vpt-marketing-automation/MEASUREMENT_SNAPSHOT.md).
+
+Full goalACTIVE. Còn hợp đồng chấp nhận bằng chứng provenance/phạm vi thực, đủ điểm nhận, đo hoàn chỉnh, ngoại lệ vận hành/AI/lịch và UAT/Founderrelease. Không có tác động thật; mục dưới giữ lịch sử.
+
+---
+
+## 2026-10-03 — Bản lưu kết quả đo đang kiểm chứng
+
+SQL675/API/UI giữ report tính ở server, thời điểm/cutoff, dependencies và danh sách thiếu theo nguồn. Bản lịch sử không tự đổi; retry trả đúng receipt cũ; source fingerprint bỏ lease/retry và receipt đã chứng minh ngoài kỳ. Chưa full measurement close/provenance hoặc CPQL đủ nguồn.
+
+Local12PASS; review đã sửa UUID, smoke độc lậpPASS. Đang chờ PostgreSQL/build/browser và review cuối. [Hợp đồng và giới hạn](vpt-marketing-automation/MEASUREMENT_SNAPSHOT.md). Full goalACTIVE, chưa có tác động thật.
+
+---
+
+## 2026-10-03 — Source export closure
+
+Runtime920e66bc tree dbb986a3; reviewer độc lập PASS local24. Automation37112179618 all10SUCCESS; census111172074851 PG60/0/0 +HTTP1/0/0; Node22 111172074887=745/0/0; build111172074765=10318modules/28.97s. Report37112179600/Messenger37112179556SUCCESS. Merge1ced58499b20ad255f6555cde077afec5608af0d có cùng tree, parentruntime+basee16c885. Browser tác giả kiểm lost-response/reload/stale/retry/sourceerror; tab/server đóng. Hồ sơ SOURCE_EXPORT_REVIEW.md; closure chỉdocs, full goalACTIVE, chưa Meta/UAT/phát hành/CPQLđầyđủ.
+
+## 2026-10-03 — Source export: kiểm biên nhận lịch sử và giới hạn HTTP
+
+Candidate36793fbc cả10jobSUCCESS, censusPG59/0/0, Node22 743/0/0, frontend10.318module. Review backend/SQLPASS. Follow-up: UI ghi rõ biên nhận sau replay là lịch sử, reset đọc tệp khi reload; thêm kiểm Express2mb nhận CSV1MiB và từ chối thêm1byte, thêm barrier PG khi receipt tới sau comparison nhưng trước append. Local24PASS; browser lost-response→reload→stale đang kiểm. Chưa phát hành/đủnguồn/CPQL, full goalACTIVE.
+
+---
+
+## 2026-10-03 — Đối soát bản xuất nguồn đang kiểm chứng
+
+SQL674 nối witness và digest tuple đúng cutoff vào snapshot, thêm so sánh CSV nguồn với tập quét theo ID/time/form, append-only evidence+audit, replay và invalidation khi receipt/source/phạm vi đổi. Server hash bytes, bỏ cột PII trước DB; UI chỉ giữmetadata/hash để retry. Local22 PASS; đang chờ PostgreSQL/browser/review. [Hợp đồng/hoàn tác](vpt-marketing-automation/SOURCE_EXPORT.md). MATCHED không là completeness/CPQL/quyền chi. Full goalACTIVE, chưa live effects.
+
+---
+
+## 2026-10-03 — Operations dashboard closure
+
+Runtime9c317310, treea708cac6; review độc lập PASS local24. Automation37109400042 all10 SUCCESS; intakePG111164221888=208/0/0; Node22 111164221873=721/0/0; frontend111164221891=10316modules/30.12s. Merge3d0e84813352f4c330861e59381cbd9310648612 có cùng tree, parentcandidate+basee16c885. Report37109400035/Messenger37109400033SUCCESS. Tác giả kiểm browser component thật/API giả8tình huống, đóng tab/server. Hồ sơ OPERATIONS_DASHBOARD_REVIEW.md giữ cả failurecandidate551046c và giới hạn CSS giản lược. Docs-only closure, full goalACTIVE, không live effects.
+
+## 2026-10-03 — Operations dashboard: đóng hai phát hiện review
+
+Sửa projection để lịch changed/thiếu end_time là ngoại lệ thay vì gây503; unique waiting bao gồm union CARE+SURVEY, STOP vẫn giữ booking. Ràng buộc booking vào thread cùng lead/scope. Local24 PASS. Candidate551046c PostgreSQL chỉ lỗi3 assertion mới về vị trí trong danh sách50; đổi sang kiểm biến động aggregate, thêm NULL/infinity. Chờ CI/browser/review cuối, không thay production hoặc mở quyền.
+
+## 2026-10-03 — Dashboard tư vấn/khảo sát đang kiểm chứng
+
+SQL673/API/UI thêm số liệu vận hành toàn công ty từ hội thoại Messenger và lịch khách xác nhận qua hệ thống, độc lập kỳ quảng cáo. Snapshot một câu lệnh dùng identity/handoff projection hiện có, che mapping ngoại công ty, tách hội thoại/nhóm CRM/lịch và ngoại lệ. STOP không xóa booking; ACK không phải hoàn tất khảo sát. Không thêm gửi tin/ghi lịch/quyền chi.
+
+Local22 unit/service/UI-state PASS. PostgreSQL/build/browser/review đang chờ; [phạm vi/hoàn tác](vpt-marketing-automation/OPERATIONS_DASHBOARD.md). Full goal ACTIVE, chưa UAT/phát hành/đạt250k.
+
+---
+
+## Hiện hành03/10/2026 — Đã kiểm chứng nhật ký trang Facebook
+
+Runtime d89e34ba thêm SQL672 ghi witness từng trang nguyên giao dịch với receipt/observation/cursor, chuỗi hash/ordinal, giờ lease DB, một Graph version yêu cầu và phát hiện lịch sử thiếu. Summary trong API trạng thái cùng snapshot; không thay UI, không chứng minh Meta đủ/CPQL/quyền chi.
+
+Review độc lập PASS; local29, censusPG50/0/0 (9ca mới), Node22 697/0/0, cả10job/build và report/Messenger SUCCESS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/CENSUS_WITNESS_REVIEW.md), [hợp đồng/hoàn tác](vpt-marketing-automation/CENSUS_WITNESS.md).
+
+Full goal ACTIVE. Tiếp tục đối soát phạm vi/tập ID thực và chốt kỳ có bằng chứng, lịch/chờ xử lý, các nghĩa vụ AI/vận hành/UAT/Founderrelease. Chưa dữ liệu Meta thật hoặc đạt250k, chưa phát hành. Các mục dưới giữ lịch sử từng phiên bản.
+
+---
+
+## 2026-10-03 — Nhật ký trang dữ liệu Facebook đang kiểm chứng
+
+SQL672 thêm bằng chứng từng trang được collector chấp nhận, nguyên giao dịch với receipt/observation/cursor. Có giờ lease từ DB, chuỗi cursor đã băm, metadata whitelist, Graph version chung, ID duy nhất/lần xuất hiện và phát hiện prefix lịch sử thiếu. Summary của status cùng snapshot, không nâng kết luận bao phủ provider hoặc CPQL. [Hợp đồng và giới hạn](vpt-marketing-automation/CENSUS_WITNESS.md).
+
+Đang chờ PostgreSQL cô lập/review độc lập; không migration thật, Meta/CRM, chi tiền hoặc phát hành. Full goal ACTIVE. Kế tiếp đối soát phạm vi/bản xuất và chốt kỳ, lịch/chờ xử lý, nghiệm thu tuyến đầu.
+
+---
+
+## Hiện hành 03/10/2026 — Đã kiểm thử số chi phí/khách tạm tính
+
+Candidatea8b2f9f hiển thị chi toàn tài khoản / khách Lead Ads đã xác minh và đối soát cùng kỳ, có positive1m/4=250k. Số này được ghi tạm tính; chưa khẳng định toàn đợt đạt mục tiêu. Mâu thuẫn nguồn loại nhóm khỏi khách đạt; thiếu dữ liệu hoặc nguồn/quyền đổi ẩn số; không có khách đạt không trả0đ. Cảnh báo bao phủ vẫn giữ riêng. Không migration mới.
+
+Independent review PASS. Local105, Node22 673, censusPG30 (4ca mới), cả10job/fullbuild và report/Messenger SUCCESS. Browser actualcomponents với API giả đã kiểm6trạng thái. [Bằng chứng đúng phiên bản](vpt-marketing-automation/OBSERVED_CPQL_REVIEW.md), [hợp đồng](vpt-marketing-automation/OBSERVED_CPQL.md).
+
+Full goal ACTIVE. Còn registry/provider coverage, measurement close, lịch/chờ xử lý, Meta/UAT/Founderrelease và các nghĩa vụ vận hành đã ghi. Không mở chi hay phát hành;250k chưa phải kết quả kinh doanh thật. Các mục sau giữ lịch sử theo phiên bản.
+
+---
+
+## 2026-10-03 — Chi phí/khách đã đối soát, tạm tính (đang kiểm chứng)
+
+Thêm observedMeasurement từ cùng snapshot: toàn bộ chi tài khoản / khách Lead Ads đã xác minh và đối soát. Có positive1m/4=250k, giữ riêng với CPQL đầy đủ và không kết luận đạt mục tiêu/mở chi. Tách lỗi hồ sơ khỏi cảnh báo bao phủ; mâu thuẫn nguồn không còn được giữ là khách đạt. UI ghi rõ phạm vi và ẩn số thiếu dữ liệu. Không migration mới.
+
+Local105 domain/UI-state tests PASS. PostgreSQL/build/independent review đang chờ. [Hợp đồng, giới hạn và hoàn tác](vpt-marketing-automation/OBSERVED_CPQL.md). Full goal ACTIVE; registry/provider completeness, lịch/chờ xử lý, Meta/UAT và phát hành còn phải hoàn thiện.
+
+---
+
+## Hiện hành 03/10/2026 — Đã kiểm thử mốc đo tiền và khách
+
+Candidate5076b2a dùng cùng kỳ ngày Việt Nam hoàn tất cho chi tiêu và khách; khôi phục khách bị sót vẫn đến lúc bắt đầu quét, kể cả ngày đầu. Giữ metadata ngoài kỳ để đối soát webhook tới muộn, không bỏ mâu thuẫn nguồn. Dashboard tách mốc khôi phục/mốc đo và không hiển thị số0 khi chưa có ngày hoàn tất.
+
+Review độc lập PASS trong phạm vi này. Census PostgreSQL26, trial PostgreSQL13, Node22 643, cả10 job/build và report/Messenger regressions PASS; local143 PASS. Browser bằng API giả đã kiểm kỳ đo, ngày đầu, mâu thuẫn và lỗi nguồn. [Bằng chứng đúng phiên bản](vpt-marketing-automation/MEASUREMENT_PERIOD_REVIEW.md), [hợp đồng](vpt-marketing-automation/MEASUREMENT_PERIOD.md).
+
+Tiếp theo phải hoàn thiện registry phạm vi + provider coverage và close có bằng chứng để tính CPQL, nối lịch/chờ xử lý vào dashboard, rồi UAT và gói phát hành. Chưa chứng minh250.000đ/khách, chưa Meta/CRM thật; full goal ACTIVE. Các mục dưới đây là lịch sử theo phiên bản.
+
+---
+
+## 2026-10-03 — Distinguish receipt review from contradictory evidence
+
+90b1068 passed9/10 jobs: trialPG, build and all new9 census period cases PASS. CensusPG111139822196 failed1 existing concurrent-state case because a REVIEW receipt with matching proof/observation was classified as a timestamp conflict. Source consistency is now checked independently of receipt processing state; REVIEW stays review-required, while true timestamp conflicts remain explicit. Added unit regression and corrected first-day UI wording to avoid claiming a recovery already succeeded. Final revalidation pending.
+
+---
+
+## 2026-10-03 — Preserve same-day customer recovery
+
+Independent review also found that using the measured cutoff for intake delayed missing today's webhooks. SQL670 now preserves the original recovery until_at and separately stores measurement_until_at. Day-one recovery remains available; its report is NO_CLOSED_DAY. Snapshot filters only measured items while all recovery items/observations stay durable. Added first-day census→real intake→CRM with fake provider, exact cutoff, future trial denial and persisted pre-midnight replay tests. Unit24 period cases PASS; final CI/review pending. Full goal remains ACTIVE, no live effects.
+
+---
+
+## 2026-10-03 — Fix hidden outside-period conflicts
+
+Independent reviewer CHANGES_REQUESTED on efcf783: valid DONE source and census observation could disagree outside the period without an issue. Added CONFLICT disposition and explicit report/reconciliation warnings, regression, and UI labels. Trial PG fixture updated for the new closed-day contract; added historical NULL-policy/partial-day PostgreSQL coverage. Local23 period cases PASS, final CI/review pending. Full goal ACTIVE.
+
+---
+
+## 2026-10-03 — Measurement period alignment
+
+Changed SQL670, report period/receipt projections, spend close guard, census fixtures/tests and dashboard period labels. Whole-account spend includes zero-Lead accounts; one cutoff excludes current-day spend and post-cutoff acquisitions together. Durable outside-period metadata reconciles late receipts without mutating intake state or hiding conflicts. Added22 unit and6 isolated PostgreSQL scenarios; existing lease rollback now also asserts observation rollback. Local140 PASS; CI/review pending. See MEASUREMENT_PERIOD.md. No live writes, merge, deploy, model API or campaign actions.
+
+---
+
+## Hiện hành 03/10/2026 — Thông báo kết quả khảo sát đã kiểm thử
+
+Candidate44d80b1 bổ sung outbox nguyên giao dịch với booking/từ chối nghiệp vụ, thông báo kết quả đúng lịch và hàng rào gửi chung với đề xuất. Không lấy receipt BLOCKED làm kết quả “chưa đặt lịch”; không gửi lại sau mất phản hồi. STOP/tiếp quản giữ nguyên, bằng chứng booking/handoff không bị xóa khi lỗi gửi.
+
+Review độc lập PASS; PostgreSQL199 (20 case outcome mới), Node22 618, cả10 job/full build và regression PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/SURVEY_OUTCOMES_REVIEW.md), [contract và giới hạn](vpt-marketing-automation/SURVEY_OUTCOMES.md).
+
+Mặc định tắt, chưa Meta/CRM thật/UAT/phát hành. Còn UI đề xuất/ngoại lệ, hủy/đổi và writer lịch cũ, nội dung/nhân sự/lịch thật, nguồn–chi tiêu và CPQL đầy đủ, hiệu năng/khôi phục. Tiếp theo ưu tiên đối soát khách–chi phí và chuẩn bị nghiệm thu Facebook→CRM→dashboard. Chưa chứng minh250.000đ/khách; full goal ACTIVE, không mở đợt chi.
+
+Các mục sau giữ lịch sử theo phiên bản.
+
+---
+
+## 2026-10-03 — Clarify STOP outcome evidence
+
+Follow-up1647479 passed9 jobs and fixed the obsolete-option case. PG111132283592 (CI37098181276) failed only the new STOP assertion: SQL665 retains a rejected confirmation and SQL669 retains its NOT_BOOKED intent; absence of an intent is not the STOP contract. The case now proves no booking, no provider POST, sticky OPTED_OUT and terminal HELD intent. Runtime SQL/worker remain unchanged. Revalidation pending, no live actions.
+
+---
+
+## 2026-10-03 — Outcome PostgreSQL fixture follow-up
+
+Runtime57fb08b CI37097932808 passed9 jobs; Node22 618 and full frontend PASS. PostgreSQL111131579765 failed one subtest because the replacement-proposal fixture reused an obsolete availability option after confirmation changed context. The fixture now obtains the current option. Added same-batch STOP, recipient-membership revocation while waiting and queue-progress cases. Runtime SQL/worker unchanged; final PostgreSQL/review still pending. No live actions.
+
+---
+
+## 2026-10-03 — Customer survey outcomes (in validation)
+
+SQL669 adds atomic BOOKED / canonical NOT_BOOKED intents, default-off outcome dispatch, current booking/authority checks, shared proposal/outcome uncertainty barrier and exact echo/ACK evidence. Ingress technical BLOCKED never negates a booking. Pre-enrollment intents stay HELD; STOP/takeover remain sticky. Local51 worker/parser tests PASS; isolated PostgreSQL and final independent review pending. [Contract, rollback and remaining gates](vpt-marketing-automation/SURVEY_OUTCOMES.md).
+
+No live migration, enrollment, Meta send, model call, ad change or release. Full goal ACTIVE; actual CPQL250k remains unproven. Still need operator exception UI, cancellation/rescheduling, legacy calendar writer transition, full source/spend data and UAT/Founder release.
+
+---
+
+## Hiện hành 03/10/2026 — Bàn giao khảo sát đã kiểm thử
+
+Runtimea35deef4 thêm màn hình CRM cho nhân viên nhận hồ sơ, queue/chỉ số chờ nhận, hội thoại đầy đủ và ACK đúng người nhận hiện hành. Sales owner/admin theo dõi, không ký thay. Receipt/audit nguyên giao dịch; replay sau mất phản hồi kiểm quyền mới; lịch khách xác nhận, staff ACK và trạng thái chăm khách được giữ riêng.
+
+Review độc lập PASS; PostgreSQL179 (21 case handoff mới), Node22 604, cả10 job/full build và regression PASS. Browser với API giả kiểm đủ55 tin, mất phản hồi/reload, đổi scope, manager, STOP và lỗi quyền/nguồn. [Bằng chứng đúng phiên bản](vpt-marketing-automation/SURVEY_HANDOFFS_REVIEW.md), [contract và giới hạn](vpt-marketing-automation/SURVEY_HANDOFFS.md).
+
+Mặc định tắt, chưa Meta/CRM thật hoặc UAT/phát hành. Còn UI đề xuất/ngoại lệ gửi, thông báo khách, hủy/đổi và writer lịch cũ, dữ liệu thật, nguồn/chi tiêu và CPQL đầy đủ, hiệu năng/khôi phục. Chưa chứng minh250.000đ/khách. Full goal ACTIVE; không mở đợt chi.
+
+Các mục sau giữ lịch sử theo phiên bản.
+
+---
+
+## 2026-10-03 — Survey staff handoff (in validation)
+
+SQL668, default-off authenticated APIs and CRM staff UI add scoped queue/detail/history and atomic receipt by the current recipient. Owner/admin monitoring does not allow proxy ACK; booking RSVP and historical booking result remain separate. Exact pending requests survive browser reload. Initial independent review found null-owner authorization and moved-staff name leakage; both fixed with regression cases.
+
+Local adapter7 PASS. Isolated PostgreSQL, UI/browser and final independent review remain pending. [Contract and rollback](vpt-marketing-automation/SURVEY_HANDOFFS.md). No live migration/send/AI call/ad change or release. Full goal ACTIVE; CPQL250k remains a target, not an observed result.
+
+---
+
+## Hiện hành 03/10/2026 — Gửi đề xuất khảo sát đã kiểm thử
+
+Runtimef82380f nối worker gửi payload bất biến → raw webhook có chữ ký → xác nhận → lịch/handoff. Có claim một lần, cửa sổ inbound24h, deadline ngắn/clock skew, binding credential hiện hành, ACK/echo khớp đúng attempt và hồi phục không gửi lại khi chưa rõ kết quả. STOP và trạng thái người tiếp quản giữ nguyên.
+
+Review độc lập PASS; PostgreSQL158 (21 case dispatch mới), Node22 593, cả10 job/full build và regression PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/SURVEY_DISPATCH_REVIEW.md), [phạm vi và cổng còn lại](vpt-marketing-automation/SURVEY_DISPATCH.md).
+
+Provider/HMAC thử được giả lập; positive path dùng worker/receiver thật, không còn owner gán SENT. Enrollment rỗng, cờ tắt, chưa Meta thật/UAT/phát hành. Còn UI khảo sát/ngoại lệ, ACK người nhận, thông báo khách, hủy/đổi và writer cũ, dữ liệu thật và đo CPQL đầy đủ. Chưa chứng minh250.000đ/khách. Full goal ACTIVE; không mở đợt chi.
+
+Các mục sau giữ lịch sử theo phiên bản.
+
+---
+
+## 2026-10-03 — Dispatch PostgreSQL follow-up
+
+Initial runtime b543eaa failed isolated PG run37092625896/job111115988767: recovery SQL reused a record variable as table alias (42702); the test adapter passed JS arrays as PostgreSQL arrays instead of JSON (22P02). Fixed alias and JSON transport fixture, with additional uncertainty/supersession and post-booking conflict cases. Other9 jobs passed, Node22 593. PostgreSQL revalidation remains pending; no live changes.
+
+---
+
+## 2026-10-03 — Controlled survey dispatch (in validation)
+
+Base a07760f. SQL667 adds private, empty dispatch enrollment; one-time immutable send authorization; credential binding; exact ACK/echo correlation; no blind resend after unknown delivery. Default-off worker now sends only prepared survey proposals and reconciles confirmation after ACK in a separate transaction. STOP and human takeover remain sticky.
+
+Local47 worker/care/webhook tests PASS. PostgreSQL and independent review pending; first review found and fixed SQL generation escaping, a shortened deadline/clock-skew fence and stale credential binding. See [contract and remaining gates](vpt-marketing-automation/SURVEY_DISPATCH.md). No live send/enrollment/migration, model call, ad change or release. Full goal ACTIVE.
+
+---
+
+## Hiện hành 03/10/2026 — Nhận xác nhận khảo sát đã kiểm thử
+
+Runtime0a97a85 nối raw webhook có kiểm chữ ký → mã quick reply → receipt riêng → giao dịch đặt lịch; toàn bộ STOP/yêu cầu người/echo chưa rõ trong batch được xử lý trước. Có hồi phục khi ACK đến muộn, giữ kết quả cuối khi worker cũ tiếp tục và tránh hồ sơ chưa ACK làm kẹt hàng chờ. Token khảo sát được bỏ trước đường log/hàng chờ cũ.
+
+Review độc lập PASS; PostgreSQL137 (14 case mới), Node22 580, cả10 job/full build và regression PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/SURVEY_CONFIRMATION_INGRESS_REVIEW.md), [phạm vi và phần chưa tích hợp](vpt-marketing-automation/SURVEY_CONFIRMATION_INGRESS.md).
+
+Proof gửi tin còn được DB owner mô phỏng; chưa có dispatcher, nhận diện echo của chính ứng dụng hoặc worker chạy reconcile. Enrollment rỗng, cờ mặc định tắt; chưa gửi/nhận Meta thật, UAT hoặc phát hành. Chưa có CPQL thực tế chứng minh250.000 đồng/khách. Full goal ACTIVE.
+
+Các mục sau giữ lịch sử theo phiên bản.
+
+---
+
+## 2026-10-03 — Signed survey confirmation ingress (in validation)
+
+SQL666 and the opt-in webhook adapter preserve quick-reply confirmation evidence from authenticated raw Meta bytes, process all STOP/human/unknown-echo events before booking, and recover confirmations waiting for a late delivery receipt. Private Page enrollment starts empty. New server RPCs enforce the actual service_role even after broad public-function grants; normalized confirmation commands are not exposed through operator/AI HTTP tools.
+
+Local31 PASS; PostgreSQL and final independent review pending. Review fixes include terminal-result compare-and-set and ready-work recovery to avoid starvation; private tokens are removed before legacy logs/queues after both signed receivers run. [Scope and remaining work](vpt-marketing-automation/SURVEY_CONFIRMATION_INGRESS.md). Delivery proof is still seeded by the isolated DB owner: no outbound dispatcher, own-send echo matching, real Meta send, UAT or release. Full goal ACTIVE.
+
+---
+
+## Hiện hành 03/10/2026 — Lõi đề xuất và đặt khảo sát đã kiểm thử
+
+Runtime243440d bổ sung đề xuất bất biến, kiểm xác nhận gắn đúng khách/lịch và giao dịch chung cho event, participant, audit, xác nhận và hàng bàn giao. Review độc lập PASS; PostgreSQL123 (12 case mới), Node22 574, cả10 job/full build và các regression PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/SURVEY_PROPOSALS_REVIEW.md), [phạm vi và phần còn thiếu](vpt-marketing-automation/SURVEY_PROPOSALS.md).
+
+Đây là kiểm thử lõi nghiệp vụ với proof do DB owner mô phỏng, chưa phải xác nhận khách thực tế. Chưa có dispatcher/ingress xác nhận, UI khảo sát hoặc ACK bàn giao; không cấp quyền ứng dụng gọi book. Các đường lịch cũ, nguồn dữ liệu thật, sao lưu/khôi phục và UAT vẫn phải hoàn thiện. Mặc định tắt, chưa phát hành/mở đợt chi; chưa có CPQL thực tế chứng minh250.000 đồng/khách. Full goal ACTIVE.
+
+Các mục sau giữ lịch sử theo phiên bản.
+
+---
+
+## 2026-10-03 — Survey proposal/booking domain (in validation)
+
+Initial PostgreSQL CI on c1dd926 (run 37088378492) failed: local variable qualification in book and a foreign-key-invalid fixture; 9 other jobs passed. Follow-up adds an explicit PL/pgSQL block label, a real conflicting Customer fixture, and millisecond-precision causal checks with a regression case. PostgreSQL revalidation remains pending; no release claim.
+
+SQL665 and the default-off proposal API bind immutable customer/staff/time/location proposals to current CRM/source context. Private book validates receipt/delivery and performs event, attendee, confirmation consumption, audit and pending handoff atomically; public operator/AI APIs cannot mint confirmation or call book. Existing travel buffers remain reserved when a later roster reduces buffer.
+
+Local adapter7 PASS; PostgreSQL and independent code review pending. [Contract and remaining integration](vpt-marketing-automation/SURVEY_PROPOSALS.md). Provider delivery/receipt and signed inbound are simulated by the isolated DB owner in tests: transport, echo correlation, survey UI, handoff acknowledgement, legacy writer transition and real UAT remain required. No live migration/send/book or release. Full goal ACTIVE.
+
+---
+
+## Hiện hành 03/10/2026 — Bảo vệ lịch khi chuyển quyền ghi đã kiểm thử
+
+Runtime7576ecf7 và regressiond242e114 bổ sung vùng điều khiển riêng, enrollment rỗng, permit theo giao dịch và trigger bảo vệ lịch khỏi đường ghi cũ. Đã kiểm cả quyền được công cụ backup cấp lại, participant thay đổi trong lúc UPDATE chờ và snapshot cũ. Review độc lập PASS; PostgreSQL111 (11 guard mới), Node22 567, cả10 job/full build và các regression PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/SURVEY_CALENDAR_GUARD_REVIEW.md), [phạm vi và cổng phát hành](vpt-marketing-automation/SURVEY_CALENDAR_GUARD.md).
+
+Chưa có lệnh đặt lịch/xác nhận khách/bàn giao nguyên giao dịch; chưa đăng ký nhân sự thật. Trước cutover cần xử lý báo thành công sai của đường cũ, đo tác động tuần tự hóa lịch và kiểm sao lưu/khôi phục vì REST replication bỏ qua RPC. Không phát hành hoặc mở đợt chi. Chưa có CPQL thực tế chứng minh250.000 đồng/khách. Full goal ACTIVE.
+
+---
+
+## Hiện hành 03/10/2026 — Nguồn giờ khảo sát đã kiểm thử
+
+Runtimec0d07e6 bổ sung nguồn lịch theo nhân sự/khu vực, phạm vi lịch được người có quyền xác nhận và phép kiểm tra bận từ toàn bộ lịch CRM/người tham gia. Các giờ đề xuất có phiên bản và hạn ngắn, không phải lịch đã giữ hoặc đặt. Kiểm thử local9, PostgreSQL100 (13 survey mới), Node22 567, cả10 job/full build và các regression PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/SURVEY_AVAILABILITY_REVIEW.md), [phạm vi và giới hạn](vpt-marketing-automation/SURVEY_AVAILABILITY.md).
+
+Mặc định tắt, chưa phát hành. Còn phải xác nhận lịch thực tế, giữ chỗ/giao dịch chung với lịch CRM, xác nhận đúng đề xuất từ khách, chặn tranh chấp với đường ghi cũ và bàn giao có bằng chứng. AI tư vấn/gửi tin, đối soát nguồn/chi tiêu đủ phạm vi và UAT còn việc. Chưa có CPQL thực tế chứng minh250.000 đồng/khách. Full goal ACTIVE; không mở đợt chi hoặc quyền AI.
+
+Các mục sau giữ lịch sử theo phiên bản.
+
+---
+
+## Hiện hành 03/10/2026 — Màn hình nội dung tư vấn đã kiểm thử
+
+Runtime979d62d bổ sung biên tập nội dung, duyệt/thu hồi đúng phiên bản, chọn sản phẩm/khu vực, xem trước nguyên văn và lịch sử đầy đủ. Bản nháp được giữ khi đổi tab hoặc phân trang lỗi; yêu cầu mất phản hồi được gửi lại đúng mã qua tải lại trình duyệt. SQL662 thêm bộ chọn và lịch sử theo quyền hiện hành. Review độc lập code/CI PASS; local20, PostgreSQL87 (4 console mới), Node22 558 và cả10 job/full build PASS. [Bằng chứng](vpt-marketing-automation/CARE_LIBRARY_CONSOLE_REVIEW.md), [kiểm tra trình duyệt và giới hạn](vpt-marketing-automation/CARE_LIBRARY_CONSOLE_BROWSER.md). Riêng accept/dismiss của hộp xác nhận gốc chưa kết luận bằng browser automation, giữ lại cho UAT.
+
+Mặc định tắt, chưa phát hành. Nội dung VPT thật, AI sử dụng/gửi tin, lịch khảo sát, đối soát đủ nguồn/chi tiêu và UAT còn phải hoàn thiện. Chưa có CPQL thực tế chứng minh đạt250.000 đồng/khách; trần100 triệu một đợt30 ngày và80/20 giữ nguyên. Không gọi model, đổi DB thật, cấp quyền duyệt hoặc mở đợt chi. Full goal ACTIVE.
+
+Các mục sau giữ lịch sử theo phiên bản.
+
+---
+
+## Hiện hành 02/10/2026 — Thư viện nội dung tư vấn đã kiểm thử
+
+Runtime880f495 thêm lưu nháp, duyệt/thu hồi nội dung, lịch sử và xem trước nguyên văn theo công ty/sản phẩm/khu vực/kênh. Sửa nội dung, đổi quyền người duyệt, thay đổi nguồn hoặc hết hạn làm mất hiệu lực sử dụng. Không cấp sẵn quyền duyệt hoặc nạp dữ liệu sản phẩm thật. Review độc lập PASS; local9, PostgreSQL83 (14 library), Node22 547 và cả10 job/full build PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/CARE_LIBRARY_REVIEW.md).
+
+Mặc định tắt; chưa có UI biên tập, AI sử dụng/gửi tin hoặc lịch khảo sát. Phần kết nối OpenAI chờ lựa chọn khóa riêng; không gọi API trả phí. Nguồn/chi tiêu thực tế và UAT vẫn chưa hoàn tất, chưa xác nhận CPQL250.000 đồng/khách. Full goal ACTIVE; không phát hành hoặc mở đợt chi.
+
+Các mục sau giữ lịch sử theo phiên bản.
+
+---
+
+## 2026-10-02 — Approved customer-facing response library (in validation)
+
+Base af19ea5. SQL661 and authenticated library APIs add scoped draft/approve/revoke/history and exact-text operator preview, with current source/audience/expiry checks. Explicit human publisher enrollment is required and is not seeded; changing content or publisher authorization invalidates prior approval. Local9 tests PASS; PostgreSQL and independent review pending. No model calls or API-dependent code: OpenAI credential selection is pending separately. Editing UI, runtime dispatch and calendar/UAT remain unfinished. See [contract](vpt-marketing-automation/CARE_LIBRARY.md). Default-off; no live change. Full goal active.
+
+---
+
+## Hiện hành 02/10/2026 — Màn hình chăm khách đã kiểm thử
+
+Runtime52741b81 nối tab Facebook → Chăm khách với hàng chờ theo hạn phản hồi, người nhận CRM, lịch sử phân trang đầy đủ và thao tác tiếp quản/ngừng liên hệ. Yêu cầu chưa xác nhận được giữ đúng mã khi mất phản hồi, tải lại trang hoặc đổi công ty. Review độc lập PASS; local27, PostgreSQL69 (9 console mới), Node22 538, cả10 job/full build và trình duyệt dữ liệu giả PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/FACEBOOK_CARE_CONSOLE_REVIEW.md).
+
+Mặc định tắt, chưa phát hành. AI tư vấn/gửi tin, lịch khảo sát, dữ liệu nguồn/chi tiêu thực tế và nghiệm thu vận hành còn phải hoàn thiện. Số hội thoại không thay số khách hợp lệ không trùng; chưa kết luận đạt250.000 đồng/khách. Full goal ACTIVE, không mở đợt chi.
+
+Các mục phía dưới giữ lịch sử theo phiên bản.
+
+---
+
+## Hiện hành 02/10/2026 — Nền tiếp nhận và tiếp quản chăm khách đã kiểm thử
+
+Bản73fa7c68 bổ sung hộp thư chăm khách bền vững: xác thực tin nguồn, lưu yêu cầu ngừng liên hệ/gặp người, đối chiếu người nhận CRM và tiếp quản có audit. Review độc lập PASS; local64, PostgreSQL60 (16 care mới), Node22 529 và cả10 job/full build PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/FACEBOOK_CUSTOMER_CARE_REVIEW.md).
+
+Page được chọn thử chỉ nhận/rà hội thoại; toàn bộ đường gửi Messenger cũ trong ứng dụng bị chặn trên Page đó. Mặc định tắt và chưa bật thật. Chưa có màn hình vận hành care, AI tư vấn/gửi tin, lịch khảo sát hay nghiệm thu thực tế. Mục tiêu250.000 đồng/khách hợp lệ; chưa có kết quả thực tế chứng minh đạt. Full goal ACTIVE; không mở đợt chi hoặc phát hành.
+
+Các mục sau là lịch sử theo phiên bản.
+
+---
+
+## Hiện hành 02/10/2026 — Đối soát khách Facebook cũ đã kiểm thử
+
+Runtime0d41d343 bổ sung cách nối nguồn Facebook đã xác minh vào đúng Lead/Customer cũ qua bản đối soát có thời hạn; giữ nguyên lịch sử và phân công CRM. Bản2d90f5c tăng độ sát của fixture với khóa ngoại dữ liệu cũ. Local82, PostgreSQL44, Node22 506, cả10 job automation/full frontend build và trình duyệt dữ liệu giả PASS; review độc lập runtime PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/FACEBOOK_LEGACY_RECONCILIATION_REVIEW.md).
+
+Phạm vi này chỉ xử lý hai liên kết lịch sử đầy đủ, đồng nhất và liên hệ khớp nguồn. Hồ sơ thiếu/mâu thuẫn vẫn cần xử lý; chưa xác nhận đủ nguồn/chi tiêu để kết luận CPQL. AI chăm khách, lịch khảo sát và nghiệm thu thực tế chưa hoàn tất. Full goal ACTIVE; chưa phát hành, mở quyền thật hoặc bắt đầu đợt chi.
+
+Các mục phía dưới giữ lịch sử theo phiên bản.
+
+---
+
+## 2026-10-02 — Facebook legacy source adoption (in validation)
+
+Base8394ed1. Added a default-off review flow for recovered Facebook receipts whose legacy Lead/Customer mappings agree. Server verifies fresh provider contact, prepares an expiring exact-context proposal, then a current admin can attach immutable source evidence to the existing CRM. No CRM/history/identity overwrite or automatic qualification. Version changes, wrong scope, expired evidence and retries are checked transactionally. Partial/conflicting legacy mappings remain exceptions; this does not prove full source coverage or actual CPQL.
+
+Local17 contact/HTTP tests PASS; PostgreSQL, full build, UI and independent review pending. See [contract](vpt-marketing-automation/FACEBOOK_LEGACY_RECONCILIATION.md). No live migration, feature enablement, merge, deployment or ad change. Full goal ACTIVE.
+
+---
+
+## Hiện hành 02/10/2026 — Dashboard đã có đối soát Facebook–CRM
+
+PR22 runtime5ff846 đã nối kết quả kiểm kê nguồn vào kỳ đo: tách lượt gửi đã khớp CRM, đang chờ, cần review, thiếu bằng chứng và lượt gửi CRM biết nhưng chưa quét thấy. Có nút khôi phục với gửi lại cùng yêu cầu khi mất phản hồi; nhãn phân biệt lượt gửi với khách duy nhất. Review độc lập PASS; PostgreSQL17, Node22 489, cả10 job automation/full build và trình duyệt dữ liệu giả PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/FACEBOOK_CRM_RECONCILIATION_REVIEW.md).
+
+Chưa phát hành hoặc mở đợt chi. Kết quả chỉ bao phủ lượt gửi đã kiểm kê và hồ sơ tiếp nhận có bằng chứng; còn phải hoàn tất phạm vi nguồn, hồ sơ legacy và cùng kỳ chi tiêu trước khi xác nhận chi phí/khách. AI chăm khách/lịch khảo sát và nghiệm thu thực tế vẫn chưa hoàn tất. Mục tiêu250.000 đồng/khách hợp lệ; trần100 triệu một đợt30 ngày gồmFacebook, TP.HCM/Cần Thơ80/20 giữ nguyên. Mục tiêu toàn hệ thống vẫn IN PROGRESS.
+
+Các mục phía dưới giữ lịch sử theo phiên bản.
+
+---
+
+## 2026-10-02 — Reconciliation review and UI terminology
+
+Runtime808a307 passed independent review, all10 automation jobs, census PostgreSQL17 cases and Node22 489 cases. Synthetic browser checks passed dropped-response same-key retry, refresh persistence, wrong-company replies, pending-write control locking and company switching. Reviewer P3 is addressed: census figures are labeled form submissions, distinct from unique qualified customers. The existing trial save button is also disabled during recovery. Final head CI and review of this UI delta remain to be recorded; no live action.
+
+---
+
+## 2026-10-02 — Connect census results to the trial dashboard (in validation)
+
+Baseline PR22 730c388. Add read-only SQL657 census inventory to the same trial snapshot, compare enumerated IDs in both directions against receipt/source/CRM evidence, and expose recovery status plus scoped same-request retry in the dashboard. Local79 cases PASS (25 new reconciliation cases plus existing25 trial and29 census). Isolated PostgreSQL, whole-app build, synthetic browser and independent review are pending on this increment. No live change or complete CPQL claim; exhaustive provider coverage and other full-goal work remain.
+
+---
+
+## Hiện hành 02/10/2026 — Khôi phục khách Facebook bị sót đã kiểm thử
+
+PR22 runtime `1625f66ee7a5d985fc9c290d460c40cdab12b200` đã bổ sung kiểm kê biểu mẫu/khách Facebook, lưu tiến độ và đưa khách bị sót về cùng đường tiếp nhận CRM. Review độc lập PASS; PostgreSQL census 11 PASS, Node18/22 mỗi bản 464 PASS, cả 10 job automation và full frontend build SUCCESS. [Bằng chứng và giới hạn](vpt-marketing-automation/FACEBOOK_SOURCE_RECONCILIATION_REVIEW.md).
+
+Đây là bước khôi phục nguồn trong bản nháp, chưa phát hành. Còn phải xác minh phạm vi nguồn, xử lý hồ sơ thiếu và đối soát tiền chi/khách của cùng kỳ trước khi kết luận chi phí/khách. Sau đó tiếp tục AI tư vấn, bàn giao và lịch khảo sát. Mục tiêu250.000 đồng/khách hợp lệ; trần100 triệu một đợt30 ngày gồm Facebook, TP.HCM/Cần Thơ80/20 giữ nguyên. Không bắt đầu chi hoặc đổi quyền thật. Mục tiêu toàn hệ thống vẫn IN PROGRESS.
+
+Các mục phía dưới là lịch sử theo phiên bản; kết quả chờ kiểm thử ở000f119 đã được thay bằng bằng chứng1625f66 ở trên.
+
+---
+
+## 2026-10-02 — Correct census race-test barrier
+
+Runtime000f119 passed29 local cases and the first9 PostgreSQL child cases, including missed-notification recovery and lease expiration after locks. The final phantom-Page test placed its barrier inside a STABLE helper, retaining the earlier snapshot; the test now pauses start before the scope statement, which reproduces the intended race. Also separate form and lead capacity checks by task kind. Final CI and independent review pending; no live change.
+
+---
+
+## 2026-10-02 — Durable Facebook source enumeration and recovery
+
+Base775d522. Added default-off provider form/lead enumeration with fixed-host pagination, stored cursors and expiring worker leases, current company/Page/trial authority, atomic receipt recovery and a scoped start/status API. Recovered IDs go through the existing verified CRM intake; no duplicate customer shortcut. Known historical forms are scanned even when absent from the Page edge; each form's Page is checked with Meta before scanning Leads. Metadata-only evidence records expiry/undiscovered forms and never certifies full coverage.
+
+Local29 adapter/worker/HTTP cases PASS. Isolated PostgreSQL concurrency/crash/scope tests and final independent review are pending. See [contract](vpt-marketing-automation/FACEBOOK_SOURCE_RECONCILIATION.md). CPQL remains unavailable until provider-scope completeness and receipt disposition are proven; next work must connect that proof to the positive measurement path, not treat API enumeration as completion. Full Marketing–Sales goal active. No live changes.
+
+---
+
+## 2026-10-02 — Measured cohort and dashboard verified; source reconciliation next
+
+Runtime af14635 (backend1c650): independent review PASS; local25 PASS; CI Node22 435 PASS, PostgreSQL trial13 PASS/0 FAIL/0 SKIP, all9 automation jobs and report/Messenger workflows SUCCESS; full frontend and synthetic browser PASS. Five review findings resolved, including old customer history, cross-company configuration race and loading/save UI race. See [evidence and limits](vpt-marketing-automation/MEASURED_COHORT_REVIEW.md).
+
+Dashboard now reads all registered Facebook account costs and observed qualified/pending/unresolved groups in one consistent snapshot. Provider census/reconciliation and survey source remain missing, so actual CPQL is unavailable. Next is durable provider reconciliation and positive CPQL acceptance, followed by AI care/calendar/full-goal work. No live change; full goal active.
+
+---
+
+## 2026-10-02 — Prevent saving measurement configuration during reload
+
+UI review found that a concurrent report reload could discard a save acknowledgement and leave the form locked. The form and submit handler now reject saves while loading; ambiguous saves still retain the same request and payload. Backend CI at1c6507d: all9 jobs PASS, PostgreSQL trial13 PASS/0 SKIP, Node22 435 PASS, full build PASS. Supported synthetic browser verification and final review follow in MEASURED_COHORT_REVIEW.md. No live change.
+
+---
+
+## 2026-10-02 — Measured cohort and dashboard integration
+
+Base0a106ab. Added versioned30-day measurement configuration and a single-statement database report joining spend, source/receipt, current qualification and identity; added observed-cohort dashboard. Global trial-ID ownership is serialized, old customer history retained, and equal-time acquisition ambiguity stays unresolved. CPQL remains unavailable until provider census/reconciliation is connected; this is explicitly the next dependency, not final success. Local25 tests PASS; isolated PG/build/browser/independent final review pending. See [contract](vpt-marketing-automation/MEASURED_COHORT.md). Default-off; no live change. Full four-part goal active.
+
+---
+
+## 2026-10-02 — Identity review verified; next is the measured cohort
+
+Implementation5d9a093: independent review PASS, local89 PASS; Node18/22 each410 PASS; isolated PostgreSQL identity27 PASS/0 FAIL/0 SKIP; full frontend and all automation/report/Messenger jobs SUCCESS. Follow-up96451de adds only combined-migration intake coverage:650–654 applied twice, intake/recovery31 PASS, all8jobs SUCCESS. Synthetic browser passed scope/source invalidation and ambiguous request retry. See [exact evidence and limits](vpt-marketing-automation/CRM_IDENTITY_OPERATIONS_REVIEW.md). No live changes. Full goal active: trial/source/qualified unique cohort + spend/CPQL, binding/legacy disposition, AI/calendar/dashboard and Founder release acceptance remain unfinished.
+
+---
+
+## 2026-10-02 — Company-wide identity review and exception UI
+
+Base PR22 301db0d. Added exact-contact inventory, explicit DISTINCT/revoke, whole-group reconfirmation, historical detach/restore safeguards and operator review card. All writes remain scoped, versioned, audited and default-off; no CRM deletion or live change. Local89 tests PASS. Isolated PostgreSQL, full build, browser and final review pending. See [contract and release limits](vpt-marketing-automation/CRM_IDENTITY_OPERATIONS.md). Identity completeness is not paid qualification; trial/source/cohort, AI/calendar, dashboard and release acceptance remain unfinished. Full goal active.
+
+---
+
+## 2026-10-02 — Intake console and recovery verified; goal continues
+
+Implementation ad806775: independent review PASS, local65 PASS; CI Node18/22 each368 PASS, isolated PostgreSQL16 intake/console31 PASS/0 FAIL/0 SKIP, all8 automation jobs and report/Messenger jobs SUCCESS. CI merge d80bf3d includes this implementation + base e16c885. Supported synthetic browser passed ambiguous response retry, delayed read/write across company switch, source failure/recovery, pagination and missing scope; no browser JS errors. See [review and limits](vpt-marketing-automation/FACEBOOK_INTAKE_CONSOLE_REVIEW.md). No production change. Default-off recovery/worker safeguards delivered; full goal remains active: canonical cohort and CPQL, binding/legacy reconciliation, AI/calendar, dashboard and release acceptance still unfinished.
+
+---
+
+## 2026-10-02 — Facebook intake operator console (goal continues)
+
+Base PR22 459c8406. Added company-scoped queue/configuration view, cursor pagination and explicitly audited recovery with fresh permissions, optimistic receipt/binding checks, idempotency and tombstone/legacy guards. Additive migration653; recovery separately default-off. Worker pause keeps signed receipt intake and selected-Page legacy exclusion. Local65 tests PASS; PostgreSQL/build/browser and final independent review pending. See [console contract and release limits](vpt-marketing-automation/FACEBOOK_INTAKE_CONSOLE.md). No production writes, merge or deployment. Full four-part goal active; unique paid cohort/CPQL, AI/calendar, further channels and release acceptance unfinished.
+
+---
+
+## 2026-10-02 — Lead Ads intake integration verified; goal continues
+
+Code d6daf4f: independent review PASS after closing P1 missing-scope permission and P2 expired-lease findings. Local41 adapter/webhook tests; CI Node18/22 each344 PASS, isolated PG intake20 scenarios+parent=21 PASS/0 FAIL/0 SKIP with650/651/652 applied. All parent PG, report, Messenger and frontend jobs SUCCESS. CI merge440ccc79 contains d6daf4f + base e16c885. See [independent evidence and limitations](vpt-marketing-automation/FACEBOOK_LEAD_INTAKE_REVIEW.md). No merge/deploy/live change. Reconciliation, complete unique qualified paid cohort, AI/care/calendar/dashboard and release acceptance remain unfinished; full goal active.
+
+---
+
+## 2026-10-02 — Lead Ads durable receipt and CRM source integration
+
+Base PR22 fa39e939. Added opt-in signed Facebook Lead Ads inbox, fenced worker/retry, provider form/ad/account verification and atomic Customer + CRM Lead + immutable source evidence. Current routing and permissions are rechecked; no shared-phone merge or public raw mirror. Admin configuration/status API is default-off. Local 41 adapter/webhook tests PASS; database CI and final independent review still pending at this entry. See [contract and rollout gates](vpt-marketing-automation/FACEBOOK_LEAD_INTAKE.md). Goal remains active: reconciliation, full identity/source/cohort coverage, AI intake/handoff, calendar/dashboard and release acceptance are unfinished. No live changes.
+
+---
+
+## 2026-10-02 — CRM identity increment verified; goal continues
+
+Code e434f4e: independent review PASS, 47 local tests; CI Node 18/22 each 303 PASS, isolated PostgreSQL identity 13 scenarios + parent = 14 PASS/0 FAIL/0 SKIP. Existing PostgreSQL jobs and full frontend build PASS. Reviewer independently checked published code blobs and PG log. CI merge ref 129c257 contains e434f4e + base e16c885. See [evidence and limits](vpt-marketing-automation/CRM_IDENTITY_REVIEW.md). Default-off, backend only; no merge/deploy/live change. Orphan/distinct resolution, UI/provider receipts, complete cohort, AI intake/handoff/calendar, dashboard and release acceptance remain open. This increment does not establish unique paid Lead counts or actual CPQL.
+
+---
+
+## 2026-10-02 — CRM identity relationships (goal continues)
+
+Base PR22 79e012b. Added non-destructive CRM link/unlink API, relationship graph projection and migration651. Identity source generation is separate from qualification; stale/missing/moved members keep the group under review. Auth/replay/graph changes are checked transactionally. Default-off, primary-only, no real data/ad changes. Local47 tests PASS; isolated PostgreSQL/independent review pending at this entry. Backend only: orphan/distinct resolution, UI/provider bindings and complete trial cohort remain unfinished. See [contract and gates](vpt-marketing-automation/CRM_IDENTITY.md). Full four-part goal remains active; this does not prove unique paid Leads or CPQL.
+
+---
+
+## 2026-10-02 — CRM qualification increment verified
+
+Implementation7079b266: independent code review PASS, all three P2 findings closed. Node18/22 combined256 tests PASS; isolated PostgreSQL16 CRM21PASS/0SKIP; full frontend build PASS. Supported browser on real component with synthetic wrapper covered changed Customer context, delayed save across Lead switch, read/write failure and recovery. CI uses PR merge ref369436b containing this head. See [review and limits](vpt-marketing-automation/CRM_QUALIFICATION_REVIEW.md). No real migration, merge/deploy or release. Full goal remains active; canonical identity/paid source/cohort, AI intake/handoff/calendar and dashboard are unfinished.
+
+---
+
+## 2026-10-02 — CRM qualification evidence (goal continues)
+
+Base PR22 ec53daf. Implemented CRM human confirmation/exception panel, authenticated service and append-only migration650. Fresh database authorization, concurrency/idempotency and monotonic invalidation preserve evidence without silently reviving it when source edits are reverted. Default-off, primary-only; no real database/customer/ad changes. Local35 service/router tests pass; exact-head PostgreSQL/build/browser and independent review remain to be verified.
+
+This is not cross-channel dedup, paid attribution, automated qualification or completed CPQL. Full four-part customer/spend, AI handoff, dashboard and acceptance goal remains active; see [scope and remaining gates](vpt-marketing-automation/CRM_QUALIFICATION.md). Human confirmation supports exceptions; it does not replace the approved automation objective. Finance deferred.
+
+---
+
+## 2026-10-02 — Marketing source integration (continuing four-part Founder goal)
+
+Base PR22 38c71c15. Connected opt-in account-level Facebook spend evidence to existing sync, plus scoped read endpoint and a source coverage card. Legacy sync now rejects incomplete pagination/unknown currency/malformed money. Account admin endpoints enforce company ownership and tenant scope. New migration649 persists begin/complete/failure evidence; latest failed/interrupted run cannot fall back to old spend. New path is default-off and refuses failover; no production writes, campaigns or messages changed.
+
+Local221 unit/integration/regression cases PASS. Implementation94528fa passed PostgreSQL16 spend evidence/concurrency (10PASS/0SKIP), whole frontend Vite build and report CI; independent reviewer reran218 tests and passed the code. Supported browser covered source failure, company switch and pending sync. See SPEND_REVIEW.md; closing UI date guard and evidence commit require exact-head CI. Scope remains the full customer+spend, AI intake/handoff, dashboard and acceptance/release objective. Canonical CRM/trial registry, recipient/calendar bindings, AI delivery and live UAT are unfinished. Finance is deferred. Trial start was asked asynchronously; no response assumed.
+
+See [source integration](vpt-marketing-automation/SPEND_INTEGRATION.md). No merge/release. Rollback disables source evidence and preserves its records; do not restore cross-company account access.
+
+---
+
+## 2026-10-02 — VPT Marketing–Sales automation implementation
+
+Founder approved the one-time100m/30-day plan,80/20 geography, interim250k/qualified paid Lead (later <=7% recognized net paid-attributed revenue), AI advice/survey booking and human final quote/close. See [approved plan](../architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md) and [implementation/remaining gates](vpt-marketing-automation/README.md). Supersedes earlier14/21m proposals and permanent agency staffing, not production release.
+
+Implemented candidate: estimated/revenue separation across report/insights/MCP/UI, strict pure domain policy/measurement/care/content controls and disabled durable command components+new migration648. Source is PR19 e16c885; no main merge. Runtime providers/context, atomic budget/slot operations and six-channel UAT remain incomplete; no live automation/ad/DB changes.
+
+Local163 tests pass including25 interim Lead measurement cases. Isolated PostgreSQL CI and independent review must be read on the final published revision; this header alone is not evidence of PASS. Inventory found connected VPT Facebook/Google/GA4 and ChatGPT Ads; ChatGPT brand review pending. Canonical Lead qualification/spend bindings and human owners still need confirmation. Finance deferred by Founder; not a gate for Lead-only trial.
+
+Rollback: stop new components; revert code if needed; keep history, queue/audit and all business records.
+
+---
+
 ## 2026-10-01 — PR19 delayed-action refresh and authorized local browser verification
 
 PR #19 original head: `1d2520d2286423269adc50104185fe3cbe10bc04`. Founder authorized a local browser using synthetic data and an independent read-only reviewer agent. Real CRM configuration access and source-to-recipient acceptance remain unverified.
@@ -1584,3 +2223,50 @@ Hoàn tác local bằng đảo commit này nếu cần, nhưng đưa route cũ t
 ---
 
 Khi bắt đầu phiên mới, thêm mục mới lên đầu file, ngay dưới tiêu đề.
+
+## 2026-10-03 — Source registry candidate
+Added SQL671/private versioned source registry, authenticated primary-only API, same-snapshot report projection, source editor and exact retry storage. Known historical forms remain explicit unresolved exceptions; all accounts included, no provider completeness or spend grant. Local129 PASS; PostgreSQL/build/browser/independent review pending. See vpt-marketing-automation/SOURCE_REGISTRY.md. No live effects; full goal ACTIVE.
+
+## 2026-10-03 — Source registry SQL correction
+36048b5 passed9/10 jobs; census111151084463 failed10 dependent newcases due ambiguous local/column k. Independent review identified k/v/x alias conflicts. Qualified aliases explicitly in SQL671; tests unchanged, PostgreSQL rerun pending.
+
+## 2026-10-03 — Registry final validation delta
+50a0e14 passed all10 jobs and independent review; census41/0/0, Node22 697/0/0, build10314 modules. Browser found stale summary after read error: clear alongside editor on load/error/save. Strengthened concurrency observation to active + Lock/PgSleep. Final rerun pending; SOURCE_REGISTRY_BROWSER.md records synthetic UI evidence.
+
+## 2026-10-03 — Held POST editor closure
+Review found closing editor before POST settles can preserve stale outer summary. Clear summary after pending is durably stored and before HTTP. Supported browser held-response/close/reopen/exact-retry passed; database unchanged. 2d53b5 all10 checks succeeded; final UI head revalidation pending.
+
+## 2026-10-03 — Source registry closure
+
+Runtime9363535a and independent review PASS. CI37105837930 all10 SUCCESS, census111154053416=41/0/0, Node22 111154053420=697/0/0, build111154053390=10314modules31.35sec. Mergeca1e35a0c6438d310cdd4841842a579660219d38 has identicalcandidate tree4bc46dc5f1470cc661ff70897b742a7335b264a0. Report37105837943/Messenger37105837923SUCCESS. Synthetic browser heldPOST-close fix validated; tabs/servers closed. EvidenceSOURCE_REGISTRY_REVIEW.md. Docs-only closure; full goalACTIVE, no live effects.
+
+## 03/10/2026 — Nối khảo sát và việc chờ theo nhóm quảng cáo đang kiểm chứng
+
+SQL678/API/UI nối nguồn tiếp nhận khách trả phí với tình trạng chăm sóc và lịch hiện hành trong cùng snapshot. Lịch sau kỳ vẫn được giữ; tổng khách cần xử lý loại trùng cả việc chờ xác minh, chưa nối chăm sóc và bàn giao khảo sát. STOP không tự mở lại; hồ sơ chưa quy thuộc được giữ riêng.
+
+Local20 ca mới/44 ca liên quan PASS. PostgreSQL/build/browser và review độc lập đang kiểm. Full goal ACTIVE; chưa UAT/dữ liệu thật/phát hành. [Hợp đồng và hoàn tác](vpt-marketing-automation/COHORT_OPERATIONS.md).
+
+---
+
+
+03/10/2026 cohort3486c59: review mã/local44/Node22 828/build PASS; browser component thật/API giả PASS. PG ca chờ khóa không quan sát được phiên khác bằng service_role; sửa observer sang owner thử + pg_stat_clear_snapshot, giữ nguyên SQL/runtime. Chờ CI mới.
+
+03/10/2026 — Cohort3f8a565: PostgreSQL214/0/0, Node22 828/0/0, cả10job và build/report/Messenger SUCCESS; merge tree bằng HEAD đã xác minh. Local44/review mã/browser giả PASS. Đã lưu [bằng chứng](vpt-marketing-automation/COHORT_OPERATIONS_REVIEW.md). Không phát hành; goal ACTIVE, bước tiếp xử lý đề xuất/gửi lịch và ngoại lệ vận hành.
+
+
+## Hiện hành 04/10/2026 — Đang khép quyền gộp CRM; bảo toàn lịch sử còn mở
+
+Bản làm việc trên baseline7cc7cb2 thêm kiểm actor/quyền hiện hành trên toàn bộ Lead giữ/xóa, khóa company/tenant/region, kiểm cờ xóa pipeline và chặn gộp Customer khác nhau chưa có phạm vi đầy đủ. Cleanup không còn tự xóa chỉ vì chung Customer: đọc một công ty có giới hạn, trả yêu cầu đối soát với0thay đổi. Local50ca mới+67regression=117/0/0;7ca PostgreSQL bổ sung chưa có kết quả CI ở checkpoint này.
+
+Reviewer phát hiện mất task/tệp/chat/quyền/tiền/Project/attribution trong thân merge cũ. **CRM merge chưa READY, cutover HOLD**; kiểm quyền không chứng minh giao dịch nguyên tử hoặc bảo toàn dữ liệu. [Phạm vi, findings, kiểm thử và bước triển khai](vpt-marketing-automation/LEGACY_CRM_MERGE_REPAIR.md). Full goal ACTIVE; không DB thật/model/provider/chi quảng cáo/phát hành. Các mục dưới là lịch sử.
+
+---
+
+
+## Hiện hành 04/10/2026 — Checkpoint quyền CRM đã qua PostgreSQL
+
+Runtime `2cac0949aa78bb5d281f580c55c9dfe1171e6101` kiểm actor và toàn bộ hồ sơ gộp bằng quyền hiện hành; chặn gộp Customer khác nhau chưa đủ phạm vi. Cleanup không tự xóa các cơ hội cùng khách hàng. Local 50 ca mới + 67 regression = 117/0/0; PostgreSQL 271/0/0 gồm 7 ca mới; Node22 843+26+117, cả 10 job, build/report/Messenger SUCCESS. CI merge tree khớp runtime. Reviewer độc lập đã đối chiếu published blobs và log CI, kết luận PASS đúng phạm vi quyền/cleanup.
+
+[Phạm vi, bằng chứng và findings còn mở](vpt-marketing-automation/LEGACY_CRM_MERGE_REPAIR.md). **CRM merge chưa READY**: còn giao dịch nguyên tử, receipt, bảo toàn task/tệp/chat/quyền/tiền/Project/attribution và Customer command đầy đủ. Tiếp tục khép phần này, creator company và cutover; sau đó cấu hình/nghiệm thu toàn tuyến, Founder release. Full goal ACTIVE; chưa DB thật, model/provider, chi quảng cáo hoặc phát hành.
+
+---

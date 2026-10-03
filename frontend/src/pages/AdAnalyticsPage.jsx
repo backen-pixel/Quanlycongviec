@@ -5,6 +5,10 @@
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
+import MarketingSpendCoverage from '../components/marketing/MarketingSpendCoverage';
+import MarketingOperations from '../components/marketing/MarketingOperations';
+import MarketingLeadTrial from '../components/marketing/MarketingLeadTrial';
 
 const TAB = [
   { key: 'insights', nhan: 'Nhận xét tự động' },
@@ -90,7 +94,7 @@ function OSoLieu({ nhan, giaTri, phu, mau = 'text-gray-900' }) {
   );
 }
 
-function KhungMarketing({ trangThai, onXong }) {
+function KhungMarketing({ trangThai, onXong, companyId, onSyncStart, onSyncFinish }) {
   const [mo, setMo] = useState(false);
   const [actId, setActId] = useState('');
   const [ten, setTen] = useState('');
@@ -116,6 +120,7 @@ function KhungMarketing({ trangThai, onXong }) {
   const thu = () => goi('thu', async () => {
     const r = await api.post('/ad-analytics/marketing/test', {
       ad_account_id: actId.trim(),
+      company_id: companyId || undefined,
       access_token: token.trim() || undefined,
     });
     const d = r.data || {};
@@ -125,6 +130,7 @@ function KhungMarketing({ trangThai, onXong }) {
   const luu = () => goi('luu', async () => {
     await api.put('/ad-analytics/marketing/account', {
       ad_account_id: actId.trim(),
+      company_id: companyId || undefined,
       ten: ten.trim() || null,
       access_token: token.trim() || undefined,
     });
@@ -134,13 +140,16 @@ function KhungMarketing({ trangThai, onXong }) {
   });
 
   const dongBo = () => goi('dongbo', async () => {
+    onSyncStart?.();
+    try {
     const r = await api.post('/ad-analytics/marketing/sync', { ngay: 30 });
     const d = r.data || {};
     const soAd = (d.ket_qua || []).reduce((s, x) => s + (x.so_ad || 0), 0);
     const hong = (d.ket_qua || []).filter((x) => !x.ok);
     if (onXong) await onXong();
     if (hong.length) return { ok: false, chu: `${hong.length} tài khoản lỗi: ${hong[0].loi}` };
-    return { ok: true, chu: `Đã kéo ${soAd} quảng cáo về, phân tích lại ${d.phan_tich_lai ?? 0} quảng cáo.` };
+    return { ok: true, chu: `Đã kéo ${soAd} quảng cáo về và cập nhật chi tiêu.` };
+    } finally { onSyncFinish?.(); }
   });
 
   return (
@@ -240,6 +249,7 @@ function KhungMarketing({ trangThai, onXong }) {
 }
 
 export default function AdAnalyticsPage() {
+  const { user } = useAuth();
   const reportRequestId = useRef(0);
   const refreshReportRef = useRef(null);
   const [tab, setTab] = useState('campaigns');
@@ -264,6 +274,8 @@ export default function AdAnalyticsPage() {
   const [tenLo, setTenLo] = useState('');
   const [dangLuu, setDangLuu] = useState(false);
   const [mkt, setMkt] = useState(null);
+  const [spendRefresh, setSpendRefresh] = useState(0);
+  const [spendSyncing, setSpendSyncing] = useState(false);
 
   const params = useMemo(() => {
     const p = {};
@@ -504,12 +516,12 @@ export default function AdAnalyticsPage() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <OSoLieu nhan="Lead từ quảng cáo" giaTri={fmtSo(tongQuan.tu_quang_cao?.leads)}
               phu={`${tongQuan.so_quang_cao} quảng cáo · ${tongQuan.ti_le_biet_quang_cao}% lead biết nguồn QC`} />
-            <OSoLieu nhan="Lead chất lượng" giaTri={fmtSo(tongQuan.tu_quang_cao?.quality_leads)}
+            <OSoLieu nhan="Lead được gắn nhãn ấm/nóng" giaTri={fmtSo(tongQuan.tu_quang_cao?.quality_leads)}
               phu={`${tongQuan.tu_quang_cao?.quality_rate || 0}% · rác ${tongQuan.tu_quang_cao?.junk_rate || 0}%`}
               mau="text-amber-700" />
-            <OSoLieu nhan="Đơn đã chốt" giaTri={fmtSo(tongQuan.tu_quang_cao?.closed)}
+            <OSoLieu nhan="Deal đã đánh dấu chốt" giaTri={fmtSo(tongQuan.tu_quang_cao?.closed)}
               phu={`tỉ lệ chốt ${tongQuan.tu_quang_cao?.close_rate || 0}%`} mau="text-emerald-700" />
-            <OSoLieu nhan="Doanh thu" giaTri={fmtTien(tongQuan.tu_quang_cao?.revenue)}
+            <OSoLieu nhan="Giá trị deal chốt (ước tính)" giaTri={fmtTien(tongQuan.tu_quang_cao?.closed_estimated_value)}
               phu={tongQuan.co_chi_tieu
                 ? `chi ${fmtTien(tongQuan.tu_quang_cao?.spend)} đ · ${fmtSo(tongQuan.tu_quang_cao?.cost_per_lead)} đ/lead`
                 + `${tongQuan.tu_quang_cao?.roas != null ? ` · ROAS ${tongQuan.tu_quang_cao.roas}` : ''}`
@@ -526,7 +538,19 @@ export default function AdAnalyticsPage() {
         </>
       )}
 
-      <KhungMarketing trangThai={mkt} onXong={async () => { await taiMkt(); await refreshReportRef.current?.(); }} />
+      <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+        <b>Mục tiêu thử: 250.000 đồng/khách hợp lệ. Chi phí thực tế: chưa đủ dữ liệu.</b>{' '}
+        Khách hợp lệ được loại trùng, xác minh nhu cầu, vùng phục vụ và thông tin liên hệ; nhãn ấm/nóng chưa thay việc xác minh này.
+        Giá trị deal là ước tính, chưa phải doanh thu ghi nhận hay tiền đã thu.
+        Chi tiêu trên bảng chỉ gồm quảng cáo đã liên kết Lead; có thể thiếu quảng cáo chưa tạo khách.
+        Chưa dùng số liệu này để tự tăng ngân sách hoặc kết luận đạt 250.000 đồng/khách hay 7% doanh thu.
+      </div>
+
+      <MarketingOperations companyId={congTy} actorId={user?.id || user?.userId} />
+      <MarketingLeadTrial companyId={congTy} actorId={user?.id || user?.userId} />
+      <MarketingSpendCoverage companyId={congTy} from={tuNgay} to={denNgay} refresh={spendRefresh} syncing={spendSyncing} />
+
+      <KhungMarketing trangThai={mkt} companyId={congTy} onSyncStart={() => setSpendSyncing(true)} onSyncFinish={() => { setSpendSyncing(false); setSpendRefresh(n => n + 1); }} onXong={async () => { await taiMkt(); await refreshReportRef.current?.(); }} />
 
       <div className="flex flex-wrap items-center gap-1.5 border-b border-gray-200">
         {TAB.map((t) => (
@@ -659,7 +683,7 @@ export default function AdAnalyticsPage() {
                           <div><div className="text-[10px] uppercase text-gray-400">Lead</div><div className="text-base font-bold tabular-nums">{fmtSo(sl.leads)}</div></div>
                           <div><div className="text-[10px] uppercase text-gray-400">Chốt</div><div className="text-base font-bold tabular-nums text-emerald-700">{fmtSo(sl.closed)}</div></div>
                           <div><div className="text-[10px] uppercase text-gray-400">Tỉ lệ</div><div className="text-base font-bold tabular-nums">{sl.ti_le_chot || 0}%</div></div>
-                          <div><div className="text-[10px] uppercase text-gray-400">Doanh thu</div><div className="text-base font-bold tabular-nums text-teal-700">{fmtTien(sl.revenue)}</div></div>
+                          <div><div className="text-[10px] uppercase text-gray-400">Giá trị deal chốt (ước tính)</div><div className="text-base font-bold tabular-nums text-teal-700">{fmtTien(sl.closed_estimated_value)}</div></div>
                         </div>
                       </div>
 
@@ -708,7 +732,7 @@ export default function AdAnalyticsPage() {
                 <th className="px-3 py-2.5 text-right">Chất lượng</th>
                 <th className="px-3 py-2.5 text-right">Rác</th>
                 <th className="px-3 py-2.5 text-right">Chốt</th>
-                <th className="px-3 py-2.5 text-right">Doanh thu</th>
+                <th className="px-3 py-2.5 text-right">Giá trị deal chốt (ước tính)</th>
                 <th className="px-3 py-2.5 text-right">Chi tiêu</th>
               </tr>
             </thead>
@@ -801,7 +825,7 @@ export default function AdAnalyticsPage() {
                       <span className="font-semibold text-emerald-700">{fmtSo(g.closed)}</span>
                       <div className="text-[11px] text-gray-400">{g.close_rate}%</div>
                     </td>
-                    <td className="px-3 py-2.5 text-right align-top tabular-nums">{fmtTien(g.revenue)}</td>
+                    <td className="px-3 py-2.5 text-right align-top tabular-nums">{fmtTien(g.closed_estimated_value)}</td>
                     <td className="px-3 py-2.5 text-right align-top tabular-nums">
                       {g.spend == null ? (
                         <span className="text-[12px] text-gray-400">—</span>
@@ -825,7 +849,7 @@ export default function AdAnalyticsPage() {
 
       <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-[12.5px] text-gray-600">
         <b>Về cột Chi tiêu:</b> hệ thống chưa nối Facebook Marketing API nên chưa có số tiền đã tiêu,
-        do đó chưa tính được giá mỗi lead và ROAS. Cần Ad Account ID và token có quyền <code>ads_read</code>.
+        do đó chưa tính được giá mỗi lead. Doanh thu kế toán và ROAS còn cần nguồn được đối soát riêng.
         <br />
         <b>Về tên chiến dịch:</b> Facebook chỉ gửi <code>ad_id</code> và tên quảng cáo, không gửi tên chiến dịch.
         Đặt tay tại đây, hoặc nối Marketing API để tự điền.
@@ -833,3 +857,4 @@ export default function AdAnalyticsPage() {
     </div>
   );
 }
+

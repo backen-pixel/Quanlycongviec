@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { auth } = require('../../../middleware/auth');
 const { supabase } = require('../../../config/supabase');
+const { assertLegacyFacebookWriteAllowed } = require('../../../helpers/facebookLegacyWriteScope');
 const { responseCache, invalidateTags: rcInvalidateTags } = require('../../../middleware/responseCache');
 const { pgCrmDuplicateLeadIds } = require('../../../helpers/pgHotQueries');
 const PDFDocument = require('pdfkit');
@@ -3655,6 +3656,7 @@ function normalizePipelineStagesList(rows) {
 /** Gộp bản ghi khách source → target: bổ sung trường trống, gán lại FK, xóa source */
 async function mergeCustomerIntoTarget(sb, targetId, sourceId) {
   if (!targetId || !sourceId || String(targetId) === String(sourceId)) return;
+  await assertLegacyFacebookWriteAllowed(sb, { customerIds: [targetId, sourceId] });
   const { data: t } = await sb.from('customers').select('*').eq('id', targetId).single();
   const { data: s } = await sb.from('customers').select('*').eq('id', sourceId).single();
   if (!t || !s) return;
@@ -3701,13 +3703,13 @@ async function mergeCustomerIntoTarget(sb, targetId, sourceId) {
  * includeSecondaryData=false: chỉ xóa bản ghi phụ, không chuyển tài liệu/nhiệm vụ/báo giá/… sang bản giữ (dữ liệu gắn lead đó cascade theo DB).
  */
 async function executeLeadMerge(keepId, deleteIds, options = {}) {
-  const { finalTitle, mergeCustomers = false, includeSecondaryData = true } = options;
-  const idsToDelete = [...new Set((deleteIds || []).filter((id) => id && String(id) !== String(keepId)))];
-  if (!keepId || !idsToDelete.length) {
-    const err = new Error('keep_id và ít nhất một delete_id là bắt buộc');
-    err.status = 400;
-    throw err;
-  }
+  const { finalTitle, mergeCustomers = false, includeSecondaryData = true, request } = options;
+  const access = await require('../../../helpers/crmLegacyMergeAccess').assertLegacyLeadMergeAccess(
+    supabase, request, keepId, deleteIds, { mergeCustomers });
+  keepId = access.keepId;
+  const idsToDelete = access.deleteIds;
+
+  await assertLegacyFacebookWriteAllowed(supabase, { leadIds: [keepId, ...idsToDelete] });
 
   const { data: keepLead } = await supabase
     .from('crm_leads')

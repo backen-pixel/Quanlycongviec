@@ -196,7 +196,7 @@ app.use((req, res, next) => {
   }
   const isLarge = largeBodyRoutes.some((p) => req.path.startsWith(p));
   const limit = isLarge ? UPLOAD_BODY_LIMIT : STANDARD_BODY_LIMIT;
-  express.json({ limit })(req, res, (err) => {
+  express.json({ limit, verify: require('./modules/marketingAutomation/facebookLeadIntake').captureFacebookRawBody })(req, res, (err) => {
     if (err) return next(err);
     express.urlencoded({ extended: true, limit })(req, res, next);
   });
@@ -1686,6 +1686,8 @@ server.listen(config.port, () => {
 
       let created = 0;
       for (const contact of contacts) {
+        try { await require('./helpers/facebookLegacyWriteScope').assertLegacyFacebookWriteAllowed(supabase, { contactIds: [contact.id] }); }
+        catch (e) { if (e.code === 'MANAGED_CARE_SCOPE') continue; throw e; }
         // Check có message inbound không
         const { count } = await supabase.from('facebook_messages')
           .select('id', { count: 'exact', head: true })
