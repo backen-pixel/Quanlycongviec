@@ -108,7 +108,7 @@ BEGIN
   OR jsonb_typeof(p_command->'sourceNote') IS DISTINCT FROM 'string' OR length(btrim(p_command->>'sourceNote')) NOT BETWEEN 20 AND 2000
   OR(p_command->>'sourceDate'~'^\d{4}-\d{2}-\d{2}$') IS NOT TRUE
   OR jsonb_typeof(p_command->'entries') IS DISTINCT FROM 'array'
-  OR EXISTS(SELECT 1 FROM jsonb_object_keys(p_command)k WHERE k NOT IN('expectedRevision','expectedInventoryVersion','sourceReference','sourceDate','sourceNote','entries'))
+  OR EXISTS(SELECT 1 FROM jsonb_object_keys(p_command) AS keys(key) WHERE keys.key NOT IN('expectedRevision','expectedInventoryVersion','sourceReference','sourceDate','sourceNote','entries'))
  THEN RAISE EXCEPTION 'invalid declaration' USING ERRCODE='22023';END IF;
  IF jsonb_array_length(p_command->'entries') NOT BETWEEN 1 AND 300 THEN RAISE EXCEPTION 'invalid entry count' USING ERRCODE='22023';END IF;
  source_day:=(p_command->>'sourceDate')::date;
@@ -117,14 +117,14 @@ BEGIN
   IF jsonb_typeof(x) IS DISTINCT FROM 'object' OR jsonb_typeof(x->'kind') IS DISTINCT FROM 'string' OR x->>'kind' NOT IN('META_LEAD_ADS','MESSENGER','WEBSITE','PHONE','OTHER','NO_LEAD_SOURCE','UNRESOLVED_FORM')
    OR EXISTS(SELECT 1 FROM jsonb_each(x)f WHERE f.key IN('accountId','pageId','formId') AND jsonb_typeof(f.value) NOT IN('string','null'))
    OR(x->>'kind'<>'UNRESOLVED_FORM' AND(x->>'accountId'~'^act_[0-9]{1,32}$') IS NOT TRUE) OR(x->>'kind'='UNRESOLVED_FORM' AND x->>'accountId' IS NOT NULL)
-   OR EXISTS(SELECT 1 FROM jsonb_object_keys(x)k WHERE k NOT IN('accountId','kind','pageId','formId','destination')) THEN RAISE EXCEPTION 'invalid entry' USING ERRCODE='22023';END IF;
+   OR EXISTS(SELECT 1 FROM jsonb_object_keys(x) AS keys(key) WHERE keys.key NOT IN('accountId','kind','pageId','formId','destination')) THEN RAISE EXCEPTION 'invalid entry' USING ERRCODE='22023';END IF;
   IF x->>'kind'='UNRESOLVED_FORM' THEN
    IF(x->>'pageId'~'^[0-9]{1,32}$') IS NOT TRUE OR(x->>'formId'~'^[0-9]{1,32}$') IS NOT TRUE OR jsonb_typeof(x->'destination') IS DISTINCT FROM 'string' OR length(btrim(x->>'destination')) NOT BETWEEN 10 AND 500 THEN RAISE EXCEPTION 'unresolved form needs reason' USING ERRCODE='22023';END IF;
   ELSIF x->>'kind' IN('META_LEAD_ADS','MESSENGER') THEN
    IF(x->>'pageId'~'^[0-9]{1,32}$') IS NOT TRUE OR x->>'destination' IS NOT NULL OR(x->>'kind'='META_LEAD_ADS' AND(x->>'formId'~'^[0-9]{1,32}$') IS NOT TRUE) OR(x->>'kind'='MESSENGER' AND x->>'formId' IS NOT NULL) THEN RAISE EXCEPTION 'invalid Page entry' USING ERRCODE='22023';END IF;
   ELSIF x->>'pageId' IS NOT NULL OR x->>'formId' IS NOT NULL OR jsonb_typeof(x->'destination') IS DISTINCT FROM 'string' OR length(btrim(x->>'destination')) NOT BETWEEN 3 AND 500 THEN RAISE EXCEPTION 'destination required' USING ERRCODE='22023';END IF;
  END LOOP;
- SELECT jsonb_agg(v ORDER BY v::text) INTO entries FROM(SELECT jsonb_build_object('accountId',x->>'accountId','kind',x->>'kind','pageId',x->>'pageId','formId',x->>'formId','destination',CASE WHEN x->>'destination' IS NOT NULL THEN btrim(x->>'destination') ELSE NULL END)v FROM jsonb_array_elements(p_command->'entries')x)s;
+ SELECT jsonb_agg(s.value ORDER BY s.value::text) INTO entries FROM(SELECT jsonb_build_object('accountId',item.value->>'accountId','kind',item.value->>'kind','pageId',item.value->>'pageId','formId',item.value->>'formId','destination',CASE WHEN item.value->>'destination' IS NOT NULL THEN btrim(item.value->>'destination') ELSE NULL END) AS value FROM jsonb_array_elements(p_command->'entries') AS item(value))s;
  IF jsonb_array_length(entries)<>(SELECT count(DISTINCT value) FROM jsonb_array_elements(entries)) THEN RAISE EXCEPTION 'duplicate entries' USING ERRCODE='22023';END IF;
  PERFORM pg_advisory_xact_lock(hashtextextended('marketing-source-request:'||p_request::text,0));
  PERFORM pg_advisory_xact_lock(hashtextextended('marketing-source-trial:'||p_trial::text,0));
@@ -144,8 +144,8 @@ BEGIN
  PERFORM 1 FROM public.marketing_fb_lead_bindings WHERE company_id=p_company ORDER BY page_id,form_id FOR SHARE;
  i:=marketing_measurement.source_inventory(p_company,p_trial);v:=i->>'version';
  IF i->>'complete' IS DISTINCT FROM 'true' OR v IS DISTINCT FROM p_command->>'expectedInventoryVersion' THEN RAISE EXCEPTION 'inventory changed' USING ERRCODE='40001';END IF;
- IF ARRAY(SELECT v->>'id' FROM jsonb_array_elements(i->'accounts')v ORDER BY 1) IS DISTINCT FROM ARRAY(SELECT unnest(t.account_ids) ORDER BY 1)
-  OR ARRAY(SELECT DISTINCT v->>'accountId' FROM jsonb_array_elements(entries)v WHERE v->>'accountId' IS NOT NULL ORDER BY 1) IS DISTINCT FROM ARRAY(SELECT unnest(t.account_ids) ORDER BY 1) THEN RAISE EXCEPTION 'all trial accounts required' USING ERRCODE='22023';END IF;
+ IF ARRAY(SELECT item.value->>'id' FROM jsonb_array_elements(i->'accounts') AS item(value) ORDER BY 1) IS DISTINCT FROM ARRAY(SELECT unnest(t.account_ids) ORDER BY 1)
+  OR ARRAY(SELECT DISTINCT item.value->>'accountId' FROM jsonb_array_elements(entries) AS item(value) WHERE item.value->>'accountId' IS NOT NULL ORDER BY 1) IS DISTINCT FROM ARRAY(SELECT unnest(t.account_ids) ORDER BY 1) THEN RAISE EXCEPTION 'all trial accounts required' USING ERRCODE='22023';END IF;
  FOR x IN SELECT value FROM jsonb_array_elements(entries) LOOP
   IF x->>'kind'='UNRESOLVED_FORM' THEN
    IF NOT EXISTS(SELECT 1 FROM jsonb_array_elements(i->'knownForms')f WHERE f->>'pageId'=x->>'pageId' AND f->>'formId'=x->>'formId') THEN RAISE EXCEPTION 'unknown historical form' USING ERRCODE='22023';END IF;
@@ -156,7 +156,7 @@ BEGIN
   IF x->>'kind'='NO_LEAD_SOURCE' AND(SELECT count(*) FROM jsonb_array_elements(entries)y WHERE y->>'accountId'=x->>'accountId')<>1 THEN RAISE EXCEPTION 'conflicting destinations' USING ERRCODE='22023';END IF;
  END LOOP;
  FOR k IN SELECT value FROM jsonb_array_elements(i->'knownForms') LOOP
-  IF NOT EXISTS(SELECT 1 FROM jsonb_array_elements(entries)x WHERE x->>'pageId'=k->>'pageId' AND x->>'formId'=k->>'formId' AND(x->>'kind'='UNRESOLVED_FORM' OR(x->>'kind'='META_LEAD_ADS' AND(k->>'accountId' IS NULL OR x->>'accountId'=k->>'accountId')))) THEN RAISE EXCEPTION 'known form omitted' USING ERRCODE='22023';END IF;
+  IF NOT EXISTS(SELECT 1 FROM jsonb_array_elements(entries) AS item(value) WHERE item.value->>'pageId'=k->>'pageId' AND item.value->>'formId'=k->>'formId' AND(item.value->>'kind'='UNRESOLVED_FORM' OR(item.value->>'kind'='META_LEAD_ADS' AND(k->>'accountId' IS NULL OR item.value->>'accountId'=k->>'accountId')))) THEN RAISE EXCEPTION 'known form omitted' USING ERRCODE='22023';END IF;
  END LOOP;
  recorded:=clock_timestamp();
  INSERT INTO marketing_measurement.source_registry(trial_id,company_id,revision,trial_revision,inventory_version,account_ids,entries,source_reference,source_date,source_note,declaration_digest,recorded_by,recorded_at)

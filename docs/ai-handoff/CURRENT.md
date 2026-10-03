@@ -1,3 +1,9 @@
+## 2026-10-03 — Sửa lỗi tên biến trong SQL danh mục
+
+Candidate36048b5 đạt9/10 job/build nhưng PostgreSQL census111151084463 phát hiện tên alias k trùng biến hàm, khiến lưu danh mục bị từ chối và10 ca mới phụ thuộc thất bại. Review độc lập phát hiện cùng nhóm lỗi v/x/k. SQL671 đã dùng alias/cột rõ ràng; giữ nguyên ca nghiệm thu, chạy lại đúng bản sửa. Chưa PASS toàn gói và chưa phát hành.
+
+---
+
 ## 2026-10-03 — Danh mục nguồn khách đang kiểm chứng
 
 SQL671/API/giao diện bổ sung phạm vi công ty/kỳ/tất cả tài khoản/Page/biểu mẫu/điểm nhận, xác nhận có phiên bản và lịch sử. Giữ ngoại lệ biểu mẫu lịch sử chưa rõ tài khoản; không suy không có điểm nhận từ số khách bằng0. Lưu nguyên giao dịch, retry đúng yêu cầu; thay cấu hình/quyền làm danh mục stale. Projection cùng snapshot báo cáo, không nâng provider completeness/CPQL/quyền chi.

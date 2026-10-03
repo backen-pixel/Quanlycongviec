@@ -1989,3 +1989,6 @@ Khi bắt đầu phiên mới, thêm mục mới lên đầu file, ngay dưới 
 
 ## 2026-10-03 — Source registry candidate
 Added SQL671/private versioned source registry, authenticated primary-only API, same-snapshot report projection, source editor and exact retry storage. Known historical forms remain explicit unresolved exceptions; all accounts included, no provider completeness or spend grant. Local129 PASS; PostgreSQL/build/browser/independent review pending. See vpt-marketing-automation/SOURCE_REGISTRY.md. No live effects; full goal ACTIVE.
+
+## 2026-10-03 — Source registry SQL correction
+36048b5 passed9/10 jobs; census111151084463 failed10 dependent newcases due ambiguous local/column k. Independent review identified k/v/x alias conflicts. Qualified aliases explicitly in SQL671; tests unchanged, PostgreSQL rerun pending.
