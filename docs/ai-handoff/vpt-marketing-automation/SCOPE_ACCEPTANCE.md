@@ -1,6 +1,6 @@
 # Accepted Facebook measurement scope
 
-Status: implementation under isolated verification; no live data, activation, release or observed business attainment. Baseline: one-time 100m/30-day cap; interim 250,000 VND per unique qualified paid Lead. The full Marketing–Sales goal remains active.
+Status: isolated verification and independent review PASS for runtime960086c. [Exact-version evidence](SCOPE_ACCEPTANCE_REVIEW.md). No live data, activation, release or observed business attainment. Baseline: one-time 100m/30-day cap; interim 250,000 VND per unique qualified paid Lead. The full Marketing–Sales goal remains active.
 
 ## Behavior
 
@@ -22,7 +22,7 @@ Before/after append context comparison catches late changes and rolls back repor
 
 New domain/service/UI-state tests cover 1m/4, zero-lead spend, zero-spend delivery, intraday intervals, contradictory metadata, incomplete/empty/filtered exports, qualification, receipt privacy, default-off/failover, replay and Vietnam time. PostgreSQL cases run through real collector/intake/qualification/registry/parser/service functions, current rights, exact retries, competing decisions, late receipts, source outage, expiry and authority changes while waiting.
 
-Local at initial candidate: 24 new tests / 63 new+related PASS. PostgreSQL, frontend build, synthetic browser and final independent review pending. Later review record must cite the tested head/tree; these local numbers do not prove production readiness.
+Local: 24 new tests / 63 new+related PASS. Runtime960086c: PostgreSQL88/0/0 (10 new cases), HTTP1/0/0, Node22 808/0/0, all10 jobs/full build/report/Messenger SUCCESS, independent review PASS. Synthetic browser verifies uncertain write/reload/file matching/retry, current versus historical display, changed source, report-failure revocation and actor changes. These isolated results do not prove production readiness.
 
 Rollback: keep/turn the new flag off and keep all acceptance/revocation/artifact evidence. Existing observed reports remain available. Do not delete accepted history, enable money movement, restore revoked permissions or run a live migration as rollback. Founder release package still requires real source provenance/configuration, successful operational UAT, restore/performance checks and the exact deployed revision.
 

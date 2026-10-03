@@ -1,3 +1,13 @@
+## Hiện hành 03/10/2026 — Xác nhận phạm vi CPQL đã kiểm chứng
+
+Runtime960086c nối bằng chứng đích quảng cáo lịch sử, đúng tệp nguồn, toàn bộ chi tiêu và khách hợp lệ vào kết quả có phạm vi. Phép thử 1 triệu/4 khách =250.000đ giữ cả tài khoản không tạo khách. Có thu hồi, retry lịch sử, kiểm quyền sau chờ khóa và rollback khi nguồn đổi; không mở quyền chi.
+
+Review độc lập PASS. Local24 ca mới/63 ca liên quan; PostgreSQL88/0/0 (10 ca mới), HTTP1/0/0, Node22 808/0/0, cả10job/build/report/Messenger SUCCESS. Browser dữ liệu giả kiểm mất phản hồi→reload→đúng/sai tệp→retry, stale/current, đổi người và thu hồi trong màn hình report lỗi. [Bằng chứng đúng phiên bản](SCOPE_ACCEPTANCE_REVIEW.md), [hợp đồng/hoàn tác](SCOPE_ACCEPTANCE.md).
+
+Full goal ACTIVE. Còn các điểm nhận chưa nối, quy thuộc khảo sát/chờ xử lý theo nhóm quảng cáo, thiết lập AI/lịch/ngoại lệ và UAT/Founder release. Chưa dữ liệu thật đạt250k, chưa chứng minh toàn bộ Meta/đa kênh, chưa phát hành. Các mục dưới giữ lịch sử.
+
+---
+
 ## 03/10/2026 — Xác nhận phạm vi CPQL đang kiểm chứng
 
 SQL677/API/UI nối bằng chứng đích quảng cáo lịch sử, tệp nguồn đã đối soát và toàn bộ chi tiêu với khách hợp lệ; kết quả 250k chỉ áp dụng phạm vi đã xác nhận. Có thu hồi, retry bất biến, kiểm quyền sau chờ khóa và rollback khi nguồn đổi. Không mở quyền chi hoặc kết luận toàn bộ kênh.
