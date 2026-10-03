@@ -2,7 +2,7 @@
 
 SQL668, default-off authenticated APIs and CRM staff UI add scoped queue/detail/history and atomic receipt by the current recipient. Owner/admin monitoring does not allow proxy ACK; booking RSVP and historical booking result remain separate. Exact pending requests survive browser reload. Initial independent review found null-owner authorization and moved-staff name leakage; both fixed with regression cases.
 
-Local adapter7 PASS. Isolated PostgreSQL, UI/browser and final independent review remain pending. [Contract and rollback](vpt-marketing-automation/SURVEY_HANDOFFS.md). No live migration/send/AI call/ad change or release. Full goal ACTIVE; CPQL250k remains a target, not an observed result.
+Runtime76340d initial CI37095078505 passed9 jobs, including full frontend and Node22 604 tests. PostgreSQL job111123247026 failed one fixture assumption: duplicate contact insert is already rejected by the existing unique constraint. The test now asserts that rejection before testing changed Customer mapping; added authority/calendar races and53-row pagination. Local adapter/UI-state11 PASS. Browser verified full55-message history, manager cannot ACK and lost-response replay across reload with a synthetic API. PostgreSQL revalidation and final independent review remain pending. [Contract and rollback](vpt-marketing-automation/SURVEY_HANDOFFS.md). No live migration/send/AI call/ad change or release. Full goal ACTIVE; CPQL250k remains a target, not an observed result.
 
 ---
 

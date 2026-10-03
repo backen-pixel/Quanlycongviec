@@ -49,8 +49,8 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,region,booked,f
   }await finished(c);
  });
  await t.test('duplicate contact mapping and changed customer cannot reveal an unrelated conversation',async()=>{
-  const c=await booked();await db.query("INSERT INTO facebook_contacts(page_id,psid,lead_id,customer_id) VALUES('123',$1,$2,$3)",[c.psid,c.lead,c.customer]);
-  await assert.rejects(read(c),e=>e.code==='42501');await db.query("DELETE FROM facebook_contacts WHERE psid=$1 AND id<>(SELECT min(id::text)::uuid FROM facebook_contacts WHERE psid=$1)",[c.psid]);
+  const c=await booked();await assert.rejects(db.query("INSERT INTO facebook_contacts(page_id,psid,lead_id,customer_id) VALUES('123',$1,$2,$3)",[c.psid,c.lead,c.customer]),e=>e.code==='23505');
+  assert.equal((await read(c)).state,'PENDING');
   const foreign=randomUUID();await db.query("INSERT INTO customers(id,full_name,phone,company_id) VALUES($1,'Another private customer','000',$2)",[foreign,company]);await db.query('UPDATE crm_leads SET customer_id=$2 WHERE id=$1',[c.lead,foreign]);await assert.rejects(read(c),e=>e.code==='42501');await finished(c);
  });
  await t.test('changed appointment invalidates old view and cannot be acknowledged as original customer consent',async()=>{
@@ -92,5 +92,25 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,region,booked,f
    for(const role of ['anon','authenticated','service_role']){await db.query('SET LOCAL ROLE '+role);await db.query('SAVEPOINT denied');await assert.rejects(db.query('SELECT * FROM crm_survey_control.handoff_receipts'),e=>e.code==='42501');await db.query('ROLLBACK TO denied');
     if(role!=='service_role'){await db.query('SAVEPOINT denied');await assert.rejects(read(c,c.staff,null,null,db),e=>e.code==='42501');await db.query('ROLLBACK TO denied');}await db.query('RESET ROLE');}
   }finally{await db.query('ROLLBACK');await finished(c);}
+ });
+ const waitBlocked=async pid=>{for(let i=0;i<100;i++){if((await db.query("SELECT wait_event_type FROM pg_stat_activity WHERE pid=$1",[pid])).rows[0]?.wait_event_type==='Lock')return;await db.query('SELECT pg_sleep(0.01)')}throw Error('Expected request to wait on current authorization/calendar lock')};
+ await t.test('company revocation while ACK waits on authority cannot commit receipt',async()=>{
+  const c=await booked(),v=await read(c),pid=(await peers[1].query('SELECT pg_backend_pid() p')).rows[0].p;
+  await db.query('BEGIN');await db.query('UPDATE companies SET is_active=false WHERE id=$1',[company]);
+  const pending=assert.rejects(ack(c,v,randomUUID(),c.staff,peers[1]),e=>e.code==='42501');
+  try{await waitBlocked(pid);}finally{await db.query('COMMIT')}await pending;
+  await db.query('UPDATE companies SET is_active=true WHERE id=$1',[company]);assert.equal((await read(c)).state,'PENDING');await finished(c);
+ });
+ await t.test('participant inserted while ACK waits on calendar gate invalidates the old handoff',async()=>{
+  const c=await booked(),v=await read(c),pid=(await peers[1].query('SELECT pg_backend_pid() p')).rows[0].p;await finished(c);
+  await db.query('BEGIN');await db.query("SELECT pg_advisory_xact_lock(hashtextextended('crm-survey-calendar-write-gate-v1',0))");
+  const pending=assert.rejects(ack(c,v,randomUUID(),c.staff,peers[1]),e=>e.code==='40001');
+  try{await waitBlocked(pid);await db.query("INSERT INTO crm_event_participants(event_id,user_id,status) VALUES($1,$2,'confirmed')",[c.booking.event_id,stranger]);}finally{await db.query('COMMIT')}await pending;
+  assert.equal((await read(c)).canAcknowledge,false);
+ });
+ await t.test('more than fifty handoffs have complete stable pagination and identical scoped counts',async()=>{
+  const owner=randomUUID();await db.query("INSERT INTO users(id,company_id,tenant_id,role,is_active) SELECT $1,id,tenant_id,'sales',true FROM companies WHERE id=$2",[owner,company]);await db.query('INSERT INTO user_company_regions VALUES($1,$2)',[owner,region]);
+  const ids=[];for(let i=0;i<53;i++){const c=await booked();await db.query('UPDATE crm_leads SET assigned_to=$2 WHERE id=$1',[c.lead,owner]);ids.push(c.proposal.proposalId);await finished(c);}
+  const first=await queue(owner),next=await queue(owner,'PENDING',first.nextAfter,first.version);assert.equal(first.items.length,50);assert.equal(next.items.length,3);assert.equal(next.nextAfter,null);assert.equal(first.counts.PENDING,53);assert.deepEqual(next.counts,first.counts);assert.equal(new Set([...first.items,...next.items].map(x=>x.proposalId)).size,53);assert.ok(ids.every(id=>[...first.items,...next.items].some(x=>x.proposalId===id)));
  });
 };
