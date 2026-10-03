@@ -63,7 +63,7 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,booked,finished
   await t.test('authority is checked after waiting for company lock; NULL active is denied',async()=>{
    const pid=(await peers[1].query('SELECT pg_backend_pid() p')).rows[0].p;await db.query('BEGIN');await db.query('UPDATE companies SET is_active=NULL WHERE id=$1',[company]);
    const pending=read(admin,company,trial,peers[1]).then(value=>({value}),error=>({error}));
-   try{let blocked=false;for(let i=0;i<100;i++){const q=await peers[2].query("SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND wait_event_type='Lock'",[pid]);if(q.rowCount){blocked=true;break;}await new Promise(r=>setTimeout(r,10));}assert.equal(blocked,true);}
+   try{let blocked=false;for(let i=0;i<100;i++){await db.query('SELECT pg_stat_clear_snapshot()');const q=await db.query("SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND wait_event_type='Lock'",[pid]);if(q.rowCount){blocked=true;break;}await new Promise(r=>setTimeout(r,10));}assert.equal(blocked,true);}
    finally{await db.query('COMMIT');}
    try{const result=await pending;assert.equal(result.error?.code,'42501');}finally{await db.query('UPDATE companies SET is_active=true WHERE id=$1',[company]);}
   });

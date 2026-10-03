@@ -2120,3 +2120,5 @@ Local20 ca mới/44 ca liên quan PASS. PostgreSQL/build/browser và review đ�
 
 ---
 
+
+03/10/2026 cohort3486c59: review mã/local44/Node22 828/build PASS; browser component thật/API giả PASS. PG ca chờ khóa không quan sát được phiên khác bằng service_role; sửa observer sang owner thử + pg_stat_clear_snapshot, giữ nguyên SQL/runtime. Chờ CI mới.

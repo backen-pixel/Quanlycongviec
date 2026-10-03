@@ -1,6 +1,6 @@
 # Khảo sát và khách cần xử lý theo nhóm quảng cáo
 
-Trạng thái 03/10/2026: mã ứng viên đang kiểm PostgreSQL/build/browser và review độc lập. Không phát hành hoặc mở quyền thực thi.
+Trạng thái 03/10/2026: runtime3486c59 đã review mã PASS, local44 và Node22 828/0/0, full frontend build PASS; browser dữ liệu giả đạt các tình huống chính. Đang sửa phép quan sát khóa trong một ca PostgreSQL rồi chạy lại. Không phát hành hoặc mở quyền thực thi.
 
 ## Hành vi
 
@@ -22,7 +22,9 @@ RPC công khai yêu cầu service_role ngay cả khi vô tình có grant thêm. 
 
 ## Kiểm chứng và hoàn tác
 
-Unit/API/UI contract: 20 ca mới, 44 ca gồm các ca vận hành liên quan PASS cục bộ. Các ca PostgreSQL mới dùng booking qua dispatch/confirmation giả và bản ghi nguồn quảng cáo giả rõ ràng; kiểm quyền, lịch sau kỳ, mất/khác công ty, thay qualification+STOP trong lúc đọc, công ty mất quyền lúc chờ khóa. Kết quả PostgreSQL/build/browser và kết luận reviewer chưa được xác nhận tại thời điểm viết.
+Unit/API/UI contract: 20 ca mới, 44 ca gồm các ca vận hành liên quan PASS cục bộ. Các ca PostgreSQL mới dùng booking qua dispatch/confirmation giả và bản ghi nguồn quảng cáo giả rõ ràng; kiểm quyền, lịch sau kỳ, mất/khác công ty, thay qualification+STOP trong lúc đọc, công ty mất quyền lúc chờ khóa. CI3486c59: 5/6 ca PostgreSQL mới PASS, ca quan sát chờ khóa dùng service_role không nhìn được wait_event của phiên khác nên thất bại trước assertion kết quả; log cho thấy RPC vẫn từ chối sau commit. Đổi observer sang kết nối chủ DB thử và xóa cache pg_stat mỗi lượt, không đổi runtime hay nới quyền ứng dụng. Chờ kết quả chạy lại.
+
+Browser được kiểm qua công cụ hỗ trợ, component thật + API giả, CSP connect-src none: số nhóm/việc/lịch; lịch2027 sau kỳ2026; lỗi nguồn ẩn số cũ; STOP bỏ việc CARE nhưng giữ lịch; đổi actor trong lúc phản hồi cũ chậm không khôi phục lịch; bảng theo kỳ vẫn hoạt động khi report cha lỗi. CSS fixture chỉ phục vụ kiểm chức năng, chưa nghiệm thu toàn bộ giao diện production.
 
 Tắt `VPT_MARKETING_COHORT_OPERATIONS` để ngừng bảng theo kỳ. SQL678 chỉ đọc; bảng toàn công ty tiếp tục gọi helper chung. Nếu cần quay toàn công ty về bản cũ, phát hành một migration mới khôi phục định nghĩa public RPC từ SQL673, không sửa file migration đã chạy. Không xóa lịch, nguồn khách hoặc bằng chứng.
 

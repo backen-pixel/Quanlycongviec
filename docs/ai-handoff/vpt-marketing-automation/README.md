@@ -2,7 +2,7 @@
 
 SQL678/API/UI nối nguồn tiếp nhận khách trả phí với tình trạng chăm sóc và lịch hiện hành trong cùng snapshot. Lịch sau kỳ vẫn được giữ; tổng khách cần xử lý loại trùng cả việc chờ xác minh, chưa nối chăm sóc và bàn giao khảo sát. STOP không tự mở lại; hồ sơ chưa quy thuộc được giữ riêng.
 
-Local20 ca mới/44 ca liên quan PASS. PostgreSQL/build/browser và review độc lập đang kiểm. Full goal ACTIVE; chưa UAT/dữ liệu thật/phát hành. [Hợp đồng và hoàn tác](COHORT_OPERATIONS.md).
+Local20 ca mới/44 ca liên quan, Node22 828/0/0 và frontend build PASS. Reviewer mã PASS; browser giả đã kiểm. PostgreSQL đạt5/6 ca mới; đang sửa observer của ca chờ khóa và chạy lại, runtime giữ nguyên. Full goal ACTIVE; chưa UAT/dữ liệu thật/phát hành. [Hợp đồng và hoàn tác](COHORT_OPERATIONS.md).
 
 ---
 
