@@ -51,6 +51,8 @@ on:
       - 'backend/tests/surveyCalendarGuard*.js'
       - 'database/665_crm_survey_proposals.sql'
       - 'backend/tests/surveyProposals*.js'
+      - 'database/666_crm_survey_confirmation_ingress.sql'
+      - 'backend/tests/surveyConfirmationIngress*.js'
       - 'frontend/src/components/facebook/CustomerCareLibrary.jsx'
       - 'frontend/src/components/facebook/careLibraryState.mjs'
       - 'frontend/src/components/facebook/FacebookCustomerCareConsole.jsx'

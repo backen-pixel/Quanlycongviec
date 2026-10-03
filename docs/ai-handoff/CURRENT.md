@@ -1,3 +1,11 @@
+## 2026-10-03 — Signed survey confirmation ingress (in validation)
+
+SQL666 and the opt-in webhook adapter preserve quick-reply confirmation evidence from authenticated raw Meta bytes, process all STOP/human/unknown-echo events before booking, and recover confirmations waiting for a late delivery receipt. Private Page enrollment starts empty. New server RPCs enforce the actual service_role even after broad public-function grants; normalized confirmation commands are not exposed through operator/AI HTTP tools.
+
+Local31 PASS; PostgreSQL and final independent review pending. Review fixes include terminal-result compare-and-set and ready-work recovery to avoid starvation; private tokens are removed before legacy logs/queues after both signed receivers run. [Scope and remaining work](vpt-marketing-automation/SURVEY_CONFIRMATION_INGRESS.md). Delivery proof is still seeded by the isolated DB owner: no outbound dispatcher, own-send echo matching, real Meta send, UAT or release. Full goal ACTIVE.
+
+---
+
 ## Hiện hành 03/10/2026 — Lõi đề xuất và đặt khảo sát đã kiểm thử
 
 Runtime243440d bổ sung đề xuất bất biến, kiểm xác nhận gắn đúng khách/lịch và giao dịch chung cho event, participant, audit, xác nhận và hàng bàn giao. Review độc lập PASS; PostgreSQL123 (12 case mới), Node22 574, cả10 job/full build và các regression PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/SURVEY_PROPOSALS_REVIEW.md), [phạm vi và phần còn thiếu](vpt-marketing-automation/SURVEY_PROPOSALS.md).

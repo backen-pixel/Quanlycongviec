@@ -3502,7 +3502,9 @@ r.post('/webhook', async (req, res) => {
   // Authenticate original bytes and persist opt-in Lead Ads before ANY legacy side effect.
   try { await facebookLeadIntake.receive(req); }
   catch (e) { return res.sendStatus(e.code === 'INVALID_SIGNATURE' ? 403 : ['INVALID_ENVELOPE','ENVELOPE_LIMIT'].includes(e.code) ? 400 : 503); }
-  const body = req.body;
+  // Both signed receivers use original bytes first. Private survey tokens must
+  // not enter legacy webhook logs, receipt queues or messaging processors.
+  const body = facebookCustomerCare.legacyBody(req.body);
   
   // Only opt-in Pages enter the durable inbox. A failed write must cause Meta retry.
   if (body.object === 'page') {

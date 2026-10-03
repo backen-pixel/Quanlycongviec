@@ -14,7 +14,7 @@ function explicitIntent(text){
  if(/\b(gap|noi chuyen voi|chuyen cho|goi) (nhan vien|nguoi that|nguoi tu van|tu van vien)\b/.test(s)||/\b(talk to|speak to) (a human|a person|an agent)\b/.test(s))return 'REQUEST_HUMAN';
  return 'MESSAGE';
 }
-function extractCareEvents(body,pages,now=Date.now()){
+function extractCareEvents(body,pages,now=Date.now(),{surveyConfirmations=false}={}){
  if(body?.object!=='page')return [];
  if(!Array.isArray(body.entry)||body.entry.length>100)throw fail('INVALID_ENVELOPE');
  const rows=[];
@@ -40,11 +40,28 @@ function extractCareEvents(body,pages,now=Date.now()){
     return {type:a.type,...(url===undefined?{}:{url})};
    });
    const source={pageId,psid,mid:m.mid,direction:echo?'outbound':'inbound',content:m.text||'',attachments,sentAt:new Date(event.timestamp).toISOString()};
-   rows.push({...source,intent:echo?'OUTBOUND_ECHO':explicitIntent(source.content),payloadHash:createHash('sha256').update(JSON.stringify(source)).digest('hex')});
+   const row={...source,intent:echo?'OUTBOUND_ECHO':explicitIntent(source.content),payloadHash:createHash('sha256').update(JSON.stringify(source)).digest('hex')};
+   // Keep the historical message hash stable across rollout. Confirmation
+   // evidence is separate and is accepted only from the signed raw envelope.
+   // An arbitrary text message containing this string is never confirmation.
+   if(surveyConfirmations&&!echo&&m.quick_reply!==undefined){
+    const payload=m.quick_reply?.payload;
+    if(typeof payload!=='string'||payload.length>1000)throw fail('INVALID_ENVELOPE');
+    const match=/^VPT_SURVEY_V1:([0-9a-f-]{36}):([0-9a-f-]{36})$/.exec(payload);
+    if(match&&uuid(match[1])&&uuid(match[2]))row.confirmationPayload=payload;
+   }
+   rows.push(row);
    if(rows.length>100)throw fail('ENVELOPE_LIMIT');
   }
  }
  return rows;
+}
+function redactSurveyConfirmationPayloads(body,pages){
+ if(body?.object!=='page'||!Array.isArray(body.entry))return body;
+ return {...body,entry:body.entry.map(entry=>!pages.has(entry?.id)||!Array.isArray(entry.messaging)?entry:{...entry,messaging:entry.messaging.map(event=>{
+  if(typeof event?.message?.quick_reply?.payload!=='string'||!event.message.quick_reply.payload.startsWith('VPT_SURVEY_V1:'))return event;
+  const {quick_reply,...message}=event.message;return {...event,message};
+ })})};
 }
 function createCustomerCare({db,isPrimary,env=process.env,now=Date.now}){
  const enabled=()=>env.VPT_FB_CARE_ADMIN==='1'&&isPrimary()===true;
@@ -59,8 +76,9 @@ function createCustomerCare({db,isPrimary,env=process.env,now=Date.now}){
   const pages=carePages(env);if(!pages.size)return {enabled:false};
   if(!verifySignature(req.facebookRawBody,req.headers?.['x-hub-signature-256'],env.VPT_FACEBOOK_APP_SECRET))throw fail('INVALID_SIGNATURE');
   let body;try{body=JSON.parse(req.facebookRawBody.toString('utf8'));}catch{throw fail('INVALID_ENVELOPE');}
-  const events=extractCareEvents(body,pages,now());
-  if(events.length)await rpc('crm_care_receive',{p_events:events});
+  const surveyConfirmations=env.VPT_SURVEY_CONFIRMATIONS==='1';
+  const events=extractCareEvents(body,pages,now(),{surveyConfirmations});
+  if(events.length)await rpc(surveyConfirmations?'crm_survey_receive':'crm_care_receive',{p_events:events});
   req.body=body;
   return {enabled:true,accepted:events.length};
  }
@@ -97,6 +115,6 @@ function createCustomerCare({db,isPrimary,env=process.env,now=Date.now}){
  function assertLegacySendAllowed(pageId){
   if(carePages(env).has(String(pageId)))throw Object.assign(fail('CARE_SEND_NOT_ENABLED'),{status:409,message:'Page đang thử hộp thư chăm khách; gửi tin từ hệ thống chưa được mở.'});
  }
- return {receive,handle,assertLegacySendAllowed,isEnrolled:pageId=>carePages(env).has(String(pageId))};
+ return {receive,handle,assertLegacySendAllowed,isEnrolled:pageId=>carePages(env).has(String(pageId)),legacyBody:body=>redactSurveyConfirmationPayloads(body,carePages(env))};
 }
-module.exports={carePages,explicitIntent,extractCareEvents,createCustomerCare};
+module.exports={carePages,explicitIntent,extractCareEvents,redactSurveyConfirmationPayloads,createCustomerCare};

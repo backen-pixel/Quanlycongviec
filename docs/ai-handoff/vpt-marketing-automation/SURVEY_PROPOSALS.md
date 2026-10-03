@@ -21,7 +21,7 @@ Buffer đã hứa được giữ theo booking, kể cả roster sau này giảm 
 ## Phần chưa tích hợp — vẫn là việc bắt buộc
 
 - Dispatcher gọi Meta và đối soát receipt; hiện không có quyền ứng dụng để tạo private receipt hoặc thực thi book. Delivery đang QUEUED không có nghĩa đã gửi.
-- Signed webhook/quick reply gắn với đúng token; không dùng boolean từ model hoặc một tin “đồng ý” không liên quan. Adapter chăm khách hiện chưa giữ payload xác nhận, và generic echo vẫn chuyển HUMAN_REQUESTED. Cần nhận diện riêng echo đã khớp lượt gửi, Page/PSID, app và nội dung; echo chưa rõ nguồn tiếp tục chuyển người.
+- [SQL666 nối signed webhook/quick reply với đúng token](SURVEY_CONFIRMATION_INGRESS.md); không dùng boolean từ model hoặc một tin “đồng ý” không liên quan. Generic echo vẫn chuyển HUMAN_REQUESTED. Cần nhận diện riêng echo đã khớp lượt gửi, Page/PSID, app và nội dung; echo chưa rõ nguồn tiếp tục chuyển người.
 - Phải xét toàn bộ STOP/takeover trong một batch trước khi thực thi xác nhận, xử lý được ACK/echo/confirmation đảo thứ tự và mất phản hồi. Không tuyên bố gửi đúng một lần nếu provider không chứng minh được.
 - Người nhận xem/ack bàn giao, UI đề xuất/xác nhận/trạng thái khảo sát, thông báo khách, hủy/đổi lịch có audit.
 - Chuyển/chặn đường ghi lịch cũ có thể báo thành công sai, dữ liệu lịch thật, đo hiệu năng, sao lưu/khôi phục/failover và gói phát hành Founder.

@@ -205,4 +205,5 @@ module.exports = async (t, { db, peers, query, company, other, admin, sales, reg
       await finished(c);
     }
   });
+  return { setup, finished };
 };
