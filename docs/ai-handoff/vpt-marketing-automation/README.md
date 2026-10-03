@@ -1,3 +1,9 @@
+## Hiện hành 03/10/2026 — Giao diện đối chiếu đang kiểm chứng
+
+SQL681/API/UI đang làm việc trênHEAD1dce6d2: tìm hồ sơ, bằng chứng, LINK/CLOSE qua reload và phân biệt mapping đầy đủ. Local26 PASS;11 caPG mới chưa chạy, browser/build/review cuối còn chờ. [Hợp đồng và bước tiếp](CARE_CONNECTION_CONSOLE.md). Chưa commit/phát hành hoặc dữ liệu thật đạt250k; full goal ACTIVE. Các bằng chứng dưới thuộc phiên bản trước.
+
+---
+
 ## Hiện hành 03/10/2026 — Điểm nối khách và ca khảo sát giả đã PASS
 
 Runtime b4e2def nối Lead intake với hội thoại có bằng chứng; ca xuyên API→xác nhận lịch→bàn giao→cohort giữ cùng Lead và tính cả chi không có khách. Lỗi timestamp SQL→API đã sửa, pending retry giữ nguyên. Review độc lập PASS; local42, intakePG233/0/0, census88+HTTP1, Node22 843+11 PASS, cả10job/build/report/Messenger SUCCESS.

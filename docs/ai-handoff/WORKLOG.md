@@ -1,3 +1,11 @@
+## 03/10/2026 — Tiếp tục giao diện đối chiếu và yêu cầu chưa rõ kết quả
+
+Thay đổi trên HEAD1dce6d2: SQL681, careConnections service/routes, CareConnections component/state và tích hợp console; thêm15 unit/API/state ca (26 cùng11 cũ),11 PG ca chưa chạy, cập nhật runner/workflow. Hai P2 review tenantNULL và mapping chưa đầy đủ đã sửa bằng cùng policy tenant và `mappingComplete`; version document SQL680 giữ nguyên. Local26 PASS, kiểm syntax/diff; chưa PostgreSQL681/browser/build hoặc review cuối, chưa commit/DB thật/phát hành.
+
+[CARE_CONNECTION_CONSOLE.md](vpt-marketing-automation/CARE_CONNECTION_CONSOLE.md) lưu hợp đồng, phần còn chờ, hoàn tác và bản đồ đường ghi cũ từ review độc lập. Tiếp theo kiểm PostgreSQL/browser, review đúng phiên bản và khép ứng dụng cũ trước enrollment. Full goal ACTIVE,250k là mục tiêu chưa phải kết quả thực tế.
+
+---
+
 ## Hiện hành 03/10/2026 — Đã kiểm điểm nối khách và hành trình khảo sát
 
 Runtime b4e2def nối Lead mới từ intake với hội thoại bằng xác nhận có bằng chứng; bảo vệ đường cũ và liên kết phục hồi. Ca giả đi qua actual API, xác nhận lịch, bàn giao và cohort; tổng chi giữ cả tài khoản không tạo khách. Sửa lỗi timestamp SQL→API khiến giao diện không tạo được đề xuất; yêu cầu đã lưu giữ nguyên khi retry.

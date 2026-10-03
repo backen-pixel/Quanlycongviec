@@ -4,7 +4,7 @@ const {createCareConnections,projection,command}=require('../src/modules/marketi
 const {id}=require('./marketingAutomation.trial.fixture');
 const actor=id(1),company=id(2),thread=id(3),lead=id(4),request=id(5),message=id(6);
 const read=()=>({policy:'CARE_CONNECTION_V1',actorId:actor,companyId:company,threadId:thread,leadId:lead,careMode:'WAITING',
- sendAllowed:false,automaticallyVerified:false,version:'a'.repeat(32),canLink:true,alreadyLinked:false,requiresIdentityEvidence:true,
+ sendAllowed:false,automaticallyVerified:false,version:'a'.repeat(32),canLink:true,alreadyLinked:false,mappingComplete:false,requiresIdentityEvidence:true,
  lead:{id:lead,code:null,title:'Synthetic Lead',customerName:'Synthetic customer',phone:null},
  messages:[{id:message,sentAt:'2026-10-03T01:00:00Z',text:'Synthetic identity evidence'}]});
 const receipt=()=>({...read(),requestId:request,contactId:id(7),replayed:false,currentLink:true});
@@ -39,7 +39,7 @@ test('wrong scope, capabilities, missing evidence and malformed message shapes f
  for(const mutate of [x=>x.actorId=id(9),x=>x.companyId=id(9),x=>x.threadId=id(9),x=>x.leadId=id(9),
   x=>x.sendAllowed=true,x=>x.automaticallyVerified=true,x=>x.requiresIdentityEvidence=false,
   x=>x.messages=[null],x=>x.messages.push(x.messages[0]),x=>x.messages[0].sentAt='bad',
-  x=>x.lead.phone=123,x=>x.messages=Array(21).fill(x.messages[0])]){
+  x=>x.lead.phone=123,x=>x.messages=Array(21).fill(x.messages[0]),x=>delete x.mappingComplete,x=>x.mappingComplete=true]){
   const x=read();mutate(x);assert.throws(()=>projection(x,actor,company,thread,lead));
  }
 });

@@ -228,4 +228,5 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,region,config})
   await c.receive([c.incoming('STOP')]);assert.equal((await query('crm_care_read',[admin,company,c.thread])).mode,'OPTED_OUT');
   assert.equal((await cohort()).counts.bookedGroups,before.counts.bookedGroups+1);
  });
+ return{fresh,view,command,link,count,storage,waitLock,blocked};
 };

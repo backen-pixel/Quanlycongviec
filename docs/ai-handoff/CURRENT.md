@@ -1,3 +1,13 @@
+## Hiện hành 03/10/2026 — Giao diện đối chiếu khách đang kiểm chứng
+
+Bản làm việc trên HEAD1dce6d2 bổ sung SQL681/API/UI tìm hồ sơ, xác nhận bằng chứng và đóng yêu cầu chưa rõ kết quả. LINK/CLOSE giữ nguyên yêu cầu qua reload; đóng trước thì chặn lệnh đến muộn, đã ghi thì giữ liên kết. Đã sửa hai P2 từ review: tenant cảhaiNULL và mapping một phần/mâu thuẫn không được báo hoàn tất.
+
+Local26 ca API/state PASS; đã viết11 ca PostgreSQL nhưng chưa chạy, browser/build và kết luận review cuối còn chờ. Chưa commit hoặc áp DB. [Hợp đồng, bản đồ đường ghi cũ và bước tiếp](vpt-marketing-automation/CARE_CONNECTION_CONSOLE.md). Bằng chứng233PG bên dưới chỉ thuộcSQL680.
+
+Full goal ACTIVE. Ưu tiên khép Facebook→CRM→khảo sát và đo đúng250k/khách hợp lệ, rồi UAT/Founder release trước mở kênh tiếp. Chưa dữ liệu thật đạt250k hoặc phát hành. Các mục dưới là lịch sử.
+
+---
+
 ## Hiện hành 03/10/2026 — Đã kiểm điểm nối khách và hành trình khảo sát
 
 Runtime b4e2def nối Lead mới từ intake với hội thoại bằng xác nhận có bằng chứng; bảo vệ đường cũ và liên kết phục hồi. Ca giả đi qua actual API, xác nhận lịch, bàn giao và cohort; tổng chi giữ cả tài khoản không tạo khách. Sửa lỗi timestamp SQL→API khiến giao diện không tạo được đề xuất; yêu cầu đã lưu giữ nguyên khi retry.
