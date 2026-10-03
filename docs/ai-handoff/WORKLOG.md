@@ -1,3 +1,9 @@
+## 2026-10-03 — Survey calendar source and availability (in validation)
+
+Basec621fe6. SQL663 and default-off survey APIs add explicit staff/region/calendar coverage with dated slots, current authority, expiry, versioned audit and idempotent writes. Availability reads complete CRM events/participants across every company/module without returning foreign event details; unknown time data blocks conservatively. Output is an expiring observation, not a reservation or confirmation. Local9 PASS; isolated PostgreSQL and independent implementation review pending. [Contract](vpt-marketing-automation/SURVEY_AVAILABILITY.md). Booking, customer confirmation, legacy-write barrier, notifications and real roster remain required. No model/provider call, live write or release. Full goal ACTIVE.
+
+---
+
 ## Hiện hành 03/10/2026 — Màn hình nội dung tư vấn đã kiểm thử
 
 Runtime979d62d bổ sung biên tập nội dung, duyệt/thu hồi đúng phiên bản, chọn sản phẩm/khu vực, xem trước nguyên văn và lịch sử đầy đủ. Bản nháp được giữ khi đổi tab hoặc phân trang lỗi; yêu cầu mất phản hồi được gửi lại đúng mã qua tải lại trình duyệt. SQL662 thêm bộ chọn và lịch sử theo quyền hiện hành. Review độc lập code/CI PASS; local20, PostgreSQL87 (4 console mới), Node22 558 và cả10 job/full build PASS. [Bằng chứng](vpt-marketing-automation/CARE_LIBRARY_CONSOLE_REVIEW.md), [kiểm tra trình duyệt và giới hạn](vpt-marketing-automation/CARE_LIBRARY_CONSOLE_BROWSER.md). Riêng accept/dismiss của hộp xác nhận gốc chưa kết luận bằng browser automation, giữ lại cho UAT.

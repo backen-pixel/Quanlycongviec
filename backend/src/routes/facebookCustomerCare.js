@@ -4,6 +4,7 @@ const {supabase}=require('../config/supabase');
 const state=require('../config/supabaseRouter');
 const {createCustomerCare}=require('../modules/marketingAutomation/facebookCustomerCare');
 const {createCareLibrary}=require('../modules/marketingAutomation/customerCareLibrary');
+const {createSurveyAvailability}=require('../modules/marketingAutomation/surveyAvailability');
 // Parent mount authenticates; each RPC checks the current actor and company.
 const r=Router(),care=createCustomerCare({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
 r.get('/threads',(req,res)=>care.handle(req,res,'list'));
@@ -18,4 +19,8 @@ r.get('/library/choices',(req,res)=>library.handle(req,res,'choices'));
 r.get('/library/history',(req,res)=>library.handle(req,res,'history'));
 r.post('/library/change',(req,res)=>library.handle(req,res,'change'));
 r.post('/library/preview',(req,res)=>library.handle(req,res,'preview'));
+const survey=createSurveyAvailability({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
+r.get('/survey/roster',(req,res)=>survey.handle(req,res,'read'));
+r.post('/survey/roster/change',(req,res)=>survey.handle(req,res,'change'));
+r.get('/survey/availability',(req,res)=>survey.handle(req,res,'availability'));
 module.exports=r;
