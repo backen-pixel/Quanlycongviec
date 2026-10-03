@@ -3,6 +3,8 @@ const {Router}=require('express');
 const {supabase}=require('../../../config/supabase');
 const state=require('../../../config/supabaseRouter');
 const {createTrialService}=require('../../../modules/marketingAutomation/trialService');
+const {createOperationsReport}=require('../../../modules/marketingAutomation/operationsReport');
+const operations=createOperationsReport({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
 const {createCensusAdmin}=require('../../../modules/marketingAutomation/facebookLeadCensusAdmin');
 const {createSourceRegistry}=require('../../../modules/marketingAutomation/sourceRegistry');
 const registry=createSourceRegistry({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
@@ -16,6 +18,7 @@ async function handle(req,res,action){
  try{const c={actorId,companyId};return res.json(await(action==='list'?service.list(c):action==='configure'?service.configure(c,req.body):service.report(c,req.params.trialId)));}
  catch(e){return res.status(e.status||503).json({error:e.status===403?'Không có quyền xem dữ liệu công ty này.':e.status===409?'Cấu hình đã thay đổi; cần tải lại.':e.status===400?'Cần tên kỳ đo và khoảng đúng 30 ngày theo giờ Việt Nam.':'Chưa đọc được đủ dữ liệu kỳ đo. Vui lòng thử lại.'});}
 }
+r.get('/marketing-operations',(req,res)=>operations(req,res));
 r.get('/marketing-trials',(req,res)=>handle(req,res,'list'));
 r.post('/marketing-trials',(req,res)=>handle(req,res,'configure'));
 r.get('/marketing-trials/:trialId/report',(req,res)=>handle(req,res,'report'));

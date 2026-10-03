@@ -75,5 +75,6 @@ test('isolated PostgreSQL Facebook Lead Ads intake',{skip:!dsn},async t=>{
   const dispatchFixtures=await require('./facebookSurveyDispatch.cases')(t,{db,peers,query,company,other,admin,...surveyFixtures});
   await require('./surveyHandoffs.cases')(t,{db,peers,query,company,other,admin,sales,region,...surveyFixtures,...dispatchFixtures});
   await require('./facebookSurveyOutcomes.cases')(t,{db,peers,query,company,other,admin,sales,region,...surveyFixtures,...dispatchFixtures});
+  await require('./marketingAutomation.operations.cases')(t,{db,peers,query,company,other,admin,sales,region,...surveyFixtures,...dispatchFixtures});
  }finally{await Promise.all(peers.map(x=>x.end()));await db.end();}
 });

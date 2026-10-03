@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import MarketingSpendCoverage from '../components/marketing/MarketingSpendCoverage';
+import MarketingOperations from '../components/marketing/MarketingOperations';
 import MarketingLeadTrial from '../components/marketing/MarketingLeadTrial';
 
 const TAB = [
@@ -545,6 +546,7 @@ export default function AdAnalyticsPage() {
         Chưa dùng số liệu này để tự tăng ngân sách hoặc kết luận đạt 250.000 đồng/khách hay 7% doanh thu.
       </div>
 
+      <MarketingOperations companyId={congTy} actorId={user?.id || user?.userId} />
       <MarketingLeadTrial companyId={congTy} actorId={user?.id || user?.userId} />
       <MarketingSpendCoverage companyId={congTy} from={tuNgay} to={denNgay} refresh={spendRefresh} syncing={spendSyncing} />
 

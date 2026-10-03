@@ -1,3 +1,11 @@
+## 2026-10-03 — Dashboard tư vấn/khảo sát đang kiểm chứng
+
+SQL673/API/UI thêm số liệu vận hành toàn công ty từ hội thoại Messenger và lịch khách xác nhận qua hệ thống, độc lập kỳ quảng cáo. Snapshot một câu lệnh dùng identity/handoff projection hiện có, che mapping ngoại công ty, tách hội thoại/nhóm CRM/lịch và ngoại lệ. STOP không xóa booking; ACK không phải hoàn tất khảo sát. Không thêm gửi tin/ghi lịch/quyền chi.
+
+Local22 unit/service/UI-state PASS. PostgreSQL/build/browser/review đang chờ; [phạm vi/hoàn tác](vpt-marketing-automation/OPERATIONS_DASHBOARD.md). Full goal ACTIVE, chưa UAT/phát hành/đạt250k.
+
+---
+
 ## Hiện hành03/10/2026 — Đã kiểm chứng nhật ký trang Facebook
 
 Runtime d89e34ba thêm SQL672 ghi witness từng trang nguyên giao dịch với receipt/observation/cursor, chuỗi hash/ordinal, giờ lease DB, một Graph version yêu cầu và phát hiện lịch sử thiếu. Summary trong API trạng thái cùng snapshot; không thay UI, không chứng minh Meta đủ/CPQL/quyền chi.
