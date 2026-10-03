@@ -1686,6 +1686,8 @@ server.listen(config.port, () => {
 
       let created = 0;
       for (const contact of contacts) {
+        try { await require('./helpers/facebookLegacyWriteScope').assertLegacyFacebookWriteAllowed(supabase, { contactIds: [contact.id] }); }
+        catch (e) { if (e.code === 'MANAGED_CARE_SCOPE') continue; throw e; }
         // Check có message inbound không
         const { count } = await supabase.from('facebook_messages')
           .select('id', { count: 'exact', head: true })

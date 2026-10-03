@@ -67,6 +67,15 @@ on:
       - 'database/679_survey_proposal_console.sql'
       - 'database/680_crm_care_connection.sql'
       - 'database/681_crm_care_connection_choices.sql'
+      - 'database/682_crm_care_legacy_write_check.sql'
+      - 'backend/src/helpers/facebookLegacy*.js'
+      - 'backend/src/helpers/facebookLeadDeleteWhenNoPhone.js'
+      - 'backend/src/routes/crm/shared/helpersBundle.js'
+      - 'backend/src/routes/crm/routes/leadDuplicates.js'
+      - 'backend/scripts/rescan-fb-inbound-phones.js'
+      - 'backend/tests/facebookLegacyWriteScope.test.js'
+      - 'backend/tests/careLegacyWrite.cases.js'
+      - 'backend/tests/facebookWebhookRecovery.test.js'
       - 'backend/tests/careConnections*.js'
       - 'frontend/src/components/facebook/CareConnections.jsx'
       - 'frontend/src/components/facebook/careConnectionState.mjs'
@@ -103,6 +112,7 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: node --test backend/tests/marketingAutomation.test.js backend/tests/marketingAutomation.leads.test.js backend/tests/marketingAutomation.reports.test.js backend/tests/marketingAutomation.spend.test.js backend/tests/marketingAutomation.spend.integration.test.js backend/tests/adAnalytics.correctness.test.js backend/tests/adAnalytics.ui-state.test.js backend/tests/adAnalytics.action-lifecycle.test.js backend/tests/crmLeadQuality.test.js backend/tests/crmLeadIdentity.test.js backend/tests/crmLeadIdentity.service.test.js backend/tests/crmLeadIdentity.review.test.js backend/tests/marketingAutomation.trial.test.js backend/tests/facebookLeadIntake.test.js backend/tests/facebookLeadIntake.integration.test.js backend/tests/facebookLeadIntake.admin.test.js backend/tests/facebookLeadCensus.test.js backend/tests/marketingAutomation.reconciliation.test.js backend/tests/marketingAutomation.period.test.js backend/tests/marketingAutomation.observedCpql.test.js backend/tests/marketingAutomation.sourceRegistry.test.js backend/tests/marketingAutomation.operations.test.js backend/tests/marketingAutomation.cohortOperations.test.js backend/tests/marketingAutomation.sourceExport.test.js backend/tests/marketingAutomation.measurementSnapshot.test.js backend/tests/marketingAutomation.accountDelivery.test.js backend/tests/marketingAutomation.scopeAcceptance.test.js backend/tests/facebookLeadIntake.legacy.test.js backend/tests/facebookCustomerCare.test.js backend/tests/facebookCustomerCare.console.test.js backend/tests/facebookCustomerCare.library.test.js backend/tests/facebookCustomerCare.libraryConsole.test.js backend/tests/surveyAvailability.test.js backend/tests/surveyProposals.test.js backend/tests/surveyProposalConsole.test.js backend/tests/facebookSurveyDispatch.test.js backend/tests/facebookSurveyOutcomes.test.js backend/tests/surveyHandoffs.test.js backend/tests/surveyHandoffs.ui-state.test.js
       - run: node --test backend/tests/careConnections.test.js backend/tests/careConnections.console.test.js
+      - run: node --test backend/tests/facebookLegacyWriteScope.test.js backend/tests/facebookWebhookRecovery.test.js
   postgres:
     runs-on: ubuntu-latest
     timeout-minutes: 10

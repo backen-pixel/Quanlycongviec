@@ -5,6 +5,8 @@ const r = express.Router();
 const { enabledPageIds, enqueueMessengerEvents, captureMessengerReferral, linkMessengerAttribution, createMessengerReceiptWorker } = require('../helpers/facebookMessengerReceipt');
 const DURABLE_MESSENGER_PAGES = enabledPageIds();
 const { isFacebookAtomicLeadScope, createFacebookLeadOnce } = require('../helpers/facebookAtomicLead');
+const { assertLegacyFacebookWriteAllowed, legacyFacebookPageMayWrite } = require('../helpers/facebookLegacyWriteScope');
+const { deleteLegacyFacebookContact, linkLegacyFacebookContact } = require('../helpers/facebookLegacyContactWrites');
 const { supabase } = require('../config/supabase');
 const { createLeadIntake } = require('../modules/marketingAutomation/facebookLeadIntake');
 const { createLeadCensus } = require('../modules/marketingAutomation/facebookLeadCensus');
@@ -2960,6 +2962,7 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
 }
 
 async function createLeadFromFacebookInner(pageId, contact, source, extraData = {}) {
+  await assertLegacyFacebookWriteAllowed(supabase, { pageIds: [String(pageId)], contactIds: [contact.id] });
   const page = await getPageConfig(pageId);
   if (!page) return null;
   const autoLeadCfg = await loadAutoLeadConfig();
@@ -2975,7 +2978,14 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
 
   const atomicScope = DURABLE_MESSENGER_PAGES.has(String(pageId))
     && isFacebookAtomicLeadScope({ pageId, companyId, moduleKey, createType });
+  // Matches discovered after the first check can belong to the new care flow.
+  // Check every discovered target before writing or returning it to a writer.
+  const checkTargets = (leadId, customerId) => assertLegacyFacebookWriteAllowed(supabase, {
+    pageIds: [String(pageId)], contactIds: [contact.id],
+    leadIds: leadId ? [leadId] : [], customerIds: customerId ? [customerId] : [],
+  });
   const atomicReuse = async (existingLeadId) => {
+    await checkTargets(existingLeadId);
     const result = await createFacebookLeadOnce(supabase, {
       pageId, contactId: contact.id, companyId, existingLeadId,
       leadData: { type: createType, company_id: companyId },
@@ -2989,6 +2999,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
 
   // 1. Check contact đã có lead_id
   if (freshContact?.lead_id) {
+    await checkTargets(freshContact.lead_id, freshContact.customer_id);
     if (atomicScope) return atomicReuse(freshContact.lead_id);
     return { id: freshContact.lead_id };
   }
@@ -3002,6 +3013,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
       .eq('company_id', companyId)
       .limit(1);
     if (existing?.length > 0) {
+      await checkTargets(existing[0].id, freshContact.customer_id);
       if (atomicScope) return atomicReuse(existing[0].id);
       console.log(`[FB] ⚠️  Đã có ${createType} (cùng công ty ${companyId}) cho customer ${freshContact.customer_id}, sync lead_id.`);
       await supabase.from('facebook_contacts').update({ lead_id: existing[0].id }).eq('id', contact.id);
@@ -3018,6 +3030,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
       .not('lead_id', 'is', null)
       .limit(1);
     if (samePsid?.length > 0) {
+      await checkTargets(samePsid[0].lead_id);
       if (atomicScope) return atomicReuse(samePsid[0].lead_id);
       console.log(`[FB] ⚠️  Đã có lead cho PSID trên cùng page ${freshContact.page_id}, sync lại.`);
       await supabase.from('facebook_contacts').update({ lead_id: samePsid[0].lead_id }).eq('id', contact.id);
@@ -3064,7 +3077,8 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
           .eq('company_id', companyId)
           .limit(1);
         if (existLead?.length > 0) {
-      if (atomicScope) return atomicReuse(existLead[0].id);
+          await checkTargets(existLead[0].id, sameCust[0].id);
+          if (atomicScope) return atomicReuse(existLead[0].id);
           console.log(`[FB] ⚠️  Đã có ${createType} cùng công ty cho SĐT ${cleanPhone}, gộp vào bản ghi ${existLead[0].id}`);
           await supabase.from('facebook_contacts').update({
             lead_id: existLead[0].id,
@@ -3078,12 +3092,14 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
 
   const leadIdBeforeWrite = await fetchContactLeadId(contact.id);
   if (leadIdBeforeWrite) {
+    await checkTargets(leadIdBeforeWrite);
     if (atomicScope) return atomicReuse(leadIdBeforeWrite);
     return { id: leadIdBeforeWrite };
   }
 
   // Tìm/tạo customer
   let customerId = contact.customer_id || freshContact?.customer_id;
+  if (customerId) await checkTargets(null, customerId);
   if (!customerId) {
     // Thử tìm customer theo SĐT trước khi tạo mới
     if (phone && phone.trim()) {
@@ -3093,6 +3109,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
           .select('id').ilike('phone', `%${cleanPhone.slice(-9)}`).limit(1);
         if (existCust?.length > 0) {
           customerId = existCust[0].id;
+          await checkTargets(null, customerId);
           await supabase.from('facebook_contacts').update({ customer_id: customerId }).eq('id', contact.id);
           console.log(`[FB] ♻️ Reuse customer ${customerId} by phone match`);
         }
@@ -3136,6 +3153,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
       .eq('company_id', companyId)
       .limit(1);
     if (leadForCust?.length > 0) {
+      await checkTargets(leadForCust[0].id, customerId);
       if (atomicScope) return atomicReuse(leadForCust[0].id);
       await supabase.from('facebook_contacts').update({ lead_id: leadForCust[0].id }).eq('id', contact.id);
       return leadForCust[0];
@@ -3144,11 +3162,13 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
 
   const leadIdBeforeInsert = await fetchContactLeadId(contact.id);
   if (leadIdBeforeInsert) {
+    await checkTargets(leadIdBeforeInsert, customerId);
     if (atomicScope) return atomicReuse(leadIdBeforeInsert);
     return { id: leadIdBeforeInsert };
   }
 
   const resolvedSourceId = await resolveFacebookSourceId(page);
+  await checkTargets(null, customerId);
 
   const codePrefix = createType === 'deal' ? 'DEAL' : 'LEAD';
   const fbTitleTypeLabel = createType === 'deal' ? 'Deal' : 'Lead';
@@ -3584,6 +3604,7 @@ async function handleMessaging(pageId, event, io, durable = false) {
 }
 
 async function handleMessagingInner(pageId, event, io, partnerPsid, durable = false) {
+  if (!await legacyFacebookPageMayWrite(supabase, pageId)) return;
   console.log(`\n[FB] 📨 Messenger event — partner PSID: ${partnerPsid}`);
 
   const sid = event.sender?.id != null ? String(event.sender.id).trim() : '';
@@ -4033,6 +4054,7 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
 // ── HANDLE LEAD ADS ──────────────────────────────────────────
 
 async function handleLeadGen(pageId, value) {
+  if (!await legacyFacebookPageMayWrite(supabase, pageId)) return;
   if (facebookLeadIntake.pages.has(String(pageId))) return; // durable worker exclusively owns opt-in Page forms
   const leadgenId = value.leadgen_id;
   const formId = value.form_id;
@@ -4132,6 +4154,7 @@ async function handleLeadGen(pageId, value) {
 // ── HANDLE COMMENTS ──────────────────────────────────────────
 
 async function handleComment(pageId, value) {
+  if (!await legacyFacebookPageMayWrite(supabase, pageId)) return;
   const commentId = value.comment_id;
   if (!commentId) return;
 
@@ -4846,11 +4869,9 @@ r.get('/contacts/:id', authMiddleware, async (req, res) => {
       return res.status(403).json({ error: 'Không có quyền xem liên hệ này' });
     }
     
-    // Nếu lead_id có nhưng lead không tồn tại → clear
+    // Reading a contact must not repair or erase an unresolved identity.
     if (contact.lead_id && !contact.lead) {
-      await supabase.from('facebook_contacts').update({ lead_id: null }).eq('id', contact.id);
-      contact.lead_id = null;
-      contact.lead = null;
+      contact.link_needs_review = true;
     }
     {
       const p = contact.customer?.phone && String(contact.customer.phone).trim() !== '' ? String(contact.customer.phone).trim() : null;
@@ -4862,23 +4883,42 @@ r.get('/contacts/:id', authMiddleware, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+async function authorizeLegacyContactMutation(req, res) {
+  const scope = await resolveFacebookPageScope(req, res);
+  if (!scope) return false;
+  const { data: contact, error } = await supabase.from('facebook_contacts').select('id, page_id').eq('id', req.params.id).maybeSingle();
+  if (error) { res.status(503).json({ error: 'Chưa kiểm tra được liên hệ.' }); return false; }
+  if (!contact) { res.status(404).json({ error: 'Không tìm thấy liên hệ.' }); return false; }
+  if (!contactAllowedByFacebookScope(scope, contact)) { res.status(403).json({ error: 'Không có quyền thay đổi liên hệ này.' }); return false; }
+  if (req.body?.lead_id || req.body?.customer_id) {
+    const page = await supabase.from('facebook_pages').select('default_company_id').eq('page_id', contact.page_id).maybeSingle();
+    if (page.error || !page.data?.default_company_id) { res.status(503).json({ error: 'Chưa xác định được công ty của Page.' }); return false; }
+    for (const [field, table] of [['lead_id', 'crm_leads'], ['customer_id', 'customers']]) {
+      if (!req.body[field]) continue;
+      const target = await supabase.from(table).select('company_id').eq('id', req.body[field]).maybeSingle();
+      if (target.error || target.data?.company_id !== page.data.default_company_id) { res.status(403).json({ error: 'Hồ sơ đích không thuộc công ty của Page.' }); return false; }
+    }
+  }
+  return true;
+}
+
 // Link contact → existing lead
 r.put('/contacts/:id/link-lead', authMiddleware, async (req, res) => {
   try {
+    if (!await authorizeLegacyContactMutation(req, res)) return;
     const { lead_id } = req.body;
-    const { data, error } = await supabase.from('facebook_contacts')
-      .update({ lead_id, updated_at: new Date().toISOString() })
-      .eq('id', req.params.id).select().single();
-    if (error) throw error;
-    // Update all messages of this contact
-    await supabase.from('facebook_messages').update({ lead_id }).eq('contact_id', req.params.id);
+    const data = await linkLegacyFacebookContact(supabase, req.params.id, lead_id);
     res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // Update contact info (sửa tên, phone, email, ghi chú)
 r.put('/contacts/:id', authMiddleware, async (req, res) => {
   try {
+    if (!await authorizeLegacyContactMutation(req, res)) return;
+    await assertLegacyFacebookWriteAllowed(supabase, {
+      contactIds: [req.params.id], leadIds: req.body.lead_id ? [req.body.lead_id] : [], customerIds: req.body.customer_id ? [req.body.customer_id] : [],
+    });
     const update = {};
     ['fb_name', 'phone', 'email', 'notes', 'lead_id', 'customer_id'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f] || null;
@@ -4898,10 +4938,9 @@ r.put('/contacts/:id', authMiddleware, async (req, res) => {
 // Delete contact (xóa contact + messages)
 r.delete('/contacts/:id', authMiddleware, async (req, res) => {
   try {
-    await supabase.from('facebook_messages').delete().eq('contact_id', req.params.id);
-    await supabase.from('facebook_contacts').delete().eq('id', req.params.id);
-    res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    if (!await authorizeLegacyContactMutation(req, res)) return;
+    res.json(await deleteLegacyFacebookContact(supabase, req.params.id));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // Tạo lead nhanh từ contact
@@ -4913,6 +4952,7 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       .select('*').eq('id', req.params.id).single();
     if (!contact) return res.status(404).json({ error: 'Contact not found' });
     if (!contactAllowedByFacebookScope(scope, contact)) return res.status(403).json({ error: 'Không có quyền tạo Lead cho Page này' });
+    await assertLegacyFacebookWriteAllowed(supabase, { contactIds: [contact.id] });
     if (contact.lead_id) {
       // Verify lead còn tồn tại
       const { data: existLead } = await supabase.from('crm_leads').select('id').eq('id', contact.lead_id).single();
@@ -6188,6 +6228,13 @@ r.post('/dedup-leads', authMiddleware, async (req, res) => {
 
     for (let g = 0; g < dupGroups.length; g++) {
       const group = dupGroups[g];
+      try { await assertLegacyFacebookWriteAllowed(supabase, { leadIds: group.map(x => x.id) }); }
+      catch (e) {
+        details.push({ reason: e.message, skipped: group.length });
+        if (e.code !== 'MANAGED_CARE_SCOPE') throw e;
+        if (io) io.emit('batch_progress', { type: 'dedup', current: g + 1, total: dupGroups.length, status: 'skipped' });
+        continue;
+      }
 
       // Chọn lead tốt nhất: ưu tiên có FB link > có phone > có value > cũ nhất (đầu tiên tạo)
       group.sort((a, b) => {
@@ -6208,6 +6255,7 @@ r.post('/dedup-leads', authMiddleware, async (req, res) => {
 
       for (const dupe of dupes) {
         try {
+          await assertLegacyFacebookWriteAllowed(supabase, { leadIds: [keep.id, dupe.id] });
           // Gộp estimated_value
           if (dupe.estimated_value > 0 && !keep.estimated_value) {
             await supabase.from('crm_leads').update({ estimated_value: dupe.estimated_value }).eq('id', keep.id);
@@ -8914,6 +8962,7 @@ async function runRescanPhonesBatch(body, ioRef) {
   for (const c of contacts || []) {
     counters.scanned += 1;
     try {
+      await assertLegacyFacebookWriteAllowed(supabase, { contactIds: [c.id] });
       const { data: msgs } = await supabase.from('facebook_messages')
         .select('content, direction, created_at')
         .eq('contact_id', c.id)
@@ -9048,6 +9097,7 @@ async function runRescanPhonesBatch(body, ioRef) {
 // ═══════════════════════════════════════════════════════════════
 
 async function patchLeadDescriptionPhone(leadId, phone) {
+  await assertLegacyFacebookWriteAllowed(supabase, { leadIds: [leadId] });
   if (!leadId || !phone) return;
   const { data: lead } = await supabase.from('crm_leads').select('id, description').eq('id', leadId).maybeSingle();
   if (!lead) return;
@@ -9125,6 +9175,7 @@ async function runLeadScanByDateBatch(body, ioRef) {
     counters.scanned += 1;
     const item = { contact_id: c.id, fb_name: c.fb_name };
     try {
+      await assertLegacyFacebookWriteAllowed(supabase, { contactIds: [c.id] });
       const row = { ...c };
       if (syncGraphFirst) {
         const syncRes = await graphSyncMessagesForContactRow(row, pageTokens, { maxGraphPages: graphPages });
@@ -9531,6 +9582,8 @@ async function applyPhoneQualityActions(body) {
 
   for (const id of updateIds) {
     if (deleteIds.includes(id)) continue;
+    try { await assertLegacyFacebookWriteAllowed(supabase, { contactIds: [id] }); }
+    catch (e) { out.update_skipped.push({ contact_id: id, reason: e.message }); continue; }
     const { data: c } = await supabase
       .from('facebook_contacts')
       .select('id, customer_id, lead_id')
@@ -9574,6 +9627,8 @@ async function applyPhoneQualityActions(body) {
   }
 
   for (const id of deleteIds) {
+    try { await assertLegacyFacebookWriteAllowed(supabase, { contactIds: [id] }); }
+    catch (e) { out.delete_blocked.push({ contact_id: id, reason: e.message }); continue; }
     const { data: c } = await supabase
       .from('facebook_contacts')
       .select('id, lead_id, customer_id')

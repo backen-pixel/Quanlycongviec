@@ -274,6 +274,8 @@ async function applyOne(contact, opts) {
     return row;
   }
 
+  await require('../src/helpers/facebookLegacyWriteScope').assertLegacyFacebookWriteAllowed(supabase, { contactIds: [contact.id] });
+
   if (shouldWriteContactPhone) {
     const { error: e1 } = await supabase
       .from('facebook_contacts')

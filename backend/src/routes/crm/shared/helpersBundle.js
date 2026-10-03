@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { auth } = require('../../../middleware/auth');
 const { supabase } = require('../../../config/supabase');
+const { assertLegacyFacebookWriteAllowed } = require('../../../helpers/facebookLegacyWriteScope');
 const { responseCache, invalidateTags: rcInvalidateTags } = require('../../../middleware/responseCache');
 const { pgCrmDuplicateLeadIds } = require('../../../helpers/pgHotQueries');
 const PDFDocument = require('pdfkit');
@@ -3655,6 +3656,7 @@ function normalizePipelineStagesList(rows) {
 /** Gộp bản ghi khách source → target: bổ sung trường trống, gán lại FK, xóa source */
 async function mergeCustomerIntoTarget(sb, targetId, sourceId) {
   if (!targetId || !sourceId || String(targetId) === String(sourceId)) return;
+  await assertLegacyFacebookWriteAllowed(sb, { customerIds: [targetId, sourceId] });
   const { data: t } = await sb.from('customers').select('*').eq('id', targetId).single();
   const { data: s } = await sb.from('customers').select('*').eq('id', sourceId).single();
   if (!t || !s) return;
@@ -3708,6 +3710,8 @@ async function executeLeadMerge(keepId, deleteIds, options = {}) {
     err.status = 400;
     throw err;
   }
+
+  await assertLegacyFacebookWriteAllowed(supabase, { leadIds: [keepId, ...idsToDelete] });
 
   const { data: keepLead } = await supabase
     .from('crm_leads')

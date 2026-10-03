@@ -1,3 +1,13 @@
+## 03/10/2026 — Kiểm đường ghi cũ; sửa target phát hiện muộn và đọc lỗi
+
+Tiếp tục: bổ sung14 ca PostgreSQL `careLegacyWrite.cases.js` và runner, gồm ACL, inactive/direct/inverse/shared/source-only/message-only/Customer receipt/comment, request không hợp lệ, graph cycle/limit, enrollment chờ khóa, trigger/isolation, actual helpers và không tạo permit. SQL682 thêm Lead→Page từ comment theo schema42. Chưa chạy CI tại thời điểm ghi mục này; review delta đã giao độc lập. Không tác động DB thật.
+
+Bản làm việc trên HEADa4da197: thêm SQL682 và helpers facebookLegacyWriteScope/facebookLegacyContactWrites; cập nhật facebook.js, cleanup helper, CRM merge/duplicate, cron server và script rescan để kiểm trước mutation. Reviewer yêu cầu P1 target tìm thấy sau phone/PSID/refresh và P2 lịch sử message/Lead Ads Customer; đã sửa mã, review lại đang chờ. Cleanup không còn dùng count lỗi/null như0. Không khẳng định giao dịch nhiều HTTP nguyên tử hoặc cutover hoàn tất.
+
+Thêm26 ca facebookLegacyWriteScope actual helper/function/handler; cập nhật dependency fixture facebookWebhookRecovery, giữ assertion ACK/retry. Cùng intake integration43PASS/0FAIL/0SKIP local; reviewer độc lập tự chạy43/43 PASS và khép hai finding về mã, không còn finding chặn trong delta. Workflow thêm test/trigger. Syntax10 file JS và diff check có tính CRLF PASS. SQL682 chưa chạy PostgreSQL/CI; bản sửa chưa commit, cutover vẫn HOLD. [Hồ sơ](vpt-marketing-automation/LEGACY_WRITE_PREFLIGHT.md). CURRENT cập nhật đúng trạng thái; chưa DB thật/model/provider/budget/release, full goal ACTIVE.
+
+---
+
 ## 03/10/2026 — Đã kiểm giao diện đối chiếu và yêu cầu chưa rõ kết quả
 
 Runtime8f42595/tree642d6628: PostgreSQL244/0/0 gồm11ca mới, census88+HTTP1, Node22 843+26 và10job/build/report/Messenger SUCCESS. CImerge01ad39a2 được xác minh tree bằng runtime. Reviewer độc lập PASS SQL681/API/UI sau khép hai P2; browser component thật/API giả xác nhận LINK/CLOSE qua reload và phạm vi người/hội thoại. [Bằng chứng đúng phiên bản](vpt-marketing-automation/CARE_CONNECTION_CONSOLE_REVIEW.md). Chưa UAT/đường ghi cũ/DB thật/phát hành; full goal ACTIVE.

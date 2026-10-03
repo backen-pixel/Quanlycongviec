@@ -223,6 +223,7 @@ r.post('/leads/cleanup-duplicates', async (req, res) => {
     for (const cid in grouped) {
       const arr = grouped[cid].sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
       if (arr.length > 1) {
+        await require('../../../helpers/facebookLegacyWriteScope').assertLegacyFacebookWriteAllowed(supabase, { customerIds: [cid], leadIds: arr.map(x => x.id) });
         const keep = arr[0];
         const dupes = arr.slice(1);
         for (const d of dupes) {
