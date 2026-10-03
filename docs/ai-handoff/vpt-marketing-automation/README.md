@@ -1,4 +1,12 @@
-## Hiện hành 03/10/2026 — Nghiệm thu điểm nối khách đang HOLD
+## Hiện hành 03/10/2026 — Điểm nối khách và ca khảo sát giả đã PASS
+
+Runtime b4e2def nối Lead intake với hội thoại có bằng chứng; ca xuyên API→xác nhận lịch→bàn giao→cohort giữ cùng Lead và tính cả chi không có khách. Lỗi timestamp SQL→API đã sửa, pending retry giữ nguyên. Review độc lập PASS; local42, intakePG233/0/0, census88+HTTP1, Node22 843+11 PASS, cả10job/build/report/Messenger SUCCESS.
+
+[Bằng chứng đúng phiên bản](CARE_CONNECTION_REVIEW.md) và [hợp đồng, giới hạn, bước tiếp](CARE_CONNECTION_ACCEPTANCE.md). Còn UI liên kết, chuyển đường gọi cũ, AI/cấu hình, khôi phục, các điểm nhận/kênh khác và UAT/Founder release. Full goal ACTIVE; chưa đạt250k bằng dữ liệu thật hoặc phát hành. Các mục dưới là lịch sử.
+
+---
+
+## 03/10/2026 — Nghiệm thu điểm nối khách đang HOLD
 
 Lead Ads tạo Lead nhưng chưa tự nối với người nhắn Messenger. SQL680/API đang triển khai cục bộ trên HEAD14e11d5; 11 ca adapter PASS, chưa kiểm PostgreSQL hoặc toàn tuyến. Review còn yêu cầu khép thứ tự khóa đường cũ và liên kết phục hồi. Xem [hiện trạng và bước tiếp](CARE_CONNECTION_ACCEPTANCE.md). Full goal ACTIVE; chưa phát hành hoặc dữ liệu thật đạt250k. Các bằng chứng đã đạt bên dưới thuộc phần đề xuất lịch trước đó.
 

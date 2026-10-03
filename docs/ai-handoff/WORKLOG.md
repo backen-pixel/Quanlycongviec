@@ -1,4 +1,14 @@
-## Hiện hành 03/10/2026 — Đang khép điểm nối Messenger với Lead
+## Hiện hành 03/10/2026 — Đã kiểm điểm nối khách và hành trình khảo sát
+
+Runtime b4e2def nối Lead mới từ intake với hội thoại bằng xác nhận có bằng chứng; bảo vệ đường cũ và liên kết phục hồi. Ca giả đi qua actual API, xác nhận lịch, bàn giao và cohort; tổng chi giữ cả tài khoản không tạo khách. Sửa lỗi timestamp SQL→API khiến giao diện không tạo được đề xuất; yêu cầu đã lưu giữ nguyên khi retry.
+
+Review độc lập PASS phạm vi SQL/API và ca giả. Local42; PostgreSQL intake233/0/0 (11ca mới), census88/0/0+HTTP1/0/0, Node22 843+11 PASS; cả10job/build/report/Messenger SUCCESS. [Bằng chứng](vpt-marketing-automation/CARE_CONNECTION_REVIEW.md), [hợp đồng và phần còn thiếu](vpt-marketing-automation/CARE_CONNECTION_ACCEPTANCE.md).
+
+Full goal ACTIVE. Tiếp theo hoàn thiện giao diện liên kết, chuyển đường gọi ứng dụng cũ và ngoại lệ/khôi phục; cấu hình AI/lịch/người nhận, các điểm nhận/kênh khác, đủ phạm vi đo và UAT/Founder release vẫn còn. Chưa chứng minh đạt250k bằng dữ liệu thật hoặc phát hành. Các mục dưới là lịch sử.
+
+---
+
+## 03/10/2026 — Đang khép điểm nối Messenger với Lead
 
 Rà toàn tuyến phát hiện Lead Ads và hội thoại Messenger chưa có điểm nối danh tính được nghiệm thu; các ca khảo sát trước tạo sẵn liên kết. SQL680/API là bản làm việc chưa commit trên HEAD14e11d5, tắt mặc định, chưa áp DB. Local11 ca adapter PASS; đã sửa khóa quyền người phát hành và khách thiếu số điện thoại theo review. PostgreSQL, giao diện và kiểm xuyên tuyến chưa chạy cho điểm nối mới.
 

@@ -1,43 +1,43 @@
-# Nối hội thoại với hồ sơ CRM — đang triển khai
+# Nối hội thoại với hồ sơ CRM — hợp đồng và nghiệm thu
 
-Ngày 03/10/2026. Bản làm việc dựa trên commit `14e11d5b503b570d34957f58e2835e09f75c7584`; thay đổi dưới đây chưa commit, chưa thuộc bằng chứng CI của bản đó. Trạng thái: **HOLD nghiệm thu điểm nối và toàn tuyến**, công việc tổng thể vẫn ACTIVE.
+Ngày 03/10/2026. Bản đã kiểm: `b4e2def38d2cfb165f94d55004e56ac5e9a682ba`. SQL680/API và hành trình bằng dữ liệu giả đã PASS trong phạm vi dưới đây; toàn mục tiêu vẫn ACTIVE, chưa UAT hoặc phát hành. [Bằng chứng đúng phiên bản](CARE_CONNECTION_REVIEW.md).
 
-## Vì sao cần điểm nối này
+## Điểm nối đã bổ sung
 
-Tiếp nhận biểu mẫu Lead Ads tạo Customer, Lead và bằng chứng quảng cáo nhưng không có PSID của người nhắn Messenger. Tiếp nhận hội thoại tạo thread/message; định tuyến chăm sóc hiện dựa vào liên kết trong `facebook_contacts`. Hai nguồn không mặc nhiên là cùng người.
+Tiếp nhận Lead Ads tạo Customer, Lead và bằng chứng quảng cáo nhưng không có PSID của người nhắn Messenger. Luồng hội thoại lưu thread/message; định tuyến chăm sóc dựa vào facebook_contacts. Hai nguồn không mặc nhiên là cùng người.
 
-Các ca khảo sát trước đã tạo sẵn liên kết contact–Lead. Các ca cohort đã thêm bằng chứng nguồn vào hồ sơ khảo sát có sẵn. Chúng vẫn chứng minh các hành vi thành phần đã ghi trong báo cáo, nhưng chưa chứng minh khách mới từ biểu mẫu đi xuyên tuyến vào chính lịch khảo sát đó. Không dùng fixture nối sẵn để công bố nghiệm thu xuyên tuyến.
+SQL680/API nối hai nguồn bằng lệnh có phạm vi công ty, phiên bản hồ sơ, mã yêu cầu bất biến, tin nhắn đầu vào, xác nhận danh tính và lý do của người vận hành. Quyền actor, người phát hành phạm vi Page, Lead, Customer, người nhận và khu vực CRM được kiểm lại khi ghi. Liên kết và audit nằm cùng giao dịch.
 
-## Bản đang xây
+Đây là xác nhận của người vận hành, chưa phải AI tự xác minh. Không suy diễn bằng tên/số điện thoại, không tự tạo Lead/Customer, phân loại hợp lệ hoặc mở gửi tin. Số điện thoại CRM được phép thiếu. STOP và trạng thái người tiếp quản không đổi.
 
-- SQL680 và API đọc/ghi liên kết cùng công ty; kiểm người thực hiện, Page, người phát hành phạm vi, Lead, Customer và người nhận CRM hiện hành.
-- Lệnh giữ phiên bản đã đọc, mã yêu cầu bất biến, tin nhắn đầu vào làm bằng chứng, lời xác nhận và lý do của người vận hành; lưu liên kết cùng audit trong một giao dịch.
-- Đây là xác nhận danh tính của người vận hành. Hệ thống không tự suy diễn từ tên/số điện thoại, không tự xác minh thay người, không phân loại khách hợp lệ hoặc tự mở gửi tin.
-- Không ghi đè mapping đã có sang khách khác. STOP và trạng thái người tiếp quản được giữ.
-- API tắt mặc định (`VPT_CARE_CONNECTIONS`); phạm vi Page riêng đang rỗng. Chưa có giao diện thao tác, chưa kết nối mô hình AI hoặc tác động hệ thống thật.
+Lệnh chỉ nối lần đầu hoặc cùng mapping. Contact đã có Lead/Customer khác, hoặc Lead khác còn facebook_contact_id dùng khôi phục, được giữ để rà. Không trả ID của inverse khác trong projection. Hai đường ghi contact và inverse được bảo vệ; RPC639 lấy cùng gate trước khóa contact và từ chối Page đã được quản lý.
 
-## Kiểm tra đã thực hiện
+API GET /facebook/customer-care/connection và POST /facebook/customer-care/connection/link lấy actor từ phiên đăng nhập. VPT_CARE_CONNECTIONS mặc định tắt; connection_pages riêng đang rỗng. Không có endpoint cấp quyền enrollment. Receipt replay là kết quả lịch sử kèm currentLink; careMode trong receipt không cấp quyền gửi hiện hành. Cần đọc lại hội thoại trước hành động tiếp.
 
-11 ca Node chạy cục bộ PASS trên adapter hiện tại: danh tính lấy từ phiên đăng nhập; từ chối thông tin vượt phạm vi; tắt mặc định/Primary; số điện thoại CRM được phép thiếu; lọc dữ liệu trả về; yêu cầu xác nhận bằng chứng; biên nhận đúng phạm vi; STOP/tiếp quản; lỗi nguồn; mất phản hồi và gửi lại đúng yêu cầu.
+## Hành trình đã kiểm
 
-Reviewer phiên độc lập tìm thấy: quyền người phát hành chưa giữ khóa và projection không nhận phone=NULL. Đã sửa khóa người phát hành kèm kiểm FOUND, nhận phone=NULL, kiểm chế độ giao dịch ở row guard và từ chối bằng chứng nội dung NULL. **Chưa có kiểm thử PostgreSQL cho SQL680**, không suy ra an toàn đồng thời từ 11 ca Node.
+Khách mới vào qua webhook ký HMAC và actual intake service, đọc Graph giả để tạo Lead và bằng chứng nguồn. Một hội thoại chưa liên kết được nhận qua actual signed receiver. Lệnh có bằng chứng nối đúng Lead đó; đánh giá hợp lệ dùng dịch vụ CRM.
 
-Reviewer giữ HOLD vì hai điểm cần bằng chứng PostgreSQL. Bản đang kiểm đã bổ sung wrapper RPC639 lấy cùng gate trước khóa contact, gate/guard bảo vệ inverse link trên crm_leads, và đưa inverse khác Lead chọn vào trạng thái cần rà. Chưa có kết quả chạy cho bản sửa:
+Ca thử gọi actual availability API → hàm trạng thái frontend → actual proposal API → worker gửi với provider giả → webhook echo/khách xác nhận → một booking → người khảo sát đọc và xác nhận nhận việc → cohort. Nhận lặp không tạo thêm lịch; STOP giữ lịch đã đặt và dừng chăm sóc.
 
-1. RPC cũ SQL639 lấy khóa contact trước global gate, ngược thứ tự với SQL680. Cần sửa đường gọi/chuyển đổi cùng thứ tự khóa và kiểm thử đúng RPC cũ chạy đồng thời; không chỉ kiểm lệnh UPDATE mô phỏng.
-2. Contact có thể trống lead_id nhưng Lead khác vẫn có facebook_contact_id trỏ về contact. Cần nhận diện liên kết phục hồi này và đưa vào rà soát, không xem là liên kết lần đầu. Kiểm cả thay đổi đồng thời; không xóa hoặc đổi Lead cũ để làm ca kiểm thử thành công.
+Collector và dịch vụ lưu chi tiêu chạy cho mọi tài khoản trong phạm vi thử, gồm 50.000đ của tài khoản không có Lead; tổng chi 250.000đ được giữ. Đây là tổng tiền của dữ liệu giả, **không phải bằng chứng chi phí 250.000đ/khách đã đạt**. Chưa xác nhận đầy đủ census/đích lịch sử/xuất nguồn trong chính ca này nên CPQL công bố vẫn NULL, targetMetToDate=false.
 
-## Công việc tiếp theo, theo thứ tự
+## Lỗi tích hợp đã khép
 
-Đã thêm 10 ca PostgreSQL trong careConnections.cases.js, chạy sau migration679 và áp SQL680 hai lần. Ca xuyên tuyến dùng actual intake/receiver/dispatch và nguồn Meta giả, giữ cùng Lead từ intake tới cohort và bàn giao; chưa gọi AI model. Chưa nối toàn bộ chi tiêu và xác nhận phạm vi CPQL trong ca này, nên không được gọi là nghiệm thu đầy đủ. Gate trên INSERT Lead và thay đổi inverse là đồng bộ toàn hệ thống; phải đo tác động tải và tạm dừng đường cũ khi chuyển Page trước phát hành.
+SQL availability trả timestamp có offset +00:00, còn lệnh proposal yêu cầu UTC Z. API hiện chuẩn hóa timestamp sau khi kiểm phạm vi và thời hạn, trước khi frontend lưu yêu cầu mới. Không thay đổi yêu cầu đã lưu khi retry. Regression đi qua các module thực, không chỉ dùng mock Z.
 
-1. Khép hai điểm review trên; kiểm PostgreSQL cô lập cho sai công ty/quyền, thu hồi người phát hành, yêu cầu lặp, stale version, crash rollback, đường ghi cũ và liên kết phục hồi. Chỉ ghi PASS khi có bằng chứng đúng bản.
-2. Hoàn thiện màn hình chọn hồ sơ, đọc bằng chứng và xác nhận; giữ yêu cầu chưa rõ kết quả qua tải lại, tránh gõ mã hồ sơ kỹ thuật. Review độc lập và kiểm giao diện bằng dữ liệu giả.
-3. Tạo một khách mới qua webhook có chữ ký và nguồn Graph giả: intake → Lead thật của ca thử → hội thoại chưa liên kết → liên kết có bằng chứng → đánh giá hợp lệ → đề xuất lịch → khách xác nhận qua webhook → người khảo sát nhận → dashboard. Kiểm lại đúng Lead ID, không trùng, không bỏ chi tiêu, STOP và nguồn lỗi. Việc tư vấn bằng mô hình vẫn phụ thuộc quyết định cấu hình AI đang chờ, không gọi API trước quyết định đó.
-4. Khi tuyến đạt, hoàn thiện cấu hình người nhận/lịch/ngoại lệ và hồ sơ vận hành, trình Founder gói phát hành cụ thể. Mở kênh tiếp theo theo quyền thực tế sau tuyến đầu.
+Giữ khóa quyền người phát hành Page tới lúc ghi; từ chối hàng không tồn tại khi khóa. Kiểm READ COMMITTED ở cả statement và row guard; từ chối bằng chứng nội dung rỗng/NULL. Liên kết phục hồi và RPC cũ có kiểm đồng thời riêng.
+
+## Phần cần hoàn tất trước vận hành
+
+1. Màn hình chọn Lead, đọc bằng chứng và xác nhận; giữ yêu cầu chưa rõ kết quả qua tải lại, không bắt người vận hành gõ UUID.
+2. Chuyển các đường gọi ứng dụng cũ trước khi enrollment Page: tạo khách tự động/thủ công, sửa liên kết và xóa contact/message. Guard DB từ chối mapping sai nhưng không chứng nhận các bước ghi phụ qua nhiều HTTP call là nguyên tử. Tạm dừng đường cũ và xử lý việc đang chạy khi chuyển; kiểm hồi quy cả Page chưa chuyển.
+3. Đo tác động gate toàn cục trên INSERT Lead và thay đổi inverse, đối soát dữ liệu cũ, kiểm khôi phục và ngoại lệ vận hành. Không mở hai đường ghi cho cùng nhóm dữ liệu.
+4. Nối cấu hình AI, dữ liệu tư vấn, lịch khảo sát và người nhận đã xác nhận; lựa chọn khóa AI đang chờ, không gọi mô hình/API trước quyết định đó. Hoàn tất phạm vi CPQL, các điểm nhận và kênh còn lại.
+5. Review/UAT trên đúng phiên bản triển khai, rồi trình Founder gói phát hành và mở thử. Kiểm bằng dữ liệu giả không thay UAT.
 
 ## Giới hạn kinh doanh và hoàn tác
 
-Mục tiêu hiện hành là 250.000đ/khách hợp lệ trả phí duy nhất. 300 khách ở đúng mức mục tiêu tương ứng 75 triệu; 100 triệu vẫn là hạn mức một đợt 30 ngày, gồm Facebook, không bắt buộc chi hết hoặc tự lặp lại. 7% doanh thu là đánh giá giai đoạn sau; không suy ra đạt 7% từ chi phí Lead.
+Mục tiêu hiện hành là 250.000đ/khách hợp lệ trả phí duy nhất. 300 khách ở mức mục tiêu tương ứng 75 triệu; 100 triệu vẫn là hạn mức một đợt 30 ngày gồm Facebook, không bắt buộc chi hết hoặc tự lặp lại. 7% doanh thu là đánh giá sau, không suy ra từ Lead rẻ.
 
-Chưa có số liệu vận hành thật chứng minh đạt mục tiêu. Chưa merge, phát hành, cấp quyền ghi thật hoặc mở ngân sách. Hoàn tác bản thử ưu tiên tắt điểm nối và giữ biên nhận; không xóa lịch sử hoặc mở đường ghi cũ để bỏ qua kiểm soát. SQL680 chỉ là candidate, không áp vào DB thật.
+Chưa có dữ liệu thật chứng minh mục tiêu, chưa merge/deploy/cấp quyền ghi thật/mở ngân sách. Hoàn tác ưu tiên tắt điểm nối và giữ audit/receipt; không xóa lịch sử, gỡ bảo vệ hoặc mở đường ghi cũ không an toàn. SQL680 chưa được duyệt áp DB thật.

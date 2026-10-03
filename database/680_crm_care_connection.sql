@@ -1,7 +1,7 @@
 -- Explicit conversation-to-CRM identity handoff. No phone/name inference.
 -- Release enrollment is private and empty; no existing Page is activated.
--- Local candidate: PostgreSQL/concurrency acceptance and legacy writer cutover
--- are outstanding. Do not apply as a release-ready migration.
+-- Isolated PostgreSQL acceptance does not replace application writer cutover
+-- and Founder release approval. Do not apply to a live database yet.
 BEGIN;
 CREATE SCHEMA IF NOT EXISTS crm_care_control;
 REVOKE ALL ON SCHEMA crm_care_control FROM PUBLIC,anon,authenticated,service_role;

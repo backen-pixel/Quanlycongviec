@@ -1,5 +1,7 @@
 # Bằng chứng Survey Proposal Console
 
+**Bổ sung 03/10/2026:** kiểm xuyên tuyến sau đó phát hiện fixture browser dưới đây dùng giờ Z, chưa bao phủ timestamp +00:00 từ PostgreSQL. Lỗi API thật đã được sửa và kiểm ở b4e2def; xem [bằng chứng mới](CARE_CONNECTION_REVIEW.md). Kết quả cũ giữ giá trị trong phạm vi đã thử, không dùng riêng nó để chứng nhận đường SQL→API→UI→proposal.
+
 Phiên bản kiểm chứng: `46c680b0fae31818b620eb85e89854907920c37a`, tree `702719718850026eaefb7e65d0d7c37c64876dd4`. Runtime từ `963e86246124927bb49e15a68b7fa457d52bd02e`; follow-up chỉ sửa observer PostgreSQL và tài liệu.
 
 ## Kiểm tự động
