@@ -1,3 +1,11 @@
+## 2026-10-03 — Calendar cutover guard (in validation)
+
+SQL664 adds a private control schema, empty staff enrollment, transaction/backend/event-bound permits, and calendar triggers covering old/new person relations, participant replacement, cascades and replica mode. The readiness check rejects disabled/ordinary triggers or broadened private access. Actual backup GRANTS_SQL is included in the isolated regression fixture; no backup or live database command was run.
+
+[Contract, writer inventory and release limits](vpt-marketing-automation/SURVEY_CALENDAR_GUARD.md). No application enrollment/booking RPC is granted. Calendar writes are serialized and require READ COMMITTED even before enrollment; performance and legacy partial-success behavior must be resolved before cutover. Customer confirmation, atomic booking/handoff, survey UI, AI dispatch and operational UAT remain incomplete. PostgreSQL and independent review are pending. Full goal ACTIVE.
+
+---
+
 ## Hiện hành 03/10/2026 — Nguồn giờ khảo sát đã kiểm thử
 
 Runtimec0d07e6 bổ sung nguồn lịch theo nhân sự/khu vực, phạm vi lịch được người có quyền xác nhận và phép kiểm tra bận từ toàn bộ lịch CRM/người tham gia. Các giờ đề xuất có phiên bản và hạn ngắn, không phải lịch đã giữ hoặc đặt. Kiểm thử local9, PostgreSQL100 (13 survey mới), Node22 567, cả10 job/full build và các regression PASS. [Bằng chứng đúng phiên bản](vpt-marketing-automation/SURVEY_AVAILABILITY_REVIEW.md), [phạm vi và giới hạn](vpt-marketing-automation/SURVEY_AVAILABILITY.md).

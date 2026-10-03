@@ -47,6 +47,8 @@ on:
       - 'database/662_crm_care_library_console.sql'
       - 'database/663_crm_survey_availability.sql'
       - 'backend/tests/surveyAvailability*.js'
+      - 'database/664_crm_survey_calendar_guard.sql'
+      - 'backend/tests/surveyCalendarGuard*.js'
       - 'frontend/src/components/facebook/CustomerCareLibrary.jsx'
       - 'frontend/src/components/facebook/careLibraryState.mjs'
       - 'frontend/src/components/facebook/FacebookCustomerCareConsole.jsx'
