@@ -86,6 +86,11 @@ test('conflicting existing source proof cannot be hidden by old provider timesta
   const f = scanned(), row = outside(f); f.sources.push({ ...f.sources[0], id: id(851), receiptId: row.id });
   assert.equal(reportTrial(f).observed.unprocessedForms, 1); assert.equal(reportTrial(f).reconciliation.counts.proofConflict, 1);
 });
+test('a REVIEW receipt with matching source and observation remains review-required, not a fabricated proof conflict', () => {
+  const f = scanned(), source = f.sources[0]; f.receipts[0].state = 'REVIEW';
+  f.providerReconciliation.observations.push({ ...source.proof, observedAt: '2026-10-01T18:30:00Z', graphVersion: 'v24.0' });
+  const r = reportTrial(f); assert.equal(r.observed.unprocessedForms, 1); assert.equal(r.reconciliation.counts.reviewRequired, 1); assert.equal(r.reconciliation.counts.proofConflict, 0);
+});
 test('a DONE receipt with two different out-of-period acquisition proofs stays a visible conflict', () => {
   const f = scanned(), source = f.sources[0];
   source.acquiredAt = source.proof.acquiredAt = '2026-09-01T00:00:00Z';

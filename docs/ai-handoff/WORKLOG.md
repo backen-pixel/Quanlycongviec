@@ -1,3 +1,9 @@
+## 2026-10-03 — Distinguish receipt review from contradictory evidence
+
+90b1068 passed9/10 jobs: trialPG, build and all new9 census period cases PASS. CensusPG111139822196 failed1 existing concurrent-state case because a REVIEW receipt with matching proof/observation was classified as a timestamp conflict. Source consistency is now checked independently of receipt processing state; REVIEW stays review-required, while true timestamp conflicts remain explicit. Added unit regression and corrected first-day UI wording to avoid claiming a recovery already succeeded. Final revalidation pending.
+
+---
+
 ## 2026-10-03 — Preserve same-day customer recovery
 
 Independent review also found that using the measured cutoff for intake delayed missing today's webhooks. SQL670 now preserves the original recovery until_at and separately stores measurement_until_at. Day-one recovery remains available; its report is NO_CLOSED_DAY. Snapshot filters only measured items while all recovery items/observations stay durable. Added first-day census→real intake→CRM with fake provider, exact cutoff, future trial denial and persisted pre-midnight replay tests. Unit24 period cases PASS; final CI/review pending. Full goal remains ACTIVE, no live effects.

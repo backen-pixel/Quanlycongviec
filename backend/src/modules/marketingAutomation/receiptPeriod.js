@@ -24,13 +24,13 @@ function receiptPeriods(raw, period) {
   const sources = new Map(raw.sources.map(s => [s.receiptId, s])), result = new Map();
   for (const r of raw.receipts) {
     const s = sources.get(r.id), o = observed.get(key(r));
-    const validSource = r.state === 'DONE' && s?.leadId === r.leadId && s?.companyId === raw.companyId &&
+    const validProof = s?.leadId === r.leadId && s?.companyId === raw.companyId &&
       s.provider === 'META_LEAD_ADS_V1' && s.proof?.pageId === r.pageId && s.proof?.formId === r.formId &&
       s.proof?.leadgenId === r.leadgenId && time(s.proof?.acquiredAt) === time(s.acquiredAt) &&
       ['PAID', 'ORGANIC', 'UNKNOWN'].includes(s.source) && s.proof.source === s.source;
-    let stamp = validSource ? time(s.acquiredAt) : NaN;
+    let stamp = r.state === 'DONE' && validProof ? time(s.acquiredAt) : NaN;
     // A conflicting proof/envelope must not be discarded as an old receipt.
-    if (o && (o.formId !== r.formId || (s && (!validSource || time(s.acquiredAt) !== time(o.acquiredAt))))) {
+    if (o && (o.formId !== r.formId || (s && (!validProof || time(s.acquiredAt) !== time(o.acquiredAt))))) {
       result.set(r.id, 'CONFLICT'); continue;
     }
     else if (o) stamp = time(o.acquiredAt);
