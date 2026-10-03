@@ -1,3 +1,15 @@
+## Hiện hành 03/10/2026 — Bàn giao khảo sát đã kiểm thử
+
+Runtimea35deef4 thêm màn hình CRM cho nhân viên nhận hồ sơ, queue/chỉ số chờ nhận, hội thoại đầy đủ và ACK đúng người nhận hiện hành. Sales owner/admin theo dõi, không ký thay. Receipt/audit nguyên giao dịch; replay sau mất phản hồi kiểm quyền mới; lịch khách xác nhận, staff ACK và trạng thái chăm khách được giữ riêng.
+
+Review độc lập PASS; PostgreSQL179 (21 case handoff mới), Node22 604, cả10 job/full build và regression PASS. Browser với API giả kiểm đủ55 tin, mất phản hồi/reload, đổi scope, manager, STOP và lỗi quyền/nguồn. [Bằng chứng đúng phiên bản](vpt-marketing-automation/SURVEY_HANDOFFS_REVIEW.md), [contract và giới hạn](vpt-marketing-automation/SURVEY_HANDOFFS.md).
+
+Mặc định tắt, chưa Meta/CRM thật hoặc UAT/phát hành. Còn UI đề xuất/ngoại lệ gửi, thông báo khách, hủy/đổi và writer lịch cũ, dữ liệu thật, nguồn/chi tiêu và CPQL đầy đủ, hiệu năng/khôi phục. Chưa chứng minh250.000đ/khách. Full goal ACTIVE; không mở đợt chi.
+
+Các mục sau giữ lịch sử theo phiên bản.
+
+---
+
 ## 2026-10-03 — Survey staff handoff (in validation)
 
 Follow-up57a54f0: all10 jobs PASS in CI37095511369, PostgreSQL111124498610 =176/0/0 incl18 handoff cases. Further independent review found a membership-insert gap between locking read and inventory. The next delta authorizes only positively locked membership/contact rows, fingerprints membership, and tests the exact gap with an isolated barrier plus revocation waiting until commit. Revalidation of this new SQL delta remains pending. [Browser evidence](vpt-marketing-automation/SURVEY_HANDOFFS_BROWSER.md).

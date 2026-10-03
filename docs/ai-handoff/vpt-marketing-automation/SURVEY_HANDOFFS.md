@@ -1,6 +1,6 @@
 # Survey handoff receipt — SQL668
 
-Status: implementation under validation on PR22, base ebe5e302. No live migration, configuration, send or release. VPT_SURVEY_HANDOFFS defaults off and requires Primary. This increment serves existing customer-confirmed bookings; it does not finish the full Marketing–Sales goal.
+Status: scoped implementation/review PASS on PR22, runtime a35deef4; [versioned evidence](SURVEY_HANDOFFS_REVIEW.md) and [browser checks](SURVEY_HANDOFFS_BROWSER.md). Release HOLD. Base ebe5e302. No live migration, configuration, send or release. VPT_SURVEY_HANDOFFS defaults off and requires Primary. This increment serves existing customer-confirmed bookings; it does not finish the full Marketing–Sales goal.
 
 ## Staff workflow
 
@@ -22,6 +22,6 @@ Inventory currently computes full relevant context/message fingerprints for the 
 
 ## Verification and rollback
 
-Local adapter tests and isolated PostgreSQL cases cover current authority, null owner, company transfers, exact replay/concurrency, rollback, STOP, history/cursor invalidation and broad backup grants. Positive fixtures create bookings through the actual dispatcher and signed receiver using a fake provider. PostgreSQL, full frontend build, browser evidence and final independent review must be recorded against the tested revision before declaring this increment PASS.
+Local adapter tests and isolated PostgreSQL cases cover current authority, null owner, company transfers, exact replay/concurrency, rollback, STOP, history/cursor invalidation and broad backup grants. Positive fixtures create bookings through the actual dispatcher and signed receiver using a fake provider. PostgreSQL179, Node22 604, full frontend build, local browser checks and independent review PASS are recorded against runtime a35deef4. Real operational acceptance is still required.
 
 Rollback: disable VPT_SURVEY_HANDOFFS on Primary, retain receipts/handoffs/audit and existing calendar bookings. Do not delete evidence, reopen care, revert safe permissions or alter historical results. Live release still needs the Founder package and decision.
