@@ -6,6 +6,7 @@ const { enabledPageIds, enqueueMessengerEvents, captureMessengerReferral, linkMe
 const DURABLE_MESSENGER_PAGES = enabledPageIds();
 const { isFacebookAtomicLeadScope, createFacebookLeadOnce } = require('../helpers/facebookAtomicLead');
 const { assertLegacyFacebookWriteAllowed, legacyFacebookPageMayWrite } = require('../helpers/facebookLegacyWriteScope');
+const { loadFacebookCreationContext, assertFacebookCreationTargets, assertFacebookCreationAssignment, assertFacebookCreationActor, assertFacebookCreationPipeline, findFacebookCreationCustomer, resolveScopedFacebookSource, assertFacebookCreationMessageLinks, writeFacebookCreationContact, assertFacebookCreationSource, facebookCreationScopeConflict } = require('../helpers/facebookLegacyCreationScope');
 const { deleteLegacyFacebookContact, linkLegacyFacebookContact, checkedLegacyFacebookResult, checkedLegacyFacebookRows, assertLegacyFacebookSyncSucceeded, assertLegacyContactIdsInPageScope } = require('../helpers/facebookLegacyContactWrites');
 const { supabase } = require('../config/supabase');
 const { createLeadIntake } = require('../modules/marketingAutomation/facebookLeadIntake');
@@ -2318,113 +2319,36 @@ function resolveFacebookCreateType(page) {
  * Không fallback stage toàn hệ thống khi đã biết company (tránh Pipeline Chung / TIẾP NHẬN VPT).
  */
 async function resolveFacebookCrmPipelineAndStage({ page, companyId, createType, moduleKey }) {
-  if (moduleKey === 'production') {
-    return { pipelineId: null, stageId: null };
+  if (moduleKey === 'production') return { pipelineId: null, stageId: null };
+  if (!companyId) throw facebookCreationScopeConflict();
+  let pipelineId = page?.default_pipeline_id || null;
+  if (pipelineId) {
+    const { data: pipeline } = await checkedLegacyFacebookResult(supabase.from('crm_pipelines')
+      .select('id,company_id,is_active').eq('id', pipelineId).maybeSingle());
+    if (!pipeline || pipeline.company_id !== companyId || pipeline.is_active !== true) throw facebookCreationScopeConflict();
+  } else if (!page?.default_stage_id) {
+    const { data: pipeline } = await checkedLegacyFacebookResult(supabase.from('crm_pipelines')
+      .select('id').eq('company_id', companyId).eq('is_active', true)
+      .order('is_default', { ascending: false }).order('created_at').limit(1).maybeSingle());
+    pipelineId = pipeline?.id || null;
   }
-
-  let pipelineId = null;
-
-  // 1) Page default_pipeline_id nếu thuộc đúng công ty
-  const pagePipelineId = page?.default_pipeline_id || null;
-  if (pagePipelineId && companyId) {
-    try {
-      const { data: pagePipe } = await supabase
-        .from('crm_pipelines')
-        .select('id, company_id, is_active')
-        .eq('id', pagePipelineId)
-        .maybeSingle();
-      if (
-        pagePipe?.id
-        && pagePipe.is_active !== false
-        && String(pagePipe.company_id || '') === String(companyId)
-      ) {
-        pipelineId = pagePipe.id;
-      }
-    } catch (_) { /* ignore */ }
-  }
-
-  // 2) Default pipeline của công ty
-  if (!pipelineId && companyId) {
-    try {
-      const { data: defPipe } = await supabase
-        .from('crm_pipelines')
-        .select('id')
-        .eq('company_id', companyId)
-        .eq('is_active', true)
-        .order('is_default', { ascending: false })
-        .order('created_at')
-        .limit(1)
-        .maybeSingle();
-      pipelineId = defPipe?.id || null;
-    } catch (_) { /* ignore */ }
-  }
-
-  // 3) Validate page.default_stage_id: đúng loại + pipeline thuộc công ty
   let stageId = page?.default_stage_id || null;
   if (stageId) {
-    try {
-      const { data: selectedStage } = await supabase
-        .from('crm_pipeline_stages')
-        .select('id, pipeline_type, pipeline_id, is_active')
-        .eq('id', stageId)
-        .maybeSingle();
-      if (
-        !selectedStage
-        || selectedStage.is_active === false
-        || String(selectedStage.pipeline_type || '') !== createType
-      ) {
-        stageId = null;
-      } else if (companyId) {
-        const { data: stagePipe } = await supabase
-          .from('crm_pipelines')
-          .select('id, company_id')
-          .eq('id', selectedStage.pipeline_id)
-          .maybeSingle();
-        if (!stagePipe?.company_id || String(stagePipe.company_id) !== String(companyId)) {
-          stageId = null;
-        } else {
-          // Đồng bộ pipeline_id theo stage page (kể cả pipeline khu vực)
-          pipelineId = stagePipe.id;
-        }
-      } else if (selectedStage.pipeline_id) {
-        pipelineId = selectedStage.pipeline_id;
-      }
-    } catch (_) {
-      stageId = null;
-    }
+    const { data: stage } = await checkedLegacyFacebookResult(supabase.from('crm_pipeline_stages')
+      .select('id,pipeline_id,pipeline_type,is_active').eq('id', stageId).maybeSingle());
+    if (!stage || stage.is_active !== true || stage.pipeline_type !== createType
+      || (pipelineId && stage.pipeline_id !== pipelineId)) throw facebookCreationScopeConflict();
+    pipelineId = stage.pipeline_id;
+    const { data: pipeline } = await checkedLegacyFacebookResult(supabase.from('crm_pipelines')
+      .select('id,company_id,is_active').eq('id', pipelineId).maybeSingle());
+    if (!pipeline || pipeline.company_id !== companyId || pipeline.is_active !== true) throw facebookCreationScopeConflict();
+  } else if (pipelineId) {
+    const { data: stage } = await checkedLegacyFacebookResult(supabase.from('crm_pipeline_stages')
+      .select('id').eq('pipeline_id', pipelineId).eq('pipeline_type', createType).eq('is_active', true)
+      .order('order_index').limit(1).maybeSingle());
+    stageId = stage?.id || null;
   }
-
-  // 4) First stage của pipeline công ty
-  if (!stageId && pipelineId) {
-    try {
-      const { data: firstStage } = await supabase
-        .from('crm_pipeline_stages')
-        .select('id')
-        .eq('pipeline_id', pipelineId)
-        .eq('pipeline_type', createType)
-        .eq('is_active', true)
-        .order('order_index')
-        .limit(1)
-        .maybeSingle();
-      if (firstStage?.id) stageId = firstStage.id;
-    } catch (_) { /* ignore */ }
-  }
-
-  // 5) Không fallback global khi đã có company — tránh gán nhầm Pipeline Chung / công ty khác
-  if (!stageId && !companyId) {
-    const { data: defaultStage } = await supabase.from('crm_pipeline_stages')
-      .select('id, pipeline_id')
-      .eq('pipeline_type', createType)
-      .eq('is_active', true)
-      .order('order_index')
-      .limit(1)
-      .maybeSingle();
-    stageId = defaultStage?.id || null;
-    if (!pipelineId && defaultStage?.pipeline_id) pipelineId = defaultStage.pipeline_id;
-  } else if (!stageId && companyId) {
-    console.warn(`[FB] Không resolve được stage CRM cho company=${companyId} pipeline=${pipelineId || 'null'} — bỏ qua fallback toàn hệ thống`);
-  }
-
+  if (!pipelineId || !stageId) throw facebookCreationScopeConflict();
   return { pipelineId, stageId };
 }
 
@@ -2855,108 +2779,16 @@ function leadLinkedPhoneAlreadyStored(contact, lead, cust) {
   return _phoneDigitsLen(cust?.phone) >= 9;
 }
 
-/** Ghi default_source_id lên facebook_pages để lần sau không tra lại crm_sources */
-async function persistPageDefaultSourceId(page, sourceId) {
-  if (!page?.id || !sourceId) return;
-  if (page.default_source_id) return;
-  await supabase.from('facebook_pages').update({ default_source_id: sourceId }).eq('id', page.id);
-  _pageConfigCache[page.page_id] = {
-    data: { ...page, default_source_id: sourceId },
-    ts: Date.now(),
-  };
-}
-
-/**
- * Một page Facebook = một dòng crm_sources chuẩn `[FB:page_id] Tên page`.
- * Trước đây dùng .single() trên tên legacy `[FB] Tên` → khi có NHIỀU dòng trùng tên PostgREST lỗi / không trả row →
- * code rơi xuống insert và tạo thêm hàng trùng vô hạn. Luôn dùng .limit(1) + ORDER.
- */
+/** Resolve only a current same-company source; never retag historical sources. */
 async function resolveFacebookSourceId(page) {
-  if (!page?.page_id) return null;
-
-  /** Ưu page → công ty mặc định trong tab Facebook (auto_lead_config / app_settings) */
-  let fallbackCompanyId = page.default_company_id || null;
-  if (!fallbackCompanyId) {
-    try {
-      const cfg = await loadAutoLeadConfig();
-      if (cfg?.default_company_id) fallbackCompanyId = cfg.default_company_id;
-    } catch {
-      /* ignore */
-    }
-  }
-
-  const fbSourcePatch = (extra = {}) => ({
-    ...extra,
-    ...(fallbackCompanyId ? { company_id: fallbackCompanyId } : {}),
-  });
-
-  if (page.default_source_id) {
-    if (fallbackCompanyId) {
-      await supabase.from('crm_sources').update({ company_id: fallbackCompanyId }).eq('id', page.default_source_id);
-    }
-    return page.default_source_id;
-  }
-
-  const pid = String(page.page_id).trim();
-  const pnm = (page.page_name || pid).trim();
-  const canonicalName = `[FB:${pid}] ${pnm}`;
-
-  const { data: exactRows } = await supabase
-    .from('crm_sources')
-    .select('id')
-    .eq('name', canonicalName)
-    .limit(1);
-  if (exactRows?.[0]?.id) {
-    if (fallbackCompanyId) {
-      await supabase.from('crm_sources').update({ company_id: fallbackCompanyId }).eq('id', exactRows[0].id);
-    }
-    await persistPageDefaultSourceId(page, exactRows[0].id);
-    return exactRows[0].id;
-  }
-
-  const { data: byPageIdRows } = await supabase
-    .from('crm_sources')
-    .select('id, name')
-    .ilike('name', `%[FB:${pid}]%`)
-    .order('id', { ascending: true })
-    .limit(1);
-  const byPage = byPageIdRows?.[0];
-  if (byPage?.id) {
-    await supabase.from('crm_sources').update(fbSourcePatch({ name: canonicalName, is_active: true })).eq('id', byPage.id);
-    await persistPageDefaultSourceId(page, byPage.id);
-    return byPage.id;
-  }
-
-  const legacyNames = [`[FB] ${pnm}`, 'Facebook'].filter(Boolean);
-  for (const name of legacyNames) {
-    const { data: legacyRows } = await supabase
-      .from('crm_sources')
-      .select('id, name')
-      .eq('name', name)
-      .order('id', { ascending: true })
-      .limit(1);
-    const legacy = legacyRows?.[0];
-    if (legacy?.id) {
-      await supabase.from('crm_sources').update(fbSourcePatch({ name: canonicalName, is_active: true })).eq('id', legacy.id);
-      await persistPageDefaultSourceId(page, legacy.id);
-      return legacy.id;
-    }
-  }
-
-  const insertRow = fbSourcePatch({ name: canonicalName, is_active: true });
-  const { data: created } = await supabase
-    .from('crm_sources')
-    .insert(insertRow)
-    .select('id')
-    .single();
-  if (created?.id) await persistPageDefaultSourceId(page, created.id);
-  return created?.id || null;
+  return resolveScopedFacebookSource(supabase, page);
 }
 
 async function fetchContactLeadId(contactId) {
   if (!contactId) return null;
-  const { data } = await supabase.from('facebook_contacts')
-    .select('lead_id').eq('id', contactId).maybeSingle();
+  const { data } = await checkedLegacyFacebookResult(supabase.from('facebook_contacts')
+    .select('lead_id').eq('id', contactId).maybeSingle());
+  if (!data) throw facebookCreationScopeConflict();
   return data?.lead_id || null;
 }
 
@@ -2969,27 +2801,27 @@ async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
 
 async function createLeadFromFacebookInner(pageId, contact, source, extraData = {}) {
   await assertLegacyFacebookWriteAllowed(supabase, { pageIds: [String(pageId)], contactIds: [contact.id] });
-  const page = await getPageConfig(pageId);
-  if (!page) return null;
+  const creationContext = await loadFacebookCreationContext(supabase, { pageId, contactId: contact.id });
+  const { page, companyId, contact: freshContact } = creationContext;
+  contact = freshContact;
   const autoLeadCfg = await loadAutoLeadConfig();
   const moduleKey = resolveFacebookModuleKeyForPage(page);
   const createType = resolveFacebookCreateType(page);
-
-  // Công ty của page đích — dùng cho mọi bước «chống trùng» (không gộp lead giữa 2 công ty / 2 page)
-  let companyId = null;
-  try {
-    if (page.default_company_id) companyId = page.default_company_id;
-  } catch (e) { /* column may not exist */ }
-  if (!companyId && autoLeadCfg?.default_company_id) companyId = autoLeadCfg.default_company_id;
 
   const atomicScope = DURABLE_MESSENGER_PAGES.has(String(pageId))
     && isFacebookAtomicLeadScope({ pageId, companyId, moduleKey, createType });
   // Matches discovered after the first check can belong to the new care flow.
   // Check every discovered target before writing or returning it to a writer.
-  const checkTargets = (leadId, customerId) => assertLegacyFacebookWriteAllowed(supabase, {
-    pageIds: [String(pageId)], contactIds: [contact.id],
-    leadIds: leadId ? [leadId] : [], customerIds: customerId ? [customerId] : [],
-  });
+  const checkTargets = async (leadId, customerId) => {
+    await assertLegacyFacebookWriteAllowed(supabase, {
+      pageIds: [String(pageId)], contactIds: [contact.id],
+      leadIds: leadId ? [leadId] : [], customerIds: customerId ? [customerId] : [],
+    });
+    const target = await assertFacebookCreationTargets(supabase, creationContext, { leadId, customerId, createType });
+    await assertFacebookCreationMessageLinks(supabase, contact.id, leadId);
+    return target;
+  };
+  await checkTargets(freshContact.lead_id, freshContact.customer_id);
   const atomicReuse = async (existingLeadId) => {
     await checkTargets(existingLeadId);
     const result = await createFacebookLeadOnce(supabase, {
@@ -3000,8 +2832,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
   };
 
   // ── ANTI-DUPLICATE: chỉ gộp trong phạm vi cùng page + cùng công ty ──
-  const { data: freshContact } = await supabase.from('facebook_contacts')
-    .select('lead_id, customer_id, psid, phone, page_id').eq('id', contact.id).single();
+
 
   // 1. Check contact đã có lead_id
   if (freshContact?.lead_id) {
@@ -3012,34 +2843,36 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
 
   // 2. Đã gán customer: chỉ tái dùng lead/deal nếu bản ghi thuộc đúng công ty của page này
   if (freshContact?.customer_id && companyId) {
-    const { data: existing } = await supabase.from('crm_leads')
+    const { data: existing } = await checkedLegacyFacebookRows(supabase.from('crm_leads')
       .select('id')
       .eq('customer_id', freshContact.customer_id)
       .eq('type', createType)
       .eq('company_id', companyId)
-      .limit(1);
+      .limit(2));
+    if (existing.length > 1) throw facebookCreationScopeConflict();
     if (existing?.length > 0) {
       await checkTargets(existing[0].id, freshContact.customer_id);
       if (atomicScope) return atomicReuse(existing[0].id);
       console.log(`[FB] ⚠️  Đã có ${createType} (cùng công ty ${companyId}) cho customer ${freshContact.customer_id}, sync lead_id.`);
-      await supabase.from('facebook_contacts').update({ lead_id: existing[0].id }).eq('id', contact.id);
+      await writeFacebookCreationContact(supabase, creationContext, { lead_id: existing[0].id });
       return { id: existing[0].id };
     }
   }
 
   // 3. Cùng PSID chỉ tra trong cùng page_id (không gộp khách nhắn page A sang lead của page B)
   if (freshContact?.psid && freshContact?.page_id) {
-    const { data: samePsid } = await supabase.from('facebook_contacts')
+    const { data: samePsid } = await checkedLegacyFacebookRows(supabase.from('facebook_contacts')
       .select('lead_id')
       .eq('psid', freshContact.psid)
       .eq('page_id', freshContact.page_id)
       .not('lead_id', 'is', null)
-      .limit(1);
+      .limit(2));
+      if (samePsid.length > 1) throw facebookCreationScopeConflict();
     if (samePsid?.length > 0) {
       await checkTargets(samePsid[0].lead_id);
       if (atomicScope) return atomicReuse(samePsid[0].lead_id);
       console.log(`[FB] ⚠️  Đã có lead cho PSID trên cùng page ${freshContact.page_id}, sync lại.`);
-      await supabase.from('facebook_contacts').update({ lead_id: samePsid[0].lead_id }).eq('id', contact.id);
+      await writeFacebookCreationContact(supabase, creationContext, { lead_id: samePsid[0].lead_id });
       return { id: samePsid[0].lead_id };
     }
   }
@@ -3073,23 +2906,24 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
   if (phone && String(phone).trim() && companyId) {
     const cleanPhone = phone.replace(/[^0-9]/g, '');
     if (cleanPhone.length >= 9) {
-      const { data: sameCust } = await supabase.from('customers')
-        .select('id').ilike('phone', `%${cleanPhone.slice(-9)}`).limit(1);
+      const candidate = await findFacebookCreationCustomer(supabase, companyId, phone);
+      const sameCust = candidate ? [candidate] : [];
       if (sameCust?.length > 0) {
-        const { data: existLead } = await supabase.from('crm_leads')
+        const { data: existLead } = await checkedLegacyFacebookRows(supabase.from('crm_leads')
           .select('id')
           .eq('customer_id', sameCust[0].id)
           .eq('type', createType)
           .eq('company_id', companyId)
-          .limit(1);
+          .limit(2));
+        if (existLead.length > 1) throw facebookCreationScopeConflict();
         if (existLead?.length > 0) {
           await checkTargets(existLead[0].id, sameCust[0].id);
           if (atomicScope) return atomicReuse(existLead[0].id);
           console.log(`[FB] ⚠️  Đã có ${createType} cùng công ty cho SĐT ${cleanPhone}, gộp vào bản ghi ${existLead[0].id}`);
-          await supabase.from('facebook_contacts').update({
+          await writeFacebookCreationContact(supabase, creationContext, {
             lead_id: existLead[0].id,
             customer_id: sameCust[0].id,
-          }).eq('id', contact.id);
+          });
           return { id: existLead[0].id };
         }
       }
@@ -3103,20 +2937,28 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     return { id: leadIdBeforeWrite };
   }
 
+  // Validate routing and recipient before any Customer creation/update.
+  const creationOwnerId = page.default_lead_owner_id || page.created_by;
+  const resolvedRegionId = await assertFacebookCreationAssignment(supabase, creationContext, creationOwnerId);
+  const { pipelineId, stageId } = await resolveFacebookCrmPipelineAndStage({ page, companyId, createType, moduleKey });
+  await assertFacebookCreationPipeline(supabase, creationContext, { pipelineId, stageId, createType, moduleKey });
+  const resolvedSourceId = await resolveFacebookSourceId(page);
+  await checkTargets(null, freshContact.customer_id);
+
   // Tìm/tạo customer
-  let customerId = contact.customer_id || freshContact?.customer_id;
+  let customerId = freshContact.customer_id;
   if (customerId) await checkTargets(null, customerId);
   if (!customerId) {
     // Thử tìm customer theo SĐT trước khi tạo mới
     if (phone && phone.trim()) {
       const cleanPhone = phone.replace(/[^0-9]/g, '');
       if (cleanPhone.length >= 9) {
-        const { data: existCust } = await supabase.from('customers')
-          .select('id').ilike('phone', `%${cleanPhone.slice(-9)}`).limit(1);
+        const candidate = await findFacebookCreationCustomer(supabase, companyId, phone);
+        const existCust = candidate ? [candidate] : [];
         if (existCust?.length > 0) {
           customerId = existCust[0].id;
           await checkTargets(null, customerId);
-          await supabase.from('facebook_contacts').update({ customer_id: customerId }).eq('id', contact.id);
+          await writeFacebookCreationContact(supabase, creationContext, { customer_id: customerId });
           console.log(`[FB] ♻️ Reuse customer ${customerId} by phone match`);
         }
       }
@@ -3129,12 +2971,15 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
         email: extraData.email || contact.email || null,
         address: extraData.address || null,
         source: 'Facebook',
+        company_id: companyId,
       };
-      const { data: customer } = await supabase.from('customers')
-        .insert(customerData).select().single();
+      const { data: customer } = await checkedLegacyFacebookResult(supabase.from('customers')
+        .insert(customerData).select().single());
+      if (!customer) throw facebookCreationScopeConflict();
+      await checkTargets(null, customer.id);
       if (customer) {
         customerId = customer.id;
-        await supabase.from('facebook_contacts').update({ customer_id: customer.id }).eq('id', contact.id);
+        await writeFacebookCreationContact(supabase, creationContext, { customer_id: customer.id });
         console.log(`[FB] ✅ Customer created: ${customer.full_name} (phone: ${customer.phone || 'N/A'})`);
       }
     }
@@ -3146,22 +2991,24 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     const fullName = extraData.full_name || contact.fb_name;
     if (fullName && fullName !== 'Facebook User') custUpd.full_name = fullName;
     if (Object.keys(custUpd).length) {
-      await supabase.from('customers').update(custUpd).eq('id', customerId);
+      await checkTargets(null, customerId);
+      await checkedLegacyFacebookResult(supabase.from('customers').update(custUpd).eq('id', customerId).eq('company_id', companyId));
       console.log(`[FB] ✅ Customer updated:`, custUpd);
     }
   }
 
   if (customerId && companyId) {
-    const { data: leadForCust } = await supabase.from('crm_leads')
+    const { data: leadForCust } = await checkedLegacyFacebookRows(supabase.from('crm_leads')
       .select('id, code')
       .eq('customer_id', customerId)
       .eq('type', createType)
       .eq('company_id', companyId)
-      .limit(1);
+      .limit(2));
+    if (leadForCust.length > 1) throw facebookCreationScopeConflict();
     if (leadForCust?.length > 0) {
       await checkTargets(leadForCust[0].id, customerId);
       if (atomicScope) return atomicReuse(leadForCust[0].id);
-      await supabase.from('facebook_contacts').update({ lead_id: leadForCust[0].id }).eq('id', contact.id);
+      await writeFacebookCreationContact(supabase, creationContext, { lead_id: leadForCust[0].id });
       return leadForCust[0];
     }
   }
@@ -3173,7 +3020,6 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     return { id: leadIdBeforeInsert };
   }
 
-  const resolvedSourceId = await resolveFacebookSourceId(page);
   await checkTargets(null, customerId);
 
   const codePrefix = createType === 'deal' ? 'DEAL' : 'LEAD';
@@ -3183,14 +3029,14 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
   const notifyTitle = createType === 'deal' ? '🎯 Deal mới từ Facebook' : '📘 Lead mới từ Facebook';
 
   // Tạo mã lead/deal — lấy code MAX hiện có để tránh race condition (count() có thể bị stale).
-  const { data: maxLead } = await supabase
+  const { data: maxLead } = await checkedLegacyFacebookResult(supabase
     .from('crm_leads')
     .select('code')
     .eq('type', createType)
     .like('code', `${codePrefix}-%`)
     .order('code', { ascending: false })
     .limit(1)
-    .maybeSingle();
+    .maybeSingle());
   const _maxNum = maxLead?.code
     ? parseInt(String(maxLead.code).replace(new RegExp(`^${codePrefix}-`), ''), 10)
     : 0;
@@ -3218,12 +3064,6 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     } catch (_) { /* ignore */ }
   }
 
-  let resolvedRegionId = null;
-  if (companyId && page?.default_region_id) {
-    const rr = await assertRegionBelongsToCompany(supabase, companyId, page.default_region_id);
-    if (rr.ok) resolvedRegionId = page.default_region_id;
-  }
-
   // Default lead/deal type (company-scoped) — chỉ áp dụng module CRM
   let leadTypeId = null;
   const candidateLeadTypeId = moduleKey === 'crm'
@@ -3243,12 +3083,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     }
   }
 
-  const { pipelineId, stageId } = await resolveFacebookCrmPipelineAndStage({
-    page,
-    companyId,
-    createType,
-    moduleKey,
-  });
+
 
   const leadData = {
     code,
@@ -3263,8 +3098,8 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     lead_type_id: leadTypeId,
     install_address: extraData.address || null,
     description: `Nguồn: Facebook ${source}\nTên: ${extraData.full_name || contact.fb_name || ''}\nSĐT: ${extraData.phone || contact.phone || ''}\nĐịa chỉ: ${extraData.address || ''}`.trim(),
-    lead_owner_id: page.default_lead_owner_id || page.created_by,
-    assigned_to: page.default_lead_owner_id || page.created_by,
+    lead_owner_id: creationOwnerId,
+    assigned_to: creationOwnerId,
     created_by: page.created_by,
   };
 
@@ -3272,23 +3107,25 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
   // (xem migration 108_crm_leads_code_unique.sql), nên cần pre-check application-level
   // để tránh race condition giữa các tick auto-pipeline / API thủ công.
   let lead = null;
-  let lastErr = null;
   for (let attempt = 0; attempt < 10; attempt++) {
     const tryCode = `${codePrefix}-${String((_maxNum || 0) + 1 + attempt).padStart(4, '0')}`;
 
     // Pre-check: code này đã tồn tại chưa
-    const { data: existing } = await supabase
+    const { data: existing } = await checkedLegacyFacebookResult(supabase
       .from('crm_leads')
       .select('id')
       .eq('type', createType)
       .eq('code', tryCode)
       .limit(1)
-      .maybeSingle();
+      .maybeSingle());
     if (existing) {
       console.warn(`[FB] ${fbTitleTypeLabel} code ${tryCode} đã tồn tại — thử mã kế tiếp (attempt ${attempt + 1})`);
       continue;
     }
 
+    await checkTargets(null, customerId);
+    await assertFacebookCreationAssignment(supabase, creationContext, creationOwnerId);
+    await assertFacebookCreationSource(supabase, creationContext, resolvedSourceId);
     const tryData = { ...leadData, code: tryCode };
     let data, error;
     if (atomicScope) {
@@ -3304,18 +3141,15 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
       ({ data, error } = await supabase.from('crm_leads').insert(tryData).select().single());
     }
     if (!error) { lead = data; break; }
-    lastErr = error;
     const isDup = String(error.message || '').toLowerCase().includes('duplicate')
                || String(error.code || '') === '23505';
     if (!isDup) {
-      console.error('[FB] Create lead error:', error.message);
-      return null;
+      throw Object.assign(new Error('Chưa hoàn tất tạo Lead; giữ hồ sơ để đối soát.'), { status: 503 });
     }
     console.warn(`[FB] ${fbTitleTypeLabel} code ${tryCode} race-collision — retry attempt ${attempt + 1}`);
   }
   if (!lead) {
-    console.error(`[FB] Create ${createType} failed sau 10 lần thử:`, lastErr?.message);
-    return null;
+    throw Object.assign(new Error('Chưa tạo được mã Lead duy nhất; giữ hồ sơ để đối soát.'), { status: 503 });
   }
 
   // Link contact → lead (và dừng sync sâu nếu cột đã có).
@@ -3325,10 +3159,10 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     _linkUpd.sync_pause_reason = 'lead_created';
     _linkUpd.phone_resolved_at = new Date().toISOString();
   }
-  await supabase.from('facebook_contacts').update(_linkUpd).eq('id', contact.id);
+  await writeFacebookCreationContact(supabase, creationContext, _linkUpd);
   // Nối lead_id vào dòng quy kết đã ghi lúc khách nhắn lần đầu.
   try {
-    await ganLeadVaoQuyKet(contact.id, lead.id, contact.customer_id || null);
+    await ganLeadVaoQuyKet(contact.id, lead.id, customerId || null);
   } catch (eGan) {
     console.warn('[FB] gan lead vao quy ket:', eGan.message);
   }
@@ -3355,6 +3189,8 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
 
   console.log(`[FB] ${fbTitleTypeLabel} created: ${lead.code} — ${lead.title}`);
 
+  // Do not send customer PII to a recipient whose assignment was revoked.
+  await assertFacebookCreationAssignment(supabase, creationContext, creationOwnerId);
   // Notify owner only (không gửi cho tất cả admin)
   try {
     const ownerId = page?.default_lead_owner_id || page?.created_by;
@@ -4954,37 +4790,38 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
   try {
     const scope = await resolveFacebookPageScope(req, res);
     if (!scope) return;
-    const { data: contact } = await supabase.from('facebook_contacts')
-      .select('*').eq('id', req.params.id).single();
+    const { data: initialContact } = await checkedLegacyFacebookResult(supabase.from('facebook_contacts')
+      .select('*').eq('id', req.params.id).single());
+    const contact = initialContact;
     if (!contact) return res.status(404).json({ error: 'Contact not found' });
     if (!contactAllowedByFacebookScope(scope, contact)) return res.status(403).json({ error: 'Không có quyền tạo Lead cho Page này' });
     await assertLegacyFacebookWriteAllowed(supabase, { contactIds: [contact.id] });
-    if (contact.lead_id) {
-      // Verify lead còn tồn tại
-      const { data: existLead } = await supabase.from('crm_leads').select('id').eq('id', contact.lead_id).single();
-      if (existLead) {
-        if (!DURABLE_MESSENGER_PAGES.has(String(contact.page_id))) return res.status(400).json({ error: 'Contact đã có Lead' });
-        const repaired = await supabase.from('facebook_messages').update({ lead_id: existLead.id }).eq('contact_id', contact.id).is('lead_id', null);
-        if (repaired.error) throw new Error('Facebook message link failed');
-        await linkMessengerAttribution(supabase, contact.page_id, contact.id);
-        return res.status(200).json(existLead);
-      }
-      // Lead đã bị xóa → clear
-      await supabase.from('facebook_contacts').update({ lead_id: null }).eq('id', contact.id);
-    }
-
-    // Lấy page config
-    const { data: page } = await supabase.from('facebook_pages')
-      .select('*').eq('page_id', contact.page_id).single();
-
+    const creationContext = await loadFacebookCreationContext(supabase, {
+      pageId: contact.page_id, contactId: contact.id, requestedCompanyId: req.body?.company_id,
+    });
+    Object.assign(contact, creationContext.contact);
+    const { page, companyId } = creationContext;
+    await assertFacebookCreationActor(supabase, creationContext, req);
     const autoLeadCfg = await loadAutoLeadConfig();
     const moduleKey = resolveFacebookModuleKeyForPage(page);
     const createType = resolveFacebookCreateType(page);
+    const checkTargets = async (leadId, customerId) => {
+      await assertLegacyFacebookWriteAllowed(supabase, {
+        pageIds: [String(contact.page_id)], contactIds: [contact.id],
+        leadIds: leadId ? [leadId] : [], customerIds: customerId ? [customerId] : [],
+      });
+      return assertFacebookCreationTargets(supabase, creationContext, { leadId, customerId, createType });
+    };
+    const existingLead = await checkTargets(contact.lead_id, contact.customer_id);
+    await assertFacebookCreationMessageLinks(supabase, contact.id, contact.lead_id);
+    if (existingLead) {
+      if (!DURABLE_MESSENGER_PAGES.has(String(contact.page_id))) return res.status(400).json({ error: 'Contact đã có Lead' });
+      await checkedLegacyFacebookResult(supabase.from('facebook_messages').update({ lead_id: existingLead.id })
+        .eq('contact_id', contact.id).is('lead_id', null));
+      await linkMessengerAttribution(supabase, contact.page_id, contact.id);
+      return res.status(200).json(existingLead);
+    }
 
-    // Company: body override → page default → auto-lead-config default (công ty mặc định trong Setup FB)
-    let companyId = req.body.company_id || null;
-    if (!companyId && page?.default_company_id) companyId = page.default_company_id;
-    if (!companyId && autoLeadCfg?.default_company_id) companyId = autoLeadCfg.default_company_id;
     if (DURABLE_MESSENGER_PAGES.has(String(contact.page_id))
       && !isFacebookAtomicLeadScope({ pageId: contact.page_id, companyId, moduleKey, createType })) {
       return res.status(409).json({ error: 'Page đang bật tiếp nhận bền vững: công ty/module/loại phải khớp cấu hình đã duyệt' });
@@ -5035,19 +4872,25 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       } catch (_) { /* ignore */ }
     }
 
-    const { stageId } = await resolveFacebookCrmPipelineAndStage({
+    const { pipelineId, stageId } = await resolveFacebookCrmPipelineAndStage({
       page,
       companyId,
       createType,
       moduleKey,
     });
 
-    // Extract phone/address từ TẤT CẢ tin nhắn cũ
+    const ownerId = page.default_lead_owner_id || page.created_by || req.user.userId;
+    const manualRegionId = await assertFacebookCreationAssignment(supabase, creationContext, ownerId);
+    await assertFacebookCreationPipeline(supabase, creationContext, { pipelineId, stageId, createType, moduleKey });
+    await assertFacebookCreationActor(supabase, creationContext, req, { ownerId, regionId: manualRegionId, createType });
+    const resolvedSourceId = await resolveFacebookSourceId(page);
+
+    // Read recent inbound evidence; failure is not an empty conversation.
     let extractedPhone = contact.phone || null;
     let extractedAddress = null;
-    const { data: messages } = await supabase.from('facebook_messages')
+    const { data: messages } = await checkedLegacyFacebookRows(supabase.from('facebook_messages')
       .select('content').eq('contact_id', contact.id).eq('direction', 'inbound')
-      .order('created_at', { ascending: false }).limit(500);
+      .order('created_at', { ascending: false }).limit(500));
 
     for (const msg of (messages || [])) {
       if (msg.content) {
@@ -5060,21 +4903,27 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
 
     console.log(`[FB] Manual create ${createType} — name: ${contact.fb_name}, phone: ${extractedPhone}, address: ${extractedAddress}`);
 
+    await checkTargets(null, contact.customer_id);
+    await assertFacebookCreationActor(supabase, creationContext, req, { ownerId, regionId: manualRegionId, createType });
+    await assertFacebookCreationAssignment(supabase, creationContext, ownerId);
     // Tạo/lấy customer
     let customerId = contact.customer_id;
     if (!customerId) {
-      const { data: customer } = await supabase.from('customers').insert({
+      const { data: customer } = await checkedLegacyFacebookResult(supabase.from('customers').insert({
         full_name: contact.fb_name || 'KH Facebook',
         phone: extractedPhone || '',
         address: extractedAddress,
         source: 'Facebook',
-      }).select().single();
+        company_id: companyId,
+      }).select().single());
+      if (!customer) throw facebookCreationScopeConflict();
+      await checkTargets(null, customer.id);
       if (customer) {
         customerId = customer.id;
-        await supabase.from('facebook_contacts').update({ 
+        await writeFacebookCreationContact(supabase, creationContext, {
           customer_id: customer.id,
           phone: extractedPhone || contact.phone,
-        }).eq('id', contact.id);
+        });
       }
     } else {
       // Update customer nếu có thông tin mới
@@ -5082,20 +4931,17 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       if (extractedPhone) custUpd.phone = extractedPhone;
       if (extractedAddress) custUpd.address = extractedAddress;
       if (Object.keys(custUpd).length) {
-        await supabase.from('customers').update(custUpd).eq('id', customerId);
+        await checkTargets(null, customerId);
+        await checkedLegacyFacebookResult(supabase.from('customers').update(custUpd).eq('id', customerId).eq('company_id', companyId));
       }
     }
 
-    const resolvedSourceId = await resolveFacebookSourceId(page);
+    await checkTargets(null, customerId);
+    await assertFacebookCreationActor(supabase, creationContext, req, { ownerId, regionId: manualRegionId, createType });
+    await assertFacebookCreationAssignment(supabase, creationContext, ownerId);
+    await assertFacebookCreationMessageLinks(supabase, contact.id);
 
-    const ownerId = page?.default_lead_owner_id || page?.created_by || req.user.userId;
-
-    let manualRegionId = null;
-    if (companyId && page?.default_region_id) {
-      const rr = await assertRegionBelongsToCompany(supabase, companyId, page.default_region_id);
-      if (rr.ok) manualRegionId = page.default_region_id;
-    }
-
+    await assertFacebookCreationSource(supabase, creationContext, resolvedSourceId);
     const manualAtomicScope = DURABLE_MESSENGER_PAGES.has(String(contact.page_id))
       && isFacebookAtomicLeadScope({ pageId: contact.page_id, companyId, moduleKey, createType });
     // IMPORTANT: tạo lead/deal qua API CRM chuẩn để giữ đúng side-effects
@@ -5105,6 +4951,7 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       title: `[FB ${createType === 'deal' ? 'Deal' : 'Lead'}] ${contact.fb_name || 'KH Facebook'}`,
       customer_id: customerId || null,
       stage_id: stageId || null,
+      pipeline_id: pipelineId || null,
       company_id: companyId || null,
       region_id: manualRegionId,
       lead_type_id: leadTypeId || null,
@@ -5114,6 +4961,10 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       assigned_to: ownerId || null,
     }, { headers: { authorization: req.headers.authorization } });
 
+    if (!lead?.id) throw facebookCreationScopeConflict();
+    await checkTargets(lead.id, customerId);
+    await assertFacebookCreationTargets(supabase, creationContext, { leadId: lead.id, customerId, createType, ownerId, regionId: manualRegionId });
+    await assertFacebookCreationActor(supabase, creationContext, req, { ownerId, regionId: manualRegionId, createType });
     if (moduleKey === 'production' && createType === 'deal' && defaultSxPipelineStageId) {
       try {
         await supabase
@@ -5130,13 +4981,14 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
 
     if (manualAtomicScope) await linkMessengerAttribution(supabase, contact.page_id, contact.id);
     // Link contact → lead + messages
-    if (!manualAtomicScope) await supabase.from('facebook_contacts').update({ lead_id: lead.id }).eq('id', contact.id);
-    const linkedMessages = await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('contact_id', contact.id);
-    if (manualAtomicScope && linkedMessages.error) throw new Error('Facebook message link failed; retry keeps existing Lead');
+    await assertFacebookCreationMessageLinks(supabase, contact.id, lead.id);
+    if (!manualAtomicScope) await writeFacebookCreationContact(supabase, creationContext, { lead_id: lead.id });
+    await checkedLegacyFacebookResult(supabase.from('facebook_messages').update({ lead_id: lead.id })
+      .eq('contact_id', contact.id).is('lead_id', null));
 
     console.log(`[FB] ✅ Manual ${createType} created: ${lead.code} — ${lead.title}`);
     res.status(201).json(lead);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(e.status || e.response?.status || 500).json({ error: e.status ? e.message : 'Chưa hoàn tất tạo hồ sơ; cần đối soát trước khi thử lại.' }); }
 });
 
 /**

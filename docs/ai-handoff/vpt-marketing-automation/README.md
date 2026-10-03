@@ -1,3 +1,5 @@
+04/10/2026: [Đường tạo khách Facebook — bản sửa đang kiểm](LEGACY_CREATOR_SCOPE.md). Local183 PASS; 10 ca PostgreSQL và review đang chờ. Cutover/UAT/phát hành vẫn HOLD.
+
 ## Hiện hành 03/10/2026 — Preflight đường ghi cũ đã kiểm PostgreSQL
 
 04/10/2026: [Gói sửa quét điện thoại](LEGACY_PHONE_REPAIR.md) tại bản kiểm5a3acc6: phạm vi công ty/Page hiện hành, final round theo nhóm chọn, checked reads/writes, MID chưa lưu và lịch sử bị cắt không cho cleanup. Review độc lập PASS sau đối chiếu runtime/CI; local77, PostgreSQL264/0/0 gồm6ca mới, census88+HTTP1, Node22 843+26+67 và cả10job/build/report/Messenger SUCCESS. CRM merge/creator company và cutover vẫn OPEN; full goal ACTIVE, chưa vận hành thật hoặc đạt250k.

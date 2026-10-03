@@ -6,6 +6,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { assertLegacyFacebookWriteAllowed: check, legacyFacebookPageMayWrite, normalizeScope } = require('../src/helpers/facebookLegacyWriteScope');
 const { deleteLegacyFacebookContact, linkLegacyFacebookContact } = require('../src/helpers/facebookLegacyContactWrites');
+const { checkedLegacyFacebookResult, checkedLegacyFacebookRows } = require('../src/helpers/facebookLegacyContactWrites');
 const { deleteLeadIfAllowedForRescan, deleteOrphanCustomerIfAllowed } = require('../src/helpers/facebookLeadDeleteWhenNoPhone');
 const id = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const contact = id(1), lead = id(2), customer = id(3), company = id(4), primary = { isPrimary: () => true };
@@ -154,6 +155,7 @@ test('actual legacy webhook handlers stop at the Page gate before contact, recei
 function legacyCreator(db, { atomic = false, fetchedLead = null } = {}) {
   const effects = [];
   const context = { supabase: db, console: { log() {}, warn() {} },
+    checkedLegacyFacebookResult, checkedLegacyFacebookRows,
     assertLegacyFacebookWriteAllowed: (connection, scope) => check(connection, scope, primary),
     getPageConfig: async () => ({ default_company_id: company }), loadAutoLeadConfig: async () => ({}),
     resolveFacebookModuleKeyForPage: () => 'crm', resolveFacebookCreateType: () => 'lead',
@@ -161,6 +163,17 @@ function legacyCreator(db, { atomic = false, fetchedLead = null } = {}) {
     createFacebookLeadOnce: async () => { effects.push('atomic'); return { lead: { id: lead } }; },
     normalizePhoneForLeadCreation: raw => ({ ok: true, normalized: raw }),
     isPhoneBlockedForFacebookAutoLead: async () => false, fetchContactLeadId: async () => fetchedLead,
+    // These tests isolate the managed-Page gate. Current-company validation is
+    // exercised without these stubs in facebookLegacyCreationScope.test.js.
+    loadFacebookCreationContext: async () => {
+      const { data } = await db.from('facebook_contacts').select('*').eq('id', contact).single();
+      return { page: { default_company_id: company }, companyId: company, contact: { id: contact, page_id: '123', ...data } };
+    },
+    assertFacebookCreationTargets: async () => null, assertFacebookCreationMessageLinks: async () => {},
+    assertFacebookCreationAssignment: async () => null, assertFacebookCreationPipeline: async () => {},
+    resolveFacebookCrmPipelineAndStage: async () => ({}), resolveFacebookSourceId: async () => null,
+    findFacebookCreationCustomer: async () => (await db.from('customers').select('id').limit(2)).data?.[0] || null,
+    writeFacebookCreationContact: async (_, context, patch) => checkedLegacyFacebookResult(db.from('facebook_contacts').update(patch).eq('id', context.contact.id)),
   };
   vm.runInNewContext(creator, context);
   return { effects, run: (input = { id: contact }, extra = {}) => context.createLeadFromFacebookInner('123', input, 'synthetic', extra) };
@@ -171,7 +184,7 @@ const discovered = [
   ['same PSID Lead', [{ data: { psid: '456', page_id: '123' } }, { data: [{ lead_id: lead }] }]],
   ['phone matched Lead and Customer', [{ data: {} }, { data: [{ id: customer }] }, { data: [{ id: lead }] }], { extra: { phone: '0900000000' } }],
   ['phone matched Customer without Lead', [{ data: {} }, { data: [] }, { data: [{ id: customer }] }], { extra: { phone: '0900000000' } }],
-  ['stale Customer from caller', [{ data: {} }], { input: { id: contact, customer_id: customer } }],
+  ['current Customer supersedes stale caller', [{ data: { customer_id: customer } }], { input: { id: contact, customer_id: id(99) } }],
   ['Lead discovered by contact refresh', [{ data: {} }], { fetchedLead: lead }],
 ];
 for (const [name, replies, options = {}] of discovered) {

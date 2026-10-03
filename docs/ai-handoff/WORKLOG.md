@@ -1,3 +1,11 @@
+## Hiện hành 04/10/2026 — Đang khép phạm vi tạo khách Facebook
+
+Bản làm việc trên a102450 sửa creator tự động/thủ công: công ty Page hiện hành, Customer/Lead cùng phạm vi, người nhận còn quyền, nguồn không bị đổi công ty, cặp pipeline/stage và giữ liên kết hội thoại. Local 66 ca mới + 117 regression = 183 PASS. Đã bổ sung 10 ca PostgreSQL; CI và review độc lập đang chờ. [Hợp đồng, kiểm thử, giới hạn và hoàn tác](vpt-marketing-automation/LEGACY_CREATOR_SCOPE.md).
+
+Chuỗi HTTP cũ chưa là một giao dịch nguyên tử; CRM merge/bảo toàn lịch sử, cutover, cấu hình AI/lịch/người nhận, nghiệm thu và Founder release vẫn OPEN. Full goal ACTIVE. Chưa dữ liệu thật, quyền AI, chi quảng cáo hoặc phát hành. Các mục dưới là lịch sử.
+
+---
+
 ## 04/10/2026 — Sửa caller quét điện thoại và các finding độc lập
 
 Reviewer độc lập khép **PASS phạm vi phone tại5a3acc6** sau tự đọc CI cuối, đối chiếu GitHub/runtime blob và test cohort. Khác CRLF giữa working tree và blob đã chuẩn hóa không đổi nội dung. Các finding CRM merge/company/cutover giữ OPEN.
