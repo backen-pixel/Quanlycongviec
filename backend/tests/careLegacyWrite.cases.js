@@ -2,7 +2,8 @@
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { assertLegacyFacebookWriteAllowed, normalizeScope } = require('../src/helpers/facebookLegacyWriteScope');
-const { deleteLegacyFacebookContact, linkLegacyFacebookContact } = require('../src/helpers/facebookLegacyContactWrites');
+const { deleteLegacyFacebookContact, linkLegacyFacebookContact, assertLegacyContactIdsInPageScope } = require('../src/helpers/facebookLegacyContactWrites');
+const { reconcileInboundPhoneAfterScan } = require('../src/helpers/facebookInboundPhoneReconcile');
 const { deleteLeadIfAllowedForRescan, deleteOrphanCustomerIfAllowed } = require('../src/helpers/facebookLeadDeleteWhenNoPhone');
 
 module.exports = async (t, { db, peers, query, company, admin, sales, region, fresh, waitLock, blocked }) => {
@@ -177,6 +178,95 @@ module.exports = async (t, { db, peers, query, company, admin, sales, region, fr
     assert.equal((await db.query('SELECT count(*)::int n FROM facebook_messages WHERE contact_id=$1', [c.contact])).rows[0].n, 0);
     assert.equal((await db.query('SELECT count(*)::int n FROM facebook_contacts WHERE id=$1', [c.contact])).rows[0].n, 0);
     assert.equal((await db.query('SELECT count(*)::int n FROM crm_leads WHERE id=$1', [c.lead])).rows[0].n, 1);
+  });
+  // Test the actual phone helper against isolated PostgreSQL, including failed reads/writes.
+  await db.query(`ALTER TABLE facebook_contacts ADD COLUMN IF NOT EXISTS phone text, ADD COLUMN IF NOT EXISTS updated_at timestamptz;
+    ALTER TABLE customers ADD COLUMN IF NOT EXISTS updated_at timestamptz;
+    ALTER TABLE crm_leads ADD COLUMN IF NOT EXISTS updated_at timestamptz;
+    ALTER TABLE facebook_messages ADD COLUMN IF NOT EXISTS created_at timestamptz DEFAULT clock_timestamp();
+    GRANT SELECT,UPDATE ON customers TO service_role;`);
+  const phoneAdapter = ({ failMessages = false, failCustomerWrite = false } = {}) => {
+    const writes = [];
+    const tables = {
+      facebook_contacts: ['id','phone','lead_id','customer_id','page_id','updated_at'],
+      crm_leads: ['id','customer_id','description','updated_at'],
+      customers: ['id','phone','updated_at'],
+      facebook_messages: ['id','content','direction','created_at','contact_id'],
+    };
+    const client = peers[0];
+    return { writes, rpc: adapter(client).rpc, from(table) {
+      assert.ok(tables[table]); let columns='*', single=false, update=null, limit=null; const filters=[];
+      const q = {
+        select(value) { const names=value.split(',').map(x=>x.trim()); assert.ok(names.every(x=>tables[table].includes(x))); columns=names.join(','); return q; },
+        eq(field,value) { assert.ok(tables[table].includes(field)); filters.push([field,value,false]); return q; },
+        in(field,value) { assert.ok(tables[table].includes(field)); filters.push([field,value,true]); return q; },
+        order(field) { assert.ok(tables[table].includes(field)); return q; },
+        limit(n) { assert.ok(Number.isInteger(n)&&n>0); limit=n; return q; },
+        maybeSingle() { single=true; return q; },
+        update(value) { assert.ok(Object.keys(value).every(x=>tables[table].includes(x))); update=value; return q; },
+        then(resolve,reject) {
+          const execute=async()=>{
+            if (table==='facebook_messages'&&failMessages) return {error:{message:'Synthetic unavailable history'}};
+            if (update) writes.push(table);
+            if (table==='customers'&&update&&failCustomerWrite) return {error:{message:'Synthetic failed customer update'}};
+            const values=[];
+            const params=value=>{values.push(value);return '$'+values.length;};
+            const set=update?Object.entries(update).map(([key,value])=>key+'='+params(value)).join(','):null;
+            const where=filters.map(([key,value,list])=>list?key+'=ANY('+params(value)+'::uuid[])':key+'='+params(value)).join(' AND ');
+            assert.ok(where);
+            try {
+              const result=await client.query(update?`UPDATE ${table} SET ${set} WHERE ${where} RETURNING *`:
+                `SELECT ${columns} FROM ${table} WHERE ${where}${limit?' LIMIT '+limit:''}`,values);
+              return {data:single?(result.rows[0]||null):result.rows};
+            } catch(error) {return {error};}
+          };
+          return execute().then(resolve,reject);
+        },
+      }; return q;
+    }};
+  };
+  const phoneRecord = async () => {
+    const c=await legacy();
+    await db.query("UPDATE facebook_contacts SET phone='0900000000' WHERE id=$1",[c.contact]);
+    await db.query("UPDATE crm_leads SET description='Synthetic old phone SĐT: 0900000000' WHERE id=$1",[c.lead]);
+    return c;
+  };
+  const phoneSnapshot = async c => (await db.query(`SELECT f.phone AS contact_phone,c.phone AS customer_phone,l.description
+    FROM facebook_contacts f JOIN customers c ON c.id=f.customer_id JOIN crm_leads l ON l.id=f.lead_id WHERE f.id=$1`,[c.contact])).rows[0];
+  await t.test('actual phone reconcile leaves all data unchanged for an enrolled Page',async()=>{
+    const c=await phoneRecord();await enroll(c);const before=await phoneSnapshot(c),connection=phoneAdapter();
+    await assert.rejects(reconcileInboundPhoneAfterScan(connection,c.contact,primary),{code:'MANAGED_CARE_SCOPE'});
+    assert.deepEqual(connection.writes,[]);assert.deepEqual(await phoneSnapshot(c),before);
+  });
+  await t.test('actual phone reconcile never clears data when PostgreSQL history read is unavailable',async()=>{
+    const c=await phoneRecord(),before=await phoneSnapshot(c),connection=phoneAdapter({failMessages:true});
+    await assert.rejects(reconcileInboundPhoneAfterScan(connection,c.contact,{...primary,deleteLeadIfNoPhone:true}),{status:503});
+    assert.deepEqual(connection.writes,[]);assert.deepEqual(await phoneSnapshot(c),before);
+  });
+  await t.test('actual phone reconcile stops after failed Customer update and preserves Lead/history',async()=>{
+    const c=await phoneRecord(),before=await phoneSnapshot(c),connection=phoneAdapter({failCustomerWrite:true});
+    await assert.rejects(reconcileInboundPhoneAfterScan(connection,c.contact,{...primary,deleteLeadIfNoPhone:true}),{status:503});
+    assert.deepEqual(connection.writes,['facebook_contacts','customers']);
+    const after=await phoneSnapshot(c);assert.equal(after.contact_phone,null);assert.equal(after.customer_phone,before.customer_phone);assert.equal(after.description,before.description);
+  });
+  await t.test('actual phone reconcile completes allowed updates without deleting a Lead',async()=>{
+    const c=await phoneRecord(),connection=phoneAdapter();
+    assert.equal((await reconcileInboundPhoneAfterScan(connection,c.contact,primary)).action,'cleared_stored_phone_only');
+    const after=await phoneSnapshot(c);assert.equal(after.contact_phone,null);assert.equal(after.customer_phone,'');assert.ok(!after.description.includes('0900000000'));
+    assert.deepEqual(connection.writes,['facebook_contacts','customers','crm_leads']);
+  });
+  await t.test('actual phone reconcile preserves a record when its negative history window is incomplete',async()=>{
+    const c=await phoneRecord(),before=await phoneSnapshot(c),connection=phoneAdapter();
+    await db.query("INSERT INTO facebook_messages(contact_id,direction,content) SELECT $1,'inbound','Synthetic message without phone' FROM generate_series(1,801)",[c.contact]);
+    await assert.rejects(reconcileInboundPhoneAfterScan(connection,c.contact,{...primary,deleteLeadIfNoPhone:true}),{status:503});
+    assert.deepEqual(connection.writes,[]);assert.deepEqual(await phoneSnapshot(c),before);
+  });
+  await t.test('actual batch contact scope rejects a mixed Page selection before any mutation',async()=>{
+    const own=await phoneRecord(),outside=await phoneRecord(),connection=phoneAdapter();
+    await assert.rejects(assertLegacyContactIdsInPageScope(connection,[own.contact,outside.contact],[own.page]),{status:403});
+    assert.deepEqual(connection.writes,[]);
+    await assertLegacyContactIdsInPageScope(connection,[own.contact],[own.page]);
+    assert.equal((await phoneSnapshot(outside)).contact_phone,'0900000000');
   });
   await t.test('successful preflight creates no connection permit or persistent operation receipt', async () => {
     const c = await legacy();

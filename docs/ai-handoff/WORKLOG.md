@@ -1,3 +1,23 @@
+## 04/10/2026 — Sửa caller quét điện thoại và các finding độc lập
+
+Sửa `facebookInboundPhoneReconcile.js`, `facebookLegacyContactWrites.js`, `routes/facebook.js`; thêm `facebookLegacyPhoneRepair.test.js` và6 ca actual helper PostgreSQL trong `careLegacyWrite.cases.js`; workflow đưa các file/test mới vào regression. Không thêm migration.
+
+Đã giới hạn company actor trước tenant-wide membership, đọc Page owner hiện hành, chặn admin HST thiếu tenant; kiểm all IDs trước quality apply, intersection page_id; checked reads/writes và final round chỉ nhận ID của nhóm chọn. Review phát hiện MID khóa chưa lưu và history cap vẫn có thể dẫn tới cleanup: sửa kiểm row đúng contact, trạng thái partial, số tin đã lưu trước lỗi và cửa sổ501/801 chặn kết luận không có số.34 ca mới local PASS. PostgreSQL và review cuối chưa chốt tại thời điểm ghi; [hợp đồng/hoàn tác](vpt-marketing-automation/LEGACY_PHONE_REPAIR.md).
+
+Giữ finding CRM merge quyền/FK và manual/automatic creator company OPEN, không coi gói này hoàn tất cutover. Chưa DB/Meta/model/budget thật, merge hoặc release; full goal ACTIVE. Phiên trước chủ yếu kiểm trạng thái, nay có thay đổi mã và ca hồi quy trực tiếp khép các đường lỗi đã xác minh.
+
+---
+
+## 03/10/2026 — Trả lời bước tiếp và ghi nhận audit mở rộng
+
+Đọc CURRENT/DECISIONS, đối chiếu HEAD `a972c030e5065d3d8d8135d4ee22e59a87c9d160` và 3 file local đang sửa: `backend/src/helpers/facebookInboundPhoneReconcile.js`, `backend/src/helpers/facebookLegacyContactWrites.js`, `backend/src/routes/facebook.js`. Không thay đổi mã thêm trong lần kiểm trạng thái này.
+
+Reviewer độc lập `/root/architecture_v11_review` trả CHANGES_REQUESTED cho cutover: vòng batch/final-round thiếu preflight/phạm vi; phone-quality/date-scan và CRM merge/cleanup thiếu quyền actor; đọc lỗi có thể dẫn tới cleanup; lỗi chuyển FK bị bỏ qua trước xóa nguồn. Finding reconcile đang sửa chưa có review kết luận. Rà tiếp route reconcile và pipeline cho thấy Graph lỗi vẫn có thể đi tiếp sang trích/đối soát; cần ca hồi quy và sửa trước nghiệm thu. Có đường HTTP/timer trong mã không đồng nghĩa đã bật trong vận hành.
+
+Chạy lại `facebookLegacyWriteScope.test.js`, `facebookWebhookRecovery.test.js`, `facebookLeadIntake.integration.test.js`: **43 PASS/0 FAIL/0 SKIP**; cú pháp cả 3 file local và diff check bỏ khác biệt CRLF PASS. Đây là regression hiện có, không chứng nhận delta đối soát điện thoại, PostgreSQL mới, cutover hoặc UAT. CURRENT cập nhật giới hạn và thứ tự tiếp tục. Không tác động DB/Meta thật, gọi model, thay ngân sách, merge hoặc phát hành; full goal ACTIVE.
+
+---
+
 ## 03/10/2026 — Kiểm đường ghi cũ; sửa target phát hiện muộn và đọc lỗi
 
 Đã kiểm runtime9cdfe7d/treeaf25883: intake PostgreSQL258/0/0 gồm14ca mới244–257, census88+HTTP1, Node22 843+26+33 PASS, cả10job/build/report/Messenger SUCCESS. CImergea620f9ce có tree bằng runtime, parentsbasee16c885+9cdfe7d. [Bằng chứng đúng phiên bản](vpt-marketing-automation/LEGACY_WRITE_PREFLIGHT_REVIEW.md). Reviewer độc lập đối chiếu4 blob và log CI, PASS phạm vi preflight/SQL682; cutover toàn bộ vẫn HOLD. Các đoạn dưới lưu tiến trình trước kiểm thử.

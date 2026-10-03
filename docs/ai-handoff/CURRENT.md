@@ -1,3 +1,23 @@
+## Hiện hành 04/10/2026 — Sửa đường quét điện thoại, đang kiểm độc lập
+
+Delta trên baseline `a972c03` khóa phạm vi công ty/Page hiện hành, giới hạn final round theo Lead đã chọn, kiểm lỗi DB và chặn đối soát khi Graph/MID/lịch sử chưa hoàn tất. Đã sửa các finding reviewer về actor A/B cùng tenant, admin thiếu tenant, cache Page, MID khóa và lịch sử bị giới hạn. Local34 ca mới PASS; 6 ca PostgreSQL mới đang chuẩn bị CI; chưa kết luận runtime.
+
+[Phạm vi, bằng chứng và hoàn tác](vpt-marketing-automation/LEGACY_PHONE_REPAIR.md). CRM merge/cleanup và tạo Lead/Customer đúng công ty còn OPEN; cutover, dừng/chờ đường cũ, đối soát/khôi phục, AI/lịch/người nhận/phạm vi đo và UAT/Founder release vẫn còn. Full goal ACTIVE, chưa tác động hệ thống thật hoặc có kết quả250k thực tế. Các mục dưới là lịch sử.
+
+---
+
+## Hiện hành 03/10/2026 — Rà toàn bộ đường cũ còn yêu cầu sửa
+
+Founder hỏi bước tiếp. Ưu tiên vẫn là Facebook → CRM → khảo sát → dashboard, mục tiêu tạm thời 250.000 đồng/khách hợp lệ. Không mở kênh hoặc giai đoạn lớn mới từ lần kiểm trạng thái này.
+
+Reviewer độc lập kết luận **CHANGES_REQUESTED cho việc chuyển Page** trên baseline `a972c03`: còn vòng trích số điện thoại/đồng bộ cuối ghi ngoài phạm vi đã kiểm; một số route quét/chất lượng số điện thoại và CRM merge/cleanup thiếu quyền trên hồ sơ đích; lỗi đọc tin nhắn có thể bị hiểu là không có số rồi cleanup; gộp hồ sơ có bước chuyển liên kết bỏ qua lỗi trước khi xóa nguồn. PASS SQL682 bên dưới chỉ áp dụng phạm vi đã kiểm, không thay kết luận này. Chưa xác minh các timer đang bật trong môi trường thật.
+
+Bản sửa local chưa commit gồm `facebookInboundPhoneReconcile.js`, `facebookLegacyContactWrites.js` và `routes/facebook.js`: thêm kiểm trước quét/đối soát, kiểm lỗi đọc/ghi và dừng ghi trạng thái đồng bộ khi thất bại. Kiểm lại 43 ca hiện có (scope + webhook recovery + intake integration), cú pháp 3 file và diff check đều PASS; **chưa có đủ ca mới, PostgreSQL hoặc review kết luận cho delta này**. Đường gọi tiếp tục trích/xóa sau Graph lỗi và các finding trên vẫn phải khép; không coi bản sửa local đã hoàn tất.
+
+Tiếp theo: khép kiểm quyền/phạm vi và lỗi đọc/ghi của các đường này → kiểm độc lập và phương án dừng/chờ đường cũ → hoàn thiện cấu hình AI/lịch/người nhận/phạm vi đo → nghiệm thu trọn tuyến và trình Founder gói phát hành. **HOLD vận hành thật**; chưa chứng minh chi phí 250.000 đồng bằng dữ liệu thật. Full goal ACTIVE; chưa đổi DB thật, quyền AI, ngân sách hoặc phát hành.
+
+---
+
 ## Hiện hành 03/10/2026 — Preflight đường ghi cũ đã qua PostgreSQL
 
 Runtime9cdfe7d/treeaf25883 bổ sung SQL682/helper kiểm phạm vi trước mutation, kiểm lại target vừa tìm được và dừng cleanup khi lỗi đọc/count. Đã khép hai finding P1/P2 về mã và kiểm cả lịch sử comment. Local43/0/0; PostgreSQL258/0/0 gồm14ca mới; census88+HTTP1, Node22 843+26+33, cả10job/build/report/Messenger SUCCESS. CImerge tree khớp runtime; reviewer độc lập PASS phạm vi preflight/SQL682 sau đối chiếu blob/log CI. [Bằng chứng](vpt-marketing-automation/LEGACY_WRITE_PREFLIGHT_REVIEW.md).
