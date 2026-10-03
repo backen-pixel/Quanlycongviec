@@ -1,5 +1,7 @@
 # Đối soát bản xuất nguồn
 
+SQL675 bổ sung `SOURCE_EXPORT_BUSINESS_CONTEXT_V2`: bỏ nhiễu lease/retry và receipt được census hiện hành chứng minh ngoài kỳ không có mâu thuẫn. Các receipt674 dùng version cũ cần đối soát lại một lần; lịch sử giữ nguyên. Phần mô tả fingerprint toàn hàng ở dưới ghi hiện trạng674 trước thay đổi này. [Bản lưu phép đo và giới hạn675](MEASUREMENT_SNAPSHOT.md).
+
 SQL674 nối witness672 vào cùng snapshot inventory dùng bởi trial/source export; bổ sung digest tuple(Page, form, leadgen ID, thời điểm epoch) đúng kỳ đo. Không thay digest traversal toàn kỳ khôi phục. Người vận hành có thể so tệp nguồn với tập đã quét và giữ bằng chứng bất biến để chuẩn bị chốt kỳ đo.
 
 ## Giao tiếp và ranh giới

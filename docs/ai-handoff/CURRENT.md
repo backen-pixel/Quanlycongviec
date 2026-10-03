@@ -1,3 +1,11 @@
+## 2026-10-03 — Bản lưu kết quả đo đang kiểm chứng
+
+SQL675/API/UI giữ report tính ở server, thời điểm/cutoff, dependencies và danh sách thiếu theo nguồn. Bản lịch sử không tự đổi; retry trả đúng receipt cũ; source fingerprint bỏ lease/retry và receipt đã chứng minh ngoài kỳ. Chưa full measurement close/provenance hoặc CPQL đủ nguồn.
+
+Local12PASS; review đã sửa UUID, smoke độc lậpPASS. Đang chờ PostgreSQL/build/browser và review cuối. [Hợp đồng và giới hạn](vpt-marketing-automation/MEASUREMENT_SNAPSHOT.md). Full goalACTIVE, chưa có tác động thật.
+
+---
+
 ## Hiện hành 03/10/2026 — Đối soát bản xuất nguồn đã kiểm chứng
 
 Runtime920e66bc nối SQL674/API/UI để so CSV với tập mã/time/form đã quét đúng kỳ, giữ bằng chứng và audit bất biến. Dòng ngoài kỳ/trùng/mâu thuẫn/rỗng có trạng thái riêng; receipt mới hoặc nguồn đổi làm trạng thái cần rà lại. Server hash bytes và loại cột PII trước DB; UI giữ metadata/hash để retry và phân biệt biên nhận lịch sử với kết quả hiện hành.

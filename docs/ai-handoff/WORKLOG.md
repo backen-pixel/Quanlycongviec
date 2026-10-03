@@ -1,3 +1,11 @@
+## 2026-10-03 — Bản lưu kết quả đo đang kiểm chứng
+
+SQL675/API/UI giữ report tính ở server, thời điểm/cutoff, dependencies và danh sách thiếu theo nguồn. Bản lịch sử không tự đổi; retry trả đúng receipt cũ; source fingerprint bỏ lease/retry và receipt đã chứng minh ngoài kỳ. Chưa full measurement close/provenance hoặc CPQL đủ nguồn.
+
+Local12PASS; review đã sửa UUID, smoke độc lậpPASS. Đang chờ PostgreSQL/build/browser và review cuối. [Hợp đồng và giới hạn](vpt-marketing-automation/MEASUREMENT_SNAPSHOT.md). Full goalACTIVE, chưa có tác động thật.
+
+---
+
 ## 2026-10-03 — Source export closure
 
 Runtime920e66bc tree dbb986a3; reviewer độc lập PASS local24. Automation37112179618 all10SUCCESS; census111172074851 PG60/0/0 +HTTP1/0/0; Node22 111172074887=745/0/0; build111172074765=10318modules/28.97s. Report37112179600/Messenger37112179556SUCCESS. Merge1ced58499b20ad255f6555cde077afec5608af0d có cùng tree, parentruntime+basee16c885. Browser tác giả kiểm lost-response/reload/stale/retry/sourceerror; tab/server đóng. Hồ sơ SOURCE_EXPORT_REVIEW.md; closure chỉdocs, full goalACTIVE, chưa Meta/UAT/phát hành/CPQLđầyđủ.
