@@ -1,3 +1,13 @@
+## Hiện hành03/10/2026 — Danh mục nguồn khách đã kiểm chứng
+
+Runtime9363535a thêm SQL671/API/editor cho phạm vi công ty/kỳ/tất cả tài khoản/Page/biểu mẫu/điểm nhận. Có revision/audit/exact retry, ngoại lệ lịch sử chưa rõ tài khoản và phát hiện cấu hình/quyền đổi. Projection cùng snapshot; không biến khai báo thành bằng chứng provider đủ hoặc quyền chi.
+
+Review độc lập PASS; local129, censusPG41/0/0, Node22 697/0/0, cả10job/build và report/Messenger SUCCESS. Browser dữ liệu giả kiểm lưu, thiếu nguồn, cấu hình đổi, lỗi/sai actor, mất phản hồi/reload/đổi người/retry và heldPOST-close. [Bằng chứng](vpt-marketing-automation/SOURCE_REGISTRY_REVIEW.md), [hợp đồng/hoàn tác](vpt-marketing-automation/SOURCE_REGISTRY.md).
+
+Full goal ACTIVE. Tiếp theo provider witness/đối soát bản xuất thực và chốt kỳ có bằng chứng; lịch/chờ xử lý cùng nghĩa vụ vận hành còn lại giữ nguyên. Chưa Meta/UAT thật/phát hành/đạt250k. Các mục dưới đây giữ lịch sử theo phiên bản.
+
+---
+
 ## 2026-10-03 — Đóng danh mục trong lúc gửi
 
 2d53b5 đạt cả10job, gồm barrier PostgreSQL active/Lock/PgSleep. Review tiếp phát hiện khi đóng editor lúc POST chờ thì summary có thể còn cũ. Đã xóa summary trước POST; browser held-response/close/reopen/retry kiểm đúng phiên bản2 và không khôi phục kết luận cũ. Bản UI sửa cần CI/review cuối; không đổi SQL.

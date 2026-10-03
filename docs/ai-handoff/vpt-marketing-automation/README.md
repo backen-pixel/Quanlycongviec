@@ -1,3 +1,9 @@
+## 03/10/2026 — Source registry validated
+
+Runtime9363535a adds declared business scope with revision/current authority/audit/exact retry, all accounts and known-form exceptions, and an operator editor. Independent review PASS; local129, censusPG41/0/0, Node22 697/0/0, all10 jobs/build and report/Messenger SUCCESS. Synthetic browser includes lost-response/reload/actor switch and heldPOST/editor close. [Evidence](SOURCE_REGISTRY_REVIEW.md), [contract](SOURCE_REGISTRY.md), [browser](SOURCE_REGISTRY_BROWSER.md). Full goal ACTIVE: provider witness/actual export reconciliation/measurement close, survey and pending dashboard, real configuration/UAT/Founder release still required. No actual Meta access or operational changes.
+
+---
+
 ## 03/10/2026 — Observed CPQL validated
 
 Runtimea8b2f9f adds provisional whole-account spend per reconciled qualified Lead. Independent review/local105/Node22 673/censusPG30/fullbuild allPASS. No migration; no full-target attainment or release. [Evidence](OBSERVED_CPQL_REVIEW.md), [contract and remaining work](OBSERVED_CPQL.md). Full goal ACTIVE.

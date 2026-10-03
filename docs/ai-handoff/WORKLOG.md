@@ -1998,3 +1998,7 @@ Added SQL671/private versioned source registry, authenticated primary-only API, 
 
 ## 2026-10-03 — Held POST editor closure
 Review found closing editor before POST settles can preserve stale outer summary. Clear summary after pending is durably stored and before HTTP. Supported browser held-response/close/reopen/exact-retry passed; database unchanged. 2d53b5 all10 checks succeeded; final UI head revalidation pending.
+
+## 2026-10-03 — Source registry closure
+
+Runtime9363535a and independent review PASS. CI37105837930 all10 SUCCESS, census111154053416=41/0/0, Node22 111154053420=697/0/0, build111154053390=10314modules31.35sec. Mergeca1e35a0c6438d310cdd4841842a579660219d38 has identicalcandidate tree4bc46dc5f1470cc661ff70897b742a7335b264a0. Report37105837943/Messenger37105837923SUCCESS. Synthetic browser heldPOST-close fix validated; tabs/servers closed. EvidenceSOURCE_REGISTRY_REVIEW.md. Docs-only closure; full goalACTIVE, no live effects.

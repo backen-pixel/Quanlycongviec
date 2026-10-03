@@ -22,7 +22,7 @@ Giao diện nằm trong kỳ đo ở trang phân tích quảng cáo. Nó gợi �
 
 ## Kiểm thử và triển khai
 
-Local129 unit/domain/UI-state tests PASS lúc chuẩn bị candidate. SQL671 được fixture census áp dụng hai lần;11 ca mới kiểm quyền trực tiếp, broad grant, tất cả tài khoản/biểu mẫu, concurrency/replay, multi-account form, lịch sử không rõ tài khoản, token thiếu, quyền hiện hành, roster/ngày thay đổi, binding thêm trong lúc đợi khóa, Page moved và cùng snapshot. PostgreSQL/build/browser/review độc lập còn chờ kết quả; không coi danh sách ca là kết quả PASS.
+Runtime9363535a đã qua review độc lập, local129 và24 ca mới reviewer chạy, PostgreSQL census41/0/0, Node22 697/0/0 và cả10job/fullbuild. SQL671 được fixture census áp dụng hai lần;11 ca mới kiểm quyền trực tiếp, broad grant, tất cả tài khoản/biểu mẫu, concurrency/replay, multi-account form, lịch sử không rõ tài khoản, token thiếu, quyền hiện hành, roster/ngày thay đổi, binding thêm trong lúc đợi khóa, Page moved và cùng snapshot. Browser dữ liệu giả kiểm lưu/retry/reload/đổi người/lỗi/heldPOST-close. [Bằng chứng đúng phiên bản và giới hạn](SOURCE_REGISTRY_REVIEW.md).
 
 Không chạy migration thật, không cấu hình Meta, không gửi khách hoặc mở chi. Hoàn tác ứng dụng bằng tắt flag và gỡ giao diện/API mới nếu cần; giữ registry/events để bảo toàn bằng chứng. Không xóa dữ liệu hoặc mở quyền trực tiếp.
 
