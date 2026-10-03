@@ -775,6 +775,19 @@ export async function fetchLeadDocuments(dealId: string): Promise<ProjectDocumen
   return list.map((row) => mapProjectDocument(row as Record<string, unknown>));
 }
 
+/**
+ * Tài liệu CRM của deal gắn với dự án, đã lọc theo quyền xem của module Sản xuất — giống tab
+ * Tài liệu trên web (`/crm/project/:id/lead-documents?for_module=production`). Route này không đi
+ * qua cổng quyền theo deal, nên nhân viên chỉ được giao việc vẫn xem được tài liệu đã chia sẻ cho SX.
+ */
+export async function fetchProjectLeadDocuments(projectId: string): Promise<ProjectDocument[]> {
+  const { data } = await api.get<unknown>(`/crm/project/${projectId}/lead-documents`, {
+    params: { for_module: 'production' },
+  });
+  const list = Array.isArray(data) ? data : [];
+  return list.map((row) => mapProjectDocument(row as Record<string, unknown>));
+}
+
 export async function fetchLeadTaskDocuments(dealId: string): Promise<ProjectDocument[]> {
   const { data } = await api.get<unknown>(`/crm/leads/${dealId}/task-documents`);
   const list = Array.isArray(data) ? data : [];

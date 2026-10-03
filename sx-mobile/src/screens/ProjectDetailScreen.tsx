@@ -28,6 +28,8 @@ import ProjectSharedWorkspaceTab from '../components/projectDetail/ProjectShared
 import SpinningLoader from '../components/SpinningLoader';
 import TapHighlight from '../components/TapHighlight';
 import { formatApiError } from '../api/client';
+import { useAuth } from '../context/AuthContext';
+import { canViewTeamWork } from '../lib/roles';
 import { useNotifications } from '../context/NotificationContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
@@ -99,6 +101,9 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   const focusLookupIdRef = useRef(incomingFocusId);
   if (incomingFocusId) focusLookupIdRef.current = incomingFocusId;
   const { colors } = useTheme();
+  const { user } = useAuth();
+  /** Tiền (giá trị SX, cọc, công nợ) chỉ dành cho quản lý/admin. */
+  const canSeeMoney = canViewTeamWork(user);
   const { joinProjectRoom, leaveProjectRoom, joinLeadRoom, leaveLeadRoom } = useNotifications();
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<TabKey>('tasks');
@@ -976,7 +981,10 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         ['info', 'Thông tin', 0],
         ['team', 'Đội ngũ', 0],
         ['schedule', 'Lịch', 0],
-      ] as [TabKey, string, number][]).map(([key, label, count]) => {
+      ] as [TabKey, string, number][])
+        // Nhân viên không dùng Drive / Thông tin / Đội ngũ của dự án.
+        .filter(([key]) => canSeeMoney || (key !== 'drive' && key !== 'info' && key !== 'team'))
+        .map(([key, label, count]) => {
         const active = tab === key;
         const badge = count > 0 ? (count > 99 ? '99+' : String(count)) : null;
         return (
@@ -1019,6 +1027,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         </View>
       </View>
 
+      {/* Giá trị / cọc / công nợ: chỉ quản lý & admin — nhân viên xưởng không xem tiền. */}
+      {canSeeMoney ? (
       <View style={styles.moneyRow}>
         <Pressable
           style={styles.moneyCard}
@@ -1048,14 +1058,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           <Text style={styles.moneyHint}>= SX − cọc</Text>
         </View>
       </View>
-
-      <View style={styles.progressBox}>
-        <Text style={styles.progressLabel}>Tiến độ sản xuất</Text>
-        <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${Math.min(100, progress)}%`, backgroundColor: progressColor }]} />
-        </View>
-        <Text style={[styles.progressPct, { color: progressColor }]}>{progress}%</Text>
-      </View>
+      ) : null}
     </View>
   );
 
@@ -1219,6 +1222,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
                 </View>
               ))}
 
+              {canSeeMoney ? (
+              <>
               {(
                 [
                   {
@@ -1260,6 +1265,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
                   <Text style={styles.infoEditHint}>= Giá trị sản xuất − Tiền cọc</Text>
                 </View>
               </View>
+              </>
+              ) : null}
 
               {(
                 [

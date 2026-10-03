@@ -42,6 +42,34 @@ export function isWorkshopDealNotification(n: Pick<SxCommentNotification, 'type'
   return WORKSHOP_DEAL_TYPES.has(String(n.type || ''));
 }
 
+/**
+ * Cờ chạy ngoài React để `Notifications.setNotificationHandler` (App.tsx) biết tài khoản hiện tại có
+ * phải nhân viên không; `NotificationProvider` cập nhật mỗi khi đổi người dùng.
+ */
+let staffOnlyNotifications = false;
+export function setStaffOnlyNotifications(on: boolean): void {
+  staffOnlyNotifications = on;
+}
+
+/** Loại thông báo mà nhân viên KHÔNG được nhận (toast / push): chỉ chặn nhóm deal xưởng. */
+export function shouldMuteForStaff(type: string): boolean {
+  if (!staffOnlyNotifications) return false;
+  return WORKSHOP_DEAL_TYPES.has(type) && !isStaffRelevantNotification({ type });
+}
+
+/**
+ * Thông báo nhân viên cần thấy: bình luận và việc / dự án được GIAO cho mình. Bỏ deal xưởng mới
+ * (`workshop_new_deal`) và dự án vừa tạo (`project_created`) — chỉ liên quan quản lý.
+ */
+export function isStaffRelevantNotification(n: Pick<SxCommentNotification, 'type'>): boolean {
+  const t = String(n.type || '');
+  return t === 'comment_added'
+    || t === 'project_assigned'
+    || t === 'task_assigned'
+    || t.startsWith('crm_task_assigned')
+    || t.startsWith('crm_assignment');
+}
+
 export function notificationCategoryLabel(n: SxCommentNotification): string {
   if (isWorkshopDealNotification(n)) return 'Deal xưởng';
   return 'Bình luận';
@@ -292,6 +320,26 @@ export async function fetchCommentNotifications(
   } catch (e) {
     if (!isNotFoundError(e)) throw e;
     return buildLocalCommentNotifications(unreadOnly);
+  }
+}
+
+/**
+ * Số chưa đọc cho NHÂN VIÊN: chỉ tính loại họ được thấy (xem `isStaffRelevantNotification`).
+ * Server đếm gộp mọi loại nên phải lấy danh sách chưa đọc rồi đếm lại; lỗi mạng thì rơi về số server.
+ * Không gọi `enrichWithLatestComments` (nặng) vì chỉ cần đếm.
+ */
+export async function fetchStaffUnreadCount(): Promise<number> {
+  try {
+    const { data } = await api.get<{ notifications?: unknown[] }>(
+      '/production/notifications/comments',
+      { params: { unread: 'true' } },
+    );
+    const list = Array.isArray(data?.notifications) ? data.notifications : [];
+    return list
+      .map((row) => mapRow(row as Record<string, unknown>))
+      .filter((n) => !n.is_read && isStaffRelevantNotification(n)).length;
+  } catch {
+    return fetchCommentUnreadCount();
   }
 }
 

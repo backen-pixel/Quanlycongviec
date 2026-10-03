@@ -28,7 +28,7 @@ import {
   type RegionOption,
   type WorkshopTypeOption,
 } from '../lib/productionApi';
-import { canPickAnyCompany, canSeeAllRegions } from '../lib/roles';
+import { canPickAnyCompany, canSeeAllRegions, canViewTeamWork } from '../lib/roles';
 import { HIT_TARGET, Radii, Spacing, colorWithAlpha } from '../theme';
 
 import SpinningLoader from './SpinningLoader';
@@ -65,6 +65,8 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const isSystemAdmin = canPickAnyCompany(user);
+  /** Giá trị deal chỉ dành cho quản lý/admin — nhân viên xưởng không nhập hay xem tiền. */
+  const canSeeMoney = canViewTeamWork(user);
 
   const [step, setStep] = useState<1 | 2>(1);
   const [title, setTitle] = useState('');
@@ -781,6 +783,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
                 />
               </View>
 
+              {canSeeMoney ? (
               <View style={styles.field}>
                 <Text style={styles.label}>Giá trị (VNĐ)</Text>
                 <View style={styles.valueRow}>
@@ -810,6 +813,7 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
                   </TouchableOpacity>
                 </View>
               </View>
+              ) : null}
 
               <View style={styles.field}>
                 <Text style={styles.label}>Ghi chú</Text>
@@ -909,12 +913,14 @@ export default function CreateDealModal({ visible, user, onClose, onCreated }: P
                     {companyName || '— Chọn —'}
                   </Text>
                 </View>
+                {canSeeMoney ? (
                 <View style={styles.confirmRow}>
                   <Text style={styles.confirmLabel}>Giá trị</Text>
                   <Text style={[styles.confirmValue, styles.confirmValueMoney]}>
                     {formatVnd(estimatedValue)}
                   </Text>
                 </View>
+                ) : null}
                 <View style={[styles.confirmRow, { marginBottom: 0 }]}>
                   <Text style={styles.confirmLabel}>Phụ trách</Text>
                   <Text style={[styles.confirmValue, styles.confirmValuePrimary]} numberOfLines={2}>

@@ -90,12 +90,15 @@ export function SectionHeader({
   title,
   actionLabel,
   onAction,
+  badge,
 }: {
   icon: IoniconName;
   iconColor?: string;
   title: string;
   actionLabel?: string;
   onAction?: () => void;
+  /** Tổng số mục — hiện thành huy hiệu tròn cạnh tiêu đề; bỏ qua khi không truyền. */
+  badge?: number;
 }) {
   const { colors } = useTheme();
   const s = useMemo(() => createStyles(colors), [colors]);
@@ -104,6 +107,11 @@ export function SectionHeader({
       <View style={s.secTitleWrap}>
         <Ionicons name={icon} size={16} color={iconColor || colors.primary} />
         <Text style={s.secTitle}>{title}</Text>
+        {badge != null && badge > 0 ? (
+          <View style={s.secBadge}>
+            <Text style={s.secBadgeTxt}>{badge > 99 ? '99+' : badge}</Text>
+          </View>
+        ) : null}
       </View>
       {actionLabel && onAction ? (
         <Pressable onPress={onAction} hitSlop={8} style={s.secAction}>
@@ -115,7 +123,15 @@ export function SectionHeader({
   );
 }
 
-export function KpiCard({ stat, style }: { stat: KpiStat; style?: object }) {
+/**
+ * `compact`: xếp DỌC (icon trên — số — nhãn) cho lưới 4 ô một hàng. Bố cục ngang
+ * ở bề rộng ~85px sẽ bóp nhãn thành một chữ hoặc cắt mất.
+ */
+export function KpiCard({
+  stat,
+  style,
+  compact = false,
+}: { stat: KpiStat; style?: object; compact?: boolean }) {
   const { colors, isDark } = useTheme();
   const s = useMemo(() => createStyles(colors), [colors]);
   // Chuyển sắc suy từ chính màu của ô nên theme sáng/tối đều ra đúng sắc độ.
@@ -132,13 +148,22 @@ export function KpiCard({ stat, style }: { stat: KpiStat; style?: object }) {
     >
       {/* Bố cục NGANG: trong lưới 2 cột thẻ đã rộng, xếp dọc icon/số/nhãn làm thẻ
           cao gấp đôi mức cần thiết và đẩy nội dung phía dưới xuống sâu. */}
-      <LinearGradient colors={grad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={s.kpiFill}>
-        <View style={[s.kpiIcon, { backgroundColor: stat.color }]}>
-          <Ionicons name={stat.icon} size={16} color={colors.white} />
+      <LinearGradient
+        colors={grad}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[s.kpiFill, compact && s.kpiFillCompact]}
+      >
+        <View style={[s.kpiIcon, compact && s.kpiIconCompact, { backgroundColor: stat.color }]}>
+          <Ionicons name={stat.icon} size={compact ? 14 : 16} color={colors.white} />
         </View>
-        <View style={s.kpiText}>
-          <Text style={[s.kpiValue, { color: stat.color }]}>{stat.value}</Text>
-          <Text style={s.kpiLabel} numberOfLines={1}>{stat.label}</Text>
+        <View style={[s.kpiText, compact && s.kpiTextCompact]}>
+          <Text style={[s.kpiValue, compact && s.kpiValueCompact, { color: stat.color }]}>
+            {stat.value}
+          </Text>
+          <Text style={[s.kpiLabel, compact && s.kpiLabelCompact]} numberOfLines={1}>
+            {stat.label}
+          </Text>
         </View>
       </LinearGradient>
     </Pressable>
@@ -172,6 +197,16 @@ function createStyles(colors: AppColors) {
       marginTop: 16,
       marginBottom: 10,
     },
+    secBadge: {
+      minWidth: 22,
+      height: 20,
+      paddingHorizontal: 6,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colorWithAlpha(colors.primary, 0.14),
+    },
+    secBadgeTxt: { color: colors.primary, fontSize: 11.5, fontWeight: '800' },
     secTitleWrap: { flexDirection: 'row', alignItems: 'center', gap: 7, flex: 1, minWidth: 0 },
     secTitle: {
       fontSize: 13,
@@ -210,6 +245,17 @@ function createStyles(colors: AppColors) {
     kpiText: { flex: 1, minWidth: 0 },
     kpiValue: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
     kpiLabel: { fontSize: 11.5, fontWeight: '700', color: colors.textMuted },
+
+    // Biến thể gọn — 4 ô một hàng. Giữ icon BÊN TRÁI như thiết kế, chỉ thu nhỏ.
+    kpiFillCompact: {
+      gap: 6,
+      paddingHorizontal: 7,
+      paddingVertical: 9,
+    },
+    kpiIconCompact: { width: 24, height: 24, borderRadius: 12 },
+    kpiTextCompact: {},
+    kpiValueCompact: { fontSize: 18 },
+    kpiLabelCompact: { fontSize: 9 },
 
     tile: {
       alignItems: 'center',

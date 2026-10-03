@@ -18,6 +18,11 @@ export type KanbanStage = {
   clears_deadline?: boolean;
   counts_as_completed_revenue?: boolean;
   counts_as_collected_revenue?: boolean;
+  /**
+   * Tick tay KPI của cột: `producing` | `awaiting_delivery` | `shipped`. Có giá trị thì thắng mọi
+   * suy đoán theo cờ/tên cột (khớp BE `sxColumnStageKpiKey`). Chưa tick → null.
+   */
+  dashboard_kpi?: string | null;
   /** null = mặc định; 0 = bỏ quá hạn ngày giao/deadline. */
   sla_days?: number | null;
   /** % tiến độ pipeline gắn với cột (khớp web sx_pipeline_percent). */
