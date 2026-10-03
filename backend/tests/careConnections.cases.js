@@ -5,6 +5,9 @@ const {createLeadIntake,readVerifiedLead}=require('../src/modules/marketingAutom
 const {createCustomerCare}=require('../src/modules/marketingAutomation/facebookCustomerCare');
 const {createSurveyDispatch}=require('../src/modules/marketingAutomation/facebookSurveyDispatch');
 const {reportCohortOperations}=require('../src/modules/marketingAutomation/cohortOperations');
+const {reportTrial}=require('../src/modules/marketingAutomation/trialReport');
+const {readAccountSpendWithDelivery}=require('../src/modules/marketingAutomation/facebookAccountDelivery');
+const {provider}=require('./marketingAutomation.accountDelivery.fixture');
 module.exports=async(t,{db,peers,query,company,other,admin,sales,region,config})=>{
  // Match production base columns before installing the actual legacy RPC.
  await db.query(`ALTER TABLE facebook_contacts ADD COLUMN IF NOT EXISTS id uuid DEFAULT gen_random_uuid();
@@ -117,7 +120,7 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,region,config})
   await assert.rejects(peers[0].query('UPDATE facebook_contacts SET customer_id=NULL WHERE id=$1',[result.contactId]),e=>e.code==='42501');
   await assert.rejects(query('create_facebook_contact_lead_once',[result.contactId,c.page,company,{type:'lead',company_id:company},c.lead]),e=>e.code==='42501');
  });
- await t.test('legacy inverse recovery is a conflict, and new inverse writes cannot race the link',async()=>{
+ await t.test('legacy inverse recovery is a conflict, and new inverse writes are refused',async()=>{
   const c=await fresh({enrolled:false}),d=await fresh(),contact=randomUUID();
   await db.query('INSERT INTO facebook_contacts(id,page_id,psid) VALUES($1,$2,$3)',[contact,c.page,c.psid]);
   await db.query('UPDATE crm_leads SET facebook_contact_id=$2 WHERE id=$1',[d.lead,contact]);
@@ -127,6 +130,18 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,region,config})
   await assert.rejects(peers[0].query('UPDATE crm_leads SET facebook_contact_id=NULL WHERE id=$1',[d.lead]),e=>e.code==='42501');
   const otherContact=(await link(d,await command(d))).contactId;
   await assert.rejects(peers[0].query('UPDATE crm_leads SET facebook_contact_id=$2 WHERE id=$1',[c.lead,otherContact]),e=>e.code==='42501');
+ });
+ await t.test('concurrent legacy inverse write and new connection serialize without introducing a second identity',async()=>{
+  const c=await fresh(),d=await fresh(),contact=randomUUID();
+  await db.query('INSERT INTO facebook_contacts(id,page_id,psid) VALUES($1,$2,$3)',[contact,c.page,c.psid]);
+  const cmd=await command(c),pids=await Promise.all([waitLock(peers[1]),waitLock(peers[2])]);
+  await db.query('BEGIN');await db.query("SELECT pg_advisory_xact_lock(hashtextextended('crm-care-connection-write-v1',0))");
+  const inverse=peers[1].query('UPDATE crm_leads SET facebook_contact_id=$2 WHERE id=$1',[d.lead,contact]).then(value=>({value}),error=>({error}));
+  const linking=link(c,cmd,randomUUID(),peers[2]).then(value=>({value}),error=>({error}));
+  try{await blocked(pids[0]);await blocked(pids[1]);}finally{await db.query('COMMIT');}
+  assert.equal((await inverse).error?.code,'42501');const linked=await linking;if(linked.error)throw linked.error;
+  assert.equal(linked.value.leadId,c.lead);assert.equal(await count(c),1);
+  assert.equal((await db.query('SELECT facebook_contact_id FROM crm_leads WHERE id=$1',[d.lead])).rows[0].facebook_contact_id,null);
  });
  await t.test('revoked release author while linking waits cannot authorize the link',async()=>{
   const c=await fresh(),author=randomUUID();
@@ -155,11 +170,26 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,region,config})
  await t.test('new paid intake Lead reaches a customer-confirmed survey and cohort without seeded links',async()=>{
   const c=await fresh(),trial=randomUUID(),staff=randomUUID(),start=Date.now()+5*86400000,end=start+3600000;
   const since=new Date(Date.now()+7*3600000-30*86400000).toISOString().slice(0,10);
+  await db.query("INSERT INTO fb_ad_accounts(ad_account_id,company_id,bat,access_token) VALUES('act_6800000',$1,true,'synthetic')",[company]);
   await query('marketing_lead_trial_set',[admin,company,trial,randomUUID(),{name:'Synthetic signed intake to survey journey',since,until:day,expectedRevision:0}]);
+  // Use the actual collector and publication services for every scoped account,
+  // including one with spend but no Lead. This is not scope/census acceptance.
+  const accounts=(await db.query('SELECT ad_account_id FROM fb_ad_accounts WHERE company_id=$1',[company])).rows;
+  for(const {ad_account_id:account}of accounts){
+   const amount=account==='act_77'?200000:account==='act_6800000'?50000:0;
+   const fake=provider({account,since,until:day,mutate:body=>{for(const row of body.data)row.spend=String(row.ad_id==='70'?0:amount);return body;}});
+   const snapshot=await readAccountSpendWithDelivery({...fake.input,now:new Date().toISOString()});
+   const run=await query('marketing_spend_begin',[account,company,since,day]);
+   await query('marketing_spend_finish',[run.id,company,snapshot,null]);
+  }
   const quality=await query('crm_lead_quality_read',[admin,company,c.lead]);
   await query('crm_lead_quality_record',[admin,company,c.lead,randomUUID(),quality.revision,quality.contextVersion,{status:'QUALIFIED',contactVerified:true,demandMatches:true,serviceAreaVerified:true,evidence:'Synthetic operator attests paid Lead quality for the signed journey'}]);
   const cohort=async()=>reportCohortOperations(await query('marketing_cohort_operations_snapshot',[admin,company,trial]));
   const before=await cohort();assert.ok(before.attention.some(x=>x.leadId===c.lead&&x.reason==='CARE_CONNECTION_NOT_ESTABLISHED'));
+  const measured=reportTrial(await query('marketing_lead_trial_snapshot',[admin,company,trial]));
+  assert.equal(measured.spend.spendVnd,250000);assert.equal(measured.spend.status,'KNOWN_TO_DATE');
+  assert.ok(measured.accountDelivery.accounts.some(x=>x.accountId==='act_6800000'&&x.spendVnd===50000));
+  assert.equal(measured.costPerQualifiedLeadVnd,null);assert.equal(measured.targetMetToDate,false);
   await link(c,await command(c));
   await db.query("INSERT INTO users(id,company_id,tenant_id,role,is_active) SELECT $1,id,tenant_id,'sales',true FROM companies WHERE id=$2",[staff,company]);
   await db.query('INSERT INTO user_company_regions VALUES($1,$2)',[staff,region]);
@@ -170,7 +200,7 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,region,config})
   await db.query("INSERT INTO crm_survey_control.dispatch_pages VALUES($1,$2,'4567','v24.0',true,'Synthetic isolated dispatch enrollment only',$3,'Synthetic credential evidence only')",[c.page,company,createHash('sha256').update('synthetic').digest('hex')]);
   const available=await query('crm_survey_availability',[admin,company,c.thread,new Date(start).toISOString(),new Date(end).toISOString()]);
   const option=available.items.find(x=>x.staffId===staff);assert.ok(option);
-  const proposal=await query('crm_survey_propose',[admin,company,randomUUID(),{threadId:c.thread,optionId:option.optionId,startsAt:option.startsAt,endsAt:option.endsAt,location:'Synthetic customer-approved location'}]);
+  const proposal=await query('crm_survey_propose',[admin,company,randomUUID(),{threadId:c.thread,optionId:option.optionId,startsAt:new Date(option.startsAt).toISOString(),endsAt:new Date(option.endsAt).toISOString(),location:'Synthetic customer-approved location'}]);
   let sent=0,click;
   const worker=createSurveyDispatch({db:storage(),isPrimary:()=>true,env:c.env,fetchImpl:async(_url,init)=>{
    sent++;const body=JSON.parse(init.body),mid=randomUUID();
