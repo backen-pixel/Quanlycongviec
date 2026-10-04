@@ -1,8 +1,8 @@
-## 04/10/2026 — Đang nghiệm thu rà khách trùng không xóa hồ sơ
+## 04/10/2026 — Rà khách trùng đã qua PostgreSQL và review độc lập
 
-Đã thay Facebook dedup cũ bằng reader danh tính CRM toàn công ty, đổi hai caller tự động và UI; đường xóa cũ trả409. SQL685 chặn company NULL/false. Local1198/0/0; review độc lập PASS rà mã; browser component thật/API giả kiểm lỗi, A→B→A và link đúng tabquality.8ca PostgreSQL mới đã đăng ký, CI/bản công bố cuối còn chờ.
+Runtime4df166 thay Facebook dedup cũ bằng reader CRM toàn công ty; hai caller và UI chỉ rà, đường xóa cũ409. SQL685 chặn company NULL/false. Local/Node22=1198/0/0; identityPG35/0/0 gồm8ca mới; intake323/0/0 và cả10job/build/report/MessengerSUCCESS. Review độc lập PASS đúng checkpoint sau đối chiếu published blobs/log CI; browser component thật/API giả kiểm lỗi, A→B→A và link đúng tabquality.
 
-[Hợp đồng, kiểm chứng và hoàn tác](vpt-marketing-automation/LEGACY_DUPLICATE_REVIEW.md). Bước tiếp: khép CI/review checkpoint → dừng/chờ/đối soát writer cũ → cấu hình AI/lịch/người nhận → UAT và Founder release. Full goal ACTIVE; chưa DB thật/phát hành hoặc kết quả250k thực tế. Các mục dưới giữ lịch sử.
+[Hợp đồng, kiểm chứng và hoàn tác](vpt-marketing-automation/LEGACY_DUPLICATE_REVIEW.md). Bước tiếp: dừng/chờ/đối soát writer cũ và các lượt chưa rõ kết quả → cấu hình AI/lịch/người nhận → UAT và Founder release. Full goal ACTIVE; chưa DB thật/phát hành hoặc kết quả250k thực tế. Các mục dưới giữ lịch sử.
 
 ---
 
