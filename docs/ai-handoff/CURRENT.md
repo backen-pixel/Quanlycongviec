@@ -1,10 +1,10 @@
-## 04/10/2026 — Đang nghiệm thu đối soát liên kết Facebook
+## 04/10/2026 — Đối soát liên kết Facebook đã qua PostgreSQL và review
 
-SQL688 bổ sung đối soát private operator cho item UNKNOWN đã có durable STOP: kiểm hold revision/manifest và snapshot Contact–Lead–Customer/messages, ghi audit nguyên giao dịch, giữ claim và thu hồi capability. RECONCILED_LINKED chỉ xác nhận liên kết hiện tại; run vẫn REVIEW, không tự replay hoặc coi mọi tác động đã hoàn tất. Public reader/UI giữ đúng giới hạn và kiểm quyền lịch sử.
+SQL688 cho operator đối soát liên kết hiện tại của item UNKNOWN đã durable STOP, dưới đúng hold revision/manifest/snapshot; giữ claim, thu hồi capability và ghi audit nguyên giao dịch. Run vẫn REVIEW; không replay creator hoặc xác nhận toàn bộ tác động đã hoàn tất. Reader/UI giữ đúng giới hạn và quyền lịch sử.
 
-Local 1.315 PASS/0 fail/5 skip; 78 ca liên quan gồm 11 mới. PostgreSQL/CI/review cuối đang chờ. [Hợp đồng, kiểm chứng và hoàn tác](vpt-marketing-automation/BATCH_LINK_RECONCILIATION.md). Generic queue không chứa Facebook handler trong mã đã khảo sát; phải cô lập runner/API/consumer khi bảo trì, không chỉ tắt polling. Còn inventory/tác động ngoài liên kết, UNKNOWN mâu thuẫn, AI/lịch/người nhận/phạm vi đo, UAT và Founder release. Full goal ACTIVE; chưa DB thật/phát hành hoặc kết quả 250k.
+Bản kiểm `d2d6e1c`: PostgreSQL **371/0/0** gồm 23 ca mới, Node22 **1.320/0/0**, cả 10 job/build/report/Messenger SUCCESS. Fixture đầu vi phạm UNIQUE đã sửa theo schema thật và thêm inverse conflict; SQL runtime không đổi. Review độc lập PASS sau đối chiếu blob/log CI. [Phạm vi, bằng chứng và hoàn tác](vpt-marketing-automation/BATCH_LINK_RECONCILIATION.md).
 
-CI b6be0989 phát hiện một fixture trùng Page/PSID bị UNIQUE hiện hữu chặn trước hàm mới. Đã sửa ca theo schema thật, bổ sung inverse Lead mâu thuẫn, giữ nguyên SQL; PostgreSQL đang chờ kiểm lại. Node 18/22 mỗi bản 1.320/0/0 và build đạt.
+Còn inventory vận hành/tác động ngoài liên kết, UNKNOWN thiếu hoặc mâu thuẫn, cấu hình AI/lịch/người nhận/phạm vi đo, UAT và Founder release. Generic queue không có Facebook handler trong mã đã khảo sát; phải cô lập cả runner/API/consumer khi bảo trì, không chỉ tắt polling. Full goal ACTIVE; chưa DB thật/phát hành hoặc kết quả 250k.
 
 ---
 

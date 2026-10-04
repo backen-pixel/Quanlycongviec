@@ -1,6 +1,6 @@
 # Đối soát liên kết của lượt Facebook bị ngắt
 
-Ngày 04/10/2026; baseline `3a19a287364f1170cf597d258323c2d637d4983b`. SQL688 và phần hiển thị đang nghiệm thu, chưa áp DB thật hoặc cấp quyền vận hành.
+Ngày 04/10/2026; baseline `3a19a287364f1170cf597d258323c2d637d4983b`. SQL688 và reader/UI đã PASS checkpoint tại bản kiểm `d2d6e1c763ac3cb992d3e360bb2705d4eae8013d`; chưa áp DB thật hoặc cấp quyền vận hành.
 
 ## Kết quả và giới hạn
 
@@ -29,7 +29,14 @@ Khi bảo trì, vẫn phải cô lập các writer này vì chúng ghi bảng n�
 
 ## Kiểm chứng và bước tiếp
 
-Local Windows: **1.315 PASS, 0 fail, 5 skip**; 78 ca liên quan journal/STOP/UI gồm 11 ca mới. CI runtime b6be0989: Node 18/22 mỗi bản 1.320 PASS/0 fail/0 skip, build và các job khác đạt; intake PostgreSQL có một ca fixture lỗi do tạo trùng Page/PSID bị UNIQUE hiện hữu chặn trước khi đến hàm mới. Đã sửa ca đó thành kiểm ràng buộc thật và thêm inverse Lead mâu thuẫn; không sửa SQL hoặc gỡ constraint. PostgreSQL và review cuối chờ kiểm lại. Các ca mới kiểm quyền private, durable STOP, đúng/sai mapping, toàn bộ message, snapshot/revision, replay và hai operator, rollback, hai thứ tự cạnh tranh với release hold, giữ claim, thu hồi token và quyền lịch sử. Không dùng dữ liệu giả làm bằng chứng đạt 250.000đ/khách.
+Local Windows: **1.315 PASS, 0 fail, 5 skip**; 78 ca liên quan journal/STOP/UI gồm 11 ca mới. CI runtime b6be0989: Node 18/22 mỗi bản 1.320 PASS/0 fail/0 skip, build và các job khác đạt; intake PostgreSQL có một ca fixture lỗi do tạo trùng Page/PSID bị UNIQUE hiện hữu chặn trước khi đến hàm mới. Đã sửa ca đó thành kiểm ràng buộc thật và thêm inverse Lead mâu thuẫn; không sửa SQL hoặc gỡ constraint. Bản kiểm lại d2d6e1c đã đạt PostgreSQL 371/0/0, gồm 23 ca mới; reviewer độc lập đối chiếu blob công bố/log CI và kết luận PASS phạm vi SQL688/reader/UI, không còn finding chặn. Các ca mới kiểm quyền private, durable STOP, đúng/sai mapping, toàn bộ message, snapshot/revision, replay và hai operator, rollback, hai thứ tự cạnh tranh với release hold, giữ claim, thu hồi token và quyền lịch sử. Không dùng dữ liệu giả làm bằng chứng đạt 250.000đ/khách.
+
+Bản runtime `b6be0989d49a4389d43b1754f65dacbe651d2a7f`; bản sửa fixture `d2d6e1c763ac3cb992d3e360bb2705d4eae8013d`, tree `60858a2aab5a56c00f6ccdf016d439fe96483ef0`:
+
+- [Automation 37183580659](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37183580659): cả 10 job SUCCESS. Node 18/22 SUCCESS; log Node22 job111380837619 có **1.320 PASS, 0 fail, 0 skip**, gồm native Linux và Express thật. Intake job111380837650 **371 PASS, 0 fail, 0 skip**. Frontend build thành công.
+- [Report 37183580678](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37183580678) và [Messenger 37183580673](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37183580673) SUCCESS.
+- Merge CI `7c91005ffec331801293f816821ab76f36208aa3` đã đối chiếu tree đúng bản kiểm, parents là base `e16c885ae7c2305645be02a1227bf378cb59137f` và d2d6e1c.
+- Reviewer độc lập xác minh fixture mới, runtime blobs giữ nguyên, log PostgreSQL/Node/build và kết luận PASS checkpoint. Mapping trong fixture đã tồn tại trước lượt UNKNOWN; không gọi đây là bằng chứng chính creator đã commit.
 
 Sau checkpoint này vẫn cần kiểm inventory vận hành và các tác động ngoài liên kết, các UNKNOWN thiếu/mâu thuẫn hồ sơ, dữ liệu AI/người nhận/lịch/phạm vi đo, UAT xuyên tuyến và gói Founder phát hành. Mục tiêu đầy đủ còn ACTIVE.
 
