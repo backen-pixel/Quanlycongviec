@@ -79,7 +79,8 @@ function decodeSelection(raw, context) {
 
 function createCareAdvisor({ db, isPrimary, infer, env = process.env, timeoutMs = 30000 }) {
   const enabled = () => env.VPT_CARE_ADVISOR_ADMIN === '1' && isPrimary() === true;
-  const canGenerate = () => enabled() && env.VPT_CARE_ADVISOR_DRAFTS === '1' && typeof infer === 'function';
+  const canGenerate = () => enabled() && env.VPT_CARE_ADVISOR_DRAFTS === '1' && typeof infer === 'function'
+    && (infer.isAvailable === undefined || infer.isAvailable() === true);
   async function rpc(name, args) {
     // The Supabase proxy can change target while inference is in flight. Never
     // turn a Primary failure into a write on Backup, even for a failure receipt.
@@ -165,7 +166,8 @@ function createCareAdvisor({ db, isPrimary, infer, env = process.env, timeoutMs 
           const timer = setTimeout(() => controller.abort(), timeoutMs);
           timer.unref?.();
           try {
-            const raw = await infer({ ...prepared, signal: controller.signal });
+            const raw = await infer({ ...prepared, signal: controller.signal,
+              authorization: { actorId: actor, companyId: company, requestId: request, capability: begin.capability } });
             if (controller.signal.aborted) response = { failure: 'MODEL_UNAVAILABLE' };
             else {
               try { response = decodeSelection(raw, begin.context); } catch { response = { failure: 'INVALID_MODEL_OUTPUT' }; }

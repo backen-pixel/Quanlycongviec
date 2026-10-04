@@ -6,6 +6,7 @@ const {createCustomerCare}=require('../modules/marketingAutomation/facebookCusto
 const {createCareConnections}=require('../modules/marketingAutomation/careConnections');
 const {createCareLibrary}=require('../modules/marketingAutomation/customerCareLibrary');
 const {createCareAdvisor}=require('../modules/marketingAutomation/careAdvisor');
+const {createCareOpenAiInference}=require('../modules/marketingAutomation/careOpenAiInference');
 const {createSurveyAvailability}=require('../modules/marketingAutomation/surveyAvailability');
 const {createSurveyProposals}=require('../modules/marketingAutomation/surveyProposals');
 const {createProposalConsole}=require('../modules/marketingAutomation/surveyProposalConsole');
@@ -30,9 +31,11 @@ r.get('/library/choices',(req,res)=>library.handle(req,res,'choices'));
 r.get('/library/history',(req,res)=>library.handle(req,res,'history'));
 r.post('/library/change',(req,res)=>library.handle(req,res,'change'));
 r.post('/library/preview',(req,res)=>library.handle(req,res,'preview'));
-// No live inference port is configured here. Provider/model/cost authorization
-// remains a separate release gate; read/close support durable draft reconciliation.
-const advisor=createCareAdvisor({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
+// Dormant until explicit private allowance enrollment, dedicated key and flags.
+// Installing code alone does not authorize provider access or outbound messages.
+const advisorPrimary=()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary';
+const advisor=createCareAdvisor({db:supabase,isPrimary:advisorPrimary,
+ infer:createCareOpenAiInference({db:supabase,isPrimary:advisorPrimary})});
 r.get('/advisor/drafts',(req,res)=>advisor.handle(req,res,'list'));
 r.get('/advisor/draft',(req,res)=>advisor.handle(req,res,'read'));
 r.post('/advisor/draft',(req,res)=>advisor.handle(req,res,'generate'));

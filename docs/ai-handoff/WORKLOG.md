@@ -1,3 +1,7 @@
+## 04/10/2026 — Adapter Responses và hạn mức gọi AI
+
+SQL691 thêm private policy/receipts/claim/record/allowance, policy immutable; careOpenAiInference nối advisor/router sau đủ cờ/dedicated key/policy. Local1356PASS/5skip, provider12ca mới;13PGcases có actual Application Service→SQL→HTTPfake→usage→draft và concurrency/revocation. Reviewer phát hiện cặp NOT_SENT/TRANSPORT_UNKNOWN bỏ khóa; đã ràng buộc theo state và PGregression giữ reservation/chặn claim tiếp. Đang chờ CI. [Hợp đồng/nguồn/hoàn tác](vpt-marketing-automation/CARE_OPENAI_INFERENCE.md). Chưa quyền hoặc gọi provider thật.
+
 ## 04/10/2026 — Khép kiểm chứng màn hình tư vấn
 
 Runtime4b4cdc5/tree3c63e0b: Node18/22=1349/0/0, intakePostgreSQL409/0/0 gồm16ca SQL690; cả10job/build/report/Messenger SUCCESS. CI merge4851adec đúng tree/parents. Reviewer độc lập tự đối chiếu published blobs/log và PASS checkpoint, khép P2 đổi tab; browser API giả do bên triển khai. Không provider/AI thật/quyền gửi/UAT hoặc phát hành. [Bằng chứng/hoàn tác](vpt-marketing-automation/CARE_ADVISOR_CONSOLE.md). Full goal ACTIVE.
