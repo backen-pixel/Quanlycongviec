@@ -2,7 +2,7 @@
 
 ## Phạm vi và trạng thái 04/10/2026
 
-Bản làm việc tiếp nối `52299379cecdc3df29192cfec15bee93d4b459e2`; thuộc PR #22, chưa phát hành. SQL684 và route batch tạo khách lưu yêu cầu cùng kết quả từng contact để đọc lại sau reload hoặc mất phản hồi. Local294/0/0; reviewer độc lập PASS phần mã. PostgreSQL CI và frontend build của bản công bố còn chờ; không coi ca trình duyệt/API giả là nghiệm thu vận hành.
+Bản đã kiểm `7b455b9e464b4fbabb4c05816c6076c91cda69a1`, tree `e14b82f58cef4e0405a7c33da83e192b6b94282b`; thuộc PR #22, chưa phát hành. SQL684 và route batch tạo khách lưu yêu cầu cùng kết quả từng contact để đọc lại sau reload hoặc mất phản hồi. Local294/0/0; PostgreSQL323/0/0; cả10job/build/report/Messenger SUCCESS. Reviewer độc lập đã đối chiếu published SQL/log CI và kết luận PASS đúng phạm vi SQL684/helper/API/UI. Không coi ca trình duyệt/API giả là nghiệm thu vận hành.
 
 ## Hợp đồng
 
@@ -16,9 +16,11 @@ Bản làm việc tiếp nối `52299379cecdc3df29192cfec15bee93d4b459e2`; thu�
 ## Bằng chứng kiểm thử
 
 - Local294 ca: quyền/creator/batch/source regressions, adapter nhật ký và controller UI thực tế; 0 fail/skip. Harness source-route được giới hạn đúng route vì chèn GET lịch sử trước POST batch.
-- 16 ca PostgreSQL mới đăng ký trong intake suite: quyền schema/RPC; yêu cầu bất biến; hai replica; claim khác UUID; đọc/replay sau crash; STOP/rollback; thu hồi quyền; Page/Lead lịch sử đổi phạm vi; history pagination; RESULT cuối không FINISH. Chưa có kết quả CI tại lúc lập hồ sơ.
+- 16 ca PostgreSQL mới trong intake suite đều PASS: quyền schema/RPC; yêu cầu bất biến; hai replica; claim khác UUID; đọc/replay sau crash; STOP/rollback; thu hồi quyền; Page/Lead lịch sử đổi phạm vi; history pagination; RESULT cuối không FINISH.
 - Browser qua công cụ được hỗ trợ, component `FacebookBatchRecovery` thực tế + React StrictMode + API giả trên127.0.0.1:5195, CSP cấm kết nối ngoài. Xác nhận trong trang hoạt động. POST đầu lưu kết quả rồi mất phản hồi; reload chỉ GET, POST giữ1 và đọc COMPLETED đúng request, đóng thông báo được. Đọc403 xóa trạng thái hoàn tất/nút đóng; lịch sử lỗi bị xóa. Phản hồi đọc A đến sau khi chuyển B không hiển thị ở B. Request B UNKNOWN giữ nguyên qua reload và không mở nút tạo/đóng; POST giữ2 sau mọi lượt đọc. Tab/server thử đã đóng. Không CRM/Meta/đăng nhập thật.
-- Review độc lập đã khép ba finding: quyền Lead lịch sử, kết quả cũ sau lỗi đọc, và RESULT cuối phải hoàn tất nguyên giao dịch. Kết luận mã PASS; bằng chứng PostgreSQL/build vẫn cần đối chiếu đúng tree.
+- Review độc lập đã khép ba finding: quyền Lead lịch sử, kết quả cũ sau lỗi đọc, và RESULT cuối phải hoàn tất nguyên giao dịch. Kết luận PASS sau đối chiếu bản công bố và CI; không bao gồm UAT/chuyển writer/giải phóng UNKNOWN. CI lần đầu27b17f dừng khi parse CASE trong IF SQL684,16ca mới chưa chạy; thêm ngoặc biểu thức và chạy lại toàn bộ, không bỏ ca lỗi hoặc đổi luật.
+- [Automation37173674070](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37173674070) 10/10SUCCESS; [intake111351715846](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37173674070/job/111351715846)323/0/0, gồm16ca307–322; ca315 kiểm RESULT cuối không FINISH. Node18/22 và frontend111351715884SUCCESS; Node22 job111351715786 có843+26+294 PASS,0fail/skip.
+- [Report37173674086](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37173674086) và [Messenger37173674069](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37173674069)SUCCESS. Log checkout merge `85194fb5134e104d83086c6d04ce7258723455c2` đối chiếu Git API đúng tree runtime, parents base `e16c885ae7c2305645be02a1227bf378cb59137f` +runtime7b455b9.
 
 ## Giới hạn và việc còn mở
 

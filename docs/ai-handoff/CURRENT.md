@@ -1,6 +1,6 @@
-## 04/10/2026 — Đang nghiệm thu nhật ký xử lý khách qua reload
+## 04/10/2026 — Nhật ký xử lý khách đã qua PostgreSQL và browser giả
 
-SQL684/API/UI lưu yêu cầu batch và kết quả từng contact, chặn dispatch lặp; reload chỉ đọc, hồ sơ chưa rõ giữ lại để đối soát. RESULT cuối khép cùng giao dịch, không treo nếu FINISH mất phản hồi. Local294/0/0, review độc lập PASS mã; browser component thật/API giả đã kiểm mất phản hồi, reload, UNKNOWN, thu hồi quyền và đổi công ty. Runtime27b17f CI Node22 843+26+294 và build PASS; PostgreSQL dừng khi parse SQL684 line139 (CASE cần ngoặc trong IF),306ca cũ PASS/1parentFAIL. Đã sửa cú pháp, chờ CI mới; chưa PASS nhật ký. [Hợp đồng, bằng chứng và giới hạn](vpt-marketing-automation/LEGACY_BATCH_JOURNAL.md).
+Runtime7b455b9 SQL684/API/UI lưu yêu cầu batch và kết quả từng contact, chặn dispatch lặp; reload chỉ đọc, hồ sơ chưa rõ giữ lại để đối soát. RESULT cuối khép cùng giao dịch, không treo nếu FINISH mất phản hồi. Local294/0/0; PostgreSQL323/0/0 gồm16ca mới; cả10job/build/report/MessengerSUCCESS. Review độc lập PASS SQL684/helper/API/UI sau đối chiếu published SQL/log CI; browser component thật/API giả kiểm mất phản hồi, reload, UNKNOWN, thu hồi quyền và đổi công ty. Lỗi cú pháp CASE phát hiện ở CI27b17f đã sửa và kiểm lại toàn suite. [Hợp đồng, bằng chứng và giới hạn](vpt-marketing-automation/LEGACY_BATCH_JOURNAL.md).
 
 Full goal ACTIVE; journal chưa khóa mọi writer cũ hoặc làm creator nguyên tử. Còn dừng/chờ/đối soát, AI/lịch/người nhận/phạm vi đo và UAT/Founder release. Chưa DB thật/phát hành hoặc đạt250k thực tế. Các mục dưới giữ lịch sử.
 

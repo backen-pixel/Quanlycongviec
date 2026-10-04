@@ -1,5 +1,7 @@
 # Tạo khách hàng loạt theo danh sách đã xác nhận
 
+Checkpoint mới tại [nhật ký batch7b455b9](LEGACY_BATCH_JOURNAL.md) thay handler retry bên dưới bằng request bền vững và GET qua reload, giữ UNKNOWN, hoàn tất RESULT cuối cùng giao dịch. PostgreSQL323/0/0 và browser component thật/API giả đã kiểm. [Sửa nguồn683](LEGACY_SOURCE_REPAIR.md) cũng đã khép riêng. Nội dung dưới lưu bằng chứng/giới hạn của phiên bản c7d2a43; không phải hợp đồng retry hiện hành.
+
 Baseline trước sửa: `5356e185871caad7e0473842580ada7f91e5506e`. Runtime đã kiểm: `c7d2a438d261b204064e6a597350e01e589fc58c`, tree `9c7083ee0e97f94a2aefbcf3e77ff70c9741c199`. Review độc lập PASS phạm vi batch-create; chưa phát hành.
 
 ## Thay đổi

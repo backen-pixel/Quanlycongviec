@@ -1,4 +1,4 @@
-04/10/2026: [Nhật ký batch qua reload](LEGACY_BATCH_JOURNAL.md) đang nghiệm thu: Local294, review mã PASS, browser thật/API giả đã kiểm. 16ca PostgreSQL mới và build chờ CI. Không chạy lại UNKNOWN; chuyển writer/đối soát/UAT/phát hành vẫn mở.
+04/10/2026: [Nhật ký batch qua reload](LEGACY_BATCH_JOURNAL.md), runtime7b455b9: Local294, PostgreSQL323/0/0 gồm16ca mới,10job/build/report/MessengerSUCCESS; review độc lập PASS sau đối chiếu CI, browser thật/API giả đã kiểm. Không chạy lại UNKNOWN; chuyển writer/đối soát/UAT/phát hành vẫn mở.
 
 04/10/2026: [Khôi phục nhãn nguồn có bằng chứng đã kiểm chứng](LEGACY_SOURCE_REPAIR.md), runtime8f61a18. Local267, PostgreSQL307/0/0 gồm17ca mới, cả10job/build/report/MessengerSUCCESS; review độc lậpPASS đúng SQL683/API. Giữ nguồn có sẵn; thiếu/mâu thuẫnREVIEW; chưa UAT/chuyển luồng/phát hành. Các mục dưới giữ lịch sử.
 
