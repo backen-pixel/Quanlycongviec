@@ -1,3 +1,5 @@
+04/10/2026: [Giao diện đối soát tư vấn](CARE_ADVISOR_CONSOLE.md) SQL690 đang nghiệm thu. Local1344PASS/5skip, focused29/29; browser Workspace/API giả đã kiểm. Review độc lập PASS về mã; chờ CI/PostgreSQL. Chưa provider/gửi khách/phát hành; full goal ACTIVE.
+
 04/10/2026: [Bản nháp tư vấn có nguồn](CARE_ADVISOR_DRAFTS.md), bản kiểm73a7824/runtime56d424f đã PASS review độc lập. Node18/22=1.336/0/0; PostgreSQL393/0/0 gồm22ca mới; cả10job/build/report/Messenger SUCCESS. Router chưa có provider, send=false; còn quyền runtime, UI/worker/gửi, chất lượng AI và UAT/Founder release. Full goal ACTIVE.
 
 04/10/2026: [Đối soát liên kết lượt Facebook bị ngắt](BATCH_LINK_RECONCILIATION.md), SQL688 tại bản kiểm `d2d6e1c` đã PASS review độc lập. PostgreSQL 371/0/0 (23 mới), Node22 1.320/0/0, cả 10 job/build/report/Messenger SUCCESS. RECONCILED_LINKED giữ claim và run REVIEW; không replay hoặc xác nhận mọi tác động đã xong. Mục tiêu đầy đủ còn ACTIVE; chưa chạy thật.

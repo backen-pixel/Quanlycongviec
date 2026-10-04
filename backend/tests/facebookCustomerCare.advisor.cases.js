@@ -210,4 +210,5 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,region,fresh})=
   const c=await fixture();await peers[0].query('BEGIN ISOLATION LEVEL REPEATABLE READ');
   try{await assert.rejects(begin(c),e=>e.code==='0A000');}finally{await peers[0].query('ROLLBACK');}
  });
+ await require('./facebookCustomerCare.advisorConsole.cases')(t,{db,peers,query,company,other,admin,sales,fixture,begin,finish,selection});
 };

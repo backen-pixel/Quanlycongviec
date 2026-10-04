@@ -1,3 +1,7 @@
+## 04/10/2026 — Giao diện và đối soát lượt tư vấn
+
+Thêm SQL690 discovery/cancel, adapter/router, CareAdvisor/state, active-tab invalidation và 16 ca PostgreSQL. Browser actual Workspace/Library/API giả kiểm thu hồi nguồn, pending qua reload/tab, CANCEL ACK riêng và stale response sau đổi actor/company. Local1344PASS/5skip; focused29/29. Reviewer độc lập PASS về mã sau khép P2 tab; chờ PostgreSQL/CI. Chưa provider, DB thật hoặc gửi khách. [Hồ sơ/hoàn tác](vpt-marketing-automation/CARE_ADVISOR_CONSOLE.md).
+
 ## 04/10/2026 — Khép kiểm chứng bản nháp tư vấn
 
 Bản kiểm73a7824/runtime56d424f: intakePG393/0/0 gồm22ca mới và observerLock; Node22=1336/0/0, all10jobs/build/report/Messenger SUCCESS. Reviewer độc lập kiểm blob/log và PASS đúng SQL689/Application Service/API dùng inference giả. Hồ sơ được khép; provider/quyền gửi/UI/chất lượng AI/UAT/phát hành còn mở. [Bằng chứng/hoàn tác](vpt-marketing-automation/CARE_ADVISOR_DRAFTS.md).

@@ -106,19 +106,39 @@ function createCareAdvisor({ db, isPrimary, infer, env = process.env, timeoutMs 
     res.set('Cache-Control', 'no-store');
     const generates = operation === 'generate' || operation === 'retry';
     if (!enabled() || (generates && !canGenerate())) return res.status(503).json({ error: 'Trợ lý tư vấn chưa được mở.' });
-    const body = operation === 'read' ? req.query : req.body;
+    const body = ['read', 'list'].includes(operation) ? req.query : req.body;
     const actor = req.user?.userId || req.user?.id, company = body?.companyId, request = body?.requestId;
     if (!uuid(actor) || !uuid(company) || (req.user?.id && req.user?.userId && req.user.id !== req.user.userId))
       return res.status(403).json({ error: 'Không xác định được phạm vi truy cập.' });
     const keys = { read: ['companyId', 'requestId'], generate: ['companyId', 'requestId', 'threadId', 'version'],
-      close: ['companyId', 'requestId', 'reason'], retry: ['companyId', 'requestId', 'previousRequestId', 'version', 'reason'] }[operation];
-    if (!keys || !exact(body, keys) || !uuid(request)
+      close: ['companyId', 'requestId', 'reason'], retry: ['companyId', 'requestId', 'previousRequestId', 'version', 'reason'],
+      cancel: ['companyId', 'requestId', 'threadId', 'reason'],
+      list: ['companyId', 'threadId', ...(body?.after === undefined ? [] : ['after'])] }[operation];
+    if (!keys || !exact(body, keys) || (operation !== 'list' && !uuid(request))
+      || (operation === 'list' && (!uuid(body.threadId) || (body.after !== undefined && !uuid(body.after))))
+      || (operation === 'cancel' && !uuid(body.threadId))
       || (operation === 'generate' && (!uuid(body.threadId) || !version(body.version)))
       || (operation === 'retry' && (!uuid(body.previousRequestId) || body.previousRequestId === request || !version(body.version)))
-      || (['close', 'retry'].includes(operation) && (typeof body.reason !== 'string' || body.reason.trim().length < 20 || body.reason.length > 2000)))
+      || (['close', 'retry', 'cancel'].includes(operation) && (typeof body.reason !== 'string' || body.reason.trim().length < 20 || body.reason.length > 2000)))
       return res.status(400).json({ error: 'Yêu cầu trợ lý không hợp lệ.' });
     const args = { p_actor: actor, p_company: company, p_request: request };
     try {
+      if (operation === 'list') {
+        const data = await rpc('crm_care_advisor_list', { p_actor: actor, p_company: company, p_thread: body.threadId, p_after: body.after || null });
+        if (!enabled() || data?.companyId !== company || data.threadId !== body.threadId || !version(data.version)
+          || !['WAITING', 'HUMAN_REQUESTED', 'HUMAN_ACTIVE', 'OPTED_OUT'].includes(data.careMode)
+          || ['routingReady', 'historyTruncated', 'threadBusy'].some(k => typeof data[k] !== 'boolean')
+          || !Array.isArray(data.items) || data.items.length > 20 || data.send !== false || data.aiMaySend !== false
+          || (data.nextAfter !== null && !uuid(data.nextAfter))) throw fail('UNAVAILABLE');
+        return res.json({ companyId: company, threadId: body.threadId, version: data.version, careMode: data.careMode,
+          routingReady: data.routingReady, historyTruncated: data.historyTruncated, threadBusy: data.threadBusy,
+          items: data.items, nextAfter: data.nextAfter, generationAvailable: canGenerate(), send: false, aiMaySend: false });
+      }
+      if (operation === 'cancel') {
+        const data = checked(await rpc('crm_care_advisor_cancel', { ...args, p_thread: body.threadId, p_reason: body.reason }), company, request, body.threadId);
+        if (!enabled() || !['ABSENT_CANCELLED', 'CLOSED', 'ALREADY_TERMINAL'].includes(data.outcome) || typeof data.replayed !== 'boolean') throw fail('UNAVAILABLE');
+        return res.json({ companyId: company, threadId: body.threadId, requestId: request, outcome: data.outcome, replayed: data.replayed, send: false });
+      }
       if (!generates) {
         const data = await rpc(operation === 'read' ? 'crm_care_advisor_read' : 'crm_care_advisor_close',
           operation === 'read' ? args : { ...args, p_reason: body.reason });

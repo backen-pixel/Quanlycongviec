@@ -1,3 +1,11 @@
+## 04/10/2026 — Màn hình tư vấn và hủy lượt đang được nghiệm thu
+
+SQL690/API/CareAdvisor bổ sung lịch sử theo actor/company/thread, kết quả có nguồn và dấu hủy chặn BEGIN/RETRY/FINISH muộn. Sửa finding giữ draft khi chuyển tab thư viện; quay lại phải đọc mới. Local 1.344 PASS/5 skip; focused 29/29. Browser actual Workspace/API giả đã kiểm thu hồi nguồn, mất phản hồi/reload/cancel và đổi phạm vi. Review độc lập PASS về mã; PostgreSQL/CI đúng commit còn chờ. [Hợp đồng, kiểm chứng và hoàn tác](vpt-marketing-automation/CARE_ADVISOR_CONSOLE.md).
+
+Full goal ACTIVE. Router chưa provider, không AI thật hoặc gửi khách; còn quyền/chi phí runtime, chất lượng, lịch/người nhận, chuyển luồng/khôi phục, UAT và Founder release. Chỉ tiêu 250k/khách hợp lệ và hạn mức 100 triệu không đổi.
+
+---
+
 ## 04/10/2026 — Bản nháp tư vấn đã qua PostgreSQL và review độc lập
 
 SQL689/Application Service đọc hội thoại và thư viện đã duyệt, chọn nguyên văn câu trả lời và lưu nhu cầu kèm trích dẫn chưa xác minh; kiểm lại quyền, nguồn và trạng thái khách trước lưu. BEGIN một lần gọi, đọc/đóng/retry tường minh giữ audit; không ghi Backup khi Primary đổi. Router chưa gắn provider, cờ mặc định tắt, send=false.

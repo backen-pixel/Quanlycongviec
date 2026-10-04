@@ -111,3 +111,27 @@ test('Primary loss while inference runs cannot write even a failure receipt to B
  const x=fixture({primary:()=>primary,infer:async()=>{primary=false;return selected();}});
  await x.run();assert.equal(x.s.status,503);assert.equal(x.calls.length,1);assert.equal(x.calls[0].name,'crm_care_advisor_begin');
 });
+test('advisor discovery reports unavailable inference truthfully and keeps read paths usable',async()=>{
+ const data={companyId:company,threadId:thread,version:v,careMode:'WAITING',routingReady:true,historyTruncated:false,threadBusy:false,items:[],nextAfter:null,send:false,aiMaySend:false};
+ const x=fixture({infer:null,rpc:async()=>({data})});await x.run('list',{companyId:company,threadId:thread});
+ assert.equal(x.s.status,200);assert.equal(x.s.body.generationAvailable,false);assert.equal(x.inferences.length,0);
+ assert.deepEqual(x.calls[0].args,{p_actor:actor,p_company:company,p_thread:thread,p_after:null});
+ for(const bad of[{...data,companyId:randomUUID()},{...data,threadId:randomUUID()},{...data,careMode:'AI_ACTIVE'},{...data,send:true}]){
+  const y=fixture({rpc:async()=>({data:bad})});await y.run('list',{companyId:company,threadId:thread});assert.equal(y.s.status,503);
+ }
+});
+test('advisor cancel authenticates and scopes the durable acknowledgement without a model port',async()=>{
+ const reason='Operator cancels an unacknowledged synthetic browser request',data={...view(),outcome:'ABSENT_CANCELLED',replayed:false};
+ const x=fixture({infer:null,rpc:async()=>({data})});await x.run('cancel',{companyId:company,requestId:request,threadId:thread,reason});
+ assert.equal(x.s.status,200);assert.equal(x.s.body.outcome,'ABSENT_CANCELLED');assert.equal(x.inferences.length,0);
+ assert.deepEqual(x.calls[0],{name:'crm_care_advisor_cancel',args:{p_actor:actor,p_company:company,p_request:request,p_thread:thread,p_reason:reason}});
+ for(const bad of[{...data,threadId:randomUUID()},{...data,outcome:'DELETED'},{...data,requestId:randomUUID()},{...data,replayed:undefined}]){
+  const y=fixture({rpc:async()=>({data:bad})});await y.run('cancel',{companyId:company,requestId:request,threadId:thread,reason});assert.equal(y.s.status,503);
+ }
+});
+test('advisor console rejects malformed pagination/cancel scope before storage',async()=>{
+ for(const[op,b]of[['list',{companyId:company,threadId:thread,after:'bad'}],['list',{companyId:company,threadId:thread,actorId:actor}],
+  ['cancel',{companyId:company,requestId:request,threadId:thread,reason:'short'}],['cancel',{companyId:company,requestId:request,threadId:'bad',reason:'A sufficiently long cancellation reason'}]]){
+  const x=fixture();await x.run(op,b);assert.equal(x.s.status,400);assert.equal(x.calls.length,0);
+ }
+});

@@ -33,10 +33,12 @@ r.post('/library/preview',(req,res)=>library.handle(req,res,'preview'));
 // No live inference port is configured here. Provider/model/cost authorization
 // remains a separate release gate; read/close support durable draft reconciliation.
 const advisor=createCareAdvisor({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
+r.get('/advisor/drafts',(req,res)=>advisor.handle(req,res,'list'));
 r.get('/advisor/draft',(req,res)=>advisor.handle(req,res,'read'));
 r.post('/advisor/draft',(req,res)=>advisor.handle(req,res,'generate'));
 r.post('/advisor/draft/close',(req,res)=>advisor.handle(req,res,'close'));
 r.post('/advisor/draft/retry',(req,res)=>advisor.handle(req,res,'retry'));
+r.post('/advisor/draft/cancel',(req,res)=>advisor.handle(req,res,'cancel'));
 const survey=createSurveyAvailability({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
 r.get('/survey/roster',(req,res)=>survey.handle(req,res,'read'));
 r.post('/survey/roster/change',(req,res)=>survey.handle(req,res,'change'));
