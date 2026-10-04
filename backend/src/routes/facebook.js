@@ -6017,6 +6017,17 @@ r.get('/batch-create-leads/:requestId', authMiddleware, async (req, res) => {
   } catch (error) { return res.status([400,403,409,503].includes(error.status) ? error.status : 503).json({ code: error.code || 'BATCH_JOURNAL_UNAVAILABLE', error: 'Chưa đọc được kết quả. Giữ mã lượt xử lý để đối soát.' }); }
 });
 
+r.post('/batch-create-leads/:requestId/stop', authMiddleware, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const result = journalResponse(await facebookBatchJournal.stop(req, req.params.requestId));
+    return res.status(result.status).json(result.body);
+  } catch (error) {
+    return res.status([400,403,409,503].includes(error.status) ? error.status : 503)
+      .json({code:error.code || 'BATCH_JOURNAL_UNAVAILABLE',error:'Chưa xác nhận được lệnh dừng. Giữ yêu cầu và đọc lại; không tạo lượt thay thế khi kết quả còn chưa rõ.'});
+  }
+});
+
 r.post('/batch-create-leads', authMiddleware, async (req, res) => {
   res.set('Cache-Control', 'no-store');
   try {

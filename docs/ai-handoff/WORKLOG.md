@@ -1,3 +1,7 @@
+## 04/10/2026 — Dừng batch có tombstone và audit
+
+SQL686 + journalhelper/route + RecoveryUI/controller; cập nhật workflow, thêm30unit/UI và12PGcases. Local1228/0/0; reviewer mãPASS; browser component thật/API giả kiểm STOP trướcBEGIN/reload vàUNKNOWNgiữclaim. Đang chờPG/CI đúngbản. Câu xác nhận sửa theo review để không hứa hủy HTTP đã gửi. [Chi tiết và rollback](vpt-marketing-automation/LEGACY_BATCH_STOP.md). Không DB thật/model/chi/phát hành; fullgoalACTIVE.
+
 ## 04/10/2026 — Facebook duplicate review
 
 Thay tự xóa/gộp bằng reader CRM company-scoped; SQL685 strict active; hai pipelinecaller, monitor và UI mới giữ UNKNOWN khi lỗi; deeplinkquality tới card hiện có. Thay đổi helper/reviewService/routes/facebook, components/pages, migrations/runners/workflow và hồ sơ liên quan. Runtime4df166/tree f550a0ca: Local1198/0/0, identityPG35/0/0 (8mới), intake323/0/0,10job/build/report/MessengerSUCCESS; CImerge dcfd6ef đúng tree/base/runtime. Reviewer độc lập PASS checkpoint; browser giảPASS phạm vi đọc/deeplink. Không DB thật/merge/deploy/model/quảng cáo. Chi tiết và rollback: [LEGACY_DUPLICATE_REVIEW](vpt-marketing-automation/LEGACY_DUPLICATE_REVIEW.md).

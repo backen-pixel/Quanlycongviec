@@ -1,3 +1,11 @@
+## 04/10/2026 — Đang nghiệm thu dừng lượt nhận khách
+
+SQL686/API/UI thêm STOP có tombstone để chặn BEGIN muộn, thu hồi token và lưu audit. Chỉ hủy phần chưa bắt đầu; UNKNOWN giữ claim. UI giữ intentSTOP qua reload/tab khác, xác nhận gắn đúng lượt; chỉ đóng thông báo khi không còn việc chưa rõ. Local1228/0/0; reviewer mãPASS; browser giả đã kiểm mấtphảnhồi/reload và nhómUNKNOWN+CANCELLED.12ca PostgreSQL mới chờ CI.
+
+[Hợp đồng, kiểm chứng và hoàn tác](vpt-marketing-automation/LEGACY_BATCH_STOP.md). Full goal ACTIVE; còn fence/drain/đốisoátUNKNOWN, AI/lịch/người nhận/phạmviđo, UAT/Founderrelease. Chưa DB thật/phát hành hoặc kết quả250k. Các mục dưới giữ lịch sử.
+
+---
+
 ## 04/10/2026 — Rà khách trùng đã qua PostgreSQL và review độc lập
 
 Runtime4df166 thay Facebook dedup cũ bằng reader CRM toàn công ty; hai caller và UI chỉ rà, đường xóa cũ409. SQL685 chặn company NULL/false. Local/Node22=1198/0/0; identityPG35/0/0 gồm8ca mới; intake323/0/0 và cả10job/build/report/MessengerSUCCESS. Review độc lập PASS đúng checkpoint sau đối chiếu published blobs/log CI; browser component thật/API giả kiểm lỗi, A→B→A và link đúng tabquality.

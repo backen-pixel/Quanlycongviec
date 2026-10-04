@@ -1,3 +1,5 @@
+04/10/2026: [Dừng batch có bằng chứng](LEGACY_BATCH_STOP.md) đang nghiệm thu: tombstone chặnBEGINmuộn, PENDINGhủy/UNKNOWNgiữclaim, intentSTOPbềnvững trênUI. Local1228/0/0; browsergiả/reviewmãPASS;12PGca chờCI. Chưa khépUNKNOWN/cutover/UAT/phát hành.
+
 04/10/2026: [Rà khách trùng giữ hồ sơ](LEGACY_DUPLICATE_REVIEW.md) runtime4df166 đã kiểm. Local/Node22=1198/0/0, identityPG35/0/0 (8mới), intake323/0/0,10job/build/report/MessengerSUCCESS; review độc lậpPASS checkpoint, browser thật/API giả đã kiểm. Còn đối soát writer/cấu hình/UAT/phát hành.
 
 04/10/2026: [Nhật ký batch qua reload](LEGACY_BATCH_JOURNAL.md), runtime7b455b9: Local294, PostgreSQL323/0/0 gồm16ca mới,10job/build/report/MessengerSUCCESS; review độc lập PASS sau đối chiếu CI, browser thật/API giả đã kiểm. Không chạy lại UNKNOWN; chuyển writer/đối soát/UAT/phát hành vẫn mở.

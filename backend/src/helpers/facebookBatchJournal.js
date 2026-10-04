@@ -18,12 +18,17 @@ function validateRun(run, actor, company, request) {
       ? { contact_id: x.contactId, status: 'linked', lead_id: x.result.lead_id }
       : x.state === 'SKIPPED' ? { contact_id: x.contactId, status: 'skipped', reason: x.result.reason } : null })) };
 }
+function journalSettled(run) {
+  return !!run && ['COMPLETED','REVIEW'].includes(run.state) && run.items.length > 0
+    && run.items.every(x => ['LINKED','SKIPPED','CANCELLED'].includes(x.state));
+}
 function journalResponse(run) {
   const count = state => run.items.filter(x => x.state === state).length;
-  return { status: run.state === 'COMPLETED' ? 200 : 202, body: { company_id: run.companyId, total: run.items.length,
+  const settled = journalSettled(run);
+  return { status: settled ? 200 : 202, body: { company_id: run.companyId, total: run.items.length,
     processed: count('LINKED'), skipped: count('SKIPPED'), failed: count('UNKNOWN'), unprocessed: count('PENDING') + count('RUNNING') + count('CANCELLED'),
-    results: run.items.filter(x => x.result).map(x => x.result), journal: run, reconciliation_required: run.state !== 'COMPLETED',
-    ...(run.state !== 'COMPLETED' ? { error: 'Lượt xử lý đã được lưu. Đọc lại tiến độ; hồ sơ chưa rõ kết quả cần đối soát trước khi tiếp tục.' } : {}) } };
+    results: run.items.filter(x => x.result).map(x => x.result), journal: run, reconciliation_required: !settled,
+    ...(!settled ? { error: 'Lượt xử lý đã được lưu. Đọc lại tiến độ; hồ sơ chưa rõ kết quả cần đối soát trước khi tiếp tục.' } : {}) } };
 }
 function createFacebookBatchJournal({ db, isPrimary }) {
   async function rpc(name, args) {
@@ -39,6 +44,7 @@ function createFacebookBatchJournal({ db, isPrimary }) {
   }
   function context(req, company, request) {
     const actor = req?.user?.userId || req?.user?.id;
+    if (req?.user?.userId && req?.user?.id && (!uuid(req.user.id) || !uuid(req.user.userId) || req.user.id.toLowerCase() !== req.user.userId.toLowerCase())) throw failure('BATCH_JOURNAL_FORBIDDEN', 403);
     if (![actor, company, request].every(uuid)) throw failure('BATCH_JOURNAL_INVALID', 400);
     return { actor: actor.toLowerCase(), company: company.toLowerCase(), request: request.toLowerCase() };
   }
@@ -46,7 +52,17 @@ function createFacebookBatchJournal({ db, isPrimary }) {
     const c = context(req, company, request);
     return validateRun(await rpc('crm_facebook_batch_read', { p_actor: c.actor, p_company: c.company, p_request: c.request }), c.actor, c.company, c.request);
   }
-  return { read, async list(req, company, before = null) {
+  return { read, async stop(req, request) {
+    const b = req.body;
+    if (!b || Array.isArray(b) || Object.keys(b).some(k => !['company_id','contact_ids'].includes(k))
+      || !Array.isArray(b.contact_ids) || !b.contact_ids.length || b.contact_ids.length > 500 || !b.contact_ids.every(uuid)) throw failure('BATCH_JOURNAL_INVALID',400);
+    const c = context(req,b.company_id,request), ids = b.contact_ids.map(x => x.toLowerCase());
+    if (new Set(ids).size !== ids.length) throw failure('BATCH_JOURNAL_INVALID',400);
+    const run = validateRun(await rpc('crm_facebook_batch_stop',{p_actor:c.actor,p_company:c.company,p_request:c.request,p_ids:ids}),c.actor,c.company,c.request);
+    if (JSON.stringify(run.items.map(x => x.contactId)) !== JSON.stringify(ids) || run.state === 'RUNNING'
+      || run.items.some(x => ['PENDING','RUNNING'].includes(x.state))) throw failure();
+    return run;
+  }, async list(req, company, before = null) {
     const c = context(req, company, before || randomUUID());
     const x = await rpc('crm_facebook_batch_list', { p_actor: c.actor, p_company: c.company, p_before: before });
     if (!x || !Array.isArray(x.runs) || x.runs.length > 20 || (x.nextCursor !== null && !uuid(x.nextCursor))
@@ -65,4 +81,4 @@ function createFacebookBatchJournal({ db, isPrimary }) {
       read: () => read(req, c.company, c.request) };
   } };
 }
-module.exports = { createFacebookBatchJournal, journalResponse, validateRun };
+module.exports = { createFacebookBatchJournal, journalResponse, validateRun, journalSettled };

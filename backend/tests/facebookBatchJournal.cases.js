@@ -1,7 +1,7 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 module.exports=async(t,{db,peers,query,company,other,admin,sales,region,fresh})=>{
- const sql=fs.readFileSync(path.resolve(__dirname,'../../database/684_facebook_batch_journal.sql'),'utf8');await db.query(sql);await db.query(sql);
+ for(const file of ['684_facebook_batch_journal.sql','686_facebook_batch_stop.sql']){const sql=fs.readFileSync(path.resolve(__dirname,'../../database',file),'utf8');await db.query(sql);await db.query(sql);}
  const fixture=async()=>{const f=await fresh({enrolled:false});f.contact=randomUUID();
   await db.query('UPDATE facebook_pages SET default_region_id=$2,default_lead_owner_id=$3 WHERE page_id=$1',[f.page,region,sales]);
   await db.query('INSERT INTO facebook_contacts(id,page_id,psid,lead_id,customer_id) VALUES($1,$2,$3,$4,$5)',[f.contact,f.page,f.psid,f.lead,f.customer]);return f;};
@@ -111,4 +111,5 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,region,fresh})=
   assert.equal(all.length,new Set(all).size);assert.equal(all.length,(await db.query('SELECT count(*)::int n FROM crm_batch_control.runs WHERE actor_id=$1 AND company_id=$2',[admin,company])).rows[0].n);
   await assert.rejects(query('crm_facebook_batch_list',[admin,company,randomUUID()]),e=>e.code==='22023');
  });
+ await require('./facebookBatchStop.cases')(t,{db,peers,query,company,other,admin,sales,fixture,begin,read,step,result,prepared,complete});
 };
