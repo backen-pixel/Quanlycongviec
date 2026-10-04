@@ -26,4 +26,6 @@ Khóa authority dùng FOR SHARE; quota advisory chỉ nằm trên đường prop
 
 Local: 1.383 PASS, 0 fail, 5 skip (native/Express cần CI); 3 ca unit mới về schema, capability và đổi phạm vi. PostgreSQL cô lập và review độc lập trên phiên bản công bố còn chờ; chưa dùng local unit làm bằng chứng booking/concurrency PASS. Bộ PG mới kiểm worker → proposal → signed click/ACK → booking → outcome → handoff, quyền/ABA/STOP, cạnh tranh slot, quota, mất claim, hết hạn sau chờ và hồi quy human.
 
+Review diff đã phát hiện và sửa: facade human phải giữ toàn bộ guard679, gồm safe replay và delivery barrier; nhánh không có lịch/hết quota dùng block label tường minh khi ghi reason. Bổ sung hồi quy human và hai ca chờ khóa confirmation–finish. Unit độc lập35/35PASS; kết luận PostgreSQL trên bản sửa cuối còn chờ.
+
 Còn chất lượng model thật, lịch/người nhận và quyền thật, UI runtime/ngoại lệ, đối soát chuyển luồng, UAT và Founder release. Không suy kết quả kinh doanh từ dữ liệu giả.

@@ -618,6 +618,7 @@ END $$;
 
 CREATE OR REPLACE FUNCTION crm_survey_control.prepare_runtime(p_request uuid,p_auth jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+<<prepare_survey>>
 DECLARE r crm_care_control.advisor_runs%ROWTYPE;t crm_care_control.runtime_turns%ROWTYPE;
  x crm_survey_control.runtime_requests%ROWTYPE;body jsonb;availability jsonb;option jsonb;proposal jsonb;address jsonb;ask jsonb;
  reason text;latest public.crm_care_messages%ROWTYPE;from_at timestamptz;to_at timestamptz;
@@ -669,7 +670,7 @@ BEGIN
   PERFORM crm_survey_control.assert_authority_live(p_auth);
   RETURN jsonb_build_object('proposalId',proposal->'proposalId','reservationMade',false,'customerConfirmationRequired',true);
  END IF;
- UPDATE crm_survey_control.runtime_requests SET reason=prepare_runtime.reason WHERE request_id=p_request;
+ UPDATE crm_survey_control.runtime_requests SET reason=prepare_survey.reason WHERE request_id=p_request;
  RETURN jsonb_build_object('reason',reason,'reservationMade',false);
 END $$;
 
