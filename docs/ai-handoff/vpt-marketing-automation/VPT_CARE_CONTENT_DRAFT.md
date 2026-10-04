@@ -1,14 +1,16 @@
-# Nội dung tư vấn VPT — bản trình duyệt V1
+# Nội dung tư vấn VPT — V1 đã được Founder duyệt câu chữ
 
-Ngày soạn 04/10/2026; đối chiếu mã tại `b3cb88dc8be07a6cad74747bdfaf431d2baa417a`. **DRAFT, chưa duyệt nội dung, chưa nhập thư viện, chưa được phép gửi khách.** Đây là phần chuẩn bị cho mục tiêu AI hỏi nhu cầu/tư vấn và bàn giao, không mở phase hoặc quyền mới.
+Ngày soạn 04/10/2026; đối chiếu mã tại `b3cb88dc8be07a6cad74747bdfaf431d2baa417a`. **Founder đã duyệt nguyên văn 18 câu ngày 04/10/2026; chưa nhập/phê duyệt thư viện runtime và chưa mở gửi khách.**
 
-## Nội dung để Founder xem
+Quyết định `VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL`: “anh duyệt bộ 18 câu hỏi”, ghi nhận trong task `01a0f6c3-9ed2-73c1-823e-0ad927431877`. Phạm vi là Q01–Q15 và A01–A03 của `VPT_CARE_CONTENT_DRAFT_V1` tại commit `ee641db9dbdee2a97b65618e8b9f3200487302e5`; toàn bộ câu chữ và điều kiện dùng giữ nguyên. Xem [sổ quyết định](../DECISIONS.md) và `founderDecision` trong JSON. Tên file/version có chữ DRAFT được giữ để ổn định tham chiếu tới bộ đã duyệt; trạng thái hiện hành là `FOUNDER_WORDING_APPROVED_PENDING_OPERATIONAL_BINDINGS`.
+
+## Nội dung Founder đã duyệt
 
 Đã soạn **18 câu** dùng cho nhận nhu cầu và tư vấn ban đầu, cùng **18 tình huống nghiệm thu**. Các câu không có giá, mức giảm, thời hạn bảo hành cố định, phí khảo sát, thời gian hoàn thành hay hứa nhân viên đã nhận hồ sơ.
 
-Website công khai giúp xác định tên nhóm hàng; chưa thay phê duyệt dữ liệu sản phẩm. Câu chữ dưới đây do bên triển khai đề xuất, không phải lời Founder đã chốt. Có thể duyệt cả bộ phiên bản này sau khi sửa các điểm cần thiết; không yêu cầu duyệt lại từng tin nhắn thông thường. Phê duyệt nội dung không thay cấp quyền gửi hoặc phát hành.
+Website công khai giúp xác định tên nhóm hàng; chưa thay xác nhận dữ liệu sản phẩm. Founder đã duyệt cả bộ câu chữ dưới đây; không yêu cầu duyệt lại từng tin nhắn thông thường trong bộ quy tắc được phép. Quyết định này không xác nhận mọi nội dung website, phí khảo sát, phạm vi phục vụ, quyền gửi hoặc phát hành.
 
-| Mã | Tình huống | Loại | Câu đề xuất nguyên văn | Nguồn |
+| Mã | Tình huống | Loại | Câu đã duyệt nguyên văn | Nguồn |
 |---|---|---|---|---|
 | Q01 | Mở đầu và chọn nhu cầu | QUALIFY | Em là trợ lý tự động của Vạn Phú Thành. Anh/chị đang cần tư vấn tủ bếp, tủ quần áo, tủ lavabo, thiết bị, phụ kiện hay hạng mục khác ạ? | S01, P01 |
 | Q02 | Xác định địa bàn | QUALIFY | Công trình của anh/chị ở tỉnh/thành và phường/xã nào ạ? | P01 |
@@ -42,18 +44,18 @@ HANDOFF là hành động bàn giao nội bộ với answer=null. Không có m�
 | S03 | [Danh mục tủ quần áo](https://vanphuthanh.net/tu-quan-ao/) | Ngữ cảnh hỏi nhu cầu tủ áo | Chưa đối chiếu mã catalog CRM |
 | S04 | [Tủ lavabo](https://vanphuthanh.net/tu-chau-lavabo/) | Có mục sản phẩm trên website | Bản truy xuất ghi crawl khoảng5tháng trước, danh sách sản phẩm trống; không khẳng định mẫu đang bán |
 | S05 | [Chính sách bảo hành](https://vanphuthanh.net/chinh-sach-doi-tra-va-bao-hanh/) | Cần đối chiếu sản phẩm và hồ sơ cụ thể | Không khái quát một thời hạn cho mọi nhóm; phiên bản áp dụng phải được xác nhận |
-| P01 | [Kế hoạch Founder đã duyệt](../../architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md) | Các trường nhu cầu, giới hạn AI và bước khảo sát | Chưa duyệt nguyên văn18câu mới |
+| P01 | [Kế hoạch Founder đã duyệt](../../architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md) | Các trường nhu cầu, giới hạn AI và bước khảo sát | Nguyên văn 18 câu có quyết định duyệt riêng ngày 04/10/2026 |
 | R01/R02 | [Adapter chọn câu](../../../backend/src/modules/marketingAutomation/careAdvisor.js), [hợp đồng gửi](../../../database/694_crm_care_answer_delivery.sql) | Ranh giới kỹ thuật của câu có thể gửi | Không chứng minh model thật chọn đúng hoặc tài khoản đã được mở |
 
 Hai liên kết chi tiết đá/kính từ trang chủ không truy xuất được qua công cụ web trong lần đọc này. Q13 chỉ hỏi nhu cầu khách chủ động nêu; không chứa thuộc tính vật liệu hoặc cam kết kinh doanh. Không dùng ảnh, thông tin công trình/khách cũ hoặc đánh giá khách hàng trong gói này.
 
 Giá trị đơn tủ bếp80–150triệu do Founder cung cấp phục vụ kế hoạch, **không phải bảng giá được phép công bố**. Mục tiêu250.000đ/Lead cũng không phải giá sản phẩm. Phạm vi quảng cáo TP.HCM/Cần Thơ không tự chứng minh phạm vi phục vụ, địa chỉ cụ thể đủ điều kiện hoặc khảo sát miễn phí.
 
-## Gắn vào hệ thống sau khi duyệt
+## Chuẩn bị gắn nội dung đã duyệt vào hệ thống
 
 [Thư viện hiện có](CARE_LIBRARY.md) yêu cầu document đúng9trường: title, purpose, question, answer, sourceReference, productId, regionIds, channels, validUntil. Bản JSON này là **hồ sơ biên tập riêng**, không phải request SAVE; metadata review không được đưa thẳng vào document.
 
-- Founder xác nhận nguyên văn/phiên bản nội dung, chính sách được nói và phạm vi phục vụ; chỉ định người duyệt và hạn hiệu lực. Company/region/product UUID do bên triển khai đối chiếu với catalog thực, không tự tạo số giả.
+- Nguyên văn/phiên bản 18 câu đã được Founder duyệt. Còn xác nhận chính sách/phạm vi phục vụ, người có quyền duyệt thư viện và hạn hiệu lực. Company/region/product UUID do bên triển khai đối chiếu với catalog thực, không tự tạo số giả.
 - Câu hỏi chung có thể productId=null theo hợp đồng. Nội dung riêng mã hàng cần mapping đúng; không dựa nhãn ngoài câu để model suy sản phẩm. Hiện context lấy theo công ty/khu vực/Facebook; model chỉ thấy question/answer/purpose, không thấy title/productId/sourceReference.
 - Điền sourceReference có URL hoặc tài liệu/version/đoạn hỗ trợ từng claim và quyết định nội dung tương ứng. Nguồn tham khảo chưa được duyệt không biến thành claim APPROVED.
 - Chọn channels=[facebook] cho tuyến đầu; chưa khai báo các kênh khác như thể transport đã sẵn sàng. Vùng và ngày hết hạn phải là giá trị thật được xác nhận. Cả18câu hiện dưới2.000ký tự, phù hợp giới hạn gửi; thư viện cho lưu4.000 không có nghĩa sender gửi được4.000.
@@ -90,10 +92,10 @@ CaE05 có tin trước xác định khách cần tủ bếp. CaE09 chỉ cho SUR
 
 ## Phần cần chốt và kiểm chứng
 
-Còn thiếu quyết định nguyên văn bộ câu, dữ liệu sản phẩm/chính sách hiện hành, phí khảo sát/phạm vi phục vụ, publisher và ngày hết hạn. Người nhận/lịch, AI/model/hạn mức và phát hành vẫn theo [hồ sơ nghiệm thu](RELEASE_READINESS.md); câu hỏi các nhóm cấu hình đã gửi vẫn chờ, không coi im lặng là duyệt.
+Đã có quyết định nguyên văn bộ 18 câu. Còn dữ liệu sản phẩm/chính sách hiện hành, phí khảo sát/phạm vi phục vụ, publisher và ngày hết hạn. Người nhận/lịch, AI/model/hạn mức và phát hành vẫn theo [hồ sơ nghiệm thu](RELEASE_READINESS.md); câu hỏi các nhóm cấu hình đã gửi vẫn chờ, không coi im lặng là duyệt.
 
-Kiểm tra biên tập đã PASS: JSON,18mã câu/18mã ca duy nhất,8nguồn/7liên kết nội bộ, độ dài và đồng bộ câu giữa MD/JSON, không template hoặc giá trị quyền giả. Reviewer độc lập mở5nguồn web, đối chiếu hợp đồng và bản sửa A01/Q14/E11/E14: **PASS hồ sơ biên tập DRAFT**, không còn finding chặn. Câu dài nhất146ký tự. PASS này không phải Founder duyệt nội dung, kiểm chất lượng model hoặc UAT.
+Kiểm tra biên tập đã PASS: JSON,18mã câu/18mã ca duy nhất,8nguồn/7liên kết nội bộ, độ dài và đồng bộ câu giữa MD/JSON, không template hoặc giá trị quyền giả. Reviewer độc lập mở5nguồn web, đối chiếu hợp đồng và bản sửa A01/Q14/E11/E14: **PASS hồ sơ biên tập DRAFT**, không còn finding chặn. Câu dài nhất146ký tự. PASS biên tập là bằng chứng trước quyết định Founder nêu đầu tài liệu; không thay kiểm chất lượng model hoặc UAT.
 
 Không đổi mã/SQL hoặc chạy model để kiểm gói tài liệu này. Nếu sửa nội dung sau duyệt, phải tạo phiên bản mới và duyệt lại theo cơ chế hiện có. Hoàn tác file bằng commit sửa/revert hồ sơ; không xóa lịch sử vận hành.
 
-Full goal ACTIVE: bộ draft giảm phần soạn nội dung còn thiếu; chưa nghiệm thu chất lượng AI hoặc vận hành.
+Nguyên văn 18 câu đã được duyệt; mục tiêu đầy đủ chưa hoàn tất. Còn cấu hình, nghiệm thu chất lượng AI và vận hành; phát hành HOLD.

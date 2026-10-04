@@ -8,12 +8,12 @@ Delta sau bản kiểm kê 1b7c00f: [outcome SEND riêng](SURVEY_OUTCOMES.md) t�
 
 Mục 4 của goal đang thực hiện xác định nghiệm thu tuyến đầu rồi mở tiếp Google và các kênh còn lại theo quyền thực tế. Gói hiện tại đưa tuyến Facebook tới nghiệm thu; việc chuẩn bị kênh khác vẫn có thể tiếp tục, không đổi phạm vi sáu kênh hoặc phân bổ trong [kế hoạch chuẩn](../../architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md). Codex khép cấu hình, kiểm tra chuyển luồng và chuẩn bị gói phát hành; reviewer độc lập kiểm lại đúng bản; Founder quyết định phạm vi và thời điểm mở thử sau khi có đủ bằng chứng.
 
-[Bộ18câu tư vấn VPT và18ca nghiệm thu](VPT_CARE_CONTENT_DRAFT.md) đã được soạn thành DRAFT có nguồn để Founder xem. Chưa nhập/duyệt/gửi, chưa chạy model; thiếu bindings/hạn/publisher nên không phải gói API có thể thực thi.
+[Bộ 18 câu tư vấn VPT và 18 ca nghiệm thu](VPT_CARE_CONTENT_DRAFT.md): Founder đã duyệt nguyên văn Q01–Q15/A01–A03 ngày 04/10/2026, nguồn ee641db9, quyết định `VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL`. Câu chữ giữ nguyên. Chưa nhập/phê duyệt thư viện runtime, chưa gửi hoặc chạy model; bindings/hạn/publisher còn thiếu.
 
 Ba nhóm đầu vào còn chờ xác nhận:
 
 1. Người nhận khách/khảo sát và người thay thế tại TP.HCM, Cần Thơ; lịch trống thực tế và đầu mối ngoại lệ trong khung 08–20h.
-2. Phiên bản dữ liệu sản phẩm, giá/chính sách và câu tư vấn được phép dùng; phạm vi gửi nội dung hội thoại sang nhà cung cấp AI.
+2. Câu chữ bộ 18 câu V1 đã duyệt. Còn phiên bản dữ liệu sản phẩm, giá/chính sách, phạm vi phục vụ, người duyệt thư viện/hạn hiệu lực và phạm vi gửi nội dung hội thoại sang nhà cung cấp AI.
 3. Tài khoản AI/key riêng theo cấu hình, model chính xác, hạn mức AI riêng, thời gian hiệu lực; phạm vi tài khoản quảng cáo/Page/công ty và ngày bắt đầu kỳ đo.
 
 Không cần chờ kết nối kế toán để chuẩn bị tuyến Lead. **250.000đ/khách quảng cáo hợp lệ duy nhất là mục tiêu tạm thời**, chưa phải kết quả đã đạt. Khách phải không trùng, thuộc sản phẩm/vùng phục vụ, có liên hệ dùng được và bằng chứng nguồn. Tổng chi gồm cả tài khoản không sinh khách; thiếu nguồn hoặc chi không rõ thì chưa kết luận đạt. 300 khách ở mức mục tiêu tương ứng 75 triệu; trần thử vẫn 100 triệu/30 ngày một lần, TP.HCM 80 triệu/Cần Thơ 20 triệu, không buộc chi hết. Đây là tổng ngân sách đợt đa kênh, tính cả Facebook đang chạy, không phải hạn mức riêng Facebook. Giữ phân bổ khởi điểm trong kế hoạch chuẩn; hồ sơ này không chuyển tiền giữa kênh. 7% doanh thu đánh giá sau bằng doanh thu đủ điều kiện.
@@ -49,7 +49,7 @@ Mỗi dòng cần giá trị cụ thể, nguồn kiểm chứng, người chịu
 | Phạm vi kinh doanh | Company UUID, Page/form/account, sản phẩm, địa bàn, quy tắc định tuyến, loại khách hợp lệ | Chưa đối chiếu vận hành |
 | Đo lường | Toàn bộ nguồn chi, cả account không Lead; múi giờ/kỳ đo; phương pháp chứng nhận đủ nguồn | Chưa chứng nhận |
 | Con người và lịch | User UUID, vai trò từng vùng, người thay thế, lịch trống, đầu mối ngoại lệ | Chờ Founder/đầu mối |
-| Thư viện tư vấn | Version/nguồn/phê duyệt/hiệu lực của thông tin và câu được dùng | Chờ dữ liệu được xác nhận |
+| Thư viện tư vấn | Version/nguồn/phê duyệt/hiệu lực của thông tin và câu được dùng | Founder đã duyệt câu chữ V1; còn mapping, dữ liệu/chính sách, publisher và hạn hiệu lực; chưa APPROVE runtime |
 | AI | Danh tính Agent, grant, inference/send/survey policy; key riêng không dán vào tài liệu; model snapshot chính xác, hạn mức/kỳ và căn cứ tiền thực chi | Chưa cấp quyền |
 | Hạ tầng | Bản đang chạy, cấu hình từng replica/worker/cron, Primary duy nhất nhận ghi, quyền/RLS, migration ledger, backup và restore trên môi trường phù hợp | Chưa xác minh |
 | Chuyển luồng | Mọi writer cũ, memory/DB queue, UNKNOWN/claim/HTTP còn dở, sự kiện đến trong bảo trì và đối soát sau chuyển | Chưa diễn tập theo môi trường đích |

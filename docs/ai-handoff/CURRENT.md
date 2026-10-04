@@ -1,3 +1,11 @@
+## 04/10/2026 — Founder đã duyệt bộ 18 câu tư vấn VPT V1
+
+Đã ghi quyết định [VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL](DECISIONS.md) từ thông điệp “anh duyệt bộ 18 câu hỏi”. Duyệt nguyên văn Q01–Q15/A01–A03 của bộ tại ee641db9; giữ nguyên nội dung và điều kiện dùng. [Bản nội dung](vpt-marketing-automation/VPT_CARE_CONTENT_DRAFT.md) và JSON đã chuyển sang trạng thái duyệt câu chữ, chờ bindings vận hành. Không cần xin duyệt lại cùng bộ câu.
+
+Còn khép người nhận/lịch, công ty/vùng/sản phẩm, chính sách/phạm vi khảo sát, publisher/hạn hiệu lực và cấu hình AI. Chưa nhập/phê duyệt thư viện runtime, chưa gọi model hoặc gửi khách; 18 ca vẫn NOT_RUN. Mục tiêu đầy đủ chưa hoàn tất; phát hành HOLD. Các trạng thái DRAFT/ACTIVE trong mục cũ bên dưới là lịch sử trước quyết định mới.
+
+---
+
 ## 04/10/2026 — Soạn bộ nội dung tư vấn VPT để trình duyệt
 
 Đã đối chiếu website công khai và hợp đồng thư viện/runtime, soạn [18 câu và 18 tình huống nghiệm thu](vpt-marketing-automation/VPT_CARE_CONTENT_DRAFT.md). Đây là DRAFT biên tập, chưa SAVE/APPROVE, bindings công ty/vùng/hạn/publisher còn trống, send=false; model/provider không được gọi. Có nguồn/giới hạn từng claim, không giá hoặc thời hạn bảo hành chung, HANDOFF không là mẫu gửi. JSON/độ dài/tham chiếu PASS; reviewer độc lập đã mở5nguồn và PASS hồ sơ biên tập sau sửa A01/Q14/E11/E14. Còn Founder chốt nguyên văn/chính sách/hạn hiệu lực và các cấu hình vận hành; evalNOT_RUN. Full goal ACTIVE/HOLD phát hành.

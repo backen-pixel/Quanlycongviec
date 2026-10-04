@@ -1,4 +1,4 @@
-04/10/2026: [Bộ nội dung tư vấn trình duyệt](VPT_CARE_CONTENT_DRAFT.md):18câu có nguồn/điều kiện dùng và18ca nghiệm thu chưa chạy. Reviewer độc lập PASS hồ sơ biên tập; vẫn DRAFT chưa Founderduyệt/nhập/gửi, không modelcall. Đây là đầu vào cụ thể cho thư viện, không thay quyền/chất lượng/UAT. FullgoalACTIVE/HOLD phát hành.
+04/10/2026: [Bộ nội dung tư vấn V1](VPT_CARE_CONTENT_DRAFT.md) đã được Founder duyệt nguyên văn 18 câu qua quyết định `VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL`, nguồn ee641db9. Giữ câu chữ/điều kiện dùng; JSON ghi duyệt câu chữ và chờ bindings. Chưa nhập/APPROVE runtime/gửi khách, chưa gọi model; 18 ca vẫn NOT_RUN. Còn người nhận/lịch, cấu hình AI và nghiệm thu vận hành; HOLD phát hành. Review biên tập trước đó không thay kiểm chất lượng AI thật.
 
 04/10/2026: [Outcome SEND riêng](SURVEY_OUTCOMES.md) tại e2afcfea PASS kiểm thử/review độc lập đúng publishedblobs/log/tree: PostgreSQL507/0/0, restore11/0/0, Node18/22 mỗi1.417/0/0, cả10job/build/report/MessengerSUCCESS. Gửi phải opt-in tường minh, recovery/receipt vẫn giữ khi chỉ tắt SEND; không đổi SQL/quyền. Chưa cấu hình/chuyển luồng/UAT thật. Full goal ACTIVE/HOLD phát hành.
 

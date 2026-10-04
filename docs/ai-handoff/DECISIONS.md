@@ -1,3 +1,13 @@
+# 2026-10-04 — Founder duyệt nguyên văn bộ 18 câu tư vấn VPT V1
+
+Quyết định `VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL`. Founder xác nhận trong task `01a0f6c3-9ed2-73c1-823e-0ad927431877`: **“anh duyệt bộ 18 câu hỏi”**.
+
+Phạm vi: nguyên văn Q01–Q15 và A01–A03 của `VPT_CARE_CONTENT_DRAFT_V1` tại commit `ee641db9dbdee2a97b65618e8b9f3200487302e5`, file [VPT_CARE_CONTENT_DRAFT.json](vpt-marketing-automation/VPT_CARE_CONTENT_DRAFT.json). Giữ nguyên câu chữ, điều kiện dùng và giới hạn đã trình. [Bản đọc](vpt-marketing-automation/VPT_CARE_CONTENT_DRAFT.md) và JSON đã ghi `FOUNDER_WORDING_APPROVED_PENDING_OPERATIONAL_BINDINGS`.
+
+Đây là duyệt câu chữ theo yêu cầu đã trình; không phải lệnh APPROVE runtime, cấp quyền publisher/Agent, xác nhận mọi dữ liệu website hoặc mở gửi/phát hành. Các bindings công ty/vùng/sản phẩm, hạn hiệu lực, chính sách/phạm vi khảo sát, người nhận/lịch và cấu hình AI còn phải khép. `sendAllowed=false`, `importReady=false`; 18 ca chất lượng vẫn NOT_RUN. Khi đưa đúng bộ vào thư viện theo gói được phép, tham chiếu quyết định này, không hỏi lại Founder duyệt cùng câu chữ. Thay câu chữ sau duyệt cần phiên bản và quyết định mới.
+
+---
+
 # 2026-10-02 — VPT Marketing–Sales execution mandate
 
 Founder explicitly requested implementation of [the approved plan](../architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md).100m VND is a single30-day trial, not recurring monthly.Later in the same task Founder chose interim250,000 VND per qualified paid Lead;300 at target implies75m, while100m remains a one-time cap. Finance integration is deferred and must not block Lead-only preparation.7% remains a later revenue evaluation, not achieved by cheap Leads. AI advises/books surveys; humans final quote/close. See implementation README for unfinished release gates. Historic decisions below remain unchanged.

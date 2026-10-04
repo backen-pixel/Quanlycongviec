@@ -4,10 +4,46 @@
   "createdOn": "2026-10-04",
   "version": "VPT_CARE_CONTENT_DRAFT_V1",
   "technicalBaseline": "b3cb88dc8be07a6cad74747bdfaf431d2baa417a",
-  "status": "DRAFT_REQUIRES_FOUNDER_CONTENT_REVIEW",
+  "status": "FOUNDER_WORDING_APPROVED_PENDING_OPERATIONAL_BINDINGS",
   "sendAllowed": false,
   "importReady": false,
-  "founderDecision": null,
+  "founderDecision": {
+    "id": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL",
+    "status": "APPROVED",
+    "scope": "WORDING_ONLY",
+    "recordedOn": "2026-10-04",
+    "authority": "Founder",
+    "evidence": {
+      "kind": "USER_MESSAGE_IN_CURRENT_TASK",
+      "taskId": "01a0f6c3-9ed2-73c1-823e-0ad927431877",
+      "text": "anh duyệt bộ 18 câu hỏi"
+    },
+    "approvedBundleVersion": "VPT_CARE_CONTENT_DRAFT_V1",
+    "approvedSourceCommit": "ee641db9dbdee2a97b65618e8b9f3200487302e5",
+    "approvedSourcePath": "docs/ai-handoff/vpt-marketing-automation/VPT_CARE_CONTENT_DRAFT.json",
+    "approvedEntryKeys": [
+      "Q01",
+      "Q02",
+      "Q03",
+      "Q04",
+      "Q05",
+      "Q06",
+      "Q07",
+      "Q08",
+      "Q09",
+      "Q10",
+      "Q11",
+      "Q12",
+      "Q13",
+      "Q14",
+      "Q15",
+      "A01",
+      "A02",
+      "A03"
+    ],
+    "decisionRecord": "docs/ai-handoff/DECISIONS.md",
+    "scopeNote": "Duyệt nguyên văn bộ 18 câu đã trình tại phiên bản nguồn, giữ điều kiện dùng và giới hạn hiện có. Không thay quyền APPROVE trong thư viện, quyền gửi, chính sách sản phẩm, bindings vận hành hoặc quyết định phát hành."
+  },
   "proposedChannel": "facebook",
   "operationalBindings": {
     "companyId": null,
@@ -76,7 +112,7 @@
       "readOn": "2026-10-04",
       "observedAt": "Chăm khách; phân vai; đo Lead V2",
       "supports": "Hỏi sản phẩm, địa bàn, nhu cầu, ngân sách và thời gian; người thật báo giá cuối/chốt đơn; đặt khảo sát cần lịch thật và khách xác nhận.",
-      "approvalScope": "Hướng nghiệp vụ đã duyệt; chưa duyệt nguyên văn các câu mới trong gói này."
+      "approvalScope": "Hướng nghiệp vụ đã duyệt trong kế hoạch; nguyên văn 18 câu được duyệt riêng tại founderDecision."
     },
     {
       "id": "R01",
@@ -96,7 +132,7 @@
   "entries": [
     {
       "key": "Q01",
-      "editorialStatus": "DRAFT",
+      "editorialStatus": "FOUNDER_WORDING_APPROVED",
       "title": "Mở đầu và chọn nhu cầu",
       "purpose": "QUALIFY",
       "question": "Khách bắt đầu hỏi tư vấn nhưng chưa nêu nhóm sản phẩm; chưa hỏi câu này trong hội thoại.",
@@ -110,11 +146,14 @@
         "request"
       ],
       "restriction": "Chỉ dùng sau khi xác nhận đúng thương hiệu/công ty; danh mục là lựa chọn nhu cầu, không khẳng định mọi mẫu đang có sẵn.",
-      "approval": null
+      "approval": {
+        "scope": "WORDING_ONLY",
+        "decisionId": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL"
+      }
     },
     {
       "key": "Q02",
-      "editorialStatus": "DRAFT",
+      "editorialStatus": "FOUNDER_WORDING_APPROVED",
       "title": "Xác định địa bàn",
       "purpose": "QUALIFY",
       "question": "Đã biết nhu cầu nhưng khách chưa nêu địa điểm công trình bằng chữ; không suy nơi thi công từ địa bàn quảng cáo.",
@@ -126,11 +165,14 @@
         "location"
       ],
       "restriction": "Địa bàn quảng cáo không chứng minh địa điểm công trình hoặc đủ điều kiện phục vụ.",
-      "approval": null
+      "approval": {
+        "scope": "WORDING_ONLY",
+        "decisionId": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL"
+      }
     },
     {
       "key": "Q03",
-      "editorialStatus": "DRAFT",
+      "editorialStatus": "FOUNDER_WORDING_APPROVED",
       "title": "Ngân sách dự kiến",
       "purpose": "QUALIFY",
       "question": "Khách chưa nêu ngân sách và chưa từ chối chia sẻ; hỏi để hiểu phạm vi, không dùng để hứa giá.",
@@ -143,11 +185,14 @@
         "request"
       ],
       "restriction": "Không biến số khách nêu thành giá báo; không hỏi lặp nếu đã từ chối.",
-      "approval": null
+      "approval": {
+        "scope": "WORDING_ONLY",
+        "decisionId": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL"
+      }
     },
     {
       "key": "Q04",
-      "editorialStatus": "DRAFT",
+      "editorialStatus": "FOUNDER_WORDING_APPROVED",
       "title": "Thời gian thực hiện",
       "purpose": "QUALIFY",
       "question": "Khách chưa nêu thời gian mong muốn; không dùng câu này để xác nhận tiến độ thi công.",
@@ -159,11 +204,14 @@
         "timing"
       ],
       "restriction": "Thời gian khách muốn không phải thời gian VPT đã cam kết.",
-      "approval": null
+      "approval": {
+        "scope": "WORDING_ONLY",
+        "decisionId": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL"
+      }
     },
     {
       "key": "Q05",
-      "editorialStatus": "DRAFT",
+      "editorialStatus": "FOUNDER_WORDING_APPROVED",
       "title": "Ưu tiên sử dụng",
       "purpose": "QUALIFY",
       "question": "Đã biết nhóm sản phẩm; nhu cầu sử dụng hoặc ưu tiên còn thiếu.",
@@ -175,11 +223,14 @@
         "request"
       ],
       "restriction": "Không tự gán nhu cầu hoặc khả năng đáp ứng.",
-      "approval": null
+      "approval": {
+        "scope": "WORDING_ONLY",
+        "decisionId": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL"
+      }
     },
     {
       "key": "Q06",
-      "editorialStatus": "DRAFT",
+      "editorialStatus": "FOUNDER_WORDING_APPROVED",
       "title": "Tủ bếp mới hay thay thế",
       "purpose": "QUALIFY",
       "question": "Khách nói cần tủ bếp nhưng chưa rõ làm mới hay thay bộ đang dùng.",
@@ -193,11 +244,14 @@
         "request"
       ],
       "restriction": "Không khẳng định nhận mọi loại sửa chữa.",
-      "approval": null
+      "approval": {
+        "scope": "WORDING_ONLY",
+        "decisionId": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL"
+      }
     },
     {
       "key": "Q07",
-      "editorialStatus": "DRAFT",
+      "editorialStatus": "FOUNDER_WORDING_APPROVED",
       "title": "Vật liệu tủ bếp",
       "purpose": "QUALIFY",
       "question": "Khách cần tủ bếp nhưng chưa nêu vật liệu/mẫu quan tâm; chưa có thông số được duyệt để so sánh.",
@@ -211,11 +265,14 @@
         "request"
       ],
       "restriction": "Không tự kết luận chống nước, chống cháy, tuổi thọ hoặc vật liệu tốt nhất.",
-      "approval": null
+      "approval": {
+        "scope": "WORDING_ONLY",
+        "decisionId": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL"
+      }
     },
     {
       "key": "Q08",
-      "editorialStatus": "DRAFT",
+      "editorialStatus": "FOUNDER_WORDING_APPROVED",
       "title": "Kích thước tủ bếp bằng chữ",
       "purpose": "QUALIFY",
       "question": "Khách cần tủ bếp và chưa cung cấp kích thước; AI hiện chỉ đọc văn bản, không đo ảnh.",
@@ -229,11 +286,14 @@
         "request"
       ],
       "restriction": "Kích thước khách ghi là thông tin chưa xác minh; không suy từ ảnh.",
-      "approval": null
+      "approval": {
+        "scope": "WORDING_ONLY",
+        "decisionId": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL"
+      }
     },
     {
       "key": "Q09",
-      "editorialStatus": "DRAFT",
+      "editorialStatus": "FOUNDER_WORDING_APPROVED",
       "title": "Nhu cầu tủ quần áo",
       "purpose": "QUALIFY",
       "question": "Khách hỏi tủ quần áo nhưng chưa nêu kích thước hoặc không gian đặt tủ.",
@@ -247,11 +307,14 @@
         "request"
       ],
       "restriction": "Không khẳng định vật liệu, tồn kho hoặc giá của mẫu chưa đối chiếu.",
-      "approval": null
+      "approval": {
+        "scope": "WORDING_ONLY",
+        "decisionId": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL"
+      }
     },
     {
       "key": "Q10",
-      "editorialStatus": "DRAFT",
+      "editorialStatus": "FOUNDER_WORDING_APPROVED",
       "title": "Nhu cầu tủ lavabo",
       "purpose": "QUALIFY",
       "question": "Khách hỏi tủ lavabo nhưng chưa rõ làm mới hay thay thế.",
@@ -265,11 +328,14 @@
         "request"
       ],
       "restriction": "Nguồn web chưa chứng minh mẫu đang bán; chưa hứa nhận đơn hoặc khả năng lắp.",
-      "approval": null
+      "approval": {
+        "scope": "WORDING_ONLY",
+        "decisionId": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL"
+      }
     },
     {
       "key": "Q11",
-      "editorialStatus": "DRAFT",
+      "editorialStatus": "FOUNDER_WORDING_APPROVED",
       "title": "Xác định phụ kiện",
       "purpose": "QUALIFY",
       "question": "Khách hỏi phụ kiện nhưng chưa có tên hoặc mã sản phẩm; không thể nhận dạng ảnh trong phiên này.",
@@ -283,11 +349,14 @@
         "product"
       ],
       "restriction": "Không xác nhận tương thích với tủ hiện có khi chưa có thông số.",
-      "approval": null
+      "approval": {
+        "scope": "WORDING_ONLY",
+        "decisionId": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL"
+      }
     },
     {
       "key": "Q12",
-      "editorialStatus": "DRAFT",
+      "editorialStatus": "FOUNDER_WORDING_APPROVED",
       "title": "Xác định thiết bị",
       "purpose": "QUALIFY",
       "question": "Khách hỏi thiết bị nhà bếp nhưng chưa có tên hoặc mã; chưa có dữ liệu tồn kho/giá được duyệt.",
@@ -300,11 +369,14 @@
         "product"
       ],
       "restriction": "Không coi danh mục website là tồn kho hoặc chứng nhận đại lý.",
-      "approval": null
+      "approval": {
+        "scope": "WORDING_ONLY",
+        "decisionId": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL"
+      }
     },
     {
       "key": "Q13",
-      "editorialStatus": "DRAFT",
+      "editorialStatus": "FOUNDER_WORDING_APPROVED",
       "title": "Nhu cầu đá hoặc kính",
       "purpose": "QUALIFY",
       "question": "Khách chủ động hỏi đá/kính khu bếp; chưa có loại và kích thước cần làm.",
@@ -318,11 +390,14 @@
         "request"
       ],
       "restriction": "Chỉ hỏi nhu cầu; hai trang chi tiết đá/kính chưa truy xuất được trong lần khảo sát này.",
-      "approval": null
+      "approval": {
+        "scope": "WORDING_ONLY",
+        "decisionId": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL"
+      }
     },
     {
       "key": "Q14",
-      "editorialStatus": "DRAFT",
+      "editorialStatus": "FOUNDER_WORDING_APPROVED",
       "title": "Khách chưa muốn nêu ngân sách",
       "purpose": "QUALIFY",
       "question": "Khách đã nói chưa rõ hoặc không muốn chia sẻ ngân sách; vẫn muốn tư vấn, chưa yêu cầu ngừng liên hệ và chưa nêu điều ưu tiên. Không dùng nếu khách đã nói ưu tiên của mình.",
@@ -334,11 +409,14 @@
         "request"
       ],
       "restriction": "Không hỏi lại ngân sách ngay, không chấm khách không hợp lệ vì từ chối câu hỏi này.",
-      "approval": null
+      "approval": {
+        "scope": "WORDING_ONLY",
+        "decisionId": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL"
+      }
     },
     {
       "key": "Q15",
-      "editorialStatus": "DRAFT",
+      "editorialStatus": "FOUNDER_WORDING_APPROVED",
       "title": "Địa chỉ cho yêu cầu khảo sát",
       "purpose": "QUALIFY",
       "question": "Khách đã yêu cầu khảo sát nhưng chưa cung cấp địa chỉ bằng chữ; không dùng khi đã có địa chỉ rõ.",
@@ -352,11 +430,14 @@
         "request"
       ],
       "restriction": "Chưa hứa giờ/người/phí. Chỉ action SURVEY và dịch vụ lịch được phép đưa lịch thật để khách xác nhận.",
-      "approval": null
+      "approval": {
+        "scope": "WORDING_ONLY",
+        "decisionId": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL"
+      }
     },
     {
       "key": "A01",
-      "editorialStatus": "DRAFT",
+      "editorialStatus": "FOUNDER_WORDING_APPROVED",
       "title": "Cách nhận báo giá",
       "purpose": "ADVICE",
       "question": "Khách hỏi cách nhận báo giá khi chưa có hạng mục hoặc kích thước dự kiến. Không dùng nếu khách yêu cầu chốt giá, thương lượng, giảm giá hoặc xác nhận mức tiền cụ thể; các trường hợp đó phải HANDOFF.",
@@ -369,11 +450,14 @@
         "request"
       ],
       "restriction": "Không dùng 80–150 triệu của Founder làm giá công bố; không tự giảm giá hoặc chốt đơn.",
-      "approval": null
+      "approval": {
+        "scope": "WORDING_ONLY",
+        "decisionId": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL"
+      }
     },
     {
       "key": "A02",
-      "editorialStatus": "DRAFT",
+      "editorialStatus": "FOUNDER_WORDING_APPROVED",
       "title": "Bảo hành theo hồ sơ cụ thể",
       "purpose": "ADVICE",
       "question": "Khách hỏi thời hạn bảo hành nhưng chưa xác định đúng mã/hạng mục và điều kiện hợp đồng; không dùng để xử lý khiếu nại đang có.",
@@ -387,11 +471,14 @@
         "request"
       ],
       "restriction": "Không hứa một số năm cho mọi mẫu; sự cố/bảo hành thực tế chuyển người xem hồ sơ.",
-      "approval": null
+      "approval": {
+        "scope": "WORDING_ONLY",
+        "decisionId": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL"
+      }
     },
     {
       "key": "A03",
-      "editorialStatus": "DRAFT",
+      "editorialStatus": "FOUNDER_WORDING_APPROVED",
       "title": "Tham khảo danh mục tủ bếp",
       "purpose": "ADVICE",
       "question": "Khách muốn xem nhóm mẫu tủ bếp trên website, chưa hỏi tồn kho/giá hay cần phân tích ảnh.",
@@ -403,7 +490,10 @@
         "product"
       ],
       "restriction": "Link tham khảo không xác nhận giá, tồn kho hoặc quyền dùng hình trong quảng cáo.",
-      "approval": null
+      "approval": {
+        "scope": "WORDING_ONLY",
+        "decisionId": "VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL"
+      }
     }
   ],
   "handoffRules": [
@@ -429,7 +519,7 @@
     }
   ],
   "limitations": [
-    "18 câu chưa có quyết định nội dung hoặc quyền phát ngôn.",
+    "18 câu đã được Founder duyệt nguyên văn; chưa có phê duyệt thư viện tại runtime hoặc quyền gửi khách.",
     "Câu hỏi/điều kiện là dữ liệu chọn câu, chưa phải workflow bảo đảm không hỏi lặp.",
     "Nhu cầu trích ra chưa xác minh; không tự tính Lead hợp lệ hoặc sửa CRM.",
     "Không tạo UUID, hạn sử dụng, publisher hoặc quyền giả để nhập thư viện.",
