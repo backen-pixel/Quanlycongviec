@@ -1,16 +1,10 @@
-## 04/10/2026 — Bản nháp tư vấn đã qua PostgreSQL, đang khép review
+## 04/10/2026 — Bản nháp tư vấn đã qua PostgreSQL và review độc lập
 
-Runtime56d424f: Node18/22 mỗi bản1.336/0/0; intakePostgreSQL393/0/0 gồm22ca mới, cả10job/build/report/Messenger SUCCESS. Đang thêm observer để xác minh ca FINISH chờ khóa OPT_OUT; runtime không đổi, review cuối còn chờ. [Bằng chứng và giới hạn](vpt-marketing-automation/CARE_ADVISOR_DRAFTS.md).
+SQL689/Application Service đọc hội thoại và thư viện đã duyệt, chọn nguyên văn câu trả lời và lưu nhu cầu kèm trích dẫn chưa xác minh; kiểm lại quyền, nguồn và trạng thái khách trước lưu. BEGIN một lần gọi, đọc/đóng/retry tường minh giữ audit; không ghi Backup khi Primary đổi. Router chưa gắn provider, cờ mặc định tắt, send=false.
 
-Full goal ACTIVE, chưa model/provider thật, quyền gửi, UAT hoặc phát hành.
+Bản kiểm73a7824 (runtime56d424f): Node18/22 mỗi bản1.336/0/0; PostgreSQL393/0/0 gồm22ca advisor, cả10job/build/report/Messenger SUCCESS. Ca chờ khóa có observer; review độc lập PASS sau đối chiếu published blobs/log CI. [Hợp đồng, bằng chứng và hoàn tác](vpt-marketing-automation/CARE_ADVISOR_DRAFTS.md).
 
----
-
-## 04/10/2026 — Đang kiểm chứng trợ lý chọn nội dung tư vấn
-
-SQL689 và Application Service nối hội thoại/nguồn đã duyệt → inference port → kiểm lại quyền/nguồn → bản nháp có trích dẫn. Có nhật ký một lần gọi, đối soát và retry tường minh; giữ send=false. Local16 PASS; PostgreSQL và review cuối đang chờ. Router chưa gắn provider, cờ mặc định tắt. [Phạm vi, phục hồi và phần còn thiếu](vpt-marketing-automation/CARE_ADVISOR_DRAFTS.md).
-
-Full goal ACTIVE: còn provider/chi phí/quyền runtime, giao diện/worker/gửi và chất lượng AI, cấu hình khảo sát, UAT/Founder release. Chưa dữ liệu thật, model call, chi quảng cáo hoặc đạt250k.
+Full goal ACTIVE. Còn provider/key/chi phí/quyền runtime, giao diện/worker/gửi và chất lượng AI; hội thoại dài, cấu hình khảo sát, chuyển luồng/khôi phục còn thiếu, UAT và Founder release. Chưa dữ liệu thật, model call, chi quảng cáo hoặc kết quả250k.
 
 ---
 

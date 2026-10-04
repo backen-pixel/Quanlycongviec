@@ -1,6 +1,6 @@
 # Trợ lý đọc hội thoại và chọn nội dung tư vấn
 
-Ngày 04/10/2026. Phạm vi: SQL689, Application Service và đường API bản nháp trong PR22. Bản56d424f đã qua CI; đang kiểm lại ca chờ khóa với observer rõ ràng trước kết luận review cuối.
+Ngày 04/10/2026. Phạm vi: SQL689, Application Service và đường API bản nháp trong PR22. Reviewer độc lập PASS checkpoint tại73a782456d8aaca2c2d9509b031ff1388353a397; runtime giữ nguyên từ56d424f. Chưa phát hành hoặc nghiệm thu mô hình thật.
 
 ## Hành vi đã triển khai
 
@@ -40,6 +40,14 @@ Runtime56d424f54373557f75bd0d808db10b4e4a865461, tree6e699331cbe81228fe07fcd3fed
 
 [Automation37185360650](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37185360650), [PostgreSQL111386035796](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37185360650/job/111386035796), [Node22](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37185360650/job/111386035756).
 
-Reviewer độc lập đang khép bằng chứng; finding đã sửa gồm ghi nhầm Backup, retry thiếu đường phục hồi, NULL reason cấp retry và rollback terminal khi Page đổi phạm vi. Ca chờ khóa đang bổ sung pg_stat_activity barrier để chứng minh FINISH thực sự chờ transaction OPT_OUT, thay vì chỉ kiểm trạng thái sau COMMIT. Runtime không đổi trong delta bằng chứng này.
+Finding đã sửa gồm ghi nhầm Backup, retry thiếu đường phục hồi, NULL reason cấp retry và rollback terminal khi Page đổi phạm vi. Ca chờ khóa có pg_stat_activity barrier chứng minh FINISH thực sự chờ transaction OPT_OUT, thay vì chỉ kiểm trạng thái sau COMMIT. Runtime không đổi trong delta bằng chứng73a7824.
+
+Bản kiểm73a782456d8aaca2c2d9509b031ff1388353a397, treecced67078b9f14fea76481b0a994bd460ceca876:
+
+- [Automation37185564701](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37185564701): cả10 job SUCCESS.
+- [PostgreSQL111386626508](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37185564701/job/111386626508):393/0/0, gồm22ca advisor và ca391 quan sát chờ khóa.
+- [Node22](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37185564701/job/111386626507):1.336/0/0; Node18 SUCCESS. [Frontend](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37185564701/job/111386626471):10.333 modules,34,54s.
+- [Report37185564710](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37185564710) và [Messenger37185564718](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37185564718):SUCCESS.
+- CI merge d0c08076fb60a823f57707b58a3bf09f3e605a13 có đúng tree và parents basee16c885ae7c2305645be02a1227bf378cb59137f +73a7824. Reviewer độc lập tự đọc published blobs/logs và kết luận PASS chỉ cho SQL689, adapter/API và inference giả; không phải quyết định phát hành.
 
 Hoàn tác: giữ cờ tắt hoặc tắt admission, chờ inference đang chạy; giữ nhật ký để đối soát và không gửi lại. Không drop bảng, xóa request hoặc mở lại quyền cũ. SQL689 chưa áp DB thật; không tự chạy migration/phát hành.
