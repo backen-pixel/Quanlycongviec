@@ -21,7 +21,9 @@ Tên bảng và trigger khớp chưa chứng minh dữ liệu/FK giống backup.
 - Chứng minh lỗi OID của inspect trước rebind; kiểm role không đọc private hoặc rebind; manifest/hash/revision/guard/graph/inheritance sai bị từ chối; chờ khóa có quan sát và timeout không ghi một phần; OID permutation và snapshot inactive; lệnh cạnh tranh cùng mã có đúng một audit.
 - Sau rebind, giữ nguyên mọi bảng nghiệp vụ và audit cũ, schema và sequence; chỉ manifest/state/restore_events đổi. Kiểm mọi bảng trong manifest vẫn bị hold, service đọc đúng tổng usage và UNKNOWN/reservation; replay sau release không bật lại hold. Release thử nằm trong giao dịch rollback, target cuối vẫn held.
 
-Node syntax đã kiểm cục bộ; rehearsal chưa chạy local vì không có PostgreSQL/Docker. CI và review độc lập đang chờ; không dùng test SKIP làm bằng chứng PASS.
+Node syntax đã kiểm cục bộ; rehearsal chưa chạy local vì không có PostgreSQL/Docker. CI a6c523c có intake502 PASS/0 fail, rehearsal2 PASS/9 fail. Lỗi đầu là inventory hiểu ACL NULL thành tập rỗng trong khi PostgreSQL dùng quyền mặc định; các lỗi sau phụ thuộc bước so sánh đầu. Harness sửa chuẩn hóa ACL bằng acldefault đúng loại/owner (sequence dùng loại s), giữ grantor/grantee/grant-option và thêm ca phát hiện grant PUBLIC thay đổi. Hai sequence synthetic có last_value700/is_calledtrue và901/false, cấu hình khác nhau, được yêu cầu tồn tại trước backup và đối chiếu sau restore/rebind; tránh kết luận từ tập rỗng. SQL697 không đổi. CI/review độc lập bản sửa đang chờ; không dùng test SKIP làm bằng chứng PASS.
+
+Quyền mặc định tham chiếu [acldefault PostgreSQL16](https://www.postgresql.org/docs/16/functions-info.html). Trạng thái sequence trong rehearsal được lấy khi không có writer; snapshot không thay thế yêu cầu dừng writer/ngoại tác trong vận hành.
 
 Nguồn công cụ: [pg_dump PostgreSQL16](https://www.postgresql.org/docs/16/app-pgdump.html), [pg_restore PostgreSQL16](https://www.postgresql.org/docs/16/app-pgrestore.html). Snapshot nhất quán của DB không tự chứng minh các tác động ở Meta/model đã hoàn tất.
 

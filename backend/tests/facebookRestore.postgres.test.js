@@ -5,20 +5,23 @@ const enabled=process.env.VPT_RESTORE_REHEARSAL==='1';
 const quote=x=>'"'+x.replace(/"/g,'""')+'"';
 const scope="n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'";
 const hash=x=>createHash('sha256').update(x).digest('hex');
-const acl=x=>`coalesce((SELECT jsonb_agg(a::text ORDER BY a::text) FROM unnest(${x}) a),'[]'::jsonb)`;
+// NULL means the object's default privileges, not an empty grant set.
+// pg_dump can canonicalize explicit owner-only grants to NULL on restore.
+const acl=(x,defaults)=>`coalesce((SELECT jsonb_agg(a::text ORDER BY a::text) FROM unnest(${defaults?`coalesce(${x},${defaults})`:x}) a),'[]'::jsonb)`;
 async function inventory(db){
  const tables=(await db.query(`SELECT n.nspname s,c.relname n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE ${scope} AND c.relkind='r' ORDER BY 1,2`)).rows;
  const data={};for(const r of tables){const key=r.s+'.'+r.n;data[key]=(await db.query(`SELECT count(*)::text rows,md5(coalesce(string_agg(to_jsonb(x)::text,E'\\n' ORDER BY to_jsonb(x)::text),'')) digest FROM ${quote(r.s)}.${quote(r.n)} x`)).rows[0];}
- const schemas=(await db.query(`SELECT n.nspname,n.nspowner::regrole::text owner,${acl('n.nspacl')} acl FROM pg_namespace n WHERE ${scope} ORDER BY 1`)).rows;
- const relations=(await db.query(`SELECT n.nspname,c.relname,c.relkind,c.relowner::regrole::text owner,c.relrowsecurity,c.relforcerowsecurity,${acl('c.relacl')} acl FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE ${scope} AND c.relkind IN('r','S','v','m') ORDER BY 1,2`)).rows;
+ const schemas=(await db.query(`SELECT n.nspname,n.nspowner::regrole::text owner,${acl('n.nspacl',"acldefault('n',n.nspowner)")} acl FROM pg_namespace n WHERE ${scope} ORDER BY 1`)).rows;
+ const relations=(await db.query(`SELECT n.nspname,c.relname,c.relkind,c.relowner::regrole::text owner,c.relrowsecurity,c.relforcerowsecurity,${acl('c.relacl',"acldefault((CASE WHEN c.relkind='S' THEN 's' ELSE 'r' END)::\"char\",c.relowner)")} acl FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE ${scope} AND c.relkind IN('r','S','v','m') ORDER BY 1,2`)).rows;
  const columns=(await db.query(`SELECT n.nspname,c.relname,a.attname,a.attnum,format_type(a.atttypid,a.atttypmod) type,a.attnotnull,a.attidentity,a.attgenerated,pg_get_expr(d.adbin,d.adrelid) default_expr,${acl('a.attacl')} acl FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum WHERE ${scope} AND c.relkind IN('r','v','m') ORDER BY 1,2,a.attnum`)).rows;
  const constraints=(await db.query(`SELECT n.nspname,c.relname,k.conname,k.contype,k.convalidated,pg_get_constraintdef(k.oid) definition FROM pg_constraint k JOIN pg_class c ON c.oid=k.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE ${scope} ORDER BY 1,2,3`)).rows;
  const triggers=(await db.query(`SELECT n.nspname,c.relname,t.tgname,t.tgenabled,pg_get_triggerdef(t.oid) definition FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE ${scope} AND NOT t.tgisinternal ORDER BY 1,2,3`)).rows;
- const functions=(await db.query(`SELECT n.nspname,p.proname,pg_get_function_identity_arguments(p.oid) args,p.proowner::regrole::text owner,${acl('p.proacl')} acl,pg_get_functiondef(p.oid) definition FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE ${scope} AND p.prokind='f' ORDER BY 1,2,3`)).rows;
+ const functions=(await db.query(`SELECT n.nspname,p.proname,pg_get_function_identity_arguments(p.oid) args,p.proowner::regrole::text owner,${acl('p.proacl',"acldefault('f',p.proowner)")} acl,pg_get_functiondef(p.oid) definition FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE ${scope} AND p.prokind='f' ORDER BY 1,2,3`)).rows;
  const policies=(await db.query("SELECT schemaname,tablename,policyname,permissive,roles,cmd,qual,with_check FROM pg_policies WHERE schemaname NOT LIKE 'pg_%' ORDER BY 1,2,3")).rows;
  const indexes=(await db.query("SELECT schemaname,tablename,indexname,indexdef FROM pg_indexes WHERE schemaname NOT LIKE 'pg_%' ORDER BY 1,2,3")).rows;
  const sequences={};for(const r of relations.filter(x=>x.relkind==='S'))sequences[r.nspname+'.'+r.relname]=(await db.query(`SELECT last_value::text,is_called FROM ${quote(r.nspname)}.${quote(r.relname)}`)).rows[0];
- return{data,schema:{schemas,relations,columns,constraints,triggers,functions,policies,indexes},sequences};
+ const sequenceDefinitions=(await db.query(`SELECT n.nspname,c.relname,format_type(s.seqtypid,NULL) type,s.seqstart,s.seqincrement,s.seqmax,s.seqmin,s.seqcache,s.seqcycle FROM pg_sequence s JOIN pg_class c ON c.oid=s.seqrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE ${scope} ORDER BY 1,2`)).rows;
+ return{data,schema:{schemas,relations,columns,constraints,triggers,functions,policies,indexes,sequenceDefinitions},sequences};
 }
 test('isolated logical backup restores business state, authority and maintenance control',{skip:!enabled,timeout:240000},async t=>{
  assert.equal(process.env.CI,'true');
@@ -52,13 +55,20 @@ test('isolated logical backup restores business state, authority and maintenance
   });
   await t.test('dump and reference digests share an exported snapshot with the source held',async()=>{
    const sql=fs.readFileSync(path.resolve(__dirname,'../../database/697_crm_legacy_hold_restore.sql'),'utf8');await source.query(sql);await source.query(sql);
+   // Nonempty sequence evidence: UUID-only business fixtures would otherwise
+   // allow an empty sequence comparison to pass without exercising restore.
+   await source.query("CREATE SCHEMA restore_fixture;CREATE SEQUENCE restore_fixture.called AS bigint INCREMENT 3 START 7 MAXVALUE 99999 CYCLE;CREATE SEQUENCE restore_fixture.uncalled AS bigint INCREMENT 5 START 11 MAXVALUE 99999;SELECT setval('restore_fixture.called',700,true);SELECT setval('restore_fixture.uncalled',901,false);GRANT USAGE ON SEQUENCE restore_fixture.called TO service_role");
    const state=await inspect(source);if(!state.state.active)await source.query('SELECT crm_legacy_hold.set_hold($1,$2,true,$3,$4)',[randomUUID(),state.state.revision,state.manifestHash,release]);
    sourcePlan=await plan(source);assert.equal(sourcePlan.needsRebind,false);assert.equal(sourcePlan.state.active,true);
    operator=(await source.query("SELECT u.id,u.company_id FROM users u JOIN companies c ON c.id=u.company_id JOIN tenants t ON t.id=c.tenant_id WHERE u.role='admin' AND u.is_active AND c.is_active AND t.is_active AND u.tenant_id=c.tenant_id AND EXISTS(SELECT 1 FROM crm_care_control.inference_policies p WHERE p.company_id=c.id) ORDER BY u.id LIMIT 1")).rows[0];assert.ok(operator);
    sourceCost=(await source.query('SELECT crm_care_inference_costs($1,$2) r',[operator.id,operator.company_id])).rows[0].r;
    await source.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
    try{
-    before=await inventory(source);const snapshot=(await source.query('SELECT pg_export_snapshot() snapshot')).rows[0].snapshot;
+    before=await inventory(source);
+    assert.ok(Object.keys(before.sequences).length>=2);
+    assert.deepEqual(before.sequences['restore_fixture.called'],{last_value:'700',is_called:true});
+    assert.deepEqual(before.sequences['restore_fixture.uncalled'],{last_value:'901',is_called:false});
+    const snapshot=(await source.query('SELECT pg_export_snapshot() snapshot')).rows[0].snapshot;
     assert.match(snapshot,/^[A-F0-9-]+$/);
     archive=execFileSync('docker',['exec',containers[0],'pg_dump','-U','postgres','-d','fb_intake_test','-Fc','--snapshot='+snapshot],{maxBuffer:64*1024*1024,timeout:90000});
    }finally{await source.query('ROLLBACK');}
@@ -74,6 +84,12 @@ test('isolated logical backup restores business state, authority and maintenance
    command=[randomUUID(),p.state.revision,p.sourceHash,p.targetHash,'Synthetic archive SHA256 '+hash(archive),release];
   });
   await t.test('restored roles cannot read private evidence, rebind or bypass the held business tables',async()=>{
+   // Normalizing default ACLs must still detect an actual privilege change.
+   await target.query('BEGIN');try{
+    await target.query('GRANT SELECT ON crm_care_control.inference_receipts TO PUBLIC');
+    assert.notDeepEqual((await inventory(target)).schema.relations,before.schema.relations);
+   }finally{await target.query('ROLLBACK');}
+   assert.deepEqual(await inventory(target),before);
    for(const role of['anon','authenticated','service_role']){await target.query('SET ROLE '+role);try{
     await assert.rejects(target.query('SELECT * FROM crm_care_control.inference_receipts'),e=>e.code==='42501');
     await assert.rejects(plan(target),e=>e.code==='42501');await assert.rejects(call(command),e=>e.code==='42501');

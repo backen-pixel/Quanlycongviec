@@ -1,5 +1,7 @@
 ## 04/10/2026 — Đang diễn tập khôi phục PostgreSQL
 
+CI a6c523c: intake 502 PASS/0 fail; rehearsal 2 PASS/9 fail, lỗi đầu do so sánh ACL mặc định NULL với owner-only explicit; lỗi sau là phụ thuộc. Sửa harness dùng acldefault đúng loại/owner, vẫn giữ đối chiếu grantor/grantee/grant-option và ca phát hiện quyền PUBLIC tăng. Thêm hai sequence có giá trị/is_called khác mặc định cùng cấu hình để không chứng minh bằng tập rỗng. SQL697 không đổi. CI/review bản sửa đang chờ; chưa PASS.
+
 Thêm rehearsal pg_dump/pg_restore giữa hai cluster cô lập trên toàn dữ liệu fixture intake/care/survey. Đối chiếu dữ liệu, schema/FK/quyền/audit và giữ UNKNOWN. SQL697 cho operator gắn lại OID manifest sau logical restore, có hash/revision/audit riêng và luôn giữ/bật hold; không tự mở vận hành. Node syntax đã kiểm, CI/review cuối đang chờ. [Phạm vi và giới hạn](vpt-marketing-automation/RESTORE_REHEARSAL.md). Full goal ACTIVE; chưa backup/khôi phục DB thật hoặc phát hành.
 
 ---

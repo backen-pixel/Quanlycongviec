@@ -1,3 +1,7 @@
+## 04/10/2026 — Sửa bằng chứng diễn tập khôi phục
+
+CI a6c523c intake502/0/0 nhưng restore2PASS/9FAIL. Harness đã hiểu ACL NULL thành không có quyền; sửa chuẩn hóa về acldefault theo loại/owner, giữ đối chiếu quyền và kiểm negative grant drift. Bổ sung hai sequence synthetic với last_value/is_called khác mặc định và đối chiếu cấu hình để kiểm rõ trạng thái bộ đếm. Log nguồn có sequence; không kết luận kiểm cũ đã so tập rỗng. Không đổi SQL697 hoặc dữ liệu thật. Node syntax PASS; CI/review cuối chờ. [Phạm vi và hoàn tác](vpt-marketing-automation/RESTORE_REHEARSAL.md).
+
 ## 04/10/2026 — Transport câu tư vấn theo quyền riêng
 
 Bản kiểm a388433/runtimec822e33 đã đạt: Node18/22 mỗi bản1.385/0/0, intakePostgreSQL469/0/0 gồm21mới; cả10job/build/report/Messenger SUCCESS. Mergea97254a khớp tree5178ac0 và parents base/head. Test câu dài đã sửa đúng actualentry; publisher expiry và recovery lockorder có regression đạt. Reviewer độc lập đã đối chiếu published blobs/log/tree và PASS checkpoint. [Bằng chứng/hoàn tác](vpt-marketing-automation/CARE_ANSWER_DELIVERY.md).

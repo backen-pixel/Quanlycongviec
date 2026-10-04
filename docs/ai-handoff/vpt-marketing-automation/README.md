@@ -1,4 +1,4 @@
-04/10/2026: [Diễn tập khôi phục PostgreSQL](RESTORE_REHEARSAL.md) đang kiểm chứng: toàn bộ fixture sang cluster khác, giữ dữ liệu/quyền/audit;697 thêm operator rebind OID manifest dưới hold. Không mở runtime hoặc giải quyết UNKNOWN/ngoại tác. CI/review cuối chờ; full goal ACTIVE.
+04/10/2026: [Diễn tập khôi phục PostgreSQL](RESTORE_REHEARSAL.md) đang kiểm chứng: toàn bộ fixture sang cluster khác, giữ dữ liệu/quyền/audit;697 thêm operator rebind OID manifest dưới hold. CI a6c523c intake502/0/0, rehearsal2PASS/9FAIL do ACL mặc định; đang kiểm lại harness đã sửa và thêm sequence không rỗng. Không đổi697, mở runtime hoặc giải quyết UNKNOWN/ngoại tác. CI/review cuối chờ; full goal ACTIVE.
 
 04/10/2026: [Phục hồi ACK biên nhận AI](CARE_OPENAI_INFERENCE.md) bản31aa29f đạt Node18/22 mỗi bản1.412/0/0, PostgreSQL502/0/0 gồm4ca mới; cả10job/build/report/Messenger SUCCESS. Reviewer độc lập đối chiếu published blobs/log/tree và PASS checkpoint. Tối đa hai lần ghi cùng bằng chứng, không gọi lại model/claim; giữ quyền Domain, Primary và reservation. Không bao phủ mất tiến trình hoặc đối soát hóa đơn; còn cấu hình/khôi phục/UAT/Founder release. Full goal ACTIVE.
 
