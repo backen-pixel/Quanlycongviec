@@ -1,5 +1,7 @@
 ## 04/10/2026 — Runtime draft và handoff theo quyền riêng
 
+Bản kiểm `65b8c7b` đã đạt Node18/22 mỗi bản1.374/0/0, PostgreSQL448/0/0 gồm26runtime; automation37191768019 cả10job SUCCESS, build10.335modules38,11s, report37191768012/Messenger37191768025 SUCCESS. Merge22463284 có tree9d1250e và parents đúng base/head. Không thay runtime business code sau05d657e; reviewer độc lập xác minh published blobs/log/tree và PASS checkpoint. [Bằng chứng/hoàn tác](vpt-marketing-automation/CARE_RUNTIME.md).
+
 Hậu kiểm `05d657e`: PostgreSQL run37191309436 thất bại (373/49), lỗi đầu 42P01 thiếu advisor_cancellations do harness; runtime chưa được thử. Sửa prerequisite SQL690 và khôi phục facade692 sau690/691 trong các nhóm hồi quy. Fixture starvation tạo liên kết qua service trước khi đổi company của Lead, giữ nguyên guard. Reviewer độc lập phát hiện cả hai vấn đề; chờ CI đúng bản sửa.
 
 Thêm SQL692 core dùng chung, SQL693 principal/grant/turn/close; careRuntime/console và provider authority riêng. Không impersonate admin; grant ABA/expiry sau waits được chặn, permit clamp theo grant. Lỗi mapping có metadata handoff để tránh nghẽn đầu hàng chờ. Tạo13unit và26PGcases, cập nhật lifecycle fixture; local1.369PASS/5skip. Reviewer rà mã, hai P2 đã sửa; chờ CI/PG đúng phiên bản. [Hợp đồng/hoàn tác](vpt-marketing-automation/CARE_RUNTIME.md). Không model thật/gửi/phát hành; full goal ACTIVE.
