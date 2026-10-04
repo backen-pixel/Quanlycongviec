@@ -2298,3 +2298,5 @@ Runtime `2cac0949aa78bb5d281f580c55c9dfe1171e6101` kiểm actor và toàn bộ h
 ## 04/10/2026 — Nhật ký batch và UI phục hồi đang nghiệm thu
 
 SQL684/private journal, helper và GET lịch sử/tiến độ; route batch lưu trước dispatch, kiểm claim và lưu từng kết quả; RESULT cuối hoàn tất nguyên giao dịch. Thay handler UI cũ bằng recovery controller/component có request cố định, reload GET, lịch sử server và trạng thái chưa rõ được giữ lại. Cập nhật suite/CI, source-route VM extraction và CURRENT/README. Local294/0/0, reviewer PASS mã sau ba finding đã sửa; browser thật/API giả PASS các tình huống ghi trong LEGACY_BATCH_JOURNAL.md. 16ca PostgreSQL mới/build chưa xác minh CI. Hoàn tác giữ journal/claim, dừng-chờ-đối soát trước chuyển code. Full goal ACTIVE, chưa live DB/UAT/release hoặc250k thực tế.
+
+04/10/2026 — CI runtime27b17f: Node22 843+26+294/build và report/Messenger PASS, nhưng intake PG306pass/1parentfail vì SQL684 line139 CASE thiếu ngoặc trong IF (42601 tại character10935);16ca mới chưa chạy. Thêm ngoặc cho biểu thức CASE, giữ nguyên điều kiện quyền/trạng thái. Chờ CI sửa; không dùng PASS mã để thay PASS PostgreSQL.

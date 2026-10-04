@@ -136,7 +136,7 @@ BEGIN
  SELECT * INTO i FROM crm_batch_control.items WHERE request_id=p_request AND contact_id=p_contact FOR UPDATE;
  IF i.contact_id IS NULL THEN RAISE EXCEPTION 'batch item unavailable' USING ERRCODE='42501';END IF;
  IF p_action IN('START','CHECK') THEN
-  IF p_result IS NOT NULL OR r.state<>'RUNNING' OR i.state<>CASE WHEN p_action='START' THEN 'PENDING' ELSE 'RUNNING' END THEN RAISE EXCEPTION 'batch not executable' USING ERRCODE='40001';END IF;
+  IF p_result IS NOT NULL OR r.state<>'RUNNING' OR i.state<>(CASE WHEN p_action='START' THEN 'PENDING' ELSE 'RUNNING' END) THEN RAISE EXCEPTION 'batch not executable' USING ERRCODE='40001';END IF;
   PERFORM crm_batch_control.authorize(r.actor_id,r.company_id,ARRAY[p_contact]);
   IF p_action='START' THEN
    IF EXISTS(SELECT 1 FROM crm_batch_control.items WHERE request_id=p_request AND (state='RUNNING' OR (ordinal<i.ordinal AND state NOT IN('LINKED','SKIPPED')))) THEN RAISE EXCEPTION 'batch item in flight' USING ERRCODE='40001';END IF;
