@@ -190,9 +190,21 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,region,fresh})=
  });
  await t.test('advisor commit waits for thread controls and observes committed opt-out',async()=>{
   const c=await fixture(),r=await begin(c);
+  const pid=(await peers[0].query('SELECT pg_backend_pid() pid')).rows[0].pid;
   await db.query('BEGIN');await db.query("UPDATE crm_care_threads SET mode='OPTED_OUT',revision=revision+1 WHERE id=$1",[c.thread]);
-  const pending=finish(c,r);await db.query('COMMIT');
-  const x=await pending;assert.equal(x.state,'REVIEW');assert.equal(x.result,null);
+  const pending=finish(c,r);pending.catch(()=>{});
+  try{
+   let blocked=false;
+   for(let i=0;i<150;i++){
+    await db.query('SELECT pg_stat_clear_snapshot()');
+    blocked=(await db.query("SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND state='active' AND wait_event_type='Lock'",[pid])).rowCount>0;
+    if(blocked)break;
+    await new Promise(resolve=>setTimeout(resolve,10));
+   }
+   assert.equal(blocked,true,'finish must be observed waiting on the held PostgreSQL lock');
+   await db.query('COMMIT');
+   const x=await pending;assert.equal(x.state,'REVIEW');assert.equal(x.result,null);
+  }finally{await db.query('ROLLBACK');await pending.catch(()=>{});}
  });
  await t.test('advisor unsupported transaction isolation fails before granting inference',async()=>{
   const c=await fixture();await peers[0].query('BEGIN ISOLATION LEVEL REPEATABLE READ');

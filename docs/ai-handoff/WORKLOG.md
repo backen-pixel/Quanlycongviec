@@ -1,3 +1,7 @@
+## 04/10/2026 — Bằng chứng trợ lý tư vấn
+
+Runtime56d424f đã qua automation37185360650: Node22=1336/0/0, intakePG393/0/0 (22mới), cả10job/build/report/Messenger SUCCESS; CI merge tree khớp. Bổ sung observer pg_stat_activity cho ca tranh chấp FINISH/OPT_OUT theo review, không đổi runtime. Review cuối chờ ca tăng cường.
+
 ## 04/10/2026 — Trợ lý tư vấn nguồn đã duyệt (đang kiểm chứng)
 
 Thêm SQL689, careAdvisor.js, router và Node/PostgreSQL cases; nối fixture inference với cơ chế thread/library hiện có. Draft giữ nguyên câu trả lời được duyệt, nhu cầu là trích dẫn chưa xác minh. Thêm BEGIN/FINISH/READ/CLOSE/RETRY bền vững; không provider thật hoặc quyền gửi. Local16 PASS; CI PostgreSQL và review cuối còn chờ. Xem [hợp đồng/hoàn tác](vpt-marketing-automation/CARE_ADVISOR_DRAFTS.md).

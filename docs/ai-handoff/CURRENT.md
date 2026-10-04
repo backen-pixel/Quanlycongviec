@@ -1,3 +1,11 @@
+## 04/10/2026 — Bản nháp tư vấn đã qua PostgreSQL, đang khép review
+
+Runtime56d424f: Node18/22 mỗi bản1.336/0/0; intakePostgreSQL393/0/0 gồm22ca mới, cả10job/build/report/Messenger SUCCESS. Đang thêm observer để xác minh ca FINISH chờ khóa OPT_OUT; runtime không đổi, review cuối còn chờ. [Bằng chứng và giới hạn](vpt-marketing-automation/CARE_ADVISOR_DRAFTS.md).
+
+Full goal ACTIVE, chưa model/provider thật, quyền gửi, UAT hoặc phát hành.
+
+---
+
 ## 04/10/2026 — Đang kiểm chứng trợ lý chọn nội dung tư vấn
 
 SQL689 và Application Service nối hội thoại/nguồn đã duyệt → inference port → kiểm lại quyền/nguồn → bản nháp có trích dẫn. Có nhật ký một lần gọi, đối soát và retry tường minh; giữ send=false. Local16 PASS; PostgreSQL và review cuối đang chờ. Router chưa gắn provider, cờ mặc định tắt. [Phạm vi, phục hồi và phần còn thiếu](vpt-marketing-automation/CARE_ADVISOR_DRAFTS.md).

@@ -1,6 +1,6 @@
 # Trợ lý đọc hội thoại và chọn nội dung tư vấn
 
-Ngày 04/10/2026. Phạm vi: SQL689, Application Service và đường API bản nháp trong PR22. Chưa có kết luận nghiệm thu PostgreSQL/review cuối tại bản hồ sơ này.
+Ngày 04/10/2026. Phạm vi: SQL689, Application Service và đường API bản nháp trong PR22. Bản56d424f đã qua CI; đang kiểm lại ca chờ khóa với observer rõ ràng trước kết luận review cuối.
 
 ## Hành vi đã triển khai
 
@@ -36,6 +36,10 @@ Tiếp theo phải nối provider và quyền theo gói đã duyệt, bổ sung 
 
 ## Kiểm chứng và hoàn tác
 
-16 ca Node cục bộ đã PASS gồm replays, Primary đổi lúc inference, đầu ra sai, nguồn/quote giả, timeout và khóa tính năng. Có 22 ca PostgreSQL mới cùng ca API → SQL → inference giả → SQL; chờ CI để xác minh quyền, đồng thời, rollback, đổi nguồn và phục hồi. Reviewer độc lập đang rà; finding đã sửa gồm ghi nhầm Backup, retry thiếu đường phục hồi, NULL reason cấp retry và rollback terminal khi Page đổi phạm vi.
+Runtime56d424f54373557f75bd0d808db10b4e4a865461, tree6e699331cbe81228fe07fcd3fed88d3984b74649: local1.331 PASS/5 skip; Node18/22 CI mỗi bản1.336 PASS/0 fail/0 skip; PostgreSQL393/0/0 gồm22 ca mới và API → SQL → inference giả → SQL. Cả10 job/build/report/Messenger SUCCESS. CI merge1fec83c10a5d48b077c06afa9ad8dadf09105d2f được đối chiếu đúng tree và hai parent.
+
+[Automation37185360650](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37185360650), [PostgreSQL111386035796](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37185360650/job/111386035796), [Node22](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37185360650/job/111386035756).
+
+Reviewer độc lập đang khép bằng chứng; finding đã sửa gồm ghi nhầm Backup, retry thiếu đường phục hồi, NULL reason cấp retry và rollback terminal khi Page đổi phạm vi. Ca chờ khóa đang bổ sung pg_stat_activity barrier để chứng minh FINISH thực sự chờ transaction OPT_OUT, thay vì chỉ kiểm trạng thái sau COMMIT. Runtime không đổi trong delta bằng chứng này.
 
 Hoàn tác: giữ cờ tắt hoặc tắt admission, chờ inference đang chạy; giữ nhật ký để đối soát và không gửi lại. Không drop bảng, xóa request hoặc mở lại quyền cũ. SQL689 chưa áp DB thật; không tự chạy migration/phát hành.
