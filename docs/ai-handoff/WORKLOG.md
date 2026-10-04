@@ -1,5 +1,7 @@
 ## 04/10/2026 — Bổ sung hành trình AI xuyên suốt
 
+Sau CI9f7a23c (intake502/2, journey chưa tới AI do nguồn fixture tích lũy >giới hạnSQL671), tách company/tenant và cấu hình journey riêng. Không xóa nguồn, nới guard hoặc seed kết quả; intake/link/library/qualification vẫn qua dịch vụ. Thêm source_inventory.complete/2accounts/1Page assertion; restore chọn công ty có unresolved receipt để tránh chọn company chỉ có usage thành công. Syntax PASS; PostgreSQL và review bản sửa chờ.
+
 Thêm facebookCustomerCare.journey.cases.js và gọi sau SQL696 trong runtime.cases: hai lượt ANSWER/SURVEY qua actual metered Responses adapter, signed intake/link/qualification, ACK-before-echo barrier, proposal/click/booking/outcome/ACK, cohort+cost API/frontend validation. Kiểm tiền account khôngLead, replay, quyền công ty, STOP/takeover và lỗi spend. Chỉ thêm test/docs, không sửa business code hoặc SQL. Syntax PASS; CI/PG/review cuối chờ. [Bằng chứng/giới hạn/hoàn tác](vpt-marketing-automation/AI_CUSTOMER_JOURNEY.md). Lượt trước PROGRESS (restore rehearsal PASS); closureCI37201135871 cả10jobSUCCESS vừa xác minh. Full goal ACTIVE; chưa model/provider/DB thật.
 
 ## 04/10/2026 — Sửa bằng chứng diễn tập khôi phục

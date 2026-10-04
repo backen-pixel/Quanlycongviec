@@ -13,7 +13,10 @@ const {readAccountSpendWithDelivery}=require('../src/modules/marketingAutomation
 const {provider}=require('./marketingAutomation.accountDelivery.fixture');
 const sha=x=>createHash('sha256').update(x).digest('hex');
 const response=()=>({code:200,set(){return this;},status(n){this.code=n;return this;},json(body){this.body=body;return this;}});
-module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,enroll,credential,model})=>{
+module.exports=async(t,{db,peers,query,other,credential,model})=>{
+ // Isolate this journey from hundreds of adversarial source fixtures; retain
+ // the production inventory bounds instead of filtering or relaxing them.
+ const {company,admin,sales,account,fixture,enroll}=await require('./facebookCustomerCare.journey.fixture')({db,peers,query,credential,model});
  const secret='synthetic-full-journey-only',address='123 Đường Kiểm Thử, Thành phố Hồ Chí Minh',ask='Cho tôi đặt khảo sát';
  const storage=(client=peers[0])=>({
   rpc:async(name,args)=>{try{return{data:await query(name,Object.values(args).map(v=>Array.isArray(v)?JSON.stringify(v):v),client)};}catch(error){return{error};}},
@@ -67,11 +70,14 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,enroll,
   await db.query("INSERT INTO fb_ad_accounts(ad_account_id,company_id,bat,access_token) VALUES($1,$2,true,'synthetic')",[zeroAccount,company]);
   await query('marketing_lead_trial_set',[admin,company,trial,randomUUID(),{name:'Synthetic complete AI journey',since,until:day,expectedRevision:0}]);
   const accounts=(await db.query('SELECT ad_account_id FROM fb_ad_accounts WHERE company_id=$1',[company])).rows;
-  for(const {ad_account_id:account}of accounts){
-   const amount=account==='act_77'?200000:account===zeroAccount?50000:0;
-   const fake=provider({account,since,until:day,mutate:body=>{for(const row of body.data)row.spend=String(row.ad_id==='70'?0:amount);return body;}});
+  assert.deepEqual(accounts.map(x=>x.ad_account_id).sort(),[account,zeroAccount].sort());
+  const inventory=(await db.query('SELECT marketing_measurement.source_inventory($1,$2) r',[company,trial])).rows[0].r;
+  assert.equal(inventory.complete,true);assert.equal(inventory.accounts.length,2);assert.equal(inventory.pages.length,1);
+  for(const {ad_account_id:accountId}of accounts){
+   const amount=accountId===account?200000:50000;
+   const fake=provider({account:accountId,since,until:day,mutate:body=>{for(const row of body.data)row.spend=String(row.ad_id==='70'?0:amount);return body;}});
    const evidence=await readAccountSpendWithDelivery({...fake.input,now:new Date().toISOString()});
-   const run=await query('marketing_spend_begin',[account,company,since,day]);
+   const run=await query('marketing_spend_begin',[accountId,company,since,day]);
    await query('marketing_spend_finish',[run.id,company,evidence,null]);
   }
   const cohort=async(cid=company)=>{

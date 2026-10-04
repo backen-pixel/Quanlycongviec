@@ -2,6 +2,8 @@
 
 Ngày 04/10/2026. Trạng thái: mã kiểm thử đã chuẩn bị; syntax PASS, PostgreSQL/CI và review cuối đang chờ. Đây là kiểm chứng trên fixture cô lập, không phải UAT vận hành hoặc phê duyệt chạy thật.
 
+CI9f7a23c: intake502PASS/2FAIL gồm ca journey và parent; takeover/STOP PASS. Journey dừng trước AI vì fixture công ty dùng chung vượt giới hạn source_inventory (100accounts/100Pages/1000bindings/1000forms). Bản sửa tạo tenant/company/users/region/account/pipeline/source/library riêng trong journey.fixture, giữ signed intake và các RPC nghiệp vụ; không lọc nguồn hoặc nâng giới hạn. Assertion inventory.complete=true, đúng2accounts/1Page trước hành trình. Restore harness chọn công ty thực sự có receipt AUTHORIZED/UNKNOWN để kiểm bảo toàn reservation, thay vì chọn ngẫu nhiên công ty chỉ có usage thành công. Không đổi runtime/SQL. Cần CI mới chứng minh nhánh happy đầy đủ.
+
 ## Điểm nối cần chứng minh
 
 Các checkpoint trước kiểm từng chức năng hoặc dùng hàm infer giả ở lượt khảo sát. Ca mới tại facebookCustomerCare.journey.cases.js giữ cùng Lead/Customer/thread/Agent qua cả lượt ANSWER và SURVEY; cả hai đi qua careRuntime và Responses adapter thực, chỉ HTTP nhà cung cấp được giả lập.

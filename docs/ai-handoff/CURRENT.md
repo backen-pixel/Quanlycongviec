@@ -1,5 +1,7 @@
 ## 04/10/2026 — Đang kiểm hành trình AI tích hợp
 
+CI9f7a23c dừng ở giới hạn nguồn của fixture tích lũy, trước lượt AI; takeover/STOP PASS. Đã tách tenant/company và cấu hình journey riêng, giữ giới hạn/đường dịch vụ thực; bản sửa chưa có CI cuối. Không đổi runtime/SQL.
+
 Thêm ca signed intake → operator link/qualification → Responses adapter ANSWER → answer ACK/echo → Responses adapter SURVEY → customer confirmation → booking/outcome/handoff → cohort/cost API và bộ kiểm frontend. Dùng cùng Lead/thread/Agent; tiền từ account không Lead vẫn tính, lỗi nguồn không thành0, STOP/takeover chặn trả lời. HTTP giả, không seed kết quả nghiệp vụ hoặc mở quyền thật. Syntax PASS; CI/PostgreSQL và review cuối chờ. [Phạm vi/tiêu chí/giới hạn](vpt-marketing-automation/AI_CUSTOMER_JOURNEY.md). Full goal ACTIVE.
 
 ---
