@@ -1,6 +1,6 @@
 # Dừng và chờ các worker nhận khách, gửi lịch
 
-Ngày 04/10/2026. Baseline `7b4e94cf7d6fac0e8984d12ef60a67adf06faa9c`, PR22 draft. Đây là bước triển khai trong mục tiêu Facebook → CRM → khảo sát → dashboard, không phải nghiệm thu toàn hệ thống hoặc mở đợt quảng cáo.
+Ngày 04/10/2026. Runtime `f3ea85ee6f453ec0931a630c6899cc4331affd3c`, tree `7cb56c23623d9801672badfeb453557e4c0a694f`, baseline `7b4e94cf7d6fac0e8984d12ef60a67adf06faa9c`, PR22 draft. Đây là bước triển khai trong mục tiêu Facebook → CRM → khảo sát → dashboard, không phải nghiệm thu toàn hệ thống hoặc mở đợt quảng cáo.
 
 ## Thay đổi vận hành
 
@@ -23,9 +23,16 @@ Report **không bao gồm** HTTP receiver đã vào handler, công việc sau AC
 
 Local Windows: 1.276 ca PASS, 0 fail, 2 skip cho SIGTERM/SIGINT native Linux. Bộ mới kiểm stop trước microtask, promise chung, lỗi/timeout/late completion, dừng từng worker khi claim/provider/commit/send/result, chờ lưu ACK, scheduler đã queued, mọi member stop dù lỗi, middleware 503, cờ mặc định tắt, mạng chưa đóng, tín hiệu lặp và report không lộ lỗi riêng tư. Router registry được thực thi trong VM với worker giả; kiểm thứ tự middleware trong nguồn server. Không khởi động bootstrap CRM thật.
 
-Review độc lập phát hiện lỗi P2 khi đóng socket bỏ qua lỗi callback/promise; đã sửa để chờ cả hai kênh và kiểm callback lỗi, promise reject, callback thành công rồi reject. Kết luận review bản sửa và CI còn chờ.
+Review độc lập phát hiện lỗi P2 khi đóng socket bỏ qua lỗi callback/promise; đã sửa để chờ cả hai kênh và kiểm callback lỗi, promise reject, callback thành công rồi reject. Reviewer đã đối chiếu năm blob helper/test/fixture đã công bố, log Node22 và CI merge; kết luận PASS checkpoint tại runtime trên. Không còn finding chặn trong phạm vi này.
 
-Hai ca native Linux chạy child Node + HTTP loopback, worker giả và tín hiệu OS thật: SIGTERM rồi SIGINT vẫn chờ lưu receipt trước exit; deadline hết thì giữ active và exit lỗi. Không DB/provider/model hoặc tin gửi khách. Cần kết quả CI Node18/22 và review độc lập đúng phiên bản trước PASS. PostgreSQL không đổi trong delta này; bộ regression vẫn chạy để kiểm tích hợp nhánh.
+Hai ca native Linux chạy child Node + HTTP loopback, worker giả và tín hiệu OS thật: SIGTERM rồi SIGINT vẫn chờ lưu receipt trước exit; deadline hết thì giữ active và exit lỗi. Không DB/provider/model hoặc tin gửi khách. Cả hai đã PASS trên Node18/22. PostgreSQL không đổi trong delta này; bộ regression vẫn chạy để kiểm tích hợp nhánh.
+
+- [Automation CI37180023384](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37180023384): cả 10 job SUCCESS. Mỗi bản Node18/22: 843+26+359+50 = **1.278 PASS, 0 fail, 0 skip**; nhóm50 gồm42 ca lifecycle/shutdown (2 ca native Linux) và8 regression Messenger.
+- Node22 job111370529825 và Node18 job111370529918 có log xác nhận hai ca native signal; lead-intake PostgreSQL job111370529821: **348/0/0**. Frontend job111370529952 build thành công,10.333 modules.
+- [Report CI37180023383](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37180023383) và [Messenger CI37180023406](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37180023406) đều SUCCESS.
+- CI checkout merge `6ffd63785867bafb6b46214414435498f5e0dfae`. Git API xác nhận tree đúng runtime, hai parent là `e16c885ae7c2305645be02a1227bf378cb59137f` và runtime `f3ea85ee6f453ec0931a630c6899cc4331affd3c`.
+
+Ca VM/source wiring không thay nghiệm thu bootstrap Express/Socket.IO/Redis/Supabase thật. CI không chứng minh external effect đã ngừng, UNKNOWN đã đối soát hay CPQL thực tế. Commit khép hồ sơ chỉ đổi tài liệu; checks của head đó theo dõi trong PR22, không tự mở quyền phát hành.
 
 ## Hoàn tác và phần còn lại
 

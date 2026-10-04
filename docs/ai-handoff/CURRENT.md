@@ -1,8 +1,8 @@
-## 04/10/2026 — Đang nghiệm thu dừng và chờ năm worker
+## 04/10/2026 — Dừng/chờ năm worker đã qua review và kiểm thử tiến trình
 
-Đã nối lifecycle cho Messenger, Lead intake/census và hai worker gửi lịch. Group ngừng nhận lượt mới, chờ promise hiện hành và kết quả đã gửi; server shutdown có cờ riêng mặc định tắt, deadline chung và báo rõ phạm vi. Local1.276 PASS/0fail,2ca native Linux chờ CI; review toàn delta đang chờ. [Hợp đồng, kiểm thử và giới hạn](vpt-marketing-automation/WORKER_DRAIN.md).
+Runtimef3ea85e nối lifecycle và server adapter mặc định tắt; ngừng nhận lượt mới, chờ kết quả đang gửi/lưu, lỗi đóng mạng không báo thành công giả. Node18/22 mỗi bản1.278/0/0 gồm2ca SIGTERM/SIGINT native Linux; intakePostgreSQL348/0/0, cả10job/build/report/Messenger SUCCESS. Reviewer độc lập đã xác minh published blobs/log CI và kết luận PASS checkpoint. [Phạm vi, bằng chứng và hoàn tác](vpt-marketing-automation/WORKER_DRAIN.md).
 
-Chưa chứng minh legacy/post-ACK/push/tiến trình khác đã dừng; chưa bật cờ, mở hold SQL687, đối soát UNKNOWN hoặc cutover. Full goal ACTIVE; còn cấu hình AI/lịch/người nhận, UAT và Founder release. Chưa dữ liệu thật đạt250k hoặc phát hành.
+Chưa chứng minh legacy/post-ACK/push/tiến trình khác đã dừng. Cờ vẫn tắt; chưa đối soát UNKNOWN, chuyển Page, tắt hold SQL687 hoặc phát hành. Full goal ACTIVE; tiếp tục dừng/chờ đường cũ, khép AI/lịch/người nhận, UAT và Founder release. Chưa dữ liệu thật đạt250k.
 
 ---
 
