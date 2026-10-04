@@ -1,3 +1,11 @@
+## 04/10/2026 — Đang nghiệm thu dừng và chờ năm worker
+
+Đã nối lifecycle cho Messenger, Lead intake/census và hai worker gửi lịch. Group ngừng nhận lượt mới, chờ promise hiện hành và kết quả đã gửi; server shutdown có cờ riêng mặc định tắt, deadline chung và báo rõ phạm vi. Local1.276 PASS/0fail,2ca native Linux chờ CI; review toàn delta đang chờ. [Hợp đồng, kiểm thử và giới hạn](vpt-marketing-automation/WORKER_DRAIN.md).
+
+Chưa chứng minh legacy/post-ACK/push/tiến trình khác đã dừng; chưa bật cờ, mở hold SQL687, đối soát UNKNOWN hoặc cutover. Full goal ACTIVE; còn cấu hình AI/lịch/người nhận, UAT và Founder release. Chưa dữ liệu thật đạt250k hoặc phát hành.
+
+---
+
 ## 04/10/2026 — Kiểm chứng bảo trì đường ghi legacy
 
 Thêm SQL687/private hold, `facebookLegacyHold.cases.js`, nối journal PG và workflow; cập nhật CURRENT/README cùng [hợp đồng](vpt-marketing-automation/LEGACY_WRITE_HOLD.md). 18 root và FK descendants, guard cả statement/replica, table-lock trước state, audit/revision/hash/request; mặc định inactive. Runtime df51b95, bản kiểm9ecbec4/treefea75d19: PG348/0/0 gồm13 ca mới, Node22=1228/0/0, cả10 job/build/report/Messenger SUCCESS. Cú pháp/diff kiểm local. SET NULL dùng parent riêng sau khi đọc log thấy fixture đầu chỉ tới CASCADE; SQL không đổi. Reviewer bổ sung nhánh assignment/artifact, isolation inactive và DDL freeze; reviewer độc lập đã đối chiếu published blobs/log CI và PASS checkpoint maintenance. Không tác động hệ thống thật; UNKNOWN/claim giữ nguyên và mục tiêu đầy đủ còn ACTIVE.

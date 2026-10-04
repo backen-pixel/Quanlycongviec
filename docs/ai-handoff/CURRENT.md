@@ -1,3 +1,11 @@
+## 04/10/2026 — Đang nghiệm thu dừng và chờ năm worker
+
+Đã nối lifecycle cho Messenger, Lead intake/census và hai worker gửi lịch. Group ngừng nhận lượt mới, chờ promise hiện hành và kết quả đã gửi; server shutdown có cờ riêng mặc định tắt, deadline chung và báo rõ phạm vi. Local1.276 PASS/0fail,2ca native Linux chờ CI; review toàn delta đang chờ. [Hợp đồng, kiểm thử và giới hạn](vpt-marketing-automation/WORKER_DRAIN.md).
+
+Chưa chứng minh legacy/post-ACK/push/tiến trình khác đã dừng; chưa bật cờ, mở hold SQL687, đối soát UNKNOWN hoặc cutover. Full goal ACTIVE; còn cấu hình AI/lịch/người nhận, UAT và Founder release. Chưa dữ liệu thật đạt250k hoặc phát hành.
+
+---
+
 ## 04/10/2026 — Bảo trì đường ghi cũ đã qua PostgreSQL
 
 SQL687 bổ sung hold private, mặc định tắt, chặn toàn bộ DML/TRUNCATE trên 18 bảng gốc và FK descendants. Bản kiểm9ecbec4: PostgreSQL348/0/0 gồm13 ca mới, Node22=1228/0/0, cả10 job/build/report/Messenger SUCCESS. Đã sửa fixture để kiểm SET NULL riêng, log xác nhận nhánh thật. Reviewer độc lập đã đối chiếu published blobs/log CI và kết luận PASS checkpoint maintenance. Hold áp dụng mọi công ty trong manifest; cài migration yêu cầu ghi READ COMMITTED cả khi inactive. Không đổi UNKNOWN/claim hoặc coi process đã dừng.

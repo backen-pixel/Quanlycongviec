@@ -88,7 +88,7 @@ test('disabling sending after Meta accepts still preserves historical ACK',async
 });
 test('overlapping drains share one worker and cannot duplicate a send',async()=>{
  let release;const pending=new Promise(r=>release=r);const h=harness({onSend:async()=>{await pending;return{ok:true,json:async()=>({recipient_id:'456',message_id:'one'})};}});
- const first=h.worker.drain();await h.worker.drain();release();await first;assert.equal(h.state.sends.length,1);
+ const first=h.worker.drain();assert.equal(h.worker.drain(),first);release();await first;assert.equal(h.state.sends.length,1);
 });
 test('own-echo fields preserve message hash and reserved metadata is removed from legacy consumers',()=>{
  const body={object:'page',entry:[{id:'123',messaging:[{sender:{id:'123'},recipient:{id:'456'},timestamp:Date.now(),message:{mid:'echo',is_echo:true,app_id:789,text:'proposal',metadata:'VPT_SURVEY_OUTCOME_V1:'+randomUUID()}}]}]};

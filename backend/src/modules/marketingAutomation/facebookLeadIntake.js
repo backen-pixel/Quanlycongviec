@@ -71,7 +71,8 @@ async function readVerifiedLead({receipt,context,version,fetchImpl=fetch,now=Dat
  return {proof,contact:mapContact(lead.field_data,context.fieldMap)};
 }
 function createLeadIntake({db,isPrimary,pages=pagesFromEnv(),secret=()=>process.env.VPT_FACEBOOK_APP_SECRET,version=()=>process.env.VPT_META_GRAPH_VERSION,readSource=readVerifiedLead,onError=()=>{},isPaused=()=>process.env.VPT_FB_LEAD_INTAKE_WORKER_PAUSED==='1'}){
- let draining=false;
+ const lifecycle=require('../../helpers/workerDrain').createWorkerDrain(drainOnce);
+ const paused=()=>lifecycle.isStopped()||isPaused();
  async function rpc(name,args){
   if(isPrimary()!==true)throw fail('PRIMARY_ONLY_REQUIRED');
   const r=await db.rpc(name,args);if(r?.error||r?.data===null||r?.data===undefined)throw fail('INTAKE_STORAGE_UNAVAILABLE');return r.data;
@@ -86,18 +87,19 @@ function createLeadIntake({db,isPrimary,pages=pagesFromEnv(),secret=()=>process.
   if(events.length)await rpc('marketing_fb_lead_enqueue',{p_events:events,p_delivery_hash:createHash('sha256').update(req.facebookRawBody).digest('hex')});
   return {enabled:true,accepted:events.length};
  }
- async function drain(){
-  if(draining||!pages.size||isPaused())return;draining=true;
+ async function drainOnce(){
+  if(!pages.size||paused())return;
   try{
    for(let i=0;i<20;i++){
-    if(isPaused())break;
+    if(paused())break;
     const token=randomUUID(),rows=await rpc('marketing_fb_lead_claim',{p_pages:[...pages],p_token:token});
     const receipt=Array.isArray(rows)?rows[0]:rows;if(!receipt)break;
+    if(paused())break;
     try{
      const context=await rpc('marketing_fb_lead_context',{p_id:receipt.id,p_token:token});
-     if(isPaused())break;
+     if(paused())break;
      const result=await readSource({receipt,context,version:version()});
-     if(isPaused())break;
+     if(paused())break;
      await rpc('crm_accept_facebook_lead',{p_id:receipt.id,p_token:token,p_context_version:context.contextVersion,p_proof:result.proof,p_contact:result.contact});
     }catch(e){
      const known=new Set(['SOURCE_CONFIG','PROVIDER_UNAVAILABLE','PROVIDER_SCOPE_MISMATCH','CONFLICTING_PAID_SOURCE','INVALID_PROVIDER_FIELDS','AMBIGUOUS_CONTACT','INVALID_CONTACT']);
@@ -106,8 +108,8 @@ function createLeadIntake({db,isPrimary,pages=pagesFromEnv(),secret=()=>process.
      onError(code);
     }
    }
-  }catch{onError('INTAKE_STORAGE_UNAVAILABLE');}finally{draining=false;}
+  }catch{onError('INTAKE_STORAGE_UNAVAILABLE');}
  }
- return {receive,drain,pages};
+ return {receive,...lifecycle,pages};
 }
 module.exports={pagesFromEnv,captureFacebookRawBody,verifySignature,extractLeadEvents,mapContact,readGraph,readVerifiedLead,createLeadIntake};

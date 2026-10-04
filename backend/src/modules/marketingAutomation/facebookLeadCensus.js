@@ -42,22 +42,23 @@ async function readCensusPage({context,version,fetchImpl=fetch}){
 }
 
 function createLeadCensus({db,isPrimary,pages,env=process.env,readSource=readCensusPage,onError=()=>{}}){
- let busy=false;
- const enabled=()=>env.VPT_FB_LEAD_CENSUS==='1'&&env.VPT_FB_LEAD_INTAKE_WORKER_PAUSED!=='1'&&pages?.size>0;
+ const lifecycle=require('../../helpers/workerDrain').createWorkerDrain(drainOnce);
+ const enabled=()=>!lifecycle.isStopped()&&env.VPT_FB_LEAD_CENSUS==='1'&&env.VPT_FB_LEAD_INTAKE_WORKER_PAUSED!=='1'&&pages?.size>0;
  async function rpc(name,args){if(!enabled()||isPrimary()!==true)throw fail('CENSUS_DISABLED');const r=await db.rpc(name,args);if(r?.error||r?.data===null||r?.data===undefined)throw fail('CENSUS_STORAGE_UNAVAILABLE');return r.data;}
- async function drain(){
-  if(busy||!enabled()||isPrimary()!==true)return;busy=true;
+ async function drainOnce(){
+  if(!enabled()||isPrimary()!==true)return;
   try{for(let i=0;i<20;i++){
    if(!enabled()||isPrimary()!==true)break;
    const token=randomUUID(),rows=await rpc('marketing_fb_census_claim',{p_pages:[...pages],p_token:token});const task=Array.isArray(rows)?rows[0]:rows;if(!task)break;
+   if(!enabled()||isPrimary()!==true)break;
    try{
     const context=await rpc('marketing_fb_census_context',{p_task:task.id,p_token:token});
     if(!enabled()||isPrimary()!==true)break;
     const result=await readSource({context,version:env.VPT_META_GRAPH_VERSION});
     await rpc('marketing_fb_census_commit',{p_task:task.id,p_token:token,p_chunk:result});
    }catch(e){const known=['CENSUS_CONFIG','CENSUS_PROVIDER_UNAVAILABLE','CENSUS_PAGING_INVALID','CENSUS_PAGING_LOOP','CENSUS_ROW_INVALID','CENSUS_SCOPE_MISMATCH'];const code=known.includes(e.code)?e.code:'CENSUS_STORAGE_UNAVAILABLE';try{await rpc('marketing_fb_census_fail',{p_task:task.id,p_token:token,p_code:code});}catch{/* lease expiry permits replay of the same cursor */}onError(code);}
-  }}catch{onError('CENSUS_STORAGE_UNAVAILABLE');}finally{busy=false;}
+  }}catch{onError('CENSUS_STORAGE_UNAVAILABLE');}
  }
- return{drain};
+ return lifecycle;
 }
 module.exports={readCensusPage,createLeadCensus};

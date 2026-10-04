@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const config = require('../config');
 const r = express.Router();
 const { enabledPageIds, enqueueMessengerEvents, captureMessengerReferral, linkMessengerAttribution, createMessengerReceiptWorker } = require('../helpers/facebookMessengerReceipt');
+const { createWorkerGroup } = require('../helpers/workerDrain');
 const DURABLE_MESSENGER_PAGES = enabledPageIds();
 const { isFacebookAtomicLeadScope, createFacebookLeadOnce } = require('../helpers/facebookAtomicLead');
 const { runFacebookLeadBatch } = require('../helpers/facebookLegacyBatch');
@@ -9660,29 +9661,22 @@ r.post('/contacts/:contactId/send-drive-folder', authMiddleware, async (req, res
   }
 });
 
-// Controlled survey delivery is default-off; durable recovery also runs after restart.
-if (process.env.VPT_SURVEY_CONFIRMATIONS === '1') {
-  const surveyTimer = setInterval(() => { void facebookSurveyDispatch.drain(); void facebookSurveyOutcomes.drain(); }, 5000);
-  surveyTimer.unref();
-  setImmediate(() => { void facebookSurveyDispatch.drain(); void facebookSurveyOutcomes.drain(); });
-}
-// Timers do not prevent shutdown. Pending/expired receipts are recovered after restart.
-if (facebookLeadIntake.pages.size) {
-  const intakeTimer = setInterval(() => { void facebookLeadIntake.drain(); void facebookLeadCensus.drain(); }, 5000);
-  intakeTimer.unref();
-  setImmediate(() => { void facebookLeadIntake.drain(); void facebookLeadCensus.drain(); });
-}
+// One registry owns the existing durable-worker schedules and stop/join lifecycle.
 const messengerReceiptWorker = createMessengerReceiptWorker({
   db: supabase,
   pageIds: DURABLE_MESSENGER_PAGES,
   processEvent: (pageId, event) => handleMessaging(pageId, event, r._ioRef, true),
   onError: (code) => console.warn('[FB durable]', code),
 });
-if (DURABLE_MESSENGER_PAGES.size) {
-  const timer = setInterval(() => { void messengerReceiptWorker.drain(); }, 5000);
-  timer.unref();
-  setImmediate(() => { void messengerReceiptWorker.drain(); });
-}
+const durableWorkers = createWorkerGroup({
+  messenger: messengerReceiptWorker, leadIntake: facebookLeadIntake, leadCensus: facebookLeadCensus,
+  surveyDispatch: facebookSurveyDispatch, surveyOutcomes: facebookSurveyOutcomes,
+}, { onError: name => console.warn('[FB worker]', name, 'DRAIN_FAILED') });
+// Internal lifecycle handle, never an HTTP endpoint or a whole-process drain claim.
+r.workerDrainGroup = durableWorkers;
+if (process.env.VPT_SURVEY_CONFIRMATIONS === '1') durableWorkers.schedule(['surveyDispatch', 'surveyOutcomes'], 5000);
+if (facebookLeadIntake.pages.size) durableWorkers.schedule(['leadIntake', 'leadCensus'], 5000);
+if (DURABLE_MESSENGER_PAGES.size) durableWorkers.schedule(['messenger'], 5000);
 // ═══════════════════════════════════════════════════════════════
 // ĐIỀU KHIỂN TRƯỜNG WEBHOOK (xem page nào đang nhận gì, bật/tắt tại chỗ)
 // ═══════════════════════════════════════════════════════════════

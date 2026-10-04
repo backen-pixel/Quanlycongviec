@@ -30,6 +30,9 @@ const {
 } = require('./helpers/apiRateLimit');
 
 const app = express();
+let workerShutdown = null;
+// Before every HTTP route, including webhooks; existing post-ACK work is outside this gate.
+app.use((req, res, next) => workerShutdown ? workerShutdown.middleware(req, res, next) : next());
 // Render / reverse proxy: 1 hop — cần để rate-limit lấy đúng IP client
 app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS) || 1);
 
@@ -445,6 +448,10 @@ app.use('/api/app-updates', require('./routes/appUpdates'));
 app.use('/api/knowledge', require('./routes/knowledge'));
 const facebookRouter = require('./routes/facebook');
 facebookRouter._ioRef = io;
+workerShutdown = require('./helpers/workerShutdown').configureWorkerShutdown({
+  server, io, workers: facebookRouter.workerDrainGroup, revision: process.env.RENDER_GIT_COMMIT,
+  onReport: report => console.log('[worker shutdown]', JSON.stringify(report)),
+});
 app.use('/api/facebook', facebookRouter);
 const zaloRouter = require('./routes/zalo');
 zaloRouter._ioRef = io;

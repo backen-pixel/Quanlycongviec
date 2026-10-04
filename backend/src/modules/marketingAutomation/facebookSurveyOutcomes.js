@@ -10,8 +10,8 @@ const fail=code=>Object.assign(new Error(code),{code});
 function createSurveyOutcomeDispatch({db,isPrimary,env=process.env,fetchImpl=globalThis.fetch,now=Date.now,
  monotonic=()=>performance.now(),workerId=randomUUID(),onError=()=>{}}){
  if(!uuid(workerId))throw fail('INVALID_WORKER_ID');
- let running=false;
- const receiveEnabled=()=>env.VPT_SURVEY_OUTCOMES==='1'&&env.VPT_SURVEY_CONFIRMATIONS==='1'&&isPrimary()===true;
+ const lifecycle=require('../../helpers/workerDrain').createWorkerDrain(drainOnce);
+ const receiveEnabled=()=>!lifecycle.isStopped()&&env.VPT_SURVEY_OUTCOMES==='1'&&env.VPT_SURVEY_CONFIRMATIONS==='1'&&isPrimary()===true;
  const sendEnabled=page=>receiveEnabled()&&env.VPT_SURVEY_OUTCOMES==='1'&&carePages(env).has(page);
  async function rpc(name,args){
   if(isPrimary()!==true)throw fail('PRIMARY_ONLY_REQUIRED');
@@ -60,10 +60,8 @@ function createSurveyOutcomeDispatch({db,isPrimary,env=process.env,fetchImpl=glo
   }catch{result={status:'UNCERTAIN',reason:'TRANSPORT_UNKNOWN'};}
   await record(c.attemptId,result);
  }
- async function drain(){
-  if(running||!receiveEnabled())return;
-  running=true;
-  try{
+ async function drainOnce(){
+  if(!receiveEnabled())return;
    for(const page of carePages(env)){
     if(!receiveEnabled())break;
     try{
@@ -72,13 +70,13 @@ function createSurveyOutcomeDispatch({db,isPrimary,env=process.env,fetchImpl=glo
      const {data:credential,error}=await db.from('facebook_pages').select('page_id,default_company_id,is_active,access_token').eq('page_id',page).maybeSingle();
      if(error||credential?.page_id!==page||credential.is_active!==true||!uuid(credential.default_company_id)
       ||typeof credential.access_token!=='string'||!credential.access_token.trim())throw fail('SURVEY_PAGE_CREDENTIAL_UNAVAILABLE');
+     if(!sendEnabled(page))break;
      const candidates=await rpc('crm_survey_outcome_candidates',{p_page:page,p_limit:10});
      if(!Array.isArray(candidates)||candidates.length>10||candidates.some(id=>!uuid(id)))throw fail('SURVEY_CANDIDATES_INVALID');
      for(const proposal of candidates){if(!sendEnabled(page))break;await dispatch(page,proposal,credential);}
     }catch{onError('SURVEY_OUTCOME_UNAVAILABLE');}
    }
-  }finally{running=false;}
  }
- return {drain};
+ return lifecycle;
 }
 module.exports={createSurveyOutcomeDispatch};

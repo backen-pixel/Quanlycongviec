@@ -1,6 +1,7 @@
 'use strict';
 
 const { createHash, randomUUID } = require('node:crypto');
+const { createWorkerDrain } = require('./workerDrain');
 
 function enabledPageIds(raw = process.env.FB_DURABLE_MESSENGER_PAGE_IDS || '') {
   return new Set(String(raw).split(',').map(s => s.trim()).filter(Boolean));
@@ -68,18 +69,24 @@ async function linkMessengerAttribution(db, pageId, contactId) {
 }
 
 function createMessengerReceiptWorker({ db, processEvent, pageIds = enabledPageIds(), onError = () => {} }) {
-  let draining = false;
-  async function drain() {
-    if (draining || !pageIds.size) return;
-    draining = true;
+  const lifecycle = createWorkerDrain(drainOnce);
+  async function drainOnce() {
+    if (!pageIds.size || lifecycle.isStopped()) return;
     try {
       // Bounded batch, one event per lease. Other instances use SKIP LOCKED.
       for (let i = 0; i < 20; i++) {
+        if (lifecycle.isStopped()) break;
         const token = randomUUID();
         const rows = assertOk(await db.rpc('facebook_claim_receipt_v1', { p_page_ids: [...pageIds], p_token: token }), 'claim');
         const row = Array.isArray(rows) ? rows[0] : rows;
         if (!row) break;
         try {
+          if (lifecycle.isStopped()) {
+            // Nothing was dispatched. Return only our own lease, never mark done.
+            const released = assertOk(await db.rpc('facebook_finish_receipt_v1', { p_id: row.id, p_token: token, p_success: false }), 'release');
+            if (released !== true) onError('FB_DURABLE_RELEASE_UNCERTAIN');
+            break;
+          }
           await processEvent(row.page_id, row.payload);
           const finished = assertOk(await db.rpc('facebook_finish_receipt_v1', { p_id: row.id, p_token: token, p_success: true }), 'finish');
           if (finished !== true) {
@@ -94,9 +101,8 @@ function createMessengerReceiptWorker({ db, processEvent, pageIds = enabledPageI
         }
       }
     } catch (err) { onError(err.code || 'FB_DURABLE_WORKER_ERROR'); }
-    finally { draining = false; }
   }
-  return { drain };
+  return lifecycle;
 }
 
 module.exports = { enabledPageIds, receiptKey, extractReferral, enqueueMessengerEvents, captureMessengerReferral, linkMessengerAttribution, createMessengerReceiptWorker };

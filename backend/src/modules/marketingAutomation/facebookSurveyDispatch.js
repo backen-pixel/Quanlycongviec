@@ -10,8 +10,8 @@ const fail=code=>Object.assign(new Error(code),{code});
 function createSurveyDispatch({db,isPrimary,env=process.env,fetchImpl=globalThis.fetch,now=Date.now,
  monotonic=()=>performance.now(),workerId=randomUUID(),onError=()=>{}}){
  if(!uuid(workerId))throw fail('INVALID_WORKER_ID');
- let running=false;
- const receiveEnabled=()=>env.VPT_SURVEY_CONFIRMATIONS==='1'&&isPrimary()===true;
+ const lifecycle=require('../../helpers/workerDrain').createWorkerDrain(drainOnce);
+ const receiveEnabled=()=>!lifecycle.isStopped()&&env.VPT_SURVEY_CONFIRMATIONS==='1'&&isPrimary()===true;
  const sendEnabled=page=>receiveEnabled()&&env.VPT_SURVEY_DISPATCH==='1'&&carePages(env).has(page);
  async function rpc(name,args){
   if(isPrimary()!==true)throw fail('PRIMARY_ONLY_REQUIRED');
@@ -65,26 +65,25 @@ function createSurveyDispatch({db,isPrimary,env=process.env,fetchImpl=globalThis
   // A distinct transaction acquires booking locks in the domain's own order.
   if(receiveEnabled())await rpc('crm_survey_confirmation_reconcile',{p_page:page,p_limit:50});
  }
- async function drain(){
-  if(running||!receiveEnabled())return;
-  running=true;
-  try{
+ async function drainOnce(){
+  if(!receiveEnabled())return;
    for(const page of carePages(env)){
     if(!receiveEnabled())break;
     try{
      await rpc('crm_survey_dispatch_recover',{p_page:page,p_limit:10});
+     if(!receiveEnabled())break;
      await rpc('crm_survey_confirmation_reconcile',{p_page:page,p_limit:50});
      if(!sendEnabled(page))continue;
      const {data:credential,error}=await db.from('facebook_pages').select('page_id,default_company_id,is_active,access_token').eq('page_id',page).maybeSingle();
      if(error||credential?.page_id!==page||credential.is_active!==true||!uuid(credential.default_company_id)
       ||typeof credential.access_token!=='string'||!credential.access_token.trim())throw fail('SURVEY_PAGE_CREDENTIAL_UNAVAILABLE');
+     if(!sendEnabled(page))break;
      const candidates=await rpc('crm_survey_dispatch_candidates',{p_page:page,p_limit:10});
      if(!Array.isArray(candidates)||candidates.length>10||candidates.some(id=>!uuid(id)))throw fail('SURVEY_CANDIDATES_INVALID');
      for(const proposal of candidates){if(!sendEnabled(page))break;await dispatch(page,proposal,credential);}
     }catch{onError('SURVEY_DISPATCH_UNAVAILABLE');}
    }
-  }finally{running=false;}
  }
- return {drain};
+ return lifecycle;
 }
 module.exports={createSurveyDispatch};
