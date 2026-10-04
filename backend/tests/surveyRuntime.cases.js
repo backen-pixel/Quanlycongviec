@@ -39,7 +39,7 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,enroll,
  const count=async x=>(await db.query('SELECT count(*)::int n FROM crm_survey_control.bookings WHERE thread_id=$1',[x.c.thread])).rows[0].n;
  const storage=client=>({rpc:async(n,a)=>{try{return{data:await query(n,Object.values(a).map(v=>Array.isArray(v)?JSON.stringify(v):v),client)}}catch(error){return{error}}},
   from:()=>({select:()=>({eq:(_k,page)=>({maybeSingle:async()=>({data:(await db.query('SELECT * FROM facebook_pages WHERE page_id=$1',[page])).rows[0]})})})})});
- const env=x=>({VPT_FB_CARE_PAGES:x.c.page,VPT_FACEBOOK_APP_SECRET:'synthetic-runtime-survey-secret',VPT_SURVEY_CONFIRMATIONS:'1',VPT_SURVEY_DISPATCH:'1',VPT_SURVEY_OUTCOMES:'1'});
+ const env=x=>({VPT_FB_CARE_PAGES:x.c.page,VPT_FACEBOOK_APP_SECRET:'synthetic-runtime-survey-secret',VPT_SURVEY_CONFIRMATIONS:'1',VPT_SURVEY_DISPATCH:'1',VPT_SURVEY_OUTCOMES:'1',VPT_SURVEY_OUTCOMES_SEND:'1'});
  const stamp=async()=>Number((await db.query('SELECT floor(extract(epoch FROM clock_timestamp())*1000)::bigint n')).rows[0].n);
  const incoming=async(x,text='Xác nhận lịch',payload)=>({sender:{id:x.c.psid},recipient:{id:x.c.page},timestamp:await stamp(),message:{mid:randomUUID(),text,...(payload?{quick_reply:{payload}}:{})}});
  const echo=async(x,payload,mid=randomUUID())=>({sender:{id:x.c.page},recipient:{id:x.c.psid},timestamp:await stamp(),message:{mid,text:payload.message.text,is_echo:true,app_id:789,metadata:payload.message.metadata}});

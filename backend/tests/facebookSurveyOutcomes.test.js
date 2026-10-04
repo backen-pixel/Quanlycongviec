@@ -4,14 +4,17 @@ const {createSurveyOutcomeDispatch}=require('../src/modules/marketingAutomation/
 const {extractCareEvents,redactSurveyConfirmationPayloads}=require('../src/modules/marketingAutomation/facebookCustomerCare');
 function harness(options={}){
  const time=Date.now(),company=randomUUID(),proposal=randomUUID(),attempt=randomUUID(),token=randomUUID();
- const env={VPT_FB_CARE_PAGES:'123',VPT_SURVEY_CONFIRMATIONS:'1',VPT_SURVEY_OUTCOMES:'1',...options.env};
- const state={primary:true,claimed:false,sends:[],results:[],calls:[],errors:[],now:time,mono:0};
+ const env={VPT_FB_CARE_PAGES:'123',VPT_SURVEY_CONFIRMATIONS:'1',VPT_SURVEY_OUTCOMES:'1',VPT_SURVEY_OUTCOMES_SEND:'1',...options.env};
+ const state={primary:true,claimed:false,sends:[],results:[],calls:[],errors:[],credentialReads:0,now:time,mono:0};
  const c={status:'CLAIMED',attemptId:attempt,proposalId:proposal,outcomeId:proposal,companyId:company,pageId:'123',psid:'456',appId:'789',graphVersion:'v24.0',
   authorizedAt:new Date(time).toISOString(),sendBefore:new Date(time+5000).toISOString(),
   payload:{recipient:{id:'456'},messaging_type:'RESPONSE',message:{text:'Đề xuất lịch khảo sát',metadata:'VPT_SURVEY_OUTCOME_V1:'+attempt}}};
  const db={rpc:async(name,args)=>{
   state.calls.push(name);
-  if(name==='crm_survey_outcome_candidates')return{data:state.claimed?[]:[proposal]};
+  if(name==='crm_survey_outcome_candidates'){
+   if(options.afterCandidates)options.afterCandidates(state,c,env);
+   return{data:state.claimed?[]:[proposal]};
+  }
   if(name==='crm_survey_outcome_claim'){
    if(state.claimed)return{data:{status:'UNAVAILABLE'}};state.claimed=true;
    if(options.claimLost)return{error:{code:'lost'}};
@@ -24,7 +27,7 @@ function harness(options={}){
    return{data:{status:args.p_result.status==='ACK'?'SENT':'UNCERTAIN'}};
   }
   return{data:[]};
- },from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{page_id:'123',default_company_id:company,is_active:true,access_token:'synthetic-token',...options.credential}})})})})};
+ },from:()=>{state.credentialReads++;return{select:()=>({eq:()=>({maybeSingle:async()=>({data:{page_id:'123',default_company_id:company,is_active:true,access_token:'synthetic-token',...options.credential}})})})};}};
  const fetchImpl=async(url,init)=>{
   state.sends.push({url,init});
   if(options.onSend)return options.onSend(state,c,env);
@@ -40,6 +43,32 @@ test('default-off worker and backup perform no reads or provider calls',async()=
 });
 test('outcome dispatch disabled performs no reads or sends',async()=>{
  const h=harness({env:{VPT_SURVEY_OUTCOMES:'0'}});await h.worker.drain();assert.equal(h.state.sends.length,0);assert.deepEqual(h.state.calls,[]);
+});
+test('missing or non-opted-in send flag keeps recovery without credentials, claim or provider calls',async()=>{
+ for(const value of [undefined,'0','true',true]){
+  const h=harness({env:{VPT_SURVEY_OUTCOMES_SEND:value}});await h.worker.drain();await h.restart().drain();
+  assert.deepEqual(h.state.calls,['crm_survey_outcome_recover','crm_survey_outcome_recover']);
+  assert.equal(h.state.credentialReads,0);assert.equal(h.state.claimed,false);assert.equal(h.state.sends.length,0);assert.deepEqual(h.state.results,[]);
+ }
+});
+test('explicit send opt-in resumes one queued item and subsequent send pause still recovers',async()=>{
+ const h=harness({env:{VPT_SURVEY_OUTCOMES_SEND:'0'}});await h.worker.drain();
+ h.env.VPT_SURVEY_OUTCOMES_SEND='1';await h.restart().drain();assert.equal(h.state.sends.length,1);
+ h.env.VPT_SURVEY_OUTCOMES_SEND='0';const reads=h.state.credentialReads,offset=h.state.calls.length;
+ await h.restart().drain();assert.equal(h.state.sends.length,1);assert.equal(h.state.credentialReads,reads);
+ assert.deepEqual(h.state.calls.slice(offset),['crm_survey_outcome_recover']);
+});
+test('send pause while candidates are read prevents acquiring a claim',async()=>{
+ const h=harness({afterCandidates:(_s,_c,e)=>{e.VPT_SURVEY_OUTCOMES_SEND='0';}});
+ await h.worker.drain();assert.equal(h.state.claimed,false);assert.equal(h.state.sends.length,0);
+ assert.ok(!h.state.calls.includes('crm_survey_outcome_claim'));
+});
+test('send pause after claim preserves uncertainty and never reissues its payload',async()=>{
+ const h=harness({afterClaim:(_s,_c,e)=>{e.VPT_SURVEY_OUTCOMES_SEND='0';}});
+ await h.worker.drain();assert.equal(h.state.sends.length,0);
+ assert.deepEqual(h.state.results,[{status:'UNCERTAIN',reason:'WORKER_STOPPED'}]);
+ h.env.VPT_SURVEY_OUTCOMES_SEND='1';await h.restart().drain();assert.equal(h.state.sends.length,0);
+ assert.equal(h.state.calls.filter(n=>n==='crm_survey_outcome_claim').length,1);
 });
 test('one immutable send uses fixed Graph host, bearer header, RESPONSE and no redirects',async()=>{
  const h=harness();await h.worker.drain();await h.worker.drain();assert.equal(h.state.sends.length,1);
@@ -62,6 +91,12 @@ test('ACK persistence retries the exact result without resending and is bounded'
   assert.ok(h.state.results.every(r=>JSON.stringify(r)===JSON.stringify(h.state.results[0])));
  }
 });
+test('transport timeout after send pause keeps uncertainty across restart without another POST',async()=>{
+ const h=harness({onSend:async(_s,_c,e)=>{e.VPT_SURVEY_OUTCOMES_SEND='0';throw Error('synthetic transport timeout');}});
+ await h.worker.drain();assert.deepEqual(h.state.results,[{status:'UNCERTAIN',reason:'TRANSPORT_UNKNOWN'}]);
+ await h.restart().drain();h.env.VPT_SURVEY_OUTCOMES_SEND='1';await h.restart().drain();assert.equal(h.state.sends.length,1);
+ assert.equal(h.state.calls.filter(n=>n==='crm_survey_outcome_claim').length,1);
+});
 test('worker checks fresh enablement, Primary and short deadline immediately before send',async()=>{
  for(const afterClaim of [(s,c,e)=>{e.VPT_SURVEY_OUTCOMES='0';},s=>{s.primary=false;},s=>{s.now+=5000;},s=>{s.mono+=5000;},s=>{s.now-=2000;}]){
   const h=harness({afterClaim});await h.worker.drain();assert.equal(h.state.sends.length,0);
@@ -83,8 +118,10 @@ test('wrong provider recipient is persisted for conflict handling, never silentl
  const h=harness({onSend:async()=>({ok:true,json:async()=>({recipient_id:'999',message_id:'other-mid'})})});await h.worker.drain();assert.equal(h.state.results[0].recipientId,'999');assert.equal(h.state.sends.length,1);
 });
 test('disabling sending after Meta accepts still preserves historical ACK',async()=>{
- const h=harness({onSend:async(s,c,e)=>{e.VPT_SURVEY_OUTCOMES='0';return{ok:true,json:async()=>({recipient_id:'456',message_id:'accepted'})};}});
- await h.worker.drain();assert.equal(h.state.results[0].messageId,'accepted');
+ for(const flag of ['VPT_SURVEY_OUTCOMES','VPT_SURVEY_OUTCOMES_SEND']){
+  const h=harness({onSend:async(s,c,e)=>{e[flag]='0';return{ok:true,json:async()=>({recipient_id:'456',message_id:'accepted'})};}});
+  await h.worker.drain();assert.equal(h.state.results[0].messageId,'accepted');assert.equal(h.state.sends.length,1);
+ }
 });
 test('overlapping drains share one worker and cannot duplicate a send',async()=>{
  let release;const pending=new Promise(r=>release=r);const h=harness({onSend:async()=>{await pending;return{ok:true,json:async()=>({recipient_id:'456',message_id:'one'})};}});

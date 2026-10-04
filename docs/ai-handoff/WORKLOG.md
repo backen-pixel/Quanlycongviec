@@ -1,3 +1,7 @@
+## 04/10/2026 — Tách công tắc gửi outcome khỏi recovery
+
+Lượt trước PROGRESS: hồ sơ/manifest đã review PASS và lưu a6b52b04. Lượt này sửa facebookSurveyOutcomes.sendEnabled để yêu cầu OUTCOMES_SEND=1; OUTCOMES/CONFIRMATIONS giữ recovery. Không đổi DB/quyền hoặc enrollment. Các fixture outcome/journey/surveyRuntime/workerDrain bật SEND rõ; thêm unit pause/missing/restart/ACK/timeout và ba ca PostgreSQL QUEUED/UNCERTAIN/STOP. Cập nhật tài liệu cùng delta; manifest giữ nguồn kiểm kê SQL cũ và chỉ rõ runtime delta cần kiểm lại. Chưa live config/provider/DB/phát hành. Full goal ACTIVE; CI và review cuối chờ.
+
 ## 04/10/2026 — Gom hồ sơ nghiệm thu và điều kiện phát hành
 
 Thêm RELEASE_READINESS.md và RELEASE_CANDIDATE_MANIFEST.json, liên kết từ CURRENT/README. Ghim source1b7c00f/tree f71ce24d, test7789338, PR22 draft/unmerged phụ thuộc PR19 open/unmerged; kiểm kê 50 SQL thêm mới648–697 theo Git blob. Chưa xác minh deployed base/schema; inventory không phải migration runner. Closure CI37202456267 cả10jobSUCCESS, report37202456273/Messenger37202456278SUCCESS đã đọc trạng thái cuối.

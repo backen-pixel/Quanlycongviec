@@ -89,7 +89,7 @@ for(const kind of ['proposal','outcome']){
    return{data:[]};
   },from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{page_id:'123',default_company_id:company,is_active:true,access_token:'fake-token'}})})})})};
   const fetchImpl=async()=>{sends++;if(stopAt==='send'){entered.resolve();await block.promise;}return{ok:true,json:async()=>({recipient_id:'456',message_id:'fake-mid'})};};
-  const args={db,isPrimary:()=>true,env:{VPT_FB_CARE_PAGES:'123',VPT_SURVEY_CONFIRMATIONS:'1',VPT_SURVEY_DISPATCH:'1',VPT_SURVEY_OUTCOMES:'1'},fetchImpl,now:()=>time,monotonic:()=>0};
+  const args={db,isPrimary:()=>true,env:{VPT_FB_CARE_PAGES:'123',VPT_SURVEY_CONFIRMATIONS:'1',VPT_SURVEY_DISPATCH:'1',VPT_SURVEY_OUTCOMES:'1',VPT_SURVEY_OUTCOMES_SEND:'1'},fetchImpl,now:()=>time,monotonic:()=>0};
   return{w:kind==='proposal'?createSurveyDispatch(args):createSurveyOutcomeDispatch(args),block,entered,calls,results,sends:()=>sends,prefix};
  }
  for(const stopAt of ['claim','send','result'])test(`${kind}: stop during ${stopAt} preserves ACK/UNCERTAIN and does not send the next item`,async()=>{

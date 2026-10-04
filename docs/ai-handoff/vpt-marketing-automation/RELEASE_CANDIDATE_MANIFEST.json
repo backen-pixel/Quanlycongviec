@@ -4,6 +4,12 @@
   "recordedOn": "2026-10-04",
   "risk": "HIGH",
   "releaseStatus": "HOLD",
+  "runtimeDeltaSincePinnedSource": {
+    "description": "Separate VPT_SURVEY_OUTCOMES_SEND explicit opt-in; recovery stays under OUTCOMES and CONFIRMATIONS",
+    "evidence": "SURVEY_OUTCOMES.md",
+    "validation": "PENDING_CURRENT_CANDIDATE",
+    "sqlChanges": false
+  },
   "founderReleaseDecision": null,
   "source": {
     "commit": "1b7c00f867191c295ce9a570ba57d2b80e0e8574",
@@ -306,7 +312,7 @@
     "Stopping inference does not stop existing answer sends.",
     "Keep durable inbound/echo/confirmation evidence; do not remove Page enrollment as rollback.",
     "Survey dispatch pause does not cancel sent proposals or prevent later bookings.",
-    "Outcome pause stops both send and recovery; no recovery-only flag.",
+    "Pinned source predates separate OUTCOMES_SEND; use the reviewed candidate and SURVEY_OUTCOMES.md, never assume the old binary honors a send-only pause.",
     "Process drain only attests registered workers in that process, not remote side effects.",
     "Retain UNKNOWN, reservations and claims; do not replay or reopen legacy writers.",
     "Source inventory dated 2026-10-02 is historical, not current account capability."

@@ -16,7 +16,7 @@ module.exports=async(t,{db,peers,query,company,other,admin,region,setup,booked,f
  const echo=async(c,payload,mid=randomUUID())=>({sender:{id:'123'},recipient:{id:c.psid},timestamp:await stamp(),message:{mid,text:payload.message.text,is_echo:true,app_id:4567,metadata:payload.message.metadata}});
  const mode=async c=>(await db.query('SELECT mode FROM crm_care_threads WHERE id=$1',[c.thread])).rows[0].mode;
  const storage={rpc:async(name,args)=>{try{return{data:await query(name,Object.values(args))}}catch(error){return{error}}},from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{page_id:'123',default_company_id:company,is_active:true,access_token:pageToken}})})})})};
- const worker=fetchImpl=>createSurveyOutcomeDispatch({db:storage,isPrimary:()=>true,env:{VPT_FB_CARE_PAGES:'123',VPT_SURVEY_CONFIRMATIONS:'1',VPT_SURVEY_OUTCOMES:'1'},fetchImpl});
+ const worker=(fetchImpl,overrides={})=>createSurveyOutcomeDispatch({db:storage,isPrimary:()=>true,env:{VPT_FB_CARE_PAGES:'123',VPT_SURVEY_CONFIRMATIONS:'1',VPT_SURVEY_OUTCOMES:'1',VPT_SURVEY_OUTCOMES_SEND:'1',...overrides},fetchImpl});
  const dispatched=async c=>{const w=randomUUID(),a=await query('crm_survey_dispatch_claim',['123',c.proposal.proposalId,w,hash]);assert.equal(a.status,'CLAIMED');await query('crm_survey_dispatch_result',[a.attemptId,w,{status:'ACK',recipientId:c.psid,messageId:randomUUID()}]);return a;};
 
  await t.test('booking creates one atomic outcome and actual worker sends the canonical result once',async()=>{
@@ -25,6 +25,36 @@ module.exports=async(t,{db,peers,query,company,other,admin,region,setup,booked,f
    const e=await echo(c,p);await receive([e]);assert.equal(await mode(c),'WAITING');return{ok:true,json:async()=>({recipient_id:c.psid,message_id:e.message.mid})};});
   await w.drain();await w.drain();assert.equal(sends,1);assert.equal((await state(c))[0].state,'SENT');
   assert.equal((await db.query('SELECT state FROM crm_survey_control.handoffs WHERE proposal_id=$1',[c.proposal.proposalId])).rows[0].state,'PENDING');await finish(c);
+ });
+ await t.test('send pause preserves queued bookings across restart; explicit opt-in sends each only once',async()=>{
+  for(const sendFlag of [undefined,'0']){
+   const c=await booked();let sends=0;
+   const send=async(_url,init)=>{sends++;const payload=JSON.parse(init.body);assert.equal(payload.recipient.id,c.psid);return{ok:true,json:async()=>({recipient_id:c.psid,message_id:randomUUID()})};};
+   await worker(send,{VPT_SURVEY_OUTCOMES_SEND:sendFlag}).drain();await worker(send,{VPT_SURVEY_OUTCOMES_SEND:sendFlag}).drain();
+   assert.equal(sends,0);assert.equal((await state(c))[0].state,'QUEUED');
+   assert.equal((await db.query('SELECT count(*)::int n FROM crm_survey_control.outcome_attempts WHERE proposal_id=$1',[c.proposal.proposalId])).rows[0].n,0);
+   assert.deepEqual((await db.query('SELECT * FROM crm_survey_control.bookings WHERE proposal_id=$1',[c.proposal.proposalId])).rows[0],c.booking);
+   await worker(send).drain();await worker(send).drain();assert.equal(sends,1);assert.equal((await state(c))[0].state,'SENT');await finish(c);
+  }
+ });
+ await t.test('recovery-only worker retains uncertainty and signed echo/late ACK without resending',async()=>{
+  const c=await booked(),w=randomUUID(),a=await claim(c,w);assert.equal(a.status,'CLAIMED');let sends=0;
+  const send=async()=>{sends++;throw Error('Existing attempt must never be replayed');};
+  await db.query("UPDATE crm_survey_control.outcome_attempts SET started_at=clock_timestamp()-interval '2 minutes' WHERE attempt_id=$1",[a.attemptId]);
+  await worker(send,{VPT_SURVEY_OUTCOMES_SEND:'0'}).drain();assert.equal((await state(c))[0].state,'UNCERTAIN');
+  await worker(send).drain();assert.equal(sends,0);assert.equal((await state(c))[0].state,'UNCERTAIN');
+  const e=await echo(c,a.payload);await receive([e]);await receive([e]);assert.equal((await state(c))[0].state,'UNCERTAIN');
+  assert.equal((await ack(a,w,e.message.mid)).status,'SENT');await worker(send,{VPT_SURVEY_OUTCOMES_SEND:'0'}).drain();await worker(send).drain();
+  assert.equal(sends,0);assert.equal((await state(c))[0].state,'SENT');
+  const attempts=(await db.query('SELECT attempt_id,ack_mid,echo_mid FROM crm_survey_control.outcome_attempts WHERE proposal_id=$1',[c.proposal.proposalId])).rows;
+  assert.deepEqual(attempts,[{attempt_id:a.attemptId,ack_mid:e.message.mid,echo_mid:e.message.mid}]);
+  assert.deepEqual((await db.query('SELECT * FROM crm_survey_control.bookings WHERE proposal_id=$1',[c.proposal.proposalId])).rows[0],c.booking);await finish(c);
+ });
+ await t.test('customer STOP during send pause prevents queued outcome on resume and preserves booking',async()=>{
+  const c=await booked();let sends=0;const send=async()=>{sends++;throw Error('Opted-out customer must not be contacted');};
+  await worker(send,{VPT_SURVEY_OUTCOMES_SEND:'0'}).drain();await receive([await incoming(c,'STOP')]);
+  await worker(send).drain();assert.equal(sends,0);assert.equal((await state(c))[0].state,'HELD');assert.equal(await mode(c),'OPTED_OUT');
+  assert.deepEqual((await db.query('SELECT * FROM crm_survey_control.bookings WHERE proposal_id=$1',[c.proposal.proposalId])).rows[0],c.booking);await finish(c);
  });
  await t.test('booking and outcome both roll back; signed replay commits exactly one of each',async()=>{
   const c=await setup(),a=await dispatched(c),click=await incoming(c,'Xác nhận lịch',a.payload.message.quick_replies[0].payload);

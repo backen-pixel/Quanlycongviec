@@ -2,6 +2,8 @@
 
 Ngày đối chiếu: 04/10/2026. **Rủi ro HIGH; HOLD phát hành.** Hồ sơ này gom điều kiện và bằng chứng, không phải quyết định mở quyền, chạy migration hoặc tiêu ngân sách. Nguồn chuẩn là repo; các mục cũ trong CURRENT/README giữ giá trị lịch sử theo phiên bản.
 
+Delta sau bản kiểm kê 1b7c00f: [outcome SEND riêng](SURVEY_OUTCOMES.md) đang được kiểm để tạm ngừng gửi và giữ recovery. Manifest vẫn ghim 50 SQL của source cũ, không tự chứng nhận runtime mới; không có SQL mới trong delta này. Cần kiểm và review đúng ứng viên trước phát hành.
+
 ## Việc tiếp theo cho Founder
 
 Mục 4 của goal đang thực hiện xác định nghiệm thu tuyến đầu rồi mở tiếp Google và các kênh còn lại theo quyền thực tế. Gói hiện tại đưa tuyến Facebook tới nghiệm thu; việc chuẩn bị kênh khác vẫn có thể tiếp tục, không đổi phạm vi sáu kênh hoặc phân bổ trong [kế hoạch chuẩn](../../architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md). Codex khép cấu hình, kiểm tra chuyển luồng và chuẩn bị gói phát hành; reviewer độc lập kiểm lại đúng bản; Founder quyết định phạm vi và thời điểm mở thử sau khi có đủ bằng chứng.
@@ -81,7 +83,7 @@ Bộ ca phải lưu kết quả theo đúng ứng viên:
 | Ngừng gửi câu trả lời mới | `VPT_CARE_RUNTIME_SEND=0` | Giữ `VPT_CARE_RUNTIME_ECHO=1`, company/Page và `VPT_FB_CARE_PAGES` để nhận echo/recovery; request đã phát đi vẫn cần đối soát |
 | Ngừng gửi đề xuất khảo sát mới | `VPT_SURVEY_DISPATCH=0` | Với confirmations còn bật, recovery/reconcile vẫn chạy; khách có thể xác nhận proposal đã gửi và tạo booking |
 | Giữ bằng chứng khách xác nhận | Không dùng `VPT_SURVEY_CONFIRMATIONS=0` làm cách tạm dừng giữ dữ liệu | Tắt flag bỏ parsing quick reply trong khi care message có thể vẫn được ACK; không hứa replay tự khôi phục bằng chứng |
-| Outcome lịch | `VPT_SURVEY_OUTCOMES` | Tắt flag dừng cả recovery và send. Chưa có recovery-only riêng; phải quyết định xử lý tồn đọng/giữ bằng chứng trước khi dừng |
+| Ngừng gửi outcome lịch mới, giữ đối soát | `VPT_SURVEY_OUTCOMES_SEND=0`, giữ `VPT_SURVEY_OUTCOMES=1`, confirmations và Page | SEND phải tường minh bằng 1 mới mở gửi. OUTCOMES=0 vẫn tắt recovery; không hoàn claim, gửi lại UNKNOWN hoặc hủy HTTP đã đi. Binary cũ không hiểu SEND nên không được coi rollback code cũ là vẫn pause |
 | Tạm dừng worker intake | `VPT_FB_LEAD_INTAKE_WORKER_PAUSED=1`, giữ enrollment Page | Không tự ngừng mọi ingress hoặc tác vụ đã bắt đầu; phải kiểm durable receive. Rút Page khỏi allowlist có thể mở lại đường legacy |
 | Chờ worker | `VPT_WORKER_SHUTDOWN=1` cùng kế hoạch stop/join | Báo cáo chỉ REGISTERED_WORKERS_THIS_PROCESS; không chứng minh mọi replica/cron/HTTP Meta/OpenAI đã dừng |
 | Hold DB bảo trì | SQL687, operator-only, trạng thái singleton | Phạm vi **mọi công ty trong tập bảng và FK descendants toàn DB**, không riêng Page/công ty; cả khi inactive vẫn yêu cầu READ COMMITTED |

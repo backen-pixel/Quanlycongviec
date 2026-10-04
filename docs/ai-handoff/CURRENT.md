@@ -1,3 +1,9 @@
+## 04/10/2026 — Tách dừng gửi outcome khỏi đối soát
+
+Worker thông báo lịch thêm OUTCOMES_SEND phải bằng chuỗi1 tường minh; thiếu/0 chỉ recovery khi OUTCOMES/CONFIRMATIONS còn bật. Giữ nhận echo, ACK/UNKNOWN và booking; không đổi SQL/quyền. Bổ sung unit/ba ca PostgreSQL và cập nhật mọi fixture gửi. [Hợp đồng và cách dừng](vpt-marketing-automation/SURVEY_OUTCOMES.md). Local focused/CI/review đúng bản cuối đang kiểm; phát hành HOLD, full goal ACTIVE. Không thay cấu hình hoặc gửi thật.
+
+---
+
 ## 04/10/2026 — Bước tiếp: khép cấu hình và nghiệm thu tuyến Facebook
 
 Đã gom [hồ sơ chuẩn bị nghiệm thu](vpt-marketing-automation/RELEASE_READINESS.md) và manifest ghim source 1b7c00f, base PR19 chưa merge, 50 SQL mới với blob SHA. Bốn yêu cầu được tách bằng chứng kỹ thuật và phần còn thiếu; rủi ro HIGH, phát hành HOLD. Ba nhóm đầu vào: người nhận/lịch, thư viện tư vấn, tài khoản/quyền/hạn mức AI cùng phạm vi đo. Mục tiêu tạm thời 250.000đ/khách hợp lệ; không chờ kế toán để chuẩn bị Lead.

@@ -12,7 +12,9 @@ function createSurveyOutcomeDispatch({db,isPrimary,env=process.env,fetchImpl=glo
  if(!uuid(workerId))throw fail('INVALID_WORKER_ID');
  const lifecycle=require('../../helpers/workerDrain').createWorkerDrain(drainOnce);
  const receiveEnabled=()=>!lifecycle.isStopped()&&env.VPT_SURVEY_OUTCOMES==='1'&&env.VPT_SURVEY_CONFIRMATIONS==='1'&&isPrimary()===true;
- const sendEnabled=page=>receiveEnabled()&&env.VPT_SURVEY_OUTCOMES==='1'&&carePages(env).has(page);
+ // Pause new sends without losing recovery/receipt processing. This is a
+ // transport admission switch, not a replacement for the domain claim rights.
+ const sendEnabled=page=>receiveEnabled()&&env.VPT_SURVEY_OUTCOMES_SEND==='1'&&carePages(env).has(page);
  async function rpc(name,args){
   if(isPrimary()!==true)throw fail('PRIMARY_ONLY_REQUIRED');
   const r=await db.rpc(name,args);

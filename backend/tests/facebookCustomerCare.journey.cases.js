@@ -26,7 +26,7 @@ module.exports=async(t,{db,peers,query,other,credential,model})=>{
  const settings=(c,g)=>({VPT_FB_CARE_PAGES:c.page,VPT_FACEBOOK_APP_SECRET:secret,VPT_CARE_RUNTIME:'1',VPT_CARE_RUNTIME_OPENAI:'1',
   VPT_CARE_RUNTIME_PRINCIPAL:g.agent,VPT_CARE_RUNTIME_COMPANY:company,VPT_CARE_RUNTIME_GRANT:g.id,VPT_CARE_RUNTIME_PAGE:c.page,
   VPT_CARE_ADVISOR_INFERENCE_POLICY:g.policy,VPT_CARE_ADVISOR_OPENAI_KEY:credential,VPT_CARE_RUNTIME_ECHO:'1',
-  VPT_SURVEY_CONFIRMATIONS:'1',VPT_SURVEY_DISPATCH:'1',VPT_SURVEY_OUTCOMES:'1'});
+  VPT_SURVEY_CONFIRMATIONS:'1',VPT_SURVEY_DISPATCH:'1',VPT_SURVEY_OUTCOMES:'1',VPT_SURVEY_OUTCOMES_SEND:'1'});
  const receive=async(x,events)=>{
   const raw=Buffer.from(JSON.stringify({object:'page',entry:[{id:x.c.page,messaging:events}]}));
   await createCustomerCare({db:storage(peers[2]),isPrimary:()=>true,env:x.env}).receive({
