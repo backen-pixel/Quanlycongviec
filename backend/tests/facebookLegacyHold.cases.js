@@ -7,7 +7,7 @@ module.exports=async(t,{db,peers,prepared,read,begin,step,query,admin,company})=
  // and never depends on their business columns. Also test real FK descendants.
  for(const name of roots)if(!(await db.query('SELECT to_regclass($1) r',['public.'+name])).rows[0].r)await db.query(`CREATE TABLE public.${name}(id uuid PRIMARY KEY DEFAULT gen_random_uuid())`);
  await db.query('CREATE TABLE hold_child(id uuid PRIMARY KEY,customer_id uuid REFERENCES customers(id));CREATE TABLE hold_grandchild(id uuid PRIMARY KEY,child_id uuid REFERENCES hold_child(id))');
- await db.query('CREATE SCHEMA hold_cross;GRANT USAGE ON SCHEMA hold_cross TO service_role;CREATE TABLE hold_outside_parent(id uuid PRIMARY KEY);CREATE TABLE hold_cross.child(id uuid PRIMARY KEY,customer_id uuid REFERENCES customers(id),cascade_id uuid REFERENCES hold_outside_parent(id) ON DELETE CASCADE,null_id uuid REFERENCES hold_outside_parent(id) ON DELETE SET NULL)');
+ await db.query('CREATE SCHEMA hold_cross;GRANT USAGE ON SCHEMA hold_cross TO service_role;CREATE TABLE hold_outside_parent(id uuid PRIMARY KEY);CREATE TABLE hold_outside_null_parent(id uuid PRIMARY KEY);CREATE TABLE hold_cross.child(id uuid PRIMARY KEY,customer_id uuid REFERENCES customers(id),cascade_id uuid REFERENCES hold_outside_parent(id) ON DELETE CASCADE,null_id uuid REFERENCES hold_outside_null_parent(id) ON DELETE SET NULL)');
  const sql=fs.readFileSync(path.resolve(__dirname,'../../database/687_crm_legacy_write_hold.sql'),'utf8');
  await db.query(sql);await db.query(sql);
  const inspect=(c=db)=>c.query('SELECT crm_legacy_hold.inspect() r').then(x=>x.rows[0].r);
@@ -63,9 +63,9 @@ module.exports=async(t,{db,peers,prepared,read,begin,step,query,admin,company})=
  });
  await t.test('foreign-key cascade and set-null from an unheld parent into a held cross-schema child roll back the parent too',async()=>{
   const f=await prepared(),a=randomUUID(),b=randomUUID(),child=randomUUID();
-  await db.query('INSERT INTO hold_outside_parent VALUES($1),($2)',[a,b]);await db.query('INSERT INTO hold_cross.child VALUES($1,$2,$3,$4)',[child,f.customer,a,b]);await set(true);
-  try{for(const id of [a,b]){await assert.rejects(db.query('DELETE FROM hold_outside_parent WHERE id=$1',[id]),e=>e.code==='55000');
-   assert.equal((await db.query('SELECT count(*)::int n FROM hold_outside_parent WHERE id=$1',[id])).rows[0].n,1);}
+  await db.query('INSERT INTO hold_outside_parent VALUES($1)',[a]);await db.query('INSERT INTO hold_outside_null_parent VALUES($1)',[b]);await db.query('INSERT INTO hold_cross.child VALUES($1,$2,$3,$4)',[child,f.customer,a,b]);await set(true);
+  try{for(const [table,id] of [['hold_outside_parent',a],['hold_outside_null_parent',b]]){await assert.rejects(db.query(`DELETE FROM ${table} WHERE id=$1`,[id]),e=>e.code==='55000');
+   assert.equal((await db.query(`SELECT count(*)::int n FROM ${table} WHERE id=$1`,[id])).rows[0].n,1);}
    const row=(await db.query('SELECT * FROM hold_cross.child WHERE id=$1',[child])).rows[0];assert.equal(row.cascade_id,a);assert.equal(row.null_id,b);
   }finally{await off();}
  });
