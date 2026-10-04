@@ -24,11 +24,19 @@ Registry có năm durable workers và năm nhóm legacy. Các cờ bật nghiệ
 1. Durable worker có thể sinh child vào legacy tracker sau khi legacy đã trả idle ở lượt đầu. Group nay kiểm lại tất cả thành viên cho tới cùng idle trong deadline; `WORKERS_NOT_DRAINED` không cho exit thành công giả.
 2. Bọc `r.use(childRouter)` không theo dõi promise handler con. Hai module Facebook con được instrument ngay trước đăng ký handler và dùng singleton cùng root. Có ca HTTP thật với client ngắt khi RPC giả còn chờ.
 
-## Bằng chứng tại bản làm việc
+## Bằng chứng đúng phiên bản
 
 Local Windows: **1.304 PASS, 0 fail, 5 skip** (2 signal Linux và3 Express thật chỉ bật trên CI). Có25 ca legacy mới trên helper/mã module thật với DB/Redis/provider giả; thêm3 regression nhóm/shutdown. Bao gồm stop trong chờ leader/config/BRPOP, giữ ID đến lưu kết quả, retry pending, boot trả muộn, re-arm, cleanup thất bại và child sinh muộn. Một fixture scan từng đếm nhầm timer quan sát của chính test; đã đổi sang kiểm số lịch nghiệp vụ và số lần scan.
 
-CI cài Express5.2.1 trong thư mục test cô lập, khớp backend lock; không bootstrap server CRM. Ba ca HTTP loopback kiểm post-ACK, lỗi handler tới middleware đúng một lần và nested handler tiếp tục được theo dõi sau client disconnect/HTTP close. Reviewer độc lập đã kiểm lại hai finding và kết luận code-review PASS; CI/native đúng phiên bản còn chờ.
+CI cài Express5.2.1 trong thư mục test cô lập, khớp backend lock; không bootstrap server CRM. Ba ca HTTP loopback kiểm post-ACK, lỗi handler tới middleware đúng một lần và nested handler tiếp tục được theo dõi sau client disconnect/HTTP close. Reviewer độc lập đã kiểm lại hai finding và kết luận code-review PASS; CI đúng phiên bản đã PASS. Reviewer độc lập đã đối chiếu tám blob công bố liên quan các finding, log Node 18/22, PostgreSQL và build; kết luận PASS checkpoint legacy drain, không có finding mới.
+
+Runtime `4c97626e8aa4ea6d22792da77ff71eeb2d628336`, tree `d74f6514b7c98dccbd2f1fdc976a553914c13abd`:
+
+- [Automation 37181842879](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37181842879): cả 10 job SUCCESS; Node 18/22 mỗi bản **1.309 PASS, 0 fail, 0 skip**, gồm ba ca Express HTTP thật và hai ca tín hiệu native Linux. Intake PostgreSQL **348 PASS, 0 fail, 0 skip**; frontend build thành công.
+- [Report 37181842880](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37181842880) và [Messenger 37181842876](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37181842876) SUCCESS.
+- CI merge `0ea6cde4070b8addc452ecf4de5653e1701b4cab` đã xác minh tree bằng runtime; parents là base `e16c885ae7c2305645be02a1227bf378cb59137f` và runtime trên.
+
+Các ca HTTP dùng Express thật với DB/provider giả; PostgreSQL chạy cô lập. Bằng chứng này xác nhận phần mã được kiểm, chưa thay nghiệm thu môi trường vận hành hoặc kết quả kinh doanh.
 
 ## Giới hạn và điều kiện chuyển luồng
 

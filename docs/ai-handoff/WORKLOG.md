@@ -1,8 +1,8 @@
-## 04/10/2026 — Đang nghiệm thu dừng vòng cũ và tác vụ Facebook
+## 04/10/2026 — Dừng vòng cũ và tác vụ Facebook đã qua kiểm thử tích hợp
 
-Đã theo dõi pipeline/master/scan/rescan/AutoTool, leader jobs, batch queue, marketing sync và handler Facebook sau ACK/client disconnect. Chờ ID đã dequeue tới lưu kết quả, không đổi enable nghiệp vụ khi shutdown. Đã sửa2finding về child sinh muộn và router con; local1.304 PASS/0fail/5skip, code-review PASS; CI/native chờ. [Phạm vi và kiểm thử](vpt-marketing-automation/LEGACY_RUNTIME_DRAIN.md).
+Runtime `4c97626` theo dõi pipeline/master/scan/rescan/AutoTool, leader jobs, batch queue, marketing sync và handler Facebook sau ACK/client disconnect. Chờ ID đã dequeue tới lưu kết quả, không đổi enable nghiệp vụ khi shutdown. Hai finding về child sinh muộn và router con đã sửa. Node 18/22 mỗi bản **1.309 PASS/0 fail/0 skip**, intake PostgreSQL **348/0/0**, cả 10 job/build/report/Messenger SUCCESS. Reviewer độc lập đã đối chiếu blob công bố và log CI, kết luận PASS trong phạm vi này. [Phạm vi và bằng chứng](vpt-marketing-automation/LEGACY_RUNTIME_DRAIN.md).
 
-Chưa toàn-process, khôi phục queue/UNKNOWN/cutover hoặc phát hành; cờ shutdown tắt. Full goal ACTIVE; còn đối soát, AI/lịch/người nhận/phạm vi đo và UAT/Founder release.
+Bước tiếp: đối soát lượt đang dở và khôi phục queue, kiểm đủ tác vụ/instance khi chuyển luồng; khép AI, người nhận/lịch khảo sát và phạm vi đo; UAT toàn tuyến rồi trình Founder phát hành. Chưa chứng nhận toàn process, xử lý UNKNOWN, chuyển Page hoặc chạy thật. Cờ shutdown vẫn tắt. Full goal ACTIVE; 250.000đ/khách hợp lệ là mục tiêu, chưa có kết quả thực tế.
 
 ---
 
