@@ -1,5 +1,17 @@
 # Nối mô hình vào trợ lý chăm khách
 
+## Cập nhật 04/10/2026 — Phục hồi ACK của biên nhận
+
+`careOpenAiInference.record` cho phép tối đa hai lần gọi cùng RPC `crm_care_inference_record` khi lỗi kết nối không có mã, mất dữ liệu phản hồi hoặc lỗi SQL tạm thời trong danh sách rõ ràng. Request, capability và receipt được giữ bất biến. Lỗi có mã không được phân loại là tạm thời, từ chối quyền, receipt mâu thuẫn, dữ liệu sai hoặc ACK không khớp đều dừng ngay. Kiểm Primary trước từng lần; không ghi Backup. Không lặp claim, HTTP Responses, BEGIN hoặc FINISH.
+
+Đây là thử lại việc ghi bằng chứng đã có, không gọi lại AI. Nếu lần đầu đã commit và mất ACK, SQL691 trả replay cùng receipt; nếu giao dịch rollback thì lần sau ghi lần đầu. Cả hai vẫn có một reservation. Ghi usage sau abort/thu hồi quyền giữ chi phí lịch sử; không cho phép phát hành câu trả lời vì Application Service/Domain vẫn kiểm quyền và trạng thái khách. UNKNOWN/NOT_SENT giữ nguyên loại bằng chứng và không hoàn reservation.
+
+Phạm vi chỉ khi tiến trình còn giữ biên nhận đã nhận. Hai lần không xác nhận được thì tiếp tục đường lỗi/bàn giao; tiến trình chết trước khi lưu vẫn cần đối soát. Không giải phóng UNKNOWN do provider, không chứng nhận miễn phí, chi phí thực hay hóa đơn. Không tạo journal chứa capability trên ổ đĩa hoặc cấp công cụ sửa receipt thủ công.
+
+Local toàn workflow 1.407 PASS/0 fail/5 skip; 6 unit mới kiểm ACK mất, retry giới hạn, conflict/quyền/ACK sai, Primary mất, abort và giữ UNKNOWN/NOT_SENT. 4 ca PostgreSQL qua runtime worker thật được thêm cho commit mất ACK/rollback, DB mất kết nối, conflict và thu hồi grant; HTTP provider giả. Chờ CI/PG và review độc lập trước kết luận checkpoint. Không đổi SQL/schema/UI; hoàn tác bằng trả adapter về một lần ghi, giữ toàn bộ receipt/reservation hiện có.
+
+Các phần dưới lưu hợp đồng và bằng chứng của checkpoint SQL691 gốc; cập nhật này thay hành vi một lần ghi receipt, không thay quy tắc một lần gọi provider.
+
 Ngày 04/10/2026. Phạm vi: SQL691 và OpenAI Responses adapter qua Application Service hiện có. Chuẩn bị cho mục tiêu AI tiếp nhận/tư vấn; chưa tự gửi khách, chưa đăng ký quyền runtime, chưa gọi mô hình thật. Kế thừa [SQL689](CARE_ADVISOR_DRAFTS.md) và [màn hình SQL690](CARE_ADVISOR_CONSOLE.md).
 
 ## Luồng thực thi

@@ -2405,3 +2405,7 @@ Thêm SQL696 reader cùngsnapshot, API Primary/offdefault và tab Chi phí AI;8u
 ### Đóng kiểm chứng Cost Console f7237b6
 
 Automation37198601106 cả 10 job SUCCESS; Node18/22 mỗi bản 1.406/0/0, intake PostgreSQL498/0/0 gồm 9 ca mới, build10.339modules/37,23s. Report37198601104 và Messenger37198601119 SUCCESS. CI merge452fbbd3cfbb7fafece00fde810c8fd560339365 có treee119eedef9acbab75d2805e44073058d43a8d115 và đúng parents base/head. Reviewer độc lập xác minh published blobs/log/tree và PASS checkpoint; không chứng nhận settlement, mở UNKNOWN, provider thật, UAT hoặc phát hành. Đã đóng trang và server kiểm thử dữ liệu giả. Cập nhật CURRENT/README theo câu hỏi Founder về bước tiếp: đối soát AI, cấu hình nội dung/người nhận/lịch/hạn mức, chuyển luồng/khôi phục và nghiệm thu toàn tuyến trước gói phát hành. Full goal ACTIVE; còn công việc được phép, chưa bắt đầu chi thử hoặc có kết quả 250.000 đồng/khách thật.
+
+## 04/10/2026 — Phục hồi ghi biên nhận AI trong cùng lượt
+
+Thay `careOpenAiInference.record` bằng tối đa hai lần ghi cùng receipt bất biến khi lỗi tạm thời/mất ACK; không repeat claim/model/BEGIN/FINISH. Fail closed với mã không nhận diện, quyền, conflict hoặc ACK sai; kiểm Primary trước mỗi lần, cho phép ghi lịch sử sau revoke nhưng không mở quyền trả lời. Thêm 6 unit và 4 ca actual runtime→SQL với HTTP giả. Local focused53/0/0, toàn workflow1.407/0/5; CI/PG/review đang chờ. CURRENT/README/CARE_OPENAI_INFERENCE ghi giới hạn mất tiến trình/hóa đơn/UNKNOWN và hoàn tác. Full goal ACTIVE; chưa gọi provider thật, thay SQL hoặc phát hành.

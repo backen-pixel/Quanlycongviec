@@ -46,8 +46,23 @@ function createCareOpenAiInference({db,isPrimary,env=process.env,fetchImpl=globa
    ||!Number.isInteger(claim.reservedVnd)||claim.reservedVnd<1)throw fail();
   const from=Date.parse(claim.authorizedAt),until=Date.parse(claim.dispatchBefore);
   async function record(receipt){
-   const ack=await rpc('crm_care_inference_record',{p_request:authorization.requestId,p_capability:claim.capability,p_receipt:receipt});
-   if(ack.requestId!==authorization.requestId||ack.state!==receipt.state||typeof ack.replayed!=='boolean')throw fail();
+   // Only retry this idempotent receipt write, never admission or provider HTTP.
+   // Keep the same capability and exact evidence even after stop/revocation;
+   // SQL691 permits late accounting but rejects a conflicting terminal receipt.
+   const args=Object.freeze({p_request:claim.requestId,p_capability:claim.capability,p_receipt:Object.freeze({...receipt})});
+   const transient=e=>e?.code==null||e.code===''||['40001','40P01','55P03','57014','08000','08003','08006'].includes(e.code);
+   for(let attempt=0;attempt<2;attempt++){
+    if(isPrimary()!==true)throw fail();
+    let response;
+    try{response=await db.rpc('crm_care_inference_record',args);}
+    catch(e){if(attempt===0&&transient(e))continue;throw fail();}
+    if(response?.error){if(attempt===0&&transient(response.error))continue;throw fail();}
+    if(!response?.data){if(attempt===0)continue;throw fail();}
+    const ack=response.data;
+    if(ack.requestId!==args.p_request||ack.state!==args.p_receipt.state||typeof ack.replayed!=='boolean')throw fail();
+    return;
+   }
+   throw fail();
   }
   let notSent=null;
   if(!available()||key()!==credential||env.VPT_CARE_ADVISOR_INFERENCE_POLICY!==policy||(authority==='RUNTIME'&&!runtimeScope(authorization)))notSent='DISABLED';

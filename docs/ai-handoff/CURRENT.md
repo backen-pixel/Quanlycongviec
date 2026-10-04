@@ -1,3 +1,11 @@
+## 04/10/2026 — Đang kiểm chứng lưu lại biên nhận AI khi mất phản hồi
+
+Adapter cho phép tối đa hai lần ghi cùng biên nhận trong lượt đang chạy; không gọi lại model hoặc xin permit mới. SQL691 giữ tính chống trùng, từ chối receipt mâu thuẫn; vẫn kiểm Primary trước từng lần ghi. Lỗi quyền/đầu vào hoặc ACK sai dừng ngay. Sau hai lần lỗi, giữ reservation và bàn giao như cũ; không tự sửa UNKNOWN hoặc dùng token làm hóa đơn. Local toàn workflow 1.407 PASS/0 fail/5 skip; 6 unit mới và 4 ca PostgreSQL qua runtime worker đã viết. CI/PG và review cuối đang chờ. [Hợp đồng, giới hạn và kiểm chứng](vpt-marketing-automation/CARE_OPENAI_INFERENCE.md).
+
+Full goal ACTIVE. Còn đối soát provider/hóa đơn và mất tiến trình, cấu hình thật, chuyển luồng/khôi phục, UAT và Founder release. Không gọi AI thật hoặc cấp thêm quyền.
+
+---
+
 ## 04/10/2026 — Màn hình mức sử dụng AI đã qua kiểm chứng
 
 SQL696/API/tab Chi phí AI tại f7237b6 đọc toàn công ty, gồm Agent; tổng và trang chi tiết cùng snapshot, có hàng chờ AUTHORIZED/UNKNOWN tại server. Node18/22 mỗi bản 1.406 PASS/0 fail/0 skip; PostgreSQL 498/0/0 gồm 9 ca mới; cả 10 job, build, report và Messenger SUCCESS, đúng CI tree/parents. Reviewer độc lập đối chiếu published blobs/log/tree và PASS checkpoint. Browser actual Workspace/API giả do bên triển khai kiểm tổng, queue, 403 và đổi phạm vi. [Phạm vi, bằng chứng và hoàn tác](vpt-marketing-automation/CARE_INFERENCE_COST_CONSOLE.md).

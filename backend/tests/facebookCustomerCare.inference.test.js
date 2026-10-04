@@ -94,9 +94,61 @@ test('oversized or non-JSON HTTP responses are bounded and retain unknown usage'
   const x=fixture({fetch:async()=>new Response(body)});await assert.rejects(x.run());assert.equal(x.calls[1].args.p_receipt.state,'UNKNOWN');
  }
 });
-test('lost usage persistence is not retried and never replays the provider',async()=>{
+test('unclassified persistence errors are not retried and never replay the provider',async()=>{
  const x=fixture({rpc:async(name,args,c)=>name==='crm_care_inference_claim'?{data:c}:{error:{code:'offline'}}});
  await assert.rejects(x.run());assert.equal(x.http.length,1);assert.equal(x.calls.length,2);
+});
+
+test('lost receipt acknowledgement retries exact evidence once without replaying admission or provider',async()=>{
+ for(const failure of['throw','missing','transient']){
+  let records=0;const x=fixture({rpc:async(name,args,c)=>{
+   if(name==='crm_care_inference_claim')return{data:c};
+   if(++records===1){if(failure==='throw')throw new TypeError('SECRET transport failure');if(failure==='missing')return{data:null};return{error:{code:'40001'}};}
+   return{data:{requestId:args.p_request,state:args.p_receipt.state,replayed:failure!=='transient'}};
+  }});
+  assert.deepEqual(await x.run(),raw);assert.equal(x.http.length,1);assert.equal(x.calls.length,3);
+  assert.deepEqual(x.calls[1],x.calls[2]);assert.equal(Object.isFrozen(x.calls[1].args.p_receipt),true);
+ }
+});
+
+test('persistent transport loss is bounded to two receipt writes and exposes no selection or provider error',async()=>{
+ const x=fixture({rpc:async(name,args,c)=>{if(name==='crm_care_inference_claim')return{data:c};throw new TypeError('SECRET transport failure');}});
+ await assert.rejects(x.run(),e=>e.message==='CARE_INFERENCE_UNAVAILABLE');assert.equal(x.http.length,1);assert.equal(x.calls.length,3);
+ assert.deepEqual(x.calls[1],x.calls[2]);
+});
+
+test('receipt conflict, denial, invalid input and a mismatched acknowledgement never retry',async()=>{
+ for(const result of[{error:{code:'23505'}},{error:{code:'42501'}},{error:{code:'22023'}},
+  {data:{requestId:randomUUID(),state:'USAGE_RECORDED',replayed:false}},
+  {data:{requestId:authorization.requestId,state:'NOT_SENT',replayed:false}}]){
+  const x=fixture({rpc:async(name,args,c)=>name==='crm_care_inference_claim'?{data:c}:result});
+  await assert.rejects(x.run());assert.equal(x.http.length,1);assert.equal(x.calls.length,2);
+ }
+});
+
+test('Primary loss before receipt retry never writes to Backup',async()=>{
+ let primary=true;const x=fixture({primary:()=>primary,rpc:async(name,args,c)=>{
+  if(name==='crm_care_inference_claim')return{data:c};primary=false;throw new TypeError('connection lost');
+ }});await assert.rejects(x.run());assert.equal(x.calls.length,2);assert.equal(x.http.length,1);
+});
+
+test('stopping after a lost receipt acknowledgement still saves usage but does not return a cancelled selection',async()=>{
+ let records=0,x;x=fixture({rpc:async(name,args,c)=>{
+  if(name==='crm_care_inference_claim')return{data:c};
+  if(++records===1){x.controller.abort();x.env.VPT_CARE_ADVISOR_OPENAI='0';throw new TypeError('lost acknowledgement');}
+  return{data:{requestId:args.p_request,state:args.p_receipt.state,replayed:true}};
+ }});await assert.rejects(x.run());assert.equal(x.calls.length,3);assert.equal(x.http.length,1);
+ assert.deepEqual(x.calls[1],x.calls[2]);assert.equal(x.calls[2].args.p_receipt.state,'USAGE_RECORDED');
+});
+
+test('receipt recovery never upgrades uncertain provider usage or claims a dispatch that did not occur',async()=>{
+ for(const state of['UNKNOWN','NOT_SENT']){
+  let records=0;const x=fixture({...(state==='UNKNOWN'?{fetch:async()=>{throw new TypeError('provider ambiguity');}}:{now:()=>Date.now()+6000}),
+   rpc:async(name,args,c)=>{if(name==='crm_care_inference_claim')return{data:c};
+    if(++records===1)throw new TypeError('receipt lost');return{data:{requestId:args.p_request,state:args.p_receipt.state,replayed:true}};}});
+  await assert.rejects(x.run());assert.equal(x.http.length,state==='UNKNOWN'?1:0);assert.equal(x.calls.length,3);
+  assert.equal(x.calls[1].args.p_receipt.state,state);assert.deepEqual(x.calls[1],x.calls[2]);
+ }
 });
 test('provider port readiness keeps advisor generation unavailable before BEGIN',async()=>{
  const x=fixture({env:{VPT_CARE_ADVISOR_OPENAI:'0'}}),calls=[];

@@ -26,9 +26,28 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,approve
  const candidates=(c,g)=>query('crm_care_runtime_candidates',[g.agent,company,g.id,c.page,10]);
  const usage=(c,p)=>query('crm_care_inference_record',[c.key,p.capability,{state:'USAGE_RECORDED',responseId:'resp_runtime_test',model,inputTokens:10,outputTokens:10,totalTokens:20}]);
  const lockWait=async pid=>{for(let i=0;i<150;i++){await db.query('SELECT pg_stat_clear_snapshot()');if((await db.query("SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND state='active' AND wait_event_type='Lock'",[pid])).rowCount)return;await new Promise(r=>setTimeout(r,10));}assert.fail('runtime waiter was not observed');};
- function worker(c,g,{action='ANSWER',lost,network=false}={}){
-  const calls=[],posts=[],errors=[];
-  const storage={rpc:async(name,args)=>{calls.push(name);try{const data=await query(name,Object.values(args));if(lost===name)return{error:{code:'LOST_ACK'}};return{data};}catch(error){return{error};}}};
+ function worker(c,g,{action='ANSWER',lost,network=false,receiptFailure}={}){
+  const calls=[],posts=[],errors=[],receiptRequests=[],receiptAcks=[];
+  const storage={rpc:async(name,args)=>{calls.push(name);try{
+   if(name==='crm_care_inference_record'){
+    receiptRequests.push(JSON.parse(JSON.stringify(args)));
+    if(receiptFailure==='transport-down')throw new TypeError('Synthetic receipt connection failure');
+    if(receiptRequests.length===1&&receiptFailure==='rollback'){
+     await peers[0].query('BEGIN');try{await query(name,Object.values(args));}finally{await peers[0].query('ROLLBACK');}
+     return{error:{code:'40001'}};
+    }
+    if(receiptRequests.length===1&&receiptFailure==='conflict')await query(name,[args.p_request,args.p_capability,{state:'UNKNOWN',reason:'TRANSPORT_UNKNOWN'}]);
+   }
+   const data=await query(name,Object.values(args));
+   if(name==='crm_care_inference_record'){
+    receiptAcks.push(data);
+    if(receiptRequests.length===1&&['lost-ack','revoke-after-commit'].includes(receiptFailure)){
+     if(receiptFailure==='revoke-after-commit')await db.query('UPDATE crm_care_control.runtime_grants SET active=false WHERE id=$1',[g.id]);
+     throw new TypeError('Synthetic lost receipt acknowledgement');
+    }
+   }
+   if(lost===name)return{error:{code:'LOST_ACK'}};return{data};
+  }catch(error){return{error};}}};
   const env={VPT_CARE_RUNTIME:'1',VPT_CARE_RUNTIME_OPENAI:'1',VPT_CARE_RUNTIME_PRINCIPAL:g.agent,VPT_CARE_RUNTIME_COMPANY:company,
    VPT_CARE_RUNTIME_GRANT:g.id,VPT_CARE_RUNTIME_PAGE:c.page,VPT_CARE_ADVISOR_INFERENCE_POLICY:g.policy,VPT_CARE_ADVISOR_OPENAI_KEY:credential};
   const infer=createCareOpenAiInference({authority:'RUNTIME',db:storage,isPrimary:()=>true,env,fetchImpl:async(url,request)=>{
@@ -38,7 +57,7 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,approve
    return new Response(JSON.stringify({id:'resp_runtime_integration',model,status:'completed',usage:{input_tokens:20,output_tokens:10,total_tokens:30},
     output:[{type:'message',role:'assistant',status:'completed',content:[{type:'output_text',text:JSON.stringify({action,answer:action==='ANSWER'?input.answers[0].id:null,needs:[]})}]}]}));
   }});
-  return{run:createCareRuntime({db:storage,env,isPrimary:()=>true,infer,onError:x=>errors.push(x),workerId:g.worker}),calls,posts,errors};
+  return{run:createCareRuntime({db:storage,env,isPrimary:()=>true,infer,onError:x=>errors.push(x),workerId:g.worker}),calls,posts,errors,receiptRequests,receiptAcks};
  }
  await t.test('shared private cores preserve human projection and no Agent enrollment is seeded',async()=>{
   assert.deepEqual(await query('crm_care_read',[admin,company,before.thread]),viewBefore);
@@ -263,6 +282,37 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,approve
   const receipt=(await db.query('SELECT state FROM crm_care_control.inference_receipts WHERE request_id=$1',[c.key])).rows[0];
   if(pair[0]==='claim'){assert.equal(receipt.state,'AUTHORIZED');assert.equal((await usage(c,first)).state,'USAGE_RECORDED');}
   else assert.equal(receipt,undefined);
+ });
+
+ await t.test('runtime receipt recovery handles committed lost ACK and rolled-back write without another inference',async()=>{
+  for(const receiptFailure of['lost-ack','rollback']){
+   const c=await fixture(),g=await enroll(c),x=worker(c,g,{receiptFailure});await x.run.drain();await x.run.drain();
+   assert.deepEqual(x.errors,[]);assert.equal(x.posts.length,1);assert.equal(x.receiptRequests.length,2);
+   assert.deepEqual(x.receiptRequests[0],x.receiptRequests[1]);assert.equal(x.receiptAcks.at(-1).replayed,receiptFailure==='lost-ack');
+   const rows=(await db.query('SELECT r.state,r.reserved_vnd,a.state run_state FROM crm_care_control.inference_receipts r JOIN crm_care_control.advisor_runs a USING(request_id) WHERE r.policy_id=$1',[g.policy])).rows;
+   assert.equal(rows.length,1);assert.equal(rows[0].state,'USAGE_RECORDED');assert.equal(rows[0].reserved_vnd,2000);assert.equal(rows[0].run_state,'DRAFT');
+   const fresh=worker(c,{...g,worker:randomUUID()});await fresh.run.drain();assert.equal(fresh.posts.length,0);
+  }
+ });
+ await t.test('two failed receipt writes retain the reservation and hand off instead of reinvoking the model',async()=>{
+  const c=await fixture(),g=await enroll(c),x=worker(c,g,{receiptFailure:'transport-down'});await x.run.drain();
+  assert.deepEqual(x.errors,[]);assert.equal(x.posts.length,1);assert.equal(x.receiptRequests.length,2);
+  const receipt=(await db.query('SELECT state,reserved_vnd FROM crm_care_control.inference_receipts WHERE policy_id=$1',[g.policy])).rows[0];
+  assert.equal(receipt.state,'AUTHORIZED');assert.equal(receipt.reserved_vnd,2000);assert.equal((await query('crm_care_read',[admin,company,c.thread])).mode,'HUMAN_REQUESTED');
+  const fresh=worker(c,{...g,worker:randomUUID()});await fresh.run.drain();assert.equal(fresh.posts.length,0);
+ });
+ await t.test('a conflicting terminal receipt is never retried or overwritten by recovered provider usage',async()=>{
+  const c=await fixture(),g=await enroll(c),x=worker(c,g,{receiptFailure:'conflict'});await x.run.drain();
+  assert.equal(x.posts.length,1);assert.equal(x.receiptRequests.length,1);assert.equal(x.receiptAcks.length,0);
+  const receipt=(await db.query('SELECT state,reserved_vnd FROM crm_care_control.inference_receipts WHERE policy_id=$1',[g.policy])).rows[0];
+  assert.equal(receipt.state,'UNKNOWN');assert.equal(receipt.reserved_vnd,2000);assert.equal((await query('crm_care_read',[admin,company,c.thread])).mode,'HUMAN_REQUESTED');
+ });
+ await t.test('receipt retry after grant revocation accounts for usage without publishing an answer',async()=>{
+  const c=await fixture(),g=await enroll(c),x=worker(c,g,{receiptFailure:'revoke-after-commit'});await x.run.drain();
+  assert.equal(x.posts.length,1);assert.equal(x.receiptRequests.length,2);assert.equal(x.receiptAcks.at(-1).replayed,true);assert.equal(x.errors.length,1);
+  const rows=(await db.query('SELECT r.request_id,r.state,r.reserved_vnd,a.state run_state,a.result FROM crm_care_control.inference_receipts r JOIN crm_care_control.advisor_runs a USING(request_id) WHERE r.policy_id=$1',[g.policy])).rows;
+  assert.equal(rows.length,1);assert.equal(rows[0].state,'USAGE_RECORDED');assert.equal(rows[0].reserved_vnd,2000);assert.equal(rows[0].run_state,'RUNNING');assert.equal(rows[0].result,null);
+  c.key=rows[0].request_id;assert.equal((await read(c)).result,null);
  });
 
  await require('./careAnswerDispatch.cases')(t,{db,peers,query,company,other,admin,sales,fixture,approve,enroll,begin,finish,select,worker,candidates,lockWait});
