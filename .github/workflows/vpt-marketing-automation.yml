@@ -96,6 +96,8 @@ on:
       - 'database/694_crm_care_answer_delivery.sql'
       - 'database/695_crm_survey_runtime.sql'
       - 'database/696_crm_care_inference_cost_console.sql'
+      - 'database/697_crm_legacy_hold_restore.sql'
+      - 'backend/tests/facebookRestore.postgres.test.js'
       - 'backend/tests/careInferenceCosts*.js'
       - 'frontend/src/components/facebook/CareInferenceCosts.jsx'
       - 'frontend/src/components/facebook/careInferenceCostState.mjs'
@@ -334,6 +336,19 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      postgres_restore:
+        image: postgres:16
+        env:
+          POSTGRES_DB: fb_intake_restore_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: isolated_test_only
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -346,6 +361,14 @@ jobs:
         env:
           FB_INTAKE_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/fb_intake_test
         run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/facebookLeadIntake.postgres.test.js
+      - name: Logical backup and restore into a separate isolated cluster
+        env:
+          VPT_RESTORE_REHEARSAL: '1'
+          FB_INTAKE_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/fb_intake_test
+          FB_RESTORE_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5433/fb_intake_restore_test
+          VPT_SOURCE_CONTAINER: ${{ job.services.postgres.id }}
+          VPT_RESTORE_CONTAINER: ${{ job.services.postgres_restore.id }}
+        run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/facebookRestore.postgres.test.js
 
   marketing-trial-postgres:
     runs-on: ubuntu-latest

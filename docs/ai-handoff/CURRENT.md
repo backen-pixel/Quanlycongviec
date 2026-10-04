@@ -1,3 +1,9 @@
+## 04/10/2026 — Đang diễn tập khôi phục PostgreSQL
+
+Thêm rehearsal pg_dump/pg_restore giữa hai cluster cô lập trên toàn dữ liệu fixture intake/care/survey. Đối chiếu dữ liệu, schema/FK/quyền/audit và giữ UNKNOWN. SQL697 cho operator gắn lại OID manifest sau logical restore, có hash/revision/audit riêng và luôn giữ/bật hold; không tự mở vận hành. Node syntax đã kiểm, CI/review cuối đang chờ. [Phạm vi và giới hạn](vpt-marketing-automation/RESTORE_REHEARSAL.md). Full goal ACTIVE; chưa backup/khôi phục DB thật hoặc phát hành.
+
+---
+
 ## 04/10/2026 — Phục hồi biên nhận AI đã qua kiểm chứng
 
 Adapter tại 31aa29f cho phép tối đa hai lần ghi cùng biên nhận trong lượt đang chạy; không gọi lại model hoặc xin permit mới. SQL691 giữ tính chống trùng, từ chối receipt mâu thuẫn; vẫn kiểm Primary trước từng lần ghi. Lỗi quyền/đầu vào hoặc ACK sai dừng ngay. Sau hai lần lỗi, giữ reservation và bàn giao như cũ; không tự sửa UNKNOWN hoặc dùng token làm hóa đơn. Node18/22 mỗi bản 1.412 PASS/0 fail/0 skip; PostgreSQL 502/0/0 gồm 4 ca mới; cả 10 job/build/report/Messenger SUCCESS. Reviewer độc lập đối chiếu published blobs/log/tree và PASS checkpoint. [Hợp đồng, giới hạn, bằng chứng và hoàn tác](vpt-marketing-automation/CARE_OPENAI_INFERENCE.md).
