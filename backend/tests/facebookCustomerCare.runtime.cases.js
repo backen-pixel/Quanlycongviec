@@ -267,5 +267,6 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,approve
 
  await require('./careAnswerDispatch.cases')(t,{db,peers,query,company,other,admin,sales,fixture,approve,enroll,begin,finish,select,worker,candidates,lockWait});
  await require('./surveyRuntime.cases')(t,{db,peers,query,company,other,admin,sales,fixture,enroll,begin,finish,lockWait});
+ await require('./careInferenceCosts.cases')(t,{db,peers,query,company,other,admin,sales,fixture,enroll,begin,claim,usage,lockWait});
 
 };

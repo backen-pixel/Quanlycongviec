@@ -2396,3 +2396,8 @@ Bổ sung CareRuntime/careRuntimeState, tab Chăm khách và10ca unit cùng work
 ### Đóng kiểm chứng runtime UI411e895
 
 Automation37197060961 cả10SUCCESS; Node18/22 mỗi1398/0/0, intakePG489/0/0, build10337modules/36,34s; Report37197060933/Messenger37197061020 SUCCESS. CImerge d974079331084ab70cb59d5ad01daf033906a210 khớp tree528487b595eb4a5aac17de1376d566bb4e12f9ca vàparents. Reviewer xác minh publishedblobs/log/tree, PASScheckpointUI; browserdoimplsynthetic. FullgoalACTIVE; cònchi phíAI/UNKNOWN,cấu hình/chuyểnluồng/UAT/release.
+
+
+## 04/10/2026 — AI usage/cost visibility
+
+Thêm SQL696 reader cùngsnapshot, API Primary/offdefault và tab Chi phí AI;8unit/9PGcases vàworkflow. Guard company/actorbinding, khônglộsecret/context; serverunresolvedqueue, actualCostNULL, reservedkhôngrefund. Local1401/0/5; browseractualWorkspace/APIgiả kiểm tổng/queue/403/ABA. Reviewđã sửaCASE và fixtureUNIQUE; chờCI/PG/build cuối. Khôngthayadmission/quyền hoặcDB thật. Xem CARE_INFERENCE_COST_CONSOLE.md; fullgoalACTIVE.

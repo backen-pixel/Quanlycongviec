@@ -1,3 +1,9 @@
+## 04/10/2026 — Đang kiểm chứng màn hình mức sử dụng AI
+
+SQL696/API/tab Chi phí AI đọc toàn công ty (gồm Agent), tổng/cursor cùng snapshot, có hàng chờ AUTHORIZED/UNKNOWN tại server; actualCostNULL và giữ reservation. Không ghi receipt/unblock/quyền chạy. Local1.401/0/5,8unitmới; actualWorkspace/APIgiả kiểm tổng/queue/403/ABA.9caPG, buildvàreview cuối đang chờ. [Phạm vi và bằng chứng](vpt-marketing-automation/CARE_INFERENCE_COST_CONSOLE.md). FullgoalACTIVE; đốisoátprovider/hóađơn/UNKNOWN,cấuhình/UAT/release cònthiếu.
+
+---
+
 ## 04/10/2026 — Giao diện theo dõi AI đã qua nghiệm thu kỹ thuật
 
 Bản411e895 thêm tab Hoạt động AI, tách kết quả tư vấn/ACK–echo/lịch đã đặt; đóng RUNNING giữ cùng yêu cầu qua mất ACK/reload. Node18/22 mỗi1.398PASS/0fail/0skip, PostgreSQL489/0/0, cả10job/build/report/Messenger SUCCESS, đúng CI tree/parents. Reviewer độc lập đối chiếu published blobs/log/tree và PASS checkpointUI. Browser actualWorkspace/APIgiả do bên triển khai kiểm scope, stale, SURVEY/BOOKED và mất ACK. [Bằng chứng và hoàn tác](vpt-marketing-automation/CARE_RUNTIME_CONSOLE.md). Không SQL/backend mới hoặc mở quyền. Full goal ACTIVE; còn chi phí AI/biên nhận UNKNOWN, cấu hình, inventory/chuyển luồng, UAT và Founder release; chưa chạy thật hoặc chứng minh250k.

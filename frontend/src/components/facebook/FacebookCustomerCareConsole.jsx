@@ -5,6 +5,7 @@ import SurveyProposals from './SurveyProposals';
 import CareConnections from './CareConnections';
 import CareAdvisor from './CareAdvisor';
 import CareRuntime from './CareRuntime';
+import CareInferenceCosts from './CareInferenceCosts';
 import {modes,labels,queueView,threadView,historyView,readPending,savePending,clearPending,controlAck,controlPayload} from './careConsoleState.mjs';
 const button='rounded-lg border px-3 py-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed';
 const date=x=>x?new Date(x).toLocaleString('vi-VN',{timeZone:'Asia/Ho_Chi_Minh'}):'Chưa có';
@@ -16,7 +17,7 @@ export default function FacebookCustomerCareConsole({companyId,actorId}){
 }
 function CareWorkspace({companyId,actorId}){
  const [view,setView]=useState('care'),[libraryVisited,setLibraryVisited]=useState(false),[careEpoch,setCareEpoch]=useState(0);
- return <div className="flex h-full flex-col"><nav className="flex gap-2 border-b p-3" aria-label="Công cụ chăm khách"><button className={button} aria-pressed={view==='care'} onClick={()=>setView('care')}>Hội thoại</button><button className={button} aria-pressed={view==='library'} onClick={()=>{setLibraryVisited(true);setView('library');}}>Nội dung tư vấn</button><button className={button} aria-pressed={view==='runtime'} onClick={()=>setView('runtime')}>Hoạt động AI</button></nav>{view==='runtime'&&<div className="min-h-0 flex-1"><CareRuntime companyId={companyId} actorId={actorId} onOpenQueue={()=>{setCareEpoch(n=>n+1);setView('care');}}/></div>}<div className={`min-h-0 flex-1 ${view==='care'?'':'hidden'}`}><CareSession key={careEpoch} companyId={companyId} actorId={actorId} active={view==='care'}/></div>{libraryVisited&&<div className={`min-h-0 flex-1 ${view==='library'?'':'hidden'}`}><CustomerCareLibrary companyId={companyId} actorId={actorId}/></div>}</div>;
+ return <div className="flex h-full flex-col"><nav className="flex gap-2 border-b p-3" aria-label="Công cụ chăm khách"><button className={button} aria-pressed={view==='care'} onClick={()=>setView('care')}>Hội thoại</button><button className={button} aria-pressed={view==='library'} onClick={()=>{setLibraryVisited(true);setView('library');}}>Nội dung tư vấn</button><button className={button} aria-pressed={view==='runtime'} onClick={()=>setView('runtime')}>Hoạt động AI</button><button className={button} aria-pressed={view==='cost'} onClick={()=>setView('cost')}>Chi phí AI</button></nav>{view==='cost'&&<div className="min-h-0 flex-1"><CareInferenceCosts companyId={companyId} actorId={actorId}/></div>}{view==='runtime'&&<div className="min-h-0 flex-1"><CareRuntime companyId={companyId} actorId={actorId} onOpenQueue={()=>{setCareEpoch(n=>n+1);setView('care');}}/></div>}<div className={`min-h-0 flex-1 ${view==='care'?'':'hidden'}`}><CareSession key={careEpoch} companyId={companyId} actorId={actorId} active={view==='care'}/></div>{libraryVisited&&<div className={`min-h-0 flex-1 ${view==='library'?'':'hidden'}`}><CustomerCareLibrary companyId={companyId} actorId={actorId}/></div>}</div>;
 }
 function CareSession({companyId,actorId,active}){
  const [mode,setMode]=useState('HUMAN_REQUESTED'),[queue,setQueue]=useState(null),[detail,setDetail]=useState(null),[messages,setMessages]=useState([]),[before,setBefore]=useState(null);

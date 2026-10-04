@@ -47,6 +47,9 @@ const runtimeConsole=createCareRuntimeConsole({db:supabase,isPrimary:advisorPrim
 r.get('/runtime/turns',(req,res)=>runtimeConsole(req,res,'list'));
 r.get('/runtime/turn',(req,res)=>runtimeConsole(req,res,'read'));
 r.post('/runtime/turn/close',(req,res)=>runtimeConsole(req,res,'close'));
+const {createCareInferenceCosts}=require('../modules/marketingAutomation/careInferenceCosts');
+const inferenceCosts=createCareInferenceCosts({db:supabase,isPrimary:advisorPrimary});
+r.get('/inference/costs',inferenceCosts);
 const survey=createSurveyAvailability({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
 r.get('/survey/roster',(req,res)=>survey.handle(req,res,'read'));
 r.post('/survey/roster/change',(req,res)=>survey.handle(req,res,'change'));

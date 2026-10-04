@@ -95,6 +95,10 @@ on:
       - 'database/693_crm_care_runtime.sql'
       - 'database/694_crm_care_answer_delivery.sql'
       - 'database/695_crm_survey_runtime.sql'
+      - 'database/696_crm_care_inference_cost_console.sql'
+      - 'backend/tests/careInferenceCosts*.js'
+      - 'frontend/src/components/facebook/CareInferenceCosts.jsx'
+      - 'frontend/src/components/facebook/careInferenceCostState.mjs'
       - 'frontend/src/components/facebook/CareRuntime.jsx'
       - 'frontend/src/components/facebook/careRuntimeState.mjs'
       - 'frontend/src/components/facebook/CareAdvisor.jsx'
@@ -172,7 +176,7 @@ jobs:
       - run: node --test backend/tests/facebookCustomerCare.advisorConsole.test.js
       - run: node --test backend/tests/facebookCustomerCare.inference.test.js
       - run: node --test backend/tests/facebookCustomerCare.runtime.test.js backend/tests/facebookCustomerCare.runtimeConsole.test.js
-      - run: node --test backend/tests/careAnswerDispatch.test.js
+      - run: node --test backend/tests/careAnswerDispatch.test.js backend/tests/careInferenceCosts.test.js
       - name: Install isolated Express version matching backend lock
         run: npm install --prefix "$RUNNER_TEMP/vpt-http" --ignore-scripts --no-audit --no-fund express@5.2.1
       - name: Real Express post-ACK and stopped admission
