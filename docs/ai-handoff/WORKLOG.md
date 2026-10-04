@@ -1,3 +1,11 @@
+## 04/10/2026 — Đang nghiệm thu sửa nguồn khách
+
+Thay route đồng bộ nguồn toàn DB bằng preview/apply theo một công ty và danh sách Lead rõ ràng. SQL683 chỉ khôi phục nhãn NULL từ evidence original intake, giữ nguồn đã có, hồ sơ mâu thuẫn cần đối soát. Ghi nhãn và receipt cùng giao dịch; quyền hiện hành và khóa graph maintenance được kiểm trong SQL. Local30 ca mới+237 regression=267 PASS. Đã bổ sung17 ca PostgreSQL; CI và review cuối đang chờ.
+
+[Hợp đồng, khóa dữ liệu và hoàn tác](vpt-marketing-automation/LEGACY_SOURCE_REPAIR.md). Reviewer phát hiện company.is_active NULL trong helper cũ; bản sửa thêm strict TRUE và ca kiểm cả sau chờ khóa/replay. Full goal ACTIVE; chưa dữ liệu thật, phát hành hoặc kết quả250k. Còn chuyển luồng, đối soát bền vững, AI/lịch/người nhận, UAT và Founder release.
+
+---
+
 ## 04/10/2026 — Batch tạo khách đã qua PostgreSQL và review
 
 Runtime `c7d2a438d261b204064e6a597350e01e589fc58c` giới hạn đúng danh sách/công ty, kiểm quyền và đầu vào hiện hành, giữ liên kết hội thoại, có đường đối soát các ID lỗi. Local237 PASS; PostgreSQL290/0/0 gồm9 ca mới; Node22 843+26+237 và cả10job/build/report/Messenger SUCCESS. Reviewer độc lập xác minh đúng bản công bố và kết luận PASS phạm vi batch-create.

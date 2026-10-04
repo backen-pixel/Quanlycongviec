@@ -6,6 +6,7 @@ const { enabledPageIds, enqueueMessengerEvents, captureMessengerReferral, linkMe
 const DURABLE_MESSENGER_PAGES = enabledPageIds();
 const { isFacebookAtomicLeadScope, createFacebookLeadOnce } = require('../helpers/facebookAtomicLead');
 const { runFacebookLeadBatch } = require('../helpers/facebookLegacyBatch');
+const { repairFacebookSources } = require('../helpers/facebookLegacySourceRepair');
 const { assertLegacyFacebookWriteAllowed, legacyFacebookPageMayWrite } = require('../helpers/facebookLegacyWriteScope');
 const { loadFacebookCreationContext, assertFacebookCreationTargets, assertFacebookCreationAssignment, assertFacebookCreationActor, assertFacebookCreationPipeline, findFacebookCreationCustomer, resolveScopedFacebookSource, assertFacebookCreationMessageLinks, writeFacebookCreationContact, assertFacebookCreationSource, facebookCreationScopeConflict } = require('../helpers/facebookLegacyCreationScope');
 const { deleteLegacyFacebookContact, linkLegacyFacebookContact, checkedLegacyFacebookResult, checkedLegacyFacebookRows, assertLegacyFacebookSyncSucceeded, assertLegacyContactIdsInPageScope } = require('../helpers/facebookLegacyContactWrites');
@@ -6256,45 +6257,14 @@ r.get('/scan-duplicates-debug', authMiddleware, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 
 r.post('/sync-source-ids', authMiddleware, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try {
-    // Phân trang 1000 dòng/lần thay vì tải toàn bộ 1 lần
-    const allContacts = [];
-    let pageFrom = 0;
-    while (true) {
-      const { data: page } = await supabase.from('facebook_contacts')
-        .select('lead_id, page_id')
-        .not('lead_id', 'is', null)
-        .not('page_id', 'is', null)
-        .range(pageFrom, pageFrom + 999);
-      if (!page?.length) break;
-      allContacts.push(...page);
-      if (page.length < 1000) break;
-      pageFrom += 1000;
-    }
-
-    const leadPageMap = new Map();
-    for (const row of allContacts) {
-      if (!row.lead_id || !row.page_id || leadPageMap.has(row.lead_id)) continue;
-      leadPageMap.set(row.lead_id, row.page_id);
-    }
-
-    let updated = 0;
-    const details = [];
-    for (const [leadId, pageId] of leadPageMap.entries()) {
-      const page = await getPageConfig(pageId);
-      if (!page) continue;
-      const sourceId = await resolveFacebookSourceId(page);
-      if (!sourceId) continue;
-      const { data: lead } = await supabase.from('crm_leads').select('id, source_id, code').eq('id', leadId).single();
-      if (!lead || lead.source_id === sourceId) continue;
-      await supabase.from('crm_leads').update({ source_id: sourceId, updated_at: new Date().toISOString() }).eq('id', leadId);
-      updated++;
-      details.push({ lead_id: leadId, code: lead.code, page_id: pageId, source_id: sourceId });
-    }
-
-    res.json({ total: leadPageMap.size, updated, details });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+    return res.json(await repairFacebookSources(supabase, req, { isPrimary: leadIntakePrimary }));
+  } catch (error) {
+    return res.status([400, 403, 409, 503].includes(error.status) ? error.status : 503).json({
+      error: 'Chưa xác nhận đồng bộ nguồn. Đối chiếu yêu cầu và phạm vi trước khi tiếp tục.',
+      code: error.code || 'SOURCE_REPAIR_UNAVAILABLE',
+    });
   }
 });
 
