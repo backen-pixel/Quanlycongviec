@@ -2,7 +2,7 @@
 
 ## Phạm vi
 
-Bản làm việc trên HEAD592ce35, SQL687. Chưa áp dụng DB thật, chưa bật bảo trì hoặc phát hành. Chỉ chuẩn bị cơ chế kiểm soát cho gói chuyển đổi đã được Founder duyệt. PostgreSQL và review cuối đang chờ; kiểm cú pháp test/diff cục bộ đã đạt.
+SQL687 tại runtime `df51b95cdc2252774a46e343c6795b1ad7cc2fd1`; bản kiểm đầy đủ `9ecbec45750c15cdfbf20bdbb60b181bc5f24bcc`, tree `fea75d19ae12786c8bd55cd71c1fcc25d822d135`. PostgreSQL 348/0/0 gồm 13 ca mới; Node22 1228/0/0 và 10 job CI đều SUCCESS. Reviewer phiên riêng đã đối chiếu published SQL/test và log CI, kết luận PASS checkpoint maintenance; không xác nhận cutover hoặc vận hành thật. Chưa áp dụng DB thật, bật bảo trì hoặc phát hành; gói vận hành vẫn cần Founder duyệt.
 
 Hold bảo vệ **toàn bộ công ty trên các bảng trong manifest**, không giới hạn một Page. Nó chặn cả công việc CRM hợp lệ trên các bảng này trong cửa sổ bảo trì. Không dùng như nút dừng chiến dịch hoặc nút dừng một khách. Không coi đây là bằng chứng tiến trình/HTTP/queue cũ đã kết thúc.
 
@@ -48,6 +48,12 @@ Các bước trên là điều kiện vận hành cần thực hiện sau duyệ
 ## Kiểm thử và hoàn tác
 
 13 ca PostgreSQL mới nối cuối suite intake: migration lặp; quyền private; mọi DML/TRUNCATE trên từng bảng; hai thứ tự cạnh tranh qua connection thật và quan sát Lock; timeout/rollback; snapshot cũ/replica và isolation khi inactive; cascade/set-null từ parent ngoài manifest sang bảng con khác schema; idempotency/revision/audit; đổi manifest; UNKNOWN giữ claim. Bảng nghiệp vụ đã có dùng fixture intake thực; một số bảng nhánh phụ chỉ cần khóa chính vì guard không đọc cột nghiệp vụ. Không coi đó là kiểm toàn bộ nghiệp vụ assignments hoặc schema production.
+
+[Automation37178090976](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37178090976): 10/10 SUCCESS. [Intake111364839406](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37178090976/job/111364839406): 348/0/0, đủ 13 ca mới 335–347. Node22 job111364839436: 843+26+359=1228/0/0; frontend111364839245 SUCCESS. [Report37178090944](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37178090944) và [Messenger37178090940](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37178090940) SUCCESS.
+
+CI merge `9f4ee09c0f1eae6e0aba00d22494c5217c4121c7` được đối chiếu Git API đúng tree của bản kiểm, parents base `e16c885ae7c2305645be02a1227bf378cb59137f` và `9ecbec45750c15cdfbf20bdbb60b181bc5f24bcc`. Node syntax/diff được kiểm cục bộ; PostgreSQL thực chạy trên CI cô lập, không phải máy local. Không có thay đổi UI nên không dùng browser làm bằng chứng cho guard SQL.
+
+CI đầu df51b95 cũng 348 PASS nhưng log cho thấy nhánh SET NULL bị câu CASCADE không khớp dòng chặn trước. Bản9ecbec4 chỉ sửa fixture, tách hai parent; log mới chứng minh cả DELETE CASCADE lẫn UPDATE SET null_id=NULL thực sự bị guard chặn, parent/child giữ nguyên. Không đổi hoặc nới SQL/assertion để lấy kết quả PASS.
 
 Nếu bật hold lỗi, giao dịch/audit rollback; đọc trạng thái bằng request/revision trước thao tác tiếp. Nếu đã bật, không bỏ trigger/migration hay sửa state để mở lại; giữ audit, manifest và claim. Chỉ tắt qua lệnh operator sau hồ sơ drain/phương án khôi phục được duyệt. Hoàn tác ứng dụng không được khôi phục writer cũ khi chưa đối soát. Chưa có quyền vận hành thật từ việc hoàn thiện mã này.
 

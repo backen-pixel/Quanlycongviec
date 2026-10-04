@@ -36,4 +36,6 @@ Không thể hoàn tác STOP bằng khôi phục token hoặc biến CANCELLED/U
 
 UNKNOWN vẫn giữ claim. Các bước Customer/Lead/message/task/notification của creator cũ là nhiều giao dịch, CHECK không giữ khóa xuyên HTTP. SQL680 mới chặn mapping/inverse; SQL682 reservationMade=false; khóa bộ nhớ một instance và stopRequested không chứng minh mọi writer đã dừng. Muốn khép UNKNOWN cần fence bền vững bao phủ writer hoặc gói dừng/chờ tất cả process/queue có bằng chứng, rồi đối soát nguyên tử; khóa maintenance ngắn rồi nhả chưa đủ.
 
+Đã bổ sung [hold DB bền vững SQL687](LEGACY_WRITE_HOLD.md), kiểm PostgreSQL trên bản9ecbec4. Nó chặn DML/TRUNCATE của manifest trong cửa sổ bảo trì nhưng không dừng process/HTTP/socket/mobile. UNKNOWN vẫn giữ nguyên; còn inventory/dừng/drain đầy đủ và đối soát nguyên tử trước mở lại. Chưa bật hold hoặc áp DB thật.
+
 Tiếp tục khép chuyển writer/UNKNOWN, cấu hình AI/lịch/người nhận/phạm vi đo, UAT toàn tuyến và Founder release. Mục tiêu250k/khách hợp lệ duy nhất chưa được chứng minh bằng dữ liệu thật; full goal ACTIVE.

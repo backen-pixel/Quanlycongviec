@@ -1,4 +1,4 @@
-04/10/2026: [Bảo trì đường ghi cũ](LEGACY_WRITE_HOLD.md), SQL687 mặc định tắt, 18 bảng gốc và FK descendants, operator-only/audit/revision/hash; đang kiểm 13 ca PostgreSQL và review. Không thay UNKNOWN/claim hoặc chứng minh process đã dừng. Chưa áp DB thật hoặc phát hành.
+04/10/2026: [Bảo trì đường ghi cũ](LEGACY_WRITE_HOLD.md), SQL687 mặc định tắt, 18 bảng gốc và FK descendants, operator-only/audit/revision/hash. Bản kiểm9ecbec4: PG348/0/0 (13 mới), Node22=1228/0/0, cả10 job/build/report/Messenger SUCCESS; reviewer độc lập PASS checkpoint maintenance sau đối chiếu published blobs/log CI. Không thay UNKNOWN/claim hoặc chứng minh process đã dừng. Chưa áp DB thật hoặc phát hành.
 
 04/10/2026: [Dừng batch có bằng chứng](LEGACY_BATCH_STOP.md), runtimee7d35d1đã kiểm: Local/Node22=1228/0/0, PG335/0/0 gồm12mới,10job/build/report/MessengerSUCCESS; review độc lậpPASS checkpoint, browsergiả đã kiểm. ChặnBEGINmuộn, hủyPENDING/giữUNKNOWN. Chưa khépUNKNOWN/cutover/UAT/phát hành.
 

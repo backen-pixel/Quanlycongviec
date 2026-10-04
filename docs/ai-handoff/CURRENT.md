@@ -1,6 +1,6 @@
-## 04/10/2026 — Đang kiểm chế độ bảo trì đường ghi cũ
+## 04/10/2026 — Bảo trì đường ghi cũ đã qua PostgreSQL
 
-SQL687 bổ sung hold private, mặc định tắt, chặn toàn bộ DML/TRUNCATE trên 18 bảng gốc và FK descendants. Bật/tắt lấy khóa bảng trước khóa trạng thái, kiểm revision/hash và ghi audit; không đổi UNKNOWN/claim hoặc coi process đã dừng. Đây là bảo trì mọi công ty trong manifest, không phải một Page. Đã viết 13 ca PostgreSQL, đang chờ CI/review; cú pháp test và diff đã kiểm.
+SQL687 bổ sung hold private, mặc định tắt, chặn toàn bộ DML/TRUNCATE trên 18 bảng gốc và FK descendants. Bản kiểm9ecbec4: PostgreSQL348/0/0 gồm13 ca mới, Node22=1228/0/0, cả10 job/build/report/Messenger SUCCESS. Đã sửa fixture để kiểm SET NULL riêng, log xác nhận nhánh thật. Reviewer độc lập đã đối chiếu published blobs/log CI và kết luận PASS checkpoint maintenance. Hold áp dụng mọi công ty trong manifest; cài migration yêu cầu ghi READ COMMITTED cả khi inactive. Không đổi UNKNOWN/claim hoặc coi process đã dừng.
 
 [Phạm vi, inventory tiến trình, kiểm chứng và hoàn tác](vpt-marketing-automation/LEGACY_WRITE_HOLD.md). Còn dừng/drain mọi writer/tác động ngoài DB và đối soát UNKNOWN, AI/lịch/người nhận, UAT và Founder release. Chưa áp DB thật, bật hold, phát hành hoặc chứng minh 250k. Full goal ACTIVE.
 

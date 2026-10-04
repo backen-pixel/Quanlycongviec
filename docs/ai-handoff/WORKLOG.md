@@ -1,6 +1,6 @@
-## 04/10/2026 — Chuẩn bị bảo trì đường ghi legacy
+## 04/10/2026 — Kiểm chứng bảo trì đường ghi legacy
 
-Thêm SQL687/private hold, `facebookLegacyHold.cases.js`, nối journal PG và workflow; cập nhật CURRENT/README cùng [hợp đồng](vpt-marketing-automation/LEGACY_WRITE_HOLD.md). 18 root và FK descendants, guard cả statement/replica, table-lock trước state, audit/revision/hash/request; mặc định inactive. 13 ca PG mới chưa có kết quả CI tại checkpoint soạn; node syntax/diff đạt. Reviewer khảo sát thêm nhánh assignment/artifact và socket/mobile; đã đưa vào manifest/điều kiện drain. Không tác động hệ thống thật; UNKNOWN/claim giữ nguyên và mục tiêu đầy đủ còn ACTIVE.
+Thêm SQL687/private hold, `facebookLegacyHold.cases.js`, nối journal PG và workflow; cập nhật CURRENT/README cùng [hợp đồng](vpt-marketing-automation/LEGACY_WRITE_HOLD.md). 18 root và FK descendants, guard cả statement/replica, table-lock trước state, audit/revision/hash/request; mặc định inactive. Runtime df51b95, bản kiểm9ecbec4/treefea75d19: PG348/0/0 gồm13 ca mới, Node22=1228/0/0, cả10 job/build/report/Messenger SUCCESS. Cú pháp/diff kiểm local. SET NULL dùng parent riêng sau khi đọc log thấy fixture đầu chỉ tới CASCADE; SQL không đổi. Reviewer bổ sung nhánh assignment/artifact, isolation inactive và DDL freeze; reviewer độc lập đã đối chiếu published blobs/log CI và PASS checkpoint maintenance. Không tác động hệ thống thật; UNKNOWN/claim giữ nguyên và mục tiêu đầy đủ còn ACTIVE.
 
 ## 04/10/2026 — Dừng batch có tombstone và audit
 
@@ -62,7 +62,7 @@ Bước tiếp: source-backfill/caller cũ và dừng/chờ khi chuyển luồng
 
 ## Hiện hành 04/10/2026 — Đang khép phạm vi tạo khách Facebook
 
-Bản làm việc trên a102450 sửa creator tự động/thủ công: công ty Page hiện hành, Customer/Lead cùng phạm vi, người nhận còn quyền, nguồn không bị đổi công ty, cặp pipeline/stage và giữ liên kết hội thoại. Local 66 ca mới + 117 regression = 183 PASS. Đã bổ sung 13 ca PostgreSQL; CI và review độc lập đang chờ. [Hợp đồng, kiểm thử, giới hạn và hoàn tác](vpt-marketing-automation/LEGACY_CREATOR_SCOPE.md).
+Bản làm việc trên a102450 sửa creator tự động/thủ công: công ty Page hiện hành, Customer/Lead cùng phạm vi, người nhận còn quyền, nguồn không bị đổi công ty, cặp pipeline/stage và giữ liên kết hội thoại. Local 66 ca mới + 117 regression = 183 PASS. Đã bổ sung 10 ca PostgreSQL; CI và review độc lập đang chờ. [Hợp đồng, kiểm thử, giới hạn và hoàn tác](vpt-marketing-automation/LEGACY_CREATOR_SCOPE.md).
 
 Chuỗi HTTP cũ chưa là một giao dịch nguyên tử; CRM merge/bảo toàn lịch sử, cutover, cấu hình AI/lịch/người nhận, nghiệm thu và Founder release vẫn OPEN. Full goal ACTIVE. Chưa dữ liệu thật, quyền AI, chi quảng cáo hoặc phát hành. Các mục dưới là lịch sử.
 
