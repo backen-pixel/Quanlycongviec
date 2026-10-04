@@ -4,6 +4,7 @@ const creation = require('./facebookLegacyCreationScope');
 const { assertLegacyFacebookWriteAllowed } = require('./facebookLegacyWriteScope');
 const { isCrmSystemAdminUser, isCrmCompanyAdminUser, isCrmSalesAdminUser, isCrmRegionAdminUser } = require('./crmAccessRoles');
 const { extractInboundContactInfo } = require('./facebookPhoneExtract');
+const { journalResponse } = require('./facebookBatchJournal');
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const fail = (status, code, message) => Object.assign(new Error(message), { status, code });
 const denied = () => fail(403, 'FACEBOOK_BATCH_FORBIDDEN', 'Không có quyền xử lý toàn bộ danh sách đã chọn.');
@@ -79,16 +80,19 @@ async function loadBatchConfig(db, context) {
   return { trigger: 'first_message', message_count_threshold: 1, ...(data?.value || {}) };
 }
 
-async function runFacebookLeadBatch(db, req, { createLead, loadConfig = context => loadBatchConfig(db, context), checkWrite = assertLegacyFacebookWriteAllowed, messageLimit = 120 }) {
+async function runFacebookLeadBatch(db, req, { createLead, journal = null, loadConfig = context => loadBatchConfig(db, context), checkWrite = assertLegacyFacebookWriteAllowed, messageLimit = 120 }) {
   const ids = batchContactIds(req?.body?.contact_ids);
   const companyId = await batchCompany(db, req);
   const contexts = await loadBatchContexts(db, req, ids, companyId, checkWrite);
+  const execution = journal ? await journal.begin(req, companyId, ids) : null;
+  if (execution && !execution.execute) return journalResponse(execution.run);
   const summary = { company_id: companyId, total: ids.length, processed: 0, phone_updated: 0, skipped: 0, failed: 0, unprocessed: ids.length, results: [] };
   const authorize = (context, target) => authorizeBatchCreation(db, req, companyId, context, target);
   let failure = null;
   for (const selected of contexts) {
     const id = selected.contact.id;
     try {
+      if (execution) await execution.start(id);
       const context = (await loadBatchContexts(db, req, [id], companyId, checkWrite))[0];
       if (String(context.page.page_id) !== String(selected.page.page_id)) throw creation.facebookCreationScopeConflict();
       const contact = context.contact;
@@ -100,6 +104,7 @@ async function runFacebookLeadBatch(db, req, { createLead, loadConfig = context 
       if (trigger === 'manual') reason = 'MANUAL_TRIGGER';
       else if (!contact.lead_id && contact.sync_paused === true) reason = 'SYNC_PAUSED';
       if (reason) {
+        if (execution) await execution.result(id, { contact_id: id, status: 'skipped', reason });
         summary.skipped++;
         summary.results.push({ contact_id: id, status: 'skipped', reason });
         summary.unprocessed--;
@@ -116,6 +121,7 @@ async function runFacebookLeadBatch(db, req, { createLead, loadConfig = context 
         if (count < Math.max(1, parseInt(cfg.message_count_threshold, 10) || 2)) reason = 'MESSAGE_THRESHOLD';
       }
       if (reason) {
+        if (execution) await execution.result(id, { contact_id: id, status: 'skipped', reason });
         summary.skipped++;
         summary.results.push({ contact_id: id, status: 'skipped', reason });
         summary.unprocessed--;
@@ -123,6 +129,7 @@ async function runFacebookLeadBatch(db, req, { createLead, loadConfig = context 
       }
       const authorizeItem = async (current, target) => {
         await authorize(current, target);
+        if (execution) await execution.check(id);
         // Bind extracted input to the contact that supplied it. The creator refreshes
         // context and updates its own mapping/pause fields after successful writes.
         const { data: observed } = await checked(db.from('facebook_contacts').select('id,page_id,psid,phone,fb_name,sync_paused,lead_id,customer_id')
@@ -163,6 +170,7 @@ async function runFacebookLeadBatch(db, req, { createLead, loadConfig = context 
         fresh.contact.phone = phone;
       }
       await authorizeItem(fresh, target);
+      if (execution) await execution.result(id, { contact_id: id, status: 'linked', lead_id: lead.id });
       summary.processed++;
       summary.unprocessed--;
       summary.results.push({ contact_id: id, status: 'linked', lead_id: lead.id });
@@ -171,12 +179,20 @@ async function runFacebookLeadBatch(db, req, { createLead, loadConfig = context 
       summary.unprocessed--;
       summary.results.push({ contact_id: id, status: 'reconciliation_required', code: error.code || 'FACEBOOK_BATCH_INCOMPLETE' });
       failure = error;
+      // A timed-out DB write may still commit. Preserve its claim as UNKNOWN;
+      // cancel only items that never started. Never dispatch a second creator.
+      if (execution) { try { await execution.stop(); } catch { /* Read/reconcile the durable run; no replay. */ } }
       break;
     }
   }
+  if (execution && !failure) await execution.finish();
   // A revoked actor must not receive earlier customer/Lead IDs or identifiers.
   try { await batchCompany(db, req); await loadBatchContexts(db, req, ids, companyId, checkWrite); }
   catch (error) { failure = error; summary.results = []; summary.details_withheld = true; }
+  if (execution) {
+    if (summary.details_withheld) throw failure;
+    return journalResponse(await execution.read());
+  }
   if (failure) return { status: [400, 403, 409, 503].includes(failure.status) ? failure.status : 503,
     body: { ...summary, reconciliation_required: true, error: 'Đã dừng xử lý. Cần đối soát các hồ sơ đã bắt đầu trước khi thử lại.', code: failure.code || 'FACEBOOK_BATCH_INCOMPLETE' } };
   return { status: 200, body: summary };

@@ -2294,3 +2294,7 @@ Runtime `2cac0949aa78bb5d281f580c55c9dfe1171e6101` kiểm actor và toàn bộ h
 [Phạm vi, bằng chứng và findings còn mở](vpt-marketing-automation/LEGACY_CRM_MERGE_REPAIR.md). **CRM merge chưa READY**: còn giao dịch nguyên tử, receipt, bảo toàn task/tệp/chat/quyền/tiền/Project/attribution và Customer command đầy đủ. Tiếp tục khép phần này, creator company và cutover; sau đó cấu hình/nghiệm thu toàn tuyến, Founder release. Full goal ACTIVE; chưa DB thật, model/provider, chi quảng cáo hoặc phát hành.
 
 ---
+
+## 04/10/2026 — Nhật ký batch và UI phục hồi đang nghiệm thu
+
+SQL684/private journal, helper và GET lịch sử/tiến độ; route batch lưu trước dispatch, kiểm claim và lưu từng kết quả; RESULT cuối hoàn tất nguyên giao dịch. Thay handler UI cũ bằng recovery controller/component có request cố định, reload GET, lịch sử server và trạng thái chưa rõ được giữ lại. Cập nhật suite/CI, source-route VM extraction và CURRENT/README. Local294/0/0, reviewer PASS mã sau ba finding đã sửa; browser thật/API giả PASS các tình huống ghi trong LEGACY_BATCH_JOURNAL.md. 16ca PostgreSQL mới/build chưa xác minh CI. Hoàn tác giữ journal/claim, dừng-chờ-đối soát trước chuyển code. Full goal ACTIVE, chưa live DB/UAT/release hoặc250k thực tế.

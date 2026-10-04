@@ -13,9 +13,9 @@ function setup(db=database(),{user=claims(),createLead=null,atomic=false}={}){
  let route;
  vm.runInNewContext(source.slice(source.indexOf("r.post('/batch-create-leads'"),source.indexOf('// ═',source.indexOf("r.post('/batch-create-leads'"))),{
   r:{post(url,...handlers){route=handlers.at(-1);},_ioRef:{emit(){throw Error('No broadcast allowed');}}},authMiddleware(){},supabase:db,
-  createLeadFromFacebook:options.createLead,runFacebookLeadBatch:(connection,req)=>batch.runFacebookLeadBatch(connection,req,options),
+  facebookBatchJournal:null,createLeadFromFacebook:options.createLead,runFacebookLeadBatch:(connection,req)=>batch.runFacebookLeadBatch(connection,req,options),
  });
- return{db,h,calls,options,run:async(req=request([i.contact],user))=>{const res={statusCode:200,status(n){this.statusCode=n;return this;},json(body){this.body=body;return this;}};
+ return{db,h,calls,options,run:async(req=request([i.contact],user))=>{const res={statusCode:200,set(){return this;},status(n){this.statusCode=n;return this;},json(body){this.body=body;return this;}};
   await route(req,res);return res;}};
 }
 function second(db,{company=i.company,page='124'}={}){

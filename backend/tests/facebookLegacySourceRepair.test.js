@@ -14,7 +14,7 @@ function setup({ data = good(), error, thrown, isPrimary = () => true } = {}) {
   let handler;
   const code = fs.readFileSync(path.join(__dirname, '../src/routes/facebook.js'), 'utf8');
   const start = code.indexOf("r.post('/sync-source-ids'");
-  vm.runInNewContext(code.slice(start, code.indexOf("r.post('/batch-create-leads'", start)), {
+  vm.runInNewContext(code.slice(start, code.indexOf("r.get('/batch-create-leads'", start)), {
     r: { post(_url, ...fns) { handler = fns.at(-1); } }, authMiddleware() {}, supabase: db,
     repairFacebookSources, leadIntakePrimary: isPrimary,
   });

@@ -7,6 +7,7 @@ const DURABLE_MESSENGER_PAGES = enabledPageIds();
 const { isFacebookAtomicLeadScope, createFacebookLeadOnce } = require('../helpers/facebookAtomicLead');
 const { runFacebookLeadBatch } = require('../helpers/facebookLegacyBatch');
 const { repairFacebookSources } = require('../helpers/facebookLegacySourceRepair');
+const { createFacebookBatchJournal, journalResponse } = require('../helpers/facebookBatchJournal');
 const { assertLegacyFacebookWriteAllowed, legacyFacebookPageMayWrite } = require('../helpers/facebookLegacyWriteScope');
 const { loadFacebookCreationContext, assertFacebookCreationTargets, assertFacebookCreationAssignment, assertFacebookCreationActor, assertFacebookCreationPipeline, findFacebookCreationCustomer, resolveScopedFacebookSource, assertFacebookCreationMessageLinks, writeFacebookCreationContact, assertFacebookCreationSource, facebookCreationScopeConflict } = require('../helpers/facebookLegacyCreationScope');
 const { deleteLegacyFacebookContact, linkLegacyFacebookContact, checkedLegacyFacebookResult, checkedLegacyFacebookRows, assertLegacyFacebookSyncSucceeded, assertLegacyContactIdsInPageScope } = require('../helpers/facebookLegacyContactWrites');
@@ -15,6 +16,7 @@ const { createLeadIntake } = require('../modules/marketingAutomation/facebookLea
 const { createLeadCensus } = require('../modules/marketingAutomation/facebookLeadCensus');
 const intakeRouterState = require('../config/supabaseRouter');
 const leadIntakePrimary = () => !intakeRouterState.isFailoverEnabled() && intakeRouterState.getActiveTarget() === 'primary';
+const facebookBatchJournal = createFacebookBatchJournal({ db: supabase, isPrimary: leadIntakePrimary });
 const facebookLeadIntake = createLeadIntake({ db: supabase, isPrimary: leadIntakePrimary, onError: code => console.warn('[FB Lead intake]', code) });
 const { createCustomerCare } = require('../modules/marketingAutomation/facebookCustomerCare');
 const facebookCustomerCare = createCustomerCare({ db: supabase, isPrimary: leadIntakePrimary });
@@ -6268,9 +6270,23 @@ r.post('/sync-source-ids', authMiddleware, async (req, res) => {
   }
 });
 
-r.post('/batch-create-leads', authMiddleware, async (req, res) => {
+r.get('/batch-create-leads', authMiddleware, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try { return res.json(await facebookBatchJournal.list(req, req.query.company_id, req.query.before || null)); }
+  catch (error) { return res.status([400,403,409,503].includes(error.status) ? error.status : 503).json({ code: error.code || 'BATCH_JOURNAL_UNAVAILABLE', error: 'Chưa đọc được lịch sử xử lý.' }); }
+});
+r.get('/batch-create-leads/:requestId', authMiddleware, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try {
-    const result = await runFacebookLeadBatch(supabase, req, { createLead: createLeadFromFacebook });
+    const result = journalResponse(await facebookBatchJournal.read(req, req.query.company_id, req.params.requestId));
+    return res.status(result.status).json(result.body);
+  } catch (error) { return res.status([400,403,409,503].includes(error.status) ? error.status : 503).json({ code: error.code || 'BATCH_JOURNAL_UNAVAILABLE', error: 'Chưa đọc được kết quả. Giữ mã lượt xử lý để đối soát.' }); }
+});
+
+r.post('/batch-create-leads', authMiddleware, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  try {
+    const result = await runFacebookLeadBatch(supabase, req, { createLead: createLeadFromFacebook, journal: facebookBatchJournal });
     return res.status(result.status).json(result.body);
   } catch (error) {
     return res.status([400, 403, 409, 503].includes(error.status) ? error.status : 503)

@@ -1,0 +1,68 @@
+'use strict';
+const { randomUUID } = require('node:crypto');
+const uuid = x => typeof x === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x);
+const failure = (code = 'BATCH_JOURNAL_UNAVAILABLE', status = 503) => Object.assign(new Error(code), { code, status });
+function validateRun(run, actor, company, request) {
+  if (!run || run.policy !== 'FACEBOOK_BATCH_JOURNAL_V1' || run.actorId !== actor || run.companyId !== company || run.requestId !== request
+    || !['RUNNING', 'COMPLETED', 'REVIEW'].includes(run.state) || !Array.isArray(run.items) || !run.items.length || run.items.length > 500
+    || new Set(run.items.map(x => x.contactId)).size !== run.items.length
+    || run.items.some(x => !uuid(x.contactId) || !['PENDING', 'RUNNING', 'LINKED', 'SKIPPED', 'UNKNOWN', 'CANCELLED'].includes(x.state)
+      || (x.state === 'LINKED' && (x.result?.status !== 'linked' || x.result?.contact_id !== x.contactId || !uuid(x.result?.lead_id)))
+      || (x.state === 'SKIPPED' && (x.result?.status !== 'skipped' || x.result?.contact_id !== x.contactId
+        || !['MANUAL_TRIGGER','SYNC_PAUSED','PHONE_REQUIRED','MESSAGE_THRESHOLD'].includes(x.result?.reason))))
+    || (run.state === 'COMPLETED' && run.items.some(x => !['LINKED','SKIPPED'].includes(x.state)))
+    || !Number.isFinite(Date.parse(run.createdAt)) || !Number.isFinite(Date.parse(run.updatedAt))) throw failure();
+  return { policy: run.policy, actorId: actor, companyId: company, requestId: request, state: run.state,
+    createdAt: run.createdAt, updatedAt: run.updatedAt,
+    items: run.items.map(x => ({ contactId: x.contactId, state: x.state, result: x.state === 'LINKED'
+      ? { contact_id: x.contactId, status: 'linked', lead_id: x.result.lead_id }
+      : x.state === 'SKIPPED' ? { contact_id: x.contactId, status: 'skipped', reason: x.result.reason } : null })) };
+}
+function journalResponse(run) {
+  const count = state => run.items.filter(x => x.state === state).length;
+  return { status: run.state === 'COMPLETED' ? 200 : 202, body: { company_id: run.companyId, total: run.items.length,
+    processed: count('LINKED'), skipped: count('SKIPPED'), failed: count('UNKNOWN'), unprocessed: count('PENDING') + count('RUNNING') + count('CANCELLED'),
+    results: run.items.filter(x => x.result).map(x => x.result), journal: run, reconciliation_required: run.state !== 'COMPLETED',
+    ...(run.state !== 'COMPLETED' ? { error: 'Lượt xử lý đã được lưu. Đọc lại tiến độ; hồ sơ chưa rõ kết quả cần đối soát trước khi tiếp tục.' } : {}) } };
+}
+function createFacebookBatchJournal({ db, isPrimary }) {
+  async function rpc(name, args) {
+    if (isPrimary() !== true) throw failure('PRIMARY_REQUIRED');
+    let response; try { response = await db.rpc(name, args); } catch { throw failure(); }
+    if (isPrimary() !== true) throw failure();
+    if (response?.error) {
+      const map = { '42501': ['BATCH_JOURNAL_FORBIDDEN', 403], '22023': ['BATCH_JOURNAL_INVALID', 400],
+        '40001': ['BATCH_JOURNAL_CONFLICT', 409], '23505': ['BATCH_JOURNAL_CLAIMED', 409], '55P03': ['BATCH_JOURNAL_BUSY', 409], '40P01': ['BATCH_JOURNAL_BUSY', 409] };
+      throw failure(...(map[response.error.code] || []));
+    }
+    return response?.data;
+  }
+  function context(req, company, request) {
+    const actor = req?.user?.userId || req?.user?.id;
+    if (![actor, company, request].every(uuid)) throw failure('BATCH_JOURNAL_INVALID', 400);
+    return { actor: actor.toLowerCase(), company: company.toLowerCase(), request: request.toLowerCase() };
+  }
+  async function read(req, company, request) {
+    const c = context(req, company, request);
+    return validateRun(await rpc('crm_facebook_batch_read', { p_actor: c.actor, p_company: c.company, p_request: c.request }), c.actor, c.company, c.request);
+  }
+  return { read, async list(req, company, before = null) {
+    const c = context(req, company, before || randomUUID());
+    const x = await rpc('crm_facebook_batch_list', { p_actor: c.actor, p_company: c.company, p_before: before });
+    if (!x || !Array.isArray(x.runs) || x.runs.length > 20 || (x.nextCursor !== null && !uuid(x.nextCursor))
+      || x.runs.some(r => !uuid(r.requestId) || !['RUNNING', 'REVIEW', 'COMPLETED'].includes(r.state) || !Number.isFinite(Date.parse(r.createdAt)))) throw failure();
+    return { runs: x.runs.map(({ requestId, state, createdAt }) => ({ requestId, state, createdAt })), nextCursor: x.nextCursor };
+  }, async begin(req, company, ids) {
+    const c = context(req, company, req.body?.requestId), token = randomUUID();
+    const r = await rpc('crm_facebook_batch_begin', { p_actor: c.actor, p_company: c.company, p_request: c.request, p_ids: ids, p_token: token });
+    const run = validateRun(r?.run, c.actor, c.company, c.request);
+    if (typeof r?.execute !== 'boolean' || JSON.stringify(run.items.map(x => x.contactId)) !== JSON.stringify(ids)) throw failure();
+    const step = async (action, id = null, result = null) => {
+      if (await rpc('crm_facebook_batch_step', { p_request: c.request, p_token: token, p_contact: id, p_action: action, p_result: result }) !== true) throw failure();
+    };
+    return { execute: r.execute, run, start: id => step('START', id), check: id => step('CHECK', id),
+      result: (id, value) => step('RESULT', id, value), stop: () => step('STOP'), finish: () => step('FINISH'),
+      read: () => read(req, c.company, c.request) };
+  } };
+}
+module.exports = { createFacebookBatchJournal, journalResponse, validateRun };

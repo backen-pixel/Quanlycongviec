@@ -1,3 +1,11 @@
+## 04/10/2026 — Đang nghiệm thu nhật ký xử lý khách qua reload
+
+SQL684/API/UI lưu yêu cầu batch và kết quả từng contact, chặn dispatch lặp; reload chỉ đọc, hồ sơ chưa rõ giữ lại để đối soát. RESULT cuối khép cùng giao dịch, không treo nếu FINISH mất phản hồi. Local294/0/0, review độc lập PASS mã; browser component thật/API giả đã kiểm mất phản hồi, reload, UNKNOWN, thu hồi quyền và đổi công ty. PostgreSQL/build bản công bố còn chờ. [Hợp đồng, bằng chứng và giới hạn](vpt-marketing-automation/LEGACY_BATCH_JOURNAL.md).
+
+Full goal ACTIVE; journal chưa khóa mọi writer cũ hoặc làm creator nguyên tử. Còn dừng/chờ/đối soát, AI/lịch/người nhận/phạm vi đo và UAT/Founder release. Chưa DB thật/phát hành hoặc đạt250k thực tế. Các mục dưới giữ lịch sử.
+
+---
+
 ## 04/10/2026 — Đã kiểm chứng sửa nguồn khách theo bằng chứng
 
 Runtime8f61a18 chỉ khôi phục nhãn nguồn NULL từ original intake cho danh sách/công ty rõ ràng; giữ nguồn đã có, hồ sơ thiếu/mâu thuẫn vào REVIEW. SQL683 ghi nhãn và receipt cùng giao dịch, khóa maintenance có giới hạn chờ. Local267 PASS; PostgreSQL307/0/0 gồm17ca mới; Node22 843+26+267, cả10job/build/report/Messenger SUCCESS. Reviewer độc lập xác minh published blobs/log CI và kết luận PASS phạm vi SQL683/API.
