@@ -43,7 +43,7 @@ function fixture(options={}){
  const db={rpc:async(name,args)=>{
   calls.push({name,args});
   const data=name==='crm_care_runtime_candidates'?{...base,pageId:s.page,items:[thread]}:
-   name==='crm_care_runtime_begin'?{...base,threadId:thread,requestId:args.p_request,invoke:true,state:'RUNNING',policyId:s.policy,capability:randomUUID(),context}:
+   ['crm_care_runtime_begin','crm_care_runtime_begin_with_survey'].includes(name)?{...base,threadId:thread,requestId:args.p_request,invoke:true,state:'RUNNING',policyId:s.policy,capability:randomUUID(),context}:
    {...base,threadId:thread,requestId:args.p_request,state:'DRAFT',handoff:false,stale:false};
   return options.rpc?options.rpc(name,args,data,worker):{data};
  }};
@@ -61,6 +61,19 @@ test('runtime uses its own identity in ordered domain calls and never sends a me
  assert.equal(x.models.length,1);assert.equal(x.models[0].authorization.actorId,x.s.principal);assert.equal(x.models[0].authorization.grantId,x.s.grant);
  assert.deepEqual(x.calls[2].args.p_response,{action:'ANSWER',entryId:x.entry,needs:[]});assert.deepEqual(x.errors,[]);
  for(const id of[x.s.principal,x.s.grant,x.s.company,x.thread])assert.equal(JSON.stringify(x.models[0].input).includes(id),false);
+});
+test('survey runtime is separately enabled and never accepts an unsolicited survey capability',async()=>{
+ const policy=randomUUID(),x=fixture({env:{VPT_CARE_RUNTIME_SURVEY:'1',VPT_CARE_RUNTIME_SURVEY_POLICY:policy}});
+ x.context.surveyProposalAllowed=true;await x.worker.drain();assert.deepEqual(x.errors,[]);
+ assert.equal(x.calls[1].name,'crm_care_runtime_begin_with_survey');assert.equal(x.calls[1].args.p_survey_policy,policy);
+ assert.ok(x.models[0].schema.properties.action.enum.includes('SURVEY'));
+ const invalid=fixture({env:{VPT_CARE_RUNTIME_SURVEY:'1'}});await invalid.worker.drain();assert.equal(invalid.calls.length,0);
+ const unsolicited=fixture();unsolicited.context.surveyProposalAllowed=true;await unsolicited.worker.drain();assert.equal(unsolicited.models.length,0);
+});
+test('survey scope change during inference records a disabled result without continuing to propose',async()=>{
+ const x=fixture({env:{VPT_CARE_RUNTIME_SURVEY:'1',VPT_CARE_RUNTIME_SURVEY_POLICY:randomUUID()},infer:async()=>{
+  x.env.VPT_CARE_RUNTIME_SURVEY_POLICY=randomUUID();return{action:'ANSWER',answer:'a0',needs:[]};}});
+ x.context.surveyProposalAllowed=true;await x.worker.drain();assert.deepEqual(x.calls[2].args.p_response,{failure:'DISABLED'});
 });
 test('invalid candidate scope, duplicates, excessive candidates and malformed BEGIN never reach inference',async()=>{
  for(const mutation of[d=>({...d,companyId:randomUUID()}),d=>({...d,items:[...d.items,...d.items]}),d=>({...d,items:Array(11).fill(randomUUID())})]){

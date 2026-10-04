@@ -12,9 +12,10 @@ function createCareRuntime({db,isPrimary,infer,env=process.env,onError=()=>{},wo
  if(!uuid(workerId))throw new TypeError('Invalid worker identity');
  const lifecycle=createWorkerDrain(drainOnce);
  const scope=()=>({principal:env.VPT_CARE_RUNTIME_PRINCIPAL,company:env.VPT_CARE_RUNTIME_COMPANY,
-  grant:env.VPT_CARE_RUNTIME_GRANT,page:env.VPT_CARE_RUNTIME_PAGE,policy:env.VPT_CARE_ADVISOR_INFERENCE_POLICY});
+  grant:env.VPT_CARE_RUNTIME_GRANT,page:env.VPT_CARE_RUNTIME_PAGE,policy:env.VPT_CARE_ADVISOR_INFERENCE_POLICY,
+  survey:env.VPT_CARE_RUNTIME_SURVEY==='1',surveyPolicy:env.VPT_CARE_RUNTIME_SURVEY_POLICY});
  const enabled=s=>!lifecycle.isStopped()&&env.VPT_CARE_RUNTIME==='1'&&isPrimary()===true
-  &&[s.principal,s.company,s.grant,s.policy].every(uuid)&&numeric(s.page)&&typeof infer==='function'
+  &&[s.principal,s.company,s.grant,s.policy].every(uuid)&&(!s.survey||uuid(s.surveyPolicy))&&numeric(s.page)&&typeof infer==='function'
   &&(infer.isAvailable===undefined||infer.isAvailable()===true)&&Object.entries(s).every(([k,v])=>scope()[k]===v);
  async function rpc(name,args){if(isPrimary()!==true)throw fail();const r=await db.rpc(name,args);if(r?.error||!r?.data)throw fail();return r.data;}
  const base=s=>({p_principal:s.principal,p_company:s.company,p_grant:s.grant});
@@ -34,10 +35,11 @@ function createCareRuntime({db,isPrimary,infer,env=process.env,onError=()=>{},wo
    if(!enabled(s))break;
    try{
     const request=randomUUID();
-    const begin=checked(await rpc('crm_care_runtime_begin',{...base(s),p_request:request,p_thread:thread,p_worker:workerId}),s,request,thread);
+    const begin=checked(await rpc(s.survey?'crm_care_runtime_begin_with_survey':'crm_care_runtime_begin',
+     {...base(s),p_request:request,p_thread:thread,p_worker:workerId,...(s.survey?{p_survey_policy:s.surveyPolicy}:{})}),s,request,thread);
     if(begin.invoke===false)continue;
     if(begin.invoke!==true||!uuid(begin.capability)||begin.policyId!==s.policy||begin.context?.companyId!==s.company
-     ||begin.context?.threadId!==thread||begin.state!=='RUNNING')throw fail();
+     ||begin.context?.threadId!==thread||begin.state!=='RUNNING'||(!s.survey&&begin.context.surveyProposalAllowed===true))throw fail();
     const response=await produceCareSelection({context:begin.context,infer,timeoutMs,isEnabled:()=>enabled(s),
      authorization:{actorId:s.principal,companyId:s.company,grantId:s.grant,requestId:request,capability:begin.capability}});
     // Persist a terminal outcome even after local stop; the database rechecks

@@ -41,12 +41,13 @@ function prepareInference(context) {
   if (new Set(context.messages.map(m => m.id)).size !== messages.length
     || new Set(context.entries.map(e => e.entryId)).size !== answers.length) throw fail('INVALID_CONTEXT');
   const input = { messages, answers };
+  const surveyAllowed = context.surveyProposalAllowed === true;
   if (Buffer.byteLength(JSON.stringify(input)) > 100000) throw fail('INVALID_CONTEXT');
   // Short aliases omit CRM/actor/Page/PSID, source internals and attachment URLs.
   const schema = {
     type: 'object', additionalProperties: false, required: ['action', 'answer', 'needs'],
     properties: {
-      action: { type: 'string', enum: ['ANSWER', 'HANDOFF'] },
+      action: { type: 'string', enum: surveyAllowed ? ['ANSWER', 'HANDOFF', 'SURVEY'] : ['ANSWER', 'HANDOFF'] },
       answer: { type: ['string', 'null'], enum: [...answers.map(a => a.id), null] },
       needs: { type: 'array', maxItems: 5, items: {
         type: 'object', additionalProperties: false, required: ['field', 'message', 'quote'],
@@ -56,15 +57,16 @@ function prepareInference(context) {
       } }
     }
   };
-  return { instructions, input, schema };
+  return { instructions: surveyAllowed ? instructions + ' A SURVEY selection with answer null may request a proposal only when the customer explicitly asks for a survey and provides its location. Include exact inbound request and location quotes. The service will choose an available time and ask the customer to confirm; you cannot pick staff, invent an address, promise availability, or confirm a booking. Otherwise select an approved qualifying answer or HANDOFF.' : instructions, input, schema };
 }
 
 function decodeSelection(raw, context) {
   const { input } = prepareInference(context);
-  if (!exact(raw, ['action', 'answer', 'needs']) || !['ANSWER', 'HANDOFF'].includes(raw.action)
+  const actions = context.surveyProposalAllowed === true ? ['ANSWER', 'HANDOFF', 'SURVEY'] : ['ANSWER', 'HANDOFF'];
+  if (!exact(raw, ['action', 'answer', 'needs']) || !actions.includes(raw.action)
     || !Array.isArray(raw.needs) || raw.needs.length > 5) throw fail('INVALID_MODEL_OUTPUT');
   const answerIndex = input.answers.findIndex(a => a.id === raw.answer);
-  if ((raw.action === 'ANSWER' && answerIndex < 0) || (raw.action === 'HANDOFF' && raw.answer !== null)) throw fail('INVALID_MODEL_OUTPUT');
+  if ((raw.action === 'ANSWER' && answerIndex < 0) || (raw.action !== 'ANSWER' && raw.answer !== null)) throw fail('INVALID_MODEL_OUTPUT');
   const seen = new Set();
   const needs = raw.needs.map(n => {
     if (!exact(n, ['field', 'message', 'quote']) || !fields.includes(n.field) || seen.has(n.field)
@@ -74,6 +76,8 @@ function decodeSelection(raw, context) {
     seen.add(n.field);
     return { field: n.field, messageId: context.messages[index].id, quote: n.quote };
   });
+  if (raw.action === 'SURVEY' && (!seen.has('request') || !seen.has('location')
+    || needs.find(n => n.field === 'location').quote.trim().length < 10)) throw fail('INVALID_MODEL_OUTPUT');
   return { action: raw.action, entryId: answerIndex < 0 ? null : context.entries[answerIndex].entryId, needs };
 }
 

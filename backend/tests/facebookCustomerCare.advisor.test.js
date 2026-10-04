@@ -28,6 +28,18 @@ test('selection maps exact evidence and approved answer identity without a model
  assert.deepEqual(decodeSelection(selected(),context()),{action:'ANSWER',entryId:entry,needs:[{field:'budget',messageId:message,quote:'100 triệu'}]});
  assert.deepEqual(decodeSelection({action:'HANDOFF',answer:null,needs:[]},context()),{action:'HANDOFF',entryId:null,needs:[]});
 });
+test('survey selection requires an explicit context capability and exact request/location evidence',()=>{
+ const c=context();c.messages[0].content='Tôi muốn khảo sát tại 123 Đường Kiểm Thử, TP.HCM';
+ const selection={action:'SURVEY',answer:null,needs:[{field:'request',message:'m0',quote:'Tôi muốn khảo sát'},
+  {field:'location',message:'m0',quote:'123 Đường Kiểm Thử, TP.HCM'}]};
+ assert.throws(()=>decodeSelection(selection,c),/INVALID_MODEL_OUTPUT/);
+ assert.equal(prepareInference(c).schema.properties.action.enum.includes('SURVEY'),false);
+ c.surveyProposalAllowed=true;assert.ok(prepareInference(c).schema.properties.action.enum.includes('SURVEY'));
+ const value=decodeSelection(selection,c);assert.equal(value.action,'SURVEY');assert.equal(value.entryId,null);assert.equal(value.needs[1].messageId,message);
+ for(const bad of[{...selection,answer:'a0'},{...selection,confirmed:true},{...selection,needs:[selection.needs[0]]},
+  {...selection,needs:[selection.needs[0],{...selection.needs[1],quote:'123'}]},
+  {...selection,needs:[selection.needs[0],{...selection.needs[1],quote:'invented address'}]}])assert.throws(()=>decodeSelection(bad,c),/INVALID_MODEL_OUTPUT/);
+});
 test('model cannot smuggle tools, free text, new entry, invented quotation, duplicate fields or outbound evidence',()=>{
  for(const raw of[{...selected(),text:'Free-form price'},{...selected(),tools:['send']},{...selected(),answer:'a55'},{...selected(),action:'SEND'},
   {...selected(),action:'HANDOFF'}, {...selected(),needs:[{field:'budget',message:'m0',quote:'250 triệu'}]},

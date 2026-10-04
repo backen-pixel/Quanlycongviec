@@ -1,3 +1,9 @@
+## 04/10/2026 — Đang kiểm chứng AI đề xuất lịch khảo sát
+
+SQL695 nối quyền Agent riêng với lịch CRM, đề xuất và signed customer confirmation, booking/outcome/handoff. Không mượn danh tính human; giữ facade human và barrier hiện hành. Local1.383PASS/0fail/5skip; PostgreSQL và review bản công bố còn chờ. [Hợp đồng, phạm vi và hoàn tác](vpt-marketing-automation/CARE_SURVEY_RUNTIME.md). Không enrollment/DB thật/phát hành. Full goal ACTIVE.
+
+---
+
 ## 04/10/2026 — Gửi câu tư vấn đã đạt kiểm thử tích hợp
 
 SQL694/worker thêm quyền gửi riêng theo Agent/grant/phiên bản câu, lease tối đa5giây và hạn publisher, payload một lần, receipt/echo và barrier dùng chung với survey/outcome. Bản kiểm a388433: Node18/22 mỗi bản1.385/0/0, PostgreSQL469/0/0 gồm21ca mới; cả10job/build/report/Messenger SUCCESS, đúng CI tree/parents. Reviewer độc lập đối chiếu published blobs/log/tree và PASS checkpoint. Không Meta thật/enrollment/phát hành. [Hợp đồng, bằng chứng và hoàn tác](vpt-marketing-automation/CARE_ANSWER_DELIVERY.md). Full goal ACTIVE; còn lịch tự động, UI/ngoại lệ, cấu hình và UAT.

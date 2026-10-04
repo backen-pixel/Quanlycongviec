@@ -94,6 +94,7 @@ on:
       - 'database/692_crm_care_shared_rules.sql'
       - 'database/693_crm_care_runtime.sql'
       - 'database/694_crm_care_answer_delivery.sql'
+      - 'database/695_crm_survey_runtime.sql'
       - 'frontend/src/components/facebook/CareAdvisor.jsx'
       - 'frontend/src/components/facebook/careAdvisorState.mjs'
       - 'backend/tests/facebookBatchLinkReconciliation*.js'
