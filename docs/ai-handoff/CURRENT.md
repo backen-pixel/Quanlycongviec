@@ -4,6 +4,8 @@ SQL688 bổ sung đối soát private operator cho item UNKNOWN đã có durable
 
 Local 1.315 PASS/0 fail/5 skip; 78 ca liên quan gồm 11 mới. PostgreSQL/CI/review cuối đang chờ. [Hợp đồng, kiểm chứng và hoàn tác](vpt-marketing-automation/BATCH_LINK_RECONCILIATION.md). Generic queue không chứa Facebook handler trong mã đã khảo sát; phải cô lập runner/API/consumer khi bảo trì, không chỉ tắt polling. Còn inventory/tác động ngoài liên kết, UNKNOWN mâu thuẫn, AI/lịch/người nhận/phạm vi đo, UAT và Founder release. Full goal ACTIVE; chưa DB thật/phát hành hoặc kết quả 250k.
 
+CI b6be0989 phát hiện một fixture trùng Page/PSID bị UNIQUE hiện hữu chặn trước hàm mới. Đã sửa ca theo schema thật, bổ sung inverse Lead mâu thuẫn, giữ nguyên SQL; PostgreSQL đang chờ kiểm lại. Node 18/22 mỗi bản 1.320/0/0 và build đạt.
+
 ---
 
 ## 04/10/2026 — Dừng vòng cũ và tác vụ Facebook đã qua kiểm thử tích hợp

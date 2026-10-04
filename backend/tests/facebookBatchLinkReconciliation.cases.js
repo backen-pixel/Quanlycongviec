@@ -69,9 +69,16 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,begin,r
   ['Lead company moved',async f=>db.query('UPDATE crm_leads SET company_id=$2 WHERE id=$1',[f.lead,other]),'LINK_SCOPE_CONFLICT'],
   ['Page company moved',async f=>db.query('UPDATE facebook_pages SET default_company_id=$2 WHERE page_id=$1',[f.page,other]),'PAGE_SCOPE_CONFLICT'],
   ['Customer company moved',async f=>db.query('UPDATE customers SET company_id=$2 WHERE id=$1',[f.customer,other]),'LINK_SCOPE_CONFLICT'],
-  ['duplicate Page identity',async f=>db.query('INSERT INTO facebook_contacts(id,page_id,psid,lead_id,customer_id) VALUES($1,$2,$3,$4,$5)',[randomUUID(),f.page,f.psid,f.lead,f.customer]),'AMBIGUOUS_CONTACT'],
+  ['conflicting inverse Lead',async f=>{const g=await fixture();await db.query('UPDATE crm_leads SET facebook_contact_id=$2 WHERE id=$1',[g.lead,f.contact]);},'AMBIGUOUS_CONTACT'],
  ])await t.test('reconciliation rejects '+label+' without changing or repairing business data',async()=>{
   const f=await stopped();await change(f);await hold(true);try{assert.ok((await preview(f)).snapshot.issues.includes(issue));await assert.rejects(apply(await args(f)),e=>e.code==='40001');assert.equal(await auditCount(f),0);}finally{await off();}
+ });
+ await t.test('duplicate Page identity is rejected by the actual unique constraint before reconciliation',async()=>{
+  const f=await stopped(),before=await graph(f);
+  await assert.rejects(db.query('INSERT INTO facebook_contacts(id,page_id,psid,lead_id,customer_id) VALUES($1,$2,$3,$4,$5)',
+   [randomUUID(),f.page,f.psid,f.lead,f.customer]),e=>e.code==='23505'&&e.constraint==='facebook_contacts_page_id_psid_key');
+  assert.deepEqual(await graph(f),before);assert.equal(await auditCount(f),0);await hold(true);
+  try{const v=await preview(f);assert.equal(v.snapshot.duplicateContacts,0);assert.equal(v.linkCanBeConfirmed,true);}finally{await off();}
  });
  await t.test('all message rows participate; row1001 cannot be truncated away',async()=>{
   const f=await stopped();await db.query("INSERT INTO facebook_messages(contact_id,lead_id,direction,content) SELECT $1,$2,'inbound','synthetic '||n FROM generate_series(1,1000)n",[f.contact,f.lead]);

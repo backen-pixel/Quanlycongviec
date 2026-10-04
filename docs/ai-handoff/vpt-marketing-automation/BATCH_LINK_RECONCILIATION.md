@@ -29,7 +29,7 @@ Khi bảo trì, vẫn phải cô lập các writer này vì chúng ghi bảng n�
 
 ## Kiểm chứng và bước tiếp
 
-Local Windows: **1.315 PASS, 0 fail, 5 skip**; 78 ca liên quan journal/STOP/UI gồm 11 ca mới. PostgreSQL cô lập, native Linux/Express, build và review cuối còn chờ. Các ca mới kiểm quyền private, durable STOP, đúng/sai mapping, toàn bộ message, snapshot/revision, replay và hai operator, rollback, hai thứ tự cạnh tranh với release hold, giữ claim, thu hồi token và quyền lịch sử. Không dùng dữ liệu giả làm bằng chứng đạt 250.000đ/khách.
+Local Windows: **1.315 PASS, 0 fail, 5 skip**; 78 ca liên quan journal/STOP/UI gồm 11 ca mới. CI runtime b6be0989: Node 18/22 mỗi bản 1.320 PASS/0 fail/0 skip, build và các job khác đạt; intake PostgreSQL có một ca fixture lỗi do tạo trùng Page/PSID bị UNIQUE hiện hữu chặn trước khi đến hàm mới. Đã sửa ca đó thành kiểm ràng buộc thật và thêm inverse Lead mâu thuẫn; không sửa SQL hoặc gỡ constraint. PostgreSQL và review cuối chờ kiểm lại. Các ca mới kiểm quyền private, durable STOP, đúng/sai mapping, toàn bộ message, snapshot/revision, replay và hai operator, rollback, hai thứ tự cạnh tranh với release hold, giữ claim, thu hồi token và quyền lịch sử. Không dùng dữ liệu giả làm bằng chứng đạt 250.000đ/khách.
 
 Sau checkpoint này vẫn cần kiểm inventory vận hành và các tác động ngoài liên kết, các UNKNOWN thiếu/mâu thuẫn hồ sơ, dữ liệu AI/người nhận/lịch/phạm vi đo, UAT xuyên tuyến và gói Founder phát hành. Mục tiêu đầy đủ còn ACTIVE.
 
