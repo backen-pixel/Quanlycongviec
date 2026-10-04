@@ -350,3 +350,5 @@ Compatibility: revenue/ROAS không còn là estimate; consumers phải xử lý 
 
 Runtime 2cac0949: checkpoint quyền CRM đạt PostgreSQL 271/0/0, Node22 843+26+117, cả 10 job/build/report/Messenger SUCCESS; CI tree đã đối chiếu. [Bằng chứng và giới hạn](LEGACY_CRM_MERGE_REPAIR.md). CRM merge bảo toàn/transaction và cutover vẫn OPEN/HOLD.
 Checkpoint [AI đề xuất lịch khảo sát theo quyền riêng](CARE_SURVEY_RUNTIME.md) đã đạt tại e91381a: PostgreSQL489/0/0, Node18/22 mỗi bản1.388/0/0, cả10job/build/report/Messenger và review độc lập PASS. Chưa provider thật/enrollment/UAT/phát hành; full goal ACTIVE.
+
+- [Theo dõi hoạt động AI và đóng lượt chờ](CARE_RUNTIME_CONSOLE.md): giao diện API runtime, bằng chứng gửi và lịch; trạng thái nghiệm thu xem tài liệu.

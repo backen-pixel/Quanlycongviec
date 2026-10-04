@@ -1,3 +1,9 @@
+## 04/10/2026 — Giao diện theo dõi AI đang qua nghiệm thu
+
+Thêm tab Hoạt động AI, đọc kết quả/câu tư vấn, bằng chứng ACK–echo và hồ sơ đề xuất lịch hiện hành; đóng RUNNING bằng yêu cầu giữ qua mất ACK/reload. Không thay SQL/backend hoặc mở quyền. Local1.393PASS/0fail/5skip,10ca UI mới; actual Workspace/API giả đã kiểm scope, stale, SURVEY/BOOKED và mất ACK. Reviewer chưa thấy finding chặn; chờ CI/build đúng bản công bố. [Hợp đồng và bằng chứng](vpt-marketing-automation/CARE_RUNTIME_CONSOLE.md). Full goal ACTIVE; còn cấu hình, inventory/chuyển luồng, UAT và Founder release. Chưa AI/Meta/CRM thật hoặc kết quả250k.
+
+---
+
 ## 04/10/2026 — AI đề xuất lịch khảo sát đã qua kiểm chứng
 
 SQL695 nối quyền Agent riêng với lịch CRM, đề xuất và signed customer confirmation, booking/outcome/handoff. Bản e91381a đạt Node18/22 mỗi bản1.388/0/0; PostgreSQL489/0/0 gồm20ca mới; cả10job/build/report/Messenger SUCCESS, đúng tree/parents. Reviewer độc lập xác minh published blobs/log/tree và PASS checkpoint. Đã sửa guard human, qualifier và lọc staff trước limit200. [Hợp đồng, bằng chứng và hoàn tác](vpt-marketing-automation/CARE_SURVEY_RUNTIME.md). Chưa enrollment/provider/DB thật/phát hành. Full goal ACTIVE; còn UI runtime/ngoại lệ, cấu hình, chuyển luồng và UAT.

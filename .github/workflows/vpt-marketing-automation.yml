@@ -95,6 +95,8 @@ on:
       - 'database/693_crm_care_runtime.sql'
       - 'database/694_crm_care_answer_delivery.sql'
       - 'database/695_crm_survey_runtime.sql'
+      - 'frontend/src/components/facebook/CareRuntime.jsx'
+      - 'frontend/src/components/facebook/careRuntimeState.mjs'
       - 'frontend/src/components/facebook/CareAdvisor.jsx'
       - 'frontend/src/components/facebook/careAdvisorState.mjs'
       - 'backend/tests/facebookBatchLinkReconciliation*.js'
@@ -169,7 +171,7 @@ jobs:
       - run: node --test backend/tests/facebookCustomerCare.advisor.test.js
       - run: node --test backend/tests/facebookCustomerCare.advisorConsole.test.js
       - run: node --test backend/tests/facebookCustomerCare.inference.test.js
-      - run: node --test backend/tests/facebookCustomerCare.runtime.test.js
+      - run: node --test backend/tests/facebookCustomerCare.runtime.test.js backend/tests/facebookCustomerCare.runtimeConsole.test.js
       - run: node --test backend/tests/careAnswerDispatch.test.js
       - name: Install isolated Express version matching backend lock
         run: npm install --prefix "$RUNNER_TEMP/vpt-http" --ignore-scripts --no-audit --no-fund express@5.2.1
