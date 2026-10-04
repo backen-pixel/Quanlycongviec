@@ -1,3 +1,9 @@
+## 04/10/2026 — Đang kiểm hành trình AI tích hợp
+
+Thêm ca signed intake → operator link/qualification → Responses adapter ANSWER → answer ACK/echo → Responses adapter SURVEY → customer confirmation → booking/outcome/handoff → cohort/cost API và bộ kiểm frontend. Dùng cùng Lead/thread/Agent; tiền từ account không Lead vẫn tính, lỗi nguồn không thành0, STOP/takeover chặn trả lời. HTTP giả, không seed kết quả nghiệp vụ hoặc mở quyền thật. Syntax PASS; CI/PostgreSQL và review cuối chờ. [Phạm vi/tiêu chí/giới hạn](vpt-marketing-automation/AI_CUSTOMER_JOURNEY.md). Full goal ACTIVE.
+
+---
+
 ## 04/10/2026 — Diễn tập khôi phục dữ liệu đã qua kiểm chứng
 
 Bản kiểm eb42ff85 đạt intake PostgreSQL502/0/0 và restore11/0/0: 124bảng fixture được khôi phục sang cluster riêng, đối chiếu dữ liệu/quyền/schema/audit/sequence và giữ UNKNOWN. Node18/22 mỗi bản1.412/0/0; cả10job/build/report/Messenger SUCCESS, đúng CI tree/parents. Reviewer độc lập xác minh published blobs/log/tree và PASS checkpoint. Lỗi harness ACL mặc định của a6c523c đã sửa; không thay SQL697. [Bằng chứng, giới hạn và hoàn tác](vpt-marketing-automation/RESTORE_REHEARSAL.md).

@@ -1,3 +1,7 @@
+## 04/10/2026 — Bổ sung hành trình AI xuyên suốt
+
+Thêm facebookCustomerCare.journey.cases.js và gọi sau SQL696 trong runtime.cases: hai lượt ANSWER/SURVEY qua actual metered Responses adapter, signed intake/link/qualification, ACK-before-echo barrier, proposal/click/booking/outcome/ACK, cohort+cost API/frontend validation. Kiểm tiền account khôngLead, replay, quyền công ty, STOP/takeover và lỗi spend. Chỉ thêm test/docs, không sửa business code hoặc SQL. Syntax PASS; CI/PG/review cuối chờ. [Bằng chứng/giới hạn/hoàn tác](vpt-marketing-automation/AI_CUSTOMER_JOURNEY.md). Lượt trước PROGRESS (restore rehearsal PASS); closureCI37201135871 cả10jobSUCCESS vừa xác minh. Full goal ACTIVE; chưa model/provider/DB thật.
+
 ## 04/10/2026 — Sửa bằng chứng diễn tập khôi phục
 
 Đóng kiểm chứng eb42ff85/tree d8f77540: automation37200820753 cả10jobSUCCESS, intake502/0/0, restore11/0/0 trên124bảng; Node18/22 mỗi1.412/0/0, build10.339modules/28,03s, report37200820778/Messenger37200820720SUCCESS. CImergea7ae00c5 khớp tree/parents. Reviewer độc lập tự đọc publishedblobs/log/tree và PASS checkpoint; SQL697 không đổi. Cập nhật CURRENT/README/RESTORE_REHEARSAL và bước tiếp cho Founder: cấu hình, nguồn/chuyển luồng, UAT rồi gói phát hành. Full goal ACTIVE; chưa DB/model/provider thật hoặc quyền chạy.
