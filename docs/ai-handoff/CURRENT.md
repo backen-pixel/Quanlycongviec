@@ -1,6 +1,6 @@
 ## 04/10/2026 — Đang kiểm chứng AI đề xuất lịch khảo sát
 
-SQL695 nối quyền Agent riêng với lịch CRM, đề xuất và signed customer confirmation, booking/outcome/handoff. Không mượn danh tính human; giữ facade human và barrier hiện hành. Local1.383PASS/0fail/5skip; reviewer unit35/35PASS, đã sửa finding guard679 và qualifier nhánh exception. PostgreSQL và review bản công bố cuối còn chờ. [Hợp đồng, phạm vi và hoàn tác](vpt-marketing-automation/CARE_SURVEY_RUNTIME.md). Không enrollment/DB thật/phát hành. Full goal ACTIVE.
+SQL695 nối quyền Agent riêng với lịch CRM, đề xuất và signed customer confirmation, booking/outcome/handoff. Không mượn danh tính human; giữ facade human và barrier hiện hành. Local1.383PASS/0fail/5skip; reviewer unit35/35PASS. Hai CI đầu477PASS/10FAIL; đã sửa guard679, qualifier và lọc staff trước limit200 theo review. Chờ PostgreSQL/review bản sửa cuối, chưa PASS checkpoint. [Hợp đồng, phạm vi và hoàn tác](vpt-marketing-automation/CARE_SURVEY_RUNTIME.md). Không enrollment/DB thật/phát hành. Full goal ACTIVE.
 
 ---
 

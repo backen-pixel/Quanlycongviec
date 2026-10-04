@@ -100,7 +100,7 @@ CREATE OR REPLACE FUNCTION crm_survey_control.context(p_actor uuid,p_company uui
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 BEGIN PERFORM public.marketing_fb_intake_admin(p_actor,p_company);RETURN crm_survey_control.context_core(p_company,p_thread);END $$;
 
-CREATE OR REPLACE FUNCTION crm_survey_control.availability_core(p_company uuid,p_thread uuid,p_from timestamptz,p_to timestamptz)
+CREATE OR REPLACE FUNCTION crm_survey_control.availability_scoped_core(p_company uuid,p_thread uuid,p_from timestamptz,p_to timestamptz,p_staff_scope uuid[])
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE view jsonb;target jsonb;roster public.crm_survey_rosters%ROWTYPE;staff jsonb;slot jsonb;items jsonb:='[]';issues jsonb:='[]';busy boolean;calendar_version text;version text;
  a timestamptz;b timestamptz;buffer_mins integer;seen integer:=0;excluded integer:=0;observed timestamptz;checked_at timestamptz;region uuid;calendar_rows jsonb;calendar_inventory jsonb;event jsonb;
@@ -120,8 +120,8 @@ BEGIN
   SELECT coalesce(jsonb_agg(jsonb_build_object('id',e.id,'start',e.start_time,'end',e.end_time,'allDay',e.all_day,'days',e.occurrence_dates) ORDER BY e.id),'[]'::jsonb) events
   FROM public.crm_events e WHERE e.status IS DISTINCT FROM 'cancelled'
    AND(e.assignee_id=r.staff_id OR e.created_by=r.staff_id OR EXISTS(SELECT 1 FROM public.crm_event_participants p WHERE p.event_id=e.id AND p.user_id=r.staff_id AND p.status IS DISTINCT FROM 'declined'))
- ) cal ON true WHERE r.company_id=p_company AND r.region_id=region;
- FOR roster IN SELECT * FROM public.crm_survey_rosters WHERE company_id=p_company AND region_id=region ORDER BY staff_id FOR SHARE LOOP
+ ) cal ON true WHERE r.company_id=p_company AND r.region_id=region AND(p_staff_scope IS NULL OR r.staff_id=ANY(p_staff_scope));
+ FOR roster IN SELECT * FROM public.crm_survey_rosters WHERE company_id=p_company AND region_id=region AND(p_staff_scope IS NULL OR staff_id=ANY(p_staff_scope)) ORDER BY staff_id FOR SHARE LOOP
   IF NOT roster.active THEN CONTINUE;END IF;
   IF calendar_inventory->roster.staff_id::text->>'sourceVersion' IS DISTINCT FROM md5(to_jsonb(roster)::text) THEN issues:=issues||jsonb_build_array(jsonb_build_object('staffId',roster.staff_id,'reason','SOURCE_CHANGED'));CONTINUE;END IF;
   IF (roster.document->>'validUntil')::timestamptz<=clock_timestamp() THEN issues:=issues||jsonb_build_array(jsonb_build_object('staffId',roster.staff_id,'reason','SOURCE_EXPIRED'));CONTINUE;END IF;
@@ -162,11 +162,15 @@ BEGIN
   'items',items,'issues',issues,'busyExcluded',excluded,'observedAt',observed,'careVersion',view->'version','reservationMade',false,'customerConfirmationRequired',true);
 END $$;
 
+CREATE OR REPLACE FUNCTION crm_survey_control.availability_core(p_company uuid,p_thread uuid,p_from timestamptz,p_to timestamptz)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+BEGIN RETURN crm_survey_control.availability_scoped_core(p_company,p_thread,p_from,p_to,NULL);END $$;
+
 CREATE OR REPLACE FUNCTION public.crm_survey_availability(p_actor uuid,p_company uuid,p_thread uuid,p_from timestamptz,p_to timestamptz)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 BEGIN PERFORM public.marketing_fb_intake_admin(p_actor,p_company);RETURN crm_survey_control.availability_core(p_company,p_thread,p_from,p_to);END $$;
 
-CREATE OR REPLACE FUNCTION crm_survey_control.propose_core(p_actor uuid,p_company uuid,p_request uuid,p_command jsonb)
+CREATE OR REPLACE FUNCTION crm_survey_control.propose_scoped_core(p_actor uuid,p_company uuid,p_request uuid,p_command jsonb,p_staff_scope uuid[])
 RETURNS jsonb LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE context jsonb;available jsonb;option jsonb;business jsonb;version text;expires timestamptz;result jsonb;
  old crm_survey_control.proposals%ROWTYPE;created crm_survey_control.proposals%ROWTYPE;thread uuid;starts timestamptz;ends timestamptz;
@@ -188,7 +192,7 @@ BEGIN
  END IF;
  context:=crm_survey_control.context_core(p_company,thread);
  PERFORM crm_survey_control.assert_ready();
- available:=crm_survey_control.availability_core(p_company,thread,starts,ends);
+ available:=crm_survey_control.availability_scoped_core(p_company,thread,starts,ends,p_staff_scope);
  SELECT value INTO option FROM jsonb_array_elements(available->'items') WHERE value->>'optionId'=p_command->>'optionId';
  IF option IS NULL THEN RAISE EXCEPTION 'survey option changed' USING ERRCODE='40001';END IF;
  IF crm_survey_control.reservation_busy((option->>'staffId')::uuid,starts-make_interval(mins=>(option->>'bufferMinutes')::integer),ends+make_interval(mins=>(option->>'bufferMinutes')::integer)) THEN
@@ -208,6 +212,10 @@ BEGIN
  INSERT INTO crm_survey_control.proposal_events(proposal_id,action,actor_id,result) VALUES(created.id,'PROPOSE',p_actor,result);
  RETURN result;
 END $$;
+
+CREATE OR REPLACE FUNCTION crm_survey_control.propose_core(p_actor uuid,p_company uuid,p_request uuid,p_command jsonb)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
+BEGIN RETURN crm_survey_control.propose_scoped_core(p_actor,p_company,p_request,p_command,NULL);END $$;
 
 CREATE OR REPLACE FUNCTION public.crm_survey_propose(p_actor uuid,p_company uuid,p_request uuid,p_command jsonb)
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
@@ -321,7 +329,7 @@ BEGIN
   IF reason IS NULL AND (context->>'targetVersion' IS DISTINCT FROM p.target_version OR version IS DISTINCT FROM p.source_version) THEN reason:='CONTEXT_CHANGED';END IF;
  END IF;
  IF reason IS NULL THEN
-  availability:=crm_survey_control.availability_core(p.company_id,p.thread_id,(p.business->>'startsAt')::timestamptz,(p.business->>'endsAt')::timestamptz);
+  availability:=crm_survey_control.availability_scoped_core(p.company_id,p.thread_id,(p.business->>'startsAt')::timestamptz,(p.business->>'endsAt')::timestamptz,CASE WHEN authority->>'kind'='AGENT' THEN ARRAY[(p.business->>'staffId')::uuid] ELSE NULL END);
   SELECT value INTO option FROM jsonb_array_elements(availability->'items') WHERE value->>'staffId'=p.business->>'staffId'
    AND (value->>'startsAt')::timestamptz=(p.business->>'startsAt')::timestamptz AND (value->>'endsAt')::timestamptz=(p.business->>'endsAt')::timestamptz;
   IF option IS NULL THEN reason:='SLOT_UNAVAILABLE';END IF;
@@ -394,7 +402,7 @@ BEGIN
    RETURN jsonb_build_object('status','CREDENTIAL_CHANGED');END IF;
   version:=crm_survey_control.source(p.company_id,(p.business->>'staffId')::uuid,(p.business->>'regionId')::uuid);
   IF context->>'targetVersion' IS DISTINCT FROM p.target_version OR version IS DISTINCT FROM p.source_version THEN reason:='CONTEXT_CHANGED';END IF;
-  available:=crm_survey_control.availability_core(p.company_id,p.thread_id,(p.business->>'startsAt')::timestamptz,(p.business->>'endsAt')::timestamptz);
+  available:=crm_survey_control.availability_scoped_core(p.company_id,p.thread_id,(p.business->>'startsAt')::timestamptz,(p.business->>'endsAt')::timestamptz,CASE WHEN authority->>'kind'='AGENT' THEN ARRAY[(p.business->>'staffId')::uuid] ELSE NULL END);
   SELECT value INTO option FROM jsonb_array_elements(available->'items') WHERE value->>'staffId'=p.business->>'staffId'
    AND (value->>'startsAt')::timestamptz=(p.business->>'startsAt')::timestamptz AND (value->>'endsAt')::timestamptz=(p.business->>'endsAt')::timestamptz;
   IF option IS NULL OR crm_survey_control.reservation_busy((p.business->>'staffId')::uuid,
@@ -649,18 +657,19 @@ BEGIN
   from_at:=clock_timestamp()+make_interval(mins=>(p_auth->'policy'->>'notice_minutes')::integer);
   to_at:=least(clock_timestamp()+make_interval(days=>(p_auth->'policy'->>'horizon_days')::integer),from_at+interval '14 days');
   IF to_at<=from_at THEN reason:='SURVEY_NO_CONFIRMED_OPTION';ELSE
-   availability:=crm_survey_control.availability_core(t.company_id,t.thread_id,from_at,to_at);
+   availability:=crm_survey_control.availability_scoped_core(t.company_id,t.thread_id,from_at,to_at,
+    ARRAY(SELECT value::uuid FROM jsonb_array_elements_text(p_auth->'policy'->'staff_ids')));
    SELECT value INTO option FROM jsonb_array_elements(availability->'items')
     WHERE value->>'staffId'=ANY(ARRAY(SELECT jsonb_array_elements_text(p_auth->'policy'->'staff_ids')))
     ORDER BY (value->>'startsAt')::timestamptz,value->>'staffId' LIMIT 1;
-   IF option IS NULL THEN reason:='SURVEY_NO_CONFIRMED_OPTION';END IF;
+   IF option IS NULL THEN reason:=CASE WHEN availability->>'status'='NARROW_RANGE_REQUIRED' THEN 'SURVEY_RANGE_TOO_BROAD' ELSE 'SURVEY_NO_CONFIRMED_OPTION' END;END IF;
   END IF;
  END IF;
  IF reason IS NULL THEN
-  proposal:=crm_survey_control.propose_core(t.principal_id,t.company_id,gen_random_uuid(),jsonb_build_object(
+  proposal:=crm_survey_control.propose_scoped_core(t.principal_id,t.company_id,gen_random_uuid(),jsonb_build_object(
    'threadId',t.thread_id,'optionId',option->>'optionId',
    'startsAt',to_char((option->>'startsAt')::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
-   'endsAt',to_char((option->>'endsAt')::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),'location',btrim(address->>'quote')));
+   'endsAt',to_char((option->>'endsAt')::timestamptz AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),'location',btrim(address->>'quote')),ARRAY[(option->>'staffId')::uuid]);
   UPDATE crm_survey_control.proposals SET expires_at=least(expires_at,(p_auth->'runtime'->>'expires_at')::timestamptz,(p_auth->'policy'->>'expires_at')::timestamptz)
    WHERE id=(proposal->>'proposalId')::uuid;
   UPDATE crm_survey_control.runtime_requests SET proposal_id=(proposal->>'proposalId')::uuid WHERE request_id=p_request;

@@ -30,7 +30,11 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,enroll,
  const begin=(x,client=peers[0],request=x.c.key)=>query('crm_care_runtime_begin_with_survey',[x.g.agent,company,x.g.id,request,x.c.thread,x.g.worker,x.p.id],client);
  const selection=r=>{const m=r.context.messages.findLast(m=>m.direction==='inbound'&&m.content.includes(address));return{action:'SURVEY',entryId:null,
   needs:[{field:'request',messageId:m.id,quote:ask},{field:'location',messageId:m.id,quote:address}]};};
- const prepare=async x=>{x.r=await begin(x);x.response=selection(x.r);x.result=await finish(x.c,x.g,x.r,x.response);x.id=x.result.survey?.proposalId;assert.ok(x.id,JSON.stringify(x.result));return x;};
+ const prepare=async x=>{x.r=await begin(x);x.response=selection(x.r);
+  const before=(await db.query('SELECT crm_survey_control.availability_scoped_core($1,$2,$3,$4,$5::uuid[]) v',
+   [company,x.c.thread,new Date(Date.now()+3600000),new Date(Date.now()+7*86400000),x.p.staff_ids])).rows[0].v;
+  x.result=await finish(x.c,x.g,x.r,x.response);x.id=x.result.survey?.proposalId;
+  assert.ok(x.id,JSON.stringify({result:x.result,availability:{status:before.status,issues:before.issues,options:before.items?.length,staffPresent:before.items?.some(v=>v.staffId===x.staff)}}));return x;};
  const claim=(x,client=peers[0])=>query('crm_survey_dispatch_claim',[x.c.page,x.id,x.g.worker,sha('synthetic')],client);
  const count=async x=>(await db.query('SELECT count(*)::int n FROM crm_survey_control.bookings WHERE thread_id=$1',[x.c.thread])).rows[0].n;
  const storage=client=>({rpc:async(n,a)=>{try{return{data:await query(n,Object.values(a).map(v=>Array.isArray(v)?JSON.stringify(v):v),client)}}catch(error){return{error}}},
@@ -191,5 +195,26 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,enroll,
    pending=(first==='confirmation'?run(peers[1]):confirm(peers[1])).then(value=>({value}),error=>({error}));await lockWait(pid);await peers[0].query('COMMIT');
    const result=await pending;assert.equal(result.error,undefined);assert.equal(await count(x),first==='confirmation'?1:0);
   }finally{await peers[0].query('ROLLBACK');if(pending)await pending;}
+ });
+ let crowded;
+ const crowd=async x=>{
+  if(crowded)return crowded;crowded=[];
+  for(let i=0;i<4;i++){const id=randomUUID(),start=Date.now()+2*86400000;
+   await db.query("INSERT INTO users(id,company_id,tenant_id,role,is_active) SELECT $1,id,tenant_id,'sales',true FROM companies WHERE id=$2",[id,company]);
+   await db.query('INSERT INTO user_company_regions VALUES($1,$2)',[id,x.region]);
+   await query('crm_survey_roster_change',[admin,company,randomUUID(),{action:'SAVE',staffId:id,regionId:x.region,expectedRevision:0,reason:'Synthetic many-option regression outside delegated staff',
+    document:{calendarSource:'CRM_COMPLETE',externalCalendarCoverage:'ALL_BUSY_IN_CRM',sourceReference:'Synthetic isolated many-option complete calendar',validUntil:new Date(start+3*86400000).toISOString(),bufferMinutes:0,
+     slots:Array.from({length:64},(_,j)=>({startsAt:new Date(start+j*1800000).toISOString(),endsAt:new Date(start+j*1800000+900000).toISOString()}))}}]);crowded.push(id);
+  }return crowded;
+ };
+ await t.test('more than 200 options outside delegated staff cannot hide its valid slot or block confirm',async()=>{
+  const x=await setup();await crowd(x);
+  const wide=await query('crm_survey_availability',[admin,company,x.c.thread,new Date(Date.now()+3600000),new Date(Date.now()+7*86400000)]);
+  assert.equal(wide.status,'NARROW_RANGE_REQUIRED');assert.deepEqual(wide.items,[]);
+  await prepare(x);const a=await sent(x);await clicked(x,a);assert.equal(await count(x),1);
+ });
+ await t.test('more than 200 permitted options still require a narrower range, never a partial booking',async()=>{
+  const x=await setup({policy:{staff_ids:crowded}}),r=await begin(x),result=await finish(x.c,x.g,r,selection(r));
+  assert.equal(result.survey.reason,'SURVEY_RANGE_TOO_BROAD');assert.equal(result.handoff,true);assert.equal(await count(x),0);
  });
 };

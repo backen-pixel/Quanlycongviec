@@ -28,4 +28,6 @@ Local: 1.383 PASS, 0 fail, 5 skip (native/Express cần CI); 3 ca unit mới v�
 
 Review diff đã phát hiện và sửa: facade human phải giữ toàn bộ guard679, gồm safe replay và delivery barrier; nhánh không có lịch/hết quota dùng block label tường minh khi ghi reason. Bổ sung hồi quy human và hai ca chờ khóa confirmation–finish. Unit độc lập35/35PASS; kết luận PostgreSQL trên bản sửa cuối còn chờ.
 
+CI d629fe1 và f767b9c mỗi bản477PASS/10FAIL (9ca con+parent); bản đầu lỗi qualifier, bản sau các ca mới nhận NO_CONFIRMED_OPTION. Không dùng các bản này làm PASS. Review xác định lịch ngoài policy bị đếm vào giới hạn200 trước lọc. Bản sửa tiếp lọc nhân sự ngay trong inventory/roster loop; prepare chỉ nhìn staff được cấp, recheck proposal/dispatch/book nhìn staff đã chọn. Human API giữ phạm vi và giới hạn cũ. Thêm ca hơn200 options ngoài policy vẫn book đúng và hơn200 trong policy phải trả SURVEY_RANGE_TOO_BROAD, không dùng danh sách một phần.
+
 Còn chất lượng model thật, lịch/người nhận và quyền thật, UI runtime/ngoại lệ, đối soát chuyển luồng, UAT và Founder release. Không suy kết quả kinh doanh từ dữ liệu giả.
