@@ -1,3 +1,11 @@
+## 04/10/2026 — Batch tạo khách đã qua PostgreSQL và review
+
+Runtime `c7d2a438d261b204064e6a597350e01e589fc58c` giới hạn đúng danh sách/công ty, kiểm quyền và đầu vào hiện hành, giữ liên kết hội thoại, có đường đối soát các ID lỗi. Local237 PASS; PostgreSQL290/0/0 gồm9 ca mới; Node22 843+26+237 và cả10job/build/report/Messenger SUCCESS. Reviewer độc lập xác minh đúng bản công bố và kết luận PASS phạm vi batch-create.
+
+[Hợp đồng và bằng chứng](vpt-marketing-automation/LEGACY_BATCH_CREATION.md). Browser đã thấy đúng request, lỗi một phần và nút đối soát; thao tác xác nhận tiếp tục chưa chứng minh do công cụ kẹt ở hộp confirm. Source-backfill, đối soát bền vững qua reload, chuỗi ghi nguyên tử/chuyển luồng, AI/lịch/người nhận, UAT và Founder release còn OPEN. Full goal ACTIVE; chưa DB thật, phát hành hoặc kết quả250k thực tế. Các mục dưới giữ lịch sử.
+
+---
+
 ## 04/10/2026 — Bản sửa tạo khách hàng loạt đang nghiệm thu
 
 Đã giới hạn batch theo danh sách 1–500 contact và một công ty, kiểm lại quyền/người nhận/đầu vào trước ghi, bỏ broadcast thông tin khách, giữ liên kết hội thoại và bổ sung đối soát trên giao diện khi một phần đã xử lý. Local54 ca mới (43 backend +11 UI) và183 regression =237 PASS. Đã thêm9 ca PostgreSQL cô lập; CI, browser và review cuối chưa có kết luận cho delta này.

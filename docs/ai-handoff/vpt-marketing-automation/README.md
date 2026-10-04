@@ -1,3 +1,5 @@
+04/10/2026: [Batch tạo khách theo danh sách đã xác nhận](LEGACY_BATCH_CREATION.md), runtimec7d2a43. Local237; PostgreSQL290/0/0 gồm9 ca mới;10job/build/report/Messenger SUCCESS; review độc lập PASS phạm vi batch. Browser mới xác nhận lỗi một phần và nút đối soát, chưa hoàn tất thao tác retry. Source-backfill, retry bền vững, HTTP/cutover/UAT/phát hành còn OPEN.
+
 04/10/2026: [Phạm vi tạo khách Facebook đã kiểm chứng](LEGACY_CREATOR_SCOPE.md), runtime925cae0. Local183, PostgreSQL281/0/0 gồm10 ca mới; cả10job/build/report/Messenger SUCCESS; review độc lập PASS checkpoint creator. Chuỗi HTTP/caller cũ/merge/cutover/UAT/phát hành còn OPEN.
 
 ## Hiện hành 03/10/2026 — Preflight đường ghi cũ đã kiểm PostgreSQL

@@ -1,5 +1,7 @@
 # Review phạm vi batch Facebook — 04/10/2026
 
+Checkpoint tiếp theo: [batch-create đã sửa và kiểm tại c7d2a43](LEGACY_BATCH_CREATION.md), review độc lập PASS đúng phạm vi. Finding của source-backfill vẫn OPEN. Nội dung dưới là audit baseline trước sửa.
+
 Baseline: `5356e185871caad7e0473842580ada7f91e5506e`.
 Reviewer độc lập: phiên `/root/architecture_v11_review`.
 Kết luận: **HOLD cho hai route batch**, không phủ định kết quả creator đã kiểm ở [checkpoint trước](LEGACY_CREATOR_SCOPE.md).

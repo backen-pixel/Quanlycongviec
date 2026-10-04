@@ -1,6 +1,6 @@
 # Tạo khách hàng loạt theo danh sách đã xác nhận
 
-Baseline trước sửa: `5356e185871caad7e0473842580ada7f91e5506e`. Trạng thái: bản sửa cục bộ đang nghiệm thu; chưa phát hành.
+Baseline trước sửa: `5356e185871caad7e0473842580ada7f91e5506e`. Runtime đã kiểm: `c7d2a438d261b204064e6a597350e01e589fc58c`, tree `9c7083ee0e97f94a2aefbcf3e77ff70c9741c199`. Review độc lập PASS phạm vi batch-create; chưa phát hành.
 
 ## Thay đổi
 
@@ -18,7 +18,11 @@ Local54 ca mới:43 backend thực thi route/helper/creator thật với DB gi�
 
 Bổ sung9 ca PostgreSQL16 trong runner intake: đúng lựa chọn, khác công ty, enrollment inactive, thu hồi actor, đổi đầu vào, repair Lead đã gắn, cạnh tranh message, cạnh tranh phone, quyền UPDATE bị thu hồi. Adapter chạy query thật dưới service_role; callback tạo Lead ở các ca này mô phỏng bước nối vào Lead fixture có sẵn, không chứng minh toàn bộ creator là giao dịch nguyên tử.
 
-CI PostgreSQL, build, browser và review cuối: chưa có bằng chứng tại bản ghi này. Reviewer đã tìm các lỗi stale input, pause và retry UI; đã thêm sửa/test tương ứng, chờ kiểm lại đúng bản cuối.
+CI [37147384369](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37147384369) cả10job SUCCESS. PostgreSQL job111274028319:290/0/0, gồm9ca mới281–289. Node22 job111274028362:843+26+237 PASS; Node18 và frontend build111274028351 SUCCESS. Report37147384350 và Messenger37147384352 SUCCESS.
+
+CI checkout merge `6624b0b6b98bd35cd12e829abbf0dc84e605a01a` có cùng tree runtime, parents đúng base `e16c885ae7c2305645be02a1227bf378cb59137f` + runtimec7d2a43. Reviewer phiên riêng đã tự đọc published blobs/log CI và chạy54ca mới, kết luận PASS đúng phạm vi batch-create.
+
+Browser cục bộ sử dụng ContactsTab trích nguyên mã ở runtime này trong React StrictMode, API/dữ liệu giả, CSP connect-src none. Đã quan sát POST đúng companyA/contacta, lỗi503 sau bước tạo giả, sốprocessed0/failed1 và nút Đối soát1liên hệ; nút đó mở đúng nội dung xác nhận tiếp tục. Công cụ trình duyệt kẹt khi xử lý native confirm, nên **chưa có bằng chứng browser về hoàn tất retry hoặc đổi scope khi phản hồi trễ**. Tab đã đóng và server giả đã dừng. Các ca đó có unit/actual-handler evidence, không thay nghiệm thu browser/UAT.
 
 ## Giới hạn và các cổng còn mở
 
