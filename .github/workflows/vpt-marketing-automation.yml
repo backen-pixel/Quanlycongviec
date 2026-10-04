@@ -5,9 +5,18 @@ on:
       - 'backend/src/modules/marketingAutomation/**'
       - 'backend/src/server.js'
       - 'backend/src/helpers/worker*.js'
+      - 'backend/src/helpers/processWork.js'
+      - 'backend/src/helpers/facebookProcessWork.js'
+      - 'backend/src/helpers/trackedRouter.js'
+      - 'backend/src/helpers/cronLeader.js'
+      - 'backend/src/helpers/autoTool.js'
+      - 'backend/src/helpers/batchQueue.js'
+      - 'backend/src/jobs/fbMarketingSyncRunner.js'
       - 'backend/src/helpers/facebookMessengerReceipt.js'
       - 'backend/tests/facebookWorkerDrain.test.js'
       - 'backend/tests/workerShutdown.test.js'
+      - 'backend/tests/legacyProcessDrain.test.js'
+      - 'backend/tests/trackedRouter.http.test.js'
       - 'backend/tests/fixtures/workerShutdown.child.cjs'
       - 'backend/src/routes/facebook.js'
       - 'backend/src/routes/facebookLeadIntakeAdmin.js'
@@ -144,6 +153,11 @@ jobs:
       - run: node --test backend/tests/careConnections.test.js backend/tests/careConnections.console.test.js
       - run: node --test backend/tests/facebookLegacyWriteScope.test.js backend/tests/facebookLegacyPhoneRepair.test.js backend/tests/facebookWebhookRecovery.test.js backend/tests/crmLegacyMergeAccess.test.js backend/tests/facebookLegacyCreationScope.test.js backend/tests/facebookLegacyBatch.test.js backend/tests/facebookLegacyBatch.ui.test.js backend/tests/facebookLegacySourceRepair.test.js backend/tests/facebookBatchJournal.test.js backend/tests/facebookBatchRecovery.ui.test.js backend/tests/facebookDuplicateReview.test.js backend/tests/facebookDuplicateReview.ui.test.js backend/tests/facebookBatchStop.test.js backend/tests/facebookBatchStop.ui.test.js
       - run: node --test backend/tests/facebookWorkerDrain.test.js backend/tests/workerShutdown.test.js backend/tests/facebookMessengerReceipt.test.js
+      - run: node --test backend/tests/legacyProcessDrain.test.js
+      - name: Install isolated Express version matching backend lock
+        run: npm install --prefix "$RUNNER_TEMP/vpt-http" --ignore-scripts --no-audit --no-fund express@5.2.1
+      - name: Real Express post-ACK and stopped admission
+        run: NODE_PATH="$RUNNER_TEMP/vpt-http/node_modules" VPT_EXPRESS_TEST=1 node --test backend/tests/trackedRouter.http.test.js
   postgres:
     runs-on: ubuntu-latest
     timeout-minutes: 10

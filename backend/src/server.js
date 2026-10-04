@@ -1189,11 +1189,11 @@ app.set('pushNotification', async (userId, notification) => {
     io.to(`user:${userId}`).emit('notification', notification);
     try {
       const { invalidateTags } = require('./middleware/responseCache');
-      void invalidateTags(['notifications', `user:${userId}`]);
+      await invalidateTags(['notifications', `user:${userId}`]);
     } catch { /* ignore */ }
     try {
       const { sendMobilePush } = require('./services/pushSender');
-      void sendMobilePush(userId, notification);
+      await sendMobilePush(userId, notification);
     } catch (_) { /* ignore */ }
   } catch (e) {
     // không để lỗi pref làm hỏng push: nếu chỉ chặn được kiểu hết hạn thì vẫn cho qua

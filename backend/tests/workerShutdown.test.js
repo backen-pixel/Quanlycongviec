@@ -4,6 +4,7 @@ const { EventEmitter } = require('node:events');
 const { fork } = require('node:child_process');
 const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
 const { createWorkerDrain, createWorkerGroup } = require('../src/helpers/workerDrain');
+const { createProcessWork } = require('../src/helpers/processWork');
 const { installWorkerShutdown, configureWorkerShutdown } = require('../src/helpers/workerShutdown');
 function gate() { let resolve, reject; const promise = new Promise((r, j) => { resolve = r; reject = j; }); return { promise, resolve, reject }; }
 const flush = () => new Promise(resolve => setImmediate(resolve));
@@ -120,7 +121,25 @@ test('already-closed HTTP server is harmless and untrusted revision/signal are o
  assert.equal(r.revision, null); assert.equal(r.signal, 'INTERNAL'); assert.deepEqual(r.errors, []);
  for (const timeoutMs of [0, -1, 30001, '10', NaN]) assert.throws(() => installWorkerShutdown({ timeoutMs }), TypeError);
 });
-test('router registers all five real lifecycle handles under the existing scheduling flags', async () => {
+test('group rechecks members when an active worker spawns a child in a previously idle member', async () => {
+ const parent=gate(),child=gate(),entered=gate(),legacy=createProcessWork({scope:'LEGACY'});
+ const worker=createWorkerDrain(async()=>{entered.resolve();await parent.promise;legacy.track(child.promise);});
+ const run=worker.drain();await entered.promise;const group=createWorkerGroup({legacy,worker});group.stop();
+ let completed=false;const waiting=group.waitForIdle({timeoutMs:1000}).then(r=>{completed=true;return r;});
+ parent.resolve();await run;await flush();assert.equal(completed,false);assert.equal(legacy.status().active,true);
+ child.resolve();const r=await waiting;assert.equal(r.timedOut,false);assert.equal(r.locallyDrained,true);
+});
+test('late child shares the original group deadline and cannot get a fresh full timeout',async()=>{
+ const child=gate(),legacy=createProcessWork({scope:'LEGACY'}),parent=gate(),entered=gate();
+ const worker=createWorkerDrain(async()=>{entered.resolve();await parent.promise;legacy.track(child.promise);});const run=worker.drain();await entered.promise;
+ const group=createWorkerGroup({legacy,worker});group.stop();const waiting=group.waitForIdle({timeoutMs:10});parent.resolve();await run;
+ const r=await waiting;assert.equal(r.timedOut,true);assert.equal(r.locallyDrained,false);assert.equal(legacy.status().active,true);child.resolve();await legacy.waitForIdle();
+});
+test('shutdown refuses success when a worker observation says it is not drained',async()=>{
+ const h=harness({workers:{stop(){},status(){return{active:true,locallyDrained:false};},async waitForIdle(){return{locallyDrained:false,timedOut:false};}}});
+ const r=await h.shutdown.begin();assert.deepEqual(h.exits,[1]);assert.ok(r.errors.includes('WORKERS_NOT_DRAINED'));
+});
+test('router registers durable and legacy lifecycle handles under the existing scheduling flags', async () => {
  const source = fs.readFileSync(path.join(__dirname, '../src/routes/facebook.js'), 'utf8');
  const start = source.indexOf('// One registry owns'), end = source.indexOf('// ═', start); assert.ok(start > 0 && end > start);
  const t = timers(), workers = [], fake = () => { const w = createWorkerDrain(() => {}); workers.push(w); return w; };
@@ -128,10 +147,14 @@ test('router registers all five real lifecycle handles under the existing schedu
  const context = { r: {}, supabase: {}, DURABLE_MESSENGER_PAGES: new Set(['synthetic']), handleMessaging() {}, console,
   createMessengerReceiptWorker: fake, createWorkerGroup: w => createWorkerGroup(w, { timers: t }),
   facebookLeadIntake: intake, facebookLeadCensus: fake(), facebookSurveyDispatch: fake(), facebookSurveyOutcomes: fake(),
+  legacyWork: createProcessWork({ scope: 'FACEBOOK_LEGACY_THIS_PROCESS' }), autoTool: { shutdown: fake() },
+  autoPipelineStates: new Map(), clearFbMasterScheduleTimer() {}, stopScanTimer() {}, clearRescanPhonesScheduleTimer() {},
+  require: name => { assert.ok(/cronLeader|batchQueue|fbMarketingSyncRunner/.test(name)); return { shutdown: fake() }; },
   process: { env: { VPT_SURVEY_CONFIRMATIONS: '1' } } };
  vm.runInNewContext(source.slice(start, end), context);
  assert.equal(t.intervals.length, 3); assert.equal(t.immediates.length, 3); context.r.workerDrainGroup.stop();
- assert.equal(workers.length, 5); assert.ok(workers.every(w => w.isStopped()));
+ assert.equal(workers.length, 9); assert.ok(workers.every(w => w.isStopped()));
+ assert.equal(context.legacyWork.isStopped(), true);
  assert.equal((await context.r.workerDrainGroup.waitForIdle()).locallyDrained, true);
  const server = fs.readFileSync(path.join(__dirname, '../src/server.js'), 'utf8');
  assert.ok(server.indexOf('workerShutdown.middleware') < server.indexOf("app.use('/api"));

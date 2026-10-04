@@ -1,3 +1,5 @@
+04/10/2026: [Dừng vòng cũ và tác vụ Facebook](LEGACY_RUNTIME_DRAIN.md) đang nghiệm thu; local1.304 PASS/0fail/5skip, code-review PASS, CI/native còn chờ. Cờ vẫn tắt; chưa khôi phục queue/UNKNOWN/toàn-process/cutover hoặc phát hành.
+
 04/10/2026: [Dừng/chờ năm worker](WORKER_DRAIN.md) runtimef3ea85e đã PASS review độc lập đúng published blobs/log CI. Node18/22=1.278/0/0 gồm2ca native signal, intakePG348/0/0,10job/build/report/Messenger SUCCESS. Cờ shutdown vẫn tắt, processesDrained=false; chưa legacy/post-ACK/push/other-process/UNKNOWN/cutover hoặc UAT/phát hành.
 
 04/10/2026: [Bảo trì đường ghi cũ](LEGACY_WRITE_HOLD.md), SQL687 mặc định tắt, 18 bảng gốc và FK descendants, operator-only/audit/revision/hash. Bản kiểm9ecbec4: PG348/0/0 (13 mới), Node22=1228/0/0, cả10 job/build/report/Messenger SUCCESS; reviewer độc lập PASS checkpoint maintenance sau đối chiếu published blobs/log CI. Không thay UNKNOWN/claim hoặc chứng minh process đã dừng. Chưa áp DB thật hoặc phát hành.

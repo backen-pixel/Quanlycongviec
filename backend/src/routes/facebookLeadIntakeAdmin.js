@@ -6,6 +6,7 @@ const {createIntakeAdmin}=require('../modules/marketingAutomation/facebookLeadIn
 const {createLegacyReview}=require('../modules/marketingAutomation/facebookLegacyReview');
 // The parent mount requires authMiddleware; DB checks current scope.
 const r=Router(),handle=createIntakeAdmin({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
+require('../helpers/trackedRouter').trackRouterHandlers(r,require('../helpers/facebookProcessWork'));
 const legacy=createLegacyReview({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
 r.get('/status',(req,res)=>handle(req,res,'status'));
 r.get('/console',(req,res)=>handle(req,res,'console'));

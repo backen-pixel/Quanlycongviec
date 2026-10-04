@@ -2,6 +2,8 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const config = require('../config');
 const r = express.Router();
+const legacyWork = require('../helpers/facebookProcessWork');
+require('../helpers/trackedRouter').trackRouterHandlers(r, legacyWork);
 const { enabledPageIds, enqueueMessengerEvents, captureMessengerReferral, linkMessengerAttribution, createMessengerReceiptWorker } = require('../helpers/facebookMessengerReceipt');
 const { createWorkerGroup } = require('../helpers/workerDrain');
 const DURABLE_MESSENGER_PAGES = enabledPageIds();
@@ -1368,7 +1370,11 @@ async function runPipelineV2OnePass({
   return summary;
 }
 
-async function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
+function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
+  return legacyWork.run(() => runAutoPipelineLoopInner(companyKey));
+}
+
+async function runAutoPipelineLoopInner(companyKey = FB_GLOBAL_SCOPE_KEY) {
   const st = getAutoPipelineState(companyKey);
   // Shadow: trong vòng lặp, `autoPipeline` = state của công ty này;
   // pushAutoLog/emitAutoState giữ chữ ký cũ nhưng gắn vào state này.
@@ -1376,9 +1382,9 @@ async function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
   const companyId = companyKeyToId(companyKey);
   const pushAutoLog = (text, status = 'info') => pushAutoLogImpl(st, text, status);
   const emitAutoState = () => emitAutoStateImpl(st);
-  const shouldStopLoop = () => !st.enabled || st.stopRequested || !getFbMasterEnabledSync();
+  const shouldStopLoop = () => legacyWork.isStopped() || !st.enabled || st.stopRequested || !getFbMasterEnabledSync();
 
-  if (autoPipeline.running) return;
+  if (legacyWork.isStopped() || autoPipeline.running) return;
   autoPipeline.running = true;
   autoPipeline.stopRequested = false;
   autoPipeline.phase = 'loop';
@@ -1405,9 +1411,9 @@ async function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
     );
   }
 
-  while (autoPipeline.enabled && !autoPipeline.stopRequested && getFbMasterEnabledSync()) {
+  while (!shouldStopLoop()) {
     const stillLeader = await renewLeader(FB_AUTO_PIPELINE_LEADER, FB_AUTO_PIPELINE_LEADER_TTL_SEC);
-    if (!stillLeader) {
+    if (shouldStopLoop() || !stillLeader) {
       pushAutoLog('⏸️ Instance khác đang chạy FB auto pipeline — dừng trên instance này', 'error');
       autoPipeline.stopRequested = true;
       break;
@@ -1418,7 +1424,7 @@ async function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
     if (Array.isArray(pageIds) && pageIds.length === 0) {
       pushAutoLog('⚠️ Công ty chưa gán page Facebook nào — chờ 60s rồi thử lại', 'error');
       emitAutoState();
-      await new Promise((resolve) => setTimeout(resolve, 60000));
+      await legacyWork.sleep(60000);
       continue;
     }
     autoPipeline.cycleCount += 1;
@@ -1757,7 +1763,7 @@ async function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
         pushAutoLog(`⏭️ Chain: nghỉ ${pauseMs / 1000}s rồi lặp từ offset 0`);
       }
       pushAutoLog(`♻️ Nghỉ ${pauseMs / 1000}s rồi lặp chu kỳ ${autoPipeline.cycleCount + 1}...`);
-      await new Promise((resolve) => setTimeout(resolve, pauseMs));
+      await legacyWork.sleep(pauseMs);
       // Hết nghỉ
       autoPipeline.pauseUntilMs = null;
     } else {
@@ -1766,11 +1772,11 @@ async function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
   }
 
   const cfgEnd = getFbPipelineConfigSync(companyKey);
-  const keepAutoOn = !!(cfgEnd.enabled && getFbMasterEnabledSync() && !autoPipeline.stopRequested);
+  const keepAutoOn = !!(!legacyWork.isStopped() && cfgEnd.enabled && getFbMasterEnabledSync() && !autoPipeline.stopRequested);
 
   autoPipeline.running = false;
   autoPipeline.stopRequested = false;
-  void releaseFbPipelineLeaderIfIdle();
+  legacyWork.track(releaseFbPipelineLeaderIfIdle());
 
   if (keepAutoOn) {
     autoPipeline.enabled = true;
@@ -1779,10 +1785,10 @@ async function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
     autoPipeline.stepLabel = null;
     pushAutoLog('♻️ Giữ auto bật — khởi động lại sau gián đoạn ngắn…');
     emitAutoState();
-    setTimeout(() => {
+    legacyWork.timeout(() => {
       const st2 = getAutoPipelineState(companyKey);
       if (!st2.running && st2.enabled && getFbMasterEnabledSync()) {
-        void startAutoPipelineForCompany(companyKey);
+        return startAutoPipelineForCompany(companyKey);
       }
     }, 2000);
     return;
@@ -1798,7 +1804,11 @@ async function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
 
 // ── Quản lý vòng auto theo công ty (start/stop độc lập + master) ──────────────
 /** Khởi động vòng auto của 1 công ty (chỉ chạy khi master bật). */
-async function startAutoPipelineForCompany(companyKey) {
+function startAutoPipelineForCompany(companyKey) {
+  return legacyWork.run(() => startAutoPipelineForCompanyInner(companyKey));
+}
+
+async function startAutoPipelineForCompanyInner(companyKey) {
   const st = getAutoPipelineState(companyKey);
   if (st.running) {
     st.enabled = true;
@@ -1812,6 +1822,7 @@ async function startAutoPipelineForCompany(companyKey) {
     return st;
   }
   const isLeader = await tryAcquireLeader(FB_AUTO_PIPELINE_LEADER, FB_AUTO_PIPELINE_LEADER_TTL_SEC);
+  if (legacyWork.isStopped()) return st;
   if (!isLeader) {
     st.enabled = true;
     emitAutoState(st);
@@ -1819,7 +1830,7 @@ async function startAutoPipelineForCompany(companyKey) {
     return st;
   }
   st.enabled = true;
-  runAutoPipelineLoop(companyKey).catch((err) => {
+  legacyWork.track(runAutoPipelineLoop(companyKey).catch((err) => {
     console.error('[AutoPipeline] FATAL', companyKey, err.message);
     pushAutoLog(st, `❌ Auto pipeline lỗi nghiêm trọng: ${err.message}`, 'error');
     st.running = false;
@@ -1829,8 +1840,8 @@ async function startAutoPipelineForCompany(companyKey) {
     st.stepLabel = null;
     st.pauseUntilMs = null;
     emitAutoState(st);
-    void releaseFbPipelineLeaderIfIdle();
-  });
+    legacyWork.track(releaseFbPipelineLeaderIfIdle());
+  }));
   return st;
 }
 
@@ -2061,39 +2072,48 @@ async function enterMasterSchedulePhase(phase, startedAtMs = Date.now(), source 
 
 function clearFbMasterScheduleTimer() {
   if (fbMasterScheduleTimeoutId) {
-    clearTimeout(fbMasterScheduleTimeoutId);
+    legacyWork.cancel(fbMasterScheduleTimeoutId);
     fbMasterScheduleTimeoutId = null;
   }
 }
 
 function armFbMasterSchedule(delayMs) {
   clearFbMasterScheduleTimer();
-  if (!fbMasterSchedule.enabled) return;
+  if (legacyWork.isStopped() || !fbMasterSchedule.enabled) return;
   const d = Math.max(0, Number(delayMs) || 0);
-  fbMasterScheduleTimeoutId = setTimeout(() => {
+  fbMasterScheduleTimeoutId = legacyWork.timeout(() => {
     fbMasterScheduleTimeoutId = null;
-    advanceMasterScheduleCycle().catch((e) => console.error('[FB MasterSchedule] cycle:', e.message));
+    return advanceMasterScheduleCycle().catch((e) => console.error('[FB MasterSchedule] cycle:', e.message));
   }, d);
 }
 
 /** FB MasterSchedule — chỉ 1 instance chạy chu kỳ bật/tắt master khi scale. */
 const FB_MASTER_SCHEDULE_LEADER = 'fb-master-schedule';
 
-async function advanceMasterScheduleCycle() {
-  if (!fbMasterSchedule.enabled) return;
+function advanceMasterScheduleCycle() {
+  return legacyWork.run(() => advanceMasterScheduleCycleInner());
+}
+
+async function advanceMasterScheduleCycleInner() {
+  if (legacyWork.isStopped() || !fbMasterSchedule.enabled) return;
   const nextPhase = fbMasterSchedule.phase === 'run' ? 'rest' : 'run';
   const ttlSec = Math.max(120, Math.ceil(masterSchedulePhaseDurationMs(nextPhase) / 1000) + 60);
   const ran = await runIfLeader(FB_MASTER_SCHEDULE_LEADER, async () => {
     const startedAt = Date.now();
+    if (legacyWork.isStopped()) return;
     await enterMasterSchedulePhase(nextPhase, startedAt);
     armFbMasterSchedule(masterSchedulePhaseDurationMs(nextPhase));
   }, { ttlSec });
   if (!ran) armFbMasterSchedule(60_000);
 }
 
-async function startFbMasterScheduleCycle({ restart = false, source = 'schedule' } = {}) {
+function startFbMasterScheduleCycle({ restart = false, source = 'schedule' } = {}) {
+  return legacyWork.run(() => startFbMasterScheduleCycleInner({ restart, source }));
+}
+
+async function startFbMasterScheduleCycleInner({ restart = false, source = 'schedule' } = {}) {
   clearFbMasterScheduleTimer();
-  if (!fbMasterSchedule.enabled) return;
+  if (legacyWork.isStopped() || !fbMasterSchedule.enabled) return;
   let phase;
   let startedAt;
   let delayMs;
@@ -2106,6 +2126,7 @@ async function startFbMasterScheduleCycle({ restart = false, source = 'schedule'
   }
   const ttlSec = Math.max(120, Math.ceil(delayMs / 1000) + 60);
   const ran = await runIfLeader(FB_MASTER_SCHEDULE_LEADER, async () => {
+    if (legacyWork.isStopped()) return;
     await enterMasterSchedulePhase(phase, startedAt, restart ? 'config' : source);
     armFbMasterSchedule(delayMs);
   }, { ttlSec });
@@ -3223,7 +3244,7 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
       // Push via Socket.IO
       const pushFn = r._app?.get?.('pushNotification');
       if (pushFn) {
-        pushFn(ownerId, { type: notifyType, title: notifyTitle, message: lead.title, entity_type: notifyEntityType, entity_id: lead.id });
+        await pushFn(ownerId, { type: notifyType, title: notifyTitle, message: lead.title, entity_type: notifyEntityType, entity_id: lead.id });
       }
     }
   } catch (e) { console.warn('[FB] Notify error:', e.message); }
@@ -3475,7 +3496,7 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
   if (durable) await captureMessengerReferral(supabase, pageId, contact.id, event);
 
   if (isPlaceholderFacebookName(contact.fb_name)) {
-    void tryResolveMessengerDisplayName(pageId, partnerPsid, contact.id, io, contact);
+    legacyWork.track(tryResolveMessengerDisplayName(pageId, partnerPsid, contact.id, io, contact));
   }
 
   console.log(`[FB] 👤 Contact: ${contact.fb_name || 'Unknown'} (ID: ${contact.id})`);
@@ -3613,7 +3634,7 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
           });
         }
       } catch (_) { /* ignore */ }
-      void tryResolveMessengerDisplayName(pageId, partnerPsid, contact.id, io, contact);
+      legacyWork.track(tryResolveMessengerDisplayName(pageId, partnerPsid, contact.id, io, contact));
       return;
     }
 
@@ -7360,7 +7381,7 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 
 // Preload config vào cache khi khởi động
-loadAutoLeadConfig().then(() => console.log('[AutoLead] ✅ Config loaded from DB'));
+legacyWork.spawn(() => loadAutoLeadConfig().then(() => console.log('[AutoLead] ✅ Config loaded from DB')));
 
 // GET /facebook/auto-lead-config
 r.get('/auto-lead-config', authMiddleware, async (req, res) => {
@@ -7425,26 +7446,30 @@ async function saveScanConfig(cfg) {
 }
 
 // Preload
-loadScanConfig().then(() => console.log('[LeadScan] ✅ Config loaded'));
-loadFbPipelineConfigFromDb().then(async () => {
+legacyWork.spawn(() => loadScanConfig().then(() => console.log('[LeadScan] ✅ Config loaded')));
+legacyWork.spawn(() => loadFbPipelineConfigFromDb().then(async () => {
   console.log('[FB] ✅ Auto pipeline config loaded (per-company)');
   try {
     const masterOn = getFbMasterEnabledSync();
-    if (masterOn && fbToolsResumeOnBoot()) {
+    if (!legacyWork.isStopped() && masterOn && fbToolsResumeOnBoot()) {
       const enabledKeys = listFbPipelineCompanyKeys().filter((k) => getFbPipelineConfigSync(k).enabled);
       console.log(`[FB] ▶️ Auto-resume auto pipeline sau deploy (master=ON) cho ${enabledKeys.length} công ty`);
-      for (const key of enabledKeys) void startAutoPipelineForCompany(key);
+      for (const key of enabledKeys) await startAutoPipelineForCompany(key);
     } else if (masterOn) {
       console.log('[FB] ⏸️ Master BẬT nhưng không tự chạy pipeline (FB_AUTO_PIPELINE_RESUME_ON_BOOT=0 hoặc NODE_ENV≠production).');
     }
   } catch (e) { console.warn('[FB] auto-resume check:', e.message); }
-});
+}));
 
 /**
  * scanAndCreateLeads — Quét facebook_contacts có SĐT nhưng chưa có lead → tạo lead
  * Chạy theo lịch hoặc gọi thủ công
  */
-async function scanAndCreateLeads() {
+function scanAndCreateLeads() {
+  return legacyWork.run(() => scanAndCreateLeadsInner());
+}
+
+async function scanAndCreateLeadsInner() {
   console.log('[LeadScan] 🔍 Starting scan...');
   const results = { scanned: 0, created: 0, skipped: 0, errors: [], leads: [] };
 
@@ -7468,6 +7493,7 @@ async function scanAndCreateLeads() {
     console.log(`[LeadScan] Found ${results.scanned} contacts with phone, no lead`);
 
     for (const contact of (contacts || [])) {
+      if (legacyWork.isStopped()) break;
       try {
         if (contact.phone && await isPhoneBlockedForFacebookAutoLead(supabase, contact.phone)) {
           results.skipped++;
@@ -7513,28 +7539,28 @@ async function scanAndCreateLeads() {
 }
 
 function startScanTimer() {
-  if (scanTimer) clearInterval(scanTimer);
-  if (!scanConfig.enabled || !scanConfig.interval_minutes) return;
+  if (scanTimer) legacyWork.cancel(scanTimer);
+  if (legacyWork.isStopped() || !scanConfig.enabled || !scanConfig.interval_minutes) return;
   const intervalMinutes = Math.max(15, parseInt(scanConfig.interval_minutes, 10) || 15);
   const ms = intervalMinutes * 60 * 1000;
   scanConfig.interval_minutes = intervalMinutes;
   console.log(`[LeadScan] ⏰ Timer started — every ${intervalMinutes} minutes`);
-  scanTimer = setInterval(() => {
+  scanTimer = legacyWork.interval(() => {
     const ttlSec = Math.max(900, intervalMinutes * 60);
-    void runIfLeader('fb-lead-scan', () => scanAndCreateLeads(), { ttlSec });
+    return runIfLeader('fb-lead-scan', () => scanAndCreateLeads(), { ttlSec });
   }, ms);
 }
 
 function stopScanTimer() {
-  if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
+  if (scanTimer) { legacyWork.cancel(scanTimer); scanTimer = null; }
   console.log('[LeadScan] ⏹️ Timer stopped');
 }
 
 // Auto-start theo cấu hình đã lưu: nếu enabled=true thì bật timer sau khi boot.
 // (Nếu muốn tắt hẳn chạy nền, set enabled=false qua /facebook/lead-scan/config)
-loadScanConfig().then((cfg) => {
+legacyWork.spawn(() => loadScanConfig().then((cfg) => {
   if (cfg?.enabled) startScanTimer();
-}).catch(() => {});
+}).catch(() => {}));
 
 // ═══════════════════════════════════════════════════════════════
 // SCHEDULED RESCAN PHONES — Quét lại SĐT từ tin inbound theo lịch
@@ -7603,7 +7629,7 @@ async function saveRescanPhonesScheduleConfig(patch) {
 
 function clearRescanPhonesScheduleTimer() {
   if (rescanPhonesScheduleTimeoutId) {
-    clearTimeout(rescanPhonesScheduleTimeoutId);
+    legacyWork.cancel(rescanPhonesScheduleTimeoutId);
     rescanPhonesScheduleTimeoutId = null;
   }
   rescanPhonesScheduleNextAtMs = null;
@@ -7611,17 +7637,21 @@ function clearRescanPhonesScheduleTimer() {
 
 function armRescanPhonesSchedule(delayMs) {
   clearRescanPhonesScheduleTimer();
-  if (!rescanPhonesSchedule.enabled) return;
+  if (legacyWork.isStopped() || !rescanPhonesSchedule.enabled) return;
   const d = Math.max(0, Number(delayMs) || 0);
   rescanPhonesScheduleNextAtMs = Date.now() + d;
-  rescanPhonesScheduleTimeoutId = setTimeout(() => {
+  rescanPhonesScheduleTimeoutId = legacyWork.timeout(() => {
     rescanPhonesScheduleTimeoutId = null;
-    runRescanPhonesScheduledTick().catch(() => {});
+    return runRescanPhonesScheduledTick().catch(() => {});
   }, d);
 }
 
-async function runRescanPhonesScheduledTick() {
-  if (!rescanPhonesSchedule.enabled) return;
+function runRescanPhonesScheduledTick() {
+  return legacyWork.run(() => runRescanPhonesScheduledTickInner());
+}
+
+async function runRescanPhonesScheduledTickInner() {
+  if (legacyWork.isStopped() || !rescanPhonesSchedule.enabled) return;
   if (rescanPhonesScheduleRunning) {
     console.warn('[RescanSchedule] tick skipped — still running, retry in 60s');
     armRescanPhonesSchedule(60_000);
@@ -7629,6 +7659,7 @@ async function runRescanPhonesScheduledTick() {
   }
   const intervalMin = Math.max(15, parseInt(rescanPhonesSchedule.interval_minutes, 10) || 60);
   const ran = await runIfLeader('fb-rescan-phones', async () => {
+    if (legacyWork.isStopped()) return;
     rescanPhonesScheduleRunning = true;
     try {
       const body = {
@@ -7664,7 +7695,7 @@ async function runRescanPhonesScheduledTick() {
 /** @param {boolean} immediateFirst — lần chạy đầu sau ~5s khi vừa bật trong UI; false = chờ đủ một chu kỳ (boot server). */
 function startRescanPhonesSchedule(immediateFirst) {
   clearRescanPhonesScheduleTimer();
-  if (!rescanPhonesSchedule.enabled) return;
+  if (legacyWork.isStopped() || !rescanPhonesSchedule.enabled) return;
   const intervalMs = Math.max(15, parseInt(rescanPhonesSchedule.interval_minutes, 10) || 60) * 60 * 1000;
   const firstMs = immediateFirst ? 5000 : intervalMs;
   console.log(`[RescanSchedule] ⏰ armed — first run in ${firstMs / 1000}s, rest ${intervalMs / 60000} min between runs`);
@@ -7682,13 +7713,13 @@ function getRescanPhonesScheduleStatus() {
   };
 }
 
-loadRescanPhonesScheduleConfig().then((cfg) => {
+legacyWork.spawn(() => loadRescanPhonesScheduleConfig().then((cfg) => {
   if (cfg?.enabled) startRescanPhonesSchedule(false);
-}).catch(() => {});
+}).catch(() => {}));
 
-loadFbMasterScheduleConfig().then((cfg) => {
+legacyWork.spawn(() => loadFbMasterScheduleConfig().then((cfg) => {
   if (cfg?.enabled) startFbMasterScheduleCycle().catch(() => {});
-}).catch(() => {});
+}).catch(() => {}));
 
 // GET /facebook/audit-phone-sync — đối soát contact/customer/lead
 r.get('/audit-phone-sync', authMiddleware, async (req, res) => {
@@ -9160,7 +9191,7 @@ autoTool.injectCoreFunctions({
 
 // Inject socket.io khi _ioRef được set
 let _autoToolIoInjected = false;
-setInterval(() => {
+legacyWork.interval(() => {
   if (!_autoToolIoInjected && r._ioRef) {
     autoTool.setIO(r._ioRef);
     _autoToolIoInjected = true;
@@ -9168,19 +9199,19 @@ setInterval(() => {
 }, 500);
 
 // Load config + tự resume Auto Tool sau deploy nếu đã bật trước đó
-autoTool.loadConfigFromDb().then(async () => {
+legacyWork.spawn(() => autoTool.loadConfigFromDb().then(async () => {
   console.log('[AutoTool] ✅ Config loaded');
   try {
-    if (!fbToolsResumeOnBoot()) return;
+    if (legacyWork.isStopped() || !fbToolsResumeOnBoot()) return;
     const wasEnabled = await autoTool.loadEnabledFlagFromDb();
-    if (wasEnabled && !autoTool.getState().running) {
+    if (!legacyWork.isStopped() && wasEnabled && !autoTool.getState().running) {
       console.log('[AutoTool] ▶️ Auto-resume sau deploy');
       autoTool.startLoop().catch((err) => console.error('[AutoTool] resume FATAL', err.message));
     }
   } catch (e) {
     console.warn('[AutoTool] auto-resume check:', e.message);
   }
-});
+}));
 
 r.get('/auto-tool/status', authMiddleware, async (_req, res) => {
   res.json(autoTool.getState());
@@ -9668,7 +9699,14 @@ const messengerReceiptWorker = createMessengerReceiptWorker({
   processEvent: (pageId, event) => handleMessaging(pageId, event, r._ioRef, true),
   onError: (code) => console.warn('[FB durable]', code),
 });
+legacyWork.onStop(() => {
+  for (const state of autoPipelineStates.values()) { state.stopRequested = true; state.enabled = false; }
+  clearFbMasterScheduleTimer(); stopScanTimer(); clearRescanPhonesScheduleTimer();
+});
 const durableWorkers = createWorkerGroup({
+  legacyFacebook: legacyWork, legacyAutoTool: autoTool.shutdown,
+  legacyLeaderJobs: require('../helpers/cronLeader').shutdown,
+  legacyBatchQueue: require('../helpers/batchQueue').shutdown, legacyMarketingSync: require('../jobs/fbMarketingSyncRunner').shutdown,
   messenger: messengerReceiptWorker, leadIntake: facebookLeadIntake, leadCensus: facebookLeadCensus,
   surveyDispatch: facebookSurveyDispatch, surveyOutcomes: facebookSurveyOutcomes,
 }, { onError: name => console.warn('[FB worker]', name, 'DRAIN_FAILED') });

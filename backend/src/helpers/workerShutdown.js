@@ -50,13 +50,14 @@ function installWorkerShutdown({ server, io, workers, processLike = process, tim
           new Promise(resolve => { deadline = setTimeout(() => resolve({ timedOut: true }), timeoutMs); }),
         ]);
         timedOut = result.timedOut;
+        if (result.workersResult && result.workersResult.locallyDrained !== true) errors.push('WORKERS_NOT_DRAINED');
         report = { workers: result.workersResult || workers.status(), timedOut, errors: [...errors] };
       } catch {
         report = { timedOut, errors: [...errors, 'SHUTDOWN_OBSERVATION_FAILED'] };
       } finally { clearTimeout(deadline); }
       Object.assign(report, { bootId, revision: safeRevision, signal: ['SIGTERM', 'SIGINT'].includes(signal) ? signal : 'INTERNAL',
         scope: 'REGISTERED_WORKERS_THIS_PROCESS', processesDrained: false, processTerminationRequired: true,
-        notCovered: ['HTTP_RECEIVERS_AND_POST_ACK_TASKS', 'LEGACY_TIMERS_AND_SCRIPTS', 'DETACHED_SOCKET_MOBILE_PUSH', 'OTHER_PROCESSES_AND_REMOTE_REQUESTS'] });
+        notCovered: ['UNTRACKED_HTTP_AND_POST_ACK_TASKS', 'UNREGISTERED_TIMERS_AND_SCRIPTS', 'UNTRACKED_SOCKET_MOBILE_PUSH', 'OTHER_PROCESSES_AND_REMOTE_REQUESTS'] });
       try { Promise.resolve(onReport(report)).catch(() => {}); } catch { /* reporting must not delay termination */ }
       complete(report);
       exit(report.timedOut || report.errors.length ? 1 : 0);

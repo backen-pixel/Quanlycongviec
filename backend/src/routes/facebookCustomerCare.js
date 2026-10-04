@@ -11,6 +11,7 @@ const {createProposalConsole}=require('../modules/marketingAutomation/surveyProp
 const {createSurveyHandoffs}=require('../modules/marketingAutomation/surveyHandoffs');
 // Parent mount authenticates; each RPC checks the current actor and company.
 const r=Router(),care=createCustomerCare({db:supabase,isPrimary:()=>!state.isFailoverEnabled()&&state.getActiveTarget()==='primary'});
+require('../helpers/trackedRouter').trackRouterHandlers(r,require('../helpers/facebookProcessWork'));
 r.get('/threads',(req,res)=>care.handle(req,res,'list'));
 r.get('/queue',(req,res)=>care.handle(req,res,'queue'));
 r.get('/thread',(req,res)=>care.handle(req,res,'read'));

@@ -1,3 +1,11 @@
+## 04/10/2026 — Đang nghiệm thu dừng vòng cũ và tác vụ Facebook
+
+Đã theo dõi pipeline/master/scan/rescan/AutoTool, leader jobs, batch queue, marketing sync và handler Facebook sau ACK/client disconnect. Chờ ID đã dequeue tới lưu kết quả, không đổi enable nghiệp vụ khi shutdown. Đã sửa2finding về child sinh muộn và router con; local1.304 PASS/0fail/5skip, code-review PASS; CI/native chờ. [Phạm vi và kiểm thử](vpt-marketing-automation/LEGACY_RUNTIME_DRAIN.md).
+
+Chưa toàn-process, khôi phục queue/UNKNOWN/cutover hoặc phát hành; cờ shutdown tắt. Full goal ACTIVE; còn đối soát, AI/lịch/người nhận/phạm vi đo và UAT/Founder release.
+
+---
+
 ## 04/10/2026 — Dừng/chờ năm worker đã qua review và kiểm thử tiến trình
 
 Runtimef3ea85e nối lifecycle và server adapter mặc định tắt; ngừng nhận lượt mới, chờ kết quả đang gửi/lưu, lỗi đóng mạng không báo thành công giả. Node18/22 mỗi bản1.278/0/0 gồm2ca SIGTERM/SIGINT native Linux; intakePostgreSQL348/0/0, cả10job/build/report/Messenger SUCCESS. Reviewer độc lập đã xác minh published blobs/log CI và kết luận PASS checkpoint. [Phạm vi, bằng chứng và hoàn tác](vpt-marketing-automation/WORKER_DRAIN.md).

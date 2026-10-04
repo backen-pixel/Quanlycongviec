@@ -1,4 +1,5 @@
 'use strict';
+const { performance } = require('node:perf_hooks');
 
 // A one-way, instance-local stop latch. This is not evidence that another
 // process, a remote HTTP request, or a database transaction has stopped.
@@ -42,7 +43,7 @@ function createWorkerGroup(workers, { onError = () => {}, timers = globalThis } 
     const members = Object.fromEntries(entries.map(([name, w]) => [name, w.status()]));
     return { scope: 'REGISTERED_WORKERS_THIS_PROCESS', members, stopped,
       locallyDrained: stopped && Object.values(members).every(x => x.locallyDrained), processesDrained: false,
-      notCovered: ['HTTP_RECEIVERS_AND_POST_ACK_TASKS','LEGACY_TIMERS_AND_SCRIPTS','DETACHED_SOCKET_MOBILE_PUSH','OTHER_PROCESSES_AND_REMOTE_REQUESTS'] };
+      notCovered: ['UNTRACKED_HTTP_AND_POST_ACK_TASKS','UNREGISTERED_TIMERS_AND_SCRIPTS','UNTRACKED_SOCKET_MOBILE_PUSH','OTHER_PROCESSES_AND_REMOTE_REQUESTS'] };
   };
   return { status, schedule(names, intervalMs) {
     if (!Array.isArray(names) || !names.length || new Set(names).size !== names.length
@@ -70,9 +71,19 @@ function createWorkerGroup(workers, { onError = () => {}, timers = globalThis } 
     for (const [, worker] of entries) { try { worker.stop(); } catch { failures.push(new Error('Worker stop failed')); } }
     if (failures.length) throw new AggregateError(failures, 'Worker group stop failed');
     return status();
-  }, async waitForIdle(options) {
-    const results = await Promise.all(entries.map(([, w]) => w.waitForIdle(options)));
-    return { ...status(), timedOut: results.some(x => x.timedOut) };
+  }, async waitForIdle({ timeoutMs = 30000 } = {}) {
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 60000) throw new TypeError('Invalid group wait');
+    const deadline = performance.now() + timeoutMs;
+    // A running member may register child work in a previously idle member.
+    // Re-observe the whole registry until it is idle at the same point in time.
+    for (;;) {
+      const remaining = Math.max(0, Math.floor(deadline - performance.now()));
+      await Promise.all(entries.map(([, w]) => w.waitForIdle({ timeoutMs: remaining })));
+      const current = status(), members = Object.values(current.members);
+      if (members.some(member => typeof member.active !== 'boolean')) throw new TypeError('Invalid worker observation');
+      if (members.every(member => !member.active)) return { ...current, timedOut: false };
+      if (performance.now() >= deadline || !remaining) return { ...current, timedOut: true };
+    }
   } };
 }
 module.exports = { createWorkerDrain, createWorkerGroup };
