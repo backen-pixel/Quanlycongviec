@@ -1,6 +1,6 @@
-## 04/10/2026 — Nối provider tư vấn với hạn mức đang kiểm chứng
+## 04/10/2026 — Hạn mức gọi AI đã qua kiểm thử tích hợp
 
-Router gắn OpenAI Responses adapter mặc định tắt, dedicated key và policy private bắt buộc; SQL691 giữ chỗ lượt gọi theo công ty/actor/key/model/kỳ, chặn lặp và UNKNOWN, lưu usage trước draft. Reservation là dự phòng, actualCostVnd chưa biết, không thay hóa đơn hoặc giới hạn provider. Migration không enrollment/key/model mặc định. Local1356PASS/5skip; focused31/31;13ca PG đang chờ CI. Review độc lập PASS về mã sau khép P2 cặp state/reason. [Hợp đồng, nguồn API và hoàn tác](vpt-marketing-automation/CARE_OPENAI_INFERENCE.md).
+Router gắn OpenAI Responses adapter mặc định tắt, dedicated key và policy private bắt buộc; SQL691 giữ chỗ lượt gọi theo công ty/actor/key/model/kỳ, chặn lặp và UNKNOWN, lưu usage trước draft. Runtime cc5e6a9: Node18/22 mỗi bản 1.361/0/0; PostgreSQL 422/0/0 gồm 13 ca mới, cả 10 job/build/report/Messenger SUCCESS. CI merge đúng tree/parents; reviewer độc lập đã xác minh published blobs/log và PASS checkpoint. Reservation là dự phòng, actualCostVnd chưa biết, không thay hóa đơn hoặc giới hạn provider. Migration không enrollment/key/model mặc định. [Hợp đồng, bằng chứng và hoàn tác](vpt-marketing-automation/CARE_OPENAI_INFERENCE.md).
 
 Full goal ACTIVE: còn cấu hình được duyệt, quyền runtime, chất lượng thật, worker/gửi, lịch/người nhận, chi phí/dashboard và UAT/Founder release. Chưa gọi AI/Meta/CRM thật, chi quảng cáo hoặc mở quyền.
 

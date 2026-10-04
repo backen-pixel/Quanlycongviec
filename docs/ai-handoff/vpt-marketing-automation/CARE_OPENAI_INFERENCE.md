@@ -32,11 +32,17 @@ Chỉ đọc một assistant message hoàn tất có một output_text; refusal,
 
 Nguồn API đã đọc 04/10/2026: [Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs), [Responses](https://developers.openai.com/api/reference/cli/resources/responses/methods/create), [token usage](https://developers.openai.com/api/docs/guides/token-counting). Việc cấu hình store:false không tự xác nhận toàn bộ chính sách lưu dữ liệu hay quyền tài khoản.
 
-## Kiểm chứng đang thực hiện
+## Kiểm chứng và review độc lập
 
-Local1.356 PASS/5skip, focused advisor+provider31/31 (12 provider mới). Kiểm các cờ/key riêng, credential đổi, permit replay/giả/quá hạn, failover, AbortSignal, URL/body, usage sai/thiếu, HTTP429, refusal/toolcall/incomplete, response lớn và mất persistence. Toàn bộ fetch giả, không model/network call.
+Runtime `cc5e6a97d319b4e5a40a9e4fe1b1e7bf873b8150`, tree `f29b53dcb41c74176cb37082b84a8bc144b9af78`:
 
-13 ca PostgreSQL16 trong suite intake: cài SQL691 hai lần, không auto-enrollment, quyền private, API→SQL→HTTPgiả→usage→DRAFT, replay, concurrent quota, limit/UNKNOWN, receipt sau revoke, NULL/cặp state-reason sai, policy bất biến, rollback và chờ khóa policy revocation có observer. Chưa có kết quả CI ở bản ghi này. Reviewer độc lập đã khép P2 cặp state/reason và PASS về mã, chờ log đúng commit trước PASS checkpoint.
+- [Automation37189376937](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37189376937): cả 10 job SUCCESS; Node18/22 mỗi bản **1.361 PASS/0 fail/0 skip**. Log Node18 111398181035 và Node22 111398180987 đã đọc.
+- [PostgreSQL111398181007](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37189376937/job/111398181007): **422/0/0**, gồm 13 ca SQL691 mới. Cài migration hai lần, quyền private/không auto-enrollment, Application Service→SQL→HTTP giả→usage→DRAFT, replay, concurrent quota, limit/UNKNOWN, receipt sau revoke, NULL/cặp state-reason sai, policy bất biến và rollback. Ca421 quan sát claim thực sự chờ khóa policy trước khi bị từ chối sau revocation commit.
+- Frontend 10.335 modules, 26,49 giây. [Report37189376944](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37189376944) và [Messenger37189376946](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37189376946) SUCCESS.
+- CI merge `890b9b31538798b8089e6e6dd3298084b957d370` đúng tree trên và hai parents base `e16c885ae7c2305645be02a1227bf378cb59137f` + runtime.
+- Reviewer độc lập đã tự đọc published blobs/log PG/Node/build và đối chiếu tree/parents: **PASS checkpoint SQL691/OpenAI adapter**, không còn finding chặn trong phạm vi. P2 receipt state/reason đã khép; invalid receipt không xóa khóa UNKNOWN hoặc reservation.
+
+Local 1.356 PASS/5skip, focused advisor+provider31/31 (12 provider mới). Kiểm cờ/key riêng, credential đổi, permit replay/giả/quá hạn, failover, AbortSignal, URL/body, usage sai/thiếu, HTTP429, refusal/toolcall/incomplete, response lớn và mất persistence. Năm ca local skip đã chạy trên CI. Toàn bộ provider response là giả; không kiểm mô hình, hóa đơn hoặc tài khoản OpenAI thật. Không có thay đổi UI trong checkpoint này; không thay bằng chứng UAT.
 
 ## Hoàn tác và phần còn thiếu
 
