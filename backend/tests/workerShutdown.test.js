@@ -146,14 +146,14 @@ test('router registers durable and legacy lifecycle handles under the existing s
  const intake = fake(); intake.pages = new Set(['synthetic']);
  const context = { r: {}, supabase: {}, DURABLE_MESSENGER_PAGES: new Set(['synthetic']), handleMessaging() {}, console,
   createMessengerReceiptWorker: fake, createWorkerGroup: w => createWorkerGroup(w, { timers: t }),
-  facebookLeadIntake: intake, facebookLeadCensus: fake(), facebookSurveyDispatch: fake(), facebookSurveyOutcomes: fake(),
+  facebookLeadIntake: intake, facebookLeadCensus: fake(), facebookSurveyDispatch: fake(), facebookSurveyOutcomes: fake(), facebookCareRuntime: fake(),
   legacyWork: createProcessWork({ scope: 'FACEBOOK_LEGACY_THIS_PROCESS' }), autoTool: { shutdown: fake() },
   autoPipelineStates: new Map(), clearFbMasterScheduleTimer() {}, stopScanTimer() {}, clearRescanPhonesScheduleTimer() {},
   require: name => { assert.ok(/cronLeader|batchQueue|fbMarketingSyncRunner/.test(name)); return { shutdown: fake() }; },
-  process: { env: { VPT_SURVEY_CONFIRMATIONS: '1' } } };
+  process: { env: { VPT_SURVEY_CONFIRMATIONS: '1', VPT_CARE_RUNTIME: '1' } } };
  vm.runInNewContext(source.slice(start, end), context);
- assert.equal(t.intervals.length, 3); assert.equal(t.immediates.length, 3); context.r.workerDrainGroup.stop();
- assert.equal(workers.length, 9); assert.ok(workers.every(w => w.isStopped()));
+ assert.equal(t.intervals.length, 4); assert.equal(t.immediates.length, 4); context.r.workerDrainGroup.stop();
+ assert.equal(workers.length, 10); assert.ok(workers.every(w => w.isStopped()));
  assert.equal(context.legacyWork.isStopped(), true);
  assert.equal((await context.r.workerDrainGroup.waitForIdle()).locallyDrained, true);
  const server = fs.readFileSync(path.join(__dirname, '../src/server.js'), 'utf8');

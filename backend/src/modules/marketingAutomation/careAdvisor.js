@@ -77,6 +77,22 @@ function decodeSelection(raw, context) {
   return { action: raw.action, entryId: answerIndex < 0 ? null : context.entries[answerIndex].entryId, needs };
 }
 
+async function produceCareSelection({ context, authorization, infer, isEnabled, timeoutMs = 30000 }) {
+  if (!isEnabled()) return { failure: 'DISABLED' };
+  let prepared;
+  try { prepared = prepareInference(context); } catch { return { failure: 'INVALID_MODEL_OUTPUT' }; }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs); timer.unref?.();
+  let response;
+  try {
+    const raw = await infer({ ...prepared, signal: controller.signal, authorization });
+    if (controller.signal.aborted) response = { failure: 'MODEL_UNAVAILABLE' };
+    else { try { response = decodeSelection(raw, context); } catch { response = { failure: 'INVALID_MODEL_OUTPUT' }; } }
+  } catch { response = { failure: 'MODEL_UNAVAILABLE' }; }
+  finally { clearTimeout(timer); }
+  return isEnabled() ? response : { failure: 'DISABLED' };
+}
+
 function createCareAdvisor({ db, isPrimary, infer, env = process.env, timeoutMs = 30000 }) {
   const enabled = () => env.VPT_CARE_ADVISOR_ADMIN === '1' && isPrimary() === true;
   const canGenerate = () => enabled() && env.VPT_CARE_ADVISOR_DRAFTS === '1' && typeof infer === 'function'
@@ -156,27 +172,8 @@ function createCareAdvisor({ db, isPrimary, infer, env = process.env, timeoutMs 
       }
       if (begin.invoke !== true || !uuid(begin.capability) || begin.context?.companyId !== company
         || begin.context?.threadId !== begin.threadId || begin.context?.version !== body.version) throw fail('UNAVAILABLE');
-      let response;
-      if (!canGenerate()) response = { failure: 'DISABLED' };
-      else {
-        let prepared;
-        try { prepared = prepareInference(begin.context); } catch { response = { failure: 'INVALID_MODEL_OUTPUT' }; }
-        if (prepared) {
-          const controller = new AbortController();
-          const timer = setTimeout(() => controller.abort(), timeoutMs);
-          timer.unref?.();
-          try {
-            const raw = await infer({ ...prepared, signal: controller.signal,
-              authorization: { actorId: actor, companyId: company, requestId: request, capability: begin.capability } });
-            if (controller.signal.aborted) response = { failure: 'MODEL_UNAVAILABLE' };
-            else {
-              try { response = decodeSelection(raw, begin.context); } catch { response = { failure: 'INVALID_MODEL_OUTPUT' }; }
-            }
-          } catch { response = { failure: 'MODEL_UNAVAILABLE' }; }
-          finally { clearTimeout(timer); }
-        }
-      }
-      if (!canGenerate()) response = { failure: 'DISABLED' };
+      const response = await produceCareSelection({ context: begin.context, infer, isEnabled: canGenerate, timeoutMs,
+        authorization: { actorId: actor, companyId: company, requestId: request, capability: begin.capability } });
       // Never automatically repeat a failed/lost finish. The durable request reader
       // is the recovery path, so a network ambiguity cannot trigger another model call.
       const data = await rpc('crm_care_advisor_finish', { ...args, p_capability: begin.capability, p_response: response });
@@ -189,4 +186,4 @@ function createCareAdvisor({ db, isPrimary, infer, env = process.env, timeoutMs 
   }
   return { handle };
 }
-module.exports = { createCareAdvisor, prepareInference, decodeSelection };
+module.exports = { createCareAdvisor, prepareInference, decodeSelection, produceCareSelection };

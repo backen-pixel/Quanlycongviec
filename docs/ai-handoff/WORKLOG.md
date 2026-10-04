@@ -1,3 +1,7 @@
+## 04/10/2026 — Runtime draft và handoff theo quyền riêng
+
+Thêm SQL692 core dùng chung, SQL693 principal/grant/turn/close; careRuntime/console và provider authority riêng. Không impersonate admin; grant ABA/expiry sau waits được chặn, permit clamp theo grant. Lỗi mapping có metadata handoff để tránh nghẽn đầu hàng chờ. Tạo13unit và26PGcases, cập nhật lifecycle fixture; local1.369PASS/5skip. Reviewer rà mã, hai P2 đã sửa; chờ CI/PG đúng phiên bản. [Hợp đồng/hoàn tác](vpt-marketing-automation/CARE_RUNTIME.md). Không model thật/gửi/phát hành; full goal ACTIVE.
+
 ## 04/10/2026 — Adapter Responses và hạn mức gọi AI
 
 Runtime cc5e6a97d319b4e5a40a9e4fe1b1e7bf873b8150/tree f29b53dcb41c74176cb37082b84a8bc144b9af78 thêm SQL691 và adapter Responses mặc định tắt. Node18/22 mỗi bản 1.361/0/0; intake PostgreSQL 422/0/0 với 13 ca mới, cả 10 job/build/report/Messenger SUCCESS. Đã xác minh CI merge890b9b3 đúng tree/parents. Ràng buộc receipt theo state khép P2; ca PostgreSQL xác nhận invalid receipt giữ reservation và khóa claim tiếp. Reviewer độc lập đã xác minh published blobs/log/tree và PASS checkpoint SQL691/adapter. [Bằng chứng/nguồn/hoàn tác](vpt-marketing-automation/CARE_OPENAI_INFERENCE.md). Không quyền runtime mới, gọi provider thật, gửi khách hoặc phát hành. Full goal ACTIVE.

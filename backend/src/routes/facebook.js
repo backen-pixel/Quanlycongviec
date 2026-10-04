@@ -28,6 +28,11 @@ const { createSurveyDispatch } = require('../modules/marketingAutomation/faceboo
 const { createSurveyOutcomeDispatch } = require('../modules/marketingAutomation/facebookSurveyOutcomes');
 const facebookSurveyOutcomes = createSurveyOutcomeDispatch({ db: supabase, isPrimary: leadIntakePrimary, onError: code => console.warn('[FB survey outcome]', code) });
 const facebookSurveyDispatch = createSurveyDispatch({ db: supabase, isPrimary: leadIntakePrimary, onError: code => console.warn('[FB survey]', code) });
+const { createCareRuntime } = require('../modules/marketingAutomation/careRuntime');
+const { createCareOpenAiInference } = require('../modules/marketingAutomation/careOpenAiInference');
+const facebookCareRuntime = createCareRuntime({ db: supabase, isPrimary: leadIntakePrimary,
+  infer: createCareOpenAiInference({ db: supabase, isPrimary: leadIntakePrimary, authority: 'RUNTIME' }),
+  onError: code => console.warn('[FB care runtime]', code) });
 const facebookLeadCensus = createLeadCensus({ db: supabase, isPrimary: leadIntakePrimary, pages: facebookLeadIntake.pages, onError: code => console.warn('[FB Lead census]', code) });
 const { fetchAllPagesParallel } = require('../helpers/supabaseFetchAll');
 const axios = require('axios');
@@ -9708,10 +9713,11 @@ const durableWorkers = createWorkerGroup({
   legacyLeaderJobs: require('../helpers/cronLeader').shutdown,
   legacyBatchQueue: require('../helpers/batchQueue').shutdown, legacyMarketingSync: require('../jobs/fbMarketingSyncRunner').shutdown,
   messenger: messengerReceiptWorker, leadIntake: facebookLeadIntake, leadCensus: facebookLeadCensus,
-  surveyDispatch: facebookSurveyDispatch, surveyOutcomes: facebookSurveyOutcomes,
+  surveyDispatch: facebookSurveyDispatch, surveyOutcomes: facebookSurveyOutcomes, careRuntime: facebookCareRuntime,
 }, { onError: name => console.warn('[FB worker]', name, 'DRAIN_FAILED') });
 // Internal lifecycle handle, never an HTTP endpoint or a whole-process drain claim.
 r.workerDrainGroup = durableWorkers;
+if (process.env.VPT_CARE_RUNTIME === '1') durableWorkers.schedule(['careRuntime'], 5000);
 if (process.env.VPT_SURVEY_CONFIRMATIONS === '1') durableWorkers.schedule(['surveyDispatch', 'surveyOutcomes'], 5000);
 if (facebookLeadIntake.pages.size) durableWorkers.schedule(['leadIntake', 'leadCensus'], 5000);
 if (DURABLE_MESSENGER_PAGES.size) durableWorkers.schedule(['messenger'], 5000);

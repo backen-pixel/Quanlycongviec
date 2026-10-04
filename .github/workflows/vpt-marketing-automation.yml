@@ -91,6 +91,8 @@ on:
       - 'database/689_crm_care_advisor_drafts.sql'
       - 'database/690_crm_care_advisor_console.sql'
       - 'database/691_crm_care_inference_permits.sql'
+      - 'database/692_crm_care_shared_rules.sql'
+      - 'database/693_crm_care_runtime.sql'
       - 'frontend/src/components/facebook/CareAdvisor.jsx'
       - 'frontend/src/components/facebook/careAdvisorState.mjs'
       - 'backend/tests/facebookBatchLinkReconciliation*.js'
@@ -165,6 +167,7 @@ jobs:
       - run: node --test backend/tests/facebookCustomerCare.advisor.test.js
       - run: node --test backend/tests/facebookCustomerCare.advisorConsole.test.js
       - run: node --test backend/tests/facebookCustomerCare.inference.test.js
+      - run: node --test backend/tests/facebookCustomerCare.runtime.test.js
       - name: Install isolated Express version matching backend lock
         run: npm install --prefix "$RUNNER_TEMP/vpt-http" --ignore-scripts --no-audit --no-fund express@5.2.1
       - name: Real Express post-ACK and stopped admission

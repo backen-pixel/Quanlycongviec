@@ -4,6 +4,8 @@ const {createCareAdvisor}=require('../src/modules/marketingAutomation/careAdviso
 module.exports=async(t,{db,peers,query,company,other,admin,sales,region,fresh})=>{
  const sql=fs.readFileSync(path.resolve(__dirname,'../../database/689_crm_care_advisor_drafts.sql'),'utf8');
  await db.query(sql);await db.query(sql);
+ // Exercise existing human paths against the shared core before runtime tests.
+ for (const name of ['691_crm_care_inference_permits.sql','692_crm_care_shared_rules.sql']) await db.query(fs.readFileSync(path.resolve(__dirname,'../../database/'+name),'utf8'));
  const product=randomUUID(),entry=randomUUID();
  await db.query("INSERT INTO products(id,company_id,name,status,cost_price,updated_at) VALUES($1,$2,'Advisor synthetic kitchen','active',987654321,clock_timestamp())",[product,company]);
  await db.query("INSERT INTO crm_care_library_publishers(company_id,user_id,active,expires_at,approval_reference) VALUES($1,$2,true,clock_timestamp()+interval '1 day','Advisor isolated test enrollment only') ON CONFLICT(company_id,user_id) DO UPDATE SET active=true,expires_at=excluded.expires_at",[company,admin]);
@@ -212,4 +214,5 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,region,fresh})=
  });
  await require('./facebookCustomerCare.advisorConsole.cases')(t,{db,peers,query,company,other,admin,sales,fixture,begin,finish,selection});
  await require('./facebookCustomerCare.inference.cases')(t,{db,peers,query,company,other,admin,sales,fixture,begin});
+ await require('./facebookCustomerCare.runtime.cases')(t,{db,peers,query,company,other,admin,sales,fixture,approve,begin});
 };

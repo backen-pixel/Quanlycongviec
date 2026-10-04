@@ -1,3 +1,11 @@
+## 04/10/2026 — Worker tư vấn danh tính riêng đang kiểm chứng
+
+SQL692/693 tách luật private dùng chung và facade runtime theo Agent/grant riêng; worker mặc định tắt. Tạo draft có nguồn, bàn giao ngoại lệ và dừng khi tiếp quản/opt-out. API lịch sử/đóng run giữ usage, không retry/refund. Local1.369PASS/5skip;26ca PG đang chờ CI. Review khép mã hai finding expiry/starvation, còn chờ bằng chứng tích hợp. [Phạm vi, kiểm chứng và hoàn tác](vpt-marketing-automation/CARE_RUNTIME.md).
+
+Full goal ACTIVE. Chưa quyền/gọi AI thật, gửi khách, tự đề xuất lịch, UI runtime hoặc UAT/phát hành.
+
+---
+
 ## 04/10/2026 — Hạn mức gọi AI đã qua kiểm thử tích hợp
 
 Router gắn OpenAI Responses adapter mặc định tắt, dedicated key và policy private bắt buộc; SQL691 giữ chỗ lượt gọi theo công ty/actor/key/model/kỳ, chặn lặp và UNKNOWN, lưu usage trước draft. Runtime cc5e6a9: Node18/22 mỗi bản 1.361/0/0; PostgreSQL 422/0/0 gồm 13 ca mới, cả 10 job/build/report/Messenger SUCCESS. CI merge đúng tree/parents; reviewer độc lập đã xác minh published blobs/log và PASS checkpoint. Reservation là dự phòng, actualCostVnd chưa biết, không thay hóa đơn hoặc giới hạn provider. Migration không enrollment/key/model mặc định. [Hợp đồng, bằng chứng và hoàn tác](vpt-marketing-automation/CARE_OPENAI_INFERENCE.md).

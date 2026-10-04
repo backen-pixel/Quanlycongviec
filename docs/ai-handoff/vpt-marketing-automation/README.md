@@ -1,3 +1,5 @@
+04/10/2026: [Runtime tư vấn/handoff](CARE_RUNTIME.md) đang kiểm chứng: danh tính Agent/ủy quyền riêng, core nghiệp vụ giữ quyền human cũ, worker mặc định tắt, lịch sử/đóng run không retry hoặc refund. Local1.369PASS/5skip,26PGcases chờ CI. Chưa gửi khách/UI runtime/đặt lịch tự động/UAT; full goal ACTIVE.
+
 04/10/2026: [Nối mô hình và hạn mức](CARE_OPENAI_INFERENCE.md), runtime cc5e6a9: Node18/22=1.361/0/0, PostgreSQL422/0/0 gồm13ca SQL691; cả10job/build/report/Messenger SUCCESS, đúng CI tree/parents. Reviewer độc lập đã xác minh published blobs/log và PASS checkpoint. Private permit/receipt, dedicated key, model/policy explicit; không auto-enrollment hoặc provider retry. Reservation không invoice; chưa modelcall thật/gửi/UAT/phát hành, full goal ACTIVE.
 
 04/10/2026: [Giao diện đối soát tư vấn](CARE_ADVISOR_CONSOLE.md), runtime4b4cdc5 đã PASS review độc lập đúng published blobs/log/tree. Node18/22=1349/0/0; PostgreSQL409/0/0 gồm16ca SQL690; cả10job/build/report/Messenger SUCCESS. Browser Workspace/API giả đã kiểm thu hồi nguồn, pending/reload/cancel và đổi phạm vi. Chưa provider/gửi khách/UAT/phát hành; full goal ACTIVE.
