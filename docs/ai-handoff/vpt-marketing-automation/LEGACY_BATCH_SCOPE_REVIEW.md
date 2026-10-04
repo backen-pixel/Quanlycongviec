@@ -1,6 +1,6 @@
 # Review phạm vi batch Facebook — 04/10/2026
 
-Checkpoint tiếp theo: [batch-create đã sửa và kiểm tại c7d2a43](LEGACY_BATCH_CREATION.md), review độc lập PASS đúng phạm vi. Finding của source-backfill vẫn OPEN. Nội dung dưới là audit baseline trước sửa.
+Checkpoint tiếp theo: [batch-create đã sửa và kiểm tại c7d2a43](LEGACY_BATCH_CREATION.md); [source-backfill đã thay bằng khôi phục có bằng chứng tại8f61a18](LEGACY_SOURCE_REPAIR.md). Cả hai được review độc lập PASS đúng phạm vi. Source repair local267, PostgreSQL307/0/0; không có UI mới, chưa chuyển luồng/phát hành. Nội dung dưới là audit baseline trước sửa, không phải trạng thái lỗi hiện hành.
 
 Baseline: `5356e185871caad7e0473842580ada7f91e5506e`.
 Reviewer độc lập: phiên `/root/architecture_v11_review`.

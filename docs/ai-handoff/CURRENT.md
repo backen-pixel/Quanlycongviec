@@ -1,3 +1,11 @@
+## 04/10/2026 — Đã kiểm chứng sửa nguồn khách theo bằng chứng
+
+Runtime8f61a18 chỉ khôi phục nhãn nguồn NULL từ original intake cho danh sách/công ty rõ ràng; giữ nguồn đã có, hồ sơ thiếu/mâu thuẫn vào REVIEW. SQL683 ghi nhãn và receipt cùng giao dịch, khóa maintenance có giới hạn chờ. Local267 PASS; PostgreSQL307/0/0 gồm17ca mới; Node22 843+26+267, cả10job/build/report/Messenger SUCCESS. Reviewer độc lập xác minh published blobs/log CI và kết luận PASS phạm vi SQL683/API.
+
+[Hợp đồng, bằng chứng và hoàn tác](vpt-marketing-automation/LEGACY_SOURCE_REPAIR.md). Tiếp theo: đối soát batch bền vững sau reload, dừng/chờ và chuyển writer cũ, bảo toàn lịch sử; khép AI/lịch/người nhận và phạm vi đo rồi UAT/Founder release. Full goal ACTIVE, chưa DB thật, phát hành hoặc kết quả250k. Các mục dưới giữ lịch sử.
+
+---
+
 ## 04/10/2026 — Đang nghiệm thu sửa nguồn khách
 
 Thay route đồng bộ nguồn toàn DB bằng preview/apply theo một công ty và danh sách Lead rõ ràng. SQL683 chỉ khôi phục nhãn NULL từ evidence original intake, giữ nguồn đã có, hồ sơ mâu thuẫn cần đối soát. Ghi nhãn và receipt cùng giao dịch; quyền hiện hành và khóa graph maintenance được kiểm trong SQL. Local30 ca mới+237 regression=267 PASS. Đã bổ sung17 ca PostgreSQL; CI và review cuối đang chờ.

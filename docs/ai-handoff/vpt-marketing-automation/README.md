@@ -1,3 +1,5 @@
+04/10/2026: [Khôi phục nhãn nguồn có bằng chứng đã kiểm chứng](LEGACY_SOURCE_REPAIR.md), runtime8f61a18. Local267, PostgreSQL307/0/0 gồm17ca mới, cả10job/build/report/MessengerSUCCESS; review độc lậpPASS đúng SQL683/API. Giữ nguồn có sẵn; thiếu/mâu thuẫnREVIEW; chưa UAT/chuyển luồng/phát hành. Các mục dưới giữ lịch sử.
+
 04/10/2026: [Khôi phục nguồn CRM có bằng chứng](LEGACY_SOURCE_REPAIR.md) đang nghiệm thu. Local267 PASS;17PG ca mới và review cuối đang chờ. Không sửa nguồn có sẵn; không đổi attribution/paid proof. Chưa phát hành.
 
 04/10/2026: [Batch tạo khách theo danh sách đã xác nhận](LEGACY_BATCH_CREATION.md), runtimec7d2a43. Local237; PostgreSQL290/0/0 gồm9 ca mới;10job/build/report/Messenger SUCCESS; review độc lập PASS phạm vi batch. Browser mới xác nhận lỗi một phần và nút đối soát, chưa hoàn tất thao tác retry. Source-backfill, retry bền vững, HTTP/cutover/UAT/phát hành còn OPEN.
