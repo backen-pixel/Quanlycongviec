@@ -2,6 +2,8 @@
 
 SQL694/worker thêm quyền gửi riêng theo Agent/grant/phiên bản câu, lease tối đa5giây, payload một lần, receipt/echo và barrier dùng chung với survey/outcome. Local1.380PASS/5skip;21ca PostgreSQL và review độc lập đang chờ. Không Meta thật/enrollment/phát hành. [Hợp đồng và hoàn tác](vpt-marketing-automation/CARE_ANSWER_DELIVERY.md). Full goal ACTIVE; còn lịch tự động, UI/ngoại lệ, cấu hình và UAT.
 
+CIc822e33 còn một subtest input/câu dài chưa đạt; Node1.385/build và các ca publisher expiry/recovery concurrency đã đạt. Sửa fixture để tạo/duyệt chính câu2001ký tự được mô hình chọn, giữ kiểm chứng phảiHELD; chờ CI tiếp.
+
 ---
 
 ## 04/10/2026 — Worker tư vấn danh tính riêng đã qua kiểm chứng

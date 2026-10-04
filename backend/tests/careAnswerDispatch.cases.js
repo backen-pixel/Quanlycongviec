@@ -89,14 +89,19 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,approve
  });
  await t.test('latest future, blank or attachment input and long approved answers are held without truncation',async()=>{
   for(const kind of['future','blank','attachment','long']){
-   const c=await fixture();
+   const c=await fixture();let restore;
    if(kind!=='long')await db.query("UPDATE crm_care_messages SET sent_at=CASE WHEN $2='future' THEN clock_timestamp()+interval '1 minute' ELSE sent_at END,content=CASE WHEN $2='blank' THEN '' ELSE content END,attachments=CASE WHEN $2='attachment' THEN '[{\"type\":\"image\"}]'::jsonb ELSE attachments END WHERE id=(SELECT id FROM crm_care_messages WHERE thread_id=$1 AND direction='inbound' ORDER BY sent_at DESC,id DESC LIMIT 1)",[c.thread,kind]);
    if(kind==='long'){
-    const e=(await db.query("SELECT id FROM crm_care_library_entries WHERE company_id=$1 AND state='APPROVED' LIMIT 1",[company])).rows[0].id;
-    await db.query("UPDATE crm_care_library_entries SET document=jsonb_set(document,'{answer}',to_jsonb(repeat('x',2001))) WHERE id=$1",[e]);
+    const context=await query('crm_care_control.context_core',[company,c.thread],db),entry=context.entries[0];
+    const save=async document=>{const current=await query('crm_care_library_read',[admin,company,entry.entryId]);
+     const saved=await query('crm_care_library_change',[admin,company,randomUUID(),{entryId:entry.entryId,action:'SAVE',expectedVersion:current.version,document,reason:'Synthetic source-backed answer length acceptance'}]);
+     await query('crm_care_library_change',[admin,company,randomUUID(),{entryId:entry.entryId,action:'APPROVE',expectedVersion:saved.entry.version,reason:'Synthetic approval for answer transport length test'}]);};
+    restore=()=>save(entry.document);await save({...entry.document,answer:'x'.repeat(2001)});
    }
-   try{const g=await enroll(c),r=await begin(c,g);assert.equal(r.invoke,true);await finish(c,g,r);const x={c,g,p:await policy(c,g)};assert.equal((await claim(x)).status,'HELD');}
-   finally{if(kind==='long')await approve();}
+   try{const g=await enroll(c),r=await begin(c,g);assert.equal(r.invoke,true,kind);
+    if(kind==='long')assert.equal(r.context.entries[0].document.answer.length,2001);
+    await finish(c,g,r);const x={c,g,p:await policy(c,g)};assert.equal((await claim(x)).status,'HELD',kind);}
+   finally{if(restore)await restore();}
   }
  });
  await t.test('lost send claim and restart never expose a second payload; recovery enters human queue',async()=>{
