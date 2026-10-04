@@ -1,3 +1,11 @@
+## 04/10/2026 — Bước tiếp: khép cấu hình và nghiệm thu tuyến Facebook
+
+Đã gom [hồ sơ chuẩn bị nghiệm thu](vpt-marketing-automation/RELEASE_READINESS.md) và manifest ghim source 1b7c00f, base PR19 chưa merge, 50 SQL mới với blob SHA. Bốn yêu cầu được tách bằng chứng kỹ thuật và phần còn thiếu; rủi ro HIGH, phát hành HOLD. Ba nhóm đầu vào: người nhận/lịch, thư viện tư vấn, tài khoản/quyền/hạn mức AI cùng phạm vi đo. Mục tiêu tạm thời 250.000đ/khách hợp lệ; không chờ kế toán để chuẩn bị Lead.
+
+Runbook phân biệt dừng tạo lượt, ngừng gửi, nhận xác nhận và thu hồi quyền. Hold SQL687 ảnh hưởng mọi công ty trong tập bảng/FK toàn DB; worker dừng không chứng minh ngoại tác đã dừng. Còn kiểm nguồn/môi trường/chuyển luồng thật và UAT đúng ứng viên trước Founder release. Chỉ tài liệu, không mở quyền hoặc chạy thật; full goal ACTIVE. Closure CI của 1b7c00f đã kết thúc: cả 10 job, report và Messenger SUCCESS. Reviewer độc lập PASS phạm vi hồ sơ/manifest sau đối chiếu 50 blob, 14 liên kết, source/base và CI; phát hành vẫn HOLD.
+
+---
+
 ## 04/10/2026 — Hành trình AI tích hợp đã qua kiểm chứng
 
 Bản kiểm 7789338 đạt PostgreSQL 504/0/0, restore 11/0/0; Node18/22 mỗi bản 1.412/0/0, cả 10 job/build/report/Messenger SUCCESS, đúng CI tree/parents. Reviewer độc lập đối chiếu published blobs/log và PASS checkpoint. Cùng khách đi qua signed intake, người vận hành liên kết/xác minh, hai lượt Responses adapter ANSWER/SURVEY, ACK/echo, khách xác nhận lịch, bàn giao và cohort/cost API cùng bộ kiểm frontend. Tiền account không Lead vẫn tính; nguồn lỗi không thành0; takeover/STOP chặn trả lời. [Bằng chứng và giới hạn](vpt-marketing-automation/AI_CUSTOMER_JOURNEY.md).

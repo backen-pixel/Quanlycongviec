@@ -1,3 +1,9 @@
+## 04/10/2026 — Gom hồ sơ nghiệm thu và điều kiện phát hành
+
+Thêm RELEASE_READINESS.md và RELEASE_CANDIDATE_MANIFEST.json, liên kết từ CURRENT/README. Ghim source1b7c00f/tree f71ce24d, test7789338, PR22 draft/unmerged phụ thuộc PR19 open/unmerged; kiểm kê 50 SQL thêm mới648–697 theo Git blob. Chưa xác minh deployed base/schema; inventory không phải migration runner. Closure CI37202456267 cả10jobSUCCESS, report37202456273/Messenger37202456278SUCCESS đã đọc trạng thái cuối.
+
+Đã tiếp nhận review thiết kế runbook: giữ Page/echo/confirmation receipts; runtime0 không chặn draft cũ; dispatch0 vẫn cho proposal cũ book; outcomes0 tắt recovery; SQL687 singleton guard mọi công ty trên graph và bắt READ COMMITTED khi inactive. Ngừng process không chứng minh Meta/OpenAI đã dừng. Chỉ sửa tài liệu; chưa live access, quyền, migration hoặc phát hành. JSON/50blob/14links PASS; reviewer độc lập xác minh cả source/base/PR/CI và PASS hồ sơ cuối, không còn finding chặn trong phạm vi. Đã làm rõ ngân sách chung sáu kênh và SQL697 replay không tự bật lại hold. Không chạy lại runtime cho delta tài liệu. Full goal ACTIVE; phát hành HOLD.
+
 ## 04/10/2026 — Bổ sung hành trình AI xuyên suốt
 
 Đóng kiểm chứng 7789338/tree31f723f9: automation37202121312 cả10jobSUCCESS, PostgreSQL504/0/0 và restore11/0/0, Node18/22 mỗi1.412/0/0, frontend10.339modules/36,68s; report37202121318/Messenger37202121320SUCCESS. Mergef23f757b đúng tree/parents. Reviewer độc lập xác minh publishedblobs/log và PASS checkpoint. Hai ca mới chạy trọn nhánh sau khi tách company; không lấy lần lỗi9f7a23c làm PASS. Chỉ test/docs, chưa runtime/SQL/DB/provider thật. Full goal ACTIVE; lượt này PROGRESS vì đã khép bằng chứng điểm nối adapter/AI→lịch→dashboard, còn UAT/cấu hình/phát hành.
