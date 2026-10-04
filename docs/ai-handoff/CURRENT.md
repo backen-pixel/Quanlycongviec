@@ -1,8 +1,8 @@
-## 04/10/2026 — Gửi câu tư vấn đang kiểm chứng
+## 04/10/2026 — Gửi câu tư vấn đã đạt kiểm thử tích hợp
 
-SQL694/worker thêm quyền gửi riêng theo Agent/grant/phiên bản câu, lease tối đa5giây, payload một lần, receipt/echo và barrier dùng chung với survey/outcome. Local1.380PASS/5skip;21ca PostgreSQL và review độc lập đang chờ. Không Meta thật/enrollment/phát hành. [Hợp đồng và hoàn tác](vpt-marketing-automation/CARE_ANSWER_DELIVERY.md). Full goal ACTIVE; còn lịch tự động, UI/ngoại lệ, cấu hình và UAT.
+SQL694/worker thêm quyền gửi riêng theo Agent/grant/phiên bản câu, lease tối đa5giây và hạn publisher, payload một lần, receipt/echo và barrier dùng chung với survey/outcome. Bản kiểm a388433: Node18/22 mỗi bản1.385/0/0, PostgreSQL469/0/0 gồm21ca mới; cả10job/build/report/Messenger SUCCESS, đúng CI tree/parents. Reviewer độc lập đối chiếu published blobs/log/tree và PASS checkpoint. Không Meta thật/enrollment/phát hành. [Hợp đồng, bằng chứng và hoàn tác](vpt-marketing-automation/CARE_ANSWER_DELIVERY.md). Full goal ACTIVE; còn lịch tự động, UI/ngoại lệ, cấu hình và UAT.
 
-CIc822e33 còn một subtest input/câu dài chưa đạt; Node1.385/build và các ca publisher expiry/recovery concurrency đã đạt. Sửa fixture để tạo/duyệt chính câu2001ký tự được mô hình chọn, giữ kiểm chứng phảiHELD; chờ CI tiếp.
+Các lỗi alias/recovery đã sửa; fixture câu dài tạo/duyệt đúng câu2001ký tự mô hình chọn và giữ yêu cầu HELD. Không dùng bản CI lỗi trước đó làm bằng chứng PASS.
 
 ---
 

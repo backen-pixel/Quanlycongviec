@@ -1,4 +1,4 @@
-04/10/2026: [Gửi câu tư vấn](CARE_ANSWER_DELIVERY.md) đang kiểm chứng: quyền gửi riêng/phiên bản nguồn, claim một lần, ACK/echo, chặn transcript chưa đủ và cạnh tranh với survey/outcome. Local1.380PASS/5skip,21ca PG và review đang chờ; chưa Meta thật/quyền chạy/phát hành, full goal ACTIVE.
+04/10/2026: [Gửi câu tư vấn](CARE_ANSWER_DELIVERY.md), bản kiểma388433: Node18/22=1.385/0/0, PostgreSQL469/0/0 gồm21ca mới; cả10job/build/report/Messenger SUCCESS, đúng CI tree/parents; reviewer độc lập PASS checkpoint đúng published blobs/log/tree. Quyền gửi riêng/phiên bản nguồn, claim một lần, ACK/echo, chặn transcript chưa đủ và cạnh tranh với survey/outcome. Chưa Meta thật/quyền chạy/phát hành, full goal ACTIVE.
 
 04/10/2026: [Runtime tư vấn/handoff](CARE_RUNTIME.md), bản kiểm65b8c7b: Node18/22=1.374/0/0, PostgreSQL448/0/0 gồm26ca mới; cả10job/build/report/Messenger SUCCESS, đúng CI tree/parents; reviewer độc lập PASS checkpoint sau đối chiếu published blobs/log/tree. Danh tính Agent/ủy quyền riêng, core nghiệp vụ giữ quyền human cũ, worker mặc định tắt, lịch sử/đóng run không retry/refund. Chưa gửi khách/UI runtime/đặt lịch tự động/UAT; full goal ACTIVE.
 
