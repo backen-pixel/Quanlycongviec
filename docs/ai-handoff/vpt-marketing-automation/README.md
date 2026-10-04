@@ -1,4 +1,4 @@
-04/10/2026: [Giao diện đối soát tư vấn](CARE_ADVISOR_CONSOLE.md) SQL690 đang nghiệm thu. Local1344PASS/5skip, focused29/29; browser Workspace/API giả đã kiểm. Review độc lập PASS về mã; chờ CI/PostgreSQL. Chưa provider/gửi khách/phát hành; full goal ACTIVE.
+04/10/2026: [Giao diện đối soát tư vấn](CARE_ADVISOR_CONSOLE.md), runtime4b4cdc5 đã PASS review độc lập đúng published blobs/log/tree. Node18/22=1349/0/0; PostgreSQL409/0/0 gồm16ca SQL690; cả10job/build/report/Messenger SUCCESS. Browser Workspace/API giả đã kiểm thu hồi nguồn, pending/reload/cancel và đổi phạm vi. Chưa provider/gửi khách/UAT/phát hành; full goal ACTIVE.
 
 04/10/2026: [Bản nháp tư vấn có nguồn](CARE_ADVISOR_DRAFTS.md), bản kiểm73a7824/runtime56d424f đã PASS review độc lập. Node18/22=1.336/0/0; PostgreSQL393/0/0 gồm22ca mới; cả10job/build/report/Messenger SUCCESS. Router chưa có provider, send=false; còn quyền runtime, UI/worker/gửi, chất lượng AI và UAT/Founder release. Full goal ACTIVE.
 

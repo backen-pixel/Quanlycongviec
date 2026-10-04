@@ -1,6 +1,6 @@
-## 04/10/2026 — Màn hình tư vấn và hủy lượt đang được nghiệm thu
+## 04/10/2026 — Màn hình tư vấn và hủy lượt đã qua kiểm chứng
 
-SQL690/API/CareAdvisor bổ sung lịch sử theo actor/company/thread, kết quả có nguồn và dấu hủy chặn BEGIN/RETRY/FINISH muộn. Sửa finding giữ draft khi chuyển tab thư viện; quay lại phải đọc mới. Local 1.344 PASS/5 skip; focused 29/29. Browser actual Workspace/API giả đã kiểm thu hồi nguồn, mất phản hồi/reload/cancel và đổi phạm vi. Review độc lập PASS về mã; PostgreSQL/CI đúng commit còn chờ. [Hợp đồng, kiểm chứng và hoàn tác](vpt-marketing-automation/CARE_ADVISOR_CONSOLE.md).
+SQL690/API/CareAdvisor bổ sung lịch sử theo actor/company/thread, kết quả có nguồn và dấu hủy chặn BEGIN/RETRY/FINISH muộn. Sửa finding giữ draft khi chuyển tab thư viện; quay lại phải đọc mới. Runtime4b4cdc5: Node18/22 mỗi bản1.349/0/0, PostgreSQL409/0/0 gồm16ca mới; cả10job/build/report/Messenger SUCCESS. Browser actual Workspace/API giả đã kiểm thu hồi nguồn, mất phản hồi/reload/cancel và đổi phạm vi. Reviewer độc lập đối chiếu published blobs/log/tree và PASS checkpoint. [Hợp đồng, kiểm chứng và hoàn tác](vpt-marketing-automation/CARE_ADVISOR_CONSOLE.md).
 
 Full goal ACTIVE. Router chưa provider, không AI thật hoặc gửi khách; còn quyền/chi phí runtime, chất lượng, lịch/người nhận, chuyển luồng/khôi phục, UAT và Founder release. Chỉ tiêu 250k/khách hợp lệ và hạn mức 100 triệu không đổi.
 

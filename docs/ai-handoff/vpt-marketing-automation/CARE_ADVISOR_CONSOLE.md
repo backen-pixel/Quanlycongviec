@@ -1,6 +1,6 @@
 # Màn hình đối soát bản đề xuất tư vấn
 
-Ngày 04/10/2026. Phạm vi: SQL690, API danh sách/hủy và CareAdvisor trong màn hình Chăm khách. Kế thừa [hợp đồng bản nháp SQL689](CARE_ADVISOR_DRAFTS.md). Đang kiểm chứng PostgreSQL/CI; chưa phát hành, chưa nối provider hoặc gửi khách.
+Ngày 04/10/2026. Phạm vi: SQL690, API danh sách/hủy và CareAdvisor trong màn hình Chăm khách. Kế thừa [hợp đồng bản nháp SQL689](CARE_ADVISOR_DRAFTS.md). Runtime 4b4cdc5 đã qua PostgreSQL/CI; chưa phát hành, chưa nối provider hoặc gửi khách.
 
 ## Hành vi và giới hạn
 
@@ -34,6 +34,18 @@ Browser bằng Computer Use trên 127.0.0.1:5194, component Workspace/Library/Ca
 - Danh sách lỗi: ẩn dữ liệu cũ và khóa tạo, không báo thành công.
 
 Harness nằm ngoài repo tại work/vpt-survey-execution/advisor-browser, là dụng cụ kiểm thử dữ liệu giả, không triển khai. Review độc lập đã tự chạy 29/29 và rà mã/16 ca PG, PASS về mã sau sửa finding tab; xác nhận runtime còn chờ CI đúng commit. Browser do bên triển khai thực hiện, không thay UAT độc lập.
+
+## CI đúng phiên bản
+
+Runtime `4b4cdc5c1e711791f1a8bde21af8b6c9769843c4`, tree `3c63e0b604269f5fb55f42a3f81030a1feec4028`. Reviewer độc lập đã đối chiếu năm published blobs SQL/API/UI/PG, merge tree/parents và log CI; kết luận **PASS checkpoint console/SQL690**. Không chứng nhận provider thật, chất lượng AI, quyền gửi hoặc phát hành.
+
+- [Automation37187822123](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37187822123): 10/10 job SUCCESS; Node18/22 mỗi bản 1.349 PASS/0 fail/0 skip.
+- [PostgreSQL111393446370](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37187822123/job/111393446370): 409 PASS/0 fail/0 skip, gồm 16 ca SQL690; ca400 kiểm operator khác và ca404–407 kiểm khóa CANCEL–RETRY/FINISH cả hai thứ tự.
+- [Node22](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37187822123/job/111393446365), [frontend](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37187822123/job/111393446481): dựng 10.335 modules trong35,48s.
+- [Report37187822132](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37187822132) và [Messenger37187822131](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37187822131): SUCCESS.
+- CI merge `4851adec67616dd0bc783cccd505bf28f9aee249` có đúng tree, parents base `e16c885ae7c2305645be02a1227bf378cb59137f` và runtime trên.
+
+Đã khép lỗi stale draft sau thu hồi nguồn bằng invalidation khi rời tab và đọc mới khi quay lại. Browser chứng minh thao tác qua Workspace/Library thật với API giả; SQL chứng minh quyền và hủy đồng thời riêng trên PostgreSQL16, không thay UAT hệ thống thật.
 
 ## Hoàn tác và bước tiếp
 
