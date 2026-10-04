@@ -1,6 +1,8 @@
-## 04/10/2026 — Đang kiểm chứng màn hình mức sử dụng AI
+## 04/10/2026 — Màn hình mức sử dụng AI đã qua kiểm chứng
 
-SQL696/API/tab Chi phí AI đọc toàn công ty (gồm Agent), tổng/cursor cùng snapshot, có hàng chờ AUTHORIZED/UNKNOWN tại server; actualCostNULL và giữ reservation. Không ghi receipt/unblock/quyền chạy. Local1.401/0/5,8unitmới; actualWorkspace/APIgiả kiểm tổng/queue/403/ABA.9caPG, buildvàreview cuối đang chờ. [Phạm vi và bằng chứng](vpt-marketing-automation/CARE_INFERENCE_COST_CONSOLE.md). FullgoalACTIVE; đốisoátprovider/hóađơn/UNKNOWN,cấuhình/UAT/release cònthiếu.
+SQL696/API/tab Chi phí AI tại f7237b6 đọc toàn công ty, gồm Agent; tổng và trang chi tiết cùng snapshot, có hàng chờ AUTHORIZED/UNKNOWN tại server. Node18/22 mỗi bản 1.406 PASS/0 fail/0 skip; PostgreSQL 498/0/0 gồm 9 ca mới; cả 10 job, build, report và Messenger SUCCESS, đúng CI tree/parents. Reviewer độc lập đối chiếu published blobs/log/tree và PASS checkpoint. Browser actual Workspace/API giả do bên triển khai kiểm tổng, queue, 403 và đổi phạm vi. [Phạm vi, bằng chứng và hoàn tác](vpt-marketing-automation/CARE_INFERENCE_COST_CONSOLE.md).
+
+Tiếp theo: khép đối soát mức dùng AI và lượt chưa rõ kết quả; xác nhận nội dung tư vấn, người nhận, lịch khảo sát, tài khoản/model và hạn mức AI; kiểm chuyển luồng/khôi phục; UAT toàn tuyến Facebook → CRM → AI → lịch → dashboard, rồi trình Founder gói phát hành. Câu hỏi cấu hình đã gửi vẫn chờ trả lời, không tự chọn người hoặc mở quyền. PASS phần này không thay UAT. Chi phí thực vẫn chưa xác định khi chưa có hóa đơn; không hoàn reservation hoặc mở UNKNOWN. Full goal ACTIVE, chưa chạy thật hoặc chứng minh 250.000 đồng/khách hợp lệ; trần 100 triệu/30 ngày và phân vùng 80/20 không đổi.
 
 ---
 

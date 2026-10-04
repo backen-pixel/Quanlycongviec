@@ -2401,3 +2401,7 @@ Automation37197060961 cả10SUCCESS; Node18/22 mỗi1398/0/0, intakePG489/0/0, b
 ## 04/10/2026 — AI usage/cost visibility
 
 Thêm SQL696 reader cùngsnapshot, API Primary/offdefault và tab Chi phí AI;8unit/9PGcases vàworkflow. Guard company/actorbinding, khônglộsecret/context; serverunresolvedqueue, actualCostNULL, reservedkhôngrefund. Local1401/0/5; browseractualWorkspace/APIgiả kiểm tổng/queue/403/ABA. Reviewđã sửaCASE và fixtureUNIQUE; chờCI/PG/build cuối. Khôngthayadmission/quyền hoặcDB thật. Xem CARE_INFERENCE_COST_CONSOLE.md; fullgoalACTIVE.
+
+### Đóng kiểm chứng Cost Console f7237b6
+
+Automation37198601106 cả 10 job SUCCESS; Node18/22 mỗi bản 1.406/0/0, intake PostgreSQL498/0/0 gồm 9 ca mới, build10.339modules/37,23s. Report37198601104 và Messenger37198601119 SUCCESS. CI merge452fbbd3cfbb7fafece00fde810c8fd560339365 có treee119eedef9acbab75d2805e44073058d43a8d115 và đúng parents base/head. Reviewer độc lập xác minh published blobs/log/tree và PASS checkpoint; không chứng nhận settlement, mở UNKNOWN, provider thật, UAT hoặc phát hành. Đã đóng trang và server kiểm thử dữ liệu giả. Cập nhật CURRENT/README theo câu hỏi Founder về bước tiếp: đối soát AI, cấu hình nội dung/người nhận/lịch/hạn mức, chuyển luồng/khôi phục và nghiệm thu toàn tuyến trước gói phát hành. Full goal ACTIVE; còn công việc được phép, chưa bắt đầu chi thử hoặc có kết quả 250.000 đồng/khách thật.
