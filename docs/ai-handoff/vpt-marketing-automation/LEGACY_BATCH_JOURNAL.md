@@ -1,4 +1,4 @@
-04/10/2026: [Bổ sung dừng yêu cầu/tombstone](LEGACY_BATCH_STOP.md) đang nghiệm thu trong SQL686. Phần chưa START có đường hủy; RUNNING/UNKNOWN vẫn phải giữ claim và đối soát. Bằng chứng684 bên dưới giữ nguyên phạm vi lịch sử.
+04/10/2026: [Bổ sung dừng yêu cầu/tombstone](LEGACY_BATCH_STOP.md) SQL686/runtimee7d35d1 đã qua PG335/0/0, Node1228/0/0, toànCI và review độc lậpPASS checkpoint. Phần chưa START có đường hủy; RUNNING/UNKNOWN vẫn phải giữ claim và đối soát. Bằng chứng684 bên dưới giữ nguyên phạm vi lịch sử.
 
 # Nhật ký và khôi phục lượt xử lý khách Facebook
 

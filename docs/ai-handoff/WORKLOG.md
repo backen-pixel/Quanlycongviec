@@ -1,6 +1,6 @@
 ## 04/10/2026 — Dừng batch có tombstone và audit
 
-SQL686 + journalhelper/route + RecoveryUI/controller; cập nhật workflow, thêm30unit/UI và12PGcases. Local1228/0/0; reviewer mãPASS; browser component thật/API giả kiểm STOP trướcBEGIN/reload vàUNKNOWNgiữclaim. Đang chờPG/CI đúngbản. Câu xác nhận sửa theo review để không hứa hủy HTTP đã gửi. [Chi tiết và rollback](vpt-marketing-automation/LEGACY_BATCH_STOP.md). Không DB thật/model/chi/phát hành; fullgoalACTIVE.
+SQL686 + journalhelper/route + RecoveryUI/controller; cập nhật workflow, thêm30unit/UI và12PGcases. Runtimee7d35d1/treebe092508: Local/Node22=1228/0/0; PG335/0/0 với12ca mới;10job/build/report/MessengerSUCCESS, CImergecf04899khớp. Reviewer độc lậpPASS checkpoint; browser component thật/API giả kiểm STOP trướcBEGIN/reload vàUNKNOWNgiữclaim. Câu xác nhận sửa theo review để không hứa hủy HTTP đã gửi. [Chi tiết và rollback](vpt-marketing-automation/LEGACY_BATCH_STOP.md). Không DB thật/model/chi/phát hành; fullgoalACTIVE.
 
 ## 04/10/2026 — Facebook duplicate review
 

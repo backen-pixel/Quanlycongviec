@@ -1,6 +1,6 @@
-## 04/10/2026 — Đang nghiệm thu dừng lượt nhận khách
+## 04/10/2026 — Dừng lượt nhận khách đã qua PostgreSQL và review
 
-SQL686/API/UI thêm STOP có tombstone để chặn BEGIN muộn, thu hồi token và lưu audit. Chỉ hủy phần chưa bắt đầu; UNKNOWN giữ claim. UI giữ intentSTOP qua reload/tab khác, xác nhận gắn đúng lượt; chỉ đóng thông báo khi không còn việc chưa rõ. Local1228/0/0; reviewer mãPASS; browser giả đã kiểm mấtphảnhồi/reload và nhómUNKNOWN+CANCELLED.12ca PostgreSQL mới chờ CI.
+Runtimee7d35d1 SQL686/API/UI lưu STOP/tombstone, chặnBEGINmuộn và thu hồi token. Chỉ hủy phần chưa bắt đầu; UNKNOWNgiữclaim. UI giữintentSTOPqua reload/tabkhác, xác nhận đúnglượt. Local/Node22=1228/0/0; PostgreSQL335/0/0 gồm12ca mới; cả10job/build/report/MessengerSUCCESS. Review độc lậpPASS checkpoint sau đối chiếu publishedblobs/logCI; browserthật/APIgiả kiểm mấtphảnhồi/reload vàUNKNOWN+CANCELLED.
 
 [Hợp đồng, kiểm chứng và hoàn tác](vpt-marketing-automation/LEGACY_BATCH_STOP.md). Full goal ACTIVE; còn fence/drain/đốisoátUNKNOWN, AI/lịch/người nhận/phạmviđo, UAT/Founderrelease. Chưa DB thật/phát hành hoặc kết quả250k. Các mục dưới giữ lịch sử.
 

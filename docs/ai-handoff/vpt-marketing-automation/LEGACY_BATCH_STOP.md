@@ -2,7 +2,7 @@
 
 ## Phạm vi 04/10/2026
 
-Bản làm việc trên1970383, PR22 chưa phát hành. Hoàn thiện đường khôi phục khi BEGIN mất phản hồi/capability: dừng đúng yêu cầu, hủy phần chưa bắt đầu và giữ phần đã bắt đầu để đối soát. Không tự suy từ mapping hiện tại rằng một HTTP cũ đã kết thúc.
+Runtime đã kiểm e7d35d1bf97d490da59834563ec800266d92fa15, tree be09250813bf49ad6c34071293062e61633276b0, PR22 chưa phát hành. Hoàn thiện đường khôi phục khi BEGIN mất phản hồi/capability: dừng đúng yêu cầu, hủy phần chưa bắt đầu và giữ phần đã bắt đầu để đối soát. Không tự suy từ mapping hiện tại rằng một HTTP cũ đã kết thúc.
 
 ## Hợp đồng và thứ tự đồng thời
 
@@ -16,9 +16,15 @@ Bản làm việc trên1970383, PR22 chưa phát hành. Hoàn thiện đường 
 
 ## Kiểm chứng
 
-- Local1228/0/0, gồm30ca mới (20backend+10UI); Node workflow đăng ký thêm tests. Reviewer tự chạy67/67 cùng37regressions và PASS rà mã, chờ published SHA/PG trước PASS runtime.
-- Đã viết12ca PostgreSQL thật trong facebookBatchStop.cases.js: quyền/private audit; STOP↔BEGIN, STOP↔START, STOP↔RESULT qua hai connection và quan sát Lock; nhóm hỗn hợp; replay/mismatch; thu hồi quyền và Lead lịch sử; rollback; workerSTOPmuộn. Nạp684→686hai lần. Chưa có kết quả CI tại checkpoint này.
+- Local/Node22=1228/0/0, gồm30ca mới (20backend+10UI). Reviewer tự chạy67/67 cùng37regressions; sau đối chiếu published blobs và log CI kết luận PASS độc lập checkpoint SQL686/helper/API/UI.
+- Đã viết12ca PostgreSQL thật trong facebookBatchStop.cases.js: quyền/private audit; STOP↔BEGIN, STOP↔START, STOP↔RESULT qua hai connection và quan sát Lock; nhóm hỗn hợp; replay/mismatch; thu hồi quyền và Lead lịch sử; rollback; workerSTOPmuộn. Nạp684→686hai lần. Intake PostgreSQL335/0/0, đủ12ca323–334PASS.
 - Browser component FacebookBatchRecovery thật/StrictMode/API giả tại127.0.0.1:5197, CSPconnect-srcnone, khôngCRM/Meta/đăng nhập thật. BEGIN chưa tới→STOP đã lưu nhưng mất phản hồi→reload GET đọc2CANCELLED,0đãtạo và cho đóng thông báo; BEGIN giữ1,STOPgiữ1. Lượt thứhai RUNNING+PENDING→STOP→UNKNOWN+CANCELLED, reload giữ yêu cầu/không có nútđóng/không cho tạo khác; BEGINgiữ2,STOPgiữ2. Confirmation hiện đúngUUID và nói rõ phần đã bắt đầu cần đối soát. Tab/server đã đóng; đây không phải UAT/backend thật.
+
+## CI đúng phiên bản
+
+[Automation37176604445](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37176604445):10/10SUCCESS. [Intake111360403652](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37176604445/job/111360403652)=335/0/0; Node22 job111360403604=843+26+359=1228/0/0; frontend111360403582SUCCESS. [Report37176604521](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37176604521) và [Messenger37176604431](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37176604431)SUCCESS.
+
+CImerge cf048998717afca4fb5e65328798af696a756ecf đã đối chiếu Git API đúng tree be09250813bf49ad6c34071293062e61633276b0, parents basee16c885ae7c2305645be02a1227bf378cb59137f + runtimee7d35d1bf97d490da59834563ec800266d92fa15. Bản đóng hồ sơ chỉ sửa5file tài liệu, không đổi runtime/tests.
 
 ## Điều kiện phát hành và hoàn tác
 
