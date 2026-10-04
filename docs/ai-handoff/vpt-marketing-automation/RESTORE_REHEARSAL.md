@@ -40,6 +40,8 @@ Reviewer độc lập đã đối chiếu published SQL/harness, log PostgreSQL/
 
 ## Cổng vận hành và hoàn tác
 
+Kiểm hồi quy tại7789338 sau khi thêm company riêng cho [hành trình AI](AI_CUSTOMER_JOURNEY.md): restore11/0/0, intake504/0/0, reviewer độc lập PASS. Selector test chọn operator của company có AUTHORIZED/UNKNOWN receipt; vẫn so toàn dữ liệu của mọi company và kiểm summary nguồn=đích/unresolved>0. Không đổi SQL697 hoặc thu hẹp danh mục backup. Bằng chứng archive/run mới nằm trong hồ sơ hành trình.
+
 Kết quả này chỉ bao phủ schema/dữ liệu fixture và lệnh metadata riêng. Chưa chứng nhận schema đầy đủ của production, file trong object storage, role/auth platform, secret, lịch bên ngoài, replication/Primary–Backup, hiệu năng/RPO/RTO hoặc webhook phát sinh sau thời điểm backup. Các mục đó cần gói diễn tập đúng môi trường và quyết định Founder. Không mở worker từ chính sách/grant active được phục hồi: phải giữ môi trường cách ly, đối soát UNKNOWN và tác động ngoài DB trước khi nghiệm thu/chuyển luồng.
 
 Hoàn tác: không dùng chức năng rebind nếu chưa đủ bằng chứng; transaction lỗi rollback toàn bộ. Sau rebind, giữ hold/audit mới; không viết lại OID cũ, xóa lịch sử hoặc mở writer cũ. Chỉ xem xét tắt hold qua hồ sơ vận hành đã duyệt. Migration không thay687 hoặc tự rebind khi cài.

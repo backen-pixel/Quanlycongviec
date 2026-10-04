@@ -1,8 +1,8 @@
 # Hành trình tích hợp AI Marketing–CRM
 
-Ngày 04/10/2026. Trạng thái: mã kiểm thử đã chuẩn bị; syntax PASS, PostgreSQL/CI và review cuối đang chờ. Đây là kiểm chứng trên fixture cô lập, không phải UAT vận hành hoặc phê duyệt chạy thật.
+Ngày 04/10/2026. Trạng thái: PASS kiểm thử và review độc lập tại bản7789338, chi tiết dưới đây. Đây là kiểm chứng trên fixture cô lập, không phải UAT vận hành hoặc phê duyệt chạy thật.
 
-CI9f7a23c: intake502PASS/2FAIL gồm ca journey và parent; takeover/STOP PASS. Journey dừng trước AI vì fixture công ty dùng chung vượt giới hạn source_inventory (100accounts/100Pages/1000bindings/1000forms). Bản sửa tạo tenant/company/users/region/account/pipeline/source/library riêng trong journey.fixture, giữ signed intake và các RPC nghiệp vụ; không lọc nguồn hoặc nâng giới hạn. Assertion inventory.complete=true, đúng2accounts/1Page trước hành trình. Restore harness chọn công ty thực sự có receipt AUTHORIZED/UNKNOWN để kiểm bảo toàn reservation, thay vì chọn ngẫu nhiên công ty chỉ có usage thành công. Không đổi runtime/SQL. Cần CI mới chứng minh nhánh happy đầy đủ.
+Lần đầu CI9f7a23c: intake502PASS/2FAIL gồm ca journey và parent; takeover/STOP PASS. Journey dừng trước AI vì fixture công ty dùng chung vượt giới hạn source_inventory (100accounts/100Pages/1000bindings/1000forms). Bản sửa tạo tenant/company/users/region/account/pipeline/source/library riêng trong journey.fixture, giữ signed intake và các RPC nghiệp vụ; không lọc nguồn hoặc nâng giới hạn. Assertion inventory.complete=true, đúng2accounts/1Page trước hành trình. Restore harness chọn công ty thực sự có receipt AUTHORIZED/UNKNOWN để kiểm bảo toàn reservation, thay vì chọn ngẫu nhiên công ty chỉ có usage thành công. Không đổi runtime/SQL. Kết quả bản sửa ở mục bên dưới mới chứng minh nhánh thành công đầy đủ.
 
 ## Điểm nối cần chứng minh
 
@@ -21,6 +21,17 @@ Fixture đầu đi qua webhook Lead Ads có chữ ký, Graph reader, lệnh CRM 
 - API chi phí thấy hai receipt/60token, dự phòng4.000đ; actualCostVnd vẫn NULL vì không có hóa đơn. Phạm vi công ty sai trả403.
 - STOP sau đặt lịch giữ lịch và dừng các worker. Takeover hoặc STOP ký trong lúc chờ HTTP mô hình giữ usage nhưng không công bố câu trả lời.
 - Lỗi lấy spend mới làm số chi và CPQL không xác định, không lấy số cũ/0 để kết luận đạt.
+
+## Kết quả đúng phiên bản
+
+Bản kiểm `77893383101667c651b41fde000b03bbdcfd2958`, tree `31f723f9c9f0d226f52d05cbd6b0566757fe53b2`. [Automation37202121312](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37202121312) cả10jobSUCCESS:
+
+- [PostgreSQL111435787034](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37202121312/job/111435787034):504PASS/0fail/0skip. Ca502 đi đủ tuyến; ca503 kiểm takeover và signedSTOP trong lúc trả lời provider. Restore11/0/0 sau đó giữ dữ liệu của cả company journey mới;124bảng,2.203.269bytes, SHA256 `da9826d88efc8b1ce10e450b4886062f3a5da3bf185dac235f4a90bd85dcb81d`.
+- Node18/22 mỗi bản1.412/0/0 (job111435787041/111435787039), frontend10.339modules/36,68s (job111435787014).
+- [Report37202121318](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37202121318) và [Messenger37202121320](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37202121320) SUCCESS.
+- CImerge `f23f757b4054a6e98e6d686ec656db44b4f8911d` cùng tree và đúng parents base `e16c885ae7c2305645be02a1227bf378cb59137f` + bản kiểm. Không dùng lần lỗi9f7a23c làm bằng chứng hoàn tất.
+
+Reviewer độc lập đã kiểm published fixture/journey/restore, log PostgreSQL/Node22/build và CI tree/parents; kết luận PASS checkpoint, không có finding chặn. Syntax/whitespace kiểm cục bộ đạt; không có PostgreSQL local nên bằng chứng tích hợp đến từ CI cô lập.
 
 ## Giới hạn và cổng tiếp theo
 

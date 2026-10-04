@@ -1,8 +1,8 @@
-## 04/10/2026 — Đang kiểm hành trình AI tích hợp
+## 04/10/2026 — Hành trình AI tích hợp đã qua kiểm chứng
 
-CI9f7a23c dừng ở giới hạn nguồn của fixture tích lũy, trước lượt AI; takeover/STOP PASS. Đã tách tenant/company và cấu hình journey riêng, giữ giới hạn/đường dịch vụ thực; bản sửa chưa có CI cuối. Không đổi runtime/SQL.
+Bản kiểm 7789338 đạt PostgreSQL 504/0/0, restore 11/0/0; Node18/22 mỗi bản 1.412/0/0, cả 10 job/build/report/Messenger SUCCESS, đúng CI tree/parents. Reviewer độc lập đối chiếu published blobs/log và PASS checkpoint. Cùng khách đi qua signed intake, người vận hành liên kết/xác minh, hai lượt Responses adapter ANSWER/SURVEY, ACK/echo, khách xác nhận lịch, bàn giao và cohort/cost API cùng bộ kiểm frontend. Tiền account không Lead vẫn tính; nguồn lỗi không thành0; takeover/STOP chặn trả lời. [Bằng chứng và giới hạn](vpt-marketing-automation/AI_CUSTOMER_JOURNEY.md).
 
-Thêm ca signed intake → operator link/qualification → Responses adapter ANSWER → answer ACK/echo → Responses adapter SURVEY → customer confirmation → booking/outcome/handoff → cohort/cost API và bộ kiểm frontend. Dùng cùng Lead/thread/Agent; tiền từ account không Lead vẫn tính, lỗi nguồn không thành0, STOP/takeover chặn trả lời. HTTP giả, không seed kết quả nghiệp vụ hoặc mở quyền thật. Syntax PASS; CI/PostgreSQL và review cuối chờ. [Phạm vi/tiêu chí/giới hạn](vpt-marketing-automation/AI_CUSTOMER_JOURNEY.md). Full goal ACTIVE.
+Sửa fixture dùng tenant/company riêng để không vượt giới hạn nguồn do các ca trước tích lũy; không đổi runtime/SQL hoặc nới guard. HTTP mô hình/Meta vẫn giả, chưa chứng minh chất lượng mô hình thật hoặc đạt250.000đ/khách. Full goal ACTIVE: còn cấu hình nội dung/người nhận/lịch/hạn mức, kiểm nguồn/chuyển luồng và nghiệm thu đúng môi trường trước Founder release.
 
 ---
 
