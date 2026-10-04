@@ -206,13 +206,17 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,approve
 
  await t.test('ten broken foreign CRM mappings do not starve the next valid conversation',async()=>{
   const c=await fixture(),g=await enroll(c),foreign=randomUUID(),broken=[];
-  await db.query("INSERT INTO crm_leads(id,company_id,title) VALUES($1,$2,'FOREIGN PRIVATE TITLE')",[foreign,other]);
+  await db.query("INSERT INTO crm_leads(id,company_id,title,type,customer_id,assigned_to,region_id) SELECT $1,company_id,'FOREIGN PRIVATE TITLE',type,customer_id,assigned_to,region_id FROM crm_leads WHERE id=$2",[foreign,c.lead]);
   for(let i=0;i<10;i++){
    const thread=randomUUID(),psid=String(800000000+i);broken.push(thread);
    await db.query("INSERT INTO crm_care_threads(id,company_id,page_id,psid,last_inbound_at,last_message_at) VALUES($1,$2,$3,$4,clock_timestamp()-interval '1 day',clock_timestamp()-interval '1 day')",[thread,company,c.page,psid]);
    await db.query("INSERT INTO crm_care_messages(thread_id,page_id,provider_mid,direction,intent,content,attachments,sent_at,payload_hash) VALUES($1,$2,$3,'inbound','MESSAGE','Synthetic scoped inquiry','[]',clock_timestamp()-interval '1 day',$4)",[thread,c.page,randomUUID(),'a'.repeat(64)]);
-   await db.query('INSERT INTO facebook_contacts(page_id,psid,lead_id) VALUES($1,$2,$3)',[c.page,psid,foreign]);
+   const evidence=(await db.query("SELECT id FROM crm_care_messages WHERE thread_id=$1 AND direction='inbound'",[thread])).rows[0].id;
+   const view=await query('crm_care_connection_read',[admin,company,thread,foreign]);
+   await query('crm_care_connection_link',[admin,company,randomUUID(),{threadId:thread,leadId:foreign,expectedVersion:view.version,
+    evidenceMessageId:evidence,identityConfirmed:true,reason:'Synthetic valid connection before ownership drift test'}]);
   }
+  await db.query('UPDATE crm_leads SET company_id=$1 WHERE id=$2',[other,foreign]);
   const x=worker(c,g);await x.run.drain();assert.equal(x.posts.length,0);assert.deepEqual(x.errors,[]);
   await x.run.drain();assert.equal(x.posts.length,1);assert.deepEqual(x.errors,[]);
   assert.equal((await db.query("SELECT count(*)::int n FROM crm_care_threads WHERE id=ANY($1::uuid[]) AND mode='HUMAN_REQUESTED'",[broken])).rows[0].n,10);

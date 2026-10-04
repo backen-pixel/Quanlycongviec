@@ -1,5 +1,7 @@
 ## 04/10/2026 — Worker tư vấn danh tính riêng đang kiểm chứng
 
+CI `05d657e` hiện HOLD: Node18/22 và build đạt, PostgreSQL 373 PASS / 49 FAIL vì harness nạp SQL692 trước bảng của SQL690; 26 ca runtime chưa chạy. Đã sửa thứ tự và áp lại facade SQL692 sau các ca kiểm migration cũ; dữ liệu thử mapping được tạo qua connection service rồi mới gây ownership drift. Chờ CI mới, không coi bản lỗi là PASS.
+
 SQL692/693 tách luật private dùng chung và facade runtime theo Agent/grant riêng; worker mặc định tắt. Tạo draft có nguồn, bàn giao ngoại lệ và dừng khi tiếp quản/opt-out. API lịch sử/đóng run giữ usage, không retry/refund. Local1.369PASS/5skip;26ca PG đang chờ CI. Review khép mã hai finding expiry/starvation, còn chờ bằng chứng tích hợp. [Phạm vi, kiểm chứng và hoàn tác](vpt-marketing-automation/CARE_RUNTIME.md).
 
 Full goal ACTIVE. Chưa quyền/gọi AI thật, gửi khách, tự đề xuất lịch, UI runtime hoặc UAT/phát hành.

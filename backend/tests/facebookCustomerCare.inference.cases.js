@@ -5,6 +5,7 @@ const {createCareAdvisor}=require('../src/modules/marketingAutomation/careAdviso
 const sha=x=>createHash('sha256').update(x).digest('hex');
 module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,begin})=>{
  const sql=fs.readFileSync(path.resolve(__dirname,'../../database/691_crm_care_inference_permits.sql'),'utf8');await db.query(sql);await db.query(sql);
+ await db.query(fs.readFileSync(path.resolve(__dirname,'../../database/692_crm_care_shared_rules.sql'),'utf8'));
  const credential='synthetic-key-for-isolated-tests',model='approved-snapshot-test';
  const policy=async(overrides={})=>{
   const g={id:randomUUID(),company_id:company,actor_id:admin,provider:'OPENAI_RESPONSES',model,credential_sha256:sha(credential),

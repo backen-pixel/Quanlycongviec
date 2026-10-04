@@ -2,6 +2,7 @@
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict'),{randomUUID}=require('node:crypto');
 module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,begin,finish,selection})=>{
  const sql=fs.readFileSync(path.resolve(__dirname,'../../database/690_crm_care_advisor_console.sql'),'utf8');await db.query(sql);await db.query(sql);
+ await db.query(fs.readFileSync(path.resolve(__dirname,'../../database/692_crm_care_shared_rules.sql'),'utf8'));
  const reason='Operator reconciles and cancels the synthetic request safely';
  const cancel=(c,key=c.key,client=peers[0])=>query('crm_care_advisor_cancel',[admin,company,key,c.thread,reason],client);
  const list=(c,after=null,client=peers[0])=>query('crm_care_advisor_list',[admin,company,c.thread,after],client);
