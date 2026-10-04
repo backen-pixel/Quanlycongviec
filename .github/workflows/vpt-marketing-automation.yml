@@ -72,6 +72,8 @@ on:
       - 'database/684_facebook_batch_journal.sql'
       - 'database/685_crm_identity_review_active_company.sql'
       - 'database/686_facebook_batch_stop.sql'
+      - 'database/687_crm_legacy_write_hold.sql'
+      - 'backend/tests/facebookLegacyHold*.js'
       - 'backend/tests/facebookBatchStop*.js'
       - 'backend/src/helpers/facebookDuplicateReview.js'
       - 'backend/tests/facebookDuplicateReview*.js'

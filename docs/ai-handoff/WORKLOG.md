@@ -1,3 +1,7 @@
+## 04/10/2026 — Chuẩn bị bảo trì đường ghi legacy
+
+Thêm SQL687/private hold, `facebookLegacyHold.cases.js`, nối journal PG và workflow; cập nhật CURRENT/README cùng [hợp đồng](vpt-marketing-automation/LEGACY_WRITE_HOLD.md). 18 root và FK descendants, guard cả statement/replica, table-lock trước state, audit/revision/hash/request; mặc định inactive. 13 ca PG mới chưa có kết quả CI tại checkpoint soạn; node syntax/diff đạt. Reviewer khảo sát thêm nhánh assignment/artifact và socket/mobile; đã đưa vào manifest/điều kiện drain. Không tác động hệ thống thật; UNKNOWN/claim giữ nguyên và mục tiêu đầy đủ còn ACTIVE.
+
 ## 04/10/2026 — Dừng batch có tombstone và audit
 
 SQL686 + journalhelper/route + RecoveryUI/controller; cập nhật workflow, thêm30unit/UI và12PGcases. Runtimee7d35d1/treebe092508: Local/Node22=1228/0/0; PG335/0/0 với12ca mới;10job/build/report/MessengerSUCCESS, CImergecf04899khớp. Reviewer độc lậpPASS checkpoint; browser component thật/API giả kiểm STOP trướcBEGIN/reload vàUNKNOWNgiữclaim. Câu xác nhận sửa theo review để không hứa hủy HTTP đã gửi. [Chi tiết và rollback](vpt-marketing-automation/LEGACY_BATCH_STOP.md). Không DB thật/model/chi/phát hành; fullgoalACTIVE.
@@ -58,7 +62,7 @@ Bước tiếp: source-backfill/caller cũ và dừng/chờ khi chuyển luồng
 
 ## Hiện hành 04/10/2026 — Đang khép phạm vi tạo khách Facebook
 
-Bản làm việc trên a102450 sửa creator tự động/thủ công: công ty Page hiện hành, Customer/Lead cùng phạm vi, người nhận còn quyền, nguồn không bị đổi công ty, cặp pipeline/stage và giữ liên kết hội thoại. Local 66 ca mới + 117 regression = 183 PASS. Đã bổ sung 10 ca PostgreSQL; CI và review độc lập đang chờ. [Hợp đồng, kiểm thử, giới hạn và hoàn tác](vpt-marketing-automation/LEGACY_CREATOR_SCOPE.md).
+Bản làm việc trên a102450 sửa creator tự động/thủ công: công ty Page hiện hành, Customer/Lead cùng phạm vi, người nhận còn quyền, nguồn không bị đổi công ty, cặp pipeline/stage và giữ liên kết hội thoại. Local 66 ca mới + 117 regression = 183 PASS. Đã bổ sung 13 ca PostgreSQL; CI và review độc lập đang chờ. [Hợp đồng, kiểm thử, giới hạn và hoàn tác](vpt-marketing-automation/LEGACY_CREATOR_SCOPE.md).
 
 Chuỗi HTTP cũ chưa là một giao dịch nguyên tử; CRM merge/bảo toàn lịch sử, cutover, cấu hình AI/lịch/người nhận, nghiệm thu và Founder release vẫn OPEN. Full goal ACTIVE. Chưa dữ liệu thật, quyền AI, chi quảng cáo hoặc phát hành. Các mục dưới là lịch sử.
 

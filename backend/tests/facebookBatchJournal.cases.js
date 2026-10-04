@@ -112,4 +112,5 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,region,fresh})=
   await assert.rejects(query('crm_facebook_batch_list',[admin,company,randomUUID()]),e=>e.code==='22023');
  });
  await require('./facebookBatchStop.cases')(t,{db,peers,query,company,other,admin,sales,fixture,begin,read,step,result,prepared,complete});
+ await require('./facebookLegacyHold.cases')(t,{db,peers,query,company,admin,prepared,begin,read,step});
 };
