@@ -88,7 +88,7 @@ CREATE OR REPLACE FUNCTION public.crm_care_send_claim(p_principal uuid,p_company
 RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,public AS $$
 DECLARE auth jsonb;rt crm_care_control.runtime_turns%ROWTYPE;r crm_care_control.advisor_runs%ROWTYPE;
  a crm_care_control.send_attempts%ROWTYPE;t public.crm_care_threads%ROWTYPE;m public.crm_care_messages%ROWTYPE;
- context jsonb;entry jsonb;reason text;payload jsonb;attempt uuid:=gen_random_uuid();authorized timestamptz;deadline timestamptz;credential text;
+ context jsonb;entry jsonb;reason text;payload jsonb;attempt uuid:=gen_random_uuid();authorized timestamptz;deadline timestamptz;credential text;publisher_until timestamptz;
 BEGIN
  auth:=crm_care_control.send_authorize(p_principal,p_company,p_grant,p_policy);
  IF p_request IS NULL OR p_worker IS NULL OR(p_credential~'^[a-f0-9]{64}$') IS NOT TRUE THEN RAISE EXCEPTION 'invalid send command' USING ERRCODE='22023';END IF;
@@ -119,7 +119,14 @@ BEGIN
  SELECT encode(sha256(convert_to(access_token,'UTF8')),'hex') INTO credential FROM public.facebook_pages
   WHERE page_id=t.page_id AND default_company_id=p_company AND is_active IS TRUE FOR SHARE;
  IF credential IS DISTINCT FROM p_credential OR auth->'policy'->>'credential_hash' IS DISTINCT FROM p_credential THEN reason:='CREDENTIAL_CHANGED';END IF;
- IF (SELECT count(*) FROM crm_care_control.send_attempts WHERE policy_id=p_policy AND payload IS NOT NULL)>=(auth->'policy'->>'max_messages')::integer THEN reason:='POLICY_LIMIT';END IF;
+ IF (SELECT count(*) FROM crm_care_control.send_attempts sa WHERE sa.policy_id=p_policy AND sa.payload IS NOT NULL)>=(auth->'policy'->>'max_messages')::integer THEN reason:='POLICY_LIMIT';END IF;
+ IF reason IS NULL THEN
+  entry:=crm_care_control.library_view_core(p_company,(r.result->>'entryId')::uuid);
+  SELECT expires_at INTO publisher_until FROM public.crm_care_library_publishers
+   WHERE company_id=p_company AND user_id=(entry->>'approvedBy')::uuid FOR SHARE;
+  IF entry->>'approvedReady' IS DISTINCT FROM 'true' OR entry->>'version' IS DISTINCT FROM r.result->>'entryVersion'
+   OR publisher_until IS NULL OR publisher_until<=clock_timestamp() THEN reason:='SOURCE_EXPIRED';END IF;
+ END IF;
  PERFORM crm_care_control.runtime_assert_live(auth->'runtime');PERFORM crm_care_control.runtime_assert_live(auth->'policy');
  IF reason IS NOT NULL THEN
   INSERT INTO crm_care_control.send_attempts(request_id,policy_id,principal_id,grant_id,company_id,page_id,thread_id,worker_id,state,reason,authority_hash,policy_snapshot)
@@ -128,7 +135,7 @@ BEGIN
   RETURN jsonb_build_object('status','HELD','attemptId',a.attempt_id,'reason',reason,'send',false);
  END IF;
  deadline:=least(authorized+interval '5 seconds',r.expires_at,(auth->'runtime'->>'expires_at')::timestamptz,
-  (auth->'policy'->>'expires_at')::timestamptz,(entry->'document'->>'validUntil')::timestamptz,m.sent_at+interval '24 hours');
+  (auth->'policy'->>'expires_at')::timestamptz,(entry->'document'->>'validUntil')::timestamptz,publisher_until,m.sent_at+interval '24 hours');
  payload:=jsonb_build_object('recipient',jsonb_build_object('id',t.psid),'messaging_type','RESPONSE',
   'message',jsonb_build_object('text',r.result->>'text','metadata','VPT_CARE_SEND_V1:'||attempt::text));
  INSERT INTO crm_care_control.send_attempts(attempt_id,request_id,policy_id,principal_id,grant_id,company_id,page_id,thread_id,worker_id,state,
@@ -179,8 +186,11 @@ DECLARE a crm_care_control.send_attempts%ROWTYPE;n integer:=0;
 BEGIN
  PERFORM crm_survey_control.require_ingress_role();
  IF p_company IS NULL OR(p_page~'^[0-9]{1,32}$') IS NOT TRUE THEN RAISE EXCEPTION 'invalid recovery scope' USING ERRCODE='22023';END IF;
- FOR a IN SELECT * FROM crm_care_control.send_attempts WHERE company_id=p_company AND page_id=p_page AND started_at<clock_timestamp()-interval '1 minute'
-  AND(state='SENDING' OR(state='SENT' AND echo_mid IS NULL AND reason IS DISTINCT FROM 'ECHO_MISSING')) ORDER BY thread_id LIMIT 10 LOOP
+ -- Match signed ingress Page/PSID order when retaining multiple thread locks.
+ FOR a IN SELECT pending.* FROM crm_care_control.send_attempts pending JOIN public.crm_care_threads t ON t.id=pending.thread_id
+  WHERE pending.company_id=p_company AND pending.page_id=p_page AND pending.started_at<clock_timestamp()-interval '1 minute'
+  AND(pending.state='SENDING' OR(pending.state='SENT' AND pending.echo_mid IS NULL AND pending.reason IS DISTINCT FROM 'ECHO_MISSING'))
+  ORDER BY t.page_id,t.psid,pending.attempt_id LIMIT 10 LOOP
   IF a.state='SENDING' THEN PERFORM public.crm_care_send_result(a.attempt_id,a.worker_id,jsonb_build_object('status','UNCERTAIN','reason','STALE_ATTEMPT'));
   ELSE
    PERFORM 1 FROM public.crm_care_threads WHERE id=a.thread_id FOR UPDATE;

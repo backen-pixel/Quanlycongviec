@@ -30,6 +30,6 @@ Worker đăng ký trong registry stop/drain. Khi hoàn tác: tắt SEND để ng
 
 ## Kiểm chứng
 
-Local:1.380PASS/5skip/0fail, gồm11ca transport mới. PostgreSQL bổ sung19ca đang chờ CI: runtime→SQL→Meta giả→signed echo/ACK, quyền và nguồn đổi, hai worker, STOP, lease hết khi chờ, mất ACK/restart, cap, nguồn/tệp/câu dài, thứ tự ACK/echo, scope và cạnh tranh với survey/outcome. Reviewer độc lập đang rà đúng mã.
+Local:1.380PASS/5skip/0fail, gồm11ca transport mới. PostgreSQL bổ sung21ca đang chờ CI: runtime→SQL→Meta giả→signed echo/ACK, quyền và nguồn đổi, hai worker, STOP, lease hết khi chờ, mất ACK/restart, cap, nguồn/tệp/câu dài, thứ tự ACK/echo, scope và cạnh tranh với survey/outcome. CI đầu7e0670b:448PASS/19FAIL do cột payload trùng tên biến trong phép đếm hạn mức; đã sửa alias. Bổ sung giới hạn lease theo hạn publisher và một ca PostgreSQL; chờ kiểm lại đúng bản. Reviewer phát hiện thứ tự khóa recovery khác signed ingress; đã đổi sang Page/PSID và thêm ca hai thread có UUID ngược thứ tự PSID. Chờ reviewer xác nhận đúng mã và CI mới.
 
 Chưa chứng minh chất lượng chọn câu của model thật, API/tài khoản thật, giao diện ngoại lệ, AI tự đề xuất lịch và khách xác nhận, người nhận/lịch thật hoặc nghiệm thu/phát hành. Full goal ACTIVE; chỉ tiêu250.000đ/khách hợp lệ cần dữ liệu vận hành, không suy từ kiểm thử giả.

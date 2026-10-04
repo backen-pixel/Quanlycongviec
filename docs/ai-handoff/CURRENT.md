@@ -1,6 +1,6 @@
 ## 04/10/2026 — Gửi câu tư vấn đang kiểm chứng
 
-SQL694/worker thêm quyền gửi riêng theo Agent/grant/phiên bản câu, lease tối đa5giây, payload một lần, receipt/echo và barrier dùng chung với survey/outcome. Local1.380PASS/5skip;19ca PostgreSQL và review độc lập đang chờ. Không Meta thật/enrollment/phát hành. [Hợp đồng và hoàn tác](vpt-marketing-automation/CARE_ANSWER_DELIVERY.md). Full goal ACTIVE; còn lịch tự động, UI/ngoại lệ, cấu hình và UAT.
+SQL694/worker thêm quyền gửi riêng theo Agent/grant/phiên bản câu, lease tối đa5giây, payload một lần, receipt/echo và barrier dùng chung với survey/outcome. Local1.380PASS/5skip;21ca PostgreSQL và review độc lập đang chờ. Không Meta thật/enrollment/phát hành. [Hợp đồng và hoàn tác](vpt-marketing-automation/CARE_ANSWER_DELIVERY.md). Full goal ACTIVE; còn lịch tự động, UI/ngoại lệ, cấu hình và UAT.
 
 ---
 

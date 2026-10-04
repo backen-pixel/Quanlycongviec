@@ -21,9 +21,9 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,approve
   from:()=>({select:()=>({eq:(_k,page)=>({maybeSingle:async()=>({data:(await db.query('SELECT * FROM facebook_pages WHERE page_id=$1',[page])).rows[0]})})})})});
  const env=x=>({VPT_CARE_RUNTIME_PRINCIPAL:x.g.agent,VPT_CARE_RUNTIME_COMPANY:company,VPT_CARE_RUNTIME_GRANT:x.g.id,
   VPT_CARE_RUNTIME_PAGE:x.c.page,VPT_CARE_RUNTIME_SEND_POLICY:x.p.id,VPT_CARE_RUNTIME_ECHO:'1',VPT_CARE_RUNTIME_SEND:'1',VPT_FB_CARE_PAGES:x.c.page});
- const receive=async(c,events)=>{
+ const receive=async(c,events,client=peers[2])=>{
   const secret='synthetic-answer-echo-secret',raw=Buffer.from(JSON.stringify({object:'page',entry:[{id:c.page,messaging:events}]}));
-  const care=createCustomerCare({db:storage(peers[2]),isPrimary:()=>true,env:{VPT_CARE_RUNTIME_ECHO:'1',VPT_FB_CARE_PAGES:c.page,VPT_FACEBOOK_APP_SECRET:secret}});
+  const care=createCustomerCare({db:storage(client),isPrimary:()=>true,env:{VPT_CARE_RUNTIME_ECHO:'1',VPT_FB_CARE_PAGES:c.page,VPT_FACEBOOK_APP_SECRET:secret}});
   await care.receive({facebookRawBody:raw,headers:{'x-hub-signature-256':'sha256='+createHmac('sha256',secret).update(raw).digest('hex')}});
  };
  const echo=async(c,a,mid=randomUUID(),overrides={})=>({sender:{id:c.page},recipient:{id:c.psid},timestamp:await stamp(),
@@ -151,11 +151,38 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,approve
   try{await lockWait(pid);await db.query('COMMIT');assert.equal((await pending).status,'HELD');}finally{await db.query('ROLLBACK');await pending.catch(()=>{});}
   assert.equal(await mode(x.c),'OPTED_OUT');
  });
+ await t.test('lease cannot outlive the named source publisher approval',async()=>{
+  const expires=new Date(Date.now()+3500);
+  await db.query('UPDATE crm_care_library_publishers SET expires_at=$1 WHERE company_id=$2 AND user_id=$3',[expires,company,admin]);
+  try{await approve();const x=await ready(),a=await claim(x);assert.equal(a.status,'CLAIMED');assert.ok(Date.parse(a.sendBefore)<=expires.getTime());}
+  finally{await db.query("UPDATE crm_care_library_publishers SET expires_at=clock_timestamp()+interval '1 day' WHERE company_id=$1 AND user_id=$2",[company,admin]);await approve();}
+ });
  await t.test('foreign policy or runtime scope cannot expose payload or operator delivery records',async()=>{
   const x=await ready();await assert.rejects(query('crm_care_send_claim',[x.g.agent,other,x.g.id,x.p.id,x.c.key,x.g.worker,sha('synthetic')]),e=>e.code==='42501');
   await assert.rejects(query('crm_care_send_claim',[admin,company,x.g.id,x.p.id,x.c.key,x.g.worker,sha('synthetic')]),e=>e.code==='42501');
   await claim(x);await assert.rejects(query('crm_care_runtime_read',[admin,other,x.c.key]),e=>e.code==='42501');
   await assert.rejects(query('crm_care_runtime_read',[sales,company,x.c.key]),e=>e.code==='42501');
+ });
+ await t.test('multi-thread recovery uses the same Page and PSID lock order as a signed inbound batch',async()=>{
+  const base=await fixture(),g=await enroll(base),threads=[];
+  for(let i=0;i<2;i++){
+   const c={...base,thread:(i===0?'f':'a')+randomUUID().slice(1),psid:String(710000001+i),key:randomUUID()};
+   await db.query('INSERT INTO crm_care_threads(id,company_id,page_id,psid) VALUES($1,$2,$3,$4)',[c.thread,company,c.page,c.psid]);
+   const event={sender:{id:c.psid},recipient:{id:c.page},timestamp:await stamp(),message:{mid:randomUUID(),text:'Synthetic request for two-thread recovery'}};
+   await receive(c,[event]);const evidence=(await db.query('SELECT id FROM crm_care_messages WHERE provider_mid=$1',[event.message.mid])).rows[0].id;
+   const v=await query('crm_care_connection_read',[admin,company,c.thread,c.lead]);
+   await query('crm_care_connection_link',[admin,company,randomUUID(),{threadId:c.thread,leadId:c.lead,expectedVersion:v.version,evidenceMessageId:evidence,identityConfirmed:true,reason:'Synthetic identity link for concurrency acceptance'}]);
+   const r=await begin(c,g);await finish(c,g,r);const x={c,g,p:await policy(c,g)};await claim(x);threads.push(c);
+  }
+  await db.query("UPDATE crm_care_control.send_attempts SET started_at=clock_timestamp()-interval '2 minutes' WHERE page_id=$1",[base.page]);
+  const events=await Promise.all(threads.map(async c=>({sender:{id:c.psid},recipient:{id:c.page},timestamp:await stamp(),message:{mid:randomUUID(),text:'Synthetic next inbound batch'}})));
+  await db.query('BEGIN');await db.query('SELECT id FROM crm_care_threads WHERE id=$1 FOR UPDATE',[threads[1].thread]);
+  const pid0=(await peers[0].query('SELECT pg_backend_pid() pid')).rows[0].pid,pid1=(await peers[1].query('SELECT pg_backend_pid() pid')).rows[0].pid;
+  const recovery=query('crm_care_send_recover',[company,base.page],peers[0]).then(value=>({value}),error=>({error}));let inbound;
+  try{await lockWait(pid0);inbound=receive(base,events,peers[1]).then(value=>({value}),error=>({error}));await lockWait(pid1);await db.query('COMMIT');
+   assert.equal((await recovery).error,undefined);assert.equal((await inbound).error,undefined);
+  }finally{await db.query('ROLLBACK');await recovery;if(inbound)await inbound;}
+  for(const c of threads){assert.equal((await state(c)).state,'UNCERTAIN');assert.equal(await mode(c),'HUMAN_REQUESTED');}
  });
 
  // Real proposal service plus actual survey claim, sharing the same conversation.
@@ -174,10 +201,11 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,approve
  };
  for(const first of['answer','survey'])await t.test('observed '+first+' claim blocks the other transport on the same thread',async()=>{
   const x=await ready(),{p,staff}=await proposal(x),survey=client=>query('crm_survey_dispatch_claim',[x.c.page,p.proposalId,randomUUID(),sha('synthetic')],client);
-  await peers[0].query('BEGIN');const a=await(first==='answer'?claim(x,peers[0]):survey(peers[0]));assert.equal(a.status,'CLAIMED');
-  const pid=(await peers[1].query('SELECT pg_backend_pid() pid')).rows[0].pid,pending=(first==='answer'?survey(peers[1]):claim(x,peers[1])).then(value=>({value}),error=>({error}));
-  try{await lockWait(pid);await peers[0].query('COMMIT');const result=await pending;assert.equal(result.error,undefined);assert.equal(result.value.status,first==='answer'?'PRIOR_DELIVERY_UNCERTAIN':'DELIVERY_PENDING');}
-  finally{await peers[0].query('ROLLBACK');await pending;await db.query('DELETE FROM crm_survey_control.crm_survey_calendar_staff WHERE staff_id=$1',[staff]);}
+  await peers[0].query('BEGIN');let pending;
+  try{const a=await(first==='answer'?claim(x,peers[0]):survey(peers[0]));assert.equal(a.status,'CLAIMED');
+   const pid=(await peers[1].query('SELECT pg_backend_pid() pid')).rows[0].pid;pending=(first==='answer'?survey(peers[1]):claim(x,peers[1])).then(value=>({value}),error=>({error}));
+   await lockWait(pid);await peers[0].query('COMMIT');const result=await pending;assert.equal(result.error,undefined);assert.equal(result.value.status,first==='answer'?'PRIOR_DELIVERY_UNCERTAIN':'DELIVERY_PENDING');}
+  finally{await peers[0].query('ROLLBACK');if(pending)await pending;await db.query('DELETE FROM crm_survey_control.crm_survey_calendar_staff WHERE staff_id=$1',[staff]);}
  });
  await t.test('answer receipt barrier also blocks a queued booking outcome',async()=>{
   const x=await ready(),{p,staff}=await proposal(x);await claim(x);const outcome=randomUUID();

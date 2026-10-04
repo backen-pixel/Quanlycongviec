@@ -1,6 +1,6 @@
 ## 04/10/2026 — Transport câu tư vấn theo quyền riêng
 
-Thêm SQL694/send policy/attempt/receipt và careAnswerDispatch; tách nhận echo khỏi booking flag, giữ bằng chứng ACK dù draft stale. Barrier ngăn model dùng transcript thiếu outbound và tránh đua với survey/outcome. Local1.380PASS/5skip;11unit mới,19PG đang chờ; reviewer độc lập đang rà. [Phạm vi/bằng chứng/hoàn tác](vpt-marketing-automation/CARE_ANSWER_DELIVERY.md). Không gửi thật, cấp quyền hoặc phát hành; full goal ACTIVE.
+Thêm SQL694/send policy/attempt/receipt và careAnswerDispatch; tách nhận echo khỏi booking flag, giữ bằng chứng ACK dù draft stale. Barrier ngăn model dùng transcript thiếu outbound và tránh đua với survey/outcome. Local1.380PASS/5skip;11unit mới,21PG đang chờ; reviewer độc lập đang rà. [Phạm vi/bằng chứng/hoàn tác](vpt-marketing-automation/CARE_ANSWER_DELIVERY.md). Không gửi thật, cấp quyền hoặc phát hành; full goal ACTIVE.
 
 ## 04/10/2026 — Runtime draft và handoff theo quyền riêng
 
