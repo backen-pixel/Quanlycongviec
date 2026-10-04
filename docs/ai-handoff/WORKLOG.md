@@ -2409,3 +2409,7 @@ Automation37198601106 cả 10 job SUCCESS; Node18/22 mỗi bản 1.406/0/0, inta
 ## 04/10/2026 — Phục hồi ghi biên nhận AI trong cùng lượt
 
 Thay `careOpenAiInference.record` bằng tối đa hai lần ghi cùng receipt bất biến khi lỗi tạm thời/mất ACK; không repeat claim/model/BEGIN/FINISH. Fail closed với mã không nhận diện, quyền, conflict hoặc ACK sai; kiểm Primary trước mỗi lần, cho phép ghi lịch sử sau revoke nhưng không mở quyền trả lời. Thêm 6 unit và 4 ca actual runtime→SQL với HTTP giả. Local focused53/0/0, toàn workflow1.407/0/5; CI/PG/review đang chờ. CURRENT/README/CARE_OPENAI_INFERENCE ghi giới hạn mất tiến trình/hóa đơn/UNKNOWN và hoàn tác. Full goal ACTIVE; chưa gọi provider thật, thay SQL hoặc phát hành.
+
+### Đóng kiểm chứng phục hồi receipt31aa29f
+
+Automation37199346559 cả10job SUCCESS; Node18/22 mỗi bản1.412/0/0; intake PostgreSQL502/0/0 gồm4ca448–451; build10.339modules/36,09s; Report37199346557 và Messenger37199346554 SUCCESS. CImerge9310e17f3f15a6287a7ac1dbe7bb36f7b5bc8a51 khớp treecdf97594f2fdf29c863bc1e165c807bb35a2af8e và parents base/head. Reviewer độc lập xác minh published blobs/log/tree, PASS checkpoint đúng phạm vi khi còn giữ receipt. Chưa giải quyết mất tiến trình, UNKNOWN provider, hóa đơn, cấu hình/chuyển luồng/khôi phục/UAT hoặc phát hành. Full goal ACTIVE; lượt trước là PROGRESS và lượt này tiếp tục thay đổi mã cùng bằng chứng, không phải chỉ nhắc trạng thái. Không thay quyền hoặc chi tiền thật.

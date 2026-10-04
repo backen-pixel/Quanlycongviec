@@ -8,7 +8,16 @@
 
 Phạm vi chỉ khi tiến trình còn giữ biên nhận đã nhận. Hai lần không xác nhận được thì tiếp tục đường lỗi/bàn giao; tiến trình chết trước khi lưu vẫn cần đối soát. Không giải phóng UNKNOWN do provider, không chứng nhận miễn phí, chi phí thực hay hóa đơn. Không tạo journal chứa capability trên ổ đĩa hoặc cấp công cụ sửa receipt thủ công.
 
-Local toàn workflow 1.407 PASS/0 fail/5 skip; 6 unit mới kiểm ACK mất, retry giới hạn, conflict/quyền/ACK sai, Primary mất, abort và giữ UNKNOWN/NOT_SENT. 4 ca PostgreSQL qua runtime worker thật được thêm cho commit mất ACK/rollback, DB mất kết nối, conflict và thu hồi grant; HTTP provider giả. Chờ CI/PG và review độc lập trước kết luận checkpoint. Không đổi SQL/schema/UI; hoàn tác bằng trả adapter về một lần ghi, giữ toàn bộ receipt/reservation hiện có.
+Local toàn workflow 1.407 PASS/0 fail/5 skip; 6 unit mới kiểm ACK mất, retry giới hạn, conflict/quyền/ACK sai, Primary mất, abort và giữ UNKNOWN/NOT_SENT. 4 ca PostgreSQL qua runtime worker thật kiểm commit mất ACK/rollback, DB mất kết nối, conflict và thu hồi grant; HTTP provider giả. Không đổi SQL/schema/UI; hoàn tác bằng trả adapter về một lần ghi, giữ toàn bộ receipt/reservation hiện có.
+
+Checkpoint `31aa29f70f2548fa7abc2efa25643e3a1ba611a2`, tree `cdf97594f2fdf29c863bc1e165c807bb35a2af8e`:
+
+- [Automation37199346559](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37199346559): cả 10 job SUCCESS. Node18/22 jobs111427627876/111427627878 mỗi bản **1.412 PASS/0 fail/0 skip**.
+- PostgreSQL job111427627810 đạt **502/0/0**, đủ bốn ca mới448–451; xác nhận một receipt/reservation, replay sau commit, lần ghi đầu sau rollback, bàn giao khi mất kết nối kéo dài, giữ UNKNOWN mâu thuẫn và thu hồi grant vẫn chặn FINISH.
+- Build job111427627845 thành công với10.339modules/36,09s. Report37199346557 và Messenger37199346554 SUCCESS.
+- CI merge `9310e17f3f15a6287a7ac1dbe7bb36f7b5bc8a51` có cùng tree, parents `e16c885ae7c2305645be02a1227bf378cb59137f` + checkpoint. Reviewer độc lập đối chiếu published adapter/unit/PG blobs, log và tree/parents; **PASS checkpoint**, không còn finding chặn. Bản đóng hồ sơ chỉ sửa tài liệu.
+
+Không có browser mới vì không đổi UI. Không suy kiểm thử provider giả thành kiểm tài khoản/model/chi phí thật, phục hồi sau mất tiến trình, UAT hoặc quyền phát hành.
 
 Các phần dưới lưu hợp đồng và bằng chứng của checkpoint SQL691 gốc; cập nhật này thay hành vi một lần ghi receipt, không thay quy tắc một lần gọi provider.
 

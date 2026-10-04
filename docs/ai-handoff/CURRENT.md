@@ -1,6 +1,6 @@
-## 04/10/2026 — Đang kiểm chứng lưu lại biên nhận AI khi mất phản hồi
+## 04/10/2026 — Phục hồi biên nhận AI đã qua kiểm chứng
 
-Adapter cho phép tối đa hai lần ghi cùng biên nhận trong lượt đang chạy; không gọi lại model hoặc xin permit mới. SQL691 giữ tính chống trùng, từ chối receipt mâu thuẫn; vẫn kiểm Primary trước từng lần ghi. Lỗi quyền/đầu vào hoặc ACK sai dừng ngay. Sau hai lần lỗi, giữ reservation và bàn giao như cũ; không tự sửa UNKNOWN hoặc dùng token làm hóa đơn. Local toàn workflow 1.407 PASS/0 fail/5 skip; 6 unit mới và 4 ca PostgreSQL qua runtime worker đã viết. CI/PG và review cuối đang chờ. [Hợp đồng, giới hạn và kiểm chứng](vpt-marketing-automation/CARE_OPENAI_INFERENCE.md).
+Adapter tại 31aa29f cho phép tối đa hai lần ghi cùng biên nhận trong lượt đang chạy; không gọi lại model hoặc xin permit mới. SQL691 giữ tính chống trùng, từ chối receipt mâu thuẫn; vẫn kiểm Primary trước từng lần ghi. Lỗi quyền/đầu vào hoặc ACK sai dừng ngay. Sau hai lần lỗi, giữ reservation và bàn giao như cũ; không tự sửa UNKNOWN hoặc dùng token làm hóa đơn. Node18/22 mỗi bản 1.412 PASS/0 fail/0 skip; PostgreSQL 502/0/0 gồm 4 ca mới; cả 10 job/build/report/Messenger SUCCESS. Reviewer độc lập đối chiếu published blobs/log/tree và PASS checkpoint. [Hợp đồng, giới hạn, bằng chứng và hoàn tác](vpt-marketing-automation/CARE_OPENAI_INFERENCE.md).
 
 Full goal ACTIVE. Còn đối soát provider/hóa đơn và mất tiến trình, cấu hình thật, chuyển luồng/khôi phục, UAT và Founder release. Không gọi AI thật hoặc cấp thêm quyền.
 
