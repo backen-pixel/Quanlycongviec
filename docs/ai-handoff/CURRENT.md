@@ -1,6 +1,8 @@
-## 04/10/2026 — Tách dừng gửi outcome khỏi đối soát
+## 04/10/2026 — Dừng gửi outcome và giữ đối soát đã qua kiểm chứng
 
-Worker thông báo lịch thêm OUTCOMES_SEND phải bằng chuỗi1 tường minh; thiếu/0 chỉ recovery khi OUTCOMES/CONFIRMATIONS còn bật. Giữ nhận echo, ACK/UNKNOWN và booking; không đổi SQL/quyền. Bổ sung unit/ba ca PostgreSQL và cập nhật mọi fixture gửi. [Hợp đồng và cách dừng](vpt-marketing-automation/SURVEY_OUTCOMES.md). Local focused/CI/review đúng bản cuối đang kiểm; phát hành HOLD, full goal ACTIVE. Không thay cấu hình hoặc gửi thật.
+Worker thông báo lịch yêu cầu OUTCOMES_SEND bằng chuỗi1 tường minh; thiếu/0 chỉ recovery khi OUTCOMES/CONFIRMATIONS còn bật. Giữ echo, ACK/UNKNOWN và booking; không đổi SQL/quyền. Bản e2afcfea đạt PostgreSQL507/0/0, restore11/0/0, Node18/22 mỗi1.417/0/0, cả10job/build/report/MessengerSUCCESS; reviewer độc lập xác minh publishedblobs/log/tree và PASS checkpoint. [Hợp đồng, bằng chứng và cách dừng](vpt-marketing-automation/SURVEY_OUTCOMES.md). Không quay binary cũ với giả định nó hiểu SEND. Chưa cấu hình/Meta thật, mọi replica, UAT hoặc release; phát hành HOLD, full goal ACTIVE.
+
+Còn khép nội dung được duyệt, người nhận/lịch, quyền/hạn mức AI, inventory nguồn/môi trường và chuyển luồng trước nghiệm thu vận hành. Mục tiêu250.000đ/khách hợp lệ chưa có kết quả thực tế. Không tự mở ngân sách, quyền hoặc lựa chọn thay Founder.
 
 ---
 

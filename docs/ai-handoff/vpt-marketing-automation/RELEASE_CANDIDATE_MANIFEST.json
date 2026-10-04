@@ -7,7 +7,14 @@
   "runtimeDeltaSincePinnedSource": {
     "description": "Separate VPT_SURVEY_OUTCOMES_SEND explicit opt-in; recovery stays under OUTCOMES and CONFIRMATIONS",
     "evidence": "SURVEY_OUTCOMES.md",
-    "validation": "PENDING_CURRENT_CANDIDATE",
+    "testedCommit": "e2afcfea9b8a29b91aa1fa17b329ccca01b3f622",
+    "testedTree": "7cdbfd57c19d5f3487f71c545a468ad7abb5105d",
+    "validation": "PASS_TECHNICAL_CHECKPOINT_AND_INDEPENDENT_REVIEW",
+    "automationRun": 37203972012,
+    "intakeTestsPassed": 507,
+    "restoreTestsPassed": 11,
+    "node18TestsPassed": 1417,
+    "node22TestsPassed": 1417,
     "sqlChanges": false
   },
   "founderReleaseDecision": null,

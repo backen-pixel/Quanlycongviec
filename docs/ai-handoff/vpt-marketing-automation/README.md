@@ -1,4 +1,4 @@
-04/10/2026: [Outcome SEND riêng](SURVEY_OUTCOMES.md) đang kiểm delta sau a6b52b04: gửi phải opt-in tường minh, recovery/receipt vẫn giữ khi chỉ tắt SEND. Không đổi SQL/quyền; CI/review cuối chờ. Full goal ACTIVE/HOLD phát hành.
+04/10/2026: [Outcome SEND riêng](SURVEY_OUTCOMES.md) tại e2afcfea PASS kiểm thử/review độc lập đúng publishedblobs/log/tree: PostgreSQL507/0/0, restore11/0/0, Node18/22 mỗi1.417/0/0, cả10job/build/report/MessengerSUCCESS. Gửi phải opt-in tường minh, recovery/receipt vẫn giữ khi chỉ tắt SEND; không đổi SQL/quyền. Chưa cấu hình/chuyển luồng/UAT thật. Full goal ACTIVE/HOLD phát hành.
 
 04/10/2026: [Bước tiếp và hồ sơ nghiệm thu](RELEASE_READINESS.md) là mục lục hiện hành cho phạm vi đã kiểm và còn thiếu. [Manifest nguồn 1b7c00f](RELEASE_CANDIDATE_MANIFEST.json) ghim dependency PR19 và 50 SQL mới; không phải migration runner. Cần khép người nhận/lịch, nội dung, AI/hạn mức và phạm vi đo, kiểm chuyển luồng/môi trường, UAT rồi Founder release. Reviewer độc lập PASS hồ sơ/manifest tại a6b52b04; HIGH/HOLD phát hành. Các mục bên dưới giữ lịch sử theo phiên bản, không thay bằng chứng vận hành. Full goal ACTIVE.
 

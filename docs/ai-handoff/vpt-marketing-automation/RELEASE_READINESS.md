@@ -2,7 +2,7 @@
 
 Ngày đối chiếu: 04/10/2026. **Rủi ro HIGH; HOLD phát hành.** Hồ sơ này gom điều kiện và bằng chứng, không phải quyết định mở quyền, chạy migration hoặc tiêu ngân sách. Nguồn chuẩn là repo; các mục cũ trong CURRENT/README giữ giá trị lịch sử theo phiên bản.
 
-Delta sau bản kiểm kê 1b7c00f: [outcome SEND riêng](SURVEY_OUTCOMES.md) đang được kiểm để tạm ngừng gửi và giữ recovery. Manifest vẫn ghim 50 SQL của source cũ, không tự chứng nhận runtime mới; không có SQL mới trong delta này. Cần kiểm và review đúng ứng viên trước phát hành.
+Delta sau bản kiểm kê 1b7c00f: [outcome SEND riêng](SURVEY_OUTCOMES.md) tại e2afcfea đã PASS kiểm thử và review độc lập để tạm ngừng gửi và giữ recovery. Manifest vẫn ghim 50 SQL của source cũ và ghi bằng chứng runtime delta riêng; không có SQL mới. PostgreSQL507/0/0, restore11/0/0 và Node18/22 mỗi1.417/0/0 không thay nghiệm thu môi trường/config thực hoặc quyền phát hành.
 
 ## Việc tiếp theo cho Founder
 

@@ -1,5 +1,7 @@
 ## 04/10/2026 — Tách công tắc gửi outcome khỏi recovery
 
+Đóng kiểm chứng e2afcfea/tree7cdbfd57: automation37203972012 cả10jobSUCCESS; PostgreSQL507/0/0 gồm3ca mới180–182 và restore11/0/0; Node18/22 mỗi1.417/0/0, build10.339modules/37,97s; report37203972039/Messenger37203972002SUCCESS. CImerge7595ad15 đúng tree/parents. Reviewer độc lập xác minh publishedblobs/log và PASS checkpoint. Sửa2P3tài liệu về quyền human/Agent và UI đã có; JSON50blob/21linksPASS. Closure CI của hồ sơ a6b52b04 cũng đã kết thúc10job/report/MessengerSUCCESS. Lượt này PROGRESS vì dừng gửi đã giữ được recovery; full goal ACTIVE, phát hành HOLD.
+
 Lượt trước PROGRESS: hồ sơ/manifest đã review PASS và lưu a6b52b04. Lượt này sửa facebookSurveyOutcomes.sendEnabled để yêu cầu OUTCOMES_SEND=1; OUTCOMES/CONFIRMATIONS giữ recovery. Không đổi DB/quyền hoặc enrollment. Các fixture outcome/journey/surveyRuntime/workerDrain bật SEND rõ; thêm unit pause/missing/restart/ACK/timeout và ba ca PostgreSQL QUEUED/UNCERTAIN/STOP. Cập nhật tài liệu cùng delta; manifest giữ nguồn kiểm kê SQL cũ và chỉ rõ runtime delta cần kiểm lại. Chưa live config/provider/DB/phát hành. Full goal ACTIVE; CI và review cuối chờ.
 
 ## 04/10/2026 — Gom hồ sơ nghiệm thu và điều kiện phát hành
