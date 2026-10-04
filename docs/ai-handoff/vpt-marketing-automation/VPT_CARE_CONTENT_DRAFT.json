@@ -1,0 +1,438 @@
+{
+  "schemaVersion": 1,
+  "kind": "EDITORIAL_REVIEW_ONLY_NOT_LIBRARY_API_DOCUMENT",
+  "createdOn": "2026-10-04",
+  "version": "VPT_CARE_CONTENT_DRAFT_V1",
+  "technicalBaseline": "b3cb88dc8be07a6cad74747bdfaf431d2baa417a",
+  "status": "DRAFT_REQUIRES_FOUNDER_CONTENT_REVIEW",
+  "sendAllowed": false,
+  "importReady": false,
+  "founderDecision": null,
+  "proposedChannel": "facebook",
+  "operationalBindings": {
+    "companyId": null,
+    "regionIds": null,
+    "productMapping": null,
+    "publisherId": null,
+    "validUntil": null,
+    "approvedServiceScope": null,
+    "surveyFeePolicy": null
+  },
+  "sources": [
+    {
+      "id": "S01",
+      "kind": "PUBLIC_WEBSITE_REFERENCE",
+      "url": "https://vanphuthanh.net/",
+      "readOn": "2026-10-04",
+      "observedAt": "Trang giới thiệu và menu danh mục",
+      "supports": "Tên thương hiệu và các nhóm hàng xuất hiện trên website; không xác nhận tồn kho, giá, công suất hay quyền dùng ảnh.",
+      "freshness": "Bản web truy xuất ghi crawl gần đây; không phải kiểm kê sản phẩm đang bán.",
+      "approval": null
+    },
+    {
+      "id": "S02",
+      "kind": "PUBLIC_WEBSITE_REFERENCE",
+      "url": "https://vanphuthanh.net/tu-bep/",
+      "readOn": "2026-10-04",
+      "observedAt": "Danh mục và phần liên hệ báo giá",
+      "supports": "Có danh mục tủ bếp và hướng dẫn liên hệ để nhận giá; không chọn giá hoặc cam kết từ bài viết.",
+      "freshness": "Trang có nội dung nhắc cả 2025 và 2026; cần xác nhận thông tin hiện hành trước công bố.",
+      "approval": null
+    },
+    {
+      "id": "S03",
+      "kind": "PUBLIC_WEBSITE_REFERENCE",
+      "url": "https://vanphuthanh.net/tu-quan-ao/",
+      "readOn": "2026-10-04",
+      "observedAt": "Danh mục sản phẩm",
+      "supports": "Có nhóm tủ quần áo; không xác nhận một mã hàng cụ thể đang được cung cấp.",
+      "freshness": "Danh sách web là tham khảo, chưa đối chiếu catalog CRM.",
+      "approval": null
+    },
+    {
+      "id": "S04",
+      "kind": "PUBLIC_WEBSITE_REFERENCE",
+      "url": "https://vanphuthanh.net/tu-chau-lavabo/",
+      "readOn": "2026-10-04",
+      "observedAt": "Mô tả nhóm sản phẩm và danh sách trống",
+      "supports": "Website có mục tủ chậu lavabo. Trang được truy xuất không hiển thị sản phẩm cụ thể.",
+      "freshness": "Kết quả web ghi crawl khoảng 5 tháng trước; không dùng làm bằng chứng khả dụng hiện tại.",
+      "approval": null
+    },
+    {
+      "id": "S05",
+      "kind": "PUBLIC_WEBSITE_REFERENCE",
+      "url": "https://vanphuthanh.net/chinh-sach-doi-tra-va-bao-hanh/",
+      "readOn": "2026-10-04",
+      "observedAt": "Mục điều kiện và thời gian bảo hành",
+      "supports": "Điều kiện/thời hạn khác nhau theo nhóm và hồ sơ hợp đồng/phiếu bảo hành; không áp một số năm cho mọi sản phẩm.",
+      "freshness": "Phải xác nhận phiên bản chính sách theo sản phẩm; không đưa con số bảo hành vào draft này.",
+      "approval": null
+    },
+    {
+      "id": "P01",
+      "kind": "FOUNDER_APPROVED_PROJECT_PLAN",
+      "path": "docs/architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md",
+      "readOn": "2026-10-04",
+      "observedAt": "Chăm khách; phân vai; đo Lead V2",
+      "supports": "Hỏi sản phẩm, địa bàn, nhu cầu, ngân sách và thời gian; người thật báo giá cuối/chốt đơn; đặt khảo sát cần lịch thật và khách xác nhận.",
+      "approvalScope": "Hướng nghiệp vụ đã duyệt; chưa duyệt nguyên văn các câu mới trong gói này."
+    },
+    {
+      "id": "R01",
+      "kind": "CODE_CONTRACT",
+      "path": "backend/src/modules/marketingAutomation/careAdvisor.js",
+      "commit": "b3cb88dc8be07a6cad74747bdfaf431d2baa417a",
+      "supports": "Chọn nguyên văn câu; chỉ trích nhu cầu có trong inbound; HANDOFF không chọn câu gửi; ảnh không nằm trong context chữ."
+    },
+    {
+      "id": "R02",
+      "kind": "CODE_CONTRACT",
+      "path": "database/694_crm_care_answer_delivery.sql",
+      "commit": "b3cb88dc8be07a6cad74747bdfaf431d2baa417a",
+      "supports": "Sender chỉ ADVICE/QUALIFY tối đa 2000 ký tự, quyền gửi riêng."
+    }
+  ],
+  "entries": [
+    {
+      "key": "Q01",
+      "editorialStatus": "DRAFT",
+      "title": "Mở đầu và chọn nhu cầu",
+      "purpose": "QUALIFY",
+      "question": "Khách bắt đầu hỏi tư vấn nhưng chưa nêu nhóm sản phẩm; chưa hỏi câu này trong hội thoại.",
+      "answer": "Em là trợ lý tự động của Vạn Phú Thành. Anh/chị đang cần tư vấn tủ bếp, tủ quần áo, tủ lavabo, thiết bị, phụ kiện hay hạng mục khác ạ?",
+      "sourceIds": [
+        "S01",
+        "P01"
+      ],
+      "needsFields": [
+        "product",
+        "request"
+      ],
+      "restriction": "Chỉ dùng sau khi xác nhận đúng thương hiệu/công ty; danh mục là lựa chọn nhu cầu, không khẳng định mọi mẫu đang có sẵn.",
+      "approval": null
+    },
+    {
+      "key": "Q02",
+      "editorialStatus": "DRAFT",
+      "title": "Xác định địa bàn",
+      "purpose": "QUALIFY",
+      "question": "Đã biết nhu cầu nhưng khách chưa nêu địa điểm công trình bằng chữ; không suy nơi thi công từ địa bàn quảng cáo.",
+      "answer": "Công trình của anh/chị ở tỉnh/thành và phường/xã nào ạ?",
+      "sourceIds": [
+        "P01"
+      ],
+      "needsFields": [
+        "location"
+      ],
+      "restriction": "Địa bàn quảng cáo không chứng minh địa điểm công trình hoặc đủ điều kiện phục vụ.",
+      "approval": null
+    },
+    {
+      "key": "Q03",
+      "editorialStatus": "DRAFT",
+      "title": "Ngân sách dự kiến",
+      "purpose": "QUALIFY",
+      "question": "Khách chưa nêu ngân sách và chưa từ chối chia sẻ; hỏi để hiểu phạm vi, không dùng để hứa giá.",
+      "answer": "Anh/chị dự kiến ngân sách cho hạng mục này khoảng bao nhiêu ạ? Nếu chưa xác định, anh/chị có thể cho biết điều mình ưu tiên trước.",
+      "sourceIds": [
+        "P01"
+      ],
+      "needsFields": [
+        "budget",
+        "request"
+      ],
+      "restriction": "Không biến số khách nêu thành giá báo; không hỏi lặp nếu đã từ chối.",
+      "approval": null
+    },
+    {
+      "key": "Q04",
+      "editorialStatus": "DRAFT",
+      "title": "Thời gian thực hiện",
+      "purpose": "QUALIFY",
+      "question": "Khách chưa nêu thời gian mong muốn; không dùng câu này để xác nhận tiến độ thi công.",
+      "answer": "Anh/chị dự kiến cần thực hiện hạng mục này vào thời gian nào ạ?",
+      "sourceIds": [
+        "P01"
+      ],
+      "needsFields": [
+        "timing"
+      ],
+      "restriction": "Thời gian khách muốn không phải thời gian VPT đã cam kết.",
+      "approval": null
+    },
+    {
+      "key": "Q05",
+      "editorialStatus": "DRAFT",
+      "title": "Ưu tiên sử dụng",
+      "purpose": "QUALIFY",
+      "question": "Đã biết nhóm sản phẩm; nhu cầu sử dụng hoặc ưu tiên còn thiếu.",
+      "answer": "Điều anh/chị muốn cải thiện nhất ở hạng mục này là gì ạ?",
+      "sourceIds": [
+        "P01"
+      ],
+      "needsFields": [
+        "request"
+      ],
+      "restriction": "Không tự gán nhu cầu hoặc khả năng đáp ứng.",
+      "approval": null
+    },
+    {
+      "key": "Q06",
+      "editorialStatus": "DRAFT",
+      "title": "Tủ bếp mới hay thay thế",
+      "purpose": "QUALIFY",
+      "question": "Khách nói cần tủ bếp nhưng chưa rõ làm mới hay thay bộ đang dùng.",
+      "answer": "Với tủ bếp, anh/chị muốn làm mới hay thay bộ tủ đang sử dụng ạ?",
+      "sourceIds": [
+        "S02",
+        "P01"
+      ],
+      "needsFields": [
+        "product",
+        "request"
+      ],
+      "restriction": "Không khẳng định nhận mọi loại sửa chữa.",
+      "approval": null
+    },
+    {
+      "key": "Q07",
+      "editorialStatus": "DRAFT",
+      "title": "Vật liệu tủ bếp",
+      "purpose": "QUALIFY",
+      "question": "Khách cần tủ bếp nhưng chưa nêu vật liệu/mẫu quan tâm; chưa có thông số được duyệt để so sánh.",
+      "answer": "Với tủ bếp, anh/chị đã có vật liệu hoặc mẫu nào muốn tham khảo chưa ạ?",
+      "sourceIds": [
+        "S02",
+        "P01"
+      ],
+      "needsFields": [
+        "product",
+        "request"
+      ],
+      "restriction": "Không tự kết luận chống nước, chống cháy, tuổi thọ hoặc vật liệu tốt nhất.",
+      "approval": null
+    },
+    {
+      "key": "Q08",
+      "editorialStatus": "DRAFT",
+      "title": "Kích thước tủ bếp bằng chữ",
+      "purpose": "QUALIFY",
+      "question": "Khách cần tủ bếp và chưa cung cấp kích thước; AI hiện chỉ đọc văn bản, không đo ảnh.",
+      "answer": "Anh/chị có thể ghi kích thước dự kiến của khu vực làm tủ bếp bằng chữ giúp em được không ạ?",
+      "sourceIds": [
+        "S02",
+        "P01",
+        "R01"
+      ],
+      "needsFields": [
+        "request"
+      ],
+      "restriction": "Kích thước khách ghi là thông tin chưa xác minh; không suy từ ảnh.",
+      "approval": null
+    },
+    {
+      "key": "Q09",
+      "editorialStatus": "DRAFT",
+      "title": "Nhu cầu tủ quần áo",
+      "purpose": "QUALIFY",
+      "question": "Khách hỏi tủ quần áo nhưng chưa nêu kích thước hoặc không gian đặt tủ.",
+      "answer": "Với tủ quần áo, anh/chị dự kiến đặt tủ ở khoảng không gian có kích thước bao nhiêu ạ?",
+      "sourceIds": [
+        "S03",
+        "P01"
+      ],
+      "needsFields": [
+        "product",
+        "request"
+      ],
+      "restriction": "Không khẳng định vật liệu, tồn kho hoặc giá của mẫu chưa đối chiếu.",
+      "approval": null
+    },
+    {
+      "key": "Q10",
+      "editorialStatus": "DRAFT",
+      "title": "Nhu cầu tủ lavabo",
+      "purpose": "QUALIFY",
+      "question": "Khách hỏi tủ lavabo nhưng chưa rõ làm mới hay thay thế.",
+      "answer": "Với tủ lavabo, anh/chị đang làm mới hay thay bộ tủ hiện có ạ?",
+      "sourceIds": [
+        "S04",
+        "P01"
+      ],
+      "needsFields": [
+        "product",
+        "request"
+      ],
+      "restriction": "Nguồn web chưa chứng minh mẫu đang bán; chưa hứa nhận đơn hoặc khả năng lắp.",
+      "approval": null
+    },
+    {
+      "key": "Q11",
+      "editorialStatus": "DRAFT",
+      "title": "Xác định phụ kiện",
+      "purpose": "QUALIFY",
+      "question": "Khách hỏi phụ kiện nhưng chưa có tên hoặc mã sản phẩm; không thể nhận dạng ảnh trong phiên này.",
+      "answer": "Anh/chị cho em tên hoặc mã phụ kiện muốn tìm bằng chữ nhé.",
+      "sourceIds": [
+        "S01",
+        "P01",
+        "R01"
+      ],
+      "needsFields": [
+        "product"
+      ],
+      "restriction": "Không xác nhận tương thích với tủ hiện có khi chưa có thông số.",
+      "approval": null
+    },
+    {
+      "key": "Q12",
+      "editorialStatus": "DRAFT",
+      "title": "Xác định thiết bị",
+      "purpose": "QUALIFY",
+      "question": "Khách hỏi thiết bị nhà bếp nhưng chưa có tên hoặc mã; chưa có dữ liệu tồn kho/giá được duyệt.",
+      "answer": "Anh/chị đang quan tâm loại thiết bị nhà bếp nào, hoặc đã có mã sản phẩm cụ thể chưa ạ?",
+      "sourceIds": [
+        "S01",
+        "P01"
+      ],
+      "needsFields": [
+        "product"
+      ],
+      "restriction": "Không coi danh mục website là tồn kho hoặc chứng nhận đại lý.",
+      "approval": null
+    },
+    {
+      "key": "Q13",
+      "editorialStatus": "DRAFT",
+      "title": "Nhu cầu đá hoặc kính",
+      "purpose": "QUALIFY",
+      "question": "Khách chủ động hỏi đá/kính khu bếp; chưa có loại và kích thước cần làm.",
+      "answer": "Với hạng mục đá hoặc kính khu bếp, anh/chị muốn làm phần nào và có kích thước dự kiến chưa ạ?",
+      "sourceIds": [
+        "S01",
+        "P01"
+      ],
+      "needsFields": [
+        "product",
+        "request"
+      ],
+      "restriction": "Chỉ hỏi nhu cầu; hai trang chi tiết đá/kính chưa truy xuất được trong lần khảo sát này.",
+      "approval": null
+    },
+    {
+      "key": "Q14",
+      "editorialStatus": "DRAFT",
+      "title": "Khách chưa muốn nêu ngân sách",
+      "purpose": "QUALIFY",
+      "question": "Khách đã nói chưa rõ hoặc không muốn chia sẻ ngân sách; vẫn muốn tư vấn, chưa yêu cầu ngừng liên hệ và chưa nêu điều ưu tiên. Không dùng nếu khách đã nói ưu tiên của mình.",
+      "answer": "Anh/chị có thể chưa cần nêu ngân sách. Mình ưu tiên công năng, kiểu dáng hay vật liệu trước ạ?",
+      "sourceIds": [
+        "P01"
+      ],
+      "needsFields": [
+        "request"
+      ],
+      "restriction": "Không hỏi lại ngân sách ngay, không chấm khách không hợp lệ vì từ chối câu hỏi này.",
+      "approval": null
+    },
+    {
+      "key": "Q15",
+      "editorialStatus": "DRAFT",
+      "title": "Địa chỉ cho yêu cầu khảo sát",
+      "purpose": "QUALIFY",
+      "question": "Khách đã yêu cầu khảo sát nhưng chưa cung cấp địa chỉ bằng chữ; không dùng khi đã có địa chỉ rõ.",
+      "answer": "Anh/chị cho em địa chỉ nơi muốn khảo sát bằng chữ nhé. Thông tin này dùng để kiểm tra lịch phù hợp, chưa phải xác nhận đã đặt lịch.",
+      "sourceIds": [
+        "P01",
+        "R01"
+      ],
+      "needsFields": [
+        "location",
+        "request"
+      ],
+      "restriction": "Chưa hứa giờ/người/phí. Chỉ action SURVEY và dịch vụ lịch được phép đưa lịch thật để khách xác nhận.",
+      "approval": null
+    },
+    {
+      "key": "A01",
+      "editorialStatus": "DRAFT",
+      "title": "Cách nhận báo giá",
+      "purpose": "ADVICE",
+      "question": "Khách hỏi cách nhận báo giá khi chưa có hạng mục hoặc kích thước dự kiến. Không dùng nếu khách yêu cầu chốt giá, thương lượng, giảm giá hoặc xác nhận mức tiền cụ thể; các trường hợp đó phải HANDOFF.",
+      "answer": "Báo giá cuối cùng cho công trình cần được nhân sự phụ trách xác nhận theo hạng mục cụ thể. Anh/chị cho em biết hạng mục và kích thước dự kiến nhé.",
+      "sourceIds": [
+        "P01"
+      ],
+      "needsFields": [
+        "product",
+        "request"
+      ],
+      "restriction": "Không dùng 80–150 triệu của Founder làm giá công bố; không tự giảm giá hoặc chốt đơn.",
+      "approval": null
+    },
+    {
+      "key": "A02",
+      "editorialStatus": "DRAFT",
+      "title": "Bảo hành theo hồ sơ cụ thể",
+      "purpose": "ADVICE",
+      "question": "Khách hỏi thời hạn bảo hành nhưng chưa xác định đúng mã/hạng mục và điều kiện hợp đồng; không dùng để xử lý khiếu nại đang có.",
+      "answer": "Thông tin bảo hành cần đối chiếu đúng sản phẩm và hồ sơ mua hàng hoặc lắp đặt. Anh/chị đang hỏi bảo hành cho hạng mục nào ạ?",
+      "sourceIds": [
+        "S05",
+        "P01"
+      ],
+      "needsFields": [
+        "product",
+        "request"
+      ],
+      "restriction": "Không hứa một số năm cho mọi mẫu; sự cố/bảo hành thực tế chuyển người xem hồ sơ.",
+      "approval": null
+    },
+    {
+      "key": "A03",
+      "editorialStatus": "DRAFT",
+      "title": "Tham khảo danh mục tủ bếp",
+      "purpose": "ADVICE",
+      "question": "Khách muốn xem nhóm mẫu tủ bếp trên website, chưa hỏi tồn kho/giá hay cần phân tích ảnh.",
+      "answer": "Anh/chị có thể tham khảo danh mục tủ bếp tại https://vanphuthanh.net/tu-bep/ rồi cho em biết mẫu mình quan tâm nhé.",
+      "sourceIds": [
+        "S02"
+      ],
+      "needsFields": [
+        "product"
+      ],
+      "restriction": "Link tham khảo không xác nhận giá, tồn kho hoặc quyền dùng hình trong quảng cáo.",
+      "approval": null
+    }
+  ],
+  "handoffRules": [
+    {
+      "id": "H01",
+      "trigger": "Khách yêu cầu gặp người, khiếu nại, thương lượng, giá cuối/giảm giá hoặc sự cố cần đối chiếu hồ sơ.",
+      "expected": "Yêu cầu gặp người được parser nhận là REQUEST_HUMAN phải chuyển HUMAN_REQUESTED và dừng trước model. Nếu còn WAITING và cần mô hình nhận ra ngoại lệ, chọn HANDOFF với answer=null. Người xử lý đọc đủ hội thoại; không tự gửi mẫu mang nhãn HANDOFF."
+    },
+    {
+      "id": "H02",
+      "trigger": "Khách gửi ảnh/tệp để hỏi chất liệu/kích thước nhưng thiếu mô tả bằng chữ; không có nội dung được duyệt phù hợp.",
+      "expected": "Không nhận diện ảnh hoặc đo kích thước. Chuyển người khi không có câu phù hợp; giữ tệp/liên kết theo hồ sơ hiện có."
+    },
+    {
+      "id": "H03",
+      "trigger": "STOP hoặc người tiếp quản.",
+      "expected": "Domain dừng AI; không gọi model để soạn thêm tin và không hứa khách đã đồng ý liên hệ lại."
+    },
+    {
+      "id": "H04",
+      "trigger": "Địa bàn công trình ngoài phạm vi pilot hoặc chưa xác minh; đề nghị khảo sát có phí/chính sách chưa rõ.",
+      "expected": "Đưa ngoại lệ đúng người; không suy phạm vi kinh doanh toàn công ty từ địa bàn quảng cáo, không hứa khảo sát miễn phí."
+    }
+  ],
+  "limitations": [
+    "18 câu chưa có quyết định nội dung hoặc quyền phát ngôn.",
+    "Câu hỏi/điều kiện là dữ liệu chọn câu, chưa phải workflow bảo đảm không hỏi lặp.",
+    "Nhu cầu trích ra chưa xác minh; không tự tính Lead hợp lệ hoặc sửa CRM.",
+    "Không tạo UUID, hạn sử dụng, publisher hoặc quyền giả để nhập thư viện.",
+    "Đánh giá chọn câu bằng model thật chưa chạy; bộ tình huống chỉ là yêu cầu nghiệm thu."
+  ]
+}

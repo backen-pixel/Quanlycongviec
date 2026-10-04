@@ -1,3 +1,11 @@
+## 04/10/2026 — Soạn bộ nội dung tư vấn VPT để trình duyệt
+
+Đã đối chiếu website công khai và hợp đồng thư viện/runtime, soạn [18 câu và 18 tình huống nghiệm thu](vpt-marketing-automation/VPT_CARE_CONTENT_DRAFT.md). Đây là DRAFT biên tập, chưa SAVE/APPROVE, bindings công ty/vùng/hạn/publisher còn trống, send=false; model/provider không được gọi. Có nguồn/giới hạn từng claim, không giá hoặc thời hạn bảo hành chung, HANDOFF không là mẫu gửi. JSON/độ dài/tham chiếu PASS; reviewer độc lập đã mở5nguồn và PASS hồ sơ biên tập sau sửa A01/Q14/E11/E14. Còn Founder chốt nguyên văn/chính sách/hạn hiệu lực và các cấu hình vận hành; evalNOT_RUN. Full goal ACTIVE/HOLD phát hành.
+
+Closure CI b3cb88dc của lượt trước đã kết thúc: cả10job automation37204358096, report37204358077 và Messenger37204358090 SUCCESS. Bằng chứng này kiểm mã hiện có, không chứng minh18câu mới đã được duyệt hoặc model chọn đúng.
+
+---
+
 ## 04/10/2026 — Dừng gửi outcome và giữ đối soát đã qua kiểm chứng
 
 Worker thông báo lịch yêu cầu OUTCOMES_SEND bằng chuỗi1 tường minh; thiếu/0 chỉ recovery khi OUTCOMES/CONFIRMATIONS còn bật. Giữ echo, ACK/UNKNOWN và booking; không đổi SQL/quyền. Bản e2afcfea đạt PostgreSQL507/0/0, restore11/0/0, Node18/22 mỗi1.417/0/0, cả10job/build/report/MessengerSUCCESS; reviewer độc lập xác minh publishedblobs/log/tree và PASS checkpoint. [Hợp đồng, bằng chứng và cách dừng](vpt-marketing-automation/SURVEY_OUTCOMES.md). Không quay binary cũ với giả định nó hiểu SEND. Chưa cấu hình/Meta thật, mọi replica, UAT hoặc release; phát hành HOLD, full goal ACTIVE.

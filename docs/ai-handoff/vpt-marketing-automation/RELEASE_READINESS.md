@@ -8,6 +8,8 @@ Delta sau bản kiểm kê 1b7c00f: [outcome SEND riêng](SURVEY_OUTCOMES.md) t�
 
 Mục 4 của goal đang thực hiện xác định nghiệm thu tuyến đầu rồi mở tiếp Google và các kênh còn lại theo quyền thực tế. Gói hiện tại đưa tuyến Facebook tới nghiệm thu; việc chuẩn bị kênh khác vẫn có thể tiếp tục, không đổi phạm vi sáu kênh hoặc phân bổ trong [kế hoạch chuẩn](../../architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md). Codex khép cấu hình, kiểm tra chuyển luồng và chuẩn bị gói phát hành; reviewer độc lập kiểm lại đúng bản; Founder quyết định phạm vi và thời điểm mở thử sau khi có đủ bằng chứng.
 
+[Bộ18câu tư vấn VPT và18ca nghiệm thu](VPT_CARE_CONTENT_DRAFT.md) đã được soạn thành DRAFT có nguồn để Founder xem. Chưa nhập/duyệt/gửi, chưa chạy model; thiếu bindings/hạn/publisher nên không phải gói API có thể thực thi.
+
 Ba nhóm đầu vào còn chờ xác nhận:
 
 1. Người nhận khách/khảo sát và người thay thế tại TP.HCM, Cần Thơ; lịch trống thực tế và đầu mối ngoại lệ trong khung 08–20h.
