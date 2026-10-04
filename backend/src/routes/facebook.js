@@ -33,6 +33,9 @@ const { createCareOpenAiInference } = require('../modules/marketingAutomation/ca
 const facebookCareRuntime = createCareRuntime({ db: supabase, isPrimary: leadIntakePrimary,
   infer: createCareOpenAiInference({ db: supabase, isPrimary: leadIntakePrimary, authority: 'RUNTIME' }),
   onError: code => console.warn('[FB care runtime]', code) });
+const { createCareAnswerDispatch } = require('../modules/marketingAutomation/careAnswerDispatch');
+const facebookCareAnswerDispatch = createCareAnswerDispatch({ db: supabase, isPrimary: leadIntakePrimary,
+  onError: code => console.warn('[FB care answer]', code) });
 const facebookLeadCensus = createLeadCensus({ db: supabase, isPrimary: leadIntakePrimary, pages: facebookLeadIntake.pages, onError: code => console.warn('[FB Lead census]', code) });
 const { fetchAllPagesParallel } = require('../helpers/supabaseFetchAll');
 const axios = require('axios');
@@ -9713,10 +9716,11 @@ const durableWorkers = createWorkerGroup({
   legacyLeaderJobs: require('../helpers/cronLeader').shutdown,
   legacyBatchQueue: require('../helpers/batchQueue').shutdown, legacyMarketingSync: require('../jobs/fbMarketingSyncRunner').shutdown,
   messenger: messengerReceiptWorker, leadIntake: facebookLeadIntake, leadCensus: facebookLeadCensus,
-  surveyDispatch: facebookSurveyDispatch, surveyOutcomes: facebookSurveyOutcomes, careRuntime: facebookCareRuntime,
+  surveyDispatch: facebookSurveyDispatch, surveyOutcomes: facebookSurveyOutcomes, careRuntime: facebookCareRuntime, careAnswerDispatch: facebookCareAnswerDispatch,
 }, { onError: name => console.warn('[FB worker]', name, 'DRAIN_FAILED') });
 // Internal lifecycle handle, never an HTTP endpoint or a whole-process drain claim.
 r.workerDrainGroup = durableWorkers;
+if (process.env.VPT_CARE_RUNTIME_ECHO === '1') durableWorkers.schedule(['careAnswerDispatch'], 5000);
 if (process.env.VPT_CARE_RUNTIME === '1') durableWorkers.schedule(['careRuntime'], 5000);
 if (process.env.VPT_SURVEY_CONFIRMATIONS === '1') durableWorkers.schedule(['surveyDispatch', 'surveyOutcomes'], 5000);
 if (facebookLeadIntake.pages.size) durableWorkers.schedule(['leadIntake', 'leadCensus'], 5000);

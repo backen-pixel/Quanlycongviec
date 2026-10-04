@@ -1,3 +1,7 @@
+## 04/10/2026 — Transport câu tư vấn theo quyền riêng
+
+Thêm SQL694/send policy/attempt/receipt và careAnswerDispatch; tách nhận echo khỏi booking flag, giữ bằng chứng ACK dù draft stale. Barrier ngăn model dùng transcript thiếu outbound và tránh đua với survey/outcome. Local1.380PASS/5skip;11unit mới,19PG đang chờ; reviewer độc lập đang rà. [Phạm vi/bằng chứng/hoàn tác](vpt-marketing-automation/CARE_ANSWER_DELIVERY.md). Không gửi thật, cấp quyền hoặc phát hành; full goal ACTIVE.
+
 ## 04/10/2026 — Runtime draft và handoff theo quyền riêng
 
 Bản kiểm `65b8c7b` đã đạt Node18/22 mỗi bản1.374/0/0, PostgreSQL448/0/0 gồm26runtime; automation37191768019 cả10job SUCCESS, build10.335modules38,11s, report37191768012/Messenger37191768025 SUCCESS. Merge22463284 có tree9d1250e và parents đúng base/head. Không thay runtime business code sau05d657e; reviewer độc lập xác minh published blobs/log/tree và PASS checkpoint. [Bằng chứng/hoàn tác](vpt-marketing-automation/CARE_RUNTIME.md).

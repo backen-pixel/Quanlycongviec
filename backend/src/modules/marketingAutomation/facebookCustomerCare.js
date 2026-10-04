@@ -14,7 +14,7 @@ function explicitIntent(text){
  if(/\b(gap|noi chuyen voi|chuyen cho|goi) (nhan vien|nguoi that|nguoi tu van|tu van vien)\b/.test(s)||/\b(talk to|speak to) (a human|a person|an agent)\b/.test(s))return 'REQUEST_HUMAN';
  return 'MESSAGE';
 }
-function extractCareEvents(body,pages,now=Date.now(),{surveyConfirmations=false}={}){
+function extractCareEvents(body,pages,now=Date.now(),{surveyConfirmations=false,careEchoes=false}={}){
  if(body?.object!=='page')return [];
  if(!Array.isArray(body.entry)||body.entry.length>100)throw fail('INVALID_ENVELOPE');
  const rows=[];
@@ -50,7 +50,7 @@ function extractCareEvents(body,pages,now=Date.now(),{surveyConfirmations=false}
     const match=/^VPT_SURVEY_V1:([0-9a-f-]{36}):([0-9a-f-]{36})$/.exec(payload);
     if(match&&uuid(match[1])&&uuid(match[2]))row.confirmationPayload=payload;
    }
-   if(surveyConfirmations&&echo){
+   if((surveyConfirmations||careEchoes)&&echo){
     const appId=Number.isSafeInteger(m.app_id)?String(m.app_id):m.app_id;
     // Unknown/malformed provider metadata remains an ordinary external echo.
     // Never infer ownership from is_echo or app_id alone.
@@ -68,7 +68,7 @@ function redactSurveyConfirmationPayloads(body,pages){
  return {...body,entry:body.entry.map(entry=>!pages.has(entry?.id)||!Array.isArray(entry.messaging)?entry:{...entry,messaging:entry.messaging.map(event=>{
   const original=event?.message;if(!original)return event;
   const confirmation=typeof original.quick_reply?.payload==='string'&&original.quick_reply.payload.startsWith('VPT_SURVEY_V1:');
-  const attempt=typeof original.metadata==='string'&&(original.metadata.startsWith('VPT_SURVEY_SEND_V1:')||original.metadata.startsWith('VPT_SURVEY_OUTCOME_V1:'));
+  const attempt=typeof original.metadata==='string'&&(original.metadata.startsWith('VPT_SURVEY_SEND_V1:')||original.metadata.startsWith('VPT_SURVEY_OUTCOME_V1:')||original.metadata.startsWith('VPT_CARE_SEND_V1:'));
   if(!confirmation&&!attempt)return event;
   const message={...original};if(confirmation)delete message.quick_reply;if(attempt)delete message.metadata;
   return {...event,message};
@@ -88,7 +88,7 @@ function createCustomerCare({db,isPrimary,env=process.env,now=Date.now}){
   if(!verifySignature(req.facebookRawBody,req.headers?.['x-hub-signature-256'],env.VPT_FACEBOOK_APP_SECRET))throw fail('INVALID_SIGNATURE');
   let body;try{body=JSON.parse(req.facebookRawBody.toString('utf8'));}catch{throw fail('INVALID_ENVELOPE');}
   const surveyConfirmations=env.VPT_SURVEY_CONFIRMATIONS==='1';
-  const events=extractCareEvents(body,pages,now(),{surveyConfirmations});
+  const events=extractCareEvents(body,pages,now(),{surveyConfirmations,careEchoes:env.VPT_CARE_RUNTIME_ECHO==='1'});
   if(events.length)await rpc(surveyConfirmations?'crm_survey_receive':'crm_care_receive',{p_events:events});
   req.body=body;
   return {enabled:true,accepted:events.length};

@@ -5,7 +5,7 @@ const {createCareOpenAiInference}=require('../src/modules/marketingAutomation/ca
 const sha=x=>createHash('sha256').update(x).digest('hex');
 module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,approve,begin:humanBegin})=>{
  const before=await fixture(),viewBefore=await query('crm_care_read',[admin,company,before.thread]);
- for(const name of['692_crm_care_shared_rules.sql','693_crm_care_runtime.sql']){
+ for(const name of['692_crm_care_shared_rules.sql','693_crm_care_runtime.sql','694_crm_care_answer_delivery.sql']){
   const sql=fs.readFileSync(path.resolve(__dirname,'../../database/'+name),'utf8');await db.query(sql);await db.query(sql);
  }
  const credential='synthetic-runtime-key-only',model='runtime-snapshot-test';
@@ -264,5 +264,7 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,fixture,approve
   if(pair[0]==='claim'){assert.equal(receipt.state,'AUTHORIZED');assert.equal((await usage(c,first)).state,'USAGE_RECORDED');}
   else assert.equal(receipt,undefined);
  });
+
+ await require('./careAnswerDispatch.cases')(t,{db,peers,query,company,other,admin,sales,fixture,approve,enroll,begin,finish,select,worker,candidates,lockWait});
 
 };

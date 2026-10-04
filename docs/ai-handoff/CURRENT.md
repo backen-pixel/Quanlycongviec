@@ -1,3 +1,9 @@
+## 04/10/2026 — Gửi câu tư vấn đang kiểm chứng
+
+SQL694/worker thêm quyền gửi riêng theo Agent/grant/phiên bản câu, lease tối đa5giây, payload một lần, receipt/echo và barrier dùng chung với survey/outcome. Local1.380PASS/5skip;19ca PostgreSQL và review độc lập đang chờ. Không Meta thật/enrollment/phát hành. [Hợp đồng và hoàn tác](vpt-marketing-automation/CARE_ANSWER_DELIVERY.md). Full goal ACTIVE; còn lịch tự động, UI/ngoại lệ, cấu hình và UAT.
+
+---
+
 ## 04/10/2026 — Worker tư vấn danh tính riêng đã qua kiểm chứng
 
 Runtime `05d657e`, bản kiểm `65b8c7b`: Node18/22 mỗi bản1.374/0/0, PostgreSQL448/0/0 gồm26ca runtime; cả10job/build/report/Messenger SUCCESS, đúng CI tree/parents. Bản kiểm sửa hai lỗi harness/fixture từ CI đầu373/49, giữ nguyên guard và chạy hồi quy trên facade692 cuối. Reviewer độc lập đối chiếu published blobs/log/tree và PASS checkpoint đúng bản cuối.
