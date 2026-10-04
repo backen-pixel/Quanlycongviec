@@ -2391,3 +2391,8 @@ SQL695 thêm policy riêng, shared survey cores giữ facade679, runtime BEGIN/F
 ## 04/10/2026 — Runtime activity console
 
 Bổ sung CareRuntime/careRuntimeState, tab Chăm khách và10ca unit cùng workflow. Hiển thị dữ liệu từ API693–695; không SQL/backend change. Pending CLOSE được lưu trướcPOST, exact receipt mớiclear; tab/company/actor đổi loại phản hồi cũ. ProposalId dùng đọc trạng thái hiện tại, không suy booking từDRAFT. Local1393/0/5, esbuildPASS; browseractualWorkspace+APIgiả kiểm lostACK/reload, actor/companyABA, delayedREAD/tab, revokedsource, OPEN→BOOKED, GET503 và mởhàngchờ. CI/review cuối đang chờ; khôngphát hành. Xem CARE_RUNTIME_CONSOLE.md.
+
+
+### Đóng kiểm chứng runtime UI411e895
+
+Automation37197060961 cả10SUCCESS; Node18/22 mỗi1398/0/0, intakePG489/0/0, build10337modules/36,34s; Report37197060933/Messenger37197061020 SUCCESS. CImerge d974079331084ab70cb59d5ad01daf033906a210 khớp tree528487b595eb4a5aac17de1376d566bb4e12f9ca vàparents. Reviewer xác minh publishedblobs/log/tree, PASScheckpointUI; browserdoimplsynthetic. FullgoalACTIVE; cònchi phíAI/UNKNOWN,cấu hình/chuyểnluồng/UAT/release.

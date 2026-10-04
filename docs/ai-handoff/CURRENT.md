@@ -1,6 +1,6 @@
-## 04/10/2026 — Giao diện theo dõi AI đang qua nghiệm thu
+## 04/10/2026 — Giao diện theo dõi AI đã qua nghiệm thu kỹ thuật
 
-Thêm tab Hoạt động AI, đọc kết quả/câu tư vấn, bằng chứng ACK–echo và hồ sơ đề xuất lịch hiện hành; đóng RUNNING bằng yêu cầu giữ qua mất ACK/reload. Không thay SQL/backend hoặc mở quyền. Local1.393PASS/0fail/5skip,10ca UI mới; actual Workspace/API giả đã kiểm scope, stale, SURVEY/BOOKED và mất ACK. Reviewer chưa thấy finding chặn; chờ CI/build đúng bản công bố. [Hợp đồng và bằng chứng](vpt-marketing-automation/CARE_RUNTIME_CONSOLE.md). Full goal ACTIVE; còn cấu hình, inventory/chuyển luồng, UAT và Founder release. Chưa AI/Meta/CRM thật hoặc kết quả250k.
+Bản411e895 thêm tab Hoạt động AI, tách kết quả tư vấn/ACK–echo/lịch đã đặt; đóng RUNNING giữ cùng yêu cầu qua mất ACK/reload. Node18/22 mỗi1.398PASS/0fail/0skip, PostgreSQL489/0/0, cả10job/build/report/Messenger SUCCESS, đúng CI tree/parents. Reviewer độc lập đối chiếu published blobs/log/tree và PASS checkpointUI. Browser actualWorkspace/APIgiả do bên triển khai kiểm scope, stale, SURVEY/BOOKED và mất ACK. [Bằng chứng và hoàn tác](vpt-marketing-automation/CARE_RUNTIME_CONSOLE.md). Không SQL/backend mới hoặc mở quyền. Full goal ACTIVE; còn chi phí AI/biên nhận UNKNOWN, cấu hình, inventory/chuyển luồng, UAT và Founder release; chưa chạy thật hoặc chứng minh250k.
 
 ---
 

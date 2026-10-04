@@ -27,10 +27,14 @@ Browser được hỗ trợ tại localhost5195, actual Workspace/React StrictMo
 6. GET503ẩnlist/detail, hiển thị lỗi; không thay bằng số0.
 7. Từ hàngWAITING, nút mởhàngchờ reset về HUMAN_REQUESTED và đọc mới.
 
-Browser là bằng chứng giao diện synthetic, không thay PostgreSQL, provider/model thật hoặc UAT. Reviewer đã chạy độc lập10/10unit và chưa có finding chặn; checkpoint còn chờ build/CI bản công bố. Cập nhật kết quả bên dưới sau xác minh.
+Browser là bằng chứng giao diện synthetic, không thay PostgreSQL, provider/model thật hoặc UAT. Reviewer đã chạy độc lập10/10unit; sau đối chiếu published blobs và CI, kết luận **PASS checkpoint UI tại411e895**. Browser synthetic do bên triển khai thực hiện.
+
+## Kiểm chứng bản công bố
+
+Commit `411e895074ff82ab93b7f97a6a6e1e7ede00a2da`, tree `528487b595eb4a5aac17de1376d566bb4e12f9ca`. [Automation37197060961](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37197060961): cả10job SUCCESS. Node18/22 jobs111421021249/111421021322 mỗi **1.398PASS/0fail/0skip**; intake PostgreSQL111421021295 **489/0/0** (hồi quy SQL không đổi); frontend111421021311 **10.337modules/36,34s**. Report37197060933 và Messenger37197061020 SUCCESS. CI merge `d974079331084ab70cb59d5ad01daf033906a210` có cùng tree, parents `e16c885ae7c2305645be02a1227bf378cb59137f` + commit UI. Reviewer độc lập xác minh published blobs/logs/tree; không còn finding chặn trong phạm vi UI.
 
 ## Bước tiếp và hoàn tác
 
-Gói còn lại: xác nhận nguồn kiến thức/sản phẩm, key/model/giới hạn chi phí AI, người nhận và lịch khảo sát, inventory/chuyển luồng/UNKNOWN, phạm vi đo; UAT toàn tuyến Facebook→CRM→tư vấn→khách xác nhận→khảo sát→dashboard rồi Founder duyệt phát hành. Chỉ tiêu250.000đ/khách hợp lệ là mục tiêu; chưa có số đo thực tế. Không mở Google/các kênh khác trước cổng tuyến đầu.
+Gói còn lại: khép màn hình chi phí AI/đối soát biên nhận UNKNOWN và các ngoại lệ vận hành; xác nhận nguồn kiến thức/sản phẩm, key/model/giới hạn chi phí AI, người nhận và lịch khảo sát, inventory/chuyển luồng/UNKNOWN, phạm vi đo; UAT toàn tuyến Facebook→CRM→tư vấn→khách xác nhận→khảo sát→dashboard rồi Founder duyệt phát hành. Chỉ tiêu250.000đ/khách hợp lệ là mục tiêu; chưa có số đo thực tế. Không mở Google/các kênh khác trước cổng tuyến đầu.
 
 Hoàn tác UI bằng bỏ tab/component mới hoặc quay bản frontend trước; giữ run, proposal, receipt và pending sessionStorage để đối soát. Không xóa dữ liệu đã phát sinh, mở đường gửi cũ hoặc cấp quyền. Full goal vẫn ACTIVE.

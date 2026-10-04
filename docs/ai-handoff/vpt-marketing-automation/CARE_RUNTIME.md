@@ -27,7 +27,7 @@ API dưới customer-care, qua đăng nhập và VPT_CARE_RUNTIME_ADMIN riêng:
 - GET runtime/turn: xem run theo quyền hiện tại; ẩn đề xuất khi nguồn hoặc authority không còn phù hợp.
 - POST runtime/turn/close: người quản trị đóng một run với command ID, runtime request ID và lý do. Đóng lặp giữ kết quả; đổi nội dung cùng command bị từ chối.
 
-Close chỉ đóng RUNNING và chuyển WAITING về human queue; giữ terminal draft, HUMAN_ACTIVE hoặc OPTED_OUT đã có. Không refund, sửa usage receipt, xóa inbound marker hoặc tự retry. FINISH muộn bị từ chối. Close không thu hồi một permit đã claim: HTTP có thể đã bắt đầu hoặc bắt đầu trong cửa sổ tối đa5giây còn hiệu lực, nên đóng không chứng minh không có phí provider. Chưa có màn hình thao tác runtime riêng; API là đầu vào cho phần đó.
+Close chỉ đóng RUNNING và chuyển WAITING về human queue; giữ terminal draft, HUMAN_ACTIVE hoặc OPTED_OUT đã có. Không refund, sửa usage receipt, xóa inbound marker hoặc tự retry. FINISH muộn bị từ chối. Close không thu hồi một permit đã claim: HTTP có thể đã bắt đầu hoặc bắt đầu trong cửa sổ tối đa5giây còn hiệu lực, nên đóng không chứng minh không có phí provider. Màn hình thao tác runtime đã bổ sung và kiểm chứng riêng tại [CARE_RUNTIME_CONSOLE.md](CARE_RUNTIME_CONSOLE.md); các kết quả SQL693 bên dưới giữ đúng phạm vi lịch sử của checkpoint ban đầu.
 
 ## Kiểm chứng và phần còn thiếu
 
