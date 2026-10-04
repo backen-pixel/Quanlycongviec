@@ -113,4 +113,5 @@ module.exports=async(t,{db,peers,query,company,other,admin,sales,region,fresh})=
  });
  await require('./facebookBatchStop.cases')(t,{db,peers,query,company,other,admin,sales,fixture,begin,read,step,result,prepared,complete});
  await require('./facebookLegacyHold.cases')(t,{db,peers,query,company,admin,prepared,begin,read,step});
+ await require('./facebookBatchLinkReconciliation.cases')(t,{db,peers,query,company,other,admin,sales,fixture,begin,read,step,prepared});
 };

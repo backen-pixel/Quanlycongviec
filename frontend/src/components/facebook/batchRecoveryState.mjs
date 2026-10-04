@@ -29,7 +29,11 @@ export function clearPending(storage,p) {
 export function validateJournal(x, actor, company, request) {
   if (!x || x.policy !== 'FACEBOOK_BATCH_JOURNAL_V1' || x.actorId !== actor || x.companyId !== company || x.requestId !== request
     || !['RUNNING','REVIEW','COMPLETED'].includes(x.state) || !Array.isArray(x.items) || !x.items.length || x.items.length>500
-    || x.items.some(i => !uuid(i.contactId) || !['PENDING','RUNNING','UNKNOWN','CANCELLED','LINKED','SKIPPED'].includes(i.state))
+    || x.items.some(i => !uuid(i.contactId) || !['PENDING','RUNNING','UNKNOWN','CANCELLED','LINKED','SKIPPED','RECONCILED_LINKED'].includes(i.state)
+      || (i.state==='RECONCILED_LINKED' && (x.state!=='REVIEW' || i.result?.status!=='linked' || i.result?.contact_id!==i.contactId || !uuid(i.result?.lead_id)
+        || i.reconciliation?.policy!=='FACEBOOK_BATCH_LINK_RECONCILIATION_V1' || !uuid(i.reconciliation.commandId)
+        || !Number.isFinite(Date.parse(i.reconciliation.recordedAt)) || i.reconciliation.linkVerified!==true || i.reconciliation.claimRetained!==true
+        || i.reconciliation.businessReconciled!==false || i.reconciliation.processesDrained!==false)))
     || new Set(x.items.map(i=>i.contactId)).size!==x.items.length
     || (x.state==='COMPLETED'&&x.items.some(i=>!['LINKED','SKIPPED'].includes(i.state)))) throw Error('Kết quả không khớp lượt xử lý. Giữ yêu cầu để đối soát.');
   return x;

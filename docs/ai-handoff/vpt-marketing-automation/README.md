@@ -1,3 +1,5 @@
+04/10/2026: [Đối soát liên kết lượt Facebook bị ngắt](BATCH_LINK_RECONCILIATION.md), SQL688 đang nghiệm thu. Private operator, snapshot/hold/references/audit, RECONCILED_LINKED giữ claim; không replay hoặc xác nhận toàn bộ tác động. Local 1.315 PASS/0 fail/5 skip; PostgreSQL/CI/review cuối chờ. Mục tiêu đầy đủ còn ACTIVE.
+
 04/10/2026: [Dừng vòng cũ và tác vụ Facebook](LEGACY_RUNTIME_DRAIN.md), runtime `4c97626`: Node 18/22 mỗi bản 1.309 PASS/0 fail/0 skip, intake PostgreSQL 348/0/0; cả 10 job/build/report/Messenger SUCCESS. Reviewer độc lập đã đối chiếu blob công bố và log CI, kết luận PASS trong phạm vi này. Cờ vẫn tắt; còn khôi phục queue/UNKNOWN, kiểm đủ tác vụ/instance, cấu hình AI/lịch/người nhận và UAT/Founder release.
 
 04/10/2026: [Dừng/chờ năm worker](WORKER_DRAIN.md) runtimef3ea85e đã PASS review độc lập đúng published blobs/log CI. Node18/22=1.278/0/0 gồm2ca native signal, intakePG348/0/0,10job/build/report/Messenger SUCCESS. Cờ shutdown vẫn tắt, processesDrained=false; chưa legacy/post-ACK/push/other-process/UNKNOWN/cutover hoặc UAT/phát hành.

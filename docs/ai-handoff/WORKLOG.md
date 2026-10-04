@@ -1,3 +1,11 @@
+## 04/10/2026 — Đang nghiệm thu đối soát liên kết Facebook
+
+SQL688 bổ sung đối soát private operator cho item UNKNOWN đã có durable STOP: kiểm hold revision/manifest và snapshot Contact–Lead–Customer/messages, ghi audit nguyên giao dịch, giữ claim và thu hồi capability. RECONCILED_LINKED chỉ xác nhận liên kết hiện tại; run vẫn REVIEW, không tự replay hoặc coi mọi tác động đã hoàn tất. Public reader/UI giữ đúng giới hạn và kiểm quyền lịch sử.
+
+Local 1.315 PASS/0 fail/5 skip; 78 ca liên quan gồm 11 mới. PostgreSQL/CI/review cuối đang chờ. [Hợp đồng, kiểm chứng và hoàn tác](vpt-marketing-automation/BATCH_LINK_RECONCILIATION.md). Generic queue không chứa Facebook handler trong mã đã khảo sát; phải cô lập runner/API/consumer khi bảo trì, không chỉ tắt polling. Còn inventory/tác động ngoài liên kết, UNKNOWN mâu thuẫn, AI/lịch/người nhận/phạm vi đo, UAT và Founder release. Full goal ACTIVE; chưa DB thật/phát hành hoặc kết quả 250k.
+
+---
+
 ## 04/10/2026 — Dừng vòng cũ và tác vụ Facebook đã qua kiểm thử tích hợp
 
 Runtime `4c97626` theo dõi pipeline/master/scan/rescan/AutoTool, leader jobs, batch queue, marketing sync và handler Facebook sau ACK/client disconnect. Chờ ID đã dequeue tới lưu kết quả, không đổi enable nghiệp vụ khi shutdown. Hai finding về child sinh muộn và router con đã sửa. Node 18/22 mỗi bản **1.309 PASS/0 fail/0 skip**, intake PostgreSQL **348/0/0**, cả 10 job/build/report/Messenger SUCCESS. Reviewer độc lập đã đối chiếu blob công bố và log CI, kết luận PASS trong phạm vi này. [Phạm vi và bằng chứng](vpt-marketing-automation/LEGACY_RUNTIME_DRAIN.md).

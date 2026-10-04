@@ -60,6 +60,7 @@ export default function FacebookBatchRecovery({ actorId, companyId, contactIds, 
     {run&&<div role="status" className="rounded border bg-white p-3">
       <p>{run.state==='COMPLETED'?'Đã hoàn tất lượt xử lý.':journalSettled(run)?'Đã dừng lượt xử lý; phần chưa bắt đầu đã được hủy.':run.state==='RUNNING'?'Lượt đang chạy hoặc chưa xác nhận đã dừng.':'Đã ngừng bắt đầu việc mới; còn kết quả cần đối soát.'}</p>
       <p>Đã nối CRM: {count('LINKED')} · Bỏ qua: {count('SKIPPED')} · Chưa bắt đầu: {count('PENDING')} · Đã hủy trước khi chạy: {count('CANCELLED')} · Chưa rõ kết quả: {count('RUNNING')+count('UNKNOWN')}</p>
+      {count('RECONCILED_LINKED')>0&&<p>Đã đối soát liên kết CRM: {count('RECONCILED_LINKED')}. Hồ sơ này được giữ, không chạy lại thao tác tạo khách. Công việc và thông báo phát sinh khác vẫn cần kiểm tra theo hồ sơ đối soát.</p>}
       {!journalSettled(run)&&<p>Không tự chạy lại hồ sơ chưa rõ kết quả. Người phụ trách cần kiểm tra tác vụ cũ và hồ sơ đã phát sinh.</p>}
     </div>}
     {(state.pending||run)&&!journalSettled(run)&&<button type="button" disabled={disabled||(!!state.pending&&!!run&&run.requestId!==state.pending.requestId)}

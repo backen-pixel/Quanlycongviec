@@ -2,19 +2,28 @@
 const { randomUUID } = require('node:crypto');
 const uuid = x => typeof x === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x);
 const failure = (code = 'BATCH_JOURNAL_UNAVAILABLE', status = 503) => Object.assign(new Error(code), { code, status });
+function linkReviewValid(x) {
+  return x?.policy === 'FACEBOOK_BATCH_LINK_RECONCILIATION_V1' && uuid(x.commandId)
+    && Number.isFinite(Date.parse(x.recordedAt)) && x.linkVerified === true && x.claimRetained === true
+    && x.businessReconciled === false && x.processesDrained === false;
+}
 function validateRun(run, actor, company, request) {
   if (!run || run.policy !== 'FACEBOOK_BATCH_JOURNAL_V1' || run.actorId !== actor || run.companyId !== company || run.requestId !== request
     || !['RUNNING', 'COMPLETED', 'REVIEW'].includes(run.state) || !Array.isArray(run.items) || !run.items.length || run.items.length > 500
     || new Set(run.items.map(x => x.contactId)).size !== run.items.length
-    || run.items.some(x => !uuid(x.contactId) || !['PENDING', 'RUNNING', 'LINKED', 'SKIPPED', 'UNKNOWN', 'CANCELLED'].includes(x.state)
-      || (x.state === 'LINKED' && (x.result?.status !== 'linked' || x.result?.contact_id !== x.contactId || !uuid(x.result?.lead_id)))
+    || run.items.some(x => !uuid(x.contactId) || !['PENDING', 'RUNNING', 'LINKED', 'SKIPPED', 'UNKNOWN', 'CANCELLED', 'RECONCILED_LINKED'].includes(x.state)
+      || (['LINKED','RECONCILED_LINKED'].includes(x.state) && (x.result?.status !== 'linked' || x.result?.contact_id !== x.contactId || !uuid(x.result?.lead_id)))
+      || (x.state === 'RECONCILED_LINKED' && (run.state !== 'REVIEW' || !linkReviewValid(x.reconciliation)))
       || (x.state === 'SKIPPED' && (x.result?.status !== 'skipped' || x.result?.contact_id !== x.contactId
         || !['MANUAL_TRIGGER','SYNC_PAUSED','PHONE_REQUIRED','MESSAGE_THRESHOLD'].includes(x.result?.reason))))
     || (run.state === 'COMPLETED' && run.items.some(x => !['LINKED','SKIPPED'].includes(x.state)))
     || !Number.isFinite(Date.parse(run.createdAt)) || !Number.isFinite(Date.parse(run.updatedAt))) throw failure();
   return { policy: run.policy, actorId: actor, companyId: company, requestId: request, state: run.state,
     createdAt: run.createdAt, updatedAt: run.updatedAt,
-    items: run.items.map(x => ({ contactId: x.contactId, state: x.state, result: x.state === 'LINKED'
+    items: run.items.map(x => ({ contactId: x.contactId, state: x.state,
+      ...(x.state === 'RECONCILED_LINKED' ? { reconciliation: { policy: x.reconciliation.policy, commandId: x.reconciliation.commandId,
+        recordedAt: x.reconciliation.recordedAt, linkVerified: true, claimRetained: true, businessReconciled: false, processesDrained: false } } : {}),
+      result: ['LINKED','RECONCILED_LINKED'].includes(x.state)
       ? { contact_id: x.contactId, status: 'linked', lead_id: x.result.lead_id }
       : x.state === 'SKIPPED' ? { contact_id: x.contactId, status: 'skipped', reason: x.result.reason } : null })) };
 }
@@ -26,7 +35,7 @@ function journalResponse(run) {
   const count = state => run.items.filter(x => x.state === state).length;
   const settled = journalSettled(run);
   return { status: settled ? 200 : 202, body: { company_id: run.companyId, total: run.items.length,
-    processed: count('LINKED'), skipped: count('SKIPPED'), failed: count('UNKNOWN'), unprocessed: count('PENDING') + count('RUNNING') + count('CANCELLED'),
+    processed: count('LINKED'), reconciled_links: count('RECONCILED_LINKED'), skipped: count('SKIPPED'), failed: count('UNKNOWN'), unprocessed: count('PENDING') + count('RUNNING') + count('CANCELLED'),
     results: run.items.filter(x => x.result).map(x => x.result), journal: run, reconciliation_required: !settled,
     ...(!settled ? { error: 'Lượt xử lý đã được lưu. Đọc lại tiến độ; hồ sơ chưa rõ kết quả cần đối soát trước khi tiếp tục.' } : {}) } };
 }
