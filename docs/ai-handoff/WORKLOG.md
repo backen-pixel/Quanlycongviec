@@ -1,3 +1,7 @@
+## 04/10/2026 — Trợ lý tư vấn nguồn đã duyệt (đang kiểm chứng)
+
+Thêm SQL689, careAdvisor.js, router và Node/PostgreSQL cases; nối fixture inference với cơ chế thread/library hiện có. Draft giữ nguyên câu trả lời được duyệt, nhu cầu là trích dẫn chưa xác minh. Thêm BEGIN/FINISH/READ/CLOSE/RETRY bền vững; không provider thật hoặc quyền gửi. Local16 PASS; CI PostgreSQL và review cuối còn chờ. Xem [hợp đồng/hoàn tác](vpt-marketing-automation/CARE_ADVISOR_DRAFTS.md).
+
 ## 04/10/2026 — Đối soát liên kết Facebook đã qua PostgreSQL và review
 
 SQL688 cho operator đối soát liên kết hiện tại của item UNKNOWN đã durable STOP, dưới đúng hold revision/manifest/snapshot; giữ claim, thu hồi capability và ghi audit nguyên giao dịch. Run vẫn REVIEW; không replay creator hoặc xác nhận toàn bộ tác động đã hoàn tất. Reader/UI giữ đúng giới hạn và quyền lịch sử.

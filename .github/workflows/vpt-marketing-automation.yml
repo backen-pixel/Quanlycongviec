@@ -88,6 +88,7 @@ on:
       - 'database/686_facebook_batch_stop.sql'
       - 'database/687_crm_legacy_write_hold.sql'
       - 'database/688_facebook_batch_link_reconciliation.sql'
+      - 'database/689_crm_care_advisor_drafts.sql'
       - 'backend/tests/facebookBatchLinkReconciliation*.js'
       - 'backend/tests/facebookLegacyHold*.js'
       - 'backend/tests/facebookBatchStop*.js'
@@ -157,6 +158,7 @@ jobs:
       - run: node --test backend/tests/facebookWorkerDrain.test.js backend/tests/workerShutdown.test.js backend/tests/facebookMessengerReceipt.test.js
       - run: node --test backend/tests/legacyProcessDrain.test.js
       - run: node --test backend/tests/facebookBatchLinkReconciliation.test.js
+      - run: node --test backend/tests/facebookCustomerCare.advisor.test.js
       - name: Install isolated Express version matching backend lock
         run: npm install --prefix "$RUNNER_TEMP/vpt-http" --ignore-scripts --no-audit --no-fund express@5.2.1
       - name: Real Express post-ACK and stopped admission

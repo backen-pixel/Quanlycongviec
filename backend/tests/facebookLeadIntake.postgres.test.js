@@ -86,5 +86,6 @@ test('isolated PostgreSQL Facebook Lead Ads intake',{skip:!dsn},async t=>{
   await require('./facebookLegacyBatch.cases')(t,{db,peers,company,other,admin,sales,region,pipeline,stage,source});
   await require('./facebookLegacySourceRepair.cases')(t,{db,peers,query,company,other,admin,sales,region,source,fresh:connectionFixtures.fresh});
   await require('./facebookBatchJournal.cases')(t,{db,peers,query,company,other,admin,sales,region,fresh:connectionFixtures.fresh});
+  await require('./facebookCustomerCare.advisor.cases')(t,{db,peers,query,company,other,admin,sales,region,fresh:connectionFixtures.fresh});
  }finally{await Promise.all(peers.map(x=>x.end()));await db.end();}
 });

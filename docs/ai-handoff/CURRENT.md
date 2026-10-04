@@ -1,3 +1,11 @@
+## 04/10/2026 — Đang kiểm chứng trợ lý chọn nội dung tư vấn
+
+SQL689 và Application Service nối hội thoại/nguồn đã duyệt → inference port → kiểm lại quyền/nguồn → bản nháp có trích dẫn. Có nhật ký một lần gọi, đối soát và retry tường minh; giữ send=false. Local16 PASS; PostgreSQL và review cuối đang chờ. Router chưa gắn provider, cờ mặc định tắt. [Phạm vi, phục hồi và phần còn thiếu](vpt-marketing-automation/CARE_ADVISOR_DRAFTS.md).
+
+Full goal ACTIVE: còn provider/chi phí/quyền runtime, giao diện/worker/gửi và chất lượng AI, cấu hình khảo sát, UAT/Founder release. Chưa dữ liệu thật, model call, chi quảng cáo hoặc đạt250k.
+
+---
+
 ## 04/10/2026 — Đối soát liên kết Facebook đã qua PostgreSQL và review
 
 SQL688 cho operator đối soát liên kết hiện tại của item UNKNOWN đã durable STOP, dưới đúng hold revision/manifest/snapshot; giữ claim, thu hồi capability và ghi audit nguyên giao dịch. Run vẫn REVIEW; không replay creator hoặc xác nhận toàn bộ tác động đã hoàn tất. Reader/UI giữ đúng giới hạn và quyền lịch sử.
