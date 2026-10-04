@@ -1,5 +1,7 @@
 ## 04/10/2026 — Sửa bằng chứng diễn tập khôi phục
 
+Đóng kiểm chứng eb42ff85/tree d8f77540: automation37200820753 cả10jobSUCCESS, intake502/0/0, restore11/0/0 trên124bảng; Node18/22 mỗi1.412/0/0, build10.339modules/28,03s, report37200820778/Messenger37200820720SUCCESS. CImergea7ae00c5 khớp tree/parents. Reviewer độc lập tự đọc publishedblobs/log/tree và PASS checkpoint; SQL697 không đổi. Cập nhật CURRENT/README/RESTORE_REHEARSAL và bước tiếp cho Founder: cấu hình, nguồn/chuyển luồng, UAT rồi gói phát hành. Full goal ACTIVE; chưa DB/model/provider thật hoặc quyền chạy.
+
 CI a6c523c intake502/0/0 nhưng restore2PASS/9FAIL. Harness đã hiểu ACL NULL thành không có quyền; sửa chuẩn hóa về acldefault theo loại/owner, giữ đối chiếu quyền và kiểm negative grant drift. Bổ sung hai sequence synthetic với last_value/is_called khác mặc định và đối chiếu cấu hình để kiểm rõ trạng thái bộ đếm. Log nguồn có sequence; không kết luận kiểm cũ đã so tập rỗng. Không đổi SQL697 hoặc dữ liệu thật. Node syntax PASS; CI/review cuối chờ. [Phạm vi và hoàn tác](vpt-marketing-automation/RESTORE_REHEARSAL.md).
 
 ## 04/10/2026 — Transport câu tư vấn theo quyền riêng

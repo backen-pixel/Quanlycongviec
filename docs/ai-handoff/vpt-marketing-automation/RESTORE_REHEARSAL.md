@@ -27,6 +27,17 @@ Quyền mặc định tham chiếu [acldefault PostgreSQL16](https://www.postgre
 
 Nguồn công cụ: [pg_dump PostgreSQL16](https://www.postgresql.org/docs/16/app-pgdump.html), [pg_restore PostgreSQL16](https://www.postgresql.org/docs/16/app-pgrestore.html). Snapshot nhất quán của DB không tự chứng minh các tác động ở Meta/model đã hoàn tất.
 
+## Kết quả đúng phiên bản
+
+Bản kiểm `eb42ff85b04c98f214a4af22a2660b50920f55f5`, tree `d8f775404218fa87282afcb55e1a62bd2fb23397`; SQL697 giữ nguyên từ a6c523c. [Automation 37200820753](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37200820753) đạt cả10job:
+
+- Node18 và22 mỗi bản1.412 PASS/0 fail/0 skip (job111431964805 và111431964794).
+- [PostgreSQL intake và restore](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37200820753/job/111431964694): intake502/0/0; rehearsal11/0/0 gồm10subtests+parent. Restore124bảng fixture, archive2.185.545bytes, SHA256 `f041559b477e49cc55079b96a343098038307c1f5d9846547592437324accfe3`. Hai sequence synthetic, quyền sau grant drift/rollback, OID permutation, khóa thật, replay và UNKNOWN đều đạt.
+- Full frontend10.339modules/28,03s; [Report37200820778](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37200820778) và [Messenger37200820720](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37200820720) SUCCESS.
+- CI merge `a7ae00c52d59b66d4449d23f6531cdedb71d0c4b` có cùng tree và đúng parents base `e16c885ae7c2305645be02a1227bf378cb59137f` + bản kiểm. Không thay rehearsal thất bại a6c523c thành bằng chứng đạt.
+
+Reviewer độc lập đã đối chiếu published SQL/harness, log PostgreSQL/Node22/build, trạng thái10job và CI tree/parents; kết luận PASS checkpoint đúng bản trên. Không có finding chặn trong phạm vi. Nội dung lịch sử “đang chờ” phía trên mô tả lần chạy trước; kết luận hiện hành là mục này.
+
 ## Cổng vận hành và hoàn tác
 
 Kết quả này chỉ bao phủ schema/dữ liệu fixture và lệnh metadata riêng. Chưa chứng nhận schema đầy đủ của production, file trong object storage, role/auth platform, secret, lịch bên ngoài, replication/Primary–Backup, hiệu năng/RPO/RTO hoặc webhook phát sinh sau thời điểm backup. Các mục đó cần gói diễn tập đúng môi trường và quyết định Founder. Không mở worker từ chính sách/grant active được phục hồi: phải giữ môi trường cách ly, đối soát UNKNOWN và tác động ngoài DB trước khi nghiệm thu/chuyển luồng.

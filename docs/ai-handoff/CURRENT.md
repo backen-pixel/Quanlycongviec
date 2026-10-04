@@ -1,8 +1,8 @@
-## 04/10/2026 — Đang diễn tập khôi phục PostgreSQL
+## 04/10/2026 — Diễn tập khôi phục dữ liệu đã qua kiểm chứng
 
-CI a6c523c: intake 502 PASS/0 fail; rehearsal 2 PASS/9 fail, lỗi đầu do so sánh ACL mặc định NULL với owner-only explicit; lỗi sau là phụ thuộc. Sửa harness dùng acldefault đúng loại/owner, vẫn giữ đối chiếu grantor/grantee/grant-option và ca phát hiện quyền PUBLIC tăng. Thêm hai sequence có giá trị/is_called khác mặc định cùng cấu hình để không chứng minh bằng tập rỗng. SQL697 không đổi. CI/review bản sửa đang chờ; chưa PASS.
+Bản kiểm eb42ff85 đạt intake PostgreSQL502/0/0 và restore11/0/0: 124bảng fixture được khôi phục sang cluster riêng, đối chiếu dữ liệu/quyền/schema/audit/sequence và giữ UNKNOWN. Node18/22 mỗi bản1.412/0/0; cả10job/build/report/Messenger SUCCESS, đúng CI tree/parents. Reviewer độc lập xác minh published blobs/log/tree và PASS checkpoint. Lỗi harness ACL mặc định của a6c523c đã sửa; không thay SQL697. [Bằng chứng, giới hạn và hoàn tác](vpt-marketing-automation/RESTORE_REHEARSAL.md).
 
-Thêm rehearsal pg_dump/pg_restore giữa hai cluster cô lập trên toàn dữ liệu fixture intake/care/survey. Đối chiếu dữ liệu, schema/FK/quyền/audit và giữ UNKNOWN. SQL697 cho operator gắn lại OID manifest sau logical restore, có hash/revision/audit riêng và luôn giữ/bật hold; không tự mở vận hành. Node syntax đã kiểm, CI/review cuối đang chờ. [Phạm vi và giới hạn](vpt-marketing-automation/RESTORE_REHEARSAL.md). Full goal ACTIVE; chưa backup/khôi phục DB thật hoặc phát hành.
+SQL697 chỉ cho operator gắn lại OID manifest dưới hold, không mở hệ thống. Bước tiếp là chốt nội dung tư vấn, người nhận/lịch khảo sát, quyền/model/hạn mức AI và phạm vi đo; khép chuyển luồng/nguồn thật, nghiệm thu Facebook → CRM → AI → khảo sát → dashboard, rồi trình Founder gói phát hành. Câu hỏi cấu hình còn chờ, không tự chọn người hoặc mở quyền. Full goal ACTIVE; chưa backup/khôi phục DB thật, UAT hoặc phát hành. Mục tiêu250.000đ/khách hợp lệ chưa có kết quả thực tế.
 
 ---
 
