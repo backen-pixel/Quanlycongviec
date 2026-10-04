@@ -1,4 +1,5 @@
 import FacebookBatchRecovery from '../components/facebook/FacebookBatchRecovery';
+import FacebookDuplicateReview from '../components/facebook/FacebookDuplicateReview';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCrmSocialInboxUser, isCrmSocialInboxCompanyLocked } from '../lib/adminRole';
@@ -2445,23 +2446,6 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
     }
   };
 
-  // Kiểm tra & xóa lead trùng không liên kết FB
-  const dedupLeads = async () => {
-    if (!confirm('Kiểm tra và xóa lead trùng không liên kết với Facebook?')) return;
-    setBatchStatus({ type: 'dedup', loading: true, result: null });
-    try {
-      const res = await fetch(`${API}/api/facebook/dedup-leads`, {
-        method: 'POST',
-        headers: { ...hdr(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id: toolCompanyId }),
-      });
-      const data = await res.json();
-      setBatchStatus({ type: 'dedup', loading: false, result: data });
-      load();
-    } catch (e) {
-      setBatchStatus({ type: 'dedup', loading: false, result: { error: e.message } });
-    }
-  };
 
   return (
     <div className="p-6 overflow-y-auto h-full">
@@ -2579,11 +2563,8 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
             {batchStatus?.type === 'names' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-purple-600 border-t-transparent rounded-full" /> : '🔄'}
             Refresh tên
           </button>
-          <button onClick={dedupLeads} disabled={batchStatus?.loading}
-            className="px-3 py-1.5 text-xs font-medium bg-orange-50 text-orange-700 border border-orange-200 rounded-lg hover:bg-orange-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
-            {batchStatus?.type === 'dedup' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-orange-600 border-t-transparent rounded-full" /> : '🔍'}
-            Xóa Lead trùng
-          </button>
+          {(toolCompanyId || user?.company_id) && <FacebookDuplicateReview
+            key={contactScopeKey} companyId={toolCompanyId || user.company_id} api={API} headers={hdr} />}
           <button onClick={batchExtractPhones} disabled={batchStatus?.loading}
             className="px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
             title="Chỉ đọc tin đã lưu DB — không kéo tin mới từ Facebook">

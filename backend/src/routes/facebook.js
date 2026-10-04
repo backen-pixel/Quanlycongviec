@@ -7,6 +7,7 @@ const DURABLE_MESSENGER_PAGES = enabledPageIds();
 const { isFacebookAtomicLeadScope, createFacebookLeadOnce } = require('../helpers/facebookAtomicLead');
 const { runFacebookLeadBatch } = require('../helpers/facebookLegacyBatch');
 const { repairFacebookSources } = require('../helpers/facebookLegacySourceRepair');
+const { readFacebookDuplicateReview } = require('../helpers/facebookDuplicateReview');
 const { createFacebookBatchJournal, journalResponse } = require('../helpers/facebookBatchJournal');
 const { assertLegacyFacebookWriteAllowed, legacyFacebookPageMayWrite } = require('../helpers/facebookLegacyWriteScope');
 const { loadFacebookCreationContext, assertFacebookCreationTargets, assertFacebookCreationAssignment, assertFacebookCreationActor, assertFacebookCreationPipeline, findFacebookCreationCustomer, resolveScopedFacebookSource, assertFacebookCreationMessageLinks, writeFacebookCreationContact, assertFacebookCreationSource, facebookCreationScopeConflict } = require('../helpers/facebookLegacyCreationScope');
@@ -1557,18 +1558,19 @@ async function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
       emitAutoState();
 
       autoPipeline.step = 3;
-      autoPipeline.stepLabel = '🔍 Xóa Lead trùng';
+      autoPipeline.stepLabel = '🔍 Rà khách trùng';
       emitAutoState();
-      let dedupMerged = 0;
-      let dedupMessage = '';
+      let dedupReview = { status: 'UNAVAILABLE', reviewGroupCount: null, unresolvedPairCount: null, merged: 0 };
       try {
-        const dd = await autoPipelineInternalPostJson('/facebook/dedup-leads', { company_id: companyId });
-        dedupMerged = dd.merged || 0;
-        dedupMessage = dd.message || '';
-        pushAutoLog(`✅ Xóa lead trùng: ${dedupMerged} lead (${dedupMessage})`, 'ok');
+        const review = await autoPipelineInternalPostJson('/facebook/duplicate-review', { company_id: companyId });
+        dedupReview = { status: 'READ', reviewGroupCount: review.reviewGroupCount,
+          unresolvedPairCount: review.unresolvedPairCount, merged: 0,
+          message: 'Đối chiếu thông tin liên hệ; hồ sơ và lịch sử được giữ nguyên.' };
+        pushAutoLog(`🔍 Rà khách trùng: ${review.reviewGroupCount} nhóm cần kiểm, ${review.unresolvedPairCount} cặp cần xác minh`, 'ok');
       } catch (e) {
-        console.error('[AutoPipeline] dedup-leads', e);
-        pushAutoLog(`❌ Xóa lead trùng: ${e.message}`, 'error');
+        console.error('[AutoPipeline] duplicate-review', e);
+        dedupReview.message = 'Chưa đọc được kết quả rà khách trùng.';
+        pushAutoLog('❌ Chưa đọc được kết quả rà khách trùng', 'error');
         autoPipeline.kpi.errors += 1;
       }
       emitAutoState();
@@ -1616,7 +1618,7 @@ async function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
                     next_offset: autoPipeline.fullCycleSyncExtractOffset,
                   },
             refresh_names: { updated: refreshUpdated, total: refreshTotal },
-            dedup: { merged: dedupMerged, message: dedupMessage },
+            dedup: dedupReview,
             sync_phones: { updated: syncPhonesUpdated, total: syncPhonesTotal },
           },
         },
@@ -1729,7 +1731,7 @@ async function runAutoPipelineLoop(companyKey = FB_GLOBAL_SCOPE_KEY) {
         console.error('[AutoPipeline] pipeline v2 (fallback)', e.message);
       }
       try { await autoPipelineInternalPostJson('/facebook/refresh-names', { company_id: companyId }); } catch (e) { console.error('[AutoPipeline] refresh-names (fallback)', e.message); }
-      try { await autoPipelineInternalPostJson('/facebook/dedup-leads', { company_id: companyId }); } catch (e) { console.error('[AutoPipeline] dedup-leads (fallback)', e.message); }
+      try { await autoPipelineInternalPostJson('/facebook/duplicate-review', { company_id: companyId }); } catch (e) { console.error('[AutoPipeline] duplicate-review (fallback)', e.message); }
       try { await autoPipelineInternalPostJson('/facebook/sync-contact-phones', { company_id: companyId }); } catch (e) { console.error('[AutoPipeline] sync-contact-phones (fallback)', e.message); }
       done = true;
     }
@@ -5972,287 +5974,19 @@ r.get('/analytics', authMiddleware, async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// BATCH: Tạo lead cho TẤT CẢ contacts chưa có lead + Extract SĐT
-// POST /facebook/dedup-leads — Gộp lead trùng: giữ lead tốt nhất, chuyển data, xóa phần dư
-r.post('/dedup-leads', authMiddleware, async (req, res) => {
-  try {
-    const io = r._ioRef;
-
-    // company_id (optional) → chỉ gộp lead trong phạm vi công ty
-    const dedupCompanyId = req.body?.company_id != null && String(req.body.company_id).trim() !== ''
-      ? String(req.body.company_id).trim()
-      : null;
-
-    // 1. Lấy tất cả leads (không join customer để tránh lỗi FK)
-    let leadsQuery = supabase.from('crm_leads')
-      .select('id, code, customer_id, source_id, title, type, estimated_value, created_at, updated_at, stage_id, assigned_to, description, install_address')
-      .eq('type', 'lead');
-    if (dedupCompanyId) leadsQuery = leadsQuery.eq('company_id', dedupCompanyId);
-    const { data: allLeads, error: leadsErr } = await leadsQuery
-      .order('created_at', { ascending: false })
-      .limit(5000);
-    
-    if (leadsErr) {
-      console.error('[Dedup] Query error:', leadsErr.message);
-      return res.status(500).json({ error: `Query lỗi: ${leadsErr.message}` });
-    }
-    if (!allLeads?.length) return res.json({ merged: 0, scanned: 0, message: 'Không có lead nào' });
-
-    // 1b. Lấy customers riêng
-    const custIds = [...new Set(allLeads.map(l => l.customer_id).filter(Boolean))];
-    const custMap = {};
-    if (custIds.length) {
-      const { data: custs } = await supabase.from('customers')
-        .select('id, full_name, phone').in('id', custIds);
-      (custs || []).forEach(c => { custMap[c.id] = c; });
-    }
-    // Attach customer data
-    allLeads.forEach(l => { l.customer = custMap[l.customer_id] || null; });
-
-    // 2. Lấy FB contacts map
-    const { data: fbContacts } = await supabase.from('facebook_contacts')
-      .select('id, lead_id, psid, fb_name, phone, page_id').not('lead_id', 'is', null);
-    const fbLeadMap = {}; // lead_id → { psid, fb_name, phone }
-    const psidLeadMap = {}; // psid → [lead_ids]
-    (fbContacts || []).forEach(c => {
-      if (c.lead_id) fbLeadMap[c.lead_id] = c;
-      if (c.psid) {
-        if (!psidLeadMap[c.psid]) psidLeadMap[c.psid] = new Set();
-        psidLeadMap[c.psid].add(c.lead_id);
-      }
-    });
-
-    // 3. Normalize SĐT → last 9 digits
-    const normalizePhone = (p) => {
-      if (!p) return null;
-      const clean = p.replace(/[^0-9]/g, '');
-      return clean.length >= 9 ? clean.slice(-9) : null;
-    };
-
-    // 4. Build union-find groups bằng nhiều tiêu chí
-    const leadById = {};
-    allLeads.forEach(l => { leadById[l.id] = l; });
-
-    // Parent map cho union-find
-    const parent = {};
-    allLeads.forEach(l => { parent[l.id] = l.id; });
-    const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
-    const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; };
-
-    // Group by customer_id
-    const byCustomer = {};
-    allLeads.forEach(l => {
-      if (!l.customer_id) return;
-      if (!byCustomer[l.customer_id]) byCustomer[l.customer_id] = [];
-      byCustomer[l.customer_id].push(l.id);
-    });
-    Object.values(byCustomer).forEach(ids => {
-      for (let i = 1; i < ids.length; i++) union(ids[0], ids[i]);
-    });
-
-    // Group by PSID
-    Object.values(psidLeadMap).forEach(leadIdSet => {
-      const ids = [...leadIdSet];
-      for (let i = 1; i < ids.length; i++) union(ids[0], ids[i]);
-    });
-
-    // Group by phone (last 9 digits)
-    const byPhone = {};
-    allLeads.forEach(l => {
-      const p = normalizePhone(l.customer?.phone);
-      if (!p) return;
-      if (!byPhone[p]) byPhone[p] = [];
-      byPhone[p].push(l.id);
-    });
-    Object.values(byPhone).forEach(ids => {
-      for (let i = 1; i < ids.length; i++) union(ids[0], ids[i]);
-    });
-
-    // Group by Title chuẩn hóa (loại [FB], lowercase, trim)
-    const byTitle = {};
-    allLeads.forEach(l => {
-      const norm = (l.title || '').replace(/\[.*?\]/g, '').toLowerCase().trim();
-      // Bỏ qua tên chung chung
-      if (!norm || norm === 'kh facebook' || norm === 'user' || norm === 'facebook user' || norm.length < 3) return;
-      if (!byTitle[norm]) byTitle[norm] = [];
-      byTitle[norm].push(l.id);
-    });
-    Object.values(byTitle).forEach(ids => {
-      for (let i = 1; i < ids.length; i++) union(ids[0], ids[i]);
-    });
-
-    console.log(`[Dedup] Scanned ${allLeads.length} leads | Groups: customer=${Object.values(byCustomer).filter(v=>v.length>1).length}, psid=${Object.values(psidLeadMap).filter(v=>v.size>1).length}, phone=${Object.values(byPhone).filter(v=>v.length>1).length}, title=${Object.values(byTitle).filter(v=>v.length>1).length}`);
-
-    // 5. Collect groups
-    const groups = {};
-    allLeads.forEach(l => {
-      const root = find(l.id);
-      if (!groups[root]) groups[root] = [];
-      groups[root].push(l);
-    });
-
-    // Filter: chỉ groups có >= 2 leads
-    const dupGroups = Object.values(groups).filter(g => g.length > 1);
-    if (!dupGroups.length) {
-      return res.json({ merged: 0, scanned: allLeads.length, message: 'Không có lead trùng cần gộp' });
-    }
-
-    if (io) io.emit('batch_progress', { type: 'dedup', phase: 'start', total: dupGroups.length, current: 0 });
-
-    let totalMerged = 0;
-    const details = [];
-
-    for (let g = 0; g < dupGroups.length; g++) {
-      const group = dupGroups[g];
-      try { await assertLegacyFacebookWriteAllowed(supabase, { leadIds: group.map(x => x.id) }); }
-      catch (e) {
-        details.push({ reason: e.message, skipped: group.length });
-        if (e.code !== 'MANAGED_CARE_SCOPE') throw e;
-        if (io) io.emit('batch_progress', { type: 'dedup', current: g + 1, total: dupGroups.length, status: 'skipped' });
-        continue;
-      }
-
-      // Chọn lead tốt nhất: ưu tiên có FB link > có phone > có value > cũ nhất (đầu tiên tạo)
-      group.sort((a, b) => {
-        const aFb = fbLeadMap[a.id] ? 1 : 0;
-        const bFb = fbLeadMap[b.id] ? 1 : 0;
-        if (bFb !== aFb) return bFb - aFb;
-        const aPhone = (a.customer?.phone) ? 1 : 0;
-        const bPhone = (b.customer?.phone) ? 1 : 0;
-        if (bPhone !== aPhone) return bPhone - aPhone;
-        const aVal = a.estimated_value || 0;
-        const bVal = b.estimated_value || 0;
-        if (bVal !== aVal) return bVal - aVal;
-        return new Date(a.created_at) - new Date(b.created_at); // oldest first = keep
-      });
-
-      const keep = group[0];
-      const dupes = group.slice(1);
-
-      for (const dupe of dupes) {
-        try {
-          await assertLegacyFacebookWriteAllowed(supabase, { leadIds: [keep.id, dupe.id] });
-          // Gộp estimated_value
-          if (dupe.estimated_value > 0 && !keep.estimated_value) {
-            await supabase.from('crm_leads').update({ estimated_value: dupe.estimated_value }).eq('id', keep.id);
-          }
-          // Gộp phone nếu keep thiếu
-          const keepCust = custMap[keep.customer_id];
-          const dupeCust = custMap[dupe.customer_id];
-          if (keepCust && !keepCust.phone && dupeCust?.phone) {
-            await supabase.from('customers').update({ phone: dupeCust.phone }).eq('id', keep.customer_id);
-            keepCust.phone = dupeCust.phone;
-          }
-          // Gộp install_address nếu keep thiếu
-          if (!keep.install_address && dupe.install_address) {
-            await supabase.from('crm_leads').update({ install_address: dupe.install_address }).eq('id', keep.id);
-          }
-
-          // Move related data → keep
-          await supabase.from('facebook_contacts').update({ lead_id: keep.id }).eq('lead_id', dupe.id);
-          await supabase.from('facebook_messages').update({ lead_id: keep.id }).eq('lead_id', dupe.id);
-          try { await supabase.from('crm_pipeline_history').update({ lead_id: keep.id }).eq('lead_id', dupe.id); } catch (_) {}
-          try { await supabase.from('crm_tasks').update({ lead_id: keep.id }).eq('lead_id', dupe.id); } catch (_) {}
-          try { await supabase.from('crm_activities').update({ lead_id: keep.id }).eq('lead_id', dupe.id); } catch (_) {}
-          try { await supabase.from('lead_documents').update({ lead_id: keep.id }).eq('lead_id', dupe.id); } catch (_) {}
-          try { await supabase.from('quotations').update({ lead_id: keep.id }).eq('lead_id', dupe.id); } catch (_) {}
-          try { await supabase.from('orders').update({ lead_id: keep.id }).eq('lead_id', dupe.id); } catch (_) {}
-          try { await supabase.from('invoices').update({ lead_id: keep.id }).eq('lead_id', dupe.id); } catch (_) {}
-          try { await supabase.from('lead_members').delete().eq('lead_id', dupe.id); } catch (_) {}
-          try { await supabase.from('lead_messages').delete().eq('lead_id', dupe.id); } catch (_) {}
-
-          // Xóa duplicate lead
-          await supabase.from('crm_leads').delete().eq('id', dupe.id);
-
-          // Xóa customer trùng nếu không còn lead nào dùng
-          if (dupe.customer_id && dupe.customer_id !== keep.customer_id) {
-            const { count } = await supabase.from('crm_leads').select('id', { count: 'exact', head: true }).eq('customer_id', dupe.customer_id);
-            if (count === 0) {
-              try { await supabase.from('customers').delete().eq('id', dupe.customer_id); } catch (_) {}
-            }
-          }
-
-          totalMerged++;
-          details.push({ deleted: dupe.code, kept: keep.code, reason: `Gộp → ${keep.code}` });
-        } catch (e) {
-          console.error(`[Dedup] Error merging ${dupe.code} → ${keep.code}:`, e.message);
-          details.push({ deleted: dupe.code, kept: keep.code, reason: `Lỗi: ${e.message}` });
-        }
-      }
-
-      if (io) io.emit('batch_progress', { type: 'dedup', current: g + 1, total: dupGroups.length, name: `${keep.code} (gộp ${dupes.length})`, status: 'merged' });
-    }
-
-    const summary = {
-      merged: totalMerged,
-      scanned: allLeads.length,
-      groups: dupGroups.length,
-      details: details.slice(0, 100),
-      message: totalMerged > 0
-        ? `Đã gộp ${totalMerged} lead trùng (${dupGroups.length} nhóm)`
-        : 'Không có lead trùng cần gộp',
-    };
-    if (io) io.emit('batch_done', { type: 'dedup', ...summary });
-    res.json(summary);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// DEBUG: Scan duplicate leads — hiển thị nhóm trùng theo title + phone + customer
-r.get('/scan-duplicates-debug', authMiddleware, async (req, res) => {
-  try {
-    const { data: allLeads, error: err } = await supabase.from('crm_leads')
-      .select('id, code, title, customer_id, source_id, created_at')
-      .eq('type', 'lead')
-      .limit(5000);
-    
-    if (err) return res.status(500).json({ error: err.message });
-
-    // Lấy customer phone riêng
-    const custIds = [...new Set(allLeads.map(l => l.customer_id).filter(Boolean))];
-    const custMap = {};
-    if (custIds.length) {
-      const { data: custs } = await supabase.from('customers').select('id, full_name, phone').in('id', custIds);
-      (custs || []).forEach(c => { custMap[c.id] = c; });
-    }
-    
-    // Group theo title chuẩn hóa
-    const byTitle = {};
-    allLeads.forEach(l => {
-      const norm = (l.title || '').replace(/\[.*?\]/g, '').toLowerCase().trim();
-      if (!norm || norm === 'kh facebook' || norm === 'user' || norm === 'facebook user' || norm.length < 3) return;
-      if (!byTitle[norm]) byTitle[norm] = [];
-      const cust = custMap[l.customer_id];
-      byTitle[norm].push({ id: l.id, code: l.code, title: l.title, phone: cust?.phone, custName: cust?.full_name, customer_id: l.customer_id });
-    });
-
-    // Group theo phone (last 9 digits)
-    const byPhone = {};
-    allLeads.forEach(l => {
-      const cust = custMap[l.customer_id];
-      const raw = cust?.phone;
-      if (!raw) return;
-      const clean = raw.replace(/[^0-9]/g, '');
-      const norm = clean.length >= 9 ? clean.slice(-9) : null;
-      if (!norm) return;
-      if (!byPhone[norm]) byPhone[norm] = [];
-      byPhone[norm].push({ id: l.id, code: l.code, title: l.title, phone: raw, customer_id: l.customer_id });
-    });
-
-    const titleDups = Object.entries(byTitle)
-      .filter(([_, leads]) => leads.length > 1)
-      .map(([title, leads]) => ({ match: 'title', key: title, count: leads.length, leads }));
-
-    const phoneDups = Object.entries(byPhone)
-      .filter(([_, leads]) => leads.length > 1)
-      .map(([phone, leads]) => ({ match: 'phone', key: phone, count: leads.length, leads }));
-
-    res.json({
-      total_leads: allLeads.length,
-      title_groups: titleDups.length,
-      phone_groups: phoneDups.length,
-      duplicates: [...titleDups, ...phoneDups],
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+// Identity review keeps source records and uses the current company inventory.
+async function handleFacebookDuplicateReview(req,res) {
+  res.set('Cache-Control','no-store');
+  try { return res.json(await readFacebookDuplicateReview(supabase,req,{isPrimary:leadIntakePrimary})); }
+  catch(e){ return res.status(e.status||503).json({error:e.message}); }
+}
+r.get('/duplicate-review',authMiddleware,handleFacebookDuplicateReview);
+r.post('/duplicate-review',authMiddleware,handleFacebookDuplicateReview); // read-only automatic pipeline step
+r.get('/scan-duplicates-debug',authMiddleware,handleFacebookDuplicateReview);
+r.post('/dedup-leads',authMiddleware,(_req,res)=>{
+  res.set('Cache-Control','no-store');
+  return res.status(409).json({code:'IDENTITY_REVIEW_REQUIRED',merged:0,
+    error:'Chuyển sang Rà khách trùng để xác minh danh tính. Hồ sơ và lịch sử được giữ nguyên.'});
 });
 
 // POST /facebook/batch-create-leads

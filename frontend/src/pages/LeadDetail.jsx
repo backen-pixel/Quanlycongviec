@@ -954,6 +954,7 @@ export default function LeadDetail() {
       return;
     }
     const allowed = new Set([
+      'quality',
       'tasks',
       'shared-workspace',
       'documents',

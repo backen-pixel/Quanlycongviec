@@ -1,3 +1,7 @@
+## 04/10/2026 — Facebook duplicate review
+
+Thay tự xóa/gộp bằng reader CRM company-scoped; SQL685 strict active; hai pipelinecaller, monitor và UI mới giữ UNKNOWN khi lỗi; deeplinkquality tới card hiện có. Thay đổi helper/reviewService/routes/facebook, components/pages, migrations/runners/workflow và hồ sơ liên quan. Local1198/0/0, review mãPASS, browser giảPASS phạm vi đọc/deeplink.8ca PG đang chờ CI. Không DB thật/merge/deploy/model/quảng cáo. Chi tiết và rollback: [LEGACY_DUPLICATE_REVIEW](vpt-marketing-automation/LEGACY_DUPLICATE_REVIEW.md).
+
 ## 04/10/2026 — Đã kiểm chứng sửa nguồn khách theo bằng chứng
 
 Runtime8f61a18 chỉ khôi phục nhãn nguồn NULL từ original intake cho danh sách/công ty rõ ràng; giữ nguồn đã có, hồ sơ thiếu/mâu thuẫn vào REVIEW. SQL683 ghi nhãn và receipt cùng giao dịch, khóa maintenance có giới hạn chờ. Local267 PASS; PostgreSQL307/0/0 gồm17ca mới; Node22 843+26+267, cả10job/build/report/Messenger SUCCESS. Reviewer độc lập xác minh published blobs/log CI và kết luận PASS phạm vi SQL683/API.

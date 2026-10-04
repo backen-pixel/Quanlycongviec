@@ -1,3 +1,11 @@
+## 04/10/2026 — Đang nghiệm thu rà khách trùng không xóa hồ sơ
+
+Đã thay Facebook dedup cũ bằng reader danh tính CRM toàn công ty, đổi hai caller tự động và UI; đường xóa cũ trả409. SQL685 chặn company NULL/false. Local1198/0/0; review độc lập PASS rà mã; browser component thật/API giả kiểm lỗi, A→B→A và link đúng tabquality.8ca PostgreSQL mới đã đăng ký, CI/bản công bố cuối còn chờ.
+
+[Hợp đồng, kiểm chứng và hoàn tác](vpt-marketing-automation/LEGACY_DUPLICATE_REVIEW.md). Bước tiếp: khép CI/review checkpoint → dừng/chờ/đối soát writer cũ → cấu hình AI/lịch/người nhận → UAT và Founder release. Full goal ACTIVE; chưa DB thật/phát hành hoặc kết quả250k thực tế. Các mục dưới giữ lịch sử.
+
+---
+
 ## 04/10/2026 — Nhật ký xử lý khách đã qua PostgreSQL và browser giả
 
 Runtime7b455b9 SQL684/API/UI lưu yêu cầu batch và kết quả từng contact, chặn dispatch lặp; reload chỉ đọc, hồ sơ chưa rõ giữ lại để đối soát. RESULT cuối khép cùng giao dịch, không treo nếu FINISH mất phản hồi. Local294/0/0; PostgreSQL323/0/0 gồm16ca mới; cả10job/build/report/MessengerSUCCESS. Review độc lập PASS SQL684/helper/API/UI sau đối chiếu published SQL/log CI; browser component thật/API giả kiểm mất phản hồi, reload, UNKNOWN, thu hồi quyền và đổi công ty. Lỗi cú pháp CASE phát hiện ở CI27b17f đã sửa và kiểm lại toàn suite. [Hợp đồng, bằng chứng và giới hạn](vpt-marketing-automation/LEGACY_BATCH_JOURNAL.md).
