@@ -163,7 +163,7 @@ const COT_GHI_TUY_CHON = [
 function cotThieuTuLoi(message) {
   const text = String(message || '');
   if (!text.includes('column')) return null;
-  return COT_GHI_TUY_CHON.find((name) => text.includes(name)) || null;
+  return COT_GHI_TUY_CHON.find((name) => new RegExp(`\\b${name}\\b`).test(text)) || null;
 }
 
 /** Cột projects.install_occurrence_dates (DATE[]) đã có từ migration 649 (05/10/2026). Ghi cả lịch nhiều đợt. */

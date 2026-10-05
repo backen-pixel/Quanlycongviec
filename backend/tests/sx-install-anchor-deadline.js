@@ -69,3 +69,4 @@ assert.equal(cleared.install_date, null);
 assert.equal(resolveSxPlanInstallYmd(cleared), '');
 
 console.log('sx-install-anchor-deadline: ok');
+process.exit(0);

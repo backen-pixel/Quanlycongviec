@@ -25,6 +25,18 @@ assert.equal(
   cotThieuTuLoi('column projects.khong_co_trong_danh_sach does not exist'),
   null,
 );
+assert.equal(
+  cotThieuTuLoi('column projects.production_deadline does not exist'),
+  null,
+);
+assert.equal(
+  cotThieuTuLoi('column projects.vc_notes does not exist'),
+  'vc_notes',
+);
+assert.equal(
+  cotThieuTuLoi('column projects.notes does not exist'),
+  'notes',
+);
 
 /** Cùng điều kiện nhánh PUT /projects/:id: không nhận ra cột thì ném lỗi, không ghi lại. */
 function seNemLoi(message, update) {
@@ -48,3 +60,4 @@ assert.equal(
 );
 
 console.log('cot-thieu-tu-loi: ok');
+process.exit(0);

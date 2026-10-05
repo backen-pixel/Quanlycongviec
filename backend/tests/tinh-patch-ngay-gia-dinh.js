@@ -38,3 +38,4 @@ assert.equal(Object.prototype.hasOwnProperty.call(saiDinhDang, 'delivery_date'),
 assert.equal(saiDinhDang.delivery_date, undefined);
 
 console.log('tinh-patch-ngay-gia-dinh: ok');
+process.exit(0);
