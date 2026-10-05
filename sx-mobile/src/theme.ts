@@ -59,12 +59,13 @@ export const darkColors: AppColors = {
 };
 
 export const lightColors: AppColors = {
-  bg: '#F1F5F9',
+  bg: '#E8EEF6',
   bgElevated: '#FFFFFF',
   card: '#FFFFFF',
   cardAlt: '#F8FAFC',
-  border: '#E2E8F0',
-  borderStrong: '#CBD5E1',
+  // Thẻ trắng nằm trên nền xám nhạt / khung trắng: viền #E2E8F0 quá mảnh nên thẻ bị chìm.
+  border: '#CFD8E4',
+  borderStrong: '#B6C2D2',
   text: '#0F172A',
   textMuted: '#64748B',
   textFaint: '#94A3B8',
