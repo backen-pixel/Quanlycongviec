@@ -1,6 +1,6 @@
 # Tài liệu hệ thống — Quanlycongviec (Tủ Bếp Pro)
 
-GitHub repository là **nguồn chuẩn**. Claude / Cursor đọc theo map bên dưới; không kết luận từ ký ức nếu chưa đối chiếu file hiện hành.
+GitHub repository là **nguồn chuẩn**. Claude / Codex / Cursor đọc theo map bên dưới; không kết luận từ ký ức nếu chưa đối chiếu file hiện hành.
 
 ## Cấu trúc chuẩn
 
@@ -20,14 +20,14 @@ Migration SQL thật nằm ở `/database/*.sql` (root repo) — không nhân b�
 
 ## Điểm vào nhanh
 
-1. Tổng quan kiến trúc → [`architecture/kien-truc-tong-the.html`](./architecture/kien-truc-tong-the.html)
+1. Kiến trúc V1.1, hiện trạng và tài liệu lịch sử → [mục lục kiến trúc](./architecture/README.md)
 2. Schema DB → [`database/DATABASE_SCHEMA.md`](./database/DATABASE_SCHEMA.md)
 3. API → [`api/API_DOCUMENT.md`](./api/API_DOCUMENT.md)
 4. Coding / inventory → [`project/CODING_STANDARD.md`](./project/CODING_STANDARD.md)
 5. Workflow Claude ↔ Cursor ↔ GitHub → [`project/workflow-claude-cursor-github.md`](./project/workflow-claude-cursor-github.md)
 6. Công việc AI hiện tại → [`ai-handoff/CURRENT.md`](./ai-handoff/CURRENT.md)
 7. Lỗi query-guard 2026-09-08 (Claude kế hoạch sửa) → [`ai-handoff/BAO-CAO-loi-query-guard-2026-09-08.md`](./ai-handoff/BAO-CAO-loi-query-guard-2026-09-08.md)
-8. Tách NextGo instance (chuẩn bị, chưa cắt) → [`ops/nextgo-instance/README.md`](./ops/nextgo-instance/README.md)
+8. Quyết định tách NextGo instance (AI-006; kiểm trạng thái trước khi tiếp tục) → [sổ quyết định bàn giao](./ai-handoff/DECISIONS.md)
 
 ## Regenerate tài liệu máy sinh
 

@@ -22,6 +22,14 @@ Trước khi tiếp tục công việc từ AI khác, đọc theo thứ tự:
 `docs/ai-handoff/CURRENT.md` → `DECISIONS.md` → `WORKLOG.md`.
 Sau phiên có thay đổi code, cập nhật trạng thái và nhật ký tại đây; không ghi secret.
 
+## Business AI OS V1.1 entry point
+
+Read [architecture index](docs/architecture/README.md), then CURRENT and the relevant decisions/source evidence. [Founder decision record](docs/ai-handoff/FOUNDER_DECISIONS_ARCHITECTURE_V1_1_20261001.md) distinguishes approved direction from runtime/release authority.
+
+Claude Code may prepare sourced context or implement a bounded assignment; Cowork availability/permissions are separate. Use a separate review session with approved requirements, relevant code and test evidence. ECC is optional Factory tooling, not authorization. Missing risk classification is unresolved, not low risk. Keep presales tasks in CRM and postsales work in Work Unified; do not migrate all crm_tasks by table name.
+
+Existing commands and database examples below are reference material, not permission to start the application, execute live SQL or change deployment. Check startup/read side effects and the assigned scope first.
+
 ## Project Overview
 
 Vietnamese-language ERP/CRM system for cabinet manufacturing companies ("Tủ Bếp"). Manages the full lifecycle: CRM leads/deals → production projects → logistics → accounting. Deployed on Render, backed by Supabase (PostgreSQL).
@@ -51,7 +59,7 @@ Both servers must run simultaneously. Vite proxies `/api` and `/socket.io` to `l
 
 ### Stack
 - **Backend**: Express 5 + Node.js ≥18, CommonJS (`require`). Entry: `backend/src/server.js`
-- **Frontend**: React 18 + Vite, ESM. Entry: `frontend/src/App.jsx`
+- **Frontend**: React ^19.1.0 in frontend/package.json + Vite, ESM (manifest baseline, not deployment verification). Entry: `frontend/src/App.jsx`
 - **Database**: Supabase (PostgreSQL) via `@supabase/supabase-js`. No ORM — all queries use Supabase client directly
 - **Realtime**: Socket.IO (optional Redis adapter for multi-instance)
 - **Styling**: Tailwind CSS v4 (via `@tailwindcss/vite` plugin, no config file)

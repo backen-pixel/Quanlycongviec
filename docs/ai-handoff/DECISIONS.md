@@ -1,3 +1,9 @@
+# 2026-10-01 — Chỉ mục quyết định Business AI OS V1.1
+
+[Sổ Founder V1.1](FOUNDER_DECISIONS_ARCHITECTURE_V1_1_20261001.md) ghi nguồn/phạm vi phê duyệt; [ADR-0016…0020](../adr/README.md) ghi lựa chọn kiến trúc. Các quyết định lịch sử bên dưới được giữ nguyên. Không dùng một hướng dẫn cũ làm quyền vượt phạm vi công việc hiện tại; phần không mâu thuẫn vẫn là tài liệu tham chiếu cần đối chiếu mã.
+
+---
+
 # Quyết định dùng chung giữa Cursor, Claude và các AI
 
 ## AI-010 — Cột lớn / cột nhỏ VC/LĐ giống SX

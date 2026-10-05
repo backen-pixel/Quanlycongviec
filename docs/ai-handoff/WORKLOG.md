@@ -1,3 +1,32 @@
+## 2026-10-02 — F-13/F-14: Marketing tự động, đo Lead trước
+
+Founder đã giao triển khai kế hoạch thay phương án A/B/nhân sự cũ, rồi chuyển phép đo trước mắt sang250.000 đồng/khách hợp lệ. Trần một đợt100 triệu/30 ngày và80/20 giữ nguyên;300 khách tương ứng75 triệu, không buộc tiêu hết.7% doanh thu đánh giá sau; không chặn giai đoạn Lead vì chưa nối kế toán.
+
+[PR22](https://github.com/backen-pixel/Quanlycongviec/pull/22) chứa bản sửa báo cáo và nền domain/queue đang tắt, [kế hoạch](https://github.com/backen-pixel/Quanlycongviec/blob/codex/vpt-marketing-automation-20261002/docs/architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md) và [trạng thái triển khai](https://github.com/backen-pixel/Quanlycongviec/blob/codex/vpt-marketing-automation-20261002/docs/ai-handoff/vpt-marketing-automation/README.md). Các adapter dữ liệu thật, atomic budget/slot, tài sản/nội dung và UAT chưa hoàn tất. Không merge/deploy/đổi ads/DB thật. PR20 là hồ sơ kiến trúc; PR19 vẫn là dependency của PR22. Xem validation đúng phiên bản trong PR22, không suy tất cả hệ thống PASS.
+
+F-13/F-14 là quyết định mới, F-12 và nhật ký dưới đây giữ lịch sử theo thời điểm. Các gate kiến trúc/Factory và sources đồng bộ giữ nguyên.
+
+---
+
+## 2026-10-02 — Cập nhật ưu tiên Marketing đa kênh theo Founder
+
+- Thực hiện: Codex. Yêu cầu: ưu tiên tạo khách qua Marketing đa kênh; Founder nêu website/Google/ChatGPT Ads/TikTok/Zalo và giao lập phương án tăng ngân sách.
+- Đã làm: F-12, roadmap thu hút → nhận khách → tư vấn → đo chất lượng; gói MK-01…06 và hai phương án media chờ duyệt. Kế thừa ngân sách Facebook đã duyệt; chưa sửa chiến dịch.
+- Kiểm tra: nội dung/phạm vi, phép tính ngân sách, liên kết và bảo toàn phần lịch sử; review bổ sung tại MARKETING_PRIORITY_REVIEW_20261002.md. Không dùng PASS tài liệu thay UAT hoặc phê duyệt chi tiền.
+- Chưa làm: chạy Ads/CRM/DB/API, tích hợp kênh hoặc merge/deploy. Không cam kết số khách khi chưa có baseline.
+- Hoàn tác: revert commit tài liệu, giữ lịch sử. Các quyết định và bằng chứng chặng 0 cũ giữ phạm vi phiên bản riêng.
+
+---
+
+# 2026-10-01 — Chặng 0 / bộ kiến trúc Business AI OS V1.1
+
+Theo kế hoạch Founder yêu cầu triển khai: soạn kiến trúc, roadmap, bản đồ ownership, sổ quyết định và ADR; gắn vào mục lục/AGENTS/CLAUDE. Đã đối chiếu 31 bản nguồn với blob Git, main 0db11ce1adb0fb89fc87529036e495a62d58fce7; phát hiện lõi Order hiện có, task xưởng trong crm_tasks, hỗ trợ đa xưởng/đa đợt, giới hạn flowRuntime và 54 nhóm số SQL trùng.
+
+Hồ sơ: [bằng chứng](ARCHITECTURE_V1_1_EVIDENCE_20261001.md), [lộ trình](../architecture/BUSINESS_AI_OS_V1_1_ROADMAP.md). Gói chỉ sửa tài liệu/hướng dẫn; không code runtime, migration, config, quyền, CI, lịch hoặc quảng cáo. Kiểm tra liên kết/phạm vi/bảo toàn lịch sử và [review độc lập](ARCHITECTURE_V1_1_INDEPENDENT_REVIEW_20261001.md) PASS; không suy test phần mềm từ kiểm tra này. Prefix mới giữ nguyên toàn bộ nội dung lịch sử phía sau.
+
+---
+
+
 ## 2026-10-05 - PR A minimal: lead measurement core
 Files: backend/src/modules/marketingAutomation/policy.js, leadMeasurement.js; backend/tests/marketingAutomation.leads.test.js; .github/workflows/marketing-lead-measure-core.yml; CURRENT.md and WORKLOG.md.
 Source: PR #22 commit 679cb926. policy.js keeps APPROVED_PLAN, money, instant; removes DAY, deny, evaluateBudgetMove, humanDeadline.
