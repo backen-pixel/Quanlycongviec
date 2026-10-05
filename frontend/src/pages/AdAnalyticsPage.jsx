@@ -217,7 +217,10 @@ function TheTrangPage({ p, onMo, onXemAnh }) {
       </div>
 
       <div className="grid grid-cols-2 gap-x-4 gap-y-4 border-y border-gray-100 py-3 sm:grid-cols-4">
-        <ONho nhan="Lead" giaTri={fmtSo(p.leads)} phu={`${p.so_quang_cao} quảng cáo`} />
+        <ONho nhan="Lead" giaTri={fmtSo(p.leads)}
+          phu={p.chua_thanh_lead > 0
+            ? `+${fmtSo(p.chua_thanh_lead)} chưa thành lead · ${p.so_quang_cao} quảng cáo`
+            : `${p.so_quang_cao} quảng cáo`} />
         <ONho nhan="Chất lượng" giaTri={`${p.quality_rate}%`} phu={`rác ${p.junk_rate}%`} />
         <ONho nhan="Chốt" giaTri={fmtSo(p.closed)} phu={`tỉ lệ ${p.close_rate}%`} />
         <ONho
@@ -280,6 +283,21 @@ function laAnhBiaVideo(m) {
   if (u.includes('/ads/image/')) return false;
   if (u.includes('/t15.')) return true;
   return m?.loai === 'video';
+}
+
+/**
+ * Phân tích đã cũ bao nhiêu giờ, và cũ tới mức đáng báo động chưa.
+ *
+ * Job chạy mỗi 60 phút. Quá 3 tiếng nghĩa là nó đã trượt ít nhất 2 lượt — gần như
+ * chắc chắn đang lỗi chứ không phải chậm. Đây KHÔNG phải cảnh báo thừa: ngày
+ * 04/10/2026 job chết lặng 5 ngày vì một lỗi bị nuốt vào log, màn hình vẫn hiện
+ * số cũ như bình thường và không ai biết. Số cũ mà trông như số mới là loại sai
+ * nguy hiểm nhất trên một trang nói về tiền.
+ */
+function doCu(tinhLuc) {
+  if (!tinhLuc) return { gio: null, hong: true };
+  const gio = (Date.now() - new Date(tinhLuc).getTime()) / 3600000;
+  return { gio, hong: gio >= 3 };
 }
 
 /**
@@ -484,7 +502,8 @@ function HangQuangCao({ a, nenChot, onDatTen, onXemAnh, onXemLead }) {
         </div>
 
         <div className="mt-3 flex flex-wrap gap-x-7 gap-y-3">
-          <ONho nhan="Lead" giaTri={fmtSo(a.leads)} />
+          <ONho nhan="Lead" giaTri={fmtSo(a.leads)}
+            phu={a.chua_thanh_lead > 0 ? `+${fmtSo(a.chua_thanh_lead)} chưa thành lead` : null} />
           <ONho nhan="Deal" giaTri={fmtSo(a.deals)} />
           <ONho nhan="Chốt" giaTri={fmtSo(a.closed)} phu={`tỉ lệ ${a.close_rate}%`} />
           <ONho nhan="Mẫu" giaTri={fmtSo(a.so_mau)} />
@@ -642,7 +661,8 @@ function HangBaiViet({ b, nenChot, onXemAnh, onXemLead }) {
         </div>
 
         <div className="mt-3 flex flex-wrap gap-x-7 gap-y-3">
-          <ONho nhan="Lead" giaTri={fmtSo(b.leads)} />
+          <ONho nhan="Lead" giaTri={fmtSo(b.leads)}
+            phu={b.chua_thanh_lead > 0 ? `+${fmtSo(b.chua_thanh_lead)} chưa thành lead` : null} />
           <ONho nhan="Deal" giaTri={fmtSo(b.deals)} />
           <ONho nhan="Chốt" giaTri={fmtSo(b.closed)} phu={`tỉ lệ ${b.close_rate}%`} />
           <ONho nhan="Mẫu" giaTri={fmtSo(b.so_mau)} />
@@ -1532,6 +1552,9 @@ export default function AdAnalyticsPage({ embedded = false }) {
                 <p className="pt-1 text-[12px] leading-relaxed text-gray-500">
                   Một bài viết có thể đang được chạy bằng nhiều quảng cáo cùng lúc. Gom theo bài
                   cho thấy đúng quy mô; chuyển sang <b>Quảng cáo</b> để xem từng cái tách riêng.
+                  Dòng <b>&quot;chưa thành lead&quot;</b> là người đã nhắn tin từ quảng cáo nhưng
+                  chưa được tạo lead trong CRM — không cộng vào cột Lead, vì cộng vào sẽ làm
+                  loãng tỉ lệ chốt và mọi so sánh cũ hoá sai.
                 </p>
               </div>
             )
@@ -1608,6 +1631,17 @@ export default function AdAnalyticsPage({ embedded = false }) {
                 {dangChayLai ? 'Đang phân tích…' : 'Phân tích lại ngay'}
               </button>
             </div>
+
+            {doCu(tinhLuc).hong && (
+              <div className="rounded-lg border border-rose-300 bg-rose-50 px-4 py-2.5 text-[12.5px] leading-relaxed text-rose-900">
+                <b>Số liệu dưới đây đã cũ.</b>{' '}
+                {tinhLuc
+                  ? `Lần phân tích gần nhất cách đây ${Math.round(doCu(tinhLuc).gio)} giờ, trong khi job phải chạy mỗi 60 phút — nghĩa là nó đang lỗi.`
+                  : 'Chưa chạy lần nào.'}{' '}
+                Bấm <b>Phân tích lại ngay</b> để thử; vẫn không đổi thì xem log máy chủ
+                mục <code>[phan-tich-qc]</code>.
+              </div>
+            )}
 
             {(tuNgay || denNgay) && (
               <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-[12.5px] text-amber-900">

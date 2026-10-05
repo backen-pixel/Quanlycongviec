@@ -131,6 +131,46 @@ async function napDuLieu(req, { chiQuangCao = false } = {}) {
   };
 }
 
+/**
+ * Đếm LƯỢT CHẠM QUẢNG CÁO CHƯA THÀNH LEAD, gom theo page / bài / quảng cáo.
+ *
+ * Quy kết được ghi ngay khi khách nhắn (mức contact), lead chỉ sinh ra sau khi
+ * được duyệt. Mọi màn phân tích đều lọc `lead_id is not null` nên số người thật
+ * sự nhắn về bị đếm thiếu — đo ngày 04/10/2026 là 156/512 lượt, tức 30%.
+ *
+ * Không đếm thiếu nữa, nhưng cũng KHÔNG cộng vào cột lead: đây là hai thứ khác
+ * nhau. Lead là người đã vào quy trình, lượt chạm là người mới nhắn. Gộp lại thì
+ * tỉ lệ chốt sẽ bị pha loãng và mọi so sánh cũ hoá sai.
+ *
+ * Không cắt được theo công ty: chưa có lead thì chưa có công ty. Bù lại, nơi gọi
+ * chỉ gắn số vào những khoá ĐÃ nằm trong nhóm đã lọc quyền, nên không lộ chéo.
+ */
+async function demChuaThanhLead({ tu, den, pageId } = {}) {
+  const rong = { page: new Map(), bai: new Map(), qc: new Map(), tong: 0 };
+  let q = supabase.from('lead_attribution')
+    .select('fb_page_id, fb_ad_id, fb_post_id')
+    .not('fb_ad_id', 'is', null)
+    .is('lead_id', null)
+    .limit(20000);
+  if (tu) q = q.gte('cham_dau_luc', tu);
+  if (den) q = q.lte('cham_dau_luc', den);
+  if (pageId) q = q.eq('fb_page_id', pageId);
+
+  const { data, error } = await q;
+  if (error) {
+    console.warn('[ad-analytics/chua-thanh-lead]', error.message);
+    return rong;
+  }
+  const cong = (m, k) => { if (k) m.set(String(k), (m.get(String(k)) || 0) + 1); };
+  for (const x of data || []) {
+    cong(rong.page, x.fb_page_id);
+    cong(rong.bai, x.fb_post_id);
+    cong(rong.qc, x.fb_ad_id);
+    rong.tong += 1;
+  }
+  return rong;
+}
+
 /** Chi tiêu theo ad_id trong kỳ. Rỗng nếu chưa nối Marketing API. */
 async function napChiTieu(tu, den) {
   let q = supabase.from('fb_ad_spend_daily').select('ad_id, chi_tieu, hien_thi, nhap').limit(50000);
@@ -617,6 +657,12 @@ r.get('/pages-profile', async (req, res) => {
       }
     }
 
+    const chuaLead = await demChuaThanhLead({
+      tu: isoNgay(req.query.from),
+      den: isoNgay(req.query.to, true),
+      pageId: req.query.page_id ? String(req.query.page_id) : null,
+    });
+
     const bayGio = Date.now();
     const data = [...gom.values()].map((g) => {
       const o = themChiTieu(chot(g), g.ad_ids, mChiTieu);
@@ -647,6 +693,7 @@ r.get('/pages-profile', async (req, res) => {
         canh_bao: imLang >= 7 ? 'im_lang' : null,
         mau_quang_cao: cre.ds,              // tối đa 8 ảnh để hiện
         so_mau: cre.khoa ? cre.khoa.size : cre.ds.length,   // tổng số mẫu khác nhau
+        chua_thanh_lead: chuaLead.page.get(String(g.page_id)) || 0,
       };
     }).sort((x, y) => y.leads - x.leads);
 
@@ -718,6 +765,10 @@ r.get('/page-ads', async (req, res) => {
       if (o.ds.length < 12) o.ds.push({ url: c.fb_creative_url, loai: c.fb_creative_type });
     }
 
+    const chuaLead = await demChuaThanhLead({
+      tu: isoNgay(req.query.from), den: isoNgay(req.query.to, true), pageId: pid,
+    });
+
     const bayGio = Date.now();
     const p = mPage.get(pid) || {};
     const data = [...gom.values()].map((g) => {
@@ -744,6 +795,7 @@ r.get('/page-ads', async (req, res) => {
         im_lang_ngay: Math.max(0, Math.round((bayGio - new Date(g.lan_cuoi).getTime()) / 86400000)),
         mau_quang_cao: c.ds,
         so_mau: c.khoa.size,
+        chua_thanh_lead: chuaLead.qc.get(String(g.ad_id)) || 0,
       };
     }).sort((x, y) => y.leads - x.leads);
 
@@ -751,6 +803,7 @@ r.get('/page-ads', async (req, res) => {
       page: { page_id: pid, page_name: p.page_name || pid },
       data,
       tong: data.length,
+      chua_thanh_lead_tong: chuaLead.tong,
     });
   } catch (e) {
     console.error('[ad-analytics/page-ads]', e);
@@ -818,6 +871,10 @@ r.get('/page-posts', async (req, res) => {
       if (o.ds.length < 12) o.ds.push({ url: c.fb_creative_url, loai: c.fb_creative_type });
     }
 
+    const chuaLead = await demChuaThanhLead({
+      tu: isoNgay(req.query.from), den: isoNgay(req.query.to, true), pageId: pid,
+    });
+
     const bayGio = Date.now();
     const p = mPage.get(pid) || {};
     const data = [...gom.values()].map((g) => {
@@ -844,10 +901,16 @@ r.get('/page-posts', async (req, res) => {
         im_lang_ngay: Math.max(0, Math.round((bayGio - new Date(g.lan_cuoi).getTime()) / 86400000)),
         mau_quang_cao: c.ds,
         so_mau: c.khoa.size,
+        chua_thanh_lead: chuaLead.bai.get(String(g.post_id)) || 0,
       };
     }).sort((x, y) => y.leads - x.leads);
 
-    res.json({ page: { page_id: pid, page_name: p.page_name || pid }, data, tong: data.length });
+    res.json({
+      page: { page_id: pid, page_name: p.page_name || pid },
+      data,
+      tong: data.length,
+      chua_thanh_lead_tong: chuaLead.tong,
+    });
   } catch (e) {
     console.error('[ad-analytics/page-posts]', e);
     res.status(500).json({ error: e.message });

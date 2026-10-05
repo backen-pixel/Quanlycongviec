@@ -2492,22 +2492,33 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
       }
     }
 
-    if (
-      b.delivery_date !== undefined
-      || b.production_finish_date !== undefined
-      || b.production_deadline !== undefined
-    ) {
+    // Đồng bộ ngày sang các bản sao của đơn ở xưởng khác.
+    //
+    // Căn theo `update` (những gì THỰC SỰ được ghi) chứ không theo `b` (thân yêu
+    // cầu thô). Sửa ô «ngày lắp» chỉ gửi lên install_date; delivery_date là do
+    // installAnchorPersistPatch suy ra rồi ghi vào chính dự án này. Nhìn mỗi `b`
+    // thì dự án đang sửa nhảy ngày còn các bản sao ở xưởng đứng yên — đúng triệu
+    // chứng "lưu được mà chỗ khác không đổi theo".
+    const chamNgay = update.delivery_date !== undefined
+      || update.production_finish_date !== undefined
+      || update.production_deadline !== undefined;
+    if (chamNgay) {
       try {
         const { syncPlacementFamilyDates } = require('../helpers/placeProjectAtWorkshops');
+        // Xoá trắng ngày của cả họ chỉ khi người dùng CỐ Ý xoá ô đó, chứ không
+        // phải vì dự án đang sửa vốn chưa từng có ngày.
+        const coYXoa = ['delivery_date', 'production_finish_date', 'production_deadline', 'install_date']
+          .some((f) => b[f] === null || b[f] === '');
         await syncPlacementFamilyDates(req.params.id, {
-          delivery_date: b.delivery_date !== undefined ? (data.delivery_date ?? null) : undefined,
-          production_deadline: b.production_deadline !== undefined || b.delivery_date !== undefined
+          delivery_date: update.delivery_date !== undefined
+            ? (data.delivery_date ?? null) : undefined,
+          production_deadline: update.production_deadline !== undefined || update.delivery_date !== undefined
             ? (data.production_deadline ?? data.delivery_date ?? null)
             : undefined,
-          production_finish_date: b.production_finish_date !== undefined || b.delivery_date !== undefined
+          production_finish_date: update.production_finish_date !== undefined || update.delivery_date !== undefined
             ? (data.production_finish_date ?? null)
             : undefined,
-        });
+        }, { choPhepXoaNgay: coYXoa });
       } catch (syncErr) {
         console.warn('[PUT /projects] sync placement dates:', syncErr.message);
       }

@@ -12,8 +12,22 @@ const { supabase } = require('../config/supabase');
 
 const CO_LO = 200;
 
+/**
+ * `String(null)` ra chuỗi 'null', `String(undefined)` ra 'undefined'. Hai chuỗi này
+ * trông như id hợp lệ với JavaScript nhưng Postgres chối thẳng khi cột là uuid —
+ * và nó chối CẢ LÔ 200 id, không riêng cái hỏng. Một dòng dữ liệu thiếu id đủ làm
+ * sập nguyên một job.
+ *
+ * Đã xảy ra thật: 04/10/2026, `adInsights` quên lọc `lead_id is null`, phân tích
+ * quảng cáo chết lặng 5 ngày mà màn hình vẫn hiện số cũ như không có chuyện gì.
+ * Nơi gọi vẫn phải lọc từ truy vấn cho đúng, nhưng chặn thêm ở đây để lần sau
+ * lỗi kiểu này không đánh sập cả lô.
+ */
+const RAC = new Set(['null', 'undefined', 'NaN', '']);
+
 async function layTheoLo(bang, cot, ids, chon, { coLo = CO_LO } = {}) {
-  const sach = [...new Set((ids || []).map(String))].filter(Boolean);
+  const sach = [...new Set((ids || []).map(String))]
+    .filter((x) => x && !RAC.has(x.trim()));
   if (!sach.length) return [];
   const lo = [];
   for (let i = 0; i < sach.length; i += coLo) lo.push(sach.slice(i, i + coLo));
