@@ -15,6 +15,26 @@ function ymdOrNull(raw) {
   return String(raw).trim().slice(0, 10);
 }
 
+/**
+ * Patch ngày cho cả họ dự án. Không ghi null khi chưa được phép xoá —
+ * null lọt vào UPDATE ... WHERE id IN (...) sẽ xoá trắng ngày.
+ */
+function tinhPatchNgayGiaDinh(dates = {}, { choPhepXoaNgay = false } = {}) {
+  const patch = {};
+  if (dates.delivery_date !== undefined) {
+    const delivery = ymdOrNull(dates.delivery_date);
+    if (delivery || choPhepXoaNgay) {
+      patch.delivery_date = delivery;
+      patch.production_deadline = ymdOrNull(dates.production_deadline) || delivery;
+    }
+  }
+  if (dates.production_finish_date !== undefined) {
+    const finish = ymdOrNull(dates.production_finish_date);
+    if (finish || choPhepXoaNgay) patch.production_finish_date = finish;
+  }
+  return patch;
+}
+
 function isoOrNull(raw) {
   if (raw == null || raw === '') return null;
   const d = new Date(String(raw).trim());
@@ -552,18 +572,7 @@ async function notifySourceDealOfWorkshopPlacement({
 async function syncPlacementFamilyDates(originProjectId, dates = {}, { choPhepXoaNgay = false } = {}) {
   const origin = String(originProjectId || '');
   if (!origin) return;
-  const patch = {};
-  if (dates.delivery_date !== undefined) {
-    const delivery = ymdOrNull(dates.delivery_date);
-    if (delivery || choPhepXoaNgay) {
-      patch.delivery_date = delivery;
-      patch.production_deadline = ymdOrNull(dates.production_deadline) || delivery;
-    }
-  }
-  if (dates.production_finish_date !== undefined) {
-    const finish = ymdOrNull(dates.production_finish_date);
-    if (finish || choPhepXoaNgay) patch.production_finish_date = finish;
-  }
+  const patch = tinhPatchNgayGiaDinh(dates, { choPhepXoaNgay });
   if (!Object.keys(patch).length) return;
 
   try {
@@ -984,6 +993,7 @@ module.exports = {
   placeProjectAtWorkshops,
   listWorkshopPlacementsForProject,
   syncPlacementFamilyDates,
+  tinhPatchNgayGiaDinh,
   syncWorkshopPlacementMembersToSourceDeal,
   canPlaceFromSource,
   normalizeTargets,

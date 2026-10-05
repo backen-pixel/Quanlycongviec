@@ -36,6 +36,7 @@ const {
 const { applyAllActiveWorkshopTemplatesForArea } = require('../helpers/workshopApplyTemplates');
 const { assertProjectAccessible } = require('../helpers/projectAccessScope');
 const { enrichProjectsModulePresence } = require('../helpers/projectModuleCompanies');
+const { cotThieuTuLoi } = require('../helpers/projectDeliveryDates');
 
 const r = Router();
 r.use(auth);
@@ -2472,15 +2473,10 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
     }
 
     // Cột thiếu: Postgres/PostgREST báo một cột mỗi lần. Chỉ bỏ đúng cột đó.
-    const optionalWriteColumns = [
-      'install_occurrence_dates', 'production_finish_date', 'collected_amount', 'deposit_amount',
-      'logistics_cost', 'delivery_date', 'order_date', 'vc_notes', 'deadline', 'notes',
-    ];
     let data, error;
     ({ data, error } = await supabase.from('projects').update(update).eq('id', req.params.id).select(`*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`).single());
-    if (error && error.message?.includes('column')) {
-      const message = String(error.message || '');
-      const missing = optionalWriteColumns.find((name) => message.includes(name));
+    if (error && String(error.message || '').includes('column')) {
+      const missing = cotThieuTuLoi(error.message);
       if (!missing || !Object.prototype.hasOwnProperty.call(update, missing)) throw error;
       console.warn(`[PUT /projects] bỏ cột chưa có trên DB: ${missing}`);
       const safeCopy = { ...update };

@@ -25,14 +25,19 @@ const CO_LO = 200;
  */
 const RAC = new Set(['null', 'undefined', 'NaN', '']);
 
-async function layTheoLo(bang, cot, ids, chon, { coLo = CO_LO } = {}) {
-  const sach = [...new Set((ids || []).map(String))]
+function locIdSach(ids) {
+  return [...new Set((ids || []).map(String))]
     .filter((x) => x && !RAC.has(x.trim()));
+}
+
+async function layTheoLo(bang, cot, ids, chon, { coLo = CO_LO, client = null } = {}) {
+  const sach = locIdSach(ids);
   if (!sach.length) return [];
+  const db = client || supabase;
   const lo = [];
   for (let i = 0; i < sach.length; i += coLo) lo.push(sach.slice(i, i + coLo));
   const phan = await Promise.all(lo.map(async (x) => {
-    const { data, error } = await supabase.from(bang).select(chon).in(cot, x);
+    const { data, error } = await db.from(bang).select(chon).in(cot, x);
     if (error) throw new Error(`${bang}.${cot}: ${error.message}`);
     return data || [];
   }));
@@ -49,4 +54,4 @@ async function layTheoLoMem(bang, cot, ids, chon, opts) {
   }
 }
 
-module.exports = { layTheoLo, layTheoLoMem, CO_LO };
+module.exports = { layTheoLo, layTheoLoMem, locIdSach, CO_LO };

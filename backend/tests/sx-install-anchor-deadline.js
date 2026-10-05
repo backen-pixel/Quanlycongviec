@@ -58,6 +58,11 @@ assert.deepEqual(afterBoth.install_occurrence_dates, ['2026-11-02']);
 assert.equal(resolveSxPlanInstallYmd(afterBoth), '2026-11-02');
 assert.equal(finishingYmd(afterBoth), '2026-10-31');
 
+const persistClearedEmpty = installAnchorPersistPatch({ delivery_date: '' });
+assert.deepEqual(persistClearedEmpty.install_occurrence_dates, []);
+const persistClearedNull = installAnchorPersistPatch({ delivery_date: null });
+assert.deepEqual(persistClearedNull.install_occurrence_dates, []);
+
 const cleared = rowAfterEdit(saved, { delivery_date: null });
 assert.deepEqual(cleared.install_occurrence_dates, []);
 assert.equal(cleared.install_date, null);
