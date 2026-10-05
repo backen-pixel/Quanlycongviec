@@ -59,4 +59,3 @@ Dùng hồ sơ trong repo và hàng việc [RELEASE_QUEUE.json](RELEASE_QUEUE.js
 Reviewer độc lập đã chỉ rõ dependency SQL, thứ tự700, giới hạn replication RPC và phạm vi687. Review vận hành hiện HOLD; review bổ sung sau CI cần ghim source/tree. Không dùng HOLD cũ về quyền bảng để che mất tiến triển đã xác minh.
 
 Các tài liệu cũ giữ lịch sử theo thời điểm. Hoàn tác delta tích hợp bằng revert trên nhánh chuẩn bị, giữ lịch sử/bảo mật. Chưa có thay đổi production của phiên này để hoàn tác.
-
