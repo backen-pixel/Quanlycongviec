@@ -1,5 +1,11 @@
 # Đối chiếu CRM chỉ đọc — 05/10/2026
 
+## Cập nhật sau đăng nhập Supabase — nhận diện đã khép
+
+[Đối chiếu trực tiếp DB](DB_CATALOG_20261005.md) xác nhận Admin VPT active/admin, company/tenant khớp và active; người nhận có phân công ở cả HCM/CT active. Page409741855550833 cùng loại/stage/pipeline active và khớp mapping legacy HCM đã đọc qua UI. ID cụ thể nằm trong [JSON](DB_CATALOG_20261005.json).
+
+Không còn chờ kiểm active/tenant hoặc chọn lại người nhận. Chưa chứng nhận toàn bộ quyền Application Service, binding Page/form/account có phiên bản, UAT hoặc lịch bận/người khảo sát. Tìm account835757498658305 trong fb_ad_accounts, cả ID thuần và bỏ tiền tố act_, không có dòng; không suy thành Meta không có tài khoản. Các mục dưới là snapshot cũ, không phải trạng thái chờ đăng nhập hiện tại.
+
 ## Cập nhật 14:14–14:19 — mapping Page Bếp Vạn Phú Thành
 
 Đọc qua giao diện cài đặt Facebook, company VPT. Mở Sửa Page để xem, đợi danh sách lựa chọn tải xong rồi đọc giá trị đang chọn; đóng bằng Hủy, không lưu hoặc bật công tắc.

@@ -370,6 +370,28 @@
     "replicationError": "PGRST204 crm_leads.facebook_contact_id absent from schema cache",
     "lastCloneFailure": "2026-10-04 prepare backup schema: out of shared memory",
     "supabaseDashboardAuthenticated": false,
+    "historicalSnapshotNote": "Authentication false belongs to 14:23 monitor observation only; current dashboard authentication and catalog results are in catalogObservation.",
     "evidence": "DB_READONLY_20261005.md"
+  },
+  "catalogObservation": {
+    "observedOn": "2026-10-05",
+    "supabaseDashboardAuthenticated": true,
+    "bothProjectsRead": true,
+    "metadataReadOnly": true,
+    "evidence": "DB_CATALOG_20261005.md",
+    "structuredEvidence": "DB_CATALOG_20261005.json",
+    "scope": "Seven table ACL/RLS and columns; atomic RPC; two table triggers; selected ledger names; three private schemas; scoped Admin/Page/region/account config. Not full DB audit.",
+    "backupStructuralGapConfirmed": true,
+    "targetPrivilegeGatePassed": false,
+    "catalogAndSelectedLedgerRead": true,
+    "fullCandidateLedgerVerified": false,
+    "adminCompanyTenantAndRegionsActive": true,
+    "versionedFormBindingVerified": false,
+    "adAccountRegistryMatch": false,
+    "nativePrimaryBackupListed": true,
+    "targetRestoreVerified": false,
+    "storageObjectsInNativeBackup": false,
+    "productionMutation": false,
+    "releaseDecision": "HOLD"
   }
 }

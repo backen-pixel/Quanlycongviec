@@ -1,5 +1,7 @@
 # Primary/Backup — bằng chứng chỉ đọc và phương án khép lỗi
 
+> Cập nhật sau đăng nhập 05/10: [kết quả catalog trực tiếp](DB_CATALOG_20261005.md) thay các mục “chờ đăng nhập/chưa đọc catalog” trong snapshot này. Backup thiếu cấu trúc thật; quyền DB đã đọc nhưng chưa an toàn, restore chưa PASS. Số queue1.011 dưới đây chỉ thuộc lúc14:23:36, không là số hiện tại. Giữ nguyên phần dưới làm lịch sử.
+
 Quan sát UI Giám sát Supabase của CRM, ngày 05/10/2026 khoảng 14:23–14:30 (Asia/Ho_Chi_Minh). **Đã mở khóa trang giám sát; HOLD điều kiện DB/khôi phục.** Không còn chờ mật khẩu CRM. Supabase Dashboard là phiên đăng nhập riêng, hiện chưa đăng nhập; đã gửi yêu cầu Founder đăng nhập trực tiếp, không gửi mật khẩu vào chat.
 
 ## Bằng chứng hiện hành

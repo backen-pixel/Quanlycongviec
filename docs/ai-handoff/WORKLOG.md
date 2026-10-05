@@ -1,3 +1,12 @@
+## 2026-10-05 — Supabase catalog, quyền và routing chỉ đọc sau đăng nhập
+
+- Đọc Primary/Backup bằng SQL Editor, BEGIN READ ONLY/SELECT/ROLLBACK; không lấy secret hoặc hồ sơ khách. Lưu [DB_CATALOG](vpt-marketing-automation/DB_CATALOG_20261005.md) và JSON, cập nhật hồ sơ trạng thái/phát hành.
+- Xác nhận Backup thiếu cột/FK/index facebook_contact_id, RPC639 và trigger SQL568 trong phạm vi so sánh; quyền rộng trên bảy bảng và RLS permissive; không suy ra khai thác thực tế hoặc toàn DB đã kiểm.
+- Xác nhận Admin VPT/company/tenant/hai vùng active, mapping Page legacy; registry không có account đã tìm. Có Physical backup Primary nhưng chưa restore và không gồm Storage. Giữ thiếu form binding/UAT và snapshot queue14:23 riêng.
+- Reviewer độc lập rà bằng chứng và các đường clone/grant/sync/replication: HOLD vận hành, đủ để lập gói khắc phục theo thứ tự trong báo cáo. Không thay runtime/SQL, không chạy DB mutation, chuyển DB, restore hoặc phát hành. Không chạy lại toàn bộ test runtime cho delta tài liệu; kiểm JSON/liên kết/diff và review tính nhất quán.
+
+---
+
 ## 05/10/2026 — Xuất bản ứng viên, khép CI và mapping Page chỉ đọc
 
 Bổ sung khoảng14:23–14:30: Giám sát CRM đã mở khóa, đọc active Primary/failover Bật/queue1011/error PGRST204 cột facebook_contact_id; lịch sửclone04Oct lỗi out of shared memory ởprepare schema. Đối chiếu clone legacy có DROP CASCADE, nonzero restore bị bỏqua theo chuỗi, rowcounts khôngassert và grant rộng. Không chạyverify/drift/sync/chuyển DB. SupabaseDashboard cầnloginriêng, đãhỏiFounder; thêm DB_READONLY và SQLcatalog READONLY chưachạy. Cậpnhật trạng thái mới, khôngcònchờ mật khẩuCRM; giữHOLDvậnhành.

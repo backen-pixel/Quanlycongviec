@@ -1,3 +1,15 @@
+## 05/10/2026 — Đã đọc Supabase; xác định lỗi cấu trúc Backup và quyền DB
+
+Founder đã đăng nhập; đọc được Primary và Backup bằng giao dịch chỉ đọc. **Không còn chờ đăng nhập.** [Hồ sơ catalog và gói khắc phục](vpt-marketing-automation/DB_CATALOG_20261005.md) cùng JSON là kết quả mới nhất; các mục dưới giữ lịch sử theo thời điểm.
+
+Backup thiếu thật cột/FK/index `crm_leads.facebook_contact_id`, RPC atomic639 và trigger Lead của SQL568 trong tập đã so sánh; không phải chỉ lỗi cache. Primary cho anon/authenticated CRUD bảy bảng đã kiểm, Backup cho authenticated; companies tắt RLS và sáu bảng còn lại có policy PUBLIC ALL permissive. Cơ chế grant rộng trong clone/sync/replication có thể mở lại quyền, nên phải sửa trước thu quyền trên DB.
+
+Admin VPT, company/tenant và phân công HCM/CT đã xác nhận active; mapping Page legacy khớp. Chưa thấy account835757498658305 trong registry CRM, chưa xác nhận binding form mới/UAT. Supabase có Physical backup Primary05/10 05:33:43 VN, không gồm đối tượng Storage và chưa thử restore. CI ứng viên fd3babeb vẫn PASS trong phạm vi cũ; phát hiện DB thật không biến thành PASS vận hành.
+
+Reviewer phiên riêng: đủ bằng chứng lập gói khắc phục, **HOLD vận hành**. Thứ tự: ngăn grant rộng tự mở lại → kiểm quyền/restore PostgreSQL17 cô lập → migration tiến tới sửa chênh Backup → đối soát replication → binding/UAT tuyến Lead. Không chạy DDL/DML/grant/clone/sync/restore, đổi cấu hình hoặc deploy. Không hỏi lại Render workspace, đăng nhập, Admin nhận khách hoặc nguồn lịch CRM.
+
+---
+
 ## 05/10/2026 — Ứng viên tích hợp đã PASS CI; còn kiểm DB thật trước phát hành
 
 Đã xuất bản PR25 `fd3babeb`, ghép main `3375ef71`. Tree ứng viên và CI đều `4c8d1cab`. Report, Agent guardrails và Marketing workflow SUCCESS; Marketing 10/10 job, Node18/22 mỗi 1.521 PASS, intake PostgreSQL 507 PASS và restore cluster cô lập 11 PASS. Reviewer riêng xác nhận P3 và scoped PASS. Không có lỗi kiểm thử còn mở cho delta tích hợp đã rà.
