@@ -1,6 +1,6 @@
 ## 2026-10-05 — Sửa mã ngăn Backup tự cấp quyền và clone legacy
 
-Trên nền b0955e23, bỏ grant tự động, khóa helper/CLI cũ trước IO và fallback clone ở sync/manual-switch. Giữ job lỗi quyền qua retry12/13, dừng batch, giữ lỗi HTTP cho caller; không xóa queue thật. 18/18 unit giả lập PASS, tám file JS qua kiểm cú pháp; chuyển fixture grants legacy riêng và giữ negative calendar tests. CI intake/restore dùng PostgreSQL17, Node18/22 có workflow guard riêng; review/CI đang chờ. [Hồ sơ tác động và giới hạn](vpt-marketing-automation/BACKUP_PRIVILEGE_GUARD_20261005.md). Chưa DB/deploy; các quyền/schema thật chưa được sửa.
+Trên nền b0955e23, bỏ grant tự động, khóa helper/CLI cũ trước IO và fallback clone ở sync/manual-switch. Giữ job lỗi quyền qua retry12/13, dừng batch, giữ lỗi HTTP cho caller; không xóa queue thật. 20/20 unit giả lập PASS, tám file JS qua kiểm cú pháp; chuyển fixture grants legacy riêng và giữ negative calendar tests. CI intake/restore dùng PostgreSQL17, Node18/22 có workflow guard riêng; review/CI đang chờ. [Hồ sơ tác động và giới hạn](vpt-marketing-automation/BACKUP_PRIVILEGE_GUARD_20261005.md). Chưa DB/deploy; các quyền/schema thật chưa được sửa.
 
 ---
 

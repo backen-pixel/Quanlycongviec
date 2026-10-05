@@ -2,7 +2,7 @@
 
 Sau catalog b0955e23, đã sửa helper/CLI cấp quyền, bỏ grant tự động ở replication/sync; khóa clone toàn bộ cũ và fallback manual-switch. Job lỗi quyền giữ ID/payload qua12 lần thử và dừng batch, không báo đã áp dụng. [Phạm vi, tác động, kiểm thử và cách dừng](vpt-marketing-automation/BACKUP_PRIVILEGE_GUARD_20261005.md).
 
-18/18 unit cô lập và kiểm cú pháp PASS cục bộ; CI Node18/22, intake/restore PostgreSQL17 và reviewer đúng delta đang thực hiện. PASS fd3babeb phía dưới là nền, không thay chứng nhận delta mới. DB thật vẫn có quyền rộng/chênh Backup đã ghi; chưa áp dụng bản sửa, đổi DB/cấu hình hoặc phát hành. Không yêu cầu Founder đăng nhập lại.
+20/20 unit cô lập và kiểm cú pháp PASS cục bộ; CI Node18/22, intake/restore PostgreSQL17 và reviewer đúng delta đang thực hiện. PASS fd3babeb phía dưới là nền, không thay chứng nhận delta mới. DB thật vẫn có quyền rộng/chênh Backup đã ghi; chưa áp dụng bản sửa, đổi DB/cấu hình hoặc phát hành. Không yêu cầu Founder đăng nhập lại.
 
 ---
 

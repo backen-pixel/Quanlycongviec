@@ -706,7 +706,7 @@ async function redisPushTail(job) {
     await redis.rpush(REDIS_KEY, JSON.stringify(job));
     return;
   }
-  memQueue.unshift(job);
+  memQueue.push(job);
 }
 
 function isDeferrableReplicationError(err) {

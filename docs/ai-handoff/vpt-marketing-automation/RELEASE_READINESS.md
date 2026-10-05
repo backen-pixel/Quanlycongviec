@@ -1,6 +1,6 @@
 # Hồ sơ chuẩn bị nghiệm thu Facebook → CRM → AI → khảo sát
 
-**Delta mới sau catalog:** [guard Backup](BACKUP_PRIVILEGE_GUARD_20261005.md) ngăn grant tự động và clone legacy, giữ job lỗi quyền. Unit18/18 cục bộ; đang chờ CI/review đúng mã mới. PASS ứng viên fd3babeb bên dưới là nền lịch sử, không phải kết luận cho delta này. Chưa sửa ACL/schema của DB thật.
+**Delta mới sau catalog:** [guard Backup](BACKUP_PRIVILEGE_GUARD_20261005.md) ngăn grant tự động và clone legacy, giữ job lỗi quyền. Unit20/20 cục bộ; đang chờ CI/review đúng mã mới. PASS ứng viên fd3babeb bên dưới là nền lịch sử, không phải kết luận cho delta này. Chưa sửa ACL/schema của DB thật.
 
 Ngày cập nhật: 05/10/2026. **Rủi ro HIGH; HOLD phát hành.** Hồ sơ này gom điều kiện và bằng chứng, không phải quyết định mở quyền, chạy migration hoặc tiêu ngân sách. Nguồn chuẩn là repo; các mục cũ trong CURRENT/README giữ giá trị lịch sử theo phiên bản.
 

@@ -97,6 +97,21 @@ for (const contact of [false, true]) {
   });
 }
 for (const redisEnabled of [false, true]) {
+  test(`mixed queue, redis=${redisEnabled}: denied job is retained without starving an allowed write`, async () => {
+    const x = replication({ redisEnabled, fetchReply: async url => new Response(url.includes('blocked') ? 'denied' : null,
+      { status: url.includes('blocked') ? 403 : 204 }) });
+    const blocked = { id: 'blocked', type: 'rest', method: 'POST', path: '/rest/v1/blocked', body: '{"keep":true}', enqueued_at: 'kept', retry: 12 };
+    const good = { id: 'good', type: 'rest', method: 'POST', path: '/rest/v1/allowed', body: '{}' };
+    // LPUSH prepends in Redis, while memory pushes; arrange the same observed order.
+    for (const job of redisEnabled ? [good, blocked] : [blocked, good]) await x.api.__test.redisPush(job);
+    const first = await x.api.drainReplicationQueue({ maxJobs: 100 });
+    assert.equal(first.failed, 1); assert.equal(first.remaining, 2); assert.equal(x.calls.length, 1);
+    await x.api.__test.workerTickBatch();
+    assert.equal(x.api.getReplicationStatus().applied, 1); assert.equal(await x.api.getQueueDepth(), 1);
+    assert.equal(x.calls.filter(([url]) => url.includes('allowed')).length, 1);
+    const kept = await x.api.__test.redisPopNonBlocking();
+    assert.equal(kept.id, blocked.id); assert.equal(kept.body, blocked.body); assert.equal(kept.enqueued_at, blocked.enqueued_at);
+  });
   for (const status of [401, 403, 400]) {
     test(`permission ${status}, redis=${redisEnabled}: one failure per batch, retains identity beyond retry 12`, async () => {
       const x = replication({ redisEnabled, status, body: status === 400 ? '{"code":"42501","message":"denied"}' : 'denied' });

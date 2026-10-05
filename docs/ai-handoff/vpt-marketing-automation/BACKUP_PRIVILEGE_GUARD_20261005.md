@@ -13,7 +13,7 @@ Sau [đối chiếu DB thật](DB_CATALOG_20261005.md), sửa bước đầu đ�
 
 ## Kiểm chứng
 
-18/18 kiểm thử hành vi cô lập PASS trên Windows/Node24: helper/CLI không nạp cấu hình/DB; force không vượt khóa; lỗi HTTP và FK; queue Redis giả lập/bộ nhớ qua retry12/13; Storage403; đồng bộ bình thường và thất bại; hai đường manual-switch không clone. Tám file JavaScript qua kiểm cú pháp. Không gọi nhà cung cấp hoặc DB thật.
+20/20 kiểm thử hành vi cô lập PASS trên Windows/Node24: helper/CLI không nạp cấu hình/DB; force không vượt khóa; lỗi HTTP và FK; queue Redis giả lập/bộ nhớ qua retry12/13; Storage403; đồng bộ bình thường và thất bại; hai đường manual-switch không clone. Tám file JavaScript qua kiểm cú pháp. Không gọi nhà cung cấp hoặc DB thật.
 
 Thêm CI Node18/22 riêng cho guard. Job intake và restore của workflow Marketing chuyển từ PostgreSQL16 sang17, dùng hai cluster dữ liệu giả. Kết quả CI và review đúng phiên bản đang chờ, chưa kế thừa PASS fd3babeb cho delta mới. Test isolated không thay restore bản sao Primary hoặc UAT vận hành.
 
