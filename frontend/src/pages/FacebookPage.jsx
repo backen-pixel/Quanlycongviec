@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, Component } from 'react';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCrmSocialInboxUser, isCrmSocialInboxCompanyLocked } from '../lib/adminRole';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
@@ -8,7 +8,7 @@ import {
   Link2, Plus, ChevronRight, Bell, Image, Paperclip, RefreshCw, ToggleLeft, ToggleRight,
   X, Trash2, Edit3, UserPlus, Phone, Mail, MoreHorizontal, Check, Copy, Save, Eye, EyeOff,
   Mic, MicOff, File, Camera, Smile, ArrowLeft, BarChart3, StickyNote, Activity, Images,
-  Calendar,
+  Calendar, Megaphone,
 } from 'lucide-react';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import AutoToolPanel from '../components/AutoToolPanel';
@@ -21,6 +21,51 @@ import { computeFacebookPageTokenReminder, FB_PAGE_TOKEN_REMINDER_DAYS } from '.
 import FacebookImageSetsSettings from '../components/facebook/FacebookImageSetsSettings';
 import FacebookImageSetPicker from '../components/facebook/FacebookImageSetPicker';
 import { patchCrmDashboardCacheLeadFields } from '../lib/crmDashboardCache';
+
+import AdAnalyticsPage from './AdAnalyticsPage';
+
+/**
+ * Bọc quanh nội dung tab. Không có nó, một lỗi lúc vẽ sẽ làm React gỡ sạch cây
+ * component và để lại Ô TRỐNG — không thông báo, không dấu vết, rất khó dò.
+ * Có nó thì lỗi hiện thành chữ ngay tại chỗ.
+ */
+class KhungBatLoi extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { loi: null };
+  }
+
+  static getDerivedStateFromError(loi) {
+    return { loi };
+  }
+
+  componentDidCatch(loi, info) {
+    console.error('[tab-loi]', this.props.ten || '', loi, info?.componentStack);
+  }
+
+  render() {
+    if (!this.state.loi) return this.props.children;
+    return (
+      <div className="h-full overflow-y-auto p-6">
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-5">
+          <h3 className="text-sm font-bold text-rose-900">
+            Tab &quot;{this.props.ten || 'này'}&quot; gặp lỗi khi hiển thị
+          </h3>
+          <p className="mt-1 text-[13px] text-rose-800">
+            {String(this.state.loi?.message || this.state.loi)}
+          </p>
+          <pre className="mt-3 max-h-60 overflow-auto rounded-lg bg-white/70 p-3 text-[11.5px] leading-relaxed text-rose-900">
+            {String(this.state.loi?.stack || '').split('\n').slice(0, 12).join('\n')}
+          </pre>
+          <button type="button" onClick={() => this.setState({ loi: null })}
+            className="mt-3 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-rose-800 cursor-pointer hover:bg-rose-100">
+            Thử lại
+          </button>
+        </div>
+      </div>
+    );
+  }
+}
 
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
@@ -303,7 +348,9 @@ export default function FacebookPage() {
     { id: 'lead-ads', label: 'Lead Ads', icon: FileText, badge: stats?.lead_ads_today },
     { id: 'comments', label: 'Bình luận', icon: MessageSquare, badge: stats?.comments_today },
     { id: 'auto-lead', label: 'Tự động', icon: UserPlus },
+    ...(isAdmin ? [{ id: 'ad-campaigns', label: 'Chiến dịch quảng cáo', icon: Megaphone }] : []),
     ...(isAdmin ? [{ id: 'auto-companies', label: 'Auto công ty', icon: Activity }] : []),
+    ...(isAdmin ? [{ id: 'webhook', label: 'Webhook', icon: Activity }] : []),
     {
       id: 'settings',
       label: 'Cài đặt',
@@ -415,6 +462,12 @@ export default function FacebookPage() {
         {tab === 'settings' && <SettingsTab onPagesChanged={loadFbTokenSummary} fbCompanyQs={fbCompanyQs} />}
         {tab === 'auto-lead' && <AutoLeadTab />}
         {tab === 'auto-companies' && isAdmin && <FacebookAutoCompaniesPanel embedded />}
+        {tab === 'ad-campaigns' && isAdmin && (
+          <KhungBatLoi ten="Chiến dịch quảng cáo"><AdAnalyticsPage embedded /></KhungBatLoi>
+        )}
+        {tab === 'webhook' && isAdmin && (
+          <KhungBatLoi ten="Webhook"><WebhookFieldsTab /></KhungBatLoi>
+        )}
       </div>
     </div>
   );
@@ -3589,6 +3642,142 @@ Content-Type: application/json
 // ═══════════════════════════════════════════════════════════════
 // LEAD ADS TAB
 // ═══════════════════════════════════════════════════════════════
+
+function WebhookFieldsTab() {
+  const [dl, setDl] = useState(null);
+  const [dangTai, setDangTai] = useState(true);
+  const [dangLuu, setDangLuu] = useState('');
+  const [bao, setBao] = useState(null);
+
+  const tai = useCallback(async () => {
+    setDangTai(true);
+    try {
+      const r = await fetch(`${API}/api/facebook/webhook-fields`, { headers: hdr() });
+      setDl(r.ok ? await r.json() : null);
+      if (!r.ok) setBao({ ok: false, chu: 'Không đọc được cấu hình webhook' });
+    } catch (e) {
+      setBao({ ok: false, chu: e.message });
+    } finally {
+      setDangTai(false);
+    }
+  }, []);
+
+  useEffect(() => { tai(); }, [tai]);
+
+  const doiTruong = async (page, ma, batLen) => {
+    // Facebook ghi đè cả danh sách — phải gửi đủ những trường đang bật muốn giữ.
+    const moi = batLen
+      ? [...new Set([...(page.dang_bat || []), ma])]
+      : (page.dang_bat || []).filter((x) => x !== ma);
+    setDangLuu(`${page.page_id}:${ma}`);
+    setBao(null);
+    try {
+      const r = await fetch(`${API}/api/facebook/webhook-fields/${page.page_id}`, {
+        method: 'POST',
+        headers: { ...hdr(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ truong: moi }),
+      });
+      const js = await r.json();
+      if (!r.ok) throw new Error(js?.error || 'Không đổi được');
+      setBao({ ok: true, chu: `${page.page_name}: đã ${batLen ? 'bật' : 'tắt'} ${ma}` });
+      await tai();
+    } catch (e) {
+      setBao({ ok: false, chu: `${page.page_name}: ${e.message}` });
+    } finally {
+      setDangLuu('');
+    }
+  };
+
+  if (dangTai) return <div className="py-12 text-center text-sm text-gray-500">Đang hỏi Facebook…</div>;
+  if (!dl) return <div className="py-12 text-center text-sm text-gray-500">Chưa có dữ liệu</div>;
+
+  return (
+    <div className="h-full space-y-4 overflow-y-auto p-6">
+      <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-[13px] text-blue-900">
+        Bảng này đọc trạng thái <b>thật</b> từ Facebook, không phải từ cơ sở dữ liệu của mình.
+        Cột &quot;7 ngày&quot; là số gói webhook thực nhận — trường nào bật mà cột đó bằng 0
+        nghĩa là bật rồi nhưng không có dữ liệu về.
+      </div>
+
+      {bao && (
+        <div className={`rounded-lg border px-4 py-2.5 text-[13px] ${
+          bao.ok ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-rose-200 bg-rose-50 text-rose-900'
+        }`}>{bao.chu}</div>
+      )}
+
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {(dl.truong || []).map((t) => (
+          <div key={t.ma} className="rounded-lg border border-gray-200 bg-white p-3">
+            <div className="flex items-center gap-2">
+              <b className="text-[13px] text-gray-900">{t.ten}</b>
+              <code className="text-[11px] text-gray-400">{t.ma}</code>
+            </div>
+            <p className="mt-1 text-[12px] leading-relaxed text-gray-600">{t.giai_thich}</p>
+            <p className="mt-1 text-[11.5px] text-gray-400">Cần quyền: {t.quyen}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
+        <table className="w-full text-[13px]">
+          <thead className="bg-gray-50 text-left text-gray-500">
+            <tr>
+              <th className="px-3 py-2.5">Page</th>
+              {(dl.truong || []).map((t) => (
+                <th key={t.ma} className="px-3 py-2.5 text-center">{t.ten}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
+            {(dl.pages || []).map((p) => (
+              <tr key={p.page_id} className={p.ok ? '' : 'bg-rose-50/40'}>
+                <td className="px-3 py-2.5 align-top">
+                  <div className="font-medium text-gray-900">{p.page_name}</div>
+                  <div className="text-[11px] text-gray-400">
+                    {p.goi_7_ngay ? `${p.goi_7_ngay.tong} gói / 7 ngày` : 'không có gói nào 7 ngày qua'}
+                  </div>
+                  {!p.ok && (
+                    <div className="mt-1 text-[11.5px] text-rose-700">
+                      {p.co_token ? p.loi : 'Chưa có access token'}
+                      {p.thieu_quyen && <b> — token thiếu quyền</b>}
+                    </div>
+                  )}
+                </td>
+                {(dl.truong || []).map((t) => {
+                  const bat = (p.dang_bat || []).includes(t.ma);
+                  const so = p.goi_7_ngay?.[t.ma];
+                  const dang = dangLuu === `${p.page_id}:${t.ma}`;
+                  return (
+                    <td key={t.ma} className="px-3 py-2.5 text-center align-top">
+                      <button type="button" disabled={!p.ok || !!dangLuu}
+                        onClick={() => doiTruong(p, t.ma, !bat)}
+                        className={`rounded-md px-2 py-1 text-[12px] font-semibold cursor-pointer disabled:opacity-40 ${
+                          bat ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                              : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                        }`}>
+                        {dang ? '…' : bat ? 'Bật' : 'Tắt'}
+                      </button>
+                      {bat && so != null && (
+                        <div className={`mt-1 text-[11px] ${so > 0 ? 'text-gray-500' : 'text-amber-700'}`}>
+                          {so > 0 ? so : 'chưa có'}
+                        </div>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-[12px] text-gray-500">
+        Facebook ghi đè toàn bộ danh sách mỗi lần đổi, nên hệ thống luôn gửi lại đủ các
+        trường đang bật — bấm tắt một trường không làm rơi những trường còn lại.
+      </p>
+    </div>
+  );
+}
 
 function LeadAdsTab() {
   const [ads, setAds] = useState([]);

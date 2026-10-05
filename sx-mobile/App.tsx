@@ -27,6 +27,7 @@ import {
 } from './src/lib/bubbleNavInitialState';
 import { hasPendingBubbleChat, peekPendingBubbleChatSync } from './src/lib/bubbleChatPending';
 import { setupNotificationChannels } from './src/lib/notificationChannels';
+import { shouldMuteForStaff } from './src/lib/notificationApi';
 import { checkAndApplyOtaUpdate } from './src/lib/otaUpdate';
 import { navigationRef, resetToBubbleChat } from './src/navigation/navigationRef';
 import RootNavigator from './src/navigation/RootNavigator';
@@ -60,6 +61,15 @@ Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
     const data = (notification.request.content.data || {}) as Record<string, unknown>;
     const type = String(data.type || '');
+    // Nhân viên không nhận đơn xưởng mới / dự án vừa tạo: ẩn hẳn (cả khi app đang mở lẫn local tray).
+    if (shouldMuteForStaff(type)) {
+      return {
+        shouldShowBanner: false,
+        shouldShowList: false,
+        shouldPlaySound: false,
+        shouldSetBadge: false,
+      };
+    }
     const muteRemoteFg =
       AppState.currentState === 'active'
       && isRemotePushNotification(notification)
@@ -203,6 +213,10 @@ function AppShell() {
       styles.root,
       bubbleOverlayUi ? styles.rootTransparent : { backgroundColor: colors.bg },
     ]}>
+      {/* Phải đứng TRƯỚC NavigationContainer: effect chạy từ trong ra ngoài và
+          theo thứ tự anh em, nên cái gắn sau thắng. Đặt ở đây thì `<StatusBar>`
+          riêng của từng màn (vd. Tổng quan giao diện sáng) mới ghi đè được nó. */}
+      <StatusBar style={isDark ? 'light' : 'dark'} />
       <NavigationContainer
         key={token ? 'authed' : 'guest'}
         ref={navigationRef}
@@ -230,7 +244,6 @@ function AppShell() {
         transparent={bubbleBoot}
         hint={token ? 'Đang tải giao diện…' : 'Đang mở ứng dụng…'}
       />
-      <StatusBar style={isDark ? 'light' : 'dark'} />
     </View>
   );
 }

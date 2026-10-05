@@ -1,7 +1,8 @@
 /**
  * Panel bình luận (thread + reactions) dùng chung cho chi tiết CRM và Sản xuất.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Calendar,
   Check,
@@ -25,19 +26,22 @@ import {
   Link2,
   Ban,
   Loader2,
+  MoreHorizontal,
   Package,
   PanelRightClose,
   PanelRightOpen,
   Paperclip,
   Pencil,
+  Trash2,
   Truck,
   X,
 } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { isAdminLike } from '../lib/adminRole';
+import { isAdminLike, isStrictAdmin } from '../lib/adminRole';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmCommentFullDateTime, formatCrmFbRelativeTime } from './crmFbCommentUi';
-import { CrmCommentMentionComposer, renderCrmCommentBody } from './crmCommentMentionUi';
+import { CrmCommentMentionComposer, linkifyCommentString, renderCrmCommentBody } from './crmCommentMentionUi';
+import { uploadMixedCommentFiles } from '../lib/oversizedDriveUpload';
 import { contentHasMentionAll } from '../lib/crmCommentMentions';
 import { FilePreview, FileUploadButton, uploadFilesBatch } from './FileUpload';
 import UploadProgressBubble from './UploadProgressBubble';
@@ -151,15 +155,23 @@ function renderSystemCommentBody(text) {
   return parts;
 }
 
+function isDriveCommentAttachment(att) {
+  if (!att) return false;
+  if (att.isDrive || att.is_drive || att.drive_file_id) return true;
+  const url = String(att.google_view_url || att.file_url || att.url || '');
+  return /https?:\/\/(?:drive|docs)\.google\.com\//i.test(url);
+}
+
 function normalizeCommentAttachment(att) {
   if (!att) return null;
-  const url = att.file_url || att.url || '';
+  const url = att.google_view_url || att.file_url || att.url || '';
   if (!url) return null;
   return {
     url,
     name: att.file_name || att.name || 'file',
     mime: att.mime_type || att.type || '',
     size: att.file_size || att.size || 0,
+    isDrive: isDriveCommentAttachment(att) || /https?:\/\/(?:drive|docs)\.google\.com\//i.test(url),
   };
 }
 
@@ -169,6 +181,7 @@ function commentAttachmentList(raw) {
 }
 
 function isCommentImage(att) {
+  if (att?.isDrive) return false;
   const mime = att.mime || '';
   const name = att.name || '';
   return mime.startsWith('image/') || /\.(jpg|jpeg|png|gif|webp|bmp|svg|heic|heif)$/i.test(name);
@@ -957,6 +970,10 @@ export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
+                  if (f.isDrive) {
+                    window.open(f.url, '_blank', 'noopener,noreferrer');
+                    return;
+                  }
                   void handleDownloadOne(f.url, f.name || 'tai-lieu');
                 }}
               >
@@ -975,8 +992,14 @@ export function CommentAttachmentsBlock({ attachments, onOpenImage }) {
                   </span>
                 </span>
                 <span className="shrink-0 inline-flex items-center gap-1.5 rounded-xl bg-[#1877f2] px-3 py-2 text-[12px] font-semibold text-white shadow-sm hover:bg-[#166fe5] transition-colors">
-                  {dlBusy ? <Loader2 className="h-4 w-4 animate-spin text-white" /> : <Download className="h-4 w-4 text-white" />}
-                  Tải xuống
+                  {f.isDrive ? (
+                    <ExternalLink className="h-4 w-4 text-white" />
+                  ) : dlBusy ? (
+                    <Loader2 className="h-4 w-4 animate-spin text-white" />
+                  ) : (
+                    <Download className="h-4 w-4 text-white" />
+                  )}
+                  {f.isDrive ? 'Mở Drive' : 'Tải xuống'}
                 </span>
               </button>
             );
@@ -1284,7 +1307,16 @@ function ReactionCornerBadge({ comment }) {
   );
 }
 
-function useCommentPasteUpload(onFilesUploaded) {
+function appendCommentShareText(setBody, shareText) {
+  const extra = String(shareText || '').trim();
+  if (!extra) return;
+  setBody((prev) => {
+    const cur = String(prev || '').trim();
+    return cur ? `${cur}\n${extra}` : extra;
+  });
+}
+
+function useCommentPasteUpload(onFilesUploaded, uploadFiles = null) {
   const [uploadingPaste, setUploadingPaste] = useState(false);
   const [pasteProgress, setPasteProgress] = useState(null);
 
@@ -1294,7 +1326,9 @@ function useCommentPasteUpload(onFilesUploaded) {
     setUploadingPaste(true);
     setPasteProgress(null);
     try {
-      const uploaded = await uploadFilesBatch(files, { onProgress: setPasteProgress });
+      const uploaded = uploadFiles
+        ? await uploadFiles(files, { onProgress: setPasteProgress })
+        : await uploadFilesBatch(files, { onProgress: setPasteProgress });
       onFilesUploaded?.(uploaded);
     } catch (e) {
       alert(e?.response?.data?.error || e?.message || 'Không upload được file dán');
@@ -1302,7 +1336,7 @@ function useCommentPasteUpload(onFilesUploaded) {
       setPasteProgress(null);
       setUploadingPaste(false);
     }
-  }, [onFilesUploaded]);
+  }, [onFilesUploaded, uploadFiles]);
 
   return { handlePasteFiles, uploadingPaste, pasteProgress };
 }
@@ -2379,6 +2413,112 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
   );
 }
 
+function CommentActionMenu({ canEdit, canRemove, onEdit, onRemove }) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef(null);
+  const menuRef = useRef(null);
+  const [pos, setPos] = useState(null);
+
+  useLayoutEffect(() => {
+    if (!open || !btnRef.current) return undefined;
+    const place = () => {
+      const rect = btnRef.current.getBoundingClientRect();
+      const width = 160;
+      const height = 8 + (canEdit ? 36 : 0) + (canRemove ? 36 : 0);
+      let left = rect.right - width;
+      let top = rect.bottom + 4;
+      if (left < 8) left = 8;
+      if (left + width > window.innerWidth - 8) left = window.innerWidth - width - 8;
+      if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 4);
+      setPos({ top, left });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open, canEdit, canRemove]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => {
+      const target = e.target;
+      if (btnRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  if (!canEdit && !canRemove) return null;
+
+  const menu = (
+    <div
+      ref={menuRef}
+      className="fixed z-[80] min-w-[148px] overflow-hidden rounded-lg border border-[#e4e6eb] bg-white py-1 shadow-lg"
+      style={pos ? { top: pos.top, left: pos.left } : { top: -9999, left: 0 }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      {canEdit ? (
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] font-medium text-[#050505] hover:bg-[#f0f2f5]"
+          onClick={() => {
+            setOpen(false);
+            onEdit();
+          }}
+        >
+          <Pencil size={14} />
+          Sửa
+        </button>
+      ) : null}
+      {canRemove ? (
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] font-medium text-red-600 hover:bg-red-50"
+          onClick={() => {
+            setOpen(false);
+            onRemove();
+          }}
+        >
+          <Trash2 size={14} />
+          Xóa
+        </button>
+      ) : null}
+    </div>
+  );
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        title="Thao tác"
+        aria-label="Thao tác bình luận"
+        aria-expanded={open}
+        className="inline-flex h-6 w-6 items-center justify-center rounded-full text-[#65676b] hover:bg-[#e4e6eb] hover:text-[#050505]"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+      >
+        <MoreHorizontal size={16} />
+      </button>
+      {open ? createPortal(menu, document.body) : null}
+    </>
+  );
+}
+
 function CommentThread({
   comments,
   loading,
@@ -2408,6 +2548,7 @@ function CommentThread({
   enableAttachments = false,
   pendingFiles = [],
   onFilesUploaded,
+  uploadFiles = null,
   onRemovePendingFile,
   onPasteFiles,
   pasteUploadProgress = null,
@@ -2432,6 +2573,9 @@ function CommentThread({
 }) {
   const selfUid = user?.userId || user?.id;
   const commentsByParent = useMemo(() => groupByParent(comments), [comments]);
+  const [attachProgress, setAttachProgress] = useState(null);
+  const onAttachProgress = useCallback((progress) => setAttachProgress(progress), []);
+  const liveUpload = attachProgress || pasteUploadProgress;
   const [rightOpen, setRightOpen] = useState(false);
   const [mediaSection, setMediaSection] = useState('media');
 
@@ -2676,6 +2820,8 @@ function CommentThread({
       const privateTooltip = isPrivateComment
         ? `Bình luận riêng tư — chỉ hiện với: ${privateAudienceNames.join(', ') || '—'}`
         : '';
+      const canEditComment = isCommentOwner(c, user);
+      const canRemoveComment = canEditComment || isStrictAdmin(user);
       return (
         <div key={c.id} className={depth > 0 ? 'ml-5 border-l border-[#ccd0d5] pl-2.5 pt-0.5' : ''}>
           <div className="group/crx flex gap-2 rounded-lg px-1 py-1.5 transition-colors hover:bg-black/[0.025]">
@@ -2683,7 +2829,9 @@ function CommentThread({
             <div className="min-w-0 flex-1">
               <div className={`relative inline-block max-w-full ${showCornerRx ? 'mb-2.5' : ''}`}>
                 <div
-                  className={`max-w-full rounded-2xl border px-3 py-2 shadow-sm ${showCornerRx ? 'pb-2.5' : ''} ${
+                  className={`relative max-w-full rounded-2xl border px-3 py-2 shadow-sm ${
+                    editingId !== c.id && (canEditComment || canRemoveComment) ? 'pr-9' : ''
+                  } ${showCornerRx ? 'pb-2.5' : ''} ${
                   isPrivateComment
                     ? 'border-amber-300 bg-amber-50/70'
                     : contentHasMentionAll(getBody(c))
@@ -2713,6 +2861,16 @@ function CommentThread({
                     });
                   }}
                 >
+                  {editingId !== c.id && (canEditComment || canRemoveComment) ? (
+                    <div className="absolute right-1.5 top-1.5">
+                      <CommentActionMenu
+                        canEdit={canEditComment}
+                        canRemove={canRemoveComment}
+                        onEdit={() => { setEditingId(c.id); setEditingBody(getBody(c)); }}
+                        onRemove={() => onRemove(c)}
+                      />
+                    </div>
+                  ) : null}
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0">
                     <span className="text-[13px] font-semibold text-[#050505]">{c.user?.full_name || 'Thành viên'}</span>
                     {isPrivateComment && (
@@ -2752,7 +2910,7 @@ function CommentThread({
                     <>
                       {(getBody(c) || '').trim() ? (
                         <p className="mt-1 break-words text-[15px] leading-snug text-[#050505] whitespace-pre-wrap">
-                          {renderBody ? renderBody(getBody(c)) : getBody(c)}
+                          {renderBody ? renderBody(getBody(c)) : linkifyCommentString(getBody(c))}
                         </p>
                       ) : null}
                       <CommentAttachmentsBlock attachments={c.attachments} onOpenImage={openLightboxByUrl} />
@@ -2786,14 +2944,6 @@ function CommentThread({
                 <div className="overflow-hidden transition-[max-height,opacity] duration-200 ease-out max-h-0 opacity-0 pointer-events-none group-hover/crx:max-h-10 group-hover/crx:opacity-100 group-hover/crx:pointer-events-auto group-focus-within/crx:max-h-10 group-focus-within/crx:opacity-100 group-focus-within/crx:pointer-events-auto">
                   <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-1 text-[12px]">
                     <button type="button" className="font-semibold text-[#65676b] hover:underline" onClick={() => onReply(c)}>Trả lời</button>
-                    {String(c.user_id || '') === String(user?.id || user?.userId || '') && (
-                      <>
-                        <span className="text-[#ccd0d5]">·</span>
-                        <button type="button" className="font-semibold text-[#65676b] hover:underline" onClick={() => { setEditingId(c.id); setEditingBody(getBody(c)); }}>Sửa</button>
-                        <span className="text-[#ccd0d5]">·</span>
-                        <button type="button" className="font-semibold text-[#65676b] hover:underline" onClick={() => onRemove(c)}>Xóa</button>
-                      </>
-                    )}
                   </div>
                 </div>
               )}
@@ -2873,17 +3023,18 @@ function CommentThread({
                 <FilePreview files={pendingFiles} onRemove={onRemovePendingFile} small />
               </div>
             )}
-            {pasteUploadProgress ? (
-              <div className="px-3 pt-2">
+            {liveUpload ? (
+              <div className="min-w-0 px-3 pt-2">
                 <UploadProgressBubble
                   variant="inline"
                   align="start"
-                  fileName={pasteUploadProgress.fileName}
-                  fileSize={pasteUploadProgress.fileSize}
-                  percent={pasteUploadProgress.percent}
-                  bytesPerSec={pasteUploadProgress.bytesPerSec}
-                  remainingSec={pasteUploadProgress.remainingSec}
-                  compact
+                  fileName={liveUpload.fileName}
+                  fileSize={liveUpload.fileSize}
+                  percent={liveUpload.percent}
+                  bytesPerSec={liveUpload.bytesPerSec}
+                  remainingSec={liveUpload.remainingSec}
+                  statusText={liveUpload.statusText}
+                  className="mb-0 w-full max-w-none"
                 />
               </div>
             ) : null}
@@ -2899,7 +3050,15 @@ function CommentThread({
                 onPaste={enableAttachments ? handleComposerPaste : undefined}
                 posting={posting}
                 canSubmit={canSubmit}
-                attachSlot={enableAttachments ? <FileUploadButton compact onFilesUploaded={onFilesUploaded} /> : null}
+                attachSlot={enableAttachments ? (
+                  <FileUploadButton
+                    compact
+                    showProgress={false}
+                    onProgressChange={onAttachProgress}
+                    uploadFiles={uploadFiles}
+                    onFilesUploaded={onFilesUploaded}
+                  />
+                ) : null}
                 placeholder={composerPlaceholder}
                 quickReplyTemplates={quickReplyTemplates}
                 onQuickReply={(text) => setBody(text)}
@@ -2915,7 +3074,15 @@ function CommentThread({
                 onPaste={enableAttachments ? handleComposerPaste : undefined}
                 posting={posting}
                 canSubmit={canSubmit}
-                attachSlot={enableAttachments ? <FileUploadButton compact onFilesUploaded={onFilesUploaded} /> : null}
+                attachSlot={enableAttachments ? (
+                  <FileUploadButton
+                    compact
+                    showProgress={false}
+                    onProgressChange={onAttachProgress}
+                    uploadFiles={uploadFiles}
+                    onFilesUploaded={onFilesUploaded}
+                  />
+                ) : null}
                 placeholder={composerPlaceholder}
               />
             )}
@@ -3162,7 +3329,17 @@ export function CrmLeadCommentsPanel({
     setPendingFiles((prev) => [...prev, ...uploaded]);
   }, []);
 
-  const { handlePasteFiles, uploadingPaste, pasteProgress } = useCommentPasteUpload(handleFilesUploaded);
+  const uploadCommentFiles = useCallback(async (files, opts) => {
+    const { uploaded, shareText } = await uploadMixedCommentFiles(files, {
+      entityType: 'lead',
+      entityId: activeLeadId,
+      ...opts,
+    });
+    appendCommentShareText(setBody, shareText);
+    return uploaded;
+  }, [activeLeadId]);
+
+  const { handlePasteFiles, uploadingPaste, pasteProgress } = useCommentPasteUpload(handleFilesUploaded, uploadCommentFiles);
 
   const saveEdit = async () => {
     const v = editingBody.trim();
@@ -3325,6 +3502,7 @@ export function CrmLeadCommentsPanel({
       enableAttachments
       pendingFiles={pendingFiles}
       onFilesUploaded={handleFilesUploaded}
+      uploadFiles={uploadCommentFiles}
       onPasteFiles={handlePasteFiles}
       pasteUploadProgress={pasteProgress}
       onRemovePendingFile={(i) => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}
@@ -3570,7 +3748,17 @@ export function ProjectCommentsPanel({
     setPendingFiles((prev) => [...prev, ...uploaded]);
   }, []);
 
-  const { handlePasteFiles, uploadingPaste, pasteProgress } = useCommentPasteUpload(handleFilesUploaded);
+  const uploadCommentFiles = useCallback(async (files, opts) => {
+    const { uploaded, shareText } = await uploadMixedCommentFiles(files, {
+      entityType: 'project',
+      entityId: activeProjectId,
+      ...opts,
+    });
+    appendCommentShareText(setBody, shareText);
+    return uploaded;
+  }, [activeProjectId]);
+
+  const { handlePasteFiles, uploadingPaste, pasteProgress } = useCommentPasteUpload(handleFilesUploaded, uploadCommentFiles);
 
   const saveEdit = async () => {
     const v = editingBody.trim();
@@ -3675,6 +3863,7 @@ export function ProjectCommentsPanel({
       enableAttachments
       pendingFiles={pendingFiles}
       onFilesUploaded={handleFilesUploaded}
+      uploadFiles={uploadCommentFiles}
       onPasteFiles={handlePasteFiles}
       pasteUploadProgress={pasteProgress}
       onRemovePendingFile={(i) => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}

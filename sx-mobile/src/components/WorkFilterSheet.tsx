@@ -20,6 +20,8 @@ import { colorWithAlpha, Radii, Spacing, type AppColors } from '../theme';
 export type WorkFilterOption = { id: string; label: string };
 export type WorkStatusFilter = 'all' | 'pending' | 'in_progress' | 'completed' | 'overdue';
 export type WorkScopeFilter = 'team' | 'mine';
+/** Hạn xử lý của việc: '' = không lọc. */
+export type WorkDueFilter = '' | 'today' | 'tomorrow' | 'this_week' | 'next_week';
 
 type Props = {
   visible: boolean;
@@ -29,8 +31,8 @@ type Props = {
   showScope: boolean;
   scope: WorkScopeFilter;
   onScopeChange: (id: WorkScopeFilter) => void;
-  statusFilter: WorkStatusFilter;
-  onStatusChange: (id: WorkStatusFilter) => void;
+  dueFilter: WorkDueFilter;
+  onDueChange: (id: WorkDueFilter) => void;
   showCompanyPicker: boolean;
   companyOptions: WorkFilterOption[];
   filterCompany: string;
@@ -41,16 +43,15 @@ type Props = {
   onAssigneeChange: (id: string) => void;
 };
 
-const STATUS_OPTS: {
-  id: WorkStatusFilter;
+const DUE_OPTS: {
+  id: Exclude<WorkDueFilter, ''>;
   label: string;
   icon: keyof typeof Ionicons.glyphMap;
 }[] = [
-  { id: 'all', label: 'Tất cả', icon: 'list-outline' },
-  { id: 'pending', label: 'Chưa làm', icon: 'time-outline' },
-  { id: 'in_progress', label: 'Đang làm', icon: 'play-outline' },
-  { id: 'completed', label: 'Hoàn tất', icon: 'checkmark-circle-outline' },
-  { id: 'overdue', label: 'Quá hạn', icon: 'alert-circle-outline' },
+  { id: 'today', label: 'Hôm nay', icon: 'today-outline' },
+  { id: 'tomorrow', label: 'Ngày mai', icon: 'sunny-outline' },
+  { id: 'this_week', label: 'Trong tuần', icon: 'calendar-outline' },
+  { id: 'next_week', label: 'Tuần sau', icon: 'calendar-number-outline' },
 ];
 
 const SCOPE_OPTS: {
@@ -218,8 +219,8 @@ export default function WorkFilterSheet({
   showScope,
   scope,
   onScopeChange,
-  statusFilter,
-  onStatusChange,
+  dueFilter,
+  onDueChange,
   showCompanyPicker,
   companyOptions,
   filterCompany,
@@ -373,7 +374,7 @@ export default function WorkFilterSheet({
               <Text style={styles.subtitle}>
                 {[
                   showScope ? 'Phạm vi' : null,
-                  'Trạng thái',
+                  'Hạn xử lý',
                   showCompanyPicker ? 'Công ty' : null,
                   showAssignee ? 'Người nhận' : null,
                 ]
@@ -430,15 +431,15 @@ export default function WorkFilterSheet({
               </FilterSection>
             ) : null}
 
-            <FilterSection title="Trạng thái" subtitle="Lọc theo tiến độ giao việc" colors={colors}>
+            <FilterSection title="Hạn xử lý" subtitle="Bấm lại để bỏ chọn" colors={colors}>
               <View style={styles.chipWrap}>
-                {STATUS_OPTS.map((opt) => (
+                {DUE_OPTS.map((opt) => (
                   <Chip
                     key={opt.id}
                     label={opt.label}
                     icon={opt.icon}
-                    active={statusFilter === opt.id}
-                    onPress={() => onStatusChange(opt.id)}
+                    active={dueFilter === opt.id}
+                    onPress={() => onDueChange(dueFilter === opt.id ? '' : opt.id)}
                   />
                 ))}
               </View>

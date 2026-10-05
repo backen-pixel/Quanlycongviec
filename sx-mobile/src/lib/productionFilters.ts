@@ -3,6 +3,8 @@
  * và ProductionDashboard.jsx (web).
  */
 import type { ProductionProject } from '../types';
+import type { RoleUser } from './roles';
+import { isSystemAdmin } from './roles';
 
 export type CompanyRow = {
   id: string;
@@ -19,16 +21,9 @@ export type ClientCompanyOption = {
   source?: string;
 };
 
-export type AuthUserLite = {
-  role?: string | null;
-  company_id?: string | null;
-  email?: string | null;
-};
-
-export function isSystemAdmin(user?: AuthUserLite | null): boolean {
-  return String(user?.role || '').trim() === 'admin'
-    && (user?.company_id == null || String(user.company_id).trim() === '');
-}
+/** Vai trò đã dọn về `lib/roles.ts`. Giữ tên cũ để nơi gọi không phải đổi. */
+export type AuthUserLite = RoleUser;
+export { isSystemAdmin };
 
 export function isMetallaOrHucabiCompany(company?: CompanyRow | null): boolean {
   if (!company) return false;

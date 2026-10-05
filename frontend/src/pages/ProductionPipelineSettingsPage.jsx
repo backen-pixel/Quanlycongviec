@@ -4,12 +4,12 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
-import { Settings, Plus, Trash2, Save, ChevronRight, ChevronDown, ChevronUp, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft, Search, Wrench, Eye, EyeOff, Layers, GripVertical, Pencil, X, Ban } from 'lucide-react';
+import { Settings, Plus, Trash2, Save, ChevronRight, ChevronDown, ChevronUp, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft, Search, Wrench, Eye, EyeOff, Layers, GripVertical, Pencil, X, Ban, Receipt } from 'lucide-react';
 import WorkshopTypeSettingsSection from '../components/WorkshopTypeSettingsSection';
 import { isPipelineStageSlaDisabled } from '../lib/crmPipelineSla';
 import { SX_DEADLINE_GROUPS, sxDeadlineGroupMeta } from '../lib/sxWorkshopSchedule';
 import { nhanCotLon, sapXepNhomCotLon, khoaCotLonTuNhan } from '../lib/sxGopCot';
-import { sxGroupPrimaryOwnerId } from '../lib/sxStageStaff';
+import { sxGroupPrimaryOwner, sxGroupPrimaryOwnerId } from '../lib/sxStageStaff';
 import { tabKanbanCot, tabKanbanNhom, khoaTabKanban, nhanTabKanban, dsTabKanban, laTabCoDinh, TAB_SX, TAB_CONG_NO } from '../lib/sxTachCongNo';
 
 /**
@@ -323,6 +323,7 @@ export default function ProductionPipelineSettingsPage() {
   const [form, setForm] = useState({
     name: '', color: COLORS[0], icon: '📋', is_active: true,
     is_handover_to_logistics: false,
+    is_phat_sinh: false,
     is_switch_workshop_type: false,
     target_workshop_type_id: '',
     crm_sync_type: null, crm_target_stage_id: '',
@@ -1101,7 +1102,7 @@ export default function ProductionPipelineSettingsPage() {
     setStageStaffSelectedMeta([]);
     setForm({
       name: '', color: COLORS[stages.length % COLORS.length], icon: ICONS[stages.length % ICONS.length],
-      is_active: true, is_handover_to_logistics: false,
+      is_active: true, is_handover_to_logistics: false, is_phat_sinh: false,
       is_switch_workshop_type: false, target_workshop_type_id: '',
       crm_sync_type: null, crm_target_stage_id: '',
       progress_percent: '',
@@ -1141,6 +1142,7 @@ export default function ProductionPipelineSettingsPage() {
       icon: stage.icon || '📋',
       is_active: stage.is_active !== false,
       is_handover_to_logistics: stage.is_handover_to_logistics || false,
+      is_phat_sinh: stage.is_phat_sinh || false,
       is_switch_workshop_type: stage.is_switch_workshop_type || false,
       target_workshop_type_id: stage.target_workshop_type_id || '',
       crm_sync_type: stage.crm_sync_type || null,
@@ -1184,10 +1186,11 @@ export default function ProductionPipelineSettingsPage() {
         workflow_stage_id: productionWorkflowStageId || null,
         is_active: form.is_active,
         is_handover_to_logistics: form.is_handover_to_logistics,
+        is_phat_sinh: !!form.is_phat_sinh && !form.is_handover_to_logistics,
         is_switch_workshop_type: form.is_switch_workshop_type,
         target_workshop_type_id: form.is_switch_workshop_type ? (form.target_workshop_type_id || null) : null,
-        crm_sync_type: (form.is_handover_to_logistics || form.is_switch_workshop_type) ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
-        crm_target_stage_id: (form.is_handover_to_logistics || form.is_switch_workshop_type) ? null : (form.crm_target_stage_id || null),
+        crm_sync_type: (form.is_handover_to_logistics || form.is_switch_workshop_type || form.is_phat_sinh) ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
+        crm_target_stage_id: (form.is_handover_to_logistics || form.is_switch_workshop_type || form.is_phat_sinh) ? null : (form.crm_target_stage_id || null),
         company_id: settingsCompanyId,
         workshop_type_id: currentWorkshopTypeId,
         ...kpiPayloadFromForm(),
@@ -1220,7 +1223,8 @@ export default function ProductionPipelineSettingsPage() {
     try {
       const intakeRow = stages.find((s) => s.id === editId)?.bucket_slug === INTAKE;
       const handover = !intakeRow && form.is_handover_to_logistics;
-      const switchType = !intakeRow && !handover && form.is_switch_workshop_type;
+      const phatSinh = !intakeRow && !handover && !!form.is_phat_sinh;
+      const switchType = !intakeRow && !handover && !phatSinh && form.is_switch_workshop_type;
       await api.put(`/production/pipeline-stages/${editId}`, {
         name: form.name.trim(),
         color: form.color,
@@ -1229,10 +1233,11 @@ export default function ProductionPipelineSettingsPage() {
         workflow_stage_id: intakeRow ? null : (productionWorkflowStageId || null),
         is_active: form.is_active,
         is_handover_to_logistics: handover,
+        is_phat_sinh: phatSinh,
         is_switch_workshop_type: switchType,
         target_workshop_type_id: switchType ? (form.target_workshop_type_id || null) : null,
-        crm_sync_type: intakeRow || handover || switchType ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
-        crm_target_stage_id: intakeRow || handover || switchType ? null : (form.crm_target_stage_id || null),
+        crm_sync_type: intakeRow || handover || switchType || phatSinh ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
+        crm_target_stage_id: intakeRow || handover || switchType || phatSinh ? null : (form.crm_target_stage_id || null),
         ...(intakeRow ? {} : { ...kpiPayloadFromForm(), ...stageStaffPayloadFromForm() }),
       });
       setEditId(null);
@@ -1353,6 +1358,16 @@ export default function ProductionPipelineSettingsPage() {
     } catch (e) {
       const msg = e.response?.data?.error || e.message || 'Lỗi';
       alert(msg.includes('clears_deadline') ? 'Chưa chạy migration 629 (cột Tắt hạn).' : msg);
+    }
+  };
+
+  const toggleChuyenCongNo = async (stage) => {
+    try {
+      const dangOCongNo = tabKanbanCot(stage) === TAB_CONG_NO;
+      await saveStageFlags(stage, { board_tab: dangOCongNo ? TAB_SX : TAB_CONG_NO });
+    } catch (e) {
+      const msg = e.response?.data?.error || e.message || 'Lỗi';
+      alert(msg.includes('board_tab') ? 'Chưa chạy migration 614 (tab Kanban).' : msg);
     }
   };
 
@@ -2255,7 +2270,21 @@ export default function ProductionPipelineSettingsPage() {
 
               <div className="flex gap-3 overflow-x-auto pb-2 pt-1 snap-x">
                 {cotLonTheoTab.map((g, gi) => {
-                  const ownerId = sxGroupPrimaryOwnerId(g.ds);
+                  const ownerCot = sxGroupPrimaryOwnerId(g.ds);
+                  const typePrimaryId = selectedTypeKey && selectedTypeKey !== GLOBAL_TYPE_KEY
+                    ? String(typeStaffPrimary[String(selectedTypeKey)] || '')
+                    : '';
+                  const ownerId = ownerCot || typePrimaryId;
+                  const ownerUser = sxGroupPrimaryOwner(g.ds);
+                  const ownerTrongDs = typeStaffUserList.some((u) => String(u.id) === String(ownerId));
+                  const ownerTuDs = typeStaffUserList.find((u) => String(u.id) === String(ownerId));
+                  const ownerName = String(
+                    ownerUser?.full_name
+                    || ownerUser?.email
+                    || ownerTuDs?.full_name
+                    || ownerTuDs?.email
+                    || '',
+                  ).trim();
                   const busy = gopOwnerSavingKey === g.key;
                   const tenHien = nhanCotLon(g.key) || g.key;
                   const dangKeoNho = Boolean(keoCotNhoId || keoPayloadRef.current?.loai === 'nho');
@@ -2304,6 +2333,12 @@ export default function ProductionPipelineSettingsPage() {
                       </div>
                       <p className="px-3 text-[10px] text-violet-500">
                         {g.ds.length} cột nhỏ{g.ds.length > 1 ? ' · song song' : ''}
+                      </p>
+                      <p
+                        className={`px-3 pb-0.5 truncate text-[11px] ${ownerName ? 'font-semibold text-indigo-800' : 'italic text-slate-400'}`}
+                        title={ownerName ? `Phụ trách cột lớn: ${ownerName}` : 'Chưa gán người chịu trách nhiệm cột chính'}
+                      >
+                        {ownerName ? `Phụ trách: ${ownerName}` : 'Chưa gán NV phụ trách'}
                       </p>
                       <div
                         className="flex-1 overflow-y-auto px-2 py-1.5 space-y-1 min-h-[6rem]"
@@ -2378,6 +2413,9 @@ export default function ProductionPipelineSettingsPage() {
                           title="Người chịu trách nhiệm cột chính"
                         >
                           <option value="">— NV phụ trách —</option>
+                          {ownerId && !ownerTrongDs && (
+                            <option value={String(ownerId)}>{ownerName || 'NV đã gán'}</option>
+                          )}
                           {typeStaffUserList.map((u) => (
                             <option key={u.id} value={String(u.id)}>{u.full_name || u.email || u.id}</option>
                           ))}
@@ -3050,6 +3088,11 @@ export default function ProductionPipelineSettingsPage() {
                           <Truck className="h-2.5 w-2.5" /> Bàn giao VC
                         </span>
                       )}
+                      {s.is_phat_sinh && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-100 text-rose-700">
+                          Cột phát sinh
+                        </span>
+                      )}
                       {s.is_switch_workshop_type && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-100 text-violet-700 border border-violet-200">
                           <ArrowRightLeft className="h-2.5 w-2.5" />
@@ -3101,6 +3144,11 @@ export default function ProductionPipelineSettingsPage() {
                       {!isIntake && s.clears_deadline && (
                         <span className="bg-slate-100 text-slate-800 border border-slate-300 px-1.5 py-0.5 rounded font-medium">
                           ⛔ Đã tắt hạn
+                        </span>
+                      )}
+                      {!isIntake && tabKanbanCot(s) === TAB_CONG_NO && (
+                        <span className="bg-amber-50 text-amber-900 border border-amber-200 px-1.5 py-0.5 rounded font-medium">
+                          → Công nợ
                         </span>
                       )}
                       {!isIntake && s.dashboard_kpi === 'producing' && (
@@ -3240,6 +3288,23 @@ export default function ProductionPipelineSettingsPage() {
                         <Clock className="h-3 w-3" />
                         {isPipelineStageSlaDisabled(s.sla_days) ? 'Đã bỏ QH' : 'Bỏ quá hạn'}
                       </button>
+                        <button
+                          type="button"
+                          onClick={() => toggleChuyenCongNo(s)}
+                          className={`h-7 px-2 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer border ${
+                            tabKanbanCot(s) === TAB_CONG_NO
+                              ? 'bg-amber-100 text-amber-900 border-amber-300'
+                              : 'bg-gray-50 text-gray-500 border-gray-200 hover:border-amber-300 hover:text-amber-800'
+                          }`}
+                          title={
+                            tabKanbanCot(s) === TAB_CONG_NO
+                              ? 'Cột đang ở tab Công nợ. Nhấn để đưa về tab Sản xuất.'
+                              : 'Đưa cột này sang tab Công nợ trên Kanban xưởng.'
+                          }
+                        >
+                          <Receipt className="h-3 w-3" />
+                          {tabKanbanCot(s) === TAB_CONG_NO ? 'Đã chuyển CN' : 'Chuyển công nợ'}
+                        </button>
                       </>
                     )}
                     <button
@@ -3442,6 +3507,18 @@ export default function ProductionPipelineSettingsPage() {
                       />
                       <Ban className="h-3.5 w-3.5 text-slate-700" /> Tắt deadline khi kéo thẻ tới cột
                     </label>
+                    <label className="flex items-center gap-2 text-xs cursor-pointer text-amber-950 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200">
+                      <input
+                        type="checkbox"
+                        checked={khoaTabKanban(form.board_tab) === TAB_CONG_NO}
+                        onChange={(e) => setForm((f) => ({
+                          ...f,
+                          board_tab: e.target.checked ? TAB_CONG_NO : TAB_SX,
+                        }))}
+                        className="rounded border-amber-400"
+                      />
+                      <Receipt className="h-3.5 w-3.5 text-amber-700" /> Chuyển công nợ
+                    </label>
                     <div className="flex flex-wrap items-center gap-2 text-xs text-sky-950 bg-sky-50 px-2 py-1 rounded-lg border border-sky-200">
                       <span className="font-semibold whitespace-nowrap">Ô Dashboard</span>
                       <label className="flex items-center gap-1 cursor-pointer">
@@ -3631,6 +3708,36 @@ export default function ProductionPipelineSettingsPage() {
                   </details>
                 )}
                 {!editingIntake && (
+                  <label className="flex items-start gap-2 text-xs cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!form.is_phat_sinh}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        setForm((f) => ({
+                          ...f,
+                          is_phat_sinh: on,
+                          ...(on ? {
+                            is_handover_to_logistics: false,
+                            is_switch_workshop_type: false,
+                            target_workshop_type_id: '',
+                            crm_sync_type: null,
+                            crm_target_stage_id: '',
+                            dashboard_kpi: '',
+                          } : {}),
+                        }));
+                      }}
+                      className="mt-0.5 rounded border-rose-400 accent-rose-600"
+                    />
+                    <span>
+                      <span className="font-medium text-rose-700">Cột phát sinh</span>
+                      <span className="block text-[10px] text-rose-600/90 mt-0.5 leading-snug">
+                        Đơn phát sinh tạo từ chi tiết dự án sẽ đứng vào cột này. Không đẩy CRM và không đổi giai đoạn workflow.
+                      </span>
+                    </span>
+                  </label>
+                )}
+                {!editingIntake && (
                   <label
                     className="flex items-start gap-2 text-xs cursor-pointer"
                     title="Khi thẻ vào cột này có thể bàn giao sang module Lắp đặt."
@@ -3648,6 +3755,7 @@ export default function ProductionPipelineSettingsPage() {
                             crm_target_stage_id: '',
                             is_switch_workshop_type: false,
                             target_workshop_type_id: '',
+                            is_phat_sinh: false,
                           } : {}),
                         }));
                       }}
@@ -3678,6 +3786,7 @@ export default function ProductionPipelineSettingsPage() {
                             is_switch_workshop_type: on,
                             ...(on ? {
                               is_handover_to_logistics: false,
+                              is_phat_sinh: false,
                               crm_sync_type: null,
                               crm_target_stage_id: '',
                             } : { target_workshop_type_id: '' }),

@@ -128,6 +128,7 @@ const EventsFeedPage = lazyWithRetry(() => import('./pages/EventsFeedPage'));
 const LeaveSchedulePage = lazyWithRetry(() => import('./pages/LeaveSchedulePage'));
 const LeaveListPage = lazyWithRetry(() => import('./pages/LeaveListPage'));
 const EventsOverviewPage = lazyWithRetry(() => import('./pages/EventsOverviewPage'));
+const EventsInstallSchedulePage = lazyWithRetry(() => import('./pages/EventsInstallSchedulePage'));
 const SocialFeedPage = lazyWithRetry(() => import('./pages/SocialFeedPage'));
 const SocialProfilePage = lazyWithRetry(() => import('./pages/SocialProfilePage'));
 const ReleaseNotesPage = lazyWithRetry(() => import('./pages/ReleaseNotesPage'));
@@ -555,6 +556,7 @@ export default function App() {
             <Route path="/crm/leaves" element={<LeaveSchedulePage />} />
             <Route path="/crm/leaves/list" element={<LeaveListPage />} />
             <Route path="/crm/events/overview" element={<EventsOverviewPage />} />
+            <Route path="/crm/events/schedule" element={<EventsInstallSchedulePage scope="crm" />} />
             <Route path="/crm/messenger" element={<MessengerHubPage />} />
             <Route path="/crm/activity" element={<ActiveUsersPage />} />
             <Route path="/crm/dashboard" element={<CRMDashboard />} />
@@ -592,6 +594,8 @@ export default function App() {
             <Route path="/crm/blocked-phones" element={<RequireCrmElevated><CrmBlockedPhonesPage /></RequireCrmElevated>} />
             <Route path="/crm/pipeline-settings" element={<RequireCrmElevated><PipelineSettingsPage /></RequireCrmElevated>} />
             <Route path="/crm/sources-settings" element={<RequireCrmElevated><CRMSourcesSettingsPage /></RequireCrmElevated>} />
+            {/* Trang này đã gộp vào /crm/facebook. Giữ đường cũ để link và bookmark không chết. */}
+            <Route path="/crm/ad-analytics" element={<Navigate to="/crm/facebook?tab=ad-campaigns" replace />} />
             <Route path="/crm/categories" element={<CategoriesPage />} />
             <Route path="/settings/pdf" element={<PDFSettingsPage />} />
             <Route path="/settings/password" element={<PasswordSettingsPage />} />
@@ -629,6 +633,7 @@ export default function App() {
               <Route path="assignments" element={<ProductionAssignmentsPage />} />
               <Route path="regions" element={<ProductionRegionsPage />} />
               <Route path="events" element={<EventsFeedPage lockedModule="production" />} />
+              <Route path="events/schedule" element={<EventsInstallSchedulePage scope="production" />} />
               <Route path="trash" element={<Navigate to="/admin/trash?tab=sx" replace />} />
               <Route path="projects/:id" element={<ProductionDetail />} />
             </Route>
@@ -642,6 +647,7 @@ export default function App() {
               <Route path="teams" element={<WorkshopTeamsPage />} />
               <Route path="assignments" element={<LogisticsAssignmentsPage />} />
               <Route path="events" element={<EventsFeedPage lockedModule="logistics" />} />
+              <Route path="events/schedule" element={<EventsInstallSchedulePage scope="logistics" />} />
               <Route path="trash" element={<Navigate to="/admin/trash?tab=vc" replace />} />
               <Route path="projects/:id" element={<LogisticsDetail />} />
             </Route>

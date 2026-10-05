@@ -8,10 +8,17 @@ const { isFacebookAtomicLeadScope, createFacebookLeadOnce } = require('../helper
 const { supabase } = require('../config/supabase');
 const { fetchAllPagesParallel } = require('../helpers/supabaseFetchAll');
 const axios = require('axios');
-const { isAdminLike, isSystemAdmin, isTenantAdmin, isEcosystemAdmin, hasCompanyId } = require('../helpers/adminRole');
+const {
+  isAdminLike, isSystemAdmin, isTenantAdmin, isEcosystemAdmin, hasCompanyId, isCrmModuleAdmin,
+} = require('../helpers/adminRole');
 const { companyInTenantContext, isTenantScopeEnforced } = require('../helpers/tenantScope');
 const { attachTenantContext } = require('../middleware/tenantGate');
 const { runIfLeader, tryAcquireLeader, renewLeader, releaseLeader } = require('../helpers/cronLeader');
+const {
+  quyKetMessenger,
+  quyKetLeadAds,
+  ganLeadVaoQuyKet,
+} = require('../helpers/leadAttribution');
 const { resolveCrmSocialInboxCompanyId } = require('../helpers/crmSocialInboxScope');
 const {
   activityTimestampMs,
@@ -3281,6 +3288,12 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
     _linkUpd.phone_resolved_at = new Date().toISOString();
   }
   await supabase.from('facebook_contacts').update(_linkUpd).eq('id', contact.id);
+  // Nối lead_id vào dòng quy kết đã ghi lúc khách nhắn lần đầu.
+  try {
+    await ganLeadVaoQuyKet(contact.id, lead.id, contact.customer_id || null);
+  } catch (eGan) {
+    console.warn('[FB] gan lead vao quy ket:', eGan.message);
+  }
   if (moduleKey === 'production' && createType === 'deal' && defaultSxPipelineStageId) {
     try {
       await supabase
@@ -3561,6 +3574,17 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
   }
 
   console.log(`[FB] 👤 Contact: ${contact.fb_name || 'Unknown'} (ID: ${contact.id})`);
+
+  // Quy kết quảng cáo: FB gửi ad_id ở event.referral / postback.referral / message.referral.
+  // Ghi lần chạm đầu tiên; lỗi không được làm hỏng luồng webhook.
+  try {
+    const kqQuyKet = await quyKetMessenger(pageId, contact, event, null);
+    if (kqQuyKet?.ok && !kqQuyKet.skipped) {
+      console.log('[FB] 🎯 Ghi quy kết quảng cáo cho contact', contact.id);
+    }
+  } catch (eQK) {
+    console.warn('[FB] quy kết messenger:', eQK.message);
+  }
 
   // Log kết quả xử lý vào DB
   if (!FB_DISABLE_WEBHOOK_LOGS) {
@@ -3961,6 +3985,24 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
   if (event.read) {
     await supabase.from('facebook_contacts').update({ unread_count: 0 }).eq('id', contact.id);
   }
+
+  // Thả cảm xúc — trước đây gói này về rồi bị vứt. Không tạo lead, chỉ ghi lại
+  // làm tín hiệu tương tác.
+  if (event.reaction) {
+    try {
+      await supabase.from('fb_message_reactions').upsert({
+        page_id: String(pageId),
+        psid: String(event.sender?.id || ''),
+        mid: event.reaction.mid || null,
+        hanh_dong: event.reaction.action || null,   // react | unreact
+        cam_xuc: event.reaction.reaction || null,   // love, like, wow...
+        emoji: event.reaction.emoji || null,
+        contact_id: contact.id,
+      }, { onConflict: 'mid,psid,hanh_dong,cam_xuc', ignoreDuplicates: true });
+    } catch (e) {
+      console.warn('[FB] luu cam xuc:', e.message);
+    }
+  }
 }
 
 // ── HANDLE LEAD ADS ──────────────────────────────────────────
@@ -3990,17 +4032,18 @@ async function handleLeadGen(pageId, value) {
     console.error('[FB] Fetch leadgen data error:', e.message);
   }
 
-  // Parse fields
-  const fields = {};
-  for (const f of (leadData.field_data || [])) {
-    fields[f.name] = f.values?.[0] || '';
+  // Bóc field_data theo bản đồ đã khai cho form, có đoán mặc định khi chưa khai.
+  // Thay cho đoạn đoán cứng cũ — đoạn đó còn sai thứ tự toán tử: form CÓ full_name
+  // lại rơi vào nhánh ghép first_name + last_name và cho ra tên rỗng.
+  const { docFormLeadAds } = require('../helpers/fbLeadFormFields');
+  const boc = await docFormLeadAds(formId, leadData.field_data);
+  const fields = boc.tat_ca;
+  const fullName = boc.ho_ten;
+  const phone = boc.sdt;
+  const email = boc.email;
+  if (!boc.da_khai_ban_do) {
+    console.log(`[FB] Lead Ad form ${formId} chua khai ban do truong — dang doan theo ten cau hoi`);
   }
-
-  const fullName = fields.full_name || fields.first_name
-    ? `${fields.first_name || ''} ${fields.last_name || ''}`.trim()
-    : 'KH Facebook Ads';
-  const phone = fields.phone_number || fields.phone || '';
-  const email = fields.email || '';
 
   // Save raw lead ad data
   const { data: savedAd } = await supabase.from('facebook_lead_ads').insert({
@@ -4026,8 +4069,10 @@ async function handleLeadGen(pageId, value) {
       full_name: fullName,
       phone,
       email,
-      description: `Form: ${leadData.form_name || formId}\n` +
-        Object.entries(fields).map(([k, v]) => `${k}: ${v}`).join('\n'),
+      // boc.ghi_chu đã bỏ họ tên / SĐT / email ra (chúng có cột riêng) và giữ lại
+      // những câu hỏi còn lại — sản phẩm quan tâm, ngân sách, khu vực…
+      description: `Form: ${leadData.form_name || formId}\n`
+        + (boc.ghi_chu || Object.entries(fields).map(([k, v]) => `${k}: ${v}`).join('\n')),
     });
 
     if (lead && savedAd) {
@@ -4036,6 +4081,24 @@ async function handleLeadGen(pageId, value) {
         lead_id: lead.id,
         processed: true,
       }).eq('id', savedAd.id);
+
+      // Quy kết Lead Ads — form_id luôn có; ad_id/campaign chỉ có khi FB trả kèm.
+      try {
+        await quyKetLeadAds(pageId, {
+          leadgenId,
+          formId,
+          adId: leadData.ad_id || value.ad_id || null,
+          adsetId: leadData.adset_id || value.adgroup_id || null,
+          campaignId: leadData.campaign_id || null,
+          campaignName: leadData.campaign_name || null,
+          leadId: lead.id,
+          customerId: contact.customer_id || null,
+          companyId: null,
+          raw: { form_name: leadData.form_name || null, value },
+        });
+      } catch (eQK) {
+        console.warn('[FB] quy kết lead ads:', eQK.message);
+      }
     }
   }
 }
@@ -4046,8 +4109,9 @@ async function handleComment(pageId, value) {
   const commentId = value.comment_id;
   if (!commentId) return;
 
-  // Skip page's own comments
-  if (value.from?.id === pageId) return;
+  // Bình luận do chính page viết: VẪN LƯU để màn hình hiện được cả luồng,
+  // nhưng không báo cho admin (không ai cần thông báo về chính mình).
+  const laCuaPage = String(value.from?.id || '') === String(pageId);
 
   console.log(`[FB] Comment: "${(value.message || '').substring(0, 50)}" by ${value.from?.name}`);
 
@@ -4055,6 +4119,22 @@ async function handleComment(pageId, value) {
   const { data: existing } = await supabase.from('facebook_comments')
     .select('id').eq('comment_id', commentId).single();
   if (existing) return;
+
+  // Bài này có phải bài quảng cáo không? referral của Messenger mang post_id,
+  // nên cùng một post_id là nối được bình luận với quảng cáo đã kéo tin nhắn.
+  let adId = null;
+  if (value.post_id) {
+    try {
+      const { data: qk } = await supabase
+        .from('lead_attribution')
+        .select('fb_ad_id')
+        .eq('fb_post_id', String(value.post_id))
+        .not('fb_ad_id', 'is', null)
+        .limit(1)
+        .maybeSingle();
+      adId = qk?.fb_ad_id || null;
+    } catch { /* chưa migrate hoặc không tìm thấy — không chặn việc lưu bình luận */ }
+  }
 
   // Save comment
   await supabase.from('facebook_comments').insert({
@@ -4066,7 +4146,11 @@ async function handleComment(pageId, value) {
     from_name: value.from?.name,
     message: value.message,
     attachment_url: value.photo || value.video || null,
+    ad_id: adId,
+    is_from_page: laCuaPage,
   });
+
+  if (laCuaPage) return;
 
   // Notify admins (đúng công ty của Page FB)
   try {
@@ -10089,5 +10173,46 @@ if (DURABLE_MESSENGER_PAGES.size) {
   timer.unref();
   setImmediate(() => { void messengerReceiptWorker.drain(); });
 }
+// ═══════════════════════════════════════════════════════════════
+// ĐIỀU KHIỂN TRƯỜNG WEBHOOK (xem page nào đang nhận gì, bật/tắt tại chỗ)
+// ═══════════════════════════════════════════════════════════════
+
+r.get('/webhook-fields', authMiddleware, async (req, res) => {
+  try {
+    if (!isCrmModuleAdmin(req.user)) {
+      return res.status(403).json({ error: 'Chỉ quản trị được xem cấu hình webhook' });
+    }
+    const { tongHop } = require('../helpers/fbWebhookFields');
+    res.json(await tongHop(facebookTenantCompanyIds(req)));
+  } catch (e) {
+    console.error('[fb/webhook-fields]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.post('/webhook-fields/:pageId', authMiddleware, async (req, res) => {
+  try {
+    if (!isCrmModuleAdmin(req.user)) {
+      return res.status(403).json({ error: 'Chỉ quản trị được đổi cấu hình webhook' });
+    }
+    const pid = String(req.params.pageId || '').trim();
+    const { data: page, error } = await supabase.from('facebook_pages')
+      .select('page_id, page_name, access_token, default_company_id')
+      .eq('page_id', pid)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!page) return res.status(404).json({ error: 'Không tìm thấy page' });
+    if (!assertFacebookCompanyInTenant(req, res, page.default_company_id)) return;
+
+    const { datTruong, docTrangThai } = require('../helpers/fbWebhookFields');
+    // Facebook GHI ĐÈ cả danh sách, nên gửi thiếu là tắt mất trường đang chạy.
+    const kq = await datTruong(page, req.body?.truong);
+    const sau = await docTrangThai(page);
+    res.json({ ok: true, ...kq, trang_thai_sau: sau });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 module.exports = r;
 

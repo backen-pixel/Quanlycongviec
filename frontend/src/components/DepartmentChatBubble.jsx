@@ -7,6 +7,7 @@ import { useAuth } from '../lib/auth';
 import { useMessengerDock } from '../context/MessengerDockContext';
 import { getInitials, avatarColor } from '../lib/utils';
 import UploadProgressBubble from './UploadProgressBubble';
+import { ChatFileDropOverlay, useChatFileDrop } from './ChatFileDrop';
 import AiBotReportContent, { isAiBotReportContent } from './AiBotReportContent';
 import { makeAxiosUploadProgressHandler, mergeUploadProgressState } from '../lib/uploadProgressEta';
 
@@ -156,9 +157,14 @@ export default function DepartmentChatBubble({ deptId, socket, fillParent }) {
   };
 
   const uid = user?.userId || user?.id;
+  const fileDrop = useChatFileDrop(uploadFiles);
 
   return (
-    <div className={fillParent ? 'flex flex-col flex-1 min-h-0' : 'flex flex-col h-[420px]'}>
+    <div
+      className={`relative ${fillParent ? 'flex flex-col flex-1 min-h-0' : 'flex flex-col h-[420px]'}`}
+      {...fileDrop.bind}
+    >
+      <ChatFileDropOverlay active={fileDrop.active} />
       <div className="flex-1 min-h-0 overflow-y-auto px-3 py-2 space-y-2 bg-slate-50">
         {messages.length === 0 ? (
           <div className="text-center text-xs text-slate-400 py-8">Chưa có tin nhắn</div>

@@ -1,9 +1,19 @@
 /**
- * Hạn thẻ tổng quan nhiệm vụ dự án = hạn module (CRM / SX / VC-LĐ)
- * theo lane của nhóm việc. Việc con trống hạn được ghi cùng hạn module.
+ * Hạn thẻ tổng quan: CRM và VC/LĐ dùng hạn module.
+ * Sản xuất lấy hạn từ lịch 7 ngày tính lùi theo ngày lắp (kế hoạch SX),
+ * theo nhóm hạn của việc còn mở. Hạn giao hàng của dự án không kéo cả danh mục vào Quá hạn.
+ * Danh mục chỉ hoàn thành khi việc nhỏ bên trong đã xong.
  */
 const { MODULE, resolveModuleDeadline, isInstallDeadlineClosed } = require('./moduleDeadlinePolicy');
 const { isSxPipelineStageNoDeadline } = require('./crmPipelineSla');
+const { companyDeadlineIsoFromYmd } = require('./companyDeadlineClock');
+const {
+  ymdFromUnknownDate,
+  resolveSxPlanInstallYmd,
+  buildSxInstallBackPlan,
+  endYmdForDeadlineGroup,
+  sxStageDeadlineGroup,
+} = require('./sxWorkshopSchedule');
 
 const STAMP_TABLE = Object.freeze({
   task: { table: 'tasks', column: 'due_date' },
@@ -18,10 +28,113 @@ function moduleKeyForOwnerLane(lane) {
   return MODULE.PRODUCTION;
 }
 
-function earliestOpenChildDeadline(openChildren) {
+function ymdOf(value) {
+  if (value == null || value === '') return null;
+  const text = String(value).trim();
+  const dateOnly = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (dateOnly && text.length <= 10) return dateOnly[1];
+  const ts = new Date(text).getTime();
+  if (!Number.isFinite(ts)) return null;
+  const shifted = new Date(ts + 7 * 60 * 60 * 1000);
+  return shifted.toISOString().slice(0, 10);
+}
+
+function countsAsTaskOrAssignmentDeadline(task) {
+  const source = String(task?.source || '');
+  if (!source) return true;
+  return source === 'crm_task' || source === 'crm_assignment';
+}
+
+const CRM_WORK_DONE = new Set(['done', 'completed']);
+
+function normTaskTitle(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function sxCrmSyncKey(projectId, title) {
+  const project = String(projectId || '');
+  const name = normTaskTitle(title);
+  if (!project || !name) return '';
+  return `${project}\t${name}`;
+}
+
+/** Nhiệm vụ SX cùng tên trên dự án: đã xong nếu có bản completed, nhóm hạn lấy từ bản còn mở. */
+function indexSxCrmCompletion(rows, leadProjectById) {
+  const map = new Map();
+  const projects = leadProjectById instanceof Map ? leadProjectById : new Map();
+  for (const row of rows || []) {
+    const slug = String(row?.stage_slug || '');
+    if (!slug.startsWith('sx_') && !row?.production_pipeline_stage_id) continue;
+    const projectId = projects.get(String(row.lead_id || ''));
+    const key = sxCrmSyncKey(projectId, row.title);
+    if (!key) continue;
+    const done = CRM_WORK_DONE.has(String(row.status || '').toLowerCase());
+    const stageId = row.production_pipeline_stage_id ? String(row.production_pipeline_stage_id) : '';
+    const prev = map.get(key);
+    if (!prev) {
+      map.set(key, { done, stageId, openStageId: done ? '' : stageId });
+      continue;
+    }
+    prev.done = prev.done || done;
+    if (!done && stageId) prev.openStageId = stageId;
+    if (!prev.stageId && stageId) prev.stageId = stageId;
+  }
+  return map;
+}
+
+function workshopChildDone(task, crmIndex) {
+  const status = String(task?.status || '').toLowerCase();
+  if (status === 'done' || status === 'completed' || status === 'cancelled' || status === 'canceled') return true;
+  const key = sxCrmSyncKey(task?.project_id, task?.title);
+  if (!key || !(crmIndex instanceof Map)) return false;
+  return crmIndex.get(key)?.done === true;
+}
+
+function deadlineGroupForWorkshopChild(task, crmIndex, stageById) {
+  const key = sxCrmSyncKey(task?.project_id, task?.title);
+  const hit = key && crmIndex instanceof Map ? crmIndex.get(key) : null;
+  const stageId = hit?.openStageId || hit?.stageId || '';
+  const stage = stageId && stageById instanceof Map ? stageById.get(stageId) : null;
+  return stage ? (sxStageDeadlineGroup(stage) || '') : '';
+}
+
+/** Hạn cuối của một nhóm trong lịch 7 ngày (lùi từ ngày lắp). */
+function sxInstallPlanDeadlineIso(project, deadlineGroup) {
+  const group = String(deadlineGroup || '').trim();
+  if (!group || !project) return null;
+  const installYmd = resolveSxPlanInstallYmd(project);
+  if (!installYmd) return null;
+  const startYmd = ymdFromUnknownDate(project.sx_reception_date)
+    || ymdFromUnknownDate(project.created_at);
+  const plan = buildSxInstallBackPlan(installYmd, {
+    startYmd,
+    slipDays: project.sx_schedule_slip_days,
+  });
+  const endYmd = endYmdForDeadlineGroup(plan, group);
+  if (!endYmd) return null;
+  return companyDeadlineIsoFromYmd(endYmd, project.company_id);
+}
+
+function earliestSxPlanDeadline(project, deadlineGroups) {
+  const isos = [];
+  const seen = new Set();
+  for (const group of deadlineGroups || []) {
+    const key = String(group || '').trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    const iso = sxInstallPlanDeadlineIso(project, key);
+    if (iso) isos.push(iso);
+  }
+  isos.sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+  return isos[0] || null;
+}
+
+function earliestOpenChildDeadline(openChildren, skipYmd = null) {
   const deadlines = (openChildren || [])
+    .filter(countsAsTaskOrAssignmentDeadline)
     .map((task) => task.deadline)
     .filter(Boolean)
+    .filter((deadline) => !skipYmd || ymdOf(deadline) !== skipYmd)
     .sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
   return deadlines[0] || null;
 }
@@ -55,8 +168,12 @@ function resolveOverviewGroupDeadline({
   const deadlineOff = moduleKey === MODULE.LOGISTICS
     ? isInstallDeadlineClosed(item, stage)
     : moduleKey === MODULE.PRODUCTION && isSxPipelineStageNoDeadline(stage);
-  if (deadlineOff) return null;
-  return resolved.deadlineAt || childDeadline || null;
+  if (deadlineOff && moduleKey !== MODULE.PRODUCTION) return null;
+  const moduleAt = deadlineOff ? null : (resolved.deadlineAt || null);
+  if (moduleKey === MODULE.PRODUCTION) {
+    return earliestOpenChildDeadline(openChildren, ymdOf(moduleAt));
+  }
+  return moduleAt || childDeadline || null;
 }
 
 function collectOpenChildDeadlineStamps(deadline, openChildren) {
@@ -116,5 +233,10 @@ module.exports = {
   collectOpenChildDeadlineStamps,
   bucketStampRows,
   stampOpenChildModuleDeadlines,
+  indexSxCrmCompletion,
+  workshopChildDone,
+  deadlineGroupForWorkshopChild,
+  sxInstallPlanDeadlineIso,
+  earliestSxPlanDeadline,
   STAMP_TABLE,
 };

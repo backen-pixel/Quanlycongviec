@@ -3,6 +3,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCompanyScopedAdmin, isWorkProductionModuleAdmin } from '../lib/adminRole';
+import { pickDefaultCompanyId } from '../lib/crmCompanyFilter';
+import { useDefaultCompanyOnce } from '../hooks/useDefaultCompanyOnce';
 import { formatDate, formatVND } from '../lib/utils';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import ResponsiveTable from '../components/ResponsiveTable';
@@ -511,6 +513,11 @@ export default function WorkUnifiedOverviewPage() {
     }).catch(() => setCompanies([]));
   }, []);
 
+  useDefaultCompanyOnce(companyId, setCompanyId, companies, {
+    enabled: canPickCompany,
+    preferredId: user?.company_id || '',
+  });
+
   const effectiveCompanyIdForUsers = useMemo(() => {
     if (canPickCompany) return companyId || '';
     const cid = user?.company_id != null ? String(user.company_id).trim() : '';
@@ -593,7 +600,7 @@ export default function WorkUnifiedOverviewPage() {
       chips.push({
         key: 'company',
         label: c?.short_name || c?.name || 'Công ty',
-        onClear: () => setCompanyId(''),
+        onClear: () => setCompanyId(pickDefaultCompanyId(companies, { preferredId: user?.company_id || '' })),
       });
     }
     if (filterUserIds.length) {
@@ -645,7 +652,7 @@ export default function WorkUnifiedOverviewPage() {
     setTimePreset('');
     setRangeFrom('');
     setRangeTo('');
-    if (canPickCompany) setCompanyId('');
+    if (canPickCompany) setCompanyId(pickDefaultCompanyId(companies, { preferredId: user?.company_id || '' }));
   };
 
   useEffect(() => { setPage(1); }, [stageFilter, forecastFilter, companyId, debouncedSearch, filterUserIds, filterRegionId, rangeFrom, rangeTo]);

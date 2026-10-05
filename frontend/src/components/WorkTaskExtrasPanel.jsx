@@ -154,7 +154,7 @@ function FileAttachmentCard({ att, allAtts, onOpenLightbox, onDelete }) {
   );
 }
 
-function CrmTaskNotesAttachments({ task }) {
+function CrmTaskNotesAttachments({ task, compact = false }) {
   const taskId = task.source_id;
   const leadId = task.lead_id;
   const [notes, setNotes] = useState(task.notes || '');
@@ -319,17 +319,23 @@ function CrmTaskNotesAttachments({ task }) {
 
   return (
     <div className="space-y-3 pt-1">
-      <p className="text-[11px] text-slate-500 leading-relaxed rounded-lg border border-amber-100 bg-amber-50/80 px-2.5 py-1.5">
-        File tiến trình Sales (bản vẽ, render, bảng mô tả) nộp tại đây. Không đưa vào tab Bình luận — file bình luận không thay thế công việc và dễ bị xóa.
-      </p>
+      {!compact && (
+        <p className="text-[11px] text-slate-500 leading-relaxed rounded-lg border border-amber-100 bg-amber-50/80 px-2.5 py-1.5">
+          File tiến trình Sales (bản vẽ, render, bảng mô tả) nộp tại đây. Không đưa vào tab Bình luận — file bình luận không thay thế công việc và dễ bị xóa.
+        </p>
+      )}
       <div className="flex items-center justify-between gap-2">
-        <Link
-          to={`/crm/leads/${leadId}`}
-          className="text-xs text-indigo-600 hover:text-indigo-800 inline-flex items-center gap-1 font-medium"
-        >
-          <ExternalLink className="h-3.5 w-3.5" />
-          Mở chi tiết deal
-        </Link>
+        {compact ? (
+          <span className="text-[10px] font-semibold uppercase text-slate-500">Ghi chú & file</span>
+        ) : (
+          <Link
+            to={`/crm/leads/${leadId}`}
+            className="text-xs text-indigo-600 hover:text-indigo-800 inline-flex items-center gap-1 font-medium"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            Mở chi tiết deal
+          </Link>
+        )}
         {uploading ? (
           <span className="text-[10px] text-orange-600">Đang upload…</span>
         ) : (
@@ -633,6 +639,16 @@ function ProductionTaskComments({ task }) {
         </button>
       </div>
     </div>
+  );
+}
+
+export function CrmTaskNotesFilesPanel({ leadId, taskId, notes = '' }) {
+  if (!leadId || !taskId) return null;
+  return (
+    <CrmTaskNotesAttachments
+      compact
+      task={{ source_id: taskId, lead_id: leadId, notes: notes || '' }}
+    />
   );
 }
 

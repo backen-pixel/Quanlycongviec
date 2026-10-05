@@ -305,16 +305,19 @@ r.post('/leads/:id/tasks/:taskId/import-quotation-excel', excelUpload.single('fi
 r.get('/leads/:id/tasks', async (req, res) => {
   try {
     const taskScope = String(req.query?.task_scope || 'all').toLowerCase();
-    let { data, error } = await supabase.from('crm_tasks')
-      .select(CRM_TASK_SELECT)
-      .eq('lead_id', req.params.id)
-      .order('stage_slug').order('order_index');
+    const [taskRes, leadRes] = await Promise.all([
+      supabase.from('crm_tasks')
+        .select(CRM_TASK_SELECT)
+        .eq('lead_id', req.params.id)
+        .order('stage_slug').order('order_index'),
+      supabase.from('crm_leads')
+        .select('type, created_by, parent_lead_id, use_order_tasks, pipeline_id, company_id, stage_id, project_id')
+        .eq('id', req.params.id)
+        .maybeSingle(),
+    ]);
+    let { data, error } = taskRes;
     if (error) throw error;
-
-    const { data: lead } = await supabase.from('crm_leads')
-      .select('type, created_by, parent_lead_id, use_order_tasks, pipeline_id, company_id, stage_id, project_id')
-      .eq('id', req.params.id)
-      .maybeSingle();
+    const lead = leadRes.data;
 
     data = await appendFulfillmentChildTasksForMasterDeal(req.params.id, data || [], lead);
 
@@ -323,26 +326,23 @@ r.get('/leads/:id/tasks', async (req, res) => {
     }
 
     let ownerCompanyId = String(req.query?.owner_company_id || '').trim() || null;
-    if (!ownerCompanyId && lead?.project_id) {
+    let projectCompanyId = null;
+    let projectWorkshopTypeId = null;
+    if (lead?.project_id && !ownerCompanyId) {
       const { data: projOwnerEarly } = await supabase
         .from('projects')
-        .select('company_id')
+        .select('company_id, workshop_type_id')
         .eq('id', lead.project_id)
         .maybeSingle();
-      ownerCompanyId = projOwnerEarly?.company_id || null;
+      projectCompanyId = projOwnerEarly?.company_id || null;
+      projectWorkshopTypeId = projOwnerEarly?.workshop_type_id || null;
+      ownerCompanyId = projectCompanyId;
     }
 
-    // Đếm số file + ghi chú cho mỗi task (RPC GROUP BY — tránh timeout khi nhiều đính kèm)
-    if (data?.length) {
-      const taskIds = data.map((t) => t.id);
-      const countMap = await loadCrmTaskAttachmentCountMap(supabase, taskIds);
-      data = data.map((t) => ({
-        ...t,
-        file_count: countMap[t.id]?.files || 0,
-        note_count: countMap[t.id]?.notes || 0,
-        attachment_count: (countMap[t.id]?.files || 0) + (countMap[t.id]?.notes || 0),
-      }));
-    }
+    const taskIdsForCounts = (data || []).map((t) => t.id);
+    const countPromise = taskIdsForCounts.length
+      ? loadCrmTaskAttachmentCountMap(supabase, taskIdsForCounts)
+      : Promise.resolve({});
 
     // Phân tách nhiệm vụ theo module:
     // - production: chỉ task SX (stage_slug bắt đầu sx_)
@@ -350,18 +350,10 @@ r.get('/leads/:id/tasks', async (req, res) => {
     // - crm: ẩn task SX (dùng cho tab VC web — nhiệm vụ deal không lẫn sx_*)
     if (taskScope === 'production') {
       data = (data || []).filter((t) => String(t.stage_slug || '').startsWith('sx_') || t.production_pipeline_stage_id);
-      const workshopTypeId = String(req.query?.workshop_type_id || '').trim() || null;
+      const workshopTypeId = String(req.query?.workshop_type_id || '').trim() || projectWorkshopTypeId || null;
       if (workshopTypeId) {
         const { getProductionPipelineStagesForWorkshopType, filterSxTasksToWorkshopPipeline } = require('../../../helpers/sxPipelineStageSlug');
-        let sxCompanyId = ownerCompanyId || lead?.company_id || null;
-        if (lead?.project_id) {
-          const { data: projSx } = await supabase
-            .from('projects')
-            .select('company_id')
-            .eq('id', lead.project_id)
-            .maybeSingle();
-          sxCompanyId = projSx?.company_id || sxCompanyId;
-        }
+        const sxCompanyId = ownerCompanyId || lead?.company_id || null;
         const stages = await getProductionPipelineStagesForWorkshopType(sxCompanyId, workshopTypeId);
         data = filterSxTasksToWorkshopPipeline(data, stages);
       } else if (lead?.project_id) {
@@ -408,16 +400,18 @@ r.get('/leads/:id/tasks', async (req, res) => {
       data = (data || []).filter((t) => !String(t.stage_slug || '').startsWith('sx_'));
     }
 
+    const countMap = await countPromise;
+    if (data?.length) {
+      data = data.map((t) => ({
+        ...t,
+        file_count: countMap[t.id]?.files || 0,
+        note_count: countMap[t.id]?.notes || 0,
+        attachment_count: (countMap[t.id]?.files || 0) + (countMap[t.id]?.notes || 0),
+      }));
+    }
+
     const { filterCrmTasksByCompanyScope, sanitizeTasksForSharedWorkspace } = require('../../../helpers/crossCompanyWorkspace');
     const taskCompanyScope = String(req.query?.task_company_scope || 'own').toLowerCase();
-    if (!ownerCompanyId && lead?.project_id) {
-      const { data: projOwner } = await supabase
-        .from('projects')
-        .select('company_id')
-        .eq('id', lead.project_id)
-        .maybeSingle();
-      ownerCompanyId = projOwner?.company_id || null;
-    }
     // Grant 'executor_company_scope' = công ty user chỉ là executor của một số task,
     // không phải chủ dự án / owner / participant → chỉ được thấy task giao cho công ty mình.
     const executorScopedOnly = req.crmLeadAccess?.grant === 'executor_company_scope';
@@ -433,8 +427,10 @@ r.get('/leads/:id/tasks', async (req, res) => {
     }
 
     if (data?.length) {
-      data = await attachAssigneesToCrmTasks(data);
-      data = await attachAssignmentIdsToCrmTasks(data);
+      await Promise.all([
+        attachAssigneesToCrmTasks(data),
+        attachAssignmentIdsToCrmTasks(data),
+      ]);
     }
 
     data = (data || []).map((t) => redactCrmTaskNotesForViewer(req.user, t));

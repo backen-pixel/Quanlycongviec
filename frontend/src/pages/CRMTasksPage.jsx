@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
+import { useDefaultCompanyOnce } from '../hooks/useDefaultCompanyOnce';
 import { formatDate, PRIORITY_LABELS, TASK_PRIORITY_COLORS as PRIORITY_COLORS } from '../lib/utils';
 import {
   List, Calendar, Users, AlertTriangle, Search, CheckCircle2, Circle, Clock,
@@ -40,6 +41,11 @@ export default function CRMTasksPage() {
   const [filterAssignee, setFilterAssignee] = useState('');
   const [filterStage, setFilterStage] = useState('');
   const [filterType, setFilterType] = useState('');
+
+  useDefaultCompanyOnce(filterCompanyId, setFilterCompanyId, companies, {
+    enabled: isAdmin,
+    preferredId: user?.company_id || '',
+  });
 
   useEffect(() => {
     if (!user?.id) return;

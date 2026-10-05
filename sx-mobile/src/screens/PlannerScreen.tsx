@@ -24,6 +24,9 @@ import {
   projectMatchesDealCompanyExternalFilter,
 } from '../lib/productionFilters';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
+import { lockedCompanyIdFor } from '../lib/roles';
+import { useMyProjectScope } from '../hooks/useMyProjectScope';
+import { canViewTeamWork } from '../lib/roles';
 import { formatMoneyAmount, Radii, Spacing, stageColor, colorWithAlpha } from '../theme';
 import type { PersonalPlanner, ProductionBoard, ProductionProject } from '../types';
 
@@ -43,8 +46,10 @@ export default function PlannerScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const isSystemAdmin = user?.role === 'admin' && !user?.company_id;
-  const lockedCompanyId = isSystemAdmin ? undefined : (user?.company_id || undefined);
+  /** Giá trị dự án chỉ dành cho quản lý/admin — nhân viên xưởng không xem tiền. */
+  const canSeeMoney = canViewTeamWork(user);
+  const { allows: allowsProject } = useMyProjectScope(user);
+  const lockedCompanyId = lockedCompanyIdFor(user);
   const [sharedBoardFilters, setSharedBoardFilters] = useState(() =>
     boardFiltersFromSharedSnap(null, { companyIdOverride: lockedCompanyId }),
   );
@@ -206,11 +211,17 @@ export default function PlannerScreen() {
     return map;
   }, [board.stages]);
 
+  /** Nhân viên chỉ thấy dự án của mình (đứng tên hoặc được giao việc); quản lý/admin thấy hết. */
+  const scopedProjects = useMemo(
+    () => board.projects.filter(allowsProject),
+    [board.projects, allowsProject],
+  );
+
   const projectById = useMemo(() => {
     const map = new Map<string, ProductionProject>();
-    board.projects.forEach((p) => map.set(p.id, p));
+    scopedProjects.forEach((p) => map.set(p.id, p));
     return map;
-  }, [board.projects]);
+  }, [scopedProjects]);
 
   const needle = search.trim().toLowerCase();
 
@@ -235,7 +246,7 @@ export default function PlannerScreen() {
     const regionMap = new Map<string, string>();
     const personMap = new Map<string, string>();
     const typeMap = new Map<string, string>();
-    board.projects.forEach((p) => {
+    scopedProjects.forEach((p) => {
       if (p.region_id && p.region_name) regionMap.set(String(p.region_id), p.region_name);
       if (p.production_person_id && p.production_person_name) {
         personMap.set(String(p.production_person_id), p.production_person_name);
@@ -255,13 +266,13 @@ export default function PlannerScreen() {
       ],
       type: toOpts(typeMap, 'Tất cả phân loại'),
     };
-  }, [board.projects, board.stages]);
+  }, [scopedProjects, board.stages]);
 
   // Nhóm theo người phụ trách (giống tab web "Theo người phụ trách").
   const ownerGroups = useMemo(() => {
     const map = new Map<string, { name: string; items: ProductionProject[]; total: number }>();
     const unassigned: ProductionProject[] = [];
-    board.projects.filter(matchesSearch).forEach((p) => {
+    scopedProjects.filter(matchesSearch).forEach((p) => {
       const id = p.production_person_id;
       const name = p.production_person_name;
       if (id && name) {
@@ -277,7 +288,7 @@ export default function PlannerScreen() {
       .map(([id, g]) => ({ id, ...g }))
       .sort((a, b) => b.items.length - a.items.length);
     return { groups, unassigned };
-  }, [board.projects, matchesSearch]);
+  }, [scopedProjects, matchesSearch]);
 
   const personalColumns = useMemo(() => {
     const itemsByCol = new Map<string, ProductionProject[]>();
@@ -449,7 +460,7 @@ export default function PlannerScreen() {
         </View>
         <Text style={styles.cardName} numberOfLines={2}>{item.name}</Text>
         {item.customer_name ? <Text style={styles.cardCustomer} numberOfLines={1}>{item.customer_name}</Text> : null}
-        {Number(item.estimated_value) > 0 ? (
+        {canSeeMoney && Number(item.estimated_value) > 0 ? (
           <Text style={styles.cardValue}>{formatMoneyDisplay(item.estimated_value)}</Text>
         ) : null}
       </View>
@@ -562,7 +573,7 @@ export default function PlannerScreen() {
                         <View style={{ flex: 1 }}>
                           <Text style={styles.groupName} numberOfLines={1}>{g.name}</Text>
                           <Text style={styles.groupMeta}>
-                            {g.items.length} dự án • {formatMoneyDisplay(g.total)}
+                            {g.items.length} dự án{canSeeMoney ? ` • ${formatMoneyDisplay(g.total)}` : ''}
                           </Text>
                         </View>
                       </View>

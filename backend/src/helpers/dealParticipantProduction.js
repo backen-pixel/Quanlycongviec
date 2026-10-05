@@ -33,10 +33,8 @@ const METALLA_HUCABI_COMPANY_ID_SET = new Set([
   'b78baba2-2486-434c-a72d-9c937fac2164', // Công Ty Metalla
 ]);
 
-/** NV luôn gắn đội SX + VC/LĐ HCB khi thiết lập sản xuất / lắp đặt. */
-const ALWAYS_HCB_WORKSHOP_STAFF = [
-  { id: '646e364e-504d-4362-af1a-4f4694b0d05d', email: 'trongthanh0800@gmail.com' },
-];
+/** Không auto gắn admin hệ thống vào đội SX / VC. Danh sách để trống. */
+const ALWAYS_HCB_WORKSHOP_STAFF = [];
 
 function extraAlwaysWorkshopStaffUserIds(companyId) {
   if (String(companyId || '') !== HCB_COMPANY_ID) return [];

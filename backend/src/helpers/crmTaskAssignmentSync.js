@@ -4,6 +4,7 @@
 const { supabase } = require('../config/supabase');
 const { replaceCrmTaskAssignees } = require('./crmTaskAssignees');
 const { fetchByIdChunks } = require('./chunkedIdQuery');
+const { isWorkshopPipelineTask } = require('./workshopPipelineTask');
 
 const SHARED_COLUMN_DEFAULTS = [
   { name: 'Chưa làm', color: '#94A3B8', position: 0, is_done_column: false, is_in_progress_column: false },
@@ -102,6 +103,10 @@ function isMissingColumn(err, name) {
 
 async function syncAssignmentFromCrmTask(req, task, assigneeIds, opts = {}) {
   if (!task?.id) return { assignmentId: null };
+  // Nhiệm vụ mẫu xưởng chỉ sống trên deal. Không chép sang Giao việc / Không gian chung.
+  if (isWorkshopPipelineTask(task)) {
+    return { assignmentId: null, skipped: true, reason: 'workshop_pipeline_task' };
+  }
   const ids = [...new Set((assigneeIds || []).filter(Boolean).map(String))];
   const { pickPrimaryAssigneeId } = require('./assignmentAssigneeRoles');
   const rolesByUserId = opts.assigneeRoles || {};
@@ -373,6 +378,7 @@ async function attachCrmTaskMetaToAssignmentsWithRows(list, taskRows, taskIds, p
     };
     // Linked CRM task: luôn ưu tiên count từ attachments (tránh file_count=0 trên assignment che mất).
     a.file_count = files;
+    a.note_count = notes;
     a.attachment_count = files + notes;
   });
   return list;
@@ -575,6 +581,7 @@ function normalizeAssignmentStatus(status) {
 }
 
 module.exports = {
+  isWorkshopPipelineTask,
   syncAssignmentFromCrmTask,
   syncCrmTaskFromAssignment,
   resolveAssignmentModuleForCrmTask,

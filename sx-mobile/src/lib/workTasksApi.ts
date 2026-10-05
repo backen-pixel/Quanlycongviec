@@ -1,5 +1,5 @@
 import { api } from '../api/client';
-import { isCrmProductionTaskDone } from './projectDetailApi';
+import { fetchCrmDealTasks, isCrmProductionTaskDone } from './projectDetailApi';
 import type { AuthUserLite } from './productionFilters';
 import type { CrmTask, PersonRef } from '../types';
 import { QUERY_TTL_SHORT, cachedQuery, invalidateQueryPrefix } from './queryCache';
@@ -36,12 +36,20 @@ export type WorkTask = CrmTask & {
   description?: string | null;
   column_id?: string | null;
   company_id?: string | null;
+  /** Nguồn gốc của dòng lấy từ `/work-tasks` (nguồn gộp) — quyết định API dùng để đổi trạng thái. */
+  source_kind?: 'task' | 'crm_task' | 'crm_assignment';
+  /** Id thật trong bảng nguồn (khác `id` gộp `unified_id`). */
+  source_id?: string | null;
+  /** Deal CRM thật của dòng (`lead_id` của nguồn gộp) — `lead_id` ở trên có thể rơi về id dự án. */
+  deal_id?: string | null;
 };
 
 export type WorkTasksQuery = {
   /** null/undefined = không lọc người (team). Có id = chỉ việc của người đó. */
   assigneeId?: string | null;
   companyId?: string | null;
+  /** Phân loại xưởng: mã loại hoặc `none` (chưa phân loại) — BE `parseWorkshopTypeFilter`. */
+  workshopTypeId?: string | null;
   /** pending | in_progress | completed — lọc phía server. */
   status?: string | null;
   /** Quá hạn: chưa xong + deadline < đầu ngày hôm nay. */
@@ -163,15 +171,8 @@ function mapAssignmentToWorkTask(raw: Record<string, unknown>): WorkTask {
   };
 }
 
-/** Khớp role admin trang Giao việc SX trên web. */
-export function canViewTeamWork(user?: AuthUserLite | null): boolean {
-  const role = String(user?.role || '').trim().toLowerCase();
-  return role === 'admin'
-    || role === 'manager'
-    || role === 'sales_admin'
-    || role === 'crm_production_admin'
-    || role === 'production_admin';
-}
+/** Khớp role admin trang Giao việc SX trên web. Đã dọn về `lib/roles.ts`. */
+export { canViewTeamWork } from './roles';
 
 export function isTaskPending(status: string): boolean {
   const s = String(status || 'pending').toLowerCase();
@@ -299,6 +300,7 @@ export async function fetchProductionWorkTasksPage(
   };
   if (query.assigneeId) params.assignee_id = query.assigneeId;
   if (query.companyId) params.company_id = query.companyId;
+  if (query.workshopTypeId) params.workshop_type_id = query.workshopTypeId;
   if (query.status) params.status = String(query.status);
   if (query.overdue) params.overdue = 1;
   if (query.q?.trim()) params.q = query.q.trim();
@@ -350,6 +352,7 @@ export async function fetchProductionWorkTaskStats(
   const params: Record<string, string> = { assignment_module: 'production' };
   if (query.assigneeId) params.assignee_id = query.assigneeId;
   if (query.companyId) params.company_id = query.companyId;
+  if (query.workshopTypeId) params.workshop_type_id = query.workshopTypeId;
   if (query.q) params.q = query.q;
   return cachedQuery<WorkTasksStats>({
     key: K_WORK_STATS + JSON.stringify(params),
@@ -396,13 +399,126 @@ export async function fetchMyProductionTasks(
   });
 }
 
-/** Cập nhật trạng thái qua API Giao việc (đồng bộ pipeline nếu có crm_task_id). */
+/** Dòng `unified_tasks_v` mà `/api/work-tasks` trả về (gồm việc SX theo dự án ở bảng `tasks`). */
+function mapUnifiedToWorkTask(raw: Record<string, unknown>): WorkTask {
+  const str = (v: unknown): string | null => (v != null && String(v) !== '' ? String(v) : null);
+  const projectId = str(raw.project_id);
+  const leadId = str(raw.lead_id);
+  const deadline = str(raw.deadline);
+  return {
+    id: String(raw.unified_id || raw.source_id || ''),
+    lead_id: leadId || projectId || ASSIGNMENT_SECTION_ID,
+    title: String(raw.title || 'Nhiệm vụ'),
+    status: String(raw.status || 'pending'),
+    deadline,
+    due_date: deadline,
+    description: str(raw.description),
+    priority: str(raw.priority),
+    source: 'assignment',
+    source_kind: raw.source === 'task' || raw.source === 'crm_task' || raw.source === 'crm_assignment'
+      ? raw.source
+      : undefined,
+    source_id: str(raw.source_id),
+    deal_id: leadId,
+    assignment_module: 'production',
+    company_id: str(raw.company_id),
+    assignee_id: str(raw.assignee_id),
+    // Không có thông tin người nhận chi tiết ở nguồn này — chỉ dùng cho danh sách «của tôi».
+    assignee: null,
+    assignees: [],
+    // Thẻ dự án: Tổng quan/Kanban suy ra «dự án tham gia» từ `lead.project_id`.
+    lead: {
+      id: leadId || projectId || '',
+      title: str(raw.project_name) || str(raw.lead_title),
+      code: str(raw.project_code),
+      project_id: projectId,
+      type: null,
+      customer: null,
+    },
+  } as WorkTask;
+}
+
+/** Tối đa bao nhiêu việc của một nhân viên được nạp cho Tổng quan / lọc dự án (an toàn bộ nhớ). */
+const MY_PARTICIPATION_MAX = 1000;
+const MY_PARTICIPATION_PAGE = 200;
+
+/**
+ * Việc sản xuất mà nhân viên ĐÃ và ĐANG tham gia — gồm cả việc đã xong. Đọc `/api/work-tasks`
+ * (nguồn gộp của web, có cả việc theo dự án ở bảng `tasks`), KHÔNG đọc `/crm/assignments` vì
+ * nguồn đó chỉ có việc «Giao việc» và có thể rỗng dù nhân viên đang làm nhiều dự án.
+ */
+export async function fetchMyParticipationTasks(
+  userId: string,
+  opts?: { signal?: AbortSignal; force?: boolean },
+): Promise<WorkTask[]> {
+  const key = `${K_WORK_PAGE}mine:${userId}`;
+  return cachedQuery<WorkTask[]>({
+    key,
+    ttlMs: QUERY_TTL_SHORT,
+    force: opts?.force,
+    signal: opts?.signal,
+    fetcher: async () => {
+      const out: WorkTask[] = [];
+      for (let page = 1; out.length < MY_PARTICIPATION_MAX; page += 1) {
+        const { data } = await api.get<{ tasks?: unknown[]; total?: number }>('/work-tasks', {
+          params: {
+            assignee_id: userId,
+            module_key: 'production',
+            page,
+            page_size: MY_PARTICIPATION_PAGE,
+          },
+          signal: opts?.signal,
+        });
+        const rows = Array.isArray(data?.tasks) ? data.tasks : [];
+        out.push(
+          ...rows
+            .map((r) => mapUnifiedToWorkTask(r as Record<string, unknown>))
+            // `assignee_id` của BE còn trả cả việc thuộc lead mình phụ trách hoặc do mình tạo.
+            // «Công việc của tôi» chỉ gồm việc ĐƯỢC GIAO cho mình.
+            .filter((t) => t.id && String(t.assignee_id || '') === String(userId)),
+        );
+        const total = Number(data?.total);
+        if (rows.length < MY_PARTICIPATION_PAGE || (Number.isFinite(total) && out.length >= total)) break;
+      }
+      return out;
+    },
+  });
+}
+
+/** Trạng thái app → trạng thái cột `tasks.status` (todo | in_progress | done). */
+function toProjectTaskStatus(status: string): string {
+  const s = String(status || '').toLowerCase();
+  if (s === 'completed' || s === 'done') return 'done';
+  if (s === 'in_progress') return 'in_progress';
+  return 'todo';
+}
+
+/**
+ * Cập nhật trạng thái qua API Giao việc (đồng bộ pipeline nếu có crm_task_id).
+ * `source: 'task'` = việc sản xuất theo dự án (bảng `tasks`) — dùng `PATCH /tasks/:id/status`,
+ * route có kiểm tra quyền theo dự án (route gộp `/work-tasks/task/:id` thì không có).
+ */
 export async function updateWorkTaskStatus(
   _dealId: string,
   taskId: string,
   status: string,
-  source: 'crm_task' | 'assignment' = 'assignment',
+  source: 'crm_task' | 'assignment' | 'task' = 'assignment',
 ): Promise<WorkTask> {
+  if (source === 'task') {
+    const next = toProjectTaskStatus(status);
+    const { data } = await api.patch<{ task?: Record<string, unknown> }>(
+      `/tasks/${taskId}/status`,
+      { status: next },
+    );
+    invalidateWorkTasksCache();
+    const row = (data?.task || {}) as Record<string, unknown>;
+    return {
+      id: taskId,
+      lead_id: _dealId,
+      title: row.title != null ? String(row.title) : '',
+      status: row.status != null ? String(row.status) : next,
+    } as WorkTask;
+  }
   if (source === 'crm_task') {
     const { data } = await api.put<Record<string, unknown>>(`/crm/leads/${_dealId}/tasks/${taskId}`, {
       status,
@@ -424,6 +540,20 @@ export async function updateWorkTaskStatus(
   invalidateWorkTasksCache();
   const row = (data?.assignment || data || {}) as Record<string, unknown>;
   return mapAssignmentToWorkTask({ ...row, id: taskId, status });
+}
+
+/**
+ * Đổi trạng thái một việc lấy từ `/work-tasks` (nguồn gộp): tự chọn đúng API theo nguồn gốc của
+ * dòng — `tasks` (việc dự án), `crm_task` hoặc `crm_assignment`. Giữ nguyên `id` gộp để khớp danh sách.
+ */
+export async function updateUnifiedTaskStatus(task: WorkTask, status: string): Promise<WorkTask> {
+  const kind = task.source_kind;
+  const realId = task.source_id || task.id;
+  const source: 'task' | 'crm_task' | 'assignment' = kind === 'task'
+    ? 'task'
+    : kind === 'crm_task' ? 'crm_task' : 'assignment';
+  const updated = await updateWorkTaskStatus(task.lead_id, realId, status, source);
+  return { ...updated, id: task.id };
 }
 
 export type WorkAssigneeOption = {
@@ -501,10 +631,64 @@ export function groupTasksByDeal(tasks: WorkTask[]): DealTaskSection[] {
     });
 }
 
+export type TaskGroupTone = 'overdue' | 'done' | 'doing' | 'todo';
+
+/**
+ * Trạng thái tổng của một nhóm việc (theo dự án/deal) — dùng chung cho tab Công việc và Tổng quan
+ * để nhãn luôn khớp nhau. Ưu tiên: Quá hạn → Hoàn thành → Đang làm → Chưa làm (nhóm còn việc trễ
+ * hạn luôn phải nổi lên). «Đang làm» gồm cả nhóm đã xong một phần mà chưa hết.
+ */
+export function summarizeTaskGroup(tasks: WorkTask[]): {
+  total: number;
+  done: number;
+  open: number;
+  overdueCount: number;
+  tone: TaskGroupTone | null;
+} {
+  const total = tasks.length;
+  const open = tasks.filter((t) => !isTaskDone(String(t.status))).length;
+  const done = total - open;
+  const overdueCount = tasks.filter((t) => isTaskOverdue(t)).length;
+  const anyInProgress = tasks.some((t) => isTaskInProgress(String(t.status)));
+  const tone: TaskGroupTone | null = total === 0
+    ? null
+    : overdueCount > 0
+      ? 'overdue'
+      : open === 0
+        ? 'done'
+        : (anyInProgress || done > 0 ? 'doing' : 'todo');
+  return { total, done, open, overdueCount, tone };
+}
+
 /** Id nhiệm vụ pipeline để focus trong chi tiết dự án. */
 export function workTaskFocusCrmId(task: WorkTask): string | null {
   if (task.crm_task_id) return String(task.crm_task_id);
   if (task.source === 'crm_task' && task.id) return String(task.id);
+  return null;
+}
+
+/**
+ * Nhiệm vụ deal (`crm_task`) tương ứng với một việc lấy từ nguồn gộp.
+ * - Dòng vốn là `crm_task` → chính nó.
+ * - Dòng `tasks` không có khóa liên kết: ghép theo (deal, tên việc); trùng tên thì ưu tiên cái giao
+ *   cho cùng người nhận. Không chắc chắn (0 hoặc nhiều ứng viên không phân biệt được) → null.
+ */
+async function resolveCrmTaskIdForUnified(task: WorkTask): Promise<string | null> {
+  if (task.crm_task_id) return String(task.crm_task_id);
+  if (task.source_kind === 'crm_task') return task.source_id || task.id || null;
+  const dealId = String(task.deal_id || '');
+  if (!dealId) return null;
+  const list = await fetchCrmDealTasks(dealId);
+  const title = String(task.title || '').trim().toLowerCase();
+  const sameTitle = list.filter((c) => String(c.title || '').trim().toLowerCase() === title);
+  if (sameTitle.length === 1) return String(sameTitle[0].id);
+  if (sameTitle.length > 1) {
+    const mine = sameTitle.filter((c) => {
+      const ids = [c.assignee?.id, ...(c.assignees || []).map((p) => p?.id)].filter(Boolean).map(String);
+      return task.assignee_id ? ids.includes(String(task.assignee_id)) : false;
+    });
+    if (mine.length === 1) return String(mine[0].id);
+  }
   return null;
 }
 
@@ -516,9 +700,17 @@ export async function uploadWorkTaskFile(
   task: WorkTask,
   file: { uri: string; name: string; mime: string },
 ): Promise<void> {
-  const dealId =
-    task.lead_id && task.lead_id !== ASSIGNMENT_SECTION_ID ? String(task.lead_id) : '';
-  const crmTaskId = workTaskFocusCrmId(task);
+  const unified = Boolean(task.source_kind);
+  const dealId = unified
+    ? String(task.deal_id || '')
+    : task.lead_id && task.lead_id !== ASSIGNMENT_SECTION_ID ? String(task.lead_id) : '';
+  const crmTaskId = unified ? await resolveCrmTaskIdForUnified(task) : workTaskFocusCrmId(task);
+
+  if (unified && !(dealId && crmTaskId)) {
+    // Việc loại `tasks` chỉ đính kèm được qua nhiệm vụ deal tương ứng (route `/tasks/:id/attachments`
+    // đòi người phụ trách deal). Không tìm thấy thì báo rõ, không tải nhầm chỗ.
+    throw new Error('Chưa tìm thấy nhiệm vụ của deal tương ứng để đính kèm file.');
+  }
 
   if (dealId && crmTaskId) {
     const { uploadCrmTaskFiles } = await import('./projectDetailApi');
@@ -566,9 +758,11 @@ function attachmentDedupeKey(url?: string | null, name?: string | null): string 
  * Có gắn crm_task → chỉ lấy CRM; không thì lấy assignment (sub + req).
  */
 export async function fetchWorkTaskAttachments(task: WorkTask): Promise<WorkTaskAttachment[]> {
-  const dealId =
-    task.lead_id && task.lead_id !== ASSIGNMENT_SECTION_ID ? String(task.lead_id) : '';
-  const crmTaskId = workTaskFocusCrmId(task);
+  const unified = Boolean(task.source_kind);
+  const dealId = unified
+    ? String(task.deal_id || '')
+    : task.lead_id && task.lead_id !== ASSIGNMENT_SECTION_ID ? String(task.lead_id) : '';
+  const crmTaskId = unified ? await resolveCrmTaskIdForUnified(task) : workTaskFocusCrmId(task);
   const out: WorkTaskAttachment[] = [];
   const seen = new Set<string>();
 

@@ -12,6 +12,11 @@ const {
   callMcpCrmReadTool,
 } = require('./mcpCrmReadBridge');
 const {
+  MCP_ADS_TOOL_SET,
+  getMcpAdsTools,
+  callMcpAdsTool,
+} = require('./mcpAdsBridge');
+const {
   MCP_REASON,
   createMcpTraceId,
   mcpDeny,
@@ -124,6 +129,7 @@ function getMcpReportTools(apiKey = null) {
     : ['reports', 'crm_read'];
   const allowReports = scopes.includes('reports');
   const allowCrm = scopes.includes('crm_read');
+  const allowAds = scopes.includes('ads_read');
 
   const fromOpenAi = OPENAI_TOOL_DEFINITIONS
     .filter((d) => MCP_REPORT_TOOL_SET.has(d.function?.name))
@@ -163,7 +169,16 @@ function getMcpReportTools(apiKey = null) {
     }
   }
 
+  // Ads tools (đối tác quảng cáo) — chỉ số tổng hợp, không thông tin cá nhân
+  for (const t of getMcpAdsTools()) {
+    if (!names.has(t.name)) {
+      patched.push(t);
+      names.add(t.name);
+    }
+  }
+
   return patched.filter((t) => {
+    if (MCP_ADS_TOOL_SET.has(t.name)) return allowAds;
     if (MCP_CRM_READ_TOOL_SET.has(t.name)) return allowCrm;
     return allowReports;
   });
@@ -173,6 +188,12 @@ function assertMcpScopeForTool(name, apiKey) {
   const scopes = Array.isArray(apiKey?.mcp_scopes) && apiKey.mcp_scopes.length
     ? apiKey.mcp_scopes
     : ['reports', 'crm_read'];
+  if (MCP_ADS_TOOL_SET.has(name)) {
+    if (!scopes.includes('ads_read')) {
+      throw mcpDeny(MCP_REASON.CAPABILITY_DENIED, 'API key không có quyền ads_read', 403);
+    }
+    return;
+  }
   if (MCP_CRM_READ_TOOL_SET.has(name)) {
     if (!scopes.includes('crm_read')) {
       throw mcpDeny(MCP_REASON.CAPABILITY_DENIED, 'API key không có quyền crm_read', 403);
@@ -274,7 +295,7 @@ function assertCompanyScope(args, apiKey) {
 }
 
 function isMcpToolAllowed(name) {
-  return MCP_REPORT_TOOL_SET.has(name) || MCP_CRM_READ_TOOL_SET.has(name);
+  return MCP_REPORT_TOOL_SET.has(name) || MCP_CRM_READ_TOOL_SET.has(name) || MCP_ADS_TOOL_SET.has(name);
 }
 
 /** Tên gợi ý write — MCP giai đoạn này chỉ read. */
@@ -315,6 +336,13 @@ async function callMcpReportTool(name, args = {}, req) {
     }
 
     assertMcpScopeForTool(name, req.apiKey);
+
+    // Ads tools chỉ đọc số tổng hợp — không cần user act-as.
+    if (MCP_ADS_TOOL_SET.has(name)) {
+      const ketQua = await callMcpAdsTool(name, args || {}, req.apiKey);
+      finishAudit('allow', MCP_REASON.ALLOWED);
+      return ketQua;
+    }
 
     const user = await resolveMcpActAsUser(req);
     auditUserId = user.id;

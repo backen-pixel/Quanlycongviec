@@ -451,6 +451,57 @@ async function attachIndexCrmTaskStatus(rows) {
 const ASSIGN_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const NO_MATCH_UUID = '00000000-0000-0000-0000-000000000000';
 
+/** Tóm tắt dự án khi Giao việc lọc ?project_id= — hiện dưới thống kê nhân viên. */
+async function loadAssignmentProjectScope(projectId) {
+  const pid = String(projectId || '').trim();
+  if (!ASSIGN_UUID_RE.test(pid)) return null;
+  try {
+    const { data: project, error } = await supabase
+      .from('projects')
+      .select(`
+        id, code, name, install_date,
+        company:companies!projects_company_id_fkey(short_name, name),
+        customer:customers(full_name, phone),
+        production_person:users!projects_production_person_id_fkey(full_name)
+      `)
+      .eq('id', pid)
+      .maybeSingle();
+    if (error) throw error;
+    if (!project) return null;
+    const { data: lead } = await supabase
+      .from('crm_leads')
+      .select('code, title, phone, region_id')
+      .eq('project_id', pid)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    let regionName = null;
+    if (lead?.region_id) {
+      const { data: region } = await supabase
+        .from('company_regions')
+        .select('name')
+        .eq('id', lead.region_id)
+        .maybeSingle();
+      regionName = region?.name || null;
+    }
+    const phone = String(lead?.phone || project.customer?.phone || '').trim();
+    return {
+      id: project.id,
+      code: project.code || null,
+      name: lead?.title || project.name || project.customer?.full_name || null,
+      deal_code: lead?.code || null,
+      company_name: project.company?.short_name || project.company?.name || null,
+      region_name: regionName,
+      phone: phone || null,
+      install_date: project.install_date || null,
+      production_person_name: project.production_person?.full_name || null,
+    };
+  } catch (err) {
+    console.warn('[crm/assignments] project scope:', err?.message || err);
+    return null;
+  }
+}
+
 async function fetchLeadIdsForProject(projectId) {
   const pid = String(projectId || '').trim();
   if (!ASSIGN_UUID_RE.test(pid)) return [];
@@ -466,6 +517,19 @@ function skipAssignModuleForProject(query = {}) {
   return ASSIGN_UUID_RE.test(String(query.project_id || '').trim());
 }
 
+/** Lọc ?project_id= vẫn giữ module trên Giao việc SX — không kéo giao việc CRM/VC. */
+function shouldApplyAssignModuleFilter(query, moduleFilter, { skipModule = false } = {}) {
+  if (skipModule || !isValidAssignModuleFilter(moduleFilter)) return false;
+  if (!skipAssignModuleForProject(query)) return true;
+  return String(moduleFilter || '').trim().toLowerCase() === 'production';
+}
+
+/** Nhiệm vụ pipeline của xưởng — cùng quy tắc task_scope=production. */
+function isWorkshopProductionCrmTask(task) {
+  const slug = String(task?.stage_slug || '');
+  return slug.startsWith('sx_') || !!task?.production_pipeline_stage_id;
+}
+
 function normalizeTaskStatusForAssignment(status) {
   const s = String(status || 'pending').toLowerCase();
   if (s === 'done' || s === 'completed') return 'completed';
@@ -479,16 +543,22 @@ async function mergeProjectCrmTaskAssignments(rows, leadIds, {
   columnId = '',
   indexOnly = false,
   columns = [],
+  assignmentModule = '',
 } = {}) {
   const list = Array.isArray(rows) ? rows : [];
   if (!leadIds?.length) return list;
+  const moduleKey = String(assignmentModule || '').trim().toLowerCase();
   const have = new Set(list.map((r) => String(r.crm_task_id || '')).filter(Boolean));
   const { data: tasks } = await supabase
     .from('crm_tasks')
-    .select('id, title, description, lead_id, status, priority, deadline, created_at, updated_at, completed_at')
+    .select('id, title, description, lead_id, status, priority, deadline, created_at, updated_at, completed_at, stage_slug, production_pipeline_stage_id, notes')
     .in('lead_id', leadIds)
     .limit(500);
-  const missing = (tasks || []).filter((t) => !have.has(String(t.id)));
+  const missing = (tasks || []).filter((t) => {
+    if (have.has(String(t.id))) return false;
+    if (moduleKey === 'production' && !isWorkshopProductionCrmTask(t)) return false;
+    return true;
+  });
   if (!missing.length) return list;
 
   const { data: leads } = await supabase
@@ -547,9 +617,37 @@ async function mergeProjectCrmTaskAssignments(rows, leadIds, {
       company: null,
       executor_company: null,
       lead,
+      crm_task: { id: t.id, notes: t.notes || '', lead_id: t.lead_id },
     });
   });
   return extra.length ? list.concat(extra) : list;
+}
+
+function parseWorkshopTypeFilter(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return null;
+  if (value === 'none' || value === 'global') return { mode: 'none' };
+  if (ASSIGN_UUID_RE.test(value)) return { mode: 'id', id: value };
+  return null;
+}
+
+/** Gắn project nội bộ để PostgREST lọc được theo phân loại xưởng. */
+function selectWithWorkshopProject(baseSelect, filter) {
+  if (!filter) return baseSelect;
+  const embed = 'lead:crm_leads!inner(id, code, title, type, project_id, project:projects!inner(workshop_type_id))';
+  if (String(baseSelect).includes('lead:crm_leads(')) {
+    return String(baseSelect).replace(
+      'lead:crm_leads(id, code, title, type, project_id)',
+      embed,
+    );
+  }
+  return `${baseSelect}, ${embed}`;
+}
+
+function applyWorkshopTypeOnQuery(q, filter) {
+  if (!filter) return q;
+  if (filter.mode === 'none') return q.is('lead.project.workshop_type_id', null);
+  return q.eq('lead.project.workshop_type_id', filter.id);
 }
 
 async function applyLeadOrProjectFilter(q, query = {}) {
@@ -954,6 +1052,9 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
 
     const overdueFlag = String(req.query.overdue || '').trim().toLowerCase();
     const moduleFilter = String(req.query.assignment_module || '').trim().toLowerCase();
+    const workshopTypeFilter = parseWorkshopTypeFilter(req.query.workshop_type_id);
+    const fullSelect = selectWithWorkshopProject(ASSIGNMENT_SELECT, workshopTypeFilter);
+    const indexSelect = selectWithWorkshopProject(ASSIGNMENT_INDEX_SELECT, workshopTypeFilter);
     const rawLimit = Number(req.query.limit);
     // Trần 1.000 = trần `max-rows` của PostgREST: xin nhiều hơn cũng chỉ nhận 1.000 dòng
     // (đo: .range(0, 4999) trả về đúng 1.000). Trần cũ 500 khiến client phải gọi gấp đôi
@@ -996,9 +1097,10 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
           .not('deadline', 'is', null)
           .lt('deadline', startIso);
       }
-      if (!skipModule && !skipAssignModuleForProject(req.query) && isValidAssignModuleFilter(moduleFilter)) {
+      if (shouldApplyAssignModuleFilter(req.query, moduleFilter, { skipModule })) {
         q = q.eq('assignment_module', moduleFilter);
       }
+      q = applyWorkshopTypeOnQuery(q, workshopTypeFilter);
       if (req.query.q) {
         ({ q } = await applyAssignmentSearchQuery(q, req.query.q));
       }
@@ -1018,12 +1120,12 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
     // ─── Chế độ bảng chỉ số: trả sớm, không đi qua nhánh nạp đầy đủ bên dưới ──
     if (wantsIndexPayload(req.query)) {
       const makeIndex = async () => applyCommonFilters(
-        supabase.from('crm_assignments').select(ASSIGNMENT_INDEX_SELECT),
+        supabase.from('crm_assignments').select(indexSelect),
       );
       let { data: idxRows, error: idxErr } = await fetchAssignmentRowsPaged(makeIndex, pageOpts);
       if (idxErr && /assignment_module/.test(idxErr.message || '') && moduleFilter) {
         const makeNoMod = async () => applyCommonFilters(
-          supabase.from('crm_assignments').select(ASSIGNMENT_INDEX_SELECT),
+          supabase.from('crm_assignments').select(indexSelect),
           { skipModule: true },
         );
         ({ data: idxRows, error: idxErr } = await fetchAssignmentRowsPaged(makeNoMod, pageOpts));
@@ -1041,7 +1143,7 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
       alignAssignmentStatusFromCrmTask(rows);
       await alignAssignmentColumnStatus(rows, cols);
       // `crm_task` chỉ là nguyên liệu để căn ở trên — client không dùng, bỏ cho nhẹ.
-      rows.forEach((r) => { delete r.crm_task; });
+      rows.forEach((r) => { delete r.crm_task; delete r.lead; });
       const projectLeadIds = skipAssignModuleForProject(req.query)
         ? await fetchLeadIdsForProject(req.query.project_id)
         : [];
@@ -1049,6 +1151,7 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
         columnId: req.query.column_id,
         indexOnly: true,
         columns: cols,
+        assignmentModule: moduleFilter,
       });
       return res.json({
         index: indexRowsOut,
@@ -1061,16 +1164,19 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
     }
 
     const makeFull = async () => applyCommonFilters(
-      supabase.from('crm_assignments').select(ASSIGNMENT_SELECT),
+      supabase.from('crm_assignments').select(fullSelect),
     );
 
     let { data, error } = await fetchAssignmentRowsPaged(makeFull, pageOpts);
 
     if (error && /task_source_type|employee_error_module|error_type_id/.test(error.message || '')) {
-      const legacySelect = ASSIGNMENT_SELECT
-        .replace(/task_source_type,\s*/g, '')
-        .replace(/employee_error_module,\s*/g, '')
-        .replace(/error_type_id,\s*/g, '');
+      const legacySelect = selectWithWorkshopProject(
+        ASSIGNMENT_SELECT
+          .replace(/task_source_type,\s*/g, '')
+          .replace(/employee_error_module,\s*/g, '')
+          .replace(/error_type_id,\s*/g, ''),
+        workshopTypeFilter,
+      );
       const makeLegacy = async () => applyCommonFilters(
         supabase.from('crm_assignments').select(legacySelect),
       );
@@ -1078,14 +1184,14 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
     }
     if (error && /executor_company_id/.test(error.message || '') && isAdmin(req) && req.query.company_id) {
       const makeExec = async () => applyCommonFilters(
-        supabase.from('crm_assignments').select(ASSIGNMENT_SELECT),
+        supabase.from('crm_assignments').select(fullSelect),
         { companyMode: 'company_only' },
       );
       ({ data, error } = await fetchAssignmentRowsPaged(makeExec, pageOpts));
     }
     if (error && /assignment_module/.test(error.message || '') && moduleFilter) {
       const makeNoMod = async () => applyCommonFilters(
-        supabase.from('crm_assignments').select(ASSIGNMENT_SELECT),
+        supabase.from('crm_assignments').select(fullSelect),
         { skipModule: true },
       );
       ({ data, error } = await fetchAssignmentRowsPaged(makeNoMod, pageOpts));
@@ -1114,6 +1220,7 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
     const outRows = await mergeProjectCrmTaskAssignments(rows, projectLeadIds, {
       columnId: req.query.column_id,
       columns: await getSharedColumnsCached(),
+      assignmentModule: moduleFilter,
     });
     const meta = {
       has_more: pageLimit != null ? outRows.length >= pageLimit : false,
@@ -1521,7 +1628,7 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
           q = q.or(`company_id.eq.${companyId},executor_company_id.eq.${companyId}`);
         }
       }
-      if (!skipModule && !skipAssignModuleForProject(req.query) && isValidAssignModuleFilter(moduleFilter)) {
+      if (shouldApplyAssignModuleFilter(req.query, moduleFilter, { skipModule })) {
         q = q.eq('assignment_module', moduleFilter);
       }
       if (priorityFilter) q = q.eq('priority', priorityFilter);
@@ -1529,19 +1636,25 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
       if (searchQ) {
         ({ q } = await applyAssignmentSearchQuery(q, searchQ));
       }
+      q = applyWorkshopTypeOnQuery(q, parseWorkshopTypeFilter(req.query.workshop_type_id));
       // Không return builder trần từ async — PostgREST thenable.
       return { q };
     }
 
     async function countExact(extra = (q) => q, opts = {}) {
-      let q = supabase.from('crm_assignments').select('id', { count: 'exact', head: true });
+      const statsTypeFilter = parseWorkshopTypeFilter(req.query.workshop_type_id);
+      const statsSelect = statsTypeFilter
+        ? 'id, lead:crm_leads!inner(project:projects!inner(workshop_type_id))'
+        : 'id';
+      let q = supabase.from('crm_assignments').select(statsSelect, { count: 'exact', head: true });
       ({ q } = await applyStatsFilters(q, opts));
       q = extra(q);
       let { count, error } = await q;
       if (error && /executor_company_id/.test(error.message || '') && isAdmin(req) && req.query.company_id) {
-        let qExec = supabase.from('crm_assignments').select('id', { count: 'exact', head: true })
+        let qExec = supabase.from('crm_assignments').select(statsSelect, { count: 'exact', head: true })
           .eq('company_id', req.query.company_id);
-        if (!opts.skipModule && !skipAssignModuleForProject(req.query) && isValidAssignModuleFilter(moduleFilter)) {
+        qExec = applyWorkshopTypeOnQuery(qExec, statsTypeFilter);
+        if (shouldApplyAssignModuleFilter(req.query, moduleFilter, { skipModule: opts.skipModule })) {
           qExec = qExec.eq('assignment_module', moduleFilter);
         }
         if (statsIdFilter) qExec = qExec.in('id', statsIdFilter);
@@ -1567,10 +1680,15 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
     ]);
     if (skipAssignModuleForProject(req.query)) {
       const leadIds = await fetchLeadIdsForProject(req.query.project_id);
-      const extras = await mergeProjectCrmTaskAssignments([], leadIds, {
+      let linkedQ = supabase.from('crm_assignments').select('crm_task_id');
+      ({ q: linkedQ } = await applyStatsFilters(linkedQ));
+      const { data: linked } = await linkedQ.not('crm_task_id', 'is', null).limit(500);
+      const extras = await mergeProjectCrmTaskAssignments(linked || [], leadIds, {
         columns: await getSharedColumnsCached(),
+        assignmentModule: moduleFilter,
       });
       extras.forEach((t) => {
+        if (!t._fromCrmTask) return;
         total += 1;
         if (t.status === 'completed') completed += 1;
         else if (t.status === 'in_progress') inProgress += 1;
@@ -1580,6 +1698,9 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
       });
     }
     const pending = Math.max(0, total - completed - inProgress);
+    const project = skipAssignModuleForProject(req.query)
+      ? await loadAssignmentProjectScope(req.query.project_id)
+      : null;
 
     res.json({
       pending,
@@ -1587,6 +1708,7 @@ r.get('/stats', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'
       completed,
       overdue,
       total,
+      project,
       stats_rev: 4,
     });
   } catch (e) {
@@ -2002,11 +2124,31 @@ r.get('/shared-workspace-report', async (req, res) => {
   }
 });
 
+async function resolvePrivateInboxUserIds(req) {
+  const selfId = req.user?.userId || req.user?.id || null;
+  if (!isAdmin(req)) return selfId ? [selfId] : [];
+  const assignee = String(req.query.assignee_id || '').trim();
+  if (assignee && ASSIGN_UUID_RE.test(assignee)) return [assignee];
+  const departmentId = String(req.query.department_id || '').trim();
+  const companyId = String(req.query.company_id || '').trim();
+  const hasDept = departmentId && ASSIGN_UUID_RE.test(departmentId);
+  const hasCompany = companyId && ASSIGN_UUID_RE.test(companyId);
+  if (!hasDept && !hasCompany) return selfId ? [selfId] : [];
+  let q = supabase.from('users').select('id').neq('is_active', false);
+  if (hasDept) q = q.eq('department_id', departmentId);
+  if (hasCompany) q = q.eq('company_id', companyId);
+  const { data, error } = await q.limit(500);
+  if (error) throw error;
+  return (data || []).map((row) => row.id).filter(Boolean);
+}
+
 // GET /api/crm/assignments/private-deal-tasks?assignment_module=crm|production|logistics
 r.get('/private-deal-tasks', async (req, res) => {
   try {
     const result = await listPrivateDealInboxTasks(req, {
       assignmentModule: req.query.assignment_module,
+      workshopTypeId: req.query.workshop_type_id,
+      userIds: await resolvePrivateInboxUserIds(req),
     });
     res.json(result);
   } catch (e) {

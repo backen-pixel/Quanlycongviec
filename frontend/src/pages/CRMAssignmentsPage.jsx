@@ -3,6 +3,15 @@ import { createPortal } from 'react-dom';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { isAdminLike, normalizeRole } from '../lib/adminRole';
+import { useDefaultCompanyOnce } from '../hooks/useDefaultCompanyOnce';
+import {
+  patchSxDashPersisted,
+  readSxDashPersisted,
+  resolveWorkshopCompanyForTypes,
+  workshopCompanyDisplayName,
+  isMetallaOrHucabiCompanyId,
+} from '../lib/crossWorkshopProduction';
 import { formatDate } from '../lib/utils';
 import { unpackAssignmentsDict } from '../lib/assignmentDictPayload';
 import {
@@ -20,7 +29,7 @@ import {
   FileText as FileIcon, Download, Upload, Repeat2, CalendarClock, ChevronDown,
   ChevronUp, ClipboardList, ChevronRight, ChevronLeft, Lock, ArrowLeft, RefreshCw, Filter, RotateCcw,
   Eye, BookOpen, TrendingUp, TrendingDown, Minus, SlidersHorizontal, LayoutList, Check, FileChartColumn,
-  UserCog,
+  UserCog, Layers,
 } from 'lucide-react';
 import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
 import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
@@ -29,6 +38,7 @@ import {
   SubmitFilesCompact,
   StagedAttachmentsSection,
 } from '../components/crm/CrmAssignmentFiles';
+import { CrmTaskNotesFilesPanel } from '../components/WorkTaskExtrasPanel';
 import {
   loadPersonalColumns,
   savePersonalColumns,
@@ -666,6 +676,7 @@ function AssignQuickFilterPanel({
   filterStatus, setFilterStatus,
   filterPriority, setFilterPriority,
   onSeeAllStaff, loadingMore = false, userDict = null,
+  projectScope = null, projectHref = '',
 }) {
   // Trên mobile panel này nằm TRÊN bảng Kanban; để mở sẵn (cao ~455px) sẽ đẩy bảng xuống
   // quá sâu. Mặc định thu gọn ở màn hẹp, giống cách dải KPI đang làm.
@@ -848,6 +859,45 @@ function AssignQuickFilterPanel({
               </button>
             )}
           </div>
+          {projectScope ? (
+            <div className="border-t border-slate-100 px-3 py-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Dự án đang lọc
+              </p>
+              <p className="mt-1.5 text-[12px] font-semibold text-teal-800 truncate" title={projectScope.code || ''}>
+                {projectScope.code || 'Chưa có mã'}
+              </p>
+              {projectScope.name ? (
+                <p className="mt-0.5 text-[11px] leading-snug text-slate-800 line-clamp-3" title={projectScope.name}>
+                  {projectScope.name}
+                </p>
+              ) : null}
+              {[projectScope.company_name, projectScope.region_name].filter(Boolean).length ? (
+                <p className="mt-1 text-[10px] text-slate-500 truncate">
+                  {[projectScope.company_name, projectScope.region_name].filter(Boolean).join(' · ')}
+                </p>
+              ) : null}
+              {projectScope.phone ? (
+                <p className="text-[10px] text-slate-500 truncate">{projectScope.phone}</p>
+              ) : null}
+              {projectScope.install_date ? (
+                <p className="text-[10px] text-slate-500">Lắp {formatDate(projectScope.install_date)}</p>
+              ) : null}
+              {projectScope.production_person_name ? (
+                <p className="text-[10px] text-slate-600 truncate" title={projectScope.production_person_name}>
+                  Phụ trách: {projectScope.production_person_name}
+                </p>
+              ) : null}
+              {projectHref ? (
+                <Link
+                  to={projectHref}
+                  className={`mt-1.5 inline-flex text-[11px] font-semibold ${theme.activeText} hover:underline`}
+                >
+                  Mở dự án
+                </Link>
+              ) : null}
+            </div>
+          ) : null}
         </>
     </aside>
   );
@@ -1013,25 +1063,49 @@ function portalAssignmentsModal(node) {
 }
 
 /** Tab «Không gian chung» — nhiệm vụ deal được giao cho tôi, nhóm theo deal / trạng thái / deadline. */
-function PrivateDealInbox({ groups, loading, assignmentModule, search, onSearchChange, theme }) {
+function PrivateDealInbox({
+  groups, loading, assignmentModule, search, onSearchChange, theme,
+  isAdmin = false,
+  companies = [],
+  departments = [],
+  assigneeOptions = [],
+  user = null,
+  filterCompanyId = '',
+  setFilterCompanyId,
+  filterDepartmentId = '',
+  setFilterDepartmentId,
+  filterAssignee = '',
+  setFilterAssignee,
+  filterStatus = '',
+  setFilterStatus,
+  filterPriority = '',
+  setFilterPriority,
+}) {
   const t = theme || getAssignmentTheme(assignmentModule);
   const [inboxView, setInboxView] = useState('deal');
   const [collapsed, setCollapsed] = useState({});
   const [searchFocused, setSearchFocused] = useState(false);
   const [kpiPanelOpen, setKpiPanelOpen] = useState(defaultKpiPanelOpen);
   const [showAdvFilter, setShowAdvFilter] = useState(false);
-  const [filterStatus, setFilterStatus] = useState('');
-  const [filterPriority, setFilterPriority] = useState('');
   const q = String(search || '').trim().toLowerCase();
-  const hasSelectFilters = !!(filterStatus || filterPriority);
-  const activeFilterCount = [filterStatus, filterPriority].filter(Boolean).length;
+  const hasSelectFilters = !!(
+    filterStatus || filterPriority
+    || (isAdmin && (filterCompanyId || filterDepartmentId || filterAssignee))
+  );
+  const activeFilterCount = [
+    isAdmin ? filterCompanyId : '',
+    isAdmin ? filterDepartmentId : '',
+    isAdmin ? filterAssignee : '',
+    filterStatus,
+    filterPriority,
+  ].filter(Boolean).length;
   const searchBoxCls = searchFocused
     ? t.searchFocus
     : (q || hasSelectFilters)
       ? t.searchActive
       : t.searchIdle;
   const spinBorder = t.mod === 'logistics' ? 'border-orange-600' : t.mod === 'production' ? 'border-indigo-600' : 'border-violet-600';
-  const filterFieldCls = `h-8 w-full min-w-0 px-2.5 bg-white border rounded-md text-xs font-medium text-slate-800 shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 transition-shadow ${t.filterField}`;
+  const filterFieldCls = `h-8 w-full min-w-0 px-2.5 bg-white border rounded-md text-xs font-medium text-slate-800 shadow-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 transition-shadow disabled:opacity-50 ${t.filterField}`;
   const filterSelectCls = `${filterFieldCls} cursor-pointer appearance-none pr-7`;
   const filterLabelCls = `text-[10px] font-semibold uppercase tracking-wide mb-1 block ${t.filterLabel}`;
 
@@ -1045,8 +1119,13 @@ function PrivateDealInbox({ groups, loading, assignmentModule, search, onSearchC
   }, [showAdvFilter]);
 
   const clearFilters = () => {
-    setFilterStatus('');
-    setFilterPriority('');
+    setFilterStatus?.('');
+    setFilterPriority?.('');
+    if (isAdmin) {
+      setFilterCompanyId?.('');
+      setFilterDepartmentId?.('');
+      setFilterAssignee?.('');
+    }
     onSearchChange?.('');
   };
 
@@ -1149,7 +1228,7 @@ function PrivateDealInbox({ groups, loading, assignmentModule, search, onSearchC
 
       {showAdvFilter && portalAssignmentsModal(
         <div
-          className="ui-solid-white fixed z-[75] max-sm:left-4 max-sm:right-4 max-sm:bottom-4 max-sm:top-auto w-[min(100vw-2rem,400px)] max-h-[min(calc(100vh-5rem),520px)] flex flex-col rounded-xl border border-gray-200 bg-white shadow-2xl overflow-hidden animate-fade-in"
+          className="ui-solid-white fixed z-[75] max-sm:left-4 max-sm:right-4 max-sm:bottom-4 max-sm:top-auto w-[min(100vw-2rem,400px)] max-h-[min(calc(100vh-5rem),620px)] flex flex-col rounded-xl border border-gray-200 bg-white shadow-2xl overflow-hidden animate-fade-in"
           style={{ top: '4.5rem', right: '1rem' }}
           role="region"
           aria-label="Bộ lọc không gian chung"
@@ -1177,20 +1256,73 @@ function PrivateDealInbox({ groups, loading, assignmentModule, search, onSearchC
             </div>
           </div>
           <div className="flex-1 min-h-0 overflow-y-auto px-3 py-1 bg-white [scrollbar-width:thin]">
-            <div className="py-2.5 grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <div className="min-w-0">
-                <label className={filterLabelCls}>Trạng thái</label>
-                <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className={filterSelectCls}>
-                  <option value="">Tất cả trạng thái</option>
-                  {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                </select>
-              </div>
-              <div className="min-w-0">
-                <label className={filterLabelCls}>Ưu tiên</label>
-                <select value={filterPriority} onChange={(e) => setFilterPriority(e.target.value)} className={filterSelectCls}>
-                  <option value="">Tất cả ưu tiên</option>
-                  {PRIORITY_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
-                </select>
+            <div className="py-2.5 space-y-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {isAdmin && (
+                  <>
+                    <div className="min-w-0">
+                      <label className={filterLabelCls}>Công ty</label>
+                      <select
+                        value={filterCompanyId}
+                        onChange={(e) => setFilterCompanyId?.(e.target.value)}
+                        className={filterSelectCls}
+                      >
+                        <option value="">Tất cả công ty</option>
+                        {companies.map((co) => (
+                          <option key={co.id} value={co.id}>{co.short_name || co.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="min-w-0">
+                      <label className={filterLabelCls}>Phòng ban</label>
+                      <select
+                        value={filterDepartmentId}
+                        onChange={(e) => setFilterDepartmentId?.(e.target.value)}
+                        disabled={!filterCompanyId}
+                        className={filterSelectCls}
+                        title={filterCompanyId ? 'Lọc theo phòng ban' : 'Chọn công ty trước'}
+                      >
+                        <option value="">{filterCompanyId ? 'Tất cả phòng ban' : 'Chọn công ty trước'}</option>
+                        {departments.map((d) => (
+                          <option key={d.id} value={d.id}>{d.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                )}
+                <div className="min-w-0 sm:col-span-2">
+                  <label className={filterLabelCls}>Nhân viên</label>
+                  {isAdmin ? (
+                    <select
+                      value={filterAssignee}
+                      onChange={(e) => setFilterAssignee?.(e.target.value)}
+                      className={filterSelectCls}
+                    >
+                      <option value="">Tất cả nhân viên</option>
+                      {assigneeOptions.map((u) => (
+                        <option key={u.id} value={u.id}>{u.full_name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className={`${filterFieldCls} flex items-center bg-slate-50 text-slate-700 cursor-default`}>
+                      {user?.full_name || 'Việc của tôi'}
+                    </div>
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <label className={filterLabelCls}>Trạng thái</label>
+                  <select value={filterStatus} onChange={(e) => setFilterStatus?.(e.target.value)} className={filterSelectCls}>
+                    <option value="">Tất cả trạng thái</option>
+                    {STATUS_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                  </select>
+                </div>
+                <div className="min-w-0">
+                  <label className={filterLabelCls}>Ưu tiên</label>
+                  <select value={filterPriority} onChange={(e) => setFilterPriority?.(e.target.value)} className={filterSelectCls}>
+                    <option value="">Tất cả ưu tiên</option>
+                    {PRIORITY_OPTIONS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+                  </select>
+                </div>
               </div>
             </div>
           </div>
@@ -1563,14 +1695,17 @@ export default function CRMAssignmentsPage({
   const { user } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const isAdmin = ['admin', 'manager', 'sales_admin'].includes(user?.role);
+  const isAdmin = isAdminLike(user)
+    || normalizeRole(user?.role) === 'manager'
+    || normalizeRole(user?.role) === 'crm_production_admin';
   const uid = String(user?.id || '');
   const canManageTask = useCallback((t) => (
     t?._fromCrmTask ? false : canManageAssignmentAccess(t, user)
   ), [user]);
-  const canMoveTask = useCallback((t) => (
-    t?._fromCrmTask ? false : canMoveAssignment(t, user)
-  ), [user]);
+  const canMoveTask = useCallback((t) => {
+    if (t?._fromCrmTask) return isAdmin;
+    return canMoveAssignment(t, user);
+  }, [user, isAdmin]);
 
   const filterProjectId = String(searchParams.get('project_id') || '').trim();
   const filterProjectLabel = String(searchParams.get('project') || '').trim();
@@ -1624,6 +1759,7 @@ export default function CRMAssignmentsPage({
   // trực tiếp: chọn "Đã làm"+"Gấp" phải ra 17 việc, nhưng board giữ 27 (kết quả của lượt
   // chỉ lọc "Gấp" trước đó).
   const loadSeqRef = useRef(0);
+  const privateLoadSeqRef = useRef(0);
 
   const [search, setSearch] = useState(() => String(searchParams.get('project') || '').trim());
   const [privateSearch, setPrivateSearch] = useState('');
@@ -1633,6 +1769,16 @@ export default function CRMAssignmentsPage({
   const [filterStatus, setFilterStatus] = useState('');
   const [filterCompanyId, setFilterCompanyId] = useState(() => {
     try { return localStorage.getItem(LS_COMPANY) || ''; } catch { return ''; }
+  });
+  const [filterWorkTypeId, setFilterWorkTypeId] = useState(() => (
+    assignmentModule === 'production'
+      ? String(readSxDashPersisted()?.filterWorkTypeId || '')
+      : ''
+  ));
+  const [workTypes, setWorkTypes] = useState([]);
+  useDefaultCompanyOnce(filterCompanyId, setFilterCompanyId, companies, {
+    enabled: isAdmin && !!user?.company_id,
+    preferredId: user?.company_id || '',
   });
   const [filterDepartmentId, setFilterDepartmentId] = useState(() => {
     try { return localStorage.getItem(LS_DEPARTMENT) || ''; } catch { return ''; }
@@ -1827,11 +1973,67 @@ export default function CRMAssignmentsPage({
 
   // ─── Load companies (admin) ──
   useEffect(() => {
-    if (!isAdmin) return;
+    if (!isAdmin && assignmentModule !== 'production') return undefined;
+    let cancelled = false;
     api.get('/companies', { params: { for_module: companiesModule } })
-      .then((r) => setCompanies(r.data?.companies || r.data || []))
-      .catch(() => setCompanies([]));
-  }, [isAdmin, companiesModule]);
+      .then((r) => {
+        if (!cancelled) setCompanies(r.data?.companies || r.data || []);
+      })
+      .catch(() => {
+        if (!cancelled && isAdmin) setCompanies([]);
+      });
+    return () => { cancelled = true; };
+  }, [isAdmin, companiesModule, assignmentModule]);
+
+  const companyForWorkTypes = useMemo(() => {
+    if (assignmentModule !== 'production') return '';
+    return resolveWorkshopCompanyForTypes({
+      filterCompany: filterCompanyId,
+      userCompanyId: user?.company_id,
+      user,
+      companies,
+    });
+  }, [assignmentModule, filterCompanyId, user, companies]);
+
+  useEffect(() => {
+    if (assignmentModule !== 'production' || !companyForWorkTypes) {
+      setWorkTypes([]);
+      return undefined;
+    }
+    let cancelled = false;
+    api.get('/workshop/project-types', { params: { company_id: companyForWorkTypes, module: 'production' } })
+      .then((r) => {
+        if (!cancelled) setWorkTypes(Array.isArray(r.data) ? r.data : []);
+      })
+      .catch(() => {
+        if (!cancelled) setWorkTypes([]);
+      });
+    return () => { cancelled = true; };
+  }, [assignmentModule, companyForWorkTypes]);
+
+  useEffect(() => {
+    if (assignmentModule !== 'production') return;
+    if (!workTypes.length) return;
+    if (filterWorkTypeId === 'none') return;
+    if (workTypes.some((row) => String(row.id) === String(filterWorkTypeId))) return;
+    const next = String(workTypes[0].id);
+    setFilterWorkTypeId(next);
+    patchSxDashPersisted({ filterWorkTypeId: next });
+  }, [assignmentModule, workTypes, filterWorkTypeId]);
+
+  const workTypeCompanyPrefix = useMemo(() => {
+    const workshops = (companies || []).filter((company) => (
+      isMetallaOrHucabiCompanyId(company.id, companies, user)
+    ));
+    if (workshops.length < 2) return '';
+    const company = (companies || []).find((row) => String(row.id) === String(companyForWorkTypes));
+    return workshopCompanyDisplayName(company);
+  }, [companies, user, companyForWorkTypes]);
+
+  const chooseWorkType = (value) => {
+    setFilterWorkTypeId(value);
+    patchSxDashPersisted({ filterWorkTypeId: value });
+  };
 
   // ─── Load all data ──
   /** Bộ tham số lọc hiện hành — dùng chung cho mọi lượt nạp (chỉ số / thẻ / nạp đủ). */
@@ -1846,11 +2048,17 @@ export default function CRMAssignmentsPage({
     if (searchDebounced && !(filterProjectId && searchDebounced === filterProjectLabel)) {
       params.q = searchDebounced;
     }
-    if (assignmentModule && !filterProjectId) params.assignment_module = assignmentModule;
+    // Lọc theo dự án trên Giao việc SX vẫn giữ module xưởng — không kéo nhiệm vụ CRM/VC.
+    if (assignmentModule && (!filterProjectId || assignmentModule === 'production')) {
+      params.assignment_module = assignmentModule;
+    }
     if (filterProjectId) params.project_id = filterProjectId;
     else if (filterLeadId) params.lead_id = filterLeadId;
+    if (assignmentModule === 'production' && filterWorkTypeId) {
+      params.workshop_type_id = filterWorkTypeId;
+    }
     return params;
-  }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, searchDebounced, assignmentModule, uid, filterProjectId, filterLeadId, filterProjectLabel]);
+  }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, searchDebounced, assignmentModule, uid, filterProjectId, filterLeadId, filterProjectLabel, filterWorkTypeId]);
 
   /** Tham số của lượt load ĐANG hiệu lực — để nạp thêm thẻ theo cột lúc người dùng cuộn. */
   const listParamsRef = useRef({});
@@ -1944,6 +2152,7 @@ export default function CRMAssignmentsPage({
         inProgress: s.in_progress || 0,
         completed: s.completed || 0,
         overdue: s.overdue || 0,
+        project: s.project || null,
       } : null);
       setSchedules(schedRes.data?.schedules || []);
 
@@ -2096,9 +2305,14 @@ export default function CRMAssignmentsPage({
       if (searchDebounced && !(filterProjectId && searchDebounced === filterProjectLabel)) {
         params.q = searchDebounced;
       }
-      if (assignmentModule && !filterProjectId) params.assignment_module = assignmentModule;
+      if (assignmentModule && (!filterProjectId || assignmentModule === 'production')) {
+        params.assignment_module = assignmentModule;
+      }
       if (filterProjectId) params.project_id = filterProjectId;
       else if (filterLeadId) params.lead_id = filterLeadId;
+      if (assignmentModule === 'production' && filterWorkTypeId) {
+        params.workshop_type_id = filterWorkTypeId;
+      }
       const { data: s } = await api.get(`${apiBase}/stats`, { params });
       if (s && typeof s.total === 'number') {
         setServerStats({
@@ -2107,10 +2321,11 @@ export default function CRMAssignmentsPage({
           inProgress: s.in_progress || 0,
           completed: s.completed || 0,
           overdue: s.overdue || 0,
+          project: s.project || null,
         });
       }
     } catch { /* giữ KPI cũ */ }
-  }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, searchDebounced, apiBase, assignmentModule, uid, filterProjectId, filterLeadId, filterProjectLabel]);
+  }, [isAdmin, filterCompanyId, filterDepartmentId, filterAssignee, filterStatus, filterPriority, searchDebounced, apiBase, assignmentModule, uid, filterProjectId, filterLeadId, filterProjectLabel, filterWorkTypeId]);
 
   useEffect(() => { void load({ soft: true }); }, [load]);
 
@@ -2127,11 +2342,21 @@ export default function CRMAssignmentsPage({
   }, [viewNeedsFullList, fullLoaded, loading, loadFullList]);
 
   const loadPrivateTasks = useCallback(async () => {
+    const seq = ++privateLoadSeqRef.current;
     setPrivateLoading(true);
     try {
       const { data } = await api.get(`${apiBase}/private-deal-tasks`, {
-        params: { assignment_module: assignmentModule },
+        params: {
+          assignment_module: assignmentModule,
+          ...(assignmentModule === 'production' && filterWorkTypeId
+            ? { workshop_type_id: filterWorkTypeId }
+            : {}),
+          ...(isAdmin && filterCompanyId ? { company_id: filterCompanyId } : {}),
+          ...(isAdmin && filterDepartmentId ? { department_id: filterDepartmentId } : {}),
+          ...(isAdmin && filterAssignee ? { assignee_id: filterAssignee } : {}),
+        },
       });
+      if (seq !== privateLoadSeqRef.current) return;
       const groups = Array.isArray(data?.groups) ? data.groups : [];
       setPrivateGroups(groups);
       setPrivateTaskCount(
@@ -2140,12 +2365,14 @@ export default function CRMAssignmentsPage({
           : groups.reduce((n, g) => n + (g.tasks?.length || 0), 0),
       );
     } catch (e) {
+      if (seq !== privateLoadSeqRef.current) return;
       console.error(e);
       setPrivateGroups([]);
       setPrivateTaskCount(0);
+    } finally {
+      if (seq === privateLoadSeqRef.current) setPrivateLoading(false);
     }
-    setPrivateLoading(false);
-  }, [apiBase, assignmentModule]);
+  }, [apiBase, assignmentModule, filterWorkTypeId, isAdmin, filterCompanyId, filterDepartmentId, filterAssignee]);
 
   useEffect(() => {
     // Prefetch badge + sẵn dữ liệu tab Không gian chung (CRM / SX / VC)
@@ -2467,8 +2694,60 @@ export default function CRMAssignmentsPage({
       alert(e.response?.data?.error || e.message || 'Không xóa được nhiệm vụ');
     }
   };
+  const statusForAssignmentColumn = (columnId) => {
+    if (!columnId || columnId === '__none__') return 'pending';
+    const col = columns.find((c) => String(c.id) === String(columnId));
+    if (!col) return 'pending';
+    if (col.is_done_column) return 'completed';
+    if (col.is_in_progress_column || (col.position ?? 0) >= 1) return 'in_progress';
+    return 'pending';
+  };
+  const columnIdForStatus = (status) => {
+    if (!columns.length) return null;
+    if (status === 'completed') {
+      return columns.find((c) => c.is_done_column)?.id ?? columns[columns.length - 1]?.id ?? null;
+    }
+    if (status === 'in_progress') {
+      const flagged = columns.find((c) => c.is_in_progress_column);
+      if (flagged) return flagged.id;
+      return columns.find((c) => !c.is_done_column && (c.position ?? 0) >= 1)?.id ?? columns[0]?.id ?? null;
+    }
+    return columns.find((c) => !c.is_done_column)?.id ?? columns[0]?.id ?? null;
+  };
+  const savePipelineTaskProgress = async (task, { status, column_id } = {}) => {
+    const taskId = String(task.crm_task_id || String(task.id || '').replace(/^task:/, '')).trim();
+    const leadId = String(task.lead_id || task.lead?.id || '').trim();
+    if (!taskId || !leadId) {
+      alert('Không mở được nhiệm vụ để đổi giai đoạn.');
+      return;
+    }
+    const nextStatus = status || statusForAssignmentColumn(column_id);
+    await api.put(`/crm/leads/${leadId}/tasks/${taskId}`, { status: nextStatus });
+    const nextColumn = column_id !== undefined ? column_id : columnIdForStatus(nextStatus);
+    const updated = {
+      status: nextStatus,
+      column_id: nextColumn,
+      completed_at: nextStatus === 'completed' ? new Date().toISOString() : null,
+    };
+    setItems((prev) => prev.map((t) => (String(t.id) === String(task.id) ? { ...t, ...updated } : t)));
+    patchIndexRow(task.id, updated);
+    setViewingItem((prev) => (prev && String(prev.id) === String(task.id) ? { ...prev, ...updated } : prev));
+    void refreshStats();
+  };
   const updateItem = async (id, patch) => {
     const task = items.find((t) => String(t.id) === String(id));
+    if (task?._fromCrmTask) {
+      if (!canMoveTask(task)) {
+        alert('Chỉ người tạo hoặc người được giao mới được cập nhật tiến độ công việc này.');
+        return;
+      }
+      try {
+        await savePipelineTaskProgress(task, { status: patch?.status, column_id: patch?.column_id });
+      } catch (e) {
+        alert(e.response?.data?.error || e.message || 'Không cập nhật được nhiệm vụ');
+      }
+      return;
+    }
     const progressKeys = new Set(['status', 'column_id', 'position']);
     const progressOnly = patch && Object.keys(patch).every((k) => progressKeys.has(k));
     if (progressOnly && task && !canMoveTask(task)) {
@@ -2492,6 +2771,18 @@ export default function CRMAssignmentsPage({
   };
   const moveItem = async (id, column_id, position) => {
     const task = items.find((t) => String(t.id) === String(id));
+    if (task?._fromCrmTask) {
+      if (!canMoveTask(task)) {
+        alert('Chỉ người tạo hoặc người được giao mới được di chuyển công việc này.');
+        return;
+      }
+      try {
+        await savePipelineTaskProgress(task, { column_id });
+      } catch (e) {
+        alert(e.response?.data?.error || e.message || 'Không di chuyển được nhiệm vụ');
+      }
+      return;
+    }
     if (task && !canMoveTask(task)) {
       alert('Chỉ người tạo hoặc người được giao mới được di chuyển công việc này.');
       return;
@@ -2641,11 +2932,19 @@ export default function CRMAssignmentsPage({
     if (match) setViewingItem(match);
   }, [items]);
 
-  const openDealSuggestDetail = useCallback((dealId) => {
+  const openDealSuggestDetail = useCallback((deal) => {
     setSearchSuggestDismissed(true);
     setSearchFocused(false);
-    navigate(`/crm/leads/${dealId}`);
-  }, [navigate]);
+    const mod = normalizeAssignmentPageModule(assignmentModule);
+    if (mod === 'production' || mod === 'logistics') {
+      const match = items.find((t) => String(t.lead?.id || t.lead_id) === String(deal?.id));
+      const projectId = deal?.project_id || match?.lead?.project_id || match?.project_id;
+      const path = projectDetailPathForModule(mod, projectId);
+      if (path) navigate(path);
+      return;
+    }
+    if (deal?.id) navigate(`/crm/leads/${deal.id}`);
+  }, [navigate, assignmentModule, items]);
 
   if (loading) {
     return (
@@ -2692,6 +2991,34 @@ export default function CRMAssignmentsPage({
             </div>
 
             <div className="flex flex-wrap items-center gap-2 justify-end">
+              {assignmentModule === 'production' && companyForWorkTypes && workTypes.length > 0 && (
+                <div
+                  className={`inline-flex items-center gap-1 h-7 px-2 rounded-lg border shrink-0 ${
+                    filterWorkTypeId === 'none'
+                      ? 'border-amber-300 bg-amber-50'
+                      : 'border-teal-300 bg-teal-50'
+                  }`}
+                  title="Phân loại đang xem"
+                >
+                  <Layers className={`h-3 w-3 shrink-0 ${
+                    filterWorkTypeId === 'none' ? 'text-amber-600' : 'text-teal-700'
+                  }`} />
+                  <select
+                    value={filterWorkTypeId === 'none' ? 'none' : (filterWorkTypeId || workTypes[0]?.id || '')}
+                    onChange={(e) => chooseWorkType(e.target.value)}
+                    className={`h-6 text-[11px] bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[13.5rem] sm:max-w-[11rem] font-semibold ${
+                      filterWorkTypeId === 'none' ? 'text-amber-700' : 'text-teal-800'
+                    }`}
+                  >
+                    <option value="none">Chưa phân loại</option>
+                    {workTypes.map((wt) => (
+                      <option key={wt.id} value={wt.id}>
+                        {workTypeCompanyPrefix ? `${workTypeCompanyPrefix} · ${wt.name}` : wt.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <button
                 type="button"
                 data-tour="assign-tour-btn"
@@ -2785,7 +3112,9 @@ export default function CRMAssignmentsPage({
           <div className="flex flex-wrap items-center gap-2 px-3 py-2 border-b border-teal-100 bg-teal-50/80">
             <span className="text-xs font-semibold text-teal-900">
               {filterProjectId
-                ? `Giao việc của ${scopedProjectLabel || 'dự án này'}`
+                ? (assignmentModule === 'production'
+                  ? `Nhiệm vụ xưởng của ${scopedProjectLabel || 'dự án này'}`
+                  : `Giao việc của ${scopedProjectLabel || 'dự án này'}`)
                 : 'Giao việc của deal đang chọn'}
             </span>
             {projectDetailHref ? (
@@ -2878,7 +3207,7 @@ export default function CRMAssignmentsPage({
                           <span className={`font-bold ${theme.suggestCount}`}>{dealSuggestResults.length}</span>
                           {' '}deal cho &ldquo;{search.trim()}&rdquo;
                           <span className={`block text-[10px] font-normal mt-0.5 ${theme.suggestHeaderMuted}`}>
-                            Chọn dòng để lọc nhiệm vụ · biểu tượng mắt để mở deal
+                            Chọn dòng để lọc nhiệm vụ · biểu tượng mắt để mở chi tiết {assignmentModule === 'production' ? 'dự án sản xuất' : assignmentModule === 'logistics' ? 'dự án lắp đặt' : 'deal'}
                             {dealSuggestResults.length > 10 ? ' · Hiển thị 10 kết quả đầu' : ''}
                           </span>
                         </>
@@ -2925,11 +3254,13 @@ export default function CRMAssignmentsPage({
                         </button>
                         <button
                           type="button"
-                          title="Mở chi tiết deal"
-                          aria-label={`Mở chi tiết ${deal.code || deal.title || deal.id}`}
+                          title={assignmentModule === 'production' ? 'Mở chi tiết dự án' : assignmentModule === 'logistics' ? 'Mở chi tiết dự án lắp đặt' : 'Mở chi tiết deal'}
+                          aria-label={assignmentModule === 'production' || assignmentModule === 'logistics'
+                            ? `Mở chi tiết dự án ${deal.project_code || deal.code || deal.title || deal.id}`
+                            : `Mở chi tiết ${deal.code || deal.title || deal.id}`}
                           className={`shrink-0 flex items-center justify-center px-2.5 border-l border-slate-100 text-slate-400 transition-colors cursor-pointer ${theme.suggestEye}`}
                           onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => openDealSuggestDetail(deal.id)}
+                          onClick={() => openDealSuggestDetail(deal)}
                         >
                           <Eye className="h-4 w-4" />
                         </button>
@@ -3183,6 +3514,21 @@ export default function CRMAssignmentsPage({
           search={privateSearch}
           onSearchChange={setPrivateSearch}
           theme={theme}
+          isAdmin={isAdmin}
+          companies={companies}
+          departments={departments}
+          assigneeOptions={filteredAssigneeOptions}
+          user={user}
+          filterCompanyId={filterCompanyId}
+          setFilterCompanyId={setFilterCompanyId}
+          filterDepartmentId={filterDepartmentId}
+          setFilterDepartmentId={setFilterDepartmentId}
+          filterAssignee={filterAssignee}
+          setFilterAssignee={setFilterAssignee}
+          filterStatus={filterStatus}
+          setFilterStatus={setFilterStatus}
+          filterPriority={filterPriority}
+          setFilterPriority={setFilterPriority}
         />
       )}
 
@@ -3207,6 +3553,8 @@ export default function CRMAssignmentsPage({
           filterPriority={filterPriority}
           setFilterPriority={setFilterPriority}
           loadingMore={loadingMore}
+          projectScope={filterProjectId ? (serverStats?.project || null) : null}
+          projectHref={filterProjectId ? (projectDetailHref || '') : ''}
         />
         <div className="min-w-0 flex-1 w-full">
         <KanbanView
@@ -3629,6 +3977,13 @@ function KanbanView({
 function Card({ task, canManage, canMove, onDragStart, onOpen, onEdit, onDelete, onUpdate }) {
   const pri = PRIORITY_MAP[task.priority] || PRIORITY_MAP.medium;
   const overdue = task.deadline && new Date(task.deadline) < new Date() && task.status !== 'completed';
+  const [notesOpen, setNotesOpen] = useState(false);
+  const notesLeadId = task.lead?.id || task.lead_id || task.crm_task?.lead_id || '';
+  const notesTaskId = task.crm_task_id || '';
+  const canNotes = !!(notesLeadId && notesTaskId);
+  const fileCount = Number(task.file_count ?? task.crm_task?.file_count) || 0;
+  const savedNoteCount = Number(task.note_count ?? task.crm_task?.note_count) || 0;
+  const noteCount = savedNoteCount + (String(task.crm_task?.notes || '').trim() ? 1 : 0);
   return (
     <div
       draggable={!!canMove}
@@ -3683,7 +4038,43 @@ function Card({ task, canManage, canMove, onDragStart, onOpen, onEdit, onDelete,
               </span>
             )}
             <AssigneeStack assignees={task.assignees} fallback={task.assignee} />
+            {canNotes && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setNotesOpen((open) => !open); }}
+                className={`inline-flex items-center gap-0.5 rounded-md border px-1.5 py-0.5 text-[10px] font-semibold cursor-pointer ${
+                  notesOpen
+                    ? 'border-blue-300 bg-blue-50 text-blue-700'
+                    : 'border-slate-200 bg-slate-50 text-slate-600 hover:border-blue-200 hover:text-blue-700'
+                }`}
+                title="Ghi chú & file"
+              >
+                <Paperclip className="h-3 w-3" />
+                Ghi chú & file
+                {fileCount > 0 && (
+                  <span className="tabular-nums">{fileCount} file</span>
+                )}
+                {noteCount > 0 && (
+                  <span className="inline-flex items-center gap-0.5 tabular-nums">
+                    <MessageSquare className="h-2.5 w-2.5" />
+                    {noteCount}
+                  </span>
+                )}
+              </button>
+            )}
           </div>
+          {notesOpen && canNotes && (
+            <div
+              className="mt-2 border-t border-slate-100 pt-2"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <CrmTaskNotesFilesPanel
+                leadId={notesLeadId}
+                taskId={notesTaskId}
+                notes={task.crm_task?.notes || ''}
+              />
+            </div>
+          )}
         </div>
         {canManage && (
           <div className="opacity-0 group-hover:opacity-100 flex flex-col gap-0.5">
@@ -5457,7 +5848,9 @@ function CommentSection({ assignmentId }) {
   const showOnScreen = useCommentShowOnScreenEnabled();
   const { apiBase } = useAssignmentsPageContext();
   const { user } = useAuth();
-  const isAdmin = ['admin', 'manager', 'sales_admin'].includes(user?.role);
+  const isAdmin = isAdminLike(user)
+    || normalizeRole(user?.role) === 'manager'
+    || normalizeRole(user?.role) === 'crm_production_admin';
   const [comments, setComments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [text, setText] = useState('');

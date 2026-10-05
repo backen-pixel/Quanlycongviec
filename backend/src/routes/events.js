@@ -1504,6 +1504,28 @@ r.get('/calendar', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// GET /events/install-schedule — bảng ngày lắp / ngày lấy hàng (CRM + SX + Lắp đặt)
+r.get('/install-schedule', async (req, res) => {
+  try {
+    const sc = resolveEventsCompanyScope(req, res);
+    if (!sc.ok) return;
+    const scopeRaw = String(req.query.scope || 'crm').trim().toLowerCase();
+    const scope = ['crm', 'production', 'logistics'].includes(scopeRaw) ? scopeRaw : 'crm';
+    const { listInstallSchedule } = require('../helpers/installScheduleSheet');
+    const data = await listInstallSchedule({
+      companyId: sc.companyId,
+      scope,
+      dateFrom: req.query.date_from,
+      dateTo: req.query.date_to,
+      search: req.query.search,
+    });
+    res.json(data);
+  } catch (e) {
+    const status = e.status || 500;
+    res.status(status).json({ error: e.message });
+  }
+});
+
 // GET /events/module-owners — người trên dự án (thành viên + NV xưởng + phụ trách) để mời sự kiện kế hoạch
 r.get('/module-owners', async (req, res) => {
   try {

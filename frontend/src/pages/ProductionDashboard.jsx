@@ -772,6 +772,10 @@ export default function ProductionDashboard() {
   const filterPanelRef = useRef(null);
   const filterPanelDragRef = useRef(null);
   const [filterWorkTypeId, setFilterWorkTypeId] = useState(() => P0?.filterWorkTypeId ?? '');
+  /** true = loại hiện tại do trang tự chọn, được phép nhảy tiếp nếu rỗng. */
+  const autoPickedTypeRef = useRef(false);
+  /** Các loại đã thử trong công ty này — chặn nhảy vòng tròn. */
+  const triedTypeIdsRef = useRef(new Set());
   const filterWorkTypeIdRef = useRef(filterWorkTypeId);
   filterWorkTypeIdRef.current = filterWorkTypeId;
   const [workTypes, setWorkTypes] = useState([]);
@@ -2377,8 +2381,50 @@ export default function ProductionDashboard() {
     if (filterWorkTypeId === 'none') return;
     const stillExists = workTypes.some((w) => String(w.id) === String(filterWorkTypeId));
     if (stillExists) return;
+    autoPickedTypeRef.current = true;
     setFilterWorkTypeId(String(workTypes[0].id));
   }, [workTypes, workTypesCompanyId, companyForTypes, filterWorkTypeId]);
+
+  // Đổi công ty → quên các loại đã thử của công ty cũ.
+  useEffect(() => {
+    triedTypeIdsRef.current = new Set();
+    autoPickedTypeRef.current = false;
+  }, [companyForTypes]);
+
+  /**
+   * Loại ĐẦU TIÊN chưa chắc có dữ liệu — Metalla có 84 dự án nhưng tất cả nằm ở
+   * «Data đầu ra», còn «Data đầu vào» rỗng, nên tự chọn loại đầu sẽ ra bảng trắng.
+   * API loại xưởng không trả số lượng nên không biết trước; tải xong mà tổng = 0
+   * thì nhảy sang loại kế tiếp. Chỉ áp dụng cho lựa chọn TỰ ĐỘNG — người dùng tự
+   * chọn một loại rỗng thì tôn trọng, không nhảy lung tung dưới tay họ.
+   */
+  const filterBusy = !!(
+    workTypesFetching
+    || (companyForTypes && workTypesCompanyId !== companyForTypes)
+    || (loading && !firstLoaded)
+    || syncing
+  );
+
+  useEffect(() => {
+    if (!autoPickedTypeRef.current) return;
+    if (filterBusy) return;
+    if (!companyForTypes || workTypesCompanyId !== companyForTypes) return;
+    if (!Array.isArray(workTypes) || workTypes.length < 2) return;
+    if (!filterWorkTypeId || filterWorkTypeId === 'none') return;
+    const total = Number(projectPageState.total);
+    if (!Number.isFinite(total)) return; // chưa có tổng từ server
+    if (total > 0) {
+      autoPickedTypeRef.current = false;
+      return;
+    }
+    triedTypeIdsRef.current.add(String(filterWorkTypeId));
+    const next = workTypes.find((w) => !triedTypeIdsRef.current.has(String(w.id)));
+    if (!next) {
+      autoPickedTypeRef.current = false;
+      return;
+    }
+    setFilterWorkTypeId(String(next.id));
+  }, [filterBusy, projectPageState.total, filterWorkTypeId, workTypes, workTypesCompanyId, companyForTypes]);
 
 
   useEffect(() => {
@@ -3866,13 +3912,6 @@ export default function ProductionDashboard() {
 
   const sxMainContentLoading = loading && !firstLoaded;
 
-  const filterBusy = !!(
-    workTypesFetching
-    || (companyForTypes && workTypesCompanyId !== companyForTypes)
-    || (loading && !firstLoaded)
-    || syncing
-  );
-
   useEffect(() => {
     if (filterBusy) {
       wasFilterBusyRef.current = true;
@@ -4086,7 +4125,11 @@ export default function ProductionDashboard() {
                   )}
                   <select
                     value={filterWorkTypeId === 'none' ? 'none' : (filterWorkTypeId || workTypes[0]?.id || '')}
-                    onChange={(e) => setFilterWorkTypeId(e.target.value)}
+                    onChange={(e) => {
+                      // Người dùng tự chọn — kể cả loại rỗng cũng giữ, không tự nhảy.
+                      autoPickedTypeRef.current = false;
+                      setFilterWorkTypeId(e.target.value);
+                    }}
                     disabled={filterBusy && !firstLoaded}
                     className={`h-6 text-[11px] bg-transparent border-0 focus:ring-0 cursor-pointer max-w-[13.5rem] sm:max-w-[11rem] font-semibold ${
                       filterWorkTypeId === 'none' ? 'text-amber-700' : 'text-teal-800'

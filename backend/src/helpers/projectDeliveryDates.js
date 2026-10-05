@@ -90,10 +90,98 @@ function productionFinishPatchFromInstallOrDelivery(body) {
   return productionFinishPatchFromDelivery(body);
 }
 
+function ymdOf(raw) {
+  if (raw == null || raw === '') return '';
+  const m = String(raw).trim().match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : '';
+}
+
+function normalizeOccurrenceYmds(raw) {
+  const list = Array.isArray(raw) ? raw : [];
+  return [...new Set(
+    list
+      .map((d) => ymdOf(d))
+      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)),
+  )].sort();
+}
+
+/**
+ * Ô «Ngày lắp» trên SX (delivery_date) và trên VC (install_date) là một mốc.
+ * Ngày vừa sửa luôn thay lịch nhiều buổi đang lưu, để hạn thẻ không bám ngày cũ.
+ * Request gửi sẵn install_occurrence_dates thì giữ đúng danh sách đó.
+ */
+function installAnchorPatchFromBody(body) {
+  if (!body) return null;
+  const hasInstall = body.install_date !== undefined;
+  const hasDelivery = body.delivery_date !== undefined;
+  const hasOcc = body.install_occurrence_dates !== undefined || body.installOccurrenceDates !== undefined;
+  if (!hasInstall && !hasDelivery && !hasOcc) return null;
+
+  if (hasOcc) {
+    const raw = body.install_occurrence_dates !== undefined
+      ? body.install_occurrence_dates
+      : body.installOccurrenceDates;
+    const occ = normalizeOccurrenceYmds(raw);
+    const patch = { install_occurrence_dates: occ };
+    const ymd = occ[0] || '';
+    if (ymd) {
+      if (!hasInstall) patch.install_date = `${ymd}T14:00:00+07:00`;
+      if (!hasDelivery) patch.delivery_date = ymd;
+    } else {
+      if (hasDelivery && !hasInstall) patch.install_date = null;
+      if (hasInstall && !hasDelivery) patch.delivery_date = null;
+    }
+    return patch;
+  }
+
+  const source = (hasInstall && ymdOf(body.install_date))
+    ? body.install_date
+    : body.delivery_date;
+  if (source == null || source === '') {
+    const cleared = { install_occurrence_dates: [] };
+    if (!hasInstall) cleared.install_date = null;
+    if (!hasDelivery) cleared.delivery_date = null;
+    return cleared;
+  }
+  const ymd = ymdOf(source);
+  if (!ymd) return null;
+  const patch = { install_occurrence_dates: [ymd] };
+  if (!hasInstall) patch.install_date = `${ymd}T14:00:00+07:00`;
+  if (!hasDelivery) patch.delivery_date = ymd;
+  return patch;
+}
+
+const COT_GHI_TUY_CHON = [
+  'install_occurrence_dates', 'production_finish_date', 'collected_amount', 'deposit_amount',
+  'logistics_cost', 'delivery_date', 'order_date', 'vc_notes', 'deadline', 'notes',
+];
+
+/**
+ * Tên cột thiếu trong thông điệp Postgres/PostgREST.
+ * Chỉ nhận cột trong danh sách cho phép. Không nhận ra thì null — người gọi phải ném lỗi.
+ */
+function cotThieuTuLoi(message) {
+  const text = String(message || '');
+  if (!text.includes('column')) return null;
+  return COT_GHI_TUY_CHON.find((name) => new RegExp(`\\b${name}\\b`).test(text)) || null;
+}
+
+/** Cột projects.install_occurrence_dates (DATE[]) đã có từ migration 649 (05/10/2026). Ghi cả lịch nhiều đợt. */
+function installAnchorPersistPatch(body) {
+  const patch = installAnchorPatchFromBody(body);
+  if (!patch) return null;
+  const persist = { ...patch };
+  return Object.keys(persist).length ? persist : null;
+}
+
 module.exports = {
   parseDateOnlyParts,
   addCalendarDays,
   subtractCalendarDays,
   productionFinishPatchFromDelivery,
   productionFinishPatchFromInstallOrDelivery,
+  installAnchorPatchFromBody,
+  installAnchorPersistPatch,
+  normalizeOccurrenceYmds,
+  cotThieuTuLoi,
 };

@@ -52,7 +52,17 @@ const {
 } = require('../helpers/projectOverviewCategory');
 const { assertProjectAccessible } = require('../helpers/projectAccessScope');
 const { attachInstallEventDatesToProjects } = require('../helpers/createPlannedVcLdEvents');
-const { resolveOverviewGroupDeadline, stampOpenChildModuleDeadlines, collectOpenChildDeadlineStamps } = require('../helpers/projectOverviewDeadline');
+const {
+  resolveOverviewGroupDeadline,
+  stampOpenChildModuleDeadlines,
+  collectOpenChildDeadlineStamps,
+  indexSxCrmCompletion,
+  workshopChildDone,
+  deadlineGroupForWorkshopChild,
+  earliestSxPlanDeadline,
+} = require('../helpers/projectOverviewDeadline');
+const { computeSxInstallPlanDeadline } = require('../helpers/sxInstallPlanKanbanDeadline');
+const { companyWorkEndMsFromRaw } = require('../helpers/companyDeadlineClock');
 const {
   isCrmCompletedStage,
   isLogisticsCompletedColumn,
@@ -518,7 +528,9 @@ async function finishProjectOverview(res, tasks, preloaded = null) {
     if (lane === 'sales') stats.by_module.crm += 1;
     else if (lane === 'logistics') stats.by_module.vc += 1;
     else stats.by_module.sx += 1;
-    const deadlineMs = task.deadline ? new Date(task.deadline).getTime() : null;
+    const deadlineMs = task.deadline
+      ? (companyWorkEndMsFromRaw(task.deadline, task.company_id) ?? new Date(task.deadline).getTime())
+      : null;
     if (deadlineMs != null && Number.isFinite(deadlineMs)) {
       if (deadlineMs < nowMs) stats.overdue += 1;
       else if (deadlineMs <= warningMs) stats.warning += 1;
@@ -704,6 +716,21 @@ r.get('/project-overview', async (req, res) => {
         })
       : Promise.resolve([]);
 
+    const sxCrmSyncPromise = (!requestedModule || requestedModule === 'sx') && (leads || []).length
+      ? fetchAllByIdsParallel({
+        table: 'crm_tasks',
+        columns: 'id, lead_id, title, status, stage_slug, production_pipeline_stage_id',
+        key: 'lead_id',
+        ids: (leads || []).map((lead) => lead.id).filter(Boolean),
+        tune: (q) => q.or('stage_slug.like.sx_%,production_pipeline_stage_id.not.is.null').order('id'),
+        idChunk: 40,
+        chunkConcurrency: 12,
+      }).catch((syncErr) => {
+        console.warn('[work-tasks] sx crm sync:', syncErr.message);
+        return [];
+      })
+      : Promise.resolve([]);
+
     const productionTasksPromise = (!requestedModule || requestedModule === 'sx') && productionProjectIds.length
         ? fetchAllByIdsParallel({
           table: 'unified_tasks_v',
@@ -775,8 +802,8 @@ r.get('/project-overview', async (req, res) => {
         : [];
     });
 
-    const [crmTasks, productionTasks, logisticsTasks, productionStaffRows, projectsWithInstall] = await Promise.all([
-      crmTasksPromise, productionTasksPromise, logisticsTasksPromise, productionStaffPromise, installEventsPromise,
+    const [crmTasks, productionTasks, logisticsTasks, productionStaffRows, projectsWithInstall, sxCrmRows] = await Promise.all([
+      crmTasksPromise, productionTasksPromise, logisticsTasksPromise, productionStaffPromise, installEventsPromise, sxCrmSyncPromise,
     ]);
     if (Array.isArray(projectsWithInstall) && projectsWithInstall.length) {
       projectsWithInstall.forEach((project) => {
@@ -850,6 +877,12 @@ r.get('/project-overview', async (req, res) => {
       };
     };
 
+    const sxStageList = [...sxStageById.values()];
+    const leadProjectById = new Map(
+      (leads || []).map((lead) => [String(lead.id), String(lead.project_id || '')]),
+    );
+    const sxCrmIndex = indexSxCrmCompletion(sxCrmRows, leadProjectById);
+
     const groupMap = new Map();
     childTasks.forEach((task) => {
       const category = categoryFor(task);
@@ -864,22 +897,41 @@ r.get('/project-overview', async (req, res) => {
 
     const stampRows = [];
     const tasks = [...groupMap.values()].map((group) => {
-      const completedChildren = group.children.filter((task) => terminalStatuses.has(String(task.status || '').toLowerCase()));
-      const openChildren = group.children.filter((task) => !terminalStatuses.has(String(task.status || '').toLowerCase()));
+      const childDone = (task) => (
+        group.lane === 'production'
+          ? workshopChildDone(task, sxCrmIndex)
+          : terminalStatuses.has(String(task.status || '').toLowerCase())
+      );
+      const completedChildren = group.children.filter(childDone);
+      const openChildren = group.children.filter((task) => !childDone(task));
       if (!openChildren.length) return null;
       const first = openChildren[0] || group.children[0];
       const assigned = openChildren.find((task) => task.effective_assignee_id) || null;
       const project = projectById.get(String(first.project_id || '')) || null;
       const lead = leadById.get(String(first.lead_id || '')) || null;
-      const deadline = resolveOverviewGroupDeadline({
-        lane: group.lane,
-        project,
-        lead,
-        sxStage: project ? sxStageById.get(String(project.sx_kanban_column_id || '')) : null,
-        vcStage: project ? vcStageById.get(String(project.vc_kanban_column_id || '')) : null,
-        openChildren,
-      });
-      stampRows.push(...collectOpenChildDeadlineStamps(deadline, openChildren));
+      let deadline = null;
+      if (group.lane === 'production') {
+        const col = project ? sxStageById.get(String(project.sx_kanban_column_id || '')) : null;
+        deadline = (col && computeSxInstallPlanDeadline(project, col, sxStageList)?.iso) || null;
+        if (!deadline && !col) {
+          const planGroups = [];
+          for (const child of openChildren) {
+            const planGroup = deadlineGroupForWorkshopChild(child, sxCrmIndex, sxStageById);
+            if (planGroup) planGroups.push(planGroup);
+          }
+          deadline = earliestSxPlanDeadline(project, planGroups);
+        }
+      } else {
+        deadline = resolveOverviewGroupDeadline({
+          lane: group.lane,
+          project,
+          lead,
+          sxStage: project ? sxStageById.get(String(project.sx_kanban_column_id || '')) : null,
+          vcStage: project ? vcStageById.get(String(project.vc_kanban_column_id || '')) : null,
+          openChildren,
+        });
+        stampRows.push(...collectOpenChildDeadlineStamps(deadline, openChildren));
+      }
       return {
         unified_id: `group:${group.key}`,
         source: first.source,
