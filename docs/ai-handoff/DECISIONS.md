@@ -1,3 +1,10 @@
+## 2026-10-06 — H1: gói tiếp nhận Facebook Page riêng từ main
+
+Founder giao tiếp tục và giữ quyết định phát hành. Đã tách nhánh `codex/facebook-durable-inbox-20261006` từ main `1f879ea8`, triển khai signed durable inbox + SQL701, giữ worker paused. Không merge PR22/25 toàn khối; không sửa SQL700 của Claude. [Phạm vi, giới hạn, kiểm thử và phương án dừng](FACEBOOK_PAGE_INBOX_H1_20261006.md).
+
+Mã mới chưa triển khai; nghiệp vụ tự tạo Lead/projection/attribution còn pending có chủ đích. Không dùng ACK/inbox làm Lead hợp lệ. CI PostgreSQL và review đang được xác nhận; quyết định bật hệ thống thật HOLD. Mục lịch sử bên dưới giữ nguyên theo thời điểm ghi.
+
+---
 # 2026-10-01 — Chỉ mục quyết định Business AI OS V1.1
 
 [Sổ Founder V1.1](FOUNDER_DECISIONS_ARCHITECTURE_V1_1_20261001.md) ghi nguồn/phạm vi phê duyệt; [ADR-0016…0020](../adr/README.md) ghi lựa chọn kiến trúc. Các quyết định lịch sử bên dưới được giữ nguyên. Không dùng một hướng dẫn cũ làm quyền vượt phạm vi công việc hiện tại; phần không mâu thuẫn vẫn là tài liệu tham chiếu cần đối chiếu mã.

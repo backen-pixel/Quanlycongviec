@@ -196,7 +196,9 @@ app.use((req, res, next) => {
   }
   const isLarge = largeBodyRoutes.some((p) => req.path.startsWith(p));
   const limit = isLarge ? UPLOAD_BODY_LIMIT : STANDARD_BODY_LIMIT;
-  express.json({ limit })(req, res, (err) => {
+  express.json({ limit, verify: (request, _response, bytes) => {
+    if (request.method === 'POST' && request.path === '/api/facebook/webhook') request.facebookRawBody = Buffer.from(bytes);
+  } })(req, res, (err) => {
     if (err) return next(err);
     express.urlencoded({ extended: true, limit })(req, res, next);
   });
@@ -446,6 +448,21 @@ app.use('/api/knowledge', require('./routes/knowledge'));
 const facebookRouter = require('./routes/facebook');
 facebookRouter._ioRef = io;
 app.use('/api/facebook', facebookRouter);
+// Only the opt-in inbox adds this lifecycle. An interrupted lease remains recoverable in PostgreSQL.
+if (facebookRouter.stopPageInbox) {
+  let shuttingDown = false;
+  const stopInbox = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    const deadline = setTimeout(() => process.exit(1), 15000);
+    deadline.unref();
+    server.close();
+    try { await facebookRouter.stopPageInbox(); io.close(); process.exit(0); }
+    catch { process.exit(1); }
+  };
+  process.once('SIGTERM', stopInbox);
+  process.once('SIGINT', stopInbox);
+}
 const zaloRouter = require('./routes/zalo');
 zaloRouter._ioRef = io;
 app.use('/api/zalo', zaloRouter);

@@ -1,0 +1,70 @@
+name: Facebook Page inbox (isolated)
+on:
+  pull_request:
+    paths:
+      - 'backend/src/helpers/facebookPageInbox.js'
+      - 'backend/src/config/supabaseRouter.js'
+      - 'backend/src/routes/facebook.js'
+      - 'backend/src/server.js'
+      - 'backend/tests/facebookPage*'
+      - 'backend/tests/facebookWebhookRecovery.test.js'
+      - 'database/701_facebook_page_inbox.sql'
+      - '.github/workflows/facebook-page-inbox.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        node: [18, 22]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Syntax and synthetic runtime regressions (no app bootstrap or secrets)
+        run: |
+          node --check backend/src/routes/facebook.js
+          node --check backend/src/config/supabaseRouter.js
+          node --check backend/src/server.js
+          node --test backend/tests/facebookPage*.test.js backend/tests/facebookWebhookRecovery.test.js
+          git diff --check
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: vpt_page_inbox_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: synthetic_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install matching PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client-17
+      - name: ACL, duplicate, concurrency, crash, lease and logical restore tests
+        env:
+          PATH: /usr/lib/postgresql/17/bin:/usr/local/bin:/usr/bin:/bin
+          VPT_ISOLATED_PG_TEST: '1'
+          VPT_INBOX_RESTORE_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGDATABASE: vpt_page_inbox_ci
+          PGUSER: postgres
+          PGPASSWORD: synthetic_ci_only
+        run: python3 backend/tests/facebookPageInbox.postgres.test.py

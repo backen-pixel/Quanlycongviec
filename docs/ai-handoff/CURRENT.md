@@ -1,3 +1,10 @@
+## 2026-10-06 — H1: gói tiếp nhận Facebook Page riêng từ main
+
+Founder giao tiếp tục và giữ quyết định phát hành. Đã tách nhánh `codex/facebook-durable-inbox-20261006` từ main `1f879ea8`, triển khai signed durable inbox + SQL701, giữ worker paused. Không merge PR22/25 toàn khối; không sửa SQL700 của Claude. [Phạm vi, giới hạn, kiểm thử và phương án dừng](FACEBOOK_PAGE_INBOX_H1_20261006.md).
+
+Mã mới chưa triển khai; nghiệp vụ tự tạo Lead/projection/attribution còn pending có chủ đích. Không dùng ACK/inbox làm Lead hợp lệ. CI PostgreSQL và review đang được xác nhận; quyết định bật hệ thống thật HOLD. Mục lịch sử bên dưới giữ nguyên theo thời điểm ghi.
+
+---
 ## 2026-10-02 — Trợ lý Marketing–CRM: hồ sơ khảo sát MCRM-D0 v1
 
 - Phạm vi được giao: khảo sát mã và chuẩn bị thử nghiệm; gói tại [marketing-crm-assistant/README.md](./marketing-crm-assistant/README.md).

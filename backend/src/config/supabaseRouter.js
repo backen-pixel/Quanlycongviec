@@ -15,6 +15,19 @@ const { fetch: undiciFetch } = require('undici');
 const config = require('./index');
 const { supabaseDispatcher } = require('./httpAgents');
 const { getRedisIfReady } = require('./redis');
+const { AsyncLocalStorage } = require('node:async_hooks');
+const primaryContext = new AsyncLocalStorage();
+
+// Durable inbox transactions must never be redirected to Backup between awaits.
+function requirePrimaryTarget() {
+  if (_activeTarget !== 'primary' || isAutoFailoverEnabled()) {
+    throw Object.assign(new Error('FB_INBOX_PRIMARY_REQUIRED'), { code: 'FB_INBOX_PRIMARY_REQUIRED' });
+  }
+}
+function withPrimaryDatabase(callback) {
+  requirePrimaryTarget();
+  return primaryContext.run(true, callback);
+}
 
 const REDIS_ACTIVE_KEY = 'supabase:active_target';
 
@@ -144,6 +157,7 @@ function _traceLabel(u) {
 }
 
 async function sharedFetch(url, init) {
+  const pinned = primaryContext.getStore() === true;
   const _tStart = SUPABASE_TRACE ? Date.now() : 0;
   const attempts = 4;
   const baseMs = 300;
@@ -153,17 +167,25 @@ async function sharedFetch(url, init) {
 
   for (let i = 0; i < attempts; i++) {
     try {
-      const res = await undiciFetch(rewriteUrlForActive(url), { ...init, dispatcher: supabaseDispatcher });
+      if (pinned) {
+        requirePrimaryTarget();
+        // A lazily executed query may have captured the Backup client earlier.
+        // Never send its credential to either database in a Primary-only operation.
+        if (!primaryBase || !originalUrl.startsWith(primaryBase + '/')) {
+          throw Object.assign(new Error('FB_INBOX_PRIMARY_REQUIRED'), { code: 'FB_INBOX_PRIMARY_REQUIRED' });
+        }
+      }
+      const res = await undiciFetch(pinned ? url : rewriteUrlForActive(url), { ...init, dispatcher: supabaseDispatcher });
       if (SUPABASE_TRACE) {
         console.log(`[pgrst] t0=${_tStart - _traceT0} +${Date.now() - _tStart}ms ${(init && init.method) || 'GET'} ${_traceLabel(originalUrl)}`);
       }
-      if (originalUrl.startsWith(primaryBase) && _activeTarget === 'primary') {
+      if (originalUrl.startsWith(primaryBase) && (pinned || _activeTarget === 'primary')) {
         try {
           const { maybeEnqueueRestReplication } = require('../helpers/supabaseReplication');
           maybeEnqueueRestReplication(originalUrl, init, res);
         } catch { /* ignore */ }
       }
-      if (originalUrl.startsWith(primaryBase) && _activeTarget === 'backup') {
+      if (!pinned && originalUrl.startsWith(primaryBase) && _activeTarget === 'backup') {
         try {
           const { maybeLogFailbackRest } = require('../helpers/supabaseFailback');
           maybeLogFailbackRest(originalUrl, init, res);
@@ -177,7 +199,7 @@ async function sharedFetch(url, init) {
     }
   }
 
-  if (isAutoFailoverEnabled() && _activeTarget === 'primary') {
+  if (!pinned && isAutoFailoverEnabled() && _activeTarget === 'primary') {
     const primary = trimBase(config.supabaseUrl);
     const backup = trimBase(config.supabaseBackupUrl);
     if (backup && String(url).startsWith(primary)) {
@@ -225,6 +247,10 @@ function getBackupClient() {
 }
 
 function getActiveClient() {
+  if (primaryContext.getStore() === true) {
+    requirePrimaryTarget();
+    return getPrimaryClient();
+  }
   if (_activeTarget === 'backup' && isFailoverEnabled()) {
     return getBackupClient() || getPrimaryClient();
   }
@@ -384,6 +410,7 @@ function startHealthChecker() {
 }
 
 module.exports = {
+  withPrimaryDatabase,
   supabase: supabaseProxy,
   getActiveClient,
   getActiveTarget,
