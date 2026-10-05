@@ -6,7 +6,7 @@ Founder: “em làm tiếp đi nhé anh quyết định phát hành.” Codex ti
 
 **Đây là hạ tầng nhận sự kiện, chưa hoàn tất nghiệp vụ tự tạo Lead.** `200` có nghĩa cả lô sự kiện đã được ghi bền vững, không có nghĩa khách đã vào CRM hoặc đạt tiêu chí khách hợp lệ. Không tính số dòng inbox vào KPI 250.000 đồng/Lead.
 
-Trạng thái ban đầu: mã và kiểm thử được chuẩn bị; PostgreSQL CI và review độc lập còn chờ kết quả ghi ở phần Bằng chứng. **Triển khai/áp SQL/bật nhận và xử lý dữ liệu thật: HOLD.** Không thay quảng cáo, ngân sách, liên hệ khách hoặc lịch CRM.
+Trạng thái: **mã H1 mặc định tắt/paused, kiểm thử cô lập và review độc lập PASS**. [PR29](https://github.com/backen-pixel/Quanlycongviec/pull/29) vẫn draft. **Triển khai/áp SQL/bật nhận và xử lý dữ liệu thật: HOLD.** Không thay quảng cáo, ngân sách, liên hệ khách hoặc lịch CRM.
 
 ## Thay đổi
 
@@ -17,6 +17,7 @@ Trạng thái ban đầu: mã và kiểm thử được chuẩn bị; PostgreSQL
 - Queue Messenger cũ phải trống trước khi worker mới claim. Không đẩy cùng một sự kiện mới vào hai queue. Cần diễn tập dừng toàn bộ phiên cũ trước chuyển đổi; kiểm tra queue trống không chứng minh không còn process cũ đang chạy ở nơi khác.
 - Worker mặc định dừng; `VPT_FB_PAGE_INBOX_WORKER_PAUSED=0` mới cho claim. Shutdown ngừng claim, đợi công việc đang chạy tối đa15 giây ở server; lease bị ngắt được nhận lại sau khi hết hạn. Health mỗi phút ghi các số đếm không chứa payload/điện thoại; pending≥100 hoặc tuổi pending≥300 giây phát mã `FB_INBOX_BACKLOG` trong log. **Chưa phải thông báo gửi đến người trực**; cấu hình cảnh báo Render/người nhận phải nằm trong nghiệm thu triển khai.
 - `VPT_FB_LEGACY_SCOPE_GUARD` mặc định tắt; `VPT_FB_MANAGED_PAGE_IDS` mặc định rỗng. Với Page được cấu hình quản lý mới, worker yêu cầu scope guard và hợp đồng `crm_care_legacy_write_check` hợp lệ; RPC thiếu, scope không rõ hoặc thuộc consumer mới →pending. Không mang toàn bộ C vào gói này. Guard ở đây chỉ bảo vệ dispatch webhook, không chứng nhận mọi đường ghi legacy trong hệ thống; C còn cần H2 và rà những điểm ghi khác.
+- Lần đọc nguồn Lead Ads mới yêu cầu `VPT_META_GRAPH_VERSION` được cấu hình rõ và có dạng `v<số>.<số>`; thiếu/sai giữ pending trước gọi nhà cung cấp. Kiểm tra cú pháp phiên bản không chứng minh phiên bản đó được Meta hỗ trợ: phải xác minh phiên bản/tài khoản trong gói nghiệm thu. Snapshot đã lưu được thử lại mà không cần tải nguồn lại. Token chỉ ở header xác thực, không ghi vào URL/log.
 - SQL701 không mở quyền PUBLIC/anon/authenticated, service_role có SELECT/INSERT/UPDATE và EXECUTE cần thiết; không cấp DELETE. Không thay cấu hình hay dữ liệu nghiệp vụ hiện có khi áp schema.
 
 ## Phần xử lý được giữ chờ có chủ đích
@@ -39,7 +40,10 @@ Vì các giới hạn này, **không bật worker/receiver trên Page nhận kh�
 - Kiểm thử Node synthetic: chữ ký/raw bytes, ACK sau commit, enqueue lỗi, scope, paused worker, lease mất, dừng/khởi động, backlog, định danh/trùng/DB lỗi, không gửi tự động và tương thích boolean durable cũ. Không bootstrap ứng dụng, không đọc `.env`, không gọi khách/Meta/DB thật.
 - Kiểm thử Primary dùng VM với module thật và AsyncLocalStorage thật, transport giả: thử lại, đổi DB trước/trong fetch, client Backup lưu từ trước, isolation với luồng legacy.
 - PostgreSQL17 CI: fresh localhost `vpt_page_inbox_ci`, role giả, SQL700→701→701, ACL/RLS, concurrency theo Page, lỗi giữa chừng, expired/stale token, retry/backoff, batch conflict/rollback, timeout và logical dump/restore vào DB mới. Đây là phục hồi **fixture inbox cô lập**, không phải chứng nhận phục hồi hai DB production.
-- Kết quả theo commit/CI và kết luận reviewer sẽ được bổ sung sau khi chạy xong. Không dùng kết quả của PR25 thay cho gói này.
+- Mã được review/kiểm tại `c97c2f3d15f0f05c028e488be3116c99e1eadf80`, cây `backend/src` là `52859b9a9c8b3ae76d114efa99567cbc9c11d7e1`. Node local **104/104 PASS**, không skip. [Review độc lập](FACEBOOK_PAGE_INBOX_H1_REVIEW_20261006.md) PASS trong phạm vi mã mặc định tắt/paused.
+- [CI H1 run37383522836](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37383522836): **3/3 job PASS**, Node18/22 và PostgreSQL17.11. [Job PostgreSQL](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37383522836/job/112011095475): **15/15 PASS**, gồm dump/restore, 0 skip,24,406 giây. Root đã đọc log hoàn tất. SQL701 blob `6aa36356c12904f7f72ca85392805b4108f877eb`, Python test blob `6e64f83b7dab7157b1b92edd6134e9454d2086ba`.
+- [CI Messenger cũ run37383522689](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37383522689): job kết nối độc lập **PASS**,5 kiểm thử PostgreSQL đạt. Kết quả này giữ bằng chứng đường cũ; không thay nghiệm thu real Page.
+- Lần CI đầu `37383203871` không chạy được PostgreSQL vì Ubuntu không có package client17 trong nguồn mặc định; Node18/22 đã đạt. Đã sửa dùng CLI17 trong service container PostgreSQL cô lập và chạy lại đầy đủ thành công, không bỏ qua bước DB. Không dùng kết quả PR25 thay cho gói này.
 
 ## Điều kiện trước khi phát hành hoặc bật vận hành
 

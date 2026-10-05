@@ -2,7 +2,7 @@
 
 Founder giao tiếp tục và giữ quyết định phát hành. Đã tách nhánh `codex/facebook-durable-inbox-20261006` từ main `1f879ea8`, triển khai signed durable inbox + SQL701, giữ worker paused. Không merge PR22/25 toàn khối; không sửa SQL700 của Claude. [Phạm vi, giới hạn, kiểm thử và phương án dừng](FACEBOOK_PAGE_INBOX_H1_20261006.md).
 
-Mã mới chưa triển khai; nghiệp vụ tự tạo Lead/projection/attribution còn pending có chủ đích. Không dùng ACK/inbox làm Lead hợp lệ. CI PostgreSQL và review đang được xác nhận; quyết định bật hệ thống thật HOLD. Mục lịch sử bên dưới giữ nguyên theo thời điểm ghi.
+PR29 draft, mã mới chưa triển khai. Source `c97c2f3d`:104/104 Node PASS; CI H1 run37383522836 đạt3/3job gồm15/15 PostgreSQL17 và restore fixture; regression Messenger cũ5/5 PG PASS; reviewer độc lập PASS mã mặc định tắt. Nghiệp vụ tự tạo Lead/projection/attribution còn pending có chủ đích; không dùng ACK/inbox làm Lead hợp lệ. Bật hệ thống thật HOLD; bước tiếp là hợp đồng Lead Ads đúng Page/công ty và projection phù hợp, không mở H2/C/ngân sách. Mục lịch sử bên dưới giữ nguyên theo thời điểm ghi.
 
 ---
 ## 2026-10-02 — Trợ lý Marketing–CRM: hồ sơ khảo sát MCRM-D0 v1
