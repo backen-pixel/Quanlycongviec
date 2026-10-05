@@ -81,20 +81,24 @@ BEGIN
     IF object_sql IS NULL THEN
       RAISE EXCEPTION 'Unknown default ACL object type: %', obj.object_identity;
     END IF;
-    EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE ALL ON %s FROM PUBLIC, anon, authenticated',
-                   obj.object_name, object_sql);
-    FOR grant_row IN
-      SELECT value->>'grantee' AS grantee,
-             value->>'privilege' AS privilege,
-             (value->>'grantable')::boolean AS grantable
-      FROM jsonb_array_elements(obj.grants)
-    LOOP
-      grantee_sql := CASE WHEN grant_row.grantee = 'PUBLIC' THEN 'PUBLIC'
-                          ELSE quote_ident(grant_row.grantee) END;
-      EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT %s ON %s TO %s%s',
-                     obj.object_name, grant_row.privilege, object_sql, grantee_sql,
-                     CASE WHEN grant_row.grantable THEN ' WITH GRANT OPTION' ELSE '' END);
-    END LOOP;
+    BEGIN
+      EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE ALL ON %s FROM PUBLIC, anon, authenticated',
+                     obj.object_name, object_sql);
+      FOR grant_row IN
+        SELECT value->>'grantee' AS grantee,
+               value->>'privilege' AS privilege,
+               (value->>'grantable')::boolean AS grantable
+        FROM jsonb_array_elements(obj.grants)
+      LOOP
+        grantee_sql := CASE WHEN grant_row.grantee = 'PUBLIC' THEN 'PUBLIC'
+                            ELSE quote_ident(grant_row.grantee) END;
+        EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public GRANT %s ON %s TO %s%s',
+                       obj.object_name, grant_row.privilege, object_sql, grantee_sql,
+                       CASE WHEN grant_row.grantable THEN ' WITH GRANT OPTION' ELSE '' END);
+      END LOOP;
+    EXCEPTION WHEN insufficient_privilege THEN
+      RAISE NOTICE 'Default privileges for role % not restored (insufficient privilege).', obj.object_name;
+    END;
   END LOOP;
 END
 $rollback$;

@@ -13,6 +13,14 @@ Phạm vi: chỉ schema `public`. Không chạy các file này từ Codex. Ngư�
 
 Nếu nghiệp vụ lỗi, người vận hành chạy `database/700_revoke_anon_public_access_rollback.sql` trên **đúng database đã snapshot**, rồi chạy audit và so với kết quả trước sửa. Script lấy quyền và grant option của `PUBLIC`, `anon`, `authenticated`, `service_role`, trạng thái RLS và định nghĩa policy từ `security_snapshot.anon_exposure_pre_700`. Giữ snapshot để đối chiếu; không dùng snapshot primary cho backup. Nếu object bị sửa/xóa sau snapshot, rollback có thể dừng và cần phục hồi thủ công từ backup catalog tương ứng. Báo Founder và xác định nguyên nhân trước khi phát hành lại.
 
+## Kết quả kỳ vọng sau migration (đã thử trên bản sao Supabase)
+
+Trên Supabase, tài khoản quản trị (`postgres`) không đổi được object/mặc định do `supabase_admin` sở hữu. Vì vậy audit sau sửa vẫn còn, và đây là điều bình thường:
+
+- Phần 4 còn khoảng 31 hàm của extension `pg_trgm` (chủ sở hữu `supabase_admin`, ví dụ `similarity`, `gtrgm_*`, `word_similarity*`). Chúng chỉ xử lý chuỗi đầu vào, không đọc bảng.
+- Phần 6 còn các default ACL của `supabase_admin` (chỉ ảnh hưởng object mới do role này tạo; migration của dự án chạy bằng `postgres`). Migration in `NOTICE` thay vì dừng khi không đủ quyền.
+- Mọi thứ khác phải bằng 0: phần 1a, 1b, 2, 3, 5 và mọi hàm do `postgres` sở hữu ở phần 4.
+
 ## Điều cần theo dõi
 
 - Bất kỳ `42501` từ backend có thể cho thấy đường đi không dùng `service_role` hoặc quyền backend khác với giả định. Dừng phát hành và kiểm tra đường gọi, nhất là khi failover sang backup.

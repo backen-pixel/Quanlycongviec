@@ -42,9 +42,14 @@ DECLARE creator text;
 BEGIN
   FOREACH creator IN ARRAY ARRAY['postgres', 'supabase_admin'] LOOP
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = creator) THEN
-      EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC, anon, authenticated', creator);
-      EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC, anon, authenticated', creator);
-      EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated', creator);
+      BEGIN
+        EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC, anon, authenticated', creator);
+        EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC, anon, authenticated', creator);
+        EXECUTE format('ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated', creator);
+      EXCEPTION WHEN insufficient_privilege THEN
+        -- Managed Supabase: the migration role cannot change supabase_admin defaults.
+        RAISE NOTICE 'Default privileges for role % not changed (insufficient privilege); re-check audit section 6.', creator;
+      END;
     END IF;
   END LOOP;
 END
