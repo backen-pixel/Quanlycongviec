@@ -33,6 +33,19 @@ Các Git blob runtime được reviewer đối chiếu:
 | frontend/src/pages/FacebookPage.jsx | `ff5cf0ac7b9afdf7fd1ee97a554d96ea0c00a845` |
 | backend/src/helpers/adInsights.js | `c905b71a781e5235e0596bc9a316bde19819dc44` |
 
+## Xác minh commit đã xuất bản
+
+Ứng viên runtime đã xuất bản: `542c4ee5e11e15d87f78bccbdb809409a55cab86`, tree `bc23ed0ae82df18b6ea15f37574d5437384f6655`, hai parent đúng như phần nguồn. CI chạy merge `a7c84af7a1436991f8d6bc2520535c56003f7afe`, có cùng tree.
+
+- [Automation 37255873901](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37255873901): cả 10 job SUCCESS. Node 18/22 mỗi bản **1.491 PASS, 0 FAIL, 0 SKIP**; bao gồm 3 ca Express HTTP và hai ca process signal mà Windows bỏ qua.
+- PostgreSQL intake **507 PASS**, restore **11 PASS**; full frontend build **10.339 modules**, thành công.
+- [Report 37255873900](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37255873900): **128 PASS**; [Messenger 37255873905](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37255873905): SUCCESS.
+- Reviewer độc lập `architecture_v11_review` đã tự xác minh published tree/parents, bốn blob, CI merge cùng tree, ba workflow và các log trên; kết luận **PASS checkpoint tích hợp kỹ thuật**. Đây là agent review trong phiên riêng, không phải GitHub human approval.
+
+Reviewer `pr19_independent_review` cũng kết luận PASS local integration PR19 `f5efde61`: kiểm đúng HEAD/bốn blob và không còn finding mở về quyền dự án, quyền chi tiết Lead, phạm vi công ty hoặc lỗi thao tác bất đồng bộ. Reviewer đã tái hiện lỗi trước sửa và rà source/tests sau sửa; lần tự chạy lại 127 ca bị spawn EPERM, chưa hoàn tất. 127 ca/build/UI/CI của PR19 là bằng chứng root, không ghi thành thực thi độc lập của reviewer này.
+
+Các câu CI/PostgreSQL còn chờ ở phần trước mô tả thời điểm trước xuất bản; phần này khép chúng cho đúng runtime `542c4ee5`. Thay đổi sau checkpoint chỉ để lưu bằng chứng phải được phân biệt với thay đổi runtime. Không nâng kết quả kiểm thử cô lập thành nghiệm thu môi trường thật.
+
 ## Cổng vận hành và hoàn tác
 
 **HOLD phát hành.** Founder đã cho phép chỉ đọc CRM để đối chiếu Admin VPT, công ty/khu vực, người khảo sát và giờ bận/trống. Tab CRM còn ở đăng nhập; chưa xác minh các giá trị thật. Không cần xin lại cùng quyền đọc. Render còn chờ xác nhận workspace; phiên bản/config đang chạy chưa được xác minh.

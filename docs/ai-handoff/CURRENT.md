@@ -2,7 +2,7 @@
 
 Đã ghép PR19 candidate `f5efde61` (main `ca8810c5`) vào PR22 `10ed7b73`. Giữ các màn Page/bài viết/quảng cáo mới, quyền khách/dự án và chống phản hồi trễ; bốn route mới vẫn tách Deal ước tính khỏi doanh thu/ROAS chưa xác minh. Giữ mục tiêu 250.000đ/khách hợp lệ, chi tiêu đầy đủ, kỳ đo, tư vấn/khảo sát và chức năng Facebook hiện có. [Bằng chứng, phiên bản và giới hạn](vpt-marketing-automation/MAIN_INTEGRATION_20261005.md).
 
-Kiểm cục bộ: 1.486 PASS/0 FAIL/2 SKIP trên Windows; build PASS; trình duyệt component/API giả PASS phạm vi đã mô tả. Reviewer độc lập tự kiểm 140/140 và PASS bảo toàn PR22. CI/PostgreSQL cần đúng commit xuất bản. Các mục phía dưới giữ lịch sử trước tích hợp.
+Runtime xuất bản `542c4ee5`, tree `bc23ed0a`: cả 10 job automation37255873901, report37255873900 và Messenger37255873905 SUCCESS. Node18/22 mỗi bản 1.491 PASS/0 FAIL/0 SKIP; intake PostgreSQL507, restore11 và frontend build PASS. Reviewer độc lập đã xác minh published tree/parents/blob/log và **PASS checkpoint kỹ thuật**. Kiểm cục bộ/trình duyệt dữ liệu giả có giới hạn trong hồ sơ. Các mục phía dưới giữ lịch sử trước tích hợp.
 
 Founder đã cho phép chỉ đọc CRM, không cần xin lại: còn phiên đăng nhập để đối chiếu Admin VPT và lịch khảo sát; Render còn chờ workspace. Bộ 18 câu đã duyệt, đầu mối Admin VPT và nguồn lịch CRM vẫn giữ. **HOLD phát hành** đến khi khép cấu hình/UAT/gói quyết định tương ứng; chưa ghi DB thật, gửi khách, đặt lịch, tăng chi hay merge main.
 

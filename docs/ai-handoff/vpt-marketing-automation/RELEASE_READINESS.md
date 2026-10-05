@@ -2,7 +2,7 @@
 
 Ngày cập nhật: 05/10/2026. **Rủi ro HIGH; HOLD phát hành.** Hồ sơ này gom điều kiện và bằng chứng, không phải quyết định mở quyền, chạy migration hoặc tiêu ngân sách. Nguồn chuẩn là repo; các mục cũ trong CURRENT/README giữ giá trị lịch sử theo phiên bản.
 
-Cập nhật tích hợp: PR22 `10ed7b73` đã ghép PR19 `f5efde61` chứa main `ca8810c5`; xem [bằng chứng và giới hạn](MAIN_INTEGRATION_20261005.md). Giữ 250.000đ/khách hợp lệ và Finance UNKNOWN trong các màn Page/bài viết mới. Local 1.486 PASS/0 FAIL/2 SKIP, build và review bảo toàn PASS; CI/PostgreSQL cần được đọc lại trên commit xuất bản. Các số CI phía dưới là lịch sử, không chứng nhận cây mới.
+Cập nhật tích hợp: PR22 runtime `542c4ee5` đã ghép PR19 `f5efde61` chứa main `ca8810c5`; xem [bằng chứng và giới hạn](MAIN_INTEGRATION_20261005.md). Giữ 250.000đ/khách hợp lệ và Finance UNKNOWN trong các màn Page/bài viết mới. Ba workflow đúng head SUCCESS; Node18/22 mỗi bản1.491 PASS, intake PostgreSQL507/restore11 và build PASS. Reviewer độc lập xác minh đúng tree/blob/log và PASS checkpoint kỹ thuật. Các số CI phía dưới là lịch sử, không chứng nhận bản triển khai thật.
 
 Founder đã cho phép **chỉ đọc CRM** để kiểm Admin VPT, công ty/khu vực, người khảo sát và giờ bận/trống. Tab CRM hiện còn yêu cầu đăng nhập; các mapping chưa xác minh. Không xin lại cùng phạm vi đọc. Render chờ xác nhận workspace. Không sửa khách/lịch/cấu hình từ quyền này. Migration 647/648 trùng tiền tố nhưng khác tệp: ledger thực phải dùng đường dẫn đầy đủ/blob/thứ tự, không dùng tiền tố để bỏ qua; manifest 50 SQL lịch sử chưa là kế hoạch migration đầy đủ cho main mới.
 
