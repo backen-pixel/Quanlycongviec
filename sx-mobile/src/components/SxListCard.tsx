@@ -8,10 +8,10 @@ import {
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import {
-  countsAsCompletedRevenue,
   projectIsAwaitingDelivery,
-  projectIsShipped,
+  projectIsDelivered,
 } from '../lib/sxBoardKpis';
+import { useHolidayIndex, workingDaysBetween, type HolidayIndex } from '../lib/workingDays';
 import { Radii, Spacing, stageColor, type AppColors } from '../theme';
 import type { KanbanStage, ProductionProject } from '../types';
 
@@ -55,7 +55,7 @@ type DateCell = {
 };
 
 /** Ba mốc ngày giống thẻ Kanban: đặt hàng → deadline → giao hàng, kèm chip còn/trễ bao nhiêu ngày. */
-function buildDateCells(p: ProductionProject, delivered: boolean): DateCell[] {
+function buildDateCells(p: ProductionProject, delivered: boolean, holidays: HolidayIndex): DateCell[] {
   const t = new Date();
   const now = new Date(t.getFullYear(), t.getMonth(), t.getDate());
   const order = parseDay(p.order_date);
@@ -75,12 +75,16 @@ function buildDateCells(p: ProductionProject, delivered: boolean): DateCell[] {
       deadlineChip = { text: 'Đã xong', tone: 'good' };
       deadlineTone = 'good';
     } else {
-      const left = dayDiff(now, deadline);
-      if (left < 0) {
-        deadlineChip = { text: `Trễ ${-left} ngày`, tone: 'bad' };
+      // Đếm ngày LÀM VIỆC (bỏ CN + lễ) giống web «Còn N ngày LV».
+      const left = workingDaysBetween(now, deadline, holidays);
+      if (dayDiff(now, deadline) < 0) {
+        deadlineChip = { text: `Trễ ${-left} ngày LV`, tone: 'bad' };
         deadlineTone = 'bad';
       } else {
-        deadlineChip = { text: left === 0 ? 'Hôm nay' : `Còn ${left} ngày`, tone: 'warn' };
+        deadlineChip = {
+          text: dayDiff(now, deadline) === 0 ? 'Hôm nay' : `Còn ${left} ngày LV`,
+          tone: 'warn',
+        };
       }
     }
   }
@@ -91,12 +95,15 @@ function buildDateCells(p: ProductionProject, delivered: boolean): DateCell[] {
     if (delivered) {
       deliveryChip = { text: 'Đã giao', tone: 'good' };
     } else {
-      const left = dayDiff(now, delivery);
-      if (left < 0) {
+      const left = workingDaysBetween(now, delivery, holidays);
+      if (dayDiff(now, delivery) < 0) {
         deliveryChip = { text: 'Giao trễ', tone: 'bad' };
         deliveryTone = 'bad';
       } else {
-        deliveryChip = { text: left === 0 ? 'Hôm nay' : `Còn ${left} ngày`, tone: 'good' };
+        deliveryChip = {
+          text: dayDiff(now, delivery) === 0 ? 'Hôm nay' : `Còn ${left} ngày LV`,
+          tone: 'good',
+        };
       }
     }
   }
@@ -132,10 +139,12 @@ function SxListCard({
   const customerLine = [item.customer_name, item.customer_phone].filter(Boolean).join(' · ');
   const owner = item.production_person_name?.trim() || 'Chưa gán';
   const vc = vcLabel(item, stages);
-  const delivered = projectIsShipped(item) || countsAsCompletedRevenue(item, stages);
+  // «Đã giao thật», không tính dự án chỉ mới được đẩy sang bảng vận chuyển (xem `projectIsDelivered`).
+  const delivered = projectIsDelivered(item, stages);
+  const holidays = useHolidayIndex();
   const overdue = Boolean(item.is_overdue) && !delivered;
   const needsClassify = !item.workshop_type_id && !!onClassify;
-  const dateCells = useMemo(() => buildDateCells(item, delivered), [item, delivered]);
+  const dateCells = useMemo(() => buildDateCells(item, delivered, holidays), [item, delivered, holidays]);
   const toneColor = (tone: Tone) =>
     tone === 'info' ? colors.primary : tone === 'warn' ? '#D97706' : tone === 'good' ? '#059669' : tone === 'bad' ? colors.danger : '#7C3AED';
 

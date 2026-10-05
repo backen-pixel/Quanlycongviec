@@ -47,7 +47,7 @@ import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import { loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '../lib/kanbanFilterStorage';
 import { REALTIME_TASK } from '../lib/realtimeModes';
-import { fetchCompanies, type CompanyOption } from '../lib/productionApi';
+import { fetchCompanies, fetchWorkshopTypes, type CompanyOption, type WorkshopTypeOption } from '../lib/productionApi';
 import {
   workshopCompaniesForCrossViewer,
 } from '../lib/productionFilters';
@@ -665,9 +665,12 @@ export default function WorkScreen() {
   const [scope, setScope] = useState<ScopeFilter>(teamView ? 'team' : 'mine');
   const [assigneeFilter, setAssigneeFilter] = useState<string>('all');
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
-  const [quickPicker, setQuickPicker] = useState<'company' | 'assignee' | null>(null);
+  const [quickPicker, setQuickPicker] = useState<'company' | 'assignee' | 'workType' | null>(null);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [filterCompany, setFilterCompany] = useState('');
+  /** Phân loại xưởng của công ty đang chọn — chỉ admin/quản lý dùng; cùng giá trị đã lưu với Tổng quan & Dự án. */
+  const [workTypes, setWorkTypes] = useState<WorkshopTypeOption[]>([]);
+  const [filterWorkTypeId, setFilterWorkTypeId] = useState('');
   const [filtersReady, setFiltersReady] = useState(false);
   const [search, setSearch] = useState('');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -759,6 +762,17 @@ export default function WorkScreen() {
     });
   }, []);
 
+  /**
+   * Phân loại gửi lên server: chỉ khi có chip (admin/quản lý và công ty có từ 2 loại) và giá trị còn hợp lệ với
+   * công ty hiện tại — loại của công ty cũ thì bỏ qua cho tới khi tự chọn lại, tránh lọc ra bảng trắng.
+   */
+  const showWorkTypePicker = teamView && workTypes.length >= 2;
+  const activeWorkTypeId = useMemo(() => {
+    if (!showWorkTypePicker) return '';
+    if (filterWorkTypeId === 'none') return 'none';
+    return workTypes.some((w) => String(w.id) === String(filterWorkTypeId)) ? filterWorkTypeId : '';
+  }, [showWorkTypePicker, filterWorkTypeId, workTypes]);
+
   const load = useCallback(async (
     silent = false,
     append = false,
@@ -813,6 +827,7 @@ export default function WorkScreen() {
       const page = await fetchProductionWorkTasksPage({
         assigneeId,
         companyId,
+        workshopTypeId: activeWorkTypeId || null,
         q,
         limit: WORK_TASKS_PAGE_SIZE,
         offset,
@@ -854,6 +869,7 @@ export default function WorkScreen() {
     scope,
     user?.company_id,
     filterCompany,
+    activeWorkTypeId,
     canPickCompany,
     filtersReady,
   ]);
@@ -871,6 +887,7 @@ export default function WorkScreen() {
       const next = await fetchProductionWorkTaskStats({
         assigneeId,
         companyId,
+        workshopTypeId: activeWorkTypeId || null,
         q: search.trim() || undefined,
         force: opts?.force,
       });
@@ -887,6 +904,7 @@ export default function WorkScreen() {
     scope,
     assigneeFilter,
     filterCompany,
+    activeWorkTypeId,
     canPickCompany,
     user?.company_id,
     search,
@@ -916,6 +934,7 @@ export default function WorkScreen() {
       const page = await fetchProductionWorkTasksPage({
         assigneeId,
         companyId,
+        workshopTypeId: activeWorkTypeId || null,
         status: chip === 'overdue' ? null : chip,
         overdue: chip === 'overdue',
         q: searchRef.current.trim() || undefined,
@@ -954,6 +973,7 @@ export default function WorkScreen() {
     scope,
     user?.company_id,
     filterCompany,
+    activeWorkTypeId,
     canPickCompany,
     filtersReady,
   ]);
@@ -989,6 +1009,7 @@ export default function WorkScreen() {
         }
       }
       setFilterCompany(companyId);
+      setFilterWorkTypeId(String(snap?.filterWorkTypeId || ''));
       setFiltersReady(true);
     })();
     return () => { cancelled = true; };
@@ -1003,9 +1024,54 @@ export default function WorkScreen() {
         if (ownId) next = ownId;
       }
       setFilterCompany((prev) => (prev === next ? prev : next));
+      const nextType = String(snap.filterWorkTypeId || '');
+      setFilterWorkTypeId((prev) => (prev === nextType ? prev : nextType));
     });
     return unsub;
   }, [canPickCompany, user?.company_id]);
+
+  // Danh sách phân loại của công ty đang chọn (chỉ admin/quản lý cần).
+  useEffect(() => {
+    if (!teamView || !filterCompany) {
+      setWorkTypes([]);
+      return undefined;
+    }
+    let cancelled = false;
+    void fetchWorkshopTypes(filterCompany, null)
+      .then((list) => { if (!cancelled) setWorkTypes(list); })
+      .catch(() => { if (!cancelled) setWorkTypes([]); });
+    return () => { cancelled = true; };
+  }, [teamView, filterCompany]);
+
+  // Giống Tổng quan/Dự án: không có «Tất cả». Giá trị rỗng hoặc của công ty khác → chọn loại đầu tiên và lưu
+  // dùng chung; «Chưa phân loại» giữ nguyên. Chưa tải được danh sách thì không đụng tới giá trị đã lưu.
+  useEffect(() => {
+    if (!showWorkTypePicker) return;
+    if (filterWorkTypeId === 'none') return;
+    if (workTypes.some((w) => String(w.id) === String(filterWorkTypeId))) return;
+    const first = String(workTypes[0].id);
+    setFilterWorkTypeId(first);
+    void saveKanbanFilters({ filterWorkTypeId: first }).catch(() => {});
+  }, [showWorkTypePicker, workTypes, filterWorkTypeId]);
+
+  const onSelectWorkType = useCallback(async (id: string) => {
+    setQuickPicker(null);
+    if (!id || id === filterWorkTypeId) return;
+    setFilterWorkTypeId(id);
+    await saveKanbanFilters({ filterWorkTypeId: id }).catch(() => {});
+  }, [filterWorkTypeId]);
+
+  const workTypeOptions = useMemo(
+    () => [
+      { id: 'none', label: 'Chưa phân loại' },
+      ...workTypes.map((t) => ({ id: String(t.id), label: t.name })),
+    ],
+    [workTypes],
+  );
+  const workTypeLabel = useMemo(
+    () => workTypeOptions.find((o) => o.id === activeWorkTypeId)?.label || 'Phân loại',
+    [workTypeOptions, activeWorkTypeId],
+  );
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -1472,6 +1538,16 @@ export default function WorkScreen() {
         onOpen: () => setQuickPicker('company'),
       });
     }
+    if (showWorkTypePicker) {
+      chips.push({
+        key: 'dd-worktype',
+        prefix: 'Phân loại',
+        // Phạm vi bắt buộc như Công ty: luôn có giá trị, không cho xóa.
+        label: workTypeLabel,
+        active: true,
+        onOpen: () => setQuickPicker('workType'),
+      });
+    }
     if (useAssigneeDropdown) {
       chips.push({
         key: 'dd-assignee',
@@ -1484,6 +1560,8 @@ export default function WorkScreen() {
     }
     return chips;
   }, [
+    showWorkTypePicker,
+    workTypeLabel,
     useCompanyDropdown,
     filterCompany,
     companyLabel,
@@ -2132,6 +2210,14 @@ export default function WorkScreen() {
         options={companyOptions}
         selectedId={filterCompany}
         onSelect={(id) => { void onSelectCompany(id); }}
+        onClose={() => setQuickPicker(null)}
+      />
+      <FilterPickerModal
+        visible={quickPicker === 'workType'}
+        title="Lọc theo phân loại"
+        options={workTypeOptions}
+        selectedId={activeWorkTypeId}
+        onSelect={(id) => { void onSelectWorkType(id); }}
         onClose={() => setQuickPicker(null)}
       />
       <FilterPickerModal

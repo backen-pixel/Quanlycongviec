@@ -3,6 +3,7 @@ import {
   computeSxBoardKpis,
   projectIsAwaitingDelivery,
   projectIsCompleted,
+  projectIsDelivered,
   projectIsProducing,
   sxColumnKpiKey,
 } from '../src/lib/sxBoardKpis';
@@ -128,5 +129,36 @@ describe('computeSxBoardKpis — số liệu tổng hợp', () => {
     expect(k.awaitingDelivery).toBe(1); // p3
     expect(k.shipped).toBe(1); // p4 (tên «đã giao»)
     expect(k.completed).toBe(1); // p5 (cột đã thu)
+  });
+});
+
+describe('projectIsDelivered — chip «Đã giao» trên thẻ', () => {
+  test('mới được đẩy sang bảng vận chuyển (có vc_kanban_column_id) mà còn ở tiếp nhận: CHƯA giao', () => {
+    expect(projectIsDelivered(pr('a', 'intake', { vc_kanban_column_id: 'vc-1' }), STAGES)).toBe(false);
+  });
+
+  test('có công ty vận chuyển nhưng còn ở cột sản xuất: chưa giao', () => {
+    expect(projectIsDelivered(pr('a', 'sx-phoi', { logistics_company_id: 'lg-1' }), STAGES)).toBe(false);
+  });
+
+  test('đứng ở cột «ĐÃ GIAO…»: đã giao', () => {
+    expect(projectIsDelivered(pr('a', 'da-giao'), STAGES)).toBe(true);
+  });
+
+  test('đứng ở cột đã thu tiền hoặc đợi thanh toán: đã giao (xong)', () => {
+    expect(projectIsDelivered(pr('a', 'da-thu'), STAGES)).toBe(true);
+    expect(projectIsDelivered(pr('a', 'doi-tt'), STAGES)).toBe(true);
+  });
+
+  test('status lắp đặt / bảo hành / hoàn tất: đã giao', () => {
+    expect(projectIsDelivered(pr('a', 'sx-phoi', { status: 'installing' }), STAGES)).toBe(true);
+    expect(projectIsDelivered(pr('a', 'sx-phoi', { status: 'warranty' }), STAGES)).toBe(true);
+    expect(projectIsDelivered(pr('a', 'sx-phoi', { status: 'completed' }), STAGES)).toBe(true);
+  });
+
+  test('cột sản xuất thường / chờ giao / chưa vào cột: chưa giao', () => {
+    expect(projectIsDelivered(pr('a', 'sx-phoi'), STAGES)).toBe(false);
+    expect(projectIsDelivered(pr('a', 'cho-giao'), STAGES)).toBe(false);
+    expect(projectIsDelivered(pr('a', null), STAGES)).toBe(false);
   });
 });

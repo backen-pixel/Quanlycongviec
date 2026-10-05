@@ -52,6 +52,25 @@ export function projectIsShipped(p: ProductionProject): boolean {
 
 export type SxStageKpiKey = 'producing' | 'awaiting_delivery' | 'shipped';
 
+/**
+ * ĐÃ GIAO THẬT — dùng cho chip trên thẻ (Đã xong / Đã giao). Khác `projectIsShipped` (dùng cho KPI): chỉ có
+ * `vc_kanban_column_id` / `logistics_company_id` nghĩa là đã được ĐẨY SANG bảng vận chuyển (VC/LĐ «Dự án sắp tới»),
+ * chưa phải đã giao, nên không tính. Đã giao khi: status lắp đặt / bảo hành / hoàn tất, hoặc đứng ở cột «đã giao»
+ * hoặc cột hoàn thành / đã thu tiền.
+ */
+export function projectIsDelivered(
+  p: ProductionProject,
+  stages: KanbanStage[],
+  index?: KpiStageIndex,
+): boolean {
+  const st = String(p.status || '');
+  if (st === 'installing' || st === 'warranty' || st === 'completed') return true;
+  const col = stageOf(p, stages, index || (stages.length ? buildKpiStageIndex(stages) : undefined));
+  if (!col || col.bucket_slug === INTAKE_BUCKET) return false;
+  if (sxColumnKpiKey(col) === 'shipped') return true;
+  return Boolean(col.counts_as_completed_revenue || col.counts_as_collected_revenue);
+}
+
 /** Tên cột kiểu «ĐÃ GIAO…» / «giao xong» — khớp BE `isSxDeliveredStage`. */
 function isDeliveredStage(stage: KanbanStage): boolean {
   const slug = String(stage.bucket_slug || stage.slug || '').toLowerCase().trim();

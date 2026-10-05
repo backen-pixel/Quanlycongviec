@@ -1114,10 +1114,13 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           <Text style={styles.statLabel}>Công việc</Text>
           <Text style={styles.statValue}>{taskDone}/{taskTotal || project?.task_total || 0}</Text>
         </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Hoạt động</Text>
-          <Text style={[styles.statValue, styles.statValueAccent]}>{activities.length}</Text>
-        </View>
+        {/* Hoạt động: chỉ quản lý & admin — nhân viên không có tab Thông tin nên số này luôn là 0. */}
+        {canSeeMoney ? (
+          <View style={styles.statCard}>
+            <Text style={styles.statLabel}>Hoạt động</Text>
+            <Text style={[styles.statValue, styles.statValueAccent]}>{activities.length}</Text>
+          </View>
+        ) : null}
         <View style={styles.statCard}>
           <Text style={styles.statLabel}>Tài liệu</Text>
           <Text style={styles.statValue}>{docCount}</Text>
@@ -1211,10 +1214,6 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
             <Text style={[styles.stageMeta, { color: colors.textMuted }]}>
               {big.columns.length} cột · {big.doneCount}/{big.tasks.length}
             </Text>
-            <Pressable style={[styles.stageChip, { borderColor: colors.border }]} onPress={() => setAllCols(!anyOpen)}>
-              <Ionicons name="list-outline" size={13} color={colors.textMuted} />
-              <Text style={[styles.stageChipTxt, { color: colors.textMuted }]}>{anyOpen ? 'Ẩn việc' : 'Hiện việc'}</Text>
-            </Pressable>
             {big.openCount > 0 && dealId ? (
               <Pressable
                 style={[styles.stageChip, styles.stageChipDone, bulkBusy && { opacity: 0.6 }]}
