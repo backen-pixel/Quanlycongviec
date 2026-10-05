@@ -137,6 +137,10 @@ test('Manual switch after an in-flight Primary send cannot redirect that send or
   await assert.rejects(operation, denied);
   assert.equal(firstReply.url, PRIMARY + '/rest/v1/rpc/facebook_page_inbox_enqueue_v1');
   assert.deepEqual(h.calls.map(c => c.url), [firstReply.url]);
+  assert.equal(h.replication.length, 1, 'The completed request still belongs to Primary replication');
+  assert.equal(h.replication[0][0], firstReply.url);
+  assert.equal(h.replication[0][2], firstReply);
+  assert.equal(h.failback.length, 0, 'An in-flight Primary response is not a Backup failback write');
 });
 
 test('Pinned retryable transport failure exhausts only Primary attempts, never Backup', async () => {

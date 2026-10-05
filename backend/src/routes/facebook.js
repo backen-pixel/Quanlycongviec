@@ -3662,7 +3662,8 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
   }
   // Replaying an old watermark must not clear counters for newer messages.
   if (pageInbox && event.read) requireFacebookLeadContract('FB_INBOX_MESSAGE_PROJECTION_CONTRACT_REQUIRED');
-  if (pageInbox && event.reaction && (!String(event.reaction.mid || '').trim()
+  if (pageInbox && event.reaction && (!String(event.sender?.id || '').trim()
+    || !String(event.reaction.mid || '').trim()
     || !['react', 'unreact'].includes(event.reaction.action)
     || !String(event.reaction.reaction || '').trim())) {
     // The legacy UNIQUE key contains these fields; SQL NULLs would allow a
@@ -3673,7 +3674,7 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
     requireFacebookLeadContract('FB_INBOX_MESSAGE_ID_REQUIRED');
   }
   let businessExclusion = null;
-  console.log(`\n[FB] 📨 Messenger event — partner PSID: ${partnerPsid}`);
+  if (!pageInbox) console.log(`\n[FB] 📨 Messenger event — partner PSID: ${partnerPsid}`);
 
   const sid = event.sender?.id != null ? String(event.sender.id).trim() : '';
   const senderLabel = sid && sid !== String(pageId).trim()
@@ -3684,13 +3685,13 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
     : await getOrCreateContact(pageId, partnerPsid, senderLabel);
   if (!contact) { if (durable) throw new Error('FB_DURABLE_CONTACT_UNAVAILABLE'); return; }
   if (pageInbox && contact.lead_id) await getDurableFacebookLinkedLead(pageId, contact.lead_id);
-  if (durable) await captureMessengerReferral(supabase, pageId, contact.id, event);
+  if (durable && !(pageInbox && event.reaction)) await captureMessengerReferral(supabase, pageId, contact.id, event);
 
   if (!pageInbox && isPlaceholderFacebookName(contact.fb_name)) {
     void tryResolveMessengerDisplayName(pageId, partnerPsid, contact.id, io, contact);
   }
 
-  console.log(`[FB] 👤 Contact: ${contact.fb_name || 'Unknown'} (ID: ${contact.id})`);
+  if (!pageInbox) console.log(`[FB] 👤 Contact: ${contact.fb_name || 'Unknown'} (ID: ${contact.id})`);
 
   // Quy kết quảng cáo: FB gửi ad_id ở event.referral / postback.referral / message.referral.
   // Ghi lần chạm đầu tiên; lỗi không được làm hỏng luồng webhook.
@@ -3706,7 +3707,7 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
   }
 
   // Log kết quả xử lý vào DB
-  if (!FB_DISABLE_WEBHOOK_LOGS) {
+  if (!pageInbox && !FB_DISABLE_WEBHOOK_LOGS) {
     await supabase.from('facebook_webhook_logs').upsert({
       page_id: pageId,
       payload: { type: 'message_processed', psid: partnerPsid, event },
@@ -3759,8 +3760,8 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
     // 1 vòng đi–về và nguyên tử hơn: trùng thì không trả dòng nào → nhánh `!savedMsg`
     // bên dưới xử lý y hệt. Giữ Layer 1 (in-memory lock) làm chốt rẻ cho race cùng tiến trình.
 
-    console.log(`[FB] 💬 Message type: ${messageType}, content: ${content?.substring(0, 50)}${content?.length > 50 ? '...' : ''}`);
-    console.log(`[FB] 📎 Attachment: ${attachmentUrl || 'None'}`);
+    if (!pageInbox) console.log(`[FB] 💬 Message type: ${messageType}, content: ${content?.substring(0, 50)}${content?.length > 50 ? '...' : ''}`);
+    if (!pageInbox) console.log(`[FB] 📎 Attachment: ${attachmentUrl || 'None'}`);
 
     // Save message — dùng upsert để tránh duplicate
     const insertData = {
@@ -3806,7 +3807,7 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
       return;
     }
 
-    console.log(`[FB] ✅ Message saved: ${savedMsg?.id} (${isEcho ? 'outbound' : 'inbound'})`);
+    if (!pageInbox) console.log(`[FB] ✅ Message saved: ${savedMsg?.id} (${isEcho ? 'outbound' : 'inbound'})`);
 
     // Message persistence and contact counters/preview are separate writes in
     // the legacy flow. A crash between them cannot be safely reconstructed from
@@ -4129,7 +4130,7 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
     }
   }
 
-  if (durable) {
+  if (durable && !(pageInbox && event.reaction)) {
     const liveLeadId = pageInbox ? await getDurableFacebookLeadId(contact.id) : await fetchContactLeadId(contact.id);
     if (liveLeadId) {
       if (pageInbox) await getDurableFacebookLinkedLead(pageId, liveLeadId);
@@ -4184,9 +4185,11 @@ async function handleDurableFacebookLeadGen(pageId, value) {
   // or require another provider request merely because CRM work is still pending.
   let leadData = savedAd?.raw_data;
   if (!Array.isArray(leadData?.field_data)) {
+    const graphVersion = String(process.env.VPT_META_GRAPH_VERSION || '');
+    if (!/^v[0-9]{1,2}\.[0-9]+$/.test(graphVersion)) requireFacebookLeadContract('FB_INBOX_GRAPH_VERSION_REQUIRED');
     if (!page.access_token) requireFacebookLeadContract('FB_DURABLE_PAGE_TOKEN_REQUIRED');
     try {
-      const response = await fetch(`https://graph.facebook.com/v19.0/${encodeURIComponent(leadgenId)}`, {
+      const response = await fetch(`https://graph.facebook.com/${graphVersion}/${encodeURIComponent(leadgenId)}`, {
         headers: { Authorization: `Bearer ${page.access_token}` },
       });
       leadData = await response.json();

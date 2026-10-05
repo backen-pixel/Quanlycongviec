@@ -41,7 +41,7 @@ function harness({ config = {}, contact = {}, linked = false, formData, graph } 
       crm_leads: linked ? [{ id: 'lead-1', company_id: 'company-1', customer_id: null }] : [],
       customers: [],
     },
-    calls: [], failures: [], graphCalls: 0, creates: 0, replies: 0,
+    calls: [], failures: [], graphCalls: 0, graphUrls: [], creates: 0, replies: 0, logs: [],
     legacyAttribution: 0, captures: 0, links: 0,
   };
   const clone = (value) => value == null ? value : JSON.parse(JSON.stringify(value));
@@ -106,11 +106,13 @@ function harness({ config = {}, contact = {}, linked = false, formData, graph } 
     },
   });
   const context = vm.createContext({
-    console: quiet, supabase: db, AUTO_LEAD_DEFAULTS: defaults, FB_DISABLE_WEBHOOK_LOGS: true,
+    console: Object.fromEntries(['log', 'warn', 'error'].map((method) => [method, (...args) => state.logs.push(args)])),
+    supabase: db, AUTO_LEAD_DEFAULTS: defaults, FB_DISABLE_WEBHOOK_LOGS: true,
+    process: { env: { VPT_META_GRAPH_VERSION: 'v99.7' } },
     setTimeout() { return 1; }, ...phone, // legacy MID expiry timer is synthetic
     _phoneDigitsLen: (value) => String(value || '').replace(/\D/g, '').length,
     async fetch(url, options) {
-      state.graphCalls++; assert.ok(!url.includes('SYNTHETIC_TOKEN'));
+      state.graphCalls++; state.graphUrls.push(url); assert.ok(!url.includes('SYNTHETIC_TOKEN'));
       assert.equal(options.headers.Authorization, 'Bearer SYNTHETIC_TOKEN');
       if (graph?.throws) throw new Error('SYNTHETIC_PROVIDER_FAILURE');
       return { ok: graph?.ok ?? true, async json() {
@@ -285,6 +287,50 @@ test('reaction persistence error never completes its event', async () => {
   const h = harness(); h.state.failures.push({ table: 'fb_message_reactions', action: 'upsert' });
   await assert.rejects(h.message({ sender: { id: 'sender-1' }, recipient: { id: 'page-1' },
     reaction: { mid: 'message-1', action: 'react', reaction: 'love' } }), /FB_DURABLE_REACTION_WRITE_FAILED/);
+});
+
+for (const sender of [undefined, { id: '' }, { id: '   ' }]) {
+  test(`reaction actor ${JSON.stringify(sender)} cannot be inferred from the recipient`, async () => {
+    const h = harness(); await assert.rejects(h.message({ sender, recipient: { id: 'sender-1' },
+      reaction: { mid: 'message-1', action: 'react', reaction: 'love' } }),
+    { code: 'FB_INBOX_REACTION_IDENTITY_REQUIRED' }); assert.equal(h.state.calls.length, 0);
+  });
+}
+
+test('new reaction intake neither backfills message Lead links nor writes attribution', async () => {
+  const h = harness({ linked: true });
+  await h.message({ sender: { id: 'sender-1' }, recipient: { id: 'page-1' },
+    reaction: { mid: 'message-1', action: 'react', reaction: 'love' }, referral: { ad_id: '12345' } });
+  assert.equal(h.state.captures, 0); assert.equal(h.state.links, 0); assert.equal(h.state.legacyAttribution, 0);
+  assert.equal(h.state.calls.some((call) => call.table === 'facebook_messages'), false);
+  assert.equal(h.state.tables.fb_message_reactions.length, 1);
+});
+
+test('new pending message logs neither raw payloads nor duplicate webhook log rows', async () => {
+  const h = harness(); h.context.FB_DISABLE_WEBHOOK_LOGS = false;
+  const value = event(); value.message.attachments = [{ type: 'image', payload: { url: 'https://synthetic.invalid/private-image' } }];
+  for (let i = 0; i < 2; i++) await assert.rejects(h.message(value), { code: 'FB_INBOX_MESSAGE_PROJECTION_CONTRACT_REQUIRED' });
+  assert.equal(h.state.logs.length, 0);
+  assert.equal(h.state.calls.some((call) => call.table === 'facebook_webhook_logs'), false);
+});
+
+for (const version of [undefined, '', '19.0', 'v19', 'v123.0', 'v19.0/path', ' v19.0']) {
+  test(`Lead Ads missing/invalid explicit Graph version ${JSON.stringify(version)} stays pending before provider I/O`, async () => {
+    const h = harness(); h.context.process.env.VPT_META_GRAPH_VERSION = version;
+    await assert.rejects(h.ad(), { code: 'FB_INBOX_GRAPH_VERSION_REQUIRED' });
+    assert.equal(h.state.graphCalls, 0); assert.equal(h.state.tables.facebook_lead_ads.length, 0);
+  });
+}
+
+test('Lead Ads uses the explicit synthetic Graph version and token only in authorization header', async () => {
+  const h = harness(); await assert.rejects(h.ad(), { code: 'FB_INBOX_LEAD_CONTRACT_REQUIRED' });
+  assert.deepEqual(h.state.graphUrls, ['https://graph.facebook.com/v99.7/ad-1']);
+});
+
+test('committed Lead Ads raw snapshot does not require a provider version for downstream retry', async () => {
+  const h = harness(); await assert.rejects(h.ad(), { code: 'FB_INBOX_LEAD_CONTRACT_REQUIRED' });
+  delete h.context.process.env.VPT_META_GRAPH_VERSION;
+  await assert.rejects(h.ad(), { code: 'FB_INBOX_LEAD_CONTRACT_REQUIRED' }); assert.equal(h.state.graphCalls, 1);
 });
 
 for (const graph of [{ throws: true }, { ok: false }, { body: { error: { message: 'SYNTHETIC' } } },

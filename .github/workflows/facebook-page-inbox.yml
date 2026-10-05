@@ -3,12 +3,14 @@ on:
   pull_request:
     paths:
       - 'backend/src/helpers/facebookPageInbox.js'
+      - 'backend/src/helpers/fbLeadFormFields.js'
       - 'backend/src/config/supabaseRouter.js'
       - 'backend/src/routes/facebook.js'
       - 'backend/src/server.js'
       - 'backend/tests/facebookPage*'
       - 'backend/tests/facebookWebhookRecovery.test.js'
       - 'database/701_facebook_page_inbox.sql'
+      - 'database/700_revoke_anon_public_access.sql'
       - '.github/workflows/facebook-page-inbox.yml'
   workflow_dispatch:
 permissions:
@@ -47,6 +49,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
+          --volume /tmp:/tmp
           --health-cmd pg_isready
           --health-interval 5s
           --health-timeout 5s
@@ -55,11 +58,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Install matching PostgreSQL client
-        run: sudo apt-get update && sudo apt-get install -y postgresql-client-17
+      - name: Use matching PostgreSQL 17 CLI in the disposable service
+        run: |
+          mkdir -p "$RUNNER_TEMP/pg17-bin"
+          cat > "$RUNNER_TEMP/pg17-bin/pg-client" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          tool="$(basename "$0")"
+          exec docker exec -i \
+            -e PGHOST -e PGPORT -e PGDATABASE -e PGUSER -e PGPASSWORD \
+            -e PGCONNECT_TIMEOUT -e PGSSLMODE -e PGOPTIONS -e PGAPPNAME \
+            "$INBOX_CI_CONTAINER_ID" "$tool" "$@"
+          SH
+          chmod +x "$RUNNER_TEMP/pg17-bin/pg-client"
+          for tool in psql pg_dump pg_restore; do ln -s pg-client "$RUNNER_TEMP/pg17-bin/$tool"; done
+          echo "$RUNNER_TEMP/pg17-bin" >> "$GITHUB_PATH"
       - name: ACL, duplicate, concurrency, crash, lease and logical restore tests
         env:
-          PATH: /usr/lib/postgresql/17/bin:/usr/local/bin:/usr/bin:/bin
+          INBOX_CI_CONTAINER_ID: ${{ job.services.postgres.id }}
           VPT_ISOLATED_PG_TEST: '1'
           VPT_INBOX_RESTORE_TEST: '1'
           PGHOST: 127.0.0.1
