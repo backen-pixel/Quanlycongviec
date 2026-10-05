@@ -293,6 +293,9 @@ async function performVcHandoverCore(req, {
   } catch (gateErr) {
     if (gateErr.code === 'FLOW_HANDOFF_BLOCKED' || gateErr.status === 400) throw gateErr;
     console.warn('[vcHandoverCore] flow gate:', gateErr.message);
+    gateErr.status = 503;
+    gateErr.code = 'FLOW_HANDOFF_BLOCKED';
+    throw gateErr;
   }
 
   const sxHandoverPipelineStageId = await resolveSxHandoverStageId(project, preferredSxStageId);

@@ -7,11 +7,10 @@
  *   - cạnh có điều kiện không đạt thì không đi qua, nên nhánh rẽ vẽ trên canvas mới thật sự có hiệu lực
  *
  * Chấm điều kiện là tri-state: đạt / trượt / không chấm được. "Không chấm được" luôn được
- * coi như đi qua được, để cấu hình thiếu không bao giờ làm tắc nghiệp vụ — nhưng nó được
- * ghi vào vết đi để người cài luồng biết mà sửa.
+ * chặn trước tác động. Chờ/duyệt chưa có trạng thái bền vững cũng phải dừng.
  *
- * Mặc định chạy ở CHẾ ĐỘ BÓNG: tính ra kết quả và ghi nhật ký chỗ lệch với logic cũ, nhưng
- * không chặn. Đặt FLOW_RUNTIME_ENFORCE=1 để kết quả đồ thị có hiệu lực thật.
+ * Các cổng tạo sản xuất và bàn giao luôn chặn nếu chưa xác minh được,
+ * kể cả khi FLOW_RUNTIME_ENFORCE chưa bật.
  */
 
 const { supabase } = require('../config/supabase');
@@ -24,7 +23,7 @@ const GRAPH_TTL_MS = 30_000;
 
 /** Khối đi xuyên qua khi tìm module kế tiếp — chúng không phải điểm dừng nghiệp vụ. */
 const PASS_THROUGH_KINDS = new Set([
-  'condition', 'fork', 'join', 'wait', 'approve',
+  'condition', 'fork',
   'report', 'ai_report', 'ai_deadline', 'notify',
 ]);
 
@@ -73,8 +72,7 @@ const STEP_SELECT = `
 async function loadGraph(flowId) {
   if (!flowId) return null;
   const key = String(flowId);
-  const hit = cachedGraph(key);
-  if (hit !== null) return hit;
+  // Decisions with side effects must see current conditions/approval configuration.
 
   const { data: rawSteps, error: stepErr } = await supabase
     .from('workflow_flow_steps')
@@ -108,7 +106,7 @@ async function loadGraph(flowId) {
     .select('*')
     .eq('flow_id', flowId)
     .order('order_index');
-  if (condErr && !isMissingGraphSchema(condErr.message)) throw condErr;
+  if (condErr) throw condErr;
   if (!condErr) conditions = condRows || [];
 
   const { enrichStepsWithModuleKey } = require('./resolveModuleFlow');
@@ -133,6 +131,10 @@ async function loadGraph(flowId) {
   const condsByNode = new Map();
   for (const c of conditions) {
     if (c.is_required === false) continue;
+    if ((c.scope === 'edge' && !(edges || []).some(e => e.id === c.edge_id))
+      || (c.scope !== 'edge' && !nodeById.has(String(c.step_node_id)))) {
+      throw new Error('FLOW_CONDITION_UNBOUND: điều kiện không gắn được với đồ thị.');
+    }
     if (c.scope === 'edge' && c.edge_id) {
       if (!condsByEdge.has(c.edge_id)) condsByEdge.set(c.edge_id, []);
       condsByEdge.get(c.edge_id).push(c);
@@ -256,6 +258,7 @@ async function evaluateStageFlag(cfg, ctx) {
   const stage = await ctx.getStage(source);
   if (!stage) return verdict(UNKNOWN, `chưa xác định được cột hiện tại của ${source}`);
   if (!(flag in stage)) return verdict(UNKNOWN, `cột không có cờ «${flag}»`);
+  if (typeof stage[flag] !== 'boolean') return verdict(UNKNOWN, 'cờ điều kiện không phải boolean');
   return stage[flag]
     ? verdict(PASS, `cột «${stage.name || stage.id}» mang cờ «${flag}»`)
     : verdict(FAIL, `cột «${stage.name || stage.id}» không mang cờ «${flag}»`);
@@ -322,6 +325,7 @@ async function evaluateTaskItemDone(cfg, ctx) {
 
 async function evaluateCondition(condition, ctx) {
   const cfg = condition?.config || {};
+  if (cfg.source && !STAGE_TABLE[cfg.source]) return verdict(UNKNOWN, 'nguồn điều kiện chưa được hỗ trợ');
   try {
     if (condition?.condition_type === 'stage_flag') return await evaluateStageFlag(cfg, ctx);
     if (condition?.condition_type === 'stage_reached') return await evaluateStageReached(cfg, ctx);
@@ -336,6 +340,7 @@ async function evaluateCondition(condition, ctx) {
 function combine(results, logic) {
   if (!results.length) return verdict(PASS, 'không có điều kiện');
   const whys = results.filter((r) => r.why).map((r) => r.why);
+  if (results.some(r => r.verdict === UNKNOWN)) return verdict(UNKNOWN, whys.join(' | '));
   if (logic === 'any') {
     if (results.some((r) => r.verdict === PASS)) return verdict(PASS, whys.join(' | '));
     if (results.some((r) => r.verdict === UNKNOWN)) return verdict(UNKNOWN, whys.join(' | '));
@@ -408,6 +413,12 @@ function walkToNextModules(graph, startNodeId, scores) {
     if (!edges.length && nodeId !== startNodeId) continue;
 
     const kind = node?.node_kind || 'module';
+    const ownGate = scores.nodeVerdict.get(nodeId);
+    if (ownGate && ownGate.verdict !== PASS) {
+      hasUnknown ||= ownGate.verdict === UNKNOWN;
+      trace.push({ from: nodeLabel(node), verdict: ownGate.verdict, why: ownGate.why });
+      continue;
+    }
     const mode = kind === 'fork' ? 'parallel'
       : kind === 'condition' ? 'conditional'
         : String(node?.branch_mode || 'sequential');
@@ -424,13 +435,25 @@ function walkToNextModules(graph, startNodeId, scores) {
       });
 
       if (v.verdict === FAIL) continue;
-      if (v.verdict === UNKNOWN) hasUnknown = true;
+      if (v.verdict !== PASS) { hasUnknown = true; continue; }
       // Rẽ theo điều kiện: chỉ đi nhánh đầu tiên còn sống.
       if (mode === 'conditional' && followedOne) continue;
       followedOne = true;
 
-      if (!target) continue;
+      if (!target) { hasUnknown = true; continue; }
       const targetKind = target.node_kind || 'module';
+      const targetGate = scores.nodeVerdict.get(target.node_id);
+      if (targetGate && targetGate.verdict !== PASS) {
+        hasUnknown ||= targetGate.verdict === UNKNOWN;
+        trace.push({ from: nodeLabel(target), verdict: targetGate.verdict, why: targetGate.why });
+        continue;
+      }
+      if (['wait', 'approve', 'join'].includes(targetKind)
+        || (targetKind === 'condition' && !graph.condsByNode.has(target.node_id))) {
+        hasUnknown = true;
+        trace.push({ from: nodeLabel(target), verdict: UNKNOWN, why: 'Chưa có trạng thái chờ/duyệt/điều kiện được xác minh.' });
+        continue;
+      }
 
       if (targetKind === 'end') { terminal = true; continue; }
 
@@ -448,8 +471,10 @@ function walkToNextModules(graph, startNodeId, scores) {
         continue;
       }
 
-      if (PASS_THROUGH_KINDS.has(targetKind) || !target.module_key) {
+      if (PASS_THROUGH_KINDS.has(targetKind)) {
         stack.push(target.node_id);
+      } else {
+        hasUnknown = true;
       }
     }
   }
@@ -510,6 +535,7 @@ async function canReachModuleViaGraph(flowId, fromModuleKey, targetModuleKey, co
   const visited = new Set([start.node_id]);
   let frontier = [start.node_id];
   let hasUnknown = false;
+  let reached = false;
 
   while (frontier.length) {
     const nextFrontier = [];
@@ -519,7 +545,9 @@ async function canReachModuleViaGraph(flowId, fromModuleKey, targetModuleKey, co
       if (hop.hasUnknown) hasUnknown = true;
       for (const mod of hop.modules) {
         if (normalizeModuleKey(mod.module_key) === want) {
-          return { supported: true, reachable: true, trace, hasUnknown };
+          // Continue collecting verdicts; another required branch may still be unknown.
+          reached = true;
+          continue;
         }
         if (!visited.has(mod.node_id)) {
           visited.add(mod.node_id);
@@ -530,7 +558,7 @@ async function canReachModuleViaGraph(flowId, fromModuleKey, targetModuleKey, co
     frontier = nextFrontier;
   }
 
-  return { supported: true, reachable: false, trace, hasUnknown };
+  return { supported: true, reachable: reached && !hasUnknown, trace, hasUnknown };
 }
 
 // ═══ Nhật ký chạy bóng ═══
@@ -545,10 +573,11 @@ async function logRuntimeDecision({
   flowId, gate, subjectType, subjectId, legacy, graph, diverged, trace,
 }) {
   const tag = diverged ? 'LỆCH' : 'khớp';
+  const enforced = ['production_create', 'production_handoff'].includes(gate) || isEnforced();
   console.info(
     `[flow-runtime] ${gate} ${tag} · flow=${String(flowId || '').slice(0, 8)}`
     + ` · cũ=${JSON.stringify(legacy)} · đồ thị=${JSON.stringify(graph)}`
-    + (isEnforced() ? ' · CHẶN THẬT' : ' · chạy bóng'),
+    + (enforced ? ' · CHẶN THẬT' : ' · chạy bóng'),
   );
   if (!logTableAvailable) return;
   try {
@@ -557,7 +586,7 @@ async function logRuntimeDecision({
       gate,
       subject_type: subjectType || null,
       subject_id: subjectId || null,
-      enforced: isEnforced(),
+      enforced,
       diverged: !!diverged,
       legacy_result: legacy || {},
       graph_result: graph || {},

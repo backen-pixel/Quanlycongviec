@@ -1,3 +1,9 @@
+## 05/10/2026 — Sửa các điểm kiểm soát Agent đã audit
+
+Theo thứ tự Founder chốt, triển khai registry đọc có kiểm quyền server, MCP bound actor, fail-closed flow gates và callers, bằng chứng trả lời có cấu trúc, context thành công/tombstones và correction ưu tiên. Reviewer độc lập tìm thêm source-error bypass, quyền đổi trước gửi, strict memory và lỗi persistence; đã sửa và bổ sung hồi quy. Bộ tập trung 112 PASS, gồm 48 regression + 64 Care; reviewer chạy riêng 48 PASS. Xem [hồ sơ](agent-guardrails-20261005/README.md), log và fingerprint để gắn đúng mã đã kiểm. Giữ nguồn audit 679cb926 nguyên lịch sử. Không sửa kiến trúc đích, SQL, ECC/hooks, cấu hình thật hay phát hành. Một số chức năng legacy giữ khóa có chủ đích; chưa chứng nhận scheduled sender/menu/MCP Ads. Không rollback bằng cách bật lại đường fail-open.
+
+---
+
 ## 05/10/2026 — Ghi đầu mối nhận khách và nguồn lịch CRM
 
 Founder xác nhận “người nhận khách là admin vạn phú thành”, sau đó trả lời “crm” cho nơi quản lý lịch khảo sát. Cập nhật DECISIONS, CURRENT, README và RELEASE_READINESS: đầu mối đã được chọn và nơi quản lý lịch đã xác định; tài khoản/quyền, nhân sự/giờ trống và độ đủ lịch bận vẫn cần đối chiếu. Đọc hợp đồng SURVEY_AVAILABILITY và CARE_SURVEY_RUNTIME để giữ đúng luồng CRM → đề xuất → khách xác nhận; không suy câu trả lời thành chứng nhận CRM_COMPLETE/ALL_BUSY_IN_CRM. Giữ nguyên bộ 18 câu đã duyệt, ngân sách, phạm vi kế hoạch và giới hạn phát hành. Không gán Admin là người khảo sát hoặc người thay thế. Chỉ sửa hồ sơ, không đổi mã/SQL hoặc routing thật. Đối chiếu diff và liên kết; không chạy lại kiểm thử runtime cho thay đổi tài liệu. Nếu cần sửa hồ sơ, dùng commit điều chỉnh có lý do và giữ lịch sử quyết định Founder.
@@ -2524,3 +2530,7 @@ Merged PR19 f5efde61 (main ca8810c5) into PR22 10ed7b73 in isolated worktree. Pr
 ### Published integration checkpoint 542c4ee5
 
 Tree bc23ed0a, parents 10ed7b73/f5efde61; CI merge a7c84af7 has identical tree. Automation37255873901 all10 jobs, report37255873900 and Messenger37255873905 SUCCESS. Node18/22 each1491/0/0; intake PostgreSQL507/0/0; restore11/0/0; report128 PASS; frontend build10339 modules. Independent architecture_v11_review verified published blobs/parents/tree and CI logs, PASS technical checkpoint. This documentation closure does not change runtime, SQL, permissions or operational HOLD; CRM login and environment/config/UAT remain outstanding.
+
+## 2026-10-05 — Agent architecture audit requested by Founder
+
+Applied ECC agent-architecture-audit to source679cb926: care runtime, legacy internal reporting chat and workflow integration, mapped to12 layers. Six findings: model-controlled reporting scope; UNKNOWN/approve/wait pass-through; ungated factual final; truncated tool JSON; failed-result session mutation; correction lost before memory priority. Seven offline VM probes reproduced mechanisms, no live DB/model/provider calls.64 focused care contract tests pass on Node24 with --test-isolation=none. Evidence/report/runner saved under audits/2026-10-05-agent-architecture. Scope explicitly does not prove production incidents or activation. No runtime/SQL/config changes, no independent review of this audit, no release/phase/baseline approval. Findings and ordered fixes are proposals. Audit artifacts remain local/unpublished.

@@ -1,0 +1,310 @@
+{
+  "schema_version": "ecc.agent-architecture-audit.report.v1",
+  "audit_date": "2026-10-05",
+  "source_commit": "679cb9266ecb87c560421f3f6fc3c3e31b50b831",
+  "executive_verdict": {
+    "overall_health": "high_risk",
+    "primary_failure_mode": "Hai tuyến Agent dùng hai chuẩn kiểm soát; legacy có scope do model quyết định, tool bằng prompt và graph fail-open.",
+    "most_urgent_fix": "AA-01: server phải giữ quyền phạm vi cho mọi tool cũ."
+  },
+  "scope": {
+    "target_name": "Business AI OS / Quanlycongviec — VPT care runtime, legacy internal report chatbot, workflow integration",
+    "model_stack": [
+      "Care Responses adapter: model do policy chọn, chưa xác minh cấu hình live",
+      "Legacy chatbot/memory/flow: gpt-4o-mini mặc định trong source"
+    ],
+    "layers_to_audit": [
+      "System prompt",
+      "Session history",
+      "Long-term memory",
+      "Distillation",
+      "Active recall",
+      "Tool selection",
+      "Tool execution",
+      "Tool interpretation",
+      "Answer shaping",
+      "Platform rendering",
+      "Hidden repair loops",
+      "Persistence"
+    ],
+    "entrypoints": [
+      "Facebook intake → careRuntime → careAdvisor → inference → guarded dispatch",
+      "Messenger group/DM → aiConversation → aiReportTools",
+      "resolveModuleFlow → flowRuntime; flowActionRunner là điểm gọi LLM riêng"
+    ],
+    "symptoms": "Founder yêu cầu audit; không có báo cáo sự cố live mới.",
+    "time_window": "Snapshot source ngày 05/10/2026; không suy ra thời điểm lỗi bắt đầu.",
+    "exclusions": [
+      "Production credentials/data and deployment state",
+      "Full security scan or live exploitation",
+      "All adapters/routes exhaustive review",
+      "Live model quality/performance benchmark",
+      "Runtime fixes or activation"
+    ]
+  },
+  "findings": [
+    {
+      "id": "AA-01",
+      "severity": "critical",
+      "title": "Phạm vi công cụ báo cáo cũ có thể bị đầu vào mô hình thay thế",
+      "symptom": "Chatbot có thể truy xuất báo cáo nhân viên/công ty ngoài phạm vi người hỏi.",
+      "mechanism": "executeTool trộn args do mô hình chọn với context; resolveAssigneeIds ưu tiên user_filter_ids hơn personal_recipient_user_id. getCompanyLeadSummary dùng company_id đầu vào, không đối chiếu ctx.companies/actor tại nhánh này.",
+      "source_layer": "6 Tool selection / 7 Tool execution",
+      "root_cause": "Phạm vi được coi là tham số tìm kiếm thay vì quyền bắt buộc do server xác lập.",
+      "evidence_refs": [
+        "backend/src/helpers/aiReportTools.js:127",
+        "backend/src/helpers/aiReportTools.js:504",
+        "backend/src/helpers/aiReportTools.js:3603",
+        "backend/src/helpers/aiConversation.js:769",
+        "backend/src/config/supabaseRouter.js:215"
+      ],
+      "confidence": 0.99,
+      "recommended_fix": "Áp dụng quyền actor/company/region ở Application Service cho mọi tool; giao phạm vi đề nghị với phạm vi được phép, từ chối sai công ty trước truy vấn. Model không được chọn principal, schedule quyền hoặc personal recipient.",
+      "reproductions": [
+        "P1_MODEL_SCOPE_OVERRIDE",
+        "P1B_FOREIGN_COMPANY_SUMMARY"
+      ],
+      "limitation": "Đã tái hiện bằng DB giả; chưa xác nhận người dùng hay dữ liệu thật đã bị lộ."
+    },
+    {
+      "id": "AA-02",
+      "severity": "critical",
+      "title": "Điều phối cũ vẫn đi qua điều kiện UNKNOWN và node approve/wait",
+      "symptom": "Một luồng hiển thị chờ/duyệt có thể được tính là đã đi tới bước sản xuất dù điều kiện chưa biết.",
+      "mechanism": "walkToNextModules chỉ loại FAIL, ghi hasUnknown rồi tiếp tục; approve/wait là pass-through. flowAllowsProductionCreate trả reachable khi bật enforce, không chặn hasUnknown.",
+      "source_layer": "7 Tool execution / 12 Persistence",
+      "root_cause": "Thuật toán đi trên đồ thị được dùng như điều kiện cho thực thi, nhưng chưa có trạng thái chờ/duyệt bền vững tương ứng.",
+      "evidence_refs": [
+        "backend/src/helpers/flowRuntime.js:26",
+        "backend/src/helpers/flowRuntime.js:426",
+        "backend/src/helpers/flowRuntime.js:451",
+        "backend/src/helpers/resolveModuleFlow.js:121"
+      ],
+      "confidence": 0.99,
+      "recommended_fix": "Giữ chức năng này ở chế độ quan sát cho lệnh nhạy cảm; chỉ PASS mới cho đi tiếp. Chờ/duyệt cần bản ghi bền vững gắn phiên bản lệnh, actor và phạm vi; Domain kiểm lại trước ghi.",
+      "reproductions": [
+        "P4_UNKNOWN_AND_APPROVAL_PASS_THROUGH"
+      ],
+      "limitation": "Mặc định mã là shadow. Giá trị FLOW_RUNTIME_ENFORCE và các chốt Domain khác trên môi trường thật chưa được xác minh; chưa chứng minh có đơn thật vượt duyệt."
+    },
+    {
+      "id": "AA-03",
+      "severity": "high",
+      "title": "Yêu cầu dùng công cụ để trả số liệu chỉ nằm trong prompt cũ",
+      "symptom": "Bot có thể trả con số nghe chắc chắn mà chưa đọc nguồn.",
+      "mechanism": "tool_choice:auto; nếu model không phát tool_calls, wrapper nhận choice.content và trả ngay. Không có điều kiện chứng minh một báo cáo số liệu đã được công cụ thực hiện thành công.",
+      "source_layer": "1 System prompt / 6 Tool selection / 7 Tool execution / 8 Tool interpretation",
+      "root_cause": "Prompt đóng vai trò bảo đảm nghiệp vụ nhưng kết quả cuối không được kiểm bằng hợp đồng bằng chứng.",
+      "evidence_refs": [
+        "backend/src/helpers/aiConversation.js:40",
+        "backend/src/helpers/aiConversation.js:619",
+        "backend/src/helpers/aiConversation.js:648"
+      ],
+      "confidence": 0.99,
+      "recommended_fix": "Phân biệt lời chào với yêu cầu dữ liệu; câu trả lời số liệu bắt buộc kèm kết quả công cụ thành công, nguồn/phạm vi/thời điểm. Dùng kết quả báo cáo do server định dạng; chưa có bằng chứng thì trả chưa xác minh.",
+      "reproductions": [
+        "P2_UNGROUNDED_FINAL_ACCEPTED"
+      ],
+      "limitation": "Mô hình giả trả 999 được wrapper chấp nhận; không phải bằng chứng model thật thường xuyên bịa số."
+    },
+    {
+      "id": "AA-04",
+      "severity": "medium",
+      "title": "Cắt chuỗi làm hỏng kết quả công cụ và có thể cắt báo cáo cuối",
+      "symptom": "Mô hình thấy dữ liệu thiếu hoặc JSON không còn hợp lệ; người đọc có thể mất phần cuối báo cáo.",
+      "mechanism": "JSON.stringify(result).slice(0,8000) cắt giữa giá trị; final text.slice(0,1900) cũng cắt mù. Prompt đồng thời yêu cầu in nguyên báo cáo.",
+      "source_layer": "8 Tool interpretation / 9 Answer shaping / 10 Platform rendering",
+      "root_cause": "Giới hạn độ dài được áp dụng trên chuỗi đã tuần tự hóa thay vì cấu trúc dữ liệu hoặc phân trang.",
+      "evidence_refs": [
+        "backend/src/helpers/aiConversation.js:190",
+        "backend/src/helpers/aiConversation.js:651",
+        "backend/src/helpers/aiConversation.js:685"
+      ],
+      "confidence": 0.99,
+      "recommended_fix": "Giảm số hàng trước serialize, giữ JSON hợp lệ với truncated/total/nextCursor; báo cáo dài chia phần hoặc dẫn tới màn chi tiết. Không cắt im lặng con số/bằng chứng.",
+      "reproductions": [
+        "P3_TOOL_JSON_CUT_MID_VALUE"
+      ],
+      "limitation": "Đã xác minh wrapper cắt JSON; chưa kiểm mọi trình hiển thị Messenger/mobile."
+    },
+    {
+      "id": "AA-05",
+      "severity": "medium",
+      "title": "Kết quả công cụ lỗi vẫn làm đổi ngữ cảnh hội thoại",
+      "symptom": "Câu hỏi tiếp nối có thể tự chuyển sang công ty/nhân viên của lần tra cứu thất bại.",
+      "mechanism": "updateSessionFromToolResult nhận args và gán company/user/time dù result.error; vòng tool gọi hàm này trước kiểm trạng thái kết quả, sau đó lưu session vào conversation.",
+      "source_layer": "2 Session history / 5 Active recall / 12 Persistence",
+      "root_cause": "Đồng nhất ý định đề nghị với kết quả đã được xác thực.",
+      "evidence_refs": [
+        "backend/src/helpers/aiChatSessionContext.js:169",
+        "backend/src/helpers/aiConversation.js:667",
+        "backend/src/helpers/aiConversation.js:882"
+      ],
+      "confidence": 0.99,
+      "recommended_fix": "Chỉ cập nhật ngữ cảnh từ result có trạng thái thành công và scope đã được server xác minh; lỗi giữ scope cũ, tách pending intent và confirmed context.",
+      "reproductions": [
+        "P5_FAILED_TOOL_PERSISTS_SCOPE"
+      ],
+      "limitation": "Đã chứng minh ở helper và đường gọi; chưa xác nhận phiên hội thoại thật bị ảnh hưởng."
+    },
+    {
+      "id": "AA-06",
+      "severity": "medium",
+      "title": "Bộ nhớ có thể bỏ mất lời sửa của người dùng trước khi xếp ưu tiên",
+      "symptom": "Bot có thể quên một lời sửa quan trọng dù mã nói luôn ưu tiên correction.",
+      "mechanism": "Query sắp theo confidence và lấy limit+5 trước khi tách correction. Với 12 suy luận confidence=1 và hai correction=.95, một correction đã bị loại khỏi kết quả DB nên không được ưu tiên lại.",
+      "source_layer": "3 Long-term memory / 4 Distillation / 5 Active recall",
+      "root_cause": "Ưu tiên correction chỉ áp dụng sau bước cắt dữ liệu; confidence do GPT đưa ra có thể đạt 1.",
+      "evidence_refs": [
+        "backend/src/helpers/aiUserMemory.js:180",
+        "backend/src/helpers/aiUserMemory.js:199",
+        "backend/src/helpers/aiUserMemory.js:311",
+        "backend/src/helpers/aiUserMemory.js:356",
+        "backend/src/helpers/aiConversation.js:594"
+      ],
+      "confidence": 0.98,
+      "recommended_fix": "Lấy correction có hiệu lực bằng truy vấn riêng trước ngân sách context; dùng khóa chủ đề và supersedes/validUntil; giữ nguồn/thời điểm của suy luận, không biến trí nhớ thành quyền hoặc quyết định Founder.",
+      "reproductions": [
+        "P6_CORRECTION_LOST_BEFORE_PRIORITY_SORT"
+      ],
+      "limitation": "Dữ liệu tổng hợp hợp lệ dùng để chứng minh đường mất correction; chưa đọc bảng memory thật."
+    }
+  ],
+  "ordered_fix_plan": [
+    {
+      "order": 1,
+      "goal": "Khóa phạm vi công cụ cũ theo danh tính server",
+      "why_now": "AA-01 liên quan dữ liệu giữa công ty/người dùng.",
+      "expected_effect": "Đầu vào model không thể mở rộng quyền; test trái công ty/nhân viên bị từ chối trước DB."
+    },
+    {
+      "order": 2,
+      "goal": "Chặn UNKNOWN và tách chờ/duyệt bền vững khỏi graph traversal",
+      "why_now": "AA-02 mâu thuẫn với điều kiện kiến trúc trước khi mở quyền tác động.",
+      "expected_effect": "Lệnh nhạy cảm chỉ chạy khi Domain xác nhận PASS và approval còn hiệu lực."
+    },
+    {
+      "order": 3,
+      "goal": "Bắt buộc bằng chứng khi trả số liệu, giữ kết quả có cấu trúc",
+      "why_now": "AA-03 và AA-04 gây câu trả lời tự tin nhưng thiếu nguồn hoặc mất dữ liệu.",
+      "expected_effect": "Không có tool result hợp lệ thì báo chưa xác minh; kết quả dài vẫn đầy đủ/phân trang."
+    },
+    {
+      "order": 4,
+      "goal": "Chỉ lưu scope đã xác minh và ưu tiên correction trước truy vấn giới hạn",
+      "why_now": "AA-05/06 có thể mang lỗi sang lượt sau.",
+      "expected_effect": "Lỗi không đổi company/user; sửa của người dùng không bị suy luận confidence cao đẩy ra."
+    },
+    {
+      "order": 5,
+      "goal": "Khép đánh giá và cấu hình riêng cho tuyến Marketing mới",
+      "why_now": "64 unit test không thay model thật, lịch CRM và quyền nguồn thực tế.",
+      "expected_effect": "Chạy bộ 18 tình huống đúng model/library/bindings trong gói được phép; UAT và quyết định phát hành vẫn riêng."
+    }
+  ],
+  "layers": [
+    {
+      "number": 1,
+      "layer": "System prompt",
+      "status": "ISSUE",
+      "observation": "AA-03; chatbot nội bộ dùng chỉ dẫn must-tool nhưng wrapper chưa ép. Care mới giới hạn schema/selection bằng mã."
+    },
+    {
+      "number": 2,
+      "layer": "Session history",
+      "status": "ISSUE",
+      "observation": "AA-05; history còn giới hạn số tin, open conversation có expires_at, không kết luận mọi history vô hạn."
+    },
+    {
+      "number": 3,
+      "layer": "Long-term memory",
+      "status": "ISSUE",
+      "observation": "AA-06 trong legacy; chưa thấy kho nhớ dài hạn tự học trong care path đã rà."
+    },
+    {
+      "number": 4,
+      "layer": "Distillation",
+      "status": "ISSUE",
+      "observation": "GPT-derived facts tồn tại; confidence tối đa 1 và admission vào memory, liên quan AA-06. Không chứng minh model tự bịa trong production."
+    },
+    {
+      "number": 5,
+      "layer": "Active recall",
+      "status": "ISSUE",
+      "observation": "Memory/session/skill snapshot ghép vào system prompt; nguồn và ưu tiên cần chặt hơn. Chưa đo chi phí context trùng."
+    },
+    {
+      "number": 6,
+      "layer": "Tool selection",
+      "status": "ISSUE",
+      "observation": "AA-01/03. Care mới chỉ chọn ANSWER/HANDOFF/SURVEY, không chọn công cụ gửi."
+    },
+    {
+      "number": 7,
+      "layer": "Tool execution",
+      "status": "ISSUE",
+      "observation": "AA-01/02. Care mới có principal/grant/company, RPC kiểm lại và Primary-only."
+    },
+    {
+      "number": 8,
+      "layer": "Tool interpretation",
+      "status": "ISSUE",
+      "observation": "AA-03/04/05. Care mới kiểm exact keys, answer ID, quote thật và usage receipt."
+    },
+    {
+      "number": 9,
+      "layer": "Answer shaping",
+      "status": "ISSUE",
+      "observation": "AA-04: cắt final 1.900 ký tự. Care mới lấy nguyên câu đã duyệt từ service."
+    },
+    {
+      "number": 10,
+      "layer": "Platform rendering",
+      "status": "PARTIAL",
+      "observation": "AA-04 được thấy ở wrapper trước vận chuyển; chưa audit mọi UI/mobile/streaming production."
+    },
+    {
+      "number": 11,
+      "layer": "Hidden repair loops",
+      "status": "NO_CONFIRMED_FINDING",
+      "observation": "Care mới không tự gọi lại provider khi mất phản hồi; retry receipt tách riêng, retry advisor có request/reason riêng. Legacy có LLM báo cáo và memory nightly riêng; chưa chứng minh vòng repair im lặng."
+    },
+    {
+      "number": 12,
+      "layer": "Persistence",
+      "status": "ISSUE",
+      "observation": "AA-02/05/06 trên legacy. Care có claim/receipt/replay, revocation checks và UNKNOWN; DB thật chưa đối chiếu."
+    }
+  ],
+  "validation": {
+    "diagnostic_probes": 7,
+    "reproduced_mechanisms": 6,
+    "provider": "synthetic only",
+    "db": "synthetic only",
+    "care_unit_tests": {
+      "pass": 64,
+      "fail": 0,
+      "skip": 0,
+      "node": "24.19.0",
+      "isolation": "none",
+      "files": [
+        "facebookCustomerCare.advisor.test.js",
+        "facebookCustomerCare.inference.test.js",
+        "facebookCustomerCare.runtime.test.js",
+        "careAnswerDispatch.test.js"
+      ]
+    },
+    "independent_review": "Not performed for this audit. Previous PR reviews had narrower scopes.",
+    "live_claims": "No claim that these paths are enabled or have caused a live incident."
+  },
+  "operational_gaps": [
+    "Model selection quality for approved 18 care entries remains untested on a live approved model.",
+    "Admin VPT, survey roster, busy/free CRM completeness, environment/grants/model/cost caps remain unverified.",
+    "Legacy LLM paths use shared OPENAI_API_KEY outside the new care admission ledger; total AI-cost coverage has not been demonstrated."
+  ],
+  "publication": {
+    "state": "LOCAL_WORKING_TREE_REPORT_NOT_PUBLISHED",
+    "runtime_changed": false,
+    "production_changed": false
+  }
+}

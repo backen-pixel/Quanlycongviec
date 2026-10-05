@@ -1,3 +1,19 @@
+## 05/10/2026 — Bản sửa kiểm soát Agent theo thứ tự Founder chốt
+
+Đã triển khai trên nhánh `codex/agent-guardrails-20261005`, base PR22 `679cb926`: khóa công cụ theo danh tính/phạm vi server; chặn UNKNOWN/chờ/duyệt và lỗi nguồn ở cổng cùng caller; dựng câu trả lời từ bằng chứng; sửa ngữ cảnh và ưu tiên correction. [Hồ sơ, phạm vi tương thích, kiểm thử và hoàn tác](agent-guardrails-20261005/README.md). Kiến trúc đích giữ nguyên.
+
+112 kiểm thử tập trung PASS (48 regression mới + 64 Care hiện có), reviewer độc lập PASS trên diff và 48 ca chạy riêng. Một số chức năng legacy được giữ khóa: chỉ 7 tool đọc đã có hợp đồng, DM riêng có kiểm người nhận, action runner chỉ preview báo cáo. Chưa xây durable wait/approval executor; scheduled sender/menu và MCP Ads ngoài chứng nhận này. Đang đóng gói PR nháp; không merge/phát hành, không đổi DB/quyền/tài khoản thật. Production vẫn HOLD, không coi đây là hoàn tất hệ thống Marketing.
+
+---
+
+## 05/10/2026 — Audit kiến trúc Agent: legacy chưa cùng chuẩn kiểm soát
+
+Founder yêu cầu skill ECC agent-architecture-audit. Rà source `679cb926` trên 12 lớp, tập trung Care Runtime mới, chatbot báo cáo nội bộ và điều phối cũ. [Báo cáo, JSON và chẩn đoán](audits/2026-10-05-agent-architecture/README.md) ghi 6 phát hiện (2 critical, 1 high, 3 medium), 7 phép thử dữ liệu giả tái hiện cơ chế và 64 care unit tests PASS. Chưa chứng minh sự cố hoặc cấu hình đang bật trên môi trường thật.
+
+Ưu tiên đề xuất: kiểm quyền server cho mọi tool cũ; chặn UNKNOWN và bổ sung chờ/duyệt bền vững; bắt buộc bằng chứng số liệu; sửa cắt JSON/ngữ cảnh lỗi/bộ nhớ correction. Chưa sửa runtime, mở phase hay đổi baseline. PASS PR19/PR22 bên dưới vẫn đúng phạm vi đã rà, không đồng nghĩa toàn bộ legacy Agent đã đạt. Audit hiện chỉ ở working tree cục bộ, chưa publish. Phát hành vẫn HOLD; các đầu vào CRM/AI/UAT đã ghi vẫn cần khép.
+
+---
+
 ## 05/10/2026 — PR22 đã tích hợp main và bảo toàn tuyến khách hợp lệ
 
 Đã ghép PR19 candidate `f5efde61` (main `ca8810c5`) vào PR22 `10ed7b73`. Giữ các màn Page/bài viết/quảng cáo mới, quyền khách/dự án và chống phản hồi trễ; bốn route mới vẫn tách Deal ước tính khỏi doanh thu/ROAS chưa xác minh. Giữ mục tiêu 250.000đ/khách hợp lệ, chi tiêu đầy đủ, kỳ đo, tư vấn/khảo sát và chức năng Facebook hiện có. [Bằng chứng, phiên bản và giới hạn](vpt-marketing-automation/MAIN_INTEGRATION_20261005.md).

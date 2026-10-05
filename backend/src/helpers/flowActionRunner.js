@@ -5,9 +5,8 @@
  * vào túi dưới khoá node_id của nó, khối sau tham chiếu bằng token {{node_id.ten_truong}}.
  * Nhờ vậy node Nhắn tin gửi được đúng đoạn AI vừa viết, mà không phải nối cứng trong code.
  *
- * Chạy được ở hai chế độ:
- *   dryRun = true  → tính đủ nội dung nhưng KHÔNG gửi (dùng cho nút Chạy thử)
- *   dryRun = false → gửi thật ra nhóm chat / phòng ban / tin riêng / thông báo
+ * Hiện chỉ cho xem trước báo cáo qua tool contract đã kiểm quyền.
+ * Các hành động và luồng chờ/duyệt giữ HOLD tới khi có hợp đồng thực thi bền vững.
  */
 
 const { supabase } = require('../config/supabase');
@@ -93,58 +92,15 @@ async function callOpenAiText({ system, user, maxWords, model, maxTokens: maxTok
 
 // ═══ Khối: Lấy báo cáo ═══
 
-async function runReportNode(node) {
+async function runReportNode(node, userId) {
   const cfg = node.node_config || {};
-  const tools = require('./aiReportTools');
-  const period = cfg.period || 'today';
-  const range = tools.resolveTimeRange(period);
-  const periodLabel = range?.label_vn || period;
-  const type = cfg.report_type || 'company_leads';
-
-  if (type === 'company_leads') {
-    if (!cfg.company_id) throw new Error('Khối Lấy báo cáo chưa chọn công ty.');
-    const args = {
-      company_id: cfg.company_id,
-      time_scope: period,
-      department_id: cfg.department_id || undefined,
-    };
-    const [data, text] = await Promise.all([
-      tools.getCompanyLeadSummary(args),
-      tools.formatCompanyReportText(args),
-    ]);
-    return { data, text: String(text || ''), period: periodLabel };
-  }
-
-  if (type === 'org_overview') {
-    if (!cfg.company_id) throw new Error('Khối Lấy báo cáo chưa chọn công ty.');
-    const result = await tools.executeTool('format_org_overview_report_text', {
-      company_id: cfg.company_id,
-      time_scope: period,
-      department_id: cfg.department_id || undefined,
-    }, {});
-    const text = typeof result === 'string' ? result : (result?.text || '');
-    return { data: result, text, period: periodLabel };
-  }
-
-  if (type === 'deal_risk') {
-    const result = await tools.formatLeadDealRiskText({
-      company_id: cfg.company_id || undefined,
-    });
-    const text = typeof result === 'string' ? result : (result?.text || '');
-    return { data: result, text, period: periodLabel };
-  }
-
-  if (type === 'employee_activity') {
-    if (!cfg.user_id) throw new Error('Khối Lấy báo cáo chưa chọn nhân viên.');
-    const result = await tools.formatEmployeeActivityReportText({
-      user_id: cfg.user_id,
-      time_scope: period,
-    });
-    const text = typeof result === 'string' ? result : (result?.text || '');
-    return { data: result, text, period: periodLabel };
-  }
-
-  throw new Error(`Loại báo cáo chưa hỗ trợ: ${type}`);
+  const name = cfg.report_type === 'company_leads' || !cfg.report_type
+    ? 'format_company_report_text' : 'legacy_report_pending';
+  const result = await require('./aiReportTools').executeTool(name, {
+    company_id: cfg.company_id, time_scope: cfg.period || 'today',
+    ...(cfg.department_id ? { department_id: cfg.department_id } : {}),
+  }, { sender_user_id: userId });
+  return { data: result, text: result.text, period: result.period };
 }
 
 // ═══ Khối: AI viết báo cáo ═══
@@ -752,6 +708,12 @@ async function runFlowActions(flowId, opts = {}) {
   if (!graph) {
     throw new Error('Luồng chưa có dữ liệu đồ thị. Mở Setup luồng và lưu lại một lần.');
   }
+  // This runner has no durable wait/approval executor. Never step across a gate,
+  // including when onlyNodeId is used or when the caller requests a dry run.
+  if (graph.condsByEdge.size || graph.condsByNode.size
+    || graph.nodes.some(n => ['condition', 'wait', 'approve', 'join'].includes(n.node_kind))) {
+    throw new Error('FLOW_GATE_UNVERIFIED: luồng có điều kiện/chờ/duyệt chưa được xác minh bởi bộ thực thi bền vững.');
+  }
 
   const edgesBySource = new Map();
   for (const [src, list] of graph.outEdges.entries()) {
@@ -771,7 +733,12 @@ async function runFlowActions(flowId, opts = {}) {
   const steps = [];
   let failed = 0;
 
-  const missingSubjects = await preloadModuleValues(graph, actionNodes, edgesBySource, subject, bag);
+  // Effects and model-generated actions need a durable, authorized execution contract.
+  if (!dryRun || actionNodes.some(n => n.node_kind !== 'report')) {
+    throw new Error('FLOW_EXECUTION_CONTRACT_PENDING: chỉ mở xem trước báo cáo đã kiểm quyền; hành động chờ hợp đồng thực thi.');
+  }
+  const missingSubjects = [];
+  if (missingSubjects.length) throw new Error('FLOW_SOURCE_MISSING: thiếu dữ liệu đầu vào, chưa thực hiện hành động.');
 
   // Tên bước để AI thấy «Sản xuất — xưởng» thay vì node_id vô nghĩa.
   const { MODULE_LABEL } = require('./flowModuleVariables');
@@ -803,7 +770,7 @@ async function runFlowActions(flowId, opts = {}) {
     const started = Date.now();
     try {
       let outputs;
-      if (node.node_kind === 'report') outputs = await runReportNode(node);
+      if (node.node_kind === 'report') outputs = await runReportNode(node, userId);
       else if (node.node_kind === 'ai_report') outputs = await runAiReportNode(node, bag, upstreamIds, labelById);
       else if (node.node_kind === 'ai_classify') outputs = await runAiClassifyNode(node, bag, upstreamIds, labelById);
       else if (node.node_kind === 'ai_extract') outputs = await runAiExtractNode(node, bag, upstreamIds, labelById);
@@ -856,6 +823,8 @@ async function runFlowActions(flowId, opts = {}) {
         output_summary: {},
         error: err.message,
       });
+      // A failed prerequisite must never produce downstream effects.
+      break;
     }
   }
 

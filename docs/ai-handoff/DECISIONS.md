@@ -1,3 +1,11 @@
+# 2026-10-05 — Thứ tự sửa kiểm soát Agent, giữ nguyên kiến trúc đích
+
+Quyết định `AGENT-GUARDRAILS-ORDER-20261005`. Founder xác nhận: “Thứ tự nên sửa: khóa quyền công cụ → chặn điều kiện chưa rõ/chưa duyệt → bắt buộc bằng chứng số liệu → sửa ngữ cảnh và bộ nhớ. Kiến trúc đích vẫn giữ nguyên.”
+
+Cho phép thực hiện bản sửa và kiểm chứng theo thứ tự audit. Không diễn giải thành phê duyệt DB thật, cấp quyền runtime, phát hành hay một kiến trúc mới. [Hồ sơ thực hiện và giới hạn](agent-guardrails-20261005/README.md). Giữ nguyên các quyết định ngân sách, nội dung, người nhận và nguồn lịch đã ghi dưới đây.
+
+---
+
 # 2026-10-05 — Nguồn lịch khảo sát là CRM
 
 Quyết định `VPT-SURVEY-CALENDAR-CRM-20261005`. Khi được hỏi nơi Admin Vạn Phú Thành quản lý lịch khảo sát, Founder trả lời **“crm”** trong task `01a0f6c3-9ed2-73c1-823e-0ad927431877`.

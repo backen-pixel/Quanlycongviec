@@ -1,0 +1,778 @@
+TAP version 13
+# Subtest: luuTen: late table action refreshes current cards view only
+ok 1 - luuTen: late table action refreshes current cards view only
+  ---
+  duration_ms: 7.3475
+  type: 'test'
+  ...
+# Subtest: luuTenLo: late table action refreshes current cards view only
+ok 2 - luuTenLo: late table action refreshes current cards view only
+  ---
+  duration_ms: 1.9659
+  type: 'test'
+  ...
+# Subtest: chayLaiPhanTich: late table action refreshes current cards view only
+ok 3 - chayLaiPhanTich: late table action refreshes current cards view only
+  ---
+  duration_ms: 1.7467
+  type: 'test'
+  ...
+# Subtest: onXong: late table action refreshes current cards view only
+ok 4 - onXong: late table action refreshes current cards view only
+  ---
+  duration_ms: 1.6233
+  type: 'test'
+  ...
+# Subtest: cards: late success cannot replace newer company
+ok 5 - cards: late success cannot replace newer company
+  ---
+  duration_ms: 1.6678
+  type: 'test'
+  ...
+# Subtest: cards: late failure cannot replace newer company
+ok 6 - cards: late failure cannot replace newer company
+  ---
+  duration_ms: 1.8799
+  type: 'test'
+  ...
+# Subtest: cards: rejected old luuTen does not hide current report
+ok 7 - cards: rejected old luuTen does not hide current report
+  ---
+  duration_ms: 2.2467
+  type: 'test'
+  ...
+# Subtest: cards: rejected old luuTenLo does not hide current report
+ok 8 - cards: rejected old luuTenLo does not hide current report
+  ---
+  duration_ms: 2.4808
+  type: 'test'
+  ...
+# Subtest: cards: rejected old chayLaiPhanTich does not hide current report
+ok 9 - cards: rejected old chayLaiPhanTich does not hide current report
+  ---
+  duration_ms: 1.5085
+  type: 'test'
+  ...
+# Subtest: cards: current error clears snapshot and preserves UNKNOWN
+ok 10 - cards: current error clears snapshot and preserves UNKNOWN
+  ---
+  duration_ms: 1.8695
+  type: 'test'
+  ...
+# Subtest: cards: pending read after unmount cannot write state
+ok 11 - cards: pending read after unmount cannot write state
+  ---
+  duration_ms: 0.9906
+  type: 'test'
+  ...
+# Subtest: luuTen: late table action refreshes current posts view only
+ok 12 - luuTen: late table action refreshes current posts view only
+  ---
+  duration_ms: 2.121
+  type: 'test'
+  ...
+# Subtest: luuTenLo: late table action refreshes current posts view only
+ok 13 - luuTenLo: late table action refreshes current posts view only
+  ---
+  duration_ms: 1.5045
+  type: 'test'
+  ...
+# Subtest: chayLaiPhanTich: late table action refreshes current posts view only
+ok 14 - chayLaiPhanTich: late table action refreshes current posts view only
+  ---
+  duration_ms: 1.4705
+  type: 'test'
+  ...
+# Subtest: onXong: late table action refreshes current posts view only
+ok 15 - onXong: late table action refreshes current posts view only
+  ---
+  duration_ms: 2.138
+  type: 'test'
+  ...
+# Subtest: posts: late success cannot replace newer company
+ok 16 - posts: late success cannot replace newer company
+  ---
+  duration_ms: 1.3389
+  type: 'test'
+  ...
+# Subtest: posts: late failure cannot replace newer company
+ok 17 - posts: late failure cannot replace newer company
+  ---
+  duration_ms: 1.3124
+  type: 'test'
+  ...
+# Subtest: posts: rejected old luuTen does not hide current report
+ok 18 - posts: rejected old luuTen does not hide current report
+  ---
+  duration_ms: 1.5538
+  type: 'test'
+  ...
+# Subtest: posts: rejected old luuTenLo does not hide current report
+ok 19 - posts: rejected old luuTenLo does not hide current report
+  ---
+  duration_ms: 1.7308
+  type: 'test'
+  ...
+# Subtest: posts: rejected old chayLaiPhanTich does not hide current report
+ok 20 - posts: rejected old chayLaiPhanTich does not hide current report
+  ---
+  duration_ms: 1.9095
+  type: 'test'
+  ...
+# Subtest: posts: current error clears snapshot and preserves UNKNOWN
+ok 21 - posts: current error clears snapshot and preserves UNKNOWN
+  ---
+  duration_ms: 1.7734
+  type: 'test'
+  ...
+# Subtest: posts: pending read after unmount cannot write state
+ok 22 - posts: pending read after unmount cannot write state
+  ---
+  duration_ms: 1.6168
+  type: 'test'
+  ...
+# Subtest: luuTen: late table action refreshes current ads view only
+ok 23 - luuTen: late table action refreshes current ads view only
+  ---
+  duration_ms: 1.513
+  type: 'test'
+  ...
+# Subtest: luuTenLo: late table action refreshes current ads view only
+ok 24 - luuTenLo: late table action refreshes current ads view only
+  ---
+  duration_ms: 1.3858
+  type: 'test'
+  ...
+# Subtest: chayLaiPhanTich: late table action refreshes current ads view only
+ok 25 - chayLaiPhanTich: late table action refreshes current ads view only
+  ---
+  duration_ms: 1.33
+  type: 'test'
+  ...
+# Subtest: onXong: late table action refreshes current ads view only
+ok 26 - onXong: late table action refreshes current ads view only
+  ---
+  duration_ms: 1.4002
+  type: 'test'
+  ...
+# Subtest: ads: late success cannot replace newer company
+ok 27 - ads: late success cannot replace newer company
+  ---
+  duration_ms: 1.5102
+  type: 'test'
+  ...
+# Subtest: ads: late failure cannot replace newer company
+ok 28 - ads: late failure cannot replace newer company
+  ---
+  duration_ms: 1.4199
+  type: 'test'
+  ...
+# Subtest: ads: rejected old luuTen does not hide current report
+ok 29 - ads: rejected old luuTen does not hide current report
+  ---
+  duration_ms: 2.2914
+  type: 'test'
+  ...
+# Subtest: ads: rejected old luuTenLo does not hide current report
+ok 30 - ads: rejected old luuTenLo does not hide current report
+  ---
+  duration_ms: 1.397
+  type: 'test'
+  ...
+# Subtest: ads: rejected old chayLaiPhanTich does not hide current report
+ok 31 - ads: rejected old chayLaiPhanTich does not hide current report
+  ---
+  duration_ms: 1.4015
+  type: 'test'
+  ...
+# Subtest: ads: current error clears snapshot and preserves UNKNOWN
+ok 32 - ads: current error clears snapshot and preserves UNKNOWN
+  ---
+  duration_ms: 1.5658
+  type: 'test'
+  ...
+# Subtest: ads: pending read after unmount cannot write state
+ok 33 - ads: pending read after unmount cannot write state
+  ---
+  duration_ms: 1.1395
+  type: 'test'
+  ...
+# Subtest: late luuTen: preserve current company after a filter change
+ok 34 - late luuTen: preserve current company after a filter change
+  ---
+  duration_ms: 2.0778
+  type: 'test'
+  ...
+# Subtest: late luuTen: no report refresh after unmount
+ok 35 - late luuTen: no report refresh after unmount
+  ---
+  duration_ms: 1.279
+  type: 'test'
+  ...
+# Subtest: luuTen: successful completion still refreshes unchanged scope
+ok 36 - luuTen: successful completion still refreshes unchanged scope
+  ---
+  duration_ms: 6.3384
+  type: 'test'
+  ...
+# Subtest: late luuTenLo: preserve current company after a filter change
+ok 37 - late luuTenLo: preserve current company after a filter change
+  ---
+  duration_ms: 1.6525
+  type: 'test'
+  ...
+# Subtest: late luuTenLo: no report refresh after unmount
+ok 38 - late luuTenLo: no report refresh after unmount
+  ---
+  duration_ms: 0.7794
+  type: 'test'
+  ...
+# Subtest: luuTenLo: successful completion still refreshes unchanged scope
+ok 39 - luuTenLo: successful completion still refreshes unchanged scope
+  ---
+  duration_ms: 0.9424
+  type: 'test'
+  ...
+# Subtest: late chayLaiPhanTich: preserve current company after a filter change
+ok 40 - late chayLaiPhanTich: preserve current company after a filter change
+  ---
+  duration_ms: 1.5615
+  type: 'test'
+  ...
+# Subtest: late chayLaiPhanTich: no report refresh after unmount
+ok 41 - late chayLaiPhanTich: no report refresh after unmount
+  ---
+  duration_ms: 0.7753
+  type: 'test'
+  ...
+# Subtest: chayLaiPhanTich: successful completion still refreshes unchanged scope
+ok 42 - chayLaiPhanTich: successful completion still refreshes unchanged scope
+  ---
+  duration_ms: 0.8027
+  type: 'test'
+  ...
+# Subtest: late onXong: preserve current company after a filter change
+ok 43 - late onXong: preserve current company after a filter change
+  ---
+  duration_ms: 1.4899
+  type: 'test'
+  ...
+# Subtest: late onXong: no report refresh after unmount
+ok 44 - late onXong: no report refresh after unmount
+  ---
+  duration_ms: 0.9178
+  type: 'test'
+  ...
+# Subtest: onXong: successful completion still refreshes unchanged scope
+ok 45 - onXong: successful completion still refreshes unchanged scope
+  ---
+  duration_ms: 0.8613
+  type: 'test'
+  ...
+# Subtest: cached financial ranking loses its stale priority before insight sorting
+ok 46 - cached financial ranking loses its stale priority before insight sorting
+  ---
+  duration_ms: 10.993
+  type: 'test'
+  ...
+# Subtest: /summary: unique Lead, Deal and order value despite duplicate attribution
+ok 47 - /summary: unique Lead, Deal and order value despite duplicate attribution
+  ---
+  duration_ms: 6.9897
+  type: 'test'
+  ...
+# Subtest: /summary: CRM error is unavailable, never a successful zero
+ok 48 - /summary: CRM error is unavailable, never a successful zero
+  ---
+  duration_ms: 5.6525
+  type: 'test'
+  ...
+# Subtest: /summary: CRM reject is unavailable, never a successful zero
+ok 49 - /summary: CRM reject is unavailable, never a successful zero
+  ---
+  duration_ms: 6.3113
+  type: 'test'
+  ...
+# Subtest: /summary: CRM invalid is unavailable, never a successful zero
+ok 50 - /summary: CRM invalid is unavailable, never a successful zero
+  ---
+  duration_ms: 5.8107
+  type: 'test'
+  ...
+# Subtest: /summary: no authorized leads remains an actual empty result
+ok 51 - /summary: no authorized leads remains an actual empty result
+  ---
+  duration_ms: 5.0203
+  type: 'test'
+  ...
+# Subtest: /summary: truly empty attribution is not a CRM error
+ok 52 - /summary: truly empty attribution is not a CRM error
+  ---
+  duration_ms: 4.9157
+  type: 'test'
+  ...
+# Subtest: /ads: unique Lead, Deal and order value despite duplicate attribution
+ok 53 - /ads: unique Lead, Deal and order value despite duplicate attribution
+  ---
+  duration_ms: 6.3347
+  type: 'test'
+  ...
+# Subtest: /ads: CRM error is unavailable, never a successful zero
+ok 54 - /ads: CRM error is unavailable, never a successful zero
+  ---
+  duration_ms: 5.9917
+  type: 'test'
+  ...
+# Subtest: /ads: CRM reject is unavailable, never a successful zero
+ok 55 - /ads: CRM reject is unavailable, never a successful zero
+  ---
+  duration_ms: 5.3038
+  type: 'test'
+  ...
+# Subtest: /ads: CRM invalid is unavailable, never a successful zero
+ok 56 - /ads: CRM invalid is unavailable, never a successful zero
+  ---
+  duration_ms: 4.8867
+  type: 'test'
+  ...
+# Subtest: /ads: no authorized leads remains an actual empty result
+ok 57 - /ads: no authorized leads remains an actual empty result
+  ---
+  duration_ms: 4.9882
+  type: 'test'
+  ...
+# Subtest: /ads: truly empty attribution is not a CRM error
+ok 58 - /ads: truly empty attribution is not a CRM error
+  ---
+  duration_ms: 5.7752
+  type: 'test'
+  ...
+# Subtest: /campaigns: unique Lead, Deal and order value despite duplicate attribution
+ok 59 - /campaigns: unique Lead, Deal and order value despite duplicate attribution
+  ---
+  duration_ms: 5.5168
+  type: 'test'
+  ...
+# Subtest: /campaigns: CRM error is unavailable, never a successful zero
+ok 60 - /campaigns: CRM error is unavailable, never a successful zero
+  ---
+  duration_ms: 4.5557
+  type: 'test'
+  ...
+# Subtest: /campaigns: CRM reject is unavailable, never a successful zero
+ok 61 - /campaigns: CRM reject is unavailable, never a successful zero
+  ---
+  duration_ms: 5.6388
+  type: 'test'
+  ...
+# Subtest: /campaigns: CRM invalid is unavailable, never a successful zero
+ok 62 - /campaigns: CRM invalid is unavailable, never a successful zero
+  ---
+  duration_ms: 4.6089
+  type: 'test'
+  ...
+# Subtest: /campaigns: no authorized leads remains an actual empty result
+ok 63 - /campaigns: no authorized leads remains an actual empty result
+  ---
+  duration_ms: 4.3515
+  type: 'test'
+  ...
+# Subtest: /campaigns: truly empty attribution is not a CRM error
+ok 64 - /campaigns: truly empty attribution is not a CRM error
+  ---
+  duration_ms: 4.1729
+  type: 'test'
+  ...
+# Subtest: /pages: unique Lead, Deal and order value despite duplicate attribution
+ok 65 - /pages: unique Lead, Deal and order value despite duplicate attribution
+  ---
+  duration_ms: 4.6299
+  type: 'test'
+  ...
+# Subtest: /pages: CRM error is unavailable, never a successful zero
+ok 66 - /pages: CRM error is unavailable, never a successful zero
+  ---
+  duration_ms: 4.3212
+  type: 'test'
+  ...
+# Subtest: /pages: CRM reject is unavailable, never a successful zero
+ok 67 - /pages: CRM reject is unavailable, never a successful zero
+  ---
+  duration_ms: 4.3671
+  type: 'test'
+  ...
+# Subtest: /pages: CRM invalid is unavailable, never a successful zero
+ok 68 - /pages: CRM invalid is unavailable, never a successful zero
+  ---
+  duration_ms: 5.4145
+  type: 'test'
+  ...
+# Subtest: /pages: no authorized leads remains an actual empty result
+ok 69 - /pages: no authorized leads remains an actual empty result
+  ---
+  duration_ms: 4.503
+  type: 'test'
+  ...
+# Subtest: /pages: truly empty attribution is not a CRM error
+ok 70 - /pages: truly empty attribution is not a CRM error
+  ---
+  duration_ms: 4.0924
+  type: 'test'
+  ...
+# Subtest: summary: organic then two ads still one total and one paid Lead
+ok 71 - summary: organic then two ads still one total and one paid Lead
+  ---
+  duration_ms: 4.7583
+  type: 'test'
+  ...
+# Subtest: pages: paid unique count is independent of organic record ordering
+ok 72 - pages: paid unique count is independent of organic record ordering
+  ---
+  duration_ms: 5.2558
+  type: 'test'
+  ...
+# Subtest: campaigns: same label cannot merge different campaign IDs
+ok 73 - campaigns: same label cannot merge different campaign IDs
+  ---
+  duration_ms: 4.484
+  type: 'test'
+  ...
+# Subtest: campaigns: attribution ID is used before a manual name fallback
+ok 74 - campaigns: attribution ID is used before a manual name fallback
+  ---
+  duration_ms: 4.8298
+  type: 'test'
+  ...
+# Subtest: campaigns: legacy manual grouping remains available without IDs
+ok 75 - campaigns: legacy manual grouping remains available without IDs
+  ---
+  duration_ms: 7.2031
+  type: 'test'
+  ...
+# Subtest: different real leads are not collapsed; company filtering remains intact
+ok 76 - different real leads are not collapsed; company filtering remains intact
+  ---
+  duration_ms: 4.1336
+  type: 'test'
+  ...
+# Subtest: UI: a failed read clears earlier figures instead of presenting them as current
+ok 77 - UI: a failed read clears earlier figures instead of presenting them as current
+  ---
+  duration_ms: 0.8108
+  type: 'test'
+  ...
+# Subtest: /pages-profile: new view counts duplicate touchpoints once
+ok 78 - /pages-profile: new view counts duplicate touchpoints once
+  ---
+  duration_ms: 5.1303
+  type: 'test'
+  ...
+# Subtest: /pages-profile: no Lead details outside company scope
+ok 79 - /pages-profile: no Lead details outside company scope
+  ---
+  duration_ms: 4.2031
+  type: 'test'
+  ...
+# Subtest: /pages-profile: second CRM batch error fails entire report safely
+ok 80 - /pages-profile: second CRM batch error fails entire report safely
+  ---
+  duration_ms: 5.1792
+  type: 'test'
+  ...
+# Subtest: /pages-profile: second CRM batch invalid fails entire report safely
+ok 81 - /pages-profile: second CRM batch invalid fails entire report safely
+  ---
+  duration_ms: 4.8998
+  type: 'test'
+  ...
+# Subtest: /pages-profile: second CRM batch reject fails entire report safely
+ok 82 - /pages-profile: second CRM batch reject fails entire report safely
+  ---
+  duration_ms: 4.8936
+  type: 'test'
+  ...
+# Subtest: /pages-profile: batched read includes every Lead
+ok 83 - /pages-profile: batched read includes every Lead
+  ---
+  duration_ms: 7.0749
+  type: 'test'
+  ...
+# Subtest: /page-ads: new view counts duplicate touchpoints once
+ok 84 - /page-ads: new view counts duplicate touchpoints once
+  ---
+  duration_ms: 4.527
+  type: 'test'
+  ...
+# Subtest: /page-ads: no Lead details outside company scope
+ok 85 - /page-ads: no Lead details outside company scope
+  ---
+  duration_ms: 4.1804
+  type: 'test'
+  ...
+# Subtest: /page-ads: second CRM batch error fails entire report safely
+ok 86 - /page-ads: second CRM batch error fails entire report safely
+  ---
+  duration_ms: 6.0336
+  type: 'test'
+  ...
+# Subtest: /page-ads: second CRM batch invalid fails entire report safely
+ok 87 - /page-ads: second CRM batch invalid fails entire report safely
+  ---
+  duration_ms: 5.9092
+  type: 'test'
+  ...
+# Subtest: /page-ads: second CRM batch reject fails entire report safely
+ok 88 - /page-ads: second CRM batch reject fails entire report safely
+  ---
+  duration_ms: 5.2036
+  type: 'test'
+  ...
+# Subtest: /page-ads: batched read includes every Lead
+ok 89 - /page-ads: batched read includes every Lead
+  ---
+  duration_ms: 6.8516
+  type: 'test'
+  ...
+# Subtest: /page-posts: new view counts duplicate touchpoints once
+ok 90 - /page-posts: new view counts duplicate touchpoints once
+  ---
+  duration_ms: 4.5378
+  type: 'test'
+  ...
+# Subtest: /page-posts: no Lead details outside company scope
+ok 91 - /page-posts: no Lead details outside company scope
+  ---
+  duration_ms: 4.3439
+  type: 'test'
+  ...
+# Subtest: /page-posts: second CRM batch error fails entire report safely
+ok 92 - /page-posts: second CRM batch error fails entire report safely
+  ---
+  duration_ms: 5.5296
+  type: 'test'
+  ...
+# Subtest: /page-posts: second CRM batch invalid fails entire report safely
+ok 93 - /page-posts: second CRM batch invalid fails entire report safely
+  ---
+  duration_ms: 5.0574
+  type: 'test'
+  ...
+# Subtest: /page-posts: second CRM batch reject fails entire report safely
+ok 94 - /page-posts: second CRM batch reject fails entire report safely
+  ---
+  duration_ms: 6.9208
+  type: 'test'
+  ...
+# Subtest: /page-posts: batched read includes every Lead
+ok 95 - /page-posts: batched read includes every Lead
+  ---
+  duration_ms: 7.3265
+  type: 'test'
+  ...
+# Subtest: /post-leads: new view counts duplicate touchpoints once
+ok 96 - /post-leads: new view counts duplicate touchpoints once
+  ---
+  duration_ms: 5.0456
+  type: 'test'
+  ...
+# Subtest: /post-leads: no Lead details outside company scope
+ok 97 - /post-leads: no Lead details outside company scope
+  ---
+  duration_ms: 4.3478
+  type: 'test'
+  ...
+# Subtest: /post-leads: second CRM batch error fails entire report safely
+ok 98 - /post-leads: second CRM batch error fails entire report safely
+  ---
+  duration_ms: 5.4674
+  type: 'test'
+  ...
+# Subtest: /post-leads: second CRM batch invalid fails entire report safely
+ok 99 - /post-leads: second CRM batch invalid fails entire report safely
+  ---
+  duration_ms: 8.1362
+  type: 'test'
+  ...
+# Subtest: /post-leads: second CRM batch reject fails entire report safely
+ok 100 - /post-leads: second CRM batch reject fails entire report safely
+  ---
+  duration_ms: 5.815
+  type: 'test'
+  ...
+# Subtest: /post-leads: batched read includes every Lead
+ok 101 - /post-leads: batched read includes every Lead
+  ---
+  duration_ms: 14.841
+  type: 'test'
+  ...
+# Subtest: post-leads: second detail read with invalid data is UNKNOWN
+ok 102 - post-leads: second detail read with invalid data is UNKNOWN
+  ---
+  duration_ms: 4.3747
+  type: 'test'
+  ...
+# Subtest: filter labels: count unique canonical Leads per Page and company
+ok 103 - filter labels: count unique canonical Leads per Page and company
+  ---
+  duration_ms: 4.3082
+  type: 'test'
+  ...
+# Subtest: filter labels: unavailable CRM count is null, not zero
+ok 104 - filter labels: unavailable CRM count is null, not zero
+  ---
+  duration_ms: 4.4378
+  type: 'test'
+  ...
+# Subtest: post-leads: canonical project gate hides foreign shared-customer project
+ok 105 - post-leads: canonical project gate hides foreign shared-customer project
+  ---
+  duration_ms: 5.4774
+  type: 'test'
+  ...
+# Subtest: post-leads: canonical project gate hides foreign direct project
+ok 106 - post-leads: canonical project gate hides foreign direct project
+  ---
+  duration_ms: 4.2729
+  type: 'test'
+  ...
+# Subtest: post-leads: project permission read failure is unavailable, not allowed
+ok 107 - post-leads: project permission read failure is unavailable, not allowed
+  ---
+  duration_ms: 4.3477
+  type: 'test'
+  ...
+# Subtest: sales_admin: company admin cannot request another company inside the same tenant
+ok 108 - sales_admin: company admin cannot request another company inside the same tenant
+  ---
+  duration_ms: 4.731
+  type: 'test'
+  ...
+# Subtest: admin: company admin cannot request another company inside the same tenant
+ok 109 - admin: company admin cannot request another company inside the same tenant
+  ---
+  duration_ms: 4.4283
+  type: 'test'
+  ...
+# Subtest: crm_production_admin: company admin cannot request another company inside the same tenant
+ok 110 - crm_production_admin: company admin cannot request another company inside the same tenant
+  ---
+  duration_ms: 6.2085
+  type: 'test'
+  ...
+# Subtest: region_admin: company admin cannot request another company inside the same tenant
+ok 111 - region_admin: company admin cannot request another company inside the same tenant
+  ---
+  duration_ms: 4.1885
+  type: 'test'
+  ...
+# Subtest: sales_admin without company has no report scope
+ok 112 - sales_admin without company has no report scope
+  ---
+  duration_ms: 4.8694
+  type: 'test'
+  ...
+# Subtest: ecosystem admin retains access across companies inside its tenant
+ok 113 - ecosystem admin retains access across companies inside its tenant
+  ---
+  duration_ms: 5.3182
+  type: 'test'
+  ...
+# Subtest: post-leads: sales owner=other region=A allowed=false
+ok 114 - post-leads: sales owner=other region=A allowed=false
+  ---
+  duration_ms: 6.3012
+  type: 'test'
+  ...
+# Subtest: post-leads: sales owner=viewer region=A allowed=true
+ok 115 - post-leads: sales owner=viewer region=A allowed=true
+  ---
+  duration_ms: 4.4337
+  type: 'test'
+  ...
+# Subtest: post-leads: sales_admin owner=other region=B allowed=true
+ok 116 - post-leads: sales_admin owner=other region=B allowed=true
+  ---
+  duration_ms: 4.1138
+  type: 'test'
+  ...
+# Subtest: post-leads: region_admin owner=other region=B allowed=false
+ok 117 - post-leads: region_admin owner=other region=B allowed=false
+  ---
+  duration_ms: 4.7738
+  type: 'test'
+  ...
+# Subtest: post-leads: region_admin owner=other region=A allowed=true
+ok 118 - post-leads: region_admin owner=other region=A allowed=true
+  ---
+  duration_ms: 4.8095
+  type: 'test'
+  ...
+# Subtest: UI async: clear previous figures as a new filter starts
+ok 119 - UI async: clear previous figures as a new filter starts
+  ---
+  duration_ms: 4.9827
+  type: 'test'
+  ...
+# Subtest: UI async: publish summary only together with successful detail
+ok 120 - UI async: publish summary only together with successful detail
+  ---
+  duration_ms: 1.3922
+  type: 'test'
+  ...
+# Subtest: UI async: older detail cannot overwrite newer company data
+ok 121 - UI async: older detail cannot overwrite newer company data
+  ---
+  duration_ms: 2.8299
+  type: 'test'
+  ...
+# Subtest: UI async: older summary cannot start or commit obsolete detail
+ok 122 - UI async: older summary cannot start or commit obsolete detail
+  ---
+  duration_ms: 1.7842
+  type: 'test'
+  ...
+# Subtest: UI async: older failure cannot erase newer successful data
+ok 123 - UI async: older failure cannot erase newer successful data
+  ---
+  duration_ms: 1.6355
+  type: 'test'
+  ...
+# Subtest: UI async: older completion cannot end newer loading indicator
+ok 124 - UI async: older completion cannot end newer loading indicator
+  ---
+  duration_ms: 1.7912
+  type: 'test'
+  ...
+# Subtest: UI async: current detail failure clears all figures and marks an error
+ok 125 - UI async: current detail failure clears all figures and marks an error
+  ---
+  duration_ms: 1.1356
+  type: 'test'
+  ...
+# Subtest: UI row identity: different campaign IDs with same label have different keys
+ok 126 - UI row identity: different campaign IDs with same label have different keys
+  ---
+  duration_ms: 1.1269
+  type: 'test'
+  ...
+# Subtest: UI row identity: unnamed campaign fallback is stable when row order changes
+ok 127 - UI row identity: unnamed campaign fallback is stable when row order changes
+  ---
+  duration_ms: 1.6632
+  type: 'test'
+  ...
+# Subtest: UI row identity: campaign ID wins over label changes
+ok 128 - UI row identity: campaign ID wins over label changes
+  ---
+  duration_ms: 1.0258
+  type: 'test'
+  ...
+1..128
+# tests 128
+# suites 0
+# pass 128
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 493.2706

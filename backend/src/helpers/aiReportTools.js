@@ -355,7 +355,7 @@ async function listCompaniesInScope({ schedule_id: scheduleId, company_whitelist
   }
 
   const { data, error } = await q;
-  if (error) throw new Error(error.message);
+  if (error) throw new Error('SOURCE_UNAVAILABLE: nguồn dữ liệu chưa khả dụng.');
 
   let companies = data || [];
 
@@ -401,15 +401,16 @@ const EMPLOYEE_LEAD_SELECT = `
 async function fetchLeadsCreatedInRange(companyId, fromIso, toIso, assigneeIds = null) {
   let q = supabase
     .from('crm_leads')
-    .select(LEAD_SELECT)
+    .select(LEAD_SELECT, { count: 'exact' })
     .eq('company_id', companyId)
     .gte('created_at', fromIso)
     .lte('created_at', toIso)
     .order('created_at', { ascending: false })
     .limit(2000);
   if (Array.isArray(assigneeIds) && assigneeIds.length) q = q.in('assigned_to', assigneeIds);
-  const { data, error } = await q;
-  if (error) throw new Error(error.message);
+  const { data, error, count } = await q;
+  if (error) throw new Error('SOURCE_UNAVAILABLE: nguồn dữ liệu chưa khả dụng.');
+  if (count == null || count !== (data || []).length) throw new Error('SOURCE_INCOMPLETE: chưa lấy đủ dữ liệu để tính tổng.');
   return data || [];
 }
 
@@ -419,14 +420,15 @@ async function fetchLeadsClosedInRange(companyId, fromIso, toIso, assigneeIds = 
   const toYmd = vnDateYmd(new Date(toIso));
   let q = supabase
     .from('crm_leads')
-    .select(LEAD_SELECT)
+    .select(LEAD_SELECT, { count: 'exact' })
     .eq('company_id', companyId)
     .gte('actual_close_date', fromYmd)
     .lte('actual_close_date', toYmd)
     .limit(2000);
   if (Array.isArray(assigneeIds) && assigneeIds.length) q = q.in('assigned_to', assigneeIds);
-  const { data, error } = await q;
-  if (error) throw new Error(error.message);
+  const { data, error, count } = await q;
+  if (error) throw new Error('SOURCE_UNAVAILABLE: nguồn dữ liệu chưa khả dụng.');
+  if (count == null || count !== (data || []).length) throw new Error('SOURCE_INCOMPLETE: chưa lấy đủ dữ liệu để tính tổng.');
   return data || [];
 }
 
@@ -438,15 +440,16 @@ async function countOpenLeads(companyId, assigneeIds = null) {
     .eq('company_id', companyId)
     .is('actual_close_date', null);
   if (Array.isArray(assigneeIds) && assigneeIds.length) q = q.in('assigned_to', assigneeIds);
-  const { count } = await q;
-  return count || 0;
+  const { count, error } = await q;
+  if (error || count == null) throw new Error('SOURCE_UNAVAILABLE: chưa xác minh số hồ sơ đang mở.');
+  return count;
 }
 
 /** Lead đang mở mà OVERDUE (expected_close_date < today). Dùng cho getOverdueBreakdown. */
 async function fetchOpenOverdueLeads(companyId, todayYmd, assigneeIds = null) {
   let q = supabase
     .from('crm_leads')
-    .select(LEAD_SELECT)
+    .select(LEAD_SELECT, { count: 'exact' })
     .eq('company_id', companyId)
     .is('actual_close_date', null)
     .not('expected_close_date', 'is', null)
@@ -454,8 +457,9 @@ async function fetchOpenOverdueLeads(companyId, todayYmd, assigneeIds = null) {
     .order('expected_close_date', { ascending: true })
     .limit(500);
   if (Array.isArray(assigneeIds) && assigneeIds.length) q = q.in('assigned_to', assigneeIds);
-  const { data, error } = await q;
-  if (error) throw new Error(error.message);
+  const { data, error, count } = await q;
+  if (error) throw new Error('SOURCE_UNAVAILABLE: nguồn dữ liệu chưa khả dụng.');
+  if (count == null || count !== (data || []).length) throw new Error('SOURCE_INCOMPLETE: chưa lấy đủ dữ liệu để tính tổng.');
   return data || [];
 }
 
@@ -478,7 +482,7 @@ async function fetchStageHistoryForCompanyInRange(companyId, fromIso, toIso, ass
     .from('crm_lead_stage_history')
     .select(
       'id, lead_id, pipeline_type, from_canonical_slug, to_canonical_slug, entered_at, '
-      + 'lead:crm_leads!inner(company_id, assigned_to)'
+      + 'lead:crm_leads!inner(company_id, assigned_to)', { count: 'exact' }
     )
     .eq('lead.company_id', companyId)
     .gte('entered_at', fromIso)
@@ -487,8 +491,8 @@ async function fetchStageHistoryForCompanyInRange(companyId, fromIso, toIso, ass
   if (Array.isArray(assigneeIds) && assigneeIds.length) {
     q = q.in('lead.assigned_to', assigneeIds);
   }
-  const { data, error } = await q;
-  if (error) return [];
+  const { data, error, count } = await q;
+  if (error || count == null || count !== (data || []).length) throw new Error('SOURCE_INCOMPLETE: chưa xác minh đủ lịch sử chuyển giai đoạn.');
   return data || [];
 }
 
@@ -515,12 +519,13 @@ async function getCompanyLeadSummary({ company_id: companyId, time_scope: timeSc
   const range = resolveTimeRange(scope || 'today', offset);
   const { from_iso: fromIso, to_iso: toIso, label_vn: labelVn } = range;
 
-  const { data: company } = await supabase
+  const { data: company, error: companyError } = await supabase
     .from('companies')
     .select('id, name, short_name')
     .eq('id', companyId)
     .maybeSingle();
 
+  if (companyError || !company) throw new Error('SOURCE_UNAVAILABLE: chưa xác minh công ty báo cáo.');
   const assigneeIds = await resolveAssigneeIds({ schedule_id: scheduleId, personal_recipient_user_id: personalUid, user_filter_ids: userFilterIds });
 
   // Tách 3 query để tránh limit 1000 của PostgREST
@@ -750,7 +755,7 @@ async function getEmployeeLeadsDrill({
   if (include_open_holdings) {
     let openQ = supabase
       .from('crm_leads')
-      .select(LEAD_SELECT)
+      .select(LEAD_SELECT, { count: 'exact' })
       .eq('company_id', companyId)
       .is('actual_close_date', null)
       .order('estimated_value', { ascending: false, nullsFirst: false })
@@ -3600,162 +3605,69 @@ const OPENAI_TOOL_DEFINITIONS = [
   },
 ];
 
-async function executeTool(name, args, ctx = {}) {
-  const { applySessionToToolArgs } = require('./aiChatSessionContext');
-  const sessionArgs = applySessionToToolArgs(args, ctx.session_context);
-  const merged = {
-    ...sessionArgs,
-    schedule_id: sessionArgs.schedule_id || ctx.schedule_id,
-    personal_recipient_user_id: sessionArgs.personal_recipient_user_id || ctx.personal_recipient_user_id || null,
-  };
-  if (ctx.session_context?.last_request && !merged.request_label) {
-    merged.request_label = ctx.session_context.last_request;
-  }
+/** All model/MCP dispatch must enter here; legacy direct helpers are not contracts. */
+async function executeTool(name, input = {}, ctx = {}) {
+  const { authorizeTool, scopeFingerprint, revalidateEvidence } = require('./aiToolAuthorization');
+  const authorization = await authorizeTool(name, input, ctx);
+  const { actor, company, args, assignees, companyWide } = authorization;
+  let result;
   switch (name) {
     case 'list_companies_in_scope':
-      return listCompaniesInScope(merged);
-    case 'find_users_by_name':
-      return findUsersByName(merged);
+      result = [{ id: company.id, name: company.name, short_name: company.short_name }];
+      break;
     case 'resolve_assignee_scope':
-      return resolveAssigneeIds(merged).then((ids) => ({
-        assignee_ids: ids,
-        is_limited: !!ids,
-        total: ids?.length || 0,
-      }));
-    case 'get_company_lead_summary':
-      return getCompanyLeadSummary(merged);
-    case 'get_employee_breakdown':
-      return getEmployeeBreakdown(merged);
-    case 'get_employee_leads_drill':
-      return getEmployeeLeadsDrill(merged);
-    case 'format_company_report_text': {
-      const text = await formatCompanyReportText(merged);
-      return { text, company_id: merged.company_id };
-    }
-    case 'format_org_overview_report_text': {
-      const { formatOrgOverviewReportText } = require('./orgOverviewReportAi');
-      return formatOrgOverviewReportText({
-        ...merged,
-        company_id: merged.company_id || ctx.last_company_id || undefined,
-        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
-      });
-    }
-    case 'format_org_employee_tab_report_text': {
-      const { formatOrgEmployeeTabReportText } = require('./orgOverviewReportAi');
-      return formatOrgEmployeeTabReportText({
-        ...merged,
-        company_id: merged.company_id || ctx.last_company_id || undefined,
-        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
-      });
-    }
-    case 'get_org_overview_report': {
-      const { getOrgOverviewReport } = require('./orgOverviewReportAi');
-      return getOrgOverviewReport({
-        ...merged,
-        company_id: merged.company_id || ctx.last_company_id || undefined,
-        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
-      });
-    }
-    case 'list_departments_in_company':
-      return listDepartmentsInCompany(args);
-    case 'get_overdue_breakdown':
-      return getOverdueBreakdown(merged);
+      result = { assignee_ids: assignees, is_limited: !!assignees, total: assignees?.length || 0 };
+      break;
     case 'resolve_time_range':
-      return resolveTimeRange(args.scope || 'today', args.days_offset ?? ctx.days_offset ?? 0);
-    case 'get_user_activity_history':
-      return getUserActivityHistory({
-        ...args,
-        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
-      });
-    case 'summarize_user_activity':
-      return summarizeUserActivity({
-        ...args,
-        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
-      });
-    case 'get_auth_events_history':
-      return getAuthEventsHistory({
-        ...args,
-        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
-      });
-    case 'summarize_auth_sessions':
-      return summarizeAuthSessions({
-        ...args,
-        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
-      });
-    case 'get_user_learned_facts': {
-      const { getUserLearnedFacts } = require('./aiUserMemory');
-      return getUserLearnedFacts(args.user_id || ctx.sender_user_id || ctx.personal_recipient_user_id);
+      result = resolveTimeRange(args.scope || args.time_scope || 'today', args.days_offset ?? 0);
+      break;
+    case 'find_users_by_name': {
+      const term = String(args.name || '').trim().replace(/[%_*]/g, '');
+      if (!term) { result = { matches: [] }; break; }
+      let query = supabase.from('users').select('id, full_name, company_id')
+        .eq('company_id', company.id).eq('tenant_id', actor.tenant_id).eq('is_active', true)
+        .ilike('full_name', '%' + term + '%').limit(20);
+      if (!companyWide) query = query.eq('id', actor.id);
+      const { data, error } = await query;
+      if (error) throw new Error('Nguồn danh sách người dùng không khả dụng.');
+      result = { matches: data || [] };
+      break;
     }
-    case 'get_online_users':
-      return getOnlineUsers(args);
-    case 'get_channel_work_context':
-      return getChannelWorkContext({
-        ...args,
-        ctx_channel_type: ctx.channel_kind,
-        ctx_channel_id: ctx.channel_id,
-      });
-    case 'get_channel_kpi_summary':
-      return getChannelKpiSummary({
-        ...args,
-        ctx_channel_type: ctx.channel_kind,
-        ctx_channel_id: ctx.channel_id,
-      });
-    case 'get_channel_members':
-      return getChannelMembers({
-        ...args,
-        ctx_channel_type: ctx.channel_kind,
-        ctx_channel_id: ctx.channel_id,
-      });
-    case 'list_pipelines_for_company':
-      return listPipelinesForCompany(merged);
-    case 'get_pipeline_breakdown':
-      return getPipelineBreakdown(merged);
-    case 'get_lead_deal_risk_report':
-      return getLeadDealRiskReport(merged);
-    case 'format_lead_deal_risk_text': {
-      const text = await formatLeadDealRiskText(merged);
-      return { text, company_id: merged.company_id || null };
+    case 'get_user_learned_facts':
+      result = await require('./aiUserMemory').getUserLearnedFacts(actor.id);
+      break;
+    case 'get_company_lead_summary':
+    case 'format_company_report_text': {
+      const summary = await getCompanyLeadSummary(args);
+      result = name === 'get_company_lead_summary' ? summary : {
+        ...summary,
+        text: [
+          summary.company_name + ' — ' + summary.period,
+          assignees ? 'Phạm vi: hồ sơ của người phụ trách được phép (' + assignees.join(', ') + ').' : 'Phạm vi: toàn công ty.',
+          'Khách mới: ' + summary.new_leads,
+          'Đang mở: ' + summary.open,
+          'Đã thắng: ' + summary.won + '; đã mất: ' + summary.lost,
+          'Giá trị ước tính các hồ sơ thắng: ' + summary.total_value_won_full + ' đồng.',
+          'Chưa phải doanh thu kế toán hoặc số khách quảng cáo hợp lệ đã đối soát.',
+        ].join('\n'),
+      };
+      break;
     }
-    case 'get_user_profile_card':
-      return getUserProfileCard({
-        ...args,
-        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
-      });
-    case 'get_employee_activity_report':
-      return getEmployeeActivityReport({
-        ...merged,
-        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
-      });
-    case 'format_employee_activity_report_text':
-      return formatEmployeeActivityReportText({
-        ...merged,
-        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
-      });
-    case 'format_all_employees_report_text': {
-      const { formatAllEmployeesReportText } = require('./orgOverviewReportAi');
-      return formatAllEmployeesReportText({
-        ...merged,
-        company_id: merged.company_id || ctx.last_company_id || undefined,
-        ctx_user_id: ctx.sender_user_id || ctx.personal_recipient_user_id || null,
-      });
-    }
-    case 'list_employees_in_scope':
-      return listEmployeesInScope(args);
-    case 'manage_ai_bot_schedule': {
-      const { manageAiBotSchedule } = require('./aiBotSkills');
-      return manageAiBotSchedule({ ...args, channel_id: args.channel_id || ctx.channel_id }, { ...ctx, io: ctx.io });
-    }
-    case 'manage_bot_skills': {
-      const { manageBotSkills } = require('./aiBotSkills');
-      return manageBotSkills(args, ctx);
-    }
-    case 'manage_skill_proposals': {
-      const { manageSkillProposals } = require('./aiBotSkillWorkshop');
-      return manageSkillProposals(args, ctx);
-    }
-    default:
-      return { error: `Unknown tool: ${name}` };
+    default: throw new Error('Công cụ chưa có hợp đồng thực thi.');
   }
+  result._evidence = {
+    status: 'success', tool: name, actor_id: actor.id, company_id: company.id,
+    tenant_id: actor.tenant_id, observed_at: new Date().toISOString(),
+    source: name === 'resolve_time_range' ? 'server_calendar' : 'application_database',
+    scope_fingerprint: scopeFingerprint(authorization), request: { ...input },
+    scope: { company_wide: assignees === null, assignee_ids: assignees },
+    context: { company_id: company.id, time_scope: result.time_range?.scope || result.scope || input.time_scope,
+      days_offset: (result.time_range || result.scope) ? (input.days_offset ?? 0) : undefined,
+      period_label: result.period || result.label_vn,
+      ...(['get_company_lead_summary', 'format_company_report_text'].includes(name) ? { assignee_ids: assignees } : {}) },
+  };
+  await revalidateEvidence([result._evidence], ctx);
+  return result;
 }
 
 async function isDirectWithBot(groupId) {

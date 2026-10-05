@@ -168,6 +168,9 @@ function applySessionToToolArgs(args = {}, session = {}) {
 
 function updateSessionFromToolResult(session, fnName, args, result) {
   const next = { ...(session || {}) };
+  if (result?.error || result?._evidence?.status !== 'success') return next;
+  // Only server-confirmed context can replace memory. Model arguments are intent.
+  args = result._evidence.context || {};
   if (args.company_id) {
     next.company_id = args.company_id;
   }
@@ -176,16 +179,24 @@ function updateSessionFromToolResult(session, fnName, args, result) {
     next.subject_user_id = result.user_id;
     next.subject_type = 'employee';
   }
-  if (args.name) next.subject_name = args.name;
-  if (args.user_id) next.subject_user_id = args.user_id;
+  if (Object.hasOwn(args, 'assignee_ids')) {
+    next.subject_name = null;
+    next.subject_user_id = null;
+    next.subject_type = args.assignee_ids === null ? 'all_employees' : 'selected_employees';
+    if (args.assignee_ids?.length === 1) {
+      next.subject_type = 'employee';
+      next.subject_user_id = args.assignee_ids[0];
+    }
+  }
+  if (args.days_offset != null) next.days_offset = args.days_offset;
   if (args.date_from && args.date_to) {
     next.date_from = args.date_from;
     next.date_to = args.date_to;
-    delete next.time_scope;
+    next.time_scope = null;
   } else if (args.time_scope) {
     next.time_scope = args.time_scope;
-    delete next.date_from;
-    delete next.date_to;
+    next.date_from = null;
+    next.date_to = null;
   }
   if (fnName === 'format_all_employees_report_text' || fnName === 'get_employee_breakdown') {
     next.subject_type = 'all_employees';
@@ -196,6 +207,7 @@ function updateSessionFromToolResult(session, fnName, args, result) {
     next.request_intent = 'employee_report';
   }
   if (result?.period_label) next.period_label = result.period_label;
+  if (args.period_label) next.period_label = args.period_label;
   return next;
 }
 
@@ -212,7 +224,8 @@ function formatSessionBlockForPrompt(session = {}) {
   }
   if (session.period_label) lines.push(`• Kỳ: ${session.period_label}`);
   else if (session.time_scope) lines.push(`• Kỳ: time_scope=${session.time_scope}`);
-  else if (session.date_from && session.date_to) {
+  if (session.days_offset != null) lines.push(`• Độ lùi ngày đã xác nhận: ${session.days_offset}`);
+  if (!session.time_scope && session.date_from && session.date_to) {
     lines.push(`• Kỳ: ${session.date_from} → ${session.date_to}`);
   }
   if (session.last_request) lines.push(`• Yêu cầu gần nhất: «${session.last_request}»`);

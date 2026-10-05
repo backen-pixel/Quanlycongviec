@@ -954,6 +954,8 @@ async function runAutoCreateProjectFromWonDeal({
     }
   } catch (flowGateErr) {
     console.warn('[auto-project] flowAllowsProductionCreate:', flowGateErr.message);
+    return { ok: false, statusCode: 503, code: 'FLOW_GATE_UNVERIFIED',
+      error: 'Chưa xác minh được điều kiện hoặc phê duyệt tạo sản xuất.' };
   }
 
   const firstStage = firstStageRes?.data || null;
