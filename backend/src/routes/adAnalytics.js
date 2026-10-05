@@ -23,9 +23,13 @@
 const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
-const { isAdminLike } = require('../helpers/adminRole');
+const { isAdminLike, isSystemAdmin, isPlatformAdmin } = require('../helpers/adminRole');
 const { isTenantScopeEnforced } = require('../helpers/tenantScope');
 const { layTheoLo, layTheoLoMem } = require('../helpers/supabaseLo');
+const { assertProjectAccessible } = require('../helpers/projectAccessScope');
+const { assertCrmLeadAccess } = require('../helpers/crmTaskLeadAccess');
+const { userSeesAllCrmLeadsForScope, userSeesAllCrmDealsForScope } = require('../helpers/crmAccessRoles');
+const { assertLeadReadableByRegionScope } = require('../helpers/crmRegionScope');
 const { chayPhanTich, tomTat } = require('../helpers/adInsights');
 const { dongBoTatCa, kiemTraKetNoi, daCauHinh, chuanHoaActId } = require('../helpers/fbMarketingSync');
 
@@ -45,13 +49,13 @@ const CONG_TY_RONG = '00000000-0000-0000-0000-000000000000';
  * Công ty người dùng được xem, LUÔN cắt theo hệ sinh thái đang đăng nhập.
  *
  * `tenantGate` chạy sẵn trong middleware auth nên req.tenantCompanyIds đã có:
- *   - admin-like  → mọi công ty TRONG hệ sinh thái của mình (không vượt tenant)
+ *   - system/ecosystem admin → mọi công ty TRONG hệ sinh thái của mình (không vượt tenant)
  *   - người khác  → đúng công ty của mình, và công ty đó phải thuộc hệ sinh thái
  *   - null        → không giới hạn (platform_admin, hoặc tài khoản legacy chưa gắn HST)
  */
 async function congTyChoPhep(req) {
   const hst = isTenantScopeEnforced(req) ? (req.tenantCompanyIds || []) : null;
-  if (isAdminLike(req.user)) {
+  if (isSystemAdmin(req.user) || isPlatformAdmin(req.user)) {
     if (!hst) return null;
     return hst.length ? hst : [CONG_TY_RONG];
   }
@@ -76,6 +80,39 @@ async function congTyLoc(req) {
 }
 
 /** Nạp quy kết + lead + điểm, gom theo khoá. */
+async function docLeadBatBuoc(query) {
+  try {
+    const result = await query;
+    if (result?.error || !Array.isArray(result?.data)) throw new Error('Invalid CRM read');
+    return result.data;
+  } catch {
+    // Lỗi đọc không được biến thành báo cáo 0 Lead; không giữ lỗi upstream.
+    const error = new Error('Chưa đọc được dữ liệu CRM. Vui lòng tải lại báo cáo.');
+    error.code = 'AD_ANALYTICS_CRM_UNAVAILABLE';
+    throw error;
+  }
+}
+
+// Keep the API query small without converting a missing/failed batch to zero Leads.
+async function docLeadTheoLo(ids, columns) {
+  const unique = [...new Set(ids.map(String))];
+  const batches = [];
+  for (let i = 0; i < unique.length; i += 200) {
+    batches.push(docLeadBatBuoc(supabase.from('crm_leads').select(columns).in('id', unique.slice(i, i + 200))));
+  }
+  return (await Promise.all(batches)).flat();
+}
+
+function traLoiBaoCao(res, error) {
+  const crmUnavailable = error?.code === 'AD_ANALYTICS_CRM_UNAVAILABLE';
+  return res.status(crmUnavailable ? 503 : 500).json({
+    error: crmUnavailable ? 'Chưa đọc được dữ liệu CRM. Vui lòng tải lại báo cáo.'
+      : 'Chưa tải được dữ liệu quảng cáo. Vui lòng thử lại.',
+    code: crmUnavailable ? 'AD_ANALYTICS_CRM_UNAVAILABLE' : 'AD_ANALYTICS_READ_FAILED',
+    data_status: 'UNKNOWN',
+  });
+}
+
 /**
  * @param {boolean} chiQuangCao — chỉ nạp dòng CÓ ad_id.
  *   Mặc định nạp hết ~6.800 dòng quy kết, trong đó chỉ ~300 dòng có ad_id.
@@ -109,8 +146,7 @@ async function napDuLieu(req, { chiQuangCao = false } = {}) {
   const dsCT = await congTyLoc(req);
 
   const [leadRows, diemRows, catRows, pageRows] = await Promise.all([
-    layTheoLo('crm_leads', 'id', ids,
-      'id, type, actual_close_date, estimated_value, company_id, created_at'),
+    docLeadTheoLo(ids, 'id, type, actual_close_date, estimated_value, company_id, created_at'),
     layTheoLo('lead_quality_scores', 'lead_id', ids, 'lead_id, diem, nhan'),
     supabase.from('fb_ad_catalog').select('ad_id, ad_name, adset_name, campaign_id, campaign_name, nguon')
       .then((x) => x.data || [], () => []),
@@ -215,12 +251,13 @@ function oTrong() {
     leads: 0,
     by_label: { rac: 0, lanh: 0, am: 0, nong: 0, da_chot: 0 },
     _sum: 0, _n: 0, deals: 0, closed: 0, revenue: 0,
+    _leadIds: new Set(), _paidLeadIds: new Set(),
   };
 }
 
 function chot(g) {
   const chatLuong = (g.by_label.am || 0) + (g.by_label.nong || 0) + (g.by_label.da_chot || 0);
-  const { _sum, _n, ...rest } = g;
+  const { _sum, _n, _leadIds, _paidLeadIds, ...rest } = g;
   return {
     ...rest,
     avg_score: _n ? Math.round(_sum / _n) : null,
@@ -235,6 +272,10 @@ function chot(g) {
 }
 
 function congDon(g, l, d) {
+  // Một hồ sơ nhiều touchpoint vẫn chỉ tính một lần trong từng nhóm.
+  const leadId = String(l.id);
+  if (g._leadIds.has(leadId)) return;
+  g._leadIds.add(leadId);
   g.leads += 1;
   if (d) {
     g.by_label[d.nhan] = (g.by_label[d.nhan] || 0) + 1;
@@ -285,8 +326,7 @@ r.get('/summary', async (req, res) => {
         : 'Chi tiêu và ROAS chưa có — cần khai báo tài khoản quảng cáo và token Marketing API.',
     });
   } catch (e) {
-    console.error('[ad-analytics/summary]', e);
-    res.status(500).json({ error: e.message });
+    traLoiBaoCao(res, e);
   }
 });
 
@@ -327,8 +367,7 @@ r.get('/ads', async (req, res) => {
       .sort((x, y) => y.leads - x.leads);
     res.json({ data, total: data.length });
   } catch (e) {
-    console.error('[ad-analytics/ads]', e);
-    res.status(500).json({ error: e.message });
+    traLoiBaoCao(res, e);
   }
 });
 
@@ -336,18 +375,20 @@ r.get('/campaigns', async (req, res) => {
   try {
     const { rows, mLead, mDiem, mCat, mChiTieu } = await napDuLieu(req);
     const gom = new Map();
-    let chuaDatTen = 0;
+    const chuaDatTen = new Set();
     for (const a of rows) {
       if (!a.fb_ad_id) continue;
       const l = mLead.get(String(a.lead_id));
       if (!l) continue;
       const c = mCat.get(String(a.fb_ad_id)) || {};
       const ten = c.campaign_name || null;
-      const k = ten || `__chua_dat_ten__${a.fb_ad_id}`;
-      if (!ten) chuaDatTen += 1;
+      const campaignId = c.campaign_id || a.fb_campaign_id || null;
+      const k = campaignId ? `id:${campaignId}`
+        : ten ? `name:${ten}` : `ad:${a.fb_ad_id}`;
+      if (!ten) chuaDatTen.add(String(l.id));
       if (!gom.has(k)) {
         gom.set(k, {
-          campaign_id: c.campaign_id || null,
+          campaign_id: campaignId,
           campaign_name: ten,
           chua_dat_ten: !ten,
           ad_ids: new Set(),
@@ -363,10 +404,9 @@ r.get('/campaigns', async (req, res) => {
         { ...chot(g), ad_ids: [...g.ad_ids], so_quang_cao: g.ad_ids.size }, g.ad_ids, mChiTieu,
       ))
       .sort((x, y) => y.leads - x.leads);
-    res.json({ data, total: data.length, lead_chua_dat_ten_chien_dich: chuaDatTen });
+    res.json({ data, total: data.length, lead_chua_dat_ten_chien_dich: chuaDatTen.size });
   } catch (e) {
-    console.error('[ad-analytics/campaigns]', e);
-    res.status(500).json({ error: e.message });
+    traLoiBaoCao(res, e);
   }
 });
 
@@ -386,7 +426,11 @@ r.get('/pages', async (req, res) => {
         });
       }
       const g = gom.get(k);
-      if (a.fb_ad_id) { g.co_ad_id += 1; g.ad_ids.add(String(a.fb_ad_id)); }
+      if (a.fb_ad_id) {
+        g._paidLeadIds.add(String(l.id));
+        g.co_ad_id = g._paidLeadIds.size;
+        g.ad_ids.add(String(a.fb_ad_id));
+      }
       congDon(g, l, mDiem.get(String(a.lead_id)));
     }
     const data = [...gom.values()]
@@ -395,7 +439,7 @@ r.get('/pages', async (req, res) => {
       .sort((x, y) => y.leads - x.leads);
     res.json({ data, total: data.length });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    traLoiBaoCao(res, e);
   }
 });
 
@@ -526,20 +570,20 @@ r.get('/bo-loc', async (req, res) => {
         .then((x) => x.data || [], () => []),
     ]);
 
-    // Đếm lead CÓ ad_id theo page. Chỉ vài trăm dòng vì đã lọc ad_id, không nặng.
-    // Mục đích: ô chọn phải nói trước page nào không bao giờ có dữ liệu quảng cáo,
-    // thay vì để người dùng chọn rồi nhận một màn hình trống không hiểu vì sao.
+    // Counts use the same canonical company scope and unique Lead identity as the report.
+    // An unavailable count is null, never a successful zero in the filter label.
     const demQC = new Map();
+    let demDuoc = false;
     try {
-      const { data: qc } = await supabase.from('lead_attribution')
-        .select('fb_page_id')
-        .not('fb_ad_id', 'is', null)
-        .limit(20000);
-      for (const r of qc || []) {
-        const k = String(r.fb_page_id || '');
-        demQC.set(k, (demQC.get(k) || 0) + 1);
+      const { rows, mLead } = await napDuLieu(req, { chiQuangCao: true });
+      for (const row of rows) {
+        if (!row.fb_ad_id || !mLead.has(String(row.lead_id))) continue;
+        const k = String(row.fb_page_id || '');
+        if (!demQC.has(k)) demQC.set(k, new Set());
+        demQC.get(k).add(String(row.lead_id));
       }
-    } catch { /* không đếm được thì thôi, ô chọn vẫn dùng được */ }
+      demDuoc = true;
+    } catch { /* Filtering remains usable while report counts are unavailable. */ }
 
     // Page không gắn công ty chỉ hiện cho tài khoản không bị giới hạn công ty.
     const pages = pageRows
@@ -548,13 +592,14 @@ r.get('/bo-loc', async (req, res) => {
         page_id: String(p.page_id),
         page_name: p.page_name || String(p.page_id),
         company_id: p.default_company_id ? String(p.default_company_id) : null,
-        lead_quang_cao: demQC.get(String(p.page_id)) || 0,
+        lead_quang_cao: demDuoc ? (demQC.get(String(p.page_id))?.size || 0) : null,
       }));
 
     const demTheoCty = new Map();
     for (const p of pages) {
       const k = String(p.company_id || '');
-      demTheoCty.set(k, (demTheoCty.get(k) || 0) + p.lead_quang_cao);
+      if (!demTheoCty.has(k)) demTheoCty.set(k, new Set());
+      for (const id of demQC.get(p.page_id) || []) demTheoCty.get(k).add(id);
     }
 
     res.json({
@@ -563,7 +608,7 @@ r.get('/bo-loc', async (req, res) => {
       cong_ty: (cty || []).map((c) => ({
         id: String(c.id),
         ten: c.short_name || c.name,
-        lead_quang_cao: demTheoCty.get(String(c.id)) || 0,
+        lead_quang_cao: demDuoc ? (demTheoCty.get(String(c.id))?.size || 0) : null,
       })),
       pages,
     });
@@ -595,14 +640,14 @@ r.get('/pages-profile', async (req, res) => {
           company_id: p.default_company_id ? String(p.default_company_id) : null,
           ad_ids: new Set(),
           lan_cuoi: a.cham_dau_luc,
-          lead_7_ngay: 0,
+          lead_7_ngay: new Set(),
           ...oTrong(),
         });
       }
       const g = gom.get(k);
       g.ad_ids.add(String(a.fb_ad_id));
       if (a.cham_dau_luc > g.lan_cuoi) g.lan_cuoi = a.cham_dau_luc;
-      if (new Date(a.cham_dau_luc).getTime() >= Date.now() - 7 * 86400000) g.lead_7_ngay += 1;
+      if (new Date(a.cham_dau_luc).getTime() >= Date.now() - 7 * 86400000) g.lead_7_ngay.add(String(l.id));
       congDon(g, l, mDiem.get(String(a.lead_id)));
     }
     if (!gom.size) return res.json({ data: [], tong: 0 });
@@ -686,7 +731,7 @@ r.get('/pages-profile', async (req, res) => {
         spend: o.spend ?? null,
         cost_per_lead: o.cost_per_lead ?? null,
         roas: o.roas ?? null,
-        lead_7_ngay: g.lead_7_ngay,
+        lead_7_ngay: g.lead_7_ngay.size,
         lan_cuoi: g.lan_cuoi,
         im_lang_ngay: imLang,
         // Im lặng quá 7 ngày mà trước đó có lead đều → đáng nghi, không khẳng định hỏng.
@@ -699,8 +744,7 @@ r.get('/pages-profile', async (req, res) => {
 
     res.json({ data, tong: data.length, co_chi_tieu: mChiTieu.size > 0 });
   } catch (e) {
-    console.error('[ad-analytics/pages-profile]', e);
-    res.status(500).json({ error: e.message });
+    return traLoiBaoCao(res, e);
   }
 });
 
@@ -806,8 +850,7 @@ r.get('/page-ads', async (req, res) => {
       chua_thanh_lead_tong: chuaLead.tong,
     });
   } catch (e) {
-    console.error('[ad-analytics/page-ads]', e);
-    res.status(500).json({ error: e.message });
+    return traLoiBaoCao(res, e);
   }
 });
 
@@ -912,8 +955,7 @@ r.get('/page-posts', async (req, res) => {
       chua_thanh_lead_tong: chuaLead.tong,
     });
   } catch (e) {
-    console.error('[ad-analytics/page-posts]', e);
-    res.status(500).json({ error: e.message });
+    return traLoiBaoCao(res, e);
   }
 });
 
@@ -975,9 +1017,20 @@ r.get('/post-leads', async (req, res) => {
     bai.so_quang_cao = dsQC.size;
 
     const ids = [...canh.keys()];
-    const chiTiet = await layTheoLo('crm_leads', 'id', ids,
+    const detailRows = await docLeadTheoLo(ids,
       'id, code, title, type, stage_id, customer_id, project_id, assigned_to, '
+      + 'company_id, region_id, lead_owner_id, parent_lead_id, '
       + 'estimated_value, actual_close_date, created_at, lead_temperature');
+    const scopeCompanies = await congTyLoc(req);
+    const chiTiet = [];
+    for (const lead of detailRows) {
+      // Aggregate reporting scope never grants access to a person's CRM details.
+      if (scopeCompanies && !scopeCompanies.includes(String(lead.company_id))) continue;
+      const seesAll = lead.type === 'deal'
+        ? userSeesAllCrmDealsForScope(req.user) : userSeesAllCrmLeadsForScope(req.user);
+      const roleGrant = seesAll && assertLeadReadableByRegionScope(req, lead).ok;
+      if (roleGrant || (await assertCrmLeadAccess(supabase, req, lead, { operation: 'READ' })).ok) chiTiet.push(lead);
+    }
 
     const idKhach = [...new Set(chiTiet.map((l) => l.customer_id).filter(Boolean).map(String))];
     const idNguoi = [...new Set(chiTiet.map((l) => l.assigned_to).filter(Boolean).map(String))];
@@ -993,12 +1046,22 @@ r.get('/post-leads', async (req, res) => {
       layTheoLoMem('projects', 'id', idDA, CHON_DA),
     ]);
 
+    // A shared customer or Lead.project_id is a relationship, not a project permission.
+    // Reuse the canonical READ gate for both join paths; do not emit its per-item 403.
+    const duAnDuocXem = new Set();
+    const candidates = new Map([...daTheoKhach, ...daTrucTiep].map(d => [String(d.id), d]));
+    for (const id of candidates.keys()) {
+      const verdict = { status() { return this; }, json() { return this; } };
+      if (await assertProjectAccessible(req, verdict, id, { operation: 'READ' })) duAnDuocXem.add(id);
+    }
+
     const mKhach = new Map(khach.map((x) => [String(x.id), x]));
     const mNguoi = new Map(nguoi.map((x) => [String(x.id), x.full_name || null]));
     const mGD = new Map(giaiDoan.map((x) => [String(x.id), x.name || null]));
-    const mDAId = new Map(daTrucTiep.map((x) => [String(x.id), x]));
+    const mDAId = new Map(daTrucTiep.filter(x => duAnDuocXem.has(String(x.id))).map((x) => [String(x.id), x]));
     const mDAKhach = new Map();
     for (const d of daTheoKhach) {
+      if (!duAnDuocXem.has(String(d.id))) continue;
       const k = String(d.customer_id || '');
       if (!mDAKhach.has(k)) mDAKhach.set(k, []);
       mDAKhach.get(k).push(d);
@@ -1068,8 +1131,7 @@ r.get('/post-leads', async (req, res) => {
 
     res.json({ bai, data, tong: data.length, tom_tat });
   } catch (e) {
-    console.error('[ad-analytics/post-leads]', e);
-    res.status(500).json({ error: e.message });
+    return traLoiBaoCao(res, e);
   }
 });
 

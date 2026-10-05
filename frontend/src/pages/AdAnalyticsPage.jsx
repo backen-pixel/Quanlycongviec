@@ -3,7 +3,7 @@
  * Ba cách nhìn: theo Chiến dịch / theo Quảng cáo / theo Page.
  * Tên chiến dịch đặt tay tại đây cho tới khi nối Marketing API.
  */
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import api from '../lib/api';
 
 const TAB = [
@@ -887,9 +887,7 @@ function KhungDanhSachLead({ mo, params, onDong }) {
 
         {!dang && !loi && tt && tt.so_du_an === 0 && (
           <div className="border-t border-gray-200 bg-amber-50 px-5 py-2 text-[12px] leading-relaxed text-amber-900">
-            Chưa lead nào của bài này gắn với dự án nào. Đo ngày 02/10/2026 trên toàn hệ thống:
-            0/308 lead đến từ quảng cáo có dự án — dự án đang được tạo thẳng từ khách hàng chứ
-            không nối ngược về lead, nên cột Dự án sẽ còn trống cho tới khi quy trình đó đổi.
+            Chưa có dự án liên kết nằm trong phạm vi anh được xem ở danh sách này.
           </div>
         )}
       </div>
@@ -1051,6 +1049,8 @@ function KhungMarketing({ trangThai, onXong }) {
  *   bỏ tiêu đề riêng (nhãn tab đã nói) và tự cuộn trong khung tab.
  */
 export default function AdAnalyticsPage({ embedded = false }) {
+  const reportRequestId = useRef(0);
+  const refreshReportRef = useRef(null);
   const [tab, setTab] = useState('campaigns');
   const [tongQuan, setTongQuan] = useState(null);
   const [rows, setRows] = useState([]);
@@ -1061,6 +1061,7 @@ export default function AdAnalyticsPage({ embedded = false }) {
   const [dangTai, setDangTai] = useState(true);
   const [loi, setLoi] = useState('');
   const [tuNgay, setTuNgay] = useState('');
+  const [loiThaoTac, setLoiThaoTac] = useState('');
   const [denNgay, setDenNgay] = useState('');
   const [congTy, setCongTy] = useState('');
   const [pageId, setPageId] = useState('');
@@ -1141,25 +1142,42 @@ export default function AdAnalyticsPage({ embedded = false }) {
   }, []);
 
   const tai = useCallback(async () => {
+    const requestId = ++reportRequestId.current;
+    const isCurrent = () => requestId === reportRequestId.current;
     setDangTai(true);
     setLoi('');
+    // A new filter invalidates the previous snapshot immediately.
+    setTongQuan(null);
+    setRows([]);
+    setNhanXet([]);
+    setTomTat(null);
+    setTinhLuc(null);
     try {
       const tq = await api.get('/ad-analytics/summary', { params });
+      if (!isCurrent()) return;
+      const ds = await api.get(tab === 'insights'
+        ? '/ad-analytics/insights' : `/ad-analytics/${tab}`, { params });
+      if (!isCurrent()) return;
+      // Commit one consistent report only after both reads succeed.
       setTongQuan(tq.data || null);
       if (tab === 'insights') {
-        const ds = await api.get('/ad-analytics/insights', { params });
         setNhanXet(ds.data?.data || []);
         setTomTat(ds.data?.tom_tat || null);
         setTinhLuc(ds.data?.tinh_luc || null);
         setRows([]);
       } else {
-        const ds = await api.get(`/ad-analytics/${tab}`, { params });
         setRows(ds.data?.data || []);
       }
     } catch (e) {
+      if (!isCurrent()) return;
+      setTongQuan(null);
+      setRows([]);
+      setNhanXet([]);
+      setTomTat(null);
+      setTinhLuc(null);
       setLoi(e?.response?.data?.error || 'Không tải được dữ liệu quảng cáo');
     } finally {
-      setDangTai(false);
+      if (isCurrent()) setDangTai(false);
     }
   }, [tab, params]);
 
@@ -1184,86 +1202,113 @@ export default function AdAnalyticsPage({ embedded = false }) {
   }, []);
 
   const taiHoSoPage = useCallback(async () => {
-    setTaiHoSo(true);
+    const requestId = ++reportRequestId.current;
+    const isCurrent = () => requestId === reportRequestId.current;
+    setHoSo([]);
+    setTongQuan(null);
     setLoi('');
+    setTaiHoSo(true);
     try {
-      // allSettled chứ KHÔNG phải all: trước đây một endpoint hỏng là kéo cái kia
-      // chết theo, nên mất cả thẻ lẫn dải tổng quan cùng lúc — nhìn như trang trắng.
-      const [r, tq] = await Promise.allSettled([
+      const [r, tq] = await Promise.all([
         api.get('/ad-analytics/pages-profile', { params }),
         api.get('/ad-analytics/summary', { params }),
       ]);
-      if (r.status === 'fulfilled') setHoSo(r.value.data?.data || []);
-      else {
-        setHoSo([]);
-        const e = r.reason;
-        setLoi(e?.response?.status === 404
-          ? 'Backend chưa có endpoint /pages-profile — khởi động lại backend để nạp code mới.'
-          : (e?.response?.data?.error || e?.message || 'Không tải được hồ sơ page'));
-      }
-      if (tq.status === 'fulfilled') setTongQuan(tq.value.data || null);
-      else setTongQuan(null);
+      if (!isCurrent()) return;
+      setHoSo(r.data?.data || []);
+      setTongQuan(tq.data || null);
     } catch (e) {
+      if (!isCurrent()) return;
       setHoSo([]);
-      setLoi(e?.response?.data?.error || e.message || 'Không tải được hồ sơ page');
+      setTongQuan(null);
+      setLoi(e?.response?.data?.error || 'Chưa tải được báo cáo. Vui lòng thử lại.');
     } finally {
-      setTaiHoSo(false);
+      if (isCurrent()) setTaiHoSo(false);
     }
   }, [params]);
 
   const taiDanhSachQc = useCallback(async () => {
-    if (!pageId) { setDsQc([]); return; }
-    setTaiDsQc(true);
+    const requestId = ++reportRequestId.current;
+    const isCurrent = () => requestId === reportRequestId.current;
+    setDsQc([]);
+    setTongQuan(null);
     setLoi('');
+    setTaiDsQc(true);
     try {
-      const r = await api.get('/ad-analytics/page-ads', { params });
+      if (!pageId) return;
+      const [r, tq] = await Promise.all([
+        api.get('/ad-analytics/page-ads', { params }),
+        api.get('/ad-analytics/summary', { params }),
+      ]);
+      if (!isCurrent()) return;
       setDsQc(r.data?.data || []);
+      setTongQuan(tq.data || null);
     } catch (e) {
+      if (!isCurrent()) return;
       setDsQc([]);
-      setLoi(e?.response?.status === 404
-        ? 'Backend chưa có endpoint /page-ads — khởi động lại backend để nạp code mới.'
-        : (e?.response?.data?.error || e.message || 'Không tải được danh sách quảng cáo'));
+      setTongQuan(null);
+      setLoi(e?.response?.data?.error || 'Chưa tải được báo cáo. Vui lòng thử lại.');
     } finally {
-      setTaiDsQc(false);
+      if (isCurrent()) setTaiDsQc(false);
     }
   }, [pageId, params]);
 
   const taiDanhSachBai = useCallback(async () => {
-    if (!pageId) { setDsBai([]); return; }
-    setTaiDsBai(true);
+    const requestId = ++reportRequestId.current;
+    const isCurrent = () => requestId === reportRequestId.current;
+    setDsBai([]);
+    setTongQuan(null);
     setLoi('');
+    setTaiDsBai(true);
     try {
-      const r = await api.get('/ad-analytics/page-posts', { params });
+      if (!pageId) return;
+      const [r, tq] = await Promise.all([
+        api.get('/ad-analytics/page-posts', { params }),
+        api.get('/ad-analytics/summary', { params }),
+      ]);
+      if (!isCurrent()) return;
       setDsBai(r.data?.data || []);
+      setTongQuan(tq.data || null);
     } catch (e) {
+      if (!isCurrent()) return;
       setDsBai([]);
-      setLoi(e?.response?.status === 404
-        ? 'Backend chưa có endpoint /page-posts — khởi động lại backend để nạp code mới.'
-        : (e?.response?.data?.error || e.message || 'Không tải được danh sách bài viết'));
+      setTongQuan(null);
+      setLoi(e?.response?.data?.error || 'Chưa tải được báo cáo. Vui lòng thử lại.');
     } finally {
-      setTaiDsBai(false);
+      if (isCurrent()) setTaiDsBai(false);
     }
   }, [pageId, params]);
 
-  useEffect(() => { if (manHinh === 'the') taiHoSoPage(); }, [manHinh, taiHoSoPage]);
+  const taiHienTai = manHinh === 'the' ? taiHoSoPage
+    : kieuCt === 'bai' ? taiDanhSachBai : kieuCt === 'qc' ? taiDanhSachQc : tai;
   useEffect(() => {
-    if (manHinh !== 'chi_tiet') return;
-    if (kieuCt === 'bai') taiDanhSachBai();
-    else if (kieuCt === 'qc') taiDanhSachQc();
-    else tai();
-  }, [manHinh, kieuCt, taiDanhSachBai, taiDanhSachQc, tai]);
+    setTongQuan(null); setHoSo([]); setDsBai([]); setDsQc([]); setRows([]);
+    setNhanXet([]); setTomTat(null); setTinhLuc(null);
+    setTaiHoSo(false); setTaiDsBai(false); setTaiDsQc(false); setDangTai(false);
+    setXemLead(null); setXemAnh(null); setChon(new Set());
+    setLoiThaoTac('');
+    refreshReportRef.current = taiHienTai;
+    taiHienTai();
+    return () => {
+      refreshReportRef.current = null;
+      reportRequestId.current += 1;
+    };
+  }, [taiHienTai]);
   useEffect(() => { taiMkt(); }, [taiMkt]);
 
   const luuTen = useCallback(async (adId) => {
     if (!tenMoi.trim()) return;
+    const actionLoader = refreshReportRef.current;
+    setLoiThaoTac('');
     setDangLuu(true);
     try {
       await api.put(`/ad-analytics/ads/${adId}`, { campaign_name: tenMoi.trim() });
       setDangSua(null);
       setTenMoi('');
-      await tai();
+      await refreshReportRef.current?.();
     } catch (e) {
-      setLoi(e?.response?.data?.error || 'Không lưu được tên chiến dịch');
+      if (actionLoader && actionLoader === refreshReportRef.current) {
+        setLoiThaoTac(e?.response?.data?.error || 'Không lưu được tên chiến dịch');
+      }
     } finally {
       setDangLuu(false);
     }
@@ -1271,26 +1316,34 @@ export default function AdAnalyticsPage({ embedded = false }) {
 
   const luuTenLo = useCallback(async () => {
     if (!tenLo.trim() || !chon.size) return;
+    const actionLoader = refreshReportRef.current;
+    setLoiThaoTac('');
     setDangLuu(true);
     try {
       await api.post('/ad-analytics/ads/bulk-name', { ad_ids: [...chon], campaign_name: tenLo.trim() });
       setChon(new Set());
       setTenLo('');
-      await tai();
+      await refreshReportRef.current?.();
     } catch (e) {
-      setLoi(e?.response?.data?.error || 'Không đặt tên hàng loạt được');
+      if (actionLoader && actionLoader === refreshReportRef.current) {
+        setLoiThaoTac(e?.response?.data?.error || 'Không đặt tên hàng loạt được');
+      }
     } finally {
       setDangLuu(false);
     }
   }, [tenLo, chon, tai]);
 
   const chayLaiPhanTich = useCallback(async () => {
+    const actionLoader = refreshReportRef.current;
+    setLoiThaoTac('');
     setDangChayLai(true);
     try {
       await api.post('/ad-analytics/insights/run', {});
-      await tai();
+      await refreshReportRef.current?.();
     } catch (e) {
-      setLoi(e?.response?.data?.error || 'Không chạy lại được phân tích');
+      if (actionLoader && actionLoader === refreshReportRef.current) {
+        setLoiThaoTac(e?.response?.data?.error || 'Không chạy lại được phân tích');
+      }
     } finally {
       setDangChayLai(false);
     }
@@ -1311,7 +1364,7 @@ export default function AdAnalyticsPage({ embedded = false }) {
           <div>
             <h1 className="text-xl font-bold text-gray-900">Hiệu quả quảng cáo Facebook</h1>
             <p className="mt-0.5 text-[13px] text-gray-500">
-              Lead đến từ quảng cáo nào, chất lượng ra sao, chốt được bao nhiêu.
+              Lead đến từ quảng cáo nào, chất lượng ra sao, chốt được bao nhiêu. Mỗi Lead tính một lần trong từng nhóm; không cộng các nhóm để suy số khách duy nhất.
             </p>
           </div>
         </div>
@@ -1345,7 +1398,7 @@ export default function AdAnalyticsPage({ embedded = false }) {
               {dsPageHienThi.map((p) => (
                 <option key={p.page_id} value={p.page_id}>
                   {p.page_name}
-                  {p.lead_quang_cao === 0 ? ' — chưa có lead QC' : ` (${p.lead_quang_cao})`}
+                  {p.lead_quang_cao == null ? '' : p.lead_quang_cao === 0 ? ' — chưa có lead QC' : ` (${p.lead_quang_cao})`}
                 </option>
               ))}
             </select>
@@ -1381,7 +1434,7 @@ export default function AdAnalyticsPage({ embedded = false }) {
                 Xoá lọc
               </button>
             )}
-            <button type="button" onClick={manHinh === 'the' ? taiHoSoPage : tai}
+            <button type="button" onClick={taiHienTai}
               className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-[13px] font-semibold text-gray-700 cursor-pointer hover:bg-gray-50">
               Tải lại
             </button>
@@ -1397,6 +1450,7 @@ export default function AdAnalyticsPage({ embedded = false }) {
       )}
 
       {loi && <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-[13px] text-rose-800">{loi}</div>}
+      {loiThaoTac && <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-[13px] text-amber-900">{loiThaoTac}</div>}
 
       {tongQuan && (
         <>
@@ -1438,13 +1492,13 @@ export default function AdAnalyticsPage({ embedded = false }) {
         </>
       )}
 
-      <KhungMarketing trangThai={mkt} onXong={async () => { await taiMkt(); await tai(); }} />
+      <KhungMarketing trangThai={mkt} onXong={async () => { await taiMkt(); await refreshReportRef.current?.(); }} />
 
       <DaiChanDoan params={params} />
 
       {manHinh === 'the' ? (
         <>
-          {taiHoSo ? (
+          {loi ? null : taiHoSo ? (
             <div className="py-14 text-center text-sm text-gray-500">
               <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-gray-200 border-t-blue-600" />
               Đang dựng hồ sơ page…
@@ -1530,7 +1584,7 @@ export default function AdAnalyticsPage({ embedded = false }) {
           </div>
 
           {kieuCt === 'bai' ? (
-            taiDsBai ? (
+            loi ? null : taiDsBai ? (
               <div className="py-14 text-center text-sm text-gray-500">
                 <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-gray-200 border-t-blue-600" />
                 Đang tải bài viết…
@@ -1559,7 +1613,7 @@ export default function AdAnalyticsPage({ embedded = false }) {
               </div>
             )
           ) : kieuCt === 'qc' ? (
-            taiDsQc ? (
+            loi ? null : taiDsQc ? (
               <div className="py-14 text-center text-sm text-gray-500">
                 <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-gray-200 border-t-blue-600" />
                 Đang tải quảng cáo…
@@ -1613,7 +1667,11 @@ export default function AdAnalyticsPage({ embedded = false }) {
         </div>
       )}
 
-      {tab === 'insights' ? (
+      {loi && !tongQuan ? (
+        <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
+          Dữ liệu chưa xác minh. Hãy tải lại; chưa thể kết luận có 0 Lead.
+        </div>
+      ) : tab === 'insights' ? (
         dangTai ? (
           <div className="py-14 text-center text-sm text-gray-500">
             <div className="mx-auto mb-3 h-7 w-7 animate-spin rounded-full border-2 border-gray-200 border-t-blue-600" />
@@ -1790,8 +1848,12 @@ export default function AdAnalyticsPage({ embedded = false }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((g, i) => {
-                const khoa = g.ad_id || g.page_id || g.campaign_name || `r${i}`;
+              {rows.map((g) => {
+                const khoa = tab === 'campaigns'
+                  ? (g.campaign_id ? `campaign:${g.campaign_id}`
+                    : g.campaign_name ? `name:${g.campaign_name}`
+                      : `ads:${[...(g.ad_ids || [])].sort().join(',')}`)
+                  : `${tab}:${g.ad_id || g.page_id || 'unknown'}`;
                 return (
                   <tr key={khoa} className="border-t border-gray-50 transition-colors hover:bg-blue-50/40">
                     {tab === 'ads' && (
@@ -1812,6 +1874,10 @@ export default function AdAnalyticsPage({ embedded = false }) {
                             <span className="ml-2 text-[12px] font-normal text-gray-500">{g.so_quang_cao} QC</span>
                           </span>
                         )
+                      )}
+
+                      {tab === 'campaigns' && g.campaign_id && (
+                        <div className="mt-0.5 font-mono text-[11px] text-gray-500">{g.campaign_id}</div>
                       )}
 
                       {tab === 'ads' && (
