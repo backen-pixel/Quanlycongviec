@@ -56,9 +56,8 @@ import { getCachedBoard, getCachedBoardSummary, isCachedBoardFresh, patchCachedP
 import { dealCompanyIdForBoardApi, loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '../lib/kanbanFilterStorage';
 import {
   computeSxBoardKpis,
-  countsAsCompletedRevenue,
   projectIsAwaitingDelivery,
-  projectIsShipped,
+  projectIsDelivered,
   sxOverdueProjectIds,
   sxDueBucketProjectIds,
   type SxDueFilter,
@@ -2379,7 +2378,8 @@ const KanbanCard = memo(function KanbanCard({
   const avatarLetters = initials(item.customer_name);
   const vcTag = getVcTag(item, stages);
   const personName = item.production_person_name?.trim() || null;
-  const delivered = projectIsShipped(item) || countsAsCompletedRevenue(item, stages);
+  // «Đã giao thật», không tính dự án chỉ mới được đẩy sang bảng vận chuyển (xem `projectIsDelivered`).
+  const delivered = projectIsDelivered(item, stages);
   const updatedStr = formatDateTime(item.updated_at || item.created_at);
 
   return (

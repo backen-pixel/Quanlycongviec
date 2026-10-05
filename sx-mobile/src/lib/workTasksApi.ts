@@ -48,6 +48,8 @@ export type WorkTasksQuery = {
   /** null/undefined = không lọc người (team). Có id = chỉ việc của người đó. */
   assigneeId?: string | null;
   companyId?: string | null;
+  /** Phân loại xưởng: mã loại hoặc `none` (chưa phân loại) — BE `parseWorkshopTypeFilter`. */
+  workshopTypeId?: string | null;
   /** pending | in_progress | completed — lọc phía server. */
   status?: string | null;
   /** Quá hạn: chưa xong + deadline < đầu ngày hôm nay. */
@@ -298,6 +300,7 @@ export async function fetchProductionWorkTasksPage(
   };
   if (query.assigneeId) params.assignee_id = query.assigneeId;
   if (query.companyId) params.company_id = query.companyId;
+  if (query.workshopTypeId) params.workshop_type_id = query.workshopTypeId;
   if (query.status) params.status = String(query.status);
   if (query.overdue) params.overdue = 1;
   if (query.q?.trim()) params.q = query.q.trim();
@@ -349,6 +352,7 @@ export async function fetchProductionWorkTaskStats(
   const params: Record<string, string> = { assignment_module: 'production' };
   if (query.assigneeId) params.assignee_id = query.assigneeId;
   if (query.companyId) params.company_id = query.companyId;
+  if (query.workshopTypeId) params.workshop_type_id = query.workshopTypeId;
   if (query.q) params.q = query.q;
   return cachedQuery<WorkTasksStats>({
     key: K_WORK_STATS + JSON.stringify(params),

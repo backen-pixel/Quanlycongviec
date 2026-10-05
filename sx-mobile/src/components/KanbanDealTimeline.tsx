@@ -2,6 +2,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useMemo, useState } from 'react';
 import { LayoutChangeEvent, StyleSheet, Text, View } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
+import { useHolidayIndex, workingDaysBetween, type HolidayIndex } from '../lib/workingDays';
 import type { ProductionProject } from '../types';
 
 const ACCENT = {
@@ -40,13 +41,19 @@ function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n));
 }
 
-function relativeToToday(target: Date, today: Date): string {
-  const n = daysBetween(today, target);
-  if (n === 0) return 'Hôm nay';
-  if (n === 1) return 'Còn 1 ngày';
-  if (n > 1) return `Còn ${n} ngày`;
-  if (n === -1) return '1 ngày trước';
-  return `${Math.abs(n)} ngày trước`;
+function relativeToToday(target: Date, today: Date, holidays?: HolidayIndex): string {
+  const cal = daysBetween(today, target);
+  if (cal === 0) return 'Hôm nay';
+  // Có `holidays` = hạn / ngày giao: đếm ngày LÀM VIỆC (bỏ CN + lễ) như web «Còn N ngày LV».
+  // Không có = ngày đặt hàng: giữ ngày lịch ("N ngày trước").
+  if (holidays) {
+    const n = workingDaysBetween(today, target, holidays);
+    return cal > 0 ? `Còn ${n} ngày LV` : `Trễ ${Math.abs(n)} ngày LV`;
+  }
+  if (cal === 1) return 'Còn 1 ngày';
+  if (cal > 1) return `Còn ${cal} ngày`;
+  if (cal === -1) return '1 ngày trước';
+  return `${Math.abs(cal)} ngày trước`;
 }
 
 export type KanbanDealTimelineProps = {
@@ -90,6 +97,7 @@ let cachedTrackW = 0;
 
 function KanbanDealTimeline({ project, isDelivered }: KanbanDealTimelineProps) {
   const { colors, isDark } = useTheme();
+  const holidays = useHolidayIndex();
   const today = useMemo(() => startOfDay(new Date()), []);
   const order = parseDay(project.order_date);
   const deadline = parseDay(project.production_deadline || project.deadline);
@@ -309,14 +317,14 @@ function KanbanDealTimeline({ project, isDelivered }: KanbanDealTimelineProps) {
       if (n === 0) return 'Đúng hạn';
       return `${Math.abs(n)} ngày trước`;
     }
-    return relativeToToday(deadline, today);
+    return relativeToToday(deadline, today, holidays);
   })();
   const deliveryHint = (() => {
     if (!delivery) return '';
     if (mode === 'delivered_early') return 'Đã giao sớm';
     if (mode === 'delivered_ontime') return 'Đúng hạn';
     if (mode === 'delivered_late') return 'Giao trễ';
-    return relativeToToday(delivery, today);
+    return relativeToToday(delivery, today, holidays);
   })();
 
   const deliveryColor =
