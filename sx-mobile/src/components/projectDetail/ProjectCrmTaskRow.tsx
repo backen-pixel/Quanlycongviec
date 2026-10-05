@@ -38,6 +38,7 @@ import { isImageFile, resolveMediaUrl } from '../../lib/mediaUtils';
 import { saveMessengerAttachment } from '../../lib/messengerFileOpen';
 
 import SpinningLoader from '../SpinningLoader';
+import { withTaskMediaName } from '../../lib/taskMediaName';
 type Props = {
   task: CrmTask;
   dealId: string;
@@ -45,6 +46,10 @@ type Props = {
   onDeleted: (taskId: string) => void;
   /** Highlight khi mở từ tab Công việc. */
   highlighted?: boolean;
+  /** Thu gọn thành một dòng (việc không phải của người đang xem); bấm để mở rộng. */
+  compact?: boolean;
+  /** Mã dự án — dùng đặt tên file ảnh/video đính kèm (xem `taskMediaName`). */
+  projectCode?: string | null;
 };
 
 function formatDate(value?: string | null): string {
@@ -91,8 +96,9 @@ function parseDeadline(value?: string | null): Date {
 
 type ModalKind = 'attach' | 'assign' | 'edit' | 'deadline' | null;
 
-export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, highlighted }: Props) {
+export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, highlighted, compact = false, projectCode }: Props) {
   const { colors } = useTheme();
+  const [expanded, setExpanded] = useState(false);
   const done = isTaskDone(task.status);
   const assignees = taskAssignees(task);
   const assignee = assignees[0] || null;
@@ -334,8 +340,12 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
     const a = pick.assets[0];
     setBusy(true);
     try {
+      // Ảnh/video chọn từ thư viện cũng đặt lại tên; PDF/Word… giữ nguyên tên người dùng.
       await uploadCrmTaskFiles(dealId, task.id, [
-        { uri: a.uri, name: a.name || 'file', mime: a.mimeType || 'application/octet-stream' },
+        withTaskMediaName(
+          { uri: a.uri, name: a.name || 'file', mime: a.mimeType || 'application/octet-stream' },
+          { projectCode, taskTitle: task.title },
+        ),
       ]);
       await loadAttachments();
       onUpdated({
@@ -360,7 +370,9 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
     try {
       const name = asset.fileName || fallbackName;
       const mime = asset.mimeType || fallbackMime;
-      await uploadCrmTaskFiles(dealId, task.id, [{ uri: asset.uri, name, mime }]);
+      // Tên máy ảnh (IMG_… / UUID) không nói ảnh của việc nào → đặt theo «mã dự án - tên việc - Ảnh/Video ngày giờ».
+      const file = withTaskMediaName({ uri: asset.uri, name, mime }, { projectCode, taskTitle: task.title });
+      await uploadCrmTaskFiles(dealId, task.id, [file]);
       await loadAttachments();
       onUpdated({
         ...task,
@@ -493,14 +505,36 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
   const styles = useMemo(
     () =>
       StyleSheet.create({
+        // Dòng phẳng nằm trong khung giai đoạn (giống web): không viền/bo riêng, ngăn cách bằng đường kẻ mảnh.
         row: {
-          backgroundColor: colors.card,
-          borderRadius: Radii.lg,
-          borderWidth: 1,
-          borderColor: colors.border,
-          padding: 12,
-          marginBottom: 8,
+          backgroundColor: 'transparent',
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.border,
+          paddingHorizontal: 12,
+          paddingTop: 10,
+          paddingBottom: 6,
         },
+        compactRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          minHeight: 42,
+          paddingHorizontal: 12,
+          backgroundColor: 'transparent',
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.border,
+        },
+        compactCheck: {
+          width: 16,
+          height: 16,
+          borderRadius: 8,
+          borderWidth: 1.5,
+          borderColor: colors.borderStrong,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        compactTitle: { flex: 1, minWidth: 0, color: colors.textMuted, fontSize: 13, fontWeight: '600' },
+        compactWho: { maxWidth: '42%', color: colors.textFaint, fontSize: 11.5, fontWeight: '700' },
         rowHighlight: {
           borderColor: colors.primary,
           borderWidth: 2,
@@ -611,18 +645,20 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
           alignItems: 'center',
           justifyContent: 'flex-end',
           gap: 2,
-          marginTop: 10,
-          paddingTop: 8,
+          marginTop: 4,
+          paddingTop: 4,
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: colors.border,
         },
         actionBtn: {
-          width: 36,
-          height: 36,
+          width: 34,
+          height: 34,
           borderRadius: Radii.md,
           alignItems: 'center',
           justifyContent: 'center',
         },
+        actionBtnPhoto: { backgroundColor: colors.primary + '14' },
+        actionBtnVideo: { backgroundColor: '#A855F714' },
         actionBtnPrimary: {
           backgroundColor: colors.primary + '18',
         },
@@ -998,6 +1034,30 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
     return null;
   };
 
+  // Việc không phải của mình: một dòng gọn (bấm để mở rộng) — việc của mình mới hiện đầy đủ thao tác.
+  if (compact && !expanded) {
+    return (
+      <TapHighlight
+        style={[styles.compactRow, highlighted && styles.rowHighlight]}
+        pressStyle={{ backgroundColor: colors.primarySoft }}
+        onPress={() => setExpanded(true)}
+        accessibilityLabel={`${task.title}, bấm để mở rộng`}
+      >
+        <View style={[styles.compactCheck, done && styles.checkDone]}>
+          {done ? <Ionicons name="checkmark" size={11} color={colors.success} /> : null}
+        </View>
+        <Text style={[styles.compactTitle, done && styles.titleDone]} numberOfLines={1}>{task.title}</Text>
+        <Text
+          style={[styles.compactWho, assignees.length === 0 && { color: colors.warning }]}
+          numberOfLines={1}
+        >
+          {assignees.length ? assignees.map((p) => p.full_name?.trim() || '—').join(', ') : 'Chưa giao'}
+        </Text>
+        <Ionicons name="chevron-down" size={14} color={colors.textFaint} />
+      </TapHighlight>
+    );
+  }
+
   return (
     <>
       <View style={[styles.row, highlighted && styles.rowHighlight]}>
@@ -1071,40 +1131,32 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
           </View>
         </View>
 
-        <View style={styles.mediaActions}>
+        {/* Hàng thao tác gọn như web: chụp / quay / đính kèm / gán / sửa / xóa trên cùng một dòng. */}
+        <View style={styles.actions}>
           <TapHighlight
-            style={[styles.mediaBtn, styles.mediaBtnPhoto]}
+            style={[styles.actionBtn, styles.actionBtnPhoto]}
             pressStyle={{ opacity: 0.85 }}
             onPress={() => void capturePhoto()}
             disabled={busy}
+            accessibilityLabel="Chụp ảnh"
+            hitSlop={4}
           >
             {busy ? (
               <SpinningLoader size="small" color={colors.primary} />
             ) : (
-              <>
-                <Ionicons name="camera" size={18} color={colors.primary} />
-                <Text style={[styles.mediaBtnTxt, { color: colors.primary }]}>Chụp ảnh</Text>
-              </>
+              <Ionicons name="camera" size={18} color={colors.primary} />
             )}
           </TapHighlight>
           <TapHighlight
-            style={[styles.mediaBtn, styles.mediaBtnVideo]}
+            style={[styles.actionBtn, styles.actionBtnVideo]}
             pressStyle={{ opacity: 0.85 }}
             onPress={() => void captureVideo()}
             disabled={busy}
+            accessibilityLabel="Quay video"
+            hitSlop={4}
           >
-            {busy ? (
-              <SpinningLoader size="small" color="#A855F7" />
-            ) : (
-              <>
-                <Ionicons name="videocam" size={18} color="#A855F7" />
-                <Text style={[styles.mediaBtnTxt, { color: '#A855F7' }]}>Quay video</Text>
-              </>
-            )}
+            <Ionicons name="videocam" size={18} color="#A855F7" />
           </TapHighlight>
-        </View>
-
-        <View style={styles.actions}>
           <TapHighlight
             style={styles.actionBtn}
             pressStyle={styles.actionBtnActive}

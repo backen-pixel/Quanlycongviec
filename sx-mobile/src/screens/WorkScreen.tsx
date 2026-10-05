@@ -32,6 +32,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
 import AssignWorkModal from '../components/AssignWorkModal';
 import TaskGroupTag, { TODAY_COLOR } from '../components/TaskGroupTag';
+import { withTaskMediaName } from '../lib/taskMediaName';
 import FilterPickerModal from '../components/FilterPickerModal';
 import ImageGalleryLightbox, { type GalleryImage } from '../components/ImageGalleryLightbox';
 import TapHighlight from '../components/TapHighlight';
@@ -1137,7 +1138,11 @@ export default function WorkScreen() {
     updatingRef.current = true;
     setUpdatingId(task.id);
     try {
-      await uploadWorkTaskFile(task, file);
+      // Cả ảnh chụp lẫn ảnh/video chọn từ thư viện: đặt tên «mã dự án - tên việc - Ảnh/Video ngày giờ».
+      await uploadWorkTaskFile(
+        task,
+        withTaskMediaName(file, { projectCode: task.lead?.code, taskTitle: task.title }),
+      );
       bumpTaskFileCount(task.id);
       setError(null);
       Alert.alert('Đã đính kèm', successMsg);
