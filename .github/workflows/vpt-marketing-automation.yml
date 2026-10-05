@@ -21,6 +21,8 @@ on:
       - 'backend/src/routes/facebook.js'
       - 'backend/src/routes/facebookLeadIntakeAdmin.js'
       - 'backend/tests/facebookLeadIntake*.js'
+      - 'backend/tests/surveyCalendarGuard.cases.js'
+      - 'backend/tests/fixtures/legacyBackupGrants.sql'
       - 'database/652_facebook_lead_intake.sql'
       - 'database/653_facebook_lead_intake_console.sql'
       - 'frontend/src/pages/FacebookPage.jsx'
@@ -324,7 +326,7 @@ jobs:
     timeout-minutes: 10
     services:
       postgres:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_DB: fb_intake_test
           POSTGRES_USER: postgres
@@ -337,7 +339,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       postgres_restore:
-        image: postgres:16
+        image: postgres:17
         env:
           POSTGRES_DB: fb_intake_restore_test
           POSTGRES_USER: postgres

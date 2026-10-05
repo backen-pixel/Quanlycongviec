@@ -14,6 +14,7 @@ const config = require('../config');
 const { supabaseDispatcher } = require('../config/httpAgents');
 const { getRedisIfReady } = require('../config/redis');
 const { runIfLeader } = require('./cronLeader');
+const { isBackupPermissionDeniedError } = require('./backupSchemaGrants');
 
 const REDIS_KEY = 'supabase:replication:pending';
 const memQueue = [];
@@ -74,27 +75,11 @@ function canReplicate() {
   return isReplicationConfigured() && isActivePrimary();
 }
 
-/** Retry REST backup một lần sau khi cấp GRANT nếu 403/42501. */
-async function backupFetchWithGrantRetry(fetchFn) {
-  let res = await fetchFn();
+/** One request with existing privileges; return error text explicitly to every caller. */
+async function backupFetchWithoutPrivilegeRepair(fetchFn) {
+  const res = await fetchFn();
   if (res.ok) return { res, text: '' };
-  let text = await res.text().catch(() => '');
-  const permissionDenied = (res.status === 403 || res.status === 401)
-    && /42501|permission denied|Grant the required privileges/i.test(text);
-  if (!permissionDenied) return { res, text };
-  try {
-    const { applyBackupSchemaGrants } = require('./backupSchemaGrants');
-    await applyBackupSchemaGrants({
-      force: true,
-      onLog: (m) => console.warn('[replication]', m),
-    });
-  } catch (e) {
-    console.warn('[replication] grants failed:', e.message);
-    return { res, text };
-  }
-  res = await fetchFn();
-  if (res.ok) return { res, text: '' };
-  text = await res.text().catch(() => '');
+  const text = await res.text().catch(() => '');
   return { res, text };
 }
 
@@ -508,7 +493,7 @@ async function upsertFacebookContactOnBackup(row, depth = 0) {
 
   const rowToWrite = await ensureFacebookContactParents(row, depth);
 
-  const upsertRes = await backupFetchWithGrantRetry(() => undiciFetch(
+  const { res: upsertRes, text } = await backupFetchWithoutPrivilegeRepair(() => undiciFetch(
     `${backupBase}/rest/v1/facebook_contacts?on_conflict=page_id,psid`,
     {
       method: 'POST',
@@ -520,7 +505,7 @@ async function upsertFacebookContactOnBackup(row, depth = 0) {
       body: JSON.stringify(rowToWrite),
       dispatcher: supabaseDispatcher,
     },
-  )).then(({ res }) => res);
+  ));
 
   if (upsertRes.ok) {
     const saved = await upsertRes.json().catch(() => null);
@@ -528,7 +513,6 @@ async function upsertFacebookContactOnBackup(row, depth = 0) {
     return savedRow?.id || row.id || null;
   }
 
-  const text = await upsertRes.text().catch(() => '');
   const fk = parseFkMissingFromError(text);
   if (fk && depth < 6) {
     await ensureRowOnBackup(fk.parentTable, fk.parentId, depth + 1);
@@ -616,7 +600,7 @@ async function postRowToBackup(table, row, depth = 0) {
   }
 
   const backupBase = trimBase(config.supabaseBackupUrl);
-  const res = await backupFetchWithGrantRetry(() => undiciFetch(
+  const { res, text } = await backupFetchWithoutPrivilegeRepair(() => undiciFetch(
     `${backupBase}/rest/v1/${table}?on_conflict=id`,
     {
       method: 'POST',
@@ -628,9 +612,8 @@ async function postRowToBackup(table, row, depth = 0) {
       body: JSON.stringify(payload),
       dispatcher: supabaseDispatcher,
     },
-  )).then(({ res: r }) => r);
+  ));
   if (res.ok) return;
-  const text = await res.text().catch(() => '');
   const fk = parseFkMissingFromError(text);
   if (fk && depth < 4) {
     await ensureRowOnBackup(fk.parentTable, fk.parentId, depth + 1);
@@ -728,13 +711,14 @@ async function redisPushTail(job) {
 
 function isDeferrableReplicationError(err) {
   const msg = String(err?.message || err || '');
-  return /→ 409\b|42501|permission denied|Grant the required privileges/i.test(msg)
+  return isBackupPermissionDeniedError(err) || /→ 409\b/i.test(msg)
     || /"code":"23503"|foreign key|is not present in table|PGRST116|→ 406\b|→ 404\b|contains 0 rows|"code":"23505"|duplicate key/i.test(msg);
 }
 
 async function requeueReplicationJob(job, err) {
   const retry = (job.retry || 0) + 1;
-  if (retry > 12) {
+  // Revoked/missing privileges must never discard the pending write after retries.
+  if (retry > 12 && !isBackupPermissionDeniedError(err)) {
     console.warn('[supabase-replication] bỏ job sau 12 lần:', job.path || job.bucket, err?.message);
     return;
   }
@@ -853,7 +837,7 @@ async function applyRestJob(job) {
     });
   }
 
-  let { res, text } = await backupFetchWithGrantRetry(doFetch);
+  let { res, text } = await backupFetchWithoutPrivilegeRepair(doFetch);
   if (res.ok) return;
   if (!text) text = await res.text().catch(() => '');
   if (method === 'DELETE' && (res.status === 404 || /PGRST116|0 rows/i.test(text))) {
@@ -946,6 +930,7 @@ async function drainReplicationQueue({ maxJobs = 100, force = false } = {}) {
       _stats.failed += 1;
       _stats.last_error = e.message;
       await requeueReplicationJob(job, e);
+      if (isBackupPermissionDeniedError(e)) break;
     }
   }
   return { processed, failed, remaining: await getQueueDepth() };
@@ -973,7 +958,7 @@ async function workerTickBatch() {
           console.warn('[supabase-replication] apply failed:', job.type, job.path || job.bucket, e.message);
         }
         await requeueReplicationJob(job, e);
-        if (!isDeferrableReplicationError(e)) break;
+        if (isBackupPermissionDeniedError(e) || !isDeferrableReplicationError(e)) break;
       }
     }
   } finally {

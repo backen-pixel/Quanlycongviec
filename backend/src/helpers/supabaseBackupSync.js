@@ -1,8 +1,6 @@
 /**
  * Backup sync — verify, manual run, lịch cron theo slot VN, lưu cấu hình app_settings.
  */
-const { spawn } = require('child_process');
-const path = require('path');
 const { supabase } = require('../config/supabase');
 const { resolvePrimaryDbUrl, resolveBackupDbUrl } = require('../config/pgConnection');
 const { getAppSettingValue, invalidateAppSettingKey } = require('./appSettingsCache');
@@ -189,10 +187,6 @@ function computeNextRunAt(settings) {
 function slotAlreadyRan(settings, vnDate, label) {
   const rec = settings.last_cron_slots;
   return rec?.date === vnDate && Array.isArray(rec.slots) && rec.slots.includes(label);
-}
-
-function scriptsDir() {
-  return path.join(__dirname, '../../scripts');
 }
 
 function appendLog(line) {
@@ -433,25 +427,6 @@ async function verifyBackup() {
   };
 }
 
-function runScript(scriptName, args = []) {
-  return new Promise((resolve, reject) => {
-    const scriptPath = path.join(scriptsDir(), scriptName);
-    appendLog(`> node ${scriptName} ${args.join(' ')}`.trim());
-    const child = spawn(process.execPath, [scriptPath, ...args], {
-      cwd: path.join(scriptsDir(), '..'),
-      env: process.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    child.stdout.on('data', (d) => appendLog(d.toString()));
-    child.stderr.on('data', (d) => appendLog(d.toString()));
-    child.on('error', reject);
-    child.on('close', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`${scriptName} exit ${code}`));
-    });
-  });
-}
-
 async function runBackupSync({
   includeDb = true,
   includeStorage = true,
@@ -500,13 +475,7 @@ async function runBackupSync({
     }
 
     if (includeDb) {
-      appendLog('Cấp quyền REST service_role trên backup (nếu cần)…');
-      try {
-        const { applyBackupSchemaGrants } = require('./backupSchemaGrants');
-        await applyBackupSchemaGrants({ onLog: appendLog, force: true });
-      } catch (e) {
-        appendLog(`Cảnh báo grants: ${e.message} — vẫn tiếp tục đồng bộ`);
-      }
+      appendLog('Đồng bộ dùng quyền hiện có; không tự cấp lại quyền Backup.');
       appendLog('Đồng bộ DB incremental (log thay đổi + bảng lệch, không clone full)…');
       const { runIncrementalDbSyncPrimaryToBackup } = require('./supabaseIncrementalDbSync');
       const inc = await runIncrementalDbSyncPrimaryToBackup({ onLog: appendLog });
@@ -527,15 +496,13 @@ async function runBackupSync({
           inc.error
             || 'Supabase tạm khóa PG (ECIRCUITBREAKER). Đợi 10–15 phút rồi chạy lại — không spam clone/pg_dump.',
         );
-      } else if (inc.full_clone_required && process.env.SUPABASE_BACKUP_ALLOW_FULL_CLONE === '1') {
-        appendLog('Incremental chưa đủ — clone full DB (SUPABASE_BACKUP_ALLOW_FULL_CLONE=1)…');
-        await runScript('clone-primary-to-backup.js');
-        lastDbMode = 'full_clone';
+      } else if (inc.full_clone_required) {
+        throw new Error('BACKUP_CLONE_REMEDIATION_REQUIRED: Incremental chưa đủ; clone toàn bộ kiểu cũ đã bị khóa. Cần kiểm chênh cấu trúc/quyền và gói khắc phục được duyệt.');
       } else if (!inc.ok) {
         const names = (inc.drifted || []).map((r) => r.table).filter(Boolean).join(', ');
         throw new Error(
           names
-            ? `DB vẫn lệch sau incremental (${names}). Sửa mật khẩu DB hoặc bật SUPABASE_BACKUP_ALLOW_FULL_CLONE=1 để clone full.`
+            ? `DB vẫn lệch sau incremental (${names}). Cần đối chiếu cấu trúc, quyền và dữ liệu để lập gói khắc phục.`
             : (inc.error || 'Đồng bộ DB incremental thất bại'),
         );
       }

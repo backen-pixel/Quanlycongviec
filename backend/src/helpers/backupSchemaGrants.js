@@ -1,82 +1,18 @@
-/**
- * Cấp quyền schema public trên backup sau pg_restore (--no-acl) để REST/service_role upsert được.
- */
-const {
-  listBackupPgProbeCandidates,
-  connectPgWithProbeCandidates,
-  describePgTarget,
-} = require('../config/pgConnection');
+'use strict';
 
-const GRANTS_SQL = `
-GRANT USAGE ON SCHEMA public TO service_role, anon, authenticated;
-GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
-GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
-
-DO $$
-DECLARE r RECORD;
-BEGIN
-  FOR r IN SELECT tablename FROM pg_tables WHERE schemaname = 'public'
-  LOOP
-    EXECUTE format(
-      'GRANT SELECT, INSERT, UPDATE, DELETE ON public.%I TO service_role, authenticated',
-      r.tablename
-    );
-  END LOOP;
-  FOR r IN
-    SELECT sequence_name FROM information_schema.sequences WHERE sequence_schema = 'public'
-  LOOP
-    EXECUTE format(
-      'GRANT USAGE, SELECT ON public.%I TO service_role, authenticated',
-      r.sequence_name
-    );
-  END LOOP;
-END $$;
-`;
-
-let _lastAppliedAt = 0;
-const MIN_INTERVAL_MS = 60_000;
-
-/**
- * @param {{ onLog?: (msg: string) => void, force?: boolean }} [opts]
- */
-async function applyBackupSchemaGrants(opts = {}) {
-  const onLog = opts.onLog || ((m) => console.log(`[fix-backup-grants] ${m}`));
-  const force = opts.force === true;
-  const now = Date.now();
-  if (!force && now - _lastAppliedAt < MIN_INTERVAL_MS) {
-    onLog('Bỏ qua grants (vừa chạy gần đây)');
-    return { skipped: true };
-  }
-
-  const candidates = listBackupPgProbeCandidates();
-  if (!candidates.length) {
-    throw new Error('Thiếu SUPABASE_BACKUP_DB_URL hoặc SUPABASE_BACKUP_DB_DIRECT_URL');
-  }
-
-  const { pool, url } = await connectPgWithProbeCandidates(candidates, {
-    label: 'Backup grants',
-    onLog,
-  });
-  try {
-    await pool.query(GRANTS_SQL);
-    _lastAppliedAt = now;
-    onLog(`OK — service_role có quyền schema public (${describePgTarget(url)})`);
-    return { skipped: false, url };
-  } finally {
-    await pool.end().catch(() => {});
-  }
+// ACL changes belong to reviewed migrations, never backup error recovery.
+// Keep the old entry point fail-closed for callers/scripts from older versions.
+async function applyBackupSchemaGrants() {
+  const error = new Error('BACKUP_GRANT_MIGRATION_REQUIRED: Tự cấp quyền Backup đã bị khóa. Cần migration quyền cụ thể đã review và duyệt áp dụng.');
+  error.code = 'BACKUP_GRANT_MIGRATION_REQUIRED';
+  throw error;
 }
 
 function isBackupPermissionDeniedError(err) {
+  const status = Number(err?.status || err?.statusCode);
   const msg = String(err?.message || err || '');
-  return /42501|permission denied for (table|schema)/i.test(msg)
-    || /Grant the required privileges.*service_role/i.test(msg);
+  return status === 401 || status === 403 || String(err?.code || '') === '42501'
+    || /42501|permission denied|Grant the required privileges|→ (401|403)\b/i.test(msg);
 }
 
-module.exports = {
-  applyBackupSchemaGrants,
-  isBackupPermissionDeniedError,
-};
+module.exports = { applyBackupSchemaGrants, isBackupPermissionDeniedError };

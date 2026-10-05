@@ -9,7 +9,7 @@ const {
   runHealthCheck,
 } = require('../config/supabaseRouter');
 const { runPreSwitchSync, isLogSyncComplete } = require('./supabaseSwitchSync');
-const { verifyBackup, runBackupSync, isJobRunning, setBackupSyncLogListener } = require('./supabaseBackupSync');
+const { verifyBackup, isJobRunning, setBackupSyncLogListener } = require('./supabaseBackupSync');
 const { verifyStorageSync, runStorageSync } = require('./supabaseStorageSync');
 const { getPendingCount, runFailbackReplay } = require('./supabaseFailback');
 const { getQueueDepth } = require('./supabaseReplication');
@@ -487,20 +487,11 @@ async function runAutoFullSyncForSwitch(from, target, userId, { needDb = true, n
         onLog('Đồng bộ DB incremental (log + bảng lệch)…');
         const inc = await runIncrementalDbSyncPrimaryToBackup({ onLog });
         if (!inc.ok) {
-          if (inc.full_clone_required && process.env.SUPABASE_BACKUP_ALLOW_FULL_CLONE === '1') {
-            onLog('Incremental chưa đủ — clone full DB…');
-            setBackupSyncLogListener(onLog);
-            await runBackupSync({
-              includeDb: true,
-              includeStorage: false,
-              verifyBefore: false,
-              verifyAfter: false,
-              userId: userId ? `switch:${userId}` : 'switch',
-            });
-          } else {
-            const names = (inc.drifted || []).map((r) => r.table).join(', ');
-            throw new Error(names ? `DB vẫn lệch: ${names}` : (inc.error || 'Đồng bộ DB thất bại'));
+          if (inc.full_clone_required) {
+            throw new Error('BACKUP_CLONE_REMEDIATION_REQUIRED: Clone kiểu cũ đã khóa; cần gói khắc phục được duyệt trước chuyển DB.');
           }
+          const names = (inc.drifted || []).map((r) => r.table).join(', ');
+          throw new Error(names ? `DB vẫn lệch: ${names}` : (inc.error || 'Đồng bộ DB thất bại'));
         }
       }
       if (needStorage) {
@@ -776,34 +767,13 @@ async function prepareManualSwitch(target, userId) {
       failbackAfter,
     });
 
-    if (!syncVerified100 && process.env.SUPABASE_BACKUP_ALLOW_FULL_CLONE === '1') {
-      const needDb = verifyAfter?.all_ok !== true;
-      const needStorage = storageVerifyAfter?.all_ok !== true;
+    if (!syncVerified100) {
       steps.push({
         id: 'full_sync',
-        label: `Fallback clone full (log chưa đủ) ${from} → ${target}`,
+        label: 'Clone kiểu cũ đã khóa — cần gói khắc phục',
         ok: false,
-        detail: { running: true, needDb, needStorage },
+        detail: { running: false, error: 'BACKUP_CLONE_REMEDIATION_REQUIRED' },
       });
-      trackSteps({ phase: 'full_sync' });
-      try {
-        await runAutoFullSyncForSwitch(from, target, userId, { needDb, needStorage });
-        steps[steps.length - 1] = {
-          ...steps[steps.length - 1],
-          ok: true,
-          detail: { running: false, completed: true },
-        };
-        sync = await runPreSwitchSync(from, target);
-        replicationAfter = await getQueueDepth().catch(() => 0);
-        failbackAfter = await getPendingCount().catch(() => 0);
-        syncVerified100 = isLogSyncComplete({ sync, replicationAfter, failbackAfter });
-      } catch (e) {
-        steps[steps.length - 1] = {
-          ...steps[steps.length - 1],
-          ok: false,
-          detail: { running: false, error: e.message },
-        };
-      }
     }
   }
 

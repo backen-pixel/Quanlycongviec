@@ -1,3 +1,11 @@
+## 05/10/2026 — Bản sửa ngăn Backup tự cấp quyền đang kiểm chứng
+
+Sau catalog b0955e23, đã sửa helper/CLI cấp quyền, bỏ grant tự động ở replication/sync; khóa clone toàn bộ cũ và fallback manual-switch. Job lỗi quyền giữ ID/payload qua12 lần thử và dừng batch, không báo đã áp dụng. [Phạm vi, tác động, kiểm thử và cách dừng](vpt-marketing-automation/BACKUP_PRIVILEGE_GUARD_20261005.md).
+
+18/18 unit cô lập và kiểm cú pháp PASS cục bộ; CI Node18/22, intake/restore PostgreSQL17 và reviewer đúng delta đang thực hiện. PASS fd3babeb phía dưới là nền, không thay chứng nhận delta mới. DB thật vẫn có quyền rộng/chênh Backup đã ghi; chưa áp dụng bản sửa, đổi DB/cấu hình hoặc phát hành. Không yêu cầu Founder đăng nhập lại.
+
+---
+
 ## 05/10/2026 — Đã đọc Supabase; xác định lỗi cấu trúc Backup và quyền DB
 
 Founder đã đăng nhập; đọc được Primary và Backup bằng giao dịch chỉ đọc. **Không còn chờ đăng nhập.** [Hồ sơ catalog và gói khắc phục](vpt-marketing-automation/DB_CATALOG_20261005.md) cùng JSON là kết quả mới nhất; các mục dưới giữ lịch sử theo thời điểm.

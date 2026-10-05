@@ -8,12 +8,9 @@ module.exports = async (t, { db, peers, company, other, admin, sales }) => {
   const sql = fs.readFileSync(path.resolve(__dirname, '../../database/664_crm_survey_calendar_guard.sql'), 'utf8');
   await db.query(sql);
   await db.query(sql);
-  // Existing deployment grants are intentionally generous for this test. The
-  // control schema must remain private even if backup's broad PUBLIC grants run.
-  const grantsSource = fs.readFileSync(path.resolve(__dirname, '../src/helpers/backupSchemaGrants.js'), 'utf8');
-  const grants = grantsSource.match(/const GRANTS_SQL = `([\s\S]*?)`;/);
-  assert.ok(grants);
-  await db.query(grants[1]);
+  // Historical broad ACLs remain a negative fixture; production recovery no longer grants them.
+  const grants = fs.readFileSync(path.resolve(__dirname, 'fixtures/legacyBackupGrants.sql'), 'utf8');
+  await db.query(grants);
   const client = peers[0];
   const start = new Date(Date.now() + 5 * 86400000).toISOString();
   const end = new Date(Date.now() + 5 * 86400000 + 3600000).toISOString();
