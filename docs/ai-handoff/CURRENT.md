@@ -44,6 +44,12 @@ Rollback: revert only this commit; preserve all customer data and prior handoff 
 
 # Current candidate handoff
 
+## 2026-10-05 — Khóa quyền anon/authenticated trên public, code only
+
+Nhánh `claude/security-anon-revoke`, nền `043c0a3b`. Đã thêm audit SELECT-only, snapshot catalog, migration 700 và rollback, smoke test PostgREST staging, runbook vận hành. Chưa kết nối database, chưa chạy SQL/smoke, chưa áp staging/production hoặc backup. Chưa commit được vì `.git` của worktree trỏ ra ngoài writable root và `git add` không tạo được `index.lock`. `BRIEF_SECURITY.md` là brief chưa theo dõi; không đưa vào diff.
+
+Backend chỉ dùng service key trong các client được rà; `supabaseAnonKey` chỉ được khai báo tại config. Frontend và sáu app mobile không có lời gọi trực tiếp Supabase REST/RPC theo rà mã nguồn; `ProductionBackupSyncPage.jsx` chỉ có chuỗi hướng dẫn biến môi trường. Cần vận hành chạy audit → snapshot → migration 700 → verify trên staging, xác nhận rollback và smoke test ứng dụng trước khi Founder duyệt phát hành. Lưu ý default `PUBLIC EXECUTE` toàn cục của PostgreSQL cho hàm mới không thể thu bằng default ACL chỉ trong schema public; xem runbook.
+
 ## 2026-09-29 — VPT Messenger durable intake, local candidate only
 
 Issue #7: https://github.com/backen-pixel/Quanlycongviec/issues/7. Base: `413e8f575b5b611b25a50980564d754b7bfcf211`. Founder requested finishing the Messenger A2/B trial. No remote commit, PR, migration, live test or deployment performed by this workstream.
