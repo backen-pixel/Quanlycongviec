@@ -64,6 +64,9 @@ function webhookHarness({ enqueueError = null } = {}) {
     DURABLE_MESSENGER_PAGES: new Set(['synthetic-page']),
     enqueueMessengerEvents,
     messengerReceiptWorker: { drain() { state.drains++; return Promise.resolve(); } },
+    // This older recovery fixture has no care/intake-enrolled Pages.
+    facebookCustomerCare: { receive: async () => {}, legacyBody: body => body },
+    facebookLeadIntake: { receive: async () => {}, drain: async () => {} },
     r: { post(route, fn) { assert.equal(route, '/webhook'); handler = fn; } },
     supabase: {
       from(table) {
@@ -198,6 +201,9 @@ function messengerHarness({ failFirstLead = false, phone = null, validPhone = tr
     FB_DISABLE_WEBHOOK_LOGS: true,
     setTimeout(fn) { state.timerCallbacks.push(fn); return state.timerCallbacks.length; },
     supabase: { from: query },
+    // This harness models an unmanaged Page; managed/error cases have separate coverage.
+    legacyFacebookPageMayWrite: async () => true,
+    facebookCustomerCare: { isEnrolled: () => false },
     captureMessengerReferral: async () => { state.captures++; },
     linkMessengerAttribution: async () => { state.attributionLinks++; },
     getOrCreateContact: async () => ({ ...state.contact }),

@@ -1,0 +1,588 @@
+{
+  "observedAt": "2026-10-05T05:51:11Z",
+  "workspace": {
+    "name": "My Workspace",
+    "id": "tea-d47g0824d50c73856e80",
+    "confirmedBy": "Founder, current task, 2026-10-05",
+    "scope": "read-only",
+    "requestScopedWorkspaceId": true
+  },
+  "candidate": {
+    "head": "a270f7bec238486b6b83f5a48d51aaff7352ff79",
+    "runtime": "add71dafac4774bc2bbabc196b5c901df8cd9107"
+  },
+  "services": [
+    {
+      "id": "srv-d6gh2mc50q8c73a3d1c0",
+      "name": "tubep-frontend",
+      "type": "static_site",
+      "branch": "main",
+      "autoDeploy": "yes",
+      "autoDeployTrigger": "commit",
+      "suspended": "not_suspended",
+      "rootDir": "frontend",
+      "url": "https://tubep-frontend-s30w.onrender.com",
+      "region": null,
+      "numInstances": null,
+      "healthCheckPath": null,
+      "previewGeneration": "off",
+      "dashboardUrl": "https://dashboard.render.com/static/srv-d6gh2mc50q8c73a3d1c0"
+    },
+    {
+      "id": "srv-d6gh0dc50q8c73a3c1bg",
+      "name": "tubep-frontend1",
+      "type": "web_service",
+      "branch": "main",
+      "autoDeploy": "yes",
+      "autoDeployTrigger": "commit",
+      "suspended": "suspended",
+      "rootDir": "frontend",
+      "url": "https://tubep-frontend.onrender.com",
+      "region": "singapore",
+      "numInstances": 1,
+      "healthCheckPath": "",
+      "previewGeneration": "off",
+      "dashboardUrl": "https://dashboard.render.com/web/srv-d6gh0dc50q8c73a3c1bg"
+    },
+    {
+      "id": "srv-d6gguqq4d50c73emh20g",
+      "name": "tubep-backend",
+      "type": "web_service",
+      "branch": "main",
+      "autoDeploy": "yes",
+      "autoDeployTrigger": "commit",
+      "suspended": "not_suspended",
+      "rootDir": "backend",
+      "url": "https://tubep-backend.onrender.com",
+      "region": "singapore",
+      "numInstances": 1,
+      "healthCheckPath": "",
+      "previewGeneration": "off",
+      "dashboardUrl": "https://dashboard.render.com/web/srv-d6gguqq4d50c73emh20g"
+    }
+  ],
+  "liveDeployments": [
+    {
+      "serviceId": "srv-d6gh2mc50q8c73a3d1c0",
+      "id": "dep-db1hqd3tqb8s739caitg",
+      "status": "live",
+      "commit": "ad88a16202c167f144411c16c0b45969b2c49378",
+      "finishedAt": "2026-10-05T03:46:06.27214Z",
+      "trigger": "new_commit"
+    },
+    {
+      "serviceId": "srv-d6gguqq4d50c73emh20g",
+      "id": "dep-db1ih3bm8hqs73e2h51g",
+      "status": "live",
+      "commit": "899db5ed0d2aaf5a72b90e3aa5cc961c1bd6e090",
+      "finishedAt": "2026-10-05T04:34:30.919444Z",
+      "trigger": "new_commit"
+    }
+  ],
+  "mainSinceTestedBase": {
+    "base": "ca8810c57d2078087a7d0afdd95776fba6e84cc3",
+    "head": "899db5ed0d2aaf5a72b90e3aa5cc961c1bd6e090",
+    "status": "ahead",
+    "ahead_by": 10,
+    "behind_by": 0,
+    "total_commits": 10,
+    "merge_base": "ca8810c57d2078087a7d0afdd95776fba6e84cc3",
+    "files": [
+      {
+        "path": "backend/package.json",
+        "status": "modified"
+      },
+      {
+        "path": "backend/src/helpers/adInsights.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/src/helpers/placeProjectAtWorkshops.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/src/helpers/projectDeliveryDates.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/src/helpers/supabaseLo.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/src/routes/adAnalytics.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/src/routes/production.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/src/routes/projects.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/tests/cot-thieu-tu-loi.js",
+        "status": "added"
+      },
+      {
+        "path": "backend/tests/lay-theo-lo-loc-id.js",
+        "status": "added"
+      },
+      {
+        "path": "backend/tests/sx-install-anchor-deadline.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/tests/tinh-patch-ngay-gia-dinh.js",
+        "status": "added"
+      },
+      {
+        "path": "database/649_va_cot_thieu_projects_drive_acl.sql",
+        "status": "added"
+      },
+      {
+        "path": "docs/architecture/cac-buoc-bat-chuc-nang-facebook.md",
+        "status": "added"
+      },
+      {
+        "path": "docs/architecture/ke-hoach-bang-dieu-khien-quang-cao.md",
+        "status": "added"
+      },
+      {
+        "path": "docs/architecture/ke-hoach-hoan-thien-facebook.md",
+        "status": "added"
+      },
+      {
+        "path": "docs/architecture/ke-hoach-test-sua-ngay-xuong.md",
+        "status": "added"
+      },
+      {
+        "path": "docs/architecture/noi-facebook-marketing-api.md",
+        "status": "added"
+      },
+      {
+        "path": "frontend/src/pages/AdAnalyticsPage.jsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/App.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/components/CommentNotificationsModal.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/components/CreateDealModal.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/components/SxListCard.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/components/TaskGroupTag.tsx",
+        "status": "added"
+      },
+      {
+        "path": "sx-mobile/src/components/WorkFilterSheet.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/components/dashboard/DashboardParts.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/components/overview/StaffOverviewBody.tsx",
+        "status": "added"
+      },
+      {
+        "path": "sx-mobile/src/components/projectDetail/ProjectCrmTaskRow.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/components/projectDetail/ProjectDocumentsTab.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/context/NotificationContext.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/hooks/useMyProjectScope.ts",
+        "status": "added"
+      },
+      {
+        "path": "sx-mobile/src/lib/notificationApi.ts",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/lib/projectDetailApi.ts",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/lib/sxBoardKpis.ts",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/lib/taskMediaName.ts",
+        "status": "added"
+      },
+      {
+        "path": "sx-mobile/src/lib/workTasksApi.ts",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/navigation/MainTabs.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/screens/KanbanScreen.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/screens/OverviewScreen.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/screens/PlannerScreen.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/screens/ProjectDetailScreen.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/screens/WorkScreen.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/theme.ts",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/types.ts",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/tests/attachUnified.test.ts",
+        "status": "added"
+      },
+      {
+        "path": "sx-mobile/tests/sxColumnKpi.test.ts",
+        "status": "added"
+      },
+      {
+        "path": "sx-mobile/tests/sxDueBucket.test.ts",
+        "status": "added"
+      },
+      {
+        "path": "sx-mobile/tests/taskMediaName.test.ts",
+        "status": "added"
+      },
+      {
+        "path": "sx-mobile/tests/updateTaskStatus.test.ts",
+        "status": "added"
+      }
+    ]
+  },
+  "frontendBackendDelta": {
+    "base": "ad88a16202c167f144411c16c0b45969b2c49378",
+    "head": "899db5ed0d2aaf5a72b90e3aa5cc961c1bd6e090",
+    "status": "ahead",
+    "ahead_by": 4,
+    "behind_by": 0,
+    "total_commits": 4,
+    "merge_base": "ad88a16202c167f144411c16c0b45969b2c49378",
+    "files": [
+      {
+        "path": "backend/package.json",
+        "status": "modified"
+      },
+      {
+        "path": "backend/src/helpers/placeProjectAtWorkshops.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/src/helpers/projectDeliveryDates.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/src/helpers/supabaseLo.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/src/routes/projects.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/tests/cot-thieu-tu-loi.js",
+        "status": "added"
+      },
+      {
+        "path": "backend/tests/lay-theo-lo-loc-id.js",
+        "status": "added"
+      },
+      {
+        "path": "backend/tests/sx-install-anchor-deadline.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/tests/tinh-patch-ngay-gia-dinh.js",
+        "status": "added"
+      },
+      {
+        "path": "docs/architecture/ke-hoach-test-sua-ngay-xuong.md",
+        "status": "added"
+      },
+      {
+        "path": "sx-mobile/src/components/projectDetail/ProjectCrmTaskRow.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/lib/projectDetailApi.ts",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/lib/taskMediaName.ts",
+        "status": "added"
+      },
+      {
+        "path": "sx-mobile/src/screens/ProjectDetailScreen.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/screens/WorkScreen.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/types.ts",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/tests/taskMediaName.test.ts",
+        "status": "added"
+      }
+    ]
+  },
+  "candidateVsBackend": {
+    "base": "add71dafac4774bc2bbabc196b5c901df8cd9107",
+    "head": "899db5ed0d2aaf5a72b90e3aa5cc961c1bd6e090",
+    "status": "diverged",
+    "ahead_by": 10,
+    "behind_by": 172,
+    "total_commits": 10,
+    "merge_base": "ca8810c57d2078087a7d0afdd95776fba6e84cc3",
+    "files": [
+      {
+        "path": "backend/package.json",
+        "status": "modified"
+      },
+      {
+        "path": "backend/src/helpers/adInsights.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/src/helpers/placeProjectAtWorkshops.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/src/helpers/projectDeliveryDates.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/src/helpers/supabaseLo.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/src/routes/adAnalytics.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/src/routes/production.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/src/routes/projects.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/tests/cot-thieu-tu-loi.js",
+        "status": "added"
+      },
+      {
+        "path": "backend/tests/lay-theo-lo-loc-id.js",
+        "status": "added"
+      },
+      {
+        "path": "backend/tests/sx-install-anchor-deadline.js",
+        "status": "modified"
+      },
+      {
+        "path": "backend/tests/tinh-patch-ngay-gia-dinh.js",
+        "status": "added"
+      },
+      {
+        "path": "database/649_va_cot_thieu_projects_drive_acl.sql",
+        "status": "added"
+      },
+      {
+        "path": "docs/architecture/cac-buoc-bat-chuc-nang-facebook.md",
+        "status": "added"
+      },
+      {
+        "path": "docs/architecture/ke-hoach-bang-dieu-khien-quang-cao.md",
+        "status": "added"
+      },
+      {
+        "path": "docs/architecture/ke-hoach-hoan-thien-facebook.md",
+        "status": "added"
+      },
+      {
+        "path": "docs/architecture/ke-hoach-test-sua-ngay-xuong.md",
+        "status": "added"
+      },
+      {
+        "path": "docs/architecture/noi-facebook-marketing-api.md",
+        "status": "added"
+      },
+      {
+        "path": "frontend/src/pages/AdAnalyticsPage.jsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/App.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/components/CommentNotificationsModal.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/components/CreateDealModal.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/components/SxListCard.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/components/TaskGroupTag.tsx",
+        "status": "added"
+      },
+      {
+        "path": "sx-mobile/src/components/WorkFilterSheet.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/components/dashboard/DashboardParts.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/components/overview/StaffOverviewBody.tsx",
+        "status": "added"
+      },
+      {
+        "path": "sx-mobile/src/components/projectDetail/ProjectCrmTaskRow.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/components/projectDetail/ProjectDocumentsTab.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/context/NotificationContext.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/hooks/useMyProjectScope.ts",
+        "status": "added"
+      },
+      {
+        "path": "sx-mobile/src/lib/notificationApi.ts",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/lib/projectDetailApi.ts",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/lib/sxBoardKpis.ts",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/lib/taskMediaName.ts",
+        "status": "added"
+      },
+      {
+        "path": "sx-mobile/src/lib/workTasksApi.ts",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/navigation/MainTabs.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/screens/KanbanScreen.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/screens/OverviewScreen.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/screens/PlannerScreen.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/screens/ProjectDetailScreen.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/screens/WorkScreen.tsx",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/theme.ts",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/src/types.ts",
+        "status": "modified"
+      },
+      {
+        "path": "sx-mobile/tests/attachUnified.test.ts",
+        "status": "added"
+      },
+      {
+        "path": "sx-mobile/tests/sxColumnKpi.test.ts",
+        "status": "added"
+      },
+      {
+        "path": "sx-mobile/tests/sxDueBucket.test.ts",
+        "status": "added"
+      },
+      {
+        "path": "sx-mobile/tests/taskMediaName.test.ts",
+        "status": "added"
+      },
+      {
+        "path": "sx-mobile/tests/updateTaskStatus.test.ts",
+        "status": "added"
+      }
+    ]
+  },
+  "targetedStartupLogs": [
+    {
+      "timestamp": "2026-10-05T04:34:25.841215634Z",
+      "message": "[supabase-health] Probe mỗi 15000ms (failover=on, auto=off)",
+      "instance": "srv-d6gguqq4d50c73emh20g-b95d7"
+    }
+  ],
+  "limitations": [
+    "No environment values or secrets retrieved.",
+    "Startup log is point-in-time, not current target or all-writer proof.",
+    "No DB, migration, backup, provider or runtime UAT.",
+    "No service mutations, deploys, merges or messages."
+  ]
+}

@@ -1,0 +1,33 @@
+name: Agent guardrails (isolated)
+on:
+  pull_request:
+    paths:
+      - 'backend/src/helpers/ai*.js'
+      - 'backend/src/helpers/flow*.js'
+      - 'backend/src/helpers/resolveModuleFlow.js'
+      - 'backend/src/helpers/mcpGateway.js'
+      - 'backend/src/helpers/autoDealWonProject.js'
+      - 'backend/src/helpers/vcHandoverCore.js'
+      - 'backend/src/routes/vcHandover.js'
+      - 'backend/tests/agentGuardrails.test.js'
+      - '.github/workflows/agent-guardrails.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolated:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        node: [18, 22]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Guardrails and unchanged Care contracts (no external services)
+        run: |
+          node --test --test-reporter=tap backend/tests/agentGuardrails.test.js backend/tests/facebookCustomerCare.advisor.test.js backend/tests/facebookCustomerCare.inference.test.js backend/tests/facebookCustomerCare.runtime.test.js backend/tests/careAnswerDispatch.test.js

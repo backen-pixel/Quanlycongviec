@@ -1,0 +1,404 @@
+{
+  "kind": "INTEGRATION_EVIDENCE_ONLY",
+  "recordedAt": "2026-10-05T16:41:54.561Z",
+  "releaseStatus": "HOLD_PRECONDITIONS",
+  "risk": "HIGH",
+  "candidate": {
+    "source": "43e502624b1454a112b0f2ee96bb0b91c5e9b1dc",
+    "tree": "ba7c2778c83ee85ab7f3a436107a2d71e419f513",
+    "integratedMain": "1f879ea85dfff23629fef79c8d15f2eaf540328e",
+    "pr": 25,
+    "branch": "codex/agent-guardrails-20261005"
+  },
+  "ci": {
+    "runId": 37340712199,
+    "mergeCommit": "bdc259cd696bd58688ff36b84f50b502d251f795",
+    "tree": "ba7c2778c83ee85ab7f3a436107a2d71e419f513",
+    "jobsPassed": 11,
+    "intakeLegacyPassed": 507,
+    "intake700Passed": 510,
+    "restoreEachBaselinePassed": 11,
+    "scope": "synthetic PostgreSQL 17; not production backup, schema or ACL certification"
+  },
+  "review": {
+    "code": "PASS_ISOLATED_COMPATIBILITY",
+    "production": "HOLD",
+    "reviewer": "independent agent marketing_release_review"
+  },
+  "sqlInventory": {
+    "comparison": "main to candidate; NOT database ledger or installation order",
+    "count": 50,
+    "entries": [
+      {
+        "path": "database/648_marketing_automation_command_queue.sql",
+        "gitBlob": "f14c7da0509dc914bdfa29b181fa7d5a2ac44836",
+        "sha256": "1b6fb2a24036583e3e464d5099459877cd258f29d9708b55594dffc2bc25da65",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/649_marketing_spend_evidence.sql",
+        "gitBlob": "9be5f3e7964b56547617a5b64bcfd7beb10f2b36",
+        "sha256": "4c88073f426ced706f2222f1f8f5dcf900f124dd6ff8cacfe713279949f3b896",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/650_crm_lead_qualification.sql",
+        "gitBlob": "74703a19ef65a02e08569c486170774aaef75dec",
+        "sha256": "4ec39ad2bfec11524ed003c46f1c8e446a7832df7364a420bab7432987401647",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/651_crm_lead_identity.sql",
+        "gitBlob": "04431c8cdd4b1460a3b1b98ed7ea33293172b366",
+        "sha256": "7eaa5574313dfddc49395169d5f90f9407e443692835a42812cead4e1311830e",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/652_facebook_lead_intake.sql",
+        "gitBlob": "5c0bd55d97e459bc85033d0f18422f4a254815d7",
+        "sha256": "a83e33bda0e59bb2a7ff987404b9ac228ac3b7a7ebeebbac67142139c64b4b84",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/653_facebook_lead_intake_console.sql",
+        "gitBlob": "98c284f244dc8a035d767a2bbb8042e1efc05421",
+        "sha256": "1ad95e728dd4e3b6364cd98431d2f708533cbf7d0bb96d4a83eb39dc4b94b848",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/654_crm_identity_review.sql",
+        "gitBlob": "b542b814551051469fd1ee731298db28f4f17644",
+        "sha256": "e135050412a743c8beb1f70129a44d125b8b63c66c40f83a6d39972c73e56e4c",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/655_marketing_lead_trial.sql",
+        "gitBlob": "6a2b0040a11cbe0ab5af2019f23f19954fe21fa0",
+        "sha256": "551fc7c9fdc9f052c0ebae4c5cee4ea148ffa5281ef775fe50738c2fd2330d65",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/656_facebook_lead_census.sql",
+        "gitBlob": "1aafff5e1a83521b1f45733aa3bec4341c468b57",
+        "sha256": "694fd73a4db61d8c07e5f97de539e369cf3de10820456efafbec6cfef89c3cc9",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/657_marketing_census_reconciliation.sql",
+        "gitBlob": "248dc4414c03d7ae1025aacbf036fbf4f0efb2b3",
+        "sha256": "7af7c9617aee5c811dc72e7f1271bac79fedb40be078868517414b18a887c53e",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/658_facebook_legacy_reconciliation.sql",
+        "gitBlob": "2768f4e6dba7b17b2fcc9b51a9ca5c677a577e28",
+        "sha256": "932e011df6da9c797d8a4a34a92ead0fc809140d597d59c7ee443dacd7497931",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/659_crm_customer_care.sql",
+        "gitBlob": "4b8076821dc59ca0d18e6b3ad98f12af1f30f0c2",
+        "sha256": "2e2f3a07bfb1af786883037ac53e18a2b177d67150fd21eb98e2150707b3f980",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/660_crm_customer_care_console.sql",
+        "gitBlob": "c08115a40ef3f08b307aada0452cd0f5f7be2c18",
+        "sha256": "ee59f54dc940b76cc1f4fb74f9ad24f50f8bb3c1754e0d06e5ec91d08cec98d8",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/661_crm_care_library.sql",
+        "gitBlob": "d9c5fafac2fbbeecb19ff0a25949b784d53f0c49",
+        "sha256": "df22c3c52257548e2862232c1b5ea7a3ba5fb05cb612c98bb5845a0d7d8e45bc",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/662_crm_care_library_console.sql",
+        "gitBlob": "b1bf42e13ed78d13f12582a3c5ceccdbc79e2c66",
+        "sha256": "38967eb7a7a03bbaff4fbe42a1743815e8c84d56c145e1f6d956074e2230fae3",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/663_crm_survey_availability.sql",
+        "gitBlob": "be068f21b953ec1342fb83129b01ae13b84f6ef8",
+        "sha256": "e4d3d3ff77e72cc6a4a069c7402b20a1556d18d288d05d1bb23c3a87214d7bc4",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/664_crm_survey_calendar_guard.sql",
+        "gitBlob": "56ba834a93a9ecde581e1d9df2274ad330784c38",
+        "sha256": "ee2e45a9356d12df2db9c9258053219a9a9df2f00a378d43f76a0ee55525072c",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/665_crm_survey_proposals.sql",
+        "gitBlob": "db13ae0651c49c8b0c37472293800ccc080d98ec",
+        "sha256": "b4d25b91ad24d6498571acb456b2bb73fbf44b5dcd8edcea7721c0f6c09e4587",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/666_crm_survey_confirmation_ingress.sql",
+        "gitBlob": "d33f9bc8c115fb33f8eb4a647796299a50b3dce7",
+        "sha256": "8dfbbc9bcebd75a51694c6ebba3b59cb6fab0022b66a06c10a73241db8f6b5eb",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/667_crm_survey_dispatch.sql",
+        "gitBlob": "51cd76575530b2a163503d6c8bd0eaeb38479332",
+        "sha256": "bcb47aba443db8e51c543a83375da60fc99942b5cf3a723956247394817c8e94",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/668_crm_survey_handoffs.sql",
+        "gitBlob": "fbc882497acf173d0eb0158009044bff640a71e2",
+        "sha256": "5ceacc4b97a87a482b51a634945aa7ddf26413b611ea907c31100b0f7aab70b9",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/669_crm_survey_outcomes.sql",
+        "gitBlob": "db49181af9ec3aa9aef767e9b0d8fa6d8a920552",
+        "sha256": "341d07beb5f671ca8d5cffc13523b02b8640ca601e24dcd7ce109a9f0ab46cf7",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/670_marketing_measurement_period.sql",
+        "gitBlob": "acab041afd6cc100da1f64a714fe4a4054977b2a",
+        "sha256": "ee9096572a7e1f644a49e5653e186c4de2eb34f2d19ab081eee454a42cae383c",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/671_marketing_source_registry.sql",
+        "gitBlob": "d8cc23963bdd5baa7685e2c7f0e7e5eb90efda2c",
+        "sha256": "3fbc777fe8897c59e10facd1a320868c6b15dcfa34bdb341439fbb67f88e1c28",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/672_marketing_census_witness.sql",
+        "gitBlob": "e404c2ad5de0860e80a32bbff91a027cbb8269d9",
+        "sha256": "0a6fafc035e21966e3637eb5f6ccca3ba8d565eaf96bdae0f8e75b7e366fed76",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/673_marketing_operations_dashboard.sql",
+        "gitBlob": "3349348d730d450e8eb4279f3c6d1752d1092915",
+        "sha256": "a16dbfb43af8cd91c612456077adac689c92282bb006401ce7288ccc8a1e55ad",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/674_marketing_source_export.sql",
+        "gitBlob": "7c1755c5d6994ad66ebd5554c6764dc4d4c1a869",
+        "sha256": "dd0710837a487e929690716d6c76bdf06a5bce09b59253644966246e07f4e90c",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/675_marketing_measurement_snapshot.sql",
+        "gitBlob": "415507179769188735165dfbc19b5435ba13c7a4",
+        "sha256": "e94b446069598533c9ea1e7945688ced4b7e98cece928b0faebbcc086a38be4f",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/676_marketing_account_delivery.sql",
+        "gitBlob": "db40015142fac07f4dece59b9081b131b2895b35",
+        "sha256": "4bcf092908e21280a1685d87aa99f0c74a7d75448ea9a896796aa6e0bb79fa9c",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/677_marketing_scope_acceptance.sql",
+        "gitBlob": "d79f94017a1e57bb3887087ddaec72ac559b097c",
+        "sha256": "71a9d9d8976dc90b1997ebaa86bcb2de4994f6830a3ffb8c80bf4fd1adbf8f24",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/678_marketing_cohort_operations.sql",
+        "gitBlob": "841fdad9b5d3cfd03a9f451df53424b1d4bcb20b",
+        "sha256": "732a734cc32e466a8a9e736319b54de40cde53c3420e2780e6d01abdfdc2b317",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/679_survey_proposal_console.sql",
+        "gitBlob": "bfece893635befb9cf5a55cfceb892eb0d743c69",
+        "sha256": "b82b19fef266ea3e2ae13996dc11551a038770b1556d5d7ca0ae2624f6112ccb",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/680_crm_care_connection.sql",
+        "gitBlob": "593a41e4dba58eaf90161d84b3a0ca915a338ee6",
+        "sha256": "535acf36200b6db75cf59809d3f4189a69a03b739ab07b4608924b023ed1c00b",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/681_crm_care_connection_choices.sql",
+        "gitBlob": "6a04b69f38b74c4f90b2a15ce2ae83faedaa4e8e",
+        "sha256": "2a7530898733930d8c9616aef949c25e5c37268728500cec049624d56776d373",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/682_crm_care_legacy_write_check.sql",
+        "gitBlob": "957d88da92e8190751a396045e430a619c4b777b",
+        "sha256": "f83f0b4da16336287a7751b56d467617b34e2618fb4cf91dd193f085252a0b41",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/683_facebook_source_repair.sql",
+        "gitBlob": "cad48de7146e79714bb08448b786aec8c3391bf8",
+        "sha256": "efd95e2b0a7b90a027c10170c41c4249a40e4623021a4f3e4d59007cfe544400",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/684_facebook_batch_journal.sql",
+        "gitBlob": "af46efe14232256b5cc72815ad3b1496623b8d1d",
+        "sha256": "dcf60a5958e86093db7197cd8f313be55fcaf3f39eb0a71f04063fb2bc034a32",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/685_crm_identity_review_active_company.sql",
+        "gitBlob": "4a6717f47a66de1bd7974dd07584712ef7c613ae",
+        "sha256": "be7d805b1487e693a834a8097b752d3b56b290820bd5250f3b3c37fb2d0e0d64",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/686_facebook_batch_stop.sql",
+        "gitBlob": "e6e5413675dcba64c15f4ed064db0a0a323da675",
+        "sha256": "df103a54f54406dc03cea271e1ced63f75fa09881a8130110f27d7412d093950",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/687_crm_legacy_write_hold.sql",
+        "gitBlob": "975a082c889df70d760c4c5e3ce881f2fae5643b",
+        "sha256": "63b248e684a6a27bf9ed6c018507a4a668ff150eb812d8952932a17847a27175",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/688_facebook_batch_link_reconciliation.sql",
+        "gitBlob": "6db207bad47fa32982f68d8b44978569017fa6db",
+        "sha256": "f39a6f5374883908d744ec2519ef4e56f545ea2ee24d5606b60ed83f699306b6",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/689_crm_care_advisor_drafts.sql",
+        "gitBlob": "0405d946ec2e77540573f3c0f69d86a0383054e5",
+        "sha256": "870bea70264adc13d75e7794fb3282c689d707c245cf41de626c412c502b33b0",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/690_crm_care_advisor_console.sql",
+        "gitBlob": "ff30ae901820dea3961da86122c66c015ed83c7d",
+        "sha256": "3a6151ba03359c0304120dca9ebd46702f8649b334651b8ef56afce76212429f",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/691_crm_care_inference_permits.sql",
+        "gitBlob": "80fe0ea1cab624e96d4a85b4ba6ff6188b755cd4",
+        "sha256": "640ef0d9383b15f9070218be3a959d7e65e1a29d41be624e842f7619e2098ca9",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/692_crm_care_shared_rules.sql",
+        "gitBlob": "92a9c8c37cdb1406a86b6ec34054627c4d0c3470",
+        "sha256": "feb3494a8938677615bebaaf9e0bc9cb542027b3bf4a1619ba28e3bbdbc9b2f2",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/693_crm_care_runtime.sql",
+        "gitBlob": "7e67c0e74df3e9e61b10b371ec36e7145949dadb",
+        "sha256": "8f09264e4c46845bef6e7b553adefc7ed49712638239340a8bee6c21711ac8e7",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/694_crm_care_answer_delivery.sql",
+        "gitBlob": "2ffdb34e31eb52d8596f002a0fbc2f93fb07eee3",
+        "sha256": "bb83edf4f0bc40838bdeea263062936fa206e12df4ad12f5fa654d01d4f5d1e1",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/695_crm_survey_runtime.sql",
+        "gitBlob": "34a361210dd44e9894eea55ed9bd7e2d0fd56c6f",
+        "sha256": "264d21311c373ede196e5b0fd306b6ffdb09082663abe5f039c9ac32f7d2b99b",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/696_crm_care_inference_cost_console.sql",
+        "gitBlob": "17429a4a99972c48f2a5d37f2f0b85e1d96ce639",
+        "sha256": "01cdfa27a910ad67b1053871b908b016189e8e3ec476cf76ab87774cfe62e527",
+        "appliedToProduction": null
+      },
+      {
+        "path": "database/697_crm_legacy_hold_restore.sql",
+        "gitBlob": "978dbcbb8b6d156eadfe9b856e367e491352a6dd",
+        "sha256": "5a2b9c0bc6bff8ac3552b3a1503121d520e5d7621e33c76c7584b6f37da325d2",
+        "appliedToProduction": null
+      }
+    ]
+  },
+  "securityBaseline": {
+    "path": "database/700_revoke_anon_public_access.sql",
+    "gitBlob": "d6d1b18d7a98fa774092e34b646ec13f644e3eaa",
+    "owner": "Claude / DB operator",
+    "modifiedHere": false,
+    "ordering": "Before Marketing migrations; never rerun blanket grants after Marketing"
+  },
+  "migrationExecution": {
+    "allowed": false,
+    "orderStatus": "DO_NOT_APPLY_WHOLE_INVENTORY_SPLIT_FIRST",
+    "knownConstraints": [
+      "639 atomic function must exist before wrapper 680; never reinstall 639 over that wrapper.",
+      "682 requires 680 and 652. 680 requires 659 and source registry 671; registry depends on measurement/identity/trial/census modules.",
+      "Legacy code paths also call 683, 684 and 686 even when AI sending flags are off.",
+      "687 affects 18 CRM root tables and FK descendants across companies; do not infer scope from Page allowlist.",
+      "Check full final ACL state after all migrations. The historical broad-grant fixture is test-only and must never be deployed.",
+      "REST replication skips RPC writes; Backup service health is not evidence new Marketing data is backed up."
+    ],
+    "minimumNewMigrationNumber": 701
+  },
+  "routing": {
+    "accountId": "835757498658305",
+    "pageId": "409741855550833",
+    "formId": "1438656288329447",
+    "formName": "VPT — Tư vấn tủ bếp HCM — 01.10.2026",
+    "formUiVerified": true,
+    "formFieldKeysVerified": false,
+    "crmAccountRegistered": false,
+    "recipient": "Admin Vạn Phú Thành",
+    "companyId": "991dc79d-cbf5-49f9-a364-35227cb47635",
+    "bindingCreated": false
+  },
+  "recovery": {
+    "productionCloneIdentified": false,
+    "actualRestoreVerified": false,
+    "backupCoverageIncludesRpcAndPrivateSchemas": null
+  },
+  "cutover": {
+    "started": false,
+    "steps": [
+      "Verify schema, final permissions and recoverable backup on isolated staging.",
+      "Register provider source using authenticated Application Service and verify exact field keys; no direct business table writes.",
+      "Verify Primary-only configuration and drain every legacy writer.",
+      "Enable intended Page with VPT_FB_LEAD_INTAKE_WORKER_PAUSED=1 and validate signed receipt.",
+      "Open worker only after binding and receipt acceptance; trace labelled test to CRM, Admin and report."
+    ],
+    "stop": "Set worker paused; retain Page/enrollment/receipts. Never reopen legacy writers or broad grants.",
+    "executable": false,
+    "prerequisites": [
+      "Split package and scoped Founder release decision",
+      "H1 durable all-Page receipt before ACK",
+      "H2 bounded scope query and load tests",
+      "Staging acceptance and real backup recovery evidence",
+      "Source binding; deployed end-to-end UAT follows controlled cutover before activation"
+    ]
+  },
+  "wholePrMergeAllowed": false,
+  "splitDecision": {
+    "source": "SPLIT_RELEASE_ALIGNMENT_20261005.md",
+    "approvedPreparation": [
+      "A_MINIMAL",
+      "SPLIT_H"
+    ],
+    "packageA": "ALREADY_ON_MAIN_PR28",
+    "openedPagesForBAndC": [],
+    "h1Status": "DESIGN_RECORDED_NOT_IMPLEMENTED",
+    "h2Status": "REQUIRES_SCOPED_QUERY_AND_STAGING_LOAD_VERIFICATION",
+    "newMigrationMinimum": 701,
+    "perPackageManifestRequired": true
+  }
+}

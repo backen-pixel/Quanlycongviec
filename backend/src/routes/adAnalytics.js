@@ -178,25 +178,39 @@ async function napDuLieu(req, { chiQuangCao = false } = {}) {
  * nhau. Lead là người đã vào quy trình, lượt chạm là người mới nhắn. Gộp lại thì
  * tỉ lệ chốt sẽ bị pha loãng và mọi so sánh cũ hoá sai.
  *
- * Không cắt được theo công ty: chưa có lead thì chưa có công ty. Bù lại, nơi gọi
- * chỉ gắn số vào những khoá ĐÃ nằm trong nhóm đã lọc quyền, nên không lộ chéo.
+ * company_id đã được gắn tại capture (SQL641); không suy quyền từ Page/ad dùng
+ * chung. Đây là số lượt chạm có gắn công ty, không là khách duy nhất/hợp lệ.
+ * Người chỉ có quyền cá nhân/khu vực chưa có hợp đồng đọc contact tương ứng.
  */
-async function demChuaThanhLead({ tu, den, pageId } = {}) {
-  const rong = { page: new Map(), bai: new Map(), qc: new Map(), tong: 0 };
-  let q = supabase.from('lead_attribution')
-    .select('fb_page_id, fb_ad_id, fb_post_id')
-    .not('fb_ad_id', 'is', null)
-    .is('lead_id', null)
-    .limit(20000);
-  if (tu) q = q.gte('cham_dau_luc', tu);
-  if (den) q = q.lte('cham_dau_luc', den);
-  if (pageId) q = q.eq('fb_page_id', pageId);
-
-  const { data, error } = await q;
-  if (error) {
-    console.warn('[ad-analytics/chua-thanh-lead]', error.message);
-    return rong;
+async function demChuaThanhLead(req, { tu, den, pageId } = {}) {
+  const unknown = (reason) => ({
+    page: new Map(), bai: new Map(), qc: new Map(), tong: null, status: 'UNKNOWN', reason,
+  });
+  const role = String(req.user?.role || '').trim().toLowerCase();
+  if (!userSeesAllCrmLeadsForScope(req.user) || role === 'region_admin') return unknown('CONTACT_SCOPE_UNVERIFIED');
+  const companies = await congTyLoc(req);
+  if (!companies?.length) return unknown('COMPANY_SCOPE_REQUIRED');
+  let result;
+  try {
+    let q = supabase.from('lead_attribution')
+      .select('company_id, fb_page_id, fb_ad_id, fb_post_id', { count: 'exact' })
+      .in('company_id', companies)
+      .not('fb_ad_id', 'is', null)
+      .is('lead_id', null)
+      .limit(20000);
+    if (tu) q = q.gte('cham_dau_luc', tu);
+    if (den) q = q.lte('cham_dau_luc', den);
+    if (pageId) q = q.eq('fb_page_id', pageId);
+    result = await q;
+  } catch {
+    return unknown('SOURCE_UNAVAILABLE');
   }
+  const { data, error, count } = result || {};
+  if (error || !Array.isArray(data)) return unknown('SOURCE_UNAVAILABLE');
+  // PostgREST can cap below the requested limit. Exact count must match this read.
+  if (!Number.isSafeInteger(count) || count < 0 || count !== data.length) return unknown('SOURCE_INCOMPLETE');
+  if (data.some(x => !companies.includes(String(x.company_id)))) return unknown('SOURCE_SCOPE_MISMATCH');
+  const rong = { page: new Map(), bai: new Map(), qc: new Map(), tong: 0, status: 'VERIFIED', reason: null };
   const cong = (m, k) => { if (k) m.set(String(k), (m.get(String(k)) || 0) + 1); };
   for (const x of data || []) {
     cong(rong.page, x.fb_page_id);
@@ -242,7 +256,9 @@ function themChiTieu(o, adIds, mChiTieu) {
     hien_thi: ht,
     nhap: nh,
     cost_per_lead: o.leads ? Math.round(spend / o.leads) : null,
-    roas: spend > 0 ? Math.round((o.revenue / spend) * 100) / 100 : null,
+    roas: null,
+    spend_status: 'PARTIAL_UNVERIFIED',
+    eligible_for_budget_optimization: false,
   };
 }
 
@@ -250,7 +266,9 @@ function oTrong() {
   return {
     leads: 0,
     by_label: { rac: 0, lanh: 0, am: 0, nong: 0, da_chot: 0 },
-    _sum: 0, _n: 0, deals: 0, closed: 0, revenue: 0,
+    _sum: 0, _n: 0, deals: 0, closed: 0, revenue: null, closed_estimated_value: 0,
+    revenue_status: 'UNKNOWN', revenue_basis: 'RECOGNIZED_NET_SOURCE_NOT_CONNECTED',
+    eligible_for_budget_optimization: false,
     _leadIds: new Set(), _paidLeadIds: new Set(),
   };
 }
@@ -283,7 +301,7 @@ function congDon(g, l, d) {
     g._n += 1;
   }
   if (l.type === 'deal') g.deals += 1;
-  if (l.actual_close_date) { g.closed += 1; g.revenue += Number(l.estimated_value) || 0; }
+  if (l.actual_close_date) { g.closed += 1; g.closed_estimated_value += Number(l.estimated_value) || 0; }
 }
 
 r.get('/summary', async (req, res) => {
@@ -322,7 +340,7 @@ r.get('/summary', async (req, res) => {
       ti_le_biet_quang_cao: tong.leads ? Math.round((tuQC.leads / tong.leads) * 100) : 0,
       co_chi_tieu: coChiTieu,
       ghi_chu_chi_tieu: coChiTieu
-        ? 'Chi tiêu lấy từ Marketing API. ROAS tính trên giá trị đơn đã chốt, đơn nào để giá 0 thì không vào ROAS.'
+        ? 'Chi tiêu chỉ gồm quảng cáo có Lead được liên kết, chưa chứng minh đầy đủ. Doanh thu kế toán và ROAS chưa xác minh; không dùng để tự tăng ngân sách.'
         : 'Chi tiêu và ROAS chưa có — cần khai báo tài khoản quảng cáo và token Marketing API.',
     });
   } catch (e) {
@@ -455,22 +473,30 @@ r.get('/insights', async (req, res) => {
       .order('diem_uu_tien', { ascending: false })
       .limit(500);
     if (error) throw new Error(error.message);
-    let rows = data || [];
+    let rows = (data || []).map(x => ({
+      ...x,
+      ...((Array.isArray(x.nhan_xet) ? x.nhan_xet : []).some(n => ['doanh_thu_cao', 'lo_von'].includes(n.ma))
+        ? { xep_hang: 'can_xem', diem_uu_tien: 0, analysis_status: 'STALE_FINANCIAL_BASIS' } : {}),
+      so_lieu: { ...x.so_lieu, closed_estimated_value: x.so_lieu?.closed_estimated_value ?? x.so_lieu?.revenue ?? null,
+        revenue: null, roas: null, doanh_thu_moi_lead: null, revenue_status: 'UNKNOWN', eligible_for_budget_optimization: false },
+      nhan_xet: (Array.isArray(x.nhan_xet) ? x.nhan_xet : []).filter(n => !['doanh_thu_cao', 'lo_von'].includes(n.ma)),
+    }));
     if (dsCT) rows = rows.filter((x) => dsCT.includes(String(x.so_lieu?.company_id || '')));
     if (pageId) rows = rows.filter((x) => String(x.so_lieu?.page_id || '') === pageId);
+    rows.sort((a, b) => (Number(b.diem_uu_tien) || 0) - (Number(a.diem_uu_tien) || 0));
 
     const nen = rows.length
       ? (() => {
         const leads = rows.reduce((a, x) => a + (x.so_lieu?.leads || 0), 0);
         const closed = rows.reduce((a, x) => a + (x.so_lieu?.closed || 0), 0);
-        const revenue = rows.reduce((a, x) => a + (x.so_lieu?.revenue || 0), 0);
+        const closed_estimated_value = rows.reduce((a, x) => a + (x.so_lieu?.closed_estimated_value || 0), 0);
         return {
           so_quang_cao: rows.length,
           leads,
           closed,
-          revenue,
+          revenue: null, closed_estimated_value, revenue_status: 'UNKNOWN', eligible_for_budget_optimization: false,
           ti_le_chot: leads ? Math.round((closed / leads) * 100) : 0,
-          doanh_thu_moi_lead: leads ? Math.round(revenue / leads) : 0,
+          doanh_thu_moi_lead: null,
         };
       })()
       : null;
@@ -618,6 +644,34 @@ r.get('/bo-loc', async (req, res) => {
   }
 });
 
+function marketingCompanyScope(req) {
+  const { accountCompanyScope } = require('../modules/marketingAutomation/accountScope');
+  return accountCompanyScope(req.user, { tenantEnforced: isTenantScopeEnforced(req), tenantCompanyIds: req.tenantCompanyIds });
+}
+function accountAllowed(scope, company) { return scope === null || (company && scope.includes(String(company))); }
+async function storedAccount(id) {
+  const r = await supabase.from('fb_ad_accounts').select('ad_account_id,company_id,tenant_id,access_token').eq('ad_account_id', id).maybeSingle();
+  if (r.error) throw new Error('ACCOUNT_SOURCE_UNAVAILABLE');
+  return r.data;
+}
+
+// Aggregate-only endpoint. Company authorization is resolved on the server.
+r.get('/marketing/spend-coverage', async (req, res) => {
+  const company = String(req.query.company_id || '');
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(company)) return res.status(400).json({ status: 'UNKNOWN', reason: 'SELECT_COMPANY', spendVnd: null });
+  try {
+    const permitted = marketingCompanyScope(req);
+    if (permitted && !permitted.includes(company)) return res.status(403).json({ status: 'UNKNOWN', reason: 'COMPANY_DENIED', spendVnd: null });
+    const { calendarDays } = require('../modules/marketingAutomation/facebookSpendSource');
+    try { calendarDays(req.query.from, req.query.to); } catch { return res.status(400).json({ status: 'UNKNOWN', reason: 'INVALID_DATE_RANGE', spendVnd: null }); }
+    const { readSpendCoverage } = require('../modules/marketingAutomation/spendCoverage');
+    const { isFailoverEnabled, getActiveTarget } = require('../config/supabaseRouter');
+    const result = await readSpendCoverage({ client: supabase, companyId: company, since: req.query.from, until: req.query.to,
+      sourceAllowed: process.env.VPT_CERTIFIED_FACEBOOK_SPEND === '1' && !isFailoverEnabled() && getActiveTarget() === 'primary' });
+    res.json(result);
+  } catch { res.status(503).json({ status: 'UNKNOWN', reason: 'SPEND_SOURCE_UNAVAILABLE', spendVnd: null }); }
+});
+
 /**
  * Hồ sơ từng Page cho màn hình đầu của trang chiến dịch.
  * Mỗi page một thẻ: công ty, số liệu, dải mẫu quảng cáo, trạng thái kết nối.
@@ -702,7 +756,7 @@ r.get('/pages-profile', async (req, res) => {
       }
     }
 
-    const chuaLead = await demChuaThanhLead({
+    const chuaLead = await demChuaThanhLead(req, {
       tu: isoNgay(req.query.from),
       den: isoNgay(req.query.to, true),
       pageId: req.query.page_id ? String(req.query.page_id) : null,
@@ -727,7 +781,8 @@ r.get('/pages-profile', async (req, res) => {
         junk_rate: o.junk_rate,
         closed: o.closed,
         close_rate: o.close_rate,
-        revenue: o.revenue,
+        revenue: null, closed_estimated_value: o.closed_estimated_value,
+        revenue_status: 'UNKNOWN', eligible_for_budget_optimization: false,
         spend: o.spend ?? null,
         cost_per_lead: o.cost_per_lead ?? null,
         roas: o.roas ?? null,
@@ -738,11 +793,14 @@ r.get('/pages-profile', async (req, res) => {
         canh_bao: imLang >= 7 ? 'im_lang' : null,
         mau_quang_cao: cre.ds,              // tối đa 8 ảnh để hiện
         so_mau: cre.khoa ? cre.khoa.size : cre.ds.length,   // tổng số mẫu khác nhau
-        chua_thanh_lead: chuaLead.page.get(String(g.page_id)) || 0,
+        chua_thanh_lead: chuaLead.status === 'VERIFIED' ? (chuaLead.page.get(String(g.page_id)) || 0) : null,
+        chua_thanh_lead_status: chuaLead.status,
+        chua_thanh_lead_reason: chuaLead.reason,
       };
     }).sort((x, y) => y.leads - x.leads);
 
-    res.json({ data, tong: data.length, co_chi_tieu: mChiTieu.size > 0 });
+    res.json({ data, tong: data.length, co_chi_tieu: mChiTieu.size > 0,
+      chua_thanh_lead_status: chuaLead.status, chua_thanh_lead_reason: chuaLead.reason });
   } catch (e) {
     return traLoiBaoCao(res, e);
   }
@@ -809,7 +867,7 @@ r.get('/page-ads', async (req, res) => {
       if (o.ds.length < 12) o.ds.push({ url: c.fb_creative_url, loai: c.fb_creative_type });
     }
 
-    const chuaLead = await demChuaThanhLead({
+    const chuaLead = await demChuaThanhLead(req, {
       tu: isoNgay(req.query.from), den: isoNgay(req.query.to, true), pageId: pid,
     });
 
@@ -828,7 +886,8 @@ r.get('/page-ads', async (req, res) => {
         deals: o.deals,
         closed: o.closed,
         close_rate: o.close_rate,
-        revenue: o.revenue,
+        revenue: null, closed_estimated_value: o.closed_estimated_value,
+        revenue_status: 'UNKNOWN', eligible_for_budget_optimization: false,
         quality_rate: o.quality_rate,
         junk_rate: o.junk_rate,
         by_label: o.by_label,
@@ -839,7 +898,9 @@ r.get('/page-ads', async (req, res) => {
         im_lang_ngay: Math.max(0, Math.round((bayGio - new Date(g.lan_cuoi).getTime()) / 86400000)),
         mau_quang_cao: c.ds,
         so_mau: c.khoa.size,
-        chua_thanh_lead: chuaLead.qc.get(String(g.ad_id)) || 0,
+        chua_thanh_lead: chuaLead.status === 'VERIFIED' ? (chuaLead.qc.get(String(g.ad_id)) || 0) : null,
+        chua_thanh_lead_status: chuaLead.status,
+        chua_thanh_lead_reason: chuaLead.reason,
       };
     }).sort((x, y) => y.leads - x.leads);
 
@@ -848,6 +909,8 @@ r.get('/page-ads', async (req, res) => {
       data,
       tong: data.length,
       chua_thanh_lead_tong: chuaLead.tong,
+      chua_thanh_lead_status: chuaLead.status,
+      chua_thanh_lead_reason: chuaLead.reason,
     });
   } catch (e) {
     return traLoiBaoCao(res, e);
@@ -914,7 +977,7 @@ r.get('/page-posts', async (req, res) => {
       if (o.ds.length < 12) o.ds.push({ url: c.fb_creative_url, loai: c.fb_creative_type });
     }
 
-    const chuaLead = await demChuaThanhLead({
+    const chuaLead = await demChuaThanhLead(req, {
       tu: isoNgay(req.query.from), den: isoNgay(req.query.to, true), pageId: pid,
     });
 
@@ -933,7 +996,8 @@ r.get('/page-posts', async (req, res) => {
         deals: o.deals,
         closed: o.closed,
         close_rate: o.close_rate,
-        revenue: o.revenue,
+        revenue: null, closed_estimated_value: o.closed_estimated_value,
+        revenue_status: 'UNKNOWN', eligible_for_budget_optimization: false,
         quality_rate: o.quality_rate,
         junk_rate: o.junk_rate,
         by_label: o.by_label,
@@ -944,7 +1008,9 @@ r.get('/page-posts', async (req, res) => {
         im_lang_ngay: Math.max(0, Math.round((bayGio - new Date(g.lan_cuoi).getTime()) / 86400000)),
         mau_quang_cao: c.ds,
         so_mau: c.khoa.size,
-        chua_thanh_lead: chuaLead.bai.get(String(g.post_id)) || 0,
+        chua_thanh_lead: chuaLead.status === 'VERIFIED' ? (chuaLead.bai.get(String(g.post_id)) || 0) : null,
+        chua_thanh_lead_status: chuaLead.status,
+        chua_thanh_lead_reason: chuaLead.reason,
       };
     }).sort((x, y) => y.leads - x.leads);
 
@@ -953,6 +1019,8 @@ r.get('/page-posts', async (req, res) => {
       data,
       tong: data.length,
       chua_thanh_lead_tong: chuaLead.tong,
+      chua_thanh_lead_status: chuaLead.status,
+      chua_thanh_lead_reason: chuaLead.reason,
     });
   } catch (e) {
     return traLoiBaoCao(res, e);
@@ -1123,8 +1191,9 @@ r.get('/post-leads', async (req, res) => {
       leads: data.length,
       deals: data.filter((x) => x.loai === 'deal').length,
       closed: data.filter((x) => x.da_chot).length,
-      revenue: data.filter((x) => x.da_chot).reduce((s, x) => s + x.gia_tri, 0),
-      // Đơn đã chốt mà để giá 0 thì mọi con số doanh thu phía trên đều thiếu.
+      closed_estimated_value: data.filter((x) => x.da_chot).reduce((s, x) => s + x.gia_tri, 0),
+      revenue: null, roas: null, revenue_status: 'UNKNOWN', eligible_for_budget_optimization: false,
+      // Giá trị deal ước tính còn thiếu; không suy thành doanh thu kế toán.
       don_chua_co_gia: data.filter((x) => x.da_chot && !(x.gia_tri > 0)).length,
       so_du_an: idDAHet.size,
     };
@@ -1139,7 +1208,7 @@ r.get('/post-leads', async (req, res) => {
 
 r.get('/marketing/status', async (req, res) => {
   try {
-    res.json(await daCauHinh());
+    res.json(await daCauHinh({ companyIds: marketingCompanyScope(req) }));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1148,58 +1217,61 @@ r.get('/marketing/status', async (req, res) => {
 r.post('/marketing/test', async (req, res) => {
   try {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được nối Marketing API' });
-    const id = req.body?.ad_account_id;
-    let token = req.body?.access_token || null;
-    if (!token && id) {
-      const { data } = await supabase.from('fb_ad_accounts')
-        .select('access_token').eq('ad_account_id', chuanHoaActId(id)).maybeSingle();
-      token = data?.access_token || null;
-    }
-    const kq = await kiemTraKetNoi(id, token);
-    res.json({ ok: true, ...kq });
-  } catch (e) {
-    res.status(400).json({ ok: false, error: e.message });
-  }
+    const scope = marketingCompanyScope(req);
+    const id = chuanHoaActId(req.body?.ad_account_id);
+    if (!id || !/^act_[0-9]+$/.test(id)) return res.status(400).json({ error: 'Ad Account ID không hợp lệ' });
+    const existing = await storedAccount(id);
+    if (existing && !accountAllowed(scope, existing.company_id)) return res.status(403).json({ error: 'Tài khoản nằm ngoài phạm vi công ty' });
+    const company = existing ? existing.company_id : req.body?.company_id;
+    if (!accountAllowed(scope, company)) return res.status(403).json({ error: 'Tài khoản nằm ngoài phạm vi công ty' });
+    const token = req.body?.access_token || existing?.access_token;
+    const result = await kiemTraKetNoi(id, token);
+    res.json({ ok: true, ...result });
+  } catch { res.status(400).json({ ok: false, error: 'Chưa kiểm tra được kết nối tài khoản.' }); }
 });
 
 r.put('/marketing/account', async (req, res) => {
   try {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được nối Marketing API' });
-    const id = chuanHoaActId(req.body?.ad_account_id);
-    if (!id) return res.status(400).json({ error: 'Thiếu Ad Account ID' });
-
-    const bo = { ad_account_id: id, updated_at: new Date().toISOString() };
-    for (const k of ['ten', 'tenant_id', 'company_id']) {
-      if (req.body?.[k] !== undefined) bo[k] = req.body[k] || null;
+    const scope = marketingCompanyScope(req), id = chuanHoaActId(req.body?.ad_account_id);
+    if (!id || !/^act_[0-9]+$/.test(id)) return res.status(400).json({ error: 'Ad Account ID không hợp lệ' });
+    const existing = await storedAccount(id);
+    if (existing && !accountAllowed(scope, existing.company_id)) return res.status(403).json({ error: 'Tài khoản nằm ngoài phạm vi công ty' });
+    const company = req.body?.company_id || existing?.company_id;
+    if (!company || !accountAllowed(scope, company)) return res.status(403).json({ error: 'Chọn công ty trong phạm vi được phép' });
+    const owner = await supabase.from('companies').select('id,tenant_id').eq('id', company).maybeSingle();
+    if (owner.error || !owner.data) return res.status(400).json({ error: 'Chưa xác minh được công ty' });
+    if (req.body?.tenant_id !== undefined && req.body.tenant_id !== owner.data.tenant_id) return res.status(403).json({ error: 'Phạm vi hệ sinh thái không khớp công ty' });
+    const record = { ad_account_id: id, company_id: company, tenant_id: owner.data.tenant_id, updated_at: new Date().toISOString() };
+    if (req.body?.ten !== undefined) record.ten = req.body.ten == null ? null : String(req.body.ten).trim().slice(0,200) || null;
+    if (req.body?.bat !== undefined) {
+      if (typeof req.body.bat !== 'boolean') return res.status(400).json({ error: 'Trạng thái tài khoản không hợp lệ' });
+      record.bat = req.body.bat;
     }
-    if (req.body?.bat !== undefined) bo.bat = !!req.body.bat;
-    // Token chỉ ghi khi người dùng nhập mới; để trống = giữ token cũ.
-    const tokenMoi = String(req.body?.access_token || '').trim();
-    if (tokenMoi) bo.access_token = tokenMoi;
-
-    const { data, error } = await supabase.from('fb_ad_accounts')
-      .upsert(bo, { onConflict: 'ad_account_id' })
-      .select('ad_account_id, ten, tenant_id, company_id, bat, lan_dong_bo_cuoi')
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    res.json({ ok: true, tai_khoan: data });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+    const token = String(req.body?.access_token || '').trim(); if (token) record.access_token = token;
+    // Scope checked against current owner again in the write predicate. Insert
+    // never upserts an account another company created concurrently.
+    let q = supabase.from('fb_ad_accounts');
+    if (existing) {
+      q = q.update(record).eq('ad_account_id',id);
+      q = existing.company_id ? q.eq('company_id',existing.company_id) : q.is('company_id',null);
+    } else q = q.insert(record);
+    const result = await q.select('ad_account_id,ten,tenant_id,company_id,bat,lan_dong_bo_cuoi').maybeSingle();
+    if (result.error || !result.data) return res.status(409).json({ error: 'Tài khoản đã thay đổi; vui lòng tải lại.' });
+    res.json({ ok: true, tai_khoan: result.data });
+  } catch { res.status(503).json({ error: 'Chưa lưu được cấu hình tài khoản.' }); }
 });
 
 r.post('/marketing/sync', async (req, res) => {
   try {
     if (!isAdminLike(req.user)) return res.status(403).json({ error: 'Chỉ quản trị được chạy đồng bộ' });
-    const ngay = Math.min(90, Math.max(1, Number(req.body?.ngay) || 30));
-    const kq = await dongBoTatCa({ ngay });
-    // Đồng bộ xong thì phân tích lại ngay để trang khớp số.
-    let phanTich = null;
-    try { phanTich = await chayPhanTich({ ngay: 90 }); } catch { /* không chặn */ }
-    res.json({ ok: true, ...kq, phan_tich_lai: phanTich?.da_phan_tich ?? null });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
+    const companyIds = marketingCompanyScope(req);
+    if (companyIds && !companyIds.length) return res.status(403).json({ error: 'Chưa xác định được phạm vi công ty' });
+    const ngay = Math.min(90, Math.max(1, Math.floor(Number(req.body?.ngay) || 30)));
+    const result = await dongBoTatCa({ ngay, companyIds });
+    // Do not launch the global analysis writer from a company-scoped request.
+    res.json({ ok: result.ket_qua.every(x => x.ok === true), ...result, phan_tich_lai: null });
+  } catch { res.status(503).json({ error: 'Chưa đồng bộ được dữ liệu quảng cáo.' }); }
 });
 
 module.exports = r;

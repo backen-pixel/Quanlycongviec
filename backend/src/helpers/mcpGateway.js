@@ -180,7 +180,7 @@ function getMcpReportTools(apiKey = null) {
   return patched.filter((t) => {
     if (MCP_ADS_TOOL_SET.has(t.name)) return allowAds;
     if (MCP_CRM_READ_TOOL_SET.has(t.name)) return allowCrm;
-    return allowReports;
+    return allowReports && require('./aiToolAuthorization').SAFE_TOOLS.has(t.name);
   });
 }
 
@@ -208,6 +208,11 @@ function assertMcpScopeForTool(name, apiKey) {
 }
 
 async function resolveMcpActAsUser(req) {
+  const boundUser = String(req.apiKey?.default_assigned_to || '').trim();
+  const requestedUser = String(req.headers['x-user-id'] || '').trim();
+  if (!boundUser || (requestedUser && requestedUser !== boundUser)) {
+    throw mcpDeny(MCP_REASON.CONTEXT_INVALID, 'Kết nối phải dùng đúng danh tính đã gắn trên API key.', 403);
+  }
   const userId = String(req.headers['x-user-id'] || req.apiKey?.default_assigned_to || '').trim();
   if (!userId) {
     throw mcpDeny(
@@ -348,8 +353,9 @@ async function callMcpReportTool(name, args = {}, req) {
     auditUserId = user.id;
     auditTenantId = user.tenant_id || null;
     const ctx = buildMcpToolContext(req, user);
-    let merged = normalizeReportArgs(args, ctx);
-    merged = applyActAsVisibility(merged, user);
+    let merged = MCP_REPORT_TOOL_SET.has(name)
+      ? { ...args, company_id: args.company_id || ctx.last_company_id }
+      : applyActAsVisibility(normalizeReportArgs(args, ctx), user);
     assertCompanyScope(merged, req.apiKey);
 
     // Với key chọn nhiều công ty: nếu chưa truyền company_id và có đúng 1 công ty → mặc định
@@ -374,12 +380,6 @@ async function callMcpReportTool(name, args = {}, req) {
         if (q.company_id) auditCompanyId = q.company_id;
       }
       result = await callMcpCrmReadTool(name, merged, user);
-    } else if (name === 'get_org_overview_report_full') {
-      const { getOrgOverviewReportFull } = require('./orgOverviewReportAi');
-      result = await getOrgOverviewReportFull({
-        ...merged,
-        ctx_user_id: user.id,
-      });
     } else {
       result = await executeTool(name, merged, ctx);
     }

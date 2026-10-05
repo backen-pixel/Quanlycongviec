@@ -118,7 +118,7 @@ async function flowNextAfterProduction(flowId) {
  *
  * @param {object} [context] { deal, dealId } — để bộ điều hướng đồ thị chấm điều kiện thật.
  */
-async function flowAllowsProductionCreate(flowId, context = null) {
+async function flowAllowsProductionCreateUnchecked(flowId, context = null) {
   const steps = await getFlowSteps(flowId);
   const legacy = legacyAllowsProductionCreate(steps);
 
@@ -129,7 +129,7 @@ async function flowAllowsProductionCreate(flowId, context = null) {
   } catch (err) {
     console.warn('[flow-runtime] canReachModule:', err.message);
   }
-  if (!graphAnswer) return legacy;
+  if (!graphAnswer) return false;
 
   await runtime.logRuntimeDecision({
     flowId,
@@ -142,7 +142,7 @@ async function flowAllowsProductionCreate(flowId, context = null) {
     trace: graphAnswer.trace,
   });
 
-  return runtime.isEnforced() ? graphAnswer.reachable : legacy;
+  return graphAnswer.reachable === true && !graphAnswer.hasUnknown;
 }
 
 function legacyAllowsProductionCreate(steps) {
@@ -184,11 +184,12 @@ async function handoffVerdictFromNext(next) {
  * @returns {{ ok: true, next: object|null }
  *   | { ok: false, error: string, nextModuleKey?: string, customModule?: object }}
  */
-async function assertProductionHandoffTarget(flowId, context = null) {
-  if (!flowId) return { ok: true, next: null };
+async function assertProductionHandoffTargetUnchecked(flowId, context = null) {
+  const hold = { ok: false, error: 'Chưa xác minh được điều kiện hoặc phê duyệt của luồng bàn giao.' };
+  if (!flowId) return hold;
   const steps = await getFlowSteps(flowId);
   const keyed = steps.filter((s) => normalizeModuleKey(s.module_key));
-  if (!keyed.length) return { ok: true, next: null };
+  if (!keyed.length) return hold;
 
   const legacyNext = await resolveNextModuleStep(flowId, 'production');
   const legacyVerdict = await handoffVerdictFromNext(legacyNext);
@@ -200,7 +201,9 @@ async function assertProductionHandoffTarget(flowId, context = null) {
   } catch (err) {
     console.warn('[flow-runtime] resolveNextModules:', err.message);
   }
-  if (!walked) return legacyVerdict;
+  if (!walked || walked.hasUnknown || !walked.next) return hold;
+  if (normalizeModuleKey(walked.next.module_key) !== 'logistics'
+    && !isCustomModuleKey(walked.next.module_key)) return hold;
 
   const graphVerdict = await handoffVerdictFromNext(walked.next);
   // So bằng id của bước — getFlowSteps không select node_id nên không dùng khoá đó được.
@@ -224,7 +227,20 @@ async function assertProductionHandoffTarget(flowId, context = null) {
     trace: walked.trace,
   });
 
-  return runtime.isEnforced() ? graphVerdict : legacyVerdict;
+  return graphVerdict;
+}
+
+async function flowAllowsProductionCreate(flowId, context = null) {
+  try { return await flowAllowsProductionCreateUnchecked(flowId, context); }
+  catch (error) { console.warn('[flow-gate] source unavailable:', error.message); return false; }
+}
+async function assertProductionHandoffTarget(flowId, context = null) {
+  try { return await assertProductionHandoffTargetUnchecked(flowId, context); }
+  catch (error) {
+    console.warn('[flow-gate] source unavailable:', error.message);
+    return { ok: false, code: 'FLOW_GATE_UNVERIFIED',
+      error: 'Chưa xác minh được điều kiện hoặc phê duyệt bàn giao.' };
+  }
 }
 
 /**

@@ -7,6 +7,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
+    "test:marketing-coverage": "node scripts/marketing-test-coverage.mjs",
     "start": "node --use-system-ca src/server.js",
     "dev": "node --use-system-ca --watch src/server.js",
     "fb:rescan-inbound-phones": "node scripts/rescan-fb-inbound-phones.js",

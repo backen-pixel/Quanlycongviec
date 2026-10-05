@@ -1,0 +1,90 @@
+{
+  "base_commit": "679cb9266ecb87c560421f3f6fc3c3e31b50b831",
+  "normalization": "UTF-8 LF",
+  "node": "v24.19.0",
+  "tests": {
+    "focused": 112,
+    "focused_new": 48,
+    "existing_care": 64,
+    "existing_report": 128,
+    "fail": 0,
+    "skip": 0
+  },
+  "source": [
+    {
+      "file": "backend/src/helpers/aiToolAuthorization.js",
+      "sha256": "2c90d8306b5cd0d6fd4dcb700a8f7f955857c7a8c818791635cc4f41947bee84",
+      "git_blob_sha1": "c4f2099ccaf90f9909edb17af6623175d5631de1"
+    },
+    {
+      "file": "backend/src/helpers/aiEvidence.js",
+      "sha256": "4a34a84556f6bbf968adf87ecab583b294d7dbac3ecb292ab5a3bc2badb02877",
+      "git_blob_sha1": "f7649f17180a5a7cc44e22ba33515f9b92282dcf"
+    },
+    {
+      "file": "backend/src/helpers/aiReportTools.js",
+      "sha256": "9b3feb2f3a339c805924b8e00b9f3d96d0629dd3555f7bdd47ca4f6f2fb7001c",
+      "git_blob_sha1": "59eb34780ff7c51de5a5223d93995b69c8bc1bb1"
+    },
+    {
+      "file": "backend/src/helpers/aiConversation.js",
+      "sha256": "80abfbe988275e7076ad66d1904c263386df2bbf54891269188b0b342c07c4de",
+      "git_blob_sha1": "09847181500dfcff07fcc3b6a2b65c6a15f4c1ee"
+    },
+    {
+      "file": "backend/src/helpers/aiChatSessionContext.js",
+      "sha256": "14e9a4b43b519140f5e7a165e4b96ee7a4524abdf452a56f68dda083c8069359",
+      "git_blob_sha1": "2f18c59a6015320341f1d401615170585edfd04c"
+    },
+    {
+      "file": "backend/src/helpers/aiUserMemory.js",
+      "sha256": "1d7e015bd2c8b0ba4c845e48f334af7cb7124d3b870afa6aa966d361b959ef86",
+      "git_blob_sha1": "997ec0575708ede0700f186859b0f4743dac1978"
+    },
+    {
+      "file": "backend/src/helpers/flowRuntime.js",
+      "sha256": "cfb50f155392fa675c569c5c56007e132219d1b3c76c46063e7ec4531b040678",
+      "git_blob_sha1": "2dda8aaab1fca4f96b9326cc4dfdef508c027446"
+    },
+    {
+      "file": "backend/src/helpers/resolveModuleFlow.js",
+      "sha256": "925fcee2b0d392cbfa9a62a5973ccaa23789b723c36626cd28640c949531b9f4",
+      "git_blob_sha1": "e3d810b886519f29513e09263f6274e999b1666b"
+    },
+    {
+      "file": "backend/src/helpers/flowActionRunner.js",
+      "sha256": "fcc0806568e97f25edab2046f16b3aeb9f0859fe420f59c3fc174e31f243c632",
+      "git_blob_sha1": "f3e349ec08cc54eba6e87f0ab5502e012f791b36"
+    },
+    {
+      "file": "backend/src/helpers/mcpGateway.js",
+      "sha256": "465391d1af62415ec2f6b9e65b6cee880aefd0055d2de9a619fe5ef15b0b59f5",
+      "git_blob_sha1": "a321afa30fd45eb01ea73ac55041d3ce54274a9a"
+    },
+    {
+      "file": "backend/src/helpers/autoDealWonProject.js",
+      "sha256": "e90907d13b0114c41a4a9bf229c09876bfc4609fb56b494e860c62729f91c9ca",
+      "git_blob_sha1": "9f8893f9b0c7d2545f717357d328a1905b30d40d"
+    },
+    {
+      "file": "backend/src/helpers/vcHandoverCore.js",
+      "sha256": "18dd6ffff73926fd50120663eda2e73832540bf2c2e2be512f6d54f7b3bad822",
+      "git_blob_sha1": "8c0baa0c505c4ad6f1401e068ef4c16a098fc08f"
+    },
+    {
+      "file": "backend/src/routes/vcHandover.js",
+      "sha256": "382b0c7c9fe6413fed6fab17054f26f8ccd6fd478491036ac37139748d6a5b6b",
+      "git_blob_sha1": "7debf891ee4218b1a50d8ee3ca5541ef8d9faae9"
+    },
+    {
+      "file": "backend/tests/agentGuardrails.test.js",
+      "sha256": "c79ddca19c28da20487135ff1c81911b18d36d30ab1702fb36a2ed313d3ef814",
+      "git_blob_sha1": "0b6907479bc17683a9ab1308fd60e1668e1e104a"
+    },
+    {
+      "file": ".github/workflows/agent-guardrails.yml",
+      "sha256": "c0de5a873927aaa2e4fc86c4b9910422aeaeaf7a0f05935d82b3735509209855",
+      "git_blob_sha1": "1dd9140b0b2611e8ff3fa489321e98125670ecb1"
+    }
+  ]
+}

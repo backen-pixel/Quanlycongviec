@@ -5,6 +5,10 @@
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import api from '../lib/api';
+import { useAuth } from '../lib/auth';
+import MarketingSpendCoverage from '../components/marketing/MarketingSpendCoverage';
+import MarketingOperations from '../components/marketing/MarketingOperations';
+import MarketingLeadTrial from '../components/marketing/MarketingLeadTrial';
 
 const TAB = [
   { key: 'insights', nhan: 'Nhận xét tự động' },
@@ -218,14 +222,13 @@ function TheTrangPage({ p, onMo, onXemAnh }) {
 
       <div className="grid grid-cols-2 gap-x-4 gap-y-4 border-y border-gray-100 py-3 sm:grid-cols-4">
         <ONho nhan="Lead" giaTri={fmtSo(p.leads)}
-          phu={p.chua_thanh_lead > 0
-            ? `+${fmtSo(p.chua_thanh_lead)} chưa thành lead · ${p.so_quang_cao} quảng cáo`
-            : `${p.so_quang_cao} quảng cáo`} />
-        <ONho nhan="Chất lượng" giaTri={`${p.quality_rate}%`} phu={`rác ${p.junk_rate}%`} />
-        <ONho nhan="Chốt" giaTri={fmtSo(p.closed)} phu={`tỉ lệ ${p.close_rate}%`} />
+          phu={p.chua_thanh_lead_status !== 'VERIFIED' ? 'Lượt chạm chưa thành Lead: chưa xác minh'
+            : `${fmtSo(p.chua_thanh_lead)} lượt chạm chưa thành Lead · ${p.so_quang_cao} quảng cáo`} />
+        <ONho nhan="Nhãn ấm/nóng" giaTri={`${p.quality_rate}%`} phu={`rác ${p.junk_rate}%`} />
+        <ONho nhan="Deal chốt" giaTri={fmtSo(p.closed)} phu={`tỉ lệ ${p.close_rate}%`} />
         <ONho
-          nhan={p.spend == null ? 'Doanh thu' : 'Chi tiêu'}
-          giaTri={p.spend == null ? fmtTien(p.revenue) : fmtTien(p.spend)}
+          nhan={p.spend == null ? 'Deal chốt (ước tính)' : 'Chi tiêu'}
+          giaTri={p.spend == null ? fmtTien(p.closed_estimated_value) : fmtTien(p.spend)}
           phu={p.spend == null ? null : `${fmtSo(p.cost_per_lead)} đ/lead`}
         />
       </div>
@@ -439,9 +442,9 @@ function nhanXetQuangCao(a, nenChot) {
     r.push(['canh_bao', `Không có lead mới ${a.im_lang_ngay} ngày`,
       'Kiểm tra quảng cáo còn chạy không, hay đã tắt.']);
   }
-  if (a.closed > 0 && !(a.revenue > 0)) {
-    r.push(['canh_bao', 'Đơn chốt chưa điền giá trị',
-      `${a.closed} đơn để giá 0 — không tính được hiệu quả đồng tiền.`]);
+  if (a.closed > 0 && a.closed_estimated_value === 0) {
+    r.push(['canh_bao', 'Deal chốt chưa điền giá trị ước tính',
+      `${a.closed} deal được đánh dấu chốt chưa có giá trị ước tính. Doanh thu kế toán cần đối soát riêng.`]);
   }
   return r;
 }
@@ -503,9 +506,10 @@ function HangQuangCao({ a, nenChot, onDatTen, onXemAnh, onXemLead }) {
 
         <div className="mt-3 flex flex-wrap gap-x-7 gap-y-3">
           <ONho nhan="Lead" giaTri={fmtSo(a.leads)}
-            phu={a.chua_thanh_lead > 0 ? `+${fmtSo(a.chua_thanh_lead)} chưa thành lead` : null} />
+            phu={a.chua_thanh_lead_status !== 'VERIFIED' ? 'Lượt chạm chưa thành Lead: chưa xác minh'
+              : `${fmtSo(a.chua_thanh_lead)} lượt chạm chưa thành Lead`} />
           <ONho nhan="Deal" giaTri={fmtSo(a.deals)} />
-          <ONho nhan="Chốt" giaTri={fmtSo(a.closed)} phu={`tỉ lệ ${a.close_rate}%`} />
+          <ONho nhan="Deal chốt" giaTri={fmtSo(a.closed)} phu={`tỉ lệ ${a.close_rate}%`} />
           <ONho nhan="Mẫu" giaTri={fmtSo(a.so_mau)} />
           {a.spend == null
             ? <div><div className="text-[11px] uppercase tracking-wide text-gray-400">Chi tiêu</div>
@@ -662,9 +666,10 @@ function HangBaiViet({ b, nenChot, onXemAnh, onXemLead }) {
 
         <div className="mt-3 flex flex-wrap gap-x-7 gap-y-3">
           <ONho nhan="Lead" giaTri={fmtSo(b.leads)}
-            phu={b.chua_thanh_lead > 0 ? `+${fmtSo(b.chua_thanh_lead)} chưa thành lead` : null} />
+            phu={b.chua_thanh_lead_status !== 'VERIFIED' ? 'Lượt chạm chưa thành Lead: chưa xác minh'
+              : `${fmtSo(b.chua_thanh_lead)} lượt chạm chưa thành Lead`} />
           <ONho nhan="Deal" giaTri={fmtSo(b.deals)} />
-          <ONho nhan="Chốt" giaTri={fmtSo(b.closed)} phu={`tỉ lệ ${b.close_rate}%`} />
+          <ONho nhan="Deal chốt" giaTri={fmtSo(b.closed)} phu={`tỉ lệ ${b.close_rate}%`} />
           <ONho nhan="Mẫu" giaTri={fmtSo(b.so_mau)} />
           {b.spend == null
             ? <div><div className="text-[11px] uppercase tracking-wide text-gray-400">Chi tiêu</div>
@@ -774,7 +779,7 @@ function KhungDanhSachLead({ mo, params, onDong }) {
             <ONho nhan="Lead" giaTri={fmtSo(tt.leads)} />
             <ONho nhan="Deal" giaTri={fmtSo(tt.deals)} />
             <ONho nhan="Đã chốt" giaTri={fmtSo(tt.closed)} />
-            <ONho nhan="Doanh thu" giaTri={fmtTien(tt.revenue)}
+            <ONho nhan="Deal chốt (ước tính)" giaTri={fmtTien(tt.closed_estimated_value)}
               phu={tt.don_chua_co_gia > 0 ? `${tt.don_chua_co_gia} đơn để giá 0` : null} />
             <ONho nhan="Dự án" giaTri={fmtSo(tt.so_du_an)} />
           </div>
@@ -806,7 +811,7 @@ function KhungDanhSachLead({ mo, params, onDong }) {
                   <th className="px-3 py-2 font-semibold">Vào lúc</th>
                   <th className="px-3 py-2 font-semibold">Chất lượng</th>
                   <th className="px-3 py-2 font-semibold">Giai đoạn</th>
-                  <th className="px-3 py-2 text-right font-semibold">Giá trị</th>
+                  <th className="px-3 py-2 text-right font-semibold">Giá trị ước tính</th>
                   <th className="px-3 py-2 font-semibold">Dự án</th>
                   <th className="px-5 py-2 font-semibold">Phụ trách</th>
                 </tr>
@@ -895,7 +900,7 @@ function KhungDanhSachLead({ mo, params, onDong }) {
   );
 }
 
-function KhungMarketing({ trangThai, onXong }) {
+function KhungMarketing({ trangThai, onXong, companyId, onSyncStart, onSyncFinish }) {
   const [mo, setMo] = useState(false);
   const [actId, setActId] = useState('');
   const [ten, setTen] = useState('');
@@ -921,6 +926,7 @@ function KhungMarketing({ trangThai, onXong }) {
   const thu = () => goi('thu', async () => {
     const r = await api.post('/ad-analytics/marketing/test', {
       ad_account_id: actId.trim(),
+      company_id: companyId || undefined,
       access_token: token.trim() || undefined,
     });
     const d = r.data || {};
@@ -930,6 +936,7 @@ function KhungMarketing({ trangThai, onXong }) {
   const luu = () => goi('luu', async () => {
     await api.put('/ad-analytics/marketing/account', {
       ad_account_id: actId.trim(),
+      company_id: companyId || undefined,
       ten: ten.trim() || null,
       access_token: token.trim() || undefined,
     });
@@ -939,13 +946,16 @@ function KhungMarketing({ trangThai, onXong }) {
   });
 
   const dongBo = () => goi('dongbo', async () => {
+    onSyncStart?.();
+    try {
     const r = await api.post('/ad-analytics/marketing/sync', { ngay: 30 });
     const d = r.data || {};
     const soAd = (d.ket_qua || []).reduce((s, x) => s + (x.so_ad || 0), 0);
     const hong = (d.ket_qua || []).filter((x) => !x.ok);
     if (onXong) await onXong();
     if (hong.length) return { ok: false, chu: `${hong.length} tài khoản lỗi: ${hong[0].loi}` };
-    return { ok: true, chu: `Đã kéo ${soAd} quảng cáo về, phân tích lại ${d.phan_tich_lai ?? 0} quảng cáo.` };
+    return { ok: true, chu: `Đã kéo ${soAd} quảng cáo về và cập nhật chi tiêu.` };
+    } finally { onSyncFinish?.(); }
   });
 
   return (
@@ -1049,6 +1059,7 @@ function KhungMarketing({ trangThai, onXong }) {
  *   bỏ tiêu đề riêng (nhãn tab đã nói) và tự cuộn trong khung tab.
  */
 export default function AdAnalyticsPage({ embedded = false }) {
+  const { user } = useAuth();
   const reportRequestId = useRef(0);
   const refreshReportRef = useRef(null);
   const [tab, setTab] = useState('campaigns');
@@ -1087,6 +1098,8 @@ export default function AdAnalyticsPage({ embedded = false }) {
   const [tenLo, setTenLo] = useState('');
   const [dangLuu, setDangLuu] = useState(false);
   const [mkt, setMkt] = useState(null);
+  const [spendRefresh, setSpendRefresh] = useState(0);
+  const [spendSyncing, setSpendSyncing] = useState(false);
 
   const params = useMemo(() => {
     const p = {};
@@ -1456,31 +1469,18 @@ export default function AdAnalyticsPage({ embedded = false }) {
         <>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <OSoLieu nhan="Lead từ quảng cáo" giaTri={fmtSo(tongQuan.tu_quang_cao?.leads)}
-              phu={`${tongQuan.so_quang_cao} quảng cáo · ${tongQuan.so_page || 0} page`} />
-            <OSoLieu nhan="Lead chất lượng" giaTri={`${tongQuan.tu_quang_cao?.quality_rate || 0}%`}
-              phu={`rác ${tongQuan.tu_quang_cao?.junk_rate || 0}%`} />
-            <OSoLieu nhan="Đơn đã chốt" giaTri={fmtSo(tongQuan.tu_quang_cao?.closed)}
-              phu={`tỉ lệ chốt ${tongQuan.tu_quang_cao?.close_rate || 0}%`} />
-            {/* Chưa nối Marketing API thì ghi "chưa có" chứ KHÔNG hiện số 0 —
-                số 0 đọc như đã tiêu 0 đồng, sai hẳn nghĩa. */}
-            {tongQuan.co_chi_tieu ? (
-              <OSoLieu nhan="Chi tiêu" giaTri={fmtTien(tongQuan.tu_quang_cao?.spend)}
-                phu={`${fmtSo(tongQuan.tu_quang_cao?.cost_per_lead)} đ/lead`
-                  + `${tongQuan.tu_quang_cao?.roas != null ? ` · ROAS ${tongQuan.tu_quang_cao.roas}` : ''}`} />
-            ) : (
-              <OTrong nhan="Chi tiêu" chu="chưa có" phu="cần nối Marketing API" />
-            )}
-          </div>
-
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-[12.5px] leading-relaxed text-amber-900">
-            <b>Hai thứ Facebook không gửi qua Messenger:</b> tên chiến dịch và số tiền đã tiêu.
-            Webhook chỉ mang <code>ad_id</code>, nên quảng cáo hiện bằng dãy số và ảnh mẫu.
-            {tongQuan.don_chua_co_gia > 0 && (
-              <>
-                {' '}Ngoài ra <b>{tongQuan.don_chua_co_gia}/{tongQuan.tu_quang_cao?.closed || 0} đơn chốt
-                đang để giá trị 0</b> — phải điền giá trước khi tin vào bất kỳ con số ROAS nào.
-              </>
-            )}
+              phu={`${tongQuan.so_quang_cao} quảng cáo · ${tongQuan.ti_le_biet_quang_cao}% lead biết nguồn QC`} />
+            <OSoLieu nhan="Lead được gắn nhãn ấm/nóng" giaTri={fmtSo(tongQuan.tu_quang_cao?.quality_leads)}
+              phu={`${tongQuan.tu_quang_cao?.quality_rate || 0}% · rác ${tongQuan.tu_quang_cao?.junk_rate || 0}%`}
+              mau="text-amber-700" />
+            <OSoLieu nhan="Deal đã đánh dấu chốt" giaTri={fmtSo(tongQuan.tu_quang_cao?.closed)}
+              phu={`tỉ lệ chốt ${tongQuan.tu_quang_cao?.close_rate || 0}%`} mau="text-emerald-700" />
+            <OSoLieu nhan="Giá trị deal chốt (ước tính)" giaTri={fmtTien(tongQuan.tu_quang_cao?.closed_estimated_value)}
+              phu={tongQuan.co_chi_tieu
+                ? `chi ${fmtTien(tongQuan.tu_quang_cao?.spend)} đ · ${fmtSo(tongQuan.tu_quang_cao?.cost_per_lead)} đ/lead`
+                + `${tongQuan.tu_quang_cao?.roas != null ? ` · ROAS ${tongQuan.tu_quang_cao.roas}` : ''}`
+                : 'Doanh thu & ROAS: chưa xác minh'}
+              mau="text-teal-700" />
           </div>
 
           {tongQuan.ti_le_biet_quang_cao < 100 && (
@@ -1492,7 +1492,19 @@ export default function AdAnalyticsPage({ embedded = false }) {
         </>
       )}
 
-      <KhungMarketing trangThai={mkt} onXong={async () => { await taiMkt(); await refreshReportRef.current?.(); }} />
+      <div role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+        <b>Mục tiêu thử: 250.000 đồng/khách hợp lệ. Chi phí thực tế: chưa đủ dữ liệu.</b>{' '}
+        Khách hợp lệ được loại trùng, xác minh nhu cầu, vùng phục vụ và thông tin liên hệ; nhãn ấm/nóng chưa thay việc xác minh này.
+        Giá trị deal là ước tính, chưa phải doanh thu ghi nhận hay tiền đã thu.
+        Chi tiêu trên bảng chỉ gồm quảng cáo đã liên kết Lead; có thể thiếu quảng cáo chưa tạo khách.
+        Chưa dùng số liệu này để tự tăng ngân sách hoặc kết luận đạt 250.000 đồng/khách hay 7% doanh thu.
+      </div>
+
+      <MarketingOperations companyId={congTy} actorId={user?.id || user?.userId} />
+      <MarketingLeadTrial companyId={congTy} actorId={user?.id || user?.userId} />
+      <MarketingSpendCoverage companyId={congTy} from={tuNgay} to={denNgay} refresh={spendRefresh} syncing={spendSyncing} />
+
+      <KhungMarketing trangThai={mkt} companyId={congTy} onSyncStart={() => setSpendSyncing(true)} onSyncFinish={() => { setSpendSyncing(false); setSpendRefresh(n => n + 1); }} onXong={async () => { await taiMkt(); await refreshReportRef.current?.(); }} />
 
       <DaiChanDoan params={params} />
 
@@ -1606,9 +1618,9 @@ export default function AdAnalyticsPage({ embedded = false }) {
                 <p className="pt-1 text-[12px] leading-relaxed text-gray-500">
                   Một bài viết có thể đang được chạy bằng nhiều quảng cáo cùng lúc. Gom theo bài
                   cho thấy đúng quy mô; chuyển sang <b>Quảng cáo</b> để xem từng cái tách riêng.
-                  Dòng <b>&quot;chưa thành lead&quot;</b> là người đã nhắn tin từ quảng cáo nhưng
-                  chưa được tạo lead trong CRM — không cộng vào cột Lead, vì cộng vào sẽ làm
-                  loãng tỉ lệ chốt và mọi so sánh cũ hoá sai.
+                  Dòng <b>&quot;chưa thành Lead&quot;</b> đếm lượt chạm quảng cáo đã gắn công ty
+                  và chưa liên kết Lead. Đây không phải số khách duy nhất hoặc khách hợp lệ;
+                  không cộng vào cột Lead hay dùng tính chi phí trên khách hợp lệ.
                 </p>
               </div>
             )
@@ -1784,7 +1796,7 @@ export default function AdAnalyticsPage({ embedded = false }) {
                           <div><div className="text-[10px] uppercase text-gray-400">Lead</div><div className="text-base font-bold tabular-nums">{fmtSo(sl.leads)}</div></div>
                           <div><div className="text-[10px] uppercase text-gray-400">Chốt</div><div className="text-base font-bold tabular-nums text-emerald-700">{fmtSo(sl.closed)}</div></div>
                           <div><div className="text-[10px] uppercase text-gray-400">Tỉ lệ</div><div className="text-base font-bold tabular-nums">{sl.ti_le_chot || 0}%</div></div>
-                          <div><div className="text-[10px] uppercase text-gray-400">Doanh thu</div><div className="text-base font-bold tabular-nums text-gray-900">{fmtTien(sl.revenue)}</div></div>
+                          <div><div className="text-[10px] uppercase text-gray-400">Giá trị deal chốt (ước tính)</div><div className="text-base font-bold tabular-nums text-teal-700">{fmtTien(sl.closed_estimated_value)}</div></div>
                         </div>
                       </div>
 
@@ -1840,10 +1852,10 @@ export default function AdAnalyticsPage({ embedded = false }) {
                 <th className="px-4 py-3 font-medium">{tab === 'campaigns' ? 'Chiến dịch' : tab === 'ads' ? 'Quảng cáo' : 'Page'}</th>
                 <th className="px-4 py-3 text-right font-medium">Lead</th>
                 <th className="w-44 px-4 py-3 font-medium">Phân bố chất lượng</th>
-                <th className="px-4 py-3 text-right font-medium">Chất lượng</th>
+                <th className="px-4 py-3 text-right font-medium">Nhãn ấm/nóng</th>
                 <th className="px-4 py-3 text-right font-medium">Rác</th>
-                <th className="px-4 py-3 text-right font-medium">Chốt</th>
-                <th className="px-4 py-3 text-right font-medium">Doanh thu</th>
+                <th className="px-4 py-3 text-right font-medium">Deal chốt</th>
+                <th className="px-4 py-3 text-right font-medium">Giá trị deal chốt (ước tính)</th>
                 <th className="px-4 py-3 text-right font-medium">Chi tiêu</th>
               </tr>
             </thead>
@@ -1936,7 +1948,7 @@ export default function AdAnalyticsPage({ embedded = false }) {
                       <span className="font-semibold text-emerald-700">{fmtSo(g.closed)}</span>
                       <div className="text-[11px] text-gray-400">{g.close_rate}%</div>
                     </td>
-                    <td className="px-4 py-3 text-right align-top tabular-nums text-gray-900">{fmtTien(g.revenue)}</td>
+                    <td className="px-4 py-3 text-right align-top tabular-nums text-gray-900">{fmtTien(g.closed_estimated_value)}</td>
                     <td className="px-4 py-3 text-right align-top tabular-nums text-gray-900">
                       {g.spend == null ? (
                         <span className="text-[12px] text-gray-400">—</span>
@@ -1978,21 +1990,12 @@ export default function AdAnalyticsPage({ embedded = false }) {
       )}
 
       <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-[12.5px] text-gray-600">
-        {mkt?.da_noi ? (
-          <>
-            <b>Về chi tiêu:</b> số tiền lấy từ Marketing API. ROAS chỉ đúng với những đơn
-            đã điền giá trị — đơn để giá 0 sẽ kéo ROAS xuống sai.
-          </>
-        ) : (
-          <>
-            <b>Về cột Chi tiêu:</b> hệ thống chưa nối Facebook Marketing API nên chưa có số tiền đã tiêu,
-            do đó chưa tính được giá mỗi lead và ROAS. Cần Ad Account ID và token có quyền <code>ads_read</code>.
-            <br />
-            <b>Về tên chiến dịch:</b> Facebook chỉ gửi <code>ad_id</code> và tên quảng cáo, không gửi tên chiến dịch.
-            Đặt tay tại đây, hoặc nối Marketing API để tự điền.
-          </>
-        )}
+        <b>Về chi tiêu:</b> {mkt?.da_noi ? 'Đã có kết nối Marketing API; cần đối soát đầy đủ kỳ và tài khoản.' : 'Chưa có kết nối Marketing API được xác nhận.'}
+        {' '}Doanh thu kế toán và ROAS còn cần nguồn được đối soát riêng.
+        <br />
+        <b>Về tên chiến dịch:</b> tên tự đặt không được đồng bộ ghi đè; có thể đối chiếu qua mã quảng cáo.
       </div>
     </div>
   );
 }
+

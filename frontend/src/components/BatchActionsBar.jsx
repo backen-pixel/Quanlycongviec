@@ -193,7 +193,7 @@ export default function BatchActionsBar({ onComplete = null, companyId = null, i
                 <strong className="text-gray-800">🔄 Refresh tên</strong>
               </li>
               <li>
-                <strong className="text-gray-800">🔍 Xóa Lead trùng</strong>
+                <strong className="text-gray-800">🔍 Rà khách trùng — giữ hồ sơ để xác minh</strong>
               </li>
               <li>
                 <strong className="text-gray-800">🔗 Sync SĐT danh bạ → Lead</strong>

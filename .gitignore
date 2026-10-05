@@ -23,6 +23,7 @@ backend/data/api-keys.json
 .apk-analysis/
 
 # Database dump files
+coverage/
 backend/uploads/_clone/*.dump
 backend/uploads/_tmp_*
 backend/uploads/_auth_*

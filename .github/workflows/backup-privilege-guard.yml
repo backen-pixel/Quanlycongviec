@@ -1,0 +1,31 @@
+name: Backup privilege guard (isolated)
+on:
+  pull_request:
+    paths:
+      - 'backend/src/helpers/backupSchemaGrants.js'
+      - 'backend/src/helpers/supabaseReplication.js'
+      - 'backend/src/helpers/supabaseBackupSync.js'
+      - 'backend/src/helpers/supabaseManualSwitch.js'
+      - 'backend/scripts/clone-primary-to-backup.js'
+      - 'backend/scripts/fix-backup-schema-grants.js'
+      - 'backend/tests/backupPrivilegeGuard.test.js'
+      - '.github/workflows/backup-privilege-guard.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolated:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        node: [18, 22]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Backup privilege and failure handling with synthetic ports
+        run: node --test backend/tests/backupPrivilegeGuard.test.js

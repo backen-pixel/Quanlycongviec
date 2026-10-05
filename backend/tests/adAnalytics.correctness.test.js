@@ -38,11 +38,12 @@ function harness(tables, fault = null) {
   const db = { from(table) {
     const call = { table, ops: [], ordinal: calls.filter(c => c.table === table).length + 1 }; calls.push(call);
     const q = {};
-    for (const op of ['select', 'in', 'not', 'limit', 'eq', 'neq', 'gte', 'lte', 'order', 'maybeSingle']) {
+    for (const op of ['select', 'in', 'not', 'is', 'limit', 'eq', 'neq', 'gte', 'lte', 'order', 'maybeSingle']) {
       q[op] = (...args) => { call.ops.push([op, ...args]); return q; };
     }
     q.then = (yes, no) => {
-      const fail = fault?.table === table && (!fault.ordinal || call.ordinal === fault.ordinal);
+      const counted = call.ops.some(o=>o[0]==='select' && o[2]?.count==='exact');
+      const fail = fault?.table === table && (!fault.ordinal || call.ordinal === fault.ordinal) && (!fault.counted || counted);
       if (fail && fault.kind === 'reject') return Promise.reject(new Error('UPSTREAM_PRIVATE_DETAIL')).then(yes, no);
       if (fail && fault.kind === 'error') return Promise.resolve({ data: null, error: { message: 'UPSTREAM_PRIVATE_DETAIL' } }).then(yes, no);
       if (fail && fault.kind === 'invalid') return Promise.resolve({ data: null, error: null }).then(yes, no);
@@ -52,9 +53,12 @@ function harness(tables, fault = null) {
         if (op === 'eq') data = data.filter((row) => row[key] === value);
         if (op === 'neq') data = data.filter((row) => row[key] !== value);
         if (op === 'not' && value === 'is') data = data.filter((row) => row[key] != null);
+        if (op === 'is') data = data.filter((row) => row[key] == value);
       }
       if (call.ops.some(o => o[0] === 'maybeSingle')) data = data[0] || null;
-      return Promise.resolve({ data, error: null }).then(yes, no);
+      const count = counted ? data.length : undefined;
+      if (fail && fault.kind === 'partial') data = data.slice(0, 1);
+      return Promise.resolve({ data, error: null, count: fail && fault.kind === 'missing-count' ? undefined : count }).then(yes, no);
     };
     return q;
   } };
@@ -114,11 +118,24 @@ function harness(tables, fault = null) {
   } };
 }
 function bucket(url, response) { return url === '/summary' ? response.body.tu_quang_cao : response.body.data[0]; }
+test('cached financial ranking loses its stale priority before insight sorting', async () => {
+  const f = fixture();
+  f.fb_ad_analysis = [
+    { ad_id: 'financial', xep_hang: 'kem', diem_uu_tien: 100, nhan_xet: [{ ma: 'lo_von' }], so_lieu: { company_id: 'company-one', revenue: 1000, roas: 2 } },
+    { ad_id: 'quality', xep_hang: 'can_xem', diem_uu_tien: 10, nhan_xet: [{ ma: 'nhieu_rac' }], so_lieu: { company_id: 'company-one' } },
+  ];
+  const r = await harness(f).run('/insights'); assert.equal(r.code, 200);
+  assert.equal(r.body.data[0].ad_id, 'quality');
+  const stale = r.body.data[1];
+  assert.equal(stale.analysis_status, 'STALE_FINANCIAL_BASIS'); assert.equal(stale.xep_hang, 'can_xem'); assert.equal(stale.diem_uu_tien, 0);
+  assert.deepEqual(stale.nhan_xet, []); assert.equal(stale.so_lieu.revenue, null); assert.equal(stale.so_lieu.roas, null);
+  assert.equal(stale.so_lieu.closed_estimated_value, 1000); assert.equal(stale.so_lieu.eligible_for_budget_optimization, false);
+});
 for (const url of paths) {
   test(`${url}: unique Lead, Deal and order value despite duplicate attribution`, async () => {
     const h = harness(fixture()); const r = await h.run(url);
     assert.equal(r.code, 200); const b = bucket(url, r);
-    assert.equal(b.leads, 1); assert.equal(b.deals, 1); assert.equal(b.closed, 1); assert.equal(b.revenue, 100);
+    assert.equal(b.leads, 1); assert.equal(b.deals, 1); assert.equal(b.closed, 1); assert.equal(b.closed_estimated_value, 100); assert.equal(b.revenue, null); assert.equal(b.roas, null); assert.equal(b.revenue_status, 'UNKNOWN'); assert.equal(b.eligible_for_budget_optimization, false);
     assert.equal(b.quality_leads, 1); assert.equal(b.avg_score, 80); assert.equal(b.cost_per_lead, 200);
     assert.doesNotMatch(JSON.stringify(r.body), /_leadIds|_paidLeadIds|lead-one/);
     if (url === '/summary') assert.equal(r.body.tat_ca.leads, 1);
@@ -175,7 +192,7 @@ test('campaigns: legacy manual grouping remains available without IDs', async ()
 test('different real leads are not collapsed; company filtering remains intact', async () => {
   const f = fixture(); f.lead_attribution.push({ ...f.lead_attribution[0], lead_id: 'lead-two' }, { ...f.lead_attribution[0], lead_id: 'other-company-lead' });
   f.crm_leads.push({ ...f.crm_leads[0], id: 'lead-two' }, { ...f.crm_leads[0], id: 'other-company-lead', company_id: 'other-company' });
-  const r = await harness(f).run('/summary'); assert.equal(r.body.tat_ca.leads, 2); assert.equal(r.body.tat_ca.revenue, 200);
+  const r = await harness(f).run('/summary'); assert.equal(r.body.tat_ca.leads, 2); assert.equal(r.body.tat_ca.closed_estimated_value, 200); assert.equal(r.body.tat_ca.revenue, null);
 });
 test('UI: a failed read clears earlier figures instead of presenting them as current', async () => {
   const begin = 'const tai = useCallback(async () => {'; const end = '}, [tab, params]);';
@@ -207,6 +224,9 @@ for (const url of pagePaths) {
     assert.equal(r.code,200);
     const stats=url==='/post-leads'?r.body.tom_tat:r.body.data[0];
     assert.equal(stats.leads,1); assert.equal(stats.closed,1);
+    assert.equal(stats.revenue,null); assert.equal(stats.roas,null);
+    assert.equal(stats.closed_estimated_value,100); assert.equal(stats.revenue_status,'UNKNOWN');
+    assert.equal(stats.eligible_for_budget_optimization,false);
     if(url==='/pages-profile') assert.equal(stats.lead_7_ngay,1);
   });
   test(`${url}: no Lead details outside company scope`, async () => {
@@ -270,6 +290,59 @@ test('post-leads: project permission read failure is unavailable, not allowed',a
   assert.equal(r.code,500);assert.equal(r.body.data_status,'UNKNOWN');
   assert.doesNotMatch(JSON.stringify(r.body),/UPSTREAM_PRIVATE_DETAIL/);
 });
+
+function pendingFixture() {
+  const f=pageFixture();
+  for (const company of ['company-one','company-one','foreign-company',null]) {
+    f.lead_attribution.push({lead_id:null, company_id:company, fb_page_id:'page-one',
+      fb_ad_id:'ad-one', fb_post_id:'post-one', cham_dau_luc:new Date().toISOString()});
+  }
+  return f;
+}
+for (const url of ['/pages-profile','/page-ads','/page-posts']) {
+  test(`${url}: shared Page counts only attributed company touches, never qualified Leads`,async()=>{
+    const h=harness(pendingFixture()); const r=await h.run(url,pageQuery);
+    assert.equal(r.code,200);
+    assert.equal(r.body.data[0].chua_thanh_lead,2);
+    assert.equal(r.body.data[0].chua_thanh_lead_status,'VERIFIED');
+    assert.equal(r.body.data[0].leads,1);
+    assert.equal(r.body.data[0].revenue,null);
+    assert.equal(r.body.data[0].eligible_for_budget_optimization,false);
+    if(url!=='/pages-profile') assert.equal(r.body.chua_thanh_lead_tong,2);
+    const read=h.calls.find(c=>c.ops.some(o=>o[0]==='is'&&o[1]==='lead_id'));
+    assert.deepEqual(plain(read.ops.find(o=>o[0]==='in')),['in','company_id',['company-one']]);
+  });
+  for (const kind of ['error','reject','invalid','partial','missing-count']) {
+    test(`${url}: pending source ${kind} stays UNKNOWN while existing Lead remains readable`,async()=>{
+      const h=harness(pendingFixture(),{table:'lead_attribution',kind,counted:true});
+      const r=await h.run(url,pageQuery);
+      assert.equal(r.code,200);
+      assert.equal(r.body.data[0].leads,1);
+      assert.equal(r.body.data[0].chua_thanh_lead,null);
+      assert.equal(r.body.data[0].chua_thanh_lead_status,'UNKNOWN');
+      if(url!=='/pages-profile') assert.equal(r.body.chua_thanh_lead_tong,null);
+      assert.doesNotMatch(JSON.stringify(r.body)+h.logs.join(' '),/UPSTREAM_PRIVATE_DETAIL/);
+    });
+  }
+  for(const role of ['sales','region_admin']) {
+    test(`${url}: ${role} cannot read company-wide contact totals`,async()=>{
+      const h=harness(pendingFixture()); const r=await h.run(url,pageQuery,{role,company_id:'company-one'});
+      assert.equal(r.code,200); assert.equal(r.body.data[0].chua_thanh_lead,null);
+      assert.equal(r.body.data[0].chua_thanh_lead_reason,'CONTACT_SCOPE_UNVERIFIED');
+      assert.equal(h.calls.some(c=>c.ops.some(o=>o[0]==='is'&&o[1]==='lead_id')),false);
+    });
+  }
+  test(`${url}: a verified empty source is zero`,async()=>{
+    const r=await harness(pageFixture()).run(url,pageQuery);
+    assert.equal(r.code,200);assert.equal(r.body.data[0].chua_thanh_lead,0);
+    assert.equal(r.body.data[0].chua_thanh_lead_status,'VERIFIED');
+  });
+  test(`${url}: outside company request discloses no pending counts`,async()=>{
+    const r=await harness(pendingFixture()).run(url,{...pageQuery,company_id:'foreign-company'});
+    assert.equal(r.code,200);assert.deepEqual(r.body.data,[]);
+    assert.equal(r.body.chua_thanh_lead_tong,undefined);
+  });
+}
 
 const regionA='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',regionB='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 for(const role of ['sales_admin','admin','crm_production_admin','region_admin']) {

@@ -12,6 +12,8 @@
  */
 
 const { supabase } = require('../config/supabase');
+const work = require('./processWork').createProcessWork({ scope: 'AUTO_TOOL_THIS_PROCESS' });
+let activeLoop = null;
 const { sortFacebookContactsNewestFirst } = require('./facebookContactActivity');
 
 // ── State ──
@@ -111,6 +113,7 @@ function getState() {
 function getConfig() { return { ...state.config }; }
 
 function setConfig(partial) {
+  work.assertOpen();
   if (!partial || typeof partial !== 'object') return;
   if (partial.limit != null) state.config.limit = Math.min(1000, Math.max(1, parseInt(partial.limit, 10) || 300));
   if (partial.graphPages != null) state.config.graphPages = Math.min(30, Math.max(1, parseInt(partial.graphPages, 10) || 10));
@@ -118,11 +121,11 @@ function setConfig(partial) {
   if (partial.pauseSec != null) state.config.pauseSec = Math.min(3600, Math.max(0, parseInt(partial.pauseSec, 10) || 60));
   if (partial.cyclePauseSec != null) state.config.cyclePauseSec = Math.min(3600, Math.max(0, parseInt(partial.cyclePauseSec, 10) || 300));
   if (partial.delayMs != null) state.config.delayMs = Math.min(5000, Math.max(0, parseInt(partial.delayMs, 10) || 100));
-  supabase.from('app_settings').upsert({
+  work.track(supabase.from('app_settings').upsert({
     key: 'auto_tool_config',
     value: state.config,
     updated_at: new Date().toISOString(),
-  }, { onConflict: 'key' }).then(() => {}).catch(() => {});
+  }, { onConflict: 'key' }).then(() => {}).catch(() => {}));
 }
 
 async function persistEnabledFlag(enabled) {
@@ -341,7 +344,7 @@ async function runOneBatch() {
 
     // Delay giữa contacts
     if (cfg.delayMs > 0 && i < contacts.length - 1) {
-      await new Promise(r => setTimeout(r, cfg.delayMs));
+      await work.sleep(cfg.delayMs);
     }
   }
 
@@ -417,13 +420,20 @@ async function interruptibleSleep(ms) {
   const start = Date.now();
   while (Date.now() - start < ms) {
     if (state.stopRequested || !state.enabled) return false;
-    await new Promise(r => setTimeout(r, 1000));
+    await work.sleep(1000);
   }
   return true;
 }
 
 // ── Main loop ──
-async function startLoop() {
+function startLoop() {
+  if (work.isStopped()) return Promise.reject(Object.assign(new Error('Process is stopping'), { code: 'PROCESS_STOPPING', status: 503 }));
+  if (activeLoop) return activeLoop;
+  activeLoop = work.run(startLoopInner).finally(() => { activeLoop = null; state.running = false; state.enabled = false; });
+  return activeLoop;
+}
+
+async function startLoopInner() {
   if (state.running) return;
   state.running = true;
   state.stopRequested = false;
@@ -443,13 +453,14 @@ async function startLoop() {
   state.logs = [];
   emit();
 
-  void persistEnabledFlag(true);
+  await persistEnabledFlag(true);
 
   pushLog('🚀 Auto Tool bắt đầu chạy (liên tục, user mới nhất trước)');
 
   while (state.enabled && !state.stopRequested) {
     // Đếm pool
     state.totalPool = await countTotalContacts();
+    if (state.stopRequested || !state.enabled) break;
 
     if (state.offset === 0) {
       state.cycleCount++;
@@ -533,14 +544,19 @@ async function startLoop() {
 }
 
 function stop() {
+  work.assertOpen();
   state.stopRequested = true;
   state.enabled = false;
-  void persistEnabledFlag(false);
+  work.track(persistEnabledFlag(false));
   pushLog('🛑 Đang dừng Auto Tool...');
   emit();
 }
 
+// Shutdown stops in RAM only; it must not change the saved business enablement.
+work.onStop(() => { state.stopRequested = true; state.enabled = false; });
+
 module.exports = {
+  shutdown: work,
   getState,
   getConfig,
   setConfig,

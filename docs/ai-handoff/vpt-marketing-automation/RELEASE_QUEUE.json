@@ -1,0 +1,98 @@
+{
+  "version": 2,
+  "updatedAt": "2026-10-05T16:55:00Z",
+  "scope": "VPT Facebook intake and qualified-lead measurement",
+  "automaticExecution": false,
+  "releaseStatus": "HOLD_PRECONDITIONS",
+  "main": "1f879ea85dfff23629fef79c8d15f2eaf540328e",
+  "tasks": [
+    {
+      "id": "INTEGRATE",
+      "owner": "Codex",
+      "status": "PASS_ISOLATED_CI_AND_REVIEW",
+      "evidence": "LIVE_RELEASE_20261005.md",
+      "acceptance": "Source43e50262 and CI share treeba7c2778; PASS isolated scope only, not runtime release"
+    },
+    {
+      "id": "SPLIT_PACKAGES",
+      "owner": "Codex / Claude H package",
+      "status": "REQUIRED_NO_WHOLE_PR_MERGE",
+      "dependsOn": [
+        "INTEGRATE"
+      ],
+      "acceptance": "A minimal already on main; remaining changes in scoped PRs and separate manifests, new SQL numbered from701"
+    },
+    {
+      "id": "H1_DURABLE_PAGE_INBOX",
+      "owner": "IMPLEMENTATION_OWNER_NOT_CONFIRMED",
+      "status": "DESIGN_ONLY_CODE_NOT_IMPLEMENTED",
+      "dependsOn": [
+        "SPLIT_PACKAGES"
+      ],
+      "acceptance": "All Page events durably queued before ACK,503 on enqueue failure,idempotency,lease,retry,backlog alarm; missing RPC/failover remains pending; default-off scoped guard; crash/restart and no-loss tests"
+    },
+    {
+      "id": "H2_SCOPE_QUERY",
+      "owner": "Package C",
+      "status": "UNVERIFIED",
+      "dependsOn": [
+        "SPLIT_PACKAGES"
+      ],
+      "acceptance": "Bounded ID-scoped traversal,index verification,timeout and load/EXPLAIN on suitable staging"
+    },
+    {
+      "id": "DATABASE",
+      "owner": "DB operator / Codex preparation",
+      "status": "MISSING_MARKETING_SCHEMA",
+      "dependsOn": [
+        "SPLIT_PACKAGES",
+        "H1_DURABLE_PAGE_INBOX",
+        "H2_SCOPE_QUERY"
+      ],
+      "acceptance": "Per-package schema/order/rollback after700 and new numbers>=701; staging concurrency and final ACLs; never install entire50-file inventory"
+    },
+    {
+      "id": "RECOVERY",
+      "owner": "DB operator",
+      "status": "EVIDENCE_NEEDED",
+      "acceptance": "Restore appropriate backup including private schemas and relevant Storage; prove data and ACL preservation"
+    },
+    {
+      "id": "SOURCE_BINDING",
+      "owner": "Codex / account owner",
+      "status": "META_FORM_VERIFIED_CRM_ACCOUNT_AND_FIELD_KEYS_PENDING",
+      "acceptance": "Official provider Page/form/account ownership, field map and signature verified; versioned recipient binding"
+    },
+    {
+      "id": "CUTOVER",
+      "owner": "Codex / Admin VPT",
+      "status": "NOT_EXECUTABLE_B_C_PAGES_NOT_OPENED",
+      "dependsOn": [
+        "DATABASE",
+        "RECOVERY",
+        "SOURCE_BINDING"
+      ],
+      "acceptance": "Primary only, legacy writers drained, signed receipt captured while worker paused"
+    },
+    {
+      "id": "UAT",
+      "owner": "Codex / Admin VPT",
+      "status": "NOT_STARTED",
+      "dependsOn": [
+        "CUTOVER"
+      ],
+      "acceptance": "Labelled test is traceable receipt-to-Lead-to-recipient-to-report; duplicate/error/restart and pause checked; test excluded from KPI"
+    },
+    {
+      "id": "ACTIVATE",
+      "owner": "Founder release scope / Codex execution",
+      "status": "NOT_READY_SCOPED_RELEASE_REQUIRED",
+      "dependsOn": [
+        "UAT"
+      ],
+      "acceptance": "Concrete version/config/impact/restore package satisfies approved release scope"
+    }
+  ],
+  "wholePrMergeAllowed": false,
+  "decisionAlignment": "SPLIT_RELEASE_ALIGNMENT_20261005.md"
+}

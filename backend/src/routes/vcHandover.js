@@ -908,6 +908,8 @@ r.post('/projects/:id/request', async (req, res) => {
       }
     } catch (gateErr) {
       console.warn('[vc-handover] flow gate:', gateErr.message);
+      return res.status(503).json({ code: 'FLOW_HANDOFF_BLOCKED',
+        error: 'Chưa xác minh được điều kiện hoặc phê duyệt bàn giao.' });
     }
 
     // Ngày lịch từ ĐÚNG project xưởng này (multi-SX không lấy từ deal/project chính).

@@ -1,0 +1,75 @@
+{
+  "sourceCommitLabel": "679cb9266ecb87c560421f3f6fc3c3e31b50b831",
+  "sourceFileSha256": {
+    "backend/src/helpers/aiChatSessionContext.js": "ec2d67bcc334b5d55132952bf019fa125a0d8c78f14026621a645425d6c224e9",
+    "backend/src/helpers/aiReportTools.js": "897529eb8946d20660088ee8ec933de588e72f41fbb00b927c9ab8de29f4b3cc",
+    "backend/src/helpers/aiConversation.js": "89e03573de13e23dc80df2d8dc09da585c98916b77e9c6207861d5af25eaa04f",
+    "backend/src/helpers/flowRuntime.js": "c290355e4beb71a0cbc1fd1148028514096942b84f851b0dbf85aca56d671efa",
+    "backend/src/helpers/aiUserMemory.js": "864e17417d34ca5845622ed09a02e8e222bf9799908965c7c59d436ef5e60546"
+  },
+  "mode": "offline-vm-synthetic-ports",
+  "results": [
+    {
+      "id": "P1_MODEL_SCOPE_OVERRIDE",
+      "status": "OBSERVED",
+      "trustedActor": "employee-A",
+      "modelRequested": "employee-B",
+      "effectiveAssignees": [
+        "employee-B"
+      ]
+    },
+    {
+      "id": "P1B_FOREIGN_COMPANY_SUMMARY",
+      "status": "OBSERVED",
+      "actorCompany": "company-A",
+      "returnedCompany": "company-B",
+      "foreignSyntheticLeads": 1
+    },
+    {
+      "id": "P2_UNGROUNDED_FINAL_ACCEPTED",
+      "status": "OBSERVED",
+      "toolCalls": 0,
+      "acceptedText": "Hôm nay có 999 khách."
+    },
+    {
+      "id": "P3_TOOL_JSON_CUT_MID_VALUE",
+      "status": "OBSERVED",
+      "deliveredCharacters": 8000,
+      "validJson": false
+    },
+    {
+      "id": "P4_UNKNOWN_AND_APPROVAL_PASS_THROUGH",
+      "status": "OBSERVED",
+      "reachable": true,
+      "hasUnknown": true,
+      "trace": [
+        {
+          "from": "crm",
+          "to": "approve",
+          "verdict": "unknown",
+          "why": "loại điều kiện lạ: unrecognized_required_condition"
+        },
+        {
+          "from": "approve",
+          "to": "production",
+          "verdict": "pass",
+          "why": null
+        }
+      ]
+    },
+    {
+      "id": "P5_FAILED_TOOL_PERSISTS_SCOPE",
+      "status": "OBSERVED",
+      "priorCompany": "company-A",
+      "failedRequestedCompany": "company-B",
+      "persistedCompany": "company-B"
+    },
+    {
+      "id": "P6_CORRECTION_LOST_BEFORE_PRIORITY_SORT",
+      "status": "OBSERVED",
+      "correctionsAvailable": 2,
+      "correctionsReturned": 1,
+      "returned": 8
+    }
+  ]
+}

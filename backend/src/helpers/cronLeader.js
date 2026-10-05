@@ -5,6 +5,7 @@
 
 const { randomUUID } = require('crypto');
 const { getRedisIfReady } = require('../config/redis');
+const leaderWork = require('./processWork').createProcessWork({ scope: 'LEADER_JOBS_THIS_PROCESS' });
 
 const _instanceId = `${process.pid}-${randomUUID().slice(0, 8)}`;
 
@@ -14,9 +15,15 @@ const _instanceId = `${process.pid}-${randomUUID().slice(0, 8)}`;
  * @param {() => Promise<void>|void} fn
  * @param {{ ttlSec?: number }} [opts]
  */
-async function runIfLeader(jobName, fn, opts = {}) {
+function runIfLeader(jobName, fn, opts = {}) {
+  if (leaderWork.isStopped()) return Promise.resolve(false);
+  return leaderWork.run(() => runIfLeaderInner(jobName, fn, opts));
+}
+
+async function runIfLeaderInner(jobName, fn, opts = {}) {
   const redis = getRedisIfReady();
   if (!redis) {
+    if (leaderWork.isStopped()) return false;
     await fn();
     return true;
   }
@@ -30,6 +37,7 @@ async function runIfLeader(jobName, fn, opts = {}) {
     const res = await redis.set(key, token, 'EX', ttlSec, 'NX');
     acquired = res === 'OK';
   } catch {
+    if (leaderWork.isStopped()) return false;
     await fn();
     return true;
   }
@@ -37,6 +45,7 @@ async function runIfLeader(jobName, fn, opts = {}) {
   if (!acquired) return false;
 
   try {
+    if (leaderWork.isStopped()) return false;
     await fn();
     return true;
   } finally {
@@ -51,7 +60,16 @@ async function runIfLeader(jobName, fn, opts = {}) {
  * Giữ lock dài hạn (pipeline, worker nền). Trả true nếu acquire mới hoặc instance này đã giữ lock.
  * Không có Redis → luôn true (single-instance).
  */
-async function tryAcquireLeader(jobName, ttlSec = 120) {
+function tryAcquireLeader(jobName, ttlSec = 120) {
+  if (leaderWork.isStopped()) return Promise.resolve(false);
+  return leaderWork.run(async () => {
+    const acquired = await tryAcquireLeaderInner(jobName, ttlSec);
+    if (leaderWork.isStopped()) { if (acquired) await releaseLeader(jobName); return false; }
+    return acquired;
+  });
+}
+
+async function tryAcquireLeaderInner(jobName, ttlSec = 120) {
   const redis = getRedisIfReady();
   if (!redis) return true;
 
@@ -101,4 +119,4 @@ async function releaseLeader(jobName) {
   } catch { /* ignore */ }
 }
 
-module.exports = { runIfLeader, tryAcquireLeader, renewLeader, releaseLeader };
+module.exports = { runIfLeader, tryAcquireLeader, renewLeader, releaseLeader, shutdown: leaderWork };

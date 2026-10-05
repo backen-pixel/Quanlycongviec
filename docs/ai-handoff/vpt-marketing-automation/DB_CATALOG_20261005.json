@@ -1,0 +1,320 @@
+{
+  "recordedOn": "2026-10-05",
+  "observedWindowLocal": "Afternoon 2026-10-05 Asia/Ho_Chi_Minh; individual query timestamps not retained",
+  "kind": "READONLY_SUPABASE_CATALOG_AND_SCOPED_ROUTING",
+  "businessMutation": false,
+  "method": "Supported browser SQL Editor, BEGIN READ ONLY + local timeout + SELECT + ROLLBACK; built-in Export JSON for metadata; scoped account/admin config only; no keys or customer rows.",
+  "candidateRuntime": "fd3babeb0a1ba25a9ec7b98f3e5918b3ef216798",
+  "primary": {
+    "project": "kdxypztstbeovyedmvem",
+    "name": "qlycv",
+    "postgres": "17.6",
+    "maxLocksPerTransaction": 64,
+    "reader": "postgres",
+    "transactionReadOnly": true,
+    "facebookContactColumn": {
+      "present": true,
+      "type": "uuid",
+      "nullable": true,
+      "foreignKey": "crm_leads_facebook_contact_id_fkey",
+      "references": "public.facebook_contacts(id)",
+      "onDelete": "SET NULL",
+      "uniquePartialIndex": "crm_leads_facebook_contact_id_uidx"
+    },
+    "atomicFunction": {
+      "present": true,
+      "name": "create_facebook_contact_lead_once",
+      "owner": "postgres",
+      "securityDefiner": false,
+      "searchPath": [
+        "pg_catalog",
+        "public"
+      ],
+      "execute": {
+        "anon": false,
+        "authenticated": false,
+        "service_role": true
+      },
+      "bodyMd5": "8df33c5a088a21f76c76296b05ca4fe0",
+      "localSql639BodyMd5Matches": true
+    },
+    "ledgerMatching630to699": [
+      {
+        "version": "20260929075651",
+        "name": "vpt_639_facebook_contact_lead_atomic"
+      },
+      {
+        "version": "20260929075707",
+        "name": "vpt_640_facebook_messenger_receipts"
+      },
+      {
+        "version": "20260929075725",
+        "name": "vpt_641_facebook_referral_attribution"
+      },
+      {
+        "version": "20261005025444",
+        "name": "649_va_cot_thieu_projects_drive_acl"
+      }
+    ]
+  },
+  "backup": {
+    "project": "atcfpgxkgbszglrelfgr",
+    "name": "QLCV_Backup",
+    "postgres": "17.6",
+    "maxLocksPerTransaction": 64,
+    "reader": "postgres",
+    "transactionReadOnly": true,
+    "facebookContactColumn": {
+      "present": false,
+      "foreignKeyPresent": false,
+      "uniquePartialIndexPresent": false
+    },
+    "atomicFunction": {
+      "present": false
+    },
+    "ledgerMatching630to699": []
+  },
+  "rights": [
+    {
+      "table": "companies",
+      "schemaUsageAllThreeRoles": true,
+      "rls": false,
+      "forcedRls": false,
+      "primaryCrud": {
+        "anon": true,
+        "authenticated": true,
+        "service_role": true
+      },
+      "backupCrud": {
+        "anon": false,
+        "authenticated": true,
+        "service_role": true
+      },
+      "policy": null
+    },
+    {
+      "table": "crm_leads",
+      "schemaUsageAllThreeRoles": true,
+      "rls": true,
+      "forcedRls": false,
+      "primaryCrud": {
+        "anon": true,
+        "authenticated": true,
+        "service_role": true
+      },
+      "backupCrud": {
+        "anon": false,
+        "authenticated": true,
+        "service_role": true
+      },
+      "policy": {
+        "mode": "PERMISSIVE",
+        "roles": [
+          "public"
+        ],
+        "command": "ALL",
+        "using": "true",
+        "withCheck": null
+      }
+    },
+    {
+      "table": "customers",
+      "schemaUsageAllThreeRoles": true,
+      "rls": true,
+      "forcedRls": false,
+      "primaryCrud": {
+        "anon": true,
+        "authenticated": true,
+        "service_role": true
+      },
+      "backupCrud": {
+        "anon": false,
+        "authenticated": true,
+        "service_role": true
+      },
+      "policy": {
+        "mode": "PERMISSIVE",
+        "roles": [
+          "public"
+        ],
+        "command": "ALL",
+        "using": "true",
+        "withCheck": "true"
+      }
+    },
+    {
+      "table": "facebook_contacts",
+      "schemaUsageAllThreeRoles": true,
+      "rls": true,
+      "forcedRls": false,
+      "primaryCrud": {
+        "anon": true,
+        "authenticated": true,
+        "service_role": true
+      },
+      "backupCrud": {
+        "anon": false,
+        "authenticated": true,
+        "service_role": true
+      },
+      "policy": {
+        "mode": "PERMISSIVE",
+        "roles": [
+          "public"
+        ],
+        "command": "ALL",
+        "using": "true",
+        "withCheck": "true"
+      }
+    },
+    {
+      "table": "facebook_pages",
+      "schemaUsageAllThreeRoles": true,
+      "rls": true,
+      "forcedRls": false,
+      "primaryCrud": {
+        "anon": true,
+        "authenticated": true,
+        "service_role": true
+      },
+      "backupCrud": {
+        "anon": false,
+        "authenticated": true,
+        "service_role": true
+      },
+      "policy": {
+        "mode": "PERMISSIVE",
+        "roles": [
+          "public"
+        ],
+        "command": "ALL",
+        "using": "true",
+        "withCheck": "true"
+      }
+    },
+    {
+      "table": "facebook_lead_ads",
+      "schemaUsageAllThreeRoles": true,
+      "rls": true,
+      "forcedRls": false,
+      "primaryCrud": {
+        "anon": true,
+        "authenticated": true,
+        "service_role": true
+      },
+      "backupCrud": {
+        "anon": false,
+        "authenticated": true,
+        "service_role": true
+      },
+      "policy": {
+        "mode": "PERMISSIVE",
+        "roles": [
+          "public"
+        ],
+        "command": "ALL",
+        "using": "true",
+        "withCheck": "true"
+      }
+    },
+    {
+      "table": "users",
+      "schemaUsageAllThreeRoles": true,
+      "rls": true,
+      "forcedRls": false,
+      "primaryCrud": {
+        "anon": true,
+        "authenticated": true,
+        "service_role": true
+      },
+      "backupCrud": {
+        "anon": false,
+        "authenticated": true,
+        "service_role": true
+      },
+      "policy": {
+        "mode": "PERMISSIVE",
+        "roles": [
+          "public"
+        ],
+        "command": "ALL",
+        "using": "true",
+        "withCheck": "true"
+      }
+    }
+  ],
+  "scopedDetailedComparison": {
+    "primaryRows": 192,
+    "backupRows": 189,
+    "onlyPrimary": [
+      "column public.crm_leads.facebook_contact_id",
+      "function public.create_facebook_contact_lead_once",
+      "trigger public.crm_leads.trg_crm_leads_has_crm_deal"
+    ],
+    "onlyBackup": [],
+    "different": [],
+    "scope": "Columns of seven listed tables, atomic function, noninternal triggers on crm_leads/facebook_contacts, three named private schemas; not a full database diff"
+  },
+  "privateSchemasAbsentBoth": [
+    "crm_survey_control",
+    "crm_legacy_hold",
+    "marketing_measurement"
+  ],
+  "routing": {
+    "companyId": "991dc79d-cbf5-49f9-a364-35227cb47635",
+    "companyActive": true,
+    "tenantId": "7d42e731-895b-4ba8-99d6-0005c4e23544",
+    "tenantActive": true,
+    "ownerId": "49fcd3ff-0d7c-4d54-8f5a-1068bd10d68c",
+    "ownerActive": true,
+    "ownerRole": "admin",
+    "ownerCompanyAndTenantMatch": true,
+    "regions": [
+      {
+        "id": "f68e643d-7999-442c-83ee-edb7f5237ab1",
+        "label": "HCM",
+        "active": true,
+        "ownerAssigned": true
+      },
+      {
+        "id": "098538c0-8429-490b-bc10-df3349fb6045",
+        "label": "Can Tho",
+        "active": true,
+        "ownerAssigned": true
+      }
+    ],
+    "pageId": "409741855550833",
+    "pageActive": true,
+    "pageOwnerCompanyRegionMatch": true,
+    "leadTypeId": "889a29ee-ddb4-478e-9e15-755eaf4b3639",
+    "leadTypeActive": true,
+    "leadTypeAppliesTo": "both",
+    "stageId": "a799f5e5-513c-4d55-b403-1ec2010574d3",
+    "stageActive": true,
+    "stageType": "lead",
+    "stageWon": false,
+    "stageLost": false,
+    "pipelineId": "78e6251c-aea1-46bc-a19f-a401f1de7f34",
+    "pipelineActive": true,
+    "pipelineCompanyRegionMatch": true,
+    "adAccountIdSearched": "835757498658305",
+    "matchingAccountRows": 0,
+    "accountQuery": "Exact and leading act_ normalization against fb_ad_accounts; no token selected",
+    "versionedFormBindingVerified": false,
+    "liveUat": false
+  },
+  "nativeBackup": {
+    "primaryLatestListedUtc": "2026-10-04T22:33:43Z",
+    "kind": "Physical",
+    "listed": true,
+    "restoreTested": false,
+    "storageObjectsIncluded": false
+  },
+  "limitations": [
+    "Ledger names are not complete migration fingerprints or proof no manual SQL ran.",
+    "Metadata rights do not establish external exploitation; no customer data or unauthorized access test.",
+    "Seven tables do not represent full DB; zero registry matches do not prove Meta account absence.",
+    "Snapshot listed is not restore PASS; no DDL/DML, REVOKE/GRANT, refresh cache, sync, switch or deployment executed."
+  ],
+  "review": "Independent review: PASS consistency of nine-file documentation delta, JSON/diff and recomputed RPC639 hash; evidence sufficient for remediation package. Not production authorization; production HOLD."
+}
