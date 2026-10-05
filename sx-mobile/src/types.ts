@@ -14,6 +14,12 @@ export type KanbanStage = {
   workflow_stage_id?: string | null;
   workshop_type_id?: string | null;
   is_handover_to_logistics?: boolean;
+  /**
+   * Cột lớn mà cột này thuộc về (khớp web `gomCotTheoNhom`): các cột cùng `group_key` gom vào một mục lớn,
+   * mỗi cột là một mục con. Trống = cột đứng riêng. `group_sort` = thứ tự cột lớn do người dùng đặt.
+   */
+  group_key?: string | null;
+  group_sort?: number | null;
   /** Cột «Bỏ hạn» — thẻ ở đây không tính quá hạn (khớp web/BE). */
   clears_deadline?: boolean;
   counts_as_completed_revenue?: boolean;
