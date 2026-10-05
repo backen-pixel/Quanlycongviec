@@ -1,3 +1,10 @@
+## 2026-10-05 - PR A minimal: lead measurement core
+Files: backend/src/modules/marketingAutomation/policy.js, leadMeasurement.js; backend/tests/marketingAutomation.leads.test.js; .github/workflows/marketing-lead-measure-core.yml; CURRENT.md and WORKLOG.md.
+Source: PR #22 commit 679cb926. policy.js keeps APPROVED_PLAN, money, instant; removes DAY, deny, evaluateBudgetMove, humanDeadline.
+Checks: Node 24.19.0 node --check passed for all three JS files; node --test --test-isolation=none passed 25/25. Plain node --test could not spawn in sandbox (EPERM); Node 18/22 CI is pending.
+Runtime: no caller, no real-data report, no DB/API access, migration, deployment, commit, or push.
+Rollback: remove the four added code/CI files and these two handoff entries.
+
 ## 2026-10-01 - Issue #15: Marketing / Business AI OS M0 candidate
 
 **State: IN PROGRESS.** Feature branch `codex/marketing-bos-m0-20261001`, base `0bc6392286df0b986cdd6dfc59b499916dd6fd31`; implementation commit `33874dd2e3632c0a1127fd76cc7351a663138e9c`.

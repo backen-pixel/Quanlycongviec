@@ -1,0 +1,36 @@
+name: Marketing lead measure core (isolated)
+
+# Pure synthetic tests only. No secrets, services or deployment.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/marketing-lead-measure-core.yml'
+      - 'backend/src/modules/marketingAutomation/policy.js'
+      - 'backend/src/modules/marketingAutomation/leadMeasurement.js'
+      - 'backend/tests/marketingAutomation.leads.test.js'
+
+permissions:
+  contents: read
+
+jobs:
+  lead-measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    strategy:
+      matrix:
+        node: [18, 22]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Syntax and isolated synthetic tests
+        run: |
+          node --version
+          node --check backend/src/modules/marketingAutomation/policy.js
+          node --check backend/src/modules/marketingAutomation/leadMeasurement.js
+          node --check backend/tests/marketingAutomation.leads.test.js
+          node --test backend/tests/marketingAutomation.leads.test.js
+          git diff --check

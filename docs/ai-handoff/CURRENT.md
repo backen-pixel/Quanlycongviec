@@ -1,3 +1,9 @@
+## 2026-10-05 - PR A minimal: lead measurement core
+State: local only; copied leadMeasurement.js and its 25 tests from PR #22 (679cb926), trimmed policy.js, and added isolated CI. No commit or push.
+Verification: Node 24.19.0 syntax checks passed; node --test --test-isolation=none passed 25/25. Plain node --test hit sandbox spawn EPERM; Node 18/22 CI is pending.
+Runtime: measureLeadTrial has no caller; no real-data report, DB/API access, migration, or deployment.
+Rollback: remove the three added module/test files and the isolated workflow, then remove these handoff entries.
+
 ## 2026-10-01 - Issue #15: Marketing / Business AI OS M0 candidate
 
 **Update 2026-10-05:** Founder approved merging PR #16 into `main`. The module is not wired into any route, scheduler or migration, so the merge changes no runtime behavior. The "No main merge" statement below describes the state before this approval.
