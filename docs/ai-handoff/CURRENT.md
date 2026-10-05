@@ -17,7 +17,15 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-10-05 16:00 (UTC+7)
+Cập nhật: 2026-10-05 20:10 (UTC+7)
+
+## Bình luận — nút ⋯ để xóa
+
+Trạng thái: **local, chưa deploy.**
+
+Bong bóng bình luận có nút ⋯ góc phải. Người viết thấy Sửa và Xóa. Admin hệ thống / admin công ty thấy Xóa cả bình luận của người khác. API xóa lead trước đây truyền `role` (chuỗi) vào hàm nhận object user nên admin không xóa được — đã sửa. Xóa có hỏi xác nhận.
+
+Hoàn tác: revert `CommentsPanels.jsx`, `leadComments.js`, `projects.js`.
 
 ## SX — NV công ty CRM mở dự án tại xưởng HCB/Metalla bị 403
 

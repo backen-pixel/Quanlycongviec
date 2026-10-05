@@ -17,6 +17,12 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Nhật ký công việc AI
 
+## 2026-10-05 20:10 — Nút ⋯ xóa bình luận
+
+- Bình luận của Lê Minh Tiển không có chỗ xóa vì nút chỉ hiện khi rê chuột và chỉ với đúng người viết.
+- Gắn nút ⋯ trên bong bóng: tác giả Sửa/Xóa, admin chỉ Xóa. Sửa API xóa lead (truyền `req.user`) và cho admin xóa bình luận dự án.
+- Đã mở deal LEAD-2026-1389, bấm ⋯ trên bình luận file SKP, menu hiện «Xóa». Chưa xóa dữ liệu thật.
+
 ## 2026-10-05 16:00 — NV Metalla không mở được dự án đặt sang xưởng Hucabi
 
 - AI: Cursor. Toại (admin Metalla) mở TB-2026-909 được nhưng TB-2026-964 (Hucabi, đặt từ 909) bị 403.

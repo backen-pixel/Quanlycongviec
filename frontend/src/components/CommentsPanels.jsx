@@ -1,7 +1,8 @@
 /**
  * Panel bình luận (thread + reactions) dùng chung cho chi tiết CRM và Sản xuất.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Calendar,
   Check,
@@ -25,17 +26,19 @@ import {
   Link2,
   Ban,
   Loader2,
+  MoreHorizontal,
   Package,
   PanelRightClose,
   PanelRightOpen,
   Paperclip,
   Pencil,
+  Trash2,
   Truck,
   X,
 } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { isAdminLike } from '../lib/adminRole';
+import { isAdminLike, isStrictAdmin } from '../lib/adminRole';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmCommentFullDateTime, formatCrmFbRelativeTime } from './crmFbCommentUi';
 import { CrmCommentMentionComposer, linkifyCommentString, renderCrmCommentBody } from './crmCommentMentionUi';
 import { uploadMixedCommentFiles } from '../lib/oversizedDriveUpload';
@@ -2410,6 +2413,112 @@ function VcHandoverCard({ comment, user, onSelect, onSchedule, onConfirm, onResc
   );
 }
 
+function CommentActionMenu({ canEdit, canRemove, onEdit, onRemove }) {
+  const [open, setOpen] = useState(false);
+  const btnRef = useRef(null);
+  const menuRef = useRef(null);
+  const [pos, setPos] = useState(null);
+
+  useLayoutEffect(() => {
+    if (!open || !btnRef.current) return undefined;
+    const place = () => {
+      const rect = btnRef.current.getBoundingClientRect();
+      const width = 160;
+      const height = 8 + (canEdit ? 36 : 0) + (canRemove ? 36 : 0);
+      let left = rect.right - width;
+      let top = rect.bottom + 4;
+      if (left < 8) left = 8;
+      if (left + width > window.innerWidth - 8) left = window.innerWidth - width - 8;
+      if (top + height > window.innerHeight - 8) top = Math.max(8, rect.top - height - 4);
+      setPos({ top, left });
+    };
+    place();
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [open, canEdit, canRemove]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDown = (e) => {
+      const target = e.target;
+      if (btnRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    const onKey = (e) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  if (!canEdit && !canRemove) return null;
+
+  const menu = (
+    <div
+      ref={menuRef}
+      className="fixed z-[80] min-w-[148px] overflow-hidden rounded-lg border border-[#e4e6eb] bg-white py-1 shadow-lg"
+      style={pos ? { top: pos.top, left: pos.left } : { top: -9999, left: 0 }}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
+      {canEdit ? (
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] font-medium text-[#050505] hover:bg-[#f0f2f5]"
+          onClick={() => {
+            setOpen(false);
+            onEdit();
+          }}
+        >
+          <Pencil size={14} />
+          Sửa
+        </button>
+      ) : null}
+      {canRemove ? (
+        <button
+          type="button"
+          className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[13px] font-medium text-red-600 hover:bg-red-50"
+          onClick={() => {
+            setOpen(false);
+            onRemove();
+          }}
+        >
+          <Trash2 size={14} />
+          Xóa
+        </button>
+      ) : null}
+    </div>
+  );
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        title="Thao tác"
+        aria-label="Thao tác bình luận"
+        aria-expanded={open}
+        className="inline-flex h-6 w-6 items-center justify-center rounded-full text-[#65676b] hover:bg-[#e4e6eb] hover:text-[#050505]"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+      >
+        <MoreHorizontal size={16} />
+      </button>
+      {open ? createPortal(menu, document.body) : null}
+    </>
+  );
+}
+
 function CommentThread({
   comments,
   loading,
@@ -2711,6 +2820,8 @@ function CommentThread({
       const privateTooltip = isPrivateComment
         ? `Bình luận riêng tư — chỉ hiện với: ${privateAudienceNames.join(', ') || '—'}`
         : '';
+      const canEditComment = isCommentOwner(c, user);
+      const canRemoveComment = canEditComment || isStrictAdmin(user);
       return (
         <div key={c.id} className={depth > 0 ? 'ml-5 border-l border-[#ccd0d5] pl-2.5 pt-0.5' : ''}>
           <div className="group/crx flex gap-2 rounded-lg px-1 py-1.5 transition-colors hover:bg-black/[0.025]">
@@ -2718,7 +2829,9 @@ function CommentThread({
             <div className="min-w-0 flex-1">
               <div className={`relative inline-block max-w-full ${showCornerRx ? 'mb-2.5' : ''}`}>
                 <div
-                  className={`max-w-full rounded-2xl border px-3 py-2 shadow-sm ${showCornerRx ? 'pb-2.5' : ''} ${
+                  className={`relative max-w-full rounded-2xl border px-3 py-2 shadow-sm ${
+                    editingId !== c.id && (canEditComment || canRemoveComment) ? 'pr-9' : ''
+                  } ${showCornerRx ? 'pb-2.5' : ''} ${
                   isPrivateComment
                     ? 'border-amber-300 bg-amber-50/70'
                     : contentHasMentionAll(getBody(c))
@@ -2748,6 +2861,16 @@ function CommentThread({
                     });
                   }}
                 >
+                  {editingId !== c.id && (canEditComment || canRemoveComment) ? (
+                    <div className="absolute right-1.5 top-1.5">
+                      <CommentActionMenu
+                        canEdit={canEditComment}
+                        canRemove={canRemoveComment}
+                        onEdit={() => { setEditingId(c.id); setEditingBody(getBody(c)); }}
+                        onRemove={() => onRemove(c)}
+                      />
+                    </div>
+                  ) : null}
                   <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0">
                     <span className="text-[13px] font-semibold text-[#050505]">{c.user?.full_name || 'Thành viên'}</span>
                     {isPrivateComment && (
@@ -2821,14 +2944,6 @@ function CommentThread({
                 <div className="overflow-hidden transition-[max-height,opacity] duration-200 ease-out max-h-0 opacity-0 pointer-events-none group-hover/crx:max-h-10 group-hover/crx:opacity-100 group-hover/crx:pointer-events-auto group-focus-within/crx:max-h-10 group-focus-within/crx:opacity-100 group-focus-within/crx:pointer-events-auto">
                   <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 pl-1 text-[12px]">
                     <button type="button" className="font-semibold text-[#65676b] hover:underline" onClick={() => onReply(c)}>Trả lời</button>
-                    {String(c.user_id || '') === String(user?.id || user?.userId || '') && (
-                      <>
-                        <span className="text-[#ccd0d5]">·</span>
-                        <button type="button" className="font-semibold text-[#65676b] hover:underline" onClick={() => { setEditingId(c.id); setEditingBody(getBody(c)); }}>Sửa</button>
-                        <span className="text-[#ccd0d5]">·</span>
-                        <button type="button" className="font-semibold text-[#65676b] hover:underline" onClick={() => onRemove(c)}>Xóa</button>
-                      </>
-                    )}
                   </div>
                 </div>
               )}
