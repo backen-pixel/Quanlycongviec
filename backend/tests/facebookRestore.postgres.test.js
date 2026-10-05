@@ -25,6 +25,7 @@ async function inventory(db){
 }
 test('isolated logical backup restores business state, authority and maintenance control',{skip:!enabled,timeout:240000},async t=>{
  assert.equal(process.env.CI,'true');
+ const expectedMajor=Number(process.env.VPT_RESTORE_TEST_PG_MAJOR||'16');assert.ok([16,17].includes(expectedMajor));
  const {Client}=require('pg');
  const urls=[process.env.FB_INTAKE_TEST_DATABASE_URL,process.env.FB_RESTORE_TEST_DATABASE_URL].map((value,i)=>{
   const u=new URL(value);assert.equal(u.protocol,'postgresql:');assert.equal(u.hostname,'127.0.0.1');assert.equal(u.username,'postgres');
@@ -41,10 +42,10 @@ test('isolated logical backup restores business state, authority and maintenance
  let before,archive,sourcePlan,sourceCost,operator,command;
  try{
   for(const db of[source,target,peer])await db.query("SET timezone='UTC';SET search_path=pg_catalog,public");
-  await t.test('source and empty target are distinct isolated PostgreSQL16 clusters',async()=>{
+  await t.test(`source and empty target are distinct isolated PostgreSQL${expectedMajor} clusters`,async()=>{
    const identities=await Promise.all([source,target].map(db=>db.query('SELECT system_identifier::text id FROM pg_control_system()')));
    assert.notEqual(identities[0].rows[0].id,identities[1].rows[0].id);
-   for(const db of[source,target])assert.equal(Math.floor(Number((await db.query('SHOW server_version_num')).rows[0].server_version_num)/10000),16);
+   for(const db of[source,target])assert.equal(Math.floor(Number((await db.query('SHOW server_version_num')).rows[0].server_version_num)/10000),expectedMajor);
    assert.equal(Object.keys((await inventory(target)).data).length,0);
    // Roles are cluster globals, intentionally provisioned as NOLOGIN on the
    // empty test target. This is not a backup of real platform/auth roles.

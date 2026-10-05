@@ -366,6 +366,7 @@ jobs:
       - name: Logical backup and restore into a separate isolated cluster
         env:
           VPT_RESTORE_REHEARSAL: '1'
+          VPT_RESTORE_TEST_PG_MAJOR: '17'
           FB_INTAKE_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/fb_intake_test
           FB_RESTORE_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5433/fb_intake_restore_test
           VPT_SOURCE_CONTAINER: ${{ job.services.postgres.id }}
