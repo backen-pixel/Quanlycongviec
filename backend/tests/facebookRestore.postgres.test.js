@@ -39,7 +39,7 @@ test('isolated logical backup restores business state, authority and maintenance
  const inspect=db=>db.query('SELECT crm_legacy_hold.inspect() r').then(x=>x.rows[0].r);
  const call=(args,db=target)=>db.query('SELECT crm_legacy_hold.rebind_restored_manifest($1,$2,$3,$4,$5,$6) r',args).then(x=>x.rows[0].r);
  const release='Synthetic approved restore rehearsal, no production operations';
- let before,archive,sourcePlan,sourceCost,operator,command;
+ let before,archive,sourcePlan,sourceCost,operator,command,targetPrepared=false;
  try{
   for(const db of[source,target,peer])await db.query("SET timezone='UTC';SET search_path=pg_catalog,public");
   await t.test(`source and empty target are distinct isolated PostgreSQL${expectedMajor} clusters`,async()=>{
@@ -53,7 +53,9 @@ test('isolated logical backup restores business state, authority and maintenance
    assert.equal(roles.length,3);for(const r of roles)for(const key of['rolsuper','rolcreaterole','rolcreatedb','rolcanlogin','rolreplication','rolbypassrls'])assert.equal(r[key],false);
    await target.query('CREATE ROLE anon NOLOGIN;CREATE ROLE authenticated NOLOGIN;CREATE ROLE service_role NOLOGIN');
    assert.deepEqual((await target.query("SELECT rolname,rolsuper,rolinherit,rolcreaterole,rolcreatedb,rolcanlogin,rolreplication,rolbypassrls FROM pg_roles WHERE rolname IN('anon','authenticated','service_role') ORDER BY rolname")).rows,roles);
+   targetPrepared=true;
   });
+  if(!targetPrepared)return; // The failed prerequisite already fails the suite; do not restore after it.
   await t.test('dump and reference digests share an exported snapshot with the source held',async()=>{
    const sql=fs.readFileSync(path.resolve(__dirname,'../../database/697_crm_legacy_hold_restore.sql'),'utf8');await source.query(sql);await source.query(sql);
    // Nonempty sequence evidence: UUID-only business fixtures would otherwise
