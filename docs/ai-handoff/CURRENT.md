@@ -2,7 +2,7 @@
 
 Đã triển khai trên nhánh `codex/agent-guardrails-20261005`, base PR22 `679cb926`: khóa công cụ theo danh tính/phạm vi server; chặn UNKNOWN/chờ/duyệt và lỗi nguồn ở cổng cùng caller; dựng câu trả lời từ bằng chứng; sửa ngữ cảnh và ưu tiên correction. [Hồ sơ, phạm vi tương thích, kiểm thử và hoàn tác](agent-guardrails-20261005/README.md). Kiến trúc đích giữ nguyên.
 
-112 kiểm thử tập trung PASS (48 regression mới + 64 Care hiện có), reviewer độc lập PASS trên diff và 48 ca chạy riêng. Một số chức năng legacy được giữ khóa: chỉ 7 tool đọc đã có hợp đồng, DM riêng có kiểm người nhận, action runner chỉ preview báo cáo. Chưa xây durable wait/approval executor; scheduled sender/menu và MCP Ads ngoài chứng nhận này. Đang đóng gói PR nháp; không merge/phát hành, không đổi DB/quyền/tài khoản thật. Production vẫn HOLD, không coi đây là hoàn tất hệ thống Marketing.
+112 kiểm thử tập trung PASS (48 regression mới + 64 Care hiện có), reviewer độc lập PASS trên diff và 48 ca chạy riêng. Một số chức năng legacy được giữ khóa: chỉ 7 tool đọc đã có hợp đồng, DM riêng có kiểm người nhận, action runner chỉ preview báo cáo. Chưa xây durable wait/approval executor; scheduled sender/menu và MCP Ads ngoài chứng nhận này. Đã xuất bản [PR nháp #25](https://github.com/backen-pixel/Quanlycongviec/pull/25), source `add71daf`, xếp sau PR22. [CI Node18/22](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37264985784) đều SUCCESS; 128 hồi quy báo cáo cục bộ cũng PASS. Không merge/phát hành, không đổi DB/quyền/tài khoản thật. Production vẫn HOLD, không coi đây là hoàn tất hệ thống Marketing.
 
 ---
 

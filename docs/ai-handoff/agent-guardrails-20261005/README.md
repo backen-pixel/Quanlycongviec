@@ -3,7 +3,7 @@
 Nguồn gốc: [audit tại 679cb926](../audits/2026-10-05-agent-architecture/README.md).
 Founder xác nhận thứ tự: khóa quyền công cụ → chặn điều kiện chưa rõ/chưa duyệt → bắt buộc bằng chứng số liệu → sửa ngữ cảnh và bộ nhớ. Kiến trúc đích V1.1, phạm vi Marketing và các quyết định ngân sách giữ nguyên.
 
-Nhánh sửa: `codex/agent-guardrails-20261005`, tách từ source PR22 `679cb9266ecb87c560421f3f6fc3c3e31b50b831`. Rủi ro HIGH do thay đổi tương thích của báo cáo/luồng cũ. Đây là bản sửa cục bộ để review; không thay DB, không phát hành hoặc gọi nhà cung cấp thật.
+Nhánh sửa: `codex/agent-guardrails-20261005`, tách từ source PR22 `679cb9266ecb87c560421f3f6fc3c3e31b50b831`. Rủi ro HIGH do thay đổi tương thích của báo cáo/luồng cũ. Đã xuất bản [PR nháp #25](https://github.com/backen-pixel/Quanlycongviec/pull/25), source `add71dafac4774bc2bbabc196b5c901df8cd9107`; không thay DB, không phát hành hoặc gọi nhà cung cấp thật.
 
 ## Thay đổi và tác động sử dụng
 
@@ -30,10 +30,10 @@ Các lối tắt sửa lịch/skill và gửi báo cáo trực tiếp trước v
 
 ## Kiểm chứng và hoàn tác
 
-Bộ regression `backend/tests/agentGuardrails.test.js` chạy mã thật với DB/provider giả, cấm network trong VM. Bao gồm quyền, thu hồi giữa đọc/gửi, scope drift, lỗi/thiếu nguồn, output dài, persistence, correction, flow gate và điểm tích hợp. Workflow `agent-guardrails.yml` đặt Node 18/22; CI chưa chạy khi chưa publish.
+Bộ regression `backend/tests/agentGuardrails.test.js` chạy mã thật với DB/provider giả, cấm network trong VM. Bao gồm quyền, thu hồi giữa đọc/gửi, scope drift, lỗi/thiếu nguồn, output dài, persistence, correction, flow gate và điểm tích hợp. Workflow `agent-guardrails.yml` đặt Node 18/22; cả hai job đã SUCCESS trên source `add71daf`.
 
-Kết quả cục bộ Node 24.19.0: [112 PASS, 0 FAIL/SKIP](unit-tests.tap), gồm 48 regression mới và 64 Care; [hồi quy báo cáo hiện có](report-tests.tap) PASS. Runner chuẩn được chạy ngoài giới hạn sandbox tạo tiến trình con; vẫn chỉ dùng fixture, không có DB/provider thật. Lượt đầu bị sandbox EPERM không phải kết quả kiểm mã; không tính là PASS.
+Kết quả cục bộ Node 24.19.0: [112 PASS, 0 FAIL/SKIP](unit-tests.tap), gồm 48 regression mới và 64 Care; [128 hồi quy báo cáo hiện có](report-tests.tap) PASS. Runner chuẩn được chạy ngoài giới hạn sandbox tạo tiến trình con; vẫn chỉ dùng fixture, không có DB/provider thật. Lượt đầu bị sandbox EPERM không phải kết quả kiểm mã; không tính là PASS.
 
-[Reviewer độc lập](REVIEW.md) đọc đủ yêu cầu, audit, diff và bằng chứng, chạy riêng 48/48 PASS và git diff --check. [Fingerprint source](source-manifest.json) xác định đúng file đã kiểm; kết luận kỹ thuật không phải phê duyệt phát hành. CI Node18/22 chưa phải bằng chứng đã có tại thời điểm đóng gói này; theo dõi trực tiếp trên PR.
+[Reviewer độc lập](REVIEW.md) đọc đủ yêu cầu, audit, diff và bằng chứng, chạy riêng 48/48 PASS và git diff --check. [Fingerprint source](source-manifest.json) xác định đúng file đã kiểm; kết luận kỹ thuật không phải phê duyệt phát hành. [CI Node18/22 run 37264985784](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37264985784) kết thúc SUCCESS ở cả hai job trên `add71daf`. Bản cập nhật hồ sơ sau đó giữ nguyên các Git blob mã trong manifest; kiểm tra run của head mới trên PR khi phát hành.
 
 Không có migration hoặc chuyển dữ liệu. Nếu ứng viên gây vấn đề trong môi trường thử: dừng entry point liên quan và giữ log/bằng chứng, sửa tiếp hoặc loại ứng viên. Không rollback bằng cách mở lại công cụ/luồng fail-open. Production chỉ mở sau inventory bindings, kiểm DB và người nhận, UAT đúng phiên bản cùng quyết định phát hành Founder; trạng thái hiện tại **HOLD**.
