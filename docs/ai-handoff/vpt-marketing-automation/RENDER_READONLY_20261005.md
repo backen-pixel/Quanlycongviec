@@ -1,5 +1,9 @@
 # Render — kiểm tra chỉ đọc sau xác nhận workspace
 
+**Cập nhật khoảng 14:15–14:19 ngày 05/10:** backend live `3375ef712c7a18a75fec8ee79f5e69a347c5f68d`, deploy `dep-db1kavrtqb8s739ed59g`, hoàn tất 06:37:49 UTC (13:37:49 Việt Nam), trigger new_commit. Frontend vẫn live `ad88a162` / `dep-db1hqd3tqb8s739caitg`. Git diff hai SHA không có thay đổi frontend. Ứng viên `fd3babeb` đã ghép main này, kiểm CI/restore/review đạt theo [hồ sơ tích hợp](RELEASE_INTEGRATION_20261005.md); ứng viên chưa được triển khai.
+
+**Cập nhật 14:23:** Giám sát Supabase đã mở khóa; UI hiện hành xác nhận Primary đang dùng, failover Bật, queue 1.011 và lỗi đồng bộ Backup. [Phiếu DB](DB_READONLY_20261005.md) ghi chi tiết và giới hạn. Supabase Dashboard còn cần đăng nhập riêng để đọc catalog. Không gọi mutation hoặc đi vòng qua mật khẩu. JSON cùng tên và các mục bên dưới giữ snapshot 12:45–12:51, không phải snapshot mới.
+
 Ngày 05/10/2026, khoảng 12:45–12:51 giờ Việt Nam. **Đã truy cập; HOLD phát hành.**
 
 Founder xác nhận workspace “My Workspace” đã được chọn cho bước đọc. Dùng `workspaceId=tea-d47g0824d50c73856e80` tường minh trong mọi lời gọi Render. Không cần hỏi chọn lại vì giá trị fallback của công cụ vẫn rỗng; workspace theo từng request không được phản ánh bởi `get_selected_workspace`. Không đổi cấu hình tài khoản hoặc workspace.

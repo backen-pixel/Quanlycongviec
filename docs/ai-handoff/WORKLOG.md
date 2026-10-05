@@ -1,3 +1,13 @@
+## 05/10/2026 — Xuất bản ứng viên, khép CI và mapping Page chỉ đọc
+
+Bổ sung khoảng14:23–14:30: Giám sát CRM đã mở khóa, đọc active Primary/failover Bật/queue1011/error PGRST204 cột facebook_contact_id; lịch sửclone04Oct lỗi out of shared memory ởprepare schema. Đối chiếu clone legacy có DROP CASCADE, nonzero restore bị bỏqua theo chuỗi, rowcounts khôngassert và grant rộng. Không chạyverify/drift/sync/chuyển DB. SupabaseDashboard cầnloginriêng, đãhỏiFounder; thêm DB_READONLY và SQLcatalog READONLY chưachạy. Cậpnhật trạng thái mới, khôngcònchờ mật khẩuCRM; giữHOLDvậnhành.
+
+Push fd3babeb lên PR25, không chạm main. CI merge7774edd9 và source có cùng tree4c8d1cab (đã fetch/đối chiếu). Workflow report37276592963/guardrails37276592953/Marketing37276593013 đều SUCCESS; 10 Marketing jobs. Đọc log Node18/22 mỗi 1.521 PASS/0 FAIL/0 SKIP, intakePG507/0/0 và restore cluster khác11/0/0. Reviewer độc lập kiểm published head, P3 UI, backend/test blobs và scoped PASS.
+
+Đọc CRM Page409741855550833 mapping legacy đúng VPT/HCM/Admin VPT, loại Bếp/stage TIẾP NHẬN; đợi options tải xong, đóng Hủy, không lưu. Nhắc token chỉ dựa ngày cài đặt; không suy hết hạn. Render backend đã live3375ef71/frontendad88a162; source candidate chưa live. Hoàn thiện RELEASE_INTEGRATION cùng bảng điều kiện mở tuyến Lead, cập nhật CURRENT/RELEASE_READINESS và phiếu CRM/Render. Chưa khép DB/password gate, quyền/binding mới/chuyển luồng/UAT thật. Không mutation production, không mở AI/chi ngân sách. Hoàn tác delta tài liệu bằng commit sửa/revert, giữ bằng chứng.
+
+---
+
 ## 05/10/2026 — Ghép main3375ef71, chuẩn bị gói Lead đầu tiên
 
 Founder yêu cầu hoàn tất các việc trước chạy thật. Commit checkpoint d5fa89d4 lưu quan sát cũ; ghép main3375ef71 trên nhánh sửa. Một conflict UI giải quyết giữ cả chức năng main và nhãn/bằng chứng. Reviewer tìm scope/false-zero metric mới; sửa company-filter, quyền contact chưa rõ trảUNKNOWN, exactcount chốngcắtnguồn.30ca mới +128cũ=158reportPASS; fullunit1564PASS/0FAIL/2WindowsSKIP; VitebuildPASS. Giữ toàn bộ49filemain trừ ba file báo cáo cần tích hợp; SQLcũkhôngsửa. ChờCI/PG và reviewđúngversion. Trang Giám sátSupabase cókhóa mật khẩu riêng; mờiFounder mởtrực tiếp, khôngbypass. Chưa mainmerge/deploy/config/DB/message. Xem RELEASE_INTEGRATION_20261005.

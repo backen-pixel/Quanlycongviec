@@ -1,3 +1,15 @@
+## 05/10/2026 — Ứng viên tích hợp đã PASS CI; còn kiểm DB thật trước phát hành
+
+Đã xuất bản PR25 `fd3babeb`, ghép main `3375ef71`. Tree ứng viên và CI đều `4c8d1cab`. Report, Agent guardrails và Marketing workflow SUCCESS; Marketing 10/10 job, Node18/22 mỗi 1.521 PASS, intake PostgreSQL 507 PASS và restore cluster cô lập 11 PASS. Reviewer riêng xác nhận P3 và scoped PASS. Không có lỗi kiểm thử còn mở cho delta tích hợp đã rà.
+
+CRM đã đọc mapping Page `409741855550833` → VPT → HCM → Bếp → TIẾP NHẬN → Admin Vạn Phú Thành; không sửa/lưu. Đây là mapping legacy, còn binding form mới và quyền hiệu lực. Backend live `3375ef71`, frontend `ad88a162`; PR25 chưa live.
+
+[Hồ sơ phiên bản và phiếu mở tuyến đầu](vpt-marketing-automation/RELEASE_INTEGRATION_20261005.md) gom kết quả, tác động, điều kiện và cách dừng. **Giám sát CRM đã mở khóa**: active Primary, failover Bật, queue 1.011 tại 14:23:36; Backup báo thiếu crm_leads.facebook_contact_id trong schema cache. Lịch sử clone04Oct lỗi out of shared memory ở prepare schema. [Phiếu DB và kế hoạch kiểm/sửa](vpt-marketing-automation/DB_READONLY_20261005.md) ghi rủi ro DROP CASCADE/grant rộng của clone cũ; chưa retry.
+
+Supabase Dashboard cần đăng nhập riêng để đọc catalog/ledger/quyền; câu hỏi đã gửi, không gửi mật khẩu qua chat. Còn DB/backup/chuyển luồng và UAT đúng bản. Không hỏi lại Render workspace, Admin nhận khách hoặc nguồn lịch CRM. Chưa merge main/deploy/sửa DB/config/gửi khách; không báo DONE vận hành. Các mục dưới đây giữ lịch sử.
+
+---
+
 ## 05/10/2026 — Đang khép ứng viên Lead sau yêu cầu hoàn tất của Founder
 
 Đã ghép main `3375ef71` (mới hơn snapshot Render) vào nhánh Agent guardrails, giữ SX/mobile/lịch cùng SQL649 khác tên. Sửa chỉ số lượt chạm mới để lọc company, giới hạn quyền và bắt buộc count đầy đủ; không biến lỗi thành0 hoặc đưa vào CPQL. [Hồ sơ tích hợp](vpt-marketing-automation/RELEASE_INTEGRATION_20261005.md): 158reportPASS, toànunit1564PASS/0FAIL/2WindowsSKIP; buildPASS trước sửa câu giải thích cuối; reviewer riêng158PASS. CI/bằng chứng đúng bản xuất bản đang khép.

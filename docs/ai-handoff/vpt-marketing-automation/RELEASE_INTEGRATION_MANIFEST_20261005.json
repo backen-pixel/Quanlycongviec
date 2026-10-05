@@ -1,0 +1,375 @@
+{
+  "kind": "INTEGRATED_CANDIDATE_INVENTORY_NOT_EXECUTABLE",
+  "recordedAt": "2026-10-05T07:19:06Z",
+  "risk": "HIGH",
+  "releaseStatus": "HOLD_REAL_DB_BINDING_CUTOVER_UAT",
+  "founderReleaseDecision": null,
+  "candidate": {
+    "commit": "fd3babeb0a1ba25a9ec7b98f3e5918b3ef216798",
+    "tree": "4c8d1caba38d8e9c6a2710d4f65f41e09bc99f76",
+    "integratedMain": "3375ef712c7a18a75fec8ee79f5e69a347c5f68d",
+    "pr": 25,
+    "branch": "codex/agent-guardrails-20261005",
+    "ciMergeCommit": "7774edd9b8a3c27d7b1d9dba465eeb2b1042b444",
+    "ciTreeEqualsCandidate": true
+  },
+  "ci": {
+    "marketing": {
+      "runId": 37276593013,
+      "conclusion": "success",
+      "jobsPassed": 10,
+      "node18Passed": 1521,
+      "node22Passed": 1521,
+      "intakePostgresPassed": 507,
+      "isolatedRestorePassed": 11
+    },
+    "report": {
+      "runId": 37276592963,
+      "conclusion": "success"
+    },
+    "guardrails": {
+      "runId": 37276592953,
+      "conclusion": "success"
+    }
+  },
+  "deployed": {
+    "backend": "3375ef712c7a18a75fec8ee79f5e69a347c5f68d",
+    "backendDeploy": "dep-db1kavrtqb8s739ed59g",
+    "frontend": "ad88a16202c167f144411c16c0b45969b2c49378",
+    "frontendDeploy": "dep-db1hqd3tqb8s739caitg",
+    "candidateLive": false
+  },
+  "sqlInventory": {
+    "comparison": "integrated main to candidate, not actual target DB",
+    "total": 50,
+    "entries": [
+      {
+        "status": "A",
+        "path": "database/648_marketing_automation_command_queue.sql",
+        "gitBlob": "f14c7da0509dc914bdfa29b181fa7d5a2ac44836",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/649_marketing_spend_evidence.sql",
+        "gitBlob": "9be5f3e7964b56547617a5b64bcfd7beb10f2b36",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/650_crm_lead_qualification.sql",
+        "gitBlob": "74703a19ef65a02e08569c486170774aaef75dec",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/651_crm_lead_identity.sql",
+        "gitBlob": "04431c8cdd4b1460a3b1b98ed7ea33293172b366",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/652_facebook_lead_intake.sql",
+        "gitBlob": "5c0bd55d97e459bc85033d0f18422f4a254815d7",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/653_facebook_lead_intake_console.sql",
+        "gitBlob": "98c284f244dc8a035d767a2bbb8042e1efc05421",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/654_crm_identity_review.sql",
+        "gitBlob": "b542b814551051469fd1ee731298db28f4f17644",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/655_marketing_lead_trial.sql",
+        "gitBlob": "6a2b0040a11cbe0ab5af2019f23f19954fe21fa0",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/656_facebook_lead_census.sql",
+        "gitBlob": "1aafff5e1a83521b1f45733aa3bec4341c468b57",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/657_marketing_census_reconciliation.sql",
+        "gitBlob": "248dc4414c03d7ae1025aacbf036fbf4f0efb2b3",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/658_facebook_legacy_reconciliation.sql",
+        "gitBlob": "2768f4e6dba7b17b2fcc9b51a9ca5c677a577e28",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/659_crm_customer_care.sql",
+        "gitBlob": "4b8076821dc59ca0d18e6b3ad98f12af1f30f0c2",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/660_crm_customer_care_console.sql",
+        "gitBlob": "c08115a40ef3f08b307aada0452cd0f5f7be2c18",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/661_crm_care_library.sql",
+        "gitBlob": "d9c5fafac2fbbeecb19ff0a25949b784d53f0c49",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/662_crm_care_library_console.sql",
+        "gitBlob": "b1bf42e13ed78d13f12582a3c5ceccdbc79e2c66",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/663_crm_survey_availability.sql",
+        "gitBlob": "be068f21b953ec1342fb83129b01ae13b84f6ef8",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/664_crm_survey_calendar_guard.sql",
+        "gitBlob": "56ba834a93a9ecde581e1d9df2274ad330784c38",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/665_crm_survey_proposals.sql",
+        "gitBlob": "db13ae0651c49c8b0c37472293800ccc080d98ec",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/666_crm_survey_confirmation_ingress.sql",
+        "gitBlob": "d33f9bc8c115fb33f8eb4a647796299a50b3dce7",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/667_crm_survey_dispatch.sql",
+        "gitBlob": "51cd76575530b2a163503d6c8bd0eaeb38479332",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/668_crm_survey_handoffs.sql",
+        "gitBlob": "fbc882497acf173d0eb0158009044bff640a71e2",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/669_crm_survey_outcomes.sql",
+        "gitBlob": "db49181af9ec3aa9aef767e9b0d8fa6d8a920552",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/670_marketing_measurement_period.sql",
+        "gitBlob": "acab041afd6cc100da1f64a714fe4a4054977b2a",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/671_marketing_source_registry.sql",
+        "gitBlob": "d8cc23963bdd5baa7685e2c7f0e7e5eb90efda2c",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/672_marketing_census_witness.sql",
+        "gitBlob": "e404c2ad5de0860e80a32bbff91a027cbb8269d9",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/673_marketing_operations_dashboard.sql",
+        "gitBlob": "3349348d730d450e8eb4279f3c6d1752d1092915",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/674_marketing_source_export.sql",
+        "gitBlob": "7c1755c5d6994ad66ebd5554c6764dc4d4c1a869",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/675_marketing_measurement_snapshot.sql",
+        "gitBlob": "415507179769188735165dfbc19b5435ba13c7a4",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/676_marketing_account_delivery.sql",
+        "gitBlob": "db40015142fac07f4dece59b9081b131b2895b35",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/677_marketing_scope_acceptance.sql",
+        "gitBlob": "d79f94017a1e57bb3887087ddaec72ac559b097c",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/678_marketing_cohort_operations.sql",
+        "gitBlob": "841fdad9b5d3cfd03a9f451df53424b1d4bcb20b",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/679_survey_proposal_console.sql",
+        "gitBlob": "bfece893635befb9cf5a55cfceb892eb0d743c69",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/680_crm_care_connection.sql",
+        "gitBlob": "593a41e4dba58eaf90161d84b3a0ca915a338ee6",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/681_crm_care_connection_choices.sql",
+        "gitBlob": "6a04b69f38b74c4f90b2a15ce2ae83faedaa4e8e",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/682_crm_care_legacy_write_check.sql",
+        "gitBlob": "957d88da92e8190751a396045e430a619c4b777b",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/683_facebook_source_repair.sql",
+        "gitBlob": "cad48de7146e79714bb08448b786aec8c3391bf8",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/684_facebook_batch_journal.sql",
+        "gitBlob": "af46efe14232256b5cc72815ad3b1496623b8d1d",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/685_crm_identity_review_active_company.sql",
+        "gitBlob": "4a6717f47a66de1bd7974dd07584712ef7c613ae",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/686_facebook_batch_stop.sql",
+        "gitBlob": "e6e5413675dcba64c15f4ed064db0a0a323da675",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/687_crm_legacy_write_hold.sql",
+        "gitBlob": "975a082c889df70d760c4c5e3ce881f2fae5643b",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/688_facebook_batch_link_reconciliation.sql",
+        "gitBlob": "6db207bad47fa32982f68d8b44978569017fa6db",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/689_crm_care_advisor_drafts.sql",
+        "gitBlob": "0405d946ec2e77540573f3c0f69d86a0383054e5",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/690_crm_care_advisor_console.sql",
+        "gitBlob": "ff30ae901820dea3961da86122c66c015ed83c7d",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/691_crm_care_inference_permits.sql",
+        "gitBlob": "80fe0ea1cab624e96d4a85b4ba6ff6188b755cd4",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/692_crm_care_shared_rules.sql",
+        "gitBlob": "92a9c8c37cdb1406a86b6ec34054627c4d0c3470",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/693_crm_care_runtime.sql",
+        "gitBlob": "7e67c0e74df3e9e61b10b371ec36e7145949dadb",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/694_crm_care_answer_delivery.sql",
+        "gitBlob": "2ffdb34e31eb52d8596f002a0fbc2f93fb07eee3",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/695_crm_survey_runtime.sql",
+        "gitBlob": "34a361210dd44e9894eea55ed9bd7e2d0fd56c6f",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/696_crm_care_inference_cost_console.sql",
+        "gitBlob": "17429a4a99972c48f2a5d37f2f0b85e1d96ce639",
+        "appliedToTarget": null
+      },
+      {
+        "status": "A",
+        "path": "database/697_crm_legacy_hold_restore.sql",
+        "gitBlob": "978dbcbb8b6d156eadfe9b856e367e491352a6dd",
+        "appliedToTarget": null
+      }
+    ],
+    "applyOrderVerified": false,
+    "targetLedgerVerified": false,
+    "note": "Preserve distinct full names including duplicate numeric prefixes. No production migration authorized by this inventory."
+  },
+  "scope": "Prepare Facebook Lead Ads -> CRM -> Admin VPT -> qualified paid Lead measurement; no activation",
+  "technicalReview": "PASS_SCOPED_INTEGRATION_NOT_RELEASE",
+  "liveReadOnlyEvidence": "CRM_READONLY_VERIFICATION_20261005.md",
+  "releaseChecklist": "RELEASE_INTEGRATION_20261005.md",
+  "requires": {
+    "dbMonitorUnlocked": true,
+    "primaryOnlyVerified": false,
+    "targetPrivilegesVerified": false,
+    "targetRestoreVerified": false,
+    "formBindingVerified": false,
+    "cutoverRehearsed": false,
+    "liveUat": false
+  },
+  "noSecretsOrCustomerRecords": true,
+  "liveDbObservation": {
+    "observedAt": "2026-10-05T07:23:36Z",
+    "activeTarget": "primary",
+    "failoverEnabled": true,
+    "replicationQueue": 1011,
+    "replicationError": "PGRST204 crm_leads.facebook_contact_id absent from schema cache",
+    "lastCloneFailure": "2026-10-04 prepare backup schema: out of shared memory",
+    "supabaseDashboardAuthenticated": false,
+    "evidence": "DB_READONLY_20261005.md"
+  }
+}

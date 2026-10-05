@@ -2,7 +2,9 @@
 
 Ngày cập nhật: 05/10/2026. **Rủi ro HIGH; HOLD phát hành.** Hồ sơ này gom điều kiện và bằng chứng, không phải quyết định mở quyền, chạy migration hoặc tiêu ngân sách. Nguồn chuẩn là repo; các mục cũ trong CURRENT/README giữ giá trị lịch sử theo phiên bản.
 
-**Render đã xác nhận workspace và đã kiểm chỉ đọc.** Backend live `899db5ed`, frontend live `ad88a162`, cả hai tự deploy từ main. Nền production mới đi trước nền kiểm `ca8810c5` 10 commit/49 file; ứng viên PR25 chưa tích hợp các thay đổi đó. Log khởi động failover=on/auto=off còn phải đối chiếu điều kiện Primary-only của tuyến mới. [Bằng chứng Render/GitHub và các điều kiện cần khép](RENDER_READONLY_20261005.md). Không còn chờ Founder chọn workspace; chưa kiểm đầy đủ environment/DB/backup hoặc nghiệm thu ứng viên.
+**Trạng thái mới nhất khoảng 14:19:** đã ghép main `3375ef71` vào PR25 `fd3babeb`; 3 workflow SUCCESS, Marketing 10/10 job, Node18/22 mỗi 1.521 PASS, intake PostgreSQL 507 PASS và restore cô lập 11 PASS. Tree ứng viên bằng tree CI; reviewer độc lập PASS phạm vi đã rà. Backend live `3375ef71`, frontend `ad88a162`; ứng viên chưa live. [Hồ sơ tích hợp và phiếu mở tuyến đầu](RELEASE_INTEGRATION_20261005.md) ghi bản kiểm, phạm vi, cách dừng và điều kiện còn thiếu.
+
+Đã đọc mapping legacy Page Bếp Vạn Phú Thành → VPT → HCM → Admin VPT đúng lựa chọn Founder. Còn binding form mới, quyền hiệu lực và UAT thật. Render workspace đã xác nhận; Giám sát CRM đã mở khóa, xác nhận Primary đang dùng, failover Bật, queue 1.011 và lỗi Backup. [Phiếu DB hiện hành](DB_READONLY_20261005.md) ghi lỗi schema-cache và clone thiếu tài nguyên khóa; Supabase Dashboard cần đăng nhập riêng để kiểm catalog/quyền. Không còn blocker workspace, mật khẩu CRM hoặc tích hợp main. Các checkpoint và số CI phía dưới giữ lịch sử.
 
 Cập nhật tích hợp: PR22 runtime `542c4ee5` đã ghép PR19 `f5efde61` chứa main `ca8810c5`; xem [bằng chứng và giới hạn](MAIN_INTEGRATION_20261005.md). Giữ 250.000đ/khách hợp lệ và Finance UNKNOWN trong các màn Page/bài viết mới. Ba workflow đúng head SUCCESS; Node18/22 mỗi bản1.491 PASS, intake PostgreSQL507/restore11 và build PASS. Reviewer độc lập xác minh đúng tree/blob/log và PASS checkpoint kỹ thuật. Các số CI phía dưới là lịch sử, không chứng nhận bản triển khai thật.
 
@@ -59,7 +61,7 @@ Mỗi dòng cần giá trị cụ thể, nguồn kiểm chứng, người chịu
 | Con người và lịch | User UUID, vai trò từng vùng, người thay thế, lịch trống, đầu mối ngoại lệ | Đã chốt Admin VPT nhận khách và nguồn lịch CRM; còn mapping tài khoản, người/giờ khảo sát, độ đủ lịch bận, người thay thế và ngoại lệ |
 | Thư viện tư vấn | Version/nguồn/phê duyệt/hiệu lực của thông tin và câu được dùng | Founder đã duyệt câu chữ V1; còn mapping, dữ liệu/chính sách, publisher và hạn hiệu lực; chưa APPROVE runtime |
 | AI | Danh tính Agent, grant, inference/send/survey policy; key riêng không dán vào tài liệu; model snapshot chính xác, hạn mức/kỳ và căn cứ tiền thực chi | Chưa cấp quyền |
-| Hạ tầng | Bản đang chạy, cấu hình từng replica/worker/cron, Primary duy nhất nhận ghi, quyền/RLS, migration ledger, backup và restore trên môi trường phù hợp | Đã đọc bản live/auto-deploy/một instance backend; còn main mới, cấu hình Primary-only, mọi writer/job, DB/ledger/backup/restore. Xem phiếu Render |
+| Hạ tầng | Bản đang chạy, cấu hình từng replica/worker/cron, Primary duy nhất nhận ghi, quyền/RLS, migration ledger, backup và restore trên môi trường phù hợp | Main mới đã tích hợp và CI PASS. Đã đọc live/auto-deploy/một instance, active Primary và failover Bật; còn xử lý lỗi Backup, mọi writer/job, catalog/ledger/quyền và restore thật. Xem phiếu DB/Render |
 | Chuyển luồng | Mọi writer cũ, memory/DB queue, UNKNOWN/claim/HTTP còn dở, sự kiện đến trong bảo trì và đối soát sau chuyển | Chưa diễn tập theo môi trường đích |
 | Mở thử | Ứng viên/nhóm khách/công ty/Page, thời gian, giới hạn, người theo dõi/dừng, kết quả UAT và quyết định Founder | Chưa duyệt phát hành |
 

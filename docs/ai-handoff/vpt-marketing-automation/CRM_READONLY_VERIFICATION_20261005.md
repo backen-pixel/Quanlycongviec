@@ -1,5 +1,23 @@
 # Đối chiếu CRM chỉ đọc — 05/10/2026
 
+## Cập nhật 14:14–14:19 — mapping Page Bếp Vạn Phú Thành
+
+Đọc qua giao diện cài đặt Facebook, company VPT. Mở Sửa Page để xem, đợi danh sách lựa chọn tải xong rồi đọc giá trị đang chọn; đóng bằng Hủy, không lưu hoặc bật công tắc.
+
+| Trường | Giá trị hiển thị / ID |
+|---|---|
+| Page | Bếp Vạn Phú Thành — `409741855550833`; Active; Auto Lead bật |
+| Module / loại đích | CRM / Lead |
+| Công ty | VPT — `991dc79d-cbf5-49f9-a364-35227cb47635` |
+| Khu vực | TP.Hồ Chí Minh (HCM) — `f68e643d-7999-442c-83ee-edb7f5237ab1` |
+| Phân loại | Bếp — `889a29ee-ddb4-478e-9e15-755eaf4b3639` |
+| Giai đoạn | TIẾP NHẬN — `a799f5e5-513c-4d55-b403-1ec2010574d3` |
+| Chủ/người nhận mặc định | Admin Vạn Phú Thành (Admin) — `49fcd3ff-0d7c-4d54-8f5a-1068bd10d68c` |
+
+Mapping Page legacy khớp người nhận Founder đã chọn. Không thay thế việc kiểm binding form mới, quyền active/tenant/region và UAT nguồn → CRM. Tab Lead Ads hiển thị “Chưa có lead ads”, không chứng minh Meta không có khách hay intake mới đã chạy. Nhắc token quá 30 ngày là nhắc theo thời điểm cập nhật cài đặt, không chứng minh token thực sự hết hạn.
+
+Render đọc lại có backend live `3375ef71`, frontend `ad88a162`; ứng viên `fd3babeb` đã ghép main và CI PASS nhưng chưa live. [Hồ sơ ứng viên và phiếu mở tuyến đầu](RELEASE_INTEGRATION_20261005.md) là trạng thái mới nhất. Nội dung dưới đây giữ quan sát 12:30–12:40.
+
 Quan sát lúc khoảng 12:30–12:40, Asia/Ho_Chi_Minh. **PARTIAL — HOLD phát hành.**
 
 Cập nhật sau lượt quan sát này: Founder đã xác nhận Render workspace; [phiếu Render](RENDER_READONLY_20261005.md) ghi backend live `899db5ed`/frontend `ad88a162`, chênh main và điều kiện Primary-only. Các ghi chép “chưa biết commit/chờ workspace” trong phiếu CRM dưới đây là trạng thái tại lúc quan sát, đã được khép một phần bởi phiếu Render; không cần hỏi lại workspace.
