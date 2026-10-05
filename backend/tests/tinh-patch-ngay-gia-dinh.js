@@ -37,5 +37,42 @@ const saiDinhDang = tinhPatchNgayGiaDinh(
 assert.equal(Object.prototype.hasOwnProperty.call(saiDinhDang, 'delivery_date'), false);
 assert.equal(saiDinhDang.delivery_date, undefined);
 
+const chiHan = tinhPatchNgayGiaDinh({ production_deadline: '2026-10-02' });
+assert.equal(chiHan.production_deadline, '2026-10-02');
+assert.equal(Object.prototype.hasOwnProperty.call(chiHan, 'delivery_date'), false);
+
+const hanVaHoanThien = tinhPatchNgayGiaDinh({
+  production_deadline: '2026-10-02',
+  production_finish_date: '2026-10-02',
+});
+assert.equal(hanVaHoanThien.production_deadline, '2026-10-02');
+assert.equal(hanVaHoanThien.production_finish_date, '2026-10-02');
+
+const chanXoaHan = tinhPatchNgayGiaDinh(
+  { production_deadline: null },
+  { choPhepXoaNgay: false },
+);
+assert.equal(Object.prototype.hasOwnProperty.call(chanXoaHan, 'production_deadline'), false);
+
+const choXoaHan = tinhPatchNgayGiaDinh(
+  { production_deadline: null },
+  { choPhepXoaNgay: true },
+);
+assert.equal(Object.prototype.hasOwnProperty.call(choXoaHan, 'production_deadline'), true);
+assert.equal(choXoaHan.production_deadline, null);
+
+const giaoMacDinhHan = tinhPatchNgayGiaDinh({ delivery_date: '2026-10-06' });
+assert.equal(giaoMacDinhHan.production_deadline, '2026-10-06');
+
+const giaoVaHanRieng = tinhPatchNgayGiaDinh({ delivery_date: '2026-10-06', production_deadline: '2026-10-04' });
+assert.equal(giaoVaHanRieng.delivery_date, '2026-10-06');
+assert.equal(giaoVaHanRieng.production_deadline, '2026-10-04');
+
+const giaoVaHanNull = tinhPatchNgayGiaDinh(
+  { delivery_date: '2026-10-06', production_deadline: null },
+  { choPhepXoaNgay: false },
+);
+assert.equal(giaoVaHanNull.production_deadline, '2026-10-06');
+
 console.log('tinh-patch-ngay-gia-dinh: ok');
 process.exit(0);

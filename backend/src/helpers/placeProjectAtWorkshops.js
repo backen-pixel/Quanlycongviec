@@ -28,6 +28,10 @@ function tinhPatchNgayGiaDinh(dates = {}, { choPhepXoaNgay = false } = {}) {
       patch.production_deadline = ymdOrNull(dates.production_deadline) || delivery;
     }
   }
+  if (dates.production_deadline !== undefined) {
+    const han = ymdOrNull(dates.production_deadline);
+    if (han || choPhepXoaNgay) patch.production_deadline = han || patch.production_deadline || null;
+  }
   if (dates.production_finish_date !== undefined) {
     const finish = ymdOrNull(dates.production_finish_date);
     if (finish || choPhepXoaNgay) patch.production_finish_date = finish;
