@@ -1,3 +1,11 @@
+# 2026-10-05 — Founder xác nhận Render workspace cho kiểm tra chỉ đọc
+
+Quyết định `RENDER-WORKSPACE-READONLY-CONFIRMED-20261005`. Founder phản hồi “đã xác nhận” về câu hỏi chọn My Workspace đã gửi trong task hiện tại. Dùng `tea-d47g0824d50c73856e80` của My Workspace cho các lời gọi chỉ đọc Render; không hỏi lại cùng lựa chọn. Công cụ get_selected_workspace chỉ phản ánh fallback, không phản ánh workspaceId theo từng request.
+
+Phạm vi: đối chiếu service/deployment và bằng chứng cấu hình phục vụ hồ sơ nghiệm thu. Không là phê duyệt deploy/restart, sửa environment/DB/quyền, merge main hoặc mở ngân sách. [Kết quả đọc](vpt-marketing-automation/RENDER_READONLY_20261005.md) ghi phiên bản live, main mới và giới hạn Primary-only còn cần xử lý.
+
+---
+
 # 2026-10-05 — Thứ tự sửa kiểm soát Agent, giữ nguyên kiến trúc đích
 
 Quyết định `AGENT-GUARDRAILS-ORDER-20261005`. Founder xác nhận: “Thứ tự nên sửa: khóa quyền công cụ → chặn điều kiện chưa rõ/chưa duyệt → bắt buộc bằng chứng số liệu → sửa ngữ cảnh và bộ nhớ. Kiến trúc đích vẫn giữ nguyên.”

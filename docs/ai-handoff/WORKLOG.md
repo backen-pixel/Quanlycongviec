@@ -1,3 +1,19 @@
+## 05/10/2026 — Xác nhận workspace và kiểm Render chỉ đọc
+
+Dùng workspace tea-d47g0824d50c73856e80 sau Founder xác nhận. Render list services/deploys/events và log khởi động mục tiêu; GitHub compare source: frontend ad88a162/backend899db5ed live, main auto-deploy, backend một instance cấu hình. Chênh từ nền ca8810c5 là10commit/49file; frontend không đổi trong bốn commit chênh backend. Runtimeadd71daf diverged, merge-baseca8810c5. Startup log failover=on/auto=off, chưa chứng minh active target hiện hành; guard tuyến mới yêu cầu failoveroff+Primary. MainSQL649 khác MarketingSQL649, phải lập ledger đầy đủ tên/blob.
+
+Lưu RENDER_READONLY_20261005.md/json, cập nhật CURRENT/DECISIONS/RELEASE_READINESS và liên kết bổ sung phiếu CRM. Không truy xuất secret/giá trị environment, không mutation production. Truy vấn Git object cục bộ thiếu object không hoàn tất do sandbox network; dùng GitHub connector chỉ đọc để so sánh, không tính lỗi đó là bằng chứng mã. JSON/link/diff được kiểm; không chạy runtime test vì chỉ hồ sơ. Không còn blocker workspace; chưa publish tài liệu, phát hành HOLD. Hoàn tác chỉ sửa/revert hồ sơ, giữ lịch sử.
+
+---
+
+## 05/10/2026 — Đối chiếu tài khoản/lịch CRM chỉ đọc
+
+Trong phiên Chrome đã đăng nhập, mở /users, lọc VPT và đọc hồ sơ Admin Vạn Phú Thành: cơ cấu đúng công ty, module crm/Admin. Đọc các option của bộ lọc /crm/events để ghi ID ứng viên người/công ty và HCM/CT/Q2; không suy quyền hoặc vùng từ tên. Lịch tháng 10 hiển thị 500 sự kiện, lưới không có sự kiện gắn dự án; không suy giờ rảnh hoặc đủ dữ liệu. Không lưu nội dung khách/sự kiện hoặc dữ liệu phiên. Render chưa chọn workspace; đã hỏi Founder theo yêu cầu connector, chưa list service/config.
+
+Thêm CRM_READONLY_VERIFICATION_20261005.md, cập nhật RELEASE_READINESS và CURRENT; thay blocker đăng nhập đã lỗi thời bằng các điều kiện tenant/active/quyền/routing/roster/lịch đầy đủ còn mở. Ứng viên PR25 vẫn a270f7be (runtime add71daf), commit production chưa biết; không gọi quan sát UI là UAT. Kiểm diff/liên kết cho delta tài liệu; không chạy lại runtime test. Chưa publish delta hồ sơ, không code/SQL/config/DB/message/booking/deploy. Hoàn tác chỉ sửa/revert tài liệu, giữ lịch sử; phát hành HOLD.
+
+---
+
 ## 05/10/2026 — Sửa các điểm kiểm soát Agent đã audit
 
 Theo thứ tự Founder chốt, triển khai registry đọc có kiểm quyền server, MCP bound actor, fail-closed flow gates và callers, bằng chứng trả lời có cấu trúc, context thành công/tombstones và correction ưu tiên. Reviewer độc lập tìm thêm source-error bypass, quyền đổi trước gửi, strict memory và lỗi persistence; đã sửa và bổ sung hồi quy. Bộ tập trung 112 PASS, gồm 48 regression + 64 Care; reviewer chạy riêng 48 PASS. Xem [hồ sơ](agent-guardrails-20261005/README.md), log và fingerprint để gắn đúng mã đã kiểm. Giữ nguồn audit 679cb926 nguyên lịch sử. Không sửa kiến trúc đích, SQL, ECC/hooks, cấu hình thật hay phát hành. Một số chức năng legacy giữ khóa có chủ đích; chưa chứng nhận scheduled sender/menu/MCP Ads. Không rollback bằng cách bật lại đường fail-open.

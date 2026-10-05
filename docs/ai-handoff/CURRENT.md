@@ -1,3 +1,21 @@
+## 05/10/2026 — Render đã xác nhận và đọc được; xác định bản live và chênh lệch
+
+Founder xác nhận dùng My Workspace; mọi lần đọc Render truyền workspaceId tường minh. **Không còn chờ chọn workspace.** Backend live `899db5ed`, frontend live `ad88a162`; cả hai auto-deploy từ main. Backend cấu hình một instance; không thấy worker/cron riêng trong danh sách workspace, chưa chứng minh toàn bộ writer/job. [Bằng chứng và giới hạn](vpt-marketing-automation/RENDER_READONLY_20261005.md).
+
+Backend live đi trước nền đã kiểm `ca8810c5` 10 commit/49 file; runtime PR25 `add71daf` chưa nằm trong lịch sử live. Cần cập nhật ứng viên và kiểm phần giao nhau, gồm báo cáo quảng cáo/lịch dự án. Main thêm SQL649 tên khác với SQL649 Marketing; phải đối chiếu ledger theo tên/blob. Log khởi động ghi failover=on/auto=off, không khớp điều kiện Primary-only của tuyến mới nếu giữ nguyên; chưa biết active target hiện hành, không tự sửa cấu hình hoặc bỏ guard.
+
+Cập nhật hồ sơ chỉ đọc và sổ xác nhận, chưa publish delta tài liệu lên PR. Không merge/deploy/restart hoặc ghi DB/environment. **HOLD phát hành**: còn tích hợp/kiểm ứng viên theo main mới, cấu hình DB/quyền/backup/chuyển luồng, mapping/lịch và UAT. Các mục “chờ workspace” hoặc “chưa biết commit đang chạy” phía dưới giữ lịch sử trước lượt này.
+
+---
+
+## 05/10/2026 — Đối chiếu CRM thật chỉ đọc: khép một phần nhận diện
+
+Đã tìm được phiên Chrome đăng nhập, mở hồ sơ **Admin Vạn Phú Thành** trong đúng công ty VPT; UI ghi module crm/vai trò Admin. Đã lưu ID người/công ty/khu vực quan sát trong [phiếu chỉ đọc](vpt-marketing-automation/CRM_READONLY_VERIFICATION_20261005.md), chưa dùng để thay routing. Lịch CRM mở được và hiển thị 500 sự kiện; chưa chứng minh đầy đủ lịch bận, người khảo sát hoặc giờ trống. Trạng thái “chờ đăng nhập CRM” bên dưới là lịch sử, không còn là blocker hiện tại.
+
+Còn kiểm tenant/active/quyền hiệu lực, routing, roster/thay thế và độ đủ lịch; Render chờ Founder xác nhận workspace theo yêu cầu công cụ. Chưa xác minh commit đang chạy; không coi quan sát UI thật là UAT của PR25 `add71daf`/hồ sơ `a270f7be`. Không ghi dữ liệu thật, cấu hình, gửi tin, đặt lịch, merge hoặc deploy. **HOLD phát hành**, kiến trúc đích giữ nguyên. Delta phiên này chỉ là hồ sơ, chưa xuất bản lên PR.
+
+---
+
 ## 05/10/2026 — Bản sửa kiểm soát Agent theo thứ tự Founder chốt
 
 Đã triển khai trên nhánh `codex/agent-guardrails-20261005`, base PR22 `679cb926`: khóa công cụ theo danh tính/phạm vi server; chặn UNKNOWN/chờ/duyệt và lỗi nguồn ở cổng cùng caller; dựng câu trả lời từ bằng chứng; sửa ngữ cảnh và ưu tiên correction. [Hồ sơ, phạm vi tương thích, kiểm thử và hoàn tác](agent-guardrails-20261005/README.md). Kiến trúc đích giữ nguyên.

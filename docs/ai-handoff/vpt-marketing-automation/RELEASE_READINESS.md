@@ -2,9 +2,13 @@
 
 Ngày cập nhật: 05/10/2026. **Rủi ro HIGH; HOLD phát hành.** Hồ sơ này gom điều kiện và bằng chứng, không phải quyết định mở quyền, chạy migration hoặc tiêu ngân sách. Nguồn chuẩn là repo; các mục cũ trong CURRENT/README giữ giá trị lịch sử theo phiên bản.
 
+**Render đã xác nhận workspace và đã kiểm chỉ đọc.** Backend live `899db5ed`, frontend live `ad88a162`, cả hai tự deploy từ main. Nền production mới đi trước nền kiểm `ca8810c5` 10 commit/49 file; ứng viên PR25 chưa tích hợp các thay đổi đó. Log khởi động failover=on/auto=off còn phải đối chiếu điều kiện Primary-only của tuyến mới. [Bằng chứng Render/GitHub và các điều kiện cần khép](RENDER_READONLY_20261005.md). Không còn chờ Founder chọn workspace; chưa kiểm đầy đủ environment/DB/backup hoặc nghiệm thu ứng viên.
+
 Cập nhật tích hợp: PR22 runtime `542c4ee5` đã ghép PR19 `f5efde61` chứa main `ca8810c5`; xem [bằng chứng và giới hạn](MAIN_INTEGRATION_20261005.md). Giữ 250.000đ/khách hợp lệ và Finance UNKNOWN trong các màn Page/bài viết mới. Ba workflow đúng head SUCCESS; Node18/22 mỗi bản1.491 PASS, intake PostgreSQL507/restore11 và build PASS. Reviewer độc lập xác minh đúng tree/blob/log và PASS checkpoint kỹ thuật. Các số CI phía dưới là lịch sử, không chứng nhận bản triển khai thật.
 
-Founder đã cho phép **chỉ đọc CRM** để kiểm Admin VPT, công ty/khu vực, người khảo sát và giờ bận/trống. Tab CRM hiện còn yêu cầu đăng nhập; các mapping chưa xác minh. Không xin lại cùng phạm vi đọc. Render chờ xác nhận workspace. Không sửa khách/lịch/cấu hình từ quyền này. Migration 647/648 trùng tiền tố nhưng khác tệp: ledger thực phải dùng đường dẫn đầy đủ/blob/thứ tự, không dùng tiền tố để bỏ qua; manifest 50 SQL lịch sử chưa là kế hoạch migration đầy đủ cho main mới.
+Founder đã cho phép **chỉ đọc CRM** để kiểm Admin VPT, công ty/khu vực, người khảo sát và giờ bận/trống. Ngày 05/10 đã truy cập phiên Chrome có sẵn: hồ sơ Admin Vạn Phú Thành thuộc đúng công ty VPT, hiển thị vai trò crm/Admin; đã ghi ID ứng viên và các vùng từ UI. Lịch CRM mở được nhưng hiển thị 500 sự kiện, chưa chứng minh toàn bộ lịch bận hoặc giờ trống. [Bằng chứng và giới hạn kiểm tra chỉ đọc](CRM_READONLY_VERIFICATION_20261005.md). Còn đối chiếu tenant/active/quyền/routing, người khảo sát và lịch đầy đủ; không còn vướng đăng nhập CRM. Không xin lại cùng phạm vi đọc hoặc xác nhận workspace Render đã có. Không sửa khách/lịch/cấu hình từ quyền này. Migration 647/648 và 649 mới có tiền tố trùng nhưng khác tệp: ledger thực phải dùng đường dẫn đầy đủ/blob/thứ tự, không dùng tiền tố để bỏ qua; manifest 50 SQL lịch sử chưa là kế hoạch migration đầy đủ cho main mới.
+
+Bản sửa kiểm soát Agent nằm ở [PR25](https://github.com/backen-pixel/Quanlycongviec/pull/25), source runtime `add71daf`, hồ sơ `a270f7be`, xếp sau PR22. [Phạm vi và các chức năng legacy còn khóa](../agent-guardrails-20261005/README.md) phải nằm trong gói kiểm tương thích trước phát hành. Đã xác định commit live trong phiếu Render; ứng viên chưa nằm trong lịch sử đó, việc đọc UI thật không chứng minh ứng viên đã được triển khai hoặc nghiệm thu.
 
 Delta sau bản kiểm kê 1b7c00f: [outcome SEND riêng](SURVEY_OUTCOMES.md) tại e2afcfea đã PASS kiểm thử và review độc lập để tạm ngừng gửi và giữ recovery. Manifest vẫn ghim 50 SQL của source cũ và ghi bằng chứng runtime delta riêng; không có SQL mới. PostgreSQL507/0/0, restore11/0/0 và Node18/22 mỗi1.417/0/0 không thay nghiệm thu môi trường/config thực hoặc quyền phát hành.
 
@@ -16,7 +20,7 @@ Mục 4 của goal đang thực hiện xác định nghiệm thu tuyến đầu 
 
 Ba nhóm đầu vào còn chờ xác nhận:
 
-1. **Đầu mối nhận khách: Admin Vạn Phú Thành; nguồn lịch khảo sát: CRM**, theo hai quyết định ngày 05/10 trong [sổ quyết định](../DECISIONS.md). Còn đối chiếu đúng tài khoản thuộc VPT/quyền hiện hành; không tự ánh xạ sang admin bất kỳ. Người trực tiếp khảo sát, người thay thế tại TP.HCM/Cần Thơ, giờ trống, độ đủ lịch bận CRM và đầu mối ngoại lệ trong khung 08–20h còn cần xác định. Xác nhận nơi quản lý lịch không tự chứng minh CRM_COMPLETE/ALL_BUSY_IN_CRM; không tạo roster đã chứng nhận từ câu trả lời này.
+1. **Đầu mối nhận khách: Admin Vạn Phú Thành; nguồn lịch khảo sát: CRM**, theo hai quyết định ngày 05/10 trong [sổ quyết định](../DECISIONS.md). Đã đối chiếu hồ sơ UI thuộc VPT và thu được ID ứng viên; còn kiểm tenant/active/quyền hiệu lực và routing, không tự ánh xạ sang admin bất kỳ. Người trực tiếp khảo sát, người thay thế tại TP.HCM/Cần Thơ, giờ trống, độ đủ lịch bận CRM và đầu mối ngoại lệ trong khung 08–20h còn cần xác định. Xác nhận nơi quản lý lịch không tự chứng minh CRM_COMPLETE/ALL_BUSY_IN_CRM; không tạo roster đã chứng nhận từ câu trả lời này.
 2. Câu chữ bộ 18 câu V1 đã duyệt. Còn phiên bản dữ liệu sản phẩm, giá/chính sách, phạm vi phục vụ, người duyệt thư viện/hạn hiệu lực và phạm vi gửi nội dung hội thoại sang nhà cung cấp AI.
 3. Tài khoản AI/key riêng theo cấu hình, model chính xác, hạn mức AI riêng, thời gian hiệu lực; phạm vi tài khoản quảng cáo/Page/công ty và ngày bắt đầu kỳ đo.
 
@@ -55,7 +59,7 @@ Mỗi dòng cần giá trị cụ thể, nguồn kiểm chứng, người chịu
 | Con người và lịch | User UUID, vai trò từng vùng, người thay thế, lịch trống, đầu mối ngoại lệ | Đã chốt Admin VPT nhận khách và nguồn lịch CRM; còn mapping tài khoản, người/giờ khảo sát, độ đủ lịch bận, người thay thế và ngoại lệ |
 | Thư viện tư vấn | Version/nguồn/phê duyệt/hiệu lực của thông tin và câu được dùng | Founder đã duyệt câu chữ V1; còn mapping, dữ liệu/chính sách, publisher và hạn hiệu lực; chưa APPROVE runtime |
 | AI | Danh tính Agent, grant, inference/send/survey policy; key riêng không dán vào tài liệu; model snapshot chính xác, hạn mức/kỳ và căn cứ tiền thực chi | Chưa cấp quyền |
-| Hạ tầng | Bản đang chạy, cấu hình từng replica/worker/cron, Primary duy nhất nhận ghi, quyền/RLS, migration ledger, backup và restore trên môi trường phù hợp | Chưa xác minh |
+| Hạ tầng | Bản đang chạy, cấu hình từng replica/worker/cron, Primary duy nhất nhận ghi, quyền/RLS, migration ledger, backup và restore trên môi trường phù hợp | Đã đọc bản live/auto-deploy/một instance backend; còn main mới, cấu hình Primary-only, mọi writer/job, DB/ledger/backup/restore. Xem phiếu Render |
 | Chuyển luồng | Mọi writer cũ, memory/DB queue, UNKNOWN/claim/HTTP còn dở, sự kiện đến trong bảo trì và đối soát sau chuyển | Chưa diễn tập theo môi trường đích |
 | Mở thử | Ứng viên/nhóm khách/công ty/Page, thời gian, giới hạn, người theo dõi/dừng, kết quả UAT và quyết định Founder | Chưa duyệt phát hành |
 
