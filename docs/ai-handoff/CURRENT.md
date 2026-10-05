@@ -1,3 +1,21 @@
+## 05/10/2026 — PR22 đã tích hợp main và bảo toàn tuyến khách hợp lệ
+
+Đã ghép PR19 candidate `f5efde61` (main `ca8810c5`) vào PR22 `10ed7b73`. Giữ các màn Page/bài viết/quảng cáo mới, quyền khách/dự án và chống phản hồi trễ; bốn route mới vẫn tách Deal ước tính khỏi doanh thu/ROAS chưa xác minh. Giữ mục tiêu 250.000đ/khách hợp lệ, chi tiêu đầy đủ, kỳ đo, tư vấn/khảo sát và chức năng Facebook hiện có. [Bằng chứng, phiên bản và giới hạn](vpt-marketing-automation/MAIN_INTEGRATION_20261005.md).
+
+Kiểm cục bộ: 1.486 PASS/0 FAIL/2 SKIP trên Windows; build PASS; trình duyệt component/API giả PASS phạm vi đã mô tả. Reviewer độc lập tự kiểm 140/140 và PASS bảo toàn PR22. CI/PostgreSQL cần đúng commit xuất bản. Các mục phía dưới giữ lịch sử trước tích hợp.
+
+Founder đã cho phép chỉ đọc CRM, không cần xin lại: còn phiên đăng nhập để đối chiếu Admin VPT và lịch khảo sát; Render còn chờ workspace. Bộ 18 câu đã duyệt, đầu mối Admin VPT và nguồn lịch CRM vẫn giữ. **HOLD phát hành** đến khi khép cấu hình/UAT/gói quyết định tương ứng; chưa ghi DB thật, gửi khách, đặt lịch, tăng chi hay merge main.
+
+---
+
+## 2026-10-05 — PR19 integration with current main; operational HOLD
+
+Integrates main `ca8810c57d2078087a7d0afdd95776fba6e84cc3` into PR19 `e16c885ae7c2305645be02a1227bf378cb59137f`. Preserves Page/post/ad views and embedded mode, strict batched CRM reads, unique counts, safe errors and async scope guards. New Lead detail uses canonical CRM permission; project joins use canonical project READ gate. 127/127 local regressions pass; full Vite build and synthetic supported-browser checks pass within limits in [integration evidence](./PR19_MAIN_INTEGRATION_20261005.md). CI/review must match published version.
+
+Founder has now explicitly authorized read-only CRM account/calendar verification. The opened CRM tab is still at login, so recipient account/company/regions/survey roster/busy slots remain unverified. Render workspace confirmation is pending. Historical access blocks below are history, not a request to reapprove this read scope. No production writes, deployment, ads, messages, migration or main merge. PR22 must be integrated/retested against updated PR19, retaining qualified-Lead and Finance UNKNOWN semantics. Live gate HOLD.
+
+---
+
 ## 05/10/2026 — Đã chốt đầu mối nhận khách VPT và nguồn lịch CRM
 
 Founder chọn **Admin Vạn Phú Thành** làm đầu mối nhận khách. Đã lưu quyết định `VPT-LEAD-RECIPIENT-FOUNDER-SELECTION-20261005` trong [DECISIONS](DECISIONS.md), trạng thái chọn đầu mối xong, chờ đối chiếu tài khoản thực. Không tự chọn admin toàn hệ thống hoặc cấp quyền. Phân công này chưa xác định người đi khảo sát hoặc người thay thế.
@@ -953,7 +971,77 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-10-01 14:45 (UTC+7)
+Cập nhật: 2026-10-02 15:15 (UTC+7)
+
+## Hàng nhiệm vụ — hiện nhân viên được gán
+
+Trạng thái: **FE local, đã xem trên TB-2026-963.**
+
+Dòng nhiệm vụ thu gọn hiện tên người nhận cạnh ngày hẹn. Phôi và Cánh hiện «Thuận» mà không cần bấm Chi tiết.
+
+Hoàn tác: revert nhánh `assignees.map` trong `renderTaskRow` của `CRMTasksTab.jsx`.
+
+## Dashboard SX — Hào chỉ thấy dự án có việc của mình
+
+Trạng thái: **BE local.**
+
+`hao@metalla.com` không còn thấy toàn bộ dự án Metalla. Danh sách và trang chi tiết chỉ gồm dự án có `crm_tasks` hoặc `tasks` gắn cho anh ấy. Nhân viên sản xuất khác không đổi.
+
+Hoàn tác: bỏ `hao@metalla.com` khỏi `TASK_SCOPED_PRODUCTION_EMAILS` trong `dealParticipantProduction.js`.
+
+## CRM — nút BC theo tổ chức cho quản trị HST
+
+Trạng thái: **FE+BE, đưa lên main.**
+
+Tài khoản `ecosystem_admin` mở nhóm KPI & báo cáo nhưng không thấy **BC theo tổ chức**, vì sidebar chỉ tính executive với `admin` / `manager` / `director` / `supervisor` / `sales_admin` / `crm_production_admin`. Menu và `RequireExecutive` nay dùng chung `isCrmExecutive`. API báo cáo tổ chức cũng nhận `ecosystem_admin` và `crm_production_admin` là báo cáo đầy đủ, không còn thu về đúng một người.
+
+## Không gian chung — bộ lọc giống Giao việc
+
+Trạng thái: **FE+BE local.**
+
+Panel bộ lọc tab Không gian chung có Công ty, Phòng ban, Nhân viên, Trạng thái, Ưu tiên — cùng các ô với tab Giao việc. Admin chọn nhân viên thì danh sách là việc của người đó.
+
+## Giao việc Sản xuất — lọc phân loại xưởng
+
+Trạng thái: **FE+BE local, đã xem trên `/sx/assignments`.**
+
+Header Giao việc Sản xuất có cùng ô phân loại với dashboard: Chưa phân loại, HCB · Tủ bếp, HCB · Cánh kính, HCB · Cửa. Lọc cả bảng Giao việc và tab Không gian chung theo `projects.workshop_type_id`. Giá trị nhớ chung với dashboard (`sx_dash_filters_v1`).
+
+Đã chọn HCB · Tủ bếp: 11 việc. HCB · Cánh kính: 0 việc. Chưa phân loại và Không gian chung trả 200. Đã trả bộ lọc về HCB · Tủ bếp.
+
+Hoàn tác: revert `workshop_type_id` trong `crmAssignments.js`, `sharedWorkspaceInbox.js`, và select trong `CRMAssignmentsPage.jsx`.
+
+## Không gian chung — không nhận nhiệm vụ mẫu xưởng
+
+Trạng thái: **BE local, đã thử trên DB.**
+
+Sửa hoặc áp bộ mẫu xưởng không còn tạo giao việc. Tab Không gian chung không liệt kê nhiệm vụ `sx_pl_…` / `vc_…`. Phát sinh `sx_shared` vẫn tạo giao việc. Đã gọi sync trên «Chốt công nợ»: bỏ qua, số giao việc trước và sau đều 0.
+
+Hoàn tác: revert `workshopPipelineTask.js` và chỗ gọi trong `crmTaskAssignmentSync.js`, `crmSequentialAssignment.js`, `sharedWorkspaceInbox.js`.
+
+## Hạn thẻ SX — sửa ngày lắp thì hạn chạy theo
+
+Trạng thái: **BE local, đã thử trên TB-2026-978 rồi trả lại ngày cũ.**
+
+`projects` không có cột `install_occurrence_dates`. Lần tính lại hạn trước đó đọc cột này nên lỗi và hạn thẻ giữ nguyên. Nay sửa ngày lắp ghi `install_date` cùng ngày, và tính lại `sx_kanban_deadline_at` từ ngày đó. Thử đổi ngày lắp TB-2026-978 từ 07/10 sang 14/10: hạn thẻ từ 03/10 sang 08/10, sau đó đã ghi lại đúng dữ liệu cũ.
+
+## Module SX — phát sinh, giai đoạn, bàn giao VC, hạn thẻ
+
+Trạng thái: **FE+BE local.** Chưa chạy `database/648_sx_phat_sinh_order.sql` (MCP primary chỉ đọc).
+
+Đơn phát sinh là project con (`source_project_id`), nút trên chi tiết SX. Cột phát sinh là cờ pipeline, không đẩy CRM. Kéo cột chỉ ghi `sx_kanban_column_id` trừ cột bàn giao VC hoặc cột đã gán KPI. Bàn giao VC bắt cột tiếp nhận của đúng công ty VC. Hạn thẻ dashboard ghi lại từ lịch 7 ngày của việc nhỏ còn mở.
+
+## Dashboard SX — hết lỗi filterBusy
+
+Trạng thái: **FE local, đã mở `/sx/dashboard`.**
+
+`filterBusy` được khai báo sau hiệu ứng tự chọn phân loại nên trang vỡ. Đã đưa khai báo lên trước. Trang hiện «Đã lọc xong · 14 thẻ».
+
+## Giao việc SX — tích và kéo nhiệm vụ của dự án
+
+Trạng thái: **FE local, đã xem trên `/sx/assignments?project_id=`.**
+
+Thẻ nhiệm vụ pipeline khi lọc một dự án tích được (Đang làm / Hoàn thành) và kéo sang cột. Quản trị hệ sinh thái cũng kéo được giao việc người khác tạo. Đã bấm Đang làm trên «Tiếp nhập thông tin dự án» của TB-2026-760 rồi trả lại Chưa làm.
 
 ## Giao việc — mắt tìm kiếm mở chi tiết đúng module
 

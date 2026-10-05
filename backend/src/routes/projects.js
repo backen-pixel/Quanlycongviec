@@ -2421,11 +2421,11 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
     try {
       const {
         productionFinishPatchFromInstallOrDelivery,
-        installAnchorPatchFromBody,
+        installAnchorPersistPatch,
       } = require('../helpers/projectDeliveryDates');
       const finishPatch = productionFinishPatchFromInstallOrDelivery(b);
       if (finishPatch) Object.assign(update, finishPatch);
-      const anchorPatch = installAnchorPatchFromBody(b);
+      const anchorPatch = installAnchorPersistPatch(b);
       if (anchorPatch) Object.assign(update, anchorPatch);
     } catch (_) { /* ignore */ }
     if (b.deposit_amount !== undefined) {
@@ -2484,33 +2484,9 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
 
     if (require('../helpers/sxInstallPlanKanbanDeadline').scheduleEditTouchesKanbanDeadline(b)) {
       try {
-        const { deadlinePatchAfterScheduleEdit } = require('../helpers/sxInstallPlanKanbanDeadline');
-        const { data: sxRow } = await supabase
-          .from('projects')
-          .select('id, company_id, install_date, delivery_date, install_occurrence_dates, production_finish_date, sx_reception_date, created_at, sx_schedule_slip_days, sx_kanban_column_id, sx_kanban_deadline_at, sx_kanban_deadline_reason')
-          .eq('id', req.params.id)
-          .maybeSingle();
-        let sxCol = null;
-        let siblingStages = null;
-        if (sxRow?.sx_kanban_column_id) {
-          const { data: col } = await supabase
-            .from('production_pipeline_stages')
-            .select('id, deadline_group, group_key, company_id, clears_deadline, is_handover_to_logistics')
-            .eq('id', sxRow.sx_kanban_column_id)
-            .maybeSingle();
-          sxCol = col || null;
-          if (sxCol && !String(sxCol.deadline_group || '').trim()) {
-            const { data: sibs } = await supabase
-              .from('production_pipeline_stages')
-              .select('id, deadline_group, group_key')
-              .eq('company_id', sxRow.company_id);
-            siblingStages = sibs || [];
-          }
-        }
-        const deadlinePatch = deadlinePatchAfterScheduleEdit(sxRow, sxCol, siblingStages, b);
-        if (deadlinePatch) {
-          await supabase.from('projects').update(deadlinePatch).eq('id', req.params.id);
-        }
+        const { syncSxCardDeadline } = require('../helpers/sxCardPlanDeadline');
+        const cardDeadline = await syncSxCardDeadline(req.params.id);
+        if (cardDeadline && data) Object.assign(data, cardDeadline);
       } catch (planDlErr) {
         console.warn('[PUT /projects] install-plan kanban deadline:', planDlErr.message);
       }

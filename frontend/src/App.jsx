@@ -157,7 +157,6 @@ const KpiBVerifyPage = lazyWithRetry(() => import('./pages/KpiBVerifyPage'));
 const KpiGuidePage = lazyWithRetry(() => import('./pages/KpiGuidePage'));
 const PipelineSettingsPage = lazyWithRetry(() => import('./pages/PipelineSettingsPage'));
 const CRMSourcesSettingsPage = lazyWithRetry(() => import('./pages/CRMSourcesSettingsPage'));
-const AdAnalyticsPage = lazyWithRetry(() => import('./pages/AdAnalyticsPage'));
 const CRMCustomersPage = lazyWithRetry(() => import('./pages/CRMCustomersPage'));
 const CRMTasksPage = lazyWithRetry(() => import('./pages/CRMTasksPage'));
 const CRMAssignmentsPage = lazyWithRetry(() => import('./pages/CRMAssignmentsPage'));
@@ -597,7 +596,8 @@ export default function App() {
             <Route path="/crm/blocked-phones" element={<RequireCrmElevated><CrmBlockedPhonesPage /></RequireCrmElevated>} />
             <Route path="/crm/pipeline-settings" element={<RequireCrmElevated><PipelineSettingsPage /></RequireCrmElevated>} />
             <Route path="/crm/sources-settings" element={<RequireCrmElevated><CRMSourcesSettingsPage /></RequireCrmElevated>} />
-            <Route path="/crm/ad-analytics" element={<RequireCrmElevated><AdAnalyticsPage /></RequireCrmElevated>} />
+            {/* Trang này đã gộp vào /crm/facebook. Giữ đường cũ để link và bookmark không chết. */}
+            <Route path="/crm/ad-analytics" element={<Navigate to="/crm/facebook?tab=ad-campaigns" replace />} />
             <Route path="/crm/categories" element={<CategoriesPage />} />
             <Route path="/settings/pdf" element={<PDFSettingsPage />} />
             <Route path="/settings/password" element={<PasswordSettingsPage />} />

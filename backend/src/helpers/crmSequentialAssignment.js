@@ -5,6 +5,7 @@
  */
 const { supabase } = require('../config/supabase');
 const { syncAssignmentFromCrmTask } = require('./crmTaskAssignmentSync');
+const { isWorkshopPipelineTask } = require('./workshopPipelineTask');
 
 const OPEN_STATUSES = ['pending', 'in_progress'];
 
@@ -81,7 +82,7 @@ async function pickNextOpenCrmTask(leadId) {
     console.warn('[crm-seq-asn] pick next task:', error.message);
     return null;
   }
-  const list = tasks || [];
+  const list = (tasks || []).filter((task) => !isWorkshopPipelineTask(task));
   if (!list.length) return null;
 
   const stageIds = [...new Set(list.map((t) => t.pipeline_stage_id).filter(Boolean))];

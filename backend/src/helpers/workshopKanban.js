@@ -32,6 +32,8 @@ const {
   markPipelineGroupSortColumnMissing,
   isPipelineBoardTabMissingError,
   markPipelineBoardTabColumnMissing,
+  isPipelinePhatSinhMissingError,
+  markPipelinePhatSinhColumnMissing,
   normalizePipelineStageApiRow,
 } = require('./productionPipelineSchema');
 const { isCrmPostWonManagedStage } = require('./crmDealStageGate');
@@ -476,6 +478,12 @@ async function loadProductionPipelineStagesRowsUncached(includeInactive = false,
       data = retry.data;
       error = retry.error;
     }
+    if (error && isPipelinePhatSinhMissingError(error)) {
+      markPipelinePhatSinhColumnMissing();
+      const retry = await runBase(scope);
+      data = retry.data;
+      error = retry.error;
+    }
     return { data, error };
   };
 
@@ -733,6 +741,9 @@ function resolveSxDisplayColumnId(project, sortedStages, opts = {}) {
   const sorted = [...(sortedStages || [])].sort((a, b) => (a.order_index || 0) - (b.order_index || 0));
   const stageIds = new Set(sorted.map((s) => String(s.id)));
   const inList = (id) => (id != null && stageIds.has(String(id)) ? id : null);
+  // Cột đã lưu trong pipeline đang xem là nguồn duy nhất. Không ép về bàn giao và không dò workflow chung.
+  const storedCol = inList(project?.sx_kanban_column_id);
+  if (storedCol) return storedCol;
   const leadMeta = opts?.leadMeta || null;
   const leadColId = opts?.leadColId || leadMeta?.sx_pipeline_stage_id || null;
   const wonDeal = opts?.sxWonDeal ?? false;

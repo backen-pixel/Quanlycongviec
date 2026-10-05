@@ -3,10 +3,19 @@ const test=require('node:test'),assert=require('node:assert/strict'),fs=require(
 const source=require('../src/modules/marketingAutomation/facebookSpendSource');
 const routeSource=fs.readFileSync(path.join(__dirname,'../src/routes/adAnalytics.js'),'utf8');
 const company='11111111-1111-1111-1111-111111111111',other='22222222-2222-2222-2222-222222222222';
+// Spend/account routes must never enter the newly imported report-detail readers.
+const forbiddenReportRead=()=>assert.fail('Unexpected report detail read from spend/account route');
+const reportOnlyDeps={
+ '../helpers/supabaseLo':{layTheoLo:forbiddenReportRead,layTheoLoMem:forbiddenReportRead},
+ '../helpers/projectAccessScope':{assertProjectAccessible:forbiddenReportRead},
+ '../helpers/crmTaskLeadAccess':{assertCrmLeadAccess:forbiddenReportRead},
+ '../helpers/crmAccessRoles':{userSeesAllCrmLeadsForScope:forbiddenReportRead,userSeesAllCrmDealsForScope:forbiddenReportRead},
+ '../helpers/crmRegionScope':{assertLeadReadableByRegionScope:forbiddenReportRead},
+};
 function route({role='sales_admin',scope=[company],failover=false,enabled=true,tenantEnforced=true,userCompany=company}={}){
  const handlers={},calls=[],router={use(){}};
  for(const method of ['get','post','put','delete','patch'])router[method]=(p,...f)=>handlers[method+p]=f.at(-1);
- const deps={express:{Router:()=>router},'../config/supabase':{supabase:{}},'../middleware/auth':{auth(){}},
+ const deps={...reportOnlyDeps,express:{Router:()=>router},'../config/supabase':{supabase:{}},'../middleware/auth':{auth(){}},
  '../helpers/adminRole':{isAdminLike:u=>['admin','ecosystem_admin','platform_admin'].includes(u.role)},'../helpers/tenantScope':{isTenantScopeEnforced:()=>tenantEnforced},
  '../modules/marketingAutomation/accountScope':require('../src/modules/marketingAutomation/accountScope'),
  '../helpers/adInsights':{},'../helpers/fbMarketingSync':{},'../modules/marketingAutomation/facebookSpendSource':source,
@@ -69,7 +78,7 @@ function management({existing=null,role='admin',userCompany=company,tenantEnforc
  const db={from(table){let mutation=null;const filters=[],q={};for(const op of ['select','eq','is'])q[op]=(...a)=>{filters.push([op,...a]);return q};
   for(const op of ['insert','update'])q[op]=data=>{mutation=data;writes.push({table,op,data,filters});return q};
   q.maybeSingle=async()=>({data:mutation|| (table==='companies'?{id:company,tenant_id:'tenant-a'}:existing)});return q;}};
- const deps={express:{Router:()=>router},'../config/supabase':{supabase:db},'../middleware/auth':{auth(){}},
+ const deps={...reportOnlyDeps,express:{Router:()=>router},'../config/supabase':{supabase:db},'../middleware/auth':{auth(){}},
  '../helpers/adminRole':{isAdminLike:u=>['admin','ecosystem_admin','platform_admin'].includes(u.role)},'../helpers/tenantScope':{isTenantScopeEnforced:()=>tenantEnforced},
  '../modules/marketingAutomation/accountScope':require('../src/modules/marketingAutomation/accountScope'),
  '../helpers/adInsights':{chayPhanTich(){assert.fail('global writer must not run')}},

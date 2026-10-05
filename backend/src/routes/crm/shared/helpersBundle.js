@@ -1537,8 +1537,8 @@ async function computeCrmLiveVersionMs(req, effectiveCompanyId, date_from, date_
 
 /** GET /crm/reports/staff-lead-deal — BC nhân viên: số lead/deal & giá trị pipeline (ước tính) / chốt / thua theo người phụ trách */
 const STAFF_LEAD_DEAL_REPORT_ROLES = new Set([
-  'admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'region_admin',
-  'platform_admin', 'sales_admin',
+  'ecosystem_admin', 'admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'region_admin',
+  'platform_admin', 'sales_admin', 'crm_production_admin',
 ]);
 
 const {

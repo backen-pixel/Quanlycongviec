@@ -1,6 +1,6 @@
 import FacebookBatchRecovery from '../components/facebook/FacebookBatchRecovery';
 import FacebookDuplicateReview from '../components/facebook/FacebookDuplicateReview';
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, Component } from 'react';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCrmSocialInboxUser, isCrmSocialInboxCompanyLocked } from '../lib/adminRole';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
@@ -10,7 +10,7 @@ import {
   Link2, Plus, ChevronRight, Bell, Image, Paperclip, RefreshCw, ToggleLeft, ToggleRight,
   X, Trash2, Edit3, UserPlus, Phone, Mail, MoreHorizontal, Check, Copy, Save, Eye, EyeOff,
   Mic, MicOff, File, Camera, Smile, ArrowLeft, BarChart3, StickyNote, Activity, Images,
-  Calendar,
+  Calendar, Megaphone,
 } from 'lucide-react';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import AutoToolPanel from '../components/AutoToolPanel';
@@ -25,6 +25,51 @@ import FacebookLeadIntakeConsole from '../components/facebook/FacebookLeadIntake
 import FacebookCustomerCareConsole from '../components/facebook/FacebookCustomerCareConsole';
 import FacebookImageSetPicker from '../components/facebook/FacebookImageSetPicker';
 import { patchCrmDashboardCacheLeadFields } from '../lib/crmDashboardCache';
+
+import AdAnalyticsPage from './AdAnalyticsPage';
+
+/**
+ * Bọc quanh nội dung tab. Không có nó, một lỗi lúc vẽ sẽ làm React gỡ sạch cây
+ * component và để lại Ô TRỐNG — không thông báo, không dấu vết, rất khó dò.
+ * Có nó thì lỗi hiện thành chữ ngay tại chỗ.
+ */
+class KhungBatLoi extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { loi: null };
+  }
+
+  static getDerivedStateFromError(loi) {
+    return { loi };
+  }
+
+  componentDidCatch(loi, info) {
+    console.error('[tab-loi]', this.props.ten || '', loi, info?.componentStack);
+  }
+
+  render() {
+    if (!this.state.loi) return this.props.children;
+    return (
+      <div className="h-full overflow-y-auto p-6">
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-5">
+          <h3 className="text-sm font-bold text-rose-900">
+            Tab &quot;{this.props.ten || 'này'}&quot; gặp lỗi khi hiển thị
+          </h3>
+          <p className="mt-1 text-[13px] text-rose-800">
+            {String(this.state.loi?.message || this.state.loi)}
+          </p>
+          <pre className="mt-3 max-h-60 overflow-auto rounded-lg bg-white/70 p-3 text-[11.5px] leading-relaxed text-rose-900">
+            {String(this.state.loi?.stack || '').split('\n').slice(0, 12).join('\n')}
+          </pre>
+          <button type="button" onClick={() => this.setState({ loi: null })}
+            className="mt-3 rounded-lg border border-rose-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-rose-800 cursor-pointer hover:bg-rose-100">
+            Thử lại
+          </button>
+        </div>
+      </div>
+    );
+  }
+}
 
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}`, 'Content-Type': 'application/json' });
@@ -308,6 +353,7 @@ export default function FacebookPage() {
     ...(isAdmin ? [{ id: 'lead-intake', label: 'Tiếp nhận biểu mẫu', icon: FileText }, { id: 'customer-care', label: 'Chăm khách', icon: Users }] : []),
     { id: 'comments', label: 'Bình luận', icon: MessageSquare, badge: stats?.comments_today },
     { id: 'auto-lead', label: 'Tự động', icon: UserPlus },
+    ...(isAdmin ? [{ id: 'ad-campaigns', label: 'Chiến dịch quảng cáo', icon: Megaphone }] : []),
     ...(isAdmin ? [{ id: 'auto-companies', label: 'Auto công ty', icon: Activity }] : []),
     ...(isAdmin ? [{ id: 'webhook', label: 'Webhook', icon: Activity }] : []),
     {
@@ -423,7 +469,12 @@ export default function FacebookPage() {
         {tab === 'settings' && <SettingsTab onPagesChanged={loadFbTokenSummary} fbCompanyQs={fbCompanyQs} />}
         {tab === 'auto-lead' && <AutoLeadTab />}
         {tab === 'auto-companies' && isAdmin && <FacebookAutoCompaniesPanel embedded />}
-        {tab === 'webhook' && isAdmin && <WebhookFieldsTab />}
+        {tab === 'ad-campaigns' && isAdmin && (
+          <KhungBatLoi ten="Chiến dịch quảng cáo"><AdAnalyticsPage embedded /></KhungBatLoi>
+        )}
+        {tab === 'webhook' && isAdmin && (
+          <KhungBatLoi ten="Webhook"><WebhookFieldsTab /></KhungBatLoi>
+        )}
       </div>
     </div>
   );
@@ -3636,7 +3687,7 @@ function WebhookFieldsTab() {
   if (!dl) return <div className="py-12 text-center text-sm text-gray-500">Chưa có dữ liệu</div>;
 
   return (
-    <div className="space-y-4">
+    <div className="h-full space-y-4 overflow-y-auto p-6">
       <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-[13px] text-blue-900">
         Bảng này đọc trạng thái <b>thật</b> từ Facebook, không phải từ cơ sở dữ liệu của mình.
         Cột &quot;7 ngày&quot; là số gói webhook thực nhận — trường nào bật mà cột đó bằng 0

@@ -323,6 +323,7 @@ export default function ProductionPipelineSettingsPage() {
   const [form, setForm] = useState({
     name: '', color: COLORS[0], icon: '📋', is_active: true,
     is_handover_to_logistics: false,
+    is_phat_sinh: false,
     is_switch_workshop_type: false,
     target_workshop_type_id: '',
     crm_sync_type: null, crm_target_stage_id: '',
@@ -1101,7 +1102,7 @@ export default function ProductionPipelineSettingsPage() {
     setStageStaffSelectedMeta([]);
     setForm({
       name: '', color: COLORS[stages.length % COLORS.length], icon: ICONS[stages.length % ICONS.length],
-      is_active: true, is_handover_to_logistics: false,
+      is_active: true, is_handover_to_logistics: false, is_phat_sinh: false,
       is_switch_workshop_type: false, target_workshop_type_id: '',
       crm_sync_type: null, crm_target_stage_id: '',
       progress_percent: '',
@@ -1141,6 +1142,7 @@ export default function ProductionPipelineSettingsPage() {
       icon: stage.icon || '📋',
       is_active: stage.is_active !== false,
       is_handover_to_logistics: stage.is_handover_to_logistics || false,
+      is_phat_sinh: stage.is_phat_sinh || false,
       is_switch_workshop_type: stage.is_switch_workshop_type || false,
       target_workshop_type_id: stage.target_workshop_type_id || '',
       crm_sync_type: stage.crm_sync_type || null,
@@ -1184,10 +1186,11 @@ export default function ProductionPipelineSettingsPage() {
         workflow_stage_id: productionWorkflowStageId || null,
         is_active: form.is_active,
         is_handover_to_logistics: form.is_handover_to_logistics,
+        is_phat_sinh: !!form.is_phat_sinh && !form.is_handover_to_logistics,
         is_switch_workshop_type: form.is_switch_workshop_type,
         target_workshop_type_id: form.is_switch_workshop_type ? (form.target_workshop_type_id || null) : null,
-        crm_sync_type: (form.is_handover_to_logistics || form.is_switch_workshop_type) ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
-        crm_target_stage_id: (form.is_handover_to_logistics || form.is_switch_workshop_type) ? null : (form.crm_target_stage_id || null),
+        crm_sync_type: (form.is_handover_to_logistics || form.is_switch_workshop_type || form.is_phat_sinh) ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
+        crm_target_stage_id: (form.is_handover_to_logistics || form.is_switch_workshop_type || form.is_phat_sinh) ? null : (form.crm_target_stage_id || null),
         company_id: settingsCompanyId,
         workshop_type_id: currentWorkshopTypeId,
         ...kpiPayloadFromForm(),
@@ -1220,7 +1223,8 @@ export default function ProductionPipelineSettingsPage() {
     try {
       const intakeRow = stages.find((s) => s.id === editId)?.bucket_slug === INTAKE;
       const handover = !intakeRow && form.is_handover_to_logistics;
-      const switchType = !intakeRow && !handover && form.is_switch_workshop_type;
+      const phatSinh = !intakeRow && !handover && !!form.is_phat_sinh;
+      const switchType = !intakeRow && !handover && !phatSinh && form.is_switch_workshop_type;
       await api.put(`/production/pipeline-stages/${editId}`, {
         name: form.name.trim(),
         color: form.color,
@@ -1229,10 +1233,11 @@ export default function ProductionPipelineSettingsPage() {
         workflow_stage_id: intakeRow ? null : (productionWorkflowStageId || null),
         is_active: form.is_active,
         is_handover_to_logistics: handover,
+        is_phat_sinh: phatSinh,
         is_switch_workshop_type: switchType,
         target_workshop_type_id: switchType ? (form.target_workshop_type_id || null) : null,
-        crm_sync_type: intakeRow || handover || switchType ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
-        crm_target_stage_id: intakeRow || handover || switchType ? null : (form.crm_target_stage_id || null),
+        crm_sync_type: intakeRow || handover || switchType || phatSinh ? null : (form.crm_target_stage_id ? null : (form.crm_sync_type || null)),
+        crm_target_stage_id: intakeRow || handover || switchType || phatSinh ? null : (form.crm_target_stage_id || null),
         ...(intakeRow ? {} : { ...kpiPayloadFromForm(), ...stageStaffPayloadFromForm() }),
       });
       setEditId(null);
@@ -3083,6 +3088,11 @@ export default function ProductionPipelineSettingsPage() {
                           <Truck className="h-2.5 w-2.5" /> Bàn giao VC
                         </span>
                       )}
+                      {s.is_phat_sinh && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-rose-100 text-rose-700">
+                          Cột phát sinh
+                        </span>
+                      )}
                       {s.is_switch_workshop_type && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-violet-100 text-violet-700 border border-violet-200">
                           <ArrowRightLeft className="h-2.5 w-2.5" />
@@ -3698,6 +3708,36 @@ export default function ProductionPipelineSettingsPage() {
                   </details>
                 )}
                 {!editingIntake && (
+                  <label className="flex items-start gap-2 text-xs cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!form.is_phat_sinh}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        setForm((f) => ({
+                          ...f,
+                          is_phat_sinh: on,
+                          ...(on ? {
+                            is_handover_to_logistics: false,
+                            is_switch_workshop_type: false,
+                            target_workshop_type_id: '',
+                            crm_sync_type: null,
+                            crm_target_stage_id: '',
+                            dashboard_kpi: '',
+                          } : {}),
+                        }));
+                      }}
+                      className="mt-0.5 rounded border-rose-400 accent-rose-600"
+                    />
+                    <span>
+                      <span className="font-medium text-rose-700">Cột phát sinh</span>
+                      <span className="block text-[10px] text-rose-600/90 mt-0.5 leading-snug">
+                        Đơn phát sinh tạo từ chi tiết dự án sẽ đứng vào cột này. Không đẩy CRM và không đổi giai đoạn workflow.
+                      </span>
+                    </span>
+                  </label>
+                )}
+                {!editingIntake && (
                   <label
                     className="flex items-start gap-2 text-xs cursor-pointer"
                     title="Khi thẻ vào cột này có thể bàn giao sang module Lắp đặt."
@@ -3715,6 +3755,7 @@ export default function ProductionPipelineSettingsPage() {
                             crm_target_stage_id: '',
                             is_switch_workshop_type: false,
                             target_workshop_type_id: '',
+                            is_phat_sinh: false,
                           } : {}),
                         }));
                       }}
@@ -3745,6 +3786,7 @@ export default function ProductionPipelineSettingsPage() {
                             is_switch_workshop_type: on,
                             ...(on ? {
                               is_handover_to_logistics: false,
+                              is_phat_sinh: false,
                               crm_sync_type: null,
                               crm_target_stage_id: '',
                             } : { target_workshop_type_id: '' }),
