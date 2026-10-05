@@ -1,3 +1,22 @@
+## 2026-10-01 - Issue #15: Marketing / Business AI OS M0 candidate
+
+**Update 2026-10-05:** Founder approved merging PR #16 into `main`. The module is not wired into any route, scheduler or migration, so the merge changes no runtime behavior. The "No main merge" statement below describes the state before this approval.
+
+**State: IN PROGRESS.** Feature branch `codex/marketing-bos-m0-20261001`, base `0bc6392286df0b986cdd6dfc59b499916dd6fd31`; implementation commit `33874dd2e3632c0a1127fd76cc7351a663138e9c`.
+
+Added a pure normalized-evidence contract and synthetic tests, ADR-0015, an integration/dependency map, a non-runtime implementation backlog and a read-only PR CI workflow. See `MARKETING_BOS_M0_EVIDENCE_20261001.md` and `../architecture/MARKETING_BOS_INTEGRATION_V1.md`.
+
+Verification: 73/73 synthetic tests on Node 22.16.0 in an isolated container; 73/73 on Node 24.19.0 in a fresh Windows sandbox after fetching this exact GitHub commit. All six new Git blob SHA-256 hashes match the locally tested contents. Helper/test syntax and diff checks pass. These are repeat runs by the same assistant, not independent review; no full application, staging or live E2E tests were run.
+
+No main merge, production deploy, SQL, CRM records, ad budgets/statuses, credentials, permissions, scheduler, agent deletion or existing runtime files were changed. The helper is not registered in an application route/worker. PR #14 remains an independent workstream.
+
+Next: review exact PR head and CI, then M1 target/schema/recipient/source verification and a scoped read adapter. M2 E2E/shadow evidence and M3 authorized release remain NOT STARTED. Preserve existing single-writer ownership and schedules. Rollback only this additive candidate; never delete customer/receipt/evidence data.
+
+Historical entries below are preserved byte-for-byte; this entry does not re-certify their live status.
+
+---
+
+
 ## 2026-10-05 — PR19 integration with current main; operational HOLD
 
 Integrates main `ca8810c57d2078087a7d0afdd95776fba6e84cc3` into PR19 `e16c885ae7c2305645be02a1227bf378cb59137f`. Preserves Page/post/ad views and embedded mode, strict batched CRM reads, unique counts, safe errors and async scope guards. New Lead detail uses canonical CRM permission; project joins use canonical project READ gate. 127/127 local regressions pass; full Vite build and synthetic supported-browser checks pass within limits in [integration evidence](./PR19_MAIN_INTEGRATION_20261005.md). CI/review must match published version.
