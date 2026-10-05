@@ -320,6 +320,45 @@ test('unstructured network and storage errors cannot escape into public health o
   storage.done();
 });
 
+async function expectIsolatedWorkerError(err, diagnostic) {
+  const h = harness([() => { throw err; }]);
+  h.t.memQueue.push(job());
+  await h.t.workerTickBatch();
+  assert.equal(h.api.getReplicationStatus().last_error, diagnostic);
+  assert.equal(h.warnings.length, 1);
+  assert.ok(!JSON.stringify(h.warnings).includes(PRIVATE));
+  h.done();
+}
+
+test('allowlisted network codes retain only a safe diagnostic', async () => {
+  const cases = [
+    [Object.assign(new Error(PRIVATE), { code: 'ECONNRESET' }), 'ECONNRESET'],
+    [Object.assign(new Error(PRIVATE), { cause: { code: 'ETIMEDOUT', message: PRIVATE } }), 'ETIMEDOUT'],
+    [Object.assign(new Error(PRIVATE), { code: 'UND_ERR_CONNECT_TIMEOUT' }), 'UND_ERR_CONNECT_TIMEOUT'],
+  ];
+  for (const [err, code] of cases) {
+    await expectIsolatedWorkerError(err, 'Replication operation failed (network ' + code + ')');
+  }
+});
+
+test('abort and timeout names produce the fixed timeout diagnostic', async () => {
+  for (const name of ['AbortError', 'TimeoutError']) {
+    await expectIsolatedWorkerError(
+      Object.assign(new Error(PRIVATE), { name }),
+      'Replication operation failed (timeout)',
+    );
+  }
+});
+
+test('unrecognized codes and upstream text stay out of diagnostics', async () => {
+  for (const code of ['E_SECRET_TOKEN_abc', 'ECONNRESET_PRIVATE', 'UND_ERR_PRIVATE']) {
+    await expectIsolatedWorkerError(
+      Object.assign(new Error(PRIVATE), { code }),
+      'Replication operation failed',
+    );
+  }
+});
+
 test('Redis enqueue failure logs never contain the thrown connection details', async () => {
   const h = harness([], {
     redis: { lpush: async () => { throw new Error(PRIVATE); } },

@@ -36,6 +36,13 @@ const replicationErrors = new WeakMap();
 function safeReplicationError(err) {
   const known = err && typeof err === 'object' ? replicationErrors.get(err) : null;
   if (known) return known.diagnostic;
+  const code = err && typeof err === 'object' ? (err.code || err.cause?.code) : null;
+  if (typeof code === 'string' && /^(?:ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|EHOSTUNREACH|ENETUNREACH|UND_ERR_(?:CONNECT_TIMEOUT|HEADERS_TIMEOUT|BODY_TIMEOUT|SOCKET|ABORTED|CLOSED|DESTROYED))$/.test(code)) {
+    return `Replication operation failed (network ${code})`;
+  }
+  if (err?.name === 'AbortError' || err?.name === 'TimeoutError') {
+    return 'Replication operation failed (timeout)';
+  }
   return 'Replication operation failed';
 }
 
