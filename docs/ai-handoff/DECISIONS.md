@@ -1,3 +1,11 @@
+# 2026-10-05 — Đối chiếu hồ sơ quyết định tách PR22/25
+
+Nguồn: hồ sơ Claude tại Founder Control Center, work/claude-handoff-20261002/10_TRANG_THAI_VA_QUYET_DINH_20261005.md, mục quyết định tách #22/#25. Đây là ghi nhận nguồn bàn giao, không phải Codex tự cấp quyết định mới. Không merge nguyên khối; A tối thiểu và tách H đã được ghi nhận duyệt; H1 là thiết kế cần triển khai trước C; B/C chưa mở Page, E/F chưa phát hành. A tối thiểu đã nằm trong main qua PR28. [Đối chiếu có phạm vi](vpt-marketing-automation/SPLIT_RELEASE_ALIGNMENT_20261005.md).
+
+Yêu cầu hoàn thành để chạy thật được tiếp tục bằng kiểm chứng, tách gói và khép điều kiện cụ thể; không dùng retarget PR25, PASS CI hoặc danh mục50SQL để vượt ranh giới này. Không hỏi lại lựa chọn Admin VPT/lịchCRM/workspace đã chốt. Migration mới từ701 theo sổ hiện hành; không sửa SQL700 hoặc tiếp quản phần thu quyền anon của Claude.
+
+---
+
 # 2026-10-05 — Hoàn tất điều kiện vận hành Marketing–CRM
 
 Founder chọn skill autonomous-agent-harness và yêu cầu: “em hoàn thành để đưa vào chạy thật nhé”. Tiếp tục khép tuyếnFacebook→CRM→AdminVPT→đo250.000đ/khách, ghép bản mainhiện hành, kiểm thử/review và chuẩn bị gói phát hành cụ thể. Giữ kiến trúc, ngân sách, người nhận và phần thu quyền anon doClaude phụ trách. Skill không biếnCodex/Claude thànhBusinessRuntimeAgent hoặc tự cấpquyền cho scheduler/gửi khách/AIbooking. Không yêu cầuFounder xác nhận lạiWorkspace/Admin/lịchđãchốt. Những tiềnđiều kiện chưa đạt phảiđượcghi rõ và kiểmtrước tácđộng thật; xem LIVE_RELEASE_20261005.md.

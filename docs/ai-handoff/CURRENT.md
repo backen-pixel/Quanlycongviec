@@ -1,3 +1,13 @@
+## 05/10/2026, 23:55 — CI đạt; PR25 chỉ làm bằng chứng tích hợp để tách gói
+
+Source43e50262/treeba7c2778 đã PASS CI PostgreSQL17 legacy/700, restore dữ liệu giả, frontend và review độc lập trong phạm vi kiểm thử. Đã xác minh Meta form1438656288329447 có8 lượt gửi; chưa đối soát đủ danh tính/nguồn vào CRM. Hai DB đã thu quyền bảng trong tập kiểm; sáu bảng Marketing mới còn thiếu, Render live main1f879ea8 và startup failoveron.
+
+Đối chiếu hồ sơ Claude xác nhận **không merge nguyên khối PR22/25**, A tối thiểu đã có trên main; tách H riêng, H1/H2 là điều kiện trước C, chưa mở B/C cho Page nào. H1 chưa được triển khai: hàng đợi Messenger opt-in không bao phủ mọi sự kiện Page trước ACK. 50 SQL là danh mục tham khảo, không phải batch áp DB; migration mới từ701.
+
+[Hồ sơ hiện hành](vpt-marketing-automation/LIVE_RELEASE_20261005.md), [đối chiếu quyết định](vpt-marketing-automation/SPLIT_RELEASE_ALIGNMENT_20261005.md), [manifest](vpt-marketing-automation/LIVE_RELEASE_MANIFEST_20261005.json) và [hàng việc](vpt-marketing-automation/RELEASE_QUEUE.json) giữ rõ điều kiện và việc chưa xong. Chưa có bằng chứng khôi phục bản sao thật, binding/UAT hoặc phát hành tự động hóa. Không sửa phần quyền DB của Claude, không mở AI/send/booking/chi quảng cáo. Các mục dưới giữ lịch sử theo thời điểm.
+
+---
+
 ## 05/10/2026, 23:20 — Khép bản tích hợp để mở Marketing–CRM
 
 Founder yêu cầu hoàn thành để chạy thật và chọn autonomous-agent-harness. Đã ghép main1f879ea8 (cũng là bản Render live) vào ứng viênf138e2bd; thêm44testcoverage. Local1628PASS/0FAIL/2SKIP Windows,49/49tệp>=80% dòng/nhánh/hàm. CI thêm nền700 trước Marketing, role service BYPASSRLS và restore defaultACL; chờ kết quả đúng bản xuất bản.
