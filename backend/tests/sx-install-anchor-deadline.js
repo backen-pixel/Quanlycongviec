@@ -43,9 +43,9 @@ assert.equal(finishingYmd(afterCrm), '2026-10-08');
 
 const sxBody = { delivery_date: '2026-10-20', production_finish_date: '2026-10-18', production_deadline: '2026-10-18' };
 const sxPersist = installAnchorPersistPatch(sxBody);
-assert.equal(sxPersist.install_occurrence_dates, undefined);
+assert.deepEqual(sxPersist.install_occurrence_dates, ['2026-10-20']);
 assert.equal(String(sxPersist.install_date).slice(0, 10), '2026-10-20');
-assert.equal(installAnchorPersistPatch(crmBody), null);
+assert.deepEqual(installAnchorPersistPatch(crmBody).install_occurrence_dates, ['2026-10-10', '2026-10-11']);
 const afterSx = rowAfterEdit(saved, sxBody);
 assert.deepEqual(afterSx.install_occurrence_dates, ['2026-10-20']);
 assert.equal(String(afterSx.install_date).slice(0, 10), '2026-10-20');

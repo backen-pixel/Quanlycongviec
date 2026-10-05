@@ -2471,13 +2471,20 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
       }
     }
 
-    // Try update — if column doesn't exist, retry without problematic fields
+    // Cột thiếu: Postgres/PostgREST báo một cột mỗi lần. Chỉ bỏ đúng cột đó.
+    const optionalWriteColumns = [
+      'install_occurrence_dates', 'production_finish_date', 'collected_amount', 'deposit_amount',
+      'logistics_cost', 'delivery_date', 'order_date', 'vc_notes', 'deadline', 'notes',
+    ];
     let data, error;
     ({ data, error } = await supabase.from('projects').update(update).eq('id', req.params.id).select(`*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`).single());
     if (error && error.message?.includes('column')) {
-      // Remove fields that may not exist yet (need migration)
+      const message = String(error.message || '');
+      const missing = optionalWriteColumns.find((name) => message.includes(name));
+      if (!missing || !Object.prototype.hasOwnProperty.call(update, missing)) throw error;
+      console.warn(`[PUT /projects] bỏ cột chưa có trên DB: ${missing}`);
       const safeCopy = { ...update };
-      ['deadline', 'notes', 'order_date', 'delivery_date', 'production_finish_date', 'deposit_amount', 'collected_amount', 'vc_notes', 'logistics_cost', 'install_occurrence_dates'].forEach(f => delete safeCopy[f]);
+      delete safeCopy[missing];
       ({ data, error } = await supabase.from('projects').update(safeCopy).eq('id', req.params.id).select(`*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`).single());
     }
     if (error) throw error;

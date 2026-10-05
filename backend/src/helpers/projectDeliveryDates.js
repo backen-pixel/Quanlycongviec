@@ -151,12 +151,11 @@ function installAnchorPatchFromBody(body) {
   return patch;
 }
 
-/** Cột projects.install_occurrence_dates chưa có trên DB. Chỉ ghi ngày lắp / ngày giao. */
+/** Cột projects.install_occurrence_dates (DATE[]) đã có từ migration 649 (05/10/2026). Ghi cả lịch nhiều đợt. */
 function installAnchorPersistPatch(body) {
   const patch = installAnchorPatchFromBody(body);
   if (!patch) return null;
   const persist = { ...patch };
-  delete persist.install_occurrence_dates;
   return Object.keys(persist).length ? persist : null;
 }
 
