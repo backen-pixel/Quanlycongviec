@@ -11,6 +11,7 @@
  *   3. Mẫu nhỏ thì im lặng, không phán.
  */
 const { supabase } = require('../config/supabase');
+const { layTheoLo, layTheoLoMem } = require('./supabaseLo');
 
 const MAU_TOI_THIEU = 10;       // dưới ngưỡng này không kết luận gì
 const MAU_DE_CHE = 15;          // đủ để nói "không ra đơn"
@@ -40,6 +41,11 @@ async function napSoLieuTheoAd({ ngay = 90 } = {}) {
     .from('lead_attribution')
     .select('lead_id, fb_ad_id, fb_page_id, fb_ad_title, cham_dau_luc')
     .not('fb_ad_id', 'is', null)
+    // BẮT BUỘC: quy kết được ghi ở mức CONTACT ngay khi khách nhắn, lead chỉ sinh
+    // ra sau khi được duyệt — nên có dòng mang ad_id mà lead_id còn trống (đo ngày
+    // 04/10/2026: 156/512 dòng). Thiếu dòng lọc này thì String(null) hoá chuỗi
+    // 'null' chui vào .in(), Postgres chối cả lô và phân tích chết lặng.
+    .not('lead_id', 'is', null)
     .gte('cham_dau_luc', tu)
     .limit(20000);
   if (error) throw new Error(error.message);
@@ -48,10 +54,9 @@ async function napSoLieuTheoAd({ ngay = 90 } = {}) {
 
   const ids = [...new Set(rows.map((x) => String(x.lead_id)))];
   const [leadRows, diemRows, catRows, pageRows] = await Promise.all([
-    supabase.from('crm_leads').select('id, type, phone, customer_id, actual_close_date, estimated_value, company_id')
-      .in('id', ids).then((x) => x.data || [], () => []),
-    supabase.from('lead_quality_scores').select('lead_id, diem, nhan')
-      .in('lead_id', ids).then((x) => x.data || [], () => []),
+    layTheoLo('crm_leads', 'id', ids,
+      'id, type, phone, customer_id, actual_close_date, estimated_value, company_id'),
+    layTheoLo('lead_quality_scores', 'lead_id', ids, 'lead_id, diem, nhan'),
     supabase.from('fb_ad_catalog').select('ad_id, campaign_name, ad_name')
       .then((x) => x.data || [], () => []),
     supabase.from('facebook_pages').select('page_id, page_name')
@@ -59,9 +64,7 @@ async function napSoLieuTheoAd({ ngay = 90 } = {}) {
   ]);
 
   const khachIds = leadRows.map((l) => l.customer_id).filter(Boolean);
-  const khachRows = khachIds.length
-    ? await supabase.from('customers').select('id, phone').in('id', khachIds).then((x) => x.data || [], () => [])
-    : [];
+  const khachRows = await layTheoLoMem('customers', 'id', khachIds, 'id, phone');
   const mSdt = new Map(khachRows.map((c) => [String(c.id), c.phone]));
 
   const mLead = new Map(leadRows.map((l) => [String(l.id), l]));

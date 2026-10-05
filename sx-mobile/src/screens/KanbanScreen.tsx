@@ -56,10 +56,11 @@ import { getCachedBoard, getCachedBoardSummary, isCachedBoardFresh, patchCachedP
 import { dealCompanyIdForBoardApi, loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '../lib/kanbanFilterStorage';
 import {
   computeSxBoardKpis,
-  countsAsCompletedRevenue,
   projectIsAwaitingDelivery,
-  projectIsShipped,
+  projectIsDelivered,
   sxOverdueProjectIds,
+  sxDueBucketProjectIds,
+  type SxDueFilter,
 } from '../lib/sxBoardKpis';
 import {
   isMetallaOrHucabiCompanyId,
@@ -71,9 +72,11 @@ import {
   workshopCompaniesForCrossViewer,
   type ClientCompanyOption,
 } from '../lib/productionFilters';
-import { canSeeAllWorkshopCompanies, isSystemAdmin } from '../lib/roles';
+import { canSeeAllWorkshopCompanies, isAdminLike, isSystemAdmin } from '../lib/roles';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
+import { useMyProjectScope } from '../hooks/useMyProjectScope';
+import { canViewTeamWork } from '../lib/workTasksApi';
 import { useTheme } from '../context/ThemeContext';
 import type { MainTabParamList } from '../navigation/MainTabs';
 import { type AppColors, colorWithAlpha, HIT_TARGET, Radii, Spacing, stageColor } from '../theme';
@@ -81,6 +84,15 @@ import type { KanbanStage, ProductionBoard, ProductionProject } from '../types';
 
 import SpinningLoader from '../components/SpinningLoader';
 type QuickFilter = 'all' | 'mine' | 'overdue' | 'today';
+
+/** Lựa chọn của chip «Hạn xử lý». */
+const DUE_OPTIONS: { id: SxDueFilter; label: string }[] = [
+  { id: '', label: 'Tất cả' },
+  { id: 'overdue', label: 'Quá hạn' },
+  { id: 'today', label: 'Hôm nay' },
+  { id: 'this_week', label: 'Tuần này' },
+  { id: 'next_week', label: 'Tuần sau' },
+];
 type ViewMode = 'list' | 'kanban';
 
 const VIEW_MODE_KEY = 'sx_kanban_view_mode';
@@ -187,6 +199,12 @@ export default function KanbanScreen() {
   const styles = useMemo(() => createKanbanStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
+  /** Nhân viên thường không dùng bộ lọc: ẩn nút lọc (bố cục khớp màn Tổng quan của họ). */
+  const showFilterButton = canViewTeamWork(user);
+  /** Admin lọc ngay bằng các chip trên màn nên không hiện nút «Bộ lọc» mở bảng lọc. */
+  const showFilterSheetButton = showFilterButton && !isAdminLike(user);
+  /** Nhân viên chỉ thấy dự án của mình (đứng tên hoặc được giao việc) — dùng chung với Planner. */
+  const { allows: allowsProject } = useMyProjectScope(user);
   const isFocused = useIsFocused();
   const route = useRoute<RouteProp<MainTabParamList, 'Kanban'>>();
   const { commentToast, dismissCommentToast, projectMetaRef, subscribeComment, subscribeSync } = useNotifications();
@@ -214,6 +232,8 @@ export default function KanbanScreen() {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [quickFilter, setQuickFilter] = useState<QuickFilter>('all');
+  /** Chip lọc theo hạn xử lý: Quá hạn / Hôm nay / Tuần này / Tuần sau. */
+  const [dueFilter, setDueFilter] = useState<SxDueFilter>('');
   const [filterCompany, setFilterCompany] = useState('');
   const [filterDealCompany, setFilterDealCompany] = useState('');
   const [filterWorkTypeId, setFilterWorkTypeId] = useState('');
@@ -230,7 +250,7 @@ export default function KanbanScreen() {
   const [filterPersonId, setFilterPersonId] = useState('');
   const [colPickerOpen, setColPickerOpen] = useState(false);
   /** Dropdown nhanh ngoài sheet: person | workshop | deal | workType */
-  const [quickPicker, setQuickPicker] = useState<'person' | 'workshop' | 'deal' | 'workType' | null>(null);
+  const [quickPicker, setQuickPicker] = useState<'person' | 'workshop' | 'deal' | 'workType' | 'due' | null>(null);
   const [visibleCount, setVisibleCount] = useState(CARD_PAGE_SIZE);
   const [moveModalProject, setMoveModalProject] = useState<ProductionProject | null>(null);
   const [classifyModalProject, setClassifyModalProject] = useState<ProductionProject | null>(null);
@@ -898,9 +918,16 @@ export default function KanbanScreen() {
     [quickFilter, board.projects, stages],
   );
 
+  const dueIds = useMemo(
+    () => (dueFilter ? sxDueBucketProjectIds(board.projects, stages, dueFilter) : null),
+    [dueFilter, board.projects, stages],
+  );
+
   const filteredProjects = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return board.projects.filter((p) => {
+      if (!allowsProject(p)) return false;
+      if (dueIds && !dueIds.has(String(p.id))) return false;
       if (needle) {
         const hay = `${p.code} ${p.name} ${p.customer_name || ''} ${p.customer_phone || ''}`.toLowerCase();
         if (!hay.includes(needle)) return false;
@@ -935,6 +962,8 @@ export default function KanbanScreen() {
     dealCompanyExternalFilter,
     filterPhone,
     filterPersonId,
+    allowsProject,
+    dueIds,
   ]);
 
   const personFilterOptions = useMemo(() => {
@@ -960,17 +989,23 @@ export default function KanbanScreen() {
     if (quickFilter !== 'all') n += 1;
     if (filterPhone) n += 1;
     if (filterPersonId) n += 1;
+    if (dueFilter) n += 1;
     if (search.trim()) n += 1;
     return n;
-  }, [scopeFilterCount, quickFilter, filterPhone, filterPersonId, search]);
+  }, [scopeFilterCount, quickFilter, filterPhone, filterPersonId, dueFilter, search]);
 
   type ActiveChip = { key: string; label: string; onClear: () => void };
   /** ≥ số lựa chọn thực (bỏ «Tất cả») → chip ngoài dùng dropdown. */
   const DROPDOWN_MIN_CHOICES = 2;
   const realChoiceCount = (opts: { id: string }[]) => opts.filter((o) => o.id !== '').length;
 
-  const usePersonDropdown = realChoiceCount(personFilterOptions) >= DROPDOWN_MIN_CHOICES;
-  const useWorkshopDropdown = showWorkshopPicker && realChoiceCount(companyOptions) >= DROPDOWN_MIN_CHOICES;
+  // Chỉ quản lý/admin lọc theo người phụ trách; nhân viên đã bị giới hạn vào dự án của mình.
+  const usePersonDropdown = showFilterButton
+    && realChoiceCount(personFilterOptions) >= DROPDOWN_MIN_CHOICES;
+  // Nhân viên đã đăng nhập vào đúng xưởng của mình nên không cần chip «Xưởng».
+  const useWorkshopDropdown = showFilterButton
+    && showWorkshopPicker
+    && realChoiceCount(companyOptions) >= DROPDOWN_MIN_CHOICES;
   const useDealDropdown = canPickDealCompany && realChoiceCount(dealCompanyPickerOptions) >= DROPDOWN_MIN_CHOICES;
   // Phân loại: luôn dropdown khi đã có ≥2 mục (vd. «Chưa phân loại» + 1 loại, hoặc 2 loại).
   const useWorkTypeDropdown = realChoiceCount(workTypeOptions) >= DROPDOWN_MIN_CHOICES;
@@ -1110,8 +1145,23 @@ export default function KanbanScreen() {
         onClear: filterWorkTypeId ? () => setFilterWorkTypeId('') : undefined,
       });
     }
-    return chips;
+    // Hạn xử lý: mọi tài khoản đều thấy (gộp Quá hạn / Hôm nay / Tuần này / Tuần sau).
+    chips.push({
+      key: 'dd-due',
+      prefix: 'Hạn xử lý',
+      label: DUE_OPTIONS.find((o) => o.id === dueFilter)?.label || 'Tất cả',
+      active: !!dueFilter,
+      onOpen: () => setQuickPicker('due'),
+      onClear: dueFilter ? () => setDueFilter('') : undefined,
+    });
+    // Xưởng luôn đứng đầu; chip người dùng đang bật (có ×) kế tiếp; còn lại giữ thứ tự.
+    const rank = (c: DropdownChip) => (c.key === 'dd-ws' ? 0 : c.onClear ? 1 : 2);
+    return chips
+      .map((c, i) => ({ c, i }))
+      .sort((a, b) => rank(a.c) - rank(b.c) || a.i - b.i)
+      .map((x) => x.c);
   }, [
+    dueFilter,
     usePersonDropdown,
     useWorkshopDropdown,
     useDealDropdown,
@@ -1521,12 +1571,13 @@ export default function KanbanScreen() {
   );
   const filterActive = search.trim().length > 0 || quickFilter !== 'all'
     || !!filterDealCompany || !!filterWorkTypeId
-    || !!filterPhone || !!filterPersonId;
+    || !!filterPhone || !!filterPersonId || !!dueFilter;
 
   const resetFilters = useCallback(() => {
     setSearchInput('');
     setSearch('');
     setQuickFilter('all');
+    setDueFilter('');
     // Không reset xưởng: đây là phạm vi bắt buộc, không phải bộ lọc.
     setFilterDealCompany('');
     setFilterWorkTypeId('');
@@ -1798,6 +1849,7 @@ export default function KanbanScreen() {
             </Pressable>
           ) : null}
         </View>
+        {showFilterSheetButton ? (
         <Pressable
           style={[styles.filterBtn, filterBadge > 0 && styles.filterBtnActive]}
           onPress={() => setFilterSheetOpen(true)}
@@ -1819,10 +1871,12 @@ export default function KanbanScreen() {
             </View>
           ) : null}
         </Pressable>
+        ) : null}
       </View>
 
       {showFilterChipRow ? (
         <ScrollView
+          key={`${filterDropdownChips.map((c) => c.key).join('|')}#${activeFilterChips.map((c) => c.key).join('|')}`}
           horizontal
           showsHorizontalScrollIndicator={false}
           style={styles.activeChipScroll}
@@ -1830,7 +1884,8 @@ export default function KanbanScreen() {
           nestedScrollEnabled
           keyboardShouldPersistTaps="handled"
         >
-          {filterDropdownChips.map((chip) => (
+          {(() => {
+            const renderDropdownChip = (chip: (typeof filterDropdownChips)[number]) => (
             <View
               key={chip.key}
               style={[styles.dropdownChip, chip.active && styles.dropdownChipActive]}
@@ -1867,13 +1922,21 @@ export default function KanbanScreen() {
                 </Pressable>
               ) : null}
             </View>
-          ))}
-          {activeFilterChips.map((chip) => (
-            <Pressable key={chip.key} style={styles.activeChip} onPress={chip.onClear}>
-              <Text style={styles.activeChipTxt} numberOfLines={1}>{chip.label}</Text>
-              <Ionicons name="close" size={13} color={colors.textMuted} />
-            </Pressable>
-          ))}
+            );
+            // Thứ tự: Xưởng → chip lọc nhanh đang bật (Quá hạn, Tìm…) → chip dropdown còn lại.
+            return (
+              <>
+                {filterDropdownChips.filter((c) => c.key === 'dd-ws').map(renderDropdownChip)}
+                {activeFilterChips.map((chip) => (
+                  <Pressable key={chip.key} style={styles.activeChip} onPress={chip.onClear}>
+                    <Text style={styles.activeChipTxt} numberOfLines={1}>{chip.label}</Text>
+                    <Ionicons name="close" size={13} color={colors.textMuted} />
+                  </Pressable>
+                ))}
+                {filterDropdownChips.filter((c) => c.key !== 'dd-ws').map(renderDropdownChip)}
+              </>
+            );
+          })()}
           {(activeFilterChips.length > 0
             || filterDropdownChips.some((c) => c.active)
             || filterBadge > 0) ? (
@@ -2254,6 +2317,14 @@ export default function KanbanScreen() {
         onClose={() => setQuickPicker(null)}
       />
       <FilterPickerModal
+        visible={quickPicker === 'due'}
+        title="Hạn xử lý"
+        options={DUE_OPTIONS}
+        selectedId={dueFilter}
+        onSelect={(id) => setDueFilter(id as SxDueFilter)}
+        onClose={() => setQuickPicker(null)}
+      />
+      <FilterPickerModal
         visible={quickPicker === 'workType'}
         title="Phân loại pipeline"
         options={workTypeOptions}
@@ -2307,7 +2378,8 @@ const KanbanCard = memo(function KanbanCard({
   const avatarLetters = initials(item.customer_name);
   const vcTag = getVcTag(item, stages);
   const personName = item.production_person_name?.trim() || null;
-  const delivered = projectIsShipped(item) || countsAsCompletedRevenue(item, stages);
+  // «Đã giao thật», không tính dự án chỉ mới được đẩy sang bảng vận chuyển (xem `projectIsDelivered`).
+  const delivered = projectIsDelivered(item, stages);
   const updatedStr = formatDateTime(item.updated_at || item.created_at);
 
   return (

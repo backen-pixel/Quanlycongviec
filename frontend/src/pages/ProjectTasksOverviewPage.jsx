@@ -32,6 +32,7 @@ import {
   workshopCompanyPickerList,
 } from '../lib/crossWorkshopProduction';
 import { crmDeadlineBucketFromTs } from '../lib/crmLeadDeadlineDisplay';
+import { companyWorkEndMsFromRaw, companyWorkEndMsOnYmd, vnYmdFromTs } from '../lib/companyDeadlineClock';
 import { avatarColor, formatDate, getStaffInitials } from '../lib/utils';
 import { assignmentsHrefForProject, projectDetailPathForModule } from '../lib/assignmentSourceLink';
 
@@ -95,8 +96,19 @@ const COLUMNS = [
 const COLUMN_BY_KEY = Object.fromEntries(COLUMNS.map((column) => [column.key, column]));
 
 function deadlineBucketOf(task, nowMs = Date.now()) {
-  const dueMs = task?.deadline ? new Date(task.deadline).getTime() : null;
-  if (dueMs == null || !Number.isFinite(dueMs)) return 'no_deadline';
+  const rawDeadline = task?.deadline;
+  if (!rawDeadline) return 'no_deadline';
+  const company = task.company_id || task.company;
+  const dueMs = companyWorkEndMsFromRaw(rawDeadline, company) ?? new Date(rawDeadline).getTime();
+  if (!Number.isFinite(dueMs)) return 'no_deadline';
+  const dueYmd = vnYmdFromTs(dueMs);
+  const todayYmd = vnYmdFromTs(nowMs);
+  if (dueYmd && todayYmd && dueYmd < todayYmd) return 'overdue';
+  if (dueYmd && dueYmd === todayYmd) {
+    const endMs = companyWorkEndMsOnYmd(dueYmd, company);
+    if (endMs != null && nowMs > endMs) return 'overdue';
+    return 'today';
+  }
   const raw = crmDeadlineBucketFromTs(dueMs, null, nowMs);
   if (raw === 'overdue' || raw === 'today' || raw === 'tomorrow' || raw === 'this_week' || raw === 'no_deadline') {
     return raw;

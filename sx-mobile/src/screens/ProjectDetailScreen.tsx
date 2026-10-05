@@ -22,12 +22,13 @@ import ProductionPipelineStepper from '../components/projectDetail/ProductionPip
 import ProjectCommentsTab from '../components/projectDetail/ProjectCommentsTab';
 import ProjectCrmTaskRow from '../components/projectDetail/ProjectCrmTaskRow';
 import ProjectDocumentsTab from '../components/projectDetail/ProjectDocumentsTab';
-import ProjectDriveTab from '../components/projectDetail/ProjectDriveTab';
 import ProjectMembersTab from '../components/projectDetail/ProjectMembersTab';
 import ProjectSharedWorkspaceTab from '../components/projectDetail/ProjectSharedWorkspaceTab';
 import SpinningLoader from '../components/SpinningLoader';
 import TapHighlight from '../components/TapHighlight';
 import { formatApiError } from '../api/client';
+import { useAuth } from '../context/AuthContext';
+import { canViewTeamWork } from '../lib/roles';
 import { useNotifications } from '../context/NotificationContext';
 import { useTheme } from '../context/ThemeContext';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
@@ -46,6 +47,7 @@ import {
   fetchDealIdForProject,
   fetchProductionProjectDetail,
   fetchProjectActivities,
+  groupColumnsIntoBigGroups,
   groupCrmTasksByStage,
   invalidateDealTasksCache,
   invalidateProjectDetailCache,
@@ -54,18 +56,24 @@ import {
   updateCrmTask,
   updateProjectDates,
   updateProjectMoney,
+  type CrmTaskBigGroup,
   type CrmTaskStageGroup,
 } from '../lib/projectDetailApi';
 import type { RootStackParamList } from '../navigation/RootNavigator';
-import { formatMoneyAmount, Radii, Spacing, getTaskProgressColor } from '../theme';
+import { colorWithAlpha, formatMoneyAmount, Radii, Spacing, getTaskProgressColor } from '../theme';
 import type { CrmTask, ProductionProjectDetail, ProjectActivity } from '../types';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ProjectDetail'>;
-type TabKey = 'tasks' | 'shared' | 'documents' | 'drive' | 'info' | 'team' | 'schedule' | 'comments';
+type TabKey = 'tasks' | 'shared' | 'documents' | 'info' | 'team' | 'schedule' | 'comments';
 
 /** Tab nặng — keep-alive tối đa 2 (LRU) để tránh chồng mount. */
-const HEAVY_TABS: TabKey[] = ['shared', 'documents', 'comments', 'drive', 'team'];
+const HEAVY_TABS: TabKey[] = ['shared', 'documents', 'comments', 'team'];
 type EditableDateField = 'order_date' | 'delivery_date' | 'deadline';
+
+/** Dòng trong danh sách việc: dòng cột (mục con) hoặc một việc. */
+type TaskListItem =
+  | { kind: 'col'; key: string; col: CrmTaskStageGroup; open: boolean }
+  | { kind: 'task'; key: string; task: CrmTask };
 type EditableMoneyField = 'production_value' | 'deposit_amount';
 
 function formatDate(value?: string | null): string {
@@ -99,6 +107,9 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   const focusLookupIdRef = useRef(incomingFocusId);
   if (incomingFocusId) focusLookupIdRef.current = incomingFocusId;
   const { colors } = useTheme();
+  const { user } = useAuth();
+  /** Tiền (giá trị SX, cọc, công nợ) chỉ dành cho quản lý/admin. */
+  const canSeeMoney = canViewTeamWork(user);
   const { joinProjectRoom, leaveProjectRoom, joinLeadRoom, leaveLeadRoom } = useNotifications();
   const insets = useSafeAreaInsets();
   const [tab, setTab] = useState<TabKey>('tasks');
@@ -121,7 +132,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   const [moneyDraft, setMoneyDraft] = useState('');
   const [moneySaving, setMoneySaving] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
-  const tasksListRef = useRef<SectionList<CrmTask, CrmTaskStageGroup>>(null);
+  const tasksListRef = useRef<SectionList<TaskListItem, CrmTaskBigGroup>>(null);
   const scrollInnerRef = useRef<View>(null);
   const focusTargetRef = useRef<View>(null);
   const didFocusScroll = useRef(false);
@@ -363,7 +374,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
   }, []);
 
-  const completeStageAll = useCallback((group: CrmTaskStageGroup) => {
+  const completeStageAll = useCallback((group: { label: string; tasks: CrmTask[] }) => {
     if (!dealId) return;
     const toComplete = group.tasks.filter((t) => !isCrmProductionTaskDone(t.status));
     if (!toComplete.length) {
@@ -558,23 +569,48 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     [tasks, highlightTaskId],
   );
 
+  // Giống web: mục lớn (cột lớn) → mục con (cột) → việc. Mỗi cột gập/mở được; «Hiện việc / Ẩn việc» ở mục lớn
+  // mở/đóng mọi cột bên trong. Mặc định chỉ mở cột hiện tại của dự án và cột chứa việc đang được trỏ tới.
+  const [colToggles, setColToggles] = useState<Record<string, boolean>>({});
+  const isColOpen = useCallback(
+    (c: CrmTaskStageGroup): boolean => {
+      const manual = colToggles[c.key];
+      if (manual != null) return manual;
+      if (project?.sx_kanban_column_id && String(c.key) === String(project.sx_kanban_column_id)) return true;
+      return Boolean(highlightTaskId) && c.tasks.some((t) => String(t.id) === String(highlightTaskId));
+    },
+    [colToggles, project?.sx_kanban_column_id, highlightTaskId],
+  );
+
+  const bigGroups = useMemo(
+    () => groupColumnsIntoBigGroups(orderedTaskGroups, project?.sxKanbanStages || []),
+    [orderedTaskGroups, project?.sxKanbanStages],
+  );
+
   const taskSections = useMemo(
-    (): Array<SectionListData<CrmTask, CrmTaskStageGroup>> =>
-      orderedTaskGroups.map((g) => ({
+    (): Array<SectionListData<TaskListItem, CrmTaskBigGroup>> =>
+      bigGroups.map((g) => ({
         ...g,
-        data: dealId ? g.tasks : [],
+        data: dealId
+          ? g.columns.flatMap((col): TaskListItem[] => {
+              const open = isColOpen(col);
+              const rows: TaskListItem[] = [{ kind: 'col', key: `col:${col.key}`, col, open }];
+              if (open) col.tasks.forEach((t) => rows.push({ kind: 'task', key: String(t.id), task: t }));
+              return rows;
+            })
+          : [],
       })),
-    [orderedTaskGroups, dealId],
+    [bigGroups, dealId, isColOpen],
   );
 
   useEffect(() => {
     if (!highlightTaskId || loading || !focusedTask || didFocusScroll.current) return;
     const timer = setTimeout(() => {
       didFocusScroll.current = true;
-      // Task đã được đưa lên đầu section 0 — cuộn tới item đầu sau header.
+      // Cột chứa việc được trỏ tới đã lên đầu section 0 — item 0 là dòng cột, item 1 là việc đầu tiên.
       tasksListRef.current?.scrollToLocation({
         sectionIndex: 0,
-        itemIndex: 0,
+        itemIndex: 1,
         viewOffset: 24,
         animated: true,
       });
@@ -749,6 +785,73 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           fontWeight: '900',
           lineHeight: 12,
         },
+        // Một khung cho cả giai đoạn (giống web): đầu khung = tiêu đề, giữa = dòng cột + việc, chân khung đóng lại.
+        stageCard: {
+          borderTopWidth: 1,
+          borderRightWidth: 1,
+          borderLeftWidth: 4,
+          borderColor: colors.border,
+          borderTopLeftRadius: Radii.lg,
+          borderTopRightRadius: Radii.lg,
+          backgroundColor: colors.card,
+          paddingHorizontal: 10,
+          paddingVertical: 8,
+          gap: 6,
+        },
+        frameSide: {
+          marginHorizontal: Spacing.lg,
+          borderLeftWidth: 4,
+          borderRightWidth: 1,
+          borderRightColor: colors.border,
+          backgroundColor: colors.card,
+        },
+        frameBottom: {
+          marginHorizontal: Spacing.lg,
+          height: 8,
+          borderLeftWidth: 4,
+          borderRightWidth: 1,
+          borderBottomWidth: 1,
+          borderRightColor: colors.border,
+          borderBottomColor: colors.border,
+          borderBottomLeftRadius: Radii.lg,
+          borderBottomRightRadius: Radii.lg,
+          backgroundColor: colors.card,
+          marginBottom: 10,
+        },
+        colRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingLeft: 10,
+          paddingRight: 4,
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.border,
+        },
+        colMain: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 9 },
+        colIcon: { fontSize: 14 },
+        colName: { flex: 1, color: colors.text, fontSize: 13, fontWeight: '700' },
+        colCount: { color: colors.textFaint, fontSize: 11, fontWeight: '700' },
+        colTrack: { width: 40, height: 5, borderRadius: 3, backgroundColor: colors.cardAlt, overflow: 'hidden' },
+        colFill: { height: '100%', borderRadius: 3, backgroundColor: colors.success },
+        colDoneBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
+        colDoneBtnOn: { opacity: 1 },
+        colEmpty: { color: colors.textFaint, fontSize: 11.5, paddingLeft: 22, paddingVertical: 6 },
+        stageTop: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+        stageTitle: { flex: 1, fontSize: 13, fontWeight: '900', letterSpacing: 0.3 },
+        stageBtns: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
+        stageMeta: { fontSize: 11, fontWeight: '700', marginRight: 'auto' },
+        stageChip: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 4,
+          paddingHorizontal: 9,
+          paddingVertical: 5,
+          borderRadius: Radii.md,
+          borderWidth: 1,
+          backgroundColor: colors.card,
+        },
+        stageChipDone: { borderColor: colors.border, backgroundColor: colors.card },
+        stageChipTxt: { fontSize: 11, fontWeight: '800' },
         groupHeader: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -957,7 +1060,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
 
   const displayTitle = displayDeal?.title || project?.name || 'Dự án';
   const displayCode = displayDeal?.code || project?.code || '';
-  const isFullHeightTab = tab === 'comments' || tab === 'documents' || tab === 'drive' || tab === 'team' || tab === 'shared';
+  const isFullHeightTab = tab === 'comments' || tab === 'documents' || tab === 'team' || tab === 'shared';
   const useTasksVirtualList = tab === 'tasks';
 
   const tabsBar = (
@@ -972,11 +1075,13 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         ['shared', 'Không gian chung', sharedCount],
         ['comments', 'Bình luận', commentCount],
         ['documents', 'Tài liệu', docCount],
-        ['drive', 'Drive', 0],
         ['info', 'Thông tin', 0],
         ['team', 'Đội ngũ', 0],
         ['schedule', 'Lịch', 0],
-      ] as [TabKey, string, number][]).map(([key, label, count]) => {
+      ] as [TabKey, string, number][])
+        // Nhân viên không dùng Thông tin / Đội ngũ của dự án.
+        .filter(([key]) => canSeeMoney || (key !== 'info' && key !== 'team'))
+        .map(([key, label, count]) => {
         const active = tab === key;
         const badge = count > 0 ? (count > 99 ? '99+' : String(count)) : null;
         return (
@@ -1009,16 +1114,21 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           <Text style={styles.statLabel}>Công việc</Text>
           <Text style={styles.statValue}>{taskDone}/{taskTotal || project?.task_total || 0}</Text>
         </View>
-        <View style={styles.statCard}>
-          <Text style={styles.statLabel}>Hoạt động</Text>
-          <Text style={[styles.statValue, styles.statValueAccent]}>{activities.length}</Text>
-        </View>
+        {/* Hoạt động: chỉ quản lý & admin — nhân viên không có tab Thông tin nên số này luôn là 0. */}
+        {canSeeMoney ? (
+          <View style={styles.statCard}>
+            <Text style={styles.statLabel}>Hoạt động</Text>
+            <Text style={[styles.statValue, styles.statValueAccent]}>{activities.length}</Text>
+          </View>
+        ) : null}
         <View style={styles.statCard}>
           <Text style={styles.statLabel}>Tài liệu</Text>
           <Text style={styles.statValue}>{docCount}</Text>
         </View>
       </View>
 
+      {/* Giá trị / cọc / công nợ: chỉ quản lý & admin — nhân viên xưởng không xem tiền. */}
+      {canSeeMoney ? (
       <View style={styles.moneyRow}>
         <Pressable
           style={styles.moneyCard}
@@ -1048,14 +1158,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           <Text style={styles.moneyHint}>= SX − cọc</Text>
         </View>
       </View>
-
-      <View style={styles.progressBox}>
-        <Text style={styles.progressLabel}>Tiến độ sản xuất</Text>
-        <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${Math.min(100, progress)}%`, backgroundColor: progressColor }]} />
-        </View>
-        <Text style={[styles.progressPct, { color: progressColor }]}>{progress}%</Text>
-      </View>
+      ) : null}
     </View>
   );
 
@@ -1081,50 +1184,128 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   );
 
   const renderTaskSectionHeader = (
-    { section }: { section: SectionListData<CrmTask, CrmTaskStageGroup> },
+    { section }: { section: SectionListData<TaskListItem, CrmTaskBigGroup> },
   ) => {
-    const doneInGroup = section.doneCount ?? section.tasks.filter((t) => isCrmProductionTaskDone(t.status)).length;
-    const openInGroup = section.openCount ?? (section.tasks.length - doneInGroup);
+    const big = section as unknown as CrmTaskBigGroup;
+    const tone = big.color || colors.primary;
+    const anyOpen = big.columns.some((c) => isColOpen(c));
+    const setAllCols = (open: boolean) =>
+      setColToggles((m) => {
+        const next = { ...m };
+        big.columns.forEach((c) => { next[c.key] = open; });
+        return next;
+      });
     return (
-      <View style={{ paddingHorizontal: Spacing.lg, marginBottom: 8, marginTop: 4 }}>
-        <View style={styles.groupHeader}>
-          <View style={styles.groupHeadMain}>
-            {section.color ? (
-              <View style={[styles.groupDot, { backgroundColor: section.color }]} />
+      <View style={{ paddingHorizontal: Spacing.lg, marginTop: 4 }}>
+        {/* Đầu khung giai đoạn giống web: tiêu đề viết hoa theo màu, «N cột · x/y», Ẩn/Hiện việc, Xong hết. */}
+        <View style={[styles.stageCard, { borderLeftColor: tone }]}>
+          <Pressable
+            style={styles.stageTop}
+            onPress={() => setAllCols(!anyOpen)}
+            accessibilityRole="button"
+            accessibilityState={{ expanded: anyOpen }}
+          >
+            <Ionicons name={anyOpen ? 'chevron-down' : 'chevron-forward'} size={16} color={tone} />
+            <Text style={[styles.stageTitle, { color: tone }]} numberOfLines={1}>
+              {String(big.label || '').toUpperCase()}
+            </Text>
+          </Pressable>
+          <View style={styles.stageBtns}>
+            <Text style={[styles.stageMeta, { color: colors.textMuted }]}>
+              {big.columns.length} cột · {big.doneCount}/{big.tasks.length}
+            </Text>
+            {big.openCount > 0 && dealId ? (
+              <Pressable
+                style={[styles.stageChip, styles.stageChipDone, bulkBusy && { opacity: 0.6 }]}
+                disabled={bulkBusy}
+                onPress={() => completeStageAll(big)}
+              >
+                <Ionicons name="checkmark-done-outline" size={13} color={colors.success} />
+                <Text style={[styles.stageChipTxt, { color: colors.success }]}>Xong hết</Text>
+              </Pressable>
             ) : null}
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={styles.groupTitle} numberOfLines={1}>{section.label}</Text>
-              <Text style={styles.groupCount}>
-                {doneInGroup}/{section.tasks.length} xong
-                {openInGroup ? ` · ${openInGroup} còn lại` : ''}
-              </Text>
-            </View>
           </View>
-          {openInGroup > 0 && dealId ? (
-            <Pressable
-              style={[styles.doneAllBtn, bulkBusy && { opacity: 0.6 }]}
-              disabled={bulkBusy}
-              onPress={() => completeStageAll(section as CrmTaskStageGroup)}
-            >
-              <Ionicons name="checkmark-done-outline" size={14} color="#FFF" />
-              <Text style={styles.doneAllTxt}>Xong hết</Text>
-            </Pressable>
-          ) : null}
         </View>
       </View>
     );
   };
 
-  const renderTaskItem = ({ item }: { item: CrmTask }) => {
+  /**
+   * Nhân viên: việc giao cho MÌNH hiện đầy đủ, việc của người khác thu gọn một dòng.
+   * Quản lý/admin cần thao tác trên mọi việc nên luôn hiện đầy đủ (hàm trả true).
+   */
+  const myId = String(user?.id || (user as { userId?: string } | null)?.userId || '');
+  const isMineTask = (t: CrmTask): boolean => {
+    if (canViewTeamWork(user) || !myId) return true;
+    const people = t.assignees?.length ? t.assignees : t.assignee ? [t.assignee] : [];
+    return people.some((p) => p?.id != null && String(p.id) === myId);
+  };
+
+  // Chân khung: đóng viền dưới + bo góc cho mục lớn (các dòng giữa chỉ có viền hai bên).
+  const renderTaskSectionFooter = (
+    { section }: { section: SectionListData<TaskListItem, CrmTaskBigGroup> },
+  ) => {
+    const tone = (section as unknown as CrmTaskBigGroup).color || colors.primary;
+    return <View style={[styles.frameBottom, { borderLeftColor: tone }]} />;
+  };
+
+  const renderTaskItem = ({ item, section }: { item: TaskListItem; section: SectionListData<TaskListItem, CrmTaskBigGroup> }) => {
     if (!dealId) return null;
+    const tone = (section as unknown as CrmTaskBigGroup).color || colors.primary;
+    if (item.kind === 'col') {
+      // Mục con: một cột trong mục lớn — chevron, tên, x/y, thanh tiến độ, nút tích xong cả cột.
+      const col = item.col;
+      const total = col.tasks.length;
+      const pct = total ? Math.round((col.doneCount / total) * 100) : 0;
+      const allDone = total > 0 && col.openCount === 0;
+      return (
+        <View style={[styles.frameSide, { borderLeftColor: tone }]}>
+          <View style={styles.colRow}>
+            <Pressable
+              style={styles.colMain}
+              onPress={() => setColToggles((m) => ({ ...m, [col.key]: !item.open }))}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: item.open }}
+            >
+              <Ionicons name={item.open ? 'chevron-down' : 'chevron-forward'} size={14} color={colors.textMuted} />
+              {col.icon ? <Text style={styles.colIcon}>{col.icon}</Text> : null}
+              <Text style={styles.colName} numberOfLines={1}>{col.label}</Text>
+              <Text style={styles.colCount}>{col.doneCount}/{total}</Text>
+              {total > 0 ? (
+                <View style={styles.colTrack}>
+                  <View style={[styles.colFill, { width: `${pct}%` }]} />
+                </View>
+              ) : null}
+            </Pressable>
+            <Pressable
+              style={[styles.colDoneBtn, allDone && styles.colDoneBtnOn, bulkBusy && { opacity: 0.6 }]}
+              disabled={bulkBusy || total === 0 || allDone}
+              onPress={() => completeStageAll(col)}
+              accessibilityLabel={allDone ? 'Cột đã xong' : 'Tích hoàn thành cột này'}
+            >
+              <Ionicons
+                name={allDone ? 'checkmark-circle' : 'ellipse-outline'}
+                size={18}
+                color={allDone ? colors.success : colors.textFaint}
+              />
+            </Pressable>
+          </View>
+          {item.open && total === 0 ? (
+            <Text style={styles.colEmpty}>Chưa có công việc thuộc cột này</Text>
+          ) : null}
+        </View>
+      );
+    }
     return (
-      <View style={{ paddingHorizontal: Spacing.lg }}>
+      <View style={[styles.frameSide, { borderLeftColor: tone, paddingLeft: 14 }]}>
         <ProjectCrmTaskRow
-          task={item}
+          task={item.task}
           dealId={dealId}
           onUpdated={onTaskUpdated}
           onDeleted={onTaskDeleted}
-          highlighted={Boolean(highlightTaskId) && String(item.id) === String(highlightTaskId)}
+          highlighted={Boolean(highlightTaskId) && String(item.task.id) === String(highlightTaskId)}
+          compact={!isMineTask(item.task)}
+          projectCode={project?.code || displayCode}
         />
       </View>
     );
@@ -1155,7 +1336,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           <SectionList
             ref={tasksListRef}
             sections={taskSections}
-            keyExtractor={(item) => String(item.id)}
+            keyExtractor={(item) => item.key}
             stickySectionHeadersEnabled={false}
             initialNumToRender={12}
             maxToRenderPerBatch={10}
@@ -1189,6 +1370,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
               )
             )}
             renderSectionHeader={renderTaskSectionHeader}
+            renderSectionFooter={renderTaskSectionFooter}
             renderItem={renderTaskItem}
           />
         ) : null}
@@ -1219,6 +1401,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
                 </View>
               ))}
 
+              {canSeeMoney ? (
+              <>
               {(
                 [
                   {
@@ -1260,6 +1444,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
                   <Text style={styles.infoEditHint}>= Giá trị sản xuất − Tiền cọc</Text>
                 </View>
               </View>
+              </>
+              ) : null}
 
               {(
                 [
@@ -1414,12 +1600,6 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
               authorTagUserId={project?.production_person_id}
               onCountChange={setCommentCount}
             />
-          </View>
-        ) : null}
-
-        {visitedTabs.has('drive') ? (
-          <View style={{ flex: 1, display: tab === 'drive' ? 'flex' : 'none' }}>
-            <ProjectDriveTab projectId={projectId} />
           </View>
         ) : null}
 

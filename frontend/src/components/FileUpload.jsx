@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import api from '../lib/api';
 import { Paperclip, X, FileText, Image, Film, File, Box } from 'lucide-react';
 import UploadProgressBubble from './UploadProgressBubble';
@@ -7,6 +7,14 @@ import {
   mergeUploadProgressState,
   updateUploadProgressTracker,
 } from '../lib/uploadProgressEta';
+import {
+  addDriveUpload,
+  createTransferId,
+  isUploadCancelledError,
+  patchDriveUpload,
+  registerUploadAbort,
+  scheduleRemoveUpload,
+} from './drive/driveTransferStore';
 
 const ICON_MAP = {
   image: Image,
@@ -32,44 +40,124 @@ function formatSize(bytes) {
   return (bytes / 1048576).toFixed(1) + 'MB';
 }
 
-/** Upload danh sách File (chọn file hoặc dán clipboard) — trả metadata file_url. */
-export async function uploadFilesBatch(files, { onProgress } = {}) {
+function finishTrackedUpload(id, { cancelled, error } = {}) {
+  if (!id) return;
+  if (cancelled) {
+    patchDriveUpload(id, { status: 'cancelled', progress: 0 });
+    scheduleRemoveUpload(id, 1500);
+    return;
+  }
+  if (error) {
+    patchDriveUpload(id, {
+      status: 'error',
+      error: error?.response?.data?.error || error?.message || 'Lỗi upload',
+    });
+    scheduleRemoveUpload(id, 6000);
+    return;
+  }
+  patchDriveUpload(id, { status: 'done', progress: 100 });
+  scheduleRemoveUpload(id, 4000);
+}
+
+/**
+ * Upload danh sách File (chọn file hoặc dán clipboard) — trả metadata file_url.
+ * `track: true` hiện tiến trình ở góc dưới phải (cùng bảng Drive) và không hủy khi rời trang.
+ */
+export async function uploadFilesBatch(files, { onProgress, track = false } = {}) {
   const list = Array.from(files || []).filter(Boolean).slice(0, 50);
   if (!list.length) return [];
   const totalSize = list.reduce((sum, f) => sum + (f.size || 0), 0);
   const tracker = createUploadProgressTracker(totalSize);
   const formData = new FormData();
   for (const f of list) formData.append('files', f);
-  const { data } = await api.post('/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    onUploadProgress: (ev) => {
-      const stats = updateUploadProgressTracker(tracker, {
-        loaded: ev.loaded,
-        total: ev.total || totalSize,
+  const fileName = list.length === 1 ? list[0].name : `${list.length} file`;
+  let transferId = null;
+  let controller = null;
+  let settled = false;
+  if (track) {
+    transferId = createTransferId();
+    controller = new AbortController();
+    addDriveUpload({
+      id: transferId,
+      name: fileName,
+      progress: 0,
+      status: 'uploading',
+      sizeBytes: totalSize,
+      loadedBytes: 0,
+      bytesPerSec: 0,
+      remainingSec: null,
+    });
+    registerUploadAbort(transferId, controller);
+  }
+  try {
+    const { data } = await api.post('/upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      signal: controller?.signal,
+      onUploadProgress: (ev) => {
+        const stats = updateUploadProgressTracker(tracker, {
+          loaded: ev.loaded,
+          total: ev.total || totalSize,
+        });
+        if (transferId) {
+          patchDriveUpload(transferId, {
+            progress: stats.percent,
+            loadedBytes: stats.loadedBytes,
+            sizeBytes: stats.totalBytes,
+            bytesPerSec: stats.bytesPerSec,
+            remainingSec: stats.remainingSec,
+          });
+        }
+        onProgress?.(mergeUploadProgressState({
+          fileName,
+          fileSize: totalSize,
+          percent: stats.percent,
+          statusText: stats.percent >= 99 ? 'Đã gửi xong, đang lưu file…' : '',
+        }, stats));
+      },
+    });
+    const all = data.files || [];
+    const uploaded = all.filter((f) => f?.file_url && !String(f.file_url).startsWith('data:'));
+    const failed = all.filter((f) => f?.error || !f?.file_url || String(f.file_url).startsWith('data:'));
+    if (!uploaded.length) {
+      const err = new Error(failed[0]?.error || data.error || 'Upload không trả về URL file hợp lệ');
+      settled = true;
+      finishTrackedUpload(transferId, { error: err });
+      throw err;
+    }
+    if (failed.length) {
+      console.warn('Upload partial failure:', failed);
+    }
+    settled = true;
+    finishTrackedUpload(transferId);
+    return uploaded;
+  } catch (err) {
+    if (transferId && !settled) {
+      finishTrackedUpload(transferId, {
+        cancelled: isUploadCancelledError(err),
+        error: isUploadCancelledError(err) ? null : err,
       });
-      onProgress?.(mergeUploadProgressState({
-        fileName: list.length === 1 ? list[0].name : `${list.length} file`,
-        fileSize: totalSize,
-        percent: stats.percent,
-      }, stats));
-    },
-  });
-  const all = data.files || [];
-  const uploaded = all.filter((f) => f?.file_url && !String(f.file_url).startsWith('data:'));
-  const failed = all.filter((f) => f?.error || !f?.file_url || String(f.file_url).startsWith('data:'));
-  if (!uploaded.length) {
-    throw new Error(failed[0]?.error || data.error || 'Upload không trả về URL file hợp lệ');
+    }
+    throw err;
   }
-  if (failed.length) {
-    console.warn('Upload partial failure:', failed);
-  }
-  return uploaded;
 }
 
-export function FileUploadButton({ onFilesUploaded, multiple = true, compact = false, showProgress = true }) {
+export function FileUploadButton({
+  onFilesUploaded,
+  uploadFiles = null,
+  multiple = true,
+  compact = false,
+  showProgress = true,
+  onProgressChange = null,
+}) {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(null);
   const inputRef = useRef(null);
+  const onProgressChangeRef = useRef(onProgressChange);
+  onProgressChangeRef.current = onProgressChange;
+
+  useEffect(() => {
+    onProgressChangeRef.current?.(uploadProgress);
+  }, [uploadProgress]);
 
   const handleFiles = async (e) => {
     const files = e.target.files;
@@ -78,17 +166,20 @@ export function FileUploadButton({ onFilesUploaded, multiple = true, compact = f
     setUploading(true);
     setUploadProgress(null);
     try {
-      const uploaded = await uploadFilesBatch(files, {
-        onProgress: showProgress ? setUploadProgress : undefined,
-      });
-      onFilesUploaded?.(uploaded);
+      const uploaded = uploadFiles
+        ? await uploadFiles(Array.from(files), { onProgress: setUploadProgress })
+        : await uploadFilesBatch(files, { onProgress: showProgress ? setUploadProgress : undefined });
+      if (uploaded?.length) onFilesUploaded?.(uploaded);
     } catch (err) {
-      console.error('Upload error:', err);
-      alert(err?.response?.data?.error || err?.message || 'Không upload được file');
+      if (!isUploadCancelledError(err)) {
+        console.error('Upload error:', err);
+        alert(err?.response?.data?.error || err?.message || 'Không upload được file');
+      }
+    } finally {
+      setUploadProgress(null);
+      setUploading(false);
+      if (inputRef.current) inputRef.current.value = '';
     }
-    setUploadProgress(null);
-    setUploading(false);
-    if (inputRef.current) inputRef.current.value = '';
   };
 
   return (
@@ -117,8 +208,9 @@ export function FileUploadButton({ onFilesUploaded, multiple = true, compact = f
           percent={uploadProgress.percent}
           bytesPerSec={uploadProgress.bytesPerSec}
           remainingSec={uploadProgress.remainingSec}
+          statusText={uploadProgress.statusText}
           compact
-          className="w-full max-w-xs"
+          className={compact ? 'mb-0 w-56 max-w-[14rem]' : 'w-full max-w-xs'}
         />
       ) : null}
     </div>
@@ -190,4 +282,4 @@ export function FileList({ files }) {
     </div>
   );
 }
-
+

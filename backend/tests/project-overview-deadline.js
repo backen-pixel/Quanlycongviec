@@ -146,6 +146,24 @@ assert.equal(
 );
 assert.equal(sxInstallPlanDeadlineIso(planProject, ''), null);
 
+const { computeSxInstallPlanDeadline } = require('../src/helpers/sxInstallPlanKanbanDeadline');
+const { companyWorkEndMsFromRaw } = require('../src/helpers/companyDeadlineClock');
+const movedInstall = {
+  company_id: '18c2563f-3495-498d-8199-23200c9f420e',
+  install_date: '2026-10-10T14:00:00+07:00',
+};
+const cabinetCard = computeSxInstallPlanDeadline(movedInstall, {
+  deadline_group: 'cabinet',
+  group_key: 'gia_cong',
+});
+assert.equal(cabinetCard.endYmd, '2026-10-06');
+assert.equal(cabinetCard.iso, '2026-10-06T17:30:00.000+07:00');
+const morning = new Date('2026-10-06T09:10:00+07:00').getTime();
+const afterWork = new Date('2026-10-06T17:31:00+07:00').getTime();
+const dueMs = companyWorkEndMsFromRaw('2026-10-06T00:00:00.000Z', movedInstall.company_id);
+assert.ok(dueMs > morning);
+assert.ok(dueMs < afterWork);
+
 const leadProject = new Map([['lead-1', 'proj-1']]);
 const crmIndex = indexSxCrmCompletion([
   { lead_id: 'lead-1', title: 'Sơn', status: 'completed', stage_slug: 'sx_gia_cong', production_pipeline_stage_id: 'stage-cabinet' },

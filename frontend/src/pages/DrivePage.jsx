@@ -37,6 +37,7 @@ import ShareModal from '../components/drive/ShareModal';
 import { useAuth } from '../lib/auth';
 import { isSystemAdmin } from '../lib/adminRole';
 import { appendDriveModuleQuery, resolveModuleFromDriveQuery, storeModule } from '../lib/sidebarModuleContext';
+import { showCopyToast } from '../lib/copyToast';
 
 function scopeIcon(scope) {
   if (scope === 'user') return UserIcon;
@@ -437,6 +438,7 @@ export default function DrivePage() {
         await driveTrashFile(item.id);
         removeFilesFromView([item.id]);
       }
+      showCopyToast(`Đã đưa «${item.name || 'mục'}» vào thùng rác`);
     } catch (e) { alert(e?.response?.data?.error || e?.message); }
   }
 
@@ -453,6 +455,7 @@ export default function DrivePage() {
     try {
       if (type === 'folder') await driveDeleteFolderForever(item.id);
       else await driveDeleteFileForever(item.id);
+      showCopyToast(`Đã xóa vĩnh viễn «${item.name || 'mục'}»`);
       await reload();
     } catch (e) { alert(e?.response?.data?.error || e?.message); }
   }
@@ -513,6 +516,7 @@ export default function DrivePage() {
       }
       clearSelection();
       removeFilesFromView(picked.map((f) => f.id));
+      showCopyToast(`Đã đưa ${picked.length} file vào thùng rác`);
     } catch (e) {
       alert(e?.response?.data?.error || e?.message || 'Lỗi xoá');
     } finally {
@@ -550,6 +554,7 @@ export default function DrivePage() {
       }
       clearSelection();
       removeFilesFromView(picked.map((f) => f.id));
+      showCopyToast(`Đã xóa vĩnh viễn ${picked.length} file`);
     } catch (e) {
       alert(e?.response?.data?.error || e?.message || 'Lỗi xoá');
     } finally {

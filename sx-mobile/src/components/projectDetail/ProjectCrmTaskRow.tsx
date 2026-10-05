@@ -38,6 +38,7 @@ import { isImageFile, resolveMediaUrl } from '../../lib/mediaUtils';
 import { saveMessengerAttachment } from '../../lib/messengerFileOpen';
 
 import SpinningLoader from '../SpinningLoader';
+import { withTaskMediaName } from '../../lib/taskMediaName';
 type Props = {
   task: CrmTask;
   dealId: string;
@@ -45,6 +46,10 @@ type Props = {
   onDeleted: (taskId: string) => void;
   /** Highlight khi mở từ tab Công việc. */
   highlighted?: boolean;
+  /** Thu gọn thành một dòng (việc không phải của người đang xem); bấm để mở rộng. */
+  compact?: boolean;
+  /** Mã dự án — dùng đặt tên file ảnh/video đính kèm (xem `taskMediaName`). */
+  projectCode?: string | null;
 };
 
 function formatDate(value?: string | null): string {
@@ -91,8 +96,9 @@ function parseDeadline(value?: string | null): Date {
 
 type ModalKind = 'attach' | 'assign' | 'edit' | 'deadline' | null;
 
-export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, highlighted }: Props) {
+export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, highlighted, compact = false, projectCode }: Props) {
   const { colors } = useTheme();
+  const [expanded, setExpanded] = useState(false);
   const done = isTaskDone(task.status);
   const assignees = taskAssignees(task);
   const assignee = assignees[0] || null;
@@ -334,8 +340,12 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
     const a = pick.assets[0];
     setBusy(true);
     try {
+      // Ảnh/video chọn từ thư viện cũng đặt lại tên; PDF/Word… giữ nguyên tên người dùng.
       await uploadCrmTaskFiles(dealId, task.id, [
-        { uri: a.uri, name: a.name || 'file', mime: a.mimeType || 'application/octet-stream' },
+        withTaskMediaName(
+          { uri: a.uri, name: a.name || 'file', mime: a.mimeType || 'application/octet-stream' },
+          { projectCode, taskTitle: task.title },
+        ),
       ]);
       await loadAttachments();
       onUpdated({
@@ -360,7 +370,9 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
     try {
       const name = asset.fileName || fallbackName;
       const mime = asset.mimeType || fallbackMime;
-      await uploadCrmTaskFiles(dealId, task.id, [{ uri: asset.uri, name, mime }]);
+      // Tên máy ảnh (IMG_… / UUID) không nói ảnh của việc nào → đặt theo «mã dự án - tên việc - Ảnh/Video ngày giờ».
+      const file = withTaskMediaName({ uri: asset.uri, name, mime }, { projectCode, taskTitle: task.title });
+      await uploadCrmTaskFiles(dealId, task.id, [file]);
       await loadAttachments();
       onUpdated({
         ...task,
@@ -493,14 +505,36 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
   const styles = useMemo(
     () =>
       StyleSheet.create({
+        // Dòng phẳng nằm trong khung giai đoạn (giống web): không viền/bo riêng, ngăn cách bằng đường kẻ mảnh.
         row: {
-          backgroundColor: colors.card,
-          borderRadius: Radii.lg,
-          borderWidth: 1,
-          borderColor: colors.border,
-          padding: 12,
-          marginBottom: 8,
+          backgroundColor: 'transparent',
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.border,
+          paddingHorizontal: 12,
+          paddingTop: 10,
+          paddingBottom: 6,
         },
+        compactRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          minHeight: 42,
+          paddingHorizontal: 12,
+          backgroundColor: 'transparent',
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: colors.border,
+        },
+        compactCheck: {
+          width: 16,
+          height: 16,
+          borderRadius: 8,
+          borderWidth: 1.5,
+          borderColor: colors.borderStrong,
+          alignItems: 'center',
+          justifyContent: 'center',
+        },
+        compactTitle: { flex: 1, minWidth: 0, color: colors.textMuted, fontSize: 13, fontWeight: '600' },
+        compactWho: { maxWidth: '42%', color: colors.textFaint, fontSize: 11.5, fontWeight: '700' },
         rowHighlight: {
           borderColor: colors.primary,
           borderWidth: 2,
@@ -573,32 +607,58 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
           letterSpacing: 0.3,
           marginBottom: 2,
         },
-        avatar: {
-          width: 28,
-          height: 28,
-          borderRadius: 14,
+        assigneeRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          alignSelf: 'flex-start',
+          maxWidth: '100%',
+          gap: 6,
+          marginTop: 6,
+          paddingVertical: 3,
+          paddingLeft: 3,
+          paddingRight: 10,
+          borderRadius: 999,
           backgroundColor: colors.primarySoft,
+        },
+        assigneeRowEmpty: {
+          paddingLeft: 8,
+          backgroundColor: colors.warning + '1F',
+        },
+        assigneeAvatars: { flexDirection: 'row', alignItems: 'center' },
+        assigneeAvatar: {
+          width: 22,
+          height: 22,
+          borderRadius: 11,
+          backgroundColor: colors.primary,
+          borderWidth: 1.5,
+          borderColor: colors.card,
           alignItems: 'center',
           justifyContent: 'center',
         },
-        avatarText: { color: colors.primary, fontSize: 10, fontWeight: '800' },
+        assigneeAvatarOverlap: { marginLeft: -7 },
+        assigneeAvatarTxt: { color: '#FFFFFF', fontSize: 9, fontWeight: '800' },
+        assigneeLabel: { color: colors.textMuted, fontSize: 11, fontWeight: '600' },
+        assigneeName: { color: colors.primary, fontSize: 12.5, fontWeight: '800', flexShrink: 1 },
+        assigneeEmptyTxt: { color: colors.warning, fontSize: 12, fontWeight: '800' },
         actions: {
           flexDirection: 'row',
           alignItems: 'center',
           justifyContent: 'flex-end',
           gap: 2,
-          marginTop: 10,
-          paddingTop: 8,
+          marginTop: 4,
+          paddingTop: 4,
           borderTopWidth: StyleSheet.hairlineWidth,
           borderTopColor: colors.border,
         },
         actionBtn: {
-          width: 36,
-          height: 36,
+          width: 34,
+          height: 34,
           borderRadius: Radii.md,
           alignItems: 'center',
           justifyContent: 'center',
         },
+        actionBtnPhoto: { backgroundColor: colors.primary + '14' },
+        actionBtnVideo: { backgroundColor: '#A855F714' },
         actionBtnPrimary: {
           backgroundColor: colors.primary + '18',
         },
@@ -974,6 +1034,30 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
     return null;
   };
 
+  // Việc không phải của mình: một dòng gọn (bấm để mở rộng) — việc của mình mới hiện đầy đủ thao tác.
+  if (compact && !expanded) {
+    return (
+      <TapHighlight
+        style={[styles.compactRow, highlighted && styles.rowHighlight]}
+        pressStyle={{ backgroundColor: colors.primarySoft }}
+        onPress={() => setExpanded(true)}
+        accessibilityLabel={`${task.title}, bấm để mở rộng`}
+      >
+        <View style={[styles.compactCheck, done && styles.checkDone]}>
+          {done ? <Ionicons name="checkmark" size={11} color={colors.success} /> : null}
+        </View>
+        <Text style={[styles.compactTitle, done && styles.titleDone]} numberOfLines={1}>{task.title}</Text>
+        <Text
+          style={[styles.compactWho, assignees.length === 0 && { color: colors.warning }]}
+          numberOfLines={1}
+        >
+          {assignees.length ? assignees.map((p) => p.full_name?.trim() || '—').join(', ') : 'Chưa giao'}
+        </Text>
+        <Ionicons name="chevron-down" size={14} color={colors.textFaint} />
+      </TapHighlight>
+    );
+  }
+
   return (
     <>
       <View style={[styles.row, highlighted && styles.rowHighlight]}>
@@ -990,6 +1074,27 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
             <Text style={[styles.title, done && styles.titleDone]} numberOfLines={2}>
               {task.title}
             </Text>
+            {/* Ai được giao: hiện rõ tên, không chỉ vòng tròn chữ cái ở góc. */}
+            {assignees.length > 0 ? (
+              <View style={styles.assigneeRow}>
+                <View style={styles.assigneeAvatars}>
+                  {assignees.slice(0, 3).map((p, i) => (
+                    <View key={String(p.id ?? i)} style={[styles.assigneeAvatar, i > 0 && styles.assigneeAvatarOverlap]}>
+                      <Text style={styles.assigneeAvatarTxt}>{initials(p.full_name)}</Text>
+                    </View>
+                  ))}
+                </View>
+                <Text style={styles.assigneeLabel}>Giao cho</Text>
+                <Text style={styles.assigneeName} numberOfLines={1}>
+                  {assignees.map((p) => p.full_name?.trim() || '—').join(', ')}
+                </Text>
+              </View>
+            ) : (
+              <View style={[styles.assigneeRow, styles.assigneeRowEmpty]}>
+                <Ionicons name="person-outline" size={14} color={colors.warning} />
+                <Text style={styles.assigneeEmptyTxt}>Chưa giao cho ai</Text>
+              </View>
+            )}
             {hasNote ? (
               <TapHighlight
                 style={styles.noteBox}
@@ -1024,51 +1129,34 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
               )}
             </View>
           </View>
-          {assignee ? (
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{initials(assignee.full_name)}</Text>
-            </View>
-          ) : (
-            <View style={[styles.avatar, { backgroundColor: colors.cardAlt }]}>
-              <Ionicons name="person-outline" size={14} color={colors.textFaint} />
-            </View>
-          )}
         </View>
 
-        <View style={styles.mediaActions}>
+        {/* Hàng thao tác gọn như web: chụp / quay / đính kèm / gán / sửa / xóa trên cùng một dòng. */}
+        <View style={styles.actions}>
           <TapHighlight
-            style={[styles.mediaBtn, styles.mediaBtnPhoto]}
+            style={[styles.actionBtn, styles.actionBtnPhoto]}
             pressStyle={{ opacity: 0.85 }}
             onPress={() => void capturePhoto()}
             disabled={busy}
+            accessibilityLabel="Chụp ảnh"
+            hitSlop={4}
           >
             {busy ? (
               <SpinningLoader size="small" color={colors.primary} />
             ) : (
-              <>
-                <Ionicons name="camera" size={18} color={colors.primary} />
-                <Text style={[styles.mediaBtnTxt, { color: colors.primary }]}>Chụp ảnh</Text>
-              </>
+              <Ionicons name="camera" size={18} color={colors.primary} />
             )}
           </TapHighlight>
           <TapHighlight
-            style={[styles.mediaBtn, styles.mediaBtnVideo]}
+            style={[styles.actionBtn, styles.actionBtnVideo]}
             pressStyle={{ opacity: 0.85 }}
             onPress={() => void captureVideo()}
             disabled={busy}
+            accessibilityLabel="Quay video"
+            hitSlop={4}
           >
-            {busy ? (
-              <SpinningLoader size="small" color="#A855F7" />
-            ) : (
-              <>
-                <Ionicons name="videocam" size={18} color="#A855F7" />
-                <Text style={[styles.mediaBtnTxt, { color: '#A855F7' }]}>Quay video</Text>
-              </>
-            )}
+            <Ionicons name="videocam" size={18} color="#A855F7" />
           </TapHighlight>
-        </View>
-
-        <View style={styles.actions}>
           <TapHighlight
             style={styles.actionBtn}
             pressStyle={styles.actionBtnActive}

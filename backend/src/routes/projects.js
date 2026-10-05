@@ -36,6 +36,8 @@ const {
 const { applyAllActiveWorkshopTemplatesForArea } = require('../helpers/workshopApplyTemplates');
 const { assertProjectAccessible } = require('../helpers/projectAccessScope');
 const { enrichProjectsModulePresence } = require('../helpers/projectModuleCompanies');
+const { cotThieuTuLoi } = require('../helpers/projectDeliveryDates');
+const { isCrmSystemAdminUser, isCrmCompanyAdminUser } = require('../helpers/crmAccessRoles');
 
 const r = Router();
 r.use(auth);
@@ -2421,11 +2423,11 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
     try {
       const {
         productionFinishPatchFromInstallOrDelivery,
-        installAnchorPatchFromBody,
+        installAnchorPersistPatch,
       } = require('../helpers/projectDeliveryDates');
       const finishPatch = productionFinishPatchFromInstallOrDelivery(b);
       if (finishPatch) Object.assign(update, finishPatch);
-      const anchorPatch = installAnchorPatchFromBody(b);
+      const anchorPatch = installAnchorPersistPatch(b);
       if (anchorPatch) Object.assign(update, anchorPatch);
     } catch (_) { /* ignore */ }
     if (b.deposit_amount !== undefined) {
@@ -2471,67 +2473,56 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
       }
     }
 
-    // Try update — if column doesn't exist, retry without problematic fields
+    // Cột thiếu: Postgres/PostgREST báo một cột mỗi lần. Chỉ bỏ đúng cột đó.
     let data, error;
     ({ data, error } = await supabase.from('projects').update(update).eq('id', req.params.id).select(`*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`).single());
-    if (error && error.message?.includes('column')) {
-      // Remove fields that may not exist yet (need migration)
+    if (error && String(error.message || '').includes('column')) {
+      const missing = cotThieuTuLoi(error.message);
+      if (!missing || !Object.prototype.hasOwnProperty.call(update, missing)) throw error;
+      console.warn(`[PUT /projects] bỏ cột chưa có trên DB: ${missing}`);
       const safeCopy = { ...update };
-      ['deadline', 'notes', 'order_date', 'delivery_date', 'production_finish_date', 'deposit_amount', 'collected_amount', 'vc_notes', 'logistics_cost', 'install_occurrence_dates'].forEach(f => delete safeCopy[f]);
+      delete safeCopy[missing];
       ({ data, error } = await supabase.from('projects').update(safeCopy).eq('id', req.params.id).select(`*, customers(id,full_name,phone), current_stage:workflow_stages(id,name,slug,color)`).single());
     }
     if (error) throw error;
 
     if (require('../helpers/sxInstallPlanKanbanDeadline').scheduleEditTouchesKanbanDeadline(b)) {
       try {
-        const { deadlinePatchAfterScheduleEdit } = require('../helpers/sxInstallPlanKanbanDeadline');
-        const { data: sxRow } = await supabase
-          .from('projects')
-          .select('id, company_id, install_date, delivery_date, install_occurrence_dates, production_finish_date, sx_reception_date, created_at, sx_schedule_slip_days, sx_kanban_column_id, sx_kanban_deadline_at, sx_kanban_deadline_reason')
-          .eq('id', req.params.id)
-          .maybeSingle();
-        let sxCol = null;
-        let siblingStages = null;
-        if (sxRow?.sx_kanban_column_id) {
-          const { data: col } = await supabase
-            .from('production_pipeline_stages')
-            .select('id, deadline_group, group_key, company_id, clears_deadline, is_handover_to_logistics')
-            .eq('id', sxRow.sx_kanban_column_id)
-            .maybeSingle();
-          sxCol = col || null;
-          if (sxCol && !String(sxCol.deadline_group || '').trim()) {
-            const { data: sibs } = await supabase
-              .from('production_pipeline_stages')
-              .select('id, deadline_group, group_key')
-              .eq('company_id', sxRow.company_id);
-            siblingStages = sibs || [];
-          }
-        }
-        const deadlinePatch = deadlinePatchAfterScheduleEdit(sxRow, sxCol, siblingStages, b);
-        if (deadlinePatch) {
-          await supabase.from('projects').update(deadlinePatch).eq('id', req.params.id);
-        }
+        const { syncSxCardDeadline } = require('../helpers/sxCardPlanDeadline');
+        const cardDeadline = await syncSxCardDeadline(req.params.id);
+        if (cardDeadline && data) Object.assign(data, cardDeadline);
       } catch (planDlErr) {
         console.warn('[PUT /projects] install-plan kanban deadline:', planDlErr.message);
       }
     }
 
-    if (
-      b.delivery_date !== undefined
-      || b.production_finish_date !== undefined
-      || b.production_deadline !== undefined
-    ) {
+    // Đồng bộ ngày sang các bản sao của đơn ở xưởng khác.
+    //
+    // Căn theo `update` (những gì THỰC SỰ được ghi) chứ không theo `b` (thân yêu
+    // cầu thô). Sửa ô «ngày lắp» chỉ gửi lên install_date; delivery_date là do
+    // installAnchorPersistPatch suy ra rồi ghi vào chính dự án này. Nhìn mỗi `b`
+    // thì dự án đang sửa nhảy ngày còn các bản sao ở xưởng đứng yên — đúng triệu
+    // chứng "lưu được mà chỗ khác không đổi theo".
+    const chamNgay = update.delivery_date !== undefined
+      || update.production_finish_date !== undefined
+      || update.production_deadline !== undefined;
+    if (chamNgay) {
       try {
         const { syncPlacementFamilyDates } = require('../helpers/placeProjectAtWorkshops');
+        // Xoá trắng ngày của cả họ chỉ khi người dùng CỐ Ý xoá ô đó, chứ không
+        // phải vì dự án đang sửa vốn chưa từng có ngày.
+        const coYXoa = ['delivery_date', 'production_finish_date', 'production_deadline', 'install_date']
+          .some((f) => b[f] === null || b[f] === '');
         await syncPlacementFamilyDates(req.params.id, {
-          delivery_date: b.delivery_date !== undefined ? (data.delivery_date ?? null) : undefined,
-          production_deadline: b.production_deadline !== undefined || b.delivery_date !== undefined
+          delivery_date: update.delivery_date !== undefined
+            ? (data.delivery_date ?? null) : undefined,
+          production_deadline: update.production_deadline !== undefined || update.delivery_date !== undefined
             ? (data.production_deadline ?? data.delivery_date ?? null)
             : undefined,
-          production_finish_date: b.production_finish_date !== undefined || b.delivery_date !== undefined
+          production_finish_date: update.production_finish_date !== undefined || update.delivery_date !== undefined
             ? (data.production_finish_date ?? null)
             : undefined,
-        });
+        }, { choPhepXoaNgay: coYXoa });
       } catch (syncErr) {
         console.warn('[PUT /projects] sync placement dates:', syncErr.message);
       }
@@ -3822,7 +3813,12 @@ r.get('/:id/comments/read-receipts', async (req, res) => {
 r.delete('/:id/comments/:commentId', async (req, res) => {
   try {
     if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE', mode: 'sensitive' }))) return;
-    await supabase.from('project_comments').delete().eq('id', req.params.commentId).eq('user_id', req.user.userId);
+    const isAdmin = isCrmSystemAdminUser(req.user) || isCrmCompanyAdminUser(req.user);
+    let q = supabase.from('project_comments').delete().eq('id', req.params.commentId).select('id');
+    if (!isAdmin) q = q.eq('user_id', req.user.userId);
+    const { data: removed, error } = await q;
+    if (error) throw error;
+    if (!removed?.length) return res.status(403).json({ error: 'Không có quyền xóa bình luận này' });
     const io = req.app.get('io');
     const pid = req.params.id;
     const delEvt = { project_id: pid, action: 'deleted', comment_id: req.params.commentId };

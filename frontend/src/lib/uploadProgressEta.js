@@ -79,7 +79,7 @@ export function formatUploadProgressMeta({
   includePercent = false,
 } = {}) {
   if (percent >= 99) {
-    return includePercent ? '99% · Đang xử lý trên server…' : 'Đang xử lý trên server…';
+    return includePercent ? '99% · Đã gửi xong, đang lưu file…' : 'Đã gửi xong, đang lưu file…';
   }
   const parts = [];
   if (includePercent) parts.push(`${percent || 0}%`);

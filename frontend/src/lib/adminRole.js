@@ -96,6 +96,24 @@ export function isCrmModuleAdmin(user) {
   return isAdminLike(user) || isCrmProductionAdmin(user);
 }
 
+/** Khớp RequireExecutive — sidebar «KPI & báo cáo» và trang BC tổ chức. */
+const CRM_EXECUTIVE_ROLES = new Set([
+  'ecosystem_admin',
+  'admin',
+  'manager',
+  'director',
+  'supervisor',
+  'superadmin',
+  'super_admin',
+  'region_admin',
+  'sales_admin',
+  'crm_production_admin',
+]);
+
+export function isCrmExecutive(user) {
+  return CRM_EXECUTIVE_ROLES.has(normalizeRole(user?.role));
+}
+
 /** Email được xem trang Facebook / Zalo OA (không cần full admin CRM). */
 const CRM_SOCIAL_INBOX_EMAILS = new Set([
   'luonggiayen@gmail.com',

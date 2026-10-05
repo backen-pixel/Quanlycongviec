@@ -1,9 +1,6 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../lib/auth';
-import { isCrmModuleAdmin, canAccessCrmSocialInbox, isPlatformAdmin } from '../lib/adminRole';
-
-/** Giám đốc / quản lý / admin KV / sales_admin xem KPI & báo cáo nhân viên — khớp backend CRM report */
-const EXEC_ROLES = ['ecosystem_admin', 'admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'region_admin', 'sales_admin', 'crm_production_admin'];
+import { isCrmModuleAdmin, canAccessCrmSocialInbox, isPlatformAdmin, isCrmExecutive } from '../lib/adminRole';
 
 /**
  * Trang KPI Giám đốc và báo cáo cấp cao
@@ -20,7 +17,7 @@ export function RequireExecutive({ children }) {
     );
   }
   if (!user) return <Navigate to="/login" state={{ from: location }} replace />;
-  if (!EXEC_ROLES.includes(user.role)) return <Navigate to="/crm/dashboard" replace />;
+  if (!isCrmExecutive(user)) return <Navigate to="/crm/dashboard" replace />;
   return children;
 }
 

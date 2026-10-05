@@ -24,6 +24,7 @@ import DriveEntityFolderPickerModal from './DriveEntityFolderPickerModal';
 import PreviewModal from './PreviewModal';
 import DriveLocationBar, { enrichDriveBreadcrumb } from './DriveLocationBar';
 import DriveUploadStatus from './DriveUploadStatus';
+import { showCopyToast } from '../../lib/copyToast';
 import DriveFileIcon from './DriveFileIcon';
 import { DriveFilesListView, DriveFilesGridView, filterImageFiles, DriveFileMoreMenu } from './DriveFileViews';
 
@@ -267,6 +268,10 @@ export default function DriveAttachments({ entityType, entityId, className = '',
       setFolderFiles((cur) => cur.filter((f) => !fileIdSet.has(f.id)));
       if (previewing && fileIdSet.has(previewing.id)) setPreviewing(null);
       clearSelection();
+      const label = items.length === 1
+        ? `Đã xóa «${items[0].name || 'file'}»`
+        : `Đã xóa ${items.length} file`;
+      showCopyToast(label);
     } catch (e) {
       alert(e?.response?.data?.error || e?.message || 'Không xóa được file');
       await reload({ silent: true });
@@ -323,9 +328,10 @@ export default function DriveAttachments({ entityType, entityId, className = '',
   async function unlink(linkId, file) {
     if (!file?.id) return;
     const inEntityFolder = folderFiles.some((f) => f.id === file.id);
+    const name = file.name || 'file này';
     const msg = inEntityFolder
-      ? 'Xóa file này khỏi deal? File sẽ được đưa vào thùng rác Drive.'
-      : 'Bỏ gắn file này khỏi deal? (File gốc vẫn giữ trên Drive.)';
+      ? `Xóa «${name}» khỏi hồ sơ? File sẽ được đưa vào thùng rác Drive.`
+      : `Bỏ gắn «${name}» khỏi hồ sơ? File gốc vẫn giữ trên Drive.`;
     if (!confirm(msg)) return;
     await removeEntityFiles([file]);
   }
