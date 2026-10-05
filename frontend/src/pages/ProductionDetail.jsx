@@ -1649,6 +1649,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [placeSxCompanies, setPlaceSxCompanies] = useState([]);
   const [placeSxTargets, setPlaceSxTargets] = useState([]);
   const [placeSxBusy, setPlaceSxBusy] = useState(false);
+  const [phatSinhBusy, setPhatSinhBusy] = useState(false);
   const [placeSxErr, setPlaceSxErr] = useState('');
   const [workshopPlacements, setWorkshopPlacements] = useState({ placed: [], received_from: [] });
   const [placeSxNotice, setPlaceSxNotice] = useState(null);
@@ -3367,6 +3368,36 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               </button>
             );
           })()}
+          {moduleKey !== 'vc' && (
+            <button
+              type="button"
+              disabled={phatSinhBusy}
+              onClick={async () => {
+                if (!window.confirm('Tạo đơn phát sinh từ dự án này? Đơn mới giữ khách và ngày lắp, không tạo deal CRM.')) return;
+                setPhatSinhBusy(true);
+                try {
+                  const { data } = await api.post(`/production/projects/${id}/phat-sinh`);
+                  const nextId = data?.project?.id;
+                  if (nextId) navigate(`/sx/projects/${nextId}`);
+                } catch (e) {
+                  window.alert(e.response?.data?.error || e.message || 'Không tạo được đơn phát sinh');
+                } finally {
+                  setPhatSinhBusy(false);
+                }
+              }}
+              className="h-9 px-3 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-sm font-medium flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+            >
+              {phatSinhBusy ? 'Đang tạo…' : 'Đơn phát sinh'}
+            </button>
+          )}
+          {project?.source_project_id && (
+            <Link
+              to={`/sx/projects/${project.source_project_id}`}
+              className="h-9 px-3 bg-rose-50 text-rose-700 rounded-lg text-sm font-medium flex items-center"
+            >
+              Đơn gốc
+            </Link>
+          )}
           <Link
             to={`/management/work-unified/${project.id}`}
             className="h-9 px-3 bg-emerald-100 text-emerald-700 rounded-lg text-sm font-medium flex items-center gap-1.5"

@@ -53,6 +53,63 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Nhật ký công việc AI
 
+## 2026-10-02 15:15 — Hàng nhiệm vụ hiện tên nhân viên được gán
+
+- AI: Cursor. Dòng nhiệm vụ thu gọn (ví dụ Phôi) chỉ hiện «Chi tiết», không hiện tên người nhận.
+- File: `frontend/src/components/CRMTasksTab.jsx`.
+- Tên nhân viên hiện luôn trên hàng, không cần mở rộng. Đã xem TB-2026-963: Phôi và Cánh hiện «Thuận».
+
+## 2026-10-02 14:20 — Dashboard Hào chỉ còn dự án có việc của anh ấy
+
+- AI: Cursor. Hào hoàn thiện đang thấy mọi dự án Metalla trên dashboard SX.
+- File: `dealParticipantProduction.js`, `tests/hao-task-project-scope.js`.
+- Tài khoản `hao@metalla.com` chỉ còn dự án có nhiệm vụ CRM hoặc việc sản xuất gắn cho mình. Dự án không có việc của Hào không lên danh sách và không mở được.
+
+## 2026-10-02 13:56 — Hiện BC theo tổ chức cho quản trị HST
+
+- AI: Cursor. Sidebar CRM ẩn mục `executiveOnly` với role `ecosystem_admin`.
+- File: `adminRole.js`, `Sidebar.jsx`, `RequireRole.jsx`, `helpersBundle.js`.
+- Menu và quyền vào trang dùng chung `isCrmExecutive`. API org-overview coi quản trị HST là báo cáo đầy đủ.
+
+## 2026-10-02 11:55 — Bộ lọc Không gian chung giống Giao việc
+
+- AI: Cursor. Tab Không gian chung trước đó chỉ lọc trạng thái và ưu tiên.
+- File: `CRMAssignmentsPage.jsx`, `crmAssignments.js`, `sharedWorkspaceInbox.js`.
+- Admin chọn công ty, phòng ban hoặc nhân viên thì tải việc của đúng phạm vi đó.
+
+## 2026-10-02 11:50 — Lọc phân loại xưởng trên Giao việc Sản xuất
+
+- AI: Cursor. Giao việc Sản xuất dùng cùng ô phân loại với dashboard xưởng (Chưa phân loại / HCB · Tủ bếp / Cánh kính / Cửa).
+- File: `CRMAssignmentsPage.jsx`, `crmAssignments.js`, `sharedWorkspaceInbox.js`.
+- Thử `/sx/assignments`: Tủ bếp 11 việc, Cánh kính 0 việc. API list, stats và Không gian chung trả 200. Đã trả bộ lọc về Tủ bếp.
+
+## 2026-10-02 11:10 — Không chép nhiệm vụ mẫu xưởng sang Không gian chung
+
+- AI: Cursor. Lưu hoặc áp bộ mẫu `sx_`/`vc_` từng tạo `crm_assignments`. Nay bỏ qua nhiệm vụ mẫu; phát sinh (`sx_shared`, `customer_request`) vẫn tạo giao việc.
+- File: `workshopPipelineTask.js`, `crmTaskAssignmentSync.js`, `crmSequentialAssignment.js`, `sharedWorkspaceInbox.js`, `tests/workshop-template-no-assignment.js`.
+- Thử: unit test ok. Gọi sync thật trên «Chốt công nợ» (`sx_pl_6723a412`) — bỏ qua, số giao việc trước/sau = 0. Việc mở kế tiếp của deal là «Thông tin khác hàng», không phải Phôi.
+
+## 2026-10-02 09:55 — Sửa ngày lắp thì hạn thẻ SX chạy theo
+
+- AI: Cursor. Tính lại hạn thẻ bị lỗi vì đọc cột `install_occurrence_dates` không có trên `projects`, nên sửa ngày lắp mà `sx_kanban_deadline_at` đứng yên.
+- File: `projectDeliveryDates.js`, `sxCardPlanDeadline.js`, `projects.js`.
+- Thử TB-2026-978: ngày lắp 07/10 → 14/10, hạn 03/10 → 08/10, rồi trả dữ liệu cũ.
+
+## 2026-10-01 15:50 — Hướng sửa 4 việc module SX
+
+- AI: Cursor. Đơn phát sinh, khóa giai đoạn khi kéo cột, bàn giao VC vào đúng pipeline, hạn thẻ theo lịch 7 ngày.
+- SQL chưa chạy: `database/648_sx_phat_sinh_order.sql`.
+
+## 2026-10-01 14:55 — Sửa dashboard SX vỡ vì filterBusy
+
+- AI: Cursor. `/sx/dashboard` báo Cannot access filterBusy before initialization vì biến được dùng trước khi khai báo.
+- File: `ProductionDashboard.jsx`.
+
+## 2026-10-01 14:50 — Tích và kéo nhiệm vụ trên Giao việc SX
+
+- AI: Cursor. Thẻ nhiệm vụ của dự án chỉ hiện vòng tròn, không tích và không kéo được. Nay quản trị tích hoặc kéo để đổi giai đoạn.
+- File: `CRMAssignmentsPage.jsx`, `assignmentManageAccess.js`.
+
 ## 2026-10-01 14:45 — Mắt tìm Giao việc mở chi tiết đúng module
 
 - AI: Cursor. Nút mắt trong ô tìm luôn nhảy sang deal CRM. Nay theo module đang đứng: SX mở dự án sản xuất, VC mở dự án lắp đặt, CRM vẫn mở deal.
@@ -1584,3 +1641,6 @@ Hoàn tác local bằng đảo commit này nếu cần, nhưng đưa route cũ t
 ---
 
 Khi bắt đầu phiên mới, thêm mục mới lên đầu file, ngay dưới tiêu đề.
+# 2026-10-05 — PR19/main compatibility and detail permissions
+
+Reconciled two conflicts between e16c885a and main ca8810c5. Preserved new Page/post/embedded views and PR19 data/async protections. Independent review identified project and Lead detail disclosure in the newly introduced main route; reused existing permission gates. Separate stale action failures from report failures. Modified adAnalytics route/UI, correctness/action lifecycle tests, CI path coverage, CURRENT and integration evidence. Local regressions 127/127; full frontend build and supported-browser synthetic checks. Operational gate HOLD: read-only CRM authorized but login pending; Render workspace unconfirmed; no live changes. See PR19_MAIN_INTEGRATION_20261005.md for scope, limitations and rollback.

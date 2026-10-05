@@ -2398,6 +2398,13 @@ export default function ProductionDashboard() {
    * thì nhảy sang loại kế tiếp. Chỉ áp dụng cho lựa chọn TỰ ĐỘNG — người dùng tự
    * chọn một loại rỗng thì tôn trọng, không nhảy lung tung dưới tay họ.
    */
+  const filterBusy = !!(
+    workTypesFetching
+    || (companyForTypes && workTypesCompanyId !== companyForTypes)
+    || (loading && !firstLoaded)
+    || syncing
+  );
+
   useEffect(() => {
     if (!autoPickedTypeRef.current) return;
     if (filterBusy) return;
@@ -3904,13 +3911,6 @@ export default function ProductionDashboard() {
     || timePreset || showOrphanColumn || searchQuery.trim();
 
   const sxMainContentLoading = loading && !firstLoaded;
-
-  const filterBusy = !!(
-    workTypesFetching
-    || (companyForTypes && workTypesCompanyId !== companyForTypes)
-    || (loading && !firstLoaded)
-    || syncing
-  );
 
   useEffect(() => {
     if (filterBusy) {

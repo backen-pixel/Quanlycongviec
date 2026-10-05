@@ -26,6 +26,22 @@ function bangChuaCo(err) {
  * Chuẩn hoá payload referral của Messenger.
  * FB gửi ở 3 chỗ: event.referral, event.postback.referral, event.message.referral
  */
+/**
+ * Khoá ổn định của một mẫu quảng cáo.
+ *
+ * URL Facebook gửi là link ký có hạn (oh=, oe=) nên vài ngày sau sẽ 404 và mỗi
+ * lần gửi lại một khác — phải cắt query mới nhóm được theo mẫu.
+ * NGOẠI LỆ: link dạng .../ads/image/ mang danh tính NGAY TRONG query, cắt query
+ * là mọi mẫu dồn chung một khoá. Đo trên dữ liệu thật: 7 dòng bị dồn như vậy.
+ */
+function khoaCreative(url) {
+  const s = String(url || '').trim();
+  if (!s) return null;
+  const duong = s.split('?')[0];
+  if (/\/ads\/image\/?$/.test(duong)) return s;
+  return duong;
+}
+
 function docReferralMessenger(event) {
   const ref = event?.referral || event?.postback?.referral || event?.message?.referral || null;
   if (!ref) return null;
@@ -44,9 +60,7 @@ function docReferralMessenger(event) {
     fb_post_id: chuoi(ads.post_id) || chuoi(ref.post_id),
     fb_creative_url: creative,
     fb_creative_type: creative ? (video ? 'video' : 'photo') : null,
-    // URL là link ký có hạn (oh=, oe=) nên vài ngày sau sẽ 404 và mỗi lần gửi lại
-    // một khác. Giữ phần đường dẫn không đổi để còn nhóm được theo mẫu.
-    fb_creative_key: creative ? String(creative).split('?')[0] : null,
+    fb_creative_key: khoaCreative(creative),
     raw: ref,
   };
 }
