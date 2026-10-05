@@ -1,6 +1,8 @@
 ## 2026-10-05 — Sửa mã ngăn Backup tự cấp quyền và clone legacy
 
-Trên nền b0955e23, bỏ grant tự động, khóa helper/CLI cũ trước IO và fallback clone ở sync/manual-switch. Giữ job lỗi quyền qua retry12/13, dừng batch, giữ lỗi HTTP cho caller; không xóa queue thật. 20/20 unit giả lập PASS, tám file JS qua kiểm cú pháp; chuyển fixture grants legacy riêng và giữ negative calendar tests. CI intake/restore dùng PostgreSQL17, Node18/22 có workflow guard riêng; review/CI đang chờ. [Hồ sơ tác động và giới hạn](vpt-marketing-automation/BACKUP_PRIVILEGE_GUARD_20261005.md). Chưa DB/deploy; các quyền/schema thật chưa được sửa.
+Trên nền b0955e23, bỏ grant tự động, khóa helper/CLI cũ trước IO và fallback clone ở sync/manual-switch. Giữ job lỗi quyền qua retry12/13, dừng batch, giữ lỗi HTTP cho caller; không xóa queue thật. Reviewer phát hiện starvation ở memory queue; sửa defer xuống cuối và thêm mixed-queue test. 20/20 unit PASS độc lập. Fixture grants lịch sử giữ nguyên negative calendar tests.
+
+Xuất bản f437db54, CImerge28d6327b cùngtree31983f8c. Backup guard37290310025 cả Node18/22:20PASS; Marketing37290310047 cả10jobSUCCESS, Node18/22 mỗi1.521PASS, PostgreSQL17 intake507/restore11PASS. Report37290310275 và Agentguardrails37290310085 SUCCESS. Lần36a6 CI restore FAIL do guard phiên bản16, đã sửa expectedmajor ghim17 và fail-fast prerequisite, kiểm lại trênhead mới. [Hồ sơ tác động và giới hạn](vpt-marketing-automation/BACKUP_PRIVILEGE_GUARD_20261005.md). Chưa DB/deploy; quyền/schema thật chưa sửa và restore thật/UAT chưa PASS.
 
 ---
 

@@ -1,6 +1,6 @@
 # Ứng viên mở tuyến Facebook nhận khách — tích hợp 05/10/2026
 
-> Delta mới trên nền b0955e23: [guard Backup](BACKUP_PRIVILEGE_GUARD_20261005.md) bỏ tự cấp quyền, khóa clone cũ và giữ job lỗi quyền. Kiểm cục bộ20/20; CI/review mới đang thực hiện. Phần fd3babeb dưới đây giữ bằng chứng nền, không tự chứng nhận delta Backup.
+> Ứng viên hiện hành f437db54: [guard Backup](BACKUP_PRIVILEGE_GUARD_20261005.md) bỏ tự cấp quyền, khóa clone cũ, giữ job lỗi quyền và cho job hợp lệ phía sau tiến được. Review20PASS, CIguard Node18/22 mỗi20PASS; Marketing10/10jobSUCCESS, PostgreSQL17 intake507/restore11PASS; report/AgentguardrailsSUCCESS. Tree31983f8c bằngCImerge28d6327b. Phần fd3babeb dưới giữ bằng chứng nền; DB thật chưa sửa hoặc phát hành.
 
 Founder yêu cầu hoàn tất việc tích hợp, kiểm thử và đối chiếu cấu hình. Ưu tiên gói đầu: Facebook Lead Ads → CRM → Admin Vạn Phú Thành → báo cáo chi phí trên khách hợp lệ. Mục tiêu 250.000đ/khách, ngân sách và kiến trúc giữ nguyên; AI gửi tư vấn/đặt lịch và các kênh khác có cổng mở riêng.
 

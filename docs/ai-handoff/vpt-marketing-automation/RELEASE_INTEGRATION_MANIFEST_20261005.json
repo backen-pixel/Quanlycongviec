@@ -1,35 +1,45 @@
 {
   "kind": "INTEGRATED_CANDIDATE_INVENTORY_NOT_EXECUTABLE",
   "recordedAt": "2026-10-05T07:19:06Z",
+  "updatedAt": "2026-10-05T09:31:27Z",
   "risk": "HIGH",
   "releaseStatus": "HOLD_REAL_DB_BINDING_CUTOVER_UAT",
   "founderReleaseDecision": null,
   "candidate": {
-    "commit": "fd3babeb0a1ba25a9ec7b98f3e5918b3ef216798",
-    "tree": "4c8d1caba38d8e9c6a2710d4f65f41e09bc99f76",
+    "commit": "f437db543fb65e6e46444b5a8dbe608a4df727db",
+    "tree": "31983f8cfa97703054d6684c1d4d90b04e35e66f",
     "integratedMain": "3375ef712c7a18a75fec8ee79f5e69a347c5f68d",
     "pr": 25,
     "branch": "codex/agent-guardrails-20261005",
-    "ciMergeCommit": "7774edd9b8a3c27d7b1d9dba465eeb2b1042b444",
+    "ciMergeCommit": "28d6327b4c77ab9b2aa74399c4fbfce0d460c335",
     "ciTreeEqualsCandidate": true
   },
   "ci": {
     "marketing": {
-      "runId": 37276593013,
+      "runId": 37290310047,
       "conclusion": "success",
       "jobsPassed": 10,
       "node18Passed": 1521,
       "node22Passed": 1521,
       "intakePostgresPassed": 507,
-      "isolatedRestorePassed": 11
+      "isolatedRestorePassed": 11,
+      "intakeAndRestorePostgresMajor": 17,
+      "restoreArchiveSha256": "5909a8681d14b02758bca3d120b4b65c0f53281a1f1eef9c5cd363144956fbf9"
     },
     "report": {
-      "runId": 37276592963,
+      "runId": 37290310275,
       "conclusion": "success"
     },
     "guardrails": {
-      "runId": 37276592953,
+      "runId": 37290310085,
       "conclusion": "success"
+    },
+    "backupPrivilegeGuard": {
+      "runId": 37290310025,
+      "conclusion": "success",
+      "node18Passed": 20,
+      "node22Passed": 20,
+      "evidence": "BACKUP_PRIVILEGE_GUARD_20261005.md"
     }
   },
   "deployed": {

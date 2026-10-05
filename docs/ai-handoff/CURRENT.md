@@ -1,8 +1,8 @@
-## 05/10/2026 — Bản sửa ngăn Backup tự cấp quyền đang kiểm chứng
+## 05/10/2026 — Bản sửa ngăn Backup tự cấp quyền đã PASS CI và review
 
 Sau catalog b0955e23, đã sửa helper/CLI cấp quyền, bỏ grant tự động ở replication/sync; khóa clone toàn bộ cũ và fallback manual-switch. Job lỗi quyền giữ ID/payload qua12 lần thử và dừng batch, không báo đã áp dụng. [Phạm vi, tác động, kiểm thử và cách dừng](vpt-marketing-automation/BACKUP_PRIVILEGE_GUARD_20261005.md).
 
-20/20 unit cô lập và kiểm cú pháp PASS cục bộ; CI Node18/22, intake/restore PostgreSQL17 và reviewer đúng delta đang thực hiện. PASS fd3babeb phía dưới là nền, không thay chứng nhận delta mới. DB thật vẫn có quyền rộng/chênh Backup đã ghi; chưa áp dụng bản sửa, đổi DB/cấu hình hoặc phát hành. Không yêu cầu Founder đăng nhập lại.
+Ứng viên f437db54, tree31983f8c bằng CImerge28d6327b. Backup guard Node18/22 mỗi20PASS; Marketing10/10job SUCCESS, Node18/22 mỗi1.521PASS, PostgreSQL17 intake507PASS/restore11PASS. Report và Agent guardrails SUCCESS. Reviewer độc lập20PASS, finding queue bộ nhớ đã khép, xác nhận published blobs và hai file diễn tập. [Manifest hiện hành](vpt-marketing-automation/RELEASE_INTEGRATION_MANIFEST_20261005.json). DB thật vẫn có quyền rộng/chênh Backup đã ghi; chưa áp dụng bản sửa, đổi DB/cấu hình hoặc phát hành. Không yêu cầu Founder đăng nhập lại.
 
 ---
 

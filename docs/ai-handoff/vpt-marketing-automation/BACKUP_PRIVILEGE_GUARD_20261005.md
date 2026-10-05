@@ -15,7 +15,14 @@ Sau [đối chiếu DB thật](DB_CATALOG_20261005.md), sửa bước đầu đ�
 
 20/20 kiểm thử hành vi cô lập PASS trên Windows/Node24: helper/CLI không nạp cấu hình/DB; force không vượt khóa; lỗi HTTP và FK; queue Redis giả lập/bộ nhớ qua retry12/13; Storage403; đồng bộ bình thường và thất bại; hai đường manual-switch không clone. Tám file JavaScript qua kiểm cú pháp. Không gọi nhà cung cấp hoặc DB thật.
 
-Thêm CI Node18/22 riêng cho guard. Job intake và restore của workflow Marketing chuyển từ PostgreSQL16 sang17, dùng hai cluster dữ liệu giả. Kết quả CI và review đúng phiên bản đang chờ, chưa kế thừa PASS fd3babeb cho delta mới. Test isolated không thay restore bản sao Primary hoặc UAT vận hành.
+Ứng viên cuối `f437db543fb65e6e46444b5a8dbe608a4df727db`, tree `31983f8cfa97703054d6684c1d4d90b04e35e66f`. CI merge `28d6327b4c77ab9b2aa74399c4fbfce0d460c335` đã lấy về và khớp cùng tree. Runtime guard tại36a6f06d; hai commit sau chỉ sửa cấu hình/điều kiện bộ diễn tập.
+
+- [Backup guard37290310025](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37290310025): Node18/22 mỗi bản20 PASS,0 FAIL,0 SKIP.
+- [Marketing37290310047](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37290310047):10/10 job SUCCESS, full frontend build; Node18/22 mỗi bản1.521 PASS. Đã đọc log job111698909613: PostgreSQL17 intake507 PASS và restore11 PASS,0 FAIL,0 SKIP.
+- Restore chạy hai cluster PostgreSQL17 khác nhau, dữ liệu giả124 bảng; archive SHA256 `5909a8681d14b02758bca3d120b4b65c0f53281a1f1eef9c5cd363144956fbf9`. **Không phải bản sao Primary thật hoặc Storage thật.**
+- [Report37290310275](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37290310275) và [Agent guardrails37290310085](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37290310085): SUCCESS.
+
+Reviewer độc lập chạy20/20 PASS và khép finding về job bị từ chối quyền chặn hàng bộ nhớ: defer xuống cuối hàng, có test mixed queue Redis/bộ nhớ. Reviewer xác nhận các blob bản xuất bản và PASS hai file sửa bộ diễn tập tạif437db54. Lần CI36a6f06d từng FAIL restore do test ghim16; đã chuyển expected major thành cấu hình ghim17 và dừng trước restore nếu prerequisite lỗi, không bỏ kiểm cluster/target rỗng/role/quyền. CI cuối trênhead mới ở trên đã PASS. Test isolated không thay restore bản sao Primary hoặc UAT vận hành.
 
 ## Giới hạn và khôi phục
 
