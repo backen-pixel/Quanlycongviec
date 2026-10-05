@@ -26,16 +26,6 @@ const CLIENT_COMPANY_PRODUCTION_AUTO_PARTICIPANT_EMAILS = new Set([
   'minh.phucdatdoor@gmail.com',
 ]);
 
-/**
- * NV xưởng chỉ thấy dự án có nhiệm vụ gắn cho mình.
- * Hào hoàn thiện: dashboard Metalla trước đó hiện mọi dự án Data đầu ra (85 thẻ).
- */
-const TASK_SCOPED_PRODUCTION_EMAILS = new Set([
-  'hao@metalla.com',
-]);
-
-const EMPTY_PROJECT_SCOPE_ID = '00000000-0000-0000-0000-000000000000';
-
 /** UUID công ty SX — đồng bộ với DB prod (HCB, Metalla). */
 const HCB_COMPANY_ID = '18c2563f-3495-498d-8199-23200c9f420e';
 const METALLA_HUCABI_COMPANY_ID_SET = new Set([
@@ -292,10 +282,6 @@ async function userCanAccessCrossWorkshopProductionProject(user, projectId) {
   }
 
   if (clientCoId && String(proj.company_id) === String(clientCoId)) {
-    if (isTaskScopedProductionUser(user)) {
-      const ids = await getTaskAssignedProjectIdsForUser(user?.userId || user?.id);
-      return ids.some((id) => String(id) === String(projectId));
-    }
     if (!userNeedsParticipantOnlyProductionScope(user)) return true;
     return userCanAccessProductionProjectAsParticipant(user?.userId, projectId, user);
   }
@@ -649,148 +635,7 @@ async function userCanAccessProductionProjectAsParticipant(userId, projectId, us
  * Phạm vi dự án SX / Lắp đặt — kế toán (accounting) + cross-viewer legacy.
  * HCB/Metalla: chỉ dự án có deal thuộc công ty kế toán (external_company_id).
  */
-function isTaskScopedProductionUser(user) {
-  return TASK_SCOPED_PRODUCTION_EMAILS.has(normalizeEmail(user?.email));
-}
-
-/** null = chưa khóa id; mảng = giao với dự án có việc của user. */
-function intersectProjectIds(baseIds, taskIds) {
-  const tasks = [...new Set((taskIds || []).map(String).filter(Boolean))];
-  if (baseIds == null) return tasks;
-  const allow = new Set(tasks);
-  return [...new Set(baseIds.map(String).filter((id) => allow.has(id)))];
-}
-
-const _taskProjectIdsCache = new Map();
-const _taskProjectIdsInflight = new Map();
-const TASK_PROJECT_IDS_TTL_MS = 30_000;
-
-async function loadTaskAssignedProjectIds(userId) {
-  const ids = new Set();
-  const { data: assignedTasks, error: taskErr } = await supabase
-    .from('crm_tasks')
-    .select('id, lead_id')
-    .eq('assignee_id', userId)
-    .limit(2000);
-  if (taskErr) {
-    console.warn('[dealParticipantProduction] task scope crm_tasks:', taskErr.message);
-    return [];
-  }
-  const { data: junction, error: jErr } = await supabase
-    .from('crm_task_assignees')
-    .select('task_id')
-    .eq('user_id', userId)
-    .limit(2000);
-  if (jErr && !/crm_task_assignees/.test(String(jErr.message || ''))) {
-    console.warn('[dealParticipantProduction] task scope assignees:', jErr.message);
-    return [];
-  }
-  const knownTaskIds = new Set((assignedTasks || []).map((t) => t.id));
-  const leadIds = new Set((assignedTasks || []).map((t) => t.lead_id).filter(Boolean));
-  const extraTaskIds = (junction || [])
-    .map((row) => row.task_id)
-    .filter((id) => id && !knownTaskIds.has(id));
-  for (let i = 0; i < extraTaskIds.length; i += 80) {
-    const chunk = extraTaskIds.slice(i, i + 80);
-    const { data, error } = await supabase.from('crm_tasks').select('lead_id').in('id', chunk);
-    if (error) {
-      console.warn('[dealParticipantProduction] task scope extra tasks:', error.message);
-      return [];
-    }
-    for (const row of data || []) {
-      if (row.lead_id) leadIds.add(row.lead_id);
-    }
-  }
-  const leadList = [...leadIds];
-  for (let i = 0; i < leadList.length; i += 80) {
-    const chunk = leadList.slice(i, i + 80);
-    const { data, error } = await supabase
-      .from('crm_leads')
-      .select('project_id')
-      .in('id', chunk)
-      .not('project_id', 'is', null);
-    if (error) {
-      console.warn('[dealParticipantProduction] task scope leads:', error.message);
-      return [];
-    }
-    for (const row of data || []) {
-      if (row.project_id) ids.add(String(row.project_id));
-    }
-  }
-  const { data: projectTasks, error: pErr } = await supabase
-    .from('tasks')
-    .select('project_id')
-    .eq('assignee_id', userId)
-    .not('project_id', 'is', null)
-    .limit(2000);
-  if (pErr) {
-    console.warn('[dealParticipantProduction] task scope project tasks:', pErr.message);
-    return [];
-  }
-  for (const row of projectTasks || []) {
-    if (row.project_id) ids.add(String(row.project_id));
-  }
-  return [...ids];
-}
-
-async function getTaskAssignedProjectIdsForUser(userId) {
-  if (!userId) return [];
-  const key = String(userId);
-  const now = Date.now();
-  const cached = _taskProjectIdsCache.get(key);
-  if (cached && now - cached.at < TASK_PROJECT_IDS_TTL_MS) return cached.ids;
-  const inflight = _taskProjectIdsInflight.get(key);
-  if (inflight) return inflight;
-  const promise = (async () => {
-    try {
-      const ids = await loadTaskAssignedProjectIds(key);
-      _taskProjectIdsCache.set(key, { at: Date.now(), ids });
-      return ids;
-    } catch (e) {
-      console.warn('[dealParticipantProduction] getTaskAssignedProjectIdsForUser:', e?.message || e);
-      return [];
-    } finally {
-      _taskProjectIdsInflight.delete(key);
-    }
-  })();
-  _taskProjectIdsInflight.set(key, promise);
-  return promise;
-}
-
-async function tightenQueryToTaskProjects(scoped, user) {
-  const taskIds = await getTaskAssignedProjectIdsForUser(user?.userId || user?.id);
-  const nextIds = intersectProjectIds(scoped.memberProjectIds, taskIds);
-  if (!nextIds.length) {
-    return {
-      query: scoped.query.in('id', [EMPTY_PROJECT_SCOPE_ID]),
-      memberProjectIds: [],
-    };
-  }
-  return {
-    query: scoped.query.in('id', nextIds),
-    memberProjectIds: nextIds,
-  };
-}
-
 async function applyWorkshopProjectVisibilityScope(
-  query,
-  user,
-  workshopCompanyId = null,
-  sxWorkshopCompanyId = null,
-  dealCompanyId = null,
-) {
-  const scoped = await resolveWorkshopProjectVisibilityScope(
-    query,
-    user,
-    workshopCompanyId,
-    sxWorkshopCompanyId,
-    dealCompanyId,
-  );
-  if (!isTaskScopedProductionUser(user)) return scoped;
-  return tightenQueryToTaskProjects(scoped, user);
-}
-
-async function resolveWorkshopProjectVisibilityScope(
   query,
   user,
   workshopCompanyId = null,
@@ -879,9 +724,6 @@ module.exports = {
   isVptCompanyCommercialDocViewer,
   userNeedsParticipantOnlyProductionScope,
   userNeedsParticipantOnlyProductionScopeForWorkshop,
-  isTaskScopedProductionUser,
-  intersectProjectIds,
-  getTaskAssignedProjectIdsForUser,
   getLeadMemberProjectIdsForUser,
   userCanAccessProductionProjectAsParticipant,
   userCanAccessCrossWorkshopProductionProject,

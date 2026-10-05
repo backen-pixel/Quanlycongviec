@@ -19,30 +19,31 @@ export default function UploadProgressBubble({
   align = 'end',
   variant = 'bubble',
   title,
+  statusText = '',
   className = '',
 }) {
   if (!fileName && !title) return null;
 
-  const meta = formatUploadProgressMeta({ percent, bytesPerSec, remainingSec });
+  const meta = statusText || formatUploadProgressMeta({ percent, bytesPerSec, remainingSec });
   const barWidth = Math.max(percent >= 99 ? 99 : 8, percent || 0);
 
   if (variant === 'inline') {
     return (
-      <div className={`mb-2 ${className}`}>
-        <div className="flex items-center justify-between text-[10px] text-blue-600 mb-1 gap-2">
-          <span className="truncate min-w-0">
-            📤 {fileName}
-            {fileSize ? ` (${formatFileSize(fileSize)})` : ''}
+      <div className={`mb-2 min-w-0 ${className}`}>
+        <div className="flex items-center justify-between gap-2 text-[12px] text-[#050505] mb-1">
+          <span className="truncate min-w-0" title={fileName || ''}>
+            {fileName}
+            {fileSize ? <span className="text-[#65676b]"> · {formatFileSize(fileSize)}</span> : null}
           </span>
-          <span className="font-bold shrink-0 tabular-nums">{percent >= 99 ? '…' : `${percent}%`}</span>
+          <span className="font-semibold shrink-0 tabular-nums text-[#1877f2]">{Math.min(99, percent || 0)}%</span>
         </div>
-        <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+        <div className="w-full h-1.5 bg-[#e4e6eb] rounded-full overflow-hidden">
           <div
-            className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full transition-all duration-300"
+            className="h-full bg-[#1877f2] rounded-full transition-all duration-300"
             style={{ width: `${barWidth}%` }}
           />
         </div>
-        <p className="text-[9px] text-blue-500/90 mt-0.5 tabular-nums truncate">{meta}</p>
+        <p className="text-[11px] text-[#65676b] mt-1 tabular-nums truncate" title={meta}>{meta}</p>
       </div>
     );
   }

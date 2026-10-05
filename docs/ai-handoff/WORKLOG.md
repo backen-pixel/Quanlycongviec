@@ -17,17 +17,60 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Nhật ký công việc AI
 
+## 2026-10-05 16:00 — NV Metalla không mở được dự án đặt sang xưởng Hucabi
+
+- AI: Cursor. Toại (admin Metalla) mở TB-2026-909 được nhưng TB-2026-964 (Hucabi, đặt từ 909) bị 403.
+- Nguyên nhân: `getAccountingClientProjectIdsAtWorkshop` gửi `.in('project_id', 641 UUID)` → PostgREST `Bad Request` (URL > ~25KB) → trả `[]` → mọi dự án Hucabi đều bị từ chối với NV công ty khác.
+- Sửa: phân trang dự án + tra deal theo lô bằng `supabaseFetchAll`. Kiểm tra local: 81 dự án khớp, có TB-2026-964.
+- Còn tồn: `getVptRelatedProjectIdsAtWorkshop` cùng kiểu lỗi, chưa sửa.
+- File: `backend/src/helpers/accountingScope.js`.
+
+## 2026-10-05 15:00 — Menu file Drive không đè thẻ
+
+- AI: Cursor. Menu ⋯ nằm trong thẻ `overflow-hidden` nên Xem trước / Xóa đè lên ảnh và bị cắt.
+- Đưa menu ra lớp nổi trên trang, căn theo nút ⋯, lật lên trên nếu sát đáy màn hình.
+- File: `DriveFileViews.jsx`.
+
+## 2026-10-05 14:35 — Xóa file Drive có xác nhận và báo thành công
+
+- AI: Cursor. Menu xóa file trên hồ sơ đã hỏi xác nhận nhưng không báo khi xong.
+- Giữ hộp xác nhận (kèm tên file) và thêm toast «Đã xóa». Trang Drive báo tương tự khi đưa vào thùng rác hoặc xóa vĩnh viễn.
+- File: `DriveAttachments.jsx`, `DrivePage.jsx`.
+
+## 2026-10-05 10:40 — Tải file bình luận sống qua đổi trang
+
+- AI: Cursor. Rời trang làm mất thanh tiến trình trong ô bình luận nên tưởng như tải bị dừng. Request axios không bị hủy khi unmount.
+- Gắn tiến trình vào bảng góc dưới phải của Drive: tốc độ và thời gian còn lại. File đính kèm thường và file lớn đều hiện ở đó.
+- File: `FileUpload.jsx`, `drive.js`, `oversizedDriveUpload.js`.
+
+## 2026-10-05 10:30 — Thanh tải file trong bình luận
+
+- AI: Cursor. Tiến trình đính kèm nằm trong cột kẹp giấy (~150px) nên tên file và chữ trạng thái bị gãy trong ô nhập.
+- Đưa thanh tiến trình ra hàng riêng, full width, phía trên ô soạn. File lớn dừng ở 99% vì server đang đẩy lên Google Drive sau khi trình duyệt gửi xong.
+- File: `CommentsPanels.jsx`, `FileUpload.jsx`, `UploadProgressBubble.jsx`, `oversizedDriveUpload.js`, `uploadProgressEta.js`.
+
+## 2026-10-05 09:20 — Hạn HCB bám cột, quá hạn sau 17:30
+
+- AI: Cursor. Đổi ngày lắp HCB vẫn quá hạn vì hạn thẻ lấy nhóm việc còn mở sớm nhất, không phải cột đang đứng.
+- Hạn thẻ và bảng nhiệm vụ SX tính lại từ cột Kanban, mốc 17:30. Cùng ngày chỉ quá hạn sau giờ đó.
+- File: `sxCardPlanDeadline.js`, `workTasks.js`, `ProjectTasksOverviewPage.jsx`. Đã quét lại hạn thẻ HCB.
+
+## 2026-10-05 08:52 — File trên 50MB lưu Drive, link vào bình luận
+
+- AI: Cursor. File đính kèm lớn hơn 50MB không còn bị chặn: tải lên Google Drive, tạo link xem, gắn vào bình luận lead/dự án. Chat lead cũng đăng bình luận kèm link.
+- File: `oversizedDriveUpload.js`, `CommentsPanels.jsx`, `LeadChatTabs.jsx`, `drive.js`, `helpersBundle.js`.
+
+## 2026-10-02 16:51 — Gỡ lọc dashboard Hào, trả về xem đủ dự án xưởng
+
+- AI: Cursor. Đã bỏ phạm vi «chỉ dự án có việc của Hào» trên dashboard SX.
+- File: `dealParticipantProduction.js`. Xóa `tests/hao-task-project-scope.js`.
+- `hao@metalla.com` thấy lại mọi dự án công ty, theo phân loại đang chọn.
+
 ## 2026-10-02 15:15 — Hàng nhiệm vụ hiện tên nhân viên được gán
 
 - AI: Cursor. Dòng nhiệm vụ thu gọn (ví dụ Phôi) chỉ hiện «Chi tiết», không hiện tên người nhận.
 - File: `frontend/src/components/CRMTasksTab.jsx`.
 - Tên nhân viên hiện luôn trên hàng, không cần mở rộng. Đã xem TB-2026-963: Phôi và Cánh hiện «Thuận».
-
-## 2026-10-02 14:20 — Dashboard Hào chỉ còn dự án có việc của anh ấy
-
-- AI: Cursor. Hào hoàn thiện đang thấy mọi dự án Metalla trên dashboard SX.
-- File: `dealParticipantProduction.js`, `tests/hao-task-project-scope.js`.
-- Tài khoản `hao@metalla.com` chỉ còn dự án có nhiệm vụ CRM hoặc việc sản xuất gắn cho mình. Dự án không có việc của Hào không lên danh sách và không mở được.
 
 ## 2026-10-02 13:56 — Hiện BC theo tổ chức cho quản trị HST
 

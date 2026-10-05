@@ -17,7 +17,75 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-10-02 15:15 (UTC+7)
+Cập nhật: 2026-10-05 16:00 (UTC+7)
+
+## SX — NV công ty CRM mở dự án tại xưởng HCB/Metalla bị 403
+
+Trạng thái: **BE local, chưa deploy.**
+
+`getAccountingClientProjectIdsAtWorkshop` đọc dự án xưởng theo trang và tra deal theo lô ID (trước đây `.in()` 641 UUID → `Bad Request` → trả rỗng → 403 «Dự án không thuộc deal công ty của bạn tại xưởng này»).
+
+Hoàn tác: revert `backend/src/helpers/accountingScope.js`.
+
+## Drive — menu file không còn đè lên thẻ
+
+Trạng thái: **FE local.**
+
+Menu ⋯ của file trong lưới Drive được gắn lên `document.body`, không còn bị `overflow-hidden` của thẻ cắt và đè lên ảnh. Hết chỗ phía dưới thì menu mở lên trên.
+
+Hoàn tác: revert `DriveFileViews.jsx`.
+
+## Drive — xác nhận và báo khi xóa file
+
+Trạng thái: **FE local.**
+
+Menu ⋯ trên file Drive của hồ sơ hỏi xác nhận (kèm tên file) trước khi xóa. Xóa xong hiện toast «Đã xóa …». Trang Drive cũng báo khi đưa vào thùng rác hoặc xóa vĩnh viễn.
+
+Hoàn tác: revert `DriveAttachments.jsx`, `DrivePage.jsx`.
+
+
+
+## Bình luận — tải file giữ khi đổi trang
+
+Trạng thái: **FE local.**
+
+Đổi trang trong app không cắt request. Tiến trình hiện ở bảng góc dưới phải (cùng chỗ Drive): %, tốc độ mạng, thời gian còn lại. File ≤ 50MB và file lớn lên Drive đều vào bảng này. Đóng tab hoặc tải lại trang thì trình duyệt vẫn hủy request.
+
+Hoàn tác: revert `FileUpload.jsx`, `drive.js`, `oversizedDriveUpload.js`.
+
+## Bình luận — thanh tải file không còn nằm trong ô nhập
+
+Trạng thái: **FE local.**
+
+Khi gửi file, tiến trình hiện thành một hàng phía trên ô bình luận (tên file một dòng, thanh %, trạng thái một dòng). Ô nhập chỉ còn nút kẹp giấy.
+
+File trên 50MB (ví dụ APK 68MB) đi Google Drive: trình duyệt gửi hết lên server thì % dừng ở 99, server mới tải tiếp lên Drive rồi tạo link. Dòng trạng thái ghi «Đã gửi xong, đang lưu Google Drive…» rồi «Đang tạo link xem…».
+
+Hoàn tác: revert `CommentsPanels.jsx`, `FileUpload.jsx`, `UploadProgressBubble.jsx`, `oversizedDriveUpload.js`, `uploadProgressEta.js`.
+
+## Deadline HCB — đổi ngày vẫn quá hạn
+
+Trạng thái: **FE+BE local, đã quét lại hạn thẻ HCB trên DB.**
+
+Hạn thẻ lấy nhóm việc mẫu còn mở sớm nhất (duyệt = lắp − 6). Đổi ngày lắp lên 10/10 vẫn ra 04/10 17:30 nên sáng 05/10 vẫn quá hạn. Nay hạn thẻ và bảng nhiệm vụ SX bám cột Kanban đang đứng, chốt 17:30. Cùng ngày chỉ vào Quá hạn sau 17:30.
+
+Hoàn tác: revert `sxCardPlanDeadline.js`, nhánh production trong `workTasks.js`, và `deadlineBucketOf` trong `ProjectTasksOverviewPage.jsx`.
+
+
+
+## Bình luận — file trên 50MB lưu Drive
+
+Trạng thái: **FE+BE local.** Chưa thử file thật lớn hơn 50MB.
+
+Đính kèm trong bình luận lead/dự án: file trên 50MB được tải lên Drive của hồ sơ, link chia sẻ hiện trong nội dung bình luận và nút Mở Drive. Chat lead làm cùng việc và thêm một bình luận. Messenger lưu Drive cá nhân và gửi link trong tin nhắn. File từ 10MB đến 50MB vẫn chỉ nhắc, vẫn gửi trực tiếp được.
+
+Kéo file từ máy vào khung chat lead, Messenger hoặc phòng ban thì gửi như khi bấm đính kèm. Khung hiện «Thả file để gửi».
+
+## Dashboard SX — Hào thấy lại toàn bộ dự án xưởng
+
+Trạng thái: **BE local, đã gỡ lọc.**
+
+Đã bỏ giới hạn chỉ hiện dự án có việc của `hao@metalla.com`. Dashboard Hào trở lại như trước: thấy mọi dự án của công ty, theo phân loại đang chọn.
 
 ## Hàng nhiệm vụ — hiện nhân viên được gán
 
@@ -26,14 +94,6 @@ Trạng thái: **FE local, đã xem trên TB-2026-963.**
 Dòng nhiệm vụ thu gọn hiện tên người nhận cạnh ngày hẹn. Phôi và Cánh hiện «Thuận» mà không cần bấm Chi tiết.
 
 Hoàn tác: revert nhánh `assignees.map` trong `renderTaskRow` của `CRMTasksTab.jsx`.
-
-## Dashboard SX — Hào chỉ thấy dự án có việc của mình
-
-Trạng thái: **BE local.**
-
-`hao@metalla.com` không còn thấy toàn bộ dự án Metalla. Danh sách và trang chi tiết chỉ gồm dự án có `crm_tasks` hoặc `tasks` gắn cho anh ấy. Nhân viên sản xuất khác không đổi.
-
-Hoàn tác: bỏ `hao@metalla.com` khỏi `TASK_SCOPED_PRODUCTION_EMAILS` trong `dealParticipantProduction.js`.
 
 ## CRM — nút BC theo tổ chức cho quản trị HST
 
