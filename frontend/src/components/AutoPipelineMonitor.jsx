@@ -160,7 +160,7 @@ function FullCyclePostSteps({ post }) {
       )}
       {post.dedup && (
         <div>
-          Xóa lead trùng: <span className="font-mono text-amber-800">{post.dedup.merged ?? 0}</span> lead
+          {post.dedup.status === 'READ' ? <span>Rà khách trùng: <span className="font-mono text-amber-800">{post.dedup.reviewGroupCount}</span> nhóm cần kiểm</span> : <span>Chưa có kết quả rà khách trùng hiện hành</span>}
           {post.dedup.message ? <span className="text-gray-500 ml-1">({post.dedup.message})</span> : null}
         </div>
       )}

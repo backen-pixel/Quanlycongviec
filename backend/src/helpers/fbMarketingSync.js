@@ -11,9 +11,9 @@
  *   - Lỗi của một tài khoản không làm hỏng các tài khoản còn lại.
  */
 const { supabase } = require('../config/supabase');
+const { allPages, graphJson, vnd } = require('../modules/marketingAutomation/facebookSpendSource');
 
 const GRAPH = 'https://graph.facebook.com/v22.0';
-const TIMEOUT_MS = 20000;
 const TOI_DA_TRANG = 50;
 
 function chuanHoaActId(x) {
@@ -27,37 +27,9 @@ function ngayISO(t) {
 }
 
 /** Gọi Graph API. Token đi trong header Authorization, không nhét vào URL. */
-async function goiGraph(url, token) {
-  const ctl = new AbortController();
-  const hen = setTimeout(() => ctl.abort(), TIMEOUT_MS);
-  try {
-    const resp = await fetch(url, {
-      signal: ctl.signal,
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const js = await resp.json().catch(() => null);
-    if (!resp.ok || js?.error) {
-      const e = js?.error || {};
-      const ma = e.code ? ` (code ${e.code})` : '';
-      throw new Error(`FB ${resp.status}: ${e.message || 'không rõ lỗi'}${ma}`);
-    }
-    return js;
-  } finally {
-    clearTimeout(hen);
-  }
-}
+async function goiGraph(url, token) { return graphJson(url, token, fetch); }
 
-/** Đi hết các trang phân trang của Graph API. */
-async function keoTatCaTrang(urlDau, token) {
-  const ra = [];
-  let url = urlDau;
-  for (let i = 0; i < TOI_DA_TRANG && url; i += 1) {
-    const js = await goiGraph(url, token);
-    if (Array.isArray(js?.data)) ra.push(...js.data);
-    url = js?.paging?.next || null;
-  }
-  return ra;
-}
+async function keoTatCaTrang(url, token) { return allPages(url, token, fetch, TOI_DA_TRANG); }
 
 /** Kiểm tra một cặp (ad account, token) có dùng được không. */
 async function kiemTraKetNoi(adAccountId, token) {
@@ -74,12 +46,9 @@ async function kiemTraKetNoi(adAccountId, token) {
 }
 
 async function layTienTe(tk) {
-  try {
-    const js = await goiGraph(`${GRAPH}/${tk.ad_account_id}?fields=currency`, tk.access_token);
-    return js?.currency || 'VND';
-  } catch {
-    return 'VND';
-  }
+  const js = await goiGraph(`${GRAPH}/${tk.ad_account_id}?fields=currency`, tk.access_token);
+  if (js.currency !== 'VND') throw new Error('ACCOUNT_OR_CURRENCY_MISMATCH');
+  return js.currency;
 }
 
 /** Kéo tên chiến dịch / nhóm / quảng cáo về danh mục. */
@@ -93,10 +62,11 @@ async function keoTenQuangCao(tk) {
   const ids = ads.map((a) => String(a.id));
   const cu = [];
   for (let i = 0; i < ids.length; i += 300) {
-    const { data } = await supabase.from('fb_ad_catalog')
+    const { data, error } = await supabase.from('fb_ad_catalog')
       .select('ad_id, nguon, campaign_name')
       .in('ad_id', ids.slice(i, i + 300));
-    if (Array.isArray(data)) cu.push(...data);
+    if (error || !Array.isArray(data)) throw new Error('CATALOG_READ_FAILED');
+    cu.push(...data);
   }
   const mCu = new Map(cu.map((x) => [String(x.ad_id), x]));
 
@@ -143,19 +113,20 @@ async function keoChiTieu(tk, ngay) {
 
   const bayGio = new Date().toISOString();
   const banGhi = rows
-    .filter((r) => r.ad_id && r.date_start)
-    .map((r) => ({
+    .map((r) => {
+      if (!r.ad_id || !r.date_start || r.date_start < tu || r.date_start > den || r.date_stop !== r.date_start) throw new Error('INVALID_DAILY_SPEND');
+      return ({
       ad_id: String(r.ad_id),
       ngay: String(r.date_start),
       ad_account_id: tk.ad_account_id,
       campaign_id: r.campaign_id || null,
       adset_id: r.adset_id || null,
-      chi_tieu: Number(r.spend) || 0,
+      chi_tieu: vnd(r.spend),
       hien_thi: Number(r.impressions) || 0,
       nhap: Number(r.clicks) || 0,
-      tien_te: tk._tien_te || 'VND',
+      tien_te: tk._tien_te,
       cap_nhat_luc: bayGio,
-    }));
+    }); });
 
   for (let i = 0; i < banGhi.length; i += 300) {
     const { error } = await supabase.from('fb_ad_spend_daily')
@@ -170,7 +141,16 @@ async function keoChiTieu(tk, ngay) {
 async function dongBoMot(tk, { ngay = 30 } = {}) {
   const batDau = Date.now();
   const kq = { ad_account_id: tk.ad_account_id, ok: false };
+  if (process.env.VPT_CERTIFIED_FACEBOOK_SPEND === '1') {
+    const { isFailoverEnabled, getActiveTarget } = require('../config/supabaseRouter');
+    if (isFailoverEnabled() || getActiveTarget() !== 'primary') return { ...kq, loi: 'PRIMARY_ONLY_REQUIRED' };
+  }
   try {
+    if (process.env.VPT_CERTIFIED_FACEBOOK_SPEND === '1') {
+      const { syncConfiguredAccount } = require('../modules/marketingAutomation/facebookSpendSync');
+      kq.spend_evidence = await syncConfiguredAccount(tk, { days: ngay });
+      if (kq.spend_evidence.status !== 'COMPLETE') throw new Error('SPEND_EVIDENCE_UNAVAILABLE');
+    }
     if (!tk.access_token) throw new Error('Chưa có access token');
     tk._tien_te = await layTienTe(tk);
     const ten = await keoTenQuangCao(tk);
@@ -196,8 +176,11 @@ async function dongBoMot(tk, { ngay = 30 } = {}) {
 }
 
 /** Đồng bộ toàn bộ tài khoản đang bật. */
-async function dongBoTatCa({ ngay = 30 } = {}) {
-  const { data, error } = await supabase.from('fb_ad_accounts').select('*').eq('bat', true);
+async function dongBoTatCa({ ngay = 30, companyIds = null } = {}) {
+  if (Array.isArray(companyIds) && !companyIds.length) return { so_tai_khoan: 0, ket_qua: [] };
+  let query = supabase.from('fb_ad_accounts').select('*').eq('bat', true);
+  if (Array.isArray(companyIds)) query = query.in('company_id', companyIds);
+  const { data, error } = await query;
   if (error) throw new Error(error.message);
   const ds = data || [];
   if (!ds.length) {
@@ -211,9 +194,12 @@ async function dongBoTatCa({ ngay = 30 } = {}) {
 }
 
 /** Đã nối Marketing API chưa — dùng cho trang hiển thị trạng thái. */
-async function daCauHinh() {
-  const { data } = await supabase.from('fb_ad_accounts')
-    .select('ad_account_id, ten, bat, lan_dong_bo_cuoi, ket_qua_cuoi, access_token');
+async function daCauHinh({ companyIds = null } = {}) {
+  if (Array.isArray(companyIds) && !companyIds.length) return { da_noi: false, tai_khoan: [] };
+  let query = supabase.from('fb_ad_accounts').select('ad_account_id, ten, bat, lan_dong_bo_cuoi, ket_qua_cuoi, access_token');
+  if (Array.isArray(companyIds)) query = query.in('company_id', companyIds);
+  const { data, error } = await query;
+  if (error) throw new Error('ACCOUNT_SOURCE_UNAVAILABLE');
   const ds = data || [];
   return {
     da_noi: ds.some((x) => x.bat && x.access_token),

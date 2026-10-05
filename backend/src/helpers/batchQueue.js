@@ -5,6 +5,8 @@
  * Disable worker: BATCH_QUEUE_DISABLED=1
  */
 const { randomUUID } = require('crypto');
+const work = require('./processWork').createProcessWork({ scope: 'BATCH_QUEUE_THIS_PROCESS', onError: code => console.warn('[batch-queue]', code) });
+let workerStarted = false;
 const { supabase } = require('../config/supabase');
 const { getRedisIfReady } = require('../config/redis');
 const { runIfLeader } = require('./cronLeader');
@@ -97,9 +99,9 @@ async function scheduleRetry(id, delayMs) {
   if (redis) {
     await redis.zadd(REDIS_DELAYED, runAt, id);
   } else {
-    setTimeout(() => {
+    work.timeout(() => {
       memQueue.push(id);
-      void pumpMemQueue();
+      return pumpMemQueue();
     }, delayMs);
   }
   await patchJob(id, { status: 'pending' });
@@ -108,7 +110,11 @@ async function scheduleRetry(id, delayMs) {
 /**
  * @param {{ type: string, payload?: object, userId?: string, companyId?: string, maxRetries?: number }}
  */
-async function enqueueBatchJob({ type, payload = {}, userId = null, companyId = null, maxRetries }) {
+function enqueueBatchJob({ type, payload = {}, userId = null, companyId = null, maxRetries }) {
+  return work.run(() => enqueueBatchJobInner({ type, payload, userId, companyId, maxRetries }));
+}
+
+async function enqueueBatchJobInner({ type, payload = {}, userId = null, companyId = null, maxRetries }) {
   const typeDef = getBatchJobType(type);
   if (!typeDef) {
     const err = new Error(`Loại job không hợp lệ: ${type}`);
@@ -177,7 +183,11 @@ async function getBatchJob(id) {
   return job;
 }
 
-async function pauseBatchJob(id) {
+function pauseBatchJob(id) {
+  return work.run(() => pauseBatchJobInner(id));
+}
+
+async function pauseBatchJobInner(id) {
   const job = await getBatchJob(id);
   if (!['pending', 'running'].includes(job.status)) {
     const err = new Error(`Không thể pause job ở trạng thái ${job.status}`);
@@ -189,7 +199,11 @@ async function pauseBatchJob(id) {
   return updated;
 }
 
-async function resumeBatchJob(id) {
+function resumeBatchJob(id) {
+  return work.run(() => resumeBatchJobInner(id));
+}
+
+async function resumeBatchJobInner(id) {
   const job = await getBatchJob(id);
   if (job.status !== 'paused') {
     const err = new Error('Chỉ resume job đang paused');
@@ -203,7 +217,11 @@ async function resumeBatchJob(id) {
   return updated;
 }
 
-async function cancelBatchJob(id) {
+function cancelBatchJob(id) {
+  return work.run(() => cancelBatchJobInner(id));
+}
+
+async function cancelBatchJobInner(id) {
   const job = await getBatchJob(id);
   if (['completed', 'cancelled'].includes(job.status)) {
     const err = new Error(`Job đã ${job.status}`);
@@ -218,7 +236,11 @@ async function cancelBatchJob(id) {
   return updated;
 }
 
-async function retryBatchJob(id) {
+function retryBatchJob(id) {
+  return work.run(() => retryBatchJobInner(id));
+}
+
+async function retryBatchJobInner(id) {
   const job = await getBatchJob(id);
   if (!['failed', 'cancelled'].includes(job.status)) {
     const err = new Error('Chỉ retry job failed hoặc cancelled');
@@ -258,7 +280,11 @@ async function checkJobAborted(id) {
   return job;
 }
 
-async function processBatchJob(id) {
+function processBatchJob(id) {
+  return work.run(() => processBatchJobInner(id));
+}
+
+async function processBatchJobInner(id) {
   let job = await loadJob(id);
   if (!job) return;
   if (!['pending'].includes(job.status)) return;
@@ -339,16 +365,23 @@ async function processBatchJob(id) {
   }
 }
 
-async function workerTick() {
+function workerTick() {
+  if (work.isStopped()) return Promise.resolve();
+  return work.run(workerTickInner);
+}
+
+async function workerTickInner() {
   if (_workerBusy) return;
   _workerBusy = true;
   try {
     await promoteDelayedJobs();
+    if (work.isStopped()) return;
     const id = await redisDequeue(1);
     if (id) {
-      await processBatchJob(id);
+      // Dequeue already reserved this ID. Finish and persist it even after stop.
+      await processBatchJobInner(id);
       const cooldown = getJobCooldownMs();
-      if (cooldown > 0) await new Promise((r) => setTimeout(r, cooldown));
+      if (cooldown > 0) await work.sleep(cooldown);
     }
   } catch (e) {
     console.error('[batch-queue] worker tick:', e.message);
@@ -357,30 +390,37 @@ async function workerTick() {
   }
 }
 
-async function pumpMemQueue() {
+function pumpMemQueue() {
+  if (work.isStopped()) return Promise.resolve();
+  return work.spawn(pumpMemQueueInner);
+}
+
+async function pumpMemQueueInner() {
   if (getRedisIfReady()) return;
   if (_workerBusy) return;
   const id = memQueue.shift();
   if (!id) return;
   _workerBusy = true;
   try {
-    await processBatchJob(id);
+    await processBatchJobInner(id);
   } finally {
     _workerBusy = false;
-    if (memQueue.length) setImmediate(() => { void pumpMemQueue(); });
+    if (memQueue.length) work.immediate(() => pumpMemQueue());
   }
 }
 
 function startBatchQueueWorker() {
+  if (work.isStopped() || workerStarted) return;
   if (process.env.BATCH_QUEUE_DISABLED === '1') {
     console.log('[batch-queue] Disabled (env BATCH_QUEUE_DISABLED=1)');
     return;
   }
+  workerStarted = true;
   const intervalMs = Math.min(5000, Math.max(500, parseInt(process.env.BATCH_QUEUE_POLL_MS || '1000', 10) || 1000));
   const ttlSec = Math.max(10, Math.ceil(intervalMs / 1000) + 5);
-  setTimeout(() => { void runIfLeader('batch-queue-worker', () => workerTick(), { ttlSec }); }, 30_000);
-  setInterval(() => { void runIfLeader('batch-queue-worker', () => workerTick(), { ttlSec }); }, intervalMs);
-  setTimeout(() => {
+  work.timeout(() => runIfLeader('batch-queue-worker', () => workerTick(), { ttlSec }), 30_000);
+  work.interval(() => runIfLeader('batch-queue-worker', () => workerTick(), { ttlSec }), intervalMs);
+  work.timeout(() => {
     const { getStatus } = require('../config/redis');
     const redisLabel = getStatus() === 'ok' ? 'yes' : (getRedisIfReady() ? 'connecting' : 'in-memory fallback');
     console.log(`[batch-queue] Worker started — poll ${intervalMs}ms (Redis: ${redisLabel})`);
@@ -388,6 +428,7 @@ function startBatchQueueWorker() {
 }
 
 module.exports = {
+  shutdown: { ...work, status: () => ({ ...work.status(), pendingInMemory: memQueue.length, queueReconciled: false }) },
   setBatchQueueIO,
   enqueueBatchJob,
   listBatchJobs,

@@ -84,7 +84,7 @@ async function napSoLieuTheoAd({ ngay = 90 } = {}) {
         page_id: a.fb_page_id || null,
         page_name: mPage.get(String(a.fb_page_id)) || null,
         company_id: l.company_id || null,
-        leads: 0, deals: 0, closed: 0, revenue: 0,
+        leads: 0, deals: 0, closed: 0, revenue: null, closed_estimated_value: 0, revenue_status: 'UNKNOWN', eligible_for_budget_optimization: false,
         chi_tieu: 0, hien_thi: 0, nhap: 0,
         rac: 0, chat_luong: 0, khong_sdt: 0,
         lead_7_ngay: 0, lead_7_ngay_truoc: 0,
@@ -107,7 +107,7 @@ async function napSoLieuTheoAd({ ngay = 90 } = {}) {
     }
     if (!String(l.phone || mSdt.get(String(l.customer_id)) || '').trim()) g.khong_sdt += 1;
     if (l.type === 'deal') g.deals += 1;
-    if (l.actual_close_date) { g.closed += 1; g.revenue += Number(l.estimated_value) || 0; }
+    if (l.actual_close_date) { g.closed += 1; g.closed_estimated_value += Number(l.estimated_value) || 0; }
   }
 
   // Chi tiêu thật từ Marketing API — không có thì để 0 và không phán gì về tiền.
@@ -128,16 +128,16 @@ async function napSoLieuTheoAd({ ngay = 90 } = {}) {
   // Nền so sánh của toàn bộ quảng cáo trong kỳ
   let tongLead = 0; let tongChot = 0; let tongDoanhThu = 0; let tongChi = 0;
   for (const g of theoAd.values()) {
-    tongLead += g.leads; tongChot += g.closed; tongDoanhThu += g.revenue; tongChi += g.chi_tieu;
+    tongLead += g.leads; tongChot += g.closed; tongDoanhThu += g.closed_estimated_value; tongChi += g.chi_tieu;
   }
   const nen = {
     so_quang_cao: theoAd.size,
     leads: tongLead,
     closed: tongChot,
-    revenue: tongDoanhThu,
+    revenue: null, closed_estimated_value: tongDoanhThu, revenue_status: 'UNKNOWN', eligible_for_budget_optimization: false,
     chi_tieu: Math.round(tongChi),
     ti_le_chot: pct(tongChot, tongLead),
-    doanh_thu_moi_lead: tongLead ? Math.round(tongDoanhThu / tongLead) : 0,
+    doanh_thu_moi_lead: null,
     gia_moi_lead: tongChi > 0 && tongLead ? Math.round(tongChi / tongLead) : 0,
     co_chi_tieu: tongChi > 0,
   };
@@ -153,11 +153,11 @@ function nhanXetChoAd(g, nen) {
   const tiLeChot = pct(g.closed, g.leads);
   const tiLeRac = pct(g.rac, g.leads);
   const tiLeKhongSdt = pct(g.khong_sdt, g.leads);
-  const doanhThuMoiLead = g.leads ? Math.round(g.revenue / g.leads) : 0;
+  const doanhThuMoiLead = null; // Recognized net revenue source is not connected.
   const imLang = soNgay(g.lan_cuoi, new Date().toISOString());
   const chiTieu = Math.round(g.chi_tieu || 0);
   const giaMoiLead = chiTieu > 0 && g.leads ? Math.round(chiTieu / g.leads) : 0;
-  const roas = chiTieu > 0 ? g.revenue / chiTieu : null;
+  const roas = null;
 
   // 1. Mẫu quá nhỏ — im lặng, không phán
   if (g.leads < MAU_TOI_THIEU) {
@@ -311,10 +311,10 @@ async function chayPhanTich({ ngay = 90 } = {}) {
         ti_le_rac: pct(g.rac, g.leads),
         ti_le_chat_luong: pct(g.chat_luong, g.leads),
         ti_le_khong_sdt: pct(g.khong_sdt, g.leads),
-        doanh_thu_moi_lead: g.leads ? Math.round(g.revenue / g.leads) : 0,
+        doanh_thu_moi_lead: null,
         chi_tieu: Math.round(g.chi_tieu || 0),
         gia_moi_lead: g.chi_tieu > 0 && g.leads ? Math.round(g.chi_tieu / g.leads) : null,
-        roas: g.chi_tieu > 0 ? Math.round((g.revenue / g.chi_tieu) * 100) / 100 : null,
+        roas: null,
         so_ngay_chay: soNgay(g.lan_dau, g.lan_cuoi) + 1,
       },
       nhan_xet: kq.nhan_xet,
@@ -355,8 +355,7 @@ function tomTat(rows, nen) {
     })),
     mat_bang: nen,
     canh_bao_chung: (nen && nen.co_chi_tieu)
-      ? 'Chi tiêu lấy từ Marketing API. ROAS chỉ đúng với những đơn đã điền giá trị — '
-        + 'đơn để giá 0 sẽ kéo ROAS xuống sai. Điểm chất lượng đo độ đầy đủ thông tin, không phải xác suất chốt.'
+      ? 'Chi tiêu chưa chứng minh đầy đủ; doanh thu kế toán và ROAS chưa xác minh. Không dùng các nhận xét này làm lệnh tự tăng ngân sách.'
       : 'Chưa nối Marketing API nên chưa có chi tiêu — mọi nhận xét dựa trên lead và đơn chốt, '
         + 'không phải hiệu quả đồng tiền. Điểm chất lượng đo độ đầy đủ thông tin, không phải xác suất chốt.',
   };

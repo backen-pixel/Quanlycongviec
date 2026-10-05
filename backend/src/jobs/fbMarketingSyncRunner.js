@@ -6,15 +6,20 @@
  * còn chi tiêu thì Facebook cũng chỉ chốt số theo ngày.
  */
 const { dongBoTatCa } = require('../helpers/fbMarketingSync');
+const work = require('../helpers/processWork').createProcessWork({ scope: 'MARKETING_SYNC_THIS_PROCESS' });
 const { runIfLeader } = require('../helpers/cronLeader');
 
 const PHUT = 60 * 1000;
 const CHU_KY_MS = 6 * 60 * PHUT;
 
-let timer = null;
+let timer = null, bootTimer = null;
 let dangChay = false;
 
-async function runOnce() {
+function runOnce() {
+  return work.run(() => runOnceInner());
+}
+
+async function runOnceInner() {
   if (dangChay) return { skip: 'dang_chay' };
   dangChay = true;
   const t0 = Date.now();
@@ -38,22 +43,24 @@ async function runOnce() {
 }
 
 function start() {
+  if (work.isStopped()) return;
   if (process.env.FB_MARKETING_CRON_DISABLED === '1') {
     console.log('[dong-bo-qc] Tat theo env');
     return;
   }
   if (timer) return;
   const chay = () => {
-    runIfLeader('fb-marketing-sync', runOnce).catch((e) => console.warn('[dong-bo-qc] leader:', e.message));
+    return runIfLeader('fb-marketing-sync', runOnce).catch((e) => console.warn('[dong-bo-qc] leader:', e.message));
   };
-  setTimeout(chay, 5 * PHUT);
-  timer = setInterval(chay, CHU_KY_MS);
+  bootTimer = work.timeout(chay, 5 * PHUT);
+  timer = work.interval(chay, CHU_KY_MS);
   if (timer.unref) timer.unref();
   console.log('[dong-bo-qc] Da bat, chu ky 6 gio');
 }
 
 function stop() {
-  if (timer) { clearInterval(timer); timer = null; }
+  if (timer) { work.cancel(timer); timer = null; }
+  if (bootTimer) { work.cancel(bootTimer); bootTimer = null; }
 }
 
-module.exports = { start, stop, runOnce };
+module.exports = { start, stop, runOnce, shutdown: work };

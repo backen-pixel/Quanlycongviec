@@ -114,11 +114,24 @@ function harness(tables, fault = null) {
   } };
 }
 function bucket(url, response) { return url === '/summary' ? response.body.tu_quang_cao : response.body.data[0]; }
+test('cached financial ranking loses its stale priority before insight sorting', async () => {
+  const f = fixture();
+  f.fb_ad_analysis = [
+    { ad_id: 'financial', xep_hang: 'kem', diem_uu_tien: 100, nhan_xet: [{ ma: 'lo_von' }], so_lieu: { company_id: 'company-one', revenue: 1000, roas: 2 } },
+    { ad_id: 'quality', xep_hang: 'can_xem', diem_uu_tien: 10, nhan_xet: [{ ma: 'nhieu_rac' }], so_lieu: { company_id: 'company-one' } },
+  ];
+  const r = await harness(f).run('/insights'); assert.equal(r.code, 200);
+  assert.equal(r.body.data[0].ad_id, 'quality');
+  const stale = r.body.data[1];
+  assert.equal(stale.analysis_status, 'STALE_FINANCIAL_BASIS'); assert.equal(stale.xep_hang, 'can_xem'); assert.equal(stale.diem_uu_tien, 0);
+  assert.deepEqual(stale.nhan_xet, []); assert.equal(stale.so_lieu.revenue, null); assert.equal(stale.so_lieu.roas, null);
+  assert.equal(stale.so_lieu.closed_estimated_value, 1000); assert.equal(stale.so_lieu.eligible_for_budget_optimization, false);
+});
 for (const url of paths) {
   test(`${url}: unique Lead, Deal and order value despite duplicate attribution`, async () => {
     const h = harness(fixture()); const r = await h.run(url);
     assert.equal(r.code, 200); const b = bucket(url, r);
-    assert.equal(b.leads, 1); assert.equal(b.deals, 1); assert.equal(b.closed, 1); assert.equal(b.revenue, 100);
+    assert.equal(b.leads, 1); assert.equal(b.deals, 1); assert.equal(b.closed, 1); assert.equal(b.closed_estimated_value, 100); assert.equal(b.revenue, null); assert.equal(b.roas, null); assert.equal(b.revenue_status, 'UNKNOWN'); assert.equal(b.eligible_for_budget_optimization, false);
     assert.equal(b.quality_leads, 1); assert.equal(b.avg_score, 80); assert.equal(b.cost_per_lead, 200);
     assert.doesNotMatch(JSON.stringify(r.body), /_leadIds|_paidLeadIds|lead-one/);
     if (url === '/summary') assert.equal(r.body.tat_ca.leads, 1);
@@ -175,7 +188,7 @@ test('campaigns: legacy manual grouping remains available without IDs', async ()
 test('different real leads are not collapsed; company filtering remains intact', async () => {
   const f = fixture(); f.lead_attribution.push({ ...f.lead_attribution[0], lead_id: 'lead-two' }, { ...f.lead_attribution[0], lead_id: 'other-company-lead' });
   f.crm_leads.push({ ...f.crm_leads[0], id: 'lead-two' }, { ...f.crm_leads[0], id: 'other-company-lead', company_id: 'other-company' });
-  const r = await harness(f).run('/summary'); assert.equal(r.body.tat_ca.leads, 2); assert.equal(r.body.tat_ca.revenue, 200);
+  const r = await harness(f).run('/summary'); assert.equal(r.body.tat_ca.leads, 2); assert.equal(r.body.tat_ca.closed_estimated_value, 200); assert.equal(r.body.tat_ca.revenue, null);
 });
 test('UI: a failed read clears earlier figures instead of presenting them as current', async () => {
   const begin = 'const tai = useCallback(async () => {'; const end = '}, [tab, params]);';
@@ -207,6 +220,9 @@ for (const url of pagePaths) {
     assert.equal(r.code,200);
     const stats=url==='/post-leads'?r.body.tom_tat:r.body.data[0];
     assert.equal(stats.leads,1); assert.equal(stats.closed,1);
+    assert.equal(stats.revenue,null); assert.equal(stats.roas,null);
+    assert.equal(stats.closed_estimated_value,100); assert.equal(stats.revenue_status,'UNKNOWN');
+    assert.equal(stats.eligible_for_budget_optimization,false);
     if(url==='/pages-profile') assert.equal(stats.lead_7_ngay,1);
   });
   test(`${url}: no Lead details outside company scope`, async () => {

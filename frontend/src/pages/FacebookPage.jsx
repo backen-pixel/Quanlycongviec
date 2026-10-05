@@ -1,3 +1,5 @@
+import FacebookBatchRecovery from '../components/facebook/FacebookBatchRecovery';
+import FacebookDuplicateReview from '../components/facebook/FacebookDuplicateReview';
 import { useState, useEffect, useRef, useCallback, useMemo, Component } from 'react';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isCrmSocialInboxUser, isCrmSocialInboxCompanyLocked } from '../lib/adminRole';
@@ -19,6 +21,8 @@ import AutoToolPanelInline from '../components/AutoToolPanel';
 import FacebookPageTokenReminderBanner, { FacebookPageTokenReminderRow } from '../components/FacebookPageTokenReminderBanner';
 import { computeFacebookPageTokenReminder, FB_PAGE_TOKEN_REMINDER_DAYS } from '../lib/facebookPageTokenReminder';
 import FacebookImageSetsSettings from '../components/facebook/FacebookImageSetsSettings';
+import FacebookLeadIntakeConsole from '../components/facebook/FacebookLeadIntakeConsole';
+import FacebookCustomerCareConsole from '../components/facebook/FacebookCustomerCareConsole';
 import FacebookImageSetPicker from '../components/facebook/FacebookImageSetPicker';
 import { patchCrmDashboardCacheLeadFields } from '../lib/crmDashboardCache';
 
@@ -346,6 +350,7 @@ export default function FacebookPage() {
     { id: 'contacts', label: 'Danh bạ', icon: Users },
     { id: 'analytics', label: 'Phân tích', icon: BarChart3 },
     { id: 'lead-ads', label: 'Lead Ads', icon: FileText, badge: stats?.lead_ads_today },
+    ...(isAdmin ? [{ id: 'lead-intake', label: 'Tiếp nhận biểu mẫu', icon: FileText }, { id: 'customer-care', label: 'Chăm khách', icon: Users }] : []),
     { id: 'comments', label: 'Bình luận', icon: MessageSquare, badge: stats?.comments_today },
     { id: 'auto-lead', label: 'Tự động', icon: UserPlus },
     ...(isAdmin ? [{ id: 'ad-campaigns', label: 'Chiến dịch quảng cáo', icon: Megaphone }] : []),
@@ -440,7 +445,7 @@ export default function FacebookPage() {
         />
       )}
 
-      <div className="border-b bg-white px-6 flex gap-0.5 shrink-0">
+      <div className="border-b bg-white px-6 flex gap-0.5 shrink-0 overflow-x-auto">
         {tabs.map(t => (
           <button key={t.id} onClick={() => { setTab(t.id); setSearchParams(prev => { const p = new URLSearchParams(prev); p.set('tab', t.id); if (t.id !== 'inbox') p.delete('contact'); return p; }); }}
             className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-all cursor-pointer ${
@@ -458,6 +463,8 @@ export default function FacebookPage() {
         {tab === 'contacts' && <ContactsTab fbCompanyQs={fbCompanyQs} companyId={effectiveCompanyFilter} isAdmin={isAdmin} />}
         {tab === 'analytics' && <AnalyticsTab fbCompanyQs={fbCompanyQs} />}
         {tab === 'lead-ads' && <LeadAdsTab />}
+        {tab === 'lead-intake' && isAdmin && <FacebookLeadIntakeConsole companyId={effectiveCompanyFilter || null} />}
+        {tab === 'customer-care' && isAdmin && <FacebookCustomerCareConsole companyId={effectiveCompanyFilter || null} actorId={user?.id || user?.userId} />}
         {tab === 'comments' && <CommentsTab />}
         {tab === 'settings' && <SettingsTab onPagesChanged={loadFbTokenSummary} fbCompanyQs={fbCompanyQs} />}
         {tab === 'auto-lead' && <AutoLeadTab />}
@@ -1879,7 +1886,17 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
   const navigate = useNavigate();
   /** company_id để scope tool theo công ty (rỗng = toàn hệ thống cho admin; NV bị backend ép theo công ty đăng nhập). */
   const toolCompanyId = companyId != null && String(companyId).trim() !== '' ? String(companyId).trim() : undefined;
-  const { socket } = useAuth();
+  const { socket, user } = useAuth();
+  const contactScopeKey = JSON.stringify([user?.id || user?.userId, user?.role, user?.company_id, user?.tenant_id, user?.crm_region_ids, toolCompanyId, fbCompanyQs]);
+  const contactScopeRef = useRef({ key: contactScopeKey, version: 0, loaded: false, request: 0 });
+  if (contactScopeRef.current.key !== contactScopeKey) {
+    contactScopeRef.current = { key: contactScopeKey, version: contactScopeRef.current.version + 1, loaded: false, request: 0 };
+  }
+  const contactMountedRef = useRef(false);
+  useEffect(() => {
+    contactMountedRef.current = true;
+    return () => { contactMountedRef.current = false; };
+  }, []);
   const [contacts, setContacts] = useState([]);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
@@ -1903,6 +1920,11 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
   const [v2DeleteLeadNoPhone, setV2DeleteLeadNoPhone] = useState(false);
   const [v2CleanupWithLead, setV2CleanupWithLead] = useState(false);
   const [meta, setMeta] = useState({ total: 0, hasMore: false, nextOffset: 0 });
+  useEffect(() => {
+    setContacts([]);
+    setMeta({ total: 0, hasMore: false, nextOffset: 0 });
+    setBatchStatus(previous => previous?.type === 'leads' ? null : previous);
+  }, [contactScopeKey]);
 
   /** Quét SĐT sai / nghi từ link — phone-quality-scan */
   const [pqLoading, setPqLoading] = useState(false);
@@ -2029,6 +2051,10 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
   }, []);
 
   const load = useCallback((append = false) => {
+    const scope = contactScopeRef.current;
+    const request = ++scope.request;
+    scope.loaded = false;
+    const isCurrent = () => contactMountedRef.current && contactScopeRef.current === scope && scope.request === request;
     const p = new URLSearchParams();
     if (search) p.set('search', search);
     if (filter === 'has_lead') p.set('has_lead', 'true');
@@ -2046,8 +2072,9 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
       new URLSearchParams(fbCompanyQs).forEach((v, k) => p.set(k, v));
     }
     fetch(`${API}/api/facebook/contacts?${p}`, { headers: hdr() })
-      .then(r => r.ok ? r.json() : { data: [], total: 0, hasMore: false, nextOffset: 0 })
+      .then(r => { if (!r.ok) throw new Error('Chưa tải được danh sách liên hệ.'); return r.json(); })
       .then(payload => {
+        if (!isCurrent()) return;
         const rows = payload?.data || [];
         const merged = append ? [...contacts, ...rows] : rows;
         const deduped = merged.filter((item, idx, arr) => arr.findIndex(x => x.id === item.id) === idx);
@@ -2062,10 +2089,11 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
           return bp - ap;
         });
         setContacts(sorted);
+        scope.loaded = true;
         setMeta({ total: payload?.total || 0, hasMore: !!payload?.hasMore, nextOffset: payload?.nextOffset || 0 });
       })
       .catch(() => {});
-  }, [search, filter, sourceFilter, meta.nextOffset, sortContacts, fbCompanyQs]);
+  }, [search, filter, sourceFilter, meta.nextOffset, sortContacts, fbCompanyQs, contactScopeKey]);
 
   // Load DISTINCT nguồn được cấu hình ở Page setup (facebook_pages.default_source_id)
   // — chỉ những nguồn này mới có ý nghĩa khi lọc trên danh bạ FB.
@@ -2222,22 +2250,6 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
   const deleteContact = async (id, name) => {
     if (!confirm(`Xóa liên hệ "${name}" và toàn bộ tin nhắn?`)) return;
     try { await fetch(`${API}/api/facebook/contacts/${id}`, { method: 'DELETE', headers: hdr() }); setContacts(prev => prev.filter(c => c.id !== id)); } catch (e) { alert('Lỗi'); }
-  };
-
-  // Batch: tạo Lead cho contact chưa có lead
-  const batchCreateLeads = async () => {
-    const noLead = contacts.filter(c => !c.lead_id);
-    if (!noLead.length) return alert('Tất cả liên hệ đã có bản ghi CRM!');
-    if (!confirm(`Tạo mới theo cài đặt Page cho ${noLead.length} liên hệ chưa có bản ghi CRM?`)) return;
-    setBatchStatus({ type: 'leads', loading: true, result: null });
-    try {
-      const res = await fetch(`${API}/api/facebook/batch-create-leads`, { method: 'POST', headers: hdr() });
-      const data = await res.json();
-      setBatchStatus({ type: 'leads', loading: false, result: data });
-      load(); // Refresh danh sách
-    } catch (e) {
-      setBatchStatus({ type: 'leads', loading: false, result: { error: e.message } });
-    }
   };
 
   // Batch: quét SĐT + thông tin từ tin nhắn (chỉ DB, không gọi Graph)
@@ -2485,23 +2497,6 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
     }
   };
 
-  // Kiểm tra & xóa lead trùng không liên kết FB
-  const dedupLeads = async () => {
-    if (!confirm('Kiểm tra và xóa lead trùng không liên kết với Facebook?')) return;
-    setBatchStatus({ type: 'dedup', loading: true, result: null });
-    try {
-      const res = await fetch(`${API}/api/facebook/dedup-leads`, {
-        method: 'POST',
-        headers: { ...hdr(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company_id: toolCompanyId }),
-      });
-      const data = await res.json();
-      setBatchStatus({ type: 'dedup', loading: false, result: data });
-      load();
-    } catch (e) {
-      setBatchStatus({ type: 'dedup', loading: false, result: { error: e.message } });
-    }
-  };
 
   return (
     <div className="p-6 overflow-y-auto h-full">
@@ -2610,21 +2605,17 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
               Thêm lượt contact đã có lead (dọn SĐT sai)
             </label>
           </div>
-          <button onClick={batchCreateLeads} disabled={batchStatus?.loading}
-            className="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-700 border border-green-200 rounded-lg hover:bg-green-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
-            {batchStatus?.type === 'leads' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-green-600 border-t-transparent rounded-full" /> : '🆕'}
-            Tạo mới hàng loạt
-          </button>
+          {(toolCompanyId || user?.company_id) && (user?.id || user?.userId) && <FacebookBatchRecovery
+            key={contactScopeKey} actorId={user.id || user.userId} companyId={toolCompanyId || user.company_id}
+            contactIds={contacts.filter(c => !c.lead_id).slice(0, 500).map(c => c.id)}
+            loaded={contactScopeRef.current.loaded && !batchStatus?.loading} api={API} headers={hdr} onChanged={() => load(false)} />}
           <button onClick={refreshNames} disabled={batchStatus?.loading}
             className="px-3 py-1.5 text-xs font-medium bg-purple-50 text-purple-700 border border-purple-200 rounded-lg hover:bg-purple-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
             {batchStatus?.type === 'names' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-purple-600 border-t-transparent rounded-full" /> : '🔄'}
             Refresh tên
           </button>
-          <button onClick={dedupLeads} disabled={batchStatus?.loading}
-            className="px-3 py-1.5 text-xs font-medium bg-orange-50 text-orange-700 border border-orange-200 rounded-lg hover:bg-orange-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer">
-            {batchStatus?.type === 'dedup' && batchStatus.loading ? <span className="animate-spin h-3 w-3 border-2 border-orange-600 border-t-transparent rounded-full" /> : '🔍'}
-            Xóa Lead trùng
-          </button>
+          {(toolCompanyId || user?.company_id) && <FacebookDuplicateReview
+            key={contactScopeKey} companyId={toolCompanyId || user.company_id} api={API} headers={hdr} />}
           <button onClick={batchExtractPhones} disabled={batchStatus?.loading}
             className="px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-50 flex items-center gap-1.5 cursor-pointer"
             title="Chỉ đọc tin đã lưu DB — không kéo tin mới từ Facebook">
@@ -2913,11 +2904,15 @@ function ContactsTab({ fbCompanyQs = '', companyId = '', isAdmin = false }) {
           <div className="flex items-center justify-between">
             <div>
               {batchStatus.result.error ? (
-                <span>❌ Lỗi: {batchStatus.result.error}</span>
+                <span>❌ Lỗi: {batchStatus.result.error}
+                  {batchStatus.type === 'leads' && batchStatus.result.total != null && (
+                    <span className="block mt-1">Đã nối CRM: {batchStatus.result.processed ?? 0} · Bỏ qua: {batchStatus.result.skipped ?? 0} · Cần đối soát: {batchStatus.result.failed ?? 0} · Chưa xử lý: {batchStatus.result.unprocessed ?? 0}</span>
+                  )}
+                </span>
               ) : batchStatus.type === 'sync' ? (
                 <span>✅ Đã đồng bộ <strong>{batchStatus.result.totalSynced || 0}</strong> tin nhắn mới từ <strong>{batchStatus.result.total || 0}</strong> liên hệ</span>
               ) : batchStatus.type === 'leads' ? (
-                <span>✅ Đã tạo <strong>{batchStatus.result.created || 0}</strong> Lead mới — Bỏ qua: {batchStatus.result.skipped || 0} (đã có Lead)</span>
+                <span>✅ Đã nối CRM: <strong>{batchStatus.result.processed ?? 0}</strong> · Bỏ qua theo điều kiện: {batchStatus.result.skipped ?? 0}</span>
               ) : batchStatus.type === 'dedup' ? (
                 <span>✅ {batchStatus.result.message}</span>
               ) : batchStatus.type === 'names' ? (
@@ -5694,3 +5689,4 @@ function SettingsTab({ onPagesChanged, fbCompanyQs = '' }) {
     </div>
   );
 }
+

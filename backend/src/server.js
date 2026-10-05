@@ -30,6 +30,9 @@ const {
 } = require('./helpers/apiRateLimit');
 
 const app = express();
+let workerShutdown = null;
+// Before every HTTP route, including webhooks; existing post-ACK work is outside this gate.
+app.use((req, res, next) => workerShutdown ? workerShutdown.middleware(req, res, next) : next());
 // Render / reverse proxy: 1 hop — cần để rate-limit lấy đúng IP client
 app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS) || 1);
 
@@ -196,7 +199,7 @@ app.use((req, res, next) => {
   }
   const isLarge = largeBodyRoutes.some((p) => req.path.startsWith(p));
   const limit = isLarge ? UPLOAD_BODY_LIMIT : STANDARD_BODY_LIMIT;
-  express.json({ limit })(req, res, (err) => {
+  express.json({ limit, verify: require('./modules/marketingAutomation/facebookLeadIntake').captureFacebookRawBody })(req, res, (err) => {
     if (err) return next(err);
     express.urlencoded({ extended: true, limit })(req, res, next);
   });
@@ -445,6 +448,10 @@ app.use('/api/app-updates', require('./routes/appUpdates'));
 app.use('/api/knowledge', require('./routes/knowledge'));
 const facebookRouter = require('./routes/facebook');
 facebookRouter._ioRef = io;
+workerShutdown = require('./helpers/workerShutdown').configureWorkerShutdown({
+  server, io, workers: facebookRouter.workerDrainGroup, revision: process.env.RENDER_GIT_COMMIT,
+  onReport: report => console.log('[worker shutdown]', JSON.stringify(report)),
+});
 app.use('/api/facebook', facebookRouter);
 const zaloRouter = require('./routes/zalo');
 zaloRouter._ioRef = io;
@@ -1182,11 +1189,11 @@ app.set('pushNotification', async (userId, notification) => {
     io.to(`user:${userId}`).emit('notification', notification);
     try {
       const { invalidateTags } = require('./middleware/responseCache');
-      void invalidateTags(['notifications', `user:${userId}`]);
+      await invalidateTags(['notifications', `user:${userId}`]);
     } catch { /* ignore */ }
     try {
       const { sendMobilePush } = require('./services/pushSender');
-      void sendMobilePush(userId, notification);
+      await sendMobilePush(userId, notification);
     } catch (_) { /* ignore */ }
   } catch (e) {
     // không để lỗi pref làm hỏng push: nếu chỉ chặn được kiểu hết hạn thì vẫn cho qua
@@ -1686,6 +1693,8 @@ server.listen(config.port, () => {
 
       let created = 0;
       for (const contact of contacts) {
+        try { await require('./helpers/facebookLegacyWriteScope').assertLegacyFacebookWriteAllowed(supabase, { contactIds: [contact.id] }); }
+        catch (e) { if (e.code === 'MANAGED_CARE_SCOPE') continue; throw e; }
         // Check có message inbound không
         const { count } = await supabase.from('facebook_messages')
           .select('id', { count: 'exact', head: true })
