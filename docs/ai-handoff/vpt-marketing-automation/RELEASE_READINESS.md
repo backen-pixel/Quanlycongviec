@@ -1,6 +1,6 @@
 # Hồ sơ chuẩn bị nghiệm thu Facebook → CRM → AI → khảo sát
 
-Ngày đối chiếu: 04/10/2026. **Rủi ro HIGH; HOLD phát hành.** Hồ sơ này gom điều kiện và bằng chứng, không phải quyết định mở quyền, chạy migration hoặc tiêu ngân sách. Nguồn chuẩn là repo; các mục cũ trong CURRENT/README giữ giá trị lịch sử theo phiên bản.
+Ngày đối chiếu kỹ thuật: 04/10/2026; cập nhật quyết định đầu mối nhận khách và nguồn lịch CRM: 05/10/2026. **Rủi ro HIGH; HOLD phát hành.** Hồ sơ này gom điều kiện và bằng chứng, không phải quyết định mở quyền, chạy migration hoặc tiêu ngân sách. Nguồn chuẩn là repo; các mục cũ trong CURRENT/README giữ giá trị lịch sử theo phiên bản.
 
 Delta sau bản kiểm kê 1b7c00f: [outcome SEND riêng](SURVEY_OUTCOMES.md) tại e2afcfea đã PASS kiểm thử và review độc lập để tạm ngừng gửi và giữ recovery. Manifest vẫn ghim 50 SQL của source cũ và ghi bằng chứng runtime delta riêng; không có SQL mới. PostgreSQL507/0/0, restore11/0/0 và Node18/22 mỗi1.417/0/0 không thay nghiệm thu môi trường/config thực hoặc quyền phát hành.
 
@@ -12,7 +12,7 @@ Mục 4 của goal đang thực hiện xác định nghiệm thu tuyến đầu 
 
 Ba nhóm đầu vào còn chờ xác nhận:
 
-1. Người nhận khách/khảo sát và người thay thế tại TP.HCM, Cần Thơ; lịch trống thực tế và đầu mối ngoại lệ trong khung 08–20h.
+1. **Đầu mối nhận khách: Admin Vạn Phú Thành; nguồn lịch khảo sát: CRM**, theo hai quyết định ngày 05/10 trong [sổ quyết định](../DECISIONS.md). Còn đối chiếu đúng tài khoản thuộc VPT/quyền hiện hành; không tự ánh xạ sang admin bất kỳ. Người trực tiếp khảo sát, người thay thế tại TP.HCM/Cần Thơ, giờ trống, độ đủ lịch bận CRM và đầu mối ngoại lệ trong khung 08–20h còn cần xác định. Xác nhận nơi quản lý lịch không tự chứng minh CRM_COMPLETE/ALL_BUSY_IN_CRM; không tạo roster đã chứng nhận từ câu trả lời này.
 2. Câu chữ bộ 18 câu V1 đã duyệt. Còn phiên bản dữ liệu sản phẩm, giá/chính sách, phạm vi phục vụ, người duyệt thư viện/hạn hiệu lực và phạm vi gửi nội dung hội thoại sang nhà cung cấp AI.
 3. Tài khoản AI/key riêng theo cấu hình, model chính xác, hạn mức AI riêng, thời gian hiệu lực; phạm vi tài khoản quảng cáo/Page/công ty và ngày bắt đầu kỳ đo.
 
@@ -48,7 +48,7 @@ Mỗi dòng cần giá trị cụ thể, nguồn kiểm chứng, người chịu
 |---|---|---|
 | Phạm vi kinh doanh | Company UUID, Page/form/account, sản phẩm, địa bàn, quy tắc định tuyến, loại khách hợp lệ | Chưa đối chiếu vận hành |
 | Đo lường | Toàn bộ nguồn chi, cả account không Lead; múi giờ/kỳ đo; phương pháp chứng nhận đủ nguồn | Chưa chứng nhận |
-| Con người và lịch | User UUID, vai trò từng vùng, người thay thế, lịch trống, đầu mối ngoại lệ | Chờ Founder/đầu mối |
+| Con người và lịch | User UUID, vai trò từng vùng, người thay thế, lịch trống, đầu mối ngoại lệ | Đã chốt Admin VPT nhận khách và nguồn lịch CRM; còn mapping tài khoản, người/giờ khảo sát, độ đủ lịch bận, người thay thế và ngoại lệ |
 | Thư viện tư vấn | Version/nguồn/phê duyệt/hiệu lực của thông tin và câu được dùng | Founder đã duyệt câu chữ V1; còn mapping, dữ liệu/chính sách, publisher và hạn hiệu lực; chưa APPROVE runtime |
 | AI | Danh tính Agent, grant, inference/send/survey policy; key riêng không dán vào tài liệu; model snapshot chính xác, hạn mức/kỳ và căn cứ tiền thực chi | Chưa cấp quyền |
 | Hạ tầng | Bản đang chạy, cấu hình từng replica/worker/cron, Primary duy nhất nhận ghi, quyền/RLS, migration ledger, backup và restore trên môi trường phù hợp | Chưa xác minh |

@@ -1,3 +1,11 @@
+## 05/10/2026 — Đã chốt đầu mối nhận khách VPT và nguồn lịch CRM
+
+Founder chọn **Admin Vạn Phú Thành** làm đầu mối nhận khách. Đã lưu quyết định `VPT-LEAD-RECIPIENT-FOUNDER-SELECTION-20261005` trong [DECISIONS](DECISIONS.md), trạng thái chọn đầu mối xong, chờ đối chiếu tài khoản thực. Không tự chọn admin toàn hệ thống hoặc cấp quyền. Phân công này chưa xác định người đi khảo sát hoặc người thay thế.
+
+Founder xác nhận nguồn lịch là **CRM**, quyết định `VPT-SURVEY-CALENDAR-CRM-20261005`. Ba đầu vào đã chốt: nguyên văn 18 câu tư vấn V1, đầu mối nhận khách và nơi quản lý lịch. Còn đối chiếu tài khoản VPT, người đi khảo sát/giờ trống và độ đủ lịch bận CRM, cấu hình AI cùng các điều kiện nghiệm thu trong [RELEASE_READINESS](vpt-marketing-automation/RELEASE_READINESS.md). Xác nhận nguồn CRM chưa phải chứng nhận CRM_COMPLETE/ALL_BUSY_IN_CRM. Chưa thay routing/DB thật, gọi model, gửi khách hoặc phát hành. Các mục phía dưới giữ lịch sử trước quyết định mới.
+
+---
+
 ## 04/10/2026 — Founder đã duyệt bộ 18 câu tư vấn VPT V1
 
 Đã ghi quyết định [VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL](DECISIONS.md) từ thông điệp “anh duyệt bộ 18 câu hỏi”. Duyệt nguyên văn Q01–Q15/A01–A03 của bộ tại ee641db9; giữ nguyên nội dung và điều kiện dùng. [Bản nội dung](vpt-marketing-automation/VPT_CARE_CONTENT_DRAFT.md) và JSON đã chuyển sang trạng thái duyệt câu chữ, chờ bindings vận hành. Không cần xin duyệt lại cùng bộ câu.

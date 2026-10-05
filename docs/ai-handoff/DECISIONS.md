@@ -1,3 +1,23 @@
+# 2026-10-05 — Nguồn lịch khảo sát là CRM
+
+Quyết định `VPT-SURVEY-CALENDAR-CRM-20261005`. Khi được hỏi nơi Admin Vạn Phú Thành quản lý lịch khảo sát, Founder trả lời **“crm”** trong task `01a0f6c3-9ed2-73c1-823e-0ad927431877`.
+
+Dùng lịch CRM hiện có làm nguồn lịch khảo sát. Trạng thái: `SOURCE_LOCATION_CONFIRMED_PENDING_ROSTER_VERIFICATION`. Bước cấu hình tiếp theo là đối chiếu người đi khảo sát, giờ trống, vùng phục vụ và các lịch bận trong CRM qua dịch vụ lịch hiện có; chọn giờ còn trống, gửi đề xuất và chờ khách xác nhận theo luồng đã thiết kế.
+
+Câu trả lời xác định nơi quản lý lịch, chưa xác nhận toàn bộ lịch bận đã nằm trong CRM; không tự công bố `CRM_COMPLETE`/`ALL_BUSY_IN_CRM` hoặc tạo roster/đặt lịch thật. Người thực hiện khảo sát và người thay thế vẫn cần xác định. Xem [hợp đồng nguồn lịch](vpt-marketing-automation/SURVEY_AVAILABILITY.md) và [luồng đề xuất/xác nhận](vpt-marketing-automation/CARE_SURVEY_RUNTIME.md). Không cần hỏi lại nơi quản lý lịch.
+
+---
+
+# 2026-10-05 — Admin Vạn Phú Thành là đầu mối nhận khách
+
+Quyết định `VPT-LEAD-RECIPIENT-FOUNDER-SELECTION-20261005`. Founder xác nhận trong task `01a0f6c3-9ed2-73c1-823e-0ad927431877`: **“người nhận khách là admin vạn phú thành”**.
+
+Đầu mối nhận khách VPT được chọn là **Admin Vạn Phú Thành**; phân vùng và phạm vi tiếp nhận giữ theo kế hoạch hiện hành. Trạng thái: `FOUNDER_SELECTED_PENDING_ACCOUNT_MAPPING`. Khi cấu hình, phải đối chiếu đúng tài khoản thuộc công ty VPT và quyền nhận khách hiện hành; không chọn bất kỳ tài khoản có nhãn admin hoặc admin toàn hệ thống, không tự tạo UUID hoặc cấp thêm quyền. Không yêu cầu Founder chọn lại đầu mối đã xác nhận; nếu nhiều tài khoản thực cùng khớp, chỉ làm rõ tài khoản cụ thể.
+
+Quyết định này chỉ xác định đầu mối tiếp nhận. Chưa chỉ định người trực tiếp khảo sát, người thay thế hoặc lịch trống; nguồn lịch CRM được xác nhận riêng trong quyết định cùng ngày ở trên. Chưa thay đổi routing/DB đang chạy. Các phần cấu hình và nghiệm thu còn lại ghi trong [hồ sơ nghiệm thu](vpt-marketing-automation/RELEASE_READINESS.md). Bộ 18 câu V1 đã được duyệt theo quyết định ngày 04/10, giữ nguyên.
+
+---
+
 # 2026-10-04 — Founder duyệt nguyên văn bộ 18 câu tư vấn VPT V1
 
 Quyết định `VPT-CARE-CONTENT-V1-FOUNDER-WORDING-APPROVAL`. Founder xác nhận trong task `01a0f6c3-9ed2-73c1-823e-0ad927431877`: **“anh duyệt bộ 18 câu hỏi”**.
