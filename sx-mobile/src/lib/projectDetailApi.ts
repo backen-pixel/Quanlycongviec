@@ -74,6 +74,8 @@ function mapKanbanStage(raw: Record<string, unknown>, index: number): KanbanStag
     bucket_slug: (raw.bucket_slug as string) ?? null,
     workflow_stage_id: (raw.workflow_stage_id as string) ?? wfStage.id ?? null,
     is_handover_to_logistics: Boolean(raw.is_handover_to_logistics),
+    group_key: raw.group_key != null && String(raw.group_key).trim() ? String(raw.group_key).trim() : null,
+    group_sort: raw.group_sort != null && Number.isFinite(Number(raw.group_sort)) ? Number(raw.group_sort) : null,
   };
 }
 
@@ -192,6 +194,73 @@ export type CrmTaskStageGroup = {
   openCount: number;
   doneCount: number;
 };
+
+/** Tên cột lớn: slug có sẵn dịch sang tiếng Việt, khoá người dùng tự đặt hiện nguyên văn (khớp web `nhanCotLon`). */
+const NHAN_COT_LON: Record<string, string> = {
+  tiep_nhan: 'Tiếp nhận',
+  ke_hoach: 'Kế hoạch',
+  duyet: 'Duyệt',
+  gia_cong: 'Gia công',
+  hoan_thien: 'Hoàn thiện',
+  dong_goi: 'Đóng gói',
+  cong_no: 'Công nợ',
+};
+
+/** Mục lớn gồm các cột (mục con); mỗi cột chứa các việc. Cột không có `group_key` tự đứng thành một mục lớn. */
+export type CrmTaskBigGroup = {
+  key: string;
+  label: string;
+  color?: string | null;
+  columns: CrmTaskStageGroup[];
+  /** Mọi việc của các cột bên trong — dùng cho «Xong hết» cả mục lớn. */
+  tasks: CrmTask[];
+  openCount: number;
+  doneCount: number;
+};
+
+/**
+ * Gom các cột (đã chia theo giai đoạn pipeline) vào mục lớn theo `group_key` — khớp web `gomCotTheoNhom`:
+ * cột lớn = giai đoạn nối tiếp, cột nhỏ bên trong = việc song song. Thứ tự: `group_sort` nếu người dùng đã đặt,
+ * không thì theo thứ tự cột đầu tiên của nhóm.
+ */
+export function groupColumnsIntoBigGroups(
+  columns: CrmTaskStageGroup[],
+  stages: KanbanStage[] = [],
+): CrmTaskBigGroup[] {
+  const stageById = new Map((stages || []).map((s) => [String(s.id), s]));
+  const order: string[] = [];
+  const byKey = new Map<string, { label: string; cols: CrmTaskStageGroup[]; sort: number | null }>();
+  for (const col of columns) {
+    const stage = stageById.get(String(col.key));
+    const gk = stage?.group_key ? String(stage.group_key).trim() : '';
+    const key = gk || `__rieng__${col.key}`;
+    if (!byKey.has(key)) {
+      byKey.set(key, { label: gk ? (NHAN_COT_LON[gk] || gk) : col.label, cols: [], sort: null });
+      order.push(key);
+    }
+    const g = byKey.get(key)!;
+    g.cols.push(col);
+    const gs = Number(stage?.group_sort);
+    if (Number.isFinite(gs) && gs > 0) g.sort = g.sort == null ? gs : Math.min(g.sort, gs);
+  }
+  const hasCustom = [...byKey.values()].some((g) => g.sort != null);
+  const keys = hasCustom
+    ? [...order].sort((a, b) => (byKey.get(a)!.sort ?? 9999) - (byKey.get(b)!.sort ?? 9999) || order.indexOf(a) - order.indexOf(b))
+    : order;
+  return keys.map((key) => {
+    const g = byKey.get(key)!;
+    const tasks = g.cols.flatMap((c) => c.tasks);
+    return {
+      key,
+      label: g.label,
+      color: g.cols[0]?.color ?? null,
+      columns: g.cols,
+      tasks,
+      openCount: g.cols.reduce((n, c) => n + c.openCount, 0),
+      doneCount: g.cols.reduce((n, c) => n + c.doneCount, 0),
+    };
+  });
+}
 
 export function getSxStageVisual(slug?: string | null): { icon: string; color: string } {
   const normalized = normalizeCrmTaskStageSlug(slug);
@@ -771,6 +840,19 @@ export async function fetchProjectTaskFiles(projectId: string): Promise<ProjectT
 
 export async function fetchLeadDocuments(dealId: string): Promise<ProjectDocument[]> {
   const { data } = await api.get<unknown>(`/crm/leads/${dealId}/documents`);
+  const list = Array.isArray(data) ? data : [];
+  return list.map((row) => mapProjectDocument(row as Record<string, unknown>));
+}
+
+/**
+ * Tài liệu CRM của deal gắn với dự án, đã lọc theo quyền xem của module Sản xuất — giống tab
+ * Tài liệu trên web (`/crm/project/:id/lead-documents?for_module=production`). Route này không đi
+ * qua cổng quyền theo deal, nên nhân viên chỉ được giao việc vẫn xem được tài liệu đã chia sẻ cho SX.
+ */
+export async function fetchProjectLeadDocuments(projectId: string): Promise<ProjectDocument[]> {
+  const { data } = await api.get<unknown>(`/crm/project/${projectId}/lead-documents`, {
+    params: { for_module: 'production' },
+  });
   const list = Array.isArray(data) ? data : [];
   return list.map((row) => mapProjectDocument(row as Record<string, unknown>));
 }

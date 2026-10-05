@@ -1,3 +1,9 @@
+## 05/10/2026 — Ghép main3375ef71, chuẩn bị gói Lead đầu tiên
+
+Founder yêu cầu hoàn tất các việc trước chạy thật. Commit checkpoint d5fa89d4 lưu quan sát cũ; ghép main3375ef71 trên nhánh sửa. Một conflict UI giải quyết giữ cả chức năng main và nhãn/bằng chứng. Reviewer tìm scope/false-zero metric mới; sửa company-filter, quyền contact chưa rõ trảUNKNOWN, exactcount chốngcắtnguồn.30ca mới +128cũ=158reportPASS; fullunit1564PASS/0FAIL/2WindowsSKIP; VitebuildPASS. Giữ toàn bộ49filemain trừ ba file báo cáo cần tích hợp; SQLcũkhôngsửa. ChờCI/PG và reviewđúngversion. Trang Giám sátSupabase cókhóa mật khẩu riêng; mờiFounder mởtrực tiếp, khôngbypass. Chưa mainmerge/deploy/config/DB/message. Xem RELEASE_INTEGRATION_20261005.
+
+---
+
 ## 05/10/2026 — Xác nhận workspace và kiểm Render chỉ đọc
 
 Dùng workspace tea-d47g0824d50c73856e80 sau Founder xác nhận. Render list services/deploys/events và log khởi động mục tiêu; GitHub compare source: frontend ad88a162/backend899db5ed live, main auto-deploy, backend một instance cấu hình. Chênh từ nền ca8810c5 là10commit/49file; frontend không đổi trong bốn commit chênh backend. Runtimeadd71daf diverged, merge-baseca8810c5. Startup log failover=on/auto=off, chưa chứng minh active target hiện hành; guard tuyến mới yêu cầu failoveroff+Primary. MainSQL649 khác MarketingSQL649, phải lập ledger đầy đủ tên/blob.

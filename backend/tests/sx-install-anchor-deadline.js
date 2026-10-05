@@ -43,9 +43,9 @@ assert.equal(finishingYmd(afterCrm), '2026-10-08');
 
 const sxBody = { delivery_date: '2026-10-20', production_finish_date: '2026-10-18', production_deadline: '2026-10-18' };
 const sxPersist = installAnchorPersistPatch(sxBody);
-assert.equal(sxPersist.install_occurrence_dates, undefined);
+assert.deepEqual(sxPersist.install_occurrence_dates, ['2026-10-20']);
 assert.equal(String(sxPersist.install_date).slice(0, 10), '2026-10-20');
-assert.equal(installAnchorPersistPatch(crmBody), null);
+assert.deepEqual(installAnchorPersistPatch(crmBody).install_occurrence_dates, ['2026-10-10', '2026-10-11']);
 const afterSx = rowAfterEdit(saved, sxBody);
 assert.deepEqual(afterSx.install_occurrence_dates, ['2026-10-20']);
 assert.equal(String(afterSx.install_date).slice(0, 10), '2026-10-20');
@@ -58,9 +58,15 @@ assert.deepEqual(afterBoth.install_occurrence_dates, ['2026-11-02']);
 assert.equal(resolveSxPlanInstallYmd(afterBoth), '2026-11-02');
 assert.equal(finishingYmd(afterBoth), '2026-10-31');
 
+const persistClearedEmpty = installAnchorPersistPatch({ delivery_date: '' });
+assert.deepEqual(persistClearedEmpty.install_occurrence_dates, []);
+const persistClearedNull = installAnchorPersistPatch({ delivery_date: null });
+assert.deepEqual(persistClearedNull.install_occurrence_dates, []);
+
 const cleared = rowAfterEdit(saved, { delivery_date: null });
 assert.deepEqual(cleared.install_occurrence_dates, []);
 assert.equal(cleared.install_date, null);
 assert.equal(resolveSxPlanInstallYmd(cleared), '');
 
 console.log('sx-install-anchor-deadline: ok');
+process.exit(0);

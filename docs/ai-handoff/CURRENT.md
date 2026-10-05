@@ -1,3 +1,11 @@
+## 05/10/2026 — Đang khép ứng viên Lead sau yêu cầu hoàn tất của Founder
+
+Đã ghép main `3375ef71` (mới hơn snapshot Render) vào nhánh Agent guardrails, giữ SX/mobile/lịch cùng SQL649 khác tên. Sửa chỉ số lượt chạm mới để lọc company, giới hạn quyền và bắt buộc count đầy đủ; không biến lỗi thành0 hoặc đưa vào CPQL. [Hồ sơ tích hợp](vpt-marketing-automation/RELEASE_INTEGRATION_20261005.md): 158reportPASS, toànunit1564PASS/0FAIL/2WindowsSKIP; buildPASS trước sửa câu giải thích cuối; reviewer riêng158PASS. CI/bằng chứng đúng bản xuất bản đang khép.
+
+Ưu tiên gói Facebook Lead Ads → CRM → Admin VPT → đo250.000đ/khách; không mở gửi AI/booking chỉ vì góiLeadđạt. Đã mở Giám sát Supabase, cần Founder mở khóa mật khẩu riêng trực tiếp trên UI; đang chờ trong lúc hoàn thiện mã. Không hỏi lại Render workspace. Chưa DB/config/writeUAT/release; mọi mục UAT thật chưa có bằng chứng vẫn HOLD.
+
+---
+
 ## 05/10/2026 — Render đã xác nhận và đọc được; xác định bản live và chênh lệch
 
 Founder xác nhận dùng My Workspace; mọi lần đọc Render truyền workspaceId tường minh. **Không còn chờ chọn workspace.** Backend live `899db5ed`, frontend live `ad88a162`; cả hai auto-deploy từ main. Backend cấu hình một instance; không thấy worker/cron riêng trong danh sách workspace, chưa chứng minh toàn bộ writer/job. [Bằng chứng và giới hạn](vpt-marketing-automation/RENDER_READONLY_20261005.md).

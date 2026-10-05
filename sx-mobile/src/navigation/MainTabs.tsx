@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import CreateDealModal from '../components/CreateDealModal';
 import Toast, { type ToastState } from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
+import { canViewTeamWork } from '../lib/roles';
 import { useMessenger } from '../context/MessengerContext';
 import { useTheme } from '../context/ThemeContext';
 import KanbanScreen from '../screens/KanbanScreen';
@@ -58,12 +59,15 @@ export default function MainTabs() {
   const [dealOpen, setDealOpen] = useState(false);
   const [toast, setToast] = useState<ToastState>(null);
 
+  /** Tạo đơn xưởng chỉ dành cho quản lý/admin. */
+  const canCreateDeal = canViewTeamWork(user);
+
   useEffect(() => {
     const sub = DeviceEventEmitter.addListener(SX_OPEN_CREATE_DEAL, () => {
-      setDealOpen(true);
+      if (canCreateDeal) setDealOpen(true);
     });
     return () => sub.remove();
-  }, []);
+  }, [canCreateDeal]);
 
   const styles = useMemo(
     () =>
@@ -165,23 +169,31 @@ export default function MainTabs() {
         <Tab.Screen
           name="CreateDeal"
           component={CreateDealPlaceholder}
-          options={{
-            tabBarLabel: () => null,
-            tabBarIcon: () => null,
-            tabBarButton: () => (
-              <View style={styles.fabTabSlot}>
-                <TouchableOpacity
-                  style={styles.fabTouchable}
-                  onPress={() => setDealOpen(true)}
-                  activeOpacity={0.88}
-                >
-                  <View style={styles.fabCircle}>
-                    <Ionicons name="add" size={28} color={colors.white} />
+          options={
+            canCreateDeal
+              ? {
+                tabBarLabel: () => null,
+                tabBarIcon: () => null,
+                tabBarButton: () => (
+                  <View style={styles.fabTabSlot}>
+                    <TouchableOpacity
+                      style={styles.fabTouchable}
+                      onPress={() => setDealOpen(true)}
+                      activeOpacity={0.88}
+                    >
+                      <View style={styles.fabCircle}>
+                        <Ionicons name="add" size={28} color={colors.white} />
+                      </View>
+                    </TouchableOpacity>
                   </View>
-                </TouchableOpacity>
-              </View>
-            ),
-          }}
+                ),
+              }
+              // Nhân viên không tạo đơn xưởng: ẩn cả ô giữ chỗ để 4 tab còn lại trải đều.
+              : {
+                tabBarButton: () => null,
+                tabBarItemStyle: { display: 'none', width: 0, height: 0 },
+              }
+          }
         />
         <Tab.Screen
           name="Work"
@@ -228,12 +240,14 @@ export default function MainTabs() {
         />
       </Tab.Navigator>
 
-      <CreateDealModal
-        visible={dealOpen}
-        user={user}
-        onClose={() => setDealOpen(false)}
-        onCreated={(msg) => showToast(msg)}
-      />
+      {canCreateDeal ? (
+        <CreateDealModal
+          visible={dealOpen}
+          user={user}
+          onClose={() => setDealOpen(false)}
+          onCreated={(msg) => showToast(msg)}
+        />
+      ) : null}
 
       <Toast state={toast} />
     </>
