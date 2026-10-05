@@ -3,6 +3,37 @@ const test=require('node:test'),assert=require('node:assert/strict');
 const {context,request,receipt,id}=require('./marketingAutomation.scopeAcceptance.fixture');
 const {parseRequest,requirements,evaluate,publicReceipt,publicView,createScopeAcceptance,keyOf}=require('../src/modules/marketingAutomation/scopeAcceptance');
 const issue=(fn,code)=>assert.throws(fn,e=>e.status===409&&e.issues?.some(x=>x.code===code));
+
+for(const [label,change] of [
+ ['negative revision',r=>r.command.expectedRevision=-1],['missing command',r=>r.command=null],
+ ['missing request identity',r=>r.requestId='invalid'],['invalid source account',r=>r.command.manifest[0].accountId='other'],
+ ['duplicate destinations',r=>r.command.manifest[0].destinations.push(r.command.manifest[0].destinations[0])],
+ ['reversed interval',r=>r.command.manifest[0].validUntil=r.command.manifest[0].validFrom],
+ ['invalid export digest',r=>r.command.exportClaims[0].fileSha256='bad'],
+ ['empty artifact',r=>r.artifactBase64=''],['invalid artifact alphabet',r=>r.artifactBase64='!!!!'],
+ ['oversized artifact',r=>r.artifactBase64=Buffer.alloc(1048577).toString('base64')],
+]) test('scope request rejects '+label,async()=>{const r=request(await context());change(r);assert.throws(()=>parseRequest(r),e=>e.status===400);});
+
+test('revoke requires the exact target, revision and meaningful reason without an attached artifact',()=>{
+ const r={requestId:id(931),command:{action:'REVOKE',expectedRevision:1,targetRequestId:id(930),reason:'Withdraw the synthetic scope after source discrepancy.'}};
+ assert.equal(parseRequest(r).artifact,null);
+ for(const change of [x=>x.command.reason='short',x=>x.command.targetRequestId='invalid',x=>x.artifactBase64='YQ==']){const bad=structuredClone(r);change(bad);assert.throws(()=>parseRequest(bad),e=>e.status===400);}
+});
+
+test('scope read uses current actor and rejects spoofed filters before storage',async()=>{
+ const c=await context(),h=harness(c);await h.run();assert.equal(h.res.code,200);assert.equal(h.res.body.currentStatus,'MISSING');
+ for(const change of [x=>x.req.user.userId='bad',x=>x.req.user.id=id(999),x=>x.req.query.page_id='123']){const bad=harness(c);change(bad);await bad.run();assert.ok([400,403].includes(bad.res.code));assert.equal(bad.calls.length,0);}
+});
+
+test('scope revoke records no report or artifact and cannot return a receipt for a different target',async()=>{
+ const c=await context(),body={requestId:id(931),command:{action:'REVOKE',expectedRevision:1,targetRequestId:id(930),reason:'Withdraw the synthetic scope after source discrepancy.'}};
+ for(const wrongTarget of [false,true]){
+  const h=harness(c,{reply:(name,args)=>{if(name==='marketing_scope_prepare')return{data:{actorId:c.actorId,companyId:c.companyId,trialId:c.trialId,revision:1}};
+   assert.equal(args.p_report,null);assert.equal(args.p_artifact,null);const r=receipt(c,{requestId:args.p_request,command:args.p_command},null);if(wrongTarget)r.targetRequestId=id(999);return{data:r};}});
+  h.req.body=body;await h.run(true);assert.equal(h.res.code,wrongTarget?503:200);
+  if(!wrongTarget){assert.equal(h.res.body.receipt.action,'REVOKE');assert.equal(h.res.body.receipt.report,null);}
+ }
+});
 test('accepted scope includes spend on zero-lead account: 1m / 4 = 250k; no budget or full-channel claim',async()=>{
  const c=await context(),r=parseRequest(request(c)),out=evaluate(c,r.command);
  assert.deepEqual(requirements(c).gaps,[]);assert.equal(out.spendVnd,1000000);assert.equal(out.qualifiedLeads,4);assert.equal(out.costPerQualifiedLeadVnd,250000);

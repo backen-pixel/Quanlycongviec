@@ -7,6 +7,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
+    "test:marketing-coverage": "node scripts/marketing-test-coverage.mjs",
     "start": "node --use-system-ca src/server.js",
     "dev": "node --use-system-ca --watch src/server.js",
     "fb:rescan-inbound-phones": "node scripts/rescan-fb-inbound-phones.js",
@@ -24,6 +25,7 @@
     "ota:publish": "node scripts/publish-ota.js",
     "test:cache": "node tests/response-cache-smoke.js",
     "test:tenant": "node tests/tenant-isolation-smoke.js",
+    "test:anon-exposure": "node tests/anon-exposure-smoke.js",
     "test:crm-split": "node tests/crm-split-50-cases.js",
     "test:crm-split:b": "node tests/crm-split-50-cases-b.js",
     "test:crm-split:all": "node tests/crm-split-50-cases.js && node tests/crm-split-50-cases-b.js",

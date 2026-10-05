@@ -99,6 +99,7 @@ on:
       - 'database/695_crm_survey_runtime.sql'
       - 'database/696_crm_care_inference_cost_console.sql'
       - 'database/697_crm_legacy_hold_restore.sql'
+      - 'database/700_revoke_anon_public_access.sql'
       - 'backend/tests/facebookRestore.postgres.test.js'
       - 'backend/tests/careInferenceCosts*.js'
       - 'frontend/src/components/facebook/CareInferenceCosts.jsx'
@@ -181,6 +182,7 @@ jobs:
       - run: node --test backend/tests/facebookCustomerCare.inference.test.js
       - run: node --test backend/tests/facebookCustomerCare.runtime.test.js backend/tests/facebookCustomerCare.runtimeConsole.test.js
       - run: node --test backend/tests/careAnswerDispatch.test.js backend/tests/careInferenceCosts.test.js
+      - run: node --test backend/tests/marketingAutomation.coverage.test.js
       - name: Install isolated Express version matching backend lock
         run: npm install --prefix "$RUNNER_TEMP/vpt-http" --ignore-scripts --no-audit --no-fund express@5.2.1
       - name: Real Express post-ACK and stopped admission
@@ -324,6 +326,10 @@ jobs:
   facebook-lead-intake-postgres:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        security-baseline: ['legacy', '700']
     services:
       postgres:
         image: postgres:17
@@ -361,10 +367,12 @@ jobs:
       - run: npm install --prefix "$RUNNER_TEMP/vpt-pg" --ignore-scripts --no-audit --no-fund pg@8.19.0
       - name: Signed Lead Ads intake, CRM transaction, permissions and leases
         env:
+          FB_INTAKE_SECURITY_BASELINE: ${{ matrix.security-baseline }}
           FB_INTAKE_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/fb_intake_test
         run: NODE_PATH="$RUNNER_TEMP/vpt-pg/node_modules" node --test backend/tests/facebookLeadIntake.postgres.test.js
       - name: Logical backup and restore into a separate isolated cluster
         env:
+          FB_INTAKE_SECURITY_BASELINE: ${{ matrix.security-baseline }}
           VPT_RESTORE_REHEARSAL: '1'
           VPT_RESTORE_TEST_PG_MAJOR: '17'
           FB_INTAKE_TEST_DATABASE_URL: postgresql://postgres:isolated_test_only@127.0.0.1:5432/fb_intake_test

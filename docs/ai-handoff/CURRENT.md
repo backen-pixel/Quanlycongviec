@@ -1,3 +1,11 @@
+## 05/10/2026, 23:20 — Khép bản tích hợp để mở Marketing–CRM
+
+Founder yêu cầu hoàn thành để chạy thật và chọn autonomous-agent-harness. Đã ghép main1f879ea8 (cũng là bản Render live) vào ứng viênf138e2bd; thêm44testcoverage. Local1628PASS/0FAIL/2SKIP Windows,49/49tệp>=80% dòng/nhánh/hàm. CI thêm nền700 trước Marketing, role service BYPASSRLS và restore defaultACL; chờ kết quả đúng bản xuất bản.
+
+**Quan sát DB mới thay trạng thái cũ:** cả Primary/Backup đã thu quyền bảng anon/auth, không còn bảngpublic tắtRLS trongtập r/p, cộtfacebook_contact_id và RPCatomic đã có. Chưa có sáu bảngMarketing kiểm; accountVPT01 thiếu trongregistryCRM, rawLeadAdstừ01/10 choPageVPT=0 cầnđốisoátvớiMeta. Backend startup vẫnfailoveron. [Gói chi tiết](vpt-marketing-automation/LIVE_RELEASE_20261005.md) và [hàng việc](vpt-marketing-automation/RELEASE_QUEUE.json). Chưa đổi DB/config/deploy; không thực hiện phần thu quyềnClaude. Không suy unitPASS làđủmởAI/gửi/booking hoặc250k/khách đãđạt.
+
+---
+
 ## 05/10/2026 — Bản sửa ngăn Backup tự cấp quyền đã PASS CI và review
 
 Sau catalog b0955e23, đã sửa helper/CLI cấp quyền, bỏ grant tự động ở replication/sync; khóa clone toàn bộ cũ và fallback manual-switch. Job lỗi quyền giữ ID/payload qua12 lần thử và dừng batch, không báo đã áp dụng. [Phạm vi, tác động, kiểm thử và cách dừng](vpt-marketing-automation/BACKUP_PRIVILEGE_GUARD_20261005.md).
@@ -81,6 +89,83 @@ Runtime xuất bản `542c4ee5`, tree `bc23ed0a`: cả 10 job automation37255873
 Founder đã cho phép chỉ đọc CRM, không cần xin lại: còn phiên đăng nhập để đối chiếu Admin VPT và lịch khảo sát; Render còn chờ workspace. Bộ 18 câu đã duyệt, đầu mối Admin VPT và nguồn lịch CRM vẫn giữ. **HOLD phát hành** đến khi khép cấu hình/UAT/gói quyết định tương ứng; chưa ghi DB thật, gửi khách, đặt lịch, tăng chi hay merge main.
 
 ---
+
+---
+
+## 2026-10-02 — Trợ lý Marketing–CRM: hồ sơ khảo sát MCRM-D0 v1
+
+- Phạm vi được giao: khảo sát mã và chuẩn bị thử nghiệm; gói tại [marketing-crm-assistant/README.md](./marketing-crm-assistant/README.md).
+- Đã làm: bản đồ 33 file nguồn tại main `0db11ce1adb0fb89fc87529036e495a62d58fce7`, 4 hợp đồng công cụ đề xuất, báo cáo dữ liệu giả, 26 kịch bản runtime và 8 đầu việc có owner/gate.
+- Phát hiện cần xử lý trước pilot: đọc chi tiết Lead có thể ghi `lead_seen_by`; sổ attribution không đủ chứng minh mọi intake đã vào CRM; đường đọc Ads MCP có xử lý lỗi riêng cần rà lại.
+- Kiểm chứng hồ sơ và review: [VALIDATION.md](./marketing-crm-assistant/VALIDATION.md). Không quy kết phát hiện tĩnh thành sự cố production đã xảy ra.
+- Agent/API/DB/runtime: chưa chạy; 26 kịch bản NOT_RUN; nghiệm thu dữ liệu thật/phát hành HOLD. Còn thiếu Sales Admin cụ thể, target môi trường và policy tiếp nhận/chăm sóc.
+- PR #19 và #20: đã kiểm metadata ngày 02/10, vẫn open/unmerged tại SHA ghi trong gói; chưa thay baseline hoặc release.
+- Các mục cũ bên dưới giữ nguyên như lịch sử tại thời điểm ghi; không tự là xác nhận hiện trạng.
+
+---
+
+
+## 2026-10-02 — F-13/F-14: Marketing tự động, đo Lead trước
+
+Founder đã giao triển khai kế hoạch thay phương án A/B/nhân sự cũ, rồi chuyển phép đo trước mắt sang250.000 đồng/khách hợp lệ. Trần một đợt100 triệu/30 ngày và80/20 giữ nguyên;300 khách tương ứng75 triệu, không buộc tiêu hết.7% doanh thu đánh giá sau; không chặn giai đoạn Lead vì chưa nối kế toán.
+
+[PR22](https://github.com/backen-pixel/Quanlycongviec/pull/22) chứa bản sửa báo cáo và nền domain/queue đang tắt, [kế hoạch](https://github.com/backen-pixel/Quanlycongviec/blob/codex/vpt-marketing-automation-20261002/docs/architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md) và [trạng thái triển khai](https://github.com/backen-pixel/Quanlycongviec/blob/codex/vpt-marketing-automation-20261002/docs/ai-handoff/vpt-marketing-automation/README.md). Các adapter dữ liệu thật, atomic budget/slot, tài sản/nội dung và UAT chưa hoàn tất. Không merge/deploy/đổi ads/DB thật. PR20 là hồ sơ kiến trúc; PR19 vẫn là dependency của PR22. Xem validation đúng phiên bản trong PR22, không suy tất cả hệ thống PASS.
+
+F-13/F-14 là quyết định mới, F-12 và nhật ký dưới đây giữ lịch sử theo thời điểm. Các gate kiến trúc/Factory và sources đồng bộ giữ nguyên.
+
+---
+
+# 2026-10-02 — Ưu tiên Marketing đa kênh để có khách
+
+Founder đã chốt F-12: làm Marketing đa kênh và CRM tiếp nhận/chăm sóc trước các phát triển chuyên sâu sau bán. Các kênh: Facebook, website, Google, ChatGPT Ads, TikTok, Zalo. [Gói ưu tiên và ngân sách đề xuất](MARKETING_MULTICHANNEL_PRIORITY_20261002.md).
+
+- Đã cập nhật roadmap và ghi quyết định mới; kiến trúc V1.1 và kiểm soát giữ nguyên. Gói media A: 14 triệu/14 ngày; B: 21 triệu/14 ngày có quỹ thử một kênh mới — cả hai **CHỜ DUYỆT**, không tự chi thêm.
+- Hồ sơ Facebook ghi đã đăng bộ được duyệt ngày 01/10, lần cuối đang xử lý; chưa đọc lại trạng thái phân phối. Không dùng brief cũ “chờ duyệt” để phủ nhận phê duyệt đã có.
+- Gói trợ lý Marketing–CRM ở PR #21 phục vụ tuyến này, chưa là điều kiện phải hoàn thành để tạo khách; runtime chưa triển khai theo hồ sơ gói.
+- Còn thiếu danh mục URL/tài khoản của kênh mới, đầu mối Marketing/Sales Admin, baseline chất lượng khách và phép đo. Nội dung, tiêu chí và các gói triển khai cụ thể tiếp tục được chuẩn bị trong phạm vi ưu tiên mới.
+- [Review phần cập nhật](MARKETING_PRIORITY_REVIEW_20261002.md); không chạy runtime hoặc sửa quảng cáo/DB trong phiên này. Lịch sử bên dưới giữ nguyên theo thời điểm ghi.
+
+---
+
+# 2026-10-01 — Business AI OS V1.1 / chặng 0
+
+Trạng thái: **gói tài liệu PASS kiểm tra và review Agent độc lập; chờ merge, chưa mở chặng 1**. Founder yêu cầu triển khai kế hoạch; phạm vi đang mở là chặng 0.
+
+- [Kiến trúc và mục lục](../architecture/README.md); [lộ trình/gói chặng 1](../architecture/BUSINESS_AI_OS_V1_1_ROADMAP.md); [sổ quyết định Founder](FOUNDER_DECISIONS_ARCHITECTURE_V1_1_20261001.md).
+- Baseline main: 0db11ce1adb0fb89fc87529036e495a62d58fce7; [đối chiếu hiện trạng](ARCHITECTURE_V1_1_EVIDENCE_20261001.md).
+- CRM giữ việc trước bán; Work Unified giữ sau bán; không gom toàn bộ crm_tasks. Chưa triển khai thay đổi runtime/schema/quyền.
+- PR #16 vẫn draft/open; PR #19 head e16c885ae7c2305645be02a1227bf378cb59137f vẫn open/chưa merge, nghiệm thu vận hành HOLD. Hồ sơ cũ bên dưới không phải trạng thái cập nhật của các PR đó.
+- Chặng tiếp chưa mở: cần gói C1-01…08, target được phép và dữ liệu đầu vào nghiệm thu; xem roadmap. Không tự chạy ứng dụng/GET hoặc SQL thật.
+- [Review độc lập](ARCHITECTURE_V1_1_INDEPENDENT_REVIEW_20261001.md): PASS trong phạm vi tài liệu; không phải GitHub/human approval hoặc nghiệm thu production.
+- Hoàn tác tài liệu: revert đúng commit của gói; giữ lịch sử bàn giao. Không có tác động DB để hoàn tác.
+
+---
+
+
+## 2026-10-05 - PR A minimal: lead measurement core
+State: local only; copied leadMeasurement.js and its 25 tests from PR #22 (679cb926), trimmed policy.js, and added isolated CI. No commit or push.
+Verification: Node 24.19.0 syntax checks passed; node --test --test-isolation=none passed 25/25. Plain node --test hit sandbox spawn EPERM; Node 18/22 CI is pending.
+Runtime: measureLeadTrial has no caller; no real-data report, DB/API access, migration, or deployment.
+Rollback: remove the three added module/test files and the isolated workflow, then remove these handoff entries.
+
+## 2026-10-01 - Issue #15: Marketing / Business AI OS M0 candidate
+
+**Update 2026-10-05:** Founder approved merging PR #16 into `main`. The module is not wired into any route, scheduler or migration, so the merge changes no runtime behavior. The "No main merge" statement below describes the state before this approval.
+
+**State: IN PROGRESS.** Feature branch `codex/marketing-bos-m0-20261001`, base `0bc6392286df0b986cdd6dfc59b499916dd6fd31`; implementation commit `33874dd2e3632c0a1127fd76cc7351a663138e9c`.
+
+Added a pure normalized-evidence contract and synthetic tests, ADR-0015, an integration/dependency map, a non-runtime implementation backlog and a read-only PR CI workflow. See `MARKETING_BOS_M0_EVIDENCE_20261001.md` and `../architecture/MARKETING_BOS_INTEGRATION_V1.md`.
+
+Verification: 73/73 synthetic tests on Node 22.16.0 in an isolated container; 73/73 on Node 24.19.0 in a fresh Windows sandbox after fetching this exact GitHub commit. All six new Git blob SHA-256 hashes match the locally tested contents. Helper/test syntax and diff checks pass. These are repeat runs by the same assistant, not independent review; no full application, staging or live E2E tests were run.
+
+No main merge, production deploy, SQL, CRM records, ad budgets/statuses, credentials, permissions, scheduler, agent deletion or existing runtime files were changed. The helper is not registered in an application route/worker. PR #14 remains an independent workstream.
+
+Next: review exact PR head and CI, then M1 target/schema/recipient/source verification and a scoped read adapter. M2 E2E/shadow evidence and M3 authorized release remain NOT STARTED. Preserve existing single-writer ownership and schedules. Rollback only this additive candidate; never delete customer/receipt/evidence data.
+
+Historical entries below are preserved byte-for-byte; this entry does not re-certify their live status.
+
+---
+
 
 ## 2026-10-05 — PR19 integration with current main; operational HOLD
 
@@ -1028,6 +1113,12 @@ Rollback: revert only this commit; preserve all customer data and prior handoff 
 
 # Current candidate handoff
 
+## 2026-10-05 — Khóa quyền anon/authenticated trên public, code only
+
+Nhánh `claude/security-anon-revoke`, nền `043c0a3b`. Đã thêm audit SELECT-only, snapshot catalog, migration 700 và rollback, smoke test PostgREST staging, runbook vận hành. Chưa kết nối database, chưa chạy SQL/smoke, chưa áp staging/production hoặc backup. Chưa commit được vì `.git` của worktree trỏ ra ngoài writable root và `git add` không tạo được `index.lock`. `BRIEF_SECURITY.md` là brief chưa theo dõi; không đưa vào diff.
+
+Backend chỉ dùng service key trong các client được rà; `supabaseAnonKey` chỉ được khai báo tại config. Frontend và sáu app mobile không có lời gọi trực tiếp Supabase REST/RPC theo rà mã nguồn; `ProductionBackupSyncPage.jsx` chỉ có chuỗi hướng dẫn biến môi trường. Cần vận hành chạy audit → snapshot → migration 700 → verify trên staging, xác nhận rollback và smoke test ứng dụng trước khi Founder duyệt phát hành. Lưu ý default `PUBLIC EXECUTE` toàn cục của PostgreSQL cho hàm mới không thể thu bằng default ACL chỉ trong schema public; xem runbook.
+
 ## 2026-09-29 — VPT Messenger durable intake, local candidate only
 
 Issue #7: https://github.com/backen-pixel/Quanlycongviec/issues/7. Base: `413e8f575b5b611b25a50980564d754b7bfcf211`. Founder requested finishing the Messenger A2/B trial. No remote commit, PR, migration, live test or deployment performed by this workstream.
@@ -1045,7 +1136,83 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-10-02 15:15 (UTC+7)
+Cập nhật: 2026-10-05 20:10 (UTC+7)
+
+## Bình luận — nút ⋯ để xóa
+
+Trạng thái: **local, chưa deploy.**
+
+Bong bóng bình luận có nút ⋯ góc phải. Người viết thấy Sửa và Xóa. Admin hệ thống / admin công ty thấy Xóa cả bình luận của người khác. API xóa lead trước đây truyền `role` (chuỗi) vào hàm nhận object user nên admin không xóa được — đã sửa. Xóa có hỏi xác nhận.
+
+Hoàn tác: revert `CommentsPanels.jsx`, `leadComments.js`, `projects.js`.
+
+## SX — NV công ty CRM mở dự án tại xưởng HCB/Metalla bị 403
+
+Trạng thái: **BE local, chưa deploy.**
+
+`getAccountingClientProjectIdsAtWorkshop` đọc dự án xưởng theo trang và tra deal theo lô ID (trước đây `.in()` 641 UUID → `Bad Request` → trả rỗng → 403 «Dự án không thuộc deal công ty của bạn tại xưởng này»).
+
+Hoàn tác: revert `backend/src/helpers/accountingScope.js`.
+
+## Drive — menu file không còn đè lên thẻ
+
+Trạng thái: **FE local.**
+
+Menu ⋯ của file trong lưới Drive được gắn lên `document.body`, không còn bị `overflow-hidden` của thẻ cắt và đè lên ảnh. Hết chỗ phía dưới thì menu mở lên trên.
+
+Hoàn tác: revert `DriveFileViews.jsx`.
+
+## Drive — xác nhận và báo khi xóa file
+
+Trạng thái: **FE local.**
+
+Menu ⋯ trên file Drive của hồ sơ hỏi xác nhận (kèm tên file) trước khi xóa. Xóa xong hiện toast «Đã xóa …». Trang Drive cũng báo khi đưa vào thùng rác hoặc xóa vĩnh viễn.
+
+Hoàn tác: revert `DriveAttachments.jsx`, `DrivePage.jsx`.
+
+
+
+## Bình luận — tải file giữ khi đổi trang
+
+Trạng thái: **FE local.**
+
+Đổi trang trong app không cắt request. Tiến trình hiện ở bảng góc dưới phải (cùng chỗ Drive): %, tốc độ mạng, thời gian còn lại. File ≤ 50MB và file lớn lên Drive đều vào bảng này. Đóng tab hoặc tải lại trang thì trình duyệt vẫn hủy request.
+
+Hoàn tác: revert `FileUpload.jsx`, `drive.js`, `oversizedDriveUpload.js`.
+
+## Bình luận — thanh tải file không còn nằm trong ô nhập
+
+Trạng thái: **FE local.**
+
+Khi gửi file, tiến trình hiện thành một hàng phía trên ô bình luận (tên file một dòng, thanh %, trạng thái một dòng). Ô nhập chỉ còn nút kẹp giấy.
+
+File trên 50MB (ví dụ APK 68MB) đi Google Drive: trình duyệt gửi hết lên server thì % dừng ở 99, server mới tải tiếp lên Drive rồi tạo link. Dòng trạng thái ghi «Đã gửi xong, đang lưu Google Drive…» rồi «Đang tạo link xem…».
+
+Hoàn tác: revert `CommentsPanels.jsx`, `FileUpload.jsx`, `UploadProgressBubble.jsx`, `oversizedDriveUpload.js`, `uploadProgressEta.js`.
+
+## Deadline HCB — đổi ngày vẫn quá hạn
+
+Trạng thái: **FE+BE local, đã quét lại hạn thẻ HCB trên DB.**
+
+Hạn thẻ lấy nhóm việc mẫu còn mở sớm nhất (duyệt = lắp − 6). Đổi ngày lắp lên 10/10 vẫn ra 04/10 17:30 nên sáng 05/10 vẫn quá hạn. Nay hạn thẻ và bảng nhiệm vụ SX bám cột Kanban đang đứng, chốt 17:30. Cùng ngày chỉ vào Quá hạn sau 17:30.
+
+Hoàn tác: revert `sxCardPlanDeadline.js`, nhánh production trong `workTasks.js`, và `deadlineBucketOf` trong `ProjectTasksOverviewPage.jsx`.
+
+
+
+## Bình luận — file trên 50MB lưu Drive
+
+Trạng thái: **FE+BE local.** Chưa thử file thật lớn hơn 50MB.
+
+Đính kèm trong bình luận lead/dự án: file trên 50MB được tải lên Drive của hồ sơ, link chia sẻ hiện trong nội dung bình luận và nút Mở Drive. Chat lead làm cùng việc và thêm một bình luận. Messenger lưu Drive cá nhân và gửi link trong tin nhắn. File từ 10MB đến 50MB vẫn chỉ nhắc, vẫn gửi trực tiếp được.
+
+Kéo file từ máy vào khung chat lead, Messenger hoặc phòng ban thì gửi như khi bấm đính kèm. Khung hiện «Thả file để gửi».
+
+## Dashboard SX — Hào thấy lại toàn bộ dự án xưởng
+
+Trạng thái: **BE local, đã gỡ lọc.**
+
+Đã bỏ giới hạn chỉ hiện dự án có việc của `hao@metalla.com`. Dashboard Hào trở lại như trước: thấy mọi dự án của công ty, theo phân loại đang chọn.
 
 ## Hàng nhiệm vụ — hiện nhân viên được gán
 
@@ -1054,14 +1221,6 @@ Trạng thái: **FE local, đã xem trên TB-2026-963.**
 Dòng nhiệm vụ thu gọn hiện tên người nhận cạnh ngày hẹn. Phôi và Cánh hiện «Thuận» mà không cần bấm Chi tiết.
 
 Hoàn tác: revert nhánh `assignees.map` trong `renderTaskRow` của `CRMTasksTab.jsx`.
-
-## Dashboard SX — Hào chỉ thấy dự án có việc của mình
-
-Trạng thái: **BE local.**
-
-`hao@metalla.com` không còn thấy toàn bộ dự án Metalla. Danh sách và trang chi tiết chỉ gồm dự án có `crm_tasks` hoặc `tasks` gắn cho anh ấy. Nhân viên sản xuất khác không đổi.
-
-Hoàn tác: bỏ `hao@metalla.com` khỏi `TASK_SCOPED_PRODUCTION_EMAILS` trong `dealParticipantProduction.js`.
 
 ## CRM — nút BC theo tổ chức cho quản trị HST
 

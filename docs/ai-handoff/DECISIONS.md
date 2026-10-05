@@ -1,3 +1,9 @@
+# 2026-10-05 — Hoàn tất điều kiện vận hành Marketing–CRM
+
+Founder chọn skill autonomous-agent-harness và yêu cầu: “em hoàn thành để đưa vào chạy thật nhé”. Tiếp tục khép tuyếnFacebook→CRM→AdminVPT→đo250.000đ/khách, ghép bản mainhiện hành, kiểm thử/review và chuẩn bị gói phát hành cụ thể. Giữ kiến trúc, ngân sách, người nhận và phần thu quyền anon doClaude phụ trách. Skill không biếnCodex/Claude thànhBusinessRuntimeAgent hoặc tự cấpquyền cho scheduler/gửi khách/AIbooking. Không yêu cầuFounder xác nhận lạiWorkspace/Admin/lịchđãchốt. Những tiềnđiều kiện chưa đạt phảiđượcghi rõ và kiểmtrước tácđộng thật; xem LIVE_RELEASE_20261005.md.
+
+---
+
 # 2026-10-05 — Founder xác nhận Render workspace cho kiểm tra chỉ đọc
 
 Quyết định `RENDER-WORKSPACE-READONLY-CONFIRMED-20261005`. Founder phản hồi “đã xác nhận” về câu hỏi chọn My Workspace đã gửi trong task hiện tại. Dùng `tea-d47g0824d50c73856e80` của My Workspace cho các lời gọi chỉ đọc Render; không hỏi lại cùng lựa chọn. Công cụ get_selected_workspace chỉ phản ánh fallback, không phản ánh workspaceId theo từng request.
@@ -47,6 +53,12 @@ Phạm vi: nguyên văn Q01–Q15 và A01–A03 của `VPT_CARE_CONTENT_DRAFT_V1
 # 2026-10-02 — VPT Marketing–Sales execution mandate
 
 Founder explicitly requested implementation of [the approved plan](../architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md).100m VND is a single30-day trial, not recurring monthly.Later in the same task Founder chose interim250,000 VND per qualified paid Lead;300 at target implies75m, while100m remains a one-time cap. Finance integration is deferred and must not block Lead-only preparation.7% remains a later revenue evaluation, not achieved by cheap Leads. AI advises/books surveys; humans final quote/close. See implementation README for unfinished release gates. Historic decisions below remain unchanged.
+
+---
+
+# 2026-10-01 — Chỉ mục quyết định Business AI OS V1.1
+
+[Sổ Founder V1.1](FOUNDER_DECISIONS_ARCHITECTURE_V1_1_20261001.md) ghi nguồn/phạm vi phê duyệt; [ADR-0016…0020](../adr/README.md) ghi lựa chọn kiến trúc. Các quyết định lịch sử bên dưới được giữ nguyên. Không dùng một hướng dẫn cũ làm quyền vượt phạm vi công việc hiện tại; phần không mâu thuẫn vẫn là tài liệu tham chiếu cần đối chiếu mã.
 
 ---
 

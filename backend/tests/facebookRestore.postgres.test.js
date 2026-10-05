@@ -2,6 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const {randomUUID,createHash}=require('node:crypto'),{execFileSync}=require('node:child_process');
 const enabled=process.env.VPT_RESTORE_REHEARSAL==='1';
+const securityBaseline=process.env.FB_INTAKE_SECURITY_BASELINE||'legacy';
 const quote=x=>'"'+x.replace(/"/g,'""')+'"';
 const scope="n.nspname NOT LIKE 'pg_%' AND n.nspname<>'information_schema'";
 const hash=x=>createHash('sha256').update(x).digest('hex');
@@ -18,13 +19,15 @@ async function inventory(db){
  const triggers=(await db.query(`SELECT n.nspname,c.relname,t.tgname,t.tgenabled,pg_get_triggerdef(t.oid) definition FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE ${scope} AND NOT t.tgisinternal ORDER BY 1,2,3`)).rows;
  const functions=(await db.query(`SELECT n.nspname,p.proname,pg_get_function_identity_arguments(p.oid) args,p.proowner::regrole::text owner,${acl('p.proacl',"acldefault('f',p.proowner)")} acl,pg_get_functiondef(p.oid) definition FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE ${scope} AND p.prokind='f' ORDER BY 1,2,3`)).rows;
  const policies=(await db.query("SELECT schemaname,tablename,policyname,permissive,roles,cmd,qual,with_check FROM pg_policies WHERE schemaname NOT LIKE 'pg_%' ORDER BY 1,2,3")).rows;
+ const defaultPrivileges=(await db.query(`SELECT pg_get_userbyid(d.defaclrole) owner,coalesce(n.nspname,'<global>') namespace,d.defaclobjtype,${acl('d.defaclacl')} acl FROM pg_default_acl d LEFT JOIN pg_namespace n ON n.oid=d.defaclnamespace ORDER BY 1,2,3`)).rows;
  const indexes=(await db.query("SELECT schemaname,tablename,indexname,indexdef FROM pg_indexes WHERE schemaname NOT LIKE 'pg_%' ORDER BY 1,2,3")).rows;
  const sequences={};for(const r of relations.filter(x=>x.relkind==='S'))sequences[r.nspname+'.'+r.relname]=(await db.query(`SELECT last_value::text,is_called FROM ${quote(r.nspname)}.${quote(r.relname)}`)).rows[0];
  const sequenceDefinitions=(await db.query(`SELECT n.nspname,c.relname,format_type(s.seqtypid,NULL) type,s.seqstart,s.seqincrement,s.seqmax,s.seqmin,s.seqcache,s.seqcycle FROM pg_sequence s JOIN pg_class c ON c.oid=s.seqrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE ${scope} ORDER BY 1,2`)).rows;
- return{data,schema:{schemas,relations,columns,constraints,triggers,functions,policies,indexes,sequenceDefinitions},sequences};
+ return{data,schema:{schemas,relations,columns,constraints,triggers,functions,policies,defaultPrivileges,indexes,sequenceDefinitions},sequences};
 }
 test('isolated logical backup restores business state, authority and maintenance control',{skip:!enabled,timeout:240000},async t=>{
  assert.equal(process.env.CI,'true');
+ assert.ok(['legacy','700'].includes(securityBaseline));
  const expectedMajor=Number(process.env.VPT_RESTORE_TEST_PG_MAJOR||'16');assert.ok([16,17].includes(expectedMajor));
  const {Client}=require('pg');
  const urls=[process.env.FB_INTAKE_TEST_DATABASE_URL,process.env.FB_RESTORE_TEST_DATABASE_URL].map((value,i)=>{
@@ -50,8 +53,9 @@ test('isolated logical backup restores business state, authority and maintenance
    // Roles are cluster globals, intentionally provisioned as NOLOGIN on the
    // empty test target. This is not a backup of real platform/auth roles.
    const roles=(await source.query("SELECT rolname,rolsuper,rolinherit,rolcreaterole,rolcreatedb,rolcanlogin,rolreplication,rolbypassrls FROM pg_roles WHERE rolname IN('anon','authenticated','service_role') ORDER BY rolname")).rows;
-   assert.equal(roles.length,3);for(const r of roles)for(const key of['rolsuper','rolcreaterole','rolcreatedb','rolcanlogin','rolreplication','rolbypassrls'])assert.equal(r[key],false);
+   assert.equal(roles.length,3);for(const r of roles){for(const key of['rolsuper','rolcreaterole','rolcreatedb','rolcanlogin','rolreplication'])assert.equal(r[key],false);assert.equal(r.rolbypassrls,securityBaseline==='700'&&r.rolname==='service_role');}
    await target.query('CREATE ROLE anon NOLOGIN;CREATE ROLE authenticated NOLOGIN;CREATE ROLE service_role NOLOGIN');
+   if(securityBaseline==='700')await target.query('ALTER ROLE service_role BYPASSRLS');
    assert.deepEqual((await target.query("SELECT rolname,rolsuper,rolinherit,rolcreaterole,rolcreatedb,rolcanlogin,rolreplication,rolbypassrls FROM pg_roles WHERE rolname IN('anon','authenticated','service_role') ORDER BY rolname")).rows,roles);
    targetPrepared=true;
   });

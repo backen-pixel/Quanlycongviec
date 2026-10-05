@@ -25,6 +25,12 @@ import {
 import DriveFilePicker from './drive/DriveFilePicker';
 import DriveChatAttachmentCard from './drive/DriveChatAttachmentCard';
 import { driveShareToLeadChat, driveShareToMessengerChat } from '../lib/drive';
+import {
+  commentAttachmentFromDriveFile,
+  driveShareBody,
+  partitionByDirectLimit,
+  storeOversizedOnDrive,
+} from '../lib/oversizedDriveUpload';
 import UploadFileLightbox, { collectUploadLightboxItems, findUploadLightboxIndex } from './UploadFileLightbox';
 import { buildMessengerMessagePreview } from '../lib/messengerPreview';
 import { countMembersByModule, memberModulesFromUser } from '../lib/memberModuleCounts';
@@ -40,6 +46,7 @@ import {
   parseCallLogPayload,
 } from '../lib/messengerCallLog';
 import ChatLargeFileDriveReminder from './ChatLargeFileDriveReminder';
+import { ChatFileDropOverlay, useChatFileDrop } from './ChatFileDrop';
 import ChatAudioAttachment from './ChatAudioAttachment';
 import {
   MESSENGER_ATTACH_HINT,
@@ -1309,15 +1316,46 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
     setSending(false);
   };
 
+  const sendOversizedLeadFiles = async (files) => {
+    setSending(true);
+    const totalSize = files.reduce((sum, f) => sum + (f.size || 0), 0);
+    setUploadState({
+      fileName: files.length === 1 ? files[0].name : `${files.length} file`,
+      fileSize: totalSize,
+      percent: 0,
+    });
+    try {
+      const rows = await storeOversizedOnDrive(files, {
+        entityType: 'lead',
+        entityId: leadId,
+        onProgress: (p) => setUploadState(p),
+      });
+      const shareText = driveShareBody(rows);
+      await driveShareToLeadChat(leadId, {
+        file_ids: rows.map((r) => r.id),
+        content: shareText,
+        reply_to: replyTo?.id || undefined,
+      });
+      await api.post(`/crm/leads/${leadId}/comments`, {
+        body: shareText,
+        attachments: rows.map(commentAttachmentFromDriveFile),
+      });
+    } catch (e) {
+      alert(e?.response?.data?.error || e?.message || 'Không lưu được file lớn lên Drive');
+    } finally {
+      setUploadState(null);
+      setSending(false);
+      clearChatFileInputs(fileInputRef, audioInputRef);
+    }
+  };
+
   const handlePickedFiles = (files) => {
     const rawPicked = Array.from(files || []).filter(Boolean);
     if (!rawPicked.length) return;
-    const validation = validateChatUploadFiles(rawPicked);
-    if (!validation.ok) {
-      alert(validation.error);
-      clearChatFileInputs(fileInputRef, audioInputRef);
-      return;
-    }
+    const { direct, oversized } = partitionByDirectLimit(rawPicked);
+    if (oversized.length) void sendOversizedLeadFiles(oversized);
+    if (!direct.length) return;
+    const validation = validateChatUploadFiles(direct);
     const picked = validation.valid;
     const large = getLargeChatFilesForDriveReminder(picked);
     if (large.length) {
@@ -1327,6 +1365,8 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
     routePickedChatFiles(picked, { addImages, sendOthers: (others) => void send(others) });
     clearChatFileInputs(fileInputRef, audioInputRef);
   };
+
+  const fileDrop = useChatFileDrop(handlePickedFiles);
 
   const sendDriveFile = async (file) => {
     if (!file?.id || sending) return;
@@ -1417,7 +1457,12 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
   };
 
   return (
-    <div className={fillParent ? 'flex flex-col flex-1 min-h-0' : 'flex flex-col'} style={fillParent ? undefined : { height: '450px' }}>
+    <div
+      className={`relative ${fillParent ? 'flex flex-col flex-1 min-h-0' : 'flex flex-col'}`}
+      style={fillParent ? undefined : { height: '450px' }}
+      {...fileDrop.bind}
+    >
+      <ChatFileDropOverlay active={fileDrop.active} />
       {imageLightboxIndex != null && chatImageGallery.length > 0 && (
         <UploadFileLightbox
           items={chatImageGallery}
@@ -1636,7 +1681,7 @@ export function LeadChatTab({ leadId, socket, fillParent, compact = false, onMes
         />
         {!compact ? (
         <p className="mt-1.5 text-slate-400 leading-snug text-[11px]">
-          {CHAT_DRIVE_REMIND_HINT}. Giới hạn đính kèm trực tiếp: {MESSENGER_MAX_FILE_MB} MB/file.
+          {CHAT_DRIVE_REMIND_HINT}. Kéo thả file vào khung chat để gửi. File trên {MESSENGER_MAX_FILE_MB} MB được lưu Drive và gắn link chia sẻ vào bình luận.
         </p>
         ) : null}
       </div>
@@ -2546,15 +2591,40 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     }
   };
 
+  const sendOversizedGroupFiles = async (files) => {
+    setSending(true);
+    const totalSize = files.reduce((sum, f) => sum + (f.size || 0), 0);
+    setUploadState({
+      fileName: files.length === 1 ? files[0].name : `${files.length} file`,
+      fileSize: totalSize,
+      percent: 0,
+    });
+    try {
+      const rows = await storeOversizedOnDrive(files, {
+        onProgress: (p) => setUploadState(p),
+      });
+      const shareText = driveShareBody(rows);
+      await driveShareToMessengerChat(groupId, {
+        file_ids: rows.map((r) => r.id),
+        content: shareText,
+        reply_to: replyTo?.id || undefined,
+      });
+    } catch (e) {
+      alert(e?.response?.data?.error || e?.message || 'Không lưu được file lớn lên Drive');
+    } finally {
+      setUploadState(null);
+      setSending(false);
+      clearChatFileInputs(fileInputRef, audioInputRef);
+    }
+  };
+
   const handlePickedFiles = (files) => {
     const rawPicked = Array.from(files || []).filter(Boolean);
     if (!rawPicked.length) return;
-    const validation = validateMessengerFiles(rawPicked);
-    if (!validation.ok) {
-      alert(validation.error);
-      clearChatFileInputs(fileInputRef, audioInputRef);
-      return;
-    }
+    const { direct, oversized } = partitionByDirectLimit(rawPicked);
+    if (oversized.length) void sendOversizedGroupFiles(oversized);
+    if (!direct.length) return;
+    const validation = validateMessengerFiles(direct);
     const picked = validation.valid;
     const large = getLargeChatFilesForDriveReminder(picked);
     if (large.length) {
@@ -2564,6 +2634,8 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
     routePickedChatFiles(picked, { addImages, sendOthers: (others) => void send(others) });
     clearChatFileInputs(fileInputRef, audioInputRef);
   };
+
+  const fileDrop = useChatFileDrop(handlePickedFiles);
 
   const sendDriveFile = async (file) => {
     if (!file?.id || sending) return;
@@ -2706,7 +2778,12 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
   const hubLayout = fillParent && !compact;
 
   return (
-    <div className={fillParent ? 'flex flex-col flex-1 min-h-0' : 'flex flex-col'} style={fillParent ? undefined : { height: '450px' }}>
+    <div
+      className={`relative ${fillParent ? 'flex flex-col flex-1 min-h-0' : 'flex flex-col'}`}
+      style={fillParent ? undefined : { height: '450px' }}
+      {...fileDrop.bind}
+    >
+      <ChatFileDropOverlay active={fileDrop.active} />
       {imageLightboxIndex != null && chatImageGallery.length > 0 && (
         <UploadFileLightbox
           items={chatImageGallery}
@@ -3398,8 +3475,8 @@ export function MessengerGroupChatTab({ groupId, socket, fillParent, compact = f
         {!compact ? (
         <p className={`mt-2 text-slate-400 leading-snug ${hubLayout ? 'text-[11px] text-center' : 'text-[11px]'}`}>
           {hubLayout
-            ? `File tối đa ${MESSENGER_MAX_FILE_MB} MB mỗi tệp. Ctrl+V để dán ảnh. ${CHAT_DRIVE_REMIND_HINT}.`
-            : `${CHAT_DRIVE_REMIND_HINT}. Giới hạn đính kèm trực tiếp: ${MESSENGER_MAX_FILE_MB} MB/file.`}
+            ? `Kéo thả file vào khung chat để gửi. File trên ${MESSENGER_MAX_FILE_MB} MB được lưu Drive. Ctrl+V để dán ảnh.`
+            : `${CHAT_DRIVE_REMIND_HINT}. Kéo thả file vào khung chat để gửi. File trên ${MESSENGER_MAX_FILE_MB} MB được lưu Drive và gửi kèm link chia sẻ.`}
         </p>
         ) : null}
       </div>

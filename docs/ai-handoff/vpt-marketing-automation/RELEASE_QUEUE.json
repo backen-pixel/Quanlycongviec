@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "updatedAt": "2026-10-05T16:20:16Z",
+  "scope": "VPT Facebook intake and qualified-lead measurement",
+  "automaticExecution": false,
+  "releaseStatus": "HOLD_PRECONDITIONS",
+  "main": "1f879ea85dfff23629fef79c8d15f2eaf540328e",
+  "tasks": [
+    {
+      "id": "INTEGRATE",
+      "owner": "Codex",
+      "status": "LOCAL_TESTS_PASS_CI_PENDING",
+      "evidence": "LIVE_RELEASE_20261005.md",
+      "acceptance": "Exact published source/tree passes CI and independent review"
+    },
+    {
+      "id": "DATABASE",
+      "owner": "DB operator / Codex preparation",
+      "status": "MISSING_MARKETING_SCHEMA",
+      "dependsOn": [
+        "INTEGRATE"
+      ],
+      "acceptance": "Explicit manifest and tested order after700; permissions and concurrency verified on suitable staging; no broad grants reintroduced"
+    },
+    {
+      "id": "RECOVERY",
+      "owner": "DB operator",
+      "status": "EVIDENCE_NEEDED",
+      "acceptance": "Restore appropriate backup including private schemas and relevant Storage; prove data and ACL preservation"
+    },
+    {
+      "id": "SOURCE_BINDING",
+      "owner": "Codex / account owner",
+      "status": "ACCOUNT_MISSING_IN_CRM",
+      "acceptance": "Official provider Page/form/account ownership, field map and signature verified; versioned recipient binding"
+    },
+    {
+      "id": "CUTOVER",
+      "owner": "Codex / Admin VPT",
+      "status": "NOT_STARTED",
+      "dependsOn": [
+        "DATABASE",
+        "RECOVERY",
+        "SOURCE_BINDING"
+      ],
+      "acceptance": "Primary only, legacy writers drained, signed receipt captured while worker paused"
+    },
+    {
+      "id": "UAT",
+      "owner": "Codex / Admin VPT",
+      "status": "NOT_STARTED",
+      "dependsOn": [
+        "CUTOVER"
+      ],
+      "acceptance": "Labelled test is traceable receipt-to-Lead-to-recipient-to-report; duplicate/error/restart and pause checked; test excluded from KPI"
+    },
+    {
+      "id": "ACTIVATE",
+      "owner": "Founder release scope / Codex execution",
+      "status": "NOT_READY",
+      "dependsOn": [
+        "UAT"
+      ],
+      "acceptance": "Concrete version/config/impact/restore package satisfies approved release scope"
+    }
+  ]
+}
+

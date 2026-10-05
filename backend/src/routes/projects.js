@@ -37,6 +37,7 @@ const { applyAllActiveWorkshopTemplatesForArea } = require('../helpers/workshopA
 const { assertProjectAccessible } = require('../helpers/projectAccessScope');
 const { enrichProjectsModulePresence } = require('../helpers/projectModuleCompanies');
 const { cotThieuTuLoi } = require('../helpers/projectDeliveryDates');
+const { isCrmSystemAdminUser, isCrmCompanyAdminUser } = require('../helpers/crmAccessRoles');
 
 const r = Router();
 r.use(auth);
@@ -3812,7 +3813,12 @@ r.get('/:id/comments/read-receipts', async (req, res) => {
 r.delete('/:id/comments/:commentId', async (req, res) => {
   try {
     if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE', mode: 'sensitive' }))) return;
-    await supabase.from('project_comments').delete().eq('id', req.params.commentId).eq('user_id', req.user.userId);
+    const isAdmin = isCrmSystemAdminUser(req.user) || isCrmCompanyAdminUser(req.user);
+    let q = supabase.from('project_comments').delete().eq('id', req.params.commentId).select('id');
+    if (!isAdmin) q = q.eq('user_id', req.user.userId);
+    const { data: removed, error } = await q;
+    if (error) throw error;
+    if (!removed?.length) return res.status(403).json({ error: 'Không có quyền xóa bình luận này' });
     const io = req.app.get('io');
     const pid = req.params.id;
     const delEvt = { project_id: pid, action: 'deleted', comment_id: req.params.commentId };

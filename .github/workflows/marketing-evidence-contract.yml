@@ -1,0 +1,28 @@
+name: Marketing evidence contract (isolated)
+
+# Issue #15: pure synthetic tests only. No secrets, services or deployment.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/marketing-evidence-contract.yml'
+      - 'backend/src/helpers/marketingEvidenceContract.js'
+      - 'backend/tests/marketingEvidenceContract.test.js'
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Syntax and isolated synthetic tests
+        run: |
+          node --version
+          node --check backend/src/helpers/marketingEvidenceContract.js
+          node --check backend/tests/marketingEvidenceContract.test.js
+          node --test backend/tests/marketingEvidenceContract.test.js
+          git diff --check

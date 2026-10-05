@@ -448,19 +448,23 @@ r.delete('/lead-comments/:cid', async (req, res) => {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     const cid = Number(req.params.cid);
-    const isAdmin = isCrmSystemAdminUser(req.user?.role) || isCrmCompanyAdminUser(req.user?.role);
+    const isAdmin = isCrmSystemAdminUser(req.user) || isCrmCompanyAdminUser(req.user);
     const { data: existing } = await supabase
       .from('crm_lead_comments')
       .select('lead_id')
       .eq('id', cid)
+      .is('deleted_at', null)
       .maybeSingle();
     let q = supabase
       .from('crm_lead_comments')
       .update({ deleted_at: new Date().toISOString() })
-      .eq('id', cid);
+      .eq('id', cid)
+      .is('deleted_at', null)
+      .select('id');
     if (!isAdmin) q = q.eq('user_id', userId);
-    const { error } = await q;
+    const { data: removed, error } = await q;
     if (error) throw error;
+    if (!removed?.length) return res.status(403).json({ error: 'Không có quyền xóa bình luận này' });
     const io = req.app.get('io');
     if (io && existing?.lead_id) {
       io.to(`lead:${existing.lead_id}`).emit('lead:comment', {

@@ -195,6 +195,8 @@ export default function OverviewScreen() {
   const [tasks, setTasks] = useState<WorkTask[]>([]);
   /** Lần tải việc của nhân viên gần nhất bị lỗi — phân biệt «lỗi» với «không có việc nào». */
   const [tasksFailed, setTasksFailed] = useState(false);
+  /** Đã nạp xong việc của nhân viên ít nhất một lần thành công — mốc để biết «không có dự án» là thật, không phải chưa về. */
+  const [tasksLoaded, setTasksLoaded] = useState(false);
   /**
    * Toàn bộ dự án của bảng (đã lọc công ty, CHƯA lọc theo người) — giữ ở ref để
    * không gây render thừa; `projectsVersion` báo hiệu đã có dữ liệu mới.
@@ -444,6 +446,7 @@ export default function OverviewScreen() {
       if (myTasks) {
         setTasks(myTasks);
         setTasksFailed(false);
+        setTasksLoaded(true);
       } else {
         // Lỗi tải: giữ danh sách cũ (nếu có) thay vì xoá trắng, và báo cho người dùng biết.
         setTasksFailed(true);
@@ -586,11 +589,15 @@ export default function OverviewScreen() {
    */
   useEffect(() => {
     if (!autoPickedTypeRef.current) return;
-    // Nhân viên: «có dự án hay không» phụ thuộc việc được giao (tải sau bảng), không phụ thuộc
-    // phân loại — để tự nhảy thì lúc việc chưa về sẽ nhảy nhầm sang loại rỗng và còn bị lưu lại.
+    // Nhân viên: «có dự án hay không» phụ thuộc việc được giao (tải sau bảng). Chỉ nhảy khi việc đã về
+    // thành công — chưa về mà nhảy thì sẽ nhảy nhầm sang loại rỗng và còn bị lưu lại. Không có việc nào
+    // thì không có gì để tìm, dừng; có việc mà loại hiện tại không có dự án nào của họ thì thử loại kế tiếp.
     if (ownOnly) {
-      autoPickedTypeRef.current = false;
-      return;
+      if (!tasksLoaded || tasksFailed) return;
+      if (tasks.length === 0) {
+        autoPickedTypeRef.current = false;
+        return;
+      }
     }
     if (loading || !filterCompany || workTypes.length < 2) return;
     if (!filterWorkTypeId || filterWorkTypeId === 'none') return;
@@ -605,7 +612,19 @@ export default function OverviewScreen() {
       return;
     }
     void applyWorkType(String(next.id));
-  }, [loading, kpis.total, ownOnly, staffScopedProjects.length, filterWorkTypeId, workTypes, filterCompany, applyWorkType]);
+  }, [
+    loading,
+    kpis.total,
+    ownOnly,
+    tasksLoaded,
+    tasksFailed,
+    tasks.length,
+    staffScopedProjects.length,
+    filterWorkTypeId,
+    workTypes,
+    filterCompany,
+    applyWorkType,
+  ]);
 
   const onSelectWorkType = useCallback(async (id: string) => {
     setTypePickerOpen(false);
@@ -751,7 +770,7 @@ export default function OverviewScreen() {
     { key: 'total', label: 'Tổng dự án', value: staffKpis.total, color: colors.primary, icon: 'cube-outline', onPress: goKanban },
     { key: 'producing', label: 'Đang sản xuất', value: staffKpis.producing, color: KPI_CYAN, icon: 'play-outline', onPress: goKanban },
     { key: 'completed', label: 'Hoàn tất', value: staffKpis.completed, color: colors.success, icon: 'checkmark-done-outline', onPress: goKanban },
-    { key: 'overdue', label: 'Quá hạn', value: staffKpis.overdue, color: colors.danger, icon: 'alert-circle-outline', onPress: () => openOverdueProjects() },
+    { key: 'overdue', label: 'Dự án quá hạn', value: staffKpis.overdue, color: colors.danger, icon: 'alert-circle-outline', onPress: () => openOverdueProjects() },
   ], [staffKpis, colors, goKanban, openOverdueProjects]);
 
   /**

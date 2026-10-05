@@ -1,7 +1,9 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),{randomUUID}=require('node:crypto');
 const dsn=process.env.FB_INTAKE_TEST_DATABASE_URL;
+const securityBaseline=process.env.FB_INTAKE_SECURITY_BASELINE||'legacy';
 test('isolated PostgreSQL Facebook Lead Ads intake',{skip:!dsn},async t=>{
+ assert.ok(['legacy','700'].includes(securityBaseline),'known isolated security baseline');
  const url=new URL(dsn);assert.ok(['127.0.0.1','localhost','[::1]'].includes(url.hostname));assert.equal(url.pathname,'/fb_intake_test');
  const {Client}=require('pg'),db=new Client({connectionString:dsn}),peers=[];await db.connect();
  const company=randomUUID(),other=randomUUID(),tenant=randomUUID(),admin=randomUUID(),sales=randomUUID(),region=randomUUID(),pipeline=randomUUID(),stage=randomUUID(),source=randomUUID(),kind=randomUUID();
@@ -30,6 +32,18 @@ test('isolated PostgreSQL Facebook Lead Ads intake',{skip:!dsn},async t=>{
   await db.query("INSERT INTO facebook_pages VALUES('123',$1,true,'page-test-token')",[company]);await db.query("INSERT INTO fb_ad_accounts VALUES('act_77',$1,true,NULL,'ad-test-token')",[company]);
   await db.query('INSERT INTO crm_pipelines VALUES($1,$2,true,$3)',[pipeline,company,region]);await db.query("INSERT INTO crm_pipeline_stages VALUES($1,$2,true,'lead',false,false)",[stage,pipeline]);
   await db.query('INSERT INTO crm_sources VALUES($1,$2,true)',[source,company]);await db.query("INSERT INTO crm_lead_types VALUES($1,$2,true,'lead')",[kind,company]);
+  if(securityBaseline==='700'){
+   // Compatibility only: real migration bytes, applied before Marketing migrations.
+   // This synthetic base is not a restored production database or a review of 700.
+   await db.query('ALTER ROLE service_role BYPASSRLS');
+   const securitySql=fs.readFileSync(path.resolve(__dirname,'../../database/700_revoke_anon_public_access.sql'),'utf8');
+   await db.query(securitySql);await db.query(securitySql);
+   await t.test('700 baseline closes base public access while preserving backend reads',async()=>{
+    for(const role of ['anon','authenticated'])assert.equal((await db.query("SELECT count(*)::int n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND has_table_privilege($1,c.oid,'SELECT,INSERT,UPDATE,DELETE')",[role])).rows[0].n,0);
+    assert.equal((await db.query("SELECT count(*)::int n FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' AND NOT c.relrowsecurity")).rows[0].n,0);
+    await db.query('SET ROLE service_role');try{assert.equal((await db.query('SELECT count(*)::int n FROM companies')).rows[0].n,2);}finally{await db.query('RESET ROLE');}
+   });
+  }
   for(const file of ['650_crm_lead_qualification.sql','651_crm_lead_identity.sql','652_facebook_lead_intake.sql','653_facebook_lead_intake_console.sql','654_crm_identity_review.sql','685_crm_identity_review_active_company.sql','658_facebook_legacy_reconciliation.sql']){const sql=fs.readFileSync(path.resolve(__dirname,'../../database',file),'utf8');await db.query(sql);await db.query(sql);}
   for(let i=0;i<3;i++){const c=new Client({connectionString:dsn});await c.connect();await c.query('SET ROLE service_role');peers.push(c);}
   const query=(name,args,c=peers[0])=>c.query(`SELECT ${name}(${args.map((_,i)=>'$'+(i+1)).join(',')}) r`,args).then(x=>x.rows[0]?.r);
@@ -69,6 +83,13 @@ test('isolated PostgreSQL Facebook Lead Ads intake',{skip:!dsn},async t=>{
   await require('./facebookCustomerCare.library.cases')(t,{db,peers,query,admin,sales,company,other,region});
   await require('./facebookCustomerCare.libraryConsole.cases')(t,{db,peers,query,admin,sales,company,other,region});
   await require('./surveyAvailability.cases')(t,{db,peers,query,admin,sales,company,other,region});
+  if(securityBaseline==='700')await t.test('Marketing intake ACLs are closed after 700 and before the historical grant fixture',async()=>{
+   for(const table of ['marketing_fb_lead_bindings','marketing_fb_lead_receipts','crm_lead_source_evidence','crm_lead_quality_events','crm_lead_identity_events']){
+    assert.ok((await db.query('SELECT to_regclass($1) object',['public.'+table])).rows[0].object,table+' exists');
+    for(const role of ['anon','authenticated','service_role'])assert.equal((await db.query("SELECT has_table_privilege($1,$2,'SELECT,INSERT,UPDATE,DELETE') allowed",[role,'public.'+table])).rows[0].allowed,false,role+' direct access to '+table);
+   }
+   for(const role of ['anon','authenticated','service_role'])assert.equal((await db.query("SELECT has_function_privilege($1,'public.marketing_fb_intake_admin(uuid,uuid)','EXECUTE') allowed",[role])).rows[0].allowed,false,role+' cannot call internal intake authorization helper');
+  });
   await require('./surveyCalendarGuard.cases')(t,{db,peers,company,other,admin,sales});
   const surveyFixtures=await require('./surveyProposals.cases')(t,{db,peers,query,company,other,admin,sales,region});
   await require('./surveyConfirmationIngress.cases')(t,{db,peers,query,company,other,admin,...surveyFixtures});
@@ -87,5 +108,11 @@ test('isolated PostgreSQL Facebook Lead Ads intake',{skip:!dsn},async t=>{
   await require('./facebookLegacySourceRepair.cases')(t,{db,peers,query,company,other,admin,sales,region,source,fresh:connectionFixtures.fresh});
   await require('./facebookBatchJournal.cases')(t,{db,peers,query,company,other,admin,sales,region,fresh:connectionFixtures.fresh});
   await require('./facebookCustomerCare.advisor.cases')(t,{db,peers,query,company,other,admin,sales,region,fresh:connectionFixtures.fresh});
+  if(securityBaseline==='700')await t.test('historical broad-grant fixture drift is detected and not certified as release state',async()=>{
+   // surveyCalendarGuard.cases intentionally installs legacyBackupGrants.sql.
+   // This demonstrates why passing business tests alone cannot certify live ACLs.
+   assert.equal((await db.query("SELECT has_table_privilege('service_role','public.marketing_fb_lead_receipts','SELECT,INSERT,UPDATE,DELETE') allowed")).rows[0].allowed,true);
+   assert.equal((await db.query("SELECT has_function_privilege('service_role','public.marketing_fb_intake_admin(uuid,uuid)','EXECUTE') allowed")).rows[0].allowed,true);
+  });
  }finally{await Promise.all(peers.map(x=>x.end()));await db.end();}
 });

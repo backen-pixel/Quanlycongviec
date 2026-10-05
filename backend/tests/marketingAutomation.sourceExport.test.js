@@ -16,5 +16,26 @@ test('service is primary/default-off and takes current actor from session; strip
 test('invalid scope/filter and SQL failures never return an empty successful comparison',async()=>{for(const [code,status]of [['42501',403],['40001',409],['23505',409],['22023',400],['XX000',503]]){const h=harness({error:code});await h.service(h.req,h.res);assert.equal(h.res.code,status);}const h=harness();h.req.query.page_id='999';await h.service(h.req,h.res);assert.equal(h.res.code,400);assert.equal(h.calls.length,0);});
 test('response with wrong actor or invented provider completeness is rejected',async()=>{for(const delta of [{actorId:id(90)},{providerCoverage:'COMPLETE'},{allowBudgetExecution:true}]){const h=harness({data:{policy:'SOURCE_EXPORT_COMPARISON_V1',actorId:id(1),companyId:id(2),trialId:id(3),providerCoverage:'UNVERIFIED',allowBudgetExecution:false,...delta}});await h.service(h.req,h.res);assert.equal(h.res.code,503);}});
 module.exports={body};
+
+test('export read deduplicates form inventory, keeps stale evidence historical and strips unused fields',async()=>{
+ const recorded=harness();await recorded.service(recorded.req,recorded.res,true);const saved=recorded.res.value;
+ const data={policy:'SOURCE_EXPORT_COMPARISON_V1',actorId:id(1),companyId:id(2),trialId:id(3),providerCoverage:'UNVERIFIED',allowBudgetExecution:false,
+  contextVersion:'a'.repeat(64),asOf:'2026-10-03T00:00:00Z',registry:{status:'CURRENT',declaration:{entries:[{kind:'META_LEAD_ADS',pageId:'123',formId:'456'},{kind:'META_LEAD_ADS',pageId:'123',formId:'456'},{kind:'WEBSITE',pageId:null,formId:null}]}},
+  census:{run:{id:id(8),state:'SCANNED',since:'2026-09-30T17:00:00Z',until:'2026-10-01T17:00:00Z',scopeCurrent:true,witness:{status:'TRAVERSED',pagesDigest:'c'.repeat(64)}},measuredEvidence:{count:1,digest:'d'.repeat(64)}},exports:[{currentStatus:'STALE_AUTHORITY',receipt:saved}],privateToken:'synthetic-secret'};
+ const h=harness({data});await h.service(h.req,h.res);
+ assert.equal(h.res.code,200);assert.deepEqual(h.res.value.forms,[{pageId:'123',formId:'456'}]);assert.equal(h.res.value.census.measuredCount,1);
+ assert.equal(h.res.value.exports[0].currentStatus,'STALE_AUTHORITY');assert.equal(h.res.value.providerCoverage,'UNVERIFIED');assert.ok(!JSON.stringify(h.res.value).includes('synthetic-secret'));
+ for(const change of [x=>x.registry.declaration.entries[0].formId='invalid',x=>x.census.run.witness.pagesDigest='bad',x=>x.exports[0].currentStatus='CURRENT_BUT_UNCHECKED',x=>x.exports[0].receipt.companyId=id(99)]){
+  const bad=structuredClone(data);change(bad);const invalid=harness({data:bad});await invalid.service(invalid.req,invalid.res);assert.equal(invalid.res.code,503);
+ }
+});
+
+test('export difference rows preserve the reason without exposing contact data',async()=>{
+ const recorded=harness();await recorded.service(recorded.req,recorded.res,true);const data=recorded.res.value;
+ data.status='DISCREPANCIES';data.comparison.notObserved=1;data.comparison.matched=0;
+ data.comparison.differences=[{id:'99',reason:'NOT_OBSERVED',exportedForm:'456',observedForm:null,exportedEpoch:1790812800,observedEpoch:null,phone:'synthetic-private'}];
+ const h=harness({data});await h.service(h.req,h.res);assert.equal(h.res.code,200);
+ assert.equal(h.res.value.comparison.differences[0].reason,'NOT_OBSERVED');assert.ok(!JSON.stringify(h.res.value).includes('synthetic-private'));
+});
 test('UI pending survives reload in the same scope without storing file bytes, and fails before POST if storage fails',async()=>{const ui=await import('../../frontend/src/components/marketing/sourceExportState.mjs');const map=new Map(),storage={getItem:k=>map.get(k)||null,setItem:(k,v)=>map.set(k,v),removeItem:k=>map.delete(k)};const b=body(),{fileBase64,...request}=b,p={fileHash:'b'.repeat(64),request};ui.storePending(storage,id(1),id(2),id(3),p);assert.deepEqual(ui.readPending(storage,id(1),id(2),id(3)),p);assert.equal(ui.readPending(storage,id(90),id(2),id(3)),null);assert.ok(![...map.values()].join('').includes('fileBase64'));assert.throws(()=>ui.storePending(storage,id(1),id(2),id(3),{...p,request:{...request,fileBase64}}));assert.throws(()=>ui.storePending({...storage,setItem(){throw Error('quota');}},id(1),id(2),id(3),p));ui.clearPending(storage,id(1),id(2),id(3));assert.equal(ui.readPending(storage,id(1),id(2),id(3)),null);});
 test('UI rejects receipt from another request, file, actor or evidence context',async()=>{const ui=await import('../../frontend/src/components/marketing/sourceExportState.mjs'),b=body(),p={fileHash:'b'.repeat(64),request:b};const x={policy:'SOURCE_EXPORT_COMPARISON_V1',actorId:id(1),companyId:id(2),trialId:id(3),contextVersion:b.contextVersion,providerCoverage:'UNVERIFIED',allowBudgetExecution:false,requestId:b.requestId,fileSha256:p.fileHash,replayed:true,status:'MATCHED_EXPORTED_IDS',comparison:{differences:[]}};assert.equal(ui.exportReceipt(x,p,id(1),id(2),id(3)),x);for(const patch of [{actorId:id(9)},{requestId:id(8)},{fileSha256:'c'.repeat(64)},{contextVersion:'d'.repeat(64)},{providerCoverage:'COMPLETE'},{allowBudgetExecution:true}])assert.throws(()=>ui.exportReceipt({...x,...patch},p,id(1),id(2),id(3)));});
