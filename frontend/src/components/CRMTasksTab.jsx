@@ -3895,8 +3895,12 @@ export default function CRMTasksTab({
                   )}
                 </span>
               )}
-              {isExpanded && assignees.map((u) => (
-                <span key={u.id} className="text-[10px] text-blue-600 flex items-center gap-0.5">
+              {assignees.map((u) => (
+                <span
+                  key={u.id}
+                  className="text-[10px] font-medium text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"
+                  title="Nhân viên được gán"
+                >
                   <User className="h-2.5 w-2.5" />{u.full_name}
                 </span>
               ))}

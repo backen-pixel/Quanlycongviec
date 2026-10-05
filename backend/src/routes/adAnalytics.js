@@ -8,6 +8,10 @@
  *   PUT  /ads/:adId          đặt tên chiến dịch / nhóm QC cho một ad_id
  *   POST /ads/bulk-name      đặt tên hàng loạt
  *
+ *   GET  /pages-profile      hồ sơ từng page cho màn hình thẻ
+ *   GET  /page-ads           quảng cáo của một page cho màn chi tiết
+ *   GET  /page-posts         gom theo BÀI VIẾT — một bài có thể chạy bằng nhiều quảng cáo
+ *   GET  /post-leads         từng lead/deal/đơn chốt + dự án của một bài viết
  *   GET  /bo-loc             danh sách công ty + page để đổ vào ô lọc
  *   GET  /marketing/status   đã nối Marketing API chưa
  *   POST /marketing/test     thử một cặp (ad account, token) — không lưu
@@ -21,6 +25,7 @@ const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { isAdminLike } = require('../helpers/adminRole');
 const { isTenantScopeEnforced } = require('../helpers/tenantScope');
+const { layTheoLo, layTheoLoMem } = require('../helpers/supabaseLo');
 const { chayPhanTich, tomTat } = require('../helpers/adInsights');
 const { dongBoTatCa, kiemTraKetNoi, daCauHinh, chuanHoaActId } = require('../helpers/fbMarketingSync');
 
@@ -34,6 +39,7 @@ function isoNgay(v, cuoi = false) {
 }
 
 const CONG_TY_RONG = '00000000-0000-0000-0000-000000000000';
+
 
 /**
  * Công ty người dùng được xem, LUÔN cắt theo hệ sinh thái đang đăng nhập.
@@ -70,15 +76,25 @@ async function congTyLoc(req) {
 }
 
 /** Nạp quy kết + lead + điểm, gom theo khoá. */
-async function napDuLieu(req) {
+/**
+ * @param {boolean} chiQuangCao — chỉ nạp dòng CÓ ad_id.
+ *   Mặc định nạp hết ~6.800 dòng quy kết, trong đó chỉ ~300 dòng có ad_id.
+ *   Nếu máy chủ giới hạn số dòng trả về (PostgREST có ngưỡng riêng, không phải
+ *   cứ .limit() to là được), phần bị cắt gần như toàn là dòng không có ad_id,
+ *   và màn hình quảng cáo sẽ thiếu dữ liệu một cách âm thầm.
+ *   Màn nào chỉ quan tâm quảng cáo thì lọc ngay từ máy chủ cho chắc.
+ */
+async function napDuLieu(req, { chiQuangCao = false } = {}) {
   const tu = isoNgay(req.query.from);
   const den = isoNgay(req.query.to, true);
   const pageId = req.query.page_id ? String(req.query.page_id) : null;
 
   let qa = supabase.from('lead_attribution')
-    .select('lead_id, fb_page_id, fb_ad_id, fb_adset_id, fb_campaign_id, fb_ad_title, fb_source, kenh, cham_dau_luc')
+    .select('lead_id, fb_page_id, fb_ad_id, fb_adset_id, fb_campaign_id, fb_ad_title, fb_post_id, fb_source, kenh, cham_dau_luc')
     .not('lead_id', 'is', null)
+    .order('cham_dau_luc', { ascending: false })
     .limit(20000);
+  if (chiQuangCao) qa = qa.not('fb_ad_id', 'is', null);
   if (tu) qa = qa.gte('cham_dau_luc', tu);
   if (den) qa = qa.lte('cham_dau_luc', den);
   if (pageId) qa = qa.eq('fb_page_id', pageId);
@@ -93,10 +109,9 @@ async function napDuLieu(req) {
   const dsCT = await congTyLoc(req);
 
   const [leadRows, diemRows, catRows, pageRows] = await Promise.all([
-    supabase.from('crm_leads').select('id, type, actual_close_date, estimated_value, company_id, created_at')
-      .in('id', ids).then((x) => x.data || [], () => []),
-    supabase.from('lead_quality_scores').select('lead_id, diem, nhan')
-      .in('lead_id', ids).then((x) => x.data || [], () => []),
+    layTheoLo('crm_leads', 'id', ids,
+      'id, type, actual_close_date, estimated_value, company_id, created_at'),
+    layTheoLo('lead_quality_scores', 'lead_id', ids, 'lead_id, diem, nhan'),
     supabase.from('fb_ad_catalog').select('ad_id, ad_name, adset_name, campaign_id, campaign_name, nguon')
       .then((x) => x.data || [], () => []),
     supabase.from('facebook_pages').select('page_id, page_name, default_company_id')
@@ -196,18 +211,33 @@ r.get('/summary', async (req, res) => {
     const tong = oTrong();
     const tuQC = oTrong();
     const adSet = new Set();
+    const pageSet = new Set();
+    let donChuaCoGia = 0;
+    const daDem = new Set();
     for (const a of rows) {
       const l = mLead.get(String(a.lead_id));
       if (!l) continue;
       const d = mDiem.get(String(a.lead_id));
       congDon(tong, l, d);
-      if (a.fb_ad_id) { congDon(tuQC, l, d); adSet.add(String(a.fb_ad_id)); }
+      if (a.fb_ad_id) {
+        congDon(tuQC, l, d);
+        adSet.add(String(a.fb_ad_id));
+        if (a.fb_page_id) pageSet.add(String(a.fb_page_id));
+        // Đơn chốt mà để giá 0 thì mọi con số về tiền sau này đều sai.
+        const k = String(a.lead_id);
+        if (l.actual_close_date && !daDem.has(k)) {
+          daDem.add(k);
+          if (!(Number(l.estimated_value) > 0)) donChuaCoGia += 1;
+        }
+      }
     }
     const coChiTieu = mChiTieu.size > 0;
     res.json({
       tat_ca: themChiTieu(chot(tong), adSet, mChiTieu),
       tu_quang_cao: themChiTieu(chot(tuQC), adSet, mChiTieu),
       so_quang_cao: adSet.size,
+      so_page: pageSet.size,
+      don_chua_co_gia: donChuaCoGia,
       ti_le_biet_quang_cao: tong.leads ? Math.round((tuQC.leads / tong.leads) * 100) : 0,
       co_chi_tieu: coChiTieu,
       ghi_chu_chi_tieu: coChiTieu
@@ -456,6 +486,21 @@ r.get('/bo-loc', async (req, res) => {
         .then((x) => x.data || [], () => []),
     ]);
 
+    // Đếm lead CÓ ad_id theo page. Chỉ vài trăm dòng vì đã lọc ad_id, không nặng.
+    // Mục đích: ô chọn phải nói trước page nào không bao giờ có dữ liệu quảng cáo,
+    // thay vì để người dùng chọn rồi nhận một màn hình trống không hiểu vì sao.
+    const demQC = new Map();
+    try {
+      const { data: qc } = await supabase.from('lead_attribution')
+        .select('fb_page_id')
+        .not('fb_ad_id', 'is', null)
+        .limit(20000);
+      for (const r of qc || []) {
+        const k = String(r.fb_page_id || '');
+        demQC.set(k, (demQC.get(k) || 0) + 1);
+      }
+    } catch { /* không đếm được thì thôi, ô chọn vẫn dùng được */ }
+
     // Page không gắn công ty chỉ hiện cho tài khoản không bị giới hạn công ty.
     const pages = pageRows
       .filter((p) => !dsCT || idCty.includes(String(p.default_company_id || '')))
@@ -463,16 +508,504 @@ r.get('/bo-loc', async (req, res) => {
         page_id: String(p.page_id),
         page_name: p.page_name || String(p.page_id),
         company_id: p.default_company_id ? String(p.default_company_id) : null,
+        lead_quang_cao: demQC.get(String(p.page_id)) || 0,
       }));
+
+    const demTheoCty = new Map();
+    for (const p of pages) {
+      const k = String(p.company_id || '');
+      demTheoCty.set(k, (demTheoCty.get(k) || 0) + p.lead_quang_cao);
+    }
 
     res.json({
       he_sinh_thai: tenantRow ? { id: String(tenantRow.id), ten: tenantRow.name } : null,
       khoa_theo_he_sinh_thai: isTenantScopeEnforced(req),
-      cong_ty: (cty || []).map((c) => ({ id: String(c.id), ten: c.short_name || c.name })),
+      cong_ty: (cty || []).map((c) => ({
+        id: String(c.id),
+        ten: c.short_name || c.name,
+        lead_quang_cao: demTheoCty.get(String(c.id)) || 0,
+      })),
       pages,
     });
   } catch (e) {
     console.error('[ad-analytics/bo-loc]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Hồ sơ từng Page cho màn hình đầu của trang chiến dịch.
+ * Mỗi page một thẻ: công ty, số liệu, dải mẫu quảng cáo, trạng thái kết nối.
+ */
+r.get('/pages-profile', async (req, res) => {
+  try {
+    const { rows, mLead, mDiem, mPage, mChiTieu } = await napDuLieu(req, { chiQuangCao: true });
+
+    const gom = new Map();
+    for (const a of rows) {
+      if (!a.fb_ad_id) continue;                 // thẻ này nói về quảng cáo
+      const l = mLead.get(String(a.lead_id));
+      if (!l) continue;
+      const k = String(a.fb_page_id || 'khong-ro');
+      if (!gom.has(k)) {
+        const p = mPage.get(k) || {};
+        gom.set(k, {
+          page_id: a.fb_page_id || null,
+          page_name: p.page_name || null,
+          company_id: p.default_company_id ? String(p.default_company_id) : null,
+          ad_ids: new Set(),
+          lan_cuoi: a.cham_dau_luc,
+          lead_7_ngay: 0,
+          ...oTrong(),
+        });
+      }
+      const g = gom.get(k);
+      g.ad_ids.add(String(a.fb_ad_id));
+      if (a.cham_dau_luc > g.lan_cuoi) g.lan_cuoi = a.cham_dau_luc;
+      if (new Date(a.cham_dau_luc).getTime() >= Date.now() - 7 * 86400000) g.lead_7_ngay += 1;
+      congDon(g, l, mDiem.get(String(a.lead_id)));
+    }
+    if (!gom.size) return res.json({ data: [], tong: 0 });
+
+    // Tên công ty + hệ sinh thái
+    const idCty = [...new Set([...gom.values()].map((g) => g.company_id).filter(Boolean))];
+    const cty = idCty.length
+      ? await supabase.from('companies').select('id, name, short_name, tenant_id').in('id', idCty)
+        .then((x) => x.data || [], () => [])
+      : [];
+    const idTenant = [...new Set(cty.map((c) => c.tenant_id).filter(Boolean))];
+    const tenants = idTenant.length
+      ? await supabase.from('tenants').select('id, name').in('id', idTenant)
+        .then((x) => x.data || [], () => [])
+      : [];
+    const mTenant = new Map(tenants.map((t) => [String(t.id), t.name]));
+    const mCty = new Map(cty.map((c) => [String(c.id), {
+      ten: c.short_name || c.name,
+      he_sinh_thai: mTenant.get(String(c.tenant_id)) || null,
+    }]));
+
+    // Dải mẫu quảng cáo — lấy mới nhất, lọc trùng theo khoá ổn định.
+    // URL Facebook là link ký có hạn nên mẫu cũ sẽ không hiện được nữa; đó là
+    // lý do chỉ lấy mẫu gần đây chứ không lấy toàn bộ lịch sử.
+    const creatives = await supabase.from('lead_attribution')
+      .select('fb_page_id, fb_ad_id, fb_post_id, fb_creative_url, fb_creative_type, fb_creative_key, cham_dau_luc')
+      .not('fb_creative_url', 'is', null)
+      .order('cham_dau_luc', { ascending: false })
+      .limit(1500)
+      .then((x) => x.data || [], () => []);
+
+    const mCre = new Map();
+    for (const c of creatives) {
+      const k = String(c.fb_page_id || '');
+      if (!gom.has(k)) continue;
+      if (!mCre.has(k)) mCre.set(k, { ds: [], khoa: new Set() });
+      const o = mCre.get(k);
+      const khoa = c.fb_creative_key || c.fb_creative_url;
+      if (o.khoa.has(khoa)) continue;
+      // Đếm HẾT số mẫu khác nhau, nhưng chỉ trả về 8 ảnh đầu. Nếu cắt luôn phần
+      // đếm thì huy hiệu "+N" trên thẻ sẽ nói dối: page có 45 mẫu mà báo +3.
+      o.khoa.add(khoa);
+      if (o.ds.length < 8) {
+        // post_id đi kèm TỪNG mẫu: một page chạy nhiều bài, nên link "Mở bài viết"
+        // phải bám theo đúng ảnh đang xem chứ không dùng chung một bài cho cả page.
+        o.ds.push({
+          url: c.fb_creative_url,
+          loai: c.fb_creative_type,
+          ad_id: c.fb_ad_id,
+          post_id: c.fb_post_id || null,
+        });
+      }
+    }
+
+    const bayGio = Date.now();
+    const data = [...gom.values()].map((g) => {
+      const o = themChiTieu(chot(g), g.ad_ids, mChiTieu);
+      const imLang = Math.max(0, Math.round((bayGio - new Date(g.lan_cuoi).getTime()) / 86400000));
+      const ct = mCty.get(String(g.company_id)) || {};
+      const cre = mCre.get(String(g.page_id)) || { ds: [], khoa: new Set() };
+      return {
+        page_id: g.page_id,
+        page_name: g.page_name || g.page_id,
+        cong_ty: ct.ten || null,
+        he_sinh_thai: ct.he_sinh_thai || null,
+        so_quang_cao: g.ad_ids.size,
+        leads: o.leads,
+        quality_leads: o.quality_leads,
+        quality_rate: o.quality_rate,
+        by_label: o.by_label,      // để thẻ vẽ được dải phân bố chất lượng
+        junk_rate: o.junk_rate,
+        closed: o.closed,
+        close_rate: o.close_rate,
+        revenue: o.revenue,
+        spend: o.spend ?? null,
+        cost_per_lead: o.cost_per_lead ?? null,
+        roas: o.roas ?? null,
+        lead_7_ngay: g.lead_7_ngay,
+        lan_cuoi: g.lan_cuoi,
+        im_lang_ngay: imLang,
+        // Im lặng quá 7 ngày mà trước đó có lead đều → đáng nghi, không khẳng định hỏng.
+        canh_bao: imLang >= 7 ? 'im_lang' : null,
+        mau_quang_cao: cre.ds,              // tối đa 8 ảnh để hiện
+        so_mau: cre.khoa ? cre.khoa.size : cre.ds.length,   // tổng số mẫu khác nhau
+      };
+    }).sort((x, y) => y.leads - x.leads);
+
+    res.json({ data, tong: data.length, co_chi_tieu: mChiTieu.size > 0 });
+  } catch (e) {
+    console.error('[ad-analytics/pages-profile]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Danh sách quảng cáo của một page — cho màn chi tiết.
+ *
+ * Dẫn đầu mỗi quảng cáo là ẢNH MẪU chứ không phải tiêu đề: đo trên dữ liệu thật,
+ * cả 5 quảng cáo của NextGo đều mang đúng một tiêu đề "Quảng cáo Lượt tương tác mới",
+ * nên tiêu đề không dùng để phân biệt được.
+ */
+r.get('/page-ads', async (req, res) => {
+  try {
+    const pid = String(req.query.page_id || '').trim();
+    if (!pid) return res.status(400).json({ error: 'Thiếu page_id' });
+
+    const { rows, mLead, mDiem, mCat, mPage, mChiTieu } = await napDuLieu(req, { chiQuangCao: true });
+
+    const gom = new Map();
+    for (const a of rows) {
+      if (!a.fb_ad_id) continue;
+      if (String(a.fb_page_id || '') !== pid) continue;
+      const l = mLead.get(String(a.lead_id));
+      if (!l) continue;
+      const k = String(a.fb_ad_id);
+      if (!gom.has(k)) {
+        const c = mCat.get(k) || {};
+        gom.set(k, {
+          ad_id: k,
+          ad_title: a.fb_ad_title || c.ad_name || null,
+          campaign_name: c.campaign_name || null,
+          post_id: a.fb_post_id || null,
+          lan_cuoi: a.cham_dau_luc,
+          ...oTrong(),
+        });
+      }
+      const g = gom.get(k);
+      if (!g.post_id && a.fb_post_id) g.post_id = a.fb_post_id;
+      if (a.cham_dau_luc > g.lan_cuoi) g.lan_cuoi = a.cham_dau_luc;
+      congDon(g, l, mDiem.get(String(a.lead_id)));
+    }
+    if (!gom.size) return res.json({ page: null, data: [], tong: 0 });
+
+    // Ảnh mẫu theo từng quảng cáo, lọc trùng bằng khoá ổn định.
+    const cre = await supabase.from('lead_attribution')
+      .select('fb_ad_id, fb_creative_url, fb_creative_type, fb_creative_key, cham_dau_luc')
+      .eq('fb_page_id', pid)
+      .not('fb_creative_url', 'is', null)
+      .order('cham_dau_luc', { ascending: false })
+      .limit(1500)
+      .then((x) => x.data || [], () => []);
+
+    const mCre = new Map();
+    for (const c of cre) {
+      const k = String(c.fb_ad_id || '');
+      if (!gom.has(k)) continue;
+      if (!mCre.has(k)) mCre.set(k, { ds: [], khoa: new Set() });
+      const o = mCre.get(k);
+      const khoa = c.fb_creative_key || c.fb_creative_url;
+      if (o.khoa.has(khoa)) continue;
+      o.khoa.add(khoa);
+      // Giữ tới 12 ảnh để khung xem phóng to còn lật được, thẻ chỉ hiện 2 ảnh đầu.
+      if (o.ds.length < 12) o.ds.push({ url: c.fb_creative_url, loai: c.fb_creative_type });
+    }
+
+    const bayGio = Date.now();
+    const p = mPage.get(pid) || {};
+    const data = [...gom.values()].map((g) => {
+      const o = themChiTieu(chot(g), [g.ad_id], mChiTieu);
+      const c = mCre.get(g.ad_id) || { ds: [], khoa: new Set() };
+      return {
+        ad_id: g.ad_id,
+        ad_title: g.ad_title,
+        campaign_name: g.campaign_name,
+        post_id: g.post_id,
+        page_id: pid,
+        leads: o.leads,
+        deals: o.deals,
+        closed: o.closed,
+        close_rate: o.close_rate,
+        revenue: o.revenue,
+        quality_rate: o.quality_rate,
+        junk_rate: o.junk_rate,
+        by_label: o.by_label,
+        spend: o.spend ?? null,
+        cost_per_lead: o.cost_per_lead ?? null,
+        roas: o.roas ?? null,
+        lan_cuoi: g.lan_cuoi,
+        im_lang_ngay: Math.max(0, Math.round((bayGio - new Date(g.lan_cuoi).getTime()) / 86400000)),
+        mau_quang_cao: c.ds,
+        so_mau: c.khoa.size,
+      };
+    }).sort((x, y) => y.leads - x.leads);
+
+    res.json({
+      page: { page_id: pid, page_name: p.page_name || pid },
+      data,
+      tong: data.length,
+    });
+  } catch (e) {
+    console.error('[ad-analytics/page-ads]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Phân tích theo BÀI VIẾT của một page.
+ *
+ * Khác hẳn gom theo quảng cáo, và đó là lý do nó tồn tại: đo trên dữ liệu thật
+ * có 27 bài viết nhưng 43 quảng cáo — một bài đang được chạy bằng tới 10 quảng cáo.
+ * Nhìn theo quảng cáo thì 90 lead của bài đó bị xé thành 10 mẩu, mẩu nào cũng
+ * "chưa đủ dữ liệu"; gom lại theo bài mới thấy nó là nguồn lead lớn nhất hệ thống
+ * mà chỉ chốt 2%.
+ */
+r.get('/page-posts', async (req, res) => {
+  try {
+    const pid = String(req.query.page_id || '').trim();
+    if (!pid) return res.status(400).json({ error: 'Thiếu page_id' });
+
+    const { rows, mLead, mDiem, mPage, mChiTieu } = await napDuLieu(req, { chiQuangCao: true });
+
+    const gom = new Map();
+    for (const a of rows) {
+      if (!a.fb_ad_id || !a.fb_post_id) continue;
+      if (String(a.fb_page_id || '') !== pid) continue;
+      const l = mLead.get(String(a.lead_id));
+      if (!l) continue;
+      const k = String(a.fb_post_id);
+      if (!gom.has(k)) {
+        gom.set(k, {
+          post_id: k,
+          tieu_de: a.fb_ad_title || null,
+          ad_ids: new Set(),
+          lan_cuoi: a.cham_dau_luc,
+          ...oTrong(),
+        });
+      }
+      const g = gom.get(k);
+      g.ad_ids.add(String(a.fb_ad_id));
+      if (!g.tieu_de && a.fb_ad_title) g.tieu_de = a.fb_ad_title;
+      if (a.cham_dau_luc > g.lan_cuoi) g.lan_cuoi = a.cham_dau_luc;
+      congDon(g, l, mDiem.get(String(a.lead_id)));
+    }
+    if (!gom.size) return res.json({ page: null, data: [], tong: 0 });
+
+    const cre = await supabase.from('lead_attribution')
+      .select('fb_post_id, fb_creative_url, fb_creative_type, fb_creative_key, cham_dau_luc')
+      .eq('fb_page_id', pid)
+      .not('fb_creative_url', 'is', null)
+      .order('cham_dau_luc', { ascending: false })
+      .limit(1500)
+      .then((x) => x.data || [], () => []);
+
+    const mCre = new Map();
+    for (const c of cre) {
+      const k = String(c.fb_post_id || '');
+      if (!gom.has(k)) continue;
+      if (!mCre.has(k)) mCre.set(k, { ds: [], khoa: new Set() });
+      const o = mCre.get(k);
+      const khoa = c.fb_creative_key || c.fb_creative_url;
+      if (o.khoa.has(khoa)) continue;
+      o.khoa.add(khoa);
+      if (o.ds.length < 12) o.ds.push({ url: c.fb_creative_url, loai: c.fb_creative_type });
+    }
+
+    const bayGio = Date.now();
+    const p = mPage.get(pid) || {};
+    const data = [...gom.values()].map((g) => {
+      const o = themChiTieu(chot(g), g.ad_ids, mChiTieu);
+      const c = mCre.get(g.post_id) || { ds: [], khoa: new Set() };
+      return {
+        post_id: g.post_id,
+        page_id: pid,
+        tieu_de: g.tieu_de,
+        so_quang_cao: g.ad_ids.size,
+        ad_ids: [...g.ad_ids],
+        leads: o.leads,
+        deals: o.deals,
+        closed: o.closed,
+        close_rate: o.close_rate,
+        revenue: o.revenue,
+        quality_rate: o.quality_rate,
+        junk_rate: o.junk_rate,
+        by_label: o.by_label,
+        spend: o.spend ?? null,
+        cost_per_lead: o.cost_per_lead ?? null,
+        roas: o.roas ?? null,
+        lan_cuoi: g.lan_cuoi,
+        im_lang_ngay: Math.max(0, Math.round((bayGio - new Date(g.lan_cuoi).getTime()) / 86400000)),
+        mau_quang_cao: c.ds,
+        so_mau: c.khoa.size,
+      };
+    }).sort((x, y) => y.leads - x.leads);
+
+    res.json({ page: { page_id: pid, page_name: p.page_name || pid }, data, tong: data.length });
+  } catch (e) {
+    console.error('[ad-analytics/page-posts]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * DANH SÁCH LEAD của một bài viết (hoặc của một quảng cáo).
+ *
+ * Màn gom (page / bài / quảng cáo) chỉ trả về con số; chỗ này trả về từng người
+ * đứng sau con số đó, để kiểm chứng được: 181 lead mà 3 đơn thì 178 người kia
+ * đang nằm ở giai đoạn nào, ai đang giữ, đơn nào đã có dự án.
+ *
+ * Dự án nối với lead qua HAI đường, và phải xét cả hai:
+ *   1. crm_leads.project_id — đường trực tiếp.
+ *   2. projects.customer_id — đường qua khách hàng, vì nhiều dự án được tạo
+ *      thẳng từ khách chứ không gắn ngược lại vào lead.
+ * Đo ngày 02/10/2026: 0/308 lead từ quảng cáo có dự án theo cả hai đường, nên
+ * cột này hiện sẽ trống — đó là sự thật của dữ liệu, không phải lỗi màn hình.
+ */
+r.get('/post-leads', async (req, res) => {
+  try {
+    const pid = String(req.query.page_id || '').trim();
+    const postId = String(req.query.post_id || '').trim();
+    const adId = String(req.query.ad_id || '').trim();
+    if (!pid) return res.status(400).json({ error: 'Thiếu page_id' });
+    if (!postId && !adId) return res.status(400).json({ error: 'Thiếu post_id hoặc ad_id' });
+
+    const { rows, mLead, mDiem, mCat, mPage } = await napDuLieu(req, { chiQuangCao: true });
+
+    // Một lead có thể có nhiều dòng quy kết (nhắn lại nhiều lần). rows đã sắp
+    // giảm dần theo thời gian chạm, nên dòng gặp ĐẦU TIÊN là lần chạm mới nhất.
+    const canh = new Map();
+    for (const a of rows) {
+      if (String(a.fb_page_id || '') !== pid) continue;
+      if (postId && String(a.fb_post_id || '') !== postId) continue;
+      if (adId && String(a.fb_ad_id || '') !== adId) continue;
+      const k = String(a.lead_id);
+      if (!mLead.has(k)) continue;              // ngoài quyền công ty → không trả
+      if (!canh.has(k)) canh.set(k, a);
+    }
+
+    const p = mPage.get(pid) || {};
+    const bai = {
+      page_id: pid,
+      page_name: p.page_name || pid,
+      post_id: postId || null,
+      ad_id: adId || null,
+      tieu_de: null,
+      so_quang_cao: 0,
+    };
+    if (!canh.size) {
+      return res.json({ bai, data: [], tong: 0, tom_tat: null });
+    }
+
+    const dsQC = new Set();
+    for (const a of canh.values()) {
+      if (a.fb_ad_id) dsQC.add(String(a.fb_ad_id));
+      if (!bai.tieu_de && a.fb_ad_title) bai.tieu_de = a.fb_ad_title;
+      if (!bai.post_id && a.fb_post_id) bai.post_id = String(a.fb_post_id);
+    }
+    bai.so_quang_cao = dsQC.size;
+
+    const ids = [...canh.keys()];
+    const chiTiet = await layTheoLo('crm_leads', 'id', ids,
+      'id, code, title, type, stage_id, customer_id, project_id, assigned_to, '
+      + 'estimated_value, actual_close_date, created_at, lead_temperature');
+
+    const idKhach = [...new Set(chiTiet.map((l) => l.customer_id).filter(Boolean).map(String))];
+    const idNguoi = [...new Set(chiTiet.map((l) => l.assigned_to).filter(Boolean).map(String))];
+    const idGD = [...new Set(chiTiet.map((l) => l.stage_id).filter(Boolean).map(String))];
+    const idDA = [...new Set(chiTiet.map((l) => l.project_id).filter(Boolean).map(String))];
+
+    const CHON_DA = 'id, code, name, status, customer_id, estimated_value, final_value';
+    const [khach, nguoi, giaiDoan, daTheoKhach, daTrucTiep] = await Promise.all([
+      layTheoLoMem('customers', 'id', idKhach, 'id, full_name, phone'),
+      layTheoLoMem('users', 'id', idNguoi, 'id, full_name'),
+      layTheoLoMem('crm_pipeline_stages', 'id', idGD, 'id, name'),
+      layTheoLoMem('projects', 'customer_id', idKhach, CHON_DA),
+      layTheoLoMem('projects', 'id', idDA, CHON_DA),
+    ]);
+
+    const mKhach = new Map(khach.map((x) => [String(x.id), x]));
+    const mNguoi = new Map(nguoi.map((x) => [String(x.id), x.full_name || null]));
+    const mGD = new Map(giaiDoan.map((x) => [String(x.id), x.name || null]));
+    const mDAId = new Map(daTrucTiep.map((x) => [String(x.id), x]));
+    const mDAKhach = new Map();
+    for (const d of daTheoKhach) {
+      const k = String(d.customer_id || '');
+      if (!mDAKhach.has(k)) mDAKhach.set(k, []);
+      mDAKhach.get(k).push(d);
+    }
+
+    const goiDA = (d) => ({
+      id: d.id,
+      ma: d.code || null,
+      ten: d.name || null,
+      trang_thai: d.status || null,
+      gia_tri: Number(d.final_value) || Number(d.estimated_value) || 0,
+    });
+
+    const data = chiTiet.map((l) => {
+      const k = String(l.id);
+      const a = canh.get(k);
+      const diem = mDiem.get(k);
+      const kh = l.customer_id ? mKhach.get(String(l.customer_id)) : null;
+      const cat = a?.fb_ad_id ? mCat.get(String(a.fb_ad_id)) : null;
+
+      // Gộp hai đường ra dự án, bỏ trùng theo id.
+      const duAn = new Map();
+      if (l.project_id && mDAId.has(String(l.project_id))) {
+        duAn.set(String(l.project_id), goiDA(mDAId.get(String(l.project_id))));
+      }
+      for (const d of (l.customer_id ? mDAKhach.get(String(l.customer_id)) || [] : [])) {
+        if (!duAn.has(String(d.id))) duAn.set(String(d.id), goiDA(d));
+      }
+
+      return {
+        lead_id: k,
+        ma: l.code || null,
+        ten: l.title || kh?.full_name || '— chưa có tên —',
+        dien_thoai: kh?.phone || null,
+        ngay_vao: a?.cham_dau_luc || l.created_at || null,
+        nhan: diem?.nhan || null,
+        diem: diem?.diem ?? null,
+        nhiet: l.lead_temperature || null,
+        loai: l.type === 'deal' ? 'deal' : 'lead',
+        da_chot: !!l.actual_close_date,
+        ngay_chot: l.actual_close_date || null,
+        giai_doan: l.stage_id ? mGD.get(String(l.stage_id)) || null : null,
+        gia_tri: Number(l.estimated_value) || 0,
+        phu_trach: l.assigned_to ? mNguoi.get(String(l.assigned_to)) || null : null,
+        ad_id: a?.fb_ad_id || null,
+        ad_ten: cat?.ad_name || cat?.campaign_name || a?.fb_ad_title || null,
+        du_an: [...duAn.values()],
+      };
+    }).sort((x, y) => {
+      // Đơn đã chốt lên trước, rồi tới deal, rồi theo ngày vào mới nhất.
+      if (x.da_chot !== y.da_chot) return x.da_chot ? -1 : 1;
+      if ((x.loai === 'deal') !== (y.loai === 'deal')) return x.loai === 'deal' ? -1 : 1;
+      return String(y.ngay_vao || '').localeCompare(String(x.ngay_vao || ''));
+    });
+
+    const idDAHet = new Set();
+    for (const x of data) for (const d of x.du_an) idDAHet.add(String(d.id));
+    const tom_tat = {
+      leads: data.length,
+      deals: data.filter((x) => x.loai === 'deal').length,
+      closed: data.filter((x) => x.da_chot).length,
+      revenue: data.filter((x) => x.da_chot).reduce((s, x) => s + x.gia_tri, 0),
+      // Đơn đã chốt mà để giá 0 thì mọi con số doanh thu phía trên đều thiếu.
+      don_chua_co_gia: data.filter((x) => x.da_chot && !(x.gia_tri > 0)).length,
+      so_du_an: idDAHet.size,
+    };
+
+    res.json({ bai, data, tong: data.length, tom_tat });
+  } catch (e) {
+    console.error('[ad-analytics/post-leads]', e);
     res.status(500).json({ error: e.message });
   }
 });
