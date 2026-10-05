@@ -50,14 +50,85 @@ export function projectIsShipped(p: ProductionProject): boolean {
   return st === 'installing' || st === 'warranty' || st === 'completed';
 }
 
+export type SxStageKpiKey = 'producing' | 'awaiting_delivery' | 'shipped';
+
+/**
+ * ĐÃ GIAO THẬT — dùng cho chip trên thẻ (Đã xong / Đã giao). Khác `projectIsShipped` (dùng cho KPI): chỉ có
+ * `vc_kanban_column_id` / `logistics_company_id` nghĩa là đã được ĐẨY SANG bảng vận chuyển (VC/LĐ «Dự án sắp tới»),
+ * chưa phải đã giao, nên không tính. Đã giao khi: status lắp đặt / bảo hành / hoàn tất, hoặc đứng ở cột «đã giao»
+ * hoặc cột hoàn thành / đã thu tiền.
+ */
+export function projectIsDelivered(
+  p: ProductionProject,
+  stages: KanbanStage[],
+  index?: KpiStageIndex,
+): boolean {
+  const st = String(p.status || '');
+  if (st === 'installing' || st === 'warranty' || st === 'completed') return true;
+  const col = stageOf(p, stages, index || (stages.length ? buildKpiStageIndex(stages) : undefined));
+  if (!col || col.bucket_slug === INTAKE_BUCKET) return false;
+  if (sxColumnKpiKey(col) === 'shipped') return true;
+  return Boolean(col.counts_as_completed_revenue || col.counts_as_collected_revenue);
+}
+
+/** Tên cột kiểu «ĐÃ GIAO…» / «giao xong» — khớp BE `isSxDeliveredStage`. */
+function isDeliveredStage(stage: KanbanStage): boolean {
+  const slug = String(stage.bucket_slug || stage.slug || '').toLowerCase().trim();
+  if (slug === 'delivered' || slug === 'delivery_done') return true;
+  const name = String(stage.name || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D')
+    .toLowerCase();
+  return name.includes('da giao') || name.includes('giao xong');
+}
+
+/**
+ * KPI Đang SX / Chờ VC / Đã VC của MỘT CỘT — khớp BE `sxColumnStageKpiKey`, thứ tự ưu tiên:
+ * cột tiếp nhận → null; tick tay `dashboard_kpi` thắng tất cả; cờ bàn giao → chờ VC;
+ * tên «đã giao» → đã VC; cờ hoàn thành/đã thu doanh thu → null (không thuộc nhóm nào);
+ * còn lại → đang SX.
+ */
+export function sxColumnKpiKey(stage?: KanbanStage | null): SxStageKpiKey | null {
+  if (!stage || stage.bucket_slug === INTAKE_BUCKET) return null;
+  const explicit = String(stage.dashboard_kpi || '').trim();
+  if (explicit === 'producing' || explicit === 'awaiting_delivery' || explicit === 'shipped') {
+    return explicit;
+  }
+  if (stage.is_handover_to_logistics) return 'awaiting_delivery';
+  if (isDeliveredStage(stage)) return 'shipped';
+  if (stage.counts_as_completed_revenue || stage.counts_as_collected_revenue) return null;
+  return 'producing';
+}
+
+/** Đã vận chuyển theo CỘT (tick tay / tên «đã giao») — bổ sung cho `projectIsShipped` theo dữ liệu dự án. */
+function columnSaysShipped(
+  p: ProductionProject,
+  stages: KanbanStage[],
+  index?: KpiStageIndex,
+): boolean {
+  return sxColumnKpiKey(stageOf(p, stages, index)) === 'shipped';
+}
+
 export function projectIsAwaitingDelivery(
   p: ProductionProject,
   stages: KanbanStage[],
   index?: KpiStageIndex,
 ): boolean {
   if (projectIsShipped(p)) return false;
+  return sxColumnKpiKey(stageOf(p, stages, index)) === 'awaiting_delivery';
+}
+
+/** Hoàn tất: trạng thái `completed`, hoặc đang đứng ở cột đã thu tiền (cờ `counts_as_collected_revenue`). */
+export function projectIsCompleted(
+  p: ProductionProject,
+  stages: KanbanStage[],
+  index?: KpiStageIndex,
+): boolean {
+  if (String(p.status || '') === 'completed') return true;
   const col = stageOf(p, stages, index);
-  return Boolean(col?.is_handover_to_logistics);
+  return Boolean(col && col.bucket_slug !== INTAKE_BUCKET && col.counts_as_collected_revenue);
 }
 
 /** Doanh thu hoàn thành theo cột — dùng loại trừ «Đang SX», không dùng cho thẻ «Hoàn tất». */
@@ -92,12 +163,11 @@ export function projectIsProducing(
   const idx = index || buildKpiStageIndex(stages);
   if (p.sx_intake) return false;
   if (projectIsShipped(p)) return false;
-  if (projectIsAwaitingDelivery(p, stages, idx)) return false;
-  if (countsAsCompletedRevenue(p, stages, idx)) return false;
-  if (countsAsCollectedRevenue(p, stages, idx)) return false;
   const col = stageOf(p, stages, idx);
-  if (col?.bucket_slug === INTAKE_BUCKET) return false;
-  return true;
+  // Chưa vào cột nào: giữ hành vi cũ (tính là đang SX) — BE bỏ qua nhưng app luôn đếm.
+  if (!col) return !countsAsCompletedRevenue(p, stages, idx);
+  // Tick tay / cờ bàn giao / tên «đã giao» / cờ hoàn thành-đã thu: dùng chung một quy tắc với BE.
+  return sxColumnKpiKey(col) === 'producing';
 }
 
 /** Chờ vào xưởng — khớp web `intake_pending`: `sx_intake`. */
@@ -200,9 +270,9 @@ export function computeSxBoardKpis(
     if (projectIsIntake(p)) intake += 1;
     if (projectIsProducing(p, stages, index)) producing += 1;
     if (projectIsAwaitingDelivery(p, stages, index)) awaitingDelivery += 1;
-    if (projectIsShipped(p)) shipped += 1;
-    // Web scopeKpis.completed = status === 'completed'
-    if (String(p.status || '') === 'completed') completed += 1;
+    if (projectIsShipped(p) || columnSaysShipped(p, stages, index)) shipped += 1;
+    // Hoàn tất: status `completed` (như web) HOẶC đứng ở cột đã thu tiền.
+    if (projectIsCompleted(p, stages, index)) completed += 1;
     if (projectIsDeadlineOverdue(p, stages, index, nowMs)) overdue += 1;
   }
   return {
@@ -232,6 +302,50 @@ export function sxOverdueProjectIds(
       ? projectIsDeadlineOverdue(p, stages, index, todayMs)
       : Boolean(p.is_overdue);
     if (hit) out.add(String(p.id));
+  }
+  return out;
+}
+
+/** Chip lọc theo hạn xử lý ở danh sách dự án. */
+export type SxDueFilter = '' | 'overdue' | 'today' | 'this_week' | 'next_week';
+
+/**
+ * Id các dự án thuộc một nhóm hạn. Dùng đúng nguồn hạn của KPI (`sxProjectDeadlineRaw`):
+ * dự án không có hạn thẻ hoặc đứng ở cột tắt hạn thì không vào nhóm nào.
+ *
+ * «Quá hạn» dùng thẳng `projectIsDeadlineOverdue` nên khớp số KPI. Các nhóm còn lại so
+ * theo NGÀY (giờ máy): hôm nay; tuần này = thứ Hai → Chủ nhật của tuần chứa hôm nay;
+ * tuần sau = tuần liền kề. Tuần này có thể chứa cả việc đã quá hạn từ đầu tuần.
+ */
+export function sxDueBucketProjectIds(
+  projects: ProductionProject[],
+  stages: KanbanStage[],
+  bucket: Exclude<SxDueFilter, ''>,
+  todayMs = Date.now(),
+): Set<string> {
+  if (bucket === 'overdue') return sxOverdueProjectIds(projects, stages, todayMs);
+  const index = stages.length ? buildKpiStageIndex(stages) : undefined;
+  const today = startOfLocalDay(new Date(todayMs));
+  // getDay(): CN=0 → quy về T2=0 … CN=6.
+  const sinceMonday = (today.getDay() + 6) % 7;
+  // Dựng mốc bằng ngày lịch (không cộng ms) để tuần có đổi giờ không bị lệch.
+  const dayAt = (offset: number) =>
+    new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset).getTime();
+  const [lo, hi] = bucket === 'today'
+    ? [dayAt(0), dayAt(1)]
+    : bucket === 'this_week'
+      ? [dayAt(-sinceMonday), dayAt(-sinceMonday + 7)]
+      : [dayAt(-sinceMonday + 7), dayAt(-sinceMonday + 14)];
+  const out = new Set<string>();
+  for (const p of projects) {
+    const raw = stages.length
+      ? sxProjectDeadlineRaw(p, stages, index)
+      : (p.sx_kanban_deadline_at || null);
+    if (!raw) continue;
+    const t = new Date(raw);
+    if (Number.isNaN(t.getTime())) continue;
+    const day = startOfLocalDay(t).getTime();
+    if (day >= lo && day < hi) out.add(String(p.id));
   }
   return out;
 }

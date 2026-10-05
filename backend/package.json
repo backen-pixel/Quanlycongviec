@@ -24,6 +24,7 @@
     "ota:publish": "node scripts/publish-ota.js",
     "test:cache": "node tests/response-cache-smoke.js",
     "test:tenant": "node tests/tenant-isolation-smoke.js",
+    "test:anon-exposure": "node tests/anon-exposure-smoke.js",
     "test:crm-split": "node tests/crm-split-50-cases.js",
     "test:crm-split:b": "node tests/crm-split-50-cases-b.js",
     "test:crm-split:all": "node tests/crm-split-50-cases.js && node tests/crm-split-50-cases-b.js",
@@ -40,6 +41,7 @@
     "test:perf-retention": "node tests/perf-retention-and-chunking.js",
     "test:role-enum": "node tests/role-enum-guard.js",
     "test:query-guard": "node tests/query-guard-42703-smoke.js",
+    "test:ngay-xuong": "node tests/cot-thieu-tu-loi.js && node tests/tinh-patch-ngay-gia-dinh.js && node tests/lay-theo-lo-loc-id.js && node tests/sx-install-anchor-deadline.js",
     "crm:route-inventory": "node scripts/crm-route-inventory.js --write",
     "cron:crm-missing-tasks": "node scripts/run-crm-missing-tasks-cron.js"
   },

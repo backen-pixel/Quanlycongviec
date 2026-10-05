@@ -185,6 +185,15 @@ async function updateProjectTask(req, taskId, body) {
     }
   }
 
+  if (old && update.status && update.status !== old.status && (data.project_id || old.project_id)) {
+    try {
+      const { syncSxCardDeadline } = require('./sxCardPlanDeadline');
+      await syncSxCardDeadline(data.project_id || old.project_id);
+    } catch (dlErr) {
+      console.warn('[tasks] sync SX card deadline:', dlErr.message);
+    }
+  }
+
   if (old && update.status && update.status !== old.status) {
     if (update.status === 'review' && data.created_by_id) {
       await createNotification(req, data.created_by_id, 'task_updated', 'Chờ nghiệm thu',

@@ -22,11 +22,15 @@ import { buildMessengerNotifFromSocket } from '../lib/messengerNotifFromSocket';
 import {
   enrichNotificationPreview,
   fetchCommentUnreadCount,
+  fetchStaffUnreadCount,
   getCurrentUserIdForNotifications,
+  isStaffRelevantNotification,
+  setStaffOnlyNotifications,
   notificationProjectId,
   type SxCommentNotification,
 } from '../lib/notificationApi';
 import type { CrmTaskChangedPayload, SyncEvent } from '../lib/realtimeSync';
+import { canViewTeamWork } from '../lib/roles';
 import { useAuth } from './AuthContext';
 
 type CommentListener = (n: SxCommentNotification) => void;
@@ -133,17 +137,26 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     return `id:${n.id}`;
   }, []);
 
+  // Nhân viên chỉ thấy bình luận + việc/dự án được giao → số trên chuông cũng đếm theo đúng tập đó.
+  const isStaff = !canViewTeamWork(user);
+  const isStaffRef = useRef(isStaff);
+  isStaffRef.current = isStaff;
+  useEffect(() => {
+    setStaffOnlyNotifications(isStaff);
+    return () => setStaffOnlyNotifications(false);
+  }, [isStaff]);
+
   const refreshUnread = useCallback(() => {
     if (!token || busyRef.current) return;
     busyRef.current = true;
-    void fetchCommentUnreadCount()
+    void (isStaff ? fetchStaffUnreadCount() : fetchCommentUnreadCount())
       // Luôn tin số server — Math.max(c, count) khiến badge không mất sau "đánh dấu đã đọc".
       .then((count) => setUnreadCount(Math.max(0, Number(count) || 0)))
       .catch(() => {})
       .finally(() => {
         busyRef.current = false;
       });
-  }, [token]);
+  }, [token, isStaff]);
 
   const subscribeComment = useCallback((fn: CommentListener) => {
     listenersRef.current.add(fn);
@@ -507,6 +520,8 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       }
 
       if (dealTypes.has(notifType)) {
+        // Nhân viên không nhận đơn xưởng mới / dự án vừa tạo: không +badge, không toast, không tray.
+        if (isStaffRef.current && !isStaffRelevantNotification({ type: notifType })) return;
         const enriched = enrichNotificationPreview({
           id: String(n.id || `srv:${Date.now()}`),
           type: notifType || 'workshop_new_deal',

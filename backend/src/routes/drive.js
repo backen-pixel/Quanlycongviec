@@ -1258,6 +1258,25 @@ r.get('/files/:id/preview-content', async (req, res) => {
   }
 });
 
+/** Link xem công khai (anyone reader) để dán vào bình luận. */
+r.post('/files/:id/anyone-link', async (req, res) => {
+  if (!requireGdrive(req, res)) return;
+  try {
+    const file = await loadFile(req.params.id);
+    if (!file) return res.status(404).json({ error: 'File không tồn tại' });
+    const access = await driveAcl.canAccess({ user: req.user, targetType: 'file', targetId: file.id, requiredRole: 'viewer' });
+    if (!access.ok) return res.status(403).json({ error: 'Không có quyền' });
+    if (file.google_file_id) await gdrive.ensureAnyoneLinkAccess(file.google_file_id, 'reader');
+    const url = file.google_view_url
+      || (file.google_file_id ? `https://drive.google.com/file/d/${file.google_file_id}/view?usp=sharing` : null);
+    if (!url) return res.status(400).json({ error: 'File chưa có link Drive' });
+    res.json({ url, name: file.name });
+  } catch (e) {
+    console.error('anyone-link error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 r.patch('/files/:id', async (req, res) => {
   if (!requireGdrive(req, res)) return;
   try {

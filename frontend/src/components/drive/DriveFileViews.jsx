@@ -1,7 +1,8 @@
 /**
  * Hiển thị file Drive dạng list / grid — dùng chung cho DrivePage, DriveAttachments, DriveFilePicker.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { User as UserIcon, ZoomIn, MoreHorizontal, Eye, Download, Trash2, FolderInput, Play, Pencil, Star, StarOff } from 'lucide-react';
 import DriveFileIcon from './DriveFileIcon';
 import { driveFileThumbnailUrl, driveFetchFileBlobUrl, driveRefreshFileThumbnail } from '../../lib/drive';
@@ -295,6 +296,18 @@ export function DriveFileThumbnail({
   );
 }
 
+function placeDriveFileMenu(anchor, width, height) {
+  const rect = anchor.getBoundingClientRect();
+  const gap = 4;
+  let top = rect.bottom + gap;
+  let left = rect.right - width;
+  if (top + height > window.innerHeight - 8) top = rect.top - gap - height;
+  if (top < 8) top = 8;
+  if (left < 8) left = 8;
+  if (left + width > window.innerWidth - 8) left = Math.max(8, window.innerWidth - 8 - width);
+  return { top, left };
+}
+
 /** Menu ⋯ gom Xem / Tải / Đổi tên / Sao / Di chuyển / Bỏ gắn */
 export function DriveFileMoreMenu({
   onPreview,
@@ -308,34 +321,50 @@ export function DriveFileMoreMenu({
   showUnlink = true,
 }) {
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
   const ref = useRef(null);
+  const menuRef = useRef(null);
+
+  const syncPos = () => {
+    const anchor = ref.current;
+    const menu = menuRef.current;
+    if (!anchor || !menu) return;
+    setPos(placeDriveFileMenu(anchor, menu.offsetWidth, menu.offsetHeight));
+  };
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPos(null);
+      return;
+    }
+    syncPos();
+  }, [open]);
 
   useEffect(() => {
     if (!open) return undefined;
     const onDoc = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+      if (ref.current?.contains(e.target) || menuRef.current?.contains(e.target)) return;
+      setOpen(false);
     };
+    const onMove = () => syncPos();
     document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
+    window.addEventListener('resize', onMove);
+    window.addEventListener('scroll', onMove, true);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      window.removeEventListener('resize', onMove);
+      window.removeEventListener('scroll', onMove, true);
+    };
   }, [open]);
 
-  return (
-    <div className="relative shrink-0" ref={ref} data-no-marquee>
-      <button
-        type="button"
-        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
-        className="p-1 hover:bg-slate-100 text-slate-500 hover:text-slate-700 rounded"
-        title="Thao tác"
-        aria-label="Thao tác file"
-        aria-expanded={open}
-      >
-        <MoreHorizontal size={16} />
-      </button>
-      {open && (
-        <div
-          className="absolute right-0 top-full mt-0.5 z-30 min-w-[148px] bg-white border border-slate-200 rounded-lg shadow-lg py-1 text-xs"
-          onClick={(e) => e.stopPropagation()}
-        >
+  const menu = open ? (
+    <div
+      ref={menuRef}
+      className="fixed z-[80] min-w-[148px] bg-white border border-slate-200 rounded-lg shadow-lg py-1 text-xs"
+      style={pos ? { top: pos.top, left: pos.left } : { top: -9999, left: 0 }}
+      onClick={(e) => e.stopPropagation()}
+      onMouseDown={(e) => e.stopPropagation()}
+    >
           {onPreview && (
             <button
               type="button"
@@ -395,8 +424,22 @@ export function DriveFileMoreMenu({
               <Trash2 size={14} className="shrink-0" /> {unlinkLabel}
             </button>
           )}
-        </div>
-      )}
+    </div>
+  ) : null;
+
+  return (
+    <div className="relative shrink-0" ref={ref} data-no-marquee>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+        className="p-1 hover:bg-slate-100 text-slate-500 hover:text-slate-700 rounded"
+        title="Thao tác"
+        aria-label="Thao tác file"
+        aria-expanded={open}
+      >
+        <MoreHorizontal size={16} />
+      </button>
+      {menu && createPortal(menu, document.body)}
     </div>
   );
 }

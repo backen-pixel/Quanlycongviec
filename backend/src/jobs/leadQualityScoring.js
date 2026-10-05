@@ -13,7 +13,8 @@ const { runIfLeader } = require('../helpers/cronLeader');
 
 const PHUT = 60 * 1000;
 const CHU_KY_MS = 30 * PHUT;
-const LO = 500;
+// 500 UUID nhét vào .in() là URL ~18KB — vượt giới hạn của nhiều proxy.
+const LO = 200;
 const TRAN_MOI_LUOT = 5000;
 
 let timer = null;

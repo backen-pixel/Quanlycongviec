@@ -1536,8 +1536,8 @@ async function computeCrmLiveVersionMs(req, effectiveCompanyId, date_from, date_
 
 /** GET /crm/reports/staff-lead-deal — BC nhân viên: số lead/deal & giá trị pipeline (ước tính) / chốt / thua theo người phụ trách */
 const STAFF_LEAD_DEAL_REPORT_ROLES = new Set([
-  'admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'region_admin',
-  'platform_admin', 'sales_admin',
+  'ecosystem_admin', 'admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'region_admin',
+  'platform_admin', 'sales_admin', 'crm_production_admin',
 ]);
 
 const {
@@ -7019,12 +7019,17 @@ function normalizeCrmLeadCommentAttachments(raw) {
     const url = typeof a.url === 'string' ? a.url.trim()
       : (typeof a.file_url === 'string' ? a.file_url.trim() : '');
     if (!isAllowedLeadCommentAttachmentUrl(url)) continue;
-    out.push({
+    const row = {
       url: url.slice(0, 4000),
       name: String(a.name != null ? a.name : (a.file_name != null ? a.file_name : '')).slice(0, 400),
       type: String(a.type != null ? a.type : (a.mime_type != null ? a.mime_type : '')).slice(0, 120),
       size: Number.isFinite(Number(a.size != null ? a.size : a.file_size)) ? Number(a.size != null ? a.size : a.file_size) : 0,
-    });
+    };
+    if (a.is_drive || a.drive_file_id) {
+      row.is_drive = true;
+      if (a.drive_file_id) row.drive_file_id = String(a.drive_file_id).slice(0, 80);
+    }
+    out.push(row);
   }
   return out;
 }

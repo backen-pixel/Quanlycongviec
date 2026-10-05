@@ -26,7 +26,74 @@ Hồ sơ: [bằng chứng](ARCHITECTURE_V1_1_EVIDENCE_20261001.md), [lộ trình
 
 ---
 
+
+## 2026-10-05 - PR A minimal: lead measurement core
+Files: backend/src/modules/marketingAutomation/policy.js, leadMeasurement.js; backend/tests/marketingAutomation.leads.test.js; .github/workflows/marketing-lead-measure-core.yml; CURRENT.md and WORKLOG.md.
+Source: PR #22 commit 679cb926. policy.js keeps APPROVED_PLAN, money, instant; removes DAY, deny, evaluateBudgetMove, humanDeadline.
+Checks: Node 24.19.0 node --check passed for all three JS files; node --test --test-isolation=none passed 25/25. Plain node --test could not spawn in sandbox (EPERM); Node 18/22 CI is pending.
+Runtime: no caller, no real-data report, no DB/API access, migration, deployment, commit, or push.
+Rollback: remove the four added code/CI files and these two handoff entries.
+
+## 2026-10-01 - Issue #15: Marketing / Business AI OS M0 candidate
+
+**State: IN PROGRESS.** Feature branch `codex/marketing-bos-m0-20261001`, base `0bc6392286df0b986cdd6dfc59b499916dd6fd31`; implementation commit `33874dd2e3632c0a1127fd76cc7351a663138e9c`.
+
+Added a pure normalized-evidence contract and synthetic tests, ADR-0015, an integration/dependency map, a non-runtime implementation backlog and a read-only PR CI workflow. See `MARKETING_BOS_M0_EVIDENCE_20261001.md` and `../architecture/MARKETING_BOS_INTEGRATION_V1.md`.
+
+Verification: 73/73 synthetic tests on Node 22.16.0 in an isolated container; 73/73 on Node 24.19.0 in a fresh Windows sandbox after fetching this exact GitHub commit. All six new Git blob SHA-256 hashes match the locally tested contents. Helper/test syntax and diff checks pass. These are repeat runs by the same assistant, not independent review; no full application, staging or live E2E tests were run.
+
+No main merge, production deploy, SQL, CRM records, ad budgets/statuses, credentials, permissions, scheduler, agent deletion or existing runtime files were changed. The helper is not registered in an application route/worker. PR #14 remains an independent workstream.
+
+Next: review exact PR head and CI, then M1 target/schema/recipient/source verification and a scoped read adapter. M2 E2E/shadow evidence and M3 authorized release remain NOT STARTED. Preserve existing single-writer ownership and schedules. Rollback only this additive candidate; never delete customer/receipt/evidence data.
+
+Historical entries below are preserved byte-for-byte; this entry does not re-certify their live status.
+
+---
+
+
+## 2026-10-01 — PR19 delayed-action refresh and authorized local browser verification
+
+PR #19 original head: `1d2520d2286423269adc50104185fe3cbe10bc04`. Founder authorized a local browser using synthetic data and an independent read-only reviewer agent. Real CRM configuration access and source-to-recipient acceptance remain unverified.
+
+Found a remaining P1: a save started under company A can finish after selecting B and invoke the old A loader; its new request ID overwrites B with A's report. Reproduced in real React browser: selected B showed A/11. The candidate uses a mounted latest-loader ref for four action completion paths, clears it on cleanup, and preserves B/22 after delayed completion. Backend business logic, permissions and configuration unchanged by this follow-up.
+
+Validation: verified original source blob hashes; existing suite 41/41 PASS; 12 new lifecycle tests against original = 4 PASS / 8 FAIL; candidate integrated suite = 53/53 PASS. Independent agent reviewed the full functional delta against base 0db11ce1adb0fb89fc87529036e495a62d58fce7, reran 41 existing + 12 new tests successfully and approved the candidate (UI blob `565f8990b3ef599f551398ec0e342239529c7d13`). CI includes the new test on Node 18/22; check the published head before relying on CI.
+
+Supported-browser evidence: actual UI component with mock-only API at loopback and CSP connect-src none; delayed save/filter switch, unavailable CRM/clear old data, recovery and empty state; screenshots at requested 1440/768/375 widths. No page horizontal overflow observed, table scrolls inside its container. Independent agent inspected saved browser evidence, did not rerun browser. Not whole-app build/auth, visual-baseline comparison, comprehensive accessibility or real CRM E2E.
+
+Review detail: PR19_BROWSER_INDEPENDENT_REVIEW_20261001.md. Operational gate stays HOLD pending allowed environment/sample and Facebook → canonical CRM → active Sales Admin/report reconciliation. No main merge, production deploy, message/ad/budget/customer/config changes.
+
+Rollback: revert only the follow-up commit; preserve all data, prior report corrections and historical handoff entries.
+
+---
+
+## 2026-10-01 - PR19 UI review follow-up (not production acceptance)
+
+Found and fixed campaign row-key collisions and stale async responses after filter changes. New snapshot reset and request-generation checks preserve the current selected scope. Existing backend report corrections unchanged. 10 new tests fail 9/10 on the old PR source; combined suite now 41/41 PASS. Actual JSX transform PASS, no warnings. CI expanded to cover both tests; result must be read on new head.
+
+Browser runner attempt was safety-blocked and not retried; no actual browser/mobile/full-build/CRM E2E PASS. Prior CRM configuration access block remains; no alternative access attempted. Same-assistant review, not independent approval. No main merge, deployment, ads/budget or customer/recipient changes. Next gates: authorized browser verification and Facebook -> canonical CRM -> active Sales Admin acceptance. Details: PR19_UI_REVIEW_20261001.md.
+
+---
+
+## 2026-10-01 — Marketing first: report correctness, Issue #18
+
+Founder requested focusing on completion of marketing, not broader AI architecture. Priority remains real source -> valid CRM intake -> active Sales Admin -> accurate reporting. No new agent, scheduler or parallel dashboard in this increment.
+
+Branch: codex/marketing-report-correctness-20261001. Base: bb6f1f26a66905de7701947c0b03c82c41343061. Correct existing ad-analytics read routes: one lead_id per group; distinguish campaigns by ID before manual labels; CRM read failure returns safe UNKNOWN/503 instead of a successful zero. UI clears earlier data on read error and explicitly shows unavailable, not an empty-result conclusion. Existing auth/company and business lifecycle rules unchanged.
+
+Verification: same 31 tests on pinned baseline = 9 PASS / 22 FAIL; candidate = 31 PASS / 0 FAIL (Node 24.19.0). Backend/test syntax and git diff check pass. VM executes actual route handlers with synthetic DB/auth dependencies and the actual UI load callback; not full auth, browser, React render, independent review, whole-app build or live E2E. GitHub CI must be read back on exact published head. JSX parser unavailable in sandbox; no dependency installed.
+
+Files: backend/src/routes/adAnalytics.js; frontend/src/pages/AdAnalyticsPage.jsx; backend/tests/adAnalytics.correctness.test.js; .github/workflows/marketing-report-correctness.yml; handoff/evidence. No main merge, deploy, DB/config change, ad/budget change, or live customer action. A live CRM configuration read was blocked and was not retried through another path. This patch does not complete source/recipient/E2E verification or replace PR #14/#16.
+
+Rollback: revert only this commit; preserve all customer data and prior handoff entries. Next: exact-head review/CI, then authorized release/smoke and source-to-recipient E2E. No live activation is implied by passing synthetic tests.
+
 # Candidate worklog
+
+## 2026-10-05 — Bản vá quyền anon/authenticated, chỉ tạo code
+
+- AI: Codex. Phạm vi theo `BRIEF_SECURITY.md`; không truy cập DB/Supabase, không chạy migration hay smoke, không push.
+- File: `database/audit/anon_exposure_audit.sql`, `database/audit/anon_exposure_snapshot.sql`, `database/700_revoke_anon_public_access.sql`, `database/700_revoke_anon_public_access_rollback.sql`, `backend/tests/anon-exposure-smoke.js`, `backend/package.json`, `docs/ops/SECURITY_ANON_REVOKE.md`, `docs/ai-handoff/CURRENT.md`, `docs/ai-handoff/WORKLOG.md`.
+- Kiểm tra tĩnh: `node --check backend/tests/anon-exposure-smoke.js`; `git diff --check`; rà RPC/backend và web/mobile bằng `rg`. Chưa xác minh cú pháp SQL bằng PostgreSQL, chưa kiểm tra hiệu quả trên staging. `git add` bị chặn khi tạo `.git/worktrees/Quanlycongviec-secfix/index.lock` ngoài writable root; chưa commit. Hoàn tác code bằng bỏ diff trong worktree; hoàn tác database bằng script rollback dùng snapshot cùng database.
 
 ## 2026-09-29 — VPT Messenger durable intake, local candidate only
 
@@ -44,6 +111,102 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 
 # Nhật ký công việc AI
+
+## 2026-10-05 20:10 — Nút ⋯ xóa bình luận
+
+- Bình luận của Lê Minh Tiển không có chỗ xóa vì nút chỉ hiện khi rê chuột và chỉ với đúng người viết.
+- Gắn nút ⋯ trên bong bóng: tác giả Sửa/Xóa, admin chỉ Xóa. Sửa API xóa lead (truyền `req.user`) và cho admin xóa bình luận dự án.
+- Đã mở deal LEAD-2026-1389, bấm ⋯ trên bình luận file SKP, menu hiện «Xóa». Chưa xóa dữ liệu thật.
+
+## 2026-10-05 16:00 — NV Metalla không mở được dự án đặt sang xưởng Hucabi
+
+- AI: Cursor. Toại (admin Metalla) mở TB-2026-909 được nhưng TB-2026-964 (Hucabi, đặt từ 909) bị 403.
+- Nguyên nhân: `getAccountingClientProjectIdsAtWorkshop` gửi `.in('project_id', 641 UUID)` → PostgREST `Bad Request` (URL > ~25KB) → trả `[]` → mọi dự án Hucabi đều bị từ chối với NV công ty khác.
+- Sửa: phân trang dự án + tra deal theo lô bằng `supabaseFetchAll`. Kiểm tra local: 81 dự án khớp, có TB-2026-964.
+- Còn tồn: `getVptRelatedProjectIdsAtWorkshop` cùng kiểu lỗi, chưa sửa.
+- File: `backend/src/helpers/accountingScope.js`.
+
+## 2026-10-05 15:00 — Menu file Drive không đè thẻ
+
+- AI: Cursor. Menu ⋯ nằm trong thẻ `overflow-hidden` nên Xem trước / Xóa đè lên ảnh và bị cắt.
+- Đưa menu ra lớp nổi trên trang, căn theo nút ⋯, lật lên trên nếu sát đáy màn hình.
+- File: `DriveFileViews.jsx`.
+
+## 2026-10-05 14:35 — Xóa file Drive có xác nhận và báo thành công
+
+- AI: Cursor. Menu xóa file trên hồ sơ đã hỏi xác nhận nhưng không báo khi xong.
+- Giữ hộp xác nhận (kèm tên file) và thêm toast «Đã xóa». Trang Drive báo tương tự khi đưa vào thùng rác hoặc xóa vĩnh viễn.
+- File: `DriveAttachments.jsx`, `DrivePage.jsx`.
+
+## 2026-10-05 10:40 — Tải file bình luận sống qua đổi trang
+
+- AI: Cursor. Rời trang làm mất thanh tiến trình trong ô bình luận nên tưởng như tải bị dừng. Request axios không bị hủy khi unmount.
+- Gắn tiến trình vào bảng góc dưới phải của Drive: tốc độ và thời gian còn lại. File đính kèm thường và file lớn đều hiện ở đó.
+- File: `FileUpload.jsx`, `drive.js`, `oversizedDriveUpload.js`.
+
+## 2026-10-05 10:30 — Thanh tải file trong bình luận
+
+- AI: Cursor. Tiến trình đính kèm nằm trong cột kẹp giấy (~150px) nên tên file và chữ trạng thái bị gãy trong ô nhập.
+- Đưa thanh tiến trình ra hàng riêng, full width, phía trên ô soạn. File lớn dừng ở 99% vì server đang đẩy lên Google Drive sau khi trình duyệt gửi xong.
+- File: `CommentsPanels.jsx`, `FileUpload.jsx`, `UploadProgressBubble.jsx`, `oversizedDriveUpload.js`, `uploadProgressEta.js`.
+
+## 2026-10-05 09:20 — Hạn HCB bám cột, quá hạn sau 17:30
+
+- AI: Cursor. Đổi ngày lắp HCB vẫn quá hạn vì hạn thẻ lấy nhóm việc còn mở sớm nhất, không phải cột đang đứng.
+- Hạn thẻ và bảng nhiệm vụ SX tính lại từ cột Kanban, mốc 17:30. Cùng ngày chỉ quá hạn sau giờ đó.
+- File: `sxCardPlanDeadline.js`, `workTasks.js`, `ProjectTasksOverviewPage.jsx`. Đã quét lại hạn thẻ HCB.
+
+## 2026-10-05 08:52 — File trên 50MB lưu Drive, link vào bình luận
+
+- AI: Cursor. File đính kèm lớn hơn 50MB không còn bị chặn: tải lên Google Drive, tạo link xem, gắn vào bình luận lead/dự án. Chat lead cũng đăng bình luận kèm link.
+- File: `oversizedDriveUpload.js`, `CommentsPanels.jsx`, `LeadChatTabs.jsx`, `drive.js`, `helpersBundle.js`.
+
+## 2026-10-02 16:51 — Gỡ lọc dashboard Hào, trả về xem đủ dự án xưởng
+
+- AI: Cursor. Đã bỏ phạm vi «chỉ dự án có việc của Hào» trên dashboard SX.
+- File: `dealParticipantProduction.js`. Xóa `tests/hao-task-project-scope.js`.
+- `hao@metalla.com` thấy lại mọi dự án công ty, theo phân loại đang chọn.
+
+## 2026-10-02 15:15 — Hàng nhiệm vụ hiện tên nhân viên được gán
+
+- AI: Cursor. Dòng nhiệm vụ thu gọn (ví dụ Phôi) chỉ hiện «Chi tiết», không hiện tên người nhận.
+- File: `frontend/src/components/CRMTasksTab.jsx`.
+- Tên nhân viên hiện luôn trên hàng, không cần mở rộng. Đã xem TB-2026-963: Phôi và Cánh hiện «Thuận».
+
+## 2026-10-02 13:56 — Hiện BC theo tổ chức cho quản trị HST
+
+- AI: Cursor. Sidebar CRM ẩn mục `executiveOnly` với role `ecosystem_admin`.
+- File: `adminRole.js`, `Sidebar.jsx`, `RequireRole.jsx`, `helpersBundle.js`.
+- Menu và quyền vào trang dùng chung `isCrmExecutive`. API org-overview coi quản trị HST là báo cáo đầy đủ.
+
+## 2026-10-02 11:55 — Bộ lọc Không gian chung giống Giao việc
+
+- AI: Cursor. Tab Không gian chung trước đó chỉ lọc trạng thái và ưu tiên.
+- File: `CRMAssignmentsPage.jsx`, `crmAssignments.js`, `sharedWorkspaceInbox.js`.
+- Admin chọn công ty, phòng ban hoặc nhân viên thì tải việc của đúng phạm vi đó.
+
+## 2026-10-02 11:50 — Lọc phân loại xưởng trên Giao việc Sản xuất
+
+- AI: Cursor. Giao việc Sản xuất dùng cùng ô phân loại với dashboard xưởng (Chưa phân loại / HCB · Tủ bếp / Cánh kính / Cửa).
+- File: `CRMAssignmentsPage.jsx`, `crmAssignments.js`, `sharedWorkspaceInbox.js`.
+- Thử `/sx/assignments`: Tủ bếp 11 việc, Cánh kính 0 việc. API list, stats và Không gian chung trả 200. Đã trả bộ lọc về Tủ bếp.
+
+## 2026-10-02 11:10 — Không chép nhiệm vụ mẫu xưởng sang Không gian chung
+
+- AI: Cursor. Lưu hoặc áp bộ mẫu `sx_`/`vc_` từng tạo `crm_assignments`. Nay bỏ qua nhiệm vụ mẫu; phát sinh (`sx_shared`, `customer_request`) vẫn tạo giao việc.
+- File: `workshopPipelineTask.js`, `crmTaskAssignmentSync.js`, `crmSequentialAssignment.js`, `sharedWorkspaceInbox.js`, `tests/workshop-template-no-assignment.js`.
+- Thử: unit test ok. Gọi sync thật trên «Chốt công nợ» (`sx_pl_6723a412`) — bỏ qua, số giao việc trước/sau = 0. Việc mở kế tiếp của deal là «Thông tin khác hàng», không phải Phôi.
+
+## 2026-10-02 09:55 — Sửa ngày lắp thì hạn thẻ SX chạy theo
+
+- AI: Cursor. Tính lại hạn thẻ bị lỗi vì đọc cột `install_occurrence_dates` không có trên `projects`, nên sửa ngày lắp mà `sx_kanban_deadline_at` đứng yên.
+- File: `projectDeliveryDates.js`, `sxCardPlanDeadline.js`, `projects.js`.
+- Thử TB-2026-978: ngày lắp 07/10 → 14/10, hạn 03/10 → 08/10, rồi trả dữ liệu cũ.
+
+## 2026-10-01 15:50 — Hướng sửa 4 việc module SX
+
+- AI: Cursor. Đơn phát sinh, khóa giai đoạn khi kéo cột, bàn giao VC vào đúng pipeline, hạn thẻ theo lịch 7 ngày.
+- SQL chưa chạy: `database/648_sx_phat_sinh_order.sql`.
 
 ## 2026-10-01 14:55 — Sửa dashboard SX vỡ vì filterBusy
 
@@ -1586,4 +1749,6 @@ Hoàn tác local bằng đảo commit này nếu cần, nhưng đưa route cũ t
 ---
 
 Khi bắt đầu phiên mới, thêm mục mới lên đầu file, ngay dưới tiêu đề.
+# 2026-10-05 — PR19/main compatibility and detail permissions
 
+Reconciled two conflicts between e16c885a and main ca8810c5. Preserved new Page/post/embedded views and PR19 data/async protections. Independent review identified project and Lead detail disclosure in the newly introduced main route; reused existing permission gates. Separate stale action failures from report failures. Modified adAnalytics route/UI, correctness/action lifecycle tests, CI path coverage, CURRENT and integration evidence. Local regressions 127/127; full frontend build and supported-browser synthetic checks. Operational gate HOLD: read-only CRM authorized but login pending; Render workspace unconfirmed; no live changes. See PR19_MAIN_INTEGRATION_20261005.md for scope, limitations and rollback.

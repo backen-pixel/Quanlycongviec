@@ -166,6 +166,15 @@ async function getLogisticsStageMap() {
   return { stages, bySlug, ids: stages.map((s) => s.id).filter(Boolean) };
 }
 
+/** Phân loại xưởng SX không được làm mất đơn đã bàn giao VC. */
+function applyVcWorkshopTypeFilter(query, workshopTypeId, companyId) {
+  if (!workshopTypeId) return query;
+  if (companyId) {
+    return query.or(`workshop_type_id.eq.${workshopTypeId},logistics_company_id.eq.${companyId}`);
+  }
+  return query.or(`workshop_type_id.eq.${workshopTypeId},logistics_company_id.not.is.null`);
+}
+
 function buildLogisticsScopeFilter(stageIds) {
   const parts = [];
   if (stageIds.length) parts.push(`current_stage_id.in.(${stageIds.join(',')})`);
@@ -436,6 +445,10 @@ function enrichOneLogisticsProject(project, sortedKanban, orphanColMeta = null) 
   const inScope = LOGISTICS_STATUSES.includes(status)
     || LOGISTICS_STAGE_SLUGS.includes(stageSlug)
     || Boolean(project.logistics_company_id || project.vc_kanban_column_id);
+  // Cột lưu thuộc pipeline khác: đơn đã có công ty VC thì đứng ở cột tiếp nhận của pipeline đang xem.
+  if (!matchedCol && project.logistics_company_id) {
+    matchedCol = intakeCol || firstCol;
+  }
   if (!matchedCol && inScope) {
     matchedCol = intakeCol || firstCol;
   }
@@ -841,7 +854,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
 
     query = locTheoKhoi(query, idCongTyKhoi);
     if (company_id) query = query.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
-    if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
+    query = applyVcWorkshopTypeFilter(query, workshop_type_id, company_id);
     ({ query } = await applyWorkshopProjectVisibilityScope(query, req.user, company_id, null));
 
     let { data: projectsRaw, error: dashErr } = await query.order('created_at', { ascending: false });
@@ -860,7 +873,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
         .or(orFilter);
       qNoSoft = locTheoKhoi(qNoSoft, idCongTyKhoi);
       if (company_id) qNoSoft = qNoSoft.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
-      if (workshop_type_id) qNoSoft = qNoSoft.eq('workshop_type_id', workshop_type_id);
+      qNoSoft = applyVcWorkshopTypeFilter(qNoSoft, workshop_type_id, company_id);
       const rNoSoft = await qNoSoft.order('created_at', { ascending: false });
       projectsRaw = rNoSoft.data;
       dashErr = rNoSoft.error;
@@ -879,7 +892,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
         .or(orFilter);
       q2 = locTheoKhoi(q2, idCongTyKhoi);
       if (company_id) q2 = q2.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
-      if (workshop_type_id) q2 = q2.eq('workshop_type_id', workshop_type_id);
+      q2 = applyVcWorkshopTypeFilter(q2, workshop_type_id, company_id);
       const { data: d0 } = await q2.order('created_at', { ascending: false });
       projectsRaw = d0;
     } else if (dashErr && dashErr.message?.includes('workshop_project_types')) {
@@ -895,7 +908,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
         .or(orFilter);
       q2 = locTheoKhoi(q2, idCongTyKhoi);
       if (company_id) q2 = q2.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
-      if (workshop_type_id) q2 = q2.eq('workshop_type_id', workshop_type_id);
+      q2 = applyVcWorkshopTypeFilter(q2, workshop_type_id, company_id);
       const { data, error: e2 } = await q2.order('created_at', { ascending: false });
       if (e2 && e2.message?.includes('vc_kanban_column_id')) {
         let q3 = supabase
@@ -910,7 +923,7 @@ r.get('/dashboard', requirePermission('projects', 'view'), async (req, res) => {
           .or(orFilter);
         q3 = locTheoKhoi(q3, idCongTyKhoi);
         if (company_id) q3 = q3.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
-        if (workshop_type_id) q3 = q3.eq('workshop_type_id', workshop_type_id);
+        q3 = applyVcWorkshopTypeFilter(q3, workshop_type_id, company_id);
         const d3 = await q3.order('created_at', { ascending: false });
         projectsRaw = d3.data;
       } else {
@@ -977,7 +990,7 @@ r.get('/overview-kpis', requirePermission('projects', 'view'), async (req, res) 
       if (withSoftDelete) query = applyVcNotDeletedFilter(query);
       query = locTheoKhoi(query, idCongTyKhoi);
       if (company_id) query = query.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
-      if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
+      query = applyVcWorkshopTypeFilter(query, workshop_type_id, company_id);
       if (priority) query = query.eq('priority', priority);
       ({ query } = await applyWorkshopProjectVisibilityScope(query, req.user, company_id, null));
       // Bọc trong object: builder PostgREST là thenable, `return query` từ hàm async
@@ -1112,7 +1125,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
     if (priority) query = query.eq('priority', priority);
     query = locTheoKhoi(query, idCongTyKhoi);
     if (company_id) query = query.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
-    if (workshop_type_id) query = query.eq('workshop_type_id', workshop_type_id);
+    query = applyVcWorkshopTypeFilter(query, workshop_type_id, company_id);
     ({ query } = await applyWorkshopProjectVisibilityScope(query, req.user, company_id, null));
 
     let { data: projectsRaw, error, count } = await query
@@ -1129,7 +1142,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
       if (priority) qNoSoft = qNoSoft.eq('priority', priority);
       qNoSoft = locTheoKhoi(qNoSoft, idCongTyKhoi);
       if (company_id) qNoSoft = qNoSoft.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
-      if (workshop_type_id) qNoSoft = qNoSoft.eq('workshop_type_id', workshop_type_id);
+      qNoSoft = applyVcWorkshopTypeFilter(qNoSoft, workshop_type_id, company_id);
       const r2 = await qNoSoft
         .order('created_at', { ascending: false })
         .range((parsedPage - 1) * parsedLimit, parsedPage * parsedLimit - 1);
@@ -1167,7 +1180,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
         .or(orFilter);
       fb2q = locTheoKhoi(fb2q, idCongTyKhoi);
       if (company_id) fb2q = fb2q.or(`company_id.eq.${company_id},logistics_company_id.eq.${company_id}`);
-      if (workshop_type_id) fb2q = fb2q.eq('workshop_type_id', workshop_type_id);
+      fb2q = applyVcWorkshopTypeFilter(fb2q, workshop_type_id, company_id);
       const fb2 = await fb2q
         .order('created_at', { ascending: false })
         .range((parsedPage - 1) * parsedLimit, parsedPage * parsedLimit - 1);
@@ -1186,7 +1199,7 @@ r.get('/projects', requirePermission('projects', 'view'), async (req, res) => {
           .or(orFilter);
         fb3q = locTheoKhoi(fb3q, idCongTyKhoi);
         if (company_id) fb3q = fb3q.eq('company_id', company_id);
-        if (workshop_type_id) fb3q = fb3q.eq('workshop_type_id', workshop_type_id);
+        fb3q = applyVcWorkshopTypeFilter(fb3q, workshop_type_id, company_id);
         const fb3 = await fb3q
           .order('created_at', { ascending: false })
           .range((parsedPage - 1) * parsedLimit, parsedPage * parsedLimit - 1);

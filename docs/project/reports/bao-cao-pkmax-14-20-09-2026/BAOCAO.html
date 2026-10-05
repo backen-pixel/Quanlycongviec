@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8"/>
+<title>Báo cáo tuần 14–20/09/2026 — Xưởng HCB</title>
+<style>
+  @page { size: A4; margin: 11mm 11mm; }
+  body { font-family: "Segoe UI", Arial, sans-serif; font-size: 10.5pt; color: #111; margin: 0; line-height: 1.38; }
+  h1 { font-size: 15pt; margin: 0 0 2px; }
+  .meta { color: #475569; font-size: 9.5pt; margin-bottom: 8px; }
+  h2 { font-size: 12pt; margin: 12px 0 5px; page-break-after: avoid; }
+  h3 { font-size: 10.5pt; margin: 8px 0 4px; page-break-after: avoid; }
+  p { margin: 0 0 6px; }
+  ol, ul { margin: 0 0 8px; padding-left: 18px; }
+  li { margin: 2px 0; }
+  figure { margin: 0 0 8px; page-break-inside: avoid; }
+  img { width: 100%; border: 1px solid #cbd5e1; border-radius: 4px; }
+  figcaption { font-size: 8.5pt; color: #475569; margin-top: 3px; }
+  .box { border: 1px solid #cbd5e1; background: #f8fafc; padding: 8px 10px; margin: 6px 0 10px; page-break-inside: avoid; }
+  .steps { display: flex; gap: 6px; margin: 8px 0 10px; page-break-inside: avoid; }
+  .step { flex: 1; border: 1px solid #94a3b8; border-radius: 6px; padding: 7px 8px; background: #fff; }
+  .step b { display: block; font-size: 9.5pt; margin-bottom: 2px; }
+  .step span { font-size: 8.5pt; color: #334155; }
+  .arrow { align-self: center; font-size: 14pt; color: #64748b; }
+  table.plan { border-collapse: collapse; width: 100%; font-size: 9.5pt; margin: 6px 0 8px; }
+  table.plan th, table.plan td { border: 1px solid #000; padding: 5px 7px; vertical-align: top; }
+  table.plan th { background: #ffc000; text-align: center; }
+  .note { font-size: 9pt; color: #64748b; margin-top: 8px; }
+  .wip { color: #9a3412; font-weight: 700; }
+  .tomtat { display: flex; gap: 8px; margin: 8px 0 12px; page-break-inside: avoid; }
+  .tomtat .col { flex: 1; border: 1px solid #000; }
+  .tomtat h2 { margin: 0; padding: 6px 8px; font-size: 11pt; }
+  .tomtat .col.done h2 { background: #dcfce7; }
+  .tomtat .col.doing h2 { background: #ffedd5; }
+  .tomtat ul { margin: 6px 8px 8px; padding-left: 16px; }
+</style>
+</head>
+<body>
+<h1>Báo cáo tuần 14/09 – 20/09/2026</h1>
+<p class="meta">Phan Nguyễn Đăng Khoa · Xưởng HCB · gửi sếp</p>
+
+<div class="tomtat">
+  <div class="col done">
+    <h2>Đã làm xong tuần này</h2>
+    <ul>
+      <li>Bảng xưởng HCB <strong>gộp cột</strong> (Tiếp nhận → Gia công → Hoàn thiện → Đóng gói).</li>
+      <li>Nút tím <strong>Nhiệm vụ</strong> trên thẻ đơn — bấm là vào quản lý việc của đúng đơn.</li>
+      <li>Trong dự án, mục <strong>Công việc</strong>: bấm vòng tròn để tick xong; <strong>Hiện việc</strong> / <strong>Xong hết</strong> theo nhóm.</li>
+      <li>Trang quản lý nhiệm vụ xếp theo hạn (Quá hạn / Hôm nay / Ngày mai).</li>
+    </ul>
+  </div>
+  <div class="col doing">
+    <h2>Đang làm</h2>
+    <ul>
+      <li>Sổ <strong>giá vốn / lợi nhuận</strong> trên tab Kế toán của từng đơn.</li>
+      <li>Nhân viên nộp Excel trên việc → hệ thống ra số lãi / lỗ (CRM dùng nút Upload Excel Báo giá có sẵn).</li>
+      <li>Đang chạy thử nội bộ — <strong>chưa mở cho cả công ty</strong>. Tuần sau đối số với Kế toán rồi mới đưa lên bản đang dùng.</li>
+    </ul>
+  </div>
+</div>
+
+<h2>1. Bảng xưởng HCB — gộp cột</h2>
+<p>
+Cột nhỏ (Chuẩn bị vật tư, Đặt kính, Sơn…) gom vào cột lớn:
+<strong>Tiếp nhận → Gia công → Hoàn thiện → Đóng gói</strong>.
+Trên thẻ có nút tím <strong>Nhiệm vụ</strong> — bấm là vào đúng đơn.
+</p>
+<figure>
+  <img src="imgs/01-hcb-gop-cot.png" alt="Bảng xưởng HCB gộp cột"/>
+  <figcaption>HCB · Tủ bếp, chế độ gộp. Nút tím «Nhiệm vụ» trên từng thẻ.</figcaption>
+</figure>
+
+<h2>2. Trong dự án — mục Công việc</h2>
+<p>
+Mở đơn (ví dụ TB-2026-896). Thanh trên cùng chính là bảng gộp:
+cột lớn (Gia công) chứa nhiều việc nhỏ chạy cùng lúc.
+</p>
+
+<h3>Cách làm trên thanh tiến độ</h3>
+<ol>
+  <li>Bấm <strong>vòng tròn</strong> để đánh dấu việc nhỏ đã xong (Chuẩn bị vật tư, Đặt kính, Sơn…).</li>
+  <li>Bấm <strong>tên cột</strong> nếu muốn chuyển cả đơn sang bước đó.</li>
+  <li>Số <strong>0/6 xong</strong> cho biết còn bao nhiêu việc trong nhóm Gia công.</li>
+</ol>
+<figure>
+  <img src="imgs/06-cong-viec-trong-du-an.png" alt="Thanh tiến độ Gia công trong chi tiết dự án"/>
+  <figcaption>Trong đơn: Gia công đang làm «Chuẩn bị vật tư». Các việc khác (Đặt kính, Sơn, Thùng…) chạy song song.</figcaption>
+</figure>
+
+<h3>Tab Công việc — nhóm việc và nút Hiện việc / Xong hết</h3>
+<ol>
+  <li>Kéo xuống tab <strong>Công việc</strong>.</li>
+  <li>Việc được gom theo bước xưởng: Tiếp nhận, Kế hoạch, Duyệt, Gia công, Hoàn thiện, Đóng gói, Công nợ.</li>
+  <li>Bấm <strong>Hiện việc</strong> để xem từng việc trong nhóm.</li>
+  <li>Bấm <strong>Xong hết</strong> để tích hoàn thành cả nhóm (khi thật sự xong).</li>
+</ol>
+<figure>
+  <img src="imgs/08-cong-viec-nhom.png" alt="Nhóm Công việc Hiện việc Xong hết"/>
+  <figcaption>Nhóm Gia công gồm 6 cột nhỏ. Nút Hiện việc / Xong hết nằm cạnh tên nhóm.</figcaption>
+</figure>
+
+<p>
+Trên trang tổng hợp dự án, tab <strong>Công việc</strong> liệt kê từng việc (Deal / Sản xuất),
+bấm Chờ → Đang làm → Hoàn thành, nộp file tại <strong>Ghi chú &amp; file</strong>.
+</p>
+<figure>
+  <img src="imgs/10-tab-cong-viec.png" alt="Tab Công việc trên chi tiết dự án"/>
+  <figcaption>Tab Công việc: 4/41 việc xong. Tách Deal (18) và Sản xuất (23). Có nút Nhắc Sales / Nhắc xưởng.</figcaption>
+</figure>
+
+<h2>3. Tab Chi phí / Kế toán — đang có và đang làm mới</h2>
+<p>
+Trên chi tiết dự án hiện có tab <strong>Chi phí</strong>: đã thu, chi phí, còn phải thu, dòng tiền.
+Đơn mẫu này chưa có giao dịch nên các số đang là 0đ.
+</p>
+<figure>
+  <img src="imgs/09-tab-chi-phi.png" alt="Tab Chi phí trên chi tiết dự án"/>
+  <figcaption>Tab Chi phí hiện đang dùng trên hệ thống (TB-2026-896).</figcaption>
+</figure>
+
+<h3>Cách thức sổ Kế toán mới (đang chạy thử, chưa mở cho cả công ty)</h3>
+<p>Làm theo 3 bước, không cần gõ công thức kỹ thuật:</p>
+<div class="steps">
+  <div class="step">
+    <b>1. Đầu vào</b>
+    <span>Nhân viên nộp file Excel trên việc (báo giá, vật tư, vận chuyển…). CRM dùng luôn nút <strong>Upload Excel Báo giá</strong> có sẵn — Phúc Đạt đã gắn 183 việc.</span>
+  </div>
+  <span class="arrow">→</span>
+  <div class="step">
+    <b>2. Công thức</b>
+    <span>Kế toán bấm nút cộng trừ nhân chia, ví dụ: tiền bán trừ chi phí vật tư, vận chuyển, CRM. Chọn theo công ty / khu vực.</span>
+  </div>
+  <span class="arrow">→</span>
+  <div class="step">
+    <b>3. Đầu ra</b>
+    <span>Tab Kế toán trên đơn hiện: doanh thu, giá vốn, lợi nhuận. Chưa nộp Excel thì việc chưa cho hoàn thành.</span>
+  </div>
+</div>
+<div class="box">
+  Hệ thống còn tự lấy thêm (nếu có): chi phí xưởng, phát sinh sản xuất, đơn mua hàng, phí vận chuyển / lắp, giá vốn trên báo giá.
+  Công thức mặc định: <strong>Lợi nhuận = tiền bán − giá vốn</strong>.
+</div>
+
+<h2>4. Kế hoạch đang thực hiện</h2>
+<table class="plan">
+  <thead>
+    <tr><th>STT</th><th>VIỆC</th><th>LÀM GÌ</th><th>TRẠNG THÁI</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>1</td>
+      <td>Bảng xưởng HCB gộp + nút Nhiệm vụ</td>
+      <td>Đưa vào dùng hàng ngày cho xưởng</td>
+      <td>Đã xong</td>
+    </tr>
+    <tr>
+      <td>2</td>
+      <td>Công việc trong đơn (vòng tròn, Hiện việc, Xong hết)</td>
+      <td>Xưởng tick việc theo nhóm, không lạc trong danh sách dài</td>
+      <td>Đã xong</td>
+    </tr>
+    <tr>
+      <td>3</td>
+      <td>Sổ giá vốn / lợi nhuận (tab Kế toán mới)</td>
+      <td>Đối số với Kế toán trên vài đơn thật, rồi mới mở cho cả công ty</td>
+      <td class="wip">Đang chạy thử</td>
+    </tr>
+    <tr>
+      <td>4</td>
+      <td>Bắt buộc nộp Excel khi hoàn thành việc</td>
+      <td>Số trong file vào sổ — tránh tick xong mà chưa có chứng từ</td>
+      <td class="wip">Đang chạy thử</td>
+    </tr>
+  </tbody>
+</table>
+<p>
+Tuần sau: ngồi với Kế toán đối vài đơn HCB / Phúc Đạt. Đúng số thì mới đưa tab Kế toán mới lên bản đang dùng hàng ngày.
+</p>
+<p class="note">Ảnh chụp trên hệ thống đang dùng, xưởng HCB, đơn TB-2026-896, ngày 20/09/2026. Sổ Kế toán mới chưa mở trên bản này.</p>
+</body>
+</html>

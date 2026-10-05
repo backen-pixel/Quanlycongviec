@@ -1,5 +1,6 @@
 const { supabase } = require('../config/supabase');
 const { normalizeRole } = require('./adminRole');
+const { fetchAllPages, fetchAllByIdsParallel } = require('./supabaseFetchAll');
 
 function isAccountingUser(user) {
   return normalizeRole(user?.role) === 'accounting'
@@ -48,11 +49,14 @@ function applyAccountingCrmCompanyFilter(query, accountingCompanyId) {
 async function getAccountingClientProjectIdsAtWorkshop(workshopCompanyId, clientCompanyId) {
   if (!workshopCompanyId || !clientCompanyId) return [];
 
-  const { data: projects, error: pErr } = await supabase
-    .from('projects')
-    .select('id')
-    .eq('company_id', workshopCompanyId);
-  if (pErr) {
+  let projects;
+  try {
+    projects = await fetchAllPages(() => supabase
+      .from('projects')
+      .select('id')
+      .eq('company_id', workshopCompanyId)
+      .order('id'));
+  } catch (pErr) {
     console.warn('[accountingScope] projects at workshop:', pErr.message);
     return [];
   }
@@ -60,12 +64,16 @@ async function getAccountingClientProjectIdsAtWorkshop(workshopCompanyId, client
   if (!projectIds.length) return [];
 
   const selectCols = 'project_id, company_id, external_company_id, external_company_name, type';
-  const { data: deals, error: dErr } = await supabase
-    .from('crm_leads')
-    .select(selectCols)
-    .eq('type', 'deal')
-    .in('project_id', projectIds);
-  if (dErr) {
+  let deals;
+  try {
+    deals = await fetchAllByIdsParallel({
+      table: 'crm_leads',
+      columns: selectCols,
+      key: 'project_id',
+      ids: projectIds,
+      tune: (q) => q.eq('type', 'deal').order('id'),
+    });
+  } catch (dErr) {
     console.warn('[accountingScope] crm_leads at workshop:', dErr.message);
     return [];
   }

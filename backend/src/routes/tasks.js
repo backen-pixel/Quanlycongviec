@@ -257,6 +257,15 @@ r.patch('/:id/status', async (req, res) => {
     const { data, error } = await supabase.from('tasks').update(update).eq('id', req.params.id).select().single();
     if (error) throw error;
 
+    if (old && update.status !== old.status && (data.project_id || old.project_id)) {
+      try {
+        const { syncSxCardDeadline } = require('../helpers/sxCardPlanDeadline');
+        await syncSxCardDeadline(data.project_id || old.project_id);
+      } catch (dlErr) {
+        console.warn('[tasks] sync SX card deadline:', dlErr.message);
+      }
+    }
+
     // Auto notifications
     if (old && update.status !== old.status) {
       if (update.status === 'review' && old.created_by_id) {

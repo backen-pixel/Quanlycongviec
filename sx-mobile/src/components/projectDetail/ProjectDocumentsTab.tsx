@@ -18,6 +18,7 @@ import { isImageFile, resolveMediaUrl, toGalleryImage } from '../../lib/mediaUti
 import {
   fetchLeadTaskDocuments,
   fetchProjectDocuments,
+  fetchProjectLeadDocuments,
   fetchProjectTaskFiles,
   type ProjectDocument,
   type ProjectTaskFile,
@@ -80,29 +81,36 @@ export default function ProjectDocumentsTab({ projectId, dealId, sharedDocuments
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
 
-  const crmSharedDocs = useMemo(
-    () => sharedDocuments.map(mapSharedDoc).filter(Boolean) as ProjectDocument[],
-    [sharedDocuments],
-  );
+  /** Tài liệu CRM của deal đã chia sẻ cho Sản xuất — lấy qua route theo dự án, không cần quyền deal. */
+  const [leadDocs, setLeadDocs] = useState<ProjectDocument[]>([]);
+
+  const crmSharedDocs = useMemo(() => {
+    const merged = new Map<string, ProjectDocument>();
+    for (const d of sharedDocuments.map(mapSharedDoc)) if (d) merged.set(d.id, d);
+    for (const d of leadDocs) if (d.id && !merged.has(d.id)) merged.set(d.id, d);
+    return [...merged.values()];
+  }, [sharedDocuments, leadDocs]);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     setError('');
-    try {
-      const [wDocs, tFiles, leadDocs] = await Promise.all([
-        fetchProjectDocuments(projectId),
-        fetchProjectTaskFiles(projectId),
-        dealId ? fetchLeadTaskDocuments(dealId) : Promise.resolve([] as ProjectDocument[]),
-      ]);
-      setWorkshopDocs(wDocs);
-      setTaskFiles(tFiles);
-      setCrmTaskDocs(leadDocs);
-    } catch (e) {
-      setError(formatApiError(e));
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
+    // Mỗi nguồn độc lập (như web `Promise.allSettled`): một nguồn bị từ chối quyền không được làm
+    // mất các nguồn còn lại. Chỉ báo lỗi khi TẤT CẢ đều hỏng.
+    const [wDocs, tFiles, taskDocs, projLeadDocs] = await Promise.allSettled([
+      fetchProjectDocuments(projectId),
+      fetchProjectTaskFiles(projectId),
+      dealId ? fetchLeadTaskDocuments(dealId) : Promise.resolve([] as ProjectDocument[]),
+      fetchProjectLeadDocuments(projectId),
+    ]);
+    if (wDocs.status === 'fulfilled') setWorkshopDocs(wDocs.value);
+    if (tFiles.status === 'fulfilled') setTaskFiles(tFiles.value);
+    if (taskDocs.status === 'fulfilled') setCrmTaskDocs(taskDocs.value);
+    if (projLeadDocs.status === 'fulfilled') setLeadDocs(projLeadDocs.value);
+    const results = [wDocs, tFiles, taskDocs, projLeadDocs];
+    const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    if (failed.length === results.length) setError(formatApiError(failed[0].reason));
+    setLoading(false);
+    setRefreshing(false);
   }, [projectId, dealId]);
 
   useEffect(() => {

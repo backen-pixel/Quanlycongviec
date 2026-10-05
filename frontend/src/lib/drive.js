@@ -87,7 +87,7 @@ function runTrackedDriveUpload(file, {
         loaded: e.loaded,
         total: e.total || file?.size,
       });
-      onProgress?.(stats.percent);
+      onProgress?.(stats);
       if (transferId) {
         patchDriveUpload(transferId, {
           progress: stats.percent,
@@ -427,6 +427,8 @@ export const driveLinksCountByEntity = (entity_type, entity_id) =>
   api.get(`/drive/links/count-by-entity/${entity_type}/${entity_id}`).then((r) => r.data?.count ?? 0);
 
 // ── Chat share ──
+export const driveEnsureAnyoneLink = (id) =>
+  api.post(`/drive/files/${id}/anyone-link`).then((r) => r.data);
 export const driveShareToLeadChat = (leadId, body) =>
   api.post(`/crm/leads/${leadId}/chat/drive`, body).then((r) => r.data);
 export const driveShareToMessengerChat = (groupId, body) =>

@@ -12,7 +12,12 @@ import {
   type KpiStat,
   type ShortcutAction,
 } from '../components/dashboard/DashboardParts';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import StaffOverviewBody, {
+  type StaffProjectRow,
+  type StaffTaskGroup,
+} from '../components/overview/StaffOverviewBody';
+import { useFocusEffect, useIsFocused, useNavigation } from '@react-navigation/native';
+import { StatusBar } from 'expo-status-bar';
 import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -33,6 +38,7 @@ import { useAuth } from '../context/AuthContext';
 import { useMessenger } from '../context/MessengerContext';
 import { useNotifications } from '../context/NotificationContext';
 import { useTheme } from '../context/ThemeContext';
+import { useMyProjectScope } from '../hooks/useMyProjectScope';
 import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { boardFiltersFromSharedSnap, loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '../lib/kanbanFilterStorage';
 import {
@@ -58,17 +64,21 @@ import {
   formatVnWeekdayDate,
   initialsFrom,
   pickOverdueProjects,
+  pickPriorityProjects,
+  projectIsDeadlineOverdue,
   shortDateLabel,
   sxProjectDeadlineRaw,
   type SxBoardKpis,
 } from '../lib/sxBoardKpis';
 import {
   canViewTeamWork,
-  fetchMyProductionTasks,
+  fetchMyParticipationTasks,
   fetchProductionWorkTasks,
   formatTaskDeadline,
   groupTasksByDeal,
+  summarizeTaskGroup,
   isTaskDone,
+  isTaskDueOnDay,
   isTaskInProgress,
   isTaskOverdue,
   statusPillLabel,
@@ -106,6 +116,9 @@ const PAGE_HPAD = 14;
 const TASK_PAGE_SIZE = 4;
 const DEAL_PAGE_SIZE = 4;
 const PRIORITY_FETCH_LIMIT = 80;
+/** Số dòng xem trước mỗi mục ở bố cục nhân viên — phần còn lại qua «Xem tất cả».
+ *  Liệt kê dài làm mục «Dự án sản xuất» bị đẩy khuất khỏi màn hình. */
+const STAFF_PREVIEW_LIMIT = 4;
 
 const EMPTY_KPI: SxBoardKpis = {
   total: 0,
@@ -146,6 +159,15 @@ export default function OverviewScreen() {
   /** Chiều cao hero đo lúc layout — dùng để đốm sáng không tràn ra ngoài. */
   const [heroH, setHeroH] = useState(0);
   const heroGlowSize = Math.max(240, heroH * 2.4);
+  /** Giao diện sáng: header xanh đậm, chữ trắng (theo thiết kế). Giao diện tối giữ nguyên. */
+  const lightHero = !isDark;
+  const isFocused = useIsFocused();
+  const heroTextStyle = { color: '#FFFFFF' };
+  const heroSubTextStyle = { color: 'rgba(255,255,255,0.82)' };
+  const heroIconBtnStyle = {
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    borderColor: 'rgba(255,255,255,0.32)',
+  };
   const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
@@ -171,6 +193,18 @@ export default function OverviewScreen() {
   /** Cột board — cần để resolve hạn hiệu lực của thẻ quá hạn (hạn thẻ ưu tiên). */
   const [boardStages, setBoardStages] = useState<KanbanStage[]>([]);
   const [tasks, setTasks] = useState<WorkTask[]>([]);
+  /** Lần tải việc của nhân viên gần nhất bị lỗi — phân biệt «lỗi» với «không có việc nào». */
+  const [tasksFailed, setTasksFailed] = useState(false);
+  /** Đã nạp xong việc của nhân viên ít nhất một lần thành công — mốc để biết «không có dự án» là thật, không phải chưa về. */
+  const [tasksLoaded, setTasksLoaded] = useState(false);
+  /**
+   * Toàn bộ dự án của bảng (đã lọc công ty, CHƯA lọc theo người) — giữ ở ref để
+   * không gây render thừa; `projectsVersion` báo hiệu đã có dữ liệu mới.
+   * Bố cục nhân viên cần danh sách này để tìm dự án họ THAM GIA, chứ không chỉ
+   * dự án họ đứng tên phụ trách.
+   */
+  const allProjectsRef = useRef<ProductionProject[]>([]);
+  const [projectsVersion, setProjectsVersion] = useState(0);
   const skipNextFocusRefreshRef = useRef(true);
   const lastSilentAtRef = useRef(0);
   const [taskPage, setTaskPage] = useState(1);
@@ -183,6 +217,8 @@ export default function OverviewScreen() {
   const [typePickerOpen, setTypePickerOpen] = useState(false);
   /** true = loại hiện tại do app tự chọn, được phép nhảy tiếp nếu rỗng. */
   const autoPickedTypeRef = useRef(false);
+  /** Lần mở app đầu tiên: cho phép tự nhảy khỏi phân loại ĐÃ LƯU nếu nó rỗng (xem effect bên dưới). */
+  const loginTypeCheckDoneRef = useRef(false);
   /** Các loại đã thử trong công ty này — chặn nhảy vòng tròn. */
   const triedTypeIdsRef = useRef<Set<string>>(new Set());
   const [workTypes, setWorkTypes] = useState<WorkshopTypeOption[]>([]);
@@ -307,6 +343,8 @@ export default function OverviewScreen() {
           : projects;
         const scoped = scopeProjectsForUser(dealScoped, { userId, ownOnly });
         setOverdueDeals(pickOverdueProjects(scoped, PRIORITY_FETCH_LIMIT, stages));
+        allProjectsRef.current = dealScoped;
+        setProjectsVersion((v) => v + 1);
         setBoardStages(stages);
         if (truncated != null) setBoardTruncated(Boolean(truncated));
         return scoped;
@@ -323,8 +361,13 @@ export default function OverviewScreen() {
       const tasksPromise = !userId
         ? Promise.resolve([] as WorkTask[])
         : ownOnly
-          ? fetchMyProductionTasks(userId, { signal: ac.signal, force: mode === 'refresh' })
-            .catch(() => [] as WorkTask[])
+          // null = tải LỖI (khác với «không có việc»): không được giả vờ danh sách rỗng.
+          ? fetchMyParticipationTasks(userId, { signal: ac.signal, force: mode === 'refresh' })
+            .catch((e): WorkTask[] | null => {
+              if (isAbortError(e)) throw e;
+              console.warn('[overview] tải công việc của tôi lỗi:', formatApiError(e));
+              return null;
+            })
           : fetchProductionWorkTasks({
               companyId: companyId || null,
               limit: WORK_TASKS_PAGE_SIZE,
@@ -400,7 +443,15 @@ export default function OverviewScreen() {
           overdue: summary.overdue,
         });
       }
-      setTasks(myTasks);
+      if (myTasks) {
+        setTasks(myTasks);
+        setTasksFailed(false);
+        setTasksLoaded(true);
+      } else {
+        // Lỗi tải: giữ danh sách cũ (nếu có) thay vì xoá trắng, và báo cho người dùng biết.
+        setTasksFailed(true);
+        if (mode !== 'silent') setError('Không tải được công việc của bạn');
+      }
       setTaskPage(1);
       setDealPage(1);
       lastSilentAtRef.current = Date.now();
@@ -447,6 +498,29 @@ export default function OverviewScreen() {
     return unsub;
   }, [load]);
 
+  /**
+   * Nhân viên: dự án CỦA MÌNH = đứng tên phụ trách HOẶC được giao việc. Lọc riêng theo
+   * `production_person_id` là sai vì nhân viên xưởng hiếm khi đứng tên mà chủ yếu nhận việc
+   * (cùng định nghĩa với tab Dự án và danh sách «Dự án sản xuất»). KPI, số quá hạn và danh
+   * sách đều dựa trên tập này để khớp nhau. Chỉ gồm dự án có trên bảng đang lọc.
+   */
+  // Dùng chung hook với tab Dự án và Planner; truyền `tasks` đã nạp ở đây để cả ba màn cùng một
+  // định nghĩa «dự án của tôi» và kéo làm mới cập nhật đồng thời.
+  const { allows: allowsProject } = useMyProjectScope(user, { tasks });
+  const staffScopedProjects = useMemo<ProductionProject[]>(() => {
+    void projectsVersion; // dữ liệu nằm ở ref — phụ thuộc có chủ ý
+    if (!ownOnly) return [];
+    return allProjectsRef.current.filter(allowsProject);
+  }, [projectsVersion, ownOnly, allowsProject]);
+  const staffKpis = useMemo(
+    () => computeSxBoardKpis(staffScopedProjects, boardStages),
+    [staffScopedProjects, boardStages],
+  );
+  const staffOverdueDeals = useMemo(
+    () => pickOverdueProjects(staffScopedProjects, PRIORITY_FETCH_LIMIT, boardStages),
+    [staffScopedProjects, boardStages],
+  );
+
   /** Danh sách loại xưởng của công ty đang chọn — không có «Tất cả», khớp web. */
   const workTypeOptions = useMemo(
     () => [
@@ -471,7 +545,16 @@ export default function OverviewScreen() {
     }
     let cancelled = false;
     void fetchWorkshopTypes(filterCompany, null)
-      .then((list) => { if (!cancelled) setWorkTypes(list); })
+      .then((list) => {
+        if (cancelled) return;
+        setWorkTypes(list);
+        // Mở app (đăng nhập) mà phân loại đã lưu rỗng → bảng trắng. Coi như lựa chọn tự động một lần
+        // để effect «tự nhảy» tìm loại có dữ liệu; người dùng tự chọn sau đó thì được tôn trọng.
+        if (!loginTypeCheckDoneRef.current) {
+          loginTypeCheckDoneRef.current = true;
+          autoPickedTypeRef.current = true;
+        }
+      })
       .catch(() => { if (!cancelled) setWorkTypes([]); });
     return () => { cancelled = true; };
   }, [filterCompany]);
@@ -506,9 +589,19 @@ export default function OverviewScreen() {
    */
   useEffect(() => {
     if (!autoPickedTypeRef.current) return;
+    // Nhân viên: «có dự án hay không» phụ thuộc việc được giao (tải sau bảng). Chỉ nhảy khi việc đã về
+    // thành công — chưa về mà nhảy thì sẽ nhảy nhầm sang loại rỗng và còn bị lưu lại. Không có việc nào
+    // thì không có gì để tìm, dừng; có việc mà loại hiện tại không có dự án nào của họ thì thử loại kế tiếp.
+    if (ownOnly) {
+      if (!tasksLoaded || tasksFailed) return;
+      if (tasks.length === 0) {
+        autoPickedTypeRef.current = false;
+        return;
+      }
+    }
     if (loading || !filterCompany || workTypes.length < 2) return;
     if (!filterWorkTypeId || filterWorkTypeId === 'none') return;
-    if (kpis.total > 0) {
+    if ((ownOnly ? staffScopedProjects.length : kpis.total) > 0) {
       autoPickedTypeRef.current = false;
       return;
     }
@@ -519,7 +612,19 @@ export default function OverviewScreen() {
       return;
     }
     void applyWorkType(String(next.id));
-  }, [loading, kpis.total, filterWorkTypeId, workTypes, filterCompany, applyWorkType]);
+  }, [
+    loading,
+    kpis.total,
+    ownOnly,
+    tasksLoaded,
+    tasksFailed,
+    tasks.length,
+    staffScopedProjects.length,
+    filterWorkTypeId,
+    workTypes,
+    filterCompany,
+    applyWorkType,
+  ]);
 
   const onSelectWorkType = useCallback(async (id: string) => {
     setTypePickerOpen(false);
@@ -548,13 +653,17 @@ export default function OverviewScreen() {
           const dealScoped = ext
             ? cached.projects.filter((p) => projectMatchesDealCompanyExternalFilter(p, ext))
             : cached.projects;
-          const scoped = scopeProjectsForUser(dealScoped, { userId, ownOnly });
-          setOverdueDeals(pickOverdueProjects(scoped, PRIORITY_FETCH_LIMIT, cached.stages));
           setBoardTruncated(Boolean(cached.truncated));
           if (ownOnly) {
-            setKpis(computeSxBoardKpis(scoped, cached.stages));
+            // Nhân viên: KPI/quá hạn suy ra từ `staffScopedProjects` (cần cả việc được giao),
+            // nên chỉ cần nạp lại dữ liệu bảng rồi để memo tự tính.
+            allProjectsRef.current = dealScoped;
+            setBoardStages(cached.stages);
+            setProjectsVersion((v) => v + 1);
             return;
           }
+          const scoped = scopeProjectsForUser(dealScoped, { userId, ownOnly });
+          setOverdueDeals(pickOverdueProjects(scoped, PRIORITY_FETCH_LIMIT, cached.stages));
         }
         // Coalesce summary khi soft-ingest dày (tránh bão GET /summary).
         if (summaryDebounceRef.current) clearTimeout(summaryDebounceRef.current);
@@ -655,6 +764,175 @@ export default function OverviewScreen() {
     [tabNav, teamView],
   );
 
+  // ── Dữ liệu cho bố cục NHÂN VIÊN ────────────────────────────────────────
+  /** 4 ô: Tổng dự án · Đang sản xuất · Hoàn tất · Quá hạn. */
+  const staffKpiStats = useMemo<KpiStat[]>(() => [
+    { key: 'total', label: 'Tổng dự án', value: staffKpis.total, color: colors.primary, icon: 'cube-outline', onPress: goKanban },
+    { key: 'producing', label: 'Đang sản xuất', value: staffKpis.producing, color: KPI_CYAN, icon: 'play-outline', onPress: goKanban },
+    { key: 'completed', label: 'Hoàn tất', value: staffKpis.completed, color: colors.success, icon: 'checkmark-done-outline', onPress: goKanban },
+    { key: 'overdue', label: 'Dự án quá hạn', value: staffKpis.overdue, color: colors.danger, icon: 'alert-circle-outline', onPress: () => openOverdueProjects() },
+  ], [staffKpis, colors, goKanban, openOverdueProjects]);
+
+  /**
+   * «Cần xử lý hôm nay» = việc chưa xong mà đã quá hạn hoặc đến hạn hôm nay (giờ VN). Việc hạn xa /
+   * chưa có hạn không tính, nếu không con số trùng tổng việc tồn và sai nghĩa «hôm nay».
+   * Đếm hết `tasks`, không đếm theo số dòng xem trước.
+   */
+  /** Huy hiệu «Công việc dự án»: mọi việc chưa xong (chưa làm + đang làm + quá hạn), không tính việc đã hoàn thành. */
+  const staffUndoneTaskCount = useMemo(
+    () => tasks.filter((t) => !isTaskDone(String(t.status))).length,
+    [tasks],
+  );
+
+  const { staffOpenTaskCount, staffOverdueTaskCount } = useMemo(() => {
+    let due = 0;
+    let overdue = 0;
+    for (const t of tasks) {
+      if (isTaskDone(String(t.status))) continue;
+      if (isTaskOverdue(t)) {
+        due += 1;
+        overdue += 1;
+      } else if (isTaskDueOnDay(t)) {
+        due += 1;
+      }
+    }
+    return { staffOpenTaskCount: due, staffOverdueTaskCount: overdue };
+  }, [tasks]);
+
+  /**
+   * Việc của tôi GOM THEO DỰ ÁN (giống tab Công việc) — gọn hơn liệt kê từng việc, và nhãn trạng
+   * thái nhóm tính chung với tab đó. Nhóm cần chú ý nhất lên trước: Quá hạn (nhiều việc trễ hơn
+   * lên trên) → Đang làm → Chưa làm → Hoàn thành.
+   */
+  const staffTaskGroupsAll = useMemo<StaffTaskGroup[]>(() => {
+    const rank: Record<string, number> = { overdue: 0, doing: 1, todo: 2, done: 3 };
+    const sections = groupTasksByDeal(tasks);
+    const dueTodayById = new Map(
+      sections.map((sec) => [
+        sec.leadId,
+        sec.tasks.some((t) => !isTaskDone(String(t.status)) && isTaskDueOnDay(t)),
+      ]),
+    );
+    return sections
+      .map((sec) => {
+        const sum = summarizeTaskGroup(sec.tasks);
+        return {
+          id: sec.leadId,
+          projectId: sec.projectId ? String(sec.projectId) : null,
+          title: `${sec.code ? `${sec.code} · ` : ''}${sec.title || 'Dự án'}`,
+          // Việc bên trong (hiện khi xổ nhóm): việc chưa xong trước, quá hạn lên đầu, xong xếp cuối.
+          tasks: sec.tasks
+            .slice()
+            .sort((a, b) => {
+              const ad = isTaskDone(String(a.status)) ? 1 : 0;
+              const bd = isTaskDone(String(b.status)) ? 1 : 0;
+              if (ad !== bd) return ad - bd;
+              const ao = isTaskOverdue(a) ? 0 : 1;
+              const bo = isTaskOverdue(b) ? 0 : 1;
+              if (ao !== bo) return ao - bo;
+              return (taskDueIso(a) || '').localeCompare(taskDueIso(b) || '');
+            })
+            .map((t) => ({
+              id: String(t.id),
+              title: String(t.title || 'Công việc'),
+              done: isTaskDone(String(t.status)),
+              inProgress: isTaskInProgress(String(t.status)),
+              overdue: isTaskOverdue(t),
+              dueToday: !isTaskDone(String(t.status)) && isTaskDueOnDay(t),
+              dueLabel: shortDateLabel(taskDueIso(t)) === '—' ? null : shortDateLabel(taskDueIso(t)),
+            })),
+          done: sum.done,
+          open: sum.open,
+          total: sum.total,
+          overdueCount: sum.overdueCount,
+          dueTodayCount: sec.tasks.filter((t) => !isTaskDone(String(t.status)) && isTaskDueOnDay(t)).length,
+          tone: sum.tone,
+        };
+      })
+      .sort((a, b) => {
+        // Nhóm có việc quá hạn lên đầu, kế đó nhóm có việc đến hạn hôm nay (chưa xong).
+        const ua = a.overdueCount > 0 ? 0 : dueTodayById.get(a.id) ? 1 : 2;
+        const ub = b.overdueCount > 0 ? 0 : dueTodayById.get(b.id) ? 1 : 2;
+        if (ua !== ub) return ua - ub;
+        const ra = a.tone ? rank[a.tone] : 4;
+        const rb = b.tone ? rank[b.tone] : 4;
+        if (ra !== rb) return ra - rb;
+        return b.overdueCount - a.overdueCount;
+      });
+  }, [tasks]);
+  const staffTaskGroups = useMemo(
+    () => staffTaskGroupsAll.slice(0, STAFF_PREVIEW_LIMIT),
+    [staffTaskGroupsAll],
+  );
+
+  /**
+   * «Đang tham gia» = có việc được giao trong dự án đó, HOẶC đứng tên phụ trách.
+   * Lọc theo mỗi `production_person_id` là sai: nhân viên xưởng được GIAO việc
+   * chứ hiếm khi được đặt làm người phụ trách, nên danh sách luôn rỗng.
+   */
+  const staffProjectAll = useMemo<StaffProjectRow[]>(() => {
+    void projectsVersion; // phụ thuộc có chủ ý: dữ liệu nằm ở ref
+    const stageById = new Map(boardStages.map((s) => [String(s.id), s]));
+    const projectById = new Map(allProjectsRef.current.map((p) => [String(p.id), p]));
+
+    // Nguồn chính là CHÍNH VIỆC ĐƯỢC GIAO: việc của nhân viên có thể nằm ở dự án
+    // ngoài bộ lọc công ty/phân loại đang chọn, nên dò theo bảng sẽ sót.
+    const rows: StaffProjectRow[] = [];
+    const seen = new Set<string>();
+    const push = (id: string, fallbackName: string) => {
+      if (!id || seen.has(id)) return;
+      seen.add(id);
+      const p = projectById.get(id);
+      const stage = p
+        ? stageById.get(String(p.sx_kanban_column_id || p.resolved_column_id || ''))
+        : undefined;
+      rows.push({
+        id,
+        name: String(p?.name || fallbackName || '—'),
+        // Dự án thường không tự có %; lấy theo % tiến độ gắn với cột đang đứng.
+        percent: Number(p?.sx_pipeline_percent ?? p?.progress ?? stage?.progress_percent ?? 0),
+        stageName: String(stage?.name || p?.stage_name || 'Chưa vào cột'),
+        stageColor: stage?.color || null,
+        orderLabel: p?.order_date ? shortDateLabel(p.order_date) : null,
+        deliveryLabel: p?.delivery_date ? shortDateLabel(p.delivery_date) : null,
+        deadlineLabel: p ? (shortDateLabel(sxProjectDeadlineRaw(p, boardStages)) === '—' ? null : shortDateLabel(sxProjectDeadlineRaw(p, boardStages))) : null,
+        overdue: Boolean(p?.is_overdue || p?.is_delivery_overdue),
+      });
+    };
+
+    for (const t of tasks) {
+      const pid = t.lead?.project_id;
+      if (pid) push(String(pid), String(t.lead?.title || ''));
+    }
+    // Thêm dự án họ đứng tên phụ trách (nếu có) mà chưa xuất hiện qua việc.
+    if (userId) {
+      for (const p of allProjectsRef.current) {
+        if (String(p.production_person_id || '') === String(userId)) {
+          push(String(p.id), String(p.name || ''));
+        }
+      }
+    }
+    // Dự án quá hạn lên đầu, kế đó dự án có hạn / ngày giao là hôm nay; còn lại giữ thứ tự cũ.
+    const todayKey = vnDayKey(new Date().toISOString());
+    const urgency = (id: string): number => {
+      const p = projectById.get(id);
+      if (!p) return 2;
+      if (p.is_overdue || p.is_delivery_overdue || projectIsDeadlineOverdue(p, boardStages)) return 0;
+      const dl = vnDayKey(sxProjectDeadlineRaw(p, boardStages));
+      const dv = vnDayKey(p.delivery_date);
+      return dl === todayKey || dv === todayKey ? 1 : 2;
+    };
+    return rows
+      .map((row, i) => ({ row, i, u: urgency(row.id) }))
+      .sort((a, b) => a.u - b.u || a.i - b.i)
+      .map((x) => x.row);
+  }, [projectsVersion, tasks, userId, boardStages]);
+  /** Chỉ phần xem trước; tổng thật là `staffProjectAll.length` (hiện ở huy hiệu). */
+  const staffProjectRows = useMemo(
+    () => staffProjectAll.slice(0, STAFF_PREVIEW_LIMIT),
+    [staffProjectAll],
+  );
+
   const kpiItems: KpiStat[] = [
     { key: 'total', label: 'Tổng dự án', value: kpis.total, color: colors.primary, icon: 'cube-outline', onPress: goKanban },
     { key: 'producing', label: 'Đang sản xuất', value: kpis.producing, color: KPI_CYAN, icon: 'play-outline', onPress: goKanban },
@@ -732,18 +1010,35 @@ export default function OverviewScreen() {
     },
   ];
 
-  const overdueDealCount = ownOnly ? overdueDeals.length : kpis.overdue;
+  const overdueDealCount = ownOnly ? staffOverdueDeals.length : kpis.overdue;
   const overdueTotal = overdueTaskCount + overdueDealCount;
   /** Lẫn cả hai loại thì mới cần tách nút; một loại thì tiêu đề đã nói đủ. */
   const bothOverdueKinds = overdueTaskCount > 0 && overdueDealCount > 0;
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
+      {lightHero ? (
+        <>
+          {/* Chữ status bar trắng khi màn đang hiển thị; hết focus thì App tự trả về kiểu của nó. */}
+          {isFocused ? <StatusBar style="light" /> : null}
+          {/* Dải xanh đậm phủ cả vùng status bar + hero, kéo thêm 24px xuống dưới để
+              hai góc bo của khung trắng lộ ra nền xanh (đúng thiết kế). */}
+          <LinearGradient
+            colors={['#2F6FE4', '#1E4FC4']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            pointerEvents="none"
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, height: insets.top + heroH + 24 }}
+          />
+        </>
+      ) : null}
       {/* Không phủ chuyển sắc kín bề ngang hero: nó làm cả khối sáng đều lên và
           tạo ranh giới với nền phía dưới, đọc thành một mảng riêng. Chỉ dùng đốm
           sáng tròn, và đặt nó nằm TRỌN trong hero (tính theo chiều cao đo được)
           để không bị overflow cắt ngang. */}
-      <View style={styles.hero} onLayout={(e) => setHeroH(e.nativeEvent.layout.height)}>
+      <View
+        style={[styles.hero, lightHero && { backgroundColor: 'transparent' }]}
+        onLayout={(e) => setHeroH(e.nativeEvent.layout.height)}>
         {heroH > 0 ? (
           <GlowSpot
             size={heroGlowSize}
@@ -754,21 +1049,56 @@ export default function OverviewScreen() {
         ) : null}
         <View style={styles.heroTop}>
           <View style={styles.heroIdentity}>
-            <Avatar name={userName} avatarUrl={user?.avatar} size={52} color={colors.primary} />
+            <Avatar name={userName} avatarUrl={user?.avatar} size={52} color={lightHero ? '#FFFFFF' : colors.primary} />
             <View style={{ flex: 1, paddingRight: 4 }}>
-              <Text style={styles.helloLine} numberOfLines={1}>{helloLine}</Text>
-              <Text style={styles.dateLine}>{dateLabel}</Text>
-              <Text style={styles.wishLine} numberOfLines={2}>{wishLine}</Text>
+              <Text style={[styles.helloLine, lightHero && heroTextStyle]} numberOfLines={1}>{helloLine}</Text>
+              {/* Nhân viên quan tâm «hôm nay phải làm gì» hơn là thứ mấy. */}
+              {teamView ? (
+                <Text style={[styles.dateLine, lightHero && heroSubTextStyle]}>{dateLabel}</Text>
+              ) : tasksFailed && tasks.length === 0 ? (
+                // Lỗi tải ≠ «không có việc»: đừng báo nhân viên rảnh khi thực ra chưa lấy được dữ liệu.
+                <Text style={[styles.dateLine, lightHero && heroSubTextStyle]}>Chưa tải được công việc của bạn</Text>
+              ) : (
+                // Nhãn nổi: đây là thông tin nhân viên cần thấy đầu tiên, chữ phụ mờ 13px là quá nhẹ.
+                <View style={[styles.todayChip, lightHero ? styles.todayChipLight : styles.todayChipDark]}>
+                  <Ionicons
+                    name={staffOpenTaskCount > 0 ? 'flash' : 'checkmark-circle'}
+                    size={15}
+                    color={staffOpenTaskCount > 0 ? '#FDE047' : lightHero ? '#FFFFFF' : colors.success}
+                  />
+                  <Text style={[styles.todayChipTxt, lightHero && heroTextStyle]} numberOfLines={2}>
+                    {staffOpenTaskCount > 0 ? (
+                      <>
+                        Hôm nay bạn có{' '}
+                        <Text style={[styles.todayChipNum, lightHero && { color: '#FDE047' }]}>
+                          {staffOpenTaskCount}
+                        </Text>
+                        {' '}công việc cần xử lý
+                      </>
+                    ) : 'Hôm nay bạn không có công việc nào cần xử lý'}
+                  </Text>
+                  {staffOpenTaskCount > 0 && staffOverdueTaskCount > 0 ? (
+                    <View style={styles.todayOverduePill}>
+                      <Ionicons name="alert-circle" size={12} color="#FFFFFF" />
+                      <Text style={styles.todayOverdueTxt}>{staffOverdueTaskCount} quá hạn</Text>
+                    </View>
+                  ) : null}
+                </View>
+              )}
+              {/* Nhân viên: header chỉ một dòng — khớp thiết kế, bớt chữ thừa. */}
+              {teamView ? (
+                <Text style={[styles.wishLine, lightHero && heroSubTextStyle]} numberOfLines={2}>{wishLine}</Text>
+              ) : null}
             </View>
           </View>
           <View style={styles.headerBtns}>
             <Pressable
-              style={styles.iconBtn}
+              style={[styles.iconBtn, lightHero && heroIconBtnStyle]}
               onPress={() => tabNav.navigate('Profile')}
               accessibilityLabel="Menu"
               hitSlop={6}
             >
-              <Ionicons name="menu-outline" size={20} color={colors.text} />
+              <Ionicons name="menu-outline" size={20} color={lightHero ? '#FFFFFF' : colors.text} />
               {messageUnread > 0 ? (
                 <View style={styles.badge}>
                   <Text style={styles.badgeText}>{messageUnread > 99 ? '99+' : messageUnread}</Text>
@@ -776,12 +1106,12 @@ export default function OverviewScreen() {
               ) : null}
             </Pressable>
             <Pressable
-              style={styles.iconBtn}
+              style={[styles.iconBtn, lightHero && heroIconBtnStyle]}
               onPress={() => void openNotifs()}
               accessibilityLabel="Thông báo"
               hitSlop={6}
             >
-              <Ionicons name="notifications-outline" size={20} color={colors.text} />
+              <Ionicons name="notifications-outline" size={20} color={lightHero ? '#FFFFFF' : colors.text} />
               {unreadCount > 0 ? (
                 <View style={styles.badge}>
                   <Text style={styles.badgeText}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
@@ -794,7 +1124,12 @@ export default function OverviewScreen() {
 
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 110 }]}
+        contentContainerStyle={
+          teamView
+            ? [styles.content, { paddingBottom: insets.bottom + 110 }]
+            // Nhân viên: khung Tổng quan tự lo đệm đáy và kéo dài hết màn hình.
+            : [styles.content, { flexGrow: 1, paddingBottom: 0 }]
+        }
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -822,6 +1157,9 @@ export default function OverviewScreen() {
           </View>
         ) : null}
 
+        {/* Chip lọc công ty / phân loại: chỉ quản lý cần. Nhân viên bị khóa
+            theo công ty của mình nên hai chip này không đổi được gì. */}
+        {teamView ? (
         <View style={styles.scopeRow}>
           <Pressable
             style={styles.scopeChip}
@@ -850,13 +1188,14 @@ export default function OverviewScreen() {
             </Pressable>
           ) : null}
         </View>
+        ) : null}
 
         {loading && !refreshing && kpis.total === 0 && overdueTotal === 0 ? (
           <View style={styles.inlineLoad}>
             <SpinningLoader size="large" color={colors.primary} />
             <Text style={styles.muted}>Đang tải tổng quan…</Text>
           </View>
-        ) : overdueTotal > 0 ? (
+        ) : teamView && overdueTotal > 0 ? (
           // Công việc và dự án quá hạn là HAI MÀN khác nhau. Khi có cả hai loại thì
           // phải giữ hai nút riêng, gộp một nút sẽ làm loại còn lại không tới được.
           <Pressable
@@ -913,12 +1252,31 @@ export default function OverviewScreen() {
           </LinearGradient>
           </Pressable>
         ) : (
-          <View style={styles.okBanner}>
-            <Ionicons name="checkmark-circle" size={20} color={colors.success} />
-            <Text style={styles.okTxt}>Không có công việc / dự án quá hạn</Text>
-          </View>
+          // Nhân viên: bỏ dải «không có quá hạn» — thiết kế không có, và KPI
+          // «Quá hạn» ngay dưới đã nói đúng con số đó rồi.
+          teamView ? (
+            <View style={styles.okBanner}>
+              <Ionicons name="checkmark-circle" size={20} color={colors.success} />
+              <Text style={styles.okTxt}>Không có công việc / dự án quá hạn</Text>
+            </View>
+          ) : null
         )}
 
+        {!teamView ? (
+          <StaffOverviewBody
+            kpiStats={staffKpiStats}
+            taskGroups={staffTaskGroups}
+            projectRows={staffProjectRows}
+            taskTotal={staffUndoneTaskCount}
+            taskGroupTotal={staffTaskGroupsAll.length}
+            loadFailed={tasksFailed}
+            projectTotal={staffProjectAll.length}
+            onOpenProject={openProjectDetail}
+            onSeeAllTasks={() => goWork('all')}
+            onSeeAllProjects={goKanban}
+          />
+        ) : (
+        <>
         <SectionHeader icon="bar-chart-outline" title="Tổng quan sản xuất" />
         {/* Lưới 2 cột thay cho cuộn ngang: có 6 ô mà cuộn ngang chỉ lọt ~4, hai ô
             cuối nằm ngoài rìa phải nên người dùng phải biết là có mới vuốt tới. */}
@@ -949,7 +1307,7 @@ export default function OverviewScreen() {
                 const expanded = !!expandedTaskLeads[section.leadId];
                 const openCount = section.tasks.filter((t) => !isTaskDone(String(t.status))).length;
                 // Chấm mã hoá MỨC KHẨN theo hạn — thứ chưa có ở dòng chữ bên cạnh.
-                // (Mã hoá tiến độ thì trùng với "x/y còn lại" đã ghi rõ bằng số.)
+                // (Mã hoá tiến độ thì trùng với "x/y xong" đã ghi rõ bằng số.)
                 const hasOverdue = section.tasks.some((t) => isTaskOverdue(t));
                 const dueKeys = section.tasks
                   .map((t) => vnDayKey(taskDueIso(t)))
@@ -986,7 +1344,8 @@ export default function OverviewScreen() {
                           {section.code ? `${section.code} · ` : ''}{section.title || 'Deal'}
                         </Text>
                         <Text style={styles.dealGroupMeta} numberOfLines={1}>
-                          {openCount}/{section.tasks.length} còn lại
+                          {section.tasks.length - openCount}/{section.tasks.length} xong
+                          {openCount > 0 ? ` · ${openCount} còn lại` : ''}
                           {nearestDue ? ' · ' : ''}
                           {nearestDue ? (
                             <Text style={{ color: hasOverdue ? colors.danger : dueToday ? colors.warning : colors.textMuted }}>
@@ -1202,6 +1561,8 @@ export default function OverviewScreen() {
             </View>
           ))}
         </View>
+        </>
+        )}
       </ScrollView>
 
       <CommentNotificationsModal
@@ -1268,6 +1629,47 @@ function createStyles(colors: AppColors) {
       fontSize: 13,
       fontWeight: '600',
     },
+    todayChip: {
+      marginTop: 6,
+      alignSelf: 'flex-start',
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+    },
+    todayChipLight: {
+      backgroundColor: 'rgba(255,255,255,0.20)',
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.35)',
+    },
+    todayChipDark: {
+      backgroundColor: colorWithAlpha(colors.primary, 0.18),
+      borderWidth: 1,
+      borderColor: colorWithAlpha(colors.primary, 0.4),
+    },
+    todayChipTxt: {
+      flexShrink: 1,
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: '800',
+    },
+    todayChipNum: {
+      fontSize: 16,
+      fontWeight: '900',
+    },
+    /** Nhãn đỏ đặc để việc quá hạn nổi bật trên cả nền header xanh lẫn nền tối. */
+    todayOverduePill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 3,
+      backgroundColor: '#DC2626',
+      borderRadius: 999,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+    },
+    todayOverdueTxt: { color: '#FFFFFF', fontSize: 12, fontWeight: '900' },
     wishLine: {
       marginTop: 4,
       color: colors.textMuted,

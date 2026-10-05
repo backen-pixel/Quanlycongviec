@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { formatApiError } from '../api/client';
+import { useAuth } from '../context/AuthContext';
+import { canViewTeamWork } from '../lib/roles';
 import { useNotifications } from '../context/NotificationContext';
 import { useTheme } from '../context/ThemeContext';
 import {
@@ -25,6 +27,7 @@ import {
   notificationCategoryLabel,
   notificationIconName,
   notificationActionLabel,
+  isStaffRelevantNotification,
   isWorkshopDealNotification,
   type SxCommentNotification,
 } from '../lib/notificationApi';
@@ -102,6 +105,7 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
     adjustUnreadCount,
     clearUnreadCount,
   } = useNotifications();
+  const { user } = useAuth();
   const liveRef = useRef(liveNotifications);
   liveRef.current = liveNotifications;
   const [tab, setTab] = useState<TabKey>('all');
@@ -389,8 +393,13 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
     [onClose, onOpenProject, adjustUnreadCount],
   );
 
-  const groups = useMemo(() => groupNotifications(items), [items]);
-  const hasReadItems = items.some((x) => x.is_read);
+  // Nhân viên chỉ thấy bình luận + việc/dự án được giao; quản lý/admin thấy đủ.
+  const shownItems = useMemo(
+    () => (canViewTeamWork(user) ? items : items.filter(isStaffRelevantNotification)),
+    [items, user],
+  );
+  const groups = useMemo(() => groupNotifications(shownItems), [shownItems]);
+  const hasReadItems = shownItems.some((x) => x.is_read);
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -435,7 +444,7 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
           </View>
         ) : null}
 
-        {loading && !items.length ? (
+        {loading && !shownItems.length ? (
           <SpinningLoader color={colors.primary} style={{ marginTop: 40 }} />
         ) : (
           <ScrollView
@@ -445,7 +454,7 @@ export default function CommentNotificationsModal({ visible, onClose, onOpenProj
               <RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} tintColor={colors.primary} />
             }
           >
-            {!items.length ? (
+            {!shownItems.length ? (
               <View style={styles.emptyWrap}>
                 <Ionicons name="notifications-off-outline" size={40} color={colors.textFaint} />
                 <Text style={styles.emptyText}>Chưa có thông báo</Text>

@@ -10,6 +10,7 @@ import {
   Users, Building, Image, File, Plus, Video, UserPlus, Smile, Bot
 } from 'lucide-react';
 import UploadProgressBubble from '../components/UploadProgressBubble';
+import { ChatFileDropOverlay, useChatFileDrop } from '../components/ChatFileDrop';
 import AiBotReportContent, { isAiBotReportContent } from '../components/AiBotReportContent';
 import { makeAxiosUploadProgressHandler, mergeUploadProgressState } from '../lib/uploadProgressEta';
 
@@ -258,6 +259,7 @@ export default function DepartmentChat() {
 
   const pinnedMessages = messages.filter(m => m.is_pinned);
   const isAdmin = ['admin', 'manager'].includes(user?.role);
+  const fileDrop = useChatFileDrop((files) => uploadFiles(Array.from(files || [])));
 
   if (loading) {
     return (
@@ -270,7 +272,8 @@ export default function DepartmentChat() {
   const dateGroups = groupByDate(messages);
 
   return (
-    <div className="flex flex-col h-[calc(100vh-80px)]">
+    <div className="relative flex flex-col h-[calc(100vh-80px)]" {...fileDrop.bind}>
+      <ChatFileDropOverlay active={fileDrop.active} />
       {/* Header */}
       <div className="bg-white border-b px-4 py-3 flex items-center gap-3 shrink-0">
         <button onClick={() => navigate('/departments')} className="w-8 h-8 rounded-lg hover:bg-gray-100 flex items-center justify-center cursor-pointer">
