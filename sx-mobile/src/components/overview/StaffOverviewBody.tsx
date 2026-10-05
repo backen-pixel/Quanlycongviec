@@ -76,7 +76,7 @@ export default function StaffOverviewBody({
   /** Phần xem trước các nhóm việc; tổng số nhóm ở `taskGroupTotal`. */
   taskGroups: StaffTaskGroup[];
   projectRows: StaffProjectRow[];
-  /** Tổng số việc (badge) / số nhóm việc / số dự án — danh sách chỉ là phần xem trước. */
+  /** Số việc CHƯA XONG (badge) / số nhóm việc / số dự án — danh sách chỉ là phần xem trước. */
   taskTotal: number;
   taskGroupTotal: number;
   projectTotal: number;
@@ -115,7 +115,7 @@ export default function StaffOverviewBody({
       <>
           <SectionHeader
             icon="checkbox-outline"
-            title="Công việc của tôi"
+            title="Công việc dự án"
             badge={taskTotal}
             // Chỉ hiện «Xem tất cả» khi còn mục chưa được liệt kê; tổng số đã có ở badge nên không lặp lại.
             actionLabel={taskGroupTotal > taskGroups.length ? 'Xem tất cả' : undefined}

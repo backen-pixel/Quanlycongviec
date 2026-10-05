@@ -573,15 +573,39 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
           letterSpacing: 0.3,
           marginBottom: 2,
         },
-        avatar: {
-          width: 28,
-          height: 28,
-          borderRadius: 14,
+        assigneeRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          alignSelf: 'flex-start',
+          maxWidth: '100%',
+          gap: 6,
+          marginTop: 6,
+          paddingVertical: 3,
+          paddingLeft: 3,
+          paddingRight: 10,
+          borderRadius: 999,
           backgroundColor: colors.primarySoft,
+        },
+        assigneeRowEmpty: {
+          paddingLeft: 8,
+          backgroundColor: colors.warning + '1F',
+        },
+        assigneeAvatars: { flexDirection: 'row', alignItems: 'center' },
+        assigneeAvatar: {
+          width: 22,
+          height: 22,
+          borderRadius: 11,
+          backgroundColor: colors.primary,
+          borderWidth: 1.5,
+          borderColor: colors.card,
           alignItems: 'center',
           justifyContent: 'center',
         },
-        avatarText: { color: colors.primary, fontSize: 10, fontWeight: '800' },
+        assigneeAvatarOverlap: { marginLeft: -7 },
+        assigneeAvatarTxt: { color: '#FFFFFF', fontSize: 9, fontWeight: '800' },
+        assigneeLabel: { color: colors.textMuted, fontSize: 11, fontWeight: '600' },
+        assigneeName: { color: colors.primary, fontSize: 12.5, fontWeight: '800', flexShrink: 1 },
+        assigneeEmptyTxt: { color: colors.warning, fontSize: 12, fontWeight: '800' },
         actions: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -990,6 +1014,27 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
             <Text style={[styles.title, done && styles.titleDone]} numberOfLines={2}>
               {task.title}
             </Text>
+            {/* Ai được giao: hiện rõ tên, không chỉ vòng tròn chữ cái ở góc. */}
+            {assignees.length > 0 ? (
+              <View style={styles.assigneeRow}>
+                <View style={styles.assigneeAvatars}>
+                  {assignees.slice(0, 3).map((p, i) => (
+                    <View key={String(p.id ?? i)} style={[styles.assigneeAvatar, i > 0 && styles.assigneeAvatarOverlap]}>
+                      <Text style={styles.assigneeAvatarTxt}>{initials(p.full_name)}</Text>
+                    </View>
+                  ))}
+                </View>
+                <Text style={styles.assigneeLabel}>Giao cho</Text>
+                <Text style={styles.assigneeName} numberOfLines={1}>
+                  {assignees.map((p) => p.full_name?.trim() || '—').join(', ')}
+                </Text>
+              </View>
+            ) : (
+              <View style={[styles.assigneeRow, styles.assigneeRowEmpty]}>
+                <Ionicons name="person-outline" size={14} color={colors.warning} />
+                <Text style={styles.assigneeEmptyTxt}>Chưa giao cho ai</Text>
+              </View>
+            )}
             {hasNote ? (
               <TapHighlight
                 style={styles.noteBox}
@@ -1024,15 +1069,6 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
               )}
             </View>
           </View>
-          {assignee ? (
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{initials(assignee.full_name)}</Text>
-            </View>
-          ) : (
-            <View style={[styles.avatar, { backgroundColor: colors.cardAlt }]}>
-              <Ionicons name="person-outline" size={14} color={colors.textFaint} />
-            </View>
-          )}
         </View>
 
         <View style={styles.mediaActions}>

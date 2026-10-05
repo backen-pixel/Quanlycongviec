@@ -215,6 +215,8 @@ export default function OverviewScreen() {
   const [typePickerOpen, setTypePickerOpen] = useState(false);
   /** true = loại hiện tại do app tự chọn, được phép nhảy tiếp nếu rỗng. */
   const autoPickedTypeRef = useRef(false);
+  /** Lần mở app đầu tiên: cho phép tự nhảy khỏi phân loại ĐÃ LƯU nếu nó rỗng (xem effect bên dưới). */
+  const loginTypeCheckDoneRef = useRef(false);
   /** Các loại đã thử trong công ty này — chặn nhảy vòng tròn. */
   const triedTypeIdsRef = useRef<Set<string>>(new Set());
   const [workTypes, setWorkTypes] = useState<WorkshopTypeOption[]>([]);
@@ -540,7 +542,16 @@ export default function OverviewScreen() {
     }
     let cancelled = false;
     void fetchWorkshopTypes(filterCompany, null)
-      .then((list) => { if (!cancelled) setWorkTypes(list); })
+      .then((list) => {
+        if (cancelled) return;
+        setWorkTypes(list);
+        // Mở app (đăng nhập) mà phân loại đã lưu rỗng → bảng trắng. Coi như lựa chọn tự động một lần
+        // để effect «tự nhảy» tìm loại có dữ liệu; người dùng tự chọn sau đó thì được tôn trọng.
+        if (!loginTypeCheckDoneRef.current) {
+          loginTypeCheckDoneRef.current = true;
+          autoPickedTypeRef.current = true;
+        }
+      })
       .catch(() => { if (!cancelled) setWorkTypes([]); });
     return () => { cancelled = true; };
   }, [filterCompany]);
@@ -748,6 +759,12 @@ export default function OverviewScreen() {
    * chưa có hạn không tính, nếu không con số trùng tổng việc tồn và sai nghĩa «hôm nay».
    * Đếm hết `tasks`, không đếm theo số dòng xem trước.
    */
+  /** Huy hiệu «Công việc dự án»: mọi việc chưa xong (chưa làm + đang làm + quá hạn), không tính việc đã hoàn thành. */
+  const staffUndoneTaskCount = useMemo(
+    () => tasks.filter((t) => !isTaskDone(String(t.status))).length,
+    [tasks],
+  );
+
   const { staffOpenTaskCount, staffOverdueTaskCount } = useMemo(() => {
     let due = 0;
     let overdue = 0;
@@ -1231,7 +1248,7 @@ export default function OverviewScreen() {
             kpiStats={staffKpiStats}
             taskGroups={staffTaskGroups}
             projectRows={staffProjectRows}
-            taskTotal={tasks.length}
+            taskTotal={staffUndoneTaskCount}
             taskGroupTotal={staffTaskGroupsAll.length}
             loadFailed={tasksFailed}
             projectTotal={staffProjectAll.length}
