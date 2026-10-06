@@ -1,3 +1,9 @@
+## 2026-10-06 — Guard PATCH đồng bộ Primary → Backup (mã cục bộ, chưa phát hành)
+
+Nhánh `codex/replication-guard-20261006` từ main `c2c594c9` chặn lỗi Backup trả 2xx cho PATCH nhưng không đổi dòng nào mà job vẫn bị tính đã áp dụng. Bốn kiểm thử lỗi giả lập đạt. **Cổng phát hành: HOLD; chưa chạm DB/Render thật, chưa merge/deploy.** Cần review độc lập và đối soát Backup cũ. Rủi ro job đã lấy bị rơi nếu target đổi sang Backup vẫn **chưa sửa**; chưa có thứ tự bền vững giữa Redis và hàng đợi bộ nhớ khi mất/kết nối lại. Enqueue vẫn bất đồng bộ, hàng đợi bộ nhớ mất khi khởi động lại và job lỗi vẫn có thể bị bỏ sau 12 lần thử.
+
+---
+
 ## 2026-10-06 16:39 — Sửa cổng xác minh callback Lead App trước chuyển đổi (mã cục bộ)
 
 GET `/api/facebook/webhook/lead-ads` nay trả challenge Meta khi App Secret và verify token **riêng, hợp lệ** đã cấu hình, dù `VPT_FB_LEAD_APP_MODE=0`. POST vẫn trả 404 khi cờ này tắt; Messenger và các cờ intake/worker không đổi. Việc xác minh GET **không chứng minh** App đã nhận Lead thật. Bản sửa trên nhánh `codex/facebook-lead-verify-precutover-20261006` chưa phát hành; 235/235 ca Node Facebook liên quan đạt. Cần review/CI trước khi phát hành, giữ chế độ App riêng OFF cho tới khi cổng Meta và đối soát Lead thật đạt. [Hồ sơ kích hoạt](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).

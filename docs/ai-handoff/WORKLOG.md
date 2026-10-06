@@ -1,3 +1,12 @@
+## 2026-10-06 — Guard PATCH Backup không đổi dòng
+
+- Từ main `c2c594c9`, sửa `backend/src/helpers/supabaseReplication.js`: yêu cầu `return=representation` cho mọi PATCH Backup trong đường đồng bộ; chỉ tính thành công khi phản hồi có ít nhất một dòng. PATCH trả 2xx/0 dòng thử bổ sung dòng thiếu rồi thử lại một lần; nếu vẫn 0 dòng, job báo lỗi và vào đường retry hiện có. Các PATCH dự phòng khi xử lý trùng cũng không còn nhận 0 dòng là thành công.
+- `backend/tests/supabaseReplication.guard.test.js`: bốn tình huống cô lập, không DB/mạng thật; `node --test --test-isolation=none` 4/4 PASS; `node --check` hai file PASS.
+- Giới hạn còn mở: đổi target sau khi đã lấy job vẫn có thể làm rơi job. Chưa có cơ chế đảm bảo thứ tự toàn cục giữa Redis và queue bộ nhớ qua đợt mất/kết nối lại; không thay đổi pop/requeue trong gói này. Chưa sửa enqueue fire-and-forget, giới hạn 12 lần thử, queue bộ nhớ mất qua restart hoặc đối soát dữ liệu Backup đã lệch.
+- Hoàn tác: revert commit của nhánh này. Cổng phát hành HOLD; chưa merge/deploy.
+
+---
+
 ## 2026-10-06 — P1-2: thu hồi quyền thừa của service_role (SQL 710)
 - 710 đã áp lên DB chính (PG 17.6, 3 bảng rỗng, RLS bật, anon/authenticated = 0). Kiểm tra sau áp thấy service_role còn UPDATE/DELETE/TRUNCATE trên bảng nhật ký do quyền mặc định của Supabase; thiết kế yêu cầu chỉ SELECT+INSERT.
 - Sửa 710: thêm REVOKE ALL FROM service_role trước GRANT. Bài thử nhánh tạm giờ cài quyền mặc định giống DB chính; 35/35 đạt. Chưa áp bản sửa lên DB chính (cần Founder duyệt riêng).
