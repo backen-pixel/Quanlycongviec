@@ -1,3 +1,18 @@
+## 2026-10-06 — ★ pipeline chọn được nhiều dòng
+
+- Dấu ★ trên liên kết loại CRM → SX đổi từ radio (một dòng) sang checkbox (nhiều dòng). Backend `replaceLeadTypeProductionLinks` giữ mọi `is_primary`, không còn xóa sao dòng thứ hai khi lưu.
+- File: `frontend/src/pages/PipelineSettingsPage.jsx`, `backend/src/helpers/crmLeadTypeProductionLinks.js`.
+
+---
+
+## 2026-10-06 — Hiện dấu ★ setup pipeline trên chọn xưởng
+
+- Đã làm: `companyShowsSxStar` / `workshopTypeShowsSxStar` đọc `is_primary` của `production_links`. `SxMultiTargetPicker` gắn ★ vào option công ty và phân loại. Deal không có loại dùng toàn bộ loại CRM của công ty.
+- File: `frontend/src/lib/sxCompanySuggestFromLeadType.js`, `frontend/src/components/SxMultiTargetPicker.jsx`, `LeadDetail.jsx`, `CRMDashboard.jsx`, `DealProductionProjectsPanel.jsx`.
+- Kiểm tra trên deal `12f731cf` (chưa có loại): ★ HCB, ★ Phúc Đạt; chọn Phúc Đạt thì ★ Cửa; chọn HCB thì ★ Tủ bếp.
+
+---
+
 ## 2026-10-06 — Chuẩn bị kích hoạt theo quyết định Founder
 
 Đã đọc trực tiếp cấu trúc và routing Primary, Render deployment; xác nhận Admin VPT đúng công ty/tenant, default stage đúng pipeline. Phát hiện `notifications.entity_id` thật là TEXT, sửa receipt replay và đưa trigger147/568 thật vào fixture. Bổ sung khôi phục đầy đủ fixture SQL702; lỗi CI đầu do PostgreSQL chuẩn hóa ngoặc CHECK được sửa bằng round-trip nguyên DDL trong fixture, vẫn so sánh nghiêm dữ liệu/quyền và thử CHECK từ chối hàng sai.

@@ -1,3 +1,9 @@
+## 2026-10-06 — Dấu ★ setup CRM → SX trên ô chọn xưởng
+
+Ô chọn công ty SX và phân loại trong hộp chuyển deal sang sản xuất hiện dấu ★ đúng các dòng ưu tiên ở Cài đặt pipeline. Một loại CRM được đánh ★ nhiều dòng. Deal chưa gán loại CRM vẫn thấy mọi cặp ★ của công ty; deal đã có loại thì ★ hiện mọi dòng ưu tiên của loại đó.
+
+---
+
 ## 2026-10-06 — Founder đã duyệt kích hoạt tuyến Facebook Form
 
 Founder yêu cầu **“cho bật chạy thật luôn nhé”**. Quyền phát hành tuyến Facebook Form → CRM → Admin Vạn Phú Thành đã có, không chờ duyệt lại. [Hồ sơ kích hoạt và hiện trạng thật](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md) thay các trạng thái HOLD vì thiếu approval ở mục lịch sử bên dưới; các điều kiện kỹ thuật vẫn phải kiểm chứng.

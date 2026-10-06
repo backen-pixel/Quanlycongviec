@@ -5,11 +5,11 @@ import api from '../lib/api';
 import MultiDayDatePicker, { formatYmdListVi } from './MultiDayDatePicker';
 import VcHandoverEventsPopup from './VcHandoverEventsPopup';
 import {
-  companyPreferredForLeadType,
+  companyShowsSxStar,
   orderWorkshopTypesPreferredFirst,
   preferredWorkshopTypeIdForCompany,
-  workshopTypeMatchesSxKind,
-  workshopTypePreferredForLeadType,
+  sxSetupStarIndex,
+  workshopTypeShowsSxStar,
 } from '../lib/sxCompanySuggestFromLeadType';
 import {
   addCalendarDaysYmd,
@@ -326,6 +326,8 @@ function mapEmitRow(r) {
 export default function SxMultiTargetPicker({
   companies = [],
   leadTypeRow = null,
+  /** Mọi loại CRM của công ty (kèm production_links) — dùng khi deal chưa chọn loại. */
+  setupLeadTypes = null,
   kind = null,
   accent = 'teal',
   disabled = false,
@@ -713,6 +715,7 @@ export default function SxMultiTargetPicker({
   const topGridCols = 'sm:grid-cols-[3.25rem_minmax(0,1.4fr)_minmax(0,1.1fr)_1.75rem]';
   const fieldCls = 'w-full h-9 px-2.5 border border-gray-200 rounded-lg text-sm bg-white disabled:bg-gray-50 disabled:text-gray-400';
   const showSchedule = showDates || showVcSetup;
+  const setupStars = sxSetupStarIndex(leadTypeRow, setupLeadTypes);
 
   // Số thứ tự các ô nhập theo đúng trình tự thao tác (bỏ qua ô đang ẩn)
   const step = (() => {
@@ -736,9 +739,9 @@ export default function SxMultiTargetPicker({
       : 'space-y-2'}
     >
       <div className="min-w-0 space-y-2">
-      {(kind || leadTypeRow) ? (
+      {(kind || leadTypeRow || setupStars.anyLink) ? (
         <p className="text-[10px] text-gray-500">
-          <span className="text-red-600 font-bold">★</span> = gợi ý theo loại CRM
+          <span className="text-red-600 font-bold">★</span> = ưu tiên trong Cài đặt pipeline (loại CRM → SX)
           {showSchedule ? ' · Lắp đặt = deadline VC/LĐ · Hoàn thiện SX = deadline tổng SX' : ''}
         </p>
       ) : (showSchedule ? (
@@ -854,7 +857,7 @@ export default function SxMultiTargetPicker({
                     <option value="">— Chọn công ty SX —</option>
                     {(companies || []).map((c) => (
                       <option key={c.id} value={c.id}>
-                        {companyPreferredForLeadType(c, leadTypeRow, kind) ? '★ ' : ''}
+                        {companyShowsSxStar(c, leadTypeRow, setupLeadTypes, kind) ? '★ ' : ''}
                         {c.short_name || c.name}
                       </option>
                     ))}
@@ -882,8 +885,7 @@ export default function SxMultiTargetPicker({
                     </option>
                     {types.map((t) => (
                       <option key={t.id} value={t.id}>
-                        {workshopTypePreferredForLeadType(t.id, leadTypeRow, row.companyId)
-                          || workshopTypeMatchesSxKind(t.name, kind)
+                        {workshopTypeShowsSxStar(t, leadTypeRow, row.companyId, setupLeadTypes, kind)
                           ? `★ ${t.name}`
                           : t.name}
                       </option>

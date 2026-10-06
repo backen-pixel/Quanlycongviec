@@ -9671,7 +9671,7 @@ export default function CRMDashboard() {
                 {dashWonHint ? (
                   <p className="mb-1.5">{dashWonHint}</p>
                 ) : (
-                  <p className="mb-1.5 text-amber-800/90">Chưa có phân loại CRM — ★ sẽ hiện khi deal có loại (Tủ bếp / Cửa…).</p>
+                  <p className="mb-1.5 text-amber-800/90">Chưa có phân loại CRM — ★ vẫn hiện cặp ưu tiên trong Cài đặt pipeline. Gán loại cho deal để ★ chỉ còn đúng loại đó.</p>
                 )}
                 <ul className="space-y-1 list-disc pl-4">
                   <li><strong>Phúc Đạt</strong> chỉ làm cửa</li>
@@ -9686,6 +9686,7 @@ export default function CRMDashboard() {
                 key={dealWonProductionCtx?.leadId || 'won-sx'}
                 companies={dashWonCompaniesForSelect}
                 leadTypeRow={dashWonLeadTypeRow}
+                setupLeadTypes={leadTypes}
                 kind={dashWonLeadKind}
                 accent="teal"
                 showDates
@@ -9800,7 +9801,7 @@ export default function CRMDashboard() {
               {dashAutoHint ? (
                 <p className="mb-1.5">{dashAutoHint}</p>
               ) : (
-                <p className="mb-1.5 text-amber-800/90">Chưa có phân loại CRM — ★ sẽ hiện khi deal có loại (Tủ bếp / Cửa…).</p>
+                <p className="mb-1.5 text-amber-800/90">Chưa có phân loại CRM — ★ vẫn hiện cặp ưu tiên trong Cài đặt pipeline. Gán loại cho deal để ★ chỉ còn đúng loại đó.</p>
               )}
               <ul className="space-y-1 list-disc pl-4">
                 <li><strong>Phúc Đạt</strong> chỉ làm cửa</li>
