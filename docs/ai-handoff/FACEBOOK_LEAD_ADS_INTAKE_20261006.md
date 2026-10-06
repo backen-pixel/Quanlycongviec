@@ -1,5 +1,7 @@
 # Facebook Lead Ads → CRM: hợp đồng tiếp nhận và giao Admin
 
+**Cập nhật chuyển đổi:** Founder đã duyệt bật thật; theo [hồ sơ kích hoạt](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md) để xem trạng thái mới nhất. Bản sửa tiếp nối tách Lead Ads của Page quản lý vào inbox mới, giữ Messenger ở hàng đợi/worker cũ; ACK sau khi cả hai lần lưu cần thiết xác nhận. Các đoạn H1/ngày kiểm thử bên dưới là lịch sử tại phiên bản ghi rõ, không còn là mô tả duy nhất của phương án chuyển đổi.
+
 Trạng thái: mã và kiểm thử cô lập PASS tại `a5bcabf3b5d680166cd1223650f3bd85f8acd3b8` trong [PR29](https://github.com/backen-pixel/Quanlycongviec/pull/29). Chưa áp SQL702, chưa bật worker hoặc sửa dữ liệu thật. Tiếp nối H1 theo yêu cầu Founder làm bước tiếp theo. Phạm vi này không mở thêm kênh, ngân sách, AI chăm sóc hoặc gói C.
 
 Phân loại: thay đổi có rủi ro cao khi kích hoạt vì tạo hồ sơ khách và kiểm soát quyền qua transaction; mặc định tắt để hoàn thiện bằng chứng trước chuyển đổi.

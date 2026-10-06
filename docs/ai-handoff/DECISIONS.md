@@ -1,3 +1,12 @@
+## 2026-10-06 — Phê duyệt kích hoạt tuyến Facebook Form hiện tại
+
+- Nguồn: Founder yêu cầu trực tiếp **“cho bật chạy thật luôn nhé”**, sau yêu cầu phát hành và làm bước tiếp theo.
+- Phạm vi: đưa tuyến Facebook Form → CRM → Admin Vạn Phú Thành đang triển khai vào vận hành sau kiểm chứng cần thiết; giữ Messenger đang hoạt động. Không yêu cầu Founder duyệt lại cùng bước phát hành.
+- Không mở rộng sang toàn bộ PR22/25, AI gửi tin khách, ngân sách mới hoặc phần thu quyền anon/SQL700 đang do Claude làm.
+- Bằng chứng kỹ thuật/cấu hình thật, phiên bản triển khai và kết quả vận hành phải ghi trong [hồ sơ kích hoạt](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md). Phê duyệt không được ghi thay cho kết quả đã kích hoạt.
+
+---
+
 ## 2026-10-06 — H1: gói tiếp nhận Facebook Page riêng từ main
 
 Founder giao tiếp tục và giữ quyết định phát hành. Đã tách nhánh `codex/facebook-durable-inbox-20261006` từ main `1f879ea8`, triển khai signed durable inbox + SQL701, giữ worker paused. Không merge PR22/25 toàn khối; không sửa SQL700 của Claude. [Phạm vi, giới hạn, kiểm thử và phương án dừng](FACEBOOK_PAGE_INBOX_H1_20261006.md).

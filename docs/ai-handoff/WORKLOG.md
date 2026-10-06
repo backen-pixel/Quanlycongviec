@@ -1,3 +1,11 @@
+## 2026-10-06 — Chuẩn bị kích hoạt theo quyết định Founder
+
+Đã đọc trực tiếp cấu trúc và routing Primary, Render deployment; xác nhận Admin VPT đúng công ty/tenant, default stage đúng pipeline. Phát hiện `notifications.entity_id` thật là TEXT, sửa receipt replay và đưa trigger147/568 thật vào fixture. Bổ sung khôi phục đầy đủ fixture SQL702; lỗi CI đầu do PostgreSQL chuẩn hóa ngoặc CHECK được sửa bằng round-trip nguyên DDL trong fixture, vẫn so sánh nghiêm dữ liệu/quyền và thử CHECK từ chối hàng sai.
+
+Source `327864b759c6e5663949b87723ed7049c209d193`: tách signed Lead Ads quản lý khỏi Messenger, bảo vệ contact/receipt khỏi các writer/bảo trì cũ,234/234 Node cục bộ PASS. Review độc lập và CI đang chạy; phát hiện thiếu Page scope ở màn hình Lead Ads đang được sửa trong cùng phạm vi. Chưa thay production. [Routing, lỗi Backup, cấu hình cần xác minh và trình tự chuyển đổi](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).
+
+---
+
 ## 2026-10-06 — H1: gói tiếp nhận Facebook Page riêng từ main
 
 Founder giao tiếp tục và giữ quyết định phát hành. Đã tách nhánh `codex/facebook-durable-inbox-20261006` từ main `1f879ea8`, triển khai signed durable inbox + SQL701, giữ worker paused. Không merge PR22/25 toàn khối; không sửa SQL700 của Claude. [Phạm vi, giới hạn, kiểm thử và phương án dừng](FACEBOOK_PAGE_INBOX_H1_20261006.md).

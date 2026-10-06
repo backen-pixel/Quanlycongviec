@@ -1,3 +1,11 @@
+## 2026-10-06 — Founder đã duyệt kích hoạt tuyến Facebook Form
+
+Founder yêu cầu **“cho bật chạy thật luôn nhé”**. Quyền phát hành tuyến Facebook Form → CRM → Admin Vạn Phú Thành đã có, không chờ duyệt lại. [Hồ sơ kích hoạt và hiện trạng thật](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md) thay các trạng thái HOLD vì thiếu approval ở mục lịch sử bên dưới; các điều kiện kỹ thuật vẫn phải kiểm chứng.
+
+Đã đối chiếu Page/công ty/Admin/taxonomy trên Primary, sửa khác biệt kiểu thông báo thật và tách Lead Ads khỏi Messenger. Source `327864b759c6e5663949b87723ed7049c209d193` có234/234 kiểm thử Node cục bộ PASS; đang chạy CI có PostgreSQL restore và review độc lập. Chưa merge/deploy/áp701–702 hoặc bật worker. Tab Render hiện thiếu quyền vào dịch vụ; đồng bộ Backup lần cuối thất bại đang được khảo sát. Không đổi ads/ngân sách, không gửi tin khách, không thay SQL700 của Claude.
+
+---
+
 ## 2026-10-06 — Tiếp theo H1: Lead Ads → CRM và giao Admin
 
 Founder giao làm bước tiếp theo. PR29 được bổ sung hợp đồng Lead Ads: binding Page/form rõ, atomic Customer/Lead/source/receipt/thông báo cho Admin, retry không tạo trùng; SQL702 mới chưa áp vào DB thật. [Phạm vi và hồ sơ kiểm chứng](FACEBOOK_LEAD_ADS_INTAKE_20261006.md). Source `a5bcabf3`:194/194 Node PASS,29/29 PostgreSQL intake và15/15 inbox PASS trên CI37393352657; regression Messenger CI37393352980 PASS. [Review độc lập](FACEBOOK_LEAD_ADS_INTAKE_REVIEW_20261006.md). Mọi cờ giữ mặc định tắt. H1 chuyển toàn endpoint nên còn phải chốt chuyển đổi Messenger và nghiệm thu cấu hình thật trước kích hoạt. Không merge/deploy, không thay ngân sách hoặc gửi tin khách.
