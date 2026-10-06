@@ -108,6 +108,7 @@ function harness({ config = {}, contact = {}, linked = false, formData, graph } 
   const context = vm.createContext({
     console: Object.fromEntries(['log', 'warn', 'error'].map((method) => [method, (...args) => state.logs.push(args)])),
     supabase: db, AUTO_LEAD_DEFAULTS: defaults, FB_DISABLE_WEBHOOK_LOGS: true,
+    PAGE_INBOX: { leadAdsIntake: false, managedPages: new Set() },
     process: { env: { VPT_META_GRAPH_VERSION: 'v99.7' } },
     setTimeout() { return 1; }, ...phone, // legacy MID expiry timer is synthetic
     _phoneDigitsLen: (value) => String(value || '').replace(/\D/g, '').length,
@@ -146,7 +147,7 @@ function harness({ config = {}, contact = {}, linked = false, formData, graph } 
     'requireFacebookResult', 'getDurableFacebookContact', 'getDurableFacebookPage',
     'getDurableFacebookLeadId', 'loadDurableFacebookAutoLeadConfig', 'durableFacebookPhoneExclusion',
     'getDurableFacebookLinkedLead', 'requireFacebookLeadContract', 'handleMessaging', 'handleMessagingInner',
-    'handleDurableFacebookLeadGen', 'handleLeadGen', 'handleDurableFacebookComment', 'handleComment'];
+    'assertLegacyLeadAdsWrite', 'handleDurableFacebookLeadGen', 'handleLeadGen', 'handleDurableFacebookComment', 'handleComment'];
   vm.runInContext('const _processingMids = new Set(); const _asyncLockTails = new Map();\n'
     + functions.map(functionText).join('\n'), context, { filename: routePath });
   return { state, context, form: formModule.exports,

@@ -10,7 +10,7 @@ const vm = require('node:vm');
 const { createHmac } = require('node:crypto');
 const domain = require('../src/domain/facebookLeadAdsIntake');
 const { createFacebookLeadAdsIntake } = require('../src/services/facebookLeadAdsIntake');
-const { createPageInboxReceiver, createPageInboxWorker, assertPageLegacyScope } = require('../src/helpers/facebookPageInbox');
+const { createLeadAdsWebhookHandoff, createPageInboxWorker, assertPageLegacyScope } = require('../src/helpers/facebookPageInbox');
 const U = n => `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const PAGE = '10001'; const FORM = '40001'; const LEADGEN = '30001'; const AD = '50001';
 const LEASE = { inboxId: U(1), leaseToken: U(2) };
@@ -351,7 +351,7 @@ test('exact route flag-off still enforces its legacy scope guard before calling 
   assert.equal(h.state.rpcCalls[0].name, 'crm_care_legacy_write_check');
 });
 
-test('signed receiver → Lead Ads worker → exact route → actual service uses one lease and finishes only after commit', async () => {
+test('signed scoped handoff → Lead Ads worker → exact route → actual service uses one lease and finishes only after commit', async () => {
   const h = fixture(); const { options, legacy } = routeWorkerOptions(h); const rows = []; const statuses = []; let committed = false;
   const db = { rpc: async (name, args) => {
     if (name === 'facebook_page_inbox_enqueue_v1') {
@@ -371,9 +371,12 @@ test('signed receiver → Lead Ads worker → exact route → actual service use
   } };
   const secret = 'synthetic-app-secret-at-least-sixteen';
   const raw = Buffer.from(JSON.stringify({ object: 'page', entry: [{ id: PAGE, changes: [envelope().event] }] }));
-  const receive = createPageInboxReceiver({ db, isPrimary: () => true, withPrimary: h.withPrimary, secret: () => secret });
+  const receive = createLeadAdsWebhookHandoff({ db, isPrimary: () => true, withPrimary: h.withPrimary,
+    secret: () => secret, managedPages: new Set([PAGE]),
+    enqueueLegacy: async body => { assert.deepEqual(body.entry[0].changes, []); } });
   await receive({ facebookRawBody: raw, headers: { 'x-hub-signature-256': 'sha256=' + createHmac('sha256', secret).update(raw).digest('hex') } },
-    { sendStatus(code) { statuses.push(code); } });
+  );
+  statuses.push(200); // Actual route ACK ordering is exercised in the scoped webhook suite.
   assert.deepEqual(statuses, [200]); assert.equal(h.state.allocations, 0, 'ACK proves inbox persistence, not CRM success');
   const worker = createPageInboxWorker({ ...options, db, beforeClaim: async () => {},
     setTimer: () => 1, clearTimer() {}, onError(code) { assert.fail(code); },

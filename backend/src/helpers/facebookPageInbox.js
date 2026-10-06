@@ -29,6 +29,11 @@ function inboxSettings(env = process.env) {
   };
 }
 
+function isManagedLeadAdsContact(settings, contact) {
+  return settings.leadAdsIntake === true && settings.managedPages.has(String(contact?.page_id))
+    && typeof contact?.psid === 'string' && contact.psid.startsWith('leadad_');
+}
+
 function rowsFromBody(body) {
   if (!record(body) || body.object !== 'page' || !Array.isArray(body.entry)
       || !body.entry.length || body.entry.length > MAX_EVENTS) throw fail('FB_INBOX_INVALID_ENVELOPE', 400);
@@ -55,7 +60,7 @@ function rowsFromBody(body) {
   return rows;
 }
 
-function signedRows(raw, signature, secret) {
+function signedDelivery(raw, signature, secret) {
   if (typeof secret !== 'string' || secret.length < 16) throw fail('FB_INBOX_SECRET_UNAVAILABLE');
   if (!Buffer.isBuffer(raw) || raw.length === 0 || raw.length > MAX_BYTES) throw fail('FB_INBOX_INVALID_BODY', 400);
   if (typeof signature !== 'string' || !/^sha256=[0-9a-f]{64}$/i.test(signature)) throw fail('FB_INBOX_INVALID_SIGNATURE', 403);
@@ -63,7 +68,11 @@ function signedRows(raw, signature, secret) {
   if (!timingSafeEqual(expected, Buffer.from(signature.slice(7), 'hex'))) throw fail('FB_INBOX_INVALID_SIGNATURE', 403);
   let body;
   try { body = JSON.parse(raw.toString('utf8')); } catch { throw fail('FB_INBOX_INVALID_ENVELOPE', 400); }
-  return rowsFromBody(body);
+  return { body, rows: rowsFromBody(body) };
+}
+
+function signedRows(raw, signature, secret) {
+  return signedDelivery(raw, signature, secret).rows;
 }
 
 function safeCode(error) {
@@ -96,6 +105,36 @@ function createPageInboxReceiver({ db, isPrimary, secret, withPrimary = fn => fn
       onError(safeCode(error));
       return res.sendStatus([400, 403].includes(error.status) ? error.status : 503);
     }
+  };
+}
+
+// Scoped cutover: every form on an explicitly managed Page belongs to the new
+// intake contract, including unbound forms that must remain pending for review.
+// Other events retain their existing delivery path and never enter this inbox.
+function createLeadAdsWebhookHandoff({ db, isPrimary, secret, managedPages,
+  enqueueLegacy, withPrimary = fn => fn() }) {
+  const pages = new Set(managedPages);
+  if (!pages.size || [...pages].some(id => typeof id !== 'string' || !/^\d{1,32}$/.test(id))
+      || typeof enqueueLegacy !== 'function') throw fail('FB_INBOX_INVALID_CONFIG');
+  return async function handoff(req) {
+    const { body, rows } = signedDelivery(req.facebookRawBody, req.headers?.['x-hub-signature-256'], secret());
+    const selected = (pageId, event) => pages.has(pageId) && event?.field === 'leadgen';
+    const leadRows = rows.filter(row => row.payload.kind === 'change' && selected(row.page_id, row.payload.event));
+    const legacyBody = { ...body, entry: body.entry.map(entry => ({ ...entry,
+      ...(entry.changes === undefined ? {} : { changes: entry.changes.filter(event => !selected(entry.id, event)) }),
+    })) };
+    if (leadRows.length) {
+      assertPrimary(isPrimary);
+      const accepted = await withPrimary(() => rpc(db, 'facebook_page_inbox_enqueue_v1', { p_rows: leadRows }));
+      assertPrimary(isPrimary);
+      if (accepted !== leadRows.length) throw fail('FB_INBOX_ENQUEUE_NOT_CONFIRMED');
+    }
+    // These are separate idempotent queue writes, not one cross-queue transaction.
+    // If the second write fails, the caller returns 503; replay safely re-enqueues
+    // the first batch. Legacy inline processing starts only after both succeed.
+    try { await enqueueLegacy(legacyBody); } catch { throw fail('FB_INBOX_LEGACY_ENQUEUE_FAILED'); }
+    if (leadRows.length) assertPrimary(isPrimary);
+    return legacyBody;
   };
 }
 
@@ -212,4 +251,4 @@ function createPageInboxWorker({
   return { drain, health, async stop() { stopping = true; if (running) await running; } };
 }
 
-module.exports = { inboxSettings, rowsFromBody, signedRows, safeCode, createPageInboxReceiver, createPageInboxWorker, assertLegacyQueueDrained, assertPageLegacyScope };
+module.exports = { inboxSettings, isManagedLeadAdsContact, rowsFromBody, signedRows, safeCode, createPageInboxReceiver, createLeadAdsWebhookHandoff, createPageInboxWorker, assertLegacyQueueDrained, assertPageLegacyScope };

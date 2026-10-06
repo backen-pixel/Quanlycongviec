@@ -257,6 +257,81 @@ class LeadAdsIntakePostgres(unittest.TestCase):
                            "(SELECT count(*) FROM lead_attribution),(SELECT count(*) FROM notifications),"
                            "(SELECT count(*) FROM facebook_lead_ads_intake_receipts),(SELECT count(*) FROM crm_tasks));", **kwargs)
 
+    def canonicalize_restore_checks(self):
+        """Round-trip exact PostgreSQL CHECK DDL in this disposable source only.
+
+        BETWEEN expands into nested AND nodes on its initial parse. Dump emits
+        the equivalent comparisons; reparsing can flatten those AND nodes and
+        change redundant parentheses. Use PostgreSQL itself, never text stripping
+        or predicate replacement, then require a second round-trip to be stable.
+        """
+        previous = None
+        for _ in range(2):
+            self.sql("""
+            DO $reparse$
+            DECLARE item record; current_check record;
+            BEGIN
+              FOR item IN
+                SELECT c.conrelid,c.conname,c.convalidated,c.connoinherit,c.conkey,
+                  c.conislocal,c.coninhcount,pg_get_constraintdef(c.oid) AS definition,
+                  obj_description(c.oid,'pg_constraint') AS comment
+                FROM pg_constraint c JOIN pg_class t ON t.oid=c.conrelid
+                WHERE c.connamespace='public'::regnamespace AND c.contype='c'
+                ORDER BY c.conrelid::regclass::text,c.conname
+              LOOP
+                IF NOT item.conislocal OR item.coninhcount<>0 THEN
+                  RAISE EXCEPTION 'Restore fixture must not reparse inherited CHECKs';
+                END IF;
+                EXECUTE format('ALTER TABLE %s DROP CONSTRAINT %I',item.conrelid::regclass,item.conname);
+                EXECUTE format('ALTER TABLE %s ADD CONSTRAINT %I %s',item.conrelid::regclass,item.conname,item.definition);
+                IF item.comment IS NOT NULL THEN
+                  EXECUTE format('COMMENT ON CONSTRAINT %I ON %s IS %L',item.conname,item.conrelid::regclass,item.comment);
+                END IF;
+                SELECT c.* INTO STRICT current_check FROM pg_constraint c
+                  WHERE c.conrelid=item.conrelid AND c.conname=item.conname;
+                IF current_check.convalidated IS DISTINCT FROM item.convalidated
+                  OR current_check.connoinherit IS DISTINCT FROM item.connoinherit
+                  OR current_check.conkey IS DISTINCT FROM item.conkey THEN
+                  RAISE EXCEPTION 'CHECK properties changed while reparsing';
+                END IF;
+              END LOOP;
+            END
+            $reparse$;
+            """)
+            current = self.scalar("SELECT jsonb_agg(jsonb_build_object('table',conrelid::regclass::text,"
+                                  "'name',conname,'definition',pg_get_constraintdef(oid)) "
+                                  "ORDER BY conrelid::regclass::text,conname) FROM pg_constraint "
+                                  "WHERE connamespace='public'::regnamespace AND contype='c';")
+            if previous is not None:
+                self.assertEqual(previous, current, "PostgreSQL CHECK serialization must reach a fixed point")
+            previous = current
+
+    def assert_restore_inventory_equal(self, expected, actual, message="Restored logical inventory differs"):
+        differences = []
+
+        def visit(left, right, path):
+            if len(differences) >= 12 or left == right:
+                return
+            if isinstance(left, dict) and isinstance(right, dict):
+                for key in sorted(set(left) | set(right)):
+                    if key not in left or key not in right:
+                        differences.append(path + "." + key + ": missing key")
+                    else:
+                        visit(left[key], right[key], path + "." + key)
+            elif isinstance(left, list) and isinstance(right, list):
+                if len(left) != len(right):
+                    differences.append(f"{path}.length: {len(left)} != {len(right)}")
+                for index, (a, b) in enumerate(zip(left, right)):
+                    label = (a.get("name") or a.get("table") or "") if isinstance(a, dict) else ""
+                    visit(a, b, f"{path}[{index}{':' + label if label else ''}]")
+            else:
+                # Metadata/digests only, bounded even for full function bodies.
+                differences.append(f"{path}: {repr(left)[:180]} != {repr(right)[:180]}")
+
+        visit(expected, actual, "inventory")
+        if differences:
+            self.fail(message + "\n" + "\n".join(differences))
+
     def restore_inventory(self, database=None):
         """Normalized logical state, without OIDs/default-ACL representation noise."""
         table_names = json.loads(self.scalar("SELECT jsonb_agg(relname ORDER BY relname) FROM pg_class "
@@ -656,6 +731,12 @@ class LeadAdsIntakePostgres(unittest.TestCase):
         self.assertEqual(self.scalar(f"SELECT lead_temperature FROM crm_leads WHERE id='{completed_result['leadId']}';"), "hot")
         self.service(f"SELECT facebook_page_inbox_finish_v1('{completed['id']}','{uid(102)}',true,NULL);")
         self.enqueue(event(3, kind="messaging"), event(4, page=PAGE_B))
+        self.canonicalize_restore_checks()
+        # A direct malformed row still hits the actual CHECK after its exact DDL
+        # round-trip, without the enqueue RPC masking a weakened constraint.
+        check_error = self.error("INSERT INTO facebook_page_inbox(event_key,page_id,payload) VALUES("
+                                 + lit("a" * 64) + ",''," + js(event()["payload"]) + ");", "23514", service=False)
+        self.assertIn("facebook_page_inbox_page_id_check", check_error)
         before = self.restore_inventory()
         self.assertEqual(json.loads(self.counts()), [2, 2, 2, 2, 2, 2, 2, 0])
         self.assertGreater(len(before["data"]), 15, "Must dump full fixture, not inbox-only")
@@ -683,13 +764,13 @@ class LeadAdsIntakePostgres(unittest.TestCase):
                 self.assertEqual(restored.returncode, 0, restored.stderr)
             # Owner/ACL/RLS, actual trigger bodies, functions, FKs/indexes and all
             # table data must match before touching the restored queue.
-            self.assertEqual(before, self.restore_inventory(database=RESTORE_DATABASE))
-            self.assertEqual(before, self.restore_inventory(), "Source cannot change during the rehearsal")
+            self.assert_restore_inventory_equal(before, self.restore_inventory(database=RESTORE_DATABASE))
+            self.assert_restore_inventory_equal(before, self.restore_inventory(), "Source cannot change during the rehearsal")
             # Prove the comparison observes effective grant drift, not just rows.
             self.sql("GRANT SELECT ON facebook_lead_ads_intake_receipts TO anon;", database=RESTORE_DATABASE)
             self.assertNotEqual(before["metadata"], self.restore_inventory(database=RESTORE_DATABASE)["metadata"])
             self.sql("REVOKE SELECT ON facebook_lead_ads_intake_receipts FROM anon;", database=RESTORE_DATABASE)
-            self.assertEqual(before, self.restore_inventory(database=RESTORE_DATABASE))
+            self.assert_restore_inventory_equal(before, self.restore_inventory(database=RESTORE_DATABASE))
             denied_tables = ["facebook_page_inbox", "facebook_lead_ads_bindings", "facebook_lead_ads_intake_receipts",
                              "customers", "crm_leads", "facebook_contacts", "facebook_lead_ads", "lead_attribution", "notifications"]
             allowed = self.scalar("SELECT bool_and(NOT has_table_privilege(r,t,p)) FROM "
@@ -760,7 +841,7 @@ class LeadAdsIntakePostgres(unittest.TestCase):
             self.assertEqual(self.service(f"SELECT facebook_page_inbox_finish_v1('{fresh['id']}','{uid(203)}',true,NULL);",
                                           database=RESTORE_DATABASE), "t")
             self.assertEqual(self.scalar("SELECT count(*) FROM facebook_page_inbox WHERE status='done';", database=RESTORE_DATABASE), "4")
-            self.assertEqual(before, self.restore_inventory(), "Restored processing must not write the source DB")
+            self.assert_restore_inventory_equal(before, self.restore_inventory(), "Restored processing must not write the source DB")
             print(json.dumps({"rehearsal": "SQL702_FULL_FIXTURE", "archiveSha256": archive_sha,
                               "archiveBytes": archive_bytes, "tables": len(before["data"]),
                               "source": "vpt_lead_ads_ci", "target": RESTORE_DATABASE,

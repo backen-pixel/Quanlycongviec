@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'backend/src/helpers/facebookPageInbox.js'
+      - 'backend/src/helpers/autoTool.js'
       - 'backend/src/domain/facebookLeadAdsIntake.js'
       - 'backend/src/services/facebookLeadAdsIntake.js'
       - 'backend/src/helpers/fbLeadFormFields.js'
@@ -38,6 +39,7 @@ jobs:
           node --check backend/src/routes/facebook.js
           node --check backend/src/config/supabaseRouter.js
           node --check backend/src/server.js
+          node --check backend/src/helpers/autoTool.js
           node --check backend/src/domain/facebookLeadAdsIntake.js
           node --check backend/src/services/facebookLeadAdsIntake.js
           node --test backend/tests/facebookPage*.test.js backend/tests/facebookWebhookRecovery.test.js

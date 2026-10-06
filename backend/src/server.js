@@ -1686,6 +1686,8 @@ server.listen(config.port, () => {
       if (cfg.trigger === 'manual') return; // Không tự động
 
       const { sortFacebookContactsNewestFirst } = require('./helpers/facebookContactActivity');
+      const { inboxSettings, isManagedLeadAdsContact } = require('./helpers/facebookPageInbox');
+      const pageInboxSettings = inboxSettings();
 
       // Contacts chưa có lead_id — xử lý từ hoạt động mới nhất (tin / tạo hồ sơ) để user mới không bị "xếp sau" hàng cũ
       const { data: probeRow } = await supabase.from('facebook_contacts').select('sync_paused').limit(1);
@@ -1703,6 +1705,9 @@ server.listen(config.port, () => {
 
       let created = 0;
       for (const contact of contacts) {
+        // Lead Ads contacts on enrolled Pages are created only by SQL702.
+        // Preserve this boundary even if this legacy scanner is re-enabled.
+        if (isManagedLeadAdsContact(pageInboxSettings, contact)) continue;
         // Check có message inbound không
         const { count } = await supabase.from('facebook_messages')
           .select('id', { count: 'exact', head: true })
