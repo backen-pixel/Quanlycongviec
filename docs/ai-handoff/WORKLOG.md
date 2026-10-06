@@ -1,3 +1,9 @@
+## 2026-10-06 — P1-2: thu hồi quyền thừa của service_role (SQL 710)
+- 710 đã áp lên DB chính (PG 17.6, 3 bảng rỗng, RLS bật, anon/authenticated = 0). Kiểm tra sau áp thấy service_role còn UPDATE/DELETE/TRUNCATE trên bảng nhật ký do quyền mặc định của Supabase; thiết kế yêu cầu chỉ SELECT+INSERT.
+- Sửa 710: thêm REVOKE ALL FROM service_role trước GRANT. Bài thử nhánh tạm giờ cài quyền mặc định giống DB chính; 35/35 đạt. Chưa áp bản sửa lên DB chính (cần Founder duyệt riêng).
+
+---
+
 ## 2026-10-06 15:45 — Facebook Lead Ads, App riêng của VPT
 
 - Meta không nhận yêu cầu quyền App `TUBEPPROvpt` qua Business Settings; yêu cầu không được gửi. Đã kiểm tra App VPT `openclaw` và `claw`, chưa App nào đạt cổng nhận production `leadgen`.

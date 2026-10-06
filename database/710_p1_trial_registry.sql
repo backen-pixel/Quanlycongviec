@@ -93,6 +93,9 @@ ALTER TABLE public.p1_trials ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.p1_trial_scopes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.p1_trial_config_events ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.p1_trials, public.p1_trial_scopes, public.p1_trial_config_events FROM PUBLIC, anon, authenticated;
+-- Supabase default privileges grant service_role ALL on new public tables; remove it so the
+-- grants below are the only ones (events stay append-only, nothing can DELETE/TRUNCATE).
+REVOKE ALL ON public.p1_trials, public.p1_trial_scopes, public.p1_trial_config_events FROM service_role;
 GRANT SELECT, INSERT, UPDATE ON public.p1_trials, public.p1_trial_scopes TO service_role;
 GRANT SELECT, INSERT ON public.p1_trial_config_events TO service_role;
 
