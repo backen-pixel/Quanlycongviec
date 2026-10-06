@@ -1,3 +1,9 @@
+## 2026-10-06 — P1-2: registry đợt thử (SQL 710)
+Tạo ba bảng P1 và RPC ghi atomic, rollback chỉ gỡ bảng rỗng; module nhận db, chưa nối route/cờ và không seed account/ngày.
+Kiểm tra: node --check và node --test --test-isolation=none trialRegistry.test.js đạt 5/5 (Node thường bị spawn EPERM); chưa chạy SQL, DB, mạng hoặc thử ACL/khóa trên bản sao.
+Hoàn tác: dùng 710_p1_trial_registry_rollback.sql trên bản sao được phép; giữ bảng có dữ liệu, rồi bỏ delta code và hai mục handoff.
+
+---
 ## 2026-10-06 — Lọc dự án theo công ty và nhân viên CRM
 
 Ô chọn dự án/deal trong hộp giao việc có bộ lọc Công ty và Nhân viên CRM (đội kinh doanh của công ty đó). Đổi công ty thì danh sách nhân viên CRM và kết quả tìm dự án đổi theo.

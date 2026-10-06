@@ -1,3 +1,9 @@
+## 2026-10-06 — P1-2: registry đợt thử (SQL 710)
+File: hai SQL 710, trialRegistry.js, trialRegistry.test.js, CURRENT.md, WORKLOG.md. Chỉ thêm bảng P1/RPC và module chưa nối runtime.
+Kiểm tra: node --check; node --test --test-isolation=none trialRegistry.test.js 5/5 (Node thường spawn EPERM); không chạy SQL/DB/mạng.
+Rollback: script 710 chỉ DROP bảng rỗng, giữ bảng có dữ liệu; chưa diễn tập trên bản sao.
+
+---
 ## 2026-10-06 — Lọc deal theo công ty và nhân viên CRM
 
 - Picker dự án/deal thêm chọn Công ty và Nhân viên CRM (`/crm/employees-by-company?for_module=crm`).
