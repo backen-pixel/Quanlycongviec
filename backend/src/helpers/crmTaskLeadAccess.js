@@ -161,6 +161,7 @@ async function userHasLeadOwnershipOrParticipation(supabase, uid, lead) {
 async function assertCrmLeadAccess(supabase, req, lead, {
   taskId = null,
   includeTaskGrants = false,
+  assigneeReadGrant = false,
   operation = 'READ',
 } = {}) {
   if (!lead) return { ok: false, error: 'Không tìm thấy lead/deal', status: 404, reason: 'lead_not_found' };
@@ -198,6 +199,13 @@ async function assertCrmLeadAccess(supabase, req, lead, {
       supabase, req.user?.company_id, lead, taskId,
     );
     if (execAccess.ok) return { ok: true, grant: execAccess.grant };
+  }
+
+  // Đọc bình luận / danh sách thành viên: người được giao việc trên deal được xem (chỉ READ,
+  // không cấp qua công ty executor vì các route này không có bước lọc theo công ty).
+  if (assigneeReadGrant && op === 'READ' && uid
+    && await userIsCrmTaskAssigneeOnLead(supabase, uid, lead.id, null)) {
+    return { ok: true, grant: 'task_assignee_read' };
   }
 
   if (!regionCheck.ok) {

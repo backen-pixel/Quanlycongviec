@@ -5,6 +5,28 @@
 - Search `backend/src` chỉ thấy `measureLeadTrial` trong chính module; chưa có caller runtime. Chưa kiểm DB, mạng hay tích hợp.
 - Hoàn tác: bỏ delta P1-1 ở hai file JS và hai mục handoff mới; giữ nội dung lịch sử.
 
+
+## 2026-10-06 — Founder đã duyệt kích hoạt tuyến Facebook Form
+
+Founder yêu cầu **“cho bật chạy thật luôn nhé”**. Quyền phát hành tuyến Facebook Form → CRM → Admin Vạn Phú Thành đã có, không chờ duyệt lại. [Hồ sơ kích hoạt và hiện trạng thật](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md) thay các trạng thái HOLD vì thiếu approval ở mục lịch sử bên dưới; các điều kiện kỹ thuật vẫn phải kiểm chứng.
+
+Đã đối chiếu Page/công ty/Admin/taxonomy trên Primary, sửa khác biệt kiểu thông báo thật và tách Lead Ads khỏi Messenger. Source `327864b759c6e5663949b87723ed7049c209d193` có234/234 kiểm thử Node cục bộ PASS; đang chạy CI có PostgreSQL restore và review độc lập. Chưa merge/deploy/áp701–702 hoặc bật worker. Tab Render hiện thiếu quyền vào dịch vụ; đồng bộ Backup lần cuối thất bại đang được khảo sát. Không đổi ads/ngân sách, không gửi tin khách, không thay SQL700 của Claude.
+
+---
+
+## 2026-10-06 — Tiếp theo H1: Lead Ads → CRM và giao Admin
+
+Founder giao làm bước tiếp theo. PR29 được bổ sung hợp đồng Lead Ads: binding Page/form rõ, atomic Customer/Lead/source/receipt/thông báo cho Admin, retry không tạo trùng; SQL702 mới chưa áp vào DB thật. [Phạm vi và hồ sơ kiểm chứng](FACEBOOK_LEAD_ADS_INTAKE_20261006.md). Source `a5bcabf3`:194/194 Node PASS,29/29 PostgreSQL intake và15/15 inbox PASS trên CI37393352657; regression Messenger CI37393352980 PASS. [Review độc lập](FACEBOOK_LEAD_ADS_INTAKE_REVIEW_20261006.md). Mọi cờ giữ mặc định tắt. H1 chuyển toàn endpoint nên còn phải chốt chuyển đổi Messenger và nghiệm thu cấu hình thật trước kích hoạt. Không merge/deploy, không thay ngân sách hoặc gửi tin khách.
+
+---
+
+## 2026-10-06 — H1: gói tiếp nhận Facebook Page riêng từ main
+
+Founder giao tiếp tục và giữ quyết định phát hành. Đã tách nhánh `codex/facebook-durable-inbox-20261006` từ main `1f879ea8`, triển khai signed durable inbox + SQL701, giữ worker paused. Không merge PR22/25 toàn khối; không sửa SQL700 của Claude. [Phạm vi, giới hạn, kiểm thử và phương án dừng](FACEBOOK_PAGE_INBOX_H1_20261006.md).
+
+PR29 draft, mã mới chưa triển khai. Source `c97c2f3d`:104/104 Node PASS; CI H1 run37383522836 đạt3/3job gồm15/15 PostgreSQL17 và restore fixture; regression Messenger cũ5/5 PG PASS; reviewer độc lập PASS mã mặc định tắt. Nghiệp vụ tự tạo Lead/projection/attribution còn pending có chủ đích; không dùng ACK/inbox làm Lead hợp lệ. Bật hệ thống thật HOLD; bước tiếp là hợp đồng Lead Ads đúng Page/công ty và projection phù hợp, không mở H2/C/ngân sách. Mục lịch sử bên dưới giữ nguyên theo thời điểm ghi.
+
+---
 ## 2026-10-02 — Trợ lý Marketing–CRM: hồ sơ khảo sát MCRM-D0 v1
 
 - Phạm vi được giao: khảo sát mã và chuẩn bị thử nghiệm; gói tại [marketing-crm-assistant/README.md](./marketing-crm-assistant/README.md).
@@ -149,7 +171,15 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-10-05 20:10 (UTC+7)
+Cập nhật: 2026-10-06 12:30 (UTC+7)
+
+## SX Kanban — deadline thẻ và các mốc còn lại
+
+Trạng thái: **local, chưa deploy.**
+
+Nút «Deadline» trên thẻ chỉ ghi `sx_kanban_deadline_at`, không đổi ngày lắp. Mở nút nay thấy deadline thẻ, ngày lắp và các mốc kế hoạch còn lại (từ hôm nay). Sửa deadline thẻ không kéo ngày lắp. Sửa ngày lắp hoặc một mốc thì ghi `delivery_date` — hoàn thiện = lắp − 2 và deadline thẻ tính lại theo cột.
+
+Hoàn tác: revert `SxKanbanDeadlinesModal.jsx` và đoạn modal trong `ProductionDashboard.jsx`.
 
 ## Bình luận — nút ⋯ để xóa
 

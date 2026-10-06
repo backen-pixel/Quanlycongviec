@@ -5,6 +5,22 @@
 - Kiểm: 25 → 38 test; harness JS giả lập 38/38, search caller trong `backend/src` không có. Claude review đã chạy Node 24 `node --test --test-isolation=none` (38/38) và `git diff --stat` (4 file).
 - Chưa kiểm: Node thật, tích hợp/runtime, DB/mạng. Hoàn tác đúng bốn delta P1-1, giữ lịch sử cũ.
 
+
+## 2026-10-06 — Chuẩn bị kích hoạt theo quyết định Founder
+
+Đã đọc trực tiếp cấu trúc và routing Primary, Render deployment; xác nhận Admin VPT đúng công ty/tenant, default stage đúng pipeline. Phát hiện `notifications.entity_id` thật là TEXT, sửa receipt replay và đưa trigger147/568 thật vào fixture. Bổ sung khôi phục đầy đủ fixture SQL702; lỗi CI đầu do PostgreSQL chuẩn hóa ngoặc CHECK được sửa bằng round-trip nguyên DDL trong fixture, vẫn so sánh nghiêm dữ liệu/quyền và thử CHECK từ chối hàng sai.
+
+Source `327864b759c6e5663949b87723ed7049c209d193`: tách signed Lead Ads quản lý khỏi Messenger, bảo vệ contact/receipt khỏi các writer/bảo trì cũ,234/234 Node cục bộ PASS. Review độc lập và CI đang chạy; phát hiện thiếu Page scope ở màn hình Lead Ads đang được sửa trong cùng phạm vi. Chưa thay production. [Routing, lỗi Backup, cấu hình cần xác minh và trình tự chuyển đổi](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).
+
+---
+
+## 2026-10-06 — H1: gói tiếp nhận Facebook Page riêng từ main
+
+Founder giao tiếp tục và giữ quyết định phát hành. Đã tách nhánh `codex/facebook-durable-inbox-20261006` từ main `1f879ea8`, triển khai signed durable inbox + SQL701, giữ worker paused. Không merge PR22/25 toàn khối; không sửa SQL700 của Claude. [Phạm vi, giới hạn, kiểm thử và phương án dừng](FACEBOOK_PAGE_INBOX_H1_20261006.md).
+
+Hoàn tất PR29 draft, source `c97c2f3d`:104/104 Node PASS; CI H1 run37383522836 đạt3/3job gồm15/15 PostgreSQL17 + restore fixture; regression Messenger cũ5/5 PG PASS; reviewer độc lập PASS mã mặc định tắt. CI đầu thiếu CLI17 đã được sửa và chạy lại toàn bộ. Nghiệp vụ tự tạo Lead/projection/attribution còn pending có chủ đích; không dùng ACK/inbox làm Lead hợp lệ. Bật hệ thống thật HOLD. Không merge/deploy/áp SQL/ghi DB thật; chỉ mã, test và hồ sơ. Mục lịch sử bên dưới giữ nguyên theo thời điểm ghi.
+
+---
 ## 2026-10-02 — MCRM-D0 v1: khảo sát và thiết kế thử nghiệm trợ lý Marketing–CRM
 
 - AI thực hiện: Codex; reviewer phiên riêng theo hồ sơ VALIDATION.
@@ -131,6 +147,16 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 
 # Nhật ký công việc AI
+
+## 2026-10-06 12:35 — Nút +1 +2 +3 ngày trên deadline SX
+
+- Hộp deadline thẻ có «Dời cả lịch» và nút +1/+2/+3 trên ngày lắp cùng từng mốc còn lại. Một lần bấm dời cả kế hoạch và hạn thẻ.
+- Nút + trên riêng deadline thẻ chỉ dời hạn thẻ, không đổi ngày lắp.
+
+## 2026-10-06 12:30 — Deadline thẻ SX hiện mốc còn lại
+
+- Nút deadline trên Kanban SX trước đây chỉ sửa hạn thẻ, không đồng bộ ngày lắp.
+- Hộp thoại nay liệt kê deadline thẻ, ngày lắp và mốc kế hoạch còn lại; sửa mốc hoặc ngày lắp thì dời cả lịch và tính lại hạn thẻ.
 
 ## 2026-10-05 20:10 — Nút ⋯ xóa bình luận
 
@@ -1772,3 +1798,8 @@ Khi bắt đầu phiên mới, thêm mục mới lên đầu file, ngay dưới 
 # 2026-10-05 — PR19/main compatibility and detail permissions
 
 Reconciled two conflicts between e16c885a and main ca8810c5. Preserved new Page/post/embedded views and PR19 data/async protections. Independent review identified project and Lead detail disclosure in the newly introduced main route; reused existing permission gates. Separate stale action failures from report failures. Modified adAnalytics route/UI, correctness/action lifecycle tests, CI path coverage, CURRENT and integration evidence. Local regressions 127/127; full frontend build and supported-browser synthetic checks. Operational gate HOLD: read-only CRM authorized but login pending; Render workspace unconfirmed; no live changes. See PR19_MAIN_INTEGRATION_20261005.md for scope, limitations and rollback.
+# 2026-10-06 — Hoàn thiện hợp đồng Lead Ads sau H1
+
+Theo yêu cầu tiếp tục của Founder, bổ sung domain/Application Service, claim riêng cho form, SQL702 atomic và bộ thử nghiệm. Nhận lại cùng nguồn giữ nguyên Customer/Lead/receipt; sai quyền hoặc dữ liệu cũ không rõ giữ để đối soát. Giao Admin bằng thông báo trong ứng dụng; không chạy legacy auto-task hoặc gửi khách. Source a5bcabf3:194/194 Node,29/29 PG intake và15/15 PG inbox PASS; CI37393352657, regression Messenger CI37393352980 PASS. Đã sửa lỗi SQL biến phone mà review/CI đầu phát hiện, giữ đầy đủ test. [Hồ sơ gói](FACEBOOK_LEAD_ADS_INTAKE_20261006.md), [review độc lập](FACEBOOK_LEAD_ADS_INTAKE_REVIEW_20261006.md). Chưa thay hệ thống thật, kích hoạt HOLD theo các giới hạn ghi trong hồ sơ.
+
+---

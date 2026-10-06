@@ -1,0 +1,107 @@
+name: Facebook Page inbox (isolated)
+on:
+  pull_request:
+    paths:
+      - 'backend/src/helpers/facebookPageInbox.js'
+      - 'backend/src/helpers/autoTool.js'
+      - 'backend/src/domain/facebookLeadAdsIntake.js'
+      - 'backend/src/services/facebookLeadAdsIntake.js'
+      - 'backend/src/helpers/fbLeadFormFields.js'
+      - 'backend/src/config/supabaseRouter.js'
+      - 'backend/src/routes/facebook.js'
+      - 'backend/src/server.js'
+      - 'backend/tests/facebookPage*'
+      - 'backend/tests/facebookLeadAdsIntake.postgres.test.py'
+      - 'backend/tests/facebookWebhookRecovery.test.js'
+      - 'database/701_facebook_page_inbox.sql'
+      - 'database/702_facebook_lead_ads_intake.sql'
+      - 'database/700_revoke_anon_public_access.sql'
+      - '.github/workflows/facebook-page-inbox.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        node: [18, 22]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Syntax and synthetic runtime regressions (no app bootstrap or secrets)
+        run: |
+          node --check backend/src/routes/facebook.js
+          node --check backend/src/config/supabaseRouter.js
+          node --check backend/src/server.js
+          node --check backend/src/helpers/autoTool.js
+          node --check backend/src/domain/facebookLeadAdsIntake.js
+          node --check backend/src/services/facebookLeadAdsIntake.js
+          node --test backend/tests/facebookPage*.test.js backend/tests/facebookWebhookRecovery.test.js
+          git diff --check
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: vpt_page_inbox_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: synthetic_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --volume /tmp:/tmp
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Use matching PostgreSQL 17 CLI in the disposable service
+        run: |
+          mkdir -p "$RUNNER_TEMP/pg17-bin"
+          cat > "$RUNNER_TEMP/pg17-bin/pg-client" <<'SH'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          tool="$(basename "$0")"
+          exec docker exec -i \
+            -e PGHOST -e PGPORT -e PGDATABASE -e PGUSER -e PGPASSWORD \
+            -e PGCONNECT_TIMEOUT -e PGSSLMODE -e PGOPTIONS -e PGAPPNAME \
+            "$INBOX_CI_CONTAINER_ID" "$tool" "$@"
+          SH
+          chmod +x "$RUNNER_TEMP/pg17-bin/pg-client"
+          for tool in psql pg_dump pg_restore; do ln -s pg-client "$RUNNER_TEMP/pg17-bin/$tool"; done
+          echo "$RUNNER_TEMP/pg17-bin" >> "$GITHUB_PATH"
+      - name: ACL, duplicate, concurrency, crash, lease and logical restore tests
+        env:
+          INBOX_CI_CONTAINER_ID: ${{ job.services.postgres.id }}
+          VPT_ISOLATED_PG_TEST: '1'
+          VPT_INBOX_RESTORE_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGDATABASE: vpt_page_inbox_ci
+          PGUSER: postgres
+          PGPASSWORD: synthetic_ci_only
+        run: python3 backend/tests/facebookPageInbox.postgres.test.py
+      - name: Atomic Lead Ads intake, company scope, recipient and recovery
+        env:
+          INBOX_CI_CONTAINER_ID: ${{ job.services.postgres.id }}
+          VPT_ISOLATED_PG_TEST: '1'
+          VPT_INBOX_RESTORE_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGDATABASE: vpt_lead_ads_ci
+          PGUSER: postgres
+          PGPASSWORD: synthetic_ci_only
+        run: |
+          psql -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE vpt_lead_ads_ci'
+          python3 backend/tests/facebookLeadAdsIntake.postgres.test.py
