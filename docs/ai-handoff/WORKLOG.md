@@ -1,3 +1,11 @@
+## 2026-10-06 08:20 — Đã triển khai dormant lên production
+
+Finalheadb94f4ef0 CI inbox37397952631 và Messenger37397953036 completed/success. Đã merge PR29→b51078d3; Renderautodeploydep-db24o3rncjis73c877fglive. Trước merge đặt đủ5cờoff/paused, áp701/702 Primary, seedbindinginactive; kiểm quyền3bảng/RPC đạt. Healthsau deployok,Primary,auto-failoveroff; inbox/receipt0,Messenger93done. [Bằng chứng đầy đủ, lần auto-review được giải quyết bằng CI và giới hạn](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).
+
+Activation chưa làm: còn xác minh AppSecret/Graph qua Render đúng tài khoản; không được bật chữ ký khi chưa biết khóa đúng. Không xin lại quyết định Founder, không gửi thêmTEST hoặc tin khách, không thay ngân sách/SQL700/Backup. Hồ sơ vận hành sau merge được cập nhật trên nhánh bàn giao; PR29 giữ nguyên phiên bản mã đã merge.
+
+---
+
 ## 2026-10-06 — Chuẩn bị kích hoạt theo quyết định Founder
 
 Đã đọc trực tiếp cấu trúc và routing Primary, Render deployment; xác nhận Admin VPT đúng công ty/tenant, default stage đúng pipeline. Phát hiện `notifications.entity_id` thật là TEXT, sửa receipt replay và đưa trigger147/568 thật vào fixture. Bổ sung khôi phục đầy đủ fixture SQL702; lỗi CI đầu do PostgreSQL chuẩn hóa ngoặc CHECK được sửa bằng round-trip nguyên DDL trong fixture, vẫn so sánh nghiêm dữ liệu/quyền và thử CHECK từ chối hàng sai.

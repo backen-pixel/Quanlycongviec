@@ -1,3 +1,11 @@
+## 2026-10-06 08:20 — PR29 đã phát hành, intake còn tắt
+
+PR29 đã merge`b51078d3`, Render deploy`dep-db24o3rncjis73c877fg` đãlive. SQL701/702 đã áp Primary và binding AdminVPT đã tạo inactive. CI đúngheadb94f4ef0PASS, review260NodePASS; healthproductionok/Primary/auto-failoveroff. [Toàn bộ bằng chứng và bước kích hoạt còn lại](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).
+
+**Chưa bật tiếp nhận form mới.** Còn phiên Render đúng quyền để kiểm AppSecret/Graph, rồi mới cutover/activebinding/unpause và nghiệm thu Meta→Admin. Quyết định Founder đã có, không chờ duyệt lại. Giữ5cờoff/paused, inbox/receipt0, Messenger93done. Lỗi customBackup đã xác định và có nativePrimarysnapshot riêng; không sửa backupclone/SQL700 hoặc ngân sách trong đợt này.
+
+---
+
 ## 2026-10-06 — Founder đã duyệt kích hoạt tuyến Facebook Form
 
 Founder yêu cầu **“cho bật chạy thật luôn nhé”**. Quyền phát hành tuyến Facebook Form → CRM → Admin Vạn Phú Thành đã có, không chờ duyệt lại. [Hồ sơ kích hoạt và hiện trạng thật](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md) thay các trạng thái HOLD vì thiếu approval ở mục lịch sử bên dưới; các điều kiện kỹ thuật vẫn phải kiểm chứng.

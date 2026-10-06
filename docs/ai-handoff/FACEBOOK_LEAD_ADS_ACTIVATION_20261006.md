@@ -1,5 +1,24 @@
 # Kích hoạt tuyến Facebook Form → CRM → Admin Vạn Phú Thành
 
+## Kết quả thực hiện — 08:20 ngày06/10/2026 (UTC+7)
+
+**Đã triển khai lên production ở trạng thái tắt. Chưa bật tiếp nhận Lead Ads mới.** Founder đã duyệt; không có yêu cầu duyệt phát hành còn chờ.
+
+- [PR29](https://github.com/backen-pixel/Quanlycongviec/pull/29) đã merge lúc01:17UTC: `b51078d3fe546eb2dd43f254e988a6195bb24df7`, head kiểm chứng `b94f4ef01e2fc13964df0770a42144e67dbe23d2`, runtime được review `66d2a5d7` không đổi.
+- CI đúng headb94: [inbox37397952631](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37397952631) Node18/22 và PostgreSQL đều success; [Messenger37397953036](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37397953036) success. PG job112058299518 chạy15/15 inbox +31/31 intake, ca30 restore thực chạy31bảng,175554bytes, hash `ff47523736c49106cefd5c0601736f9cbc89d76acc27d13e60573e8a1b43c59c`. Đây vẫn là fixture, không phải restore production.
+- Primary đã áp `facebook_page_inbox_701` version`20261006011452` và `facebook_lead_ads_intake_702` version`20261006011508`, đúng fileSQL trong source được review. Không sửa SQL700 hoặc DB Backup. Binding Page`409741855550833`/form`1438656288329447` đã tạo đúng routing dưới đây, **active=false, version1**.
+- Kiểm quyền thực01:16UTC: cả3bảng mới có RLS, anon/authenticated không SELECT; service không INSERT/DELETE binding/receipt, không DELETE inbox; intake RPC chỉ service có EXECUTE, không anon/authenticated. Không cấp quyền lại trên bảng cũ.
+- Render đã xác nhận lưu đúng5cờ off/paused bằng merge-env, không thay các biến khác; thao tác tự tạo deploy cấu hình`dep-db24mumk1f9s7393kp5g`. Merge tự tạo deploy mã`dep-db24o3rncjis73c877fg`, trạng thái **live**, hoàn tất01:18:09UTC, đúng mergeSHA trên; không gọi deploy lần nữa.
+- Sau deploy: `/api/health` lúc01:19:18UTC trả`ok`, uptime73s,`active=primary`,`auto_failover_enabled=false`,Primaryhealthy. Startup instance`...-w2flx` ghi probe failoveron/autooff lúc01:18:04UTC. Quyền chuyển DB thủ công vẫn có, không dùng nó trong đợt này.
+- Đối soát01:20:40UTC: inbox0,receipt0,bindinginactive; Messenger93receipt đều done, không có receipt dangdở. Giao diện CRM đăng nhập hiện tại tải lại tabLeadAds thành công, hiển thị chưa có LeadAds; đây không phải nghiệm thu bằng tài khoản AdminVPT hoặc một Lead thật.
+- Công cụ auto-review đã từ chối merge lần đầu vì chưa ghi nhận đủ CI headcuối. Sau khi đọc lại cảhai workflow completed/success đúngb94 và cung cấp evidence trong lời gọi, cùng công cụ đã cho merge thành công. Không dùng đường vòng hoặc bỏ qua kiểm soát.
+
+**Điểm chưa mở:** phiên Render UI đang là tài khoản không có quyền dịch vụ VPT; cần phiên đúng để xác minh`VPT_FACEBOOK_APP_SECRET` và`VPT_META_GRAPH_VERSION`, quyền Page/form và đối chiếu chữ ký Meta. Không suy secret thiếu hoặc đúng khi chưa đọc; không dùng webhook verify token thay AppSecret. Root đã gửi câu hỏi nhờ Founder chuyển tài khoản; không xin duyệt lại release. Sau khi xác minh, bật signed scoped receiver với workerpaused, chờ bản cũ dừng, đối soát chuyển đổi rồi mới mở binding/worker và xác nhận hành trình Meta→Admin. Chưa gửi thêm formTEST, nhắn khách hoặc đổi ngân sách.
+
+Phần dưới giữ hồ sơ trước triển khai và trình tự còn lại theo thời điểm.
+
+---
+
 Founder đã yêu cầu rõ: **“cho bật chạy thật luôn nhé”** ngày 06/10/2026, tiếp nối quyết định phát hành. Quyền phát hành tuyến đang làm đã có; không chờ duyệt lại. Phạm vi không mở AI gửi tin, tăng chi quảng cáo hoặc merge toàn bộ PR22/25. Phần thu quyền anon/SQL700 vẫn thuộc Claude, Codex không thay.
 
 Trạng thái trước triển khai: source `66d2a5d7c867cb5574ac61709fe39669cbbcec67` đã qua260/260 kiểm thử Node độc lập và review mã; đang chuẩn bị triển khai dormant với mọi cờ intake tắt. CI PostgreSQL của phần SQL/restore tại327864b7 đạt15/15 inbox và31/31 intake; vẫn kiểm CI head cuối trước merge. Chưa merge PR29, áp701/702 hay bật worker tại checkpoint này. Không dùng hồ sơ này làm bằng chứng đã chạy thật.
