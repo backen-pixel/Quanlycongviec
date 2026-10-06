@@ -417,7 +417,10 @@ async function upsertCrmLeadOnBackup(row, depth = 0) {
     if (patchRes.ok) {
       const patched = await patchRes.json().catch(() => null);
       const patchedRow = Array.isArray(patched) ? patched[0] : patched;
-      return patchedRow?.id || backupId;
+      if (!patchedRow?.id) {
+        throw new Error('backup PATCH crm_leads returned no confirmed row id');
+      }
+      return patchedRow.id;
     }
     const patchText = await patchRes.text().catch(() => '');
     const patchFk = parseFkMissingFromError(patchText);
@@ -450,7 +453,10 @@ async function upsertCrmLeadOnBackup(row, depth = 0) {
   if (res.ok) {
     const saved = await res.json().catch(() => null);
     const savedRow = Array.isArray(saved) ? saved[0] : saved;
-    return savedRow?.id || row.id || null;
+    if (!savedRow?.id) {
+      throw new Error('backup POST crm_leads returned no confirmed row id');
+    }
+    return savedRow.id;
   }
 
   const text = await res.text().catch(() => '');
@@ -481,7 +487,13 @@ async function ensureCrmLeadOnBackup(leadId, depth = 0) {
 }
 
 async function ensureFacebookContactParents(row, depth = 0) {
-  if (!row || depth > 5) return row;
+  if (!row) return row;
+  if (depth > 5) {
+    if (row.lead_id || row.customer_id) {
+      throw new Error('backup parent check depth exceeded for facebook_contacts');
+    }
+    return row;
+  }
   let next = row;
   if (row.lead_id) {
     const backupLeadId = await ensureCrmLeadOnBackup(row.lead_id, depth);
@@ -636,9 +648,9 @@ async function postRowToBackup(table, row, depth = 0) {
     // A missing optional parent still cannot be silently removed from a copied row.
     if (
       fk.childColumn === 'template_item_id'
-      && !(await backupRowExists('crm_daily_report_template_items', fk.parentId))
+      && !(await backupRowExists(fk.parentTable, fk.parentId))
     ) {
-      throw new Error('backup parent crm_daily_report_template_items not confirmed for template_item_id');
+      throw new Error(`backup parent ${fk.parentTable} not confirmed for ${table}.template_item_id`);
     }
     return postRowToBackup(table, row, depth + 1);
   }

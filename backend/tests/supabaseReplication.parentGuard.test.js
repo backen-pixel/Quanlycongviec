@@ -101,6 +101,19 @@ test('a contact keeps its Customer link when parent REST reads fail', async () =
   assert.equal(h.calls.some(({ init }) => init.method === 'POST'), false);
 });
 
+test('a contact keeps its Lead link when parent REST reads fail', async () => {
+  const h = harness(async (url, init) => {
+    if (url.startsWith(`${PRIMARY}/rest/v1/facebook_contacts?`)) {
+      return reply(200, [{ id: 'contact-1', page_id: 'page-1', psid: 'psid-1', lead_id: 'lead-1' }]);
+    }
+    if (url.includes('/rest/v1/crm_leads?')) return reply(503, null, 'temporary upstream failure');
+    throw new Error(`Unexpected request ${init.method || 'GET'} ${url}`);
+  });
+  const result = await h.enqueueAndDrain('facebook_contacts', 'contact-1');
+  assertQueuedFailure(h, result, /crm_leads not confirmed.*lead_id/);
+  assert.equal(h.calls.some(({ init }) => init.method === 'POST'), false);
+});
+
 test('a contact with confirmed parents retains both links in the Backup write', async () => {
   const h = harness(async (url, init) => {
     if (url.startsWith(`${PRIMARY}/rest/v1/facebook_contacts?`)) {
@@ -129,6 +142,135 @@ test('a contact with confirmed parents retains both links in the Backup write', 
   assert.equal(row.customer_id, 'customer-1');
 });
 
+test('a Lead matched by code keeps the existing Backup ID in its contact link', async () => {
+  const h = harness(async (url, init) => {
+    if (url.startsWith(`${PRIMARY}/rest/v1/facebook_contacts?`)) {
+      return reply(200, [{ id: 'contact-1', page_id: 'page-1', psid: 'psid-1', lead_id: 'primary-lead-1' }]);
+    }
+    if (url.startsWith(`${BACKUP}/rest/v1/crm_leads?id=`) && !init.method) return reply(200, []);
+    if (url.startsWith(`${PRIMARY}/rest/v1/crm_leads?`)) {
+      return reply(200, [{ id: 'primary-lead-1', code: 'LEAD-1', type: 'lead' }]);
+    }
+    if (url.startsWith(`${BACKUP}/rest/v1/crm_leads?code=`)) {
+      return reply(200, [{ id: 'backup-lead-1', type: 'lead' }]);
+    }
+    if (url.startsWith(`${BACKUP}/rest/v1/crm_leads?id=`) && init.method === 'PATCH') {
+      return reply(200, [{ id: 'backup-lead-1' }]);
+    }
+    if (url.startsWith(`${BACKUP}/rest/v1/facebook_contacts?`) && init.method === 'POST') {
+      return reply(201, [{ id: 'contact-1' }]);
+    }
+    if (url.startsWith(`${BACKUP}/rest/v1/facebook_contacts?`) && init.method === 'PATCH') {
+      return reply(204);
+    }
+    throw new Error(`Unexpected request ${init.method || 'GET'} ${url}`);
+  });
+  const result = await h.enqueueAndDrain('facebook_contacts', 'contact-1');
+  assert.equal(result.processed, 1);
+  const upsert = h.calls.find(({ url, init }) => url.includes('/facebook_contacts?') && init.method === 'POST');
+  assert.equal(JSON.parse(upsert.init.body).lead_id, 'backup-lead-1');
+});
+
+test('an empty 2xx Lead PATCH representation cannot authorize a contact write', async () => {
+  const h = harness(async (url, init) => {
+    if (url.startsWith(`${PRIMARY}/rest/v1/facebook_contacts?`)) {
+      return reply(200, [{ id: 'contact-1', page_id: 'page-1', psid: 'psid-1', lead_id: 'primary-lead-1' }]);
+    }
+    if (url.startsWith(`${BACKUP}/rest/v1/crm_leads?id=`) && !init.method) return reply(200, []);
+    if (url.startsWith(`${PRIMARY}/rest/v1/crm_leads?`)) {
+      return reply(200, [{ id: 'primary-lead-1', code: 'LEAD-1', type: 'lead' }]);
+    }
+    if (url.startsWith(`${BACKUP}/rest/v1/crm_leads?code=`)) {
+      return reply(200, [{ id: 'backup-lead-1', type: 'lead' }]);
+    }
+    if (url.startsWith(`${BACKUP}/rest/v1/crm_leads?id=`) && init.method === 'PATCH') {
+      return reply(200, []);
+    }
+    throw new Error(`Unexpected request ${init.method || 'GET'} ${url}`);
+  });
+  const result = await h.enqueueAndDrain('facebook_contacts', 'contact-1');
+  assertQueuedFailure(h, result, /PATCH crm_leads returned no confirmed row id/);
+  assert.equal(h.calls.some(({ url }) => url.includes('/facebook_contacts?') && url.startsWith(BACKUP)), false);
+});
+
+test('an empty 2xx Lead POST representation cannot authorize a contact write', async () => {
+  const h = harness(async (url, init) => {
+    if (url.startsWith(`${PRIMARY}/rest/v1/facebook_contacts?`)) {
+      return reply(200, [{ id: 'contact-1', page_id: 'page-1', psid: 'psid-1', lead_id: 'primary-lead-1' }]);
+    }
+    if (url.startsWith(`${BACKUP}/rest/v1/crm_leads?id=`) && !init.method) return reply(200, []);
+    if (url.startsWith(`${PRIMARY}/rest/v1/crm_leads?`)) {
+      return reply(200, [{ id: 'primary-lead-1', code: 'LEAD-1', type: 'lead' }]);
+    }
+    if (url.startsWith(`${BACKUP}/rest/v1/crm_leads?code=`)) return reply(200, []);
+    if (url === `${BACKUP}/rest/v1/crm_leads` && init.method === 'POST') return reply(201, []);
+    throw new Error(`Unexpected request ${init.method || 'GET'} ${url}`);
+  });
+  const result = await h.enqueueAndDrain('facebook_contacts', 'contact-1');
+  assertQueuedFailure(h, result, /POST crm_leads returned no confirmed row id/);
+  assert.equal(h.calls.some(({ url }) => url.includes('/facebook_contacts?') && url.startsWith(BACKUP)), false);
+});
+
+test('a contact with no parent links still copies normally', async () => {
+  const h = harness(async (url, init) => {
+    if (url.startsWith(`${PRIMARY}/rest/v1/facebook_contacts?`)) {
+      return reply(200, [{ id: 'contact-1', page_id: 'page-1', psid: 'psid-1' }]);
+    }
+    if (url.startsWith(`${BACKUP}/rest/v1/facebook_contacts?`) && init.method === 'POST') {
+      return reply(201, [{ id: 'contact-1' }]);
+    }
+    if (url.startsWith(`${BACKUP}/rest/v1/facebook_contacts?`) && init.method === 'PATCH') {
+      return reply(204);
+    }
+    throw new Error(`Unexpected request ${init.method || 'GET'} ${url}`);
+  });
+  const result = await h.enqueueAndDrain('facebook_contacts', 'contact-1');
+  assert.equal(result.processed, 1);
+  assert.equal(result.failed, 0);
+});
+
+test('recursive contact retries stop before bypassing a required parent check', async () => {
+  let contactPosts = 0;
+  const h = harness(async (url, init) => {
+    if (url.startsWith(`${PRIMARY}/rest/v1/facebook_contacts?`)) {
+      return reply(200, [{ id: 'contact-1', page_id: 'page-1', psid: 'psid-1', lead_id: 'lead-1' }]);
+    }
+    if (url.startsWith(`${BACKUP}/rest/v1/crm_leads?`)) return reply(200, [{ id: 'lead-1' }]);
+    if (url.startsWith(`${BACKUP}/rest/v1/facebook_contacts?`) && init.method === 'POST') {
+      contactPosts += 1;
+      return reply(409, null, 'Key (lead_id)=(lead-1) is not present in table "crm_leads"');
+    }
+    throw new Error(`Unexpected request ${init.method || 'GET'} ${url}`);
+  });
+  const result = await h.enqueueAndDrain('facebook_contacts', 'contact-1');
+  assertQueuedFailure(h, result, /parent check depth exceeded/);
+  assert.equal(contactPosts, 6);
+});
+
+test('the retry depth cap does not reject a contact without Lead or Customer links', async () => {
+  let contactPosts = 0;
+  const h = harness(async (url, init) => {
+    if (url.startsWith(`${PRIMARY}/rest/v1/facebook_contacts?`)) {
+      return reply(200, [{ id: 'contact-1', page_id: 'page-1', psid: 'psid-1' }]);
+    }
+    if (url.startsWith(`${BACKUP}/rest/v1/users?`)) return reply(200, [{ id: 'user-1' }]);
+    if (url.startsWith(`${BACKUP}/rest/v1/facebook_contacts?`) && init.method === 'POST') {
+      contactPosts += 1;
+      return contactPosts <= 6
+        ? reply(409, null, 'Key (created_by)=(user-1) is not present in table "users"')
+        : reply(201, [{ id: 'contact-1' }]);
+    }
+    if (url.startsWith(`${BACKUP}/rest/v1/facebook_contacts?`) && init.method === 'PATCH') {
+      return reply(204);
+    }
+    throw new Error(`Unexpected request ${init.method || 'GET'} ${url}`);
+  });
+  const result = await h.enqueueAndDrain('facebook_contacts', 'contact-1');
+  assert.equal(result.processed, 1);
+  assert.equal(result.failed, 0);
+  assert.equal(contactPosts, 7);
+});
+
 for (const parentRestStatus of [200, 503]) {
   test(`a missing template item (${parentRestStatus}) cannot be replaced with null`, async () => {
     const h = harness(async (url, init) => {
@@ -152,3 +294,29 @@ for (const parentRestStatus of [200, 503]) {
     assert.equal(JSON.parse(writes[0].init.body).template_item_id, 'item-1');
   });
 }
+
+test('template_item_id checks the parent table named by the FK error', async () => {
+  let linePosts = 0;
+  const h = harness(async (url, init) => {
+    if (url.startsWith(`${BACKUP}/rest/v1/custom_report_lines?`) && !init.method) return reply(200, []);
+    if (url.startsWith(`${PRIMARY}/rest/v1/custom_report_lines?`)) {
+      return reply(200, [{ id: 'line-1', template_item_id: 'item-1' }]);
+    }
+    if (url.startsWith(`${BACKUP}/rest/v1/other_template_items?`)) return reply(200, [{ id: 'item-1' }]);
+    if (url.startsWith(`${BACKUP}/rest/v1/custom_report_lines?`) && init.method === 'POST') {
+      linePosts += 1;
+      return linePosts === 1
+        ? reply(409, null, 'Key (template_item_id)=(item-1) is not present in table "other_template_items"')
+        : reply(201);
+    }
+    if (url.startsWith(`${BACKUP}/rest/v1/custom_report_lines?`) && init.method === 'PATCH') {
+      return reply(204);
+    }
+    throw new Error(`Unexpected request ${init.method || 'GET'} ${url}`);
+  });
+  const result = await h.enqueueAndDrain('custom_report_lines', 'line-1');
+  assert.equal(result.processed, 1);
+  assert.equal(result.failed, 0);
+  assert.equal(linePosts, 2);
+  assert.equal(h.calls.some(({ url }) => url.includes('/crm_daily_report_template_items?')), false);
+});

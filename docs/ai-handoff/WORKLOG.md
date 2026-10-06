@@ -1,8 +1,8 @@
 ## 2026-10-06 — Fail-closed liên kết cha khi sao chép Backup
 
-- Phạm vi: `backend/src/helpers/supabaseReplication.js`, `backend/tests/supabaseReplication.parentGuard.test.js`, `CURRENT.md`, `WORKLOG.md`. Nhánh riêng từ main `c2c594c9`; không thay luồng ghi Primary, lịch Backup, Redis, quyền hay migration.
-- Contact có Lead/Customer nhưng bản ghi cha không xác nhận được trên Backup nay báo lỗi thay vì ghi contact với FK bị xóa. Dòng báo cáo có `template_item_id` cũng báo lỗi khi FK cha chưa có, không tự xóa liên kết. Contact có cha hợp lệ vẫn sao chép với đủ FK.
-- Kiểm thử: chạy trực tiếp `node backend/tests/supabaseReplication.parentGuard.test.js` 5/5 PASS trên dữ liệu giả; `node --check backend/src/helpers/supabaseReplication.js` và `git diff --check` PASS. Chưa thử PostgreSQL cô lập hoặc production.
+- Phạm vi: `backend/src/helpers/supabaseReplication.js`, `backend/tests/supabaseReplication.parentGuard.test.js`, `.github/workflows/supabase-replication-parent-guard.yml`, `CURRENT.md`, `WORKLOG.md`. Nhánh riêng từ main `c2c594c9`; không thay luồng ghi Primary, lịch Backup, Redis, quyền hay migration.
+- Contact có Lead/Customer nhưng bản ghi cha không xác nhận được trên Backup nay báo lỗi thay vì ghi contact với FK bị xóa. Response PATCH/POST Lead 2xx nhưng không có hàng/id cũng lỗi. Dòng có `template_item_id` giữ nguyên FK, kiểm đúng bảng cha từ lỗi thay vì hardcode một bảng CRM. Vượt giới hạn retry không bỏ qua kiểm tra parent; contact không có FK này vẫn được xử lý.
+- Kiểm thử: chạy trực tiếp `node backend/tests/supabaseReplication.parentGuard.test.js` 13/13 PASS trên dữ liệu giả, gồm Lead cùng code nhưng UUID Backup khác, lỗi REST 503 và representation rỗng; `node --check` helper/test và `git diff --check` PASS. Workflow CI Node 18/22 đã thêm, chưa chạy; chưa thử PostgreSQL cô lập hoặc production. Reviewer độc lập yêu cầu sửa bản đầu, chờ review lại bản này.
 - Giới hạn: worker hiện vẫn xóa job sau 12 lần và hàng chờ RAM mất khi restart; xử lý bền hàng chờ và đối soát ID/FK là việc riêng trước deploy. Hoàn tác mã bằng revert commit của nhánh này; không cần hoàn tác DB vì không đổi schema/dữ liệu thật.
 
 ---
