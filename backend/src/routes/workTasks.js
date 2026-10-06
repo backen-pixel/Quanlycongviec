@@ -1043,6 +1043,19 @@ r.get('/', async (req, res) => {
       return res.json({ tasks: [], total: 0, page, page_size: pageSize });
     }
 
+    /**
+     * NV xem việc ĐƯỢC GIAO CHO CHÍNH MÌNH (assignee_id = mình, không chỉ định company_id): không lọc theo công ty.
+     * View `unified_tasks_v` gán company_id của việc crm_tasks theo công ty của DEAL, nên dự án sản xuất cho
+     * xưởng của NV nhưng deal thuộc công ty khác (vd. Vạn Phú Thành) bị mất việc. Quyền vẫn do
+     * `applyEmployeeScope` (assignee/created_by = mình) giữ chặt — chỉ bỏ ràng buộc công ty.
+     */
+    const viewerId = String(req.user?.userId || req.user?.id || '');
+    const ownTasksView = !company_id && !lead_id && !!assignee_id && !!viewerId
+      && String(assignee_id) === viewerId;
+    const resolveEffectiveCompany = () => (ownTasksView
+      ? null
+      : (company_id || (!isSystemAdmin(req.user) ? req.user?.company_id : null)));
+
     // opts.leadScoped = true khi đường gọi đã bám theo lead (region lead ids) —
     // khi đó KHÔNG lọc is_primary_lead, nếu không task của lead thứ 2 biến mất.
     const applyListFilters = (q, opts = {}) => {
@@ -1052,7 +1065,7 @@ r.get('/', async (req, res) => {
         else if (sources.length > 1) q = q.in('source', sources);
       }
       if (project_id) q = q.eq('project_id', project_id);
-      const effectiveCompany = company_id || (!isSystemAdmin(req.user) ? req.user?.company_id : null);
+      const effectiveCompany = resolveEffectiveCompany();
       let leadScoped = !!opts.leadScoped;
       if (lead_id) {
         q = q.eq('lead_id', lead_id);
@@ -1090,7 +1103,7 @@ r.get('/', async (req, res) => {
 
     let assigneeLeadIds = [];
     if (!lead_id && assignee_id) {
-      const effectiveCompany = company_id || (!isSystemAdmin(req.user) ? req.user?.company_id : null);
+      const effectiveCompany = resolveEffectiveCompany();
       assigneeLeadIds = await resolveAssigneeLeadScope(assignee_id, effectiveCompany || null);
     }
 
