@@ -112,6 +112,7 @@ async function createCrmAssignment(req, body) {
 
   const {
     resolveTaskSourceFields,
+    resolvePhatSinhFields,
     isTaskSourceColumnError,
   } = require('./sharedWorkspaceTaskSource');
   const source = resolveTaskSourceFields(
@@ -119,6 +120,8 @@ async function createCrmAssignment(req, body) {
     { required: false },
   );
   if (!source.ok) return { error: source.error, status: source.status || 400 };
+  const phatSinh = resolvePhatSinhFields(body);
+  if (!phatSinh.ok) return { error: phatSinh.error, status: phatSinh.status || 400 };
 
   let effectiveCompany = isAdmin(req)
     ? (company_id || req.user?.company_id || null)
@@ -169,6 +172,8 @@ async function createCrmAssignment(req, body) {
     insertRow.task_source_type = source.task_source_type;
     insertRow.employee_error_module = source.employee_error_module;
   }
+  if (phatSinh.phat_sinh_kind !== undefined) insertRow.phat_sinh_kind = phatSinh.phat_sinh_kind;
+  if (phatSinh.department_id !== undefined) insertRow.department_id = phatSinh.department_id;
   if (error_type_id !== undefined) {
     const { normalizeErrorTypeId } = require('./sharedWorkspaceErrorTypes');
     insertRow.error_type_id = normalizeErrorTypeId(error_type_id);
@@ -180,7 +185,11 @@ async function createCrmAssignment(req, body) {
 
   let { data, error } = await insertWithSelect(insertRow, ASSIGNMENT_SELECT);
   if (error && isTaskSourceColumnError(error)) {
-    const { task_source_type: _t, employee_error_module: _e, error_type_id: _et, ...legacy } = insertRow;
+    const {
+      task_source_type: _t, employee_error_module: _e, error_type_id: _et,
+      phat_sinh_kind: _k, department_id: _d,
+      ...legacy
+    } = insertRow;
     ({ data, error } = await insertWithSelect(legacy, ASSIGNMENT_SELECT_LEGACY));
   }
   if (error && /assignment_module/.test(error.message || '')) {

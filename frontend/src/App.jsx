@@ -107,6 +107,7 @@ const WorkshopTaskTemplatesPage = lazyWithRetry(() => import('./pages/WorkshopTa
 const ProductionHandoverSettingsPage = lazyWithRetry(() => import('./pages/ProductionHandoverSettingsPage'));
 const ProductionBackupSyncPage = lazyWithRetry(() => import('./pages/ProductionBackupSyncPage'));
 const ProductionAssignmentsPage = lazyWithRetry(() => import('./pages/ProductionAssignmentsPage'));
+const ProductionPhatSinhPage = lazyWithRetry(() => import('./pages/ProductionPhatSinhPage'));
 const LogisticsAssignmentsPage = lazyWithRetry(() => import('./pages/LogisticsAssignmentsPage'));
 const CustomModuleAssignmentsPage = lazyWithRetry(() => import('./pages/CustomModuleAssignmentsPage'));
 const CustomModuleEventsPage = lazyWithRetry(() => import('./pages/CustomModuleEventsPage'));
@@ -631,6 +632,7 @@ export default function App() {
               <Route path="task-templates" element={<WorkshopTaskTemplatesPage fixedArea="production" />} />
               <Route path="handover-settings" element={<ProductionHandoverSettingsPage />} />
               <Route path="assignments" element={<ProductionAssignmentsPage />} />
+              <Route path="phat-sinh" element={<ProductionPhatSinhPage />} />
               <Route path="regions" element={<ProductionRegionsPage />} />
               <Route path="events" element={<EventsFeedPage lockedModule="production" />} />
               <Route path="events/schedule" element={<EventsInstallSchedulePage scope="production" />} />

@@ -332,6 +332,7 @@ const SX_MENU_GROUPS = [
       { to: '/sx/dashboard', icon: LayoutDashboard, label: 'Dashboard xưởng', end: true },
       { to: '/sx/project-tasks', icon: CheckSquare, label: 'Quản lý nhiệm vụ' },
       { to: '/sx/assignments', icon: ClipboardList, label: 'Giao việc Sản xuất' },
+      { to: '/sx/phat-sinh', icon: ClipboardList, label: 'Quản lý phát sinh' },
       { to: '/management/project-logs', icon: History, label: 'Nhật ký công trình' },
       { to: '/drive?module=sx', icon: HardDrive, label: 'Drive Sản xuất' },
     ]

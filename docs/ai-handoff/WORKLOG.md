@@ -1,3 +1,45 @@
+## 2026-10-06 — Lọc deal theo công ty và nhân viên CRM
+
+- Picker dự án/deal thêm chọn Công ty và Nhân viên CRM (`/crm/employees-by-company?for_module=crm`).
+- File: `LeadDealPicker.jsx`, `CRMAssignmentsPage.jsx`.
+
+---
+
+## 2026-10-06 — Cột Ngày mai ở nhóm theo hạn
+
+- Thêm nhóm `tomorrow` vào Deadline giao việc, giữa Hôm nay và Tuần này.
+- File: `frontend/src/pages/CRMAssignmentsPage.jsx`.
+
+---
+
+## 2026-10-06 — Form phát sinh giống Không gian chung
+
+- Hộp giao việc phát sinh thêm phân loại, người chịu trách nhiệm, người làm. POST tạo việc ghi `phat_sinh_kind`.
+- File: `CRMAssignmentsPage.jsx`, `crmAssignmentMutations.js`, `phatSinhKinds.js`.
+
+---
+
+## 2026-10-06 — Kéo thả thẻ giao việc
+
+- Sửa kéo thả Kanban: `dataTransfer` + ref, không setState khi bắt đầu kéo. Thả cùng cột thì bỏ qua.
+- File: `frontend/src/pages/CRMAssignmentsPage.jsx`.
+
+---
+
+## 2026-10-06 — Bộ lọc nhanh giao việc mặc định đóng
+
+- `AssignQuickFilterPanel` khởi tạo `open = false` thay vì mở khi màn hình từ 768px.
+- File: `frontend/src/pages/CRMAssignmentsPage.jsx`.
+
+---
+
+## 2026-10-06 — Giao việc: bỏ «Tất cả công ty»
+
+- Dropdown Công ty ở bộ lọc trang giao việc chỉ còn từng công ty. Công ty trống hoặc không hợp lệ được gán mặc định; Đặt lại không xóa công ty.
+- File: `frontend/src/pages/CRMAssignmentsPage.jsx`.
+
+---
+
 ## 2026-10-06 — ★ pipeline chọn được nhiều dòng
 
 - Dấu ★ trên liên kết loại CRM → SX đổi từ radio (một dòng) sang checkbox (nhiều dòng). Backend `replaceLeadTypeProductionLinks` giữ mọi `is_primary`, không còn xóa sao dòng thứ hai khi lưu.

@@ -1100,6 +1100,21 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
       if (shouldApplyAssignModuleFilter(req.query, moduleFilter, { skipModule })) {
         q = q.eq('assignment_module', moduleFilter);
       }
+      // Trang Quan ly phat sinh: chi viec co loai phat sinh, tach hai tab theo
+      // `co_phi` cua loai. `phat_sinh_kind` la CHUOI SLUG chu khong phai khoa
+      // ngoai, nen loc bang danh sach slug lay tu danh muc loai.
+      if (String(req.query.phat_sinh || '') === '1') {
+        q = q.not('phat_sinh_kind', 'is', null);
+      }
+      const coPhiLoc = String(req.query.co_phi ?? '');
+      if (coPhiLoc === '0' || coPhiLoc === '1') {
+        const { listPhatSinhKinds } = require('../helpers/sharedWorkspacePhatSinhKinds');
+        const muon = coPhiLoc === '1';
+        const kinds = await listPhatSinhKinds({ includeInactive: true }).catch(() => []);
+        const slugs = kinds.filter((k) => !!k.co_phi === muon).map((k) => k.slug).filter(Boolean);
+        if (!slugs.length) return res.json({ assignments: [] });
+        q = q.in('phat_sinh_kind', slugs);
+      }
       q = applyWorkshopTypeOnQuery(q, workshopTypeFilter);
       if (req.query.q) {
         ({ q } = await applyAssignmentSearchQuery(q, req.query.q));

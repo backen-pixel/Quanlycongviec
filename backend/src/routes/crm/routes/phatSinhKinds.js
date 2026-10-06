@@ -32,11 +32,22 @@ function withHint(row) {
   return { ...row, sla_hint: slaHint(row) };
 }
 
+/**
+ * Người chịu trách nhiệm: chấp nhận UUID, hoặc rỗng/null để bỏ trống.
+ * Chuỗi lạ thì trả về undefined — nơi gọi bỏ qua, không ghi rác xuống DB.
+ */
+function nguoiPhuTrach(raw) {
+  if (raw === null || raw === '' || raw === undefined) return null;
+  const v = String(raw).trim();
+  return UUID_RE.test(v) ? v : undefined;
+}
+
 r.get('/phat-sinh-kinds', async (req, res) => {
   try {
     const includeInactive = canManagePhatSinhKinds(req) && String(req.query.include_inactive || '') === '1';
-    const kinds = await listPhatSinhKinds({ includeInactive });
-    res.json({ phat_sinh_kinds: kinds.map(withHint), company_id: null });
+    const companyId = String(req.query.company_id || '').trim() || null;
+    const kinds = await listPhatSinhKinds({ companyId, includeInactive });
+    res.json({ phat_sinh_kinds: kinds.map(withHint), company_id: companyId });
   } catch (e) {
     if (isPhatSinhKindSchemaError(e)) return res.json({ phat_sinh_kinds: [], company_id: null });
     res.status(500).json({ error: e.message });
@@ -72,6 +83,8 @@ r.post('/phat-sinh-kinds', async (req, res) => {
         cutoff_time,
         is_active: b.is_active !== false,
         sort_order: Number.isFinite(Number(b.sort_order)) ? Number(b.sort_order) : nextOrder,
+        co_phi: b.co_phi === true || b.co_phi === 'true',
+        nguoi_phu_trach_id: nguoiPhuTrach(b.nguoi_phu_trach_id) ?? null,
       })
       .select('*')
       .single();
@@ -120,6 +133,12 @@ r.put('/phat-sinh-kinds/:id', async (req, res) => {
     if (b.is_active !== undefined) update.is_active = !!b.is_active;
     if (b.sort_order !== undefined && Number.isFinite(Number(b.sort_order))) {
       update.sort_order = Number(b.sort_order);
+    }
+    if (b.co_phi !== undefined) update.co_phi = b.co_phi === true || b.co_phi === 'true';
+    if (b.nguoi_phu_trach_id !== undefined) {
+      const ai = nguoiPhuTrach(b.nguoi_phu_trach_id);
+      // undefined = gửi lên một chuỗi không phải UUID. Bỏ qua thay vì ghi rác.
+      if (ai !== undefined) update.nguoi_phu_trach_id = ai;
     }
     const nextMode = update.sla_mode || existing.sla_mode;
     if (nextMode !== 'noon_cutoff') update.cutoff_time = null;

@@ -82,7 +82,7 @@ async function listPhatSinhKinds({ companyId, includeInactive = false } = {}) {
 
   let q = supabase
     .from('shared_workspace_phat_sinh_kinds')
-    .select('id, company_id, name, slug, sla_mode, sla_days, cutoff_time, is_active, sort_order')
+    .select('id, company_id, name, slug, sla_mode, sla_days, cutoff_time, is_active, sort_order, co_phi, nguoi_phu_trach_id')
     .order('sort_order', { ascending: true })
     .order('name', { ascending: true });
   if (!includeInactive) q = q.eq('is_active', true);
