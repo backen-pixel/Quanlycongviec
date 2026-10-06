@@ -305,7 +305,7 @@ BEGIN
       RAISE EXCEPTION 'FB_INBOX_LEAD_RECEIPT_REVIEW_REQUIRED' USING ERRCODE='40001';
     END IF;
     SELECT * INTO notice FROM public.notifications WHERE id=receipt.notification_id FOR SHARE;
-    IF NOT FOUND OR notice.user_id IS DISTINCT FROM recipient.id OR notice.entity_id IS DISTINCT FROM lead.id
+    IF NOT FOUND OR notice.user_id IS DISTINCT FROM recipient.id OR notice.entity_id::text IS DISTINCT FROM lead.id::text
         OR notice.entity_type IS DISTINCT FROM 'crm_lead' OR notice.type::text IS DISTINCT FROM 'system'
         OR notice.metadata->>'receiptId' IS DISTINCT FROM receipt.id::text
         OR notice.metadata->>'companyId' IS DISTINCT FROM company.id::text THEN

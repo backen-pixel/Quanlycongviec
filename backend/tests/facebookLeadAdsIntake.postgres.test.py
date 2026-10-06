@@ -4,6 +4,9 @@
 No application bootstrap, provider calls or live configuration. CRM baseline is
 an explicit synthetic schema; Facebook/attribution/639/700/701/702 are actual
 migrations. No task-template behavior or production/UAT claim is made here.
+VPT_INBOX_RESTORE_TEST=1 additionally restores the complete fixture to the new
+localhost vpt_lead_ads_restore_ci DB; it refuses a preexisting target and never
+replaces the source. Requires matching pg_dump/pg_restore and CREATEDB.
 """
 import hashlib
 import json
@@ -11,6 +14,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 import time
 import unittest
 
@@ -19,6 +23,7 @@ PREFIX = "vpt_lead_ads_ci_"
 PAGE = "70200001"
 PAGE_B = "70200002"
 FORM = "70201"
+RESTORE_DATABASE = "vpt_lead_ads_restore_ci"
 
 
 def uid(n):
@@ -71,16 +76,24 @@ CREATE TABLE crm_sources(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),name text
 CREATE TABLE crm_pipelines(id uuid PRIMARY KEY,name text NOT NULL,company_id uuid REFERENCES companies(id),is_active boolean DEFAULT true);
 CREATE TABLE crm_pipeline_stages(id uuid PRIMARY KEY,name text NOT NULL,pipeline_id uuid REFERENCES crm_pipelines(id),
  pipeline_type text DEFAULT 'lead',is_active boolean DEFAULT true,is_won boolean DEFAULT false,is_lost boolean DEFAULT false);
+-- Minimal dependencies for the actual full migrations147 and568. Intake uses
+-- NULL project_id and does not claim complete customer info or create a deal.
+CREATE TABLE projects(id uuid PRIMARY KEY,company_id uuid REFERENCES companies(id));
 CREATE TABLE crm_leads(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),code text,title text NOT NULL,type text DEFAULT 'lead',
  customer_id uuid REFERENCES customers(id),stage_id uuid REFERENCES crm_pipeline_stages(id),source_id uuid REFERENCES crm_sources(id),
  pipeline_id uuid REFERENCES crm_pipelines(id),company_id uuid REFERENCES companies(id),region_id uuid REFERENCES company_regions(id),
  assigned_to uuid REFERENCES users(id),lead_owner_id uuid REFERENCES users(id),created_by uuid REFERENCES users(id),description text,
- lead_type_id uuid,install_address text,stage_entered_at timestamptz,created_at timestamptz DEFAULT now(),updated_at timestamptz DEFAULT now());
-CREATE TABLE notifications(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id uuid NOT NULL REFERENCES users(id),type notification_type NOT NULL,
- title varchar(255) NOT NULL,message text,entity_type varchar(30),entity_id uuid,metadata jsonb,is_read boolean DEFAULT false,created_at timestamptz DEFAULT now());
+ lead_type_id uuid,install_address text,phone text,estimated_value numeric,project_id uuid REFERENCES projects(id),
+ stage_entered_at timestamptz,created_at timestamptz DEFAULT now(),updated_at timestamptz DEFAULT now());
+CREATE TABLE crm_activities(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),lead_id uuid REFERENCES crm_leads(id),
+ activity_date timestamptz,created_at timestamptz DEFAULT now(),type text);
+CREATE TABLE crm_deal_projects(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),lead_id uuid REFERENCES crm_leads(id),
+ project_id uuid REFERENCES projects(id));
+-- Primary preflight 2026-10-06: type and entity_id are TEXT, not UUID/enum.
+CREATE TABLE notifications(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),user_id uuid NOT NULL REFERENCES users(id),type text NOT NULL,
+ title varchar(255) NOT NULL,message text,entity_type varchar(30),entity_id text,metadata jsonb,is_read boolean DEFAULT false,created_at timestamptz DEFAULT now());
 CREATE TABLE external_api_keys(id uuid PRIMARY KEY);
 CREATE TABLE crm_tasks(id uuid PRIMARY KEY,lead_id uuid NOT NULL REFERENCES crm_leads(id) ON DELETE CASCADE,title text NOT NULL);
-CREATE TABLE projects(id uuid PRIMARY KEY,company_id uuid REFERENCES companies(id));
 -- Actual migration392 conditionally retains nullable tenants on legacy rows.
 -- Its actual Lead trigger still prohibits every new Lead with a NULL tenant.
 INSERT INTO companies(id,name) VALUES('70200000-0000-4000-8000-000000000999','Legacy baseline');
@@ -90,10 +103,15 @@ INSERT INTO users(id,full_name,role,company_id) VALUES('70200000-0000-4000-8000-
 
 class LeadAdsIntakePostgres(unittest.TestCase):
     @classmethod
-    def sql_process(cls, sql, name="check", timeout=20):
+    def sql_process(cls, sql, name="check", timeout=20, database=None):
+        if database not in (None, "vpt_lead_ads_ci", RESTORE_DATABASE):
+            raise RuntimeError("Unexpected database target")
+        env = {**cls.env, "PGAPPNAME": PREFIX + name}
+        if database:
+            env["PGDATABASE"] = database
         return subprocess.run(["psql", "-X", "-w", "-qAt", "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=verbose"],
                               input=sql, text=True, capture_output=True,
-                              env={**cls.env, "PGAPPNAME": PREFIX + name}, timeout=timeout)
+                              env=env, timeout=timeout)
 
     @classmethod
     def sql(cls, sql, **kwargs):
@@ -133,7 +151,8 @@ class LeadAdsIntakePostgres(unittest.TestCase):
                      "305_facebook_pages_default_module_key.sql", "108_crm_leads_code_unique.sql",
                      "129_crm_auto_lead_blocked_phones.sql", "638_lead_attribution_quality_partner.sql",
                      "639_facebook_contact_lead_atomic.sql", "39_auto_gen_tasks_trigger.sql", "227_drop_legacy_auto_gen_tasks_trigger.sql",
-                     "145_crm_stage_history.sql", "392_tenant_isolation_db.sql", "700_revoke_anon_public_access.sql",
+                     "145_crm_stage_history.sql", "147_crm_leads_kpi_fields.sql", "392_tenant_isolation_db.sql",
+                     "568_projects_has_crm_deal_column.sql", "700_revoke_anon_public_access.sql",
                      "701_facebook_page_inbox.sql", "702_facebook_lead_ads_intake.sql", "702_facebook_lead_ads_intake.sql"):
             cls.sql((ROOT / "database" / file).read_text(encoding="utf-8"), name=file.split("_")[0])
         if cls.scalar("SELECT count(*) FROM facebook_lead_ads_bindings;") != "0":
@@ -206,8 +225,8 @@ class LeadAdsIntakePostgres(unittest.TestCase):
         self.sql("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE "
                  f"datname=current_database() AND application_name={lit(PREFIX + name)};")
 
-    def error(self, command, code="40001", service=True):
-        result = self.sql_process(("SET ROLE service_role; " if service else "") + command)
+    def error(self, command, code="40001", service=True, **kwargs):
+        result = self.sql_process(("SET ROLE service_role; " if service else "") + command, **kwargs)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(code, result.stderr)
         return result.stderr
@@ -232,11 +251,73 @@ class LeadAdsIntakePostgres(unittest.TestCase):
     def intake(self, item, **kwargs):
         return json.loads(self.service(self.command(item, **kwargs)))
 
-    def counts(self):
+    def counts(self, **kwargs):
         return self.scalar("SELECT json_build_array((SELECT count(*) FROM customers),(SELECT count(*) FROM crm_leads),"
                            "(SELECT count(*) FROM facebook_contacts),(SELECT count(*) FROM facebook_lead_ads),"
                            "(SELECT count(*) FROM lead_attribution),(SELECT count(*) FROM notifications),"
-                           "(SELECT count(*) FROM facebook_lead_ads_intake_receipts),(SELECT count(*) FROM crm_tasks));")
+                           "(SELECT count(*) FROM facebook_lead_ads_intake_receipts),(SELECT count(*) FROM crm_tasks));", **kwargs)
+
+    def restore_inventory(self, database=None):
+        """Normalized logical state, without OIDs/default-ACL representation noise."""
+        table_names = json.loads(self.scalar("SELECT jsonb_agg(relname ORDER BY relname) FROM pg_class "
+                                "WHERE relnamespace='public'::regnamespace AND relkind IN ('r','p');", database=database))
+        quoted = lambda name: '"' + name.replace('"', '""') + '"'
+        # Every fixture table, including stage history/receipts/config and empty
+        # tables, is compared. JSONB rows are sorted independent of heap order.
+        statements = ["SELECT jsonb_build_object('table'," + lit(name) + ",'count',count(*),"
+                      "'sha256',encode(sha256(convert_to(coalesce(string_agg(to_jsonb(t)::text,E'\\n' "
+                      "ORDER BY to_jsonb(t)::text),''),'UTF8')),'hex')) FROM public."
+                      + quoted(name) + " t;" for name in table_names]
+        rows = [json.loads(line) for line in self.sql("\n".join(statements), database=database).splitlines()]
+        metadata = json.loads(self.scalar("""
+        SELECT jsonb_build_object(
+          'relations',(SELECT jsonb_agg(jsonb_build_object('name',c.relname,'kind',c.relkind,'owner',r.rolname,
+            'rls',c.relrowsecurity,'forceRls',c.relforcerowsecurity,'acl',
+              (SELECT jsonb_agg(jsonb_build_object('grantee',coalesce(gr.rolname,'PUBLIC'),'grantor',go.rolname,
+                'privilege',a.privilege_type,'grantable',a.is_grantable)
+                ORDER BY coalesce(gr.rolname,'PUBLIC'),go.rolname,a.privilege_type,a.is_grantable)
+               FROM aclexplode(coalesce(c.relacl,acldefault((CASE WHEN c.relkind='S' THEN 's' ELSE 'r' END)::"char",c.relowner))) a
+               LEFT JOIN pg_roles gr ON gr.oid=a.grantee LEFT JOIN pg_roles go ON go.oid=a.grantor)) ORDER BY c.relname)
+            FROM pg_class c JOIN pg_roles r ON r.oid=c.relowner
+            WHERE c.relnamespace='public'::regnamespace AND c.relkind IN ('r','p','S')),
+          'constraints',(SELECT jsonb_agg(jsonb_build_object('table',c.conrelid::regclass::text,'name',c.conname,
+            'definition',pg_get_constraintdef(c.oid),'validated',c.convalidated) ORDER BY c.conrelid::regclass::text,c.conname)
+            FROM pg_constraint c WHERE c.connamespace='public'::regnamespace),
+          'columns',(SELECT jsonb_agg(jsonb_build_object('table',c.table_name,'column',c.column_name,
+            'type',c.udt_name,'nullable',c.is_nullable,'default',c.column_default,'identity',c.is_identity,
+            'identityGeneration',c.identity_generation,'generated',c.is_generated,
+            'generationExpression',c.generation_expression) ORDER BY c.table_name,c.ordinal_position)
+            FROM information_schema.columns c WHERE c.table_schema='public'),
+          'indexes',(SELECT jsonb_agg(jsonb_build_object('table',tablename,'name',indexname,'definition',indexdef)
+            ORDER BY tablename,indexname) FROM pg_indexes WHERE schemaname='public'),
+          'triggers',(SELECT jsonb_agg(jsonb_build_object('table',t.tgrelid::regclass::text,'name',t.tgname,
+            'enabled',t.tgenabled,'definition',pg_get_triggerdef(t.oid)) ORDER BY t.tgrelid::regclass::text,t.tgname)
+            FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
+            WHERE c.relnamespace='public'::regnamespace AND NOT t.tgisinternal),
+          'policies',(SELECT jsonb_agg(to_jsonb(p) ORDER BY p.tablename,p.policyname) FROM pg_policies p WHERE p.schemaname='public'),
+          'sequenceDefinitions',(SELECT jsonb_agg(to_jsonb(s)-'last_value' ORDER BY s.sequencename)
+            FROM pg_sequences s WHERE s.schemaname='public'),
+          'functions',(SELECT jsonb_agg(jsonb_build_object('name',p.proname,'args',pg_get_function_identity_arguments(p.oid),
+            'owner',r.rolname,'definer',p.prosecdef,'config',p.proconfig,'definition',pg_get_functiondef(p.oid),'acl',
+              (SELECT jsonb_agg(jsonb_build_object('grantee',coalesce(gr.rolname,'PUBLIC'),'grantor',go.rolname,
+                'privilege',a.privilege_type,'grantable',a.is_grantable)
+                ORDER BY coalesce(gr.rolname,'PUBLIC'),go.rolname,a.privilege_type,a.is_grantable)
+               FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a
+               LEFT JOIN pg_roles gr ON gr.oid=a.grantee LEFT JOIN pg_roles go ON go.oid=a.grantor))
+            ORDER BY p.proname,pg_get_function_identity_arguments(p.oid)) FROM pg_proc p JOIN pg_roles r ON r.oid=p.proowner
+            WHERE p.pronamespace='public'::regnamespace AND p.prokind='f'),
+          'schemaCreate',(SELECT jsonb_agg(jsonb_build_object('role',name,'create',has_schema_privilege(name,'public','CREATE')) ORDER BY name)
+            FROM unnest(ARRAY['anon','authenticated','service_role']) name)
+        );
+        """, database=database))
+        sequence_names = json.loads(self.scalar("SELECT coalesce(jsonb_agg(relname ORDER BY relname),'[]'::jsonb) FROM pg_class "
+                                               "WHERE relnamespace='public'::regnamespace AND relkind='S';", database=database))
+        sequences = []
+        for name in sequence_names:
+            sequences.append(json.loads(self.scalar("SELECT jsonb_build_object('name'," + lit(name)
+                                                    + ",'last',last_value,'called',is_called) FROM public."
+                                                    + quoted(name) + ";", database=database)))
+        return {"data": rows, "metadata": metadata, "sequences": sequences}
 
     def test_01_acl_definer_entrypoint_and_operator_only_binding(self):
         for table in ("facebook_lead_ads_bindings", "facebook_lead_ads_intake_receipts"):
@@ -554,6 +635,161 @@ class LeadAdsIntakePostgres(unittest.TestCase):
         finally:
             self.sql((ROOT / "database/227_drop_legacy_auto_gen_tasks_trigger.sql").read_text(encoding="utf-8"))
         self.assertEqual(json.loads(self.counts()), [0] * 8)
+
+    @unittest.skipUnless(os.environ.get("VPT_INBOX_RESTORE_TEST") == "1", "Set VPT_INBOX_RESTORE_TEST=1 for isolated SQL702 restore")
+    def test_30_full_logical_restore_preserves_domain_receipts_queue_replay_and_restricted_acl(self):
+        for executable in ("pg_dump", "pg_restore"):
+            self.assertTrue(shutil.which(executable), f"{executable} required")
+        self.assertEqual(self.env["PGHOST"], "127.0.0.1")
+        self.assertEqual(self.env["PGDATABASE"], "vpt_lead_ads_ci")
+        self.assertNotEqual(RESTORE_DATABASE, self.env["PGDATABASE"])
+        self.assertEqual(self.scalar(f"SELECT count(*) FROM pg_database WHERE datname='{RESTORE_DATABASE}';"), "0",
+                         "Refuse a preexisting restore target; never clean/overwrite another database")
+
+        # Commit CRM for A without finishing inbox: actual crash/response-loss seam.
+        unfinished = self.prepare()
+        original = self.intake(unfinished)
+        # Separate completed receipt, then pending Messenger and Lead Ads entries.
+        completed = self.prepare(2, page=PAGE_B, token=102)
+        completed_result = self.intake(completed, token=102, business=data(2), provider=proof(2, page=PAGE_B))
+        self.sql(f"UPDATE crm_leads SET expected_construction_time='under_1m' WHERE id='{completed_result['leadId']}';")
+        self.assertEqual(self.scalar(f"SELECT lead_temperature FROM crm_leads WHERE id='{completed_result['leadId']}';"), "hot")
+        self.service(f"SELECT facebook_page_inbox_finish_v1('{completed['id']}','{uid(102)}',true,NULL);")
+        self.enqueue(event(3, kind="messaging"), event(4, page=PAGE_B))
+        before = self.restore_inventory()
+        self.assertEqual(json.loads(self.counts()), [2, 2, 2, 2, 2, 2, 2, 0])
+        self.assertGreater(len(before["data"]), 15, "Must dump full fixture, not inbox-only")
+        self.assertTrue(any(s["name"] == "facebook_page_inbox_queue_order_seq" and s["called"] for s in before["sequences"]))
+        source_database_oid = self.scalar("SELECT oid FROM pg_database WHERE datname=current_database();")
+        created = False
+        archive_sha = None
+        archive_bytes = 0
+        try:
+            self.sql(f"CREATE DATABASE {RESTORE_DATABASE} TEMPLATE template0;")
+            created = True
+            self.assertEqual(self.scalar("SELECT count(*) FROM pg_tables WHERE schemaname='public';", database=RESTORE_DATABASE), "0")
+            self.assertNotEqual(source_database_oid, self.scalar("SELECT oid FROM pg_database WHERE datname=current_database();", database=RESTORE_DATABASE))
+            with tempfile.TemporaryDirectory(prefix="vpt-lead-ads-restore-") as directory:
+                archive = Path(directory) / "lead-ads-full.dump"
+                dumped = subprocess.run(["pg_dump", "--format=custom", "--file", str(archive)],
+                                        env=self.env, capture_output=True, text=True, timeout=60)
+                self.assertEqual(dumped.returncode, 0, dumped.stderr)
+                archive_content = archive.read_bytes()
+                archive_bytes = len(archive_content)
+                self.assertGreater(archive_bytes, 10000)
+                archive_sha = hashlib.sha256(archive_content).hexdigest()
+                restored = subprocess.run(["pg_restore", "--single-transaction", "--exit-on-error", "--dbname", RESTORE_DATABASE, str(archive)],
+                                          env={**self.env, "PGDATABASE": RESTORE_DATABASE}, capture_output=True, text=True, timeout=60)
+                self.assertEqual(restored.returncode, 0, restored.stderr)
+            # Owner/ACL/RLS, actual trigger bodies, functions, FKs/indexes and all
+            # table data must match before touching the restored queue.
+            self.assertEqual(before, self.restore_inventory(database=RESTORE_DATABASE))
+            self.assertEqual(before, self.restore_inventory(), "Source cannot change during the rehearsal")
+            # Prove the comparison observes effective grant drift, not just rows.
+            self.sql("GRANT SELECT ON facebook_lead_ads_intake_receipts TO anon;", database=RESTORE_DATABASE)
+            self.assertNotEqual(before["metadata"], self.restore_inventory(database=RESTORE_DATABASE)["metadata"])
+            self.sql("REVOKE SELECT ON facebook_lead_ads_intake_receipts FROM anon;", database=RESTORE_DATABASE)
+            self.assertEqual(before, self.restore_inventory(database=RESTORE_DATABASE))
+            denied_tables = ["facebook_page_inbox", "facebook_lead_ads_bindings", "facebook_lead_ads_intake_receipts",
+                             "customers", "crm_leads", "facebook_contacts", "facebook_lead_ads", "lead_attribution", "notifications"]
+            allowed = self.scalar("SELECT bool_and(NOT has_table_privilege(r,t,p)) FROM "
+                                  "unnest(ARRAY['anon','authenticated']) r CROSS JOIN unnest(ARRAY["
+                                  + ",".join(lit(t) for t in denied_tables) + "]) t CROSS JOIN "
+                                  "unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE','TRUNCATE']) p;", database=RESTORE_DATABASE)
+            self.assertEqual(allowed, "t")
+            self.assertEqual(self.scalar("SELECT bool_and(NOT has_table_privilege('service_role',t,p)) FROM "
+                "unnest(ARRAY['facebook_lead_ads_bindings','facebook_lead_ads_intake_receipts']) t CROSS JOIN "
+                "unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE']) p;", database=RESTORE_DATABASE), "t")
+            self.assertEqual(self.scalar("SELECT has_table_privilege('service_role','facebook_page_inbox','DELETE') OR "
+                "has_table_privilege('service_role','facebook_page_inbox','TRUNCATE');", database=RESTORE_DATABASE), "f")
+            signature = "facebook_lead_ads_intake_v1(uuid,uuid,integer,jsonb,jsonb)"
+            self.assertEqual(self.scalar(f"SELECT has_function_privilege('service_role','{signature}','EXECUTE') AND "
+                f"NOT has_function_privilege('anon','{signature}','EXECUTE') AND "
+                f"NOT has_function_privilege('authenticated','{signature}','EXECUTE');", database=RESTORE_DATABASE), "t")
+            self.error("SET ROLE anon; SELECT * FROM facebook_lead_ads_intake_receipts;", "42501", service=False, database=RESTORE_DATABASE)
+            self.error("UPDATE facebook_lead_ads_bindings SET active=true;", "42501", database=RESTORE_DATABASE)
+            self.error("UPDATE facebook_lead_ads_intake_receipts SET lead_data='{}';", "42501", service=False, database=RESTORE_DATABASE)
+            self.assertEqual(self.service(f"SELECT facebook_page_inbox_finish_v1('{unfinished['id']}','{uid(199)}',true,NULL);",
+                                          database=RESTORE_DATABASE), "f")
+
+            # Restore does not grant a new lease. Simulate elapsed time only on
+            # target; recover through actual claim and cached receipt RPC.
+            self.sql(f"UPDATE facebook_page_inbox SET locked_until=clock_timestamp()-interval '1 second' WHERE id='{unfinished['id']}';",
+                     database=RESTORE_DATABASE)
+            recovered = json.loads(self.service(f"SELECT row_to_json(x) FROM facebook_page_inbox_claim_lead_ads_v1('{uid(201)}',ARRAY['{PAGE}']) x;",
+                                                 database=RESTORE_DATABASE))
+            self.assertEqual(recovered["id"], unfinished["id"])
+            self.error(self.command(unfinished), "40001", database=RESTORE_DATABASE)
+            cached = json.loads(self.service("SELECT json_build_object('lead',lead_data,'provider',provider_data) "
+                                            f"FROM facebook_lead_ads_intake_receipts WHERE id='{original['receiptId']}';", database=RESTORE_DATABASE))
+            replay = json.loads(self.service(self.command(recovered, token=201, business=cached["lead"], provider=cached["provider"]),
+                                            database=RESTORE_DATABASE))
+            self.assertEqual(replay, {**original, "status": "existing"})
+            self.assertEqual(json.loads(self.counts(database=RESTORE_DATABASE)), [2, 2, 2, 2, 2, 2, 2, 0])
+            self.assertEqual(self.service(f"SELECT facebook_page_inbox_finish_v1('{recovered['id']}','{uid(201)}',true,NULL);",
+                                          database=RESTORE_DATABASE), "t")
+            self.assertEqual(self.service(f"SELECT facebook_page_inbox_enqueue_v1({js([event()])});", database=RESTORE_DATABASE), "1")
+            self.assertEqual(self.scalar(f"SELECT status FROM facebook_page_inbox WHERE id='{unfinished['id']}';", database=RESTORE_DATABASE), "done")
+            self.assertEqual(self.scalar("SELECT count(*) FROM facebook_page_inbox WHERE payload->>'kind'='messaging' AND status='pending';",
+                                         database=RESTORE_DATABASE), "1")
+
+            # A new envelope for the same provider identity also returns the
+            # preserved receipt; identity sequence must continue after restore.
+            self.service(f"SELECT facebook_page_inbox_enqueue_v1({js([event(5, leadgen=proof()['id'])])});", database=RESTORE_DATABASE)
+            self.assertEqual(self.scalar("SELECT max(queue_order)>4 FROM facebook_page_inbox;", database=RESTORE_DATABASE), "t")
+            duplicate = json.loads(self.service(f"SELECT row_to_json(x) FROM facebook_page_inbox_claim_lead_ads_v1('{uid(202)}',ARRAY['{PAGE}']) x;",
+                                                database=RESTORE_DATABASE))
+            duplicate_result = json.loads(self.service(self.command(duplicate, token=202, business=cached["lead"], provider=cached["provider"]),
+                                                      database=RESTORE_DATABASE))
+            self.assertEqual(duplicate_result, {**original, "status": "existing"})
+            self.assertEqual(self.service(f"SELECT facebook_page_inbox_finish_v1('{duplicate['id']}','{uid(202)}',true,NULL);",
+                                          database=RESTORE_DATABASE), "t")
+            # This time perform a new full intake, proving restored functions,
+            # real stage-history triggers and FK permissions still execute.
+            fresh = json.loads(self.service(f"SELECT row_to_json(x) FROM facebook_page_inbox_claim_lead_ads_v1('{uid(203)}',ARRAY['{PAGE_B}']) x;",
+                                            database=RESTORE_DATABASE))
+            fresh_result = json.loads(self.service(self.command(fresh, token=203, business=data(4), provider=proof(4, page=PAGE_B)),
+                                                  database=RESTORE_DATABASE))
+            self.assertEqual(fresh_result["status"], "created")
+            self.assertEqual(json.loads(self.counts(database=RESTORE_DATABASE)), [3, 3, 3, 3, 3, 3, 3, 0])
+            self.assertEqual(self.scalar("SELECT count(*) FROM crm_lead_stage_history;", database=RESTORE_DATABASE), "3")
+            self.assertEqual(self.scalar(f"SELECT lead_temperature FROM crm_leads WHERE id='{completed_result['leadId']}';",
+                                         database=RESTORE_DATABASE), "hot")
+            self.assertEqual(self.scalar(f"SELECT project_id IS NULL AND lead_temperature IS NULL AND info_complete IS FALSE "
+                                         f"FROM crm_leads WHERE id='{fresh_result['leadId']}';", database=RESTORE_DATABASE), "t")
+            self.assertEqual(self.service(f"SELECT facebook_page_inbox_finish_v1('{fresh['id']}','{uid(203)}',true,NULL);",
+                                          database=RESTORE_DATABASE), "t")
+            self.assertEqual(self.scalar("SELECT count(*) FROM facebook_page_inbox WHERE status='done';", database=RESTORE_DATABASE), "4")
+            self.assertEqual(before, self.restore_inventory(), "Restored processing must not write the source DB")
+            print(json.dumps({"rehearsal": "SQL702_FULL_FIXTURE", "archiveSha256": archive_sha,
+                              "archiveBytes": archive_bytes, "tables": len(before["data"]),
+                              "source": "vpt_lead_ads_ci", "target": RESTORE_DATABASE,
+                              "sameCluster": True, "productionRestore": False}, sort_keys=True), flush=True)
+        finally:
+            if created:
+                # Literal allowlisted target created by this method only. No path,
+                # connection string or preexisting DB is accepted as a target.
+                self.sql(f"DROP DATABASE {RESTORE_DATABASE} WITH (FORCE);")
+
+    def test_31_actual_temperature_and_project_triggers_run_without_intake_side_effects(self):
+        trigger_names = ["trg_crm_lead_auto_temperature_ins", "trg_crm_lead_auto_temperature_upd", "trg_crm_leads_has_crm_deal"]
+        self.assertEqual(self.scalar("SELECT count(*) FROM pg_trigger WHERE tgrelid='crm_leads'::regclass "
+                                     "AND tgenabled='O' AND tgname=ANY(ARRAY["
+                                     + ",".join(lit(name) for name in trigger_names) + "]);"), "3")
+        self.sql(f"INSERT INTO projects(id,company_id) VALUES('{uid(71)}','{uid(11)}');")
+        project_before = self.scalar(f"SELECT to_jsonb(p) FROM projects p WHERE id='{uid(71)}';")
+        result = self.intake(self.prepare())
+        self.assertEqual(self.scalar(f"SELECT project_id IS NULL AND lead_temperature IS NULL AND info_complete IS FALSE "
+                                     f"FROM crm_leads WHERE id='{result['leadId']}';"), "t")
+        self.assertEqual(project_before, self.scalar(f"SELECT to_jsonb(p) FROM projects p WHERE id='{uid(71)}';"))
+        self.assertEqual(self.scalar("SELECT count(*) FROM crm_deal_projects;"), "0")
+        self.assertEqual(self.scalar("SELECT count(*) FROM crm_tasks;"), "0")
+        # Exercise the actual UPDATE trigger too; no copied substitute function.
+        self.sql(f"UPDATE crm_leads SET expected_construction_time='under_1m' WHERE id='{result['leadId']}';")
+        self.assertEqual(self.scalar(f"SELECT lead_temperature FROM crm_leads WHERE id='{result['leadId']}';"), "hot")
+        self.sql(f"UPDATE crm_leads SET expected_construction_time='1_2m' WHERE id='{result['leadId']}';")
+        self.assertEqual(self.scalar(f"SELECT lead_temperature FROM crm_leads WHERE id='{result['leadId']}';"), "warm")
+        self.assertEqual(project_before, self.scalar(f"SELECT to_jsonb(p) FROM projects p WHERE id='{uid(71)}';"))
 
 
 if __name__ == "__main__":

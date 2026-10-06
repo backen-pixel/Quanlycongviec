@@ -94,6 +94,7 @@ jobs:
         env:
           INBOX_CI_CONTAINER_ID: ${{ job.services.postgres.id }}
           VPT_ISOLATED_PG_TEST: '1'
+          VPT_INBOX_RESTORE_TEST: '1'
           PGHOST: 127.0.0.1
           PGPORT: '5432'
           PGDATABASE: vpt_lead_ads_ci
