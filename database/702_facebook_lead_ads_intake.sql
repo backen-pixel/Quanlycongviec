@@ -131,7 +131,7 @@ DECLARE
   region public.company_regions; receipt public.facebook_lead_ads_intake_receipts;
   contact public.facebook_contacts; lead public.crm_leads; customer public.customers;
   ad public.facebook_lead_ads; attribution public.lead_attribution;
-  event_value jsonb; form text; leadgen text; phone text; full_name text; email text;
+  event_value jsonb; form text; leadgen text; v_phone text; full_name text; email text;
   new_lead uuid:=gen_random_uuid(); new_customer uuid:=gen_random_uuid(); new_contact uuid:=gen_random_uuid();
   new_attr uuid:=gen_random_uuid(); new_ad uuid:=gen_random_uuid(); new_notification uuid:=gen_random_uuid();
   new_receipt uuid:=gen_random_uuid(); stamp timestamptz; acquired_at timestamptz; tenant_active boolean;
@@ -210,7 +210,7 @@ BEGIN
       IF acquired_at IS NULL OR NOT isfinite(acquired_at) THEN RAISE EXCEPTION 'invalid time'; END IF;
     EXCEPTION WHEN others THEN RAISE EXCEPTION 'FB_INBOX_PROVIDER_TIME_INVALID' USING ERRCODE='22023'; END;
   END IF;
-  phone:=p_lead_data->>'phone'; full_name:=p_lead_data->>'full_name'; email:=nullif(p_lead_data->>'email','');
+  v_phone:=p_lead_data->>'phone'; full_name:=p_lead_data->>'full_name'; email:=nullif(p_lead_data->>'email','');
   -- Identity lock is global because the legacy leadgen_id constraint is global too.
   PERFORM pg_advisory_xact_lock(hashtextextended('facebook.lead_ads.intake:'||leadgen,0));
   SELECT * INTO receipt FROM public.facebook_lead_ads_intake_receipts WHERE leadgen_id=leadgen;
@@ -270,7 +270,7 @@ BEGIN
   -- Row locks cannot protect the absence of a newly blocked phone. Brief SHARE
   -- lock makes block/unblock serialize with the whole intake (lock timeout bound).
   LOCK TABLE public.crm_auto_lead_blocked_phones IN SHARE MODE;
-  IF EXISTS(SELECT 1 FROM public.crm_auto_lead_blocked_phones WHERE phone_last9=right(phone,9)) THEN
+  IF EXISTS(SELECT 1 FROM public.crm_auto_lead_blocked_phones WHERE phone_last9=right(v_phone,9)) THEN
     RAISE EXCEPTION 'FB_INBOX_LEAD_PHONE_BLOCKED' USING ERRCODE='42501';
   END IF;
   IF receipt.id IS NOT NULL THEN
@@ -315,21 +315,21 @@ BEGIN
     RETURN jsonb_build_object('status','existing','leadId',receipt.lead_id,'customerId',receipt.customer_id,
       'contactId',receipt.contact_id,'receiptId',receipt.id,'recipientId',receipt.recipient_id);
   END IF;
-  PERFORM pg_advisory_xact_lock(hashtextextended('facebook.lead_ads.phone:'||company.id::text||':'||phone,0));
+  PERFORM pg_advisory_xact_lock(hashtextextended('facebook.lead_ads.phone:'||company.id::text||':'||v_phone,0));
   IF EXISTS(SELECT 1 FROM public.facebook_lead_ads WHERE leadgen_id=leadgen)
       OR EXISTS(SELECT 1 FROM public.facebook_contacts WHERE page_id=item.page_id AND psid='leadad_'||leadgen) THEN
     RAISE EXCEPTION 'FB_INBOX_LEAD_RECEIPT_REVIEW_REQUIRED' USING ERRCODE='40001';
   END IF;
   IF EXISTS(SELECT 1 FROM public.customers c WHERE c.company_id=company.id
-      AND regexp_replace(regexp_replace(c.phone,'[^0-9]','','g'),'^(0084|84)','0')=phone) THEN
+      AND regexp_replace(regexp_replace(c.phone,'[^0-9]','','g'),'^(0084|84)','0')=v_phone) THEN
     RAISE EXCEPTION 'FB_INBOX_LEAD_PHONE_REVIEW_REQUIRED' USING ERRCODE='40001';
   END IF;
   IF item.locked_until<=clock_timestamp() THEN RAISE EXCEPTION 'FB_INBOX_LEASE_LOST' USING ERRCODE='40001'; END IF;
   stamp:=clock_timestamp();
   INSERT INTO public.customers(id,full_name,phone,email,address,source,company_id,assigned_to)
-    VALUES(new_customer,full_name,phone,email,p_lead_data->>'address','Facebook',company.id,recipient.id);
+    VALUES(new_customer,full_name,v_phone,email,p_lead_data->>'address','Facebook',company.id,recipient.id);
   INSERT INTO public.facebook_contacts(id,page_id,psid,fb_name,phone,email,customer_id)
-    VALUES(new_contact,item.page_id,'leadad_'||leadgen,full_name,phone,email,new_customer);
+    VALUES(new_contact,item.page_id,'leadad_'||leadgen,full_name,v_phone,email,new_customer);
   -- Separate prefix avoids contaminating the legacy LEAD-% numeric MAX+1 parser.
   -- UUID avoids code races without resetting or sharing the old counter.
   INSERT INTO public.crm_leads(id,code,title,type,customer_id,stage_id,source_id,pipeline_id,company_id,
@@ -338,7 +338,7 @@ BEGIN
       binding.region_id,recipient.id,recipient.id,NULL,p_lead_data->>'description',new_contact);
   UPDATE public.facebook_contacts SET lead_id=new_lead,updated_at=stamp WHERE id=new_contact;
   INSERT INTO public.facebook_lead_ads(id,page_id,leadgen_id,form_id,field_data,full_name,phone,email,raw_data,customer_id,lead_id,processed)
-    VALUES(new_ad,item.page_id,leadgen,form,p_lead_data->'field_data',full_name,phone,email,p_provider_data,new_customer,new_lead,true);
+    VALUES(new_ad,item.page_id,leadgen,form,p_lead_data->'field_data',full_name,v_phone,email,p_provider_data,new_customer,new_lead,true);
   INSERT INTO public.lead_attribution(id,lead_id,contact_id,customer_id,company_id,kenh,platform,
       fb_page_id,fb_form_id,fb_leadgen_id,fb_ad_id,fb_adset_id,fb_campaign_id,cham_dau_luc,raw)
     VALUES(new_attr,new_lead,new_contact,new_customer,company.id,'lead_ads',coalesce(p_provider_data->>'platform','facebook'),
