@@ -1890,7 +1890,7 @@ export default function PipelineSettingsPage() {
               <div className="mx-4 mb-3 rounded-xl border border-violet-200 bg-violet-50/50 p-3 space-y-2">
                 <p className="text-[11px] font-semibold text-violet-950">Liên kết loại CRM ↔ SX</p>
                 <p className="text-[10px] text-violet-900/75 leading-snug">
-                  1 loại CRM có thể gắn nhiều công ty SX và nhiều phân loại xưởng. Dòng <span className="text-red-600 font-bold">★</span> = ưu tiên gợi ý khi chọn xưởng trên deal.
+                  1 loại CRM có thể gắn nhiều công ty SX và nhiều phân loại xưởng. Có thể đánh dấu <span className="text-red-600 font-bold">★</span> nhiều dòng — mỗi dòng là một gợi ý khi chọn xưởng trên deal.
                 </p>
                 <div className="overflow-x-auto rounded-lg border border-violet-100 bg-white">
                   <table className="w-full text-left text-[11px]">
@@ -2090,16 +2090,17 @@ export default function PipelineSettingsPage() {
                     </label>
                     <label className="col-span-2 flex items-center gap-1.5 text-[10px] text-gray-600 h-8">
                       <input
-                        type="radio"
-                        name="leadTypeNewPrimary"
+                        type="checkbox"
                         checked={!!link.is_primary}
-                        onChange={() => setLeadTypeNew((prev) => ({
-                          ...prev,
-                          production_links: (prev.production_links || []).map((l, i) => ({
-                            ...l,
-                            is_primary: i === idx,
-                          })),
-                        }))}
+                        onChange={(e) => {
+                          const on = e.target.checked;
+                          setLeadTypeNew((prev) => ({
+                            ...prev,
+                            production_links: (prev.production_links || []).map((l, i) => (
+                              i === idx ? { ...l, is_primary: on } : l
+                            )),
+                          }));
+                        }}
                       />
                       <span className="text-red-600 font-bold">★</span> ưu tiên
                     </label>
@@ -2228,11 +2229,13 @@ export default function PipelineSettingsPage() {
                               </select>
                               <label className="col-span-2 flex items-center gap-0.5 text-[9px] text-gray-600">
                                 <input
-                                  type="radio"
-                                  name={`primary-${t.id}`}
+                                  type="checkbox"
                                   checked={!!link.is_primary}
-                                  onChange={() => {
-                                    const next = links.map((l, i) => ({ ...l, is_primary: i === idx }));
+                                  onChange={(e) => {
+                                    const on = e.target.checked;
+                                    const next = links.map((l, i) => (
+                                      i === idx ? { ...l, is_primary: on } : l
+                                    ));
                                     updateLeadTypeLinks(t.id, next);
                                   }}
                                 />

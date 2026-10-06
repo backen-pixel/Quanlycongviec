@@ -1,125 +1,134 @@
-# Trang Phát sinh ở Sản xuất — đặc tả
+# Trang Phát sinh ở Sản xuất — đặc tả (bản 2)
 
-Hai tab, mỗi tab một Kanban: **Phát sinh không chi phí** và **Phát sinh có chi phí**.
-
----
-
-## 0. Kết luận quan trọng nhất: gần như không phải dựng mới
-
-Khảo sát ngày 05/10/2026 cho thấy **toàn bộ cơ chế đã có sẵn** trong hệ thống.
-Không cần thêm bảng mới, không cần thêm cột mới vào database.
-
-| Thứ cần có | Đã có sẵn ở đâu |
-|---|---|
-| Tách bảng Kanban thành nhiều tab | `production_pipeline_stages.board_tab` — đang chạy thật với `sx` (11 cột) và `cong_no` (6 cột) của HCB |
-| Tab tự thêm ngoài hai tab cứng | `normalizeBoardTabValue` trả nguyên giá trị lạ (`t.slice(0, 80)`), `sxTachCongNo.js` ghi rõ "cột nào có board_tab thì vào đúng tab đó" |
-| Cột khai báo riêng theo công ty | `production_pipeline_stages.company_id` + trang Cài đặt pipeline đã sửa được `board_tab` |
-| Đánh dấu cột tiếp nhận phát sinh | `production_pipeline_stages.is_phat_sinh` (migration 648, chạy 05/10) |
-| Tạo đơn phát sinh | `POST /production/projects/:id/phat-sinh` + helper `createPhatSinhProject` |
-| Nối về đơn gốc | `projects.source_project_id` (migration 648) |
-| **Người chịu trách nhiệm theo công ty** | `production_pipeline_stage_default_staff` (có `is_primary`) — gắn vào cột tiếp nhận của từng tab |
-| Kanban, kéo thả | `KanbanView` dùng chung cho mọi tab |
-
-Hiện trạng: **0 đơn phát sinh, 0 cột nào được đánh dấu `is_phat_sinh`** — vì 648 mãi
-hôm qua mới chạy. Nên đây là lần đầu tiên tính năng được bật, không phải sửa cái hỏng.
+Thay thế hoàn toàn bản 1. Bản 1 sai ở điểm trung tâm, xem mục 0.
 
 ---
 
-## 1. Hai tab là hai luồng việc riêng
+## 0. Đính chính bản 1
 
-Theo anh mô tả: hai tab là hai luồng việc độc lập, HCB giao cho hai người khác nhau
-(Công Trương và Sang), **và phải đổi được người theo từng công ty**.
+Bản 1 cho rằng một đơn phát sinh là một dòng `projects` (sinh ra từ
+`POST /production/projects/:id/phat-sinh`, nối về đơn gốc bằng `source_project_id`),
+và tab được quyết định bởi cột Kanban nó đang đứng.
 
-Thiết kế theo đúng cách `sx` / `cong_no` đang chạy:
+**Sai.** Khảo sát lại ngày 06/10/2026 theo đúng chỗ anh chỉ:
 
-- `board_tab = 'ps_khong_chi_phi'` → tab **Phát sinh không chi phí**
-- `board_tab = 'ps_co_chi_phi'` → tab **Phát sinh có chi phí**
+- Phát sinh là **một dòng `crm_assignments`** — tức là một việc trong **Không gian
+  chung**, không phải một đơn sản xuất. Cột `crm_assignments.phat_sinh_kind` giữ
+  slug của loại. **Đã có 10 dòng thật**, mang 3 loại: `glass_painted`,
+  `glass_unpainted`, `tempered_glass`.
+- Loại phát sinh khai ở bảng **`shared_workspace_phat_sinh_kinds`**, đúng trang
+  `/management/shared-workspace-settings` anh nói. Trang đó đã gọi sẵn
+  `/crm/phat-sinh-kinds` để xem, thêm, sửa, xoá.
+- `crm_assignments` **đã là Kanban sẵn**: có `column_id` trỏ sang
+  `crm_assignment_columns`, có `position`, `status`, `assignee_id`, `deadline`,
+  `company_id`.
 
-**Một đơn thuộc tab nào là do CỘT nó đang đứng quyết định**, y hệt cơ chế hiện tại.
-Không thêm cột `loai_phat_sinh` vào bảng `projects`: thêm vào là có hai nguồn sự thật,
-rồi sẽ tới ngày chúng lệch nhau.
+Nhánh `projects` + `is_phat_sinh` là một cơ chế **khác**, của pipeline Sản xuất, và
+chưa ai dùng (0 đơn, 0 cột đánh dấu). Đừng trộn hai thứ vào nhau.
 
-**Người chịu trách nhiệm** gắn vào **cột tiếp nhận** của mỗi tab qua
-`production_pipeline_stage_default_staff` với `is_primary = true`. Mỗi công ty khai
-cột riêng nên tự nhiên mỗi công ty có người riêng — không gắn cứng tên ai trong code.
+---
+
+## 1. Còn thiếu đúng hai thứ
+
+Bảng `shared_workspace_phat_sinh_kinds` hiện có:
+`id, company_id, name, slug, sla_mode, sla_days, cutoff_time, is_active, sort_order`.
+
+Thiếu đúng hai cột anh yêu cầu:
+
+| Cột thêm | Kiểu | Ý nghĩa |
+|---|---|---|
+| `co_phi` | `boolean not null default false` | Phát sinh **có phí** hay **không phí**. Quyết định việc nằm ở tab nào. |
+| `nguoi_phu_trach_id` | `uuid references users(id) on delete set null` | Người chịu trách nhiệm loại này **ở công ty đó**. |
+
+Không cần thêm gì vào `crm_assignments`: nó đã có `phat_sinh_kind`, và `co_phi`
+tra ngược từ loại. Một nguồn sự thật, không có chỗ cho hai số liệu lệch nhau.
+
+### Ghi chú về phạm vi công ty
+
+Ba loại đang có đều mang `company_id = NULL`, tức là dùng chung. Anh muốn "sinh
+hoạt theo công ty" nên từ nay mỗi công ty khai loại riêng. Ba dòng cũ **giữ nguyên
+làm mẫu dùng chung** — đừng xoá, có 10 việc đang trỏ vào chúng qua slug.
+
+`phat_sinh_kind` là **chuỗi slug**, không phải khoá ngoại. Khi tra loại phải khớp
+theo `slug` **và** `company_id` của việc, có dự phòng về dòng `company_id IS NULL`
+khi công ty chưa khai riêng. Chỉ khớp slug là hai công ty cùng slug sẽ đè nhau.
 
 ---
 
 ## 2. Việc phải làm
 
-### 2.1 Khai cột cho hai tab (dữ liệu, không phải DDL)
+### 2.1 Migration (thêm cột, không đụng dữ liệu)
 
-Chạy tay trên Supabase cho HCB (`18c2563f-3495-498d-8199-23200c9f420e`), hoặc khai
-bằng tay trong trang Cài đặt pipeline. Mỗi tab tối thiểu ba cột, cột đầu đánh dấu
-`is_phat_sinh = true` để `POST /phat-sinh` biết thả đơn vào đâu.
+```sql
+ALTER TABLE public.shared_workspace_phat_sinh_kinds
+  ADD COLUMN IF NOT EXISTS co_phi BOOLEAN NOT NULL DEFAULT false;
 
-Gợi ý: Tiếp nhận → Đang xử lý → Hoàn thành.
+ALTER TABLE public.shared_workspace_phat_sinh_kinds
+  ADD COLUMN IF NOT EXISTS nguoi_phu_trach_id UUID REFERENCES public.users(id) ON DELETE SET NULL;
+```
 
-**Lưu ý quan trọng:** `is_phat_sinh` hiện dùng để tìm cột đích. Có **hai** cột cùng
-cờ đó thì `POST /phat-sinh` phải biết chọn cột nào — xem 2.2.
+Mặc định `false` nghĩa là mọi loại đang có vào tab **không phí** cho tới khi anh đánh
+dấu lại. Đó là lựa chọn an toàn: không tự gán phí cho thứ chưa ai xác nhận là có phí.
 
-### 2.2 Backend: cho `/phat-sinh` nhận loại
+### 2.2 Trang cài đặt `/management/shared-workspace-settings`
 
-`POST /production/projects/:id/phat-sinh` đang lọc
-`stages.filter(s => s.is_phat_sinh === true)` rồi lấy cột đầu tiên. Khi có hai tab
-thì phải nhận thêm tham số:
+File `frontend/src/pages/SharedWorkspaceErrorTypesPage.jsx` (636 dòng) đã có sẵn khối
+quản lý loại phát sinh. Thêm vào biểu mẫu của khối đó:
 
-- Thân yêu cầu thêm `board_tab` (`'ps_khong_chi_phi'` | `'ps_co_chi_phi'`).
-- Chọn cột có `is_phat_sinh = true` **và** `board_tab` khớp, trong đúng công ty.
-- Không truyền `board_tab`, hoặc không tìm thấy cột khớp → **trả lỗi 400 nói rõ**,
-  đừng đoán lấy cột đầu tiên. Đoán sai thì đơn rơi nhầm luồng và người nhầm sẽ ôm việc.
-- Gán người phụ trách từ `production_pipeline_stage_default_staff` của cột đó
-  (`is_primary = true`).
+- Ô chọn **Có phí / Không phí**.
+- Ô chọn **Người chịu trách nhiệm** (danh sách người dùng trang này đã nạp sẵn qua
+  `api.get('/users')`).
 
-### 2.3 Frontend: trang mới
+Gửi kèm trong payload của `POST` và `PUT /crm/phat-sinh-kinds`. Backend nhận thêm
+hai trường, có lọc giá trị, không nhận trường lạ.
 
-Route `/sx/phat-sinh`, thêm vào khối `<Route path="/sx" element={<ProductionLayout />}>`
-trong `App.jsx` và vào sidebar của mô-đun Sản xuất.
+### 2.3 Khi tạo phát sinh thì tự gán người
 
-- Hai tab ở đầu trang, mỗi tab render `KanbanView` với bộ cột lọc theo `board_tab`
-  tương ứng — **dùng lại đúng component và cách lọc của `sxTachCongNo.js`**, đừng
-  viết Kanban thứ hai.
-- Kéo thẻ đổi cột: dùng lại đúng đường đã có (`PATCH /production/projects/:id/stage`).
-- Thẻ hiển thị: mã đơn, tên, **đơn gốc** (`source_project_id` → mã đơn gốc, bấm vào
-  mở được), người phụ trách, hạn.
-- Nút **Tạo phát sinh** ngay trên trang: chọn đơn gốc → chọn tab → gọi `/phat-sinh`
-  với `board_tab` của tab đang mở.
+Tạo một việc phát sinh mà chưa chọn người thực hiện → lấy `nguoi_phu_trach_id` của
+loại đó **trong công ty đang mở**. Đúng ý anh: mở công ty nào thì người được khai
+cho công ty đó làm.
 
-### 2.4 Tạo từ Không gian chung
+Người tạo vẫn đổi người khác được — tự gán là gợi ý, không phải khoá.
 
-Anh yêu cầu tạo được cả từ Không gian chung. Dùng lại đúng hộp thoại của 2.3, mở từ
-đó, truyền sẵn đơn gốc đang xem. Không viết luồng tạo thứ hai.
+### 2.4 Trang mới `/sx/phat-sinh`
+
+- Hai tab: **Không phí** và **Có phí**, lọc theo `co_phi` của loại.
+- Mỗi tab là Kanban dựng từ `crm_assignment_columns` + `crm_assignments.column_id`,
+  **dùng lại component Kanban của Không gian chung**, đừng viết cái thứ hai.
+- Chỉ lấy việc có `phat_sinh_kind IS NOT NULL`, cắt theo công ty đang chọn.
+- Kéo thẻ đổi cột: dùng lại đúng đường API Không gian chung đang dùng.
+- Thẻ hiện: tiêu đề, loại phát sinh, người thực hiện, hạn, mức ưu tiên.
+- Nút **Tạo phát sinh** mở đúng hộp thoại của Không gian chung, đặt sẵn loại theo
+  tab đang mở.
 
 ---
 
 ## 3. Thứ tự làm
 
-1. Khai cột cho hai tab của HCB (dữ liệu). Làm trước để các bước sau có cái mà thử.
-2. Sửa `POST /phat-sinh` nhận `board_tab` + gán người phụ trách. Có test thuần cho
-   phần chọn cột: đúng loại, sai loại, không có cột khớp.
-3. Trang `/sx/phat-sinh` với hai tab + Kanban + kéo thả.
-4. Nút tạo trên trang.
-5. Mở hộp thoại tạo từ Không gian chung.
+1. Migration 2.1.
+2. Hai ô trong trang cài đặt (2.2) + backend nhận hai trường.
+3. Anh vào khai: mỗi công ty, mỗi loại — có phí hay không, ai chịu trách nhiệm.
+4. Tự gán người khi tạo (2.3).
+5. Trang `/sx/phat-sinh` (2.4).
 
-Bước 1–2 xong là đã dùng được bằng Kanban sẵn có; bước 3 chỉ là gom lại cho dễ nhìn.
+Bước 1–3 xong là dữ liệu đã đúng và dùng được ngay trong Không gian chung. Bước 5
+chỉ là gom lại cho Sản xuất dễ nhìn.
 
 ---
 
 ## 4. Những chỗ dễ sai
 
-- **Đừng thêm cột `loai_phat_sinh` vào `projects`.** Cột nó đứng đã là câu trả lời.
-- **Đừng gắn cứng tên Sang / Công Trương vào code.** Anh đã nói rõ phải đổi được
-  theo công ty. Để trong `production_pipeline_stage_default_staff`.
-- **Đừng để `/phat-sinh` tự đoán cột** khi thiếu `board_tab`.
-- **Đừng viết Kanban mới.** Dùng `KanbanView` đang chạy.
-- Hai file sẽ sửa có kiểu xuống dòng khác nhau: `production.js` CRLF, `App.jsx` cần
-  kiểm trước khi sửa. Trong git cả repo là LF; máy Windows bật `core.autocrlf=true`.
+- **Đừng trộn với `projects` + `is_phat_sinh`.** Hai cơ chế khác nhau.
+- **Đừng tra loại chỉ bằng slug.** Phải kèm `company_id`, có dự phòng về `NULL`.
+- **Đừng xoá ba loại cũ** — 10 việc đang trỏ vào.
+- **Đừng thêm `co_phi` vào `crm_assignments`.** Tra từ loại ra.
+- **Đừng gắn cứng tên người vào code.** Để trong `nguoi_phu_trach_id`.
 
 ---
 
-## 5. Chưa rõ, cần hỏi lại khi làm tới
+## 5. Chưa rõ
 
-Anh chọn "hai luồng việc riêng" nhưng chưa mô tả mỗi luồng làm gì khác nhau. Hiện
-đặc tả này coi hai luồng **giống hệt nhau về thao tác**, chỉ khác bộ cột và người
-phụ trách. Nếu luồng "có chi phí" cần thêm bước nhập tiền, duyệt chi, hay nối sang
-sổ chi phí thì nói trước khi làm bước 3 — thêm sau sẽ phải sửa lại thẻ và hộp thoại.
+Một việc phát sinh đang gắn `company_id` (công ty chủ) và `executor_company_id`
+(công ty thực hiện). Khi anh nói "mở công ty đó thì người được setup đó thực hiện",
+em hiểu là theo **công ty thực hiện**. Cần anh xác nhận trước khi làm bước 2.3 —
+chọn nhầm cột thì việc sẽ giao sai người ở các đơn làm chéo công ty.

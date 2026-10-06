@@ -29,6 +29,8 @@ const EMPTY_PHAT_FORM = {
   sla_mode: 'same_day',
   sla_days: 1,
   cutoff_time: '12:00',
+  co_phi: false,
+  nguoi_phu_trach_id: '',
 };
 
 function slaModeLabel(mode) {
@@ -175,6 +177,9 @@ export default function SharedWorkspaceErrorTypesPage() {
       sla_mode: phatDraft.sla_mode,
       sla_days: Number(phatDraft.sla_days) || 1,
       cutoff_time: phatDraft.cutoff_time,
+      co_phi: phatDraft.co_phi === true,
+      // Chuỗi rỗng = bỏ trống người phụ trách, gửi null cho rõ nghĩa.
+      nguoi_phu_trach_id: phatDraft.nguoi_phu_trach_id || null,
     };
     try {
       if (editingPhat?.id) {
@@ -569,6 +574,38 @@ export default function SharedWorkspaceErrorTypesPage() {
               />
             </div>
           )}
+          <div>
+            <label className="text-[10px] text-gray-500">Chi phí</label>
+            <select
+              value={phatDraft.co_phi ? '1' : '0'}
+              onChange={(e) => {
+                const co_phi = e.target.value === '1';
+                if (editingPhat) setEditingPhat((c) => ({ ...c, co_phi }));
+                else setPhatForm((f) => ({ ...f, co_phi }));
+              }}
+              className="w-full border rounded-lg px-2 py-1.5 text-sm"
+            >
+              <option value="0">Không phí</option>
+              <option value="1">Có phí</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-[10px] text-gray-500">Người chịu trách nhiệm</label>
+            <select
+              value={phatDraft.nguoi_phu_trach_id || ''}
+              onChange={(e) => {
+                const nguoi_phu_trach_id = e.target.value;
+                if (editingPhat) setEditingPhat((c) => ({ ...c, nguoi_phu_trach_id }));
+                else setPhatForm((f) => ({ ...f, nguoi_phu_trach_id }));
+              }}
+              className="w-full border rounded-lg px-2 py-1.5 text-sm"
+            >
+              <option value="">— chưa giao —</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{u.full_name || u.email || u.id}</option>
+              ))}
+            </select>
+          </div>
           <div className="flex gap-2">
             <button
               type="submit"
@@ -594,6 +631,15 @@ export default function SharedWorkspaceErrorTypesPage() {
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <p className="text-sm font-semibold text-gray-900">{k.name}</p>
+                  <span className={`text-[9px] px-1.5 py-0.5 rounded ${k.co_phi
+                    ? 'bg-slate-200 text-slate-800' : 'bg-slate-50 text-slate-600'}`}>
+                    {k.co_phi ? 'Có phí' : 'Không phí'}
+                  </span>
+                  {k.nguoi_phu_trach_id && (
+                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-50 text-slate-600">
+                      {users.find((u) => String(u.id) === String(k.nguoi_phu_trach_id))?.full_name || 'đã giao'}
+                    </span>
+                  )}
                   {k.is_active === false && (
                     <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-800">Tắt</span>
                   )}

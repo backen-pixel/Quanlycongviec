@@ -4,6 +4,63 @@ Kiểm tra: node --check; node --test --test-isolation=none trialRegistry.test.j
 Rollback: script 710 chỉ DROP bảng rỗng, giữ bảng có dữ liệu; chưa diễn tập trên bản sao.
 
 ---
+## 2026-10-06 — Lọc deal theo công ty và nhân viên CRM
+
+- Picker dự án/deal thêm chọn Công ty và Nhân viên CRM (`/crm/employees-by-company?for_module=crm`).
+- File: `LeadDealPicker.jsx`, `CRMAssignmentsPage.jsx`.
+
+---
+
+## 2026-10-06 — Cột Ngày mai ở nhóm theo hạn
+
+- Thêm nhóm `tomorrow` vào Deadline giao việc, giữa Hôm nay và Tuần này.
+- File: `frontend/src/pages/CRMAssignmentsPage.jsx`.
+
+---
+
+## 2026-10-06 — Form phát sinh giống Không gian chung
+
+- Hộp giao việc phát sinh thêm phân loại, người chịu trách nhiệm, người làm. POST tạo việc ghi `phat_sinh_kind`.
+- File: `CRMAssignmentsPage.jsx`, `crmAssignmentMutations.js`, `phatSinhKinds.js`.
+
+---
+
+## 2026-10-06 — Kéo thả thẻ giao việc
+
+- Sửa kéo thả Kanban: `dataTransfer` + ref, không setState khi bắt đầu kéo. Thả cùng cột thì bỏ qua.
+- File: `frontend/src/pages/CRMAssignmentsPage.jsx`.
+
+---
+
+## 2026-10-06 — Bộ lọc nhanh giao việc mặc định đóng
+
+- `AssignQuickFilterPanel` khởi tạo `open = false` thay vì mở khi màn hình từ 768px.
+- File: `frontend/src/pages/CRMAssignmentsPage.jsx`.
+
+---
+
+## 2026-10-06 — Giao việc: bỏ «Tất cả công ty»
+
+- Dropdown Công ty ở bộ lọc trang giao việc chỉ còn từng công ty. Công ty trống hoặc không hợp lệ được gán mặc định; Đặt lại không xóa công ty.
+- File: `frontend/src/pages/CRMAssignmentsPage.jsx`.
+
+---
+
+## 2026-10-06 — ★ pipeline chọn được nhiều dòng
+
+- Dấu ★ trên liên kết loại CRM → SX đổi từ radio (một dòng) sang checkbox (nhiều dòng). Backend `replaceLeadTypeProductionLinks` giữ mọi `is_primary`, không còn xóa sao dòng thứ hai khi lưu.
+- File: `frontend/src/pages/PipelineSettingsPage.jsx`, `backend/src/helpers/crmLeadTypeProductionLinks.js`.
+
+---
+
+## 2026-10-06 — Hiện dấu ★ setup pipeline trên chọn xưởng
+
+- Đã làm: `companyShowsSxStar` / `workshopTypeShowsSxStar` đọc `is_primary` của `production_links`. `SxMultiTargetPicker` gắn ★ vào option công ty và phân loại. Deal không có loại dùng toàn bộ loại CRM của công ty.
+- File: `frontend/src/lib/sxCompanySuggestFromLeadType.js`, `frontend/src/components/SxMultiTargetPicker.jsx`, `LeadDetail.jsx`, `CRMDashboard.jsx`, `DealProductionProjectsPanel.jsx`.
+- Kiểm tra trên deal `12f731cf` (chưa có loại): ★ HCB, ★ Phúc Đạt; chọn Phúc Đạt thì ★ Cửa; chọn HCB thì ★ Tủ bếp.
+
+---
+
 ## 2026-10-06 — Sửa đồng bộ Facebook Marketing theo BRIEF_SYNC
 
 File: `backend/src/helpers/fbMarketingSync.js`, `backend/tests/fbMarketingSync.test.js`, `docs/ai-handoff/CURRENT.md`, `WORKLOG.md`. Phân trang báo thiếu, currency không đoán VND, số sai không ghi 0, ngày theo Việt Nam, lỗi Meta chỉ lưu mã lọc. Fetch/Supabase giả với `<TOKEN_GIA>`: V8 8/8 PASS; `node --check`/`node --test` và `git status` bị chặn khi tạo phiên sandbox. Chưa gọi DB/Meta. Hoàn tác: đảo diff bốn file này.
@@ -16,7 +73,6 @@ File: `backend/src/helpers/fbMarketingSync.js`, `backend/tests/fbMarketingSync.t
 - So sánh `spend <= target × qualified` bằng số nguyên an toàn; `uiState` theo reason và trạng thái đo.
 - Kiểm: 25 → 38 test; harness JS giả lập 38/38, search caller trong `backend/src` không có. Claude review đã chạy Node 24 `node --test --test-isolation=none` (38/38) và `git diff --stat` (4 file).
 - Chưa kiểm: Node thật, tích hợp/runtime, DB/mạng. Hoàn tác đúng bốn delta P1-1, giữ lịch sử cũ.
-
 
 ## 2026-10-06 — Chuẩn bị kích hoạt theo quyết định Founder
 

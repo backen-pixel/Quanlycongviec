@@ -21,6 +21,11 @@ export default function LeadDealPicker({
   companyId = null,
   /** Lọc deal theo NV phụ trách (assigned_to) */
   assigneeId = null,
+  /** Hiện bộ lọc công ty + nhân viên CRM ngay trên ô tìm */
+  companyOptions = null,
+  onCompanyIdChange = null,
+  assigneeOptions = null,
+  onAssigneeIdChange = null,
   /** Lọc deal theo công ty thuộc khối module (crm | production | logistics) — khớp /companies?for_module= */
   forModule = null,
   placeholder = 'Tìm deal theo mã / tên / SĐT khách...',
@@ -110,9 +115,48 @@ export default function LeadDealPicker({
   };
 
   const labelText = type === 'lead' ? 'lead' : 'deal';
+  const showCompanyFilter = Array.isArray(companyOptions) && typeof onCompanyIdChange === 'function';
+  const showAssigneeFilter = Array.isArray(assigneeOptions) && typeof onAssigneeIdChange === 'function';
 
   return (
     <div ref={wrapperRef} className="relative w-full">
+      {(showCompanyFilter || showAssigneeFilter) && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-2">
+          {showCompanyFilter && (
+            <label className="block min-w-0">
+              <span className="block text-[10px] font-semibold text-slate-600 mb-0.5">Công ty</span>
+              <select
+                value={companyId || ''}
+                onChange={(e) => onCompanyIdChange(e.target.value)}
+                className="w-full h-9 px-2 border border-gray-200 rounded-lg text-xs bg-white cursor-pointer"
+              >
+                <option value="">Tất cả công ty</option>
+                {companyOptions.map((co) => (
+                  <option key={co.id} value={co.id}>{co.short_name || co.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          {showAssigneeFilter && (
+            <label className="block min-w-0">
+              <span className="block text-[10px] font-semibold text-slate-600 mb-0.5">Nhân viên CRM</span>
+              <select
+                value={assigneeId || ''}
+                onChange={(e) => onAssigneeIdChange(e.target.value)}
+                className="w-full h-9 px-2 border border-violet-200 rounded-lg text-xs bg-white cursor-pointer"
+              >
+                <option value="">Tất cả nhân viên CRM</option>
+                {assigneeOptions.map((u) => (
+                  <option key={u.id} value={u.id}>{u.full_name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <p className="sm:col-span-2 text-[11px] text-gray-500 -mt-0.5">
+            Lọc dự án theo công ty và nhân viên CRM phụ trách deal.
+          </p>
+        </div>
+      )}
       {!open && (
         <button
           type="button"

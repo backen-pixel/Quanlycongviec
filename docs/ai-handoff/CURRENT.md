@@ -4,6 +4,48 @@ Kiểm tra: node --check và node --test --test-isolation=none trialRegistry.tes
 Hoàn tác: dùng 710_p1_trial_registry_rollback.sql trên bản sao được phép; giữ bảng có dữ liệu, rồi bỏ delta code và hai mục handoff.
 
 ---
+## 2026-10-06 — Lọc dự án theo công ty và nhân viên CRM
+
+Ô chọn dự án/deal trong hộp giao việc có bộ lọc Công ty và Nhân viên CRM (đội kinh doanh của công ty đó). Đổi công ty thì danh sách nhân viên CRM và kết quả tìm dự án đổi theo.
+
+---
+
+## 2026-10-06 — Nhóm theo hạn có cột Ngày mai
+
+Màn Deadline của giao việc (Nhóm theo hạn) thêm cột Ngày mai, nằm giữa Hôm nay và Tuần này. Việc hạn đúng ngày hôm sau vào cột này; Tuần này giữ phần còn lại trong 7 ngày tới.
+
+---
+
+## 2026-10-06 — Form phát sinh có phân loại và người chịu trách nhiệm
+
+Hộp «Giao việc mới» trên `/sx/phat-sinh` có loại phát sinh (theo tab có phí / không phí), loại nhiệm vụ, khối gây lỗi, người chịu trách nhiệm và người làm. Chọn loại có người phụ trách thì điền sẵn người chịu trách nhiệm. Tạo việc lưu `phat_sinh_kind` và nguồn nhiệm vụ.
+
+---
+
+## 2026-10-06 — Kéo thả thẻ giao việc sang cột khác
+
+Thẻ Kanban giao việc kéo được sang cột khác. Id thẻ giữ trong ref lúc kéo (không setState trong dragstart, vì setState làm trình duyệt hủy kéo). Thả đúng cột đang đứng thì không gọi API. Link deal trên thẻ không cướp thao tác kéo.
+
+---
+
+## 2026-10-06 — Bộ lọc nhanh giao việc mặc định đóng
+
+Cột «Bộ lọc nhanh» trên trang giao việc khởi tạo ở trạng thái thu gọn (dải hẹp trên desktop, thanh mỏng trên mobile). Bấm tiêu đề để mở lại.
+
+---
+
+## 2026-10-06 — Bộ lọc giao việc luôn một công ty
+
+Dropdown Công ty trên trang giao việc (bộ lọc nhanh, panel lọc giao việc và Không gian chung) không còn mục «Tất cả công ty». Admin chưa chọn hoặc chọn công ty không còn trong danh sách được gán công ty mặc định (công ty của user, rồi Phúc Đạt, rồi công ty đầu danh sách). Đặt lại bộ lọc giữ nguyên công ty đang xem. Form tạo việc vẫn có «Tất cả công ty module này» để lọc deal.
+
+---
+
+## 2026-10-06 — Dấu ★ setup CRM → SX trên ô chọn xưởng
+
+Ô chọn công ty SX và phân loại trong hộp chuyển deal sang sản xuất hiện dấu ★ đúng các dòng ưu tiên ở Cài đặt pipeline. Một loại CRM được đánh ★ nhiều dòng. Deal chưa gán loại CRM vẫn thấy mọi cặp ★ của công ty; deal đã có loại thì ★ hiện mọi dòng ưu tiên của loại đó.
+
+---
+
 ## 2026-10-06 — Đồng bộ chi tiêu Facebook: chặn sai nguồn
 
 Helper đồng bộ ghi phần dữ liệu hợp lệ nhưng đánh dấu thiếu khi hết trang/dòng hỏng; không ghi chi tiêu nếu chưa biết currency, giữ nhãn USD, dùng ngày Việt Nam và mã lỗi Meta đã lọc. Giữ các trường kết quả cũ; không đổi runner/schema/chu kỳ. Test cô lập tại `backend/tests/fbMarketingSync.test.js`: V8 giả lập 8/8 PASS; Node CLI bị chặn khi tạo phiên sandbox. Chưa kiểm chứng DB/Meta/production. Hoàn tác: đảo diff helper, test và hai mục bàn giao này.
