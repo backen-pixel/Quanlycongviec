@@ -86,8 +86,8 @@ function fixture(options = {}) {
   const fetchImpl = async (url, init) => {
     state.fetches.push({ url, headers: clone(init.headers), redirect: init.redirect });
     assert.ok(state.depth > 0); assert.equal(init.redirect, 'error'); assert.ok(init.signal);
-    assert.equal(init.headers.Authorization, 'Bearer SYNTHETIC_ONLY_TOKEN');
-    assert.equal(url.includes('SYNTHETIC_ONLY_TOKEN'), false);
+    assert.equal(init.headers.Authorization, `Bearer ${state.expectedToken || 'SYNTHETIC_ONLY_TOKEN'}`);
+    assert.equal(url.includes(state.expectedToken || 'SYNTHETIC_ONLY_TOKEN'), false);
     const parsed = new URL(url); assert.equal(parsed.origin, 'https://graph.facebook.com');
     const node = parsed.pathname.split('/').at(-1); assert.ok([LEADGEN, FORM].includes(node));
     if (state.fetchHook) await state.fetchHook(node, state);
@@ -98,11 +98,29 @@ function fixture(options = {}) {
     } };
   };
   const intake = createFacebookLeadAdsIntake({ db, fetchImpl, getGraphVersion: () => state.graphVersion,
+    getLeadGraphToken: options.getLeadGraphToken,
     isPrimary: () => state.primary, withPrimary, managedPages: options.managedPages || new Set([PAGE]) });
   return { state, db, withPrimary, intake,
     run: (payload = envelope(), lease = LEASE, pageId = PAGE) => intake(pageId, payload, lease) };
 }
 const businessCalls = h => h.state.rpcCalls.filter(call => call.name === 'facebook_lead_ads_intake_v1');
+
+test('dedicated Lead App token is used for both Graph reads without replacing the Messenger token', async () => {
+  const h = fixture({ expectedToken: 'SYNTHETIC_LEAD_APP_TOKEN',
+    getLeadGraphToken: () => 'SYNTHETIC_LEAD_APP_TOKEN' });
+  await h.run();
+  assert.equal(h.state.page.access_token, 'SYNTHETIC_ONLY_TOKEN');
+  assert.equal(h.state.fetches.length, 2);
+  assert.ok(h.state.fetches.every(call => call.headers.Authorization === 'Bearer SYNTHETIC_LEAD_APP_TOKEN'));
+});
+
+test('dedicated Lead App cannot fall back to the Messenger token or fetch without its own token', async () => {
+  for (const token of ['', 'SYNTHETIC_ONLY_TOKEN']) {
+    const h = fixture({ getLeadGraphToken: () => token });
+    await rejectsBeforeRpc(h, 'FB_INBOX_PROVIDER_TOKEN_REQUIRED');
+    assert.equal(h.state.fetches.length, 0);
+  }
+});
 async function rejectsBeforeRpc(h, code) {
   await assert.rejects(h.run(), { code }); assert.equal(businessCalls(h).length, 0);
 }

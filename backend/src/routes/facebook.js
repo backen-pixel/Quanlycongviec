@@ -7,7 +7,7 @@ const DURABLE_MESSENGER_PAGES = enabledPageIds();
 const { isFacebookAtomicLeadScope, createFacebookLeadOnce } = require('../helpers/facebookAtomicLead');
 const { supabase } = require('../config/supabase');
 const { withPrimaryDatabase, getActiveTarget, isAutoFailoverEnabled } = require('../config/supabaseRouter');
-const { inboxSettings, isManagedLeadAdsContact, createPageInboxReceiver, createLeadAdsWebhookHandoff, createPageInboxWorker, assertPageLegacyScope, safeCode } = require('../helpers/facebookPageInbox');
+const { inboxSettings, isManagedLeadAdsContact, createPageInboxReceiver, createDedicatedLeadAdsReceiver, createLeadAdsWebhookHandoff, createPageInboxWorker, assertPageLegacyScope, safeCode } = require('../helpers/facebookPageInbox');
 const { createFacebookLeadAdsIntake } = require('../services/facebookLeadAdsIntake');
 const PAGE_INBOX = inboxSettings();
 const pageInboxPrimary = () => getActiveTarget() === 'primary' && !isAutoFailoverEnabled();
@@ -3539,6 +3539,16 @@ r.get('/webhook', async (req, res) => {
   res.sendStatus(403);
 });
 
+// Separate callback for the VPT-owned Lead App. Its verify token and signing
+// secret are deliberately unrelated to the existing Messenger App.
+r.get('/webhook/lead-ads', (req, res) => {
+  if (!PAGE_INBOX.dedicatedLeadApp) return res.sendStatus(404);
+  const token = process.env.VPT_FB_LEAD_APP_VERIFY_TOKEN;
+  if (req.query['hub.mode'] !== 'subscribe' || req.query['hub.verify_token'] !== token
+      || typeof req.query['hub.challenge'] !== 'string' || !req.query['hub.challenge']) return res.sendStatus(403);
+  return res.status(200).send(req.query['hub.challenge']);
+});
+
 // ── WEBHOOK RECEIVE (POST) ───────────────────────────────────
 
 r.post('/webhook', async (req, res) => {
@@ -3612,6 +3622,11 @@ r.post('/webhook', async (req, res) => {
   } catch (e) {
     console.error('[FB] Webhook processing error:', e.message, e.stack);
   }
+});
+
+r.post('/webhook/lead-ads', (req, res) => {
+  if (!PAGE_INBOX.dedicatedLeadApp) return res.sendStatus(404);
+  return receiveDedicatedLeadAds(req, res);
 });
 
 // ── HANDLE MESSENGER ─────────────────────────────────────────
@@ -10563,14 +10578,21 @@ const receivePageInbox = createPageInboxReceiver({
   db: supabase, isPrimary: pageInboxPrimary, withPrimary: withPrimaryDatabase,
   secret: () => process.env.VPT_FACEBOOK_APP_SECRET, onError: pageInboxError,
 });
+const receiveDedicatedLeadAds = PAGE_INBOX.dedicatedLeadApp ? createDedicatedLeadAdsReceiver({
+  db: supabase, isPrimary: pageInboxPrimary, withPrimary: withPrimaryDatabase,
+  secret: () => process.env.VPT_FB_LEAD_APP_SECRET, managedPages: PAGE_INBOX.managedPages,
+  onError: pageInboxError,
+}) : null;
 const handoffLeadAdsWebhook = PAGE_INBOX.leadAdsIntake ? createLeadAdsWebhookHandoff({
   db: supabase, isPrimary: pageInboxPrimary, withPrimary: withPrimaryDatabase,
   secret: () => process.env.VPT_FACEBOOK_APP_SECRET, managedPages: PAGE_INBOX.managedPages,
+  dedicatedLeadApp: PAGE_INBOX.dedicatedLeadApp,
   enqueueLegacy: body => enqueueMessengerEvents(supabase, body.entry, DURABLE_MESSENGER_PAGES),
 }) : null;
 const intakePageLeadAds = createFacebookLeadAdsIntake({
   db: supabase, fetchImpl: (...args) => fetch(...args),
   getGraphVersion: () => process.env.VPT_META_GRAPH_VERSION,
+  getLeadGraphToken: PAGE_INBOX.dedicatedLeadApp ? () => process.env.VPT_FB_LEAD_APP_ACCESS_TOKEN : undefined,
   isPrimary: pageInboxPrimary, withPrimary: withPrimaryDatabase, managedPages: PAGE_INBOX.managedPages,
 });
 const pageInboxWorker = createPageInboxWorker({

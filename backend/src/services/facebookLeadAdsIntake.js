@@ -2,7 +2,7 @@
 
 const { object, fail, uuid, intakeIdentity, validateProvider, prepareLead } = require('../domain/facebookLeadAdsIntake');
 
-function createFacebookLeadAdsIntake({ db, fetchImpl, getGraphVersion, isPrimary, withPrimary, managedPages }) {
+function createFacebookLeadAdsIntake({ db, fetchImpl, getGraphVersion, getLeadGraphToken, isPrimary, withPrimary, managedPages }) {
   const allowedPages = new Set(managedPages);
   const primary = () => { if (isPrimary() !== true) throw fail('FB_INBOX_PRIMARY_REQUIRED'); };
   const read = async query => {
@@ -51,10 +51,14 @@ function createFacebookLeadAdsIntake({ db, fetchImpl, getGraphVersion, isPrimary
       } else {
         const version = getGraphVersion();
         if (typeof version !== 'string' || !/^v\d{1,2}\.\d+$/.test(version)) throw fail('FB_INBOX_GRAPH_VERSION_REQUIRED');
-        if (typeof page.access_token !== 'string' || !page.access_token.trim()) throw fail('FB_INBOX_PROVIDER_TOKEN_REQUIRED');
+        // A dedicated Lead App must use its own token. The Messenger Page token
+        // stays in facebook_pages and is never silently reused as a fallback.
+        const token = getLeadGraphToken ? getLeadGraphToken() : page.access_token;
+        if (typeof token !== 'string' || !token.trim()
+            || (getLeadGraphToken && token === page.access_token)) throw fail('FB_INBOX_PROVIDER_TOKEN_REQUIRED');
         const [provider, form, mapping] = await Promise.all([
-          graph(version, identity.leadgenId, 'id,form_id,field_data,created_time,ad_id,adset_id,campaign_id,is_organic,platform', page.access_token),
-          graph(version, identity.formId, 'id,page_id', page.access_token),
+          graph(version, identity.leadgenId, 'id,form_id,field_data,created_time,ad_id,adset_id,campaign_id,is_organic,platform', token),
+          graph(version, identity.formId, 'id,page_id', token),
           read(db.from('fb_lead_form_mapping').select('page_id,truong').eq('form_id', identity.formId).maybeSingle()),
         ]);
         if (form.id !== identity.formId || form.page_id !== pageId) throw fail('FB_INBOX_PROVIDER_FORM_SCOPE_MISMATCH');

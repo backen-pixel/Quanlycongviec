@@ -42,7 +42,7 @@ function functionText(name, text = source) {
   return text.slice(found.index, end.index + 1);
 }
 
-function webhookHarness({ scoped = true, generic = false } = {}) {
+function webhookHarness({ scoped = true, generic = false, dedicated = false } = {}) {
   const state = { primary: true, depth: 0, events: [], statuses: [], errors: [],
     inbox: new Map(), messenger: new Map(), inline: [], generic: 0 };
   const withPrimary = async fn => { state.depth++; try { return await fn(); } finally { state.depth--; } };
@@ -67,11 +67,13 @@ function webhookHarness({ scoped = true, generic = false } = {}) {
   const pages = new Set([PAGE]);
   const handoff = createLeadAdsWebhookHandoff({ db, isPrimary: () => state.primary, withPrimary,
     secret: () => SECRET, managedPages: pages,
+    dedicatedLeadApp: dedicated,
     enqueueLegacy: body => enqueueMessengerEvents(db, body.entry, pages) });
   let handler;
   vm.runInNewContext(routeText('post', '/webhook'), {
     r: { post(_route, fn) { handler = fn; } }, supabase: db,
-    PAGE_INBOX: { enabled: scoped || generic, leadAdsIntake: scoped, scopeGuard: scoped, managedPages: scoped ? pages : new Set() },
+    PAGE_INBOX: { enabled: scoped || generic, leadAdsIntake: scoped, dedicatedLeadApp: dedicated,
+      scopeGuard: scoped, managedPages: scoped ? pages : new Set() },
     DURABLE_MESSENGER_PAGES: pages, enqueueMessengerEvents, handoffLeadAdsWebhook: handoff,
     pageInboxError: code => state.errors.push(code), safeCode, FB_DISABLE_WEBHOOK_LOGS: true, console: quiet,
     receivePageInbox: async (_req, res) => { state.generic++; return res.sendStatus(200); },
@@ -84,6 +86,32 @@ function webhookHarness({ scoped = true, generic = false } = {}) {
     await handler(req, { sendStatus(code) { state.events.push('ack-' + code); state.statuses.push(code); } });
   } };
 }
+
+test('separate App mode strips managed leadgen from old unsigned callback without touching Messenger', async () => {
+  const h = webhookHarness({ dedicated: true });
+  const unsigned = request(); unsigned.headers = {}; unsigned.facebookRawBody = undefined;
+  await h.receive(unsigned);
+  assert.deepEqual(h.state.statuses, [200]);
+  assert.equal(h.state.inbox.size, 0);
+  assert.equal(h.state.messenger.size, 1);
+  assert.ok(h.state.inline.some(([kind, pageId]) => kind === 'comment' && pageId === PAGE));
+  assert.ok(h.state.inline.some(([kind, pageId]) => kind === 'leadgen' && pageId === OTHER));
+  assert.equal(h.state.inline.some(([kind, pageId]) => kind === 'leadgen' && pageId === PAGE), false);
+});
+
+test('separate App mode preserves old callback behavior for non-Page and large Messenger batches', async () => {
+  const nonPage = webhookHarness({ dedicated: true });
+  await nonPage.receive({ body: { object: 'instagram', entry: [] }, headers: {} });
+  assert.deepEqual(nonPage.state.statuses, [200]);
+
+  const large = webhookHarness({ dedicated: true });
+  const batch = { object: 'page', entry: Array.from({ length: 101 }, (_, index) => ({
+    id: PAGE, messaging: [{ message: { mid: `m${index}` } }],
+  })) };
+  await large.receive({ body: batch, headers: {} });
+  assert.deepEqual(large.state.statuses, [200]);
+  assert.equal(large.state.messenger.size, 101);
+});
 
 test('scoped signed mixed delivery enqueues only managed leadgen and preserves legacy Messenger/comment/other Page', async () => {
   const h = webhookHarness(); const req = request();

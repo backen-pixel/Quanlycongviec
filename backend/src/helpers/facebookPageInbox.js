@@ -19,12 +19,22 @@ function inboxSettings(env = process.env) {
   const enabled = env.VPT_FB_PAGE_INBOX === '1';
   const scopeGuard = env.VPT_FB_LEGACY_SCOPE_GUARD === '1';
   const leadAdsIntake = env.VPT_FB_LEAD_ADS_INTAKE === '1';
+  const dedicatedLeadApp = env.VPT_FB_LEAD_APP_MODE === '1';
   if (leadAdsIntake && (!enabled || !scopeGuard || !managedPages.size)) throw fail('FB_INBOX_INVALID_CONFIG');
+  if (dedicatedLeadApp && (!leadAdsIntake || managedPages.size !== 1
+      || !managedPages.has(env.VPT_FB_LEAD_APP_PAGE_ID)
+      || typeof env.VPT_FB_LEAD_APP_SECRET !== 'string' || env.VPT_FB_LEAD_APP_SECRET.length < 16
+      || (env.VPT_FACEBOOK_APP_SECRET && env.VPT_FB_LEAD_APP_SECRET === env.VPT_FACEBOOK_APP_SECRET)
+      || typeof env.VPT_FB_LEAD_APP_VERIFY_TOKEN !== 'string' || env.VPT_FB_LEAD_APP_VERIFY_TOKEN.length < 16
+      || typeof env.VPT_FB_LEAD_APP_ACCESS_TOKEN !== 'string' || !env.VPT_FB_LEAD_APP_ACCESS_TOKEN.trim())) {
+    throw fail('FB_INBOX_INVALID_CONFIG');
+  }
   return {
     enabled,
     paused: env.VPT_FB_PAGE_INBOX_WORKER_PAUSED !== '0',
     scopeGuard,
     leadAdsIntake,
+    dedicatedLeadApp,
     managedPages,
   };
 }
@@ -108,22 +118,63 @@ function createPageInboxReceiver({ db, isPrimary, secret, withPrimary = fn => fn
   };
 }
 
+// A second Meta App has its own callback and signing key. Reject any non-lead
+// delivery as a whole so this endpoint can never become a Messenger writer.
+function createDedicatedLeadAdsReceiver({ db, isPrimary, secret, managedPages,
+  withPrimary = fn => fn(), onError = () => {} }) {
+  const pages = new Set(managedPages);
+  if (pages.size !== 1 || [...pages].some(id => typeof id !== 'string' || !/^\d{1,32}$/.test(id))) {
+    throw fail('FB_INBOX_INVALID_CONFIG');
+  }
+  return async function receive(req, res) {
+    try {
+      const rows = signedRows(req.facebookRawBody, req.headers?.['x-hub-signature-256'], secret());
+      if (!rows.length || rows.some(row => {
+        const value = row.payload.event?.value;
+        return !pages.has(row.page_id) || row.payload.kind !== 'change'
+          || row.payload.event?.field !== 'leadgen' || !record(value)
+          || !/^\d{1,32}$/.test(value.form_id) || !/^\d{1,32}$/.test(value.leadgen_id)
+          || (value.page_id !== undefined && value.page_id !== row.page_id)
+          || (value.ad_id !== undefined && !/^\d{1,32}$/.test(value.ad_id));
+      })) throw fail('FB_INBOX_DEDICATED_EVENT_REJECTED', 400);
+      assertPrimary(isPrimary);
+      const accepted = await withPrimary(() => rpc(db, 'facebook_page_inbox_enqueue_v1', { p_rows: rows }));
+      assertPrimary(isPrimary);
+      if (accepted !== rows.length) throw fail('FB_INBOX_ENQUEUE_NOT_CONFIRMED');
+      return res.sendStatus(200);
+    } catch (error) {
+      onError(safeCode(error));
+      return res.sendStatus([400, 403].includes(error.status) ? error.status : 503);
+    }
+  };
+}
+
 // Scoped cutover: every form on an explicitly managed Page belongs to the new
 // intake contract, including unbound forms that must remain pending for review.
 // Other events retain their existing delivery path and never enter this inbox.
 function createLeadAdsWebhookHandoff({ db, isPrimary, secret, managedPages,
-  enqueueLegacy, withPrimary = fn => fn() }) {
+  enqueueLegacy, withPrimary = fn => fn(), dedicatedLeadApp = false }) {
   const pages = new Set(managedPages);
   if (!pages.size || [...pages].some(id => typeof id !== 'string' || !/^\d{1,32}$/.test(id))
       || typeof enqueueLegacy !== 'function') throw fail('FB_INBOX_INVALID_CONFIG');
   return async function handoff(req) {
-    const { body, rows } = signedDelivery(req.facebookRawBody, req.headers?.['x-hub-signature-256'], secret());
+    // The existing Messenger callback was already operating without an App
+    // signing key. In dedicated mode it keeps that path and filters managed
+    // leadgen; only the new Lead callback accepts signed Lead events. This
+    // avoids requiring credentials for the unavailable Messenger App owner.
+    const { body, rows } = dedicatedLeadApp
+      ? { body: req.body, rows: [] }
+      : signedDelivery(req.facebookRawBody, req.headers?.['x-hub-signature-256'], secret());
     const selected = (pageId, event) => pages.has(pageId) && event?.field === 'leadgen';
     const leadRows = rows.filter(row => row.payload.kind === 'change' && selected(row.page_id, row.payload.event));
-    const legacyBody = { ...body, entry: body.entry.map(entry => ({ ...entry,
-      ...(entry.changes === undefined ? {} : { changes: entry.changes.filter(event => !selected(entry.id, event)) }),
-    })) };
-    if (leadRows.length) {
+    // Preserve the old callback's envelope behavior in dedicated mode. Its
+    // Messenger and other events must not inherit the new Lead inbox limits.
+    const legacyBody = dedicatedLeadApp && (!record(body) || body.object !== 'page' || !Array.isArray(body.entry))
+      ? body
+      : { ...body, entry: body.entry.map(entry => (record(entry) && Array.isArray(entry.changes)
+        ? { ...entry, changes: entry.changes.filter(event => !selected(entry.id, event)) }
+        : entry)) };
+    if (leadRows.length && !dedicatedLeadApp) {
       assertPrimary(isPrimary);
       const accepted = await withPrimary(() => rpc(db, 'facebook_page_inbox_enqueue_v1', { p_rows: leadRows }));
       assertPrimary(isPrimary);
@@ -132,8 +183,10 @@ function createLeadAdsWebhookHandoff({ db, isPrimary, secret, managedPages,
     // These are separate idempotent queue writes, not one cross-queue transaction.
     // If the second write fails, the caller returns 503; replay safely re-enqueues
     // the first batch. Legacy inline processing starts only after both succeed.
-    try { await enqueueLegacy(legacyBody); } catch { throw fail('FB_INBOX_LEGACY_ENQUEUE_FAILED'); }
-    if (leadRows.length) assertPrimary(isPrimary);
+    if (legacyBody?.object === 'page') {
+      try { await enqueueLegacy(legacyBody); } catch { throw fail('FB_INBOX_LEGACY_ENQUEUE_FAILED'); }
+    }
+    if (leadRows.length && !dedicatedLeadApp) assertPrimary(isPrimary);
     return legacyBody;
   };
 }
@@ -251,4 +304,4 @@ function createPageInboxWorker({
   return { drain, health, async stop() { stopping = true; if (running) await running; } };
 }
 
-module.exports = { inboxSettings, isManagedLeadAdsContact, rowsFromBody, signedRows, safeCode, createPageInboxReceiver, createLeadAdsWebhookHandoff, createPageInboxWorker, assertLegacyQueueDrained, assertPageLegacyScope };
+module.exports = { inboxSettings, isManagedLeadAdsContact, rowsFromBody, signedRows, safeCode, createPageInboxReceiver, createDedicatedLeadAdsReceiver, createLeadAdsWebhookHandoff, createPageInboxWorker, assertLegacyQueueDrained, assertPageLegacyScope };

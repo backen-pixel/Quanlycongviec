@@ -1,3 +1,9 @@
+## 2026-10-06 15:45 — App Lead riêng: mã PASS, production HOLD
+
+Đã chuẩn bị callback/token Lead Ads riêng ở chế độ mặc định tắt để giữ Messenger cũ. 210 ca Node liên quan đạt; reviewer độc lập PASS mã, nhưng App VPT `openclaw` vẫn chưa phát hành/đăng ký `leadgen`, còn App `claw` chưa cấu hình Webhooks/Lead Capture. Không đổi Meta, Render hoặc DB thật; Facebook Form → CRM → Admin VPT **chưa chạy thật**. Việc tiếp theo: đưa mã qua PR/CI và hoàn tất quyền, callback, Lead Access, sự kiện Meta thật trước khi bật; giữ cờ OFF để không rơi Lead. [Bằng chứng và cổng chuyển đổi](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).
+
+---
+
 ## 2026-10-06 — P1-2: registry đợt thử (SQL 710)
 Tạo ba bảng P1 và RPC ghi atomic, rollback chỉ gỡ bảng rỗng; module nhận db, chưa nối route/cờ và không seed account/ngày.
 Kiểm tra: node --check và node --test --test-isolation=none trialRegistry.test.js đạt 5/5 (Node thường bị spawn EPERM); chưa chạy SQL, DB, mạng hoặc thử ACL/khóa trên bản sao.

@@ -1,3 +1,11 @@
+## 2026-10-06 15:45 — Facebook Lead Ads, App riêng của VPT
+
+- Meta không nhận yêu cầu quyền App `TUBEPPROvpt` qua Business Settings; yêu cầu không được gửi. Đã kiểm tra App VPT `openclaw` và `claw`, chưa App nào đạt cổng nhận production `leadgen`.
+- Chuẩn bị đường App Lead riêng, mặc định tắt, với callback ký riêng, token Graph riêng và phân luồng giữ Messenger. 210 ca Node liên quan đạt; reviewer độc lập PASS mã, HOLD production vì quyền và sự kiện Meta thật chưa xác minh.
+- Ghi rõ điều kiện cutover: không bật chế độ App riêng trước khi App mới nhận production Lead, vì callback cũ sẽ bỏ qua `leadgen` của Page quản lý. Không thay production trong lượt này.
+
+---
+
 ## 2026-10-06 — P1-2: registry đợt thử (SQL 710)
 File: hai SQL 710, trialRegistry.js, trialRegistry.test.js, CURRENT.md, WORKLOG.md. Chỉ thêm bảng P1/RPC và module chưa nối runtime.
 Kiểm tra: node --check; node --test --test-isolation=none trialRegistry.test.js 5/5 (Node thường spawn EPERM); không chạy SQL/DB/mạng.
