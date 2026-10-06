@@ -1,6 +1,14 @@
 'use strict';
 const { APPROVED_PLAN, money, instant } = require('./policy');
-const unknown = reason => ({ status: 'UNKNOWN', reason, spendVnd: null, qualifiedLeads: null, costPerQualifiedLeadVnd: null, targetMetToDate: false, allowBudgetExecution: false });
+const UI_STATE_BY_REASON = Object.freeze({
+  UNVERIFIED_SOURCE: 'BLOCKED', INCOMPLETE_COVERAGE: 'BLOCKED',
+  CONFLICTING_SPEND: 'BLOCKED', CONFLICTING_LEAD: 'BLOCKED', AMOUNT_OVERFLOW: 'BLOCKED',
+  INVALID_SNAPSHOT: 'UNKNOWN', MISSING_SOURCE: 'UNKNOWN', INVALID_SPEND: 'UNKNOWN',
+  INVALID_LEAD: 'UNKNOWN', UNVERIFIED_QUALIFICATION: 'UNKNOWN',
+});
+const unknown = reason => ({ status: 'UNKNOWN', reason,
+  uiState: Object.hasOwn(UI_STATE_BY_REASON, reason) ? UI_STATE_BY_REASON[reason] : 'UNKNOWN',
+  spendVnd: null, qualifiedLeads: null, costPerQualifiedLeadVnd: null, targetMetToDate: false, allowBudgetExecution: false });
 
 // Trusted, complete CRM projection: one current qualification and one verified
 // first-paid source per canonical Lead. It does not accept model quality scores
@@ -33,12 +41,17 @@ function measureLeadTrial(s) {
     if (!leads.has(row.canonicalLeadId)) counts[row.qualification]++;
     leads.set(row.canonicalLeadId, identity);
   }
-  const cost = counts.QUALIFIED > 0 ? spend / counts.QUALIFIED : null;
-  return { status: counts.QUALIFIED > 0 ? 'KNOWN_TO_DATE' : 'NO_QUALIFIED_LEADS', asOf: s.asOf,
+  const qualified = counts.QUALIFIED;
+  const target = APPROVED_PLAN.targetQualifiedLeadCostVnd;
+  const targetTotal = target * qualified;
+  if (!Number.isSafeInteger(targetTotal)) return unknown('AMOUNT_OVERFLOW');
+  const cost = qualified > 0 ? spend / qualified : null;
+  const status = qualified > 0 ? 'KNOWN_TO_DATE' : 'NO_QUALIFIED_LEADS';
+  return { status, uiState: status, asOf: s.asOf,
     spendVnd: spend, receivedPaidLeads: leads.size, qualifiedLeads: counts.QUALIFIED,
     pendingLeads: counts.PENDING, rejectedLeads: counts.REJECTED, costPerQualifiedLeadVnd: cost,
     targetVnd: APPROVED_PLAN.targetQualifiedLeadCostVnd,
-    targetMetToDate: cost !== null && cost <= APPROVED_PLAN.targetQualifiedLeadCostVnd,
+    targetMetToDate: qualified > 0 && spend <= targetTotal,
     allowBudgetExecution: false, revenueTargetEvaluated: false };
 }
 module.exports = { measureLeadTrial };

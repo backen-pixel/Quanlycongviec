@@ -4,6 +4,14 @@ File: `backend/src/helpers/fbMarketingSync.js`, `backend/tests/fbMarketingSync.t
 
 ---
 
+## 2026-10-06 — P1-1: bộ đo Lead hợp lệ
+
+- File đổi: `leadMeasurement.js`, `marketingAutomation.leads.test.js`, `CURRENT.md`, `WORKLOG.md`; không commit/push.
+- So sánh `spend <= target × qualified` bằng số nguyên an toàn; `uiState` theo reason và trạng thái đo.
+- Kiểm: 25 → 38 test; harness JS giả lập 38/38, search caller trong `backend/src` không có. Claude review đã chạy Node 24 `node --test --test-isolation=none` (38/38) và `git diff --stat` (4 file).
+- Chưa kiểm: Node thật, tích hợp/runtime, DB/mạng. Hoàn tác đúng bốn delta P1-1, giữ lịch sử cũ.
+
+
 ## 2026-10-06 — Chuẩn bị kích hoạt theo quyết định Founder
 
 Đã đọc trực tiếp cấu trúc và routing Primary, Render deployment; xác nhận Admin VPT đúng công ty/tenant, default stage đúng pipeline. Phát hiện `notifications.entity_id` thật là TEXT, sửa receipt replay và đưa trigger147/568 thật vào fixture. Bổ sung khôi phục đầy đủ fixture SQL702; lỗi CI đầu do PostgreSQL chuẩn hóa ngoặc CHECK được sửa bằng round-trip nguyên DDL trong fixture, vẫn so sánh nghiêm dữ liệu/quyền và thử CHECK từ chối hàng sai.

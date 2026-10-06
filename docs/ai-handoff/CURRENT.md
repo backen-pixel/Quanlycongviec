@@ -4,6 +4,14 @@ Helper đồng bộ ghi phần dữ liệu hợp lệ nhưng đánh dấu thiế
 
 ---
 
+## 2026-10-06 — P1-1: so sánh nguyên và trạng thái bộ đo Lead
+
+- Local only: sửa `leadMeasurement.js` (so sánh VND nguyên, chặn tràn tích, `uiState`) và thêm test trong `marketingAutomation.leads.test.js`.
+- 25 test cũ giữ nguyên; tổng 38 test. Harness JS giả lập chạy 38/38; Claude review chạy lại bằng Node 24 (`node --test --test-isolation=none`) cũng đạt 38/38.
+- Search `backend/src` chỉ thấy `measureLeadTrial` trong chính module; chưa có caller runtime. Chưa kiểm DB, mạng hay tích hợp.
+- Hoàn tác: bỏ delta P1-1 ở hai file JS và hai mục handoff mới; giữ nội dung lịch sử.
+
+
 ## 2026-10-06 — Founder đã duyệt kích hoạt tuyến Facebook Form
 
 Founder yêu cầu **“cho bật chạy thật luôn nhé”**. Quyền phát hành tuyến Facebook Form → CRM → Admin Vạn Phú Thành đã có, không chờ duyệt lại. [Hồ sơ kích hoạt và hiện trạng thật](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md) thay các trạng thái HOLD vì thiếu approval ở mục lịch sử bên dưới; các điều kiện kỹ thuật vẫn phải kiểm chứng.
