@@ -82,7 +82,12 @@ async function enforceCrmDealAssigneeAccess(req, res, next) {
 
     const gate = isTasksPath
       ? await assertCrmTaskLeadAccess(supabase, req, lead, { taskId, operation })
-      : await assertCrmLeadAccess(supabase, req, lead, { operation });
+      : await assertCrmLeadAccess(supabase, req, lead, {
+        operation,
+        // Bình luận + thành viên: người được giao việc trên deal được ĐỌC (xem tab Bình luận / Không gian chung).
+        assigneeReadGrant: String(req.method || '').toUpperCase() === 'GET'
+          && (parts[2] === 'comments' || parts[2] === 'members'),
+      });
     if (!gate.ok) {
       recordCrmAccessDenial(req, {
         reason: gate.reason || 'access_denied', leadId, taskId, operation, status: gate.status || 403,
