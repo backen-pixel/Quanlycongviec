@@ -1,3 +1,9 @@
+## 2026-10-06 10:34 — Bản live mới đã đối chiếu; tiếp nhận form còn tắt
+
+Render đang chạy `6494f870` sau PR30, các file tuyến Facebook đã review không đổi. Primary khỏe, auto-failover tắt; binding inactive/version1, inbox/receipt0, Messenger93done. Phiên Chrome vừa đăng nhập vẫn thuộc tài khoản không có quyền backend; đã chuẩn bị đúng trang đăng nhập cho Founder. Còn kiểm khóa ký đúng App, quyền Graph/Page/form và callback trước khi mở worker. **Không chờ Founder duyệt phát hành lại.** [Bằng chứng và trình tự kích hoạt](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).
+
+---
+
 ## 2026-10-06 08:20 — PR29 đã phát hành, intake còn tắt
 
 PR29 đã merge`b51078d3`, Render deploy`dep-db24o3rncjis73c877fg` đãlive. SQL701/702 đã áp Primary và binding AdminVPT đã tạo inactive. CI đúngheadb94f4ef0PASS, review260NodePASS; healthproductionok/Primary/auto-failoveroff. [Toàn bộ bằng chứng và bước kích hoạt còn lại](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).

@@ -1,5 +1,18 @@
 # Kích hoạt tuyến Facebook Form → CRM → Admin Vạn Phú Thành
 
+## Kiểm tra tiếp — 10:34 ngày 06/10/2026 (UTC+7)
+
+**Intake mới vẫn chưa bật. Quyết định phát hành của Founder vẫn có hiệu lực.**
+
+- Render hiện live commit `6494f870d756ba294f6d4fdbb64f4acba8483547`, deploy `dep-db25vnjtqb8s73c6ff9g` hoàn tất 02:42:47 UTC. Đây là thay đổi PR30 của người làm song song; so với merge PR29, chỉ bổ sung quyền đọc bình luận/thành viên cho người được giao việc. Các file Facebook, worker, router DB và SQL701/702 đã review không đổi.
+- Đọc lại Primary lúc khoảng 03:26 UTC: binding còn `active=false, version=1`; Page và Admin active, cùng công ty; token Page có mặt (không đọc/xuất giá trị). Inbox/receipt mới đều 0, Messenger 93 receipt đều done. `/api/health` lúc 03:27:29 UTC: `ok`, Primary khỏe, active Primary, auto-failover tắt. Những kết quả này không thay nghiệm thu một sự kiện Meta thật.
+- Sau hai lần Founder báo đã chuyển/đăng nhập, tab Chrome đang kết nối vẫn trả tài khoản `kinhphucdat@gmail.com`, workspace chỉ có hai dịch vụ `web-cong-dong`, và `Access denied` với backend VPT. Đã đưa đúng tab về đăng nhập, điền email quản lý `backen@vanphuthanh.net`, nhờ Founder xác nhận khi nhìn thấy `tubep-backend`. Không xin duyệt lại release và không coi đăng nhập thành công vào tài khoản khác là đã có quyền backend.
+- Reviewer độc lập rà lại trình tự kích hoạt: phải xác minh đúng **App ID** đăng ký `leadgen` và callback của backend. Route cũ `/api/facebook/webhook-fields` gộp field của nhiều app, nên kết quả có `leadgen` riêng lẻ chưa đủ. Có thể dùng Shell của đúng backend để GET Graph với Page token trong bộ nhớ, chỉ xuất ID/boolean/mã HTTP; chưa chạy preflight này.
+- Khi đủ cấu hình, bật đồng thời scoped receiver/intake/legacy guard và danh sách Page, vẫn giữ worker paused. Chờ bản cũ dừng rồi mới mở binding một lần và unpause. Không bật riêng inbox vì có thể chuyển cả Messenger. Dừng thông thường bằng pause worker; không cập nhật binding chỉ để pause vì trigger tăng phiên bản và receipt cũ cần đối soát.
+- Khóa ký có mặt không chứng minh khóa đúng; webhook GET challenge không xác minh App Secret. Chưa xác minh khóa/Graph nên chưa đổi cờ, chưa mở binding, chưa gửi thêm form TEST hoặc liên hệ khách.
+
+---
+
 ## Kết quả thực hiện — 08:20 ngày06/10/2026 (UTC+7)
 
 **Đã triển khai lên production ở trạng thái tắt. Chưa bật tiếp nhận Lead Ads mới.** Founder đã duyệt; không có yêu cầu duyệt phát hành còn chờ.
