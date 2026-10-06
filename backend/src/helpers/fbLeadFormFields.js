@@ -48,17 +48,26 @@ function chuanHoaSdt(x) {
 }
 
 /** Lấy bản đồ đã khai cho form này, nếu có. */
-async function layBanDo(formId) {
+async function layBanDo(formId, { strict = false } = {}) {
   if (!formId) return null;
   try {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('fb_lead_form_mapping')
       .select('truong')
       .eq('form_id', String(formId))
       .maybeSingle();
+    if (strict && error) throw new Error('FB_DURABLE_FORM_MAPPING_READ_FAILED');
     const t = data?.truong;
+    if (strict && t != null && (typeof t !== 'object' || Array.isArray(t))) {
+      throw new Error('FB_DURABLE_FORM_MAPPING_READ_FAILED');
+    }
     return t && typeof t === 'object' && Object.keys(t).length ? t : null;
-  } catch {
+  } catch (error) {
+    if (strict) {
+      const failure = new Error('FB_DURABLE_FORM_MAPPING_READ_FAILED');
+      failure.code = failure.message;
+      throw failure;
+    }
     return null;   // bảng chưa migrate — rơi xuống đoán mặc định
   }
 }
@@ -87,7 +96,7 @@ function timTheoTuKhoa(fields, tuKhoa) {
  * @param {string} formId
  * @param {Array}  fieldData  mảng {name, values} Facebook trả về
  */
-async function docFormLeadAds(formId, fieldData) {
+async function docFormLeadAds(formId, fieldData, options = {}) {
   const fields = {};
   for (const f of fieldData || []) {
     const ten = String(f?.name || '').trim();
@@ -95,7 +104,7 @@ async function docFormLeadAds(formId, fieldData) {
     fields[ten] = Array.isArray(f.values) ? (f.values[0] ?? '') : (f.values ?? '');
   }
 
-  const banDo = await layBanDo(formId);
+  const banDo = await layBanDo(formId, options);
   const theoBanDo = (cot) => {
     const ten = banDo?.[cot];
     if (!ten) return '';

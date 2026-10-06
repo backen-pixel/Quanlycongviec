@@ -225,7 +225,8 @@ async function runOneBatch() {
     return { done: true };
   }
 
-  const { graphSyncMessagesForContactRow, extractInboundContactInfo, createLeadFromFacebook } = _coreFns;
+  const { graphSyncMessagesForContactRow, extractInboundContactInfo, createLeadFromFacebook,
+    isLegacyContactProtected = async () => false } = _coreFns;
   const cfg = state.config;
 
   // Kéo contacts batch
@@ -262,6 +263,7 @@ async function runOneBatch() {
     emit();
 
     try {
+      if (await isLegacyContactProtected(contact.id)) continue;
       // ── Bước 2: Đồng bộ tin nhắn Graph → DB ──
       let syncOk = false;
       try {

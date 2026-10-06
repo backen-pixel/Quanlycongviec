@@ -51,6 +51,34 @@ function webhookRouteText() {
   return source.slice(start, end + 4);
 }
 
+test('Page inbox opt-in routes every envelope only to the durable receiver', async () => {
+  let handler;
+  const seen = [];
+  const context = vm.createContext({
+    PAGE_INBOX: { enabled: true },
+    r: { post(_route, fn) { handler = fn; } },
+    receivePageInbox: async (req, res) => { seen.push(req); return res.sendStatus(200); },
+    // Any accidental legacy reference fails this test; those globals deliberately do not exist.
+  });
+  vm.runInContext(webhookRouteText(), context);
+  const request = { body: { object: 'page' } };
+  let status;
+  await handler(request, { sendStatus: code => { status = code; } });
+  assert.deepEqual(seen, [request]);
+  assert.equal(status, 200);
+});
+
+test('scope enrollment with durable receiver disabled fails before any legacy ACK/write', async () => {
+  for (const flags of [{ scopeGuard: true, managedPages: new Set() }, { scopeGuard: false, managedPages: new Set(['10001']) }]) {
+    let handler;
+    const context = vm.createContext({ PAGE_INBOX: { enabled: false, ...flags }, r: { post(_route, fn) { handler = fn; } } });
+    vm.runInContext(webhookRouteText(), context);
+    let status;
+    await handler({}, { sendStatus: code => { status = code; } });
+    assert.equal(status, 503);
+  }
+});
+
 const quietConsole = { log() {}, warn() {}, error() {} };
 
 function webhookHarness({ enqueueError = null } = {}) {
@@ -59,6 +87,7 @@ function webhookHarness({ enqueueError = null } = {}) {
   const state = { committed: false, statuses: [], drains: 0, legacyMessages: 0 };
   let handler;
   const context = vm.createContext({
+    PAGE_INBOX: { enabled: false, scopeGuard: false, managedPages: new Set() },
     console: quietConsole,
     FB_DISABLE_WEBHOOK_LOGS: true,
     DURABLE_MESSENGER_PAGES: new Set(['synthetic-page']),

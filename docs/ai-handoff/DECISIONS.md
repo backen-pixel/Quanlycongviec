@@ -1,3 +1,19 @@
+## 2026-10-06 — Phê duyệt kích hoạt tuyến Facebook Form hiện tại
+
+- Nguồn: Founder yêu cầu trực tiếp **“cho bật chạy thật luôn nhé”**, sau yêu cầu phát hành và làm bước tiếp theo.
+- Phạm vi: đưa tuyến Facebook Form → CRM → Admin Vạn Phú Thành đang triển khai vào vận hành sau kiểm chứng cần thiết; giữ Messenger đang hoạt động. Không yêu cầu Founder duyệt lại cùng bước phát hành.
+- Không mở rộng sang toàn bộ PR22/25, AI gửi tin khách, ngân sách mới hoặc phần thu quyền anon/SQL700 đang do Claude làm.
+- Bằng chứng kỹ thuật/cấu hình thật, phiên bản triển khai và kết quả vận hành phải ghi trong [hồ sơ kích hoạt](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md). Phê duyệt không được ghi thay cho kết quả đã kích hoạt.
+
+---
+
+## 2026-10-06 — H1: gói tiếp nhận Facebook Page riêng từ main
+
+Founder giao tiếp tục và giữ quyết định phát hành. Đã tách nhánh `codex/facebook-durable-inbox-20261006` từ main `1f879ea8`, triển khai signed durable inbox + SQL701, giữ worker paused. Không merge PR22/25 toàn khối; không sửa SQL700 của Claude. [Phạm vi, giới hạn, kiểm thử và phương án dừng](FACEBOOK_PAGE_INBOX_H1_20261006.md).
+
+Mã mới chưa triển khai; nghiệp vụ tự tạo Lead/projection/attribution còn pending có chủ đích. Không dùng ACK/inbox làm Lead hợp lệ. Kết quả kiểm thử/review gói H1 đã ghi trong hồ sơ, không tự trở thành quyết định Founder cho phép cutover. Bật hệ thống thật HOLD do hợp đồng downstream và nghiệm thu target chưa hoàn tất. Mục lịch sử bên dưới giữ nguyên theo thời điểm ghi.
+
+---
 # 2026-10-01 — Chỉ mục quyết định Business AI OS V1.1
 
 [Sổ Founder V1.1](FOUNDER_DECISIONS_ARCHITECTURE_V1_1_20261001.md) ghi nguồn/phạm vi phê duyệt; [ADR-0016…0020](../adr/README.md) ghi lựa chọn kiến trúc. Các quyết định lịch sử bên dưới được giữ nguyên. Không dùng một hướng dẫn cũ làm quyền vượt phạm vi công việc hiện tại; phần không mâu thuẫn vẫn là tài liệu tham chiếu cần đối chiếu mã.
@@ -84,3 +100,8 @@
 - Mỗi luồng việc commit riêng một commit; không gộp hai luồng vào một commit.
 - Phản biện lẫn nhau phải kèm số đo và câu lệnh đã chạy; lập luận không có số đo
   không đủ để đảo một kết luận đã có số.
+# 2026-10-06 — Giao bước tiếp theo H1
+
+Founder: “em làm bước tiếp theo nhé”, tiếp nối bước Facebook → Lead đúng công ty/người nhận Admin Vạn Phú Thành. Phạm vi triển khai: hợp đồng tiếp nhận Lead Ads và kiểm thử/review trong PR29; không tự mở gói C, AI gửi tin, ngân sách hoặc đồng thời bật hai writer. Lựa chọn kỹ thuật: binding rõ mặc định tắt, transaction SQL702, source receipt bất biến, hồ sơ cũ không rõ phải đối soát. Các lựa chọn này là thiết kế thực thi để review, không biến suy luận thành quyết định phát hành Founder. [Chi tiết](FACEBOOK_LEAD_ADS_INTAKE_20261006.md).
+
+---
