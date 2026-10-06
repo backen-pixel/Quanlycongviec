@@ -7,7 +7,7 @@
  *
  * Ba nguyên tắc:
  *   - Tên do người đặt tay (nguon='thu_cong') KHÔNG bị ghi đè. Người biết rõ hơn API.
- *   - Không bao giờ in giá trị token ra log, chỉ in độ dài.
+ *   - Không bao giờ in giá trị token ra log.
  *   - Lỗi của một tài khoản không làm hỏng các tài khoản còn lại.
  */
 const { supabase } = require('../config/supabase');
@@ -22,8 +22,37 @@ function chuanHoaActId(x) {
   return s.startsWith('act_') ? s : `act_${s.replace(/^act/i, '')}`;
 }
 
-function ngayISO(t) {
-  return new Date(t).toISOString().slice(0, 10);
+function ngayVietNam(t) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date(t));
+  const get = (type) => parts.find((p) => p.type === type).value;
+  return `${get('year')}-${get('month')}-${get('day')}`;
+}
+
+function maLoiMeta(code, status) {
+  if (Number(code) === 190 || status === 401) return 'META_AUTH';
+  if ([10, 200].includes(Number(code)) || status === 403) return 'META_PERMISSION';
+  if ([4, 17, 32, 613].includes(Number(code)) || status === 429) return 'META_RATE_LIMIT';
+  return 'META_ERROR';
+}
+
+function loiDaLoc(code) {
+  const e = new Error(code);
+  e.code = code;
+  return e;
+}
+
+function gioiHanTrang() {
+  const n = Number(process.env.FB_MARKETING_MAX_PAGES);
+  return Number.isSafeInteger(n) && n > 0 ? n : TOI_DA_TRANG;
+}
+
+function soKhongAm(value) {
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+  if (typeof value === 'string' && !/^\d+(?:\.\d+)?$/.test(value)) return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
 /** Gọi Graph API. Token đi trong header Authorization, không nhét vào URL. */
@@ -31,15 +60,18 @@ async function goiGraph(url, token) {
   const ctl = new AbortController();
   const hen = setTimeout(() => ctl.abort(), TIMEOUT_MS);
   try {
-    const resp = await fetch(url, {
-      signal: ctl.signal,
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    let resp;
+    try {
+      resp = await fetch(url, {
+        signal: ctl.signal,
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      throw loiDaLoc('NETWORK');
+    }
     const js = await resp.json().catch(() => null);
     if (!resp.ok || js?.error) {
-      const e = js?.error || {};
-      const ma = e.code ? ` (code ${e.code})` : '';
-      throw new Error(`FB ${resp.status}: ${e.message || 'không rõ lỗi'}${ma}`);
+      throw loiDaLoc(maLoiMeta(js?.error?.code, resp.status));
     }
     return js;
   } finally {
@@ -49,14 +81,18 @@ async function goiGraph(url, token) {
 
 /** Đi hết các trang phân trang của Graph API. */
 async function keoTatCaTrang(urlDau, token) {
-  const ra = [];
+  const rows = [];
   let url = urlDau;
-  for (let i = 0; i < TOI_DA_TRANG && url; i += 1) {
+  let pages = 0;
+  const limit = gioiHanTrang();
+  while (url && pages < limit) {
     const js = await goiGraph(url, token);
-    if (Array.isArray(js?.data)) ra.push(...js.data);
+    if (!Array.isArray(js?.data)) throw loiDaLoc('META_ERROR');
+    pages += 1;
+    rows.push(...js.data);
     url = js?.paging?.next || null;
   }
-  return ra;
+  return { rows, pages, truncated: !!url };
 }
 
 /** Kiểm tra một cặp (ad account, token) có dùng được không. */
@@ -76,18 +112,20 @@ async function kiemTraKetNoi(adAccountId, token) {
 async function layTienTe(tk) {
   try {
     const js = await goiGraph(`${GRAPH}/${tk.ad_account_id}?fields=currency`, tk.access_token);
-    return js?.currency || 'VND';
+    const currency = typeof js?.currency === 'string' ? js.currency.trim() : '';
+    if (currency) return currency;
   } catch {
-    return 'VND';
+    // Lỗi đọc tiền tệ không được phép biến thành số tiền VND.
   }
+  throw loiDaLoc('CURRENCY_UNKNOWN');
 }
 
 /** Kéo tên chiến dịch / nhóm / quảng cáo về danh mục. */
 async function keoTenQuangCao(tk) {
   const fields = 'id,name,status,adset{id,name},campaign{id,name,objective}';
   const url = `${GRAPH}/${tk.ad_account_id}/ads?fields=${encodeURIComponent(fields)}&limit=200`;
-  const ads = await keoTatCaTrang(url, tk.access_token);
-  if (!ads.length) return { so_ad: 0, giu_ten_tay: 0 };
+  const { rows: ads, pages, truncated } = await keoTatCaTrang(url, tk.access_token);
+  if (!ads.length) return { so_ad: 0, giu_ten_tay: 0, pages, truncated };
 
   // Đọc trước những dòng đã có để biết cái nào người đã đặt tay.
   const ids = ads.map((a) => String(a.id));
@@ -127,35 +165,44 @@ async function keoTenQuangCao(tk) {
       .upsert(rows.slice(i, i + 200), { onConflict: 'ad_id' });
     if (error) throw new Error(`Lưu danh mục: ${error.message}`);
   }
-  return { so_ad: rows.length, giu_ten_tay: giuTay };
+  return { so_ad: rows.length, giu_ten_tay: giuTay, pages, truncated };
 }
 
 /** Kéo chi tiêu theo từng quảng cáo từng ngày. */
-async function keoChiTieu(tk, ngay) {
-  const den = ngayISO(Date.now());
-  const tu = ngayISO(Date.now() - (Math.max(1, ngay) - 1) * 86400000);
+async function keoChiTieu(tk, { since, until }) {
   const fields = 'ad_id,campaign_id,adset_id,spend,impressions,clicks';
-  const khoang = encodeURIComponent(JSON.stringify({ since: tu, until: den }));
+  const khoang = encodeURIComponent(JSON.stringify({ since, until }));
   const url = `${GRAPH}/${tk.ad_account_id}/insights?level=ad&time_increment=1&limit=500`
     + `&fields=${encodeURIComponent(fields)}&time_range=${khoang}`;
-  const rows = await keoTatCaTrang(url, tk.access_token);
-  if (!rows.length) return { so_dong_chi_tieu: 0, tong_chi_tieu: 0 };
+  const { rows, pages, truncated } = await keoTatCaTrang(url, tk.access_token);
 
   const bayGio = new Date().toISOString();
-  const banGhi = rows
-    .filter((r) => r.ad_id && r.date_start)
-    .map((r) => ({
+  const banGhi = [];
+  let invalid_rows = 0;
+  let skipped_rows = 0;
+  for (const r of rows) {
+    if (!r?.ad_id || !r?.date_start) { skipped_rows += 1; continue; }
+    const spend = soKhongAm(r.spend);
+    // Meta may omit count fields when they are zero; only a present, malformed count is invalid.
+    const impressions = r.impressions == null ? 0 : soKhongAm(r.impressions);
+    const clicks = r.clicks == null ? 0 : soKhongAm(r.clicks);
+    if (spend === null || !Number.isSafeInteger(impressions) || !Number.isSafeInteger(clicks)) {
+      invalid_rows += 1;
+      continue;
+    }
+    banGhi.push({
       ad_id: String(r.ad_id),
       ngay: String(r.date_start),
       ad_account_id: tk.ad_account_id,
       campaign_id: r.campaign_id || null,
       adset_id: r.adset_id || null,
-      chi_tieu: Number(r.spend) || 0,
-      hien_thi: Number(r.impressions) || 0,
-      nhap: Number(r.clicks) || 0,
-      tien_te: tk._tien_te || 'VND',
+      chi_tieu: spend,
+      hien_thi: impressions,
+      nhap: clicks,
+      tien_te: tk._tien_te,
       cap_nhat_luc: bayGio,
-    }));
+    });
+  }
 
   for (let i = 0; i < banGhi.length; i += 300) {
     const { error } = await supabase.from('fb_ad_spend_daily')
@@ -163,27 +210,51 @@ async function keoChiTieu(tk, ngay) {
     if (error) throw new Error(`Lưu chi tiêu: ${error.message}`);
   }
   const tong = banGhi.reduce((s, x) => s + x.chi_tieu, 0);
-  return { so_dong_chi_tieu: banGhi.length, tong_chi_tieu: Math.round(tong) };
+  return {
+    so_dong_chi_tieu: banGhi.length, tong_chi_tieu: Math.round(tong),
+    rows_written: banGhi.length, invalid_rows, skipped_rows, pages, truncated,
+  };
 }
 
 /** Đồng bộ một tài khoản. Không ném lỗi ra ngoài — ghi lại vào ket_qua_cuoi. */
 async function dongBoMot(tk, { ngay = 30 } = {}) {
   const batDau = Date.now();
-  const kq = { ad_account_id: tk.ad_account_id, ok: false };
+  const until = ngayVietNam(batDau);
+  const since = ngayVietNam(batDau - (Math.max(1, ngay) - 1) * 86400000);
+  const kq = {
+    ad_account_id: tk.ad_account_id, ok: false, complete: false, currency: null,
+    since, until, pages: 0, rows_written: 0, invalid_rows: 0, skipped_rows: 0,
+    truncated: false, error_code: null,
+  };
   try {
-    if (!tk.access_token) throw new Error('Chưa có access token');
+    if (!tk.access_token) throw loiDaLoc('TOKEN_MISSING');
     tk._tien_te = await layTienTe(tk);
+    kq.currency = tk._tien_te;
+    kq.currency_mismatch = tk._tien_te !== 'VND';
     const ten = await keoTenQuangCao(tk);
-    const chi = await keoChiTieu(tk, ngay);
+    kq.pages += ten.pages;
+    kq.truncated = ten.truncated;
+    const chi = await keoChiTieu(tk, { since, until });
     Object.assign(kq, ten, chi, {
       ok: true,
       tien_te: tk._tien_te,
       giay: Math.round((Date.now() - batDau) / 1000),
     });
+    kq.pages = ten.pages + chi.pages;
+    kq.truncated = ten.truncated || chi.truncated;
+    kq.complete = !kq.truncated && !kq.invalid_rows && !kq.skipped_rows
+      && !kq.currency_mismatch;
+    if (kq.truncated) console.warn(`[dong-bo-qc] ${tk.ad_account_id}: TRUNCATED (${kq.pages} trang)`);
+    if (kq.invalid_rows || kq.skipped_rows) {
+      console.warn(`[dong-bo-qc] ${tk.ad_account_id}: INVALID_ROWS=${kq.invalid_rows}, SKIPPED_ROWS=${kq.skipped_rows}`);
+    }
   } catch (e) {
-    kq.loi = e.message;
-    const doDai = String(tk.access_token || '').length;
-    console.warn(`[dong-bo-qc] ${tk.ad_account_id}: ${e.message} (token ${doDai} ký tự)`);
+    kq.error_code = [
+      'TOKEN_MISSING', 'CURRENCY_UNKNOWN', 'META_AUTH', 'META_PERMISSION',
+      'META_RATE_LIMIT', 'META_ERROR', 'NETWORK',
+    ].includes(e.code) ? e.code : 'SYNC_ERROR';
+    kq.loi = kq.error_code;
+    console.warn(`[dong-bo-qc] ${tk.ad_account_id}: ${kq.error_code}`);
   }
   try {
     await supabase.from('fb_ad_accounts').update({

@@ -1,3 +1,9 @@
+## 2026-10-06 — Đồng bộ chi tiêu Facebook: chặn sai nguồn
+
+Helper đồng bộ ghi phần dữ liệu hợp lệ nhưng đánh dấu thiếu khi hết trang/dòng hỏng; không ghi chi tiêu nếu chưa biết currency, giữ nhãn USD, dùng ngày Việt Nam và mã lỗi Meta đã lọc. Giữ các trường kết quả cũ; không đổi runner/schema/chu kỳ. Test cô lập tại `backend/tests/fbMarketingSync.test.js`: V8 giả lập 8/8 PASS; Node CLI bị chặn khi tạo phiên sandbox. Chưa kiểm chứng DB/Meta/production. Hoàn tác: đảo diff helper, test và hai mục bàn giao này.
+
+---
+
 ## 2026-10-06 — P1-1: so sánh nguyên và trạng thái bộ đo Lead
 
 - Local only: sửa `leadMeasurement.js` (so sánh VND nguyên, chặn tràn tích, `uiState`) và thêm test trong `marketingAutomation.leads.test.js`.
