@@ -1,5 +1,20 @@
 # Kích hoạt tuyến Facebook Form → CRM → Admin Vạn Phú Thành
 
+## Kiểm tra tiếp — Chrome Work đã kết nối, 06/10/2026 khoảng 11:07 (UTC+7)
+
+**Đã giải quyết quyền truy cập Render. Điểm chặn hiện tại là cấu hình và quyền Meta, không còn là đăng nhập Render. Intake mới vẫn tắt.**
+
+- Founder cung cấp ảnh đúng dịch vụ trên hồ sơ Chrome Work. Sau khi kết nối tiện ích, Codex thấy hồ sơ `vanphuthanh.net` và mở được Environment/Shell của đúng `srv-d6gguqq4d50c73emh20g`. Không yêu cầu đăng nhập lại Render.
+- Đọc từ process Shell trên instance `c2brv`, commit `6494f870d756ba294f6d4fdbb64f4acba8483547`: `VPT_FACEBOOK_APP_SECRET` **chưa có**, `VPT_META_GRAPH_VERSION` **chưa có**; inbox/intake/guard đều `0`, worker paused=`1`, managed Page rỗng. Messenger Page=`409741855550833`, auto-failover=`0`. Chỉ in boolean và cấu hình không bí mật; không xuất token/secret.
+- Phép GET Graph chỉ đọc dùng Page token đã lưu trên Primary, giữ token trong bộ nhớ process. Yêu cầu `v22.0` trả header phiên bản thực `v25.0`; lần kiểm riêng tiếp theo dùng `v25.0` trực tiếp. Đây là phiên bản thử đọc, **chưa được lưu vào cấu hình dịch vụ**.
+- `GET /me?fields=id` trên v25 trả HTTP200, định danh khớp Page VPT. Vì vậy không kết luận token hết hạn hoặc thuộc Page khác.
+- `GET /409741855550833/subscribed_apps?fields=id,subscribed_fields` trả HTTP403, Meta code200, thông báo nhắc `pages_manage_metadata`. Chưa đọc được App ID và đăng ký `leadgen`; chưa xác minh callback hoặc khóa ký.
+- `GET /1438656288329447?fields=id,page_id` trả HTTP400, code100/subcode33. Token hiện tại không đọc được đối tượng này; lỗi chưa đủ phân biệt thiếu quyền, đối tượng không tồn tại hoặc giới hạn truy cập. Nhật ký giao diện ngày01/10 ghi đã tạo form, ngày05/10 ghi quảng cáo hoạt động; cần đối chiếu lại trong Meta bằng tài khoản quản trị, không tự sửa ID binding từ lỗi này.
+- Một lệnh nhập nhiều dòng đầu tiên lỗi cú pháp trước khi thực thi; sau khi sửa cách xuống dòng, các phép GET trên mới thực chạy. Không có POST Graph, thay token, cấp quyền, đổi env, mở binding, gửi form TEST hoặc tạo Lead trong đợt kiểm này.
+- Tab Meta for Developers trên chính Chrome Work yêu cầu đăng nhập Facebook. Đã mở sẵn và gửi yêu cầu Founder đăng nhập tài khoản quản trị ứng dụng VPT, không gửi mật khẩu/khóa vào chat. Sau đăng nhập: đối chiếu App/callback, bổ sung khóa ký và quyền Page/form đúng phạm vi, kiểm lại dữ liệu mẫu rồi mới thực hiện trình tự bật receiver/binding/worker đã review.
+
+---
+
 ## Kiểm tra tiếp — 10:34 ngày 06/10/2026 (UTC+7)
 
 **Intake mới vẫn chưa bật. Quyết định phát hành của Founder vẫn có hiệu lực.**

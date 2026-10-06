@@ -1,3 +1,9 @@
+## 2026-10-06 11:07 — Đã vào đúng Render; còn khóa ứng dụng và quyền Meta
+
+Chrome Work đã kết nối, kiểm được backend live6494. App Secret và Graph version chưa cấu hình; các cờ intake vẫn off/paused. Token lưu đúng Page VPT (GET định danh200), nhưng đọc form trả400/100/33 và đọc ứng dụng đăng ký trả403/200, nhắc quyền `pages_manage_metadata`. Chưa kết luận form mất hoặc token hết hạn. Đang chờ Founder đăng nhập Meta quản trị trên tab đã mở để hoàn tất cấu hình; **không cần đăng nhập Render hoặc duyệt release lại**. Không đổi token/quyền/env/DB trong lần kiểm này. [Bằng chứng](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).
+
+---
+
 ## 2026-10-06 10:34 — Bản live mới đã đối chiếu; tiếp nhận form còn tắt
 
 Render đang chạy `6494f870` sau PR30, các file tuyến Facebook đã review không đổi. Primary khỏe, auto-failover tắt; binding inactive/version1, inbox/receipt0, Messenger93done. Phiên Chrome vừa đăng nhập vẫn thuộc tài khoản không có quyền backend; đã chuẩn bị đúng trang đăng nhập cho Founder. Còn kiểm khóa ký đúng App, quyền Graph/Page/form và callback trước khi mở worker. **Không chờ Founder duyệt phát hành lại.** [Bằng chứng và trình tự kích hoạt](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).
