@@ -1,3 +1,10 @@
+## 2026-10-06 — P1-1: so sánh nguyên và trạng thái bộ đo Lead
+
+- Local only: sửa `leadMeasurement.js` (so sánh VND nguyên, chặn tràn tích, `uiState`) và thêm test trong `marketingAutomation.leads.test.js`.
+- 25 test cũ giữ nguyên; tổng 38 test. Harness JS giả lập chạy 38/38; Claude review chạy lại bằng Node 24 (`node --test --test-isolation=none`) cũng đạt 38/38.
+- Search `backend/src` chỉ thấy `measureLeadTrial` trong chính module; chưa có caller runtime. Chưa kiểm DB, mạng hay tích hợp.
+- Hoàn tác: bỏ delta P1-1 ở hai file JS và hai mục handoff mới; giữ nội dung lịch sử.
+
 ## 2026-10-02 — Trợ lý Marketing–CRM: hồ sơ khảo sát MCRM-D0 v1
 
 - Phạm vi được giao: khảo sát mã và chuẩn bị thử nghiệm; gói tại [marketing-crm-assistant/README.md](./marketing-crm-assistant/README.md).

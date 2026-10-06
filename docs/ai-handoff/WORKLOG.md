@@ -1,3 +1,10 @@
+## 2026-10-06 — P1-1: bộ đo Lead hợp lệ
+
+- File đổi: `leadMeasurement.js`, `marketingAutomation.leads.test.js`, `CURRENT.md`, `WORKLOG.md`; không commit/push.
+- So sánh `spend <= target × qualified` bằng số nguyên an toàn; `uiState` theo reason và trạng thái đo.
+- Kiểm: 25 → 38 test; harness JS giả lập 38/38, search caller trong `backend/src` không có. Claude review đã chạy Node 24 `node --test --test-isolation=none` (38/38) và `git diff --stat` (4 file).
+- Chưa kiểm: Node thật, tích hợp/runtime, DB/mạng. Hoàn tác đúng bốn delta P1-1, giữ lịch sử cũ.
+
 ## 2026-10-02 — MCRM-D0 v1: khảo sát và thiết kế thử nghiệm trợ lý Marketing–CRM
 
 - AI thực hiện: Codex; reviewer phiên riêng theo hồ sơ VALIDATION.

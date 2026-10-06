@@ -21,3 +21,82 @@ test('source from an old acquisition cohort is rejected',()=>{const s=fixture();
 test('qualification may arrive after spending ends, but not after the snapshot',()=>{const s=fixture();s.paidLeads[0].qualifiedAt='2026-11-02T00:00:00Z';assert.equal(measureLeadTrial(s).targetMetToDate,true);s.paidLeads[0].qualifiedAt='2026-12-02T00:00:00Z';assert.equal(measureLeadTrial(s).reason,'UNVERIFIED_QUALIFICATION');});
 test('wrong company and account block measurement',()=>{for(const patch of [{companyId:'other'},{accountId:'other'}]){const s=fixture();Object.assign(s.paidLeads[0],patch);assert.equal(measureLeadTrial(s).status,'UNKNOWN');}});
 test('conflicting spend event must be reconciled',()=>{const s=fixture();s.spend.push({...s.spend[0],amountVnd:1});assert.equal(measureLeadTrial(s).reason,'CONFLICTING_SPEND');});
+
+test('integer target comparison holds at one and seven qualified Leads',()=>{
+  for (const qualified of [1, 7]) {
+    const s = fixture();
+    s.paidLeads = Array.from({ length: qualified }, (_, i) => ({
+      ...s.paidLeads[0], canonicalLeadId: `lead${i + 1}`, sourceEvidenceId: `receipt${i + 1}`,
+    }));
+    s.spend[0].amountVnd = 250000 * qualified;
+    assert.equal(measureLeadTrial(s).targetMetToDate, true);
+    s.spend[0].amountVnd++;
+    assert.equal(measureLeadTrial(s).targetMetToDate, false);
+  }
+});
+
+function isolatedMeasurement(targetVnd) {
+  const { readFileSync } = require('node:fs');
+  const { runInNewContext } = require('node:vm');
+  const policy = require('../src/modules/marketingAutomation/policy');
+  const source = readFileSync(require.resolve('../src/modules/marketingAutomation/leadMeasurement'), 'utf8');
+  const module = { exports: {} };
+  runInNewContext(`${source}\nmodule.exports.unknownForTest = unknown;`, { module, require: path => {
+    assert.equal(path, './policy');
+    return { ...policy, APPROVED_PLAN: { ...APPROVED_PLAN, targetQualifiedLeadCostVnd: targetVnd } };
+  } });
+  return module.exports;
+}
+
+test('unsafe target multiplication and spend sum block measurement',()=>{
+  const s = fixture();
+  s.paidLeads.push({ ...s.paidLeads[0], canonicalLeadId: 'lead2', sourceEvidenceId: 'receipt2' });
+  const targetVnd = Math.floor(Number.MAX_SAFE_INTEGER / 2) + 1;
+  const r = isolatedMeasurement(targetVnd).measureLeadTrial(s);
+  assert.equal(r.reason, 'AMOUNT_OVERFLOW');
+  assert.equal(r.uiState, 'BLOCKED');
+  assert.equal(r.targetMetToDate, false);
+  const spendOverflow = fixture();
+  spendOverflow.spend.push({ ...spendOverflow.spend[0], eventId: 'spend2', amountVnd: Number.MAX_SAFE_INTEGER });
+  assert.equal(measureLeadTrial(spendOverflow).uiState, 'BLOCKED');
+});
+
+for (const [reason, uiState, mutate] of [
+  ['INVALID_SNAPSHOT', 'UNKNOWN', s => { s.companyId = ''; }],
+  ['MISSING_SOURCE', 'UNKNOWN', s => { s.accountIds = []; }],
+  ['INVALID_SPEND', 'UNKNOWN', s => { s.spend[0].amountVnd = -1; }],
+  ['INVALID_LEAD', 'UNKNOWN', s => { s.paidLeads[0].qualification = 'invalid'; }],
+  ['UNVERIFIED_QUALIFICATION', 'UNKNOWN', s => { s.paidLeads[0].contactVerified = false; }],
+  ['UNVERIFIED_SOURCE', 'BLOCKED', s => { s.sourceVerified = false; }],
+  ['INCOMPLETE_COVERAGE', 'BLOCKED', s => { s.coverage.spend = 'PARTIAL'; }],
+  ['CONFLICTING_SPEND', 'BLOCKED', s => { s.spend.push({ ...s.spend[0], amountVnd: 1 }); }],
+  ['CONFLICTING_LEAD', 'BLOCKED', s => { s.paidLeads.push({ ...s.paidLeads[0], accountId: 'google' }); }],
+]) test(`uiState maps ${reason} to ${uiState}`,()=>{
+  const s = fixture(); mutate(s);
+  const r = measureLeadTrial(s);
+  assert.equal(r.status, 'UNKNOWN');
+  assert.equal(r.reason, reason);
+  assert.equal(r.uiState, uiState);
+  assert.equal(r.allowBudgetExecution, false);
+});
+
+test('successful uiState follows status and zero qualified Leads keep null cost',()=>{
+  const known = measureLeadTrial(fixture());
+  assert.equal(known.status, 'KNOWN_TO_DATE');
+  assert.equal(known.uiState, 'KNOWN_TO_DATE');
+  const s = fixture(); s.paidLeads = [];
+  const empty = measureLeadTrial(s);
+  assert.equal(empty.status, 'NO_QUALIFIED_LEADS');
+  assert.equal(empty.uiState, 'NO_QUALIFIED_LEADS');
+  assert.equal(empty.costPerQualifiedLeadVnd, null);
+  assert.equal(empty.targetMetToDate, false);
+});
+
+test('unlisted reasons default to UNKNOWN, including prototype property names',()=>{
+  const { unknownForTest } = isolatedMeasurement(APPROVED_PLAN.targetQualifiedLeadCostVnd);
+  for (const reason of ['UNLISTED_REASON', '__proto__']) {
+    const r = unknownForTest(reason);
+    assert.equal(r.reason, reason);
+    assert.equal(r.uiState, 'UNKNOWN');
+  }
+});
