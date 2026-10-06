@@ -20,12 +20,18 @@ function inboxSettings(env = process.env) {
   const scopeGuard = env.VPT_FB_LEGACY_SCOPE_GUARD === '1';
   const leadAdsIntake = env.VPT_FB_LEAD_ADS_INTAKE === '1';
   const dedicatedLeadApp = env.VPT_FB_LEAD_APP_MODE === '1';
+  // Meta verifies the callback before the Lead App can be cut over. The GET
+  // challenge needs only the dedicated App secret and verify token; POST intake
+  // remains controlled by dedicatedLeadApp and the existing scope gates.
+  const dedicatedLeadAppVerification = typeof env.VPT_FB_LEAD_APP_SECRET === 'string'
+    && env.VPT_FB_LEAD_APP_SECRET.length >= 16
+    && (!env.VPT_FACEBOOK_APP_SECRET || env.VPT_FB_LEAD_APP_SECRET !== env.VPT_FACEBOOK_APP_SECRET)
+    && typeof env.VPT_FB_LEAD_APP_VERIFY_TOKEN === 'string'
+    && env.VPT_FB_LEAD_APP_VERIFY_TOKEN.length >= 16;
   if (leadAdsIntake && (!enabled || !scopeGuard || !managedPages.size)) throw fail('FB_INBOX_INVALID_CONFIG');
   if (dedicatedLeadApp && (!leadAdsIntake || managedPages.size !== 1
       || !managedPages.has(env.VPT_FB_LEAD_APP_PAGE_ID)
-      || typeof env.VPT_FB_LEAD_APP_SECRET !== 'string' || env.VPT_FB_LEAD_APP_SECRET.length < 16
-      || (env.VPT_FACEBOOK_APP_SECRET && env.VPT_FB_LEAD_APP_SECRET === env.VPT_FACEBOOK_APP_SECRET)
-      || typeof env.VPT_FB_LEAD_APP_VERIFY_TOKEN !== 'string' || env.VPT_FB_LEAD_APP_VERIFY_TOKEN.length < 16
+      || !dedicatedLeadAppVerification
       || typeof env.VPT_FB_LEAD_APP_ACCESS_TOKEN !== 'string' || !env.VPT_FB_LEAD_APP_ACCESS_TOKEN.trim())) {
     throw fail('FB_INBOX_INVALID_CONFIG');
   }
@@ -35,6 +41,7 @@ function inboxSettings(env = process.env) {
     scopeGuard,
     leadAdsIntake,
     dedicatedLeadApp,
+    dedicatedLeadAppVerification,
     managedPages,
   };
 }

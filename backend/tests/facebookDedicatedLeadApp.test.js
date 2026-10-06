@@ -32,6 +32,7 @@ const env = () => ({ VPT_FB_PAGE_INBOX: '1', VPT_FB_LEAD_ADS_INTAKE: '1',
 test('dedicated App remains opt-in and needs its own credentials, one managed Page and existing scope gates', () => {
   assert.equal(inboxSettings({}).dedicatedLeadApp, false);
   assert.equal(inboxSettings(env()).dedicatedLeadApp, true);
+  assert.equal(inboxSettings(env()).dedicatedLeadAppVerification, true);
   assert.equal(inboxSettings({ ...env(), VPT_FACEBOOK_APP_SECRET: undefined }).dedicatedLeadApp, true);
   for (const key of ['VPT_FB_PAGE_INBOX', 'VPT_FB_LEAD_ADS_INTAKE', 'VPT_FB_LEGACY_SCOPE_GUARD',
     'VPT_FB_LEAD_APP_PAGE_ID', 'VPT_FB_LEAD_APP_SECRET',
@@ -42,6 +43,27 @@ test('dedicated App remains opt-in and needs its own credentials, one managed Pa
   assert.throws(() => inboxSettings({ ...env(), VPT_FB_MANAGED_PAGE_IDS: `${PAGE},${OTHER}` }), /INVALID_CONFIG/);
   assert.throws(() => inboxSettings({ ...env(), VPT_FB_LEAD_APP_SECRET: MESSENGER_SECRET }), /INVALID_CONFIG/);
   assert.equal(inboxSettings({ ...env(), VPT_FB_LEAD_APP_MODE: 'true' }).dedicatedLeadApp, false);
+});
+
+test('dedicated callback can be verified before intake is enabled, but incomplete or shared credentials cannot verify', () => {
+  const preparation = { ...env(), VPT_FB_LEAD_APP_MODE: '0', VPT_FB_PAGE_INBOX: '0',
+    VPT_FB_LEAD_ADS_INTAKE: '0', VPT_FB_LEGACY_SCOPE_GUARD: '0',
+    VPT_FB_MANAGED_PAGE_IDS: undefined, VPT_FB_LEAD_APP_PAGE_ID: undefined,
+    VPT_FB_LEAD_APP_ACCESS_TOKEN: undefined };
+  const settings = inboxSettings(preparation);
+  assert.equal(settings.dedicatedLeadAppVerification, true);
+  assert.equal(settings.dedicatedLeadApp, false);
+  assert.equal(settings.leadAdsIntake, false);
+  assert.equal(settings.enabled, false);
+  for (const override of [
+    { VPT_FB_LEAD_APP_SECRET: undefined },
+    { VPT_FB_LEAD_APP_SECRET: 'too-short' },
+    { VPT_FB_LEAD_APP_SECRET: MESSENGER_SECRET },
+    { VPT_FB_LEAD_APP_VERIFY_TOKEN: undefined },
+    { VPT_FB_LEAD_APP_VERIFY_TOKEN: 'too-short' },
+  ]) {
+    assert.equal(inboxSettings({ ...preparation, ...override }).dedicatedLeadAppVerification, false);
+  }
 });
 
 function receiverHarness() {
@@ -107,22 +129,32 @@ function routeText(method) {
   return routeSource.slice(start, end + 4);
 }
 
-test('actual dedicated GET/POST routes remain closed when flag is off and GET never accepts Messenger token', async () => {
-  for (const enabled of [false, true]) {
+test('actual GET can verify before cutover while POST stays closed; absent credentials close both', async () => {
+  for (const [verificationReady, enabled] of [[false, false], [true, false], [true, true]]) {
     const handlers = {};
+    const routeEnv = { VPT_FB_LEAD_APP_VERIFY_TOKEN: VERIFY };
     const context = { r: { get(_path, fn) { handlers.get = fn; }, post(_path, fn) { handlers.post = fn; } },
-      PAGE_INBOX: { dedicatedLeadApp: enabled }, process: { env: { VPT_FB_LEAD_APP_VERIFY_TOKEN: VERIFY } },
+      PAGE_INBOX: { dedicatedLeadAppVerification: verificationReady, dedicatedLeadApp: enabled },
+      process: { env: routeEnv },
       receiveDedicatedLeadAds: async (_req, res) => res.sendStatus(200) };
     vm.runInNewContext(routeText('get') + '\n' + routeText('post'), context);
     const result = [];
     const res = { sendStatus: code => result.push(code), status(code) { result.push(code); return res; }, send: value => result.push(value) };
     handlers.get({ query: { 'hub.mode': 'subscribe', 'hub.verify_token': VERIFY, 'hub.challenge': 'synthetic-challenge' } }, res);
     await handlers.post({}, res);
-    assert.deepEqual(result, enabled ? [200, 'synthetic-challenge', 200] : [404, 404]);
-    if (enabled) {
+    assert.deepEqual(result, verificationReady
+      ? [200, 'synthetic-challenge', enabled ? 200 : 404]
+      : [404, 404]);
+    if (verificationReady) {
       handlers.get({ query: { 'hub.mode': 'subscribe', 'hub.verify_token': MESSENGER_SECRET,
         'hub.challenge': 'synthetic-challenge' } }, res);
       assert.equal(result.at(-1), 403);
+      handlers.get({ query: { 'hub.mode': 'subscribe', 'hub.verify_token': VERIFY,
+        'hub.challenge': '' } }, res);
+      assert.equal(result.at(-1), 403);
+      routeEnv.VPT_FB_LEAD_APP_VERIFY_TOKEN = undefined;
+      handlers.get({ query: { 'hub.mode': 'subscribe', 'hub.challenge': 'synthetic-challenge' } }, res);
+      assert.equal(result.at(-1), 404);
     }
   }
 });

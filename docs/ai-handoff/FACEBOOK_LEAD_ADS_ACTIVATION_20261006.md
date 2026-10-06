@@ -1,5 +1,13 @@
 # Kích hoạt tuyến Facebook Form → CRM → Admin Vạn Phú Thành
 
+## Bản sửa xác minh callback trước chuyển đổi — 16:39 ngày 06/10/2026 (UTC+7)
+
+Trong mã cục bộ, GET callback Lead Ads có thể hoàn tất challenge của Meta khi đã cấu hình App Secret và verify token **riêng** hợp lệ, ngay cả lúc `VPT_FB_LEAD_APP_MODE=0`. Trước đó GET trả 404 cho tới khi bật cờ này, tạo thế kẹt giữa xác minh callback và chuyển đổi không rơi Lead. POST vẫn trả 404 khi cờ tắt; Messenger, đường ghi Lead và worker không thay đổi. Kiểm thử 235/235 ca Node Facebook liên quan đạt. Chưa review độc lập, CI hoặc phát hành bản sửa; không đổi Meta/Render/DB thật.
+
+**Giới hạn vận hành:** GET trả challenge chỉ chứng minh callback và verify token khớp. Nó không chứng minh App đã được phát hành, đăng ký `leadgen`, có quyền đọc form/Lead hay nhận được sự kiện thật. Không đăng ký đường gửi Lead production khi POST còn đóng nếu việc đó có thể đưa Lead thật vào callback mới; giữ cổng chuyển đổi bên dưới và đối soát một Lead thật trước khi tuyên bố đã chạy.
+
+---
+
 ## Bản mã App Lead riêng — 15:45 ngày 06/10/2026 (UTC+7)
 
 Đã chuẩn bị mã **opt-in, mặc định tắt** cho callback Lead Ads riêng `/api/facebook/webhook/lead-ads`. POST chỉ nhận lô `leadgen` của đúng Page quản lý khi chữ ký SHA-256 khớp App Secret riêng; xác nhận HTTP 200 sau khi Primary ghi bền vững toàn bộ lô. Worker dùng token Graph riêng của App Lead để đọc form và Lead, không dùng Page token Messenger làm phương án dự phòng. Callback Messenger hiện tại tiếp tục nhận tin/bình luận theo cách cũ; ở chế độ App riêng, nó bỏ qua `leadgen` của Page quản lý để tránh hai writer. Nếu thiếu khóa, token, Page hoặc các cờ kiểm soát, cấu hình App riêng không khởi động.

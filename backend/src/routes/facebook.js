@@ -3542,8 +3542,9 @@ r.get('/webhook', async (req, res) => {
 // Separate callback for the VPT-owned Lead App. Its verify token and signing
 // secret are deliberately unrelated to the existing Messenger App.
 r.get('/webhook/lead-ads', (req, res) => {
-  if (!PAGE_INBOX.dedicatedLeadApp) return res.sendStatus(404);
+  if (!PAGE_INBOX.dedicatedLeadAppVerification) return res.sendStatus(404);
   const token = process.env.VPT_FB_LEAD_APP_VERIFY_TOKEN;
+  if (typeof token !== 'string' || token.length < 16) return res.sendStatus(404);
   if (req.query['hub.mode'] !== 'subscribe' || req.query['hub.verify_token'] !== token
       || typeof req.query['hub.challenge'] !== 'string' || !req.query['hub.challenge']) return res.sendStatus(403);
   return res.status(200).send(req.query['hub.challenge']);
