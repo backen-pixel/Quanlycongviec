@@ -163,7 +163,15 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-10-05 20:10 (UTC+7)
+Cập nhật: 2026-10-06 12:30 (UTC+7)
+
+## SX Kanban — deadline thẻ và các mốc còn lại
+
+Trạng thái: **local, chưa deploy.**
+
+Nút «Deadline» trên thẻ chỉ ghi `sx_kanban_deadline_at`, không đổi ngày lắp. Mở nút nay thấy deadline thẻ, ngày lắp và các mốc kế hoạch còn lại (từ hôm nay). Sửa deadline thẻ không kéo ngày lắp. Sửa ngày lắp hoặc một mốc thì ghi `delivery_date` — hoàn thiện = lắp − 2 và deadline thẻ tính lại theo cột.
+
+Hoàn tác: revert `SxKanbanDeadlinesModal.jsx` và đoạn modal trong `ProductionDashboard.jsx`.
 
 ## Bình luận — nút ⋯ để xóa
 

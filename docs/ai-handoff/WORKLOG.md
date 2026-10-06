@@ -140,6 +140,16 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Nhật ký công việc AI
 
+## 2026-10-06 12:35 — Nút +1 +2 +3 ngày trên deadline SX
+
+- Hộp deadline thẻ có «Dời cả lịch» và nút +1/+2/+3 trên ngày lắp cùng từng mốc còn lại. Một lần bấm dời cả kế hoạch và hạn thẻ.
+- Nút + trên riêng deadline thẻ chỉ dời hạn thẻ, không đổi ngày lắp.
+
+## 2026-10-06 12:30 — Deadline thẻ SX hiện mốc còn lại
+
+- Nút deadline trên Kanban SX trước đây chỉ sửa hạn thẻ, không đồng bộ ngày lắp.
+- Hộp thoại nay liệt kê deadline thẻ, ngày lắp và mốc kế hoạch còn lại; sửa mốc hoặc ngày lắp thì dời cả lịch và tính lại hạn thẻ.
+
 ## 2026-10-05 20:10 — Nút ⋯ xóa bình luận
 
 - Bình luận của Lê Minh Tiển không có chỗ xóa vì nút chỉ hiện khi rê chuột và chỉ với đúng người viết.

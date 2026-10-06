@@ -83,6 +83,7 @@ import {
 } from '../lib/sxPipelineRevenue';
 import { isProjectAlreadyInLogistics, sxCardLogisticsProgress } from '../lib/projectLogistics';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
+import SxKanbanDeadlinesModal from '../components/SxKanbanDeadlinesModal';
 import BlockingTasksAlertModal from '../components/BlockingTasksAlertModal';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import NewDealModal from '../components/NewDealModal';
@@ -3514,13 +3515,59 @@ export default function ProductionDashboard() {
   }, [switchWorkshopModal, switchWorkshopSaving, workTypes, load, scheduleBoardRefresh]);
 
   const openDeadlineFromCard = useCallback((item) => {
+    const col = pipeline.find((s) => String(s.id) === String(item.sx_kanban_column_id))
+      || item.sx_pipeline_stage
+      || null;
     setDeadlineCtx({
       projectId: item.id,
       targetCol: null,
       project: item,
+      stage: col,
       mode: 'edit_only',
     });
-  }, []);
+  }, [pipeline]);
+
+  const saveProjectSchedule = async ({ installYmd, cardDeadlineIso, reason }) => {
+    const ctx = deadlineCtx;
+    if (!ctx) return;
+    setDeadlineBusy(true);
+    try {
+      const pid = String(ctx.projectId);
+      const patch = {};
+      if (installYmd !== undefined) {
+        const { data } = await api.put(`/projects/${pid}`, { delivery_date: installYmd });
+        Object.assign(patch, {
+          delivery_date: data?.delivery_date ?? installYmd,
+          install_date: data?.install_date ?? null,
+          production_finish_date: data?.production_finish_date ?? null,
+          production_deadline: data?.production_deadline ?? null,
+          sx_kanban_deadline_at: data?.sx_kanban_deadline_at ?? null,
+          sx_kanban_deadline_reason: data?.sx_kanban_deadline_reason ?? null,
+        });
+      }
+      if (cardDeadlineIso !== undefined) {
+        const { data } = await api.patch(`/production/projects/${pid}/kanban-deadline`, {
+          sx_kanban_deadline_at: cardDeadlineIso,
+          reason: reason || '',
+        });
+        patch.sx_kanban_deadline_at = data?.sx_kanban_deadline_at ?? cardDeadlineIso;
+        patch.sx_kanban_deadline_reason = data?.sx_kanban_deadline_reason ?? reason ?? null;
+        if (data?.effective_deadline_at !== undefined) {
+          patch.effective_deadline_module = data.effective_deadline_module;
+          patch.effective_deadline_at = data.effective_deadline_at;
+          patch.effective_deadline_source = data.effective_deadline_source;
+          patch.deadline_state = data.deadline_state;
+        }
+      }
+      setProjects((prev) => prev.map((p) => (String(p.id) === pid ? { ...p, ...patch } : p)));
+      setDeadlineCtx(null);
+      scheduleBoardRefresh(1500, { bustCache: true });
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Lỗi cập nhật deadline');
+    } finally {
+      setDeadlineBusy(false);
+    }
+  };
 
   const confirmDeadlineMove = async ({ deadlineIso, reason }) => {
     const ctx = deadlineCtx;
@@ -5091,20 +5138,26 @@ export default function ProductionDashboard() {
         }}
       />
 
+      <SxKanbanDeadlinesModal
+        open={deadlineCtx?.mode === 'edit_only'}
+        project={deadlineCtx?.project}
+        stage={deadlineCtx?.stage}
+        siblingStages={pipeline}
+        submitting={deadlineBusy}
+        onClose={() => !deadlineBusy && setDeadlineCtx(null)}
+        onSave={saveProjectSchedule}
+      />
+
       <CrmDeadlineModal
-        open={!!deadlineCtx}
-        title={deadlineCtx?.mode === 'edit_only' ? 'Deadline thẻ SX' : 'Đặt deadline khi chuyển cột'}
-        subtitle={
-          deadlineCtx?.mode === 'edit_only'
-            ? (deadlineCtx?.project?.name || deadlineCtx?.project?.code || '')
-            : 'Chọn hạn hoàn thành cho thẻ trước khi chuyển sang cột mới.'
-        }
+        open={!!deadlineCtx && deadlineCtx.mode !== 'edit_only'}
+        title="Đặt deadline khi chuyển cột"
+        subtitle="Chọn hạn hoàn thành cho thẻ trước khi chuyển sang cột mới."
         stageName={deadlineCtx?.mode === 'stage_move' ? deadlineCtx?.targetCol?.name : ''}
         initialDeadline={deadlineCtx?.project?.sx_kanban_deadline_at || null}
         currentDeadline={deadlineCtx?.project?.sx_kanban_deadline_at || null}
         mandatory={deadlineCtx?.mode === 'stage_move'}
-        requireReason={deadlineCtx?.mode === 'edit_only' && !!deadlineCtx?.project?.sx_kanban_deadline_at}
-        allowClear={deadlineCtx?.mode === 'edit_only' && !!deadlineCtx?.project?.sx_kanban_deadline_at}
+        requireReason={false}
+        allowClear={false}
         submitting={deadlineBusy}
         companyId={deadlineCtx?.project?.company_id || null}
         onClose={() => !deadlineBusy && setDeadlineCtx(null)}
