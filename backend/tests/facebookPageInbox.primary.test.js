@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { AsyncLocalStorage } = require('node:async_hooks');
+const { createFacebookLeadAdsCutoverBackfill } = require('../src/services/facebookLeadAdsCutoverBackfill');
 
 const source = fs.readFileSync(path.join(__dirname, '../src/config/supabaseRouter.js'), 'utf8');
 const PRIMARY = 'https://primary.synthetic.invalid';
@@ -98,6 +99,39 @@ test('Primary scope selects the Primary client before and after await', async ()
   assert.equal(result.url, PRIMARY + '/rest/v1/rpc/facebook_page_inbox_enqueue_v1');
   assert.equal(h.calls.length, 1);
   assert.equal(h.calls[0].init.headers.apikey, 'SYNTHETIC_PRIMARY_KEY');
+});
+
+test('cutover backfill awaits lazy database query within production Primary scope', async () => {
+  const h = harness();
+  const db = { from() {
+    const builder = {
+      select() { return builder; }, eq() { return builder; },
+      maybeSingle() { return { then(resolve, reject) {
+        queueMicrotask(async () => {
+          try {
+            await h.router.setActiveTarget('backup', 'synthetic', { skipSync: true });
+            await h.router.supabase.rpc('synthetic_probe');
+            resolve({ data: null });
+          } catch (error) { reject(error); }
+        });
+      } }; },
+    };
+    return builder;
+  } };
+  const backfill = createFacebookLeadAdsCutoverBackfill({ db,
+    fetchImpl: async () => { throw new Error('Graph must not be reached'); },
+    getGraphVersion: () => 'v24.0', getLeadGraphToken: () => 'synthetic-lead-token',
+    getLeadAppId: () => '123456', getLeadTokenMetadata: async () => ({
+      app_id: '123456', is_valid: true, type: 'PAGE', profile_id: '10001', scopes: ['leads_retrieval'],
+    }),
+    assertPrimaryObserved: async () => {}, isPrimary: () => h.router.getActiveTarget() === 'primary',
+    withPrimary: h.router.withPrimaryDatabase, isWorkerPaused: () => true,
+    isLegacyWriterFenced: () => true, pageId: '10001',
+  });
+  await assert.rejects(backfill({ from: '2026-10-06T08:00:00Z', to: '2026-10-06T09:00:00Z',
+    expectedFormIds: ['20001'], expectedLeadCounts: { 20001: 0 } }),
+  { code: 'FB_INBOX_BACKFILL_DB_UNAVAILABLE' });
+  assert.equal(h.calls.length, 0, 'a lazy read must never escape to Backup');
 });
 
 for (const mode of ['backup', 'auto-failover']) {

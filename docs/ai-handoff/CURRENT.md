@@ -1,6 +1,8 @@
-## 2026-10-06 16:39 — Sửa cổng xác minh callback Lead App trước chuyển đổi (mã cục bộ)
+## 2026-10-06 — Chuẩn bị đối soát khoảng chuyển Facebook Lead App (PR nháp)
 
-GET `/api/facebook/webhook/lead-ads` nay trả challenge Meta khi App Secret và verify token **riêng, hợp lệ** đã cấu hình, dù `VPT_FB_LEAD_APP_MODE=0`. POST vẫn trả 404 khi cờ này tắt; Messenger và các cờ intake/worker không đổi. Việc xác minh GET **không chứng minh** App đã nhận Lead thật. Bản sửa trên nhánh `codex/facebook-lead-verify-precutover-20261006` chưa phát hành; 235/235 ca Node Facebook liên quan đạt. Cần review/CI trước khi phát hành, giữ chế độ App riêng OFF cho tới khi cổng Meta và đối soát Lead thật đạt. [Hồ sơ kích hoạt](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).
+Đã bổ sung công cụ thủ công xem trước/ghi vào Primary inbox cho Lead trong khoảng UTC `T0–T1` khi chuyển Messenger App sang Lead App riêng. Công cụ chỉ dùng Graph token App Lead, đối chiếu App/Page/quyền token, so danh mục form và số Lead từng form độc lập, duyệt hết phân trang, phân loại receipt/Lead cũ/còn thiếu, kiểm Primary chia sẻ/worker paused/writer cũ đã chặn/binding inactive, xác nhận hàng đợi `pending` từng lô; mặc định không ghi. Khóa Redis `supabase:active_target` vắng cũng dừng, không lấy mặc định Primary của tiến trình mới làm bằng chứng; [checklist](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md) ghi cổng khởi tạo riêng. Mã trên nhánh `codex/facebook-lead-cutover-backfill-20261006` dựa trên main có PR38; chưa merge/triển khai/chạy với Meta hay DB thật. 15 kiểm thử riêng và 111 kiểm thử Facebook liên quan PASS trên mã cục bộ. [Cổng HOLD và quy trình](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md): quyền App/Lead Access, đối soát số Meta thực, hàng chờ Backup đang ở bộ nhớ/đồng bộ lỗi, khôi phục và một Lead thật đến đúng Admin VPT vẫn chưa được xác nhận. Cờ intake giữ OFF.
+
+GET callback Lead riêng đã phát hành qua PR38: chỉ xác minh challenge của Meta với App Secret và verify token riêng khi `VPT_FB_LEAD_APP_MODE=0`; POST vẫn 404 và không có Lead mới đi vào CRM. Kết quả GET không chứng minh App đã được Page đăng ký `leadgen`. [Hồ sơ kích hoạt](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).
 
 ---
 
