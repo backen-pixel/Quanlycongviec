@@ -1,5 +1,7 @@
 # H1 — Tiếp nhận Facebook Page bền vững, gói tách từ main
 
+Hồ sơ này giữ bằng chứng H1 ban đầu. Phần tiếp theo đã bổ sung hợp đồng tạo Lead Ads và thông báo Admin: xem [trạng thái mới tại source a5bcabf3](FACEBOOK_LEAD_ADS_INTAKE_20261006.md). Các giới hạn và số kiểm thử bên dưới phản ánh H1 tại thời điểm ghi, không thay kết quả gói bổ sung. Chưa kích hoạt production.
+
 ## Phạm vi và quyết định
 
 Founder: “em làm tiếp đi nhé anh quyết định phát hành.” Codex tiếp tục triển khai và chuẩn bị bằng chứng; quyết định phát hành thuộc Founder. Gói này tách từ main `1f879ea85dfff23629fef79c8d15f2eaf540328e`, nhánh `codex/facebook-durable-inbox-20261006`. Không merge cả PR22/25; không sửa việc đóng quyền anon do Claude phụ trách; không thay kiến trúc Domain/Application Service.

@@ -1,6 +1,6 @@
 # Facebook Lead Ads → CRM: hợp đồng tiếp nhận và giao Admin
 
-Trạng thái: đang kiểm thử và review trên PR29, chưa áp SQL702, chưa bật worker hoặc sửa dữ liệu thật. Tiếp nối H1 theo yêu cầu Founder làm bước tiếp theo. Phạm vi này không mở thêm kênh, ngân sách, AI chăm sóc hoặc gói C.
+Trạng thái: mã và kiểm thử cô lập PASS tại `a5bcabf3b5d680166cd1223650f3bd85f8acd3b8` trong [PR29](https://github.com/backen-pixel/Quanlycongviec/pull/29). Chưa áp SQL702, chưa bật worker hoặc sửa dữ liệu thật. Tiếp nối H1 theo yêu cầu Founder làm bước tiếp theo. Phạm vi này không mở thêm kênh, ngân sách, AI chăm sóc hoặc gói C.
 
 Phân loại: thay đổi có rủi ro cao khi kích hoạt vì tạo hồ sơ khách và kiểm soát quyền qua transaction; mặc định tắt để hoàn thiện bằng chứng trước chuyển đổi.
 
@@ -32,7 +32,21 @@ Nguồn được ghi với mã Page/form/leadgen cùng bằng chứng ad/campaig
 
 ## Kiểm thử và rollback
 
-Bằng chứng cuối được bổ sung sau khi freeze mã và reviewer độc lập xác nhận. Bộ bắt buộc: sai provider/form/Page, binding/owner bị thay hoặc thu hồi, lease hết hạn, hai lượt xử lý đồng thời, lỗi từng bước, mất response sau commit, retry sau restart, phone trùng cùng/khác công ty, giữ attribution cũ, notification không nhân bản, quyền anon/authenticated và tương thích trigger CRM.
+Source được kiểm: `a5bcabf3b5d680166cd1223650f3bd85f8acd3b8`; backend source tree `233aeadf4e8f86e3a0411ea13b8b078465c14da5`; SQL702 blob `4d3133ac5a39ad9f5ff3e14cce4cb84761f32e8b`; PostgreSQL intake test blob `c3fd54332f3c4e41252d3908a84d34fc6b7f5d4d`.
+
+| Bằng chứng | Kết quả |
+|---|---|
+| Node local và CI18/22, không bootstrap ứng dụng/secret | 194/194 PASS |
+| PostgreSQL17 Lead Ads, DB mới `vpt_lead_ads_ci` | 29/29 PASS |
+| PostgreSQL17 inbox H1, gồm logical restore fixture inbox | 15/15 PASS |
+| Regression Messenger cũ | CI PASS |
+| Review độc lập | [Kết luận đúng phiên bản](FACEBOOK_LEAD_ADS_INTAKE_REVIEW_20261006.md) |
+
+[CI chính](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37393352657): Node18 job112043385423, Node22 job112043385408, PostgreSQL job112043385270, cả3PASS. [Regression Messenger](https://github.com/backen-pixel/Quanlycongviec/actions/runs/37393352980): job112043386429 PASS. CI dùng merge ref của PR với main `1f879ea8`, không triển khai Render.
+
+Tình huống đã kiểm: sai provider/form/Page, binding/owner bị thay hoặc thu hồi, lease hết hạn, hai lượt xử lý đồng thời, notification lỗi làm rollback toàn bộ, mất response sau commit, receipt retry, phone trùng cùng/khác công ty, hồ sơ cũ không tự nhận, notification không nhân bản, quyền anon/authenticated, guard C, tương thích trigger145/392 và loại trigger auto-task39 theo227. Fixture dùng các migration thực này nhưng không đại diện toàn bộ catalog DB production.
+
+Lần CI đầu tại `b8fe6d24` thất bại do biến SQL `phone` trùng tên cột. Đã sửa thành `v_phone`, giữ đủ29ca và chạy lại thành công tại SHA trên. Không bỏ/skip kiểm thử để đạt PASS. Logical restore hiện chỉ bao phủ inbox701; chưa kiểm restore tập Customer/Lead/receipt/notification702 hoặc production.
 
 Hoàn tác ưu tiên pause worker và giữ inbox/receipt. Không xóa Lead/Customer/giao dịch đã phát sinh, không xóa bằng chứng, không bật đồng thời writer cũ và mới. Nếu cần hoàn tác receiver thì xử lý hàng chờ và single writer trước; không chỉ tắt cờ trong lúc còn sự kiện đang xử lý.
 

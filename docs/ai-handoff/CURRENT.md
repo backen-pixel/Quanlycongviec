@@ -1,6 +1,6 @@
 ## 2026-10-06 — Tiếp theo H1: Lead Ads → CRM và giao Admin
 
-Founder giao làm bước tiếp theo. PR29 được bổ sung hợp đồng Lead Ads: binding Page/form rõ, atomic Customer/Lead/source/receipt/thông báo cho Admin, retry không tạo trùng; SQL702 mới chưa áp vào DB thật. [Phạm vi và hồ sơ kiểm chứng](FACEBOOK_LEAD_ADS_INTAKE_20261006.md). Đang kiểm thử/review; mọi cờ giữ mặc định tắt. H1 chuyển toàn endpoint nên còn phải chốt chuyển đổi Messenger và nghiệm thu cấu hình thật trước kích hoạt. Không merge/deploy, không thay ngân sách hoặc gửi tin khách.
+Founder giao làm bước tiếp theo. PR29 được bổ sung hợp đồng Lead Ads: binding Page/form rõ, atomic Customer/Lead/source/receipt/thông báo cho Admin, retry không tạo trùng; SQL702 mới chưa áp vào DB thật. [Phạm vi và hồ sơ kiểm chứng](FACEBOOK_LEAD_ADS_INTAKE_20261006.md). Source `a5bcabf3`:194/194 Node PASS,29/29 PostgreSQL intake và15/15 inbox PASS trên CI37393352657; regression Messenger CI37393352980 PASS. [Review độc lập](FACEBOOK_LEAD_ADS_INTAKE_REVIEW_20261006.md). Mọi cờ giữ mặc định tắt. H1 chuyển toàn endpoint nên còn phải chốt chuyển đổi Messenger và nghiệm thu cấu hình thật trước kích hoạt. Không merge/deploy, không thay ngân sách hoặc gửi tin khách.
 
 ---
 
