@@ -198,6 +198,8 @@ export default function OverviewScreen() {
   const [tasksFailed, setTasksFailed] = useState(false);
   /** Đã nạp xong việc của nhân viên ít nhất một lần thành công — mốc để biết «không có dự án» là thật, không phải chưa về. */
   const [tasksLoaded, setTasksLoaded] = useState(false);
+  /** Đang tải lại sau khi đổi phân loại (xem `applyWorkType`). */
+  const [typeSwitching, setTypeSwitching] = useState(false);
   /**
    * Toàn bộ dự án của bảng (đã lọc công ty, CHƯA lọc theo người) — giữ ở ref để
    * không gây render thừa; `projectsVersion` báo hiệu đã có dữ liệu mới.
@@ -375,7 +377,12 @@ export default function OverviewScreen() {
               offset: 0,
               signal: ac.signal,
               force: mode === 'refresh',
-            }).catch(() => [] as WorkTask[]);
+            }).catch((e): WorkTask[] | null => {
+              // null = tải LỖI (khác «không có việc»): trước đây `[]` làm banner báo «Không có công việc quá hạn».
+              if (isAbortError(e)) throw e;
+              console.warn('[overview] tải công việc đội lỗi:', formatApiError(e));
+              return null;
+            });
 
       const [board, summary, myTasks] = await Promise.all([
         skipBoard
@@ -451,7 +458,7 @@ export default function OverviewScreen() {
       } else {
         // Lỗi tải: giữ danh sách cũ (nếu có) thay vì xoá trắng, và báo cho người dùng biết.
         setTasksFailed(true);
-        if (mode !== 'silent') setError('Không tải được công việc của bạn');
+        if (mode !== 'silent') setError(ownOnly ? 'Không tải được công việc của bạn' : 'Không tải được danh sách công việc');
       }
       setTaskPage(1);
       setDealPage(1);
@@ -566,9 +573,16 @@ export default function OverviewScreen() {
    * của «mọi phân loại» trong khi chip đã ghi tên một loại, tức hiển thị sai.
    */
   const applyWorkType = useCallback(async (id: string) => {
+    // Đang đổi loại: vòng «tự nhảy» phải chờ dữ liệu loại mới về — nếu không nó đọc số của loại CŨ (rỗng),
+    // kết luận «loại mới cũng rỗng» và nhảy tiếp, bỏ qua loại ở giữa có dữ liệu.
+    setTypeSwitching(true);
     setFilterWorkTypeId(id);
-    await saveKanbanFilters({ filterWorkTypeId: id }).catch(() => {});
-    void load('refresh');
+    try {
+      await saveKanbanFilters({ filterWorkTypeId: id }).catch(() => {});
+      await load('refresh');
+    } finally {
+      setTypeSwitching(false);
+    }
   }, [load]);
 
   // Không có «Tất cả»: rỗng hoặc loại không thuộc công ty hiện hành → loại đầu tiên.
@@ -590,6 +604,7 @@ export default function OverviewScreen() {
    */
   useEffect(() => {
     if (!autoPickedTypeRef.current) return;
+    if (typeSwitching) return;
     // Nhân viên: «có dự án hay không» phụ thuộc việc được giao (tải sau bảng). Chỉ nhảy khi việc đã về
     // thành công — chưa về mà nhảy thì sẽ nhảy nhầm sang loại rỗng và còn bị lưu lại. Không có việc nào
     // thì không có gì để tìm, dừng; có việc mà loại hiện tại không có dự án nào của họ thì thử loại kế tiếp.
@@ -625,6 +640,7 @@ export default function OverviewScreen() {
     workTypes,
     filterCompany,
     applyWorkType,
+    typeSwitching,
   ]);
 
   const onSelectWorkType = useCallback(async (id: string) => {
@@ -1260,7 +1276,8 @@ export default function OverviewScreen() {
         ) : (
           // Nhân viên: bỏ dải «không có quá hạn» — thiết kế không có, và KPI
           // «Quá hạn» ngay dưới đã nói đúng con số đó rồi.
-          teamView ? (
+          // Tải việc lỗi thì không được khẳng định «không có quá hạn» (đã có banner lỗi ở trên).
+          teamView && !tasksFailed ? (
             <View style={styles.okBanner}>
               <Ionicons name="checkmark-circle" size={20} color={colors.success} />
               <Text style={styles.okTxt}>Không có công việc / dự án quá hạn</Text>

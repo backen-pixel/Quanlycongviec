@@ -206,7 +206,7 @@ export default function KanbanScreen() {
   /** Admin lọc ngay bằng các chip trên màn nên không hiện nút «Bộ lọc» mở bảng lọc. */
   const showFilterSheetButton = showFilterButton && !isAdminLike(user);
   /** Nhân viên chỉ thấy dự án của mình (đứng tên hoặc được giao việc) — dùng chung với Planner. */
-  const { allows: allowsProject } = useMyProjectScope(user);
+  const { allows: allowsProject, restricted: scopeRestricted } = useMyProjectScope(user);
   const isFocused = useIsFocused();
   const route = useRoute<RouteProp<MainTabParamList, 'Kanban'>>();
   const { commentToast, dismissCommentToast, projectMetaRef, subscribeComment, subscribeSync } = useNotifications();
@@ -1692,10 +1692,18 @@ export default function KanbanScreen() {
   const statPills = useMemo(() => {
     const client = computeSxBoardKpis(filteredProjects, stages);
     // Chỉ dùng summary server khi không còn lọc client-only (search / mine / overdue…).
+    // Mọi bộ lọc mà `filteredProjects` áp ở client đều phải có mặt ở đây, nếu không thẻ KPI (số của cả
+    // xưởng từ server) lệch với danh sách đang hiện: phạm vi nhân viên, hạn xử lý, SĐT, người phụ trách,
+    // «Chưa phân loại».
     const clientOnlyFilter = Boolean(
       search.trim()
       || quickFilter !== 'all'
-      || dealCompanyExternalFilter,
+      || dealCompanyExternalFilter
+      || scopeRestricted
+      || dueFilter
+      || filterPhone
+      || filterPersonId
+      || filterWorkTypeId === 'none',
     );
     const useServer = !clientOnlyFilter && summaryKpis;
     const kpi = useServer
@@ -1724,6 +1732,11 @@ export default function KanbanScreen() {
     search,
     quickFilter,
     dealCompanyExternalFilter,
+    scopeRestricted,
+    dueFilter,
+    filterPhone,
+    filterPersonId,
+    filterWorkTypeId,
   ]);
 
   if (loading) {
