@@ -53,9 +53,9 @@ export function isNextGoCompany(company) {
 /** Đoạn gợi ý khi chưa có loại CRM — theo công ty CRM của deal. */
 export function sxPickGuideFallbackText(company) {
   if (isNextGoCompany(company)) {
-    return 'Chưa có phân loại CRM — ★ sẽ hiện khi deal có loại (Túi giấy / Hộp / Thùng carton…).';
+    return 'Chưa có phân loại CRM — ★ vẫn hiện cặp ưu tiên trong Cài đặt pipeline (Túi giấy / Hộp / Thùng carton…). Gán loại cho deal để ★ chỉ còn đúng loại đó.';
   }
-  return 'Chưa có phân loại CRM — ★ sẽ hiện khi deal có loại (Tủ bếp / Cửa…).';
+  return 'Chưa có phân loại CRM — ★ vẫn hiện cặp ưu tiên trong Cài đặt pipeline (Tủ bếp / Cửa…). Gán loại cho deal để ★ chỉ còn đúng loại đó.';
 }
 
 /** Phân loại thu công nợ — hiện trên Kanban SX, ẩn khi đặt xưởng / tạo dự án mới. */
@@ -214,6 +214,51 @@ export function companyPreferredForLeadType(company, leadTypeRow, kind) {
   const { companyIds } = preferredSxFromLeadTypeRow(leadTypeRow);
   if (companyIds.length && company && companyIds.includes(String(company.id))) return true;
   return companyPreferredForSxKind(company, kind);
+}
+
+/**
+ * Dấu ★ đúng như radio ưu tiên trong Cài đặt pipeline.
+ * Có loại trên deal → chỉ loại đó. Chưa có loại → mọi loại CRM của công ty.
+ * @returns {{ anyLink: boolean, primaryCompanyIds: Set<string>, primaryTypeIdsByCompany: Map<string, Set<string>> }}
+ */
+export function sxSetupStarIndex(leadTypeRow, setupLeadTypes) {
+  const scoped = leadTypeRow
+    ? [leadTypeRow]
+    : (Array.isArray(setupLeadTypes) ? setupLeadTypes : []);
+  const primaryCompanyIds = new Set();
+  const primaryTypeIdsByCompany = new Map();
+  let anyLink = false;
+  for (const row of scoped) {
+    const { links } = preferredSxFromLeadTypeRow(row);
+    for (const link of links) {
+      anyLink = true;
+      if (!link.isPrimary || !link.companyId) continue;
+      primaryCompanyIds.add(String(link.companyId));
+      if (!link.workshopTypeId) continue;
+      const cid = String(link.companyId);
+      if (!primaryTypeIdsByCompany.has(cid)) primaryTypeIdsByCompany.set(cid, new Set());
+      primaryTypeIdsByCompany.get(cid).add(String(link.workshopTypeId));
+    }
+  }
+  return { anyLink, primaryCompanyIds, primaryTypeIdsByCompany };
+}
+
+/** ★ trên ô công ty SX: link is_primary; không có cấu hình thì heuristic theo loại CRM. */
+export function companyShowsSxStar(company, leadTypeRow, setupLeadTypes, kind) {
+  const { anyLink, primaryCompanyIds } = sxSetupStarIndex(leadTypeRow, setupLeadTypes);
+  if (anyLink) return primaryCompanyIds.has(String(company?.id || ''));
+  return companyPreferredForSxKind(company, kind);
+}
+
+/** ★ trên ô phân loại: đúng cặp is_primary của công ty đang chọn. Không có cấu hình thì khớp tên, và không gắn ★ khi chưa biết loại. */
+export function workshopTypeShowsSxStar(workshopType, leadTypeRow, companyId, setupLeadTypes, kind) {
+  const { anyLink, primaryTypeIdsByCompany } = sxSetupStarIndex(leadTypeRow, setupLeadTypes);
+  if (anyLink) {
+    const set = primaryTypeIdsByCompany.get(String(companyId || ''));
+    return !!(set && set.has(String(workshopType?.id || '')));
+  }
+  if (!kind) return false;
+  return workshopTypeMatchesSxKind(workshopType?.name, kind);
 }
 
 /** Phân loại có trong links của công ty đang chọn? */

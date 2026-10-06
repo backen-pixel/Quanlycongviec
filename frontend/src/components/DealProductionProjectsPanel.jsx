@@ -483,6 +483,7 @@ export default function DealProductionProjectsPanel({
   const [addSxTargets, setAddSxTargets] = useState([]);
   const [addSxCompanies, setAddSxCompanies] = useState([]);
   const [addSxLeadTypeRow, setAddSxLeadTypeRow] = useState(null);
+  const [addSxLeadTypes, setAddSxLeadTypes] = useState([]);
 
   const addSxKind = useMemo(
     () => classifyCrmLeadTypeForSx(
@@ -768,6 +769,7 @@ export default function DealProductionProjectsPanel({
       setAddSxCompanies(Array.isArray(list) ? list : []);
       const types = Array.isArray(typesRes?.data) ? typesRes.data : [];
       const typeId = lead?.lead_type_id;
+      setAddSxLeadTypes(types);
       setAddSxLeadTypeRow(
         typeId ? (types.find((t) => String(t.id) === String(typeId)) || null) : null,
       );
@@ -1283,6 +1285,7 @@ export default function DealProductionProjectsPanel({
                 key="add-sx-wu"
                 companies={addSxCompaniesForSelect}
                 leadTypeRow={addSxLeadTypeRow}
+                setupLeadTypes={addSxLeadTypes}
                 kind={addSxKind}
                 accent="teal"
                 showDates

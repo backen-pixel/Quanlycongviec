@@ -74,18 +74,8 @@ async function replaceLeadTypeProductionLinks(leadTypeId, links) {
     });
   }
 
-  if (normalized.length) {
-    const hasPrimary = normalized.some((r) => r.is_primary);
-    if (!hasPrimary) normalized[0].is_primary = true;
-    else {
-      let seenPrimary = false;
-      for (const r of normalized) {
-        if (r.is_primary) {
-          if (seenPrimary) r.is_primary = false;
-          else seenPrimary = true;
-        }
-      }
-    }
+  if (normalized.length && !normalized.some((r) => r.is_primary)) {
+    normalized[0].is_primary = true;
   }
 
   const { error: delErr } = await supabase

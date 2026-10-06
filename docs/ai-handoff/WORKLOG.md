@@ -1,3 +1,18 @@
+## 2026-10-06 — ★ pipeline chọn được nhiều dòng
+
+- Dấu ★ trên liên kết loại CRM → SX đổi từ radio (một dòng) sang checkbox (nhiều dòng). Backend `replaceLeadTypeProductionLinks` giữ mọi `is_primary`, không còn xóa sao dòng thứ hai khi lưu.
+- File: `frontend/src/pages/PipelineSettingsPage.jsx`, `backend/src/helpers/crmLeadTypeProductionLinks.js`.
+
+---
+
+## 2026-10-06 — Hiện dấu ★ setup pipeline trên chọn xưởng
+
+- Đã làm: `companyShowsSxStar` / `workshopTypeShowsSxStar` đọc `is_primary` của `production_links`. `SxMultiTargetPicker` gắn ★ vào option công ty và phân loại. Deal không có loại dùng toàn bộ loại CRM của công ty.
+- File: `frontend/src/lib/sxCompanySuggestFromLeadType.js`, `frontend/src/components/SxMultiTargetPicker.jsx`, `LeadDetail.jsx`, `CRMDashboard.jsx`, `DealProductionProjectsPanel.jsx`.
+- Kiểm tra trên deal `12f731cf` (chưa có loại): ★ HCB, ★ Phúc Đạt; chọn Phúc Đạt thì ★ Cửa; chọn HCB thì ★ Tủ bếp.
+
+---
+
 ## 2026-10-06 — Sửa đồng bộ Facebook Marketing theo BRIEF_SYNC
 
 File: `backend/src/helpers/fbMarketingSync.js`, `backend/tests/fbMarketingSync.test.js`, `docs/ai-handoff/CURRENT.md`, `WORKLOG.md`. Phân trang báo thiếu, currency không đoán VND, số sai không ghi 0, ngày theo Việt Nam, lỗi Meta chỉ lưu mã lọc. Fetch/Supabase giả với `<TOKEN_GIA>`: V8 8/8 PASS; `node --check`/`node --test` và `git status` bị chặn khi tạo phiên sandbox. Chưa gọi DB/Meta. Hoàn tác: đảo diff bốn file này.
@@ -10,7 +25,6 @@ File: `backend/src/helpers/fbMarketingSync.js`, `backend/tests/fbMarketingSync.t
 - So sánh `spend <= target × qualified` bằng số nguyên an toàn; `uiState` theo reason và trạng thái đo.
 - Kiểm: 25 → 38 test; harness JS giả lập 38/38, search caller trong `backend/src` không có. Claude review đã chạy Node 24 `node --test --test-isolation=none` (38/38) và `git diff --stat` (4 file).
 - Chưa kiểm: Node thật, tích hợp/runtime, DB/mạng. Hoàn tác đúng bốn delta P1-1, giữ lịch sử cũ.
-
 
 ## 2026-10-06 — Chuẩn bị kích hoạt theo quyết định Founder
 
