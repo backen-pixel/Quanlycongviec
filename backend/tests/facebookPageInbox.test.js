@@ -15,8 +15,26 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 test('rollout flags are OFF / paused by default; invalid managed Page config fails closed', () => {
   const value = inboxSettings({});
   assert.equal(value.enabled, false); assert.equal(value.paused, true); assert.equal(value.scopeGuard, false);
+  assert.equal(value.leadAdsIntake, false);
   assert.equal(inboxSettings({ VPT_FB_PAGE_INBOX: '1', VPT_FB_PAGE_INBOX_WORKER_PAUSED: '0' }).paused, false);
   assert.throws(() => inboxSettings({ VPT_FB_MANAGED_PAGE_IDS: '123,not-a-page' }), /INVALID_CONFIG/);
+});
+
+test('Lead Ads opt-in requires the durable receiver, scope guard and explicit managed Pages', () => {
+  const valid = { VPT_FB_LEAD_ADS_INTAKE: '1', VPT_FB_PAGE_INBOX: '1',
+    VPT_FB_LEGACY_SCOPE_GUARD: '1', VPT_FB_MANAGED_PAGE_IDS: '10001,10002' };
+  const settings = inboxSettings(valid);
+  assert.equal(settings.leadAdsIntake, true); assert.equal(settings.paused, true);
+  assert.deepEqual([...settings.managedPages], ['10001', '10002']);
+  for (const missing of ['VPT_FB_PAGE_INBOX', 'VPT_FB_LEGACY_SCOPE_GUARD', 'VPT_FB_MANAGED_PAGE_IDS']) {
+    const env = { ...valid }; delete env[missing];
+    assert.throws(() => inboxSettings(env), { code: 'FB_INBOX_INVALID_CONFIG' });
+  }
+  for (const ids of ['', ' , ', '10001,not-a-page']) {
+    assert.throws(() => inboxSettings({ ...valid, VPT_FB_MANAGED_PAGE_IDS: ids }), { code: 'FB_INBOX_INVALID_CONFIG' });
+  }
+  // The feature cannot be enabled by a merely truthy string.
+  assert.equal(inboxSettings({ VPT_FB_LEAD_ADS_INTAKE: 'true' }).leadAdsIntake, false);
 });
 
 test('all Pages, changes, messages and unknown entry envelopes are retained', () => {
@@ -84,7 +102,10 @@ function workerHarness(overrides = {}) {
   const calls = []; const errors = []; const metrics = []; let once = false; let renewCallback;
   const db = { rpc: async (name, args) => {
     calls.push({ name, args });
-    if (name.endsWith('claim_v1')) { if (once) return { data: [] }; once = true; return { data: [{ id: 'synthetic-id', page_id: '10001', payload: { kind: 'messaging', event: {} } }] }; }
+    if (name === 'facebook_page_inbox_claim_v1' || name === 'facebook_page_inbox_claim_lead_ads_v1') {
+      if (once) return { data: [] }; once = true;
+      return { data: [{ id: 'synthetic-id', page_id: '10001', payload: { kind: 'messaging', event: {} }, ...(overrides.claimRow || {}) }] };
+    }
     if (name.endsWith('health_v1')) return { data: { pendingCount: 2, processingCount: 0, oldestPendingSeconds: 301, secret: 'must not log' } };
     if (name.endsWith('renew_v1')) return { data: overrides.renewResult ?? true };
     return { data: true };
@@ -147,4 +168,104 @@ test('managed Page cannot bypass absent/unknown/denied scope contract', async ()
 test('error labels never accept provider text', () => {
   assert.equal(safeCode({ code: 'FB_INBOX_LEAD_CONTRACT_REQUIRED' }), 'FB_INBOX_LEAD_CONTRACT_REQUIRED');
   assert.equal(safeCode({ code: 'https://token.example.test' }), 'FB_INBOX_OPERATION_FAILED');
+});
+
+const leadAdsRow = () => ({ id: 'synthetic-lead-ad-inbox', page_id: '10001', payload: {
+  kind: 'change', event: { field: 'leadgen', value: { leadgen_id: '30001', form_id: '40001' } },
+} });
+
+test('explicit Lead Ads lane selects only its claim RPC and passes the matching lease context', async () => {
+  const seen = []; const pages = ['10001', '10002'];
+  const h = workerHarness({ leadAdsPages: pages, claimRow: leadAdsRow(),
+    processEvent: async (...args) => { seen.push(args); } });
+  // Changing the caller's array after construction must not enroll a new Page.
+  pages.push('99999'); await h.worker.drain();
+  assert.equal(h.calls.some(call => call.name === 'facebook_page_inbox_claim_v1'), false);
+  const claim = h.calls.find(call => call.name === 'facebook_page_inbox_claim_lead_ads_v1');
+  assert.deepEqual(claim.args.p_page_ids, ['10001', '10002']);
+  assert.equal(seen.length, 1); assert.equal(seen[0][0], '10001');
+  assert.deepEqual(seen[0][1], leadAdsRow().payload);
+  assert.deepEqual(seen[0][2], { inboxId: 'synthetic-lead-ad-inbox', leaseToken: claim.args.p_token });
+  assert.equal(Object.isFrozen(seen[0][2]), true);
+  const finish = h.calls.find(call => call.name === 'facebook_page_inbox_finish_v1');
+  assert.equal(finish.args.p_id, seen[0][2].inboxId);
+  assert.equal(finish.args.p_token, seen[0][2].leaseToken); assert.equal(finish.args.p_success, true);
+});
+
+test('default generic lane retains the H1 claim RPC without a Page filter', async () => {
+  let context;
+  const h = workerHarness({ processEvent: async (_pageId, _payload, lease) => { context = lease; } });
+  await h.worker.drain();
+  const claim = h.calls.find(call => call.name === 'facebook_page_inbox_claim_v1');
+  assert.equal(Object.hasOwn(claim.args, 'p_page_ids'), false);
+  assert.equal(h.calls.some(call => call.name === 'facebook_page_inbox_claim_lead_ads_v1'), false);
+  assert.deepEqual(context, { inboxId: 'synthetic-id', leaseToken: claim.args.p_token });
+});
+
+test('empty or malformed explicit Lead Ads lane cannot silently fall back to generic processing', () => {
+  for (const pages of [null, [], '', new Set(['10001']), [10001], [''], [' 10001'], ['1'.repeat(33)], ['10001', '10001']]) {
+    assert.throws(() => workerHarness({ leadAdsPages: pages }), { code: 'FB_INBOX_INVALID_CONFIG' });
+  }
+});
+
+test('missing Lead Ads claim RPC fails closed without retrying the generic lane', async () => {
+  const names = []; let processed = 0;
+  const h = workerHarness({ leadAdsPages: ['10001'],
+    db: { rpc: async name => { names.push(name); return { data: null, error: { code: 'PGRST202' } }; } },
+    processEvent: async () => { processed++; } });
+  await h.worker.drain();
+  assert.deepEqual(names, ['facebook_page_inbox_claim_lead_ads_v1']);
+  assert.equal(processed, 0); assert.deepEqual(h.errors, ['FB_INBOX_DATABASE_UNAVAILABLE']);
+});
+
+for (const [description, patch] of [
+  ['foreign Page', { page_id: '99999' }],
+  ['Messenger', { payload: { kind: 'messaging', event: {} } }],
+  ['entry event', { payload: { kind: 'entry', event: { field: 'leadgen' } } }],
+  ['feed comment', { payload: { kind: 'change', event: { field: 'feed', value: { item: 'comment' } } } }],
+  ['missing event', { payload: { kind: 'change' } }],
+  ['array event', { payload: { kind: 'change', event: [] } }],
+]) test(`Lead Ads lane rejects an unexpected claimed ${description} before processing or finishing`, async () => {
+  let processed = 0;
+  const h = workerHarness({ leadAdsPages: ['10001'], claimRow: { ...leadAdsRow(), ...patch },
+    processEvent: async () => { processed++; } });
+  await h.worker.drain();
+  assert.equal(processed, 0); assert.deepEqual(h.errors, ['FB_INBOX_INVALID_CLAIM']);
+  assert.equal(h.calls.some(call => /finish|renew/.test(call.name)), false);
+});
+
+test('Lead Ads lane preserves pause, Primary and old-queue-drained gates', async () => {
+  for (const override of [
+    { isPaused: () => true }, { isPrimary: () => false },
+    { beforeClaim: async () => { throw Object.assign(new Error(), { code: 'FB_INBOX_LEGACY_QUEUE_PENDING' }); } },
+  ]) {
+    let processed = 0;
+    const h = workerHarness({ leadAdsPages: ['10001'], claimRow: leadAdsRow(), ...override,
+      processEvent: async () => { processed++; } });
+    await h.worker.drain(); assert.equal(h.calls.length, 0); assert.equal(processed, 0);
+  }
+});
+
+test('Lead Ads processor remains Primary-pinned and a scope denial returns its receipt to pending', async () => {
+  let primaryDepth = 0; let processedInsidePrimary = false;
+  const h = workerHarness({ leadAdsPages: ['10001'], claimRow: leadAdsRow(),
+    withPrimary: async fn => { primaryDepth++; try { return await fn(); } finally { primaryDepth--; } },
+    processEvent: async () => {
+      processedInsidePrimary = primaryDepth > 0;
+      throw Object.assign(new Error(), { code: 'FB_INBOX_MANAGED_PAGE_PENDING' });
+    } });
+  await h.worker.drain(); assert.equal(processedInsidePrimary, true);
+  const finish = h.calls.find(call => call.name === 'facebook_page_inbox_finish_v1');
+  assert.equal(finish.args.p_success, false); assert.equal(finish.args.p_error_code, 'FB_INBOX_MANAGED_PAGE_PENDING');
+});
+
+test('Lead Ads heartbeat uses the processor lease and a lost lease cannot finish', async () => {
+  const gate = deferred(); let context;
+  const h = workerHarness({ leadAdsPages: ['10001'], claimRow: leadAdsRow(), renewResult: false,
+    processEvent: async (_pageId, _payload, lease) => { context = lease; await gate.promise; } });
+  const pending = h.worker.drain(); await tick(); h.renew(); await tick(); gate.resolve(); await pending;
+  const renewed = h.calls.find(call => call.name === 'facebook_page_inbox_renew_v1');
+  assert.equal(renewed.args.p_id, context.inboxId); assert.equal(renewed.args.p_token, context.leaseToken);
+  assert.equal(h.calls.some(call => call.name === 'facebook_page_inbox_finish_v1'), false);
+  assert.ok(h.errors.includes('FB_INBOX_LEASE_LOST'));
 });

@@ -3,13 +3,17 @@ on:
   pull_request:
     paths:
       - 'backend/src/helpers/facebookPageInbox.js'
+      - 'backend/src/domain/facebookLeadAdsIntake.js'
+      - 'backend/src/services/facebookLeadAdsIntake.js'
       - 'backend/src/helpers/fbLeadFormFields.js'
       - 'backend/src/config/supabaseRouter.js'
       - 'backend/src/routes/facebook.js'
       - 'backend/src/server.js'
       - 'backend/tests/facebookPage*'
+      - 'backend/tests/facebookLeadAdsIntake.postgres.test.py'
       - 'backend/tests/facebookWebhookRecovery.test.js'
       - 'database/701_facebook_page_inbox.sql'
+      - 'database/702_facebook_lead_ads_intake.sql'
       - 'database/700_revoke_anon_public_access.sql'
       - '.github/workflows/facebook-page-inbox.yml'
   workflow_dispatch:
@@ -34,6 +38,8 @@ jobs:
           node --check backend/src/routes/facebook.js
           node --check backend/src/config/supabaseRouter.js
           node --check backend/src/server.js
+          node --check backend/src/domain/facebookLeadAdsIntake.js
+          node --check backend/src/services/facebookLeadAdsIntake.js
           node --test backend/tests/facebookPage*.test.js backend/tests/facebookWebhookRecovery.test.js
           git diff --check
   postgres:
@@ -84,3 +90,15 @@ jobs:
           PGUSER: postgres
           PGPASSWORD: synthetic_ci_only
         run: python3 backend/tests/facebookPageInbox.postgres.test.py
+      - name: Atomic Lead Ads intake, company scope, recipient and recovery
+        env:
+          INBOX_CI_CONTAINER_ID: ${{ job.services.postgres.id }}
+          VPT_ISOLATED_PG_TEST: '1'
+          PGHOST: 127.0.0.1
+          PGPORT: '5432'
+          PGDATABASE: vpt_lead_ads_ci
+          PGUSER: postgres
+          PGPASSWORD: synthetic_ci_only
+        run: |
+          psql -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE vpt_lead_ads_ci'
+          python3 backend/tests/facebookLeadAdsIntake.postgres.test.py

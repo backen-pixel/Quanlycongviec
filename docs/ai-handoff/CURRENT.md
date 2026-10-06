@@ -1,3 +1,9 @@
+## 2026-10-06 — Tiếp theo H1: Lead Ads → CRM và giao Admin
+
+Founder giao làm bước tiếp theo. PR29 được bổ sung hợp đồng Lead Ads: binding Page/form rõ, atomic Customer/Lead/source/receipt/thông báo cho Admin, retry không tạo trùng; SQL702 mới chưa áp vào DB thật. [Phạm vi và hồ sơ kiểm chứng](FACEBOOK_LEAD_ADS_INTAKE_20261006.md). Đang kiểm thử/review; mọi cờ giữ mặc định tắt. H1 chuyển toàn endpoint nên còn phải chốt chuyển đổi Messenger và nghiệm thu cấu hình thật trước kích hoạt. Không merge/deploy, không thay ngân sách hoặc gửi tin khách.
+
+---
+
 ## 2026-10-06 — H1: gói tiếp nhận Facebook Page riêng từ main
 
 Founder giao tiếp tục và giữ quyết định phát hành. Đã tách nhánh `codex/facebook-durable-inbox-20261006` từ main `1f879ea8`, triển khai signed durable inbox + SQL701, giữ worker paused. Không merge PR22/25 toàn khối; không sửa SQL700 của Claude. [Phạm vi, giới hạn, kiểm thử và phương án dừng](FACEBOOK_PAGE_INBOX_H1_20261006.md).

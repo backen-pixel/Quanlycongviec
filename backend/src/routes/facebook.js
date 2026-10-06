@@ -8,6 +8,7 @@ const { isFacebookAtomicLeadScope, createFacebookLeadOnce } = require('../helper
 const { supabase } = require('../config/supabase');
 const { withPrimaryDatabase, getActiveTarget, isAutoFailoverEnabled } = require('../config/supabaseRouter');
 const { inboxSettings, createPageInboxReceiver, createPageInboxWorker, assertPageLegacyScope } = require('../helpers/facebookPageInbox');
+const { createFacebookLeadAdsIntake } = require('../services/facebookLeadAdsIntake');
 const PAGE_INBOX = inboxSettings();
 const pageInboxPrimary = () => getActiveTarget() === 'primary' && !isAutoFailoverEnabled();
 const pageInboxError = code => console.warn('[FB page inbox]', code);
@@ -10446,12 +10447,22 @@ const receivePageInbox = createPageInboxReceiver({
   db: supabase, isPrimary: pageInboxPrimary, withPrimary: withPrimaryDatabase,
   secret: () => process.env.VPT_FACEBOOK_APP_SECRET, onError: pageInboxError,
 });
+const intakePageLeadAds = createFacebookLeadAdsIntake({
+  db: supabase, fetchImpl: (...args) => fetch(...args),
+  getGraphVersion: () => process.env.VPT_META_GRAPH_VERSION,
+  isPrimary: pageInboxPrimary, withPrimary: withPrimaryDatabase, managedPages: PAGE_INBOX.managedPages,
+});
 const pageInboxWorker = createPageInboxWorker({
   db: supabase, isPrimary: pageInboxPrimary, withPrimary: withPrimaryDatabase,
+  leadAdsPages: PAGE_INBOX.leadAdsIntake ? [...PAGE_INBOX.managedPages] : undefined,
   isPaused: () => !PAGE_INBOX.enabled || process.env.VPT_FB_PAGE_INBOX_WORKER_PAUSED !== '0',
   onError: pageInboxError,
   onHealth: counts => console.info('[FB page inbox health]', JSON.stringify(counts)),
-  processEvent: async (pageId, payload) => {
+  processEvent: async (pageId, payload, lease) => {
+    // The Lead Ads application contract rechecks its binding/scope in SQL702
+    // and rejects coexistence with the separate care package. It does not
+    // depend on that package's SQL682 legacy preflight function.
+    if (PAGE_INBOX.leadAdsIntake) return intakePageLeadAds(pageId, payload, lease);
     await assertPageLegacyScope(supabase, pageId, PAGE_INBOX);
     if (payload.kind === 'messaging') return handleMessaging(pageId, payload.event, r._ioRef, 'page-inbox');
     if (payload.kind === 'change' && payload.event?.field === 'leadgen') return handleLeadGen(pageId, payload.event.value, true);

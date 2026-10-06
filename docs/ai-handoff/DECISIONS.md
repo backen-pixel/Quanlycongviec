@@ -91,3 +91,8 @@ Mã mới chưa triển khai; nghiệp vụ tự tạo Lead/projection/attributi
 - Mỗi luồng việc commit riêng một commit; không gộp hai luồng vào một commit.
 - Phản biện lẫn nhau phải kèm số đo và câu lệnh đã chạy; lập luận không có số đo
   không đủ để đảo một kết luận đã có số.
+# 2026-10-06 — Giao bước tiếp theo H1
+
+Founder: “em làm bước tiếp theo nhé”, tiếp nối bước Facebook → Lead đúng công ty/người nhận Admin Vạn Phú Thành. Phạm vi triển khai: hợp đồng tiếp nhận Lead Ads và kiểm thử/review trong PR29; không tự mở gói C, AI gửi tin, ngân sách hoặc đồng thời bật hai writer. Lựa chọn kỹ thuật: binding rõ mặc định tắt, transaction SQL702, source receipt bất biến, hồ sơ cũ không rõ phải đối soát. Các lựa chọn này là thiết kế thực thi để review, không biến suy luận thành quyết định phát hành Founder. [Chi tiết](FACEBOOK_LEAD_ADS_INTAKE_20261006.md).
+
+---

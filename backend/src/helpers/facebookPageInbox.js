@@ -16,10 +16,15 @@ function canonical(value, depth = 0) {
 function inboxSettings(env = process.env) {
   const managedPages = new Set(String(env.VPT_FB_MANAGED_PAGE_IDS || '').split(',').map(x => x.trim()).filter(Boolean));
   if ([...managedPages].some(x => !/^\d{1,32}$/.test(x))) throw fail('FB_INBOX_INVALID_CONFIG');
+  const enabled = env.VPT_FB_PAGE_INBOX === '1';
+  const scopeGuard = env.VPT_FB_LEGACY_SCOPE_GUARD === '1';
+  const leadAdsIntake = env.VPT_FB_LEAD_ADS_INTAKE === '1';
+  if (leadAdsIntake && (!enabled || !scopeGuard || !managedPages.size)) throw fail('FB_INBOX_INVALID_CONFIG');
   return {
-    enabled: env.VPT_FB_PAGE_INBOX === '1',
+    enabled,
     paused: env.VPT_FB_PAGE_INBOX_WORKER_PAUSED !== '0',
-    scopeGuard: env.VPT_FB_LEGACY_SCOPE_GUARD === '1',
+    scopeGuard,
+    leadAdsIntake,
     managedPages,
   };
 }
@@ -116,7 +121,16 @@ function createPageInboxWorker({
   db, isPrimary, processEvent, withPrimary = fn => fn(), isPaused = () => true,
   beforeClaim = () => assertLegacyQueueDrained(db), onError = () => {},
   onHealth = () => {}, heartbeatMs = 30000, setTimer = setInterval, clearTimer = clearInterval,
+  leadAdsPages,
 }) {
+  // Opt-in lane only: omitting the option preserves the H1 generic claim RPC.
+  // Copy the allowlist so later caller mutations cannot widen processing scope.
+  if (leadAdsPages !== undefined && (!Array.isArray(leadAdsPages) || !leadAdsPages.length
+    || leadAdsPages.some(id => typeof id !== 'string' || !/^\d{1,32}$/.test(id))
+    || new Set(leadAdsPages).size !== leadAdsPages.length)) throw fail('FB_INBOX_INVALID_CONFIG');
+  const claimPages = leadAdsPages === undefined ? null : Object.freeze([...leadAdsPages]);
+  const allowedPages = claimPages && new Set(claimPages);
+  const claimRpc = claimPages ? 'facebook_page_inbox_claim_lead_ads_v1' : 'facebook_page_inbox_claim_v1';
   let running = null;
   let stopping = false;
   const primaryCall = async (name, args) => {
@@ -132,11 +146,15 @@ function createPageInboxWorker({
         await withPrimary(beforeClaim);
         if (stopping || isPaused()) break;
         const token = randomUUID();
-        const rows = await primaryCall('facebook_page_inbox_claim_v1', { p_token: token });
+        const rows = await primaryCall(claimRpc, {
+          p_token: token, ...(claimPages ? { p_page_ids: [...claimPages] } : {}),
+        });
         if (!Array.isArray(rows) || rows.length > 1) throw fail('FB_INBOX_INVALID_CLAIM');
         const row = rows[0];
         if (!row) break;
         if (typeof row.id !== 'string' || typeof row.page_id !== 'string' || !record(row.payload)) throw fail('FB_INBOX_INVALID_CLAIM');
+        if (allowedPages && (!allowedPages.has(row.page_id) || row.payload.kind !== 'change'
+          || !record(row.payload.event) || row.payload.event.field !== 'leadgen')) throw fail('FB_INBOX_INVALID_CLAIM');
         let leaseLost = false;
         let renewal = null;
         const renew = () => {
@@ -150,7 +168,8 @@ function createPageInboxWorker({
         timer?.unref?.();
         try {
           if (isPaused() || stopping) throw fail('FB_INBOX_WORKER_PAUSED');
-          await withPrimary(() => processEvent(row.page_id, row.payload));
+          await withPrimary(() => processEvent(row.page_id, row.payload,
+            Object.freeze({ inboxId: row.id, leaseToken: token })));
           clearTimer(timer);
           if (renewal) await renewal;
           if (leaseLost) throw fail('FB_INBOX_LEASE_LOST');
