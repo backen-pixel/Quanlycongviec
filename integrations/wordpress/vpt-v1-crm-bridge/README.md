@@ -1,3 +1,7 @@
+# 2026-10-06 SEO attribution candidate — not installed
+
+Version 0.2.4 is a local candidate adding Google Organic source separation, referrer host, landing path and source expiry checked again at form submission. It supersedes the uninstalled Organic 0.2.3 candidate; version 0.2.3 was also used by a separate historical uninstalled TTL candidate, so identify installed files by fingerprints. See [SEO_REVIEW_20261006.md](SEO_REVIEW_20261006.md) for verified tests, activation gates and rollback. The historical 0.2.2 deployment notes below describe the previous installed version, not this candidate.
+
 # VPT V1 WordPress CRM bridge — ChatGPT paid source
 
 Bridge CF7 form `11116` → CRM VPT. This reviewed change maps normalized

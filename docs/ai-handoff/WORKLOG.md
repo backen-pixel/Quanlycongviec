@@ -1,5 +1,13 @@
 # Candidate worklog
 
+## 2026-10-06 — VPT attribution TTL-at-submit, local 0.2.4 candidate
+
+Root requested the verified long-open-form fix on codex/vpt-attribution-20261006. The 0.2.3 Organic candidate captured time once at page load, so expired source remained at submit. Changed attribution.js to check the original deadline whenever form fields are populated, clear all attribution fields and storage after expiry, and keep paid priority, complete bundle replacement, blocked-storage fallback and measurement events unchanged. Entry-point header/cache suffix now 0.2.4 to distinguish earlier uninstalled 0.2.3 candidates. Updated test_attribution.cjs, README, SEO_REVIEW and CURRENT; core.php/backend/schema untouched in this follow-up.
+
+Four new actual-script regressions failed against pre-fix 05bd00a behavior, then 13/13 VM tests passed with the fix. Coverage includes Organic and Google/ChatGPT paid at 29/31 minutes with storage available/blocked, restored original deadline and exact TTL boundary without reviving URL parameters. JS syntax, PHP syntax for core/entrypoint, 15/15 core methods and git diff --check pass. Local TTL work made no external calls, deployment or CRM writes. Root accepted the review. Candidate 0.2.4 remains not installed; restore candidate 05bd00a locally if needed. Live rollback restores the three plugin files from c504623 and removes only newly added CF7 tags, preserving keys/mode/jobs/data.
+
+Prior-turn browser evidence supplied by root: the two hidden tags were saved and read back in form 11116 with “Thay đổi đã được lưu.”. Installed entrypoint/core checksums and lengths matched c504623 before an attempted editor paste; live attribution.js was not read. Core save was not confirmed, so fresh reads of all three live files are required to resolve partial-save drift. Existing tags should be rechecked without duplicate insertion. Documentation was corrected to this state; no tests were repeated for this docs-only correction. Live acceptance remains outstanding.
+
 ## 2026-09-29 — VPT Messenger durable intake, local candidate only
 
 Issue #7: https://github.com/backen-pixel/Quanlycongviec/issues/7. Base: `413e8f575b5b611b25a50980564d754b7bfcf211`. Founder requested finishing the Messenger A2/B trial. No remote commit, PR, migration, live test or deployment performed by this workstream.
@@ -1426,3 +1434,7 @@ Hoàn tác local bằng đảo commit này nếu cần, nhưng đưa route cũ t
 
 Khi bắt đầu phiên mới, thêm mục mới lên đầu file, ngay dưới tiêu đề.
 
+
+## 2026-10-06 — VPT SEO attribution candidate, pending WordPress access
+
+Google Organic → CF7 11116 → CRM source SEO Google VPT V1; host/path-only evidence, paid/click precedence and 30-minute complete bundle persistence. Scope: integrations/wordpress/vpt-v1-crm-bridge (JS, pure core, entrypoint cache version, hidden-field tags, tests and review note). Backend/schema/data unchanged. Branch codex/vpt-attribution-20261006; checkpoint c504623. PHP syntax and 15 core test methods plus 9 actual-script VM tests PASS. No WordPress activation or real organic-to-CRM E2E verified: browser native-credential observation protection blocks the installed core/JS and edits. See SEO_REVIEW_20261006.md for activation, acceptance, risks and rollback. Website quote content was updated separately through WordPress and public text verified. Sitemap XML/GSC remain pending, not DONE.

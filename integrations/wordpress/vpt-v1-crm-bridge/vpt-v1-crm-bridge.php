@@ -2,7 +2,7 @@
 /**
  * Plugin Name: VPT V1 — Form to CRM
  * Description: Private pilot bridge for CF7 form 11116 to VPT CRM, with durable intake, duplicate suppression and explicit review of uncertain writes.
- * Version: 0.2.2
+ * Version: 0.2.4
  * Requires PHP: 7.4
  * Author: Vạn Phú Thành
  */
@@ -44,7 +44,7 @@ final class VPT_V1_CRM_Bridge {
 
     public static function tracking_script() {
         if (is_admin() || self::mode()==='off') { return; }
-        echo '<script data-nowprocket="1" data-cfasync="false" src="'.esc_url(plugins_url('attribution.js',__FILE__)).'?ver=0.2.2" defer></script>';
+        echo '<script data-nowprocket="1" data-cfasync="false" src="'.esc_url(plugins_url('attribution.js',__FILE__)).'?ver=0.2.4" defer></script>';
     }
     public static function product_form() {
         if (!in_array((int)get_the_ID(),array(6368,5864,6203),true)) { return; }

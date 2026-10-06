@@ -56,7 +56,9 @@ final class VPT_V1_CRM_Core {
         // UTM and click IDs are visitor-supplied attribution signals, not verified sales.
         $paid = strtolower($tracking['utm_source']) === 'google' && in_array(strtolower($tracking['utm_medium']), array('cpc','ppc','paid_search'), true);
         $chatgpt_paid = strtolower($tracking['utm_source']) === 'chatgpt' && strtolower($tracking['utm_medium']) === 'paid';
-        $source = $test ? 'TEST VPT V1 — không tính khách' : ($paid ? 'Google Ads VPT V1' : ($chatgpt_paid ? 'ChatGPT Ads VPT V1' : 'Website VPT V1'));
+        $google_click = $tracking['gclid'] !== '' || $tracking['gbraid'] !== '' || $tracking['wbraid'] !== '';
+        $organic = !$google_click && strtolower($tracking['utm_source']) === 'google' && strtolower($tracking['utm_medium']) === 'organic';
+        $source = $test ? 'TEST VPT V1 — không tính khách' : ($paid ? 'Google Ads VPT V1' : ($chatgpt_paid ? 'ChatGPT Ads VPT V1' : ($organic ? 'SEO Google VPT V1' : 'Website VPT V1')));
         $url = parse_url((string) $submitted_url);
         $page = '';
         if (is_array($url) && in_array(strtolower($url['host'] ?? ''), array('vanphuthanh.net','www.vanphuthanh.net'), true)) {
@@ -65,6 +67,14 @@ final class VPT_V1_CRM_Core {
         $notes = 'VPT_V1 | ' . gmdate('c', $now) . "\nĐồng ý liên hệ: có\nTrang: " . $page;
         if ($test) { $notes .= "\nTEST: KHÔNG GỌI, không báo giá, không tính doanh thu/chuyển đổi."; }
         foreach ($tracking as $key => $value) { $notes .= "\n" . $key . ': ' . $value; }
+        $referrer = strtolower(self::text($data['vpt_referrer_host'] ?? '', 253));
+        if ($referrer !== '' && preg_match('/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/D', $referrer)) {
+            $notes .= "\nvpt_referrer_host: " . $referrer;
+        }
+        $landing = parse_url(self::text($data['vpt_landing_page'] ?? '', 1000));
+        if (is_array($landing) && in_array(strtolower($landing['scheme'] ?? ''), array('http','https'), true) && in_array(strtolower($landing['host'] ?? ''), array('vanphuthanh.net','www.vanphuthanh.net'), true)) {
+            $notes .= "\nvpt_landing_page: https://vanphuthanh.net" . ($landing['path'] ?? '/');
+        }
         $business = array('name'=>$name,'phone'=>$phone,'area'=>$area,'material'=>$material,'timeline'=>$timeline,'message'=>$message,'test'=>$test);
         return array(
             'business'=>$business,

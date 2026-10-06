@@ -1,0 +1,2 @@
+[hidden vpt_referrer_host]
+[hidden vpt_landing_page]
