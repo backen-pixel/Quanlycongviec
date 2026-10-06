@@ -1,3 +1,9 @@
+## 2026-10-06 — P1-2: registry đợt thử (SQL 710)
+File: hai SQL 710, trialRegistry.js, trialRegistry.test.js, CURRENT.md, WORKLOG.md. Chỉ thêm bảng P1/RPC và module chưa nối runtime.
+Kiểm tra: node --check; node --test --test-isolation=none trialRegistry.test.js 5/5 (Node thường spawn EPERM); không chạy SQL/DB/mạng.
+Rollback: script 710 chỉ DROP bảng rỗng, giữ bảng có dữ liệu; chưa diễn tập trên bản sao.
+
+---
 ## 2026-10-06 — Sửa đồng bộ Facebook Marketing theo BRIEF_SYNC
 
 File: `backend/src/helpers/fbMarketingSync.js`, `backend/tests/fbMarketingSync.test.js`, `docs/ai-handoff/CURRENT.md`, `WORKLOG.md`. Phân trang báo thiếu, currency không đoán VND, số sai không ghi 0, ngày theo Việt Nam, lỗi Meta chỉ lưu mã lọc. Fetch/Supabase giả với `<TOKEN_GIA>`: V8 8/8 PASS; `node --check`/`node --test` và `git status` bị chặn khi tạo phiên sandbox. Chưa gọi DB/Meta. Hoàn tác: đảo diff bốn file này.
