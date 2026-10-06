@@ -341,31 +341,7 @@ export default function MessagesScreen() {
         </View>
       ) : null}
 
-      <View style={styles.hubBar}>
-        {([
-          ['chats', 'chatbubbles', 'Hội thoại'],
-          ['calls', 'call', 'Cuộc gọi'],
-        ] as const).map(([key, icon, label]) => {
-          const active = hub === key;
-          return (
-            <Pressable
-              key={key}
-              style={[styles.hubTab, active && { borderBottomColor: Colors.primary }]}
-              onPress={() => setHub(key)}
-            >
-              <Ionicons
-                name={(active ? icon : `${icon}-outline`) as keyof typeof Ionicons.glyphMap}
-                size={18}
-                color={active ? Colors.primary : Colors.textFaint}
-              />
-              <Text style={[styles.hubLabel, { color: active ? Colors.primary : Colors.textFaint }]}>
-                {label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
+      {/* Bỏ tab «Cuộc gọi»: chỉ còn danh sách hội thoại nên không cần thanh tab. */}
       {hub === 'chats' ? (
         <FlatList
           data={filtered}
@@ -477,6 +453,10 @@ const makeStyles = (Colors: AppColors) => StyleSheet.create({
     marginTop: 8,
     marginBottom: 4,
     minHeight: 108,
+    // Đường kẻ mảnh tách khối «Đang online» khỏi danh sách hội thoại bên dưới.
+    paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Colors.border,
   },
   onlineHeader: {
     flexDirection: 'row',

@@ -66,6 +66,7 @@ import {
   pickOverdueProjects,
   pickPriorityProjects,
   projectIsDeadlineOverdue,
+  projectIsDelivered,
   shortDateLabel,
   sxProjectDeadlineRaw,
   type SxBoardKpis,
@@ -774,8 +775,8 @@ export default function OverviewScreen() {
   ], [staffKpis, colors, goKanban, openOverdueProjects]);
 
   /**
-   * «Cần xử lý hôm nay» = việc chưa xong mà đã quá hạn hoặc đến hạn hôm nay (giờ VN). Việc hạn xa /
-   * chưa có hạn không tính, nếu không con số trùng tổng việc tồn và sai nghĩa «hôm nay».
+   * «Cần xử lý hôm nay» = việc chưa xong mà đã quá hạn, đến hạn hôm nay (giờ VN) hoặc đang làm.
+   * Việc «chưa làm» có hạn xa / chưa có hạn không tính, nếu không con số trùng tổng việc tồn và sai nghĩa «hôm nay».
    * Đếm hết `tasks`, không đếm theo số dòng xem trước.
    */
   /** Huy hiệu «Công việc dự án»: mọi việc chưa xong (chưa làm + đang làm + quá hạn), không tính việc đã hoàn thành. */
@@ -789,10 +790,11 @@ export default function OverviewScreen() {
     let overdue = 0;
     for (const t of tasks) {
       if (isTaskDone(String(t.status))) continue;
+      // Cần xử lý = quá hạn + đến hạn hôm nay + ĐANG LÀM (dù hạn còn xa / chưa có hạn).
       if (isTaskOverdue(t)) {
         due += 1;
         overdue += 1;
-      } else if (isTaskDueOnDay(t)) {
+      } else if (isTaskDueOnDay(t) || isTaskInProgress(String(t.status))) {
         due += 1;
       }
     }
@@ -897,6 +899,10 @@ export default function OverviewScreen() {
         deliveryLabel: p?.delivery_date ? shortDateLabel(p.delivery_date) : null,
         deadlineLabel: p ? (shortDateLabel(sxProjectDeadlineRaw(p, boardStages)) === '—' ? null : shortDateLabel(sxProjectDeadlineRaw(p, boardStages))) : null,
         overdue: Boolean(p?.is_overdue || p?.is_delivery_overdue),
+        // Ngày gốc + «đã giao» để thẻ dự án tự gắn nhãn Hôm nay / Còn N ngày LV / Trễ N ngày LV.
+        deliveryRaw: p?.delivery_date ?? null,
+        deadlineRaw: p ? sxProjectDeadlineRaw(p, boardStages) || null : null,
+        delivered: p ? projectIsDelivered(p, boardStages) : false,
       });
     };
 

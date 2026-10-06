@@ -950,14 +950,6 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
                     <Ionicons name="camera" size={16} color={colors.primary} />
                     <Text style={[styles.mediaBtnTxt, { color: colors.primary }]}>Chụp</Text>
                   </TapHighlight>
-                  <TapHighlight
-                    style={[styles.mediaBtn, styles.mediaBtnVideo]}
-                    onPress={() => void captureVideo()}
-                    disabled={busy}
-                  >
-                    <Ionicons name="videocam" size={16} color="#A855F7" />
-                    <Text style={[styles.mediaBtnTxt, { color: '#A855F7' }]}>Video</Text>
-                  </TapHighlight>
                 </View>
                 <Text style={[styles.sheetTitle, { fontSize: 14, marginTop: 12 }]}>
                   File đính kèm ({attachments.length})
@@ -1146,16 +1138,6 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
             ) : (
               <Ionicons name="camera" size={18} color={colors.primary} />
             )}
-          </TapHighlight>
-          <TapHighlight
-            style={[styles.actionBtn, styles.actionBtnVideo]}
-            pressStyle={{ opacity: 0.85 }}
-            onPress={() => void captureVideo()}
-            disabled={busy}
-            accessibilityLabel="Quay video"
-            hitSlop={4}
-          >
-            <Ionicons name="videocam" size={18} color="#A855F7" />
           </TapHighlight>
           <TapHighlight
             style={styles.actionBtn}

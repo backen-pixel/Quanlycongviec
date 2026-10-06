@@ -1363,7 +1363,9 @@ export default function WorkScreen() {
       if (teamView && scope === 'team' && assigneeFilter !== 'all') {
         if (!taskAssignedToUser(t, assigneeFilter)) return false;
       }
-      if (filterCompany && String(t.company_id || '') !== String(filterCompany)) {
+      // Nhân viên (nguồn «việc của tôi»): việc đã là của chính họ. `company_id` của việc crm_tasks là công ty của
+      // DEAL (có thể khác xưởng) nên lọc theo đó sẽ ẩn mất việc thuộc dự án của xưởng mình.
+      if (!unifiedSource && filterCompany && String(t.company_id || '') !== String(filterCompany)) {
         return false;
       }
       if (dueFilter && !dueMatches(taskDueIso(t), dueFilter)) return false;
@@ -1411,12 +1413,13 @@ export default function WorkScreen() {
       if (teamView && scope === 'team' && assigneeFilter !== 'all') {
         if (!taskAssignedToUser(t, assigneeFilter)) return false;
       }
-      if (filterCompany && String(t.company_id || '') !== String(filterCompany)) {
+      // Nhân viên: không lọc theo company_id của việc (xem giải thích ở `filtered`).
+      if (!unifiedSource && filterCompany && String(t.company_id || '') !== String(filterCompany)) {
         return false;
       }
       return true;
     });
-  }, [tasks, teamView, scope, assigneeFilter, filterCompany]);
+  }, [tasks, teamView, scope, assigneeFilter, filterCompany, unifiedSource]);
 
   const stats = useMemo(() => {
     if (serverStats) {

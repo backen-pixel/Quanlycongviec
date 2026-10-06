@@ -458,29 +458,55 @@ export async function fetchMyParticipationTasks(
     force: opts?.force,
     signal: opts?.signal,
     fetcher: async () => {
-      const out: WorkTask[] = [];
-      for (let page = 1; out.length < MY_PARTICIPATION_MAX; page += 1) {
-        const { data } = await api.get<{ tasks?: unknown[]; total?: number }>('/work-tasks', {
-          params: {
-            assignee_id: userId,
-            module_key: 'production',
-            page,
-            page_size: MY_PARTICIPATION_PAGE,
-          },
-          signal: opts?.signal,
-        });
-        const rows = Array.isArray(data?.tasks) ? data.tasks : [];
-        out.push(
-          ...rows
-            .map((r) => mapUnifiedToWorkTask(r as Record<string, unknown>))
-            // `assignee_id` của BE còn trả cả việc thuộc lead mình phụ trách hoặc do mình tạo.
-            // «Công việc của tôi» chỉ gồm việc ĐƯỢC GIAO cho mình.
-            .filter((t) => t.id && String(t.assignee_id || '') === String(userId)),
-        );
-        const total = Number(data?.total);
-        if (rows.length < MY_PARTICIPATION_PAGE || (Number.isFinite(total) && out.length >= total)) break;
+      const fetchAll = async (extra: Record<string, unknown>): Promise<WorkTask[]> => {
+        const out: WorkTask[] = [];
+        for (let page = 1; out.length < MY_PARTICIPATION_MAX; page += 1) {
+          const { data } = await api.get<{ tasks?: unknown[]; total?: number }>('/work-tasks', {
+            params: {
+              assignee_id: userId,
+              ...extra,
+              page,
+              page_size: MY_PARTICIPATION_PAGE,
+            },
+            signal: opts?.signal,
+          });
+          const rows = Array.isArray(data?.tasks) ? data.tasks : [];
+          out.push(
+            ...rows
+              .map((r) => mapUnifiedToWorkTask(r as Record<string, unknown>))
+              // `assignee_id` của BE còn trả cả việc thuộc lead mình phụ trách hoặc do mình tạo.
+              // «Công việc của tôi» chỉ gồm việc ĐƯỢC GIAO cho mình.
+              .filter((t) => t.id && String(t.assignee_id || '') === String(userId)),
+          );
+          const total = Number(data?.total);
+          if (rows.length < MY_PARTICIPATION_PAGE || (Number.isFinite(total) && out.length >= total)) break;
+        }
+        return out;
+      };
+
+      // Việc sản xuất ở bảng `tasks` (task_kind SX / Dự án).
+      const sx = await fetchAll({ module_key: 'production' });
+      // Việc ở bảng `crm_tasks` của deal đã có dự án mang task_kind «CRM-Deal» nên bị `module_key=production`
+      // loại hết — dự án chỉ có việc loại này (chưa đồng bộ sang `tasks`) sẽ biến mất khỏi «dự án của tôi».
+      // Lấy thêm, chỉ giữ việc gắn dự án, và bỏ việc trùng với bản ở bảng `tasks` (cùng dự án + cùng tên).
+      let crm: WorkTask[] = [];
+      try {
+        crm = await fetchAll({ task_kind: 'CRM-Deal' });
+      } catch (e) {
+        // Lỗi ở nguồn phụ không được làm mất danh sách chính.
+        if ((e as { name?: string })?.name === 'CanceledError' || opts?.signal?.aborted) throw e;
       }
-      return out;
+      const keyOf = (t: WorkTask) =>
+        `${t.lead?.project_id || ''}|${String(t.title || '').trim().toLowerCase()}`;
+      const seen = new Set(sx.map(keyOf));
+      const extra = crm.filter((t) => {
+        if (!t.lead?.project_id) return false;
+        const k = keyOf(t);
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+      return [...sx, ...extra];
     },
   });
 }
