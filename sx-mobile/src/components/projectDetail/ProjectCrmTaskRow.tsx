@@ -1026,6 +1026,9 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
     return null;
   };
 
+  /** Việc của người khác (nhân viên): mở rộng chỉ để XEM — không đổi trạng thái / sửa / xóa / giao lại. */
+  const readOnly = compact;
+
   // Việc không phải của mình: một dòng gọn (bấm để mở rộng) — việc của mình mới hiện đầy đủ thao tác.
   if (compact && !expanded) {
     return (
@@ -1059,7 +1062,7 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
           </View>
         ) : null}
         <View style={styles.top}>
-          <TapHighlight style={[styles.check, done && styles.checkDone]} onPress={() => void toggleStatus()} disabled={busy}>
+          <TapHighlight style={[styles.check, done && styles.checkDone]} onPress={() => void toggleStatus()} disabled={busy || readOnly}>
             {done ? <Ionicons name="checkmark" size={14} color={colors.success} /> : null}
           </TapHighlight>
           <View style={styles.body}>
@@ -1092,6 +1095,7 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
                 style={styles.noteBox}
                 pressStyle={{ opacity: 0.92 }}
                 onPress={openAttach}
+                disabled={readOnly}
               >
                 <Ionicons name="chatbubble-ellipses" size={16} color={colors.warning} style={styles.noteIcon} />
                 <View style={{ flex: 1, minWidth: 0 }}>
@@ -1107,6 +1111,7 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
                 style={styles.metaBtn}
                 pressStyle={{ backgroundColor: colors.primarySoft }}
                 onPress={openDeadline}
+                disabled={readOnly}
               >
                 <Ionicons name="calendar-outline" size={12} color={isOverdue ? colors.danger : colors.textFaint} />
                 <Text style={[styles.metaText, deadline ? (isOverdue ? styles.metaOverdue : styles.metaTextActive) : null]}>
@@ -1123,7 +1128,18 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
           </View>
         </View>
 
-        {/* Hàng thao tác gọn như web: chụp / quay / đính kèm / gán / sửa / xóa trên cùng một dòng. */}
+        {readOnly ? (
+          // Việc của người khác: chỉ cho thu gọn lại, không có thao tác ghi.
+          <TapHighlight
+            style={styles.compactRow}
+            pressStyle={{ backgroundColor: colors.primarySoft }}
+            onPress={() => setExpanded(false)}
+            accessibilityLabel="Thu gọn"
+          >
+            <Text style={styles.compactWho}>Việc của người khác · chỉ xem</Text>
+            <Ionicons name="chevron-up" size={14} color={colors.textFaint} />
+          </TapHighlight>
+        ) : (
         <View style={styles.actions}>
           <TapHighlight
             style={[styles.actionBtn, styles.actionBtnPhoto]}
@@ -1162,6 +1178,7 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
             <Ionicons name="trash-outline" size={18} color={colors.textMuted} />
           </TapHighlight>
         </View>
+        )}
       </View>
       {renderModal()}
       <ImageGalleryLightbox

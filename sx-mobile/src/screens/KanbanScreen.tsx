@@ -201,6 +201,8 @@ export default function KanbanScreen() {
   const { user } = useAuth();
   /** Nhân viên thường không dùng bộ lọc: ẩn nút lọc (bố cục khớp màn Tổng quan của họ). */
   const showFilterButton = canViewTeamWork(user);
+  /** Chuyển cột / Phân loại dự án: chỉ quản lý & admin (nhân viên chỉ xem). */
+  const canEditBoard = canViewTeamWork(user);
   /** Admin lọc ngay bằng các chip trên màn nên không hiện nút «Bộ lọc» mở bảng lọc. */
   const showFilterSheetButton = showFilterButton && !isAdminLike(user);
   /** Nhân viên chỉ thấy dự án của mình (đứng tên hoặc được giao việc) — dùng chung với Planner. */
@@ -1272,6 +1274,7 @@ export default function KanbanScreen() {
         onComment={handleCardComment}
         onMove={handleCardMove}
         onClassify={handleCardClassify}
+        canEdit={canEditBoard}
       />
     ),
     [
@@ -1284,6 +1287,7 @@ export default function KanbanScreen() {
       movingId,
       isOrphanColumn,
       highlightProjectId,
+      canEditBoard,
       handleCardOpen,
       handleCardComment,
       handleCardMove,
@@ -1517,6 +1521,7 @@ export default function KanbanScreen() {
             onPress={() => handleCardOpen(item.id)}
             onMove={() => handleCardMove(item)}
             onClassify={() => handleCardClassify(item)}
+            canEdit={canEditBoard}
           />
         </View>
       );
@@ -1531,6 +1536,7 @@ export default function KanbanScreen() {
       handleCardOpen,
       handleCardMove,
       handleCardClassify,
+      canEditBoard,
     ],
   );
 
@@ -2353,6 +2359,8 @@ type KanbanCardProps = {
   onComment: (p: ProductionProject) => void;
   onMove: (p: ProductionProject) => void;
   onClassify: (p: ProductionProject) => void;
+  /** false = chỉ xem (nhân viên): ẩn nút Chuyển cột / Phân loại. */
+  canEdit?: boolean;
 };
 
 const KanbanCard = memo(function KanbanCard({
@@ -2370,6 +2378,7 @@ const KanbanCard = memo(function KanbanCard({
   onComment,
   onMove,
   onClassify,
+  canEdit = true,
 }: KanbanCardProps) {
   const workTypeName = item.workshop_type_name;
   const workTypeColor = workTypeName ? typeColor(workTypeName) : null;
@@ -2477,7 +2486,7 @@ const KanbanCard = memo(function KanbanCard({
           {updatedStr ? `Cập nhật lần cuối ${updatedStr}` : ' '}
         </Text>
 
-        {isOrphanColumn ? (
+        {!canEdit ? null : isOrphanColumn ? (
           <TapHighlight
             style={[styles.cardActionBtn, styles.cardActionBtnClassify]}
             onPress={() => onClassify(item)}

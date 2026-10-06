@@ -24,6 +24,8 @@ type Props = {
   onPress: () => void;
   onMove: () => void;
   onClassify?: () => void;
+  /** false = chỉ xem (nhân viên): ẩn nút Chuyển cột / Phân loại. Mặc định true. */
+  canEdit?: boolean;
 };
 
 function parseDay(value?: string | null): Date | null {
@@ -130,6 +132,7 @@ function SxListCard({
   onPress,
   onMove,
   onClassify,
+  canEdit = true,
 }: Props) {
   const { colors } = useTheme();
   const styles = useMemo(() => makeStyles(colors), [colors]);
@@ -226,6 +229,7 @@ function SxListCard({
         })}
       </Pressable>
 
+      {canEdit ? (
       <View style={styles.actions}>
         <Pressable
           style={[styles.moveBtn, moving && styles.moveBtnBusy]}
@@ -249,6 +253,7 @@ function SxListCard({
           )}
         </Pressable>
       </View>
+      ) : null}
     </View>
   );
 }

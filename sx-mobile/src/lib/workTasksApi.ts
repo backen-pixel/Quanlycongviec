@@ -468,7 +468,9 @@ export async function fetchMyParticipationTasks(
               page,
               page_size: MY_PARTICIPATION_PAGE,
             },
-            signal: opts?.signal,
+            // KHÔNG truyền `opts.signal` vào đây: yêu cầu này được nhiều người gọi dùng chung (cachedQuery dedupe).
+            // Nếu người gọi đầu bị hủy (vd. sau đăng nhập `user` đổi → load chạy lại) thì cả yêu cầu bị hủy và
+            // người gọi thứ hai cũng nhận lỗi hủy → Tổng quan trống. `cachedQuery` đã tự hủy phần của từng người gọi.
           });
           const rows = Array.isArray(data?.tasks) ? data.tasks : [];
           out.push(

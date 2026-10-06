@@ -888,7 +888,9 @@ export default function WorkScreen() {
         assigneeId,
         companyId,
         workshopTypeId: activeWorkTypeId || null,
-        q: search.trim() || undefined,
+        // Đọc qua ref: để `search` trong deps làm mỗi phím gõ đổi định danh callback → effect nạp lại
+        // → spinner toàn màn hình → ô tìm kiếm bị unmount (mất focus). Debounce bên dưới đã tự gọi lại.
+        q: searchRef.current.trim() || undefined,
         force: opts?.force,
       });
       setServerStats(next);
@@ -907,7 +909,6 @@ export default function WorkScreen() {
     activeWorkTypeId,
     canPickCompany,
     user?.company_id,
-    search,
   ]);
 
   /** Chip status → lọc server (status / overdue). */
