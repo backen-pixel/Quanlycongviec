@@ -5738,12 +5738,28 @@ r.post('/contacts/backfill-last-message', authMiddleware, async (req, res) => {
 
 r.get('/lead-ads', authMiddleware, async (req, res) => {
   try {
-    const { data } = await supabase.from('facebook_lead_ads')
-      .select('*, lead:crm_leads(id, title, code)')
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+    if (!['all', 'filter'].includes(scope.mode)
+      || (scope.mode === 'filter' && (!Array.isArray(scope.pageIds)
+        || scope.pageIds.some(id => typeof id !== 'string' || !id)))) throw new Error('Invalid Page scope');
+    const pageId = String(req.query.page_id || '').trim();
+    if (pageId && scope.mode === 'filter' && !scope.pageIds.includes(pageId)) {
+      return res.status(403).json({ error: 'Không có quyền xem Page này' });
+    }
+    if (scope.mode === 'filter' && !scope.pageIds.length) return res.json([]);
+    let query = supabase.from('facebook_lead_ads').select('*, lead:crm_leads(id, title, code)');
+    if (pageId) query = query.eq('page_id', pageId);
+    else if (scope.mode === 'filter') query = query.in('page_id', scope.pageIds);
+    const { data, error } = await query
       .order('created_at', { ascending: false })
       .limit(100);
-    res.json(data || []);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    if (error || !Array.isArray(data)
+      || data.some(row => !contactAllowedByFacebookScope(scope, row) || (pageId && row.page_id !== pageId))) {
+      throw new Error('Lead Ads read not confirmed');
+    }
+    res.json(data);
+  } catch (_) { res.status(500).json({ error: 'Không đọc được danh sách Lead Ads.' }); }
 });
 
 // ── Comments ─────────────────────────────────────────────────
@@ -8064,6 +8080,12 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
     for (let i = 0; i < contacts.length; i++) {
       const contact = contacts[i];
 
+      // Keep the ownership check outside the legacy error handler below, which
+      // writes last_synced_at even on failure.
+      if (await isLegacyContactProtected(contact.id)) {
+        results.push({ contact_id: contact.id, synced: 0, sync_status: 'lead_ads_managed_skip' });
+        continue;
+      }
       // Kiểm tra timeout — dừng và trả về nextOffset để caller tiếp tục
       if (timeoutMs > 0 && (Date.now() - startTime) >= timeoutMs) {
         const nextOffset = offsetIdx + i;
@@ -8767,6 +8789,11 @@ r.post('/refresh-names', authMiddleware, async (req, res) => {
 
     for (let i = 0; i < stuckContacts.length; i++) {
       const c = stuckContacts[i];
+      if (await isLegacyContactProtected(c.id)) {
+        emitRefreshLog({ current: i + 1, total, status: 'lead_ads_managed_skip',
+          message: 'Bỏ qua hồ sơ Lead Ads do luồng tiếp nhận quản lý.' });
+        continue;
+      }
       if (i > 0) await sleepMs(FB_FETCH_PROFILE_PIC ? 450 : 200);
       const profile = await fetchProfileViaConversations(c.page_id, c.psid);
       const upd = { updated_at: new Date().toISOString() };

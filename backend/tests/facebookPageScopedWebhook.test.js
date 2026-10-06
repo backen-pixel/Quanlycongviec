@@ -208,6 +208,8 @@ function guardHarness({ enabled = true, contact = { id: 'c1', page_id: PAGE, psi
   const state = { queries: [], writes: 0, inner: 0 };
   const db = { from(table) {
     const query = { select() { return query; }, eq() { return query; },
+      or() { return query; }, order() { return query; }, limit() { return query; },
+      then(resolve, reject) { return Promise.resolve({ data: [contact] }).then(resolve, reject); },
       async maybeSingle() {
         state.queries.push(table);
         if (errorTable === table) return { data: null, error: { message: 'synthetic-private' } };
@@ -380,3 +382,35 @@ test('malformed ownership rows cannot authorize a legacy write', async () => {
     assert.equal(h.state.writes, 0);
   }
 });
+for (const route of ['/batch-sync-messages', '/refresh-names']) {
+  for (const mode of ['protected', 'ordinary', 'read-error']) {
+    test('actual ' + route + ' checks fresh identity before Graph or writes: ' + mode, async () => {
+      const contact = { id: 'c1', page_id: PAGE, psid: mode === 'ordinary' ? '20001' : 'leadad_30001', fb_name: 'Synthetic' };
+      const h = guardHarness({ contact, errorTable: mode === 'read-error' ? 'facebook_contacts' : null });
+      let handler; let body; let status = 200; let graphs = 0;
+      Object.assign(h.context, {
+        r: { post(_route, _auth, fn) { handler = fn; } }, authMiddleware() {},
+        resolvePageIdsForCompanyScoped: async () => [PAGE], applyPageIdsFilter: query => query,
+        loadFacebookContactsForBatchPipeline: async () => ({ contacts: [contact], excludedStaleNoContact: 0, rawFetched: 1 }),
+        sortFacebookContactsNewestFirst: rows => rows, getFbPipelineConfigSync: () => ({}),
+        FB_SYNC_BATCH_GRAPH_MAX_PAGES: 1, AUTO_PIPELINE_RECENT_HOURS: 1, FB_FETCH_PROFILE_PIC: false,
+        getPageConfig: async () => ({ access_token: 'SYNTHETIC_ONLY_TOKEN' }),
+        graphResolveConversationIdForPsid: async () => { graphs++; return { convId: null }; },
+        fetchProfileViaConversations: async () => { graphs++; return {}; },
+      });
+      vm.runInContext(routeText('post', route), h.context);
+      const res = { status(code) { status = code; return res; }, json(value) { body = value; } };
+      await handler({ body: { mode: 'all' } }, res);
+      assert.equal(h.state.writes, 0);
+      if (mode === 'read-error') {
+        assert.equal(status, 500); assert.equal(body.error, 'FB_INBOX_LEGACY_CONTACT_SCOPE_UNAVAILABLE'); assert.equal(graphs, 0);
+      } else {
+        assert.equal(status, 200); assert.equal(graphs, mode === 'ordinary' ? 1 : 0);
+        if (mode === 'protected') {
+          const rows = body.details || body.log_lines;
+          assert.ok(rows.some(row => row.sync_status === 'lead_ads_managed_skip' || row.status === 'lead_ads_managed_skip'));
+        }
+      }
+    });
+  }
+}
