@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-10-06 16:39 — Xác minh Lead App trong giai đoạn chuẩn bị
+
+- Sửa `backend/src/helpers/facebookPageInbox.js` và `backend/src/routes/facebook.js`: tách điều kiện xác minh GET khỏi cờ nhận POST; yêu cầu secret/token riêng đủ dài và secret khác Messenger. Không thay luồng POST, worker hoặc Messenger.
+- Bổ sung kịch bản cấu hình thiếu/sai khóa và GET xác minh được trong khi POST đóng ở `backend/tests/facebookDedicatedLeadApp.test.js`.
+- Kiểm thử: 235/235 ca Node Facebook liên quan PASS; chưa chạy Meta thật, PostgreSQL/CI hoặc triển khai bản sửa. Hoàn tác bằng revert đúng commit của gói sau khi commit.
+
+---
+
 ## 2026-10-06 15:45 — Facebook Lead Ads, App riêng của VPT
 
 - Meta không nhận yêu cầu quyền App `TUBEPPROvpt` qua Business Settings; yêu cầu không được gửi. Đã kiểm tra App VPT `openclaw` và `claw`, chưa App nào đạt cổng nhận production `leadgen`.
