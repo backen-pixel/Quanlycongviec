@@ -803,6 +803,7 @@ export default function WorkScreen() {
       const res = await fetchTeamProjectTasksPage({
         companyId: o.companyId ?? (filterCompany || (canPickCompany ? null : (user?.company_id || null))),
         assigneeId: assigneeFilterRef.current !== 'all' ? assigneeFilterRef.current : null,
+        workshopTypeId: activeWorkTypeId || null,
         q: searchRef.current,
         page,
         force: o.force,
@@ -823,7 +824,7 @@ export default function WorkScreen() {
     } finally {
       if (append) teamLoadingMoreRef.current = false;
     }
-  }, [filterCompany, canPickCompany, user?.company_id]);
+  }, [filterCompany, canPickCompany, user?.company_id, activeWorkTypeId]);
 
   const load = useCallback(async (
     silent = false,
