@@ -43,6 +43,8 @@ type Opts = {
   assigneeId?: string | null;
   /** Phân loại xưởng: mã loại hoặc `none` (chưa phân loại). */
   workshopTypeId?: string | null;
+  /** true = mục «Không hạn»: việc chưa xong KHÔNG có hạn, tạo từ lâu (phần mới tạo đã ở danh sách chính). */
+  noDeadline?: boolean;
   q?: string;
   page?: number;
   pageSize?: number;
@@ -131,7 +133,7 @@ async function fetchLegacy(o: Opts): Promise<TeamProjectPage> {
 export async function fetchTeamProjectTasksPage(o: Opts): Promise<TeamProjectPage> {
   const page = Math.max(1, o.page || 1);
   const pageSize = o.pageSize || TEAM_GROUPS_PER_PAGE;
-  const key = `${K_TEAM}${o.companyId || ''}|${o.assigneeId || ''}|${o.workshopTypeId || ''}|${(o.q || '').trim()}|${page}|${pageSize}`;
+  const key = `${K_TEAM}${o.noDeadline ? 'nd|' : ''}${o.companyId || ''}|${o.assigneeId || ''}|${o.workshopTypeId || ''}|${(o.q || '').trim()}|${page}|${pageSize}`;
   return cachedQuery<TeamProjectPage>({
     key,
     ttlMs: QUERY_TTL_SHORT,
@@ -150,6 +152,7 @@ export async function fetchTeamProjectTasksPage(o: Opts): Promise<TeamProjectPag
             due_days: DUE_SOON_DAYS,
             // Lấy thêm việc MỚI TẠO trong N ngày qua dù chưa có hạn (máy chủ mặc định cũng là 7).
             created_days: NEW_TASK_DAYS,
+            ...(o.noDeadline ? { no_deadline: 1 } : {}),
             ...(o.companyId ? { company_id: o.companyId } : {}),
             ...(o.assigneeId ? { assignee_id: o.assigneeId } : {}),
             ...(o.workshopTypeId ? { workshop_type_id: o.workshopTypeId } : {}),
@@ -173,8 +176,8 @@ export async function fetchTeamProjectTasksPage(o: Opts): Promise<TeamProjectPag
         };
       } catch (e) {
         const status = (e as { response?: { status?: number } })?.response?.status;
-        // 404 = máy chủ chưa deploy endpoint mới → dùng đường cũ (chỉ trang 1, đã gồm hết).
-        if (status === 404 && page === 1) return fetchLegacy(o);
+        // 404 = máy chủ chưa deploy endpoint mới → dùng đường cũ (chỉ trang 1, đã gồm hết). Mục «Không hạn» thì bỏ qua.
+        if (status === 404 && page === 1 && !o.noDeadline) return fetchLegacy(o);
         if (status === 404) return { tasks: [], counts: { overdue: 0, soon: 0, total: 0, inProgress: 0, groups: 0 }, hasMore: false, page };
         throw e;
       }

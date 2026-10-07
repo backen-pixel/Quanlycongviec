@@ -468,18 +468,28 @@ r.get('/team-project-tasks', async (req, res) => {
     const until = new Date(nowMs + dueDays * 86_400_000).toISOString();
     const createdSince = new Date(nowMs - createdDays * 86_400_000).toISOString();
     const COLS = 'unified_id, source, project_id, lead_id, title, status, deadline, created_at, assignee_id, task_kind, project_code, project_name, lead_title';
+    // no_deadline=1: mục riêng «Không hạn» — việc chưa xong KHÔNG có hạn và tạo từ lâu (trước `created_days` ngày);
+    // phần mới tạo đã nằm ở danh sách chính. Lấy tách riêng để danh sách chính không phình theo hàng nghìn việc cũ.
+    const noDeadlineMode = ['1', 'true'].includes(String(req.query.no_deadline || '').toLowerCase());
 
     // Quét nhẹ (chỉ vài cột) theo lô 1000 — PostgREST cắt ở 1000 dòng/lần.
     const scanned = [];
     for (let from = 0; from < TEAM_TASKS_SCAN_CAP; from += 1000) {
       let qy = supabase.from('unified_tasks_v').select(COLS)
         .in('task_kind', TEAM_PROJECT_TASK_KINDS)
-        .not('project_id', 'is', null)
+        .not('project_id', 'is', null);
+      if (noDeadlineMode) {
+        qy = qy.is('deadline', null).lt('created_at', createdSince)
+          .order('created_at', { ascending: false });
+      } else {
         // Có hạn đến hết cửa sổ N ngày tới, HOẶC mới tạo gần đây (kể cả không hạn).
-        .or(createdDays > 0
-          ? `and(deadline.not.is.null,deadline.lte.${until}),created_at.gte.${createdSince}`
-          : `and(deadline.not.is.null,deadline.lte.${until})`)
-        .order('deadline', { ascending: true })
+        qy = qy
+          .or(createdDays > 0
+            ? `and(deadline.not.is.null,deadline.lte.${until}),created_at.gte.${createdSince}`
+            : `and(deadline.not.is.null,deadline.lte.${until})`)
+          .order('deadline', { ascending: true });
+      }
+      qy = qy
         .order('unified_id', { ascending: true })
         .range(from, from + 999);
       qy = applyOpenOnlyFilter(qy);
