@@ -1,3 +1,9 @@
+## 2026-10-07 — Bấm bình luận mở đúng module của người nhận
+
+Nhân viên xưởng bấm chuông bình luận của sale CRM không còn bị đưa sang trang deal CRM. Người chỉ thuộc Sản xuất mở `/sx/projects/:id?tab=comments`, người VC mở `/vc/projects/:id`, người CRM mở `/crm/leads/:id`. Thông báo mới ghi `viewer_module_key` theo từng người nhận.
+
+---
+
 ## 2026-10-06 16:39 — Sửa cổng xác minh callback Lead App trước chuyển đổi (mã cục bộ)
 
 GET `/api/facebook/webhook/lead-ads` nay trả challenge Meta khi App Secret và verify token **riêng, hợp lệ** đã cấu hình, dù `VPT_FB_LEAD_APP_MODE=0`. POST vẫn trả 404 khi cờ này tắt; Messenger và các cờ intake/worker không đổi. Việc xác minh GET **không chứng minh** App đã nhận Lead thật. Bản sửa trên nhánh `codex/facebook-lead-verify-precutover-20261006` chưa phát hành; 235/235 ca Node Facebook liên quan đạt. Cần review/CI trước khi phát hành, giữ chế độ App riêng OFF cho tới khi cổng Meta và đối soát Lead thật đạt. [Hồ sơ kích hoạt](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).
@@ -16,6 +22,7 @@ Kiểm tra: node --check và node --test --test-isolation=none trialRegistry.tes
 Hoàn tác: dùng 710_p1_trial_registry_rollback.sql trên bản sao được phép; giữ bảng có dữ liệu, rồi bỏ delta code và hai mục handoff.
 
 ---
+
 ## 2026-10-06 — Lọc dự án theo công ty và nhân viên CRM
 
 Ô chọn dự án/deal trong hộp giao việc có bộ lọc Công ty và Nhân viên CRM (đội kinh doanh của công ty đó). Đổi công ty thì danh sách nhân viên CRM và kết quả tìm dự án đổi theo.

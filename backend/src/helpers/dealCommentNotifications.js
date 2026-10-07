@@ -11,6 +11,7 @@ const {
   memberDisplayName,
 } = require('./crmLeadCommentMentions');
 const { ensureLeadMembersFromProjectStaff } = require('./productionWorkshopTypeStaff');
+const { pickCommentViewerModule } = require('./commentViewerModule');
 
 async function loadDealCommentContext(supabase, leadId) {
   let leadTitle = '';
@@ -150,6 +151,81 @@ function buildCommentPreview(text, maxLen = 160) {
   return rawBody.length > maxLen ? `${rawBody.slice(0, maxLen - 3)}…` : rawBody;
 }
 
+async function viewerModuleByUserId(userIds) {
+  const ids = [...new Set((userIds || []).map(String).filter(Boolean))];
+  const map = new Map();
+  if (!ids.length) return map;
+
+  let users = [];
+  let roleRows = [];
+  try {
+    const { data } = await supabase.from('users').select('id, role, drive_module').in('id', ids);
+    users = data || [];
+  } catch { users = []; }
+  try {
+    const { data, error } = await supabase
+      .from('user_module_roles')
+      .select('user_id, module_key')
+      .in('user_id', ids);
+    if (!error) roleRows = data || [];
+  } catch { roleRows = []; }
+
+  const keysByUser = new Map();
+  for (const row of roleRows) {
+    const id = String(row.user_id || '');
+    if (!id) continue;
+    if (!keysByUser.has(id)) keysByUser.set(id, []);
+    if (row.module_key) keysByUser.get(id).push(row.module_key);
+  }
+  const userById = new Map((users || []).map((u) => [String(u.id), u]));
+  for (const id of ids) {
+    const u = userById.get(id);
+    map.set(id, pickCommentViewerModule({
+      role: u?.role,
+      driveModule: u?.drive_module,
+      moduleKeys: keysByUser.get(id) || [],
+    }));
+  }
+  return map;
+}
+
+/** Cùng một bình luận, mỗi người nhận mở đúng module của mình. */
+async function notifyAudienceByViewerModule(req, notifyMultiple, userIds, payload) {
+  const ids = [...new Set((userIds || []).map(String).filter(Boolean))];
+  if (!ids.length || typeof notifyMultiple !== 'function') return;
+  let byUser;
+  try {
+    byUser = await viewerModuleByUserId(ids);
+  } catch (e) {
+    console.warn('[comment-nav] viewer module:', e?.message || e);
+    byUser = new Map();
+  }
+  const groups = new Map();
+  for (const id of ids) {
+    const mod = byUser.get(id) || 'crm';
+    if (!groups.has(mod)) groups.set(mod, []);
+    groups.get(mod).push(id);
+  }
+  for (const [mod, groupIds] of groups) {
+    const metadata = {
+      ...(payload.metadata || {}),
+      module_key: mod,
+      ecosystem_module_key: mod,
+      viewer_module_key: mod,
+    };
+    await notifyMultiple(
+      req,
+      groupIds,
+      payload.type,
+      payload.title,
+      payload.message,
+      payload.entityType,
+      payload.entityId,
+      metadata,
+    );
+  }
+}
+
 function buildDealCommentMetadata(ctx, commentRow, senderName, senderAvatar, { mentioned = false, commentIdField = 'id', bodyField = 'body' } = {}) {
   return {
     nav_tab: 'comments',
@@ -181,16 +257,14 @@ async function notifyDealCommentMentions(req, notifyMultiple, leadId, senderId, 
   const preview = buildCommentPreview(commentRow?.body);
   const label = ctx.leadTitle || ctx.leadCode || 'Lead/Deal';
 
-  await notifyMultiple(
-    req,
-    ids,
-    'comment_added',
-    `${label} · Nhắc bạn`,
-    `${senderName} đã nhắc bạn trong bình luận: ${preview}`,
-    'lead',
-    leadId,
-    buildDealCommentMetadata(ctx, commentRow, senderName, senderAvatar, { mentioned: true }),
-  );
+  await notifyAudienceByViewerModule(req, notifyMultiple, ids, {
+    type: 'comment_added',
+    title: `${label} · Nhắc bạn`,
+    message: `${senderName} đã nhắc bạn trong bình luận: ${preview}`,
+    entityType: 'lead',
+    entityId: leadId,
+    metadata: buildDealCommentMetadata(ctx, commentRow, senderName, senderAvatar, { mentioned: true }),
+  });
 }
 
 /** Thông báo thành viên deal khi có bình luận CRM mới (không phải @mention). */
@@ -209,16 +283,14 @@ async function notifyDealCommentParticipants(req, notifyMultiple, leadId, sender
   const stageMove = commentRow?.comment_type === 'stage_move'
     || String(commentRow?.body || '').includes('Đã chuyển trạng thái');
 
-  await notifyMultiple(
-    req,
-    ids,
-    'comment_added',
-    stageMove ? `${label} · Đã chuyển trạng thái` : `${label} · Bình luận mới`,
-    stageMove ? `${senderName}: ${preview}` : `${senderName} vừa bình luận: ${preview}`,
-    'lead',
-    leadId,
-    buildDealCommentMetadata(ctx, commentRow, senderName, senderAvatar, { mentioned: false }),
-  );
+  await notifyAudienceByViewerModule(req, notifyMultiple, ids, {
+    type: 'comment_added',
+    title: stageMove ? `${label} · Đã chuyển trạng thái` : `${label} · Bình luận mới`,
+    message: stageMove ? `${senderName}: ${preview}` : `${senderName} vừa bình luận: ${preview}`,
+    entityType: 'lead',
+    entityId: leadId,
+    metadata: buildDealCommentMetadata(ctx, commentRow, senderName, senderAvatar, { mentioned: false }),
+  });
 }
 
 /** Thông báo thành viên deal khi có bình luận project (tab SX / dự án không deal). */
@@ -265,20 +337,18 @@ async function notifyProjectCommentParticipants(req, notifyMultiple, projectId, 
   const entityType = deal?.id ? 'lead' : 'project';
   const entityId = deal?.id || projectId;
 
-  await notifyMultiple(
-    req,
-    ids,
-    'comment_added',
-    `${label} · Bình luận mới`,
-    `${senderName} vừa bình luận: ${preview}`,
+  await notifyAudienceByViewerModule(req, notifyMultiple, ids, {
+    type: 'comment_added',
+    title: `${label} · Bình luận mới`,
+    message: `${senderName} vừa bình luận: ${preview}`,
     entityType,
     entityId,
-    buildDealCommentMetadata(ctx, commentRow, senderName, senderAvatar, {
+    metadata: buildDealCommentMetadata(ctx, commentRow, senderName, senderAvatar, {
       mentioned: false,
       commentIdField: 'id',
       bodyField: 'content',
     }),
-  );
+  });
 }
 
 /**

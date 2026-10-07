@@ -1,3 +1,11 @@
+## 2026-10-07 — Chuông bình luận theo module người nhận
+
+- Deal đã có VC vẫn gửi một `ecosystem_module_key` chung, frontend chỉ nhận diện SX rồi còn lại nhảy `/crm/leads`. NV xưởng Metalla không vào được.
+- Bấm chuông chọn đường dẫn theo module của người đang đăng nhập. Thông báo mới gắn `viewer_module_key` từng người nhận.
+- File: `NotificationCenter.jsx`, `dealModulePathAccess.js`, `dealCommentNotifications.js`, `commentViewerModule.js`.
+
+---
+
 ## 2026-10-06 — P1-2: thu hồi quyền thừa của service_role (SQL 710)
 - 710 đã áp lên DB chính (PG 17.6, 3 bảng rỗng, RLS bật, anon/authenticated = 0). Kiểm tra sau áp thấy service_role còn UPDATE/DELETE/TRUNCATE trên bảng nhật ký do quyền mặc định của Supabase; thiết kế yêu cầu chỉ SELECT+INSERT.
 - Sửa 710: thêm REVOKE ALL FROM service_role trước GRANT. Bài thử nhánh tạm giờ cài quyền mặc định giống DB chính; 35/35 đạt. Chưa áp bản sửa lên DB chính (cần Founder duyệt riêng).
@@ -26,6 +34,7 @@ Kiểm tra: node --check; node --test --test-isolation=none trialRegistry.test.j
 Rollback: script 710 chỉ DROP bảng rỗng, giữ bảng có dữ liệu; chưa diễn tập trên bản sao.
 
 ---
+
 ## 2026-10-06 — Lọc deal theo công ty và nhân viên CRM
 
 - Picker dự án/deal thêm chọn Công ty và Nhân viên CRM (`/crm/employees-by-company?for_module=crm`).
