@@ -19,6 +19,10 @@ import {
   resolveActiveModule,
   sidebarModuleToNotificationFilter,
 } from '../lib/sidebarModuleContext';
+import {
+  resolveLeadCommentNotificationPath,
+  viewerCommentModuleKey,
+} from '../lib/dealModulePathAccess';
 
 const ICON_MAP = {
   task_assigned: CheckSquare,
@@ -300,17 +304,10 @@ function eventsPathForNotification(n) {
   return '/crm/events';
 }
 
-/** Bình luận deal — mở tab Bình luận ở SX nếu deal gắn dự án xưởng. */
-function navigateLeadCommentMention(navigate, n, setOpen) {
-  const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : {};
-  const navTab = meta.nav_tab || 'comments';
-  const pid = meta.project_id;
-  const isProd = meta.ecosystem_module_key === 'production' || meta.module_key === 'production';
-  if (pid && isProd) {
-    navigate(`/sx/projects/${pid}?tab=${navTab}`);
-  } else if (n?.entity_id) {
-    navigate(`/crm/leads/${n.entity_id}?tab=${navTab}`);
-  }
+/** Bình luận deal — mở đúng module của người bấm (SX / VC / CRM), không theo module người gửi. */
+function navigateLeadCommentMention(navigate, n, setOpen, viewer) {
+  const path = resolveLeadCommentNotificationPath(n, viewer || {});
+  if (path) navigate(path);
   setOpen?.(false);
 }
 
@@ -1235,7 +1232,10 @@ export default function NotificationCenter({ socket }) {
           onDismiss={dismissToast}
           onNavigate={(notif) => {
             if (isLeadCommentMentionNotification(notif) && notif.entity_id) {
-              navigateLeadCommentMention(navigate, notif, setOpen);
+              navigateLeadCommentMention(navigate, notif, setOpen, {
+                user,
+                activeModule: activeSidebarModule,
+              });
               return;
             }
             // workshop_new_deal: luôn ưu tiên Kanban SX (bỏ qua nav_url cũ trỏ /projects hoặc /sx/projects).
@@ -1854,6 +1854,9 @@ export default function NotificationCenter({ socket }) {
               notifications.map(n => {
                 const isApproval = n.metadata?.type === 'approval_request';
                 const isAssignNotif = isAssignmentNotification(n);
+                const moduleChipKey = isLeadCommentMentionNotification(n)
+                  ? (viewerCommentModuleKey(user, activeSidebarModule) || inferNotificationModuleKey(n))
+                  : inferNotificationModuleKey(n);
                 const Icon = isApproval ? FolderKanban : (isAssignNotif ? ClipboardList : (ICON_MAP[n.type] || Bell));
                 const color = isApproval
                   ? 'bg-orange-100 text-orange-600'
@@ -1884,7 +1887,10 @@ export default function NotificationCenter({ socket }) {
                       }
                       // Bình luận lead/deal → tab Bình luận (SX nếu có project_id)
                       if (isLeadCommentMentionNotification(n) && n.entity_id) {
-                        navigateLeadCommentMention(navigate, n, setOpen);
+                        navigateLeadCommentMention(navigate, n, setOpen, {
+                          user,
+                          activeModule: activeSidebarModule,
+                        });
                         return;
                       }
                       // Chat trên Lead/Deal → mở Lead chat dock
@@ -1990,9 +1996,9 @@ export default function NotificationCenter({ socket }) {
                             {n.title}
                           </p>
                           <div className="flex items-center gap-1 shrink-0">
-                            {moduleFilter === 'all' && inferNotificationModuleKey(n) && (
+                            {moduleFilter === 'all' && moduleChipKey && (
                               <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-slate-700">
-                                {moduleChipLabel(inferNotificationModuleKey(n))}
+                                {moduleChipLabel(moduleChipKey)}
                               </span>
                             )}
                             {!n.is_read && (

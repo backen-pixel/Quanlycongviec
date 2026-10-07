@@ -641,13 +641,13 @@ async function fetchAccountingDealDetail(leadId, clientCompanyId) {
     projectId
       ? supabase
         .from('projects')
-        .select('id, code, name, status, production_value, estimated_value, deposit_amount, collected_amount, company_id, deadline, production_deadline')
+        .select('id, code, name, status, production_value, estimated_value, deposit_amount, collected_amount, company_id, deadline, production_deadline, company:companies!projects_company_id_fkey(id, name, short_name)')
         .eq('id', projectId)
         .maybeSingle()
       : Promise.resolve({ data: null }),
     supabase
       .from('quotations')
-      .select('id, code, status, total, deposit_amount, deposit_received, created_at, title')
+      .select('id, code, status, total, deposit_amount, deposit_received, created_at, title, source_excel_file_name, source_excel_file_url')
       .eq('lead_id', leadId)
       .order('created_at', { ascending: false })
       .limit(20),
@@ -659,7 +659,7 @@ async function fetchAccountingDealDetail(leadId, clientCompanyId) {
       .limit(20),
     supabase
       .from('invoices')
-      .select('id, code, status, total, paid_amount, payment_status, created_at, title, order_id')
+      .select('id, code, status, total, paid_amount, payment_status, created_at, title, order_id, invoice_number, invoice_date')
       .eq('lead_id', leadId)
       .order('created_at', { ascending: false })
       .limit(20),
@@ -670,7 +670,10 @@ async function fetchAccountingDealDetail(leadId, clientCompanyId) {
   ]);
 
   const lead = leadFullRes.data || leadBase;
-  const project = projectRes.data || null;
+  const projectRaw = projectRes.data || null;
+  const project = projectRaw
+    ? { ...projectRaw, company: unwrapEmbed(projectRaw.company) }
+    : null;
   const crmValue = Number(lead.estimated_value) || 0;
   const projectMirror = projectDealMirrorValue(project);
   const productionCost = project ? Number(project.production_value) || 0 : 0;

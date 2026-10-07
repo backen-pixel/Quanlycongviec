@@ -201,10 +201,12 @@ export default function KanbanScreen() {
   const { user } = useAuth();
   /** Nhân viên thường không dùng bộ lọc: ẩn nút lọc (bố cục khớp màn Tổng quan của họ). */
   const showFilterButton = canViewTeamWork(user);
+  /** Chuyển cột / Phân loại dự án: chỉ quản lý & admin (nhân viên chỉ xem). */
+  const canEditBoard = canViewTeamWork(user);
   /** Admin lọc ngay bằng các chip trên màn nên không hiện nút «Bộ lọc» mở bảng lọc. */
   const showFilterSheetButton = showFilterButton && !isAdminLike(user);
   /** Nhân viên chỉ thấy dự án của mình (đứng tên hoặc được giao việc) — dùng chung với Planner. */
-  const { allows: allowsProject } = useMyProjectScope(user);
+  const { allows: allowsProject, restricted: scopeRestricted } = useMyProjectScope(user);
   const isFocused = useIsFocused();
   const route = useRoute<RouteProp<MainTabParamList, 'Kanban'>>();
   const { commentToast, dismissCommentToast, projectMetaRef, subscribeComment, subscribeSync } = useNotifications();
@@ -1272,6 +1274,7 @@ export default function KanbanScreen() {
         onComment={handleCardComment}
         onMove={handleCardMove}
         onClassify={handleCardClassify}
+        canEdit={canEditBoard}
       />
     ),
     [
@@ -1284,6 +1287,7 @@ export default function KanbanScreen() {
       movingId,
       isOrphanColumn,
       highlightProjectId,
+      canEditBoard,
       handleCardOpen,
       handleCardComment,
       handleCardMove,
@@ -1305,6 +1309,22 @@ export default function KanbanScreen() {
     });
     return map;
   }, [displayStages, filteredProjects, stages, stageIndex]);
+
+  // Áp «Hạn xử lý»: nếu cột đang xem trống mà các cột khác có dự án → nhảy tới cột đầu tiên có dự án (một lần
+  // cho mỗi giá trị bộ lọc, để không giành quyền khi người dùng tự vuốt sang cột khác).
+  const dueJumpedRef = useRef('');
+  useEffect(() => {
+    if (!dueFilter) {
+      dueJumpedRef.current = '';
+      return;
+    }
+    if (loading || dueJumpedRef.current === dueFilter) return;
+    dueJumpedRef.current = dueFilter;
+    const cur = displayStages[activeIndex];
+    if (cur && (projectsByStage.get(cur.id)?.length ?? 0) > 0) return;
+    const idx = displayStages.findIndex((s) => (projectsByStage.get(s.id)?.length ?? 0) > 0);
+    if (idx >= 0) setActiveIndex(idx);
+  }, [dueFilter, loading, displayStages, projectsByStage, activeIndex]);
 
   const stageById = useMemo(() => {
     const m = new Map<string, KanbanStage>();
@@ -1517,6 +1537,7 @@ export default function KanbanScreen() {
             onPress={() => handleCardOpen(item.id)}
             onMove={() => handleCardMove(item)}
             onClassify={() => handleCardClassify(item)}
+            canEdit={canEditBoard}
           />
         </View>
       );
@@ -1531,6 +1552,7 @@ export default function KanbanScreen() {
       handleCardOpen,
       handleCardMove,
       handleCardClassify,
+      canEditBoard,
     ],
   );
 
@@ -1686,10 +1708,18 @@ export default function KanbanScreen() {
   const statPills = useMemo(() => {
     const client = computeSxBoardKpis(filteredProjects, stages);
     // Chỉ dùng summary server khi không còn lọc client-only (search / mine / overdue…).
+    // Mọi bộ lọc mà `filteredProjects` áp ở client đều phải có mặt ở đây, nếu không thẻ KPI (số của cả
+    // xưởng từ server) lệch với danh sách đang hiện: phạm vi nhân viên, hạn xử lý, SĐT, người phụ trách,
+    // «Chưa phân loại».
     const clientOnlyFilter = Boolean(
       search.trim()
       || quickFilter !== 'all'
-      || dealCompanyExternalFilter,
+      || dealCompanyExternalFilter
+      || scopeRestricted
+      || dueFilter
+      || filterPhone
+      || filterPersonId
+      || filterWorkTypeId === 'none',
     );
     const useServer = !clientOnlyFilter && summaryKpis;
     const kpi = useServer
@@ -1718,6 +1748,11 @@ export default function KanbanScreen() {
     search,
     quickFilter,
     dealCompanyExternalFilter,
+    scopeRestricted,
+    dueFilter,
+    filterPhone,
+    filterPersonId,
+    filterWorkTypeId,
   ]);
 
   if (loading) {
@@ -2353,6 +2388,8 @@ type KanbanCardProps = {
   onComment: (p: ProductionProject) => void;
   onMove: (p: ProductionProject) => void;
   onClassify: (p: ProductionProject) => void;
+  /** false = chỉ xem (nhân viên): ẩn nút Chuyển cột / Phân loại. */
+  canEdit?: boolean;
 };
 
 const KanbanCard = memo(function KanbanCard({
@@ -2370,6 +2407,7 @@ const KanbanCard = memo(function KanbanCard({
   onComment,
   onMove,
   onClassify,
+  canEdit = true,
 }: KanbanCardProps) {
   const workTypeName = item.workshop_type_name;
   const workTypeColor = workTypeName ? typeColor(workTypeName) : null;
@@ -2477,7 +2515,7 @@ const KanbanCard = memo(function KanbanCard({
           {updatedStr ? `Cập nhật lần cuối ${updatedStr}` : ' '}
         </Text>
 
-        {isOrphanColumn ? (
+        {!canEdit ? null : isOrphanColumn ? (
           <TapHighlight
             style={[styles.cardActionBtn, styles.cardActionBtnClassify]}
             onPress={() => onClassify(item)}

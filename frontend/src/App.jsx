@@ -110,6 +110,7 @@ const ProductionAssignmentsPage = lazyWithRetry(() => import('./pages/Production
 const ProductionPhatSinhPage = lazyWithRetry(() => import('./pages/ProductionPhatSinhPage'));
 const LogisticsAssignmentsPage = lazyWithRetry(() => import('./pages/LogisticsAssignmentsPage'));
 const CustomModuleAssignmentsPage = lazyWithRetry(() => import('./pages/CustomModuleAssignmentsPage'));
+const CustomModulePhatSinhPage = lazyWithRetry(() => import('./pages/CustomModuleAssignmentsPage').then((m) => ({ default: m.CustomModulePhatSinhPage })));
 const CustomModuleEventsPage = lazyWithRetry(() => import('./pages/CustomModuleEventsPage'));
 const ProductionRegionsPage = lazyWithRetry(() => import('./pages/ProductionRegionsPage'));
 const LogisticsDashboard = lazyWithRetry(() => import('./pages/LogisticsDashboard'));
@@ -214,6 +215,7 @@ const HopCungDesignWizardPage = lazyWithRetry(() => import('./pages/calc/HopCung
 const AccountingDashboard = lazyWithRetry(() => import('./pages/AccountingDashboard'));
 const AccountingDealDetail = lazyWithRetry(() => import('./pages/AccountingDealDetail'));
 const AccountingBankAccountsPage = lazyWithRetry(() => import('./pages/AccountingBankAccountsPage'));
+const AccountingReceivablesPage = lazyWithRetry(() => import('./pages/AccountingReceivablesPage'));
 const AccountingCostHubPage = lazyWithRetry(() => import('./pages/AccountingCostHubPage'));
 const AccountingCostSetupPage = lazyWithRetry(() => import('./pages/AccountingCostSetupPage'));
 const AccountingLayout = lazyWithRetry(() => import('./layouts/AccountingLayout'));
@@ -532,6 +534,7 @@ export default function App() {
             <Route path="/m/:moduleKey" element={<AppModuleLayout />}>
               <Route index element={<AppModuleDashboard />} />
               <Route path="assignments" element={<CustomModuleAssignmentsPage />} />
+              <Route path="phat-sinh" element={<CustomModulePhatSinhPage />} />
               <Route path="events" element={<CustomModuleEventsPage />} />
               <Route path="leaves" element={<LeaveSchedulePage />} />
               <Route path="leaves/list" element={<LeaveListPage />} />
@@ -613,12 +616,13 @@ export default function App() {
             <Route path="/crm/customers" element={<CRMCustomersPage />} />
             <Route path="/crm/tasks" element={<CRMTasksPage />} />
             <Route path="/crm/assignments" element={<CRMAssignmentsPage />} />
+            <Route path="/crm/phat-sinh" element={<ProductionPhatSinhPage companiesModule="crm" assignmentModule="crm" storagePrefix="crm_phat_sinh" dashboardLink="/crm/dashboard" />} />
             <Route path="/crm/dept-plan" element={<CrmDeptPlanPage />} />
             <Route path="/crm/daily-reports" element={<CrmDailyReportPage />} />
             <Route path="/crm/daily-reports/history" element={<CrmDailyWorkHistoryPage />} />
             <Route path="/production/assignments" element={<Navigate to="/sx/assignments" replace />} />
             <Route path="/crm/follow-up-care" element={<CrmFollowUpCarePage />} />
-            <Route path="/crm/project-tasks" element={<Suspense fallback={<PageLoader />}><ProjectTasksOverviewPage fixedModule="crm" /></Suspense>} />
+            <Route path="/crm/project-tasks" element={<Suspense fallback={<PageLoader />}><div className="w-auto lg:w-full max-w-none pt-2 pb-0 -ml-3 -mr-3 lg:mr-[-28px] px-2"><ProjectTasksOverviewPage fixedModule="crm" /></div></Suspense>} />
             <Route path="/crm/task-templates" element={<RequireCrmElevated><CRMTemplatesPage /></RequireCrmElevated>} />
             <Route path="/crm/auto-project-config" element={<RequireCrmElevated><AutoProjectConfigPage /></RequireCrmElevated>} />
             <Route path="/crm/products" element={<ProductsPage />} />
@@ -648,6 +652,7 @@ export default function App() {
               <Route path="task-templates" element={<LogisticsTaskTemplatesPage />} />
               <Route path="teams" element={<WorkshopTeamsPage />} />
               <Route path="assignments" element={<LogisticsAssignmentsPage />} />
+              <Route path="phat-sinh" element={<ProductionPhatSinhPage companiesModule="logistics" assignmentModule="logistics" storagePrefix="vc_phat_sinh" dashboardLink="/vc/dashboard" />} />
               <Route path="events" element={<EventsFeedPage lockedModule="logistics" />} />
               <Route path="events/schedule" element={<EventsInstallSchedulePage scope="logistics" />} />
               <Route path="trash" element={<Navigate to="/admin/trash?tab=vc" replace />} />
@@ -667,9 +672,12 @@ export default function App() {
               <Route path="chi-phi" element={<AccountingCostHubPage />} />
               <Route path="deals/:leadId" element={<AccountingDealDetail />} />
               <Route path="bank-accounts" element={<AccountingBankAccountsPage />} />
+              <Route path="cong-no" element={<AccountingReceivablesPage />} />
+              <Route path="phat-sinh" element={<ProductionPhatSinhPage companiesModule="accounting" assignmentModule="accounting" storagePrefix="ketoan_phat_sinh" dashboardLink="/ketoan/dashboard" />} />
             </Route>
             <Route path="/mua-hang" element={<PurchasingLayout />}>
               <Route index element={<PurchasingInboxPage />} />
+              <Route path="phat-sinh" element={<ProductionPhatSinhPage companiesModule="purchasing" assignmentModule="purchasing" storagePrefix="muahang_phat_sinh" dashboardLink="/mua-hang" />} />
               <Route path="orders" element={<PurchasingInboxPage />} />
               <Route path="orders/new" element={<PurchaseOrderForm />} />
               <Route path="orders/:id" element={<PurchaseOrderDetail />} />

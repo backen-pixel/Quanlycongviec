@@ -18,12 +18,46 @@ const {
 const { isHucabiSameDayPastWorkEnd } = require('./companyDeadlineClock');
 const { sxColumnStageKpiKey } = require('./sxPipelineRevenue');
 const { isSxPipelineStageNoDeadline } = require('./crmPipelineSla');
+const { pickChunkTarget, chunkIds, SX_URL_SAFE_ID_MAX } = require('./sxChunkedIdPage');
 
 const VN_TZ = 'Asia/Ho_Chi_Minh';
 const SX_KANBAN_COL_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isSxKanbanColumnUuid(id) {
   return SX_KANBAN_COL_UUID_RE.test(String(id || '').trim());
+}
+
+/** Tên mảng id trong `pickChunkTarget` → khoá tương ứng trong ctx của summary. */
+const CHUNK_CTX_KEY = { restrictIds: 'restrictIds', wonIds: 'wonIds', partnerIds: 'scopePartnerIds' };
+
+/**
+ * Chạy `scan(ctx)` — một lượt quét nạp hết trang, trả `{ rows, empty?, truncated? }`.
+ * Mảng id quá dài (từ ~556 id, HCB có 650+) làm URL PostgREST vỡ → 500 «Bad Request» cho cả summary;
+ * khi đó chia mảng thành lô, quét song song rồi hợp nhất theo `id`. Mỗi lô là `A ∨ id∈Cᵢ` nên hợp các lô
+ * đúng bằng kết quả của mảng đầy đủ (xem helpers/sxChunkedIdPage).
+ */
+async function scanRowsMaybeChunked(ctx, scan) {
+  const target = pickChunkTarget({
+    wonIds: ctx.wonIds,
+    restrictIds: ctx.restrictIds,
+    partnerIds: ctx.scopePartnerIds,
+  });
+  if (!target) return scan(ctx);
+  const groups = chunkIds(target.ids, SX_URL_SAFE_ID_MAX);
+  const parts = await Promise.all(
+    groups.map((g) => scan({ ...ctx, [CHUNK_CTX_KEY[target.name]]: g })),
+  );
+  const byId = new Map();
+  let truncated = false;
+  let anyRows = false;
+  for (const part of parts) {
+    if (part.truncated) truncated = true;
+    if (!part.empty) anyRows = true;
+    for (const row of part.rows || []) {
+      if (row?.id != null && !byId.has(String(row.id))) byId.set(String(row.id), row);
+    }
+  }
+  return { rows: [...byId.values()], empty: !anyRows, truncated };
 }
 
 const EMPTY_DEADLINE_COUNTS = Object.freeze({
@@ -317,7 +351,6 @@ async function thinScanSummary(ctx, opts = {}) {
   const stage_kpis = emptyStageKpis();
   const revenue_kpis = emptyRevenueKpis();
   let total = 0;
-  let cursor = 0;
   const todayYmd = formatVnYmd(new Date());
   const stageById = opts.stageById || await loadStageFlagsById(ctx.company_id, ctx.workshop_type_id);
   // Cột đã sắp + mốc «Bàn giao VC» — dùng để quy đổi khoá đếm sang cột hiển thị.
@@ -331,43 +364,59 @@ async function thinScanSummary(ctx, opts = {}) {
   let omitVcCol = false;
   let omitFinanceCols = false;
 
-  while (cursor < MAX) {
-    let q = supabase.from('projects').select(selectCols);
-    const applied = applySxSummaryFiltersSync(q, { ...ctx, columnMode: undefined });
-    if (applied.empty) {
-      return {
-        total: 0,
-        counts: {},
-        values: {},
-        deadline_counts: emptyDeadlineCounts(),
-        stage_kpis: emptyStageKpis(),
-        revenue_kpis: emptyRevenueKpis(),
-      };
-    }
-    q = applied.query.order('id', { ascending: true }).range(cursor, cursor + PAGE - 1);
-    let { data, error } = await q;
-    if (error && !omitVcCol && String(error.message || '').includes('vc_kanban_column_id')) {
-      omitVcCol = true;
-      selectCols = selectCols.split(', ').filter((c) => c !== 'vc_kanban_column_id').join(', ');
-      continue;
-    }
-    if (error && !omitFinanceCols && /production_value|deposit_amount/.test(String(error.message || ''))) {
-      omitFinanceCols = true;
-      selectCols = selectCols.split(', ').filter((c) => c !== 'production_value' && c !== 'deposit_amount').join(', ');
-      continue;
-    }
-    // Phòng cột enrich/legacy lỡ select — bỏ và thử lại.
-    if (error && /sx_intake|column .* does not exist/i.test(String(error.message || ''))) {
-      const msg = String(error.message || '');
-      const drop = ['sx_intake', 'sx_kanban_deadline_at', 'production_finish_date']
-        .filter((c) => msg.includes(c) && selectCols.includes(c));
-      if (drop.length) {
-        selectCols = selectCols.split(', ').filter((c) => !drop.includes(c)).join(', ');
+  // Một lượt quét nạp hết trang cho một ctx (có thể là một LÔ id khi mảng id dài — xem scanRowsMaybeChunked).
+  const scanOnce = async (scanCtx) => {
+    const rows = [];
+    let pos = 0;
+    while (pos < MAX) {
+      let q = supabase.from('projects').select(selectCols);
+      const applied = applySxSummaryFiltersSync(q, { ...scanCtx, columnMode: undefined });
+      if (applied.empty) return { rows: [], empty: true, truncated: false };
+      q = applied.query.order('id', { ascending: true }).range(pos, pos + PAGE - 1);
+      const { data, error } = await q;
+      if (error && !omitVcCol && String(error.message || '').includes('vc_kanban_column_id')) {
+        omitVcCol = true;
+        selectCols = selectCols.split(', ').filter((c) => c !== 'vc_kanban_column_id').join(', ');
         continue;
       }
+      if (error && !omitFinanceCols && /production_value|deposit_amount/.test(String(error.message || ''))) {
+        omitFinanceCols = true;
+        selectCols = selectCols.split(', ').filter((c) => c !== 'production_value' && c !== 'deposit_amount').join(', ');
+        continue;
+      }
+      // Phòng cột enrich/legacy lỡ select — bỏ và thử lại.
+      if (error && /sx_intake|column .* does not exist/i.test(String(error.message || ''))) {
+        const msg = String(error.message || '');
+        const drop = ['sx_intake', 'sx_kanban_deadline_at', 'production_finish_date']
+          .filter((c) => msg.includes(c) && selectCols.includes(c));
+        if (drop.length) {
+          selectCols = selectCols.split(', ').filter((c) => !drop.includes(c)).join(', ');
+          continue;
+        }
+      }
+      if (error) throw error;
+      const batch = data || [];
+      rows.push(...batch);
+      if (batch.length < PAGE) break;
+      pos += batch.length;
     }
-    if (error) throw error;
-    const batch = data || [];
+    return { rows, empty: false, truncated: pos >= MAX };
+  };
+
+  const scanned = await scanRowsMaybeChunked(ctx, scanOnce);
+  if (scanned.empty) {
+    return {
+      total: 0,
+      counts: {},
+      values: {},
+      deadline_counts: emptyDeadlineCounts(),
+      stage_kpis: emptyStageKpis(),
+      revenue_kpis: emptyRevenueKpis(),
+    };
+  }
+
+  {
+    const batch = scanned.rows;
     for (const row of batch) {
       if (needColumnCounts) {
         const key = displayColumnCountKey(row, stageById, sortedStages, handoverMinOrder);
@@ -392,11 +441,10 @@ async function thinScanSummary(ctx, opts = {}) {
         revenue_kpis.debt_revenue += Math.max(0, sxRowProductionValue(row) - sxRowDeposit(row));
       }
     }
-    if (batch.length < PAGE) break;
-    cursor += batch.length;
   }
-  const truncated = cursor >= MAX;
-  return { total, counts, values: {}, deadline_counts, stage_kpis, revenue_kpis, truncated };
+  return {
+    total, counts, values: {}, deadline_counts, stage_kpis, revenue_kpis, truncated: Boolean(scanned.truncated),
+  };
 }
 
 async function headCountTotalOnly(ctx) {
@@ -523,33 +571,42 @@ async function loadSxDeadlineBucketPage(ctx, { bucket, offset = 0, limit = 24 } 
   const MAX = 20000;
   const todayYmd = formatVnYmd(new Date());
   const entries = [];
-  let cursor = 0;
   let selectCols = 'id, company_id, sx_kanban_column_id, sx_kanban_deadline_at, production_finish_date, delivery_date, production_deadline, deadline, status, logistics_company_id, vc_kanban_column_id';
 
-  while (cursor < MAX) {
-    let q = supabase.from('projects').select(selectCols);
-    const applied = applySxSummaryFiltersSync(q, { ...fullCtx, columnMode: undefined });
-    if (applied.empty) {
-      return { ids: [], total: 0, nextOffset: 0, hasMore: false, bucket: bucketKey };
+  // Cùng lý do với thinScanSummary: mảng id dài thì chia lô (xem scanRowsMaybeChunked).
+  const scanOnce = async (scanCtx) => {
+    const rows = [];
+    let pos = 0;
+    while (pos < MAX) {
+      let q = supabase.from('projects').select(selectCols);
+      const applied = applySxSummaryFiltersSync(q, { ...scanCtx, columnMode: undefined });
+      if (applied.empty) return { rows: [], empty: true, truncated: false };
+      q = applied.query.order('id', { ascending: true }).range(pos, pos + PAGE - 1);
+      const { data, error } = await q;
+      if (error && /sx_intake|column .* does not exist/i.test(String(error.message || ''))) {
+        selectCols = selectCols.split(', ').filter((c) => c !== 'sx_intake').join(', ');
+        continue;
+      }
+      if (error) throw error;
+      const batch = data || [];
+      rows.push(...batch);
+      if (batch.length < PAGE) break;
+      pos += batch.length;
     }
-    q = applied.query.order('id', { ascending: true }).range(cursor, cursor + PAGE - 1);
-    let { data, error } = await q;
-    if (error && /sx_intake|column .* does not exist/i.test(String(error.message || ''))) {
-      selectCols = selectCols.split(', ').filter((c) => c !== 'sx_intake').join(', ');
-      continue;
-    }
-    if (error) throw error;
-    const batch = data || [];
-    for (const row of batch) {
-      const colId = row?.sx_kanban_column_id ? String(row.sx_kanban_column_id) : null;
-      const stage = colId ? stageById.get(colId) : null;
-      const b = resolveSxDeadlineBucketKey(row, stage, todayYmd, row.company_id || fullCtx.company_id);
-      if (b !== bucketKey) continue;
-      const ymd = toVnDeadlineYmd(sxDeadlineRaw(row)) || '9999-99-99';
-      entries.push({ id: String(row.id), ymd });
-    }
-    if (batch.length < PAGE) break;
-    cursor += batch.length;
+    return { rows, empty: false, truncated: pos >= MAX };
+  };
+
+  const scanned = await scanRowsMaybeChunked(fullCtx, scanOnce);
+  if (scanned.empty) {
+    return { ids: [], total: 0, nextOffset: 0, hasMore: false, bucket: bucketKey };
+  }
+  for (const row of scanned.rows) {
+    const colId = row?.sx_kanban_column_id ? String(row.sx_kanban_column_id) : null;
+    const stage = colId ? stageById.get(colId) : null;
+    const b = resolveSxDeadlineBucketKey(row, stage, todayYmd, row.company_id || fullCtx.company_id);
+    if (b !== bucketKey) continue;
+    const ymd = toVnDeadlineYmd(sxDeadlineRaw(row)) || '9999-99-99';
+    entries.push({ id: String(row.id), ymd });
   }
 
   entries.sort((a, b) => a.ymd.localeCompare(b.ymd) || a.id.localeCompare(b.id));

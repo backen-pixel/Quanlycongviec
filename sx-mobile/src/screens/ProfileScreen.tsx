@@ -22,7 +22,7 @@ import { useNotifications } from '../context/NotificationContext';
 import { useMessenger } from '../context/MessengerContext';
 import { useTheme } from '../context/ThemeContext';
 import { fetchCompanies, type CompanyOption } from '../lib/productionApi';
-import { isSystemAdmin, roleLabel } from '../lib/roles';
+import { canViewTeamWork, isSystemAdmin, roleLabel } from '../lib/roles';
 import { ensureNotificationPermission } from '../lib/pushRegistration';
 import type { MainTabParamList } from '../navigation/MainTabs';
 import type { RootStackParamList } from '../navigation/RootNavigator';
@@ -91,7 +91,11 @@ export default function ProfileScreen() {
     ]);
   }, [logout]);
 
-  const mgmtItems: MgmtItem[] = [
+  /** Nhân viên: Menu chỉ giữ tiện ích cá nhân — các mục trùng thanh tab hoặc dành cho quản lý bị ẩn. */
+  const isManager = canViewTeamWork(user);
+  const STAFF_MENU_KEYS = new Set(['leaves', 'events', 'stock', 'settings']);
+
+  const allMgmtItems: MgmtItem[] = [
     {
       key: 'orders',
       label: 'Dự án',
@@ -164,6 +168,8 @@ export default function ProfileScreen() {
     },
   ];
 
+  const mgmtItems = isManager ? allMgmtItems : allMgmtItems.filter((i) => STAFF_MENU_KEYS.has(i.key));
+
   const quickItems: QuickItem[] = [
     {
       key: 'qr',
@@ -212,7 +218,9 @@ export default function ProfileScreen() {
           </TapHighlight>
           <View style={{ flex: 1 }}>
             <Text style={styles.headerTitle}>Menu</Text>
-            <Text style={styles.headerSub}>Xin chào, quản lý xưởng của bạn 👋</Text>
+            <Text style={styles.headerSub}>
+              {isManager ? 'Xin chào, quản lý xưởng của bạn 👋' : `Xin chào, ${name.split(' ').slice(-1)[0]} 👋`}
+            </Text>
           </View>
           <TapHighlight style={styles.iconBtn} onPress={() => void openNotifs()} hitSlop={8}>
             <Ionicons name="notifications-outline" size={22} color={colors.text} />
@@ -261,7 +269,7 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        <Text style={styles.sectionTitle}>Quản lý xưởng</Text>
+        <Text style={styles.sectionTitle}>{isManager ? 'Quản lý xưởng' : 'Tiện ích'}</Text>
         <View style={styles.mgmtGrid}>
           {mgmtItems.map((item) => (
             <TouchableOpacity
@@ -283,22 +291,26 @@ export default function ProfileScreen() {
           ))}
         </View>
 
-        <Text style={styles.sectionTitle}>Công cụ nhanh</Text>
-        <View style={styles.quickRow}>
-          {quickItems.map((item) => (
-            <TouchableOpacity
-              key={item.key}
-              style={styles.quickCard}
-              activeOpacity={0.88}
-              onPress={item.onPress}
-            >
-              <View style={[styles.quickIcon, { backgroundColor: colorWithAlpha(item.color, 0.2) }]}>
-                <Ionicons name={item.icon} size={18} color={item.color} />
-              </View>
-              <Text style={styles.quickLabel}>{item.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        {isManager ? (
+          <>
+            <Text style={styles.sectionTitle}>Công cụ nhanh</Text>
+            <View style={styles.quickRow}>
+              {quickItems.map((item) => (
+                <TouchableOpacity
+                  key={item.key}
+                  style={styles.quickCard}
+                  activeOpacity={0.88}
+                  onPress={item.onPress}
+                >
+                  <View style={[styles.quickIcon, { backgroundColor: colorWithAlpha(item.color, 0.2) }]}>
+                    <Ionicons name={item.icon} size={18} color={item.color} />
+                  </View>
+                  <Text style={styles.quickLabel}>{item.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
+        ) : null}
 
         <TouchableOpacity
           style={styles.logoutBtn}

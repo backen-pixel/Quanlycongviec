@@ -572,14 +572,21 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   // Giống web: mục lớn (cột lớn) → mục con (cột) → việc. Mỗi cột gập/mở được; «Hiện việc / Ẩn việc» ở mục lớn
   // mở/đóng mọi cột bên trong. Mặc định chỉ mở cột hiện tại của dự án và cột chứa việc đang được trỏ tới.
   const [colToggles, setColToggles] = useState<Record<string, boolean>>({});
+  const staffUserId = String(user?.id || (user as { userId?: string } | null)?.userId || '');
   const isColOpen = useCallback(
     (c: CrmTaskStageGroup): boolean => {
       const manual = colToggles[c.key];
       if (manual != null) return manual;
       if (project?.sx_kanban_column_id && String(c.key) === String(project.sx_kanban_column_id)) return true;
+      // Nhân viên: cột nào có việc CHƯA XONG được giao cho mình thì tự mở sẵn để thấy ngay.
+      if (!canSeeMoney && staffUserId && c.tasks.some((t) => {
+        if (isCrmProductionTaskDone(t.status)) return false;
+        const people = t.assignees?.length ? t.assignees : t.assignee ? [t.assignee] : [];
+        return people.some((p) => p?.id != null && String(p.id) === staffUserId);
+      })) return true;
       return Boolean(highlightTaskId) && c.tasks.some((t) => String(t.id) === String(highlightTaskId));
     },
-    [colToggles, project?.sx_kanban_column_id, highlightTaskId],
+    [colToggles, project?.sx_kanban_column_id, highlightTaskId, canSeeMoney, staffUserId],
   );
 
   const bigGroups = useMemo(
@@ -594,7 +601,10 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         data: dealId
           ? g.columns.flatMap((col): TaskListItem[] => {
               const open = isColOpen(col);
-              const rows: TaskListItem[] = [{ kind: 'col', key: `col:${col.key}`, col, open }];
+              // Giai đoạn chỉ có một cột: bỏ dòng cột (trùng tên giai đoạn), đầu khung đã đủ để mở/thu.
+              const rows: TaskListItem[] = g.columns.length === 1
+                ? []
+                : [{ kind: 'col', key: `col:${col.key}`, col, open }];
               if (open) col.tasks.forEach((t) => rows.push({ kind: 'task', key: String(t.id), task: t }));
               return rows;
             })
@@ -610,7 +620,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
       // Cột chứa việc được trỏ tới đã lên đầu section 0 — item 0 là dòng cột, item 1 là việc đầu tiên.
       tasksListRef.current?.scrollToLocation({
         sectionIndex: 0,
-        itemIndex: 1,
+        // Giai đoạn một cột không có dòng cột → việc đầu tiên nằm ở item 0.
+        itemIndex: taskSections[0]?.data[0]?.kind === 'col' ? 1 : 0,
         viewOffset: 24,
         animated: true,
       });
@@ -773,14 +784,13 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           height: 18,
           borderRadius: 9,
           paddingHorizontal: 5,
-          backgroundColor: colors.danger,
+          // Trung tính (không đỏ): đây là số đếm, không phải cảnh báo chưa đọc.
+          backgroundColor: colorWithAlpha(colors.primary, 0.14),
           alignItems: 'center',
           justifyContent: 'center',
-          borderWidth: 1.5,
-          borderColor: colors.bgElevated,
         },
         tabBadgeTxt: {
-          color: '#FFFFFF',
+          color: colors.primary,
           fontSize: 10,
           fontWeight: '900',
           lineHeight: 12,
@@ -1071,7 +1081,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
       contentContainerStyle={styles.tabsInner}
     >
       {([
-        ['tasks', 'Công việc', taskTotal],
+        // Huy hiệu «Công việc» = số việc CHƯA xong (không phải tổng).
+        ['tasks', 'Công việc', Math.max(0, taskTotal - taskDone)],
         ['shared', 'Không gian chung', sharedCount],
         ['comments', 'Bình luận', commentCount],
         ['documents', 'Tài liệu', docCount],
@@ -1212,9 +1223,10 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           </Pressable>
           <View style={styles.stageBtns}>
             <Text style={[styles.stageMeta, { color: colors.textMuted }]}>
-              {big.columns.length} cột · {big.doneCount}/{big.tasks.length}
+              {big.columns.length > 1 ? `${big.columns.length} cột · ` : ''}{big.doneCount}/{big.tasks.length}
             </Text>
-            {big.openCount > 0 && dealId ? (
+            {/* «Xong hết» đóng cả giai đoạn một lần — chỉ quản lý, tránh nhân viên bấm nhầm. */}
+            {canSeeMoney && big.openCount > 0 && dealId ? (
               <Pressable
                 style={[styles.stageChip, styles.stageChipDone, bulkBusy && { opacity: 0.6 }]}
                 disabled={bulkBusy}
@@ -1277,18 +1289,20 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
                 </View>
               ) : null}
             </Pressable>
-            <Pressable
-              style={[styles.colDoneBtn, allDone && styles.colDoneBtnOn, bulkBusy && { opacity: 0.6 }]}
-              disabled={bulkBusy || total === 0 || allDone}
-              onPress={() => completeStageAll(col)}
-              accessibilityLabel={allDone ? 'Cột đã xong' : 'Tích hoàn thành cột này'}
-            >
-              <Ionicons
-                name={allDone ? 'checkmark-circle' : 'ellipse-outline'}
-                size={18}
-                color={allDone ? colors.success : colors.textFaint}
-              />
-            </Pressable>
+            {canSeeMoney ? (
+              <Pressable
+                style={[styles.colDoneBtn, allDone && styles.colDoneBtnOn, bulkBusy && { opacity: 0.6 }]}
+                disabled={bulkBusy || total === 0 || allDone}
+                onPress={() => completeStageAll(col)}
+                accessibilityLabel={allDone ? 'Cột đã xong' : 'Tích hoàn thành cột này'}
+              >
+                <Ionicons
+                  name={allDone ? 'checkmark-circle' : 'ellipse-outline'}
+                  size={18}
+                  color={allDone ? colors.success : colors.textFaint}
+                />
+              </Pressable>
+            ) : null}
           </View>
           {item.open && total === 0 ? (
             <Text style={styles.colEmpty}>Chưa có công việc thuộc cột này</Text>
