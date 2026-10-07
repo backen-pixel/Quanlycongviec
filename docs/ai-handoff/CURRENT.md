@@ -1,3 +1,17 @@
+## 2026-10-07 — SX mobile tab Công việc/Dự án của quản lý: lọc theo hạn, khử trùng, tự nhảy cột
+
+App sx-mobile (quản lý/admin) tab Công việc lấy việc dự án của cả đội qua `GET /api/work-tasks/team-project-tasks` (phân trang theo nhóm dự án, quá hạn lên trước, có mục riêng "Không hạn" cho việc cũ hơn 7 ngày). Chip Hạn xử lý (Hôm nay / Ngày mai / Trong tuần / Tuần sau), Phân loại và Người đều lọc ở máy chủ (`due_from`, `due_to`, `workshop_type_id`, `assignee_id`).
+
+Lỗi đã sửa: lọc khoảng hạn trước khi khử trùng khiến bản CRM (hạn hôm nay) sống sót dù bản SX cùng tên đã quá hạn, nên dự án quá hạn lọt vào Hôm nay/Ngày mai (ví dụ TB-2026-986, TB-2026-989 ở HCB). Nay khử trùng trước (lấy thêm bản SX song sinh của các dự án có việc CRM trong khoảng) rồi mới lọc lại khoảng hạn.
+
+Tab Dự án (Kanban): khi áp Hạn xử lý mà cột đang xem trống thì tự nhảy tới cột đầu tiên có dự án, một lần cho mỗi giá trị bộ lọc.
+
+Đối chiếu SQL chỉ-đọc với app sau deploy (HCB = Công ty Hucabi, 07/10/2026): Tủ bếp Hôm nay 43 việc/3 nhóm, Ngày mai 51/3; Cánh kính Hôm nay 7/1, Ngày mai 7/1 — khớp. Các số đổi theo ngày và theo việc được hoàn thành.
+
+Chưa kiểm: độ mượt cuộn trên máy thật (LDPlayer render phần mềm, số đo giật không đáng tin); `/project-overview` (route do tác giả khác thêm) mất ~13,7 s với HCB; sửa/xóa ở không gian chung chưa phân quyền theo vai trò; badge thông báo còn race. Token `gh` của phiên AI không có quyền tạo/merge PR, người dùng tạo PR và merge thủ công.
+
+---
+
 ## 2026-10-07 — Quản lý phát sinh ở các module còn lại
 
 Trang hai tab Không phí / Có phí của Sản xuất có thêm ở CRM (`/crm/phat-sinh`), Lắp đặt (`/vc/phat-sinh`), Kế toán (`/ketoan/phat-sinh`), Mua hàng (`/mua-hang/phat-sinh`) và module tùy chỉnh (`/m/:moduleKey/phat-sinh`). Mỗi trang chỉ hiện việc phát sinh của đúng module đó.
