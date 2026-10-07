@@ -1,3 +1,9 @@
+## 2026-10-06 — P1-5: sự kiện xác nhận khách (SQL 712, mã cục bộ)
+
+Thêm SQL 712/rollback, adapter `qualification.js` và test giả; chưa nối route/UI, chưa chạy SQL hay DB thật. `canonical_lead_id` tạm là `crm_leads.id`; P1-3 sẽ xử lý gộp và đếm trùng. Kiểm thử và số ca xem mục WORKLOG cùng ngày.
+Hoàn tác: chạy rollback trên bản sao được phép (giữ bảng có dữ liệu), rồi bỏ đúng delta P1-5 và hai mục handoff.
+
+---
 ## 2026-10-06 16:39 — Sửa cổng xác minh callback Lead App trước chuyển đổi (mã cục bộ)
 
 GET `/api/facebook/webhook/lead-ads` nay trả challenge Meta khi App Secret và verify token **riêng, hợp lệ** đã cấu hình, dù `VPT_FB_LEAD_APP_MODE=0`. POST vẫn trả 404 khi cờ này tắt; Messenger và các cờ intake/worker không đổi. Việc xác minh GET **không chứng minh** App đã nhận Lead thật. Bản sửa trên nhánh `codex/facebook-lead-verify-precutover-20261006` chưa phát hành; 235/235 ca Node Facebook liên quan đạt. Cần review/CI trước khi phát hành, giữ chế độ App riêng OFF cho tới khi cổng Meta và đối soát Lead thật đạt. [Hồ sơ kích hoạt](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).

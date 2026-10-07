@@ -1,3 +1,9 @@
+## 2026-10-06 — P1-5: qualification events
+File: hai SQL 712, `qualification.js`, `qualification.test.js`, CURRENT.md, WORKLOG.md. Chỉ thêm bảng sự kiện/RPC và module chưa nối runtime.
+Kiểm tra: `node --check` đạt; test qualification 6/6 và test trialRegistry 5/5 đạt; `git diff --check` sạch.
+Chưa kiểm chứng: SQL thực, chạy migration hai lần/rollback, ACL và giao tranh trên bản sao; test Node giả không chứng minh các điểm này.
+
+---
 ## 2026-10-06 — P1-2: thu hồi quyền thừa của service_role (SQL 710)
 - 710 đã áp lên DB chính (PG 17.6, 3 bảng rỗng, RLS bật, anon/authenticated = 0). Kiểm tra sau áp thấy service_role còn UPDATE/DELETE/TRUNCATE trên bảng nhật ký do quyền mặc định của Supabase; thiết kế yêu cầu chỉ SELECT+INSERT.
 - Sửa 710: thêm REVOKE ALL FROM service_role trước GRANT. Bài thử nhánh tạm giờ cài quyền mặc định giống DB chính; 35/35 đạt. Chưa áp bản sửa lên DB chính (cần Founder duyệt riêng).
