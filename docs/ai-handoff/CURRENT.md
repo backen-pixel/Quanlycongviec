@@ -1,3 +1,9 @@
+## 2026-10-06 — P1-6: đọc chi tiêu Facebook và chứng minh coverage (local)
+
+Thêm `spendCoverage.js` chỉ đọc và `spendCoverage.test.js`; không route, migration hay kết nối nguồn thật. 14/14 test P1-6, 8/8 đồng bộ cũ, 38/38 lead measurement đạt bằng Node. Chỉ kết luận `COMPLETE` khi sync và mọi dòng đủ điều kiện; chưa có đối soát tổng cấp tài khoản Meta (`AD_LEVEL_ONLY`). Claude cần chạy adapter với DB thật và đối chiếu 27.589.061 đ cho 07/09–05/10 cùng trạng thái sync trước PR. Hoàn tác: bỏ hai file JS P1-6 và hai mục bàn giao P1-6.
+
+---
+
 ## 2026-10-06 16:39 — Sửa cổng xác minh callback Lead App trước chuyển đổi (mã cục bộ)
 
 GET `/api/facebook/webhook/lead-ads` nay trả challenge Meta khi App Secret và verify token **riêng, hợp lệ** đã cấu hình, dù `VPT_FB_LEAD_APP_MODE=0`. POST vẫn trả 404 khi cờ này tắt; Messenger và các cờ intake/worker không đổi. Việc xác minh GET **không chứng minh** App đã nhận Lead thật. Bản sửa trên nhánh `codex/facebook-lead-verify-precutover-20261006` chưa phát hành; 235/235 ca Node Facebook liên quan đạt. Cần review/CI trước khi phát hành, giữ chế độ App riêng OFF cho tới khi cổng Meta và đối soát Lead thật đạt. [Hồ sơ kích hoạt](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).

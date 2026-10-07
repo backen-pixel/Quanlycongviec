@@ -1,3 +1,10 @@
+## 2026-10-06 — P1-6: adapter chi tiêu chỉ đọc
+- Thêm module thuần và adapter `fb_ad_accounts`/`fb_ad_spend_daily` phân trang, kiểm sync/VND/cửa sổ/tính tươi/trùng dòng/tràn số; không chọn token hoặc ghi DB.
+- Kiểm tra: `node --check` hai file; P1-6 14/14, fbMarketingSync 8/8, leadMeasurement 38/38; chưa đối chiếu DB/Meta thật.
+- Quyết định: tổng chỉ có bằng chứng cấp ad (`AD_LEVEL_ONLY`); không có dòng và sync không đủ thì tiền `null`. Hoàn tác: bỏ hai file JS và hai mục P1-6.
+
+---
+
 ## 2026-10-06 — P1-2: thu hồi quyền thừa của service_role (SQL 710)
 - 710 đã áp lên DB chính (PG 17.6, 3 bảng rỗng, RLS bật, anon/authenticated = 0). Kiểm tra sau áp thấy service_role còn UPDATE/DELETE/TRUNCATE trên bảng nhật ký do quyền mặc định của Supabase; thiết kế yêu cầu chỉ SELECT+INSERT.
 - Sửa 710: thêm REVOKE ALL FROM service_role trước GRANT. Bài thử nhánh tạm giờ cài quyền mặc định giống DB chính; 35/35 đạt. Chưa áp bản sửa lên DB chính (cần Founder duyệt riêng).
