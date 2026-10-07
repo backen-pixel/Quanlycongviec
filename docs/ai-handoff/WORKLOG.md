@@ -1,3 +1,9 @@
+## 2026-10-06 — P1-5: qualification events
+File: hai SQL 712, `qualification.js`, `qualification.test.js`, CURRENT.md, WORKLOG.md. Chỉ thêm bảng sự kiện/RPC và module chưa nối runtime.
+Kiểm tra: `node --check` đạt; test qualification 6/6 và test trialRegistry 5/5 đạt; `git diff --check` sạch.
+Chưa kiểm chứng: SQL thực, chạy migration hai lần/rollback, ACL và giao tranh trên bản sao; test Node giả không chứng minh các điểm này.
+
+---
 ## 2026-10-06 — P1-6: adapter chi tiêu chỉ đọc
 - Thêm module thuần và adapter `fb_ad_accounts`/`fb_ad_spend_daily` phân trang, kiểm sync/VND/cửa sổ/tính tươi/trùng dòng/tràn số; không chọn token hoặc ghi DB.
 - Kiểm tra: `node --check` hai file; P1-6 14/14, fbMarketingSync 8/8, leadMeasurement 38/38; chưa đối chiếu DB/Meta thật.
