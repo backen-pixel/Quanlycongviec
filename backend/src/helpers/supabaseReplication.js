@@ -285,6 +285,21 @@ function ensureUpsertPrefer(headers, path, method) {
   return { ...headers, prefer: parts.join(',') };
 }
 
+/** PostgREST PATCH may return 2xx even when its filter matched no rows. */
+async function confirmedPatchRows(res) {
+  if (!res.ok) return null;
+  let rows;
+  try {
+    rows = await res.json();
+  } catch {
+    throw new Error('backup PATCH response has no row representation');
+  }
+  if (!Array.isArray(rows)) {
+    throw new Error('backup PATCH response has no row representation');
+  }
+  return rows.filter((row) => row && typeof row === 'object');
+}
+
 async function patchBackupRowByConflictColumns(table, columns, row) {
   if (!table || !columns?.length || !row || typeof row !== 'object') return false;
   const backupBase = trimBase(config.supabaseBackupUrl);
@@ -302,13 +317,13 @@ async function patchBackupRowByConflictColumns(table, columns, row) {
       headers: {
         ...backupHeaders({}),
         'content-type': 'application/json',
-        prefer: 'return=minimal',
+        prefer: 'return=representation',
       },
       body: JSON.stringify(stripRowForBackupReplication(table, patch)),
       dispatcher: supabaseDispatcher,
     },
   );
-  return res.ok;
+  return (await confirmedPatchRows(res) || []).length > 0;
 }
 
 async function retryDuplicateUpsertOnBackup(table, path, body) {
@@ -415,9 +430,8 @@ async function upsertCrmLeadOnBackup(row, depth = 0) {
       },
     );
     if (patchRes.ok) {
-      const patched = await patchRes.json().catch(() => null);
-      const patchedRow = Array.isArray(patched) ? patched[0] : patched;
-      return patchedRow?.id || backupId;
+      const patchedRow = (await confirmedPatchRows(patchRes))[0];
+      return patchedRow ? (patchedRow.id || backupId) : null;
     }
     const patchText = await patchRes.text().catch(() => '');
     const patchFk = parseFkMissingFromError(patchText);
@@ -551,9 +565,9 @@ async function upsertFacebookContactOnBackup(row, depth = 0) {
       },
     );
     if (patchRes.ok) {
-      const patched = await patchRes.json().catch(() => null);
-      const patchedRow = Array.isArray(patched) ? patched[0] : patched;
-      return patchedRow?.id || (await fetchBackupContactIdByNaturalKey(pageId, psid));
+      const patchedRow = (await confirmedPatchRows(patchRes))[0];
+      if (!patchedRow) throw new Error('backup PATCH facebook_contacts returned 0 rows');
+      return patchedRow.id || (await fetchBackupContactIdByNaturalKey(pageId, psid));
     }
     const patchText = await patchRes.text().catch(() => '');
     const patchFk = parseFkMissingFromError(patchText);
@@ -654,13 +668,16 @@ async function postRowToBackup(table, row, depth = 0) {
         headers: {
           ...backupHeaders({}),
           'content-type': 'application/json',
-          prefer: 'return=minimal',
+          prefer: 'return=representation',
         },
         body: JSON.stringify(patch),
         dispatcher: supabaseDispatcher,
       },
     );
-    if (patchRes.ok) return;
+    if (patchRes.ok) {
+      if ((await confirmedPatchRows(patchRes)).length) return;
+      throw new Error(`backup PATCH ${table} returned 0 rows`);
+    }
   }
   throw new Error(`backup upsert ${table} → ${res.status} ${text.slice(0, 200)}`);
 }
@@ -836,6 +853,10 @@ async function applyRestJob(job) {
     headers['content-type'] = headers['content-type'] || 'application/json';
   }
   headers.prefer = headers.prefer || 'return=minimal';
+  if (method === 'PATCH') {
+    headers.prefer = String(headers.prefer).split(',').map((s) => s.trim())
+      .filter((s) => s && !/^return=/i.test(s)).concat('return=representation').join(',');
+  }
 
   const prepared = { ...job, path, body };
   await ensureReplicationParents(prepared);
@@ -854,13 +875,15 @@ async function applyRestJob(job) {
   }
 
   let { res, text } = await backupFetchWithGrantRetry(doFetch);
-  if (res.ok) return;
-  if (!text) text = await res.text().catch(() => '');
+  let zeroPatchRows = method === 'PATCH' && res.ok && !(await confirmedPatchRows(res)).length;
+  if (res.ok && !zeroPatchRows) return;
+  if (zeroPatchRows) text = 'backup PATCH returned 0 rows';
+  else if (!text) text = await res.text().catch(() => '');
   if (method === 'DELETE' && (res.status === 404 || /PGRST116|0 rows/i.test(text))) {
     return;
   }
   const fk = parseFkMissingFromError(text);
-  const missingRow = isMissingRowReplicationError(text);
+  const missingRow = zeroPatchRows || isMissingRowReplicationError(text);
   if (fk || missingRow) {
     if (missingRow) {
       const missingTable = restTableFromPath(path);
@@ -869,8 +892,9 @@ async function applyRestJob(job) {
     }
     if (fk) await ensureRowOnBackup(fk.parentTable, fk.parentId);
     res = await doFetch();
-    if (res.ok) return;
-    text = await res.text().catch(() => '');
+    zeroPatchRows = method === 'PATCH' && res.ok && !(await confirmedPatchRows(res)).length;
+    if (res.ok && !zeroPatchRows) return;
+    text = zeroPatchRows ? 'backup PATCH returned 0 rows' : await res.text().catch(() => '');
     if (method === 'DELETE' && (res.status === 404 || /PGRST116|0 rows/i.test(text))) {
       return;
     }
