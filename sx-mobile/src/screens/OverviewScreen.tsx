@@ -59,6 +59,7 @@ import {
 } from '../lib/productionApi';
 import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
+import { fetchTeamProjectTasksPage } from '../lib/teamProjectTasksApi';
 import {
   computeSxBoardKpis,
   formatVnWeekdayDate,
@@ -198,6 +199,9 @@ export default function OverviewScreen() {
   const [tasksFailed, setTasksFailed] = useState(false);
   /** Đã nạp xong việc của nhân viên ít nhất một lần thành công — mốc để biết «không có dự án» là thật, không phải chưa về. */
   const [tasksLoaded, setTasksLoaded] = useState(false);
+  /** Quản lý: tổng việc DỰ ÁN quá hạn theo máy chủ (danh sách chỉ nạp trang đầu). null = chưa biết / nhân viên. */
+  const [teamProjectOverdue, setTeamProjectOverdue] = useState<number | null>(null);
+  const teamOverdueRef = useRef<number | null>(null);
   /** Đang tải lại sau khi đổi phân loại (xem `applyWorkType`). */
   const [typeSwitching, setTypeSwitching] = useState(false);
   /**
@@ -371,13 +375,27 @@ export default function OverviewScreen() {
               console.warn('[overview] tải công việc của tôi lỗi:', formatApiError(e));
               return null;
             })
-          : fetchProductionWorkTasks({
+          // Quản lý: «Giao việc» + việc DỰ ÁN của cả đội (trước đây bỏ sót — xem `teamProjectTasksApi`).
+          : Promise.all([
+            fetchProductionWorkTasks({
               companyId: companyId || null,
               limit: WORK_TASKS_PAGE_SIZE,
               offset: 0,
               signal: ac.signal,
               force: mode === 'refresh',
-            }).catch((e): WorkTask[] | null => {
+            }),
+            // Chỉ TRANG ĐẦU (20 nhóm dự án, quá hạn lên trước) + số đếm toàn bộ do máy chủ tính.
+            fetchTeamProjectTasksPage({
+              companyId: companyId || null,
+              page: 1,
+              signal: ac.signal,
+              force: mode === 'refresh',
+            }),
+          ]).then(([assignments, projectPage]) => {
+            teamOverdueRef.current = projectPage.counts.overdue;
+            return [...assignments, ...projectPage.tasks];
+          })
+            .catch((e): WorkTask[] | null => {
               // null = tải LỖI (khác «không có việc»): trước đây `[]` làm banner báo «Không có công việc quá hạn».
               if (isAbortError(e)) throw e;
               console.warn('[overview] tải công việc đội lỗi:', formatApiError(e));
@@ -453,6 +471,7 @@ export default function OverviewScreen() {
       }
       if (myTasks) {
         setTasks(myTasks);
+        setTeamProjectOverdue(ownOnly ? null : teamOverdueRef.current);
         setTasksFailed(false);
         setTasksLoaded(true);
       } else {
@@ -733,7 +752,12 @@ export default function OverviewScreen() {
   );
 
   const overdueTasksAll = useMemo(() => tasks.filter((t) => isTaskOverdue(t)), [tasks]);
-  const overdueTaskCount = overdueTasksAll.length;
+  // Việc dự án chỉ nạp trang đầu → số quá hạn của chúng lấy từ máy chủ, không đếm từ danh sách đã nạp.
+  const overdueTaskCount = useMemo(() => {
+    const isProject = (t: WorkTask) => t.source_kind === 'task' || t.source_kind === 'crm_task';
+    const loadedProject = overdueTasksAll.filter(isProject).length;
+    return overdueTasksAll.length - loadedProject + (teamProjectOverdue ?? loadedProject);
+  }, [overdueTasksAll, teamProjectOverdue]);
 
   /** Chỉ việc QUÁ HẠN — hạn cũ nhất lên trước. */
   const overdueTasks = useMemo(() => (

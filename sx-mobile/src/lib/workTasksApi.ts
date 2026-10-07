@@ -400,7 +400,7 @@ export async function fetchMyProductionTasks(
 }
 
 /** Dòng `unified_tasks_v` mà `/api/work-tasks` trả về (gồm việc SX theo dự án ở bảng `tasks`). */
-function mapUnifiedToWorkTask(raw: Record<string, unknown>): WorkTask {
+export function mapUnifiedToWorkTask(raw: Record<string, unknown>): WorkTask {
   const str = (v: unknown): string | null => (v != null && String(v) !== '' ? String(v) : null);
   const projectId = str(raw.project_id);
   const leadId = str(raw.lead_id);
