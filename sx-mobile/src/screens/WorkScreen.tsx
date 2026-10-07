@@ -816,7 +816,7 @@ export default function WorkScreen() {
    */
   const loadTeamProjects = useCallback(async (
     append: boolean,
-    o: { force?: boolean; companyId?: string | null; signal?: AbortSignal; seq?: number } = {},
+    o: { force?: boolean; companyId?: string | null; signal?: AbortSignal; seq?: number; keepNd?: boolean } = {},
   ) => {
     if (append) {
       if (teamLoadingMoreRef.current || !teamHasMoreRef.current) return;
@@ -824,8 +824,9 @@ export default function WorkScreen() {
     }
     const page = append ? teamPageRef.current + 1 : 1;
     const mySeq = o.seq ?? loadSeqRef.current;
-    if (!append) {
-      // Đổi bộ lọc / làm mới: đóng mục «Không hạn» (sẽ nạp lại theo bộ lọc mới khi mở).
+    if (!append && !o.keepNd) {
+      // Đổi bộ lọc / kéo làm mới: đóng mục «Không hạn» (sẽ nạp lại theo bộ lọc mới khi mở). Tải lại NỀN (silent:
+      // realtime, quay lại tab) thì giữ nguyên để mục đang mở không tự đóng dưới tay người dùng.
       setNdOpen(false);
       setNdTasks([]);
       setNdTotal(null);
@@ -945,7 +946,7 @@ export default function WorkScreen() {
       const q = searchRef.current.trim() || undefined;
       // Việc dự án của đội chạy SONG SONG với «Giao việc» (trước đây đợi «Giao việc» xong mới bắt đầu → cộng dồn thời gian chờ).
       if (!append && teamView && scope === 'team') {
-        void loadTeamProjects(false, { force: opts?.force, companyId, signal: ac.signal, seq });
+        void loadTeamProjects(false, { force: opts?.force, companyId, signal: ac.signal, seq, keepNd: silent && !opts?.force });
       }
       // Scope load — không gửi status (giữ KPI đúng trên mọi chip).
       const page = await fetchProductionWorkTasksPage({
