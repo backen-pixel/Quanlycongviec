@@ -14,6 +14,10 @@ const {
   getWonDealProjectIds,
   resolveSxDisplayColumnId,
 } = require('./workshopKanban');
+const { projectNamesDiffer, pickWorkshopQuoteFiles } = require('./accountingDealIdentity');
+const { buildAccountingChecklist, buildReceivablesReport } = require('./accountingChecklist');
+const { buildVcInfo, VC_GROUP_LABELS } = require('./accountingVcInfo');
+const { summarizePhatSinhByLeadIds } = require('./accountingPhatSinh');
 
 function unwrapEmbed(row) {
   if (!row) return null;
@@ -137,7 +141,12 @@ function dealMatchesSearch(row, searchNorm) {
     row.customer_name,
     row.customer_phone,
     row.project_code,
+    row.project_name,
     row.workshop_name,
+    row.vc_company_name,
+    row.quotation_code,
+    row.quotation_file_name,
+    ...(row.workshop_quote_files || []).map((f) => f.file_name),
   ];
   return parts.some((p) => String(p || '').toLowerCase().includes(searchNorm));
 }
@@ -228,15 +237,18 @@ async function fetchPaymentTotalsByLeadIds(leadIds) {
       .in('lead_id', leadIds),
     supabase
       .from('crm_deal_payments')
-      .select('lead_id, amount')
+      .select('lead_id, amount, payment_method, reference_number')
       .in('lead_id', leadIds),
   ]);
   if (stErr) console.warn('[accountingDeals] payment_stages:', stErr.message);
   if (payErr) console.warn('[accountingDeals] deal_payments:', payErr.message);
 
+  const emptySlot = () => ({
+    stages_received: 0, deposit_stage_received: 0, payments_received: 0, payments_count: 0, payments_missing_ref: 0,
+  });
   for (const s of stages || []) {
     const lid = String(s.lead_id);
-    if (!map.has(lid)) map.set(lid, { stages_received: 0, deposit_stage_received: 0, payments_received: 0 });
+    if (!map.has(lid)) map.set(lid, emptySlot());
     const slot = map.get(lid);
     const amt = Number(s.received_amount) || 0;
     slot.stages_received += amt;
@@ -244,20 +256,38 @@ async function fetchPaymentTotalsByLeadIds(leadIds) {
   }
   for (const p of pays || []) {
     const lid = String(p.lead_id);
-    if (!map.has(lid)) map.set(lid, { stages_received: 0, deposit_stage_received: 0, payments_received: 0 });
-    map.get(lid).payments_received += Number(p.amount) || 0;
+    if (!map.has(lid)) map.set(lid, emptySlot());
+    const slot = map.get(lid);
+    slot.payments_received += Number(p.amount) || 0;
+    slot.payments_count += 1;
+    if (p.payment_method === 'transfer' && !String(p.reference_number || '').trim()) slot.payments_missing_ref += 1;
   }
   return map;
 }
 
-function applyFinancialFilters(rows, { financialStatus, sxDoneNotInvoiced }) {
+function applyFinancialFilters(rows, {
+  financialStatus, sxDoneNotInvoiced, nameMismatch, missingDocs, missingItem, vcGroup,
+}) {
   let out = rows;
+  if (vcGroup && VC_GROUP_LABELS[vcGroup]) {
+    out = out.filter((r) => r.vc_group === vcGroup);
+  }
   if (financialStatus) {
     const fs = String(financialStatus).trim();
     out = out.filter((r) => r.financial_status === fs);
   }
   if (sxDoneNotInvoiced === true || sxDoneNotInvoiced === 'true' || sxDoneNotInvoiced === '1') {
     out = out.filter((r) => r.sx_production_done && r.financial_status !== FINANCIAL_STATUS.INVOICED);
+  }
+  if (nameMismatch === true || nameMismatch === 'true' || nameMismatch === '1') {
+    out = out.filter((r) => r.names_differ);
+  }
+  if (missingDocs === true || missingDocs === 'true' || missingDocs === '1') {
+    out = out.filter((r) => (r.checklist?.missing_count || 0) > 0);
+  }
+  if (missingItem) {
+    const key = String(missingItem).trim();
+    out = out.filter((r) => (r.checklist?.items || []).some((i) => i.key === key && i.status === 'missing'));
   }
   return out;
 }
@@ -266,25 +296,35 @@ function finalizeDealRow(base) {
   const financial_status = deriveFinancialStatus(base);
   const sx_production_done = isSxProductionDone(base);
   const outstanding_amount = computeOutstandingAmount(base);
-  return {
+  const row = {
     ...base,
     financial_status,
     financial_status_label: FINANCIAL_STATUS_LABELS[financial_status] || financial_status,
     sx_production_done,
     outstanding_amount,
   };
+  row.checklist = buildAccountingChecklist(row);
+  return row;
 }
 
 async function fetchLatestFinancialsByLeadIds(leadIds) {
   const map = new Map();
   if (!leadIds.length) return map;
 
-  const chunk = async (table, statusField, extraCols = '') => {
-    const { data, error } = await supabase
-      .from(table)
-      .select(`id, lead_id, total, status, code, created_at, ${statusField}${extraCols}`)
-      .in('lead_id', leadIds)
-      .order('created_at', { ascending: false });
+  const chunk = async (table, statusField, extraCols = '', optionalCols = '') => {
+    const run = (withOptional) => {
+      const opt = withOptional && optionalCols ? `, ${optionalCols}` : '';
+      return supabase
+        .from(table)
+        .select(`id, lead_id, total, status, code, created_at, ${statusField}${extraCols}${opt}`)
+        .in('lead_id', leadIds)
+        .order('created_at', { ascending: false });
+    };
+    let { data, error } = await run(Boolean(optionalCols));
+    if (error && optionalCols) {
+      console.warn(`[accountingDeals] ${table} optional cols:`, error.message);
+      ({ data, error } = await run(false));
+    }
     if (error) {
       console.warn(`[accountingDeals] ${table}:`, error.message);
       return;
@@ -293,16 +333,19 @@ async function fetchLatestFinancialsByLeadIds(leadIds) {
       const lid = String(row.lead_id);
       if (!map.has(lid)) map.set(lid, {});
       const slot = map.get(lid);
-      if (table === 'quotations' && !slot.quotation) slot.quotation = row;
+      if (table === 'quotations') {
+        slot.quotation_count = (slot.quotation_count || 0) + 1;
+        if (!slot.quotation) slot.quotation = row;
+      }
       if (table === 'orders' && !slot.order) slot.order = row;
       if (table === 'invoices' && !slot.invoice) slot.invoice = row;
     }
   };
 
   await Promise.all([
-    chunk('quotations', 'accepted_at', ', deposit_amount, deposit_received'),
+    chunk('quotations', 'accepted_at', ', deposit_amount, deposit_received', 'title, source_excel_file_name, source_excel_file_url'),
     chunk('orders', 'order_date', ', deposit_amount, deposit_received'),
-    chunk('invoices', 'invoice_date'),
+    chunk('invoices', 'invoice_date', ', invoice_number'),
   ]);
   return map;
 }
@@ -313,6 +356,11 @@ async function fetchAccountingDeals({
   search = '',
   financialStatus = null,
   sxDoneNotInvoiced = false,
+  nameMismatch = false,
+  missingDocs = false,
+  missingItem = null,
+  vcGroup = null,
+  onlyLeadId = null,
   page = 1,
   limit = 50,
 }) {
@@ -341,21 +389,21 @@ async function fetchAccountingDeals({
       lead_type:crm_lead_types(id, name)
     `;
 
+  const runDealQuery = (sel) => {
+    let q = supabase
+      .from('crm_leads')
+      .select(sel)
+      .eq('type', 'deal')
+      .in('project_id', projectIds);
+    if (onlyLeadId) q = q.eq('id', onlyLeadId);
+    return q.order('updated_at', { ascending: false });
+  };
+
   let dealsRaw;
   let dealErr;
-  ({ data: dealsRaw, error: dealErr } = await supabase
-    .from('crm_leads')
-    .select(dealSelectWithSx)
-    .eq('type', 'deal')
-    .in('project_id', projectIds)
-    .order('updated_at', { ascending: false }));
+  ({ data: dealsRaw, error: dealErr } = await runDealQuery(dealSelectWithSx));
   if (dealErr) {
-    ({ data: dealsRaw, error: dealErr } = await supabase
-      .from('crm_leads')
-      .select(dealSelectFallback)
-      .eq('type', 'deal')
-      .in('project_id', projectIds)
-      .order('updated_at', { ascending: false }));
+    ({ data: dealsRaw, error: dealErr } = await runDealQuery(dealSelectFallback));
   }
   if (dealErr) throw dealErr;
 
@@ -366,24 +414,41 @@ async function fetchAccountingDeals({
   const uniqueProjectIds = [...new Set(dealsFiltered.map((d) => d.project_id).filter(Boolean))];
   const { data: projects, error: projErr } = await supabase
     .from('projects')
-    .select('id, code, name, company_id, status, production_value, estimated_value, deposit_amount, current_stage_id, workshop_type_id')
+    .select(`
+      id, code, name, company_id, status, production_value, estimated_value, deposit_amount, current_stage_id,
+      workshop_type_id, quotation_files, logistics_company_id, vc_kanban_column_id, vc_deleted_at,
+      logistics_cost, delivery_date, install_date
+    `)
     .in('id', uniqueProjectIds);
   if (projErr) throw projErr;
 
   const projectMap = new Map((projects || []).map((p) => [String(p.id), p]));
-  const workshopIds = [...new Set((projects || []).map((p) => p.company_id).filter(Boolean))];
+  const companyIds = [...new Set((projects || [])
+    .flatMap((p) => [p.company_id, p.logistics_company_id])
+    .filter(Boolean))];
+  const vcStageIds = [...new Set((projects || []).map((p) => p.vc_kanban_column_id).filter(Boolean))];
   const sxStageCtx = await buildSxStageContext(projects || []);
 
-  const { data: workshopCos } = workshopIds.length
-    ? await supabase.from('companies').select('id, name, short_name').in('id', workshopIds)
-    : { data: [] };
+  const [{ data: companyRows }, { data: vcStages }] = await Promise.all([
+    companyIds.length
+      ? supabase.from('companies').select('id, name, short_name').in('id', companyIds)
+      : Promise.resolve({ data: [] }),
+    vcStageIds.length
+      ? supabase
+        .from('logistics_pipeline_stages')
+        .select('id, name, color, bucket_slug, crm_sync_type')
+        .in('id', vcStageIds)
+      : Promise.resolve({ data: [] }),
+  ]);
 
-  const workshopMap = new Map((workshopCos || []).map((c) => [String(c.id), c]));
+  const workshopMap = new Map((companyRows || []).map((c) => [String(c.id), c]));
+  const vcStageMap = new Map((vcStages || []).map((s) => [String(s.id), s]));
 
   const leadIds = dealsFiltered.map((d) => d.id).filter(Boolean);
-  const [financialMap, paymentTotalsMap] = await Promise.all([
+  const [financialMap, paymentTotalsMap, phatSinhMap] = await Promise.all([
     fetchLatestFinancialsByLeadIds(leadIds),
     fetchPaymentTotalsByLeadIds(leadIds),
+    summarizePhatSinhByLeadIds(leadIds),
   ]);
 
   const searchNorm = normalizeSearch(search);
@@ -393,7 +458,11 @@ async function fetchAccountingDeals({
     const sxInfo = resolveSxStageInfo(d, proj, sxStageCtx);
     const fin = financialMap.get(String(d.id)) || {};
     const pay = paymentTotalsMap.get(String(d.id)) || {};
+    const ps = phatSinhMap.get(String(d.id)) || null;
     return finalizeDealRow({
+      phat_sinh_count: ps?.count || 0,
+      phat_sinh_missing_cost: ps?.missing_cost || 0,
+      extra_cost_total: ps?.total || 0,
       id: d.id,
       code: d.code,
       title: d.title,
@@ -424,25 +493,38 @@ async function fetchAccountingDeals({
       stages_received: Number(pay.stages_received) || 0,
       deposit_stage_received: Number(pay.deposit_stage_received) || 0,
       payments_received: Number(pay.payments_received) || 0,
+      payments_count: Number(pay.payments_count) || 0,
+      payments_missing_ref: Number(pay.payments_missing_ref) || 0,
       workshop_company_id: proj?.company_id || null,
       workshop_name: ws?.short_name || ws?.name || null,
       ...sxInfo,
+      ...buildVcInfo(proj, proj?.vc_kanban_column_id ? vcStageMap.get(String(proj.vc_kanban_column_id)) : null, workshopMap),
       quotation_id: fin.quotation?.id || null,
       quotation_total: fin.quotation ? Number(fin.quotation.total) || 0 : null,
       quotation_code: fin.quotation?.code || null,
       quotation_status: fin.quotation?.status || null,
+      quotation_title: fin.quotation?.title || null,
+      quotation_file_name: fin.quotation?.source_excel_file_name || null,
+      quotation_file_url: fin.quotation?.source_excel_file_url || null,
+      quotation_count: fin.quotation_count || (fin.quotation ? 1 : 0),
+      workshop_quote_files: pickWorkshopQuoteFiles(proj?.quotation_files),
+      names_differ: projectNamesDiffer(d.title, proj?.name),
       order_id: fin.order?.id || null,
       order_total: fin.order ? Number(fin.order.total) || 0 : null,
       order_code: fin.order?.code || null,
       order_status: fin.order?.status || null,
+      order_date: fin.order?.order_date || null,
       invoice_id: fin.invoice?.id || null,
       invoice_total: fin.invoice ? Number(fin.invoice.total) || 0 : null,
       invoice_code: fin.invoice?.code || null,
       invoice_status: fin.invoice?.status || null,
+      invoice_number: fin.invoice?.invoice_number || null,
     });
   }).filter((row) => dealMatchesSearch(row, searchNorm));
 
-  const enriched = applyFinancialFilters(enrichedRaw, { financialStatus, sxDoneNotInvoiced });
+  const enriched = applyFinancialFilters(enrichedRaw, {
+    financialStatus, sxDoneNotInvoiced, nameMismatch, missingDocs, missingItem, vcGroup,
+  });
 
   const total = enriched.length;
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
@@ -465,8 +547,31 @@ function aggregateFinancialKpis(deals) {
   let count_not_invoiced = 0;
   let count_sx_done_not_invoiced = 0;
   let sx_done_not_invoiced_value = 0;
+  let count_name_mismatch = 0;
+  let count_missing_docs = 0;
+  let total_logistics_cost = 0;
+  let total_extra_cost = 0;
+  let count_with_extra_cost = 0;
+  const missing_by_item = {};
+  const vc_breakdown = Object.fromEntries(
+    Object.entries(VC_GROUP_LABELS).map(([key, label]) => [key, { key, label, count: 0, outstanding: 0 }]),
+  );
 
   for (const d of deals) {
+    total_logistics_cost += d.logistics_cost || 0;
+    total_extra_cost += d.extra_cost_total || 0;
+    if ((d.phat_sinh_count || 0) > 0) count_with_extra_cost += 1;
+    const vcSlot = vc_breakdown[d.vc_group];
+    if (vcSlot) {
+      vcSlot.count += 1;
+      vcSlot.outstanding += d.outstanding_amount || 0;
+    }
+    if ((d.checklist?.missing_count || 0) > 0) count_missing_docs += 1;
+    for (const it of d.checklist?.items || []) {
+      if (it.status !== 'missing') continue;
+      if (!missing_by_item[it.key]) missing_by_item[it.key] = { key: it.key, label: it.label, count: 0 };
+      missing_by_item[it.key].count += 1;
+    }
     const fs = d.financial_status || FINANCIAL_STATUS.NO_QUOTE;
     if (financial_breakdown[fs]) {
       financial_breakdown[fs].count += 1;
@@ -479,6 +584,7 @@ function aggregateFinancialKpis(deals) {
       count_sx_done_not_invoiced += 1;
       sx_done_not_invoiced_value += d.outstanding_amount || 0;
     }
+    if (d.names_differ) count_name_mismatch += 1;
   }
 
   return {
@@ -488,6 +594,13 @@ function aggregateFinancialKpis(deals) {
     count_not_invoiced,
     count_sx_done_not_invoiced,
     sx_done_not_invoiced_value,
+    count_name_mismatch,
+    count_missing_docs,
+    total_logistics_cost,
+    total_extra_cost,
+    count_with_extra_cost,
+    vc_breakdown: Object.values(vc_breakdown),
+    missing_by_item: Object.values(missing_by_item).sort((a, b) => b.count - a.count),
   };
 }
 
@@ -570,8 +683,19 @@ function buildAccountingDealsCsvRows(deals) {
     'SĐT': d.customer_phone || '',
     'SX tại': d.workshop_name || '',
     'Mã dự án': d.project_code || '',
+    'Tên dự án xưởng': d.project_name || '',
+    'Tên khác nhau': d.names_differ ? 'Có' : 'Không',
+    'File báo giá': d.quotation_file_name || '',
+    'File trên xưởng': (d.workshop_quote_files || []).map((f) => f.file_name).filter(Boolean).join(' | '),
     'Cột SX': d.sx_stage_name || '',
     'SX xong': d.sx_production_done ? 'Có' : 'Không',
+    'VC/LĐ tại': d.vc_company_name || '',
+    'Giai đoạn VC/LĐ': d.vc_stage_name || d.vc_phase_label || '',
+    'Ngày giao': d.delivery_date || '',
+    'Ngày lắp': d.install_date ? String(d.install_date).slice(0, 10) : '',
+    'Phí VC/LĐ': d.logistics_cost ?? '',
+    'Số việc phát sinh': d.phat_sinh_count || 0,
+    'Chi phí phát sinh': d.extra_cost_total || 0,
     'Trạng thái TT': d.financial_status_label || '',
     'Giá trị SX': d.production_value || d.estimated_value || 0,
     'Mã BG': d.quotation_code || '',
@@ -596,6 +720,19 @@ function accountingDealsToCsv(deals) {
   return `\ufeff${lines.join('\n')}`;
 }
 
+/** Một dòng deal kế toán (cùng cách tính danh sách) — dùng cho hồ sơ trên trang chi tiết. */
+async function fetchAccountingDealRow(clientCompanyId, leadId) {
+  const { deals } = await fetchAccountingDeals({ clientCompanyId, onlyLeadId: leadId, page: 1, limit: 1 });
+  return deals[0] || null;
+}
+
+async function fetchAccountingReceivables({ clientCompanyId, workshopCompanyId = null, search = '' }) {
+  const { deals } = await fetchAccountingDeals({
+    clientCompanyId, workshopCompanyId, search, page: 1, limit: 100000,
+  });
+  return buildReceivablesReport(deals);
+}
+
 async function fetchAccountingDealsForExport(options) {
   const { deals } = await fetchAccountingDeals({
     ...options,
@@ -612,6 +749,8 @@ module.exports = {
   listWorkshopsForClientCompany,
   fetchAccountingDeals,
   fetchAccountingDealsForExport,
+  fetchAccountingDealRow,
+  fetchAccountingReceivables,
   buildAccountingSummary,
   accountingDealsToCsv,
   applyAccountingCrmCompanyFilter,

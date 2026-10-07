@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
 import CRMAssignmentsPage from './CRMAssignmentsPage';
+import ProductionPhatSinhPage from './ProductionPhatSinhPage';
 
 /**
  * Giao việc module tùy chỉnh — cùng UX CRM/SX/VC,
@@ -32,6 +33,30 @@ export default function CustomModuleAssignmentsPage() {
       companiesModule={moduleKey}
       assignmentModule={moduleKey}
       storagePrefix={`m_${moduleKey}_assignments`}
+      dashboardLink={`/m/${moduleKey}`}
+    />
+  );
+}
+
+/** Quản lý phát sinh của module tùy chỉnh — cùng hai tab với Sản xuất. */
+export function CustomModulePhatSinhPage() {
+  const { moduleKey: paramKey } = useParams();
+  const ctx = useOutletContext() || {};
+  const moduleKey = String(ctx.moduleKey || paramKey || '').trim().toLowerCase();
+
+  if (!moduleKey) {
+    return (
+      <div className="p-6 text-sm text-gray-500">
+        Không xác định được module.
+      </div>
+    );
+  }
+
+  return (
+    <ProductionPhatSinhPage
+      companiesModule={moduleKey}
+      assignmentModule={moduleKey}
+      storagePrefix={`m_${moduleKey}_phat_sinh`}
       dashboardLink={`/m/${moduleKey}`}
     />
   );
