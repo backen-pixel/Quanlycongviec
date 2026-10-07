@@ -1310,6 +1310,22 @@ export default function KanbanScreen() {
     return map;
   }, [displayStages, filteredProjects, stages, stageIndex]);
 
+  // Áp «Hạn xử lý»: nếu cột đang xem trống mà các cột khác có dự án → nhảy tới cột đầu tiên có dự án (một lần
+  // cho mỗi giá trị bộ lọc, để không giành quyền khi người dùng tự vuốt sang cột khác).
+  const dueJumpedRef = useRef('');
+  useEffect(() => {
+    if (!dueFilter) {
+      dueJumpedRef.current = '';
+      return;
+    }
+    if (loading || dueJumpedRef.current === dueFilter) return;
+    dueJumpedRef.current = dueFilter;
+    const cur = displayStages[activeIndex];
+    if (cur && (projectsByStage.get(cur.id)?.length ?? 0) > 0) return;
+    const idx = displayStages.findIndex((s) => (projectsByStage.get(s.id)?.length ?? 0) > 0);
+    if (idx >= 0) setActiveIndex(idx);
+  }, [dueFilter, loading, displayStages, projectsByStage, activeIndex]);
+
   const stageById = useMemo(() => {
     const m = new Map<string, KanbanStage>();
     displayStages.forEach((s) => m.set(String(s.id), s));
