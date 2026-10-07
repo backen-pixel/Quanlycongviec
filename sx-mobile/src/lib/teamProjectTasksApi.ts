@@ -45,6 +45,9 @@ type Opts = {
   workshopTypeId?: string | null;
   /** true = mục «Không hạn»: việc chưa xong KHÔNG có hạn, tạo từ lâu (phần mới tạo đã ở danh sách chính). */
   noDeadline?: boolean;
+  /** Khoảng hạn (YYYY-MM-DD, ngày VN, gồm hai đầu) cho chip Hôm nay / Ngày mai / Trong tuần / Tuần sau — máy chủ lọc. */
+  dueFrom?: string | null;
+  dueTo?: string | null;
   q?: string;
   page?: number;
   pageSize?: number;
@@ -133,7 +136,7 @@ async function fetchLegacy(o: Opts): Promise<TeamProjectPage> {
 export async function fetchTeamProjectTasksPage(o: Opts): Promise<TeamProjectPage> {
   const page = Math.max(1, o.page || 1);
   const pageSize = o.pageSize || TEAM_GROUPS_PER_PAGE;
-  const key = `${K_TEAM}${o.noDeadline ? 'nd|' : ''}${o.companyId || ''}|${o.assigneeId || ''}|${o.workshopTypeId || ''}|${(o.q || '').trim()}|${page}|${pageSize}`;
+  const key = `${K_TEAM}${o.noDeadline ? 'nd|' : ''}${o.dueFrom ? `d${o.dueFrom}~${o.dueTo}|` : ''}${o.companyId || ''}|${o.assigneeId || ''}|${o.workshopTypeId || ''}|${(o.q || '').trim()}|${page}|${pageSize}`;
   return cachedQuery<TeamProjectPage>({
     key,
     ttlMs: QUERY_TTL_SHORT,
@@ -153,6 +156,7 @@ export async function fetchTeamProjectTasksPage(o: Opts): Promise<TeamProjectPag
             // Lấy thêm việc MỚI TẠO trong N ngày qua dù chưa có hạn (máy chủ mặc định cũng là 7).
             created_days: NEW_TASK_DAYS,
             ...(o.noDeadline ? { no_deadline: 1 } : {}),
+            ...(o.dueFrom && o.dueTo ? { due_from: o.dueFrom, due_to: o.dueTo } : {}),
             ...(o.companyId ? { company_id: o.companyId } : {}),
             ...(o.assigneeId ? { assignee_id: o.assigneeId } : {}),
             ...(o.workshopTypeId ? { workshop_type_id: o.workshopTypeId } : {}),
