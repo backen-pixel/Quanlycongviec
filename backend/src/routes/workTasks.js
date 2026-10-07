@@ -451,6 +451,9 @@ r.get('/summary', async (req, res) => {
  */
 const TEAM_PROJECT_TASK_KINDS = ['SX', 'Dự án', 'CRM-Deal'];
 const TEAM_TASKS_SCAN_CAP = 8000;
+/** Cache kết quả quét theo bộ lọc (30s): trang 2+ và lần mở lại không phải quét lại; dữ liệu cũ tối đa 30s. */
+const TEAM_TASKS_CACHE_MS = 30_000;
+const teamTasksCache = new Map();
 
 r.get('/team-project-tasks', async (req, res) => {
   try {
@@ -472,91 +475,137 @@ r.get('/team-project-tasks', async (req, res) => {
     // phần mới tạo đã nằm ở danh sách chính. Lấy tách riêng để danh sách chính không phình theo hàng nghìn việc cũ.
     const noDeadlineMode = ['1', 'true'].includes(String(req.query.no_deadline || '').toLowerCase());
 
-    // Quét nhẹ (chỉ vài cột) theo lô 1000 — PostgREST cắt ở 1000 dòng/lần.
-    const scanned = [];
-    for (let from = 0; from < TEAM_TASKS_SCAN_CAP; from += 1000) {
-      let qy = supabase.from('unified_tasks_v').select(COLS)
-        .in('task_kind', TEAM_PROJECT_TASK_KINDS)
-        .not('project_id', 'is', null);
-      if (noDeadlineMode) {
-        qy = qy.is('deadline', null).lt('created_at', createdSince)
-          .order('created_at', { ascending: false });
-      } else {
-        // Có hạn đến hết cửa sổ N ngày tới, HOẶC mới tạo gần đây (kể cả không hạn).
-        qy = qy
-          .or(createdDays > 0
-            ? `and(deadline.not.is.null,deadline.lte.${until}),created_at.gte.${createdSince}`
-            : `and(deadline.not.is.null,deadline.lte.${until})`)
-          .order('deadline', { ascending: true });
+    // Toàn bộ phần quét + gom nhóm gói trong `computeTeamTasks` để CACHE ngắn hạn: các trang 2, 3… (cuộn tiếp) và các lần
+    // mở lại cùng bộ lọc không phải quét lại hàng nghìn dòng (HCB «Không hạn» ~5.500 việc: ~3,3s/trang khi quét tuần tự).
+    const computeTeamTasks = async () => {
+      const applyScanFilters = (qy) => {
+        qy = qy.in('task_kind', TEAM_PROJECT_TASK_KINDS).not('project_id', 'is', null);
+        if (noDeadlineMode) {
+          qy = qy.is('deadline', null).lt('created_at', createdSince).order('created_at', { ascending: false });
+        } else {
+          // Có hạn đến hết cửa sổ N ngày tới, HOẶC mới tạo gần đây (kể cả không hạn).
+          qy = qy
+            .or(createdDays > 0
+              ? `and(deadline.not.is.null,deadline.lte.${until}),created_at.gte.${createdSince}`
+              : `and(deadline.not.is.null,deadline.lte.${until})`)
+            .order('deadline', { ascending: true });
+        }
+        qy = qy.order('unified_id', { ascending: true });
+        qy = applyOpenOnlyFilter(qy);
+        if (effectiveCompany) qy = qy.eq('company_id', effectiveCompany);
+        if (assignee_id) qy = qy.eq('assignee_id', assignee_id);
+        const needle = String(searchQ || '').trim();
+        if (needle) qy = qy.ilike('title', `%${needle}%`);
+        return qy;
+      };
+
+      // Lô đầu kèm tổng số dòng → các lô còn lại chạy SONG SONG (PostgREST cắt ở 1000 dòng/lần).
+      const first = await applyScanFilters(
+        supabase.from('unified_tasks_v').select(COLS, { count: 'exact' }),
+      ).range(0, 999);
+      if (first.error) throw first.error;
+      const scanned = [...(first.data || [])];
+      const total = Math.min(Number(first.count) || scanned.length, TEAM_TASKS_SCAN_CAP);
+      if (total > 1000) {
+        const starts = [];
+        for (let from = 1000; from < total; from += 1000) starts.push(from);
+        const parts = await Promise.all(starts.map(async (from) => {
+          const r = await applyScanFilters(supabase.from('unified_tasks_v').select(COLS)).range(from, from + 999);
+          if (r.error) throw r.error;
+          return r.data || [];
+        }));
+        parts.forEach((p) => scanned.push(...p));
       }
-      qy = qy
-        .order('unified_id', { ascending: true })
-        .range(from, from + 999);
-      qy = applyOpenOnlyFilter(qy);
-      if (effectiveCompany) qy = qy.eq('company_id', effectiveCompany);
-      if (assignee_id) qy = qy.eq('assignee_id', assignee_id);
-      const needle = String(searchQ || '').trim();
-      if (needle) qy = qy.ilike('title', `%${needle}%`);
-      const { data, error } = await qy;
-      if (error) throw error;
-      scanned.push(...(data || []));
-      if (!data || data.length < 1000) break;
-    }
 
-    // Lọc theo PHÂN LOẠI xưởng (`workshop_type_id`: mã loại hoặc `none`) — view không có cột này nên lấy tập dự án trước.
-    let scannedRows = scanned;
-    const typeRaw = String(req.query.workshop_type_id || '').trim();
-    if (typeRaw) {
-      const typeProjectIds = new Set();
-      for (let from = 0; from < 20000; from += 1000) {
-        let pq = supabase.from('projects').select('id').order('id', { ascending: true }).range(from, from + 999);
-        pq = typeRaw.toLowerCase() === 'none' ? pq.is('workshop_type_id', null) : pq.eq('workshop_type_id', typeRaw);
-        if (effectiveCompany) pq = pq.eq('company_id', effectiveCompany);
-        const { data: prow, error: perr } = await pq;
-        if (perr) throw perr;
-        (prow || []).forEach((p) => typeProjectIds.add(String(p.id)));
-        if (!prow || prow.length < 1000) break;
+      // Lọc theo PHÂN LOẠI xưởng (`workshop_type_id`: mã loại hoặc `none`) — view không có cột này nên lấy tập dự án trước.
+      let scannedRows = scanned;
+      const typeRaw = String(req.query.workshop_type_id || '').trim();
+      if (typeRaw) {
+        const projectsQuery = (cols, opts) => {
+          let pq = supabase.from('projects').select(cols, opts).order('id', { ascending: true });
+          pq = typeRaw.toLowerCase() === 'none' ? pq.is('workshop_type_id', null) : pq.eq('workshop_type_id', typeRaw);
+          if (effectiveCompany) pq = pq.eq('company_id', effectiveCompany);
+          return pq;
+        };
+        const typeProjectIds = new Set();
+        const pFirst = await projectsQuery('id', { count: 'exact' }).range(0, 999);
+        if (pFirst.error) throw pFirst.error;
+        (pFirst.data || []).forEach((p) => typeProjectIds.add(String(p.id)));
+        const pTotal = Math.min(Number(pFirst.count) || 0, 20000);
+        if (pTotal > 1000) {
+          const pStarts = [];
+          for (let from = 1000; from < pTotal; from += 1000) pStarts.push(from);
+          const pParts = await Promise.all(pStarts.map(async (from) => {
+            const r = await projectsQuery('id').range(from, from + 999);
+            if (r.error) throw r.error;
+            return r.data || [];
+          }));
+          pParts.forEach((p) => p.forEach((x) => typeProjectIds.add(String(x.id))));
+        }
+        scannedRows = scanned.filter((t) => typeProjectIds.has(String(t.project_id)));
       }
-      scannedRows = scanned.filter((t) => typeProjectIds.has(String(t.project_id)));
-    }
 
-    // Khử trùng: ưu tiên bản ở bảng `tasks` (source != crm_task).
-    const keyOf = (t) => `${t.project_id}|${String(t.title || '').trim().toLowerCase()}`;
-    const chosen = new Map();
-    for (const t of scannedRows) {
-      const k = keyOf(t);
-      const cur = chosen.get(k);
-      if (!cur || (cur.source === 'crm_task' && t.source !== 'crm_task')) chosen.set(k, t);
-    }
-    const rows = [...chosen.values()];
+      // Khử trùng: ưu tiên bản ở bảng `tasks` (source != crm_task).
+      const keyOf = (t) => `${t.project_id}|${String(t.title || '').trim().toLowerCase()}`;
+      const chosen = new Map();
+      for (const t of scannedRows) {
+        const k = keyOf(t);
+        const cur = chosen.get(k);
+        if (!cur || (cur.source === 'crm_task' && t.source !== 'crm_task')) chosen.set(k, t);
+      }
+      const rows = [...chosen.values()];
 
-    let overdue = 0;
-    let inProgress = 0;
-    let noDeadline = 0;
-    const groups = new Map();
-    for (const t of rows) {
-      // Việc không có hạn KHÔNG được coi là quá hạn (new Date(null) = 1970).
-      const hasDeadline = !!t.deadline;
-      const isOver = hasDeadline && new Date(t.deadline).getTime() < nowMs;
-      if (isOver) overdue += 1;
-      if (!hasDeadline) noDeadline += 1;
-      if (String(t.status || '').toLowerCase() === 'in_progress') inProgress += 1;
-      let g = groups.get(t.project_id);
-      if (!g) { g = { firstDeadline: null, newestCreated: '', overdue: false, rows: [] }; groups.set(t.project_id, g); }
-      if (isOver) g.overdue = true;
-      if (hasDeadline && (g.firstDeadline == null || String(t.deadline) < String(g.firstDeadline))) g.firstDeadline = t.deadline;
-      if (String(t.created_at || '') > g.newestCreated) g.newestCreated = String(t.created_at || '');
-      g.rows.push(t);
+      let overdue = 0;
+      let inProgress = 0;
+      let noDeadline = 0;
+      const groups = new Map();
+      for (const t of rows) {
+        // Việc không có hạn KHÔNG được coi là quá hạn (new Date(null) = 1970).
+        const hasDeadline = !!t.deadline;
+        const isOver = hasDeadline && new Date(t.deadline).getTime() < nowMs;
+        if (isOver) overdue += 1;
+        if (!hasDeadline) noDeadline += 1;
+        if (String(t.status || '').toLowerCase() === 'in_progress') inProgress += 1;
+        let g = groups.get(t.project_id);
+        if (!g) { g = { firstDeadline: null, newestCreated: '', overdue: false, rows: [] }; groups.set(t.project_id, g); }
+        if (isOver) g.overdue = true;
+        if (hasDeadline && (g.firstDeadline == null || String(t.deadline) < String(g.firstDeadline))) g.firstDeadline = t.deadline;
+        if (String(t.created_at || '') > g.newestCreated) g.newestCreated = String(t.created_at || '');
+        g.rows.push(t);
+      }
+      // Thứ tự nhóm: (0) có việc quá hạn → (1) có việc sắp đến hạn → (2) chỉ có việc mới tạo chưa có hạn / hạn xa.
+      // Nhóm 0–1 theo hạn gần nhất cũ → mới; nhóm 2 theo việc tạo MỚI NHẤT lên trước.
+      const tierOf = (g) => (g.overdue ? 0 : g.firstDeadline != null && String(g.firstDeadline) <= until ? 1 : 2);
+      const ordered = [...groups.values()].sort((a, b) => {
+        const ta = tierOf(a); const tb = tierOf(b);
+        if (ta !== tb) return ta - tb;
+        if (ta === 2) return String(b.newestCreated).localeCompare(String(a.newestCreated));
+        return String(a.firstDeadline).localeCompare(String(b.firstDeadline));
+      });
+      return {
+        ordered,
+        counts: {
+          overdue,
+          soon: rows.length - overdue,
+          total: rows.length,
+          in_progress: inProgress,
+          no_deadline: noDeadline,
+          groups: ordered.length,
+        },
+      };
+    };
+
+    const cacheKey = JSON.stringify([
+      effectiveCompany || '', assignee_id || '', String(req.query.workshop_type_id || ''),
+      String(searchQ || '').trim(), dueDays, createdDays, noDeadlineMode,
+    ]);
+    let computed = teamTasksCache.get(cacheKey);
+    if (!computed || Date.now() - computed.at > TEAM_TASKS_CACHE_MS) {
+      computed = { at: Date.now(), ...(await computeTeamTasks()) };
+      teamTasksCache.set(cacheKey, computed);
+      if (teamTasksCache.size > 30) teamTasksCache.delete(teamTasksCache.keys().next().value);
     }
-    // Thứ tự nhóm: (0) có việc quá hạn → (1) có việc sắp đến hạn → (2) chỉ có việc mới tạo chưa có hạn / hạn xa.
-    // Nhóm 0–1 theo hạn gần nhất cũ → mới; nhóm 2 theo việc tạo MỚI NHẤT lên trước.
-    const tierOf = (g) => (g.overdue ? 0 : g.firstDeadline != null && String(g.firstDeadline) <= until ? 1 : 2);
-    const ordered = [...groups.values()].sort((a, b) => {
-      const ta = tierOf(a); const tb = tierOf(b);
-      if (ta !== tb) return ta - tb;
-      if (ta === 2) return String(b.newestCreated).localeCompare(String(a.newestCreated));
-      return String(a.firstDeadline).localeCompare(String(b.firstDeadline));
-    });
+    const { ordered, counts } = computed;
 
     const start = (page - 1) * pageSize;
     const pageGroups = ordered.slice(start, start + pageSize);
@@ -565,14 +614,7 @@ r.get('/team-project-tasks', async (req, res) => {
     await enrichTaskModuleOwners(tasks);
 
     res.json({
-      counts: {
-        overdue,
-        soon: rows.length - overdue,
-        total: rows.length,
-        in_progress: inProgress,
-        no_deadline: noDeadline,
-        groups: ordered.length,
-      },
+      counts,
       page,
       page_size: pageSize,
       has_more: start + pageSize < ordered.length,
