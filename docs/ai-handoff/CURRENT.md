@@ -1,3 +1,10 @@
+## 2026-10-06 — P1-6: đọc chi tiêu Facebook và chứng minh coverage (local)
+
+Thêm `spendCoverage.js` chỉ đọc và `spendCoverage.test.js`; không route, migration hay kết nối nguồn thật. 14/14 test P1-6, 8/8 đồng bộ cũ, 38/38 lead measurement đạt bằng Node. Chỉ kết luận `COMPLETE` khi sync và mọi dòng đủ điều kiện; chưa có đối soát tổng cấp tài khoản Meta (`AD_LEVEL_ONLY`). Claude cần chạy adapter với DB thật và đối chiếu 27.589.061 đ cho 07/09–05/10 cùng trạng thái sync trước PR. Hoàn tác: bỏ hai file JS P1-6 và hai mục bàn giao P1-6.
+
+---
+
+## 2026-10-06 16:39 — Sửa cổng xác minh callback Lead App trước chuyển đổi (mã cục bộ)
 ## 2026-10-07 — SX mobile tab Công việc/Dự án của quản lý: lọc theo hạn, khử trùng, tự nhảy cột
 
 App sx-mobile (quản lý/admin) tab Công việc lấy việc dự án của cả đội qua `GET /api/work-tasks/team-project-tasks` (phân trang theo nhóm dự án, quá hạn lên trước, có mục riêng "Không hạn" cho việc cũ hơn 7 ngày). Chip Hạn xử lý (Hôm nay / Ngày mai / Trong tuần / Tuần sau), Phân loại và Người đều lọc ở máy chủ (`due_from`, `due_to`, `workshop_type_id`, `assignee_id`).

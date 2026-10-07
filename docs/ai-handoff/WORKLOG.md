@@ -1,3 +1,13 @@
+## 2026-10-06 — P1-6: adapter chi tiêu chỉ đọc
+- Thêm module thuần và adapter `fb_ad_accounts`/`fb_ad_spend_daily` phân trang, kiểm sync/VND/cửa sổ/tính tươi/trùng dòng/tràn số; không chọn token hoặc ghi DB.
+- Kiểm tra: `node --check` hai file; P1-6 14/14, fbMarketingSync 8/8, leadMeasurement 38/38; chưa đối chiếu DB/Meta thật.
+- Quyết định: tổng chỉ có bằng chứng cấp ad (`AD_LEVEL_ONLY`); không có dòng và sync không đủ thì tiền `null`. Hoàn tác: bỏ hai file JS và hai mục P1-6.
+
+---
+
+## 2026-10-06 — P1-2: thu hồi quyền thừa của service_role (SQL 710)
+- 710 đã áp lên DB chính (PG 17.6, 3 bảng rỗng, RLS bật, anon/authenticated = 0). Kiểm tra sau áp thấy service_role còn UPDATE/DELETE/TRUNCATE trên bảng nhật ký do quyền mặc định của Supabase; thiết kế yêu cầu chỉ SELECT+INSERT.
+- Sửa 710: thêm REVOKE ALL FROM service_role trước GRANT. Bài thử nhánh tạm giờ cài quyền mặc định giống DB chính; 35/35 đạt. Chưa áp bản sửa lên DB chính (cần Founder duyệt riêng).
 ## 2026-10-07 — SX mobile (quản lý): việc dự án cả đội, lọc hạn ở máy chủ, khử trùng trước khi lọc
 
 - Backend `backend/src/routes/workTasks.js`: route mới `GET /team-project-tasks` (chỉ quản lý; tham số `company_id, assignee_id, q, due_days, created_days, workshop_type_id, no_deadline, due_from, due_to, page, page_size`). `computeTeamTasks` quét `unified_tasks_v` song song, cache 30 s (`teamTasksCache`), khử trùng theo `project_id|title` (ưu tiên bản không phải `crm_task`), gom nhóm theo dự án (quá hạn → sắp đến hạn → mới/không hạn). Commit cuối `698c5a68`: khi có `due_from/due_to`, lấy thêm bản không-`crm_task` của các dự án có việc CRM trong khoảng, khử trùng rồi mới lọc lại khoảng hạn. Cũng `crmAssignments.js`: `exclude_done=1`; `crmTaskLeadAccess.js`: `assigneeReadGrant` cho GET comments/members.
