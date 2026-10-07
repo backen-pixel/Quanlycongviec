@@ -1,3 +1,10 @@
+## 2026-10-07 — P1-7: route qualification mặc định tắt
+
+File: `p1Qualification.js`, `p1Qualification.route.test.js`, một dòng `server.js`, CURRENT.md, WORKLOG.md. Admin cùng công ty hoặc admin hệ thống trong HST được duyệt; cờ tắt 404, backup 503, lỗi DB được lọc.
+Kiểm tra: `node --check` route/server; route 22/22, qualification/trialRegistry 11/11, `git diff --check`. Chưa kiểm chứng HTTP thật, migration/RPC thật, failover thật.
+
+---
+
 ## 2026-10-06 — P1-5: qualification events
 File: hai SQL 712, `qualification.js`, `qualification.test.js`, CURRENT.md, WORKLOG.md. Chỉ thêm bảng sự kiện/RPC và module chưa nối runtime.
 Kiểm tra: `node --check` đạt; test qualification 6/6 và test trialRegistry 5/5 đạt; `git diff --check` sạch.

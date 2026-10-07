@@ -1,3 +1,10 @@
+## 2026-10-07 — P1-7: route xác nhận khách (mã cục bộ)
+
+Thêm route admin `GET/PUT/POST /api/marketing-p1/qualification/leads/:leadId` (POST thêm `/revoke`), mặc định tắt bằng `VPT_P1_REVIEW_WRITE`. Kiểm CRM company, phạm vi HST và primary trước RPC; chỉ trả trường sự kiện cho phép.
+Kiểm thử: route 22/22, qualification/trialRegistry 11/11; chưa thử HTTP thật, DB thật hay SQL. Hoàn tác: bỏ route/test, một dòng mount và hai mục handoff P1-7.
+
+---
+
 ## 2026-10-06 — P1-5: sự kiện xác nhận khách (SQL 712, mã cục bộ)
 
 Thêm SQL 712/rollback, adapter `qualification.js` và test giả; chưa nối route/UI, chưa chạy SQL hay DB thật. `canonical_lead_id` tạm là `crm_leads.id`; P1-3 sẽ xử lý gộp và đếm trùng. Kiểm thử và số ca xem mục WORKLOG cùng ngày.
