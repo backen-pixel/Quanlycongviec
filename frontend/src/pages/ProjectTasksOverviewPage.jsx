@@ -3,7 +3,7 @@ import {
 } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
-  AlertTriangle, Bell, CalendarClock, CalendarDays, CalendarOff, ClipboardList, Clock3, Factory, Loader2, RefreshCw, Search, Sun, Target, Truck, X,
+  AlertTriangle, Bell, CalendarClock, CalendarDays, CalendarOff, CheckCircle2, Circle, ClipboardList, Clock3, Factory, LayoutGrid, Loader2, RefreshCw, Search, Sun, Target, Truck, X,
 } from 'lucide-react';
 import api from '../lib/api';
 import { canSendTaskRemind, getDeepLink } from '../components/UnifiedTaskRow';
@@ -94,6 +94,38 @@ const COLUMNS = [
 ];
 
 const COLUMN_BY_KEY = Object.fromEntries(COLUMNS.map((column) => [column.key, column]));
+
+const STATUS_COLUMNS = [
+  {
+    key: 'pending',
+    label: 'Chưa làm',
+    icon: Circle,
+    header: 'bg-slate-50 text-slate-700 border-slate-200',
+    empty: 'Không có nhiệm vụ chưa làm',
+  },
+  {
+    key: 'in_progress',
+    label: 'Đang làm',
+    icon: Clock3,
+    header: 'bg-blue-50 text-blue-800 border-blue-100',
+    empty: 'Không có nhiệm vụ đang làm',
+  },
+  {
+    key: 'completed',
+    label: 'Đã làm',
+    icon: CheckCircle2,
+    header: 'bg-emerald-50 text-emerald-800 border-emerald-100',
+    empty: 'Không có nhiệm vụ đã làm',
+  },
+];
+
+function progressLaneOf(task) {
+  const done = Number(task?.child_completed || 0);
+  const total = Number(task?.child_total || 0);
+  if (total > 0 && done >= total) return 'completed';
+  if (done > 0) return 'in_progress';
+  return 'pending';
+}
 
 function deadlineBucketOf(task, nowMs = Date.now()) {
   const rawDeadline = task?.deadline;
@@ -395,6 +427,14 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [boardView, setBoardView] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem(`projectTasksBoard:${fixedModuleKey || 'all'}`);
+      return saved === 'kanban' ? 'kanban' : 'deadline';
+    } catch {
+      return 'deadline';
+    }
+  });
   const [riskFilter, setRiskFilter] = useState('all');
   const [progressFilter, setProgressFilter] = useState('all');
   const [companyFilter, setCompanyFilter] = useState(() => {
@@ -681,10 +721,40 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     ]),
   ), [visibleTasks]);
 
+  const tasksByStatus = useMemo(() => Object.fromEntries(
+    STATUS_COLUMNS.map((column) => [
+      column.key,
+      visibleTasks.filter((task) => progressLaneOf(task) === column.key),
+    ]),
+  ), [visibleTasks]);
+
+  const boardColumns = boardView === 'kanban' ? STATUS_COLUMNS : COLUMNS;
+  const boardGroups = boardView === 'kanban' ? tasksByStatus : tasksByBucket;
+
   const visibleStats = useMemo(() => ({
     total: visibleTasks.length,
     ...Object.fromEntries(COLUMNS.map((column) => [column.key, tasksByBucket[column.key]?.length || 0])),
   }), [tasksByBucket, visibleTasks.length]);
+
+  const kpiStats = useMemo(() => {
+    let notStarted = 0;
+    let inProgress = 0;
+    let completed = 0;
+    visibleTasks.forEach((task) => {
+      const done = Number(task.child_completed || 0);
+      const total = Number(task.child_total || 0);
+      if (total > 0 && done >= total) completed += 1;
+      else if (done > 0) inProgress += 1;
+      else notStarted += 1;
+    });
+    return {
+      total: visibleTasks.length,
+      notStarted,
+      inProgress,
+      completed,
+      overdue: tasksByBucket.overdue?.length || 0,
+    };
+  }, [tasksByBucket.overdue, visibleTasks]);
 
   const selectedCompany = companyOptions
     .find((company) => String(company.id) === companyFilter);
@@ -826,6 +896,31 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <div className="flex rounded-lg border border-gray-200 bg-white p-0.5" role="group" aria-label="Kiểu xem">
+              {[
+                { id: 'kanban', label: 'Kanban', icon: LayoutGrid },
+                { id: 'deadline', label: 'Hạn', icon: CalendarDays },
+              ].map((mode) => {
+                const Icon = mode.icon;
+                const active = boardView === mode.id;
+                return (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    onClick={() => {
+                      setBoardView(mode.id);
+                      try { sessionStorage.setItem(`projectTasksBoard:${fixedModuleKey || 'all'}`, mode.id); } catch { /* bỏ qua */ }
+                    }}
+                    className={`h-9 px-2.5 rounded-md text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer ${
+                      active ? 'bg-indigo-600 text-white' : 'text-gray-600 hover:bg-gray-50'
+                    }`}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {mode.label}
+                  </button>
+                );
+              })}
+            </div>
             <AdvFilterButton
               open={filtersOpen}
               active={activeAdvancedFilters > 0}
@@ -876,6 +971,36 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       </div>
 
       {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{error}</div>}
+
+      <div className="rounded-2xl border border-slate-200/90 bg-white shadow-md ring-1 ring-slate-900/[0.04] overflow-hidden">
+        <div className="border-b border-indigo-100/70 bg-white/40 px-2 sm:px-3 py-2 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+          {[
+            { key: 'total', label: 'Tổng', value: kpiStats.total, icon: ClipboardList, iconBg: 'bg-violet-100', iconColor: 'text-violet-700', active: riskFilter === 'all' && progressFilter === 'all', onClick: () => { setRiskFilter('all'); setProgressFilter('all'); } },
+            { key: 'not_started', label: 'Chưa làm', value: kpiStats.notStarted, icon: Circle, iconBg: 'bg-slate-100', iconColor: 'text-slate-600', active: progressFilter === 'not_started', onClick: () => { setProgressFilter((v) => (v === 'not_started' ? 'all' : 'not_started')); setRiskFilter('all'); } },
+            { key: 'in_progress', label: 'Đang làm', value: kpiStats.inProgress, icon: Clock3, iconBg: 'bg-blue-100', iconColor: 'text-blue-700', active: progressFilter === 'in_progress', onClick: () => { setProgressFilter((v) => (v === 'in_progress' ? 'all' : 'in_progress')); setRiskFilter('all'); } },
+            { key: 'completed', label: 'Đã làm', value: kpiStats.completed, icon: CheckCircle2, iconBg: 'bg-emerald-100', iconColor: 'text-emerald-700', active: false, onClick: null },
+            { key: 'overdue', label: 'Quá hạn', value: kpiStats.overdue, icon: AlertTriangle, iconBg: 'bg-red-100', iconColor: 'text-red-700', active: riskFilter === 'overdue', onClick: () => { setRiskFilter((v) => (v === 'overdue' ? 'all' : 'overdue')); setProgressFilter('all'); } },
+          ].map((kpi) => (
+            <button
+              key={kpi.key}
+              type="button"
+              onClick={kpi.onClick || undefined}
+              disabled={!kpi.onClick}
+              className={`group relative h-full min-w-0 flex items-center gap-2 rounded-xl border bg-white px-2.5 py-2 shadow-sm ${
+                kpi.active ? 'border-indigo-300 ring-1 ring-indigo-200' : 'border-slate-200'
+              } ${kpi.onClick ? 'cursor-pointer hover:shadow-md' : 'cursor-default'}`}
+            >
+              <span className={`shrink-0 grid h-8 w-8 place-items-center rounded-lg ${kpi.iconBg} ${kpi.iconColor}`}>
+                <kpi.icon className="h-4 w-4" />
+              </span>
+              <span className="min-w-0 flex-1 text-left">
+                <span className="block truncate text-[9px] font-semibold uppercase tracking-wide text-slate-500">{kpi.label}</span>
+                <span className="block text-lg font-bold leading-tight tabular-nums text-slate-900">{kpi.value}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
 
       {filtersOpen && (
         <ProjectTasksFilterPanel
@@ -982,11 +1107,11 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
           columnScrollMode="off"
         >
           <div className="flex min-w-max gap-3 items-start px-0.5">
-            {COLUMNS.map((column) => (
+            {boardColumns.map((column) => (
               <KanbanColumn
                 key={column.key}
                 column={column}
-                tasks={tasksByBucket[column.key] || []}
+                tasks={boardGroups[column.key] || []}
                 focused={focusRisk === column.key}
                 canRemind={canRemind}
                 showModule={!fixedModuleKey}

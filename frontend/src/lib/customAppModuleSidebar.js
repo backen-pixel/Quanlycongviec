@@ -52,6 +52,7 @@ export function buildCustomAppModuleMenuGroups(moduleKey, modMeta = null) {
       items: [
         { to: base, icon: LayoutDashboard, label: 'Dashboard', end: true },
         { to: `${base}/assignments`, icon: ClipboardList, label: `Giao việc ${labelName}` },
+        { to: `${base}/phat-sinh`, icon: ClipboardList, label: 'Quản lý phát sinh' },
         { to: `/drive?module=${encodeURIComponent(scope)}`, icon: HardDrive, label: 'Drive' },
       ],
     },

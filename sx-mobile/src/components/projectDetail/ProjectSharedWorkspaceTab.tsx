@@ -142,6 +142,9 @@ function moduleChipColor(mod: string, colors: AppColors): string {
   return colors.primary;
 }
 
+/** Lỗi 403 khi tải Không gian chung: nhân viên chưa thuộc nhóm của dự án. */
+const NOT_MEMBER_MSG = 'Bạn chưa được thêm vào dự án này';
+
 export default function ProjectSharedWorkspaceTab({
   dealId,
   linkedProjectId = null,
@@ -271,7 +274,9 @@ export default function ProjectSharedWorkspaceTab({
       }
     } catch (e) {
       if (seq !== loadSeqRef.current) return;
-      setError(formatApiError(e));
+      // 403 = chưa thuộc nhóm của dự án (backend báo «Không có quyền xem lead/deal khu vực này») → nói dễ hiểu hơn.
+      const status = (e as { response?: { status?: number } })?.response?.status;
+      setError(status === 403 ? NOT_MEMBER_MSG : formatApiError(e));
     } finally {
       if (seq === loadSeqRef.current) {
         setLoading(false);
@@ -738,12 +743,15 @@ export default function ProjectSharedWorkspaceTab({
 
       <View style={styles.sectionHead}>
         <Text style={styles.sectionTitle}>Phân công</Text>
-        <TapHighlight style={styles.addBtn} onPress={openCreate}>
-          <Ionicons name="add" size={16} color={colors.white} />
-          <Text style={styles.addBtnTxt}>
-            Thêm{moduleTab !== 'all' ? ` · ${assignmentModuleLabel(moduleTab)}` : ''}
-          </Text>
-        </TapHighlight>
+        {/* Chưa thuộc nhóm dự án (403) thì thêm phân công cũng bị từ chối → ẩn nút. */}
+        {error === NOT_MEMBER_MSG ? null : (
+          <TapHighlight style={styles.addBtn} onPress={openCreate}>
+            <Ionicons name="add" size={16} color={colors.white} />
+            <Text style={styles.addBtnTxt}>
+              Thêm{moduleTab !== 'all' ? ` · ${assignmentModuleLabel(moduleTab)}` : ''}
+            </Text>
+          </TapHighlight>
+        )}
       </View>
 
       {loading ? (

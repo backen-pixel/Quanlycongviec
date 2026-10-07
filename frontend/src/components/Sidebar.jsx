@@ -12,7 +12,7 @@ import {
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, UsersRound,
   Target, FileText, ShoppingCart, ShoppingBag, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic, Award, Plus,
   BookOpen, FolderTree, Factory, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Download, UserMinus,
-  Sigma, Calculator, FileUp, History as HistoryIcon, History, HardDrive, Database, Globe, CreditCard, Sparkles, Pin,
+  Sigma, Calculator, FileUp, History as HistoryIcon, History, HardDrive, Database, Globe, CreditCard, Sparkles, Pin, Wallet,
   Menu as MenuIcon, X as XIcon,
 } from 'lucide-react';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -191,6 +191,7 @@ const CRM_MENU_BOTTOM_GROUPS = [
       { to: '/crm/follow-up-care', icon: CalendarClock, label: 'CSKH theo hạn' },
       { to: '/crm/tasks', icon: CheckSquare, label: 'Công việc CRM', end: true },
       { to: '/crm/assignments', icon: ClipboardList, label: 'Giao việc CRM', end: true },
+      { to: '/crm/phat-sinh', icon: ClipboardList, label: 'Quản lý phát sinh' },
       { to: '/crm/dept-plan', icon: CalendarRange, label: 'Kế hoạch phòng ban' },
       { to: '/crm/daily-reports', icon: ClipboardCheck, label: 'Báo cáo hằng ngày' },
       { to: '/crm/daily-reports/history', icon: History, label: 'Lịch sử công việc ngày' },
@@ -429,7 +430,9 @@ const KETOAN_MENU_GROUPS = [
     title: '1. Tổng quan',
     emoji: '🧾',
     items: [
-      { to: '/ketoan/dashboard', icon: LayoutDashboard, label: 'Tổng hợp deal SX', end: true },
+      { to: '/ketoan/dashboard', icon: LayoutDashboard, label: 'Tổng hợp deal SX · VC/LĐ', end: true },
+      { to: '/ketoan/phat-sinh', icon: ClipboardList, label: 'Quản lý phát sinh' },
+      { to: '/ketoan/cong-no', icon: Wallet, label: 'Công nợ phải thu' },
       { to: '/ketoan/bank-accounts', icon: CreditCard, label: 'Tài khoản NH' },
       { to: '/ketoan/chi-phi', icon: Calculator, label: 'Chi phí dự án' },
       { to: '/ketoan/chi-phi/setup', icon: Settings, label: 'Công thức chi phí' },
@@ -459,6 +462,7 @@ const MUAHANG_MENU_GROUPS = [
     emoji: '🛒',
     items: [
       { to: '/mua-hang', icon: ShoppingBag, label: 'Inbox Mua hàng', end: true },
+      { to: '/mua-hang/phat-sinh', icon: ClipboardList, label: 'Quản lý phát sinh' },
     ],
   },
   {
@@ -485,6 +489,7 @@ const VC_MENU_GROUPS = [
       { to: '/vc/dashboard', icon: LayoutDashboard, label: 'Dashboard Lắp đặt', end: true },
       { to: '/vc/project-tasks', icon: CheckSquare, label: 'Quản lý nhiệm vụ' },
       { to: '/vc/assignments', icon: ClipboardList, label: 'Giao việc Lắp đặt' },
+      { to: '/vc/phat-sinh', icon: ClipboardList, label: 'Quản lý phát sinh' },
       { to: '/management/project-logs', icon: History, label: 'Nhật ký công trình' },
       { to: '/drive?module=vc', icon: HardDrive, label: 'Drive Lắp đặt' },
     ]

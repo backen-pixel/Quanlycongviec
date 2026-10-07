@@ -8,31 +8,113 @@
 ## 2026-10-06 — P1-2: thu hồi quyền thừa của service_role (SQL 710)
 - 710 đã áp lên DB chính (PG 17.6, 3 bảng rỗng, RLS bật, anon/authenticated = 0). Kiểm tra sau áp thấy service_role còn UPDATE/DELETE/TRUNCATE trên bảng nhật ký do quyền mặc định của Supabase; thiết kế yêu cầu chỉ SELECT+INSERT.
 - Sửa 710: thêm REVOKE ALL FROM service_role trước GRANT. Bài thử nhánh tạm giờ cài quyền mặc định giống DB chính; 35/35 đạt. Chưa áp bản sửa lên DB chính (cần Founder duyệt riêng).
+## 2026-10-07 — SX mobile (quản lý): việc dự án cả đội, lọc hạn ở máy chủ, khử trùng trước khi lọc
+
+- Backend `backend/src/routes/workTasks.js`: route mới `GET /team-project-tasks` (chỉ quản lý; tham số `company_id, assignee_id, q, due_days, created_days, workshop_type_id, no_deadline, due_from, due_to, page, page_size`). `computeTeamTasks` quét `unified_tasks_v` song song, cache 30 s (`teamTasksCache`), khử trùng theo `project_id|title` (ưu tiên bản không phải `crm_task`), gom nhóm theo dự án (quá hạn → sắp đến hạn → mới/không hạn). Commit cuối `698c5a68`: khi có `due_from/due_to`, lấy thêm bản không-`crm_task` của các dự án có việc CRM trong khoảng, khử trùng rồi mới lọc lại khoảng hạn. Cũng `crmAssignments.js`: `exclude_done=1`; `crmTaskLeadAccess.js`: `assigneeReadGrant` cho GET comments/members.
+- App `sx-mobile`: `lib/teamProjectTasksApi.ts` (mới), `lib/workTasksApi.ts`, `screens/WorkScreen.tsx` (chip Người/Phân loại/Hạn, mục "Không hạn", hiện dần từng nhóm), `screens/OverviewScreen.tsx`, `screens/KanbanScreen.tsx` (effect `dueJumpedRef` tự nhảy tới cột đầu tiên có dự án khi áp Hạn xử lý).
+- PR đã merge vào main: #49, #50, #52 (squash; lần sau gộp `origin/main` vào nhánh và giữ phía nhánh nếu báo xung đột).
+- Kiểm tra: SQL chỉ-đọc (project `qlycv`) khớp app sau deploy — HCB 07/10/2026: Tủ bếp Hôm nay 43/3, Ngày mai 51/3; Cánh kính Hôm nay 7/1, Ngày mai 7/1. Trước sửa lệch 56/4 và 17/2 do dự án TB-2026-986/989. Không ghi dữ liệu thật.
+- Chưa làm/để ngỏ: độ mượt cuộn trên máy thật; `/project-overview` ~13,7 s với HCB; phân quyền sửa/xóa không gian chung; badge thông báo race; giải thích hiển thị web của TB-2026-901. File chưa commit và không thuộc việc này: `backend/package.json`, `route-manifest*.json`, `route-parity-report.json`, `debug-fb4228.log`, `docs/ops/README.md`, `.claude/`, `backend/tests/sx-kanban-counts-readonly.js`.
 
 ---
 
-## 2026-10-06 16:39 — Xác minh Lead App trong giai đoạn chuẩn bị
+## 2026-10-07 — Phát sinh trên CRM, VC, Kế toán, Mua hàng, module tùy chỉnh
 
-- Sửa `backend/src/helpers/facebookPageInbox.js` và `backend/src/routes/facebook.js`: tách điều kiện xác minh GET khỏi cờ nhận POST; yêu cầu secret/token riêng đủ dài và secret khác Messenger. Không thay luồng POST, worker hoặc Messenger.
-- Bổ sung kịch bản cấu hình thiếu/sai khóa và GET xác minh được trong khi POST đóng ở `backend/tests/facebookDedicatedLeadApp.test.js`.
-- Kiểm thử: 235/235 ca Node Facebook liên quan PASS; chưa chạy Meta thật, PostgreSQL/CI hoặc triển khai bản sửa. Hoàn tác bằng revert đúng commit của gói sau khi commit.
-
----
-
-## 2026-10-06 15:45 — Facebook Lead Ads, App riêng của VPT
-
-- Meta không nhận yêu cầu quyền App `TUBEPPROvpt` qua Business Settings; yêu cầu không được gửi. Đã kiểm tra App VPT `openclaw` và `claw`, chưa App nào đạt cổng nhận production `leadgen`.
-- Chuẩn bị đường App Lead riêng, mặc định tắt, với callback ký riêng, token Graph riêng và phân luồng giữ Messenger. 210 ca Node liên quan đạt; reviewer độc lập PASS mã, HOLD production vì quyền và sự kiện Meta thật chưa xác minh.
-- Ghi rõ điều kiện cutover: không bật chế độ App riêng trước khi App mới nhận production Lead, vì callback cũ sẽ bỏ qua `leadgen` của Page quản lý. Không thay production trong lượt này.
+- Cùng trang `/sx/phat-sinh`: tab Không phí / Có phí, lọc `phat_sinh` theo `assignment_module` của từng module.
+- File: `ProductionPhatSinhPage.jsx`, `CustomModuleAssignmentsPage.jsx`, `App.jsx`, `Sidebar.jsx`, `customAppModuleSidebar.js`.
 
 ---
 
-## 2026-10-06 — P1-2: registry đợt thử (SQL 710)
-File: hai SQL 710, trialRegistry.js, trialRegistry.test.js, CURRENT.md, WORKLOG.md. Chỉ thêm bảng P1/RPC và module chưa nối runtime.
-Kiểm tra: node --check; node --test --test-isolation=none trialRegistry.test.js 5/5 (Node thường spawn EPERM); không chạy SQL/DB/mạng.
-Rollback: script 710 chỉ DROP bảng rỗng, giữ bảng có dữ liệu; chưa diễn tập trên bản sao.
+## 2026-10-07 — Chi phí phát sinh kế toán theo việc phát sinh không gian chung
+
+- Thay helper `accountingExpenses.js` bằng `accountingPhatSinh.js`: `listDealPhatSinh`, `setPhatSinhCost`, `summarizePhatSinhByLeadIds`. Chi phí ghi qua `upsertCostEntry` (`source_table='crm_tasks'`, `source_row_id=crm_task_id`, `source_key='sx.project_expense'`); bỏ phí thì void.
+- API mới `GET /accounting/deals/:leadId/phat-sinh`, `PUT /accounting/deals/:leadId/phat-sinh/:assignmentId/cost` (body `{ amount }`, null = bỏ). Bỏ API `/expenses`.
+- `accountingDeals.js`: dòng deal có `phat_sinh_count`, `phat_sinh_missing_cost`, `extra_cost_total`. `accountingChecklist.js`: mục `phat_sinh_cost`.
+- Frontend: `PhatSinhPanel.jsx` thay `ExpensesPanel.jsx`; dòng "Phát sinh (n việc)" trên thẻ dashboard trỏ tới `#phat-sinh`; nút "Ghi phí" trong checklist.
+- Test: `node tests/accounting-checklist.js` ok. Đã xem LEAD-2026-958 (2 việc, chưa ghi phí) trên trình duyệt. Chưa ghi phí thật.
 
 ---
+
+## 2026-10-07 — Kế toán ghi chi phí phát sinh (đã thay bằng mục trên)
+
+- Helper `accountingExpenses.js` (đọc/ghi `project_expenses`, ghi sổ chi phí qua `syncProjectExpense`, xóa thì void `cost_entries`). API `GET/POST /accounting/deals/:leadId/expenses`, `DELETE .../expenses/:expenseId`.
+- `accountingDeals.js`: dòng deal có `extra_cost_total/count`; summary `total_extra_cost`; CSV cột "Chi phí phát sinh".
+- Frontend: `components/accounting/ExpensesPanel.jsx` ở tab Tài chính chi tiết deal; ô "Phát sinh" trong khung Chi phí theo nguồn; dòng "Phát sinh" ở bước Xưởng trên thẻ dashboard.
+- Khác với trang `/ketoan/phat-sinh` (việc phát sinh trên `crm_assignments`, không có số tiền) do phiên khác thêm, chưa commit.
+- Đã xem trên trình duyệt, chưa lưu khoản chi thật (bảng `project_expenses` hiện trống).
+
+---
+
+## 2026-10-07 — Thẻ deal kế toán dạng 4 bước
+
+- `AccountingDashboard.jsx`: thẻ deal đổi thành đầu thẻ (mã, tên deal, khách, hồ sơ, Còn phải thu) + 4 bước CRM / Xưởng / Chứng từ / VC-LĐ có vạch màu trạng thái; số tiền nằm trong từng bước. Bỏ hàng số liệu cuối thẻ và chú thích cũ.
+
+---
+
+## 2026-10-07 — Kế toán thêm VC/LĐ
+
+- Helper mới `accountingVcInfo.js` (giai đoạn VC từ cột kanban VC). `accountingDeals.js` đọc thêm `logistics_company_id, vc_kanban_column_id, vc_deleted_at, logistics_cost, delivery_date, install_date`; summary thêm `vc_breakdown`, `total_logistics_cost`; CSV thêm 5 cột VC/LĐ; lọc `vc_group=none|active|done`.
+- API mới `PUT /accounting/deals/:leadId/logistics-cost`. `/checklist` trả thêm `vc`.
+- Checklist thêm `vc_cost`; `collected` tính cả khi `vc_done`.
+- Frontend: `AccountingDashboard.jsx` (làn VC/LĐ, chip lọc, KPI Phí VC/LĐ), `AccountingDealDetail.jsx` (ô VC/LĐ + nhập phí), `AccountingReceivablesPage.jsx` (cột VC/LĐ).
+- Test: `node backend/tests/accounting-checklist.js`. Đã xem trên trình duyệt (VPT: 140 chưa bàn giao, 60 đang VC/LĐ); chưa bấm lưu phí thật.
+
+---
+
+## 2026-10-07 — Kế toán giai đoạn 1
+
+- API mới: `GET /accounting/receivables`, `GET /accounting/deals/:leadId/checklist`, `POST /accounting/deals/:leadId/invoices`. `/deals` và `/export` nhận thêm `missing_docs`, `missing_item`, `name_mismatch`.
+- Frontend: `AccountingChecklist.jsx`, `InvoiceFromOrderModal.jsx`, `AccountingReceivablesPage.jsx` (route `/ketoan/cong-no`, menu Sidebar), sửa `AccountingDashboard.jsx`, `AccountingDealDetail.jsx`, `App.jsx`.
+- Backend: `accountingChecklist.js`, `accountingInvoices.js`, sửa `accountingDeals.js`, `accountingDealDetail.js`, `accounting.js`.
+- Test: `node backend/tests/accounting-checklist.js`, `node backend/tests/accounting-deal-identity.js`. Đã xem trên trình duyệt bằng tài khoản kế toán VPT; chưa bấm tạo hóa đơn thật.
+- Rollback: bỏ các file trên; không có migration.
+
+---
+
+## 2026-10-07 — Chuông bình luận theo module người nhận
+
+- Deal đã có VC vẫn gửi một `ecosystem_module_key` chung, frontend chỉ nhận diện SX rồi còn lại nhảy `/crm/leads`. NV xưởng Metalla không vào được.
+- Bấm chuông chọn đường dẫn theo module của người đang đăng nhập. Thông báo mới gắn `viewer_module_key` từng người nhận.
+- File: `NotificationCenter.jsx`, `dealModulePathAccess.js`, `dealCommentNotifications.js`, `commentViewerModule.js`.
+
+---
+
+## 2026-10-07 — Kế toán đối chiếu báo giá
+
+- Dashboard kế toán bỏ bảng nhiều cột, mỗi deal hiện tên CRM, tên xưởng và file báo giá cạnh nhau. Lọc được deal tên khác nhau. Xuất Excel thêm tên xưởng và tên file.
+- Chi tiết deal hiện cùng hai tên, mỗi tài liệu ghi mã CRM và mã xưởng.
+- File: `AccountingDashboard.jsx`, `AccountingDealDetail.jsx`, `accountingDeals.js`, `accountingDealDetail.js`, `accounting.js`, `accountingDealIdentity.js`, `tests/accounting-deal-identity.js`.
+
+---
+
+## 2026-10-06 — Sửa đếm 1/7 khi CRM còn việc mở
+
+- `indexSxCrmCompletion` không còn coi xong nếu chỉ một bản CRM cùng tên đã completed mà bản khác vẫn pending.
+- File: `projectOverviewDeadline.js`, `tests/project-overview-deadline.js`.
+
+---
+
+## 2026-10-06 — Kanban Quản lý nhiệm vụ
+
+- Thêm nút Kanban / Hạn. Kanban xếp danh mục theo tiến độ việc con.
+- File: `frontend/src/pages/ProjectTasksOverviewPage.jsx`.
+
+---
+
+## 2026-10-06 — Dải KPI trên Quản lý nhiệm vụ
+
+- Thêm Tổng, Chưa làm, Đang làm, Đã làm, Quá hạn vào `ProjectTasksOverviewPage` (mọi module).
+- File: `frontend/src/pages/ProjectTasksOverviewPage.jsx`.
+
+---
+
+## 2026-10-06 — Nhiệm vụ CRM cùng giao diện cột hạn với SX
+
+- Khung `/crm/project-tasks` tràn ngang như trang xưởng. Thẻ CRM thiếu hạn thì hiện hạn lịch lắp để vào đúng cột.
+- File: `workTasks.js`, `App.jsx`.
+
+---
+
 ## 2026-10-06 — Lọc deal theo công ty và nhân viên CRM
 
 - Picker dự án/deal thêm chọn Công ty và Nhân viên CRM (`/crm/employees-by-company?for_module=crm`).

@@ -9,8 +9,13 @@ const {
   fetchAccountingDeals,
   buildAccountingSummary,
   fetchAccountingDealsForExport,
+  fetchAccountingDealRow,
+  fetchAccountingReceivables,
   accountingDealsToCsv,
 } = require('../helpers/accountingDeals');
+const { createInvoiceFromOrder } = require('../helpers/accountingInvoices');
+const { syncLogisticsCost } = require('../helpers/costLedger');
+const { listDealPhatSinh, setPhatSinhCost } = require('../helpers/accountingPhatSinh');
 const {
   assertAccountingDeal,
   listBankAccounts,
@@ -37,6 +42,10 @@ function parseQueryFilters(req) {
     search: req.query.search || req.query.q || '',
     financialStatus: req.query.financial_status || null,
     sxDoneNotInvoiced: req.query.sx_done_not_invoiced === 'true' || req.query.sx_done_not_invoiced === '1',
+    nameMismatch: req.query.name_mismatch === 'true' || req.query.name_mismatch === '1',
+    missingDocs: req.query.missing_docs === 'true' || req.query.missing_docs === '1',
+    missingItem: req.query.missing_item || null,
+    vcGroup: req.query.vc_group || null,
   };
 }
 
@@ -119,6 +128,10 @@ r.get('/deals', async (req, res) => {
       search: filters.search,
       financialStatus: filters.financialStatus,
       sxDoneNotInvoiced: filters.sxDoneNotInvoiced,
+      nameMismatch: filters.nameMismatch,
+      missingDocs: filters.missingDocs,
+      missingItem: filters.missingItem,
+      vcGroup: filters.vcGroup,
       page: req.query.page,
       limit: req.query.limit,
     });
@@ -144,6 +157,10 @@ r.get('/export', async (req, res) => {
       search: filters.search,
       financialStatus: filters.financialStatus,
       sxDoneNotInvoiced: filters.sxDoneNotInvoiced,
+      nameMismatch: filters.nameMismatch,
+      missingDocs: filters.missingDocs,
+      missingItem: filters.missingItem,
+      vcGroup: filters.vcGroup,
     });
     const csv = accountingDealsToCsv(deals);
     const coLabel = (ctx.company?.short_name || ctx.company?.name || 'ketoan')
@@ -347,6 +364,160 @@ r.get('/deals/:leadId', async (req, res) => {
   } catch (e) {
     console.error('[accounting/deals/:id]', e);
     res.status(500).json({ error: e.message || 'Lỗi tải chi tiết deal' });
+  }
+});
+
+/** GET /accounting/receivables — công nợ phải thu theo tuổi nợ và theo khách */
+r.get('/receivables', async (req, res) => {
+  try {
+    const ctx = await resolveClientCompanyContext(req);
+    if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
+    const filters = parseQueryFilters(req);
+    const report = await fetchAccountingReceivables({
+      clientCompanyId: ctx.clientCompanyId,
+      workshopCompanyId: filters.workshopCompanyId,
+      search: filters.search,
+    });
+    res.json({ client_company: ctx.company, ...report });
+  } catch (e) {
+    console.error('[accounting/receivables]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải công nợ' });
+  }
+});
+
+/** GET /accounting/deals/:leadId/checklist — hồ sơ kế toán của deal */
+r.get('/deals/:leadId/checklist', async (req, res) => {
+  try {
+    const ctx = await resolveClientCompanyContext(req);
+    if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
+    const check = await assertAccountingDeal(req.params.leadId, ctx.clientCompanyId);
+    if (check.error) return res.status(check.status).json({ error: check.error });
+    const row = await fetchAccountingDealRow(ctx.clientCompanyId, req.params.leadId);
+    if (!row) return res.json({ checklist: null });
+    res.json({
+      checklist: row.checklist,
+      outstanding_amount: row.outstanding_amount,
+      sx_production_done: row.sx_production_done,
+      vc: {
+        phase: row.vc_phase,
+        phase_label: row.vc_phase_label,
+        group: row.vc_group,
+        done: row.vc_done,
+        company_name: row.vc_company_name,
+        stage_name: row.vc_stage_name,
+        stage_color: row.vc_stage_color,
+        delivery_date: row.delivery_date,
+        install_date: row.install_date,
+        logistics_cost: row.logistics_cost,
+      },
+    });
+  } catch (e) {
+    console.error('[accounting/deals/:id/checklist]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải hồ sơ kế toán' });
+  }
+});
+
+/** POST /accounting/deals/:leadId/invoices — xuất hóa đơn từ đơn hàng của deal */
+r.post('/deals/:leadId/invoices', async (req, res) => {
+  try {
+    const ctx = await resolveClientCompanyContext(req);
+    if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
+    const check = await assertAccountingDeal(req.params.leadId, ctx.clientCompanyId);
+    if (check.error) return res.status(check.status).json({ error: check.error });
+    const b = req.body || {};
+    if (!b.order_id) return res.status(400).json({ error: 'Chọn đơn hàng để xuất hóa đơn' });
+    const result = await createInvoiceFromOrder({
+      leadId: req.params.leadId,
+      orderId: b.order_id,
+      body: b,
+      userId: req.user?.userId || req.user?.id || null,
+    });
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    res.status(201).json(result);
+  } catch (e) {
+    console.error('[accounting/deals/:id/invoices]', e);
+    res.status(500).json({ error: e.message || 'Lỗi xuất hóa đơn' });
+  }
+});
+
+async function assertDealAccess(req, res) {
+  const ctx = await resolveClientCompanyContext(req);
+  if (ctx.error) { res.status(ctx.status).json({ error: ctx.error }); return false; }
+  const check = await assertAccountingDeal(req.params.leadId, ctx.clientCompanyId);
+  if (check.error) { res.status(check.status).json({ error: check.error }); return false; }
+  return true;
+}
+
+/** GET /accounting/deals/:leadId/phat-sinh — việc phát sinh (không gian chung) của deal + chi phí đã ghi */
+r.get('/deals/:leadId/phat-sinh', async (req, res) => {
+  try {
+    if (!(await assertDealAccess(req, res))) return;
+    res.json(await listDealPhatSinh(req.params.leadId));
+  } catch (e) {
+    console.error('[accounting/deals/:id/phat-sinh]', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải việc phát sinh' });
+  }
+});
+
+/** PUT /accounting/deals/:leadId/phat-sinh/:assignmentId/cost — ghi chi phí một việc phát sinh */
+r.put('/deals/:leadId/phat-sinh/:assignmentId/cost', async (req, res) => {
+  try {
+    if (!(await assertDealAccess(req, res))) return;
+    const result = await setPhatSinhCost({
+      leadId: req.params.leadId,
+      assignmentId: req.params.assignmentId,
+      amount: req.body?.amount,
+      userId: req.user?.userId || req.user?.id || null,
+    });
+    if (result.error) return res.status(result.status).json({ error: result.error });
+    res.json(result);
+  } catch (e) {
+    console.error('[accounting/deals/:id/phat-sinh/:aid/cost]', e);
+    res.status(500).json({ error: e.message || 'Lỗi ghi chi phí phát sinh' });
+  }
+});
+
+/** PUT /accounting/deals/:leadId/logistics-cost — phí VC/LĐ trên dự án (null = chưa nhập, 0 = không phí) */
+r.put('/deals/:leadId/logistics-cost', async (req, res) => {
+  try {
+    const ctx = await resolveClientCompanyContext(req);
+    if (ctx.error) return res.status(ctx.status).json({ error: ctx.error });
+    const check = await assertAccountingDeal(req.params.leadId, ctx.clientCompanyId);
+    if (check.error) return res.status(check.status).json({ error: check.error });
+
+    const raw = req.body?.logistics_cost;
+    let cost = null;
+    if (raw !== null && raw !== undefined && raw !== '') {
+      cost = Number(raw);
+      if (!Number.isFinite(cost) || cost < 0) {
+        return res.status(400).json({ error: 'Phí VC/LĐ phải là số không âm' });
+      }
+    }
+
+    const { data: lead } = await supabase
+      .from('crm_leads')
+      .select('id, project_id')
+      .eq('id', req.params.leadId)
+      .maybeSingle();
+    if (!lead?.project_id) return res.status(400).json({ error: 'Deal chưa có dự án để ghi phí VC/LĐ' });
+
+    const { data: project, error } = await supabase
+      .from('projects')
+      .update({ logistics_cost: cost, updated_at: new Date().toISOString() })
+      .eq('id', lead.project_id)
+      .select('id, company_id, logistics_cost')
+      .maybeSingle();
+    if (error) throw error;
+
+    if (project && cost != null) {
+      await syncLogisticsCost(project, { actorUserId: req.user?.userId || req.user?.id || null })
+        .catch((e) => console.warn('[accounting/logistics-cost] cost ledger:', e.message || e));
+    }
+
+    res.json({ ok: true, logistics_cost: project?.logistics_cost ?? null });
+  } catch (e) {
+    console.error('[accounting/deals/:id/logistics-cost]', e);
+    res.status(500).json({ error: e.message || 'Lỗi cập nhật phí VC/LĐ' });
   }
 });
 

@@ -5,7 +5,7 @@ import {
   Factory, DollarSign, Plus, Trash2, Loader2, Save, Banknote, Building2,
   Landmark, Wallet, CheckCircle2, Clock3, AlertCircle, ChevronDown, ChevronUp,
   User, Phone, Tag, TrendingUp, X, FileSpreadsheet, FileImage, File as FileIcon,
-  Download, ClipboardList, ArrowRightLeft, Eye,
+  Download, ClipboardList, ArrowRightLeft, Eye, Truck,
 } from 'lucide-react';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -13,6 +13,9 @@ import { formatVND, formatDate } from '../lib/utils';
 import { publicFileUrl, getFileOpenAnchorProps, downloadUploadFile } from '../lib/publicFileUrl';
 import { isAccountingUser } from '../lib/crossWorkshopProduction';
 import ExcelQuotationImport from '../components/ExcelQuotationImport';
+import AccountingChecklist, { ChecklistMeter } from '../components/accounting/AccountingChecklist';
+import InvoiceFromOrderModal from '../components/accounting/InvoiceFromOrderModal';
+import PhatSinhPanel from '../components/accounting/PhatSinhPanel';
 import BankAccountsManagerModal from '../components/BankAccountsManagerModal';
 
 const TABS = [
@@ -202,6 +205,13 @@ export default function AccountingDealDetail() {
   const [docStatusSavingId, setDocStatusSavingId] = useState(null);
 
   const [costSummary, setCostSummary] = useState(null);
+  const [costRefresh, setCostRefresh] = useState(0);
+  const [checklist, setChecklist] = useState(null);
+  const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
+  const [checklistBusy, setChecklistBusy] = useState(false);
+  const [vc, setVc] = useState(null);
+  const [vcCostDraft, setVcCostDraft] = useState('');
+  const [vcCostSaving, setVcCostSaving] = useState(false);
 
   const adminParams = useMemo(() => {
     if (isAccountingUser(user)) return {};
@@ -217,8 +227,15 @@ export default function AccountingDealDetail() {
       if (!isAccountingUser(user) && user?.company_id) {
         params.client_company_id = user.company_id;
       }
-      const { data } = await api.get(`/accounting/deals/${leadId}`, { params });
+      const [{ data }, checklistRes] = await Promise.all([
+        api.get(`/accounting/deals/${leadId}`, { params }),
+        api.get(`/accounting/deals/${leadId}/checklist`, { params }).catch(() => null),
+      ]);
       setBundle(data);
+      setChecklist(checklistRes?.data?.checklist || null);
+      const vcInfo = checklistRes?.data?.vc || null;
+      setVc(vcInfo);
+      setVcCostDraft(vcInfo?.logistics_cost != null ? String(vcInfo.logistics_cost) : '');
       const lead = data.lead || {};
       setDepositForm({
         deposit_amount: lead.deposit_amount != null ? String(lead.deposit_amount) : '',
@@ -232,10 +249,26 @@ export default function AccountingDealDetail() {
     }
   }, [leadId, user]);
 
+  const refreshChecklist = useCallback(async () => {
+    try {
+      const { data } = await api.get(`/accounting/deals/${leadId}/checklist`, { params: adminParams });
+      setChecklist(data?.checklist || null);
+    } catch {
+      /* giữ checklist cũ */
+    }
+  }, [leadId, adminParams]);
+
   useEffect(() => { load(); }, [load]);
 
   const lead = bundle?.lead;
   const project = bundle?.project;
+  const workshopLabel = project?.company?.short_name || project?.company?.name || '';
+  const namesDiffer = (() => {
+    const a = String(lead?.title || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const b = String(project?.name || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    return Boolean(a && b && a !== b);
+  })();
+  const vcActive = Boolean(vc?.phase) && vc.phase !== 'none';
   const stages = bundle?.payment_stages || [];
   const payments = bundle?.payments || [];
   const bankAccounts = bundle?.bank_accounts || [];
@@ -251,9 +284,94 @@ export default function AccountingDealDetail() {
       .then(({ data }) => { if (!cancelled) setCostSummary(data); })
       .catch(() => { if (!cancelled) setCostSummary(null); });
     return () => { cancelled = true; };
-  }, [project?.id, adminParams]);
+  }, [project?.id, adminParams, costRefresh]);
 
   const docBlockData = { quotation: quotations, order: orders, invoice: invoices };
+
+  const markDepositReceived = async () => {
+    if (!confirm('Đánh dấu cọc đã nhận? Báo giá và đơn hàng của deal sẽ cập nhật theo.')) return;
+    setChecklistBusy(true);
+    try {
+      await api.put(`/accounting/deals/${leadId}/deposit`, { deposit_received: true }, { params: adminParams });
+      await load();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Không cập nhật được cọc');
+    } finally {
+      setChecklistBusy(false);
+    }
+  };
+
+  const saveLogisticsCost = async (value) => {
+    setVcCostSaving(true);
+    try {
+      await api.put(`/accounting/deals/${leadId}/logistics-cost`, { logistics_cost: value }, { params: adminParams });
+      await load();
+    } catch (e) {
+      alert(e.response?.data?.error || e.message || 'Không lưu được phí VC/LĐ');
+    } finally {
+      setVcCostSaving(false);
+    }
+  };
+
+  const checklistAction = (item) => {
+    const btn = 'shrink-0 h-7 px-2.5 rounded-md text-[11px] font-bold cursor-pointer transition disabled:opacity-50';
+    switch (item.key) {
+      case 'quotation':
+        return <Link to={`/crm/quotations/new?lead_id=${encodeURIComponent(leadId)}`} className={`${btn} inline-flex items-center bg-blue-50 text-blue-700 hover:bg-blue-100`}>Tạo báo giá</Link>;
+      case 'quotation_file':
+        return <button type="button" onClick={() => { setImportDocSource(null); setImportType('quotation'); }} className={`${btn} bg-blue-50 text-blue-700 hover:bg-blue-100`}>Nhập Excel</button>;
+      case 'order':
+        return <Link to="/crm/orders" className={`${btn} inline-flex items-center bg-emerald-50 text-emerald-700 hover:bg-emerald-100`}>Tạo đơn hàng</Link>;
+      case 'vc_cost':
+        return (
+          <button
+            type="button"
+            onClick={() => {
+              const el = document.getElementById('vc-cost-input');
+              el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              el?.focus();
+            }}
+            className={`${btn} bg-sky-50 text-sky-700 hover:bg-sky-100`}
+          >
+            Nhập phí
+          </button>
+        );
+      case 'phat_sinh_cost':
+        return (
+          <button
+            type="button"
+            onClick={() => {
+              setTab('finance');
+              setTimeout(() => document.getElementById('phat-sinh')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+            }}
+            className={`${btn} bg-rose-50 text-rose-700 hover:bg-rose-100`}
+          >
+            Ghi phí
+          </button>
+        );
+      case 'deposit':
+        return <button type="button" disabled={checklistBusy} onClick={markDepositReceived} className={`${btn} bg-emerald-50 text-emerald-700 hover:bg-emerald-100`}>Đánh dấu đã nhận</button>;
+      case 'payment_proof':
+        return (
+          <button
+            type="button"
+            onClick={() => {
+              setTab('finance');
+              setTimeout(() => document.getElementById('lich-su-thanh-toan')?.scrollIntoView({ behavior: 'smooth' }), 50);
+            }}
+            className={`${btn} bg-gray-100 text-gray-700 hover:bg-gray-200`}
+          >
+            Xem khoản thu
+          </button>
+        );
+      case 'invoice':
+        return <button type="button" onClick={() => setInvoiceModalOpen(true)} className={`${btn} bg-purple-600 text-white hover:bg-purple-700`}>Xuất hóa đơn</button>;
+      case 'collected':
+        return <button type="button" onClick={() => { setTab('finance'); setPayFormOpen(true); }} className={`${btn} bg-amber-50 text-amber-800 hover:bg-amber-100`}>Ghi nhận thu</button>;
+      default:
+        return null;
+    }
+  };
 
   const updateDocStatus = async (blockKey, doc, value) => {
     if (!doc?.id || docStatusSavingId) return;
@@ -536,6 +654,100 @@ export default function AccountingDealDetail() {
         </div>
       </div>
 
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 px-3.5 py-3">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-indigo-600">Dự án CRM</p>
+          <p className="text-sm font-bold text-gray-900 mt-1">{lead.title || '—'}</p>
+          <p className="text-xs text-gray-500 mt-0.5">{lead.code || 'Chưa có mã deal'}</p>
+        </div>
+        <div className={`rounded-xl border px-3.5 py-3 ${namesDiffer ? 'border-amber-300 bg-amber-50' : 'border-orange-200 bg-orange-50/50'}`}>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-orange-700">Dự án xưởng</p>
+            {namesDiffer && (
+              <span className="text-[10px] font-bold uppercase text-amber-800">Tên khác CRM</span>
+            )}
+          </div>
+          <p className={`text-sm font-bold mt-1 ${namesDiffer ? 'text-amber-950' : 'text-gray-900'}`}>{project?.name || 'Chưa gắn dự án xưởng'}</p>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {[project?.code, workshopLabel].filter(Boolean).join(' · ') || 'Chưa có mã dự án'}
+          </p>
+        </div>
+        <div className="rounded-xl border border-sky-200 bg-sky-50/60 px-3.5 py-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-sky-700">Vận chuyển / Lắp đặt</p>
+            {project?.id && vcActive && (
+              <Link to={`/vc/projects/${project.id}`} className="text-[11px] font-semibold text-sky-700 hover:underline inline-flex items-center gap-1">
+                <Truck className="h-3 w-3" /> Mở VC
+              </Link>
+            )}
+          </div>
+          <p className={`text-sm font-bold mt-1 ${vcActive ? 'text-gray-900' : 'text-gray-400'}`}>
+            {vcActive ? (vc.stage_name || vc.phase_label) : 'Chưa bàn giao VC/LĐ'}
+          </p>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {[
+              vc?.company_name,
+              vc?.delivery_date ? `Giao ${formatDate(String(vc.delivery_date).slice(0, 10))}` : null,
+              vc?.install_date ? `Lắp ${formatDate(String(vc.install_date).slice(0, 10))}` : null,
+            ].filter(Boolean).join(' · ') || (vcActive ? 'Chưa có ngày giao / lắp' : 'Xưởng chưa chuyển sang VC/LĐ')}
+          </p>
+          <label htmlFor="vc-cost-input" className="block text-[11px] font-semibold text-gray-600 mt-2">Phí VC/LĐ (đ)</label>
+          <div className="flex flex-wrap items-center gap-1.5 mt-1">
+            <input
+              id="vc-cost-input"
+              type="number"
+              min="0"
+              inputMode="numeric"
+              value={vcCostDraft}
+              onChange={(e) => setVcCostDraft(e.target.value)}
+              placeholder="Chưa nhập"
+              className="min-w-[8rem] flex-1 h-7 px-2 rounded-md border border-sky-200 bg-white text-xs tabular-nums focus:outline-none focus:ring-2 focus:ring-sky-400"
+            />
+            <button
+              type="button"
+              disabled={vcCostSaving || vcCostDraft === (vc?.logistics_cost != null ? String(vc.logistics_cost) : '')}
+              onClick={() => saveLogisticsCost(vcCostDraft === '' ? null : Number(vcCostDraft))}
+              className="h-7 px-2.5 rounded-md bg-sky-600 text-white text-[11px] font-bold hover:bg-sky-700 cursor-pointer disabled:opacity-40"
+            >
+              Lưu
+            </button>
+            {vc?.logistics_cost == null && (
+              <button
+                type="button"
+                disabled={vcCostSaving}
+                onClick={() => saveLogisticsCost(0)}
+                title="Khách tự chở hoặc giá đã gồm VC/LĐ"
+                className="h-7 px-2 rounded-md border border-sky-200 bg-white text-sky-700 text-[11px] font-semibold hover:bg-sky-50 cursor-pointer disabled:opacity-40"
+              >
+                Không phí
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {checklist && (
+        <div className={`rounded-xl border bg-white shadow-sm p-4 ${checklist.missing_count ? 'border-red-200' : 'border-emerald-200'}`}>
+          <div className="flex flex-wrap items-start justify-between gap-3 mb-1">
+            <div>
+              <h3 className="text-sm font-bold text-gray-900">Hồ sơ kế toán</h3>
+              <p className="text-[11px] text-gray-500">Các mục kế toán cần có cho deal này. Mục xám là chưa tới lúc làm.</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="w-40"><ChecklistMeter checklist={checklist} /></div>
+              <button
+                type="button"
+                onClick={() => setInvoiceModalOpen(true)}
+                className="h-8 px-3 rounded-lg bg-purple-600 text-white text-xs font-bold hover:bg-purple-700 cursor-pointer inline-flex items-center gap-1"
+              >
+                <Receipt className="h-3.5 w-3.5" /> Xuất hóa đơn
+              </button>
+            </div>
+          </div>
+          <AccountingChecklist checklist={checklist} renderAction={checklistAction} />
+        </div>
+      )}
+
       {/* Stat cards — deal CRM (doanh thu) · chi phí xưởng — hai số độc lập */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <StatCard
@@ -580,7 +792,7 @@ export default function AccountingDealDetail() {
             <p className="text-sm font-bold text-teal-900">Chi phí theo nguồn</p>
             <Link to="/ketoan/chi-phi" className="text-xs font-semibold text-teal-700 hover:underline">Mở sổ chi phí</Link>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
             <div>
               <p className="text-[11px] uppercase text-gray-500 font-semibold">Giá vốn</p>
               <p className="text-lg font-extrabold tabular-nums">{formatVND(costSummary.gia_von || 0)}</p>
@@ -592,6 +804,10 @@ export default function AccountingDealDetail() {
             <div>
               <p className="text-[11px] uppercase text-gray-500 font-semibold">Xưởng</p>
               <p className="text-lg font-extrabold tabular-nums">{formatVND(costSummary.by_source?.['sx.production_value'] || 0)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] uppercase text-gray-500 font-semibold">Phát sinh</p>
+              <p className="text-lg font-extrabold tabular-nums text-rose-700">{formatVND(costSummary.by_source?.['sx.project_expense'] || 0)}</p>
             </div>
             <div>
               <p className="text-[11px] uppercase text-gray-500 font-semibold">Mua hàng + VC + COGS</p>
@@ -691,6 +907,12 @@ export default function AccountingDealDetail() {
                         <p className={`text-sm font-semibold text-gray-900 truncate ${d.task_name ? 'mt-0.5' : ''}`} title={fileName}>
                           {fileName}
                         </p>
+                        <p className="text-[10px] text-gray-500 mt-0.5 truncate" title={`${lead.title || ''} / ${project?.name || ''}`}>
+                          CRM {lead.code || '—'}
+                          {' · '}
+                          Xưởng {project?.code || '—'}
+                          {namesDiffer ? ' · tên khác' : ''}
+                        </p>
                         <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                           <span className={`inline-flex px-1.5 py-0.5 rounded-md text-[10px] font-semibold border ${style.tone}`}>
                             {style.label}
@@ -788,6 +1010,21 @@ export default function AccountingDealDetail() {
                               <div className="min-w-0">
                                 <p className="text-sm font-semibold text-gray-800 truncate">{x.code || x.title || '—'}</p>
                                 <p className="text-[11px] text-gray-500 tabular-nums">{formatVND(x.total || 0)}</p>
+                                {block.key === 'invoice' && (
+                                  <p className="text-[11px] text-purple-700">
+                                    {x.invoice_number ? `Số HĐ ${x.invoice_number}` : 'Chưa có số hóa đơn'}
+                                    {x.invoice_date ? ` · ${formatDate(x.invoice_date)}` : ''}
+                                  </p>
+                                )}
+                                {block.key === 'quotation' && x.source_excel_file_name && (
+                                  <p className="text-[11px] text-blue-800 truncate" title={x.source_excel_file_name}>
+                                    {x.source_excel_file_url && getFileOpenAnchorProps(x.source_excel_file_url) ? (
+                                      <a {...getFileOpenAnchorProps(x.source_excel_file_url, { fileName: x.source_excel_file_name })} className="hover:underline">
+                                        {x.source_excel_file_name}
+                                      </a>
+                                    ) : x.source_excel_file_name}
+                                  </p>
+                                )}
                               </div>
                               <div className="shrink-0 flex flex-col items-end gap-0.5">
                                 {(DOC_STATUS_OPTIONS[block.key] || []).length > 0 && (
@@ -1112,7 +1349,7 @@ export default function AccountingDealDetail() {
           </div>
 
           {/* Payment history */}
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div id="lich-su-thanh-toan" className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden scroll-mt-4">
             <div className="p-4 flex items-center justify-between gap-2 flex-wrap border-b border-gray-100">
               <div>
                 <h3 className="text-sm font-bold text-gray-900">Lịch sử thanh toán</h3>
@@ -1267,7 +1504,25 @@ export default function AccountingDealDetail() {
               </div>
             )}
           </div>
+
+          <PhatSinhPanel
+            leadId={leadId}
+            params={adminParams}
+            onChanged={() => { setCostRefresh((n) => n + 1); refreshChecklist(); }}
+          />
         </div>
+      )}
+
+      {invoiceModalOpen && (
+        <InvoiceFromOrderModal
+          leadId={leadId}
+          orders={orders}
+          invoices={invoices}
+          customerName={lead?.customer?.full_name || ''}
+          params={adminParams}
+          onClose={() => setInvoiceModalOpen(false)}
+          onCreated={() => { setInvoiceModalOpen(false); load(); }}
+        />
       )}
 
       {importType && (

@@ -5,23 +5,84 @@ Thêm `spendCoverage.js` chỉ đọc và `spendCoverage.test.js`; không route,
 ---
 
 ## 2026-10-06 16:39 — Sửa cổng xác minh callback Lead App trước chuyển đổi (mã cục bộ)
+## 2026-10-07 — SX mobile tab Công việc/Dự án của quản lý: lọc theo hạn, khử trùng, tự nhảy cột
 
-GET `/api/facebook/webhook/lead-ads` nay trả challenge Meta khi App Secret và verify token **riêng, hợp lệ** đã cấu hình, dù `VPT_FB_LEAD_APP_MODE=0`. POST vẫn trả 404 khi cờ này tắt; Messenger và các cờ intake/worker không đổi. Việc xác minh GET **không chứng minh** App đã nhận Lead thật. Bản sửa trên nhánh `codex/facebook-lead-verify-precutover-20261006` chưa phát hành; 235/235 ca Node Facebook liên quan đạt. Cần review/CI trước khi phát hành, giữ chế độ App riêng OFF cho tới khi cổng Meta và đối soát Lead thật đạt. [Hồ sơ kích hoạt](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).
+App sx-mobile (quản lý/admin) tab Công việc lấy việc dự án của cả đội qua `GET /api/work-tasks/team-project-tasks` (phân trang theo nhóm dự án, quá hạn lên trước, có mục riêng "Không hạn" cho việc cũ hơn 7 ngày). Chip Hạn xử lý (Hôm nay / Ngày mai / Trong tuần / Tuần sau), Phân loại và Người đều lọc ở máy chủ (`due_from`, `due_to`, `workshop_type_id`, `assignee_id`).
+
+Lỗi đã sửa: lọc khoảng hạn trước khi khử trùng khiến bản CRM (hạn hôm nay) sống sót dù bản SX cùng tên đã quá hạn, nên dự án quá hạn lọt vào Hôm nay/Ngày mai (ví dụ TB-2026-986, TB-2026-989 ở HCB). Nay khử trùng trước (lấy thêm bản SX song sinh của các dự án có việc CRM trong khoảng) rồi mới lọc lại khoảng hạn.
+
+Tab Dự án (Kanban): khi áp Hạn xử lý mà cột đang xem trống thì tự nhảy tới cột đầu tiên có dự án, một lần cho mỗi giá trị bộ lọc.
+
+Đối chiếu SQL chỉ-đọc với app sau deploy (HCB = Công ty Hucabi, 07/10/2026): Tủ bếp Hôm nay 43 việc/3 nhóm, Ngày mai 51/3; Cánh kính Hôm nay 7/1, Ngày mai 7/1 — khớp. Các số đổi theo ngày và theo việc được hoàn thành.
+
+Chưa kiểm: độ mượt cuộn trên máy thật (LDPlayer render phần mềm, số đo giật không đáng tin); `/project-overview` (route do tác giả khác thêm) mất ~13,7 s với HCB; sửa/xóa ở không gian chung chưa phân quyền theo vai trò; badge thông báo còn race. Token `gh` của phiên AI không có quyền tạo/merge PR, người dùng tạo PR và merge thủ công.
+
+---
+
+## 2026-10-07 — Quản lý phát sinh ở các module còn lại
+
+Trang hai tab Không phí / Có phí của Sản xuất có thêm ở CRM (`/crm/phat-sinh`), Lắp đặt (`/vc/phat-sinh`), Kế toán (`/ketoan/phat-sinh`), Mua hàng (`/mua-hang/phat-sinh`) và module tùy chỉnh (`/m/:moduleKey/phat-sinh`). Mỗi trang chỉ hiện việc phát sinh của đúng module đó.
 
 ---
 
-## 2026-10-06 15:45 — App Lead riêng: mã PASS, production HOLD
+## 2026-10-07 — Chi phí phát sinh kế toán lấy từ việc phát sinh không gian chung
 
-Đã chuẩn bị callback/token Lead Ads riêng ở chế độ mặc định tắt để giữ Messenger cũ. 210 ca Node liên quan đạt; reviewer độc lập PASS mã, nhưng App VPT `openclaw` vẫn chưa phát hành/đăng ký `leadgen`, còn App `claw` chưa cấu hình Webhooks/Lead Capture. Không đổi Meta, Render hoặc DB thật; Facebook Form → CRM → Admin VPT **chưa chạy thật**. Việc tiếp theo: đưa mã qua PR/CI và hoàn tất quyền, callback, Lead Access, sự kiện Meta thật trước khi bật; giữ cờ OFF để không rơi Lead. [Bằng chứng và cổng chuyển đổi](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).
+Khu "Chi phí phát sinh" ở tab Tài chính chi tiết deal kế toán liệt kê việc phát sinh của deal (`crm_assignments` có `phat_sinh_kind`, bỏ việc đã hủy): loại, có phí/không phí theo loại, trạng thái, lỗi nhân viên/khách yêu cầu, người làm. Kế toán ghi chi phí từng việc (số tiền, "Không phí" = 0, "Bỏ" = void). Không còn nhập tay vào `project_expenses`.
+
+Chi phí lưu ở `cost_entries` (`source_key='sx.project_expense'`, `source_table='crm_tasks'`, `source_row_id` = `crm_task_id` của việc) vì `source_row_id` là uuid còn id việc là bigint. Không đổi schema. Việc chưa gắn `crm_task_id` thì chưa ghi được phí.
+
+Thẻ dashboard hiện "Phát sinh (n việc)", tổng phí hoặc "Chưa ghi phí". Checklist hồ sơ có mục "Phát sinh đã ghi chi phí" (chỉ khi deal có việc phát sinh). CSV thêm "Số việc phát sinh".
+
+---
+
+## 2026-10-07 — Kế toán thấy VC/LĐ của từng deal
+
+Thẻ deal kế toán có thêm cột "Vận chuyển / Lắp đặt" (đơn vị VC, cột kanban VC, ngày giao, ngày lắp) và ô "Phí VC/LĐ". Lọc được theo Chưa bàn giao / Đang VC/LĐ / Lắp xong. Chi tiết deal cho kế toán nhập `projects.logistics_cost` (trống = chưa nhập, 0 = không phí), ghi kèm sổ chi phí qua `syncLogisticsCost`. Hồ sơ deal thêm mục "Có phí VC/LĐ"; "Thu đủ tiền" cũng báo thiếu khi đã lắp xong. Công nợ có cột VC/LĐ. Giai đoạn VC suy theo `logistics_pipeline_stages` (dùng `kpiBucketForStage`), dự án `vc_deleted_at` coi như chưa bàn giao.
 
 ---
 
-## 2026-10-06 — P1-2: registry đợt thử (SQL 710)
-Tạo ba bảng P1 và RPC ghi atomic, rollback chỉ gỡ bảng rỗng; module nhận db, chưa nối route/cờ và không seed account/ngày.
-Kiểm tra: node --check và node --test --test-isolation=none trialRegistry.test.js đạt 5/5 (Node thường bị spawn EPERM); chưa chạy SQL, DB, mạng hoặc thử ACL/khóa trên bản sao.
-Hoàn tác: dùng 710_p1_trial_registry_rollback.sql trên bản sao được phép; giữ bảng có dữ liệu, rồi bỏ delta code và hai mục handoff.
+## 2026-10-07 — Kế toán giai đoạn 1: hồ sơ deal, xuất hóa đơn, công nợ
+
+Mỗi deal kế toán có danh sách 8 mục hồ sơ (báo giá, file Excel, đơn hàng, đơn khớp giá deal, cọc, mã giao dịch khoản thu, hóa đơn, thu đủ). Dashboard có khung "Việc kế toán cần làm" đếm deal thiếu từng mục, bấm để lọc. Chi tiết deal có nút xử lý từng mục và hộp "Xuất hóa đơn" từ đơn hàng (ghi `invoices.lead_id`, chặn vượt giá trị đơn). Trang mới `/ketoan/cong-no` chia tiền còn thu theo số ngày nợ, tính từ ngày bàn giao SX. Không đổi schema. Chưa làm: công nợ phải trả xưởng/NCC, sổ quỹ, báo cáo lãi lỗ, khóa kỳ.
 
 ---
+
+## 2026-10-07 — Bấm bình luận mở đúng module của người nhận
+
+Nhân viên xưởng bấm chuông bình luận của sale CRM không còn bị đưa sang trang deal CRM. Người chỉ thuộc Sản xuất mở `/sx/projects/:id?tab=comments`, người VC mở `/vc/projects/:id`, người CRM mở `/crm/leads/:id`. Thông báo mới ghi `viewer_module_key` theo từng người nhận.
+
+---
+
+## 2026-10-07 — Kế toán: đối chiếu file báo giá với tên CRM và tên xưởng
+
+Danh sách kế toán hiện mỗi deal thành ba cột: tên dự án CRM, tên dự án xưởng, file báo giá. Deal có hai tên khác nhau được đánh dấu. File Excel đã nhập báo giá được ưu tiên; nếu chưa nhập thì hiện tệp đang nằm trên dự án xưởng.
+
+---
+
+## 2026-10-06 — Tiến độ thẻ SX không tính xong khi CRM còn bản đang mở
+
+Thẻ danh mục xưởng chỉ cộng việc con là xong khi mọi việc CRM cùng tên đã xong. Còn một bản đang mở (ví dụ Sơn vừa completed vừa pending) thì việc xưởng cùng tên vẫn chưa xong. Bản huỷ không giữ việc ở trạng thái mở.
+
+---
+
+## 2026-10-06 — Kanban trên Quản lý nhiệm vụ
+
+Quản lý nhiệm vụ có hai kiểu xem: Kanban (Chưa làm, Đang làm, Đã làm) và Hạn (các cột theo ngày). Lựa chọn giữ trong phiên làm việc của từng module.
+
+---
+
+## 2026-10-06 — KPI Tổng / Chưa làm / Đang làm / Đã làm / Quá hạn trên Quản lý nhiệm vụ
+
+Trang Quản lý nhiệm vụ (CRM, Sản xuất, Lắp đặt và tổng quan) có dải số giống Giao việc. Bấm Chưa làm, Đang làm hoặc Quá hạn để lọc bảng. Đã làm đếm danh mục đã xong hết việc con.
+
+---
+
+## 2026-10-06 — Quản lý nhiệm vụ CRM cùng khung với Sản xuất
+
+`/crm/project-tasks` dùng cùng khung tràn ngang với `/sx/project-tasks`. Thẻ CRM không có hạn module thì lấy mốc lịch lắp của dự án để xếp vào cột Quá hạn / Hôm nay / Ngày mai, giống thẻ xưởng. Không ghi hạn đó xuống việc con.
+
+---
+
 ## 2026-10-06 — Lọc dự án theo công ty và nhân viên CRM
 
 Ô chọn dự án/deal trong hộp giao việc có bộ lọc Công ty và Nhân viên CRM (đội kinh doanh của công ty đó). Đổi công ty thì danh sách nhân viên CRM và kết quả tìm dự án đổi theo.

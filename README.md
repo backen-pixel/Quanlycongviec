@@ -16,3 +16,4 @@ cd frontend && npm run dev    # http://localhost:5173
 ```
 
 Stack: Express 5 + React/Vite + Supabase (PostgreSQL). Chi tiết trong `docs/project/CODING_STANDARD.md`.
+........

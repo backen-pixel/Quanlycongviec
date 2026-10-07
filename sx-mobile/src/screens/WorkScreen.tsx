@@ -89,6 +89,8 @@ import {
 import { isImageFile, resolveMediaUrl } from '../lib/mediaUtils';
 import { saveMessengerAttachment } from '../lib/messengerFileOpen';
 import { isQueryAbortError } from '../lib/queryCache';
+import { fetchTeamProjectTasksPage, type TeamProjectCounts } from '../lib/teamProjectTasksApi';
+import { fetchAssignmentLookups } from '../lib/sharedWorkspaceApi';
 
 import SpinningLoader from '../components/SpinningLoader';
 
@@ -118,6 +120,22 @@ function dueMatches(iso: string | null | undefined, filter: WorkDueFilter): bool
   if (filter === 'this_week') return day >= weekStart && day < weekStart + 7 * DAY;
   return day >= weekStart + 7 * DAY && day < weekStart + 14 * DAY;
 }
+/** Chip hạn xử lý → khoảng ngày lịch VN (YYYY-MM-DD, gồm hai đầu) để máy chủ lọc; rỗng nếu chưa chọn chip. */
+function dueRangeVN(filter: WorkDueFilter): { dueFrom?: string; dueTo?: string } {
+  if (!filter) return {};
+  const DAY = 86_400_000;
+  const ymd = (ms: number) => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+  const now = Date.now();
+  if (filter === 'today') return { dueFrom: ymd(now), dueTo: ymd(now) };
+  if (filter === 'tomorrow') return { dueFrom: ymd(now + DAY), dueTo: ymd(now + DAY) };
+  // Thứ Hai = đầu tuần theo ngày VN. 00:00 VN + 7h = 00:00 UTC cùng ngày → getUTCDay cho đúng thứ của ngày VN.
+  const vnMidnight = new Date(`${ymd(now)}T00:00:00+07:00`).getTime();
+  const vnDow = (new Date(vnMidnight + 7 * 3600_000).getUTCDay() + 6) % 7; // 0 = thứ Hai
+  const mon = vnMidnight - vnDow * DAY;
+  if (filter === 'this_week') return { dueFrom: ymd(mon), dueTo: ymd(mon + 6 * DAY) };
+  return { dueFrom: ymd(mon + 7 * DAY), dueTo: ymd(mon + 13 * DAY) };
+}
+
 type ScopeFilter = WorkScopeFilter;
 
 function isAssignmentsAdmin(role?: string | null): boolean {
@@ -601,6 +619,21 @@ function createStyles(colors: AppColors, bottomInset: number) {
       backgroundColor: colors.bgElevated,
     },
     statusBtnTxt: { color: colors.text, fontSize: 12, fontWeight: '800' },
+    /** Nút mở mục «Không hạn» ở cuối danh sách. */
+    ndBtn: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      marginVertical: 16,
+      marginHorizontal: 16,
+      paddingVertical: 12,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: colors.border,
+      backgroundColor: colors.card,
+    },
+    ndBtnTxt: { color: colors.textMuted, fontSize: 13, fontWeight: '800' },
     empty: {
       color: colors.textMuted,
       textAlign: 'center',
@@ -647,6 +680,23 @@ export default function WorkScreen() {
   const ownCompanyId = user?.company_id ? String(user.company_id) : '';
 
   const [tasks, setTasks] = useState<WorkTask[]>([]);
+  /** Quản lý (phạm vi Đội): việc DỰ ÁN quá hạn của cả đội — «Giao việc» không bao gồm chúng. */
+  const [teamProjectTasks, setTeamProjectTasks] = useState<WorkTask[]>([]);
+  /** Số đếm toàn bộ việc dự án của đội (máy chủ tính) — danh sách chỉ nạp theo trang. */
+  const [teamCounts, setTeamCounts] = useState<TeamProjectCounts | null>(null);
+  const [teamHasMore, setTeamHasMore] = useState(false);
+  /** Mục riêng «Không hạn»: việc chưa xong không có hạn, tạo từ lâu — nạp theo yêu cầu, theo trang nhóm dự án. */
+  const [ndOpen, setNdOpen] = useState(false);
+  const [ndTasks, setNdTasks] = useState<WorkTask[]>([]);
+  const [ndTotal, setNdTotal] = useState<number | null>(null);
+  const [ndHasMore, setNdHasMore] = useState(false);
+  const [ndLoading, setNdLoading] = useState(false);
+  const ndPageRef = useRef(0);
+  const ndHasMoreRef = useRef(false);
+  const ndLoadingRef = useRef(false);
+  const teamHasMoreRef = useRef(false);
+  const teamPageRef = useRef(1);
+  const teamLoadingMoreRef = useRef(false);
   /** List theo chip status (server) — tách khỏi `tasks` để KPI Chưa/Đang/Xong/QH không bị lệch. */
   const [chipTasks, setChipTasks] = useState<WorkTask[]>([]);
   const [hasMoreTasks, setHasMoreTasks] = useState(false);
@@ -660,6 +710,8 @@ export default function WorkScreen() {
   const [serverStats, setServerStats] = useState<WorkTasksStats | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [dueFilter, setDueFilter] = useState<WorkDueFilter>('');
+  const dueFilterRef = useRef<WorkDueFilter>('');
+  dueFilterRef.current = dueFilter;
   /** Section deal đóng mặc định — chỉ lưu leadId đang mở (giống VC). */
   const [expandedLeadIds, setExpandedLeadIds] = useState<Record<string, boolean>>({});
   const [scope, setScope] = useState<ScopeFilter>(teamView ? 'team' : 'mine');
@@ -699,6 +751,9 @@ export default function WorkScreen() {
   const statusFilterRef = useRef<StatusFilter>('all');
   const searchRef = useRef(search);
   searchRef.current = search;
+  const assigneeFilterRef = useRef(assigneeFilter);
+  assigneeFilterRef.current = assigneeFilter;
+  const skipFirstAssigneeEffectRef = useRef(true);
   const skipFirstSearchEffectRef = useRef(true);
 
   useEffect(() => { tasksLenRef.current = tasks.length; }, [tasks.length]);
@@ -773,6 +828,92 @@ export default function WorkScreen() {
     return workTypes.some((w) => String(w.id) === String(filterWorkTypeId)) ? filterWorkTypeId : '';
   }, [showWorkTypePicker, filterWorkTypeId, workTypes]);
 
+  /**
+   * Việc dự án của đội (quản lý, phạm vi Đội): tải theo TRANG nhóm dự án từ máy chủ, cuộn đến đâu tải tiếp.
+   * `assigneeFilter` và tìm kiếm cũng do máy chủ lọc — lọc ở máy chỉ thấy phần đã tải.
+   */
+  const loadTeamProjects = useCallback(async (
+    append: boolean,
+    o: { force?: boolean; companyId?: string | null; signal?: AbortSignal; seq?: number; keepNd?: boolean } = {},
+  ) => {
+    if (append) {
+      if (teamLoadingMoreRef.current || !teamHasMoreRef.current) return;
+      teamLoadingMoreRef.current = true;
+    }
+    const page = append ? teamPageRef.current + 1 : 1;
+    const mySeq = o.seq ?? loadSeqRef.current;
+    if (!append && !o.keepNd) {
+      // Đổi bộ lọc / kéo làm mới: đóng mục «Không hạn» (sẽ nạp lại theo bộ lọc mới khi mở). Tải lại NỀN (silent:
+      // realtime, quay lại tab) thì giữ nguyên để mục đang mở không tự đóng dưới tay người dùng.
+      setNdOpen(false);
+      setNdTasks([]);
+      setNdTotal(null);
+      ndPageRef.current = 0;
+      ndHasMoreRef.current = false;
+      setNdHasMore(false);
+    }
+    try {
+      const res = await fetchTeamProjectTasksPage({
+        companyId: o.companyId ?? (filterCompany || (canPickCompany ? null : (user?.company_id || null))),
+        assigneeId: assigneeFilterRef.current !== 'all' ? assigneeFilterRef.current : null,
+        workshopTypeId: activeWorkTypeId || null,
+        q: searchRef.current,
+        // Chip hạn xử lý do MÁY CHỦ lọc (lọc ở máy chỉ thấy nhóm đã tải; việc đến hạn hôm nay nằm ở trang sau nhóm quá hạn).
+        ...dueRangeVN(dueFilterRef.current),
+        page,
+        force: o.force,
+        signal: o.signal,
+      });
+      if (!append && mySeq !== loadSeqRef.current) return;
+      teamPageRef.current = res.page;
+      teamHasMoreRef.current = res.hasMore;
+      setTeamHasMore(res.hasMore);
+      setTeamCounts(res.counts);
+      setTeamProjectTasks((prev) => {
+        if (!append) return res.tasks;
+        const seen = new Set(prev.map((t) => t.id));
+        return [...prev, ...res.tasks.filter((t) => !seen.has(t.id))];
+      });
+    } catch (e) {
+      if (!isQueryAbortError(e)) console.warn('[WorkScreen] việc dự án của đội lỗi:', e);
+    } finally {
+      if (append) teamLoadingMoreRef.current = false;
+    }
+  }, [filterCompany, canPickCompany, user?.company_id, activeWorkTypeId]);
+
+  /** Nạp một trang nhóm dự án của mục «Không hạn» (append = trang kế tiếp). */
+  const loadNoDeadline = useCallback(async (append: boolean) => {
+    if (ndLoadingRef.current) return;
+    if (append && !ndHasMoreRef.current) return;
+    ndLoadingRef.current = true;
+    setNdLoading(true);
+    const page = append ? ndPageRef.current + 1 : 1;
+    try {
+      const res = await fetchTeamProjectTasksPage({
+        companyId: filterCompany || (canPickCompany ? null : (user?.company_id || null)),
+        assigneeId: assigneeFilterRef.current !== 'all' ? assigneeFilterRef.current : null,
+        workshopTypeId: activeWorkTypeId || null,
+        q: searchRef.current,
+        noDeadline: true,
+        page,
+      });
+      ndPageRef.current = res.page;
+      ndHasMoreRef.current = res.hasMore;
+      setNdHasMore(res.hasMore);
+      setNdTotal(res.counts.total);
+      setNdTasks((prev) => {
+        if (!append) return res.tasks;
+        const seen = new Set(prev.map((t) => t.id));
+        return [...prev, ...res.tasks.filter((t) => !seen.has(t.id))];
+      });
+    } catch (e) {
+      if (!isQueryAbortError(e)) console.warn('[WorkScreen] việc không hạn lỗi:', e);
+    } finally {
+      ndLoadingRef.current = false;
+      setNdLoading(false);
+    }
+  }, [filterCompany, canPickCompany, user?.company_id, activeWorkTypeId]);
+
   const load = useCallback(async (
     silent = false,
     append = false,
@@ -823,12 +964,17 @@ export default function WorkScreen() {
       const companyId = filterCompany || (canPickCompany ? null : (user?.company_id || null));
       const offset = append ? tasksLenRef.current : 0;
       const q = searchRef.current.trim() || undefined;
+      // Việc dự án của đội chạy SONG SONG với «Giao việc» (trước đây đợi «Giao việc» xong mới bắt đầu → cộng dồn thời gian chờ).
+      if (!append && teamView && scope === 'team') {
+        void loadTeamProjects(false, { force: opts?.force, companyId, signal: ac.signal, seq, keepNd: silent && !opts?.force });
+      }
       // Scope load — không gửi status (giữ KPI đúng trên mọi chip).
       const page = await fetchProductionWorkTasksPage({
         assigneeId,
         companyId,
         workshopTypeId: activeWorkTypeId || null,
         q,
+        excludeDone: teamView,
         limit: WORK_TASKS_PAGE_SIZE,
         offset,
         signal: ac.signal,
@@ -843,6 +989,11 @@ export default function WorkScreen() {
       setHasMoreTasks(page.hasMore);
       hasMoreTasksRef.current = page.hasMore;
       lastSilentAtRef.current = Date.now();
+      if (!append && !(teamView && scope === 'team')) {
+        setTeamProjectTasks([]);
+        setTeamCounts(null);
+        teamHasMoreRef.current = false;
+      }
     } catch (e) {
       if (seq !== loadSeqRef.current) return;
       const msg = String((e as { message?: string })?.message || '');
@@ -872,7 +1023,17 @@ export default function WorkScreen() {
     activeWorkTypeId,
     canPickCompany,
     filtersReady,
+    loadTeamProjects,
   ]);
+
+  // Đổi người nhận / chip hạn xử lý (phạm vi Đội): việc dự án do máy chủ lọc → tải lại trang đầu.
+  useEffect(() => {
+    if (skipFirstAssigneeEffectRef.current) {
+      skipFirstAssigneeEffectRef.current = false;
+      return;
+    }
+    if (teamView && scope === 'team' && filtersReady) void loadTeamProjects(false, { force: true });
+  }, [assigneeFilter, dueFilter, teamView, scope, filtersReady, loadTeamProjects]);
 
   /** KPI server — đếm đủ mọi assignment (không cắt 200). */
   const loadStats = useCallback(async (opts?: { force?: boolean }) => {
@@ -888,7 +1049,9 @@ export default function WorkScreen() {
         assigneeId,
         companyId,
         workshopTypeId: activeWorkTypeId || null,
-        q: search.trim() || undefined,
+        // Đọc qua ref: để `search` trong deps làm mỗi phím gõ đổi định danh callback → effect nạp lại
+        // → spinner toàn màn hình → ô tìm kiếm bị unmount (mất focus). Debounce bên dưới đã tự gọi lại.
+        q: searchRef.current.trim() || undefined,
         force: opts?.force,
       });
       setServerStats(next);
@@ -907,7 +1070,6 @@ export default function WorkScreen() {
     activeWorkTypeId,
     canPickCompany,
     user?.company_id,
-    search,
   ]);
 
   /** Chip status → lọc server (status / overdue). */
@@ -937,6 +1099,7 @@ export default function WorkScreen() {
         workshopTypeId: activeWorkTypeId || null,
         status: chip === 'overdue' ? null : chip,
         overdue: chip === 'overdue',
+        excludeDone: teamView,
         q: searchRef.current.trim() || undefined,
         limit: WORK_TASKS_PAGE_SIZE,
         offset,
@@ -1347,12 +1510,57 @@ export default function WorkScreen() {
   }, [uploadMediaForTask]);
 
 
-  const assigneeOptions = useMemo(() => collectAssigneeOptions(tasks), [tasks]);
+  // Danh sách người nhận: nhân viên CỦA CÔNG TY (không chỉ những người xuất hiện trong trang việc đã tải — ở
+  // công ty như HCB gần như không việc nào gắn người nên chip «Người» từng bị ẩn) + người có trong việc đã tải.
+  const [companyPeople, setCompanyPeople] = useState<Array<{ id: string; name: string }>>([]);
+  useEffect(() => {
+    if (!teamView) { setCompanyPeople([]); return undefined; }
+    const cid = filterCompany || (canPickCompany ? null : (user?.company_id || null));
+    if (!cid) { setCompanyPeople([]); return undefined; }
+    let cancelled = false;
+    void fetchAssignmentLookups(String(cid))
+      .then((r) => {
+        if (cancelled) return;
+        setCompanyPeople(
+          r.users
+            .map((u) => ({ id: u.id, name: (u.full_name || u.email || '').trim() }))
+            .filter((u) => u.id && u.name),
+        );
+      })
+      .catch(() => { if (!cancelled) setCompanyPeople([]); });
+    return () => { cancelled = true; };
+  }, [teamView, filterCompany, canPickCompany, user?.company_id]);
+
+  const assigneeOptions = useMemo(() => {
+    const fromTasks = collectAssigneeOptions([...tasks, ...teamProjectTasks]);
+    const map = new Map(companyPeople.map((p) => [p.id, p.name]));
+    // Người đã có trong việc nhưng thiếu ở danh sách công ty (vd. NV công ty khác) vẫn giữ lại.
+    for (const p of fromTasks) if (!map.has(p.id)) map.set(p.id, p.name);
+    return [...map.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+  }, [tasks, teamProjectTasks, companyPeople]);
 
   const filtered = useMemo(() => {
     // Search đã gửi `q` lên server — không lọc lại client (tránh che match SĐT/lead).
-    const source = statusFilter === 'all' || unifiedSource ? tasks : chipTasks;
+    const base = statusFilter === 'all' || unifiedSource ? tasks : chipTasks;
+    // Quản lý (Đội): thêm việc dự án quá hạn. Máy chủ chưa lọc chúng theo tìm kiếm → lọc ở đây.
+    const needle = search.trim().toLowerCase();
+    const projectRows = teamProjectTasks.length
+      ? teamProjectTasks.filter((t) => !needle
+        || `${t.title} ${t.lead?.title || ''} ${t.lead?.code || ''}`.toLowerCase().includes(needle))
+      : [];
+    // Mục «Không hạn» (đã mở): nối vào cuối; khử trùng với danh sách chính theo id.
+    const ndRows = ndOpen && ndTasks.length ? ndTasks : [];
+    const mainSource = projectRows.length ? [...base, ...projectRows] : base;
+    let source = mainSource;
+    if (ndRows.length) {
+      const seenIds = new Set(mainSource.map((t) => t.id));
+      source = [...mainSource, ...ndRows.filter((t) => !seenIds.has(t.id))];
+    }
     return source.filter((t) => {
+      // Quản lý / admin: việc đã hoàn thành không cần hiện (nhóm chỉ toàn việc xong cũng biến mất).
+      if (teamView && isTaskDone(t.status)) return false;
       // Status đã lọc server khi chip ≠ all — chỉ soft-check overdue nếu BE cũ chưa có param.
       if (statusFilter === 'all') {
         /* no status chip */
@@ -1363,13 +1571,17 @@ export default function WorkScreen() {
       if (teamView && scope === 'team' && assigneeFilter !== 'all') {
         if (!taskAssignedToUser(t, assigneeFilter)) return false;
       }
-      if (filterCompany && String(t.company_id || '') !== String(filterCompany)) {
+      // Nhân viên (nguồn «việc của tôi»): việc đã là của chính họ. `company_id` của việc crm_tasks là công ty của
+      // DEAL (có thể khác xưởng) nên lọc theo đó sẽ ẩn mất việc thuộc dự án của xưởng mình.
+      // Việc dự án (nguồn `/work-tasks`) đã được máy chủ lọc theo công ty; `company_id` của chúng có thể là công ty DEAL.
+      const isProjectTask = t.source_kind === 'task' || t.source_kind === 'crm_task';
+      if (!unifiedSource && !isProjectTask && filterCompany && String(t.company_id || '') !== String(filterCompany)) {
         return false;
       }
       if (dueFilter && !dueMatches(taskDueIso(t), dueFilter)) return false;
       return true;
     });
-  }, [tasks, chipTasks, statusFilter, dueFilter, unifiedSource, teamView, scope, assigneeFilter, filterCompany]);
+  }, [tasks, chipTasks, teamProjectTasks, ndOpen, ndTasks, search, statusFilter, dueFilter, unifiedSource, teamView, scope, assigneeFilter, filterCompany]);
 
   // Nhóm cần xử lý lên trước: có việc quá hạn → có việc đến hạn hôm nay → còn lại (giữ thứ tự cũ).
   const dealSections = useMemo(() => {
@@ -1389,9 +1601,25 @@ export default function WorkScreen() {
       .map((x) => x.s);
   }, [filtered]);
 
+  /**
+   * Hiện dần từng nhóm một (thay vì đổ cả trang 20 nhóm cùng lúc làm khựng): khởi đầu vài nhóm đầu, rồi cứ ~80ms thêm
+   * vài nhóm cho tới hết. Đổi bộ lọc thì bắt đầu lại từ đầu; nhóm nạp thêm khi cuộn thì nối tiếp, không quay lại.
+   */
+  const REVEAL_INITIAL = 6;
+  const REVEAL_STEP = 2;
+  const [revealCount, setRevealCount] = useState(REVEAL_INITIAL);
+  const revealKey = `${statusFilter}|${search}|${assigneeFilter}|${filterCompany}|${activeWorkTypeId}|${dueFilter}`;
+  useEffect(() => { setRevealCount(REVEAL_INITIAL); }, [revealKey]);
+  useEffect(() => {
+    if (revealCount >= dealSections.length) return undefined;
+    const t = setTimeout(() => setRevealCount((c) => c + REVEAL_STEP), 80);
+    return () => clearTimeout(t);
+  }, [revealCount, dealSections.length]);
+  const revealing = revealCount < dealSections.length;
+
   const flatRows = useMemo(() => {
     const rows: ListRow[] = [];
-    for (const section of dealSections) {
+    for (const section of dealSections.slice(0, revealCount)) {
       rows.push({ kind: 'section', key: `s-${section.leadId}`, section });
       if (!expandedLeadIds[section.leadId]) continue;
       for (const task of section.tasks) {
@@ -1399,7 +1627,7 @@ export default function WorkScreen() {
       }
     }
     return rows;
-  }, [dealSections, expandedLeadIds]);
+  }, [dealSections, expandedLeadIds, revealCount]);
 
   const toggleDealSection = useCallback((leadId: string) => {
     setExpandedLeadIds((prev) => ({ ...prev, [leadId]: !prev[leadId] }));
@@ -1411,29 +1639,34 @@ export default function WorkScreen() {
       if (teamView && scope === 'team' && assigneeFilter !== 'all') {
         if (!taskAssignedToUser(t, assigneeFilter)) return false;
       }
-      if (filterCompany && String(t.company_id || '') !== String(filterCompany)) {
+      // Nhân viên: không lọc theo company_id của việc (xem giải thích ở `filtered`).
+      if (!unifiedSource && filterCompany && String(t.company_id || '') !== String(filterCompany)) {
         return false;
       }
       return true;
     });
-  }, [tasks, teamView, scope, assigneeFilter, filterCompany]);
+  }, [tasks, teamView, scope, assigneeFilter, filterCompany, unifiedSource]);
 
   const stats = useMemo(() => {
+    // Cộng thêm việc dự án theo SỐ ĐẾM TOÀN BỘ của máy chủ (danh sách chỉ nạp theo trang nên không đếm từ đó được).
+    const pDoing = teamCounts?.inProgress ?? 0;
+    const pPending = Math.max(0, (teamCounts?.total ?? 0) - pDoing);
+    const pOverdue = teamCounts?.overdue ?? 0;
     if (serverStats) {
       return {
-        pending: serverStats.pending,
-        inProgress: serverStats.in_progress,
+        pending: serverStats.pending + pPending,
+        inProgress: serverStats.in_progress + pDoing,
         done: serverStats.completed,
-        overdue: serverStats.overdue,
+        overdue: serverStats.overdue + pOverdue,
       };
     }
     return {
-      pending: statsScope.filter((t) => isTaskPending(t.status)).length,
-      inProgress: statsScope.filter((t) => isTaskInProgress(t.status)).length,
+      pending: statsScope.filter((t) => isTaskPending(t.status)).length + pPending,
+      inProgress: statsScope.filter((t) => isTaskInProgress(t.status)).length + pDoing,
       done: statsScope.filter((t) => isTaskDone(t.status)).length,
-      overdue: statsScope.filter((t) => isTaskOverdue(t)).length,
+      overdue: statsScope.filter((t) => isTaskOverdue(t)).length + pOverdue,
     };
-  }, [serverStats, statsScope]);
+  }, [serverStats, statsScope, teamCounts]);
 
   const personLabel = useMemo(() => {
     if (assigneeFilter === 'all') return 'Tất cả';
@@ -1589,9 +1822,17 @@ export default function WorkScreen() {
     try {
       const next = nextTaskStatus(task.status);
       // Nhân viên: việc lấy từ nguồn gộp (bảng `tasks`…) → gọi đúng API theo nguồn của dòng.
-      const updated = unifiedSource
+      // Quản lý cũng thấy việc dự án (bảng `tasks` / `crm_tasks`): đổi trạng thái qua API theo nguồn của dòng,
+      // KHÔNG dùng đường «Giao việc» (id của dòng không phải id phân công).
+      const isProjectRow = task.source_kind === 'task' || task.source_kind === 'crm_task';
+      const updated = unifiedSource || isProjectRow
         ? await updateUnifiedTaskStatus(task, next)
         : await updateWorkTaskStatus(task.lead_id, task.id, next, 'assignment');
+      setTeamProjectTasks((prev) =>
+        prev.map((t) =>
+          t.id === task.id ? { ...t, status: updated.status, title: updated.title || t.title } : t,
+        ),
+      );
       setTasks((prev) =>
         prev.map((t) =>
           t.id === task.id
@@ -1657,6 +1898,12 @@ export default function WorkScreen() {
                 <View style={[styles.statusBadge, { backgroundColor: colorWithAlpha(TODAY_COLOR, 0.15) }]}>
                   <Ionicons name="today" size={12} color={TODAY_COLOR} />
                   <Text style={[styles.statusBadgeTxt, { color: TODAY_COLOR }]}>Hôm nay</Text>
+                </View>
+              ) : null}
+              {!done && !taskDueIso(task) ? (
+                <View style={[styles.statusBadge, { backgroundColor: colorWithAlpha(colors.textMuted, 0.14) }]}>
+                  <Ionicons name="calendar-clear-outline" size={12} color={colors.textMuted} />
+                  <Text style={[styles.statusBadgeTxt, { color: colors.textMuted }]}>Không hạn</Text>
                 </View>
               ) : null}
             </View>
@@ -1776,6 +2023,8 @@ export default function WorkScreen() {
       // Nhãn ở dòng nhóm để biết ngay không cần mở; cùng một cách tính với Tổng quan.
       const { open, done, overdueCount, tone } = summarizeTaskGroup(s.tasks);
       const dueTodayCount = s.tasks.filter((t) => !isTaskDone(t.status) && isTaskDueOnDay(t)).length;
+      // Việc chưa xong mà không có hạn: gắn nhãn «Không hạn» ở dòng nhóm để khỏi tưởng là sắp/đã tới hạn.
+      const noDeadlineCount = s.tasks.filter((t) => !isTaskDone(t.status) && !taskDueIso(t)).length;
       const expanded = !!expandedLeadIds[s.leadId];
       return (
         <View style={styles.sectionCard}>
@@ -1792,6 +2041,11 @@ export default function WorkScreen() {
               <Text style={styles.sectionMeta}>
                 {done}/{s.tasks.length} xong
                 {open > 0 ? ` · ${open} còn lại` : ''}
+                {noDeadlineCount > 0 ? (
+                  <Text style={{ fontWeight: '800' }}>
+                    {` · ${noDeadlineCount === open ? 'Không hạn' : `${noDeadlineCount} không hạn`}`}
+                  </Text>
+                ) : null}
                 {s.customerName ? ` · ${s.customerName}` : ''}
                 {!expanded ? ' · chạm để mở' : ''}
               </Text>
@@ -1942,7 +2196,7 @@ export default function WorkScreen() {
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={styles.filterScroll}
         >
-          {STATUS_CHIPS.map((chip) => {
+          {STATUS_CHIPS.filter((chip) => !(teamView && chip.key === 'completed')).map((chip) => {
             const active = statusFilter === chip.key;
             const iconColor = active
               ? (chip.key === 'overdue' ? colors.danger : colors.primary)
@@ -1984,11 +2238,13 @@ export default function WorkScreen() {
           <Text style={[styles.statsLabel, { color: colors.primary }]}>Đang</Text>
           <Text style={[styles.statsNum, { color: colors.primary }]}>{stats.inProgress}</Text>
         </View>
-        <View style={styles.statsItem}>
-          <View style={[styles.statsDot, { backgroundColor: colors.success }]} />
-          <Text style={[styles.statsLabel, { color: colors.success }]}>Xong</Text>
-          <Text style={[styles.statsNum, { color: colors.success }]}>{stats.done}</Text>
-        </View>
+        {teamView ? null : (
+          <View style={styles.statsItem}>
+            <View style={[styles.statsDot, { backgroundColor: colors.success }]} />
+            <Text style={[styles.statsLabel, { color: colors.success }]}>Xong</Text>
+            <Text style={[styles.statsNum, { color: colors.success }]}>{stats.done}</Text>
+          </View>
+        )}
         <View style={styles.statsItem}>
           <View style={[styles.statsDot, { backgroundColor: colors.danger }]} />
           <Text style={[styles.statsLabel, { color: colors.danger }]}>QH</Text>
@@ -2019,31 +2275,62 @@ export default function WorkScreen() {
         keyExtractor={(item) => item.key}
         renderItem={renderRow}
         contentContainerStyle={styles.listContent}
-        initialNumToRender={16}
-        windowSize={7}
-        maxToRenderPerBatch={12}
+        initialNumToRender={10}
+        windowSize={5}
+        maxToRenderPerBatch={8}
+        updateCellsBatchingPeriod={40}
         removeClippedSubviews={false}
         keyboardShouldPersistTaps="handled"
         onEndReached={() => {
           if (filtered.length === 0) return;
+          // Còn nhóm đang hiện dần thì đẩy nhanh phần hiện, chưa gọi máy chủ.
+          if (revealing) { setRevealCount((c) => c + REVEAL_STEP * 3); return; }
           if (loading || chipLoading || loadingMoreRef.current) return;
           if (statusFilter !== 'all') {
-            if (!chipHasMoreRef.current) return;
+            if (!chipHasMoreRef.current) {
+              if (teamHasMoreRef.current) void loadTeamProjects(true, {});
+              return;
+            }
             void loadChip(true);
             return;
           }
-          if (!hasMoreTasksRef.current) return;
+          // Hết «Giao việc» thì tải tiếp trang nhóm dự án của đội.
+          if (!hasMoreTasksRef.current) {
+            if (teamHasMoreRef.current) void loadTeamProjects(true, {});
+            else if (ndOpen && ndHasMoreRef.current) void loadNoDeadline(true);
+            return;
+          }
           void load(true, true);
         }}
         onEndReachedThreshold={0.35}
         ListFooterComponent={
-          filtered.length === 0
+          filtered.length === 0 && !(teamView && scope === 'team')
             ? null
+            : ndOpen && ndLoading
+              ? <SpinningLoader style={{ marginVertical: 16 }} color={colors.primary} />
+              : ndOpen && ndHasMore && !teamHasMore
+                ? <Text style={[styles.empty, { paddingVertical: 12 }]}>Vuốt thêm để tải tiếp việc không hạn…</Text>
+              // Hết danh sách chính → nút mở mục riêng «Không hạn» (việc cũ chưa có hạn, nạp theo yêu cầu).
+              : teamView && scope === 'team' && !teamHasMore && !hasMoreTasks && !loading
+                && (statusFilter === 'all' || statusFilter === 'pending')
+                && !ndOpen
+                ? (
+                  <Pressable
+                    style={({ pressed }) => [styles.ndBtn, pressed && { opacity: 0.7 }]}
+                    onPress={() => { setNdOpen(true); void loadNoDeadline(false); }}
+                    accessibilityRole="button"
+                  >
+                    <Ionicons name="calendar-clear-outline" size={16} color={colors.textMuted} />
+                    <Text style={styles.ndBtnTxt}>Xem việc không hạn (cũ hơn 7 ngày)</Text>
+                  </Pressable>
+                )
+            : filtered.length === 0
+              ? null
             : loadingMore
               ? (
                 <SpinningLoader style={{ marginVertical: 16 }} color={colors.primary} />
               )
-              : (statusFilter === 'all' ? hasMoreTasks : chipHasMore)
+              : ((statusFilter === 'all' ? hasMoreTasks : chipHasMore) || teamHasMore)
                 ? (
                   <Text style={[styles.empty, { paddingVertical: 12 }]}>Vuốt thêm để tải tiếp…</Text>
                 )
@@ -2056,7 +2343,7 @@ export default function WorkScreen() {
           <Text style={styles.empty}>
             {!userId
               ? 'Đăng nhập để xem công việc.'
-              : search.trim() || statusFilter !== 'all' || assigneeFilter !== 'all'
+              : search.trim() || statusFilter !== 'all' || assigneeFilter !== 'all' || dueFilter
                 ? 'Không có công việc khớp bộ lọc.'
                 : teamView && scope === 'team'
                   ? 'Chưa có giao việc sản xuất trong phạm vi công ty.'

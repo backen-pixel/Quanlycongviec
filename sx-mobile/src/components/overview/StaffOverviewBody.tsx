@@ -8,6 +8,7 @@ import { Radii, Spacing, colorWithAlpha, type AppColors } from '../../theme';
 import type { TaskGroupTone } from '../../lib/workTasksApi';
 import { KpiCard, SectionHeader, type KpiStat } from '../dashboard/DashboardParts';
 import TaskGroupTag, { TodayTag } from '../TaskGroupTag';
+import { useHolidayIndex, workingDaysBetween, type HolidayIndex } from '../../lib/workingDays';
 
 /**
  * Bố cục Tổng quan cho NHÂN VIÊN — khác bản quản trị ở chỗ đặt việc của mình
@@ -58,7 +59,29 @@ export type StaffProjectRow = {
   deliveryLabel?: string | null;
   deadlineLabel?: string | null;
   overdue?: boolean;
+  /** Ngày giao / deadline gốc (ISO) — để tính nhãn «Hôm nay / Còn N ngày LV / Trễ N ngày LV». */
+  deliveryRaw?: string | null;
+  deadlineRaw?: string | null;
+  /** Đã giao thật → không báo hạn nữa. */
+  delivered?: boolean;
 };
+
+type DateTone = 'late' | 'today' | 'soon' | 'ok';
+
+/** Nhãn hạn cho một ngày: so với hôm nay theo ngày làm việc (bỏ CN + lễ, khớp web). */
+function dateStatus(raw: string | null | undefined, delivered: boolean | undefined, holidays: HolidayIndex)
+  : { text: string; tone: DateTone } | null {
+  if (!raw || delivered) return null;
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return null;
+  const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (target.getTime() === today.getTime()) return { text: 'Hôm nay', tone: 'today' };
+  const n = workingDaysBetween(today, target, holidays);
+  if (target < today) return { text: `Trễ ${Math.abs(n)} ngày LV`, tone: 'late' };
+  return { text: `Còn ${n} ngày LV`, tone: n <= 2 ? 'soon' : 'ok' };
+}
 
 export default function StaffOverviewBody({
   kpiStats,
@@ -90,6 +113,9 @@ export default function StaffOverviewBody({
   /** Nhóm đang xổ ra — đóng mặc định, chạm để mở (giống tab Công việc). */
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const toggle = (id: string) => setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+  const holidays = useHolidayIndex();
+  const toneColor = (t: DateTone): string =>
+    t === 'late' ? colors.danger : t === 'today' ? '#EA580C' : t === 'soon' ? colors.warning : colors.success;
   const bottomInset = useSafeAreaInsets().bottom;
   const s = useMemo(() => makeStyles(colors, bottomInset, isDark), [colors, bottomInset, isDark]);
   // Tối: nền xanh đêm chuyển sắc nhẹ + viền xanh sáng mờ. Sáng: nền trắng thuần.
@@ -239,21 +265,38 @@ export default function StaffOverviewBody({
                         <Text style={[s.chipTxt, { color: tone }]} numberOfLines={1}>{p.stageName}</Text>
                       </View>
                       {[
-                        { key: 'o', icon: 'calendar-outline' as const, text: p.orderLabel ? `Đặt ${p.orderLabel}` : null },
-                        { key: 'g', icon: 'car-outline' as const, text: p.deliveryLabel ? `Giao ${p.deliveryLabel}` : null },
-                        { key: 'h', icon: 'time-outline' as const, text: p.deadlineLabel ? `Hạn ${p.deadlineLabel}` : null },
-                      ].filter((d) => d.text).map((d) => (
-                        <View key={d.key} style={s.dateItem}>
-                          <Ionicons
-                            name={d.icon}
-                            size={12}
-                            color={p.overdue && d.key !== 'o' ? colors.danger : colors.textMuted}
-                          />
-                          <Text style={[s.dueTxt, p.overdue && d.key !== 'o' && { color: colors.danger }]}>
-                            {d.text}
-                          </Text>
+                        { key: 'o', icon: 'calendar-outline' as const, text: p.orderLabel ? `Đặt ${p.orderLabel}` : null, status: null },
+                        { key: 'g', icon: 'car-outline' as const, text: p.deliveryLabel ? `Giao ${p.deliveryLabel}` : null, status: dateStatus(p.deliveryRaw, p.delivered, holidays) },
+                        { key: 'h', icon: 'time-outline' as const, text: p.deadlineLabel ? `Hạn ${p.deadlineLabel}` : null, status: dateStatus(p.deadlineRaw, p.delivered, holidays) },
+                      ].filter((d) => d.text).map((d) => {
+                        // Có nhãn hạn → cả cụm thành viên thuốc màu, chữ đậm: nhìn là thấy ngay dự án sắp/đã tới hạn.
+                        const tint = d.status ? toneColor(d.status.tone) : null;
+                        if (!d.status || !tint) {
+                          return (
+                            <View key={d.key} style={s.dateItem}>
+                              <Ionicons name={d.icon} size={12} color={colors.textMuted} />
+                              <Text style={s.dueTxt}>{d.text}</Text>
+                            </View>
+                          );
+                        }
+                        return (
+                          <View
+                            key={d.key}
+                            style={[s.datePill, { backgroundColor: colorWithAlpha(tint, 0.14), borderColor: colorWithAlpha(tint, 0.55) }]}
+                          >
+                            <Ionicons name={d.icon} size={12} color={tint} />
+                            <Text style={[s.datePillTxt, { color: tint }]}>{d.text}</Text>
+                            <View style={[s.dateTag, { backgroundColor: tint }]}>
+                              <Text style={s.dateTagTxt}>{d.status.text}</Text>
+                            </View>
+                          </View>
+                        );
+                      })}
+                      {p.delivered ? (
+                        <View style={[s.dateTag, { backgroundColor: colors.success }]}>
+                          <Text style={s.dateTagTxt}>Đã giao</Text>
                         </View>
-                      ))}
+                      ) : null}
                     </View>
                   </View>
                   <Ionicons name="chevron-forward" size={18} color={colors.textFaint} />
@@ -361,6 +404,20 @@ function makeStyles(colors: AppColors, bottomInset: number, isDark: boolean) {
     metaRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, columnGap: 10 },
     stageChip: { paddingHorizontal: 9, paddingVertical: 3, borderRadius: Radii.full },
     dateItem: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+    /** Ngày giao / deadline có nhãn hạn: thuốc màu viền đậm, nhãn đặc ở cuối. */
+    datePill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 4,
+      paddingLeft: 7,
+      paddingRight: 3,
+      paddingVertical: 3,
+      borderRadius: Radii.full,
+      borderWidth: 1,
+    },
+    datePillTxt: { fontSize: 12, fontWeight: '800' },
+    dateTag: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: Radii.full },
+    dateTagTxt: { color: '#FFFFFF', fontSize: 11, fontWeight: '900' },
     rowTitle: { color: colors.text, fontSize: 14, fontWeight: '800' },
     rowSub: { color: colors.textMuted, fontSize: 12 },
     dueLine: { flexDirection: 'row', alignItems: 'center', gap: 4 },

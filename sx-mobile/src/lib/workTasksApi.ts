@@ -56,6 +56,8 @@ export type WorkTasksQuery = {
   overdue?: boolean;
   /** Tìm kiếm server (title / mô tả / deal…). */
   q?: string | null;
+  /** true = máy chủ không trả việc đã hoàn thành (quản lý không cần xem). */
+  excludeDone?: boolean;
   /** Phân trang — mặc định mobile dùng 200. */
   limit?: number;
   offset?: number;
@@ -303,6 +305,7 @@ export async function fetchProductionWorkTasksPage(
   if (query.workshopTypeId) params.workshop_type_id = query.workshopTypeId;
   if (query.status) params.status = String(query.status);
   if (query.overdue) params.overdue = 1;
+  if (query.excludeDone) params.exclude_done = 1;
   if (query.q?.trim()) params.q = query.q.trim();
 
   const key = K_WORK_PAGE + JSON.stringify(params);
@@ -400,7 +403,7 @@ export async function fetchMyProductionTasks(
 }
 
 /** Dòng `unified_tasks_v` mà `/api/work-tasks` trả về (gồm việc SX theo dự án ở bảng `tasks`). */
-function mapUnifiedToWorkTask(raw: Record<string, unknown>): WorkTask {
+export function mapUnifiedToWorkTask(raw: Record<string, unknown>): WorkTask {
   const str = (v: unknown): string | null => (v != null && String(v) !== '' ? String(v) : null);
   const projectId = str(raw.project_id);
   const leadId = str(raw.lead_id);
@@ -458,29 +461,57 @@ export async function fetchMyParticipationTasks(
     force: opts?.force,
     signal: opts?.signal,
     fetcher: async () => {
-      const out: WorkTask[] = [];
-      for (let page = 1; out.length < MY_PARTICIPATION_MAX; page += 1) {
-        const { data } = await api.get<{ tasks?: unknown[]; total?: number }>('/work-tasks', {
-          params: {
-            assignee_id: userId,
-            module_key: 'production',
-            page,
-            page_size: MY_PARTICIPATION_PAGE,
-          },
-          signal: opts?.signal,
-        });
-        const rows = Array.isArray(data?.tasks) ? data.tasks : [];
-        out.push(
-          ...rows
-            .map((r) => mapUnifiedToWorkTask(r as Record<string, unknown>))
-            // `assignee_id` của BE còn trả cả việc thuộc lead mình phụ trách hoặc do mình tạo.
-            // «Công việc của tôi» chỉ gồm việc ĐƯỢC GIAO cho mình.
-            .filter((t) => t.id && String(t.assignee_id || '') === String(userId)),
-        );
-        const total = Number(data?.total);
-        if (rows.length < MY_PARTICIPATION_PAGE || (Number.isFinite(total) && out.length >= total)) break;
+      const fetchAll = async (extra: Record<string, unknown>): Promise<WorkTask[]> => {
+        const out: WorkTask[] = [];
+        for (let page = 1; out.length < MY_PARTICIPATION_MAX; page += 1) {
+          const { data } = await api.get<{ tasks?: unknown[]; total?: number }>('/work-tasks', {
+            params: {
+              assignee_id: userId,
+              ...extra,
+              page,
+              page_size: MY_PARTICIPATION_PAGE,
+            },
+            // KHÔNG truyền `opts.signal` vào đây: yêu cầu này được nhiều người gọi dùng chung (cachedQuery dedupe).
+            // Nếu người gọi đầu bị hủy (vd. sau đăng nhập `user` đổi → load chạy lại) thì cả yêu cầu bị hủy và
+            // người gọi thứ hai cũng nhận lỗi hủy → Tổng quan trống. `cachedQuery` đã tự hủy phần của từng người gọi.
+          });
+          const rows = Array.isArray(data?.tasks) ? data.tasks : [];
+          out.push(
+            ...rows
+              .map((r) => mapUnifiedToWorkTask(r as Record<string, unknown>))
+              // `assignee_id` của BE còn trả cả việc thuộc lead mình phụ trách hoặc do mình tạo.
+              // «Công việc của tôi» chỉ gồm việc ĐƯỢC GIAO cho mình.
+              .filter((t) => t.id && String(t.assignee_id || '') === String(userId)),
+          );
+          const total = Number(data?.total);
+          if (rows.length < MY_PARTICIPATION_PAGE || (Number.isFinite(total) && out.length >= total)) break;
+        }
+        return out;
+      };
+
+      // Việc sản xuất ở bảng `tasks` (task_kind SX / Dự án).
+      const sx = await fetchAll({ module_key: 'production' });
+      // Việc ở bảng `crm_tasks` của deal đã có dự án mang task_kind «CRM-Deal» nên bị `module_key=production`
+      // loại hết — dự án chỉ có việc loại này (chưa đồng bộ sang `tasks`) sẽ biến mất khỏi «dự án của tôi».
+      // Lấy thêm, chỉ giữ việc gắn dự án, và bỏ việc trùng với bản ở bảng `tasks` (cùng dự án + cùng tên).
+      let crm: WorkTask[] = [];
+      try {
+        crm = await fetchAll({ task_kind: 'CRM-Deal' });
+      } catch (e) {
+        // Lỗi ở nguồn phụ không được làm mất danh sách chính.
+        if ((e as { name?: string })?.name === 'CanceledError' || opts?.signal?.aborted) throw e;
       }
-      return out;
+      const keyOf = (t: WorkTask) =>
+        `${t.lead?.project_id || ''}|${String(t.title || '').trim().toLowerCase()}`;
+      const seen = new Set(sx.map(keyOf));
+      const extra = crm.filter((t) => {
+        if (!t.lead?.project_id) return false;
+        const k = keyOf(t);
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+      return [...sx, ...extra];
     },
   });
 }
@@ -552,7 +583,9 @@ export async function updateUnifiedTaskStatus(task: WorkTask, status: string): P
   const source: 'task' | 'crm_task' | 'assignment' = kind === 'task'
     ? 'task'
     : kind === 'crm_task' ? 'crm_task' : 'assignment';
-  const updated = await updateWorkTaskStatus(task.lead_id, realId, status, source);
+  // Việc `crm_task` phải gọi theo DEAL thật (`deal_id`); `lead_id` có thể đã được gom về id dự án để nhóm theo dự án.
+  const leadForApi = source === 'crm_task' ? (task.deal_id || task.lead_id) : task.lead_id;
+  const updated = await updateWorkTaskStatus(leadForApi, realId, status, source);
   return { ...updated, id: task.id };
 }
 
