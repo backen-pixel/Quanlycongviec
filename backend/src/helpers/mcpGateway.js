@@ -4,6 +4,7 @@
  * Mọi tools/call: Permission deny có reason_code + Audit Allow/Deny/Error.
  */
 const { supabase } = require('../config/supabase');
+const { MCP_FOUNDER_TOOL_SET, getMcpFounderTools, callMcpFounderTool } = require('./mcpFounderBridge');
 const { isAdminLike, isSystemAdmin } = require('./adminRole');
 const { OPENAI_TOOL_DEFINITIONS, executeTool } = require('./aiReportTools');
 const {
@@ -177,14 +178,15 @@ function getMcpReportTools(apiKey = null) {
     }
   }
 
-  return patched.filter((t) => {
+  return [...getMcpFounderTools(apiKey), ...patched.filter((t) => {
     if (MCP_ADS_TOOL_SET.has(t.name)) return allowAds;
     if (MCP_CRM_READ_TOOL_SET.has(t.name)) return allowCrm;
     return allowReports;
-  });
+  })];
 }
 
 function assertMcpScopeForTool(name, apiKey) {
+  if (MCP_FOUNDER_TOOL_SET.has(name)) return; // New bridge checks fresh key + actor + tenant per operation.
   const scopes = Array.isArray(apiKey?.mcp_scopes) && apiKey.mcp_scopes.length
     ? apiKey.mcp_scopes
     : ['reports', 'crm_read'];
@@ -295,7 +297,7 @@ function assertCompanyScope(args, apiKey) {
 }
 
 function isMcpToolAllowed(name) {
-  return MCP_REPORT_TOOL_SET.has(name) || MCP_CRM_READ_TOOL_SET.has(name) || MCP_ADS_TOOL_SET.has(name);
+  return MCP_FOUNDER_TOOL_SET.has(name) || MCP_REPORT_TOOL_SET.has(name) || MCP_CRM_READ_TOOL_SET.has(name) || MCP_ADS_TOOL_SET.has(name);
 }
 
 /** Tên gợi ý write — MCP giai đoạn này chỉ read. */
@@ -336,6 +338,14 @@ async function callMcpReportTool(name, args = {}, req) {
     }
 
     assertMcpScopeForTool(name, req.apiKey);
+
+    if (MCP_FOUNDER_TOOL_SET.has(name)) {
+      auditUserId = req.apiKey?.default_assigned_to || null;
+      const result = await callMcpFounderTool(name, args, req);
+      auditTenantId = result.scope.tenant_id;
+      finishAudit('allow', MCP_REASON.ALLOWED);
+      return result;
+    }
 
     // Ads tools chỉ đọc số tổng hợp — không cần user act-as.
     if (MCP_ADS_TOOL_SET.has(name)) {

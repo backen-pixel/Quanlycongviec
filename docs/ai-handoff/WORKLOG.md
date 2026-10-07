@@ -1,3 +1,6 @@
+## 2026-10-07 — PR51 sửa 5 phát hiện review
+
+Đã tái hiện FAIL từng lỗi trên mã cũ; sửa auth Founder, tenant gate, microsecond SLA, source provenance, lỗi bridge/DB và SQL711 + rollback. Backend 41/41, PGlite 10/10, typecheck PASS; Claude kiểm độc lập: build Skybridge OK, app 18/18, backend 41/41; trên mã cũ 7 test backend + 2 test app FAIL. Đã commit lên nhánh PR; không merge, flags, DB/mạng thật. Xem [hồ sơ](FOUNDER_CONTROL_CENTER_V1_20261007.md#sửa-review-0710).
 ## 2026-10-07 — SX mobile (quản lý): việc dự án cả đội, lọc hạn ở máy chủ, khử trùng trước khi lọc
 
 - Backend `backend/src/routes/workTasks.js`: route mới `GET /team-project-tasks` (chỉ quản lý; tham số `company_id, assignee_id, q, due_days, created_days, workshop_type_id, no_deadline, due_from, due_to, page, page_size`). `computeTeamTasks` quét `unified_tasks_v` song song, cache 30 s (`teamTasksCache`), khử trùng theo `project_id|title` (ưu tiên bản không phải `crm_task`), gom nhóm theo dự án (quá hạn → sắp đến hạn → mới/không hạn). Commit cuối `698c5a68`: khi có `due_from/due_to`, lấy thêm bản không-`crm_task` của các dự án có việc CRM trong khoảng, khử trùng rồi mới lọc lại khoảng hạn. Cũng `crmAssignments.js`: `exclude_done=1`; `crmTaskLeadAccess.js`: `assigneeReadGrant` cho GET comments/members.
@@ -1973,3 +1976,7 @@ Theo yêu cầu tiếp tục của Founder, bổ sung domain/Application Service
 
 ---
 
+
+## 2026-10-07 — Founder Control Center V1
+
+Thêm module Founder theo sáu hệ, năm MCP tools, ba Skybridge views và SQL711 candidate với delegated actor/key/company, idempotency và decision version/digest + audit atomic. Không đổi OpenClaw/project approvals/policy automation cũ; ads dry-run mặc định scope unknown. Kiểm thử 219 backend +16 app, npm ci/build/typecheck PASS synthetic. Chưa release, không chạy DB thật/Meta/notification. GitHub API Forbidden nên draft PR pending. Chi tiết: [hồ sơ](FOUNDER_CONTROL_CENTER_V1_20261007.md).

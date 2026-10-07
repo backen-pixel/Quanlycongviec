@@ -1,0 +1,10 @@
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+body { margin:0; }
+.control { padding:20px; color:light-dark(#172c34,#e7f1f4); background:light-dark(#fff,#142128); border-radius:16px; }
+header { display:flex; flex-wrap:wrap; align-items:center; gap:12px; justify-content:space-between; }
+h1 { font-size:20px; margin:0; } h2 { font-size:15px; margin:0 0 6px; }
+p { font-size:13px; overflow-wrap:anywhere; } small { font-size:12px; opacity:.8; }
+dl { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; }
+dl div,section { border:1px solid light-dark(#dde6e9,#344951); padding:12px; border-radius:10px; margin-bottom:8px; }
+dt { font-size:12px; } dd { font-size:17px; margin:5px 0; }
+.notice { padding:10px; background:light-dark(#fff4dd,#493d22); border-radius:8px; }
