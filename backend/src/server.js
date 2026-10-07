@@ -196,7 +196,11 @@ app.use((req, res, next) => {
   }
   const isLarge = largeBodyRoutes.some((p) => req.path.startsWith(p));
   const limit = isLarge ? UPLOAD_BODY_LIMIT : STANDARD_BODY_LIMIT;
-  express.json({ limit })(req, res, (err) => {
+  express.json({ limit, verify: (request, _response, bytes) => {
+    if (request.method === 'POST' && ['/api/facebook/webhook', '/api/facebook/webhook/lead-ads'].includes(request.path)) {
+      request.facebookRawBody = Buffer.from(bytes);
+    }
+  } })(req, res, (err) => {
     if (err) return next(err);
     express.urlencoded({ extended: true, limit })(req, res, next);
   });
@@ -446,6 +450,21 @@ app.use('/api/knowledge', require('./routes/knowledge'));
 const facebookRouter = require('./routes/facebook');
 facebookRouter._ioRef = io;
 app.use('/api/facebook', facebookRouter);
+// Only the opt-in inbox adds this lifecycle. An interrupted lease remains recoverable in PostgreSQL.
+if (facebookRouter.stopPageInbox) {
+  let shuttingDown = false;
+  const stopInbox = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    const deadline = setTimeout(() => process.exit(1), 15000);
+    deadline.unref();
+    server.close();
+    try { await facebookRouter.stopPageInbox(); io.close(); process.exit(0); }
+    catch { process.exit(1); }
+  };
+  process.once('SIGTERM', stopInbox);
+  process.once('SIGINT', stopInbox);
+}
 const zaloRouter = require('./routes/zalo');
 zaloRouter._ioRef = io;
 app.use('/api/zalo', zaloRouter);
@@ -1669,6 +1688,8 @@ server.listen(config.port, () => {
       if (cfg.trigger === 'manual') return; // Không tự động
 
       const { sortFacebookContactsNewestFirst } = require('./helpers/facebookContactActivity');
+      const { inboxSettings, isManagedLeadAdsContact } = require('./helpers/facebookPageInbox');
+      const pageInboxSettings = inboxSettings();
 
       // Contacts chưa có lead_id — xử lý từ hoạt động mới nhất (tin / tạo hồ sơ) để user mới không bị "xếp sau" hàng cũ
       const { data: probeRow } = await supabase.from('facebook_contacts').select('sync_paused').limit(1);
@@ -1686,6 +1707,9 @@ server.listen(config.port, () => {
 
       let created = 0;
       for (const contact of contacts) {
+        // Lead Ads contacts on enrolled Pages are created only by SQL702.
+        // Preserve this boundary even if this legacy scanner is re-enabled.
+        if (isManagedLeadAdsContact(pageInboxSettings, contact)) continue;
         // Check có message inbound không
         const { count } = await supabase.from('facebook_messages')
           .select('id', { count: 'exact', head: true })

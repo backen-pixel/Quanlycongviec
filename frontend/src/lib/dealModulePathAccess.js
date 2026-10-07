@@ -148,6 +148,88 @@ export function buildDealModulePath({ leadId, projectId, currentModule = 'crm' }
   });
 }
 
+function commentHomeModules(user) {
+  return memberModulesFromUser(user).filter((m) => m === 'crm' || m === 'production' || m === 'logistics');
+}
+
+function sidebarToCommentModule(activeModule) {
+  const m = String(activeModule || '').toLowerCase();
+  if (m === 'sx' || m === 'production') return 'production';
+  if (m === 'vc' || m === 'logistics') return 'logistics';
+  if (m === 'crm') return 'crm';
+  return null;
+}
+
+function commentPathForModule(mod, { leadId, projectId, query }) {
+  if (mod === 'crm' && leadId) return `/crm/leads/${leadId}${query}`;
+  if (mod === 'production' && projectId) return `/sx/projects/${projectId}${query}`;
+  if (mod === 'logistics' && projectId) return `/vc/projects/${projectId}${query}`;
+  return null;
+}
+
+/**
+ * Module người xem dùng để mở bình luận.
+ * Một module thì luôn module đó (NV xưởng không bị đẩy sang CRM/VC).
+ * Nhiều module thì theo sidebar đang mở.
+ */
+export function viewerCommentModuleKey(user, activeModule) {
+  const homes = commentHomeModules(user);
+  if (homes.length === 1) return homes[0];
+  const side = sidebarToCommentModule(activeModule);
+  if (side && homes.includes(side)) return side;
+  return null;
+}
+
+/**
+ * Bấm chuông bình luận lead/deal → đúng dự án trong module của người bấm.
+ * @returns {string|null}
+ */
+export function resolveLeadCommentNotificationPath(n, { user, activeModule } = {}) {
+  const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  const navTab = String(meta.nav_tab || 'comments').trim() || 'comments';
+  const query = `?tab=${encodeURIComponent(navTab)}`;
+  const projectId = meta.project_id != null && String(meta.project_id).trim() !== ''
+    ? String(meta.project_id).trim()
+    : null;
+  const et = String(n?.entity_type || '');
+  const leadFromEntity = ['lead', 'crm_lead', 'crm_deal'].includes(et) && n?.entity_id
+    ? String(n.entity_id)
+    : null;
+  const leadId = leadFromEntity || (meta.lead_id ? String(meta.lead_id).trim() : null);
+  const ids = { leadId, projectId, query };
+
+  const homes = commentHomeModules(user);
+  const unique = homes.length ? homes : ['crm'];
+  const candidates = unique
+    .map((mod) => ({ mod, path: commentPathForModule(mod, ids) }))
+    .filter((row) => row.path);
+  if (!candidates.length) return null;
+  if (candidates.length === 1) return candidates[0].path;
+
+  const side = sidebarToCommentModule(activeModule);
+  const sideHit = candidates.find((row) => row.mod === side);
+  if (sideHit) return sideHit.path;
+
+  const stamped = String(meta.viewer_module_key || '').trim();
+  const stampHit = candidates.find((row) => row.mod === stamped);
+  if (stampHit) return stampHit.path;
+
+  const drive = String(user?.drive_module || '').toLowerCase();
+  const driveMod = drive === 'sx' || drive === 'production'
+    ? 'production'
+    : drive === 'vc' || drive === 'logistics'
+      ? 'logistics'
+      : drive === 'crm'
+        ? 'crm'
+        : null;
+  const driveHit = candidates.find((row) => row.mod === driveMod);
+  if (driveHit) return driveHit.path;
+
+  const prod = candidates.find((row) => row.mod === 'production');
+  if (prod && side !== 'crm') return prod.path;
+  return candidates[0].path;
+}
+
 /** Primary project id từ deal (production_projects hoặc project_id). */
 export function resolveDealPrimaryProjectId(lead) {
   if (!lead) return null;

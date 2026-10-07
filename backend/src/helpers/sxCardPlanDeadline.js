@@ -1,5 +1,6 @@
 /**
- * Hạn thẻ SX = hạn sớm nhất của các nhóm lịch 7 ngày còn việc nhỏ chưa xong.
+ * Hạn thẻ SX = hạn của cột Kanban đang đứng, tính lùi từ ngày lắp, chốt 17:30.
+ * Việc mẫu còn mở ở nhóm sớm hơn không kéo cả thẻ về quá hạn.
  * Ghi vào projects.sx_kanban_deadline_at. Không ghi xuống tasks.due_date.
  */
 const { supabase } = require('../config/supabase');
@@ -15,6 +16,50 @@ const PROJECT_COLS = 'id, company_id, workshop_type_id, sx_kanban_column_id, ins
 
 function columnClearsCardDeadline(stage) {
   return !!(stage?.clears_deadline || stage?.is_handover_to_logistics);
+}
+
+/** Thẻ chưa có cột: hạn sớm nhất của nhóm việc còn mở. */
+async function earliestOpenGroupIso(project, projectId) {
+  const { data: taskRows } = await supabase
+    .from('tasks')
+    .select('id, title, status, project_id')
+    .eq('project_id', projectId);
+  const tasks = taskRows || [];
+  const { data: leads } = await supabase
+    .from('crm_leads')
+    .select('id')
+    .eq('project_id', projectId)
+    .eq('type', 'deal');
+  const leadIds = (leads || []).map((l) => l.id).filter(Boolean);
+  let crmRows = [];
+  if (leadIds.length) {
+    const { data } = await supabase
+      .from('crm_tasks')
+      .select('id, lead_id, title, status, stage_slug, production_pipeline_stage_id')
+      .in('lead_id', leadIds)
+      .or('stage_slug.like.sx_%,production_pipeline_stage_id.not.is.null');
+    crmRows = data || [];
+  }
+  const leadProjectById = new Map((leads || []).map((l) => [String(l.id), String(projectId)]));
+  const crmIndex = indexSxCrmCompletion(crmRows, leadProjectById);
+  const stageIds = [...new Set(crmRows.map((r) => r.production_pipeline_stage_id).filter(Boolean))];
+  let stageById = new Map();
+  if (stageIds.length) {
+    const { data: stageRows } = await supabase
+      .from('production_pipeline_stages')
+      .select('id, group_key, deadline_group, name')
+      .in('id', stageIds);
+    stageById = new Map((stageRows || []).map((s) => [String(s.id), s]));
+  }
+  const openTasks = tasks.filter((task) => !workshopChildDone(task, crmIndex));
+  if (tasks.length && !openTasks.length) return null;
+  const groups = [];
+  for (const task of openTasks) {
+    const group = deadlineGroupForWorkshopChild(task, crmIndex, stageById);
+    if (group) groups.push(group);
+  }
+  if (groups.length) return earliestSxPlanDeadline(project, groups);
+  return null;
 }
 
 async function syncSxCardDeadline(projectId) {
@@ -47,51 +92,10 @@ async function syncSxCardDeadline(projectId) {
 
   let iso = null;
   if (!columnClearsCardDeadline(stage)) {
-    const { data: taskRows } = await supabase
-      .from('tasks')
-      .select('id, title, status, project_id')
-      .eq('project_id', projectId);
-    const tasks = taskRows || [];
-    const { data: leads } = await supabase
-      .from('crm_leads')
-      .select('id')
-      .eq('project_id', projectId)
-      .eq('type', 'deal');
-    const leadIds = (leads || []).map((l) => l.id).filter(Boolean);
-    let crmRows = [];
-    if (leadIds.length) {
-      const { data } = await supabase
-        .from('crm_tasks')
-        .select('id, lead_id, title, status, stage_slug, production_pipeline_stage_id')
-        .in('lead_id', leadIds)
-        .or('stage_slug.like.sx_%,production_pipeline_stage_id.not.is.null');
-      crmRows = data || [];
-    }
-    const leadProjectById = new Map((leads || []).map((l) => [String(l.id), String(projectId)]));
-    const crmIndex = indexSxCrmCompletion(crmRows, leadProjectById);
-    const stageIds = [...new Set(crmRows.map((r) => r.production_pipeline_stage_id).filter(Boolean))];
-    let stageById = new Map();
-    if (stageIds.length) {
-      const { data: stageRows } = await supabase
-        .from('production_pipeline_stages')
-        .select('id, group_key, deadline_group, name')
-        .in('id', stageIds);
-      stageById = new Map((stageRows || []).map((s) => [String(s.id), s]));
-    }
-    const openTasks = tasks.filter((task) => !workshopChildDone(task, crmIndex));
-    if (!tasks.length) {
+    if (stage) {
       iso = computeSxInstallPlanDeadline(project, stage, siblings)?.iso || null;
-    } else if (!openTasks.length) {
-      iso = null;
     } else {
-      const groups = [];
-      for (const task of openTasks) {
-        const group = deadlineGroupForWorkshopChild(task, crmIndex, stageById);
-        if (group) groups.push(group);
-      }
-      iso = groups.length
-        ? earliestSxPlanDeadline(project, groups)
-        : (computeSxInstallPlanDeadline(project, stage, siblings)?.iso || null);
+      iso = await earliestOpenGroupIso(project, projectId);
     }
   }
 

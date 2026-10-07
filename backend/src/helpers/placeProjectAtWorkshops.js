@@ -15,6 +15,30 @@ function ymdOrNull(raw) {
   return String(raw).trim().slice(0, 10);
 }
 
+/**
+ * Patch ngày cho cả họ dự án. Không ghi null khi chưa được phép xoá —
+ * null lọt vào UPDATE ... WHERE id IN (...) sẽ xoá trắng ngày.
+ */
+function tinhPatchNgayGiaDinh(dates = {}, { choPhepXoaNgay = false } = {}) {
+  const patch = {};
+  if (dates.delivery_date !== undefined) {
+    const delivery = ymdOrNull(dates.delivery_date);
+    if (delivery || choPhepXoaNgay) {
+      patch.delivery_date = delivery;
+      patch.production_deadline = ymdOrNull(dates.production_deadline) || delivery;
+    }
+  }
+  if (dates.production_deadline !== undefined) {
+    const han = ymdOrNull(dates.production_deadline);
+    if (han || choPhepXoaNgay) patch.production_deadline = han || patch.production_deadline || null;
+  }
+  if (dates.production_finish_date !== undefined) {
+    const finish = ymdOrNull(dates.production_finish_date);
+    if (finish || choPhepXoaNgay) patch.production_finish_date = finish;
+  }
+  return patch;
+}
+
 function isoOrNull(raw) {
   if (raw == null || raw === '') return null;
   const d = new Date(String(raw).trim());
@@ -535,18 +559,24 @@ async function notifySourceDealOfWorkshopPlacement({
  * Đổi ngày lắp / hoàn thiện trên 1 project → ghi cùng bộ ngày sang
  * project nguồn, các bản đặt xưởng, và dòng project_workshop_placements.
  */
-async function syncPlacementFamilyDates(originProjectId, dates = {}) {
+/**
+ * @param {boolean} choPhepXoaNgay — cho phép GHI NULL đè lên ngày của các dự án
+ *   anh em. Mặc định KHÔNG.
+ *
+ *   applyProjectDatesPatch ghi thẳng `UPDATE projects SET delivery_date = <giá trị>
+ *   WHERE id IN (...)`, nên một giá trị null lọt vào đây là xoá trắng ngày của cả
+ *   họ chỉ bằng một câu lệnh. Đã xảy ra thật: ngày 05/10/2026 lúc 09:31 giờ VN,
+ *   TB-2026-909 và TB-2026-740 cùng bị đặt delivery_date = NULL trong đúng một
+ *   câu UPDATE (updated_at trùng tới từng mili giây), trong khi bản sao ở xưởng
+ *   của chúng vẫn giữ nguyên ngày.
+ *
+ *   Chỉ xoá khi người dùng CỐ Ý xoá ô ngày, không phải vì dự án đang sửa tình cờ
+ *   chưa có ngày nào.
+ */
+async function syncPlacementFamilyDates(originProjectId, dates = {}, { choPhepXoaNgay = false } = {}) {
   const origin = String(originProjectId || '');
   if (!origin) return;
-  const patch = {};
-  if (dates.delivery_date !== undefined) {
-    const delivery = ymdOrNull(dates.delivery_date);
-    patch.delivery_date = delivery;
-    patch.production_deadline = ymdOrNull(dates.production_deadline) || delivery;
-  }
-  if (dates.production_finish_date !== undefined) {
-    patch.production_finish_date = ymdOrNull(dates.production_finish_date);
-  }
+  const patch = tinhPatchNgayGiaDinh(dates, { choPhepXoaNgay });
   if (!Object.keys(patch).length) return;
 
   try {
@@ -967,6 +997,7 @@ module.exports = {
   placeProjectAtWorkshops,
   listWorkshopPlacementsForProject,
   syncPlacementFamilyDates,
+  tinhPatchNgayGiaDinh,
   syncWorkshopPlacementMembersToSourceDeal,
   canPlaceFromSource,
   normalizeTargets,

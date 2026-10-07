@@ -1,4 +1,234 @@
+## 2026-10-07 — Chuông bình luận theo module người nhận
+
+- Deal đã có VC vẫn gửi một `ecosystem_module_key` chung, frontend chỉ nhận diện SX rồi còn lại nhảy `/crm/leads`. NV xưởng Metalla không vào được.
+- Bấm chuông chọn đường dẫn theo module của người đang đăng nhập. Thông báo mới gắn `viewer_module_key` từng người nhận.
+- File: `NotificationCenter.jsx`, `dealModulePathAccess.js`, `dealCommentNotifications.js`, `commentViewerModule.js`.
+
+---
+
+## 2026-10-06 — P1-2: thu hồi quyền thừa của service_role (SQL 710)
+- 710 đã áp lên DB chính (PG 17.6, 3 bảng rỗng, RLS bật, anon/authenticated = 0). Kiểm tra sau áp thấy service_role còn UPDATE/DELETE/TRUNCATE trên bảng nhật ký do quyền mặc định của Supabase; thiết kế yêu cầu chỉ SELECT+INSERT.
+- Sửa 710: thêm REVOKE ALL FROM service_role trước GRANT. Bài thử nhánh tạm giờ cài quyền mặc định giống DB chính; 35/35 đạt. Chưa áp bản sửa lên DB chính (cần Founder duyệt riêng).
+
+---
+
+## 2026-10-06 16:39 — Xác minh Lead App trong giai đoạn chuẩn bị
+
+- Sửa `backend/src/helpers/facebookPageInbox.js` và `backend/src/routes/facebook.js`: tách điều kiện xác minh GET khỏi cờ nhận POST; yêu cầu secret/token riêng đủ dài và secret khác Messenger. Không thay luồng POST, worker hoặc Messenger.
+- Bổ sung kịch bản cấu hình thiếu/sai khóa và GET xác minh được trong khi POST đóng ở `backend/tests/facebookDedicatedLeadApp.test.js`.
+- Kiểm thử: 235/235 ca Node Facebook liên quan PASS; chưa chạy Meta thật, PostgreSQL/CI hoặc triển khai bản sửa. Hoàn tác bằng revert đúng commit của gói sau khi commit.
+
+---
+
+## 2026-10-06 15:45 — Facebook Lead Ads, App riêng của VPT
+
+- Meta không nhận yêu cầu quyền App `TUBEPPROvpt` qua Business Settings; yêu cầu không được gửi. Đã kiểm tra App VPT `openclaw` và `claw`, chưa App nào đạt cổng nhận production `leadgen`.
+- Chuẩn bị đường App Lead riêng, mặc định tắt, với callback ký riêng, token Graph riêng và phân luồng giữ Messenger. 210 ca Node liên quan đạt; reviewer độc lập PASS mã, HOLD production vì quyền và sự kiện Meta thật chưa xác minh.
+- Ghi rõ điều kiện cutover: không bật chế độ App riêng trước khi App mới nhận production Lead, vì callback cũ sẽ bỏ qua `leadgen` của Page quản lý. Không thay production trong lượt này.
+
+---
+
+## 2026-10-06 — P1-2: registry đợt thử (SQL 710)
+File: hai SQL 710, trialRegistry.js, trialRegistry.test.js, CURRENT.md, WORKLOG.md. Chỉ thêm bảng P1/RPC và module chưa nối runtime.
+Kiểm tra: node --check; node --test --test-isolation=none trialRegistry.test.js 5/5 (Node thường spawn EPERM); không chạy SQL/DB/mạng.
+Rollback: script 710 chỉ DROP bảng rỗng, giữ bảng có dữ liệu; chưa diễn tập trên bản sao.
+
+---
+
+## 2026-10-06 — Lọc deal theo công ty và nhân viên CRM
+
+- Picker dự án/deal thêm chọn Công ty và Nhân viên CRM (`/crm/employees-by-company?for_module=crm`).
+- File: `LeadDealPicker.jsx`, `CRMAssignmentsPage.jsx`.
+
+---
+
+## 2026-10-06 — Cột Ngày mai ở nhóm theo hạn
+
+- Thêm nhóm `tomorrow` vào Deadline giao việc, giữa Hôm nay và Tuần này.
+- File: `frontend/src/pages/CRMAssignmentsPage.jsx`.
+
+---
+
+## 2026-10-06 — Form phát sinh giống Không gian chung
+
+- Hộp giao việc phát sinh thêm phân loại, người chịu trách nhiệm, người làm. POST tạo việc ghi `phat_sinh_kind`.
+- File: `CRMAssignmentsPage.jsx`, `crmAssignmentMutations.js`, `phatSinhKinds.js`.
+
+---
+
+## 2026-10-06 — Kéo thả thẻ giao việc
+
+- Sửa kéo thả Kanban: `dataTransfer` + ref, không setState khi bắt đầu kéo. Thả cùng cột thì bỏ qua.
+- File: `frontend/src/pages/CRMAssignmentsPage.jsx`.
+
+---
+
+## 2026-10-06 — Bộ lọc nhanh giao việc mặc định đóng
+
+- `AssignQuickFilterPanel` khởi tạo `open = false` thay vì mở khi màn hình từ 768px.
+- File: `frontend/src/pages/CRMAssignmentsPage.jsx`.
+
+---
+
+## 2026-10-06 — Giao việc: bỏ «Tất cả công ty»
+
+- Dropdown Công ty ở bộ lọc trang giao việc chỉ còn từng công ty. Công ty trống hoặc không hợp lệ được gán mặc định; Đặt lại không xóa công ty.
+- File: `frontend/src/pages/CRMAssignmentsPage.jsx`.
+
+---
+
+## 2026-10-06 — ★ pipeline chọn được nhiều dòng
+
+- Dấu ★ trên liên kết loại CRM → SX đổi từ radio (một dòng) sang checkbox (nhiều dòng). Backend `replaceLeadTypeProductionLinks` giữ mọi `is_primary`, không còn xóa sao dòng thứ hai khi lưu.
+- File: `frontend/src/pages/PipelineSettingsPage.jsx`, `backend/src/helpers/crmLeadTypeProductionLinks.js`.
+
+---
+
+## 2026-10-06 — Hiện dấu ★ setup pipeline trên chọn xưởng
+
+- Đã làm: `companyShowsSxStar` / `workshopTypeShowsSxStar` đọc `is_primary` của `production_links`. `SxMultiTargetPicker` gắn ★ vào option công ty và phân loại. Deal không có loại dùng toàn bộ loại CRM của công ty.
+- File: `frontend/src/lib/sxCompanySuggestFromLeadType.js`, `frontend/src/components/SxMultiTargetPicker.jsx`, `LeadDetail.jsx`, `CRMDashboard.jsx`, `DealProductionProjectsPanel.jsx`.
+- Kiểm tra trên deal `12f731cf` (chưa có loại): ★ HCB, ★ Phúc Đạt; chọn Phúc Đạt thì ★ Cửa; chọn HCB thì ★ Tủ bếp.
+
+---
+
+## 2026-10-06 — Sửa đồng bộ Facebook Marketing theo BRIEF_SYNC
+
+File: `backend/src/helpers/fbMarketingSync.js`, `backend/tests/fbMarketingSync.test.js`, `docs/ai-handoff/CURRENT.md`, `WORKLOG.md`. Phân trang báo thiếu, currency không đoán VND, số sai không ghi 0, ngày theo Việt Nam, lỗi Meta chỉ lưu mã lọc. Fetch/Supabase giả với `<TOKEN_GIA>`: V8 8/8 PASS; `node --check`/`node --test` và `git status` bị chặn khi tạo phiên sandbox. Chưa gọi DB/Meta. Hoàn tác: đảo diff bốn file này.
+
+---
+
+## 2026-10-06 — P1-1: bộ đo Lead hợp lệ
+
+- File đổi: `leadMeasurement.js`, `marketingAutomation.leads.test.js`, `CURRENT.md`, `WORKLOG.md`; không commit/push.
+- So sánh `spend <= target × qualified` bằng số nguyên an toàn; `uiState` theo reason và trạng thái đo.
+- Kiểm: 25 → 38 test; harness JS giả lập 38/38, search caller trong `backend/src` không có. Claude review đã chạy Node 24 `node --test --test-isolation=none` (38/38) và `git diff --stat` (4 file).
+- Chưa kiểm: Node thật, tích hợp/runtime, DB/mạng. Hoàn tác đúng bốn delta P1-1, giữ lịch sử cũ.
+
+## 2026-10-06 — Chuẩn bị kích hoạt theo quyết định Founder
+
+Đã đọc trực tiếp cấu trúc và routing Primary, Render deployment; xác nhận Admin VPT đúng công ty/tenant, default stage đúng pipeline. Phát hiện `notifications.entity_id` thật là TEXT, sửa receipt replay và đưa trigger147/568 thật vào fixture. Bổ sung khôi phục đầy đủ fixture SQL702; lỗi CI đầu do PostgreSQL chuẩn hóa ngoặc CHECK được sửa bằng round-trip nguyên DDL trong fixture, vẫn so sánh nghiêm dữ liệu/quyền và thử CHECK từ chối hàng sai.
+
+Source `327864b759c6e5663949b87723ed7049c209d193`: tách signed Lead Ads quản lý khỏi Messenger, bảo vệ contact/receipt khỏi các writer/bảo trì cũ,234/234 Node cục bộ PASS. Review độc lập và CI đang chạy; phát hiện thiếu Page scope ở màn hình Lead Ads đang được sửa trong cùng phạm vi. Chưa thay production. [Routing, lỗi Backup, cấu hình cần xác minh và trình tự chuyển đổi](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).
+
+---
+
+## 2026-10-06 — H1: gói tiếp nhận Facebook Page riêng từ main
+
+Founder giao tiếp tục và giữ quyết định phát hành. Đã tách nhánh `codex/facebook-durable-inbox-20261006` từ main `1f879ea8`, triển khai signed durable inbox + SQL701, giữ worker paused. Không merge PR22/25 toàn khối; không sửa SQL700 của Claude. [Phạm vi, giới hạn, kiểm thử và phương án dừng](FACEBOOK_PAGE_INBOX_H1_20261006.md).
+
+Hoàn tất PR29 draft, source `c97c2f3d`:104/104 Node PASS; CI H1 run37383522836 đạt3/3job gồm15/15 PostgreSQL17 + restore fixture; regression Messenger cũ5/5 PG PASS; reviewer độc lập PASS mã mặc định tắt. CI đầu thiếu CLI17 đã được sửa và chạy lại toàn bộ. Nghiệp vụ tự tạo Lead/projection/attribution còn pending có chủ đích; không dùng ACK/inbox làm Lead hợp lệ. Bật hệ thống thật HOLD. Không merge/deploy/áp SQL/ghi DB thật; chỉ mã, test và hồ sơ. Mục lịch sử bên dưới giữ nguyên theo thời điểm ghi.
+
+---
+## 2026-10-02 — MCRM-D0 v1: khảo sát và thiết kế thử nghiệm trợ lý Marketing–CRM
+
+- AI thực hiện: Codex; reviewer phiên riêng theo hồ sơ VALIDATION.
+- Yêu cầu Founder: thực hiện bước khảo sát/đóng gói đã đề xuất cho trợ lý Marketing–CRM.
+- Đã làm: nguồn mã có SHA, phạm vi/owner/gate, 4 tool contract, mẫu báo cáo/fixture, target còn thiếu và 26 case chưa chạy.
+- File thay đổi: thư mục `docs/ai-handoff/marketing-crm-assistant/`, liên kết README và mục trạng thái CURRENT/WORKLOG này.
+- Kiểm chứng và kết luận review: [VALIDATION](./marketing-crm-assistant/VALIDATION.md); kiểm tài liệu/fixture không thay kiểm ứng dụng.
+- Chưa làm: implementation runtime, OpenAI API, DB/Meta/CRM thật, merge/deploy. Không dùng báo cáo giả làm chỉ số vận hành.
+- Bước tiếp: chốt target/người nghiệm thu/policy; mở đúng gói implementation sau khảo sát. Hoàn tác gói này bằng revert commit tài liệu.
+
+---
+
+
+## 2026-10-02 — F-13/F-14: Marketing tự động, đo Lead trước
+
+Founder đã giao triển khai kế hoạch thay phương án A/B/nhân sự cũ, rồi chuyển phép đo trước mắt sang250.000 đồng/khách hợp lệ. Trần một đợt100 triệu/30 ngày và80/20 giữ nguyên;300 khách tương ứng75 triệu, không buộc tiêu hết.7% doanh thu đánh giá sau; không chặn giai đoạn Lead vì chưa nối kế toán.
+
+[PR22](https://github.com/backen-pixel/Quanlycongviec/pull/22) chứa bản sửa báo cáo và nền domain/queue đang tắt, [kế hoạch](https://github.com/backen-pixel/Quanlycongviec/blob/codex/vpt-marketing-automation-20261002/docs/architecture/VPT_MARKETING_SALES_AUTOMATION_V1.md) và [trạng thái triển khai](https://github.com/backen-pixel/Quanlycongviec/blob/codex/vpt-marketing-automation-20261002/docs/ai-handoff/vpt-marketing-automation/README.md). Các adapter dữ liệu thật, atomic budget/slot, tài sản/nội dung và UAT chưa hoàn tất. Không merge/deploy/đổi ads/DB thật. PR20 là hồ sơ kiến trúc; PR19 vẫn là dependency của PR22. Xem validation đúng phiên bản trong PR22, không suy tất cả hệ thống PASS.
+
+F-13/F-14 là quyết định mới, F-12 và nhật ký dưới đây giữ lịch sử theo thời điểm. Các gate kiến trúc/Factory và sources đồng bộ giữ nguyên.
+
+---
+
+## 2026-10-02 — Cập nhật ưu tiên Marketing đa kênh theo Founder
+
+- Thực hiện: Codex. Yêu cầu: ưu tiên tạo khách qua Marketing đa kênh; Founder nêu website/Google/ChatGPT Ads/TikTok/Zalo và giao lập phương án tăng ngân sách.
+- Đã làm: F-12, roadmap thu hút → nhận khách → tư vấn → đo chất lượng; gói MK-01…06 và hai phương án media chờ duyệt. Kế thừa ngân sách Facebook đã duyệt; chưa sửa chiến dịch.
+- Kiểm tra: nội dung/phạm vi, phép tính ngân sách, liên kết và bảo toàn phần lịch sử; review bổ sung tại MARKETING_PRIORITY_REVIEW_20261002.md. Không dùng PASS tài liệu thay UAT hoặc phê duyệt chi tiền.
+- Chưa làm: chạy Ads/CRM/DB/API, tích hợp kênh hoặc merge/deploy. Không cam kết số khách khi chưa có baseline.
+- Hoàn tác: revert commit tài liệu, giữ lịch sử. Các quyết định và bằng chứng chặng 0 cũ giữ phạm vi phiên bản riêng.
+
+---
+
+# 2026-10-01 — Chặng 0 / bộ kiến trúc Business AI OS V1.1
+
+Theo kế hoạch Founder yêu cầu triển khai: soạn kiến trúc, roadmap, bản đồ ownership, sổ quyết định và ADR; gắn vào mục lục/AGENTS/CLAUDE. Đã đối chiếu 31 bản nguồn với blob Git, main 0db11ce1adb0fb89fc87529036e495a62d58fce7; phát hiện lõi Order hiện có, task xưởng trong crm_tasks, hỗ trợ đa xưởng/đa đợt, giới hạn flowRuntime và 54 nhóm số SQL trùng.
+
+Hồ sơ: [bằng chứng](ARCHITECTURE_V1_1_EVIDENCE_20261001.md), [lộ trình](../architecture/BUSINESS_AI_OS_V1_1_ROADMAP.md). Gói chỉ sửa tài liệu/hướng dẫn; không code runtime, migration, config, quyền, CI, lịch hoặc quảng cáo. Kiểm tra liên kết/phạm vi/bảo toàn lịch sử và [review độc lập](ARCHITECTURE_V1_1_INDEPENDENT_REVIEW_20261001.md) PASS; không suy test phần mềm từ kiểm tra này. Prefix mới giữ nguyên toàn bộ nội dung lịch sử phía sau.
+
+---
+
+
+## 2026-10-05 - PR A minimal: lead measurement core
+Files: backend/src/modules/marketingAutomation/policy.js, leadMeasurement.js; backend/tests/marketingAutomation.leads.test.js; .github/workflows/marketing-lead-measure-core.yml; CURRENT.md and WORKLOG.md.
+Source: PR #22 commit 679cb926. policy.js keeps APPROVED_PLAN, money, instant; removes DAY, deny, evaluateBudgetMove, humanDeadline.
+Checks: Node 24.19.0 node --check passed for all three JS files; node --test --test-isolation=none passed 25/25. Plain node --test could not spawn in sandbox (EPERM); Node 18/22 CI is pending.
+Runtime: no caller, no real-data report, no DB/API access, migration, deployment, commit, or push.
+Rollback: remove the four added code/CI files and these two handoff entries.
+
+## 2026-10-01 - Issue #15: Marketing / Business AI OS M0 candidate
+
+**State: IN PROGRESS.** Feature branch `codex/marketing-bos-m0-20261001`, base `0bc6392286df0b986cdd6dfc59b499916dd6fd31`; implementation commit `33874dd2e3632c0a1127fd76cc7351a663138e9c`.
+
+Added a pure normalized-evidence contract and synthetic tests, ADR-0015, an integration/dependency map, a non-runtime implementation backlog and a read-only PR CI workflow. See `MARKETING_BOS_M0_EVIDENCE_20261001.md` and `../architecture/MARKETING_BOS_INTEGRATION_V1.md`.
+
+Verification: 73/73 synthetic tests on Node 22.16.0 in an isolated container; 73/73 on Node 24.19.0 in a fresh Windows sandbox after fetching this exact GitHub commit. All six new Git blob SHA-256 hashes match the locally tested contents. Helper/test syntax and diff checks pass. These are repeat runs by the same assistant, not independent review; no full application, staging or live E2E tests were run.
+
+No main merge, production deploy, SQL, CRM records, ad budgets/statuses, credentials, permissions, scheduler, agent deletion or existing runtime files were changed. The helper is not registered in an application route/worker. PR #14 remains an independent workstream.
+
+Next: review exact PR head and CI, then M1 target/schema/recipient/source verification and a scoped read adapter. M2 E2E/shadow evidence and M3 authorized release remain NOT STARTED. Preserve existing single-writer ownership and schedules. Rollback only this additive candidate; never delete customer/receipt/evidence data.
+
+Historical entries below are preserved byte-for-byte; this entry does not re-certify their live status.
+
+---
+
+
+## 2026-10-01 — PR19 delayed-action refresh and authorized local browser verification
+
+PR #19 original head: `1d2520d2286423269adc50104185fe3cbe10bc04`. Founder authorized a local browser using synthetic data and an independent read-only reviewer agent. Real CRM configuration access and source-to-recipient acceptance remain unverified.
+
+Found a remaining P1: a save started under company A can finish after selecting B and invoke the old A loader; its new request ID overwrites B with A's report. Reproduced in real React browser: selected B showed A/11. The candidate uses a mounted latest-loader ref for four action completion paths, clears it on cleanup, and preserves B/22 after delayed completion. Backend business logic, permissions and configuration unchanged by this follow-up.
+
+Validation: verified original source blob hashes; existing suite 41/41 PASS; 12 new lifecycle tests against original = 4 PASS / 8 FAIL; candidate integrated suite = 53/53 PASS. Independent agent reviewed the full functional delta against base 0db11ce1adb0fb89fc87529036e495a62d58fce7, reran 41 existing + 12 new tests successfully and approved the candidate (UI blob `565f8990b3ef599f551398ec0e342239529c7d13`). CI includes the new test on Node 18/22; check the published head before relying on CI.
+
+Supported-browser evidence: actual UI component with mock-only API at loopback and CSP connect-src none; delayed save/filter switch, unavailable CRM/clear old data, recovery and empty state; screenshots at requested 1440/768/375 widths. No page horizontal overflow observed, table scrolls inside its container. Independent agent inspected saved browser evidence, did not rerun browser. Not whole-app build/auth, visual-baseline comparison, comprehensive accessibility or real CRM E2E.
+
+Review detail: PR19_BROWSER_INDEPENDENT_REVIEW_20261001.md. Operational gate stays HOLD pending allowed environment/sample and Facebook → canonical CRM → active Sales Admin/report reconciliation. No main merge, production deploy, message/ad/budget/customer/config changes.
+
+Rollback: revert only the follow-up commit; preserve all data, prior report corrections and historical handoff entries.
+
+---
+
+## 2026-10-01 - PR19 UI review follow-up (not production acceptance)
+
+Found and fixed campaign row-key collisions and stale async responses after filter changes. New snapshot reset and request-generation checks preserve the current selected scope. Existing backend report corrections unchanged. 10 new tests fail 9/10 on the old PR source; combined suite now 41/41 PASS. Actual JSX transform PASS, no warnings. CI expanded to cover both tests; result must be read on new head.
+
+Browser runner attempt was safety-blocked and not retried; no actual browser/mobile/full-build/CRM E2E PASS. Prior CRM configuration access block remains; no alternative access attempted. Same-assistant review, not independent approval. No main merge, deployment, ads/budget or customer/recipient changes. Next gates: authorized browser verification and Facebook -> canonical CRM -> active Sales Admin acceptance. Details: PR19_UI_REVIEW_20261001.md.
+
+---
+
+## 2026-10-01 — Marketing first: report correctness, Issue #18
+
+Founder requested focusing on completion of marketing, not broader AI architecture. Priority remains real source -> valid CRM intake -> active Sales Admin -> accurate reporting. No new agent, scheduler or parallel dashboard in this increment.
+
+Branch: codex/marketing-report-correctness-20261001. Base: bb6f1f26a66905de7701947c0b03c82c41343061. Correct existing ad-analytics read routes: one lead_id per group; distinguish campaigns by ID before manual labels; CRM read failure returns safe UNKNOWN/503 instead of a successful zero. UI clears earlier data on read error and explicitly shows unavailable, not an empty-result conclusion. Existing auth/company and business lifecycle rules unchanged.
+
+Verification: same 31 tests on pinned baseline = 9 PASS / 22 FAIL; candidate = 31 PASS / 0 FAIL (Node 24.19.0). Backend/test syntax and git diff check pass. VM executes actual route handlers with synthetic DB/auth dependencies and the actual UI load callback; not full auth, browser, React render, independent review, whole-app build or live E2E. GitHub CI must be read back on exact published head. JSX parser unavailable in sandbox; no dependency installed.
+
+Files: backend/src/routes/adAnalytics.js; frontend/src/pages/AdAnalyticsPage.jsx; backend/tests/adAnalytics.correctness.test.js; .github/workflows/marketing-report-correctness.yml; handoff/evidence. No main merge, deploy, DB/config change, ad/budget change, or live customer action. A live CRM configuration read was blocked and was not retried through another path. This patch does not complete source/recipient/E2E verification or replace PR #14/#16.
+
+Rollback: revert only this commit; preserve all customer data and prior handoff entries. Next: exact-head review/CI, then authorized release/smoke and source-to-recipient E2E. No live activation is implied by passing synthetic tests.
+
 # Candidate worklog
+
+## 2026-10-05 — Bản vá quyền anon/authenticated, chỉ tạo code
+
+- AI: Codex. Phạm vi theo `BRIEF_SECURITY.md`; không truy cập DB/Supabase, không chạy migration hay smoke, không push.
+- File: `database/audit/anon_exposure_audit.sql`, `database/audit/anon_exposure_snapshot.sql`, `database/700_revoke_anon_public_access.sql`, `database/700_revoke_anon_public_access_rollback.sql`, `backend/tests/anon-exposure-smoke.js`, `backend/package.json`, `docs/ops/SECURITY_ANON_REVOKE.md`, `docs/ai-handoff/CURRENT.md`, `docs/ai-handoff/WORKLOG.md`.
+- Kiểm tra tĩnh: `node --check backend/tests/anon-exposure-smoke.js`; `git diff --check`; rà RPC/backend và web/mobile bằng `rg`. Chưa xác minh cú pháp SQL bằng PostgreSQL, chưa kiểm tra hiệu quả trên staging. `git add` bị chặn khi tạo `.git/worktrees/Quanlycongviec-secfix/index.lock` ngoài writable root; chưa commit. Hoàn tác code bằng bỏ diff trong worktree; hoàn tác database bằng script rollback dùng snapshot cùng database.
 
 ## 2026-09-29 — VPT Messenger durable intake, local candidate only
 
@@ -17,17 +247,76 @@ Rollback: keep ads paused; drain pending receipts before disabling FB_DURABLE_ME
 
 # Nhật ký công việc AI
 
+## 2026-10-06 12:35 — Nút +1 +2 +3 ngày trên deadline SX
+
+- Hộp deadline thẻ có «Dời cả lịch» và nút +1/+2/+3 trên ngày lắp cùng từng mốc còn lại. Một lần bấm dời cả kế hoạch và hạn thẻ.
+- Nút + trên riêng deadline thẻ chỉ dời hạn thẻ, không đổi ngày lắp.
+
+## 2026-10-06 12:30 — Deadline thẻ SX hiện mốc còn lại
+
+- Nút deadline trên Kanban SX trước đây chỉ sửa hạn thẻ, không đồng bộ ngày lắp.
+- Hộp thoại nay liệt kê deadline thẻ, ngày lắp và mốc kế hoạch còn lại; sửa mốc hoặc ngày lắp thì dời cả lịch và tính lại hạn thẻ.
+
+## 2026-10-05 20:10 — Nút ⋯ xóa bình luận
+
+- Bình luận của Lê Minh Tiển không có chỗ xóa vì nút chỉ hiện khi rê chuột và chỉ với đúng người viết.
+- Gắn nút ⋯ trên bong bóng: tác giả Sửa/Xóa, admin chỉ Xóa. Sửa API xóa lead (truyền `req.user`) và cho admin xóa bình luận dự án.
+- Đã mở deal LEAD-2026-1389, bấm ⋯ trên bình luận file SKP, menu hiện «Xóa». Chưa xóa dữ liệu thật.
+
+## 2026-10-05 16:00 — NV Metalla không mở được dự án đặt sang xưởng Hucabi
+
+- AI: Cursor. Toại (admin Metalla) mở TB-2026-909 được nhưng TB-2026-964 (Hucabi, đặt từ 909) bị 403.
+- Nguyên nhân: `getAccountingClientProjectIdsAtWorkshop` gửi `.in('project_id', 641 UUID)` → PostgREST `Bad Request` (URL > ~25KB) → trả `[]` → mọi dự án Hucabi đều bị từ chối với NV công ty khác.
+- Sửa: phân trang dự án + tra deal theo lô bằng `supabaseFetchAll`. Kiểm tra local: 81 dự án khớp, có TB-2026-964.
+- Còn tồn: `getVptRelatedProjectIdsAtWorkshop` cùng kiểu lỗi, chưa sửa.
+- File: `backend/src/helpers/accountingScope.js`.
+
+## 2026-10-05 15:00 — Menu file Drive không đè thẻ
+
+- AI: Cursor. Menu ⋯ nằm trong thẻ `overflow-hidden` nên Xem trước / Xóa đè lên ảnh và bị cắt.
+- Đưa menu ra lớp nổi trên trang, căn theo nút ⋯, lật lên trên nếu sát đáy màn hình.
+- File: `DriveFileViews.jsx`.
+
+## 2026-10-05 14:35 — Xóa file Drive có xác nhận và báo thành công
+
+- AI: Cursor. Menu xóa file trên hồ sơ đã hỏi xác nhận nhưng không báo khi xong.
+- Giữ hộp xác nhận (kèm tên file) và thêm toast «Đã xóa». Trang Drive báo tương tự khi đưa vào thùng rác hoặc xóa vĩnh viễn.
+- File: `DriveAttachments.jsx`, `DrivePage.jsx`.
+
+## 2026-10-05 10:40 — Tải file bình luận sống qua đổi trang
+
+- AI: Cursor. Rời trang làm mất thanh tiến trình trong ô bình luận nên tưởng như tải bị dừng. Request axios không bị hủy khi unmount.
+- Gắn tiến trình vào bảng góc dưới phải của Drive: tốc độ và thời gian còn lại. File đính kèm thường và file lớn đều hiện ở đó.
+- File: `FileUpload.jsx`, `drive.js`, `oversizedDriveUpload.js`.
+
+## 2026-10-05 10:30 — Thanh tải file trong bình luận
+
+- AI: Cursor. Tiến trình đính kèm nằm trong cột kẹp giấy (~150px) nên tên file và chữ trạng thái bị gãy trong ô nhập.
+- Đưa thanh tiến trình ra hàng riêng, full width, phía trên ô soạn. File lớn dừng ở 99% vì server đang đẩy lên Google Drive sau khi trình duyệt gửi xong.
+- File: `CommentsPanels.jsx`, `FileUpload.jsx`, `UploadProgressBubble.jsx`, `oversizedDriveUpload.js`, `uploadProgressEta.js`.
+
+## 2026-10-05 09:20 — Hạn HCB bám cột, quá hạn sau 17:30
+
+- AI: Cursor. Đổi ngày lắp HCB vẫn quá hạn vì hạn thẻ lấy nhóm việc còn mở sớm nhất, không phải cột đang đứng.
+- Hạn thẻ và bảng nhiệm vụ SX tính lại từ cột Kanban, mốc 17:30. Cùng ngày chỉ quá hạn sau giờ đó.
+- File: `sxCardPlanDeadline.js`, `workTasks.js`, `ProjectTasksOverviewPage.jsx`. Đã quét lại hạn thẻ HCB.
+
+## 2026-10-05 08:52 — File trên 50MB lưu Drive, link vào bình luận
+
+- AI: Cursor. File đính kèm lớn hơn 50MB không còn bị chặn: tải lên Google Drive, tạo link xem, gắn vào bình luận lead/dự án. Chat lead cũng đăng bình luận kèm link.
+- File: `oversizedDriveUpload.js`, `CommentsPanels.jsx`, `LeadChatTabs.jsx`, `drive.js`, `helpersBundle.js`.
+
+## 2026-10-02 16:51 — Gỡ lọc dashboard Hào, trả về xem đủ dự án xưởng
+
+- AI: Cursor. Đã bỏ phạm vi «chỉ dự án có việc của Hào» trên dashboard SX.
+- File: `dealParticipantProduction.js`. Xóa `tests/hao-task-project-scope.js`.
+- `hao@metalla.com` thấy lại mọi dự án công ty, theo phân loại đang chọn.
+
 ## 2026-10-02 15:15 — Hàng nhiệm vụ hiện tên nhân viên được gán
 
 - AI: Cursor. Dòng nhiệm vụ thu gọn (ví dụ Phôi) chỉ hiện «Chi tiết», không hiện tên người nhận.
 - File: `frontend/src/components/CRMTasksTab.jsx`.
 - Tên nhân viên hiện luôn trên hàng, không cần mở rộng. Đã xem TB-2026-963: Phôi và Cánh hiện «Thuận».
-
-## 2026-10-02 14:20 — Dashboard Hào chỉ còn dự án có việc của anh ấy
-
-- AI: Cursor. Hào hoàn thiện đang thấy mọi dự án Metalla trên dashboard SX.
-- File: `dealParticipantProduction.js`, `tests/hao-task-project-scope.js`.
-- Tài khoản `hao@metalla.com` chỉ còn dự án có nhiệm vụ CRM hoặc việc sản xuất gắn cho mình. Dự án không có việc của Hào không lên danh sách và không mở được.
 
 ## 2026-10-02 13:56 — Hiện BC theo tổ chức cho quản trị HST
 
@@ -1605,4 +1894,12 @@ Hoàn tác local bằng đảo commit này nếu cần, nhưng đưa route cũ t
 ---
 
 Khi bắt đầu phiên mới, thêm mục mới lên đầu file, ngay dưới tiêu đề.
+# 2026-10-05 — PR19/main compatibility and detail permissions
+
+Reconciled two conflicts between e16c885a and main ca8810c5. Preserved new Page/post/embedded views and PR19 data/async protections. Independent review identified project and Lead detail disclosure in the newly introduced main route; reused existing permission gates. Separate stale action failures from report failures. Modified adAnalytics route/UI, correctness/action lifecycle tests, CI path coverage, CURRENT and integration evidence. Local regressions 127/127; full frontend build and supported-browser synthetic checks. Operational gate HOLD: read-only CRM authorized but login pending; Render workspace unconfirmed; no live changes. See PR19_MAIN_INTEGRATION_20261005.md for scope, limitations and rollback.
+# 2026-10-06 — Hoàn thiện hợp đồng Lead Ads sau H1
+
+Theo yêu cầu tiếp tục của Founder, bổ sung domain/Application Service, claim riêng cho form, SQL702 atomic và bộ thử nghiệm. Nhận lại cùng nguồn giữ nguyên Customer/Lead/receipt; sai quyền hoặc dữ liệu cũ không rõ giữ để đối soát. Giao Admin bằng thông báo trong ứng dụng; không chạy legacy auto-task hoặc gửi khách. Source a5bcabf3:194/194 Node,29/29 PG intake và15/15 PG inbox PASS; CI37393352657, regression Messenger CI37393352980 PASS. Đã sửa lỗi SQL biến phone mà review/CI đầu phát hiện, giữ đầy đủ test. [Hồ sơ gói](FACEBOOK_LEAD_ADS_INTAKE_20261006.md), [review độc lập](FACEBOOK_LEAD_ADS_INTAKE_REVIEW_20261006.md). Chưa thay hệ thống thật, kích hoạt HOLD theo các giới hạn ghi trong hồ sơ.
+
+---
 

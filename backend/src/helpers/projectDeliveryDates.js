@@ -151,12 +151,26 @@ function installAnchorPatchFromBody(body) {
   return patch;
 }
 
-/** Cột projects.install_occurrence_dates chưa có trên DB. Chỉ ghi ngày lắp / ngày giao. */
+const COT_GHI_TUY_CHON = [
+  'install_occurrence_dates', 'production_finish_date', 'collected_amount', 'deposit_amount',
+  'logistics_cost', 'delivery_date', 'order_date', 'vc_notes', 'deadline', 'notes',
+];
+
+/**
+ * Tên cột thiếu trong thông điệp Postgres/PostgREST.
+ * Chỉ nhận cột trong danh sách cho phép. Không nhận ra thì null — người gọi phải ném lỗi.
+ */
+function cotThieuTuLoi(message) {
+  const text = String(message || '');
+  if (!text.includes('column')) return null;
+  return COT_GHI_TUY_CHON.find((name) => new RegExp(`\\b${name}\\b`).test(text)) || null;
+}
+
+/** Cột projects.install_occurrence_dates (DATE[]) đã có từ migration 649 (05/10/2026). Ghi cả lịch nhiều đợt. */
 function installAnchorPersistPatch(body) {
   const patch = installAnchorPatchFromBody(body);
   if (!patch) return null;
   const persist = { ...patch };
-  delete persist.install_occurrence_dates;
   return Object.keys(persist).length ? persist : null;
 }
 
@@ -169,4 +183,5 @@ module.exports = {
   installAnchorPatchFromBody,
   installAnchorPersistPatch,
   normalizeOccurrenceYmds,
+  cotThieuTuLoi,
 };

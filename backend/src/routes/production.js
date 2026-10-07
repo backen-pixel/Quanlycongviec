@@ -1322,9 +1322,20 @@ r.put('/substage-status', requireProductionKanbanEdit(), async (req, res) => {
     const selectCols = logistics
       ? 'project_id, stage_id, logistics_stage_id, trang_thai, nguoi_lam, bat_dau_luc, xong_luc, ghi_chu, updated_at'
       : 'project_id, stage_id, trang_thai, nguoi_lam, bat_dau_luc, xong_luc, ghi_chu, updated_at';
+    // Đọc rồi mới ghi là một cuộc ĐUA: hai yêu cầu cùng lúc đều thấy "chưa có
+    // dòng nào" rồi cùng insert, dòng thứ hai đập vào project_substage_status_uniq
+    // (project_id, stage_id) và người dùng nhận lỗi 500. Đã xảy ra thật ngày
+    // 05/10/2026. Dùng upsert để Postgres tự xử bằng chính ràng buộc đó.
+    //
+    // Nhánh logistics vẫn insert: dòng logistics có stage_id = NULL, mà chỉ mục
+    // trên coi các NULL là khác nhau nên không bao giờ đụng ràng buộc này —
+    // ép onConflict vào đó chỉ tạo ra lỗi mới chứ không chặn được gì.
     const write = cu?.id
       ? supabase.from('project_substage_status').update(row).eq('id', cu.id)
-      : supabase.from('project_substage_status').insert(row);
+      : (logistics
+        ? supabase.from('project_substage_status').insert(row)
+        : supabase.from('project_substage_status')
+          .upsert(row, { onConflict: 'project_id,stage_id' }));
     const { data, error } = await write
       .select(selectCols)
       .maybeSingle();

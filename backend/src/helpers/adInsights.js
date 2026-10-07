@@ -41,6 +41,11 @@ async function napSoLieuTheoAd({ ngay = 90 } = {}) {
     .from('lead_attribution')
     .select('lead_id, fb_ad_id, fb_page_id, fb_ad_title, cham_dau_luc')
     .not('fb_ad_id', 'is', null)
+    // BẮT BUỘC: quy kết được ghi ở mức CONTACT ngay khi khách nhắn, lead chỉ sinh
+    // ra sau khi được duyệt — nên có dòng mang ad_id mà lead_id còn trống (đo ngày
+    // 04/10/2026: 156/512 dòng). Thiếu dòng lọc này thì String(null) hoá chuỗi
+    // 'null' chui vào .in(), Postgres chối cả lô và phân tích chết lặng.
+    .not('lead_id', 'is', null)
     .gte('cham_dau_luc', tu)
     .limit(20000);
   if (error) throw new Error(error.message);

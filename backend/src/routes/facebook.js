@@ -6,6 +6,12 @@ const { enabledPageIds, enqueueMessengerEvents, captureMessengerReferral, linkMe
 const DURABLE_MESSENGER_PAGES = enabledPageIds();
 const { isFacebookAtomicLeadScope, createFacebookLeadOnce } = require('../helpers/facebookAtomicLead');
 const { supabase } = require('../config/supabase');
+const { withPrimaryDatabase, getActiveTarget, isAutoFailoverEnabled } = require('../config/supabaseRouter');
+const { inboxSettings, isManagedLeadAdsContact, createPageInboxReceiver, createDedicatedLeadAdsReceiver, createLeadAdsWebhookHandoff, createPageInboxWorker, assertPageLegacyScope, safeCode } = require('../helpers/facebookPageInbox');
+const { createFacebookLeadAdsIntake } = require('../services/facebookLeadAdsIntake');
+const PAGE_INBOX = inboxSettings();
+const pageInboxPrimary = () => getActiveTarget() === 'primary' && !isAutoFailoverEnabled();
+const pageInboxError = code => console.warn('[FB page inbox]', code);
 const { fetchAllPagesParallel } = require('../helpers/supabaseFetchAll');
 const axios = require('axios');
 const {
@@ -1196,6 +1202,10 @@ async function runPipelineV2OnePass({
     if (typeof shouldStop === 'function' && shouldStop()) break;
     const contact = contacts[i];
     const row = { contact_id: contact.id, name: contact.fb_name };
+    if (await isLegacyContactProtected(contact.id)) {
+      details.push({ contact_id: contact.id, lead_status: 'lead_ads_managed_skip' });
+      continue;
+    }
 
     const syncRes = await graphSyncMessagesForContactRow(contact, pageTokens, { maxGraphPages: graphPages });
     messagesSynced += syncRes.synced || 0;
@@ -1281,6 +1291,10 @@ async function runPipelineV2OnePass({
     for (let j = 0; j < withLead.length; j++) {
       if (typeof shouldStop === 'function' && shouldStop()) break;
       const c = withLead[j];
+      if (await isLegacyContactProtected(c.id)) {
+        cleanupDetails.push({ contact_id: c.id, reconcile: 'lead_ads_managed_skip' });
+        continue;
+      }
       const crow = { contact_id: c.id, name: c.fb_name, phase: 'cleanup_with_lead' };
       const s2 = await graphSyncMessagesForContactRow(c, pageTokens, { maxGraphPages: graphPages });
       messagesSynced += s2.synced || 0;
@@ -2940,11 +2954,55 @@ async function fetchContactLeadId(contactId) {
   return data?.lead_id || null;
 }
 
+function assertLegacyLeadAdsWrite(pageId) {
+  if (PAGE_INBOX.leadAdsIntake && PAGE_INBOX.managedPages.has(String(pageId))) {
+    throw Object.assign(new Error('FB_INBOX_LEAD_ADS_LEGACY_WRITE_BLOCKED'), { code: 'FB_INBOX_LEAD_ADS_LEGACY_WRITE_BLOCKED' });
+  }
+}
+
+async function isLegacyContactProtected(contactId) {
+  if (!PAGE_INBOX.leadAdsIntake) return false;
+  // Identity comes from storage: callers may use partial contact projections.
+  // An unavailable read must never authorize a legacy write to an intake receipt.
+  try {
+    const contact = requireFacebookResult(await supabase.from('facebook_contacts')
+      .select('id,page_id,psid').eq('id', contactId).maybeSingle(), 'FB_INBOX_LEGACY_CONTACT_SCOPE_UNAVAILABLE', true);
+    if (contact.id !== contactId || typeof contact.page_id !== 'string' || typeof contact.psid !== 'string') {
+      throw new Error('Invalid contact identity');
+    }
+    if (isManagedLeadAdsContact(PAGE_INBOX, contact)) return true;
+    const receipt = requireFacebookResult(await supabase.from('facebook_lead_ads_intake_receipts')
+      .select('contact_id,page_id').eq('contact_id', contactId).maybeSingle(), 'FB_INBOX_LEGACY_CONTACT_SCOPE_UNAVAILABLE');
+    if (receipt && (receipt.contact_id !== contactId || typeof receipt.page_id !== 'string')) throw new Error('Invalid receipt identity');
+    return !!receipt && PAGE_INBOX.managedPages.has(receipt.page_id);
+  } catch (_) {
+    throw Object.assign(new Error('FB_INBOX_LEGACY_CONTACT_SCOPE_UNAVAILABLE'), { code: 'FB_INBOX_LEGACY_CONTACT_SCOPE_UNAVAILABLE' });
+  }
+}
+
+async function assertLegacyContactWrite(contactId) {
+  if (await isLegacyContactProtected(contactId)) {
+    throw Object.assign(new Error('FB_INBOX_LEAD_ADS_LEGACY_WRITE_BLOCKED'), { code: 'FB_INBOX_LEAD_ADS_LEGACY_WRITE_BLOCKED' });
+  }
+}
+
+function assertLegacyMaintenanceAllowed() {
+  if (PAGE_INBOX.leadAdsIntake) {
+    throw Object.assign(new Error('Chức năng bảo trì này tạm khóa khi tiếp nhận Lead Ads đang hoạt động.'),
+      { code: 'FB_INBOX_LEGACY_MAINTENANCE_BLOCKED', status: 409 });
+  }
+}
+
 async function createLeadFromFacebook(pageId, contact, source, extraData = {}) {
+  // Manual sync, batch scan, Pipeline and Auto Tool share this entry point.
+  // Synthetic Lead Ads contacts on managed Pages belong only to SQL702;
+  // Messenger contacts keep their existing creation contract.
+  if (String(contact?.psid || '').startsWith('leadad_') || source === 'Lead Ads') assertLegacyLeadAdsWrite(pageId);
   if (!contact?.id) return null;
-  return withAsyncLock(`fb-lead:${contact.id}`, () =>
-    createLeadFromFacebookInner(pageId, contact, source, extraData),
-  );
+  return withAsyncLock(`fb-lead:${contact.id}`, async () => {
+    await assertLegacyContactWrite(contact.id);
+    return createLeadFromFacebookInner(pageId, contact, source, extraData);
+  });
 }
 
 async function createLeadFromFacebookInner(pageId, contact, source, extraData = {}) {
@@ -3481,19 +3539,48 @@ r.get('/webhook', async (req, res) => {
   res.sendStatus(403);
 });
 
+// Separate callback for the VPT-owned Lead App. Its verify token and signing
+// secret are deliberately unrelated to the existing Messenger App.
+r.get('/webhook/lead-ads', (req, res) => {
+  if (!PAGE_INBOX.dedicatedLeadAppVerification) return res.sendStatus(404);
+  const token = process.env.VPT_FB_LEAD_APP_VERIFY_TOKEN;
+  if (typeof token !== 'string' || token.length < 16) return res.sendStatus(404);
+  if (req.query['hub.mode'] !== 'subscribe' || req.query['hub.verify_token'] !== token
+      || typeof req.query['hub.challenge'] !== 'string' || !req.query['hub.challenge']) return res.sendStatus(403);
+  return res.status(200).send(req.query['hub.challenge']);
+});
+
 // ── WEBHOOK RECEIVE (POST) ───────────────────────────────────
 
 r.post('/webhook', async (req, res) => {
-  const body = req.body;
-  
-  // Only opt-in Pages enter the durable inbox. A failed write must cause Meta retry.
-  if (body.object === 'page') {
+  let body;
+  if (PAGE_INBOX.leadAdsIntake) {
     try {
-      await enqueueMessengerEvents(supabase, body.entry, DURABLE_MESSENGER_PAGES);
-    } catch (_) {
-      return res.sendStatus(503);
+      // Signed partition removes every managed Lead Ads event from legacy
+      // dispatch; both required queue writes must confirm before the ACK.
+      body = await handoffLeadAdsWebhook(req);
+    } catch (error) {
+      pageInboxError(safeCode(error));
+      return res.sendStatus([400, 403].includes(error.status) ? error.status : 503);
+    }
+  } else {
+    if (PAGE_INBOX.enabled) {
+      // Generic H1 remains a full-endpoint handoff, separate from scoped intake.
+      return receivePageInbox(req, res);
+    }
+    // Generic scope protection still fails closed without its durable receiver.
+    if (PAGE_INBOX.scopeGuard || PAGE_INBOX.managedPages.size) return res.sendStatus(503);
+    body = req.body;
+    // Only opt-in Pages enter the existing Messenger queue.
+    if (body.object === 'page') {
+      try {
+        await enqueueMessengerEvents(supabase, body.entry, DURABLE_MESSENGER_PAGES);
+      } catch (_) {
+        return res.sendStatus(503);
+      }
     }
   }
+  if (!body) return res.sendStatus(503);
   res.sendStatus(200);
   void messengerReceiptWorker.drain();
 
@@ -3538,6 +3625,11 @@ r.post('/webhook', async (req, res) => {
   }
 });
 
+r.post('/webhook/lead-ads', (req, res) => {
+  if (!PAGE_INBOX.dedicatedLeadApp) return res.sendStatus(404);
+  return receiveDedicatedLeadAds(req, res);
+});
+
 // ── HANDLE MESSENGER ─────────────────────────────────────────
 
 /** PSID khách: tin từ KH (sender ≠ page); echo/read/delivery thường có sender = page → lấy recipient. */
@@ -3550,35 +3642,144 @@ function messengerPartnerPsid(pageId, event) {
   return null;
 }
 
+// Durable handlers must distinguish an empty result from an unavailable DB.
+// Keep error text bounded and free of Page tokens / customer payloads.
+function requireFacebookResult(result, code, required = false) {
+  if (!result || result.error || (required && !result.data)) {
+    const error = new Error(code);
+    error.code = code;
+    throw error;
+  }
+  return result.data;
+}
+
+async function getDurableFacebookContact(pageId, psid, name) {
+  const read = () => supabase.from('facebook_contacts').select('*')
+    .eq('page_id', pageId).eq('psid', psid).maybeSingle();
+  let contact = requireFacebookResult(await read(), 'FB_DURABLE_CONTACT_READ_FAILED');
+  if (!contact) {
+    const inserted = await supabase.from('facebook_contacts')
+      .insert({ page_id: pageId, psid, fb_name: name || 'Facebook User' }).select().single();
+    // A timed-out insert is retried by the receipt; the unique Page/PSID identity
+    // is read first on that retry. Only a definite duplicate is read here.
+    contact = inserted.error?.code === '23505'
+      ? requireFacebookResult(await read(), 'FB_DURABLE_CONTACT_REPLAY_FAILED', true)
+      : requireFacebookResult(inserted, 'FB_DURABLE_CONTACT_WRITE_FAILED', true);
+  }
+  if (name && name !== contact.fb_name) {
+    requireFacebookResult(await supabase.from('facebook_contacts').update({
+      fb_name: name, updated_at: new Date().toISOString(),
+    }).eq('id', contact.id), 'FB_DURABLE_CONTACT_UPDATE_FAILED');
+    contact.fb_name = name;
+  }
+  return contact;
+}
+
+async function getDurableFacebookPage(pageId) {
+  return requireFacebookResult(await supabase.from('facebook_pages').select('*')
+    .eq('page_id', pageId).eq('is_active', true).maybeSingle(), 'FB_DURABLE_PAGE_UNAVAILABLE', true);
+}
+
+async function getDurableFacebookLeadId(contactId) {
+  const row = requireFacebookResult(await supabase.from('facebook_contacts').select('lead_id')
+    .eq('id', contactId).maybeSingle(), 'FB_DURABLE_CONTACT_READ_FAILED', true);
+  return row.lead_id || null;
+}
+
+async function loadDurableFacebookAutoLeadConfig() {
+  const row = requireFacebookResult(await supabase.from('app_settings').select('value')
+    .eq('key', 'auto_lead_config').maybeSingle(), 'FB_DURABLE_CONFIG_READ_FAILED');
+  if (row?.value != null && (typeof row.value !== 'object' || Array.isArray(row.value))) {
+    requireFacebookLeadContract('FB_DURABLE_CONFIG_INVALID');
+  }
+  return { ...AUTO_LEAD_DEFAULTS, ...(row?.value || {}) };
+}
+
+async function durableFacebookPhoneExclusion(rawPhone) {
+  if (rawPhone == null || !String(rawPhone).trim()) return null;
+  const normalized = normalizePhoneForLeadCreation(String(rawPhone).trim());
+  if (!normalized.ok) return 'invalid_phone';
+  const digits = String(normalized.normalized || '').replace(/\D/g, '');
+  if (digits.length < 9) return null;
+  const rows = requireFacebookResult(await supabase.from('crm_auto_lead_blocked_phones')
+    .select('id').eq('phone_last9', digits.slice(-9)).limit(1), 'FB_DURABLE_BLOCKLIST_READ_FAILED', true);
+  if (!Array.isArray(rows)) requireFacebookLeadContract('FB_DURABLE_BLOCKLIST_READ_FAILED');
+  return rows.length ? 'blocked_phone' : null;
+}
+
+async function getDurableFacebookLinkedLead(pageId, leadId) {
+  const page = await getDurableFacebookPage(pageId);
+  const lead = requireFacebookResult(await supabase.from('crm_leads')
+    .select('id, company_id, customer_id').eq('id', leadId).maybeSingle(), 'FB_DURABLE_LEAD_READ_FAILED', true);
+  if (!page.default_company_id || String(lead.company_id || '') !== String(page.default_company_id)) {
+    const error = new Error('FB_INBOX_LEAD_SCOPE_MISMATCH');
+    error.code = error.message;
+    throw error;
+  }
+  return lead;
+}
+
+function requireFacebookLeadContract(code = 'FB_INBOX_LEAD_CONTRACT_REQUIRED') {
+  const error = new Error(code);
+  error.code = code;
+  throw error;
+}
+
 async function handleMessaging(pageId, event, io, durable = false) {
   const partnerPsid = messengerPartnerPsid(pageId, event);
-  if (!partnerPsid) return;
+  if (!partnerPsid) {
+    if (durable === 'page-inbox') requireFacebookLeadContract('FB_INBOX_MESSAGE_PARTNER_REQUIRED');
+    return;
+  }
   return withAsyncLock(`fb-msg:${pageId}:${partnerPsid}`, () =>
     handleMessagingInner(pageId, event, io, partnerPsid, durable),
   );
 }
 
 async function handleMessagingInner(pageId, event, io, partnerPsid, durable = false) {
-  console.log(`\n[FB] 📨 Messenger event — partner PSID: ${partnerPsid}`);
+  const pageInbox = durable === 'page-inbox';
+  if (pageInbox && !event.message && !event.read && !event.reaction) {
+    requireFacebookLeadContract('FB_INBOX_MESSAGING_EVENT_CONTRACT_REQUIRED');
+  }
+  // Replaying an old watermark must not clear counters for newer messages.
+  if (pageInbox && event.read) requireFacebookLeadContract('FB_INBOX_MESSAGE_PROJECTION_CONTRACT_REQUIRED');
+  if (pageInbox && event.reaction && (!String(event.sender?.id || '').trim()
+    || !String(event.reaction.mid || '').trim()
+    || !['react', 'unreact'].includes(event.reaction.action)
+    || !String(event.reaction.reaction || '').trim())) {
+    // The legacy UNIQUE key contains these fields; SQL NULLs would allow a
+    // duplicate on every retry. Do not manufacture a sentinel reaction value.
+    requireFacebookLeadContract('FB_INBOX_REACTION_IDENTITY_REQUIRED');
+  }
+  if (pageInbox && event.message && !String(event.message.mid || '').trim()) {
+    requireFacebookLeadContract('FB_INBOX_MESSAGE_ID_REQUIRED');
+  }
+  let businessExclusion = null;
+  if (!pageInbox) console.log(`\n[FB] 📨 Messenger event — partner PSID: ${partnerPsid}`);
 
   const sid = event.sender?.id != null ? String(event.sender.id).trim() : '';
   const senderLabel = sid && sid !== String(pageId).trim()
     ? (event.sender?.name || null)
     : (event.recipient?.name || null);
-  const contact = await getOrCreateContact(pageId, partnerPsid, senderLabel);
+  const contact = pageInbox
+    ? await getDurableFacebookContact(pageId, partnerPsid, senderLabel)
+    : await getOrCreateContact(pageId, partnerPsid, senderLabel);
   if (!contact) { if (durable) throw new Error('FB_DURABLE_CONTACT_UNAVAILABLE'); return; }
-  if (durable) await captureMessengerReferral(supabase, pageId, contact.id, event);
+  if (pageInbox && contact.lead_id) await getDurableFacebookLinkedLead(pageId, contact.lead_id);
+  if (durable && !(pageInbox && event.reaction)) await captureMessengerReferral(supabase, pageId, contact.id, event);
 
-  if (isPlaceholderFacebookName(contact.fb_name)) {
+  if (!pageInbox && isPlaceholderFacebookName(contact.fb_name)) {
     void tryResolveMessengerDisplayName(pageId, partnerPsid, contact.id, io, contact);
   }
 
-  console.log(`[FB] 👤 Contact: ${contact.fb_name || 'Unknown'} (ID: ${contact.id})`);
+  if (!pageInbox) console.log(`[FB] 👤 Contact: ${contact.fb_name || 'Unknown'} (ID: ${contact.id})`);
 
   // Quy kết quảng cáo: FB gửi ad_id ở event.referral / postback.referral / message.referral.
   // Ghi lần chạm đầu tiên; lỗi không được làm hỏng luồng webhook.
   try {
-    const kqQuyKet = await quyKetMessenger(pageId, contact, event, null);
+    // The durable referral RPC above owns this write. The legacy helper hides
+    // DB failures and stores free-form referral fields, so do not call it twice.
+    const kqQuyKet = pageInbox ? null : await quyKetMessenger(pageId, contact, event, null);
     if (kqQuyKet?.ok && !kqQuyKet.skipped) {
       console.log('[FB] 🎯 Ghi quy kết quảng cáo cho contact', contact.id);
     }
@@ -3587,7 +3788,7 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
   }
 
   // Log kết quả xử lý vào DB
-  if (!FB_DISABLE_WEBHOOK_LOGS) {
+  if (!pageInbox && !FB_DISABLE_WEBHOOK_LOGS) {
     await supabase.from('facebook_webhook_logs').upsert({
       page_id: pageId,
       payload: { type: 'message_processed', psid: partnerPsid, event },
@@ -3640,8 +3841,8 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
     // 1 vòng đi–về và nguyên tử hơn: trùng thì không trả dòng nào → nhánh `!savedMsg`
     // bên dưới xử lý y hệt. Giữ Layer 1 (in-memory lock) làm chốt rẻ cho race cùng tiến trình.
 
-    console.log(`[FB] 💬 Message type: ${messageType}, content: ${content?.substring(0, 50)}${content?.length > 50 ? '...' : ''}`);
-    console.log(`[FB] 📎 Attachment: ${attachmentUrl || 'None'}`);
+    if (!pageInbox) console.log(`[FB] 💬 Message type: ${messageType}, content: ${content?.substring(0, 50)}${content?.length > 50 ? '...' : ''}`);
+    if (!pageInbox) console.log(`[FB] 📎 Attachment: ${attachmentUrl || 'None'}`);
 
     // Save message — dùng upsert để tránh duplicate
     const insertData = {
@@ -3687,17 +3888,25 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
       return;
     }
 
-    console.log(`[FB] ✅ Message saved: ${savedMsg?.id} (${isEcho ? 'outbound' : 'inbound'})`);
+    if (!pageInbox) console.log(`[FB] ✅ Message saved: ${savedMsg?.id} (${isEcho ? 'outbound' : 'inbound'})`);
+
+    // Message persistence and contact counters/preview are separate writes in
+    // the legacy flow. A crash between them cannot be safely reconstructed from
+    // a duplicate MID (nor may a retry overwrite a newer preview). Until an
+    // atomic, ordered projection contract exists, retain this saved message's
+    // receipt as pending before touching those projections, for echo as well.
+    if (pageInbox) requireFacebookLeadContract('FB_INBOX_MESSAGE_PROJECTION_CONTRACT_REQUIRED');
 
     if (isEcho) {
       const previewEcho = content
         ? content.substring(0, 100)
         : (msg.attachments?.length ? '[Tệp đính kèm]' : '');
-      await supabase.from('facebook_contacts').update({
+      const echoUpdate = await supabase.from('facebook_contacts').update({
         last_message_at: new Date().toISOString(),
         last_message_preview: previewEcho,
         updated_at: new Date().toISOString(),
       }).eq('id', contact.id);
+      if (pageInbox) requireFacebookResult(echoUpdate, 'FB_DURABLE_CONTACT_UPDATE_FAILED');
       try {
         if (io) {
           io.emit('fb_message', {
@@ -3708,8 +3917,8 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
           });
         }
       } catch (_) { /* ignore */ }
-      void tryResolveMessengerDisplayName(pageId, partnerPsid, contact.id, io, contact);
-      return;
+      if (!pageInbox) void tryResolveMessengerDisplayName(pageId, partnerPsid, contact.id, io, contact);
+      return pageInbox ? { status: 'stored', skipped: 'outbound_echo' } : undefined;
     }
 
     if (!isEcho) {
@@ -3718,12 +3927,13 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
         ? content.substring(0, 100)
         : (msg.attachments?.length ? '[Tệp đính kèm]' : '');
       if (!isReplay) {
-      await supabase.from('facebook_contacts').update({
+      const messageUpdate = await supabase.from('facebook_contacts').update({
         last_message_at: new Date().toISOString(),
         last_message_preview: preview,
         unread_count: (contact.unread_count || 0) + 1,
         updated_at: new Date().toISOString(),
       }).eq('id', contact.id);
+      if (pageInbox) requireFacebookResult(messageUpdate, 'FB_DURABLE_CONTACT_UPDATE_FAILED');
       }
 
       // ── Extract phone & address từ tin nhắn TRƯỚC khi tạo lead ──
@@ -3739,18 +3949,20 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
       }
 
       // Auto-create lead nếu chưa có — theo cấu hình auto-lead-config (gồm công ty mặc định trong tab Setup)
-      const autoLeadCfg = await loadAutoLeadConfig();
+      const autoLeadCfg = pageInbox ? await loadDurableFacebookAutoLeadConfig() : await loadAutoLeadConfig();
       let isFirstMessage = false;
-      const liveLeadId = await fetchContactLeadId(contact.id);
+      const liveLeadId = pageInbox ? await getDurableFacebookLeadId(contact.id) : await fetchContactLeadId(contact.id);
       if (liveLeadId) contact.lead_id = liveLeadId;
       if (!contact.lead_id) {
         // Check: có lead cũ đã bị xóa không?
-        const { data: oldMsgs } = await supabase.from('facebook_messages')
+        const history = await supabase.from('facebook_messages')
           .select('lead_id').eq('contact_id', contact.id).not('lead_id', 'is', null).limit(1);
+        const oldMsgs = pageInbox ? requireFacebookResult(history, 'FB_DURABLE_MESSAGE_HISTORY_FAILED', true) : history.data;
         const hadLeadBefore = oldMsgs?.length > 0;
 
         // Nếu lead bị xóa, check config cho phép tạo lại không
         if (hadLeadBefore && !autoLeadCfg.recreate_deleted_leads) {
+          businessExclusion = 'deleted_lead_recreation_disabled';
           console.log(`[FB] ⏭️ Contact ${contact.id} had a lead before (deleted), config: no recreate`);
         } else {
           let shouldCreate = false;
@@ -3767,14 +3979,20 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
             case 'message_count': {
               // Tạo khi đủ X tin nhắn
               const threshold = autoLeadCfg.message_count_threshold || 2;
-              const { count: msgCount } = await supabase.from('facebook_messages')
+              const counted = await supabase.from('facebook_messages')
                 .select('id', { count: 'exact', head: true })
                 .eq('contact_id', contact.id)
                 .eq('direction', 'inbound');
+              if (pageInbox) {
+                requireFacebookResult(counted, 'FB_DURABLE_MESSAGE_COUNT_FAILED');
+                if (!Number.isSafeInteger(counted.count) || counted.count < 0) throw new Error('FB_DURABLE_MESSAGE_COUNT_FAILED');
+              }
+              const msgCount = counted.count;
               if ((msgCount || 0) >= threshold) {
                 shouldCreate = true;
                 reason.push(`message_count: ${msgCount} >= ${threshold}`);
               } else {
+                businessExclusion = 'message_threshold_not_reached';
                 console.log(`[FB] ⏳ Contact ${contact.id}: ${msgCount}/${threshold} messages, waiting...`);
               }
               break;
@@ -3786,11 +4004,13 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
                 shouldCreate = true;
                 reason.push(`has_phone: ${extractedPhone}`);
               } else {
+                businessExclusion = 'phone_not_available';
                 console.log(`[FB] ⏳ Contact ${contact.id}: no phone yet, waiting...`);
               }
               break;
 
             case 'manual':
+              businessExclusion = 'manual_lead_creation';
               // Không tự động tạo
               console.log(`[FB] ⏭️ Contact ${contact.id}: manual mode, skip auto-create`);
               break;
@@ -3804,10 +4024,15 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
           // not a database outage. Do not keep retrying its accepted message.
           if (durable && shouldCreate && (extractedPhone || contact.phone)) {
             const requestedPhone = extractedPhone || contact.phone;
-            if (!normalizePhoneForLeadCreation(requestedPhone).ok
-              || await isPhoneBlockedForFacebookAutoLead(supabase, requestedPhone)) shouldCreate = false;
+            const exclusion = pageInbox ? await durableFacebookPhoneExclusion(requestedPhone)
+              : (!normalizePhoneForLeadCreation(requestedPhone).ok
+                || await isPhoneBlockedForFacebookAutoLead(supabase, requestedPhone)) ? 'invalid_or_blocked_phone' : null;
+            if (exclusion) { shouldCreate = false; businessExclusion = exclusion; }
           }
           if (shouldCreate) {
+            // Legacy customer creation + Lead link is not one atomic contract.
+            // Keep the receipt pending; never repeat those writes after a crash.
+            if (pageInbox) requireFacebookLeadContract();
             const contactName = contact.fb_name || autoLeadCfg.default_customer_name || 'User';
 
             console.log(`[FB] 🆕 Creating lead: "${contactName}" (${reason.join(', ')})`);
@@ -3821,14 +4046,16 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
             if (lead) {
               console.log(`[FB] ✅ Lead created: ${lead.code} — "${contactName}"`);
               contact.lead_id = lead.id;
-              await supabase.from('facebook_contacts').update({
+              const paused = await supabase.from('facebook_contacts').update({
                 sync_paused: true,
                 sync_pause_reason: 'lead_created',
                 phone_resolved_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
               }).eq('id', contact.id);
+              if (pageInbox) requireFacebookResult(paused, 'FB_DURABLE_CONTACT_UPDATE_FAILED');
               if (savedMsg) {
-                await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('id', savedMsg.id);
+                const linked = await supabase.from('facebook_messages').update({ lead_id: lead.id }).eq('id', savedMsg.id);
+                if (pageInbox) requireFacebookResult(linked, 'FB_DURABLE_MESSAGE_LINK_FAILED');
               }
 
               // Không fetch profile/avatar nền để giảm request Facebook.
@@ -3841,21 +4068,25 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
           }
         }
       } else {
+        if (pageInbox) await getDurableFacebookLinkedLead(pageId, contact.lead_id);
         // Verify lead vẫn tồn tại — nếu bị xóa thì clear lead_id
-        const { data: leadCheck } = await supabase.from('crm_leads')
-          .select('id').eq('id', contact.lead_id).single();
+        const leadRead = await supabase.from('crm_leads')
+          .select('id').eq('id', contact.lead_id).maybeSingle();
+        const leadCheck = pageInbox ? requireFacebookResult(leadRead, 'FB_DURABLE_LEAD_READ_FAILED') : leadRead.data;
         if (!leadCheck) {
           console.log(`[FB] 🗑️ Lead ${contact.lead_id} was deleted, clearing contact.lead_id`);
-          await supabase.from('facebook_contacts').update({
+          const cleared = await supabase.from('facebook_contacts').update({
             lead_id: null,
             updated_at: new Date().toISOString(),
           }).eq('id', contact.id);
+          if (pageInbox) requireFacebookResult(cleared, 'FB_DURABLE_CONTACT_UPDATE_FAILED');
           contact.lead_id = null;
         }
       }
 
       // Auto-reply chỉ cho tin nhắn đầu tiên (khi vừa tạo lead)
-      if (!isReplay && isFirstMessage && autoLeadCfg.auto_reply_first_message) {
+      // Outbound auto-replies have no durable delivery key yet.
+      if (!pageInbox && !isReplay && isFirstMessage && autoLeadCfg.auto_reply_first_message) {
         const page = await getPageConfig(pageId);
         if (page?.auto_reply_message) {
           await sendMessengerReply(pageId, partnerPsid, page.auto_reply_message);
@@ -3863,6 +4094,12 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
       }
 
       // ── Update lead/customer/contact khi có phone/address MỚI (theo config) ──
+      // The legacy enrichment path below may update a shared Customer and has
+      // no company-scoped application contract. Do not certify it as completed.
+      if (pageInbox && contact.lead_id && (autoLeadCfg.auto_update_phone || autoLeadCfg.auto_update_address)) {
+        requireFacebookLeadContract('FB_INBOX_LEAD_UPDATE_CONTRACT_REQUIRED');
+      }
+      if (!pageInbox) {
       // Refresh contact.lead_id vì có thể vừa được tạo trong createLeadFromFacebook ở trên
       if (!contact.lead_id) {
         const { data: refreshed } = await supabase.from('facebook_contacts')
@@ -3955,6 +4192,8 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
         }
       }
 
+      }
+
       // Push realtime notification
       try {
         if (io) {
@@ -3972,9 +4211,10 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
     }
   }
 
-  if (durable) {
-    const liveLeadId = await fetchContactLeadId(contact.id);
+  if (durable && !(pageInbox && event.reaction)) {
+    const liveLeadId = pageInbox ? await getDurableFacebookLeadId(contact.id) : await fetchContactLeadId(contact.id);
     if (liveLeadId) {
+      if (pageInbox) await getDurableFacebookLinkedLead(pageId, liveLeadId);
       const repaired = await supabase.from('facebook_messages').update({ lead_id: liveLeadId })
         .eq('contact_id', contact.id).is('lead_id', null);
       if (repaired.error) throw new Error('FB_DURABLE_MESSAGE_LINK_FAILED');
@@ -3983,14 +4223,15 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
   }
 
   if (event.read) {
-    await supabase.from('facebook_contacts').update({ unread_count: 0 }).eq('id', contact.id);
+    const readUpdate = await supabase.from('facebook_contacts').update({ unread_count: 0 }).eq('id', contact.id);
+    if (pageInbox) requireFacebookResult(readUpdate, 'FB_DURABLE_READ_UPDATE_FAILED');
   }
 
   // Thả cảm xúc — trước đây gói này về rồi bị vứt. Không tạo lead, chỉ ghi lại
   // làm tín hiệu tương tác.
   if (event.reaction) {
     try {
-      await supabase.from('fb_message_reactions').upsert({
+      const reactionWrite = await supabase.from('fb_message_reactions').upsert({
         page_id: String(pageId),
         psid: String(event.sender?.id || ''),
         mid: event.reaction.mid || null,
@@ -3999,15 +4240,94 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
         emoji: event.reaction.emoji || null,
         contact_id: contact.id,
       }, { onConflict: 'mid,psid,hanh_dong,cam_xuc', ignoreDuplicates: true });
+      if (pageInbox) requireFacebookResult(reactionWrite, 'FB_DURABLE_REACTION_WRITE_FAILED');
     } catch (e) {
+      if (pageInbox) throw e;
       console.warn('[FB] luu cam xuc:', e.message);
     }
   }
+  if (pageInbox) return { status: 'stored', skipped: businessExclusion };
 }
 
 // ── HANDLE LEAD ADS ──────────────────────────────────────────
 
-async function handleLeadGen(pageId, value) {
+async function handleDurableFacebookLeadGen(pageId, value) {
+  assertLegacyLeadAdsWrite(pageId);
+  const leadgenId = String(value?.leadgen_id || '').trim();
+  const formId = String(value?.form_id || '').trim();
+  if (!leadgenId || !formId) requireFacebookLeadContract('FB_INBOX_LEAD_AD_IDENTITY_REQUIRED');
+  const read = () => supabase.from('facebook_lead_ads').select('*')
+    .eq('leadgen_id', leadgenId).maybeSingle();
+  let savedAd = requireFacebookResult(await read(), 'FB_DURABLE_LEAD_AD_READ_FAILED');
+  if (savedAd && (String(savedAd.page_id) !== String(pageId) || String(savedAd.form_id) !== formId)) {
+    requireFacebookLeadContract('FB_INBOX_LEAD_AD_SCOPE_MISMATCH');
+  }
+  const page = await getDurableFacebookPage(pageId);
+  // A committed raw snapshot belongs to this event. A retry must not discard it
+  // or require another provider request merely because CRM work is still pending.
+  let leadData = savedAd?.raw_data;
+  if (!Array.isArray(leadData?.field_data)) {
+    const graphVersion = String(process.env.VPT_META_GRAPH_VERSION || '');
+    if (!/^v[0-9]{1,2}\.[0-9]+$/.test(graphVersion)) requireFacebookLeadContract('FB_INBOX_GRAPH_VERSION_REQUIRED');
+    if (!page.access_token) requireFacebookLeadContract('FB_DURABLE_PAGE_TOKEN_REQUIRED');
+    try {
+      const response = await fetch(`https://graph.facebook.com/${graphVersion}/${encodeURIComponent(leadgenId)}`, {
+        headers: { Authorization: `Bearer ${page.access_token}` },
+      });
+      leadData = await response.json();
+      if (!response.ok || leadData?.error || !Array.isArray(leadData?.field_data)) {
+        requireFacebookLeadContract('FB_DURABLE_LEAD_AD_SOURCE_FAILED');
+      }
+    } catch (_) {
+      requireFacebookLeadContract('FB_DURABLE_LEAD_AD_SOURCE_FAILED');
+    }
+  }
+  const { docFormLeadAds } = require('../helpers/fbLeadFormFields');
+  const parsed = await docFormLeadAds(formId, leadData.field_data, { strict: true });
+  const raw = {
+    page_id: pageId, leadgen_id: leadgenId, form_id: formId,
+    form_name: leadData.form_name || value.form_name || null,
+    field_data: parsed.tat_ca, full_name: parsed.ho_ten, phone: parsed.sdt,
+    email: parsed.email, raw_data: leadData,
+  };
+  if (!savedAd) {
+    const inserted = await supabase.from('facebook_lead_ads').insert(raw).select().single();
+    savedAd = inserted.error?.code === '23505'
+      ? requireFacebookResult(await read(), 'FB_DURABLE_LEAD_AD_REPLAY_FAILED', true)
+      : requireFacebookResult(inserted, 'FB_DURABLE_LEAD_AD_WRITE_FAILED', true);
+    if (String(savedAd.page_id) !== String(pageId) || String(savedAd.form_id) !== formId) {
+      requireFacebookLeadContract('FB_INBOX_LEAD_AD_SCOPE_MISMATCH');
+    }
+    if (inserted.error?.code === '23505') return handleDurableFacebookLeadGen(pageId, value);
+  } else if (!Array.isArray(savedAd.raw_data?.field_data)) {
+    requireFacebookResult(await supabase.from('facebook_lead_ads').update(raw)
+      .eq('id', savedAd.id), 'FB_DURABLE_LEAD_AD_WRITE_FAILED');
+  }
+  const contact = await getDurableFacebookContact(pageId, `leadad_${leadgenId}`, parsed.ho_ten);
+  if (parsed.email) requireFacebookResult(await supabase.from('facebook_contacts')
+    .update({ email: parsed.email, updated_at: new Date().toISOString() }).eq('id', contact.id),
+  'FB_DURABLE_CONTACT_UPDATE_FAILED');
+  const linkedLeadId = await getDurableFacebookLeadId(contact.id);
+  if (!linkedLeadId) {
+    const exclusion = await durableFacebookPhoneExclusion(parsed.sdt);
+    if (exclusion) return { status: 'stored', skipped: exclusion };
+    requireFacebookLeadContract();
+  }
+  const lead = await getDurableFacebookLinkedLead(pageId, linkedLeadId);
+  if (savedAd.lead_id && String(savedAd.lead_id) !== String(lead.id)) {
+    requireFacebookLeadContract('FB_INBOX_LEAD_AD_LINK_MISMATCH');
+  }
+  requireFacebookResult(await supabase.from('facebook_lead_ads').update({
+    lead_id: lead.id, customer_id: lead.customer_id || null,
+  }).eq('id', savedAd.id), 'FB_DURABLE_LEAD_AD_LINK_FAILED');
+  // Legacy attribution can report ok:true after a failed update. Do not turn
+  // this partially completed intake into a processed CRM event.
+  requireFacebookLeadContract('FB_INBOX_ATTRIBUTION_CONTRACT_REQUIRED');
+}
+
+async function handleLeadGen(pageId, value, durable = false) {
+  assertLegacyLeadAdsWrite(pageId);
+  if (durable) return handleDurableFacebookLeadGen(pageId, value);
   const leadgenId = value.leadgen_id;
   const formId = value.form_id;
   
@@ -4105,7 +4425,37 @@ async function handleLeadGen(pageId, value) {
 
 // ── HANDLE COMMENTS ──────────────────────────────────────────
 
-async function handleComment(pageId, value) {
+async function handleDurableFacebookComment(pageId, value) {
+  const commentId = String(value?.comment_id || '').trim();
+  if (!commentId) requireFacebookLeadContract('FB_INBOX_COMMENT_ID_REQUIRED');
+  // Delete/edit/reply delivery needs its own ordering contract. Keep unsupported
+  // mutations in the inbox rather than silently certifying a stored old snapshot.
+  if (value.verb && value.verb !== 'add') requireFacebookLeadContract('FB_INBOX_COMMENT_MUTATION_CONTRACT_REQUIRED');
+  const read = () => supabase.from('facebook_comments').select('id, page_id')
+    .eq('comment_id', commentId).maybeSingle();
+  let row = requireFacebookResult(await read(), 'FB_DURABLE_COMMENT_READ_FAILED');
+  if (!row) {
+    const inserted = await supabase.from('facebook_comments').insert({
+      page_id: pageId, post_id: value.post_id, comment_id: commentId,
+      parent_comment_id: value.parent_id || null, from_id: value.from?.id,
+      from_name: value.from?.name, message: value.message,
+      attachment_url: value.photo || value.video || null,
+      // Optional ad matching must not invent attribution from another Page.
+      ad_id: null, is_from_page: String(value.from?.id || '') === String(pageId),
+    }).select('id, page_id').single();
+    row = inserted.error?.code === '23505'
+      ? requireFacebookResult(await read(), 'FB_DURABLE_COMMENT_REPLAY_FAILED', true)
+      : requireFacebookResult(inserted, 'FB_DURABLE_COMMENT_WRITE_FAILED', true);
+  }
+  if (String(row.page_id) !== String(pageId)) requireFacebookLeadContract('FB_INBOX_COMMENT_SCOPE_MISMATCH');
+  // Comment intake has no automatic Lead creation in the existing route.
+  // Notifications are disabled here until they have a durable delivery key.
+  return { status: 'stored', skipped: String(value.from?.id || '') === String(pageId)
+    ? 'page_authored_comment' : 'comment_notification_disabled' };
+}
+
+async function handleComment(pageId, value, durable = false) {
+  if (durable) return handleDurableFacebookComment(pageId, value);
   const commentId = value.comment_id;
   if (!commentId) return;
 
@@ -4821,7 +5171,7 @@ r.get('/contacts/:id', authMiddleware, async (req, res) => {
     }
     
     // Nếu lead_id có nhưng lead không tồn tại → clear
-    if (contact.lead_id && !contact.lead) {
+    if (contact.lead_id && !contact.lead && !(await isLegacyContactProtected(contact.id))) {
       await supabase.from('facebook_contacts').update({ lead_id: null }).eq('id', contact.id);
       contact.lead_id = null;
       contact.lead = null;
@@ -4839,6 +5189,7 @@ r.get('/contacts/:id', authMiddleware, async (req, res) => {
 // Link contact → existing lead
 r.put('/contacts/:id/link-lead', authMiddleware, async (req, res) => {
   try {
+    await assertLegacyContactWrite(req.params.id);
     const { lead_id } = req.body;
     const { data, error } = await supabase.from('facebook_contacts')
       .update({ lead_id, updated_at: new Date().toISOString() })
@@ -4853,6 +5204,7 @@ r.put('/contacts/:id/link-lead', authMiddleware, async (req, res) => {
 // Update contact info (sửa tên, phone, email, ghi chú)
 r.put('/contacts/:id', authMiddleware, async (req, res) => {
   try {
+    await assertLegacyContactWrite(req.params.id);
     const update = {};
     ['fb_name', 'phone', 'email', 'notes', 'lead_id', 'customer_id'].forEach(f => {
       if (req.body[f] !== undefined) update[f] = req.body[f] || null;
@@ -4872,6 +5224,7 @@ r.put('/contacts/:id', authMiddleware, async (req, res) => {
 // Delete contact (xóa contact + messages)
 r.delete('/contacts/:id', authMiddleware, async (req, res) => {
   try {
+    await assertLegacyContactWrite(req.params.id);
     await supabase.from('facebook_messages').delete().eq('contact_id', req.params.id);
     await supabase.from('facebook_contacts').delete().eq('id', req.params.id);
     res.json({ success: true });
@@ -4887,6 +5240,7 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
       .select('*').eq('id', req.params.id).single();
     if (!contact) return res.status(404).json({ error: 'Contact not found' });
     if (!contactAllowedByFacebookScope(scope, contact)) return res.status(403).json({ error: 'Không có quyền tạo Lead cho Page này' });
+    await assertLegacyContactWrite(contact.id);
     if (contact.lead_id) {
       // Verify lead còn tồn tại
       const { data: existLead } = await supabase.from('crm_leads').select('id').eq('id', contact.lead_id).single();
@@ -5074,6 +5428,7 @@ r.post('/contacts/:id/create-lead', authMiddleware, async (req, res) => {
  */
 r.post('/contacts/:id/reconcile-inbound-phone', authMiddleware, async (req, res) => {
   try {
+    await assertLegacyContactWrite(req.params.id);
     const deleteLeadIfNoPhone = !!req.body?.delete_lead_if_no_phone;
     const syncGraphFirst = req.body?.sync_graph_first !== false;
     let messagesSynced = 0;
@@ -5109,6 +5464,7 @@ r.post('/contacts/:id/reconcile-inbound-phone', authMiddleware, async (req, res)
 // Sync lịch sử hội thoại cũ từ Facebook cho 1 contact
 r.post('/contacts/:id/sync-history', authMiddleware, async (req, res) => {
   try {
+    await assertLegacyContactWrite(req.params.id);
     const scope = await resolveFacebookPageScope(req, res);
     if (!scope) return;
     const { data: contact } = await supabase.from('facebook_contacts')
@@ -5398,12 +5754,28 @@ r.post('/contacts/backfill-last-message', authMiddleware, async (req, res) => {
 
 r.get('/lead-ads', authMiddleware, async (req, res) => {
   try {
-    const { data } = await supabase.from('facebook_lead_ads')
-      .select('*, lead:crm_leads(id, title, code)')
+    const scope = await resolveFacebookPageScope(req, res);
+    if (!scope) return;
+    if (!['all', 'filter'].includes(scope.mode)
+      || (scope.mode === 'filter' && (!Array.isArray(scope.pageIds)
+        || scope.pageIds.some(id => typeof id !== 'string' || !id)))) throw new Error('Invalid Page scope');
+    const pageId = String(req.query.page_id || '').trim();
+    if (pageId && scope.mode === 'filter' && !scope.pageIds.includes(pageId)) {
+      return res.status(403).json({ error: 'Không có quyền xem Page này' });
+    }
+    if (scope.mode === 'filter' && !scope.pageIds.length) return res.json([]);
+    let query = supabase.from('facebook_lead_ads').select('*, lead:crm_leads(id, title, code)');
+    if (pageId) query = query.eq('page_id', pageId);
+    else if (scope.mode === 'filter') query = query.in('page_id', scope.pageIds);
+    const { data, error } = await query
       .order('created_at', { ascending: false })
       .limit(100);
-    res.json(data || []);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    if (error || !Array.isArray(data)
+      || data.some(row => !contactAllowedByFacebookScope(scope, row) || (pageId && row.page_id !== pageId))) {
+      throw new Error('Lead Ads read not confirmed');
+    }
+    res.json(data);
+  } catch (_) { res.status(500).json({ error: 'Không đọc được danh sách Lead Ads.' }); }
 });
 
 // ── Comments ─────────────────────────────────────────────────
@@ -6034,6 +6406,7 @@ r.get('/analytics', authMiddleware, async (req, res) => {
 // POST /facebook/dedup-leads — Gộp lead trùng: giữ lead tốt nhất, chuyển data, xóa phần dư
 r.post('/dedup-leads', authMiddleware, async (req, res) => {
   try {
+    assertLegacyMaintenanceAllowed();
     const io = r._ioRef;
 
     // company_id (optional) → chỉ gộp lead trong phạm vi công ty
@@ -6310,6 +6683,7 @@ r.get('/scan-duplicates-debug', authMiddleware, async (req, res) => {
 
 r.post('/sync-source-ids', authMiddleware, async (req, res) => {
   try {
+    assertLegacyMaintenanceAllowed();
     // Phân trang 1000 dòng/lần thay vì tải toàn bộ 1 lần
     const allContacts = [];
     let pageFrom = 0;
@@ -6407,6 +6781,7 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
     for (let i = 0; i < contacts.length; i++) {
       const contact = contacts[i];
       try {
+        await assertLegacyContactWrite(contact.id);
         // Verify lead chưa có (double check)
         if (contact.lead_id) { skipped++; continue; }
 
@@ -6538,6 +6913,7 @@ r.post('/batch-create-leads', authMiddleware, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 r.post('/sync-contact-phones', authMiddleware, async (req, res) => {
   try {
+    assertLegacyMaintenanceAllowed();
     const io = r._ioRef;
     console.log('[SyncPhone] START — contacts có phone → lead/customer');
 
@@ -6681,6 +7057,7 @@ r.post('/sync-contact-phones', authMiddleware, async (req, res) => {
 
 r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
   try {
+    assertLegacyMaintenanceAllowed();
     const io = r._ioRef;
     // offset/limit cho phép pipeline gọi theo batch 300
     const reqOffset = parseInt(req.body?.offset) || 0;
@@ -7071,6 +7448,7 @@ r.post('/batch-extract-phones', authMiddleware, async (req, res) => {
  * @returns {{ synced: number, status: string, error?: string, graph_error?: object|null }}
  */
 async function graphSyncMessagesForContactRow(contact, pageTokens, { maxGraphPages } = {}) {
+  if (await isLegacyContactProtected(contact.id)) return { synced: 0, status: 'lead_ads_managed_skip' };
   const pages = maxGraphPages ?? FB_SYNC_BATCH_GRAPH_MAX_PAGES;
   try {
     if (!pageTokens[contact.page_id]) {
@@ -7147,6 +7525,7 @@ async function graphSyncMessagesForContactRow(contact, pageTokens, { maxGraphPag
  * Quét SĐT/địa chỉ từ DB cho 1 contact (không chạy vòng cuối sync toàn lead).
  */
 async function applyExtractFromDbMessagesForContact(contact, { forceRescanPhones = false } = {}) {
+  if (await isLegacyContactProtected(contact.id)) return { outcome: 'lead_ads_managed_skip' };
   const { data: fresh } = await supabase.from('facebook_contacts')
     .select('id, psid, page_id, fb_name, lead_id, phone, customer_id, last_message_at, last_synced_at, created_at')
     .eq('id', contact.id)
@@ -7257,6 +7636,7 @@ async function applyExtractFromDbMessagesForContact(contact, { forceRescanPhones
 
 /** Vòng cuối: customer.phone → mô tả lead (giống batch-extract-phones). */
 async function runExtractPhonesFinalLeadDescriptionSync() {
+  assertLegacyMaintenanceAllowed();
   let allLeads = [];
   let lp = 0;
   while (true) {
@@ -7470,7 +7850,9 @@ async function runSyncThenExtractPhonesJob({
     totalLeads: 0,
     leadsUpdatedList: [],
   };
-  if (!skipFinalRound && runExtract) {
+  if (!skipFinalRound && runExtract && PAGE_INBOX.leadAdsIntake) {
+    finalRound.skipped = 'lead_ads_maintenance_locked';
+  } else if (!skipFinalRound && runExtract) {
     if (sock) {
       sock.emit('batch_progress', {
         type: 'sync_then_extract_phones',
@@ -7714,6 +8096,12 @@ r.post('/batch-sync-messages', authMiddleware, async (req, res) => {
     for (let i = 0; i < contacts.length; i++) {
       const contact = contacts[i];
 
+      // Keep the ownership check outside the legacy error handler below, which
+      // writes last_synced_at even on failure.
+      if (await isLegacyContactProtected(contact.id)) {
+        results.push({ contact_id: contact.id, synced: 0, sync_status: 'lead_ads_managed_skip' });
+        continue;
+      }
       // Kiểm tra timeout — dừng và trả về nextOffset để caller tiếp tục
       if (timeoutMs > 0 && (Date.now() - startTime) >= timeoutMs) {
         const nextOffset = offsetIdx + i;
@@ -8005,6 +8393,7 @@ async function scanAndCreateLeads() {
 
     for (const contact of (contacts || [])) {
       try {
+        if (await isLegacyContactProtected(contact.id)) { results.skipped++; continue; }
         if (contact.phone && await isPhoneBlockedForFacebookAutoLead(supabase, contact.phone)) {
           results.skipped++;
           continue;
@@ -8416,6 +8805,11 @@ r.post('/refresh-names', authMiddleware, async (req, res) => {
 
     for (let i = 0; i < stuckContacts.length; i++) {
       const c = stuckContacts[i];
+      if (await isLegacyContactProtected(c.id)) {
+        emitRefreshLog({ current: i + 1, total, status: 'lead_ads_managed_skip',
+          message: 'Bỏ qua hồ sơ Lead Ads do luồng tiếp nhận quản lý.' });
+        continue;
+      }
       if (i > 0) await sleepMs(FB_FETCH_PROFILE_PIC ? 450 : 200);
       const profile = await fetchProfileViaConversations(c.page_id, c.psid);
       const upd = { updated_at: new Date().toISOString() };
@@ -8781,6 +9175,7 @@ async function filterContactsByLeadDateRange(supabaseClient, contactsList, body)
 }
 
 async function runRescanPhonesBatch(body, ioRef) {
+  assertLegacyMaintenanceAllowed();
   const b = body && typeof body === 'object' ? body : {};
   const limit = Math.max(1, Math.min(1000, parseInt(b.limit, 10) || 50));
   const mode = ['all', 'with_phone', 'without_phone'].includes(b.mode) ? b.mode : 'all';
@@ -9040,6 +9435,7 @@ async function patchLeadDescriptionPhone(leadId, phone) {
  * POST /facebook/scan-leads-by-date — bắt buộc lead_date_from + lead_date_to (YYYY-MM-DD).
  */
 async function runLeadScanByDateBatch(body, ioRef) {
+  assertLegacyMaintenanceAllowed();
   const b = body && typeof body === 'object' ? body : {};
   const fromS = b.lead_date_from && String(b.lead_date_from).trim();
   const toS = b.lead_date_to && String(b.lead_date_to).trim();
@@ -9488,6 +9884,7 @@ async function runPhoneQualityScan(body) {
 }
 
 async function applyPhoneQualityActions(body) {
+  assertLegacyMaintenanceAllowed();
   const b = body && typeof body === 'object' ? body : {};
   const updateIds = [...new Set((b.update_contact_ids || []).map((x) => String(x)))];
   const deleteIds = [...new Set((b.delete_contact_ids || []).map((x) => String(x)))];
@@ -9656,6 +10053,7 @@ autoTool.injectCoreFunctions({
   graphSyncMessagesForContactRow,
   extractInboundContactInfo,
   createLeadFromFacebook,
+  isLegacyContactProtected,
 });
 
 // Inject socket.io khi _ioRef được set
@@ -9900,6 +10298,7 @@ r.post('/tools/link-only-phones/preview', authMiddleware, async (req, res) => {
 
 r.post('/tools/link-only-phones/execute', authMiddleware, async (req, res) => {
   try {
+    assertLegacyMaintenanceAllowed();
     if (!isAdminLike(req.user)) {
       return res.status(403).json({ error: 'Chỉ admin dùng tool này' });
     }
@@ -10168,10 +10567,70 @@ const messengerReceiptWorker = createMessengerReceiptWorker({
   processEvent: (pageId, event) => handleMessaging(pageId, event, r._ioRef, true),
   onError: (code) => console.warn('[FB durable]', code),
 });
-if (DURABLE_MESSENGER_PAGES.size) {
+// Scoped Lead Ads leaves Messenger on its existing queue and recovery timer.
+// Generic H1 still requires the old queue to drain before its own cutover.
+if (DURABLE_MESSENGER_PAGES.size && (PAGE_INBOX.leadAdsIntake || (!PAGE_INBOX.scopeGuard && !PAGE_INBOX.managedPages.size))) {
   const timer = setInterval(() => { void messengerReceiptWorker.drain(); }, 5000);
   timer.unref();
   setImmediate(() => { void messengerReceiptWorker.drain(); });
+}
+
+const receivePageInbox = createPageInboxReceiver({
+  db: supabase, isPrimary: pageInboxPrimary, withPrimary: withPrimaryDatabase,
+  secret: () => process.env.VPT_FACEBOOK_APP_SECRET, onError: pageInboxError,
+});
+const receiveDedicatedLeadAds = PAGE_INBOX.dedicatedLeadApp ? createDedicatedLeadAdsReceiver({
+  db: supabase, isPrimary: pageInboxPrimary, withPrimary: withPrimaryDatabase,
+  secret: () => process.env.VPT_FB_LEAD_APP_SECRET, managedPages: PAGE_INBOX.managedPages,
+  onError: pageInboxError,
+}) : null;
+const handoffLeadAdsWebhook = PAGE_INBOX.leadAdsIntake ? createLeadAdsWebhookHandoff({
+  db: supabase, isPrimary: pageInboxPrimary, withPrimary: withPrimaryDatabase,
+  secret: () => process.env.VPT_FACEBOOK_APP_SECRET, managedPages: PAGE_INBOX.managedPages,
+  dedicatedLeadApp: PAGE_INBOX.dedicatedLeadApp,
+  enqueueLegacy: body => enqueueMessengerEvents(supabase, body.entry, DURABLE_MESSENGER_PAGES),
+}) : null;
+const intakePageLeadAds = createFacebookLeadAdsIntake({
+  db: supabase, fetchImpl: (...args) => fetch(...args),
+  getGraphVersion: () => process.env.VPT_META_GRAPH_VERSION,
+  getLeadGraphToken: PAGE_INBOX.dedicatedLeadApp ? () => process.env.VPT_FB_LEAD_APP_ACCESS_TOKEN : undefined,
+  isPrimary: pageInboxPrimary, withPrimary: withPrimaryDatabase, managedPages: PAGE_INBOX.managedPages,
+});
+const pageInboxWorker = createPageInboxWorker({
+  db: supabase, isPrimary: pageInboxPrimary, withPrimary: withPrimaryDatabase,
+  leadAdsPages: PAGE_INBOX.leadAdsIntake ? [...PAGE_INBOX.managedPages] : undefined,
+  // The disjoint Lead Ads lane does not consume Messenger events and must not
+  // wait for an active Messenger queue to become empty. Generic H1 keeps its gate.
+  beforeClaim: PAGE_INBOX.leadAdsIntake ? async () => {} : undefined,
+  isPaused: () => !PAGE_INBOX.enabled || process.env.VPT_FB_PAGE_INBOX_WORKER_PAUSED !== '0',
+  onError: pageInboxError,
+  onHealth: counts => console.info('[FB page inbox health]', JSON.stringify(counts)),
+  processEvent: async (pageId, payload, lease) => {
+    // The Lead Ads application contract rechecks its binding/scope in SQL702
+    // and rejects coexistence with the separate care package. It does not
+    // depend on that package's SQL682 legacy preflight function.
+    if (PAGE_INBOX.leadAdsIntake) return intakePageLeadAds(pageId, payload, lease);
+    await assertPageLegacyScope(supabase, pageId, PAGE_INBOX);
+    if (payload.kind === 'messaging') return handleMessaging(pageId, payload.event, r._ioRef, 'page-inbox');
+    if (payload.kind === 'change' && payload.event?.field === 'leadgen') return handleLeadGen(pageId, payload.event.value, true);
+    if (payload.kind === 'change' && payload.event?.field === 'feed' && payload.event.value?.item === 'comment') {
+      return handleComment(pageId, payload.event.value, true);
+    }
+    // Unknown events are retained for a deliberate disposition; no silent "done".
+    throw Object.assign(new Error('FB_INBOX_EVENT_UNSUPPORTED'), { code: 'FB_INBOX_EVENT_UNSUPPORTED' });
+  },
+});
+if (PAGE_INBOX.enabled) {
+  const timer = setInterval(() => { void pageInboxWorker.drain(); }, 5000);
+  const healthTimer = setInterval(() => { void pageInboxWorker.health(); }, 60000);
+  timer.unref();
+  healthTimer.unref();
+  setImmediate(() => { void pageInboxWorker.health(); void pageInboxWorker.drain(); });
+  r.stopPageInbox = async () => {
+    clearInterval(timer);
+    clearInterval(healthTimer);
+    await pageInboxWorker.stop();
+  };
 }
 // ═══════════════════════════════════════════════════════════════
 // ĐIỀU KHIỂN TRƯỜNG WEBHOOK (xem page nào đang nhận gì, bật/tắt tại chỗ)

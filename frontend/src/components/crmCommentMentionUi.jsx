@@ -515,6 +515,38 @@ export function CrmCommentMentionComposer({
   );
 }
 
+const COMMENT_LINK_RE = /https?:\/\/[^\s<]+[^<.,:;"')\]\s]/gi;
+
+/** Bọc URL http(s) thành link mở tab mới. */
+export function linkifyCommentString(text, keyPrefix = 'u') {
+  const s = String(text ?? '');
+  if (!s) return s;
+  const out = [];
+  let last = 0;
+  COMMENT_LINK_RE.lastIndex = 0;
+  let m = COMMENT_LINK_RE.exec(s);
+  while (m) {
+    if (m.index > last) out.push(s.slice(last, m.index));
+    const url = m[0];
+    out.push(
+      <a
+        key={`${keyPrefix}-${m.index}`}
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-[#1877f2] underline break-all"
+      >
+        {url}
+      </a>,
+    );
+    last = m.index + url.length;
+    m = COMMENT_LINK_RE.exec(s);
+  }
+  if (!out.length) return s;
+  if (last < s.length) out.push(s.slice(last));
+  return out;
+}
+
 /** Highlight @mention (tên đầy đủ) trong nội dung bình luận. */
 export function renderCrmCommentBody(content, members = []) {
   if (!content) return null;
@@ -535,7 +567,7 @@ export function renderCrmCommentBody(content, members = []) {
     const rest = text.slice(i + 1);
     const allMatch = rest.match(/^(tất\s*cả|tat\s*ca|all)(?=$|[\s.,!?;:…])/i);
     if (allMatch) {
-      if (i > last) spans.push(<span key={`t-${i}`}>{text.slice(last, i)}</span>);
+      if (i > last) spans.push(<span key={`t-${i}`}>{linkifyCommentString(text.slice(last, i), `t-${i}`)}</span>);
       const len = 1 + allMatch[0].length;
       spans.push(
         <span
@@ -567,7 +599,7 @@ export function renderCrmCommentBody(content, members = []) {
     }
 
     if (hit) {
-      if (i > last) spans.push(<span key={`t-${i}`}>{text.slice(last, i)}</span>);
+      if (i > last) spans.push(<span key={`t-${i}`}>{linkifyCommentString(text.slice(last, i), `t-${i}`)}</span>);
       const len = 1 + hit.length;
       spans.push(
         <span key={`m-${i}`} className="font-semibold text-amber-900 bg-amber-100/90 px-0.5 rounded">
@@ -581,7 +613,7 @@ export function renderCrmCommentBody(content, members = []) {
     }
   }
 
-  if (last < text.length) spans.push(<span key="tail">{text.slice(last)}</span>);
+  if (last < text.length) spans.push(<span key="tail">{linkifyCommentString(text.slice(last), 'tail')}</span>);
   if (!spans.length) return text;
   return spans;
 }

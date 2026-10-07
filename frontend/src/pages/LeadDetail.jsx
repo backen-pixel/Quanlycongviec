@@ -3866,6 +3866,7 @@ export default function LeadDetail() {
                 key="add-sx"
                 companies={parentSxCompaniesForSelect}
                 leadTypeRow={parentSxLeadTypeRow}
+                setupLeadTypes={headerLeadTypes}
                 kind={parentSxLeadKind}
                 accent="teal"
                 showDates
@@ -5558,6 +5559,7 @@ export default function LeadDetail() {
               key={showCreateOrderModal ? 'create-order-sx' : 'create-order-sx-closed'}
               companies={parentSxCompaniesForSelect}
               leadTypeRow={parentSxLeadTypeRow}
+              setupLeadTypes={headerLeadTypes}
               kind={parentSxLeadKind}
               accent="teal"
               showDates
@@ -5696,6 +5698,7 @@ export default function LeadDetail() {
                 key={`won-list-${dealStageWonPick.stageId}`}
                 companies={parentSxCompaniesForSelect}
                 leadTypeRow={parentSxLeadTypeRow}
+                setupLeadTypes={headerLeadTypes}
                 kind={parentSxLeadKind}
                 accent="teal"
                 showDates
@@ -5797,6 +5800,7 @@ export default function LeadDetail() {
                 key="pick-project-list"
                 companies={parentSxCompaniesForSelect}
                 leadTypeRow={parentSxLeadTypeRow}
+                setupLeadTypes={headerLeadTypes}
                 kind={parentSxLeadKind}
                 accent="amber"
                 showDates
@@ -7953,6 +7957,7 @@ function LeadInfoPanel({
                     key="leadinfo-add-sx"
                     companies={sxCompaniesForSelect}
                     leadTypeRow={sxLeadTypeRow}
+                    setupLeadTypes={leadTypes}
                     kind={sxLeadKind}
                     accent="orange"
                     showDates

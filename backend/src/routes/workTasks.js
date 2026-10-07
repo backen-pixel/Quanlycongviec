@@ -61,6 +61,8 @@ const {
   deadlineGroupForWorkshopChild,
   earliestSxPlanDeadline,
 } = require('../helpers/projectOverviewDeadline');
+const { computeSxInstallPlanDeadline } = require('../helpers/sxInstallPlanKanbanDeadline');
+const { companyWorkEndMsFromRaw } = require('../helpers/companyDeadlineClock');
 const {
   isCrmCompletedStage,
   isLogisticsCompletedColumn,
@@ -642,7 +644,9 @@ async function finishProjectOverview(res, tasks, preloaded = null) {
     if (lane === 'sales') stats.by_module.crm += 1;
     else if (lane === 'logistics') stats.by_module.vc += 1;
     else stats.by_module.sx += 1;
-    const deadlineMs = task.deadline ? new Date(task.deadline).getTime() : null;
+    const deadlineMs = task.deadline
+      ? (companyWorkEndMsFromRaw(task.deadline, task.company_id) ?? new Date(task.deadline).getTime())
+      : null;
     if (deadlineMs != null && Number.isFinite(deadlineMs)) {
       if (deadlineMs < nowMs) stats.overdue += 1;
       else if (deadlineMs <= warningMs) stats.warning += 1;
@@ -989,6 +993,7 @@ r.get('/project-overview', async (req, res) => {
       };
     };
 
+    const sxStageList = [...sxStageById.values()];
     const leadProjectById = new Map(
       (leads || []).map((lead) => [String(lead.id), String(lead.project_id || '')]),
     );
@@ -1022,12 +1027,16 @@ r.get('/project-overview', async (req, res) => {
       const lead = leadById.get(String(first.lead_id || '')) || null;
       let deadline = null;
       if (group.lane === 'production') {
-        const planGroups = [];
-        for (const child of openChildren) {
-          const planGroup = deadlineGroupForWorkshopChild(child, sxCrmIndex, sxStageById);
-          if (planGroup) planGroups.push(planGroup);
+        const col = project ? sxStageById.get(String(project.sx_kanban_column_id || '')) : null;
+        deadline = (col && computeSxInstallPlanDeadline(project, col, sxStageList)?.iso) || null;
+        if (!deadline && !col) {
+          const planGroups = [];
+          for (const child of openChildren) {
+            const planGroup = deadlineGroupForWorkshopChild(child, sxCrmIndex, sxStageById);
+            if (planGroup) planGroups.push(planGroup);
+          }
+          deadline = earliestSxPlanDeadline(project, planGroups);
         }
-        deadline = earliestSxPlanDeadline(project, planGroups);
       } else {
         deadline = resolveOverviewGroupDeadline({
           lane: group.lane,
