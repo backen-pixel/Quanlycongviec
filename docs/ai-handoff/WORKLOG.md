@@ -1,3 +1,11 @@
+## 2026-10-06 — Đối soát khoảng chuyển Facebook Lead App (chưa kích hoạt)
+- Thêm `backend/src/services/facebookLeadAdsCutoverBackfill.js`, lệnh thủ công `backend/scripts/reconcile-facebook-lead-cutover.js`, kiểm thử `backend/tests/facebookLeadAdsCutoverBackfill.test.js`; cập nhật hồ sơ kích hoạt và CURRENT.
+- Đường Graph chỉ đọc ID/form/giờ/ad ID cho cửa sổ T0–T1; đủ quyền, form, số Lead từng form, phân trang và phân loại receipt/legacy mới ghi phần còn thiếu vào cùng Primary inbox. Review độc lập phát hiện ngữ cảnh Primary của Supabase thenable, provenance App/token, trạng thái inbox cũ và bằng chứng receipt chưa đủ; đã sửa callback await trong ALS, xác thực `/debug_token` không chứa token trong URL, bắt Redis/Primary xác nhận (chờ kết nối lazy tối đa 3 giây), đòi hàng `pending`, kiểm attribution/owner/notification. Mặc định xem trước; `--apply` cần xác nhận lại Page và chặn writer cũ. Mọi cờ runtime giữ nguyên. Kiểm thử Node riêng 15/15 và nhóm Facebook liên quan 111/111 PASS; không gọi Graph/DB thật. Đã chuyển thay đổi lên nhánh `codex/facebook-lead-cutover-backfill-20261006` từ main có PR38; PR này chỉ chuẩn bị mã, chưa kích hoạt production.
+- Hoàn tác: revert delta mã/tài liệu của mục này. Nếu công cụ đã chạy ghi inbox thật trong tương lai, **không xóa receipt hoặc Lead đã ghi**; pause worker, đối soát và xử lý theo hồ sơ kích hoạt.
+- Rà bổ sung trạng thái Redis mới: khóa `supabase:active_target` có thể chưa từng được tạo dù router của tiến trình mới báo Primary. Giữ lệnh fail-closed khi khóa thiếu; checklist yêu cầu bằng chứng từ từng instance và một thao tác khởi tạo có duyệt, nguyên tử và audit riêng trước khi đối soát. Không tự bootstrap, không đảo sang Backup để tạo khóa.
+
+---
+
 ## 2026-10-06 — P1-2: thu hồi quyền thừa của service_role (SQL 710)
 - 710 đã áp lên DB chính (PG 17.6, 3 bảng rỗng, RLS bật, anon/authenticated = 0). Kiểm tra sau áp thấy service_role còn UPDATE/DELETE/TRUNCATE trên bảng nhật ký do quyền mặc định của Supabase; thiết kế yêu cầu chỉ SELECT+INSERT.
 - Sửa 710: thêm REVOKE ALL FROM service_role trước GRANT. Bài thử nhánh tạm giờ cài quyền mặc định giống DB chính; 35/35 đạt. Chưa áp bản sửa lên DB chính (cần Founder duyệt riêng).
