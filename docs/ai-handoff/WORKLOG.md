@@ -1,3 +1,9 @@
+## 2026-10-07 — PR51 sửa 5 phát hiện review
+
+Đã tái hiện FAIL từng lỗi trên mã cũ; sửa auth Founder, tenant gate, microsecond SLA, source provenance, lỗi bridge/DB và SQL711 + rollback. Backend 41/41, PGlite 10/10, typecheck PASS; Claude kiểm độc lập: build Skybridge OK, app 18/18, backend 41/41; trên mã cũ 7 test backend + 2 test app FAIL. Đã commit lên nhánh PR; không merge, flags, DB/mạng thật. Xem [hồ sơ](FOUNDER_CONTROL_CENTER_V1_20261007.md#sửa-review-0710).
+
+---
+
 ## 2026-10-07 — Phát sinh trên CRM, VC, Kế toán, Mua hàng, module tùy chỉnh
 
 - Cùng trang `/sx/phat-sinh`: tab Không phí / Có phí, lọc `phat_sinh` theo `assignment_module` của từng module.

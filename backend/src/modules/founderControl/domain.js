@@ -11,31 +11,44 @@ function fail(code, status = 400) {
   return Object.assign(new Error(code), { reasonCode: code, status });
 }
 function instant(s) {
-  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/.test(s)) return null;
-  const n = Date.parse(s);
-  // Reject JS date rollover, e.g. February 30.
-  const day = s.slice(0, 10);
-  const dateOnly = Date.parse(day + 'T00:00:00Z');
-  if (!Number.isFinite(n) || !Number.isFinite(dateOnly) || new Date(dateOnly).toISOString().slice(0, 10) !== day) return null;
-  return n;
+  if (typeof s !== 'string') return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|([+-])(\d{2})(?::?(\d{2}))?)$/.exec(s);
+  if (!m) return null;
+  const [year,month,date,hour,minute,second]=m.slice(1,7).map(Number);
+  const offsetHour=Number(m[10]||0),offsetMinute=Number(m[11]||0);
+  if (hour>23 || minute>59 || second>59 || offsetHour>14 || (offsetHour===14 && offsetMinute>0) || offsetMinute>59) return null;
+  const day=Date.UTC(year,month-1,date);
+  if (!Number.isFinite(day) || new Date(day).toISOString().slice(0,10)!==s.slice(0,10)) return null;
+  const offset=(m[9]==='-'?-1:1)*(offsetHour*60+offsetMinute);
+  return BigInt(day+((hour*60+minute-offset)*60+second)*1000)*1000n+BigInt((m[7]||'').padEnd(6,'0')||0);
+}
+const MS=1000n, MINUTE=60000000n, DAY=86400000000n;
+function floorDiv(a,b) { return a>=0n ? a/b : (a-b+1n)/b; }
+function iso(us) {
+  const ms=floorDiv(us,MS);
+  const base=new Date(Number(ms)).toISOString();
+  const extra=us-ms*MS;
+  return extra===0n ? base : base.replace('Z',String(extra).padStart(3,'0')+'Z');
 }
 function windowOf(args) {
   const start = instant(args.window_start), end = instant(args.window_end);
-  if (start === null || end === null || start >= end || end - start > 31 * 86400000) throw fail('INVALID_WINDOW');
-  return { start: new Date(start).toISOString(), end: new Date(end).toISOString(), timezone: 'Asia/Ho_Chi_Minh' };
+  if (start === null || end === null || start >= end || end - start > 31n * DAY) throw fail('INVALID_WINDOW');
+  return { start: iso(start), end: iso(end), timezone: 'Asia/Ho_Chi_Minh' };
 }
 // Vietnam has no DST. Measure overlap with every day's 08:00–22:00 shift.
 function responseSla(receivedAt, respondedAt, now) {
   const start = instant(receivedAt), end = instant(respondedAt), observed = instant(now);
   if (start === null || end === null || observed === null) return { status: 'UNKNOWN', reason: 'RESPONSE_EVIDENCE_MISSING', minutes: null };
-  if (end < start || end > observed || end - start > 366 * 86400000) return { status: 'UNKNOWN', reason: 'RESPONSE_TIME_INVALID', minutes: null };
-  const offset = 7 * 3600000, day = 86400000;
-  let elapsed = 0;
-  for (let d = Math.floor((start + offset) / day) * day - offset; d <= end; d += day) {
-    elapsed += Math.max(0, Math.min(end, d + 22 * 3600000) - Math.max(start, d + 8 * 3600000));
+  if (end < start || end > observed || end - start > 366n * DAY) return { status: 'UNKNOWN', reason: 'RESPONSE_TIME_INVALID', minutes: null };
+  const offset = 7n * 60n * MINUTE;
+  let elapsed = 0n;
+  for (let d = floorDiv(start + offset,DAY) * DAY - offset; d <= end; d += DAY) {
+    const overlap = (end < d + 22n * 60n * MINUTE ? end : d + 22n * 60n * MINUTE)
+      - (start > d + 8n * 60n * MINUTE ? start : d + 8n * 60n * MINUTE);
+    if (overlap > 0n) elapsed += overlap;
   }
   // An overnight response before next shift starts is a valid zero working-time response.
-  return { status: elapsed < 300000 ? 'MET' : 'BREACHED', minutes: elapsed / 60000,
+  return { status: elapsed < 5n * MINUTE ? 'MET' : 'BREACHED', minutes: Number(elapsed) / Number(MINUTE),
     timezone: 'Asia/Ho_Chi_Minh', shift: '08:00–22:00 mỗi ngày', target: '<5 phút',
     policy_version: 'VPT-FIRST-RESPONSE-20261007-v1' };
 }
@@ -52,12 +65,12 @@ function evaluateAdDryRun(observation, policy, now) {
   const out = { mode: 'DRY_RUN', execution: 'NOT_EXECUTED', action: 'UNKNOWN', reason: null };
   if (!policy || policy.verified !== true || policy.subject !== 'ad' || !policy.version) return { ...out, reason: 'POLICY_SCOPE_UNVERIFIED' };
   const n = instant(now), asOf = instant(observation?.as_of);
-  if (n === null || asOf === null || asOf > n || !Number.isSafeInteger(policy.max_age_ms) || policy.max_age_ms <= 0 || n - asOf > policy.max_age_ms) return { ...out, reason: 'DATA_STALE_OR_MISSING' };
+  if (n === null || asOf === null || asOf > n || !Number.isSafeInteger(policy.max_age_ms) || policy.max_age_ms <= 0 || n - asOf > BigInt(policy.max_age_ms)*MS) return { ...out, reason: 'DATA_STALE_OR_MISSING' };
   if (observation?.coverage !== 'COMPLETE' || observation?.scope_verified !== true || observation.currency !== 'VND'
     || !Number.isSafeInteger(observation.spend_vnd) || observation.spend_vnd < 0
     || !Number.isSafeInteger(observation.phone_count) || observation.phone_count < 0) return { ...out, reason: 'RECONCILIATION_UNKNOWN' };
   if (!UUID.test(observation.company_id || '') || observation.ad_id !== policy.ad_id || observation.company_id !== policy.company_id) return { ...out, reason: 'POLICY_SCOPE_MISMATCH' };
-  const day = new Date(n + 7 * 3600000).toISOString().slice(0, 10);
+  const day = iso(n + 7n * 60n * MINUTE).slice(0, 10);
   const nextDay = new Date(Date.parse(day + 'T00:00:00Z') + 86400000).toISOString().slice(0, 10);
   if (observation.day !== day) return { ...out, reason: 'COHORT_MISMATCH' };
   const midnight = policy.resume_at_midnight === true && observation.paused_by_policy_version === policy.version
@@ -65,4 +78,4 @@ function evaluateAdDryRun(observation, policy, now) {
   return { ...out, action: midnight ? 'WOULD_RESUME' : observation.spend_vnd >= 50000 && observation.phone_count === 0 ? 'WOULD_PAUSE' : 'NO_CHANGE',
     reason: 'EVALUATED', policy_version: policy.version, subject_ref: observation.ad_id, next_reset: nextDay + 'T00:00:00+07:00' };
 }
-module.exports = { VERSION, UUID, SYSTEMS, fail, instant, windowOf, responseSla, digest, unknown, evaluateAdDryRun };
+module.exports = { VERSION, UUID, SYSTEMS, fail, instant, iso, windowOf, responseSla, digest, unknown, evaluateAdDryRun };

@@ -7,6 +7,19 @@ import { present } from '../src/view-model.js';
 import { FounderCard, FounderError } from '../src/founder-card.js';
 import { synthetic } from './fixture.js';
 const responder=(body:object,status=200): Fetcher=>async()=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json'}});
+test('safe backend error codes survive bridge without upstream content',async()=>{
+ for(const reason of ['REQUEST_CONFLICT','PROPOSAL_VERSION_CONFLICT','OBJECT_NOT_ACCESSIBLE','PERMISSION_DENIED','TENANT_INACTIVE','INVALID_ARGUMENTS','WRITE_GATE_CLOSED','WRITE_OUTCOME_UNKNOWN_REPLAY_SAME_REQUEST','AUTHENTICATION_REQUIRED','BACKEND_UNAVAILABLE']){
+  const r=await forward('create_founder_objective',{},'synthetic-key',responder({reasonCode:reason,error:'SYNTHETIC_SECRET_SENTINEL',message:'SYNTHETIC_DB_SENTINEL',phone:'SYNTHETIC_PHONE_SENTINEL'},409));
+  assert.equal(r.structuredContent?.reason,reason);assert.ok(!JSON.stringify(r).includes('SENTINEL'));
+  if(reason==='WRITE_OUTCOME_UNKNOWN_REPLAY_SAME_REQUEST'){
+   assert.equal(r.structuredContent.replay_same_request_id,true);assert.match(r.content[0].text,/cùng request_id và payload/);
+  }
+ }
+ const unknown=await forward('create_founder_objective',{},'synthetic-key',responder({reasonCode:'RAW_DB_ERROR'},503));
+ assert.equal(unknown.structuredContent?.reason,'BACKEND_UNAVAILABLE');
+ const toolFailure=await forward('create_founder_objective',{},'synthetic-key',responder({isError:true,structuredContent:{reason:'REQUEST_CONFLICT'},content:[{type:'text',text:'SYNTHETIC_SECRET_SENTINEL'}]}));
+ assert.equal(toolFailure.structuredContent.reason,'REQUEST_CONFLICT');assert.ok(!JSON.stringify(toolFailure).includes('SENTINEL'));
+});
 test('missing bearer rejects before network; failed connection returns error without raw secret',async()=>{
  let called=false;const result=await forward('get_founder_overview',{},undefined,async()=>{called=true;throw new Error('SHOULD_NOT_CALL')});
  assert.equal(called,false);assert.equal(result.isError,true);

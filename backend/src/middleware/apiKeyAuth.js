@@ -15,6 +15,7 @@
 const { supabase } = require('../config/supabase');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('node:crypto');
 
 const LEGACY_KEYS_FILE = path.join(__dirname, '../../data/api-keys.json');
 
@@ -277,6 +278,11 @@ async function apiKeyAuth(req, res, next) {
       tenant_company_ids: tenantCompanyIds,
       all_companies: !found.company_id && allowedCompanies.length === 0,
     };
+    // Founder uses the presented access secret, never the public key id or refresh token.
+    req.apiKeyCredential = isUuid(key) ? 'UUID_PATH' : found.key === key ? 'SECRET' : 'OTHER';
+    req.apiKey.credential = req.apiKeyCredential;
+    req.apiKeyCredentialDigest = req.apiKeyCredential === 'SECRET'
+      ? crypto.createHash('sha256').update(key).digest('hex') : null;
     next();
   } catch (e) {
     console.error('[apiKeyAuth] DB error:', e.message);

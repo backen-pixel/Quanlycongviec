@@ -70,6 +70,22 @@ Xem [README adapter](../../apps/founder-control-center/README.md). Không nhập
 
 Tắt FOUNDER_CONTROL_ENABLED/FOUNDER_CONTROL_WRITES_ENABLED, dừng adapter, thu hồi execute RPC theo rollback SQL. Không xóa receipts/objectives/decisions/audit. Hệ project approvals và automation cũ giữ nguyên.
 
+## Sửa review 07/10
+
+Phạm vi chỉ PR51; migration 711 chưa triển khai nên sửa cùng rollback tại chỗ. Test hồi quy được viết và chạy trên mã cũ trước khi sửa:
+
+| Lỗi | Trước sửa (FAIL) | Sau sửa / test | Giới hạn còn lại |
+|---|---|---|---|
+| L1 | `Missing expected rejection` khi dùng UUID cho Founder read/write; `tools/list` cũng hiện Founder tools theo scope. | Middleware gắn loại credential và SHA-256 digest của access secret; list rỗng nếu UUID; service so với key mới; RPC so digest dưới `FOR SHARE`. Backend auth/service/gateway PASS, PGlite rotation giữa service và RPC PASS. Refresh token bị từ chối. | Chưa thử rotation trên Supabase thật hoặc nhiều session. MCP cũ vẫn nhận UUID. |
+| L2 | `Missing expected rejection` với `tenants.is_active=false`. | Service chặn đọc/ghi; RPC khóa tenant `FOR SHARE`, trả `TENANT_INACTIVE`. Backend/PGlite PASS. | `subscription_end` không nằm trong `assertTenantActive` hiện hành (`backend/src/helpers/tenantScope.js:78-89`), nên không tự áp chính sách hết hạn mới. |
+| L3 | SLA PostgreSQL `4:59.999999` trả `UNKNOWN` thay `MET`. | Parser integer microseconds xử lý dấu cách/T, 1–6 số lẻ, Z/offset giờ/phút; kiểm ngày/giờ/offset; `windowOf`, freshness, dry-run và biên SLA dùng cùng parser. Backend PASS. | JSON minutes vẫn là Number, so ngưỡng bằng BigInt. |
+| L4 | Chỉ có enqueue mà SLA trả `MET` thay `UNKNOWN`. | `first_response` trả bốn milestones và basis; chỉ dùng `provider_data.created_time` của receipt Lead Ads đã scope, hợp lệ về thứ tự/thời gian, cùng human outbound. Thiếu/lệch nguồn trả UNKNOWN; backend PASS, không trả provider_data/PII. | Không có cột nhận webhook riêng nên `webhook_received_at=null`; so độ lệch nguồn→enqueue tối đa 24 giờ là guard bảo thủ. SLA Messenger chưa có receipt gắn Lead trong luồng này. |
+| L5 | Adapter gốc trả `BACKEND_UNAVAILABLE` cho `REQUEST_CONFLICT` (assertion FAIL); DB CHECK trả `WRITE_UNAVAILABLE` thay `INVALID_ARGUMENTS`. | Bridge chỉ giữ 10 mã cho phép, không echo upstream, có `retryable`/`replay_same_request_id`; service map 23514/22P02/22023. Backend PASS, kiểm bridge trực tiếp 10/10. | (build và app suite đã được Claude chạy độc lập: xem mục xác minh). |
+
+Đối chiếu mốc SLA: SPEC hiện tại yêu cầu thời điểm nguồn đã xác minh và outbound con người (`apps/founder-control-center/SPEC.md:18`); kế hoạch CRM cũ dùng `first_touch_time`/15 phút (`docs/architecture/ke-hoach-cong-du-lieu-lead-facebook.md:226`), còn quyết định Founder 01/10 chưa chốt KPI/SLA (`docs/ai-handoff/FOUNDER_DECISIONS_ARCHITECTURE_V1_1_20261001.md:55`). Với luồng Lead Ads mới, webhook được xác thực chữ ký (`backend/src/helpers/facebookPageInbox.js:80-85`), Graph lấy `created_time` (`backend/src/services/facebookLeadAdsIntake.js:60`), receipt giữ `provider_data` (`database/702_facebook_lead_ads_intake.sql:59,353-355`). Inbox chỉ có `created_at` khi enqueue (`database/701_facebook_page_inbox.sql:20-24`); receipt `created_at` cũng là thời điểm ghi. Vì vậy chọn Graph `provider_data.created_time` làm source event; không thay 08–22/<5 phút/policy_version. **Cần Founder xác nhận** cách đo khi nguồn Messenger hoặc mốc webhook nhận được lưu bền vững; các trường hợp đó hiện trả UNKNOWN.
+
+Xác minh tại checkout: backend 41/41 PASS; PGlite 10/10 PASS; `npx tsc --noEmit` PASS; bridge trực tiếp 10/10 mã PASS. Claude kiểm độc lập (ngoài sandbox Codex): `npx skybridge build` OK; `npx tsx --test tests/*.test.ts` sau build 18/18 PASS; backend 41/41, typecheck sạch. Trên mã cũ (657faf88) cùng các test mới: 7 backend + 2 app FAIL, nên test hồi quy tái hiện đúng lỗi. Không kết nối DB/mạng thật, không bật flags, không migration/deploy. Rollback: tắt Founder flags theo quy trình release, dùng `711_founder_control_center_rollback.sql` để thu quyền RPC; dữ liệu lịch sử được giữ.
+
 ## Draft PR
 
 Dùng phần vấn đề/kết quả, phạm vi files, kiểm thử và release gates của hồ sơ này làm PR body. Đã push branch với implementation commit `d9a26c36`. Lệnh tạo draft PR trả `Post https://api.github.com/graphql: Forbidden`; draft PR chưa được tạo. [Nội dung PR](FOUNDER_CONTROL_CENTER_V1_PR.md) đã lưu; [mở trang tạo PR](https://github.com/backen-pixel/Quanlycongviec/pull/new/codex/founder-control-center-v1). Diff/branch là vật phẩm review thay thế; không merge hoặc deploy.

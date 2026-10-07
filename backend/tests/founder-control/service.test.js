@@ -1,9 +1,9 @@
-const test=require('node:test'), assert=require('node:assert/strict');
+const test=require('node:test'), assert=require('node:assert/strict'), crypto=require('node:crypto');
 const {createFounderControl}=require('../../src/modules/founderControl/service');
 const id=n=>'00000000-0000-0000-0000-'+String(n).padStart(12,'0');
 function fixture(overrides={}) {
- const key={id:id(3),active:true,default_assigned_to:id(2),created_by:id(2),company_id:id(1),mcp_scopes:['founder_read','founder_write']};
- const tables={external_api_keys:[key],companies:[{id:id(1),tenant_id:id(9)}],users:[{id:id(2),tenant_id:id(9),company_id:id(1),role:'admin',is_active:true}],
+ const key={id:id(3),key:'synthetic-access-1',active:true,default_assigned_to:id(2),created_by:id(2),company_id:id(1),mcp_scopes:['founder_read','founder_write']};
+ const tables={external_api_keys:[key],tenants:[{id:id(9),is_active:true}],companies:[{id:id(1),tenant_id:id(9)}],users:[{id:id(2),tenant_id:id(9),company_id:id(1),role:'admin',is_active:true}],
    crm_leads:[],lead_attribution:[],fb_ad_accounts:[],founder_objectives:[],founder_proposals:[],founder_decisions:[],...overrides};
  const calls=[]; let rpcCalls=0;
  const db={from(table){
@@ -17,7 +17,7 @@ function fixture(overrides={}) {
   }};return q;
  },async rpc(){rpcCalls++;return {data:{status:'DRAFT',objective_id:id(5),execution:'NOT_EXECUTED'}}}};
  const service=createFounderControl({db,slaCompanyId:id(1),isPrimary:()=>true,enabled:()=>true,writesEnabled:()=>true,now:()=> '2026-10-08T00:00:00Z'});
- const req={apiKey:key,headers:{}};
+ const req={apiKey:key,apiKeyCredential:'SECRET',apiKeyCredentialDigest:crypto.createHash('sha256').update(key.key).digest('hex'),headers:{}};
  const args={company_id:id(1),window_start:'2026-10-07T00:00:00Z',window_end:'2026-10-08T00:00:00Z'};
  return {service,db,req,args,tables,calls,rpcCalls:()=>rpcCalls};
 }
@@ -40,7 +40,7 @@ test('ghi mặc định tắt và Backup không được ghi',async()=>{
 test('chỉ query CRM object đúng company, không ghi seen_by',async()=>{const f=fixture();await assert.rejects(f.service.call('get_founder_evidence',{...f.args,lead_id:id(8)},f.req),/OBJECT_NOT_ACCESSIBLE/);assert.equal(f.rpcCalls(),0)});
 test('SLA bỏ system response và lấy human sent_by đúng tenant',async()=>{
  const f=fixture({crm_leads:[{id:id(4),company_id:id(1),type:'lead',assigned_to:id(2),stage_id:id(7)}],
- facebook_lead_ads_intake_receipts:[{id:id(5),company_id:id(1),lead_id:id(4),inbox_id:id(6),created_at:'2026-10-07T03:00:01Z'}],
+ facebook_lead_ads_intake_receipts:[{id:id(5),company_id:id(1),lead_id:id(4),inbox_id:id(6),created_at:'2026-10-07T03:00:01Z',provider_data:{created_time:'2026-10-07T03:00:00Z'}}],
  facebook_page_inbox:[{id:id(6),created_at:'2026-10-07T03:00:00Z'}],facebook_messages:[
  {id:id(7),lead_id:id(4),direction:'outbound',created_at:'2026-10-07T03:00:30Z',sent_by:null,fb_message_id:'auto'},
  {id:id(8),lead_id:id(4),direction:'outbound',created_at:'2026-10-07T03:04:00Z',sent_by:id(10),fb_message_id:'human'},
@@ -49,6 +49,58 @@ test('SLA bỏ system response và lấy human sent_by đúng tenant',async()=>{
 });
 test('read lỗi/không receipt không dùng first_touch_time thay SLA',async()=>{const f=fixture({crm_leads:[{id:id(4),company_id:id(1),first_touch_time:'2026-10-07T03:00:00Z'}]});const r=await f.service.call('get_founder_evidence',{...f.args,lead_id:id(4)},f.req);assert.equal(r.data.first_response.status,'UNKNOWN')});
 module.exports={fixture,id};
+test('Founder requires a current access secret, including after rotation',async()=>{
+ const f=fixture();f.tables.external_api_keys[0].key='synthetic-access-1';
+ for(const credential of [undefined,'UUID_PATH','REFRESH']){
+  f.req.apiKeyCredential=credential;f.req.apiKeySecret=credential==='REFRESH'?'synthetic-refresh':undefined;
+  await assert.rejects(f.service.call('get_founder_overview',f.args,f.req));
+  await assert.rejects(f.service.call('create_founder_objective',{...f.args,request_id:'request-001',owner_id:id(2),title:'Fixture',metric:'FIRST_RESPONSE_SLA',target:95},f.req));
+ }
+ f.req.apiKeyCredential='SECRET';f.req.apiKeySecret='synthetic-access-1';
+ await f.service.call('get_founder_overview',f.args,f.req);
+ f.tables.external_api_keys[0].key='synthetic-access-2';f.tables.external_api_keys[0].rotated_at='2026-10-07T00:00:00Z';
+ await assert.rejects(f.service.call('get_founder_overview',f.args,f.req),/PERMISSION_DENIED/);
+});
+test('suspended tenant is denied before read and write',async()=>{
+ const f=fixture({tenants:[{id:id(9),is_active:false}]});
+ await assert.rejects(f.service.call('get_founder_overview',f.args,f.req),/TENANT_INACTIVE/);
+ await assert.rejects(f.service.call('create_founder_objective',{...f.args,request_id:'request-001',owner_id:id(2),title:'Fixture',metric:'FIRST_RESPONSE_SLA',target:95},f.req),/TENANT_INACTIVE/);
+ assert.equal(f.rpcCalls(),0);
+});
+test('existing tenant lifecycle does not suspend on subscription_end alone',async()=>{
+ const f=fixture({tenants:[{id:id(9),is_active:true,subscription_end:'2020-01-01T00:00:00Z'}]});
+ const r=await f.service.call('get_founder_overview',f.args,f.req);
+ assert.equal(r.scope.tenant_id,id(9));
+});
+test('enqueue alone cannot prove first response; source time and provenance are required',async()=>{
+ const f=fixture({crm_leads:[{id:id(4),company_id:id(1)}],facebook_lead_ads_intake_receipts:[{id:id(5),company_id:id(1),lead_id:id(4),inbox_id:id(6),created_at:'2026-10-07T03:00:01Z'}],facebook_page_inbox:[{id:id(6),created_at:'2026-10-07T03:00:00Z'}],facebook_messages:[{id:id(8),lead_id:id(4),direction:'outbound',created_at:'2026-10-07T03:04:00Z',sent_by:id(2),fb_message_id:'synthetic-message'}]});
+ f.tables.users[0].role='sales_admin';f.tables.users.push({id:id(10),company_id:id(1),tenant_id:id(9),role:'admin',is_active:true});f.tables.external_api_keys[0].created_by=id(10);
+ let result=await f.service.call('get_founder_evidence',{...f.args,lead_id:id(4)},f.req);
+ assert.equal(result.data.first_response.status,'UNKNOWN');assert.equal(result.data.first_response.reason,'SOURCE_EVENT_TIME_UNAVAILABLE');
+ assert.equal(result.data.first_response.milestones.enqueued_at.value,'2026-10-07T03:00:00Z');
+ f.tables.facebook_lead_ads_intake_receipts[0].provider_data={created_time:'2026-10-07T02:59:00Z',phone:'SYNTHETIC_PHONE_SENTINEL'};
+ result=await f.service.call('get_founder_evidence',{...f.args,lead_id:id(4)},f.req);
+ assert.equal(result.data.first_response.status,'BREACHED');assert.equal(result.data.first_response.basis,'source_event_at');
+ assert.ok(!JSON.stringify(result).includes('SYNTHETIC_PHONE_SENTINEL'));
+ f.tables.facebook_lead_ads_intake_receipts[0].provider_data.created_time='2026-10-09T00:00:00Z';
+ result=await f.service.call('get_founder_evidence',{...f.args,lead_id:id(4)},f.req);
+ assert.equal(result.data.first_response.status,'UNKNOWN');
+ f.tables.facebook_page_inbox[0].created_at='2026-10-07T03:06:00Z';
+ f.tables.facebook_lead_ads_intake_receipts[0].created_at='2026-10-07T03:07:00Z';
+ f.tables.facebook_lead_ads_intake_receipts[0].provider_data.created_time='2026-10-07T03:05:00Z';
+ result=await f.service.call('get_founder_evidence',{...f.args,lead_id:id(4)},f.req);
+ assert.equal(result.data.first_response.reason,'SOURCE_EVENT_TIME_INCONSISTENT');
+ f.tables.facebook_lead_ads_intake_receipts[0].provider_data.created_time='SYNTHETIC_PHONE_SENTINEL';
+ result=await f.service.call('get_founder_evidence',{...f.args,lead_id:id(4)},f.req);
+ assert.equal(result.data.first_response.milestones.source_event_at.value,null);
+ assert.ok(!JSON.stringify(result).includes('SYNTHETIC_PHONE_SENTINEL'));
+});
+test('database CHECK and cast errors become INVALID_ARGUMENTS',async()=>{
+ for(const code of ['23514','22P02','22023']){
+  const f=fixture();f.db.rpc=async()=>({error:{code,message:'SYNTHETIC_DB_SENTINEL'}});
+  await assert.rejects(f.service.call('create_founder_objective',{...f.args,request_id:'request-001',owner_id:id(2),title:'Fixture',metric:'FIRST_RESPONSE_SLA',target:95},f.req),/INVALID_ARGUMENTS/);
+ }
+});
 test('nguồn đồng bộ cũ hiện nhãn STALE; không biến fetched_at thành source_as_of',async()=>{const f=fixture({fb_ad_accounts:[{company_id:id(1),tenant_id:id(9),ad_account_id:'act_fixture',lan_dong_bo_cuoi:'2026-10-06T00:00:00Z'}]});const r=await f.service.call('get_founder_overview',f.args,f.req);const account=r.source_refs.find(s=>s.ref==='fb_ad_accounts');assert.equal(account.freshness,'STALE_SYNC_OVER_15_MINUTES');assert.equal(account.source_as_of,null);assert.equal(r.data.metrics.spend_vnd.value,null)});
 test('không đọc inbox theo Page hiện tại; chỉ IDs từ receipt cùng công ty',async()=>{const f=fixture({facebook_lead_ads_intake_receipts:[{id:id(5),inbox_id:id(6),company_id:id(1),lead_id:id(4),created_at:'2026-10-07T03:00:00Z'}],facebook_page_inbox:[{id:id(6),status:'pending',attempts:2,last_error_code:'RETRY_FIXTURE',available_at:'2026-10-07T03:00:05Z'},{id:id(7),status:'pending',attempts:9,last_error_code:'OTHER_COMPANY'}]});const r=await f.service.call('get_founder_overview',f.args,f.req);assert.equal(r.data.intake_processing.length,1);assert.equal(r.data.intake_processing[0].evidence_ref,id(6));assert.equal(r.data.metrics.unprocessed_intake_events.value,null);assert.ok(!JSON.stringify(r).includes('OTHER_COMPANY'))});
 test('uncertain connection error is explicit; backend does not retry the write blindly',async()=>{const f=fixture();f.db.rpc=async()=>{throw new Error('raw secret')};await assert.rejects(f.service.call('create_founder_objective',{...f.args,request_id:'request-001',owner_id:id(2),title:'Mục tiêu',metric:'FIRST_RESPONSE_SLA',target:95},f.req),/WRITE_OUTCOME_UNKNOWN_REPLAY_SAME_REQUEST/)});

@@ -1,3 +1,9 @@
+## 2026-10-07 — PR51 sửa review Founder Control Center
+
+Sửa L1–L5 trong checkout, đã commit lên nhánh PR (chưa merge/deploy): Founder yêu cầu access secret hiện hành (RPC so digest), tenant inactive bị chặn, timestamp microseconds chính xác, SLA dùng source event có provenance, adapter giữ mã lỗi an toàn. Backend 41/41, PGlite 10/10, typecheck và bridge trực tiếp PASS. Claude kiểm độc lập: build Skybridge OK, app 18/18, backend 41/41; trên mã cũ 7 test backend + 2 test app FAIL; không dùng DB/mạng thật. [Chi tiết và rollback](FOUNDER_CONTROL_CENTER_V1_20261007.md#sửa-review-0710).
+
+---
+
 ## 2026-10-07 — Founder Control Center Marketing → CRM V1
 
 Branch `codex/founder-control-center-v1`: năm tools, ba view Skybridge, tenant-safe domain/service và candidate SQL711 lưu objective/proposal/decision/receipt + audit atomic. Flags mặc định tắt; không migration, Meta action, thông báo hay deploy thật. Backend 219/219, app 16/16 và build/typecheck PASS synthetic. OAuth ChatGPT/HTTPS MCP, Supabase staging concurrency, nguồn cohort/watermark và review độc lập còn chờ. [Hồ sơ và rollback](FOUNDER_CONTROL_CENTER_V1_20261007.md), [chạy thử/cấu hình](../../apps/founder-control-center/README.md).

@@ -63,10 +63,10 @@ CREATE INDEX IF NOT EXISTS founder_decisions_scope ON public.founder_decisions(t
 
 CREATE OR REPLACE FUNCTION public.founder_control_command_v1(
  p_key_id uuid,p_actor_id uuid,p_company_id uuid,p_tenant_id uuid,
- p_request_id text,p_command text,p_payload jsonb
+ p_request_id text,p_command text,p_payload jsonb,p_credential_digest text
 ) RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path=''
 SET lock_timeout='3s' SET statement_timeout='10s' AS $$
-DECLARE k public.external_api_keys; a public.users; c public.companies; owner_row public.users;
+DECLARE k public.external_api_keys; a public.users; c public.companies; tenant_row public.tenants; owner_row public.users;
  receipt public.founder_command_receipts; objective public.founder_objectives; proposal public.founder_proposals;
  result jsonb; new_id uuid; proposal_payload jsonb;
 BEGIN
@@ -78,10 +78,17 @@ BEGIN
    RAISE EXCEPTION 'INVALID_ARGUMENTS' USING ERRCODE='22023';
  END IF;
  SELECT * INTO k FROM public.external_api_keys WHERE id=p_key_id FOR SHARE;
+ SELECT * INTO tenant_row FROM public.tenants WHERE id=p_tenant_id FOR SHARE;
+ IF tenant_row.id IS NULL OR tenant_row.is_active IS FALSE THEN
+   RAISE EXCEPTION 'TENANT_INACTIVE' USING ERRCODE='42501';
+ END IF;
  SELECT * INTO a FROM public.users WHERE id=p_actor_id FOR SHARE;
  SELECT * INTO c FROM public.companies WHERE id=p_company_id FOR SHARE;
  SELECT * INTO owner_row FROM public.users WHERE id=k.created_by FOR SHARE;
- IF k.id IS NULL OR k.active IS NOT TRUE OR k.default_assigned_to IS DISTINCT FROM a.id
+ IF k.id IS NULL OR k.active IS NOT TRUE OR p_credential_digest IS NULL
+   OR p_credential_digest !~ '^[a-f0-9]{64}$'
+   OR p_credential_digest IS DISTINCT FROM encode(sha256(convert_to(k.key,'UTF8')),'hex')
+   OR k.default_assigned_to IS DISTINCT FROM a.id
    OR k.region_id IS NOT NULL OR NOT coalesce('founder_write'=ANY(k.mcp_scopes),false)
    OR NOT k.mcp_scopes <@ ARRAY['founder_read','founder_write']::text[]
    OR a.id IS NULL OR a.is_active IS NOT TRUE OR NOT coalesce(a.role IN ('admin','ecosystem_admin'),false)
@@ -147,7 +154,7 @@ BEGIN
  RETURN result;
 END;
 $$;
-REVOKE ALL ON FUNCTION public.founder_control_command_v1(uuid,uuid,uuid,uuid,text,text,jsonb) FROM PUBLIC,anon,authenticated;
-GRANT EXECUTE ON FUNCTION public.founder_control_command_v1(uuid,uuid,uuid,uuid,text,text,jsonb) TO service_role;
-COMMENT ON FUNCTION public.founder_control_command_v1(uuid,uuid,uuid,uuid,text,text,jsonb) IS 'Record objective or version-bound decision and audit atomically. Never executes ads, tasks, messages or jobs.';
+REVOKE ALL ON FUNCTION public.founder_control_command_v1(uuid,uuid,uuid,uuid,text,text,jsonb,text) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.founder_control_command_v1(uuid,uuid,uuid,uuid,text,text,jsonb,text) TO service_role;
+COMMENT ON FUNCTION public.founder_control_command_v1(uuid,uuid,uuid,uuid,text,text,jsonb,text) IS 'Record objective or version-bound decision and audit atomically. Never executes ads, tasks, messages or jobs.';
 COMMIT;

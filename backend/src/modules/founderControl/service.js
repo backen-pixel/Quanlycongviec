@@ -1,6 +1,6 @@
 'use strict';
 const crypto = require('node:crypto');
-const { VERSION, SYSTEMS, fail, windowOf, instant, responseSla, unknown, evaluateAdDryRun } = require('./domain');
+const { VERSION, SYSTEMS, fail, windowOf, instant, iso, responseSla, unknown, evaluateAdDryRun } = require('./domain');
 const { validate } = require('./contracts');
 
 // Inject dependencies; importing this module never starts jobs or reads credentials.
@@ -15,7 +15,9 @@ function createFounderControl({ db, isPrimary, enabled, writesEnabled, slaCompan
   async function context(req, companyId, write) {
     if (!enabled()) throw fail('FOUNDER_CONTROL_DISABLED', 403);
     if (!req.apiKey?.id) throw fail('DELEGATION_DENIED', 403);
-    const key = await one(db.from('external_api_keys').select('id,active,default_assigned_to,company_id,region_id,mcp_scopes,allowed_company_ids,created_by').eq('id', req.apiKey.id).maybeSingle());
+    if (req.apiKeyCredential !== 'SECRET' || !/^[a-f0-9]{64}$/.test(req.apiKeyCredentialDigest || '')) throw fail('PERMISSION_DENIED', 403);
+    const key = await one(db.from('external_api_keys').select('id,key,active,default_assigned_to,company_id,region_id,mcp_scopes,allowed_company_ids,created_by').eq('id', req.apiKey.id).maybeSingle());
+    if (!key?.key || crypto.createHash('sha256').update(key.key).digest('hex') !== req.apiKeyCredentialDigest) throw fail('PERMISSION_DENIED', 403);
     if (!key?.active || !key.mcp_scopes?.includes(write ? 'founder_write' : 'founder_read')) throw fail('CAPABILITY_DENIED', 403);
     if (key.mcp_scopes.some(s => !['founder_read', 'founder_write'].includes(s))) throw fail('DEDICATED_KEY_REQUIRED', 403);
     if (!key.default_assigned_to || (req.headers?.['x-user-id'] && req.headers['x-user-id'] !== key.default_assigned_to)) throw fail('DELEGATION_DENIED', 403);
@@ -28,6 +30,8 @@ function createFounderControl({ db, isPrimary, enabled, writesEnabled, slaCompan
       one(db.from('companies').select('id,tenant_id').eq('id', companyId).maybeSingle()),
     ]);
     if (!actor || actor.is_active !== true || !actor.tenant_id || !company || company.tenant_id !== actor.tenant_id) throw fail('TENANT_SCOPE_DENIED', 403);
+    const tenant = await one(db.from('tenants').select('id,is_active').eq('id', actor.tenant_id).maybeSingle());
+    if (!tenant || tenant.is_active === false) throw fail('TENANT_INACTIVE', 403);
     const owner = key.created_by ? await one(db.from('users').select('role,company_id,tenant_id,is_active').eq('id', key.created_by).maybeSingle()) : null;
     if (!owner || owner.is_active !== true || owner.tenant_id !== actor.tenant_id || !['admin', 'ecosystem_admin'].includes(owner.role)
       || (owner.company_id && owner.company_id !== companyId)) throw fail('DELEGATION_DENIED', 403);
@@ -35,7 +39,8 @@ function createFounderControl({ db, isPrimary, enabled, writesEnabled, slaCompan
     if (!roles.includes(actor.role) || (actor.company_id && actor.company_id !== companyId)
       || (actor.role === 'sales_admin' && actor.company_id !== companyId)) throw fail('ACTOR_PERMISSION_DENIED', 403);
     if (write && (!writesEnabled() || isPrimary() !== true)) throw fail('WRITE_GATE_CLOSED', 403);
-    return { tenant_id: actor.tenant_id, company_id: companyId, actor_id: actor.id, key_id: key.id };
+    return { tenant_id: actor.tenant_id, company_id: companyId, actor_id: actor.id, key_id: key.id,
+      credential_digest: req.apiKeyCredentialDigest };
   }
   async function source(ref, make) {
     const rows = [];
@@ -116,7 +121,7 @@ function createFounderControl({ db, isPrimary, enabled, writesEnabled, slaCompan
     if (!lead) throw fail('OBJECT_NOT_ACCESSIBLE', 403);
     const sources = await Promise.all([
       source('lead_attribution', () => inWindow(db.from('lead_attribution').select('id,kenh,platform,fb_campaign_id,cham_dau_luc,updated_at').eq('company_id', ctx.company_id).eq('lead_id', id).order('id'), 'cham_dau_luc', w)),
-      source('facebook_lead_ads_intake_receipts', () => inWindow(db.from('facebook_lead_ads_intake_receipts').select('id,inbox_id,recipient_id,created_at').eq('company_id', ctx.company_id).eq('lead_id', id).order('id'), 'created_at', w)),
+      source('facebook_lead_ads_intake_receipts', () => inWindow(db.from('facebook_lead_ads_intake_receipts').select('id,inbox_id,recipient_id,created_at,provider_data').eq('company_id', ctx.company_id).eq('lead_id', id).order('id'), 'created_at', w)),
     ]);
     const receipts = sources[1];
     let salesResult = unknown('STAGE_WIN_LOSS_MAPPING_NOT_VERIFIED');
@@ -131,21 +136,47 @@ function createFounderControl({ db, isPrimary, enabled, writesEnabled, slaCompan
       }
     }
     let sla = { status: 'UNKNOWN', reason: ctx.company_id === slaCompanyId ? 'VERIFIED_INTAKE_OR_RESPONSE_MISSING' : 'VPT_POLICY_SCOPE_UNVERIFIED', minutes: null };
+    const milestones = { source_event_at: { value: null, source: 'facebook_lead_ads_intake_receipts.provider_data.created_time' },
+      webhook_received_at: { value: null, source: 'NOT_PERSISTED' },
+      enqueued_at: { value: null, source: 'facebook_page_inbox.created_at' },
+      response_at: { value: null, source: 'facebook_messages.created_at' } };
+    let basis = null;
     let humanResponseRef = null;
     const owner = lead.assigned_to ? await one(db.from('users').select('id,is_active,company_id,tenant_id').eq('id', lead.assigned_to).maybeSingle()) : null;
     if (ctx.company_id === slaCompanyId && receipts.status === 'OK' && receipts.rows.length === 1) {
       const r = receipts.rows[0];
       const received = await one(db.from('facebook_page_inbox').select('id,created_at').eq('id', r.inbox_id).maybeSingle());
       if (received) {
+        const enqueueTime = instant(received.created_at);
+        milestones.enqueued_at.value = enqueueTime === null ? null : received.created_at;
+        // Graph lead created_time is persisted by the signed Lead Ads intake receipt.
+        const sourceAt = r.provider_data?.created_time || null;
+        const sourceTime = instant(sourceAt), observed = instant(now());
+        milestones.source_event_at.value = sourceTime === null ? null : sourceAt;
+        if (sourceTime === null) sla = { status: 'UNKNOWN', reason: 'SOURCE_EVENT_TIME_UNAVAILABLE', minutes: null };
+        else if (enqueueTime === null || observed === null || sourceTime > observed || sourceTime > enqueueTime
+          || enqueueTime - sourceTime > 24n*60n*60000000n) {
+          sla = { status: 'UNKNOWN', reason: 'SOURCE_EVENT_TIME_INCONSISTENT', minutes: null };
+        }
+        const windowStart = instant(w.start);
+        const queryStart = sourceTime !== null && windowStart !== null && sourceTime < windowStart ? iso(sourceTime) : w.start;
         const messages = await source('facebook_messages', () => db.from('facebook_messages').select('id,created_at,sent_by,fb_message_id').eq('lead_id', id).eq('direction', 'outbound')
-          .gte('created_at', received.created_at).lt('created_at', w.end).order('created_at').order('id'));
+          .gte('created_at', queryStart).lt('created_at', w.end).order('created_at').order('id'));
         sources.push(messages);
         if (messages.status === 'OK') {
           for (const m of messages.rows) {
             if (!m.sent_by || !m.fb_message_id) continue;
             const sender = await one(db.from('users').select('id,role,is_active,company_id,tenant_id').eq('id', m.sent_by).maybeSingle());
             if (sender?.is_active === true && ['sales', 'sales_admin'].includes(sender.role) && sender.company_id === ctx.company_id && sender.tenant_id === ctx.tenant_id) {
-              sla = responseSla(received.created_at, m.created_at, now()); humanResponseRef = m.id; break;
+              const responseTime = instant(m.created_at);
+              milestones.response_at.value = responseTime === null ? null : m.created_at;
+              humanResponseRef = m.id;
+              if (sourceTime === null) sla = { status: 'UNKNOWN', reason: 'SOURCE_EVENT_TIME_UNAVAILABLE', minutes: null };
+              else if (enqueueTime === null || responseTime === null || observed === null || sourceTime > observed
+                || sourceTime > responseTime || sourceTime > enqueueTime || enqueueTime - sourceTime > 24n*60n*60000000n) {
+                sla = { status: 'UNKNOWN', reason: 'SOURCE_EVENT_TIME_INCONSISTENT', minutes: null };
+              } else { sla = responseSla(sourceAt, m.created_at, now()); basis = 'source_event_at'; }
+              break;
             }
           }
         }
@@ -157,7 +188,7 @@ function createFounderControl({ db, isPrimary, enabled, writesEnabled, slaCompan
         status: !lead.assigned_to ? 'UNASSIGNED' : owner?.is_active === true && owner.company_id === ctx.company_id && owner.tenant_id === ctx.tenant_id ? 'VALID' : 'UNKNOWN' },
       attribution: sources[0].status === 'OK' ? sources[0].rows.map(a => ({ evidence_ref: a.id, channel: a.kenh || null, campaign_ref: a.fb_campaign_id || null, occurred_at: a.cham_dau_luc })) : null,
       receipt_refs: receipts.status === 'OK' ? receipts.rows.map(r => r.id) : null,
-      first_response: { ...sla, evidence_ref: humanResponseRef }, next_step: sla.status === 'UNKNOWN' ? 'Kiểm chứng receipt và phản hồi con người; hiện chưa đo được SLA' : 'Đối chiếu chăm sóc và kết quả bán hàng',
+      first_response: { ...sla, evidence_ref: humanResponseRef, milestones, basis }, next_step: sla.status === 'UNKNOWN' ? 'Kiểm chứng receipt và phản hồi con người; hiện chưa đo được SLA' : 'Đối chiếu chăm sóc và kết quả bán hàng',
     } };
   }
   async function objectives(ctx) {
@@ -175,12 +206,15 @@ function createFounderControl({ db, isPrimary, enabled, writesEnabled, slaCompan
     let result;
     // No automatic retry on uncertain writes: identical request_id can be replayed safely.
     try { result = await db.rpc('founder_control_command_v1', { p_key_id: ctx.key_id, p_actor_id: ctx.actor_id,
-      p_company_id: ctx.company_id, p_tenant_id: ctx.tenant_id, p_request_id: args.request_id, p_command: name, p_payload: payload }); }
+      p_company_id: ctx.company_id, p_tenant_id: ctx.tenant_id, p_credential_digest: ctx.credential_digest,
+      p_request_id: args.request_id, p_command: name, p_payload: payload }); }
     catch { throw fail('WRITE_OUTCOME_UNKNOWN_REPLAY_SAME_REQUEST', 503); }
     if (result?.error) {
-      const allowed = ['REQUEST_CONFLICT', 'PROPOSAL_VERSION_CONFLICT', 'OBJECT_NOT_ACCESSIBLE', 'PERMISSION_DENIED'];
-      const code = allowed.find(c => result.error.message?.includes(c));
-      throw fail(code || 'WRITE_UNAVAILABLE', code === 'PERMISSION_DENIED' ? 403 : code ? 409 : 503);
+      const allowed = ['REQUEST_CONFLICT', 'PROPOSAL_VERSION_CONFLICT', 'OBJECT_NOT_ACCESSIBLE', 'PERMISSION_DENIED', 'TENANT_INACTIVE', 'INVALID_ARGUMENTS'];
+      const code = allowed.find(c => result.error.message === c);
+      const invalid = ['23514','22P02','22023'].includes(result.error.code);
+      throw fail(code || (invalid ? 'INVALID_ARGUMENTS' : 'WRITE_UNAVAILABLE'),
+        code === 'PERMISSION_DENIED' || code === 'TENANT_INACTIVE' ? 403 : code === 'INVALID_ARGUMENTS' || invalid ? 400 : code ? 409 : 503);
     }
     return { sources: [], data: { ...result.data, execution: 'NOT_EXECUTED' } };
   }
@@ -198,13 +232,13 @@ function createFounderControl({ db, isPrimary, enabled, writesEnabled, slaCompan
     await context(req, args.company_id, !tool.read);
     const sourceRefs = result.sources.map(s => {
       const times = s.rows.map(r => r.cap_nhat_luc || r.lan_dong_bo_cuoi).map(instant).filter(n => n !== null);
-      const latest = times.length ? Math.max(...times) : null;
+      const latest = times.length ? times.reduce((a,b)=>a>b?a:b) : null;
       const observed = instant(fetched);
       return { ref: s.ref, status: s.status, coverage: s.coverage, reason: s.reason || null,
-        source_as_of: null, last_sync_observed_at: latest === null ? null : new Date(latest).toISOString(),
+        source_as_of: null, last_sync_observed_at: latest === null ? null : iso(latest),
         // Operational indicator, never a proof that a cohort is complete.
         freshness: latest === null ? 'UNKNOWN_NO_SOURCE_WATERMARK' : latest > observed ? 'INVALID_FUTURE_SYNC'
-          : observed - latest > 15 * 60000 ? 'STALE_SYNC_OVER_15_MINUTES' : 'RECENT_SYNC_COMPLETENESS_UNKNOWN' };
+          : observed - latest > 15n * 60000000n ? 'STALE_SYNC_OVER_15_MINUTES' : 'RECENT_SYNC_COMPLETENESS_UNKNOWN' };
     });
     return { contract_version: VERSION, run_id: crypto.randomUUID(), scope: { tenant_id: ctx.tenant_id, company_id: ctx.company_id },
       window: w, outcome: tool.read ? 'PARTIAL' : 'OK', coverage: tool.read ? 'PARTIAL' : 'COMPLETE',

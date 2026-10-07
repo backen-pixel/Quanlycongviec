@@ -1,6 +1,15 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { responseSla, windowOf, digest, evaluateAdDryRun } = require('../../src/modules/founderControl/domain');
+const { instant, responseSla, windowOf, digest, evaluateAdDryRun } = require('../../src/modules/founderControl/domain');
+test('PostgreSQL microseconds and timezone retain the same instant',()=>{
+ const forms=['2026-10-07 02:42:44.061234+00','2026-10-07T09:42:44.061234+07:00','2026-10-07T09:42:44.061234+07','2026-10-07 09:42:44.061234+0700'];
+ assert.ok(forms.every(s=>instant(s)===instant(forms[0])));
+ assert.equal(responseSla('2026-10-07 08:00:00+07','2026-10-07 08:04:59.999999+07','2026-10-07T09:00:00+07:00').status,'MET');
+ assert.equal(responseSla('2026-10-07 08:00:00+07','2026-10-07 08:05:00.000000+07','2026-10-07T09:00:00+07:00').status,'BREACHED');
+ assert.equal(windowOf({window_start:'2026-10-07T00:00:00.000001Z',window_end:'2026-10-07T00:00:00.000002Z'}).start,'2026-10-07T00:00:00.000001Z');
+ assert.equal(windowOf({window_start:'1969-12-31T23:59:59.999999Z',window_end:'1970-01-01T00:00:00Z'}).start,'1969-12-31T23:59:59.999999Z');
+ for(const bad of ['2026-02-30 08:00:00+07','2026-10-07 24:00:00+07','2026-10-07 08:60:00+07','2026-10-07 08:00:60+07','2026-10-07 08:00:00','2026-10-07 08:00:00+24','2026-10-07 08:00:00+15','2026-10-07 08:00:00.1234567+07',42,null])assert.equal(instant(bad),null);
+});
 const { validate } = require('../../src/modules/founderControl/contracts');
 const now='2026-10-08T23:00:00+07:00';
 for (const [name,start,end,minutes,status] of [

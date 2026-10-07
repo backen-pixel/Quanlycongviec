@@ -12,6 +12,7 @@ const tools = [
 ];
 const TOOL_SET = new Set(tools.map(t => t.name));
 function getTools(apiKey) {
+  if (apiKey?.credential !== 'SECRET') return [];
   const scopes = apiKey?.mcp_scopes || [];
   return tools.filter(t => scopes.includes(t.read ? 'founder_read' : 'founder_write')).map(t => ({
     name: t.name, description: t.description, inputSchema: { type: 'object', additionalProperties: false, properties: t.properties, required: t.required },

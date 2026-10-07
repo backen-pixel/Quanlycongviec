@@ -9,8 +9,30 @@ const resultSchema = z.object({
   data: z.record(z.string(), z.unknown()),
 });
 export type Result = z.infer<typeof resultSchema>;
-export type ErrorResult = { outcome: 'ERROR'; reason: 'AUTHENTICATION_REQUIRED' | 'BACKEND_UNAVAILABLE' };
-function toolError(reason: ErrorResult['reason']) { return { isError: true as const, structuredContent: { outcome: 'ERROR' as const, reason }, content: [{ type: 'text' as const, text: 'Không lấy được dữ liệu. Kiểm tra quyền và trạng thái backend; không coi lỗi là số 0.' }] }; }
+const SAFE_ERRORS = ['REQUEST_CONFLICT','PROPOSAL_VERSION_CONFLICT','OBJECT_NOT_ACCESSIBLE','PERMISSION_DENIED','TENANT_INACTIVE','INVALID_ARGUMENTS','WRITE_GATE_CLOSED','WRITE_OUTCOME_UNKNOWN_REPLAY_SAME_REQUEST','AUTHENTICATION_REQUIRED','BACKEND_UNAVAILABLE'] as const;
+export type ErrorResult = { outcome: 'ERROR'; reason: typeof SAFE_ERRORS[number]; retryable: boolean; replay_same_request_id: boolean };
+function safeReason(value: unknown): ErrorResult['reason'] { return typeof value === 'string' && (SAFE_ERRORS as readonly string[]).includes(value) ? value as ErrorResult['reason'] : 'BACKEND_UNAVAILABLE'; }
+function toolError(reason: ErrorResult['reason']) {
+  const replay = reason === 'WRITE_OUTCOME_UNKNOWN_REPLAY_SAME_REQUEST';
+  const text = replay ? 'Kết quả ghi chưa rõ: phát lại đúng cùng request_id và payload; không tạo request mới.'
+    : 'Không lấy được dữ liệu. Kiểm tra quyền và trạng thái backend; không coi lỗi là số 0.';
+  return { isError: true as const, structuredContent: { outcome: 'ERROR' as const, reason,
+    retryable: replay || reason === 'BACKEND_UNAVAILABLE', replay_same_request_id: replay }, content: [{ type: 'text' as const, text }] };
+}
+function backendReason(body: unknown): ErrorResult['reason'] {
+  if (!body || typeof body !== 'object') return 'BACKEND_UNAVAILABLE';
+  const item=body as Record<string,unknown>;
+  const nestedError=item.error && typeof item.error==='object' ? item.error as Record<string,unknown> : {};
+  const structured=item.structuredContent as Record<string,unknown> | undefined;
+  const nestedData=nestedError.data as Record<string,unknown> | undefined;
+  const direct=safeReason(item.reasonCode ?? item.reason_code ?? item.reason ?? structured?.reason_code ?? structured?.reason
+    ?? nestedError.reason_code ?? nestedError.reasonCode ?? nestedData?.reason_code);
+  if (direct !== 'BACKEND_UNAVAILABLE') return direct;
+  try { const raw=(item.content as {type?:string;text?:string}[] | undefined)?.find(c=>c.type==='text')?.text;
+    if (raw && raw.length<4096) { const parsed=JSON.parse(raw) as Record<string,unknown>; return safeReason(parsed.reason_code ?? parsed.reasonCode); }
+  } catch { /* untrusted upstream text is never returned */ }
+  return direct;
+}
 export type Fetcher = typeof fetch;
 export function backendUrl() {
   const url = new URL(process.env.FOUNDER_BACKEND_URL || 'http://127.0.0.1:4000');
@@ -33,9 +55,12 @@ export async function forward(name: string, args: object, token: string | undefi
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, arguments: args }), redirect: 'error', signal: AbortSignal.timeout(30000),
     });
-    if (!r.ok) throw new Error(r.status === 403 ? 'PERMISSION_DENIED' : 'BACKEND_UNAVAILABLE');
     const body = await r.json() as { isError?: boolean; structuredContent?: unknown; content?: { type: string; text?: string }[] };
-    if (body.isError) throw new Error('BACKEND_TOOL_FAILED');
+    if (!r.ok || body.isError) {
+      const reason=backendReason(body);
+      return toolError(reason === 'BACKEND_UNAVAILABLE' && r.status === 401 ? 'AUTHENTICATION_REQUIRED'
+        : reason === 'BACKEND_UNAVAILABLE' && r.status === 403 ? 'PERMISSION_DENIED' : reason);
+    }
     const data = body.structuredContent ?? JSON.parse(body.content?.find(c => c.type === 'text')?.text || 'null');
     const parsed = resultSchema.parse(data);
     return { structuredContent: parsed, content: [{ type: 'text' as const,
