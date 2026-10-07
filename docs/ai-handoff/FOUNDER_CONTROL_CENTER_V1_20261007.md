@@ -72,4 +72,4 @@ Tắt FOUNDER_CONTROL_ENABLED/FOUNDER_CONTROL_WRITES_ENABLED, dừng adapter, th
 
 ## Draft PR
 
-Dùng phần vấn đề/kết quả, phạm vi files, kiểm thử và release gates của hồ sơ này làm PR body. GitHub API trong environment trả Forbidden khi đọc repository; draft PR chưa được tạo qua API. Diff/branch là vật phẩm review thay thế; không merge hoặc deploy.
+Dùng phần vấn đề/kết quả, phạm vi files, kiểm thử và release gates của hồ sơ này làm PR body. Đã push branch với implementation commit `d9a26c36`. Lệnh tạo draft PR trả `Post https://api.github.com/graphql: Forbidden`; draft PR chưa được tạo. [Nội dung PR](FOUNDER_CONTROL_CENTER_V1_PR.md) đã lưu; [mở trang tạo PR](https://github.com/backen-pixel/Quanlycongviec/pull/new/codex/founder-control-center-v1). Diff/branch là vật phẩm review thay thế; không merge hoặc deploy.
