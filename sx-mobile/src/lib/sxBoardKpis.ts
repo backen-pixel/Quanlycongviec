@@ -102,15 +102,6 @@ export function sxColumnKpiKey(stage?: KanbanStage | null): SxStageKpiKey | null
   return 'producing';
 }
 
-/** Đã vận chuyển theo CỘT (tick tay / tên «đã giao») — bổ sung cho `projectIsShipped` theo dữ liệu dự án. */
-function columnSaysShipped(
-  p: ProductionProject,
-  stages: KanbanStage[],
-  index?: KpiStageIndex,
-): boolean {
-  return sxColumnKpiKey(stageOf(p, stages, index)) === 'shipped';
-}
-
 export function projectIsAwaitingDelivery(
   p: ProductionProject,
   stages: KanbanStage[],
@@ -268,9 +259,15 @@ export function computeSxBoardKpis(
   let overdue = 0;
   for (const p of projects) {
     if (projectIsIntake(p)) intake += 1;
-    if (projectIsProducing(p, stages, index)) producing += 1;
-    if (projectIsAwaitingDelivery(p, stages, index)) awaitingDelivery += 1;
-    if (projectIsShipped(p) || columnSaysShipped(p, stages, index)) shipped += 1;
+    // Đang SX / Chờ VC / Đã VC: CHỈ theo cột kanban — cùng quy tắc với web `computeSxRevenueKpis` và summary BE
+    // (`classifyRowStageKpi`). Trước đây app còn tính «đã VC» cho mọi dự án có đơn vị VC / cột VC / status lắp đặt
+    // (`projectIsShipped`) nên HCB hiện Đã VC 216 / Đang SX 28 trong khi web và máy chủ ra 121 / 41.
+    // Lưu ý: API danh sách đã «làm giàu» `sx_kanban_column_id` cho dự án DB để NULL, còn summary BE đếm cột thô
+    // (bỏ qua NULL) — nên số đếm ở máy có thể hơn summary vài dự án mới tạo chưa vào cột (HCB: 42 so với 41).
+    const kpiKey = sxColumnKpiKey(stageOf(p, stages, index));
+    if (kpiKey === 'producing') producing += 1;
+    else if (kpiKey === 'awaiting_delivery') awaitingDelivery += 1;
+    else if (kpiKey === 'shipped') shipped += 1;
     // Hoàn tất: status `completed` (như web) HOẶC đứng ở cột đã thu tiền.
     if (projectIsCompleted(p, stages, index)) completed += 1;
     if (projectIsDeadlineOverdue(p, stages, index, nowMs)) overdue += 1;
