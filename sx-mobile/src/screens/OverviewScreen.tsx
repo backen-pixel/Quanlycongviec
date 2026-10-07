@@ -379,6 +379,7 @@ export default function OverviewScreen() {
           : Promise.all([
             fetchProductionWorkTasks({
               companyId: companyId || null,
+              excludeDone: true,
               limit: WORK_TASKS_PAGE_SIZE,
               offset: 0,
               signal: ac.signal,

@@ -875,12 +875,17 @@ export default function WorkScreen() {
       const companyId = filterCompany || (canPickCompany ? null : (user?.company_id || null));
       const offset = append ? tasksLenRef.current : 0;
       const q = searchRef.current.trim() || undefined;
+      // Việc dự án của đội chạy SONG SONG với «Giao việc» (trước đây đợi «Giao việc» xong mới bắt đầu → cộng dồn thời gian chờ).
+      if (!append && teamView && scope === 'team') {
+        void loadTeamProjects(false, { force: opts?.force, companyId, signal: ac.signal, seq });
+      }
       // Scope load — không gửi status (giữ KPI đúng trên mọi chip).
       const page = await fetchProductionWorkTasksPage({
         assigneeId,
         companyId,
         workshopTypeId: activeWorkTypeId || null,
         q,
+        excludeDone: teamView,
         limit: WORK_TASKS_PAGE_SIZE,
         offset,
         signal: ac.signal,
@@ -895,15 +900,10 @@ export default function WorkScreen() {
       setHasMoreTasks(page.hasMore);
       hasMoreTasksRef.current = page.hasMore;
       lastSilentAtRef.current = Date.now();
-      if (!append) {
-        if (teamView && scope === 'team') {
-          // Việc dự án: TRANG ĐẦU (nhóm dự án, quá hạn trước) + số đếm toàn bộ từ máy chủ; không chặn danh sách chính.
-          void loadTeamProjects(false, { force: opts?.force, companyId, signal: ac.signal, seq });
-        } else {
-          setTeamProjectTasks([]);
-          setTeamCounts(null);
-          teamHasMoreRef.current = false;
-        }
+      if (!append && !(teamView && scope === 'team')) {
+        setTeamProjectTasks([]);
+        setTeamCounts(null);
+        teamHasMoreRef.current = false;
       }
     } catch (e) {
       if (seq !== loadSeqRef.current) return;
@@ -1010,6 +1010,7 @@ export default function WorkScreen() {
         workshopTypeId: activeWorkTypeId || null,
         status: chip === 'overdue' ? null : chip,
         overdue: chip === 'overdue',
+        excludeDone: teamView,
         q: searchRef.current.trim() || undefined,
         limit: WORK_TASKS_PAGE_SIZE,
         offset,
@@ -1436,6 +1437,8 @@ export default function WorkScreen() {
       : [];
     const source = projectRows.length ? [...base, ...projectRows] : base;
     return source.filter((t) => {
+      // Quản lý / admin: việc đã hoàn thành không cần hiện (nhóm chỉ toàn việc xong cũng biến mất).
+      if (teamView && isTaskDone(t.status)) return false;
       // Status đã lọc server khi chip ≠ all — chỉ soft-check overdue nếu BE cũ chưa có param.
       if (statusFilter === 'all') {
         /* no status chip */
@@ -2055,7 +2058,7 @@ export default function WorkScreen() {
           keyboardShouldPersistTaps="handled"
           contentContainerStyle={styles.filterScroll}
         >
-          {STATUS_CHIPS.map((chip) => {
+          {STATUS_CHIPS.filter((chip) => !(teamView && chip.key === 'completed')).map((chip) => {
             const active = statusFilter === chip.key;
             const iconColor = active
               ? (chip.key === 'overdue' ? colors.danger : colors.primary)
@@ -2097,11 +2100,13 @@ export default function WorkScreen() {
           <Text style={[styles.statsLabel, { color: colors.primary }]}>Đang</Text>
           <Text style={[styles.statsNum, { color: colors.primary }]}>{stats.inProgress}</Text>
         </View>
-        <View style={styles.statsItem}>
-          <View style={[styles.statsDot, { backgroundColor: colors.success }]} />
-          <Text style={[styles.statsLabel, { color: colors.success }]}>Xong</Text>
-          <Text style={[styles.statsNum, { color: colors.success }]}>{stats.done}</Text>
-        </View>
+        {teamView ? null : (
+          <View style={styles.statsItem}>
+            <View style={[styles.statsDot, { backgroundColor: colors.success }]} />
+            <Text style={[styles.statsLabel, { color: colors.success }]}>Xong</Text>
+            <Text style={[styles.statsNum, { color: colors.success }]}>{stats.done}</Text>
+          </View>
+        )}
         <View style={styles.statsItem}>
           <View style={[styles.statsDot, { backgroundColor: colors.danger }]} />
           <Text style={[styles.statsLabel, { color: colors.danger }]}>QH</Text>
@@ -2132,9 +2137,10 @@ export default function WorkScreen() {
         keyExtractor={(item) => item.key}
         renderItem={renderRow}
         contentContainerStyle={styles.listContent}
-        initialNumToRender={16}
-        windowSize={7}
-        maxToRenderPerBatch={12}
+        initialNumToRender={10}
+        windowSize={5}
+        maxToRenderPerBatch={8}
+        updateCellsBatchingPeriod={40}
         removeClippedSubviews={false}
         keyboardShouldPersistTaps="handled"
         onEndReached={() => {
