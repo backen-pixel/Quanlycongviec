@@ -460,9 +460,14 @@ r.get('/team-project-tasks', async (req, res) => {
     const { page, pageSize } = parsePagination(req, 20, 100);
     const effectiveCompany = company_id || (!isSystemAdmin(req.user) ? req.user?.company_id : null);
 
+    // created_days: lấy thêm việc MỚI TẠO trong N ngày qua dù chưa có hạn / hạn xa (0 = tắt). Mặc định 7.
+    const createdRaw = parseInt(req.query.created_days, 10);
+    const createdDays = Math.min(60, Math.max(0, Number.isFinite(createdRaw) ? createdRaw : 7));
+
     const nowMs = Date.now();
     const until = new Date(nowMs + dueDays * 86_400_000).toISOString();
-    const COLS = 'unified_id, source, project_id, lead_id, title, status, deadline, assignee_id, task_kind, project_code, project_name, lead_title';
+    const createdSince = new Date(nowMs - createdDays * 86_400_000).toISOString();
+    const COLS = 'unified_id, source, project_id, lead_id, title, status, deadline, created_at, assignee_id, task_kind, project_code, project_name, lead_title';
 
     // Quét nhẹ (chỉ vài cột) theo lô 1000 — PostgREST cắt ở 1000 dòng/lần.
     const scanned = [];
@@ -470,8 +475,10 @@ r.get('/team-project-tasks', async (req, res) => {
       let qy = supabase.from('unified_tasks_v').select(COLS)
         .in('task_kind', TEAM_PROJECT_TASK_KINDS)
         .not('project_id', 'is', null)
-        .not('deadline', 'is', null)
-        .lte('deadline', until)
+        // Có hạn đến hết cửa sổ N ngày tới, HOẶC mới tạo gần đây (kể cả không hạn).
+        .or(createdDays > 0
+          ? `and(deadline.not.is.null,deadline.lte.${until}),created_at.gte.${createdSince}`
+          : `and(deadline.not.is.null,deadline.lte.${until})`)
         .order('deadline', { ascending: true })
         .order('unified_id', { ascending: true })
         .range(from, from + 999);
@@ -515,21 +522,31 @@ r.get('/team-project-tasks', async (req, res) => {
 
     let overdue = 0;
     let inProgress = 0;
+    let noDeadline = 0;
     const groups = new Map();
     for (const t of rows) {
-      const isOver = new Date(t.deadline).getTime() < nowMs;
+      // Việc không có hạn KHÔNG được coi là quá hạn (new Date(null) = 1970).
+      const hasDeadline = !!t.deadline;
+      const isOver = hasDeadline && new Date(t.deadline).getTime() < nowMs;
       if (isOver) overdue += 1;
+      if (!hasDeadline) noDeadline += 1;
       if (String(t.status || '').toLowerCase() === 'in_progress') inProgress += 1;
       let g = groups.get(t.project_id);
-      if (!g) { g = { firstDeadline: t.deadline, overdue: false, rows: [] }; groups.set(t.project_id, g); }
+      if (!g) { g = { firstDeadline: null, newestCreated: '', overdue: false, rows: [] }; groups.set(t.project_id, g); }
       if (isOver) g.overdue = true;
-      if (String(t.deadline) < String(g.firstDeadline)) g.firstDeadline = t.deadline;
+      if (hasDeadline && (g.firstDeadline == null || String(t.deadline) < String(g.firstDeadline))) g.firstDeadline = t.deadline;
+      if (String(t.created_at || '') > g.newestCreated) g.newestCreated = String(t.created_at || '');
       g.rows.push(t);
     }
-    // Nhóm có việc quá hạn lên trước, rồi theo hạn gần nhất cũ → mới.
-    const ordered = [...groups.values()].sort((a, b) =>
-      (a.overdue === b.overdue ? 0 : a.overdue ? -1 : 1)
-      || String(a.firstDeadline).localeCompare(String(b.firstDeadline)));
+    // Thứ tự nhóm: (0) có việc quá hạn → (1) có việc sắp đến hạn → (2) chỉ có việc mới tạo chưa có hạn / hạn xa.
+    // Nhóm 0–1 theo hạn gần nhất cũ → mới; nhóm 2 theo việc tạo MỚI NHẤT lên trước.
+    const tierOf = (g) => (g.overdue ? 0 : g.firstDeadline != null && String(g.firstDeadline) <= until ? 1 : 2);
+    const ordered = [...groups.values()].sort((a, b) => {
+      const ta = tierOf(a); const tb = tierOf(b);
+      if (ta !== tb) return ta - tb;
+      if (ta === 2) return String(b.newestCreated).localeCompare(String(a.newestCreated));
+      return String(a.firstDeadline).localeCompare(String(b.firstDeadline));
+    });
 
     const start = (page - 1) * pageSize;
     const pageGroups = ordered.slice(start, start + pageSize);
@@ -543,6 +560,7 @@ r.get('/team-project-tasks', async (req, res) => {
         soon: rows.length - overdue,
         total: rows.length,
         in_progress: inProgress,
+        no_deadline: noDeadline,
         groups: ordered.length,
       },
       page,

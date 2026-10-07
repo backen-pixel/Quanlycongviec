@@ -20,6 +20,8 @@ const K_TEAM = 'sx:workTasks:team-project:';
 export const TEAM_GROUPS_PER_PAGE = 20;
 /** Lấy việc đến hạn trong N ngày tới (ngoài việc quá hạn). */
 const DUE_SOON_DAYS = 7;
+/** Việc tạo trong N ngày qua vẫn hiện dù chưa có hạn (để kéo làm mới thấy việc mới). */
+const NEW_TASK_DAYS = 7;
 
 export type TeamProjectCounts = {
   overdue: number;
@@ -146,6 +148,8 @@ export async function fetchTeamProjectTasksPage(o: Opts): Promise<TeamProjectPag
             page,
             page_size: pageSize,
             due_days: DUE_SOON_DAYS,
+            // Lấy thêm việc MỚI TẠO trong N ngày qua dù chưa có hạn (máy chủ mặc định cũng là 7).
+            created_days: NEW_TASK_DAYS,
             ...(o.companyId ? { company_id: o.companyId } : {}),
             ...(o.assigneeId ? { assignee_id: o.assigneeId } : {}),
             ...(o.workshopTypeId ? { workshop_type_id: o.workshopTypeId } : {}),
