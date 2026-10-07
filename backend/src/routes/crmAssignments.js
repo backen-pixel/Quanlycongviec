@@ -1097,6 +1097,11 @@ r.get('/', responseCache({ ttl: 20, scope: 'user', tags: ['crm:assignments'] }),
           .not('deadline', 'is', null)
           .lt('deadline', startIso);
       }
+      // exclude_done=1: không trả việc ĐÃ HOÀN THÀNH (quản lý chỉ cần việc còn phải làm) — giảm dữ liệu tải về.
+      const excludeDone = String(req.query.exclude_done || '').trim().toLowerCase();
+      if (excludeDone === '1' || excludeDone === 'true') {
+        q = q.neq('status', 'completed');
+      }
       if (shouldApplyAssignModuleFilter(req.query, moduleFilter, { skipModule })) {
         q = q.eq('assignment_module', moduleFilter);
       }
