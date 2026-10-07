@@ -1,3 +1,9 @@
+## 2026-10-06 — Chặn đồng bộ Backup làm mất liên kết cha (nhánh cục bộ)
+
+Trên nhánh `codex/replication-fk-failclosed-20261006` từ main `c2c594c9`, bản sửa hẹp ngừng việc tự đặt `facebook_contacts.lead_id`, `facebook_contacts.customer_id` và `template_item_id` thành `null` khi chưa xác nhận được bản ghi cha ở Backup. Response Lead 2xx rỗng và quá giới hạn retry không còn được coi là xác nhận parent. Job lỗi được báo rõ và trả về hàng chờ theo cơ chế hiện tại; trường hợp cha hợp lệ vẫn giữ liên kết, kể cả Lead cùng code có UUID khác ở Backup. 13 ca fault-injection cô lập, `node --check` và `git diff --check` đạt; CI Node 18/22 đã khai báo nhưng chưa chạy. Reviewer độc lập đã yêu cầu sửa bản đầu, bản bổ sung này đang chờ review lại. Chưa merge, deploy hoặc sửa DB thật. Hàng chờ hiện vẫn có thể mất khi restart và vẫn bỏ job sau 12 lần; bản sửa này **không** làm Backup đủ điều kiện failover hay mở Facebook Lead Ads. Cần xử lý hàng chờ bền và đối soát theo khóa trước phát hành.
+
+---
+
 ## 2026-10-06 16:39 — Sửa cổng xác minh callback Lead App trước chuyển đổi (mã cục bộ)
 
 GET `/api/facebook/webhook/lead-ads` nay trả challenge Meta khi App Secret và verify token **riêng, hợp lệ** đã cấu hình, dù `VPT_FB_LEAD_APP_MODE=0`. POST vẫn trả 404 khi cờ này tắt; Messenger và các cờ intake/worker không đổi. Việc xác minh GET **không chứng minh** App đã nhận Lead thật. Bản sửa trên nhánh `codex/facebook-lead-verify-precutover-20261006` chưa phát hành; 235/235 ca Node Facebook liên quan đạt. Cần review/CI trước khi phát hành, giữ chế độ App riêng OFF cho tới khi cổng Meta và đối soát Lead thật đạt. [Hồ sơ kích hoạt](FACEBOOK_LEAD_ADS_ACTIVATION_20261006.md).
