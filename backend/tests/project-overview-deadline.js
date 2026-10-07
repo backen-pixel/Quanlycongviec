@@ -173,6 +173,15 @@ const crmIndex = indexSxCrmCompletion([
 assert.equal(workshopChildDone({ project_id: 'proj-1', title: 'Sơn', status: 'todo' }, crmIndex), true);
 assert.equal(workshopChildDone({ project_id: 'proj-1', title: 'Vẽ và lên kế hoạch sản xuất', status: 'todo' }, crmIndex), false);
 assert.equal(workshopChildDone({ project_id: 'proj-1', title: 'Ngoài xưởng', status: 'todo' }, crmIndex), false);
+
+const mixedIndex = indexSxCrmCompletion([
+  { lead_id: 'lead-1', title: 'Sơn', status: 'completed', stage_slug: 'sx_pl_done', production_pipeline_stage_id: 'stage-old' },
+  { lead_id: 'lead-1', title: 'Sơn', status: 'pending', stage_slug: 'sx_kiem_tra_cheo', production_pipeline_stage_id: 'stage-open' },
+  { lead_id: 'lead-1', title: 'Đặt phụ kiện', status: 'completed', stage_slug: 'sx_gia_cong', production_pipeline_stage_id: 'stage-cabinet' },
+  { lead_id: 'lead-1', title: 'Đặt phụ kiện', status: 'cancelled', stage_slug: 'sx_gia_cong', production_pipeline_stage_id: 'stage-cabinet' },
+], leadProject);
+assert.equal(workshopChildDone({ project_id: 'proj-1', title: 'Sơn', status: 'todo' }, mixedIndex), false);
+assert.equal(workshopChildDone({ project_id: 'proj-1', title: 'Đặt phụ kiện', status: 'todo' }, mixedIndex), true);
 const stages = new Map([
   ['stage-plan', { id: 'stage-plan', group_key: 'tiep_nhan', deadline_group: null }],
   ['stage-cabinet', { id: 'stage-cabinet', group_key: 'gia_cong', deadline_group: 'cabinet' }],

@@ -1075,6 +1075,12 @@ r.get('/project-overview', async (req, res) => {
           openChildren,
         });
         stampRows.push(...collectOpenChildDeadlineStamps(deadline, openChildren));
+        // CRM không có hạn module: hiện cùng mốc lịch lắp với thẻ Sản xuất, chỉ để xếp cột.
+        if (!deadline && group.lane === 'sales' && project) {
+          const col = sxStageById.get(String(project.sx_kanban_column_id || ''));
+          deadline = (col && computeSxInstallPlanDeadline(project, col, sxStageList)?.iso) || null;
+          if (!deadline) deadline = project.install_date || project.delivery_date || null;
+        }
       }
       return {
         unified_id: `group:${group.key}`,

@@ -2,7 +2,8 @@ import { useState } from 'react';
 import CRMAssignmentsPage from './CRMAssignmentsPage';
 
 /**
- * Quản lý phát sinh (Sản xuất) — hai luồng việc riêng: không phí và có phí.
+ * Quản lý phát sinh — hai luồng việc riêng: không phí và có phí.
+ * Sản xuất, CRM, Lắp đặt và module tùy chỉnh dùng cùng một trang, chỉ khác module lọc.
  *
  * Dùng lại nguyên trang Giao việc, chỉ hẹp bộ lọc lại. Không viết Kanban thứ hai:
  * thẻ, kéo thả, bình luận, tệp đính kèm đều đã chạy ổn định ở đó rồi.
@@ -17,7 +18,12 @@ const TAB = [
   { key: '1', nhan: 'Có phí' },
 ];
 
-export default function ProductionPhatSinhPage() {
+export default function ProductionPhatSinhPage({
+  companiesModule = 'production',
+  assignmentModule = 'production',
+  storagePrefix = 'sx_phat_sinh',
+  dashboardLink = '/sx/dashboard',
+} = {}) {
   const [coPhi, setCoPhi] = useState('0');
 
   return (
@@ -47,10 +53,10 @@ export default function ProductionPhatSinhPage() {
           key={coPhi}
           apiBase="/crm/assignments"
           pageTitle={`Quản lý phát sinh — ${coPhi === '1' ? 'Có phí' : 'Không phí'}`}
-          companiesModule="production"
-          assignmentModule="production"
-          storagePrefix={`sx_phat_sinh_${coPhi}`}
-          dashboardLink="/sx/dashboard"
+          companiesModule={companiesModule}
+          assignmentModule={assignmentModule}
+          storagePrefix={`${storagePrefix}_${coPhi}`}
+          dashboardLink={dashboardLink}
           phatSinhOnly
           coPhi={coPhi}
         />

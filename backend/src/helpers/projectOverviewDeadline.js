@@ -58,7 +58,17 @@ function sxCrmSyncKey(projectId, title) {
   return `${project}\t${name}`;
 }
 
-/** Nhiệm vụ SX cùng tên trên dự án: đã xong nếu có bản completed, nhóm hạn lấy từ bản còn mở. */
+function crmSxRowState(status) {
+  const s = String(status || '').toLowerCase();
+  if (CRM_WORK_DONE.has(s)) return 'done';
+  if (s === 'cancelled' || s === 'canceled') return 'skip';
+  return 'open';
+}
+
+/**
+ * Cùng tên trên dự án: chỉ coi xong khi mọi bản CRM SX của tên đó đã xong.
+ * Còn một bản đang mở thì việc xưởng cùng tên chưa xong. Nhóm hạn lấy từ bản còn mở.
+ */
 function indexSxCrmCompletion(rows, leadProjectById) {
   const map = new Map();
   const projects = leadProjectById instanceof Map ? leadProjectById : new Map();
@@ -68,15 +78,25 @@ function indexSxCrmCompletion(rows, leadProjectById) {
     const projectId = projects.get(String(row.lead_id || ''));
     const key = sxCrmSyncKey(projectId, row.title);
     if (!key) continue;
-    const done = CRM_WORK_DONE.has(String(row.status || '').toLowerCase());
+    const state = crmSxRowState(row.status);
     const stageId = row.production_pipeline_stage_id ? String(row.production_pipeline_stage_id) : '';
     const prev = map.get(key);
     if (!prev) {
-      map.set(key, { done, stageId, openStageId: done ? '' : stageId });
+      map.set(key, {
+        done: state === 'done',
+        hasOpen: state === 'open',
+        stageId,
+        openStageId: state === 'open' ? stageId : '',
+      });
       continue;
     }
-    prev.done = prev.done || done;
-    if (!done && stageId) prev.openStageId = stageId;
+    if (state === 'open') {
+      prev.hasOpen = true;
+      prev.done = false;
+      if (stageId) prev.openStageId = stageId;
+    } else if (state === 'done' && !prev.hasOpen) {
+      prev.done = true;
+    }
     if (!prev.stageId && stageId) prev.stageId = stageId;
   }
   return map;
