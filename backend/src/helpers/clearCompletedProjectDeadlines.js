@@ -18,6 +18,44 @@ const { isHcbCanhKinhProject, isSxHoanThanhColumn } = require('./projectForecast
 const PAGE = 800;
 const IN_CHUNK = 120;
 
+/** Cột «Hủy» — việc không làm nữa, sự kiện mới ghi là hủy. */
+function laCotHuy(cot) {
+  const n = String(cot?.name || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'd')
+    .trim()
+    .toLowerCase();
+  return n === 'huy' || n.startsWith('huy ') || n.startsWith('da huy');
+}
+
+/**
+ * Sự kiện SX còn mở khi dự án rời sang cột kết thúc.
+ * Việc đã làm xong thì phải ghi «hoàn thành» kèm kết quả — ghi «hủy» là sai sự thật,
+ * người xem tưởng dự án bị bỏ. Chỉ cột «Hủy» mới thật sự là hủy.
+ */
+function patchKetThucSuKienSx(cot, nowIso) {
+  const ten = String(cot?.name || '').trim();
+  if (laCotHuy(cot)) {
+    return {
+      status: 'cancelled',
+      cancel_reason: ten
+        ? `Tự hủy khi kéo dự án SX sang cột «${ten}»`
+        : 'Tự hủy khi dự án SX bị hủy',
+      updated_at: nowIso,
+    };
+  }
+  return {
+    status: 'completed',
+    result: ten
+      ? `Tự hoàn thành khi kéo dự án SX sang cột «${ten}»`
+      : 'Tự hoàn thành khi dự án SX đã xong',
+    cancel_reason: null,
+    updated_at: nowIso,
+  };
+}
+
 function uniqIds(list) {
   return [...new Set((list || []).map((x) => String(x || '').trim()).filter(Boolean))];
 }
@@ -46,10 +84,11 @@ async function fetchAllRows(table, select, apply) {
  * chỉ xóa deadline SX + hoàn thành NV SX còn mở + hủy lịch hẹn SX.
  * Không đụng deadline CRM, VC/LĐ và các ngày giao/lắp lịch sử.
  */
-async function clearSxSchedulesOnCompletedForProjects(projectIds, { completeWork = true } = {}) {
+async function clearSxSchedulesOnCompletedForProjects(projectIds, { completeWork = true, cot = null } = {}) {
   const ids = uniqIds(projectIds);
   if (!ids.length) return { projects: 0 };
   const nowIso = new Date().toISOString();
+  const evtPatch = patchKetThucSuKienSx(cot, nowIso);
 
   const projectPatch = projectDeadlinePatchOnModuleDone('production', nowIso);
 
@@ -99,11 +138,7 @@ async function clearSxSchedulesOnCompletedForProjects(projectIds, { completeWork
     for (const part of chunk(leadIds)) {
       const { error: evtErr } = await supabase
         .from('crm_events')
-        .update({
-          status: 'cancelled',
-          cancel_reason: 'Tự hủy khi kéo dự án SX sang cột hoàn thành',
-          updated_at: nowIso,
-        })
+        .update(evtPatch)
         .in('lead_id', part)
         .eq('module', 'production')
         .in('status', ['planned', 'in_progress']);
@@ -116,11 +151,7 @@ async function clearSxSchedulesOnCompletedForProjects(projectIds, { completeWork
   for (const part of chunk(ids)) {
     const { error: projEvtErr } = await supabase
       .from('crm_events')
-      .update({
-        status: 'cancelled',
-        cancel_reason: 'Tự hủy khi kéo dự án SX sang cột hoàn thành',
-        updated_at: nowIso,
-      })
+      .update(evtPatch)
       .in('project_id', part)
       .eq('module', 'production')
       .in('status', ['planned', 'in_progress']);
