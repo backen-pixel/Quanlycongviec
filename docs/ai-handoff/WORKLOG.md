@@ -1,6 +1,13 @@
 ## 2026-10-07 — PR51 sửa 5 phát hiện review
 
 Đã tái hiện FAIL từng lỗi trên mã cũ; sửa auth Founder, tenant gate, microsecond SLA, source provenance, lỗi bridge/DB và SQL711 + rollback. Backend 41/41, PGlite 10/10, typecheck PASS; Claude kiểm độc lập: build Skybridge OK, app 18/18, backend 41/41; trên mã cũ 7 test backend + 2 test app FAIL. Đã commit lên nhánh PR; không merge, flags, DB/mạng thật. Xem [hồ sơ](FOUNDER_CONTROL_CENTER_V1_20261007.md#sửa-review-0710).
+## 2026-10-07 — SX mobile (quản lý): việc dự án cả đội, lọc hạn ở máy chủ, khử trùng trước khi lọc
+
+- Backend `backend/src/routes/workTasks.js`: route mới `GET /team-project-tasks` (chỉ quản lý; tham số `company_id, assignee_id, q, due_days, created_days, workshop_type_id, no_deadline, due_from, due_to, page, page_size`). `computeTeamTasks` quét `unified_tasks_v` song song, cache 30 s (`teamTasksCache`), khử trùng theo `project_id|title` (ưu tiên bản không phải `crm_task`), gom nhóm theo dự án (quá hạn → sắp đến hạn → mới/không hạn). Commit cuối `698c5a68`: khi có `due_from/due_to`, lấy thêm bản không-`crm_task` của các dự án có việc CRM trong khoảng, khử trùng rồi mới lọc lại khoảng hạn. Cũng `crmAssignments.js`: `exclude_done=1`; `crmTaskLeadAccess.js`: `assigneeReadGrant` cho GET comments/members.
+- App `sx-mobile`: `lib/teamProjectTasksApi.ts` (mới), `lib/workTasksApi.ts`, `screens/WorkScreen.tsx` (chip Người/Phân loại/Hạn, mục "Không hạn", hiện dần từng nhóm), `screens/OverviewScreen.tsx`, `screens/KanbanScreen.tsx` (effect `dueJumpedRef` tự nhảy tới cột đầu tiên có dự án khi áp Hạn xử lý).
+- PR đã merge vào main: #49, #50, #52 (squash; lần sau gộp `origin/main` vào nhánh và giữ phía nhánh nếu báo xung đột).
+- Kiểm tra: SQL chỉ-đọc (project `qlycv`) khớp app sau deploy — HCB 07/10/2026: Tủ bếp Hôm nay 43/3, Ngày mai 51/3; Cánh kính Hôm nay 7/1, Ngày mai 7/1. Trước sửa lệch 56/4 và 17/2 do dự án TB-2026-986/989. Không ghi dữ liệu thật.
+- Chưa làm/để ngỏ: độ mượt cuộn trên máy thật; `/project-overview` ~13,7 s với HCB; phân quyền sửa/xóa không gian chung; badge thông báo race; giải thích hiển thị web của TB-2026-901. File chưa commit và không thuộc việc này: `backend/package.json`, `route-manifest*.json`, `route-parity-report.json`, `debug-fb4228.log`, `docs/ops/README.md`, `.claude/`, `backend/tests/sx-kanban-counts-readonly.js`.
 
 ---
 

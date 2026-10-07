@@ -7,6 +7,17 @@ Sửa L1–L5 trong checkout, đã commit lên nhánh PR (chưa merge/deploy): F
 ## 2026-10-07 — Founder Control Center Marketing → CRM V1
 
 Branch `codex/founder-control-center-v1`: năm tools, ba view Skybridge, tenant-safe domain/service và candidate SQL711 lưu objective/proposal/decision/receipt + audit atomic. Flags mặc định tắt; không migration, Meta action, thông báo hay deploy thật. Backend 219/219, app 16/16 và build/typecheck PASS synthetic. OAuth ChatGPT/HTTPS MCP, Supabase staging concurrency, nguồn cohort/watermark và review độc lập còn chờ. [Hồ sơ và rollback](FOUNDER_CONTROL_CENTER_V1_20261007.md), [chạy thử/cấu hình](../../apps/founder-control-center/README.md).
+## 2026-10-07 — SX mobile tab Công việc/Dự án của quản lý: lọc theo hạn, khử trùng, tự nhảy cột
+
+App sx-mobile (quản lý/admin) tab Công việc lấy việc dự án của cả đội qua `GET /api/work-tasks/team-project-tasks` (phân trang theo nhóm dự án, quá hạn lên trước, có mục riêng "Không hạn" cho việc cũ hơn 7 ngày). Chip Hạn xử lý (Hôm nay / Ngày mai / Trong tuần / Tuần sau), Phân loại và Người đều lọc ở máy chủ (`due_from`, `due_to`, `workshop_type_id`, `assignee_id`).
+
+Lỗi đã sửa: lọc khoảng hạn trước khi khử trùng khiến bản CRM (hạn hôm nay) sống sót dù bản SX cùng tên đã quá hạn, nên dự án quá hạn lọt vào Hôm nay/Ngày mai (ví dụ TB-2026-986, TB-2026-989 ở HCB). Nay khử trùng trước (lấy thêm bản SX song sinh của các dự án có việc CRM trong khoảng) rồi mới lọc lại khoảng hạn.
+
+Tab Dự án (Kanban): khi áp Hạn xử lý mà cột đang xem trống thì tự nhảy tới cột đầu tiên có dự án, một lần cho mỗi giá trị bộ lọc.
+
+Đối chiếu SQL chỉ-đọc với app sau deploy (HCB = Công ty Hucabi, 07/10/2026): Tủ bếp Hôm nay 43 việc/3 nhóm, Ngày mai 51/3; Cánh kính Hôm nay 7/1, Ngày mai 7/1 — khớp. Các số đổi theo ngày và theo việc được hoàn thành.
+
+Chưa kiểm: độ mượt cuộn trên máy thật (LDPlayer render phần mềm, số đo giật không đáng tin); `/project-overview` (route do tác giả khác thêm) mất ~13,7 s với HCB; sửa/xóa ở không gian chung chưa phân quyền theo vai trò; badge thông báo còn race. Token `gh` của phiên AI không có quyền tạo/merge PR, người dùng tạo PR và merge thủ công.
 
 ---
 

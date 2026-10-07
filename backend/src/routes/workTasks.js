@@ -474,6 +474,18 @@ r.get('/team-project-tasks', async (req, res) => {
     // no_deadline=1: mục riêng «Không hạn» — việc chưa xong KHÔNG có hạn và tạo từ lâu (trước `created_days` ngày);
     // phần mới tạo đã nằm ở danh sách chính. Lấy tách riêng để danh sách chính không phình theo hàng nghìn việc cũ.
     const noDeadlineMode = ['1', 'true'].includes(String(req.query.no_deadline || '').toLowerCase());
+    // due_from / due_to (YYYY-MM-DD, ngày lịch VN, gồm cả hai đầu): lọc việc theo KHOẢNG HẠN ở máy chủ (chip Hôm nay / Ngày
+    // mai / Trong tuần…). Lọc ở máy chỉ thấy các nhóm đã tải, mà nhóm quá hạn xếp trước nên việc đến hạn hôm nay nằm ở trang sau.
+    const dateRe = /^\d{4}-\d{2}-\d{2}$/;
+    const dueFromRaw = String(req.query.due_from || '').trim();
+    const dueToRaw = String(req.query.due_to || '').trim();
+    const dueRange = dateRe.test(dueFromRaw) && dateRe.test(dueToRaw) && !noDeadlineMode
+      ? {
+        from: new Date(`${dueFromRaw}T00:00:00+07:00`).toISOString(),
+        // Hết ngày due_to = đầu ngày kế tiếp (VN).
+        to: new Date(new Date(`${dueToRaw}T00:00:00+07:00`).getTime() + 86_400_000).toISOString(),
+      }
+      : null;
 
     // Toàn bộ phần quét + gom nhóm gói trong `computeTeamTasks` để CACHE ngắn hạn: các trang 2, 3… (cuộn tiếp) và các lần
     // mở lại cùng bộ lọc không phải quét lại hàng nghìn dòng (HCB «Không hạn» ~5.500 việc: ~3,3s/trang khi quét tuần tự).
@@ -482,6 +494,9 @@ r.get('/team-project-tasks', async (req, res) => {
         qy = qy.in('task_kind', TEAM_PROJECT_TASK_KINDS).not('project_id', 'is', null);
         if (noDeadlineMode) {
           qy = qy.is('deadline', null).lt('created_at', createdSince).order('created_at', { ascending: false });
+        } else if (dueRange) {
+          // Chip hạn xử lý: chỉ việc có hạn nằm trong khoảng đã chọn (không kèm việc mới tạo).
+          qy = qy.gte('deadline', dueRange.from).lt('deadline', dueRange.to).order('deadline', { ascending: true });
         } else {
           // Có hạn đến hết cửa sổ N ngày tới, HOẶC mới tạo gần đây (kể cả không hạn).
           qy = qy
@@ -515,6 +530,34 @@ r.get('/team-project-tasks', async (req, res) => {
           return r.data || [];
         }));
         parts.forEach((p) => scanned.push(...p));
+      }
+
+      // Chip hạn xử lý: khử trùng phải thấy cả bản SX «song sinh» nằm NGOÀI khoảng. Nếu chỉ quét trong khoảng thì bản CRM
+      // (hạn hôm nay) sống sót dù bản SX của chính việc đó đã quá hạn → việc quá hạn lọt vào «Hôm nay» / «Ngày mai».
+      // Nên lấy thêm bản không phải crm_task của các dự án có việc CRM trong khoảng (mọi hạn), khử trùng rồi mới lọc lại khoảng.
+      if (dueRange) {
+        const crmProjectIds = [...new Set(scanned.filter((t) => t.source === 'crm_task').map((t) => String(t.project_id)))];
+        if (crmProjectIds.length) {
+          const chunks = [];
+          for (let i = 0; i < crmProjectIds.length; i += 15) chunks.push(crmProjectIds.slice(i, i + 15));
+          const twinParts = await Promise.all(chunks.map(async (ids) => {
+            let tq = supabase.from('unified_tasks_v').select(COLS)
+              .in('task_kind', TEAM_PROJECT_TASK_KINDS)
+              .in('project_id', ids)
+              .neq('source', 'crm_task')
+              .order('unified_id', { ascending: true });
+            tq = applyOpenOnlyFilter(tq);
+            if (effectiveCompany) tq = tq.eq('company_id', effectiveCompany);
+            if (assignee_id) tq = tq.eq('assignee_id', assignee_id);
+            const needle = String(searchQ || '').trim();
+            if (needle) tq = tq.ilike('title', `%${needle}%`);
+            const r = await tq.range(0, 999);
+            if (r.error) throw r.error;
+            return r.data || [];
+          }));
+          const have = new Set(scanned.map((t) => t.unified_id));
+          twinParts.forEach((p) => p.forEach((t) => { if (!have.has(t.unified_id)) { have.add(t.unified_id); scanned.push(t); } }));
+        }
       }
 
       // Lọc theo PHÂN LOẠI xưởng (`workshop_type_id`: mã loại hoặc `none`) — view không có cột này nên lấy tập dự án trước.
@@ -553,7 +596,17 @@ r.get('/team-project-tasks', async (req, res) => {
         const cur = chosen.get(k);
         if (!cur || (cur.source === 'crm_task' && t.source !== 'crm_task')) chosen.set(k, t);
       }
-      const rows = [...chosen.values()];
+      let rows = [...chosen.values()];
+      // Sau khi khử trùng mới áp khoảng hạn: chỉ giữ bản được chọn mà hạn của chính nó nằm trong khoảng.
+      if (dueRange) {
+        const fromMs = new Date(dueRange.from).getTime();
+        const toMs = new Date(dueRange.to).getTime();
+        rows = rows.filter((t) => {
+          if (!t.deadline) return false;
+          const ms = new Date(t.deadline).getTime();
+          return ms >= fromMs && ms < toMs;
+        });
+      }
 
       let overdue = 0;
       let inProgress = 0;
@@ -597,7 +650,7 @@ r.get('/team-project-tasks', async (req, res) => {
 
     const cacheKey = JSON.stringify([
       effectiveCompany || '', assignee_id || '', String(req.query.workshop_type_id || ''),
-      String(searchQ || '').trim(), dueDays, createdDays, noDeadlineMode,
+      String(searchQ || '').trim(), dueDays, createdDays, noDeadlineMode, dueFromRaw, dueToRaw,
     ]);
     let computed = teamTasksCache.get(cacheKey);
     if (!computed || Date.now() - computed.at > TEAM_TASKS_CACHE_MS) {

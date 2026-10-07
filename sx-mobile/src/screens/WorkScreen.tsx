@@ -120,6 +120,22 @@ function dueMatches(iso: string | null | undefined, filter: WorkDueFilter): bool
   if (filter === 'this_week') return day >= weekStart && day < weekStart + 7 * DAY;
   return day >= weekStart + 7 * DAY && day < weekStart + 14 * DAY;
 }
+/** Chip hạn xử lý → khoảng ngày lịch VN (YYYY-MM-DD, gồm hai đầu) để máy chủ lọc; rỗng nếu chưa chọn chip. */
+function dueRangeVN(filter: WorkDueFilter): { dueFrom?: string; dueTo?: string } {
+  if (!filter) return {};
+  const DAY = 86_400_000;
+  const ymd = (ms: number) => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+  const now = Date.now();
+  if (filter === 'today') return { dueFrom: ymd(now), dueTo: ymd(now) };
+  if (filter === 'tomorrow') return { dueFrom: ymd(now + DAY), dueTo: ymd(now + DAY) };
+  // Thứ Hai = đầu tuần theo ngày VN. 00:00 VN + 7h = 00:00 UTC cùng ngày → getUTCDay cho đúng thứ của ngày VN.
+  const vnMidnight = new Date(`${ymd(now)}T00:00:00+07:00`).getTime();
+  const vnDow = (new Date(vnMidnight + 7 * 3600_000).getUTCDay() + 6) % 7; // 0 = thứ Hai
+  const mon = vnMidnight - vnDow * DAY;
+  if (filter === 'this_week') return { dueFrom: ymd(mon), dueTo: ymd(mon + 6 * DAY) };
+  return { dueFrom: ymd(mon + 7 * DAY), dueTo: ymd(mon + 13 * DAY) };
+}
+
 type ScopeFilter = WorkScopeFilter;
 
 function isAssignmentsAdmin(role?: string | null): boolean {
@@ -694,6 +710,8 @@ export default function WorkScreen() {
   const [serverStats, setServerStats] = useState<WorkTasksStats | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [dueFilter, setDueFilter] = useState<WorkDueFilter>('');
+  const dueFilterRef = useRef<WorkDueFilter>('');
+  dueFilterRef.current = dueFilter;
   /** Section deal đóng mặc định — chỉ lưu leadId đang mở (giống VC). */
   const [expandedLeadIds, setExpandedLeadIds] = useState<Record<string, boolean>>({});
   const [scope, setScope] = useState<ScopeFilter>(teamView ? 'team' : 'mine');
@@ -816,7 +834,7 @@ export default function WorkScreen() {
    */
   const loadTeamProjects = useCallback(async (
     append: boolean,
-    o: { force?: boolean; companyId?: string | null; signal?: AbortSignal; seq?: number } = {},
+    o: { force?: boolean; companyId?: string | null; signal?: AbortSignal; seq?: number; keepNd?: boolean } = {},
   ) => {
     if (append) {
       if (teamLoadingMoreRef.current || !teamHasMoreRef.current) return;
@@ -824,8 +842,9 @@ export default function WorkScreen() {
     }
     const page = append ? teamPageRef.current + 1 : 1;
     const mySeq = o.seq ?? loadSeqRef.current;
-    if (!append) {
-      // Đổi bộ lọc / làm mới: đóng mục «Không hạn» (sẽ nạp lại theo bộ lọc mới khi mở).
+    if (!append && !o.keepNd) {
+      // Đổi bộ lọc / kéo làm mới: đóng mục «Không hạn» (sẽ nạp lại theo bộ lọc mới khi mở). Tải lại NỀN (silent:
+      // realtime, quay lại tab) thì giữ nguyên để mục đang mở không tự đóng dưới tay người dùng.
       setNdOpen(false);
       setNdTasks([]);
       setNdTotal(null);
@@ -839,6 +858,8 @@ export default function WorkScreen() {
         assigneeId: assigneeFilterRef.current !== 'all' ? assigneeFilterRef.current : null,
         workshopTypeId: activeWorkTypeId || null,
         q: searchRef.current,
+        // Chip hạn xử lý do MÁY CHỦ lọc (lọc ở máy chỉ thấy nhóm đã tải; việc đến hạn hôm nay nằm ở trang sau nhóm quá hạn).
+        ...dueRangeVN(dueFilterRef.current),
         page,
         force: o.force,
         signal: o.signal,
@@ -945,7 +966,7 @@ export default function WorkScreen() {
       const q = searchRef.current.trim() || undefined;
       // Việc dự án của đội chạy SONG SONG với «Giao việc» (trước đây đợi «Giao việc» xong mới bắt đầu → cộng dồn thời gian chờ).
       if (!append && teamView && scope === 'team') {
-        void loadTeamProjects(false, { force: opts?.force, companyId, signal: ac.signal, seq });
+        void loadTeamProjects(false, { force: opts?.force, companyId, signal: ac.signal, seq, keepNd: silent && !opts?.force });
       }
       // Scope load — không gửi status (giữ KPI đúng trên mọi chip).
       const page = await fetchProductionWorkTasksPage({
@@ -1005,14 +1026,14 @@ export default function WorkScreen() {
     loadTeamProjects,
   ]);
 
-  // Đổi người nhận (phạm vi Đội): việc dự án do máy chủ lọc theo người → tải lại trang đầu.
+  // Đổi người nhận / chip hạn xử lý (phạm vi Đội): việc dự án do máy chủ lọc → tải lại trang đầu.
   useEffect(() => {
     if (skipFirstAssigneeEffectRef.current) {
       skipFirstAssigneeEffectRef.current = false;
       return;
     }
     if (teamView && scope === 'team' && filtersReady) void loadTeamProjects(false, { force: true });
-  }, [assigneeFilter, teamView, scope, filtersReady, loadTeamProjects]);
+  }, [assigneeFilter, dueFilter, teamView, scope, filtersReady, loadTeamProjects]);
 
   /** KPI server — đếm đủ mọi assignment (không cắt 200). */
   const loadStats = useCallback(async (opts?: { force?: boolean }) => {
@@ -1580,9 +1601,25 @@ export default function WorkScreen() {
       .map((x) => x.s);
   }, [filtered]);
 
+  /**
+   * Hiện dần từng nhóm một (thay vì đổ cả trang 20 nhóm cùng lúc làm khựng): khởi đầu vài nhóm đầu, rồi cứ ~80ms thêm
+   * vài nhóm cho tới hết. Đổi bộ lọc thì bắt đầu lại từ đầu; nhóm nạp thêm khi cuộn thì nối tiếp, không quay lại.
+   */
+  const REVEAL_INITIAL = 6;
+  const REVEAL_STEP = 2;
+  const [revealCount, setRevealCount] = useState(REVEAL_INITIAL);
+  const revealKey = `${statusFilter}|${search}|${assigneeFilter}|${filterCompany}|${activeWorkTypeId}|${dueFilter}`;
+  useEffect(() => { setRevealCount(REVEAL_INITIAL); }, [revealKey]);
+  useEffect(() => {
+    if (revealCount >= dealSections.length) return undefined;
+    const t = setTimeout(() => setRevealCount((c) => c + REVEAL_STEP), 80);
+    return () => clearTimeout(t);
+  }, [revealCount, dealSections.length]);
+  const revealing = revealCount < dealSections.length;
+
   const flatRows = useMemo(() => {
     const rows: ListRow[] = [];
-    for (const section of dealSections) {
+    for (const section of dealSections.slice(0, revealCount)) {
       rows.push({ kind: 'section', key: `s-${section.leadId}`, section });
       if (!expandedLeadIds[section.leadId]) continue;
       for (const task of section.tasks) {
@@ -1590,7 +1627,7 @@ export default function WorkScreen() {
       }
     }
     return rows;
-  }, [dealSections, expandedLeadIds]);
+  }, [dealSections, expandedLeadIds, revealCount]);
 
   const toggleDealSection = useCallback((leadId: string) => {
     setExpandedLeadIds((prev) => ({ ...prev, [leadId]: !prev[leadId] }));
@@ -2246,6 +2283,8 @@ export default function WorkScreen() {
         keyboardShouldPersistTaps="handled"
         onEndReached={() => {
           if (filtered.length === 0) return;
+          // Còn nhóm đang hiện dần thì đẩy nhanh phần hiện, chưa gọi máy chủ.
+          if (revealing) { setRevealCount((c) => c + REVEAL_STEP * 3); return; }
           if (loading || chipLoading || loadingMoreRef.current) return;
           if (statusFilter !== 'all') {
             if (!chipHasMoreRef.current) {
@@ -2304,7 +2343,7 @@ export default function WorkScreen() {
           <Text style={styles.empty}>
             {!userId
               ? 'Đăng nhập để xem công việc.'
-              : search.trim() || statusFilter !== 'all' || assigneeFilter !== 'all'
+              : search.trim() || statusFilter !== 'all' || assigneeFilter !== 'all' || dueFilter
                 ? 'Không có công việc khớp bộ lọc.'
                 : teamView && scope === 'team'
                   ? 'Chưa có giao việc sản xuất trong phạm vi công ty.'
