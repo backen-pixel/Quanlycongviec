@@ -532,6 +532,34 @@ r.get('/team-project-tasks', async (req, res) => {
         parts.forEach((p) => scanned.push(...p));
       }
 
+      // Chip hạn xử lý: khử trùng phải thấy cả bản SX «song sinh» nằm NGOÀI khoảng. Nếu chỉ quét trong khoảng thì bản CRM
+      // (hạn hôm nay) sống sót dù bản SX của chính việc đó đã quá hạn → việc quá hạn lọt vào «Hôm nay» / «Ngày mai».
+      // Nên lấy thêm bản không phải crm_task của các dự án có việc CRM trong khoảng (mọi hạn), khử trùng rồi mới lọc lại khoảng.
+      if (dueRange) {
+        const crmProjectIds = [...new Set(scanned.filter((t) => t.source === 'crm_task').map((t) => String(t.project_id)))];
+        if (crmProjectIds.length) {
+          const chunks = [];
+          for (let i = 0; i < crmProjectIds.length; i += 15) chunks.push(crmProjectIds.slice(i, i + 15));
+          const twinParts = await Promise.all(chunks.map(async (ids) => {
+            let tq = supabase.from('unified_tasks_v').select(COLS)
+              .in('task_kind', TEAM_PROJECT_TASK_KINDS)
+              .in('project_id', ids)
+              .neq('source', 'crm_task')
+              .order('unified_id', { ascending: true });
+            tq = applyOpenOnlyFilter(tq);
+            if (effectiveCompany) tq = tq.eq('company_id', effectiveCompany);
+            if (assignee_id) tq = tq.eq('assignee_id', assignee_id);
+            const needle = String(searchQ || '').trim();
+            if (needle) tq = tq.ilike('title', `%${needle}%`);
+            const r = await tq.range(0, 999);
+            if (r.error) throw r.error;
+            return r.data || [];
+          }));
+          const have = new Set(scanned.map((t) => t.unified_id));
+          twinParts.forEach((p) => p.forEach((t) => { if (!have.has(t.unified_id)) { have.add(t.unified_id); scanned.push(t); } }));
+        }
+      }
+
       // Lọc theo PHÂN LOẠI xưởng (`workshop_type_id`: mã loại hoặc `none`) — view không có cột này nên lấy tập dự án trước.
       let scannedRows = scanned;
       const typeRaw = String(req.query.workshop_type_id || '').trim();
@@ -568,7 +596,17 @@ r.get('/team-project-tasks', async (req, res) => {
         const cur = chosen.get(k);
         if (!cur || (cur.source === 'crm_task' && t.source !== 'crm_task')) chosen.set(k, t);
       }
-      const rows = [...chosen.values()];
+      let rows = [...chosen.values()];
+      // Sau khi khử trùng mới áp khoảng hạn: chỉ giữ bản được chọn mà hạn của chính nó nằm trong khoảng.
+      if (dueRange) {
+        const fromMs = new Date(dueRange.from).getTime();
+        const toMs = new Date(dueRange.to).getTime();
+        rows = rows.filter((t) => {
+          if (!t.deadline) return false;
+          const ms = new Date(t.deadline).getTime();
+          return ms >= fromMs && ms < toMs;
+        });
+      }
 
       let overdue = 0;
       let inProgress = 0;
