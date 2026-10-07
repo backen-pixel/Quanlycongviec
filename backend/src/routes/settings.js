@@ -186,6 +186,7 @@ const {
 } = require('../middleware/apiKeyAuth');
 const { buildTokenPair, formatOneTimeTokenResponse } = require('../helpers/apiKeyTokens');
 const crypto = require('crypto');
+const { hasFounderScopes, founderKeyManagement } = require('../helpers/founderKeyPolicy');
 
 function apiKeyAllowedInTenant(req, k) {
   if (!isTenantScopeEnforced(req)) return true;
@@ -260,7 +261,7 @@ async function assertRegionMatchesCompany(region_id, company_id) {
   return { ok: true };
 }
 
-const ALLOWED_MCP_SCOPES = new Set(['reports', 'crm_read']);
+const ALLOWED_MCP_SCOPES = new Set(['reports', 'crm_read', 'founder_read', 'founder_write']);
 
 function normalizeMcpScopes(input) {
   let arr = input;
@@ -309,6 +310,9 @@ r.post('/api-keys', async (req, res) => {
     if (!name || !String(name).trim()) {
       return res.status(400).json({ error: 'Nhập tên để nhận biết key này (VD: "Website form", "Zap")' });
     }
+    const scopes = normalizeMcpScopes(mcp_scopes);
+    const founderGrant = founderKeyManagement(req.user.role, [], scopes);
+    if (!founderGrant.ok) return res.status(founderGrant.status).json({ error: founderGrant.error });
 
     const allowedList = normalizeAllowedCompanyIds(allowed_company_ids);
     const wantAllCompanies = all_companies === true
@@ -334,17 +338,18 @@ r.post('/api-keys', async (req, res) => {
       effectiveCompanyId = allowedList[0] || company_id;
       effectiveRegionId = region_id || null;
       effectiveAllowed = effectiveCompanyId ? [String(effectiveCompanyId)] : [];
-      if (!effectiveRegionId) {
+      if (!effectiveRegionId && !hasFounderScopes(scopes)) {
         return res.status(400).json({ error: 'Thiếu region_id — bắt buộc khi gắn 1 công ty' });
       }
-      const chk = await assertRegionMatchesCompany(effectiveRegionId, effectiveCompanyId);
-      if (!chk.ok) return res.status(400).json({ error: chk.error });
+      if (effectiveRegionId) {
+        const chk = await assertRegionMatchesCompany(effectiveRegionId, effectiveCompanyId);
+        if (!chk.ok) return res.status(400).json({ error: chk.error });
+      }
     } else {
       return res.status(400).json({ error: 'Chọn công ty (1 / nhiều) hoặc «Tất cả công ty»' });
     }
     if (!assertApiKeyCompanyInTenant(req, res, effectiveCompanyId, effectiveAllowed)) return;
 
-    const scopes = normalizeMcpScopes(mcp_scopes);
     const pair = buildTokenPair();
     const record = await insertKey({
       name: String(name).trim(),
@@ -389,6 +394,8 @@ r.patch('/api-keys/:id', async (req, res) => {
       region_id, default_source_category_id, default_lead_type_id, default_pipeline_id,
       mcp_scopes, all_companies, allowed_company_ids,
     } = req.body;
+    const founderGrant = founderKeyManagement(req.user.role, cur.mcp_scopes, mcp_scopes === undefined ? cur.mcp_scopes : normalizeMcpScopes(mcp_scopes));
+    if (!founderGrant.ok) return res.status(founderGrant.status).json({ error: founderGrant.error });
     const patch = {};
     if (name != null) patch.name = String(name).trim();
     if (default_assigned_to !== undefined) patch.default_assigned_to = default_assigned_to || null;
@@ -428,7 +435,8 @@ r.patch('/api-keys/:id', async (req, res) => {
       ? (Array.isArray(patch.allowed_company_ids) ? patch.allowed_company_ids : [])
       : (Array.isArray(cur.allowed_company_ids) ? cur.allowed_company_ids : []);
     if (!assertApiKeyCompanyInTenant(req, res, effectiveCompany, effectiveAllowed)) return;
-    if (patch.region_id !== undefined || patch.company_id !== undefined) {
+    if ((patch.region_id !== undefined || patch.company_id !== undefined)
+      && !(hasFounderScopes(patch.mcp_scopes || cur.mcp_scopes) && !effectiveRegion)) {
       const chk = await assertRegionMatchesCompany(effectiveRegion, effectiveCompany);
       if (!chk.ok) return res.status(400).json({ error: chk.error });
     }
@@ -464,6 +472,8 @@ r.post('/api-keys/:id/rotate', async (req, res) => {
     }
     const cur = await findKeyById(req.params.id);
     if (!cur) return res.status(404).json({ error: 'Không tìm thấy key' });
+    const founderGrant = founderKeyManagement(req.user.role, cur.mcp_scopes);
+    if (!founderGrant.ok) return res.status(founderGrant.status).json({ error: founderGrant.error });
     if (!apiKeyAllowedInTenant(req, cur)) {
       return res.status(403).json({ error: 'Chỉ được dùng API key của hệ sinh thái hiện tại' });
     }
@@ -579,6 +589,8 @@ r.delete('/api-keys/:id', async (req, res) => {
     }
     const cur = await findKeyById(req.params.id);
     if (!cur) return res.status(404).json({ error: 'Không tìm thấy key' });
+    const founderGrant = founderKeyManagement(req.user.role, cur.mcp_scopes);
+    if (!founderGrant.ok) return res.status(founderGrant.status).json({ error: founderGrant.error });
     if (!apiKeyAllowedInTenant(req, cur)) {
       return res.status(403).json({ error: 'Chỉ được dùng API key của hệ sinh thái hiện tại' });
     }

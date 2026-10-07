@@ -1963,3 +1963,7 @@ Theo yêu cầu tiếp tục của Founder, bổ sung domain/Application Service
 
 ---
 
+
+## 2026-10-07 — Founder Control Center V1
+
+Thêm module Founder theo sáu hệ, năm MCP tools, ba Skybridge views và SQL711 candidate với delegated actor/key/company, idempotency và decision version/digest + audit atomic. Không đổi OpenClaw/project approvals/policy automation cũ; ads dry-run mặc định scope unknown. Kiểm thử 219 backend +16 app, npm ci/build/typecheck PASS synthetic. Chưa release, không chạy DB thật/Meta/notification. GitHub API Forbidden nên draft PR pending. Chi tiết: [hồ sơ](FOUNDER_CONTROL_CENTER_V1_20261007.md).

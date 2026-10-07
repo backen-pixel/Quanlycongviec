@@ -1,3 +1,9 @@
+## 2026-10-07 — Founder Control Center Marketing → CRM V1
+
+Branch `codex/founder-control-center-v1`: năm tools, ba view Skybridge, tenant-safe domain/service và candidate SQL711 lưu objective/proposal/decision/receipt + audit atomic. Flags mặc định tắt; không migration, Meta action, thông báo hay deploy thật. Backend 219/219, app 16/16 và build/typecheck PASS synthetic. OAuth ChatGPT/HTTPS MCP, Supabase staging concurrency, nguồn cohort/watermark và review độc lập còn chờ. [Hồ sơ và rollback](FOUNDER_CONTROL_CENTER_V1_20261007.md), [chạy thử/cấu hình](../../apps/founder-control-center/README.md).
+
+---
+
 ## 2026-10-07 — Quản lý phát sinh ở các module còn lại
 
 Trang hai tab Không phí / Có phí của Sản xuất có thêm ở CRM (`/crm/phat-sinh`), Lắp đặt (`/vc/phat-sinh`), Kế toán (`/ketoan/phat-sinh`), Mua hàng (`/mua-hang/phat-sinh`) và module tùy chỉnh (`/m/:moduleKey/phat-sinh`). Mỗi trang chỉ hiện việc phát sinh của đúng module đó.

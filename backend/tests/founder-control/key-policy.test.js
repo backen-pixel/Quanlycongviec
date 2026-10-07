@@ -1,0 +1,4 @@
+const test=require('node:test'),assert=require('node:assert/strict');
+const {founderKeyManagement}=require('../../src/helpers/founderKeyPolicy');
+test('manager keeps old capabilities, cannot grant/manage/rotate Founder delegation',()=>{assert.equal(founderKeyManagement('manager',['crm_read']).ok,true);assert.equal(founderKeyManagement('manager',[],['founder_read']).status,403);assert.equal(founderKeyManagement('manager',['founder_write']).status,403);assert.equal(founderKeyManagement('manager',['founder_read'],['crm_read']).status,403)});
+test('Founder scopes require a dedicated key; only current admin grants',()=>{assert.equal(founderKeyManagement('admin',[],['founder_read','founder_write']).ok,true);assert.equal(founderKeyManagement('ecosystem_admin',[],['founder_read']).ok,true);assert.equal(founderKeyManagement('admin',[],['founder_read','crm_read']).status,400);assert.equal(founderKeyManagement('sales_admin',[],['founder_write']).status,403)});
