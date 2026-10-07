@@ -90,6 +90,7 @@ import { isImageFile, resolveMediaUrl } from '../lib/mediaUtils';
 import { saveMessengerAttachment } from '../lib/messengerFileOpen';
 import { isQueryAbortError } from '../lib/queryCache';
 import { fetchTeamProjectTasksPage, type TeamProjectCounts } from '../lib/teamProjectTasksApi';
+import { fetchAssignmentLookups } from '../lib/sharedWorkspaceApi';
 
 import SpinningLoader from '../components/SpinningLoader';
 
@@ -1488,10 +1489,36 @@ export default function WorkScreen() {
   }, [uploadMediaForTask]);
 
 
-  const assigneeOptions = useMemo(
-    () => collectAssigneeOptions([...tasks, ...teamProjectTasks]),
-    [tasks, teamProjectTasks],
-  );
+  // Danh sách người nhận: nhân viên CỦA CÔNG TY (không chỉ những người xuất hiện trong trang việc đã tải — ở
+  // công ty như HCB gần như không việc nào gắn người nên chip «Người» từng bị ẩn) + người có trong việc đã tải.
+  const [companyPeople, setCompanyPeople] = useState<Array<{ id: string; name: string }>>([]);
+  useEffect(() => {
+    if (!teamView) { setCompanyPeople([]); return undefined; }
+    const cid = filterCompany || (canPickCompany ? null : (user?.company_id || null));
+    if (!cid) { setCompanyPeople([]); return undefined; }
+    let cancelled = false;
+    void fetchAssignmentLookups(String(cid))
+      .then((r) => {
+        if (cancelled) return;
+        setCompanyPeople(
+          r.users
+            .map((u) => ({ id: u.id, name: (u.full_name || u.email || '').trim() }))
+            .filter((u) => u.id && u.name),
+        );
+      })
+      .catch(() => { if (!cancelled) setCompanyPeople([]); });
+    return () => { cancelled = true; };
+  }, [teamView, filterCompany, canPickCompany, user?.company_id]);
+
+  const assigneeOptions = useMemo(() => {
+    const fromTasks = collectAssigneeOptions([...tasks, ...teamProjectTasks]);
+    const map = new Map(companyPeople.map((p) => [p.id, p.name]));
+    // Người đã có trong việc nhưng thiếu ở danh sách công ty (vd. NV công ty khác) vẫn giữ lại.
+    for (const p of fromTasks) if (!map.has(p.id)) map.set(p.id, p.name);
+    return [...map.entries()]
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+  }, [tasks, teamProjectTasks, companyPeople]);
 
   const filtered = useMemo(() => {
     // Search đã gửi `q` lên server — không lọc lại client (tránh che match SĐT/lead).
