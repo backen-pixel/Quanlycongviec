@@ -59,6 +59,7 @@ import {
 } from '../lib/productionApi';
 import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
+import { fetchTeamProjectTasksPage } from '../lib/teamProjectTasksApi';
 import {
   computeSxBoardKpis,
   formatVnWeekdayDate,
@@ -66,6 +67,7 @@ import {
   pickOverdueProjects,
   pickPriorityProjects,
   projectIsDeadlineOverdue,
+  projectIsDelivered,
   shortDateLabel,
   sxProjectDeadlineRaw,
   type SxBoardKpis,
@@ -197,6 +199,11 @@ export default function OverviewScreen() {
   const [tasksFailed, setTasksFailed] = useState(false);
   /** Đã nạp xong việc của nhân viên ít nhất một lần thành công — mốc để biết «không có dự án» là thật, không phải chưa về. */
   const [tasksLoaded, setTasksLoaded] = useState(false);
+  /** Quản lý: tổng việc DỰ ÁN quá hạn theo máy chủ (danh sách chỉ nạp trang đầu). null = chưa biết / nhân viên. */
+  const [teamProjectOverdue, setTeamProjectOverdue] = useState<number | null>(null);
+  const teamOverdueRef = useRef<number | null>(null);
+  /** Đang tải lại sau khi đổi phân loại (xem `applyWorkType`). */
+  const [typeSwitching, setTypeSwitching] = useState(false);
   /**
    * Toàn bộ dự án của bảng (đã lọc công ty, CHƯA lọc theo người) — giữ ở ref để
    * không gây render thừa; `projectsVersion` báo hiệu đã có dữ liệu mới.
@@ -368,13 +375,32 @@ export default function OverviewScreen() {
               console.warn('[overview] tải công việc của tôi lỗi:', formatApiError(e));
               return null;
             })
-          : fetchProductionWorkTasks({
+          // Quản lý: «Giao việc» + việc DỰ ÁN của cả đội (trước đây bỏ sót — xem `teamProjectTasksApi`).
+          : Promise.all([
+            fetchProductionWorkTasks({
               companyId: companyId || null,
               limit: WORK_TASKS_PAGE_SIZE,
               offset: 0,
               signal: ac.signal,
               force: mode === 'refresh',
-            }).catch(() => [] as WorkTask[]);
+            }),
+            // Chỉ TRANG ĐẦU (20 nhóm dự án, quá hạn lên trước) + số đếm toàn bộ do máy chủ tính.
+            fetchTeamProjectTasksPage({
+              companyId: companyId || null,
+              page: 1,
+              signal: ac.signal,
+              force: mode === 'refresh',
+            }),
+          ]).then(([assignments, projectPage]) => {
+            teamOverdueRef.current = projectPage.counts.overdue;
+            return [...assignments, ...projectPage.tasks];
+          })
+            .catch((e): WorkTask[] | null => {
+              // null = tải LỖI (khác «không có việc»): trước đây `[]` làm banner báo «Không có công việc quá hạn».
+              if (isAbortError(e)) throw e;
+              console.warn('[overview] tải công việc đội lỗi:', formatApiError(e));
+              return null;
+            });
 
       const [board, summary, myTasks] = await Promise.all([
         skipBoard
@@ -445,12 +471,13 @@ export default function OverviewScreen() {
       }
       if (myTasks) {
         setTasks(myTasks);
+        setTeamProjectOverdue(ownOnly ? null : teamOverdueRef.current);
         setTasksFailed(false);
         setTasksLoaded(true);
       } else {
         // Lỗi tải: giữ danh sách cũ (nếu có) thay vì xoá trắng, và báo cho người dùng biết.
         setTasksFailed(true);
-        if (mode !== 'silent') setError('Không tải được công việc của bạn');
+        if (mode !== 'silent') setError(ownOnly ? 'Không tải được công việc của bạn' : 'Không tải được danh sách công việc');
       }
       setTaskPage(1);
       setDealPage(1);
@@ -565,9 +592,16 @@ export default function OverviewScreen() {
    * của «mọi phân loại» trong khi chip đã ghi tên một loại, tức hiển thị sai.
    */
   const applyWorkType = useCallback(async (id: string) => {
+    // Đang đổi loại: vòng «tự nhảy» phải chờ dữ liệu loại mới về — nếu không nó đọc số của loại CŨ (rỗng),
+    // kết luận «loại mới cũng rỗng» và nhảy tiếp, bỏ qua loại ở giữa có dữ liệu.
+    setTypeSwitching(true);
     setFilterWorkTypeId(id);
-    await saveKanbanFilters({ filterWorkTypeId: id }).catch(() => {});
-    void load('refresh');
+    try {
+      await saveKanbanFilters({ filterWorkTypeId: id }).catch(() => {});
+      await load('refresh');
+    } finally {
+      setTypeSwitching(false);
+    }
   }, [load]);
 
   // Không có «Tất cả»: rỗng hoặc loại không thuộc công ty hiện hành → loại đầu tiên.
@@ -589,6 +623,7 @@ export default function OverviewScreen() {
    */
   useEffect(() => {
     if (!autoPickedTypeRef.current) return;
+    if (typeSwitching) return;
     // Nhân viên: «có dự án hay không» phụ thuộc việc được giao (tải sau bảng). Chỉ nhảy khi việc đã về
     // thành công — chưa về mà nhảy thì sẽ nhảy nhầm sang loại rỗng và còn bị lưu lại. Không có việc nào
     // thì không có gì để tìm, dừng; có việc mà loại hiện tại không có dự án nào của họ thì thử loại kế tiếp.
@@ -624,6 +659,7 @@ export default function OverviewScreen() {
     workTypes,
     filterCompany,
     applyWorkType,
+    typeSwitching,
   ]);
 
   const onSelectWorkType = useCallback(async (id: string) => {
@@ -716,7 +752,12 @@ export default function OverviewScreen() {
   );
 
   const overdueTasksAll = useMemo(() => tasks.filter((t) => isTaskOverdue(t)), [tasks]);
-  const overdueTaskCount = overdueTasksAll.length;
+  // Việc dự án chỉ nạp trang đầu → số quá hạn của chúng lấy từ máy chủ, không đếm từ danh sách đã nạp.
+  const overdueTaskCount = useMemo(() => {
+    const isProject = (t: WorkTask) => t.source_kind === 'task' || t.source_kind === 'crm_task';
+    const loadedProject = overdueTasksAll.filter(isProject).length;
+    return overdueTasksAll.length - loadedProject + (teamProjectOverdue ?? loadedProject);
+  }, [overdueTasksAll, teamProjectOverdue]);
 
   /** Chỉ việc QUÁ HẠN — hạn cũ nhất lên trước. */
   const overdueTasks = useMemo(() => (
@@ -774,8 +815,8 @@ export default function OverviewScreen() {
   ], [staffKpis, colors, goKanban, openOverdueProjects]);
 
   /**
-   * «Cần xử lý hôm nay» = việc chưa xong mà đã quá hạn hoặc đến hạn hôm nay (giờ VN). Việc hạn xa /
-   * chưa có hạn không tính, nếu không con số trùng tổng việc tồn và sai nghĩa «hôm nay».
+   * «Cần xử lý hôm nay» = việc chưa xong mà đã quá hạn, đến hạn hôm nay (giờ VN) hoặc đang làm.
+   * Việc «chưa làm» có hạn xa / chưa có hạn không tính, nếu không con số trùng tổng việc tồn và sai nghĩa «hôm nay».
    * Đếm hết `tasks`, không đếm theo số dòng xem trước.
    */
   /** Huy hiệu «Công việc dự án»: mọi việc chưa xong (chưa làm + đang làm + quá hạn), không tính việc đã hoàn thành. */
@@ -789,10 +830,11 @@ export default function OverviewScreen() {
     let overdue = 0;
     for (const t of tasks) {
       if (isTaskDone(String(t.status))) continue;
+      // Cần xử lý = quá hạn + đến hạn hôm nay + ĐANG LÀM (dù hạn còn xa / chưa có hạn).
       if (isTaskOverdue(t)) {
         due += 1;
         overdue += 1;
-      } else if (isTaskDueOnDay(t)) {
+      } else if (isTaskDueOnDay(t) || isTaskInProgress(String(t.status))) {
         due += 1;
       }
     }
@@ -897,6 +939,10 @@ export default function OverviewScreen() {
         deliveryLabel: p?.delivery_date ? shortDateLabel(p.delivery_date) : null,
         deadlineLabel: p ? (shortDateLabel(sxProjectDeadlineRaw(p, boardStages)) === '—' ? null : shortDateLabel(sxProjectDeadlineRaw(p, boardStages))) : null,
         overdue: Boolean(p?.is_overdue || p?.is_delivery_overdue),
+        // Ngày gốc + «đã giao» để thẻ dự án tự gắn nhãn Hôm nay / Còn N ngày LV / Trễ N ngày LV.
+        deliveryRaw: p?.delivery_date ?? null,
+        deadlineRaw: p ? sxProjectDeadlineRaw(p, boardStages) || null : null,
+        delivered: p ? projectIsDelivered(p, boardStages) : false,
       });
     };
 
@@ -1254,7 +1300,8 @@ export default function OverviewScreen() {
         ) : (
           // Nhân viên: bỏ dải «không có quá hạn» — thiết kế không có, và KPI
           // «Quá hạn» ngay dưới đã nói đúng con số đó rồi.
-          teamView ? (
+          // Tải việc lỗi thì không được khẳng định «không có quá hạn» (đã có banner lỗi ở trên).
+          teamView && !tasksFailed ? (
             <View style={styles.okBanner}>
               <Ionicons name="checkmark-circle" size={20} color={colors.success} />
               <Text style={styles.okTxt}>Không có công việc / dự án quá hạn</Text>

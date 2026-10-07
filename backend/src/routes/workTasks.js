@@ -440,6 +440,105 @@ r.get('/summary', async (req, res) => {
   }
 });
 
+/**
+ * GET /api/work-tasks/team-project-tasks — việc DỰ ÁN (bảng `tasks` + `crm_tasks` của deal đã có dự án) CHƯA XONG,
+ * có hạn đến hết `due_days` ngày tới, cho góc nhìn quản lý. Phân trang THEO NHÓM DỰ ÁN (mỗi nhóm kèm đủ việc
+ * trong cửa sổ) để app chỉ tải phần đang xem; số đếm toàn bộ do máy chủ tính.
+ *
+ * Query: company_id, assignee_id, q, due_days (mặc định 7, tối đa 60), page, page_size (nhóm/trang, mặc định 20).
+ * Trả: { counts: {overdue, soon, total, in_progress, groups}, page, page_size, has_more, tasks[] }.
+ * Quá hạn xếp trước, nhóm có hạn cũ nhất lên đầu. Một việc có thể có cả bản ở `tasks` lẫn `crm_tasks` → khử trùng.
+ */
+const TEAM_PROJECT_TASK_KINDS = ['SX', 'Dự án', 'CRM-Deal'];
+const TEAM_TASKS_SCAN_CAP = 8000;
+
+r.get('/team-project-tasks', async (req, res) => {
+  try {
+    if (!isManagerLike(req.user)) return res.status(403).json({ error: 'Chỉ dành cho quản lý' });
+    const { company_id, assignee_id, q: searchQ } = req.query;
+    const dueDays = Math.min(60, Math.max(0, parseInt(req.query.due_days, 10) || 7));
+    const { page, pageSize } = parsePagination(req, 20, 100);
+    const effectiveCompany = company_id || (!isSystemAdmin(req.user) ? req.user?.company_id : null);
+
+    const nowMs = Date.now();
+    const until = new Date(nowMs + dueDays * 86_400_000).toISOString();
+    const COLS = 'unified_id, source, project_id, lead_id, title, status, deadline, assignee_id, task_kind, project_code, project_name, lead_title';
+
+    // Quét nhẹ (chỉ vài cột) theo lô 1000 — PostgREST cắt ở 1000 dòng/lần.
+    const scanned = [];
+    for (let from = 0; from < TEAM_TASKS_SCAN_CAP; from += 1000) {
+      let qy = supabase.from('unified_tasks_v').select(COLS)
+        .in('task_kind', TEAM_PROJECT_TASK_KINDS)
+        .not('project_id', 'is', null)
+        .not('deadline', 'is', null)
+        .lte('deadline', until)
+        .order('deadline', { ascending: true })
+        .order('unified_id', { ascending: true })
+        .range(from, from + 999);
+      qy = applyOpenOnlyFilter(qy);
+      if (effectiveCompany) qy = qy.eq('company_id', effectiveCompany);
+      if (assignee_id) qy = qy.eq('assignee_id', assignee_id);
+      const needle = String(searchQ || '').trim();
+      if (needle) qy = qy.ilike('title', `%${needle}%`);
+      const { data, error } = await qy;
+      if (error) throw error;
+      scanned.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+
+    // Khử trùng: ưu tiên bản ở bảng `tasks` (source != crm_task).
+    const keyOf = (t) => `${t.project_id}|${String(t.title || '').trim().toLowerCase()}`;
+    const chosen = new Map();
+    for (const t of scanned) {
+      const k = keyOf(t);
+      const cur = chosen.get(k);
+      if (!cur || (cur.source === 'crm_task' && t.source !== 'crm_task')) chosen.set(k, t);
+    }
+    const rows = [...chosen.values()];
+
+    let overdue = 0;
+    let inProgress = 0;
+    const groups = new Map();
+    for (const t of rows) {
+      const isOver = new Date(t.deadline).getTime() < nowMs;
+      if (isOver) overdue += 1;
+      if (String(t.status || '').toLowerCase() === 'in_progress') inProgress += 1;
+      let g = groups.get(t.project_id);
+      if (!g) { g = { firstDeadline: t.deadline, overdue: false, rows: [] }; groups.set(t.project_id, g); }
+      if (isOver) g.overdue = true;
+      if (String(t.deadline) < String(g.firstDeadline)) g.firstDeadline = t.deadline;
+      g.rows.push(t);
+    }
+    // Nhóm có việc quá hạn lên trước, rồi theo hạn gần nhất cũ → mới.
+    const ordered = [...groups.values()].sort((a, b) =>
+      (a.overdue === b.overdue ? 0 : a.overdue ? -1 : 1)
+      || String(a.firstDeadline).localeCompare(String(b.firstDeadline)));
+
+    const start = (page - 1) * pageSize;
+    const pageGroups = ordered.slice(start, start + pageSize);
+    const pageTasks = pageGroups.flatMap((g) => g.rows);
+    const tasks = await enrichUnifiedCrmTasks(supabase, pageTasks);
+    await enrichTaskModuleOwners(tasks);
+
+    res.json({
+      counts: {
+        overdue,
+        soon: rows.length - overdue,
+        total: rows.length,
+        in_progress: inProgress,
+        groups: ordered.length,
+      },
+      page,
+      page_size: pageSize,
+      has_more: start + pageSize < ordered.length,
+      tasks,
+    });
+  } catch (e) {
+    console.error('[work-tasks] team-project-tasks:', e);
+    res.status(500).json({ error: e.message || 'Lỗi tải việc dự án của đội' });
+  }
+});
+
 function foldTaskStageName(value) {
   return String(value || '')
     .toLowerCase()
