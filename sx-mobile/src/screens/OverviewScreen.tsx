@@ -379,6 +379,7 @@ export default function OverviewScreen() {
           : Promise.all([
             fetchProductionWorkTasks({
               companyId: companyId || null,
+              excludeDone: true,
               limit: WORK_TASKS_PAGE_SIZE,
               offset: 0,
               signal: ac.signal,
@@ -387,6 +388,7 @@ export default function OverviewScreen() {
             // Chỉ TRANG ĐẦU (20 nhóm dự án, quá hạn lên trước) + số đếm toàn bộ do máy chủ tính.
             fetchTeamProjectTasksPage({
               companyId: companyId || null,
+              workshopTypeId: String(snap?.filterWorkTypeId || '') || null,
               page: 1,
               signal: ac.signal,
               force: mode === 'refresh',

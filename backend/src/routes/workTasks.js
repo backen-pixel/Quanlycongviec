@@ -486,10 +486,27 @@ r.get('/team-project-tasks', async (req, res) => {
       if (!data || data.length < 1000) break;
     }
 
+    // Lọc theo PHÂN LOẠI xưởng (`workshop_type_id`: mã loại hoặc `none`) — view không có cột này nên lấy tập dự án trước.
+    let scannedRows = scanned;
+    const typeRaw = String(req.query.workshop_type_id || '').trim();
+    if (typeRaw) {
+      const typeProjectIds = new Set();
+      for (let from = 0; from < 20000; from += 1000) {
+        let pq = supabase.from('projects').select('id').order('id', { ascending: true }).range(from, from + 999);
+        pq = typeRaw.toLowerCase() === 'none' ? pq.is('workshop_type_id', null) : pq.eq('workshop_type_id', typeRaw);
+        if (effectiveCompany) pq = pq.eq('company_id', effectiveCompany);
+        const { data: prow, error: perr } = await pq;
+        if (perr) throw perr;
+        (prow || []).forEach((p) => typeProjectIds.add(String(p.id)));
+        if (!prow || prow.length < 1000) break;
+      }
+      scannedRows = scanned.filter((t) => typeProjectIds.has(String(t.project_id)));
+    }
+
     // Khử trùng: ưu tiên bản ở bảng `tasks` (source != crm_task).
     const keyOf = (t) => `${t.project_id}|${String(t.title || '').trim().toLowerCase()}`;
     const chosen = new Map();
-    for (const t of scanned) {
+    for (const t of scannedRows) {
       const k = keyOf(t);
       const cur = chosen.get(k);
       if (!cur || (cur.source === 'crm_task' && t.source !== 'crm_task')) chosen.set(k, t);

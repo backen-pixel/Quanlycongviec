@@ -39,6 +39,8 @@ export type TeamProjectPage = {
 type Opts = {
   companyId?: string | null;
   assigneeId?: string | null;
+  /** Phân loại xưởng: mã loại hoặc `none` (chưa phân loại). */
+  workshopTypeId?: string | null;
   q?: string;
   page?: number;
   pageSize?: number;
@@ -50,7 +52,12 @@ function mapRow(raw: Record<string, unknown>): WorkTask {
   const t = mapUnifiedToWorkTask(raw);
   const id = raw.assignee_id ? String(raw.assignee_id) : '';
   const name = String(raw.assignee_name || '').trim();
-  return id && name ? { ...t, assignee: { id, full_name: name } as WorkTask['assignee'] } : t;
+  const withWho = id && name ? { ...t, assignee: { id, full_name: name } as WorkTask['assignee'] } : t;
+  // Gom nhóm THEO DỰ ÁN: một dự án có thể gắn nhiều deal, view trả mỗi việc một bản cho từng deal nên sau khi
+  // khử trùng các việc cùng dự án mang `lead_id` khác nhau → bị tách thành nhiều nhóm trùng tên. Deal thật vẫn
+  // nằm ở `deal_id` (dùng cho việc `crm_task` khi cập nhật).
+  const projectId = raw.project_id ? String(raw.project_id) : '';
+  return projectId ? { ...withWho, lead_id: projectId } : withWho;
 }
 
 /** Ngày (giờ VN) cách hôm nay `plusDays` ngày, dạng YYYY-MM-DD — chỉ cho đường dự phòng. */
@@ -122,7 +129,7 @@ async function fetchLegacy(o: Opts): Promise<TeamProjectPage> {
 export async function fetchTeamProjectTasksPage(o: Opts): Promise<TeamProjectPage> {
   const page = Math.max(1, o.page || 1);
   const pageSize = o.pageSize || TEAM_GROUPS_PER_PAGE;
-  const key = `${K_TEAM}${o.companyId || ''}|${o.assigneeId || ''}|${(o.q || '').trim()}|${page}|${pageSize}`;
+  const key = `${K_TEAM}${o.companyId || ''}|${o.assigneeId || ''}|${o.workshopTypeId || ''}|${(o.q || '').trim()}|${page}|${pageSize}`;
   return cachedQuery<TeamProjectPage>({
     key,
     ttlMs: QUERY_TTL_SHORT,
@@ -141,6 +148,7 @@ export async function fetchTeamProjectTasksPage(o: Opts): Promise<TeamProjectPag
             due_days: DUE_SOON_DAYS,
             ...(o.companyId ? { company_id: o.companyId } : {}),
             ...(o.assigneeId ? { assignee_id: o.assigneeId } : {}),
+            ...(o.workshopTypeId ? { workshop_type_id: o.workshopTypeId } : {}),
             ...(o.q?.trim() ? { q: o.q.trim() } : {}),
           },
         });

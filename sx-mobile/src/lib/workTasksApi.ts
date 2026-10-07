@@ -56,6 +56,8 @@ export type WorkTasksQuery = {
   overdue?: boolean;
   /** Tìm kiếm server (title / mô tả / deal…). */
   q?: string | null;
+  /** true = máy chủ không trả việc đã hoàn thành (quản lý không cần xem). */
+  excludeDone?: boolean;
   /** Phân trang — mặc định mobile dùng 200. */
   limit?: number;
   offset?: number;
@@ -303,6 +305,7 @@ export async function fetchProductionWorkTasksPage(
   if (query.workshopTypeId) params.workshop_type_id = query.workshopTypeId;
   if (query.status) params.status = String(query.status);
   if (query.overdue) params.overdue = 1;
+  if (query.excludeDone) params.exclude_done = 1;
   if (query.q?.trim()) params.q = query.q.trim();
 
   const key = K_WORK_PAGE + JSON.stringify(params);
@@ -580,7 +583,9 @@ export async function updateUnifiedTaskStatus(task: WorkTask, status: string): P
   const source: 'task' | 'crm_task' | 'assignment' = kind === 'task'
     ? 'task'
     : kind === 'crm_task' ? 'crm_task' : 'assignment';
-  const updated = await updateWorkTaskStatus(task.lead_id, realId, status, source);
+  // Việc `crm_task` phải gọi theo DEAL thật (`deal_id`); `lead_id` có thể đã được gom về id dự án để nhóm theo dự án.
+  const leadForApi = source === 'crm_task' ? (task.deal_id || task.lead_id) : task.lead_id;
+  const updated = await updateWorkTaskStatus(leadForApi, realId, status, source);
   return { ...updated, id: task.id };
 }
 
