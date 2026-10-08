@@ -273,12 +273,18 @@ function isSxColumnClearsDeadlines(col) {
 }
 
 /** Alias cũ — dùng khi bật cờ hoàn thành trên cột. */
-async function clearSxKanbanDeadlinesForProjects(projectIds) {
-  return clearSxSchedulesOnCompletedForProjects(projectIds);
+async function clearSxKanbanDeadlinesForProjects(projectIds, cot = null) {
+  return clearSxSchedulesOnCompletedForProjects(projectIds, { cot });
 }
 
 async function clearSxKanbanDeadlinesForPipelineColumn(colId) {
   if (!colId) return;
+  // Lấy tên cột để sự kiện ghi đúng «hoàn thành ở cột nào» thay vì ghi hủy chung chung.
+  const { data: cot } = await supabase
+    .from('production_pipeline_stages')
+    .select('id, name')
+    .eq('id', colId)
+    .maybeSingle();
   const { data: leads } = await supabase
     .from('crm_leads')
     .select('project_id')
@@ -291,7 +297,7 @@ async function clearSxKanbanDeadlinesForPipelineColumn(colId) {
     .select('id')
     .eq('sx_kanban_column_id', colId);
   const fromProjects = (projects || []).map((p) => p.id);
-  await clearSxSchedulesOnCompletedForProjects([...fromLeads, ...fromProjects]);
+  await clearSxSchedulesOnCompletedForProjects([...fromLeads, ...fromProjects], { cot: cot || null });
 }
 
 /** Gán NV mặc định theo phân loại xưởng khi deal vào cột intake nếu dự án chưa có đủ NV SX. */
@@ -3765,7 +3771,7 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
       // Cột SX đã giao/hoàn thành: chỉ đóng và xóa deadline thuộc module SX.
       if (isColChange && isCompletedCol) {
         try {
-          await clearSxSchedulesOnCompletedForProjects([id]);
+          await clearSxSchedulesOnCompletedForProjects([id], { cot: colRow });
         } catch (clearErr) {
           console.warn('[production] clear SX schedules on completed column:', clearErr.message);
         }

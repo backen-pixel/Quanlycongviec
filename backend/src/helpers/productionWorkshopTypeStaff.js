@@ -428,7 +428,7 @@ async function pruneNonResponsibleCrmLeadMembersForDeal(dealId) {
 
   const { data: members, error: memErr } = await supabase
     .from('lead_members')
-    .select('user_id, user:users!lead_members_user_id_fkey(id, role, drive_module, email)')
+    .select('user_id, added_by, user:users!lead_members_user_id_fkey(id, role, drive_module, email)')
     .eq('lead_id', dealId);
   if (memErr) {
     console.warn('[productionWorkshopTypeStaff] prune load members:', memErr.message);
@@ -439,6 +439,10 @@ async function pruneNonResponsibleCrmLeadMembersForDeal(dealId) {
   for (const m of members || []) {
     const uid = String(m.user_id || '');
     if (!uid || keep.has(uid)) continue;
+    // Người được thêm tay ở tab Thành viên (added_by có giá trị) là chủ ý của người dùng —
+    // dọn tự động không được gỡ, nếu không họ bấm thêm xong là biến mất ngay lượt tải sau.
+    // Luồng tự động (mergeDealLeadMembers) để added_by = NULL nên vẫn dọn được như cũ.
+    if (m.added_by) continue;
     // Giữ NV SX/VC thêm tay; CRM thừa (không phụ trách) thì gỡ.
     if (isSxOrVcMemberUser(m.user)) continue;
     toRemove.push(uid);
@@ -863,7 +867,18 @@ async function ensureLeadMembersFromProjectStaff(leadId) {
   // Gỡ NV role không thuộc khối SX/VC (vd. staff/admin/sales) đã lỡ được ghi vào lead_members
   // qua các luồng cũ. Không đụng NV thêm tay từ tab Thành viên (không nằm trong roster xưởng).
   const allowedSet = new Set(userIds);
-  const surplus = [...allStaffCandidates].filter((uid) => !allowedSet.has(uid));
+  let surplus = [...allStaffCandidates].filter((uid) => !allowedSet.has(uid));
+  if (surplus.length) {
+    // Bỏ qua người được thêm tay ở tab Thành viên — xem ghi chú ở pruneNonResponsibleCrmLeadMembersForDeal.
+    const { data: thuCong } = await supabase
+      .from('lead_members')
+      .select('user_id')
+      .eq('lead_id', leadId)
+      .in('user_id', surplus)
+      .not('added_by', 'is', null);
+    const giuLai = new Set((thuCong || []).map((r) => String(r.user_id)));
+    surplus = surplus.filter((uid) => !giuLai.has(String(uid)));
+  }
   if (surplus.length) {
     const { error: delErr } = await supabase
       .from('lead_members')

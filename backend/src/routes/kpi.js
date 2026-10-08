@@ -49,8 +49,8 @@ r.use((req, res, next) => {
 });
 
 const MANAGER_ROLES = new Set(['admin', 'manager', 'director', 'supervisor', 'superadmin', 'super_admin', 'administrator', 'region_admin']);
-/** Tạo/duyệt đơn nghỉ hộ NV: manager+ và sales_admin (Sale Admin công ty). */
-const LEAVE_MANAGER_ROLES = new Set([...MANAGER_ROLES, 'sales_admin']);
+/** Tạo/duyệt đơn nghỉ hộ NV: quản trị HST, manager+ và sales_admin. */
+const LEAVE_MANAGER_ROLES = new Set([...MANAGER_ROLES, 'sales_admin', 'ecosystem_admin']);
 const ADMIN_ROLES = new Set(['admin', 'superadmin', 'super_admin', 'administrator']);
 
 function isManager(req) { return MANAGER_ROLES.has(String(req.user?.role || '').toLowerCase()); }

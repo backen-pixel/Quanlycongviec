@@ -450,7 +450,14 @@ r.get('/summary', async (req, res) => {
  * Quá hạn xếp trước, nhóm có hạn cũ nhất lên đầu. Một việc có thể có cả bản ở `tasks` lẫn `crm_tasks` → khử trùng.
  */
 const TEAM_PROJECT_TASK_KINDS = ['SX', 'Dự án', 'CRM-Deal'];
-const TEAM_TASKS_SCAN_CAP = 8000;
+/**
+ * Trần số dòng quét cho một lần tính. Trước đây 8000 và CẮT ÂM THẦM: HCB đã có ~6400 việc không hạn cũ (mọi phân loại,
+ * vì lọc phân loại làm SAU khi quét) nên sắp chạm trần, vượt là số đếm sai mà không báo. Nay trần cao hơn, quét theo
+ * từng đợt song song (không dồn hàng chục request cùng lúc), và nếu vẫn vượt thì trả `truncated` + `scan_total`.
+ */
+const TEAM_TASKS_SCAN_CAP = Math.max(1000, Number(process.env.TEAM_TASKS_SCAN_CAP) || 30000);
+/** Số lô 1000 dòng chạy song song mỗi đợt. */
+const TEAM_TASKS_SCAN_WAVE = Math.max(1, Number(process.env.TEAM_TASKS_SCAN_WAVE) || 6);
 /** Cache kết quả quét theo bộ lọc (30s): trang 2+ và lần mở lại không phải quét lại; dữ liệu cũ tối đa 30s. */
 const TEAM_TASKS_CACHE_MS = 30_000;
 const teamTasksCache = new Map();
@@ -520,16 +527,25 @@ r.get('/team-project-tasks', async (req, res) => {
       ).range(0, 999);
       if (first.error) throw first.error;
       const scanned = [...(first.data || [])];
-      const total = Math.min(Number(first.count) || scanned.length, TEAM_TASKS_SCAN_CAP);
+      const scanTotal = Number(first.count) || scanned.length;
+      const truncated = scanTotal > TEAM_TASKS_SCAN_CAP;
+      const total = Math.min(scanTotal, TEAM_TASKS_SCAN_CAP);
+      if (truncated) {
+        console.warn(`[work-tasks] team-project-tasks: ${scanTotal} dòng vượt trần quét ${TEAM_TASKS_SCAN_CAP} — số đếm chỉ tính phần đầu`);
+      }
       if (total > 1000) {
         const starts = [];
         for (let from = 1000; from < total; from += 1000) starts.push(from);
-        const parts = await Promise.all(starts.map(async (from) => {
-          const r = await applyScanFilters(supabase.from('unified_tasks_v').select(COLS)).range(from, from + 999);
-          if (r.error) throw r.error;
-          return r.data || [];
-        }));
-        parts.forEach((p) => scanned.push(...p));
+        // Quét theo ĐỢT song song (TEAM_TASKS_SCAN_WAVE lô mỗi đợt) — trần cao hơn thì không được dồn cả chục request một lúc.
+        for (let i = 0; i < starts.length; i += TEAM_TASKS_SCAN_WAVE) {
+          const wave = starts.slice(i, i + TEAM_TASKS_SCAN_WAVE);
+          const parts = await Promise.all(wave.map(async (from) => {
+            const r = await applyScanFilters(supabase.from('unified_tasks_v').select(COLS)).range(from, from + 999);
+            if (r.error) throw r.error;
+            return r.data || [];
+          }));
+          parts.forEach((p) => scanned.push(...p));
+        }
       }
 
       // Chip hạn xử lý: khử trùng phải thấy cả bản SX «song sinh» nằm NGOÀI khoảng. Nếu chỉ quét trong khoảng thì bản CRM
@@ -644,6 +660,9 @@ r.get('/team-project-tasks', async (req, res) => {
           in_progress: inProgress,
           no_deadline: noDeadline,
           groups: ordered.length,
+          // true = bộ lọc khớp nhiều dòng hơn trần quét nên số đếm chỉ tính phần đầu (xem TEAM_TASKS_SCAN_CAP).
+          truncated,
+          scan_total: scanTotal,
         },
       };
     };

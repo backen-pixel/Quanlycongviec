@@ -360,13 +360,25 @@ async function clearCrmLeadDeadlines(leadIds) {
   return n;
 }
 
-async function cancelOpenEvents({ leadIds, projectIds, module, reason }) {
+/**
+ * Đóng các sự kiện còn mở của một module.
+ * hoanThanh = true: việc đã làm xong → ghi «hoàn thành» + kết quả (mặc định cho các
+ * mốc hoàn tất). Chỉ khi việc thật sự bị bỏ mới để false để ghi «hủy».
+ */
+async function cancelOpenEvents({ leadIds, projectIds, module, reason, hoanThanh = false }) {
   const nowIso = new Date().toISOString();
-  const patch = {
-    status: 'cancelled',
-    cancel_reason: reason,
-    updated_at: nowIso,
-  };
+  const patch = hoanThanh
+    ? {
+      status: 'completed',
+      result: reason,
+      cancel_reason: null,
+      updated_at: nowIso,
+    }
+    : {
+      status: 'cancelled',
+      cancel_reason: reason,
+      updated_at: nowIso,
+    };
   const leads = uniqIds(leadIds);
   const projects = uniqIds(projectIds);
   for (const part of chunk(leads)) {
@@ -652,7 +664,8 @@ async function completeOpenWorkOnModuleDone({ module, leadIds = [], projectIds =
       leadIds: leads,
       projectIds: projects,
       module: 'logistics',
-      reason: 'Tự hủy khi kéo dự án VC/LĐ sang cột hoàn thành',
+      reason: 'Tự hoàn thành khi kéo dự án VC/LĐ sang cột hoàn thành',
+      hoanThanh: true,
     });
   }
 
@@ -787,13 +800,15 @@ async function finalizeHcbCanhKinhOnSxDone({ projectIds = [], leadIds = [] } = {
     leadIds: leads,
     projectIds: projects,
     module: 'production',
-    reason: `Tự hủy khi ${HCB_CANH_KINH_DONE_REASON}`,
+    reason: `Tự hoàn thành khi ${HCB_CANH_KINH_DONE_REASON}`,
+    hoanThanh: true,
   });
   await cancelOpenEvents({
     leadIds: leads,
     projectIds: projects,
     module: 'logistics',
-    reason: `Tự hủy khi ${HCB_CANH_KINH_DONE_REASON}`,
+    reason: `Tự hoàn thành khi ${HCB_CANH_KINH_DONE_REASON}`,
+    hoanThanh: true,
   });
 
   const cleared = await clearAllProjectDeadlinesOnInstallationDone({

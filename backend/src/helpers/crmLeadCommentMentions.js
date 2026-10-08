@@ -107,7 +107,9 @@ async function fetchLeadMentionMembers(supabase, leadId) {
 
   const { data: rows } = await supabase
     .from('lead_members')
-    .select('user_id, user:users!lead_members_user_id_fkey(id, full_name, email, avatar, role, company_id, drive_module)')
+    // Phải lấy cả lead_members.role: thiếu nó thì mọi thành viên về undefined,
+    // UI luôn hiện «Tham gia» và @Tất cả vẫn bắn cho người vai trò viewer.
+    .select('id, user_id, role, added_by, user:users!lead_members_user_id_fkey(id, full_name, email, avatar, role, company_id, drive_module)')
     .eq('lead_id', lid);
 
   const map = new Map();

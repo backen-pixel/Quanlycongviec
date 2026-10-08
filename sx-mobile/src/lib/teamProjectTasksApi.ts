@@ -29,6 +29,10 @@ export type TeamProjectCounts = {
   total: number;
   inProgress: number;
   groups: number;
+  /** true = bộ lọc khớp nhiều dòng hơn trần quét của máy chủ nên số đếm chỉ tính phần đầu. */
+  truncated?: boolean;
+  /** Số dòng thực tế khớp bộ lọc (khi bị cắt thì lớn hơn số đã tính). */
+  scanTotal?: number;
 };
 
 export type TeamProjectPage = {
@@ -174,6 +178,8 @@ export async function fetchTeamProjectTasksPage(o: Opts): Promise<TeamProjectPag
             total: Number(c.total) || 0,
             inProgress: Number(c.in_progress) || 0,
             groups: Number(c.groups) || 0,
+            truncated: Boolean(c.truncated),
+            scanTotal: Number(c.scan_total) || undefined,
           },
           hasMore: Boolean(data?.has_more),
           page,
