@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../lib/api';
-import { stateLabel, errorLabel, validateForm, commandBody, createRequestIdentity } from '../lib/p1Qualification';
+import { stateLabel, errorLabel, validateForm, commandBody, createRequestIdentity,
+  formatVnd, summaryReasonLabel, summaryCostLabel } from '../lib/p1Qualification';
 const ROOT = '/marketing-p1/qualification';
 const emptyForm = () => ({ contact_usable: false, need_in_scope: false, area_in_service: false, evidence_ref: '', reason: '' });
 export default function P1QualificationPanel({ duongDanLead }) {
@@ -9,8 +10,20 @@ export default function P1QualificationPanel({ duongDanLead }) {
   const [rows, setRows] = useState([]), [cursor, setCursor] = useState(null);
   const [more, setMore] = useState(false), [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(''), [dialog, setDialog] = useState(null);
+  const [summary, setSummary] = useState(null), [summaryError, setSummaryError] = useState('');
+  const [summaryLoading, setSummaryLoading] = useState(false), [summaryVersion, setSummaryVersion] = useState(0);
   const [form, setForm] = useState(emptyForm), identity = useRef(createRequestIdentity());
   const closeButton = useRef(null), opener = useRef(null);
+  useEffect(() => {
+    if (!enabled || !trialId) { setSummary(null); return; }
+    let active = true;
+    setSummary(null); setSummaryError(''); setSummaryLoading(true);
+    api.get(`${ROOT}/summary`, { params: { trial_id: trialId } })
+      .then(({ data }) => { if (active) setSummary(data); })
+      .catch(error => { if (active) setSummaryError(errorLabel(error.response?.data?.reason_code)); })
+      .finally(() => { if (active) setSummaryLoading(false); });
+    return () => { active = false; };
+  }, [enabled, trialId, summaryVersion]);
   useEffect(() => {
     let active = true;
     api.get(`${ROOT}/config`).then(() => {
@@ -70,6 +83,7 @@ export default function P1QualificationPanel({ duongDanLead }) {
       if (kind === 'revoke') await api.post(`${ROOT}/leads/${row.lead_id}/revoke`, body);
       else await api.put(`${ROOT}/leads/${row.lead_id}`, body);
       identity.current.reset(); setDialog(null); opener.current?.focus();
+      setSummaryVersion(value => value + 1);
       // Reload the current filter because the row can move out of it.
       const { data } = await api.get(`${ROOT}/queue`, { params: { trial_id: trialId, state: filter } });
       setRows(data.rows); setCursor(data.next_cursor); setMore(data.has_more); setMessage('Đã lưu trạng thái.');
@@ -92,7 +106,23 @@ export default function P1QualificationPanel({ duongDanLead }) {
   }, {});
   return <section className="rounded-xl border border-gray-200 bg-white p-4" aria-label="Đánh dấu khách hợp lệ">
     <h2 className="text-lg font-semibold">Đánh dấu khách hợp lệ (đợt thử)</h2>
-    <p className="mt-1 text-sm text-amber-800">Chưa đối chiếu tài khoản quảng cáo; chưa phải số chi phí mỗi khách.</p>
+    <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm" aria-label="Tổng hợp đợt thử">
+      {summaryLoading && <p role="status">Đang tải tổng hợp đợt thử…</p>}
+      {summaryError && <p role="alert">Không tải được tổng hợp: {summaryError}</p>}
+      {!trialId && <p>Chưa có đợt thử để tổng hợp.</p>}
+      {summary && <>
+        <p>Chi tiêu đợt thử: {summary.spend.vnd === null
+          ? `Chưa biết — ${(summary.spend.reasons || []).map(summaryReasonLabel).join('; ')}`
+          : formatVnd(summary.spend.vnd)}</p>
+        <p>Khách ứng viên / Hợp lệ / Chờ / Loại: {summary.leads.candidates} / {summary.leads.qualified} / {summary.leads.pending} / {summary.leads.rejected}</p>
+        {summary.leads.excluded_unavailable > 0 && <p>Không còn trong CRM: {summary.leads.excluded_unavailable}</p>}
+        <p>{summaryCostLabel(summary.cost_per_qualified_lead)}</p>
+        <p>Cập nhật: {new Date(summary.as_of).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}</p>
+        <p className="mt-2 font-semibold">Tạm tính, chưa kết luận đạt/không đạt</p>
+        <ul className="list-disc pl-5">{(summary.caveats || []).map(code =>
+          <li key={code}>{summaryReasonLabel(code)}</li>)}</ul>
+      </>}
+    </div>
     <div className="my-3 flex flex-wrap gap-2">
       <select aria-label="Đợt thử" value={trialId} onChange={e => setTrialId(e.target.value)} className="rounded border p-2">{trials.map(trial => <option key={trial.id} value={trial.id}>{trial.name}</option>)}</select>
       <select aria-label="Lọc trạng thái" value={filter} onChange={e => setFilter(e.target.value)} className="rounded border p-2">

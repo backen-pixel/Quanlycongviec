@@ -1,3 +1,10 @@
+## 2026-10-08 — P1-8: tổng hợp tạm tính chỉ đọc
+
+File: `p1Qualification.js` (route), `trialCohort.js`, 4 tệp test route/UI, `P1QualificationPanel.jsx`, `p1Qualification.js` (frontend/lib), CURRENT.md, WORKLOG.md. `/summary` không trả danh tính khách, không kết luận mục tiêu; scope trùng tài khoản giữ tổng chưa biết để tránh cộng đôi.
+Kiểm tra: Node test, `node --check`, `git diff --check` (số ca ở báo cáo cuối). Chưa kiểm DB/HTTP thật, build/trình duyệt, nguồn chi tiêu thật. Hoàn tác: bỏ đúng delta P1-8 và hai mục handoff này.
+
+---
+
 ## 2026-10-07 — P1-7b: khối đánh dấu khách hợp lệ
 
 File: `p1Qualification.js`, `p1QualificationQueue.route.test.js`, `p1QualificationUi.test.js`, `p1Qualification.js` (frontend/lib), `P1QualificationPanel.jsx`, `AdAnalyticsPage.jsx`, CURRENT.md, WORKLOG.md.

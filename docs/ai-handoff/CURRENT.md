@@ -1,3 +1,10 @@
+## 2026-10-08 — P1-8: tổng hợp tạm tính chi phí khách hợp lệ (mã cục bộ)
+
+GET `/summary` dùng cùng tập ứng viên với `/queue`, đọc chi tiêu Facebook theo scope và chỉ tính tiền khi đủ coverage; giao diện hiển thị số tạm tính, luôn `NOT_EVALUATED`. Cờ `VPT_P1_REVIEW_WRITE` giữ mặc định tắt; không ghi DB hay đổi quảng cáo.
+Kiểm thử Node và số ca xem WORKLOG. Chưa kiểm DB/HTTP thật, dữ liệu chi tiêu thật, build hay duyệt trình duyệt. Hoàn tác: bỏ đúng delta P1-8 trong route, module cohort, test, hai file UI và hai mục handoff này.
+
+---
+
 ## 2026-10-07 — P1-7b: màn admin đánh dấu khách đợt thử (mã cục bộ)
 
 Thêm GET config/trials/queue vào route P1 đang tắt mặc định và khối đánh dấu trên trang quảng cáo FB. Kênh ứng viên: `messenger`, `lead_ads`; scope tài khoản quảng cáo chưa đối chiếu.
