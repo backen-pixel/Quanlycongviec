@@ -1,6 +1,33 @@
 # Trạng thái công việc hiện tại
 
-Cập nhật: 2026-09-19 10:30 (UTC+7)
+Cập nhật: 2026-09-21 16:50 (UTC+7)
+
+## Zalo cá nhân — vá cho mô hình CRM ở VPS nước ngoài
+
+Trạng thái: **code xong, cổng ĐÃ chạy; backend CHƯA khởi động lại.**
+
+Mô hình đích: cổng `zalo-bridge` chạy máy văn phòng 24/7, CRM ở VPS nước ngoài.
+Hiện `crm.beppro.io.vn` vẫn vòng Cloudflare về `localhost:4000` của chính máy
+này — cùng máy, cùng DB, nên chưa phải mô hình thật.
+
+Bốn vá (chi tiết trong WORKLOG 2026-09-21):
+1. `crm.js` — `AbortSignal.timeout`, env `CRM_TIMEOUT_MS=20000`
+2. `zaloOutboxSweep.js` mới — tin kẹt `sending` quá 5 phút thành `failed`,
+   KHÔNG tự gửi lại
+3. `zaloBridgeLimiter` — rổ đếm riêng 1500/phút cho `/api/zalo-bridge`
+4. `zaloAttachmentCopy.js` — timeout 30s → 60s
+
+Việc phải làm tiếp:
+- **Khởi động lại backend** (đang là tiến trình root, không có `--watch`) để ba
+  vá phía server có hiệu lực. Kiểm: `RateLimit-Limit` phải là 1500.
+- Xoay `gateway_token` (khoá hiện tại đã lộ) và thêm `config.json` vào
+  `zalo-bridge/.gitignore`.
+- Khi dựng CRM thật ở VPS: chạy migration 558→565 trên DB đó, lấy token mới,
+  tạo hàng `zalo_oa_accounts` kèm `expected_phone`.
+
+Hoàn tác: revert 6 file — `zalo-bridge/src/{config,crm}.js`,
+`backend/src/{server.js,helpers/apiRateLimit.js,helpers/zaloAttachmentCopy.js}`,
+xoá `backend/src/helpers/zaloOutboxSweep.js`.
 
 ## CRM Kanban — 400 thiếu company_id (admin HST)
 

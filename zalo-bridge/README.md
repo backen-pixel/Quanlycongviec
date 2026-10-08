@@ -22,6 +22,18 @@ không đụng router. Tin CRM cần gửi thì cổng chủ động hỏi mỗi
 Một cụm chết thì bộ điều phối dựng lại sau 5 giây và nạp lại phiên từ đĩa —
 **không phải quét QR lại**. Các cụm khác không bị ảnh hưởng.
 
+Sơ đồ chi tiết, kèm bảng dữ liệu và kho tệp — mở bằng bất kỳ trình xem Mermaid nào:
+
+- [`docs/luong-zalo-ca-nhan-tong-the.mmd`](docs/luong-zalo-ca-nhan-tong-the.mmd) —
+  toàn cảnh: cổng, CRM, các bảng PostgreSQL, bucket đính kèm. Màu đường phân theo
+  chiều về, chiều đi, thao tác cơ sở dữ liệu, tệp đính kèm và các vòng nền.
+- [`docs/luong-zalo-ca-nhan-trinh-tu.mmd`](docs/luong-zalo-ca-nhan-trinh-tu.mmd) —
+  trình tự theo thời gian của một tin đến và một tin đi.
+
+`linkStyle` trong sơ đồ tổng thể đánh theo **chỉ số cạnh**. Các cạnh được xếp
+thành năm khối liền nhau, mỗi khối có dòng `%%` ghi rõ dải chỉ số. Thêm hay bớt
+một cạnh thì phải cộng dồn lại các dải phía sau, nếu không màu sẽ lệch.
+
 ## Ngân sách bộ nhớ
 
 Đo trên chính máy này (17/09/2026):

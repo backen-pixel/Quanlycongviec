@@ -27,6 +27,7 @@ const {
   apiBurstLimiter,
   apiWindowLimiter,
   uploadLimiter,
+  zaloBridgeLimiter,
 } = require('./helpers/apiRateLimit');
 
 const app = express();
@@ -101,6 +102,10 @@ app.use(helmet());
 // Rate-limit toàn /api (burst + cửa sổ 1 phút) — bỏ qua /health, tắt ở dev trừ khi FORCE=1
 app.use('/api', apiBurstLimiter, apiWindowLimiter);
 app.use('/api/upload', uploadLimiter);
+// Cổng Zalo ở máy văn phòng gọi lên theo nhịp cố định (outbox 3s, lệnh 10s,
+// trạng thái 30s…) và ra Internet bằng cùng IP NAT với nhân viên. Chung hạn mức
+// thì 15 tài khoản là ăn hết phần của người dùng. Cho nó rổ đếm riêng.
+app.use('/api/zalo-bridge', zaloBridgeLimiter);
 app.use('/api/voice-recordings', uploadLimiter);
 
 // CORS: phần lớn app dùng whitelist; /api/external xác thực bằng X-Api-Key nên cần cho phép
@@ -470,6 +475,13 @@ setInterval(() => {
 const zaloBridgeRouter = require('./routes/zaloBridge');
 zaloBridgeRouter._ioRef = io;
 app.use('/api/zalo-bridge', zaloBridgeRouter);
+
+// Tin kẹt ở 'sending' vì cổng mất mạng giữa chừng. Không tự gửi lại — xem
+// helpers/zaloOutboxSweep.js để biết vì sao.
+setInterval(() => {
+  require('./helpers/zaloOutboxSweep').sweepStuckSending(io)
+    .catch((e) => console.warn('[Zalo outbox] vòng dọn:', e.message));
+}, 60000);
 // Inject io reference for realtime fb_message events
 app.use('/api/production', require('./routes/production'));
 try { app.use('/api/production/backup-sync', require('./routes/productionBackupSync')); } catch (e) { console.warn('⚠️ production backup-sync route failed:', e.message); }

@@ -35,11 +35,15 @@ async function call(pathname, { method = 'GET', body } = {}) {
         ...(body ? { 'Content-Type': 'application/json' } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(config.crmTimeoutMs),
     });
   } catch (e) {
-    // Mất mạng / VPS không trả lời — fetch ném trước khi có response
+    // Mất mạng / VPS không trả lời — fetch ném trước khi có response.
+    // TimeoutError: kết nối treo quá hạn, xử lý y như mất mạng.
     health.lastErrorAt = new Date().toISOString();
-    health.lastError = `Không kết nối được tới CRM (${e.message})`;
+    health.lastError = e.name === 'TimeoutError'
+      ? `CRM không trả lời trong ${Math.round(config.crmTimeoutMs / 1000)} giây`
+      : `Không kết nối được tới CRM (${e.message})`;
     health.errorCount += 1;
     health.latencyMs = null;
     throw new Error(health.lastError);

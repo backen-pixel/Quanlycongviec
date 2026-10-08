@@ -1,0 +1,130 @@
+flowchart TB
+
+  subgraph KH["Khách hàng"]
+    DT["Điện thoại khách<br/>ứng dụng Zalo"]
+  end
+
+  subgraph ZALO["Hạ tầng Zalo — ngoài tầm kiểm soát"]
+    ZS["Máy chủ Zalo"]
+    CDN["Zalo CDN<br/>link ảnh và tệp"]
+  end
+
+  subgraph MAY["Máy tính văn phòng — cổng zalo-bridge"]
+    SUP["Bộ điều phối supervisor<br/>hỏi lệnh 10s · báo trạng thái 30s<br/>cụm chết thì dựng lại sau 5s"]
+    ZCA["zca-js trong worker<br/>WebSocket Zalo Web"]
+    ECHO["Lọc tin do chính mình gửi<br/>sentByUs theo msg_id"]
+    LOC{"Hội thoại đã gắn lead?<br/>allowlist làm mới 60s"}
+    OUTL["outboxLoop<br/>hỏi CRM mỗi 3 giây"]
+    LNKL["linkRequestLoop<br/>hỏi 15s · tối đa 5 mỗi lượt<br/>giãn 20s giữa từng lần tra"]
+    SES[("sessions/*.json<br/>phiên đăng nhập · 0600")]
+    SPO[("spool/*.jsonl<br/>hàng đợi khi mất mạng")]
+    CFG[("config.json<br/>khoá máy · 0600")]
+  end
+
+  subgraph CRMAPI["CRM trên VPS — Express"]
+    BR["/api/zalo-bridge<br/>xác thực X-Gateway-Token<br/>tuỳ chọn lọc IP"]
+    ING["ingestPersonalMessage"]
+    SEND["/api/zalo/contacts/:id/messages<br/>xác thực JWT nhân viên"]
+    COPY["Vòng nền chép đính kèm<br/>20 giây một lần · ngưỡng 10 MB"]
+    SERVE["/api/zalo/messages/:id/attachment<br/>kiểm tra quyền rồi đẩy thẳng tệp"]
+    SIO["Socket.IO"]
+  end
+
+  subgraph DB["Supabase — PostgreSQL"]
+    GW[("zalo_gateways<br/>gateway_token · last_seen_at")]
+    ACC[("zalo_oa_accounts<br/>gateway_id · expected_phone<br/>owner_user_id · bridge_status · qr_image")]
+    CON[("zalo_contacts<br/>thread_id ↔ lead_id<br/>nguồn của allowlist")]
+    MSG[("zalo_messages<br/>nội dung · stored_path<br/>attachment_status")]
+    OBX[("zalo_outbox<br/>pending → sending → sent/failed")]
+    PEND[("zalo_personal_pending_threads<br/>CHỈ tên · số · số lượt · thời điểm")]
+    LNK[("zalo_link_requests<br/>tra số → uid Zalo")]
+    CMD[("zalo_gateway_commands<br/>logout · restart · relogin")]
+    LEAD[("crm_leads + customers<br/>khớp lead theo số")]
+  end
+
+  subgraph BUCKET["Supabase Storage"]
+    ATT[("bucket attachments<br/>private · tối đa 50 MB")]
+  end
+
+  subgraph NV["Nhân viên"]
+    UI["Trình duyệt<br/>tab Zalo trong lead"]
+  end
+
+  %% ── Khối 0-8 · chiều về: khách nhắn tới ──────────────────
+  DT -->|"gõ tin"| ZS
+  ZS -->|"sự kiện tin nhắn"| ZCA
+  ZCA --> ECHO
+  ECHO --> LOC
+  LOC -->|"CHƯA gắn: chỉ tên, ảnh, số<br/>nội dung ở lại máy này"| BR
+  LOC -->|"ĐÃ gắn: gửi cả nội dung<br/>HTTPS + khoá máy"| BR
+  BR --> ING
+  ING --> SIO
+  SIO -->|"zalo_message realtime"| UI
+
+  %% ── Khối 9-13 · chiều đi: nhân viên trả lời ──────────────
+  UI -->|"nhân viên gõ trả lời"| SEND
+  OUTL -->|"GET /outbox, giành quyền"| BR
+  OUTL -->|"transport.send"| ZCA
+  ZCA --> ZS
+  ZS -->|"khách nhận tin"| DT
+
+  %% ── Khối 14-29 · đọc ghi cơ sở dữ liệu ───────────────────
+  BR -->|"đối chiếu khoá, đóng dấu last_seen_at"| GW
+  BR -->|"tài khoản có thuộc máy này?"| ACC
+  ING -->|"khớp số → lead"| LEAD
+  ING -->|"chưa gắn lead"| PEND
+  ING -->|"gắn được thì đánh dấu dismissed"| PEND
+  ING -->|"đã gắn lead"| MSG
+  ING -->|"unread_count, xem trước 100 ký tự"| CON
+  BR -->|"GET /allowlist: thread có lead_id"| CON
+  SEND -->|"ghi bong bóng, delivered = false"| MSG
+  SEND -->|"xếp hàng pending"| OBX
+  BR -->|"pending → sending"| OBX
+  BR -->|"sent + delivered = true"| MSG
+  BR --> LNK
+  BR --> CMD
+  BR -->|"bridge_status, account_phone, chủ sở hữu"| ACC
+  BR -->|"qr_image để admin quét từ xa"| ACC
+
+  %% ── Khối 30-35 · ảnh và tệp đính kèm ─────────────────────
+  MSG -.->|"attachment_status = pending"| COPY
+  COPY -->|"tải theo attachment_url"| CDN
+  COPY -->|"ghi tệp"| ATT
+  COPY -.->|"stored_path · stored / too_large / failed"| MSG
+  UI -->|"bấm xem ảnh, kèm JWT"| SERVE
+  SERVE --> ATT
+
+  %% ── Khối 36-46 · nền, dự phòng, quản trị ─────────────────
+  SES -.->|"nạp lại, khỏi quét QR"| ZCA
+  CFG -.->|"địa chỉ CRM + khoá"| BR
+  LOC -.->|"CRM không nhận được"| SPO
+  SPO -.->|"thử lại 15 giây"| BR
+  CON -.->|"danh sách hội thoại được lưu nội dung"| LOC
+  OUTL -.->|"POST ack, tối đa 3 lần"| BR
+  LNKL -->|"GET /link-requests"| BR
+  LNKL -.->|"POST ack: uid, tên, ảnh"| BR
+  SUP -->|"POST /status mỗi 30 giây"| BR
+  SUP -->|"GET /commands mỗi 10 giây"| BR
+  ZCA -->|"POST /qr khi cần đăng nhập"| BR
+
+  classDef ngoai fill:#FAECE7,stroke:#D85A30,stroke-width:1px,color:#4A1B0C
+  classDef may fill:#E1F5EE,stroke:#1D9E75,stroke-width:1px,color:#04342C
+  classDef tep fill:#F1EFE8,stroke:#888780,stroke-width:1px,color:#2C2C2A
+  classDef crm fill:#EEEDFE,stroke:#7F77DD,stroke-width:1px,color:#26215C
+  classDef csdl fill:#E6F1FB,stroke:#378ADD,stroke-width:1px,color:#042C53
+  classDef kho fill:#FAEEDA,stroke:#BA7517,stroke-width:1px,color:#412402
+  classDef nguoi fill:#FBEAF0,stroke:#D4537E,stroke-width:1px,color:#4B1528
+
+  class DT,ZS,CDN ngoai
+  class SUP,ZCA,ECHO,LOC,OUTL,LNKL may
+  class SES,SPO,CFG tep
+  class BR,ING,SEND,COPY,SERVE,SIO crm
+  class GW,ACC,CON,MSG,OBX,PEND,LNK,CMD,LEAD csdl
+  class ATT kho
+  class UI nguoi
+
+  linkStyle 0,1,2,3,4,5,6,7,8 stroke:#1D9E75,stroke-width:2px,color:#0F6E56
+  linkStyle 9,10,11,12,13 stroke:#D85A30,stroke-width:2px,color:#993C1D
+  linkStyle 14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29 stroke:#378ADD,stroke-width:1.5px,color:#185FA5
+  linkStyle 30,31,32,33,34,35 stroke:#BA7517,stroke-width:1.5px,color:#854F0B
+  linkStyle 36,37,38,39,40,41,42,43,44,45,46 stroke:#888780,stroke-width:1px,color:#5F5E5A

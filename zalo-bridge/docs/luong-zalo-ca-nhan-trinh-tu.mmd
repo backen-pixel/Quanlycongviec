@@ -1,0 +1,70 @@
+%%{init: {'theme':'base','themeVariables':{'primaryColor':'#EEEDFE','primaryBorderColor':'#7F77DD','primaryTextColor':'#26215C','actorBkg':'#E1F5EE','actorBorder':'#1D9E75','actorTextColor':'#04342C','signalColor':'#5F5E5A','signalTextColor':'#2C2C2A','labelBoxBkgColor':'#FAEEDA','labelBoxBorderColor':'#BA7517','labelTextColor':'#412402','noteBkgColor':'#FAECE7','noteBorderColor':'#D85A30','noteTextColor':'#4A1B0C','sequenceNumberColor':'#ffffff'}}}%%
+sequenceDiagram
+  autonumber
+  actor KH as Khách
+  participant ZS as Máy chủ Zalo
+  participant GW as Cổng zalo-bridge<br/>máy văn phòng
+  participant API as CRM /api/zalo-bridge
+  participant DB as PostgreSQL
+  participant ST as Storage attachments
+  actor NV as Nhân viên
+
+  rect rgb(225, 245, 238)
+  Note over KH,NV: Chiều về — khách nhắn tới
+  KH->>ZS: "Bao giờ giao được?"
+  ZS-->>GW: sự kiện tin nhắn qua WebSocket
+  GW->>GW: bỏ tin do chính mình vừa gửi, sentByUs
+  alt Hội thoại CHƯA gắn lead
+    GW->>GW: tách số điện thoại, GIỮ LẠI nội dung
+    GW->>API: POST /inbound — chỉ tên, ảnh đại diện, số
+    API->>DB: khớp số với customers + crm_leads
+    alt Khớp được lead
+      API->>DB: zalo_contacts.lead_id — gắn tự động
+      API->>DB: zalo_personal_pending_threads.dismissed = true
+      API->>DB: zalo_messages — hàng này nội dung RỖNG
+      Note over GW,DB: Cổng đã giữ nội dung lại trước khi gửi.<br/>Nội dung chỉ chảy từ tin KẾ TIẾP, sau khi<br/>allowlist làm mới, chậm nhất 60 giây.
+    else Không khớp
+      API->>DB: zalo_personal_pending_threads — chỉ đếm lượt
+      Note over DB: Nội dung tin KHÔNG nằm trong cơ sở dữ liệu
+    end
+  else Hội thoại ĐÃ gắn lead
+    GW->>API: POST /inbound — nội dung đầy đủ qua HTTPS
+    API->>DB: chống trùng theo zalo_msg_id
+    API->>DB: zalo_messages — content, attachment_url
+    API->>DB: zalo_contacts — unread_count, xem trước 100 ký tự
+  end
+  API-->>NV: Socket.IO zalo_message
+  Note over API,ST: Vòng nền 20 giây tải ảnh từ CDN Zalo về bucket,<br/>bỏ qua tệp trên 10 MB, ghi stored_path.<br/>Nhân viên bấm xem thì CRM kiểm tra quyền rồi đẩy thẳng tệp.
+  end
+
+  rect rgb(250, 236, 231)
+  Note over KH,NV: Chiều đi — nhân viên trả lời
+  NV->>API: POST /api/zalo/contacts/:id/messages — JWT
+  API->>DB: zalo_messages — delivered = false
+  API->>DB: zalo_outbox — status = pending
+  API-->>NV: trả 200 ngay, kể cả khi cổng đang chết
+  loop mỗi 3 giây
+    GW->>API: GET /outbox — kèm X-Gateway-Token
+  end
+  API->>DB: UPDATE pending → sending, giành quyền xử lý
+  API-->>GW: danh sách tin cần gửi
+  GW->>ZS: transport.send qua zca-js
+  ZS->>KH: "Dạ bên em còn hàng ạ"
+  GW->>GW: thêm thread vào allowlist ngay, khỏi đợi 60 giây
+  GW->>API: POST /outbox/:id/ack — ok, zalo_msg_id
+  API->>DB: zalo_outbox = sent, zalo_messages delivered = true
+  API-->>NV: Socket.IO zalo_outbox_ack — hiện dấu đã gửi
+  Note over API,DB: Thất bại thì quay về pending, attempts + 1,<br/>quá 3 lần thành failed
+  end
+
+  rect rgb(241, 239, 232)
+  Note over GW,DB: Nền — bộ điều phối tự chạy
+  loop mỗi 30 giây
+    GW->>API: POST /status — trạng thái từng tài khoản, số máy
+    API->>DB: zalo_oa_accounts.bridge_status, khớp chủ sở hữu
+  end
+  loop mỗi 10 giây
+    GW->>API: GET /commands — logout, restart, relogin
+    API->>DB: zalo_gateway_commands
+  end
+  end

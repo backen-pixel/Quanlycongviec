@@ -29,6 +29,12 @@ const config = {
   // trước khi tăng — mỗi phiên Zalo tốn thêm bộ nhớ thật.
   accountsPerWorker: num('ACCOUNTS_PER_WORKER', 4),
 
+  // CRM ở VPS nước ngoài: kết nối hay treo nửa chừng (mở nhưng không có dữ liệu
+  // về) chứ không đứt hẳn. Không đặt hạn thì vòng lặp đứng im vô hạn, không log,
+  // trang quản trị vẫn báo online. Hết hạn thì coi như lỗi mạng bình thường —
+  // spool và các vòng thử lại tiếp quản.
+  crmTimeoutMs: num('CRM_TIMEOUT_MS', 20000),
+
   outboxPollMs: num('OUTBOX_POLL_MS', 3000),
   allowlistRefreshMs: num('ALLOWLIST_REFRESH_MS', 60000),
   statusReportMs: num('STATUS_REPORT_MS', 30000),

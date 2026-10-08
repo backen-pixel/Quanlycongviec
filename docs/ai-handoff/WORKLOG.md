@@ -1,5 +1,44 @@
 # Nhật ký công việc AI
 
+## 2026-09-21 16:50 — Zalo cá nhân: vá 4 chỗ cho mô hình CRM ở VPS nước ngoài
+
+- AI: Claude Code. Ngữ cảnh mới: cổng chạy máy văn phòng 24/7, CRM ở VPS nước
+  ngoài. Soát code tìm những chỗ chỉ hỏng khi đường truyền dài. Bốn chỗ, đều
+  KHÔNG lộ ra khi chạy local.
+- **Timeout khi gọi CRM** (`zalo-bridge/src/crm.js`): `fetch` trần, không hạn
+  chờ. Đường ra nước ngoài hay treo nửa chừng (kết nối mở, không có dữ liệu về)
+  chứ không đứt hẳn — khi đó `outboxLoop`/`allowlistLoop` đứng im VÔ HẠN, không
+  log, `crm_health` giữ `lastOkAt` cũ, trang 8787 vẫn báo `online`. Vá:
+  `AbortSignal.timeout(config.crmTimeoutMs)`, mặc định 20s, env `CRM_TIMEOUT_MS`.
+  `TimeoutError` được coi như mất mạng → spool và vòng thử lại tiếp quản.
+- **Hàng `zalo_outbox` kẹt ở `sending`** (`backend/src/helpers/zaloOutboxSweep.js`
+  mới + `server.js`): `GET /outbox` đổi `pending→sending`; cổng mất mạng trước
+  khi ack thì KHÔNG có gì đưa về. Vá: vòng quét 60s, quá 5 phút (`claimed_at`)
+  thì đánh `failed` + `last_error` nói rõ "có thể đã gửi, kiểm tra Zalo trước
+  khi gửi lại", bắn `zalo_outbox_ack` để giao diện cập nhật.
+  **CỐ Ý KHÔNG tự gửi lại** — cổng có thể đã gửi xong rồi mới mất mạng, tự thử
+  lại là khách nhận hai lần. Đổi ý: sửa `'failed'` → `'pending'` trong helper.
+  Env `ZALO_OUTBOX_STUCK_MS`.
+- **Rate limit tính theo IP** (`backend/src/helpers/apiRateLimit.js` + `server.js`):
+  `/api` giới hạn 600 req/phút mỗi IP, mà cổng và nhân viên văn phòng ra Internet
+  CHUNG một IP NAT. Đo nhịp: mỗi tài khoản ~25 req/phút + supervisor 8 → 15 tài
+  khoản ≈ 383, cộng người dùng là chạm trần, chạm thì 429 cả hai. Vá:
+  `zaloBridgeLimiter` rổ đếm riêng (1500/phút, env `ZALO_BRIDGE_RATE_MAX`), và
+  `hasOwnLimiter()` cho `/api/zalo-bridge` thoát limiter chung để khỏi đếm hai lần.
+- **Timeout tải đính kèm** (`backend/src/helpers/zaloAttachmentCopy.js`): 30s cứng.
+  CRM ở nước ngoài kéo tệp từ CDN Zalo tại VN, tệp sát ngưỡng 10 MB dễ vượt và bị
+  đánh `failed` oan. Nay mặc định 60s, env `ZALO_ATTACHMENT_TIMEOUT_MS`.
+- **Đã kiểm chứng**: `node --check` sạch 6 file; `API_RATE_LIMITS` in ra có
+  `zaloBridge {60000, 1500}`; cổng khởi động lại 16:50, đăng nhập bằng session cũ
+  KHÔNG phải quét QR, "Số khớp khai báo (0344937397)", `errorCount = 0`, độ trễ
+  194–301 ms qua đường tunnel.
+- **CÒN TREO**: backend đang chạy là tiến trình `root`, `node --use-system-ca
+  src/server.js`, KHÔNG có `--watch` → ba vá phía backend CHƯA có hiệu lực, phải
+  khởi động lại backend. Kiểm bằng header `RateLimit-Limit` trên
+  `/api/zalo-bridge/*`: còn 600 là chưa nạp, 1500 là đã nạp.
+- Ghi chú: `zalo-bridge/config.json` chứa khoá máy dạng plaintext và VẪN chưa nằm
+  trong `.gitignore`. Khoá hiện tại đã lộ trong hội thoại, cần xoay.
+
 ## 2026-09-19 19:30 — Quản trị xoá được kinh nghiệm (2 lỗi)
 
 - AI: Claude Code. Anh B.A. báo bấm thùng rác ở tab Kinh nghiệm không ăn.

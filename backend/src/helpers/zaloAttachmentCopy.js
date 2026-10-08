@@ -24,7 +24,12 @@ const MIME_BY_TYPE = {
   file: 'application/octet-stream',
 };
 
-const FETCH_TIMEOUT_MS = 30000;
+/**
+ * CRM chạy ở VPS nước ngoài còn tệp nằm trên CDN Zalo tại Việt Nam, nên chặng
+ * tải này dài hơn hẳn so với lúc chạy trong nước. Tệp sát ngưỡng 10 MB qua
+ * đường đó có thể vượt 30 giây và bị đánh 'failed' oan.
+ */
+const FETCH_TIMEOUT_MS = Number(process.env.ZALO_ATTACHMENT_TIMEOUT_MS) || 60000;
 
 function extFromUrl(url) {
   const m = String(url || '').match(/\.([a-z0-9]{2,5})(?:[?#]|$)/i);
