@@ -1,3 +1,10 @@
+## 2026-10-08 — P1-9: mốc Cold/Warm/Hot (khách đã được sales phân loại) tự động (mã cục bộ)
+
+`/summary` thêm `milestone` từ lịch sử bước do người chuyển sau `cham_dau_luc` của ứng viên, chi phí đến nay và nhóm qua 4 ngày; vẫn `NOT_EVALUATED`, chỉ đọc, cờ mặc định tắt. UI hiển thị chỉ số thay thế trung tính; xác nhận thủ công là tuỳ chọn.
+Test Node trực tiếp và `node --check` đạt (xem WORKLOG). `trialCohort` lấy attribution mới nhất nếu khách có nhiều dòng, nên chưa bảo đảm `cham_dau_luc` là lần chạm đầu; chưa build/duyệt trình duyệt hoặc đối chiếu DB/HTTP thật. Hoàn tác: bỏ delta P1-9 và hai mục handoff này.
+
+---
+
 ## 2026-10-08 — P1-8: tổng hợp tạm tính chi phí khách hợp lệ (mã cục bộ)
 
 GET `/summary` dùng cùng tập ứng viên với `/queue`, đọc chi tiêu Facebook theo scope và chỉ tính tiền khi đủ coverage; giao diện hiển thị số tạm tính, luôn `NOT_EVALUATED`. Cờ `VPT_P1_REVIEW_WRITE` giữ mặc định tắt; không ghi DB hay đổi quảng cáo.

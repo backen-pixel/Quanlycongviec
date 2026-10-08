@@ -19,7 +19,20 @@ export const summaryReasonLabel = code => ({
   AD_ACCOUNT_SCOPE_UNVERIFIED: 'Chưa lọc khách theo tài khoản quảng cáo',
   SPEND_AD_LEVEL_ONLY: 'Chi tiêu mới đối chiếu ở cấp quảng cáo',
   FIRST_PAID_SOURCE_UNVERIFIED: 'Chưa xác minh nguồn trả phí đầu tiên',
+  MILESTONE_IS_STAGE_PROXY: 'Mốc theo bước bán hàng chỉ là chỉ số thay thế',
+  NO_MATURE_WINDOW: 'Chưa đủ cửa sổ chi tiêu cho nhóm qua 4 ngày',
 }[code] || 'Nguồn dữ liệu chưa đủ để đối chiếu');
+export const milestoneCostLabel = cost => cost?.status === 'PROVISIONAL'
+  ? formatVnd(cost.vnd_ceil)
+  : cost?.status === 'NO_QUALIFIED_LEADS' ? 'Chưa có khách đạt mốc' : 'Chưa biết';
+export function milestoneTargetMultiple(cost, targetVnd) {
+  if (cost?.status !== 'PROVISIONAL' || !Number.isSafeInteger(cost.numerator_vnd) ||
+      cost.numerator_vnd < 0 || !Number.isSafeInteger(cost.denominator) ||
+      cost.denominator < 1 || !Number.isSafeInteger(targetVnd) || targetVnd < 1) return null;
+  const base = BigInt(targetVnd) * BigInt(cost.denominator);
+  const tenths = (BigInt(cost.numerator_vnd) * 10n + base / 2n) / base;
+  return `${tenths / 10n},${tenths % 10n}`;
+}
 export function summaryCostLabel(cost) {
   if (cost?.status === 'PROVISIONAL' && Number.isSafeInteger(cost.vnd_ceil))
     return `Chi phí mỗi khách hợp lệ (TẠM TÍNH): ${formatVnd(cost.vnd_ceil)} — mục tiêu ≤ ${formatVnd(cost.target_vnd)}`;
