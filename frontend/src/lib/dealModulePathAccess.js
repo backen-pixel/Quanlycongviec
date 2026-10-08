@@ -149,6 +149,8 @@ export function buildDealModulePath({ leadId, projectId, currentModule = 'crm' }
 }
 
 function commentHomeModules(user) {
+  // Admin truy cập được cả 3 module → để sidebar đang mở quyết định, không mặc định CRM.
+  if (isAdminLike(user) || isSystemAdmin(user)) return ['crm', 'production', 'logistics'];
   return memberModulesFromUser(user).filter((m) => m === 'crm' || m === 'production' || m === 'logistics');
 }
 
