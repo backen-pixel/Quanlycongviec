@@ -20,6 +20,7 @@ import {
   sidebarModuleToNotificationFilter,
 } from '../lib/sidebarModuleContext';
 import {
+  resolveDealPrimaryProjectId,
   resolveLeadCommentNotificationPath,
   viewerCommentModuleKey,
 } from '../lib/dealModulePathAccess';
@@ -307,8 +308,22 @@ function eventsPathForNotification(n) {
 /** Bình luận deal — mở đúng module của người bấm (SX / VC / CRM), không theo module người gửi. */
 function navigateLeadCommentMention(navigate, n, setOpen, viewer) {
   const path = resolveLeadCommentNotificationPath(n, viewer || {});
-  if (path) navigate(path);
   setOpen?.(false);
+  const wantMod = viewerCommentModuleKey(viewer?.user, viewer?.activeModule);
+  const leadId = resolveCommentLeadId(n);
+  // Thông báo cũ thiếu project_id: người xem ở SX/VC mà path rơi về CRM → tra dự án từ deal.
+  if ((wantMod === 'production' || wantMod === 'logistics') && leadId && (!path || path.startsWith('/crm/'))) {
+    const tab = String(n?.metadata?.nav_tab || 'comments').trim() || 'comments';
+    api.get(`/crm/leads/${leadId}`)
+      .then((res) => {
+        const pid = resolveDealPrimaryProjectId(res?.data?.lead || res?.data);
+        if (pid) navigate(`/${wantMod === 'production' ? 'sx' : 'vc'}/projects/${pid}?tab=${encodeURIComponent(tab)}`);
+        else if (path) navigate(path);
+      })
+      .catch(() => { if (path) navigate(path); });
+    return;
+  }
+  if (path) navigate(path);
 }
 
 /**
