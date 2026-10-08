@@ -1,3 +1,7 @@
+## 2026-10-08 — P1-12: đối soát chi tiêu cấp tài khoản (local)
+Kéo tổng Meta theo ngày cấp tài khoản sau ghi quảng cáo; MATCH/MISMATCH/UNAVAILABLE vào ket_qua_cuoi, coverage và caveat summary theo đối soát. Chưa chạy SQL, DB/mạng, Meta thật, bật cờ, commit hay push.
+Kiểm chứng: 210/210 test fake fetch, P1/adAnalytics và node --check đạt; sau triển khai cần Claude đọc ket_qua_cuoi sau lần đồng bộ tiếp theo. Hoàn tác: bỏ diff P1-12 và mục này.
+
 ## 2026-10-08 — Sửa test báo cáo quảng cáo adAnalytics
 
 Sáu lỗi ở /pages-profile, /page-ads, /page-posts do DB giả thiếu toán tử .is('lead_id', null) đã thêm trong mã báo cáo; sửa harness tại backend/tests/adAnalytics.correctness.test.js, giữ nguyên khẳng định đếm Lead và đọc theo lô.

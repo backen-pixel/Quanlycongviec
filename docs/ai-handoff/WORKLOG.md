@@ -1,3 +1,7 @@
+## 2026-10-08 — P1-12: đối soát tổng chi tiêu Meta
+Sửa fbMarketingSync.js, spendCoverage.js, trialSummary.js, nhãn p1Qualification.js và test tương ứng; không đổi ghi fb_ad_spend_daily hay khóa kết quả cũ. Lệch trong kỳ thành PARTIAL; thiếu đối soát giữ AD_LEVEL_ONLY.
+Kiểm thử: 210/210 test, node --check đạt bằng fetch/DB giả; chưa xác minh dữ liệu Meta thật. Hoàn tác: bỏ diff các tệp P1-12 và hai mục handoff.
+
 ## 2026-10-08 — Khôi phục 6 test adAnalytics
 
 - Gốc lỗi: commit 58ea0102 thêm demChuaThanhLead dùng .is('lead_id', null) ở backend/src/routes/adAnalytics.js:189; harness backend/tests/adAnalytics.correctness.test.js:39-56 thiếu .is nên ba route trả 500. Test cũ, không phải lỗi đếm nghiệp vụ.

@@ -19,6 +19,7 @@ export const summaryReasonLabel = code => ({
   AD_ACCOUNT_SCOPE_UNVERIFIED: 'Chưa lọc khách theo tài khoản quảng cáo',
   LEADS_FROM_UNCONNECTED_ADS: 'Có khách đến từ quảng cáo chưa thuộc tài khoản đã nối',
   SPEND_AD_LEVEL_ONLY: 'Chi tiêu mới đối chiếu ở cấp quảng cáo',
+  SPEND_ACCOUNT_TOTAL_MISMATCH: 'Tổng chi tiêu từng quảng cáo lệch tổng của tài khoản (có thể thiếu quảng cáo)',
   FIRST_PAID_SOURCE_UNVERIFIED: 'Chưa xác minh nguồn trả phí đầu tiên',
   MILESTONE_IS_STAGE_PROXY: 'Mốc theo bước bán hàng chỉ là chỉ số thay thế',
   NO_MATURE_WINDOW: 'Chưa đủ cửa sổ chi tiêu cho nhóm qua 4 ngày',
