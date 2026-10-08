@@ -9,6 +9,13 @@
 
 ---
 
+## 2026-10-08 — P1-10: snapshot đợt thử (local)
+
+Đổi `database/713_p1_trial_snapshots*.sql`, `backend/src/modules/marketingAutomation/{trialSummary,spendCoverage}.js`, `backend/src/jobs/p1TrialSnapshotRunner.js`, route P1, một dòng server và test liên quan.
+Kiểm tra Node trực tiếp: summary/queue, spendCoverage, snapshot runner/route và SQL tĩnh đạt; `node --check` và `git diff --check` đạt.
+Chưa thử SQL thật, quyền/rollback trên Supabase, HTTP/DB và dữ liệu thật; Claude sẽ kiểm trên nhánh tạm. Rollback chỉ DROP bảng rỗng.
+---
+
 ## 2026-10-08 — SX mobile: bỏ trần quét 8000 cắt âm thầm của team-project-tasks
 
 - Backend `backend/src/routes/workTasks.js` (commit `813f5bde`): `TEAM_TASKS_SCAN_CAP = max(1000, env || 30000)`; thêm `TEAM_TASKS_SCAN_WAVE = max(1, env || 6)`; vòng quét các lô sau lô đầu chạy theo đợt (`for … i += WAVE`, mỗi đợt `Promise.all`). `scanTotal = first.count`, `truncated = scanTotal > cap`; vượt thì `console.warn`. `counts` trả thêm `truncated`, `scan_total` (nằm trong cache 30 s cùng `counts`).

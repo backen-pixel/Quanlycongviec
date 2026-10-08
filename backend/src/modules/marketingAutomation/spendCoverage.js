@@ -18,9 +18,9 @@ function dayNumber(value) {
   return Number.isFinite(day) && new Date(day).toISOString().slice(0, 10) === value ? day / DAY_MS : null;
 }
 
-function result(status, spendVnd, asOf, daysCovered, reasons) {
+function result(status, spendVnd, asOf, daysCovered, reasons, daily = []) {
   // There is no Meta account-level total here to reconcile against ad-level spend.
-  return { status, spendVnd, asOf, daysCovered, reasons, reconciliation: 'AD_LEVEL_ONLY' };
+  return { status, spendVnd, asOf, daysCovered, reasons, reconciliation: 'AD_LEVEL_ONLY', daily };
 }
 
 function evaluateSpendCoverage({ accountId, from, to, rows, sync, nowMs, today } = {}) {
@@ -38,6 +38,7 @@ function evaluateSpendCoverage({ accountId, from, to, rows, sync, nowMs, today }
   const reasons = [];
   let failed = false, currencyMismatch = false;
   let spend = 0, validRows = 0;
+  const byDay = new Map();
   const seen = new Set();
   for (const row of rows) {
     if (!row || row.ad_account_id !== accountId || dayNumber(row.ngay) === null ||
@@ -53,6 +54,9 @@ function evaluateSpendCoverage({ accountId, from, to, rows, sync, nowMs, today }
     validRows++;
     spend += amount;
     if (!Number.isSafeInteger(spend)) return result('FAILED', null, asOf, daysCovered, ['AMOUNT_OVERFLOW']);
+    const dayTotal = (byDay.get(row.ngay) || 0) + amount;
+    if (!Number.isSafeInteger(dayTotal)) return result('FAILED', null, asOf, daysCovered, ['AMOUNT_OVERFLOW']);
+    byDay.set(row.ngay, dayTotal);
   }
 
   if (report?.currency !== 'VND') { currencyMismatch = true; reasons.push('SYNC_CURRENCY'); }
@@ -71,7 +75,8 @@ function evaluateSpendCoverage({ accountId, from, to, rows, sync, nowMs, today }
   if (provenZero) reasons.push('NO_ROWS_CONFIRMED_ZERO');
   // Without rows or a complete account sync, zero is not evidence of no spend.
   const spendVnd = validRows === 0 && !provenZero ? null : spend;
-  return result(status, spendVnd, asOf, daysCovered, [...new Set(reasons)]);
+  return result(status, spendVnd, asOf, daysCovered, [...new Set(reasons)],
+    status === 'COMPLETE' ? [...byDay].map(([day, vnd]) => ({ account_id: accountId, day, vnd })) : []);
 }
 
 function vietnamToday(nowMs) {

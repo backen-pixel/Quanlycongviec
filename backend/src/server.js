@@ -1270,6 +1270,7 @@ server.listen(config.port, () => {
   // Cron phân tích hiệu quả quảng cáo Facebook: 60 phút/lần (disable: AD_ANALYSIS_CRON_DISABLED=1)
   try { require('./jobs/adAnalysisRunner').start(); } catch (e) { console.warn('[phan-tich-qc] Failed to start:', e.message); }
   try { require('./jobs/fbMarketingSyncRunner').start(); } catch (e) { console.warn('[dong-bo-qc] Failed to start:', e.message); }
+  try { require('./jobs/p1TrialSnapshotRunner').start(); } catch { console.warn('[p1-snapshot] START_FAILED'); }
 
   // Cron CSKH: nhắc chăm lại lead lúc 8h30 & 13h30 VN (disable bằng CSKH_CRON_DISABLED=1)
   try { require('./jobs/cskhReminder').start(io); } catch (e) { console.warn('[cskh-cron] Failed to start:', e.message); }
