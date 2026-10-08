@@ -1,3 +1,33 @@
+## 2026-10-07 — P1-7b: khối đánh dấu khách hợp lệ
+
+File: `p1Qualification.js`, `p1QualificationQueue.route.test.js`, `p1QualificationUi.test.js`, `p1Qualification.js` (frontend/lib), `P1QualificationPanel.jsx`, `AdAnalyticsPage.jsx`, CURRENT.md, WORKLOG.md.
+Kiểm tra: Node 37/37 test đạt, `node --check` route, `git diff --check`; chưa chạy build, trình duyệt, DB/HTTP thật. Hoàn tác: bỏ đúng delta và tệp P1-7b nêu trên.
+
+---
+
+## 2026-10-07 — P1-7: route qualification mặc định tắt
+
+File: `p1Qualification.js`, `p1Qualification.route.test.js`, một dòng `server.js`, CURRENT.md, WORKLOG.md. Admin cùng công ty hoặc admin hệ thống trong HST được duyệt; cờ tắt 404, backup 503, lỗi DB được lọc.
+Kiểm tra: `node --check` route/server; route 22/22, qualification/trialRegistry 11/11, `git diff --check`. Chưa kiểm chứng HTTP thật, migration/RPC thật, failover thật.
+
+---
+
+## 2026-10-06 — P1-5: qualification events
+File: hai SQL 712, `qualification.js`, `qualification.test.js`, CURRENT.md, WORKLOG.md. Chỉ thêm bảng sự kiện/RPC và module chưa nối runtime.
+Kiểm tra: `node --check` đạt; test qualification 6/6 và test trialRegistry 5/5 đạt; `git diff --check` sạch.
+Chưa kiểm chứng: SQL thực, chạy migration hai lần/rollback, ACL và giao tranh trên bản sao; test Node giả không chứng minh các điểm này.
+
+---
+## 2026-10-06 — P1-6: adapter chi tiêu chỉ đọc
+- Thêm module thuần và adapter `fb_ad_accounts`/`fb_ad_spend_daily` phân trang, kiểm sync/VND/cửa sổ/tính tươi/trùng dòng/tràn số; không chọn token hoặc ghi DB.
+- Kiểm tra: `node --check` hai file; P1-6 14/14, fbMarketingSync 8/8, leadMeasurement 38/38; chưa đối chiếu DB/Meta thật.
+- Quyết định: tổng chỉ có bằng chứng cấp ad (`AD_LEVEL_ONLY`); không có dòng và sync không đủ thì tiền `null`. Hoàn tác: bỏ hai file JS và hai mục P1-6.
+
+---
+
+## 2026-10-06 — P1-2: thu hồi quyền thừa của service_role (SQL 710)
+- 710 đã áp lên DB chính (PG 17.6, 3 bảng rỗng, RLS bật, anon/authenticated = 0). Kiểm tra sau áp thấy service_role còn UPDATE/DELETE/TRUNCATE trên bảng nhật ký do quyền mặc định của Supabase; thiết kế yêu cầu chỉ SELECT+INSERT.
+- Sửa 710: thêm REVOKE ALL FROM service_role trước GRANT. Bài thử nhánh tạm giờ cài quyền mặc định giống DB chính; 35/35 đạt. Chưa áp bản sửa lên DB chính (cần Founder duyệt riêng).
 ## 2026-10-07 — SX mobile (quản lý): việc dự án cả đội, lọc hạn ở máy chủ, khử trùng trước khi lọc
 
 - Backend `backend/src/routes/workTasks.js`: route mới `GET /team-project-tasks` (chỉ quản lý; tham số `company_id, assignee_id, q, due_days, created_days, workshop_type_id, no_deadline, due_from, due_to, page, page_size`). `computeTeamTasks` quét `unified_tasks_v` song song, cache 30 s (`teamTasksCache`), khử trùng theo `project_id|title` (ưu tiên bản không phải `crm_task`), gom nhóm theo dự án (quá hạn → sắp đến hạn → mới/không hạn). Commit cuối `698c5a68`: khi có `due_from/due_to`, lấy thêm bản không-`crm_task` của các dự án có việc CRM trong khoảng, khử trùng rồi mới lọc lại khoảng hạn. Cũng `crmAssignments.js`: `exclude_done=1`; `crmTaskLeadAccess.js`: `assigneeReadGrant` cho GET comments/members.

@@ -1,3 +1,30 @@
+## 2026-10-07 — P1-7b: màn admin đánh dấu khách đợt thử (mã cục bộ)
+
+Thêm GET config/trials/queue vào route P1 đang tắt mặc định và khối đánh dấu trên trang quảng cáo FB. Kênh ứng viên: `messenger`, `lead_ads`; scope tài khoản quảng cáo chưa đối chiếu.
+Kiểm tra: 7 test queue, 2 test UI, 22 test route cũ, 6 test qualification đạt bằng Node; chưa build/duyệt trình duyệt, chưa kiểm DB/HTTP thật. Hoàn tác: bỏ delta P1-7b ở route, hai test, hai file UI mới, import/JSX và hai mục handoff.
+
+---
+
+## 2026-10-07 — P1-7: route xác nhận khách (mã cục bộ)
+
+Thêm route admin `GET/PUT/POST /api/marketing-p1/qualification/leads/:leadId` (POST thêm `/revoke`), mặc định tắt bằng `VPT_P1_REVIEW_WRITE`. Kiểm CRM company, phạm vi HST và primary trước RPC; chỉ trả trường sự kiện cho phép.
+Kiểm thử: route 22/22, qualification/trialRegistry 11/11; chưa thử HTTP thật, DB thật hay SQL. Hoàn tác: bỏ route/test, một dòng mount và hai mục handoff P1-7.
+
+---
+
+## 2026-10-06 — P1-5: sự kiện xác nhận khách (SQL 712, mã cục bộ)
+
+Thêm SQL 712/rollback, adapter `qualification.js` và test giả; chưa nối route/UI, chưa chạy SQL hay DB thật. `canonical_lead_id` tạm là `crm_leads.id`; P1-3 sẽ xử lý gộp và đếm trùng. Kiểm thử và số ca xem mục WORKLOG cùng ngày.
+Hoàn tác: chạy rollback trên bản sao được phép (giữ bảng có dữ liệu), rồi bỏ đúng delta P1-5 và hai mục handoff.
+
+---
+## 2026-10-06 — P1-6: đọc chi tiêu Facebook và chứng minh coverage (local)
+
+Thêm `spendCoverage.js` chỉ đọc và `spendCoverage.test.js`; không route, migration hay kết nối nguồn thật. 14/14 test P1-6, 8/8 đồng bộ cũ, 38/38 lead measurement đạt bằng Node. Chỉ kết luận `COMPLETE` khi sync và mọi dòng đủ điều kiện; chưa có đối soát tổng cấp tài khoản Meta (`AD_LEVEL_ONLY`). Claude cần chạy adapter với DB thật và đối chiếu 27.589.061 đ cho 07/09–05/10 cùng trạng thái sync trước PR. Hoàn tác: bỏ hai file JS P1-6 và hai mục bàn giao P1-6.
+
+---
+
+## 2026-10-06 16:39 — Sửa cổng xác minh callback Lead App trước chuyển đổi (mã cục bộ)
 ## 2026-10-07 — SX mobile tab Công việc/Dự án của quản lý: lọc theo hạn, khử trùng, tự nhảy cột
 
 App sx-mobile (quản lý/admin) tab Công việc lấy việc dự án của cả đội qua `GET /api/work-tasks/team-project-tasks` (phân trang theo nhóm dự án, quá hạn lên trước, có mục riêng "Không hạn" cho việc cũ hơn 7 ngày). Chip Hạn xử lý (Hôm nay / Ngày mai / Trong tuần / Tuần sau), Phân loại và Người đều lọc ở máy chủ (`due_from`, `due_to`, `workshop_type_id`, `assignee_id`).
