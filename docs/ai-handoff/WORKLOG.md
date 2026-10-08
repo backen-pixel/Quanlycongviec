@@ -1,3 +1,7 @@
+## 2026-10-08 — P1-8: tổng hợp tạm tính chỉ đọc
+
+File: `p1Qualification.js` (route), `trialCohort.js`, 4 tệp test route/UI, `P1QualificationPanel.jsx`, `p1Qualification.js` (frontend/lib), CURRENT.md, WORKLOG.md. `/summary` không trả danh tính khách, không kết luận mục tiêu; scope trùng tài khoản giữ tổng chưa biết để tránh cộng đôi.
+Kiểm tra: Node test, `node --check`, `git diff --check` (số ca ở báo cáo cuối). Chưa kiểm DB/HTTP thật, build/trình duyệt, nguồn chi tiêu thật. Hoàn tác: bỏ đúng delta P1-8 và hai mục handoff này.
 ## 2026-10-08 — SX mobile: summary HCB hết 500 (chia lô id) và KPI app theo cột
 
 - Backend `backend/src/helpers/sxKanbanSummary.js` (commit `06b530d7`): thêm `scanRowsMaybeChunked` (dùng `pickChunkTarget`, `chunkIds`, `SX_URL_SAFE_ID_MAX=300` của `sxChunkedIdPage.js`); `thinScanSummary` và `loadSxDeadlineBucketPage` tách phần phân trang thành `scanOnce`, chạy từng lô song song rồi hợp nhất theo `id`. Gốc lỗi: `applySxKanbanRowScope` → `buildScopeOrFilter` đưa `id.in.(…wonIds…)` vào URL; HCB 652 id > ~556.
