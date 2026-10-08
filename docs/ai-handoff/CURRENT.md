@@ -1,3 +1,10 @@
+## 2026-10-07 — P1-7b: màn admin đánh dấu khách đợt thử (mã cục bộ)
+
+Thêm GET config/trials/queue vào route P1 đang tắt mặc định và khối đánh dấu trên trang quảng cáo FB. Kênh ứng viên: `messenger`, `lead_ads`; scope tài khoản quảng cáo chưa đối chiếu.
+Kiểm tra: 7 test queue, 2 test UI, 22 test route cũ, 6 test qualification đạt bằng Node; chưa build/duyệt trình duyệt, chưa kiểm DB/HTTP thật. Hoàn tác: bỏ delta P1-7b ở route, hai test, hai file UI mới, import/JSX và hai mục handoff.
+
+---
+
 ## 2026-10-07 — P1-7: route xác nhận khách (mã cục bộ)
 
 Thêm route admin `GET/PUT/POST /api/marketing-p1/qualification/leads/:leadId` (POST thêm `/revoke`), mặc định tắt bằng `VPT_P1_REVIEW_WRITE`. Kiểm CRM company, phạm vi HST và primary trước RPC; chỉ trả trường sự kiện cho phép.

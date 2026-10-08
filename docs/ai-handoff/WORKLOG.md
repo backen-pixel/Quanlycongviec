@@ -1,3 +1,10 @@
+## 2026-10-07 — P1-7b: khối đánh dấu khách hợp lệ
+
+File: `p1Qualification.js`, `p1QualificationQueue.route.test.js`, `p1QualificationUi.test.js`, `p1Qualification.js` (frontend/lib), `P1QualificationPanel.jsx`, `AdAnalyticsPage.jsx`, CURRENT.md, WORKLOG.md.
+Kiểm tra: Node 37/37 test đạt, `node --check` route, `git diff --check`; chưa chạy build, trình duyệt, DB/HTTP thật. Hoàn tác: bỏ đúng delta và tệp P1-7b nêu trên.
+
+---
+
 ## 2026-10-07 — P1-7: route qualification mặc định tắt
 
 File: `p1Qualification.js`, `p1Qualification.route.test.js`, một dòng `server.js`, CURRENT.md, WORKLOG.md. Admin cùng công ty hoặc admin hệ thống trong HST được duyệt; cờ tắt 404, backup 503, lỗi DB được lọc.
