@@ -2,6 +2,13 @@
 
 File: `p1Qualification.js` (route), `trialCohort.js`, 4 tệp test route/UI, `P1QualificationPanel.jsx`, `p1Qualification.js` (frontend/lib), CURRENT.md, WORKLOG.md. `/summary` không trả danh tính khách, không kết luận mục tiêu; scope trùng tài khoản giữ tổng chưa biết để tránh cộng đôi.
 Kiểm tra: Node test, `node --check`, `git diff --check` (số ca ở báo cáo cuối). Chưa kiểm DB/HTTP thật, build/trình duyệt, nguồn chi tiêu thật. Hoàn tác: bỏ đúng delta P1-8 và hai mục handoff này.
+## 2026-10-08 — SX mobile: summary HCB hết 500 (chia lô id) và KPI app theo cột
+
+- Backend `backend/src/helpers/sxKanbanSummary.js` (commit `06b530d7`): thêm `scanRowsMaybeChunked` (dùng `pickChunkTarget`, `chunkIds`, `SX_URL_SAFE_ID_MAX=300` của `sxChunkedIdPage.js`); `thinScanSummary` và `loadSxDeadlineBucketPage` tách phần phân trang thành `scanOnce`, chạy từng lô song song rồi hợp nhất theo `id`. Gốc lỗi: `applySxKanbanRowScope` → `buildScopeOrFilter` đưa `id.in.(…wonIds…)` vào URL; HCB 652 id > ~556.
+- App `sx-mobile/src/lib/sxBoardKpis.ts` (commit `09a403dc`): `computeSxBoardKpis` đếm producing/awaiting/shipped bằng `sxColumnKpiKey(stageOf(...))` thay cho `projectIsProducing/AwaitingDelivery/projectIsShipped`; xóa `columnSaysShipped`. Khớp web `computeSxRevenueKpis` và BE `classifyRowStageKpi`.
+- PR: #53, #54 đã merge vào main; nhánh đã gộp `origin/main` cục bộ (`a947afb2`, chỉ xung đột CURRENT.md/WORKLOG.md, giữ cả hai bên), chưa push vì cây trùng main.
+- Kiểm tra (chỉ-đọc, không ghi dữ liệu thật): script Node gọi `loadSxKanbanColumnSummary` cho HCB Tủ bếp 429 / SP 41 / CVC 5 / DVC 121 / QH 7, HCB mọi loại 652, Metalla 91 (24/1/3) không đổi; đếm tay theo luật cột trong DB ra 41/5/121. Đo API (lượt 2-3): team-project-tasks 435-484 ms, bảng sản xuất 259-284 ms (690 KB), work-tasks ~780 ms. Khởi động nguội app trên LDPlayer 3,3-3,9 s (chỉ để so sánh nội bộ).
+- Ngoài phạm vi, để ngỏ: TB-2026-556 bị loại khỏi bảng (web và app); `TEAM_TASKS_SCAN_CAP` cắt âm thầm; số «5 quá hạn» trên web vs 7; TB-2026-1037/1038 hiện nhãn «Đã giao»; mất thân bài mục 06/10 16:39 do gộp #55. Chưa kiểm chứng sau deploy (cần LDPlayer + Metro hoặc đăng nhập web).
 
 ---
 
