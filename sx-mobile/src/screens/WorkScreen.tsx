@@ -389,6 +389,12 @@ function createStyles(colors: AppColors, bottomInset: number) {
       alignItems: 'center',
       gap: 12,
     },
+    truncNote: {
+      paddingHorizontal: Spacing.lg,
+      paddingBottom: 8,
+      fontSize: 11,
+      color: colors.warning,
+    },
     statsItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
     statsDot: { width: 6, height: 6, borderRadius: 3 },
     statsLabel: { fontSize: 11, fontWeight: '700' },
@@ -2251,6 +2257,12 @@ export default function WorkScreen() {
           <Text style={[styles.statsNum, { color: colors.danger }]}>{stats.overdue}</Text>
         </View>
       </View>
+
+      {teamView && teamCounts?.truncated ? (
+        <Text style={styles.truncNote}>
+          Danh sách quá lớn{teamCounts.scanTotal ? ` (${teamCounts.scanTotal} việc)` : ''} nên số đếm chỉ tính phần đầu — hãy lọc thêm theo người hoặc phân loại.
+        </Text>
+      ) : null}
 
       {error ? (
         <View style={styles.errorBox}>

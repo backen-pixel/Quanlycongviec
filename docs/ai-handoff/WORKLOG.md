@@ -1,3 +1,12 @@
+## 2026-10-08 — SX mobile: bỏ trần quét 8000 cắt âm thầm của team-project-tasks
+
+- Backend `backend/src/routes/workTasks.js` (commit `813f5bde`): `TEAM_TASKS_SCAN_CAP = max(1000, env || 30000)`; thêm `TEAM_TASKS_SCAN_WAVE = max(1, env || 6)`; vòng quét các lô sau lô đầu chạy theo đợt (`for … i += WAVE`, mỗi đợt `Promise.all`). `scanTotal = first.count`, `truncated = scanTotal > cap`; vượt thì `console.warn`. `counts` trả thêm `truncated`, `scan_total` (nằm trong cache 30 s cùng `counts`).
+- App (commit `7c44e4bb`): `teamProjectTasksApi.ts` thêm `truncated?`, `scanTotal?` vào `TeamProjectCounts` và map từ `counts.truncated/scan_total`; `WorkScreen.tsx` hiện `styles.truncNote` dưới dòng thống kê khi `teamView && teamCounts?.truncated`.
+- Kiểm tra (chỉ-đọc, không ghi dữ liệu thật): server Express tạm mount router thật, thay `middleware/auth` bằng bản giả trong bộ nhớ; HCB không hạn mọi loại 5411 việc/314 nhóm (`scan_total` 6410, không cắt); Tủ bếp không hạn 5177/294; mặc định 864 quá hạn, 1434/108; Hôm nay 51/3. Ép `TEAM_TASKS_SCAN_CAP=3000` → `truncated=true`, tính 2521 việc, có cảnh báo. `node --check` và `tsc` sạch.
+- Chưa làm: xem dòng cảnh báo trên màn hình app; đẩy lọc phân loại xuống truy vấn để khỏi quét mọi phân loại; chưa merge/deploy.
+
+---
+
 ## 2026-10-08 — P1-9: đo chi phí theo mốc bán hàng tự động
 
 File: `stageMilestone.js`, `p1Qualification.js` (route), `stageMilestone.test.js`, `p1QualificationSummary.route.test.js`, `p1QualificationUi.test.js`, `P1QualificationPanel.jsx`, `p1Qualification.js` (frontend/lib), CURRENT.md, WORKLOG.md. Chỉ đọc lịch sử bước và chi tiêu; không ghi DB, không kết luận mục tiêu.
@@ -9,6 +18,8 @@ Kiểm tra: `node --check` và test Node chạy trực tiếp (số ca trong bá
 
 File: `p1Qualification.js` (route), `trialCohort.js`, 4 tệp test route/UI, `P1QualificationPanel.jsx`, `p1Qualification.js` (frontend/lib), CURRENT.md, WORKLOG.md. `/summary` không trả danh tính khách, không kết luận mục tiêu; scope trùng tài khoản giữ tổng chưa biết để tránh cộng đôi.
 Kiểm tra: Node test, `node --check`, `git diff --check` (số ca ở báo cáo cuối). Chưa kiểm DB/HTTP thật, build/trình duyệt, nguồn chi tiêu thật. Hoàn tác: bỏ đúng delta P1-8 và hai mục handoff này.
+---
+
 ## 2026-10-08 — SX mobile: summary HCB hết 500 (chia lô id) và KPI app theo cột
 
 - Backend `backend/src/helpers/sxKanbanSummary.js` (commit `06b530d7`): thêm `scanRowsMaybeChunked` (dùng `pickChunkTarget`, `chunkIds`, `SX_URL_SAFE_ID_MAX=300` của `sxChunkedIdPage.js`); `thinScanSummary` và `loadSxDeadlineBucketPage` tách phần phân trang thành `scanOnce`, chạy từng lô song song rồi hợp nhất theo `id`. Gốc lỗi: `applySxKanbanRowScope` → `buildScopeOrFilter` đưa `id.in.(…wonIds…)` vào URL; HCB 652 id > ~556.
