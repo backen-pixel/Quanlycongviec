@@ -414,6 +414,7 @@ async function filterNotificationsForCompanyViewerAsync(rows, viewer) {
   }
 
   const leadCompanyMap = new Map();
+  const leadProjectMap = new Map();
   if (leadIds.size) {
     const { data: leads } = await supabase
       .from('crm_leads')
@@ -423,7 +424,10 @@ async function filterNotificationsForCompanyViewerAsync(rows, viewer) {
       const set = new Set();
       addCompanyId(set, l.company_id);
       addCompanyId(set, l.sx_template_company_id);
-      if (l.project_id) projectIds.add(String(l.project_id));
+      if (l.project_id) {
+        projectIds.add(String(l.project_id));
+        leadProjectMap.set(String(l.id), String(l.project_id));
+      }
       leadCompanyMap.set(String(l.id), set);
     }
     try {
@@ -439,25 +443,23 @@ async function filterNotificationsForCompanyViewerAsync(rows, viewer) {
 
   const projectCompanyMap = new Map();
   if (projectIds.size) {
-    for (const pid of projectIds) {
-      const set = new Set();
-      await collectProjectRelatedCompanyIds(pid, set);
-      projectCompanyMap.set(String(pid), set);
+    // Mỗi dự án = nhiều truy vấn; chạy tuần tự từng cái làm trung tâm thông báo load rất chậm.
+    const pidList = [...projectIds];
+    const CONCURRENCY = 8;
+    for (let i = 0; i < pidList.length; i += CONCURRENCY) {
+      await Promise.all(pidList.slice(i, i + CONCURRENCY).map(async (pid) => {
+        const set = new Set();
+        await collectProjectRelatedCompanyIds(pid, set);
+        projectCompanyMap.set(String(pid), set);
+      }));
     }
   }
 
-  // Gắn company từ project vào lead map
-  if (leadIds.size) {
-    const { data: leads } = await supabase
-      .from('crm_leads')
-      .select('id, project_id')
-      .in('id', [...leadIds]);
-    for (const l of leads || []) {
-      const set = leadCompanyMap.get(String(l.id)) || new Set();
-      const pset = l.project_id ? projectCompanyMap.get(String(l.project_id)) : null;
-      if (pset) pset.forEach((c) => set.add(c));
-      leadCompanyMap.set(String(l.id), set);
-    }
+  // Gắn company từ project vào lead map (dùng lại project_id đã lấy ở trên, không query lại crm_leads)
+  for (const [lid, set] of leadCompanyMap) {
+    const pid = leadProjectMap.get(lid);
+    const pset = pid ? projectCompanyMap.get(pid) : null;
+    if (pset) pset.forEach((c) => set.add(c));
   }
 
   for (const n of needResolve) {
