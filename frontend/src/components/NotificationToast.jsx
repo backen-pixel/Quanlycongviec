@@ -38,8 +38,11 @@ function resolveToastDisplay(notification) {
   let contextLabel = null;
   let message = rawMessage;
 
+  const leadTitle = String(meta.lead_title || '').trim();
+  const titleWithLead = leadTitle && !title.includes(leadTitle) ? `${title} · ${leadTitle}` : title;
+
   if (senderName && title && title !== senderName) {
-    contextLabel = title;
+    contextLabel = titleWithLead;
   } else if (!senderName && title) {
     userName = title;
   } else if (!title && !senderName && notification?.entity_type === 'crm_lead') {

@@ -31,6 +31,61 @@ Test Node trực tiếp và `node --check` đạt; chưa chạy SQL, kết nối
 Kiểm chứng chỉ-đọc bằng server Express tạm (auth giả trong bộ nhớ, dữ liệu thật): HCB không hạn mọi loại quét 6410 dòng, `truncated=false`; ép `TEAM_TASKS_SCAN_CAP=3000` thì `truncated=true`, `scan_total=6410`; Tủ bếp mặc định 864 quá hạn / 1434 việc / 108 nhóm, Hôm nay 51/3 — khớp app. Chưa xem dòng cảnh báo trên màn hình app (cần ép trần trên backend máy, đổi JWT và mất phiên đăng nhập); mới kiểm kiểu bằng tsc. Chưa merge/deploy.
 
 Chưa xử lý gốc: lọc phân loại vẫn chạy SAU khi quét nên «Tủ bếp» vẫn quét cả 6410 việc của HCB; trần mới chỉ là đệm. Muốn gọn hơn thì đẩy lọc phân loại xuống truy vấn.
+---
+
+## 2026-10-08 — Bàn giao VC không còn làm đơn biến mất khỏi module Sản xuất
+
+Xưởng báo: chuyển đơn sang VC/LĐ xong thì không thấy đơn nữa. Nguyên nhân: bàn giao ghi `current_stage_id = null`, trong khi mọi màn lọc theo giai đoạn chạy `.eq('current_stage.slug', stage_slug)` (`production.js`) — NULL không khớp slug nào nên đơn rụng khỏi danh sách, không báo lỗi gì.
+
+Sửa: thêm `resolveVcHandoverWorkflowStageId()` ở `backend/src/helpers/workshopKanban.js` (trả stage `delivery`, lùi dần `shipping`/`installation`/`installing`). Bàn giao nay ghi stage đó thay vì null — 3 chỗ trong `PATCH /production/projects/:id/handover-vc` (`production.js`, gồm 2 nhánh fallback khi DB thiếu cột) và 1 chỗ ở `vcHandoverCore.js`. Khớp với `SX_STAGE_SLUG_STATUS`: `delivery` ↔ `status 'shipping'` mà chính bàn giao đang ghi. Không đụng logic đọc, không đổi cột Kanban.
+
+Đã vá dữ liệu cũ: `backend/scripts/_tmp_backfill_current_stage_sau_vc.js --apply` gán stage theo đúng `status` hiện tại cho **143 dự án** (133 Hucabi, 8 Phúc Đạt, 2 Vạn Phú Thành). Rollback: `backend/uploads/_rollback_current_stage_sau_vc_1791442560935.json`. Đếm lại sau khi ghi: đơn đã sang VC còn `current_stage_id` NULL giảm **177 → 34** (riêng HCB 158 → 25).
+
+Chưa xử lý: 34 đơn còn lại không ánh xạ được vì `status` là `completed` (18) hoặc `consulting` (16) — `consulting` mà đã sang VC là dữ liệu sai từ luồng khác (TB-2026-1037, 1038, 991, 1019, 1030, 1031, 1035…), cần truy riêng. Chưa chạy thử qua trình duyệt.
+
+Ngoài phạm vi, còn để ngỏ: 25 đơn chủ là Metalla/Phúc Đạt đã sang VC không nằm trong `getExecutorProjectIdsForCompany(HCB)` → NV HCB mở bị 403 (`production.js:3092-3101`); hàm đó dựa vào `crm_tasks.executor_company_id` gần như không được set (chỉ ra 9 dự án, 0 đơn đặt xưởng).
+
+---
+
+## 2026-10-08 — Vào cột «Đã VC» tự đóng nhiệm vụ SX từ cột đó trở về trước
+
+Kéo thẻ SX sang cột tick «Đã VC» (`production_pipeline_stages.dashboard_kpi = 'shipped'`, cài ở /sx/pipeline-settings) thì mọi nhiệm vụ SX còn mở thuộc cột đó **trở về trước** tự chuyển hoàn thành. Nhiệm vụ ở cột SAU (chốt công nợ, thu tiền, kế toán) giữ nguyên.
+
+Mã: `completeSxWorkUpToShippedColumn` + `isSxShippedColumn` trong `backend/src/helpers/completeOpenWorkOnModuleDone.js`; gọi từ `PATCH /api/production/projects/:id/stage` (nhánh cột pipeline) trong `setImmediate`, chạy TRƯỚC `applyProductionTemplatesOnPipelineEnter` để việc do chính cột «Đã VC» sinh ra khi vừa tới vẫn còn mở. Thứ tự cột lấy theo `order_index` trong phạm vi công ty + phân loại xưởng (`getProductionPipelineStagesForWorkshopType`). Đóng `crm_tasks` sx_* (cột theo `production_pipeline_stage_id`, fallback `stage_slug` cũ qua `resolveSxTaskProductionStageId`) và `tasks` dự án (theo `production_stage_id`); `crm_assignments` chỉ đóng theo đúng `crm_task_id` vừa đóng, không quét theo lead.
+
+Nhiệm vụ KHÔNG gắn cột nào thì để nguyên — không suy được nó trước hay sau mốc giao hàng, đoán sai sẽ đóng nhầm việc công nợ.
+
+Thử chỉ-đọc trên dữ liệu thật (`backend/scripts/_tmp_dryrun_shipped_complete.js`): HCB có đúng 1 cột tick «Đã VC» (#18 ĐƠN HÀNG ĐÃ GIAO, phân loại Tủ bếp), 124 dự án đang nằm sẵn ở đó → sẽ đóng 242 `crm_tasks` (#1 38, #4 131, #14 73), giữ nguyên 38 việc ở #19 CHỐT CÔNG NỢ và #23 CÔNG NỢ ĐÃ CHỐT, bỏ qua 5 việc không xác định được cột. `tasks` dự án = 0 vì toàn bộ `production_stage_id` đang NULL.
+
+Đã hồi tố 124 dự án nằm sẵn ở cột đó bằng `backend/scripts/_tmp_backfill_shipped_column_complete.js --apply` (gọi đúng hàm chạy thật): đóng 242 `crm_tasks`, 0 `tasks`, 0 assignment. Rollback: `backend/uploads/_rollback_hcb_shipped_column_complete_1791434791696.json`. Chạy lại bản dry-run sau khi ghi: còn 0 việc trước mốc giao, 38 việc công nợ và 5 việc không rõ cột vẫn nguyên.
+
+Chưa làm: chưa chạy thử qua API/trình duyệt thật (mới gọi trực tiếp hàm). Nhiệm vụ bảng `tasks` vẫn chưa gắn cột nên cơ chế không chạm tới — muốn bao phủ cả nhóm này thì phải gắn `production_stage_id` cho bộ mẫu xưởng.
+
+---
+
+## 2026-10-08 — Backfill người phụ trách nhiệm vụ SX tháng 10 (HCB)
+
+Commit `98d16c5b` (cùng ngày) đã sửa để nhiệm vụ xưởng mới tự nhận người phụ trách (cột SX → phân loại xưởng), nhưng không hồi tố nhiệm vụ cũ. Chạy `backend/scripts/_tmp_backfill_hcb_sx_cot_lon_assignee.js --apply`, giới hạn nhiệm vụ tạo trong tháng 10/2026 (theo yêu cầu người dùng): 777 nhiệm vụ SX đang mở của HCB chưa có người nhận → gán theo "Phụ trách SX ★" của phân loại xưởng (không có task nào khớp cấu hình theo cột SX vì `production_stage_id` của task cũ đều NULL). Rollback: `backend/uploads/_rollback_hcb_backfill_sx_cot_lon_assignee_1791432736908.json`. Đã xác nhận lại: 0 nhiệm vụ tháng 10 còn trống người phụ trách.
+
+Chưa xử lý: ~5.300 nhiệm vụ mở của các tháng trước (không thuộc phạm vi yêu cầu lần này) và 123 nhiệm vụ không gán được vì dự án chưa có `workshop_type_id`.
+
+---
+
+## 2026-10-08 — Kanban SX: mọi thẻ đều kéo được
+
+Bỏ khóa kéo thẻ bảo hành / đang lắp chưa gắn VC trên bảng Sản xuất. `projectLockedOnSxKanban` luôn trả về không khóa.
+
+---
+
+## 2026-10-08 — Lịch chọn khoảng ngày trên form đơn nghỉ
+
+Form tạo/sửa đơn nghỉ ở Lịch nghỉ bỏ hai ô `type="date"`. Thay bằng lịch bấm ngày bắt đầu rồi ngày kết thúc; các ngày ở giữa, kể cả chủ nhật, được tô và ghi số ngày. Nút Đóng / Gửi nằm cố định dưới khung.
+
+---
+
+## 2026-10-07 — Thông báo bình luận ngắn tiêu đề, hiện đủ nội dung
+
+Tiêu đề thông báo bình luận deal/dự án đổi từ «tên đơn đầy đủ · Bình luận mới» sang «mã dự án (hoặc mã deal) · Bình luận mới / Nhắc bạn». Tên đơn đầy đủ vẫn ở `metadata.lead_title`: popup ghép sau tiêu đề, chuông hiện thành dòng phụ. Nội dung bình luận hiện tối đa 4 dòng (trước 2). Thông báo cũ giữ nguyên tiêu đề dài. Chưa sửa app mobile.
 
 ---
 
