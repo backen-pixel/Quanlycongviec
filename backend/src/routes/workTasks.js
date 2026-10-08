@@ -42,6 +42,7 @@ const {
   fetchUnifiedTasksSummary,
 } = require('../helpers/unifiedTasksQuery');
 const { fetchAllByIds, fetchAllByIdsParallel, fetchAllPages } = require('../helpers/supabaseFetchAll');
+const { SX_URL_SAFE_ID_MAX } = require('../helpers/sxChunkedIdPage');
 const { resolveWorkRegionScope, taskMatchesRegionScope } = require('../helpers/workRegionFilter');
 const {
   projectOverviewCategoryId,
@@ -456,11 +457,48 @@ const TEAM_PROJECT_TASK_KINDS = ['SX', 'Dự án', 'CRM-Deal'];
  * từng đợt song song (không dồn hàng chục request cùng lúc), và nếu vẫn vượt thì trả `truncated` + `scan_total`.
  */
 const TEAM_TASKS_SCAN_CAP = Math.max(1000, Number(process.env.TEAM_TASKS_SCAN_CAP) || 30000);
+/** Tập dự án của loại nhỏ hơn ngưỡng này thì đẩy `project_id in (…)` xuống truy vấn quét (nhanh); lớn hơn thì dùng phần bù. */
+const TEAM_TASKS_IN_MAX = 200;
 /** Số lô 1000 dòng chạy song song mỗi đợt. */
 const TEAM_TASKS_SCAN_WAVE = Math.max(1, Number(process.env.TEAM_TASKS_SCAN_WAVE) || 6);
 /** Cache kết quả quét theo bộ lọc (30s): trang 2+ và lần mở lại không phải quét lại; dữ liệu cũ tối đa 30s. */
-const TEAM_TASKS_CACHE_MS = 30_000;
+const TEAM_TASKS_CACHE_MS = Math.max(0, Number(process.env.TEAM_TASKS_CACHE_MS) || 30_000);
 const teamTasksCache = new Map();
+/** Tổng dòng quét lần trước theo bộ lọc — chỉ để bắn sớm các lô khi tính lại (không ảnh hưởng kết quả). */
+const teamScanHint = new Map();
+/** Phạm vi dự án của loại lần trước theo công ty+loại — để quét sớm song song với việc lấy dự án mới (luôn kiểm lại, không ảnh hưởng kết quả). */
+const teamTypeScopeCache = new Map();
+
+/** Tên người dùng theo id (cache 10 phút) — chế độ `lite` chỉ cần `assignee_name`, khỏi chạy cả `enrichTaskModuleOwners`. */
+const USER_NAME_TTL_MS = 10 * 60_000;
+const userNameCache = new Map();
+async function lookupUserNames(ids) {
+  const out = new Map();
+  const now = Date.now();
+  const missing = [];
+  for (const id of ids) {
+    const hit = userNameCache.get(id);
+    if (hit && now - hit.at < USER_NAME_TTL_MS) out.set(id, hit.name);
+    else missing.push(id);
+  }
+  if (missing.length) {
+    const users = await fetchAllByIdsParallel({
+      table: 'users',
+      columns: 'id, full_name',
+      key: 'id',
+      ids: missing,
+      tune: (q) => q.order('id'),
+    });
+    const found = new Map((users || []).map((u) => [String(u.id), u.full_name || null]));
+    for (const id of missing) {
+      const name = found.get(id) ?? null;
+      userNameCache.set(id, { name, at: now });
+      out.set(id, name);
+    }
+    if (userNameCache.size > 5000) userNameCache.delete(userNameCache.keys().next().value);
+  }
+  return out;
+}
 
 r.get('/team-project-tasks', async (req, res) => {
   try {
@@ -521,32 +559,140 @@ r.get('/team-project-tasks', async (req, res) => {
         return qy;
       };
 
-      // Lô đầu kèm tổng số dòng → các lô còn lại chạy SONG SONG (PostgREST cắt ở 1000 dòng/lần).
-      const first = await applyScanFilters(
-        supabase.from('unified_tasks_v').select(COLS, { count: 'exact' }),
-      ).range(0, 999);
-      if (first.error) throw first.error;
-      const scanned = [...(first.data || [])];
-      const scanTotal = Number(first.count) || scanned.length;
-      const truncated = scanTotal > TEAM_TASKS_SCAN_CAP;
-      const total = Math.min(scanTotal, TEAM_TASKS_SCAN_CAP);
-      if (truncated) {
-        console.warn(`[work-tasks] team-project-tasks: ${scanTotal} dòng vượt trần quét ${TEAM_TASKS_SCAN_CAP} — số đếm chỉ tính phần đầu`);
-      }
-      if (total > 1000) {
-        const starts = [];
-        for (let from = 1000; from < total; from += 1000) starts.push(from);
-        // Quét theo ĐỢT song song (TEAM_TASKS_SCAN_WAVE lô mỗi đợt) — trần cao hơn thì không được dồn cả chục request một lúc.
-        for (let i = 0; i < starts.length; i += TEAM_TASKS_SCAN_WAVE) {
-          const wave = starts.slice(i, i + TEAM_TASKS_SCAN_WAVE);
-          const parts = await Promise.all(wave.map(async (from) => {
-            const r = await applyScanFilters(supabase.from('unified_tasks_v').select(COLS)).range(from, from + 999);
-            if (r.error) throw r.error;
-            return r.data || [];
-          }));
-          parts.forEach((p) => scanned.push(...p));
+      // Lọc theo PHÂN LOẠI xưởng (`workshop_type_id`: mã loại hoặc `none`) — view không có cột này nên lấy tập dự án trước rồi
+      // ĐẨY XUỐNG truy vấn quét để khỏi đọc cả công ty: trước đây «Tủ bếp» vẫn đọc ~6.000 dòng, loại rỗng vẫn quét hết, và
+      // `scan_total` / `truncated` đo sai phạm vi. Chọn tập NHỎ HƠN (đo trên HCB: `in` nhanh với ≤ ~200 id nhưng chậm gấp 3-4
+      // lần khi 300+ id; `not in` phần bù nhanh bằng truy vấn không lọc): loại ít dự án → `project_id in (…)`; loại chiếm đa số
+      // (vd. Tủ bếp) → `project_id not in (các dự án loại khác)`; cả hai đều lớn → quét cả công ty như cũ. Luôn lọc lại bằng tập
+      // id ở máy để giữ nguyên ngữ nghĩa cũ (việc của dự án thuộc công ty khác vẫn bị loại).
+      const typeRaw = String(req.query.workshop_type_id || '').trim();
+      const emptyTeamResult = () => ({
+        ordered: [],
+        counts: {
+          overdue: 0, soon: 0, total: 0, in_progress: 0, no_deadline: 0, groups: 0, truncated: false, scan_total: 0,
+        },
+      });
+      // Lấy phạm vi dự án của loại (+ cách đẩy xuống truy vấn): { typedSet, pushdown } — `pushdown` = { mode: 'in' | 'notin', ids } | null.
+      const loadTypeScope = async () => {
+        const isNone = typeRaw.toLowerCase() === 'none';
+        const projectRows = async (typeFilter) => {
+          const build = (cols, opts) => {
+            let pq = supabase.from('projects').select(cols, opts).order('id', { ascending: true });
+            if (effectiveCompany) pq = pq.eq('company_id', effectiveCompany);
+            if (typeFilter) pq = isNone ? pq.is('workshop_type_id', null) : pq.eq('workshop_type_id', typeRaw);
+            return pq;
+          };
+          const cols = 'id, workshop_type_id';
+          const pFirst = await build(cols, { count: 'exact' }).range(0, 999);
+          if (pFirst.error) throw pFirst.error;
+          const out = [...(pFirst.data || [])];
+          const pTotal = Math.min(Number(pFirst.count) || 0, 20000);
+          if (pTotal > 1000) {
+            const pStarts = [];
+            for (let from = 1000; from < pTotal; from += 1000) pStarts.push(from);
+            const pParts = await Promise.all(pStarts.map(async (from) => {
+              const r = await build(cols).range(from, from + 999);
+              if (r.error) throw r.error;
+              return r.data || [];
+            }));
+            pParts.forEach((p) => out.push(...p));
+          }
+          return out;
+        };
+        // Có công ty → lấy một lần mọi dự án của công ty (id + loại) để suy ra cả tập loại lẫn phần bù; không có → chỉ tập loại.
+        const rowsAll = await projectRows(!effectiveCompany);
+        const isType = (p) => (isNone
+          ? !p.workshop_type_id
+          : String(p.workshop_type_id || '').toLowerCase() === typeRaw.toLowerCase());
+        const typedRows = effectiveCompany ? rowsAll.filter(isType) : rowsAll;
+        const typedSetLocal = new Set(typedRows.map((p) => String(p.id)));
+        const complement = effectiveCompany
+          ? rowsAll.filter((p) => !typedSetLocal.has(String(p.id))).map((p) => String(p.id))
+          : null;
+        let pd = null;
+        if (typedSetLocal.size && typedSetLocal.size <= TEAM_TASKS_IN_MAX) pd = { mode: 'in', ids: [...typedSetLocal] };
+        else if (typedSetLocal.size && complement && complement.length <= SX_URL_SAFE_ID_MAX) pd = { mode: 'notin', ids: complement };
+        return { typedSet: typedSetLocal, pushdown: pd };
+      };
+
+      // Quét theo một cách đẩy xuống `pd`: lô đầu kèm tổng số dòng → các lô còn lại chạy song song theo ĐỢT (PostgREST cắt ở
+      // 1000 dòng/lần; trần cao hơn thì không được dồn cả chục request một lúc). Nếu lần trước đã biết tổng (`hint`), bắn sẵn các
+      // lô đầu tiên CÙNG LÚC với lô đầu thay vì đợi đếm xong — lần tính lại sau khi cache hết hạn chỉ tốn ~một lượt truy vấn.
+      const runScan = async (pd) => {
+        const build = (qy) => {
+          const q2 = applyScanFilters(qy);
+          if (!pd || !pd.ids.length) return q2;
+          return pd.mode === 'in'
+            ? q2.in('project_id', pd.ids)
+            : q2.not('project_id', 'in', `(${pd.ids.join(',')})`);
+        };
+        const fetchBatch = async (from) => {
+          const r = await build(supabase.from('unified_tasks_v').select(COLS)).range(from, from + 999);
+          if (r.error) throw r.error;
+          return r.data || [];
+        };
+        const hint = Math.min(Number(teamScanHint.get(cacheKey)) || 0, TEAM_TASKS_SCAN_CAP);
+        const spec = new Map();
+        for (let from = 1000, n = 0; from < hint && n < TEAM_TASKS_SCAN_WAVE; from += 1000, n += 1) {
+          spec.set(from, fetchBatch(from).catch(() => null));
         }
+        const first = await build(supabase.from('unified_tasks_v').select(COLS, { count: 'exact' })).range(0, 999);
+        if (first.error) throw first.error;
+        const rows = [...(first.data || [])];
+        const scanTotal = Number(first.count) || rows.length;
+        const truncated = scanTotal > TEAM_TASKS_SCAN_CAP;
+        const total = Math.min(scanTotal, TEAM_TASKS_SCAN_CAP);
+        if (truncated) {
+          console.warn(`[work-tasks] team-project-tasks: ${scanTotal} dòng vượt trần quét ${TEAM_TASKS_SCAN_CAP} — số đếm chỉ tính phần đầu`);
+        }
+        if (total > 1000) {
+          const starts = [];
+          for (let from = 1000; from < total; from += 1000) starts.push(from);
+          for (let i = 0; i < starts.length; i += TEAM_TASKS_SCAN_WAVE) {
+            const wave = starts.slice(i, i + TEAM_TASKS_SCAN_WAVE);
+            const parts = await Promise.all(wave.map(async (from) => {
+              const pre = spec.has(from) ? await spec.get(from) : null;
+              return pre || fetchBatch(from); // bắn sẵn lỗi/thiếu → lấy lại bình thường
+            }));
+            parts.forEach((p) => rows.push(...p));
+          }
+        }
+        // Gợi ý thật dùng cho lần tính lại sau (không đổi kết quả, chỉ để bắn sớm).
+        teamScanHint.set(cacheKey, scanTotal);
+        if (teamScanHint.size > 100) teamScanHint.delete(teamScanHint.keys().next().value);
+        return { rows, scanTotal, truncated };
+      };
+
+      let typedSet = null;
+      let scan;
+      if (typeRaw) {
+        const typeKey = `${effectiveCompany || ''}|${typeRaw.toLowerCase()}`;
+        const sameSet = (a, b) => a.size === b.size && [...a].every((x) => b.has(x));
+        const knownRaw = teamTypeScopeCache.get(typeKey);
+        const known = knownRaw && knownRaw.typedSet.size ? knownRaw : null;
+        const freshP = loadTypeScope();
+        let fresh;
+        if (known) {
+          // Đã biết phạm vi lần trước → quét SỚM bằng phạm vi cũ, song song với việc lấy dự án mới. Chỉ dùng kết quả quét sớm
+          // khi tập dự án của loại KHÔNG đổi (luôn lọc lại bằng tập mới nên không sai); đổi (dự án mới / đổi loại) thì quét lại.
+          const [freshNow, early] = await Promise.all([freshP, runScan(known.pushdown)]);
+          fresh = freshNow;
+          scan = sameSet(fresh.typedSet, known.typedSet) ? early : null;
+        } else {
+          fresh = await freshP;
+        }
+        if (fresh.typedSet.size) teamTypeScopeCache.set(typeKey, fresh);
+        if (teamTypeScopeCache.size > 30) teamTypeScopeCache.delete(teamTypeScopeCache.keys().next().value);
+        typedSet = fresh.typedSet;
+        // Loại không có dự án nào → không có việc nào, khỏi quét.
+        if (!typedSet.size) return emptyTeamResult();
+        if (!scan) scan = await runScan(fresh.pushdown);
+      } else {
+        scan = await runScan(null);
       }
+      const { scanTotal, truncated } = scan;
+      // Lọc lại theo tập dự án của loại (no-op với `in`; loại bỏ việc của dự án công ty khác khi dùng `not in`).
+      const scanned = typedSet ? scan.rows.filter((t) => typedSet.has(String(t.project_id))) : scan.rows;
 
       // Chip hạn xử lý: khử trùng phải thấy cả bản SX «song sinh» nằm NGOÀI khoảng. Nếu chỉ quét trong khoảng thì bản CRM
       // (hạn hôm nay) sống sót dù bản SX của chính việc đó đã quá hạn → việc quá hạn lọt vào «Hôm nay» / «Ngày mai».
@@ -576,38 +722,10 @@ r.get('/team-project-tasks', async (req, res) => {
         }
       }
 
-      // Lọc theo PHÂN LOẠI xưởng (`workshop_type_id`: mã loại hoặc `none`) — view không có cột này nên lấy tập dự án trước.
-      let scannedRows = scanned;
-      const typeRaw = String(req.query.workshop_type_id || '').trim();
-      if (typeRaw) {
-        const projectsQuery = (cols, opts) => {
-          let pq = supabase.from('projects').select(cols, opts).order('id', { ascending: true });
-          pq = typeRaw.toLowerCase() === 'none' ? pq.is('workshop_type_id', null) : pq.eq('workshop_type_id', typeRaw);
-          if (effectiveCompany) pq = pq.eq('company_id', effectiveCompany);
-          return pq;
-        };
-        const typeProjectIds = new Set();
-        const pFirst = await projectsQuery('id', { count: 'exact' }).range(0, 999);
-        if (pFirst.error) throw pFirst.error;
-        (pFirst.data || []).forEach((p) => typeProjectIds.add(String(p.id)));
-        const pTotal = Math.min(Number(pFirst.count) || 0, 20000);
-        if (pTotal > 1000) {
-          const pStarts = [];
-          for (let from = 1000; from < pTotal; from += 1000) pStarts.push(from);
-          const pParts = await Promise.all(pStarts.map(async (from) => {
-            const r = await projectsQuery('id').range(from, from + 999);
-            if (r.error) throw r.error;
-            return r.data || [];
-          }));
-          pParts.forEach((p) => p.forEach((x) => typeProjectIds.add(String(x.id))));
-        }
-        scannedRows = scanned.filter((t) => typeProjectIds.has(String(t.project_id)));
-      }
-
-      // Khử trùng: ưu tiên bản ở bảng `tasks` (source != crm_task).
+      // Khử trùng: ưu tiên bản ở bảng `tasks` (source != crm_task). `scanned` đã chỉ gồm dự án của loại được chọn (nếu có lọc).
       const keyOf = (t) => `${t.project_id}|${String(t.title || '').trim().toLowerCase()}`;
       const chosen = new Map();
-      for (const t of scannedRows) {
+      for (const t of scanned) {
         const k = keyOf(t);
         const cur = chosen.get(k);
         if (!cur || (cur.source === 'crm_task' && t.source !== 'crm_task')) chosen.set(k, t);
@@ -682,8 +800,22 @@ r.get('/team-project-tasks', async (req, res) => {
     const start = (page - 1) * pageSize;
     const pageGroups = ordered.slice(start, start + pageSize);
     const pageTasks = pageGroups.flatMap((g) => g.rows);
-    const tasks = await enrichUnifiedCrmTasks(supabase, pageTasks);
-    await enrichTaskModuleOwners(tasks);
+    // `lite=1` (app mobile): chỉ cần `assignee_name` — bỏ `enrichTaskModuleOwners` (3 đợt truy vấn nối tiếp ~450ms mỗi lần
+    // gọi, kể cả trúng cache) vốn tính thêm module_owner_*, effective_assignee_*, region_id mà app không dùng.
+    const lite = ['1', 'true'].includes(String(req.query.lite || '').toLowerCase());
+    let tasks;
+    if (lite) {
+      const assigneeIds = [...new Set(pageTasks.map((t) => t.assignee_id).filter(Boolean).map(String))];
+      const [enriched, names] = await Promise.all([
+        enrichUnifiedCrmTasks(supabase, pageTasks),
+        lookupUserNames(assigneeIds),
+      ]);
+      tasks = enriched;
+      for (const t of tasks) t.assignee_name = t.assignee_id ? (names.get(String(t.assignee_id)) ?? null) : null;
+    } else {
+      tasks = await enrichUnifiedCrmTasks(supabase, pageTasks);
+      await enrichTaskModuleOwners(tasks);
+    }
 
     res.json({
       counts,

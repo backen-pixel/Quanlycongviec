@@ -156,6 +156,8 @@ export async function fetchTeamProjectTasksPage(o: Opts): Promise<TeamProjectPag
           params: {
             page,
             page_size: pageSize,
+            // lite: máy chủ bỏ phần làm giàu nặng (module_owner_*, effective_assignee_*, region_id) — app chỉ cần `assignee_name`.
+            lite: 1,
             due_days: DUE_SOON_DAYS,
             // Lấy thêm việc MỚI TẠO trong N ngày qua dù chưa có hạn (máy chủ mặc định cũng là 7).
             created_days: NEW_TASK_DAYS,
