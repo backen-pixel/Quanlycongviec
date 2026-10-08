@@ -1,3 +1,7 @@
+## 2026-10-08 — P2-1b (local)
+Thêm `database/714_ai_reply_drafts*.sql`, `aiReplyDraft/{store,service}.js` và hai test tương ứng; dùng `customers.full_name/address`, `crm_leads.install_address` để ẩn danh.
+Kiểm tra: Node test giả và `node --check`; chưa chạy SQL, DB/mạng, gọi OpenAI thật, bật cờ, commit hoặc push. Rollback 714 chỉ xóa bảng khi rỗng.
+
 ## 2026-10-08 — P2-1a: lõi thuần AI soạn nháp (anonymize, policy, budget, provider)
 
 Tệp: `backend/src/modules/aiReplyDraft/*.js`, `backend/tests/aiReplyDraft.test.js`. Chỉ thêm mô-đun thuần và test (15/15); chưa nối route/SQL/UI, không gọi mạng, không tốn tiền, AI không có đường tự gửi tin. Bước kế: P2-1b (bảng bản nháp chỉ ghi thêm + dịch vụ với nhà cung cấp giả), P2-2 (giao diện nhân viên duyệt), P2-3 (chạy bóng, cần Founder duyệt trần chi phí).

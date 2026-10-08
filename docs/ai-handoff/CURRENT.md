@@ -1,3 +1,7 @@
+## 2026-10-08 — P2-1b: lưu sự kiện và dịch vụ AI soạn nháp (local)
+Thêm SQL 714/rollback, bộ chuyển RPC, dịch vụ và test giả; chỉ soạn nháp, không route/gửi tin/DB thật/mạng/bật cờ.
+Chống lặp bằng tra sự kiện theo requestId trước provider và gom yêu cầu đồng thời trong một tiến trình; cần thử SQL và đua nhiều tiến trình trên nhánh Supabase tạm.
+
 ## 2026-10-08 — P2-1a: lõi thuần «AI soạn nháp trả lời khách» (chưa nối đâu, chưa gọi mạng)
 
 Founder chọn API chính thức cho giai đoạn 2. Thêm `backend/src/modules/aiReplyDraft/{anonymize,policy,budget,provider}.js`: ẩn danh hội thoại (số điện thoại mọi dạng kể cả viết bằng chữ, email, liên kết, tên/địa chỉ đã biết, địa chỉ đường/hẻm khách tự gõ) và thất bại thì đóng; bộ luật kiểm bản nháp (không báo giá/hứa/PII/liên kết); trần chi phí số nguyên VND làm tròn lên; giao diện nhà cung cấp (OpenAI qua fetch giả trong test). Không route, SQL, giao diện; không gửi tin; không gọi OpenAI thật; không đọc env. Test 15/15. Giới hạn: biệt danh/viết dính của khách không biết trước không ẩn được; từ «tuần» trùng tên «Tuấn» bị che nhầm (an toàn nhưng mất ngữ cảnh). Codex đang bị đăng xuất nên Claude tự viết.
