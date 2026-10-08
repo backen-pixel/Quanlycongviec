@@ -2217,3 +2217,9 @@ Kèm 2 việc chặn khác: thu quyền `EXECUTE` của 4 hàm mới khỏi `ano
 - Tiếp tục kiểm thử tích hợp và hồi quy giao diện SX/VC-LĐ với dữ liệu thật.
 - Xác nhận cache/socket cập nhật đúng khi đổi deadline từ một màn hình và quan sát ở màn hình khác.
 - Không tự ý commit các file tạm, upload, lock hoặc thay đổi `.idea` đang tồn tại trong working tree.
+## 2026-10-08 — P1-11: kiểm phạm vi quảng cáo (local)
+
+`/summary` đối chiếu ad ID qua chi tiêu/danh mục của account trong scope, trả `scope_check`, hai chi phí mốc và độ tin cậy; snapshots có hai số phạm vi. UI cảnh báo và liệt kê tối đa 10 quảng cáo ngoài phạm vi.
+233 test tổng hợp P1/adAnalytics/mốc/chi tiêu đạt; `node --check` đạt. `vite build` chưa chạy được vì thiếu `cross-env` tại máy; chưa kiểm DB/HTTP/dữ liệu thật hay duyệt UI. Không chạy SQL, bật cờ, commit hoặc push. Hoàn tác: bỏ diff P1-11 và hai mục bàn giao này.
+
+---

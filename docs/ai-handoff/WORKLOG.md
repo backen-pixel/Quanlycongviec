@@ -2125,3 +2125,9 @@ Reconciled two conflicts between e16c885a and main ca8810c5. Preserved new Page/
 Theo yêu cầu tiếp tục của Founder, bổ sung domain/Application Service, claim riêng cho form, SQL702 atomic và bộ thử nghiệm. Nhận lại cùng nguồn giữ nguyên Customer/Lead/receipt; sai quyền hoặc dữ liệu cũ không rõ giữ để đối soát. Giao Admin bằng thông báo trong ứng dụng; không chạy legacy auto-task hoặc gửi khách. Source a5bcabf3:194/194 Node,29/29 PG intake và15/15 PG inbox PASS; CI37393352657, regression Messenger CI37393352980 PASS. Đã sửa lỗi SQL biến phone mà review/CI đầu phát hiện, giữ đầy đủ test. [Hồ sơ gói](FACEBOOK_LEAD_ADS_INTAKE_20261006.md), [review độc lập](FACEBOOK_LEAD_ADS_INTAKE_REVIEW_20261006.md). Chưa thay hệ thống thật, kích hoạt HOLD theo các giới hạn ghi trong hồ sơ.
 
 ---
+## 2026-10-08 — P1-11: phạm vi tài khoản quảng cáo
+
+- Thêm `adScope.js`, sửa `trialSummary.js`, `stageMilestone.js`, route snapshots, hai file UI và ba test: ad ID khớp chính xác trong spend hoặc catalog của account thuộc trial; lỗi nguồn ném 503, chi phí cũ có độ tin cậy và chi phí mới chỉ dùng khách trong phạm vi.
+- 177 test P1/adAnalytics và 56 test mốc/chi tiêu đạt; `node --check`, `git diff --check` đạt. Build dừng do thiếu `cross-env`; chưa kiểm dữ liệu thật, DB/HTTP, trình duyệt. Không chạy SQL, bật cờ, commit hoặc push; hoàn tác bằng cách bỏ đúng diff P1-11 và mục CURRENT/WORKLOG này.
+
+---
