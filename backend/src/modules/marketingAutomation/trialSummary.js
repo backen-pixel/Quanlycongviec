@@ -8,6 +8,7 @@ const { MILESTONE_SLUGS, MILESTONE_LABEL, MATURITY_DAYS, loadMilestoneReached, s
 async function readSpendWindow(db, scopes, from, to, asOf) {
   const accounts = [], daily = [], reasons = new Set();
   let total = 0, complete = scopes.length > 0, status = scopes.length ? 'COMPLETE' : 'UNPROVEN';
+  let allReconciled = scopes.length > 0;
   const priority = { COMPLETE: 0, STALE: 1, UNPROVEN: 2, PARTIAL: 3,
     CURRENCY_MISMATCH: 4, FAILED: 5 };
   if (!scopes.length) reasons.add('NO_FACEBOOK_SCOPE');
@@ -17,6 +18,7 @@ async function readSpendWindow(db, scopes, from, to, asOf) {
       throw Error('SOURCE_UNAVAILABLE');
     accounts.push({ account_id: scope.account_id, status: result.status,
       vnd: result.status === 'COMPLETE' ? result.spendVnd : null });
+    if (result.reconciliation !== 'ACCOUNT_LEVEL_MATCHED') allReconciled = false;
     if (result.status === 'COMPLETE') daily.push(...result.daily);
     if (result.status !== 'COMPLETE' || !Number.isSafeInteger(result.spendVnd)) complete = false;
     if ((priority[result.status] ?? 5) > (priority[status] ?? 5)) status = result.status;
@@ -28,10 +30,12 @@ async function readSpendWindow(db, scopes, from, to, asOf) {
   }
   if (new Set(scopes.map(scope => scope.account_id)).size !== scopes.length) {
     complete = false;
+    allReconciled = false;
     if (status === 'COMPLETE') status = 'UNPROVEN';
     reasons.add('DUPLICATE_ACCOUNT_SCOPE');
   }
   return { status, vnd: complete ? total : null, as_of: asOf, accounts, reasons: [...reasons],
+    ...(allReconciled ? { reconciliation: 'ACCOUNT_LEVEL_MATCHED' } : {}),
     daily: complete ? daily.sort((a, b) => a.day.localeCompare(b.day) ||
       a.account_id.localeCompare(b.account_id)) : [] };
 }
@@ -104,7 +108,9 @@ async function buildTrialSummary({ db, trial, now = new Date() }) {
         caveats: ['MILESTONE_IS_STAGE_PROXY', 'IDENTITY_NOT_RECONCILED',
           ...(scopeCheck.not_in_connected_accounts > 0 ? ['LEADS_FROM_UNCONNECTED_ADS']
             : scopeCheck.status === 'VERIFIED' ? [] : ['AD_ACCOUNT_SCOPE_UNVERIFIED']),
-          'SPEND_AD_LEVEL_ONLY', 'FIRST_PAID_SOURCE_UNVERIFIED'] };
+          ...(spend.reconciliation === 'ACCOUNT_LEVEL_MATCHED' ? [] : ['SPEND_AD_LEVEL_ONLY']),
+          ...(spend.reasons.includes('ACCOUNT_TOTAL_MISMATCH') ? ['SPEND_ACCOUNT_TOTAL_MISMATCH'] : []),
+          'FIRST_PAID_SOURCE_UNVERIFIED'] };
         return { summary, spendByDay };
 }
 module.exports = { buildTrialSummary };

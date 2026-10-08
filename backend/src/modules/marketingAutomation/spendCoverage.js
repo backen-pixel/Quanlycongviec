@@ -18,9 +18,8 @@ function dayNumber(value) {
   return Number.isFinite(day) && new Date(day).toISOString().slice(0, 10) === value ? day / DAY_MS : null;
 }
 
-function result(status, spendVnd, asOf, daysCovered, reasons, daily = []) {
-  // There is no Meta account-level total here to reconcile against ad-level spend.
-  return { status, spendVnd, asOf, daysCovered, reasons, reconciliation: 'AD_LEVEL_ONLY', daily };
+function result(status, spendVnd, asOf, daysCovered, reasons, daily = [], reconciliation = 'AD_LEVEL_ONLY') {
+  return { status, spendVnd, asOf, daysCovered, reasons, reconciliation, daily };
 }
 
 function evaluateSpendCoverage({ accountId, from, to, rows, sync, nowMs, today } = {}) {
@@ -69,14 +68,23 @@ function evaluateSpendCoverage({ accountId, from, to, rows, sync, nowMs, today }
   const syncMs = asOf instanceof Date ? asOf.getTime() : Date.parse(asOf);
   const stale = last >= current && (!Number.isFinite(syncMs) || syncMs > nowMs || nowMs - syncMs > 8 * 3600000);
   if (stale) reasons.push('STALE_SYNC');
-  const status = failed ? 'FAILED' : currencyMismatch ? 'CURRENCY_MISMATCH' :
+  let status = failed ? 'FAILED' : currencyMismatch ? 'CURRENCY_MISMATCH' :
     partial ? 'PARTIAL' : uncovered ? 'UNPROVEN' : stale ? 'STALE' : 'COMPLETE';
   const provenZero = rows.length === 0 && status === 'COMPLETE';
+  const checked = report?.reconciliation;
+  const mismatchInWindow = checked?.status === 'MISMATCH' &&
+    checked.mismatched_days?.some(item => dayNumber(item?.day) !== null &&
+      item.day >= from && item.day <= to && dayNumber(item.day) <= requiredLast);
+  if (mismatchInWindow) {
+    reasons.push('ACCOUNT_TOTAL_MISMATCH');
+    if (status === 'COMPLETE') status = 'PARTIAL';
+  }
   if (provenZero) reasons.push('NO_ROWS_CONFIRMED_ZERO');
   // Without rows or a complete account sync, zero is not evidence of no spend.
   const spendVnd = validRows === 0 && !provenZero ? null : spend;
   return result(status, spendVnd, asOf, daysCovered, [...new Set(reasons)],
-    status === 'COMPLETE' ? [...byDay].map(([day, vnd]) => ({ account_id: accountId, day, vnd })) : []);
+    status === 'COMPLETE' ? [...byDay].map(([day, vnd]) => ({ account_id: accountId, day, vnd })) : [],
+    checked?.status === 'MATCH' ? 'ACCOUNT_LEVEL_MATCHED' : 'AD_LEVEL_ONLY');
 }
 
 function vietnamToday(nowMs) {

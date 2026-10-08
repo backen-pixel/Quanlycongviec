@@ -128,6 +128,30 @@ test('complete spend gives exact integer ceiling and no verdict', async () => {
   assert.equal(exact.body.cost_per_qualified_lead.vnd_ceil, 333333);
 });
 
+test('summary caveats reflect every account reconciliation and mismatches', async () => {
+  const withStatus = (id, status, mismatched_days = []) => {
+    const value = account(id);
+    value.ket_qua_cuoi.reconciliation = { status, mismatched_days };
+    return value;
+  };
+  const matched = (await harness({ ...base,
+    accounts: [withStatus('acct', 'MATCH')] }).send('/summary', q)).body;
+  assert.equal(matched.spend.reconciliation, 'ACCOUNT_LEVEL_MATCHED');
+  assert.ok(!matched.caveats.includes('SPEND_AD_LEVEL_ONLY'));
+  assert.equal(matched.verdict, 'NOT_EVALUATED');
+  const mixed = (await harness({ ...base, scopes: [scope('acct'), scope('second')],
+    accounts: [withStatus('acct', 'MATCH'), account('second')],
+    spend: [spend('acct', 1000001), spend('second', 1)] }).send('/summary', q)).body;
+  assert.ok(mixed.caveats.includes('SPEND_AD_LEVEL_ONLY'));
+  assert.equal(mixed.spend.reconciliation, undefined);
+  const mismatch = (await harness({ ...base,
+    accounts: [withStatus('acct', 'MISMATCH', [{ day: t.start_date,
+      ad_level_vnd: 1000001, account_level_vnd: 1000002 }])] }).send('/summary', q)).body;
+  assert.ok(mismatch.caveats.includes('SPEND_AD_LEVEL_ONLY'));
+  assert.ok(mismatch.caveats.includes('SPEND_ACCOUNT_TOTAL_MISMATCH'));
+  assert.equal(mismatch.spend.status, 'PARTIAL');
+});
+
 test('summary counts human stage milestones and returns no private fields', async () => {
   const stage = (lead_id, to_canonical_slug, entered_at, changed_by = 'staff') =>
     ({ lead_id, to_canonical_slug, entered_at, changed_by });
