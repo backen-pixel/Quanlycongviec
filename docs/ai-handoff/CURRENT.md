@@ -1,3 +1,8 @@
+## 2026-10-08 — P1-10: ảnh chụp tổng hợp đợt thử (local)
+
+Thêm SQL 713/rollback, module summary, daily khi COMPLETE, job cờ `VPT_P1_SNAPSHOT_CRON` mặc định tắt và GET `/snapshots` chỉ admin trên DB chính.
+Chỉ ghi thêm; khi chi tiêu chưa COMPLETE, `spend_by_day=[]` và `source_note` ghi trạng thái, không suy thiếu thành 0.
+Test Node trực tiếp và `node --check` đạt; chưa chạy SQL, kết nối DB/mạng hay kiểm chứng dữ liệu thật. Hoàn tác: bỏ delta P1-10; rollback SQL chỉ gỡ bảng rỗng, giữ ảnh chụp đã có.
 ## 2026-10-08 — SX mobile: trần quét việc dự án không còn cắt âm thầm
 
 `GET /api/work-tasks/team-project-tasks` trước đây quét tối đa 8000 dòng và bỏ phần vượt mà không báo; HCB đã có ~6410 việc không hạn cũ (mọi phân loại, vì lọc phân loại làm sau khi quét) nên sắp chạm trần. Nay trần mặc định 30.000 (`TEAM_TASKS_SCAN_CAP`), quét theo đợt 6 lô song song (`TEAM_TASKS_SCAN_WAVE`), và `counts` có thêm `truncated` + `scan_total`; vượt trần thì `console.warn` và app tab Công việc (xem quản lý) hiện dòng «Danh sách quá lớn … chỉ tính phần đầu». App cũ bỏ qua hai trường mới. Commit `813f5bde` (backend), `7c44e4bb` (app).

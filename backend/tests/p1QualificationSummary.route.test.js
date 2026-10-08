@@ -6,11 +6,12 @@ const { trial, touch, A, B } = require('./p1QualificationQueue.route.test');
 const source = fs.readFileSync(path.join(__dirname, '../src/routes/p1Qualification.js'), 'utf8');
 function harness({ enabled = true, role = 'admin', company = A, tenant = [A, B],
   trials = [trial], touches = [], events = [], leads = [], scopes = [], accounts = [],
-  spend = [], stages = [], fail = null } = {}) {
+  spend = [], stages = [], snapshots = [], fail = null } = {}) {
   const layers = [], calls = [];
   const tables = { p1_trials: trials, lead_attribution: touches,
     p1_qualification_events: events, crm_leads: leads, p1_trial_scopes: scopes,
-    fb_ad_accounts: accounts, fb_ad_spend_daily: spend, crm_lead_stage_history: stages };
+    fb_ad_accounts: accounts, fb_ad_spend_daily: spend, crm_lead_stage_history: stages,
+    p1_trial_snapshots: snapshots };
   const db = { from(name) {
     calls.push(name);
     let rows = tables[name] || [], offset = 0, end = Infinity, selected = '', ordering = [];
@@ -53,6 +54,7 @@ function harness({ enabled = true, role = 'admin', company = A, tenant = [A, B],
     '../helpers/tenantScope': { isTenantScopeEnforced: () => true },
     '../modules/marketingAutomation/qualification': require('../src/modules/marketingAutomation/qualification'),
     '../modules/marketingAutomation/trialCohort': require('../src/modules/marketingAutomation/trialCohort'),
+    '../modules/marketingAutomation/trialSummary': require('../src/modules/marketingAutomation/trialSummary'),
     '../modules/marketingAutomation/spendCoverage': require('../src/modules/marketingAutomation/spendCoverage'),
     '../modules/marketingAutomation/policy': require('../src/modules/marketingAutomation/policy'),
     '../modules/marketingAutomation/stageMilestone': require('../src/modules/marketingAutomation/stageMilestone'),
@@ -73,7 +75,7 @@ function harness({ enabled = true, role = 'admin', company = A, tenant = [A, B],
     }
     return res;
   }
-  return { send, calls };
+  return { send, calls, db };
 }
 const t = { ...trial, start_date: '2020-01-01', end_date: '2020-01-02' };
 const q = { trial_id: t.id };
@@ -218,3 +220,4 @@ test('whole cohort counts across pages, chunks, latest revision and unavailable 
   assert.equal(result.body.leads.excluded_unavailable, 1);
   assert.equal(result.body.cost_per_qualified_lead.vnd_ceil, 2001);
 });
+module.exports = { harness, base, q, t, A, B };
