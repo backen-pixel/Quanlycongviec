@@ -1,3 +1,15 @@
+## 2026-10-08 — Bảng sản xuất: dự án mới đã gán đơn vị VC không còn bị xếp vào cột cuối («Đã giao»)
+
+Lỗi: deal thắng MỚI về xưởng đã chọn sẵn đơn vị vận chuyển lúc tạo (`projects.logistics_company_id`), status còn `consulting`, `sx_kanban_column_id` NULL, bị `resolveSxDisplayColumnId` (`backend/src/helpers/workshopKanban.js`) xếp vào cột CUỐI pipeline («CÔNG NỢ ĐÃ CHỐT»), nên thẻ hiện «Đã xong / Đã giao» + «Công nợ đã chốt» (thấy ở TB-2026-1037/1038). Nguyên nhân: nhánh `wonDeal` chỉ trả cột đầu khi `!inLogistics`; dự án có đơn vị VC rơi xuống nhánh `inLogistics` cuối hàm → `lastSxPipelineColumnId`. Sửa (commit `f04b8752`): nếu `inLogistics` nhưng status `consulting`, chưa `current_stage_id`, chưa `sx_handover_at` và chưa có `vc_kanban_column_id` thì về cột đầu như dự án chưa gán đơn vị VC. Hàm dùng chung nên web và app đổi theo; không đổi API/schema.
+
+Kiểm chứng: cấu hình 23 cột thật HCB Tủ bếp + dự án mô phỏng (lỗi đổi «CÔNG NỢ ĐÃ CHỐT» → «Tiếp nhận đơn hàng về SX», các trường hợp shipping/completed/đã có cột VC/đã vào xưởng giữ nguyên); so cột 430 dự án thật trước/sau sửa: 0 thay đổi; dự án test thật `TEST-NULL-001` — app (backend chưa deploy) hiện «CÔNG NỢ ĐÃ CHỐT», code đã sửa cho «Tiếp nhận đơn hàng về SX». Chưa merge/deploy; sau deploy cần kiểm lại `TEST-NULL-001` nằm trong chip «Tiếp nhận (1)».
+
+DỮ LIỆU TEST ĐÃ GHI VÀO DB THẬT (theo yêu cầu người dùng): `projects` `TEST-NULL-001` (id `fc96d2f0-5a3d-4819-8f37-1aab43111776`) và `crm_leads` deal `TEST-NULL-DEAL-001` (id `0a92e2b2-4131-4371-93c5-71a3f225dd31`), HCB Tủ bếp, cột NULL, đã gán đơn vị VC Phúc Đạt, khách có sẵn «ZZ TEST — kiểm thử kéo thẻ (xoá sau)». Nhân viên HCB thấy thẻ này và KPI Tổng +1 cho tới khi người dùng xóa: `delete from crm_leads where id='0a92e2b2-4131-4371-93c5-71a3f225dd31' and code='TEST-NULL-DEAL-001';` rồi `delete from projects where id='fc96d2f0-5a3d-4819-8f37-1aab43111776' and code='TEST-NULL-001';`. AI không xóa dữ liệu thật.
+
+Chưa xử lý: nhánh «đã vào xưởng (`current_stage_id`) + có đơn vị VC + không có cột» vẫn về cột cuối (có thể là dự án cũ hợp lệ).
+
+---
+
 ## 2026-10-08 — SX mobile: trần quét việc dự án không còn cắt âm thầm
 
 `GET /api/work-tasks/team-project-tasks` trước đây quét tối đa 8000 dòng và bỏ phần vượt mà không báo; HCB đã có ~6410 việc không hạn cũ (mọi phân loại, vì lọc phân loại làm sau khi quét) nên sắp chạm trần. Nay trần mặc định 30.000 (`TEAM_TASKS_SCAN_CAP`), quét theo đợt 6 lô song song (`TEAM_TASKS_SCAN_WAVE`), và `counts` có thêm `truncated` + `scan_total`; vượt trần thì `console.warn` và app tab Công việc (xem quản lý) hiện dòng «Danh sách quá lớn … chỉ tính phần đầu». App cũ bỏ qua hai trường mới. Commit `813f5bde` (backend), `7c44e4bb` (app).
