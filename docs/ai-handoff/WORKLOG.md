@@ -1,3 +1,23 @@
+## 2026-10-08 — PR72: sửa hai P2 trộn attribution qua lần chạm
+
+Review tái hiện trên `c38febe3`: 6 ca mới thất bại. Đổi enrichment sang một UPDATE nguyên tử có CAS toàn snapshot; kiểm tra bốn click ID và campaign/ad/form/landing identity, zero-row phải đọc lại và trả xung đột thay vì thành công giả. Không thêm SQL/quyền hay gọi production. Helper 12/12; tổng gói Node 136/136, gồm 8 ca con PostgreSQL chạy helper thật qua các session đồng thời. Chi tiết tại [MARKETING_INTAKE_20261008.md](MARKETING_INTAKE_20261008.md); SHA và CI đúng phiên bản được cập nhật trong draft PR72. Chưa merge/deploy.
+
+---
+
+## 2026-10-08 — Marketing intake: chuẩn bị draft PR và nối WordPress
+
+Tiếp nối nhánh `codex/marketing-attribution-20261008`: phát hiện bridge CF7 đã thu tracking nhưng chỉ gửi notes; thêm attribution/is_test vào payload, giữ nguồn/notes/fingerprint/queue. Bổ sung CI PR-only Node 18/22 + PostgreSQL dữ liệu tổng hợp + PHP-to-Node contract; không gọi production. Bằng chứng từng nhóm và release blockers: [MARKETING_INTAKE_20261008.md](MARKETING_INTAKE_20261008.md). Trạng thái PR/CI phải đối chiếu đúng SHA trong báo cáo cuối, không suy từ test local.
+
+---
+
+## 2026-10-08 — Marketing intake / test exclusion (prepared, not released)
+
+Nhánh `codex/marketing-attribution-20261008`, baseline `ac8971fb`. Bổ sung hợp đồng attribution cho API external và projection nguyên tử (SQL714), cờ is_test lọc báo cáo marketing, mốc assigned_at và phản hồi partner tách các mốc; sửa enrichment bảo toàn first touch. Chuẩn bị repair đúng tenant/VPT/3 mã có dry-run mặc định, journal và rollback chống drift. Không đọc external_api_logs, không ghi production; dừng mọi đọc production sau cập nhật cancellation.
+
+121/121 test Node 24 + PostgreSQL 16 dữ liệu tổng hợp đạt; node --check và git diff --check đạt. Chưa staging đầy đủ, chưa nghiệm thu website/UI, chưa migration/backfill production, PR, merge/deploy. Rollback và release gate tại [MARKETING_INTAKE_20261008.md](MARKETING_INTAKE_20261008.md). Không coi có code là hoàn tất vận hành.
+
+---
+
 ## 2026-10-08 — Khôi phục 6 test adAnalytics
 
 - Gốc lỗi: commit 58ea0102 thêm demChuaThanhLead dùng .is('lead_id', null) ở backend/src/routes/adAnalytics.js:189; harness backend/tests/adAnalytics.correctness.test.js:39-56 thiếu .is nên ba route trả 500. Test cũ, không phải lỗi đếm nghiệp vụ.

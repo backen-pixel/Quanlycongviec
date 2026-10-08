@@ -1,3 +1,9 @@
+## Prepared update 08/10/2026 — not installed on WordPress
+
+The current branch adds `is_test` and structured `attribution` to the existing CRM payload, mapping `campaignid`/`adgroupid` to generic `campaign_id`/`adset_id` and retaining captured UTM/gclid/gbraid/wbraid. Description, notes, company/owner/pipeline, source selection, business fingerprint and queue/confirmation policy are preserved. The source/fingerprint and deployment statements below describe the earlier patch, not this uninstalled update.
+
+Deploy only after CRM migration 714 and the backend contract are accepted. Existing queued jobs keep their serialized old payload; this patch does not replay/rewrite jobs. Roll back this additive update by reverting its `core.php` diff (not by reverting the older ChatGPT source fix). No WordPress settings or runtime network calls are part of the isolated tests. Full staging WordPress + CF7 + worker acceptance remains outstanding.
+
 # VPT V1 WordPress CRM bridge — ChatGPT paid source
 
 Bridge CF7 form `11116` → CRM VPT. This reviewed change maps normalized

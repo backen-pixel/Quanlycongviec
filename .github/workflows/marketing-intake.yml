@@ -1,0 +1,46 @@
+name: Marketing intake (isolated)
+on:
+  pull_request:
+    paths:
+      - 'backend/src/domain/externalLeadTracking.js'
+      - 'backend/src/helpers/leadAttribution.js'
+      - 'backend/src/helpers/adInsights.js'
+      - 'backend/src/helpers/mcpAdsBridge.js'
+      - 'backend/src/routes/external.js'
+      - 'backend/src/routes/partner.js'
+      - 'backend/src/routes/adAnalytics.js'
+      - 'backend/src/modules/marketingAutomation/trialCohort.js'
+      - 'backend/tests/*Tracking*'
+      - 'backend/tests/leadAttribution.enrichment.test.js'
+      - 'backend/tests/partnerMarketing.route.test.js'
+      - 'backend/tests/marketingIntake.sql.test.js'
+      - 'backend/tests/fixtures/leadAttributionPostgres.js'
+      - 'database/714_marketing_intake*.sql'
+      - 'database/repairs/marketing_20261008*.sql'
+      - 'integrations/wordpress/vpt-v1-crm-bridge/**'
+      - '.github/workflows/marketing-intake.yml'
+permissions:
+  contents: read
+jobs:
+  synthetic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        node: [18, 22]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Backend contracts, reports and isolated PostgreSQL
+        run: |
+          docker pull postgres:16-alpine
+          node --test backend/tests/externalLeadTracking.test.js backend/tests/externalLeadTracking.route.test.js backend/tests/leadAttribution.enrichment.test.js backend/tests/partnerMarketing.route.test.js backend/tests/marketingIntake.sql.test.js backend/tests/adAnalytics.correctness.test.js backend/tests/p1QualificationQueue.route.test.js backend/tests/p1QualificationSummary.route.test.js
+      - name: WordPress pure mapping and PHP-to-Node contract
+        run: |
+          php -n -l integrations/wordpress/vpt-v1-crm-bridge/core.php
+          python3 integrations/wordpress/vpt-v1-crm-bridge/tests/test_core.py php
+          git diff --check

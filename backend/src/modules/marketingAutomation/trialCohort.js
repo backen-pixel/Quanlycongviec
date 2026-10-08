@@ -23,17 +23,21 @@ async function loadTrialCohort(db, trial) {
   // A lead belongs to the trial only if its CRM record is in this company; null-company
   // attribution rows of other companies drop out here. Tagged rows whose lead is gone are counted.
   const inCompany = new Set();
+  const tests = new Set();
   const allIds = [...firstByLead.keys()];
   for (let i = 0; i < allIds.length; i += 100) {
-    const { data, error } = await db.from('crm_leads').select('id')
+    const { data, error } = await db.from('crm_leads').select('id,is_test')
       .eq('company_id', trial.company_id).in('id', allIds.slice(i, i + 100));
     if (error || !Array.isArray(data)) throw error || Error('SOURCE_UNAVAILABLE');
-    for (const row of data) inCompany.add(row.id);
+    for (const row of data) {
+      inCompany.add(row.id);
+      if (row.is_test === true) tests.add(row.id);
+    }
   }
   let excludedUnavailable = 0;
   for (const row of firstByLead.values())
     if (!inCompany.has(row.lead_id) && row.company_id === trial.company_id) excludedUnavailable++;
-  const candidates = [...firstByLead.values()].filter(row => inCompany.has(row.lead_id))
+  const candidates = [...firstByLead.values()].filter(row => inCompany.has(row.lead_id) && !tests.has(row.lead_id))
     .sort((a, b) => Date.parse(b.cham_dau_luc) - Date.parse(a.cham_dau_luc) || a.id.localeCompare(b.id));
   const statesByLead = new Map();
   const leadIds = candidates.map(row => row.lead_id);

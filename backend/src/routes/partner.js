@@ -231,7 +231,7 @@ r.get('/leads', async (req, res) => {
 
     let q = supabase
       .from('crm_leads')
-      .select('id, code, title, type, phone, customer_id, company_id, created_at, actual_close_date, estimated_value, stage_id')
+      .select('id, code, title, type, phone, customer_id, company_id, source_id, created_at, assigned_at, first_touch_time, actual_close_date, estimated_value, stage_id').eq('is_test', false)
       .order('created_at', { ascending: false })
       .order('id', { ascending: false })
       .limit(limit + 1);
@@ -254,7 +254,7 @@ r.get('/leads', async (req, res) => {
       supabase.from('lead_quality_scores').select('lead_id, diem, nhan, thanh_phan').in('lead_id', ids)
         .then((x) => x.data || [], () => []),
       supabase.from('lead_attribution')
-        .select('lead_id, kenh, platform, fb_page_id, fb_ad_id, fb_adset_id, fb_campaign_id, fb_campaign_name, fb_ref, fb_source, utm_source, utm_medium, utm_campaign, gclid, fbclid, cham_dau_luc')
+        .select('lead_id, kenh, platform, campaign_id, adset_id, ad_id, gbraid, wbraid, utm_content, utm_term, fb_page_id, fb_ad_id, fb_adset_id, fb_campaign_id, fb_campaign_name, fb_ref, fb_source, utm_source, utm_medium, utm_campaign, gclid, fbclid, cham_dau_luc')
         .in('lead_id', ids).then((x) => x.data || [], () => []),
       supabase.from('customers').select('id, full_name, phone, email')
         .in('id', ds.map((l) => l.customer_id).filter(Boolean)).then((x) => x.data || [], () => []),
@@ -276,21 +276,25 @@ r.get('/leads', async (req, res) => {
         id: l.id,
         code: l.code || null,
         created_at: l.created_at,
+        source_id: l.source_id || null,
+        milestones: { received_at: l.created_at, assigned_at: l.assigned_at || null,
+          contacted_at: l.first_touch_time || null, closed_on: l.actual_close_date || null },
         channel: a?.kenh || null,
         attribution: a ? {
           platform: a.platform || null,
           page_id: a.fb_page_id || null,
           page_name: tenPage(req, a.fb_page_id),
           company_id: congTyCuaPage(req, a.fb_page_id),
-          campaign_id: a.fb_campaign_id || null,
+          campaign_id: a.campaign_id || a.fb_campaign_id || null,
           campaign_name: a.fb_campaign_name || null,
-          adset_id: a.fb_adset_id || null,
-          ad_id: a.fb_ad_id || null,
+          adset_id: a.adset_id || a.fb_adset_id || null,
+          ad_id: a.ad_id || a.fb_ad_id || null,
           ref: a.fb_ref || null,
           source: a.fb_source || null,
-          utm: { source: a.utm_source || null, medium: a.utm_medium || null, campaign: a.utm_campaign || null },
+          utm: { source: a.utm_source || null, medium: a.utm_medium || null, campaign: a.utm_campaign || null, content: a.utm_content || null, term: a.utm_term || null },
           gclid: a.gclid || null,
           fbclid: a.fbclid || null,
+          gbraid: a.gbraid || null, wbraid: a.wbraid || null,
           first_touch_at: a.cham_dau_luc || null,
         } : null,
         quality: d ? { score: d.diem, label: d.nhan, components: d.thanh_phan || {} } : null,
@@ -321,7 +325,7 @@ r.get('/leads', async (req, res) => {
 r.get('/leads/:id', async (req, res) => {
   try {
     let q = supabase.from('crm_leads')
-      .select('id, code, title, type, phone, customer_id, company_id, created_at, actual_close_date, estimated_value, stage_id, description')
+      .select('id, code, title, type, phone, customer_id, company_id, source_id, created_at, assigned_at, first_touch_time, actual_close_date, estimated_value, stage_id, description').eq('is_test', false)
       .eq('id', req.params.id);
     q = locCongTy(q, req);
     const { data: l } = await q.maybeSingle();
@@ -340,13 +344,16 @@ r.get('/leads/:id', async (req, res) => {
       id: l.id,
       code: l.code || null,
       created_at: l.created_at,
+      source_id: l.source_id || null,
+      milestones: { received_at: l.created_at, assigned_at: l.assigned_at || null,
+        contacted_at: l.first_touch_time || null, closed_on: l.actual_close_date || null },
       channel: a?.kenh || null,
       attribution: a ? {
-        platform: a.platform, page_id: a.fb_page_id, campaign_id: a.fb_campaign_id,
-        campaign_name: a.fb_campaign_name, adset_id: a.fb_adset_id, ad_id: a.fb_ad_id,
+        platform: a.platform, page_id: a.fb_page_id, campaign_id: a.campaign_id || a.fb_campaign_id,
+        campaign_name: a.fb_campaign_name, adset_id: a.adset_id || a.fb_adset_id, ad_id: a.ad_id || a.fb_ad_id,
         ref: a.fb_ref, source: a.fb_source, form_id: a.fb_form_id,
         utm: { source: a.utm_source, medium: a.utm_medium, campaign: a.utm_campaign, content: a.utm_content, term: a.utm_term },
-        gclid: a.gclid, fbclid: a.fbclid, landing_url: a.landing_url, first_touch_at: a.cham_dau_luc,
+        gclid: a.gclid, fbclid: a.fbclid, gbraid: a.gbraid, wbraid: a.wbraid, landing_url: a.landing_url, first_touch_at: a.cham_dau_luc,
       } : null,
       quality: d ? { score: d.diem, label: d.nhan, components: d.thanh_phan || {} } : null,
       funnel: { is_deal: l.type === 'deal', closed_at: l.actual_close_date, value: l.estimated_value ?? null },
@@ -379,7 +386,7 @@ async function tongHop(req, { theoAd = false, theoPage = false, campaignId = nul
 
   const ids = [...new Set(rows.map((x) => String(x.lead_id)))];
   const [leadRows, diemRows] = await Promise.all([
-    supabase.from('crm_leads').select('id, type, actual_close_date, estimated_value, company_id')
+    supabase.from('crm_leads').select('id, type, actual_close_date, estimated_value, company_id').eq('is_test', false)
       .in('id', ids.slice(0, 20000)).then((x) => x.data || [], () => []),
     supabase.from('lead_quality_scores').select('lead_id, diem, nhan')
       .in('lead_id', ids.slice(0, 20000)).then((x) => x.data || [], () => []),
@@ -524,7 +531,7 @@ r.get('/conversions', async (req, res) => {
     const den = ngayIso(req.query.to);
 
     let q = supabase.from('crm_leads')
-      .select('id, code, customer_id, phone, company_id, actual_close_date, estimated_value')
+      .select('id, code, customer_id, phone, company_id, actual_close_date, estimated_value').eq('is_test', false)
       .eq('type', 'deal')
       .not('actual_close_date', 'is', null)
       .order('actual_close_date', { ascending: false })

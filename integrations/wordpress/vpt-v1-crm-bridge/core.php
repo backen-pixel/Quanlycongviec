@@ -65,6 +65,19 @@ final class VPT_V1_CRM_Core {
         $notes = 'VPT_V1 | ' . gmdate('c', $now) . "\nĐồng ý liên hệ: có\nTrang: " . $page;
         if ($test) { $notes .= "\nTEST: KHÔNG GỌI, không báo giá, không tính doanh thu/chuyển đổi."; }
         foreach ($tracking as $key => $value) { $notes .= "\n" . $key . ': ' . $value; }
+        // Additive CRM contract; keep notes and the business-only deduplication unchanged.
+        $attribution = array('kenh'=>'website', 'platform'=>'direct');
+        if ($page !== '') { $attribution['landing_url'] = $page; }
+        $platform = strtolower(trim($tracking['utm_source']));
+        if ($platform !== '') { $attribution['platform'] = $platform; }
+        elseif ($tracking['gclid'] !== '' || $tracking['gbraid'] !== '' || $tracking['wbraid'] !== '') {
+            $attribution['platform'] = 'google';
+        }
+        foreach (array('utm_source','utm_medium','utm_campaign','utm_content','utm_term','gclid','gbraid','wbraid') as $field) {
+            if ($tracking[$field] !== '') { $attribution[$field] = $tracking[$field]; }
+        }
+        if ($tracking['campaignid'] !== '') { $attribution['campaign_id'] = $tracking['campaignid']; }
+        if ($tracking['adgroupid'] !== '') { $attribution['adset_id'] = $tracking['adgroupid']; }
         $business = array('name'=>$name,'phone'=>$phone,'area'=>$area,'material'=>$material,'timeline'=>$timeline,'message'=>$message,'test'=>$test);
         return array(
             'business'=>$business,
@@ -74,7 +87,7 @@ final class VPT_V1_CRM_Core {
                 'region_id'=>self::REGION, 'pipeline_id'=>self::PIPELINE,
                 'lead_type_id'=>self::LEAD_TYPE, 'assigned_to'=>self::OWNER,
                 'source_name'=>$source, 'description'=>'Vật liệu: ' . $material . "\nDự kiến: " . $timeline . "\nGhi chú: " . $message,
-                'notes'=>$notes
+                'notes'=>$notes, 'is_test'=>$test, 'attribution'=>$attribution
             )
         );
     }
