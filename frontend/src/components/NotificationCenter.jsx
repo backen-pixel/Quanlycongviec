@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { isPlatformAdmin, isSystemAdmin } from '../lib/adminRole';
+import { isAdminLike, isPlatformAdmin, isSystemAdmin } from '../lib/adminRole';
 import { alertIncomingNotification, cancelNotificationSpeech } from '../lib/notificationAlert';
 import { setNotificationPrefsCache, getNotificationPrefsCache, isNotificationTypeEnabled } from '../lib/notificationPrefsCache';
 import { isExpiryDeadlineNotificationType } from '../lib/notificationOperationalFilter';
@@ -22,6 +22,7 @@ import {
 import {
   resolveDealPrimaryProjectId,
   resolveLeadCommentNotificationPath,
+  stampedCommentModule,
   viewerCommentModuleKey,
 } from '../lib/dealModulePathAccess';
 
@@ -309,7 +310,9 @@ function eventsPathForNotification(n) {
 function navigateLeadCommentMention(navigate, n, setOpen, viewer) {
   const path = resolveLeadCommentNotificationPath(n, viewer || {});
   setOpen?.(false);
-  const wantMod = viewerCommentModuleKey(viewer?.user, viewer?.activeModule);
+  const isAdminViewer = isAdminLike(viewer?.user) || isSystemAdmin(viewer?.user);
+  const wantMod = (!isAdminViewer && stampedCommentModule(n))
+    || viewerCommentModuleKey(viewer?.user, viewer?.activeModule);
   const leadId = resolveCommentLeadId(n);
   // Thông báo cũ thiếu project_id: người xem ở SX/VC mà path rơi về CRM → tra dự án từ deal.
   if ((wantMod === 'production' || wantMod === 'logistics') && leadId && (!path || path.startsWith('/crm/'))) {
