@@ -1,3 +1,11 @@
+## 2026-10-08 — Khôi phục 6 test adAnalytics
+
+- Gốc lỗi: commit 58ea0102 thêm demChuaThanhLead dùng .is('lead_id', null) ở backend/src/routes/adAnalytics.js:189; harness backend/tests/adAnalytics.correctness.test.js:39-56 thiếu .is nên ba route trả 500. Test cũ, không phải lỗi đếm nghiệp vụ.
+- Sửa harness để .is(null) lọc đúng, thêm dòng lượt chạm chưa thành Lead và khẳng định chua_thanh_lead=1 trong ca đếm trùng; không sửa route.
+- Trước: 6/127 lỗi (500 thay vì 200). Sau: 127/127 adAnalytics, 68/68 P1 liên quan, node --check đạt. Lệnh CI nguyên dạng bị sandbox chặn spawn EPERM; đã dùng --test-isolation=none trên Node 24, chưa kiểm Node 18/22 hay DB thật. Hoàn tác: bỏ diff test và hai mục bàn giao này.
+
+---
+
 ## 2026-10-08 — Sửa cột hiển thị của dự án mới đã gán đơn vị VC (nhãn «Đã giao» sai) và dữ liệu test
 
 - Backend `backend/src/helpers/workshopKanban.js` (commit `f04b8752`), hàm `resolveSxDisplayColumnId`: trong nhánh `if (wonDeal)` thêm `newlyReceivedWithPresetVc = inLogistics && status==='consulting' && !vc_kanban_column_id`; điều kiện trả `firstSxPipelineColumnId` đổi từ `!inWorkshop && !hasSxHandover && !inLogistics` thành `... && (!inLogistics || newlyReceivedWithPresetVc)`. Gốc lỗi: dự án có `logistics_company_id` bị loại khỏi nhánh này nên tới `if (inLogistics || status==='shipping') return lastSxPipelineColumnId(...)`.
