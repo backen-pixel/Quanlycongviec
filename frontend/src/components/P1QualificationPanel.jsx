@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../lib/api';
 import { stateLabel, errorLabel, validateForm, commandBody, createRequestIdentity,
-  formatVnd, summaryReasonLabel, summaryCostLabel } from '../lib/p1Qualification';
+  formatVnd, summaryReasonLabel, summaryCostLabel, milestoneCostLabel,
+  milestoneTargetMultiple } from '../lib/p1Qualification';
 const ROOT = '/marketing-p1/qualification';
 const emptyForm = () => ({ contact_usable: false, need_in_scope: false, area_in_service: false, evidence_ref: '', reason: '' });
 export default function P1QualificationPanel({ duongDanLead }) {
@@ -111,10 +112,19 @@ export default function P1QualificationPanel({ duongDanLead }) {
       {summaryError && <p role="alert">Không tải được tổng hợp: {summaryError}</p>}
       {!trialId && <p>Chưa có đợt thử để tổng hợp.</p>}
       {summary && <>
+        {summary.milestone && <div className="mb-3 rounded border border-gray-200 p-3">
+          <h3 className="font-semibold">Đo tự động theo bước (không cần xác nhận tay)</h3>
+          <p>Khách đạt mốc <strong>{summary.milestone.definition.label}</strong> (do nhân viên chuyển bước): {summary.milestone.reached} / {summary.milestone.candidates} khách</p>
+          <p>Chi phí mỗi khách đạt mốc: {milestoneCostLabel(summary.milestone.cost_to_date)} (đến nay, {summary.milestone.reached} khách)</p>
+          <p>{milestoneCostLabel(summary.milestone.cost_mature)} (khách đã qua {summary.milestone.definition.maturity_days} ngày — ổn định hơn, {summary.milestone.mature_reached} / {summary.milestone.mature_candidates} khách)</p>
+          <p>mục tiêu ≤ {formatVnd(summary.cost_per_qualified_lead.target_vnd)}{milestoneTargetMultiple(summary.milestone.cost_to_date, summary.cost_per_qualified_lead.target_vnd)
+            ? ` — hiện gấp ${milestoneTargetMultiple(summary.milestone.cost_to_date, summary.cost_per_qualified_lead.target_vnd)} lần mục tiêu` : ''}</p>
+          <p className="text-gray-600">Mốc theo bước bán hàng, là chỉ số thay thế, không thay cho xác nhận khách hợp lệ.</p>
+        </div>}
         <p>Chi tiêu đợt thử: {summary.spend.vnd === null
           ? `Chưa biết — ${(summary.spend.reasons || []).map(summaryReasonLabel).join('; ')}`
           : formatVnd(summary.spend.vnd)}</p>
-        <p>Khách ứng viên / Hợp lệ / Chờ / Loại: {summary.leads.candidates} / {summary.leads.qualified} / {summary.leads.pending} / {summary.leads.rejected}</p>
+        <p>Xác nhận thủ công (tuỳ chọn) — Khách ứng viên / Hợp lệ / Chờ / Loại: {summary.leads.candidates} / {summary.leads.qualified} / {summary.leads.pending} / {summary.leads.rejected}</p>
         {summary.leads.excluded_unavailable > 0 && <p>Không còn trong CRM: {summary.leads.excluded_unavailable}</p>}
         <p>{summaryCostLabel(summary.cost_per_qualified_lead)}</p>
         <p>Cập nhật: {new Date(summary.as_of).toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })}</p>

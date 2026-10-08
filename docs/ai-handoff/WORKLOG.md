@@ -1,3 +1,10 @@
+## 2026-10-08 — P1-9: đo chi phí theo mốc bán hàng tự động
+
+File: `stageMilestone.js`, `p1Qualification.js` (route), `stageMilestone.test.js`, `p1QualificationSummary.route.test.js`, `p1QualificationUi.test.js`, `P1QualificationPanel.jsx`, `p1Qualification.js` (frontend/lib), CURRENT.md, WORKLOG.md. Chỉ đọc lịch sử bước và chi tiêu; không ghi DB, không kết luận mục tiêu.
+Kiểm tra: `node --check` và test Node chạy trực tiếp (số ca trong báo cáo); chưa chạy vite build/duyệt UI/DB thật. `trialCohort` hiện lấy attribution mới nhất khi trùng khách, chưa bảo đảm mốc lần chạm đầu; không sửa theo brief. `node --test` bị chặn tạo tiến trình con (`spawn EPERM`). Hoàn tác: bỏ đúng delta P1-9 và hai mục handoff này.
+
+---
+
 ## 2026-10-08 — P1-8: tổng hợp tạm tính chỉ đọc
 
 File: `p1Qualification.js` (route), `trialCohort.js`, 4 tệp test route/UI, `P1QualificationPanel.jsx`, `p1Qualification.js` (frontend/lib), CURRENT.md, WORKLOG.md. `/summary` không trả danh tính khách, không kết luận mục tiêu; scope trùng tài khoản giữ tổng chưa biết để tránh cộng đôi.
@@ -2016,4 +2023,3 @@ Reconciled two conflicts between e16c885a and main ca8810c5. Preserved new Page/
 Theo yêu cầu tiếp tục của Founder, bổ sung domain/Application Service, claim riêng cho form, SQL702 atomic và bộ thử nghiệm. Nhận lại cùng nguồn giữ nguyên Customer/Lead/receipt; sai quyền hoặc dữ liệu cũ không rõ giữ để đối soát. Giao Admin bằng thông báo trong ứng dụng; không chạy legacy auto-task hoặc gửi khách. Source a5bcabf3:194/194 Node,29/29 PG intake và15/15 PG inbox PASS; CI37393352657, regression Messenger CI37393352980 PASS. Đã sửa lỗi SQL biến phone mà review/CI đầu phát hiện, giữ đầy đủ test. [Hồ sơ gói](FACEBOOK_LEAD_ADS_INTAKE_20261006.md), [review độc lập](FACEBOOK_LEAD_ADS_INTAKE_REVIEW_20261006.md). Chưa thay hệ thống thật, kích hoạt HOLD theo các giới hạn ghi trong hồ sơ.
 
 ---
-
