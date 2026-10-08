@@ -10,10 +10,11 @@ const touch = (id, lead_id, cham_dau_luc, kenh = 'messenger', company_id = A) =>
   ({ id, lead_id, cham_dau_luc, kenh, company_id, fb_campaign_id: 'campaign', fb_ad_id: 'ad' });
 
 function harness({ enabled = true, role = 'admin', company = A, tenant = [A, B],
-  trials = [trial], touches = [], events = [], leads = [], fail = null } = {}) {
+  trials = [trial], touches = [], events = [], leads = [], scopes = [], accounts = [], spend = [], fail = null } = {}) {
   const layers = [], calls = [];
   const tables = { p1_trials: trials, lead_attribution: touches,
-    p1_qualification_events: events, crm_leads: leads };
+    p1_qualification_events: events, crm_leads: leads, p1_trial_scopes: scopes,
+    fb_ad_accounts: accounts, fb_ad_spend_daily: spend };
   const db = { from(name) {
     calls.push(name);
     let rows = tables[name] || [], offset = 0, end = Infinity, selected = '', ordering = [];
@@ -22,7 +23,14 @@ function harness({ enabled = true, role = 'admin', company = A, tenant = [A, B],
       eq(key, value) { rows = rows.filter(row => row[key] === value); return q; },
       in(key, values) { rows = rows.filter(row => values.includes(row[key])); return q; },
       not(key) { rows = rows.filter(row => row[key] != null); return q; },
+      or(expr) { // supports "field.eq.value" and "field.is.null" terms joined by commas
+        const terms = String(expr).split(',').map(term => term.split('.'));
+        rows = rows.filter(row => terms.some(([key, op, value]) =>
+          op === 'eq' ? row[key] === value : op === 'is' && value === 'null' ? row[key] == null : false));
+        return q;
+      },
       gte(key, value) { rows = rows.filter(row => Date.parse(row[key]) >= Date.parse(value)); return q; },
+      lte(key, value) { rows = rows.filter(row => String(row[key]) <= String(value)); return q; },
       lt(key, value) { rows = rows.filter(row => Date.parse(row[key]) < Date.parse(value)); return q; },
       order(key, { ascending }) { ordering.push([key, ascending]); return q; },
       range(from, to) { offset = from; end = to + 1; return q; },
@@ -53,6 +61,9 @@ function harness({ enabled = true, role = 'admin', company = A, tenant = [A, B],
     '../middleware/auth': { auth: (_req, _res, next) => next() },
     '../helpers/tenantScope': { isTenantScopeEnforced: () => true },
     '../modules/marketingAutomation/qualification': require('../src/modules/marketingAutomation/qualification'),
+    '../modules/marketingAutomation/trialCohort': require('../src/modules/marketingAutomation/trialCohort'),
+    '../modules/marketingAutomation/spendCoverage': require('../src/modules/marketingAutomation/spendCoverage'),
+    '../modules/marketingAutomation/policy': require('../src/modules/marketingAutomation/policy'),
   };
   vm.runInNewContext(`(function(require,module,process){${source}\n})`,
     { Buffer, Date, Error, console, JSON, Object, String, Number, Map, Array, Set },
@@ -79,6 +90,7 @@ test('flag and role gate all reads', async () => {
   assert.deepEqual(JSON.parse(JSON.stringify((await harness().send('/config')).body)),
     { enabled: true, can_mark: true });
 });
+module.exports = { harness, trial, touch, A, B };
 test('trials and queue remain within company and tenant', async () => {
   const h = harness({ trials: [trial, { ...trial, id: 'trial-b', company_id: B }] });
   assert.equal((await h.send('/trials')).body.trials.length, 1);
@@ -116,6 +128,19 @@ test('cursor, state filter and latest revision do not skip matches', async () =>
   assert.notEqual(first.rows[0].lead_id, second.rows[0].lead_id);
   const filtered = (await h.send('/queue', { ...query, state: 'QUALIFIED' })).body;
   assert.deepEqual(Array.from(filtered.rows, row => row.lead_id), ['02']); assert.equal(filtered.rows[0].state.revision, 2);
+});
+test('attribution rows without company_id are attributed through the lead CRM company', async () => {
+  // Real data: recent attribution rows have company_id NULL; the lead CRM company decides.
+  const touches = [touch('01', 'mine-null', '2026-10-07T01:00:00Z', 'messenger', null),
+    touch('02', 'other-null', '2026-10-07T02:00:00Z', 'messenger', null),
+    touch('03', 'tagged-b', '2026-10-07T03:00:00Z', 'messenger', B),
+    touch('04', 'mine-tagged', '2026-10-07T04:00:00Z')];
+  const leads = [{ id: 'mine-null', company_id: A, code: 'm1', title: 't' }, { id: 'other-null', company_id: B, code: 'o', title: 't' },
+    { id: 'tagged-b', company_id: B, code: 'b', title: 't' }, { id: 'mine-tagged', company_id: A, code: 'm2', title: 't' }];
+  const result = await harness({ touches, leads }).send('/queue', query);
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(Array.from(result.body.rows, row => row.lead_id).sort(), ['mine-null', 'mine-tagged']);
+  assert.equal(result.body.excluded_unavailable, 0);
 });
 test('DB failures return 503 and no empty queue', async () => {
   const h = harness({ fail: 'lead_attribution' }), result = await h.send('/queue', query);

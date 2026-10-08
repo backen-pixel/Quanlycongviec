@@ -149,6 +149,8 @@ export function buildDealModulePath({ leadId, projectId, currentModule = 'crm' }
 }
 
 function commentHomeModules(user) {
+  // Admin truy cập được cả 3 module → để sidebar đang mở quyết định, không mặc định CRM.
+  if (isAdminLike(user) || isSystemAdmin(user)) return ['crm', 'production', 'logistics'];
   return memberModulesFromUser(user).filter((m) => m === 'crm' || m === 'production' || m === 'logistics');
 }
 
@@ -158,6 +160,13 @@ function sidebarToCommentModule(activeModule) {
   if (m === 'vc' || m === 'logistics') return 'logistics';
   if (m === 'crm') return 'crm';
   return null;
+}
+
+/** Module do backend stamp trong metadata thông báo bình luận (theo người nhận). */
+export function stampedCommentModule(n) {
+  const meta = n?.metadata && typeof n.metadata === 'object' ? n.metadata : {};
+  const k = String(meta.viewer_module_key || '').trim().toLowerCase();
+  return k === 'crm' || k === 'production' || k === 'logistics' ? k : null;
 }
 
 function commentPathForModule(mod, { leadId, projectId, query }) {
@@ -197,6 +206,14 @@ export function resolveLeadCommentNotificationPath(n, { user, activeModule } = {
     : null;
   const leadId = leadFromEntity || (meta.lead_id ? String(meta.lead_id).trim() : null);
   const ids = { leadId, projectId, query };
+
+  // Backend đã stamp module theo từng người nhận (có cả user_module_roles mà frontend không có).
+  // Người không phải admin → tin stamp, tránh NV xưởng role staff/manager bị coi là CRM.
+  const stampedKey = stampedCommentModule(n);
+  if (stampedKey && !(isAdminLike(user) || isSystemAdmin(user))) {
+    const stampedPath = commentPathForModule(stampedKey, ids);
+    if (stampedPath) return stampedPath;
+  }
 
   const homes = commentHomeModules(user);
   const unique = homes.length ? homes : ['crm'];

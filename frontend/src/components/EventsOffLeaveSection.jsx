@@ -21,6 +21,7 @@ import {
   getCrmDateRangeFromPreset,
 } from '../lib/crmDateRangePresets';
 import DateRangePickerPopover from './DateRangePickerPopover';
+import LeaveRangeCalendar from './LeaveRangeCalendar';
 import ResponsiveTable from './ResponsiveTable';
 import ScopeFilterBar from '../shared/components/ScopeFilterBar';
 import {
@@ -768,7 +769,7 @@ export default function EventsOffLeaveSection({
       )}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3">
         {isManager && !editingLeaveId && (
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-4">
             <label className="block text-[10px] font-medium text-gray-600 mb-0.5">Nhân viên</label>
             <LeaveStaffSearchSelect
               users={createFormUsers}
@@ -783,7 +784,7 @@ export default function EventsOffLeaveSection({
           </div>
         )}
         {isManager && editingLeaveId && (
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-4">
             <label className="block text-[10px] font-medium text-gray-600 mb-0.5">Nhân viên</label>
             <input
               type="text"
@@ -793,25 +794,7 @@ export default function EventsOffLeaveSection({
             />
           </div>
         )}
-        <div className={isManager ? 'lg:col-span-2' : 'lg:col-span-3'}>
-          <label className="block text-[10px] font-medium text-gray-600 mb-0.5">Nghỉ từ ngày</label>
-          <input
-            type="date"
-            value={form.start_date}
-            onChange={(e) => setForm({ ...form, start_date: e.target.value })}
-            className="w-full px-2 py-1.5 border rounded-lg text-sm bg-white"
-          />
-        </div>
-        <div className={isManager ? 'lg:col-span-2' : 'lg:col-span-3'}>
-          <label className="block text-[10px] font-medium text-gray-600 mb-0.5">Đến ngày</label>
-          <input
-            type="date"
-            value={form.end_date}
-            onChange={(e) => setForm({ ...form, end_date: e.target.value })}
-            className="w-full px-2 py-1.5 border rounded-lg text-sm bg-white"
-          />
-        </div>
-        <div className="lg:col-span-2">
+        <div className={isManager ? 'lg:col-span-4' : 'lg:col-span-6'}>
           <label className="block text-[10px] font-medium text-gray-600 mb-0.5">Loại nghỉ</label>
           <select
             value={form.leave_type}
@@ -821,7 +804,7 @@ export default function EventsOffLeaveSection({
             {LEAVE_TYPES.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
           </select>
         </div>
-        <div className="lg:col-span-2">
+        <div className={isManager ? 'lg:col-span-4' : 'lg:col-span-6'}>
           <label className="block text-[10px] font-medium text-gray-600 mb-0.5">Buổi</label>
           <select
             value={form.half_day}
@@ -830,6 +813,13 @@ export default function EventsOffLeaveSection({
           >
             {HALF_DAY.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
           </select>
+        </div>
+        <div className="lg:col-span-12">
+          <LeaveRangeCalendar
+            startDate={form.start_date}
+            endDate={form.end_date}
+            onChange={({ start_date, end_date }) => setForm({ ...form, start_date, end_date })}
+          />
         </div>
         <div className="lg:col-span-12">
           <label className="block text-[10px] font-medium text-gray-600 mb-0.5">Ghi chú</label>
@@ -841,34 +831,37 @@ export default function EventsOffLeaveSection({
             className="w-full px-2 py-1.5 border rounded-lg text-sm bg-white"
           />
         </div>
-        <div className="lg:col-span-12 flex justify-end gap-2">
-          {editingLeaveId && canDeleteLeave({ id: editingLeaveId, user_id: form.user_id, status: form.status }) && (
-            <button
-              type="button"
-              onClick={() => deleteLeave(editingLeaveId)}
-              className="h-9 px-4 text-red-600 hover:bg-red-50 border border-red-200 rounded-lg text-sm font-medium cursor-pointer inline-flex items-center gap-1.5"
-            >
-              <Trash2 className="h-4 w-4" /> Xóa
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={closeCreateForm}
-            className="h-9 px-4 text-gray-600 hover:bg-white border border-gray-200 rounded-lg text-sm font-medium cursor-pointer"
-          >
-            Đóng
-          </button>
-          <button
-            type="button"
-            onClick={submitRequest}
-            disabled={submitting}
-            className="h-9 px-4 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-          >
-            {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : editingLeaveId ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-            {editingLeaveId ? 'Lưu thay đổi' : 'Gửi đơn nghỉ'}
-          </button>
-        </div>
       </div>
+    </div>
+  );
+
+  const createFormActions = (
+    <div className="shrink-0 flex justify-end gap-2 px-4 sm:px-5 py-3 border-t border-gray-100 bg-white">
+      {editingLeaveId && canDeleteLeave({ id: editingLeaveId, user_id: form.user_id, status: form.status }) && (
+        <button
+          type="button"
+          onClick={() => deleteLeave(editingLeaveId)}
+          className="h-9 px-4 text-red-600 hover:bg-red-50 border border-red-200 rounded-lg text-sm font-medium cursor-pointer inline-flex items-center gap-1.5"
+        >
+          <Trash2 className="h-4 w-4" /> Xóa
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={closeCreateForm}
+        className="h-9 px-4 text-gray-600 hover:bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium cursor-pointer"
+      >
+        Đóng
+      </button>
+      <button
+        type="button"
+        onClick={submitRequest}
+        disabled={submitting}
+        className="h-9 px-4 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+      >
+        {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : editingLeaveId ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+        {editingLeaveId ? 'Lưu thay đổi' : 'Gửi đơn nghỉ'}
+      </button>
     </div>
   );
 
@@ -1480,8 +1473,9 @@ export default function EventsOffLeaveSection({
 
       {showCreateForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={closeCreateForm}>
-          <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto bg-white rounded-2xl shadow-2xl border border-gray-200" onClick={(e) => e.stopPropagation()}>
-            <div className="p-4 sm:p-5">{createFormBlock}</div>
+          <div className="w-full max-w-3xl max-h-[90vh] flex flex-col bg-white rounded-2xl shadow-2xl border border-gray-200" onClick={(e) => e.stopPropagation()}>
+            <div className="flex-1 overflow-y-auto p-4 sm:p-5">{createFormBlock}</div>
+            {createFormActions}
           </div>
         </div>
       )}

@@ -123,25 +123,8 @@ export function shouldForceSxHandoverColumn(project, projectColRow) {
   return false;
 }
 
-/** Khoá kéo thẻ trên Kanban SX — không khoá thẻ producing đã có logistics_company_id. */
-export function projectLockedOnSxKanban(project, sxStage) {
-  if (TEMP_SX_FREE_DRAG) return false;
-  const st = String(project?.status || '');
-  const inLogistics = Boolean(
-    project?.vc_kanban_column_id
-    || project?.logistics_company_id
-    || project?.logistics_company?.id,
-  );
-  if (sxStatusComesFromColumn(project, sxStage) && !inLogistics) {
-    return false;
-  }
-  // Đã bàn giao VC: PATCH chỉ đổi cột SX, không đè status VC — vẫn cho kéo
-  // Đơn hàng đã giao → Công nợ (theo dõi thu tiền trên board SX).
-  if (inLogistics) return false;
-  if (st === 'installing' || st === 'warranty') return true;
-  if (st === 'shipping') {
-    return !sxStatusComesFromColumn(project, sxStage);
-  }
+/** Mọi thẻ Kanban SX đều kéo được, kể cả bảo hành / đang lắp chưa gắn VC. */
+export function projectLockedOnSxKanban() {
   return false;
 }
 

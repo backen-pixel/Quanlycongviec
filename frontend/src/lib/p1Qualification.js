@@ -4,6 +4,41 @@ export const errorLabel = code => ({
   SOURCE_UNAVAILABLE: 'Chưa tải được nguồn dữ liệu. Vui lòng thử lại.', WRITE_UNAVAILABLE: 'Chưa lưu được. Vui lòng thử lại.',
   TRIAL_DATES_MISSING: 'Đợt thử chưa có đủ ngày bắt đầu và kết thúc.',
 }[code] || 'Không xử lý được yêu cầu. Vui lòng thử lại.');
+export const formatVnd = amount => Number.isSafeInteger(amount) && amount >= 0
+  ? `${new Intl.NumberFormat('vi-VN').format(amount)} đ` : 'Chưa biết';
+export const summaryReasonLabel = code => ({
+  NO_FACEBOOK_SCOPE: 'Đợt thử chưa có tài khoản Facebook', ACCOUNT_UNAVAILABLE: 'Tài khoản quảng cáo chưa sẵn sàng',
+  INVALID_INPUT: 'Khoảng ngày hoặc tài khoản chưa hợp lệ', INVALID_ROW_SCOPE: 'Có dòng chi tiêu ngoài phạm vi',
+  DUPLICATE_AD_DAY: 'Có dòng chi tiêu trùng ngày', ROW_CURRENCY: 'Đơn vị tiền trên dòng chi tiêu chưa đúng',
+  INVALID_AMOUNT: 'Số tiền chi tiêu chưa hợp lệ', SYNC_CURRENCY: 'Đơn vị tiền đồng bộ chưa đúng',
+  SYNC_FAILED: 'Lần đồng bộ chi tiêu bị lỗi', INCOMPLETE_SYNC: 'Dữ liệu đồng bộ chưa đầy đủ',
+  SYNC_WINDOW_UNPROVEN: 'Chưa phủ đủ ngày của đợt thử', STALE_SYNC: 'Dữ liệu chi tiêu chưa được cập nhật',
+  AMOUNT_OVERFLOW: 'Tổng chi tiêu vượt giới hạn tính toán',
+  DUPLICATE_ACCOUNT_SCOPE: 'Tài khoản quảng cáo xuất hiện nhiều lần trong phạm vi đợt thử',
+  IDENTITY_NOT_RECONCILED: 'Chưa gộp khách trùng',
+  AD_ACCOUNT_SCOPE_UNVERIFIED: 'Chưa lọc khách theo tài khoản quảng cáo',
+  SPEND_AD_LEVEL_ONLY: 'Chi tiêu mới đối chiếu ở cấp quảng cáo',
+  FIRST_PAID_SOURCE_UNVERIFIED: 'Chưa xác minh nguồn trả phí đầu tiên',
+  MILESTONE_IS_STAGE_PROXY: 'Mốc theo bước bán hàng chỉ là chỉ số thay thế',
+  NO_MATURE_WINDOW: 'Chưa đủ cửa sổ chi tiêu cho nhóm qua 4 ngày',
+}[code] || 'Nguồn dữ liệu chưa đủ để đối chiếu');
+export const milestoneCostLabel = cost => cost?.status === 'PROVISIONAL'
+  ? formatVnd(cost.vnd_ceil)
+  : cost?.status === 'NO_QUALIFIED_LEADS' ? 'Chưa có khách đạt mốc' : 'Chưa biết';
+export function milestoneTargetMultiple(cost, targetVnd) {
+  if (cost?.status !== 'PROVISIONAL' || !Number.isSafeInteger(cost.numerator_vnd) ||
+      cost.numerator_vnd < 0 || !Number.isSafeInteger(cost.denominator) ||
+      cost.denominator < 1 || !Number.isSafeInteger(targetVnd) || targetVnd < 1) return null;
+  const base = BigInt(targetVnd) * BigInt(cost.denominator);
+  const tenths = (BigInt(cost.numerator_vnd) * 10n + base / 2n) / base;
+  return `${tenths / 10n},${tenths % 10n}`;
+}
+export function summaryCostLabel(cost) {
+  if (cost?.status === 'PROVISIONAL' && Number.isSafeInteger(cost.vnd_ceil))
+    return `Chi phí mỗi khách hợp lệ (TẠM TÍNH): ${formatVnd(cost.vnd_ceil)} — mục tiêu ≤ ${formatVnd(cost.target_vnd)}`;
+  if (cost?.status === 'NO_QUALIFIED_LEADS') return 'Chưa có khách hợp lệ';
+  return 'Chưa biết';
+}
 export function validateForm(kind, form) {
   if (kind === 'QUALIFIED' && (!form.contact_usable || !form.need_in_scope ||
     !form.area_in_service || !form.evidence_ref?.trim()))

@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { isPlatformAdmin, isSystemAdmin } from '../lib/adminRole';
+import { isAdminLike, isPlatformAdmin, isSystemAdmin } from '../lib/adminRole';
 import { alertIncomingNotification, cancelNotificationSpeech } from '../lib/notificationAlert';
 import { setNotificationPrefsCache, getNotificationPrefsCache, isNotificationTypeEnabled } from '../lib/notificationPrefsCache';
 import { isExpiryDeadlineNotificationType } from '../lib/notificationOperationalFilter';
@@ -20,7 +20,9 @@ import {
   sidebarModuleToNotificationFilter,
 } from '../lib/sidebarModuleContext';
 import {
+  resolveDealPrimaryProjectId,
   resolveLeadCommentNotificationPath,
+  stampedCommentModule,
   viewerCommentModuleKey,
 } from '../lib/dealModulePathAccess';
 
@@ -307,8 +309,46 @@ function eventsPathForNotification(n) {
 /** Bình luận deal — mở đúng module của người bấm (SX / VC / CRM), không theo module người gửi. */
 function navigateLeadCommentMention(navigate, n, setOpen, viewer) {
   const path = resolveLeadCommentNotificationPath(n, viewer || {});
-  if (path) navigate(path);
   setOpen?.(false);
+  const isAdminViewer = isAdminLike(viewer?.user) || isSystemAdmin(viewer?.user);
+  const wantMod = (!isAdminViewer && stampedCommentModule(n))
+    || viewerCommentModuleKey(viewer?.user, viewer?.activeModule);
+  const leadId = resolveCommentLeadId(n);
+  // Thông báo cũ thiếu project_id: người xem ở SX/VC mà path rơi về CRM → tra dự án từ deal.
+  if ((wantMod === 'production' || wantMod === 'logistics') && leadId && (!path || path.startsWith('/crm/'))) {
+    const tab = String(n?.metadata?.nav_tab || 'comments').trim() || 'comments';
+    api.get(`/crm/leads/${leadId}`)
+      .then((res) => {
+        const pid = resolveDealPrimaryProjectId(res?.data?.lead || res?.data);
+        if (pid) navigate(`/${wantMod === 'production' ? 'sx' : 'vc'}/projects/${pid}?tab=${encodeURIComponent(tab)}`);
+        else if (path) navigate(path);
+      })
+      .catch(() => { if (path) navigate(path); });
+    return;
+  }
+  if (path) navigate(path);
+}
+
+/**
+ * Mở deal theo module của người bấm (dùng cho task CRM khi thông báo chỉ có lead_id, không có project_id).
+ * NV xưởng/VC → tra dự án từ deal rồi mở /sx|vc/projects/:id; CRM hoặc không tra được → crmPath.
+ */
+function navigateLeadForViewer(navigate, n, viewer, { leadId, tab, crmPath }) {
+  const isAdminViewer = isAdminLike(viewer?.user) || isSystemAdmin(viewer?.user);
+  const wantMod = (!isAdminViewer && stampedCommentModule(n))
+    || viewerCommentModuleKey(viewer?.user, viewer?.activeModule);
+  if (!leadId || (wantMod !== 'production' && wantMod !== 'logistics')) {
+    navigate(crmPath);
+    return;
+  }
+  api.get(`/crm/leads/${leadId}`)
+    .then((res) => {
+      const pid = resolveDealPrimaryProjectId(res?.data?.lead || res?.data);
+      navigate(pid
+        ? `/${wantMod === 'production' ? 'sx' : 'vc'}/projects/${pid}?tab=${encodeURIComponent(tab)}`
+        : crmPath);
+    })
+    .catch(() => navigate(crmPath));
 }
 
 /**
@@ -1238,6 +1278,18 @@ export default function NotificationCenter({ socket }) {
               });
               return;
             }
+            // Chat trên Lead/Deal → mở Lead chat dock (giống bấm trong danh sách, không nhảy sang CRM)
+            if (notif.type === 'lead_chat' && notif.entity_id) {
+              const senderName = extractChatSenderName(notif);
+              openLeadChat({
+                id: notif.entity_id,
+                title: notif.metadata?.lead_title || senderName || 'Lead',
+                code: notif.metadata?.lead_code || '',
+                type: notif.metadata?.lead_type || 'lead',
+              });
+              setOpen(false);
+              return;
+            }
             // workshop_new_deal: luôn ưu tiên Kanban SX (bỏ qua nav_url cũ trỏ /projects hoặc /sx/projects).
             if (
               notif.type === 'workshop_new_deal'
@@ -1275,7 +1327,15 @@ export default function NotificationCenter({ socket }) {
               if (aid) navigateCrmAssignment(navigate, aid);
               else {
                 const lid = notif.metadata?.lead_id;
-                navigate(lid ? `/crm/leads/${lid}?tab=tasks` : '/crm/tasks');
+                if (lid) {
+                  navigateLeadForViewer(navigate, notif, { user, activeModule: activeSidebarModule }, {
+                    leadId: String(lid),
+                    tab: 'tasks',
+                    crmPath: `/crm/leads/${lid}?tab=tasks`,
+                  });
+                } else {
+                  navigate('/crm/tasks');
+                }
               }
             } else if (isAssignmentNotification(notif)) {
               navigateCrmAssignment(navigate, notif);
