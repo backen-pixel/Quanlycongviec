@@ -1,3 +1,13 @@
+## 2026-10-08 — SX mobile: trần quét việc dự án không còn cắt âm thầm
+
+`GET /api/work-tasks/team-project-tasks` trước đây quét tối đa 8000 dòng và bỏ phần vượt mà không báo; HCB đã có ~6410 việc không hạn cũ (mọi phân loại, vì lọc phân loại làm sau khi quét) nên sắp chạm trần. Nay trần mặc định 30.000 (`TEAM_TASKS_SCAN_CAP`), quét theo đợt 6 lô song song (`TEAM_TASKS_SCAN_WAVE`), và `counts` có thêm `truncated` + `scan_total`; vượt trần thì `console.warn` và app tab Công việc (xem quản lý) hiện dòng «Danh sách quá lớn … chỉ tính phần đầu». App cũ bỏ qua hai trường mới. Commit `813f5bde` (backend), `7c44e4bb` (app).
+
+Kiểm chứng chỉ-đọc bằng server Express tạm (auth giả trong bộ nhớ, dữ liệu thật): HCB không hạn mọi loại quét 6410 dòng, `truncated=false`; ép `TEAM_TASKS_SCAN_CAP=3000` thì `truncated=true`, `scan_total=6410`; Tủ bếp mặc định 864 quá hạn / 1434 việc / 108 nhóm, Hôm nay 51/3 — khớp app. Chưa xem dòng cảnh báo trên màn hình app (cần ép trần trên backend máy, đổi JWT và mất phiên đăng nhập); mới kiểm kiểu bằng tsc. Chưa merge/deploy.
+
+Chưa xử lý gốc: lọc phân loại vẫn chạy SAU khi quét nên «Tủ bếp» vẫn quét cả 6410 việc của HCB; trần mới chỉ là đệm. Muốn gọn hơn thì đẩy lọc phân loại xuống truy vấn.
+
+---
+
 ## 2026-10-08 — SX mobile: KPI bảng sản xuất khớp web/máy chủ; summary HCB hết lỗi 500
 
 Lỗi: `GET /api/production/projects?summary=1` trả 500 «Bad Request» với mọi truy vấn có HCB (652 dự án gắn deal), Metalla (91) vẫn chạy. Nguyên nhân: `thinScanSummary` và `loadSxDeadlineBucketPage` nhét cả mảng `wonIds` vào `.or(id.in.(…))`, URL PostgREST vỡ từ khoảng 556 id. App phải rơi về đếm ở máy. Sửa ở `backend/src/helpers/sxKanbanSummary.js`: chia lô id (dùng `pickChunkTarget`/`chunkIds` của `sxChunkedIdPage.js`), quét song song, hợp nhất theo `id`. Không đổi API/schema.
