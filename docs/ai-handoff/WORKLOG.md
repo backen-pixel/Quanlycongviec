@@ -1,8 +1,21 @@
+## 2026-10-08 — Sửa cột hiển thị của dự án mới đã gán đơn vị VC (nhãn «Đã giao» sai) và dữ liệu test
+
+- Backend `backend/src/helpers/workshopKanban.js` (commit `f04b8752`), hàm `resolveSxDisplayColumnId`: trong nhánh `if (wonDeal)` thêm `newlyReceivedWithPresetVc = inLogistics && status==='consulting' && !vc_kanban_column_id`; điều kiện trả `firstSxPipelineColumnId` đổi từ `!inWorkshop && !hasSxHandover && !inLogistics` thành `... && (!inLogistics || newlyReceivedWithPresetVc)`. Gốc lỗi: dự án có `logistics_company_id` bị loại khỏi nhánh này nên tới `if (inLogistics || status==='shipping') return lastSxPipelineColumnId(...)`.
+- Kiểm tra (không ghi dữ liệu ngoài phần test bên dưới): script Node trên cấu hình cột thật `getResolvedKanbanStages(HCB, Tủ bếp)` (23 cột, đầu «Tiếp nhận đơn hàng về SX», cuối «CÔNG NỢ ĐÃ CHỐT»): ca lỗi đổi từ cuối sang đầu, 5 ca còn lại không đổi; so cột 430 dự án thật trước/sau (git stash bản sửa để đo): 0 đổi. `node --check` sạch.
+- Dữ liệu test ghi vào DB thật theo yêu cầu người dùng (đã hỏi xác nhận phương án HCB Tủ bếp có nhãn TEST): 1 dòng `projects` (`TEST-NULL-001`, `fc96d2f0-5a3d-4819-8f37-1aab43111776`; status consulting, `logistics_company_id` Phúc Đạt, `sx_kanban_column_id` NULL, flow/priority copy từ dự án thật) + 1 dòng `crm_leads` type deal (`TEST-NULL-DEAL-001`, `0a92e2b2-4131-4371-93c5-71a3f225dd31`, stage/pipeline copy từ deal TB-2026-1039, `sx_pipeline_stage_id` NULL, `created_by` = người yêu cầu). Dùng lại khách «ZZ TEST — kiểm thử kéo thẻ (xoá sau)» (`8d4d5f64-…`). Trigger trên hai bảng chỉ là nhiệt độ lead, lịch sử giai đoạn, kiểm tra tenant, đồng bộ `has_crm_deal` — không gửi thông báo. Dự án nằm trong `wonIds`, hiện trên bảng cho nhân viên HCB, KPI Tổng 430 → 431.
+- Quan sát trước sửa: app (backend chưa deploy) hiện `TEST-NULL-001` với nhãn «CÔNG NỢ ĐÃ CHỐT», không nằm trong chip «Tiếp nhận» (0); code cũ chạy ở máy cho cùng kết quả; code mới cho «Tiếp nhận đơn hàng về SX».
+- Dọn dẹp (người dùng chạy, AI không xóa dữ liệu thật): `delete from crm_leads where id='0a92e2b2-4131-4371-93c5-71a3f225dd31' and code='TEST-NULL-DEAL-001';` rồi `delete from projects where id='fc96d2f0-5a3d-4819-8f37-1aab43111776' and code='TEST-NULL-001';`.
+- Chưa làm: kiểm lại sau deploy (kỳ vọng chip «Tiếp nhận (1)»); nhánh «đã vào xưởng + có đơn vị VC + không cột» còn về cột cuối; chưa merge/deploy.
+
+---
+
 ## 2026-10-08 — P1-10: snapshot đợt thử (local)
 
 Đổi `database/713_p1_trial_snapshots*.sql`, `backend/src/modules/marketingAutomation/{trialSummary,spendCoverage}.js`, `backend/src/jobs/p1TrialSnapshotRunner.js`, route P1, một dòng server và test liên quan.
 Kiểm tra Node trực tiếp: summary/queue, spendCoverage, snapshot runner/route và SQL tĩnh đạt; `node --check` và `git diff --check` đạt.
 Chưa thử SQL thật, quyền/rollback trên Supabase, HTTP/DB và dữ liệu thật; Claude sẽ kiểm trên nhánh tạm. Rollback chỉ DROP bảng rỗng.
+---
+
 ## 2026-10-08 — SX mobile: bỏ trần quét 8000 cắt âm thầm của team-project-tasks
 
 - Backend `backend/src/routes/workTasks.js` (commit `813f5bde`): `TEAM_TASKS_SCAN_CAP = max(1000, env || 30000)`; thêm `TEAM_TASKS_SCAN_WAVE = max(1, env || 6)`; vòng quét các lô sau lô đầu chạy theo đợt (`for … i += WAVE`, mỗi đợt `Promise.all`). `scanTotal = first.count`, `truncated = scanTotal > cap`; vượt thì `console.warn`. `counts` trả thêm `truncated`, `scan_total` (nằm trong cache 30 s cùng `counts`).

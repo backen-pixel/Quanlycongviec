@@ -789,7 +789,15 @@ function resolveSxDisplayColumnId(project, sortedStages, opts = {}) {
 
   if (wonDeal) {
     const inWorkshop = Boolean(project?.current_stage_id);
-    if (!inWorkshop && !hasSxHandover && !inLogistics) return firstSxPipelineColumnId(sorted);
+    // Deal thắng MỚI về xưởng đã chọn sẵn đơn vị VC lúc tạo (`logistics_company_id`) vẫn là «consulting», chưa có cột VC
+    // thật → chưa phải đã sang vận chuyển. Trước đây `!inLogistics` loại nó khỏi nhánh này nên rơi xuống cột CUỐI pipeline
+    // (hiện «CÔNG NỢ ĐÃ CHỐT» + nhãn «Đã giao» trên thẻ vừa tạo) — nay về cột đầu như dự án chưa gán đơn vị VC.
+    const newlyReceivedWithPresetVc = inLogistics
+      && String(project?.status || '') === 'consulting'
+      && !project?.vc_kanban_column_id;
+    if (!inWorkshop && !hasSxHandover && (!inLogistics || newlyReceivedWithPresetVc)) {
+      return firstSxPipelineColumnId(sorted);
+    }
   }
 
   const cid = project?.current_stage_id || null;
