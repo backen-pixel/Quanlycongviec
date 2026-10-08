@@ -1,3 +1,17 @@
+## 2026-10-08 — SX mobile: KPI bảng sản xuất khớp web/máy chủ; summary HCB hết lỗi 500
+
+Lỗi: `GET /api/production/projects?summary=1` trả 500 «Bad Request» với mọi truy vấn có HCB (652 dự án gắn deal), Metalla (91) vẫn chạy. Nguyên nhân: `thinScanSummary` và `loadSxDeadlineBucketPage` nhét cả mảng `wonIds` vào `.or(id.in.(…))`, URL PostgREST vỡ từ khoảng 556 id. App phải rơi về đếm ở máy. Sửa ở `backend/src/helpers/sxKanbanSummary.js`: chia lô id (dùng `pickChunkTarget`/`chunkIds` của `sxChunkedIdPage.js`), quét song song, hợp nhất theo `id`. Không đổi API/schema.
+
+Đồng bộ định nghĩa: web và máy chủ đếm Đang SX / Chờ VC / Đã VC CHỈ theo cột kanban (`sxColumnStageKpiKey`); app thêm quy tắc `projectIsShipped` (có đơn vị VC thì «đã VC») nên HCB hiện Đã VC 216 / Đang SX 28 so với 121 / 41. Sửa `computeSxBoardKpis` trong `sx-mobile/src/lib/sxBoardKpis.ts` đếm theo cột; `projectIsShipped`/`projectIsDelivered` giữ cho nhãn thẻ và quá hạn.
+
+Kiểm chứng (chỉ-đọc, HCB Tủ bếp, 07/10/2026): hàm đã sửa trả tổng 429, Đang SX 41, Chờ VC 5, Đã VC 121, quá hạn 7 (đếm tay trong DB cũng ra 41/5/121); Metalla không đổi. App ở máy: 429 / 42 / 5 / 121 / 7 — chênh 1 ở Đang SX vì API danh sách «làm giàu» `sx_kanban_column_id` cho dự án DB để NULL (TB-2026-1037, 1038) còn summary đếm cột thô. Khi summary chạy, tiêu đề app dùng số máy chủ (41).
+
+Đã gộp vào main qua #54 (và #53); chưa xác nhận backend đã deploy bản sửa summary — cần gọi lại `summary=1` cho HCB (kỳ vọng 200, 429/41/5/121/7) hoặc xem thẻ KPI trên app.
+
+Chưa xử lý: TB-2026-556 (không gắn deal, `sx_kanban_column_id` NULL) bị cả web lẫn app loại khỏi bảng — chưa rõ thiết kế hay dữ liệu rác; thẻ TB-2026-1037/1038 mới tạo hiện nhãn «Đã xong / Đã giao» và «CÔNG NỢ ĐÃ CHỐT»; `TEAM_TASKS_SCAN_CAP=8000` ở `workTasks.js` cắt âm thầm (HCB hiện 6410 việc không hạn cũ); huy hiệu chuông (83) chưa đối chiếu được với DB. Mục «2026-10-06 16:39 — Sửa cổng xác minh callback Lead App» ở dưới đã mất thân bài từ lần gộp #55, không do phiên này.
+
+---
+
 ## 2026-10-07 — P1-7b: màn admin đánh dấu khách đợt thử (mã cục bộ)
 
 Thêm GET config/trials/queue vào route P1 đang tắt mặc định và khối đánh dấu trên trang quảng cáo FB. Kênh ứng viên: `messenger`, `lead_ads`; scope tài khoản quảng cáo chưa đối chiếu.
