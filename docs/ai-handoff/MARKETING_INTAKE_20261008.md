@@ -8,7 +8,7 @@ Branch `codex/marketing-attribution-20261008`, baseline `ac8971fb`. Scope: marke
 - Before the later instruction to stop production reads, read-only schema checks on primary qlycv `kdxypztstbeovyedmvem` confirmed `crm_leads` and `lead_attribution` columns/indexes. Both have RLS enabled, no policies, and grants only to `service_role` among anon/authenticated/service_role. This patch preserves those grants/RLS and uses invoker triggers; no public RPC or new security-definer function.
 - A scoped, non-PII projection confirmed three VPT codes lack attribution and the two specified campaign strings occur in the relevant descriptions. No descriptions/contact details were exported. No `external_api_logs` query was performed. Stopped production reads after the cancellation update; subsequent verification uses synthetic local PostgreSQL only.
 - Source traced: `POST /api/external/leads` and `/deals` resolve company from API key, preserve `source_id`, then insert `crm_leads`. Previously no structured attribution write. This establishes the repository writer, not the deployed website's actual request payload or release SHA.
-- Existing enrichment could overwrite first-touch facts when `fb_ad_id` was NULL, and could not fill campaign when ad was already present. Corrected with field-level compare-and-set, immutable provenance, company checks and matching-ad guards (including concurrent different-ad requests). Historical NULL-company rows are not automatically enriched by company-bound callers; reconcile them separately.
+- Existing enrichment could overwrite first-touch facts when `fb_ad_id` was NULL, and could not fill campaign when ad was already present. Corrected with a single atomic, complete-snapshot compare-and-set patch, immutable provenance, company checks, and campaign/click/ad identity guards. See the independent-review remediation below; the earlier per-field implementation was insufficient. Historical NULL-company rows are not automatically enriched by company-bound callers; reconcile them separately.
 
 ## Changes
 
@@ -60,7 +60,7 @@ Stage/type/funnel remain unchanged. `type=lead` is not unique customers or all i
 
 ## Verification completed
 
-Node v24.19.0: **121/121 tests passed** with the command below. All changed JavaScript passed `node --check`; `git diff --check` passed.
+Node v24.19.0 after review remediation: **136/136 tests passed** with the command below. All changed JavaScript passed `node --check`; `git diff --check` passed.
 
 ```sh
 node --test backend/tests/externalLeadTracking.test.js backend/tests/externalLeadTracking.route.test.js backend/tests/leadAttribution.enrichment.test.js backend/tests/partnerMarketing.route.test.js backend/tests/marketingIntake.sql.test.js backend/tests/adAnalytics.correctness.test.js backend/tests/p1QualificationQueue.route.test.js backend/tests/p1QualificationSummary.route.test.js
@@ -92,9 +92,9 @@ Local test groups on final source (some P1 summary tests import queue tests, so 
 |---|---:|---|
 | Input normalization | 5/5 | `externalLeadTracking.test.js` |
 | Actual external handler with mocks | 2/2 | `externalLeadTracking.route.test.js` |
-| First-touch enrichment/races | 5/5 | `leadAttribution.enrichment.test.js` |
+| First-touch enrichment/races | 12/12 | `leadAttribution.enrichment.test.js` |
 | Partner metadata/scope | 2/2 | `partnerMarketing.route.test.js` |
-| PostgreSQL scenario | 1/1 | `marketingIntake.sql.test.js`, assertions include apply/replay/permissions/rollback |
+| PostgreSQL scenario and concurrency subtests | 9/9 | `marketingIntake.sql.test.js`, assertions include apply/replay/permissions/rollback |
 | Report handler correctness | 76/76 | `adAnalytics.correctness.test.js` |
 | P1 queue | 10/10 | `p1QualificationQueue.route.test.js` |
 | P1 summary including inherited queue tests | 20/20 | `p1QualificationSummary.route.test.js` |
@@ -104,3 +104,13 @@ Local test groups on final source (some P1 summary tests import queue tests, so 
 The SQL harness initially raced PostgreSQL's temporary initialization socket during rerun; fixed readiness to wait for the final TCP listener inside the network-disabled container, then passed. PHP bridge validation found the missing explicit direct-platform value; fixed it and reran the entire differential suite. Neither failure involved production.
 
 Security details: existing CRM/attribution table RLS/grants unchanged. New trigger functions explicitly revoke EXECUTE from PUBLIC/anon/authenticated; they are SECURITY INVOKER. Approved repair apply creates a private journal schema/table, enables RLS and revokes PUBLIC/anon/authenticated privileges. Default dry-run does not create that journal. Migration does not grant any new role access. Rollback removes new triggers/functions but keeps populated columns/receipts; journal repair rollback rejects drift. General ERP/KPI reports, contact-only counts and old snapshots still require separate coverage decisions.
+
+## Independent-review P2 remediation (after c38febe3)
+
+Reproduced both review findings on `c38febe3b536a9c5f5bd130f902e81ddba235370` without production access: four conflicting-click variants and two campaign-only concurrency variants failed (**6 failures; 5 existing tests passed**). The old helper retained first IDs but could fill other nullable fields from a losing/later touch, and returned success when conditional writes affected zero rows.
+
+Root fix in `leadAttribution.js`: read all enrichment fields in one snapshot; reject conflicting gclid/fbclid/gbraid/wbraid, ad/campaign/form/leadgen identities and landing URL; construct only missing fields; write the entire patch in one SQL UPDATE guarded by the complete snapshot (including NULLs and company). `.select('id').maybeSingle()` distinguishes an applied write from zero affected rows. On a lost comparison, re-read and revalidate identities before a bounded retry (maximum three UPDATE attempts); contention exhaustion returns `ok:false, skipped:xung_dot_dong_thoi`. No identity/provenance or first-touch timestamp is overwritten. No new RPC, migration, privilege or production operation was added.
+
+The PostgreSQL fixture executes the actual JS helper with a narrow Supabase-shaped adapter against separate asynchronous psql sessions in the existing network-disabled PostgreSQL 16 container, under service_role. A barrier ensures both initial SELECT snapshots finish before either UPDATE. It checks all four click conflicts, competing Facebook/generic campaign-only writes, competing gclid-only writes, and safe same-click retry/idempotency. Losing requests must return a conflict and must not donate a campaign name/keyword. Raw provenance and first-touch time remain unchanged. This exercises PostgreSQL's real conditional UPDATE semantics, not a database mutation mock; it does not claim HTTP/PostgREST or full deployment acceptance.
+
+Local results after remediation: **136/136** Node cases (12 helper tests; PostgreSQL parent plus 8 subtests; unchanged other groups). Added a workflow path for the PostgreSQL fixture so changes cannot silently skip CI. `node --check` and `git diff --check` passed. The published SHA/CI results are recorded in PR #72; independent re-review and the original full staging/release gates remain required. Rollback of this remediation is a code revert; the original migration/backfill rollback remains separate and unchanged.

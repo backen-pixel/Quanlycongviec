@@ -72,6 +72,28 @@ function dangLuu(row) {
     || row.campaign_id || row.ad_id || row.gbraid || row.wbraid || row.landing_url);
 }
 
+// Read one complete snapshot, then fill missing fields in ONE guarded UPDATE.
+// Every click/campaign identity is a touch boundary, not just the ad ID.
+const ENRICHABLE_FIELDS = [
+  'fb_ad_id', 'fb_adset_id', 'fb_campaign_id', 'fb_campaign_name',
+  'fb_ref', 'fb_source', 'fb_ad_title', 'fb_post_id', 'fb_form_id', 'fb_leadgen_id',
+  'fb_creative_url', 'fb_creative_type', 'fb_creative_key',
+  'campaign_id', 'ad_id', 'adset_id', 'utm_source', 'utm_medium', 'utm_campaign',
+  'utm_content', 'utm_term', 'gclid', 'fbclid', 'gbraid', 'wbraid',
+  'landing_url', 'referrer_url', 'fbp', 'fbc',
+];
+const TOUCH_IDENTITY_FIELDS = [
+  'platform', 'fb_ad_id', 'fb_adset_id', 'fb_campaign_id', 'fb_form_id', 'fb_leadgen_id',
+  'ad_id', 'adset_id', 'campaign_id', 'gclid', 'fbclid', 'gbraid', 'wbraid', 'landing_url',
+];
+const SNAPSHOT_FIELDS = ['company_id', 'platform', ...ENRICHABLE_FIELDS];
+function readAttribution(row) {
+  let q = supabase.from('lead_attribution')
+    .select(['id', 'lead_id', 'contact_id', ...SNAPSHOT_FIELDS].join(',')).limit(1);
+  q = row.lead_id ? q.eq('lead_id', row.lead_id) : q.eq('contact_id', row.contact_id);
+  return q.maybeSingle();
+}
+
 /**
  * Ghi quy kết. Trả { ok, id, skipped } — không ném lỗi.
  * @param {object} row các trường của lead_attribution
@@ -83,47 +105,40 @@ async function ghiQuyKet(row) {
     }
     if (!dangLuu(row)) return { ok: false, skipped: 'khong_co_quy_ket' };
 
-    // Đã có dòng cho lead / contact này chưa?
-    let q = supabase.from('lead_attribution').select('id, lead_id, contact_id, company_id, platform, fb_ad_id, fb_campaign_id, ad_id, campaign_id').limit(1);
-    q = row.lead_id ? q.eq('lead_id', row.lead_id) : q.eq('contact_id', row.contact_id);
-    const { data: cu, error: eCu } = await q.maybeSingle();
+    let { data: cu, error: eCu } = await readAttribution(row);
     if (eCu) return { ok: false, skipped: bangChuaCo(eCu) ? 'chua_migrate' : 'loi' };
 
     if (cu?.id) {
-      if (row.company_id && cu.company_id !== row.company_id) return { ok: false, skipped: 'khac_cong_ty' };
-      for (const key of ['platform', 'fb_ad_id', 'fb_campaign_id', 'ad_id', 'campaign_id']) {
-        if (cu[key] && row[key] && cu[key] !== row[key]) return { ok: false, skipped: 'khac_lan_cham' };
-      }
-      // Compare-and-set each nullable field: preserve first touch even under races.
-      // Identity, channel and provenance are immutable; enrich only missing facts.
-      const enrichable = new Set([
-        'fb_ad_id', 'fb_adset_id', 'fb_campaign_id', 'fb_campaign_name',
-        'fb_ref', 'fb_source', 'fb_ad_title', 'fb_post_id', 'fb_form_id', 'fb_leadgen_id',
-        'fb_creative_url', 'fb_creative_type', 'fb_creative_key',
-        'campaign_id', 'ad_id', 'adset_id', 'utm_source', 'utm_medium', 'utm_campaign',
-        'utm_content', 'utm_term', 'gclid', 'fbclid', 'gbraid', 'wbraid',
-        'landing_url', 'referrer_url', 'fbp', 'fbc',
-      ]);
-      const identityOrder = ['fb_ad_id', 'ad_id', 'fb_campaign_id', 'campaign_id'];
-      const entries = Object.entries(row).sort(([a], [b]) =>
-        (identityOrder.includes(a) ? identityOrder.indexOf(a) : 99) -
-        (identityOrder.includes(b) ? identityOrder.indexOf(b) : 99));
-      for (const [k, v] of entries) {
-        if (!enrichable.has(k) || v == null || v === '') continue;
-        let patch = supabase.from('lead_attribution')
-          .update({ [k]: v, updated_at: new Date().toISOString() })
-          .eq('id', cu.id).is(k, null);
-        if (row.company_id) patch = patch.eq('company_id', row.company_id);
-        // Tie enrichment to the winning ad even when two first referrals race.
-        for (const identity of ['fb_ad_id', 'ad_id']) {
-          if (identity !== k && (row[identity] || cu[identity])) {
-            patch = patch.eq(identity, row[identity] || cu[identity]);
-          }
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (row.company_id && cu.company_id !== row.company_id) return { ok: false, skipped: 'khac_cong_ty' };
+        for (const key of TOUCH_IDENTITY_FIELDS) {
+          if (cu[key] && row[key] && cu[key] !== row[key]) return { ok: false, skipped: 'khac_lan_cham' };
         }
-        const { error } = await patch;
+        const patch = {};
+        for (const key of ENRICHABLE_FIELDS) {
+          if (cu[key] == null && row[key] != null && row[key] !== '') patch[key] = row[key];
+        }
+        if (!Object.keys(patch).length) return { ok: true, id: cu.id, skipped: 'khong_co_gi_moi' };
+
+        let update = supabase.from('lead_attribution')
+          .update({ ...patch, updated_at: new Date().toISOString() }).eq('id', cu.id);
+        // PostgreSQL rechecks the complete predicate after waiting for a concurrent
+        // writer. No partial field writes can survive a lost snapshot comparison.
+        for (const key of SNAPSHOT_FIELDS) {
+          update = cu[key] == null ? update.is(key, null) : update.eq(key, cu[key]);
+        }
+        const { data: changed, error } = await update.select('id').maybeSingle();
         if (error) return { ok: false, skipped: 'loi' };
+        if (changed?.id) return { ok: true, id: changed.id, skipped: 'da_co' };
+
+        // Zero affected rows is a conflict, not success. Re-read before deciding
+        // whether the same touch can safely fill anything else; bound contention.
+        const fresh = await readAttribution(row);
+        if (fresh.error) return { ok: false, skipped: 'loi' };
+        if (!fresh.data || fresh.data.id !== cu.id) return { ok: false, skipped: 'xung_dot_dong_thoi' };
+        cu = fresh.data;
       }
-      return { ok: true, id: cu.id, skipped: 'da_co' };
+      return { ok: false, skipped: 'xung_dot_dong_thoi' };
     }
 
     const { data, error } = await supabase

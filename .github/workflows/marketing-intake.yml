@@ -14,6 +14,7 @@ on:
       - 'backend/tests/leadAttribution.enrichment.test.js'
       - 'backend/tests/partnerMarketing.route.test.js'
       - 'backend/tests/marketingIntake.sql.test.js'
+      - 'backend/tests/fixtures/leadAttributionPostgres.js'
       - 'database/714_marketing_intake*.sql'
       - 'database/repairs/marketing_20261008*.sql'
       - 'integrations/wordpress/vpt-v1-crm-bridge/**'

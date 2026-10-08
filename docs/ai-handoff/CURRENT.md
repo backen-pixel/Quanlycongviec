@@ -1,3 +1,9 @@
+## 2026-10-08 — PR72: sửa hai P2 trộn attribution qua lần chạm
+
+Review tái hiện trên `c38febe3`: 6 ca mới thất bại. Đổi enrichment sang một UPDATE nguyên tử có CAS toàn snapshot; kiểm tra bốn click ID và campaign/ad/form/landing identity, zero-row phải đọc lại và trả xung đột thay vì thành công giả. Không thêm SQL/quyền hay gọi production. Helper 12/12; tổng gói Node 136/136, gồm 8 ca con PostgreSQL chạy helper thật qua các session đồng thời. Chi tiết tại [MARKETING_INTAKE_20261008.md](MARKETING_INTAKE_20261008.md); SHA và CI đúng phiên bản được cập nhật trong draft PR72. Chưa merge/deploy.
+
+---
+
 ## 2026-10-08 — Marketing intake: chuẩn bị draft PR và nối WordPress
 
 Tiếp nối nhánh `codex/marketing-attribution-20261008`: phát hiện bridge CF7 đã thu tracking nhưng chỉ gửi notes; thêm attribution/is_test vào payload, giữ nguồn/notes/fingerprint/queue. Bổ sung CI PR-only Node 18/22 + PostgreSQL dữ liệu tổng hợp + PHP-to-Node contract; không gọi production. Bằng chứng từng nhóm và release blockers: [MARKETING_INTAKE_20261008.md](MARKETING_INTAKE_20261008.md). Trạng thái PR/CI phải đối chiếu đúng SHA trong báo cáo cuối, không suy từ test local.

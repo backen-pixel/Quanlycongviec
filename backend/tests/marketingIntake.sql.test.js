@@ -2,7 +2,7 @@
 // Local, synthetic PostgreSQL only. No credentials, ports, volumes, or production connections.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, execFile } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '../..');
@@ -11,11 +11,17 @@ const name = `marketing-intake-test-${process.pid}`;
 const docker = args => execFileSync('docker', args, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
 const sql = (input, args = []) => execFileSync('docker', ['exec', '-i', name, 'psql', '-h', '127.0.0.1', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1', ...args],
   { input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+const runSql = input => new Promise((resolve, reject) => {
+  const child = execFile('docker', ['exec', '-i', name, 'psql', '-h', '127.0.0.1', '-U', 'postgres',
+    '-v', 'ON_ERROR_STOP=1', '-tAq'], { encoding: 'utf8', timeout: 10000 },
+  (error, stdout) => error ? reject(error) : resolve(stdout));
+  child.stdin.end(input);
+});
 const company = '991dc79d-cbf5-49f9-a364-35227cb47635';
 const tenant = '7d42e731-895b-4ba8-99d6-0005c4e23544';
 const check = (condition) => sql(`DO $$ BEGIN IF NOT (${condition}) THEN RAISE EXCEPTION 'assertion failed'; END IF; END $$;`);
 
-test('PostgreSQL: atomic intake, permissions, migration replay, scoped repair and rollback', { timeout: 60000 }, async () => {
+test('PostgreSQL: atomic intake, permissions, migration replay, scoped repair and rollback', { timeout: 60000 }, async (t) => {
   docker(['run', '--rm', '-d', '--network', 'none', '--name', name, '-e', 'POSTGRES_HOST_AUTH_METHOD=trust',
     'postgres:16-alpine']);
   try {
@@ -42,6 +48,8 @@ test('PostgreSQL: atomic intake, permissions, migration replay, scoped repair an
     // Use the real existing attribution schema and indexes, not a hand-invented replacement.
     const schema = read('database/638_lead_attribution_quality_partner.sql');
     sql(schema.slice(schema.indexOf('CREATE TABLE IF NOT EXISTS lead_attribution'), schema.indexOf('CREATE TABLE IF NOT EXISTS lead_quality_scores')));
+    const creative = read('database/645_fb_creative_reaction_leadform.sql');
+    sql(creative.slice(creative.indexOf('alter table'), creative.indexOf('comment on column')));
     sql('ALTER TABLE crm_leads ENABLE ROW LEVEL SECURITY; ALTER TABLE lead_attribution ENABLE ROW LEVEL SECURITY; GRANT SELECT, INSERT, UPDATE ON crm_leads,lead_attribution TO service_role;');
     const migration = read('database/714_marketing_intake.sql');
     sql(migration); sql(migration);
@@ -78,6 +86,7 @@ test('PostgreSQL: atomic intake, permissions, migration replay, scoped repair an
     assert.equal(sql("SELECT jsonb_agg(to_jsonb(l) ORDER BY id) FROM crm_leads l", ['-tA']).trim(), before);
     sql(`UPDATE companies SET tenant_id='00000000-0000-4000-8000-000000000001' WHERE id='${company}'`);
     assert.throws(() => sql(repair, ['-v', 'apply=true']));
+    await require('./fixtures/leadAttributionPostgres').runEnrichmentRaceChecks(t, { sql, runSql, company });
     sql(read('database/714_marketing_intake_rollback.sql'));
     check("(SELECT intake_attribution IS NOT NULL FROM crm_leads WHERE code='new')");
   } finally { docker(['rm', '-f', name]); }
