@@ -1,3 +1,11 @@
+## 2026-10-08 — P1-10: snapshot đợt thử (local)
+
+Đổi `database/713_p1_trial_snapshots*.sql`, `backend/src/modules/marketingAutomation/{trialSummary,spendCoverage}.js`, `backend/src/jobs/p1TrialSnapshotRunner.js`, route P1, một dòng server và test liên quan.
+Kiểm tra Node trực tiếp: summary/queue, spendCoverage, snapshot runner/route và SQL tĩnh đạt; `node --check` và `git diff --check` đạt.
+Chưa thử SQL thật, quyền/rollback trên Supabase, HTTP/DB và dữ liệu thật; Claude sẽ kiểm trên nhánh tạm. Rollback chỉ DROP bảng rỗng.
+
+---
+
 ## 2026-10-08 — P1-9: đo chi phí theo mốc bán hàng tự động
 
 File: `stageMilestone.js`, `p1Qualification.js` (route), `stageMilestone.test.js`, `p1QualificationSummary.route.test.js`, `p1QualificationUi.test.js`, `P1QualificationPanel.jsx`, `p1Qualification.js` (frontend/lib), CURRENT.md, WORKLOG.md. Chỉ đọc lịch sử bước và chi tiêu; không ghi DB, không kết luận mục tiêu.

@@ -1,3 +1,11 @@
+## 2026-10-08 — P1-10: ảnh chụp tổng hợp đợt thử (local)
+
+Thêm SQL 713/rollback, module summary, daily khi COMPLETE, job cờ `VPT_P1_SNAPSHOT_CRON` mặc định tắt và GET `/snapshots` chỉ admin trên DB chính.
+Chỉ ghi thêm; khi chi tiêu chưa COMPLETE, `spend_by_day=[]` và `source_note` ghi trạng thái, không suy thiếu thành 0.
+Test Node trực tiếp và `node --check` đạt; chưa chạy SQL, kết nối DB/mạng hay kiểm chứng dữ liệu thật. Hoàn tác: bỏ delta P1-10; rollback SQL chỉ gỡ bảng rỗng, giữ ảnh chụp đã có.
+
+---
+
 ## 2026-10-08 — P1-9: mốc Cold/Warm/Hot (khách đã được sales phân loại) tự động (mã cục bộ)
 
 `/summary` thêm `milestone` từ lịch sử bước do người chuyển sau `cham_dau_luc` của ứng viên, chi phí đến nay và nhóm qua 4 ngày; vẫn `NOT_EVALUATED`, chỉ đọc, cờ mặc định tắt. UI hiển thị chỉ số thay thế trung tính; xác nhận thủ công là tuỳ chọn.

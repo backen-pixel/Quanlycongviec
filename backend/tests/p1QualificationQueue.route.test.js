@@ -62,6 +62,7 @@ function harness({ enabled = true, role = 'admin', company = A, tenant = [A, B],
     '../helpers/tenantScope': { isTenantScopeEnforced: () => true },
     '../modules/marketingAutomation/qualification': require('../src/modules/marketingAutomation/qualification'),
     '../modules/marketingAutomation/trialCohort': require('../src/modules/marketingAutomation/trialCohort'),
+    '../modules/marketingAutomation/trialSummary': require('../src/modules/marketingAutomation/trialSummary'),
     '../modules/marketingAutomation/spendCoverage': require('../src/modules/marketingAutomation/spendCoverage'),
     '../modules/marketingAutomation/policy': require('../src/modules/marketingAutomation/policy'),
   };
