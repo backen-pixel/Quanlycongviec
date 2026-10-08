@@ -1,3 +1,10 @@
+## 2026-10-08 — Sửa test báo cáo quảng cáo adAnalytics
+
+Sáu lỗi ở /pages-profile, /page-ads, /page-posts do DB giả thiếu toán tử .is('lead_id', null) đã thêm trong mã báo cáo; sửa harness tại backend/tests/adAnalytics.correctness.test.js, giữ nguyên khẳng định đếm Lead và đọc theo lô.
+Kiểm tra: 127/127 test adAnalytics và 68/68 test P1 liên quan đạt trên Node 24 với --test-isolation=none; node --check đạt. Lệnh workflow nguyên dạng bị sandbox chặn spawn (EPERM); chưa kiểm Node 18/22 hoặc DB thật. Không đổi mã runtime/API; hoàn tác bằng cách bỏ diff test và mục bàn giao này.
+
+---
+
 ## 2026-10-08 — Bảng sản xuất: dự án mới đã gán đơn vị VC không còn bị xếp vào cột cuối («Đã giao»)
 
 Lỗi: deal thắng MỚI về xưởng đã chọn sẵn đơn vị vận chuyển lúc tạo (`projects.logistics_company_id`), status còn `consulting`, `sx_kanban_column_id` NULL, bị `resolveSxDisplayColumnId` (`backend/src/helpers/workshopKanban.js`) xếp vào cột CUỐI pipeline («CÔNG NỢ ĐÃ CHỐT»), nên thẻ hiện «Đã xong / Đã giao» + «Công nợ đã chốt» (thấy ở TB-2026-1037/1038). Nguyên nhân: nhánh `wonDeal` chỉ trả cột đầu khi `!inLogistics`; dự án có đơn vị VC rơi xuống nhánh `inLogistics` cuối hàm → `lastSxPipelineColumnId`. Sửa (commit `f04b8752`): nếu `inLogistics` nhưng status `consulting`, chưa `current_stage_id`, chưa `sx_handover_at` và chưa có `vc_kanban_column_id` thì về cột đầu như dự án chưa gán đơn vị VC. Hàm dùng chung nên web và app đổi theo; không đổi API/schema.

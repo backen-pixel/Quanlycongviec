@@ -38,7 +38,7 @@ function harness(tables, fault = null) {
   const db = { from(table) {
     const call = { table, ops: [], ordinal: calls.filter(c => c.table === table).length + 1 }; calls.push(call);
     const q = {};
-    for (const op of ['select', 'in', 'not', 'limit', 'eq', 'neq', 'gte', 'lte', 'order', 'maybeSingle']) {
+    for (const op of ['select', 'in', 'not', 'is', 'limit', 'eq', 'neq', 'gte', 'lte', 'order', 'maybeSingle']) {
       q[op] = (...args) => { call.ops.push([op, ...args]); return q; };
     }
     q.then = (yes, no) => {
@@ -52,6 +52,7 @@ function harness(tables, fault = null) {
         if (op === 'eq') data = data.filter((row) => row[key] === value);
         if (op === 'neq') data = data.filter((row) => row[key] !== value);
         if (op === 'not' && value === 'is') data = data.filter((row) => row[key] != null);
+        if (op === 'is' && value === null) data = data.filter((row) => row[key] == null);
       }
       if (call.ops.some(o => o[0] === 'maybeSingle')) data = data[0] || null;
       return Promise.resolve({ data, error: null }).then(yes, no);
@@ -203,11 +204,14 @@ function pageFixture(count = 1) {
 }
 for (const url of pagePaths) {
   test(`${url}: new view counts duplicate touchpoints once`, async () => {
-    const r = await harness(pageFixture()).run(url, pageQuery);
+    const f = pageFixture();
+    f.lead_attribution.push({ ...f.lead_attribution[0], lead_id: null });
+    const r = await harness(f).run(url, pageQuery);
     assert.equal(r.code,200);
     const stats=url==='/post-leads'?r.body.tom_tat:r.body.data[0];
     assert.equal(stats.leads,1); assert.equal(stats.closed,1);
     if(url==='/pages-profile') assert.equal(stats.lead_7_ngay,1);
+    if(url!=='/post-leads') assert.equal(stats.chua_thanh_lead,1);
   });
   test(`${url}: no Lead details outside company scope`, async () => {
     const r=await harness(pageFixture()).run(url,{...pageQuery,company_id:'outside'});
