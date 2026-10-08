@@ -1,3 +1,9 @@
+## 2026-10-08 — P2-1a: lõi thuần «AI soạn nháp trả lời khách» (chưa nối đâu, chưa gọi mạng)
+
+Founder chọn API chính thức cho giai đoạn 2. Thêm `backend/src/modules/aiReplyDraft/{anonymize,policy,budget,provider}.js`: ẩn danh hội thoại (số điện thoại mọi dạng kể cả viết bằng chữ, email, liên kết, tên/địa chỉ đã biết, địa chỉ đường/hẻm khách tự gõ) và thất bại thì đóng; bộ luật kiểm bản nháp (không báo giá/hứa/PII/liên kết); trần chi phí số nguyên VND làm tròn lên; giao diện nhà cung cấp (OpenAI qua fetch giả trong test). Không route, SQL, giao diện; không gửi tin; không gọi OpenAI thật; không đọc env. Test 15/15. Giới hạn: biệt danh/viết dính của khách không biết trước không ẩn được; từ «tuần» trùng tên «Tuấn» bị che nhầm (an toàn nhưng mất ngữ cảnh). Codex đang bị đăng xuất nên Claude tự viết.
+
+---
+
 ## 2026-10-08 — P1-12: đối soát chi tiêu cấp tài khoản (local)
 Kéo tổng Meta theo ngày cấp tài khoản sau ghi quảng cáo; MATCH/MISMATCH/UNAVAILABLE vào ket_qua_cuoi, coverage và caveat summary theo đối soát. Chưa chạy SQL, DB/mạng, Meta thật, bật cờ, commit hay push.
 Kiểm chứng: 210/210 test fake fetch, P1/adAnalytics và node --check đạt; sau triển khai cần Claude đọc ket_qua_cuoi sau lần đồng bộ tiếp theo. Hoàn tác: bỏ diff P1-12 và mục này.
