@@ -14,6 +14,7 @@ const {
   resolveSxHandoverColumnId,
   getCrmVcDeliveryStageId,
   getCrmStageByRole,
+  resolveVcHandoverWorkflowStageId,
 } = require('./workshopKanban');
 const {
   resolveLogisticsHandoverResponsibleUserId,
@@ -361,9 +362,10 @@ async function performVcHandoverCore(req, {
     resolvedInstallerPersonId = await resolveLogisticsHandoverInstallerUserId(logisticsCompanyId);
   }
 
+  // Giữ workflow stage «delivery» thay vì xoá trắng — xem resolveVcHandoverWorkflowStageId.
   const projectUpdate = {
     status: 'shipping',
-    current_stage_id: null,
+    current_stage_id: await resolveVcHandoverWorkflowStageId(),
     logistics_company_id: logisticsCompanyId,
     updated_at: new Date().toISOString(),
   };

@@ -21,6 +21,7 @@ const {
   resolveSxDisplayColumnId,
   shouldForceSxHandoverColumn,
   SX_STAGE_SLUG_STATUS,
+  resolveVcHandoverWorkflowStageId,
   enrichProjectsForSx,
   buildPipelineSummary,
   syncCrmLeadSxPipelineFromProject,
@@ -64,6 +65,10 @@ const {
 } = require('../helpers/projectOrderFulfillment');
 const { assertSxKanbanAdvanceAllowed } = require('../helpers/workshopStageAdvanceGate');
 const { clearSxSchedulesOnCompletedForProjects } = require('../helpers/clearCompletedProjectDeadlines');
+const {
+  isSxShippedColumn,
+  completeSxWorkUpToShippedColumn,
+} = require('../helpers/completeOpenWorkOnModuleDone');
 const { MODULE, resolveModuleDeadline } = require('../helpers/moduleDeadlinePolicy');
 const { applyProjectTenantScope, assertRowCompanyInTenant, isTenantScopeEnforced } = require('../helpers/tenantScope');
 
@@ -3875,6 +3880,24 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
           } catch (syncErr) {
             console.warn('[production] syncCrmLeadSxPipelineFromProject (pipeline col):', syncErr.message);
           }
+          // Cột tick «Đã VC»: hàng đã rời xưởng → đóng nhiệm vụ SX từ cột đó trở về trước.
+          // Chạy TRƯỚC bộ mẫu để việc do chính cột này sinh ra khi vừa tới vẫn còn mở.
+          if (colChanged && isSxShippedColumn(colRow)) {
+            try {
+              const rShip = await completeSxWorkUpToShippedColumn({
+                projectId: id,
+                shippedColumnId: colId,
+              });
+              if (rShip?.crm_tasks || rShip?.workshop_tasks) {
+                console.info(
+                  `[production] SX shipped auto-complete: project=${id} stage=${colId} `
+                  + `crm_tasks=${rShip.crm_tasks} tasks=${rShip.workshop_tasks} assignments=${rShip.assignments || 0}`,
+                );
+              }
+            } catch (shipErr) {
+              console.warn('[production] completeSxWorkUpToShippedColumn:', shipErr.message);
+            }
+          }
           if (shouldApplyPipelineTemplates) {
             try {
               const rTpl = await applyProductionTemplatesOnPipelineEnter({
@@ -4766,7 +4789,10 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
       resolvedInstallerPersonId = await resolveLogisticsHandoverInstallerUserId(logisticsCompanyId);
     }
 
-    const projectUpdate = { status: 'shipping', current_stage_id: null };
+    // Giữ workflow stage «delivery» thay vì xoá trắng: `.eq('current_stage.slug', …)` ở các màn
+    // lọc theo giai đoạn không bao giờ khớp NULL, nên đơn vừa bàn giao sẽ biến mất khỏi danh sách.
+    const handoverStageId = await resolveVcHandoverWorkflowStageId();
+    const projectUpdate = { status: 'shipping', current_stage_id: handoverStageId };
     // Chỉ gán VC/LĐ — không ghi đè production_person_id hay assignee CRM trên deal.
     if (resolvedLogisticsPersonId) projectUpdate.logistics_person_id = resolvedLogisticsPersonId;
     if (resolvedInstallerPersonId) projectUpdate.installer_person_id = resolvedInstallerPersonId;
@@ -4787,7 +4813,7 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
           .from('projects')
           .update({
             status: 'shipping',
-            current_stage_id: null,
+            current_stage_id: handoverStageId,
             logistics_company_id: logisticsCompanyId,
             ...(deliveryTeamId ? { delivery_team_id: deliveryTeamId } : {}),
             ...(installationTeamId ? { installation_team_id: installationTeamId } : {}),
@@ -4810,7 +4836,7 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
           .from('projects')
           .update({
             status: 'shipping',
-            current_stage_id: null,
+            current_stage_id: handoverStageId,
             ...(deliveryTeamId ? { delivery_team_id: deliveryTeamId } : {}),
             ...(installationTeamId ? { installation_team_id: installationTeamId } : {}),
             ...(vcStageId ? { vc_kanban_column_id: vcStageId } : {}),

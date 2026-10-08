@@ -146,6 +146,18 @@ async function fetchProjectCommentNotifyUserIds(supabase, projectId) {
   return [...new Set([...audienceIds, ...participantIds])];
 }
 
+/**
+ * Nhãn ngắn cho tiêu đề thông báo bình luận. Tên đơn đầy đủ nằm ở metadata.lead_title —
+ * popup / push chỉ hiện 1 dòng tiêu đề nên ưu tiên mã dự án / mã deal.
+ */
+function commentNotificationLabel(ctx, fallback = 'Lead/Deal') {
+  const code = String(ctx?.projectCode || ctx?.leadCode || '').trim();
+  if (code) return code;
+  const title = String(ctx?.leadTitle || '').trim();
+  if (!title) return fallback;
+  return title.length > 40 ? `${title.slice(0, 39)}…` : title;
+}
+
 function buildCommentPreview(text, maxLen = 160) {
   const rawBody = String(text || '').trim();
   return rawBody.length > maxLen ? `${rawBody.slice(0, maxLen - 3)}…` : rawBody;
@@ -255,7 +267,7 @@ async function notifyDealCommentMentions(req, notifyMultiple, leadId, senderId, 
   const senderName = commentRow?.user?.full_name || req.user?.fullName || 'Ai đó';
   const senderAvatar = commentRow?.user?.avatar || '';
   const preview = buildCommentPreview(commentRow?.body);
-  const label = ctx.leadTitle || ctx.leadCode || 'Lead/Deal';
+  const label = commentNotificationLabel(ctx);
 
   await notifyAudienceByViewerModule(req, notifyMultiple, ids, {
     type: 'comment_added',
@@ -279,7 +291,7 @@ async function notifyDealCommentParticipants(req, notifyMultiple, leadId, sender
   const senderName = commentRow?.user?.full_name || req.user?.fullName || 'Ai đó';
   const senderAvatar = commentRow?.user?.avatar || '';
   const preview = buildCommentPreview(commentRow?.body);
-  const label = ctx.leadTitle || ctx.leadCode || 'Lead/Deal';
+  const label = commentNotificationLabel(ctx);
   const stageMove = commentRow?.comment_type === 'stage_move'
     || String(commentRow?.body || '').includes('Đã chuyển trạng thái');
 
@@ -333,7 +345,7 @@ async function notifyProjectCommentParticipants(req, notifyMultiple, projectId, 
   const senderName = commentRow?.user?.full_name || req.user?.fullName || 'Ai đó';
   const senderAvatar = commentRow?.user?.avatar || '';
   const preview = buildCommentPreview(commentRow?.content);
-  const label = ctx.leadTitle || ctx.leadCode || proj?.code || 'Dự án';
+  const label = commentNotificationLabel({ ...ctx, projectCode: ctx.projectCode || proj?.code }, 'Dự án');
   const entityType = deal?.id ? 'lead' : 'project';
   const entityId = deal?.id || projectId;
 

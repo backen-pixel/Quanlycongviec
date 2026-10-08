@@ -31,6 +31,70 @@ Chưa thử SQL thật, quyền/rollback trên Supabase, HTTP/DB và dữ liệu
 - App (commit `7c44e4bb`): `teamProjectTasksApi.ts` thêm `truncated?`, `scanTotal?` vào `TeamProjectCounts` và map từ `counts.truncated/scan_total`; `WorkScreen.tsx` hiện `styles.truncNote` dưới dòng thống kê khi `teamView && teamCounts?.truncated`.
 - Kiểm tra (chỉ-đọc, không ghi dữ liệu thật): server Express tạm mount router thật, thay `middleware/auth` bằng bản giả trong bộ nhớ; HCB không hạn mọi loại 5411 việc/314 nhóm (`scan_total` 6410, không cắt); Tủ bếp không hạn 5177/294; mặc định 864 quá hạn, 1434/108; Hôm nay 51/3. Ép `TEAM_TASKS_SCAN_CAP=3000` → `truncated=true`, tính 2521 việc, có cảnh báo. `node --check` và `tsc` sạch.
 - Chưa làm: xem dòng cảnh báo trên màn hình app; đẩy lọc phân loại xuống truy vấn để khỏi quét mọi phân loại; chưa merge/deploy.
+---
+
+## 2026-10-08 — Bàn giao VC: giữ current_stage_id thay vì xoá trắng
+
+- Triệu chứng xưởng báo: chuyển sang VC/LĐ thì «không thấy đơn hoặc không xem được». Dò ra hai cơ chế khác nhau.
+- **Mất khỏi danh sách** (đã sửa): bàn giao ghi `current_stage_id = null`; `production.js` (nhánh `stage_slug`) chạy `.eq('current_stage.slug', stage_slug)` — NULL không khớp slug nào. Đo trước khi sửa: 660 dự án HCB có 190 NULL, trong đó 158 là đơn đã bàn giao VC.
+- Sửa: `workshopKanban.js` thêm `resolveVcHandoverWorkflowStageId()` (ưu tiên slug `delivery` → `shipping` → `installation` → `installing`), export kèm `SX_STAGE_SLUG_STATUS`. Thay `current_stage_id: null` ở 3 chỗ trong `production.js` (payload chính + 2 nhánh retry khi DB thiếu `vc_kanban_column_id` / `logistics_company_id`) và 1 chỗ `vcHandoverCore.js`. Import thêm ở cả hai file.
+- Kiểm chứng helper trên DB thật: trả `a0cb3505-…` = `workflow_stages{slug:'delivery', name:'Giao hàng'}`, và `SX_STAGE_SLUG_STATUS['delivery'] = 'shipping'` — khớp đúng status mà bàn giao ghi.
+- Vá dữ liệu: `_tmp_backfill_current_stage_sau_vc.js` ánh xạ nghịch `status` → slug (shipping→delivery, installing→installation, warranty→customer-care, producing→production), update theo lô 100 kèm `.is('current_stage_id', null)` để không đè bản ghi đã có stage. Dry-run rồi `--apply`: 143/143 dự án. Rollback: `_rollback_current_stage_sau_vc_1791442560935.json`. Đếm lại: NULL+đã sang VC 177 → 34.
+- Đã loại trừ bằng dữ liệu (không phải nguyên nhân): phân quyền (22 user HCB, 0 người participant-only — `workshopCompanyScope.js:52` cho `production_admin`/`production_staff` xem toàn công ty); không tồn tại cổng nào so công ty người xem với `logistics_company_id`; `tenantScope.js:152-175` OR cả hai công ty nên nới chứ không chặn; app mobile không bỏ thẻ; `projectLockedOnSxKanban` hard-code false; tab Công nợ (bên đó không bật «Gộp cột»).
+- **Chưa sửa**: 403 ở `production.js:3092-3101` cho 25 đơn chủ Metalla/Phúc Đạt — `getExecutorProjectIdsForCompany(HCB)` chỉ trả 9 dự án và 0 đơn đặt xưởng vì `crm_tasks.executor_company_id` hầu như không được set. 34 đơn status `completed`/`consulting` chưa ánh xạ được.
+- Kiểm tra: `node --check` 3 file đạt; chưa chạy thử qua trình duyệt/API thật. Hoàn tác: bỏ delta 3 file mã nguồn + khôi phục từ file rollback.
+
+---
+
+## 2026-10-08 — Cột «Đã VC» tự đóng nhiệm vụ SX tới mốc đó
+
+- `completeOpenWorkOnModuleDone.js`: thêm `isSxShippedColumn` (`dashboard_kpi === 'shipped'`) và `completeSxWorkUpToShippedColumn({ projectId, shippedColumnId })`. Lấy cột theo `getProductionPipelineStagesForWorkshopType(company_id, workshop_type_id)`, tập cột đích = `order_index <= order_index` của cột «Đã VC».
+- Đóng `crm_tasks` sx_* chưa terminal có cột nằm trong tập (dùng `resolveSxTaskProductionStageId` nên bắt được cả việc cũ chỉ có `stage_slug`), và `tasks` dự án theo `production_stage_id`. Việc không gắn cột: bỏ qua có chủ ý.
+- `completeLinkedAssignments` gọi với `leadIds: []` — chỉ đóng assignment của đúng crm_task vừa đóng; quét theo lead sẽ đóng nhầm assignment module `production` của các cột công nợ phía sau.
+- `production.js`: import hai hàm trên; gọi trong `setImmediate` của nhánh cột pipeline (`PATCH /production/projects/:id/stage`), điều kiện `colChanged && isSxShippedColumn(colRow)`, đặt trước `applyProductionTemplatesOnPipelineEnter`.
+- Khảo sát dữ liệu trước khi code: toàn bộ 6.173 `tasks` SX mở của HCB có `production_stage_id` NULL và không suy được cột qua `metadata.workshop_template_id` (các bộ mẫu sinh ra chúng đều chưa gắn cột), nên chỗ bám duy nhất đáng tin là `crm_tasks` sx_* (2.366/2.609 việc mở có `production_pipeline_stage_id`). Đó là lý do không đóng hàng loạt theo dự án.
+- Kiểm tra: `node --check` hai file đạt; nạp module và thử `isSxShippedColumn` đạt; dry-run chỉ-đọc trên DB thật cho 124 dự án HCB đang ở cột #18 → đóng 242, giữ 38 việc công nợ (#19, #23), bỏ qua 5. Chưa gọi API thật, chưa thử trên trình duyệt, chưa ghi dữ liệu.
+- Hồi tố: `_tmp_backfill_shipped_column_complete.js --apply` chạy chính `completeSxWorkUpToShippedColumn` cho 124 dự án → 242 crm_tasks đóng, 0 tasks, 0 assignment (không có assignment nào trỏ tới 242 việc đó). Chụp trạng thái cũ (status/completed_at/deadline) vào `_rollback_hcb_shipped_column_complete_1791434791696.json` trước khi ghi. Dry-run lại sau khi ghi: 0 còn lại trước mốc, 38 việc công nợ + 5 việc không rõ cột giữ nguyên.
+- Hoàn tác: bỏ delta ở hai file mã nguồn và hai mục bàn giao này; dữ liệu khôi phục từ file rollback nêu trên.
+
+---
+
+## 2026-10-08 — Admin HST tạo được đơn nghỉ hộ nhân viên
+
+- `POST /api/kpi/leaves` 403 vì `ecosystem_admin` không nằm trong `LEAVE_MANAGER_ROLES`, trong khi form lịch nghỉ đã coi role này là quản lý.
+- Đã thêm `ecosystem_admin` vào danh sách quyền tạo/duyệt đơn hộ.
+
+---
+
+## 2026-10-08 — Bỏ khóa kéo thẻ Kanban SX
+
+- `sxPipelineRevenue.js`: `projectLockedOnSxKanban` luôn `false`. Thẻ warranty/installing/shipping chưa gắn VC vẫn kéo cột.
+- Không đổi cổng nhiệm vụ chặn chuyển giai đoạn và cổng bàn giao VC.
+
+---
+
+## 2026-10-08 — Lịch chọn từ ngày đến ngày trên đơn nghỉ
+
+- `LeaveRangeCalendar.jsx`: bấm ngày đầu, bấm ngày cuối; tô khoảng, ghi «N ngày liên tiếp, gồm chủ nhật» khi có CN.
+- `EventsOffLeaveSection.jsx`: thay hai input date; nút form ghim dưới dialog.
+- Test trên `/crm/leaves`: chọn 10/10 rồi 12/10 → T7 10/10 đến T2 12/10, ngày 11 tô giữa. Không gửi đơn.
+
+---
+
+## 2026-10-07 — Đưa 2 đơn Metalla→HCB bị ẩn về cột Tiếp nhận (DB thật)
+
+- TB-2026-1037, TB-2026-1038: đặt xưởng có `logistics_company_id` nhưng `sx_kanban_column_id` null → resolver đẩy về cột cuối (tab Công nợ), HCB không thấy ở tab Sản xuất.
+- Đã set `projects.sx_kanban_column_id` + `crm_leads.sx_pipeline_stage_id` = «Tiếp nhận đơn hàng về SX» (`b5472e51-…`). Rollback: `backend/uploads/_rollback_hcb_hidden_placements_20261007.json`.
+- Chưa sửa mã `placeProjectAtWorkshops.js` — đơn đặt xưởng mới có chọn VC vẫn có thể bị ẩn.
+
+---
+
+## 2026-10-07 — Thông báo bình luận bị cắt chữ
+
+- Nguyên nhân: tiêu đề `comment_added` = tên deal (~120 ký tự) + « · Bình luận mới»; popup `truncate` 1 dòng, chuông `line-clamp-2` nội dung, push mobile 1 dòng tiêu đề.
+- `dealCommentNotifications.js`: helper `commentNotificationLabel` (mã dự án → mã deal → tên cắt 40 ký tự) cho 3 loại thông báo bình luận.
+- `NotificationToast.jsx`: dòng phụ = tiêu đề + `metadata.lead_title`. `NotificationCenter.jsx`: dòng tên đơn dưới tiêu đề cho `comment_added`; nội dung `line-clamp-4`. `FloatingNotificationCard.jsx`: nội dung `line-clamp-4`.
+- Test: nạp helper bằng node, lint sạch. Chưa bình luận thử trên trình duyệt. Rollback: revert 4 file.
 
 ---
 
