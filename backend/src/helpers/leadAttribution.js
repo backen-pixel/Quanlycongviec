@@ -68,7 +68,8 @@ function docReferralMessenger(event) {
 /** Có thông tin đáng lưu không — tránh tạo dòng rỗng. */
 function dangLuu(row) {
   return !!(row.fb_ad_id || row.fb_ref || row.fb_campaign_id || row.fb_form_id
-    || row.utm_source || row.utm_campaign || row.gclid || row.fbclid || row.fb_source);
+    || row.utm_source || row.utm_campaign || row.gclid || row.fbclid || row.fb_source
+    || row.campaign_id || row.ad_id || row.gbraid || row.wbraid || row.landing_url);
 }
 
 /**
@@ -83,25 +84,45 @@ async function ghiQuyKet(row) {
     if (!dangLuu(row)) return { ok: false, skipped: 'khong_co_quy_ket' };
 
     // Đã có dòng cho lead / contact này chưa?
-    let q = supabase.from('lead_attribution').select('id, lead_id, contact_id').limit(1);
+    let q = supabase.from('lead_attribution').select('id, lead_id, contact_id, company_id, platform, fb_ad_id, fb_campaign_id, ad_id, campaign_id').limit(1);
     q = row.lead_id ? q.eq('lead_id', row.lead_id) : q.eq('contact_id', row.contact_id);
     const { data: cu, error: eCu } = await q.maybeSingle();
-    if (eCu && bangChuaCo(eCu)) return { ok: false, skipped: 'chua_migrate' };
+    if (eCu) return { ok: false, skipped: bangChuaCo(eCu) ? 'chua_migrate' : 'loi' };
 
     if (cu?.id) {
-      // Bổ sung trường còn trống, không ghi đè lần chạm đầu
-      const bo = {};
-      for (const [k, v] of Object.entries(row)) {
-        if (k === 'raw' || k === 'cham_dau_luc' || v === null || v === undefined) continue;
-        bo[k] = v;
+      if (row.company_id && cu.company_id !== row.company_id) return { ok: false, skipped: 'khac_cong_ty' };
+      for (const key of ['platform', 'fb_ad_id', 'fb_campaign_id', 'ad_id', 'campaign_id']) {
+        if (cu[key] && row[key] && cu[key] !== row[key]) return { ok: false, skipped: 'khac_lan_cham' };
       }
-      if (!Object.keys(bo).length) return { ok: true, id: cu.id, skipped: 'khong_co_gi_moi' };
-      const { error } = await supabase
-        .from('lead_attribution')
-        .update({ ...bo, updated_at: new Date().toISOString() })
-        .eq('id', cu.id)
-        .is('fb_ad_id', null);   // chỉ vá khi lần đầu chưa có ad_id
-      if (error) console.warn('[quy-ket] bo sung:', error.message);
+      // Compare-and-set each nullable field: preserve first touch even under races.
+      // Identity, channel and provenance are immutable; enrich only missing facts.
+      const enrichable = new Set([
+        'fb_ad_id', 'fb_adset_id', 'fb_campaign_id', 'fb_campaign_name',
+        'fb_ref', 'fb_source', 'fb_ad_title', 'fb_post_id', 'fb_form_id', 'fb_leadgen_id',
+        'fb_creative_url', 'fb_creative_type', 'fb_creative_key',
+        'campaign_id', 'ad_id', 'adset_id', 'utm_source', 'utm_medium', 'utm_campaign',
+        'utm_content', 'utm_term', 'gclid', 'fbclid', 'gbraid', 'wbraid',
+        'landing_url', 'referrer_url', 'fbp', 'fbc',
+      ]);
+      const identityOrder = ['fb_ad_id', 'ad_id', 'fb_campaign_id', 'campaign_id'];
+      const entries = Object.entries(row).sort(([a], [b]) =>
+        (identityOrder.includes(a) ? identityOrder.indexOf(a) : 99) -
+        (identityOrder.includes(b) ? identityOrder.indexOf(b) : 99));
+      for (const [k, v] of entries) {
+        if (!enrichable.has(k) || v == null || v === '') continue;
+        let patch = supabase.from('lead_attribution')
+          .update({ [k]: v, updated_at: new Date().toISOString() })
+          .eq('id', cu.id).is(k, null);
+        if (row.company_id) patch = patch.eq('company_id', row.company_id);
+        // Tie enrichment to the winning ad even when two first referrals race.
+        for (const identity of ['fb_ad_id', 'ad_id']) {
+          if (identity !== k && (row[identity] || cu[identity])) {
+            patch = patch.eq(identity, row[identity] || cu[identity]);
+          }
+        }
+        const { error } = await patch;
+        if (error) return { ok: false, skipped: 'loi' };
+      }
       return { ok: true, id: cu.id, skipped: 'da_co' };
     }
 
@@ -183,6 +204,8 @@ async function quyKetWeb({ leadId, customerId, companyId, landingUrl, referrerUr
     utm_term: t?.utm_term || null,
     gclid: t?.gclid || null,
     fbclid: t?.fbclid || null,
+    gbraid: t?.gbraid || null,
+    wbraid: t?.wbraid || null,
     landing_url: t?.landing_url || chuoi(landingUrl),
     referrer_url: chuoi(referrerUrl),
     fbp: chuoi(fbp),

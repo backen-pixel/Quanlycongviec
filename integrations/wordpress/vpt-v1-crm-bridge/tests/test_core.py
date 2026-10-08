@@ -46,14 +46,37 @@ class CorePatchTests(unittest.TestCase):
         if eligible:
             self.assertEqual(baseline["result"]["build"]["payload"]["source_name"], "Website VPT V1")
             self.assertNotEqual(baseline, candidate)
-        else:
-            self.assertEqual(baseline, candidate)
         old = copy.deepcopy(baseline)
         new = copy.deepcopy(candidate)
+        del new["result"]["build"]["payload"]["attribution"]
+        del new["result"]["build"]["payload"]["is_test"]
         del old["result"]["build"]["payload"]["source_name"]
         del new["result"]["build"]["payload"]["source_name"]
-        self.assertEqual(old, new, "Only source_name may change, including fingerprint, scope and notes")
+        self.assertEqual(old, new, "Only source_name and additive tracking contract may change; fingerprint, scope and notes remain identical")
         return candidate["result"]
+
+    def test_structured_campaign_clicks_and_test_flag(self):
+        built = call(PATCHED, request({"utm_source":"google", "campaignid":"23976669573",
+                      "adgroupid":"123456789", "gclid":"synthetic-click"}))["result"]["build"]["payload"]
+        self.assertEqual(built["attribution"]["campaign_id"], "23976669573")
+        self.assertEqual(built["attribution"]["adset_id"], "123456789")
+        self.assertEqual(built["attribution"]["gclid"], "synthetic-click")
+        self.assertFalse(built["is_test"])
+        marked = call(PATCHED, request({"your-name":"TEST VPT V1 isolated", "your-phone":"0000000001"},
+                      mode="test", is_admin=True))["result"]["build"]["payload"]
+        self.assertTrue(marked["is_test"])
+        self.assertNotIn("gclid", marked["attribution"])
+
+    def test_bridge_payload_accepted_by_backend_contract(self):
+        for data in [{}, {"utm_source":"google", "utm_medium":"cpc", "campaignid":"23976669573",
+                          "gclid":"synthetic-click", "gbraid":"synthetic-braid"}]:
+            built = call(PATCHED, request(data))["result"]["build"]["payload"]
+            js = "const fs=require('fs'); const {externalLeadTracking}=require('./backend/src/domain/externalLeadTracking'); console.log(JSON.stringify(externalLeadTracking(JSON.parse(fs.readFileSync(0,'utf8')))));"
+            result = subprocess.run(["node", "-e", js], cwd=ROOT.parents[2], input=json.dumps(built),
+                                    capture_output=True, text=True, check=True)
+            received = json.loads(result.stdout)
+            self.assertEqual(received["intake_attribution"], built["attribution"])
+            self.assertEqual(received["is_test"], built["is_test"])
 
     def test_canonical_chatgpt_paid_changes_only_source(self):
         self.compare_build(request({"utm_source": "chatgpt", "utm_medium": "paid"}), "ChatGPT Ads VPT V1", True)

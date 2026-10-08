@@ -47,6 +47,7 @@ function harness(tables, fault = null) {
       if (fail && fault.kind === 'error') return Promise.resolve({ data: null, error: { message: 'UPSTREAM_PRIVATE_DETAIL' } }).then(yes, no);
       if (fail && fault.kind === 'invalid') return Promise.resolve({ data: null, error: null }).then(yes, no);
       let data = structuredClone(tables[table] || []);
+      if (table === 'crm_leads') data = data.map(row => ({ is_test: false, ...row }));
       for (const [op, key, value] of call.ops) {
         if (op === 'in') data = data.filter((row) => value.includes(row[key]));
         if (op === 'eq') data = data.filter((row) => row[key] === value);
@@ -310,5 +311,17 @@ for(const scenario of [
       assert.doesNotMatch(JSON.stringify(r.body),/PRIVATE_LEAD_TITLE|SYNTHETIC_PRIVATE_PHONE/);
       assert.equal(h.calls.some(c=>c.table==='customers'),false,'Denied details must not trigger downstream customer lookup');
     }
+  });
+}
+
+for (const url of paths) {
+  test(`${url}: explicitly marked tests are excluded without discarding real leads`, async () => {
+    const f = fixture();
+    f.crm_leads.push({ ...f.crm_leads[0], id: 'synthetic', is_test: true, estimated_value: 999999 });
+    f.lead_attribution.push({ ...f.lead_attribution[0], lead_id: 'synthetic' });
+    const r = await harness(f).run(url);
+    assert.equal(r.code, 200);
+    assert.equal(bucket(url, r).leads, 1);
+    assert.equal(bucket(url, r).revenue, 100);
   });
 }

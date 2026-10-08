@@ -198,7 +198,7 @@ function main() {
   }
 
   md += `---\n\n## 4. External API (body)\n\nXem header \`backend/src/routes/external.js\`.\n\n| Method | Path | Body chính |\n|---|---|---|\n`;
-  md += `| POST | /api/external/leads | title*, phone*, type?, full_name?, email?, source_name?, stage_id?, assigned_to?, company_id?, estimated_value?, description?, notes?, webhook_url? |\n`;
+  md += `| POST | /api/external/leads | title*, phone*, type?, full_name?, email?, source_name?, stage_id?, assigned_to?, company_id?, estimated_value?, description?, notes?, is_test?, attribution?, webhook_url? |\n`;
   md += `| POST | /api/external/deals | tương tự leads |\n`;
   md += `| GET | /api/external/stages | query type=lead\\|deal |\n`;
   md += `| GET | /api/external/sources | — |\n`;

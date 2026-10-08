@@ -168,3 +168,12 @@ test('a touch whose CRM record is missing is excluded, not a queue-wide failure'
   assert.deepEqual(Array.from(result.body.rows, row => row.lead_id), ['one']);
   assert.equal(result.body.excluded_unavailable, 2);
 });
+
+test('test CRM records are excluded from the trial queue, not counted as unavailable', async () => {
+  const h = harness({ touches: [touch('01', 'test-lead', '2026-10-07T01:00:00Z'),
+    touch('02', 'real-lead', '2026-10-07T01:00:00Z')],
+    leads: [{ id: 'test-lead', company_id: A, is_test: true }, { id: 'real-lead', company_id: A }] });
+  const r = await h.send('/queue', { trial_id: trial.id });
+  assert.equal(r.statusCode, 200);
+  assert.deepEqual(Array.from(r.body.rows, row => row.lead_id), ['real-lead']);
+});
