@@ -2223,3 +2223,14 @@ Theo yêu cầu tiếp tục của Founder, bổ sung domain/Application Service
 - **Cố ý bỏ qua 3 cột «Dự án sắp tới»** (`is_temp_install_staging`): heuristic đang xếp chúng vào `shipping`, tức đếm vào «Đang vận chuyển» dù đây là cột chờ. Tick vào là đóng băng một kết quả đáng ngờ — cần người dùng xác nhận ý định trước.
 - **ĐÍNH CHÍNH báo cáo «Khoảng trống VC/LĐ»**, mục C: nói «0/29 cột có crm_target_stage_id ⇒ kéo thẻ VC gần như không đồng bộ CRM» là SAI. `syncCrmLeadFromLogisticsStage` (`workshopKanban.js:1141-1153`) lùi về `getCrmStageIdBySyncType(crm_sync_type)` khi thiếu `crm_target_stage_id`. Hucabi và VPT đã cấu hình đủ (delivery/delivery/installation/customer_care). Thiếu thật chỉ ở Phúc Đạt («Đã giao», «Lắp đặt», «Đang nghiệm thu») và global («Lắp đặt», «Nghiệm thu»). Chưa sửa — bật `crm_sync_type` làm kéo thẻ VC đổi giai đoạn deal bên CRM, phải để người dùng quyết.
 - **RÚT khuyến nghị bật «cột lớn» cho VC**: mỗi pipeline VC chỉ 6-9 cột nên gộp gần như vô ích, trong khi bài học từ SX cùng ngày cho thấy cột gộp nuốt cờ của mọi cột nhỏ không phải cột đầu (`sxGopCot.js:155-165`) và xé nhóm khi `board_tab` lệch. Thêm rủi ro mà không được gì.
+
+---
+
+## 2026-10-09 — «Dự án sắp tới» thôi bị đếm vào ô Đang vận chuyển
+
+- `kpiBucketForStage` phân loại cột bằng chuỗi heuristic rồi **vét cuối bằng `return 'shipping'`**. Cột «Dự án sắp tới» (`is_temp_install_staging = true`) không khớp luật nào nên rơi vào nhánh vét đó và bị đếm là đang vận chuyển, dù đây là cột CHỜ.
+- Thêm `if (stage?.is_temp_install_staging) return 'intake';` ngay sau nhánh tick tường minh, ở **cả ba bản sao** phải khớp 1:1: `backend/src/helpers/vcOverviewKpis.js`, `frontend/src/lib/vcPipelineKpi.js`, `vc-mobile/src/lib/vcBoardKpis.ts`. Thêm trường `is_temp_install_staging` vào type `KanbanStage` (`vc-mobile/src/types.ts`) vì mobile chưa khai báo.
+- Tác động đo trên dữ liệu thật: **30 dự án** chuyển từ `shipping` sang `intake` (shipping 31 → 1, intake 159 → 191). Nhiều hơn con số 3 tôi ước tính lúc đầu — ba cột «Dự án sắp tới» đang giữ 30 đơn chứ không phải 3.
+- **Chưa đổi gì trên 6 ô KPI của Dashboard web.** `vcColumnDashboardKpiKey` chỉ ánh xạ 4 nhãn và vét phần còn lại bằng `return 'shipping'`, nên `intake` vẫn nằm trong ô «Đang vận chuyển» — vốn đã gộp sẵn 161 dự án tiếp nhận từ trước. Muốn web hiện đúng thì phải thêm ô «Chờ tiếp nhận» (ô thứ 7) hoặc đổi nhãn ô hiện tại; là việc giao diện, chưa làm.
+- Kiểm tra: `node --check` backend đạt, `npx vite build` đạt (58s). `tsc` của vc-mobile báo một lỗi ở `vcBoardKpis.ts` nhưng đã xác minh lỗi đó CÓ SẴN trước thay đổi (stash rồi chạy lại: cùng lỗi ở dòng 223 thay vì 227).
+- Không có file rollback vì đây là thay đổi mã, không ghi dữ liệu. Hoàn tác: bỏ delta 4 file.
