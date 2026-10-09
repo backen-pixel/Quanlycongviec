@@ -2191,3 +2191,13 @@ Theo yêu cầu tiếp tục của Founder, bổ sung domain/Application Service
 - **Lỗi tự gây và đã sửa**: `fetchAll` phân trang bằng `.range()` mà KHÔNG có `ORDER BY` → PostgREST trả thứ tự không ổn định giữa các trang, mỗi lượt chạy bỏ sót một tập khác nhau (bản đồ sinh đôi lúc 9.336 lúc 10.032; hai lượt đầu chỉ ghi được 7.996 + 1.761 thay vì trọn gói). Thêm `.order('id')` vào cả 4 truy vấn phân trang thì bản đồ ổn định 10.032 khóa và lượt 2-3 trả về 0 — hội tụ. Ghi nhớ cho mọi script sau: `.range()` phải đi kèm `.order()`.
 - Kết quả: `tasks` có `production_stage_id` 740 → **9.442**. Kiểm chính trực: cột trỏ tới bản ghi không tồn tại = 0; cột thuộc công ty khác với dự án = 0. HCB việc còn mở: 2.267 đã có cột / 3.702 vẫn NULL (phần lớn là việc không có sinh đôi crm_task).
 - Rollback: `_rollback_production_stage_id_1791513366337.json`, `..._1791513478130.json`, `..._1791513531932.json` (ba lượt, tổng 10.819 dòng, tất cả đều đưa về NULL).
+
+---
+
+## 2026-10-09 — Điền người nhận việc theo phụ trách CỘT (chỉ chỗ trống)
+
+- Câu hỏi: gán thành viên ở CỘT LỚN thì nhiệm vụ ở cột nhỏ có nhận người đó không. Cơ chế thì có — `datNguoiCotLon` fan-out `primary_user_id` xuống từng cột nhỏ, `nguoiPhuTrachCotSx` đọc đúng cột khi sinh việc. Nhưng dữ liệu cũ chưa theo.
+- Đo được (sau khi đã có `production_stage_id`): 3.021 việc còn mở có cột SX → khớp phụ trách cột 116, bỏ trống 1.455, giao lệch 376, cột chưa gán phụ trách 1.074. Riêng 566 việc đang giao cho phụ trách PHÂN LOẠI XƯỞNG — hệ quả của đường lùi dùng hôm 08/10 khi việc chưa có cột.
+- Đã điền **1.455 việc đang bỏ trống** theo phụ trách cột: #4 Sản xuất kiểm tra chéo 771 → Nguyễn Nhật · #14 KT KCS 448 → Hòa Bảo · #1 Tiếp nhận 228 → Sang Thiết Kế VPT 1 · #3 và #17 mỗi cột 4. Rollback: `_rollback_phu_trach_theo_cot_1791514624083.json`. Kiểm lại: còn 0 chỗ trống, khớp sẵn 116 → 1.571.
+- **CỐ Ý KHÔNG đổi 376 việc đã có người** dù lệch phụ trách cột — lấy việc khỏi tay người đang giữ là thay đổi ảnh hưởng người thật, để quản lý tự quyết. Lệnh ghi bản «đổi cả 376» cũng bị bộ lọc quyền chặn hai lần, không lách. Danh sách để lại: #4 194 việc (Sang Thiết Kế VPT 1 → Nguyễn Nhật), #17 116 (→ Hòa Bảo), #3 40, #1 24, #7 2.
+- Chưa xử lý: 1.074 việc ở cột chưa gán phụ trách (chủ yếu nhóm công nợ) — phải gán phụ trách cho cột ở `/sx/pipeline-settings` trước rồi chạy lại.
