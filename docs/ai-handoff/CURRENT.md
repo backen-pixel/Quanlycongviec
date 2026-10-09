@@ -1,3 +1,7 @@
+## 2026-10-09 — P2-2: route + giao diện duyệt bản nháp AI (thử nghiệm, mặc định tắt)
+Thêm `/api/ai-reply-drafts` (cờ P2_AI_DRAFTS_ENABLED, chỉ admin trong P2_AI_DRAFTS_USER_IDS, công ty/Page trong danh sách), `aiReplyDraft/config.js` (trần 5 USD/ngày, 3 địa chỉ được nói) và khung «Soạn nháp bằng AI» trong FacebookChatTab. Không có đường gửi tin: nhân viên tự gửi bằng route cũ rồi giao diện ghi nhận sửa/đã gửi/bỏ.
+Bật thử cần Founder đặt biến trên Render: P2_AI_DRAFTS_ENABLED, _COMPANY_IDS, _PAGE_IDS, _USER_IDS, _VND_PER_USD (thiếu tỷ giá → từ chối). Codex bị đăng xuất nên Claude tự viết.
+
 ## 2026-10-09 — Tên CRM và tên xưởng tách riêng (chưa deploy)
 `PUT /crm/leads/:id` không còn copy tiêu đề sang `projects.name`. Kanban và chi tiết SX/VC hiển thị tên dự án. Tìm kiếm CRM và SX khớp cả hai tên.
 Chưa deploy. TB-2026-990 trên DB chính vẫn đang là «Anh Lộc - Cần giờ» ở cả deal và dự án.

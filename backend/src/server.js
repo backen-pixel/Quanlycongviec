@@ -401,6 +401,7 @@ try { app.use('/api/partner/v1', require('./routes/partner')); } catch (e) { con
 // Phân tích hiệu quả quảng cáo Facebook (nội bộ)
 try { app.use('/api/ad-analytics', require('./routes/adAnalytics')); } catch (e) { console.warn('⚠️ Ad analytics route failed:', e.message); }
 try { app.use('/api/marketing-p1/qualification', require('./routes/p1Qualification')); } catch (e) { console.warn('⚠️ P1 qualification route failed:', e.message); }
+try { app.use('/api/ai-reply-drafts', require('./routes/aiReplyDrafts')); } catch (e) { console.warn('⚠️ AI reply drafts route failed:', e.message); }
 app.use('/api/management/project-logs', require('./routes/projectConstructionLogs'));
 app.use('/api/management', require('./routes/management'));
 app.use('/api/customers', require('./routes/customers'));
