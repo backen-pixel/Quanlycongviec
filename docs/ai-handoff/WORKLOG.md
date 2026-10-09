@@ -74,7 +74,7 @@ Chưa thử SQL thật, quyền/rollback trên Supabase, HTTP/DB và dữ liệu
 - Áp bằng Supabase MCP `apply_migration` lên `kdxypztstbeovyedmvem` (qlycv). Kiểm chứng ngay trên view: HCB việc mở 6.191 SX + 0 VC → 3.216 SX + 2.975 VC (khớp dự đoán 2.975); 124 đơn ở cột `dashboard_kpi='shipped'` → 157 SX + 717 VC (khớp phân loại `isLogisticsWorkshopTask` phía Node); `unified_id` trùng (is_primary_lead) = 0; tổng dòng view 149.111.
 - Dữ liệu dẫn tới quyết định KHÔNG đóng hàng loạt: trong 874 việc mở của 124 đơn «đã giao», 717 là VC/LĐ — tiêu đề «Kiểm tra trước khi lấy hàng», «Hàng lên xe và vận chuyển», «Quy trình lắp đặt», «Nghiệm thu sau khi lắp» (mỗi loại 92). «ĐƠN HÀNG ĐÃ GIAO» ở pipeline xưởng = hàng rời xưởng, việc giao–lắp mới bắt đầu. Trong 157 việc SX còn lại có 20 việc công nợ/thu tiền cũng không nên đóng.
 - Phát hiện kèm theo: `isProductionTaskTerminalStage` (`workTasks.js:842-852`) không xét `dashboard_kpi='shipped'` và tên «ĐƠN HÀNG ĐÃ GIAO» không khớp mẫu chuỗi nào, nên trang không tự ẩn nhóm này. Chưa sửa — sửa sẽ ẩn luôn 717 việc VC/LĐ đang chờ làm thật.
-- CHƯA áp lên `QLCV_Backup` (`atcfpgxkgbszglrelfgr`, còn bản 594, 4.862 việc mở HCB). Failover đang tắt.
+- Đã áp lên `QLCV_Backup` (`atcfpgxkgbszglrelfgr`) ngày 09/10/2026, cùng câu SQL. Trước: 4.810 SX + 52 «Dự án» + 0 VC; sau: 2.933 SX + 1.877 VC + 52 «Dự án» — tổng 4.862 không đổi, `unified_id` trùng = 0, tổng dòng view 113.972, chú thích view ghi `(715)`. Hai DB nay cùng định nghĩa view nên failover không làm đảo làn.
 - Hoàn tác: chạy `715_..._rollback.sql` trên qlycv.
 
 ---

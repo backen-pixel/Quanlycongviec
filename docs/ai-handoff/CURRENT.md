@@ -84,7 +84,7 @@ Xưởng hỏi vì sao trang `/sx/project-tasks` đầy nhiệm vụ của đơn
 
 ĐÃ ÁP lên dự án chính `qlycv` (`kdxypztstbeovyedmvem`) lúc 08/10/2026. Đo trước/sau trên chính view: việc còn mở của HCB 6.191 SX + 0 VC → **3.216 SX + 2.975 VC** (tổng không đổi, `unified_id` trùng = 0, tổng dòng view 149.111). Riêng 124 đơn ở cột «ĐƠN HÀNG ĐÃ GIAO»: **157 SX + 717 VC** — khớp đúng con số đo độc lập phía Node trước khi áp.
 
-CHƯA áp lên `QLCV_Backup` (`atcfpgxkgbszglrelfgr`) — vẫn còn bản 594. Failover đang tắt nên không ảnh hưởng chạy thật, nhưng hai DB đang lệch định nghĩa view.
+ĐÃ áp lên cả `QLCV_Backup` (`atcfpgxkgbszglrelfgr`) ngày 09/10/2026 — hai DB nay cùng định nghĩa view. Backup trước khi áp: 4.810 SX + 52 «Dự án» + 0 VC; sau: 2.933 SX + 1.877 VC + 52 «Dự án» (tổng 4.862 không đổi, `unified_id` trùng = 0, tổng dòng view 113.972).
 
 Chưa làm: chưa mở trình duyệt xem lại hai tab; chưa đóng nhiệm vụ nào. Bước kế tiếp đã bàn: 124 đơn đã giao giờ chỉ còn 157 việc ở làn SX, trong đó ~20 việc công nợ — đóng tự động ~137 việc còn lại là an toàn. Hoàn tác: chạy `715_..._rollback.sql`.
 
