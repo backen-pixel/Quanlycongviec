@@ -2179,3 +2179,15 @@ Theo yêu cầu tiếp tục của Founder, bổ sung domain/Application Service
 - 177 test P1/adAnalytics và 56 test mốc/chi tiêu đạt; `node --check`, `git diff --check` đạt. Build dừng do thiếu `cross-env`; chưa kiểm dữ liệu thật, DB/HTTP, trình duyệt. Không chạy SQL, bật cờ, commit hoặc push; hoàn tác bằng cách bỏ đúng diff P1-11 và mục CURRENT/WORKLOG này.
 
 ---
+
+---
+
+## 2026-10-09 — Gán production_stage_id cho nhiệm vụ dự án
+
+- Gốc vấn đề đã đeo bám cả ngày: `tasks.production_stage_id` gần như toàn NULL nên không map được việc về cột SX — chặn cổng `blocks_stage_advance`, chặn `completeSxWorkUpToShippedColumn`, buộc phải dồn hạn ĐỀU thay vì tính lại theo công đoạn.
+- Đo ba nguồn suy ra cột trên 16.344 việc SX thiếu cột: (A) crm_task sinh đôi cùng dự án + cùng tiêu đề đã bỏ dấu, (B) bộ mẫu gắn cột, (C) `matchProductionStageForLabel` khớp tên.
+- **Dùng A để kiểm định C**: trong 8.725 việc có cả hai nguồn, C chỉ trùng A **49%** — ngang tung đồng xu. LOẠI C. Ví dụ lệch: «Sơn» → sinh đôi «Sản xuất kiểm tra chéo đặt kính» vs khớp tên «HT Sơn»; «Thu tiền» → «CHỐT CÔNG NỢ» vs «Thu tiền». B phủ 0 việc.
+- Chỉ ghi từ A, kèm bốn chốt an toàn: bỏ khóa mơ hồ (147 khóa trỏ nhiều cột), bỏ việc VC/LĐ (`isLogisticsWorkshopTask`), chỉ nhận cột thuộc pipeline đúng công ty + phân loại, chỉ ghi vào dòng NULL.
+- **Lỗi tự gây và đã sửa**: `fetchAll` phân trang bằng `.range()` mà KHÔNG có `ORDER BY` → PostgREST trả thứ tự không ổn định giữa các trang, mỗi lượt chạy bỏ sót một tập khác nhau (bản đồ sinh đôi lúc 9.336 lúc 10.032; hai lượt đầu chỉ ghi được 7.996 + 1.761 thay vì trọn gói). Thêm `.order('id')` vào cả 4 truy vấn phân trang thì bản đồ ổn định 10.032 khóa và lượt 2-3 trả về 0 — hội tụ. Ghi nhớ cho mọi script sau: `.range()` phải đi kèm `.order()`.
+- Kết quả: `tasks` có `production_stage_id` 740 → **9.442**. Kiểm chính trực: cột trỏ tới bản ghi không tồn tại = 0; cột thuộc công ty khác với dự án = 0. HCB việc còn mở: 2.267 đã có cột / 3.702 vẫn NULL (phần lớn là việc không có sinh đôi crm_task).
+- Rollback: `_rollback_production_stage_id_1791513366337.json`, `..._1791513478130.json`, `..._1791513531932.json` (ba lượt, tổng 10.819 dòng, tất cả đều đưa về NULL).
