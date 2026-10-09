@@ -4947,6 +4947,10 @@ export default function CRMDashboard() {
         const o = l.lead_owner;
         return (
           (l.title && l.title.toLowerCase().includes(q))
+          || (l.linked_project?.name && l.linked_project.name.toLowerCase().includes(q))
+          || (l.linked_project?.code && l.linked_project.code.toLowerCase().includes(q))
+          || (l.project?.name && l.project.name.toLowerCase().includes(q))
+          || (l.project_name && String(l.project_name).toLowerCase().includes(q))
           || (l.code && l.code.toLowerCase().includes(q))
           || (l.phone && l.phone.toLowerCase().includes(q))
           || (c?.phone && c.phone.toLowerCase().includes(q))
