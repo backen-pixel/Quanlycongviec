@@ -2252,3 +2252,13 @@ Hai lỗi tìm ra từ lượt review hạn ba module.
 Kiểm tra: `node --check` 4 file đạt, nạp module đạt, 3 test deadline đạt. Chưa thử luồng VC «Phát sinh» trên dữ liệu thật (cần kéo thẻ thật). Hoàn tác: bỏ delta 4 file.
 
 **Chưa làm** (từ danh sách review): gán nhóm hạn cho cột của năm công ty ngoài Hucabi — cần họ xác nhận công đoạn nào thuộc nhóm nào; và cho thẻ SX đọc `effective_deadline_at` thay vì cột thô.
+
+---
+
+## 2026-10-09 — Thẻ SX tôn trọng cổng tắt hạn của chính sách (phạm vi hẹp)
+
+- Mục 4 của review: cho thẻ SX dùng `effective_deadline_at` thay cột thô. **Đo trước thì kết quả ngược với mô tả lúc đề xuất**: chuyển trọn sang resolver KHÔNG bỏ hạn nào (0 thẻ) mà THÊM hạn cho **50 thẻ** đang trống — lấy từ chuỗi lùi `production_finish_date → production_deadline → delivery_date → deadline`. Nửa bảng sẽ hiện ngày hoàn thiện trong khi nửa kia hiện ngày lắp, mâu thuẫn quy tắc «hạn thẻ = ngày lắp đặt» vừa chốt. Nên KHÔNG dùng trọn resolver.
+- Làm bản hẹp đúng phần có giá trị: thêm `chinhSachTatHan = isSxPipelineStageNoDeadline(sxStage) || item.crm_completed_deadlines_off`, chặn `manualDlUrgency` và badge hạn. Thẻ thôi hiện hạn sót ở cột tích «Tắt hạn»/«Bàn giao VC» — đúng điều `resolveProductionDeadline` quy định.
+- **Thay đổi thấy được hôm nay: 0 thẻ.** Cả 380 thẻ ở cột tắt hạn đều đã có `sx_kanban_deadline_at` null (do `syncSxCardDeadline` dọn). Đây là chốt chặn cho sau này, không phải sửa lỗi đang xảy ra.
+- CỐ Ý không dùng cờ `hideColumnDeadline` sẵn có (đang hard-code `false`): bật nó lên sẽ tắt luôn tone SLA cột của **243 thẻ**, nằm ngoài phạm vi yêu cầu. Muốn bật thì là một quyết định riêng.
+- `npx vite build` đạt. Hoàn tác: bỏ delta 1 file.

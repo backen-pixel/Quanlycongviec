@@ -78,6 +78,7 @@ import {
   getSxPipelineStageSlaTone,
   resolveSxDisplayColumnId,
   projectLockedOnSxKanban,
+  isSxPipelineStageNoDeadline,
   shouldIgnoreSxOrderDeliveryOverdue,
   getSxOrderDeliveryDateUrgency,
   sxColumnStageKpiKey,
@@ -5601,10 +5602,25 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   const columnEnteredAt = item.sx_pipeline_stage_entered_at || item.stage_entered_at || item.updated_at || item.created_at || null;
   const sxStage = stage || item.sx_pipeline_stage;
   const hideColumnDeadline = false;
+  // Cổng TẮT của chính sách hạn (moduleDeadlinePolicy: resolveProductionDeadline bỏ
+  // hạn khi cột tích «Tắt hạn»/«Bàn giao VC», hoặc deal đã ở cột Hoàn thành CRM).
+  // Thẻ vốn đọc thẳng `sx_kanban_deadline_at` nên hạn sót lại ở những cột đó vẫn hiện,
+  // trong khi chính sách coi là không còn hạn. Hiện 0 thẻ rơi vào trạng thái này
+  // (syncSxCardDeadline xoá sạch) — đây là chốt chặn cho sau này.
+  //
+  // Chỉ chặn HẠN THẺ, cố ý KHÔNG dùng `hideColumnDeadline` (cờ đó còn tắt cả tone SLA
+  // cột: 243 thẻ đang dùng, nằm ngoài phạm vi việc này).
+  //
+  // Cũng cố ý KHÔNG dùng trọn resolver: chuỗi lùi của nó
+  // (production_finish_date → production_deadline → delivery_date → deadline) sẽ gắn
+  // hạn cho 50 thẻ đang trống bằng NGÀY HOÀN THIỆN, trong khi quy tắc hiện hành là
+  // hạn thẻ = NGÀY LẮP ĐẶT. Nửa bảng một kiểu còn tệ hơn hiện trạng.
+  const chinhSachTatHan = isSxPipelineStageNoDeadline(sxStage)
+    || !!item.crm_completed_deadlines_off;
   const columnSlaTone = hideColumnDeadline
     ? null
     : getSxPipelineStageSlaTone(item.sx_pipeline_stage_entered_at, sxStage, item.company_id || item.company);
-  const manualDlUrgency = !hideColumnDeadline && item.sx_kanban_deadline_at
+  const manualDlUrgency = !hideColumnDeadline && !chinhSachTatHan && item.sx_kanban_deadline_at
     ? getCrmDeadlineUrgencyFromIso(item.sx_kanban_deadline_at, item.company_id || item.company)
     : null;
   const manualDlLevel = manualDlUrgency && manualDlUrgency.level !== 'ok' ? manualDlUrgency.level : null;
@@ -5847,7 +5863,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
       })()}
 
       {/* Deadline thẻ (sx_kanban_deadline_at) — bấm để sửa */}
-      {!hideColumnDeadline && typeof onOpenDeadline === 'function' && item.sx_kanban_deadline_at && (() => {
+      {!hideColumnDeadline && !chinhSachTatHan && typeof onOpenDeadline === 'function' && item.sx_kanban_deadline_at && (() => {
         const { level } = getCrmDeadlineUrgencyFromIso(item.sx_kanban_deadline_at, item.company_id || item.company);
         const tone = `${getCrmDeadlineUrgencyBadgeClass(level)} hover:opacity-90 cursor-pointer`;
         const urgent = level === 'overdue' || level === 'soon';
