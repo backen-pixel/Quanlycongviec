@@ -531,7 +531,7 @@ export default function AccountingDealDetail() {
     if (!Number.isFinite(amount) || amount <= 0) return alert('Nhập số tiền hợp lệ');
     setPaySaving(true);
     try {
-      await api.post(`/accounting/deals/${leadId}/payments`, {
+      const { data: res } = await api.post(`/accounting/deals/${leadId}/payments`, {
         amount,
         payment_date: payForm.payment_date,
         payment_method: payForm.payment_method,
@@ -541,6 +541,11 @@ export default function AccountingDealDetail() {
         notes: payForm.notes || null,
         invoice_id: payForm.invoice_id || null,
       }, { params: adminParams });
+      // Khoản thu ghi xong nhưng hóa đơn chưa cập nhật được — phải nói ra, nếu không
+      // hai bên lệch nhau âm thầm (trước đây lỗi này chỉ nằm trong log máy chủ).
+      if (res?.warning) {
+        alert(`${res.warning}\n\nKhoản thu đã lưu. Kiểm tra lại hóa đơn trước khi đối chiếu công nợ.`);
+      }
       setPayForm({
         amount: '', payment_date: new Date().toISOString().slice(0, 10),
         payment_method: 'cash', bank_account_id: '', stage_id: '',

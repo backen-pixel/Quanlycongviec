@@ -2262,3 +2262,18 @@ Kiểm tra: `node --check` 4 file đạt, nạp module đạt, 3 test deadline �
 - **Thay đổi thấy được hôm nay: 0 thẻ.** Cả 380 thẻ ở cột tắt hạn đều đã có `sx_kanban_deadline_at` null (do `syncSxCardDeadline` dọn). Đây là chốt chặn cho sau này, không phải sửa lỗi đang xảy ra.
 - CỐ Ý không dùng cờ `hideColumnDeadline` sẵn có (đang hard-code `false`): bật nó lên sẽ tắt luôn tone SLA cột của **243 thẻ**, nằm ngoài phạm vi yêu cầu. Muốn bật thì là một quyết định riêng.
 - `npx vite build` đạt. Hoàn tác: bỏ delta 1 file.
+
+---
+
+## 2026-10-09 — Kế toán: khoản thu lệch hóa đơn thôi im lặng
+
+Từ review module kế toán, mục «sửa (a) và (d)».
+
+**(d) ĐÃ SỬA — bản sao khoản thu sang hóa đơn nuốt lỗi.** `mirrorPaymentToInvoice` (`accountingDealDetail.js:430`) chèn `payment_records` rồi tính lại `invoices.paid_amount`. Insert lỗi thì chỉ `console.warn` và trả null; câu `update` hóa đơn ở cuối KHÔNG kiểm lỗi lần nào. Khoản thu đã nằm trong `crm_deal_payments` nên hai bảng lệch nhau mà kế toán không có cách nào biết.
+- Hàm nay trả `{ ok, id, error }`: kiểm lỗi cả ba bước (insert `payment_records`, đọc lại để cộng, update `invoices`), và `console.warn` riêng cho bước gắn `mirrored_payment_record_id`.
+- `POST /accounting/deals/:leadId/payments` (`accounting.js:846`) bắt `ok === false` và trả thêm trường `warning` trong body 201 — khoản thu vẫn lưu, nhưng người dùng được báo.
+- `AccountingDealDetail.jsx` `savePayment` đọc `res.warning` và cảnh báo kèm câu nhắc kiểm tra hóa đơn trước khi đối chiếu công nợ.
+
+**(a) KHÔNG SỬA — đo lại thì không có gì hỏng.** Việc phát sinh thiếu `crm_task_id` không ghi được phí (do `cost_entries.source_row_id` là uuid còn id việc là bigint). Nhưng: 10/10 việc phát sinh hiện có đủ `crm_task_id`, **0 việc bị chặn**; giao diện ĐÃ xử lý sẵn — `PhatSinhPanel.jsx:30-32` hiện dòng «Chưa gắn nhiệm vụ CRM — chưa ghi được phí» thay cho ô nhập, nên kế toán không gõ rồi mới gặp lỗi; backend trả 400 làm lớp phòng hờ. Thêm cột `source_row_bigint` cho `cost_entries` để sửa 0 trường hợp là không tương xứng — để nguyên, ghi lại đây nếu sau này có việc phát sinh tạo thẳng không qua nhiệm vụ CRM.
+
+Kiểm tra: `node --check` 2 file backend; nạp module và gọi `mirrorPaymentToInvoice` với payload không có `invoice_id` → trả null như cũ (không đụng DB); `npx vite build` đạt. CHƯA thử luồng ghi thanh toán thật — `invoices` vẫn 0 dòng nên chưa có hóa đơn để soi. Hoàn tác: bỏ delta 3 file.
