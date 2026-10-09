@@ -86,7 +86,11 @@ Xưởng hỏi vì sao trang `/sx/project-tasks` đầy nhiệm vụ của đơn
 
 ĐÃ áp lên cả `QLCV_Backup` (`atcfpgxkgbszglrelfgr`) ngày 09/10/2026 — hai DB nay cùng định nghĩa view. Backup trước khi áp: 4.810 SX + 52 «Dự án» + 0 VC; sau: 2.933 SX + 1.877 VC + 52 «Dự án» (tổng 4.862 không đổi, `unified_id` trùng = 0, tổng dòng view 113.972).
 
-Chưa làm: chưa mở trình duyệt xem lại hai tab; chưa đóng nhiệm vụ nào. Bước kế tiếp đã bàn: 124 đơn đã giao giờ chỉ còn 157 việc ở làn SX, trong đó ~20 việc công nợ — đóng tự động ~137 việc còn lại là an toàn. Hoàn tác: chạy `715_..._rollback.sql`.
+Chưa làm: chưa mở trình duyệt xem lại hai tab. Hoàn tác: chạy `715_..._rollback.sql`.
+
+**Đã đóng việc sản xuất của đơn đã giao (09/10/2026).** 133 dự án đang đứng ở cột «ĐƠN HÀNG ĐÃ GIAO» có 931 việc còn mở. Đóng **132** việc khu sản xuất; giữ nguyên **774 việc VC/LĐ** và **25 việc sau giao hàng**. Rollback: `backend/uploads/_rollback_dong_viec_don_da_giao_1791513018243.json`. Chạy lại script sau khi ghi: 931 → 799 việc mở, 0 việc còn phải đóng.
+
+Phân loại dùng `isLogisticsWorkshopTask` (cùng hàm `completeOpenWorkOnModuleDone` dùng) cộng danh sách từ khóa việc-sau-giao. Lượt dry-run ĐẦU lọt hai việc không được đóng — «Lắp đặt tại công trình» và «Xin đánh giá & giới thiệu» — vì `metadata.workshop_area` của chúng không phải `logistics`; đã thêm `lap dat` / `danh gia` / `gioi thieu` vào bộ từ khóa rồi mới ghi. Bài học: với nhóm việc này KHÔNG tin một mình `workshop_area`, phải soi danh sách tiêu đề trước khi đóng.
 
 ---
 
