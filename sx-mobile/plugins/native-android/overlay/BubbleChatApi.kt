@@ -39,6 +39,8 @@ object BubbleChatApi {
     val replySender: String? = null,
     val replyPreview: String? = null,
     val reactions: List<ReactionGroup> = emptyList(),
+    /** Ảnh đại diện của người gửi (đường dẫn tương đối hoặc URL đầy đủ). */
+    val avatarUrl: String? = null,
   ) {
     fun allAttachments(): List<MediaAttachment> {
       if (attachments.isNotEmpty()) return attachments
@@ -97,7 +99,58 @@ object BubbleChatApi {
     val name: String,
     val isDirect: Boolean,
     val statusLabel: String,
+    val avatarUrl: String? = null,
   )
+
+  /** Một dòng trong trang «Đoạn chat». */
+  data class GroupRow(
+    val id: String,
+    val name: String,
+    val preview: String,
+    val lastAtMs: Long,
+    val unread: Int,
+    val isDirect: Boolean,
+    val avatarUrl: String? = null,
+  )
+
+  /** GET /messenger/groups — danh sách đoạn chat của tôi, mới nhất lên đầu. */
+  fun fetchGroups(ctx: Context): List<GroupRow> {
+    val base = apiBase(ctx)
+    val auth = authHeader(ctx) ?: return emptyList()
+    return try {
+      val conn = openJson("$base/messenger/groups?_ts=${System.currentTimeMillis()}", auth, "GET")
+      val code = conn.responseCode
+      val body = readBody(conn, code in 200..299)
+      conn.disconnect()
+      if (code !in 200..299 || body.isBlank()) return emptyList()
+      val arr = JSONArray(body)
+      val out = ArrayList<GroupRow>(arr.length())
+      for (i in 0 until arr.length()) {
+        val o = arr.optJSONObject(i) ?: continue
+        val id = o.optString("id", "")
+        if (id.isBlank()) continue
+        val name = listOf("display_name", "name", "raw_name")
+          .map { cleanApiString(o.optString(it, "")).orEmpty() }
+          .firstOrNull { it.isNotBlank() } ?: "Chat"
+        out.add(
+          GroupRow(
+            id = id,
+            name = name,
+            preview = cleanDisplayText(o.optString("last_message", "")),
+            lastAtMs = parseIsoTime(o.optString("last_message_at", "")),
+            unread = o.optInt("unread_count", 0),
+            isDirect = o.optBoolean("is_direct", false),
+            avatarUrl = listOf("peer_avatar", "avatar")
+              .map { cleanApiString(o.optString(it, "")).orEmpty() }
+              .firstOrNull { it.isNotBlank() },
+          ),
+        )
+      }
+      out.sortedByDescending { it.lastAtMs }
+    } catch (_: Exception) {
+      emptyList()
+    }
+  }
 
   fun fetchGroupMeta(ctx: Context, groupId: String): GroupMeta? {
     if (groupId.isBlank()) return null
@@ -112,7 +165,10 @@ object BubbleChatApi {
       val o = JSONObject(body)
       val name = o.optString("name", "").trim().ifBlank { "Chat" }
       val isDirect = o.optBoolean("is_direct", false)
-      GroupMeta(name, isDirect, if (isDirect) "Trực tiếp" else "Nhóm chat · realtime")
+      val avatar = listOf("peer_avatar", "avatar", "group_avatar")
+        .map { cleanApiString(o.optString(it, "")).orEmpty() }
+        .firstOrNull { it.isNotBlank() }
+      GroupMeta(name, isDirect, if (isDirect) "Trực tiếp" else "Nhóm chat · realtime", avatar)
     } catch (_: Exception) {
       null
     }
@@ -133,6 +189,15 @@ object BubbleChatApi {
     } catch (_: Exception) {
       emptyList()
     }
+  }
+
+  /** Avatar tương đối («/uploads/…») → URL đầy đủ theo máy chủ API; rỗng nếu không có. */
+  fun resolveAvatarUrl(ctx: Context, raw: String?): String {
+    val s = cleanApiString(raw) ?: return ""
+    if (s.startsWith("http://", ignoreCase = true) || s.startsWith("https://", ignoreCase = true)) return s
+    val origin = prefs(ctx).getString("api_origin", null)?.trim()?.trimEnd('/').orEmpty()
+    if (origin.isBlank()) return ""
+    return origin + (if (s.startsWith("/")) s else "/$s")
   }
 
   private fun cleanApiString(raw: String?): String? {
@@ -314,6 +379,8 @@ object BubbleChatApi {
       replySender = replySender,
       replyPreview = replyPreview,
       reactions = parseReactions(o.optJSONArray("reactions"), myUserId),
+      avatarUrl = cleanApiString(o.optJSONObject("user")?.optString("avatar", ""))
+        ?: cleanApiString(o.optString("sender_avatar", "")),
     )
   }
 

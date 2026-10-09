@@ -8,7 +8,11 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.animation.ValueAnimator
+import android.graphics.Canvas
 import android.graphics.Outline
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.PixelFormat
@@ -23,12 +27,16 @@ import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.ViewOutlineProvider
 import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.view.animation.DecelerateInterpolator
+import android.view.animation.LinearInterpolator
+import android.view.animation.OvershootInterpolator
 import androidx.core.app.NotificationCompat
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -40,7 +48,7 @@ class OverlayBubbleService : Service() {
   private var windowManager: WindowManager? = null
   private var bubbleRoot: FrameLayout? = null
   private var stackHost: FrameLayout? = null
-  private var peekRoot: LinearLayout? = null
+  private var peekRoot: View? = null
   private var convPickerRoot: FrameLayout? = null
   private var badgeView: TextView? = null
   private var layoutParams: WindowManager.LayoutParams? = null
@@ -55,6 +63,19 @@ class OverlayBubbleService : Service() {
   private val handler = Handler(Looper.getMainLooper())
   private var peekHideRunnable: Runnable? = null
   private var foregroundStarted = false
+  /** Mốc thời gian (ms) hiệu ứng «hiện lên» của bong bóng kết thúc — tránh nảy chồng lên nó. */
+  private var entranceUntilMs = 0L
+  /** Hoạt ảnh vòng sáng nhấp nháy quanh bong bóng — phải hủy khi dựng lại/gỡ bong bóng để khỏi rò rỉ. */
+  private var glowAnimator: ValueAnimator? = null
+  /** Phần chồng bong bóng cao thêm phía trên bong bóng trước nhất (px) — để dời cửa sổ cho bong bóng trước nhất đứng yên. */
+  private var stackExtraPx = 0
+  /** Các bong bóng nằm dưới bong bóng trước nhất kèm độ sâu (1 = ngay dưới) — để lộ ra phía sau khi kéo. */
+  private val trailViews = ArrayList<Pair<View, Int>>()
+  private val trailRelaxRunnable = Runnable { trailBack() }
+  /** Kích thước (px) và vị trí (phía trên/dưới bong bóng) của thẻ xem trước tin nhắn đang hiện — dùng khi kéo bong bóng. */
+  private var peekW = 0
+  private var peekH = 0
+  private var peekToLeft = true
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -87,17 +108,60 @@ class OverlayBubbleService : Service() {
         val sender = intent.getStringExtra(EXTRA_SENDER).orEmpty()
         val preview = intent.getStringExtra(EXTRA_MESSAGE).orEmpty()
         val increment = intent.getBooleanExtra(EXTRA_INCREMENT_BADGE, false)
+        val openGid = openPanelGroupId()
+        if (openGid.isNotBlank()) {
+          // Khung chat đang mở: tin của chính đoạn đang xem thì khung tự cập nhật (xem SHOW_PEEK) — không nảy bong bóng.
+          if (gid == openGid) return START_STICKY
+          // Tin của đoạn khác: ghi nhận vào chồng + huy hiệu, đưa người đó lên dải đầu chat; bong bóng đang ẩn nên không nảy.
+          upsertConversation(gid, title, letter, avatarUrl, sender, preview, increment)
+          if (increment) incrementBadgeCount()
+          chatPanel?.updateHeads(chatHeads())
+          rebuildStackUi()
+          return START_STICKY
+        }
         upsertConversation(gid, title, letter, avatarUrl, sender, preview, increment)
         if (increment) incrementBadgeCount()
         prefs().edit().remove(PREF_BUBBLE_DISMISSED).apply()
+        val existed = bubbleRoot != null
         ensureOverlay()
         rebuildStackUi()
+        // Bong bóng đã có sẵn mà có tin mới → nảy nhẹ cho dễ để ý; mới tạo thì đã có hiệu ứng xuất hiện.
+        if (existed && increment) popBubble()
         return START_STICKY
       }
       ACTION_SHOW_PEEK -> {
         val sender = intent.getStringExtra(EXTRA_SENDER).orEmpty()
         val message = intent.getStringExtra(EXTRA_MESSAGE).orEmpty()
         val gid = intent.getStringExtra(EXTRA_GROUP_ID).orEmpty()
+        val openGid = openPanelGroupId()
+        if (openGid.isNotBlank()) {
+          val panel = chatPanel
+          if (panel != null && (gid.isBlank() || gid == openGid)) {
+            // Đang xem đúng đoạn chat này: chèn tin thẳng vào khung (rồi tải lại cho khớp máy chủ), KHÔNG hiện thẻ xem trước.
+            panel.appendIncoming(
+              sender,
+              message,
+              intent.getStringExtra(EXTRA_MESSAGE_ID).orEmpty().ifBlank { null },
+              convStack[openGid]?.avatarUrl,
+            )
+            panel.reloadMessages()
+            return START_STICKY
+          }
+          // Tin của đoạn khác trong lúc khung đang mở: chỉ cập nhật chồng/huy hiệu/dải đầu chat, không bật thẻ đè lên khung.
+          upsertConversation(
+            gid,
+            bubbleTitle.ifBlank { sender.ifBlank { "Chat" } },
+            bubbleLetter.ifBlank { sender.firstOrNull()?.uppercaseChar()?.toString() ?: "?" },
+            bubbleAvatarUrl,
+            sender,
+            message,
+            increment = false,
+          )
+          if (intent.getBooleanExtra(EXTRA_INCREMENT_BADGE, true)) incrementBadgeCount()
+          panel?.updateHeads(chatHeads())
+          rebuildStackUi()
+          return START_STICKY
+        }
         if (gid.isNotBlank()) {
           upsertConversation(
             gid,
@@ -112,8 +176,10 @@ class OverlayBubbleService : Service() {
         if (intent.getBooleanExtra(EXTRA_INCREMENT_BADGE, true)) {
           incrementBadgeCount()
         }
-        if (bubbleRoot == null) ensureOverlay()
+        val existed = bubbleRoot != null
+        if (!existed) ensureOverlay()
         rebuildStackUi()
+        if (existed) popBubble()
         showPeek(sender, message)
         return START_STICKY
       }
@@ -203,6 +269,8 @@ class OverlayBubbleService : Service() {
       avatarUrl = avatarUrl.ifBlank { prev?.avatarUrl ?: "" },
     )
     convStack[groupId] = conv
+    // Tải sẵn ảnh đại diện ngay khi có tin: bong bóng, thẻ xem trước và khung chat đều dùng chung bản đã đệm.
+    if (conv.avatarUrl.isNotBlank()) OverlayAvatarCache.prefetch(this, conv.avatarUrl)
     bubbleGroupId = groupId
     bubbleTitle = conv.title
     bubbleLetter = conv.letter
@@ -230,12 +298,16 @@ class OverlayBubbleService : Service() {
       PixelFormat.TRANSLUCENT,
     )
     params.gravity = Gravity.TOP or Gravity.START
-    params.x = dm.widthPixels - bubbleSize - dp(12)
+    // Cửa sổ rộng hơn bong bóng 2 × bubbleMargin() (chừa chỗ cho vòng sáng nhấp nháy + bóng) nên dựa sát mép phải.
+    params.x = dm.widthPixels - bubbleSize - bubbleMargin() * 2
     params.y = (dm.heightPixels * 0.58f).toInt()
     layoutParams = params
 
     val root = FrameLayout(this)
     root.id = R.id.sx_bubble_root
+    // Khung con (host) vẽ bong bóng bên dưới lệch ra ngoài mép của nó khi kéo → khung cha cũng phải tắt cắt, nếu không phần lộ ra
+    // bị cắt thẳng đứng ngay mép host. Vẫn giới hạn bởi lề cửa sổ (bubbleMargin).
+    root.clipChildren = false
 
     val host = FrameLayout(this)
     host.layoutParams = FrameLayout.LayoutParams(
@@ -249,14 +321,16 @@ class OverlayBubbleService : Service() {
     badge.gravity = Gravity.CENTER
     badge.setTextColor(Color.WHITE)
     badge.setTypeface(badge.typeface, Typeface.BOLD)
-    badge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+    badge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
     badge.setPadding(dp(5), dp(1), dp(5), dp(1))
-    badge.minWidth = dp(20)
-    badge.minHeight = dp(20)
+    badge.minWidth = dp(22)
+    badge.minHeight = dp(22)
     val badgeBg = GradientDrawable()
     badgeBg.shape = GradientDrawable.RECTANGLE
-    badgeBg.cornerRadius = dp(10).toFloat()
-    badgeBg.setColor(Color.parseColor("#FF3B30"))
+    badgeBg.cornerRadius = dp(11).toFloat()
+    badgeBg.setColor(Color.parseColor("#FA3E3E"))
+    // Viền trắng quanh huy hiệu để nó "tách" khỏi ảnh đại diện phía sau (đúng thiết kế: đỏ #FA3E3E, viền trắng 2dp).
+    badgeBg.setStroke(dp(2), Color.WHITE)
     badge.background = badgeBg
     badge.elevation = dp(4).toFloat()
     badge.visibility = View.GONE
@@ -265,8 +339,9 @@ class OverlayBubbleService : Service() {
       FrameLayout.LayoutParams.WRAP_CONTENT,
     )
     badgeLp.gravity = Gravity.END or Gravity.TOP
-    badgeLp.topMargin = -dp(2)
-    badgeLp.marginEnd = -dp(2)
+    // Cửa sổ rộng hơn bong bóng ~12dp bên phải (chừa chỗ cho bóng đổ) nên huy hiệu lùi vào cho khớp mép bong bóng.
+    badgeLp.topMargin = bubbleMargin() - dp(6)
+    badgeLp.marginEnd = bubbleMargin() - dp(4)
     badge.layoutParams = badgeLp
     badgeView = badge
     root.addView(badge)
@@ -278,15 +353,56 @@ class OverlayBubbleService : Service() {
     bubbleRoot = root
     rebuildStackUi()
     updateBadge()
+
+    // Hiện lên: phóng từ nhỏ lên với độ nảy nhẹ + mờ dần vào, thay vì xuất hiện cái bụp.
+    root.alpha = 0f
+    root.scaleX = 0.35f
+    root.scaleY = 0.35f
+    entranceUntilMs = System.currentTimeMillis() + 480
+    root.animate()
+      .alpha(1f)
+      .scaleX(1f)
+      .scaleY(1f)
+      .setDuration(420)
+      .setInterpolator(OvershootInterpolator(1.9f))
+      .withEndAction {
+        // Phòng khi hiệu ứng bị huỷ giữa chừng: luôn trả về trạng thái hiển thị đầy đủ.
+        root.alpha = 1f
+        root.scaleX = 1f
+        root.scaleY = 1f
+      }
+      .start()
+  }
+
+  /** Nảy nhẹ khi có tin mới (bong bóng đã hiện sẵn). Bỏ qua nếu hiệu ứng hiện lên còn đang chạy (tin đến liền sau khi tạo). */
+  private fun popBubble() {
+    val root = bubbleRoot ?: return
+    if (System.currentTimeMillis() < entranceUntilMs) return
+    root.animate().cancel()
+    root.alpha = 1f
+    root.scaleX = 1f
+    root.scaleY = 1f
+    root.animate()
+      .scaleX(1.16f)
+      .scaleY(1.16f)
+      .setDuration(110)
+      .setInterpolator(DecelerateInterpolator())
+      .withEndAction {
+        root.animate()
+          .scaleX(1f)
+          .scaleY(1f)
+          .setDuration(320)
+          .setInterpolator(OvershootInterpolator(3f))
+          .start()
+      }
+      .start()
   }
 
   private fun onBubbleStackTapped() {
     hideConvPicker()
-    if (convStack.size <= 1) {
-      openPendingChat()
-    } else {
-      showConvPicker()
-    }
+    // Chạm bong bóng luôn mở THẲNG đoạn chat đang hiện trên bong bóng (cuộc mới nhất). Muốn chuyển cuộc khác thì dùng dải
+    // đầu chat hoặc trang «Đoạn chat» trong khung — không còn hộp «Chọn cuộc trò chuyện».
+    openPendingChat()
   }
 
   private fun rebuildStackUi() {
@@ -308,19 +424,43 @@ class OverlayBubbleService : Service() {
       return
     }
 
-    val bubbleSize = dp(52)
-    val offset = dp(10)
-    val count = convs.size
-    val showPlus = count > 3
-    val visible = if (count <= 3) convs else convs.takeLast(2)
-    val layers = visible.size + if (showPlus) 1 else 0
-    val stackW = bubbleSize + offset * (layers - 1).coerceAtLeast(0)
-    val stackH = stackW
+    glowAnimator?.cancel()
+    glowAnimator = null
+    val bubbleSize = dp(58)
+    // Chồng TRÙNG KHÍT (kiểu B): mọi cuộc trò chuyện nằm đúng một chỗ, chỉ hiện bong bóng của cuộc MỚI NHẤT; huy hiệu đỏ là số
+    // tin chưa đọc tổng. Không có lớp nào nhô ra/lệch, không chip «+N» (số cuộc trong chồng không phản ánh tin chưa đọc).
+    // Chạm vào bong bóng khi có nhiều cuộc thì hiện danh sách để chọn.
+    val peek = 0
+    val visible = convs.takeLast(3) // cũ → mới; phần tử cuối là bong bóng trước nhất, các cuộc cũ nằm khuất ngay bên dưới
+    val depthMax = visible.size - 1
+    val extra = peek * depthMax
+    val stackW = bubbleSize
+    val stackH = bubbleSize + extra
 
-    host.layoutParams = FrameLayout.LayoutParams(stackW, stackH)
+    // Cửa sổ overlay cắt mọi thứ ngoài mép → chừa lề đều bốn phía (bubbleMargin) cho vòng sáng nhấp nháy và bóng đổ.
+    val m = bubbleMargin()
+    host.clipChildren = false
+    host.layoutParams = FrameLayout.LayoutParams(stackW, stackH).apply {
+      leftMargin = m
+      topMargin = m
+    }
+    // Huy hiệu bám góc trên phải của bong bóng TRƯỚC NHẤT (nằm thấp hơn đỉnh chồng một đoạn `extra`).
+    badgeView?.let { b ->
+      (b.layoutParams as? FrameLayout.LayoutParams)?.let { blp ->
+        blp.topMargin = m + extra - dp(6)
+        b.layoutParams = blp
+      }
+    }
     layoutParams?.let { lp ->
-      lp.width = stackW + dp(6)
-      lp.height = stackH + dp(6)
+      lp.width = stackW + m * 2
+      lp.height = stackH + m * 2
+      // Chồng cao thêm (hoặc thấp đi) về phía TRÊN: dời cửa sổ cùng lượng đó để bong bóng trước nhất đứng yên một chỗ.
+      lp.y -= extra - stackExtraPx
+      stackExtraPx = extra
+      // Giữ cửa sổ nằm gọn trong màn hình, khỏi bị cắt mép.
+      val dm = resources.displayMetrics
+      lp.x = lp.x.coerceAtMost(dm.widthPixels - lp.width).coerceAtLeast(0)
+      lp.y = lp.y.coerceAtMost(dm.heightPixels - lp.height - dp(96)).coerceAtLeast(dp(72))
       bubbleRoot?.let { root ->
         try {
           windowManager?.updateViewLayout(root, lp)
@@ -328,27 +468,47 @@ class OverlayBubbleService : Service() {
       }
     }
 
+    trailViews.clear()
     visible.forEachIndexed { index, conv ->
-      val bubble = buildMiniBubble(conv, bubbleSize)
-      bubble.translationX = (offset * index).toFloat()
-      bubble.translationY = (offset * index).toFloat()
-      bubble.elevation = (index + 1) * dp(2).toFloat()
+      val depth = depthMax - index // 0 = trước nhất
+      val bubble = buildMiniBubble(conv, bubbleSize, dim = depth > 0)
+      // Các bong bóng phía dưới trùng khít bên dưới bong bóng trước nhất (bị che kín khi đứng yên); khi KÉO chúng hơi lộ ra
+      // phía sau như đuôi — xem trailTo().
+      if (depth > 0) trailViews.add(Pair(bubble, depth))
+      // Cùng một cột: bong bóng càng sâu càng nằm cao hơn một nấc `peek` và nhỏ hơn 10% → chỉ lộ cung mép trên.
+      bubble.translationY = (extra - peek * depth).toFloat()
+      val s = 1f - 0.04f * depth
+      bubble.scaleX = s
+      bubble.scaleY = s
+      // Bóng đổ vừa phải (≈3dp) để nằm gọn trong phần lề chừa sẵn của cửa sổ, không bị cắt thành khung chữ nhật.
+      bubble.elevation = dp(2).toFloat() + (index + 1) * dp(1).toFloat()
       host.addView(
         bubble,
         FrameLayout.LayoutParams(bubbleSize, bubbleSize),
       )
     }
 
-    if (showPlus) {
-      val extra = count - 2
-      val plus = buildPlusBubble(extra.coerceAtMost(99), bubbleSize)
-      plus.translationX = (offset * visible.size).toFloat()
-      plus.translationY = (offset * visible.size).toFloat()
-      plus.elevation = (visible.size + 1) * dp(2).toFloat()
-      host.addView(
-        plus,
-        FrameLayout.LayoutParams(bubbleSize, bubbleSize),
-      )
+    // Vòng sáng hồng nhấp nháy phía sau bong bóng trước nhất (thu hút chú ý): nở ra ~10dp rồi mờ dần, lặp mỗi 2,4 giây.
+    val glow = View(this)
+    glow.background = GradientDrawable().apply {
+      shape = GradientDrawable.OVAL
+      setColor(Color.parseColor("#DF248B"))
+    }
+    glow.translationY = extra.toFloat()
+    host.addView(glow, 0, FrameLayout.LayoutParams(bubbleSize, bubbleSize))
+    val spread = (bubbleSize + dp(20)).toFloat() / bubbleSize
+    glowAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+      duration = 2400
+      repeatCount = ValueAnimator.INFINITE
+      interpolator = LinearInterpolator()
+      addUpdateListener {
+        val t = it.animatedValue as Float
+        val s = 1f + (spread - 1f) * t
+        glow.scaleX = s
+        glow.scaleY = s
+        glow.alpha = 0.6f * (1f - t)
+      }
+      start()
     }
 
     val active = convs.lastOrNull()
@@ -360,17 +520,18 @@ class OverlayBubbleService : Service() {
     }
   }
 
-  private fun buildMiniBubble(conv: ConvBubble, size: Int): FrameLayout {
+  private fun buildMiniBubble(conv: ConvBubble, size: Int, dim: Boolean = false): FrameLayout {
+    // Đầu chat KHÔNG viền: chỉ ảnh đại diện tròn (nền chuyển màu hồng → tím khi chưa có ảnh) và bóng đổ nổi lên.
+    // dim = true cho các bong bóng nằm dưới: phủ một lớp tối nhẹ để phân biệt với bong bóng trước nhất khi lộ ra lúc kéo.
     val outer = FrameLayout(this)
-    val outerBg = GradientDrawable()
-    outerBg.shape = GradientDrawable.OVAL
-    outerBg.setColor(Color.WHITE)
-    outerBg.setStroke(dp(2), Color.parseColor("#6C5CE7"))
-    outer.background = outerBg
+    outer.outlineProvider = object : ViewOutlineProvider() {
+      override fun getOutline(view: View, outline: Outline) {
+        outline.setOval(0, 0, view.width, view.height)
+      }
+    }
 
-    val innerSize = size - dp(5)
     val clipHost = FrameLayout(this)
-    val clipLp = FrameLayout.LayoutParams(innerSize, innerSize)
+    val clipLp = FrameLayout.LayoutParams(size, size)
     clipLp.gravity = Gravity.CENTER
     clipHost.layoutParams = clipLp
     clipHost.clipToOutline = true
@@ -379,17 +540,21 @@ class OverlayBubbleService : Service() {
         outline.setOval(0, 0, view.width, view.height)
       }
     }
-    val hostBg = GradientDrawable()
+    val hostBg = GradientDrawable(
+      GradientDrawable.Orientation.TL_BR,
+      intArrayOf(0xFFFF416C.toInt(), 0xFF8A2387.toInt()),
+    )
     hostBg.shape = GradientDrawable.OVAL
-    hostBg.setColor(colorFromName(conv.lastSender.ifBlank { conv.title }.ifBlank { conv.letter }))
     clipHost.background = hostBg
 
     val letter = TextView(this)
     letter.gravity = Gravity.CENTER
     letter.setTextColor(Color.WHITE)
     letter.setTypeface(letter.typeface, Typeface.BOLD)
-    letter.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-    letter.text = (conv.lastSender.ifBlank { conv.letter }).take(2).uppercase()
+    letter.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+    letter.letterSpacing = 0.04f
+    // Chữ cái theo cách lấy chung (chữ đầu họ + chữ đầu tên).
+    letter.text = OverlayChatTheme.initials(conv.lastSender.ifBlank { conv.title.ifBlank { conv.letter } })
     letter.layoutParams = FrameLayout.LayoutParams(
       FrameLayout.LayoutParams.MATCH_PARENT,
       FrameLayout.LayoutParams.MATCH_PARENT,
@@ -405,29 +570,13 @@ class OverlayBubbleService : Service() {
 
     clipHost.addView(letter)
     clipHost.addView(avatar)
+    if (dim) {
+      val shade = View(this)
+      shade.setBackgroundColor(Color.argb(70, 0, 0, 0))
+      clipHost.addView(shade, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+    }
     outer.addView(clipHost)
     loadAvatarInto(conv.avatarUrl, avatar, letter, clipHost, conv.title, conv.letter)
-    return outer
-  }
-
-  private fun buildPlusBubble(extraCount: Int, size: Int): FrameLayout {
-    val outer = FrameLayout(this)
-    val bg = GradientDrawable()
-    bg.shape = GradientDrawable.OVAL
-    bg.setColor(Color.parseColor("#334155"))
-    bg.setStroke(dp(2), Color.WHITE)
-    outer.background = bg
-    outer.addView(TextView(this).apply {
-      text = if (extraCount > 99) "+99" else "+$extraCount"
-      gravity = Gravity.CENTER
-      setTextColor(Color.WHITE)
-      setTypeface(typeface, Typeface.BOLD)
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-      layoutParams = FrameLayout.LayoutParams(
-        FrameLayout.LayoutParams.MATCH_PARENT,
-        FrameLayout.LayoutParams.MATCH_PARENT,
-      )
-    })
     return outer
   }
 
@@ -562,9 +711,44 @@ class OverlayBubbleService : Service() {
     bubbleAvatarUrl = conv.avatarUrl
   }
 
+  /**
+   * Khi kéo bong bóng, các cuộc trò chuyện nằm dưới hơi lộ ra phía SAU hướng kéo (như đuôi): lệch ngược chiều di chuyển, càng
+   * sâu càng lệch xa, tối đa 6dp mỗi lớp (nằm gọn trong lề cửa sổ). Ngừng kéo là tự thu về.
+   */
+  private fun trailTo(vx: Float, vy: Float) {
+    // vx, vy: vận tốc kéo (px/ms). Tính theo vận tốc (không theo từng nhịp cảm ứng) để mức lộ ra ổn định ở mọi tốc độ cập nhật.
+    if (trailViews.isEmpty()) return
+    val cap = dp(13).toFloat() // 2 lớp × 13dp = 26dp ≤ lề cửa sổ (bubbleMargin), không bị cắt
+    for ((v, depth) in trailViews) {
+      val limit = cap * depth
+      val tx = (-vx * 150f * depth).coerceIn(-limit, limit)
+      val ty = (-vy * 150f * depth).coerceIn(-limit, limit)
+      v.animate().cancel()
+      v.translationX += (tx - v.translationX) * 0.5f
+      v.translationY += (ty - v.translationY) * 0.5f
+    }
+    handler.removeCallbacks(trailRelaxRunnable)
+    handler.postDelayed(trailRelaxRunnable, 140)
+  }
+
+  private fun trailBack() {
+    handler.removeCallbacks(trailRelaxRunnable)
+    for ((v, _) in trailViews) {
+      v.animate()
+        .translationX(0f)
+        .translationY(0f)
+        .setDuration(240)
+        .setInterpolator(OvershootInterpolator(2f))
+        .start()
+    }
+  }
+
   private fun attachDrag(root: FrameLayout, params: WindowManager.LayoutParams) {
     var downX = 0f
     var downY = 0f
+    var lastX = 0f
+    var lastY = 0f
+    var lastT = 0L
     var startX = 0
     var startY = 0
     var moved = false
@@ -573,6 +757,9 @@ class OverlayBubbleService : Service() {
         MotionEvent.ACTION_DOWN -> {
           downX = event.rawX
           downY = event.rawY
+          lastX = event.rawX
+          lastY = event.rawY
+          lastT = event.eventTime
           startX = params.x
           startY = params.y
           moved = false
@@ -586,12 +773,24 @@ class OverlayBubbleService : Service() {
           params.y = startY + dy
           windowManager?.updateViewLayout(root, params)
           updatePeekPosition()
+          val dt = (event.eventTime - lastT).coerceAtLeast(1L).toFloat()
+          if (moved) {
+            showDismissTarget()
+            updateDismissTarget(params)
+            trailTo((event.rawX - lastX) / dt, (event.rawY - lastY) / dt)
+          }
+          lastX = event.rawX
+          lastY = event.rawY
+          lastT = event.eventTime
           true
         }
         MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+          trailBack()
+          val droppedOnX = event.actionMasked == MotionEvent.ACTION_UP && moved && dismissOver
+          hideDismissTarget()
           if (!moved) {
             root.performClick()
-          } else if (shouldDismissBubble(params, downX, downY, event.rawX, event.rawY)) {
+          } else if (droppedOnX) {
             dismissBubble()
           } else {
             snapToEdge(params)
@@ -605,20 +804,90 @@ class OverlayBubbleService : Service() {
     }
   }
 
-  /** Kéo ra ngoài màn hình hoặc kéo xa (>72dp) → đóng bong bóng. */
-  private fun shouldDismissBubble(
-    params: WindowManager.LayoutParams,
-    downX: Float,
-    downY: Float,
-    upX: Float,
-    upY: Float,
-  ): Boolean {
+  // ---- Ô tròn X để tắt bong bóng: chỉ khi THẢ bong bóng vào ô này mới tắt (kéo đi đâu khác chỉ là dời chỗ) ----
+  private var dismissTarget: FrameLayout? = null
+  private var dismissOver = false
+
+  private fun dismissTargetSize(): Int = dp(64)
+
+  /** Tâm ô X (tọa độ màn hình): giữa chiều ngang, cách đáy ~110dp (trên thanh điều hướng). */
+  private fun dismissTargetCenter(): Pair<Float, Float> {
     val dm = resources.displayMetrics
-    val cx = params.x + params.width / 2f
-    val cy = params.y + params.height / 2f
-    val offScreen = cx < 0 || cx > dm.widthPixels || cy < 0 || cy > dm.heightPixels
-    val dragDist = hypot((upX - downX).toDouble(), (upY - downY).toDouble())
-    return offScreen || dragDist >= dp(72)
+    return Pair(dm.widthPixels / 2f, dm.heightPixels - dp(110).toFloat())
+  }
+
+  private fun showDismissTarget() {
+    if (dismissTarget != null) return
+    val wm = windowManager ?: return
+    val size = dismissTargetSize()
+    val box = FrameLayout(this)
+    box.background = GradientDrawable().apply {
+      shape = GradientDrawable.OVAL
+      setColor(Color.argb(190, 20, 24, 36))
+      setStroke(dp(2), Color.argb(230, 255, 255, 255))
+    }
+    box.elevation = dp(6).toFloat()
+    val x = TextView(this)
+    x.text = "✕"
+    x.gravity = Gravity.CENTER
+    x.setTextColor(Color.WHITE)
+    x.setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
+    x.setTypeface(x.typeface, Typeface.BOLD)
+    box.addView(x, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+    val (cx, cy) = dismissTargetCenter()
+    val lp = WindowManager.LayoutParams(
+      size,
+      size,
+      overlayType(),
+      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+      PixelFormat.TRANSLUCENT,
+    )
+    lp.gravity = Gravity.TOP or Gravity.START
+    lp.x = (cx - size / 2f).toInt()
+    lp.y = (cy - size / 2f).toInt()
+    box.alpha = 0f
+    box.scaleX = 0.6f
+    box.scaleY = 0.6f
+    try {
+      wm.addView(box, lp)
+    } catch (_: Exception) {
+      return
+    }
+    dismissTarget = box
+    dismissOver = false
+    box.animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(180).setInterpolator(OvershootInterpolator(1.6f)).start()
+  }
+
+  /** Cập nhật trạng thái «đang ở trên ô X»: phóng to ô, đổi màu đỏ; trả về true nếu đang ở trên. */
+  private fun updateDismissTarget(params: WindowManager.LayoutParams): Boolean {
+    val box = dismissTarget ?: return false
+    val m = bubbleMargin()
+    val bx = params.x + m + dp(58) / 2f
+    val by = params.y + m + stackExtraPx + dp(58) / 2f
+    val (cx, cy) = dismissTargetCenter()
+    val dist = hypot((bx - cx).toDouble(), (by - cy).toDouble())
+    val over = dist <= dp(64)
+    if (over != dismissOver) {
+      dismissOver = over
+      (box.background as? GradientDrawable)?.setColor(if (over) Color.argb(235, 239, 68, 68) else Color.argb(190, 20, 24, 36))
+      box.animate().cancel()
+      box.animate().scaleX(if (over) 1.3f else 1f).scaleY(if (over) 1.3f else 1f).setDuration(120).start()
+    }
+    return over
+  }
+
+  private fun hideDismissTarget() {
+    val box = dismissTarget ?: return
+    dismissTarget = null
+    dismissOver = false
+    box.animate().cancel()
+    box.animate().alpha(0f).scaleX(0.6f).scaleY(0.6f).setDuration(140).withEndAction {
+      try {
+        windowManager?.removeView(box)
+      } catch (_: Exception) { }
+    }.start()
   }
 
   private fun dismissBubble() {
@@ -647,7 +916,8 @@ class OverlayBubbleService : Service() {
     val dm = resources.displayMetrics
     val bubbleSize = params.width
     val mid = dm.widthPixels / 2
-    params.x = if (params.x + bubbleSize / 2 < mid) dp(10) else dm.widthPixels - bubbleSize - dp(10)
+    // Cửa sổ đã có lề bubbleMargin() mỗi bên → dựa sát mép màn hình để bong bóng cách mép ≈ bubbleMargin().
+    params.x = if (params.x + bubbleSize / 2 < mid) 0 else dm.widthPixels - bubbleSize
     params.y = params.y.coerceIn(dp(72), dm.heightPixels - bubbleSize - dp(96))
   }
 
@@ -743,26 +1013,89 @@ class OverlayBubbleService : Service() {
     updateBadge()
     removePeek()
     closeChatPanel()
-    snapBubbleForChatPanel()
-    bubbleRoot?.visibility = View.VISIBLE
     showNativeChatPanel()
   }
+
+  /** Dải «đầu chat» trong khung: cuộc đang mở đứng đầu, kế đó các cuộc gần nhất (tối đa 4). */
+  private fun chatHeads(): List<OverlayChatPanel.Head> {
+    // Khung đang mở đoạn nào thì đoạn đó đứng đầu (kể cả khi bong bóng đã chuyển sang cuộc mới nhất do có tin đến).
+    val activeGid = openPanelGroupId().ifBlank { bubbleGroupId }
+    val active = convStack[activeGid]
+    val others = convStack.values.filter { it.groupId != activeGid }.reversed()
+    return (listOfNotNull(active) + others).take(4).map {
+      OverlayChatPanel.Head(
+        it.groupId,
+        it.title.ifBlank { it.lastSender.ifBlank { "Chat" } },
+        it.avatarUrl.ifBlank { null },
+      )
+    }
+  }
+
+  /** groupId của đoạn chat đang mở trong khung (rỗng nếu khung chưa mở). */
+  private fun openPanelGroupId(): String {
+    val p = chatPanel ?: return ""
+    return if (p.isAlive()) p.currentGroupId() else ""
+  }
+
+  /** Chiều cao dải đầu chat phía trên khung chat (gồm thanh trạng thái). */
+  private fun chatHeadsReserve(): Int = statusBarHeight() + dp(76)
 
   /** Panel overlay native — không mở MainActivity, chat nổi trên app khác. */
   private fun showNativeChatPanel() {
     val wm = windowManager ?: return
-    val topReserve = snapBubbleForChatPanel()
+    val topReserve = chatHeadsReserve()
+    bubbleRoot?.visibility = View.GONE
     chatPanel = OverlayChatPanel(
       this,
       wm,
       onClosed = {
         chatPanel = null
-        bubbleRoot?.visibility = View.VISIBLE
+        restoreBubbleAnimated()
       },
       onExpand = { gid, title -> openBubbleChatInApp(gid, title) },
       onStartCall = { gid, title, media -> openOutboundCallInApp(gid, title, media) },
+      originProvider = { bubbleCenter() },
+      onSelectHead = { gid, name ->
+        // Chọn một đoạn chat khác (từ dải đầu chat hoặc trang «Đoạn chat»): chuyển cuộc đang mở, khung tự tải lại tin.
+        // Đoạn chat chưa từng hiện bong bóng thì thêm vào chồng trước.
+        if (convStack[gid] == null) {
+          upsertConversation(gid, name, name.firstOrNull()?.uppercaseChar()?.toString() ?: "?", "", "", "", false)
+        }
+        selectConversation(gid)
+        chatPanel?.show(bubbleGroupId, bubbleTitle, topReserve, chatHeads())
+      },
     )
-    chatPanel?.show(bubbleGroupId, bubbleTitle, topReserve)
+    chatPanel?.show(bubbleGroupId, bubbleTitle, topReserve, chatHeads())
+  }
+
+  /** Tâm bong bóng thật (đã trừ lề cửa sổ) theo toạ độ màn hình — gốc của hiệu ứng bung/thu khung chat. */
+  private fun bubbleCenter(): Pair<Float, Float>? {
+    val lp = layoutParams ?: return null
+    val m = bubbleMargin()
+    return Pair(lp.x + m + dp(58) / 2f, lp.y + m + stackExtraPx + dp(58) / 2f)
+  }
+
+  /** Bong bóng hiện lại sau khi khung chat thu về: phóng nhẹ từ nhỏ lên, có độ nảy. */
+  private fun restoreBubbleAnimated() {
+    val root = bubbleRoot ?: return
+    root.animate().cancel()
+    root.visibility = View.VISIBLE
+    root.alpha = 0f
+    root.scaleX = 0.4f
+    root.scaleY = 0.4f
+    entranceUntilMs = System.currentTimeMillis() + 340
+    root.animate()
+      .alpha(1f)
+      .scaleX(1f)
+      .scaleY(1f)
+      .setDuration(300)
+      .setInterpolator(OvershootInterpolator(2.2f))
+      .withEndAction {
+        root.alpha = 1f
+        root.scaleX = 1f
+        root.scaleY = 1f
+      }
+      .start()
   }
 
   private fun stashPendingBubbleChat(groupId: String, title: String) {
@@ -864,56 +1197,217 @@ class OverlayBubbleService : Service() {
     val lp = layoutParams ?: return
     val dm = resources.displayMetrics
 
-    val peek = LinearLayout(this)
-    peek.orientation = LinearLayout.VERTICAL
-    peek.id = R.id.sx_bubble_peek
-    val bg = GradientDrawable()
-    bg.cornerRadius = dp(12).toFloat()
-    bg.setColor(Color.parseColor("#F0FFFFFF"))
-    bg.setStroke(dp(1), Color.parseColor("#336C5CE7"))
-    peek.background = bg
-    peek.setPadding(dp(10), dp(8), dp(10), dp(8))
-    peek.elevation = dp(6).toFloat()
+    val pal = OverlayChatTheme.palette(this)
+    val title = if (sender.isNotBlank()) sender else bubbleTitle
+    val pad = peekShadowPad()
+    val bubbleOnRight = lp.x + lp.width / 2 >= dm.widthPixels / 2
 
-    val senderTv = TextView(this)
-    senderTv.setTextColor(Color.parseColor("#1E293B"))
-    senderTv.setTypeface(senderTv.typeface, Typeface.BOLD)
-    senderTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-    senderTv.maxLines = 1
-    senderTv.text = if (sender.isNotBlank()) sender else bubbleTitle
+    // Vỏ ngoài chừa lề để bóng đổ của thẻ không bị cắt ở mép cửa sổ overlay.
+    val shell = FrameLayout(this)
+    shell.id = R.id.sx_bubble_peek
+    shell.clipChildren = false
+    shell.clipToPadding = false
+    shell.setPadding(pad, pad, pad, pad)
+
+    // Thẻ thông báo: nền trắng bo lớn (22dp), bóng đổ mềm, không viền. Từ trái sang phải: avatar tròn màu cam có chữ cái →
+    // (tên đậm + giờ · nội dung xám tối đa 2 dòng) → chấm đỏ «chưa đọc». Rộng vừa nội dung, nằm NGANG HÀNG bong bóng.
+    val maxCardW = (dm.widthPixels - dp(58) - dp(12) - dp(28)).coerceAtMost(dp(320))
+    val colMax = (maxCardW - dp(122)).coerceAtLeast(dp(120))
+
+    val card = LinearLayout(this)
+    card.orientation = LinearLayout.HORIZONTAL
+    card.gravity = Gravity.CENTER_VERTICAL
+    card.minimumWidth = dp(220)
+    card.setPadding(dp(14), dp(12), dp(14), dp(12))
+    card.elevation = dp(8).toFloat()
+    card.background = GradientDrawable().apply {
+      setColor(pal.bgElevated)
+      cornerRadius = dp(22).toFloat()
+    }
+
+    // Avatar thẻ xem trước: ảnh người gửi nếu có, không thì chữ cái trên nền cam.
+    val avatar = OverlayAvatarView(this)
+      .style(Color.parseColor("#F97316"), Color.parseColor("#F97316"), 14f)
+      .setAvatar(bubbleAvatarUrl, title)
+
+    val nameTv = TextView(this)
+    nameTv.setTextColor(pal.text)
+    nameTv.setTypeface(nameTv.typeface, Typeface.BOLD)
+    nameTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+    nameTv.maxLines = 1
+    nameTv.maxWidth = (colMax - dp(48)).coerceAtLeast(dp(72))
+    nameTv.ellipsize = android.text.TextUtils.TruncateAt.END
+    nameTv.text = title
+
+    val timeTv = TextView(this)
+    timeTv.setTextColor(pal.textFaint)
+    timeTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+    timeTv.text = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date())
+
+    val nameRow = LinearLayout(this)
+    nameRow.orientation = LinearLayout.HORIZONTAL
+    nameRow.gravity = Gravity.CENTER_VERTICAL
+    nameRow.addView(nameTv, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+    // Khoảng đệm co giãn đẩy giờ về sát mép phải của cột nội dung (tối thiểu 10dp khi thẻ ôm sát chữ).
+    nameRow.addView(View(this), LinearLayout.LayoutParams(dp(10), 1, 1f))
+    nameRow.addView(timeTv, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
 
     val msgTv = TextView(this)
-    msgTv.setTextColor(Color.parseColor("#475569"))
-    msgTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+    msgTv.setTextColor(pal.textMuted)
+    msgTv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+    msgTv.setLineSpacing(0f, 1.08f)
     msgTv.maxLines = 2
-    msgTv.text = message.take(120)
+    msgTv.maxWidth = colMax
+    msgTv.ellipsize = android.text.TextUtils.TruncateAt.END
+    msgTv.text = message.take(160)
 
-    peek.addView(senderTv)
-    peek.addView(msgTv)
+    val col = LinearLayout(this)
+    col.orientation = LinearLayout.VERTICAL
+    col.addView(nameRow, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+    col.addView(
+      msgTv,
+      LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2) },
+    )
 
-    peek.setOnClickListener { openPendingChat() }
+    // Chấm «chưa đọc»: tròn đỏ có chấm trắng nhỏ ở giữa.
+    val dot = FrameLayout(this)
+    dot.background = GradientDrawable().apply {
+      shape = GradientDrawable.OVAL
+      setColor(Color.parseColor("#F43F5E"))
+    }
+    val dotCore = View(this)
+    dotCore.background = GradientDrawable().apply {
+      shape = GradientDrawable.OVAL
+      setColor(Color.WHITE)
+    }
+    dot.addView(
+      dotCore,
+      FrameLayout.LayoutParams(dp(4), dp(4)).apply { gravity = Gravity.CENTER },
+    )
 
-    val bubbleOnRight = lp.x + lp.width / 2 >= dm.widthPixels / 2
+    card.addView(avatar, LinearLayout.LayoutParams(dp(44), dp(44)))
+    card.addView(
+      col,
+      LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+        marginStart = dp(12)
+        marginEnd = dp(12)
+      },
+    )
+    card.addView(dot, LinearLayout.LayoutParams(dp(14), dp(14)))
+    shell.addView(
+      card,
+      FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT),
+    )
+
+    // Mũi nhọn nhỏ ở GIỮA cạnh hướng về bong bóng (hình thoi xoay 45°, cùng màu thẻ, bỏ bóng riêng để khỏi in lên thẻ).
+    val tail = View(this)
+    tail.setBackgroundColor(pal.bgElevated)
+    tail.rotation = 45f
+    tail.elevation = dp(9).toFloat()
+    tail.outlineProvider = object : ViewOutlineProvider() {
+      override fun getOutline(view: View, outline: Outline) {
+        outline.setEmpty()
+      }
+    }
+    shell.addView(
+      tail,
+      FrameLayout.LayoutParams(dp(14), dp(14)).apply {
+        // FrameLayout canh theo mép TRONG phần đệm (chính là mép thẻ) → lề âm 7dp để mũi nhọn nhô ra đúng nửa ngoài thẻ.
+        if (bubbleOnRight) {
+          gravity = Gravity.END or Gravity.CENTER_VERTICAL
+          marginEnd = -dp(7)
+        } else {
+          gravity = Gravity.START or Gravity.CENTER_VERTICAL
+          marginStart = -dp(7)
+        }
+      },
+    )
+
+    shell.setOnClickListener { openPendingChat() }
+
+    // Đo trước để biết kích thước thẻ → đặt cửa sổ vừa khít và canh NGANG HÀNG với bong bóng.
+    shell.measure(
+      View.MeasureSpec.makeMeasureSpec(maxCardW + pad * 2, View.MeasureSpec.AT_MOST),
+      View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+    )
+    peekW = shell.measuredWidth
+    peekH = shell.measuredHeight
+    val pos = peekPosition(lp, bubbleOnRight, dm.widthPixels, dm.heightPixels)
+    peekToLeft = bubbleOnRight
+
     val peekParams = WindowManager.LayoutParams(
-      dp(196),
-      WindowManager.LayoutParams.WRAP_CONTENT,
+      peekW,
+      peekH,
       overlayType(),
       WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
       PixelFormat.TRANSLUCENT,
     )
     peekParams.gravity = Gravity.TOP or Gravity.START
-    peekParams.x = if (bubbleOnRight) {
-      (lp.x - dp(204)).coerceAtLeast(dp(4))
-    } else {
-      lp.x + lp.width + dp(8)
+    peekParams.x = pos[0]
+    peekParams.y = pos[1]
+    wm.addView(shell, peekParams)
+    peekRoot = shell
+
+    // Hiện lên (floatPop): từ nhỏ 85% + nhích 14dp từ phía bong bóng ra, mờ dần vào, nảy nhẹ ở cuối (280ms).
+    val fromBubble = if (bubbleOnRight) 1f else -1f
+    shell.alpha = 0f
+    shell.translationX = fromBubble * dp(14)
+    shell.scaleX = 0.85f
+    shell.scaleY = 0.85f
+    shell.post {
+      // Phóng ra từ cạnh thẻ gần bong bóng (đúng chỗ mũi nhọn).
+      shell.pivotX = if (bubbleOnRight) (shell.width - pad).toFloat() else pad.toFloat()
+      shell.pivotY = shell.height / 2f
+      shell.animate()
+        .alpha(1f)
+        .translationX(0f)
+        .scaleX(1f)
+        .scaleY(1f)
+        .setDuration(280)
+        .setInterpolator(OvershootInterpolator(1.4f))
+        .start()
     }
-    peekParams.y = lp.y - dp(6)
-    wm.addView(peek, peekParams)
-    peekRoot = peek
 
     peekHideRunnable?.let { handler.removeCallbacks(it) }
-    peekHideRunnable = Runnable { removePeek() }
+    peekHideRunnable = Runnable { hidePeekAnimated() }
     handler.postDelayed(peekHideRunnable!!, 5000)
+  }
+
+  /** Lề quanh thẻ (trong cửa sổ xem trước) để bóng đổ không bị cắt ở mép cửa sổ. */
+  private fun peekShadowPad(): Int = dp(18)
+
+  /** Lề đều quanh bong bóng trong cửa sổ overlay — chỗ cho vòng sáng nhấp nháy (~10dp) và bóng đổ không bị cắt. */
+  private fun bubbleMargin(): Int = dp(28)
+
+  /**
+   * Vị trí cửa sổ xem trước: thẻ nằm NGANG HÀNG với bong bóng — canh giữa theo chiều dọc với tâm bong bóng, bên TRÁI bong bóng
+   * khi bong bóng ở nửa phải màn hình (và ngược lại), cách 12dp (chừa chỗ cho mũi nhọn). Tính theo mép bong bóng THẬT (đã trừ
+   * lề cửa sổ). Trả về [x, y].
+   */
+  private fun peekPosition(lp: WindowManager.LayoutParams, bubbleOnRight: Boolean, screenW: Int, screenH: Int): IntArray {
+    val pad = peekShadowPad()
+    val m = bubbleMargin()
+    val gap = dp(12)
+    val bubbleLeft = lp.x + m
+    val bubbleRight = lp.x + lp.width - m
+    val bubbleCenterY = lp.y + m + stackExtraPx + dp(58) / 2
+    // Phần lề bóng đổ (pad) trong suốt nên được phép tràn ra ngoài mép màn hình; chỉ phần thẻ thật mới phải nằm trong màn hình.
+    val x = (if (bubbleOnRight) bubbleLeft - gap + pad - peekW else bubbleRight + gap - pad)
+      .coerceIn(-pad, (screenW - peekW + pad).coerceAtLeast(-pad))
+    val y = (bubbleCenterY - peekH / 2)
+      .coerceIn(dp(32) - pad, (screenH - peekH - dp(32) + pad).coerceAtLeast(dp(32) - pad))
+    return intArrayOf(x, y)
+  }
+
+  /** Biến mất êm: mờ + nhích về phía bong bóng rồi mới gỡ khỏi màn hình. */
+  private fun hidePeekAnimated() {
+    val shell = peekRoot ?: return removePeek()
+    shell.animate()
+      .alpha(0f)
+      .translationX((if (peekToLeft) 1f else -1f) * dp(10))
+      .setDuration(200)
+      .withEndAction { if (peekRoot === shell) removePeek() }
+      .start()
   }
 
   private fun updatePeekPosition() {
@@ -922,12 +1416,9 @@ class OverlayBubbleService : Service() {
     val dm = resources.displayMetrics
     val bubbleOnRight = lp.x + lp.width / 2 >= dm.widthPixels / 2
     val peekLp = peek.layoutParams as? WindowManager.LayoutParams ?: return
-    peekLp.x = if (bubbleOnRight) {
-      (lp.x - dp(204)).coerceAtLeast(dp(4))
-    } else {
-      lp.x + lp.width + dp(8)
-    }
-    peekLp.y = lp.y - dp(6)
+    val pos = peekPosition(lp, bubbleOnRight, dm.widthPixels, dm.heightPixels)
+    peekLp.x = pos[0]
+    peekLp.y = pos[1]
     windowManager?.updateViewLayout(peek, peekLp)
   }
 
@@ -953,35 +1444,21 @@ class OverlayBubbleService : Service() {
       imageView.visibility = View.GONE
       letter.visibility = View.VISIBLE
       host.visibility = View.VISIBLE
-      (host.background as? GradientDrawable)?.setColor(
-        colorFromName(title.ifBlank { letterText }),
-      )
+      // Giữ nền chuyển màu hồng → tím của thiết kế (không còn đổi màu theo tên).
       return
     }
-    Thread {
-      try {
-        val conn = URL(url).openConnection()
-        conn.connectTimeout = 8000
-        conn.readTimeout = 8000
-        val bmp = BitmapFactory.decodeStream(conn.getInputStream())
-        handler.post {
-          if (bmp != null) {
-            imageView.setImageBitmap(bmp)
-            imageView.visibility = View.VISIBLE
-            letter.visibility = View.GONE
-            host.background = null
-          } else {
-            imageView.visibility = View.GONE
-            letter.visibility = View.VISIBLE
-          }
-        }
-      } catch (_: Exception) {
-        handler.post {
-          imageView.visibility = View.GONE
-          letter.visibility = View.VISIBLE
-        }
+    // Dùng bộ nhớ đệm chung (RAM + đĩa, giải mã thu nhỏ): lần đầu tải một lần, các lần sau có ảnh ngay.
+    OverlayAvatarCache.load(this, url) { bmp ->
+      if (bmp != null) {
+        imageView.setImageBitmap(bmp)
+        imageView.visibility = View.VISIBLE
+        letter.visibility = View.GONE
+        host.background = null
+      } else {
+        imageView.visibility = View.GONE
+        letter.visibility = View.VISIBLE
       }
-    }.start()
+    }
   }
 
   private fun colorFromName(name: String): Int {
@@ -1015,6 +1492,16 @@ class OverlayBubbleService : Service() {
   }
 
   private fun removeOverlay() {
+    glowAnimator?.cancel()
+    glowAnimator = null
+    handler.removeCallbacks(trailRelaxRunnable)
+    trailViews.clear()
+    dismissTarget?.let {
+      try {
+        windowManager?.removeView(it)
+      } catch (_: Exception) { }
+    }
+    dismissTarget = null
     closeChatPanel()
     removePeek()
     hideConvPicker()
@@ -1027,6 +1514,7 @@ class OverlayBubbleService : Service() {
     stackHost = null
     badgeView = null
     layoutParams = null
+    stackExtraPx = 0
     convStack.clear()
   }
 

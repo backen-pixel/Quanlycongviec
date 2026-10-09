@@ -39,14 +39,22 @@ class OverlayChatPanel(
   private val onClosed: () -> Unit,
   private val onExpand: (groupId: String, title: String) -> Unit = { _, _ -> },
   private val onStartCall: (groupId: String, title: String, media: String) -> Unit = { _, _, _ -> },
+  private val onSelectHead: (groupId: String, title: String) -> Unit = { _, _ -> },
+  /** Tâm bong bóng (toạ độ màn hình) — khung chat bung ra từ đó và thu về đó. null = không hiệu ứng. */
+  private val originProvider: () -> Pair<Float, Float>? = { null },
 ) {
+  /** Một cuộc trò chuyện hiện ở dải «đầu chat» phía trên khung (cuộc đang mở đứng đầu). */
+  data class Head(val groupId: String, val title: String, val avatarUrl: String? = null)
+
+  private var heads: List<Head> = emptyList()
+  private var headsStrip: LinearLayout? = null
   private val handler = Handler(Looper.getMainLooper())
   private var panelRoot: FrameLayout? = null
   private var columnRoot: LinearLayout? = null
   private var messagesWrap: LinearLayout? = null
   private var scrollView: ScrollView? = null
   private var inputView: EditText? = null
-  private var sendButton: TextView? = null
+  private var sendButton: View? = null
   private var replyBar: LinearLayout? = null
   private var pendingStrip: HorizontalScrollView? = null
   private var pendingRow: LinearLayout? = null
@@ -59,7 +67,11 @@ class OverlayChatPanel(
   private var statusView: TextView? = null
   private var titleView: TextView? = null
   private var subtitleView: TextView? = null
-  private var avatarView: TextView? = null
+  private var avatarView: OverlayAvatarView? = null
+  /** Ảnh đại diện của đoạn chat đang mở (từ máy chủ: người đối diện nếu chat 1-1, ảnh nhóm nếu là nhóm). */
+  private var metaAvatarUrl: String? = null
+  /** Ảnh đại diện của từng người gửi đã thấy trong đoạn chat (khoá = userId hoặc tên) — để tin chèn cục bộ vẫn có ảnh. */
+  private val senderAvatars = HashMap<String, String>()
   private var composerWrap: LinearLayout? = null
   private var popupLayer: FrameLayout? = null
   private var scrimView: View? = null
@@ -78,6 +90,11 @@ class OverlayChatPanel(
   private var suspendedForCompose = false
   private var loadSeq = 0
   private var reloadRunnable: Runnable? = null
+  private var collapsing = false
+
+  private companion object {
+    const val EXPAND_MS = 320L
+  }
 
   private val quickReactions = arrayOf("👍", "❤️", "😂", "😮", "😢", "🙏")
 
@@ -90,13 +107,22 @@ class OverlayChatPanel(
   /** @deprecated dùng isVisibleOnScreen — giữ cho Service cũ nếu cần. */
   fun isShowing(): Boolean = isVisibleOnScreen()
 
-  fun show(groupId: String, title: String, topReservePx: Int = 0) {
+  fun show(groupId: String, title: String, topReservePx: Int = 0, heads: List<Head> = emptyList()) {
     if (groupId.isBlank()) return
+    if (this.groupId != groupId) {
+      // Đổi sang cuộc trò chuyện khác: xóa tin cũ để khỏi nháy nội dung của cuộc trước.
+      messages.clear()
+      messagesWrap?.removeAllViews()
+      metaAvatarUrl = null
+      senderAvatars.clear()
+    }
     this.groupId = groupId
     this.title = title.ifBlank { "Chat" }
+    this.heads = heads
     if (panelRoot != null) {
       applyPanelTop(topReservePx)
       applyHeader()
+      rebuildHeads()
       loadConversationAsync()
       BubbleMediaBridge.registerPanel(this)
       BubbleComposeBridge.registerPanel(this)
@@ -104,10 +130,24 @@ class OverlayChatPanel(
       return
     }
     buildPanel(topReservePx)
-    loadConversationAsync()
-    BubbleChatApi.markRead(context, groupId)
+    // Có hiệu ứng bung thì hoãn tải tin/đánh dấu đã đọc đến khi bung xong, tránh dồn việc nặng vào lúc đang chạy hiệu ứng.
+    val animated = playExpand()
+    val gid = groupId
+    val startLoad = Runnable {
+      if (panelRoot != null && this.groupId == gid) {
+        loadConversationAsync()
+        BubbleChatApi.markRead(context, gid)
+      }
+    }
+    if (animated) handler.postDelayed(startLoad, EXPAND_MS + 40) else startLoad.run()
     BubbleMediaBridge.registerPanel(this)
     BubbleComposeBridge.registerPanel(this)
+  }
+
+  /** Cập nhật dải đầu chat (có người nhắn mới ở đoạn khác) mà không tải lại tin của đoạn đang mở. */
+  fun updateHeads(newHeads: List<Head>) {
+    heads = newHeads
+    if (panelRoot != null && isVisibleOnScreen()) rebuildHeads()
   }
 
   /** Ẩn panel tạm (không removeView) để picker không bị che. */
@@ -201,7 +241,114 @@ class OverlayChatPanel(
     }
   }
 
+  private var morphAnimator: android.animation.ValueAnimator? = null
+
+  /** Các lớp nội dung của khung (mọi thứ trừ lớp nền mờ) — cùng co/giãn về tâm bong bóng. */
+  private fun contentViews(root: FrameLayout): List<View> =
+    (0 until root.childCount).map { root.getChildAt(it) }.filter { it !== scrimView }
+
+  /**
+   * Bung/thu giữa khung chat và bong bóng. Nội dung phóng/thu quanh tâm bong bóng, còn lớp nền mờ KHÔNG co theo mà chỉ mờ
+   * dần/đậm dần — nếu co cả lớp nền thì phần màn hình nền lộ ra sáng bật lên từng mảng, nhìn như bị chớp.
+   * Một bộ hẹn giờ duy nhất điều khiển mọi lớp nên chúng luôn khớp nhau.
+   */
+  private fun runMorph(root: FrameLayout, origin: Pair<Float, Float>, expand: Boolean, durationMs: Long, onEnd: () -> Unit) {
+    morphAnimator?.cancel()
+    val kids = contentViews(root)
+    val scrim = scrimView
+    kids.forEach {
+      it.pivotX = origin.first - it.left
+      it.pivotY = origin.second - it.top
+      it.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+    }
+    val shape = if (expand) android.view.animation.PathInterpolator(0.2f, 0f, 0f, 1f)
+    else android.view.animation.PathInterpolator(0.4f, 0f, 0.8f, 0.4f)
+    val anim = android.animation.ValueAnimator.ofFloat(0f, 1f)
+    anim.duration = durationMs
+    anim.interpolator = android.view.animation.LinearInterpolator()
+    anim.addUpdateListener { va ->
+      val t = va.animatedFraction
+      val p = shape.getInterpolation(t)
+      val open = if (expand) p else 1f - p
+      val sc = 0.06f + 0.94f * open
+      // Mở: nội dung hiện nhanh ở nửa đầu. Thu: nội dung mờ ở nửa sau để không biến mất đột ngột.
+      val a = if (expand) (t / 0.45f).coerceIn(0f, 1f) else 1f - ((t - 0.35f) / 0.65f).coerceIn(0f, 1f)
+      for (v in kids) {
+        v.scaleX = sc
+        v.scaleY = sc
+        v.alpha = a
+      }
+      scrim?.alpha = if (expand) (t / 0.7f).coerceIn(0f, 1f) else 1f - (t / 0.85f).coerceIn(0f, 1f)
+    }
+    anim.addListener(object : android.animation.AnimatorListenerAdapter() {
+      private var cancelled = false
+      override fun onAnimationCancel(animation: android.animation.Animator) { cancelled = true }
+      override fun onAnimationEnd(animation: android.animation.Animator) {
+        if (morphAnimator === animation) morphAnimator = null
+        if (cancelled) return
+        if (expand) {
+          for (v in kids) {
+            v.scaleX = 1f
+            v.scaleY = 1f
+            v.alpha = 1f
+            v.setLayerType(View.LAYER_TYPE_NONE, null)
+          }
+          scrim?.alpha = 1f
+        }
+        onEnd()
+      }
+    })
+    morphAnimator = anim
+    anim.start()
+  }
+
+  /** Bung ra từ bong bóng (như Messenger). Trả về false nếu không có hiệu ứng (không biết vị trí bong bóng). */
+  private fun playExpand(): Boolean {
+    val root = panelRoot ?: return false
+    val origin = originProvider() ?: return false
+    // Trạng thái đầu: trong suốt hoàn toàn, để khung hình đầu (dựng + đo + vẽ khung chat — rất nặng) vẽ xong mà không thấy gì.
+    contentViews(root).forEach {
+      it.alpha = 0f
+      it.scaleX = 0.06f
+      it.scaleY = 0.06f
+    }
+    scrimView?.alpha = 0f
+    // Chỉ chạy hiệu ứng sau khi khung hình đầu đã vẽ xong, nếu không hiệu ứng bị nuốt mất vài chục mili giây đầu và nhảy cóc.
+    root.viewTreeObserver.addOnPreDrawListener(object : ViewTreeObserver.OnPreDrawListener {
+      override fun onPreDraw(): Boolean {
+        root.viewTreeObserver.removeOnPreDrawListener(this)
+        root.post {
+          if (panelRoot !== root) return@post
+          runMorph(root, origin, expand = true, durationMs = EXPAND_MS) { }
+        }
+        return true
+      }
+    })
+    return true
+  }
+
+  /** Thu lại thành bong bóng: khung co về tâm bong bóng rồi mới gỡ; bong bóng hiện lại ở `onClosed`. */
+  fun collapse() {
+    val root = panelRoot ?: return
+    if (collapsing) return
+    // Đang bung dở thì bỏ qua lệnh thu (tránh nhảy trạng thái giữa chừng).
+    if (morphAnimator?.isRunning == true) return
+    val origin = originProvider()
+    if (origin == null || suspendedForPicker || suspendedForCompose) {
+      hide()
+      return
+    }
+    collapsing = true
+    hidePopups()
+    dismissComposerFocus()
+    hideKeyboard()
+    runMorph(root, origin, expand = false, durationMs = 280) { hide() }
+  }
+
   fun hide() {
+    morphAnimator?.cancel()
+    morphAnimator = null
+    collapsing = false
     hidePopups()
     hideKeyboard()
     BubbleComposeBridge.dismissComposeIfOpen()
@@ -216,7 +363,13 @@ class OverlayChatPanel(
     panelRoot?.let {
       try { windowManager.removeView(it) } catch (_: Exception) { }
     }
+    inboxRoot = null
+    inboxListWrap = null
+    inboxTray = null
+    inboxOpen = false
+    inboxRows = emptyList()
     panelRoot = null
+    headsStrip = null
     columnRoot = null
     messagesWrap = null
     scrollView = null
@@ -261,7 +414,7 @@ class OverlayChatPanel(
     }
   }
 
-  fun appendIncoming(sender: String, text: String, messageId: String? = null) {
+  fun appendIncoming(sender: String, text: String, messageId: String? = null, avatarUrl: String? = null) {
     if (!isAlive()) return
     handler.post {
       val body = normalizeMsgText(text)
@@ -272,10 +425,14 @@ class OverlayChatPanel(
         sender = sender.ifBlank { "Tin nhắn" },
         text = body,
         isMine = false,
+        avatarUrl = avatarUrl?.takeIf { it.isNotBlank() },
       )
+      rememberAvatars(listOf(candidate))
       if (messages.any { isNearDuplicate(it, candidate) }) return@post
       messages.add(candidate)
       if (messages.size > 80) messages.removeAt(0)
+      // Có tin rồi thì ẩn dòng «Chưa có tin nhắn» / «Đang tải…».
+      statusView?.visibility = View.GONE
       if (isVisibleOnScreen()) renderMessages()
     }
   }
@@ -316,22 +473,49 @@ class OverlayChatPanel(
     val root = FrameLayout(context)
 
     val scrim = View(context).apply {
-      setBackgroundColor(Color.argb(110, 0, 0, 0))
+      setBackgroundColor(Color.argb(102, 15, 23, 42))
       layoutParams = FrameLayout.LayoutParams(
         FrameLayout.LayoutParams.MATCH_PARENT,
         FrameLayout.LayoutParams.MATCH_PARENT,
       )
-      setOnClickListener { hide() }
+      setOnClickListener { collapse() }
     }
     scrimView = scrim
     root.addView(scrim)
 
-    val sheetBg = OverlayChatTheme.roundedRect(c.bgElevated, 18, ::dp, c.border)
-    sheetBg.cornerRadii = floatArrayOf(
-      dp(18).toFloat(), dp(18).toFloat(),
-      dp(18).toFloat(), dp(18).toFloat(),
-      0f, 0f, 0f, 0f,
+    // Dải «đầu chat» phía trên khung (các cuộc trò chuyện đang mở + nút Đoạn chat / đóng).
+    panelTopReserve = topReserve
+    root.addView(buildHeadsStrip(c, topReserve))
+    root.addView(
+      View(context).apply {
+        background = GradientDrawable().apply {
+          setColor(c.bgElevated)
+          cornerRadii = floatArrayOf(dp(7).toFloat(), dp(7).toFloat(), dp(7).toFloat(), dp(7).toFloat(), 0f, 0f, 0f, 0f)
+        }
+        elevation = dp(18).toFloat()
+        // Giữ độ cao để vẽ trên khung nhưng bỏ bóng đổ (bóng làm mấu bị nhòe).
+        outlineProvider = object : android.view.ViewOutlineProvider() {
+          override fun getOutline(view: View, outline: android.graphics.Outline) {
+            outline.setEmpty()
+          }
+        }
+        // Tâm đầu thứ nhất: lề trái 16dp + nửa bề rộng 26dp.
+        layoutParams = FrameLayout.LayoutParams(dp(14), dp(6), Gravity.TOP or Gravity.START).also {
+          it.leftMargin = dp(16) + dp(26) - dp(7)
+          it.topMargin = topReserve - dp(6)
+        }
+      },
     )
+
+    // Khung chat: nền trắng bo trên 32dp, không viền.
+    val sheetBg = GradientDrawable().apply {
+      setColor(c.bgElevated)
+      cornerRadii = floatArrayOf(
+        dp(32).toFloat(), dp(32).toFloat(),
+        dp(32).toFloat(), dp(32).toFloat(),
+        0f, 0f, 0f, 0f,
+      )
+    }
 
     val column = LinearLayout(context).apply {
       orientation = LinearLayout.VERTICAL
@@ -345,6 +529,17 @@ class OverlayChatPanel(
     }
     columnRoot = column
 
+    // Tay nắm kéo (trang trí) ở giữa mép trên khung.
+    column.addView(
+      View(context).apply {
+        background = OverlayChatTheme.roundedRect(c.border, 2, ::dp)
+        layoutParams = LinearLayout.LayoutParams(dp(40), dp(4)).also {
+          it.gravity = Gravity.CENTER_HORIZONTAL
+          it.topMargin = dp(10)
+          it.bottomMargin = dp(4)
+        }
+      },
+    )
     column.addView(buildHeader(c))
     column.addView(buildMessagesArea(c))
     column.addView(buildComposer(c))
@@ -383,6 +578,491 @@ class OverlayChatPanel(
     windowManager.addView(root, params)
     panelParams = params
     installKeyboardWatcher(root)
+  }
+
+  // ---- Trang «Đoạn chat» (mở khi chạm biểu tượng bong bóng chat ở dải đầu chat) ----
+  private var inboxRoot: FrameLayout? = null
+  private var inboxOpen = false
+  private var inboxRows: List<BubbleChatApi.GroupRow> = emptyList()
+  private var inboxListWrap: LinearLayout? = null
+  private var inboxTray: LinearLayout? = null
+  private var inboxSeq = 0
+  private var inboxQuery = ""
+
+  private val inboxPalette = arrayOf(
+    intArrayOf(0xFFEC4899.toInt(), 0xFFF43F5E.toInt()),
+    intArrayOf(0xFF1D4ED8.toInt(), 0xFF4F46E5.toInt()),
+    intArrayOf(0xFF059669.toInt(), 0xFF14B8A6.toInt()),
+    intArrayOf(0xFFD97706.toInt(), 0xFFF97316.toInt()),
+    intArrayOf(0xFF9333EA.toInt(), 0xFFD946EF.toInt()),
+    intArrayOf(0xFF0891B2.toInt(), 0xFF2563EB.toInt()),
+  )
+
+  private fun toggleInbox() {
+    if (inboxOpen) hideInbox() else showInbox()
+  }
+
+  fun hideInbox() {
+    val root = panelRoot
+    inboxRoot?.let { root?.removeView(it) }
+    inboxRoot = null
+    inboxListWrap = null
+    inboxTray = null
+    inboxQuery = ""
+    if (inboxOpen) {
+      inboxOpen = false
+      rebuildHeads()
+    }
+  }
+
+  private fun showInbox() {
+    val root = panelRoot ?: return
+    hidePopups()
+    dismissComposerFocus()
+    val c = colors()
+    inboxOpen = true
+    inboxQuery = ""
+
+    val sheet = LinearLayout(context).apply {
+      orientation = LinearLayout.VERTICAL
+      background = GradientDrawable().apply {
+        setColor(c.bgElevated)
+        cornerRadii = floatArrayOf(
+          dp(32).toFloat(), dp(32).toFloat(), dp(32).toFloat(), dp(32).toFloat(), 0f, 0f, 0f, 0f,
+        )
+      }
+      elevation = dp(20).toFloat()
+      isClickable = true
+      layoutParams = FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT,
+        basePanelHeight,
+        Gravity.BOTTOM,
+      )
+    }
+    inboxRoot = FrameLayout(context).apply {
+      // Thứ tự vẽ theo độ cao giữa các view anh em trong root: khung chat (column) cao 16dp nên lớp này phải cao hơn.
+      elevation = dp(20).toFloat()
+      layoutParams = FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT,
+        FrameLayout.LayoutParams.MATCH_PARENT,
+      )
+      addView(sheet)
+    }
+    root.addView(inboxRoot)
+
+    // Tay nắm
+    sheet.addView(
+      View(context).apply {
+        background = OverlayChatTheme.roundedRect(c.border, 2, ::dp)
+        layoutParams = LinearLayout.LayoutParams(dp(40), dp(4)).also {
+          it.gravity = Gravity.CENTER_HORIZONTAL
+          it.topMargin = dp(10)
+          it.bottomMargin = dp(4)
+        }
+      },
+    )
+
+    // Tiêu đề «Đoạn chat» + nút máy ảnh (chụp ảnh gửi vào cuộc trò chuyện đang mở)
+    val head = LinearLayout(context).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+      setPadding(dp(16), dp(6), dp(16), dp(6))
+    }
+    head.addView(
+      TextView(context).apply {
+        text = "Đoạn chat"
+        setTextColor(c.text)
+        setTypeface(typeface, Typeface.BOLD)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 24f)
+        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+      },
+    )
+    head.addView(
+      ComposerIcon(context, ComposerIcon.CAMERA, c.text, dp(20)).apply {
+        background = OverlayChatTheme.circleBg(c.iconBtnBg, ::dp)
+        layoutParams = LinearLayout.LayoutParams(dp(36), dp(36))
+        setOnClickListener {
+          hideInbox()
+          dismissComposerFocus()
+          BubbleMediaBridge.pick(context, BubbleMediaBridge.MODE_CAMERA, suspendPanel = true) { files ->
+            if (files.isNotEmpty()) {
+              pendingFiles.addAll(files)
+              refreshPendingStrip()
+            }
+          }
+        }
+      },
+    )
+    sheet.addView(head)
+
+    // Ô tìm kiếm
+    val search = LinearLayout(context).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+      background = OverlayChatTheme.roundedRect(c.iconBtnBg, 22, ::dp)
+      setPadding(dp(14), 0, dp(14), 0)
+      layoutParams = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        dp(40),
+      ).also {
+        it.marginStart = dp(16)
+        it.marginEnd = dp(16)
+        it.topMargin = dp(4)
+        it.bottomMargin = dp(6)
+      }
+    }
+    search.addView(
+      ComposerIcon(context, ComposerIcon.SEARCH, c.textFaint, dp(16)).apply {
+        layoutParams = LinearLayout.LayoutParams(dp(20), dp(20)).also { it.marginEnd = dp(8) }
+      },
+    )
+    search.addView(
+      EditText(context).apply {
+        hint = "Tìm kiếm đoạn chat..."
+        setHintTextColor(c.textFaint)
+        setTextColor(c.text)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        background = null
+        maxLines = 1
+        inputType = InputType.TYPE_CLASS_TEXT
+        imeOptions = EditorInfo.IME_ACTION_SEARCH
+        setPadding(0, 0, 0, 0)
+        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f)
+        isFocusable = true
+        isFocusableInTouchMode = true
+        addTextChangedListener(object : android.text.TextWatcher {
+          override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+          override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+            inboxQuery = s?.toString().orEmpty()
+            renderInboxList()
+          }
+          override fun afterTextChanged(s: android.text.Editable?) {}
+        })
+        setOnClickListener {
+          requestFocus()
+          showKeyboard()
+        }
+      },
+    )
+    sheet.addView(search)
+
+    // Dải liên hệ gần đây (ảnh đại diện + tên rút gọn)
+    val trayScroll = HorizontalScrollView(context).apply {
+      isHorizontalScrollBarEnabled = false
+    }
+    inboxTray = LinearLayout(context).apply {
+      orientation = LinearLayout.HORIZONTAL
+      setPadding(dp(16), dp(4), dp(16), dp(8))
+    }
+    trayScroll.addView(inboxTray)
+    sheet.addView(trayScroll)
+    sheet.addView(
+      View(context).apply {
+        setBackgroundColor(c.bubbleInBorder)
+        layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
+      },
+    )
+
+    // Danh sách đoạn chat
+    val scroll = ScrollView(context).apply {
+      isVerticalScrollBarEnabled = false
+      layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+    }
+    inboxListWrap = LinearLayout(context).apply {
+      orientation = LinearLayout.VERTICAL
+      setPadding(dp(8), dp(6), dp(8), dp(16))
+    }
+    scroll.addView(inboxListWrap)
+    sheet.addView(scroll)
+
+    rebuildHeads()
+    renderInboxList()
+    val seq = ++inboxSeq
+    Thread {
+      val rows = BubbleChatApi.fetchGroups(context)
+      handler.post {
+        if (seq != inboxSeq || !inboxOpen) return@post
+        inboxRows = rows
+        renderInboxList()
+      }
+    }.start()
+  }
+
+  private fun inboxTime(ms: Long): String {
+    if (ms <= 0L) return ""
+    val now = java.util.Calendar.getInstance()
+    val t = java.util.Calendar.getInstance().apply { timeInMillis = ms }
+    fun sameDay(a: java.util.Calendar, b: java.util.Calendar) =
+      a.get(java.util.Calendar.YEAR) == b.get(java.util.Calendar.YEAR) &&
+        a.get(java.util.Calendar.DAY_OF_YEAR) == b.get(java.util.Calendar.DAY_OF_YEAR)
+    if (sameDay(now, t)) return formatTime(ms)
+    val y = java.util.Calendar.getInstance().apply { add(java.util.Calendar.DAY_OF_YEAR, -1) }
+    if (sameDay(y, t)) return "Hôm qua"
+    val days = (now.timeInMillis - ms) / 86_400_000L
+    if (days < 7) {
+      return when (t.get(java.util.Calendar.DAY_OF_WEEK)) {
+        java.util.Calendar.MONDAY -> "T2"
+        java.util.Calendar.TUESDAY -> "T3"
+        java.util.Calendar.WEDNESDAY -> "T4"
+        java.util.Calendar.THURSDAY -> "T5"
+        java.util.Calendar.FRIDAY -> "T6"
+        java.util.Calendar.SATURDAY -> "T7"
+        else -> "CN"
+      }
+    }
+    return SimpleDateFormat("dd/MM", Locale.getDefault()).format(Date(ms))
+  }
+
+  private fun inboxAvatar(name: String, url: String?, sizeDp: Int, textSp: Float): OverlayAvatarView {
+    val pal = inboxPalette[kotlin.math.abs(name.hashCode()) % inboxPalette.size]
+    return OverlayAvatarView(context).style(pal[0], pal[1], textSp).setAvatar(url, name).apply {
+      layoutParams = LinearLayout.LayoutParams(dp(sizeDp), dp(sizeDp))
+    }
+  }
+
+  private fun pickFromInbox(g: BubbleChatApi.GroupRow) {
+    hideInbox()
+    if (g.id == groupId) return
+    onSelectHead(g.id, g.name)
+  }
+
+  private fun renderInboxList() {
+    val wrap = inboxListWrap ?: return
+    val tray = inboxTray ?: return
+    val c = colors()
+    wrap.removeAllViews()
+    tray.removeAllViews()
+    val q = inboxQuery.trim().lowercase()
+    val rows = if (q.isEmpty()) inboxRows else inboxRows.filter {
+      it.name.lowercase().contains(q) || it.preview.lowercase().contains(q)
+    }
+    if (inboxRows.isEmpty()) {
+      wrap.addView(
+        TextView(context).apply {
+          text = "Đang tải đoạn chat…"
+          gravity = Gravity.CENTER
+          setTextColor(c.textMuted)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+          setPadding(0, dp(24), 0, dp(24))
+        },
+      )
+      return
+    }
+    // Dải liên hệ gần đây: tối đa 8 người, ẩn khi đang tìm kiếm.
+    if (q.isEmpty()) {
+      for (g in inboxRows.take(8)) {
+        val col = LinearLayout(context).apply {
+          orientation = LinearLayout.VERTICAL
+          gravity = Gravity.CENTER_HORIZONTAL
+          layoutParams = LinearLayout.LayoutParams(dp(64), LinearLayout.LayoutParams.WRAP_CONTENT)
+          setOnClickListener { pickFromInbox(g) }
+        }
+        col.addView(inboxAvatar(g.name, g.avatarUrl, 48, 13f))
+        col.addView(
+          TextView(context).apply {
+            text = g.name
+            setTextColor(c.textMuted)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            gravity = Gravity.CENTER
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(dp(2), dp(4), dp(2), 0)
+          },
+        )
+        tray.addView(col)
+      }
+    }
+    if (rows.isEmpty()) {
+      wrap.addView(
+        TextView(context).apply {
+          text = "Không tìm thấy đoạn chat nào"
+          gravity = Gravity.CENTER
+          setTextColor(c.textMuted)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+          setPadding(0, dp(24), 0, dp(24))
+        },
+      )
+      return
+    }
+    for (g in rows) {
+      val unread = g.unread > 0
+      val row = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(10), dp(10), dp(10), dp(10))
+        if (unread) background = OverlayChatTheme.roundedRect(c.accentSoft, 16, ::dp)
+        setOnClickListener { pickFromInbox(g) }
+      }
+      row.addView(inboxAvatar(g.name, g.avatarUrl, 48, 14f))
+      val mid = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).also {
+          it.marginStart = dp(12)
+          it.marginEnd = dp(8)
+        }
+      }
+      val top = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+      }
+      top.addView(
+        TextView(context).apply {
+          text = g.name
+          setTextColor(c.text)
+          setTypeface(typeface, if (unread) Typeface.BOLD else Typeface.NORMAL)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+          maxLines = 1
+          ellipsize = android.text.TextUtils.TruncateAt.END
+          layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        },
+      )
+      top.addView(
+        TextView(context).apply {
+          text = inboxTime(g.lastAtMs)
+          setTextColor(if (unread) c.accent else c.textFaint)
+          setTypeface(typeface, if (unread) Typeface.BOLD else Typeface.NORMAL)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f)
+          setPadding(dp(8), 0, 0, 0)
+        },
+      )
+      mid.addView(top)
+      mid.addView(
+        TextView(context).apply {
+          text = g.preview.ifBlank { "Chưa có tin nhắn" }
+          setTextColor(if (unread) c.text else c.textMuted)
+          setTypeface(typeface, if (unread) Typeface.BOLD else Typeface.NORMAL)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+          maxLines = 1
+          ellipsize = android.text.TextUtils.TruncateAt.END
+          setPadding(0, dp(2), 0, 0)
+        },
+      )
+      row.addView(mid)
+      if (unread) {
+        if (g.unread > 1) {
+          row.addView(
+            TextView(context).apply {
+              text = if (g.unread > 99) "99+" else g.unread.toString()
+              gravity = Gravity.CENTER
+              setTextColor(Color.WHITE)
+              setTypeface(typeface, Typeface.BOLD)
+              setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+              minWidth = dp(20)
+              setPadding(dp(6), dp(1), dp(6), dp(1))
+              background = OverlayChatTheme.roundedRect(c.accent, 10, ::dp)
+            },
+          )
+        } else {
+          row.addView(
+            View(context).apply {
+              background = OverlayChatTheme.circleBg(c.accent, ::dp)
+              layoutParams = LinearLayout.LayoutParams(dp(10), dp(10))
+            },
+          )
+        }
+      }
+      wrap.addView(row)
+    }
+  }
+
+  // ---- Dải «đầu chat» phía trên khung ----
+  private val headPalette = arrayOf(
+    intArrayOf(0xFF2563EB.toInt(), 0xFF4F46E5.toInt()),
+    intArrayOf(0xFF10B981.toInt(), 0xFF0D9488.toInt()),
+    intArrayOf(0xFFF59E0B.toInt(), 0xFFF97316.toInt()),
+    intArrayOf(0xFFEC4899.toInt(), 0xFFE11D48.toInt()),
+  )
+
+  private fun buildHeadsStrip(c: OverlayChatTheme.Palette, topReserve: Int): View {
+    val strip = LinearLayout(context).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+      clipChildren = false
+      clipToPadding = false
+      setPadding(dp(16), statusBarHeight() + dp(4), dp(12), dp(10))
+      layoutParams = FrameLayout.LayoutParams(
+        FrameLayout.LayoutParams.MATCH_PARENT,
+        topReserve,
+        Gravity.TOP,
+      )
+    }
+    headsStrip = strip
+    fillHeads(strip, c)
+    return strip
+  }
+
+  private fun rebuildHeads() {
+    val strip = headsStrip ?: return
+    fillHeads(strip, colors())
+  }
+
+  private fun gradCircle(c1: Int, c2: Int): GradientDrawable =
+    GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(c1, c2)).apply { shape = GradientDrawable.OVAL }
+
+  private fun fillHeads(strip: LinearLayout, c: OverlayChatTheme.Palette) {
+    strip.removeAllViews()
+    val list = if (heads.isEmpty()) listOf(Head(groupId, title)) else heads
+    val group = LinearLayout(context).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+      clipChildren = false
+      // Không co giãn: các đầu chat và icon «Đoạn chat» nối liền nhau, cách đều 10dp.
+      layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+    }
+    var other = 0
+    for (h in list.take(4)) {
+      val active = h.groupId == groupId
+      val letters = OverlayChatTheme.initials(h.title)
+      if (active) {
+        // Đầu đang mở: viền chuyển sắc xanh, nền avatar hồng → tím; to hơn một chút nhưng CÙNG đường giữa với các đầu khác.
+        val ring = FrameLayout(context).apply {
+          background = GradientDrawable(
+            GradientDrawable.Orientation.BL_TR,
+            intArrayOf(0xFF2563EB.toInt(), 0xFF0084FF.toInt(), 0xFF38BDF8.toInt()),
+          ).apply { shape = GradientDrawable.OVAL }
+          elevation = dp(6).toFloat()
+          layoutParams = LinearLayout.LayoutParams(dp(52), dp(52)).also { it.marginEnd = dp(10) }
+          setPadding(dp(2), dp(2), dp(2), dp(2))
+        }
+        ring.addView(
+          OverlayAvatarView(context)
+            .style(0xFFFF416C.toInt(), 0xFF8A2387.toInt(), 14f, 2f, Color.WHITE)
+            .setAvatar(h.avatarUrl ?: metaAvatarUrl, h.title),
+          FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT),
+        )
+        group.addView(ring)
+      } else {
+        val pal = headPalette[other % headPalette.size]
+        other += 1
+        group.addView(
+          OverlayAvatarView(context).style(pal[0], pal[1], 12f, 2f, Color.WHITE).setAvatar(h.avatarUrl, h.title).apply {
+            elevation = dp(4).toFloat()
+            layoutParams = LinearLayout.LayoutParams(dp(46), dp(46)).also { it.marginEnd = dp(10) }
+            setOnClickListener {
+              hideInbox()
+              onSelectHead(h.groupId, h.title)
+            }
+          },
+        )
+      }
+    }
+    strip.addView(group)
+
+    // Nút «Đoạn chat» (icon bong bóng chat): mở/đóng trang danh sách; đang mở thì viền xanh bao quanh. Cạnh đó là nút đóng.
+    strip.addView(
+      ComposerIcon(context, ComposerIcon.CHAT, 0xFF2563EB.toInt(), dp(22)).apply {
+        background = GradientDrawable().apply {
+          shape = GradientDrawable.OVAL
+          setColor(Color.argb(240, 255, 255, 255))
+          if (inboxOpen) setStroke(dp(3), 0xFF38BDF8.toInt())
+        }
+        elevation = dp(4).toFloat()
+        layoutParams = LinearLayout.LayoutParams(dp(46), dp(46))
+        // Chạm khi trang «Đoạn chat» đang mở → thu cả khung về bong bóng; chưa mở thì mở trang «Đoạn chat».
+        setOnClickListener { if (inboxOpen) collapse() else toggleInbox() }
+      },
+    )
+    // Không còn nút X: đóng khung bằng cách chạm vào vùng mờ phía sau (scrim) hoặc phím Quay lại.
   }
 
   private fun buildComposer(c: OverlayChatTheme.Palette): View {
@@ -443,51 +1123,67 @@ class OverlayChatPanel(
     pendingScroll.addView(pendingRow)
     wrap.addView(pendingScroll)
 
+    // Thanh nhập tin theo thiết kế: «+» nền xanh nhạt · nút ảnh · ô nhập bo tròn (có nút cảm xúc) · nút gửi chuyển màu xanh.
     val bar = LinearLayout(context).apply {
       orientation = LinearLayout.HORIZONTAL
       gravity = Gravity.BOTTOM
-      setPadding(dp(12), dp(10), dp(12), dp(12))
+      setPadding(dp(12), dp(12), dp(12), dp(12))
     }
+    val btn = dp(32)
 
-    bar.addView(TextView(context).apply {
-      text = "+"
-      gravity = Gravity.CENTER
-      setTextColor(c.accent)
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
-      setTypeface(typeface, Typeface.BOLD)
-      background = OverlayChatTheme.plusButtonBg(c, ::dp)
-      layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).also { it.bottomMargin = dp(4) }
-      setOnClickListener { showAttachSheet() }
-    })
+    // «+» → mở bảng đính kèm (ảnh, video, tệp, chụp, quay).
+    bar.addView(
+      ComposerIcon(context, ComposerIcon.PLUS, c.accent, dp(16)).apply {
+        background = OverlayChatTheme.circleBg(c.accentSoft, ::dp)
+        layoutParams = LinearLayout.LayoutParams(btn, btn).also { it.bottomMargin = dp(2) }
+        setOnClickListener { showAttachSheet() }
+      },
+    )
+
+    // Nút ảnh → chọn thẳng từ thư viện ảnh.
+    bar.addView(
+      ComposerIcon(context, ComposerIcon.IMAGE, c.accent, dp(20)).apply {
+        layoutParams = LinearLayout.LayoutParams(btn, btn).also {
+          it.marginStart = dp(8)
+          it.bottomMargin = dp(2)
+        }
+        setOnClickListener {
+          hidePopups()
+          dismissComposerFocus()
+          BubbleMediaBridge.pick(context, BubbleMediaBridge.MODE_GALLERY, suspendPanel = true) { files ->
+            if (files.isNotEmpty()) {
+              pendingFiles.addAll(files)
+              refreshPendingStrip()
+            }
+          }
+        }
+      },
+    )
 
     val inputWrap = LinearLayout(context).apply {
       orientation = LinearLayout.HORIZONTAL
       gravity = Gravity.BOTTOM
-      background = OverlayChatTheme.roundedRect(c.inputBg, 22, ::dp, c.border)
-      setPadding(dp(16), 0, dp(4), 0)
+      background = OverlayChatTheme.roundedRect(c.iconBtnBg, 20, ::dp)
+      setPadding(dp(14), 0, dp(8), 0)
       layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).also {
-        it.marginStart = dp(10)
-        it.marginEnd = dp(10)
-        it.bottomMargin = dp(4)
+        it.marginStart = dp(8)
+        it.marginEnd = dp(8)
       }
-      minimumHeight = dp(44)
+      minimumHeight = dp(36)
     }
 
     inputView = EditText(context).apply {
-      hint = "Nhắn tin..."
+      hint = "Nhập tin nhắn..."
       setHintTextColor(c.textFaint)
       setTextColor(c.text)
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
       maxLines = 4
       background = null
       isFocusable = true
       isFocusableInTouchMode = true
       isClickable = true
-      setPadding(0, dp(11), 0, dp(11))
-      layoutParams = LinearLayout.LayoutParams(
-        LinearLayout.LayoutParams.MATCH_PARENT,
-        LinearLayout.LayoutParams.WRAP_CONTENT,
-      )
+      setPadding(0, dp(9), 0, dp(9))
+      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
       inputType = InputType.TYPE_CLASS_TEXT or
         InputType.TYPE_TEXT_FLAG_CAP_SENTENCES or
         InputType.TYPE_TEXT_FLAG_MULTI_LINE
@@ -528,15 +1224,23 @@ class OverlayChatPanel(
       }
     }
     inputWrap.addView(inputView)
+
+    // Biểu tượng cảm xúc: mở bàn phím để chọn emoji (chưa có bảng emoji riêng).
+    inputWrap.addView(
+      ComposerIcon(context, ComposerIcon.EMOJI, c.textFaint, dp(16)).apply {
+        layoutParams = LinearLayout.LayoutParams(dp(28), dp(36))
+        setOnClickListener {
+          inputView?.requestFocus()
+          showKeyboard()
+        }
+      },
+    )
     bar.addView(inputWrap)
 
-    sendButton = TextView(context).apply {
-      text = "➤"
-      gravity = Gravity.CENTER
-      setTextColor(Color.WHITE)
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-      background = OverlayChatTheme.sendButtonBg(c, ::dp)
-      layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
+    // Nút gửi: tròn 32dp, chuyển sắc xanh #0084FF → #2563EB, mũi tên máy bay giấy trắng.
+    sendButton = ComposerIcon(context, ComposerIcon.SEND, Color.WHITE, dp(16)).apply {
+      layoutParams = LinearLayout.LayoutParams(btn, btn).also { it.bottomMargin = dp(2) }
+      elevation = dp(3).toFloat()
       setOnClickListener { sendDraft() }
     }
     bar.addView(sendButton)
@@ -550,93 +1254,71 @@ class OverlayChatPanel(
     val bar = LinearLayout(context).apply {
       orientation = LinearLayout.HORIZONTAL
       gravity = Gravity.CENTER_VERTICAL
-      setPadding(dp(8), dp(10), dp(8), dp(10))
+      setPadding(dp(16), dp(8), dp(16), dp(10))
       setBackgroundColor(c.bgElevated)
     }
-    val back = TextView(context).apply {
-      text = "←"
-      gravity = Gravity.CENTER
-      setTextColor(c.text)
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
-      background = OverlayChatTheme.iconButtonBg(c, ::dp)
-      layoutParams = LinearLayout.LayoutParams(dp(38), dp(38))
-      setOnClickListener { hide() }
-    }
-    avatarView = TextView(context).apply {
-      gravity = Gravity.CENTER
-      setTextColor(Color.WHITE)
-      setTypeface(typeface, Typeface.BOLD)
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-      layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).also { it.marginStart = dp(6) }
+    // Avatar tròn 40dp nền chuyển sắc hồng → tím, viền trắng.
+    avatarView = OverlayAvatarView(context).style(0xFFFF416C.toInt(), 0xFF8A2387.toInt(), 14f, 2f, c.bgElevated).apply {
+      layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
     }
     val body = LinearLayout(context).apply {
       orientation = LinearLayout.VERTICAL
       layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).also {
-        it.marginStart = dp(10)
+        it.marginStart = dp(12)
         it.marginEnd = dp(8)
       }
     }
     titleView = TextView(context).apply {
       setTextColor(c.text)
       setTypeface(typeface, Typeface.BOLD)
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 14.5f)
       maxLines = 1
+      ellipsize = android.text.TextUtils.TruncateAt.END
     }
     subtitleView = TextView(context).apply {
       setTextColor(c.textMuted)
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-      setTypeface(typeface, Typeface.BOLD)
       maxLines = 1
+      setPadding(0, dp(2), 0, 0)
     }
     body.addView(titleView)
     body.addView(subtitleView)
-    fun headerBtn(icon: String, onClick: () -> Unit): TextView {
-      return TextView(context).apply {
-        text = icon
-        gravity = Gravity.CENTER
-        setTextColor(c.textMuted)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
-        background = OverlayChatTheme.iconButtonBg(c, ::dp)
-        layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).also { it.marginStart = dp(4) }
+
+    // Ba nút tròn 32dp nền xám nhạt có viền: gọi thoại · gọi video · thông tin (mở cuộc trò chuyện trong app).
+    fun headerBtn(kind: Int, onClick: () -> Unit): View {
+      return ComposerIcon(context, kind, c.accent, dp(16)).apply {
+        background = OverlayChatTheme.circleBg(c.iconBtnBg, ::dp).also { it.setStroke(dp(1), c.border) }
+        layoutParams = LinearLayout.LayoutParams(dp(32), dp(32)).also { it.marginStart = dp(6) }
         setOnClickListener { onClick() }
       }
     }
-    val callAudio = headerBtn("📞") {
+    val callAudio = headerBtn(ComposerIcon.PHONE) {
       val gid = groupId
       val t = title
       if (gid.isNotBlank()) onStartCall(gid, t, "audio")
     }
-    val callVideo = headerBtn("📹") {
+    val callVideo = headerBtn(ComposerIcon.VIDEO) {
       val gid = groupId
       val t = title
       if (gid.isNotBlank()) onStartCall(gid, t, "video")
     }
-    val expand = TextView(context).apply {
-      text = "⛶"
-      gravity = Gravity.CENTER
-      setTextColor(c.textMuted)
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
-      background = OverlayChatTheme.iconButtonBg(c, ::dp)
-      layoutParams = LinearLayout.LayoutParams(dp(38), dp(38)).also { it.marginStart = dp(4) }
-      setOnClickListener {
-        val gid = groupId
-        val t = title
-        hide()
-        if (gid.isNotBlank()) onExpand(gid, t)
-      }
+    val info = headerBtn(ComposerIcon.INFO) {
+      val gid = groupId
+      val t = title
+      hide()
+      if (gid.isNotBlank()) onExpand(gid, t)
     }
-    bar.addView(back)
     bar.addView(avatarView)
     bar.addView(body)
     bar.addView(callAudio)
     bar.addView(callVideo)
-    bar.addView(expand)
+    bar.addView(info)
     return LinearLayout(context).apply {
       orientation = LinearLayout.VERTICAL
       addView(bar)
       addView(View(context).apply {
         layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1)
-        setBackgroundColor(c.border)
+        setBackgroundColor(c.bubbleInBorder)
       })
     }
   }
@@ -660,7 +1342,7 @@ class OverlayChatPanel(
     }
     messagesWrap = LinearLayout(context).apply {
       orientation = LinearLayout.VERTICAL
-      setPadding(dp(12), dp(4), dp(12), dp(12))
+      setPadding(dp(16), dp(8), dp(16), dp(12))
     }
     scrollView?.addView(messagesWrap, FrameLayout.LayoutParams(
       FrameLayout.LayoutParams.MATCH_PARENT,
@@ -825,13 +1507,13 @@ class OverlayChatPanel(
       pendingFiles.isNotEmpty() || inputView?.text?.toString()?.trim()?.isNotEmpty() == true
       )
     sendButton?.apply {
+      // Luôn là nút tròn chuyển sắc xanh; chưa có gì để gửi thì mờ đi.
       alpha = if (canSend) 1f else 0.45f
       isEnabled = canSend
-      background = if (canSend) {
-        OverlayChatTheme.sendButtonBg(c, ::dp)
-      } else {
-        OverlayChatTheme.roundedRect(c.inputBg, 24, ::dp, c.border)
-      }
+      background = GradientDrawable(
+        GradientDrawable.Orientation.BL_TR,
+        intArrayOf(0xFF0084FF.toInt(), 0xFF2563EB.toInt()),
+      ).apply { shape = GradientDrawable.OVAL }
     }
   }
 
@@ -1086,17 +1768,52 @@ class OverlayChatPanel(
   private fun renderMessages() {
     val wrap = messagesWrap ?: return
     val c = colors()
-    val maxBubbleW = (panelRoot?.width?.takeIf { it > 0 } ?: context.resources.displayMetrics.widthPixels) * 0.78f
+    val maxBubbleW = (panelRoot?.width?.takeIf { it > 0 } ?: context.resources.displayMetrics.widthPixels) * 0.70f
     wrap.removeAllViews()
     var lastSenderKey: String? = null
+    var lastDay = ""
     for (msg in messages) {
+      val day = if (msg.createdAtMs > 0L) SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date(msg.createdAtMs)) else ""
+      if (day.isNotEmpty() && day != lastDay) {
+        wrap.addView(buildDatePill(msg.createdAtMs, c))
+        lastDay = day
+        lastSenderKey = null
+      }
       val senderKey = senderKey(msg)
-      val showAvatar = shouldShowMessageAvatars() && !msg.isMine && senderKey != lastSenderKey
+      // Tin đến luôn có avatar nhỏ bên trái (như thiết kế); tên người gửi chỉ hiện trong nhóm.
       val showSenderName = shouldShowMessageAvatars() && !msg.isMine && senderKey != lastSenderKey
-      wrap.addView(buildMessageRow(msg, c, maxBubbleW.toInt(), showAvatar, showSenderName))
+      wrap.addView(buildMessageRow(msg, c, maxBubbleW.toInt(), !msg.isMine, showSenderName))
       if (!msg.isMine) lastSenderKey = senderKey else lastSenderKey = null
     }
     scrollView?.post { scrollView?.fullScroll(View.FOCUS_DOWN) }
+  }
+
+  /** Nhãn ngày giữa khung: «Hôm nay 09:45», «Hôm qua 21:10» hoặc «dd/MM/yyyy HH:mm». */
+  private fun buildDatePill(ms: Long, c: OverlayChatTheme.Palette): View {
+    val cal = java.util.Calendar.getInstance()
+    val today = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(cal.time)
+    cal.add(java.util.Calendar.DAY_OF_YEAR, -1)
+    val yesterday = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(cal.time)
+    val key = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date(ms))
+    val label = when (key) {
+      today -> "Hôm nay"
+      yesterday -> "Hôm qua"
+      else -> SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(ms))
+    } + " " + formatTime(ms)
+    return LinearLayout(context).apply {
+      gravity = Gravity.CENTER
+      setPadding(0, dp(2), 0, dp(10))
+      addView(
+        TextView(context).apply {
+          text = label
+          setTextColor(c.textMuted)
+          setTypeface(typeface, Typeface.BOLD)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+          setPadding(dp(12), dp(4), dp(12), dp(4))
+          background = OverlayChatTheme.roundedRect(c.bgElevated, 14, ::dp, c.bubbleInBorder)
+        },
+      )
+    }
   }
 
   private fun buildMessageRow(
@@ -1108,26 +1825,24 @@ class OverlayChatPanel(
   ): View {
     val row = LinearLayout(context).apply {
       orientation = LinearLayout.HORIZONTAL
-      gravity = if (msg.isMine) Gravity.END else Gravity.START
-      setPadding(0, 0, 0, dp(10))
+      gravity = Gravity.BOTTOM or (if (msg.isMine) Gravity.END else Gravity.START)
+      setPadding(0, 0, 0, dp(12))
+      // Đủ cao để chứa avatar (28dp + lề đáy 16dp) kể cả khi tin chỉ có một dòng không giờ — nếu thấp hơn, avatar bị cắt phần trên.
+      if (!msg.isMine) minimumHeight = dp(28 + 16 + 12)
     }
-    if (showAvatar) {
-      row.addView(TextView(context).apply {
-        text = OverlayChatTheme.initials(msg.sender)
-        gravity = Gravity.CENTER
-        setTextColor(Color.WHITE)
-        setTypeface(typeface, Typeface.BOLD)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-        background = OverlayChatTheme.circleBg(OverlayChatTheme.avatarColor(msg.sender), ::dp)
-        layoutParams = LinearLayout.LayoutParams(dp(34), dp(34)).also {
-          it.marginEnd = dp(8)
-          it.topMargin = dp(18)
-        }
-      })
-    } else if (shouldShowMessageAvatars() && !msg.isMine) {
-      row.addView(View(context).apply {
-        layoutParams = LinearLayout.LayoutParams(dp(42), 1)
-      })
+    if (!msg.isMine) {
+      // Avatar tròn 28dp: ảnh thật nếu có, không thì chữ cái trên nền chuyển sắc hồng → tím; nằm sát đáy bóng tin.
+      row.addView(
+        OverlayAvatarView(context)
+          .style(0xFFFF416C.toInt(), 0xFF8A2387.toInt(), 10f)
+          .setAvatar(avatarFor(msg), msg.sender)
+          .apply {
+            layoutParams = LinearLayout.LayoutParams(dp(28), dp(28)).also {
+              it.marginEnd = dp(8)
+              it.bottomMargin = dp(16)
+            }
+          },
+      )
     }
 
     val col = LinearLayout(context).apply {
@@ -1191,15 +1906,6 @@ class OverlayChatPanel(
       bubbleCol.addView(textView(caption, msg.isMine, c, maxBubbleW))
     }
 
-    if (msg.createdAtMs > 0L) {
-      bubbleCol.addView(TextView(context).apply {
-        text = formatTime(msg.createdAtMs)
-        setTextColor(if (msg.isMine) Color.argb(170, 255, 255, 255) else c.textFaint)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
-        setPadding(0, dp(4), 0, 0)
-      })
-    }
-
     bubbleCol.setOnLongClickListener {
       showMessageActions(msg, bubbleCol)
       true
@@ -1207,6 +1913,16 @@ class OverlayChatPanel(
     bubbleCol.setOnClickListener { setReplyTo(msg) }
 
     col.addView(bubbleCol)
+
+    // Giờ gửi nằm DƯỚI bóng tin (nhỏ, xám) như thiết kế.
+    if (msg.createdAtMs > 0L) {
+      col.addView(TextView(context).apply {
+        text = formatTime(msg.createdAtMs)
+        setTextColor(c.textFaint)
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+        setPadding(dp(4), dp(3), dp(4), 0)
+      })
+    }
 
     if (msg.reactions.isNotEmpty()) {
       val rRow = LinearLayout(context).apply {
@@ -1359,19 +2075,78 @@ class OverlayChatPanel(
         loadImageAsync(url, thumb)
       }
       else -> {
-        val name = att.name?.take(40) ?: msg.attachmentName?.take(40) ?: "Tệp đính kèm"
-        bubbleCol.addView(TextView(context).apply {
-          text = "📎 $name"
-          setTextColor(if (msg.isMine) Color.WHITE else c.text)
-          setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
-          setPadding(dp(4), dp(4), dp(4), dp(4))
+        val fileName = att.name?.take(40) ?: msg.attachmentName?.take(40) ?: "Tệp đính kèm"
+        val kind = when {
+          mime.contains("pdf") || name.endsWith(".pdf") -> "Tài liệu PDF"
+          mime.contains("word") || name.endsWith(".doc") || name.endsWith(".docx") -> "Tài liệu Word"
+          mime.contains("sheet") || mime.contains("excel") || name.endsWith(".xls") || name.endsWith(".xlsx") -> "Bảng tính"
+          else -> "Tệp đính kèm"
+        }
+        // Thẻ tệp: ô biểu tượng đỏ hồng 40dp + tên đậm + loại tệp + nút «Xem».
+        val card = LinearLayout(context).apply {
+          orientation = LinearLayout.HORIZONTAL
+          gravity = Gravity.CENTER_VERTICAL
+          setPadding(dp(10), dp(10), dp(10), dp(10))
+          background = if (msg.isMine) {
+            OverlayChatTheme.roundedRect(Color.argb(46, 255, 255, 255), 12, ::dp)
+          } else {
+            OverlayChatTheme.roundedRect(c.bg, 12, ::dp, c.border)
+          }
           layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT,
             LinearLayout.LayoutParams.WRAP_CONTENT,
           ).also {
-            if (addGap) it.bottomMargin = dp(4)
+            if (addGap) it.bottomMargin = dp(6)
+          }
+        }
+        card.addView(
+          ComposerIcon(context, ComposerIcon.FILE, Color.WHITE, dp(20)).apply {
+            background = GradientDrawable(
+              GradientDrawable.Orientation.BL_TR,
+              intArrayOf(0xFFF43F5E.toInt(), 0xFFE11D48.toInt()),
+            ).apply { cornerRadius = dp(12).toFloat() }
+            layoutParams = LinearLayout.LayoutParams(dp(40), dp(40))
+          },
+        )
+        val info = LinearLayout(context).apply {
+          orientation = LinearLayout.VERTICAL
+          layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).also {
+            it.marginStart = dp(10)
+            it.marginEnd = dp(10)
+          }
+        }
+        info.addView(TextView(context).apply {
+          text = fileName
+          setTextColor(if (msg.isMine) Color.WHITE else c.text)
+          setTypeface(typeface, Typeface.BOLD)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+          maxLines = 1
+          ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        info.addView(TextView(context).apply {
+          text = kind
+          setTextColor(if (msg.isMine) Color.argb(200, 255, 255, 255) else c.textMuted)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 10.5f)
+          setPadding(0, dp(1), 0, 0)
+        })
+        card.addView(info)
+        card.addView(TextView(context).apply {
+          text = "Xem"
+          gravity = Gravity.CENTER
+          setTextColor(c.accent)
+          setTypeface(typeface, Typeface.BOLD)
+          setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+          setPadding(dp(12), dp(5), dp(12), dp(5))
+          background = OverlayChatTheme.roundedRect(c.bgElevated, 8, ::dp, c.bubbleInBorder)
+          setOnClickListener {
+            try {
+              val i = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(absoluteMediaUrl(url)))
+              i.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+              context.startActivity(i)
+            } catch (_: Exception) { }
           }
         })
+        bubbleCol.addView(card)
       }
     }
   }
@@ -1380,8 +2155,8 @@ class OverlayChatPanel(
     return TextView(context).apply {
       this.text = text
       setTextColor(if (mine) Color.WHITE else c.text)
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-      setLineSpacing(0f, 1.05f)
+      setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+      setLineSpacing(0f, 1.08f)
       maxWidth = maxW
     }
   }
@@ -1460,8 +2235,12 @@ class OverlayChatPanel(
           title = meta.name.ifBlank { title }
           isDirect = meta.isDirect
           isGroupChat = !meta.isDirect
+          if (!meta.avatarUrl.isNullOrBlank()) metaAvatarUrl = meta.avatarUrl
         }
+        rememberAvatars(rows)
         applyHeader()
+        // Tải lỗi/trống mà đang có tin hiển thị thì giữ nguyên, đừng xoá sạch khung chỉ vì một lần tải hụt.
+        if (rows.isEmpty() && hadMessages) return@post
         if (rows.isEmpty()) {
           statusView?.visibility = View.VISIBLE
           statusView?.text = "Chưa có tin nhắn"
@@ -1475,14 +2254,32 @@ class OverlayChatPanel(
     }.start()
   }
 
+  private fun senderAvatarKey(msg: BubbleChatApi.ChatMessage): String =
+    msg.userId.ifBlank { msg.sender }
+
+  private fun rememberAvatars(list: List<BubbleChatApi.ChatMessage>) {
+    for (m in list) {
+      val u = m.avatarUrl?.takeIf { it.isNotBlank() } ?: continue
+      senderAvatars[senderAvatarKey(m)] = u
+    }
+  }
+
+  /** Ảnh đại diện của một tin: của chính tin → đã thấy trước đó → (chat 1-1) ảnh người đối diện. */
+  private fun avatarFor(msg: BubbleChatApi.ChatMessage): String? =
+    msg.avatarUrl?.takeIf { it.isNotBlank() }
+      ?: senderAvatars[senderAvatarKey(msg)]
+      ?: (if (isDirect) headAvatarUrl() else null)
+
+  /** Ảnh của đoạn chat đang mở: ưu tiên dữ liệu máy chủ, nếu chưa có thì lấy từ dải đầu chat. */
+  private fun headAvatarUrl(): String? =
+    metaAvatarUrl?.takeIf { it.isNotBlank() }
+      ?: heads.firstOrNull { it.groupId == groupId }?.avatarUrl?.takeIf { it.isNotBlank() }
+
   private fun applyHeader() {
     val c = colors()
     titleView?.text = title
     subtitleView?.text = if (isDirect) "Trực tiếp" else "Nhóm chat · realtime"
-    avatarView?.apply {
-      text = OverlayChatTheme.initials(title)
-      background = OverlayChatTheme.circleBg(OverlayChatTheme.avatarColor(title), ::dp)
-    }
+    avatarView?.setAvatar(headAvatarUrl(), title)
   }
 
   private fun resolveTopReserve(topReservePx: Int): Int {
@@ -1526,5 +2323,141 @@ class OverlayChatPanel(
       v.toFloat(),
       context.resources.displayMetrics,
     ).toInt()
+  }
+}
+
+/** Biểu tượng nét tròn (lưới 24×24) cho thanh nhập tin: «+», ảnh, cảm xúc, gửi. Vẽ bằng đường dẫn nên sắc nét ở mọi mật độ. */
+internal class ComposerIcon(
+  ctx: android.content.Context,
+  private val kind: Int,
+  private val tint: Int,
+  private val iconPx: Int,
+) : View(ctx) {
+  private val stroke = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+    color = tint
+    style = android.graphics.Paint.Style.STROKE
+    strokeCap = android.graphics.Paint.Cap.ROUND
+    strokeJoin = android.graphics.Paint.Join.ROUND
+  }
+  private val fill = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+    color = tint
+    style = android.graphics.Paint.Style.FILL
+  }
+  private val send: android.graphics.Path? =
+    androidx.core.graphics.PathParser.createPathFromPathData("M2.01 21L23 12 2.01 3 2 10l15 2-15 2z")
+  private val smile: android.graphics.Path? =
+    androidx.core.graphics.PathParser.createPathFromPathData("M8 14c0 0 1.5 2 4 2s4-2 4-2")
+  private val photoHill: android.graphics.Path? =
+    androidx.core.graphics.PathParser.createPathFromPathData("M21 15L16 10L5 21")
+  private val phone: android.graphics.Path? = androidx.core.graphics.PathParser.createPathFromPathData(
+    "M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C10.6 21 3 13.4 3 4c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1z",
+  )
+  private val videoTri: android.graphics.Path? =
+    androidx.core.graphics.PathParser.createPathFromPathData("M15 10l5.5-3v10L15 14z")
+  // Bong bóng chat của riêng app (cùng kiểu icon «Tin nhắn» trên thanh tab) — không dùng logo của hãng khác.
+  private val chatBubble: android.graphics.Path? = androidx.core.graphics.PathParser.createPathFromPathData(
+    "M12 3.2c-4.9 0-8.8 3.6-8.8 8.1 0 1.9.7 3.7 1.9 5L4.4 20.2a.6.6 0 0 0 .8.7l3.7-1.7c1 .4 2 .6 3.1.6 4.9 0 8.8-3.6 8.8-8.1S16.9 3.2 12 3.2Z",
+  )
+  private val dotCut = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+    color = android.graphics.Color.WHITE
+    style = android.graphics.Paint.Style.FILL
+  }
+  private val cameraBody: android.graphics.Path? = androidx.core.graphics.PathParser.createPathFromPathData(
+    "M3 8a2 2 0 0 1 2-2h2l1.5-2h7L17 6h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
+  )
+  private val filePage: android.graphics.Path? = androidx.core.graphics.PathParser.createPathFromPathData(
+    "M14 3H7c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V8z M14 3v5h5",
+  )
+
+  init {
+    isClickable = true
+  }
+
+  override fun onDraw(canvas: android.graphics.Canvas) {
+    val s = iconPx / 24f
+    canvas.save()
+    canvas.translate((width - iconPx) / 2f, (height - iconPx) / 2f)
+    canvas.scale(s, s)
+    when (kind) {
+      PLUS -> {
+        stroke.strokeWidth = 2.5f
+        canvas.drawLine(12f, 5f, 12f, 19f, stroke)
+        canvas.drawLine(5f, 12f, 19f, 12f, stroke)
+      }
+      IMAGE -> {
+        stroke.strokeWidth = 2f
+        canvas.drawRoundRect(3f, 3f, 21f, 21f, 2f, 2f, stroke)
+        canvas.drawCircle(8.5f, 8.5f, 1.5f, stroke)
+        photoHill?.let { canvas.drawPath(it, stroke) }
+      }
+      PHONE -> {
+        stroke.strokeWidth = 1.8f
+        phone?.let { canvas.drawPath(it, stroke) }
+      }
+      VIDEO -> {
+        stroke.strokeWidth = 1.8f
+        canvas.drawRoundRect(3f, 6f, 15f, 18f, 2.5f, 2.5f, stroke)
+        videoTri?.let { canvas.drawPath(it, stroke) }
+      }
+      INFO -> {
+        stroke.strokeWidth = 2f
+        canvas.drawCircle(12f, 12f, 9f, stroke)
+        canvas.drawLine(12f, 11f, 12f, 16f, stroke)
+        canvas.drawCircle(12f, 8f, 1.1f, fill)
+      }
+      CLOSE -> {
+        stroke.strokeWidth = 2.6f
+        canvas.drawLine(6f, 6f, 18f, 18f, stroke)
+        canvas.drawLine(18f, 6f, 6f, 18f, stroke)
+      }
+      CHAT -> {
+        chatBubble?.let { canvas.drawPath(it, fill) }
+        canvas.drawCircle(8.3f, 11.5f, 1.15f, dotCut)
+        canvas.drawCircle(12f, 11.5f, 1.15f, dotCut)
+        canvas.drawCircle(15.7f, 11.5f, 1.15f, dotCut)
+      }
+      CAMERA -> {
+        stroke.strokeWidth = 1.9f
+        cameraBody?.let { canvas.drawPath(it, stroke) }
+        canvas.drawCircle(12f, 13f, 3.5f, stroke)
+      }
+      SEARCH -> {
+        stroke.strokeWidth = 2f
+        canvas.drawCircle(11f, 11f, 7f, stroke)
+        canvas.drawLine(21f, 21f, 16.2f, 16.2f, stroke)
+      }
+      FILE -> {
+        stroke.strokeWidth = 1.9f
+        filePage?.let { canvas.drawPath(it, stroke) }
+      }
+      EMOJI -> {
+        stroke.strokeWidth = 2f
+        canvas.drawCircle(12f, 12f, 9f, stroke)
+        smile?.let { canvas.drawPath(it, stroke) }
+        canvas.drawCircle(9f, 9f, 1.1f, fill)
+        canvas.drawCircle(15f, 9f, 1.1f, fill)
+      }
+      else -> {
+        // Mũi tên «gửi» hơi lệch phải 1 đơn vị cho cân quang học (như ml-0.5 của thiết kế).
+        canvas.translate(0.8f, 0f)
+        send?.let { canvas.drawPath(it, fill) }
+      }
+    }
+    canvas.restore()
+  }
+
+  companion object {
+    const val PLUS = 0
+    const val IMAGE = 1
+    const val EMOJI = 2
+    const val SEND = 3
+    const val PHONE = 4
+    const val VIDEO = 5
+    const val INFO = 6
+    const val CLOSE = 7
+    const val CHAT = 8
+    const val FILE = 9
+    const val CAMERA = 10
+    const val SEARCH = 11
   }
 }
