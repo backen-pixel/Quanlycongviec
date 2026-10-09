@@ -2201,3 +2201,15 @@ Theo yêu cầu tiếp tục của Founder, bổ sung domain/Application Service
 - Đã điền **1.455 việc đang bỏ trống** theo phụ trách cột: #4 Sản xuất kiểm tra chéo 771 → Nguyễn Nhật · #14 KT KCS 448 → Hòa Bảo · #1 Tiếp nhận 228 → Sang Thiết Kế VPT 1 · #3 và #17 mỗi cột 4. Rollback: `_rollback_phu_trach_theo_cot_1791514624083.json`. Kiểm lại: còn 0 chỗ trống, khớp sẵn 116 → 1.571.
 - **CỐ Ý KHÔNG đổi 376 việc đã có người** dù lệch phụ trách cột — lấy việc khỏi tay người đang giữ là thay đổi ảnh hưởng người thật, để quản lý tự quyết. Lệnh ghi bản «đổi cả 376» cũng bị bộ lọc quyền chặn hai lần, không lách. Danh sách để lại: #4 194 việc (Sang Thiết Kế VPT 1 → Nguyễn Nhật), #17 116 (→ Hòa Bảo), #3 40, #1 24, #7 2.
 - Chưa xử lý: 1.074 việc ở cột chưa gán phụ trách (chủ yếu nhóm công nợ) — phải gán phụ trách cho cột ở `/sx/pipeline-settings` trước rồi chạy lại.
+
+---
+
+## 2026-10-09 — Hạn thẻ SX chỉ lấy NGÀY LẮP ĐẶT, bỏ mốc công đoạn
+
+- Yêu cầu: hạn ở xưởng chỉ tính theo ngày lắp đặt; các mốc gia công / hoàn thiện / đóng gói không còn được dùng làm hạn thẻ.
+- `sxInstallPlanKanbanDeadline.js` — `computeSxInstallPlanDeadline` nay trả `endYmd = installYmd` thay vì `endYmdForDeadlineGroup(plan, group)`. GIỮ hai thứ: (a) `group` vẫn được tra làm CỔNG — cột không thuộc nhóm hạn nào (nhóm công nợ ánh xạ sang null) vẫn không có hạn SX như cũ; (b) `buildSxInstallBackPlan` / `endYmdForDeadlineGroup` không đổi vì panel kế hoạch và việc nhóm hạn vẫn dùng.
+- `deadlinePatchAfterScheduleEdit` — bỏ hẳn nhánh `onlyFinishDateEdit` (sửa riêng ngày hoàn thiện từng đặt hạn thẻ = ngày hoàn thiện). Đuôi fallback khi cột chưa gán nhóm đổi từ `production_finish_date || delivery_date` sang ngày lắp. Hàm `onlyFinishDateEdit` nay là mã chết, đã xoá.
+- `sxCardPlanDeadline.js` — nhánh thẻ CHƯA có cột cũng ưu tiên ngày lắp, chỉ khi thiếu ngày lắp mới lùi về `earliestOpenGroupIso` như cũ. Thêm import `companyDeadlineIsoFromYmd`.
+- Frontend: gỡ hai thứ làm sáng cùng ngày nay đã sai — nhãn thẻ quay lại «Deadline» (gọi theo tên công đoạn là sai khi hạn = ngày lắp), tooltip ghi «Hạn thẻ = ngày lắp đặt»; cảnh báo ở `ProductionDetail` bỏ điều kiện «cột trước nhóm hoàn thiện», nay hiện cho MỌI cột có hạn vì sửa ngày hoàn thiện không bao giờ đổi hạn thẻ nữa. Gỡ import `sxDeadlineGroupMeta` khỏi cả hai file.
+- Test: sửa 3 file test theo quy tắc mới — `sx-install-back-plan.js` (3 iso → ngày lắp 2026-09-20), `sx-install-anchor-deadline.js` (4 mốc finishing → ngày lắp), `project-overview-deadline.js` (cabinetCard 2026-10-06 → 2026-10-10 và ba dòng giờ-làm-việc theo). Khẳng định về `sxInstallPlanDeadlineIso`/`earliestSxPlanDeadline` GIỮ NGUYÊN vì chúng phục vụ nhóm việc, không phải hạn thẻ. Cả 3 test đạt; `npx vite build` đạt.
+- Vá dữ liệu: chạy `syncSxCardDeadline` cho 29 dự án đang có hạn thẻ → 28 đổi, 1 giữ, 0 bị xoá. Mọi thay đổi đều dời hạn RA XA (mốc công đoạn luôn sớm hơn ngày lắp) nên không ai bỗng thành quá hạn; riêng TB-2026-784 lùi lại 20/10 → 13/10 vì hạn cũ của nó vốn muộn hơn ngày lắp. Quét lại: 29/29 khớp. Rollback: `_rollback_han_theo_ngay_lap_1791516088594.json`.

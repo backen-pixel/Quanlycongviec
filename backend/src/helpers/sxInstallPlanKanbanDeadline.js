@@ -19,6 +19,20 @@ function isAutoInstallPlanDeadlineReason(reason) {
   return !s || s === AUTO_REASON;
 }
 
+/**
+ * Hạn thẻ SX = NGÀY LẮP ĐẶT, không phải hạn của công đoạn đang đứng.
+ *
+ * Trước đây hàm này trả hạn riêng của từng nhóm công đoạn (planning/cabinet/
+ * finishing/packing) tính lùi từ ngày lắp, nên mỗi cột một hạn khác nhau: thẻ ở
+ * «Gia công» hiện 08/10 trong khi ngày lắp là 12/10. Xưởng chỉ muốn đếm MỘT mốc —
+ * ngày lắp — nên các mốc công đoạn không còn được dùng làm hạn thẻ nữa.
+ *
+ * Giữ nguyên hai thứ:
+ *   - `group` vẫn được tra để làm CỔNG: cột không thuộc nhóm hạn nào (vd. nhóm
+ *     công nợ ánh xạ sang null) thì vẫn KHÔNG có hạn SX, như cũ.
+ *   - `buildSxInstallBackPlan` / `endYmdForDeadlineGroup` không đổi — kế hoạch lùi
+ *     vẫn hiển thị ở panel kế hoạch, chỉ thôi quyết định hạn thẻ.
+ */
 function computeSxInstallPlanDeadline(project, stage, siblingStages = null) {
   const group = sxStageDeadlineGroup(stage, siblingStages);
   if (!group) return null;
@@ -30,13 +44,11 @@ function computeSxInstallPlanDeadline(project, stage, siblingStages = null) {
     startYmd,
     slipDays: project?.sx_schedule_slip_days,
   });
-  const endYmd = endYmdForDeadlineGroup(plan, group);
-  if (!endYmd) return null;
-  const iso = companyDeadlineIsoFromYmd(endYmd, project?.company_id);
+  const iso = companyDeadlineIsoFromYmd(installYmd, project?.company_id);
   if (!iso) return null;
   return {
     iso,
-    endYmd,
+    endYmd: installYmd,
     group,
     reason: AUTO_REASON,
     productionFinishYmd: plan.productionFinishYmd || null,
@@ -90,32 +102,18 @@ function isoDeadlineFromYmd(ymd, companyId) {
   return new Date(ms).toISOString();
 }
 
-function onlyFinishDateEdit(body) {
-  return !!(body
-    && body.production_finish_date !== undefined
-    && body.install_date === undefined
-    && body.delivery_date === undefined
-    && body.install_occurrence_dates === undefined
-    && body.installOccurrenceDates === undefined);
-}
-
 /**
- * Hạn thẻ sau khi sửa ngày trong chi tiết.
+ * Hạn thẻ sau khi sửa ngày trong chi tiết — luôn bám NGÀY LẮP ĐẶT.
  * Cột tắt hạn → xóa hạn thẻ.
- * Sửa ngày lắp → tính lại theo nhóm cột từ đúng ngày đó.
- * Sửa riêng ngày hoàn thiện → hạn thẻ = ngày hoàn thiện khi cột thuộc hoàn thiện hoặc chưa gán nhóm.
- * Cột không có nhóm → hạn thẻ = ngày hoàn thiện, không giữ hạn cũ.
+ * Sửa ngày lắp → hạn thẻ theo ngày mới.
+ * Sửa riêng ngày hoàn thiện → hạn thẻ KHÔNG đổi (ngày hoàn thiện không còn là hạn).
+ * Cột chưa gán nhóm hạn → vẫn lấy ngày lắp nếu có.
  */
 function deadlinePatchAfterScheduleEdit(projectRow, stage, siblingStages, body) {
   if (stage && (stage.clears_deadline || stage.is_handover_to_logistics)) {
     return { sx_kanban_deadline_at: null, sx_kanban_deadline_reason: null };
   }
   const group = sxStageDeadlineGroup(stage, siblingStages);
-  if (onlyFinishDateEdit(body) && (!group || group === 'finishing')) {
-    const iso = isoDeadlineFromYmd(projectRow?.production_finish_date, projectRow?.company_id);
-    if (!iso) return { sx_kanban_deadline_at: null, sx_kanban_deadline_reason: null };
-    return { sx_kanban_deadline_at: iso, sx_kanban_deadline_reason: AUTO_REASON };
-  }
   const anchored = anchorProjectForDateEdit(projectRow, body);
   const computed = computeSxInstallPlanDeadline(anchored, stage, siblingStages);
   if (computed?.iso) {
@@ -124,12 +122,11 @@ function deadlinePatchAfterScheduleEdit(projectRow, stage, siblingStages, body) 
       sx_kanban_deadline_reason: computed.reason,
     };
   }
-  // Nhóm đã gán nhưng không còn ngày kết thúc (vd. kế hoạch đã lố) → bỏ hạn cũ.
+  // Nhóm đã gán nhưng thiếu ngày lắp → bỏ hạn cũ, không bịa hạn khác.
   if (group) return { sx_kanban_deadline_at: null, sx_kanban_deadline_reason: null };
-  const finishIso = isoDeadlineFromYmd(anchored.production_finish_date, projectRow?.company_id)
-    || isoDeadlineFromYmd(anchored.delivery_date, projectRow?.company_id);
-  if (finishIso) {
-    return { sx_kanban_deadline_at: finishIso, sx_kanban_deadline_reason: AUTO_REASON };
+  const installIso = isoDeadlineFromYmd(resolveSxPlanInstallYmd(anchored), projectRow?.company_id);
+  if (installIso) {
+    return { sx_kanban_deadline_at: installIso, sx_kanban_deadline_reason: AUTO_REASON };
   }
   return { sx_kanban_deadline_at: null, sx_kanban_deadline_reason: null };
 }

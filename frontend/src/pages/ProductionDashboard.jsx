@@ -43,8 +43,7 @@ import {
 } from 'lucide-react';
 import { gopPipeline, coTheGopCot, gomCotTheoNhom, docSxGopCot, ghiSxGopCot } from '../lib/sxGopCot';
 import {
-  sxInstallPlanForProject, sxStagePlanSlice, vnNowParts,
-  sxStageDeadlineGroup, sxDeadlineGroupMeta, laHanTheMayTinh,
+  sxInstallPlanForProject, sxStagePlanSlice, vnNowParts, laHanTheMayTinh,
 } from '../lib/sxWorkshopSchedule';
 import { sxStagePrimaryOwnerName, sxGroupPrimaryOwnerName } from '../lib/sxStageStaff';
 import { tachCotTheoTab, demTheCot, nhanTabKanban, TAB_SX, TAB_CONG_NO } from '../lib/sxTachCongNo';
@@ -5852,19 +5851,13 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
         const { level } = getCrmDeadlineUrgencyFromIso(item.sx_kanban_deadline_at, item.company_id || item.company);
         const tone = `${getCrmDeadlineUrgencyBadgeClass(level)} hover:opacity-90 cursor-pointer`;
         const urgent = level === 'overdue' || level === 'soon';
-        // Hạn này là hạn của CÔNG ĐOẠN cột đang đứng (tính lùi từ ngày lắp theo
-        // deadline_group), không phải hạn cả đơn — nên gọi đúng tên công đoạn.
-        // Ghi «Deadline» trống trơn khiến người dùng đọc nhầm là hạn giao hàng rồi
-        // thắc mắc vì sao sửa ngày hoàn thiện trong chi tiết mà số này không đổi.
+        // Hạn thẻ SX = NGÀY LẮP ĐẶT (xem computeSxInstallPlanDeadline). Các mốc công
+        // đoạn không còn được dùng làm hạn thẻ, nên nhãn quay lại gọi thẳng là «Deadline»
+        // — gọi theo tên công đoạn lúc này sẽ sai.
         const hanMayTinh = laHanTheMayTinh(item.sx_kanban_deadline_reason);
-        const nhomHan = hanMayTinh ? sxStageDeadlineGroup(sxStage, pipelineStages) : '';
-        const metaHan = nhomHan ? sxDeadlineGroupMeta(nhomHan) : null;
-        const nhan = metaHan ? metaHan.shortLabel : 'Deadline';
-        const mocLap = item.install_date || item.delivery_date || null;
-        const chuThich = metaHan
-          ? `Hạn công đoạn «${metaHan.label}»: ${formatDate(item.sx_kanban_deadline_at)}`
-            + (mocLap ? ` — tính lùi từ ngày lắp ${formatDate(mocLap)}` : '')
-            + `. Đây KHÔNG phải hạn giao cả đơn. Bấm để sửa.`
+        const nhan = 'Deadline';
+        const chuThich = hanMayTinh
+          ? `Hạn thẻ = ngày lắp đặt (${formatDate(item.sx_kanban_deadline_at)}). Bấm để sửa.`
           : `Deadline thẻ — bấm để sửa (${formatDate(item.sx_kanban_deadline_at)})`;
         return (
           <button

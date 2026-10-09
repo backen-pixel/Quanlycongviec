@@ -24,7 +24,7 @@ const computed = computeSxInstallPlanDeadline(
   },
   { deadline_group: 'finishing' },
 );
-assert.ok(computed.iso.includes('2026-09-18T17:30:00'));
+assert.ok(computed.iso.includes('2026-09-20T17:30:00'));
 assert.equal(computed.reason, 'Tính từ ngày lắp (kế hoạch SX)');
 
 const inheritedFromKey = computeSxInstallPlanDeadline(
@@ -36,7 +36,7 @@ const inheritedFromKey = computeSxInstallPlanDeadline(
   { group_key: 'gia_cong' },
 );
 assert.equal(inheritedFromKey.group, 'cabinet');
-assert.ok(inheritedFromKey.iso.includes('2026-09-16T17:30:00'));
+assert.ok(inheritedFromKey.iso.includes('2026-09-20T17:30:00'));
 
 const inheritedFromSibling = computeSxInstallPlanDeadline(
   {
@@ -51,7 +51,7 @@ const inheritedFromSibling = computeSxInstallPlanDeadline(
   ],
 );
 assert.equal(inheritedFromSibling.group, 'finishing');
-assert.ok(inheritedFromSibling.iso.includes('2026-09-18T17:30:00'));
+assert.ok(inheritedFromSibling.iso.includes('2026-09-20T17:30:00'));
 
 const noCongNo = computeSxInstallPlanDeadline(
   {
