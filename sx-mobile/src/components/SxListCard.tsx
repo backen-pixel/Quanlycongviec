@@ -139,7 +139,6 @@ function SxListCard({
 
   const accent = stageColor(stage?.color || null, 0);
   const stageName = stage?.name || item.stage_name || '—';
-  const customerLine = [item.customer_name, item.customer_phone].filter(Boolean).join(' · ');
   const owner = item.production_person_name?.trim() || 'Chưa gán';
   const vc = vcLabel(item, stages);
   // «Đã giao thật», không tính dự án chỉ mới được đẩy sang bảng vận chuyển (xem `projectIsDelivered`).
@@ -159,49 +158,44 @@ function SxListCard({
         style={({ pressed }) => [styles.main, pressed && styles.mainPressed]}
         accessibilityRole="button"
       >
-        <View style={styles.body}>
-          <View style={styles.topRow}>
-            <Text style={styles.code} numberOfLines={1}>{item.code}</Text>
-            {item.workshop_type_name ? (
-              <Text style={styles.typeTxt} numberOfLines={1}>{item.workshop_type_name}</Text>
-            ) : null}
-          </View>
-          <Text style={styles.name} numberOfLines={2}>{item.name}</Text>
-          <View style={styles.infoRow}>
-            {customerLine ? (
-              <View style={[styles.infoItem, { flexShrink: 2 }]}>
-                <Ionicons name="person-outline" size={13} color={colors.textFaint} />
-                <Text style={styles.customer} numberOfLines={1}>{customerLine}</Text>
-              </View>
-            ) : null}
-            {item.company_name ? (
-              <View style={[styles.infoItem, { flexShrink: 0 }]}>
-                <Ionicons name="location-outline" size={13} color={colors.textFaint} />
-                <Text style={styles.company} numberOfLines={1}>{item.company_name}</Text>
-              </View>
-            ) : null}
-            <View style={[styles.infoItem, { flexShrink: 1 }]}>
-              <Ionicons name="pricetag-outline" size={13} color={colors.textFaint} />
-              <Text style={styles.owner} numberOfLines={1}>PT: {owner}</Text>
-            </View>
-          </View>
-          <View style={styles.tagRow}>
-            <View style={[styles.stagePill, { backgroundColor: `${accent}22` }]}>
-              <Text style={[styles.stageTxt, { color: accent }]} numberOfLines={1}>
-                {stageName}
-              </Text>
-            </View>
-            {vc ? (
-              <View style={[styles.miniTag, { borderColor: colors.primary }]}>
-                <Text style={[styles.miniTagTxt, { color: colors.primary }]}>{vc}</Text>
-              </View>
-            ) : null}
-            {overdue ? (
-              <View style={[styles.miniTag, { borderColor: colors.danger }]}>
-                <Text style={[styles.miniTagTxt, { color: colors.danger }]}>Quá hạn</Text>
-              </View>
-            ) : null}
-          </View>
+        {/* Giảm số View native mỗi thẻ: chữ lồng chữ thay cho View + Text, icon đặt LỒNG trong Text (không tạo View riêng),
+            nhãn/viên thuốc là Text có nền + bo + đệm thay vì View bọc Text. */}
+        <Text style={styles.topRow} numberOfLines={1}>
+          <Text style={styles.code}>{item.code}</Text>
+          {item.workshop_type_name ? (
+            <Text style={styles.typeTxt}>{`   ${item.workshop_type_name}`}</Text>
+          ) : null}
+        </Text>
+        <Text style={styles.name} numberOfLines={2}>{item.name}</Text>
+        <View style={styles.infoRow}>
+          {item.company_name ? (
+            <Text style={[styles.company, { flexShrink: 0 }]} numberOfLines={1}>
+              <Ionicons name="location-outline" size={13} color={colors.textFaint} />
+              {` ${item.company_name}`}
+            </Text>
+          ) : null}
+          <Text style={[styles.owner, { flexShrink: 1 }]} numberOfLines={1}>
+            <Ionicons name="pricetag-outline" size={13} color={colors.textFaint} />
+            {` PT: ${owner}`}
+          </Text>
+        </View>
+        <View style={styles.tagRow}>
+          <Text
+            style={[styles.stagePill, styles.stageTxt, { backgroundColor: `${accent}22`, color: accent }]}
+            numberOfLines={1}
+          >
+            {stageName}
+          </Text>
+          {vc ? (
+            <Text style={[styles.miniTag, styles.miniTagTxt, { borderColor: colors.primary, color: colors.primary }]}>
+              {vc}
+            </Text>
+          ) : null}
+          {overdue ? (
+            <Text style={[styles.miniTag, styles.miniTagTxt, { borderColor: colors.danger, color: colors.danger }]}>
+              Quá hạn
+            </Text>
+          ) : null}
         </View>
       </Pressable>
 
@@ -211,18 +205,27 @@ function SxListCard({
           return (
             <View key={c.key} style={[styles.dateCol, i > 0 && styles.dateColSep]}>
               <View style={styles.dateHead}>
-                <View style={[styles.dateIcon, { backgroundColor: `${col}22` }]}>
-                  <Ionicons name={c.icon} size={13} color={col} />
-                </View>
+                {/* Vòng tròn nền ngay trên chính glyph (một View) thay cho View vòng + View glyph. */}
+                <Ionicons
+                  name={c.icon}
+                  size={13}
+                  color={col}
+                  style={[styles.dateIcon, { backgroundColor: `${col}22` }]}
+                />
                 <Text style={[styles.dateLabel, { color: col }]} numberOfLines={1}>{c.label}</Text>
               </View>
               <Text style={styles.dateVal} numberOfLines={1}>{c.date}</Text>
               {c.chip ? (
-                <View style={[styles.dateChip, { backgroundColor: `${toneColor(c.chip.tone)}22` }]}>
-                  <Text style={[styles.dateChipTxt, { color: toneColor(c.chip.tone) }]} numberOfLines={1}>
-                    {c.chip.text}
-                  </Text>
-                </View>
+                <Text
+                  style={[
+                    styles.dateChip,
+                    styles.dateChipTxt,
+                    { backgroundColor: `${toneColor(c.chip.tone)}22`, color: toneColor(c.chip.tone) },
+                  ]}
+                  numberOfLines={1}
+                >
+                  {c.chip.text}
+                </Text>
               ) : null}
             </View>
           );
@@ -240,16 +243,10 @@ function SxListCard({
           {moving ? (
             <SpinningLoader size="small" color="#fff" />
           ) : (
-            <>
-              <Ionicons
-                name={needsClassify ? 'layers-outline' : 'swap-horizontal'}
-                size={16}
-                color="#fff"
-              />
-              <Text style={styles.moveBtnTxt}>
-                {needsClassify ? 'Phân loại' : 'Chuyển cột'}
-              </Text>
-            </>
+            <Text style={styles.moveBtnTxt}>
+              <Ionicons name={needsClassify ? 'layers-outline' : 'swap-horizontal'} size={16} color="#fff" />
+              {`  ${needsClassify ? 'Phân loại' : 'Chuyển cột'}`}
+            </Text>
           )}
         </Pressable>
       </View>
@@ -271,39 +268,37 @@ const makeStyles = (c: AppColors) =>
       borderColor: c.border,
       overflow: 'hidden',
     },
+    // Pressable chính xếp dọc trực tiếp các dòng nội dung (đã bỏ View bọc `body`).
     main: {
-      flexDirection: 'row',
-      alignItems: 'flex-start',
-      gap: 12,
       padding: 14,
       paddingBottom: 10,
+      gap: 2,
     },
     mainPressed: { opacity: 0.92 },
-    body: { flex: 1, minWidth: 0, gap: 2 },
-    topRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    topRow: {},
     code: { color: c.primary, fontSize: 12, fontWeight: '800' },
-    typeTxt: { color: c.textMuted, fontSize: 11, fontWeight: '700', flexShrink: 1 },
+    typeTxt: { color: c.textMuted, fontSize: 11, fontWeight: '700' },
     name: { color: c.text, fontSize: 15, fontWeight: '800', marginTop: 2 },
     infoRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 3 },
-    infoItem: { flexDirection: 'row', alignItems: 'center', gap: 3, minWidth: 0 },
-    customer: { color: c.primary, fontSize: 12, fontWeight: '700', flexShrink: 1 },
     company: { color: c.textMuted, fontSize: 12, fontWeight: '600' },
-    owner: { color: c.textFaint, fontSize: 12, fontWeight: '600', flexShrink: 1 },
+    owner: { color: c.textFaint, fontSize: 12, fontWeight: '600' },
     tagRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 },
+    // Các nhãn là Text có nền/viền/đệm (không bọc View) — đặt `overflow: hidden` để nền bo theo góc.
     miniTag: {
       borderWidth: 1,
       borderRadius: 6,
       paddingHorizontal: 6,
       paddingVertical: 2,
+      overflow: 'hidden',
     },
     miniTagTxt: { fontSize: 10, fontWeight: '800' },
-    meta: { alignItems: 'flex-end', gap: 6, maxWidth: 118 },
     /** Vạch màu theo cột Kanban ở mép trái thẻ — giống thẻ dự án ở Tổng quan. */
     accentBar: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 4 },
     stagePill: {
       borderRadius: 999,
       paddingHorizontal: 9,
       paddingVertical: 3,
+      overflow: 'hidden',
     },
     stageTxt: { fontSize: 11, fontWeight: '800' },
     dates: {
@@ -317,10 +312,25 @@ const makeStyles = (c: AppColors) =>
     dateCol: { flex: 1, minWidth: 0, gap: 3, paddingRight: 4 },
     dateColSep: { borderLeftWidth: 1, borderLeftColor: c.border, paddingLeft: 10 },
     dateHead: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-    dateIcon: { width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+    dateIcon: {
+      width: 20,
+      height: 20,
+      borderRadius: 10,
+      overflow: 'hidden',
+      textAlign: 'center',
+      textAlignVertical: 'center',
+      lineHeight: 20,
+      includeFontPadding: false,
+    },
     dateLabel: { fontSize: 11, fontWeight: '700', flexShrink: 1 },
     dateVal: { color: c.text, fontSize: 12.5, fontWeight: '800' },
-    dateChip: { alignSelf: 'flex-start', borderRadius: 8, paddingHorizontal: 7, paddingVertical: 2 },
+    dateChip: {
+      alignSelf: 'flex-start',
+      borderRadius: 8,
+      paddingHorizontal: 7,
+      paddingVertical: 2,
+      overflow: 'hidden',
+    },
     dateChipTxt: { fontSize: 10.5, fontWeight: '800' },
     actions: {
       borderTopWidth: 1,

@@ -1,6 +1,7 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useMemo, useState } from 'react';
 import { LayoutChangeEvent, StyleSheet, Text, View } from 'react-native';
+import Svg, { Circle, Path, Rect } from 'react-native-svg';
 import { useTheme } from '../context/ThemeContext';
 import { useHolidayIndex, workingDaysBetween, type HolidayIndex } from '../lib/workingDays';
 import type { ProductionProject } from '../types';
@@ -154,46 +155,8 @@ function KanbanDealTimeline({ project, isDelivered }: KanbanDealTimelineProps) {
           marginTop: 2,
           marginHorizontal: 4,
         },
-        trackBg: {
-          position: 'absolute',
-          left: 0,
-          right: 0,
-          height: 4,
-          borderRadius: 2,
-          backgroundColor: isDark ? '#334155' : '#E2E8F0',
-        },
-        trackFill: {
-          position: 'absolute',
-          height: 4,
-          borderRadius: 2,
-        },
-        trackRemain: {
-          position: 'absolute',
-          height: 4,
-          borderRadius: 2,
-          backgroundColor: isDark ? '#475569' : '#CBD5E1',
-          opacity: 0.7,
-        },
-        dot: {
-          position: 'absolute',
-          top: 7,
-          width: 14,
-          height: 14,
-          borderRadius: 7,
-          borderWidth: 2,
-          borderColor: isDark ? '#0F172A' : '#FFFFFF',
-        },
-        checkDot: {
-          position: 'absolute',
-          top: 4,
-          width: 18,
-          height: 18,
-          borderRadius: 9,
-          alignItems: 'center',
-          justifyContent: 'center',
-          borderWidth: 2,
-          borderColor: isDark ? '#0F172A' : '#FFFFFF',
-        },
+        // Lớp SVG vẽ thanh + chấm mốc, phủ đúng vùng trackWrap (cao 28).
+        trackSvg: { position: 'absolute', left: 0, top: 0 },
         todayPill: {
           position: 'absolute',
           top: -2,
@@ -367,6 +330,10 @@ function KanbanDealTimeline({ project, isDelivered }: KanbanDealTimelineProps) {
     && today.getTime() >= axisStart.getTime()
     && today.getTime() <= axisEnd.getTime() + 86400000;
 
+  const trackBgColor = isDark ? '#334155' : '#E2E8F0';
+  const trackRemainColor = isDark ? '#475569' : '#CBD5E1';
+  /** Viền quanh chấm mốc cùng màu nền thẻ để chấm "tách" khỏi thanh. */
+  const dotRing = isDark ? '#0F172A' : '#FFFFFF';
   const markerLeft = (p: number) => Math.max(0, Math.min(trackW - 14, p * trackW - 7));
   const pillLeft = (p: number) => Math.max(0, Math.min(Math.max(0, trackW - 64), p * trackW - 32));
 
@@ -435,63 +402,50 @@ function KanbanDealTimeline({ project, isDelivered }: KanbanDealTimelineProps) {
       </View>
 
       <View style={styles.trackWrap} onLayout={onTrackLayout}>
-        <View style={styles.trackBg} />
-        {isDelivered && deliveryPos != null && deadlinePos != null && deliveryPos < deadlinePos && trackW > 0 ? (
-          <View
-            style={[
-              styles.trackRemain,
-              {
-                left: deliveryPos * trackW,
-                width: Math.max(0, (deadlinePos - deliveryPos) * trackW),
-              },
-            ]}
-          />
-        ) : null}
+        {/* Thanh nền + phần đã đi + phần còn lại + các chấm mốc + dấu tích: một SvgView thay cho tới 7 View chồng nhau.
+            Chấm có viền trắng/tối (stroke) như cũ; tọa độ khớp với bản View (thanh cao 4 ở y=12, chấm tâm y=14). */}
         {trackW > 0 ? (
-          <View
-            style={[
-              styles.trackFill,
-              {
-                left: orderPos * trackW,
-                width: Math.max(4, (fillEndPos - orderPos) * trackW),
-                backgroundColor: fillColor,
-              },
-            ]}
-          />
-        ) : null}
-
-        {trackW > 0 ? (
-          <View style={[styles.dot, { left: markerLeft(orderPos), backgroundColor: ACCENT.order }]} />
-        ) : null}
-
-        {deadlinePos != null && trackW > 0 ? (
-          <View
-            style={[
-              styles.dot,
-              { left: markerLeft(deadlinePos), backgroundColor: ACCENT.deadline },
-            ]}
-          />
-        ) : null}
-
-        {isDelivered && deliveryPos != null && trackW > 0 ? (
-          <View
-            style={[
-              styles.checkDot,
-              {
-                left: markerLeft(deliveryPos) - 2,
-                backgroundColor: fillColor,
-              },
-            ]}
-          >
-            <Ionicons name="checkmark" size={10} color="#FFF" />
-          </View>
-        ) : deliveryPos != null && trackW > 0 ? (
-          <View
-            style={[
-              styles.dot,
-              { left: markerLeft(deliveryPos), backgroundColor: ACCENT.delivery },
-            ]}
-          />
+          <Svg style={styles.trackSvg} width={trackW} height={28}>
+            <Rect x={0} y={12} width={trackW} height={4} rx={2} fill={trackBgColor} />
+            {isDelivered && deliveryPos != null && deadlinePos != null && deliveryPos < deadlinePos ? (
+              <Rect
+                x={deliveryPos * trackW}
+                y={12}
+                width={Math.max(0, (deadlinePos - deliveryPos) * trackW)}
+                height={4}
+                rx={2}
+                fill={trackRemainColor}
+                opacity={0.7}
+              />
+            ) : null}
+            <Rect
+              x={orderPos * trackW}
+              y={12}
+              width={Math.max(4, (fillEndPos - orderPos) * trackW)}
+              height={4}
+              rx={2}
+              fill={fillColor}
+            />
+            <Circle cx={markerLeft(orderPos) + 7} cy={14} r={6} fill={ACCENT.order} stroke={dotRing} strokeWidth={2} />
+            {deadlinePos != null ? (
+              <Circle cx={markerLeft(deadlinePos) + 7} cy={14} r={6} fill={ACCENT.deadline} stroke={dotRing} strokeWidth={2} />
+            ) : null}
+            {isDelivered && deliveryPos != null ? (
+              <>
+                <Circle cx={markerLeft(deliveryPos) + 7} cy={13} r={8} fill={fillColor} stroke={dotRing} strokeWidth={2} />
+                <Path
+                  d={`M${markerLeft(deliveryPos) + 3.6} 13.2 L${markerLeft(deliveryPos) + 6.2} 15.8 L${markerLeft(deliveryPos) + 10.6} 10.6`}
+                  stroke="#FFFFFF"
+                  strokeWidth={1.8}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  fill="none"
+                />
+              </>
+            ) : deliveryPos != null ? (
+              <Circle cx={markerLeft(deliveryPos) + 7} cy={14} r={6} fill={ACCENT.delivery} stroke={dotRing} strokeWidth={2} />
+            ) : null}
+          </Svg>
         ) : null}
 
         {showTodayPill && todayPos != null && trackW > 0 ? (

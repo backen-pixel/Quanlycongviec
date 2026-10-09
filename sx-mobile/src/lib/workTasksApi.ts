@@ -3,6 +3,7 @@ import { fetchCrmDealTasks, isCrmProductionTaskDone } from './projectDetailApi';
 import type { AuthUserLite } from './productionFilters';
 import type { CrmTask, PersonRef } from '../types';
 import { QUERY_TTL_SHORT, cachedQuery, invalidateQueryPrefix } from './queryCache';
+import { vnYmd } from './vnDate';
 
 const K_WORK_PAGE = 'sx:workTasks:';
 const K_WORK_STATS = 'sx:workStats:';
@@ -239,22 +240,14 @@ export function taskDueIso(task: WorkTask): string | null {
   return task.deadline || task.due_date || null;
 }
 
-/** Ngày lịch VN (YYYY-MM-DD) — khớp BE vnStartOfTodayIso / Asia/Ho_Chi_Minh. */
-const VN_TZ = 'Asia/Ho_Chi_Minh';
-
-function ymdInTimeZone(d: Date, timeZone: string): string {
-  return d.toLocaleDateString('en-CA', { timeZone });
-}
-
+/** Ngày lịch VN (YYYY-MM-DD) — khớp BE vnStartOfTodayIso / Asia/Ho_Chi_Minh. Dùng `vnYmd` (nhanh), không dùng Intl. */
 export function isTaskOverdue(task: WorkTask): boolean {
   if (isTaskDone(task.status)) return false;
   const raw = taskDueIso(task);
   if (!raw) return false;
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return false;
-  const todayYmd = ymdInTimeZone(new Date(), VN_TZ);
-  const dueYmd = ymdInTimeZone(d, VN_TZ);
-  return dueYmd < todayYmd;
+  return vnYmd(d) < vnYmd();
 }
 
 /** Hạn (deadline/due_date) trùng ngày lịch VN với `day`. */
@@ -263,7 +256,7 @@ export function isTaskDueOnDay(task: WorkTask, day: Date = new Date()): boolean 
   if (!raw) return false;
   const d = new Date(raw);
   if (Number.isNaN(d.getTime())) return false;
-  return ymdInTimeZone(d, VN_TZ) === ymdInTimeZone(day, VN_TZ);
+  return vnYmd(d) === vnYmd(day);
 }
 
 /**
