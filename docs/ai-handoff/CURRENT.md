@@ -1,3 +1,24 @@
+## 2026-10-09 — SX mobile: bong bóng chat nổi mới, khung chat overlay, avatar thật; backend thu nhỏ avatar khi đổi
+
+Mobile (`sx-mobile/`, nhánh `feat/sx-mobile-dashboard-redesign`, chưa merge/release): (1) bong bóng chat native (`OverlayBubbleService.kt`): chồng bong bóng thật (chỉ cái mới nhất hiện, kéo thì lộ cái dưới), thẻ xem trước nằm ngang hàng, kéo vào ô X dưới đáy mới tắt, chạm mở thẳng đoạn chat; (2) khung chat (`OverlayChatPanel.kt`) thiết kế mới: dải đầu chat liền nhau + icon «Đoạn chat» (trang danh sách), bung/thu từ bong bóng bằng zoom (nền mờ dần riêng, hardware layer), chọn ảnh hệ thống trực tiếp; tin mới của đoạn đang mở chèn thẳng vào khung (không bật thẻ xem trước), tin đoạn khác chỉ cập nhật dải đầu chat/huy hiệu; (3) avatar thật: `OverlayAvatarView.kt` (bộ nhớ đệm RAM + `filesDir/avatars`, tải xuống tệp, giải mã thu nhỏ ≤512px, theo chuyển hướng, mã hóa URL, thử lại, tối đa 64MB), `BubbleChatApi.kt` đọc `user.avatar`/`peer_avatar`/`avatar`; (4) tab bar SVG (`react-native-svg`), `vnYmd` thay `toLocaleDateString` chậm, banner quá hạn, tắt phóng chữ theo hệ thống.
+
+Backend: `PATCH /api/internal-social/profile/me` gọi `backend/src/helpers/avatarOptimize.js` — avatar nằm trong Storage dự án thì cắt vuông, thu ≤512px, WebP (dự phòng JPEG) bằng ffmpeg-static, lưu `internal_social/<uid>/avatar_<ts>.webp` và ghi URL bản nhỏ; URL ngoài Storage hoặc lỗi bất kỳ → giữ URL gốc; không xóa ảnh gốc. Script `backend/scripts/optimize-user-avatars.js` dọn avatar cũ: mặc định chạy thử, `--apply` mới ghi, cập nhật có điều kiện avatar còn là giá trị cũ, nhật ký `.log.jsonl` + `--rollback`.
+
+Kiểm tra: máy thật Vivo (bản dev): avatar gốc 25,6MB tải + thu nhỏ ~3 giây, hiện đúng ở tiêu đề khung và hàng tin; tin mới chèn thẳng vào khung; thu/mở khung bớt giật (`gfxinfo` p99 250–550ms → ~40–57ms, một lượt đo). Test offline backend đạt 11 + 5 (DB/Storage/ffmpeg giả).
+
+Chưa làm / lưu ý: backend CHƯA deploy; script dọn avatar cũ CHƯA chạy trên dữ liệu thật (người dùng quyết định); lệnh ffmpeg thật CHƯA chạy (máy dev thiếu ffmpeg) — thử một avatar sau deploy; điện thoại đang chạy bản dev chứ chưa về release 1.1.122; Vivo ẩn log Info/Warn nên log lỗi avatar ở mức Error (tag `SxAvatar`); chưa thử thu khung bằng cách chạm icon chat trên máy thật (chạm vùng mờ đã thử); lúc test có một ảnh chụp màn hình app dường như bị gửi vào một cuộc chat Zalo, chưa rõ nguyên nhân — nay luôn kiểm tra app đang ở foreground trước khi chạm và chụp thẳng về máy tính.
+
+---
+
+## 2026-10-08 — team-project-tasks nhanh hơn: lọc phân loại xuống truy vấn, quét song song theo gợi ý, chế độ `lite`
+
+`GET /api/work-tasks/team-project-tasks` (`backend/src/routes/workTasks.js`, commit `6c186869`; app `7e6cadae`): (1) lọc phân loại đẩy xuống truy vấn quét — loại ít dự án (≤200) dùng `project_id in`, loại chiếm đa số (vd. Tủ bếp) dùng `not in` phần bù (đo: `in` 300+ id chậm gấp 3-4 lần), cả hai lớn thì quét cả công ty; luôn lọc lại bằng tập dự án ở máy nên kết quả không đổi; `scan_total`/`truncated` nay đo đúng phạm vi đã lọc; (2) nhớ tổng dòng lần trước (`teamScanHint`) để bắn sớm các lô cùng lúc với lô đầu, và nhớ phạm vi dự án của loại (`teamTypeScopeCache`) để quét sớm song song với việc lấy dự án mới (chỉ dùng khi tập dự án không đổi); (3) `lite=1` (app gửi) bỏ `enrichTaskModuleOwners` (~450ms/lần gọi, kể cả trúng cache), chỉ tra `assignee_name` qua cache tên 10 phút; không gửi `lite` thì giữ hành vi đầy đủ. Thêm biến môi trường `TEAM_TASKS_CACHE_MS`.
+
+Đo ở máy với DB thật (trung vị trang 1, cache hết hạn mỗi lần): cũ → mới+lite: Tủ bếp mặc định 1470 → 597 ms, không hạn 1653 → 721, hôm nay 957 → 249, chưa phân loại 1004 → 224. Kiểm sau merge (#70) và deploy trên backend thật: HTTP 200, `lite` không còn `module_owner_*`; trang 1 trúng cache `lite` ~150-190 ms so với ~450-475 ms bản đầy đủ; lần tính đầu 429-1202 ms. Số đếm khớp DB từng số (HCB Tủ bếp 1418 việc / 824 quá hạn / 268 không hạn / 109 nhóm; không hạn cũ 4906 / 292); app tab Công việc «Chưa 1418 · QH 824». Tên người được giao `lite` = đầy đủ (ca Hôm nay 51/51).
+
+Lưu ý: gợi ý và phạm vi nhớ chỉ có tác dụng từ yêu cầu thứ hai của mỗi bộ lọc sau mỗi lần khởi động server; tên người được giao có thể cũ tối đa 10 phút; số đo ở máy chưa gồm độ trễ mạng từ điện thoại. Chưa đo thời gian thật trên app (chỉ kiểm số liệu).
+---
+
 ## 2026-10-09 — P2-2: route + giao diện duyệt bản nháp AI (thử nghiệm, mặc định tắt)
 Thêm `/api/ai-reply-drafts` (cờ P2_AI_DRAFTS_ENABLED, chỉ admin trong P2_AI_DRAFTS_USER_IDS, công ty/Page trong danh sách), `aiReplyDraft/config.js` (trần 5 USD/ngày, 3 địa chỉ được nói) và khung «Soạn nháp bằng AI» trong FacebookChatTab. Không có đường gửi tin: nhân viên tự gửi bằng route cũ rồi giao diện ghi nhận sửa/đã gửi/bỏ.
 Bật thử cần Founder đặt biến trên Render: P2_AI_DRAFTS_ENABLED, _COMPANY_IDS, _PAGE_IDS, _USER_IDS, _VND_PER_USD (thiếu tỷ giá → từ chối). Codex bị đăng xuất nên Claude tự viết.

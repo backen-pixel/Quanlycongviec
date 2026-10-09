@@ -38,3 +38,5 @@ hs_err_*.log
 replay_*.log
 .jscpd-report/
 backend/supabase/.temp/
+# Nhật ký của scripts/optimize-user-avatars.js (chứa URL avatar người dùng — giữ cục bộ để khôi phục)
+backend/scripts/avatar-optimize-*.log.jsonl

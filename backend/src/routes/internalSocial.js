@@ -6,6 +6,7 @@ const { getPresenceForUserIds, listOnlineUsersForCompany } = require('../helpers
 const { emitNotifyBadge } = require('../helpers/notifyBadge');
 const { responseCache, invalidateTags: rcInvalidateTags } = require('../middleware/responseCache');
 const { companyInTenantContext } = require('../helpers/tenantScope');
+const { optimizeAvatarUrl } = require('../helpers/avatarOptimize');
 
 const r = Router();
 r.use(auth);
@@ -1050,7 +1051,8 @@ r.patch('/profile/me', async (req, res) => {
     const update = {};
     if (req.body?.avatar !== undefined) {
       const v = req.body.avatar == null ? '' : String(req.body.avatar).trim();
-      update.avatar = v || null;
+      // Avatar nằm trong Storage của dự án: thu nhỏ ≤512px + nén trước khi lưu (lỗi bất kỳ → giữ URL gốc).
+      update.avatar = v ? (await optimizeAvatarUrl(v, me)).url || null : null;
     }
     if (req.body?.cover_url !== undefined) {
       const v = req.body.cover_url == null ? '' : String(req.body.cover_url).trim();
