@@ -41,6 +41,8 @@ import {
   remainingSxWorkingDaysTo,
   resolveSxPlanInstallYmd,
   resolveSxReceptionYmd,
+  sxStageDeadlineGroup,
+  sxDeadlineGroupMeta,
 } from '../lib/sxWorkshopSchedule';
 import {
   ArrowLeft, FolderKanban, MessageSquare, Plus, X,
@@ -323,6 +325,18 @@ function WorkshopInfoPanel({
 
   const startEdit = (field, value) => { setEditing(field); setDraft(value ?? ''); };
   const cancelEdit = () => { setEditing(null); setDraft(''); };
+
+  // Hạn thẻ Kanban SX = hạn của CÔNG ĐOẠN cột đang đứng, tính lùi từ ngày lắp.
+  // Ngày hoàn thiện chỉ quyết định hạn thẻ khi cột đã ở nhóm «hoàn thiện» trở đi
+  // (xem backend/src/helpers/sxInstallPlanKanbanDeadline.js: deadlinePatchAfterScheduleEdit).
+  // Sửa ngày hoàn thiện lúc thẻ còn ở công đoạn trước đó thì hạn thẻ KHÔNG đổi —
+  // báo trước để người dùng khỏi sửa đi sửa lại mà không hiểu vì sao số ngoài thẻ đứng yên.
+  const THU_TU_NHOM_HAN = ['planning', 'cabinet', 'finishing', 'packing'];
+  const nhomHanCot = sxStageDeadlineGroup(currentStage);
+  const metaNhomHan = nhomHanCot ? sxDeadlineGroupMeta(nhomHanCot) : null;
+  const truocHoanThien = nhomHanCot
+    && THU_TU_NHOM_HAN.indexOf(nhomHanCot) >= 0
+    && THU_TU_NHOM_HAN.indexOf(nhomHanCot) < THU_TU_NHOM_HAN.indexOf('finishing');
 
   const otherName = String(
     crmDeal?.external_company_name
@@ -631,7 +645,15 @@ function WorkshopInfoPanel({
                   <button type="button" onClick={() => save('production_finish_date', draft)} disabled={saving} className="px-2 py-1 bg-teal-600 text-white rounded text-xs cursor-pointer disabled:opacity-50">✓</button>
                   <button type="button" onClick={cancelEdit} className="px-2 py-1 bg-gray-100 rounded text-xs cursor-pointer">✕</button>
                 </div>
-              ) : (
+              ) : null}
+              {editing === 'production_finish_date' && truocHoanThien && (
+                <p className="mt-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-1.5 text-[10px] leading-snug text-amber-900">
+                  ⚠️ Thẻ đang ở công đoạn «{metaNhomHan?.label || nhomHanCot}» nên sửa ngày này
+                  <b> không đổi hạn trên thẻ Kanban</b> — hạn thẻ tính lùi từ <b>ngày lắp đặt</b>.
+                  Muốn dời hạn thẻ (và dồn luôn hạn các nhiệm vụ) thì sửa ô «Ngày lắp đặt» bên dưới.
+                </p>
+              )}
+              {editing !== 'production_finish_date' && (
                 <div className="flex flex-wrap items-center gap-1.5">
                   <p className={`text-sm flex items-center gap-1 min-w-0 ${finishTone.value}`}>
                     <span className="min-w-0">{productionFinishDate ? formatDate(productionFinishDate) : '—'}</span>

@@ -47,6 +47,49 @@ Kiểm chứng chỉ-đọc bằng server Express tạm (auth giả trong bộ n
 Chưa xử lý gốc: lọc phân loại vẫn chạy SAU khi quét nên «Tủ bếp» vẫn quét cả 6410 việc của HCB; trần mới chỉ là đệm. Muốn gọn hơn thì đẩy lọc phân loại xuống truy vấn.
 ---
 
+## 2026-10-08 — Thẻ SX gọi đúng tên hạn công đoạn, hết đọc nhầm là hạn giao đơn
+
+Người dùng hỏi vì sao sửa ngày trong chi tiết mà «Deadline» trên thẻ không đổi. Không phải lỗi tính: hạn thẻ là hạn của CÔNG ĐOẠN cột đang đứng, tính lùi từ ngày lắp theo `deadline_group`, chứ không phải hạn cả đơn. Nhãn cũ ghi trần trụi «Deadline: 8/10/2026» nên bị đọc nhầm thành hạn giao hàng.
+
+Dẫn chứng chạy đúng hàm thật trên TB-2026-1019 (cột «ĐANG SX THÙNG», `group_key=gia_cong` → nhóm `cabinet`): lắp 12/10 → kế hoạch lùi planning 06/10 · **cabinet 08/10** · finishing 10/10 · packing 11/10. `computeSxInstallPlanDeadline` trả 2026-10-08T17:30 — khớp đúng thẻ. Ngày hoàn thiện 10/10 người dùng nhập là mốc của nhóm `finishing`, không phải nhóm cột đang đứng.
+
+Vì sao sửa ngày hoàn thiện không đổi được hạn thẻ: `deadlinePatchAfterScheduleEdit` (`sxInstallPlanKanbanDeadline.js:109-135`) chỉ lấy `production_finish_date` làm hạn thẻ khi `onlyFinishDateEdit(body) && (!group || group === 'finishing')`. Cột đang ở nhóm `cabinet` nên rơi xuống nhánh tính lùi từ ngày lắp. Ở cột này chỉ ĐỔI NGÀY LẮP hoặc KÉO SANG CỘT KHÁC mới đổi được hạn thẻ.
+
+Sửa (chỉ giao diện, không đụng logic tính): `ProductionDashboard.jsx` nhãn thẻ đổi từ «Deadline:» sang tên công đoạn — «Kế hoạch / Gia công / Hoàn thiện / Giao hàng», lấy từ `sxDeadlineGroupMeta`. Chỉ đổi khi `sx_kanban_deadline_reason` đúng bằng hằng số máy tính; hạn người nhập tay vẫn ghi «Deadline». Tooltip nói rõ là hạn công đoạn, tính lùi từ ngày lắp nào, và KHÔNG phải hạn giao cả đơn. Thêm `SX_AUTO_DEADLINE_REASON` + `laHanTheMayTinh` vào `lib/sxWorkshopSchedule.js` (phải khớp từng ký tự với `AUTO_REASON` của backend).
+
+`npx vite build` đạt. Chưa xem trên trình duyệt thật.
+
+Làm tiếp cùng ngày, hai việc nữa:
+
+1. **Cảnh báo ở form chi tiết** (`ProductionDetail.jsx`, `WorkshopInfoPanel`): khi mở sửa «Ngày hoàn thiện sản xuất» mà cột đang đứng thuộc nhóm hạn TRƯỚC `finishing` (thứ tự `planning < cabinet < finishing < packing`), hiện khối vàng báo sửa ngày này không đổi hạn thẻ, muốn dời thì sửa «Ngày lắp đặt». Dùng `currentStage` vốn đã là prop sẵn có của panel.
+
+2. **Dời ngày lắp thì dồn luôn hạn nhiệm vụ**: thêm `backend/src/helpers/donHanNhiemVuTheoMocLap.js`, gọi từ `PUT /api/projects/:id` ngay sau `syncSxCardDeadline` khi mốc lắp đổi. Mốc lắp lấy bằng `resolveSxPlanInstallYmd` trên hàng cũ (`old`) và hàng mới — cùng hàm mà kế hoạch lùi đang dùng. Dời ĐỀU đúng số ngày chênh lệch cho `tasks.due_date` và `crm_tasks.deadline` của việc CÒN MỞ và ĐÃ CÓ hạn; việc chưa có hạn giữ NULL. Không tính lại theo công đoạn vì `tasks.production_stage_id` gần như toàn NULL nên không map được về nhóm hạn.
+
+`node --check` hai file backend đạt; thử tay `soNgayGiua`/`doiNgay` (lệch dương, âm, rác, giữ giờ, qua tháng) đạt. `npx vite build` đạt.
+
+**Đã vá tồn đọng (09/10/2026).** Quét 622 dự án còn sống tìm đơn có kế hoạch CÒN hạn mà việc bên trong ĐÃ quá hạn — dấu hiệu lịch việc kẹt ở kế hoạch cũ (hệ thống không lưu lịch sử ngày lắp nên không chứng minh trực tiếp được). Ra 20 dự án / 291 việc, chia hai nhóm:
+
+- **Nhóm 1 — 15 dự án / 206 việc**: TOÀN BỘ việc còn mở đều quá hạn (6/6, 23/23, 41/41…) trong khi kế hoạch còn hạn. Đã dồn, mỗi dự án đúng số ngày lệch riêng (3→33 ngày) bằng chính `donHanNhiemVuTheoMocLap`. Kết quả: 176 `tasks` + 30 `crm_tasks`. Rollback: `backend/uploads/_rollback_don_han_nhom1_1791512123387.json` (206 dòng, lưu hạn cũ từng việc).
+- **Nhóm 2 — 5 dự án / 85 việc**: lệch −2 đến +1 ngày, chỉ quá hạn một phần (17/31, 17/30…). CỐ Ý KHÔNG dồn — đây là đơn chạy đúng kế hoạch, chỉ trễ mấy việc đầu công đoạn; dồn vào sẽ che mất việc trễ thật.
+
+Quét lại sau khi vá: 20 → **6 dự án**, 291 → **105 việc**. Sáu dự án còn lại đều lệch ≤ 1 (đúng nhóm 2, cộng TB-2026-784 nay lệch 0). TB-2026-784 vẫn còn 20/41 việc quá hạn vì lịch nội bộ của nó trải rộng hơn 26 ngày đã dồn — dồn đều giữ nguyên khoảng cách nên việc đầu công đoạn vẫn ở quá khứ; đúng thiết kế, không phải lỗi.
+
+---
+
+## 2026-10-08 — Trang Quản lý nhiệm vụ: việc VC/LĐ hết bị xếp nhầm vào làn Sản xuất (SQL 715, ĐÃ ÁP)
+
+Xưởng hỏi vì sao trang `/sx/project-tasks` đầy nhiệm vụ của đơn đã giao. Gốc: view `unified_tasks_v` (bản 594) suy `task_kind` theo thuộc tính DỰ ÁN — `p.production_person_id IS NOT NULL` ⇒ MỌI nhiệm vụ của dự án thành `SX`, kể cả việc do bộ mẫu VC/LĐ sinh ra. Cả 124 dự án HCB ở cột «ĐƠN HÀNG ĐÃ GIAO» đều có `production_person_id`, nên 874/874 việc còn mở mang nhãn SX dù 717 trong đó là việc giao–lắp.
+
+`database/715_unified_tasks_v_task_kind_theo_nhiem_vu.sql` chèn hai nhánh đọc `tasks.metadata->>'workshop_area'` LÊN TRƯỚC biểu thức cũ; việc không có `workshop_area` giữ nguyên hành vi. Chỉ đổi biểu thức `task_kind`, không đổi cột/kiểu/thứ tự/nhánh UNION.
+
+ĐÃ ÁP lên dự án chính `qlycv` (`kdxypztstbeovyedmvem`) lúc 08/10/2026. Đo trước/sau trên chính view: việc còn mở của HCB 6.191 SX + 0 VC → **3.216 SX + 2.975 VC** (tổng không đổi, `unified_id` trùng = 0, tổng dòng view 149.111). Riêng 124 đơn ở cột «ĐƠN HÀNG ĐÃ GIAO»: **157 SX + 717 VC** — khớp đúng con số đo độc lập phía Node trước khi áp.
+
+CHƯA áp lên `QLCV_Backup` (`atcfpgxkgbszglrelfgr`) — vẫn còn bản 594. Failover đang tắt nên không ảnh hưởng chạy thật, nhưng hai DB đang lệch định nghĩa view.
+
+Chưa làm: chưa mở trình duyệt xem lại hai tab; chưa đóng nhiệm vụ nào. Bước kế tiếp đã bàn: 124 đơn đã giao giờ chỉ còn 157 việc ở làn SX, trong đó ~20 việc công nợ — đóng tự động ~137 việc còn lại là an toàn. Hoàn tác: chạy `715_..._rollback.sql`.
+
+---
+
 ## 2026-10-08 — Bàn giao VC không còn làm đơn biến mất khỏi module Sản xuất
 
 Xưởng báo: chuyển đơn sang VC/LĐ xong thì không thấy đơn nữa. Nguyên nhân: bàn giao ghi `current_stage_id = null`, trong khi mọi màn lọc theo giai đoạn chạy `.eq('current_stage.slug', stage_slug)` (`production.js`) — NULL không khớp slug nào nên đơn rụng khỏi danh sách, không báo lỗi gì.

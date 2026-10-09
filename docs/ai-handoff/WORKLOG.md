@@ -47,6 +47,38 @@ Chưa thử SQL thật, quyền/rollback trên Supabase, HTTP/DB và dữ liệu
 - Chưa làm: xem dòng cảnh báo trên màn hình app; đẩy lọc phân loại xuống truy vấn để khỏi quét mọi phân loại; chưa merge/deploy.
 ---
 
+## 2026-10-08 — Nhãn hạn thẻ SX theo tên công đoạn
+
+- Truy nguyên con số trên thẻ TB-2026-1019 bằng chính helper của hệ thống: cột «ĐANG SX THÙNG» không có `deadline_group`, `sxStageDeadlineGroup` suy từ `group_key='gia_cong'` qua `SX_GROUP_KEY_DEADLINE` (`sxWorkshopSchedule.js:201-209`) ra nhóm `cabinet`. `buildSxInstallBackPlan(12/10, {startYmd: 06/10, slipDays: 0})` → planning 06/10, cabinet 07→08/10, finishing 09→10/10, packing 11/10. `endYmdForDeadlineGroup(plan,'cabinet')=08/10` → `companyDeadlineIsoFromYmd` → `2026-10-08T17:30+07`. Khớp đúng `sx_kanban_deadline_at` đang lưu.
+- Kết luận: logic tính đúng, lỗi nằm ở nhãn. `ProductionDashboard.jsx:5861` ghi cứng «Deadline: {ngày}» nên người dùng hiểu là hạn giao cả đơn, rồi thắc mắc vì sao sửa `production_finish_date` trong chi tiết mà số không đổi.
+- `lib/sxWorkshopSchedule.js`: thêm `SX_AUTO_DEADLINE_REASON` (bản sao từng ký tự của `AUTO_REASON`, `backend/src/helpers/sxInstallPlanKanbanDeadline.js:15`) và `laHanTheMayTinh(reason)`. Chỉ nhận đúng chuỗi đó là hạn máy tính — reason rỗng KHÔNG coi là máy tính, khác với `isAutoInstallPlanDeadlineReason` của backend, vì rỗng thì không biết chắc nên để nguyên nhãn cũ.
+- `ProductionDashboard.jsx` (trong `KanbanCard`, dòng 5562, đã sẵn prop `pipelineStages` để làm siblings): nhãn = `sxDeadlineGroupMeta(nhóm).shortLabel` → «Kế hoạch / Gia công / Hoàn thiện / Giao hàng»; tooltip ghi tên công đoạn đầy đủ + ngày lắp dùng để tính lùi + câu «KHÔNG phải hạn giao cả đơn». Hạn nhập tay giữ nguyên chữ «Deadline». Không đổi `getCrmDeadlineUrgencyFromIso`, màu, hay hành vi bấm-để-sửa.
+- Kiểm tra: `npx vite build` đạt (1m26s). Chưa mở trình duyệt. Hoàn tác: bỏ delta 2 file frontend và mục bàn giao này.
+- `ProductionDetail.jsx` (`WorkshopInfoPanel`): khối cảnh báo vàng khi mở sửa `production_finish_date` lúc `sxStageDeadlineGroup(currentStage)` nằm trước `finishing` trong `['planning','cabinet','finishing','packing']`. Phải tách ternary cũ thành `? … : null` + hai khối `&&` để chèn cảnh báo giữa ô nhập và khối hiển thị.
+- `donHanNhiemVuTheoMocLap.js` (mới): `soNgayGiua(aYmd,bYmd)` đếm ngày lịch, `doiNgay(raw, n)` dời mốc giữ nguyên giờ-phút, `donHanNhiemVuTheoMocLap({projectId, soNgay, dryRun})` gom theo hạn mới rồi update theo lô 100. Chỉ đụng việc CÒN MỞ và ĐÃ CÓ hạn (`tasks.status != 'done'` / `crm_tasks.status` không terminal); việc hạn NULL giữ NULL vì chúng chưa từng được lên lịch.
+- `projects.js`: gọi helper trong cùng nhánh `scheduleEditTouchesKanbanDeadline(b)`, ngay sau `syncSxCardDeadline`, dùng `resolveSxPlanInstallYmd(old)` vs `resolveSxPlanInstallYmd(data)` để ra độ lệch. Lệch 0 thì không làm gì. Lỗi được bắt riêng, không làm hỏng PUT.
+- Vì sao dời ĐỀU thay vì tính lại theo công đoạn: 6.173/6.173 nhiệm vụ mở của HCB có `production_stage_id` NULL nên không map được về nhóm hạn; dời đều giữ đúng khoảng cách xưởng đã sắp.
+- Kiểm tra: `node --check` 2 file backend; thử tay `soNgayGiua('2026-10-12','2026-10-15')=3`, `=-2` khi lùi, `=0` với đầu vào rác; `doiNgay` giữ giờ và qua được ranh giới tháng. `npx vite build` đạt (53s).
+- **Vá tồn đọng 09/10/2026.** Script quét (`_tmp_quet_ngay_lap_doi_viec_ket.js`) dựng tiêu chí: dự án còn sống + có việc mở có hạn + kế hoạch (`production_finish_date`, thiếu thì `resolveSxPlanInstallYmd`) >= hôm nay + còn việc quá hạn. Ra 20 dự án / 291 việc (Hucabi 19, Metalla 1), lệch trung bình 9 ngày.
+- Tách nhóm bằng tỷ lệ `quáHạn/tổng`: nhóm 1 = quáHạn === tổng VÀ lệch > 0 (15 dự án, 206 việc) — cả bộ lịch đứng yên; nhóm 2 = lệch ≤ 0 hoặc quá hạn một phần (5 dự án, 85 việc) — đơn chạy đúng kế hoạch, chỉ trễ việc đầu công đoạn, KHÔNG dồn.
+- `_tmp_va_don_han_nhom1.js --apply` tính lại tiêu chí tại chỗ (không hardcode mã), lưu rollback 206 dòng trước khi ghi, rồi gọi `donHanNhiemVuTheoMocLap` từng dự án với `soNgay` riêng (3→33). Kết quả 176 `tasks` + 30 `crm_tasks`. Rollback: `_rollback_don_han_nhom1_1791512123387.json`.
+- Quét lại: 20 → 6 dự án, 291 → 105 việc; 6 dự án còn lại lệch ≤ 1 đúng như kỳ vọng. TB-2026-784 sau khi dồn +26 vẫn còn 20/41 việc quá hạn — lịch nội bộ trải rộng hơn 26 ngày, dồn ĐỀU giữ nguyên khoảng cách nên việc đầu công đoạn vẫn ở quá khứ. Đúng thiết kế; muốn hết thì phải tính lại theo công đoạn, mà `production_stage_id` toàn NULL nên chưa làm được.
+
+---
+
+## 2026-10-08 — SQL 715: task_kind phân làn theo nhiệm vụ (đã áp lên qlycv)
+
+- Gốc: `database/594...sql:36-41` suy `task_kind` theo dự án (`p.production_person_id` / `p.vc_kanban_column_id` / `p.logistics_company_id`), không đọc gì của chính nhiệm vụ.
+- `715_unified_tasks_v_task_kind_theo_nhiem_vu.sql`: chèn `lower(t.metadata->>'workshop_area') = 'logistics' → 'VC'` và `= 'production' → 'SX'` lên trước, ở CẢ hai nhánh task (1a dòng chính và 1b dòng phụ). `diff` với 594 chỉ ra đúng 2 dòng/nhánh + chú thích; cột/kiểu/thứ tự/UNION y nguyên nên `CREATE OR REPLACE VIEW` chạy được không cần DROP. Kèm `715_..._rollback.sql` dựng lại nguyên văn thân 594.
+- Đo sức ảnh hưởng TRƯỚC khi áp (script Node chỉ-đọc, 22.631 dòng `tasks`): đổi làn 5.026 việc (3.881 còn mở) — SX→VC 4.821, Dự án→SX 138, VC→SX 54, Dự án→VC 13. Việc còn mở theo công ty: Hucabi 2.975, Metalla 373, Phúc Đạt 299, NextGo 234.
+- Áp bằng Supabase MCP `apply_migration` lên `kdxypztstbeovyedmvem` (qlycv). Kiểm chứng ngay trên view: HCB việc mở 6.191 SX + 0 VC → 3.216 SX + 2.975 VC (khớp dự đoán 2.975); 124 đơn ở cột `dashboard_kpi='shipped'` → 157 SX + 717 VC (khớp phân loại `isLogisticsWorkshopTask` phía Node); `unified_id` trùng (is_primary_lead) = 0; tổng dòng view 149.111.
+- Dữ liệu dẫn tới quyết định KHÔNG đóng hàng loạt: trong 874 việc mở của 124 đơn «đã giao», 717 là VC/LĐ — tiêu đề «Kiểm tra trước khi lấy hàng», «Hàng lên xe và vận chuyển», «Quy trình lắp đặt», «Nghiệm thu sau khi lắp» (mỗi loại 92). «ĐƠN HÀNG ĐÃ GIAO» ở pipeline xưởng = hàng rời xưởng, việc giao–lắp mới bắt đầu. Trong 157 việc SX còn lại có 20 việc công nợ/thu tiền cũng không nên đóng.
+- Phát hiện kèm theo: `isProductionTaskTerminalStage` (`workTasks.js:842-852`) không xét `dashboard_kpi='shipped'` và tên «ĐƠN HÀNG ĐÃ GIAO» không khớp mẫu chuỗi nào, nên trang không tự ẩn nhóm này. Chưa sửa — sửa sẽ ẩn luôn 717 việc VC/LĐ đang chờ làm thật.
+- CHƯA áp lên `QLCV_Backup` (`atcfpgxkgbszglrelfgr`, còn bản 594, 4.862 việc mở HCB). Failover đang tắt.
+- Hoàn tác: chạy `715_..._rollback.sql` trên qlycv.
+
+---
+
 ## 2026-10-08 — Bàn giao VC: giữ current_stage_id thay vì xoá trắng
 
 - Triệu chứng xưởng báo: chuyển sang VC/LĐ thì «không thấy đơn hoặc không xem được». Dò ra hai cơ chế khác nhau.

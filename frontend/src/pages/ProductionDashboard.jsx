@@ -42,7 +42,10 @@ import {
   CheckSquare, UserCheck, Loader2, Truck, Clock, Layers, Trash2, MessageSquare, Pin, Building2, ArrowRightLeft, Settings, ChevronDown, Eye, ChevronRight, Banknote,
 } from 'lucide-react';
 import { gopPipeline, coTheGopCot, gomCotTheoNhom, docSxGopCot, ghiSxGopCot } from '../lib/sxGopCot';
-import { sxInstallPlanForProject, sxStagePlanSlice, vnNowParts } from '../lib/sxWorkshopSchedule';
+import {
+  sxInstallPlanForProject, sxStagePlanSlice, vnNowParts,
+  sxStageDeadlineGroup, sxDeadlineGroupMeta, laHanTheMayTinh,
+} from '../lib/sxWorkshopSchedule';
 import { sxStagePrimaryOwnerName, sxGroupPrimaryOwnerName } from '../lib/sxStageStaff';
 import { tachCotTheoTab, demTheCot, nhanTabKanban, TAB_SX, TAB_CONG_NO } from '../lib/sxTachCongNo';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -5849,16 +5852,30 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
         const { level } = getCrmDeadlineUrgencyFromIso(item.sx_kanban_deadline_at, item.company_id || item.company);
         const tone = `${getCrmDeadlineUrgencyBadgeClass(level)} hover:opacity-90 cursor-pointer`;
         const urgent = level === 'overdue' || level === 'soon';
+        // Hạn này là hạn của CÔNG ĐOẠN cột đang đứng (tính lùi từ ngày lắp theo
+        // deadline_group), không phải hạn cả đơn — nên gọi đúng tên công đoạn.
+        // Ghi «Deadline» trống trơn khiến người dùng đọc nhầm là hạn giao hàng rồi
+        // thắc mắc vì sao sửa ngày hoàn thiện trong chi tiết mà số này không đổi.
+        const hanMayTinh = laHanTheMayTinh(item.sx_kanban_deadline_reason);
+        const nhomHan = hanMayTinh ? sxStageDeadlineGroup(sxStage, pipelineStages) : '';
+        const metaHan = nhomHan ? sxDeadlineGroupMeta(nhomHan) : null;
+        const nhan = metaHan ? metaHan.shortLabel : 'Deadline';
+        const mocLap = item.install_date || item.delivery_date || null;
+        const chuThich = metaHan
+          ? `Hạn công đoạn «${metaHan.label}»: ${formatDate(item.sx_kanban_deadline_at)}`
+            + (mocLap ? ` — tính lùi từ ngày lắp ${formatDate(mocLap)}` : '')
+            + `. Đây KHÔNG phải hạn giao cả đơn. Bấm để sửa.`
+          : `Deadline thẻ — bấm để sửa (${formatDate(item.sx_kanban_deadline_at)})`;
         return (
           <button
             type="button"
             data-sx-kanban-deadline-btn
             onClick={(ev) => { ev.stopPropagation(); onOpenDeadline(item); }}
             className={`inline-flex items-center gap-1 rounded-md border transition-opacity mb-1.5 ${urgent ? 'px-2 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[10px] font-semibold'} ${tone}`}
-            title={`Deadline thẻ — bấm để sửa (${formatDate(item.sx_kanban_deadline_at)})`}
+            title={chuThich}
           >
             <Clock className="h-3 w-3" strokeWidth={2.4} />
-            Deadline: {formatDate(item.sx_kanban_deadline_at)}
+            {nhan}: {formatDate(item.sx_kanban_deadline_at)}
           </button>
         );
       })()}

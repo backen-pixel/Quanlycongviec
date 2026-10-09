@@ -260,6 +260,17 @@ export function sxDeadlineGroupMeta(value) {
   return SX_DEADLINE_GROUPS.find((g) => g.value === key) || null;
 }
 
+/**
+ * Lý do hạn thẻ do máy tự tính lùi từ ngày lắp.
+ * Phải khớp từng ký tự với AUTO_REASON ở backend/src/helpers/sxInstallPlanKanbanDeadline.js:15 —
+ * đây là dấu hiệu duy nhất phân biệt hạn máy tính với hạn người nhập tay.
+ */
+export const SX_AUTO_DEADLINE_REASON = 'Tính từ ngày lắp (kế hoạch SX)';
+
+export function laHanTheMayTinh(reason) {
+  return String(reason || '').trim() === SX_AUTO_DEADLINE_REASON;
+}
+
 export function normalizeSxDeadlineGroup(value) {
   const key = String(value || '').trim();
   if (!key) return null;
