@@ -2306,3 +2306,14 @@ Tiếp phần kế toán. Hai lỗi đếm thiếu, cả hai đều âm thầm.
 Kiểm tra: `node --check` đạt, `npx vite build` đạt. Chưa thử qua giao diện bằng tài khoản kế toán thật. Hoàn tác: bỏ delta 2 file.
 
 **Còn lại từ review kế toán** (chưa làm, đều không mất dữ liệu): (b) `production_value` và giá trị deal là hai số độc lập — cần quyết định nghiệp vụ; (c) tiền cọc nhân ra 4 nơi; (h) `/ketoan/*` không bọc quyền ở frontend (backend vẫn chặn).
+
+---
+
+## 2026-10-09 — Lọc CRM: tìm tên không còn nuốt khoảng ngày tự chọn
+
+- Báo lỗi: trên board CRM, gõ tìm «web» đồng thời chọn khoảng ngày 08/10 → kết quả vẫn ra lead từ 15/6, 13/6, 18/5. Khung thời gian bị bỏ qua.
+- Truy ngược: RPC `crm_leads_page_ids` xử lý ĐÚNG cả hai — thử trực tiếp với công ty VPT: chỉ ngày = 28, chỉ tìm «web» = 107, tìm + ngày = **18** (đúng tập con). Lỗi không nằm ở backend.
+- Thủ phạm ở `CRMDashboard.jsx` `buildCrmKanbanServerFilterParams`: `if (search.length >= 2) { delete common.date_from; delete common.date_to; }` — cố ý, kèm chú thích tránh «thấy trong gợi ý nhưng board lọc theo tháng hiện tại → thẻ biến mất». Nhưng nó không phân biệt khung do PRESET sinh ra với khoảng người dùng TỰ CHỌN.
+- Hệ thống vốn phân biệt được: `timePreset === ''` (Tất cả, không ngày) · tên preset (ngày tự suy, `showCustomDate: false`) · `'custom'` (người dùng tự chọn, `showCustomDate: true`). Nay điều kiện thành `search.length >= 2 && timePreset !== 'custom'` — giữ nguyên ý đồ cũ cho preset, tôn trọng khoảng tự chọn.
+- Thêm `timePreset` vào chữ ký hàm và **đủ 13/13 lời gọi** (dùng script khớp ngoặc, vì file còn 5 chỗ `customDateTo:` ở object khác — thay hàng loạt sẽ hỏng). Kiểm lại bằng script đếm: 13 lời gọi, 0 chỗ thiếu.
+- `npx vite build` đạt. Chưa thử trên trình duyệt. Hoàn tác: bỏ delta 1 file.
