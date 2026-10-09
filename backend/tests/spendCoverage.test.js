@@ -35,6 +35,32 @@ test('complete VND account and ad rows produce integer spend', () => {
   assert.deepEqual(result.reasons, []);
 });
 
+test('account reconciliation marks MATCH and only in-window mismatch partial', () => {
+  const matched = sync();
+  matched.ket_qua_cuoi.reconciliation = { status: 'MATCH', mismatched_days: [] };
+  assert.equal(evaluate({ sync: matched }).reconciliation, 'ACCOUNT_LEVEL_MATCHED');
+  const mismatched = sync();
+  mismatched.ket_qua_cuoi.reconciliation = { status: 'MISMATCH', mismatched_days: [
+    { day: '2026-10-05', ad_level_vnd: 250000, account_level_vnd: 250001 }] };
+  const inside = evaluate({ sync: mismatched });
+  assert.equal(inside.status, 'PARTIAL');
+  assert.equal(inside.spendVnd, 250000);
+  assert.ok(inside.reasons.includes('ACCOUNT_TOTAL_MISMATCH'));
+  const outside = evaluate({ sync: mismatched, to: '2026-10-04', rows: [] });
+  assert.equal(outside.status, 'COMPLETE');
+  assert.ok(!outside.reasons.includes('ACCOUNT_TOTAL_MISMATCH'));
+  const future = sync();
+  future.ket_qua_cuoi.reconciliation = { status: 'MISMATCH', mismatched_days: [
+    { day: '2026-10-07', ad_level_vnd: 0, account_level_vnd: 1 }] };
+  assert.equal(evaluate({ sync: future, to: '2026-10-07' }).status, 'COMPLETE');
+  const zeroMismatch = evaluate({ sync: mismatched, rows: [] });
+  assert.equal(zeroMismatch.status, 'PARTIAL');
+  assert.equal(zeroMismatch.spendVnd, 0);
+  mismatched.ket_qua_cuoi.reconciliation.status = 'UNAVAILABLE';
+  assert.equal(evaluate({ sync: mismatched }).status, 'COMPLETE');
+  assert.equal(evaluate({ sync: mismatched }).reconciliation, 'AD_LEVEL_ONLY');
+});
+
 test('freshness applies to current day but not an ended period', () => {
   const old = sync(); old.lan_dong_bo_cuoi = '2026-10-05T21:59:59Z';
   assert.equal(evaluate({ sync: old }).status, 'STALE');

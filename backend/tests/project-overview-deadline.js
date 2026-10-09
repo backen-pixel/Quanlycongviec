@@ -152,15 +152,18 @@ const movedInstall = {
   company_id: '18c2563f-3495-498d-8199-23200c9f420e',
   install_date: '2026-10-10T14:00:00+07:00',
 };
+// Han THE nay = NGAY LAP, khong con lui ve moc cong doan. Cac moc cong doan
+// (sxInstallPlanDeadlineIso / earliestSxPlanDeadline o tren) van giu nguyen vi
+// chung phuc vu nhom viec va panel ke hoach, khong phai han the.
 const cabinetCard = computeSxInstallPlanDeadline(movedInstall, {
   deadline_group: 'cabinet',
   group_key: 'gia_cong',
 });
-assert.equal(cabinetCard.endYmd, '2026-10-06');
-assert.equal(cabinetCard.iso, '2026-10-06T17:30:00.000+07:00');
-const morning = new Date('2026-10-06T09:10:00+07:00').getTime();
-const afterWork = new Date('2026-10-06T17:31:00+07:00').getTime();
-const dueMs = companyWorkEndMsFromRaw('2026-10-06T00:00:00.000Z', movedInstall.company_id);
+assert.equal(cabinetCard.endYmd, '2026-10-10');
+assert.equal(cabinetCard.iso, '2026-10-10T17:30:00.000+07:00');
+const morning = new Date('2026-10-10T09:10:00+07:00').getTime();
+const afterWork = new Date('2026-10-10T17:31:00+07:00').getTime();
+const dueMs = companyWorkEndMsFromRaw('2026-10-10T00:00:00.000Z', movedInstall.company_id);
 assert.ok(dueMs > morning);
 assert.ok(dueMs < afterWork);
 

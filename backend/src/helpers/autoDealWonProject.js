@@ -1207,6 +1207,14 @@ async function runAutoCreateProjectFromWonDeal({
     }),
   ]);
 
+  // Hạn thẻ SX cho dự án VỪA TẠO — xem ghi chú cùng nội dung ở createWorkshopIntake.
+  try {
+    const { syncSxCardDeadline } = require('./sxCardPlanDeadline');
+    await syncSxCardDeadline(projectId);
+  } catch (dlErr) {
+    console.warn('[auto-project] hạn thẻ SX:', dlErr.message);
+  }
+
   // Assignment vừa copy từ mẫu luồng — gán công ty thật của từng module
   try {
     const { syncProjectModuleAssignments } = require('./syncProjectModuleAssignments');

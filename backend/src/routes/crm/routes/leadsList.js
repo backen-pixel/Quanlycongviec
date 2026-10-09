@@ -346,6 +346,15 @@ r.get('/leads/search-suggest', async (req, res) => {
     if (custMatchIds.length) {
       orParts.push(`customer_id.in.(${custMatchIds.join(',')})`);
     }
+    const { data: projectNameRows } = await supabase
+      .from('projects')
+      .select('id')
+      .or(`name.ilike.%${safe}%,code.ilike.%${safe}%`)
+      .limit(40);
+    const projectNameIds = (projectNameRows || []).map((r) => r.id).filter(Boolean);
+    if (projectNameIds.length) {
+      orParts.push(`project_id.in.(${projectNameIds.join(',')})`);
+    }
     query = query.or(orParts.join(','));
 
     const { data, error } = await query;

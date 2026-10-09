@@ -6,11 +6,12 @@ const { trial, touch, A, B } = require('./p1QualificationQueue.route.test');
 const source = fs.readFileSync(path.join(__dirname, '../src/routes/p1Qualification.js'), 'utf8');
 function harness({ enabled = true, role = 'admin', company = A, tenant = [A, B],
   trials = [trial], touches = [], events = [], leads = [], scopes = [], accounts = [],
-  spend = [], stages = [], snapshots = [], fail = null } = {}) {
+  spend = [], catalog = [], stages = [], snapshots = [], fail = null } = {}) {
   const layers = [], calls = [];
   const tables = { p1_trials: trials, lead_attribution: touches,
     p1_qualification_events: events, crm_leads: leads, p1_trial_scopes: scopes,
-    fb_ad_accounts: accounts, fb_ad_spend_daily: spend, crm_lead_stage_history: stages,
+    fb_ad_accounts: accounts, fb_ad_spend_daily: spend, fb_ad_catalog: catalog,
+    crm_lead_stage_history: stages,
     p1_trial_snapshots: snapshots };
   const db = { from(name) {
     calls.push(name);
@@ -116,11 +117,39 @@ test('complete spend gives exact integer ceiling and no verdict', async () => {
   assert.equal(body.milestone.reached, 0);
   assert.equal(body.milestone.cost_to_date.status, 'NO_QUALIFIED_LEADS');
   assert.equal(body.milestone.definition.human_only, true);
+  assert.equal(body.scope_check.status, 'NONE_IN_SCOPE');
+  assert.equal(body.scope_check.not_in_connected_accounts, 3);
+  assert.equal(body.milestone.cost_to_date.reliability, 'LOW_UNCONNECTED_ADS');
+  assert.ok(body.caveats.includes('LEADS_FROM_UNCONNECTED_ADS'));
   assert.ok(body.caveats.includes('MILESTONE_IS_STAGE_PROXY'));
   assert.ok(body.caveats.includes('SPEND_AD_LEVEL_ONLY'));
   assert.doesNotMatch(JSON.stringify(body), /target_met|passed|changed_by|phone|email|Synthetic/);
   const exact = await harness({ ...base, spend: [spend('acct', 999999)] }).send('/summary', q);
   assert.equal(exact.body.cost_per_qualified_lead.vnd_ceil, 333333);
+});
+
+test('summary caveats reflect every account reconciliation and mismatches', async () => {
+  const withStatus = (id, status, mismatched_days = []) => {
+    const value = account(id);
+    value.ket_qua_cuoi.reconciliation = { status, mismatched_days };
+    return value;
+  };
+  const matched = (await harness({ ...base,
+    accounts: [withStatus('acct', 'MATCH')] }).send('/summary', q)).body;
+  assert.equal(matched.spend.reconciliation, 'ACCOUNT_LEVEL_MATCHED');
+  assert.ok(!matched.caveats.includes('SPEND_AD_LEVEL_ONLY'));
+  assert.equal(matched.verdict, 'NOT_EVALUATED');
+  const mixed = (await harness({ ...base, scopes: [scope('acct'), scope('second')],
+    accounts: [withStatus('acct', 'MATCH'), account('second')],
+    spend: [spend('acct', 1000001), spend('second', 1)] }).send('/summary', q)).body;
+  assert.ok(mixed.caveats.includes('SPEND_AD_LEVEL_ONLY'));
+  assert.equal(mixed.spend.reconciliation, undefined);
+  const mismatch = (await harness({ ...base,
+    accounts: [withStatus('acct', 'MISMATCH', [{ day: t.start_date,
+      ad_level_vnd: 1000001, account_level_vnd: 1000002 }])] }).send('/summary', q)).body;
+  assert.ok(mismatch.caveats.includes('SPEND_AD_LEVEL_ONLY'));
+  assert.ok(mismatch.caveats.includes('SPEND_ACCOUNT_TOTAL_MISMATCH'));
+  assert.equal(mismatch.spend.status, 'PARTIAL');
 });
 
 test('summary counts human stage milestones and returns no private fields', async () => {
@@ -142,6 +171,43 @@ test('summary counts human stage milestones and returns no private fields', asyn
   const failed = await harness({ ...base, stages, fail: 'crm_lead_stage_history' }).send('/summary', q);
   assert.equal(failed.statusCode, 503);
   assert.equal(failed.body.reason_code, 'SOURCE_UNAVAILABLE');
+});
+
+test('summary keeps both milestone costs and verifies catalog membership', async () => {
+  const rows = touches(3).map((row, i) => ({ ...row, fb_ad_id: i === 0 ? 'ad-acct' : 'catalog',
+    fb_ad_title: 'Quảng cáo mẫu' }));
+  const stages = [0, 1, 2].map(i => ({ lead_id: `lead-${i}`, to_canonical_slug: 'hot',
+    changed_by: 'staff', entered_at: '2020-01-01T02:00:00Z' }));
+  const result = await harness({ ...base, touches: rows, stages,
+    catalog: [{ ad_id: 'catalog', ad_account_id: 'acct' }] }).send('/summary', q);
+  assert.equal(result.statusCode, 200);
+  assert.equal(result.body.scope_check.status, 'VERIFIED');
+  assert.equal(result.body.scope_check.in_scope, 3);
+  assert.equal(result.body.milestone.reached_in_scope, 3);
+  assert.equal(result.body.milestone.cost_in_scope_to_date.vnd_ceil, 333334);
+  assert.equal(result.body.milestone.cost_in_scope_mature.vnd_ceil, 333334);
+  assert.equal(result.body.milestone.cost_to_date.reliability, 'OK');
+  assert.ok(!result.body.caveats.includes('AD_ACCOUNT_SCOPE_UNVERIFIED'));
+  assert.equal(result.body.verdict, 'NOT_EVALUATED');
+  const partial = (await harness({ ...base, touches: rows, stages }).send('/summary', q)).body;
+  assert.equal(partial.scope_check.status, 'PARTIAL');
+  assert.equal(partial.milestone.reached_in_scope, 1);
+  assert.equal(partial.milestone.cost_to_date.vnd_ceil, 333334);
+  assert.equal(partial.milestone.cost_in_scope_to_date.vnd_ceil, 1000001);
+  assert.equal(partial.milestone.cost_to_date.reliability, 'LOW_UNCONNECTED_ADS');
+  assert.equal(partial.scope_check.unverified_ads[0].title, 'Quảng cáo mẫu');
+  assert.equal((await harness({ ...base, touches: rows, fail: 'fb_ad_catalog' })
+    .send('/summary', q)).statusCode, 503);
+});
+
+test('snapshots expose scope counts and retain null for old summaries', async () => {
+  const snapshots = [{ trial_id: t.id, company_id: A, taken_at: '2020-01-04',
+    summary: { scope_check: { in_scope: 2, not_in_connected_accounts: 1 } } },
+  { trial_id: t.id, company_id: A, taken_at: '2020-01-03', summary: {} }];
+  const result = await harness({ ...base, snapshots }).send('/snapshots', q);
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(result.body.snapshots.map(row => [row.scope_in_scope, row.scope_not_connected]),
+    [[2, 1], [null, null]]);
 });
 
 test('new trial has no mature spending window', async () => {

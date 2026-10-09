@@ -42,7 +42,9 @@ import {
   CheckSquare, UserCheck, Loader2, Truck, Clock, Layers, Trash2, MessageSquare, Pin, Building2, ArrowRightLeft, Settings, ChevronDown, Eye, ChevronRight, Banknote,
 } from 'lucide-react';
 import { gopPipeline, coTheGopCot, gomCotTheoNhom, docSxGopCot, ghiSxGopCot } from '../lib/sxGopCot';
-import { sxInstallPlanForProject, sxStagePlanSlice, vnNowParts } from '../lib/sxWorkshopSchedule';
+import {
+  sxInstallPlanForProject, sxStagePlanSlice, vnNowParts, laHanTheMayTinh,
+} from '../lib/sxWorkshopSchedule';
 import { sxStagePrimaryOwnerName, sxGroupPrimaryOwnerName } from '../lib/sxStageStaff';
 import { tachCotTheoTab, demTheCot, nhanTabKanban, TAB_SX, TAB_CONG_NO } from '../lib/sxTachCongNo';
 import { useVirtualizer } from '@tanstack/react-virtual';
@@ -76,6 +78,7 @@ import {
   getSxPipelineStageSlaTone,
   resolveSxDisplayColumnId,
   projectLockedOnSxKanban,
+  isSxPipelineStageNoDeadline,
   shouldIgnoreSxOrderDeliveryOverdue,
   getSxOrderDeliveryDateUrgency,
   sxColumnStageKpiKey,
@@ -5593,16 +5596,31 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   const assignee = item.production_person || primaryStaff || item.assignee;
   const deals = Array.isArray(item.crm_deals) ? item.crm_deals : [];
   const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
-  const cardTitle = (primaryDeal?.title || '').trim() || item.name || '';
+  const cardTitle = String(item.name || '').trim() || (primaryDeal?.title || '').trim() || '';
   const crmAssignee = primaryDeal?.assignee || primaryDeal?.lead_owner || item.sales_person || null;
   const leadCreatedAt = primaryDeal?.created_at || item.created_at || null;
   const columnEnteredAt = item.sx_pipeline_stage_entered_at || item.stage_entered_at || item.updated_at || item.created_at || null;
   const sxStage = stage || item.sx_pipeline_stage;
   const hideColumnDeadline = false;
+  // Cổng TẮT của chính sách hạn (moduleDeadlinePolicy: resolveProductionDeadline bỏ
+  // hạn khi cột tích «Tắt hạn»/«Bàn giao VC», hoặc deal đã ở cột Hoàn thành CRM).
+  // Thẻ vốn đọc thẳng `sx_kanban_deadline_at` nên hạn sót lại ở những cột đó vẫn hiện,
+  // trong khi chính sách coi là không còn hạn. Hiện 0 thẻ rơi vào trạng thái này
+  // (syncSxCardDeadline xoá sạch) — đây là chốt chặn cho sau này.
+  //
+  // Chỉ chặn HẠN THẺ, cố ý KHÔNG dùng `hideColumnDeadline` (cờ đó còn tắt cả tone SLA
+  // cột: 243 thẻ đang dùng, nằm ngoài phạm vi việc này).
+  //
+  // Cũng cố ý KHÔNG dùng trọn resolver: chuỗi lùi của nó
+  // (production_finish_date → production_deadline → delivery_date → deadline) sẽ gắn
+  // hạn cho 50 thẻ đang trống bằng NGÀY HOÀN THIỆN, trong khi quy tắc hiện hành là
+  // hạn thẻ = NGÀY LẮP ĐẶT. Nửa bảng một kiểu còn tệ hơn hiện trạng.
+  const chinhSachTatHan = isSxPipelineStageNoDeadline(sxStage)
+    || !!item.crm_completed_deadlines_off;
   const columnSlaTone = hideColumnDeadline
     ? null
     : getSxPipelineStageSlaTone(item.sx_pipeline_stage_entered_at, sxStage, item.company_id || item.company);
-  const manualDlUrgency = !hideColumnDeadline && item.sx_kanban_deadline_at
+  const manualDlUrgency = !hideColumnDeadline && !chinhSachTatHan && item.sx_kanban_deadline_at
     ? getCrmDeadlineUrgencyFromIso(item.sx_kanban_deadline_at, item.company_id || item.company)
     : null;
   const manualDlLevel = manualDlUrgency && manualDlUrgency.level !== 'ok' ? manualDlUrgency.level : null;
@@ -5845,20 +5863,28 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
       })()}
 
       {/* Deadline thẻ (sx_kanban_deadline_at) — bấm để sửa */}
-      {!hideColumnDeadline && typeof onOpenDeadline === 'function' && item.sx_kanban_deadline_at && (() => {
+      {!hideColumnDeadline && !chinhSachTatHan && typeof onOpenDeadline === 'function' && item.sx_kanban_deadline_at && (() => {
         const { level } = getCrmDeadlineUrgencyFromIso(item.sx_kanban_deadline_at, item.company_id || item.company);
         const tone = `${getCrmDeadlineUrgencyBadgeClass(level)} hover:opacity-90 cursor-pointer`;
         const urgent = level === 'overdue' || level === 'soon';
+        // Hạn thẻ SX = NGÀY LẮP ĐẶT (xem computeSxInstallPlanDeadline). Các mốc công
+        // đoạn không còn được dùng làm hạn thẻ, nên nhãn quay lại gọi thẳng là «Deadline»
+        // — gọi theo tên công đoạn lúc này sẽ sai.
+        const hanMayTinh = laHanTheMayTinh(item.sx_kanban_deadline_reason);
+        const nhan = 'Deadline';
+        const chuThich = hanMayTinh
+          ? `Hạn thẻ = ngày lắp đặt (${formatDate(item.sx_kanban_deadline_at)}). Bấm để sửa.`
+          : `Deadline thẻ — bấm để sửa (${formatDate(item.sx_kanban_deadline_at)})`;
         return (
           <button
             type="button"
             data-sx-kanban-deadline-btn
             onClick={(ev) => { ev.stopPropagation(); onOpenDeadline(item); }}
             className={`inline-flex items-center gap-1 rounded-md border transition-opacity mb-1.5 ${urgent ? 'px-2 py-1 text-[11px]' : 'px-1.5 py-0.5 text-[10px] font-semibold'} ${tone}`}
-            title={`Deadline thẻ — bấm để sửa (${formatDate(item.sx_kanban_deadline_at)})`}
+            title={chuThich}
           >
             <Clock className="h-3 w-3" strokeWidth={2.4} />
-            Deadline: {formatDate(item.sx_kanban_deadline_at)}
+            {nhan}: {formatDate(item.sx_kanban_deadline_at)}
           </button>
         );
       })()}
@@ -6143,7 +6169,7 @@ const SxTheGon = memo(function SxTheGon({ item, stage, soXong, tongViec, isSelec
   const navigate = useNavigate();
   const deals = Array.isArray(item.crm_deals) ? item.crm_deals : [];
   const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
-  const ten = (primaryDeal?.title || '').trim() || item.name || item.code || '—';
+  const ten = String(item.name || '').trim() || (primaryDeal?.title || '').trim() || item.code || '—';
   const moi = !!item.sx_intake;
   const giao = item.delivery_date
     ? getSxOrderDeliveryDateUrgency(item.delivery_date, stage || item.sx_pipeline_stage, item.company_id)
@@ -6418,7 +6444,7 @@ function SxMaTranSongSong({
             const pct = cotNho.length ? Math.round((soXong / cotNho.length) * 100) : 0;
             const dealsHang = Array.isArray(item.crm_deals) ? item.crm_deals : [];
             const dealHang = dealsHang.find((d) => String(d?.type || '') === 'deal') || dealsHang[0] || null;
-            const tenDA = String((dealHang?.title || '').trim() || item.name || '').trim();
+            const tenDA = String(item.name || '').trim() || String((dealHang?.title || '').trim() || '').trim();
             const planHang = sxInstallPlanForProject(item);
             return (
               <Fragment key={item.id}>

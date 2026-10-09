@@ -697,6 +697,26 @@ const SX_STAGE_SLUG_STATUS = {
 };
 
 /**
+ * Workflow stage ứng với lúc bàn giao VC (`status = 'shipping'`).
+ *
+ * Trước đây bàn giao ghi `current_stage_id = null`. Nhưng mọi màn lọc theo giai đoạn
+ * chạy `.eq('current_stage.slug', stage_slug)` (production.js) — NULL không khớp slug nào
+ * nên đơn vừa bàn giao biến mất khỏi danh sách mà không báo lỗi. Giữ đúng stage tương ứng
+ * để đơn còn tra ra được; `SX_STAGE_SLUG_STATUS` cho biết 'delivery' ↔ 'shipping'.
+ */
+async function resolveVcHandoverWorkflowStageId() {
+  try {
+    const { bySlug } = await getWorkshopStageMap();
+    for (const slug of ['delivery', 'shipping', 'installation', 'installing']) {
+      if (bySlug?.[slug]?.id) return bySlug[slug].id;
+    }
+  } catch (e) {
+    console.warn('[workshopKanban] resolveVcHandoverWorkflowStageId:', e.message);
+  }
+  return null;
+}
+
+/**
  * `status` = shipping/warranty có thể do chính cột SX đang gắn sinh ra, không phải vì đã bàn giao VC.
  * Khi đó không được ép thẻ về cột «Bàn giao VC» — thẻ sẽ nhảy khỏi cột vừa kéo.
  */
@@ -1916,6 +1936,7 @@ module.exports = {
   resolveSxHandoverColumnId,
   shouldForceSxHandoverColumn,
   SX_STAGE_SLUG_STATUS,
+  resolveVcHandoverWorkflowStageId,
   sxStatusComesFromColumn,
   enrichProjectsForSx,
   buildPipelineSummary,

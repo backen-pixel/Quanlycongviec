@@ -1012,28 +1012,8 @@ r.put('/leads/:id', async (req, res) => {
       console.warn('[crm-seq-asn] reassign on lead owner change:', reErr.message);
     }
 
-    // Đồng bộ tên dự án SX/VC — card Kanban dùng projects.name, chi tiết deal dùng crm_leads.title
-    try {
-      const nextTitle = typeof safeBody.title === 'string' ? safeBody.title.trim() : '';
-      const projectId = data?.project_id || oldLead?.project_id;
-      if (
-        nextTitle
-        && projectId
-        && Object.prototype.hasOwnProperty.call(safeBody, 'title')
-        && String(oldLead?.title || '') !== nextTitle
-      ) {
-        const { error: projNameErr } = await supabase
-          .from('projects')
-          .update({ name: nextTitle, updated_at: new Date().toISOString() })
-          .eq('id', projectId);
-        if (projNameErr) console.warn('[crm PUT /leads/:id] sync project.name:', projNameErr.message);
-        else {
-          try { await rcInvalidateTags(['production']); } catch (_) {}
-        }
-      }
-    } catch (syncNameErr) {
-      console.warn('[crm PUT /leads/:id] sync project.name:', syncNameErr.message);
-    }
+    // Tên deal (crm_leads.title) và tên dự án (projects.name) độc lập.
+    // Sửa một bên không ghi đè bên kia. Tìm kiếm khớp cả hai tên.
 
     emitCrmDashboardChanged(req, {
       type: data?.type || oldLead?.type,

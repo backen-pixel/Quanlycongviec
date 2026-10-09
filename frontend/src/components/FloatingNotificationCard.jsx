@@ -183,7 +183,7 @@ export default function FloatingNotificationCard({
               {subtitleLine}
             </p>
           )}
-          <p className="mt-1 line-clamp-2 text-[12px] leading-snug text-gray-600 break-words">
+          <p className="mt-1 line-clamp-4 text-[12px] leading-snug text-gray-600 break-words">
             {previewLine}
           </p>
         </div>

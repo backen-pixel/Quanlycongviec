@@ -54,3 +54,18 @@ test('automatic milestone helpers format safely without a pass label', async () 
   assert.doesNotMatch(q.milestoneCostLabel(cost) + q.milestoneTargetMultiple(cost, 250000), /Đạt/);
   assert.match(component, /Đo tự động theo bước/);
 });
+
+test('scope helpers warn clearly and format only ad metadata', async () => {
+  const q = await import(`file:///${lib.replace(/\\/g, '/')}`);
+  const scope = { status: 'PARTIAL', candidates: 22, not_in_connected_accounts: 21 };
+  assert.equal(q.scopeStatusLabel('PARTIAL'), 'Một phần quảng cáo ngoài phạm vi');
+  assert.match(q.scopeWarning(scope), /21\/22 khách/);
+  assert.match(q.scopeWarning(scope), /CHƯA ĐỦ TIN CẬY/);
+  assert.doesNotMatch(q.scopeWarning(scope), /Đạt/);
+  assert.equal(q.scopeWarning({ status: 'VERIFIED' }), null);
+  assert.match(q.scopeWarning(undefined), /CHƯA ĐỦ TIN CẬY/);
+  assert.equal(q.scopeAdLabel({ ad_id: 'ad-1', title: 'Bài viết', leads: 3 }),
+    'Bài viết · ad-1 · 3 khách');
+  assert.equal(q.milestoneReliabilityLabel('LOW_UNCONNECTED_ADS'), 'chưa đủ tin cậy');
+  assert.match(component, /scope_check\.unverified_ads\.slice\(0, 10\)/);
+});

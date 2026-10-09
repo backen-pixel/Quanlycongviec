@@ -368,13 +368,53 @@ async function fetchActiveWorkshopTemplatesForArea(workshopArea, companyId, opts
 }
 
 /**
+ * NV phụ trách của một cột SX (cột nhỏ) — setup tại /sx/pipeline-settings.
+ * Cột nào có người chịu trách nhiệm thì nhiệm vụ sinh ra ở cột đó về tay người ấy.
+ */
+async function nguoiPhuTrachCotSx(productionStageId) {
+  if (!productionStageId) return null;
+  const { data, error } = await supabase
+    .from('production_pipeline_stage_default_staff')
+    .select('user_id')
+    .eq('production_pipeline_stage_id', productionStageId)
+    .eq('is_primary', true)
+    .order('order_index', { ascending: true })
+    .limit(1);
+  if (error) {
+    console.warn('[workshop-template] phụ trách cột SX:', error.message);
+    return null;
+  }
+  const uid = (data || [])[0]?.user_id;
+  return uid ? String(uid) : null;
+}
+
+/** Bộ mẫu chưa gắn cột nào thì lùi về «Phụ trách SX ★» của phân loại xưởng. */
+async function nguoiPhuTrachPhanLoaiXuong(companyId, workshopTypeId) {
+  if (!companyId || !workshopTypeId) return null;
+  const { data, error } = await supabase
+    .from('production_workshop_type_default_staff')
+    .select('user_id')
+    .eq('production_company_id', companyId)
+    .eq('workshop_type_id', workshopTypeId)
+    .eq('is_primary', true)
+    .order('order_index', { ascending: true })
+    .limit(1);
+  if (error) {
+    console.warn('[workshop-template] phụ trách phân loại xưởng:', error.message);
+    return null;
+  }
+  const uid = (data || [])[0]?.user_id;
+  return uid ? String(uid) : null;
+}
+
+/**
  * Áp một bộ mẫu xưởng → tạo tasks dự án (batch insert; checklist sau khi có id).
  */
 async function applyWorkshopTemplateToProject(projectId, templateId, userId, opts = {}) {
   let { data: project } = await supabase
     .from('projects')
     .select(`
-      id, company_id, logistics_company_id, status,
+      id, company_id, logistics_company_id, status, workshop_type_id,
       sx_kanban_deadline_at, production_finish_date, production_deadline,
       delivery_date, deadline, install_date, sx_kanban_column_id, vc_kanban_column_id
     `)
@@ -503,6 +543,17 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId, opt
     }
   }
 
+  // Mẫu không chỉ định người → lấy phụ trách cột SX (setup ở Pipeline xưởng),
+  // cột chưa gán thì lấy phụ trách chính của phân loại. Trước đây để trống hẳn,
+  // nên nhiệm vụ sinh ra không có ai nhận (HCB: 16.980/17.046 task chưa giao).
+  let phuTrachMacDinh = null;
+  if (tpl.workshop_area === 'production') {
+    phuTrachMacDinh = await nguoiPhuTrachCotSx(pipelineStageIdForTask);
+    if (!phuTrachMacDinh) {
+      phuTrachMacDinh = await nguoiPhuTrachPhanLoaiXuong(project.company_id, project.workshop_type_id);
+    }
+  }
+
   const taskRows = [];
   for (const s of staged) {
     maxOrderByStage[s.stageId] = (maxOrderByStage[s.stageId] ?? 0) + 1;
@@ -518,7 +569,7 @@ async function applyWorkshopTemplateToProject(projectId, templateId, userId, opt
       created_by_id: userId,
       due_date: s.dueDate,
       order_index: s.item.order_index ?? maxOrderByStage[s.stageId],
-      assignee_id: s.item.default_assignee_id || null,
+      assignee_id: s.item.default_assignee_id || phuTrachMacDinh || null,
       metadata: {
         workshop_template_id: templateId,
         workshop_template_item_id: s.item.id,

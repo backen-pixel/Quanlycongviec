@@ -69,6 +69,7 @@ const {
   isAccountingUser,
   getAccountingCompanyId,
   crmDealBelongsToAccountingCompany,
+  warmAccountingCompanyNames,
 } = require('../../../helpers/accountingScope');
 const { DEFAULT_CHECKLISTS } = require('../../../helpers/defaultChecklists');
 const { generateFlowTasks, generateStepTasks } = require('../../../helpers/generateFlowTasks');
@@ -391,7 +392,7 @@ async function enforceCommercialDocCompanyOnWrite(req, res, payloadCompanyId, en
           .maybeSingle();
         if (leadErr) {
           console.warn('[commercial-write] accounting lead check:', leadErr.message);
-        } else if (lead && crmDealBelongsToAccountingCompany(lead, ac)) {
+        } else if (lead && (await warmAccountingCompanyNames(), crmDealBelongsToAccountingCompany(lead, ac))) {
           return { ok: true, companyId: payloadCompanyId };
         }
       }
@@ -5206,6 +5207,29 @@ function crmListUsesLegacyFilters(mergedQuery) {
 
 /** GET /crm/stage-counts — đếm tất cả cột trong 1 request (RPC GROUP BY stage_id). */
 
+/** Deal có tên/mã dự án SX khớp — tìm CRM bằng tên xưởng dù tiêu đề deal khác. */
+async function leadsMatchingLinkedProjectName(search, type) {
+  const safe = String(search || '').trim().replace(/[(),]/g, ' ');
+  if (safe.length < 2) return [];
+  const { data: projects, error } = await supabase
+    .from('projects')
+    .select('id')
+    .or(`name.ilike.%${safe}%,code.ilike.%${safe}%`)
+    .limit(40);
+  if (error || !projects?.length) return [];
+  const projectIds = projects.map((row) => row.id).filter(Boolean);
+  if (!projectIds.length) return [];
+  let q = supabase
+    .from('crm_leads')
+    .select('id, stage_id')
+    .in('project_id', projectIds)
+    .limit(40);
+  if (type === 'lead' || type === 'deal') q = q.eq('type', type);
+  const { data: leads, error: leadErr } = await q;
+  if (leadErr) return [];
+  return leads || [];
+}
+
 /** Gom trang lead/deal qua RPC + hydrate — dùng chung /crm/leads và bootstrap. */
 async function fetchCrmLeadsPageViaRpc(req, mergedQuery, type, parsedOffset, parsedLimit, opts = {}) {
   const forcedDealSelf = type === 'deal' && req.user?.userId && !userSeesAllCrmDealsForScope(req.user);
@@ -5242,6 +5266,17 @@ async function fetchCrmLeadsPageViaRpc(req, mergedQuery, type, parsedOffset, par
   const { rpcData, rpcError } = await invokeCrmLeadsPageIdsRpc(rpcParams);
   const parsedRpc = !rpcError ? parseCrmLeadsPageRpc(rpcData) : null;
   if (!parsedRpc) return null;
+  if (search) {
+    const extra = await leadsMatchingLinkedProjectName(search, type);
+    if (extra.length) {
+      const seen = new Set(parsedRpc.ids);
+      const add = extra.map((row) => String(row.id)).filter((id) => id && !seen.has(id));
+      if (add.length) {
+        parsedRpc.ids = [...add, ...parsedRpc.ids].slice(0, parsedLimit);
+        parsedRpc.total += add.length;
+      }
+    }
+  }
   const lite = resolveCrmLeadsKanbanLite(mergedQuery, opts);
   const skipDeadline = resolveCrmLeadsSkipDeadline(mergedQuery, opts);
   return hydrateCrmLeadsRpcPage(parsedRpc, req, parsedOffset, parsedLimit, { lite, skipDeadline });
@@ -5283,6 +5318,19 @@ async function fetchCrmKanbanStagePageIdsViaRpc(req, mergedQuery, type, requests
   const payload = Array.isArray(data) && data.length === 1 ? data[0] : data;
   if (!payload || typeof payload !== 'object' || !payload.pages || typeof payload.pages !== 'object') {
     return null;
+  }
+  const search = String(mergedQuery.search || '').trim();
+  if (search) {
+    const extra = await leadsMatchingLinkedProjectName(search, type);
+    for (const row of extra) {
+      const stageKey = String(row.stage_id || '');
+      const page = stageKey ? payload.pages[stageKey] : null;
+      if (!page || !Array.isArray(page.ids)) continue;
+      const id = String(row.id);
+      if (page.ids.some((existing) => String(existing) === id)) continue;
+      page.ids = [id, ...page.ids];
+      page.total = Number(page.total || 0) + 1;
+    }
   }
   return payload.pages;
 }
@@ -5851,7 +5899,7 @@ async function userMayAccessQuotationRow(req, row) {
         .maybeSingle();
       if (leadErr) {
         console.warn('[quotation-access] accounting lead check:', leadErr.message);
-      } else if (lead && crmDealBelongsToAccountingCompany(lead, ac)) {
+      } else if (lead && (await warmAccountingCompanyNames(), crmDealBelongsToAccountingCompany(lead, ac))) {
         return true;
       }
     }

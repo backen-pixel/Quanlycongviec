@@ -463,6 +463,20 @@ async function clearAllProjectDeadlinesOnInstallationDone({
 
   let leadCount = 0;
   for (const part of chunk(leads)) {
+    // Chụp hạn cũ TRƯỚC khi xoá để còn bật lại được. Không ghi lại thì giá trị
+    // mất hẳn — đo ngày 09/10/2026: 842/860 deal đang tắt hạn không có dòng lịch
+    // sử nào, chính vì ba đường xoá hạn đều từng ghi đè thẳng mà không lưu.
+    let truoc = [];
+    try {
+      const { data: rows } = await supabase
+        .from('crm_leads')
+        .select('id, stage_id, kanban_deadline_at')
+        .in('id', part)
+        .not('kanban_deadline_at', 'is', null);
+      truoc = rows || [];
+    } catch (snapErr) {
+      console.warn('[completeOpenWork] chụp hạn CRM cũ:', snapErr.message);
+    }
     const patch = {
       kanban_deadline_at: null,
       kanban_deadline_reason: `Tự tắt khi ${reason}`,
@@ -491,6 +505,22 @@ async function clearAllProjectDeadlinesOnInstallationDone({
     }
     if (error) console.warn('[completeOpenWork] all CRM lead deadlines:', error.message);
     else leadCount += (data || []).length;
+
+    if (!error && truoc.length) {
+      try {
+        await supabase.from('crm_lead_deadline_history').insert(truoc.map((l) => ({
+          lead_id: l.id,
+          stage_id: l.stage_id || null,
+          old_deadline_at: l.kanban_deadline_at,
+          new_deadline_at: null,
+          reason: `Tự tắt khi ${reason}`,
+          source: 'module_done',
+          changed_by: null,
+        })));
+      } catch (histErr) {
+        console.warn('[completeOpenWork] lịch sử hạn CRM:', histErr.message);
+      }
+    }
   }
 
   const crmTaskIds = [];
@@ -827,6 +857,117 @@ async function finalizeHcbCanhKinhOnSxDone({ projectIds = [], leadIds = [] } = {
   };
 }
 
+/** Cột SX được tick «Đã VC» ở ô KPI Dashboard của /sx/pipeline-settings. */
+function isSxShippedColumn(col) {
+  return String(col?.dashboard_kpi || '').trim() === 'shipped';
+}
+
+/**
+ * Đơn SX vào cột tick «Đã VC»: hàng đã rời xưởng nên mọi nhiệm vụ SX từ cột đó
+ * TRỞ VỀ TRƯỚC coi như xong. Nhiệm vụ ở cột SAU (chốt công nợ, thu tiền, kế toán…)
+ * giữ nguyên — đó là việc chưa làm.
+ *
+ * Chỉ đóng nhiệm vụ xác định được cột: `crm_tasks` sx_* theo
+ * `production_pipeline_stage_id` (có fallback `stage_slug` cũ), `tasks` dự án theo
+ * `production_stage_id`. Nhiệm vụ không gắn cột nào thì ĐỂ NGUYÊN: không suy được nó
+ * nằm trước hay sau mốc giao hàng, mà đoán sai thì đóng nhầm việc công nợ.
+ *
+ * Thứ tự cột lấy theo `order_index` trong đúng phạm vi công ty + phân loại xưởng của
+ * dự án (mỗi phân loại có bộ cột riêng).
+ */
+async function completeSxWorkUpToShippedColumn({ projectId, shippedColumnId } = {}) {
+  const empty = { crm_tasks: 0, workshop_tasks: 0, assignments: 0 };
+  const pid = String(projectId || '').trim();
+  const colId = String(shippedColumnId || '').trim();
+  if (!pid || !colId) return { ...empty, reason: 'missing_params' };
+
+  const { data: project } = await supabase
+    .from('projects')
+    .select('id, company_id, workshop_type_id')
+    .eq('id', pid)
+    .maybeSingle();
+  if (!project?.id) return { ...empty, reason: 'no_project' };
+
+  const {
+    getProductionPipelineStagesForWorkshopType,
+    resolveSxTaskProductionStageId,
+  } = require('./sxPipelineStageSlug');
+  const stages = await getProductionPipelineStagesForWorkshopType(
+    project.company_id,
+    project.workshop_type_id,
+  );
+  const shipped = (stages || []).find((s) => String(s.id) === colId);
+  if (!shipped) return { ...empty, reason: 'column_not_in_pipeline' };
+  const limitOrder = Number(shipped.order_index);
+  if (!Number.isFinite(limitOrder)) return { ...empty, reason: 'column_without_order' };
+
+  const upToColumnIds = new Set(
+    stages
+      .filter((s) => {
+        const o = Number(s?.order_index);
+        return Number.isFinite(o) && o <= limitOrder;
+      })
+      .map((s) => String(s.id)),
+  );
+
+  const leads = await resolveDealLeadIds([pid]);
+
+  const openCrm = [];
+  for (const part of chunk(leads)) {
+    const { data, error } = await supabase
+      .from('crm_tasks')
+      .select('id, lead_id, title, status, stage_slug, checklist, production_pipeline_stage_id')
+      .in('lead_id', part)
+      .like('stage_slug', 'sx_%');
+    if (error) {
+      console.warn('[sxShipped] crm_tasks fetch:', error.message);
+      continue;
+    }
+    for (const t of data || []) {
+      if (isTerminalStatus(t.status)) continue;
+      const stageId = resolveSxTaskProductionStageId(t, stages);
+      if (stageId && upToColumnIds.has(String(stageId))) openCrm.push(t);
+    }
+  }
+  const crmResult = await completeCrmTaskRows(openCrm);
+
+  const openWorkshop = [];
+  {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('id, project_id, status, production_stage_id')
+      .eq('project_id', pid)
+      .not('production_stage_id', 'is', null);
+    if (error) {
+      if (!String(error.message || '').includes('production_stage_id')) {
+        console.warn('[sxShipped] tasks fetch:', error.message);
+      }
+    } else {
+      for (const t of data || []) {
+        if (isTerminalStatus(t.status)) continue;
+        if (upToColumnIds.has(String(t.production_stage_id))) openWorkshop.push(t);
+      }
+    }
+  }
+  const workshopResult = await completeWorkshopTaskRows(openWorkshop);
+
+  // Chỉ đóng assignment gắn đúng các crm_task vừa đóng — KHÔNG quét theo lead,
+  // vì assignment module 'production' còn gồm việc công nợ ở các cột sau.
+  const assignments = await completeLinkedAssignments({
+    leadIds: [],
+    crmTaskIds: crmResult.ids,
+    moduleKey: 'production',
+  });
+
+  return {
+    crm_tasks: crmResult.count,
+    workshop_tasks: workshopResult.count,
+    assignments,
+    up_to_order_index: limitOrder,
+    columns_counted: upToColumnIds.size,
+  };
+}
+
 const INSTALL_CLOCK_STATUSES = ['shipping', 'installing', 'producing'];
 
 /**
@@ -878,5 +1019,7 @@ module.exports = {
   clearAllProjectDeadlinesOnInstallationDone,
   closeInstallDeadlineWhenCrmPastInstallation,
   finalizeHcbCanhKinhOnSxDone,
+  isSxShippedColumn,
+  completeSxWorkUpToShippedColumn,
   HCB_CANH_KINH_DONE_REASON,
 };

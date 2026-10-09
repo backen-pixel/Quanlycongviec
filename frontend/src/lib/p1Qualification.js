@@ -17,7 +17,9 @@ export const summaryReasonLabel = code => ({
   DUPLICATE_ACCOUNT_SCOPE: 'Tài khoản quảng cáo xuất hiện nhiều lần trong phạm vi đợt thử',
   IDENTITY_NOT_RECONCILED: 'Chưa gộp khách trùng',
   AD_ACCOUNT_SCOPE_UNVERIFIED: 'Chưa lọc khách theo tài khoản quảng cáo',
+  LEADS_FROM_UNCONNECTED_ADS: 'Có khách đến từ quảng cáo chưa thuộc tài khoản đã nối',
   SPEND_AD_LEVEL_ONLY: 'Chi tiêu mới đối chiếu ở cấp quảng cáo',
+  SPEND_ACCOUNT_TOTAL_MISMATCH: 'Tổng chi tiêu từng quảng cáo lệch tổng của tài khoản (có thể thiếu quảng cáo)',
   FIRST_PAID_SOURCE_UNVERIFIED: 'Chưa xác minh nguồn trả phí đầu tiên',
   MILESTONE_IS_STAGE_PROXY: 'Mốc theo bước bán hàng chỉ là chỉ số thay thế',
   NO_MATURE_WINDOW: 'Chưa đủ cửa sổ chi tiêu cho nhóm qua 4 ngày',
@@ -25,6 +27,18 @@ export const summaryReasonLabel = code => ({
 export const milestoneCostLabel = cost => cost?.status === 'PROVISIONAL'
   ? formatVnd(cost.vnd_ceil)
   : cost?.status === 'NO_QUALIFIED_LEADS' ? 'Chưa có khách đạt mốc' : 'Chưa biết';
+export const scopeStatusLabel = status => ({
+  VERIFIED: 'Đã đối chiếu toàn bộ quảng cáo', PARTIAL: 'Một phần quảng cáo ngoài phạm vi',
+  NONE_IN_SCOPE: 'Chưa có quảng cáo nào trong phạm vi',
+  UNKNOWN: 'Chưa xác định được phạm vi quảng cáo',
+}[status] || 'Chưa xác định được phạm vi quảng cáo');
+export function scopeWarning(scope) {
+  if (scope?.status === 'VERIFIED') return null;
+  return `${scope?.not_in_connected_accounts ?? 0}/${scope?.candidates ?? 0} khách đến từ quảng cáo chưa thuộc tài khoản quảng cáo đã nối — chi tiêu của các quảng cáo này chưa được tính, nên chi phí mỗi khách hiện CHƯA ĐỦ TIN CẬY. Cần nối thêm tài khoản quảng cáo sở hữu các quảng cáo này.`;
+}
+export const scopeAdLabel = ad => `${ad.title || 'Chưa có tiêu đề'} · ${ad.ad_id} · ${ad.leads} khách`;
+export const milestoneReliabilityLabel = reliability => reliability === 'LOW_UNCONNECTED_ADS'
+  ? 'chưa đủ tin cậy' : 'Tạm tính';
 export function milestoneTargetMultiple(cost, targetVnd) {
   if (cost?.status !== 'PROVISIONAL' || !Number.isSafeInteger(cost.numerator_vnd) ||
       cost.numerator_vnd < 0 || !Number.isSafeInteger(cost.denominator) ||

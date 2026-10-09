@@ -2,7 +2,7 @@
  * Bundle chi tiết deal kế toán: docs CRM+SX, BG/ĐH/HĐ, lịch thanh toán, STK.
  */
 const { supabase } = require('../config/supabase');
-const { crmDealBelongsToAccountingCompany } = require('./accountingScope');
+const { crmDealBelongsToAccountingCompany, warmAccountingCompanyNames } = require('./accountingScope');
 const {
   normalizeDepositInstallments,
   aggregateDepositFromInstallments,
@@ -38,6 +38,7 @@ async function assertAccountingDeal(leadId, clientCompanyId) {
     .maybeSingle();
   if (error) throw error;
   if (!lead) return { error: 'Không tìm thấy deal', status: 404 };
+  await warmAccountingCompanyNames();
   if (!crmDealBelongsToAccountingCompany(lead, clientCompanyId)) {
     return { error: 'Deal không thuộc phạm vi công ty kế toán', status: 403 };
   }
@@ -445,15 +446,22 @@ async function mirrorPaymentToInvoice(dealPayment, userId) {
     .select('id')
     .maybeSingle();
   if (error) {
+    // KHÔNG nuốt lỗi: khoản thu đã ghi vào crm_deal_payments rồi, nếu bản sao sang
+    // payment_records hỏng thì hóa đơn giữ paid_amount cũ và hai bên lệch nhau âm
+    // thầm — kế toán không có cách nào biết. Trả lỗi lên để route báo cho người dùng.
     console.warn('[accounting] mirror payment_records:', error.message);
-    return null;
+    return { ok: false, error: `Đã ghi khoản thu nhưng chưa cập nhật được hóa đơn: ${error.message}` };
   }
 
   // Recompute invoice paid_amount
-  const { data: pays } = await supabase
+  const { data: pays, error: payErr } = await supabase
     .from('payment_records')
     .select('amount')
     .eq('invoice_id', dealPayment.invoice_id);
+  if (payErr) {
+    console.warn('[accounting] đọc payment_records:', payErr.message);
+    return { ok: false, id: rec?.id || null, error: `Đã ghi khoản thu nhưng chưa tính lại được số tiền hóa đơn: ${payErr.message}` };
+  }
   const paid = (pays || []).reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const { data: inv } = await supabase
     .from('invoices')
@@ -466,19 +474,25 @@ async function mirrorPaymentToInvoice(dealPayment, userId) {
   else if (total > 0 && paid + 0.0001 >= total) paymentStatus = 'paid';
   else paymentStatus = 'partial';
 
-  await supabase.from('invoices').update({
+  const { error: invErr } = await supabase.from('invoices').update({
     paid_amount: paid,
     payment_status: paymentStatus,
     updated_at: new Date().toISOString(),
   }).eq('id', dealPayment.invoice_id);
+  if (invErr) {
+    // Trước đây câu update này không kiểm lỗi lần nào — hóa đơn đứng yên mà không ai hay.
+    console.warn('[accounting] cập nhật hóa đơn:', invErr.message);
+    return { ok: false, id: rec?.id || null, error: `Đã ghi khoản thu nhưng chưa cập nhật được hóa đơn: ${invErr.message}` };
+  }
 
   if (rec?.id && dealPayment.id) {
-    await supabase
+    const { error: linkErr } = await supabase
       .from('crm_deal_payments')
       .update({ mirrored_payment_record_id: rec.id })
       .eq('id', dealPayment.id);
+    if (linkErr) console.warn('[accounting] gắn mirrored_payment_record_id:', linkErr.message);
   }
-  return rec?.id || null;
+  return { ok: true, id: rec?.id || null };
 }
 
 /** "[Tên nhiệm vụ] 📄 Nhãn tài liệu" → { taskName, label } — lead_documents thường được đặt tên theo mẫu này khi sync từ CRM task. */

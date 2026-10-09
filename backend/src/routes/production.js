@@ -21,6 +21,7 @@ const {
   resolveSxDisplayColumnId,
   shouldForceSxHandoverColumn,
   SX_STAGE_SLUG_STATUS,
+  resolveVcHandoverWorkflowStageId,
   enrichProjectsForSx,
   buildPipelineSummary,
   syncCrmLeadSxPipelineFromProject,
@@ -64,6 +65,10 @@ const {
 } = require('../helpers/projectOrderFulfillment');
 const { assertSxKanbanAdvanceAllowed } = require('../helpers/workshopStageAdvanceGate');
 const { clearSxSchedulesOnCompletedForProjects } = require('../helpers/clearCompletedProjectDeadlines');
+const {
+  isSxShippedColumn,
+  completeSxWorkUpToShippedColumn,
+} = require('../helpers/completeOpenWorkOnModuleDone');
 const { MODULE, resolveModuleDeadline } = require('../helpers/moduleDeadlinePolicy');
 const { applyProjectTenantScope, assertRowCompanyInTenant, isTenantScopeEnforced } = require('../helpers/tenantScope');
 
@@ -1822,6 +1827,20 @@ const CRM_DEALS_PROJECT_EMBED_LEGACY = 'crm_deals:crm_leads(id, type, title, reg
 const CRM_DEALS_PROJECT_EMBED_MOBILE = 'crm_deals:crm_leads(id, type, title, region_id, external_company_name, external_company_id, sx_pipeline_stage_id, crm_region:company_regions(id, name))';
 
 // ─── GET /production/projects ──
+/** Dự án gắn deal có tiêu đề khớp — tìm trên Kanban SX bằng tên CRM hoặc tên xưởng. */
+async function projectIdsMatchingDealTitle(search) {
+  const safe = String(search || '').trim().replace(/[(),]/g, ' ');
+  if (safe.length < 2) return [];
+  const { data, error } = await supabase
+    .from('crm_leads')
+    .select('project_id')
+    .ilike('title', `%${safe}%`)
+    .not('project_id', 'is', null)
+    .limit(80);
+  if (error) return [];
+  return [...new Set((data || []).map((row) => row.project_id).filter(Boolean))];
+}
+
 r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 20, scope: 'user', tags: ['production'] }), async (req, res) => {
   try {
     const {
@@ -1973,6 +1992,8 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
      * @param {object|null} idOverride — thay một mảng id bằng lô nhỏ hơn khi phải chia lô
      *   (xem helpers/sxChunkedIdPage). Không truyền → giữ nguyên hành vi cũ.
      */
+    const dealTitleProjectIds = search ? await projectIdsMatchingDealTitle(search) : [];
+
     const applyProjectsListFilters = (q, idOverride = null) => {
       const wonIdsUse = idOverride?.wonIds ?? wonIds;
       const restrictIdsUse = idOverride?.restrictIds ?? restrictIds;
@@ -1993,7 +2014,13 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
 
       if (search) {
         const searchPattern = `%${search}%`;
-        query = query.or(`code.ilike.${searchPattern},name.ilike.${searchPattern},notes.ilike.${searchPattern}`);
+        const parts = [
+          `code.ilike.${searchPattern}`,
+          `name.ilike.${searchPattern}`,
+          `notes.ilike.${searchPattern}`,
+        ];
+        if (dealTitleProjectIds.length) parts.push(`id.in.(${dealTitleProjectIds.join(',')})`);
+        query = query.or(parts.join(','));
       }
 
       if (priority) query = query.eq('priority', priority);
@@ -2076,6 +2103,18 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
           if (page) {
             pageIds = (page.ids || []).map(String);
             count = Number(page.total) || 0;
+            if (dealTitleProjectIds.length) {
+              let colQ = supabase.from('projects').select('id').in('id', dealTitleProjectIds);
+              if (wantsNullKanbanColumn) colQ = colQ.is('sx_kanban_column_id', null);
+              else if (wantsKanbanColumn) colQ = colQ.eq('sx_kanban_column_id', sxKanbanColumnId);
+              const { data: colHits } = await colQ;
+              const have = new Set(pageIds);
+              const add = (colHits || []).map((row) => String(row.id)).filter((id) => id && !have.has(id));
+              if (add.length) {
+                pageIds = [...add, ...pageIds].slice(0, parsedLimit);
+                count += add.length;
+              }
+            }
           }
         }
       }
@@ -3875,6 +3914,24 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
           } catch (syncErr) {
             console.warn('[production] syncCrmLeadSxPipelineFromProject (pipeline col):', syncErr.message);
           }
+          // Cột tick «Đã VC»: hàng đã rời xưởng → đóng nhiệm vụ SX từ cột đó trở về trước.
+          // Chạy TRƯỚC bộ mẫu để việc do chính cột này sinh ra khi vừa tới vẫn còn mở.
+          if (colChanged && isSxShippedColumn(colRow)) {
+            try {
+              const rShip = await completeSxWorkUpToShippedColumn({
+                projectId: id,
+                shippedColumnId: colId,
+              });
+              if (rShip?.crm_tasks || rShip?.workshop_tasks) {
+                console.info(
+                  `[production] SX shipped auto-complete: project=${id} stage=${colId} `
+                  + `crm_tasks=${rShip.crm_tasks} tasks=${rShip.workshop_tasks} assignments=${rShip.assignments || 0}`,
+                );
+              }
+            } catch (shipErr) {
+              console.warn('[production] completeSxWorkUpToShippedColumn:', shipErr.message);
+            }
+          }
           if (shouldApplyPipelineTemplates) {
             try {
               const rTpl = await applyProductionTemplatesOnPipelineEnter({
@@ -4766,7 +4823,10 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
       resolvedInstallerPersonId = await resolveLogisticsHandoverInstallerUserId(logisticsCompanyId);
     }
 
-    const projectUpdate = { status: 'shipping', current_stage_id: null };
+    // Giữ workflow stage «delivery» thay vì xoá trắng: `.eq('current_stage.slug', …)` ở các màn
+    // lọc theo giai đoạn không bao giờ khớp NULL, nên đơn vừa bàn giao sẽ biến mất khỏi danh sách.
+    const handoverStageId = await resolveVcHandoverWorkflowStageId();
+    const projectUpdate = { status: 'shipping', current_stage_id: handoverStageId };
     // Chỉ gán VC/LĐ — không ghi đè production_person_id hay assignee CRM trên deal.
     if (resolvedLogisticsPersonId) projectUpdate.logistics_person_id = resolvedLogisticsPersonId;
     if (resolvedInstallerPersonId) projectUpdate.installer_person_id = resolvedInstallerPersonId;
@@ -4787,7 +4847,7 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
           .from('projects')
           .update({
             status: 'shipping',
-            current_stage_id: null,
+            current_stage_id: handoverStageId,
             logistics_company_id: logisticsCompanyId,
             ...(deliveryTeamId ? { delivery_team_id: deliveryTeamId } : {}),
             ...(installationTeamId ? { installation_team_id: installationTeamId } : {}),
@@ -4810,7 +4870,7 @@ r.patch('/projects/:id/handover-vc', requireProductionKanbanEdit(), async (req, 
           .from('projects')
           .update({
             status: 'shipping',
-            current_stage_id: null,
+            current_stage_id: handoverStageId,
             ...(deliveryTeamId ? { delivery_team_id: deliveryTeamId } : {}),
             ...(installationTeamId ? { installation_team_id: installationTeamId } : {}),
             ...(vcStageId ? { vc_kanban_column_id: vcStageId } : {}),

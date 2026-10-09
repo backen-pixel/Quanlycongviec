@@ -14,6 +14,8 @@ export type KanbanStage = {
   is_handover_to_logistics?: boolean;
   /** Cột VC gắn cờ «Chuyển LĐ» — kéo dự án vào cột này sẽ tự nhảy sang cột Lắp đặt. */
   is_handover_to_install?: boolean;
+  /** Cột «lắp đặt tạm» (vd. «Dự án sắp tới») — chỗ chờ, đếm vào ô Tiếp nhận. */
+  is_temp_install_staging?: boolean;
   crm_sync_type?: string | null;
   /** Ô KPI Dashboard VC: shipping | installing | warranty | completed */
   dashboard_kpi?: string | null;

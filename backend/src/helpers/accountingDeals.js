@@ -4,11 +4,13 @@ const {
   getAccountingCompanyId,
   isAccountingUser,
   crmDealBelongsToAccountingCompany,
+  warmAccountingCompanyNames,
   applyAccountingCrmCompanyFilter,
   getAccountingScopedProjectIds,
   getAccountingClientProjectIdsAtWorkshop,
 } = require('./accountingScope');
 const { filterProjectIdsBySxWorkshopCompany } = require('./dealParticipantProduction');
+const { fetchAllByIdsParallel } = require('./supabaseFetchAll');
 const {
   getResolvedKanbanStages,
   getWonDealProjectIds,
@@ -363,6 +365,8 @@ async function fetchAccountingDeals({
   onlyLeadId = null,
   page = 1,
   limit = 50,
+  // Caller cong tong (KPI / cong no / xuat file) phai lay HET, khong phan trang.
+  all = false,
 }) {
   const projectIds = await resolveScopedProjectIds(clientCompanyId, workshopCompanyId || null);
   if (!projectIds.length) {
@@ -389,14 +393,33 @@ async function fetchAccountingDeals({
       lead_type:crm_lead_types(id, name)
     `;
 
-  const runDealQuery = (sel) => {
-    let q = supabase
-      .from('crm_leads')
-      .select(sel)
-      .eq('type', 'deal')
-      .in('project_id', projectIds);
-    if (onlyLeadId) q = q.eq('id', onlyLeadId);
-    return q.order('updated_at', { ascending: false });
+  /**
+   * Trước đây đây là một `.select()` trần: không `.range()` nên PostgREST CẮT Ở 1000
+   * DÒNG mà không báo gì, và `.in('project_id', …)` với danh sách dài thì vỡ URL
+   * (bên SX đo được ngưỡng ~643 id). Đo ngày 09/10/2026: 934 deal có `project_id`
+   * (93% ngưỡng 1000) và Hucabi có 534 dự án trong phạm vi (83% ngưỡng `.in`) —
+   * chưa vỡ, nhưng vượt cái là kế toán mất deal ở MỌI màn hình mà không ai hay.
+   * `fetchAllByIdsParallel` xử cả hai: tự chia khúc id và phân trang từng khúc.
+   */
+  const runDealQuery = async (sel) => {
+    try {
+      const rows = await fetchAllByIdsParallel({
+        table: 'crm_leads',
+        columns: sel,
+        key: 'project_id',
+        ids: projectIds,
+        tune: (q) => {
+          let qq = q.eq('type', 'deal');
+          if (onlyLeadId) qq = qq.eq('id', onlyLeadId);
+          return qq.order('id');
+        },
+      });
+      // Chia khúc nên phải sắp lại ở bộ nhớ, giữ đúng thứ tự cũ (mới sửa lên trước).
+      rows.sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+      return { data: rows, error: null };
+    } catch (e) {
+      return { data: null, error: e };
+    }
   };
 
   let dealsRaw;
@@ -407,6 +430,8 @@ async function fetchAccountingDeals({
   }
   if (dealErr) throw dealErr;
 
+  // Nap san ten cong ty: ham loc ben duoi la dong bo, cache nguoi se bo sot deal.
+  await warmAccountingCompanyNames();
   const dealsFiltered = (dealsRaw || []).filter((d) =>
     crmDealBelongsToAccountingCompany(d, clientCompanyId),
   );
@@ -527,10 +552,13 @@ async function fetchAccountingDeals({
   });
 
   const total = enriched.length;
-  const pageNum = Math.max(1, parseInt(page, 10) || 1);
-  const pageSize = Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
-  const start = (pageNum - 1) * pageSize;
-  const deals = enriched.slice(start, start + pageSize);
+  const pageNum = all ? 1 : Math.max(1, parseInt(page, 10) || 1);
+  // Tran 200 la de phan trang danh sach tren man hinh. Truoc day caller cong tong
+  // truyen limit: 100000 va VAN bi cat con 200 -> KPI, cong no va xuat file chi
+  // tinh tren 200 deal dau (Hucabi co 536 => thieu 63%). Nay `all` bo qua tran do.
+  const pageSize = all ? (total || 1) : Math.min(200, Math.max(1, parseInt(limit, 10) || 50));
+  const start = all ? 0 : (pageNum - 1) * pageSize;
+  const deals = all ? enriched : enriched.slice(start, start + pageSize);
 
   return { deals, total, page: pageNum, limit: pageSize };
 }
@@ -609,7 +637,7 @@ async function buildAccountingSummary(clientCompanyId, workshopCompanyId = null)
     clientCompanyId,
     workshopCompanyId,
     page: 1,
-    limit: 100000,
+    all: true,
   });
 
   const financialKpis = aggregateFinancialKpis(deals);
@@ -728,7 +756,7 @@ async function fetchAccountingDealRow(clientCompanyId, leadId) {
 
 async function fetchAccountingReceivables({ clientCompanyId, workshopCompanyId = null, search = '' }) {
   const { deals } = await fetchAccountingDeals({
-    clientCompanyId, workshopCompanyId, search, page: 1, limit: 100000,
+    clientCompanyId, workshopCompanyId, search, page: 1, all: true,
   });
   return buildReceivablesReport(deals);
 }
@@ -737,7 +765,7 @@ async function fetchAccountingDealsForExport(options) {
   const { deals } = await fetchAccountingDeals({
     ...options,
     page: 1,
-    limit: 100000,
+    all: true,
   });
   return deals;
 }

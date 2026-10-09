@@ -150,6 +150,8 @@ async function readRoute(req, res, action) {
           candidates: numberOrNull(row.summary?.leads?.candidates),
           qualified: numberOrNull(row.summary?.leads?.qualified),
           milestone_reached: numberOrNull(row.summary?.milestone?.reached),
+          scope_in_scope: numberOrNull(row.summary?.scope_check?.in_scope),
+          scope_not_connected: numberOrNull(row.summary?.scope_check?.not_in_connected_accounts),
           cost_to_date_vnd_ceil: numberOrNull(row.summary?.milestone?.cost_to_date?.vnd_ceil),
           spend_status: row.summary?.spend?.status ?? null,
         })) });

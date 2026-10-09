@@ -2144,7 +2144,13 @@ export default function NotificationCenter({ socket }) {
                             )}
                           </div>
                         </div>
-                        <p className="text-xs text-gray-600 mt-1 line-clamp-2 whitespace-pre-line leading-relaxed">{n.message}</p>
+                        {n.type === 'comment_added' && n.metadata?.lead_title
+                          && !String(n.title || '').includes(String(n.metadata.lead_title)) && (
+                          <p className="text-[11px] text-sky-700 mt-0.5 truncate" title={n.metadata.lead_title}>
+                            {n.metadata.lead_title}
+                          </p>
+                        )}
+                        <p className="text-xs text-gray-600 mt-1 line-clamp-4 whitespace-pre-line leading-relaxed">{n.message}</p>
 
                         {/* Approval: show notes + files */}
                         {isApproval && n.metadata?.notes && (

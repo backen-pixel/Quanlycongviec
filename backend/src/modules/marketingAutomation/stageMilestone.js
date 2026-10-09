@@ -58,21 +58,25 @@ function cost(spend, denominator) {
     numerator_vnd: vnd, denominator };
 }
 
-function summarizeMilestone({ candidates, reachedByLead, spendAll, spendMature, nowMs }) {
+function summarizeMilestone({ candidates, reachedByLead, spendAll, spendMature, nowMs,
+  inScopeLeadIds = new Set(), reliability = 'OK' }) {
   const cutoff = nowMs - MATURITY_DAYS * DAY_MS;
-  let reached = 0, mature = 0, matureReached = 0;
+  let reached = 0, mature = 0, matureReached = 0, reachedInScope = 0, matureReachedInScope = 0;
   for (const row of candidates) {
     const hit = reachedByLead.has(row.lead_id);
-    if (hit) reached++;
+    if (hit) { reached++; if (inScopeLeadIds.has(row.lead_id)) reachedInScope++; }
     const touchMs = Date.parse(row.cham_dau_luc);
     if (Number.isFinite(touchMs) && touchMs <= cutoff) {
       mature++;
-      if (hit) matureReached++;
+      if (hit) { matureReached++; if (inScopeLeadIds.has(row.lead_id)) matureReachedInScope++; }
     }
   }
   return { candidates: candidates.length, reached, mature_candidates: mature,
-    mature_reached: matureReached, cost_to_date: cost(spendAll, reached),
-    cost_mature: cost(spendMature, matureReached) };
+    mature_reached: matureReached, reached_in_scope: reachedInScope,
+    cost_to_date: { ...cost(spendAll, reached), reliability },
+    cost_mature: { ...cost(spendMature, matureReached), reliability },
+    cost_in_scope_to_date: cost(spendAll, reachedInScope),
+    cost_in_scope_mature: cost(spendMature, matureReachedInScope) };
 }
 
 module.exports = { MILESTONE_SLUGS, MILESTONE_LABEL, MATURITY_DAYS,

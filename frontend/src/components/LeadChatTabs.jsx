@@ -5,7 +5,7 @@ import { resolveMediaUrl, BROKEN_MEDIA_PLACEHOLDER } from '../lib/mediaUrl';
 import {
   Trash2, Send, Users, Crown, Shield, Building2, Eye, Paperclip, X, Mic, Reply,
   CornerDownRight, Smile, Zap, Undo2, Check, CheckCheck, Phone, Loader2, ClipboardList,
-  HardDrive, Image as ImageIcon,
+  HardDrive, Image as ImageIcon, Search,
 } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { isAdminLike } from '../lib/adminRole';
@@ -705,6 +705,8 @@ export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace,
   const [selectedUsers, setSelectedUsers] = useState([]); // [{user_id, role, name}]
   const [checkedUserIds, setCheckedUserIds] = useState(() => new Set());
   const [pickRole, setPickRole] = useState('member');
+  const [timNVThem, setTimNVThem] = useState('');
+  const [timThanhVien, setTimThanhVien] = useState('');
   const [loading, setLoading] = useState(false);
   const [leadAssignmentsCount, setLeadAssignmentsCount] = useState(0);
   const { user } = useAuth();
@@ -812,10 +814,24 @@ export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace,
     return ids;
   }, [members, selectedUsers]);
 
-  const pickableEmployees = useMemo(
-    () => (employeeOptionsFiltered || []).filter((u) => u?.id && !blockedUserIds.has(String(u.id))),
-    [employeeOptionsFiltered, blockedUserIds],
-  );
+  /** Bỏ dấu để gõ «nhut» vẫn ra «Nhựt». */
+  const boDau = (x) => String(x || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd').replace(/Đ/g, 'D')
+    .toLowerCase().trim();
+
+  const pickableEmployees = useMemo(() => {
+    const ds = (employeeOptionsFiltered || []).filter((u) => u?.id && !blockedUserIds.has(String(u.id)));
+    const q = boDau(timNVThem);
+    if (!q) return ds;
+    return ds.filter((u) => [u.full_name, u.email, u.position].some((f) => boDau(f).includes(q)));
+  }, [employeeOptionsFiltered, blockedUserIds, timNVThem]);
+
+  const membersHienThi = useMemo(() => {
+    const q = boDau(timThanhVien);
+    if (!q) return members;
+    return members.filter((m) => [m.user?.full_name, m.user?.email].some((f) => boDau(f).includes(q)));
+  }, [members, timThanhVien]);
 
   const toggleCheckedUser = (userId) => {
     const sid = String(userId);
@@ -969,14 +985,27 @@ export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace,
           </div>
         </div>
 
+        <div className="relative">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+          <input
+            type="search"
+            value={timNVThem}
+            onChange={(e) => setTimNVThem(e.target.value)}
+            placeholder="Tìm tên nhân viên, email…"
+            className="w-full h-9 pl-8 pr-2 bg-white border border-blue-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
+          />
+        </div>
+
         <div className="max-h-52 overflow-y-auto rounded-lg border border-blue-100 bg-white divide-y divide-slate-100">
           {pickableEmployees.length === 0 ? (
             <p className="text-xs text-gray-400 px-3 py-4 text-center">
-              {employeeFilterListByRegion.length === 0
+              {timNVThem.trim()
+                ? `Không có NV nào khớp «${timNVThem.trim()}»`
+                : employeeFilterListByRegion.length === 0
                 ? (companies.length
                   ? 'Không có nhân viên theo bộ lọc (thử «Tất cả công ty» / đổi khu vực)'
-                  : 'Chưa tải được danh sách công ty hệ sinh thái')
-                : 'Không còn NV phù hợp (đã là thành viên hoặc đã chọn)'}
+                    : 'Chưa tải được danh sách công ty hệ sinh thái')
+                  : 'Không còn NV phù hợp (đã là thành viên hoặc đã chọn)'}
             </p>
           ) : (
             pickableEmployees.map((u) => {
@@ -1059,7 +1088,23 @@ export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace,
 
       {/* Danh sách thành viên */}
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <p className="text-xs text-gray-400">{members.length} thành viên</p>
+        <div className="flex items-center gap-2">
+          <p className="text-xs text-gray-400">
+            {timThanhVien.trim() ? `${membersHienThi.length}/${members.length}` : members.length} thành viên
+          </p>
+          {members.length > 5 && (
+            <div className="relative">
+              <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+              <input
+                type="search"
+                value={timThanhVien}
+                onChange={(e) => setTimThanhVien(e.target.value)}
+                placeholder="Tìm thành viên…"
+                className="h-7 w-40 pl-7 pr-2 bg-white border border-slate-200 rounded-lg text-[11px] focus:outline-none focus:ring-2 focus:ring-blue-300"
+              />
+            </div>
+          )}
+        </div>
         {(moduleCounts.crm > 0 || moduleCounts.production > 0 || moduleCounts.logistics > 0) && (
           <span className="inline-flex items-center gap-1 text-[10px]" title="Theo khối CRM / SX / VC">
             <span className={`min-w-[1.15rem] h-[1.15rem] px-1 rounded font-bold leading-[1.15rem] text-center ${moduleBadgeMeta.crm.cls}`} title="CRM">
@@ -1079,7 +1124,7 @@ export function LeadMembersTab({ leadId, onMembersChange, onOpenSharedWorkspace,
       </div>
 
       <div className="space-y-2">
-        {members.map(m => {
+        {membersHienThi.map(m => {
           const rl = getRoleMeta(m.role);
           const mods = memberModulesFromUser(m.user || m);
           return (
