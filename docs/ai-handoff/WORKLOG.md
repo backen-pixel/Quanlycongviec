@@ -2284,3 +2284,5 @@ Mục (e) của review kế toán — rò rỉ dữ liệu giữa công ty.
 - Phúc Đạt THÊM 4 — chuẩn hoá bỏ dấu phủ được biến thể viết không dấu mà chuỗi cứng không bắt.
 
 Kiểm tra: `node --check` 4 file đạt. Hoàn tác: bỏ delta 4 file. Chưa thử qua giao diện bằng tài khoản kế toán thật.
+
+**Đính chính commit `8eb6e94a`.** Commit đó mang nhãn «Ke toan: bo chuoi cung van phu/vpt» nhưng còn **cuốn theo thay đổi của một phiên khác đang chạy song song**: tính năng tìm dự án trên Kanban SX theo tên deal / tên xưởng (`routes/crm/routes/leadsList.js`, `routes/production.js` hàm `projectIdsMatchingDealTitle`, `routes/crm/routes/leadLifecycle.js`, phần lớn `routes/crm/shared/helpersBundle.js`, và một mục trong `CURRENT.md`). Nguyên nhân: tôi dùng `git add -u backend/src docs` thay vì liệt kê từng file, nên quét cả file do phiên khác sửa. Code của họ hoàn chỉnh và không hỏng gì; đã push nên KHÔNG viết lại lịch sử (phiên khác đang làm trên cùng nhánh). Chỉ 4 file này là của phần kế toán: `accountingScope.js`, `accountingDeals.js`, `accountingDealDetail.js`, và 3 dòng trong `helpersBundle.js` (import + 2 chỗ gọi `warmAccountingCompanyNames`). Lần sau: luôn `git add` theo tên file.
