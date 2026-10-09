@@ -1,3 +1,7 @@
+## 2026-10-09 — Tên CRM và tên xưởng tách riêng (chưa deploy)
+`PUT /crm/leads/:id` không còn copy tiêu đề sang `projects.name`. Kanban và chi tiết SX/VC hiển thị tên dự án. Tìm kiếm CRM và SX khớp cả hai tên.
+Chưa deploy. TB-2026-990 trên DB chính vẫn đang là «Anh Lộc - Cần giờ» ở cả deal và dự án.
+
 ## 2026-10-08 — P2-1b: lưu sự kiện và dịch vụ AI soạn nháp (local)
 Thêm SQL 714/rollback, bộ chuyển RPC, dịch vụ và test giả; chỉ soạn nháp, không route/gửi tin/DB thật/mạng/bật cờ.
 Chống lặp bằng tra sự kiện theo requestId trước provider và gom yêu cầu đồng thời trong một tiến trình; cần thử SQL và đua nhiều tiến trình trên nhánh Supabase tạm.

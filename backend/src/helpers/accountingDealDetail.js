@@ -2,7 +2,7 @@
  * Bundle chi tiết deal kế toán: docs CRM+SX, BG/ĐH/HĐ, lịch thanh toán, STK.
  */
 const { supabase } = require('../config/supabase');
-const { crmDealBelongsToAccountingCompany } = require('./accountingScope');
+const { crmDealBelongsToAccountingCompany, warmAccountingCompanyNames } = require('./accountingScope');
 const {
   normalizeDepositInstallments,
   aggregateDepositFromInstallments,
@@ -38,6 +38,7 @@ async function assertAccountingDeal(leadId, clientCompanyId) {
     .maybeSingle();
   if (error) throw error;
   if (!lead) return { error: 'Không tìm thấy deal', status: 404 };
+  await warmAccountingCompanyNames();
   if (!crmDealBelongsToAccountingCompany(lead, clientCompanyId)) {
     return { error: 'Deal không thuộc phạm vi công ty kế toán', status: 403 };
   }

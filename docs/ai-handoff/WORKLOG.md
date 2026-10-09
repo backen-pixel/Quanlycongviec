@@ -1,3 +1,7 @@
+## 2026-10-09 — Tách tên deal CRM và tên dự án xưởng
+Sửa tiêu đề deal không còn ghi `projects.name`. Thẻ SX/VC và trang chi tiết xưởng hiện `projects.name`; sửa tên ở xưởng chỉ lưu tên dự án. Tìm CRM khớp thêm tên/mã dự án; tìm SX khớp thêm tiêu đề deal.
+Chưa deploy. Đơn TB-2026-990 trên DB chính đã bị ghi cả hai tên thành «Anh Lộc - Cần giờ» từ trước, code mới không tự đổi lại tên đó.
+
 ## 2026-10-08 — P2-1b (local)
 Thêm `database/714_ai_reply_drafts*.sql`, `aiReplyDraft/{store,service}.js` và hai test tương ứng; dùng `customers.full_name/address`, `crm_leads.install_address` để ẩn danh.
 Kiểm tra: Node test giả và `node --check`; chưa chạy SQL, DB/mạng, gọi OpenAI thật, bật cờ, commit hoặc push. Rollback 714 chỉ xóa bảng khi rỗng.
@@ -2265,15 +2269,18 @@ Kiểm tra: `node --check` 4 file đạt, nạp module đạt, 3 test deadline �
 
 ---
 
-## 2026-10-09 — Kế toán: khoản thu lệch hóa đơn thôi im lặng
+## 2026-10-09 — Kế toán: bỏ chuỗi cứng «vạn phú/vpt» trong phạm vi công ty
 
-Từ review module kế toán, mục «sửa (a) và (d)».
+Mục (e) của review kế toán — rò rỉ dữ liệu giữa công ty.
 
-**(d) ĐÃ SỬA — bản sao khoản thu sang hóa đơn nuốt lỗi.** `mirrorPaymentToInvoice` (`accountingDealDetail.js:430`) chèn `payment_records` rồi tính lại `invoices.paid_amount`. Insert lỗi thì chỉ `console.warn` và trả null; câu `update` hóa đơn ở cuối KHÔNG kiểm lỗi lần nào. Khoản thu đã nằm trong `crm_deal_payments` nên hai bảng lệch nhau mà kế toán không có cách nào biết.
-- Hàm nay trả `{ ok, id, error }`: kiểm lỗi cả ba bước (insert `payment_records`, đọc lại để cộng, update `invoices`), và `console.warn` riêng cho bước gắn `mirrored_payment_record_id`.
-- `POST /accounting/deals/:leadId/payments` (`accounting.js:846`) bắt `ok === false` và trả thêm trường `warning` trong body 201 — khoản thu vẫn lưu, nhưng người dùng được báo.
-- `AccountingDealDetail.jsx` `savePayment` đọc `res.warning` và cảnh báo kèm câu nhắc kiểm tra hóa đơn trước khi đối chiếu công nợ.
+**Lỗi.** `crmDealBelongsToAccountingCompanyLegacyName` (`accountingScope.js`) kết thúc bằng `return ext.includes('vạn phú') || ext.includes('van phu') || ext.includes('vpt')` — trả true **bất kể công ty kế toán đang hỏi là ai**. Nhánh an toàn phía trên dựa vào `dealRow._accounting_company_short`, nhưng trường đó **không nơi nào gán** (grep toàn repo: chỉ có 2 chỗ ĐỌC), nên luôn rơi xuống chuỗi cứng. Thêm nữa `includes` khiến «VẠN PHÚC DESIGN» khớp nhầm «Vạn Phú».
 
-**(a) KHÔNG SỬA — đo lại thì không có gì hỏng.** Việc phát sinh thiếu `crm_task_id` không ghi được phí (do `cost_entries.source_row_id` là uuid còn id việc là bigint). Nhưng: 10/10 việc phát sinh hiện có đủ `crm_task_id`, **0 việc bị chặn**; giao diện ĐÃ xử lý sẵn — `PhatSinhPanel.jsx:30-32` hiện dòng «Chưa gắn nhiệm vụ CRM — chưa ghi được phí» thay cho ô nhập, nên kế toán không gõ rồi mới gặp lỗi; backend trả 400 làm lớp phòng hờ. Thêm cột `source_row_bigint` cho `cost_entries` để sửa 0 trường hợp là không tương xứng — để nguyên, ghi lại đây nếu sau này có việc phát sinh tạo thẳng không qua nhiệm vụ CRM.
+**Sửa.** Thay bằng đối chiếu với tên thật của ĐÚNG công ty đang hỏi: cache `companies(id, name, short_name)` TTL 5 phút, chuẩn hoá (bỏ dấu, đ→d, gộp khoảng trắng, thường hoá) rồi so khớp **BẰNG NHAU**, không phải chứa nhau. Cache nguội thì trả false và nạp nền — thà bỏ sót một deal trong tích tắc còn hơn cho công ty khác nhìn thấy nhầm.
+- Hàm matcher giữ nguyên kiểu ĐỒNG BỘ (một chỗ gọi là `.filter()`), nên thêm `warmAccountingCompanyNames()` ở **5 chỗ gọi**: `accountingDeals.js:412`, `accountingDealDetail.js:41`, hai hàm vòng lặp trong chính `accountingScope.js`, và 2 chỗ ở `helpersBundle.js:395,5902`.
 
-Kiểm tra: `node --check` 2 file backend; nạp module và gọi `mirrorPaymentToInvoice` với payload không có `invoice_id` → trả null như cũ (không đụng DB); `npx vite build` đạt. CHƯA thử luồng ghi thanh toán thật — `invoices` vẫn 0 dòng nên chưa có hóa đơn để soi. Hoàn tác: bỏ delta 3 file.
+**Đo trên 2.424 deal thật, so luật cũ với luật mới** (không công ty nào mất deal của chính mình):
+- Hucabi bớt 28, Metalla 71, NextGo 99, Phúc Đạt 99, ABC 99 — toàn deal tên «Công ty TNHH Bếp Vạn Phú Thành» / «VPT», tức deal của VPT mà họ đang thấy nhầm.
+- VPT bớt 17 — toàn «VẠN PHÚC DESGIN»/«VẠN PHÚC DESIGN», công ty khác bị khớp nhầm; VPT giữ nguyên 421 deal thật.
+- Phúc Đạt THÊM 4 — chuẩn hoá bỏ dấu phủ được biến thể viết không dấu mà chuỗi cứng không bắt.
+
+Kiểm tra: `node --check` 4 file đạt. Hoàn tác: bỏ delta 4 file. Chưa thử qua giao diện bằng tài khoản kế toán thật.

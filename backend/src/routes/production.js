@@ -1827,6 +1827,20 @@ const CRM_DEALS_PROJECT_EMBED_LEGACY = 'crm_deals:crm_leads(id, type, title, reg
 const CRM_DEALS_PROJECT_EMBED_MOBILE = 'crm_deals:crm_leads(id, type, title, region_id, external_company_name, external_company_id, sx_pipeline_stage_id, crm_region:company_regions(id, name))';
 
 // ─── GET /production/projects ──
+/** Dự án gắn deal có tiêu đề khớp — tìm trên Kanban SX bằng tên CRM hoặc tên xưởng. */
+async function projectIdsMatchingDealTitle(search) {
+  const safe = String(search || '').trim().replace(/[(),]/g, ' ');
+  if (safe.length < 2) return [];
+  const { data, error } = await supabase
+    .from('crm_leads')
+    .select('project_id')
+    .ilike('title', `%${safe}%`)
+    .not('project_id', 'is', null)
+    .limit(80);
+  if (error) return [];
+  return [...new Set((data || []).map((row) => row.project_id).filter(Boolean))];
+}
+
 r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 20, scope: 'user', tags: ['production'] }), async (req, res) => {
   try {
     const {
@@ -1978,6 +1992,8 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
      * @param {object|null} idOverride — thay một mảng id bằng lô nhỏ hơn khi phải chia lô
      *   (xem helpers/sxChunkedIdPage). Không truyền → giữ nguyên hành vi cũ.
      */
+    const dealTitleProjectIds = search ? await projectIdsMatchingDealTitle(search) : [];
+
     const applyProjectsListFilters = (q, idOverride = null) => {
       const wonIdsUse = idOverride?.wonIds ?? wonIds;
       const restrictIdsUse = idOverride?.restrictIds ?? restrictIds;
@@ -1998,7 +2014,13 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
 
       if (search) {
         const searchPattern = `%${search}%`;
-        query = query.or(`code.ilike.${searchPattern},name.ilike.${searchPattern},notes.ilike.${searchPattern}`);
+        const parts = [
+          `code.ilike.${searchPattern}`,
+          `name.ilike.${searchPattern}`,
+          `notes.ilike.${searchPattern}`,
+        ];
+        if (dealTitleProjectIds.length) parts.push(`id.in.(${dealTitleProjectIds.join(',')})`);
+        query = query.or(parts.join(','));
       }
 
       if (priority) query = query.eq('priority', priority);
@@ -2081,6 +2103,18 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
           if (page) {
             pageIds = (page.ids || []).map(String);
             count = Number(page.total) || 0;
+            if (dealTitleProjectIds.length) {
+              let colQ = supabase.from('projects').select('id').in('id', dealTitleProjectIds);
+              if (wantsNullKanbanColumn) colQ = colQ.is('sx_kanban_column_id', null);
+              else if (wantsKanbanColumn) colQ = colQ.eq('sx_kanban_column_id', sxKanbanColumnId);
+              const { data: colHits } = await colQ;
+              const have = new Set(pageIds);
+              const add = (colHits || []).map((row) => String(row.id)).filter((id) => id && !have.has(id));
+              if (add.length) {
+                pageIds = [...add, ...pageIds].slice(0, parsedLimit);
+                count += add.length;
+              }
+            }
           }
         }
       }

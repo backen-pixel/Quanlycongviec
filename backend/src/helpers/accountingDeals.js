@@ -4,6 +4,7 @@ const {
   getAccountingCompanyId,
   isAccountingUser,
   crmDealBelongsToAccountingCompany,
+  warmAccountingCompanyNames,
   applyAccountingCrmCompanyFilter,
   getAccountingScopedProjectIds,
   getAccountingClientProjectIdsAtWorkshop,
@@ -407,6 +408,8 @@ async function fetchAccountingDeals({
   }
   if (dealErr) throw dealErr;
 
+  // Nap san ten cong ty: ham loc ben duoi la dong bo, cache nguoi se bo sot deal.
+  await warmAccountingCompanyNames();
   const dealsFiltered = (dealsRaw || []).filter((d) =>
     crmDealBelongsToAccountingCompany(d, clientCompanyId),
   );
