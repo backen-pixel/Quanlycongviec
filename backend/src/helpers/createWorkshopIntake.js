@@ -610,6 +610,16 @@ async function createWorkshopIntakeOrder(opts) {
     }, 'workshop-intake.cost');
   } catch (_) { /* ignore */ }
 
+  // Hạn thẻ SX cho dự án VỪA TẠO. Trước đây syncSxCardDeadline chỉ chạy khi sửa
+  // dự án / kéo cột / đụng nhiệm vụ, nên đơn mới có đủ ngày lắp và nhóm hạn vẫn
+  // nằm im với ô hạn trống cho tới khi có người chạm vào.
+  try {
+    const { syncSxCardDeadline } = require('./sxCardPlanDeadline');
+    await syncSxCardDeadline(projectId);
+  } catch (dlErr) {
+    console.warn('[workshop-intake] hạn thẻ SX:', dlErr.message);
+  }
+
   const timing = timer.done();
   console.info('[workshop-intake] timing', {
     deal_code: deal.code,

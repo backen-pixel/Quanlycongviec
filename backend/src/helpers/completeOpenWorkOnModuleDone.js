@@ -463,6 +463,20 @@ async function clearAllProjectDeadlinesOnInstallationDone({
 
   let leadCount = 0;
   for (const part of chunk(leads)) {
+    // Chụp hạn cũ TRƯỚC khi xoá để còn bật lại được. Không ghi lại thì giá trị
+    // mất hẳn — đo ngày 09/10/2026: 842/860 deal đang tắt hạn không có dòng lịch
+    // sử nào, chính vì ba đường xoá hạn đều từng ghi đè thẳng mà không lưu.
+    let truoc = [];
+    try {
+      const { data: rows } = await supabase
+        .from('crm_leads')
+        .select('id, stage_id, kanban_deadline_at')
+        .in('id', part)
+        .not('kanban_deadline_at', 'is', null);
+      truoc = rows || [];
+    } catch (snapErr) {
+      console.warn('[completeOpenWork] chụp hạn CRM cũ:', snapErr.message);
+    }
     const patch = {
       kanban_deadline_at: null,
       kanban_deadline_reason: `Tự tắt khi ${reason}`,
@@ -491,6 +505,22 @@ async function clearAllProjectDeadlinesOnInstallationDone({
     }
     if (error) console.warn('[completeOpenWork] all CRM lead deadlines:', error.message);
     else leadCount += (data || []).length;
+
+    if (!error && truoc.length) {
+      try {
+        await supabase.from('crm_lead_deadline_history').insert(truoc.map((l) => ({
+          lead_id: l.id,
+          stage_id: l.stage_id || null,
+          old_deadline_at: l.kanban_deadline_at,
+          new_deadline_at: null,
+          reason: `Tự tắt khi ${reason}`,
+          source: 'module_done',
+          changed_by: null,
+        })));
+      } catch (histErr) {
+        console.warn('[completeOpenWork] lịch sử hạn CRM:', histErr.message);
+      }
+    }
   }
 
   const crmTaskIds = [];

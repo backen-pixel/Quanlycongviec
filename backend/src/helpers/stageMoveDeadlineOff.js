@@ -103,6 +103,24 @@ async function turnOffCrmDeadlineOnCompletedStage(req, { leadId, stage }) {
     return { cleared: false };
   }
 
+  // Ghi lại giá trị vừa xoá — nhánh này trước đây KHÔNG ghi lịch sử, nên hạn mất
+  // hẳn và không bật lại được (khác với disableLinkedDealDeadlines vốn đã ghi).
+  if (lead.kanban_deadline_at) {
+    try {
+      await supabase.from('crm_lead_deadline_history').insert({
+        lead_id: leadId,
+        stage_id: lead.stage_id || null,
+        old_deadline_at: lead.kanban_deadline_at,
+        new_deadline_at: null,
+        reason,
+        source: 'stage_move',
+        changed_by: req.user?.userId || null,
+      });
+    } catch (histErr) {
+      console.warn('[stageMoveDeadlineOff] crm history:', histErr.message);
+    }
+  }
+
   const { data: openTasks } = await supabase
     .from('crm_tasks')
     .select('id, stage_slug')
@@ -258,11 +276,39 @@ function vcColumnIsIncident(stage) {
   return foldVi(stage?.name).includes('phat sinh');
 }
 
+/**
+ * Hạn CRM mà chính hệ thống đã tắt gần đây nhất — để bật lại thì trả đúng giá trị cũ.
+ *
+ * Lúc tắt, `kanban_deadline_at` bị set null nhưng giá trị cũ được ghi vào
+ * `crm_lead_deadline_history.old_deadline_at`. Trước đây bật lại chỉ xoá
+ * `deadline_disabled_at` nên ô hạn vẫn trống vĩnh viễn — đơn đi «hoàn thành →
+ * phát sinh» là mất hạn, không ai lấy lại được.
+ *
+ * Chỉ nhận dòng do hệ thống tự tắt (`new_deadline_at` null và có `old_deadline_at`),
+ * không đụng tới những lần người dùng chủ động xoá hạn.
+ */
+async function hanCrmTuocGanNhat(leadId) {
+  if (!leadId) return null;
+  const { data, error } = await supabase
+    .from('crm_lead_deadline_history')
+    .select('old_deadline_at, new_deadline_at, created_at')
+    .eq('lead_id', leadId)
+    .is('new_deadline_at', null)
+    .not('old_deadline_at', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (error) {
+    console.warn('[stageMoveDeadlineOff] đọc lịch sử hạn:', error.message);
+    return null;
+  }
+  return (data || [])[0]?.old_deadline_at || null;
+}
+
 async function turnOnDeadlineOnVcIncident(req, { projectId, stage }) {
   if (!projectId || !vcColumnIsIncident(stage)) return { enabled: false };
   const { data: leads, error } = await supabase
     .from('crm_leads')
-    .select('id, company_id, project_id, stage_id, deadline_disabled_at')
+    .select('id, company_id, project_id, stage_id, deadline_disabled_at, kanban_deadline_at')
     .eq('project_id', projectId);
   if (error) {
     console.warn('[stageMoveDeadlineOff] incident leads:', error.message);
@@ -273,28 +319,39 @@ async function turnOnDeadlineOnVcIncident(req, { projectId, stage }) {
 
   const now = new Date().toISOString();
   const stageName = stage?.name || 'Phát sinh';
-  const body = `${ON_NOTICE} (VC/LĐ sang «${stageName}»).`;
+  let khoiPhuc = 0;
   for (const lead of targets) {
+    // Chỉ trả lại hạn khi ô đang trống — không đè lên hạn người dùng vừa đặt tay.
+    const hanCu = lead.kanban_deadline_at ? null : await hanCrmTuocGanNhat(lead.id);
+    const patch = {
+      deadline_disabled_at: null,
+      deadline_disabled_reason: null,
+      deadline_disabled_by: null,
+      updated_at: now,
+    };
+    if (hanCu) {
+      patch.kanban_deadline_at = hanCu;
+      patch.kanban_deadline_reason = `Khôi phục khi VC/LĐ sang «${stageName}»`;
+    }
     const { error: updErr } = await supabase
       .from('crm_leads')
-      .update({
-        deadline_disabled_at: null,
-        deadline_disabled_reason: null,
-        deadline_disabled_by: null,
-        updated_at: now,
-      })
+      .update(patch)
       .eq('id', lead.id);
     if (updErr) {
       console.warn('[stageMoveDeadlineOff] incident on:', updErr.message);
       continue;
     }
+    if (hanCu) khoiPhuc += 1;
+    const body = hanCu
+      ? `${ON_NOTICE} (VC/LĐ sang «${stageName}»). Đã trả lại hạn cũ: ${String(hanCu).slice(0, 10)}.`
+      : `${ON_NOTICE} (VC/LĐ sang «${stageName}»).`;
     try {
       await supabase.from('crm_lead_deadline_history').insert({
         lead_id: lead.id,
         stage_id: lead.stage_id || null,
         old_deadline_at: null,
-        new_deadline_at: null,
-        reason: ON_NOTICE,
+        new_deadline_at: hanCu || null,
+        reason: hanCu ? `${ON_NOTICE} — khôi phục hạn cũ` : ON_NOTICE,
         source: 'stage_move',
         changed_by: req.user?.userId || null,
       });
@@ -314,7 +371,7 @@ async function turnOnDeadlineOnVcIncident(req, { projectId, stage }) {
       commentType: 'system',
     });
   }
-  return { enabled: true };
+  return { enabled: true, restored: khoiPhuc };
 }
 
 async function turnOffVcDeadlineOnCompletedColumn(req, { projectId, stage, hadDeadline }) {

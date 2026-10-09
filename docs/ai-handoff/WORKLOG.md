@@ -2234,3 +2234,21 @@ Theo yêu cầu tiếp tục của Founder, bổ sung domain/Application Service
 - **Chưa đổi gì trên 6 ô KPI của Dashboard web.** `vcColumnDashboardKpiKey` chỉ ánh xạ 4 nhãn và vét phần còn lại bằng `return 'shipping'`, nên `intake` vẫn nằm trong ô «Đang vận chuyển» — vốn đã gộp sẵn 161 dự án tiếp nhận từ trước. Muốn web hiện đúng thì phải thêm ô «Chờ tiếp nhận» (ô thứ 7) hoặc đổi nhãn ô hiện tại; là việc giao diện, chưa làm.
 - Kiểm tra: `node --check` backend đạt, `npx vite build` đạt (58s). `tsc` của vc-mobile báo một lỗi ở `vcBoardKpis.ts` nhưng đã xác minh lỗi đó CÓ SẴN trước thay đổi (stash rồi chạy lại: cùng lỗi ở dòng 223 thay vì 227).
 - Không có file rollback vì đây là thay đổi mã, không ghi dữ liệu. Hoàn tác: bỏ delta 4 file.
+
+---
+
+## 2026-10-09 — Hạn CRM bật lại được; dự án mới có hạn SX ngay
+
+Hai lỗi tìm ra từ lượt review hạn ba module.
+
+**1. Hạn CRM bị xoá là mất hẳn.** Ba đường đều set `crm_leads.kanban_deadline_at = null`, nhưng chỉ `disableLinkedDealDeadlines` ghi `crm_lead_deadline_history`; hai đường kia không. Và `turnOnDeadlineOnVcIncident` (thẻ VC vào «Phát sinh») chỉ xoá `deadline_disabled_at`, không trả lại giá trị. Đơn đi «hoàn thành → phát sinh» mất hạn vĩnh viễn.
+- `stageMoveDeadlineOff.js`: thêm `hanCrmTuocGanNhat(leadId)` đọc dòng lịch sử gần nhất có `old_deadline_at` và `new_deadline_at IS NULL` (chỉ nhận lần hệ thống tự tắt, không đụng lần người dùng chủ động xoá). `turnOnDeadlineOnVcIncident` nay khôi phục giá trị — nhưng CHỈ khi ô đang trống, để không đè hạn người dùng vừa đặt tay; ghi lịch sử dòng khôi phục và nhắc ngày cũ trong bình luận; trả thêm `restored` trong kết quả.
+- `turnOffCrmDeadlineOnCompletedStage`: bổ sung ghi lịch sử trước khi xoá (trước đây thiếu hẳn).
+- `completeOpenWorkOnModuleDone.js` — `clearAllProjectDeadlinesOnInstallationDone`: chụp `id/stage_id/kanban_deadline_at` của lô trước khi update rồi ghi lịch sử sau khi update thành công, `source='module_done'`.
+- Đo hiện trạng: 860 deal đang tắt hạn CRM, chỉ **14** có lịch sử khôi phục được, **842 không có** — giá trị của chúng đã mất trước khi có bản vá này, không cứu lại được. Bản vá chỉ chặn mất mát từ nay.
+
+**2. Dự án mới không được tính hạn SX.** `syncSxCardDeadline` không được gọi ở bất kỳ đường tạo dự án nào (grep: không có trong `autoDealWonProject.js`, `createWorkshopIntake.js`, `placeProjectAtWorkshops.js`) — chỉ chạy khi sửa dự án, kéo cột, hoặc đụng nhiệm vụ. Nay gọi ở cuối `createWorkshopIntake` và `autoDealWonProject`, bắt lỗi riêng để không làm hỏng luồng tạo. Vá TB-2026-1048 (trống → 06/10); TB-2026-1050/1051 đã tự có hạn trước đó.
+
+Kiểm tra: `node --check` 4 file đạt, nạp module đạt, 3 test deadline đạt. Chưa thử luồng VC «Phát sinh» trên dữ liệu thật (cần kéo thẻ thật). Hoàn tác: bỏ delta 4 file.
+
+**Chưa làm** (từ danh sách review): gán nhóm hạn cho cột của năm công ty ngoài Hucabi — cần họ xác nhận công đoạn nào thuộc nhóm nào; và cho thẻ SX đọc `effective_deadline_at` thay vì cột thô.
