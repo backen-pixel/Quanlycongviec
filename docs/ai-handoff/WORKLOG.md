@@ -4,7 +4,7 @@ Chưa bật cờ, chưa gọi OpenAI thật; cần thử trên Page thật sau k
 
 ## 2026-10-09 — Tách tên deal CRM và tên dự án xưởng
 Sửa tiêu đề deal không còn ghi `projects.name`. Thẻ SX/VC và trang chi tiết xưởng hiện `projects.name`; sửa tên ở xưởng chỉ lưu tên dự án. Tìm CRM khớp thêm tên/mã dự án; tìm SX khớp thêm tiêu đề deal.
-Chưa deploy. Đơn TB-2026-990 trên DB chính đã bị ghi cả hai tên thành «Anh Lộc - Cần giờ» từ trước, code mới không tự đổi lại tên đó.
+Chưa deploy. Đã trả `projects.name` của TB-2026-990 trên DB chính về «Chị Hạnh - Nhà Bè - nhà đã hoàn thiện»; `crm_leads.title` vẫn «Anh Lộc - Cần giờ».
 
 ## 2026-10-08 — P2-1b (local)
 Thêm `database/714_ai_reply_drafts*.sql`, `aiReplyDraft/{store,service}.js` và hai test tương ứng; dùng `customers.full_name/address`, `crm_leads.install_address` để ẩn danh.
@@ -2290,3 +2290,34 @@ Mục (e) của review kế toán — rò rỉ dữ liệu giữa công ty.
 Kiểm tra: `node --check` 4 file đạt. Hoàn tác: bỏ delta 4 file. Chưa thử qua giao diện bằng tài khoản kế toán thật.
 
 **Đính chính commit `8eb6e94a`.** Commit đó mang nhãn «Ke toan: bo chuoi cung van phu/vpt» nhưng còn **cuốn theo thay đổi của một phiên khác đang chạy song song**: tính năng tìm dự án trên Kanban SX theo tên deal / tên xưởng (`routes/crm/routes/leadsList.js`, `routes/production.js` hàm `projectIdsMatchingDealTitle`, `routes/crm/routes/leadLifecycle.js`, phần lớn `routes/crm/shared/helpersBundle.js`, và một mục trong `CURRENT.md`). Nguyên nhân: tôi dùng `git add -u backend/src docs` thay vì liệt kê từng file, nên quét cả file do phiên khác sửa. Code của họ hoàn chỉnh và không hỏng gì; đã push nên KHÔNG viết lại lịch sử (phiên khác đang làm trên cùng nhánh). Chỉ 4 file này là của phần kế toán: `accountingScope.js`, `accountingDeals.js`, `accountingDealDetail.js`, và 3 dòng trong `helpersBundle.js` (import + 2 chỗ gọi `warmAccountingCompanyNames`). Lần sau: luôn `git add` theo tên file.
+
+---
+
+## 2026-10-09 — Kế toán: KPI, công nợ và xuất file thôi bị cắt còn 200 deal
+
+Tiếp phần kế toán. Hai lỗi đếm thiếu, cả hai đều âm thầm.
+
+**1. Trần 200 cắt cả ba đường cộng tổng.** `fetchAccountingDeals` phân trang bằng `pageSize = Math.min(200, limit)`. Ba caller cần TOÀN BỘ dữ liệu lại truyền `limit: 100000` — và vẫn bị cắt còn 200: `buildAccountingSummary` (ô KPI dashboard), `fetchAccountingReceivables` (trang công nợ), `fetchAccountingDealsForExport` (xuất file). Hucabi có **536 deal** nên KPI, công nợ và file xuất đều chỉ tính trên 200 deal đầu — **thiếu 63%**; VPT 209 deal, thiếu 9.
+- Thêm tham số `all = false`. Khi `all` thì bỏ qua trần và trả trọn `enriched`, giữ trần 200 cho danh sách phân trang trên màn hình (đúng hành vi UI). Ba caller trên đổi sang `all: true`.
+- Kiểm chứng sau sửa: Hucabi `all` và `export` đều trả **536/536** (trước 200), VPT **209/209**, Metalla 71, Phúc Đạt 186, NextGo 39 — các công ty dưới 200 không đổi. Một trang vẫn 50 dòng như cũ.
+
+**2. `runDealQuery` không phân trang → PostgREST cắt ở 1000.** Hàm là một `.select()` trần: không `.range()`, và `.in('project_id', projectIds)` có thể vỡ URL khi danh sách dài (bên SX đo được ~643 id). Đo ngưỡng thật bằng chính client ứng dụng: select trần trên `tasks` (22.776 dòng) chỉ trả **1000** — xác nhận trần 1000.
+- Hiện trạng: 934/2.424 deal có `project_id` (**93% ngưỡng**), Hucabi có 534 dự án trong phạm vi (**83% ngưỡng `.in`**). Chưa vỡ nhưng sát.
+- Thay bằng `fetchAllByIdsParallel` (`supabaseFetchAll.js`) — tự chia khúc id và phân trang từng khúc. Vì chia khúc nên sắp lại `updated_at desc` ở bộ nhớ để giữ đúng thứ tự cũ.
+
+**3. Nút «Xuất Excel» đổi thành «Xuất CSV»** — tệp tải về là `.csv` (blob `text/csv`), gọi sai tên từ trước.
+
+Kiểm tra: `node --check` đạt, `npx vite build` đạt. Chưa thử qua giao diện bằng tài khoản kế toán thật. Hoàn tác: bỏ delta 2 file.
+
+**Còn lại từ review kế toán** (chưa làm, đều không mất dữ liệu): (b) `production_value` và giá trị deal là hai số độc lập — cần quyết định nghiệp vụ; (c) tiền cọc nhân ra 4 nơi; (h) `/ketoan/*` không bọc quyền ở frontend (backend vẫn chặn).
+
+---
+
+## 2026-10-09 — Lọc CRM: tìm tên không còn nuốt khoảng ngày tự chọn
+
+- Báo lỗi: trên board CRM, gõ tìm «web» đồng thời chọn khoảng ngày 08/10 → kết quả vẫn ra lead từ 15/6, 13/6, 18/5. Khung thời gian bị bỏ qua.
+- Truy ngược: RPC `crm_leads_page_ids` xử lý ĐÚNG cả hai — thử trực tiếp với công ty VPT: chỉ ngày = 28, chỉ tìm «web» = 107, tìm + ngày = **18** (đúng tập con). Lỗi không nằm ở backend.
+- Thủ phạm ở `CRMDashboard.jsx` `buildCrmKanbanServerFilterParams`: `if (search.length >= 2) { delete common.date_from; delete common.date_to; }` — cố ý, kèm chú thích tránh «thấy trong gợi ý nhưng board lọc theo tháng hiện tại → thẻ biến mất». Nhưng nó không phân biệt khung do PRESET sinh ra với khoảng người dùng TỰ CHỌN.
+- Hệ thống vốn phân biệt được: `timePreset === ''` (Tất cả, không ngày) · tên preset (ngày tự suy, `showCustomDate: false`) · `'custom'` (người dùng tự chọn, `showCustomDate: true`). Nay điều kiện thành `search.length >= 2 && timePreset !== 'custom'` — giữ nguyên ý đồ cũ cho preset, tôn trọng khoảng tự chọn.
+- Thêm `timePreset` vào chữ ký hàm và **đủ 13/13 lời gọi** (dùng script khớp ngoặc, vì file còn 5 chỗ `customDateTo:` ở object khác — thay hàng loạt sẽ hỏng). Kiểm lại bằng script đếm: 13 lời gọi, 0 chỗ thiếu.
+- `npx vite build` đạt. Chưa thử trên trình duyệt. Hoàn tác: bỏ delta 1 file.

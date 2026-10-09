@@ -4,7 +4,6 @@ import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
 import api from '../lib/api';
 import { taskBelongsToWorkshopModule, taskBelongsToVcSubTab } from '../lib/workshopTaskScope';
 import { markWorkshopPipelineCardFocus, markWorkshopProjectRename } from '../lib/workshopPipelineStorage';
-import { patchCrmDashboardCacheLeadFields } from '../lib/crmDashboardCache';
 import {
   isLeadDocVisibleInModule,
   isCrmSharedArtifactVisibleInModule,
@@ -2894,27 +2893,13 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   };
 
   const saveTitle = async () => {
-    const dealId = project?.crmDeals?.[0]?.id;
-    if (!titleDraft.trim() || savingTitle) return;
+    if (!titleDraft.trim() || savingTitle || !project?.id) return;
     setSavingTitle(true);
     try {
       const nextTitle = titleDraft.trim();
-      if (dealId) {
-        // Backend PUT /crm/leads/:id đồng bộ luôn projects.name (card Kanban SX/VC).
-        const { data } = await api.put(`/crm/leads/${dealId}`, { title: nextTitle });
-        const savedTitle = data?.title || nextTitle;
-        setProject((prev) => (prev ? {
-          ...prev,
-          name: savedTitle,
-          crmDeals: prev.crmDeals?.map((d) => (d.id === dealId ? { ...d, ...data, title: savedTitle } : d)),
-        } : prev));
-        patchCrmDashboardCacheLeadFields(dealId, { title: savedTitle });
-        if (project?.id) markWorkshopProjectRename(project.id, { name: savedTitle, dealTitle: savedTitle });
-      } else if (project?.id) {
-        await api.put(`/projects/${project.id}`, { name: nextTitle });
-        setProject((prev) => (prev ? { ...prev, name: nextTitle } : prev));
-        markWorkshopProjectRename(project.id, { name: nextTitle });
-      }
+      await api.put(`/projects/${project.id}`, { name: nextTitle });
+      setProject((prev) => (prev ? { ...prev, name: nextTitle } : prev));
+      markWorkshopProjectRename(project.id, { name: nextTitle });
       setEditingTitle(false);
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi cập nhật tên');
@@ -3221,7 +3206,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const tasksLeadId = dealLeadFromUrl || crmLeadId;
   const focusCrmTaskId = searchParams.get('crm_task');
   const displayCode = primaryCrmDeal?.code || project.code;
-  const displayTitle = primaryCrmDeal?.title || project.name;
+  const displayTitle = String(project.name || '').trim() || primaryCrmDeal?.title || '';
   const taskCount = moduleKey === 'vc' && crmLeadId
     ? (crmDealTaskSummary.total || productionTaskSummary.total || 0)
     : moduleKey === 'vc'
@@ -3323,7 +3308,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                   value={titleDraft}
                   onChange={(e) => setTitleDraft(e.target.value)}
                   className="h-10 min-w-[320px] max-w-[560px] px-3 border border-gray-300 rounded-lg text-lg font-semibold text-gray-900 bg-white"
-                  placeholder="Nhập tên deal"
+                  placeholder="Nhập tên dự án"
                   autoFocus
                 />
                 <button
@@ -3344,11 +3329,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             ) : (
               <div className="mt-1 flex items-center gap-2 flex-wrap">
                 <h1 className="text-2xl font-bold text-gray-900">{displayTitle}</h1>
-                {crmLeadId && (
+                {project?.id && (
                   <button
                     onClick={() => { setTitleDraft(displayTitle || ''); setEditingTitle(true); }}
                     className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg cursor-pointer transition"
-                    title="Sửa tên deal"
+                    title="Sửa tên dự án. Tên deal CRM giữ nguyên."
                   >
                     <Edit2 className="h-4 w-4" />
                   </button>

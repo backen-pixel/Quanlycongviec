@@ -5596,7 +5596,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   const assignee = item.production_person || primaryStaff || item.assignee;
   const deals = Array.isArray(item.crm_deals) ? item.crm_deals : [];
   const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
-  const cardTitle = (primaryDeal?.title || '').trim() || item.name || '';
+  const cardTitle = String(item.name || '').trim() || (primaryDeal?.title || '').trim() || '';
   const crmAssignee = primaryDeal?.assignee || primaryDeal?.lead_owner || item.sales_person || null;
   const leadCreatedAt = primaryDeal?.created_at || item.created_at || null;
   const columnEnteredAt = item.sx_pipeline_stage_entered_at || item.stage_entered_at || item.updated_at || item.created_at || null;
@@ -6169,7 +6169,7 @@ const SxTheGon = memo(function SxTheGon({ item, stage, soXong, tongViec, isSelec
   const navigate = useNavigate();
   const deals = Array.isArray(item.crm_deals) ? item.crm_deals : [];
   const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
-  const ten = (primaryDeal?.title || '').trim() || item.name || item.code || '—';
+  const ten = String(item.name || '').trim() || (primaryDeal?.title || '').trim() || item.code || '—';
   const moi = !!item.sx_intake;
   const giao = item.delivery_date
     ? getSxOrderDeliveryDateUrgency(item.delivery_date, stage || item.sx_pipeline_stage, item.company_id)
@@ -6444,7 +6444,7 @@ function SxMaTranSongSong({
             const pct = cotNho.length ? Math.round((soXong / cotNho.length) * 100) : 0;
             const dealsHang = Array.isArray(item.crm_deals) ? item.crm_deals : [];
             const dealHang = dealsHang.find((d) => String(d?.type || '') === 'deal') || dealsHang[0] || null;
-            const tenDA = String((dealHang?.title || '').trim() || item.name || '').trim();
+            const tenDA = String(item.name || '').trim() || String((dealHang?.title || '').trim() || '').trim();
             const planHang = sxInstallPlanForProject(item);
             return (
               <Fragment key={item.id}>
