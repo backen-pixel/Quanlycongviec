@@ -29,6 +29,7 @@
     "test:crm-split:b": "node tests/crm-split-50-cases-b.js",
     "test:crm-split:all": "node tests/crm-split-50-cases.js && node tests/crm-split-50-cases-b.js",
     "test:crm-split:ui": "node tests/crm-split-100-ui.js",
+    "test:sx-counts": "node tests/sx-kanban-counts-readonly.js",
     "test:crm-remediation": "node tests/crm-remediation-gate.js",
     "test:crm-access": "node tests/crm-task-access-rollback.js",
     "test:crm-http": "node tests/crm-task-http-integration.js",
