@@ -503,7 +503,8 @@ export default function AccountingDashboard() {
             className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 cursor-pointer disabled:opacity-60"
           >
             <Download className={`h-4 w-4 ${exporting ? 'animate-pulse' : ''}`} />
-            Xuất Excel
+            {/* Gọi đúng tên: tệp tải về là .csv (blob text/csv), không phải .xlsx. */}
+            Xuất CSV
           </button>
           <button
             type="button"
