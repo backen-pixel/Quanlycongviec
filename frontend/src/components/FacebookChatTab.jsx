@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { Image, Paperclip, Send, RefreshCw, ExternalLink, Images } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import FacebookImageSetPicker from './facebook/FacebookImageSetPicker';
+import AiDraftBar from './AiDraftBar';
+import { recordSentDraft } from '../lib/aiReplyDrafts';
 
 const API = import.meta.env.VITE_API_URL || '';
 const hdr = () => ({
@@ -29,6 +31,7 @@ export default function FacebookChatTab({ leadId, companyId }) {
   const imageInputRef = useRef(null);
   const contactRef = useRef(null);
   contactRef.current = contact;
+  const draftRef = useRef(null);
 
   const companyQs = useMemo(
     () => (companyId ? `?company_id=${encodeURIComponent(companyId)}` : ''),
@@ -167,6 +170,10 @@ export default function FacebookChatTab({ leadId, companyId }) {
       if (res.ok) {
         const msg = await res.json();
         setMessages((prev) => [...prev, { ...msg, contact }]);
+        const usedDraft = draftRef.current;
+        draftRef.current = null;
+        // Recording is best effort and must never block or undo the send itself.
+        if (usedDraft) recordSentDraft(usedDraft, reply).catch(() => {});
         setReply('');
         setTimeout(() => scrollChatToBottom(true), 100);
       }
@@ -374,6 +381,7 @@ export default function FacebookChatTab({ leadId, companyId }) {
       </div>
 
       <div className="pt-3 border-t mt-3 shrink-0">
+        <AiDraftBar leadId={leadId} reply={reply} setReply={setReply} draftRef={draftRef} disabled={!contact || sending} />
         {uploading && (
           <div className="flex items-center gap-2 text-xs text-blue-600 mb-2">
             <div className="w-3.5 h-3.5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />

@@ -1,3 +1,7 @@
+## 2026-10-09 — P2-2 (local)
+Thêm `routes/aiReplyDrafts.js`, `aiReplyDraft/config.js`, `lib/aiReplyDrafts.js`, `AiDraftBar.jsx`, sửa tối thiểu `FacebookChatTab.jsx` và `server.js` (1 dòng mount); test route/cấu hình 43/43 (gồm 31 test P2-1), vite build đạt.
+Chưa bật cờ, chưa gọi OpenAI thật; cần thử trên Page thật sau khi Founder đặt biến Render.
+
 ## 2026-10-09 — Tách tên deal CRM và tên dự án xưởng
 Sửa tiêu đề deal không còn ghi `projects.name`. Thẻ SX/VC và trang chi tiết xưởng hiện `projects.name`; sửa tên ở xưởng chỉ lưu tên dự án. Tìm CRM khớp thêm tên/mã dự án; tìm SX khớp thêm tiêu đề deal.
 Chưa deploy. Đã trả `projects.name` của TB-2026-990 trên DB chính về «Chị Hạnh - Nhà Bè - nhà đã hoàn thiện»; `crm_leads.title` vẫn «Anh Lộc - Cần giờ».
