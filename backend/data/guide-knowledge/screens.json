@@ -300,6 +300,15 @@
     ]
   },
   {
+    "path": "/crm/ad-analytics",
+    "label": "/crm/ad-analytics",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": true,
+    "summary": "",
+    "keywords": []
+  },
+  {
     "path": "/crm/admin/sla-watchlist",
     "label": "SLA Lead/Deal (quản trị)",
     "menu": "CRM → KPI & báo cáo",
@@ -600,6 +609,21 @@
     ]
   },
   {
+    "path": "/crm/events/schedule",
+    "label": "/crm/events/schedule",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Bảng ngày lắp và ngày lấy hàng của CRM — xem và sửa mốc lắp đặt, mốc lấy hàng của các dự án theo dạng bảng, xuất được ra Excel.",
+    "keywords": [
+      "lich lap dat",
+      "ngay lap",
+      "ngay lay hang",
+      "bang ngay lap",
+      "su kien lap dat"
+    ]
+  },
+  {
     "path": "/crm/executive-kpi",
     "label": "KPI Giám đốc",
     "menu": "CRM → KPI & báo cáo",
@@ -621,8 +645,8 @@
   },
   {
     "path": "/crm/facebook",
-    "label": "Facebook",
-    "menu": "CRM → Kênh chat",
+    "label": "Hiệu quả quảng cáo FB",
+    "menu": "CRM → KPI & báo cáo",
     "needs_admin": true,
     "redirect": false,
     "summary": "Kênh Facebook — Hộp thư tin nhắn Page, Danh bạ liên hệ, Bình luận, Phân tích, mẫu trả lời nhanh, quy tắc Tự động và Auto công ty; lọc khách đã có/chưa có SĐT và đồng bộ tin nhắn.",
@@ -1092,6 +1116,21 @@
       {
         "label": "Xuất PDF"
       }
+    ]
+  },
+  {
+    "path": "/crm/phat-sinh",
+    "label": "Quản lý phát sinh",
+    "menu": "CRM → Bán hàng",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Quản lý phát sinh của CRM — các việc nảy sinh ngoài kế hoạch, tách hai luồng «không phí» và «có phí». Dùng lại đúng bảng Giao việc (thẻ, kéo thả, bình luận, tệp đính kèm), chỉ hẹp bộ lọc về module này. Mỗi việc là một dòng crm_assignments có phat_sinh_kind.",
+    "keywords": [
+      "phat sinh",
+      "viec phat sinh",
+      "chi phi phat sinh",
+      "ngoai ke hoach",
+      "crm"
     ]
   },
   {
@@ -1790,8 +1829,52 @@
     ]
   },
   {
+    "path": "/ketoan/chi-phi",
+    "label": "Chi phí dự án",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Chi phí dự án theo công ty — gom chi phí từ nhiều nguồn (chi phí xưởng, phát sinh, …) về từng dự án để đối chiếu với doanh thu. Có tìm kiếm, mở rộng từng dự án và xuất file.",
+    "keywords": [
+      "chi phi du an",
+      "chi phi",
+      "gia von",
+      "doi chieu chi phi",
+      "ke toan chi phi"
+    ]
+  },
+  {
+    "path": "/ketoan/chi-phi/setup",
+    "label": "Công thức chi phí",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Setup chi phí — khai báo nguồn chi phí nào được tính vào dự án, tỉ lệ trừ, và nhiệm vụ của module nào đóng góp chi phí. Có chế độ thử trước khi áp dụng.",
+    "keywords": [
+      "setup chi phi",
+      "cau hinh chi phi",
+      "nguon chi phi",
+      "ti le tru"
+    ]
+  },
+  {
+    "path": "/ketoan/cong-no",
+    "label": "Công nợ phải thu",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Công nợ phải thu — số tiền khách còn nợ, chia nhóm theo tuổi nợ (0–30, 31–60, 61–90, trên 90 ngày) để biết khoản nào cần đòi trước.",
+    "keywords": [
+      "cong no",
+      "phai thu",
+      "tuoi no",
+      "khach con no",
+      "no qua han"
+    ]
+  },
+  {
     "path": "/ketoan/dashboard",
-    "label": "Tổng hợp deal SX",
+    "label": "Tổng hợp deal SX · VC/LĐ",
     "menu": "1. Tổng quan",
     "needs_admin": false,
     "redirect": false,
@@ -1815,7 +1898,7 @@
         "label": "Mở deal CRM"
       },
       {
-        "label": "Mở dự án SX"
+        "label": "Mở công nợ"
       }
     ]
   },
@@ -1846,6 +1929,21 @@
       {
         "label": "Sản xuất"
       }
+    ]
+  },
+  {
+    "path": "/ketoan/phat-sinh",
+    "label": "Quản lý phát sinh",
+    "menu": "1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Quản lý phát sinh của Kế toán — các việc nảy sinh ngoài kế hoạch, tách hai luồng «không phí» và «có phí». Dùng lại đúng bảng Giao việc (thẻ, kéo thả, bình luận, tệp đính kèm), chỉ hẹp bộ lọc về module này. Mỗi việc là một dòng crm_assignments có phat_sinh_kind.",
+    "keywords": [
+      "phat sinh",
+      "viec phat sinh",
+      "chi phi phat sinh",
+      "ngoai ke hoach",
+      "k ton"
     ]
   },
   {
@@ -2166,6 +2264,19 @@
     ]
   },
   {
+    "path": "/m/:moduleKey/phat-sinh",
+    "label": "/m/:moduleKey/phat-sinh",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Quản lý phát sinh của một module tùy chỉnh — cùng trang phát sinh dùng chung, module lấy theo moduleKey trên đường dẫn.",
+    "keywords": [
+      "phat sinh",
+      "module tuy chinh",
+      "viec phat sinh"
+    ]
+  },
+  {
     "path": "/m/:moduleKey/records/:recordId",
     "label": "Chi tiết thẻ (module tùy chỉnh)",
     "menu": "",
@@ -2292,6 +2403,19 @@
       {
         "label": "Chuyển DB"
       }
+    ]
+  },
+  {
+    "path": "/management/cost-setup",
+    "label": "Setup công thức chi phí",
+    "menu": "3. Thiết lập",
+    "needs_admin": true,
+    "redirect": false,
+    "summary": "Setup chi phí mở từ Work Unified — cùng màn hình với /ketoan/chi-phi/setup, chỉ khác nút quay lại trỏ về Work Unified.",
+    "keywords": [
+      "setup chi phi",
+      "cau hinh chi phi",
+      "work unified"
     ]
   },
   {
@@ -2700,6 +2824,21 @@
       {
         "label": "Lưu & gửi Mua hàng"
       }
+    ]
+  },
+  {
+    "path": "/mua-hang/phat-sinh",
+    "label": "Quản lý phát sinh",
+    "menu": "1. Lệnh đặt hàng",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Quản lý phát sinh của Mua hàng — các việc nảy sinh ngoài kế hoạch, tách hai luồng «không phí» và «có phí». Dùng lại đúng bảng Giao việc (thẻ, kéo thả, bình luận, tệp đính kèm), chỉ hẹp bộ lọc về module này. Mỗi việc là một dòng crm_assignments có phat_sinh_kind.",
+    "keywords": [
+      "phat sinh",
+      "viec phat sinh",
+      "chi phi phat sinh",
+      "ngoai ke hoach",
+      "mua hng"
     ]
   },
   {
@@ -3631,6 +3770,21 @@
     ]
   },
   {
+    "path": "/sx/events/schedule",
+    "label": "/sx/events/schedule",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Bảng ngày lắp và ngày lấy hàng của Sản xuất — xem và sửa mốc lắp đặt, mốc lấy hàng của các dự án theo dạng bảng, xuất được ra Excel.",
+    "keywords": [
+      "lich lap dat",
+      "ngay lap",
+      "ngay lay hang",
+      "bang ngay lap",
+      "su kien lap dat"
+    ]
+  },
+  {
     "path": "/sx/handover-settings",
     "label": "Bàn giao CRM → SX (nâng cao)",
     "menu": "Sản xuất → 3. Setup xưởng",
@@ -3648,6 +3802,21 @@
       {
         "label": "Tạo đội sản xuất thuộc công ty"
       }
+    ]
+  },
+  {
+    "path": "/sx/phat-sinh",
+    "label": "Quản lý phát sinh",
+    "menu": "Sản xuất → 1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Quản lý phát sinh của Sản xuất — các việc nảy sinh ngoài kế hoạch, tách hai luồng «không phí» và «có phí». Dùng lại đúng bảng Giao việc (thẻ, kéo thả, bình luận, tệp đính kèm), chỉ hẹp bộ lọc về module này. Mỗi việc là một dòng crm_assignments có phat_sinh_kind.",
+    "keywords": [
+      "phat sinh",
+      "viec phat sinh",
+      "chi phi phat sinh",
+      "ngoai ke hoach",
+      "sn xut"
     ]
   },
   {
@@ -4074,6 +4243,36 @@
       "su kien lap dat",
       "lich vc",
       "su kien van chuyen"
+    ]
+  },
+  {
+    "path": "/vc/events/schedule",
+    "label": "/vc/events/schedule",
+    "menu": "",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Bảng ngày lắp và ngày lấy hàng của Vận chuyển – Lắp đặt — xem và sửa mốc lắp đặt, mốc lấy hàng của các dự án theo dạng bảng, xuất được ra Excel.",
+    "keywords": [
+      "lich lap dat",
+      "ngay lap",
+      "ngay lay hang",
+      "bang ngay lap",
+      "su kien lap dat"
+    ]
+  },
+  {
+    "path": "/vc/phat-sinh",
+    "label": "Quản lý phát sinh",
+    "menu": "Vận chuyển → 1. Tổng quan",
+    "needs_admin": false,
+    "redirect": false,
+    "summary": "Quản lý phát sinh của Vận chuyển – Lắp đặt — các việc nảy sinh ngoài kế hoạch, tách hai luồng «không phí» và «có phí». Dùng lại đúng bảng Giao việc (thẻ, kéo thả, bình luận, tệp đính kèm), chỉ hẹp bộ lọc về module này. Mỗi việc là một dòng crm_assignments có phat_sinh_kind.",
+    "keywords": [
+      "phat sinh",
+      "viec phat sinh",
+      "chi phi phat sinh",
+      "ngoai ke hoach",
+      "vn chuyn  lp t"
     ]
   },
   {

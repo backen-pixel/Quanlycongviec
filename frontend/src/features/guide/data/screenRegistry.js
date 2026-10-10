@@ -74,6 +74,11 @@ export const SCREEN_REGISTRY = [
     "menu": "CRM → Tổng quan"
   },
   {
+    "path": "/crm/ad-analytics",
+    "label": "/crm/ad-analytics",
+    "menu": ""
+  },
+  {
     "path": "/crm/admin/sla-watchlist",
     "label": "SLA Lead/Deal (quản trị)",
     "menu": "CRM → KPI & báo cáo"
@@ -144,14 +149,19 @@ export const SCREEN_REGISTRY = [
     "menu": ""
   },
   {
+    "path": "/crm/events/schedule",
+    "label": "/crm/events/schedule",
+    "menu": ""
+  },
+  {
     "path": "/crm/executive-kpi",
     "label": "KPI Giám đốc",
     "menu": "CRM → KPI & báo cáo"
   },
   {
     "path": "/crm/facebook",
-    "label": "Facebook",
-    "menu": "CRM → Kênh chat"
+    "label": "Hiệu quả quảng cáo FB",
+    "menu": "CRM → KPI & báo cáo"
   },
   {
     "path": "/crm/facebook/link-phone-cleanup",
@@ -262,6 +272,11 @@ export const SCREEN_REGISTRY = [
     "path": "/crm/orders/new",
     "label": "Tạo đơn hàng",
     "menu": ""
+  },
+  {
+    "path": "/crm/phat-sinh",
+    "label": "Quản lý phát sinh",
+    "menu": "CRM → Bán hàng"
   },
   {
     "path": "/crm/pipeline",
@@ -439,14 +454,34 @@ export const SCREEN_REGISTRY = [
     "menu": "1. Tổng quan"
   },
   {
+    "path": "/ketoan/chi-phi",
+    "label": "Chi phí dự án",
+    "menu": "1. Tổng quan"
+  },
+  {
+    "path": "/ketoan/chi-phi/setup",
+    "label": "Công thức chi phí",
+    "menu": "1. Tổng quan"
+  },
+  {
+    "path": "/ketoan/cong-no",
+    "label": "Công nợ phải thu",
+    "menu": "1. Tổng quan"
+  },
+  {
     "path": "/ketoan/dashboard",
-    "label": "Tổng hợp deal SX",
+    "label": "Tổng hợp deal SX · VC/LĐ",
     "menu": "1. Tổng quan"
   },
   {
     "path": "/ketoan/deals/:leadId",
     "label": "Chi tiết kế toán của deal",
     "menu": ""
+  },
+  {
+    "path": "/ketoan/phat-sinh",
+    "label": "Quản lý phát sinh",
+    "menu": "1. Tổng quan"
   },
   {
     "path": "/knowledge",
@@ -529,6 +564,11 @@ export const SCREEN_REGISTRY = [
     "menu": ""
   },
   {
+    "path": "/m/:moduleKey/phat-sinh",
+    "label": "/m/:moduleKey/phat-sinh",
+    "menu": ""
+  },
+  {
     "path": "/m/:moduleKey/records/:recordId",
     "label": "Chi tiết thẻ (module tùy chỉnh)",
     "menu": ""
@@ -557,6 +597,11 @@ export const SCREEN_REGISTRY = [
     "path": "/management/backup-sync",
     "label": "Giám sát Supabase",
     "menu": "4. Cài đặt"
+  },
+  {
+    "path": "/management/cost-setup",
+    "label": "Setup công thức chi phí",
+    "menu": "3. Thiết lập"
   },
   {
     "path": "/management/crm-overview",
@@ -682,6 +727,11 @@ export const SCREEN_REGISTRY = [
     "path": "/mua-hang/orders/new",
     "label": "Tạo lệnh đặt hàng",
     "menu": ""
+  },
+  {
+    "path": "/mua-hang/phat-sinh",
+    "label": "Quản lý phát sinh",
+    "menu": "1. Lệnh đặt hàng"
   },
   {
     "path": "/mua-hang/products",
@@ -909,9 +959,19 @@ export const SCREEN_REGISTRY = [
     "menu": ""
   },
   {
+    "path": "/sx/events/schedule",
+    "label": "/sx/events/schedule",
+    "menu": ""
+  },
+  {
     "path": "/sx/handover-settings",
     "label": "Bàn giao CRM → SX (nâng cao)",
     "menu": "Sản xuất → 3. Setup xưởng"
+  },
+  {
+    "path": "/sx/phat-sinh",
+    "label": "Quản lý phát sinh",
+    "menu": "Sản xuất → 1. Tổng quan"
   },
   {
     "path": "/sx/pipeline",
@@ -1024,6 +1084,16 @@ export const SCREEN_REGISTRY = [
     "menu": ""
   },
   {
+    "path": "/vc/events/schedule",
+    "label": "/vc/events/schedule",
+    "menu": ""
+  },
+  {
+    "path": "/vc/phat-sinh",
+    "label": "Quản lý phát sinh",
+    "menu": "Vận chuyển → 1. Tổng quan"
+  },
+  {
     "path": "/vc/pipeline-settings",
     "label": "Pipeline Lắp đặt",
     "menu": "Vận chuyển → 3. Điều hành Lắp đặt"
@@ -1099,8 +1169,8 @@ export const MODULE_INDEX = [
       "Bán hàng",
       "Dữ liệu",
       "Hỗ trợ & công cụ",
-      "Kênh chat",
       "Tài chính",
+      "Kênh chat",
       "Thông báo"
     ]
   },
