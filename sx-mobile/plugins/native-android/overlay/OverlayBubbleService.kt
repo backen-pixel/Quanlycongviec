@@ -53,6 +53,8 @@ class OverlayBubbleService : Service() {
   private var badgeView: TextView? = null
   private var layoutParams: WindowManager.LayoutParams? = null
   private var badgeCount = 0
+  /** Số tin chưa đọc theo từng đoạn (cộng dồn từ lúc bong bóng nhận tin) — để đọc xong đoạn nào thì trừ đúng phần của đoạn đó khỏi huy hiệu. */
+  private val convUnread = HashMap<String, Int>()
   private var bubbleLetter = "?"
   private var bubbleTitle = "Chat"
   private var bubbleGroupId = ""
@@ -114,19 +116,20 @@ class OverlayBubbleService : Service() {
         val sender = intent.getStringExtra(EXTRA_SENDER).orEmpty()
         val preview = intent.getStringExtra(EXTRA_MESSAGE).orEmpty()
         val increment = intent.getBooleanExtra(EXTRA_INCREMENT_BADGE, false)
+        rememberIncomingId(gid, intent.getStringExtra(EXTRA_MESSAGE_ID))
         val openGid = openPanelGroupId()
         if (openGid.isNotBlank()) {
           // Khung chat đang mở: tin của chính đoạn đang xem thì khung tự cập nhật (xem SHOW_PEEK) — không nảy bong bóng.
           if (gid == openGid) return START_STICKY
           // Tin của đoạn khác: ghi nhận vào chồng + huy hiệu, đưa người đó lên dải đầu chat; bong bóng đang ẩn nên không nảy.
           upsertConversation(gid, title, letter, avatarUrl, sender, preview, increment)
-          if (increment) incrementBadgeCount()
+          if (increment) incrementBadgeCount(gid)
           chatPanel?.updateHeads(chatHeads())
           rebuildStackUi()
           return START_STICKY
         }
         upsertConversation(gid, title, letter, avatarUrl, sender, preview, increment)
-        if (increment) incrementBadgeCount()
+        if (increment) incrementBadgeCount(gid)
         prefs().edit().remove(PREF_BUBBLE_DISMISSED).apply()
         val existed = bubbleRoot != null
         ensureOverlay()
@@ -165,7 +168,7 @@ class OverlayBubbleService : Service() {
             message,
             increment = false,
           )
-          if (intent.getBooleanExtra(EXTRA_INCREMENT_BADGE, true)) incrementBadgeCount()
+          if (intent.getBooleanExtra(EXTRA_INCREMENT_BADGE, true)) incrementBadgeCount(gid)
           panel?.updateHeads(chatHeads())
           rebuildStackUi()
           return START_STICKY
@@ -182,7 +185,7 @@ class OverlayBubbleService : Service() {
           )
         }
         if (intent.getBooleanExtra(EXTRA_INCREMENT_BADGE, true)) {
-          incrementBadgeCount()
+          incrementBadgeCount(gid)
         }
         val existed = bubbleRoot != null
         if (!existed) ensureOverlay()
@@ -248,6 +251,26 @@ class OverlayBubbleService : Service() {
     }
   }
 
+  /** Mã các tin đã đến theo từng đoạn (tối đa 30 mã/đoạn) — để gỡ đúng thông báo `msg:<mã tin>` khi đoạn đó được đọc. */
+  private val convMessageIds = HashMap<String, ArrayDeque<String>>()
+
+  private fun rememberIncomingId(groupId: String, messageId: String?) {
+    if (groupId.isBlank() || messageId.isNullOrBlank()) return
+    val q = convMessageIds.getOrPut(groupId) { ArrayDeque() }
+    if (q.contains(messageId)) return
+    q.addLast(messageId)
+    while (q.size > 30) q.removeFirst()
+  }
+
+  /** Gỡ khỏi thanh thông báo các thông báo tin nhắn (thẻ `msg:<mã tin>`, cả của FCM lẫn cục bộ) của đoạn đã đọc. */
+  private fun cancelNotificationsOf(groupId: String) {
+    val ids = convMessageIds.remove(groupId) ?: return
+    val nm = getSystemService(NOTIFICATION_SERVICE) as? android.app.NotificationManager ?: return
+    for (id in ids) {
+      try { nm.cancel("msg:$id", 0) } catch (_: Exception) { }
+    }
+  }
+
   /** Tin đến gần đây (khoá → thời điểm) để loại bản trùng. Chỉ dùng trên luồng chính (onStartCommand). */
   private val recentIncoming = LinkedHashMap<String, Long>()
 
@@ -280,6 +303,7 @@ class OverlayBubbleService : Service() {
       return true
     }
     recentIncoming[key] = now
+    rememberIncomingId(groupId, messageId)
     return false
   }
 
@@ -949,10 +973,23 @@ class OverlayBubbleService : Service() {
     prefs().edit().putInt(PREF_BADGE_COUNT, badgeCount.coerceAtLeast(0)).apply()
   }
 
-  private fun incrementBadgeCount() {
+  private fun incrementBadgeCount(groupId: String = "") {
     badgeCount = (badgeCount + 1).coerceAtMost(999)
+    if (groupId.isNotBlank()) convUnread[groupId] = (convUnread[groupId] ?: 0) + 1
     saveBadgeToPrefs()
     updateBadge()
+  }
+
+  /** Máy chủ đã nhận «đã đọc» của đoạn này: trừ phần tin chưa đọc của đoạn khỏi huy hiệu và báo app chính cập nhật số chưa đọc. */
+  private fun onGroupMarkedRead(groupId: String) {
+    val n = convUnread.remove(groupId) ?: 0
+    if (n > 0) {
+      badgeCount = (badgeCount - n).coerceAtLeast(0)
+      saveBadgeToPrefs()
+      updateBadge()
+    }
+    cancelNotificationsOf(groupId)
+    FloatingBubbleBridge.emitGroupRead(groupId)
   }
 
   private fun snapToEdge(params: WindowManager.LayoutParams) {
@@ -1052,6 +1089,7 @@ class OverlayBubbleService : Service() {
     if (bubbleGroupId.isBlank()) return
     hideConvPicker()
     badgeCount = 0
+    convUnread.clear()
     saveBadgeToPrefs()
     updateBadge()
     removePeek()
@@ -1098,6 +1136,7 @@ class OverlayBubbleService : Service() {
       onExpand = { gid, title -> openBubbleChatInApp(gid, title) },
       onStartCall = { gid, title, media -> openOutboundCallInApp(gid, title, media) },
       originProvider = { bubbleCenter() },
+      onGroupRead = { gid -> onGroupMarkedRead(gid) },
       onSelectHead = { gid, name ->
         // Chọn một đoạn chat khác (từ dải đầu chat hoặc trang «Đoạn chat»): chuyển cuộc đang mở, khung tự tải lại tin.
         // Đoạn chat chưa từng hiện bong bóng thì thêm vào chồng trước.

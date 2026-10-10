@@ -312,15 +312,35 @@ object BubbleChatApi {
     }
   }
 
-  fun markRead(ctx: Context, groupId: String) {
-    if (groupId.isBlank()) return
-    val base = apiBase(ctx)
-    val auth = authHeader(ctx) ?: return
-    try {
-      val conn = openJson("$base/messenger/groups/$groupId/read", auth, "PATCH")
-      readBody(conn, conn.responseCode in 200..299)
-      conn.disconnect()
-    } catch (_: Exception) { }
+  /**
+   * PATCH /messenger/groups/:id/read — luôn chạy ở luồng nền (gọi mạng trên luồng chính bị Android chặn bằng
+   * NetworkOnMainThreadException; trước đây lỗi đó bị nuốt nên máy chủ không bao giờ ghi nhận «đã đọc»).
+   * [onDone] được gọi ở luồng nền với kết quả thật (true = máy chủ trả 2xx).
+   */
+  fun markRead(ctx: Context, groupId: String, onDone: ((Boolean) -> Unit)? = null) {
+    if (groupId.isBlank()) {
+      onDone?.invoke(false)
+      return
+    }
+    val appCtx = ctx.applicationContext
+    Thread {
+      var ok = false
+      try {
+        val base = apiBase(appCtx)
+        val auth = authHeader(appCtx)
+        if (auth != null) {
+          val conn = openJson("$base/messenger/groups/$groupId/read", auth, "PATCH")
+          val code = conn.responseCode
+          ok = code in 200..299
+          readBody(conn, ok)
+          conn.disconnect()
+          if (!ok) android.util.Log.e("SxPanel", "PATCH /read lỗi HTTP $code")
+        }
+      } catch (e: Exception) {
+        android.util.Log.e("SxPanel", "PATCH /read lỗi: ${e.javaClass.simpleName}")
+      }
+      try { onDone?.invoke(ok) } catch (_: Exception) { }
+    }.start()
   }
 
   fun parseMessagesFromSeed(json: String, myUserId: String): List<ChatMessage> {

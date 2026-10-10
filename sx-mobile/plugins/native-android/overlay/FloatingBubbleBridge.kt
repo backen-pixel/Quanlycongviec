@@ -31,6 +31,19 @@ object FloatingBubbleBridge {
     } catch (_: Exception) { }
   }
 
+  /** Khung chat bong bóng đã đánh dấu «đã đọc» một đoạn trên máy chủ → app chính xoá số chưa đọc của đoạn đó. */
+  fun emitGroupRead(groupId: String) {
+    if (groupId.isBlank()) return
+    try {
+      val ctx = reactContext ?: return
+      if (!ctx.hasActiveReactInstance()) return
+      val map = Arguments.createMap()
+      map.putString("groupId", groupId)
+      ctx.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+        .emit("BubbleGroupRead", map)
+    } catch (_: Exception) { }
+  }
+
   fun emitStartCall(groupId: String, title: String, media: String) {
     if (groupId.isBlank()) return
     try {
