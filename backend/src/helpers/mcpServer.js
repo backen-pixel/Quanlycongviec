@@ -66,6 +66,7 @@ const SERVER_INSTRUCTIONS =
   + 'Tìm một khách/đơn cụ thể: dùng search rồi fetch. '
   + 'Số liệu tổng hợp: get_org_overview_report_full hoặc format_org_overview_report_text, '
   + 'mỗi lần gọi phải kèm kỳ báo cáo (date_from + date_to, hoặc time_scope). '
+  + 'Ngoài CRM còn các cổng <module>_api_get (sản xuất, vận chuyển, kế toán, dự án, nhiệm vụ, KPI, sự kiện) nếu key được cấp. '
   + 'Phạm vi công ty do API key quyết định; không tool nào ghi dữ liệu.';
 
 /** @type {Map<string, {

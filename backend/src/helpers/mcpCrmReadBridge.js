@@ -908,4 +908,10 @@ module.exports = {
   urlLeadCrm,
   boTheoWhitelist,
   layHangCrm,
+  // Bo may dung chung cho cau noi module khac (mcpModuleReadBridge) — khong chep lai.
+  signActAsJwt,
+  createMockRes,
+  stringifyQuery,
+  truncatePayload,
+  isPathDenied,
 };

@@ -17,6 +17,9 @@ const {
   callMcpAdsTool,
 } = require('./mcpAdsBridge');
 const {
+  MCP_MODULE_TOOL_SET, MCP_MODULE_SCOPES, getMcpModuleTools, callMcpModuleTool,
+} = require('./mcpModuleReadBridge');
+const {
   MCP_REASON,
   createMcpTraceId,
   mcpDeny,
@@ -169,6 +172,13 @@ const TIEU_DE_TOOL = {
   find_wasted_spend: 'Quảng cáo tiêu tiền kém hiệu quả',
   list_pages: 'Danh sách page Facebook',
   get_conversion_events: 'Đơn đã chốt theo chiến dịch',
+  production_api_get: 'Dữ liệu Sản xuất',
+  logistics_api_get: 'Dữ liệu Vận chuyển – Lắp đặt',
+  accounting_api_get: 'Dữ liệu Kế toán',
+  projects_api_get: 'Dữ liệu Dự án',
+  tasks_api_get: 'Dữ liệu Nhiệm vụ',
+  kpi_api_get: 'Dữ liệu KPI',
+  events_api_get: 'Dữ liệu Sự kiện / lịch',
 };
 
 const SCHEMA_SEARCH = {
@@ -202,6 +212,17 @@ const SCHEMA_FETCH = {
   },
 };
 
+/** Cổng đọc module ngoài CRM: cùng khuôn bridge, thêm `module` để biết nguồn. */
+const SCHEMA_BRIDGE_MODULE = {
+  type: 'object',
+  properties: {
+    status: { type: 'integer', description: 'Mã HTTP của endpoint module phía sau' },
+    data: { description: 'Thân phản hồi của endpoint module' },
+    path: { type: 'string' },
+    module: { type: 'string', description: 'production | logistics | accounting | …' },
+  },
+};
+
 /** Mọi tool đi qua bridge CRM đều trả đúng khuôn này — đã đối chiếu phản hồi thật. */
 const SCHEMA_BRIDGE_CRM = {
   type: 'object',
@@ -221,6 +242,7 @@ function outputSchemaCho(name) {
   if (name === 'search') return SCHEMA_SEARCH;
   if (name === 'fetch') return SCHEMA_FETCH;
   if (MCP_CRM_READ_TOOL_SET.has(name)) return SCHEMA_BRIDGE_CRM;
+  if (MCP_MODULE_TOOL_SET.has(name)) return SCHEMA_BRIDGE_MODULE;
   return null;
 }
 
@@ -311,9 +333,16 @@ function getMcpReportTools(apiKey = null) {
     }
   }
 
+  // Cong doc cac module ngoai CRM (san xuat, VC, ke toan, du an, nhiem vu, KPI, su kien).
+  for (const t of getMcpModuleTools()) {
+    if (!names.has(t.name)) { patched.push(t); names.add(t.name); }
+  }
+
   return patched.filter((t) => {
     if (MCP_ADS_TOOL_SET.has(t.name)) return allowAds;
     if (MCP_CRM_READ_TOOL_SET.has(t.name)) return allowCrm;
+    // Module ngoai CRM chi hien khi key co dung scope cua module do.
+    if (MCP_MODULE_TOOL_SET.has(t.name)) return scopes.includes(MCP_MODULE_SCOPES[t.name]);
     return allowReports;
   }).map(trangBiMetadataTool);
 }
@@ -325,6 +354,15 @@ function assertMcpScopeForTool(name, apiKey) {
   if (MCP_ADS_TOOL_SET.has(name)) {
     if (!scopes.includes('ads_read')) {
       throw mcpDeny(MCP_REASON.CAPABILITY_DENIED, 'API key không có quyền ads_read', 403);
+    }
+    return;
+  }
+  // Module ngoai CRM: moi module mot scope rieng. Key cu khong tu nhien co them quyen —
+  // mac dinh van chi reports + crm_read, module moi phai bat tay tren tung key.
+  if (MCP_MODULE_TOOL_SET.has(name)) {
+    const can = MCP_MODULE_SCOPES[name];
+    if (!scopes.includes(can)) {
+      throw mcpDeny(MCP_REASON.CAPABILITY_DENIED, `API key khong co quyen ${can}`, 403);
     }
     return;
   }
@@ -491,7 +529,8 @@ function locHangTheoCongTyChoPhep(ketQua, allowed, tenTool) {
 }
 
 function isMcpToolAllowed(name) {
-  return MCP_REPORT_TOOL_SET.has(name) || MCP_CRM_READ_TOOL_SET.has(name) || MCP_ADS_TOOL_SET.has(name);
+  return MCP_REPORT_TOOL_SET.has(name) || MCP_CRM_READ_TOOL_SET.has(name)
+    || MCP_ADS_TOOL_SET.has(name) || MCP_MODULE_TOOL_SET.has(name);
 }
 
 /** Tên gợi ý write — MCP giai đoạn này chỉ read. */
@@ -556,7 +595,9 @@ async function callMcpReportTool(name, args = {}, req) {
     if (merged.company_id) auditCompanyId = merged.company_id;
 
     let result;
-    if (MCP_CRM_READ_TOOL_SET.has(name)) {
+    if (MCP_MODULE_TOOL_SET.has(name)) {
+      result = await callMcpModuleTool(name, merged, user);
+    } else if (MCP_CRM_READ_TOOL_SET.has(name)) {
       // Default company_id từ key cho alias list (không ghi đè path crm_api_get)
       if (name !== 'crm_api_get' && !merged.company_id && ctx.last_company_id) {
         merged.company_id = ctx.last_company_id;
