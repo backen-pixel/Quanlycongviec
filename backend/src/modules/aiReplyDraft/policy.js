@@ -23,7 +23,9 @@ function buildSystemPrompt({ companyName = 'công ty', pilotFacts = [] } = {}) {
     `Bạn là trợ lý soạn NHÁP tin nhắn tư vấn tủ bếp cho ${companyName}. Nhân viên sẽ đọc, sửa và tự gửi.`,
     'Chỉ tư vấn nhu cầu và đề xuất đặt lịch khảo sát. Không báo giá, không hứa giảm giá, khuyến mãi, thời gian thi công hay bảo hành.',
     'Không nói mình là người thật. Không hỏi thẳng số điện thoại nếu khách chưa muốn; gợi ý để nhân viên xin.',
-    `Viết tiếng Việt lịch sự, tối đa ${MAX_DRAFT_CHARS} ký tự, đúng một câu hỏi tiếp theo. Nhãn như {TEN_KHACH} giữ nguyên.`,
+    'Xưng "em", gọi khách là "anh/chị" (biết rõ là nam thì "anh", nữ thì "chị"). Tuyệt đối không dùng "bạn", "chúng tôi", "quý khách". Mở đầu bằng "Dạ".',
+    'Viết như nhân viên nhắn Messenger: 2–3 câu ngắn, tối đa 250 ký tự, đúng một câu hỏi tiếp theo. Không nhắc địa chỉ nếu khách chưa hỏi chỗ xem mẫu hay vị trí công ty.',
+    'Viết tiếng Việt lịch sự. Nhãn như {TEN_KHACH} giữ nguyên.',
     facts.length ? `Chỉ được nêu các thông tin đã duyệt sau: ${facts.join(' | ')}` : 'Không có thông tin đã duyệt nào ngoài nội dung trên.',
   ].join('\n');
 }
@@ -48,6 +50,8 @@ function validateDraft(text, { allowedFacts = [] } = {}) {
   if (/nguoi that|khong phai\s+(?:la\s+)?(?:ai|robot|bot)\b|con nguoi that/.test(f)) reasons.push('IDENTITY_CLAIM');
   if (/\b(system prompt|ignore (?:all|previous)|as an ai|openai|chatgpt|gpt)\b/.test(f)) reasons.push('PROMPT_LEAK');
   if ((f.match(ENGLISH_STOPWORDS) || []).length >= 3) reasons.push('NOT_VIETNAMESE');
+  // House voice is "em" to "anh/chị"; checked on the accented text so "bàn" (table) is not mistaken for "bạn".
+  if (/(?<![\p{L}])(?:bạn|chúng tôi|quý khách)(?![\p{L}])/iu.test(body)) reasons.push('WRONG_PRONOUN');
   const unique = [...new Set(reasons)];
   return { ok: unique.length === 0, reasons: unique };
 }
