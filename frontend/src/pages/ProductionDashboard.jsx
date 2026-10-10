@@ -84,6 +84,14 @@ import {
   sxColumnStageKpiKey,
   TEMP_SX_FREE_DRAG,
 } from '../lib/sxPipelineRevenue';
+import {
+  buildSxInstallBackPlan,
+  endYmdForDeadlineGroup,
+  ngayNhomTuCotPipeline,
+  resolveSxPlanInstallYmd,
+  sxStageDeadlineGroup,
+  ymdFromUnknownDate,
+} from '../lib/sxWorkshopSchedule';
 import { isProjectAlreadyInLogistics, sxCardLogisticsProgress } from '../lib/projectLogistics';
 import CrmDeadlineModal from '../components/CrmDeadlineModal';
 import SxKanbanDeadlinesModal from '../components/SxKanbanDeadlinesModal';
@@ -5660,6 +5668,38 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
   const primaryDeadline = hideColumnDeadline
     ? null
     : (item.production_deadline || item.deadline || null);
+  /**
+   * Hạn riêng của CỘT LỚN thẻ đang đứng (Gia công / Hoàn thiện / Đóng gói), lùi từ ngày lắp
+   * theo số ngày xưởng đặt ở Setup.
+   *
+   * Đây là DÒNG PHỤ, không phải hạn của thẻ. Hạn chính vẫn là ngày lắp — xưởng chỉ muốn đếm
+   * một mốc (xem `sxInstallPlanKanbanDeadline.js`). Dòng này chỉ trả lời «công đoạn đang làm
+   * đáng lẽ xong ngày nào», để biết đã trễ nhịp trước khi ngày lắp kịp đỏ.
+   *
+   * Bỏ qua nhóm `planning`: nó không có số ngày cố định mà là phần còn lại tới ngày tiếp nhận,
+   * nên một cái hạn ở đó không nói lên điều gì.
+   */
+  const hanCotLon = useMemo(() => {
+    if (hideColumnDeadline || chinhSachTatHan) return null;
+    const nhom = sxStageDeadlineGroup(sxStage, pipelineStages);
+    if (!nhom || nhom === 'planning') return null;
+    const lap = resolveSxPlanInstallYmd(item);
+    if (!lap) return null;
+    const plan = buildSxInstallBackPlan(lap, {
+      startYmd: ymdFromUnknownDate(item.sx_reception_date) || ymdFromUnknownDate(item.created_at),
+      slipDays: item.sx_schedule_slip_days,
+      ngayNhom: ngayNhomTuCotPipeline(pipelineStages),
+    });
+    const end = endYmdForDeadlineGroup(plan, nhom);
+    if (!end) return null;
+    const homNay = new Date(Date.now() + 7 * 3600 * 1000).toISOString().slice(0, 10);
+    return {
+      nhan: plan?.[nhom]?.label || nhom,
+      ymd: end,
+      treNhip: end < homNay,
+    };
+  }, [item, sxStage, pipelineStages, hideColumnDeadline, chinhSachTatHan]);
+
   const deliveryOverdueTone = !hideColumnDeadline && item.delivery_date && !ignoreOrderDeliveryOverdue
     ? getSxOrderDeliveryDateUrgency(item.delivery_date, sxStage, item.company_id)
     : null;
@@ -5837,6 +5877,14 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
               label={item.production_deadline ? 'Giao xưởng' : 'Deadline'}
               suppressUrgency={ignoreOrderDeliveryOverdue}
             />
+          )}
+          {hanCotLon && (
+            <span
+              className={`text-[10px] leading-tight ${hanCotLon.treNhip ? 'text-red-600 font-semibold' : 'text-gray-500'}`}
+              title={`Công đoạn «${hanCotLon.nhan}» tính lùi từ ngày lắp. Đây không phải hạn của thẻ.`}
+            >
+              {`└ ${hanCotLon.nhan}: ${hanCotLon.ymd.slice(8, 10)}/${hanCotLon.ymd.slice(5, 7)}`}
+            </span>
           )}
         </div>
       )}

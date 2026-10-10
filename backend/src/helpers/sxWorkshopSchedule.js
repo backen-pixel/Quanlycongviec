@@ -164,15 +164,63 @@ function resolveSxPlanInstallYmd(project) {
     || '';
 }
 
-function buildSxInstallBackPlan(installYmd, { startYmd = null, slipDays = 0 } = {}) {
+/**
+ * Số ngày mặc định của từng nhóm công đoạn, khi xưởng chưa đặt `sla_days` trên cột pipeline.
+ *
+ * Đúng bằng bảng cứng dùng trước đây — lắp D, đóng gói D−1, hoàn thiện D−3..D−2,
+ * gia công D−5..D−4, kế hoạch …D−6 — nên công ty chưa cấu hình gì thì lịch không đổi một ngày.
+ */
+const SX_MAC_DINH_NGAY_NHOM = { packing: 1, finishing: 2, cabinet: 2 };
+
+/** Thứ tự lùi: từ ngày lắp đi ngược lên. `planning` là phần còn lại, không có số ngày cố định. */
+const SX_THU_TU_LUI = ['packing', 'finishing', 'cabinet'];
+
+/**
+ * Số ngày mỗi nhóm, đọc từ `sla_days` của các cột pipeline của công ty.
+ *
+ * Lấy MAX trong nhóm chứ không cộng dồn: trang Setup nói rõ «cột nhỏ bên trong chạy song song»,
+ * nên thời gian của một cột lớn là cột nhỏ lâu nhất, không phải tổng các cột nhỏ.
+ * Cột nào chưa đặt (0/null) thì nhóm đó rơi về mặc định.
+ */
+function ngayNhomTuCotPipeline(stages) {
+  const out = { ...SX_MAC_DINH_NGAY_NHOM };
+  if (!Array.isArray(stages) || !stages.length) return out;
+  const max = {};
+  for (const s of stages) {
+    if (s?.is_active === false) continue;
+    const g = sxStageDeadlineGroup(s, stages);
+    if (!g || !SX_THU_TU_LUI.includes(g)) continue;
+    const n = Math.floor(Number(s?.sla_days) || 0);
+    if (n > 0) max[g] = Math.max(max[g] || 0, n);
+  }
+  for (const g of SX_THU_TU_LUI) if (max[g] > 0) out[g] = max[g];
+  return out;
+}
+
+/**
+ * Lịch lùi từ ngày lắp đặt.
+ *
+ * `ngayNhom` cho phép mỗi xưởng tự đặt số ngày từng công đoạn (xem `ngayNhomTuCotPipeline`).
+ * Không truyền thì dùng mặc định — kết quả trùng khít bảng cứng cũ.
+ *
+ * Cách đi: nhóm cuối kết thúc TRƯỚC ngày lắp một ngày, rồi lùi dần; nhóm trước kết thúc trước
+ * ngày bắt đầu của nhóm sau một ngày. `planning` nhận phần còn lại tới ngày tiếp nhận.
+ */
+function buildSxInstallBackPlan(installYmd, { startYmd = null, slipDays = 0, ngayNhom = null } = {}) {
   const install = String(installYmd || '').slice(0, 10);
   if (!parseYmd(install)) return null;
-  const packingEnd = addCalendarDaysYmd(install, -1);
-  const finishEnd = addCalendarDaysYmd(install, -2);
-  const finishStartYmd = addCalendarDaysYmd(install, -3);
-  const cabinetEnd = addCalendarDaysYmd(install, -4);
-  const cabinetStart = addCalendarDaysYmd(install, -5);
-  const planEnd = addCalendarDaysYmd(install, -6);
+
+  const ngay = { ...SX_MAC_DINH_NGAY_NHOM, ...(ngayNhom || {}) };
+  const moc = {};
+  let ketThuc = addCalendarDaysYmd(install, -1);
+  for (const g of SX_THU_TU_LUI) {
+    const soNgay = Math.max(1, Math.floor(Number(ngay[g]) || 1));
+    const batDau = addCalendarDaysYmd(ketThuc, -(soNgay - 1));
+    moc[g] = { startYmd: batDau, endYmd: ketThuc };
+    ketThuc = addCalendarDaysYmd(batDau, -1);
+  }
+  const planEnd = ketThuc;
+
   const start = startYmd ? String(startYmd).slice(0, 10) : '';
   const hasStart = Boolean(parseYmd(start));
   let planningEnd = planEnd;
@@ -181,14 +229,15 @@ function buildSxInstallBackPlan(installYmd, { startYmd = null, slipDays = 0 } = 
   const shift = (ymd) => (ymd && slip ? addCalendarDaysYmd(ymd, slip) : ymd);
   return {
     installYmd: install,
-    productionFinishYmd: shift(finishEnd),
-    packing: { endYmd: shift(packingEnd) },
-    finishing: { endYmd: shift(finishEnd), startYmd: shift(finishStartYmd) },
-    cabinet: { endYmd: shift(cabinetEnd), startYmd: shift(cabinetStart) },
+    productionFinishYmd: shift(moc.finishing.endYmd),
+    packing: { endYmd: shift(moc.packing.endYmd), startYmd: shift(moc.packing.startYmd) },
+    finishing: { endYmd: shift(moc.finishing.endYmd), startYmd: shift(moc.finishing.startYmd) },
+    cabinet: { endYmd: shift(moc.cabinet.endYmd), startYmd: shift(moc.cabinet.startYmd) },
     planning: {
       startYmd: hasStart ? start : null,
       endYmd: hasStart && planningEnd && start <= planEnd ? planningEnd : (hasStart ? null : planEnd),
     },
+    ngayNhom: ngay,
   };
 }
 
@@ -238,6 +287,8 @@ module.exports = {
   ymdFromUnknownDate,
   resolveSxPlanInstallYmd,
   buildSxInstallBackPlan,
+  ngayNhomTuCotPipeline,
+  SX_MAC_DINH_NGAY_NHOM,
   endYmdForDeadlineGroup,
   sxStageDeadlineGroup,
   SX_GROUP_KEY_DEADLINE,
