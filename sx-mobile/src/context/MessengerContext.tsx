@@ -44,6 +44,8 @@ type MessengerCtx = {
   unreadTotal: number;
   refreshThreads: (silent?: boolean) => Promise<void>;
   markThreadRead: (groupId: string) => Promise<void>;
+  /** Chỉ xoá số chưa đọc trong bộ nhớ (máy chủ đã được báo ở nơi khác, vd. khung chat bong bóng native). */
+  clearThreadUnread: (groupId: string) => void;
   sendText: (
     groupId: string,
     content: string,
@@ -237,6 +239,14 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
       if (evt.type === 'members') {
         void refreshThreads(true);
       }
+      // Chính tôi vừa đọc đoạn này (ở bong bóng chat, máy khác hoặc web) → bỏ số chưa đọc ở app.
+      if (evt.type === 'read' && myUserId && evt.userId && String(evt.userId) === String(myUserId)) {
+        setThreads((prev) =>
+          prev.some((t) => t.id === evt.groupId && t.unread)
+            ? prev.map((t) => (t.id === evt.groupId ? { ...t, unread: 0 } : t))
+            : prev,
+        );
+      }
       if (evt.type === 'updated') {
         setThreads((prev) =>
           prev.map((t) =>
@@ -253,7 +263,7 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
       }
       for (const fn of metaListenersRef.current) fn(evt);
     });
-  }, [token, subscribeMessengerMetaRaw, refreshThreads]);
+  }, [token, myUserId, subscribeMessengerMetaRaw, refreshThreads]);
 
   useEffect(() => {
     if (!token) return undefined;
@@ -275,6 +285,14 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
     } catch {
       /* best-effort */
     }
+  }, []);
+
+  const clearThreadUnread = useCallback((groupId: string) => {
+    setThreads((prev) =>
+      prev.some((t) => t.id === groupId && t.unread)
+        ? prev.map((t) => (t.id === groupId ? { ...t, unread: 0 } : t))
+        : prev,
+    );
   }, []);
 
   const sendText = useCallback(async (
@@ -316,6 +334,7 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
       unreadTotal,
       refreshThreads,
       markThreadRead,
+      clearThreadUnread,
       sendText,
       loadMessages,
       subscribeGroupMessage,
@@ -333,6 +352,7 @@ export function MessengerProvider({ children }: { children: React.ReactNode }) {
       unreadTotal,
       refreshThreads,
       markThreadRead,
+      clearThreadUnread,
       sendText,
       loadMessages,
       subscribeGroupMessage,
