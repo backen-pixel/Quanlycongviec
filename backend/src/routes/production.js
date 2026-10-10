@@ -746,7 +746,7 @@ async function invalidateProductionPipelineCache() {
 //   - không truyền        → trả tất cả (Global + theo loại) cho công ty
 //   - 'global'            → chỉ cột không gắn loại (workshop_type_id IS NULL)
 //   - <uuid>              → cột gắn loại đó + cột Global
-r.get('/pipeline-stages', requirePermission('projects', 'view'), responseCache({ ttl: 300, scope: 'company', tags: ['production'] }), async (req, res) => {
+r.get('/pipeline-stages', requirePermission('projects', 'view'), responseCache({ ttl: 300, scope: 'company', tags: ['production'], revalidate: true }), async (req, res) => {
   try {
     const includeInactive = req.query.all === 'true';
     const company_id = effectiveWorkshopCompanyId(req, req.query.company_id);
