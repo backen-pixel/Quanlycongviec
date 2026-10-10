@@ -88,5 +88,24 @@ kiem('số ngày 0 hoặc âm được ép về tối thiểu 1',
 kiem('trượt lịch (slipDays) đẩy toàn bộ mốc đi',
   buildSxInstallBackPlan(LAP, { slipDays: 2 }).cabinet.endYmd === '2026-10-16');
 
+// ── 6. Gắn hạn cho NHIỆM VỤ theo cột nó đang đứng ────────────────────────────
+const { hanNhiemVuTheoCot } = require('../src/helpers/ganHanNhiemVuTheoCongDoan');
+const lich = buildSxInstallBackPlan(LAP, { ngayNhom: { cabinet: 5, finishing: 3, packing: 2 } });
+
+kiem('việc ở Gia công nhận đúng hạn của Gia công',
+  hanNhiemVuTheoCot({ group_key: 'gia_cong' }, cot, lich) === lich.cabinet.endYmd,
+  hanNhiemVuTheoCot({ group_key: 'gia_cong' }, cot, lich));
+kiem('việc ở Đóng gói có hạn MUỘN hơn việc ở Gia công',
+  hanNhiemVuTheoCot({ group_key: 'dong_goi' }, cot, lich)
+  > hanNhiemVuTheoCot({ group_key: 'gia_cong' }, cot, lich));
+kiem('việc ở Tiếp nhận/Duyệt VẪN có hạn — khác thẻ Dashboard, cố ý',
+  !!hanNhiemVuTheoCot({ group_key: 'tiep_nhan' }, cot, lich));
+kiem('việc nhóm Công nợ KHÔNG nhận hạn sản xuất',
+  hanNhiemVuTheoCot({ group_key: 'cong_no' }, cot, lich) === '');
+kiem('cột không thuộc nhóm nào → không gắn',
+  hanNhiemVuTheoCot({ group_key: 'linh_tinh' }, cot, lich) === '');
+kiem('không có lịch → không gắn',
+  hanNhiemVuTheoCot({ group_key: 'gia_cong' }, cot, null) === '');
+
 console.log(`\n${dat} đạt · ${truot} trượt`);
 process.exit(truot ? 1 : 0);
