@@ -123,7 +123,7 @@ export default function CategoriesPage() {
   return (
     <div className="space-y-6 max-w-4xl">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div data-guide-khu-vuc="Tiêu đề nhóm ngành" className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
             <FolderTree className="h-6 w-6 text-purple-600" /> Quản lý Nhóm ngành
@@ -156,7 +156,7 @@ export default function CategoriesPage() {
       </div>
 
       {/* Stats cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div data-guide-khu-vuc="Thống kê nhóm ngành" className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 text-center">
           <p className="text-2xl font-bold text-purple-700">{categories.filter(c => c.is_active !== false).length}</p>
           <p className="text-xs text-purple-600 mt-1">Đang hoạt động</p>
@@ -176,7 +176,7 @@ export default function CategoriesPage() {
       </div>
 
       {/* Category Table */}
-      <div className="bg-white rounded-xl border overflow-hidden">
+      <div data-guide-khu-vuc="Danh sách nhóm ngành" className="bg-white rounded-xl border overflow-hidden">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-gray-50 text-xs text-gray-500 uppercase">

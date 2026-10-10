@@ -286,7 +286,7 @@ export default function LeaveListSection({
         <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">{err}</div>
       )}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div data-guide-khu-vuc="Thống kê đơn nghỉ" className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
           { label: 'Tổng đơn', value: stats.total, icon: ListChecks, color: 'text-violet-600 bg-violet-50' },
           { label: 'Nhân viên', value: stats.active, icon: CalendarDays, color: 'text-emerald-600 bg-emerald-50' },
@@ -307,7 +307,7 @@ export default function LeaveListSection({
 
       <LeaveActiveFilterBar chips={activeFilterChips} onClearAll={hasActiveFilters ? clearFilters : undefined} />
 
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+      <div data-guide-khu-vuc="Danh sách đơn nghỉ" className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-gray-100">
           <div>
             <h2 className="text-[15px] font-bold text-gray-900">Danh sách đơn nghỉ</h2>

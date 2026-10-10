@@ -79,6 +79,12 @@ import DealCrossScoresPanel from '../components/DealCrossScoresPanel';
 import LeadKpiLedgerPanel from '../components/LeadKpiLedgerPanel';
 import { CrmLeadCommentsPanel, CrmLeadHistoryPanel } from '../components/CommentsPanels';
 import { useCommentProgressSlash } from '../lib/commentProgressSlash';
+import { markWorkshopProjectRename } from '../lib/workshopPipelineStorage';
+import {
+  buildProjectRenameSlashCommand,
+  clipProjectName,
+  renameNoticeBody,
+} from '../lib/projectRenameComment';
 import { CRM_DEAL_COMMENT_QUICK_REPLIES } from '../lib/crmCommentMentions';
 import { TASK_ATTACHMENT_FILE_ACCEPT } from '../lib/attachmentFileIcon';
 import DriveAttachments from '../components/drive/DriveAttachments';
@@ -351,6 +357,22 @@ export default function LeadDetail() {
   if (lead?.project_id && (leadProject?.logistics_company_id || leadProject?.company_id || lead?.company_id)) {
     progressModules.push('vc');
   }
+  const renameProjectFromComment = useCallback(async (nextName) => {
+    const pid = lead?.project_id;
+    if (!pid) return { ok: false, error: 'Deal chưa có dự án để đổi tên' };
+    const oldName = String(leadProject?.name || '').trim();
+    const next = clipProjectName(nextName);
+    if (!next) return { ok: false, error: 'Điền tên mới sau dấu :' };
+    if (oldName && next === oldName) return { ok: false, error: 'Tên mới trùng tên hiện tại' };
+    try {
+      await api.put(`/projects/${pid}`, { name: next });
+      setLead((prev) => (prev ? { ...prev, project: { ...(prev.project || {}), name: next } } : prev));
+      markWorkshopProjectRename(pid, { name: next });
+      return { ok: true, oldName: oldName || 'dự án', notice: renameNoticeBody(oldName || 'dự án', next) };
+    } catch (e) {
+      return { ok: false, error: e?.response?.data?.error || 'Không đổi được tên dự án' };
+    }
+  }, [lead?.project_id, leadProject?.name]);
   const { commands: progressSlashCmds, run: runProgressSlash } = useCommentProgressSlash({
     enabled: !!lead?.id,
     modules: progressModules,
@@ -5058,7 +5080,11 @@ export default function LeadDetail() {
                     leadId={id}
                     onCountChange={setCommentCount}
                     quickReplyTemplates={lead?.type === 'deal' ? CRM_DEAL_COMMENT_QUICK_REPLIES : []}
-                    slashCommands={progressSlashCmds}
+                    slashCommands={[
+                      ...(lead?.project_id ? [buildProjectRenameSlashCommand(leadProject?.name || lead?.title)] : []),
+                      ...progressSlashCmds,
+                    ]}
+                    onProjectRename={lead?.project_id ? renameProjectFromComment : undefined}
                     onSlashCommand={async (cmd) => {
                       const res = await runProgressSlash(cmd);
                       if (res?.ok) loadRef.current?.({ silent: true });

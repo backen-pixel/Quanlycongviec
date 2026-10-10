@@ -74,7 +74,7 @@ export default function InvoicesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div data-guide-khu-vuc="Tiêu đề hóa đơn" className="flex items-center justify-between">
         <div><h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><Receipt className="h-6 w-6 text-purple-600" /> Hóa đơn</h1><p className="text-sm text-gray-500 mt-1">{invoices.length} hóa đơn · Tổng {formatVND(totalAmount)}</p></div>
         <div className="flex items-center gap-2">
           <button onClick={() => navigate('/crm/invoices/new')} className="h-9 px-4 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium flex items-center gap-2 cursor-pointer"><Plus className="h-4 w-4" /> Tạo hóa đơn</button>
@@ -82,7 +82,7 @@ export default function InvoicesPage() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div data-guide-khu-vuc="Tổng quan hóa đơn" className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {[
           {
             label: 'Tổng hóa đơn',
@@ -139,7 +139,7 @@ export default function InvoicesPage() {
       </div>
 
       {/* Payment tabs */}
-      <div className="flex gap-2 overflow-x-auto">
+      <div data-guide-khu-vuc="Lọc theo thanh toán" className="flex gap-2 overflow-x-auto">
         <button onClick={() => setPayFilter('')} className={`px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer ${!payFilter ? 'bg-purple-600 text-white border-purple-600' : 'hover:bg-gray-50'}`}>Tất cả ({invoices.length})</button>
         {Object.entries(PAY_MAP).map(([k, v]) => (paySummary[k] || 0) > 0 && (
           <button key={k} onClick={() => setPayFilter(payFilter === k ? '' : k)} className={`px-3 py-1.5 rounded-full text-xs font-medium border cursor-pointer whitespace-nowrap ${payFilter === k ? 'bg-purple-600 text-white border-purple-600' : PAY_COLORS[k]}`}>{v} ({paySummary[k]})</button>
@@ -147,7 +147,7 @@ export default function InvoicesPage() {
       </div>
 
       <div className="bg-white rounded-xl border p-6">
-        <div className="flex flex-wrap items-center gap-3 mb-5">
+        <div data-guide-khu-vuc="Tìm kiếm & bộ lọc hóa đơn" className="flex flex-wrap items-center gap-3 mb-5">
           <div className="relative flex-1 min-w-[200px] max-w-sm"><Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Tìm mã, tên, KH..." className="w-full h-10 pl-10 pr-3 border rounded-lg text-sm" /></div>
           <div className="flex items-center gap-1 text-xs text-gray-500"><Calendar className="h-3.5 w-3.5" />Từ</div>
           <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} className="h-10 px-3 border rounded-lg text-sm" />
@@ -155,7 +155,7 @@ export default function InvoicesPage() {
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} className="h-10 px-3 border rounded-lg text-sm" />
           {(search || payFilter || dateFrom || dateTo) && <button onClick={() => { setSearch(''); setPayFilter(''); setDateFrom(''); setDateTo(''); }} className="text-xs text-red-500 hover:underline cursor-pointer">Xóa lọc</button>}
         </div>
-        <div
+        <div data-guide-khu-vuc="Danh sách hóa đơn"
           className="overflow-auto rounded-lg border border-gray-200 [scrollbar-width:thin]"
           style={{ maxHeight: 'calc(100vh - 360px)', minHeight: 240 }}
         >

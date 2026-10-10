@@ -345,6 +345,10 @@ export default function SxMultiTargetPicker({
   leadId = null,
   /** 'install' = bắt ngày lắp khi có VC/lấy hàng. 'pickup' = Đặt xưởng khác: chỉ bắt ngày lấy. */
   schedule = 'install',
+  /** Ô tên dự án tạo ở xưởng nhận — mặc định tên dự án hiện tại. */
+  showProjectName = false,
+  projectName = '',
+  onProjectNameChange,
 }) {
   const [holidayIndex, setHolidayIndex] = useState(() => normalizeHolidayIndex([]));
   const [logisticsCompanies, setLogisticsCompanies] = useState([]);
@@ -778,6 +782,22 @@ export default function SxMultiTargetPicker({
             Chọn ngày trên lịch bên phải (CRM / Sản xuất / VC/LĐ).
           </p>
         </div>
+      ) : null}
+      {showProjectName ? (
+        <label className="block">
+          <span className="text-xs font-semibold text-gray-700">Tên dự án</span>
+          <input
+            value={projectName}
+            onChange={(e) => onProjectNameChange?.(e.target.value)}
+            disabled={disabled}
+            maxLength={180}
+            placeholder="Tên dự án ở xưởng nhận"
+            className="mt-1 w-full h-10 px-3 border border-teal-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:bg-gray-50"
+          />
+          <span className="mt-1 block text-[11px] text-gray-500">
+            Mặc định là tên dự án hiện tại. Một xưởng dùng đúng tên này; nhiều xưởng sẽ thêm tên công ty phía sau.
+          </span>
+        </label>
       ) : null}
       <div className={`rounded-xl border ${accentBorder} overflow-hidden bg-white divide-y divide-slate-100`}>
         {rows.map((row, idx) => {

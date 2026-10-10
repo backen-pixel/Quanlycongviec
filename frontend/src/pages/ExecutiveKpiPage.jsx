@@ -170,7 +170,7 @@ export default function ExecutiveKpiPage() {
       ) : data ? (
         <>
           {/* KPI cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <div data-guide-khu-vuc="Thẻ KPI tổng" className="grid grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-white rounded-xl border p-4 shadow-sm">
               <div className="text-xs font-semibold text-gray-500 uppercase">Doanh thu (đơn sales)</div>
               <div className="text-xl font-bold text-gray-900 mt-1">{formatVND(data.totals?.revenue)}</div>
@@ -199,7 +199,7 @@ export default function ExecutiveKpiPage() {
 
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             {/* Sale revenue bar */}
-            <div className="bg-white rounded-xl border p-5 shadow-sm">
+            <div data-guide-khu-vuc="Doanh thu theo Sale (NV phụ trách)" className="bg-white rounded-xl border p-5 shadow-sm">
               <h2 className="text-base font-bold text-gray-900 mb-1 flex items-center gap-2">
                 <Users className="h-5 w-5 text-blue-600" /> Doanh thu theo Sale (NV phụ trách)
               </h2>
@@ -218,7 +218,7 @@ export default function ExecutiveKpiPage() {
             </div>
 
             {/* Monthly line */}
-            <div className="bg-white rounded-xl border p-5 shadow-sm">
+            <div data-guide-khu-vuc="Xu hướng theo tháng" className="bg-white rounded-xl border p-5 shadow-sm">
               <h2 className="text-base font-bold text-gray-900 mb-4">Xu hướng theo tháng (doanh thu + số đơn)</h2>
               <div className="h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
@@ -253,7 +253,7 @@ export default function ExecutiveKpiPage() {
             </div>
 
             {/* Department pie */}
-            <div className="bg-white rounded-xl border p-5 shadow-sm">
+            <div data-guide-khu-vuc="Doanh thu theo phòng ban" className="bg-white rounded-xl border p-5 shadow-sm">
               <h2 className="text-base font-bold text-gray-900 mb-1 flex items-center gap-2">
                 <Building2 className="h-5 w-5 text-violet-600" /> Doanh thu theo phòng ban
               </h2>
@@ -282,7 +282,7 @@ export default function ExecutiveKpiPage() {
             </div>
 
             {/* Score vs thu tiền */}
-            <div className="bg-white rounded-xl border p-5 shadow-sm">
+            <div data-guide-khu-vuc="Điểm KPI vs tỷ lệ thu tiền" className="bg-white rounded-xl border p-5 shadow-sm">
               <h2 className="text-base font-bold text-gray-900 mb-1">Điểm KPI vs tỷ lệ thu tiền</h2>
               <p className="text-xs text-gray-500 mb-4">Điểm (0–100) so với % đã thu trên giá trị đơn</p>
               <div className="h-[320px]">
@@ -302,7 +302,7 @@ export default function ExecutiveKpiPage() {
           </div>
 
           {/* Install */}
-          <div className="bg-white rounded-xl border p-5 shadow-sm">
+          <div data-guide-khu-vuc="Lắp đặt / Thi công" className="bg-white rounded-xl border p-5 shadow-sm">
             <h2 className="text-base font-bold text-gray-900 mb-1 flex items-center gap-2">
               <Wrench className="h-5 w-5 text-orange-600" /> Lắp đặt / Thi công (sx_construction_assignee_id)
             </h2>
@@ -329,7 +329,7 @@ export default function ExecutiveKpiPage() {
           </div>
 
           {/* Tables */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div data-guide-khu-vuc="Bảng số liệu" className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="bg-white rounded-xl border overflow-hidden">
               <div className="px-4 py-3 border-b font-bold text-gray-900 text-sm">Bảng điểm Sale</div>
               <div className="overflow-x-auto max-h-[360px] overflow-y-auto">
@@ -389,7 +389,7 @@ export default function ExecutiveKpiPage() {
           </div>
 
           {/* Cross checks */}
-          <div className="bg-white rounded-xl border overflow-hidden">
+          <div data-guide-khu-vuc="Đối chiếu chéo" className="bg-white rounded-xl border overflow-hidden">
             <div className="px-4 py-3 border-b font-bold text-gray-900 text-sm flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-amber-600" /> Đối soát chéo (Lead/DA vs Đơn)
             </div>
@@ -443,7 +443,7 @@ export default function ExecutiveKpiPage() {
 
           {/* Acceptances logged */}
           {(data.acceptances || []).length > 0 && (
-            <div className="bg-white rounded-xl border overflow-hidden">
+            <div data-guide-khu-vuc="Nghiệm thu đã ghi nhận" className="bg-white rounded-xl border overflow-hidden">
               <div className="px-4 py-3 border-b font-bold text-gray-900 text-sm flex items-center gap-2">
                 <ClipboardCheck className="h-4 w-4 text-emerald-600" /> Đã ghi nhận nghiệm thu / đối soát
               </div>

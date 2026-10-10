@@ -179,6 +179,7 @@ const ApiKeysSettingsPage = lazyWithRetry(() => import('./pages/ApiKeysSettingsP
 const McpReportApiPage = lazyWithRetry(() => import('./pages/McpReportApiPage'));
 const ProjectDeadlineDispatchPage = lazyWithRetry(() => import('./pages/ProjectDeadlineDispatchPage'));
 const AiChatBotSettingsPage = lazyWithRetry(() => import('./pages/AiChatBotSettingsPage'));
+const GuideAssistantPage = lazyWithRetry(() => import('./pages/GuideAssistantPage'));
 const CreateProject = lazyWithRetry(() => import('./pages/CreateProject'));
 const PermissionsPage = lazyWithRetry(() => import('./pages/PermissionsPage'));
 const EcosystemPermissionsPage = lazyWithRetry(() => import('./pages/EcosystemPermissionsPage'));
@@ -241,6 +242,7 @@ const PlatformPurchasesPage = lazyWithRetry(() => import('./pages/platform/Platf
 import { Settings } from 'lucide-react';
 
 import PinnedProjectsWidget from './components/PinnedProjectsWidget';
+import { AppGuideCopilot } from './features/guide';
 import { ThemeProvider, useTheme } from './components/ThemeProvider';
 import { CrmNotesFabProvider } from './context/CrmNotesFabContext';
 import { MessengerDockProvider } from './context/MessengerDockContext';
@@ -402,6 +404,7 @@ function ProtectedLayout() {
             </main>
           </div>
           <PinnedProjectsWidget />
+          <AppGuideCopilot />
         </div>
       </ProductTourProvider>
     </CrmNotesFabProvider>
@@ -610,6 +613,7 @@ export default function App() {
             <Route path="/settings/misa" element={<RequireCrmElevated><MisaSettingsPage /></RequireCrmElevated>} />
             <Route path="/settings/api-keys" element={<RequireCrmElevated><ApiKeysSettingsPage /></RequireCrmElevated>} />
             <Route path="/settings/ai-chat-bot" element={<RequireCrmElevated><AiChatBotSettingsPage /></RequireCrmElevated>} />
+            <Route path="/settings/tro-ly-huong-dan" element={<RequireCrmElevated><GuideAssistantPage /></RequireCrmElevated>} />
             <Route path="/settings/request-monitor" element={<RequestMonitorPage />} />
             <Route path="/admin/trash" element={<UnifiedTrashPage />} />
             <Route path="/trash" element={<Navigate to="/admin/trash?tab=crm" replace />} />

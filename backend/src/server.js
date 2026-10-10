@@ -122,6 +122,8 @@ const corsMainApp = cors({
     'X-Supabase-Monitor-Token',
     'X-Device-Id',
     'X-No-Cache',
+    // Trợ lý hướng dẫn khai chế độ của client để server gửi đúng bộ luật.
+    'X-Guide-Full-Access',
   ],
   exposedHeaders: [
     'Content-Disposition',
@@ -165,6 +167,11 @@ app.use(compression({
   threshold: 1024,
   filter: (req, res) => {
     if (req.headers['x-no-compression']) return false;
+    // SSE (/api/copilotkit, /api/mcp): compressible coi text/event-stream là nén được, nên zlib
+    // giữ byte trong buffer 16KB tới res.end() — cả lượt trả lời về trình duyệt MỘT CỤC thay vì
+    // nhỏ giọt. Lọc theo content-type để mọi endpoint SSE thêm sau khỏi phải nhớ.
+    const ct = res.getHeader('Content-Type');
+    if (typeof ct === 'string' && ct.includes('text/event-stream')) return false;
     return compression.filter(req, res);
   },
 }));
@@ -492,6 +499,7 @@ try { app.use('/api/turn', require('./routes/turn')); } catch (e) { console.warn
 try { app.use('/api/push', require('./routes/push')); } catch (e) { console.warn('⚠️ Push route failed to load:', e.message); }
 try { app.use('/api/devices', require('./routes/devices')); } catch (e) { console.warn('⚠️ Devices route failed to load:', e.message); }
 try { app.use('/api/assistant', require('./routes/assistant')); } catch (e) { console.warn('⚠️ Assistant route failed to load:', e.message); }
+try { app.use('/api/copilotkit', require('./routes/guide')); } catch (e) { console.warn('⚠️ Guide (CopilotKit) route failed to load:', e.message); }
 try { app.use('/api/ai-chat-bot', require('./routes/aiChatBot')); } catch (e) { console.warn('⚠️ AI Chat Bot route failed to load:', e.message); }
 try { app.use('/api/user-activity', require('./routes/userActivityLog')); } catch (e) { console.warn('⚠️ User Activity Log route failed to load:', e.message); }
 try { app.use('/api/auth-events', require('./routes/authEventLog')); } catch (e) { console.warn('⚠️ Auth Event Log route failed to load:', e.message); }

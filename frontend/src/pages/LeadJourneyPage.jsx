@@ -1168,7 +1168,7 @@ export default function LeadJourneyPage() {
       <div style={{maxWidth:1220,margin:'0 auto'}}>
 
         {/* Header — Hero glass */}
-        <div style={{
+        <div data-guide-khu-vuc="Tiêu đề & tiến độ theo khối" style={{
           ...glassCard, borderRadius:24, padding:'16px 22px', marginBottom:14,
           display:'flex', alignItems:'center', gap:14, flexWrap:'wrap',
           backgroundImage:'linear-gradient(135deg, rgba(124,58,237,0.08), rgba(255,255,255,0) 40%, rgba(22,163,74,0.06))',
@@ -1246,7 +1246,7 @@ export default function LeadJourneyPage() {
         </div>
 
         {/* Tabs — glass pills */}
-        <div style={{
+        <div data-guide-khu-vuc="Tab sơ đồ hành trình" style={{
           display:'inline-flex',gap:4,marginBottom:12,flexWrap:'wrap',
           padding:4, borderRadius:14, ...glassCardSoft,
         }}>
@@ -1280,7 +1280,7 @@ export default function LeadJourneyPage() {
         </div>
 
         {/* Diagram — glass canvas */}
-        <div style={{
+        <div data-guide-khu-vuc="Sơ đồ hành trình" style={{
           ...glassCard, borderRadius:20, overflowX:'auto',
           padding:'10px 6px 12px',
         }}>
@@ -1295,7 +1295,7 @@ export default function LeadJourneyPage() {
 
         {/* Slider — glass */}
         {showStepDiagram && (
-          <div style={{
+          <div data-guide-khu-vuc="Thanh chọn bước" style={{
             ...glassCardSoft, borderRadius:16, padding:'10px 18px',
             marginTop:12, display:'flex', alignItems:'center', gap:14,
           }}>
@@ -1324,14 +1324,14 @@ export default function LeadJourneyPage() {
 
         {/* Detail */}
         {showStepDiagram && (
-          <div key={active} className="panel-in" style={{marginTop:14}}>
+          <div data-guide-khu-vuc="Chi tiết bước" key={active} className="panel-in" style={{marginTop:14}}>
             <DetailPanel step={cur}/>
           </div>
         )}
 
         {/* Quick-jump — glass */}
         {showStepDiagram && (
-          <div style={{
+          <div data-guide-khu-vuc="Nhảy nhanh tới bước" style={{
             marginTop:14, ...glassCardSoft, borderRadius:16,
             padding:'12px 18px', display:'flex', alignItems:'center', gap:6, flexWrap:'wrap',
           }}>

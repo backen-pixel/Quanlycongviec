@@ -141,7 +141,7 @@ export default function AutoProjectConfigPage() {
   return (
     <div className="max-w-4xl mx-auto p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-3">
+      <div data-guide-khu-vuc="Tiêu đề cấu hình tự tạo dự án" className="flex items-center gap-3">
         <button onClick={() => nav(-1)} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer">
           <ArrowLeft className="h-5 w-5" />
         </button>
@@ -155,7 +155,7 @@ export default function AutoProjectConfigPage() {
       </div>
 
       {/* Flow selection */}
-      <div className="bg-white rounded-xl border p-5 space-y-4">
+      <div data-guide-khu-vuc="Luồng quy trình mặc định" className="bg-white rounded-xl border p-5 space-y-4">
         <h2 className="text-sm font-bold text-gray-800 flex items-center gap-2">
           <FolderTree className="h-4 w-4 text-blue-600" />
           Luồng quy trình mặc định
@@ -176,7 +176,7 @@ export default function AutoProjectConfigPage() {
       </div>
 
       {/* Flow assignments */}
-      <div className="bg-white rounded-xl border p-5 space-y-4">
+      <div data-guide-khu-vuc="Phân công luồng" className="bg-white rounded-xl border p-5 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-bold text-gray-800 flex items-center gap-2">
             <Building2 className="h-4 w-4 text-purple-600" />
@@ -242,7 +242,7 @@ export default function AutoProjectConfigPage() {
       </div>
 
       {/* Options */}
-      <div className="bg-white rounded-xl border p-5 space-y-4">
+      <div data-guide-khu-vuc="Tùy chọn" className="bg-white rounded-xl border p-5 space-y-4">
         <h2 className="text-sm font-bold text-gray-800 flex items-center gap-2">
           <ClipboardList className="h-4 w-4 text-emerald-600" />
           Tùy chọn

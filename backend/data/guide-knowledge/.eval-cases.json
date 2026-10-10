@@ -1,0 +1,225 @@
+[
+ {
+  "q": "tôi muốn đổi mật khẩu",
+  "expect": [
+   "/settings/password"
+  ],
+  "group": "truc tiep"
+ },
+ {
+  "q": "đổi ảnh nền của giao diện",
+  "expect": [
+   "/settings/theme"
+  ],
+  "group": "truc tiep"
+ },
+ {
+  "q": "hôm nay ai nghỉ",
+  "expect": [
+   "/crm/leaves"
+  ],
+  "group": "truc tiep"
+ },
+ {
+  "q": "duyệt đơn xin nghỉ cho nhân viên",
+  "expect": [
+   "/crm/leaves/list"
+  ],
+  "group": "truc tiep"
+ },
+ {
+  "q": "tạo một báo giá mới cho khách",
+  "expect": [
+   "/crm/quotations/new"
+  ],
+  "group": "truc tiep"
+ },
+ {
+  "q": "tạo hoá đơn cho khách hàng",
+  "expect": [
+   "/crm/invoices/new"
+  ],
+  "group": "truc tiep"
+ },
+ {
+  "q": "xem hộp thư facebook của khách",
+  "expect": [
+   "/crm/facebook"
+  ],
+  "group": "truc tiep"
+ },
+ {
+  "q": "kết nối Zalo OA",
+  "expect": [
+   "/crm/zalo"
+  ],
+  "group": "truc tiep"
+ },
+ {
+  "q": "bảng điểm KPI tháng của nhân viên",
+  "expect": [
+   "/crm/kpi/scorecard"
+  ],
+  "group": "truc tiep"
+ },
+ {
+  "q": "đăng bài lên bảng tin nội bộ",
+  "expect": [
+   "/social"
+  ],
+  "group": "truc tiep"
+ },
+ {
+  "q": "lấy lại lead bị xoá nhầm",
+  "expect": [
+   "/admin/trash"
+  ],
+  "group": "dong nghia"
+ },
+ {
+  "q": "thêm một cột mới vào bảng kéo thả deal",
+  "expect": [
+   "/crm/pipeline-settings",
+   "/crm/pipeline"
+  ],
+  "group": "dong nghia"
+ },
+ {
+  "q": "khách đến từ quảng cáo thì khai báo ở đâu",
+  "expect": [
+   "/crm/sources-settings"
+  ],
+  "group": "dong nghia"
+ },
+ {
+  "q": "phê duyệt yêu cầu bên xưởng",
+  "expect": [
+   "/sx/approvals"
+  ],
+  "group": "dong nghia"
+ },
+ {
+  "q": "phân công thợ đi lắp cho khách",
+  "expect": [
+   "/vc/assignments"
+  ],
+  "group": "dong nghia"
+ },
+ {
+  "q": "đặt hàng vật tư từ nhà cung cấp",
+  "expect": [
+   "/mua-hang/orders/new"
+  ],
+  "group": "dong nghia"
+ },
+ {
+  "q": "số tài khoản ngân hàng của công ty xem ở đâu",
+  "expect": [
+   "/ketoan/bank-accounts"
+  ],
+  "group": "dong nghia"
+ },
+ {
+  "q": "cho nhân viên quyền xem báo cáo",
+  "expect": [
+   "/permissions",
+   "/ecosystem-permissions"
+  ],
+  "group": "dong nghia"
+ },
+ {
+  "q": "tải tệp lên để chia sẻ cho đồng nghiệp",
+  "expect": [
+   "/drive"
+  ],
+  "group": "dong nghia"
+ },
+ {
+  "q": "đẩy khách từ website vào hệ thống",
+  "expect": [
+   "/settings/api-keys"
+  ],
+  "group": "dong nghia"
+ },
+ {
+  "q": "doi mat khau o dau",
+  "expect": [
+   "/settings/password"
+  ],
+  "group": "khong dau"
+ },
+ {
+  "q": "tai app cho xuong san xuat",
+  "expect": [
+   "/sx/download-app"
+  ],
+  "group": "khong dau"
+ },
+ {
+  "q": "lam bai tap trac nghiem",
+  "expect": [
+   "/knowledge/exercises/:id"
+  ],
+  "group": "khong dau"
+ },
+ {
+  "q": "xem chung nhan cua toi",
+  "expect": [
+   "/knowledge/certificates"
+  ],
+  "group": "khong dau"
+ },
+ {
+  "q": "co gi moi trong phien ban nay",
+  "expect": [
+   "/updates"
+  ],
+  "group": "khong dau"
+ },
+ {
+  "q": "Bài học phần mềm này ở đâu",
+  "expect": [
+   "/knowledge/lessons/:id",
+   "/knowledge"
+  ],
+  "group": "tu nhat ky",
+  "hard": true,
+  "note": "Lượt thật 12/09: model KHÔNG gọi tool, trả lời chung chung."
+ },
+ {
+  "q": "còn các thành phần khác thì sao có tài liệu học không",
+  "expect": [
+   "/knowledge",
+   "/knowledge/lessons/:id"
+  ],
+  "group": "tu nhat ky",
+  "hard": true,
+  "note": "Lượt thật: kho trả về tab Tài liệu của Lead — lạc đề. Ca chính của điểm yếu tra từ khoá."
+ },
+ {
+  "q": "có hướng dẫn không",
+  "expect": [
+   "/guide"
+  ],
+  "group": "tu nhat ky",
+  "hard": true,
+  "note": "Lượt thật: câu cụt, model hỏi ngược lại."
+ },
+ {
+  "q": "cấu hình trợ lý hướng dẫn",
+  "expect": [
+   "/settings/tro-ly-huong-dan"
+  ],
+  "group": "tu nhat ky",
+  "note": "Phải phân biệt với /guide — cùng chữ 'hướng dẫn' nhưng khác việc."
+ },
+ {
+  "q": "deal này còn phải thu bao nhiêu tiền",
+  "expect": [
+   "/ketoan/dashboard",
+   "/ketoan/deals/:leadId"
+  ],
+  "group": "tu nhat ky",
+  "hard": true
+ }
+]
