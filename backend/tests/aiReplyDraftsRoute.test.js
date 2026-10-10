@@ -23,7 +23,9 @@ function harness({ enabled = true, session = adminUser(), leadCompany = company,
       facebook_contacts: { page_id: page },
       ai_reply_draft_events: { draft_id: draftId, revision: 1, kind: 'GENERATED', draft_text: 'Dạ chào anh', policy_reasons: [] } };
     const chain = { select() { return chain; }, eq() { return chain; }, order() { return chain; },
-      limit() { return chain; }, async maybeSingle() { return { data: rows[table], error: null }; } };
+      in(column, values) { calls.push(['in', column, values]); return chain; }, gte() { return chain; },
+      limit() { return chain; }, async maybeSingle() { return { data: rows[table], error: null }; },
+      then(resolve) { resolve({ data: [rows[table]], error: null }); } };
     return chain;
   } };
   const recorded = [];
@@ -47,6 +49,7 @@ function harness({ enabled = true, session = adminUser(), leadCompany = company,
       async generateForLead(id, opts) { generate.push([id, opts]); return { status: 'GENERATED', draftId: draftId, text: 'Dạ chào anh' }; } }) },
     '../modules/aiReplyDraft/provider': { createOpenAiProvider: () => ({}) },
     '../modules/aiReplyDraft/config': require('../src/modules/aiReplyDraft/config'),
+    '../modules/aiReplyDraft/report': require('../src/modules/aiReplyDraft/report'),
   };
   const processEnv = { P2_AI_DRAFTS_ENABLED: enabled ? '1' : '0', P2_AI_DRAFTS_COMPANY_IDS: company,
     P2_AI_DRAFTS_PAGE_IDS: PAGE, P2_AI_DRAFTS_USER_IDS: pilotUser, ...env };
@@ -146,4 +149,14 @@ test('frontend lib only calls the draft API, never the send route', () => {
   const bar = fs.readFileSync(path.join(__dirname, '../../frontend/src/components/AiDraftBar.jsx'), 'utf8');
   assert.match(lib, /\/api\/ai-reply-drafts/);
   assert.doesNotMatch(lib + bar, /\/reply|facebook\/contacts|graph\.facebook\.com/);
+});
+test('report: pilot only, scoped to pilot companies, counts without draft text', async () => {
+  assert.equal((await harness({ session: adminUser({ role: 'sales' }) }).send('GET', '/report')).statusCode, 403);
+  const h = harness();
+  const res = await h.send('GET', '/report');
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.body.days, 7);
+  assert.equal(res.body.generated, 1);
+  assert.equal(JSON.stringify(res.body).includes('Dạ chào anh'), false);
+  assert.deepEqual(JSON.parse(JSON.stringify(h.calls.find(c => c[0] === 'in'))), ['in', 'company_id', [company]]);
 });
