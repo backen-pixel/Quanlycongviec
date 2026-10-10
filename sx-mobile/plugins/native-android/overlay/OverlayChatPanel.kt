@@ -91,9 +91,26 @@ class OverlayChatPanel(
   private var loadSeq = 0
   private var reloadRunnable: Runnable? = null
   private var collapsing = false
+  /** Thời điểm (uptimeMillis) hiệu ứng bung dự kiến xong — kết quả tải chỉ được VẼ sau mốc này. 0 = không có hiệu ứng. */
+  private var animationEndsAt = 0L
+  private var showAtMs = 0L
+  private var lastBuildMs = 0L
 
   private companion object {
     const val EXPAND_MS = 320L
+
+    /** Bản sao đoạn chat đã tải (theo groupId, tối đa 6) để mở lại là có tin + avatar ngay, rồi làm mới ở nền. */
+    class CachedConv(
+      val title: String,
+      val messages: List<BubbleChatApi.ChatMessage>,
+      val metaAvatarUrl: String?,
+      val isDirect: Boolean,
+      val senderAvatars: Map<String, String>,
+    )
+
+    val convCache = object : LinkedHashMap<String, CachedConv>(8, 0.75f, true) {
+      override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, CachedConv>?): Boolean = size > 6
+    }
   }
 
   private val quickReactions = arrayOf("👍", "❤️", "😂", "😮", "😢", "🙏")
@@ -123,23 +140,34 @@ class OverlayChatPanel(
       applyPanelTop(topReservePx)
       applyHeader()
       rebuildHeads()
-      loadConversationAsync()
+      animationEndsAt = 0L
+      showAtMs = android.os.SystemClock.uptimeMillis()
+      val usedCache = applyCachedConversation(groupId)
+      loadConversationAsync(usedCache)
       BubbleMediaBridge.registerPanel(this)
       BubbleComposeBridge.registerPanel(this)
       ensurePanelAttached(force = true)
       return
     }
-    buildPanel(topReservePx)
-    // Có hiệu ứng bung thì hoãn tải tin/đánh dấu đã đọc đến khi bung xong, tránh dồn việc nặng vào lúc đang chạy hiệu ứng.
-    val animated = playExpand()
-    val gid = groupId
-    val startLoad = Runnable {
-      if (panelRoot != null && this.groupId == gid) {
-        loadConversationAsync()
-        BubbleChatApi.markRead(context, gid)
-      }
+    showAtMs = android.os.SystemClock.uptimeMillis()
+    // Tải sẵn ảnh đại diện (đầu chat + của đoạn này) để giải mã chạy SONG SONG với việc dựng khung.
+    for (h in heads) OverlayAvatarCache.prefetch(context, h.avatarUrl)
+    convCache[groupId]?.let { c ->
+      OverlayAvatarCache.prefetch(context, c.metaAvatarUrl)
+      for (u in c.senderAvatars.values.distinct().take(8)) OverlayAvatarCache.prefetch(context, u)
     }
-    if (animated) handler.postDelayed(startLoad, EXPAND_MS + 40) else startLoad.run()
+    val buildStart = android.os.SystemClock.uptimeMillis()
+    buildPanel(topReservePx)
+    lastBuildMs = android.os.SystemClock.uptimeMillis() - buildStart
+    // Bản sao đã tải lần trước (nếu có): vẽ ngay 20 tin cuối để khung mở ra đã có tin + avatar, rồi làm mới ở nền.
+    val usedCache = applyCachedConversation(groupId)
+    val animated = playExpand()
+    // Việc TẢI bắt đầu ngay (không gây giật); chỉ việc VẼ ~60 hàng tin mới phải đợi bung xong.
+    animationEndsAt = if (animated) android.os.SystemClock.uptimeMillis() + 120 + EXPAND_MS else 0L
+    loadConversationAsync(usedCache)
+    val gid = groupId
+    val markRead = Runnable { if (panelRoot != null && this.groupId == gid) BubbleChatApi.markRead(context, gid) }
+    if (animated) handler.postDelayed(markRead, EXPAND_MS + 40) else markRead.run()
     BubbleMediaBridge.registerPanel(this)
     BubbleComposeBridge.registerPanel(this)
   }
@@ -2218,19 +2246,53 @@ class OverlayChatPanel(
     }
   }
 
-  private fun loadConversationAsync() {
+  /** Dựng ngay bản sao đoạn chat đã tải lần trước (20 tin cuối). Trả về true nếu có bản sao. */
+  private fun applyCachedConversation(gid: String): Boolean {
+    val c = convCache[gid] ?: return false
+    messages.clear()
+    messages.addAll(c.messages.takeLast(20))
+    if (!c.metaAvatarUrl.isNullOrBlank()) metaAvatarUrl = c.metaAvatarUrl
+    isDirect = c.isDirect
+    isGroupChat = !c.isDirect
+    senderAvatars.putAll(c.senderAvatars)
+    if (c.title.isNotBlank()) title = c.title
+    statusView?.visibility = View.GONE
+    applyHeader()
+    renderMessages()
+    return true
+  }
+
+  private fun loadConversationAsync(usedCache: Boolean = false) {
     val seq = ++loadSeq
     val gid = groupId
     val hadMessages = messages.isNotEmpty()
+    val t0 = android.os.SystemClock.uptimeMillis()
     if (!hadMessages) {
       statusView?.visibility = View.VISIBLE
       statusView?.text = "Đang tải tin nhắn…"
     }
     Thread {
-      val meta = BubbleChatApi.fetchGroupMeta(context, gid)
+      // Hai yêu cầu độc lập → chạy SONG SONG (trước đây nối tiếp nên chờ gấp đôi).
+      val metaBox = arrayOfNulls<BubbleChatApi.GroupMeta>(1)
+      val metaMsBox = LongArray(1)
+      val metaThread = Thread {
+        val m0 = android.os.SystemClock.uptimeMillis()
+        metaBox[0] = BubbleChatApi.fetchGroupMeta(context, gid)
+        metaMsBox[0] = android.os.SystemClock.uptimeMillis() - m0
+      }
+      metaThread.start()
+      val r0 = android.os.SystemClock.uptimeMillis()
       val rows = BubbleChatApi.fetchMessages(context, gid)
-      handler.post {
-        if (seq != loadSeq || gid != groupId || panelRoot == null) return@post
+      val rowsMs = android.os.SystemClock.uptimeMillis() - r0
+      try { metaThread.join() } catch (_: InterruptedException) { }
+      val meta = metaBox[0]
+      val fetchedMs = android.os.SystemClock.uptimeMillis() - t0
+      val apply = Runnable {
+        try {
+        if (seq != loadSeq || gid != groupId || panelRoot == null) {
+          android.util.Log.d("SxPanel", "bỏ qua kết quả tải: seq=$seq/$loadSeq, cùng nhóm=${gid == groupId}, khung còn=${panelRoot != null}")
+          return@Runnable
+        }
         if (meta != null) {
           title = meta.name.ifBlank { title }
           isDirect = meta.isDirect
@@ -2240,17 +2302,40 @@ class OverlayChatPanel(
         rememberAvatars(rows)
         applyHeader()
         // Tải lỗi/trống mà đang có tin hiển thị thì giữ nguyên, đừng xoá sạch khung chỉ vì một lần tải hụt.
-        if (rows.isEmpty() && hadMessages) return@post
+        if (rows.isEmpty() && hadMessages) {
+          android.util.Log.d("SxPanel", "tải trống nhưng đang có ${messages.size} tin → giữ nguyên (nhóm ${gid.take(8)})")
+          return@Runnable
+        }
         if (rows.isEmpty()) {
           statusView?.visibility = View.VISIBLE
           statusView?.text = "Chưa có tin nhắn"
         } else {
           statusView?.visibility = View.GONE
         }
-        messages.clear()
-        messages.addAll(dedupeMessages(rows))
-        renderMessages()
+        val fresh = dedupeMessages(rows)
+        // Không đổi so với đang hiển thị thì khỏi dựng lại (đỡ nháy và đỡ tốn).
+        val unchanged = messages.size == fresh.size && messages.indices.all { messages[it].id == fresh[it].id }
+        var renderMs = 0L
+        if (!unchanged) {
+          messages.clear()
+          messages.addAll(fresh)
+          val r1 = android.os.SystemClock.uptimeMillis()
+          renderMessages()
+          renderMs = android.os.SystemClock.uptimeMillis() - r1
+        }
+        convCache[gid] = CachedConv(title, fresh.takeLast(60), metaAvatarUrl, isDirect, HashMap(senderAvatars))
+        // Log tốc độ mở khung (mức Debug, bật khi cần đo). Không ghi nội dung tin.
+        android.util.Log.d(
+          "SxPanel",
+          "mở khung ${gid.take(8)}: dựng khung ${lastBuildMs}ms; tải nhóm ${metaMsBox[0]}ms, tải tin ${rowsMs}ms (xong sau ${fetchedMs}ms); dựng tin ${renderMs}ms; xong ${android.os.SystemClock.uptimeMillis() - showAtMs}ms kể từ lúc mở (cache=$usedCache, đổi=${!unchanged}, tin=${fresh.size})",
+        )
+        } catch (t: Throwable) {
+          // Ghi rõ lỗi (loại, thông điệp, vài dòng đầu dấu vết) thay vì để bước vẽ chết lặng.
+          android.util.Log.e("SxPanel", "bước vẽ LỖI: ${t.javaClass.simpleName}: ${t.message} @ ${t.stackTrace.take(5).joinToString(" <- ")}")
+        }
       }
+      val wait = animationEndsAt - android.os.SystemClock.uptimeMillis()
+      if (wait > 0) handler.postDelayed(apply, wait) else handler.post(apply)
     }.start()
   }
 

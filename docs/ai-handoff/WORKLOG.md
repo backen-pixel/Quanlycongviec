@@ -1,3 +1,15 @@
+## 2026-10-10 — SX mobile: chống báo trùng tin, khung chat tải nhanh, bộ đệm avatar gọn, huy hiệu mồ côi, thông báo trùng
+
+- `OverlayBubbleService.kt`: `recentIncoming` + `isDuplicateIncoming(groupId, sender, message, messageId)` gọi ở đầu `ACTION_SHOW_PEEK` (khoá `id:<mã>` TTL 120 s; không mã thì `t:<nhóm>|<người gửi>|<nội dung>` TTL 5 s; trùng theo nội dung ghi log Error nhãn `SxPeek`, trùng theo mã chỉ Debug). `ACTION_SET_BADGE`: chồng trống → không `ensureOverlay()`, gỡ cửa sổ trống; `updateBadge()` ẩn khi `convStack` rỗng và `bubbleGroupId` rỗng.
+- `BubbleFcmWake.kt`: `alreadyHandled(data, groupId)` (đồng bộ hoá, khoá theo `message_id`) và gửi `EXTRA_MESSAGE_ID` vào intent `SHOW_PEEK`. `SxFirebaseMessagingService.kt`: `isBubbleWakeOnly` → không gọi `super.onMessageReceived` cho FCM dữ liệu thuần `bubble_wake` (tránh Expo tạo thông báo thứ 3). `FloatingBubbleModule.kt`: `dispatchShowPeek(..., messageId)`, `postChatNotification` mang mã tin. `floatingBubbleOverlay.ts`: nhánh không-active dùng `postChatNotification` (cùng đích `showPeek`) để có mã tin.
+- `OverlayChatPanel.kt`: `show()` tải ngay (`loadConversationAsync(usedCache)`), 2 lời gọi song song (`metaThread` + `fetchMessages`), `animationEndsAt` chỉ hoãn bước vẽ; `convCache` (companion, `LinkedHashMap` access-order, tối đa 6) + `applyCachedConversation` (20 tin cuối); bỏ dựng lại nếu id không đổi; bước vẽ bọc `try/catch` (log Error nếu lỗi). `BubbleChatApi.fetchMessages`: `/chat?limit=60` (máy chủ trả đúng 60 tin MỚI NHẤT; trước đó không `limit` → 500 tin cũ nhất).
+- `OverlayAvatarView.kt`: bản đệm `<sha1>.s` giữ nguyên tệp tải về nếu ≤200KB (`KEEP_RAW_MAX_BYTES`), ngược lại WebP nén (`compactFormat()`: `WEBP_LOSSY` API ≥30); đọc đệm bằng `decodeFileScaled`.
+- Backend `services/pushSender.js`: `fcmTrayTag(notification, meta)` (export) — chat + có `message_id` → `msg:<mã>`, còn lại như cũ; dùng ở `android.notification.tag` của `sendFcmTrayNotification`. Test: `node tests/push-tray-tag.js`.
+- Bằng chứng (máy thật Vivo, bản dev): `SxPeek` log 1 `NHẬN` + 2 `BỎ QUA` (cách 592/598 ms và 520/547 ms) cho mỗi tin; `dumpsys notification --noredact` liệt kê 3 bản ghi tin nhắn (tag `0:…%…`, `msg:<mã>`, uuid; kênh fallback ×2 và `crm_chat`); tệp `sx_bubble_prefs.xml` có `badge_count=41` khi không có bong bóng; `/chat?limit=60` 744–1.078 ms, `/groups/<id>` ~960 ms. Tài khoản thử có 2 token FCM `sx-mobile` (một cái có thể là máy khác).
+- Chưa làm/chưa chứng minh: deploy backend (thẻ `msg:`); số thông báo thực sau sửa; thời gian dựng 60 hàng tin; danh sách đoạn chat bền qua khởi động lại. Quy ước test: kiểm tra app foreground trước khi chạm, chụp `exec-out`, log chẩn đoán mức Error và ít dòng (Vivo).
+
+---
+
 ## 2026-10-09 — SX mobile: bong bóng chat nổi, khung chat overlay, avatar thật; backend thu nhỏ avatar
 
 - Nguồn native chuẩn nằm ở `sx-mobile/plugins/native-android/overlay/` (thư mục `android/` bị gitignore, sinh lại bởi `plugins/withFloatingBubbleAndroid.js`; danh sách tệp Kotlin của plugin là liệt kê tường minh — đã thêm `OverlayAvatarView.kt`). Mỗi lần sửa phải đồng bộ bản `android/` → plugin.

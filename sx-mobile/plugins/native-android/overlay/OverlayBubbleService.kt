@@ -94,6 +94,12 @@ class OverlayBubbleService : Service() {
       ACTION_SET_BADGE -> {
         badgeCount = intent.getIntExtra(EXTRA_BADGE, 0).coerceAtLeast(0)
         saveBadgeToPrefs()
+        // Chưa biết đoạn chat nào (chồng bong bóng nằm trong bộ nhớ, mất khi tiến trình khởi động lại) thì KHÔNG có bong bóng để gắn huy
+        // hiệu: đừng tạo cửa sổ overlay chỉ để hiện một con số trơ trọi, và gỡ cửa sổ trống nếu đang có.
+        if (convStack.isEmpty()) {
+          if (bubbleRoot != null) removeOverlay()
+          return START_STICKY
+        }
         if (badgeCount > 0 && bubbleRoot == null && !isBubbleDismissed()) {
           ensureOverlay()
         }
@@ -133,6 +139,8 @@ class OverlayBubbleService : Service() {
         val sender = intent.getStringExtra(EXTRA_SENDER).orEmpty()
         val message = intent.getStringExtra(EXTRA_MESSAGE).orEmpty()
         val gid = intent.getStringExtra(EXTRA_GROUP_ID).orEmpty()
+        // Một tin có thể tới nhiều đường (FCM bị gọi 2 lần, FCM + socket): chỉ xử lý MỘT lần, kẻo bong bóng nháy 2 lần và huy hiệu cộng đôi.
+        if (isDuplicateIncoming(gid, sender, message, intent.getStringExtra(EXTRA_MESSAGE_ID))) return START_STICKY
         val openGid = openPanelGroupId()
         if (openGid.isNotBlank()) {
           val panel = chatPanel
@@ -238,6 +246,41 @@ class OverlayBubbleService : Service() {
       }
       else -> return START_STICKY
     }
+  }
+
+  /** Tin đến gần đây (khoá → thời điểm) để loại bản trùng. Chỉ dùng trên luồng chính (onStartCommand). */
+  private val recentIncoming = LinkedHashMap<String, Long>()
+
+  /**
+   * true nếu tin này vừa được xử lý rồi. Có mã tin nhắn thì so theo mã (nhớ 2 phút); không có thì so theo nhóm + người gửi + nội
+   * dung trong 5 giây (đủ phủ hai lần gọi liền nhau của cùng một thông báo đẩy mà không nuốt hai tin giống hệt cách nhau lâu).
+   */
+  private fun isDuplicateIncoming(groupId: String, sender: String, message: String, messageId: String?): Boolean {
+    val now = System.currentTimeMillis()
+    val it = recentIncoming.entries.iterator()
+    while (it.hasNext()) if (now - it.next().value > 120_000L) it.remove()
+    val key: String
+    val ttl: Long
+    if (!messageId.isNullOrBlank()) {
+      key = "id:$messageId"
+      ttl = 120_000L
+    } else {
+      key = "t:$groupId|$sender|$message"
+      ttl = 5_000L
+    }
+    val last = recentIncoming[key]
+    if (last != null && now - last < ttl) {
+      // Không ghi nội dung tin hay tên người gửi (riêng tư). Trùng theo MÃ là đường đi bình thường (socket + FCM cùng báo một tin) →
+      // chỉ mức Debug. Trùng theo NỘI DUNG (tin không có mã) bất thường hơn → mức Error để còn thấy trên Vivo/ROM ẩn Info/Warn.
+      if (!messageId.isNullOrBlank()) {
+        android.util.Log.d("SxPeek", "bỏ qua tin trùng cùng mã $messageId, nhóm ${groupId.take(8)}, cách lần trước ${now - last}ms")
+      } else {
+        android.util.Log.e("SxPeek", "BỎ QUA tin trùng (không có mã, cùng nhóm+người gửi+nội dung), nhóm ${groupId.take(8)}, cách lần trước ${now - last}ms")
+      }
+      return true
+    }
+    recentIncoming[key] = now
+    return false
   }
 
   private data class ConvBubble(
@@ -1478,7 +1521,8 @@ class OverlayBubbleService : Service() {
 
   private fun updateBadge() {
     val badge = badgeView ?: return
-    if (badgeCount <= 0) {
+    // Huy hiệu chỉ có nghĩa khi có bong bóng để gắn vào; chồng trống thì không vẽ bong bóng nào (xem rebuildStackUi) → ẩn luôn huy hiệu.
+    if (badgeCount <= 0 || (convStack.isEmpty() && bubbleGroupId.isBlank())) {
       badge.visibility = View.GONE
       return
     }

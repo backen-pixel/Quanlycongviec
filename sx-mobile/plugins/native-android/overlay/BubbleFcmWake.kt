@@ -26,6 +26,8 @@ object BubbleFcmWake {
 
     val groupId = resolveGroupId(data)
     if (groupId.isBlank()) return
+    // Một thông báo đẩy có thể bị gọi 2 lần liền nhau (handleIntent rồi onMessageReceived): chỉ xử lý một lần.
+    if (alreadyHandled(data, groupId)) return
 
     val title = data["title"]?.trim().orEmpty().ifBlank { "Tin nhắn" }
     val sender = data["sender_name"]?.trim().orEmpty().ifBlank { title }
@@ -33,6 +35,7 @@ object BubbleFcmWake {
     val avatarRaw = data["sender_avatar"]?.trim().orEmpty()
     val avatarUrl = absolutize(ctx, avatarRaw)
     val letter = sender.firstOrNull()?.uppercaseChar()?.toString() ?: "?"
+    val messageId = data["message_id"]?.trim().orEmpty()
 
     OverlayBubbleService.start(ctx)
     val show = Intent(ctx, OverlayBubbleService::class.java).apply {
@@ -48,11 +51,30 @@ object BubbleFcmWake {
     val peek = Intent(ctx, OverlayBubbleService::class.java).apply {
       action = OverlayBubbleService.ACTION_SHOW_PEEK
       putExtra(OverlayBubbleService.EXTRA_GROUP_ID, groupId)
+      if (messageId.isNotBlank()) putExtra(OverlayBubbleService.EXTRA_MESSAGE_ID, messageId)
       putExtra(OverlayBubbleService.EXTRA_SENDER, sender)
       putExtra(OverlayBubbleService.EXTRA_MESSAGE, message)
     }
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ctx.startForegroundService(peek)
     else ctx.startService(peek)
+  }
+
+  /** Tin vừa xử lý (khoá → thời điểm). FCM có thể gọi từ nhiều luồng nên đồng bộ hoá. */
+  private val recentWakes = LinkedHashMap<String, Long>()
+
+  /** true nếu tin này vừa được xử lý: so theo message_id (nhớ 2 phút); không có mã thì theo nhóm+người gửi+nội dung trong 5 giây. */
+  @Synchronized
+  private fun alreadyHandled(data: Map<String, String>, groupId: String): Boolean {
+    val now = System.currentTimeMillis()
+    val it = recentWakes.entries.iterator()
+    while (it.hasNext()) if (now - it.next().value > 120_000L) it.remove()
+    val id = data["message_id"]?.trim().orEmpty()
+    val key = if (id.isNotBlank()) "id:$id" else "t:$groupId|${data["sender_name"].orEmpty()}|${data["message"].orEmpty()}"
+    val ttl = if (id.isNotBlank()) 120_000L else 5_000L
+    val last = recentWakes[key]
+    if (last != null && now - last < ttl) return true
+    recentWakes[key] = now
+    return false
   }
 
   private fun resolveGroupId(data: Map<String, String>): String {

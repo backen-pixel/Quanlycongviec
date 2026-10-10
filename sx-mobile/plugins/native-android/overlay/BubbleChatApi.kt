@@ -169,7 +169,8 @@ object BubbleChatApi {
         .map { cleanApiString(o.optString(it, "")).orEmpty() }
         .firstOrNull { it.isNotBlank() }
       GroupMeta(name, isDirect, if (isDirect) "Trực tiếp" else "Nhóm chat · realtime", avatar)
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+      android.util.Log.e("SxPanel", "GET /groups/<id> lỗi: ${e.javaClass.simpleName} ${e.message}")
       null
     }
   }
@@ -180,13 +181,14 @@ object BubbleChatApi {
     val auth = authHeader(ctx) ?: return emptyList()
     val myId = myUserId(ctx)
     return try {
-      val conn = openJson("$base/messenger/groups/$groupId/chat", auth, "GET")
+      val conn = openJson("$base/messenger/groups/$groupId/chat?limit=60", auth, "GET")
       val code = conn.responseCode
       val body = readBody(conn, code in 200..299)
       conn.disconnect()
       if (code !in 200..299 || body.isBlank()) return emptyList()
       parseMessages(JSONArray(body), myId).takeLast(60)
-    } catch (_: Exception) {
+    } catch (e: Exception) {
+      android.util.Log.e("SxPanel", "GET /chat lỗi: ${e.javaClass.simpleName} ${e.message}")
       emptyList()
     }
   }
