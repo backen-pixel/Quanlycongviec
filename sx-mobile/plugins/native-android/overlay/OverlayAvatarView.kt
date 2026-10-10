@@ -37,6 +37,8 @@ object OverlayAvatarCache {
   private const val DISK_LIMIT_BYTES = 24L * 1024 * 1024
   private const val FAIL_TTL_MS = 60_000L
   private const val MAX_BYTES = 64L * 1024 * 1024
+  /** Tệp tải về nhẹ hơn mức này thì giữ nguyên làm bản đệm (không mã hóa lại). */
+  private const val KEEP_RAW_MAX_BYTES = 200L * 1024
 
   private val main = Handler(Looper.getMainLooper())
   private val mem = object : LruCache<String, Bitmap>(10 * 1024 * 1024) {
@@ -84,15 +86,18 @@ object OverlayAvatarCache {
    * cacheDir bất cứ lúc nào.
    */
   private fun fetch(ctx: Context, url: String): Bitmap? {
+    val t0 = android.os.SystemClock.uptimeMillis()
     val dir = File(ctx.filesDir, "avatars").apply { mkdirs() }
     val key = sha1(url)
     val small = File(dir, "$key.s")
 
     // (1) Bản nhỏ đã lưu.
     if (small.exists() && small.length() > 0L) {
-      val cached = try { BitmapFactory.decodeFile(small.absolutePath) } catch (_: Throwable) { null }
+      // Cũng giải mã THU NHỎ khi đọc lại: tệp đệm có thể là ảnh nhẹ về byte nhưng rất lớn về điểm ảnh.
+      val cached = try { decodeFileScaled(small) } catch (_: Throwable) { null }
       if (cached != null) {
         small.setLastModified(System.currentTimeMillis())
+        Log.d(TAG, "avatar nguồn=đĩa ${android.os.SystemClock.uptimeMillis() - t0}ms")
         return cached
       }
       small.delete()
@@ -112,11 +117,17 @@ object OverlayAvatarCache {
         log("không giải mã được ảnh (${raw.length()}B, định dạng không hỗ trợ? vd. SVG): ${shortUrl(url)}")
         return null
       }
-      Log.d(TAG, "OK gốc ${raw.length()}B → ${bmp.width}x${bmp.height} ${shortUrl(url)}")
+      Log.d(TAG, "avatar nguồn=mạng ${android.os.SystemClock.uptimeMillis() - t0}ms, gốc ${raw.length()}B → ${bmp.width}x${bmp.height}")
       try {
-        val tmp = File(dir, "$key.s.tmp")
-        tmp.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        if (!tmp.renameTo(small)) tmp.delete()
+        if (raw.length() <= KEEP_RAW_MAX_BYTES) {
+          // Tệp tải về đã nhẹ sẵn (vd. avatar WebP vài chục KB do backend thu nhỏ): giữ nguyên làm bản đệm, không mã hóa lại.
+          if (!raw.renameTo(small)) raw.copyTo(small, overwrite = true)
+        } else {
+          // Ảnh nặng: lưu bản thu nhỏ dạng WebP nén (vẫn giữ nền trong suốt) thay cho PNG không nén (hàng trăm KB).
+          val tmp = File(dir, "$key.s.tmp")
+          tmp.outputStream().use { bmp.compress(compactFormat(), 85, it) }
+          if (!tmp.renameTo(small)) tmp.delete()
+        }
         trimDisk(dir)
       } catch (_: Exception) { }
       return bmp
@@ -124,6 +135,11 @@ object OverlayAvatarCache {
       try { raw.delete() } catch (_: Exception) { }
     }
   }
+
+  /** WebP nén có mất mát (nhỏ hơn PNG nhiều lần, vẫn hỗ trợ trong suốt); API ≥ 30 dùng hằng số mới. */
+  @Suppress("DEPRECATION")
+  private fun compactFormat(): Bitmap.CompressFormat =
+    if (android.os.Build.VERSION.SDK_INT >= 30) Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.WEBP
 
   /** Log LỖI tải/giải mã avatar. Vivo và một số ROM ẩn log Info/Warn của app, chỉ cho Error lọt ra — nên dùng mức Error. */
   private fun log(msg: String) { Log.e(TAG, msg) }

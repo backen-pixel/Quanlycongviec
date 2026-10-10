@@ -158,7 +158,12 @@ export async function showChatBubbleForMessage(
     }
   } else {
     try {
-      Overlay.showPeek?.(sender, message, groupId);
+      // postChatNotification cùng đích với showPeek nhưng mang theo mã tin nhắn → service chống trùng với FCM/socket.
+      if (Overlay.postChatNotification) {
+        Overlay.postChatNotification(groupId, title, sender, avatarUrl || null, message, p.messageId || null, null);
+      } else {
+        Overlay.showPeek?.(sender, message, groupId);
+      }
     } catch {
       /* ignore */
     }
