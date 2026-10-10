@@ -60,3 +60,14 @@ export async function recordSentDraft(draft, sentText) {
   }
   return Boolean(await recordDraft('sent', draft.draftId, { ...draft, revision, text: sentText }));
 }
+
+export async function getDraftReport(days = 7) {
+  const result = await call(`/report?days=${days === 30 ? 30 : 7}`);
+  return result.ok ? result.body : null;
+}
+
+export const discardReasonLabel = code => ({
+  WRONG_PRONOUN: 'Sai xưng hô', TOO_LONG: 'Quá dài', PRICE_MENTION: 'Nhắc giá', PII_LEAK: 'Lộ thông tin cá nhân',
+  LINK: 'Có đường link', RISKY_PROMISE: 'Hứa hẹn', IDENTITY_CLAIM: 'Nhận là người thật', PROMPT_LEAK: 'Lộ lời dặn',
+  NOT_VIETNAMESE: 'Không phải tiếng Việt', UNFILLED_PLACEHOLDER: 'Còn nhãn chưa thay', EMPTY: 'Rỗng',
+}[code] || code);
