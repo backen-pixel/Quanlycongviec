@@ -32,6 +32,7 @@ export default function FacebookChatTab({ leadId, companyId }) {
   const contactRef = useRef(null);
   contactRef.current = contact;
   const draftRef = useRef(null);
+  const loadedLeadRef = useRef(null);
 
   const companyQs = useMemo(
     () => (companyId ? `?company_id=${encodeURIComponent(companyId)}` : ''),
@@ -79,7 +80,9 @@ export default function FacebookChatTab({ leadId, companyId }) {
 
   const loadMessages = useCallback(() => {
     if (!leadId) return;
-    setLoading(true);
+    // Spinner only on the first load of a lead: background refreshes (30s timer, tab switch)
+    // must not unmount the reply box and the AI draft bar while staff are working.
+    if (loadedLeadRef.current !== leadId) setLoading(true);
     setLoadError(null);
     fetch(`${API}/api/facebook/leads/${leadId}/messages`, {
       headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
@@ -112,7 +115,10 @@ export default function FacebookChatTab({ leadId, companyId }) {
         setMessages([]);
         setContact(null);
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        loadedLeadRef.current = leadId;
+        setLoading(false);
+      });
   }, [leadId, tryAutoSync, scrollChatToBottom]);
 
   const uniqueMessages = useMemo(() => {
