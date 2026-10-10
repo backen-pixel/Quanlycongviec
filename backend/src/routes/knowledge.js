@@ -722,6 +722,73 @@ async function ensureLessonViewedByUser(userId, lessonId, existingProg) {
   );
 }
 
+/**
+ * Mốc bắt học lại gần nhất của một người ở một bài tập. Null = chưa từng phải học lại.
+ *
+ * Bảng `knowledge_exercise_resets` có thể chưa tồn tại (chưa chạy database/716). Khi đó trả
+ * null để mọi thứ chạy y như trước — đếm lượt trên toàn bộ lịch sử — thay vì ném lỗi làm
+ * người học không nộp được bài.
+ */
+async function layMocHocLaiGanNhat(exerciseId, userId) {
+  const { data, error } = await supabase
+    .from('knowledge_exercise_resets')
+    .select('reset_at')
+    .eq('exercise_id', exerciseId)
+    .eq('user_id', userId)
+    .order('reset_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    if (!/does not exist|schema cache/i.test(error.message || '')) {
+      console.warn('[knowledge] đọc mốc học lại:', error.message);
+    }
+    return null;
+  }
+  return data?.reset_at || null;
+}
+
+/**
+ * Trượt lượt cuối → đặt tiến độ CẢ KHOÁ về chưa học, và ghi một mốc để lượt thi đếm lại từ 0.
+ *
+ * Vì sao đặt lại cả khoá chứ không riêng bài chứa bài thi: thi tổng kết rút câu từ mọi bài,
+ * nên trượt ba lần nghĩa là chưa nắm phần nào đó trong khoá — bắt đọc lại đúng bài chứa bài
+ * thi thì không giải quyết được gì.
+ *
+ * Ghi mốc TRƯỚC khi xoá tiến độ: nếu bước sau hỏng thì người học vẫn được cấp lại lượt, còn
+ * hơn kẹt cứng không thi tiếp được. Đây là ưu tiên có chủ ý.
+ */
+async function batHocLaiSauKhiTruotHetLuot({ exerciseId, userId, categoryId, soLuot }) {
+  const { data: baiHoc } = await supabase
+    .from('knowledge_lessons')
+    .select('id')
+    .eq('category_id', categoryId);
+  const ids = (baiHoc || []).map((l) => l.id);
+
+  const { error: eReset } = await supabase.from('knowledge_exercise_resets').insert({
+    exercise_id: exerciseId,
+    user_id: userId,
+    reason: 'het_luot',
+    lessons_reset: ids.length,
+  });
+  if (eReset) {
+    // Chưa chạy database/716 → không bắt học lại được, nhưng KHÔNG chặn việc nộp bài.
+    console.warn('[knowledge] ghi mốc học lại:', eReset.message);
+    return null;
+  }
+
+  if (ids.length) {
+    const { error: eProg } = await supabase
+      .from('knowledge_lesson_progress')
+      .delete()
+      .eq('user_id', userId)
+      .in('lesson_id', ids);
+    if (eProg) console.warn('[knowledge] đặt lại tiến độ:', eProg.message);
+  }
+
+  console.info(`[knowledge] bắt học lại: user=${userId} khoá=${categoryId} — trượt ${soLuot} lượt, đặt lại ${ids.length} bài`);
+  return { lessons_reset: ids.length, attempts_used: soLuot };
+}
+
 function gradeQuiz(questions, answers) {
   const items = questions?.items || [];
   if (!items.length) return { score: 100, passed: true, details: [] };
@@ -1479,11 +1546,16 @@ r.post('/exercises/:id/submit', async (req, res) => {
       }
     }
 
-    const { count } = await supabase
+    // Lượt thi đếm TỪ LẦN BẮT HỌC LẠI GẦN NHẤT, không đếm toàn bộ lịch sử — xem
+    // database/716 và `batHocLaiSauKhiTruotHetLuot` bên dưới.
+    const mocHocLai = await layMocHocLaiGanNhat(req.params.id, req.user.userId);
+    let qSoLuot = supabase
       .from('knowledge_exercise_submissions')
       .select('id', { count: 'exact', head: true })
       .eq('exercise_id', req.params.id)
       .eq('user_id', req.user.userId);
+    if (mocHocLai) qSoLuot = qSoLuot.gt('submitted_at', mocHocLai);
+    const { count } = await qSoLuot;
     const attempt = (count || 0) + 1;
     if (ex.max_attempts && attempt > ex.max_attempts) {
       return res.status(400).json({ error: `Đã hết lượt làm bài (tối đa ${ex.max_attempts})` });
@@ -1525,6 +1597,17 @@ r.post('/exercises/:id/submit', async (req, res) => {
       .select()
       .single();
     if (insErr) throw insErr;
+
+    // Trượt đúng lượt cuối → bắt học lại cả khoá rồi cấp lại lượt mới.
+    let hocLai = null;
+    if (status === 'failed' && ex.max_attempts && attempt >= ex.max_attempts && ex.lesson?.category_id) {
+      hocLai = await batHocLaiSauKhiTruotHetLuot({
+        exerciseId: req.params.id,
+        userId: req.user.userId,
+        categoryId: ex.lesson.category_id,
+        soLuot: ex.max_attempts,
+      });
+    }
 
     let submissionRow = data;
     if (ex.lesson?.category_id) {
@@ -1580,6 +1663,9 @@ r.post('/exercises/:id/submit', async (req, res) => {
       required_failed: simRequiredFailed,
       certificate_issued: newCert || null,
       next_lesson: nextLesson || null,
+      // Khác null = vừa trượt lượt cuối, tiến độ cả khoá đã đặt lại, lượt thi cấp lại từ đầu.
+      // Giao diện nên báo rõ: «Bạn đã dùng hết N lượt — cần học lại khoá trước khi thi tiếp».
+      bat_hoc_lai: hocLai,
       current_lesson_id: ex.lesson?.id || null,
     });
   } catch (e) {
