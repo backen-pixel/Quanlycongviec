@@ -71,6 +71,11 @@ import { fetchPipelineStagesById } from '../lib/crmPipelineStages';
 import { buildSxPipelineStageMeta, projectIsShipped, resolveSxDisplayColumnId, TEMP_SX_FREE_DRAG } from '../lib/sxPipelineRevenue';
 import { CrmLeadCommentsPanel, CrmLeadHistoryPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
 import { useCommentProgressSlash } from '../lib/commentProgressSlash';
+import {
+  buildProjectRenameSlashCommand,
+  clipProjectName,
+  renameNoticeBody,
+} from '../lib/projectRenameComment';
 import SharedCRMNotes from '../components/SharedCRMNotes';
 import DriveAttachments from '../components/drive/DriveAttachments';
 import ProjectProcurementTab from '../components/ProjectProcurementTab';
@@ -1666,6 +1671,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [placeSxBusy, setPlaceSxBusy] = useState(false);
   const [phatSinhBusy, setPhatSinhBusy] = useState(false);
   const [placeSxErr, setPlaceSxErr] = useState('');
+  const [placeSxName, setPlaceSxName] = useState('');
   const [workshopPlacements, setWorkshopPlacements] = useState({ placed: [], received_from: [] });
   const [placeSxNotice, setPlaceSxNotice] = useState(null);
   const workshopPlacementsRef = useRef(null);
@@ -2321,6 +2327,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
   const openPlaceSxModal = useCallback(async () => {
     setPlaceSxErr('');
+    setPlaceSxName(String(project?.name || '').trim());
     setPlaceSxTargets([]);
     setPlaceSxCompanies([]);
     setPlaceSxLoading(true);
@@ -2339,7 +2346,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     } finally {
       setPlaceSxLoading(false);
     }
-  }, [project?.company_id, project?.company?.id]);
+  }, [project?.company_id, project?.company?.id, project?.name]);
 
   const submitPlaceSx = useCallback(async () => {
     const err = validateSxTargets(placeSxTargets, { schedule: 'pickup' });
@@ -2347,11 +2354,17 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       setPlaceSxErr(err);
       return;
     }
+    const projectName = clipProjectName(placeSxName);
+    if (!projectName) {
+      setPlaceSxErr('Nhập tên dự án');
+      return;
+    }
     setPlaceSxBusy(true);
     setPlaceSxErr('');
     try {
       const { data } = await api.post(`/production/projects/${id}/place-at-workshops`, {
         targets: sxTargetsToApiPayload(placeSxTargets),
+        project_name: projectName,
       });
       const created = (Array.isArray(data?.created) ? data.created : []).map((row) => {
         const match = placeSxTargets.find((t) => (
@@ -2395,7 +2408,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     } finally {
       setPlaceSxBusy(false);
     }
-  }, [placeSxTargets, placeSxCompanies, id, loadWorkshopPlacements]);
+  }, [placeSxTargets, placeSxCompanies, placeSxName, id, loadWorkshopPlacements]);
 
   /** Realtime: đồng bộ Kanban + nhiệm vụ CRM giữa web và mobile */
   useEffect(() => {
@@ -2891,6 +2904,23 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       setDeadlineBusy(false);
     }
   };
+
+  const renameProjectFromComment = useCallback(async (nextName) => {
+    if (!project?.id) return { ok: false, error: 'Chưa có dự án để đổi tên' };
+    const oldName = String(project.name || '').trim();
+    const next = clipProjectName(nextName);
+    if (!next) return { ok: false, error: 'Điền tên mới sau dấu :' };
+    if (next === oldName) return { ok: false, error: 'Tên mới trùng tên hiện tại' };
+    try {
+      await api.put(`/projects/${project.id}`, { name: next });
+      setProject((prev) => (prev ? { ...prev, name: next } : prev));
+      setTitleDraft(next);
+      markWorkshopProjectRename(project.id, { name: next });
+      return { ok: true, oldName: oldName || 'dự án', notice: renameNoticeBody(oldName || 'dự án', next) };
+    } catch (e) {
+      return { ok: false, error: e?.response?.data?.error || 'Không đổi được tên dự án' };
+    }
+  }, [project?.id, project?.name]);
 
   const saveTitle = async () => {
     if (!titleDraft.trim() || savingTitle || !project?.id) return;
@@ -4230,14 +4260,26 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                         leadId={crmLeadId}
                         forModule={workshopShareMod}
                         onCountChange={setCommentCount}
-                        slashCommands={progressSlashCmds}
+                        slashCommands={[buildProjectRenameSlashCommand(displayTitle), ...progressSlashCmds]}
+                        onProjectRename={renameProjectFromComment}
                         onSlashCommand={async (cmd) => {
                           const res = await progressSlash.run(cmd);
                           if (res?.ok) refreshProjectSilently?.();
                         }}
                       />
                     )
-                    : <ProjectCommentsPanel projectId={project.id} onCountChange={setCommentCount} />)
+                    : (
+                      <ProjectCommentsPanel
+                        projectId={project.id}
+                        onCountChange={setCommentCount}
+                        slashCommands={[buildProjectRenameSlashCommand(displayTitle), ...progressSlashCmds]}
+                        onProjectRename={renameProjectFromComment}
+                        onSlashCommand={async (cmd) => {
+                          const res = await progressSlash.run(cmd);
+                          if (res?.ok) refreshProjectSilently?.();
+                        }}
+                      />
+                    ))
                   : <p className="text-sm text-gray-500 text-center py-8">Chưa có dữ liệu để bình luận.</p>
               )}
 
@@ -4451,6 +4493,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               showDates
               showVcSetup
               schedule="pickup"
+              showProjectName
+              projectName={placeSxName}
+              onProjectNameChange={setPlaceSxName}
               leadId={crmLeadId || null}
               disabled={placeSxBusy}
               defaultDeliveryDate={String(project?.delivery_date || project?.production_deadline || '').slice(0, 10)}
@@ -4473,7 +4518,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           </button>
           <button
             type="button"
-            disabled={placeSxBusy || !!validateSxTargets(placeSxTargets, { schedule: 'pickup' }) || placeSxCompanies.length === 0}
+            disabled={placeSxBusy || !clipProjectName(placeSxName) || !!validateSxTargets(placeSxTargets, { schedule: 'pickup' }) || placeSxCompanies.length === 0}
             onClick={submitPlaceSx}
             className="flex-1 h-11 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold inline-flex items-center justify-center gap-1.5 disabled:opacity-40 cursor-pointer"
           >

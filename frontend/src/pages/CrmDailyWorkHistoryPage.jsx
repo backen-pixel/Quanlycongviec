@@ -218,7 +218,7 @@ export default function CrmDailyWorkHistoryPage() {
                 ))}
               </div>
 
-              <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+              <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm" data-guide-khu-vuc="Hoạt động gần nhất trong ngày">
                 <div className="border-b border-gray-100 px-4 py-2.5 text-sm font-semibold text-gray-800">
                   Hoạt động gần nhất trong ngày
                 </div>
@@ -281,7 +281,7 @@ export default function CrmDailyWorkHistoryPage() {
                 ))}
               </div>
 
-              <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+              <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm" data-guide-khu-vuc="Chi tiết hoạt động trong ngày">
                 <ul className="divide-y divide-gray-100">
                   {items.map((it) => {
                     const meta = KIND_META[it.kind] || KIND_META.activity;

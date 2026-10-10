@@ -459,7 +459,7 @@ export default function FacebookLinkPhoneCleanupPage() {
         </div>
 
         {rows.length > 0 && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <div data-guide-khu-vuc="2. Xem lại trước khi xóa & chặn" className="bg-amber-50 border border-amber-200 rounded-xl p-4">
             <h2 className="font-semibold text-amber-900 text-sm mb-2">2. Xem lại trước khi xóa & chặn</h2>
             <p className="text-xs text-amber-800 mb-3">
               Đối chiếu SĐT chỉ với tin <strong>inbound trong khoảng ngày đã chọn</strong>. Bỏ chọn dòng cần giữ; các
@@ -573,7 +573,7 @@ export default function FacebookLinkPhoneCleanupPage() {
         )}
 
         {executeLog && (
-          <div className="bg-white border rounded-xl p-4 text-sm">
+          <div data-guide-khu-vuc="Kết quả thực hiện" className="bg-white border rounded-xl p-4 text-sm">
             <h3 className="font-semibold mb-2">Kết quả thực hiện</h3>
             <ul className="text-xs space-y-1 max-h-48 overflow-y-auto font-mono">
               {(executeLog.results || []).map((x, i) => (

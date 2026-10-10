@@ -1178,7 +1178,7 @@ export default function MessengerHubPage() {
     <div className="flex h-full min-h-0 flex-1 flex-col text-slate-800 bg-slate-50/80">
       <div className="relative flex min-h-0 flex-1 border-t border-slate-200/80">
         {!leftOpen && !isMobile && (
-          <div className="flex w-[56px] shrink-0 flex-col border-r border-slate-200 bg-white z-[1]">
+          <div className="flex w-[56px] shrink-0 flex-col border-r border-slate-200 bg-white z-[1]" data-guide-khu-vuc="Danh sách nhóm chat (thu gọn)">
             <div className="flex shrink-0 justify-center border-b border-slate-100 py-2">
               <button
                 type="button"
@@ -1224,7 +1224,7 @@ export default function MessengerHubPage() {
         )}
         {/* —— Cột trái: danh sách —— */}
         {showList && (
-        <aside className="w-full lg:w-[320px] shrink-0 flex flex-col bg-white border-r border-slate-200 shadow-sm">
+        <aside className="w-full lg:w-[320px] shrink-0 flex flex-col bg-white border-r border-slate-200 shadow-sm" data-guide-khu-vuc="Danh sách nhóm chat">
           <div className="px-4 pt-4 pb-3 border-b border-slate-100 bg-white">
             <div className="flex items-center justify-between mb-3">
               <div>
@@ -1568,7 +1568,7 @@ export default function MessengerHubPage() {
 
         {/* —— Giữa: chat —— */}
         {showChatPane && (
-        <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-white">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-white" data-guide-khu-vuc="Khung chat nhóm">
           {!selectedGroupId ? (
             <div className="flex flex-1 flex-col items-center justify-center p-8 bg-slate-50/50">
               <div className="relative w-28 h-24 mb-6">

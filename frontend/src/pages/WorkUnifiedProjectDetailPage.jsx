@@ -32,6 +32,12 @@ import ProjectSharedWorkspaceTab from '../components/ProjectSharedWorkspaceTab';
 import ProjectSummaryReportTab from '../components/ProjectSummaryReportTab';
 import CommentSlashTaskForm from '../components/CommentSlashTaskForm';
 import { useCommentProgressSlash } from '../lib/commentProgressSlash';
+import { markWorkshopProjectRename } from '../lib/workshopPipelineStorage';
+import {
+  buildProjectRenameSlashCommand,
+  clipProjectName,
+  renameNoticeBody,
+} from '../lib/projectRenameComment';
 import CostExcelUpload from '../components/CostExcelUpload';
 import { LeadMembersTab } from '../components/LeadChatTabs';
 import { CrmLeadCommentsPanel, ProjectCommentsPanel } from '../components/CommentsPanels';
@@ -2529,6 +2535,22 @@ function WorkUnifiedProjectDetailInner() {
     || bundle?.overview?.owners?.vc?.id
     || bundle?.overview?.owners?.sx?.id
     || null;
+  const renameProjectFromComment = useCallback(async (nextName) => {
+    const pid = progressProject?.id || id;
+    if (!pid) return { ok: false, error: 'Chưa có dự án để đổi tên' };
+    const oldName = String(progressProject?.name || '').trim();
+    const next = clipProjectName(nextName);
+    if (!next) return { ok: false, error: 'Điền tên mới sau dấu :' };
+    if (oldName && next === oldName) return { ok: false, error: 'Tên mới trùng tên hiện tại' };
+    try {
+      await api.put(`/projects/${pid}`, { name: next });
+      setBundle((prev) => (prev?.project ? { ...prev, project: { ...prev.project, name: next } } : prev));
+      markWorkshopProjectRename(pid, { name: next });
+      return { ok: true, oldName: oldName || 'dự án', notice: renameNoticeBody(oldName || 'dự án', next) };
+    } catch (e) {
+      return { ok: false, error: e?.response?.data?.error || 'Không đổi được tên dự án' };
+    }
+  }, [progressProject?.id, progressProject?.name, id]);
   const { commands: progressSlashCmds, run: runProgressSlash } = useCommentProgressSlash({
     enabled: !!progressProject?.id,
     modules: ['sx', 'vc'],
@@ -2867,7 +2889,7 @@ function WorkUnifiedProjectDetailInner() {
           <div className="mx-4 mb-1 rounded-lg border-2 border-violet-400 bg-violet-50 px-3 py-2.5 text-[13px] leading-relaxed text-violet-950 shadow-sm">
             <p className="font-bold">Gõ / trong bình luận</p>
             <p className="mt-0.5">
-              <span className="font-semibold">/Công việc</span> tạo việc · <span className="font-semibold">/Phát sinh</span> ghi phát sinh · <span className="font-semibold">/Đã giao</span> chuyển cột đã giao.
+              <span className="font-semibold">/Công việc</span> tạo việc · <span className="font-semibold">/Phát sinh</span> ghi phát sinh · <span className="font-semibold">/Đã giao</span> chuyển cột đã giao · <span className="font-semibold">/Đổi tên</span> đổi tên dự án.
             </p>
             <p className="mt-1 font-semibold">
               Người phụ trách phải gõ <span className="font-mono">/Lắp xong</span> để hoàn thành dự án. Cả nhóm thấy dòng tím và nhận thông báo.
@@ -2878,7 +2900,12 @@ function WorkUnifiedProjectDetailInner() {
               leadId={effectiveLeadId}
               forModule="projects"
               onCountChange={setCommentCount}
-              slashCommands={[...COMMENT_SLASH_COMMANDS, ...progressSlashCmds]}
+              slashCommands={[
+                buildProjectRenameSlashCommand(progressProject?.name),
+                ...COMMENT_SLASH_COMMANDS,
+                ...progressSlashCmds,
+              ]}
+              onProjectRename={renameProjectFromComment}
               onSlashCommand={async (cmd) => {
                 if (cmd?.kind === 'stage') {
                   const res = await runProgressSlash(cmd);
@@ -2897,7 +2924,12 @@ function WorkUnifiedProjectDetailInner() {
               ) : null}
             />
           ) : (
-            <ProjectCommentsPanel projectId={id} onCountChange={setCommentCount} />
+            <ProjectCommentsPanel
+              projectId={id}
+              onCountChange={setCommentCount}
+              slashCommands={[buildProjectRenameSlashCommand(progressProject?.name)]}
+              onProjectRename={renameProjectFromComment}
+            />
           )}
         </div>
       )}

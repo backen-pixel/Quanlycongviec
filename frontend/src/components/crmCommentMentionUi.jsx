@@ -49,6 +49,8 @@ export function CrmCommentMentionComposer({
   const [slashStart, setSlashStart] = useState(0);
   const [slashQuery, setSlashQuery] = useState('');
   const [slashPickIdx, setSlashPickIdx] = useState(0);
+  /** Sau khi chèn «/đổi tên …»: giữ menu đóng trong lúc người dùng điền tên mới. */
+  const composeLockRef = useRef(null);
 
   const meId = user?.userId || user?.id;
 
@@ -83,9 +85,29 @@ export function CrmCommentMentionComposer({
     syncHeight();
   }, [value, syncHeight]);
 
+  const renameComposeLocked = (text, pos) => {
+    const lock = composeLockRef.current;
+    if (!lock) return false;
+    if (pos < lock.start) {
+      composeLockRef.current = null;
+      return false;
+    }
+    const slice = String(text || '').slice(lock.start);
+    if (!/^\/\s*(?:đổi|doi)\s*(?:tên|ten)/i.test(slice)) {
+      composeLockRef.current = null;
+      return false;
+    }
+    return true;
+  };
+
   const syncMentionUi = useCallback((pos) => {
     const p = pos ?? cursorPos;
     setCursorPos(p);
+    if (renameComposeLocked(value, p)) {
+      setSlashOpen(false);
+      setMentionOpen(false);
+      return;
+    }
     const sl = getActiveSlashState(value, p);
     setSlashOpen(!!(sl.active && (slashCommands || []).length));
     setSlashStart(sl.start);
@@ -122,6 +144,11 @@ export function CrmCommentMentionComposer({
     requestAnimationFrame(() => {
       syncHeight();
       setCursorPos(pos);
+      if (renameComposeLocked(nextText, pos)) {
+        setSlashOpen(false);
+        setMentionOpen(false);
+        return;
+      }
       const sl = getActiveSlashState(nextText, pos);
       setSlashOpen(!!(sl.active && (slashCommands || []).length));
       setSlashStart(sl.start);
@@ -139,10 +166,29 @@ export function CrmCommentMentionComposer({
 
   const slashItems = slashOpen ? filterSlashCommands(slashCommands, slashQuery) : [];
 
-  /** Chon 1 lenh: xoa doan «/tu-khoa» khoi o nhap roi ban lenh ra ngoai. */
+  /** Chon 1 lenh: xoa doan «/tu-khoa» khoi o nhap roi ban lenh ra ngoai.
+   *  Lệnh kind=compose thì chèn mẫu (vd. /đổi tên) để người dùng điền tiếp. */
   const applySlashPick = (cmd) => {
     if (!cmd) return;
     const text = String(value || '');
+    if (cmd.kind === 'compose' && cmd.composeText) {
+      const inserted = String(cmd.composeText);
+      const next = text.slice(0, slashStart) + inserted + text.slice(cursorPos);
+      const caret = slashStart + inserted.length;
+      composeLockRef.current = { start: slashStart };
+      onChange?.({ target: { value: next } });
+      setSlashOpen(false);
+      setCursorPos(caret);
+      requestAnimationFrame(() => {
+        if (textareaRef.current) {
+          textareaRef.current.focus();
+          textareaRef.current.setSelectionRange(caret, caret);
+        }
+        syncHeight();
+      });
+      return;
+    }
+    composeLockRef.current = null;
     const next = text.slice(0, slashStart) + text.slice(cursorPos);
     onChange?.({ target: { value: next } });
     setSlashOpen(false);

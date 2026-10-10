@@ -186,7 +186,7 @@ export default function OrderDetail() {
 
   return (
     <div className="space-y-4 w-full">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between" data-guide-khu-vuc="Tiêu đề & thao tác đơn hàng">
         <div className="flex items-center gap-3">
           <button onClick={() => navigate('/crm/orders')} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
           <div>
@@ -206,7 +206,7 @@ export default function OrderDetail() {
       </div>
 
       {/* Progress Steps - Clickable */}
-      <div className="bg-white rounded-xl border p-4">
+      <div className="bg-white rounded-xl border p-4" data-guide-khu-vuc="Tiến độ đơn hàng">
         <div className="flex items-center justify-between">
           {STATUS_STEPS.map((step, i) => (
             <div key={step} className="flex items-center flex-1">
@@ -229,7 +229,7 @@ export default function OrderDetail() {
 
       <div className="grid grid-cols-1 gap-4">
         {/* 1. Thông tin khách hàng — cùng thứ tự như báo giá */}
-        <div className="bg-white rounded-xl border p-4">
+        <div className="bg-white rounded-xl border p-4" data-guide-khu-vuc="Thông tin khách hàng">
           <h2 className="text-sm font-bold text-gray-900 mb-3">Thông tin khách hàng</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
             <div>
@@ -279,7 +279,7 @@ export default function OrderDetail() {
         />
 
         {/* 3. Tiến độ thanh toán đơn — chỉ đơn hàng, đặt sau bảng như phần “thực thu” */}
-        <div className="bg-white rounded-xl border p-4 space-y-3">
+        <div className="bg-white rounded-xl border p-4 space-y-3" data-guide-khu-vuc="Thanh toán đơn hàng">
           <h2 className="text-sm font-bold text-gray-900">Thanh toán đơn hàng</h2>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between"><span className="text-xs text-gray-500">Tổng tiền (sau thuế)</span><span className="font-bold">{formatVND(paymentSummary.total)}</span></div>
@@ -339,7 +339,7 @@ export default function OrderDetail() {
         </div>
 
         {/* 4. Điều khoản — cuối trang như form báo giá */}
-        <div className="bg-white rounded-xl border p-4 space-y-4">
+        <div className="bg-white rounded-xl border p-4 space-y-4" data-guide-khu-vuc="Điều khoản đơn hàng">
           <h2 className="text-sm font-bold text-gray-900 mb-1 flex items-center gap-2">
             <FileText className="h-4 w-4 text-emerald-600" /> Điều khoản
           </h2>

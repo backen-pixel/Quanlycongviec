@@ -326,7 +326,7 @@ export default function KpiBVerifyPage() {
             </div>
           </div>
 
-          <div className="bg-white rounded-xl border border-gray-100 overflow-x-auto">
+          <div data-guide-khu-vuc="Danh sách lead cần verify" className="bg-white rounded-xl border border-gray-100 overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-xs text-gray-700 uppercase">
                 <tr>

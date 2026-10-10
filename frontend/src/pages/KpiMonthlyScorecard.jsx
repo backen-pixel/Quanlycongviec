@@ -572,7 +572,7 @@ export default function KpiMonthlyScorecard() {
     <div className="min-h-screen bg-slate-950 text-slate-200">
       <div className="p-4 md:p-6 max-w-[1400px] mx-auto space-y-5">
         {/* Header */}
-        <div className="flex items-start justify-between flex-wrap gap-3">
+        <div data-guide-khu-vuc="Tiêu đề bảng điểm" className="flex items-start justify-between flex-wrap gap-3">
           <div>
             <h1 className="text-2xl font-bold text-white" style={{ color: '#ffffff' }}>Bảng điểm KPI tháng</h1>
           </div>
@@ -597,7 +597,7 @@ export default function KpiMonthlyScorecard() {
         </div>
 
         {/* Stat cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div data-guide-khu-vuc="Thẻ chỉ số" className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <StatCard
             icon={Users}
             accent="bg-sky-500/15 text-sky-300"
@@ -631,7 +631,7 @@ export default function KpiMonthlyScorecard() {
         </div>
 
         {/* Filter row */}
-        <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+        <div data-guide-khu-vuc="Bộ lọc bảng điểm" className="rounded-xl border border-slate-800 bg-slate-900/70 p-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 items-end">
             <label className="flex flex-col gap-1">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Công ty</span>
@@ -710,7 +710,7 @@ export default function KpiMonthlyScorecard() {
 
         {/* Tabs + count */}
         {data && (
-          <div className="flex items-center justify-between flex-wrap gap-3">
+          <div data-guide-khu-vuc="Tab & số lượng" className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex gap-1 bg-slate-900 border border-slate-800 rounded-xl p-1 w-fit">
               {[
                 { id: 'scorecard', label: '15 KPI × Nhân viên' },
@@ -742,7 +742,7 @@ export default function KpiMonthlyScorecard() {
             </div>
           </div>
         ) : data && activeTab === 'scorecard' ? (
-          <div className={`rounded-xl border border-slate-800 bg-slate-900/70 overflow-x-auto ${usersSorted.length > 10 ? 'max-h-[640px] overflow-y-auto' : ''}`}>
+          <div data-guide-khu-vuc="Bảng điểm KPI tháng" className={`rounded-xl border border-slate-800 bg-slate-900/70 overflow-x-auto ${usersSorted.length > 10 ? 'max-h-[640px] overflow-y-auto' : ''}`}>
             <table className="w-full text-sm border-separate border-spacing-0">
               <thead className="sticky top-0 z-20">
                 {/* Hàng nhóm KPI */}
@@ -838,7 +838,7 @@ export default function KpiMonthlyScorecard() {
             </table>
           </div>
         ) : data && activeTab === 'deal-scores' ? (
-          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4 space-y-4">
+          <div data-guide-khu-vuc="Điểm từng Deal theo nhân viên" className="rounded-xl border border-slate-800 bg-slate-900/70 p-4 space-y-4">
             <div className="flex items-center gap-2 mb-1">
               <Award className="w-4 h-4 text-violet-300" />
               <h2 className="font-semibold text-slate-100">Điểm từng Deal theo nhân viên (CRM Ledger)</h2>
