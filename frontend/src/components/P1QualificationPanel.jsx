@@ -3,7 +3,7 @@ import api from '../lib/api';
 import { stateLabel, errorLabel, validateForm, commandBody, createRequestIdentity,
   formatVnd, summaryReasonLabel, summaryCostLabel, milestoneCostLabel,
   milestoneTargetMultiple, scopeStatusLabel, scopeWarning, scopeAdLabel,
-  milestoneReliabilityLabel } from '../lib/p1Qualification';
+  milestoneReliabilityLabel, connectedOnly, excludedNote } from '../lib/p1Qualification';
 const ROOT = '/marketing-p1/qualification';
 const emptyForm = () => ({ contact_usable: false, need_in_scope: false, area_in_service: false, evidence_ref: '', reason: '' });
 export default function P1QualificationPanel({ duongDanLead }) {
@@ -113,7 +113,15 @@ export default function P1QualificationPanel({ duongDanLead }) {
       {summaryError && <p role="alert">Không tải được tổng hợp: {summaryError}</p>}
       {!trialId && <p>Chưa có đợt thử để tổng hợp.</p>}
       {summary && <>
-        {scopeWarning(summary.scope_check) && <div className="mb-3 rounded border-2 border-amber-700 bg-white p-3" role="alert">
+        {connectedOnly(summary) && summary.milestone && <div className="mb-3 rounded border border-gray-200 bg-white p-3">
+          <h3 className="font-semibold">Chi phí mỗi khách đạt mốc — chỉ quảng cáo VPT 01</h3>
+          <p>Khách từ quảng cáo VPT 01: {summary.milestone.in_scope_candidates} · đạt mốc <strong>{summary.milestone.definition.label}</strong>: {summary.milestone.reached_in_scope}</p>
+          <p>Đến nay: <strong>{milestoneCostLabel(summary.milestone.cost_in_scope_to_date)}</strong> · Nhóm đã qua {summary.milestone.definition.maturity_days} ngày ({summary.milestone.mature_in_scope_candidates} khách, {summary.milestone.cost_in_scope_mature?.denominator ?? 0} đạt mốc): <strong>{milestoneCostLabel(summary.milestone.cost_in_scope_mature)}</strong></p>
+          <p>mục tiêu ≤ {formatVnd(summary.cost_per_qualified_lead.target_vnd)}{milestoneTargetMultiple(summary.milestone.cost_in_scope_mature, summary.cost_per_qualified_lead.target_vnd)
+            ? ` — hiện gấp ${milestoneTargetMultiple(summary.milestone.cost_in_scope_mature, summary.cost_per_qualified_lead.target_vnd)} lần mục tiêu` : ''}</p>
+          <p className="text-gray-600">{excludedNote(summary)}</p>
+        </div>}
+        {!connectedOnly(summary) && scopeWarning(summary.scope_check) && <div className="mb-3 rounded border-2 border-amber-700 bg-white p-3" role="alert">
           <p className="font-semibold">{scopeStatusLabel(summary.scope_check?.status)}</p>
           <p>{scopeWarning(summary.scope_check)}</p>
           {!!summary.scope_check?.unverified_ads?.length && <ul className="mt-2 list-disc pl-5">
@@ -121,7 +129,7 @@ export default function P1QualificationPanel({ duongDanLead }) {
               <li key={ad.ad_id}>{scopeAdLabel(ad)}</li>)}
           </ul>}
         </div>}
-        {summary.milestone && <div className="mb-3 rounded border border-gray-200 p-3">
+        {!connectedOnly(summary) && summary.milestone && <div className="mb-3 rounded border border-gray-200 p-3">
           <h3 className="font-semibold">Đo tự động theo bước (không cần xác nhận tay)</h3>
           <p>Khách đạt mốc <strong>{summary.milestone.definition.label}</strong> (do nhân viên chuyển bước): {summary.milestone.reached} / {summary.milestone.candidates} khách</p>
           <p>Chi phí mỗi khách đạt mốc (mọi ứng viên, {milestoneReliabilityLabel(summary.milestone.cost_to_date.reliability)}): {milestoneCostLabel(summary.milestone.cost_to_date)} (đến nay, {summary.milestone.reached} khách)</p>

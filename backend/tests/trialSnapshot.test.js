@@ -58,8 +58,14 @@ function runner({ flag = '1', target = 'primary', trials = [], build, writeError
     '../modules/marketingAutomation/trialSummary': { buildTrialSummary: build || (async () => ({
       summary: { as_of: '2026-10-08T04:00:00Z', spend: { status: 'COMPLETE' } }, spendByDay: [] })) } };
   const module = { exports: {} };
+  // Pin "today" to the day these windows were written for, so the test does not expire.
+  const FIXED_NOW = Date.parse('2026-10-08T05:00:00Z');
+  class FixedDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [FIXED_NOW])); }
+    static now() { return FIXED_NOW; }
+  }
   vm.runInNewContext(`(function(require,module,process,console,setTimeout,setInterval,clearTimeout,clearInterval){${source}\n})`,
-    { Date, Intl, Number, Error },
+    { Date: FixedDate, Intl, Number, Error },
   )(name => imports[name], module, { env: { VPT_P1_SNAPSHOT_CRON: flag } },
     { warn: value => warnings.push(value) }, timers.setTimeout, timers.setInterval,
     timers.clearTimeout, timers.clearInterval);
