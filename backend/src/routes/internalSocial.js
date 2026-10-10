@@ -1051,7 +1051,7 @@ r.patch('/profile/me', async (req, res) => {
     const update = {};
     if (req.body?.avatar !== undefined) {
       const v = req.body.avatar == null ? '' : String(req.body.avatar).trim();
-      // Avatar nằm trong Storage của dự án: thu nhỏ ≤512px + nén trước khi lưu (lỗi bất kỳ → giữ URL gốc).
+      // Avatar nằm trong Storage của dự án: thu nhỏ vừa khung 512px (giữ tỷ lệ, không cắt) + nén trước khi lưu (lỗi bất kỳ → giữ URL gốc).
       update.avatar = v ? (await optimizeAvatarUrl(v, me)).url || null : null;
     }
     if (req.body?.cover_url !== undefined) {

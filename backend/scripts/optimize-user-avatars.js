@@ -1,5 +1,5 @@
 /**
- * Dọn avatar cũ quá nặng: thu nhỏ ≤512px + nén WebP cho các avatar nằm trong Storage của dự án, rồi cập nhật users.avatar.
+ * Dọn avatar cũ quá nặng: thu nhỏ cho vừa khung 512px (giữ nguyên tỷ lệ, không cắt) + nén WebP cho các avatar nằm trong Storage của dự án, rồi cập nhật users.avatar.
  *
  * MẶC ĐỊNH LÀ CHẠY THỬ (dry-run): chỉ liệt kê và ước tính dung lượng tiết kiệm, KHÔNG tải gì lên Storage, KHÔNG sửa DB.
  * Chỉ khi có cờ --apply mới ghi: tải bản nhỏ lên Storage rồi sửa users.avatar (có điều kiện avatar vẫn là giá trị cũ,
