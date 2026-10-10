@@ -5,6 +5,10 @@ const { APPROVED_PLAN } = require('./policy');
 const { checkAdScope } = require('./adScope');
 const { MILESTONE_SLUGS, MILESTONE_LABEL, MATURITY_DAYS, loadMilestoneReached, summarizeMilestone } = require('./stageMilestone');
 
+// Founder decision 2026-10-10: measure only ads of the connected ad accounts (VPT 01). Leads from
+// other accounts (the outsourced agency) are excluded from the cost, not treated as missing spend.
+const MEASUREMENT_SCOPE = 'CONNECTED_AD_ACCOUNTS_ONLY';
+
 async function readSpendWindow(db, scopes, from, to, asOf) {
   const accounts = [], daily = [], reasons = new Set();
   let total = 0, complete = scopes.length > 0, status = scopes.length ? 'COMPLETE' : 'UNPROVEN';
@@ -104,9 +108,10 @@ async function buildTrialSummary({ db, trial, now = new Date() }) {
         const summary = { trial: { id: trial.id, name: trial.name, status: trial.status,
           start_date: trial.start_date, end_date: trial.end_date }, as_of: asOf,
         spend: spendSummary, leads, scope_check: scopeCheck, cost_per_qualified_lead: cost,
-        milestone, verdict: 'NOT_EVALUATED',
+        milestone, verdict: 'NOT_EVALUATED', measurement_scope: MEASUREMENT_SCOPE,
+        excluded_unconnected_ads: scopeCheck.not_in_connected_accounts,
         caveats: ['MILESTONE_IS_STAGE_PROXY', 'IDENTITY_NOT_RECONCILED',
-          ...(scopeCheck.not_in_connected_accounts > 0 ? ['LEADS_FROM_UNCONNECTED_ADS']
+          ...(scopeCheck.not_in_connected_accounts > 0 ? ['UNCONNECTED_ADS_EXCLUDED']
             : scopeCheck.status === 'VERIFIED' ? [] : ['AD_ACCOUNT_SCOPE_UNVERIFIED']),
           ...(spend.reconciliation === 'ACCOUNT_LEVEL_MATCHED' ? [] : ['SPEND_AD_LEVEL_ONLY']),
           ...(spend.reasons.includes('ACCOUNT_TOTAL_MISMATCH') ? ['SPEND_ACCOUNT_TOTAL_MISMATCH'] : []),

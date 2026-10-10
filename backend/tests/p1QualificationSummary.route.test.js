@@ -120,7 +120,10 @@ test('complete spend gives exact integer ceiling and no verdict', async () => {
   assert.equal(body.scope_check.status, 'NONE_IN_SCOPE');
   assert.equal(body.scope_check.not_in_connected_accounts, 3);
   assert.equal(body.milestone.cost_to_date.reliability, 'LOW_UNCONNECTED_ADS');
-  assert.ok(body.caveats.includes('LEADS_FROM_UNCONNECTED_ADS'));
+  assert.ok(body.caveats.includes('UNCONNECTED_ADS_EXCLUDED'));
+  assert.equal(body.measurement_scope, 'CONNECTED_AD_ACCOUNTS_ONLY');
+  assert.equal(body.excluded_unconnected_ads, 3);
+  assert.equal(body.milestone.in_scope_candidates, 0);
   assert.ok(body.caveats.includes('MILESTONE_IS_STAGE_PROXY'));
   assert.ok(body.caveats.includes('SPEND_AD_LEVEL_ONLY'));
   assert.doesNotMatch(JSON.stringify(body), /target_met|passed|changed_by|phone|email|Synthetic/);
