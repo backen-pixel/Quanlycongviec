@@ -40,6 +40,8 @@ class OverlayChatPanel(
   private val onExpand: (groupId: String, title: String) -> Unit = { _, _ -> },
   private val onStartCall: (groupId: String, title: String, media: String) -> Unit = { _, _, _ -> },
   private val onSelectHead: (groupId: String, title: String) -> Unit = { _, _ -> },
+  /** Máy chủ đã nhận «đã đọc» của đoạn này — nơi gọi dọn huy hiệu / báo cho app. Luôn chạy trên luồng chính. */
+  private val onGroupRead: (groupId: String) -> Unit = { },
   /** Tâm bong bóng (toạ độ màn hình) — khung chat bung ra từ đó và thu về đó. null = không hiệu ứng. */
   private val originProvider: () -> Pair<Float, Float>? = { null },
 ) {
@@ -144,6 +146,8 @@ class OverlayChatPanel(
       showAtMs = android.os.SystemClock.uptimeMillis()
       val usedCache = applyCachedConversation(groupId)
       loadConversationAsync(usedCache)
+      // Chuyển sang đoạn khác (đầu chat / trang «Đoạn chat»): đoạn vừa mở cũng phải được đánh dấu đã đọc.
+      markCurrentRead(force = true)
       BubbleMediaBridge.registerPanel(this)
       BubbleComposeBridge.registerPanel(this)
       ensurePanelAttached(force = true)
@@ -165,9 +169,8 @@ class OverlayChatPanel(
     // Việc TẢI bắt đầu ngay (không gây giật); chỉ việc VẼ ~60 hàng tin mới phải đợi bung xong.
     animationEndsAt = if (animated) android.os.SystemClock.uptimeMillis() + 120 + EXPAND_MS else 0L
     loadConversationAsync(usedCache)
-    val gid = groupId
-    val markRead = Runnable { if (panelRoot != null && this.groupId == gid) BubbleChatApi.markRead(context, gid) }
-    if (animated) handler.postDelayed(markRead, EXPAND_MS + 40) else markRead.run()
+    // markRead chạy ở luồng nền (trước đây gọi thẳng trên luồng chính → Android chặn mạng, lỗi bị nuốt, máy chủ không bao giờ nhận).
+    markCurrentRead(force = true)
     BubbleMediaBridge.registerPanel(this)
     BubbleComposeBridge.registerPanel(this)
   }
@@ -423,6 +426,39 @@ class OverlayChatPanel(
 
   fun currentGroupId(): String = groupId
 
+  private var lastMarkReadAt = 0L
+  private var lastMarkReadGroup = ""
+  private var trailingMarkRead: Runnable? = null
+
+  /**
+   * Báo máy chủ «đã đọc» đoạn đang mở (luồng nền). Thành công thì: dòng của đoạn này ở trang «Đoạn chat» hết đậm/hết số,
+   * và onGroupRead để Service dọn huy hiệu + app chính cập nhật số chưa đọc.
+   * [force] = false thì giãn ≥ 2 giây giữa hai lần cho cùng một đoạn (tin đến dồn dập).
+   */
+  private fun markCurrentRead(force: Boolean) {
+    val gid = groupId
+    if (gid.isBlank() || panelRoot == null) return
+    val now = android.os.SystemClock.uptimeMillis()
+    if (!force && gid == lastMarkReadGroup && now - lastMarkReadAt < 2_000L) {
+      // Giãn nhịp nhưng không bỏ rơi tin đến trong khoảng đó: hẹn một lần cuối ngay sau khi hết giãn.
+      trailingMarkRead?.let { handler.removeCallbacks(it) }
+      val r = Runnable { if (this.groupId == gid) markCurrentRead(force = true) }
+      trailingMarkRead = r
+      handler.postDelayed(r, 2_000L - (now - lastMarkReadAt) + 50L)
+      return
+    }
+    lastMarkReadGroup = gid
+    lastMarkReadAt = now
+    BubbleChatApi.markRead(context, gid) { ok ->
+      if (!ok) return@markRead
+      handler.post {
+        inboxRows = inboxRows.map { if (it.id == gid) it.copy(unread = 0) else it }
+        if (inboxOpen) renderInboxList()
+        onGroupRead(gid)
+      }
+    }
+  }
+
   fun reloadMessages() {
     reloadRunnable?.let { handler.removeCallbacks(it) }
     reloadRunnable = Runnable { loadConversationAsync() }
@@ -461,7 +497,11 @@ class OverlayChatPanel(
       if (messages.size > 80) messages.removeAt(0)
       // Có tin rồi thì ẩn dòng «Chưa có tin nhắn» / «Đang tải…».
       statusView?.visibility = View.GONE
-      if (isVisibleOnScreen()) renderMessages()
+      if (isVisibleOnScreen()) {
+        renderMessages()
+        // Đang nhìn thấy khung của đúng đoạn này → tin vừa đến coi như đã đọc.
+        markCurrentRead(force = false)
+      }
     }
   }
 
@@ -851,6 +891,8 @@ class OverlayChatPanel(
   private fun pickFromInbox(g: BubbleChatApi.GroupRow) {
     hideInbox()
     if (g.id == groupId) return
+    // Mở đoạn nào là đọc đoạn đó: bỏ dấu chưa đọc ở bản sao danh sách ngay (show() sẽ báo máy chủ).
+    inboxRows = inboxRows.map { if (it.id == g.id) it.copy(unread = 0) else it }
     onSelectHead(g.id, g.name)
   }
 
@@ -913,7 +955,8 @@ class OverlayChatPanel(
       return
     }
     for (g in rows) {
-      val unread = g.unread > 0
+      // Đoạn đang mở trong khung là đoạn đang đọc: không đánh dấu chưa đọc dù máy chủ đếm trễ một nhịp.
+      val unread = g.unread > 0 && g.id != groupId
       val row = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL

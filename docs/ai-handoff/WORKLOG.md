@@ -1,3 +1,16 @@
+## 2026-10-10 (2) — SX mobile: khung chat bong bóng đánh dấu «đã đọc» thật; dọn huy hiệu, dấu chưa đọc, thông báo
+
+- Nguyên nhân gốc: `BubbleChatApi.markRead` (`PATCH /messenger/groups/:id/read`) chạy trên luồng chính trong `OverlayChatPanel.show()` → `NetworkOnMainThreadException` bị `catch (_: Exception)` nuốt → máy chủ không bao giờ ghi nhận «đã đọc»; `show()` nhánh chuyển đoạn và tin đến lúc đang xem cũng không gọi.
+- `BubbleChatApi.markRead(ctx, groupId, onDone)`: luồng nền, `onDone(ok)` theo mã HTTP thật, lỗi → log Error `SxPanel` ("PATCH /read lỗi …").
+- `OverlayChatPanel.kt`: tham số `onGroupRead`; `markCurrentRead(force)` gọi ở `show()` (cả hai nhánh) và `appendIncoming` (giãn 2 giây + `trailingMarkRead` gọi bù); thành công → `inboxRows` đoạn đó `unread=0`, vẽ lại trang «Đoạn chat», `onGroupRead(gid)`; `renderInboxList` coi đoạn đang mở là đã đọc; `pickFromInbox` bỏ dấu chưa đọc ở bản sao.
+- `OverlayBubbleService.kt`: `convUnread` (huy hiệu theo từng đoạn, `incrementBadgeCount(groupId)`), `onGroupMarkedRead` (trừ huy hiệu, `cancelNotificationsOf` gỡ `msg:<mã tin>` id 0 từ `convMessageIds` ≤30 mã/đoạn ghi ở `ACTION_SHOW_BUBBLE` + `isDuplicateIncoming`, phát `BubbleGroupRead`); `openChatPanel` xoá `convUnread`. `FloatingBubbleBridge.emitGroupRead` → sự kiện JS `BubbleGroupRead {groupId}`.
+- App JS: `MessengerContext` thêm `clearThreadUnread` và xử lý meta `read` của chính mình; `SystemBubbleSync` nghe `BubbleGroupRead` (xoá số chưa đọc, `getPresentedNotificationsAsync` gỡ thông báo theo `entity_id/group_id/groupId`) và `setBubbleBadge(unreadTotal)` khi `unreadTotal` giảm lúc app ở nền.
+- Bằng chứng (Vivo, bản dev): `dumpsys notification` trước sửa còn 3 bản ghi `msg:…` + `ranker_group`, sau sửa không còn `msg:…` (chỉ còn thông báo nền id 8801 của dịch vụ); `badge_count`=0; không còn cửa sổ overlay; log không có `PATCH /read lỗi`, `NetworkOnMainThread`, crash. `tsc` không lỗi mới ở `MessengerContext.tsx`/`SystemBubbleSync.tsx` (lỗi sẵn có ở file khác: `useRootNavigation.ts`, `ProjectDetailScreen.tsx`, `NotificationContext.tsx:578`, `mobile-shared/share-intent`).
+- Chưa chứng minh trực tiếp: log thành công của lần `PATCH /read` (chỉ lỗi mới ghi); thông báo của tin đến trước khi service khởi động lại không gỡ được; chưa về release 1.1.122; ghi dữ liệu thật (đã đọc) xảy ra khi mở đoạn trong khung bong bóng — đúng hành vi sản phẩm.
+- Không commit: `debug-fb4228.log`, `.claude/`, `backend/data/themes/*.json`, `backend/src/routes/crm/route-manifest*.json`, `route-parity-report.json`.
+
+---
+
 ## 2026-10-10 — SX mobile: chống báo trùng tin, khung chat tải nhanh, bộ đệm avatar gọn, huy hiệu mồ côi, thông báo trùng
 
 - `OverlayBubbleService.kt`: `recentIncoming` + `isDuplicateIncoming(groupId, sender, message, messageId)` gọi ở đầu `ACTION_SHOW_PEEK` (khoá `id:<mã>` TTL 120 s; không mã thì `t:<nhóm>|<người gửi>|<nội dung>` TTL 5 s; trùng theo nội dung ghi log Error nhãn `SxPeek`, trùng theo mã chỉ Debug). `ACTION_SET_BADGE`: chồng trống → không `ensureOverlay()`, gỡ cửa sổ trống; `updateBadge()` ẩn khi `convStack` rỗng và `bubbleGroupId` rỗng.
