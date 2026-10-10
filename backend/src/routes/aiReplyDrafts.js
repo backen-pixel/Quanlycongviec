@@ -9,6 +9,7 @@ const store = require('../modules/aiReplyDraft/store');
 const { createDraftService } = require('../modules/aiReplyDraft/service');
 const { createOpenAiProvider } = require('../modules/aiReplyDraft/provider');
 const { loadDraftConfig } = require('../modules/aiReplyDraft/config');
+const { summarizeDrafts } = require('../modules/aiReplyDraft/report');
 
 // Pilot-only drafting. This router records and reads drafts; it never sends a message.
 // Staff send through the existing Facebook reply route and then record the outcome here.
@@ -69,6 +70,27 @@ async function guarded(req, res, work) {
 
 router.get('/config', (req, res) => pilotUser(req)
   ? res.json({ enabled: true }) : reply(res, 403, 'Không có quyền dùng bản nháp AI', 'FORBIDDEN'));
+
+// Usage summary for the pilot companies: counts and cost only, never draft text.
+router.get('/report', async (req, res) => {
+  if (!pilotUser(req)) return reply(res, 403, 'Không có quyền dùng bản nháp AI', 'FORBIDDEN');
+  const days = [7, 30].includes(Number(req.query?.days)) ? Number(req.query.days) : 7;
+  if (getActiveTarget() !== 'primary')
+    return reply(res, 503, 'Cơ sở dữ liệu chính chưa sẵn sàng', 'SOURCE_UNAVAILABLE');
+  try {
+    return await withPrimaryDatabase(async () => {
+      const since = new Date(Date.now() - days * 86400000).toISOString();
+      const { data, error } = await supabase.from('ai_reply_draft_events')
+        .select('draft_id,revision,kind,policy_reasons,prompt_tokens,completion_tokens,cost_vnd')
+        .in('company_id', getConfig().companyIds).gte('recorded_at', since)
+        .order('recorded_at', { ascending: true }).limit(5000);
+      if (error) throw error;
+      return res.json({ days, truncated: (data || []).length >= 5000, ...summarizeDrafts(data || []) });
+    });
+  } catch {
+    return reply(res, 503, 'Chưa tải được báo cáo, vui lòng thử lại', 'SOURCE_UNAVAILABLE');
+  }
+});
 
 router.post('/leads/:leadId/generate', (req, res) => guarded(req, res, async lead => {
   const requestId = req.body?.request_id;
