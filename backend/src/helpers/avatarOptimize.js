@@ -3,7 +3,7 @@
  *
  * Vấn đề: web tải ảnh gốc lên Storage rồi lưu nguyên URL vào users.avatar — có avatar là PNG/ảnh chụp màn hình hàng chục MB, khiến
  * app mobile / chat overlay tải rất chậm và tốn dữ liệu. Giải pháp: ngay khi nhận URL avatar mới, server tải ảnh từ Storage, cắt
- * vuông giữa, thu nhỏ ≤ 512px, nén WebP (dự phòng JPEG), lưu bản nhỏ và dùng URL bản nhỏ.
+ * thu nhỏ cho vừa khung 512px (giữ nguyên tỷ lệ, KHÔNG cắt), nén WebP (dự phòng JPEG), lưu bản nhỏ và dùng URL bản nhỏ.
  *
  * An toàn:
  * - Chỉ xử lý URL nằm trong Storage của chính dự án (bucket attachments) — URL ngoài (vd. ảnh Google) giữ nguyên, tránh SSRF.
@@ -58,9 +58,12 @@ function runFfmpeg(args) {
   });
 }
 
-/** Bộ lọc: cắt vuông ở giữa rồi thu nhỏ (không phóng to ảnh bé). */
+/**
+ * Bộ lọc: chỉ THU NHỎ cho vừa khung maxPx×maxPx, GIỮ NGUYÊN tỷ lệ và toàn bộ ảnh (không cắt). Ảnh bé hơn khung giữ nguyên
+ * kích thước (không phóng to). Nơi hiển thị avatar tròn tự lấy phần giữa (object-fit: cover) nên hình nhìn không đổi.
+ */
 function buildScaleFilter(maxPx = AVATAR_MAX_PX) {
-  return `crop='min(iw,ih)':'min(iw,ih)',scale='min(${maxPx},iw)':'min(${maxPx},iw)'`;
+  return `scale='min(${maxPx},iw)':'min(${maxPx},ih)':force_original_aspect_ratio=decrease`;
 }
 
 /**

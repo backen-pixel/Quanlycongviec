@@ -52,8 +52,11 @@ const fakeResize = async () => ({ buffer: Buffer.alloc(30 * 1024, 3), ext: 'webp
   ok('storagePathFromUrl: nhận URL trong Storage, chặn URL ngoài và path traversal');
 
   // 2) bộ lọc không phóng to ảnh bé
-  assert.ok(buildScaleFilter(512).includes('min(512,iw)'));
-  ok('buildScaleFilter: giới hạn 512px');
+  const filt = buildScaleFilter(512);
+  assert.ok(filt.includes('min(512,iw)') && filt.includes('min(512,ih)'));
+  assert.ok(filt.includes('force_original_aspect_ratio=decrease'));
+  assert.ok(!filt.includes('crop'), 'không được cắt ảnh');
+  ok('buildScaleFilter: chỉ thu nhỏ vừa khung 512px, giữ tỷ lệ, không cắt');
 
   // 3) URL ngoài → giữ nguyên, không tải gì
   {
