@@ -95,6 +95,8 @@ test('policy: every rule has a positive and a negative case and reports all reas
     ['NOT_VIETNAMESE', 'Please tell you the size and the style for your kitchen', 'Anh cho em biết kiểu tủ'],
     ['TOO_LONG', 'a '.repeat(MAX_DRAFT_CHARS), 'Ngắn gọn'],
     ['EMPTY', '   ', 'Có nội dung'],
+    ['WRONG_PRONOUN', 'Chào bạn, chúng tôi có showroom', 'Dạ anh/chị cần mẫu bàn đá hay tủ ạ?'],
+    ['WRONG_PRONOUN', 'Cảm ơn quý khách đã quan tâm', 'Dạ em cảm ơn chị đã quan tâm ạ'],
   ];
   for (const [code, bad, good] of cases) {
     assert.ok(validateDraft(bad).reasons.includes(code), `${code} should flag: ${bad}`);

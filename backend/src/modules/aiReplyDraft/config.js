@@ -39,7 +39,7 @@ function loadDraftConfig(env = {}) {
     caps: valid ? { maxDraftsPerDay, maxTokensPerDay, maxDraftsPerLead,
       maxVndPerDay: Math.ceil(maxUsd * vndPerUsd) } : null,
     pricing: valid ? { usdPer1kIn, usdPer1kOut, vndPerUsd } : null,
-    promptVersion: 'p2-v1',
+    promptVersion: 'p2-v2',
     pilotFacts: [...PILOT_FACTS],
     maxOutputTokens: valid ? maxOutputTokens : null,
   };
