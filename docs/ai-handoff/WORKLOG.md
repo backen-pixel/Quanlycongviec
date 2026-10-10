@@ -1,3 +1,18 @@
+## 2026-10-10 — Nạp guide-knowledge lên DB
+`syncFromFiles` từ `backend/data/guide-knowledge`: screens 230, guides 52, tour-guides 2, lead-detail 63. Không có `tasks.json` / `business-rules.json`. Trước và sau đều 347 mục, không hàng sửa tay. Giữ `hand_edited`.
+
+## 2026-10-10 — Khởi động lại backend để trợ lý nhận env mới
+Cổng 4000 do tiến trình `node --watch` từ 10:02 giữ (tiến trình con từ 12:07). `.env` lưu 13:34 không vào tiến trình đó: log có `POST /api/copilotkit` 503 và `[guide] kho kiến thức` nghỉ 900s vì schema cache. Đã dừng PID 29060/6552, `npm run dev` lại (65 biến env). Gọi thử Anthropic `claude-sonnet-5` thành công. `GET /api/copilotkit/ui-settings` 200.
+
+## 2026-10-10 — Chạy SQL nhánh Copilot 602–604
+`node scripts/guide/run-migration-602.js` không nối được (28P01 trên cổng 5432 và pooler 6543). Đã gửi nguyên văn `database/602_guide_assistant_en.sql`, `603_guide_knowledge_vectors.sql`, `604_guide_assistant_settings_to_db.sql` qua `POST /v1/projects/{ref}/database/query` cho cả bản chính và bản dự phòng. Kiểm tra: 5 bảng `guide_*`, cột embedding trên `guide_knowledge`, 6 hàm, hàng `guide_assistant`. Script tạm đã xóa.
+
+## 2026-10-10 — Huy Metalla nhận thông báo Đặt xưởng khác
+Thêm ô chọn trên Cài đặt pipeline sản xuất, lưu `app_settings.sx_place_workshop_notify_users`. Đã ghi Huy Metalla cho công ty Metalla. Thông báo gồm chiều đặt đi và chiều xưởng khác đặt tới.
+
+## 2026-10-10 — Ô tên khi đặt xưởng và /đổi tên trong bình luận
+Form đặt xưởng gửi `project_name`. Lệnh `/đổi tên` trong bình luận SX, CRM (khi đã có dự án) và Work Unified đổi `projects.name` rồi đăng dòng thông báo; chuông hiện «Đã đổi tên».
+Kiểm tra: parser lệnh (6 ca) và `node --check` các file backend đã sửa. Chưa mở trình duyệt (không có phiên đăng nhập). Chưa deploy.
 ## 2026-10-10 (2) — SX mobile: khung chat bong bóng đánh dấu «đã đọc» thật; dọn huy hiệu, dấu chưa đọc, thông báo
 
 - Nguyên nhân gốc: `BubbleChatApi.markRead` (`PATCH /messenger/groups/:id/read`) chạy trên luồng chính trong `OverlayChatPanel.show()` → `NetworkOnMainThreadException` bị `catch (_: Exception)` nuốt → máy chủ không bao giờ ghi nhận «đã đọc»; `show()` nhánh chuyển đoạn và tin đến lúc đang xem cũng không gọi.

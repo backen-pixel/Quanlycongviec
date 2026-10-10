@@ -149,6 +149,47 @@ function getBoundSession(sessionId) {
   return { id: sessionId, ...session };
 }
 
+/**
+ * NHẬN NUÔI một session id lạ thay vì bắt client initialize lại.
+ *
+ * `_sessions` nằm trong bộ nhớ TIẾN TRÌNH. Hai tình huống làm nó biến mất, cả hai đều thường
+ * xuyên và không phải lỗi của client:
+ *
+ *   1. Deploy. Mỗi lần push lên main là tiến trình khởi động lại → mọi ChatGPT/Claude đang gắn
+ *      MCP đồng loạt nhận `-32002` và phải tự bấm nối lại. Người dùng chỉ thấy "trợ lý tự nhiên
+ *      hỏng". Đã xảy ra thật ngay trong phiên làm việc dựng tính năng này.
+ *   2. Nhiều instance. `render.yaml` đặt `maxInstances: 3` và Redis đang tắt, nên không có kho
+ *      phiên dùng chung. Client initialize ở instance A rồi request sau rơi vào instance B →
+ *      B không có phiên đó → cùng một lỗi, nhưng CHẬP CHỜN, loại khó lần nhất.
+ *
+ * Session id KHÔNG phải thứ để xác thực — khoá nằm ở UUID trên URL và đã được `apiKeyAuth`
+ * kiểm xong trước khi tới đây. Session chỉ là trạng thái giao thức. Nên dựng lại nó là an toàn,
+ * và ràng vào đúng `apiKeyId` của request hiện tại để một khoá không mượn được phiên của khoá
+ * khác.
+ *
+ * Phiên nhận nuôi đánh dấu `adopted` để log còn phân biệt được với phiên initialize thật.
+ */
+function adoptSession(req, sessionId, protocolVersion) {
+  if (!sessionId) return null;
+  pruneSessions();
+  // {} chứ không phải null: tham số mặc định chỉ áp dụng cho `undefined`, truyền null thì
+  // `params.client_id` ném TypeError.
+  const clientId = resolveClientId({}, getHeader(req, 'Mcp-Client-Id'));
+  const session = {
+    initialized: true,
+    protocolVersion: protocolVersion || DEFAULT_LEGACY_VERSION,
+    clientId,
+    clientInfo: null,
+    apiKeyId: req.apiKey?.id || null,
+    createdAt: Date.now(),
+    lastSeenAt: Date.now(),
+    adopted: true,
+  };
+  _sessions.set(sessionId, session);
+  console.warn(`[MCP] nhận nuôi session lạ ${String(sessionId).slice(0, 8)}… (tiến trình vừa khởi động lại, hoặc request rơi sang instance khác)`);
+  return { id: sessionId, ...session };
+}
+
 function markSessionInitialized(sessionId) {
   const s = _sessions.get(sessionId);
   if (s) s.initialized = true;
@@ -599,6 +640,11 @@ async function handleMcpPost(req, body) {
     session = started.session;
   } else {
     session = getBoundSession(sessionId);
+    // Phiên đã mất (deploy / rơi sang instance khác) nhưng khoá API hợp lệ → dựng lại, đừng
+    // bắt người dùng đi bấm nối lại. Xem chú thích ở `adoptSession`.
+    if (!session && sessionId && req.apiKey?.id) {
+      session = adoptSession(req, sessionId, protocolVersion);
+    }
     clientId = session?.clientId || null;
   }
 
@@ -678,6 +724,9 @@ function buildLegacySseEndpointUrl(req) {
 }
 
 module.exports = {
+  // Chỉ dùng cho test: xoá sạch bảng phiên để giả lập tiến trình vừa khởi động lại.
+  _xoaPhienDeTest: () => _sessions.clear(),
+  getSessionState,
   JSONRPC_VERSION,
   SERVER_NAME,
   SERVER_VERSION,

@@ -1,3 +1,14 @@
+## 2026-10-10 — Trợ lý không chạy vì backend cũ giữ cổng 4000
+Bảng `guide_*` đã có (347 mục kiến thức, PostgREST đọc được). Tiến trình backend từ 12:07 không nạp lại `.env` lúc 13:34 nên `POST /api/copilotkit` trả 503, và cổng DB đã nghỉ 15 phút sau lỗi schema cache. Đã tắt tiến trình đó và bật lại; model `claude-sonnet-5` gọi thử được.
+
+## 2026-10-10 — Đã chạy SQL trợ lý Copilot (602, 603, 604)
+Chạy trên DB chính (`kdxypztstbeovyedmvem`) và DB dự phòng (`atcfpgxkgbszglrelfgr`) qua Management API, vì mật khẩu Postgres trong `backend/.env` bị từ chối (`28P01`). Trước đó chưa có bảng `guide_*`. Sau khi chạy có `guide_experiences`, `guide_knowledge` (kèm cột embedding), `guide_knowledge_version`, `guide_quota_turn`, `guide_chat_log`, các hàm `guide_*`, và `app_settings.guide_assistant` (hạn mức 30). Chưa nhúng vector (đúng như 603: vòng nền sẽ bù).
+
+## 2026-10-10 — Setup nhận thông báo Đặt xưởng khác
+Cài đặt pipeline sản xuất có mục «Nhận thông báo Đặt xưởng khác» (lưu `app_settings` key `sx_place_workshop_notify_users`). Metalla: Huy Metalla được @ khi công ty đặt đi hoặc được đặt tới.
+
+## 2026-10-10 — Đặt xưởng: ô tên dự án + lệnh bình luận /đổi tên
+Modal «Đặt xưởng khác» có ô tên, mặc định tên dự án đang mở; một xưởng dùng đúng tên đó, nhiều xưởng thêm tên công ty. Bình luận gõ `/đổi tên "tên hiện tại": tên mới` thì lưu `projects.name` và gửi thông báo «Đã đổi tên». Chưa deploy.
 ## 2026-10-10 (2) — SX mobile: khung chat bong bóng đánh dấu «đã đọc» thật, huy hiệu / dấu chưa đọc / thông báo được dọn
 
 Mobile (`sx-mobile/`, nhánh `fix/sx-mobile-bubble-da-doc`): nguyên nhân tin đã đọc vẫn hiện huy hiệu + dấu chưa đọc là `BubbleChatApi.markRead` bị gọi thẳng trên luồng chính (`OverlayChatPanel.show()`), Android chặn mạng (`NetworkOnMainThreadException`) và `catch` nuốt lỗi nên máy chủ KHÔNG BAO GIỜ nhận `PATCH /messenger/groups/:id/read`. Sửa: `markRead` chạy luồng nền, có callback kết quả thật (lỗi ghi log Error `SxPanel`); khung gọi «đã đọc» khi mở lần đầu, khi chuyển đoạn (đầu chat / trang «Đoạn chat») và khi có tin đến lúc đang xem đoạn đó (giãn 2 giây, có một lần gọi bù cuối); thành công thì `onGroupRead` → `OverlayBubbleService.onGroupMarkedRead`: trừ phần tin chưa đọc của đoạn (`convUnread`) khỏi huy hiệu, gỡ thông báo `msg:<mã tin>` của đoạn (`convMessageIds`, tối đa 30 mã/đoạn, chỉ trong RAM) và phát sự kiện JS `BubbleGroupRead`; danh sách «Đoạn chat» bỏ dấu đậm/số chưa đọc ngay (đoạn đang mở luôn coi là đã đọc). App JS: `MessengerContext.clearThreadUnread` + xử lý sự kiện socket `messenger_group:read` của chính mình; `SystemBubbleSync` nghe `BubbleGroupRead` (xoá số chưa đọc, gỡ thông báo hiện còn theo group) và hạ huy hiệu khi `unreadTotal` giảm lúc app ở nền.
@@ -47,7 +58,7 @@ Bật thử cần Founder đặt biến trên Render: P2_AI_DRAFTS_ENABLED, _COM
 
 ## 2026-10-09 — Tên CRM và tên xưởng tách riêng (chưa deploy)
 `PUT /crm/leads/:id` không còn copy tiêu đề sang `projects.name`. Kanban và chi tiết SX/VC hiển thị tên dự án. Tìm kiếm CRM và SX khớp cả hai tên.
-Chưa deploy. TB-2026-990 trên DB chính vẫn đang là «Anh Lộc - Cần giờ» ở cả deal và dự án.
+Chưa deploy. Đã trả tên dự án TB-2026-990 trên DB chính về «Chị Hạnh - Nhà Bè - nhà đã hoàn thiện»; tiêu đề deal vẫn «Anh Lộc - Cần giờ».
 
 ## 2026-10-08 — P2-1b: lưu sự kiện và dịch vụ AI soạn nháp (local)
 Thêm SQL 714/rollback, bộ chuyển RPC, dịch vụ và test giả; chỉ soạn nháp, không route/gửi tin/DB thật/mạng/bật cờ.
