@@ -62,17 +62,22 @@ function summarizeMilestone({ candidates, reachedByLead, spendAll, spendMature, 
   inScopeLeadIds = new Set(), reliability = 'OK' }) {
   const cutoff = nowMs - MATURITY_DAYS * DAY_MS;
   let reached = 0, mature = 0, matureReached = 0, reachedInScope = 0, matureReachedInScope = 0;
+  let inScope = 0, matureInScope = 0;
   for (const row of candidates) {
     const hit = reachedByLead.has(row.lead_id);
-    if (hit) { reached++; if (inScopeLeadIds.has(row.lead_id)) reachedInScope++; }
+    const scoped = inScopeLeadIds.has(row.lead_id);
+    if (scoped) inScope++;
+    if (hit) { reached++; if (scoped) reachedInScope++; }
     const touchMs = Date.parse(row.cham_dau_luc);
     if (Number.isFinite(touchMs) && touchMs <= cutoff) {
       mature++;
-      if (hit) { matureReached++; if (inScopeLeadIds.has(row.lead_id)) matureReachedInScope++; }
+      if (scoped) matureInScope++;
+      if (hit) { matureReached++; if (scoped) matureReachedInScope++; }
     }
   }
   return { candidates: candidates.length, reached, mature_candidates: mature,
     mature_reached: matureReached, reached_in_scope: reachedInScope,
+    in_scope_candidates: inScope, mature_in_scope_candidates: matureInScope,
     cost_to_date: { ...cost(spendAll, reached), reliability },
     cost_mature: { ...cost(spendMature, matureReached), reliability },
     cost_in_scope_to_date: cost(spendAll, reachedInScope),

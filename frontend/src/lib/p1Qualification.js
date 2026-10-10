@@ -18,6 +18,7 @@ export const summaryReasonLabel = code => ({
   IDENTITY_NOT_RECONCILED: 'Chưa gộp khách trùng',
   AD_ACCOUNT_SCOPE_UNVERIFIED: 'Chưa lọc khách theo tài khoản quảng cáo',
   LEADS_FROM_UNCONNECTED_ADS: 'Có khách đến từ quảng cáo chưa thuộc tài khoản đã nối',
+  UNCONNECTED_ADS_EXCLUDED: 'Đã loại khách đến từ quảng cáo của tài khoản khác (thuê ngoài)',
   SPEND_AD_LEVEL_ONLY: 'Chi tiêu mới đối chiếu ở cấp quảng cáo',
   SPEND_ACCOUNT_TOTAL_MISMATCH: 'Tổng chi tiêu từng quảng cáo lệch tổng của tài khoản (có thể thiếu quảng cáo)',
   FIRST_PAID_SOURCE_UNVERIFIED: 'Chưa xác minh nguồn trả phí đầu tiên',
@@ -36,6 +37,8 @@ export function scopeWarning(scope) {
   if (scope?.status === 'VERIFIED') return null;
   return `${scope?.not_in_connected_accounts ?? 0}/${scope?.candidates ?? 0} khách đến từ quảng cáo chưa thuộc tài khoản quảng cáo đã nối — chi tiêu của các quảng cáo này chưa được tính, nên chi phí mỗi khách hiện CHƯA ĐỦ TIN CẬY. Cần nối thêm tài khoản quảng cáo sở hữu các quảng cáo này.`;
 }
+export const connectedOnly = summary => summary?.measurement_scope === 'CONNECTED_AD_ACCOUNTS_ONLY';
+export const excludedNote = summary => `Chỉ đo quảng cáo của tài khoản đã nối (VPT 01). ${summary?.excluded_unconnected_ads ?? 0}/${summary?.scope_check?.candidates ?? 0} khách đến từ quảng cáo tài khoản khác (thuê ngoài) được loại khỏi phép tính, theo quyết định ngày 10/10/2026.`;
 export const scopeAdLabel = ad => `${ad.title || 'Chưa có tiêu đề'} · ${ad.ad_id} · ${ad.leads} khách`;
 export const milestoneReliabilityLabel = reliability => reliability === 'LOW_UNCONNECTED_ADS'
   ? 'chưa đủ tin cậy' : 'Tạm tính';
