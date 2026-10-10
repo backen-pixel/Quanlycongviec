@@ -587,6 +587,46 @@ const MCP_CRM_READ_TOOLS = [
       },
     },
   },
+  /**
+   * `search` + `fetch` — CẶP TOOL CHUẨN của OpenAI cho nguồn tri thức công ty.
+   *
+   * ChatGPT đòi đúng hai tên này với đúng khuôn kết quả thì mới nhận connector vào Deep
+   * Research / Company Knowledge; thiếu là nó từ chối ngay ở cửa, không phải lỗi cấu hình.
+   *
+   *   search(query) -> { results: [{ id, title, url }] }
+   *   fetch(id)     -> { id, title, text, url, metadata? }
+   *
+   * `buildCallToolResult` sẵn có bọc giúp thành { content, structuredContent } đúng chuẩn, nên
+   * ở đây chỉ cần trả object thuần.
+   *
+   * `id` mang tiền tố loại (`lead:<uuid>`) để sau này thêm nguồn khác (dự án, báo giá) mà không
+   * phải đổi khuôn id đã phát ra ngoài.
+   */
+  {
+    name: 'search',
+    description:
+      'Tìm lead/deal theo tên khách, số điện thoại hoặc mã. Trả về danh sách {id, title, url} '
+      + 'để gọi tiếp `fetch`. Chỉ tìm trong phạm vi công ty của API key.',
+    inputSchema: {
+      type: 'object',
+      required: ['query'],
+      properties: {
+        query: { type: 'string', description: 'Từ khóa: tên khách, SĐT, hoặc mã lead/deal' },
+      },
+    },
+  },
+  {
+    name: 'fetch',
+    description:
+      'Lấy nội dung đầy đủ của một kết quả do `search` trả về. Nhận đúng chuỗi `id` của kết quả đó.',
+    inputSchema: {
+      type: 'object',
+      required: ['id'],
+      properties: {
+        id: { type: 'string', description: 'id lấy từ kết quả `search`, dạng lead:<uuid>' },
+      },
+    },
+  },
 ];
 
 const MCP_CRM_READ_TOOL_SET = new Set(MCP_CRM_READ_TOOLS.map((t) => t.name));
@@ -599,6 +639,84 @@ function getMcpCrmReadTools() {
   }));
 }
 
+/** Rút mảng hàng ra khỏi mọi khuôn trả về của bridge: {data:{data}}, {data}, hoặc mảng trần. */
+function layHangCrm(res) {
+  if (Array.isArray(res)) return res;
+  if (Array.isArray(res?.data)) return res.data;
+  if (Array.isArray(res?.data?.data)) return res.data.data;
+  return [];
+}
+
+/** URL trích dẫn — ChatGPT hiện link này cho người dùng bấm về đúng bản ghi. */
+function urlLeadCrm(id) {
+  const goc = String(config.frontendUrl || '').replace(/\/$/, '');
+  return `${goc}/crm/leads/${id}`;
+}
+
+function soTien(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v) || v === 0) return null;
+  return `${v.toLocaleString('vi-VN')} đ`;
+}
+
+/**
+ * Dựng phần `text` cho `fetch` — ChatGPT đọc chuỗi này để trả lời và trích dẫn.
+ *
+ * Viết thành câu tiếng Việt chứ không đổ JSON: JSON thô khiến model phải tự đoán nghĩa từng
+ * khóa, và payload lead vốn đã rất nặng (mảng `production_staff` 19 người lặp hai lần mỗi hàng).
+ * Chỉ lấy các trường đã kiểm là có thật trong phản hồi `/leads`.
+ */
+function vanBanLead(row) {
+  const d = [];
+  const them = (nhan, gt) => { if (gt !== null && gt !== undefined && gt !== '') d.push(`${nhan}: ${gt}`); };
+  them('Mã', row.code);
+  them('Tên', row.title);
+  them('Loại', row.type === 'deal' ? 'Deal' : 'Lead');
+  them('Công ty', row.company?.name || row.company?.short_name);
+  them('Khu vực', row.crm_region?.name);
+  them('Giai đoạn', row.stage?.name);
+  them('Khách hàng', row.customer?.full_name);
+  them('Điện thoại', row.customer?.phone || row.display_phone);
+  them('Phụ trách', row.assignee?.full_name);
+  them('Giá trị ước tính', soTien(row.estimated_value));
+  them('Tiền cọc', soTien(row.deposit_amount));
+  them('Địa chỉ lắp đặt', row.install_address);
+  them('Nguồn giới thiệu', row.referrer_name);
+  them('Hạn kanban', row.kanban_deadline_at);
+  them('Ngày tạo', row.created_at);
+  them('Hoạt động gần nhất', row.last_activity_at);
+  if (row.linked_project) {
+    them('Dự án xưởng', `${row.linked_project.code || ''} ${row.linked_project.name || ''}`.trim());
+    them('Ngày giao', row.linked_project.delivery_date);
+    them('Ngày lắp', row.linked_project.install_date);
+    them('Hạn sản xuất', row.linked_project.production_deadline);
+  }
+  them('Mô tả', row.description);
+  return d.join('\n');
+}
+
+/** Tiêu đề ngắn, đủ để người dùng nhận ra bản ghi trong danh sách kết quả. */
+function tieuDeLead(row) {
+  const phan = [row.code, row.title || row.customer?.full_name].filter(Boolean);
+  const ten = phan.join(' · ') || String(row.id);
+  const cty = row.company?.short_name || row.company?.name;
+  return cty ? `${ten} (${cty})` : ten;
+}
+
+/**
+ * Giới hạn hàng theo danh sách công ty của API key.
+ *
+ * KHÔNG được bỏ qua bước này. User act-as của key thường là system admin, nên `/leads` gọi mà
+ * không kèm company_id sẽ trả về lead của MỌI công ty — đúng loại lỗi đã đo ở `/crm/pipelines`.
+ * Lưới chặn ở gateway không đỡ được `search` vì kết quả của nó là {results:[{id,title,url}]},
+ * không mang company_id để lọc.
+ */
+function boTheoWhitelist(rows, whitelist) {
+  if (!Array.isArray(whitelist) || !whitelist.length) return rows;
+  const choPhep = new Set(whitelist.map((x) => String(x)));
+  return rows.filter((r) => !r?.company_id || choPhep.has(String(r.company_id)));
+}
+
 async function callMcpCrmReadTool(name, args = {}, user) {
   if (!MCP_CRM_READ_TOOL_SET.has(name)) {
     const err = new Error(`Tool CRM không được phép: ${name}`);
@@ -607,6 +725,66 @@ async function callMcpCrmReadTool(name, args = {}, user) {
   }
 
   const a = args || {};
+
+  if (name === 'search') {
+    const tuKhoa = String(a.query || '').trim();
+    if (!tuKhoa) return { results: [] };
+    const whitelist = Array.isArray(a.company_whitelist) ? a.company_whitelist : null;
+    const chung = { search: tuKhoa, limit: 10 };
+    // Key chỉ có đúng 1 công ty thì thu hẹp ngay ở truy vấn, đỡ phải lọc sau.
+    if (whitelist && whitelist.length === 1) chung.company_id = whitelist[0];
+    else if (a.company_id) chung.company_id = a.company_id;
+
+    const [kqLead, kqDeal] = await Promise.all([
+      invokeCrmGet({ path: '/leads', query: { ...chung, type: 'lead' }, user }).catch(() => null),
+      invokeCrmGet({ path: '/leads', query: { ...chung, type: 'deal' }, user }).catch(() => null),
+    ]);
+    const hang = boTheoWhitelist([...layHangCrm(kqLead), ...layHangCrm(kqDeal)], whitelist);
+    const results = hang.slice(0, 20).map((row) => ({
+      id: `lead:${row.id}`,
+      title: tieuDeLead(row),
+      url: urlLeadCrm(row.id),
+    }));
+    return { results };
+  }
+
+  if (name === 'fetch') {
+    const raw = String(a.id || '').trim();
+    const khop = raw.match(/^(?:lead:)?([0-9a-fA-F-]{36})$/);
+    if (!khop) {
+      const err = new Error('id không hợp lệ — dùng đúng chuỗi id mà `search` trả về (lead:<uuid>)');
+      err.status = 400;
+      throw err;
+    }
+    const id = khop[1];
+    const res = await invokeCrmGet({ path: `/leads/${id}/detail`, query: {}, user });
+    const row = (res && res.data && !Array.isArray(res.data) && res.data.data) || res?.data || null;
+    if (!row || !row.id) {
+      const err = new Error('Không tìm thấy bản ghi');
+      err.status = 404;
+      throw err;
+    }
+    // Chặn lần hai: id đoán mò sang công ty khác vẫn phải bị từ chối.
+    const whitelist = Array.isArray(a.company_whitelist) ? a.company_whitelist : null;
+    if (whitelist && whitelist.length && row.company_id
+      && !whitelist.map(String).includes(String(row.company_id))) {
+      const err = new Error('Bản ghi không thuộc phạm vi công ty của API key');
+      err.status = 403;
+      throw err;
+    }
+    return {
+      id: `lead:${row.id}`,
+      title: tieuDeLead(row),
+      text: vanBanLead(row),
+      url: urlLeadCrm(row.id),
+      metadata: {
+        type: row.type || null,
+        company_id: row.company_id || null,
+        stage: row.stage?.name || null,
+        assignee: row.assignee?.full_name || null,
+      },
+    };
+  }
 
   if (name === 'crm_api_get') {
     return invokeCrmGet({ path: a.path, query: a.query || {}, user });
@@ -724,4 +902,10 @@ module.exports = {
   invokeCrmGet,
   assertCrmGetPath,
   ALLOWED_PATHS_HELP,
+  // Xuất để test offline khuôn kết quả search/fetch (không cần DB).
+  tieuDeLead,
+  vanBanLead,
+  urlLeadCrm,
+  boTheoWhitelist,
+  layHangCrm,
 };

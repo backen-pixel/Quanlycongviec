@@ -62,10 +62,11 @@ const MCP_PROMPTS = [
 ];
 
 const SERVER_INSTRUCTIONS =
-  'MCP server báo cáo CRM TuBep Pro. '
-  + 'Dùng tools/list để xem tool; gọi get_org_overview_report_full hoặc format_org_overview_report_text. '
-  + 'Mỗi request phải truyền kỳ BC (date_from/date_to hoặc time_scope). '
-  + 'Cần header X-Api-Key và X-User-Id (user có quyền báo cáo tổ chức).';
+  'MCP chỉ đọc của TuBep Pro — CRM, báo cáo tổ chức, hiệu quả quảng cáo. '
+  + 'Tìm một khách/đơn cụ thể: dùng search rồi fetch. '
+  + 'Số liệu tổng hợp: get_org_overview_report_full hoặc format_org_overview_report_text, '
+  + 'mỗi lần gọi phải kèm kỳ báo cáo (date_from + date_to, hoặc time_scope). '
+  + 'Phạm vi công ty do API key quyết định; không tool nào ghi dữ liệu.';
 
 /** @type {Map<string, {
  *   initialized: boolean,

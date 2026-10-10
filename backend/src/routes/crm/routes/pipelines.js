@@ -25,6 +25,28 @@ r.get('/pipelines', responseCache({ ttl: 120, scope: 'company', tags: ['crm:taxo
       if (!cid) return;
       companyFilter = cid;
     }
+    /**
+     * Tôn trọng ?company_id — CHỈ để THU HẸP, không bao giờ nới rộng.
+     *
+     * Trước đây tham số này bị bỏ qua hoàn toàn: phạm vi chỉ suy từ vai trò người gọi. Với
+     * system admin thì companyFilter ở lại null nên route trả về pipeline của MỌI công ty,
+     * kể cả khi người gọi đã nói rõ mình chỉ hỏi một công ty. Đo thật qua MCP: hỏi pipeline của
+     * VPT (3 cái) thì nhận về cả 10 cái của 8 công ty — rò siêu dữ liệu chéo công ty qua một
+     * API key vốn chỉ được cấp 2 công ty.
+     *
+     * Người đã bị khoá phạm vi (nhân viên / admin công ty) mà hỏi công ty khác thì chặn 403,
+     * chứ không im lặng trả về công ty của họ — im lặng thì bên gọi tưởng đã lọc đúng.
+     */
+    const qCompanyId = String(req.query.company_id || '').trim();
+    if (qCompanyId) {
+      if (!isUuidString(qCompanyId)) {
+        return res.status(400).json({ error: 'company_id không hợp lệ' });
+      }
+      if (companyFilter && String(companyFilter) !== qCompanyId) {
+        return res.status(403).json({ error: 'Không có quyền xem pipeline công ty khác' });
+      }
+      companyFilter = qCompanyId;
+    }
     const data = await getPipelinesList({ companyFilter, activeOnly });
     res.json(data);
   } catch (e) {

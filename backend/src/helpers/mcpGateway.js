@@ -114,6 +114,140 @@ const FULL_ORG_REPORT_SCHEMA = {
   },
 };
 
+/**
+ * Tên hiển thị cho người đọc — ChatGPT/Claude hiện `title` thay cho `name` kỹ thuật.
+ * Thiếu thì client hiện thẳng `format_org_employee_tab_report_text`.
+ */
+const TIEU_DE_TOOL = {
+  get_org_overview_report_full: 'Báo cáo tổ chức (JSON đầy đủ)',
+  get_org_overview_report: 'Báo cáo tổ chức (JSON)',
+  format_org_overview_report_text: 'Báo cáo tổ chức (văn bản)',
+  format_org_employee_tab_report_text: 'Báo cáo tổ chức — tab Nhân viên (văn bản)',
+  format_all_employees_report_text: 'Toàn bộ nhân viên (văn bản)',
+  format_company_report_text: 'Báo cáo công ty (văn bản)',
+  format_employee_activity_report_text: 'Hoạt động nhân viên (văn bản)',
+  format_lead_deal_risk_text: 'Rủi ro lead/deal (văn bản)',
+  get_lead_deal_risk_report: 'Báo cáo rủi ro lead/deal',
+  get_company_lead_summary: 'Tóm tắt lead/deal của công ty',
+  get_employee_activity_report: 'Báo cáo hoạt động một nhân viên',
+  get_employee_leads_drill: 'Lead/deal của từng nhân viên',
+  get_employee_breakdown: 'Phân rã theo nhân viên',
+  get_overdue_breakdown: 'Chi tiết quá hạn',
+  get_pipeline_breakdown: 'Chi tiết một pipeline',
+  get_user_profile_card: 'Hồ sơ nhân viên',
+  list_companies_in_scope: 'Danh sách công ty trong phạm vi',
+  list_departments_in_company: 'Danh sách phòng ban',
+  list_employees_in_scope: 'Danh sách nhân viên trong phạm vi',
+  list_pipelines_for_company: 'Pipeline của công ty',
+  find_users_by_name: 'Tìm nhân viên theo tên',
+  resolve_time_range: 'Quy đổi khoảng thời gian',
+  resolve_assignee_scope: 'Phạm vi nhân viên được phép',
+  search: 'Tìm kiếm',
+  fetch: 'Lấy nội dung bản ghi',
+  crm_api_get: 'Gọi API CRM (chỉ đọc)',
+  search_crm_leads: 'Tìm lead/deal',
+  get_crm_lead_detail: 'Chi tiết lead/deal',
+  get_crm_stage_counts: 'Đếm lead/deal theo giai đoạn',
+  list_crm_pipelines: 'Danh sách pipeline',
+  list_crm_pipeline_stages: 'Danh sách giai đoạn',
+  list_crm_customers: 'Danh sách khách hàng',
+  list_crm_quotations: 'Danh sách báo giá',
+  get_crm_quotation: 'Chi tiết báo giá',
+  list_crm_orders: 'Danh sách đơn hàng',
+  get_crm_order: 'Chi tiết đơn hàng',
+  list_crm_invoices: 'Danh sách hóa đơn',
+  get_crm_invoice: 'Chi tiết hóa đơn',
+  list_crm_lead_tasks: 'Công việc của lead/deal',
+  get_crm_lead_activities: 'Lịch sử hoạt động lead/deal',
+  list_crm_lead_documents: 'Tài liệu đính kèm lead/deal',
+  get_crm_dashboard: 'Dashboard CRM',
+  get_crm_kanban_bootstrap: 'Dữ liệu khởi tạo Kanban CRM',
+  list_lead_campaigns: 'Danh sách chiến dịch quảng cáo',
+  get_campaign_performance: 'Hiệu quả chiến dịch',
+  compare_campaigns: 'So sánh các chiến dịch',
+  get_lead_quality_breakdown: 'Chất lượng lead theo quảng cáo',
+  find_wasted_spend: 'Quảng cáo tiêu tiền kém hiệu quả',
+  list_pages: 'Danh sách page Facebook',
+  get_conversion_events: 'Đơn đã chốt theo chiến dịch',
+};
+
+const SCHEMA_SEARCH = {
+  type: 'object',
+  required: ['results'],
+  properties: {
+    results: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['id', 'title', 'url'],
+        properties: {
+          id: { type: 'string', description: 'Truyền lại cho `fetch`' },
+          title: { type: 'string' },
+          url: { type: 'string', description: 'Link trích dẫn về bản ghi' },
+        },
+      },
+    },
+  },
+};
+
+const SCHEMA_FETCH = {
+  type: 'object',
+  required: ['id', 'title', 'text', 'url'],
+  properties: {
+    id: { type: 'string' },
+    title: { type: 'string' },
+    text: { type: 'string', description: 'Nội dung đầy đủ của bản ghi' },
+    url: { type: 'string' },
+    metadata: { type: 'object' },
+  },
+};
+
+/** Mọi tool đi qua bridge CRM đều trả đúng khuôn này — đã đối chiếu phản hồi thật. */
+const SCHEMA_BRIDGE_CRM = {
+  type: 'object',
+  properties: {
+    status: { type: 'integer', description: 'Mã HTTP của endpoint CRM phía sau' },
+    data: { description: 'Thân phản hồi: mảng hàng, hoặc {data, total, offset, limit, hasMore}' },
+    path: { type: 'string' },
+  },
+};
+
+/**
+ * `outputSchema` CHỈ khai ở những tool đã kiểm chứng khuôn trả về bằng phản hồi thật.
+ * Khai bừa cho đủ bộ còn hại hơn bỏ trống: model tin vào lược đồ sai rồi đi tìm trường không
+ * tồn tại. Các tool báo cáo còn lại để trống cho tới khi có người đo từng cái.
+ */
+function outputSchemaCho(name) {
+  if (name === 'search') return SCHEMA_SEARCH;
+  if (name === 'fetch') return SCHEMA_FETCH;
+  if (MCP_CRM_READ_TOOL_SET.has(name)) return SCHEMA_BRIDGE_CRM;
+  return null;
+}
+
+/**
+ * Gắn metadata OpenAI đòi cho mọi tool.
+ *
+ * `readOnlyHint: true` cho TẤT CẢ — gateway chặn cứng write (`looksLikeWriteTool`) và
+ * `crm_api_get` chỉ cho GET trong whitelist, nên không có tool nào đổi trạng thái.
+ * Client dùng cờ này để quyết định tool nào chạy được mà không phải hỏi lại người dùng.
+ *
+ * `openWorldHint: false` vì đây là CRM nội bộ có biên giới rõ, không phải tra cứu Internet mở.
+ */
+function trangBiMetadataTool(t) {
+  const out = {
+    ...t,
+    title: TIEU_DE_TOOL[t.name] || t.name,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      openWorldHint: false,
+    },
+  };
+  const os = outputSchemaCho(t.name);
+  if (os) out.outputSchema = os;
+  return out;
+}
+
 function openAiToolToMcp(def) {
   const fn = def.function || def;
   return {
@@ -181,7 +315,7 @@ function getMcpReportTools(apiKey = null) {
     if (MCP_ADS_TOOL_SET.has(t.name)) return allowAds;
     if (MCP_CRM_READ_TOOL_SET.has(t.name)) return allowCrm;
     return allowReports;
-  });
+  }).map(trangBiMetadataTool);
 }
 
 function assertMcpScopeForTool(name, apiKey) {
@@ -294,6 +428,68 @@ function assertCompanyScope(args, apiKey) {
   }
 }
 
+/**
+ * LƯỚI CHẶN CUỐI — lọc hàng trả về theo đúng danh sách công ty của API key.
+ *
+ * `assertCompanyScope` chỉ kiểm THAM SỐ ĐẦU VÀO. Nó không bảo đảm được rằng endpoint phía sau
+ * thật sự lọc theo tham số đó. Đã đo thật: `list_crm_pipelines` truyền company_id hợp lệ của VPT
+ * vẫn nhận về cả 10 pipeline của 8 công ty, vì `GET /crm/pipelines` suy phạm vi từ VAI TRÒ người
+ * gọi chứ không đọc `company_id` — mà user act-as của key lại là system admin.
+ *
+ * Vá riêng endpoint đó là chưa đủ: còn hơn 40 tool, mỗi tool một endpoint, chỉ cần một chỗ quên
+ * lọc là rò. Nên chặn ở đây, nơi MỌI tool đều đi qua.
+ *
+ * CHỈ LỌC TẦNG NGOÀI, KHÔNG ĐỆ QUY — đây là điểm dễ sai nhất.
+ * Liên kết chéo công ty bên trong một hàng là HỢP LỆ và phải giữ: deal của VPT mang
+ * `production_projects[].company_id = Hucabi` vì VPT đặt Hucabi gia công. Lọc sâu sẽ xoá mất
+ * thông tin xưởng — làm hỏng dữ liệu thật thay vì bảo vệ nó.
+ *
+ * Hàng không có `company_id` (vd pipeline dùng chung, company_id = null) thì GIỮ — nó không
+ * thuộc tenant nào cả, bỏ đi là làm hụt dữ liệu hợp lệ.
+ */
+function locHangTheoCongTyChoPhep(ketQua, allowed, tenTool) {
+  if (!Array.isArray(allowed) || !allowed.length) return ketQua;
+  const choPhep = new Set(allowed.map((x) => String(x)));
+  let daBo = 0;
+
+  const locMang = (rows) => {
+    if (!Array.isArray(rows)) return rows;
+    const giu = rows.filter((row) => {
+      if (!row || typeof row !== 'object') return true;
+      if (!Object.prototype.hasOwnProperty.call(row, 'company_id')) return true;
+      const cid = row.company_id;
+      if (cid === null || cid === undefined || cid === '') return true;
+      return choPhep.has(String(cid));
+    });
+    daBo += rows.length - giu.length;
+    return giu;
+  };
+
+  let out = ketQua;
+  if (Array.isArray(ketQua)) {
+    out = locMang(ketQua);
+  } else if (ketQua && typeof ketQua === 'object') {
+    if (Array.isArray(ketQua.data)) {
+      out = { ...ketQua, data: locMang(ketQua.data) };
+    } else if (ketQua.data && typeof ketQua.data === 'object' && Array.isArray(ketQua.data.data)) {
+      const rows = locMang(ketQua.data.data);
+      const inner = { ...ketQua.data, data: rows };
+      // `total` là số hàng khớp bộ lọc phía trên. Bỏ hàng mà giữ nguyên total thì bên gọi phân
+      // trang sẽ đi tìm những hàng không bao giờ tới.
+      if (typeof inner.total === 'number' && daBo > 0) {
+        inner.total = Math.max(0, inner.total - daBo);
+      }
+      out = { ...ketQua, data: inner };
+    }
+  }
+
+  if (daBo > 0) {
+    // Log để còn lần ra endpoint nào đang quên lọc — im lặng thì lỗi gốc sống mãi.
+    console.warn(`[MCP] ${tenTool}: đã bỏ ${daBo} hàng ngoài phạm vi công ty của API key`);
+  }
+  return out;
+}
+
 function isMcpToolAllowed(name) {
   return MCP_REPORT_TOOL_SET.has(name) || MCP_CRM_READ_TOOL_SET.has(name) || MCP_ADS_TOOL_SET.has(name);
 }
@@ -341,7 +537,7 @@ async function callMcpReportTool(name, args = {}, req) {
     if (MCP_ADS_TOOL_SET.has(name)) {
       const ketQua = await callMcpAdsTool(name, args || {}, req.apiKey);
       finishAudit('allow', MCP_REASON.ALLOWED);
-      return ketQua;
+      return locHangTheoCongTyChoPhep(ketQua, getKeyAllowedCompanyIds(req.apiKey), name);
     }
 
     const user = await resolveMcpActAsUser(req);
@@ -385,7 +581,7 @@ async function callMcpReportTool(name, args = {}, req) {
     }
 
     finishAudit('allow', MCP_REASON.ALLOWED);
-    return result;
+    return locHangTheoCongTyChoPhep(result, allowed, name);
   } catch (e) {
     const reason = e.reasonCode || e.mcpReasonCode
       || (e.status === 403 ? MCP_REASON.CAPABILITY_DENIED : MCP_REASON.UPSTREAM_ERROR);
@@ -424,4 +620,5 @@ module.exports = {
   resolveMcpActAsUser,
   callMcpReportTool,
   queryToReportArgs,
+  locHangTheoCongTyChoPhep,
 };
