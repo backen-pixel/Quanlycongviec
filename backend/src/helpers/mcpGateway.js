@@ -294,6 +294,68 @@ function assertCompanyScope(args, apiKey) {
   }
 }
 
+/**
+ * LƯỚI CHẶN CUỐI — lọc hàng trả về theo đúng danh sách công ty của API key.
+ *
+ * `assertCompanyScope` chỉ kiểm THAM SỐ ĐẦU VÀO. Nó không bảo đảm được rằng endpoint phía sau
+ * thật sự lọc theo tham số đó. Đã đo thật: `list_crm_pipelines` truyền company_id hợp lệ của VPT
+ * vẫn nhận về cả 10 pipeline của 8 công ty, vì `GET /crm/pipelines` suy phạm vi từ VAI TRÒ người
+ * gọi chứ không đọc `company_id` — mà user act-as của key lại là system admin.
+ *
+ * Vá riêng endpoint đó là chưa đủ: còn hơn 40 tool, mỗi tool một endpoint, chỉ cần một chỗ quên
+ * lọc là rò. Nên chặn ở đây, nơi MỌI tool đều đi qua.
+ *
+ * CHỈ LỌC TẦNG NGOÀI, KHÔNG ĐỆ QUY — đây là điểm dễ sai nhất.
+ * Liên kết chéo công ty bên trong một hàng là HỢP LỆ và phải giữ: deal của VPT mang
+ * `production_projects[].company_id = Hucabi` vì VPT đặt Hucabi gia công. Lọc sâu sẽ xoá mất
+ * thông tin xưởng — làm hỏng dữ liệu thật thay vì bảo vệ nó.
+ *
+ * Hàng không có `company_id` (vd pipeline dùng chung, company_id = null) thì GIỮ — nó không
+ * thuộc tenant nào cả, bỏ đi là làm hụt dữ liệu hợp lệ.
+ */
+function locHangTheoCongTyChoPhep(ketQua, allowed, tenTool) {
+  if (!Array.isArray(allowed) || !allowed.length) return ketQua;
+  const choPhep = new Set(allowed.map((x) => String(x)));
+  let daBo = 0;
+
+  const locMang = (rows) => {
+    if (!Array.isArray(rows)) return rows;
+    const giu = rows.filter((row) => {
+      if (!row || typeof row !== 'object') return true;
+      if (!Object.prototype.hasOwnProperty.call(row, 'company_id')) return true;
+      const cid = row.company_id;
+      if (cid === null || cid === undefined || cid === '') return true;
+      return choPhep.has(String(cid));
+    });
+    daBo += rows.length - giu.length;
+    return giu;
+  };
+
+  let out = ketQua;
+  if (Array.isArray(ketQua)) {
+    out = locMang(ketQua);
+  } else if (ketQua && typeof ketQua === 'object') {
+    if (Array.isArray(ketQua.data)) {
+      out = { ...ketQua, data: locMang(ketQua.data) };
+    } else if (ketQua.data && typeof ketQua.data === 'object' && Array.isArray(ketQua.data.data)) {
+      const rows = locMang(ketQua.data.data);
+      const inner = { ...ketQua.data, data: rows };
+      // `total` là số hàng khớp bộ lọc phía trên. Bỏ hàng mà giữ nguyên total thì bên gọi phân
+      // trang sẽ đi tìm những hàng không bao giờ tới.
+      if (typeof inner.total === 'number' && daBo > 0) {
+        inner.total = Math.max(0, inner.total - daBo);
+      }
+      out = { ...ketQua, data: inner };
+    }
+  }
+
+  if (daBo > 0) {
+    // Log để còn lần ra endpoint nào đang quên lọc — im lặng thì lỗi gốc sống mãi.
+    console.warn(`[MCP] ${tenTool}: đã bỏ ${daBo} hàng ngoài phạm vi công ty của API key`);
+  }
+  return out;
+}
+
 function isMcpToolAllowed(name) {
   return MCP_REPORT_TOOL_SET.has(name) || MCP_CRM_READ_TOOL_SET.has(name) || MCP_ADS_TOOL_SET.has(name);
 }
@@ -341,7 +403,7 @@ async function callMcpReportTool(name, args = {}, req) {
     if (MCP_ADS_TOOL_SET.has(name)) {
       const ketQua = await callMcpAdsTool(name, args || {}, req.apiKey);
       finishAudit('allow', MCP_REASON.ALLOWED);
-      return ketQua;
+      return locHangTheoCongTyChoPhep(ketQua, getKeyAllowedCompanyIds(req.apiKey), name);
     }
 
     const user = await resolveMcpActAsUser(req);
@@ -385,7 +447,7 @@ async function callMcpReportTool(name, args = {}, req) {
     }
 
     finishAudit('allow', MCP_REASON.ALLOWED);
-    return result;
+    return locHangTheoCongTyChoPhep(result, allowed, name);
   } catch (e) {
     const reason = e.reasonCode || e.mcpReasonCode
       || (e.status === 403 ? MCP_REASON.CAPABILITY_DENIED : MCP_REASON.UPSTREAM_ERROR);
@@ -424,4 +486,5 @@ module.exports = {
   resolveMcpActAsUser,
   callMcpReportTool,
   queryToReportArgs,
+  locHangTheoCongTyChoPhep,
 };
