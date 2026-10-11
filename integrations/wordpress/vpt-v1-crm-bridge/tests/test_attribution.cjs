@@ -103,3 +103,34 @@ test('Facebook ad click keeps fbclid and ad id utm for the form',()=>{
  assert.equal(r.data.fbclid,'synthetic-fb');assert.equal(r.data.utm_content,'120200000000002');
  assert.equal(r.data.utm_source,'facebook');assert.equal(r.attrs['data-vpt-attribution'],'ready');
 });
+function clickOn(r,href){
+ const beacons=[];r.window.navigator={sendBeacon(url,body){beacons.push({url,body:JSON.parse(body)});return true;}};
+ r.handlers.click({target:{closest(){return {getAttribute(){return href;}};}}});
+ return beacons;
+}
+test('Call, Zalo and Messenger clicks send one beacon per visit with the visit source',()=>{
+ const r=run({url:'https://vanphuthanh.net/tu-bep/?utm_source=facebook&utm_medium=paid&utm_content=120200000000002&fbclid=synthetic-fb&keyword=private',ref:'https://l.facebook.com/'});
+ const call=clickOn(r,'tel:0908309222');
+ assert.equal(call.length,1);assert.equal(call[0].url,'https://tubep-backend.onrender.com/api/external/web-events');
+ const b=call[0].body;assert.equal(b.kind,'call');assert.match(b.session_key,/^[0-9a-f]{32}$/);
+ assert.equal(b.utm_content,'120200000000002');assert.equal(b.fbclid,'synthetic-fb');assert.equal(b.page_url,'https://vanphuthanh.net/tu-bep/');
+ assert.equal(b.landing_url,'https://vanphuthanh.net/tu-bep/');assert.equal(b.referrer_host,'l.facebook.com');
+ assert.equal(b.keyword,undefined);assert.doesNotMatch(JSON.stringify(b),/0908309222/);
+ assert.equal(clickOn(r,'tel:0908309222').length,0);
+ assert.equal(clickOn(r,'https://zalo.me/0908309222')[0].body.kind,'zalo');
+ assert.equal(clickOn(r,'https://www.messenger.com/t/2083771045205323/')[0].body.kind,'messenger');
+ assert.equal(clickOn(r,'https://m.me/somepage').length,0);
+ assert.equal(clickOn(r,'https://vanphuthanh.net/lien-he/').length,0);
+ assert.equal(r.window.dataLayer.filter(e=>/^vpt_click_/.test(e.event)).length,3);
+});
+test('Visit key survives internal navigation and expires with the source',()=>{
+ const first=run({ref:'https://www.google.com/'});const sid=first.prior.sid;assert.match(sid,/^[0-9a-f]{32}$/);
+ const next=run({ref:'https://vanphuthanh.net/tu-bep/',url:'https://vanphuthanh.net/lien-he/',prior:first.prior});
+ assert.equal(next.prior.sid,sid);
+ next.advanceTime(31*60*1000);const late=clickOn(next,'tel:0908309222')[0].body;
+ assert.equal(late.utm_source,undefined);assert.equal(late.landing_url,undefined);
+ const fresh=run({ref:'https://l.facebook.com/',prior:first.prior});assert.notEqual(fresh.prior.sid,sid);
+});
+test('Blocked storage still sends the click without throwing',()=>{
+ const r=run({blocked:true});assert.equal(clickOn(r,'tel:0908309222').length,1);
+});

@@ -488,6 +488,10 @@ app.use('/api/workshop-teams', require('./routes/workshopTeams'));
 try { app.use('/api/procurement', require('./routes/procurement')); } catch (e) { console.warn('⚠️ Procurement Lite route failed:', e.message); }
 try { app.use('/api/purchasing', require('./routes/purchasing')); } catch (e) { console.warn('⚠️ Purchasing route failed:', e.message); }
 app.use('/api/settings', require('./routes/settings'));
+// Website click beacons (no API key; origin allowlist + externalLimiter). Mounted before the keyed router.
+app.use('/api/external/web-events', require('./routes/webEvents').createWebEventsRouter({
+  getDb: () => require('./config/supabase').supabase,
+}));
 app.use('/api/external', require('./routes/external'));
 try {
   app.use('/api/mcp', (req, res, next) => {
