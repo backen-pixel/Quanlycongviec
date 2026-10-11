@@ -54,11 +54,11 @@ async function main() {
     const projectIds = Array.from(projectsNeedStage);
     console.log(`   ✅ Nhóm thành ${projectIds.length} dự án\n`);
 
-    // Bước 3: Lấy current_stage_id của từng project
-    console.log('3️⃣ Đang lấy current_stage_id của các dự án...');
+    // Bước 3: Lấy sx_kanban_column_id của từng project
+    console.log('3️⃣ Đang lấy sx_kanban_column_id của các dự án...');
     const { data: projects, error: projErr } = await supabase
       .from('projects')
-      .select('id, code, current_stage_id')
+      .select('id, code, sx_kanban_column_id')
       .in('id', projectIds);
 
     if (projErr) throw projErr;
@@ -66,14 +66,14 @@ async function main() {
     const stageByProject = {};
     let projectsWithStage = 0;
     projects.forEach(p => {
-      if (p.current_stage_id) {
-        stageByProject[p.id] = p.current_stage_id;
+      if (p.sx_kanban_column_id) {
+        stageByProject[p.id] = p.sx_kanban_column_id;
         projectsWithStage++;
       }
     });
 
-    console.log(`   ✅ ${projectsWithStage}/${projectIds.length} dự án có current_stage_id`);
-    console.log(`   ⚠️ ${projectIds.length - projectsWithStage} dự án không có stage (sẽ bỏ qua)\n`);
+    console.log(`   ✅ ${projectsWithStage}/${projectIds.length} dự án có sx_kanban_column_id`);
+    console.log(`   ⚠️ ${projectIds.length - projectsWithStage} dự án không có cột SX (sẽ bỏ qua)\n`);
 
     // Bước 4: Backfill từng project
     console.log('4️⃣ Đang backfill task...');

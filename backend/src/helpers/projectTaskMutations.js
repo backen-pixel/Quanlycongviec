@@ -33,17 +33,17 @@ async function createProjectTask(req, body) {
     ? b.metadata
     : null;
 
-  // ✅ Tự động gán production_stage_id từ cột hiện tại của dự án
+  // ✅ Tự động gán production_stage_id từ cột SX hiện tại của dự án
   let productionStageId = b.production_stage_id || null;
   if (b.project_id && !productionStageId) {
     try {
       const { data: proj } = await supabase
         .from('projects')
-        .select('current_stage_id')
+        .select('sx_kanban_column_id')
         .eq('id', b.project_id)
         .maybeSingle();
-      if (proj?.current_stage_id) {
-        productionStageId = proj.current_stage_id;
+      if (proj?.sx_kanban_column_id) {
+        productionStageId = proj.sx_kanban_column_id;
       }
     } catch (e) {
       console.warn('[tasks] auto-assign production_stage_id:', e.message);
