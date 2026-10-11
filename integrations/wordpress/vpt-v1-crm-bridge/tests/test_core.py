@@ -91,10 +91,50 @@ class CorePatchTests(unittest.TestCase):
 
     def test_unrecognized_and_organic_sources_remain_website(self):
         for source, medium in [("chatgpt", "organic"), ("chatgpt", "cpc"), ("chatgpt", ""),
-                               ("openai", "paid"), ("facebook", "paid"), ("google", "organic"),
+                               ("openai", "paid"), ("facebook", "paid"),
                                ("", "paid"), ("", ""), ("chatgpt.com", "paid")]:
             with self.subTest(source=source, medium=medium):
                 self.compare_build(request({"utm_source": source, "utm_medium": medium}), "Website VPT V1")
+
+    def test_google_organic_has_distinct_source_but_preserves_business(self):
+        self.compare_build(request({"utm_source": " Google ", "utm_medium": " Organic "}), "SEO Google VPT V1", True)
+
+    def test_click_ids_prevent_organic_classification(self):
+        for key in ("gclid", "gbraid", "wbraid"):
+            with self.subTest(key=key):
+                self.compare_build(request({"utm_source": "google", "utm_medium": "organic", key: "synthetic-click"}), "Website VPT V1")
+
+    def test_referrer_and_landing_do_not_leak_queries_or_change_fingerprint(self):
+        direct = call(PATCHED, request())['result']
+        candidate = call(PATCHED, request({"utm_source":"google", "utm_medium":"organic", "vpt_referrer_host":"www.google.com.vn",
+                                           "vpt_landing_page":"https://www.vanphuthanh.net/tu-bep/?private=synthetic#secret"}))['result']
+        self.assertEqual(candidate['fingerprint'], direct['fingerprint'])
+        self.assertEqual(candidate['build']['business'], direct['build']['business'])
+        notes = candidate['build']['payload']['notes']
+        self.assertIn('\nvpt_landing_page: https://vanphuthanh.net/tu-bep/', notes)
+        self.assertIn('\nvpt_referrer_host: www.google.com.vn', notes)
+        self.assertNotIn('private=', notes)
+        self.assertNotIn('#secret', notes)
+        self.assertEqual(candidate['build']['payload']['attribution']['landing_url'], 'https://vanphuthanh.net/tu-bep/')
+        invalid = call(PATCHED, request({'vpt_referrer_host':'google.com/private?secret=x','vpt_landing_page':'https://evil.invalid/path'}))['result']
+        self.assertNotIn('vpt_referrer_host:', invalid['build']['payload']['notes'])
+        self.assertNotIn('vpt_landing_page:', invalid['build']['payload']['notes'])
+
+    def test_facebook_ad_ids_and_fbclid_become_structured_attribution(self):
+        built = call(PATCHED, request({"utm_source": "FB", "utm_medium": "paid", "utm_campaign": "120200000000001",
+                                       "utm_content": "120200000000002", "fbclid": "synthetic-fb"}))["result"]
+        a = built["build"]["payload"]["attribution"]
+        self.assertEqual(a["platform"], "facebook")
+        self.assertEqual(a["campaign_id"], "120200000000001")
+        self.assertEqual(a["ad_id"], "120200000000002")
+        self.assertEqual(a["fbclid"], "synthetic-fb")
+        self.assertIn("\nfbclid: synthetic-fb", built["build"]["payload"]["notes"])
+        self.assertEqual(built["fingerprint"], call(PATCHED, request())["result"]["fingerprint"])
+        named = call(PATCHED, request({"utm_source": "facebook", "utm_campaign": "tet sale", "utm_content": "video"}))["result"]
+        self.assertNotIn("ad_id", named["build"]["payload"]["attribution"])
+        self.assertNotIn("campaign_id", named["build"]["payload"]["attribution"])
+        google = call(PATCHED, request({"utm_source": "google", "utm_content": "120200000000002"}))["result"]
+        self.assertNotIn("ad_id", google["build"]["payload"]["attribution"])
 
     def test_test_mode_overrides_all_paid_sources(self):
         for source, medium in [("chatgpt", "paid"), ("google", "cpc"), ("", "")]:

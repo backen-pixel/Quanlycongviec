@@ -51,7 +51,7 @@ test('PostgreSQL: atomic intake, permissions, migration replay, scoped repair an
     const creative = read('database/645_fb_creative_reaction_leadform.sql');
     sql(creative.slice(creative.indexOf('alter table'), creative.indexOf('comment on column')));
     sql('ALTER TABLE crm_leads ENABLE ROW LEVEL SECURITY; ALTER TABLE lead_attribution ENABLE ROW LEVEL SECURITY; GRANT SELECT, INSERT, UPDATE ON crm_leads,lead_attribution TO service_role;');
-    const migration = read('database/714_marketing_intake.sql');
+    const migration = read('database/717_marketing_intake.sql');
     sql(migration); sql(migration);
     check("(SELECT count(*) FROM crm_leads WHERE assigned_at IS NOT NULL)=0");
     assert.throws(() => sql('SET ROLE anon; SELECT * FROM lead_attribution;'));
@@ -87,7 +87,7 @@ test('PostgreSQL: atomic intake, permissions, migration replay, scoped repair an
     sql(`UPDATE companies SET tenant_id='00000000-0000-4000-8000-000000000001' WHERE id='${company}'`);
     assert.throws(() => sql(repair, ['-v', 'apply=true']));
     await require('./fixtures/leadAttributionPostgres').runEnrichmentRaceChecks(t, { sql, runSql, company });
-    sql(read('database/714_marketing_intake_rollback.sql'));
+    sql(read('database/717_marketing_intake_rollback.sql'));
     check("(SELECT intake_attribution IS NOT NULL FROM crm_leads WHERE code='new')");
   } finally { docker(['rm', '-f', name]); }
 });
