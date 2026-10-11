@@ -32,6 +32,24 @@ async function createProjectTask(req, body) {
   const meta = b.metadata && typeof b.metadata === 'object' && !Array.isArray(b.metadata)
     ? b.metadata
     : null;
+
+  // ✅ Tự động gán production_stage_id từ cột hiện tại của dự án
+  let productionStageId = b.production_stage_id || null;
+  if (b.project_id && !productionStageId) {
+    try {
+      const { data: proj } = await supabase
+        .from('projects')
+        .select('current_stage_id')
+        .eq('id', b.project_id)
+        .maybeSingle();
+      if (proj?.current_stage_id) {
+        productionStageId = proj.current_stage_id;
+      }
+    } catch (e) {
+      console.warn('[tasks] auto-assign production_stage_id:', e.message);
+    }
+  }
+
   const insertRow = {
     project_id: b.project_id || null,
     stage_id: b.stage_id || null,
@@ -47,6 +65,7 @@ async function createProjectTask(req, body) {
     estimated_hours: b.estimated_hours || null,
     attachments: b.attachments || [],
     task_type: b.task_type || 'project',
+    production_stage_id: productionStageId,
   };
   if (meta) insertRow.metadata = meta;
 
