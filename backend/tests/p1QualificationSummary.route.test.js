@@ -21,9 +21,11 @@ function harness({ enabled = true, role = 'admin', company = A, tenant = [A, B],
       eq(key, value) { rows = rows.filter(row => row[key] === value); return q; },
       in(key, values) { rows = rows.filter(row => values.includes(row[key])); return q; },
       not(key) { rows = rows.filter(row => row[key] != null); return q; },
-      or(expr) { const terms = String(expr).split(',').map(term => term.split('.'));
-        rows = rows.filter(row => terms.some(([key, op, value]) => op === 'eq'
-          ? row[key] === value : op === 'is' && value === 'null' && row[key] == null)); return q; },
+      or(expr) { const terms = String(expr).split(/,(?![^(]*\))/).map(term => {
+          const [key, op, ...rest] = term.split('.'); return [key, op, rest.join('.')]; });
+        rows = rows.filter(row => terms.some(([key, op, value]) => op === 'eq' ? row[key] === value
+          : op === 'in' ? value.replace(/^\(|\)$/g, '').split(',').includes(row[key])
+            : op === 'is' && value === 'null' && row[key] == null)); return q; },
       gte(key, value) { rows = rows.filter(row => Date.parse(row[key]) >= Date.parse(value)); return q; },
       lte(key, value) { rows = rows.filter(row => String(row[key]) <= String(value)); return q; },
       lt(key, value) { rows = rows.filter(row => Date.parse(row[key]) < Date.parse(value)); return q; },
