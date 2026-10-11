@@ -208,6 +208,23 @@ async function updateProjectTask(req, taskId, body) {
 
   notify(req.app?.get?.('io'), 'task:updated', data);
 
+  // ✅ Invalidate kanban cache khi status hoặc stage thay đổi
+  if (data && (b.status !== undefined || b.stage_id !== undefined)) {
+    try {
+      const { invalidateTags } = require('../middleware/responseCache');
+      const projectId = data?.project_id;
+      if (projectId && invalidateTags) {
+        await invalidateTags([
+          `kanban:${projectId}`,
+          `project:${projectId}`,
+          'kanban:*'
+        ]);
+      }
+    } catch (cacheErr) {
+      console.warn('[tasks] cache invalidation:', cacheErr.message);
+    }
+  }
+
   if (data?.status === 'done') {
     try { await scheduleNextWorkshopTaskAfterComplete(data); } catch (e) {
       console.warn('[tasks] workshop deadline chain:', e.message);
