@@ -841,8 +841,93 @@ async function applyAllActiveWorkshopTemplatesForArea(projectId, userId, {
   };
 }
 
-async function scheduleNextWorkshopTaskAfterComplete() {
-  return { ok: true, skip: 'manual_deadline_policy' };
+/**
+ * Khi task hoàn thành (status = 'done'):
+ * - Nếu task.production_stage_id ≠ project.sx_kanban_column_id (task nằm ngoài cột hiện tại)
+ *   → tự động hoàn thành tất cả task trong cột hiện tại
+ *   → auto-advance project sang cột tiếp theo
+ */
+async function scheduleNextWorkshopTaskAfterComplete(taskData) {
+  if (!taskData?.project_id || !taskData?.production_stage_id) {
+    return { ok: true, skip: 'task_incomplete' };
+  }
+
+  try {
+    const { data: project } = await supabase
+      .from('projects')
+      .select('id, sx_kanban_column_id')
+      .eq('id', taskData.project_id)
+      .maybeSingle();
+
+    if (!project?.sx_kanban_column_id) {
+      return { ok: true, skip: 'project_no_current_stage' };
+    }
+
+    // Task nằm trong cột hiện tại → không cần auto-advance
+    if (String(taskData.production_stage_id) === String(project.sx_kanban_column_id)) {
+      return { ok: true, skip: 'task_in_current_stage' };
+    }
+
+    // Task nằm ngoài cột hiện tại → auto-complete current stage + advance
+    const { data: tasksInCurrentStage, error: err1 } = await supabase
+      .from('tasks')
+      .select('id, status, blocks_stage_advance')
+      .eq('project_id', taskData.project_id)
+      .eq('production_stage_id', project.sx_kanban_column_id);
+
+    if (err1) {
+      console.warn('[scheduleNextWorkshopTaskAfterComplete] query current stage tasks:', err1.message);
+      return { ok: false, error: err1.message };
+    }
+
+    // Tự động hoàn thành tất cả task không có blocks_stage_advance trong cột hiện tại
+    const autoCompleteTasks = (tasksInCurrentStage || [])
+      .filter((t) => !t.blocks_stage_advance && t.status !== 'done')
+      .map((t) => t.id);
+
+    if (autoCompleteTasks.length > 0) {
+      const { error: err2 } = await supabase
+        .from('tasks')
+        .update({ status: 'done', completed_at: new Date().toISOString() })
+        .in('id', autoCompleteTasks);
+
+      if (err2) {
+        console.warn('[scheduleNextWorkshopTaskAfterComplete] auto-complete tasks:', err2.message);
+      }
+    }
+
+    // Tìm cột tiếp theo để auto-advance
+    const { data: currentStageRow } = await supabase
+      .from('production_pipeline_stages')
+      .select('order_index')
+      .eq('id', project.sx_kanban_column_id)
+      .maybeSingle();
+
+    const currentOrderIndex = currentStageRow?.order_index || 0;
+    const { data: nextStage, error: err3 } = await supabase
+      .from('production_pipeline_stages')
+      .select('id, order_index')
+      .gt('order_index', currentOrderIndex)
+      .order('order_index', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (!err3 && nextStage?.id) {
+      const { error: err4 } = await supabase
+        .from('projects')
+        .update({ sx_kanban_column_id: nextStage.id })
+        .eq('id', taskData.project_id);
+
+      if (!err4) {
+        return { ok: true, advanced: true, from_stage: project.sx_kanban_column_id, to_stage: nextStage.id };
+      }
+    }
+
+    return { ok: true, completed_but_no_next_stage: true };
+  } catch (e) {
+    console.warn('[scheduleNextWorkshopTaskAfterComplete]:', e.message);
+    return { ok: false, error: e.message };
+  }
 }
 
 module.exports = {
