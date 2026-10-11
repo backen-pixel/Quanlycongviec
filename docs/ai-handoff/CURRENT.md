@@ -1,3 +1,22 @@
+## 2026-10-11 — Khách biểu mẫu Facebook vào CRM; mốc hợp lệ tính cả chuyển Deal
+
+- **Khách biểu mẫu → CRM đang chạy.**
+  - Đi qua app Meta riêng «VPT Lead CRM» (ID 1454523093219159), webhook `/api/facebook/webhook/lead-ads`.
+  - Chỉ nối biểu mẫu `1438656288329447` (VPT — Tư vấn tủ bếp HCM). Khách vào bước TIẾP NHẬN, giao Admin Vạn Phú Thành.
+  - Khách thật đầu tiên vào CRM lúc 12:58 ngày 11/10.
+- **Khai báo trường biểu mẫu.** `fb_lead_form_mapping` đã khai `{ho_ten:"tên_đầy_đủ", sdt:"số_điện_thoại"}`.
+  - Biểu mẫu tạo bằng tiếng Việt dùng khóa tiếng Việt. Thiếu khai báo thì MỌI khách bị giữ với mã `FB_INBOX_LEAD_PHONE_REVIEW_REQUIRED`.
+  - Biểu mẫu mới: gọi `GET {form_id}?fields=name,questions`, rồi thêm binding và mapping.
+- **Mã truy cập Facebook.** `VPT_FB_LEAD_APP_ACCESS_TOKEN` trên Render là mã Trang «Không bao giờ hết hạn», cấp từ tài khoản Nguyễn Phạm Hùng.
+  - Quyền dữ liệu Meta hết khoảng 08/01/2027. Gia hạn bằng nút Generate Access Token; đã đặt lịch nhắc ngày 28/12/2026.
+  - Mã ngắn hạn cũ đã hết hạn thật. Triệu chứng khi mã hỏng: `FB_INBOX_PROVIDER_UNAVAILABLE`.
+- **Khách trùng số bị giữ.** Khách có số điện thoại đã tồn tại trong CRM bị giữ (`PHONE_REVIEW_REQUIRED`) và không hiện trên màn hình nào. Tác vụ lịch `fb-lead-form-held-check` kiểm tra hằng ngày lúc 08:30.
+- **PR #87:** theo Founder ngày 11/10, mốc hợp lệ P1 là Cold/Warm/Hot **hoặc chuyển Deal** (mọi cột deal, trừ cột thua và «Chuyển về lead»).
+- **Treo trong kế hoạch (Founder chọn bỏ qua ngày 11/10):** 17 khách biểu mẫu 01–10/10 chưa vào CRM, vì webhook không gửi lại khách cũ.
+  - Hệ quả: đến 11/10, đợt đo VPT 01 ghi 3.130.366 đ chi tiêu nhưng chỉ có 1 khách trong phạm vi. Chi phí mỗi khách VPT 01 của 07–10/10 vì vậy bị thổi cao.
+  - Báo cáo cuối kỳ phải nêu rõ điều này.
+  - Làm lại được bất cứ lúc nào: lấy leadgen_id từ file CSV của Trung tâm khách hàng tiềm năng, đẩy vào `facebook_page_inbox_enqueue_v1` dưới dạng sự kiện `leadgen`. Khách đã có sẵn trong CRM được chặn trùng theo số điện thoại.
+
 ## 2026-10-10 — Trợ lý không chạy vì backend cũ giữ cổng 4000
 Bảng `guide_*` đã có (347 mục kiến thức, PostgREST đọc được). Tiến trình backend từ 12:07 không nạp lại `.env` lúc 13:34 nên `POST /api/copilotkit` trả 503, và cổng DB đã nghỉ 15 phút sau lỗi schema cache. Đã tắt tiến trình đó và bật lại; model `claude-sonnet-5` gọi thử được.
 
