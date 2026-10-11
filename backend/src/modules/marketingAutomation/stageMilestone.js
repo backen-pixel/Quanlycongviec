@@ -2,11 +2,13 @@
 
 // A lead sales has classified (cold / warm / hot = chuẩn bị xây / xây thô / nhà gần hoàn thiện)
 // is "valid" per Founder (08/10/2026); leads that moved further also count. Human-entered only.
-// Not counted: lead_new, not_contacted, lost and stages without a canonical slug.
+// Converting to a deal also counts (Founder 11/10/2026), even into deal stages without a
+// canonical slug such as "Chờ sale xác nhận" — except lost stages and "Chuyển về lead".
+// Not counted: lead_new, not_contacted, lost and lead stages without a canonical slug.
 const MILESTONE_SLUGS = Object.freeze(['cold', 'warm', 'hot', 'survey_scheduled', 'survey_done', 'quoted',
   'negotiating', 'waiting_deposit', 'designing', 'contract_signed', 'producing',
   'installing', 'completed']);
-const MILESTONE_LABEL = 'Đã phân loại Cold/Warm/Hot';
+const MILESTONE_LABEL = 'Đã phân loại Cold/Warm/Hot hoặc chuyển Deal';
 const MATURITY_DAYS = 4;
 const DAY_MS = 86400000;
 
@@ -20,27 +22,41 @@ async function loadMilestoneReached(db, candidates) {
     firstTouch.set(row.lead_id, ms);
   }
   const ids = [...firstTouch.keys()];
+  const history = [];
   for (let i = 0; i < ids.length; i += 100) {
     const chunk = ids.slice(i, i + 100);
     for (let offset = 0;; offset += 500) {
       const { data, error } = await db.from('crm_lead_stage_history')
-        .select('lead_id,to_canonical_slug,changed_by,entered_at')
-        .in('lead_id', chunk).in('to_canonical_slug', MILESTONE_SLUGS)
+        .select('lead_id,pipeline_type,to_stage_id,to_canonical_slug,changed_by,entered_at')
+        .in('lead_id', chunk)
+        .or(`to_canonical_slug.in.(${MILESTONE_SLUGS.join(',')}),pipeline_type.eq.deal`)
         .not('changed_by', 'is', null).order('entered_at', { ascending: true })
         .range(offset, offset + 499);
       if (error || !Array.isArray(data) || data.length > 500)
         throw error || Error('SOURCE_UNAVAILABLE');
-      for (const row of data) {
-        if (!firstTouch.has(row.lead_id) || !MILESTONE_SLUGS.includes(row.to_canonical_slug) ||
-            !row.changed_by) continue;
-        const ms = Date.parse(row.entered_at);
-        if (!Number.isFinite(ms)) { invalidTimestamps++; continue; }
-        if (ms < firstTouch.get(row.lead_id)) continue;
-        const previous = reachedByLead.get(row.lead_id);
-        if (!previous || ms < Date.parse(previous)) reachedByLead.set(row.lead_id, row.entered_at);
-      }
+      history.push(...data);
       if (data.length < 500) break;
     }
+  }
+  const dealStageIds = [...new Set(history.filter(row => row.pipeline_type === 'deal' &&
+    !MILESTONE_SLUGS.includes(row.to_canonical_slug) && row.to_stage_id).map(row => row.to_stage_id))];
+  const openDealStages = new Set();
+  for (let i = 0; i < dealStageIds.length; i += 100) {
+    const { data, error } = await db.from('crm_pipeline_stages')
+      .select('id,pipeline_type,is_lost,allow_revert_to_lead').in('id', dealStageIds.slice(i, i + 100));
+    if (error || !Array.isArray(data)) throw error || Error('SOURCE_UNAVAILABLE');
+    for (const row of data) if (row.pipeline_type === 'deal' && row.is_lost !== true &&
+      row.allow_revert_to_lead !== true) openDealStages.add(row.id);
+  }
+  for (const row of history) {
+    const counts = MILESTONE_SLUGS.includes(row.to_canonical_slug) ||
+      (row.pipeline_type === 'deal' && openDealStages.has(row.to_stage_id));
+    if (!firstTouch.has(row.lead_id) || !counts || !row.changed_by) continue;
+    const ms = Date.parse(row.entered_at);
+    if (!Number.isFinite(ms)) { invalidTimestamps++; continue; }
+    if (ms < firstTouch.get(row.lead_id)) continue;
+    const previous = reachedByLead.get(row.lead_id);
+    if (!previous || ms < Date.parse(previous)) reachedByLead.set(row.lead_id, row.entered_at);
   }
   return { reachedByLead, invalidTimestamps };
 }
