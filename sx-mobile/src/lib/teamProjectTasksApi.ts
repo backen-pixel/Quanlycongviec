@@ -2,6 +2,7 @@ import { api } from '../api/client';
 import { fetchAssignmentLookups } from './sharedWorkspaceApi';
 import { QUERY_TTL_SHORT, cachedQuery } from './queryCache';
 import { isTaskOverdue, mapUnifiedToWorkTask, type WorkTask } from './workTasksApi';
+import { vnYmd } from './vnDate';
 
 /**
  * Việc DỰ ÁN (bảng `tasks` + `crm_tasks` của deal đã có dự án) CHƯA XONG của cả đội — góc nhìn quản lý.
@@ -73,8 +74,7 @@ function mapRow(raw: Record<string, unknown>): WorkTask {
 
 /** Ngày (giờ VN) cách hôm nay `plusDays` ngày, dạng YYYY-MM-DD — chỉ cho đường dự phòng. */
 function vnDate(plusDays = 0): string {
-  return new Date(Date.now() + plusDays * 86_400_000)
-    .toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+  return vnYmd(Date.now() + plusDays * 86_400_000);
 }
 
 async function fetchLegacyAll(params: Record<string, unknown>): Promise<WorkTask[]> {

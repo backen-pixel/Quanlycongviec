@@ -91,6 +91,7 @@ import { saveMessengerAttachment } from '../lib/messengerFileOpen';
 import { isQueryAbortError } from '../lib/queryCache';
 import { fetchTeamProjectTasksPage, type TeamProjectCounts } from '../lib/teamProjectTasksApi';
 import { fetchAssignmentLookups } from '../lib/sharedWorkspaceApi';
+import { vnYmd } from '../lib/vnDate';
 
 import SpinningLoader from '../components/SpinningLoader';
 
@@ -124,7 +125,7 @@ function dueMatches(iso: string | null | undefined, filter: WorkDueFilter): bool
 function dueRangeVN(filter: WorkDueFilter): { dueFrom?: string; dueTo?: string } {
   if (!filter) return {};
   const DAY = 86_400_000;
-  const ymd = (ms: number) => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+  const ymd = (ms: number) => vnYmd(ms);
   const now = Date.now();
   if (filter === 'today') return { dueFrom: ymd(now), dueTo: ymd(now) };
   if (filter === 'tomorrow') return { dueFrom: ymd(now + DAY), dueTo: ymd(now + DAY) };
@@ -395,8 +396,6 @@ function createStyles(colors: AppColors, bottomInset: number) {
       fontSize: 11,
       color: colors.warning,
     },
-    statsItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-    statsDot: { width: 6, height: 6, borderRadius: 3 },
     statsLabel: { fontSize: 11, fontWeight: '700' },
     statsNum: { fontSize: 12, fontWeight: '800' },
     errorBox: {
@@ -417,11 +416,13 @@ function createStyles(colors: AppColors, bottomInset: number) {
       borderColor: colors.border,
       overflow: 'hidden',
     },
+    // gap/lề vừa phải để dòng «x/y xong · … · chạm để mở» không rơi đúng ngưỡng ngắt dòng (Android đo 2 dòng nhưng vẽ 1 dòng
+    // → thẻ dư khoảng trống) khi nhãn bên phải hẹp lại.
     sectionHead: {
       flexDirection: 'row',
       alignItems: 'center',
-      gap: 8,
-      paddingHorizontal: 12,
+      gap: 6,
+      paddingHorizontal: 10,
       paddingVertical: 11,
     },
     sectionTitle: {
@@ -446,12 +447,10 @@ function createStyles(colors: AppColors, bottomInset: number) {
     cardBody: { paddingLeft: 14, paddingRight: 12, paddingVertical: 12 },
     cardTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
     statusBadge: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 6,
       paddingHorizontal: 10,
       paddingVertical: 4,
       borderRadius: Radii.full,
+      overflow: 'hidden',
     },
     statusBadgeTxt: { fontSize: 11, fontWeight: '800' },
     badgeRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
@@ -461,6 +460,7 @@ function createStyles(colors: AppColors, bottomInset: number) {
       paddingVertical: 3,
       borderRadius: Radii.full,
       backgroundColor: colorWithAlpha(colors.danger, 0.12),
+      overflow: 'hidden',
     },
     prioTxt: { color: colors.danger, fontSize: 11, fontWeight: '800' },
     dueTxt: { fontSize: 12, fontWeight: '700', color: colors.textMuted },
@@ -506,6 +506,7 @@ function createStyles(colors: AppColors, bottomInset: number) {
       backgroundColor: colors.bgElevated,
       borderWidth: 1,
       borderColor: colors.border,
+      overflow: 'hidden',
     },
     stageTxt: { color: colors.textMuted, fontSize: 11, fontWeight: '700' },
     cardFooter: {
@@ -1889,35 +1890,33 @@ export default function WorkScreen() {
         <View style={styles.cardBody}>
           <View style={styles.cardTop}>
             <View style={styles.badgeRow}>
-              <View style={[styles.statusBadge, { backgroundColor: colorWithAlpha(accent, 0.15) }]}>
-                <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: accent }} />
-                <Text style={[styles.statusBadgeTxt, { color: accent }]}>{statusPillLabel(task.status)}</Text>
-              </View>
+              {/* Mỗi nhãn là MỘT Text có nền (icon/chấm lồng trong chữ) thay cho View + icon + Text. */}
+              <Text style={[styles.statusBadge, styles.statusBadgeTxt, { backgroundColor: colorWithAlpha(accent, 0.15), color: accent }]}>
+                {'● '}{statusPillLabel(task.status)}
+              </Text>
               {/* Nhãn riêng cho việc quá hạn — nổi hơn dòng chữ hạn ở góc phải. */}
               {overdue ? (
-                <View style={[styles.statusBadge, { backgroundColor: colorWithAlpha(colors.danger, 0.15) }]}>
+                <Text style={[styles.statusBadge, styles.statusBadgeTxt, { backgroundColor: colorWithAlpha(colors.danger, 0.15), color: colors.danger }]}>
                   <Ionicons name="alert-circle" size={12} color={colors.danger} />
-                  <Text style={[styles.statusBadgeTxt, { color: colors.danger }]}>Quá hạn</Text>
-                </View>
+                  {' Quá hạn'}
+                </Text>
               ) : null}
               {!done && !overdue && isTaskDueOnDay(task) ? (
-                <View style={[styles.statusBadge, { backgroundColor: colorWithAlpha(TODAY_COLOR, 0.15) }]}>
+                <Text style={[styles.statusBadge, styles.statusBadgeTxt, { backgroundColor: colorWithAlpha(TODAY_COLOR, 0.15), color: TODAY_COLOR }]}>
                   <Ionicons name="today" size={12} color={TODAY_COLOR} />
-                  <Text style={[styles.statusBadgeTxt, { color: TODAY_COLOR }]}>Hôm nay</Text>
-                </View>
+                  {' Hôm nay'}
+                </Text>
               ) : null}
               {!done && !taskDueIso(task) ? (
-                <View style={[styles.statusBadge, { backgroundColor: colorWithAlpha(colors.textMuted, 0.14) }]}>
+                <Text style={[styles.statusBadge, styles.statusBadgeTxt, { backgroundColor: colorWithAlpha(colors.textMuted, 0.14), color: colors.textMuted }]}>
                   <Ionicons name="calendar-clear-outline" size={12} color={colors.textMuted} />
-                  <Text style={[styles.statusBadgeTxt, { color: colors.textMuted }]}>Không hạn</Text>
-                </View>
+                  {' Không hạn'}
+                </Text>
               ) : null}
             </View>
             <View style={styles.metaRight}>
               {prio === 'Cao' ? (
-                <View style={styles.prioPill}>
-                  <Text style={styles.prioTxt}>Cao</Text>
-                </View>
+                <Text style={[styles.prioPill, styles.prioTxt]}>Cao</Text>
               ) : null}
               <Text style={[styles.dueTxt, overdue && styles.dueOverdue]}>
                 {due}
@@ -1951,9 +1950,7 @@ export default function WorkScreen() {
           </View>
 
           {stage ? (
-            <View style={styles.stagePill}>
-              <Text style={styles.stageTxt}>{stage}</Text>
-            </View>
+            <Text style={[styles.stagePill, styles.stageTxt]}>{stage}</Text>
           ) : null}
 
           <View style={styles.cardFooter}>
@@ -2032,41 +2029,40 @@ export default function WorkScreen() {
       // Việc chưa xong mà không có hạn: gắn nhãn «Không hạn» ở dòng nhóm để khỏi tưởng là sắp/đã tới hạn.
       const noDeadlineCount = s.tasks.filter((t) => !isTaskDone(t.status) && !taskDueIso(t)).length;
       const expanded = !!expandedLeadIds[s.leadId];
+      // Một TapHighlight mang luôn khung thẻ (trước đây có thêm View `sectionCard` bọc ngoài).
       return (
-        <View style={styles.sectionCard}>
-          <TapHighlight style={styles.sectionHead} onPress={() => toggleDealSection(s.leadId)}>
-            <Ionicons
-              name={expanded ? 'chevron-down' : 'chevron-forward'}
-              size={18}
-              color={colors.textMuted}
-            />
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={styles.sectionTitle} numberOfLines={1}>
-                {s.code ? `${s.code} · ` : ''}{s.title || 'Deal'}
-              </Text>
-              <Text style={styles.sectionMeta}>
-                {done}/{s.tasks.length} xong
-                {open > 0 ? ` · ${open} còn lại` : ''}
-                {noDeadlineCount > 0 ? (
-                  <Text style={{ fontWeight: '800' }}>
-                    {` · ${noDeadlineCount === open ? 'Không hạn' : `${noDeadlineCount} không hạn`}`}
-                  </Text>
-                ) : null}
-                {s.customerName ? ` · ${s.customerName}` : ''}
-                {!expanded ? ' · chạm để mở' : ''}
-              </Text>
-            </View>
-            <TaskGroupTag tone={tone} overdueCount={overdueCount} dueTodayCount={dueTodayCount} />
-            {s.projectId ? (
-              <Pressable
-                hitSlop={8}
-                onPress={() => openProjectDetail(String(s.projectId))}
-              >
-                <Ionicons name="open-outline" size={18} color={colors.primary} />
-              </Pressable>
-            ) : null}
-          </TapHighlight>
-        </View>
+        <TapHighlight style={[styles.sectionCard, styles.sectionHead]} onPress={() => toggleDealSection(s.leadId)}>
+          <Ionicons
+            name={expanded ? 'chevron-down' : 'chevron-forward'}
+            size={18}
+            color={colors.textMuted}
+          />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={styles.sectionTitle} numberOfLines={1}>
+              {s.code ? `${s.code} · ` : ''}{s.title || 'Deal'}
+            </Text>
+            <Text style={styles.sectionMeta}>
+              {done}/{s.tasks.length} xong
+              {open > 0 ? ` · ${open} còn lại` : ''}
+              {noDeadlineCount > 0 ? (
+                <Text style={{ fontWeight: '800' }}>
+                  {` · ${noDeadlineCount === open ? 'Không hạn' : `${noDeadlineCount} không hạn`}`}
+                </Text>
+              ) : null}
+              {s.customerName ? ` · ${s.customerName}` : ''}
+              {!expanded ? ' · chạm để mở' : ''}
+            </Text>
+          </View>
+          <TaskGroupTag tone={tone} overdueCount={overdueCount} dueTodayCount={dueTodayCount} />
+          {s.projectId ? (
+            <Pressable
+              hitSlop={8}
+              onPress={() => openProjectDetail(String(s.projectId))}
+            >
+              <Ionicons name="open-outline" size={18} color={colors.primary} />
+            </Pressable>
+          ) : null}
+        </TapHighlight>
       );
     }
     return renderTaskCard(item.task);
@@ -2153,18 +2149,19 @@ export default function WorkScreen() {
                 onPress={chip.onOpen}
                 accessibilityLabel={`${chip.prefix}: ${chip.label}`}
               >
-                <Text style={styles.dropdownChipPrefix} numberOfLines={1}>{chip.prefix}</Text>
-                <Text
-                  style={[styles.dropdownChipTxt, chip.active && styles.dropdownChipTxtActive]}
-                  numberOfLines={1}
-                >
-                  {chip.label}
+                {/* Tiền tố + nhãn + mũi tên trong MỘT Text (trước đây 3 View native cho mỗi chip). */}
+                <Text style={styles.dropdownChipPrefix} numberOfLines={1}>
+                  {`${chip.prefix} `}
+                  <Text style={[styles.dropdownChipTxt, chip.active && styles.dropdownChipTxtActive]}>
+                    {chip.label}
+                  </Text>
+                  {' '}
+                  <Ionicons
+                    name="chevron-down"
+                    size={12}
+                    color={chip.active ? colors.primary : colors.textMuted}
+                  />
                 </Text>
-                <Ionicons
-                  name="chevron-down"
-                  size={12}
-                  color={chip.active ? colors.primary : colors.textMuted}
-                />
               </Pressable>
               {chip.onClear ? (
                 <Pressable
@@ -2217,7 +2214,6 @@ export default function WorkScreen() {
                 ]}
                 onPress={() => setStatusFilter(chip.key)}
               >
-                <Ionicons name={chip.icon} size={15} color={iconColor} />
                 <Text
                   style={[
                     styles.iconChipTxt,
@@ -2225,7 +2221,8 @@ export default function WorkScreen() {
                     active && chip.key === 'overdue' && { color: colors.danger },
                   ]}
                 >
-                  {chip.label}
+                  <Ionicons name={chip.icon} size={15} color={iconColor} />
+                  {`  ${chip.label}`}
                 </Text>
               </TapHighlight>
             );
@@ -2233,29 +2230,22 @@ export default function WorkScreen() {
         </ScrollView>
       </View>
 
+      {/* Mỗi mục «● Nhãn số» là MỘT Text (chấm tròn là ký tự) — trước đây View + View chấm + 2 Text. */}
       <View style={styles.statsLine}>
-        <View style={styles.statsItem}>
-          <View style={[styles.statsDot, { backgroundColor: colors.warning }]} />
-          <Text style={[styles.statsLabel, { color: colors.warning }]}>Chưa</Text>
-          <Text style={[styles.statsNum, { color: colors.warning }]}>{stats.pending}</Text>
-        </View>
-        <View style={styles.statsItem}>
-          <View style={[styles.statsDot, { backgroundColor: colors.primary }]} />
-          <Text style={[styles.statsLabel, { color: colors.primary }]}>Đang</Text>
-          <Text style={[styles.statsNum, { color: colors.primary }]}>{stats.inProgress}</Text>
-        </View>
+        <Text style={[styles.statsLabel, { color: colors.warning }]}>
+          {'● Chưa '}<Text style={styles.statsNum}>{stats.pending}</Text>
+        </Text>
+        <Text style={[styles.statsLabel, { color: colors.primary }]}>
+          {'● Đang '}<Text style={styles.statsNum}>{stats.inProgress}</Text>
+        </Text>
         {teamView ? null : (
-          <View style={styles.statsItem}>
-            <View style={[styles.statsDot, { backgroundColor: colors.success }]} />
-            <Text style={[styles.statsLabel, { color: colors.success }]}>Xong</Text>
-            <Text style={[styles.statsNum, { color: colors.success }]}>{stats.done}</Text>
-          </View>
+          <Text style={[styles.statsLabel, { color: colors.success }]}>
+            {'● Xong '}<Text style={styles.statsNum}>{stats.done}</Text>
+          </Text>
         )}
-        <View style={styles.statsItem}>
-          <View style={[styles.statsDot, { backgroundColor: colors.danger }]} />
-          <Text style={[styles.statsLabel, { color: colors.danger }]}>QH</Text>
-          <Text style={[styles.statsNum, { color: colors.danger }]}>{stats.overdue}</Text>
-        </View>
+        <Text style={[styles.statsLabel, { color: colors.danger }]}>
+          {'● QH '}<Text style={styles.statsNum}>{stats.overdue}</Text>
+        </Text>
       </View>
 
       {teamView && teamCounts?.truncated ? (

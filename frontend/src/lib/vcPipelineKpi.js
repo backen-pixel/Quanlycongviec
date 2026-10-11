@@ -116,6 +116,10 @@ function isDoneCol(stage) {
 export function kpiBucketForStage(stage) {
   const explicit = explicitDashboardKpi(stage);
   if (explicit) return explicit;
+  // Cột «lắp đặt tạm» («Dự án sắp tới») là chỗ CHỜ, chưa tiếp nhận — không phải
+  // đang vận chuyển. Tên nó không khớp luật nào nên trước đây rơi xuống nhánh vét
+  // cuối `return 'shipping'`. Khớp backend/src/helpers/vcOverviewKpis.js.
+  if (stage?.is_temp_install_staging) return 'intake';
   if (isDoneCol(stage)) return 'completed';
   if (isAcceptanceCol(stage)) return 'acceptance';
   if (isWarrantyCol(stage)) return 'warranty';

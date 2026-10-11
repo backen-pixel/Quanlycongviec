@@ -71,7 +71,7 @@ object OverlayChatTheme {
   )
 
   private fun lightPalette() = Palette(
-    bg = Color.parseColor("#F4F6FB"),
+    bg = Color.parseColor("#F8FAFC"),
     bgElevated = Color.parseColor("#FFFFFF"),
     border = Color.parseColor("#E2E8F0"),
     text = Color.parseColor("#0F172A"),
@@ -80,8 +80,8 @@ object OverlayChatTheme {
     accent = Color.parseColor("#2563EB"),
     accentSoft = Color.argb(31, 37, 99, 235),
     bubbleOut = Color.parseColor("#2563EB"),
-    bubbleIn = Color.parseColor("#EEF2F8"),
-    bubbleInBorder = Color.parseColor("#E2E8F0"),
+    bubbleIn = Color.parseColor("#FFFFFF"),
+    bubbleInBorder = Color.parseColor("#F1F5F9"),
     online = Color.parseColor("#16A34A"),
     inputBg = Color.parseColor("#FFFFFF"),
     iconBtnBg = Color.parseColor("#F1F5F9"),
@@ -101,22 +101,31 @@ object OverlayChatTheme {
   }
 
   fun initials(name: String): String {
-    val parts = name.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+    // Bỏ emoji/ký hiệu (vd. «🤖 AI Assistant») để chữ cái đầu không bị cắt giữa cặp ký tự thay thế.
+    val clean = name.filter { it.isLetterOrDigit() || it.isWhitespace() }
+    val parts = clean.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
     if (parts.isEmpty()) return "?"
     if (parts.size == 1) return parts[0].take(2).uppercase()
     return "${parts.first().firstOrNull() ?: ""}${parts.last().firstOrNull() ?: ""}".uppercase()
   }
 
+  /** Bóng tin nhắn theo thiết kế: bo 16dp, góc gần avatar chỉ 4dp; tin của mình tô chuyển sắc xanh #0084FF → #2563EB. */
   fun bubbleBackground(
     mine: Boolean,
     c: Palette,
     dp: (Int) -> Int,
   ): android.graphics.drawable.GradientDrawable {
-    val r = dp(18).toFloat()
+    val r = dp(16).toFloat()
     val tail = dp(4).toFloat()
-    val gd = android.graphics.drawable.GradientDrawable()
+    val gd = if (mine) {
+      android.graphics.drawable.GradientDrawable(
+        android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
+        intArrayOf(0xFF0084FF.toInt(), 0xFF2563EB.toInt()),
+      )
+    } else {
+      android.graphics.drawable.GradientDrawable().also { it.setColor(c.bubbleIn) }
+    }
     gd.shape = android.graphics.drawable.GradientDrawable.RECTANGLE
-    gd.setColor(if (mine) c.bubbleOut else c.bubbleIn)
     gd.cornerRadii = if (mine) {
       floatArrayOf(r, r, r, r, tail, tail, r, r)
     } else {

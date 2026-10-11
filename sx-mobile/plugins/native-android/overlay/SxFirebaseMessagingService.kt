@@ -16,6 +16,9 @@ class SxFirebaseMessagingService : ExpoFirebaseMessagingService() {
     val data = remoteMessage.data
     if (handleIncomingCall(data)) return
     maybeWakeBubble(data)
+    // FCM dữ liệu thuần dành riêng cho bong bóng (bubble_wake, không có phần notification) đã xử lý xong ở trên. KHÔNG chuyển cho Expo:
+    // Expo sẽ tự biến nó thành thêm một thông báo hiển thị (kênh fallback) trùng với thông báo đẩy của backend và thông báo cục bộ.
+    if (isBubbleWakeOnly(remoteMessage)) return
     super.onMessageReceived(remoteMessage)
   }
 
@@ -48,6 +51,9 @@ class SxFirebaseMessagingService : ExpoFirebaseMessagingService() {
     IncomingCallHelper.showIncomingCall(applicationContext, call)
     return true
   }
+
+  private fun isBubbleWakeOnly(m: RemoteMessage): Boolean =
+    m.notification == null && m.data["bubble_wake"] == "1" && m.data["type"] == "messenger_chat"
 
   private fun maybeWakeBubble(data: Map<String, String>) {
     if (data.isNotEmpty() && data["bubble_wake"] == "1" && data["type"] == "messenger_chat") {

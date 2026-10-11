@@ -1,0 +1,6 @@
+[
+  "guides.json :: /crm/leads/:id#shared-workspace :: Thêm · CRM",
+  "guides.json :: /projects/:id#aggregate :: Tổng hợp CRM/SX/VC",
+  "guides.json :: /projects/:id#finance :: Thu chi",
+  "screens.json :: /management :: Tổng hợp NV"
+]

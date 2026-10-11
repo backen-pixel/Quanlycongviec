@@ -1,22 +1,97 @@
-## 2026-10-08 — PR72: sửa hai P2 trộn attribution qua lần chạm
+## 2026-10-11 — Khách biểu mẫu Facebook vào CRM; mốc hợp lệ tính cả chuyển Deal
 
-Review tái hiện trên `c38febe3`: 6 ca mới thất bại. Đổi enrichment sang một UPDATE nguyên tử có CAS toàn snapshot; kiểm tra bốn click ID và campaign/ad/form/landing identity, zero-row phải đọc lại và trả xung đột thay vì thành công giả. Không thêm SQL/quyền hay gọi production. Helper 12/12; tổng gói Node 136/136, gồm 8 ca con PostgreSQL chạy helper thật qua các session đồng thời. Chi tiết tại [MARKETING_INTAKE_20261008.md](MARKETING_INTAKE_20261008.md); SHA và CI đúng phiên bản được cập nhật trong draft PR72. Chưa merge/deploy.
+- **Khách biểu mẫu → CRM đang chạy.**
+  - Đi qua app Meta riêng «VPT Lead CRM» (ID 1454523093219159), webhook `/api/facebook/webhook/lead-ads`.
+  - Chỉ nối biểu mẫu `1438656288329447` (VPT — Tư vấn tủ bếp HCM). Khách vào bước TIẾP NHẬN, giao Admin Vạn Phú Thành.
+  - Khách thật đầu tiên vào CRM lúc 12:58 ngày 11/10.
+- **Khai báo trường biểu mẫu.** `fb_lead_form_mapping` đã khai `{ho_ten:"tên_đầy_đủ", sdt:"số_điện_thoại"}`.
+  - Biểu mẫu tạo bằng tiếng Việt dùng khóa tiếng Việt. Thiếu khai báo thì MỌI khách bị giữ với mã `FB_INBOX_LEAD_PHONE_REVIEW_REQUIRED`.
+  - Biểu mẫu mới: gọi `GET {form_id}?fields=name,questions`, rồi thêm binding và mapping.
+- **Mã truy cập Facebook.** `VPT_FB_LEAD_APP_ACCESS_TOKEN` trên Render là mã Trang «Không bao giờ hết hạn», cấp từ tài khoản Nguyễn Phạm Hùng.
+  - Quyền dữ liệu Meta hết khoảng 08/01/2027. Gia hạn bằng nút Generate Access Token; đã đặt lịch nhắc ngày 28/12/2026.
+  - Mã ngắn hạn cũ đã hết hạn thật. Triệu chứng khi mã hỏng: `FB_INBOX_PROVIDER_UNAVAILABLE`.
+- **Khách trùng số bị giữ.** Khách có số điện thoại đã tồn tại trong CRM bị giữ (`PHONE_REVIEW_REQUIRED`) và không hiện trên màn hình nào. Tác vụ lịch `fb-lead-form-held-check` kiểm tra hằng ngày lúc 08:30.
+- **PR #87:** theo Founder ngày 11/10, mốc hợp lệ P1 là Cold/Warm/Hot **hoặc chuyển Deal** (mọi cột deal, trừ cột thua và «Chuyển về lead»).
+- **Treo trong kế hoạch (Founder chọn bỏ qua ngày 11/10):** 17 khách biểu mẫu 01–10/10 chưa vào CRM, vì webhook không gửi lại khách cũ.
+  - Hệ quả: đến 11/10, đợt đo VPT 01 ghi 3.130.366 đ chi tiêu nhưng chỉ có 1 khách trong phạm vi. Chi phí mỗi khách VPT 01 của 07–10/10 vì vậy bị thổi cao.
+  - Báo cáo cuối kỳ phải nêu rõ điều này.
+  - Làm lại được bất cứ lúc nào: lấy leadgen_id từ file CSV của Trung tâm khách hàng tiềm năng, đẩy vào `facebook_page_inbox_enqueue_v1` dưới dạng sự kiện `leadgen`. Khách đã có sẵn trong CRM được chặn trùng theo số điện thoại.
+
+## 2026-10-10 — Trợ lý không chạy vì backend cũ giữ cổng 4000
+Bảng `guide_*` đã có (347 mục kiến thức, PostgREST đọc được). Tiến trình backend từ 12:07 không nạp lại `.env` lúc 13:34 nên `POST /api/copilotkit` trả 503, và cổng DB đã nghỉ 15 phút sau lỗi schema cache. Đã tắt tiến trình đó và bật lại; model `claude-sonnet-5` gọi thử được.
+
+## 2026-10-10 — Đã chạy SQL trợ lý Copilot (602, 603, 604)
+Chạy trên DB chính (`kdxypztstbeovyedmvem`) và DB dự phòng (`atcfpgxkgbszglrelfgr`) qua Management API, vì mật khẩu Postgres trong `backend/.env` bị từ chối (`28P01`). Trước đó chưa có bảng `guide_*`. Sau khi chạy có `guide_experiences`, `guide_knowledge` (kèm cột embedding), `guide_knowledge_version`, `guide_quota_turn`, `guide_chat_log`, các hàm `guide_*`, và `app_settings.guide_assistant` (hạn mức 30). Chưa nhúng vector (đúng như 603: vòng nền sẽ bù).
+
+## 2026-10-10 — Setup nhận thông báo Đặt xưởng khác
+Cài đặt pipeline sản xuất có mục «Nhận thông báo Đặt xưởng khác» (lưu `app_settings` key `sx_place_workshop_notify_users`). Metalla: Huy Metalla được @ khi công ty đặt đi hoặc được đặt tới.
+
+## 2026-10-10 — Đặt xưởng: ô tên dự án + lệnh bình luận /đổi tên
+Modal «Đặt xưởng khác» có ô tên, mặc định tên dự án đang mở; một xưởng dùng đúng tên đó, nhiều xưởng thêm tên công ty. Bình luận gõ `/đổi tên "tên hiện tại": tên mới` thì lưu `projects.name` và gửi thông báo «Đã đổi tên». Chưa deploy.
+## 2026-10-10 (2) — SX mobile: khung chat bong bóng đánh dấu «đã đọc» thật, huy hiệu / dấu chưa đọc / thông báo được dọn
+
+Mobile (`sx-mobile/`, nhánh `fix/sx-mobile-bubble-da-doc`): nguyên nhân tin đã đọc vẫn hiện huy hiệu + dấu chưa đọc là `BubbleChatApi.markRead` bị gọi thẳng trên luồng chính (`OverlayChatPanel.show()`), Android chặn mạng (`NetworkOnMainThreadException`) và `catch` nuốt lỗi nên máy chủ KHÔNG BAO GIỜ nhận `PATCH /messenger/groups/:id/read`. Sửa: `markRead` chạy luồng nền, có callback kết quả thật (lỗi ghi log Error `SxPanel`); khung gọi «đã đọc» khi mở lần đầu, khi chuyển đoạn (đầu chat / trang «Đoạn chat») và khi có tin đến lúc đang xem đoạn đó (giãn 2 giây, có một lần gọi bù cuối); thành công thì `onGroupRead` → `OverlayBubbleService.onGroupMarkedRead`: trừ phần tin chưa đọc của đoạn (`convUnread`) khỏi huy hiệu, gỡ thông báo `msg:<mã tin>` của đoạn (`convMessageIds`, tối đa 30 mã/đoạn, chỉ trong RAM) và phát sự kiện JS `BubbleGroupRead`; danh sách «Đoạn chat» bỏ dấu đậm/số chưa đọc ngay (đoạn đang mở luôn coi là đã đọc). App JS: `MessengerContext.clearThreadUnread` + xử lý sự kiện socket `messenger_group:read` của chính mình; `SystemBubbleSync` nghe `BubbleGroupRead` (xoá số chưa đọc, gỡ thông báo hiện còn theo group) và hạ huy hiệu khi `unreadTotal` giảm lúc app ở nền.
+
+Ghi dữ liệu thật: mở một đoạn trong khung bong bóng nay ghi `messenger_read_receipts` + đánh dấu thông báo `messenger_chat` của đoạn đó là đã đọc (đúng hành vi sản phẩm, như mở đoạn trong app).
+
+Kiểm tra trên máy thật Vivo (bản dev): trước sửa còn 3 thông báo `msg:…` + `ranker_group` trên thanh thông báo; sau sửa không còn thông báo `msg:…` nào, `badge_count`=0, không có cửa sổ overlay mồ côi, không có `PATCH /read lỗi`/`NetworkOnMainThread`/crash. Chưa kiểm chứng trực tiếp: log thành công của lần gọi (chỉ lỗi mới ghi log); thông báo của tin đến trước khi service khởi động lại không được gỡ (mã tin chỉ nằm trong RAM). Điện thoại vẫn đang chạy bản dev, chưa về release 1.1.122.
 
 ---
 
-## 2026-10-08 — Marketing intake: chuẩn bị draft PR và nối WordPress
+## 2026-10-10 — SX mobile: tin đến không còn báo trùng, khung chat mở nhanh hơn, huy hiệu không còn mồ côi, thông báo hết hiện 3 lần
 
-Tiếp nối nhánh `codex/marketing-attribution-20261008`: phát hiện bridge CF7 đã thu tracking nhưng chỉ gửi notes; thêm attribution/is_test vào payload, giữ nguồn/notes/fingerprint/queue. Bổ sung CI PR-only Node 18/22 + PostgreSQL dữ liệu tổng hợp + PHP-to-Node contract; không gọi production. Bằng chứng từng nhóm và release blockers: [MARKETING_INTAKE_20261008.md](MARKETING_INTAKE_20261008.md). Trạng thái PR/CI phải đối chiếu đúng SHA trong báo cáo cuối, không suy từ test local.
+Mobile (nhánh `feat/sx-mobile-chat-bubble-hoan-thien`): (1) **Tin đến bị báo 3 lần** (socket + FCM bị xử lý 2 lần do `SxFirebaseMessagingService.handleIntent` rồi `onMessageReceived`): `OverlayBubbleService.isDuplicateIncoming` bỏ qua tin đã xử lý (theo `message_id`, nhớ 2 phút; không có mã thì nhóm+người gửi+nội dung trong 5 giây), `BubbleFcmWake.alreadyHandled` chặn ngay ở cửa FCM, JS gửi `messageId` qua `postChatNotification`; (2) **khung chat mở chậm**: tải bắt đầu ngay và 2 lời gọi (nhóm + tin) chạy song song thay vì nối tiếp rồi hoãn 0,36 giây; chỉ VẼ sau khi hiệu ứng bung xong; nhớ đoạn chat đã tải (`convCache`, tối đa 6) để mở lại có 20 tin cuối + avatar ngay; không dựng lại nếu dữ liệu không đổi; `fetchMessages` gọi `/chat?limit=60` (trước không có `limit` nên máy chủ trả tới 500 tin CŨ NHẤT, đoạn chat dài hơn 500 tin hiện nhầm tin cũ); (3) **bộ đệm avatar gọn**: tệp tải về nhẹ (≤200KB) giữ nguyên làm bản đệm, ảnh nặng lưu WebP nén (trước: PNG không nén 168–505KB), đọc lại cũng giải mã thu nhỏ; (4) **huy hiệu mồ côi**: `badge_count` lưu bền nhưng chồng bong bóng chỉ ở RAM → sau khi tiến trình khởi động lại hiện huy hiệu (vd. 41) mà không có bong bóng; nay không tạo cửa sổ overlay/không hiện huy hiệu khi chồng trống; (5) **thông báo thanh hệ thống hiện 3 cái cho 1 tin**: (a) FCM dữ liệu thuần `bubble_wake` bị Expo biến thành thông báo → `SxFirebaseMessagingService` không chuyển cho Expo nữa, (b) thông báo cục bộ `msg:<mã tin>` và (c) thông báo FCM của backend có thẻ khác nhau.
+
+Backend: `pushSender.js` thêm `fcmTrayTag` — tin chat dùng thẻ `msg:<mã tin>` (trùng thông báo cục bộ trong app) nên hệ thống gộp (b) và (c) làm một; test `backend/tests/push-tray-tag.js` (5 kiểm tra). CHƯA deploy: cho tới khi deploy vẫn còn 2 thông báo/tin.
+
+Kiểm tra trên máy thật Vivo (bản dev): log cho thấy mỗi tin tới 3 lần (1 + 2 bản trùng cách 7–27 ms) và service chỉ xử lý 1; `dumpsys notification` thấy đúng 3 thông báo (thẻ `0:<id FCM>`, `msg:<mã tin>`, mã thông báo trong DB) trước khi sửa; khung chat tải nhóm+tin xong ~1 giây; cửa sổ overlay không còn sau khi mở lại app dù `badge_count`=41. Chưa kiểm chứng sau sửa: số thông báo thực tế khi có tin mới, thời gian dựng 60 hàng tin (log bị Vivo giới hạn số dòng nên chưa đo được), thu khung bằng chạm icon chat.
+
+Lưu ý: máy Vivo ẩn log Info/Warn của app và dường như giới hạn số dòng log mỗi nhãn → log chẩn đoán phải ở mức Error và ít dòng; log chẩn đoán tạm đã gỡ/hạ Debug. Danh sách đoạn chat của bong bóng chỉ ở RAM nên tin chưa đọc từ trước không tự hiện thành bong bóng. Chưa commit tới nay: các tệp manifest/log/theme cục bộ không thuộc thay đổi này.
+
+---
+
+## 2026-10-09 — SX mobile: bong bóng chat nổi mới, khung chat overlay, avatar thật; backend thu nhỏ avatar khi đổi
+
+Mobile (`sx-mobile/`, nhánh `feat/sx-mobile-dashboard-redesign`, chưa merge/release): (1) bong bóng chat native (`OverlayBubbleService.kt`): chồng bong bóng thật (chỉ cái mới nhất hiện, kéo thì lộ cái dưới), thẻ xem trước nằm ngang hàng, kéo vào ô X dưới đáy mới tắt, chạm mở thẳng đoạn chat; (2) khung chat (`OverlayChatPanel.kt`) thiết kế mới: dải đầu chat liền nhau + icon «Đoạn chat» (trang danh sách), bung/thu từ bong bóng bằng zoom (nền mờ dần riêng, hardware layer), chọn ảnh hệ thống trực tiếp; tin mới của đoạn đang mở chèn thẳng vào khung (không bật thẻ xem trước), tin đoạn khác chỉ cập nhật dải đầu chat/huy hiệu; (3) avatar thật: `OverlayAvatarView.kt` (bộ nhớ đệm RAM + `filesDir/avatars`, tải xuống tệp, giải mã thu nhỏ ≤512px, theo chuyển hướng, mã hóa URL, thử lại, tối đa 64MB), `BubbleChatApi.kt` đọc `user.avatar`/`peer_avatar`/`avatar`; (4) tab bar SVG (`react-native-svg`), `vnYmd` thay `toLocaleDateString` chậm, banner quá hạn, tắt phóng chữ theo hệ thống.
+
+Backend: `PATCH /api/internal-social/profile/me` gọi `backend/src/helpers/avatarOptimize.js` — avatar nằm trong Storage dự án thì thu nhỏ vừa khung 512px GIỮ NGUYÊN tỷ lệ và toàn bộ ảnh (không cắt; ảnh bé hơn không phóng to), WebP (dự phòng JPEG) bằng ffmpeg-static, lưu `internal_social/<uid>/avatar_<ts>.webp` và ghi URL bản nhỏ; URL ngoài Storage hoặc lỗi bất kỳ → giữ URL gốc; không xóa ảnh gốc. Script `backend/scripts/optimize-user-avatars.js` dọn avatar cũ: mặc định chạy thử, `--apply` mới ghi, cập nhật có điều kiện avatar còn là giá trị cũ, nhật ký `.log.jsonl` + `--rollback`.
+
+Kiểm tra: máy thật Vivo (bản dev): avatar gốc 25,6MB tải + thu nhỏ ~3 giây, hiện đúng ở tiêu đề khung và hàng tin; tin mới chèn thẳng vào khung; thu/mở khung bớt giật (`gfxinfo` p99 250–550ms → ~40–57ms, một lượt đo). Test offline backend đạt 11 + 5 (DB/Storage/ffmpeg giả).
+
+Chưa làm / lưu ý: backend CHƯA deploy; script dọn avatar cũ CHƯA chạy trên dữ liệu thật (người dùng quyết định); lệnh ffmpeg thật CHƯA chạy (máy dev thiếu ffmpeg) — thử một avatar sau deploy; điện thoại đang chạy bản dev chứ chưa về release 1.1.122; Vivo ẩn log Info/Warn nên log lỗi avatar ở mức Error (tag `SxAvatar`); chưa thử thu khung bằng cách chạm icon chat trên máy thật (chạm vùng mờ đã thử); lúc test có một ảnh chụp màn hình app dường như bị gửi vào một cuộc chat Zalo, chưa rõ nguyên nhân — nay luôn kiểm tra app đang ở foreground trước khi chạm và chụp thẳng về máy tính.
 
 ---
 
-## 2026-10-08 — Marketing intake / test exclusion (prepared, not released)
+## 2026-10-08 — team-project-tasks nhanh hơn: lọc phân loại xuống truy vấn, quét song song theo gợi ý, chế độ `lite`
 
-Nhánh `codex/marketing-attribution-20261008`, baseline `ac8971fb`. Bổ sung hợp đồng attribution cho API external và projection nguyên tử (SQL714), cờ is_test lọc báo cáo marketing, mốc assigned_at và phản hồi partner tách các mốc; sửa enrichment bảo toàn first touch. Chuẩn bị repair đúng tenant/VPT/3 mã có dry-run mặc định, journal và rollback chống drift. Không đọc external_api_logs, không ghi production; dừng mọi đọc production sau cập nhật cancellation.
+`GET /api/work-tasks/team-project-tasks` (`backend/src/routes/workTasks.js`, commit `6c186869`; app `7e6cadae`): (1) lọc phân loại đẩy xuống truy vấn quét — loại ít dự án (≤200) dùng `project_id in`, loại chiếm đa số (vd. Tủ bếp) dùng `not in` phần bù (đo: `in` 300+ id chậm gấp 3-4 lần), cả hai lớn thì quét cả công ty; luôn lọc lại bằng tập dự án ở máy nên kết quả không đổi; `scan_total`/`truncated` nay đo đúng phạm vi đã lọc; (2) nhớ tổng dòng lần trước (`teamScanHint`) để bắn sớm các lô cùng lúc với lô đầu, và nhớ phạm vi dự án của loại (`teamTypeScopeCache`) để quét sớm song song với việc lấy dự án mới (chỉ dùng khi tập dự án không đổi); (3) `lite=1` (app gửi) bỏ `enrichTaskModuleOwners` (~450ms/lần gọi, kể cả trúng cache), chỉ tra `assignee_name` qua cache tên 10 phút; không gửi `lite` thì giữ hành vi đầy đủ. Thêm biến môi trường `TEAM_TASKS_CACHE_MS`.
 
-121/121 test Node 24 + PostgreSQL 16 dữ liệu tổng hợp đạt; node --check và git diff --check đạt. Chưa staging đầy đủ, chưa nghiệm thu website/UI, chưa migration/backfill production, PR, merge/deploy. Rollback và release gate tại [MARKETING_INTAKE_20261008.md](MARKETING_INTAKE_20261008.md). Không coi có code là hoàn tất vận hành.
+Đo ở máy với DB thật (trung vị trang 1, cache hết hạn mỗi lần): cũ → mới+lite: Tủ bếp mặc định 1470 → 597 ms, không hạn 1653 → 721, hôm nay 957 → 249, chưa phân loại 1004 → 224. Kiểm sau merge (#70) và deploy trên backend thật: HTTP 200, `lite` không còn `module_owner_*`; trang 1 trúng cache `lite` ~150-190 ms so với ~450-475 ms bản đầy đủ; lần tính đầu 429-1202 ms. Số đếm khớp DB từng số (HCB Tủ bếp 1418 việc / 824 quá hạn / 268 không hạn / 109 nhóm; không hạn cũ 4906 / 292); app tab Công việc «Chưa 1418 · QH 824». Tên người được giao `lite` = đầy đủ (ca Hôm nay 51/51).
+
+Lưu ý: gợi ý và phạm vi nhớ chỉ có tác dụng từ yêu cầu thứ hai của mỗi bộ lọc sau mỗi lần khởi động server; tên người được giao có thể cũ tối đa 10 phút; số đo ở máy chưa gồm độ trễ mạng từ điện thoại. Chưa đo thời gian thật trên app (chỉ kiểm số liệu).
+---
+
+## 2026-10-09 — P2-2: route + giao diện duyệt bản nháp AI (thử nghiệm, mặc định tắt)
+Thêm `/api/ai-reply-drafts` (cờ P2_AI_DRAFTS_ENABLED, chỉ admin trong P2_AI_DRAFTS_USER_IDS, công ty/Page trong danh sách), `aiReplyDraft/config.js` (trần 5 USD/ngày, 3 địa chỉ được nói) và khung «Soạn nháp bằng AI» trong FacebookChatTab. Không có đường gửi tin: nhân viên tự gửi bằng route cũ rồi giao diện ghi nhận sửa/đã gửi/bỏ.
+Bật thử cần Founder đặt biến trên Render: P2_AI_DRAFTS_ENABLED, _COMPANY_IDS, _PAGE_IDS, _USER_IDS, _VND_PER_USD (thiếu tỷ giá → từ chối). Codex bị đăng xuất nên Claude tự viết.
+
+## 2026-10-09 — Tên CRM và tên xưởng tách riêng (chưa deploy)
+`PUT /crm/leads/:id` không còn copy tiêu đề sang `projects.name`. Kanban và chi tiết SX/VC hiển thị tên dự án. Tìm kiếm CRM và SX khớp cả hai tên.
+Chưa deploy. Đã trả tên dự án TB-2026-990 trên DB chính về «Chị Hạnh - Nhà Bè - nhà đã hoàn thiện»; tiêu đề deal vẫn «Anh Lộc - Cần giờ».
+
+## 2026-10-08 — P2-1b: lưu sự kiện và dịch vụ AI soạn nháp (local)
+Thêm SQL 714/rollback, bộ chuyển RPC, dịch vụ và test giả; chỉ soạn nháp, không route/gửi tin/DB thật/mạng/bật cờ.
+Chống lặp bằng tra sự kiện theo requestId trước provider và gom yêu cầu đồng thời trong một tiến trình; cần thử SQL và đua nhiều tiến trình trên nhánh Supabase tạm.
+
+## 2026-10-08 — P2-1a: lõi thuần «AI soạn nháp trả lời khách» (chưa nối đâu, chưa gọi mạng)
+
+Founder chọn API chính thức cho giai đoạn 2. Thêm `backend/src/modules/aiReplyDraft/{anonymize,policy,budget,provider}.js`: ẩn danh hội thoại (số điện thoại mọi dạng kể cả viết bằng chữ, email, liên kết, tên/địa chỉ đã biết, địa chỉ đường/hẻm khách tự gõ) và thất bại thì đóng; bộ luật kiểm bản nháp (không báo giá/hứa/PII/liên kết); trần chi phí số nguyên VND làm tròn lên; giao diện nhà cung cấp (OpenAI qua fetch giả trong test). Không route, SQL, giao diện; không gửi tin; không gọi OpenAI thật; không đọc env. Test 15/15. Giới hạn: biệt danh/viết dính của khách không biết trước không ẩn được; từ «tuần» trùng tên «Tuấn» bị che nhầm (an toàn nhưng mất ngữ cảnh). Codex đang bị đăng xuất nên Claude tự viết.
 
 ---
+
+## 2026-10-08 — P1-12: đối soát chi tiêu cấp tài khoản (local)
+Kéo tổng Meta theo ngày cấp tài khoản sau ghi quảng cáo; MATCH/MISMATCH/UNAVAILABLE vào ket_qua_cuoi, coverage và caveat summary theo đối soát. Chưa chạy SQL, DB/mạng, Meta thật, bật cờ, commit hay push.
+Kiểm chứng: 210/210 test fake fetch, P1/adAnalytics và node --check đạt; sau triển khai cần Claude đọc ket_qua_cuoi sau lần đồng bộ tiếp theo. Hoàn tác: bỏ diff P1-12 và mục này.
 
 ## 2026-10-08 — Sửa test báo cáo quảng cáo adAnalytics
 
@@ -51,6 +126,53 @@ Test Node trực tiếp và `node --check` đạt; chưa chạy SQL, kết nối
 Kiểm chứng chỉ-đọc bằng server Express tạm (auth giả trong bộ nhớ, dữ liệu thật): HCB không hạn mọi loại quét 6410 dòng, `truncated=false`; ép `TEAM_TASKS_SCAN_CAP=3000` thì `truncated=true`, `scan_total=6410`; Tủ bếp mặc định 864 quá hạn / 1434 việc / 108 nhóm, Hôm nay 51/3 — khớp app. Chưa xem dòng cảnh báo trên màn hình app (cần ép trần trên backend máy, đổi JWT và mất phiên đăng nhập); mới kiểm kiểu bằng tsc. Chưa merge/deploy.
 
 Chưa xử lý gốc: lọc phân loại vẫn chạy SAU khi quét nên «Tủ bếp» vẫn quét cả 6410 việc của HCB; trần mới chỉ là đệm. Muốn gọn hơn thì đẩy lọc phân loại xuống truy vấn.
+---
+
+## 2026-10-08 — Thẻ SX gọi đúng tên hạn công đoạn, hết đọc nhầm là hạn giao đơn
+
+Người dùng hỏi vì sao sửa ngày trong chi tiết mà «Deadline» trên thẻ không đổi. Không phải lỗi tính: hạn thẻ là hạn của CÔNG ĐOẠN cột đang đứng, tính lùi từ ngày lắp theo `deadline_group`, chứ không phải hạn cả đơn. Nhãn cũ ghi trần trụi «Deadline: 8/10/2026» nên bị đọc nhầm thành hạn giao hàng.
+
+Dẫn chứng chạy đúng hàm thật trên TB-2026-1019 (cột «ĐANG SX THÙNG», `group_key=gia_cong` → nhóm `cabinet`): lắp 12/10 → kế hoạch lùi planning 06/10 · **cabinet 08/10** · finishing 10/10 · packing 11/10. `computeSxInstallPlanDeadline` trả 2026-10-08T17:30 — khớp đúng thẻ. Ngày hoàn thiện 10/10 người dùng nhập là mốc của nhóm `finishing`, không phải nhóm cột đang đứng.
+
+Vì sao sửa ngày hoàn thiện không đổi được hạn thẻ: `deadlinePatchAfterScheduleEdit` (`sxInstallPlanKanbanDeadline.js:109-135`) chỉ lấy `production_finish_date` làm hạn thẻ khi `onlyFinishDateEdit(body) && (!group || group === 'finishing')`. Cột đang ở nhóm `cabinet` nên rơi xuống nhánh tính lùi từ ngày lắp. Ở cột này chỉ ĐỔI NGÀY LẮP hoặc KÉO SANG CỘT KHÁC mới đổi được hạn thẻ.
+
+Sửa (chỉ giao diện, không đụng logic tính): `ProductionDashboard.jsx` nhãn thẻ đổi từ «Deadline:» sang tên công đoạn — «Kế hoạch / Gia công / Hoàn thiện / Giao hàng», lấy từ `sxDeadlineGroupMeta`. Chỉ đổi khi `sx_kanban_deadline_reason` đúng bằng hằng số máy tính; hạn người nhập tay vẫn ghi «Deadline». Tooltip nói rõ là hạn công đoạn, tính lùi từ ngày lắp nào, và KHÔNG phải hạn giao cả đơn. Thêm `SX_AUTO_DEADLINE_REASON` + `laHanTheMayTinh` vào `lib/sxWorkshopSchedule.js` (phải khớp từng ký tự với `AUTO_REASON` của backend).
+
+`npx vite build` đạt. Chưa xem trên trình duyệt thật.
+
+Làm tiếp cùng ngày, hai việc nữa:
+
+1. **Cảnh báo ở form chi tiết** (`ProductionDetail.jsx`, `WorkshopInfoPanel`): khi mở sửa «Ngày hoàn thiện sản xuất» mà cột đang đứng thuộc nhóm hạn TRƯỚC `finishing` (thứ tự `planning < cabinet < finishing < packing`), hiện khối vàng báo sửa ngày này không đổi hạn thẻ, muốn dời thì sửa «Ngày lắp đặt». Dùng `currentStage` vốn đã là prop sẵn có của panel.
+
+2. **Dời ngày lắp thì dồn luôn hạn nhiệm vụ**: thêm `backend/src/helpers/donHanNhiemVuTheoMocLap.js`, gọi từ `PUT /api/projects/:id` ngay sau `syncSxCardDeadline` khi mốc lắp đổi. Mốc lắp lấy bằng `resolveSxPlanInstallYmd` trên hàng cũ (`old`) và hàng mới — cùng hàm mà kế hoạch lùi đang dùng. Dời ĐỀU đúng số ngày chênh lệch cho `tasks.due_date` và `crm_tasks.deadline` của việc CÒN MỞ và ĐÃ CÓ hạn; việc chưa có hạn giữ NULL. Không tính lại theo công đoạn vì `tasks.production_stage_id` gần như toàn NULL nên không map được về nhóm hạn.
+
+`node --check` hai file backend đạt; thử tay `soNgayGiua`/`doiNgay` (lệch dương, âm, rác, giữ giờ, qua tháng) đạt. `npx vite build` đạt.
+
+**Đã vá tồn đọng (09/10/2026).** Quét 622 dự án còn sống tìm đơn có kế hoạch CÒN hạn mà việc bên trong ĐÃ quá hạn — dấu hiệu lịch việc kẹt ở kế hoạch cũ (hệ thống không lưu lịch sử ngày lắp nên không chứng minh trực tiếp được). Ra 20 dự án / 291 việc, chia hai nhóm:
+
+- **Nhóm 1 — 15 dự án / 206 việc**: TOÀN BỘ việc còn mở đều quá hạn (6/6, 23/23, 41/41…) trong khi kế hoạch còn hạn. Đã dồn, mỗi dự án đúng số ngày lệch riêng (3→33 ngày) bằng chính `donHanNhiemVuTheoMocLap`. Kết quả: 176 `tasks` + 30 `crm_tasks`. Rollback: `backend/uploads/_rollback_don_han_nhom1_1791512123387.json` (206 dòng, lưu hạn cũ từng việc).
+- **Nhóm 2 — 5 dự án / 85 việc**: lệch −2 đến +1 ngày, chỉ quá hạn một phần (17/31, 17/30…). CỐ Ý KHÔNG dồn — đây là đơn chạy đúng kế hoạch, chỉ trễ mấy việc đầu công đoạn; dồn vào sẽ che mất việc trễ thật.
+
+Quét lại sau khi vá: 20 → **6 dự án**, 291 → **105 việc**. Sáu dự án còn lại đều lệch ≤ 1 (đúng nhóm 2, cộng TB-2026-784 nay lệch 0). TB-2026-784 vẫn còn 20/41 việc quá hạn vì lịch nội bộ của nó trải rộng hơn 26 ngày đã dồn — dồn đều giữ nguyên khoảng cách nên việc đầu công đoạn vẫn ở quá khứ; đúng thiết kế, không phải lỗi.
+
+---
+
+## 2026-10-08 — Trang Quản lý nhiệm vụ: việc VC/LĐ hết bị xếp nhầm vào làn Sản xuất (SQL 715, ĐÃ ÁP)
+
+Xưởng hỏi vì sao trang `/sx/project-tasks` đầy nhiệm vụ của đơn đã giao. Gốc: view `unified_tasks_v` (bản 594) suy `task_kind` theo thuộc tính DỰ ÁN — `p.production_person_id IS NOT NULL` ⇒ MỌI nhiệm vụ của dự án thành `SX`, kể cả việc do bộ mẫu VC/LĐ sinh ra. Cả 124 dự án HCB ở cột «ĐƠN HÀNG ĐÃ GIAO» đều có `production_person_id`, nên 874/874 việc còn mở mang nhãn SX dù 717 trong đó là việc giao–lắp.
+
+`database/715_unified_tasks_v_task_kind_theo_nhiem_vu.sql` chèn hai nhánh đọc `tasks.metadata->>'workshop_area'` LÊN TRƯỚC biểu thức cũ; việc không có `workshop_area` giữ nguyên hành vi. Chỉ đổi biểu thức `task_kind`, không đổi cột/kiểu/thứ tự/nhánh UNION.
+
+ĐÃ ÁP lên dự án chính `qlycv` (`kdxypztstbeovyedmvem`) lúc 08/10/2026. Đo trước/sau trên chính view: việc còn mở của HCB 6.191 SX + 0 VC → **3.216 SX + 2.975 VC** (tổng không đổi, `unified_id` trùng = 0, tổng dòng view 149.111). Riêng 124 đơn ở cột «ĐƠN HÀNG ĐÃ GIAO»: **157 SX + 717 VC** — khớp đúng con số đo độc lập phía Node trước khi áp.
+
+ĐÃ áp lên cả `QLCV_Backup` (`atcfpgxkgbszglrelfgr`) ngày 09/10/2026 — hai DB nay cùng định nghĩa view. Backup trước khi áp: 4.810 SX + 52 «Dự án» + 0 VC; sau: 2.933 SX + 1.877 VC + 52 «Dự án» (tổng 4.862 không đổi, `unified_id` trùng = 0, tổng dòng view 113.972).
+
+Chưa làm: chưa mở trình duyệt xem lại hai tab. Hoàn tác: chạy `715_..._rollback.sql`.
+
+**Đã đóng việc sản xuất của đơn đã giao (09/10/2026).** 133 dự án đang đứng ở cột «ĐƠN HÀNG ĐÃ GIAO» có 931 việc còn mở. Đóng **132** việc khu sản xuất; giữ nguyên **774 việc VC/LĐ** và **25 việc sau giao hàng**. Rollback: `backend/uploads/_rollback_dong_viec_don_da_giao_1791513018243.json`. Chạy lại script sau khi ghi: 931 → 799 việc mở, 0 việc còn phải đóng.
+
+Phân loại dùng `isLogisticsWorkshopTask` (cùng hàm `completeOpenWorkOnModuleDone` dùng) cộng danh sách từ khóa việc-sau-giao. Lượt dry-run ĐẦU lọt hai việc không được đóng — «Lắp đặt tại công trình» và «Xin đánh giá & giới thiệu» — vì `metadata.workshop_area` của chúng không phải `logistics`; đã thêm `lap dat` / `danh gia` / `gioi thieu` vào bộ từ khóa rồi mới ghi. Bài học: với nhóm việc này KHÔNG tin một mình `workshop_area`, phải soi danh sách tiêu đề trước khi đóng.
+
 ---
 
 ## 2026-10-08 — Bàn giao VC không còn làm đơn biến mất khỏi module Sản xuất

@@ -1,0 +1,2006 @@
+[
+  {
+    "path": "/crm/leads/:id#vi-sao-phai-nam-tung-vung-tren-trang-nay",
+    "label": "Vì sao phải nắm từng vùng trên trang này",
+    "menu": "CRM → Bán hàng",
+    "summary": "Một hồ sơ khách không phải “một form”. Đó là nơi làm việc cả vòng đời: từ hỏi giá → khảo sát → báo giá → ký HĐ → đặt hàng phụ → bàn giao xưởng / lắp đặt.",
+    "keywords": [
+      "vi sao phai nam tung vung tren trang nay",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Một hồ sơ khách không phải “một form”. Đó là nơi làm việc cả vòng đời: từ hỏi giá → khảo sát → báo giá → ký HĐ → đặt hàng phụ → bàn giao xưởng / lắp đặt.\nMục tiêu của trang:\nKhông mất ngữ cảnh — người khác mở cùng hồ sơ vẫn biết khách đang ở đâu, đã nói gì, file nào đã có.\nKhông nhầm kênh — việc bán hàng, chat nội bộ, hội thoại khách, file, PO, ghi âm… mỗi thứ một tab.\nChặn tiến độ giả — kéo giai đoạn khi task chưa xong thì hệ thống chặn; KPI và báo cáo mới đúng.\nVùng — Ở đâu — Việc chính\nHeader — Thanh trên cùng — Nhận diện hồ sơ + thao tác lớn (chuyển Deal, sự kiện, kế hoạch SX…)\nStepper giai đoạn — Ngay dưới header — Xem / đổi cột pipeline (cùng nghĩa với kéo thẻ Kanban)\nCột trái Thông tin — Trái — Sửa SĐT, giá trị, nguồn, phụ trách, deadline thẻ\nHàng tab (cột phải) — Phải — Nơi làm việc hàng ngày: task, file, chat, PO…\nLead và Deal dùng chung trang. Khác nhau ở nút header và một số tab chỉ hiện theo điều kiện.\nĐăng nhập → menu trái CRM.\nMở Bảng Lead hoặc Bảng Deal (Kanban).\nLọc đúng công ty (nếu admin thấy nhiều công ty).\nBấm thẻ khách trên Kanban (hoặc tìm theo tên / SĐT / mã rồ",
+    "actions": [
+      {
+        "label": "Không mất ngữ cảnh — người khác mở cùng hồ sơ vẫn biết khách đang ở đâu, đã nói gì, file nào đã có."
+      },
+      {
+        "label": "Không nhầm kênh — việc bán hàng, chat nội bộ, hội thoại khách, file, PO, ghi âm… mỗi thứ một tab."
+      },
+      {
+        "label": "Chặn tiến độ giả — kéo giai đoạn khi task chưa xong thì hệ thống chặn; KPI và báo cáo mới đúng."
+      },
+      {
+        "label": "Đăng nhập → menu trái CRM."
+      },
+      {
+        "label": "Mở Bảng Lead hoặc Bảng Deal (Kanban)."
+      },
+      {
+        "label": "Lọc đúng công ty (nếu admin thấy nhiều công ty)."
+      },
+      {
+        "label": "Bấm thẻ khách trên Kanban (hoặc tìm theo tên / SĐT / mã rồi bấm thẻ)."
+      },
+      {
+        "label": "Trang chi tiết mở. Cuộn nhẹ: trên là header + stepper, trái là Thông tin, phải là hàng tab."
+      },
+      {
+        "label": "(Tuỳ chọn) Bấm Hướng dẫn chi tiết trên header để tour từng nút ngay trên màn hình đang mở."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#header-nhan-dien-ho-so-va-thao-tac-lon",
+    "label": "Header — nhận diện hồ sơ và thao tác lớn",
+    "menu": "CRM → Bán hàng",
+    "summary": "Chức năng: Thanh hành động của cả ca làm việc. Không nằm ở menu trái.",
+    "keywords": [
+      "header — nhan dien ho so va thao tac lon",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Chức năng: Thanh hành động của cả ca làm việc. Không nằm ở menu trái.\nMục đích: Thao tác “đổi trạng thái hồ sơ” hoặc “mở luồng lớn” phải một chỗ, không rải trong từng tab.\nMục tiêu: Người phụ trách mở hồ sơ là biết đây Lead hay Deal, khách nào, phân loại gì, rồi bấm đúng nút cho bước tiếp theo.\nThành phần — Tác dụng — Mục tiêu\nNút mũi tên về — Quay Kanban CRM, giữ filter / thẻ đang focus — Không lạc pipeline đang lọc\nGhim — Ghim thẻ lên đầu Kanban của bạn — Ưu tiên hồ sơ nóng, không mất trong đống thẻ\nĐã tương tác — Đánh dấu đã liên hệ khách (bật/tắt tay) — Phân biệt “đã đụng” vs “chưa gọi” trên bảng\nBadge LEAD / DEAL — Phân biệt giai đoạn kinh doanh — Lead = chưa cam kết mua; Deal = đã chốt / đang làm HĐ–SX\nMã (LEAD-6535…) — Định danh cố định — Tra cứu, bàn giao, đối soát KPI\nTên hồ sơ + bút sửa — Đổi tiêu đề tại chỗ — Tiêu đề phải nhận ra khách + khu vực + sản phẩm\nPhân loại (vd. Bếp) — Loại lead/deal theo danh mục công ty — Báo cáo theo loại SP; xưởng nhận đúng pack việc\nNút — Khi hiện — Chức năng / tác dụng — Mục đích — Mục tiêu\nHướng dẫn chi tiết — Luôn — Bật tour từng vùng trên",
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#header-nhan-dien-ho-so-va-thao-tac-lon-sua-ten-ho-so",
+    "label": "Sửa tên hồ sơ (Header — nhận diện hồ sơ và thao tác lớn)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Bấm icon bút cạnh tiêu đề.",
+    "keywords": [
+      "sua ten ho so",
+      "header — nhan dien ho so va thao tac lon",
+      "icon but",
+      "luu",
+      "huy",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Bấm icon bút cạnh tiêu đề.\nGõ tên rõ: Tên khách — khu vực — sản phẩm (vd. Chicuong Chen — Bếp).\nBấm Lưu (xanh) hoặc Hủy.",
+    "actions": [
+      {
+        "label": "Bấm icon bút cạnh tiêu đề."
+      },
+      {
+        "label": "Gõ tên rõ: Tên khách — khu vực — sản phẩm (vd. Chicuong Chen — Bếp)."
+      },
+      {
+        "label": "Bấm Lưu (xanh) hoặc Hủy."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#header-nhan-dien-ho-so-va-thao-tac-lon-ghim-danh-dau-da-tuon",
+    "label": "Ghim / đánh dấu đã tương tác (Header — nhận diện hồ sơ và thao tác lớn)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Bấm ghim (icon pin) → thẻ lên đầu Kanban của bạn. Bấm lại để bỏ ghim.",
+    "keywords": [
+      "ghim / danh dau da tuong tac",
+      "header — nhan dien ho so va thao tac lon",
+      "ghim",
+      "dau check",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Bấm ghim (icon pin) → thẻ lên đầu Kanban của bạn. Bấm lại để bỏ ghim.\nBấm dấu check (đã tương tác) sau khi đã liên hệ khách. Bấm lại nếu đánh nhầm.",
+    "actions": [
+      {
+        "label": "Bấm ghim (icon pin) → thẻ lên đầu Kanban của bạn. Bấm lại để bỏ ghim."
+      },
+      {
+        "label": "Bấm dấu check (đã tương tác) sau khi đã liên hệ khách. Bấm lại nếu đánh nhầm."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#header-nhan-dien-ho-so-va-thao-tac-lon-chay-tour-huong-dan",
+    "label": "Chạy tour hướng dẫn (Header — nhận diện hồ sơ và thao tác lớn)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Bấm Hướng dẫn chi tiết (nút xanh nhạt, icon sách).",
+    "keywords": [
+      "chay tour huong dan",
+      "header — nhan dien ho so va thao tac lon",
+      "huong dan chi tiet",
+      "tiep",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Bấm Hướng dẫn chi tiết (nút xanh nhạt, icon sách).\nLàm theo từng bước trên overlay. Tiếp để qua bước; có thể bỏ qua bước tùy chọn nếu hồ sơ chưa có task.",
+    "actions": [
+      {
+        "label": "Bấm Hướng dẫn chi tiết (nút xanh nhạt, icon sách)."
+      },
+      {
+        "label": "Làm theo từng bước trên overlay. Tiếp để qua bước; có thể bỏ qua bước tùy chọn nếu hồ sơ chưa có task."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#header-nhan-dien-ho-so-va-thao-tac-lon-chuyen-lead-deal",
+    "label": "Chuyển Lead → Deal (Header — nhận diện hồ sơ và thao tác lớn)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Chỉ hiện khi badge đang là LEAD.",
+    "keywords": [
+      "chuyen lead → deal",
+      "header — nhan dien ho so va thao tac lon",
+      "lead",
+      "ten khach + sdt",
+      "chuyen deal",
+      "chuyen sang deal",
+      "deal",
+      "chuyen lead thanh deal",
+      "chuyen lead sang deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Chỉ hiện khi badge đang là LEAD.\nKiểm tra cột trái: đủ tên khách + SĐT (thiếu thì hệ thống báo, bổ sung rồi thử lại).\nBấm Chuyển Deal (nút xanh lá).\nĐọc popup: điều kiện, pipeline Deal, người phụ trách (nếu hệ thống yêu cầu).\nXác nhận Chuyển sang Deal.\nBadge đổi thành DEAL. Hồ sơ sang pipeline Deal; tài liệu / task / hoạt động giữ nguyên.",
+    "actions": [
+      {
+        "label": "Chỉ hiện khi badge đang là LEAD."
+      },
+      {
+        "label": "Kiểm tra cột trái: đủ tên khách + SĐT (thiếu thì hệ thống báo, bổ sung rồi thử lại)."
+      },
+      {
+        "label": "Bấm Chuyển Deal (nút xanh lá)."
+      },
+      {
+        "label": "Đọc popup: điều kiện, pipeline Deal, người phụ trách (nếu hệ thống yêu cầu)."
+      },
+      {
+        "label": "Xác nhận Chuyển sang Deal."
+      },
+      {
+        "label": "Badge đổi thành DEAL. Hồ sơ sang pipeline Deal; tài liệu / task / hoạt động giữ nguyên."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#header-nhan-dien-ho-so-va-thao-tac-lon-tra-deal-lead",
+    "label": "Trả Deal → Lead (Header — nhận diện hồ sơ và thao tác lớn)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Chỉ hiện khi đang là DEAL.",
+    "keywords": [
+      "tra deal → lead",
+      "header — nhan dien ho so va thao tac lon",
+      "deal",
+      "tra ve lead",
+      "nguoi phu trach lead moi",
+      "ly do",
+      "tich",
+      "tra deal thanh lead",
+      "tra deal sang lead",
+      "lead",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Chỉ hiện khi đang là DEAL.\nBấm Trả về Lead.\nChọn người phụ trách Lead mới (bắt buộc).\nNhập lý do.\nNếu deal đã có dự án SX: đọc cảnh báo, tích «Tôi xác nhận gỡ liên kết dự án SX khỏi deal này» (không xóa xưởng).\nBấm Trả về Lead. Deal về cột nhận Lead trả về của pipeline Lead.",
+    "actions": [
+      {
+        "label": "Chỉ hiện khi đang là DEAL."
+      },
+      {
+        "label": "Bấm Trả về Lead."
+      },
+      {
+        "label": "Chọn người phụ trách Lead mới (bắt buộc)."
+      },
+      {
+        "label": "Nhập lý do."
+      },
+      {
+        "label": "Nếu deal đã có dự án SX: đọc cảnh báo, tích «Tôi xác nhận gỡ liên kết dự án SX khỏi deal này» (không xóa xưởng)."
+      },
+      {
+        "label": "Bấm Trả về Lead. Deal về cột nhận Lead trả về của pipeline Lead."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#header-nhan-dien-ho-so-va-thao-tac-lon-chuyen-nguoi-phu-trac",
+    "label": "Chuyển người phụ trách (Header — nhận diện hồ sơ và thao tác lớn)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Bấm Chuyển người phụ trách.",
+    "keywords": [
+      "chuyen nguoi phu trach",
+      "header — nhan dien ho so va thao tac lon",
+      "hien tai",
+      "cong ty",
+      "khu vuc",
+      "nhan vien",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Bấm Chuyển người phụ trách.\nXem khối xám: công ty / khu vực / phụ trách hiện tại.\nNếu được chuyển công ty: chọn Công ty trước.\nChọn Khu vực → danh sách NV của khu vực đó.\nChọn nhân viên mới → xác nhận.\nKiểm lại cột trái: phụ trách đã đổi.",
+    "actions": [
+      {
+        "label": "Bấm Chuyển người phụ trách."
+      },
+      {
+        "label": "Xem khối xám: công ty / khu vực / phụ trách hiện tại."
+      },
+      {
+        "label": "Nếu được chuyển công ty: chọn Công ty trước."
+      },
+      {
+        "label": "Chọn Khu vực → danh sách NV của khu vực đó."
+      },
+      {
+        "label": "Chọn nhân viên mới → xác nhận."
+      },
+      {
+        "label": "Kiểm lại cột trái: phụ trách đã đổi."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#header-nhan-dien-ho-so-va-thao-tac-lon-tao-su-kien-gan-ho-so",
+    "label": "Tạo sự kiện gắn hồ sơ (Header — nhận diện hồ sơ và thao tác lớn)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Bấm Tạo sự kiện.",
+    "keywords": [
+      "tao su kien gan ho so",
+      "header — nhan dien ho so va thao tac lon",
+      "tao su kien",
+      "loai su kien",
+      "su kien",
+      "tu hoi",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Bấm Tạo sự kiện.\nChọn loại sự kiện (khảo sát, gặp khách, ký HĐ…).\nĐiền thời gian, địa điểm, ghi chú nếu có.\nLưu. Sự kiện gắn đúng lead/deal này — xem lại tại menu CRM → Sự kiện.\nĐóng form. Sửa / xóa sau trên trang Sự kiện.\nMột số cột pipeline bật «tạo sự kiện khi vào» — khi bấm stepper vào cột đó, hệ thống tự hỏi lịch hẹn (giống bước G).",
+    "actions": [
+      {
+        "label": "Bấm Tạo sự kiện."
+      },
+      {
+        "label": "Chọn loại sự kiện (khảo sát, gặp khách, ký HĐ…)."
+      },
+      {
+        "label": "Điền thời gian, địa điểm, ghi chú nếu có."
+      },
+      {
+        "label": "Lưu. Sự kiện gắn đúng lead/deal này — xem lại tại menu CRM → Sự kiện."
+      },
+      {
+        "label": "Đóng form. Sửa / xóa sau trên trang Sự kiện."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#header-nhan-dien-ho-so-va-thao-tac-lon-phieu-khao-sat-nut-ca",
+    "label": "Phiếu khảo sát (nút cam trên header) (Header — nhận diện hồ sơ và thao tác lớn)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Nút chỉ hiện khi giai đoạn có form khảo sát.",
+    "keywords": [
+      "phieu khao sat (nut cam tren header)",
+      "header — nhan dien ho so va thao tac lon",
+      "them phieu khao sat",
+      "sua phieu khao sat",
+      "cong viec",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Nút chỉ hiện khi giai đoạn có form khảo sát.\nCam đậm Thêm phiếu khảo sát = chưa điền; cam nhạt Sửa phiếu khảo sát = đã có phiếu.\nBấm nút → hệ thống mở tab Công việc và mở form.\nĐiền số đo / hiện trạng → lưu.\nKhông tìm phiếu ở tab Ghi chú.",
+    "actions": [
+      {
+        "label": "Nút chỉ hiện khi giai đoạn có form khảo sát."
+      },
+      {
+        "label": "Cam đậm Thêm phiếu khảo sát = chưa điền; cam nhạt Sửa phiếu khảo sát = đã có phiếu."
+      },
+      {
+        "label": "Bấm nút → hệ thống mở tab Công việc và mở form."
+      },
+      {
+        "label": "Điền số đo / hiện trạng → lưu."
+      },
+      {
+        "label": "Không tìm phiếu ở tab Ghi chú."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#header-nhan-dien-ho-so-va-thao-tac-lon-import-excel-bao-gia",
+    "label": "Import Excel báo giá (Header — nhận diện hồ sơ và thao tác lớn)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Bấm Import Excel.",
+    "keywords": [
+      "import excel bao gia",
+      "header — nhan dien ho so va thao tac lon",
+      "import excel",
+      "mau bao gia cua cong ty",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Bấm Import Excel.\nChọn file theo mẫu báo giá của công ty (không dùng file khách tùy hứng nếu lệch cột).\nXem trước / xác nhận import.\nKiểm tra kết quả trên hồ sơ (dòng hàng / file BG). Sai file thì hủy, không import đè bừa.",
+    "actions": [
+      {
+        "label": "Bấm Import Excel."
+      },
+      {
+        "label": "Chọn file theo mẫu báo giá của công ty (không dùng file khách tùy hứng nếu lệch cột)."
+      },
+      {
+        "label": "Xem trước / xác nhận import."
+      },
+      {
+        "label": "Kiểm tra kết quả trên hồ sơ (dòng hàng / file BG). Sai file thì hủy, không import đè bừa."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#header-nhan-dien-ho-so-va-thao-tac-lon-thiet-lap-sua-ke-hoac",
+    "label": "Thiết lập / sửa kế hoạch SX & VC/LĐ (chỉ Deal) (Header — nhận diện hồ sơ và thao tác lớn)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Deal chưa có dự án: bấm Thiết lập kế hoạch SX & VC/LĐ.",
+    "keywords": [
+      "thiet lap / sua ke hoach sx & vc/ld (chi deal)",
+      "header — nhan dien ho so va thao tac lon",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Deal chưa có dự án: bấm Thiết lập kế hoạch SX & VC/LĐ.\nDeal đã có dự án: bấm Kế hoạch SX & VC/LĐ để sửa lịch (đúng quyền).\nTrong form: chọn công ty SX, ngày lắp, thông tin VC/LĐ — chi tiết điền form học khoá Kế hoạch SX & VC/LĐ.\nLưu → hệ thống tạo / cập nhật dự án xưởng.\nKiểm tab Thành viên: phụ trách VC thường được tự thêm.\nDải CRM · Sản xuất · VC/LĐ hiện dưới header: bấm Sản xuất để sang trang xưởng cùng đơn, rồi quay lại deal.",
+    "actions": [
+      {
+        "label": "Deal chưa có dự án: bấm Thiết lập kế hoạch SX & VC/LĐ."
+      },
+      {
+        "label": "Deal đã có dự án: bấm Kế hoạch SX & VC/LĐ để sửa lịch (đúng quyền)."
+      },
+      {
+        "label": "Trong form: chọn công ty SX, ngày lắp, thông tin VC/LĐ — chi tiết điền form học khoá Kế hoạch SX & VC/LĐ."
+      },
+      {
+        "label": "Lưu → hệ thống tạo / cập nhật dự án xưởng."
+      },
+      {
+        "label": "Kiểm tab Thành viên: phụ trách VC thường được tự thêm."
+      },
+      {
+        "label": "Dải CRM · Sản xuất · VC/LĐ hiện dưới header: bấm Sản xuất để sang trang xưởng cùng đơn, rồi quay lại deal."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#header-nhan-dien-ho-so-va-thao-tac-lon-tao-don-hang-phat-sin",
+    "label": "Tạo đơn hàng phát sinh (Deal khách hàng) (Header — nhận diện hồ sơ và thao tác lớn)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Không nhầm với tab Đặt hàng.",
+    "keywords": [
+      "tao don hang phat sinh (deal khach hang)",
+      "header — nhan dien ho so va thao tac lon",
+      "dat hang",
+      "tao don hang phat sinh",
+      "deal moi + du an sx",
+      "mo deal nguon",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Không nhầm với tab Đặt hàng.\nBấm Tạo đơn hàng phát sinh.\nChọn lại công ty SX và kế hoạch lắp (theo form).\nLưu → hệ thống tạo deal mới + dự án SX, thẻ ở cột đầu tab Khách hàng.\nBanner teal trên hồ sơ phát sinh: bấm tên để mở deal nguồn.",
+    "actions": [
+      {
+        "label": "Không nhầm với tab Đặt hàng."
+      },
+      {
+        "label": "Bấm Tạo đơn hàng phát sinh."
+      },
+      {
+        "label": "Chọn lại công ty SX và kế hoạch lắp (theo form)."
+      },
+      {
+        "label": "Lưu → hệ thống tạo deal mới + dự án SX, thẻ ở cột đầu tab Khách hàng."
+      },
+      {
+        "label": "Banner teal trên hồ sơ phát sinh: bấm tên để mở deal nguồn."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#stepper-giai-doan-pipeline",
+    "label": "Stepper giai đoạn (Pipeline)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Chức năng: Hàng vòng tròn dưới header. Mỗi vòng = một cột pipeline (vd. Chờ sale xác nhận → Khảo sát → Báo giá → Ký HĐ → Đang sản xuất…).",
+    "keywords": [
+      "stepper giai doan (pipeline)",
+      "bam mot vong",
+      "chan",
+      "tien do that",
+      "cach dung dung",
+      "cong viec",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Chức năng: Hàng vòng tròn dưới header. Mỗi vòng = một cột pipeline (vd. Chờ sale xác nhận → Khảo sát → Báo giá → Ký HĐ → Đang sản xuất…).\nTác dụng:\n• Vòng hiện tại tô màu cột; vòng đã qua có dấu ✓; vòng chưa tới xám.\n• Bấm một vòng = chuyển giai đoạn (cùng nghiệp vụ kéo thẻ Kanban).\n• Hệ thống có thể chặn và mở popup: nhiệm vụ bắt buộc chưa xong, thiếu người, thiếu deadline, lý do thua, hoặc hỏi tạo sự kiện (vd. vào cột khảo sát).\nMục đích: Pipeline phản ánh tiến độ thật của khách — không phải trang trí bảng.\nMục tiêu:\nMọi người nhìn hồ sơ biết khách đang ở bước nào, không hỏi lại.\nBáo cáo / KPI theo cột đúng (kéo sai cột = số liệu sai).\nGate nhiệm vụ: không “kéo đẹp” khi việc chưa làm.\nCách dùng đúng\nLàm việc trên tab Công việc (hoàn thành task, ghi chú, file).\nKhi đủ điều kiện mới bấm vòng tiếp theo (hoặc kéo Kanban).\nNếu bị chặn: đọc thông báo, bổ sung task / người / deadline rồi thử lại.",
+    "actions": [
+      {
+        "label": "Mọi người nhìn hồ sơ biết khách đang ở bước nào, không hỏi lại."
+      },
+      {
+        "label": "Báo cáo / KPI theo cột đúng (kéo sai cột = số liệu sai)."
+      },
+      {
+        "label": "Gate nhiệm vụ: không “kéo đẹp” khi việc chưa làm."
+      },
+      {
+        "label": "Làm việc trên tab Công việc (hoàn thành task, ghi chú, file)."
+      },
+      {
+        "label": "Khi đủ điều kiện mới bấm vòng tiếp theo (hoặc kéo Kanban)."
+      },
+      {
+        "label": "Nếu bị chặn: đọc thông báo, bổ sung task / người / deadline rồi thử lại."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#stepper-giai-doan-pipeline-chuyen-giai-doan-tu-trang-chi-tie",
+    "label": "Chuyển giai đoạn từ trang chi tiết (Stepper giai đoạn (Pipeline))",
+    "menu": "CRM → Bán hàng",
+    "summary": "Nhìn hàng vòng: ✓ xanh = đã qua; vòng tô màu + chữ đậm = đang đứng; vòng xám = chưa tới.",
+    "keywords": [
+      "chuyen giai doan tu trang chi tiet",
+      "stepper giai doan (pipeline)",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Nhìn hàng vòng: ✓ xanh = đã qua; vòng tô màu + chữ đậm = đang đứng; vòng xám = chưa tới.\nCuộn ngang nếu pipeline dài (nhiều cột).\nBấm vòng cột muốn tới (thường là cột kế tiếp; nhảy xa có thể bị chặn tùy cấu hình).\nNếu không có popup — đã chuyển. Kiểm lại chữ đậm dưới vòng.\nNếu có popup, xử lý đúng loại:\n• Nhiệm vụ bắt buộc chưa xong → Đóng popup → tab Công việc → hoàn thành (ô tròn + ghi chú/file nếu bắt) → bấm stepper lại.\n• Thiếu người / deadline → chọn NV, đặt hạn → xác nhận.\n• Lý do thua → nhập lý do → xác nhận (cột thua).\n• Tạo sự kiện khi vào cột (vd. khảo sát) → điền lịch như mục G header → lưu.\nCách khác: về Kanban, kéo thẻ sang cột mới — cùng một rule chặn.",
+    "actions": [
+      {
+        "label": "Nhìn hàng vòng: ✓ xanh = đã qua; vòng tô màu + chữ đậm = đang đứng; vòng xám = chưa tới."
+      },
+      {
+        "label": "Cuộn ngang nếu pipeline dài (nhiều cột)."
+      },
+      {
+        "label": "Bấm vòng cột muốn tới (thường là cột kế tiếp; nhảy xa có thể bị chặn tùy cấu hình)."
+      },
+      {
+        "label": "Nếu không có popup — đã chuyển. Kiểm lại chữ đậm dưới vòng."
+      },
+      {
+        "label": "Nếu có popup, xử lý đúng loại:"
+      },
+      {
+        "label": "Cách khác: về Kanban, kéo thẻ sang cột mới — cùng một rule chặn."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#stepper-giai-doan-pipeline-deal-lead-dang-thua-hoi-lai",
+    "label": "Deal / Lead đang thua — hồi lại (Stepper giai đoạn (Pipeline))",
+    "menu": "CRM → Bán hàng",
+    "summary": "Banner đỏ Hồi lại deal (hoặc tương đương) trên hồ sơ thua.",
+    "keywords": [
+      "deal / lead dang thua — hoi lai",
+      "stepper giai doan (pipeline)",
+      "hoi lai deal",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Banner đỏ Hồi lại deal (hoặc tương đương) trên hồ sơ thua.\nBấm → xác nhận.\nHồ sơ trở lại pipeline đang chạy; không tạo mã mới.",
+    "actions": [
+      {
+        "label": "Banner đỏ Hồi lại deal (hoặc tương đương) trên hồ sơ thua."
+      },
+      {
+        "label": "Bấm → xác nhận."
+      },
+      {
+        "label": "Hồ sơ trở lại pipeline đang chạy; không tạo mã mới."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#stepper-giai-doan-pipeline-cot-hien-tai-khong-nam-tren-thanh",
+    "label": "Cột hiện tại không nằm trên thanh (Stepper giai đoạn (Pipeline))",
+    "menu": "CRM → Bán hàng",
+    "summary": "Nếu có khung vàng «Giai đoạn hiện tại … không nằm trong danh sách cột đang hiển thị»: cột đã tắt hoặc đổi pipeline — báo admin, đừng bấm lung tung các vòng để “sửa”.",
+    "keywords": [
+      "cot hien tai khong nam tren thanh",
+      "stepper giai doan (pipeline)",
+      "dung",
+      "luu y crm (khong linear nhu xuong)",
+      "thua",
+      "hoi lai deal",
+      "do cong ty cau hinh",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Nếu có khung vàng «Giai đoạn hiện tại … không nằm trong danh sách cột đang hiển thị»: cột đã tắt hoặc đổi pipeline — báo admin, đừng bấm lung tung các vòng để “sửa”.\nLưu ý CRM (không linear như xưởng)\n• Deal có thể bỏ qua cột SX/VC trên stepper CRM (cột đó thuộc module xưởng / lắp).\n• Cột thua có banner Hồi lại deal.\n• Tên cột do công ty cấu hình — ví dụ trên ảnh: Chuyển về lead → Chờ sale xác nhận → Chờ khảo sát → Đã khảo sát → Đang báo giá → Đã gửi BG → Theo dõi thêm → Cọc lên bản vẽ → Đã ký HĐ → Đang sản xuất.",
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#ban-do-hang-tab-chon-dung-kenh",
+    "label": "Bản đồ hàng tab — chọn đúng kênh",
+    "menu": "CRM → Bán hàng",
+    "summary": "Dùng bảng này trước khi ghi gì đó vào hồ sơ:",
+    "keywords": [
+      "ban do hang tab — chon dung kenh",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Dùng bảng này trước khi ghi gì đó vào hồ sơ:\nTab — Kênh gì — Đối tượng đọc — Không dùng để\nCông việc — Checklist bán hàng theo mẫu pipeline — Sale + người được gán task — Chat tán gẫu; giao việc xưởng (dùng Không gian chung)\nKhông gian chung — Giao việc cho người (CRM / SX / VC), kể cả công ty khác — Người được giao — Checklist mẫu giai đoạn\nĐặt hàng — PO mua hàng gắn deal — Sale + mua hàng — Tạo deal phát sinh (dùng nút header)\nTài liệu — File / văn bản trên hệ thống — Team được chia sẻ khối — Chat Messenger với khách\nDrive — File Google Drive gắn hồ sơ — Team dùng Drive chung — Thay thế 100% tab Tài liệu\nGhi chú & HĐ — Nhật ký chăm sóc khách + ghi chú nội bộ — Người xem hồ sơ — Chat nhóm thay cho quyết định\nFacebook / Zalo OA — Hội thoại với khách trên kênh gốc — Sale phụ trách inbox — Thảo luận giá nội bộ\nThành viên — Ai được vào hồ sơ — Admin / phụ trách — Giao từng việc (dùng Không gian chung)\nBình luận — Chat nội bộ trên hồ sơ (+ thẻ bàn giao VC) — Thành viên hồ sơ — Ghi cuộc gọi với khách (dùng Ghi chú & HĐ)\nLịch sử — Nhật ký hệ thống (chuyển cột, hoàn thành task…) — Mọi người",
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-cong-viec-loi-hay-gap-tab-cong-viec",
+    "label": "Lỗi hay gặp — Tab Công việc (Tab Công việc)",
+    "menu": "CRM → Bán hàng",
+    "summary": "• Bấm Xong hết khi khách chưa chốt → KPI/checklist sai.",
+    "keywords": [
+      "loi hay gap — tab cong viec",
+      "tab cong viec",
+      "xong het",
+      "cong viec",
+      "khong gian chung",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "• Bấm Xong hết khi khách chưa chốt → KPI/checklist sai.\n• Tìm phiếu khảo sát ở Ghi chú — phiếu nằm Công việc.\n• Nhầm với Không gian chung: đây là checklist mẫu, không phải “giao việc cho thợ xưởng”.",
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-cong-viec",
+    "label": "Tab Công việc",
+    "menu": "CRM → Bán hàng",
+    "summary": "Nhãn UI: ✅ Công việc",
+    "keywords": [
+      "tab cong viec",
+      "mau pipeline",
+      "crm / sx",
+      "bat buoc hoan thanh task",
+      "ngay hen",
+      "gan mau",
+      "them viec",
+      "xong het",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Nhãn UI: ✅ Công việc\nTooltip: Nhiệm vụ CRM (pipeline deal / lead)\nTour: lead-tab-tasks\nDanh sách nhiệm vụ theo mẫu pipeline của giai đoạn: gọi khách, khảo sát, gửi BG, checklist “đủ thông tin”… Có phiếu khảo sát, ghi chú/file trên từng việc, gán người, deadline.\nDeal có thể gạt CRM / SX để xem pack việc bán hàng hoặc pack xưởng (khi đã liên kết dự án).\n• Tự tạo / gắn việc khi vào cột mới (auto-task theo mẫu).\n• Nhiều cột bắt buộc hoàn thành task trước khi kéo stepper / Kanban.\n• File và ghi chú trên task đồng bộ sang tab Tài liệu (và có thể chia sẻ xưởng).\n• Widget lịch sử task thống nhất (CRM + dự án nếu có).\nBiến “cột Kanban” thành việc cụ thể có chủ, có hạn, có minh chứng — không chỉ đổi màu thẻ.\nSale biết hôm nay phải làm gì trên hồ sơ này.\nQuản lý đối soát: đã gọi chưa, đã đo chưa, đã đủ file chưa.\nChặn chuyển cột khi việc bắt buộc chưa xong → KPI đúng.\n• Hoàn thành (ô tròn) / đặt Ngày hẹn / gán người.\n• Icon kẹp giấy: mô tả mẫu, checklist con, ghi chú, upload ảnh/PDF.\n• Đủ / Chưa (verdict) — checklist thông tin trước khi kéo cột.\n• Gắn mẫu, Thêm việc, Xong hết (cả nhóm — chỉ kh",
+    "actions": [
+      {
+        "label": "Sale biết hôm nay phải làm gì trên hồ sơ này."
+      },
+      {
+        "label": "Quản lý đối soát: đã gọi chưa, đã đo chưa, đã đủ file chưa."
+      },
+      {
+        "label": "Chặn chuyển cột khi việc bắt buộc chưa xong → KPI đúng."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-cong-viec-mo-tab-va-doi-cach-xem",
+    "label": "Mở tab và đổi cách xem (Tab Công việc)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Bấm ✅ Công việc trên hàng tab (gạch chân xanh khi đang chọn).",
+    "keywords": [
+      "mo tab va doi cach xem",
+      "tab cong viec",
+      "✅ cong viec",
+      "crm / sx",
+      "list",
+      "deadline",
+      "planner",
+      "lich",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Bấm ✅ Công việc trên hàng tab (gạch chân xanh khi đang chọn).\nDeal đã có pack xưởng: gạt CRM / SX để xem việc bán hàng hoặc việc xưởng.\nĐổi kiểu xem: List (mặc định) · Deadline · Planner · Lịch — cùng một danh sách, khác cách sắp.",
+    "actions": [
+      {
+        "label": "Bấm ✅ Công việc trên hàng tab (gạch chân xanh khi đang chọn)."
+      },
+      {
+        "label": "Deal đã có pack xưởng: gạt CRM / SX để xem việc bán hàng hoặc việc xưởng."
+      },
+      {
+        "label": "Đổi kiểu xem: List (mặc định) · Deadline · Planner · Lịch — cùng một danh sách, khác cách sắp."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-cong-viec-gan-mau-bo-sung-viec-thieu",
+    "label": "Gắn mẫu / bổ sung việc thiếu (Tab Công việc)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Bấm Gắn mẫu (có thể có Gắn mẫu VC/LĐ nếu đúng ngữ cảnh lắp).",
+    "keywords": [
+      "gan mau / bo sung viec thieu",
+      "tab cong viec",
+      "gan mau",
+      "gan mau vc/ld",
+      "dung pipeline / cong ty",
+      "bo sung thieu crm",
+      "bo sung thieu sx",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Bấm Gắn mẫu (có thể có Gắn mẫu VC/LĐ nếu đúng ngữ cảnh lắp).\nChọn bộ mẫu đúng pipeline / công ty của hồ sơ — bấm tên mẫu.\nViệc mẫu xuất hiện theo nhóm giai đoạn.\nNếu deal đã chuyển xưởng mà thiếu việc: Bổ sung thiếu CRM hoặc Bổ sung thiếu SX.",
+    "actions": [
+      {
+        "label": "Bấm Gắn mẫu (có thể có Gắn mẫu VC/LĐ nếu đúng ngữ cảnh lắp)."
+      },
+      {
+        "label": "Chọn bộ mẫu đúng pipeline / công ty của hồ sơ — bấm tên mẫu."
+      },
+      {
+        "label": "Việc mẫu xuất hiện theo nhóm giai đoạn."
+      },
+      {
+        "label": "Nếu deal đã chuyển xưởng mà thiếu việc: Bổ sung thiếu CRM hoặc Bổ sung thiếu SX."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-cong-viec-them-mot-viec-trong-nhom",
+    "label": "Thêm một việc trong nhóm (Tab Công việc)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Trong nhóm giai đoạn, bấm Thêm việc.",
+    "keywords": [
+      "them mot viec trong nhom",
+      "tab cong viec",
+      "them viec",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Trong nhóm giai đoạn, bấm Thêm việc.\nĐiền tiêu đề, hạn, người (nếu form hỏi) → lưu.\nViệc mới nằm dưới nhóm đang mở.",
+    "actions": [
+      {
+        "label": "Trong nhóm giai đoạn, bấm Thêm việc."
+      },
+      {
+        "label": "Điền tiêu đề, hạn, người (nếu form hỏi) → lưu."
+      },
+      {
+        "label": "Việc mới nằm dưới nhóm đang mở."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-cong-viec-xu-ly-mot-dong-nhiem-vu-hang-ngay",
+    "label": "Xử lý một dòng nhiệm vụ (hàng ngày) (Tab Công việc)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Đọc tên việc — đây là việc phải làm.",
+    "keywords": [
+      "xu ly mot dong nhiem vu (hang ngay)",
+      "tab cong viec",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Đọc tên việc — đây là việc phải làm.\nBấm ô tròn bên trái khi đã xong / bấm lại nếu chưa xong. Cột có gate: chưa tick thì không kéo được stepper.\nBấm + Ngày hẹn (hoặc ngày đã có) để đặt / đổi deadline gọi-gặp.\nBấm icon người để gán 1 hoặc nhiều NV — họ nhận việc, có thể được @ trên Bình luận.\nĐủ / Chưa: tick nhanh «Đã đủ thông tin» hoặc «Chưa» (+ lý do) trước khi chuyển cột.\nNút ghi nhận file/ghi chú: đánh dấu đã bổ sung minh chứng (theo dõi đủ thông tin — không tự chặn cột).\nSửa (icon bút): đổi tiêu đề, mô tả, ưu tiên, người.\nXóa: chỉ khi tạo nhầm. Cẩn thận với việc bắt buộc của giai đoạn.\nGiao việc CRM / SX / VC trên dòng: mở bảng giao việc của khối (một số pack chỉ cho mở 1 việc tới lượt).",
+    "actions": [
+      {
+        "label": "Đọc tên việc — đây là việc phải làm."
+      },
+      {
+        "label": "Bấm ô tròn bên trái khi đã xong / bấm lại nếu chưa xong. Cột có gate: chưa tick thì không kéo được stepper."
+      },
+      {
+        "label": "Bấm + Ngày hẹn (hoặc ngày đã có) để đặt / đổi deadline gọi-gặp."
+      },
+      {
+        "label": "Bấm icon người để gán 1 hoặc nhiều NV — họ nhận việc, có thể được @ trên Bình luận."
+      },
+      {
+        "label": "Đủ / Chưa: tick nhanh «Đã đủ thông tin» hoặc «Chưa» (+ lý do) trước khi chuyển cột."
+      },
+      {
+        "label": "Nút ghi nhận file/ghi chú: đánh dấu đã bổ sung minh chứng (theo dõi đủ thông tin — không tự chặn cột)."
+      },
+      {
+        "label": "Sửa (icon bút): đổi tiêu đề, mô tả, ưu tiên, người."
+      },
+      {
+        "label": "Xóa: chỉ khi tạo nhầm. Cẩn thận với việc bắt buộc của giai đoạn."
+      },
+      {
+        "label": "Giao việc CRM / SX / VC trên dòng: mở bảng giao việc của khối (một số pack chỉ cho mở 1 việc tới lượt)."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-cong-viec-ghi-chu-file-checklist-tren-viec",
+    "label": "Ghi chú, file, checklist trên việc (Tab Công việc)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Bấm icon kẹp giấy bên phải dòng → khung mở dưới dòng.",
+    "keywords": [
+      "ghi chu, file, checklist tren viec",
+      "tab cong viec",
+      "icon kep giay",
+      "mo ta / huong dan mau",
+      "checklist con",
+      "ghi chu task",
+      "dinh kem",
+      "bat",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Bấm icon kẹp giấy bên phải dòng → khung mở dưới dòng.\nĐọc mô tả / hướng dẫn mẫu (nếu có).\nChecklist con: tick từng mục; thêm ghi chú/file riêng mục nếu hiện ô.\nÔ ghi chú task: viết kết quả cụ thể, vd. «15h30 gọi chị Lan, hẹn đo T5 sáng, KH đồng ý» — không chỉ «đã gọi».\nĐính kèm: upload ảnh khảo sát, PDF BG, HĐ… Đồng nghiệp mở cùng hồ sơ đều thấy; file hiện badge trên dòng và có thể lên tab Tài liệu.\nNhiều giai đoạn bắt ghi chú hoặc file trước khi đánh dấu xong / kéo cột — đọc thông báo nếu bị chặn.",
+    "actions": [
+      {
+        "label": "Bấm icon kẹp giấy bên phải dòng → khung mở dưới dòng."
+      },
+      {
+        "label": "Đọc mô tả / hướng dẫn mẫu (nếu có)."
+      },
+      {
+        "label": "Checklist con: tick từng mục; thêm ghi chú/file riêng mục nếu hiện ô."
+      },
+      {
+        "label": "Ô ghi chú task: viết kết quả cụ thể, vd. «15h30 gọi chị Lan, hẹn đo T5 sáng, KH đồng ý» — không chỉ «đã gọi»."
+      },
+      {
+        "label": "Đính kèm: upload ảnh khảo sát, PDF BG, HĐ… Đồng nghiệp mở cùng hồ sơ đều thấy; file hiện badge trên dòng và có thể lên tab Tài liệu."
+      },
+      {
+        "label": "Nhiều giai đoạn bắt ghi chú hoặc file trước khi đánh dấu xong / kéo cột — đọc thông báo nếu bị chặn."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-cong-viec-phieu-khao-sat-tren-viec",
+    "label": "Phiếu khảo sát trên việc (Tab Công việc)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Từ header Thêm/Sửa phiếu khảo sát, hoặc nút Sửa phiếu / Xóa phiếu trên đúng việc khảo sát.",
+    "keywords": [
+      "phieu khao sat tren viec",
+      "tab cong viec",
+      "them/sua phieu khao sat",
+      "sua phieu",
+      "xoa phieu",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Từ header Thêm/Sửa phiếu khảo sát, hoặc nút Sửa phiếu / Xóa phiếu trên đúng việc khảo sát.\nĐiền form → lưu. Xóa phiếu chỉ khi nhập nhầm.",
+    "actions": [
+      {
+        "label": "Từ header Thêm/Sửa phiếu khảo sát, hoặc nút Sửa phiếu / Xóa phiếu trên đúng việc khảo sát."
+      },
+      {
+        "label": "Điền form → lưu. Xóa phiếu chỉ khi nhập nhầm."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-cong-viec-xong-het-ca-nhom",
+    "label": "Xong hết cả nhóm (Tab Công việc)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Bấm Xong hết trên nhóm chỉ khi mọi việc trong nhóm thật sự xong.",
+    "keywords": [
+      "xong het ca nhom",
+      "tab cong viec",
+      "xong het",
+      "moi viec trong nhom that su xong",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Bấm Xong hết trên nhóm chỉ khi mọi việc trong nhóm thật sự xong.\nKhông bấm đầu ca «cho đẹp bảng».",
+    "actions": [
+      {
+        "label": "Bấm Xong hết trên nhóm chỉ khi mọi việc trong nhóm thật sự xong."
+      },
+      {
+        "label": "Không bấm đầu ca «cho đẹp bảng»."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-cong-viec-khoi-phuc-viec-xoa-nham",
+    "label": "Khôi phục việc xóa nhầm (Tab Công việc)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Dùng Khôi phục từ mẫu (khi có) nếu việc mẫu bị xóa — gắn lại từ bộ mẫu, không tạo tay tên lệch.",
+    "keywords": [
+      "khoi phuc viec xoa nham",
+      "tab cong viec",
+      "khoi phuc tu mau",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Dùng Khôi phục từ mẫu (khi có) nếu việc mẫu bị xóa — gắn lại từ bộ mẫu, không tạo tay tên lệch.",
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-khong-gian-chung-loi-hay-gap-tab-khong-gian-chung",
+    "label": "Lỗi hay gặp — Tab Không gian chung (Tab Không gian chung)",
+    "menu": "CRM → Bán hàng",
+    "summary": "• Giao việc trong tab Công việc rồi tưởng xưởng nhận — xưởng nhận ở đây / bảng Giao việc SX.",
+    "keywords": [
+      "loi hay gap — tab khong gian chung",
+      "tab khong gian chung",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "• Giao việc trong tab Công việc rồi tưởng xưởng nhận — xưởng nhận ở đây / bảng Giao việc SX.\n• Chỉ nhắn Zalo — mất vết, KPI không đối soát được.",
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-khong-gian-chung",
+    "label": "Tab Không gian chung",
+    "menu": "CRM → Bán hàng",
+    "summary": "Nhãn UI: 🤝 Không gian chung",
+    "keywords": [
+      "tab khong gian chung",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Nhãn UI: 🤝 Không gian chung\nTooltip: Phân công thành viên deal và nhiệm vụ giao chéo công ty\nTour: lead-tab-shared\nNơi giao việc cho người trên cùng một Deal: Sale, xưởng, VC, công ty khác. Lọc theo khối Bán hàng / Xưởng / Lắp đặt. Form giao việc: người, mô tả, hạn, ảnh, khối.\nNgười được giao thấy việc trên app (bảng giao việc + tab này), không phụ thuộc tin nhắn Zalo riêng. Deal phát sinh có link về deal nguồn / đơn anh em.\nPhối hợp đa công ty / đa khối trên một đơn, có vết trên hệ thống.\nXưởng / VC nhận đúng việc Sale giao, đúng hạn.\nTránh “nhắn riêng rồi quên, không ai chịu trách nhiệm”.\nTách rõ: mẫu pipeline (Công việc) vs việc giao cho người (tab này).\n• Lọc Tất cả / Bán hàng / Xưởng / Lắp đặt.\n• Thêm giao việc mới → Lưu.\n• Sửa / xóa / thêm ảnh trên từng dòng.\n• Link Giao việc ra bảng đầy đủ của khối.\nBấm 🤝 Không gian chung.\nĐọc danh sách việc đã giao. Deal phát sinh: dùng link Mở deal nguồn / đơn anh em nếu có.\nLọc chip Tất cả · Bán hàng · Xưởng · Lắp đặt để thu hẹp theo khối.\nGiao việc mới:\nBấm Thêm (hoặc link Giao việc để ra bảng đầy đủ).\nForm «Giao việc mới»: chọn người, k",
+    "actions": [
+      {
+        "label": "Xưởng / VC nhận đúng việc Sale giao, đúng hạn."
+      },
+      {
+        "label": "Tránh “nhắn riêng rồi quên, không ai chịu trách nhiệm”."
+      },
+      {
+        "label": "Tách rõ: mẫu pipeline (Công việc) vs việc giao cho người (tab này)."
+      },
+      {
+        "label": "Bấm 🤝 Không gian chung."
+      },
+      {
+        "label": "Đọc danh sách việc đã giao. Deal phát sinh: dùng link Mở deal nguồn / đơn anh em nếu có."
+      },
+      {
+        "label": "Lọc chip Tất cả · Bán hàng · Xưởng · Lắp đặt để thu hẹp theo khối."
+      },
+      {
+        "label": "Giao việc mới:"
+      },
+      {
+        "label": "Bấm Thêm (hoặc link Giao việc để ra bảng đầy đủ)."
+      },
+      {
+        "label": "Form «Giao việc mới»: chọn người, khối, mô tả, hạn, ảnh nếu cần."
+      },
+      {
+        "label": "Lưu. Hủy nếu chỉ xem form (thực hành)."
+      },
+      {
+        "label": "Trên từng dòng: Sửa nội dung/hạn/người; Thêm ảnh; Xóa nếu giao nhầm."
+      },
+      {
+        "label": "Người được giao phải có trong tab Thành viên (hoặc được hệ thống thêm) thì mới vào được deal — thiếu thì thêm Thành viên trước, rồi giao việ"
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-dat-hang-loi-hay-gap-tab-dat-hang",
+    "label": "Lỗi hay gặp — Tab Đặt hàng (Tab Đặt hàng)",
+    "menu": "CRM → Bán hàng",
+    "summary": "• Bấm Tạo đơn hàng phát sinh khi chỉ cần PO phụ kiện.",
+    "keywords": [
+      "loi hay gap — tab dat hang",
+      "tab dat hang",
+      "tao don hang phat sinh",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "• Bấm Tạo đơn hàng phát sinh khi chỉ cần PO phụ kiện.\n• Tạo PO rỗng (không có dòng hàng) — hệ thống yêu cầu ít nhất 1 dòng có tên.",
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-dat-hang",
+    "label": "Tab Đặt hàng",
+    "menu": "CRM → Bán hàng",
+    "summary": "Nhãn UI: 🛒 Đặt hàng",
+    "keywords": [
+      "tab dat hang",
+      "chi co tren chi tiet crm",
+      "lenh dat hang (po)",
+      "cua dung deal nay",
+      "mua hang",
+      "them",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Nhãn UI: 🛒 Đặt hàng\nTooltip: Lệnh đặt hàng của deal — lọc theo trạng thái\nTour: lead-tab-orders\nChỉ có trên chi tiết CRM (trang SX/VC không có tab này).\nQuản lý lệnh đặt hàng (PO) gắn deal: tạo từ catalog hoặc nhập tay, lọc trạng thái, xem/sửa/xóa. Badge số = số PO.\nTrạng thái: Nháp → Đã gửi MH → Xác nhận → Đã đặt NCC → Nhận 1 phần → Đã nhận / Đã hủy.\nTheo dõi mua vật tư / hàng phát sinh của đúng deal này, hiện cả module Mua hàng. Tiêu đề PO tự theo deal.\nTách luồng mua hàng khỏi luồng bán hàng và khỏi “đơn phát sinh” (deal mới).\nSale / mua hàng biết deal này đã đặt gì, bao nhiêu tiền, đang ở bước nào.\nKhông nhầm PO với deal phát sinh trên header.\nCatalog + dòng tay: đủ cả SP chuẩn và hạng mục ngoài list.\n• Thêm → chọn SP catalog hoặc gõ tên → Lưu.\n• Chip lọc trạng thái; mắt / sửa / xóa từng dòng.",
+    "actions": [
+      {
+        "label": "Sale / mua hàng biết deal này đã đặt gì, bao nhiêu tiền, đang ở bước nào."
+      },
+      {
+        "label": "Không nhầm PO với deal phát sinh trên header."
+      },
+      {
+        "label": "Catalog + dòng tay: đủ cả SP chuẩn và hạng mục ngoài list."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-dat-hang-tao-lenh-dat-hang",
+    "label": "Tạo lệnh đặt hàng (Tab Đặt hàng)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Bấm 🛒 Đặt hàng.",
+    "keywords": [
+      "tao lenh dat hang",
+      "tab dat hang",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Bấm 🛒 Đặt hàng.\nBấm Thêm (góc phải) hoặc Thêm mới nếu danh sách trống.\nForm hiện deal đang gắn (không đổi tay — PO theo hồ sơ này).\nChọn Ngày và Trạng thái (mới tạo thường Nháp).\nThêm dòng hàng — một trong hai cách (có thể kết hợp):\n• Nhập tay: gõ Tên hàng → SL → đơn giá → + Thêm. Enter cũng thêm.\n• Catalog: lọc thương hiệu / danh mục / ô tìm tên-mã-SKU → tick SP. Tick lại để bỏ.\nSửa SL, đơn giá, tên trên từng dòng đã chọn; icon thùng rác để xóa dòng.\nGhi chú nếu cần → Lưu. Cần ít nhất 1 dòng có tên.\nPO mới hiện trên bảng; badge số trên tab tăng.",
+    "actions": [
+      {
+        "label": "Bấm 🛒 Đặt hàng."
+      },
+      {
+        "label": "Bấm Thêm (góc phải) hoặc Thêm mới nếu danh sách trống."
+      },
+      {
+        "label": "Form hiện deal đang gắn (không đổi tay — PO theo hồ sơ này)."
+      },
+      {
+        "label": "Chọn Ngày và Trạng thái (mới tạo thường Nháp)."
+      },
+      {
+        "label": "Thêm dòng hàng — một trong hai cách (có thể kết hợp):"
+      },
+      {
+        "label": "Sửa SL, đơn giá, tên trên từng dòng đã chọn; icon thùng rác để xóa dòng."
+      },
+      {
+        "label": "Ghi chú nếu cần → Lưu. Cần ít nhất 1 dòng có tên."
+      },
+      {
+        "label": "PO mới hiện trên bảng; badge số trên tab tăng."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-dat-hang-loc-xem-sua-xoa",
+    "label": "Lọc, xem, sửa, xóa (Tab Đặt hàng)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Chip Tất cả hoặc chip trạng thái (chỉ hiện trạng thái đang có PO).",
+    "keywords": [
+      "loc, xem, sua, xoa",
+      "tab dat hang",
+      "tat ca",
+      "mat",
+      "dong",
+      "but sua",
+      "luu",
+      "thung rac",
+      "da huy",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Chip Tất cả hoặc chip trạng thái (chỉ hiện trạng thái đang có PO).\nMắt → popup chi tiết: mã, ngày, tổng, VAT, dòng hàng, khách. Đóng.\nBút sửa → cùng form, đổi dòng/trạng thái → Lưu.\nThùng rác → xác nhận Xóa {mã}? — không xóa PO đã đặt NCC nếu chưa hỏi mua hàng.\nLuồng trạng thái gợi ý: Nháp → Đã gửi MH → Xác nhận → Đã đặt NCC → (Nhận 1 phần) → Đã nhận. Đã hủy khi thôi mua.",
+    "actions": [
+      {
+        "label": "Chip Tất cả hoặc chip trạng thái (chỉ hiện trạng thái đang có PO)."
+      },
+      {
+        "label": "Mắt → popup chi tiết: mã, ngày, tổng, VAT, dòng hàng, khách. Đóng."
+      },
+      {
+        "label": "Bút sửa → cùng form, đổi dòng/trạng thái → Lưu."
+      },
+      {
+        "label": "Thùng rác → xác nhận Xóa {mã}? — không xóa PO đã đặt NCC nếu chưa hỏi mua hàng."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-tai-lieu-loi-hay-gap-tab-tai-lieu",
+    "label": "Lỗi hay gặp — Tab Tài liệu (Tab Tài liệu)",
+    "menu": "CRM → Bán hàng",
+    "summary": "• Upload HĐ nhưng không share SX → xưởng báo thiếu file.",
+    "keywords": [
+      "loi hay gap — tab tai lieu",
+      "tab tai lieu",
+      "ghi chu & hd",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "• Upload HĐ nhưng không share SX → xưởng báo thiếu file.\n• Nhét cuộc gọi vào Tài liệu — cuộc gọi thuộc Ghi chú & HĐ.",
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-tai-lieu",
+    "label": "Tab Tài liệu",
+    "menu": "CRM → Bán hàng",
+    "summary": "Nhãn UI: 📋 Tài liệu",
+    "keywords": [
+      "tab tai lieu",
+      "tren app",
+      "da chia se ve crm",
+      "chua chia se",
+      "mot nguon",
+      "nhap van ban",
+      "upload file",
+      "tai tat ca",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Nhãn UI: 📋 Tài liệu\nTour: lead-tab-documents\nKho file trên app: upload, nhập văn bản, tải ZIP (chia thư mục Deal → giai đoạn → nhiệm vụ → checklist). Gồm:\n• File gắn trên nhiệm vụ (panel theo giai đoạn).\n• Tài liệu xưởng đã chia sẻ về CRM.\n• File đồng bộ từ task.\n• File thêm trực tiếp trên lead/deal.\nBản vẽ, HĐ, ảnh khảo sát, BG… nằm trên hồ sơ. Có thể chia sẻ sang khối SX / VC. Xưởng không thấy file chưa chia sẻ, dù CRM đã upload.\nHồ sơ giấy tờ một nguồn — không gửi Zalo riêng rồi mất.\nNgười mới mở deal là tải được HĐ / bản vẽ.\nMinh chứng KPI (ảnh đo, scan HĐ) đúng chỗ.\nXưởng nhận file khi được share — tránh “không có bản vẽ”.\n• Nhập văn bản / Upload file / Tải tất cả.\n• Từng file: mở, in, tải, chia sẻ khối, xóa (đúng quyền).",
+    "actions": [
+      {
+        "label": "Người mới mở deal là tải được HĐ / bản vẽ."
+      },
+      {
+        "label": "Minh chứng KPI (ảnh đo, scan HĐ) đúng chỗ."
+      },
+      {
+        "label": "Xưởng nhận file khi được share — tránh “không có bản vẽ”."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-tai-lieu-upload-file-len-ho-so",
+    "label": "Upload file lên hồ sơ (Tab Tài liệu)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Bấm 📋 Tài liệu.",
+    "keywords": [
+      "upload file len ho so",
+      "tab tai lieu",
+      "📋 tai lieu",
+      "upload file",
+      "tai lieu lead",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Bấm 📋 Tài liệu.\nBấm Upload file → chọn PDF / ảnh / CAD từ máy. Chờ «Đang tải lên...».\nFile vào nhóm Tài liệu Lead (thêm trực tiếp trên deal).",
+    "actions": [
+      {
+        "label": "Bấm 📋 Tài liệu."
+      },
+      {
+        "label": "Bấm Upload file → chọn PDF / ảnh / CAD từ máy. Chờ «Đang tải lên...»."
+      },
+      {
+        "label": "File vào nhóm Tài liệu Lead (thêm trực tiếp trên deal)."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-tai-lieu-nhap-van-ban-khong-phai-file-may",
+    "label": "Nhập văn bản (không phải file máy) (Tab Tài liệu)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Bấm Nhập văn bản.",
+    "keywords": [
+      "nhap van ban (khong phai file may)",
+      "tab tai lieu",
+      "nhap van ban",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Bấm Nhập văn bản.\nĐiền tên, loại, nội dung / ghi chú; chọn phòng ban / công ty được xem nếu form hỏi.\nLưu. Dùng cho biên bản, ghi nhớ chữ — không thay upload scan HĐ.",
+    "actions": [
+      {
+        "label": "Bấm Nhập văn bản."
+      },
+      {
+        "label": "Điền tên, loại, nội dung / ghi chú; chọn phòng ban / công ty được xem nếu form hỏi."
+      },
+      {
+        "label": "Lưu. Dùng cho biên bản, ghi nhớ chữ — không thay upload scan HĐ."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-tai-lieu-tai-ca-kho-ve-may",
+    "label": "Tải cả kho về máy (Tab Tài liệu)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Khi badge số > 0, bấm Tải tất cả (N).",
+    "keywords": [
+      "tai ca kho ve may",
+      "tab tai lieu",
+      "tai tat ca (n)",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Khi badge số > 0, bấm Tải tất cả (N).\nChờ nén ZIP. File trong ZIP chia thư mục: Deal → giai đoạn → nhiệm vụ → checklist.",
+    "actions": [
+      {
+        "label": "Khi badge số > 0, bấm Tải tất cả (N)."
+      },
+      {
+        "label": "Chờ nén ZIP. File trong ZIP chia thư mục: Deal → giai đoạn → nhiệm vụ → checklist."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-tai-lieu-file-tu-nhiem-vu-tu-xuong",
+    "label": "File từ nhiệm vụ / từ xưởng (Tab Tài liệu)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Khối trên cùng: file gắn theo task / giai đoạn — bấm ảnh để xem lớn.",
+    "keywords": [
+      "file tu nhiem vu / tu xuong",
+      "tab tai lieu",
+      "theo task / giai doan",
+      "tai lieu tu san xuat",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Khối trên cùng: file gắn theo task / giai đoạn — bấm ảnh để xem lớn.\nKhối tím Tài liệu từ Sản xuất: xưởng đã share về CRM — chỉ xem, không xóa từ CRM.\nKhối đồng bộ từ NV: file task đẩy lên hồ sơ.",
+    "actions": [
+      {
+        "label": "Khối trên cùng: file gắn theo task / giai đoạn — bấm ảnh để xem lớn."
+      },
+      {
+        "label": "Khối tím Tài liệu từ Sản xuất: xưởng đã share về CRM — chỉ xem, không xóa từ CRM."
+      },
+      {
+        "label": "Khối đồng bộ từ NV: file task đẩy lên hồ sơ."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-tai-lieu-chia-se-sang-xuong-vc-quan-trong",
+    "label": "Chia sẻ sang xưởng / VC (quan trọng) (Tab Tài liệu)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Trên dòng file CRM, mở bánh răng / chia sẻ.",
+    "keywords": [
+      "chia se sang xuong / vc (quan trong)",
+      "tab tai lieu",
+      "banh rang / chia se",
+      "sx",
+      "vc",
+      "chua share thi xuong khong thay",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Trên dòng file CRM, mở bánh răng / chia sẻ.\nBật khối SX và/hoặc VC.\nLưu. Chưa share thì xưởng không thấy, dù file đã có trên tab này.",
+    "actions": [
+      {
+        "label": "Trên dòng file CRM, mở bánh răng / chia sẻ."
+      },
+      {
+        "label": "Bật khối SX và/hoặc VC."
+      },
+      {
+        "label": "Lưu. Chưa share thì xưởng không thấy, dù file đã có trên tab này."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-tai-lieu-xoa-file",
+    "label": "Xóa file (Tab Tài liệu)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Chỉ file mình quản lý được / đúng quyền canManageDeal. Không xóa file xưởng read-only.",
+    "keywords": [
+      "xoa file",
+      "tab tai lieu",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Chỉ file mình quản lý được / đúng quyền canManageDeal. Không xóa file xưởng read-only.",
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-drive-khi-nao-dung-tai-lieu-vs-drive-tab-drive",
+    "label": "Khi nào dùng Tài liệu vs Drive — Tab Drive (Tab Drive)",
+    "menu": "CRM → Bán hàng",
+    "summary": "• Tài liệu: file cần kiểm soát trên hệ thống, share khối, ZIP theo task.",
+    "keywords": [
+      "khi nao dung tai lieu vs drive — tab drive",
+      "tab drive",
+      "tai lieu",
+      "drive",
+      "bo sung",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "• Tài liệu: file cần kiểm soát trên hệ thống, share khối, ZIP theo task.\n• Drive: file sống trên Google, nhiều người sửa trên Drive.\nHai tab bổ sung, không thay thế nhau.",
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-drive",
+    "label": "Tab Drive",
+    "menu": "CRM → Bán hàng",
+    "summary": "Nhãn UI: ☁️ Drive",
+    "keywords": [
+      "tab drive",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Nhãn UI: ☁️ Drive\nTooltip: File trên Google Drive đã gắn vào lead/deal này\nTour: lead-tab-drive\nGắn thư mục / file Google Drive vào hồ sơ: tải lên Drive, tạo Doc/Sheet, liên kết file có sẵn, tải xuống, xóa.\nTeam đang làm việc trên Drive công ty vẫn neo file vào đúng khách, không copy hết vào server app.\nCầu nối CRM ↔ Drive: cùng một deal, mở tab là thấy folder khách.\nFile lớn / cộng tác Google (bản vẽ, sheet BOQ) không phải upload lại mỗi lần.\nNgười bàn giao biết “folder Drive của đơn này là gì”.\nBấm ☁️ Drive.\nThư mục: bấm Thư mục → gõ tên → Enter (Esc hủy).\nTải lên từ máy: bấm Tải lên từ máy → chọn file (nhiều file được). File vào folder Drive của hồ sơ và tự gắn.\nTạo Google Doc / Sheet: bấm Doc hoặc Sheet — file mới gắn vào bản ghi.\nGắn file đã có trên Drive: bấm Liên kết file Drive → chọn file/folder có sẵn → xác nhận.\nĐổi list / lưới bằng hai icon góc phải thanh công cụ.\nMở file bằng bấm tên (tab Google). Tải xuống / Xóa trên từng dòng khi cần gỡ khỏi hồ sơ.\nCông ty chưa kết nối Drive: làm theo hướng dẫn trên tab (admin cấu hình), không upload vào đây được.",
+    "actions": [
+      {
+        "label": "File lớn / cộng tác Google (bản vẽ, sheet BOQ) không phải upload lại mỗi lần."
+      },
+      {
+        "label": "Người bàn giao biết “folder Drive của đơn này là gì”."
+      },
+      {
+        "label": "Bấm ☁️ Drive."
+      },
+      {
+        "label": "Thư mục: bấm Thư mục → gõ tên → Enter (Esc hủy)."
+      },
+      {
+        "label": "Tải lên từ máy: bấm Tải lên từ máy → chọn file (nhiều file được). File vào folder Drive của hồ sơ và tự gắn."
+      },
+      {
+        "label": "Tạo Google Doc / Sheet: bấm Doc hoặc Sheet — file mới gắn vào bản ghi."
+      },
+      {
+        "label": "Gắn file đã có trên Drive: bấm Liên kết file Drive → chọn file/folder có sẵn → xác nhận."
+      },
+      {
+        "label": "Đổi list / lưới bằng hai icon góc phải thanh công cụ."
+      },
+      {
+        "label": "Mở file bằng bấm tên (tab Google). Tải xuống / Xóa trên từng dòng khi cần gỡ khỏi hồ sơ."
+      },
+      {
+        "label": "Công ty chưa kết nối Drive: làm theo hướng dẫn trên tab (admin cấu hình), không upload vào đây được."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-ghi-chu-hoat-dong-phan-biet-nhanh-tab-ghi-chu-hoat-dong",
+    "label": "Phân biệt nhanh — Tab Ghi chú & hoạt động (Tab Ghi chú & hoạt động)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Cần ghi — Đúng tab",
+    "keywords": [
+      "phan biet nhanh — tab ghi chu & hoat dong",
+      "tab ghi chu & hoat dong",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Cần ghi — Đúng tab\n“15h gọi chị Lan, hẹn đo T5” — Ghi chú & HĐ (hoạt động Gọi điện)\n“@Nam xem giúp giá cánh” — Bình luận\nTin Messenger khách — Facebook\nẢnh hiện trạng khảo sát — Công việc (file task) hoặc Tài liệu",
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-ghi-chu-hoat-dong-loi-hay-gap-tab-ghi-chu-hoat-dong",
+    "label": "Lỗi hay gặp — Tab Ghi chú & hoạt động (Tab Ghi chú & hoạt động)",
+    "menu": "CRM → Bán hàng",
+    "summary": "• Chỉ chat Bình luận, không ghi hoạt động → KPI / lịch sử chăm sóc trống.",
+    "keywords": [
+      "loi hay gap — tab ghi chu & hoat dong",
+      "tab ghi chu & hoat dong",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "• Chỉ chat Bình luận, không ghi hoạt động → KPI / lịch sử chăm sóc trống.\n• Thảo luận giá với khách trên Facebook rồi không tóm tắt vào hoạt động.",
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-ghi-chu-hoat-dong",
+    "label": "Tab Ghi chú & hoạt động",
+    "menu": "CRM → Bán hàng",
+    "summary": "Nhãn UI: 📝 Ghi chú & HĐ",
+    "keywords": [
+      "tab ghi chu & hoat dong",
+      "ghi chu noi bo",
+      "hoat dong",
+      "them",
+      "tuong tac voi khach",
+      "binh luan",
+      "facebook",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Nhãn UI: 📝 Ghi chú & HĐ\nTooltip: Ghi chú và lịch sử hoạt động\nTour: lead-tab-notes\nHai lớp:\nGhi chú nội bộ (ô soạn → Gửi Ctrl+Enter; sửa/xóa; có thể chia sẻ sang khối khác).\nHoạt động — timeline sự kiện với khách: Gọi điện, Gặp mặt, Email, Zalo, Ghi chú, Gửi báo giá… (nút Thêm). Hệ thống cũng ghi một số mốc (icon 🔄).\nNhật ký chăm sóc: ai gọi lúc nào, khách nói gì, kết quả ra sao. Đọc 30 giây trước cuộc gọi tiếp theo.\nLưu tương tác với khách (và ghi chú vận hành), tách khỏi chat nội bộ team.\nBàn giao ca / nghỉ phép: người mới đọc được lịch sử, không hỏi lại khách.\nMinh chứng đã liên hệ (SLA, KPI đúng hạn).\nKhông nhầm với Bình luận (nội bộ) hay Facebook (tin khách).",
+    "actions": [
+      {
+        "label": "Ghi chú nội bộ (ô soạn → Gửi Ctrl+Enter; sửa/xóa; có thể chia sẻ sang khối khác)."
+      },
+      {
+        "label": "Hoạt động — timeline sự kiện với khách: Gọi điện, Gặp mặt, Email, Zalo, Ghi chú, Gửi báo giá… (nút Thêm). Hệ thống cũng ghi một số mốc (icon"
+      },
+      {
+        "label": "Bàn giao ca / nghỉ phép: người mới đọc được lịch sử, không hỏi lại khách."
+      },
+      {
+        "label": "Minh chứng đã liên hệ (SLA, KPI đúng hạn)."
+      },
+      {
+        "label": "Không nhầm với Bình luận (nội bộ) hay Facebook (tin khách)."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-ghi-chu-hoat-dong-gui-ghi-chu-noi-bo",
+    "label": "Gửi ghi chú nội bộ (Tab Ghi chú & hoạt động)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Bấm 📝 Ghi chú & HĐ.",
+    "keywords": [
+      "gui ghi chu noi bo",
+      "tab ghi chu & hoat dong",
+      "📝 ghi chu & hd",
+      "gui",
+      "ctrl+enter",
+      "sua",
+      "luu",
+      "huy",
+      "chia se sang khoi khac",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Bấm 📝 Ghi chú & HĐ.\nGõ vào ô soạn (trên cùng).\nGửi hoặc Ctrl+Enter.\nSửa ghi chú cũ → Lưu / Hủy. Admin/manager có thể sửa ghi chú người khác.\nChia sẻ sang khối khác nếu xưởng/VC cần đọc ghi chú CRM.",
+    "actions": [
+      {
+        "label": "Bấm 📝 Ghi chú & HĐ."
+      },
+      {
+        "label": "Gõ vào ô soạn (trên cùng)."
+      },
+      {
+        "label": "Gửi hoặc Ctrl+Enter."
+      },
+      {
+        "label": "Sửa ghi chú cũ → Lưu / Hủy. Admin/manager có thể sửa ghi chú người khác."
+      },
+      {
+        "label": "Chia sẻ sang khối khác nếu xưởng/VC cần đọc ghi chú CRM."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-ghi-chu-hoat-dong-them-hoat-dong-goi-gap-zalo",
+    "label": "Thêm hoạt động (gọi, gặp, Zalo…) (Tab Ghi chú & hoạt động)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Kéo xuống khối Hoạt động → bấm Thêm.",
+    "keywords": [
+      "them hoat dong (goi, gap, zalo…)",
+      "tab ghi chu & hoat dong",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Kéo xuống khối Hoạt động → bấm Thêm.\nChọn loại: Gọi điện · Gặp mặt · Email · Zalo · Ghi chú · Bình luận @ · Gửi báo giá.\nNhập tiêu đề + nội dung (khách nói gì, hẹn gì) + kết quả nếu có.\nNgày hoạt động: mặc định hôm nay, đổi nếu ghi muộn.\nLưu. Dòng mới hiện trên timeline (icon theo loại, người tạo, giờ).\nQuy tắc ghi tốt: thời điểm + đã làm gì + khách phản hồi + bước tiếp. Ví dụ: «14h gọi, hẹn đo thứ 5, KH đồng ý».",
+    "actions": [
+      {
+        "label": "Kéo xuống khối Hoạt động → bấm Thêm."
+      },
+      {
+        "label": "Chọn loại: Gọi điện · Gặp mặt · Email · Zalo · Ghi chú · Bình luận @ · Gửi báo giá."
+      },
+      {
+        "label": "Nhập tiêu đề + nội dung (khách nói gì, hẹn gì) + kết quả nếu có."
+      },
+      {
+        "label": "Ngày hoạt động: mặc định hôm nay, đổi nếu ghi muộn."
+      },
+      {
+        "label": "Lưu. Dòng mới hiện trên timeline (icon theo loại, người tạo, giờ)."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-facebook-va-zalo-oa-loi-hay-gap-tab-facebook-va-zalo-oa",
+    "label": "Lỗi hay gặp — Tab Facebook (và Zalo OA) (Tab Facebook (và Zalo OA))",
+    "menu": "CRM → Bán hàng",
+    "summary": "• Đàm phán nội bộ trên Messenger khách.",
+    "keywords": [
+      "loi hay gap — tab facebook (va zalo oa)",
+      "tab facebook (va zalo oa)",
+      "khong co tab",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "• Đàm phán nội bộ trên Messenger khách.\n• Lead không từ Facebook thì không có tab — đừng tìm.",
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-facebook-va-zalo-oa",
+    "label": "Tab Facebook (và Zalo OA)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Nhãn UI: 📘 Facebook (hoặc 💬 Zalo OA)",
+    "keywords": [
+      "tab facebook (va zalo oa)",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Nhãn UI: 📘 Facebook (hoặc 💬 Zalo OA)\nTour: lead-tab-facebook / lead-tab-zalo\nChỉ hiện khi hồ sơ đến từ kênh inbox đó.\nHội thoại Messenger (hoặc Zalo OA) gắn đúng lead/deal: xem lịch sử, trả lời, đính ảnh/file, đồng bộ thread.\nSale trả lời khách ngay trên hồ sơ, không mở Facebook riêng rồi mất ngữ cảnh CRM.\nGiữ kênh khách và hồ sơ CRM là một. Lead từ fanpage không bị “chat một nơi, task một nơi”.\nKhông bỏ sót tin khách khi đang làm việc trên deal.\nNội bộ không thảo luận giá / quyết định trên kênh khách — quyết định ghi Ghi chú / Tài liệu / Công việc.\nChỉ làm khi thấy tab 📘 Facebook hoặc 💬 Zalo OA trên hàng tab.\nBấm tab → khung hội thoại với khách (cuộn trong khung chat, không kéo cả trang).\nĐọc tin chưa trả. Nếu ít tin, hệ thống có thể tự đồng bộ lịch sử; hoặc bấm làm mới nếu có nút.\nGõ trả lời → Gửi. Đính ảnh / file / bộ ảnh (Facebook) bằng icon kẹp / ảnh trên ô soạn.\nQuyết định nội bộ (giá, ngày lắp) không viết vào thread khách — ghi Bình luận hoặc Ghi chú & HĐ, file vào Tài liệu.\nSau cuộc chat: vào Ghi chú & HĐ → Thêm loại Zalo/gọi để tóm tắt (để người không mở Messenger vẫn nắ",
+    "actions": [
+      {
+        "label": "Không bỏ sót tin khách khi đang làm việc trên deal."
+      },
+      {
+        "label": "Nội bộ không thảo luận giá / quyết định trên kênh khách — quyết định ghi Ghi chú / Tài liệu / Công việc."
+      },
+      {
+        "label": "Chỉ làm khi thấy tab 📘 Facebook hoặc 💬 Zalo OA trên hàng tab."
+      },
+      {
+        "label": "Bấm tab → khung hội thoại với khách (cuộn trong khung chat, không kéo cả trang)."
+      },
+      {
+        "label": "Đọc tin chưa trả. Nếu ít tin, hệ thống có thể tự đồng bộ lịch sử; hoặc bấm làm mới nếu có nút."
+      },
+      {
+        "label": "Gõ trả lời → Gửi. Đính ảnh / file / bộ ảnh (Facebook) bằng icon kẹp / ảnh trên ô soạn."
+      },
+      {
+        "label": "Quyết định nội bộ (giá, ngày lắp) không viết vào thread khách — ghi Bình luận hoặc Ghi chú & HĐ, file vào Tài liệu."
+      },
+      {
+        "label": "Sau cuộc chat: vào Ghi chú & HĐ → Thêm loại Zalo/gọi để tóm tắt (để người không mở Messenger vẫn nắm)."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-thanh-vien-loi-hay-gap-tab-thanh-vien",
+    "label": "Lỗi hay gặp — Tab Thành viên (Tab Thành viên)",
+    "menu": "CRM → Bán hàng",
+    "summary": "• Thêm người nhưng không giao việc → họ vào được deal nhưng không có task (dùng Không gian chung).",
+    "keywords": [
+      "loi hay gap — tab thanh vien",
+      "tab thanh vien",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "• Thêm người nhưng không giao việc → họ vào được deal nhưng không có task (dùng Không gian chung).\n• Nhầm “thêm thành viên” với “chuyển người phụ trách” (nút header đổi Sale chịu KPI).",
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-thanh-vien",
+    "label": "Tab Thành viên",
+    "menu": "CRM → Bán hàng",
+    "summary": "Nhãn UI: 👥 Thành viên",
+    "keywords": [
+      "tab thanh vien",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Nhãn UI: 👥 Thành viên\nBadge: ba số CRM / SX / VC (xanh / teal / cam)\nTour: lead-tab-team\nDanh sách người được xem và vào hồ sơ. Thêm / xóa / đổi vai trò. Ai không trong list (trừ admin đúng quyền) thì không vào deal.\nKhi lưu kế hoạch SX & VC/LĐ, hệ thống tự thêm phụ trách VC vào đây — nên kiểm lại sau khi lưu kế hoạch.\nNút mở sang Không gian chung để giao việc sau khi đã thêm người.\nPhân quyền theo hồ sơ: Sale, xưởng, lắp đặt cùng thấy deal nhưng KPI phụ trách chính không đổi.\nKiểm soát ai được nhìn khách này — không phải nơi giao từng task.\nĐủ người cần phối hợp; không lộ deal cho người ngoài.\nBadge theo khối: biết deal đã “kéo” bao nhiêu người CRM / SX / VC.\nThành viên hỗ trợ ≠ thay người phụ trách chính (KPI vẫn một chủ).\nBấm 👥 Thành viên. Ba số trên tab = số người theo khối CRM / SX / VC.\nThêm người:\nKhối xanh Thêm thành viên.\nChọn công ty hệ sinh thái → khu vực → tìm NV (ô lọc).\nChọn Quyền mặc định (thường member).\nTick từng người (hoặc Chọn tất cả / Bỏ chọn).\nBấm + Thêm N người vào danh sách (hàng chờ).\nKiểm list chờ → lưu / gửi vào nhóm.\nTrên từng dòng đã có: đổi vai trò nếu",
+    "actions": [
+      {
+        "label": "Đủ người cần phối hợp; không lộ deal cho người ngoài."
+      },
+      {
+        "label": "Badge theo khối: biết deal đã “kéo” bao nhiêu người CRM / SX / VC."
+      },
+      {
+        "label": "Thành viên hỗ trợ ≠ thay người phụ trách chính (KPI vẫn một chủ)."
+      },
+      {
+        "label": "Bấm 👥 Thành viên. Ba số trên tab = số người theo khối CRM / SX / VC."
+      },
+      {
+        "label": "Thêm người:"
+      },
+      {
+        "label": "Khối xanh Thêm thành viên."
+      },
+      {
+        "label": "Chọn công ty hệ sinh thái → khu vực → tìm NV (ô lọc)."
+      },
+      {
+        "label": "Chọn Quyền mặc định (thường member)."
+      },
+      {
+        "label": "Tick từng người (hoặc Chọn tất cả / Bỏ chọn)."
+      },
+      {
+        "label": "Bấm + Thêm N người vào danh sách (hàng chờ)."
+      },
+      {
+        "label": "Kiểm list chờ → lưu / gửi vào nhóm."
+      },
+      {
+        "label": "Trên từng dòng đã có: đổi vai trò nếu được; Xóa → xác nhận «Xóa thành viên khỏi nhóm?»."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-binh-luan-loi-hay-gap-tab-binh-luan",
+    "label": "Lỗi hay gặp — Tab Bình luận (Tab Bình luận)",
+    "menu": "CRM → Bán hàng",
+    "summary": "• Chỉ nhắn Zalo riêng → người thay ca không đọc được.",
+    "keywords": [
+      "loi hay gap — tab binh luan",
+      "tab binh luan",
+      "lich su",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "• Chỉ nhắn Zalo riêng → người thay ca không đọc được.\n• Nhầm Bình luận với Ghi chú: Bình luận = team; Ghi chú & HĐ = nhật ký khách / ghi nhớ vận hành.\n• Tìm log “đã chuyển cột” trong Bình luận — sang Lịch sử.",
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-binh-luan",
+    "label": "Tab Bình luận",
+    "menu": "CRM → Bán hàng",
+    "summary": "Nhãn UI: 💬 Bình luận",
+    "keywords": [
+      "tab binh luan",
+      "ban giao lap dat",
+      "chon & ban giao",
+      "khong",
+      "lich su",
+      "neo vao dung khach",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Nhãn UI: 💬 Bình luận\nTour: lead-tab-comments\nĐây là kênh trao đổi nội bộ chuẩn trên từng hồ sơ.\nThread chat trên lead/deal: gửi tin, @mention, đính file, trả lời, sửa/xóa, reaction, đã đọc. Deal có mẫu trả lời nhanh.\nSau khi xưởng bàn giao lắp: thẻ Bàn giao Lắp đặt — Sale đọc rồi Chọn & bàn giao (luồng chi tiết ở khoá Kế hoạch SX & VC/LĐ).\nThông báo hệ thống (chuyển cột, hoàn thành task…) không nằm đây — nằm tab Lịch sử.\nMọi thành viên mở cùng hồ sơ thấy một luồng. Hỏi đồng nghiệp / xưởng tại chỗ, có file, có vết.\nThay chat Zalo nhóm rời: bàn giao và hỏi đáp neo vào đúng khách.\nƯu tiên viết ở đây khi hỏi về hồ sơ này — tour gọi đây là tab quan trọng nhất.\n@ đúng người để họ nhận việc / thông báo.\nFile trao đổi nhanh vẫn gắn deal (bản vẽ gửi kèm comment), bên cạnh tab Tài liệu.",
+    "actions": [
+      {
+        "label": "Ưu tiên viết ở đây khi hỏi về hồ sơ này — tour gọi đây là tab quan trọng nhất."
+      },
+      {
+        "label": "@ đúng người để họ nhận việc / thông báo."
+      },
+      {
+        "label": "File trao đổi nhanh vẫn gắn deal (bản vẽ gửi kèm comment), bên cạnh tab Tài liệu."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-binh-luan-trao-doi-noi-bo",
+    "label": "Trao đổi nội bộ (Tab Bình luận)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Bấm 💬 Bình luận.",
+    "keywords": [
+      "trao doi noi bo",
+      "tab binh luan",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Bấm 💬 Bình luận.\nGõ tin. Gõ @ rồi chọn người (phụ trách / thành viên) để họ nhận thông báo.\nĐính file/ảnh nếu cần (bản vẽ gửi kèm cho xưởng xem nhanh).\nDeal: có thể bấm mẫu trả lời nhanh rồi sửa trước khi gửi.\nGửi. Thread realtime — người khác mở cùng hồ sơ thấy ngay.\nTrên từng tin: Trả lời (thread con), Sửa, Xóa (tin mình / đúng quyền), thả reaction.\nCuộn lên tin cũ; hệ thống đánh dấu đã đọc khi bạn mở tab.",
+    "actions": [
+      {
+        "label": "Bấm 💬 Bình luận."
+      },
+      {
+        "label": "Gõ tin. Gõ @ rồi chọn người (phụ trách / thành viên) để họ nhận thông báo."
+      },
+      {
+        "label": "Đính file/ảnh nếu cần (bản vẽ gửi kèm cho xưởng xem nhanh)."
+      },
+      {
+        "label": "Deal: có thể bấm mẫu trả lời nhanh rồi sửa trước khi gửi."
+      },
+      {
+        "label": "Gửi. Thread realtime — người khác mở cùng hồ sơ thấy ngay."
+      },
+      {
+        "label": "Trên từng tin: Trả lời (thread con), Sửa, Xóa (tin mình / đúng quyền), thả reaction."
+      },
+      {
+        "label": "Cuộn lên tin cũ; hệ thống đánh dấu đã đọc khi bạn mở tab."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-binh-luan-the-ban-giao-lap-dat-khi-xuong-xong",
+    "label": "Thẻ bàn giao lắp đặt (khi xưởng xong) (Tab Bình luận)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Cuộn thread, tìm thẻ Bàn giao Lắp đặt (không lẫn với chat thường).",
+    "keywords": [
+      "the ban giao lap dat (khi xuong xong)",
+      "tab binh luan",
+      "ban giao lap dat",
+      "chon & ban giao",
+      "ke hoach sx & vc/ld",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Cuộn thread, tìm thẻ Bàn giao Lắp đặt (không lẫn với chat thường).\nĐọc thông tin xưởng gửi (ngày, ghi chú, file).\nBấm Chọn & bàn giao khi đồng ý. Chi tiết cột tạm / ngày lắp: khoá Kế hoạch SX & VC/LĐ.\nKhông bấm nếu chưa kiểm file — hỏi lại trên cùng thread bằng @ xưởng.",
+    "actions": [
+      {
+        "label": "Cuộn thread, tìm thẻ Bàn giao Lắp đặt (không lẫn với chat thường)."
+      },
+      {
+        "label": "Đọc thông tin xưởng gửi (ngày, ghi chú, file)."
+      },
+      {
+        "label": "Bấm Chọn & bàn giao khi đồng ý. Chi tiết cột tạm / ngày lắp: khoá Kế hoạch SX & VC/LĐ."
+      },
+      {
+        "label": "Không bấm nếu chưa kiểm file — hỏi lại trên cùng thread bằng @ xưởng."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-lich-su-loi-hay-gap-tab-lich-su",
+    "label": "Lỗi hay gặp — Tab Lịch sử (Tab Lịch sử)",
+    "menu": "CRM → Bán hàng",
+    "summary": "• Viết trao đổi vào đây — không gửi được; dùng Bình luận.",
+    "keywords": [
+      "loi hay gap — tab lich su",
+      "tab lich su",
+      "ghi chu & hd",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "• Viết trao đổi vào đây — không gửi được; dùng Bình luận.\n• Tưởng Lịch sử = hoạt động gọi khách — hoạt động nằm Ghi chú & HĐ.",
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-lich-su",
+    "label": "Tab Lịch sử",
+    "menu": "CRM → Bán hàng",
+    "summary": "Nhãn UI: 🕘 Lịch sử",
+    "keywords": [
+      "tab lich su",
+      "comment loai he thong",
+      "vet may",
+      "chat nguoi",
+      "🕘 lich su",
+      "khong co o gui tin",
+      "binh luan",
+      "ghi chu & hd",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Nhãn UI: 🕘 Lịch sử\nTour: lead-tab-history\nTimeline comment loại hệ thống: hoàn thành nhiệm vụ, chuyển giai đoạn, mốc máy sinh. Chỉ đọc, không phải ô chat.\nĐối soát “ai / lúc nào / hệ thống ghi gì” khi tranh cãi tiến độ hoặc audit.\nTách vết máy khỏi chat người, để Bình luận không bị lẫn thông báo tự động.\nTruy vết chuyển cột và hoàn thành task.\nQC / quản lý xem hồ sơ đã đi qua những mốc nào mà không đọc hết chat.\nBấm 🕘 Lịch sử.\nĐọc timeline từ mới → cũ: hoàn thành task, chuyển giai đoạn, mốc máy.\nMỗi dòng: nội dung hệ thống + giờ + người liên quan (nếu có).\nKhông có ô gửi tin. Cần hỏi đồng nghiệp → tab Bình luận. Cần ghi cuộc gọi → Ghi chú & HĐ.\nDùng khi: «Ai kéo cột lúc nào?», «Task X xong chưa theo máy?», audit KPI.",
+    "actions": [
+      {
+        "label": "Truy vết chuyển cột và hoàn thành task."
+      },
+      {
+        "label": "QC / quản lý xem hồ sơ đã đi qua những mốc nào mà không đọc hết chat."
+      },
+      {
+        "label": "Bấm 🕘 Lịch sử."
+      },
+      {
+        "label": "Đọc timeline từ mới → cũ: hoàn thành task, chuyển giai đoạn, mốc máy."
+      },
+      {
+        "label": "Mỗi dòng: nội dung hệ thống + giờ + người liên quan (nếu có)."
+      },
+      {
+        "label": "Không có ô gửi tin. Cần hỏi đồng nghiệp → tab Bình luận. Cần ghi cuộc gọi → Ghi chú & HĐ."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-ghi-am-loi-hay-gap-tab-ghi-am",
+    "label": "Lỗi hay gặp — Tab Ghi âm (Tab Ghi âm)",
+    "menu": "CRM → Bán hàng",
+    "summary": "• Chỉ lưu ghi âm, không ghi “khách hẹn T5 đo” → người sau phải nghe cả file.",
+    "keywords": [
+      "loi hay gap — tab ghi am",
+      "tab ghi am",
+      "nghe / xem",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "• Chỉ lưu ghi âm, không ghi “khách hẹn T5 đo” → người sau phải nghe cả file.\n• Tìm nút ghi âm cuộc gọi trên tab này — tab chủ yếu nghe / xem, ghi mới ở module cuộc gọi.",
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-ghi-am",
+    "label": "Tab Ghi âm",
+    "menu": "CRM → Bán hàng",
+    "summary": "Nhãn UI: Ghi âm (icon micro)",
+    "keywords": [
+      "tab ghi am",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Nhãn UI: Ghi âm (icon micro)\nTour: lead-tab-voice\nDanh sách file ghi âm / cuộc gọi gắn lead/deal: nghe lại, hướng gọi (đến/đi), trạng thái chuyển văn bản (STT) nếu có. Upload thường ở trang Cuộc gọi & ghi âm, rồi hiện lại đây.\nBàn giao ca, QC nội dung trao đổi với khách, đối soát cam kết miệng.\nGiữ bằng chứng thoại trên đúng hồ sơ, không nằm máy cá nhân.\nNgười nhận bàn giao nghe lại được cuộc gọi.\nLead có thể yêu cầu STT; Deal tùy cấu hình.\nVẫn tóm tắt kết quả vào Ghi chú & HĐ — file nghe không thay thế nhật ký.\nBấm Ghi âm (icon micro).\nDanh sách file gắn hồ sơ: hướng Gọi đến / Gọi đi, giờ, badge STT (Đã có văn bản / Đang chuyển / Lỗi…).\nBấm phát để nghe.\nNếu là Lead và có nút chuyển văn bản: bấm để STT (chờ trạng thái Đã có văn bản), mở bản ghi chữ.\nLàm mới danh sách nếu vừa ghi cuộc gọi ở trang Cuộc gọi & ghi âm.\nBắt buộc sau khi nghe / gọi: tab Ghi chú & HĐ → Thêm → Gọi điện, tóm tắt kết quả — người sau không phải nghe cả file.\nGhi cuộc gọi mới: vào module cuộc gọi / tổng đài của hệ thống, gắn đúng lead/deal — không giả định nút Record nằm trên tab này.",
+    "actions": [
+      {
+        "label": "Người nhận bàn giao nghe lại được cuộc gọi."
+      },
+      {
+        "label": "Lead có thể yêu cầu STT; Deal tùy cấu hình."
+      },
+      {
+        "label": "Vẫn tóm tắt kết quả vào Ghi chú & HĐ — file nghe không thay thế nhật ký."
+      },
+      {
+        "label": "Bấm Ghi âm (icon micro)."
+      },
+      {
+        "label": "Danh sách file gắn hồ sơ: hướng Gọi đến / Gọi đi, giờ, badge STT (Đã có văn bản / Đang chuyển / Lỗi…)."
+      },
+      {
+        "label": "Bấm phát để nghe."
+      },
+      {
+        "label": "Nếu là Lead và có nút chuyển văn bản: bấm để STT (chờ trạng thái Đã có văn bản), mở bản ghi chữ."
+      },
+      {
+        "label": "Làm mới danh sách nếu vừa ghi cuộc gọi ở trang Cuộc gọi & ghi âm."
+      },
+      {
+        "label": "Bắt buộc sau khi nghe / gọi: tab Ghi chú & HĐ → Thêm → Gọi điện, tóm tắt kết quả — người sau không phải nghe cả file."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#tab-an-theo-dieu-kien-cung-hang-tab",
+    "label": "Tab ẩn theo điều kiện (cùng hàng tab)",
+    "menu": "CRM → Bán hàng",
+    "summary": "Tab — Điều kiện — Vai trò ngắn",
+    "keywords": [
+      "tab an theo dieu kien (cung hang tab)",
+      "zalo oa",
+      "diem cheo & kh",
+      "phe duyet",
+      "diem cheo tung buoc (khi tab hien)",
+      "⭐ diem cheo & kh",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Tab — Điều kiện — Vai trò ngắn\nZalo OA — inboxChannel === 'zalo' — Như Facebook, kênh Zalo\nĐiểm chéo & KH — Deal ở cột Hoàn thành — Nhập/xem điểm chéo sau nghiệm thu — không dùng lúc đang bán\nPhê duyệt (nếu bật) — Deal có project_id — Gửi duyệt xưởng; chưa có dự án thì hướng dẫn thắng / tạo dự án\nĐiểm chéo từng bước (khi tab hiện): bấm ⭐ Điểm chéo & KH → nhập/xem điểm theo form → lưu. Không dùng tab này lúc đang tư vấn / khảo sát.",
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  },
+  {
+    "path": "/crm/leads/:id#muc-tieu-tong-the-dung-trang-nhu-mot-ban-lam-viec",
+    "label": "Mục tiêu tổng thể — dùng trang như một “bàn làm việc”",
+    "menu": "CRM → Bán hàng",
+    "summary": "Thứ tự ưu tiên khi mở hồ sơ — Việc",
+    "keywords": [
+      "muc tieu tong the — dung trang nhu mot “ban lam viec”",
+      "lead",
+      "deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "ho so khach"
+    ],
+    "content": "Thứ tự ưu tiên khi mở hồ sơ — Việc\n1 — Đọc stepper: khách đang cột nào\n2 — Cột trái: SĐT, địa chỉ, phụ trách, 6 trường bắt buộc\n3 — Ghi chú & HĐ + Lịch sử: đã xảy ra gì\n4 — Công việc: hôm nay làm task nào, có bị gate không\n5 — Bình luận: team đang hỏi gì, có thẻ bàn giao không\n6 — Tài liệu / Drive: đủ file chưa, đã share SX chưa\n7 — Không gian chung / Thành viên: đúng người cùng làm\n8 — Đặt hàng / Ghi âm / Facebook: khi đúng ngữ cảnh\nBa nguyên tắc\nĐúng tab đúng việc — nhầm kênh = mất vết, KPI sai, xưởng “không thấy file”.\nKéo cột sau khi làm việc — stepper là kết quả, không phải trang trí.\nNeo vào hồ sơ — Zalo/Messenger chỉ là kênh khách; quyết định và file phải lên app.\nMở Kanban → bấm thẻ cần xử lý (ghim / đã tương tác nếu đúng).\nĐọc stepper: đang cột nào.\nCột trái: kiểm SĐT, địa chỉ, phụ trách; bấm dòng để sửa thiếu.\nGhi chú & HĐ + Lịch sử: 30 giây nắm đã gọi gì, máy ghi gì.\nCông việc: làm task hôm nay — tick xong, ngày hẹn, file/ghi chú.\nĐủ điều kiện → bấm vòng stepper (hoặc kéo Kanban). Bị chặn thì quay bước 5.\nBình luận: @ người cần; kiểm thẻ bàn giao nếu deal đã qua xưởng.\nFil",
+    "actions": [
+      {
+        "label": "Đúng tab đúng việc — nhầm kênh = mất vết, KPI sai, xưởng “không thấy file”."
+      },
+      {
+        "label": "Kéo cột sau khi làm việc — stepper là kết quả, không phải trang trí."
+      },
+      {
+        "label": "Neo vào hồ sơ — Zalo/Messenger chỉ là kênh khách; quyết định và file phải lên app."
+      },
+      {
+        "label": "Mở Kanban → bấm thẻ cần xử lý (ghim / đã tương tác nếu đúng)."
+      },
+      {
+        "label": "Đọc stepper: đang cột nào."
+      },
+      {
+        "label": "Cột trái: kiểm SĐT, địa chỉ, phụ trách; bấm dòng để sửa thiếu."
+      },
+      {
+        "label": "Ghi chú & HĐ + Lịch sử: 30 giây nắm đã gọi gì, máy ghi gì."
+      },
+      {
+        "label": "Công việc: làm task hôm nay — tick xong, ngày hẹn, file/ghi chú."
+      },
+      {
+        "label": "Đủ điều kiện → bấm vòng stepper (hoặc kéo Kanban). Bị chặn thì quay bước 5."
+      },
+      {
+        "label": "Bình luận: @ người cần; kiểm thẻ bàn giao nếu deal đã qua xưởng."
+      },
+      {
+        "label": "File mới: Tài liệu (+ share SX) hoặc Drive."
+      },
+      {
+        "label": "Cần người khác cùng làm: Thành viên rồi Không gian chung."
+      }
+    ],
+    "generated_from_doc": "KIEN_THUC_TRANG_CHI_TIET_LEAD_DEAL.md"
+  }
+]

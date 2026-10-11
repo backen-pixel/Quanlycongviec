@@ -211,7 +211,7 @@ export default function CRMReports() {
         subtitle="Pipeline — số lead theo từng giai đoạn"
         accentColor="from-blue-500 to-cyan-500"
       >
-        <div className="space-y-3 mt-2">
+        <div className="space-y-3 mt-2" data-guide-khu-vuc="Phễu bán hàng">
           {pipeline.length === 0 && (
             <p className="text-center text-sm py-6" style={{ color: '#000000' }}>Chưa có dữ liệu pipeline</p>
           )}
@@ -306,7 +306,7 @@ export default function CRMReports() {
                 </div>
               )}
             </div>
-            <div className="md:col-span-3 grid grid-cols-2 gap-2.5">
+            <div className="md:col-span-3 grid grid-cols-2 gap-2.5" data-guide-khu-vuc="Thống kê báo giá">
               {Object.entries(QUOTE_PALETTE).map(([key, meta]) => {
                 const Icon = meta.icon;
                 const count = quoteStats[key] || 0;
@@ -348,7 +348,7 @@ export default function CRMReports() {
         >
           <div className="mt-2 grid grid-cols-1 md:grid-cols-[160px_1fr] gap-5 items-center">
             <CircularProgress percentage={invPct} />
-            <div className="space-y-2.5">
+            <div className="space-y-2.5" data-guide-khu-vuc="Doanh thu và công nợ">
               <div className="flex items-center justify-between py-2 px-3 rounded-lg bg-slate-50 border border-slate-200">
                 <span className="text-sm font-medium" style={{ color: '#000000' }}>Tổng hóa đơn</span>
                 <span className="text-sm font-bold tabular-nums" style={{ color: '#000000' }}>{formatVND(invTotal)}</span>
@@ -369,7 +369,7 @@ export default function CRMReports() {
               </div>
             </div>
           </div>
-          <div className="mt-4 grid grid-cols-2 gap-3">
+          <div className="mt-4 grid grid-cols-2 gap-3" data-guide-khu-vuc="Tình trạng thanh toán hóa đơn">
             <div className="rounded-xl border border-red-200 bg-gradient-to-br from-red-50 to-rose-50 p-3 flex items-center gap-3">
               <div className="h-10 w-10 rounded-lg bg-red-200 flex items-center justify-center">
                 <Clock className="h-5 w-5 text-red-700" />

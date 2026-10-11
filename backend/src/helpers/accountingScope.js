@@ -22,15 +22,61 @@ function crmDealBelongsToAccountingCompany(dealRow, accountingCompanyId) {
   return crmDealBelongsToAccountingCompanyLegacyName(dealRow, accountingCompanyId);
 }
 
-/** Fallback khi DB chưa có cột external_company_id — dùng tên text. */
-function crmDealBelongsToAccountingCompanyLegacyName(dealRow, accountingCompanyId) {
-  if (!dealRow?.external_company_name) return false;
-  const ext = String(dealRow.external_company_name).toLowerCase();
-  if (accountingCompanyId && dealRow._accounting_company_short) {
-    const sn = String(dealRow._accounting_company_short).toLowerCase();
-    if (sn && ext.includes(sn)) return true;
+/**
+ * Tên công ty để đối chiếu deal chỉ có `external_company_name` (chưa có id).
+ *
+ * Trước đây chỗ này so khớp bằng chuỗi CỨNG 'vạn phú'/'van phu'/'vpt' và trả true
+ * bất kể công ty kế toán đang hỏi là ai — tức deal của VPT lọt sang mọi công ty khác.
+ * Thêm nữa, dùng `includes` khiến «VẠN PHÚC DESIGN» khớp nhầm «Vạn Phú» (đo ngày
+ * 09/10/2026: 17/99 deal khớp chuỗi cứng KHÔNG thuộc VPT). Nay đối chiếu với tên
+ * thật của ĐÚNG công ty kế toán đang hỏi, và so khớp BẰNG NHAU chứ không chứa nhau.
+ */
+const COMPANY_NAME_TTL_MS = 5 * 60 * 1000;
+let _companyNameCache = { at: 0, byId: new Map() };
+
+function chuanHoaTenCongTy(raw) {
+  return String(raw || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'd')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Nạp sẵn tên công ty. Gọi trước khi lọc hàng loạt để khỏi rơi vào cache nguội. */
+async function warmAccountingCompanyNames(force = false) {
+  const now = Date.now();
+  if (!force && _companyNameCache.byId.size && now - _companyNameCache.at < COMPANY_NAME_TTL_MS) {
+    return _companyNameCache.byId;
   }
-  return ext.includes('vạn phú') || ext.includes('van phu') || ext.includes('vpt');
+  const { data, error } = await supabase.from('companies').select('id, name, short_name');
+  if (error) {
+    console.warn('[accountingScope] nạp tên công ty:', error.message);
+    return _companyNameCache.byId;
+  }
+  const byId = new Map();
+  for (const c of data || []) {
+    const ten = [chuanHoaTenCongTy(c.name), chuanHoaTenCongTy(c.short_name)].filter(Boolean);
+    byId.set(String(c.id), ten);
+  }
+  _companyNameCache = { at: now, byId };
+  return byId;
+}
+
+function crmDealBelongsToAccountingCompanyLegacyName(dealRow, accountingCompanyId) {
+  if (!dealRow?.external_company_name || !accountingCompanyId) return false;
+  const ten = _companyNameCache.byId.get(String(accountingCompanyId));
+  if (!ten || !ten.length) {
+    // Cache nguội: nạp nền cho lượt sau, lượt này trả false. Thà bỏ sót một deal
+    // trong tích tắc còn hơn cho công ty khác nhìn thấy nhầm.
+    void warmAccountingCompanyNames().catch(() => {});
+    return false;
+  }
+  const ext = chuanHoaTenCongTy(dealRow.external_company_name);
+  if (!ext) return false;
+  return ten.some((t) => t === ext);
 }
 
 /**
@@ -78,6 +124,7 @@ async function getAccountingClientProjectIdsAtWorkshop(workshopCompanyId, client
     return [];
   }
 
+  await warmAccountingCompanyNames();
   const matched = new Set();
   for (const d of deals || []) {
     if (!d.project_id) continue;
@@ -104,6 +151,7 @@ async function getAccountingScopedProjectIds(clientCompanyId) {
     console.warn('[accountingScope] getAccountingScopedProjectIds:', error.message);
     return [];
   }
+  await warmAccountingCompanyNames();
   const ids = new Set();
   for (const d of deals || []) {
     if (d.project_id && crmDealBelongsToAccountingCompany(d, clientCompanyId)) {
@@ -118,6 +166,7 @@ module.exports = {
   getAccountingCompanyId,
   crmDealBelongsToAccountingCompany,
   crmDealBelongsToAccountingCompanyLegacyName,
+  warmAccountingCompanyNames,
   applyAccountingCrmCompanyFilter,
   getAccountingClientProjectIdsAtWorkshop,
   getAccountingScopedProjectIds,

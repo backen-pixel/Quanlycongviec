@@ -64,6 +64,68 @@ export function renderMarkdownLines(content) {
   let inCode = false;
   let codeBuffer = [];
   let listBuffer = [];
+  let inBang = false;
+  let bangBuffer = [];
+  let inTrich = false;
+  let trichBuffer = [];
+
+  /** '| a | b |' → ['a','b']. Bỏ ô rỗng hai đầu do dấu | mở và đóng tạo ra. */
+  const tachO = (dong) => dong.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((o) => o.trim());
+  const laDongPhanCach = (dong) => /^\s*\|[\s:|-]+\|\s*$/.test(dong);
+
+  const flushBang = () => {
+    if (!inBang) return;
+    inBang = false;
+    // Có dòng `|---|---|` nghĩa là hàng đầu là tiêu đề. Phải tính TRƯỚC khi xoá buffer.
+    const coTieuDe = bangBuffer.some(laDongPhanCach);
+    const hang = bangBuffer.filter((d) => !laDongPhanCach(d)).map(tachO);
+    bangBuffer = [];
+    if (!hang.length) return;
+    const [dau, ...than] = hang;
+    out.push(
+      <div key={`tb-${out.length}`} className="my-3 overflow-x-auto rounded-lg border border-gray-200">
+        <table className="w-full border-collapse text-[14px]">
+          <thead>
+            <tr className="bg-gray-50">
+              {dau.map((o, i) => (
+                <th key={i} className="border-b border-gray-200 px-3 py-2 text-left font-semibold text-gray-700">
+                  {renderInline(o, `th-${out.length}-${i}`)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {(coTieuDe ? than : hang).map((h, r) => (
+              <tr key={r}>
+                {h.map((o, i) => (
+                  <td key={i} className="border-b border-gray-100 px-3 py-2 align-top" style={{ color: '#1f2937' }}>
+                    {renderInline(o, `td-${out.length}-${r}-${i}`)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>,
+    );
+  };
+
+  const flushTrich = () => {
+    if (!inTrich) return;
+    inTrich = false;
+    const dong = trichBuffer.filter((d) => d.trim() !== '');
+    trichBuffer = [];
+    if (!dong.length) return;
+    out.push(
+      <div key={`bq-${out.length}`} className="my-3 rounded-r-lg border-l-4 border-amber-400 bg-amber-50 px-4 py-3">
+        {dong.map((d, i) => (
+          <p key={i} className="text-[14.5px] leading-relaxed" style={{ color: '#4a3410' }}>
+            {renderInline(d, `bq-${out.length}-${i}`)}
+          </p>
+        ))}
+      </div>,
+    );
+  };
 
   const flushList = () => {
     if (listBuffer.length) {
@@ -99,6 +161,38 @@ export function renderMarkdownLines(content) {
       return;
     }
 
+    /**
+     * BẢNG — bộ dựng này vốn không hiểu bảng, nên 12 bài có bảng hiện ra nguyên dấu `|`
+     * (đã đo: 71 hàng). Gom các dòng bắt đầu bằng `|` liền nhau rồi dựng <table>.
+     * Dòng phân cách `|---|---|` chỉ để đánh dấu hàng tiêu đề, không hiện ra.
+     */
+    if (line.trim().startsWith('|') && !inBang) {
+      flushList();
+      inBang = true;
+      bangBuffer = [line];
+      return;
+    }
+    if (inBang) {
+      if (line.trim().startsWith('|')) { bangBuffer.push(line); return; }
+      flushBang();
+      // rơi tiếp xuống để xử lý chính dòng hiện tại
+    }
+
+    /**
+     * TRÍCH DẪN — 86/89 bài dùng `>` (ghi chú, cảnh báo, chỗ chờ ảnh) mà trước đây hiện
+     * nguyên dấu `>` giữa đoạn văn. Gom các dòng `>` liền nhau thành một khối.
+     */
+    if (line.trim().startsWith('>') && !inTrich) {
+      flushList();
+      inTrich = true;
+      trichBuffer = [line.replace(/^\s*>\s?/, '')];
+      return;
+    }
+    if (inTrich) {
+      if (line.trim().startsWith('>')) { trichBuffer.push(line.replace(/^\s*>\s?/, '')); return; }
+      flushTrich();
+    }
+
     if (line.startsWith('### ')) {
       flushList();
       out.push(<h4 key={i} className="text-base font-bold text-gray-900 mt-5 mb-2">{renderInline(line.slice(4), `h4-${i}`)}</h4>);
@@ -129,6 +223,9 @@ export function renderMarkdownLines(content) {
       out.push(<p key={i} className="text-[15px] leading-relaxed my-1" style={{ color: '#1f2937' }}>{renderInline(line, `p-${i}`)}</p>);
     }
   });
+  // Bài kết thúc ngay sau một bảng hoặc một khối trích dẫn thì phải xả nốt, không thì mất.
+  flushBang();
+  flushTrich();
   flushList();
   return out;
 }

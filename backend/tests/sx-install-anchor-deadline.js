@@ -14,6 +14,7 @@ function rowAfterEdit(saved, body) {
 }
 
 function finishingYmd(row) {
+  // Han the nay = NGAY LAP, khong con la moc cuoi cong doan hoan thien.
   const computed = computeSxInstallPlanDeadline(row, { deadline_group: 'finishing' });
   return computed?.endYmd || null;
 }
@@ -27,7 +28,7 @@ const saved = {
 };
 
 assert.equal(resolveSxPlanInstallYmd(saved), '2026-09-08');
-assert.equal(finishingYmd(saved), '2026-09-06');
+assert.equal(finishingYmd(saved), '2026-09-08');
 
 const crmBody = {
   install_date: '2026-10-10T09:30:00+07:00',
@@ -39,7 +40,7 @@ const crmBody = {
 const afterCrm = rowAfterEdit(saved, crmBody);
 assert.deepEqual(afterCrm.install_occurrence_dates, ['2026-10-10', '2026-10-11']);
 assert.equal(resolveSxPlanInstallYmd(afterCrm), '2026-10-10');
-assert.equal(finishingYmd(afterCrm), '2026-10-08');
+assert.equal(finishingYmd(afterCrm), '2026-10-10');
 
 const sxBody = { delivery_date: '2026-10-20', production_finish_date: '2026-10-18', production_deadline: '2026-10-18' };
 const sxPersist = installAnchorPersistPatch(sxBody);
@@ -50,13 +51,13 @@ const afterSx = rowAfterEdit(saved, sxBody);
 assert.deepEqual(afterSx.install_occurrence_dates, ['2026-10-20']);
 assert.equal(String(afterSx.install_date).slice(0, 10), '2026-10-20');
 assert.equal(resolveSxPlanInstallYmd(afterSx), '2026-10-20');
-assert.equal(finishingYmd(afterSx), '2026-10-18');
+assert.equal(finishingYmd(afterSx), '2026-10-20');
 
 const bothDatesOnly = { install_date: '2026-11-02T14:00:00+07:00', delivery_date: '2026-11-02' };
 const afterBoth = rowAfterEdit(saved, bothDatesOnly);
 assert.deepEqual(afterBoth.install_occurrence_dates, ['2026-11-02']);
 assert.equal(resolveSxPlanInstallYmd(afterBoth), '2026-11-02');
-assert.equal(finishingYmd(afterBoth), '2026-10-31');
+assert.equal(finishingYmd(afterBoth), '2026-11-02');
 
 const persistClearedEmpty = installAnchorPersistPatch({ delivery_date: '' });
 assert.deepEqual(persistClearedEmpty.install_occurrence_dates, []);

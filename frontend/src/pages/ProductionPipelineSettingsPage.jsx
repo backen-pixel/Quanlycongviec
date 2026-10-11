@@ -7,7 +7,10 @@ import { isAdminLike } from '../lib/adminRole';
 import { Settings, Plus, Trash2, Save, ChevronRight, ChevronDown, ChevronUp, Loader2, Factory, Truck, Building2, ListChecks, Tags, Globe, Clock, Trophy, CheckCircle2, UserCircle, Banknote, Hammer, ArrowRightLeft, Search, Wrench, Eye, EyeOff, Layers, GripVertical, Pencil, X, Ban, Receipt } from 'lucide-react';
 import WorkshopTypeSettingsSection from '../components/WorkshopTypeSettingsSection';
 import { isPipelineStageSlaDisabled } from '../lib/crmPipelineSla';
-import { SX_DEADLINE_GROUPS, sxDeadlineGroupMeta } from '../lib/sxWorkshopSchedule';
+import { SX_DEADLINE_GROUPS, sxDeadlineGroupMeta, sxStageDeadlineGroup } from '../lib/sxWorkshopSchedule';
+
+/** Số ngày mặc định mỗi nhóm công đoạn — khớp SX_INSTALL_BACK_PLAN trong lib. */
+const MAC_DINH_NGAY_NHOM = { cabinet: 2, finishing: 2, packing: 1 };
 import { nhanCotLon, sapXepNhomCotLon, khoaCotLonTuNhan } from '../lib/sxGopCot';
 import { sxGroupPrimaryOwner, sxGroupPrimaryOwnerId } from '../lib/sxStageStaff';
 import { tabKanbanCot, tabKanbanNhom, khoaTabKanban, nhanTabKanban, dsTabKanban, laTabCoDinh, TAB_SX, TAB_CONG_NO } from '../lib/sxTachCongNo';
@@ -1451,6 +1454,51 @@ export default function ProductionPipelineSettingsPage() {
     }
   };
 
+  /**
+   * Nhóm hạn của một cột lớn — suy từ các cột nhỏ bên trong.
+   * Chỉ 3 nhóm có số ngày cố định; `planning` là phần còn lại tới ngày tiếp nhận nên không
+   * cho đặt, và nhóm công nợ thì không có hạn SX.
+   */
+  const nhomHanCuaCotLon = (ds) => {
+    for (const st of ds || []) {
+      const g = sxStageDeadlineGroup(st, stages);
+      if (g && Object.prototype.hasOwnProperty.call(MAC_DINH_NGAY_NHOM, g)) return g;
+    }
+    return null;
+  };
+
+  /** Số ngày đang đặt cho cột lớn = MAX của các cột nhỏ (chúng chạy song song). */
+  const soNgayCotLon = (ds) => {
+    let max = 0;
+    for (const st of ds || []) {
+      const n = Math.floor(Number(st?.sla_days) || 0);
+      if (n > max) max = n;
+    }
+    return max;
+  };
+
+  /**
+   * Ghi số ngày cho cả cột lớn: đặt `sla_days` giống nhau cho MỌI cột nhỏ bên trong.
+   *
+   * Số ngày là thuộc tính của cột lớn, nhưng DB chỉ có `sla_days` trên từng cột nhỏ. Ghi đều
+   * cho cả nhóm thì đọc ra bằng MAX luôn đúng, và ai sửa lẻ một cột nhỏ sau này cũng không làm
+   * lệch kết quả. Bỏ trống hoặc 0 = xoá về mặc định.
+   */
+  const datSoNgayCotLon = async (ds, raw) => {
+    const s = String(raw ?? '').trim();
+    const n = s === '' ? 0 : Math.max(0, Math.min(60, Math.floor(Number(s) || 0)));
+    if (n === soNgayCotLon(ds)) return;
+    const dsHopLe = (ds || []).filter((st) => st?.id && st.bucket_slug !== INTAKE);
+    if (!dsHopLe.length) return;
+    dsHopLe.forEach((st) => patchStageLocal(st.id, { sla_days: n || null }));
+    try {
+      await Promise.all(dsHopLe.map((st) => api.put(`/production/pipeline-stages/${st.id}`, { sla_days: n || null })));
+    } catch (err) {
+      dsHopLe.forEach((st) => patchStageLocal(st.id, { sla_days: st.sla_days ?? null }));
+      alert('Không lưu được số ngày: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
   const persistStageOrderPatch = async (patch) => {
     if (reorderBusy || !patch.length) return;
     const prevStages = stages;
@@ -2334,6 +2382,26 @@ export default function ProductionPipelineSettingsPage() {
                       <p className="px-3 text-[10px] text-violet-500">
                         {g.ds.length} cột nhỏ{g.ds.length > 1 ? ' · song song' : ''}
                       </p>
+                      {nhomHanCuaCotLon(g.ds) && (
+                        <div className="flex items-center gap-1.5 px-3 pb-0.5">
+                          <label className="text-[10px] text-slate-500" htmlFor={`ngay-${g.key}`}>Số ngày</label>
+                          <input
+                            id={`ngay-${g.key}`}
+                            type="number"
+                            min="1"
+                            max="60"
+                            defaultValue={soNgayCotLon(g.ds) || ''}
+                            key={`ngay:${g.key}:${soNgayCotLon(g.ds)}`}
+                            onBlur={(e) => datSoNgayCotLon(g.ds, e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                            className="h-6 w-14 rounded border border-slate-200 bg-white px-1 text-[11px] text-slate-800"
+                            placeholder={String(MAC_DINH_NGAY_NHOM[nhomHanCuaCotLon(g.ds)] || '')}
+                            title={'Số ngày công đoạn này cần, dùng để tính lùi từ ngày lắp đặt.\n'
+                              + 'Bỏ trống = dùng mặc định. Giá trị ghi cho mọi cột nhỏ bên trong.'}
+                          />
+                          <span className="text-[10px] text-slate-400">trước ngày lắp</span>
+                        </div>
+                      )}
                       <p
                         className={`px-3 pb-0.5 truncate text-[11px] ${ownerName ? 'font-semibold text-indigo-800' : 'italic text-slate-400'}`}
                         title={ownerName ? `Phụ trách cột lớn: ${ownerName}` : 'Chưa gán người chịu trách nhiệm cột chính'}

@@ -532,7 +532,7 @@ export default function ZaloPage() {
   return (
     <div className="flex flex-col h-screen min-h-0 max-h-screen overflow-hidden bg-white -m-6">
       {/* Header */}
-      <div className="shrink-0 border-b border-sky-100 bg-gradient-to-r from-sky-50/90 via-white to-white px-4 sm:px-6 py-3.5 shadow-sm">
+      <div data-guide-khu-vuc="Tiêu đề & chọn OA" className="shrink-0 border-b border-sky-100 bg-gradient-to-r from-sky-50/90 via-white to-white px-4 sm:px-6 py-3.5 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-3 min-w-0">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-[#0068FF] to-[#0047b3] flex items-center justify-center shrink-0 shadow-lg shadow-sky-200/60 text-lg">
@@ -567,7 +567,7 @@ export default function ZaloPage() {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 mt-3.5 -mb-px overflow-x-auto">
+        <div data-guide-khu-vuc="Tab Zalo" className="flex gap-1 mt-3.5 -mb-px overflow-x-auto">
           {[
             { id: 'inbox', label: 'Hộp thư', icon: MessageCircle, badge: stats?.unread },
             { id: 'contacts', label: 'Danh bạ', icon: Users },
@@ -647,7 +647,7 @@ export default function ZaloPage() {
         <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
         <div className="flex flex-col lg:flex-row flex-1 min-h-0 overflow-hidden rounded-t-2xl rounded-b-none bg-white shadow-xl shadow-sky-100/50 ring-1 ring-sky-100/80 ring-b-0">
           {/* Sidebar liên hệ */}
-          <div className="flex flex-col border-b lg:border-b-0 lg:border-r border-gray-100 bg-gradient-to-b from-white to-sky-50/20 min-h-0 shrink-0 max-h-[36vh] lg:max-h-none lg:w-[min(340px,34%)] lg:max-w-[340px] lg:h-full overflow-hidden">
+          <div data-guide-khu-vuc="Danh sách hội thoại" className="flex flex-col border-b lg:border-b-0 lg:border-r border-gray-100 bg-gradient-to-b from-white to-sky-50/20 min-h-0 shrink-0 max-h-[36vh] lg:max-h-none lg:w-[min(340px,34%)] lg:max-w-[340px] lg:h-full overflow-hidden">
             <div className="px-3 pt-3 pb-2 border-b border-gray-100 shrink-0 bg-white/80 backdrop-blur-sm">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-[#0068FF]">Hội thoại</span>
@@ -743,7 +743,7 @@ export default function ZaloPage() {
           </div>
 
           {/* Khung chat — flex-1 để thanh nhập dính đáy panel */}
-          <div className="flex flex-col flex-1 min-h-0 h-full overflow-hidden bg-white">
+          <div data-guide-khu-vuc="Khung chat" className="flex flex-col flex-1 min-h-0 h-full overflow-hidden bg-white">
             {!selectedId ? (
               <div className="flex-1 flex flex-col items-center justify-center gap-3 p-8 bg-gradient-to-br from-sky-50/40 via-white to-indigo-50/30">
                 <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-[#0068FF] to-[#0047b3] flex items-center justify-center shadow-xl shadow-sky-200/60">
@@ -877,7 +877,7 @@ export default function ZaloPage() {
 
       {tab === 'settings' && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+          <div data-guide-khu-vuc="Webhook URL" className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
             <h2 className="font-semibold mb-3 flex items-center gap-2">
               <ExternalLink size={18} /> Webhook URL
             </h2>
@@ -902,7 +902,7 @@ export default function ZaloPage() {
             </a>
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+          <div data-guide-khu-vuc="n8n — trigger theo từng OA" className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
             <h2 className="font-semibold mb-2 flex items-center gap-2 text-violet-900">
               <Zap size={18} /> n8n — trigger theo từng OA
             </h2>
@@ -912,7 +912,7 @@ export default function ZaloPage() {
             </p>
           </div>
 
-          <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+          <div data-guide-khu-vuc="OA đã cấu hình" className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
             <h2 className="font-semibold mb-3">OA đã cấu hình</h2>
             {!accounts.length ? (
               <p className="text-sm text-slate-500">Chưa có OA nào.</p>
@@ -1024,7 +1024,7 @@ export default function ZaloPage() {
             </p>
           </div>
 
-          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm lg:col-span-2">
+          <div data-guide-khu-vuc="Thêm / sửa OA" className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm lg:col-span-2">
             <h2 className="font-semibold mb-3 flex items-center gap-2">
               {editingId ? <Save size={18} /> : <Plus size={18} />}
               {editingId ? 'Sửa OA' : 'Thêm Official Account'}

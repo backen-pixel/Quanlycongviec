@@ -260,6 +260,17 @@ export function sxDeadlineGroupMeta(value) {
   return SX_DEADLINE_GROUPS.find((g) => g.value === key) || null;
 }
 
+/**
+ * Lý do hạn thẻ do máy tự tính lùi từ ngày lắp.
+ * Phải khớp từng ký tự với AUTO_REASON ở backend/src/helpers/sxInstallPlanKanbanDeadline.js:15 —
+ * đây là dấu hiệu duy nhất phân biệt hạn máy tính với hạn người nhập tay.
+ */
+export const SX_AUTO_DEADLINE_REASON = 'Tính từ ngày lắp (kế hoạch SX)';
+
+export function laHanTheMayTinh(reason) {
+  return String(reason || '').trim() === SX_AUTO_DEADLINE_REASON;
+}
+
 export function normalizeSxDeadlineGroup(value) {
   const key = String(value || '').trim();
   if (!key) return null;
@@ -281,18 +292,53 @@ function inclusiveCalendarDays(fromYmd, toYmd) {
  * @param {{ startYmd?: string|null }} opts startYmd = ngày tiếp nhận / bắt đầu SX
  * @returns {null|{ installYmd, packing, finishing, cabinet, planning, productionFinishYmd }}
  */
-export function buildSxInstallBackPlan(installYmd, { startYmd = null, slipDays = 0 } = {}) {
+/**
+ * Số ngày mỗi nhóm, đọc từ `sla_days` của cột pipeline. Khớp hàm cùng tên ở backend
+ * (`backend/src/helpers/sxWorkshopSchedule.js`) — sửa một bên phải sửa cả bên kia.
+ *
+ * Lấy MAX trong nhóm chứ không cộng dồn: cột nhỏ trong một cột lớn chạy SONG SONG, nên thời
+ * gian của cột lớn là cột nhỏ lâu nhất. Cột chưa đặt (0/null) thì nhóm đó rơi về mặc định.
+ */
+export function ngayNhomTuCotPipeline(stages) {
+  const out = {
+    packing: SX_INSTALL_BACK_PLAN.packingDays,
+    finishing: SX_INSTALL_BACK_PLAN.finishDays,
+    cabinet: SX_INSTALL_BACK_PLAN.cabinetDays,
+  };
+  if (!Array.isArray(stages) || !stages.length) return out;
+  const max = {};
+  for (const s of stages) {
+    if (s?.is_active === false) continue;
+    const g = sxStageDeadlineGroup(s, stages);
+    if (!g || !(g in out)) continue;
+    const n = Math.floor(Number(s?.sla_days) || 0);
+    if (n > 0) max[g] = Math.max(max[g] || 0, n);
+  }
+  for (const g of Object.keys(out)) if (max[g] > 0) out[g] = max[g];
+  return out;
+}
+
+export function buildSxInstallBackPlan(installYmd, { startYmd = null, slipDays = 0, ngayNhom = null } = {}) {
   const install = String(installYmd || '').slice(0, 10);
   if (!parseYmd(install)) return null;
 
-  // Lắp D → đóng D-1 → hoàn thiện D-3..D-2 → thùng D-5..D-4 → kế hoạch …..D-6
+  // Lùi dần từ ngày lắp. Không truyền `ngayNhom` thì ra đúng bảng cũ:
+  // Lắp D → đóng D-1 → hoàn thiện D-3..D-2 → gia công D-5..D-4 → kế hoạch …..D-6
+  const ngay = {
+    packing: SX_INSTALL_BACK_PLAN.packingDays,
+    finishing: SX_INSTALL_BACK_PLAN.finishDays,
+    cabinet: SX_INSTALL_BACK_PLAN.cabinetDays,
+    ...(ngayNhom || {}),
+  };
+  const soNgay = (g) => Math.max(1, Math.floor(Number(ngay[g]) || 1));
+
   const packingEnd = addCalendarDaysYmd(install, -1);
-  const packingStart = packingEnd;
-  const finishEnd = addCalendarDaysYmd(install, -2);
-  const finishStartYmd = addCalendarDaysYmd(install, -3);
-  const cabinetEnd = addCalendarDaysYmd(install, -4);
-  const cabinetStart = addCalendarDaysYmd(install, -5);
-  const planEnd = addCalendarDaysYmd(install, -6);
+  const packingStart = addCalendarDaysYmd(packingEnd, -(soNgay('packing') - 1));
+  const finishEnd = addCalendarDaysYmd(packingStart, -1);
+  const finishStartYmd = addCalendarDaysYmd(finishEnd, -(soNgay('finishing') - 1));
+  const cabinetEnd = addCalendarDaysYmd(finishStartYmd, -1);
+  const cabinetStart = addCalendarDaysYmd(cabinetEnd, -(soNgay('cabinet') - 1));
+  const planEnd = addCalendarDaysYmd(cabinetStart, -1);
 
   const start = startYmd ? String(startYmd).slice(0, 10) : '';
   const hasStart = Boolean(parseYmd(start));
@@ -324,21 +370,21 @@ export function buildSxInstallBackPlan(installYmd, { startYmd = null, slipDays =
     packing: {
       key: 'packing',
       label: 'Giao hàng',
-      daysFixed: SX_INSTALL_BACK_PLAN.packingDays,
+      daysFixed: soNgay('packing'),
       startYmd: shift(packingStart),
       endYmd: shiftedPackingEnd,
     },
     finishing: {
       key: 'finishing',
       label: 'Hoàn thiện',
-      daysFixed: SX_INSTALL_BACK_PLAN.finishDays,
+      daysFixed: soNgay('finishing'),
       startYmd: shift(finishStartYmd),
       endYmd: shiftedFinish,
     },
     cabinet: {
       key: 'cabinet',
       label: 'Gia công',
-      daysFixed: SX_INSTALL_BACK_PLAN.cabinetDays,
+      daysFixed: soNgay('cabinet'),
       startYmd: shift(cabinetStart),
       endYmd: shift(cabinetEnd),
     },

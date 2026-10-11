@@ -46,7 +46,7 @@ function row(overrides = {}) {
 }
 
 async function run({ currency = 'VND', currencyResponse, ads = [], insights = [row()],
-  insightResponse, now } = {}) {
+  insightResponse, accountInsights = [], accountResponse, now, days = 30 } = {}) {
   saved.catalog.length = 0;
   saved.spend.length = 0;
   saved.results.length = 0;
@@ -63,12 +63,14 @@ async function run({ currency = 'VND', currencyResponse, ads = [], insights = [r
     const parsed = new URL(url);
     if (parsed.pathname.endsWith('/ads')) return response({ data: ads });
     if (parsed.pathname.endsWith('/insights')) {
+      if (parsed.searchParams.get('level') === 'account')
+        return accountResponse ? accountResponse(parsed) : response({ data: accountInsights });
       return insightResponse ? insightResponse(parsed) : response({ data: insights });
     }
     return currencyResponse || response({ currency });
   };
   try {
-    const result = await dongBoMot({ ad_account_id: 'act_1', access_token: TOKEN }, { ngay: 30 });
+    const result = await dongBoMot({ ad_account_id: 'act_1', access_token: TOKEN }, { ngay: days });
     assert.deepEqual(saved.results, [result]);
     return { result, catalog: [...saved.catalog], spend: [...saved.spend],
       calls: [...saved.calls], warnings };
@@ -181,4 +183,98 @@ test('Meta 190: chỉ mã lọc đi vào kết quả và log', async () => {
   assert.equal(result.loi, 'META_AUTH');
   assert.equal(spend.length, 0);
   assert.doesNotMatch(JSON.stringify(result) + warnings.join(' '), /raw secret|TOKEN_GIA/);
+});
+
+test('đối soát từng đồng, giữ khóa cũ và ngày vắng/0 cùng khớp', async () => {
+  const now = Date.parse('2026-10-06T16:30:00Z');
+  const { result, calls } = await run({ now, days: 2,
+    insights: [row({ date_start: '2026-10-05', spend: '5' }),
+      row({ ad_id: 'ad_2', date_start: '2026-10-05', spend: '1' }),
+      row({ date_start: '2026-10-06', spend: '0' })],
+    accountInsights: [{ date_start: '2026-10-05', spend: '6', account_currency: 'VND' }] });
+  assert.equal(result.reconciliation.status, 'MATCH');
+  assert.equal(result.reconciliation.days_checked, 1);
+  assert.deepEqual(result.reconciliation.today_pending, { day: '2026-10-06', ad_level_vnd: 0, account_level_vnd: 0 });
+  assert.deepEqual(result.reconciliation.mismatched_days, []);
+  assert.equal(result.complete, true);
+  for (const key of ['ok', 'complete', 'currency', 'since', 'until', 'pages', 'rows_written',
+    'invalid_rows', 'skipped_rows', 'truncated', 'error_code']) assert.ok(key in result);
+  const accountUrl = new URL(calls.find(x => x.includes('level=account')));
+  assert.equal(accountUrl.searchParams.get('time_increment'), '1');
+  assert.equal(accountUrl.searchParams.get('fields'), 'spend,account_currency');
+  assert.deepEqual(JSON.parse(accountUrl.searchParams.get('time_range')),
+    { since: '2026-10-05', until: '2026-10-06' });
+});
+
+test('cấp tài khoản phân trang đủ và hai phía vắng đều khớp', async () => {
+  const day = resultDay();
+  const paged = await run({ now: Date.parse('2026-10-06T16:30:00Z'), days: 2,
+    insights: [row({ date_start: day, spend: '3' })],
+    accountResponse(parsed) {
+      return parsed.searchParams.has('page')
+        ? response({ data: [] })
+        : response({ data: [{ date_start: day, spend: '3' }],
+          paging: { next: 'https://graph.facebook.com/insights?level=account&page=2' } });
+    } });
+  assert.equal(paged.result.reconciliation.status, 'MATCH');
+  assert.equal(paged.calls.filter(x => x.includes('level=account')).length, 2);
+  const empty = await run({ now: Date.parse('2026-10-06T16:30:00Z'), days: 2,
+    insights: [], accountInsights: [] });
+  assert.equal(empty.result.reconciliation.status, 'MATCH');
+  assert.equal(empty.result.reconciliation.days_checked, 1);
+});
+
+test('lệch một đồng báo đúng ngày và vẫn ghi dòng quảng cáo', async () => {
+  const { result, spend } = await run({ now: Date.parse('2026-10-06T16:30:00Z'),
+    days: 2, insights: [row({ date_start: resultDay(), spend: '5' })],
+    accountInsights: [{ date_start: resultDay(), spend: '6' }] });
+  assert.equal(result.reconciliation.status, 'MISMATCH');
+  assert.deepEqual(result.reconciliation.mismatched_days, [{ day: resultDay(),
+    ad_level_vnd: 5, account_level_vnd: 6 }]);
+  assert.equal(spend.length, 1);
+});
+
+test('chỉ ngày hôm nay lệch (chi tiêu còn tăng giữa hai lần gọi) vẫn khớp và được ghi nhận', async () => {
+  const { result } = await run({ now: Date.parse('2026-10-06T16:30:00Z'), days: 2,
+    insights: [row({ date_start: '2026-10-05', spend: '5' }), row({ date_start: '2026-10-06', spend: '7' })],
+    accountInsights: [{ date_start: '2026-10-05', spend: '5' }, { date_start: '2026-10-06', spend: '9' }] });
+  assert.equal(result.reconciliation.status, 'MATCH');
+  assert.deepEqual(result.reconciliation.mismatched_days, []);
+  assert.deepEqual(result.reconciliation.today_pending, { day: '2026-10-06', ad_level_vnd: 7, account_level_vnd: 9 });
+});
+
+function resultDay() { return '2026-10-05'; }
+
+test('lỗi cấp tài khoản, phân trang và tiền tệ trả UNAVAILABLE không lộ token', async () => {
+  for (const [accountResponse, code] of [
+    [() => response({ error: { code: 200, message: TOKEN } }, 403), 'META_PERMISSION'],
+    [() => { throw Error(TOKEN); }, 'NETWORK'],
+    [() => response({ data: [], paging: { next: 'https://graph.facebook.com/insights?level=account' } }),
+      'PAGE_LIMIT'],
+    [() => response({ data: [{ date_start: resultDay(), spend: '1', account_currency: 'USD' }] }),
+      'CURRENCY_MISMATCH'],
+  ]) {
+    const { result, spend, warnings } = await run({ now: Date.parse('2026-10-06T16:30:00Z'), days: 2,
+      insights: [row({ date_start: resultDay(), spend: '1' })], accountResponse });
+    assert.equal(result.ok, true);
+    assert.equal(result.complete, true);
+    assert.equal(result.reconciliation.status, 'UNAVAILABLE');
+    assert.equal(result.reconciliation.error_code, code);
+    assert.equal(spend.length, 1);
+    assert.doesNotMatch(JSON.stringify(result) + warnings.join(' '), /TOKEN_GIA/);
+  }
+});
+
+test('số lẻ, âm và sai kiểu đánh dấu INVALID, không ép tròn', async () => {
+  const day = resultDay();
+  const fractional = await run({ now: Date.parse('2026-10-06T16:30:00Z'), days: 2,
+    insights: [row({ date_start: day, spend: '1.5' })],
+    accountInsights: [{ date_start: day, spend: '2' }] });
+  assert.deepEqual(fractional.result.reconciliation.mismatched_days,
+    [{ day, ad_level_vnd: 'INVALID', account_level_vnd: 2 }]);
+  const negative = await run({ now: Date.parse('2026-10-06T16:30:00Z'), days: 2,
+    insights: [row({ date_start: day, spend: '0' })],
+    accountInsights: [{ date_start: day, spend: '-1' }] });
+  assert.deepEqual(negative.result.reconciliation.mismatched_days,
+    [{ day, ad_level_vnd: 0, account_level_vnd: 'INVALID' }]);
 });

@@ -648,7 +648,7 @@ export default function KpiGuidePage() {
   return (
     <div className="min-h-screen">
       {/* Page header */}
-      <div className="bg-white border-b border-gray-200 px-4 md:px-6 py-4">
+      <div data-guide-khu-vuc="Tiêu đề hướng dẫn KPI" className="bg-white border-b border-gray-200 px-4 md:px-6 py-4">
         <div className="max-w-4xl mx-auto">
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center flex-shrink-0">
@@ -685,7 +685,7 @@ export default function KpiGuidePage() {
       <div className="max-w-4xl mx-auto px-4 md:px-6 py-6 space-y-6">
 
         {/* Gating alert */}
-        <div className="rounded-xl border-2 border-red-300 bg-red-50 p-4">
+        <div data-guide-khu-vuc="Cảnh báo điều kiện KPI" className="rounded-xl border-2 border-red-300 bg-red-50 p-4">
           <div className="flex gap-3">
             <AlertTriangle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
             <div>
@@ -700,7 +700,7 @@ export default function KpiGuidePage() {
         </div>
 
         {/* Section tabs */}
-        <div className="flex gap-1 bg-gray-100 rounded-xl p-1">
+        <div data-guide-khu-vuc="Tab mục hướng dẫn" className="flex gap-1 bg-gray-100 rounded-xl p-1">
           {[
             { id: 'standards', label: 'Tiêu chuẩn KPI', icon: Target },
             { id: 'scoring', label: 'Cách tính điểm', icon: BarChart2 },
@@ -727,7 +727,7 @@ export default function KpiGuidePage() {
         {activeSection === 'standards' && (
           <div className="space-y-6">
             {/* Role filter */}
-            <div>
+            <div data-guide-khu-vuc="Lọc theo vai trò">
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Lọc theo vai trò của bạn</p>
               <div className="flex flex-wrap gap-2">
                 {ROLES.map(r => (
@@ -759,7 +759,7 @@ export default function KpiGuidePage() {
         {/* ── Section: Cách tính điểm ───────────────────────────── */}
         {activeSection === 'scoring' && (
           <div className="space-y-5">
-            <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+            <div data-guide-khu-vuc="Công thức tính điểm từng KPI" className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
               <h3 className="font-bold text-gray-900">Công thức tính điểm từng KPI</h3>
               <div className="space-y-3">
                 {SCORING_RULES.map((r, i) => (
@@ -796,7 +796,7 @@ export default function KpiGuidePage() {
               </div>
             </div>
 
-            <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+            <div data-guide-khu-vuc="Lịch tính điểm" className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
               <h3 className="font-bold text-gray-900">Lịch tính điểm</h3>
               <div className="space-y-2">
                 {[
@@ -816,7 +816,7 @@ export default function KpiGuidePage() {
               </div>
             </div>
 
-            <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div data-guide-khu-vuc="Cách xem điểm của mình" className="bg-white rounded-xl border border-gray-200 p-5">
               <h3 className="font-bold text-gray-900 mb-3">Cách xem điểm của mình</h3>
               <div className="space-y-2 text-sm text-gray-700">
                 <div className="flex items-center gap-2">
@@ -856,7 +856,7 @@ export default function KpiGuidePage() {
               ))}
             </div>
 
-            <div className="bg-white rounded-xl border border-gray-200 p-5">
+            <div data-guide-khu-vuc="Checklist hàng tuần" className="bg-white rounded-xl border border-gray-200 p-5">
               <h3 className="font-bold text-gray-900 mb-3 flex items-center gap-2">
                 <CalendarCheck className="h-4 w-4 text-indigo-500" />
                 Checklist hàng tuần
@@ -871,7 +871,7 @@ export default function KpiGuidePage() {
               </ul>
             </div>
 
-            <div className="bg-indigo-50 rounded-xl border border-indigo-200 p-5">
+            <div data-guide-khu-vuc="5 quy tắc vàng để không bao giờ bị điểm thấp" className="bg-indigo-50 rounded-xl border border-indigo-200 p-5">
               <h3 className="font-bold text-indigo-900 mb-3 flex items-center gap-2">
                 <ShieldCheck className="h-4 w-4 text-indigo-600" />
                 5 quy tắc vàng để không bao giờ bị điểm thấp

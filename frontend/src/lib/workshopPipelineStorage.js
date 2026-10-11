@@ -116,7 +116,7 @@ export function applyWorkshopProjectRenamePatches(projects) {
     if (!patch) return p;
     any = true;
     const nextName = (patch.name || '').trim() || p.name;
-    const nextDealTitle = (patch.dealTitle || patch.name || '').trim();
+    const nextDealTitle = (patch.dealTitle || '').trim();
     let crmDeals = p.crm_deals;
     if (nextDealTitle && Array.isArray(crmDeals) && crmDeals.length) {
       crmDeals = crmDeals.map((d, i) => (i === 0 || d?.type === 'deal'

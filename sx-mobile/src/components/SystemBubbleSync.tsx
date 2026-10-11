@@ -69,7 +69,7 @@ export default function SystemBubbleSync() {
   const { token, user } = useAuth();
   const { isDark } = useTheme();
   const uid = user?.id || user?.userId || '';
-  const { unreadTotal } = useMessenger();
+  const { unreadTotal, clearThreadUnread } = useMessenger();
   const { subscribeMessengerChat } = useNotifications();
   const [prefs, setPrefs] = useState<SxMobilePrefs | null>(null);
   const unreadRef = useRef(unreadTotal);
@@ -176,6 +176,39 @@ export default function SystemBubbleSync() {
     );
     return () => sub.remove();
   }, [uid]);
+
+  // Khung chat bong bóng (native) đã đánh dấu «đã đọc» một đoạn trên máy chủ: bỏ số chưa đọc của đoạn đó trong app
+  // và gỡ các thông báo còn nằm trên thanh thông báo của đoạn đó.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const sub = DeviceEventEmitter.addListener('BubbleGroupRead', (p: { groupId?: string } | null) => {
+      const gid = p?.groupId?.trim();
+      if (!gid) return;
+      clearThreadUnread(gid);
+      void (async () => {
+        try {
+          const shown = await Notifications.getPresentedNotificationsAsync();
+          for (const n of shown) {
+            const d = n.request.content.data as Record<string, unknown> | undefined;
+            const hit = d && [d.entity_id, d.group_id, d.groupId].some((v) => v != null && String(v) === gid);
+            if (hit) await Notifications.dismissNotificationAsync(n.request.identifier);
+          }
+        } catch {
+          /* best-effort */
+        }
+      })();
+    });
+    return () => sub.remove();
+  }, [clearThreadUnread]);
+
+  // Số chưa đọc của app giảm (đọc ở nơi khác) → huy hiệu bong bóng giảm theo, không để huy hiệu cũ nằm lại.
+  const prevUnreadRef = useRef(unreadTotal);
+  useEffect(() => {
+    const prev = prevUnreadRef.current;
+    prevUnreadRef.current = unreadTotal;
+    if (Platform.OS !== 'android' || !Overlay) return;
+    if (unreadTotal < prev && AppState.currentState !== 'active') setBubbleBadge(unreadTotal);
+  }, [unreadTotal]);
 
   return null;
 }

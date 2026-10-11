@@ -578,7 +578,7 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
 
   ) {
 
-    dispatchShowPeek(bubbleKey, sender, message)
+    dispatchShowPeek(bubbleKey, sender, message, true, messageId)
 
   }
 
@@ -621,7 +621,7 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
 
 
 
-  private fun dispatchShowPeek(groupId: String, sender: String, message: String, incrementBadge: Boolean = true) {
+  private fun dispatchShowPeek(groupId: String, sender: String, message: String, incrementBadge: Boolean = true, messageId: String? = null) {
 
     val i = Intent(reactContext, OverlayBubbleService::class.java).apply {
 
@@ -634,6 +634,8 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
       putExtra(OverlayBubbleService.EXTRA_MESSAGE, message)
 
       putExtra(OverlayBubbleService.EXTRA_INCREMENT_BADGE, incrementBadge)
+
+      if (!messageId.isNullOrBlank()) putExtra(OverlayBubbleService.EXTRA_MESSAGE_ID, messageId)
 
     }
 

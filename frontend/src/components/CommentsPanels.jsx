@@ -37,6 +37,7 @@ import {
   X,
 } from 'lucide-react';
 import api from '../lib/api';
+import { parseProjectRenameCommand, renameNoticeBody } from '../lib/projectRenameComment';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isStrictAdmin } from '../lib/adminRole';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmCommentFullDateTime, formatCrmFbRelativeTime } from './crmFbCommentUi';
@@ -3112,6 +3113,8 @@ export function CrmLeadCommentsPanel({
   slashCommands = [],
   onSlashCommand,
   slashFormSlot = null,
+  /** (nextName) => Promise<{ ok, error?, oldName?, notice? }> — lệnh /đổi tên */
+  onProjectRename,
 }) {
   const showOnScreen = useCommentShowOnScreenEnabled();
   const { user } = useAuth();
@@ -3292,12 +3295,30 @@ export function CrmLeadCommentsPanel({
   useLeadCommentSocket(activeLeadId, handleLeadCommentEvent, applyReadReceipt);
 
   const submit = useCallback(async ({ mention_user_ids, attachmentList, visibility, visible_user_ids } = {}) => {
-    const v = body.trim();
+    let v = body.trim();
     const files = attachmentList ?? pendingFiles;
     if (!activeLeadId || (!v && !files.length)) return;
     setPosting(true);
+    let commentType = null;
     try {
+      const parsedRename = onProjectRename ? parseProjectRenameCommand(v) : null;
+      if (parsedRename) {
+        if (!parsedRename.nextName) {
+          alert('Điền tên mới sau dấu : — ví dụ /đổi tên "dự án xưởng": Tên mới');
+          setPosting(false);
+          return;
+        }
+        const renamed = await onProjectRename(parsedRename.nextName);
+        if (!renamed?.ok) {
+          alert(renamed?.error || 'Không đổi được tên dự án');
+          setPosting(false);
+          return;
+        }
+        v = renamed.notice || renameNoticeBody(renamed.oldName, parsedRename.nextName);
+        commentType = 'rename';
+      }
       const payload = { body: v };
+      if (commentType) payload.comment_type = commentType;
       if (replyTo?.id != null) payload.parent_id = replyTo.id;
       if (mention_user_ids?.length) payload.mention_user_ids = mention_user_ids;
       if (files.length) payload.attachments = files;
@@ -3321,7 +3342,7 @@ export function CrmLeadCommentsPanel({
     } finally {
       setPosting(false);
     }
-  }, [body, pendingFiles, activeLeadId, replyTo, onCountChange, handleIncomingComment]);
+  }, [body, pendingFiles, activeLeadId, replyTo, onCountChange, handleIncomingComment, onProjectRename]);
 
   const handleFilesUploaded = useCallback((files) => {
     const uploaded = (files || []).filter((f) => f?.file_url || f?.url);
@@ -3601,6 +3622,7 @@ export function ProjectCommentsPanel({
   onCountChange,
   slashCommands = [],
   onSlashCommand,
+  onProjectRename,
 }) {
   const showOnScreen = useCommentShowOnScreenEnabled();
   const { user } = useAuth();
@@ -3715,11 +3737,26 @@ export function ProjectCommentsPanel({
   useProjectCommentSocket(activeProjectId, handleProjectCommentEvent, applyReadReceipt);
 
   const submit = useCallback(async (attachmentList) => {
-    const v = body.trim();
+    let v = body.trim();
     const files = attachmentList ?? pendingFiles;
     if (!activeProjectId || (!v && !files.length)) return;
     setPosting(true);
     try {
+      const parsedRename = onProjectRename ? parseProjectRenameCommand(v) : null;
+      if (parsedRename) {
+        if (!parsedRename.nextName) {
+          alert('Điền tên mới sau dấu : — ví dụ /đổi tên "dự án xưởng": Tên mới');
+          setPosting(false);
+          return;
+        }
+        const renamed = await onProjectRename(parsedRename.nextName);
+        if (!renamed?.ok) {
+          alert(renamed?.error || 'Không đổi được tên dự án');
+          setPosting(false);
+          return;
+        }
+        v = renamed.notice || renameNoticeBody(renamed.oldName, parsedRename.nextName);
+      }
       const payload = { content: v };
       if (replyTo?.id != null) payload.parent_id = replyTo.id;
       if (files.length) payload.attachments = files;
@@ -3740,7 +3777,7 @@ export function ProjectCommentsPanel({
     } finally {
       setPosting(false);
     }
-  }, [body, pendingFiles, activeProjectId, replyTo, onCountChange, load]);
+  }, [body, pendingFiles, activeProjectId, replyTo, onCountChange, load, onProjectRename]);
 
   const handleFilesUploaded = useCallback((files) => {
     const uploaded = (files || []).filter((f) => f?.file_url || f?.url);

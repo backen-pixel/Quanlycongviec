@@ -10,6 +10,7 @@ const OVERLAY_FILES = [
   'overlay/OverlayBubbleService.kt',
   'overlay/OverlayChatPanel.kt',
   'overlay/OverlayChatTheme.kt',
+  'overlay/OverlayAvatarView.kt',
   'overlay/BubbleChatApi.kt',
   'overlay/BubbleComposeBridge.kt',
   'overlay/BubbleComposeActivity.kt',

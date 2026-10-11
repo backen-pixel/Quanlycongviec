@@ -47,7 +47,7 @@ export default function UnifiedTaskHistoryWidget({
   if (!projectId && !leadId && !(source && sourceId)) return null;
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white p-4">
+    <div className="rounded-xl border border-gray-200 bg-white p-4" data-guide-khu-vuc="Lịch sử nhiệm vụ">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-sm font-bold text-gray-800 inline-flex items-center gap-2">
           <History className="h-4 w-4 text-blue-600" />

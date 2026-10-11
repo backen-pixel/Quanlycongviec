@@ -3,6 +3,7 @@
  * + `ProductionDashboard` scopeKpis.
  */
 import type { KanbanStage, ProductionProject } from '../types';
+import { vnYmd } from './vnDate';
 
 const INTAKE_BUCKET = 'won_pending';
 const VC_SHIPPED = new Set(['shipping', 'installing', 'warranty', 'completed']);
@@ -172,8 +173,8 @@ function isHucabiSameDayPast1730(raw: string | Date, companyId: string | null | 
   if (String(companyId || '') !== HUCABI_COMPANY_ID) return false;
   const ts = new Date(raw).getTime();
   if (!Number.isFinite(ts)) return false;
-  const dueYmd = new Date(ts).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
-  const nowYmd = new Date(nowMs).toLocaleDateString('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' });
+  const dueYmd = vnYmd(ts);
+  const nowYmd = vnYmd(nowMs);
   if (dueYmd !== nowYmd) return false;
   const endMs = new Date(`${dueYmd}T17:30:00+07:00`).getTime();
   return nowMs > endMs;

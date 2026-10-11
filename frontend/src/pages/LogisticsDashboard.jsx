@@ -2103,7 +2103,7 @@ const KanbanCard = memo(function KanbanCard({
   const taskBadgeTitle = isInstallStage ? 'Nhiệm vụ Lắp đặt' : 'Nhiệm vụ Vận chuyển';
   const deals = Array.isArray(item.crm_deals) ? item.crm_deals : [];
   const primaryDeal = deals.find((d) => String(d?.type || '') === 'deal') || deals[0] || null;
-  const cardTitle = (primaryDeal?.title || '').trim() || item.name || '';
+  const cardTitle = String(item.name || '').trim() || (primaryDeal?.title || '').trim() || '';
   const leadCreatedAt = primaryDeal?.created_at || item.created_at || null;
   const vcDeadline = resolveEffectiveModuleDeadline(DEADLINE_MODULE.LOGISTICS, item, stage);
   const vcOverdue = vcDeadline?.deadlineTs != null && vcDeadline.deadlineTs < Date.now();

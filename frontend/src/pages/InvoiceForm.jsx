@@ -164,7 +164,7 @@ export default function InvoiceForm() {
     <div className="space-y-4 w-full">
       <SaveToast status={saveStatus} message={saveMsg} onDone={() => setSaveStatus('idle')} />
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div data-guide-khu-vuc="Tiêu đề & thao tác hóa đơn" className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <button onClick={() => navigate(returnTo || (isEdit ? `/crm/invoices/${id}` : '/crm/invoices'))} className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"><ArrowLeft className="h-5 w-5" /></button>
           <div>
@@ -209,7 +209,7 @@ export default function InvoiceForm() {
       </div>
 
       {/* Customer Info */}
-      <div className="bg-white rounded-xl border p-4">
+      <div data-guide-khu-vuc="Thông tin khách hàng" className="bg-white rounded-xl border p-4">
         <h2 className="text-sm font-bold mb-3" style={{ color: '#000000' }}>Thông tin khách hàng</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -267,7 +267,7 @@ export default function InvoiceForm() {
       </CommercialItemsTable>
 
       {/* Notes */}
-      <div className="bg-white rounded-xl border p-4">
+      <div data-guide-khu-vuc="Ghi chú hóa đơn" className="bg-white rounded-xl border p-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="text-xs font-medium text-gray-600">Hạn thanh toán</label>

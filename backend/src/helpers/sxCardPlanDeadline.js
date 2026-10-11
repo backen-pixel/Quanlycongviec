@@ -4,6 +4,7 @@
  * Ghi vào projects.sx_kanban_deadline_at. Không ghi xuống tasks.due_date.
  */
 const { supabase } = require('../config/supabase');
+const { companyDeadlineIsoFromYmd } = require('./companyDeadlineClock');
 const { AUTO_REASON, computeSxInstallPlanDeadline } = require('./sxInstallPlanKanbanDeadline');
 const {
   indexSxCrmCompletion,
@@ -95,7 +96,12 @@ async function syncSxCardDeadline(projectId) {
     if (stage) {
       iso = computeSxInstallPlanDeadline(project, stage, siblings)?.iso || null;
     } else {
-      iso = await earliestOpenGroupIso(project, projectId);
+      // Thẻ chưa có cột: vẫn ưu tiên NGÀY LẮP ĐẶT cho thống nhất với thẻ đã có cột.
+      // Chỉ khi chưa có ngày lắp mới lùi về hạn sớm nhất của nhóm việc còn mở.
+      const { resolveSxPlanInstallYmd } = require('./sxWorkshopSchedule');
+      const installYmd = resolveSxPlanInstallYmd(project);
+      iso = (installYmd ? companyDeadlineIsoFromYmd(installYmd, project.company_id) : null)
+        || await earliestOpenGroupIso(project, projectId);
     }
   }
 

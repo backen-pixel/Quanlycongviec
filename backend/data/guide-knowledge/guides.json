@@ -1,0 +1,1118 @@
+[
+  {
+    "path": "/crm/leads/:id",
+    "label": "Các mục trong chi tiết Lead / Deal",
+    "menu": "CRM → Bán hàng",
+    "summary": "Trang chi tiết một lead/deal có một hàng mục (tab) ngay dưới khối thông tin khách: Công việc, Không gian chung, Đặt hàng, Tài liệu, Drive, Ghi chú & HĐ, Facebook, Zalo, Thành viên, Bình luận, Ghi âm, và Điểm chéo & KH. Mỗi mục là một phần việc khác nhau của cùng cơ hội đó.",
+    "keywords": [
+      "tab lead",
+      "tab deal",
+      "muc trong lead",
+      "muc trong deal",
+      "chi tiet lead",
+      "chi tiet deal",
+      "cac tab",
+      "thanh tab",
+      "hang muc"
+    ],
+    "content": "Bấm vào tên mục để chuyển; chỉ một mục mở tại một thời điểm. Mục ĐANG MỞ đọc được ở `tab_dang_chon` của doc_trang. Hai mục CHỈ HIỆN CÓ ĐIỀU KIỆN: 'Zalo' chỉ có khi lead đã nối Zalo OA, và 'Điểm chéo & KH' chỉ hiện sau khi deal vào cột Hoàn thành — nếu người dùng không thấy chúng thì đó là lý do, không phải lỗi. Số nhỏ trên góc tên mục là số bản ghi đang có trong mục đó (tài liệu, ghi chú, đặt hàng, bình luận); riêng mục Thành viên hiện 3 số theo khối CRM / SX / LD.",
+    "actions": [
+      {
+        "label": "Công việc"
+      },
+      {
+        "label": "Không gian chung"
+      },
+      {
+        "label": "Đặt hàng"
+      },
+      {
+        "label": "Tài liệu"
+      },
+      {
+        "label": "Drive"
+      },
+      {
+        "label": "Ghi chú & HĐ"
+      },
+      {
+        "label": "Facebook"
+      },
+      {
+        "label": "Thành viên"
+      },
+      {
+        "label": "Bình luận"
+      },
+      {
+        "label": "Ghi âm"
+      }
+    ]
+  },
+  {
+    "path": "/crm/leads/:id#tasks",
+    "label": "Lead/Deal → mục Công việc",
+    "menu": "CRM → Bán hàng",
+    "summary": "Nhiệm vụ CRM của chính lead/deal này, xếp theo từng giai đoạn của pipeline (Mới, Tư vấn, Liên hệ không trả lời, Cold, Warm, Hot, Chuyển Deal).",
+    "keywords": [
+      "cong viec trong lead",
+      "nhiem vu lead",
+      "nhiem vu deal",
+      "task lead",
+      "giao viec lead",
+      "them viec",
+      "deadline lead",
+      "planner"
+    ],
+    "content": "Đầu mục có thanh tiến độ dạng '0/3 xong' cho nhóm nhiệm vụ đang mở. Quy tắc do chính màn hình ghi ra: 'Giao việc chỉ mở 1 nhiệm vụ tại một thời điểm — hoàn thành mới tạo tiếp', và 'Người nhận: ưu tiên người trên nhiệm vụ, thiếu thì người phụ trách lead/deal'. Có các lối xem khác nhau cho cùng dữ liệu: List, Deadline, Planner, Lịch. 'Gắn mẫu' áp một bộ nhiệm vụ mẫu (xem Bộ mẫu CRM); 'Bổ sung thiếu CRM' thêm những nhiệm vụ mẫu còn thiếu mà không đụng nhiệm vụ đã có. Cuối mục có 'Lịch sử nhiệm vụ' ghi lại ai tạo/sửa nhiệm vụ nào lúc nào.",
+    "actions": [
+      {
+        "label": "Thêm việc"
+      },
+      {
+        "label": "Giao việc"
+      },
+      {
+        "label": "Gắn mẫu"
+      },
+      {
+        "label": "Bổ sung thiếu CRM"
+      },
+      {
+        "label": "List"
+      },
+      {
+        "label": "Deadline"
+      },
+      {
+        "label": "Planner"
+      },
+      {
+        "label": "Lịch"
+      },
+      {
+        "label": "Xem tất cả"
+      }
+    ]
+  },
+  {
+    "path": "/crm/leads/:id#shared-workspace",
+    "label": "Lead/Deal → mục Không gian chung",
+    "menu": "CRM → Bán hàng",
+    "summary": "Nơi phân công thành viên cho deal và giao nhiệm vụ CHÉO giữa các công ty/khối (CRM, Sản xuất, Lắp đặt) trên cùng một cơ hội.",
+    "keywords": [
+      "khong gian chung",
+      "phan cong thanh vien",
+      "giao cheo",
+      "giao viec cheo",
+      "shared workspace",
+      "don hang phat sinh"
+    ],
+    "content": "Khối 'Phân công thành viên' hiện tổng dạng '1 việc · CRM · 1 NV' và lọc được theo khối: Tất cả / CRM / SX / LD. Đây là chỗ TẠO, SỬA, XOÁ phân công cho thành viên deal — mục Thành viên chỉ thêm người vào deal chứ không giao việc. Bên dưới có khối 'Đơn hàng phát sinh': các deal sinh ra từ deal của cùng khách hàng này, bấm để mở chi tiết/pipeline; muốn tạo thì dùng nút «Tạo đơn hàng phát sinh» trên deal khách hàng.",
+    "actions": [
+      {
+        "label": "Giao việc"
+      },
+      {
+        "label": "Thêm · CRM"
+      },
+      {
+        "label": "Mở trang Giao việc"
+      }
+    ]
+  },
+  {
+    "path": "/crm/leads/:id#purchase_orders",
+    "label": "Lead/Deal → mục Đặt hàng",
+    "menu": "CRM → Bán hàng",
+    "summary": "Lệnh đặt hàng gắn với deal này — chọn sản phẩm từ catalog mua hàng, lọc được theo trạng thái.",
+    "keywords": [
+      "dat hang trong deal",
+      "lenh dat hang",
+      "purchase order",
+      "po deal",
+      "mua hang cho deal"
+    ],
+    "content": "Mục hiện số bản ghi và ghi rõ 'chọn SP từ catalog' — sản phẩm lấy từ catalog ở trang Sản phẩm (Mua hàng), không gõ tay tự do. Có bộ lọc theo trạng thái lệnh (Tất cả + từng trạng thái). Khi chưa có gì thì hiện 'Chưa có đặt hàng' kèm nút Thêm mới.",
+    "actions": [
+      {
+        "label": "Thêm"
+      },
+      {
+        "label": "Thêm mới"
+      },
+      {
+        "label": "Tất cả"
+      }
+    ]
+  },
+  {
+    "path": "/crm/leads/:id#documents",
+    "label": "Lead/Deal → mục Tài liệu",
+    "menu": "CRM → Bán hàng",
+    "summary": "Tài liệu của riêng lead/deal này: tải file lên hoặc nhập thẳng văn bản.",
+    "keywords": [
+      "tai lieu lead",
+      "tai lieu deal",
+      "upload file lead",
+      "nhap van ban",
+      "dinh kem lead"
+    ],
+    "content": "Hai lối thêm: 'Upload file' (tệp từ máy) và 'Nhập văn bản' (gõ nội dung trực tiếp, không cần tệp). Tiêu đề hiện số lượng dạng 'TÀI LIỆU LEAD (0)'. Khác với mục Drive: Tài liệu lưu trong hệ thống, Drive là file nằm trên Google Drive được liên kết vào.",
+    "actions": [
+      {
+        "label": "Upload file"
+      },
+      {
+        "label": "Nhập văn bản"
+      }
+    ]
+  },
+  {
+    "path": "/crm/leads/:id#drive",
+    "label": "Lead/Deal → mục Drive",
+    "menu": "CRM → Bán hàng",
+    "summary": "File trên Google Drive đã gắn vào lead/deal này.",
+    "keywords": [
+      "drive lead",
+      "google drive deal",
+      "lien ket file drive",
+      "tao doc",
+      "tao sheet"
+    ],
+    "content": "Tạo được thư mục riêng cho cơ hội, tải file từ máy lên Drive, tạo mới Doc hoặc Sheet ngay tại đây, hoặc liên kết một file Drive có sẵn. Đây là file nằm TRÊN Google Drive — khác mục Tài liệu là tệp lưu trong hệ thống.",
+    "actions": [
+      {
+        "label": "Thư mục"
+      },
+      {
+        "label": "Tải lên từ máy"
+      },
+      {
+        "label": "Doc"
+      },
+      {
+        "label": "Sheet"
+      },
+      {
+        "label": "Liên kết file Drive"
+      }
+    ]
+  },
+  {
+    "path": "/crm/leads/:id#notes",
+    "label": "Lead/Deal → mục Ghi chú & HĐ",
+    "menu": "CRM → Bán hàng",
+    "summary": "Ghi chú gắn với lead/deal này, trộn chung một dòng thời gian với lịch sử hoạt động và các cuộc ghi âm đã ghép.",
+    "keywords": [
+      "ghi chu lead",
+      "ghi chu deal",
+      "hoat dong lead",
+      "lich su hoat dong",
+      "note lead",
+      "dong thoi gian"
+    ],
+    "content": "Bấm biểu tượng bút để sửa một ghi chú. Ghi âm CRM đã ghép với cơ hội hiện ngay trong dòng thời gian này dưới dạng bong bóng màu tím — nội dung đầy đủ thì xem ở mục Ghi âm. Ghi chú ở đây cũng hiện lại trong tab Hoạt động chung. Có ô 'PHẠM VI GHI CHÚ' cho biết ghi chú đang gắn vào lead nào (VD 'Lead LEAD-6678'). Từ bong bóng nổi ngoài màn hình có thể tìm và chọn lead/deal khác để xem hoặc ghi chú nhanh mà không cần mở trang.",
+    "actions": [
+      {
+        "label": "Sửa"
+      }
+    ]
+  },
+  {
+    "path": "/crm/leads/:id#facebook",
+    "label": "Lead/Deal → mục Facebook",
+    "menu": "CRM → Kênh chat",
+    "summary": "Hội thoại Messenger của khách này, đọc và trả lời ngay trong trang lead.",
+    "keywords": [
+      "facebook lead",
+      "messenger lead",
+      "chat facebook",
+      "hop thu facebook",
+      "sync tin nhan"
+    ],
+    "content": "Hiện đúng luồng tin nhắn Messenger của khách kèm thời gian từng tin. Có 'Hộp thư' để sang danh sách hội thoại và 'Sync' để kéo tin mới về. Chỉ có nội dung khi lead đã được nối với một người dùng Facebook — lead nhập tay sẽ trống.",
+    "actions": [
+      {
+        "label": "Hộp thư"
+      },
+      {
+        "label": "Sync"
+      }
+    ]
+  },
+  {
+    "path": "/crm/leads/:id#zalo",
+    "label": "Lead/Deal → mục Zalo",
+    "menu": "CRM → Kênh chat",
+    "summary": "Hội thoại Zalo OA của khách này. Mục CHỈ HIỆN khi lead đã nối với Zalo OA.",
+    "keywords": [
+      "zalo lead",
+      "zalo oa lead",
+      "chat zalo",
+      "khong thay tab zalo"
+    ],
+    "content": "Nếu người dùng không thấy mục Zalo trên một lead thì không phải lỗi: lead đó chưa nối Zalo OA. Đã đo trên một lead nguồn Facebook — hàng mục không có Zalo."
+  },
+  {
+    "path": "/crm/leads/:id#team",
+    "label": "Lead/Deal → mục Thành viên",
+    "menu": "CRM → Bán hàng",
+    "summary": "Thêm người vào cơ hội này — chọn được nhân viên của MỌI công ty trong hệ sinh thái, không giới hạn công ty của lead.",
+    "keywords": [
+      "thanh vien lead",
+      "thanh vien deal",
+      "them nguoi vao deal",
+      "quyen thanh vien",
+      "nhan vien deal"
+    ],
+    "content": "Luồng thêm đi theo 3 bước ghi sẵn trên màn hình: CHỌN CÔNG TY HỆ SINH THÁI → KHU VỰC → NV. Chọn 'Tất cả công ty (HST)' để thấy người của mọi công ty; lọc tiếp theo khu vực rồi tick nhiều nhân viên, chọn quyền, rồi thêm. Số trên tên mục là 3 con số theo khối CRM / SX / LD. LƯU Ý phân biệt: mục này chỉ THÊM người vào deal; muốn giao việc cho họ thì sang mục Không gian chung, hoặc mở trang Giao việc CRM.",
+    "actions": [
+      {
+        "label": "Công ty"
+      },
+      {
+        "label": "Khu vực"
+      },
+      {
+        "label": "Mở Không gian chung"
+      },
+      {
+        "label": "Mở trang Giao việc"
+      }
+    ]
+  },
+  {
+    "path": "/crm/leads/:id#comments",
+    "label": "Lead/Deal → mục Bình luận",
+    "menu": "CRM → Bán hàng",
+    "summary": "Trao đổi nội bộ về cơ hội này, kèm được ảnh và tệp, đặt được ở chế độ riêng tư.",
+    "keywords": [
+      "binh luan lead",
+      "binh luan deal",
+      "comment lead",
+      "trao doi noi bo",
+      "rieng tu"
+    ],
+    "content": "Gõ nội dung rồi bấm 'Đăng'. Có nút 'Ảnh & tệp' để đính kèm, và công tắc '🔒 Riêng tư' để bình luận chỉ người trong nhóm thấy. Khác mục Ghi chú & HĐ: Ghi chú là dòng thời gian làm việc của cơ hội, Bình luận là chỗ người với người trao đổi.",
+    "actions": [
+      {
+        "label": "Đăng"
+      },
+      {
+        "label": "Ảnh & tệp"
+      },
+      {
+        "label": "Riêng tư"
+      }
+    ]
+  },
+  {
+    "path": "/crm/leads/:id#voice_crm",
+    "label": "Lead/Deal → mục Ghi âm",
+    "menu": "CRM → Tổng quan",
+    "summary": "Các file ghi âm cuộc gọi (từ web hoặc app) đã ghép với lead/deal này.",
+    "keywords": [
+      "ghi am lead",
+      "ghi am deal",
+      "cuoc goi lead",
+      "chuyen thanh van ban",
+      "transcript",
+      "voice"
+    ],
+    "content": "Lead tiềm năng được xếp hàng chuyển ghi âm thành văn bản tự động. Nếu chưa có file nào, màn hình chỉ đúng hai cách ghép: upload kèm số điện thoại (hệ thống tự ghép theo SĐT), hoặc gắn tay trên trang Ghi âm. Bản rút gọn của các ghi âm đã ghép cũng hiện dưới dạng bong bóng tím trong mục Ghi chú & HĐ.",
+    "actions": [
+      {
+        "label": "Làm mới"
+      },
+      {
+        "label": "Trang ghi âm"
+      }
+    ]
+  },
+  {
+    "path": "/crm/leads/:id#deal_scores",
+    "label": "Lead/Deal → mục Điểm chéo & KH",
+    "menu": "CRM → KPI & báo cáo",
+    "summary": "Chấm điểm chéo giữa các bên và điểm khách hàng cho deal. Mục CHỈ HIỆN sau khi deal đã ở cột Hoàn thành.",
+    "keywords": [
+      "diem cheo",
+      "cham diem deal",
+      "diem khach hang",
+      "khong thay tab diem"
+    ],
+    "content": "Người dùng không thấy mục này nghĩa là deal chưa vào cột Hoàn thành — phải kéo deal sang Hoàn thành trước, không phải lỗi hiển thị."
+  },
+  {
+    "path": "/crm/dashboard#che-do-xem",
+    "label": "Dashboard CRM → các chế độ xem",
+    "menu": "CRM → Tổng quan",
+    "summary": "Cùng dữ liệu lead/deal nhưng xem theo 6 kiểu: Kanban, Danh sách, Planner, Deadline, Bình luận và Lịch.",
+    "keywords": [
+      "che do xem crm",
+      "kanban",
+      "danh sach lead",
+      "planner",
+      "deadline view",
+      "xem theo lich",
+      "doi kieu hien thi"
+    ],
+    "content": "Kanban là mặc định — kéo thẻ qua cột pipeline. Danh sách xem dạng bảng, lọc và sắp xếp nhiều tiêu chí. Planner nhóm theo nhân viên phụ trách. Deadline gom thẻ theo hạn (Quá hạn / Hôm nay / Tuần này…) theo cấu hình ở Cấu hình Deadline CRM. Bình luận gom các thẻ có trao đổi mới. Lịch trải thẻ theo ngày hẹn. Chuyển kiểu bằng nhóm nút ở thanh trên, hệ thống nhớ lựa chọn cho lần sau.",
+    "actions": [
+      {
+        "label": "Kanban"
+      },
+      {
+        "label": "Danh sách"
+      },
+      {
+        "label": "Planner"
+      },
+      {
+        "label": "Deadline"
+      },
+      {
+        "label": "Bình luận"
+      },
+      {
+        "label": "Lịch"
+      }
+    ]
+  },
+  {
+    "path": "/crm/facebook#inbox",
+    "label": "Facebook → mục Hộp thư",
+    "menu": "CRM → Kênh chat",
+    "summary": "Hộp thư Messenger của các Page — đọc và trả lời tin nhắn khách, dùng mẫu trả lời nhanh, huy hiệu đếm tin chưa đọc.",
+    "keywords": [
+      "hop thu facebook",
+      "tra loi messenger",
+      "tin chua doc",
+      "mau tra loi nhanh",
+      "chat khach fb"
+    ],
+    "content": "Lọc theo Page hoặc theo công ty đăng nhập (có thể đang bị khoá theo công ty). Mẫu trả lời nhanh tối đa 80 mẫu, tạo ở nút «Mẫu». Có thể đồng bộ lại tin nhắn cho tất cả liên hệ — thao tác này mất vài phút.",
+    "actions": [
+      {
+        "label": "Hộp thư"
+      },
+      {
+        "label": "Mẫu"
+      }
+    ],
+    "needs_admin": true
+  },
+  {
+    "path": "/crm/facebook#contacts",
+    "label": "Facebook → mục Danh bạ",
+    "menu": "CRM → Kênh chat",
+    "summary": "Danh bạ liên hệ Facebook, lọc theo Tất cả / Có SĐT / Chưa có SĐT / Có Lead / Chưa có Lead / Lead + SĐT / Lead chưa có SĐT.",
+    "keywords": [
+      "danh ba facebook",
+      "lien he fb",
+      "khach chua co sdt",
+      "lien he chua co lead",
+      "loc danh ba fb"
+    ],
+    "content": "Đây là nơi kiểm tra khách nào đã lên Lead, khách nào còn thiếu SĐT để bổ sung. Nếu SĐT bị lấy nhầm từ link Messenger thì dùng trang «Dọn SĐT từ link».",
+    "actions": [
+      {
+        "label": "Danh bạ"
+      },
+      {
+        "label": "📞 Có SĐT"
+      },
+      {
+        "label": "❌ Chưa có SĐT"
+      }
+    ],
+    "needs_admin": true
+  },
+  {
+    "path": "/crm/facebook#analytics",
+    "label": "Facebook → mục Phân tích",
+    "menu": "CRM → Kênh chat",
+    "summary": "Thống kê kênh Facebook theo khoảng thời gian (Hôm nay, Hôm qua, 7 ngày, 30 ngày) — lượng tin nhắn và hồ sơ mới.",
+    "keywords": [
+      "phan tich facebook",
+      "thong ke tin nhan fb",
+      "ho so moi",
+      "bao cao kenh facebook"
+    ],
+    "actions": [
+      {
+        "label": "Phân tích"
+      }
+    ],
+    "needs_admin": true
+  },
+  {
+    "path": "/crm/facebook#lead-ads",
+    "label": "Facebook → mục Lead Ads",
+    "menu": "CRM → Kênh chat",
+    "summary": "Lead thu từ biểu mẫu quảng cáo Facebook Lead Ads đổ về hệ thống, có huy hiệu đếm lead ads trong ngày.",
+    "keywords": [
+      "lead ads",
+      "form quang cao facebook",
+      "lead tu quang cao",
+      "bieu mau fb"
+    ],
+    "actions": [
+      {
+        "label": "Lead Ads"
+      }
+    ],
+    "needs_admin": true
+  },
+  {
+    "path": "/crm/facebook#comments",
+    "label": "Facebook → mục Bình luận",
+    "menu": "CRM → Kênh chat",
+    "summary": "Bình luận trên bài viết Page — trả lời ngay tại đây, đánh dấu «Đã trả lời»; huy hiệu đếm bình luận trong ngày.",
+    "keywords": [
+      "binh luan facebook",
+      "tra loi binh luan",
+      "comment page",
+      "da tra loi"
+    ],
+    "actions": [
+      {
+        "label": "Bình luận"
+      },
+      {
+        "label": "Trả lời"
+      }
+    ],
+    "needs_admin": true
+  },
+  {
+    "path": "/crm/facebook#auto-lead",
+    "label": "Facebook → mục Tự động (tạo Lead)",
+    "menu": "CRM → Kênh chat",
+    "summary": "Điều kiện tự động tạo Lead từ tin nhắn Messenger — chọn một trong 4 kiểu kích hoạt.",
+    "keywords": [
+      "tu dong tao lead",
+      "auto lead facebook",
+      "tao lead khi nhan tin",
+      "sau n tin nhan",
+      "chi tao khi co sdt"
+    ],
+    "content": "Bốn lựa chọn: «Tạo ngay khi có tin nhắn» (khách nhắn lần đầu là tạo Lead luôn), «Sau N tin nhắn» (chờ đủ số tin), «Khi có số điện thoại» (chỉ tạo khi tìm được SĐT trong tin nhắn), và «Thủ công» (không tự tạo, chỉ tạo bằng tay). Có nút khôi phục cài đặt mặc định. SĐT nằm trong danh sách chặn ở trang «Chặn KH (SĐT)» sẽ bị bỏ qua.",
+    "actions": [
+      {
+        "label": "Tự động"
+      }
+    ],
+    "needs_admin": true
+  },
+  {
+    "path": "/crm/facebook#auto-companies",
+    "label": "Facebook → mục Auto công ty",
+    "menu": "CRM → Kênh chat",
+    "summary": "Bật/tắt tự động theo từng công ty (công tắc tổng + default_company_id), xem số SĐT quét được và tin đã đồng bộ. Chỉ admin thấy mục này.",
+    "keywords": [
+      "auto cong ty",
+      "cong tac tong auto",
+      "default company id",
+      "bat auto theo cong ty"
+    ],
+    "actions": [
+      {
+        "label": "Auto công ty"
+      }
+    ],
+    "needs_admin": true
+  },
+  {
+    "path": "/crm/facebook#settings",
+    "label": "Facebook → mục Cài đặt",
+    "menu": "CRM → Kênh chat",
+    "summary": "Kết nối Page và token Facebook — huy hiệu cảnh báo khi token sắp hết hạn hoặc có Page lỗi.",
+    "keywords": [
+      "cai dat facebook",
+      "token facebook",
+      "ket noi page",
+      "token het han",
+      "canh bao page"
+    ],
+    "actions": [
+      {
+        "label": "Cài đặt"
+      }
+    ],
+    "needs_admin": true
+  },
+  {
+    "path": "/crm/zalo#inbox",
+    "label": "Zalo OA → mục Hộp thư",
+    "menu": "CRM → Kênh chat",
+    "summary": "Tin nhắn Zalo OA — trả lời khách, đếm tin chưa đọc. Lưu ý: OA chỉ cho phép nhắn lại trong vòng 7 ngày kể từ tin của khách.",
+    "keywords": [
+      "hop thu zalo",
+      "tra loi zalo",
+      "cua so 7 ngay",
+      "tin zalo moi"
+    ],
+    "actions": [
+      {
+        "label": "Hộp thư"
+      }
+    ],
+    "needs_admin": true
+  },
+  {
+    "path": "/crm/zalo#contacts",
+    "label": "Zalo OA → mục Danh bạ",
+    "menu": "CRM → Kênh chat",
+    "summary": "Danh bạ người quan tâm OA — cập nhật tên khách lấy từ Zalo cho một hoặc tất cả liên hệ.",
+    "keywords": [
+      "danh ba zalo",
+      "lay ten khach zalo",
+      "cap nhat ten tat ca lien he"
+    ],
+    "actions": [
+      {
+        "label": "Danh bạ"
+      },
+      {
+        "label": "Cập nhật tên tất cả liên hệ"
+      }
+    ],
+    "needs_admin": true
+  },
+  {
+    "path": "/crm/zalo#tools",
+    "label": "Zalo OA → mục Công cụ Lead",
+    "menu": "CRM → Kênh chat",
+    "summary": "Công cụ chuyển hội thoại Zalo thành Lead CRM và xử lý hàng loạt liên hệ.",
+    "keywords": [
+      "cong cu lead zalo",
+      "tao lead tu zalo",
+      "chuyen hoi thoai thanh lead"
+    ],
+    "actions": [
+      {
+        "label": "Công cụ Lead"
+      }
+    ],
+    "needs_admin": true
+  },
+  {
+    "path": "/crm/zalo#settings",
+    "label": "Zalo OA → mục Cài đặt",
+    "menu": "CRM → Kênh chat",
+    "summary": "Cấu hình OA — OA ID, Access Token, refresh token và webhook n8n (tin Zalo mới → n8n, lấy tên khách → n8n).",
+    "keywords": [
+      "cau hinh oa",
+      "access token zalo",
+      "refresh token",
+      "webhook n8n zalo",
+      "oa id"
+    ],
+    "content": "Trạng thái token hiện ngay trên đầu: Access hết hạn / Cần refresh / Sắp hết hạn / Chưa có refresh. Refresh token thất bại thì phải lấy token mới từ Zalo OA rồi lưu lại.",
+    "actions": [
+      {
+        "label": "Cài đặt"
+      }
+    ],
+    "needs_admin": true
+  },
+  {
+    "path": "/projects/:id#aggregate",
+    "label": "Dự án → mục Tổng hợp CRM/SX/VC",
+    "menu": "2. Làm việc",
+    "summary": "Gộp tiến độ của một dự án ở cả ba khối CRM, Sản xuất và Vận chuyển/Lắp đặt trên một màn hình.",
+    "keywords": [
+      "tong hop crm sx vc",
+      "tien do du an tong hop",
+      "xem ca ba khoi"
+    ],
+    "actions": [
+      {
+        "label": "Tổng hợp CRM/SX/VC"
+      }
+    ]
+  },
+  {
+    "path": "/projects/:id#tasks",
+    "label": "Dự án → mục Công việc",
+    "menu": "2. Làm việc",
+    "summary": "Nhiệm vụ của dự án theo giai đoạn quy trình, có đếm tổng số việc; giai đoạn sau bị khoá tới khi hoàn thành hết nhiệm vụ giai đoạn trước.",
+    "keywords": [
+      "cong viec du an",
+      "nhiem vu du an",
+      "khoa giai doan",
+      "hoan thanh nhiem vu"
+    ],
+    "actions": [
+      {
+        "label": "Công việc"
+      }
+    ]
+  },
+  {
+    "path": "/projects/:id#orders",
+    "label": "Dự án → mục Đơn hàng",
+    "menu": "2. Làm việc",
+    "summary": "Đơn hàng gắn với dự án này, kèm số lượng bản ghi.",
+    "keywords": [
+      "don hang du an",
+      "don hang gan du an"
+    ],
+    "actions": [
+      {
+        "label": "Đơn hàng"
+      }
+    ]
+  },
+  {
+    "path": "/projects/:id#finance",
+    "label": "Dự án → mục Thu chi",
+    "menu": "2. Làm việc",
+    "summary": "Theo dõi khoản thu và khoản chi phát sinh của dự án.",
+    "keywords": [
+      "thu chi du an",
+      "chi phi du an",
+      "khoan thu"
+    ],
+    "actions": [
+      {
+        "label": "Thu chi"
+      }
+    ]
+  },
+  {
+    "path": "/projects/:id#flow",
+    "label": "Dự án → mục Luồng",
+    "menu": "2. Làm việc",
+    "summary": "Luồng quy trình đang áp cho dự án — các bước và nhánh nối tiếp nhau; luồng được dựng ở trang Setup luồng.",
+    "keywords": [
+      "luong du an",
+      "so do buoc du an",
+      "quy trinh dang ap"
+    ],
+    "actions": [
+      {
+        "label": "Luồng"
+      }
+    ]
+  },
+  {
+    "path": "/projects/:id#documents",
+    "label": "Dự án → mục Tài liệu",
+    "menu": "2. Làm việc",
+    "summary": "Tệp đính kèm của dự án — báo giá, hợp đồng, bản vẽ và tài liệu khác.",
+    "keywords": [
+      "tai lieu du an",
+      "dinh kem du an",
+      "file du an"
+    ],
+    "actions": [
+      {
+        "label": "Tài liệu"
+      }
+    ]
+  },
+  {
+    "path": "/projects/:id#approvals",
+    "label": "Dự án → mục Duyệt",
+    "menu": "2. Làm việc",
+    "summary": "Yêu cầu duyệt của dự án, có đếm số yêu cầu đang chờ; chế độ duyệt thủ công hay tự động lấy theo Quy tắc duyệt.",
+    "keywords": [
+      "duyet du an",
+      "yeu cau duyet",
+      "cho duyet",
+      "quy tac duyet"
+    ],
+    "actions": [
+      {
+        "label": "Duyệt"
+      }
+    ]
+  },
+  {
+    "path": "/projects/:id#chat",
+    "label": "Dự án → mục Trao đổi",
+    "menu": "2. Làm việc",
+    "summary": "Bình luận, trao đổi của các thành viên trong dự án, có đếm số bình luận.",
+    "keywords": [
+      "trao doi du an",
+      "binh luan du an",
+      "thao luan"
+    ],
+    "actions": [
+      {
+        "label": "Trao đổi"
+      }
+    ]
+  },
+  {
+    "path": "/projects/:id#crm",
+    "label": "Dự án → mục Bán hàng",
+    "menu": "2. Làm việc",
+    "summary": "Thông tin bán hàng của dự án — deal, báo giá và giá trị liên quan bên CRM.",
+    "keywords": [
+      "ban hang du an",
+      "deal cua du an",
+      "gia tri du an"
+    ],
+    "actions": [
+      {
+        "label": "Bán hàng"
+      }
+    ]
+  },
+  {
+    "path": "/projects/:id#history",
+    "label": "Dự án → mục Lịch sử",
+    "menu": "2. Làm việc",
+    "summary": "Nhật ký hoạt động của dự án — ai làm gì, lúc nào, có đếm số hoạt động.",
+    "keywords": [
+      "lich su du an",
+      "nhat ky du an",
+      "hoat dong du an"
+    ],
+    "actions": [
+      {
+        "label": "Lịch sử"
+      }
+    ]
+  },
+  {
+    "path": "/sx/projects/:id#tai-lieu",
+    "label": "Dự án xưởng → tài liệu theo loại",
+    "menu": "Sản xuất → 3. Điều hành xưởng",
+    "summary": "Tài liệu của dự án xưởng phân theo 6 loại: Yêu cầu KH, Bản vẽ, Hình ảnh, Hợp đồng, Số đo và Khác.",
+    "keywords": [
+      "tai lieu du an xuong",
+      "ban ve",
+      "so do",
+      "yeu cau kh",
+      "hinh anh san xuat"
+    ],
+    "content": "File tải lên ở đây bên đặt hàng (Bếp / CRM) sẽ thấy trên mục Tài liệu của deal — không cần gửi lại qua chat.",
+    "actions": [
+      {
+        "label": "Yêu cầu KH"
+      },
+      {
+        "label": "Bản vẽ"
+      },
+      {
+        "label": "Hình ảnh"
+      },
+      {
+        "label": "Hợp đồng"
+      },
+      {
+        "label": "Số đo"
+      }
+    ]
+  },
+  {
+    "path": "/knowledge/admin#categories",
+    "label": "Quản trị kiến thức → mục Danh mục",
+    "menu": "Sản xuất → 2. Quản lý nội dung",
+    "summary": "Danh mục khoá học — tên, slug (tự sinh nếu để trống), mô tả và huy chương; hoàn thành hết bài trong một danh mục thì học viên được cấp chứng nhận.",
+    "keywords": [
+      "danh muc kien thuc",
+      "khoa hoc",
+      "huy chuong",
+      "slug danh muc"
+    ],
+    "actions": [
+      {
+        "label": "Danh mục"
+      },
+      {
+        "label": "Thêm danh mục"
+      }
+    ],
+    "needs_admin": true
+  },
+  {
+    "path": "/knowledge/admin#lessons",
+    "label": "Quản trị kiến thức → mục Bài học",
+    "menu": "Sản xuất → 2. Quản lý nội dung",
+    "summary": "Soạn bài học — nội dung, media tham khảo (YouTube, Vimeo hoặc upload/link trực tiếp), thứ tự mở khoá trong danh mục.",
+    "keywords": [
+      "tao bai hoc",
+      "soan bai",
+      "video bai hoc",
+      "youtube vimeo",
+      "mo khoa bai"
+    ],
+    "actions": [
+      {
+        "label": "Bài học"
+      },
+      {
+        "label": "Upload file từ máy"
+      }
+    ],
+    "needs_admin": true
+  },
+  {
+    "path": "/knowledge/admin#exercises",
+    "label": "Quản trị kiến thức → mục Bài tập",
+    "menu": "Sản xuất → 2. Quản lý nội dung",
+    "summary": "Tạo bài tập 4 dạng: Trắc nghiệm, Checklist, Tự luận và Mô phỏng thao tác; đặt được giới hạn thời gian.",
+    "keywords": [
+      "tao bai tap",
+      "trac nghiem",
+      "checklist",
+      "tu luan",
+      "mo phong thao tac",
+      "gioi han thoi gian"
+    ],
+    "actions": [
+      {
+        "label": "Bài tập"
+      }
+    ],
+    "needs_admin": true
+  },
+  {
+    "path": "/knowledge/admin#employees",
+    "label": "Quản trị kiến thức → mục Chứng nhận NV",
+    "menu": "Sản xuất → 2. Quản lý nội dung",
+    "summary": "Chứng nhận của nhân viên — xem ai đã được cấp, đặt tên người ký, và thu hồi chứng nhận kèm lý do.",
+    "keywords": [
+      "chung nhan nhan vien",
+      "cap chung nhan",
+      "thu hoi chung nhan",
+      "nguoi ky"
+    ],
+    "actions": [
+      {
+        "label": "Chứng nhận NV"
+      }
+    ],
+    "needs_admin": true
+  },
+  {
+    "path": "/knowledge/admin#submissions",
+    "label": "Quản trị kiến thức → mục Chấm essay",
+    "menu": "Sản xuất → 2. Quản lý nội dung",
+    "summary": "Hàng chờ chấm bài tự luận — số bài đang chờ hiện ngay trên tên mục; chấm điểm và ghi nhận xét cho học viên.",
+    "keywords": [
+      "cham essay",
+      "cham tu luan",
+      "cho cham",
+      "nhan xet bai lam"
+    ],
+    "actions": [
+      {
+        "label": "Chấm essay"
+      }
+    ],
+    "needs_admin": true
+  },
+  {
+    "path": "/knowledge/admin#analytics",
+    "label": "Quản trị kiến thức → mục Thống kê",
+    "menu": "Sản xuất → 2. Quản lý nội dung",
+    "summary": "Thống kê học tập toàn hệ thống; muốn xem chi tiết từng nhân viên thì sang Bảng điểm công ty.",
+    "keywords": [
+      "thong ke hoc tap",
+      "bao cao dao tao",
+      "bang diem"
+    ],
+    "actions": [
+      {
+        "label": "Thống kê"
+      },
+      {
+        "label": "Bảng điểm"
+      }
+    ],
+    "needs_admin": true
+  },
+  {
+    "path": "/ketoan/deals/:leadId#finance",
+    "label": "Kế toán deal → mục Tài chính",
+    "menu": "1. Tổng quan",
+    "summary": "Báo giá, đơn hàng, hóa đơn của deal cùng các giao dịch thu (tiền mặt / chuyển khoản) và trạng thái Chưa thu / Một phần / Quá hạn.",
+    "keywords": [
+      "tai chinh deal",
+      "giao dich thu tien",
+      "cong no",
+      "chua thu",
+      "qua han thanh toan"
+    ],
+    "actions": [
+      {
+        "label": "Tài chính"
+      }
+    ]
+  },
+  {
+    "path": "/ketoan/deals/:leadId#documents",
+    "label": "Kế toán deal → mục Tài liệu",
+    "menu": "1. Tổng quan",
+    "summary": "Chứng từ của deal; import file Excel vào thẳng báo giá / đơn hàng / hóa đơn.",
+    "keywords": [
+      "tai lieu ke toan",
+      "import excel bao gia",
+      "chung tu deal"
+    ],
+    "actions": [
+      {
+        "label": "Tài liệu"
+      }
+    ]
+  },
+  {
+    "path": "/ketoan/deals/:leadId#crm",
+    "label": "Kế toán deal → mục CRM",
+    "menu": "1. Tổng quan",
+    "summary": "Nhiệm vụ và diễn biến bên CRM của deal, để kế toán đối chiếu trước khi xuất hóa đơn.",
+    "keywords": [
+      "crm cua deal ke toan",
+      "nhiem vu crm",
+      "doi chieu deal"
+    ],
+    "actions": [
+      {
+        "label": "🗂️ CRM"
+      }
+    ]
+  },
+  {
+    "path": "/ketoan/deals/:leadId#sx",
+    "label": "Kế toán deal → mục Sản xuất",
+    "menu": "1. Tổng quan",
+    "summary": "Nhiệm vụ và tiến độ xưởng của deal — biết deal đã SX xong chưa để chốt hóa đơn.",
+    "keywords": [
+      "san xuat cua deal ke toan",
+      "tien do xuong",
+      "sx xong chua"
+    ],
+    "actions": [
+      {
+        "label": "🏭 Sản xuất"
+      }
+    ]
+  },
+  {
+    "path": "/management/backup-sync#cac-tab",
+    "label": "Giám sát Supabase → các mục",
+    "menu": "4. Cài đặt",
+    "summary": "Bảy mục: Giám sát, Kiểm tra drift, Lịch đồng bộ, Phân tích sử dụng, Nhật ký truy cập, Cập nhật log và Lịch sử đồng bộ.",
+    "keywords": [
+      "cac tab giam sat supabase",
+      "kiem tra drift",
+      "lich dong bo",
+      "nhat ky truy cap",
+      "lich su dong bo"
+    ],
+    "content": "Giám sát hiện trạng thái Primary/Backup (Bình thường, Cảnh báo, Suy giảm, Down, Đang dùng Backup, Primary down — sẵn sàng failover, Nghiêm trọng). Kiểm tra drift so lệch dữ liệu giữa hai DB. Lịch đồng bộ đặt chạy tự động. Phân tích sử dụng xem dung lượng và truy vấn. Nhật ký truy cập ghi ai đọc/ghi gì. Lịch sử đồng bộ liệt kê từng lần chạy — chưa có lần nào nghĩa là chưa chạy hoặc chưa tới lịch.",
+    "actions": [
+      {
+        "label": "Giám sát"
+      },
+      {
+        "label": "Kiểm tra drift"
+      },
+      {
+        "label": "Lịch đồng bộ"
+      },
+      {
+        "label": "Phân tích sử dụng"
+      },
+      {
+        "label": "Nhật ký truy cập"
+      },
+      {
+        "label": "Lịch sử đồng bộ"
+      }
+    ]
+  },
+  {
+    "path": "/calc/setup#variables",
+    "label": "Cấu hình tính toán → mục Biến đầu vào",
+    "menu": "2. Cấu hình",
+    "summary": "Khai báo biến dùng trong công thức — mỗi biến có var_key viết ASCII không dấu và nhãn hiển thị.",
+    "keywords": [
+      "bien dau vao",
+      "var key",
+      "khai bao bien",
+      "bien cong thuc"
+    ],
+    "actions": [
+      {
+        "label": "Biến đầu vào"
+      },
+      {
+        "label": "Thêm biến"
+      }
+    ]
+  },
+  {
+    "path": "/calc/setup#formulas",
+    "label": "Cấu hình tính toán → mục Công thức",
+    "menu": "2. Cấu hình",
+    "summary": "Viết công thức tính theo các var_key đã khai báo ở mục Biến đầu vào.",
+    "keywords": [
+      "cong thuc tinh",
+      "cong thuc calc",
+      "viet cong thuc"
+    ],
+    "actions": [
+      {
+        "label": "Công thức"
+      }
+    ]
+  },
+  {
+    "path": "/calc/setup#rules",
+    "label": "Cấu hình tính toán → mục Rule điều kiện",
+    "menu": "2. Cấu hình",
+    "summary": "Rule quyết định với bộ kích thước nào thì áp công thức nào — khi tính nhanh hệ thống hiện «Rule khớp» đã chọn.",
+    "keywords": [
+      "rule dieu kien",
+      "chon cong thuc theo dieu kien",
+      "rule khop"
+    ],
+    "actions": [
+      {
+        "label": "Rule điều kiện"
+      }
+    ]
+  },
+  {
+    "path": "/drive#khu-vuc",
+    "label": "Drive → các khu vực",
+    "menu": "2. Làm việc",
+    "summary": "Sidebar Drive chia thành Truy cập nhanh, Gần đây, Được chia sẻ với tôi, Thùng rác, Drive của tôi và các Drive chung theo Cá nhân / Công ty.",
+    "keywords": [
+      "khu vuc drive",
+      "drive cua toi",
+      "drive chung",
+      "duoc chia se voi toi",
+      "thung rac drive",
+      "truy cap nhanh"
+    ],
+    "content": "Chia sẻ đặt theo mức Xem hoặc Sửa. Xoá lần đầu chỉ đưa vào Thùng rác; «Xoá vĩnh viễn» thì không khôi phục được. Xem được dạng lưới hoặc dạng danh sách.",
+    "actions": [
+      {
+        "label": "Drive của tôi"
+      },
+      {
+        "label": "Gần đây"
+      },
+      {
+        "label": "Được chia sẻ với tôi"
+      },
+      {
+        "label": "Thùng rác"
+      },
+      {
+        "label": "Dạng lưới"
+      },
+      {
+        "label": "Dạng danh sách"
+      }
+    ]
+  }
+]

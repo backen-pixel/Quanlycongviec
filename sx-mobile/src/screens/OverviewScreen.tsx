@@ -29,6 +29,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Polygon, Stop } from 'react-native-svg';
 import { formatApiError } from '../api/client';
 import Avatar from '../components/Avatar';
 import CommentNotificationsModal from '../components/CommentNotificationsModal';
@@ -114,6 +115,8 @@ const KPI_CYAN = '#11C5FF';
 const KPI_PURPLE = '#A66CFF';
 
 const PAGE_HPAD = 14;
+/** Bề rộng khối đỏ chéo của thẻ cảnh báo quá hạn. */
+const ALERT_BADGE_W = 76;
 /** Số nhóm deal trên mỗi trang preview Tổng quan (không phải số task). */
 const TASK_PAGE_SIZE = 4;
 const DEAL_PAGE_SIZE = 4;
@@ -981,8 +984,8 @@ export default function OverviewScreen() {
     [staffProjectAll],
   );
 
+  // Đã bỏ «Tổng dự án» và «Hoàn tất» khỏi lưới theo yêu cầu (số vẫn xem được ở tab Dự án).
   const kpiItems: KpiStat[] = [
-    { key: 'total', label: 'Tổng dự án', value: kpis.total, color: colors.primary, icon: 'cube-outline', onPress: goKanban },
     { key: 'producing', label: 'Đang sản xuất', value: kpis.producing, color: KPI_CYAN, icon: 'play-outline', onPress: goKanban },
     {
       key: 'await',
@@ -998,14 +1001,6 @@ export default function OverviewScreen() {
       value: kpis.shipped,
       color: colors.success,
       icon: 'checkmark-outline',
-      onPress: goKanban,
-    },
-    {
-      key: 'done',
-      label: 'Hoàn tất',
-      value: kpis.completed,
-      color: colors.warning,
-      icon: 'flag-outline',
       onPress: goKanban,
     },
     {
@@ -1063,6 +1058,39 @@ export default function OverviewScreen() {
   /** Lẫn cả hai loại thì mới cần tách nút; một loại thì tiêu đề đã nói đủ. */
   const bothOverdueKinds = overdueTaskCount > 0 && overdueDealCount > 0;
 
+  /** Chip lọc công ty / phân loại: chỉ quản lý cần. Nhân viên bị khóa theo công ty của mình nên hai chip này không đổi được gì.
+   *  Giao diện sáng: nằm TRONG hero xanh (đúng thiết kế); giao diện tối: nằm đầu vùng cuộn như cũ. */
+  const scopeChips = teamView ? (
+    <View style={[styles.scopeRow, lightHero && styles.scopeRowHero]}>
+      <Pressable
+        style={[styles.scopeChip, lightHero && styles.scopeChipHero]}
+        onPress={() => { if (canPickCompany) setCompanyPickerOpen(true); }}
+        disabled={!canPickCompany}
+        accessibilityRole="button"
+        accessibilityLabel={`Lọc công ty: ${workshopLabel}`}
+      >
+        <Ionicons name="business-outline" size={14} color={colors.primary} />
+        <Text style={styles.scopeChipTxt} numberOfLines={1}>{workshopLabel}</Text>
+        {canPickCompany ? (
+          <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
+        ) : null}
+      </Pressable>
+
+      {workTypeOptions.length > 1 ? (
+        <Pressable
+          style={[styles.scopeChip, lightHero && styles.scopeChipHero]}
+          onPress={() => setTypePickerOpen(true)}
+          accessibilityRole="button"
+          accessibilityLabel={`Lọc phân loại: ${workTypeLabel}`}
+        >
+          <Ionicons name="layers-outline" size={14} color={colors.primary} />
+          <Text style={styles.scopeChipTxt} numberOfLines={1}>{workTypeLabel}</Text>
+          <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
+        </Pressable>
+      ) : null}
+    </View>
+  ) : null;
+
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       {lightHero ? (
@@ -1097,7 +1125,11 @@ export default function OverviewScreen() {
         ) : null}
         <View style={styles.heroTop}>
           <View style={styles.heroIdentity}>
-            <Avatar name={userName} avatarUrl={user?.avatar} size={52} color={lightHero ? '#FFFFFF' : colors.primary} />
+            <View>
+              <Avatar name={userName} avatarUrl={user?.avatar} size={52} color={lightHero ? '#FFFFFF' : colors.primary} />
+              {/* Chấm «đang online» như thiết kế. */}
+              <View style={styles.onlineDot} pointerEvents="none" />
+            </View>
             <View style={{ flex: 1, paddingRight: 4 }}>
               <Text style={[styles.helloLine, lightHero && heroTextStyle]} numberOfLines={1}>{helloLine}</Text>
               {/* Nhân viên quan tâm «hôm nay phải làm gì» hơn là thứ mấy. */}
@@ -1168,10 +1200,12 @@ export default function OverviewScreen() {
             </Pressable>
           </View>
         </View>
+        {lightHero ? scopeChips : null}
       </View>
 
       <ScrollView
-        style={{ flex: 1 }}
+        // Giao diện sáng: khung nội dung bo cong hai góc trên, đè lên hero xanh 12px (đúng thiết kế).
+        style={lightHero ? styles.panelLight : { flex: 1 }}
         contentContainerStyle={
           teamView
             ? [styles.content, { paddingBottom: insets.bottom + 110 }]
@@ -1205,38 +1239,8 @@ export default function OverviewScreen() {
           </View>
         ) : null}
 
-        {/* Chip lọc công ty / phân loại: chỉ quản lý cần. Nhân viên bị khóa
-            theo công ty của mình nên hai chip này không đổi được gì. */}
-        {teamView ? (
-        <View style={styles.scopeRow}>
-          <Pressable
-            style={styles.scopeChip}
-            onPress={() => { if (canPickCompany) setCompanyPickerOpen(true); }}
-            disabled={!canPickCompany}
-            accessibilityRole="button"
-            accessibilityLabel={`Lọc công ty: ${workshopLabel}`}
-          >
-            <Ionicons name="business-outline" size={14} color={colors.primary} />
-            <Text style={styles.scopeChipTxt} numberOfLines={1}>{workshopLabel}</Text>
-            {canPickCompany ? (
-              <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
-            ) : null}
-          </Pressable>
-
-          {workTypeOptions.length > 1 ? (
-            <Pressable
-              style={styles.scopeChip}
-              onPress={() => setTypePickerOpen(true)}
-              accessibilityRole="button"
-              accessibilityLabel={`Lọc phân loại: ${workTypeLabel}`}
-            >
-              <Ionicons name="layers-outline" size={14} color={colors.primary} />
-              <Text style={styles.scopeChipTxt} numberOfLines={1}>{workTypeLabel}</Text>
-              <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
-            </Pressable>
-          ) : null}
-        </View>
-        ) : null}
+        {/* Chip lọc: giao diện tối nằm ở đây; giao diện sáng nằm trong hero xanh. */}
+        {!lightHero ? scopeChips : null}
 
         {loading && !refreshing && kpis.total === 0 && overdueTotal === 0 ? (
           <View style={styles.inlineLoad}>
@@ -1255,31 +1259,51 @@ export default function OverviewScreen() {
             disabled={bothOverdueKinds}
             accessibilityRole={bothOverdueKinds ? undefined : 'button'}
           >
-          <LinearGradient
-            colors={[
-              colorWithAlpha(colors.danger, isDark ? 0.42 : 0.20),
-              colorWithAlpha(colors.danger, isDark ? 0.14 : 0.06),
-            ]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.alertBanner}
-          >
-            <View style={styles.alertIcon}>
-              <Ionicons name="alert-circle" size={22} color={colors.danger} />
+          <View style={styles.alertBanner}>
+            {/* Khối đỏ tràn mép trái, cạnh phải chéo (trên dài hơn dưới) — tương đương clip-path:
+                polygon(0 0, 100% 0, 74% 100%, 0 100%) của thiết kế. preserveAspectRatio="none" để co theo chiều cao thẻ. */}
+            <View style={styles.alertBadge}>
+              <Svg
+                style={StyleSheet.absoluteFill}
+                width="100%"
+                height="100%"
+                viewBox="0 0 100 100"
+                preserveAspectRatio="none"
+              >
+                <Defs>
+                  <SvgLinearGradient id="alertRed" x1="0" y1="0" x2="1" y2="1">
+                    <Stop offset="0" stopColor="#ff244c" />
+                    <Stop offset="1" stopColor="#ef144a" />
+                  </SvgLinearGradient>
+                </Defs>
+                <Polygon points="0,0 100,0 74,100 0,100" fill="url(#alertRed)" />
+              </Svg>
+              <View style={styles.alertIcon}>
+                <Text style={styles.alertBang}>!</Text>
+              </View>
             </View>
-            <View style={{ flex: 1 }}>
+            <View style={styles.alertBody}>
               {/* Gọi đúng thứ đang có: chỉ dùng từ chung "hạng mục" khi thực sự
                   lẫn cả hai loại, nếu không thì nói thẳng là công việc hay dự án. */}
-              <Text style={styles.alertTitle}>
-                {overdueTaskCount > 0 && overdueDealCount > 0
-                  ? `${overdueTotal} hạng mục quá hạn`
-                  : overdueTaskCount > 0
-                    ? `${overdueTaskCount} công việc quá hạn`
-                    : `${overdueDealCount} dự án quá hạn`}
-              </Text>
+              <View style={styles.alertTitleRow}>
+                <Text style={styles.alertCount}>
+                  {overdueTaskCount > 0 && overdueDealCount > 0
+                    ? overdueTotal
+                    : overdueTaskCount > 0
+                      ? overdueTaskCount
+                      : overdueDealCount}
+                </Text>
+                <Text style={styles.alertTitle} numberOfLines={1}>
+                  {overdueTaskCount > 0 && overdueDealCount > 0
+                    ? 'hạng mục quá hạn'
+                    : overdueTaskCount > 0
+                      ? 'công việc quá hạn'
+                      : 'dự án quá hạn'}
+                </Text>
+              </View>
+              <Text style={styles.alertSub} numberOfLines={1}>{workshopLabel}</Text>
               {/* Chỉ tách chip khi lẫn CẢ HAI loại — mỗi loại mở một màn khác nhau
-                  nên phải có nút riêng. Một loại thì tiêu đề đã nói hết, chip chỉ
-                  lặp lại; khi đó cho cả thẻ bấm được. */}
+                  nên phải có nút riêng. Một loại thì cả thẻ bấm được (nút «Xem chi tiết» bên phải). */}
               {bothOverdueKinds ? (
                 <View style={styles.alertActions}>
                   <Pressable style={styles.alertChip} hitSlop={6} onPress={() => goWork('overdue')}>
@@ -1292,12 +1316,13 @@ export default function OverviewScreen() {
                   </Pressable>
                 </View>
               ) : null}
-              <Text style={styles.alertSub}>{workshopLabel}</Text>
             </View>
             {bothOverdueKinds ? null : (
-              <Ionicons name="chevron-forward" size={20} color={colors.danger} />
+              <View style={styles.alertCta}>
+                <Ionicons name="chevron-forward" size={22} color="#E60026" />
+              </View>
             )}
-          </LinearGradient>
+          </View>
           </Pressable>
         ) : (
           // Nhân viên: bỏ dải «không có quá hạn» — thiết kế không có, và KPI
@@ -1666,16 +1691,24 @@ function createStyles(colors: AppColors) {
       alignItems: 'center',
       gap: 12,
     },
+    // Khung nội dung giao diện sáng: bo cong hai góc trên và đè lên hero xanh (thiết kế: -mt-2, rounded-2xl).
+    panelLight: {
+      flex: 1,
+      marginTop: -12,
+      backgroundColor: colors.bg,
+      borderTopLeftRadius: 22,
+      borderTopRightRadius: 22,
+    },
     helloLine: {
       color: colors.text,
-      fontSize: 20,
+      fontSize: 18,
       fontWeight: '800',
       letterSpacing: -0.3,
     },
     dateLine: {
-      marginTop: 3,
+      marginTop: 2,
       color: colors.textMuted,
-      fontSize: 13,
+      fontSize: 12,
       fontWeight: '600',
     },
     todayChip: {
@@ -1720,17 +1753,28 @@ function createStyles(colors: AppColors) {
     },
     todayOverdueTxt: { color: '#FFFFFF', fontSize: 12, fontWeight: '900' },
     wishLine: {
-      marginTop: 4,
+      marginTop: 2,
       color: colors.textMuted,
-      fontSize: 13.5,
+      fontSize: 11.5,
       fontWeight: '600',
-      lineHeight: 18,
+      lineHeight: 15,
+    },
+    onlineDot: {
+      position: 'absolute',
+      right: 0,
+      bottom: 0,
+      width: 14,
+      height: 14,
+      borderRadius: 7,
+      backgroundColor: '#34D399',
+      borderWidth: 2,
+      borderColor: '#FFFFFF',
     },
     headerBtns: { flexDirection: 'row', alignItems: 'center', gap: 8 },
     iconBtn: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
+      width: 38,
+      height: 38,
+      borderRadius: 19,
       backgroundColor: colors.cardAlt,
       borderWidth: 1,
       borderColor: colors.border,
@@ -1771,6 +1815,19 @@ function createStyles(colors: AppColors) {
       borderWidth: 1,
       borderColor: colors.border,
       maxWidth: '100%',
+    },
+    // Trong hero xanh: chip trắng không viền, đổ bóng nhẹ, cách dòng chào 14px (thiết kế: mt-4).
+    scopeRowHero: { marginTop: 14, marginBottom: 0 },
+    scopeChipHero: {
+      borderWidth: 0,
+      backgroundColor: '#FFFFFF',
+      paddingHorizontal: 13,
+      paddingVertical: 7,
+      shadowColor: '#0B1F4A',
+      shadowOpacity: 0.12,
+      shadowRadius: 4,
+      shadowOffset: { width: 0, height: 2 },
+      elevation: 2,
     },
     scopeChipTxt: {
       color: colors.text,
@@ -1815,28 +1872,42 @@ function createStyles(colors: AppColors) {
       marginBottom: 12,
     },
     truncatedBannerTxt: { flex: 1, color: colors.warning, fontSize: 12, fontWeight: '700', lineHeight: 16 },
+    // Thẻ cảnh báo quá hạn (theo thiết kế): thẻ trắng bo 20, khối đỏ chéo bên trái, số lớn, nút hồng «Xem chi tiết».
     alertBanner: {
       flexDirection: 'row',
-      alignItems: 'center',
-      gap: 10,
-      borderRadius: Radii.lg,
-      borderWidth: 1,
-      borderColor: colorWithAlpha(colors.danger, 0.4),
-      paddingHorizontal: 12,
-      paddingVertical: 12,
+      alignItems: 'stretch',
+      backgroundColor: colors.card,
+      borderRadius: 20,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colorWithAlpha(colors.border, 0.9),
+      paddingRight: 12,
       marginBottom: 14,
       overflow: 'hidden',
     },
-    alertIcon: {
-      width: 36,
-      height: 36,
-      borderRadius: 18,
-      backgroundColor: colors.card,
+    alertBadge: {
+      width: ALERT_BADGE_W,
+      minHeight: 68,
       alignItems: 'center',
       justifyContent: 'center',
+      overflow: 'hidden',
     },
-    alertTitle: { color: colors.danger, fontSize: 14.5, fontWeight: '800' },
-    alertSub: { color: colors.textMuted, fontSize: 12, fontWeight: '600', marginTop: 2 },
+    alertIcon: {
+      width: 34,
+      height: 34,
+      borderRadius: 17,
+      backgroundColor: '#FFFFFF',
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginLeft: -6,
+    },
+    alertBang: { color: '#E60026', fontSize: 20, fontWeight: '900', lineHeight: 24, includeFontPadding: false },
+    alertBody: { flex: 1, minWidth: 0, paddingVertical: 10, paddingLeft: 10, paddingRight: 6, justifyContent: 'center' },
+    alertTitleRow: { flexDirection: 'row', alignItems: 'baseline', gap: 5 },
+    alertCount: { color: '#E60026', fontSize: 24, fontWeight: '900', letterSpacing: -0.5, includeFontPadding: false },
+    alertTitle: { flexShrink: 1, color: colors.text, fontSize: 13.5, fontWeight: '800' },
+    alertSub: { color: colors.textMuted, fontSize: 11.5, fontWeight: '600', marginTop: 2 },
+    // Chỉ còn mũi tên (không chữ «Xem chi tiết», không nền) — cả thẻ vẫn bấm được.
+    alertCta: { alignSelf: 'center', paddingLeft: 4 },
     alertActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6 },
     alertChip: {
       flexDirection: 'row',
@@ -1928,8 +1999,8 @@ function createStyles(colors: AppColors) {
       justifyContent: 'center',
     },
     avatarTxt: { fontSize: 12, fontWeight: '800' },
-    rowTitle: { color: colors.text, fontSize: 14, fontWeight: '700' },
-    rowSub: { color: colors.textMuted, fontSize: 12, fontWeight: '600', marginTop: 2 },
+    rowTitle: { color: colors.text, fontSize: 12.5, fontWeight: '700' },
+    rowSub: { color: colors.textMuted, fontSize: 11, fontWeight: '600', marginTop: 2 },
     pager: {
       flexDirection: 'row',
       alignItems: 'center',

@@ -55,6 +55,20 @@ function soKhongAm(value) {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
+function vndNguyen(value) {
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+  if (typeof value === 'string' && !/^\d+(?:\.0+)?$/.test(value)) return null;
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+
+function ngayHopLe(day, since, until) {
+  if (typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+  const ms = Date.parse(`${day}T00:00:00Z`);
+  return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === day
+    && day >= since && day <= until;
+}
+
 /** Gọi Graph API. Token đi trong header Authorization, không nhét vào URL. */
 async function goiGraph(url, token) {
   const ctl = new AbortController();
@@ -178,15 +192,20 @@ async function keoChiTieu(tk, { since, until }) {
 
   const bayGio = new Date().toISOString();
   const banGhi = [];
+  const invalidDays = new Set();
   let invalid_rows = 0;
   let skipped_rows = 0;
   for (const r of rows) {
-    if (!r?.ad_id || !r?.date_start) { skipped_rows += 1; continue; }
+    if (!r?.ad_id || !r?.date_start) {
+      if (r?.date_start) invalidDays.add(String(r.date_start));
+      skipped_rows += 1; continue;
+    }
     const spend = soKhongAm(r.spend);
     // Meta may omit count fields when they are zero; only a present, malformed count is invalid.
     const impressions = r.impressions == null ? 0 : soKhongAm(r.impressions);
     const clicks = r.clicks == null ? 0 : soKhongAm(r.clicks);
     if (spend === null || !Number.isSafeInteger(impressions) || !Number.isSafeInteger(clicks)) {
+      if (r?.date_start) invalidDays.add(String(r.date_start));
       invalid_rows += 1;
       continue;
     }
@@ -210,10 +229,61 @@ async function keoChiTieu(tk, { since, until }) {
     if (error) throw new Error(`Lưu chi tiêu: ${error.message}`);
   }
   const tong = banGhi.reduce((s, x) => s + x.chi_tieu, 0);
+  const adDaily = new Map();
+  for (const row of banGhi) {
+    const previous = adDaily.get(row.ngay) ?? 0;
+    const amount = vndNguyen(row.chi_tieu);
+    const total = amount === null || previous === 'INVALID' ? 'INVALID' : previous + amount;
+    adDaily.set(row.ngay, Number.isSafeInteger(total) ? total : 'INVALID');
+  }
+  for (const day of invalidDays) adDaily.set(day, 'INVALID');
   return {
     so_dong_chi_tieu: banGhi.length, tong_chi_tieu: Math.round(tong),
-    rows_written: banGhi.length, invalid_rows, skipped_rows, pages, truncated,
+    rows_written: banGhi.length, invalid_rows, skipped_rows, pages, truncated, adDaily,
   };
+}
+
+async function doiSoatChiTieu(tk, { since, until }, adDaily, adComplete) {
+  const checked_at = new Date().toISOString();
+  const unavailable = error_code => ({ status: 'UNAVAILABLE', days_checked: 0,
+    mismatched_days: [], checked_at, error_code });
+  const khoang = encodeURIComponent(JSON.stringify({ since, until }));
+  const url = `${GRAPH}/${tk.ad_account_id}/insights?level=account&time_increment=1&limit=500`
+    + `&fields=${encodeURIComponent('spend,account_currency')}&time_range=${khoang}`;
+  try {
+    const { rows, truncated } = await keoTatCaTrang(url, tk.access_token);
+    if (truncated) return unavailable('PAGE_LIMIT');
+    if (tk._tien_te !== 'VND') return unavailable('CURRENCY_MISMATCH');
+    if (!adComplete || [...adDaily.keys()].some(day => !ngayHopLe(day, since, until)))
+      return unavailable('AD_LEVEL_INCOMPLETE');
+    const accountDaily = new Map();
+    for (const row of rows) {
+      const day = row?.date_start;
+      if (!ngayHopLe(day, since, until) || accountDaily.has(day)) return unavailable('META_ERROR');
+      if (row.account_currency && row.account_currency !== 'VND')
+        return unavailable('CURRENCY_MISMATCH');
+      accountDaily.set(day, vndNguyen(row.spend) ?? 'INVALID');
+    }
+    const mismatched_days = [];
+    let days_checked = 0, today_pending = null;
+    for (let ms = Date.parse(`${since}T00:00:00Z`); ms <= Date.parse(`${until}T00:00:00Z`); ms += 86400000) {
+      const day = new Date(ms).toISOString().slice(0, 10);
+      const ad_level_vnd = adDaily.get(day) ?? 0;
+      const account_level_vnd = accountDaily.get(day) ?? 0;
+      // `until` is today (Vietnam): spend is still accruing between the two Meta calls, so a small
+      // difference is expected and must not flip the verdict. Record it, never use it to conclude.
+      if (day === until) { today_pending = { day, ad_level_vnd, account_level_vnd }; continue; }
+      days_checked++;
+      if ((ad_level_vnd === 'INVALID' || account_level_vnd === 'INVALID' ||
+        ad_level_vnd !== account_level_vnd) && mismatched_days.length < 31)
+        mismatched_days.push({ day, ad_level_vnd, account_level_vnd });
+    }
+    return { status: mismatched_days.length ? 'MISMATCH' : 'MATCH',
+      days_checked, mismatched_days, today_pending, checked_at };
+  } catch (e) {
+    return unavailable(['NETWORK', 'META_AUTH', 'META_PERMISSION', 'META_RATE_LIMIT', 'META_ERROR']
+      .includes(e.code) ? e.code : 'META_ERROR');
+  }
 }
 
 /** Đồng bộ một tài khoản. Không ném lỗi ra ngoài — ghi lại vào ket_qua_cuoi. */
@@ -235,7 +305,8 @@ async function dongBoMot(tk, { ngay = 30 } = {}) {
     kq.pages += ten.pages;
     kq.truncated = ten.truncated;
     const chi = await keoChiTieu(tk, { since, until });
-    Object.assign(kq, ten, chi, {
+    const { adDaily, ...chiPublic } = chi;
+    Object.assign(kq, ten, chiPublic, {
       ok: true,
       tien_te: tk._tien_te,
       giay: Math.round((Date.now() - batDau) / 1000),
@@ -244,6 +315,8 @@ async function dongBoMot(tk, { ngay = 30 } = {}) {
     kq.truncated = ten.truncated || chi.truncated;
     kq.complete = !kq.truncated && !kq.invalid_rows && !kq.skipped_rows
       && !kq.currency_mismatch;
+    kq.reconciliation = await doiSoatChiTieu(tk, { since, until }, adDaily,
+      !chi.truncated && !chi.skipped_rows);
     if (kq.truncated) console.warn(`[dong-bo-qc] ${tk.ad_account_id}: TRUNCATED (${kq.pages} trang)`);
     if (kq.invalid_rows || kq.skipped_rows) {
       console.warn(`[dong-bo-qc] ${tk.ad_account_id}: INVALID_ROWS=${kq.invalid_rows}, SKIPPED_ROWS=${kq.skipped_rows}`);
@@ -256,6 +329,8 @@ async function dongBoMot(tk, { ngay = 30 } = {}) {
     kq.loi = kq.error_code;
     console.warn(`[dong-bo-qc] ${tk.ad_account_id}: ${kq.error_code}`);
   }
+  if (!kq.reconciliation) kq.reconciliation = { status: 'UNAVAILABLE', days_checked: 0,
+    mismatched_days: [], checked_at: new Date().toISOString(), error_code: 'AD_LEVEL_INCOMPLETE' };
   try {
     await supabase.from('fb_ad_accounts').update({
       lan_dong_bo_cuoi: new Date().toISOString(),

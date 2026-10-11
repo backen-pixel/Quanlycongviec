@@ -30,6 +30,27 @@ class BubbleMediaPickerActivity : Activity() {
   }
 
   private fun pickContent(type: String, allowMultiple: Boolean) {
+    // Mở THẲNG bộ chọn của hệ thống (không qua hộp thoại «Chọn ứng dụng»): Android 13+ dùng bộ chọn ảnh/video (lưới ảnh gần
+    // đây), máy cũ hơn mở thẳng trình duyệt tài liệu ở mục ảnh. Không mở được mới quay về hộp thoại chọn bên dưới.
+    val direct = if (Build.VERSION.SDK_INT >= 33 && (type.startsWith("image/") || type.startsWith("video/"))) {
+      Intent(MediaStore.ACTION_PICK_IMAGES).apply {
+        this.type = type
+        if (allowMultiple) putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, MediaStore.getPickImagesMaxLimit())
+      }
+    } else {
+      Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+        this.type = type
+        addCategory(Intent.CATEGORY_OPENABLE)
+        if (allowMultiple) putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+      }
+    }
+    try {
+      @Suppress("DEPRECATION")
+      startActivityForResult(direct, REQ_PICK)
+      return
+    } catch (_: Exception) {
+      // rơi xuống đường cũ
+    }
     val intents = ArrayList<Intent>()
     intents.add(Intent(Intent.ACTION_GET_CONTENT).apply {
       this.type = type

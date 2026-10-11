@@ -169,20 +169,33 @@ async function invalidateTags(tags) {
   await Promise.all([...keysToDelete].map((k) => deleteCacheKey(k)));
 }
 
-function cacheControlHeader(scope, ttlSec) {
-  return scope === 'global'
-    ? `public, max-age=${ttlSec}`
-    : `private, max-age=${ttlSec}`;
+/**
+ * Header Cache-Control gửi cho TRÌNH DUYỆT (khác cache phía server).
+ *
+ * `revalidate: true` dành cho dữ liệu CẤU HÌNH mà người dùng vừa sửa xong là muốn thấy ngay
+ * (thứ tự cột pipeline, …). Không có nó thì trình duyệt giữ bản cũ suốt `max-age` và KHÔNG
+ * hỏi server lần nào — server xoá cache bao nhiêu lần cũng vô ích vì request không bao giờ tới.
+ * Bấm F5 thường cũng không cứu được, vì đây là lệnh gọi do JavaScript phát ra.
+ *
+ * `max-age=0, must-revalidate` buộc trình duyệt hỏi lại mỗi lần, nhưng ETag vẫn làm việc:
+ * không đổi gì thì nhận `304` rỗng. Vẫn tiết kiệm băng thông, mà sửa setup là thấy liền.
+ * Cache L1/L2 phía server KHÔNG đổi — vẫn chặn truy vấn DB như cũ.
+ */
+function cacheControlHeader(scope, ttlSec, revalidate = false) {
+  const tamNhin = scope === 'global' ? 'public' : 'private';
+  if (revalidate) return `${tamNhin}, max-age=0, must-revalidate`;
+  return `${tamNhin}, max-age=${ttlSec}`;
 }
 
 /**
  * Express middleware — cache GET responses.
- * @param {{ ttl?: number, scope?: 'user'|'role'|'company'|'global', tags?: string[] }} opts
+ * @param {{ ttl?: number, scope?: 'user'|'role'|'company'|'global', tags?: string[], revalidate?: boolean }} opts
  */
 function responseCache(opts = {}) {
   const ttlSec = Math.max(1, Number(opts.ttl) || 60);
   const scope = opts.scope || 'user';
   const tags = Array.isArray(opts.tags) ? opts.tags : [];
+  const revalidate = opts.revalidate === true;
 
   return async (req, res, next) => {
     if (isDisabled()) return next();
@@ -196,7 +209,7 @@ function responseCache(opts = {}) {
       const cached = await readCache(key);
       if (cached) {
         res.set('ETag', cached.etag);
-        res.set('Cache-Control', cacheControlHeader(scope, ttlSec));
+        res.set('Cache-Control', cacheControlHeader(scope, ttlSec, revalidate));
         res.set('X-Cache', 'HIT');
         res.set('Age', String(Math.floor((Date.now() - cached.storedAt) / 1000)));
         if (cached.contentType) res.set('Content-Type', cached.contentType);
@@ -241,7 +254,7 @@ function responseCache(opts = {}) {
       }
       void writeCache(key, entry, scopedTags, ttlSec);
       res.set('ETag', etag);
-      res.set('Cache-Control', cacheControlHeader(scope, ttlSec));
+      res.set('Cache-Control', cacheControlHeader(scope, ttlSec, revalidate));
       res.set('X-Cache', 'MISS');
     };
 

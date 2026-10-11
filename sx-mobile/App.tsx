@@ -1,9 +1,11 @@
+// PHẢI đứng đầu: vá Text/TextInput (tắt phóng chữ theo cỡ chữ hệ thống) trước khi mọi màn hình render.
+import './src/lib/disableFontScaling';
 import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { ShareIntentProvider } from 'expo-share-intent';
 import { StatusBar } from 'expo-status-bar';
 import * as Notifications from 'expo-notifications';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, Platform, StyleSheet, Text, TextInput, View } from 'react-native';
+import { AppState, Platform, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import BootLoadingScreen, { BOOT_BG } from './src/components/BootLoadingScreen';
 import BubbleOutboundCallHandler from './src/components/BubbleOutboundCallHandler';
@@ -83,10 +85,6 @@ Notifications.setNotificationHandler({
   },
 });
 
-if (Text.defaultProps == null) Text.defaultProps = {};
-Text.defaultProps.allowFontScaling = false;
-if (TextInput.defaultProps == null) TextInput.defaultProps = {};
-TextInput.defaultProps.allowFontScaling = false;
 
 function AppShell() {
   const { token, loading } = useAuth();

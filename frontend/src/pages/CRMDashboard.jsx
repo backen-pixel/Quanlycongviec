@@ -810,6 +810,7 @@ function buildCrmKanbanServerFilterParams({
   searchText,
   customDateFrom,
   customDateTo,
+  timePreset,
 }) {
   const dateParams = {};
   if (customDateFrom) dateParams.date_from = customDateFrom;
@@ -832,9 +833,11 @@ function buildCrmKanbanServerFilterParams({
   if (source && !source.startsWith('fbp:')) common.source_id = source;
   const search = String(searchText || '').trim();
   if (search) common.search = search;
-  // Khi đang tìm kiếm (Enter / server search): bỏ khung thời gian — giống search-suggest.
-  // Tránh «thấy trong gợi ý nhưng board reload theo tháng hiện tại → thẻ biến mất».
-  if (search.length >= 2) {
+  // Khi tìm kiếm thì bỏ khung thời gian do PRESET sinh ra (vd. «tháng này») — tránh
+  // «thấy trong gợi ý nhưng board lọc theo tháng hiện tại → thẻ biến mất».
+  // NHƯNG khoảng ngày người dùng TỰ CHỌN (timePreset === 'custom') thì phải giữ:
+  // họ đã cố ý thu hẹp, bỏ đi thành ra chỉ lọc mỗi tên.
+  if (search.length >= 2 && timePreset !== 'custom') {
     delete common.date_from;
     delete common.date_to;
   }
@@ -2771,6 +2774,7 @@ export default function CRMDashboard() {
           searchText: serverSearchText,
           customDateFrom,
           customDateTo,
+          timePreset,
         }),
         ...CRM_KANBAN_LEAD_QUERY,
         limit: pageLimit,
@@ -2939,6 +2943,7 @@ export default function CRMDashboard() {
           searchText: serverSearchText,
           customDateFrom,
           customDateTo,
+          timePreset,
         }),
         ...CRM_KANBAN_LEAD_QUERY,
       };
@@ -3191,6 +3196,7 @@ export default function CRMDashboard() {
         searchText: serverSearchText,
         customDateFrom,
         customDateTo,
+        timePreset,
       });
 
       try {
@@ -3520,6 +3526,7 @@ export default function CRMDashboard() {
           searchText: serverSearchText,
           customDateFrom,
           customDateTo,
+          timePreset,
         });
         if (phone_filter) p.phone_filter = phone_filter;
         else delete p.phone_filter;
@@ -3680,6 +3687,7 @@ export default function CRMDashboard() {
       searchText: serverSearchText,
       customDateFrom,
       customDateTo,
+      timePreset,
     });
     try {
       const { data } = await api.get('/crm/stage-counts', { params });
@@ -3735,6 +3743,7 @@ export default function CRMDashboard() {
       searchText: serverSearchText,
       customDateFrom,
       customDateTo,
+      timePreset,
     });
     delete params.type;
     // buildCrmKanbanServerFilterParams cố ý để __none__ ở client cho danh sách;
@@ -4228,6 +4237,7 @@ export default function CRMDashboard() {
         searchText: serverSearchText,
         customDateFrom,
         customDateTo,
+        timePreset,
       });
 
       const effectiveKanbanLoadLimit = opts?.kanbanLoadLimitOverride != null
@@ -4947,6 +4957,10 @@ export default function CRMDashboard() {
         const o = l.lead_owner;
         return (
           (l.title && l.title.toLowerCase().includes(q))
+          || (l.linked_project?.name && l.linked_project.name.toLowerCase().includes(q))
+          || (l.linked_project?.code && l.linked_project.code.toLowerCase().includes(q))
+          || (l.project?.name && l.project.name.toLowerCase().includes(q))
+          || (l.project_name && String(l.project_name).toLowerCase().includes(q))
           || (l.code && l.code.toLowerCase().includes(q))
           || (l.phone && l.phone.toLowerCase().includes(q))
           || (c?.phone && c.phone.toLowerCase().includes(q))
@@ -5499,6 +5513,7 @@ export default function CRMDashboard() {
       searchText: serverSearchText,
       customDateFrom,
       customDateTo,
+      timePreset,
     });
 
     // Chữ ký phạm vi THẬT (không gồm realtime nonce) — chỉ wipe sạch tiến độ đã tải khi cái này
@@ -5618,6 +5633,7 @@ export default function CRMDashboard() {
       searchText: serverSearchText,
       customDateFrom,
       customDateTo,
+      timePreset,
     });
     api.post('/crm/deadline-bucket-counts', {
       stage_ids: deadlineStageIds,
@@ -5693,6 +5709,7 @@ export default function CRMDashboard() {
       searchText: serverSearchText,
       customDateFrom,
       customDateTo,
+      timePreset,
     });
     const periodStart = currentData?.kpis?.kpi_ledger_period_start || undefined;
     // Chưa có khối `kpis` nghĩa là dashboard chưa tải xong — gọi lúc này chắc chắn sẽ phải
@@ -5796,6 +5813,7 @@ export default function CRMDashboard() {
         searchText: serverSearchText,
         customDateFrom,
         customDateTo,
+        timePreset,
       });
       const { data } = await api.post('/crm/deadline-bucket-pages', {
         buckets: [{ bucket: 'overdue', offset, limit: 20 }],
@@ -5886,6 +5904,7 @@ export default function CRMDashboard() {
         searchText: serverSearchText,
         customDateFrom,
         customDateTo,
+        timePreset,
       });
       const { data } = await api.post('/crm/deadline-bucket-pages', {
         buckets: requests,

@@ -843,8 +843,12 @@ r.post('/deals/:leadId/payments', async (req, res) => {
     if (stageId) await recomputeStageReceived(stageId);
     await syncDepositFromPaymentStages(leadId);
 
+    // Khoản thu đã ghi xong. Nếu bản sao sang hóa đơn hỏng thì PHẢI báo lên, kẻo
+    // crm_deal_payments và invoices lệch nhau mà kế toán không biết.
+    let canhBao = null;
     if (payment?.invoice_id) {
-      await mirrorPaymentToInvoice(payment, insertRow.created_by);
+      const mirror = await mirrorPaymentToInvoice(payment, insertRow.created_by);
+      if (mirror && mirror.ok === false) canhBao = mirror.error;
     }
 
     const payments = await listDealPayments(leadId);
@@ -853,6 +857,7 @@ r.post('/deals/:leadId/payments', async (req, res) => {
       payment: payments.find((p) => p.id === payment.id) || payment,
       payment_stages: stages,
       payments,
+      ...(canhBao ? { warning: canhBao } : {}),
     });
   } catch (e) {
     console.error('[accounting/payments POST]', e);

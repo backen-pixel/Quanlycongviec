@@ -673,6 +673,18 @@ async function sendFcmIncomingCall(tokens, notification) {
   }
 }
 
+/**
+ * Thẻ (android.notification.tag) của thông báo FCM trên thanh hệ thống. Tin chat dùng ĐÚNG thẻ của thông báo cục bộ do app tự tạo khi nhận qua
+ * socket (`msg:<mã tin>`) → hai thông báo cùng khoá (pkg + id + tag) nên hệ thống GỘP thành một thay vì hiện đôi; các loại khác giữ thẻ cũ.
+ */
+function fcmTrayTag(notification, meta) {
+  if (isChatType(notification.type)) {
+    const messageId = String((meta && meta.message_id) || notification.message_id || '').trim();
+    if (messageId) return `msg:${messageId}`;
+  }
+  return String(notification.id || notification.type || 'sx');
+}
+
 /** FCM hiển thị notification trên thanh hệ thống (bình luận xưởng SX, v.v.). */
 async function sendFcmTrayNotification(tokens, notification) {
   if (!tokens.length) return;
@@ -707,7 +719,7 @@ async function sendFcmTrayNotification(tokens, notification) {
               channel_id: payload.channelId,
               sound: 'default',
               // Gộp trùng local tray cùng id khi app còn sống + FCM cùng lúc.
-              tag: String(notification.id || notification.type || 'sx'),
+              tag: fcmTrayTag(notification, meta),
             },
           },
         },
@@ -1004,4 +1016,5 @@ module.exports = {
   sendFcmIncomingCall,
   sendCallDismissPush,
   sendAppUpdateBroadcast,
+  fcmTrayTag,
 };
