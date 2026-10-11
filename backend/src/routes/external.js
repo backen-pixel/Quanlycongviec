@@ -19,6 +19,8 @@
  *   company_id     — UUID công ty nội bộ
  *   estimated_value — giá trị ước tính (số)
  *   description    — mô tả thêm
+ *   is_test        — boolean hồ sơ thử, loại khỏi báo cáo marketing
+ *   attribution    — object có whitelist: kenh, platform, campaign_id, adset_id, ad_id, UTM, click IDs, landing_url
  *   notes          — ghi chú nội bộ
  *   webhook_url    — URL callback sau khi tạo thành công (ghi đè webhook_url của key)
  *
@@ -32,6 +34,7 @@
 const { Router } = require('express');
 const { apiKeyAuth, extractApiKey, resolveKeyCredential } = require('../middleware/apiKeyAuth');
 const { supabase } = require('../config/supabase');
+const { externalLeadTracking } = require('../domain/externalLeadTracking');
 const { nextCrmCode } = require('../helpers/crmNextCode');
 const { enforceQuotaForRequest, invalidateTenantUsageCache, resolveTenantIdForQuota } = require('../helpers/tenantQuotas');
 const {
@@ -243,6 +246,10 @@ async function handleCreateExternal(req, res) {
       notes,
       webhook_url: bodyWebhookUrl,
     } = req.body;
+
+    let tracking;
+    try { tracking = externalLeadTracking(req.body); }
+    catch (error) { return res.status(400).json({ error: error.message }); }
 
     const recordType = String(bodyType || 'lead').trim().toLowerCase() === 'deal' ? 'deal' : 'lead';
     const typeLabel = recordType === 'deal' ? 'Deal' : 'Lead';
@@ -460,6 +467,7 @@ async function handleCreateExternal(req, res) {
         .from('crm_leads')
         .insert({
           code,
+          ...tracking,
           title: String(title).trim(),
           type: recordType,
           customer_id: customerId,

@@ -107,7 +107,7 @@ async function napVaGom(apiKey, { gomTheo = 'campaign', dateFrom, dateTo, campai
 
   const ids = [...new Set(rows.map((x) => String(x.lead_id)))].slice(0, 20000);
   const [leadRows, diemRows] = await Promise.all([
-    supabase.from('crm_leads').select('id, type, actual_close_date, estimated_value, company_id')
+    supabase.from('crm_leads').select('id, type, actual_close_date, estimated_value, company_id').eq('is_test', false)
       .in('id', ids).then((x) => x.data || [], () => []),
     supabase.from('lead_quality_scores').select('lead_id, diem, nhan')
       .in('lead_id', ids).then((x) => x.data || [], () => []),
@@ -261,7 +261,7 @@ async function callMcpAdsTool(name, args = {}, apiKey) {
     const den = isoNgay(args.date_to, true);
     const limit = Math.min(Number(args.limit) || 100, 200);
     let q = supabase.from('crm_leads')
-      .select('id, code, actual_close_date, estimated_value, company_id')
+      .select('id, code, actual_close_date, estimated_value, company_id').eq('is_test', false)
       .eq('type', 'deal').not('actual_close_date', 'is', null)
       .order('actual_close_date', { ascending: false }).limit(limit);
     q = q.in('company_id', pv.company_ids.length ? pv.company_ids : ['00000000-0000-0000-0000-000000000000']);

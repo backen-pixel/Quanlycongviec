@@ -1894,7 +1894,7 @@ Xem header `backend/src/routes/external.js`.
 
 | Method | Path | Body chính |
 |---|---|---|
-| POST | /api/external/leads | title*, phone*, type?, full_name?, email?, source_name?, stage_id?, assigned_to?, company_id?, estimated_value?, description?, notes?, webhook_url? |
+| POST | /api/external/leads | title*, phone*, type?, full_name?, email?, source_name?, stage_id?, assigned_to?, company_id?, estimated_value?, description?, notes?, is_test?, attribution?, webhook_url? |
 | POST | /api/external/deals | tương tự leads |
 | GET | /api/external/stages | query type=lead\|deal |
 | GET | /api/external/sources | — |

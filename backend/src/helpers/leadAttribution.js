@@ -68,7 +68,30 @@ function docReferralMessenger(event) {
 /** Có thông tin đáng lưu không — tránh tạo dòng rỗng. */
 function dangLuu(row) {
   return !!(row.fb_ad_id || row.fb_ref || row.fb_campaign_id || row.fb_form_id
-    || row.utm_source || row.utm_campaign || row.gclid || row.fbclid || row.fb_source);
+    || row.utm_source || row.utm_campaign || row.gclid || row.fbclid || row.fb_source
+    || row.campaign_id || row.ad_id || row.gbraid || row.wbraid || row.landing_url);
+}
+
+// Read one complete snapshot, then fill missing fields in ONE guarded UPDATE.
+// Every click/campaign identity is a touch boundary, not just the ad ID.
+const ENRICHABLE_FIELDS = [
+  'fb_ad_id', 'fb_adset_id', 'fb_campaign_id', 'fb_campaign_name',
+  'fb_ref', 'fb_source', 'fb_ad_title', 'fb_post_id', 'fb_form_id', 'fb_leadgen_id',
+  'fb_creative_url', 'fb_creative_type', 'fb_creative_key',
+  'campaign_id', 'ad_id', 'adset_id', 'utm_source', 'utm_medium', 'utm_campaign',
+  'utm_content', 'utm_term', 'gclid', 'fbclid', 'gbraid', 'wbraid',
+  'landing_url', 'referrer_url', 'fbp', 'fbc',
+];
+const TOUCH_IDENTITY_FIELDS = [
+  'platform', 'fb_ad_id', 'fb_adset_id', 'fb_campaign_id', 'fb_form_id', 'fb_leadgen_id',
+  'ad_id', 'adset_id', 'campaign_id', 'gclid', 'fbclid', 'gbraid', 'wbraid', 'landing_url',
+];
+const SNAPSHOT_FIELDS = ['company_id', 'platform', ...ENRICHABLE_FIELDS];
+function readAttribution(row) {
+  let q = supabase.from('lead_attribution')
+    .select(['id', 'lead_id', 'contact_id', ...SNAPSHOT_FIELDS].join(',')).limit(1);
+  q = row.lead_id ? q.eq('lead_id', row.lead_id) : q.eq('contact_id', row.contact_id);
+  return q.maybeSingle();
 }
 
 /**
@@ -82,27 +105,40 @@ async function ghiQuyKet(row) {
     }
     if (!dangLuu(row)) return { ok: false, skipped: 'khong_co_quy_ket' };
 
-    // Đã có dòng cho lead / contact này chưa?
-    let q = supabase.from('lead_attribution').select('id, lead_id, contact_id').limit(1);
-    q = row.lead_id ? q.eq('lead_id', row.lead_id) : q.eq('contact_id', row.contact_id);
-    const { data: cu, error: eCu } = await q.maybeSingle();
-    if (eCu && bangChuaCo(eCu)) return { ok: false, skipped: 'chua_migrate' };
+    let { data: cu, error: eCu } = await readAttribution(row);
+    if (eCu) return { ok: false, skipped: bangChuaCo(eCu) ? 'chua_migrate' : 'loi' };
 
     if (cu?.id) {
-      // Bổ sung trường còn trống, không ghi đè lần chạm đầu
-      const bo = {};
-      for (const [k, v] of Object.entries(row)) {
-        if (k === 'raw' || k === 'cham_dau_luc' || v === null || v === undefined) continue;
-        bo[k] = v;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (row.company_id && cu.company_id !== row.company_id) return { ok: false, skipped: 'khac_cong_ty' };
+        for (const key of TOUCH_IDENTITY_FIELDS) {
+          if (cu[key] && row[key] && cu[key] !== row[key]) return { ok: false, skipped: 'khac_lan_cham' };
+        }
+        const patch = {};
+        for (const key of ENRICHABLE_FIELDS) {
+          if (cu[key] == null && row[key] != null && row[key] !== '') patch[key] = row[key];
+        }
+        if (!Object.keys(patch).length) return { ok: true, id: cu.id, skipped: 'khong_co_gi_moi' };
+
+        let update = supabase.from('lead_attribution')
+          .update({ ...patch, updated_at: new Date().toISOString() }).eq('id', cu.id);
+        // PostgreSQL rechecks the complete predicate after waiting for a concurrent
+        // writer. No partial field writes can survive a lost snapshot comparison.
+        for (const key of SNAPSHOT_FIELDS) {
+          update = cu[key] == null ? update.is(key, null) : update.eq(key, cu[key]);
+        }
+        const { data: changed, error } = await update.select('id').maybeSingle();
+        if (error) return { ok: false, skipped: 'loi' };
+        if (changed?.id) return { ok: true, id: changed.id, skipped: 'da_co' };
+
+        // Zero affected rows is a conflict, not success. Re-read before deciding
+        // whether the same touch can safely fill anything else; bound contention.
+        const fresh = await readAttribution(row);
+        if (fresh.error) return { ok: false, skipped: 'loi' };
+        if (!fresh.data || fresh.data.id !== cu.id) return { ok: false, skipped: 'xung_dot_dong_thoi' };
+        cu = fresh.data;
       }
-      if (!Object.keys(bo).length) return { ok: true, id: cu.id, skipped: 'khong_co_gi_moi' };
-      const { error } = await supabase
-        .from('lead_attribution')
-        .update({ ...bo, updated_at: new Date().toISOString() })
-        .eq('id', cu.id)
-        .is('fb_ad_id', null);   // chỉ vá khi lần đầu chưa có ad_id
-      if (error) console.warn('[quy-ket] bo sung:', error.message);
-      return { ok: true, id: cu.id, skipped: 'da_co' };
+      return { ok: false, skipped: 'xung_dot_dong_thoi' };
     }
 
     const { data, error } = await supabase
@@ -183,6 +219,8 @@ async function quyKetWeb({ leadId, customerId, companyId, landingUrl, referrerUr
     utm_term: t?.utm_term || null,
     gclid: t?.gclid || null,
     fbclid: t?.fbclid || null,
+    gbraid: t?.gbraid || null,
+    wbraid: t?.wbraid || null,
     landing_url: t?.landing_url || chuoi(landingUrl),
     referrer_url: chuoi(referrerUrl),
     fbp: chuoi(fbp),
