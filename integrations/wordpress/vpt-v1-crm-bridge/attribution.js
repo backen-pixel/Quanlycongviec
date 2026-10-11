@@ -29,10 +29,44 @@
     }
   }
   var expires = usePrior ? prior.expires : now + ttl;
+  // Random visit key (no personal data) so a click is counted once per visit and kind.
+  function newSessionKey() {
+    var bytes = new Uint8Array(16);
+    try { window.crypto.getRandomValues(bytes); } catch (_) { for (var i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256); }
+    return Array.prototype.map.call(bytes, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+  }
+  var sessionKey = usePrior && typeof prior.sid === 'string' && /^[0-9a-f]{32}$/.test(prior.sid) ? prior.sid : newSessionKey();
   // A new campaign replaces the entire bundle: never join an old click ID to new UTMs.
   if (Object.keys(data).length) {
-    try { sessionStorage.setItem(storageKey, JSON.stringify({expires:expires, fields:data})); } catch (_) {}
+    try { sessionStorage.setItem(storageKey, JSON.stringify({expires:expires, fields:data, sid:sessionKey})); } catch (_) {}
   } else { try { sessionStorage.removeItem(storageKey); } catch (_) {} }
+  // Website click conversions (call / Zalo / Messenger) go to the CRM with this visit's source.
+  var beaconUrl = 'https://tubep-backend.onrender.com/api/external/web-events';
+  var beaconKeys = ['utm_source','utm_medium','utm_campaign','utm_content','utm_term','gclid','fbclid','gbraid','wbraid','campaignid','adgroupid'];
+  function clickKind(href) {
+    if (/^tel:/i.test(href)) return 'call';
+    if (/^https?:\/\/(www\.)?zalo\.me\//i.test(href)) return 'zalo';
+    if (/^https?:\/\/(www\.)?(messenger\.com\/t\/|m\.me\/)/i.test(href)) return 'messenger';
+    return '';
+  }
+  document.addEventListener('click', function (event) {
+    var link = event.target && event.target.closest ? event.target.closest('a[href]') : null;
+    var kind = link ? clickKind(link.getAttribute('href') || '') : '';
+    if (!kind) return;
+    var fields = expires > Date.now() ? data : {};
+    var once = 'vpt_v1_click_' + kind + '_' + sessionKey;
+    try { if (sessionStorage.getItem(once)) return; sessionStorage.setItem(once, '1'); } catch (_) {}
+    var body = {kind: kind, session_key: sessionKey, page_url: 'https://vanphuthanh.net' + window.location.pathname};
+    if (fields.vpt_landing_page) body.landing_url = fields.vpt_landing_page;
+    if (fields.vpt_referrer_host) body.referrer_host = fields.vpt_referrer_host;
+    beaconKeys.forEach(function (key) { if (fields[key]) body[key] = fields[key]; });
+    window.dataLayer = window.dataLayer || [];
+    window.dataLayer.push({event: 'vpt_click_' + kind});
+    try {
+      var nav = window.navigator;
+      if (nav && typeof nav.sendBeacon === 'function') nav.sendBeacon(beaconUrl, JSON.stringify(body));
+    } catch (_) {}
+  }, true);
   function populate() {
     // Recheck at submit: a form can remain open beyond the source's original TTL.
     if (expires <= Date.now()) {
