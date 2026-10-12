@@ -11,7 +11,13 @@ import {
   resolveWorkshopCompanyForTypes,
   workshopCompanyDisplayName,
   isMetallaOrHucabiCompanyId,
+  productionWorkshopFilterCompanies,
 } from '../lib/crossWorkshopProduction';
+import {
+  useKanbanColumnTheme,
+  KANBAN_COLUMN_RAIL_CLASS,
+  KANBAN_BOARD_COLUMN_RAILS_CLASS,
+} from '../lib/kanbanColumnTheme';
 import { formatDate } from '../lib/utils';
 import { unpackAssignmentsDict } from '../lib/assignmentDictPayload';
 import {
@@ -29,7 +35,7 @@ import {
   FileText as FileIcon, Download, Upload, Repeat2, CalendarClock, ChevronDown,
   ChevronUp, ClipboardList, ChevronRight, ChevronLeft, Lock, ArrowLeft, RefreshCw, Filter, RotateCcw,
   Eye, BookOpen, TrendingUp, TrendingDown, Minus, SlidersHorizontal, LayoutList, Check, FileChartColumn,
-  UserCog, Layers,
+  UserCog, Layers, Factory,
 } from 'lucide-react';
 import ViewModeDropdownMenu from '../components/ViewModeDropdownMenu';
 import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
@@ -998,70 +1004,80 @@ function InboxTaskRow({ task, actionLabel = 'Mở', extraMeta = null }) {
   );
 }
 
-function InboxStatusBoard({ tasks, actionLabel }) {
-  const grouped = useMemo(() => groupTasksByStatus(tasks), [tasks]);
+/**
+ * Một cột Kanban của Không gian chung — DÙNG CHUNG kiểu cột của dashboard xưởng:
+ * bề rộng 15rem, nền pha theo màu cột (`getKanbanColumnTheme`), header dính top,
+ * badge đếm bo góc. Trước đây hai bảng dưới đây tự vẽ cột 18rem nền trắng, nên
+ * người dùng đi từ dashboard sang thấy như hai phần mềm khác nhau.
+ */
+function InboxKanbanColumn({ label, count, columnIndex, children, emptyLabel = 'Không có nhiệm vụ' }) {
+  const columnTheme = useKanbanColumnTheme(columnIndex);
   return (
-    <div className="flex gap-3 overflow-x-auto pb-2" style={{ minHeight: 280 }}>
-      {STATUS_BOARD_META.map((col) => {
+    <div
+      className={`flex flex-col flex-shrink-0 w-[15rem] max-[400px]:w-[13.5rem] rounded-lg kanban-column-surface ${KANBAN_COLUMN_RAIL_CLASS}`}
+      style={{ backgroundColor: columnTheme.columnBg }}
+    >
+      <div
+        className="sticky top-0 z-10 px-2 py-2.5 border-b rounded-t-md kanban-column-surface"
+        style={{
+          backgroundColor: columnTheme.headerBg,
+          borderColor: columnTheme.border,
+          boxShadow: columnTheme.headerShadow,
+        }}
+      >
+        <div className="flex flex-nowrap items-center gap-1 min-w-0">
+          <h3 className="flex-1 min-w-0 text-sm font-semibold truncate leading-snug text-black" title={label}>
+            {label}
+          </h3>
+          <span
+            className="inline-flex items-center justify-center min-w-[24px] h-[22px] px-1.5 rounded-md text-[13px] font-bold tabular-nums leading-none shrink-0"
+            style={{
+              backgroundColor: columnTheme.badgeBg,
+              color: columnTheme.accent,
+              border: `1px solid ${columnTheme.badgeBorder}`,
+            }}
+          >
+            {count}
+          </span>
+        </div>
+      </div>
+      <div className="flex-1 p-1.5 space-y-1.5 min-h-[120px] max-h-[62vh] overflow-y-auto">
+        {count > 0 ? children : (
+          <p className="text-[11px] text-slate-400 text-center py-8">{emptyLabel}</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function InboxKanbanBoard({ columns, grouped, actionLabel }) {
+  return (
+    <div
+      className={`flex gap-2 overflow-x-auto pb-2 ${KANBAN_BOARD_COLUMN_RAILS_CLASS}`}
+      style={{ minHeight: 300 }}
+    >
+      {columns.map((col, i) => {
         const list = grouped[col.key] || [];
         return (
-          <div
-            key={col.key}
-            className="w-72 shrink-0 rounded-xl border border-slate-200/90 bg-white flex flex-col shadow-sm"
-          >
-            <div
-              className={`px-3 py-2.5 flex items-center gap-2 border-b border-slate-100 ${col.headerBg} rounded-t-xl`}
-              style={{ borderTopColor: col.color, borderTopWidth: 3 }}
-            >
-              <span className="text-sm font-semibold flex-1" style={{ color: col.color }}>{col.label}</span>
-              <span className="text-[11px] font-semibold text-gray-500 tabular-nums">{list.length}</span>
-            </div>
-            <div className="flex-1 p-2 space-y-2 min-h-[100px] max-h-[60vh] overflow-y-auto">
-              {list.map((t) => (
-                <InboxTaskRow key={t.id} task={t} actionLabel={actionLabel} />
-              ))}
-              {!list.length && (
-                <p className="text-[11px] text-gray-400 text-center py-8">Không có nhiệm vụ</p>
-              )}
-            </div>
-          </div>
+          <InboxKanbanColumn key={col.key} label={col.label} count={list.length} columnIndex={i}>
+            {list.map((t) => (
+              <InboxTaskRow key={t.id} task={t} actionLabel={actionLabel} />
+            ))}
+          </InboxKanbanColumn>
         );
       })}
     </div>
   );
 }
 
+function InboxStatusBoard({ tasks, actionLabel }) {
+  const grouped = useMemo(() => groupTasksByStatus(tasks), [tasks]);
+  return <InboxKanbanBoard columns={STATUS_BOARD_META} grouped={grouped} actionLabel={actionLabel} />;
+}
+
 function InboxDeadlineBoard({ tasks, actionLabel }) {
   const grouped = useMemo(() => groupTasksByDeadline(tasks), [tasks]);
-  return (
-    <div className="flex gap-3 overflow-x-auto pb-2" style={{ minHeight: 280 }}>
-      {DEADLINE_BUCKET_META.map((col) => {
-        const list = grouped[col.key] || [];
-        return (
-          <div
-            key={col.key}
-            className="w-72 shrink-0 rounded-xl border border-slate-200/90 bg-white flex flex-col shadow-sm"
-          >
-            <div
-              className="px-3 py-2.5 flex items-center gap-2 border-b border-slate-100 bg-slate-50/80 rounded-t-xl"
-              style={{ borderTopColor: col.color, borderTopWidth: 3 }}
-            >
-              <span className="text-sm font-semibold flex-1 text-slate-800">{col.label}</span>
-              <span className="text-[11px] font-semibold text-slate-500 tabular-nums">{list.length}</span>
-            </div>
-            <div className="flex-1 p-2 space-y-2 min-h-[100px] max-h-[60vh] overflow-y-auto">
-              {list.map((t) => (
-                <InboxTaskRow key={t.id} task={t} actionLabel={actionLabel} />
-              ))}
-              {!list.length && (
-                <p className="text-[11px] text-slate-400 text-center py-8">Không có nhiệm vụ</p>
-              )}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
+  return <InboxKanbanBoard columns={DEADLINE_BUCKET_META} grouped={grouped} actionLabel={actionLabel} />;
 }
 
 /** Modal phải portal ra body — tránh bị sidebar (z-30) đè vì main nằm trong stacking context z-10. */
@@ -1082,17 +1098,26 @@ function portalAssignmentsModal(node) {
 }
 
 /** Tab «Không gian chung» — nhiệm vụ deal được giao cho tôi, nhóm theo deal / trạng thái / deadline. */
+/**
+ * Không gian chung — hộp thư nhiệm vụ gắn deal của chính mình.
+ *
+ * Hai bộ lọc công ty ở đây lọc theo VIỆC chứ không theo người:
+ *   · Công ty sản xuất = công ty chủ dự án (`owner_company_id`)
+ *   · Công ty đặt hàng = công ty chủ deal (`lead.company_id`)
+ * Danh sách chọn dựng từ chính dữ liệu đang có, nên không bao giờ bày ra một công ty
+ * mà chọn vào thì rỗng.
+ */
 function PrivateDealInbox({
   groups, loading, assignmentModule, search, onSearchChange, theme,
   isAdmin = false,
-  companies = [],
-  departments = [],
   assigneeOptions = [],
   user = null,
-  filterCompanyId = '',
-  setFilterCompanyId,
-  filterDepartmentId = '',
-  setFilterDepartmentId,
+  ownerCompanyOptions = [],
+  dealCompanyOptions = [],
+  filterOwnerCompanyId = '',
+  setFilterOwnerCompanyId,
+  filterDealCompanyId = '',
+  setFilterDealCompanyId,
   filterAssignee = '',
   setFilterAssignee,
   filterStatus = '',
@@ -1107,16 +1132,26 @@ function PrivateDealInbox({
   const [kpiPanelOpen, setKpiPanelOpen] = useState(defaultKpiPanelOpen);
   const [showAdvFilter, setShowAdvFilter] = useState(false);
   const q = String(search || '').trim().toLowerCase();
+
+  const ownerCompanyLabel = ownerCompanyOptions.find((c) => c.id === String(filterOwnerCompanyId))?.name || '';
+  const dealCompanyLabel = dealCompanyOptions.find((c) => c.id === String(filterDealCompanyId))?.name || '';
+  const assigneeLabel = assigneeOptions.find((u) => String(u.id) === String(filterAssignee))?.full_name || '';
+  const statusLabel = STATUS_OPTIONS.find((s) => s.value === filterStatus)?.label || '';
+  const priorityLabel = PRIORITY_OPTIONS.find((p) => p.value === filterPriority)?.label || '';
+
+  // Xưởng luôn có giá trị nên KHÔNG tính là «bộ lọc đang bật» — nếu tính thì bộ đếm
+  // không bao giờ về 0 và người dùng mất cảm giác «đã sạch bộ lọc».
   const hasSelectFilters = !!(
-    filterStatus || filterPriority
-    || (isAdmin && (filterDepartmentId || filterAssignee))
+    filterStatus || filterPriority || filterDealCompanyId
+    || (isAdmin && filterAssignee)
   );
-  const activeFilterCount = [
-    isAdmin ? filterDepartmentId : '',
-    isAdmin ? filterAssignee : '',
-    filterStatus,
-    filterPriority,
-  ].filter(Boolean).length;
+  const activeChips = [
+    filterDealCompanyId && { key: 'deal', label: `Đặt hàng: ${dealCompanyLabel}`, clear: () => setFilterDealCompanyId?.('') },
+    isAdmin && filterAssignee && { key: 'assignee', label: `Nhân viên: ${assigneeLabel}`, clear: () => setFilterAssignee?.('') },
+    filterStatus && { key: 'status', label: `Trạng thái: ${statusLabel}`, clear: () => setFilterStatus?.('') },
+    filterPriority && { key: 'priority', label: `Ưu tiên: ${priorityLabel}`, clear: () => setFilterPriority?.('') },
+  ].filter(Boolean);
+  const activeFilterCount = activeChips.length;
   const searchBoxCls = searchFocused
     ? t.searchFocus
     : (q || hasSelectFilters)
@@ -1139,11 +1174,10 @@ function PrivateDealInbox({
   const clearFilters = () => {
     setFilterStatus?.('');
     setFilterPriority?.('');
-    if (isAdmin) {
-      setFilterDepartmentId?.('');
-      setFilterAssignee?.('');
-    }
+    setFilterDealCompanyId?.('');
+    if (isAdmin) setFilterAssignee?.('');
     onSearchChange?.('');
+    // Xưởng không nằm trong «Đặt lại» — bỏ trống nó là bảng rỗng, không ai muốn thế.
   };
 
   const filteredGroups = useMemo(() => {
@@ -1231,6 +1265,25 @@ function PrivateDealInbox({
             </button>
           </div>
         </div>
+        {/* Xưởng đang xem — luôn hiện, vì nó quyết định toàn bộ con số trên bảng. */}
+        {ownerCompanyOptions.length > 0 && (
+          <div
+            className="inline-flex items-center gap-1 h-8 pl-2 pr-1 rounded-md border border-indigo-200 bg-indigo-50 shrink-0"
+            title="Công ty sản xuất đang xem"
+          >
+            <Factory className="h-3.5 w-3.5 shrink-0 text-indigo-600" aria-hidden />
+            <select
+              value={filterOwnerCompanyId}
+              onChange={(e) => setFilterOwnerCompanyId?.(e.target.value)}
+              className="h-6 max-w-[9rem] bg-transparent border-0 text-[11px] font-bold text-indigo-900 focus:ring-0 cursor-pointer"
+              aria-label="Công ty sản xuất"
+            >
+              {ownerCompanyOptions.map((co) => (
+                <option key={co.id} value={co.id}>{co.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
         <div className="flex items-center gap-0.5 shrink-0 ml-auto pl-1 border-l border-slate-200/80">
           <ViewModeSwitcher
             view={inboxView}
@@ -1275,37 +1328,35 @@ function PrivateDealInbox({
           <div className="flex-1 min-h-0 overflow-y-auto px-3 py-1 bg-white [scrollbar-width:thin]">
             <div className="py-2.5 space-y-2.5">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {isAdmin && (
-                  <>
-                    <div className="min-w-0">
-                      <label className={filterLabelCls}>Công ty</label>
-                      <select
-                        value={filterCompanyId}
-                        onChange={(e) => setFilterCompanyId?.(e.target.value)}
-                        className={filterSelectCls}
-                      >
-                        {companies.map((co) => (
-                          <option key={co.id} value={co.id}>{co.short_name || co.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="min-w-0">
-                      <label className={filterLabelCls}>Phòng ban</label>
-                      <select
-                        value={filterDepartmentId}
-                        onChange={(e) => setFilterDepartmentId?.(e.target.value)}
-                        disabled={!filterCompanyId}
-                        className={filterSelectCls}
-                        title={filterCompanyId ? 'Lọc theo phòng ban' : 'Chọn công ty trước'}
-                      >
-                        <option value="">{filterCompanyId ? 'Tất cả phòng ban' : 'Chọn công ty trước'}</option>
-                        {departments.map((d) => (
-                          <option key={d.id} value={d.id}>{d.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </>
-                )}
+                <div className="min-w-0">
+                  <label className={filterLabelCls}>Công ty sản xuất *</label>
+                  <select
+                    value={filterOwnerCompanyId}
+                    onChange={(e) => setFilterOwnerCompanyId?.(e.target.value)}
+                    className={filterSelectCls}
+                    title="Công ty chủ dự án — xưởng làm ra đơn hàng"
+                  >
+                    {ownerCompanyOptions.map((co) => (
+                      <option key={co.id} value={co.id}>{co.name}</option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[10px] leading-snug text-slate-400">Luôn xem theo một xưởng</p>
+                </div>
+                <div className="min-w-0">
+                  <label className={filterLabelCls}>Công ty đặt hàng</label>
+                  <select
+                    value={filterDealCompanyId}
+                    onChange={(e) => setFilterDealCompanyId?.(e.target.value)}
+                    className={filterSelectCls}
+                    title="Công ty chủ deal — nơi đặt hàng"
+                  >
+                    <option value="">Tất cả công ty đặt</option>
+                    {dealCompanyOptions.map((co) => (
+                      <option key={co.id} value={co.id}>{co.name}</option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-[10px] leading-snug text-slate-400">Để trống = mọi nơi đặt</p>
+                </div>
                 <div className="min-w-0 sm:col-span-2">
                   <label className={filterLabelCls}>Nhân viên</label>
                   {isAdmin ? (
@@ -1353,6 +1404,34 @@ function PrivateDealInbox({
             </button>
           </div>
         </div>,
+      )}
+
+      {activeChips.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 px-2.5 sm:px-3 py-1.5 border-b border-slate-200/60 bg-slate-50/60">
+          {activeChips.map((chip) => (
+            <span
+              key={chip.key}
+              className="inline-flex items-center gap-1 h-6 pl-2 pr-1 rounded-full border border-slate-200 bg-white text-[11px] font-medium text-slate-700 shadow-sm"
+            >
+              <span className="truncate max-w-[14rem]">{chip.label}</span>
+              <button
+                type="button"
+                onClick={chip.clear}
+                className="h-4 w-4 inline-flex items-center justify-center rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-50 cursor-pointer"
+                aria-label={`Bỏ lọc ${chip.label}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="h-6 px-2 rounded-full text-[11px] font-semibold text-slate-500 hover:text-slate-800 cursor-pointer"
+          >
+            Xoá hết
+          </button>
+        </div>
       )}
 
       {!loading && flatTasks.length > 0 && (
@@ -1414,6 +1493,7 @@ function PrivateDealInbox({
             const isCollapsed = !!collapsed[g.lead_id];
             const gStats = computeTaskStats(g.tasks || []);
             const allDone = gStats.completed === gStats.total && gStats.total > 0;
+            const gOwnerCompany = (g.tasks || []).find((x) => x.owner_company_name)?.owner_company_name || '';
             return (
               <div key={g.lead_id} className="rounded-xl border border-slate-200/90 overflow-hidden bg-white shadow-sm">
                 <div className="flex items-center gap-1 bg-slate-50/80 border-b border-slate-200/60">
@@ -1428,9 +1508,28 @@ function PrivateDealInbox({
                     <Lock className="h-3.5 w-3.5 text-slate-500 shrink-0" />
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-semibold text-slate-900 truncate">{dealLabel}</p>
-                      {g.lead?.project_code ? (
-                        <p className="text-[11px] text-slate-500 truncate">{g.lead.project_code}</p>
-                      ) : null}
+                      <div className="flex flex-wrap items-center gap-1 mt-0.5">
+                        {g.lead?.project_code ? (
+                          <span className="text-[11px] text-slate-500 font-mono truncate">{g.lead.project_code}</span>
+                        ) : null}
+                        {/* Hai công ty bày ngay trên thẻ, đúng cặp với hai bộ lọc ở trên */}
+                        {gOwnerCompany ? (
+                          <span
+                            className="inline-flex items-center h-4 px-1.5 rounded border border-indigo-200 bg-indigo-50 text-[9.5px] font-semibold text-indigo-700"
+                            title="Công ty sản xuất"
+                          >
+                            SX · {gOwnerCompany}
+                          </span>
+                        ) : null}
+                        {g.lead?.company_name ? (
+                          <span
+                            className="inline-flex items-center h-4 px-1.5 rounded border border-amber-200 bg-amber-50 text-[9.5px] font-semibold text-amber-800"
+                            title="Công ty đặt hàng"
+                          >
+                            ĐH · {g.lead.company_name}
+                          </span>
+                        ) : null}
+                      </div>
                     </div>
                     <div className="hidden sm:flex items-center gap-1 shrink-0 text-[10px]">
                       <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-700 font-medium">{gStats.pending} chưa</span>
@@ -1736,6 +1835,15 @@ export default function CRMAssignmentsPage({
   // phatSinhOnly = chỉ việc có loại phát sinh; coPhi = '0' | '1' tách hai tab.
   phatSinhOnly = false,
   coPhi = null,
+  /**
+   * onlyPrivate = trang CHỈ có Không gian chung, không có tab «Giao việc».
+   *
+   * Dùng cho Quản lý phát sinh: một việc phát sinh luôn thuộc về một dự án cụ thể,
+   * nên lối tạo duy nhất là lối gắn deal — việc rơi thẳng vào không gian chung của
+   * dự án đó. Để hở tab Giao việc thì tạo được việc phát sinh mồ côi, không dự án,
+   * và báo cáo phát sinh theo dự án thủng ngay chỗ đó.
+   */
+  onlyPrivate = false,
 } = {}) {
   const LS_COMPANY = `${storagePrefix}_company_id`;
   const LS_DEPARTMENT = `${storagePrefix}_department_id`;
@@ -1763,7 +1871,9 @@ export default function CRMAssignmentsPage({
     : null;
 
   const [pageTab, setPageTab] = useState(() => (
-    String(searchParams.get('pageTab') || '').toLowerCase() === 'private' ? 'private' : 'assignments'
+    onlyPrivate || String(searchParams.get('pageTab') || '').toLowerCase() === 'private'
+      ? 'private'
+      : 'assignments'
   ));
   const [view, setView] = useState('kanban');
   const [columns, setColumns] = useState([]);
@@ -1815,6 +1925,16 @@ export default function CRMAssignmentsPage({
   const [filterAssignee, setFilterAssignee] = useState('');
   const [filterPriority, setFilterPriority] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
+  /**
+   * Hai bộ lọc công ty của Không gian chung — lọc theo VIỆC, không theo người.
+   *   filterOwnerCompanyId = công ty SẢN XUẤT, tức công ty chủ dự án
+   *   filterDealCompanyId  = công ty ĐẶT HÀNG, tức công ty chủ deal
+   * `filterCompanyId` bên dưới là chuyện khác hẳn: nó chọn đọc hộp thư của nhân viên
+   * công ty nào. Trước đây chỉ có mỗi nó nên nhìn tưởng lọc dự án.
+   */
+  const [filterOwnerCompanyId, setFilterOwnerCompanyId] = useState('');
+  const [filterDealCompanyId, setFilterDealCompanyId] = useState('');
+  const LS_OWNER_COMPANY = `${storagePrefix}_owner_company_id`;
   const [filterCompanyId, setFilterCompanyId] = useState(() => {
     try { return localStorage.getItem(LS_COMPANY) || ''; } catch { return ''; }
   });
@@ -1838,6 +1958,43 @@ export default function CRMAssignmentsPage({
   const [filterDepartmentId, setFilterDepartmentId] = useState(() => {
     try { return localStorage.getItem(LS_DEPARTMENT) || ''; } catch { return ''; }
   });
+
+  /**
+   * Xưởng (công ty SẢN XUẤT) — luôn đúng MỘT, không có «Tất cả».
+   * Việc phát sinh bao giờ cũng thuộc về một xưởng cụ thể; gộp mọi xưởng vào một
+   * bảng thì số liệu KPI và cột Kanban trộn lẫn hai dây chuyền khác nhau.
+   * Danh sách lấy từ bảng companies (HCB · Metalla…), KHÔNG dựng từ dữ liệu đã tải —
+   * tải rỗng mà danh sách cũng rỗng thì không còn đường chọn lại.
+   */
+  const workshopCompanyOptions = useMemo(() => {
+    const list = productionWorkshopFilterCompanies(companies)
+      .map((co) => ({ id: String(co.id), name: workshopCompanyDisplayName(co) || co.name }));
+    return list.length
+      ? list
+      : (companies || []).map((co) => ({ id: String(co.id), name: co.short_name || co.name }));
+  }, [companies]);
+
+  /** Công ty ĐẶT HÀNG — có «Tất cả», vì một xưởng nhận đơn từ nhiều nơi. */
+  const dealCompanyOptions = useMemo(
+    () => (companies || []).map((co) => ({ id: String(co.id), name: co.short_name || co.name })),
+    [companies],
+  );
+
+  useEffect(() => {
+    if (!onlyPrivate || !workshopCompanyOptions.length) return;
+    if (workshopCompanyOptions.some((c) => c.id === String(filterOwnerCompanyId))) return;
+    let saved = '';
+    try { saved = localStorage.getItem(LS_OWNER_COMPANY) || ''; } catch { saved = ''; }
+    const pick = workshopCompanyOptions.find((c) => c.id === saved)
+      || workshopCompanyOptions.find((c) => c.id === String(user?.company_id || ''))
+      || workshopCompanyOptions[0];
+    if (pick) setFilterOwnerCompanyId(pick.id);
+  }, [onlyPrivate, workshopCompanyOptions, filterOwnerCompanyId, user?.company_id, LS_OWNER_COMPANY]);
+
+  useEffect(() => {
+    if (!onlyPrivate || !filterOwnerCompanyId) return;
+    try { localStorage.setItem(LS_OWNER_COMPANY, filterOwnerCompanyId); } catch { /* bỏ qua */ }
+  }, [onlyPrivate, filterOwnerCompanyId, LS_OWNER_COMPANY]);
 
   const [editingItem, setEditingItem] = useState(null);
   const [showItemModal, setShowItemModal] = useState(false);
@@ -2407,6 +2564,8 @@ export default function CRMAssignmentsPage({
           ...(isAdmin && filterCompanyId ? { company_id: filterCompanyId } : {}),
           ...(isAdmin && filterDepartmentId ? { department_id: filterDepartmentId } : {}),
           ...(isAdmin && filterAssignee ? { assignee_id: filterAssignee } : {}),
+          ...(filterOwnerCompanyId ? { owner_company_id: filterOwnerCompanyId } : {}),
+          ...(filterDealCompanyId ? { deal_company_id: filterDealCompanyId } : {}),
         },
       });
       if (seq !== privateLoadSeqRef.current) return;
@@ -2425,7 +2584,8 @@ export default function CRMAssignmentsPage({
     } finally {
       if (seq === privateLoadSeqRef.current) setPrivateLoading(false);
     }
-  }, [apiBase, assignmentModule, filterWorkTypeId, isAdmin, filterCompanyId, filterDepartmentId, filterAssignee]);
+  }, [apiBase, assignmentModule, filterWorkTypeId, isAdmin, filterCompanyId, filterDepartmentId,
+    filterAssignee, filterOwnerCompanyId, filterDealCompanyId]);
 
   useEffect(() => {
     // Prefetch badge + sẵn dữ liệu tab Không gian chung (CRM / SX / VC)
@@ -2433,7 +2593,7 @@ export default function CRMAssignmentsPage({
   }, [loadPrivateTasks]);
 
   const setPageTabAndUrl = useCallback((tab) => {
-    const next = tab === 'private' ? 'private' : 'assignments';
+    const next = onlyPrivate || tab === 'private' ? 'private' : 'assignments';
     setPageTab(next);
     setSearchParams((prev) => {
       const p = new URLSearchParams(prev);
@@ -2441,7 +2601,7 @@ export default function CRMAssignmentsPage({
       else p.delete('pageTab');
       return p;
     }, { replace: true });
-  }, [setSearchParams]);
+  }, [setSearchParams, onlyPrivate]);
 
   const clearProjectScope = useCallback(() => {
     setSearch('');
@@ -2492,10 +2652,10 @@ export default function CRMAssignmentsPage({
 
   useEffect(() => {
     const raw = String(searchParams.get('pageTab') || '').toLowerCase();
-    // pageTab=shared cũ → về Giao việc
-    const t = raw === 'private' ? 'private' : 'assignments';
+    // pageTab=shared cũ → về Giao việc. Trang chỉ-Không-gian-chung thì khoá luôn.
+    const t = onlyPrivate || raw === 'private' ? 'private' : 'assignments';
     setPageTab((prev) => (prev === t ? prev : t));
-  }, [searchParams]);
+  }, [searchParams, onlyPrivate]);
 
   // Mở chi tiết từ thông báo / liên kết (?open=id)
   const openHandledRef = useRef(null);
@@ -3027,18 +3187,22 @@ export default function CRMAssignmentsPage({
                 <p className="text-[10px] text-slate-500 leading-tight">
                   {pageTab === 'assignments'
                     ? `${stats.total} việc · ${stats.pending} chưa · ${stats.inProgress} đang · ${stats.completed} xong`
-                    : `${privateTaskCount} nhiệm vụ deal · ${privateGroups.length} deal`}
+                    : onlyPrivate
+                      ? `${privateTaskCount} việc phát sinh · ${privateGroups.length} dự án`
+                      : `${privateTaskCount} nhiệm vụ deal · ${privateGroups.length} deal`}
                 </p>
               </div>
-              <SegmentedControl
-                value={pageTab}
-                onChange={setPageTabAndUrl}
-                activeText={theme.activeText}
-                options={[
-                  { id: 'assignments', label: 'Giao việc', dataTour: 'assign-tab-assignments' },
-                  { id: 'private', label: 'Không gian chung', badge: privateTaskCount, dataTour: 'assign-tab-private' },
-                ]}
-              />
+              {!onlyPrivate && (
+                <SegmentedControl
+                  value={pageTab}
+                  onChange={setPageTabAndUrl}
+                  activeText={theme.activeText}
+                  options={[
+                    { id: 'assignments', label: 'Giao việc', dataTour: 'assign-tab-assignments' },
+                    { id: 'private', label: 'Không gian chung', badge: privateTaskCount, dataTour: 'assign-tab-private' },
+                  ]}
+                />
+              )}
             </div>
 
             <div className="flex flex-wrap items-center gap-2 justify-end">
@@ -3142,9 +3306,12 @@ export default function CRMAssignmentsPage({
                       setShowItemModal(true);
                     }}
                     className={`h-8 px-3 rounded-md text-white text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer shadow-sm ${theme.cta}`}
-                    title="Tạo giao việc gắn deal — hiện ở Không gian chung"
+                    title={onlyPrivate
+                      ? 'Tạo việc phát sinh — bắt buộc chọn dự án, việc vào thẳng không gian chung của dự án đó'
+                      : 'Tạo giao việc gắn deal — hiện ở Không gian chung'}
                   >
-                    <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />Giao việc KG chung
+                    <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
+                    {onlyPrivate ? 'Tạo phát sinh' : 'Giao việc KG chung'}
                   </button>
                   <button
                     type="button"
@@ -3569,10 +3736,12 @@ export default function CRMAssignmentsPage({
           departments={departments}
           assigneeOptions={filteredAssigneeOptions}
           user={user}
-          filterCompanyId={filterCompanyId}
-          setFilterCompanyId={setFilterCompanyId}
-          filterDepartmentId={filterDepartmentId}
-          setFilterDepartmentId={setFilterDepartmentId}
+          ownerCompanyOptions={workshopCompanyOptions}
+          dealCompanyOptions={dealCompanyOptions}
+          filterOwnerCompanyId={filterOwnerCompanyId}
+          setFilterOwnerCompanyId={setFilterOwnerCompanyId}
+          filterDealCompanyId={filterDealCompanyId}
+          setFilterDealCompanyId={setFilterDealCompanyId}
           filterAssignee={filterAssignee}
           setFilterAssignee={setFilterAssignee}
           filterStatus={filterStatus}

@@ -337,7 +337,10 @@ async function rowsForUserChunks(userIds, run) {
   return out;
 }
 
-async function listPrivateDealInboxTasks(req, { assignmentModule, workshopTypeId, userIds } = {}) {
+async function listPrivateDealInboxTasks(req, {
+  assignmentModule, workshopTypeId, userIds,
+  ownerCompanyId = null, dealCompanyId = null,
+} = {}) {
   const mod = normalizeAssignModule(assignmentModule);
   const selfId = req.user?.userId || req.user?.id;
   const subjectIds = Array.isArray(userIds)
@@ -541,6 +544,49 @@ async function listPrivateDealInboxTasks(req, { assignmentModule, workshopTypeId
       }
     }
     tasks.sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+  }
+
+  // Hai công ty của một việc là HAI thứ khác nhau, bộ lọc trang Phát sinh tách riêng:
+  //   owner_company_*      = công ty SẢN XUẤT (chủ dự án)
+  //   lead.company_*       = công ty ĐẶT HÀNG (chủ deal)
+  // Nhánh crm_assignments ở trên chưa nằm trong `companyNames` (map dựng từ crm_tasks),
+  // nên bồi tên một lượt ở đây cho cả hai nhánh thay vì đọc companies hai lần.
+  {
+    const missing = [];
+    for (const t of tasks) {
+      if (t.owner_company_id && !companyNames.has(String(t.owner_company_id))) missing.push(t.owner_company_id);
+      if (t.lead?.company_id && !companyNames.has(String(t.lead.company_id))) missing.push(t.lead.company_id);
+    }
+    if (missing.length) {
+      try {
+        const extra = await loadCompanyNameMap(missing);
+        extra.forEach((v, k) => companyNames.set(k, v));
+      } catch (e) {
+        console.warn('[private-deal-tasks] company names:', e.message);
+      }
+    }
+    for (const t of tasks) {
+      if (t.owner_company_id && !t.owner_company_name) {
+        t.owner_company_name = companyNames.get(String(t.owner_company_id)) || null;
+      }
+      if (t.lead?.company_id) {
+        t.lead.company_name = companyNames.get(String(t.lead.company_id)) || null;
+      }
+    }
+  }
+
+  // Lọc theo VIỆC, không phải theo người: `userIds` ở trên đã quyết định đọc hộp thư
+  // của những ai; hai bộ lọc này thu hẹp trong số việc đọc được.
+  const ownerCoFilter = String(ownerCompanyId || '').trim();
+  const dealCoFilter = String(dealCompanyId || '').trim();
+  if (ownerCoFilter || dealCoFilter) {
+    const kept = tasks.filter((t) => {
+      if (ownerCoFilter && String(t.owner_company_id || '') !== ownerCoFilter) return false;
+      if (dealCoFilter && String(t.lead?.company_id || '') !== dealCoFilter) return false;
+      return true;
+    });
+    tasks.length = 0;
+    tasks.push(...kept);
   }
 
   const workshopTypeFilter = parseInboxWorkshopType(workshopTypeId);

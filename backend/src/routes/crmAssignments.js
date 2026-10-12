@@ -2168,6 +2168,12 @@ r.get('/private-deal-tasks', async (req, res) => {
     const result = await listPrivateDealInboxTasks(req, {
       assignmentModule: req.query.assignment_module,
       workshopTypeId: req.query.workshop_type_id,
+      // Hai bộ lọc của trang Quản lý phát sinh — lọc theo VIỆC:
+      //   owner_company_id = công ty SẢN XUẤT (chủ dự án)
+      //   deal_company_id  = công ty ĐẶT HÀNG (chủ deal)
+      // Khác hẳn `company_id` bên dưới, cái đó chọn xem hộp thư của NHÂN VIÊN công ty nào.
+      ownerCompanyId: req.query.owner_company_id,
+      dealCompanyId: req.query.deal_company_id,
       userIds: await resolvePrivateInboxUserIds(req),
     });
     res.json(result);
