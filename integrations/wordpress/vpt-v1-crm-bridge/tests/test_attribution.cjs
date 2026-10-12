@@ -6,18 +6,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 const script = fs.readFileSync(path.join(__dirname,'../attribution.js'),'utf8');
 const now = 1791302400000;
-function run({url='https://vanphuthanh.net/tu-bep/',ref='',prior=null,blocked=false}={}) {
+function run({url='https://vanphuthanh.net/tu-bep/',ref='',prior=null,blocked=false,saved:seed=null,extra={},win={}}={}) {
  const location = new URL(url), fields={}, attrs={}, handlers={}, saved=new Map();
  let clock=now;
  if(prior) saved.set('vpt_v1_attribution_session',JSON.stringify(prior));
+ if(seed) for(const [k,v] of seed) saved.set(k,v);
  const names=['utm_source','utm_medium','utm_campaign','utm_content','utm_term','gclid','fbclid','gbraid','wbraid','campaignid','adgroupid','keyword','matchtype','device','vpt_referrer_host','vpt_landing_page'];
  names.forEach(k=>fields[k]={value:''});
  const form={querySelector(s){const n=s.match(/name="([^"]+)"/)[1];return n==='vpt_form'?{value:'VPT_V1'}:fields[n];},setAttribute(k,v){attrs[k]=v;}};
  const document={referrer:ref,readyState:'complete',querySelectorAll(){return[form]},addEventListener(k,v){handlers[k]=v;}};
  const storage={getItem(k){if(blocked)throw Error('blocked');return saved.get(k)||null;},setItem(k,v){if(blocked)throw Error('blocked');saved.set(k,v);},removeItem(k){if(blocked)throw Error('blocked');saved.delete(k);}};
- const window={location,dataLayer:[]};
- vm.runInNewContext(script,{window,document,sessionStorage:storage,URL,URLSearchParams,Date:{now:()=>clock}});
- return {get data(){return Object.fromEntries(names.map(k=>[k,fields[k].value]));},attrs,handlers,window,get prior(){return JSON.parse(saved.get('vpt_v1_attribution_session')||'null');},form,advanceTime(ms){clock+=ms;}};
+ const window={location,dataLayer:[],...win};
+ vm.runInNewContext(script,{window,document,sessionStorage:storage,URL,URLSearchParams,Date:{now:()=>clock},...extra});
+ return {saved,get data(){return Object.fromEntries(names.map(k=>[k,fields[k].value]));},attrs,handlers,window,get prior(){return JSON.parse(saved.get('vpt_v1_attribution_session')||'null');},form,advanceTime(ms){clock+=ms;}};
 }
 test('Google organic entry retains sanitized landing and host',()=>{
  const r=run({url:'https://vanphuthanh.net/tu-bep/?private=synthetic#secret',ref:'https://www.google.com.vn/search?q=private'});
@@ -133,4 +134,46 @@ test('Visit key survives internal navigation and expires with the source',()=>{
 });
 test('Blocked storage still sends the click without throwing',()=>{
  const r=run({blocked:true});assert.equal(clickOn(r,'tel:0908309222').length,1);
+});
+// 0.3.1: Google Ads conversion only after the CRM confirmed the lead.
+function confirmHarness(states, opts = {}) {
+ const timers=[];const asked=[];
+ const extra={setTimeout:(fn)=>{timers.push(fn);return timers.length;}};
+ const win={fetch:(url)=>{asked.push(url);const state=states.shift()||'pending';return Promise.resolve({ok:true,json:()=>Promise.resolve({state})});}};
+ const r=run({...opts,extra,win});
+ const tick=async()=>{const fn=timers.shift();if(fn){fn();await new Promise(res=>setImmediate(res));await new Promise(res=>setImmediate(res));}};
+ return {r,timers,asked,tick};
+}
+const RID='11111111-2222-4333-8444-555555555555';
+const submit=(r,mode='live')=>r.handlers.wpcf7submit({target:r.form,detail:{contactFormId:11116,apiResponse:{vpt_v1:{status:'queued',mode,request_id:RID}}}});
+const conversions=r=>r.window.dataLayer.filter(e=>e&&e[0]==='event'&&e[1]==='conversion');
+test('Conversion waits for CRM confirmation and fires once',async()=>{
+ const h=confirmHarness(['pending','confirmed']);submit(h.r);
+ assert.equal(conversions(h.r).length,0);assert.equal(h.r.attrs['data-vpt-ads-dispatch'],'awaiting_crm');
+ assert.equal(h.r.window.dataLayer[0].event,'vpt_v1_lead_request');
+ await h.tick();assert.equal(conversions(h.r).length,0);
+ await h.tick();assert.equal(conversions(h.r).length,1);
+ assert.equal(h.asked[0],'/wp-json/vpt-v1/v1/receipt/'+RID);
+ const c=conversions(h.r)[0][2];assert.equal(c.send_to,'AW-460207797/fC1UCJTQnYIdELXtuNsB');assert.equal(c.transaction_id,RID);
+ assert.ok(h.r.window.dataLayer.some(e=>e.event==='vpt_v1_lead_confirmed'));
+ assert.equal(h.r.attrs['data-vpt-ads-dispatch'],'confirmed');assert.equal(h.timers.length,0);
+ submit(h.r);assert.equal(h.timers.length,0);
+});
+test('Failed or unknown CRM delivery never reports a conversion',async()=>{
+ for(const state of ['failed','unknown']){
+  const h=confirmHarness([state]);submit(h.r);await h.tick();
+  assert.equal(conversions(h.r).length,0);assert.equal(h.r.attrs['data-vpt-ads-dispatch'],state);assert.equal(h.timers.length,0);
+ }
+});
+test('Test mode confirms only to the diagnostic goal',async()=>{
+ const h=confirmHarness(['confirmed']);submit(h.r,'test');await h.tick();
+ assert.equal(conversions(h.r)[0][2].send_to,'AW-460207797/qwtDCI-6q4IdELXtuNsB');
+});
+test('Wait resumes on the next page of the visit and stops after 10 minutes',async()=>{
+ const first=confirmHarness([]);submit(first.r);
+ const pending=first.r.saved.get('vpt_v1_pending_conversions');assert.match(pending,new RegExp(RID));
+ const next=confirmHarness(['confirmed'],{saved:[['vpt_v1_pending_conversions',pending]]});
+ await next.tick();assert.equal(conversions(next.r).length,1);
+ const late=confirmHarness(['pending'],{saved:[['vpt_v1_pending_conversions',pending]]});
+ late.r.advanceTime(11*60*1000);await late.tick();assert.equal(conversions(late.r).length,0);assert.equal(late.timers.length,0);
 });

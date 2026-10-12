@@ -42,5 +42,7 @@ jobs:
       - name: WordPress pure mapping and PHP-to-Node contract
         run: |
           php -n -l integrations/wordpress/vpt-v1-crm-bridge/core.php
+          php -n -l integrations/wordpress/vpt-v1-crm-bridge/vpt-v1-crm-bridge.php
+          node --test integrations/wordpress/vpt-v1-crm-bridge/tests/test_attribution.cjs
           python3 integrations/wordpress/vpt-v1-crm-bridge/tests/test_core.py php
           git diff --check

@@ -222,6 +222,15 @@ class CorePatchTests(unittest.TestCase):
                 self.assertEqual(old, new)
                 self.assertEqual(new, {"ok": True, "result": expected})
 
+    def test_public_receipt_state_exposes_only_delivery_state(self):
+        cases = [({"state": "sent", "lead_id": "00000000-0000-4000-8000-000000000001", "payload": {"phone": "0900000000"}}, "confirmed"),
+                 ({"state": "queued"}, "pending"), ({"state": "sending"}, "pending"),
+                 ({"state": "review"}, "failed"), ({"state": "blocked"}, "failed"),
+                 ({"state": "other"}, "unknown"), (None, "unknown")]
+        for job, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertEqual(call(PATCHED, {"operation": "receipt", "job": job}), {"ok": True, "result": expected})
+
     def test_scope_helpers_and_endpoint_unchanged(self):
         payload = dict(operation="scope", data={"nested": {"id": "synthetic", "company_id": "company-a"},
                                                  "other": [{"company_id": "company-b"}, {"company_id": "company-a"}]},

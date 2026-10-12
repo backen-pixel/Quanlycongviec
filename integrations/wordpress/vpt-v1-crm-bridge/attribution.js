@@ -94,18 +94,57 @@
     if (receipt.status !== 'queued' || !['live','test'].includes(receipt.mode) || !receipt.request_id) return;
     // TEST is server-authorized for administrators and routes only to the diagnostic goal.
     var isTest = receipt.mode === 'test';
-    var dedupe = 'vpt_v1_event_' + receipt.request_id;
-    try { if (sessionStorage.getItem(dedupe)) return; sessionStorage.setItem(dedupe,'1'); } catch (_) {}
+    var requested = 'vpt_v1_request_' + receipt.request_id;
+    try { if (sessionStorage.getItem(requested)) return; sessionStorage.setItem(requested,'1'); } catch (_) {}
     window.dataLayer = window.dataLayer || [];
     window.dataLayer.push({event:isTest ? 'vpt_v1_test_request' : 'vpt_v1_lead_request',vpt_form_id:11116,transaction_id:receipt.request_id});
-    var conversion = {send_to:isTest ? 'AW-460207797/qwtDCI-6q4IdELXtuNsB' : 'AW-460207797/fC1UCJTQnYIdELXtuNsB',value:0,currency:'VND',transaction_id:receipt.request_id};
+    node.setAttribute('data-vpt-measurement',isTest ? 'test_request' : 'lead_request');
+    node.setAttribute('data-vpt-ads-dispatch','awaiting_crm');
+    remember({rid: receipt.request_id, test: isTest, until: Date.now() + waitMs});
+    watch(receipt.request_id, isTest, Date.now() + waitMs, node);
+  });
+  // 0.3.1: the Google Ads conversion fires only after the CRM confirmed the lead. The browser asks the
+  // site for the delivery state of its own random request_id; a reply is only a state word.
+  var pendingKey = 'vpt_v1_pending_conversions';
+  var waitMs = 10 * 60 * 1000;
+  function pendingList() {
+    try { var list = JSON.parse(sessionStorage.getItem(pendingKey) || '[]'); return Array.isArray(list) ? list : []; } catch (_) { return []; }
+  }
+  function savePending(list) { try { sessionStorage.setItem(pendingKey, JSON.stringify(list)); } catch (_) {} }
+  function remember(item) { savePending(pendingList().filter(function (p) { return p.rid !== item.rid; }).concat([item])); }
+  function forget(rid) { savePending(pendingList().filter(function (p) { return p.rid !== rid; })); }
+  function fireConversion(rid, isTest, node) {
+    var dedupe = 'vpt_v1_event_' + rid;
+    try { if (sessionStorage.getItem(dedupe)) return; sessionStorage.setItem(dedupe,'1'); } catch (_) {}
+    window.dataLayer = window.dataLayer || [];
+    window.dataLayer.push({event:isTest ? 'vpt_v1_test_confirmed' : 'vpt_v1_lead_confirmed',vpt_form_id:11116,transaction_id:rid});
+    // Destination copied from the verified Google Ads conversion setup, 2026-09-23.
+    var conversion = {send_to:isTest ? 'AW-460207797/qwtDCI-6q4IdELXtuNsB' : 'AW-460207797/fC1UCJTQnYIdELXtuNsB',value:0,currency:'VND',transaction_id:rid};
     if (typeof window.gtag === 'function') {
       window.gtag('event','conversion',conversion);
     } else {
       // Queue using the standard Google tag arguments format; reuse the site's tag.
       (function () { window.dataLayer.push(arguments); })('event','conversion',conversion);
     }
-    node.setAttribute('data-vpt-measurement',isTest ? 'test_request' : 'lead_request');
-    node.setAttribute('data-vpt-ads-dispatch','queued');
+    if (node) node.setAttribute('data-vpt-ads-dispatch','confirmed');
+  }
+  function watch(rid, isTest, until, node) {
+    if (!/^[0-9a-f-]{36}$/.test(rid) || typeof window.fetch !== 'function') return;
+    function ask() {
+      if (Date.now() > until) { forget(rid); if (node) node.setAttribute('data-vpt-ads-dispatch','timeout'); return; }
+      window.fetch('/wp-json/vpt-v1/v1/receipt/' + rid, {credentials: 'omit', cache: 'no-store'})
+        .then(function (r) { return r.ok ? r.json() : {state: 'pending'}; })
+        .then(function (body) {
+          var state = body && body.state;
+          if (state === 'confirmed') { forget(rid); fireConversion(rid, isTest, node); return; }
+          if (state === 'failed' || state === 'unknown') { forget(rid); if (node) node.setAttribute('data-vpt-ads-dispatch', state); return; }
+          setTimeout(ask, 3000);
+        }, function () { setTimeout(ask, 5000); });
+    }
+    setTimeout(ask, 2000);
+  }
+  // Resume waits started on an earlier page of this visit.
+  pendingList().forEach(function (p) {
+    if (p && typeof p.rid === 'string' && p.until > Date.now()) watch(p.rid, p.test === true, p.until, null); else if (p) forget(p.rid);
   });
 })();
