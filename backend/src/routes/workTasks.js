@@ -643,7 +643,7 @@ async function dropTasksClosedOnDeal(rows, detailLeads) {
   const projectIds = [...new Set(taskRows.map((t) => String(t.project_id)))];
   const crmRowsAll = await fetchAllByIdsParallel({
     table: 'unified_tasks_v',
-    columns: 'unified_id, source_id, project_id, lead_id, title, status',
+    columns: 'unified_id, source_id, project_id, lead_id, title, status, deadline',
     key: 'project_id',
     ids: projectIds,
     // `in` trên view nhanh với khoảng ≤ ~200 id (xem TEAM_TASKS_IN_MAX) → chia khúc nhỏ.
@@ -672,12 +672,16 @@ async function dropTasksClosedOnDeal(rows, detailLeads) {
     if (!sxCrm.has(crmTaskIdOf(c))) continue;
     projectsWithSxCrm.add(String(c.project_id));
     const k = keyOf(c);
-    const s = state.get(k) || { open: 0, closed: 0 };
+    const s = state.get(k) || { open: 0, closed: 0, openDeadlineMs: [] };
     if (CLOSED_TASK_STATUSES.has(String(c.status || '').toLowerCase())) s.closed += 1;
-    else s.open += 1;
+    else {
+      s.open += 1;
+      const ms = c.deadline ? new Date(c.deadline).getTime() : NaN;
+      if (Number.isFinite(ms)) s.openDeadlineMs.push(ms);
+    }
     state.set(k, s);
   }
-  return rows.filter((t) => {
+  const kept = rows.filter((t) => {
     if (t.source !== 'task') return true;
     const s = state.get(keyOf(t));
     // 1. Bản `crm_task` cùng tên đã đóng hết → việc đã xong ở chi tiết dự án.
@@ -687,6 +691,19 @@ async function dropTasksClosedOnDeal(rows, detailLeads) {
     //    Việc đã giao cho một người, hoặc dự án chưa có việc SX ở deal (xưởng theo dõi bằng bảng `tasks`) thì giữ.
     if (!s && !t.assignee_id && projectsWithSxCrm.has(String(t.project_id))) return false;
     return true;
+  });
+  // 3. HẠN lấy theo `crm_task` (bản chi tiết dự án hiển thị) thay vì `tasks.due_date`: bản `tasks` hay cũ / do script gán nên
+  //    trước đây tab báo «quá hạn» trong khi chi tiết không có hạn hoặc hạn còn xa (HCB: chỉ 16/93 việc quá hạn khớp chi
+  //    tiết). Có nhiều bản crm mở cùng tên → lấy hạn SỚM NHẤT có giá trị (cùng bản được ghép làm song sinh ở bước khử trùng);
+  //    bản crm không có hạn → việc không có hạn.
+  return kept.map((t) => {
+    if (t.source !== 'task') return t;
+    const s = state.get(keyOf(t));
+    if (!s || s.open === 0) return t;
+    const ms = s.openDeadlineMs.length ? Math.min(...s.openDeadlineMs) : null;
+    const current = t.deadline ? new Date(t.deadline).getTime() : null;
+    if (ms === current) return t;
+    return { ...t, deadline: ms == null ? null : new Date(ms).toISOString() };
   });
 }
 
@@ -984,6 +1001,17 @@ r.get('/team-project-tasks', async (req, res) => {
       }
       // Bỏ bản `tasks` còn «todo» mà bản `crm_task` cùng tên đã xong (chi tiết dự án coi là xong) — xem `dropTasksClosedOnDeal`.
       let rows = await dropTasksClosedOnDeal(chosenRows, detailLeads);
+      // Hạn đã đổi theo `crm_task` → áp lại cửa sổ của lần quét (có hạn ≤ N ngày tới, HOẶC mới tạo trong M ngày): việc có hạn
+      // xa hơn cửa sổ / không hạn mà tạo từ lâu rời khỏi danh sách như mọi việc khác. Chế độ khoảng hạn / «không hạn» có lọc riêng.
+      if (!noDeadlineMode && !dueRange) {
+        const untilMs = new Date(until).getTime();
+        const createdSinceMs = new Date(createdSince).getTime();
+        rows = rows.filter((t) => {
+          const dl = t.deadline ? new Date(t.deadline).getTime() : null;
+          if (dl != null && dl <= untilMs) return true;
+          return createdDays > 0 && t.created_at && new Date(t.created_at).getTime() >= createdSinceMs;
+        });
+      }
       // Sau khi khử trùng mới áp khoảng hạn: chỉ giữ bản được chọn mà hạn của chính nó nằm trong khoảng.
       if (dueRange) {
         const fromMs = new Date(dueRange.from).getTime();
