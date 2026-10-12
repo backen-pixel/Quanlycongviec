@@ -1,3 +1,11 @@
+## 2026-10-12 (8) — App: bỏ mục «Không hạn» (cũ hơn 7 ngày) khỏi tab Công việc
+
+- Theo yêu cầu: gỡ nút «Xem việc không hạn (cũ hơn 7 ngày)» và toàn bộ luồng nạp mục riêng này ở `sx-mobile/src/screens/WorkScreen.tsx` (state `nd*`, `loadNoDeadline`, nhánh `ListFooterComponent`/`onEndReached`, style `ndBtn*`, tuỳ chọn `keepNd`). Phạm vi bạn chọn: CHỈ mục riêng; việc mới tạo ≤ 7 ngày chưa có hạn vẫn hiện ở danh sách chính (kèm nhãn «Không hạn» ở dòng nhóm).
+- Không đổi backend: `fetchTeamProjectTasksPage` vẫn có tuỳ chọn `noDeadline` (không còn ai gọi) — có thể gỡ sau. Kiểm trên máy ảo: cuối danh sách HCB · Tủ bếp không còn nút; `tsc` không báo lỗi ở `WorkScreen.tsx`.
+- Hệ quả: các việc cũ chưa có hạn (vd. TB-2026-416: 14 việc tạo 18/07) không còn xem được từ tab Công việc; vẫn xem được trong chi tiết dự án.
+
+---
+
 ## 2026-10-12 (7) — team-project-tasks: bỏ việc mẫu bị bỏ quên (TB-2026-029) khỏi tab Công việc
 
 - Bảng `tasks` = việc xưởng theo dự án (sinh từ bộ mẫu, `status` todo/in_progress/done, `due_date`, `assignee_id`, `production_stage_id`, `metadata.workshop_area`), tách với `crm_tasks` (việc của deal). Chi tiết dự án có deal chỉ đọc `crm_tasks`; `tasks` chỉ hiện ở chi tiết khi dự án KHÔNG có deal.
