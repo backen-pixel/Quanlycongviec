@@ -7,6 +7,8 @@ const { getActiveTarget, withPrimaryDatabase } = require('../config/supabaseRout
 const { auth } = require('../middleware/auth');
 const { isTenantScopeEnforced } = require('../helpers/tenantScope');
 const { buildWebConversions } = require('../modules/marketingAutomation/webConversions');
+const { buildGoogleOfflineConversions, previewRow, CONVERSION_NAMES } =
+  require('../modules/marketingAutomation/googleOfflineConversions');
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -43,7 +45,7 @@ function range(req) {
 }
 
 function createWebConversionsRouter({ db = supabase, primary = getActiveTarget, withPrimary = withPrimaryDatabase,
-  authMiddleware = auth } = {}) {
+  authMiddleware = auth, now = () => Date.now() } = {}) {
   const router = Router();
   router.use(authMiddleware);
   async function guarded(req, res, fn) {
@@ -63,6 +65,21 @@ function createWebConversionsRouter({ db = supabase, primary = getActiveTarget, 
     if (!r) return reply(res, 400, 'Khoảng ngày không hợp lệ (tối đa 120 ngày)', 'INVALID_RANGE');
     return guarded(req, res, async company =>
       res.json(await buildWebConversions({ db, companyId: company, from: r.from, to: r.to })));
+  });
+
+  // Preview of the Google Ads offline conversion export (gclid masked to its last 6 characters).
+  router.get('/offline-conversions', (req, res) => {
+    const r = range(req);
+    if (!r) return reply(res, 400, 'Khoảng ngày không hợp lệ (tối đa 120 ngày)', 'INVALID_RANGE');
+    return guarded(req, res, async company => {
+      const fromMs = Date.parse(`${r.from}T00:00:00+07:00`);
+      const toMs = Math.min(Date.parse(`${r.to}T00:00:00+07:00`) + 86400000 - 1, now());
+      const { rows, diagnostics } = await buildGoogleOfflineConversions({ db, companyId: company, fromMs, toMs });
+      return res.json({ from: r.from, to: r.to, conversion_names: CONVERSION_NAMES,
+        counts: { calls: rows.filter(x => x.type === 'CALL').length,
+          valid_leads: rows.filter(x => x.type === 'VALID_LEAD').length },
+        rows: rows.map(previewRow), diagnostics });
+    });
   });
 
   router.get('/spend', (req, res) => {
