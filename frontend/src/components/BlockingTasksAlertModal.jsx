@@ -182,11 +182,33 @@ export default function BlockingTasksAlertModal({
   const [recordsLoadingById, setRecordsLoadingById] = useState({});
   const [taskNotesById, setTaskNotesById] = useState({});
 
+  // Nhiệm vụ chặn có 2 nguồn: crm_tasks (API /crm/leads/...) và tasks dự án (API /tasks/...).
+  const findTask = (taskId) => (remainingTasks || []).find((x) => String(x.id) === String(taskId));
+  const isProjectTask = (t) => t?.source === 'project_task';
+  const leadOf = (t) => (t?.lead_id ? String(t.lead_id) : leadId);
+
   const loadRecords = async (taskId) => {
-    if (!leadId || !taskId) return;
+    const task = findTask(taskId);
+    if (!taskId || (!isProjectTask(task) && !leadOf(task))) return;
     setRecordsLoadingById((prev) => ({ ...prev, [taskId]: true }));
     try {
-      const { data } = await api.get(`/crm/leads/${leadId}/tasks/${taskId}/attachments`);
+      if (isProjectTask(task)) {
+        const [{ data: attData }, { data: cmData }] = await Promise.all([
+          api.get(`/tasks/${taskId}/attachments`),
+          api.get(`/tasks/${taskId}/comments`).catch(() => ({ data: {} })),
+        ]);
+        const files = Array.isArray(attData?.attachments) ? attData.attachments : [];
+        const notes = (Array.isArray(cmData?.comments) ? cmData.comments : []).map((c) => ({
+          id: `cm-${c.id}`,
+          doc_type: 'task_note',
+          notes: c.content,
+          creator: c.user,
+          created_at: c.created_at,
+        }));
+        setRecordsById((prev) => ({ ...prev, [taskId]: [...notes, ...files] }));
+        return;
+      }
+      const { data } = await api.get(`/crm/leads/${leadOf(task)}/tasks/${taskId}/attachments`);
       setRecordsById((prev) => ({ ...prev, [taskId]: Array.isArray(data) ? data : [] }));
     } catch (_) {
       setRecordsById((prev) => ({ ...prev, [taskId]: [] }));
@@ -196,20 +218,21 @@ export default function BlockingTasksAlertModal({
   };
 
   const loadAllTaskContent = async (taskList) => {
-    if (!leadId || !taskList?.length) return;
+    if (!taskList?.length) return;
     const ids = new Set(taskList.map((t) => String(t.id)));
-    try {
-      const { data: allTasks } = await api.get(`/crm/leads/${leadId}/tasks`);
-      const notesMap = {};
-      (allTasks || []).forEach((t) => {
-        if (ids.has(String(t.id)) && (t.notes || '').trim()) {
-          notesMap[t.id] = String(t.notes).trim();
-        }
-      });
-      setTaskNotesById(notesMap);
-    } catch (_) {
-      setTaskNotesById({});
-    }
+    const crmLeadIds = [...new Set(taskList.filter((t) => !isProjectTask(t)).map(leadOf).filter(Boolean))];
+    const notesMap = {};
+    await Promise.all(crmLeadIds.map(async (lid) => {
+      try {
+        const { data: allTasks } = await api.get(`/crm/leads/${lid}/tasks`);
+        (allTasks || []).forEach((t) => {
+          if (ids.has(String(t.id)) && (t.notes || '').trim()) {
+            notesMap[t.id] = String(t.notes).trim();
+          }
+        });
+      } catch (_) { /* bỏ qua: chỉ mất phần ghi chú inline */ }
+    }));
+    setTaskNotesById(notesMap);
     await Promise.all(taskList.map((t) => loadRecords(t.id)));
   };
 
@@ -272,7 +295,11 @@ export default function BlockingTasksAlertModal({
     setBusyId(task.id);
     setTaskError(task.id, '');
     try {
-      await api.put(`/crm/leads/${leadId}/tasks/${task.id}`, { status: 'completed' });
+      if (isProjectTask(task)) {
+        await api.patch(`/tasks/${task.id}/status`, { status: 'done' });
+      } else {
+        await api.put(`/crm/leads/${leadOf(task)}/tasks/${task.id}`, { status: 'completed' });
+      }
       onChanged?.();
       removeTask(task.id);
     } catch (e) {
@@ -289,7 +316,7 @@ export default function BlockingTasksAlertModal({
   };
 
   const saveNote = async (task) => {
-    if (!leadId) return;
+    if (!isProjectTask(task) && !leadOf(task)) return;
     if (!noteText.trim()) {
       setTaskError(task.id, 'Nhập nội dung ghi chú trước khi lưu.');
       return;
@@ -298,8 +325,13 @@ export default function BlockingTasksAlertModal({
     setTaskError(task.id, '');
     try {
       const trimmed = noteText.trim();
-      await api.put(`/crm/leads/${leadId}/tasks/${task.id}/notes`, { notes: trimmed });
-      setTaskNotesById((prev) => ({ ...prev, [task.id]: trimmed }));
+      if (isProjectTask(task)) {
+        // Nhiệm vụ dự án không có cột notes → ghi chú lưu thành bình luận của nhiệm vụ (loadRecords hiển thị lại).
+        await api.post(`/tasks/${task.id}/comments`, { content: trimmed });
+      } else {
+        await api.put(`/crm/leads/${leadOf(task)}/tasks/${task.id}/notes`, { notes: trimmed });
+        setTaskNotesById((prev) => ({ ...prev, [task.id]: trimmed }));
+      }
       setNoteOpenId(null);
       setNoteText('');
       await loadRecords(task.id);
@@ -313,7 +345,7 @@ export default function BlockingTasksAlertModal({
   };
 
   const uploadFile = (task) => {
-    if (!leadId) return;
+    if (!isProjectTask(task) && !leadOf(task)) return;
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
@@ -341,7 +373,19 @@ export default function BlockingTasksAlertModal({
           file_size: up.file_size,
           mime_type: up.mime_type,
         }));
-        await api.post(`/crm/leads/${leadId}/tasks/${task.id}/attachments/bulk`, { items });
+        if (isProjectTask(task)) {
+          await api.post(`/tasks/${task.id}/attachments/bulk`, {
+            items: items.map((it) => ({
+              original_name: it.name,
+              file_name: it.file_name,
+              file_url: it.file_url,
+              file_size: it.file_size,
+              mime_type: it.mime_type,
+            })),
+          });
+        } else {
+          await api.post(`/crm/leads/${leadOf(task)}/tasks/${task.id}/attachments/bulk`, { items });
+        }
         await loadRecords(task.id);
         onChanged?.();
         setTaskError(task.id, '');
@@ -456,7 +500,7 @@ export default function BlockingTasksAlertModal({
                           <TaskQuickVerdictBar
                             compact
                             task={t}
-                            leadId={leadId}
+                            leadId={leadOf(t)}
                             onUpdated={(updated) => {
                               patchTaskInList(t.id, updated);
                               onChanged?.();

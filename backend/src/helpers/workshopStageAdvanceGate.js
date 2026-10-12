@@ -159,7 +159,7 @@ async function assertSxKanbanAdvanceAllowed({ projectId, targetColId, currentCol
           .eq('blocks_stage_advance', true)
           .not('status', 'in', '(completed,cancelled)')
           .limit(50);
-        if (!error && Array.isArray(rows)) blockingCrm.push(...rows);
+        if (!error && Array.isArray(rows)) blockingCrm.push(...rows.map((t) => ({ ...t, source: 'crm_task' })));
         else if (error && !String(error.message || '').includes('production_pipeline_stage_id')) {
           console.warn('[workshopStageAdvanceGate] crm_tasks query:', error.message);
         }
@@ -179,7 +179,8 @@ async function assertSxKanbanAdvanceAllowed({ projectId, targetColId, currentCol
         .eq('blocks_stage_advance', true)
         .neq('status', 'done')
         .limit(50);
-      if (!error && Array.isArray(rows)) blockingProject.push(...rows);
+      // source='project_task': id thuộc bảng `tasks`, UI phải gọi /tasks/:id chứ không phải /crm/leads/.../tasks/:id.
+      if (!error && Array.isArray(rows)) blockingProject.push(...rows.map((t) => ({ ...t, source: 'project_task' })));
       else if (error && !String(error.message || '').includes('production_stage_id')) {
         console.warn('[workshopStageAdvanceGate] tasks query:', error.message);
       }
