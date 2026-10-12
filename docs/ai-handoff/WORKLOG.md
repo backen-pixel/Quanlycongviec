@@ -1,3 +1,11 @@
+## 2026-10-12 (4) — team-project-tasks: không còn gộp việc cùng tên ở nhiều cột (nhóm B)
+
+- Nguyên nhân: khử trùng theo khóa «dự án + tên việc» chỉ giữ MỘT dòng, trong khi chi tiết dự án liệt kê từng `crm_task` ở mỗi cột quy trình (vd. «Sơn» ×3 ở TB-2026-1013: `sx_kiem_tra_cheo`, `sx_pl_10b782a0`, `sx_pl_19c001f2`) và bảng `tasks` chỉ có MỘT dòng cho tên đó. HCB · Tủ bếp mất 20 việc (1013: 8, 1048: 8, 1037/1043/1030/1054: 1 mỗi dự án).
+- `workTasks.js` (`computeTeamTasks`): gom theo khóa như cũ nhưng giữ `task` (một dòng, các dòng `tasks` trùng tên vẫn gom) + các `crm_task` còn lại sau khi trừ MỘT bản song sinh (bản hạn sớm nhất, null xếp cuối). Không có bản `tasks` → giữ mọi `crm_task` cùng tên (trước đây cũng gộp). `dropTasksClosedOnDeal` chạy sau như cũ.
+- Test giả 7 ca đạt (T=1·C=3→3, T=1·C=1→1, T=0·C=2→2, T=2·C=0→1, khác dự án, hoa/thường). Chưa chạy trên DB thật; sau deploy kỳ vọng HCB · Tủ bếp 496 → 516 và «lệch so với chi tiết dự án» về 0 (loại trừ mục «Không hạn» cũ).
+
+---
+
 ## 2026-10-12 (3) — team-project-tasks: lấy thêm việc crm của dự án mà deal thuộc công ty khác (nhóm C)
 
 - Nguyên nhân: `unified_tasks_v.company_id` của `crm_task` = công ty của DEAL, nên dự án HCB làm cho VPT / Phúc Đạt (TB-2026-1048, 898, 1064, 1057: deal 991dc79d… / 29677f68…) bị lọc `company_id = HCB` làm mất 8 việc `crm_task` chưa có bản `tasks` (chi tiết dự án vẫn hiện).
