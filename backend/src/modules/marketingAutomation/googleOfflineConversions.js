@@ -4,6 +4,9 @@
 //  - CALL: a real call recording (>= 30 s, not outbound) matched to a website "call" click with a gclid.
 //  - VALID_LEAD: a lead that reached the stage milestone (cold/warm/hot or open deal stage), with the
 //    gclid of its website form, else the gclid of the call click matched to one of its recordings.
+//    Website form leads from before lead_attribution existed (WordPress "VPT_V1" plugin) keep their
+//    tracking only in crm_leads.description; their "gclid:" line is used when the lead has no
+//    lead_attribution gclid, with the "VPT_V1 | <ISO>" submit time as click time.
 // Only gclid is exported; gbraid/wbraid are counted in diagnostics. QA traffic is never exported.
 const { loadMilestoneReached } = require('./stageMilestone');
 
@@ -19,6 +22,8 @@ const DEFAULT_DAYS = 60;
 const PAGE = 1000;
 const MAX_PAGES = 50;
 const GCLID = /^[A-Za-z0-9_-]{8,512}$/;
+const DESCRIPTION_GCLID = /^[A-Za-z0-9_-]{20,200}$/; // stricter: read back from free text
+const VPT_V1_MARKER = /(?:^|\n)(?:Ghi chú: )?VPT_V1 \| ([^\n]*)/g;
 const VN_OFFSET_MS = 7 * 3600000;
 
 async function readAll(build) {
@@ -56,6 +61,29 @@ function callTimeMs(rec) {
 /** "yyyy-MM-dd HH:mm:ss" in Vietnam time (UTC+7, no DST). */
 function formatVietnamTime(ms) {
   return new Date(Math.floor(ms / 1000) * 1000 + VN_OFFSET_MS).toISOString().slice(0, 19).replace('T', ' ');
+}
+
+/**
+ * Tracking written by the VPT_V1 WordPress bridge into the lead description ("VPT_V1 | <ISO>" then
+ * "key: value" lines). Only lines after the last marker are read, so text the visitor typed into
+ * the message (which comes before the notes) cannot supply a gclid. Null without the marker.
+ */
+function parseVptV1Description(description) {
+  const value = description == null ? '' : String(description).replace(/\r\n?/g, '\n');
+  let last = null;
+  for (const m of value.matchAll(VPT_V1_MARKER)) last = m;
+  if (!last) return null;
+  const submitMs = Date.parse(text(last[1]));
+  const fields = {};
+  let test = false;
+  for (const line of value.slice(last.index + last[0].length).split('\n')) {
+    if (line.startsWith('TEST:')) test = true;
+    const m = /^([a-z_]+): ?(.*)$/.exec(line);
+    if (m && !(m[1] in fields)) fields[m[1]] = text(m[2]);
+  }
+  return { submit_ms: Number.isFinite(submitMs) ? submitMs : null, gclid: fields.gclid || '',
+    utm_source: fields.utm_source || '', gbraid: fields.gbraid || '', wbraid: fields.wbraid || '',
+    campaign_id: /^\d{1,32}$/.test(fields.campaignid || '') ? fields.campaignid : null, test };
 }
 
 const maskGclid = gclid => `…${String(gclid).slice(-6)}`;
@@ -96,8 +124,8 @@ async function buildGoogleOfflineConversions({ db, companyId, fromMs, toMs }) {
     call_clicks: 0, call_clicks_with_gclid: 0, call_clicks_braid_only: 0, call_clicks_no_click_id: 0,
     call_clicks_unmatched: 0, test_excluded: 0, invalid_gclid: 0,
     website_form_leads: 0, valid_leads: 0, valid_leads_with_gclid: 0, valid_leads_via_form_gclid: 0,
-    valid_leads_via_call_gclid: 0, valid_leads_without_gclid: 0, valid_leads_braid_only: 0,
-    valid_leads_milestone_before_click: 0,
+    valid_leads_via_call_gclid: 0, valid_leads_via_description_gclid: 0, valid_leads_without_gclid: 0,
+    valid_leads_braid_only: 0, valid_leads_milestone_before_click: 0,
   };
 
   // 1. Website call clicks (lookback + window).
@@ -169,8 +197,24 @@ async function buildGoogleOfflineConversions({ db, companyId, fromMs, toMs }) {
     formByLead.set(row.lead_id, row);
   }
 
+  // 3b. Website form leads whose tracking lives only in the description (VPT_V1 notes block).
+  const descRows = await readAll(() => db.from('crm_leads')
+    .select('id,is_test,description,created_at')
+    .eq('company_id', companyId).ilike('description', '%VPT_V1 |%')
+    .gte('created_at', loadFrom).lte('created_at', new Date(toMs).toISOString())
+    .order('created_at', { ascending: true }).order('id', { ascending: true }));
+  const descByLead = new Map();
+  for (const row of descRows) {
+    if (row.is_test === true) continue;
+    const parsed = parseVptV1Description(row.description);
+    if (!parsed) continue;
+    const ms = parsed.submit_ms ?? Date.parse(row.created_at);
+    if (!Number.isFinite(ms)) continue;
+    descByLead.set(row.id, { ...parsed, click_ms: ms });
+  }
+
   // 4. Keep only real leads of this company.
-  const leadIds = [...new Set([...formByLead.keys(), ...callClickByLead.keys()])];
+  const leadIds = [...new Set([...formByLead.keys(), ...descByLead.keys(), ...callClickByLead.keys()])];
   const real = new Set();
   for (let i = 0; i < leadIds.length; i += 100) {
     const { data, error } = await db.from('crm_leads').select('id,is_test')
@@ -179,9 +223,11 @@ async function buildGoogleOfflineConversions({ db, companyId, fromMs, toMs }) {
     for (const row of data) if (row.is_test !== true) real.add(row.id);
   }
 
-  // 5. One source per lead: form gclid first, then call gclid; form leads without gclid for diagnostics.
+  // 5. One source per lead: lead_attribution gclid first, then the description gclid (only when
+  //    lead_attribution has none), then call gclid; form leads without gclid for diagnostics.
   const candidates = [];
   const sourceByLead = new Map();
+  const descFormLeads = new Set(); // description-only website form leads, for website_form_leads
   for (const leadId of leadIds) {
     if (!real.has(leadId)) continue;
     const form = formByLead.get(leadId);
@@ -191,12 +237,23 @@ async function buildGoogleOfflineConversions({ db, companyId, fromMs, toMs }) {
     else if (formGclid && GCLID.test(formGclid)) source = { kind: 'form', gclid: formGclid,
       click_ms: Date.parse(form.cham_dau_luc), campaign_id: form.campaign_id || null };
     else if (formGclid) source = { kind: 'invalid' };
-    if (!source || source.kind !== 'form') {
+    const desc = !formGclid && !(form && isQaSource(form)) ? descByLead.get(leadId) : null;
+    if (desc) {
+      const qa = desc.test || desc.utm_source.toLowerCase() === 'vpt_test';
+      if (!form && !qa && !isTestGclid(desc.gclid)) descFormLeads.add(leadId);
+      if (qa || (desc.gclid && isTestGclid(desc.gclid))) source = { kind: 'test' };
+      else if (desc.gclid && DESCRIPTION_GCLID.test(desc.gclid)) source = { kind: 'description',
+        gclid: desc.gclid, click_ms: desc.click_ms, campaign_id: desc.campaign_id };
+      else if (desc.gclid) source = { kind: 'invalid' };
+    }
+    if (!source || (source.kind !== 'form' && source.kind !== 'description')) {
       const click = callClickByLead.get(leadId);
       if (click) source = { kind: 'call', gclid: click.gclid, click_ms: click.ms, campaign_id: click.campaign_id };
     }
-    if (!source && form && !isQaSource(form)) source = { kind: 'none', braid: hasBraid(form),
-      click_ms: Date.parse(form.cham_dau_luc) };
+    if (!source && form && !isQaSource(form)) source = { kind: 'none', braid: hasBraid(form) ||
+      Boolean(desc && (desc.gbraid || desc.wbraid)), click_ms: Date.parse(form.cham_dau_luc) };
+    if (!source && desc) source = { kind: 'none', braid: Boolean(desc.gbraid || desc.wbraid),
+      click_ms: desc.click_ms };
     if (!source && form && isQaSource(form)) source = { kind: 'test' };
     if (!source) continue;
     if (source.kind === 'test') { d.test_excluded++; continue; }
@@ -205,8 +262,10 @@ async function buildGoogleOfflineConversions({ db, companyId, fromMs, toMs }) {
     candidates.push({ lead_id: leadId, cham_dau_luc: new Date(source.click_ms).toISOString() });
   }
   for (const [leadId, form] of formByLead) {
-    if (real.has(leadId) && !isQaSource(form) && inWindow(Date.parse(form.cham_dau_luc))) d.website_form_leads++;
+    if (real.has(leadId) && !isQaSource(form) && !isTestGclid(text(form.gclid)) &&
+      inWindow(Date.parse(form.cham_dau_luc))) d.website_form_leads++;
   }
+  for (const leadId of descFormLeads) if (inWindow(descByLead.get(leadId).click_ms)) d.website_form_leads++;
 
   const { reachedByLead } = await loadMilestoneReached(db, candidates);
   for (const [leadId, source] of sourceByLead) {
@@ -222,7 +281,9 @@ async function buildGoogleOfflineConversions({ db, companyId, fromMs, toMs }) {
     }
     if (!(ms > source.click_ms)) { d.valid_leads_milestone_before_click++; continue; }
     d.valid_leads_with_gclid++;
-    if (source.kind === 'form') d.valid_leads_via_form_gclid++; else d.valid_leads_via_call_gclid++;
+    if (source.kind === 'form') d.valid_leads_via_form_gclid++;
+    else if (source.kind === 'description') d.valid_leads_via_description_gclid++;
+    else d.valid_leads_via_call_gclid++;
     rows.push({ type: 'VALID_LEAD', conversion_name: CONVERSION_NAMES.VALID_LEAD, gclid: source.gclid,
       conversion_ms: ms, click_ms: source.click_ms, lead_id: leadId, recording_id: null,
       campaign_id: source.campaign_id, gclid_source: source.kind });
@@ -252,4 +313,5 @@ function previewRow(row) {
 }
 
 module.exports = { CONVERSION_NAMES, DEFAULT_DAYS, CSV_HEADER, buildGoogleOfflineConversions,
-  matchCallsToClicks, toGoogleCsv, previewRow, formatVietnamTime, maskGclid, callTimeMs, inboundLike };
+  matchCallsToClicks, toGoogleCsv, previewRow, formatVietnamTime, maskGclid, callTimeMs, inboundLike,
+  parseVptV1Description };

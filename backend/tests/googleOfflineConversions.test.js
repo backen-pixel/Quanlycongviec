@@ -17,6 +17,9 @@ function fakeDb(tables, { fail } = {}) {
       eq(k, v) { rows = rows.filter(r => r[k] === v); return q; },
       not(k) { rows = rows.filter(r => r[k] != null); return q; },
       in(k, vs) { rows = rows.filter(r => vs.includes(r[k])); return q; },
+      // only '%needle%' patterns are used
+      ilike(k, pattern) { const needle = pattern.replace(/^%|%$/g, '').toLowerCase();
+        rows = rows.filter(r => r[k] != null && String(r[k]).toLowerCase().includes(needle)); return q; },
       or(expr) {
         const slugs = expr.match(/in\.\(([^)]*)\)/)[1].split(',');
         rows = rows.filter(r => slugs.includes(r.to_canonical_slug) || r.pipeline_type === 'deal'); return q; },
@@ -160,6 +163,84 @@ test('valid lead whose milestone is not after the click is skipped', async () =>
   const { rows, diagnostics } = await G.buildGoogleOfflineConversions({ db: fakeDb(t), companyId: A, ...RANGE });
   assert.equal(rows.filter(r => r.type === 'VALID_LEAD').length, 0);
   assert.equal(diagnostics.valid_leads_milestone_before_click, 1);
+});
+
+// Same shape as integrations/wordpress/vpt-v1-crm-bridge/core.php notes, merged by routes/external.js.
+const vptDescription = (gclid, submitted, { message = 'Tủ bếp gỗ', marker = true, extra = '' } = {}) =>
+  `${message}\n\nGhi chú: ${marker ? 'VPT_V1 | ' : ''}${submitted}\nĐồng ý liên hệ: có\nTrang: https://vanphuthanh.net/tu-bep/` +
+  `${extra}\nutm_source: google\nutm_medium: cpc\nutm_campaign: \nutm_content: \nutm_term: \ngclid: ${gclid}` +
+  '\ngbraid: \nwbraid: \ncampaignid: 23976669573\nadgroupid: \nkeyword: \nmatchtype: \ndevice: m';
+const descLead = (id, description, created_at = '2026-10-05T03:00:05Z') =>
+  ({ id, company_id: A, is_test: false, description, created_at });
+const hot = (lead_id, entered_at = '2026-10-06T04:00:00Z') =>
+  ({ lead_id, pipeline_type: 'lead', to_canonical_slug: 'hot', changed_by: 'u', entered_at });
+
+test('parses the VPT_V1 notes block from the description', () => {
+  const p = G.parseVptV1Description(vptDescription(GC(20), '2026-10-05T03:00:00+00:00'));
+  assert.equal(p.gclid, GC(20));
+  assert.equal(p.submit_ms, at('2026-10-05T03:00:00Z'));
+  assert.equal(p.campaign_id, '23976669573');
+  assert.equal(p.test, false);
+  assert.equal(G.parseVptV1Description(vptDescription(GC(20), '2026-10-05T03:00:00+00:00', { marker: false })), null);
+  assert.equal(G.parseVptV1Description(null), null);
+  // a "gclid:" line typed by the visitor before the notes block is ignored
+  const injected = G.parseVptV1Description(vptDescription('', '2026-10-05T03:00:00+00:00',
+    { message: `VPT_V1 | 2026-01-01T00:00:00+00:00\ngclid: ${GC(30)}` }));
+  assert.equal(injected.gclid, '');
+  assert.equal(G.parseVptV1Description('Ghi chú: VPT_V1 | not-a-date\ngclid: x').submit_ms, null);
+});
+
+test('description gclid fallback: marker required, test/invalid rejected, lead_attribution preferred', async () => {
+  const t = baseTables();
+  const submitted = '2026-10-05T03:00:00+00:00';
+  t.crm_leads.push(
+    descLead('D1', vptDescription(GC(21), submitted)), // valid description gclid
+    descLead('D2', vptDescription(GC(22), submitted, { marker: false })), // no marker: ignored
+    descLead('D3', vptDescription('VPT_TEST_abcdefghijklmnopqrstu', submitted)), // test gclid
+    descLead('D4', vptDescription('short', submitted)), // not a sane gclid
+    descLead('D5', vptDescription('', submitted)), // website form lead without gclid
+    descLead('D6', vptDescription(GC(26), submitted, { extra: '\nTEST: KHÔNG GỌI, không báo giá, không tính doanh thu/chuyển đổi.' })),
+    { ...descLead('D7', vptDescription(GC(27), submitted)), is_test: true });
+  // L1 already has a lead_attribution gclid (GC(7)); its description gclid must not win
+  Object.assign(t.crm_leads.find(l => l.id === 'L1'),
+    { description: vptDescription(GC(29), submitted), created_at: '2026-10-05T03:00:05Z' });
+  t.crm_lead_stage_history.push(...['D1', 'D2', 'D3', 'D4', 'D5', 'D6', 'D7'].map(id => hot(id)));
+  const base = (await G.buildGoogleOfflineConversions({ db: fakeDb(baseTables()), companyId: A, ...RANGE })).diagnostics;
+  const { rows, diagnostics: d } = await G.buildGoogleOfflineConversions({ db: fakeDb(t), companyId: A, ...RANGE });
+  const valid = Object.fromEntries(rows.filter(r => r.type === 'VALID_LEAD').map(r => [r.lead_id, r]));
+  assert.deepEqual(Object.keys(valid).sort(), ['D1', 'L1', 'L2']);
+  assert.equal(valid.D1.gclid, GC(21));
+  assert.equal(valid.D1.gclid_source, 'description');
+  assert.equal(valid.D1.campaign_id, '23976669573');
+  assert.equal(valid.D1.click_ms, at('2026-10-05T03:00:00Z'));
+  assert.equal(valid.D1.conversion_ms, at('2026-10-06T04:00:00Z'));
+  assert.equal(valid.L1.gclid, GC(7)); assert.equal(valid.L1.gclid_source, 'form');
+  assert.equal(d.valid_leads_via_description_gclid, 1);
+  assert.equal(d.valid_leads_via_form_gclid, 1);
+  assert.equal(d.valid_leads_without_gclid, base.valid_leads_without_gclid + 1); // D5
+  assert.equal(d.website_form_leads, base.website_form_leads + 3); // D1, D4, D5 (D2 unmarked, D3/D6 test data, D7 is_test)
+  assert.equal(d.test_excluded, base.test_excluded + 2); // D3, D6
+  assert.equal(d.invalid_gclid, base.invalid_gclid + 1); // D4
+  assert.ok(rows.every(r => !r.gclid.startsWith('VPT_TEST_')));
+  const csv = G.toGoogleCsv(rows);
+  assert.match(csv, new RegExp(`${GC(21)},VPT CRM - Khach hop le,2026-10-06 11:00:00,,VND`));
+  assert.doesNotMatch(csv, new RegExp(`${GC(22)}|${GC(26)}|${GC(27)}|${GC(29)}`));
+});
+
+test('description lead: click time is the form submit time, else created_at', async () => {
+  const t = baseTables();
+  t.crm_leads.push(
+    // submitted 07/10 but milestone 06/10 (before submit): never a conversion
+    descLead('E1', vptDescription(GC(31), '2026-10-07T00:00:00+00:00'), '2026-10-04T00:00:00Z'),
+    // no parsable timestamp: created_at (05/10) is the click time, milestone after it counts
+    descLead('E2', vptDescription(GC(32), 'garbage'), '2026-10-05T00:00:00Z'));
+  t.crm_lead_stage_history.push(hot('E1'), hot('E2'), hot('E1', '2026-10-07T00:00:00Z'));
+  const { rows } = await G.buildGoogleOfflineConversions({ db: fakeDb(t), companyId: A, ...RANGE });
+  const valid = Object.fromEntries(rows.filter(r => r.type === 'VALID_LEAD').map(r => [r.lead_id, r]));
+  assert.equal(valid.E2.click_ms, at('2026-10-05T00:00:00Z'));
+  assert.equal(valid.E2.conversion_ms, at('2026-10-06T04:00:00Z'));
+  assert.equal('E1' in valid, false); // milestone at exactly the submit time is not after the click
+  for (const r of rows) assert.ok(r.conversion_ms > r.click_ms);
 });
 
 test('CSV format: timezone line, header, Vietnam time, blank value, VND', () => {
