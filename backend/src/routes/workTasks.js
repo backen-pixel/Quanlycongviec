@@ -633,7 +633,9 @@ const CLOSED_TASK_STATUSES = new Set(['done', 'completed', 'cancelled']);
  * việc «chưa xong» và 40 / 149 việc «quá hạn» thuộc loại này.
  *
  * Chỉ bỏ khi mọi bản `crm_task` sản xuất cùng tên đều đã đóng (còn một bản đang mở thì giữ — trường hợp nhiều việc cùng tên
- * ở các cột khác nhau). Việc không có bản `crm_task` tương ứng được giữ nguyên. KHÔNG ghi dữ liệu.
+ * ở các cột khác nhau). Việc không có bản `crm_task` tương ứng được giữ nguyên — TRỪ việc mẫu bị bỏ quên (không người nhận,
+ * không có `crm_task` sản xuất cùng tên, dự án đã có việc sản xuất ở deal): chi tiết dự án không hiện chúng nên tab cũng bỏ.
+ * KHÔNG ghi dữ liệu.
  */
 async function dropTasksClosedOnDeal(rows, detailLeads) {
   const taskRows = rows.filter((t) => t.source === 'task');
@@ -664,8 +666,11 @@ async function dropTasksClosedOnDeal(rows, detailLeads) {
   );
   const keyOf = (t) => `${t.project_id}|${String(t.title || '').trim().toLowerCase()}`;
   const state = new Map();
+  // Dự án đã có việc SẢN XUẤT ở deal mà chi tiết hiện (bất kể trạng thái) — chi tiết dự án lấy việc từ đó.
+  const projectsWithSxCrm = new Set();
   for (const c of crmRows) {
     if (!sxCrm.has(crmTaskIdOf(c))) continue;
+    projectsWithSxCrm.add(String(c.project_id));
     const k = keyOf(c);
     const s = state.get(k) || { open: 0, closed: 0 };
     if (CLOSED_TASK_STATUSES.has(String(c.status || '').toLowerCase())) s.closed += 1;
@@ -675,7 +680,13 @@ async function dropTasksClosedOnDeal(rows, detailLeads) {
   return rows.filter((t) => {
     if (t.source !== 'task') return true;
     const s = state.get(keyOf(t));
-    return !(s && s.closed > 0 && s.open === 0);
+    // 1. Bản `crm_task` cùng tên đã đóng hết → việc đã xong ở chi tiết dự án.
+    if (s && s.closed > 0 && s.open === 0) return false;
+    // 2. Việc mẫu bị bỏ quên: CHƯA AI NHẬN, không có `crm_task` sản xuất nào cùng tên, mà dự án đã có việc sản xuất ở deal
+    //    (chi tiết chỉ hiện các việc đó). Vd. TB-2026-029: 14 việc mẫu tạo 13/04, không người nhận, hạn 14–15/04 đã quá hạn.
+    //    Việc đã giao cho một người, hoặc dự án chưa có việc SX ở deal (xưởng theo dõi bằng bảng `tasks`) thì giữ.
+    if (!s && !t.assignee_id && projectsWithSxCrm.has(String(t.project_id))) return false;
+    return true;
   });
 }
 

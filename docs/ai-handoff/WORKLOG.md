@@ -1,3 +1,10 @@
+## 2026-10-12 (7) — team-project-tasks: bỏ việc mẫu bị bỏ quên (TB-2026-029) khỏi tab Công việc
+
+- Bảng `tasks` = việc xưởng theo dự án (sinh từ bộ mẫu, `status` todo/in_progress/done, `due_date`, `assignee_id`, `production_stage_id`, `metadata.workshop_area`), tách với `crm_tasks` (việc của deal). Chi tiết dự án có deal chỉ đọc `crm_tasks`; `tasks` chỉ hiện ở chi tiết khi dự án KHÔNG có deal.
+- TB-2026-029 (Phúc Đạt): 33 việc ở `tasks` (19 xong / 10 pending / 4 todo), tạo 13/04, cập nhật hàng loạt 11/10, không ai nhận, không `workshop_area`; 14 việc chưa xong có tên không tồn tại ở deal (chỉ 3/33 trùng việc SX của deal); 8 việc có hạn 14–15/04 → 8 «quá hạn» ở tab dù chi tiết dự án không hiện.
+- `dropTasksClosedOnDeal` thêm quy tắc 2: bỏ dòng `source='task'` khi CHƯA AI NHẬN + không có `crm_task` SX cùng tên + dự án đã có việc SX ở deal chi tiết hiện (`projectsWithSxCrm`). Việc đã giao người hoặc dự án chưa có việc SX ở deal (xưởng theo dõi bằng `tasks`) vẫn giữ. Quyết định theo yêu cầu «bỏ các dự án kiểu này khỏi tab»; CHƯA xác nhận với quản lý xưởng việc mẫu này có được dùng thật không.
+- Đo trước khi đẩy (3 xưởng, dữ liệu thật): chỉ TB-2026-029 bị ảnh hưởng — 8 việc (cả 8 quá hạn); Metalla / HCB không việc nào; 0 việc đã giao người bị loại; 0 dự án chưa có việc SX ở deal bị loại. Kỳ vọng Phúc Đạt 187 → 179, quá hạn 50 → 42.
+- Test giả có kiểm tên cột thật: 6 ca (giữ/bỏ) đạt.
 ## 2026-10-12 (7) — Chuyển đổi website: thêm kênh TikTok Ads và Zalo Ads (plugin 0.3.2)
 
 - Founder duyệt thêm Zalo và TikTok vào chiến dịch đa kênh 13/10–09/11. Tổng ngân sách giữ 130 triệu: TikTok 20 tr, Zalo Ads 10 tr. Hai kênh này chạy từ tuần 2, sau khi Founder tạo tài khoản quảng cáo.
