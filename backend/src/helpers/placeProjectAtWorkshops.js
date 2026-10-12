@@ -993,8 +993,35 @@ async function listWorkshopPlacementsRaw(projectId) {
   };
 }
 
+/**
+ * Dự án ở xưởng NHẬN thì tài liệu và deal CRM nằm bên dự án NGUỒN, không nằm ở nó.
+ * Trả về id dự án nguồn để chỗ gọi mở rộng phạm vi đọc; null nếu đây không phải
+ * dự án đặt xưởng.
+ *
+ * `projects.source_project_id` không phải lúc nào cũng được điền — quan hệ thật nằm
+ * ở bảng project_workshop_placements, nên tra thẳng bảng đó.
+ */
+async function resolveWorkshopSourceProjectId(targetProjectId) {
+  if (!targetProjectId) return null;
+  try {
+    const { data, error } = await supabase
+      .from('project_workshop_placements')
+      .select('source_project_id')
+      .eq('target_project_id', targetProjectId)
+      .limit(1)
+      .maybeSingle();
+    if (error || !data?.source_project_id) return null;
+    const src = String(data.source_project_id);
+    return src === String(targetProjectId) ? null : src;
+  } catch (e) {
+    console.warn('[placement] resolve source project:', e.message);
+    return null;
+  }
+}
+
 module.exports = {
   placeProjectAtWorkshops,
+  resolveWorkshopSourceProjectId,
   listWorkshopPlacementsForProject,
   syncPlacementFamilyDates,
   tinhPatchNgayGiaDinh,
