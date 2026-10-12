@@ -1,3 +1,12 @@
+## 2026-10-12 (5) — team-project-tasks: chỉ đếm `crm_task` của deal mà chi tiết dự án hiện (sửa đếm thừa sau nhóm B)
+
+- Sau khi bỏ gộp theo tên (nhóm B), HCB · Tủ bếp ra 559 vs chi tiết 539: thừa 27 việc ở TB-2026-1037 (14) và 1038 (13) — dự án có 3 deal, lần quét lấy `crm_task` của MỌI deal còn chi tiết chỉ hiện deal gốc (trước đây gộp theo tên che mất). Phần còn lại của chênh lệch là dữ liệu đổi (chi tiết 516 → 539).
+- `workTasks.js`: `loadDetailLeadsByProject` = deal gốc (quy tắc `pickBootstrapDeal`) + deal con (`parent_lead_id`) + lead fulfillment của `orders` thuộc deal gốc (khớp `appendFulfillmentChildTasksForMasterDeal`); `crmRowInDetailLeads` lọc `crm_task` trong `computeTeamTasks` sau lọc phạm vi SX; `dropTasksClosedOnDeal(rows, detailLeads)` cũng chỉ xét bản crm ở các deal đó (thêm cột `lead_id`). Việc ở bảng `tasks` và dự án không có lead giữ nguyên.
+- Test giả kiểm cả tên cột thật (`crm_leads`, `orders`, view): P1 → {gốc, con, fulfillment}, loại việc deal khác và fulfillment của deal khác; bản đã xong ở deal khác không còn làm mất việc mở. Sau deploy cần đo lại HCB · Tủ bếp so với chi tiết (kỳ vọng thừa/thiếu ≈ 0 ngoài mục «Không hạn»).
+- Bài học: kiểm lại bằng phép so với chi tiết dự án NGAY sau mỗi lần deploy — hai lần liên tiếp (source_id, nhóm B) lỗi chỉ lộ ra trên dữ liệu thật.
+
+---
+
 ## 2026-10-12 (4) — team-project-tasks: không còn gộp việc cùng tên ở nhiều cột (nhóm B)
 
 - Nguyên nhân: khử trùng theo khóa «dự án + tên việc» chỉ giữ MỘT dòng, trong khi chi tiết dự án liệt kê từng `crm_task` ở mỗi cột quy trình (vd. «Sơn» ×3 ở TB-2026-1013: `sx_kiem_tra_cheo`, `sx_pl_10b782a0`, `sx_pl_19c001f2`) và bảng `tasks` chỉ có MỘT dòng cho tên đó. HCB · Tủ bếp mất 20 việc (1013: 8, 1048: 8, 1037/1043/1030/1054: 1 mỗi dự án).
