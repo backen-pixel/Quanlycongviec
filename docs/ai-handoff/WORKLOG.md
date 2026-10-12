@@ -1,3 +1,12 @@
+## 2026-10-12 (6) — team-project-tasks: sửa việc bị đếm đôi do quét bổ sung theo dự án (HCB · Tủ bếp thừa 27 việc)
+
+- Triệu chứng sau #104/#105: HCB · Tủ bếp 559 vs chi tiết 539; thừa tập trung ở TB-2026-1037 (14) và 1038 (13). Bản #105 (lọc theo deal gốc) KHÔNG đổi số — tôi đoán sai nguyên nhân (cũng thử giả thuyết «lọc pipeline phân loại»: bác bỏ, 20/20 việc SX của deal gốc đều hiện ở chi tiết).
+- Nguyên nhân thật: dữ liệu thật cho thấy mỗi `crm_task` hiện HAI lần cùng `source_id` (vd. «Sơn» 861892 ×2). `loadCrossCompanyCrmRows` (nhóm C, #102) quét theo DỰ ÁN nên với dự án nhiều deal có một deal thuộc công ty khác (1037/1038: 3 deal) nó trả cả việc của deal cùng công ty, trùng với lần quét chính; khử trùng ghép bản `tasks` với MỘT bản crm nên bản crm trùng còn lại hiện thêm.
+- `workTasks.js`: gộp `crossRows` vào `scan.rows` chỉ với dòng chưa có theo `unified_id`. Test giả 4 ca đạt. `loadDetailLeadsByProject` (#105) vẫn có tác dụng: chi tiết chỉ hiện deal gốc + con + fulfillment.
+- Việc cần làm sau deploy: so lại HCB · Tủ bếp / Metalla / Phúc Đạt với chi tiết (kỳ vọng thừa ≈ 0). Bài học thêm: khi bản vá không đổi số thì phải xem DÒNG DỮ LIỆU thật (tab vs chi tiết, cùng id) trước khi đoán nguyên nhân khác.
+
+---
+
 ## 2026-10-12 (5) — team-project-tasks: chỉ đếm `crm_task` của deal mà chi tiết dự án hiện (sửa đếm thừa sau nhóm B)
 
 - Sau khi bỏ gộp theo tên (nhóm B), HCB · Tủ bếp ra 559 vs chi tiết 539: thừa 27 việc ở TB-2026-1037 (14) và 1038 (13) — dự án có 3 deal, lần quét lấy `crm_task` của MỌI deal còn chi tiết chỉ hiện deal gốc (trước đây gộp theo tên che mất). Phần còn lại của chênh lệch là dữ liệu đổi (chi tiết 516 → 539).
