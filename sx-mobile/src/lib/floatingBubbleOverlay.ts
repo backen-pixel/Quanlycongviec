@@ -31,6 +31,13 @@ export const Overlay = NativeModules.FloatingBubbleOverlay as
         avatarLetter: string,
         avatarUrl: string,
       ) => void;
+      /** Người dùng chủ động mở bong bóng: native đóng khung chat đang mở/treo (nếu có) rồi hiện bong bóng của đoạn này. */
+      openConvBubble?: (
+        groupId: string,
+        title: string,
+        avatarLetter: string,
+        avatarUrl: string,
+      ) => void;
       noteConv?: (groupId: string, title: string, avatarLetter: string) => void;
       noteConvWithAvatar?: (
         groupId: string,
@@ -168,6 +175,42 @@ export async function showChatBubbleForMessage(
       /* ignore */
     }
   }
+}
+
+/** true sau khi người dùng chủ động «Mở bong bóng chat» — để chế độ «chỉ hiện khi có tin chưa đọc» không gỡ bong bóng đó khi thoát app. */
+let manualBubbleOpen = false;
+export function isManualBubbleOpen(): boolean {
+  return manualBubbleOpen;
+}
+
+export type OpenBubbleResult = 'ok' | 'unsupported' | 'disabled' | 'permission';
+
+/**
+ * Mở bong bóng chat nổi cho một cuộc trò chuyện (người dùng chủ động, vd. nhấn giữ cuộc trò chuyện → «Mở bong bóng chat»).
+ * Không giả tin nhắn / không hiện thẻ xem trước: chỉ thêm bong bóng (kèm ảnh đại diện) vào chồng bong bóng.
+ */
+export async function openChatBubbleForThread(t: {
+  id: string;
+  name: string;
+  avatarUrl?: string | null;
+}): Promise<OpenBubbleResult> {
+  if (!isFloatingBubbleSupported() || !Overlay) return 'unsupported';
+  const groupId = t.id?.trim();
+  if (!groupId) return 'unsupported';
+  const prefs = await loadSxMobilePrefs();
+  if (!prefs.floatingChatBubbleEnabled || !prefs.floatingChatBubbleSystemOverlay) return 'disabled';
+  if (!(await canDrawOverlays())) return 'permission';
+  await Overlay.startOverlay?.().catch(() => false);
+  const title = t.name?.trim() || 'Tin nhắn';
+  const letter = title[0]?.toUpperCase() || '?';
+  const avatar = absolutizeAvatar(t.avatarUrl);
+  if (Overlay.openConvBubble) {
+    Overlay.openConvBubble(groupId, title, letter, avatar);
+  } else {
+    pushBubble(groupId, title, letter, avatar);
+  }
+  manualBubbleOpen = true;
+  return 'ok';
 }
 
 export async function canDrawOverlays(): Promise<boolean> {

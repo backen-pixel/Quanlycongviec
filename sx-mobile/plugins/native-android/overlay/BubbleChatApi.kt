@@ -41,6 +41,8 @@ object BubbleChatApi {
     val reactions: List<ReactionGroup> = emptyList(),
     /** Ảnh đại diện của người gửi (đường dẫn tương đối hoặc URL đầy đủ). */
     val avatarUrl: String? = null,
+    /** created_at nguyên văn từ máy chủ — dùng làm mốc `before` khi tải tin cũ hơn (không làm tròn mili giây). */
+    val createdAtRaw: String = "",
   ) {
     fun allAttachments(): List<MediaAttachment> {
       if (attachments.isNotEmpty()) return attachments
@@ -100,7 +102,34 @@ object BubbleChatApi {
     val isDirect: Boolean,
     val statusLabel: String,
     val avatarUrl: String? = null,
+    /** Chat 1-1: mã người kia (để hỏi trạng thái hoạt động). */
+    val peerId: String? = null,
   )
+
+  /** Trạng thái hoạt động của một người (POST /users/presence — cùng nguồn với app). */
+  data class Presence(val online: Boolean, val lastPingMs: Long)
+
+  fun fetchPresence(ctx: Context, userId: String): Presence? {
+    if (userId.isBlank()) return null
+    val base = apiBase(ctx)
+    val auth = authHeader(ctx) ?: return null
+    return try {
+      val conn = openJson("$base/users/presence", auth, "POST")
+      conn.doOutput = true
+      conn.outputStream.use {
+        it.write(JSONObject().put("user_ids", JSONArray().put(userId)).toString().toByteArray(Charsets.UTF_8))
+      }
+      val code = conn.responseCode
+      val body = readBody(conn, code in 200..299)
+      conn.disconnect()
+      if (code !in 200..299 || body.isBlank()) return null
+      val p = JSONObject(body).optJSONObject("presence")?.optJSONObject(userId) ?: return Presence(false, 0L)
+      Presence(p.optBoolean("online", false), parseIsoTime(p.optString("last_ping_at", "")))
+    } catch (e: Exception) {
+      android.util.Log.e("SxPanel", "POST /users/presence lỗi: ${e.javaClass.simpleName}")
+      null
+    }
+  }
 
   /** Một dòng trong trang «Đoạn chat». */
   data class GroupRow(
@@ -111,7 +140,38 @@ object BubbleChatApi {
     val unread: Int,
     val isDirect: Boolean,
     val avatarUrl: String? = null,
+    /** Chat 1-1: mã người kia (để hỏi trạng thái hoạt động). */
+    val peerId: String? = null,
   )
+
+  /** Nhiều người một lần (POST /users/presence). Trả về map mã người → trạng thái; lỗi → map rỗng. */
+  fun fetchPresences(ctx: Context, userIds: List<String>): Map<String, Presence> {
+    val ids = userIds.filter { it.isNotBlank() }.distinct().take(100)
+    if (ids.isEmpty()) return emptyMap()
+    val base = apiBase(ctx)
+    val auth = authHeader(ctx) ?: return emptyMap()
+    return try {
+      val conn = openJson("$base/users/presence", auth, "POST")
+      conn.doOutput = true
+      conn.outputStream.use {
+        it.write(JSONObject().put("user_ids", JSONArray(ids)).toString().toByteArray(Charsets.UTF_8))
+      }
+      val code = conn.responseCode
+      val body = readBody(conn, code in 200..299)
+      conn.disconnect()
+      if (code !in 200..299 || body.isBlank()) return emptyMap()
+      val pres = JSONObject(body).optJSONObject("presence") ?: return emptyMap()
+      val out = HashMap<String, Presence>()
+      for (id in ids) {
+        val p = pres.optJSONObject(id)
+        out[id] = if (p == null) Presence(false, 0L) else Presence(p.optBoolean("online", false), parseIsoTime(p.optString("last_ping_at", "")))
+      }
+      out
+    } catch (e: Exception) {
+      android.util.Log.e("SxPanel", "POST /users/presence (nhiều) lỗi: ${e.javaClass.simpleName}")
+      emptyMap()
+    }
+  }
 
   /** GET /messenger/groups — danh sách đoạn chat của tôi, mới nhất lên đầu. */
   fun fetchGroups(ctx: Context): List<GroupRow> {
@@ -143,6 +203,7 @@ object BubbleChatApi {
             avatarUrl = listOf("peer_avatar", "avatar")
               .map { cleanApiString(o.optString(it, "")).orEmpty() }
               .firstOrNull { it.isNotBlank() },
+            peerId = if (o.optBoolean("is_direct", false)) cleanApiString(o.optString("peer_id", "")) else null,
           ),
         )
       }
@@ -163,16 +224,215 @@ object BubbleChatApi {
       conn.disconnect()
       if (code !in 200..299 || body.isBlank()) return null
       val o = JSONObject(body)
-      val name = o.optString("name", "").trim().ifBlank { "Chat" }
       val isDirect = o.optBoolean("is_direct", false)
+      // Chat 1-1: `name` là «Trò chuyện: A — B»; tên người kia (đã tính biệt danh) nằm ở `display_name`.
+      val name = (if (isDirect) cleanApiString(o.optString("display_name", "")).orEmpty() else "")
+        .ifBlank { o.optString("name", "").trim() }
+        .ifBlank { "Chat" }
       val avatar = listOf("peer_avatar", "avatar", "group_avatar")
         .map { cleanApiString(o.optString(it, "")).orEmpty() }
         .firstOrNull { it.isNotBlank() }
-      GroupMeta(name, isDirect, if (isDirect) "Trực tiếp" else "Nhóm chat · realtime", avatar)
+      val peerId = if (isDirect) cleanApiString(o.optString("peer_id", "")) else null
+      GroupMeta(name, isDirect, if (isDirect) "Trực tiếp" else "Nhóm chat · realtime", avatar, peerId)
     } catch (e: Exception) {
       android.util.Log.e("SxPanel", "GET /groups/<id> lỗi: ${e.javaClass.simpleName} ${e.message}")
       null
     }
+  }
+
+  /** Một thành viên trong trang «Tùy chọn». */
+  data class MemberRow(val id: String, val name: String, val avatarUrl: String?, val role: String?)
+
+  /** Chi tiết đoạn chat cho trang «Tùy chọn»: tên, ảnh, loại, danh sách thành viên. */
+  data class GroupDetail(
+    val name: String,
+    val isDirect: Boolean,
+    val avatarUrl: String?,
+    val members: List<MemberRow>,
+  )
+
+  /** GET /messenger/groups/:id — cùng nguồn với app (ChatDetailInfoScreen → fetchMessengerGroupDetail). */
+  fun fetchGroupDetail(ctx: Context, groupId: String): GroupDetail? {
+    if (groupId.isBlank()) return null
+    val base = apiBase(ctx)
+    val auth = authHeader(ctx) ?: return null
+    return try {
+      val conn = openJson("$base/messenger/groups/$groupId?_ts=${System.currentTimeMillis()}", auth, "GET")
+      val code = conn.responseCode
+      val body = readBody(conn, code in 200..299)
+      conn.disconnect()
+      if (code !in 200..299 || body.isBlank()) return null
+      val o = JSONObject(body)
+      val isDirect = o.optBoolean("is_direct", false)
+      val avatar = listOf("peer_avatar", "avatar", "group_avatar")
+        .map { cleanApiString(o.optString(it, "")).orEmpty() }
+        .firstOrNull { it.isNotBlank() }
+      val arr = o.optJSONArray("members") ?: JSONArray()
+      val members = ArrayList<MemberRow>(arr.length())
+      for (i in 0 until arr.length()) {
+        val m = arr.optJSONObject(i) ?: continue
+        val u = m.optJSONObject("user") ?: JSONObject()
+        val id = m.optString("user_id", "").ifBlank { u.optString("id", "") }
+        if (id.isBlank()) continue
+        val name = listOf("display_name", "group_nickname", "nickname", "full_name", "email")
+          .map { cleanApiString(u.optString(it, "")).orEmpty() }
+          .firstOrNull { it.isNotBlank() } ?: "Thành viên"
+        members.add(
+          MemberRow(
+            id = id,
+            name = name,
+            avatarUrl = cleanApiString(u.optString("avatar", "")),
+            role = cleanApiString(m.optString("role", "")),
+          ),
+        )
+      }
+      GroupDetail(
+        name = (if (isDirect) cleanApiString(o.optString("display_name", "")).orEmpty() else "")
+          .ifBlank { o.optString("name", "").trim() }
+          .ifBlank { "Chat" },
+        isDirect = isDirect,
+        avatarUrl = avatar,
+        members = members,
+      )
+    } catch (e: Exception) {
+      android.util.Log.e("SxPanel", "GET /groups/<id> (tùy chọn) lỗi: ${e.javaClass.simpleName}")
+      null
+    }
+  }
+
+  /** Người dùng có thể thêm vào nhóm (GET /users/activity — cùng nguồn với app). */
+  data class UserRow(val id: String, val name: String, val avatarUrl: String?, val online: Boolean = false)
+
+  /** POST /messenger/direct {peer_user_id} — tạo (hoặc lấy) chat 1-1 với một người, như app khi chạm người đang online. onDone(mã đoạn chat hoặc null). */
+  fun createDirectChat(ctx: Context, peerUserId: String, onDone: (String?) -> Unit) {
+    if (peerUserId.isBlank()) {
+      onDone(null)
+      return
+    }
+    val appCtx = ctx.applicationContext
+    Thread {
+      var id: String? = null
+      try {
+        val auth = authHeader(appCtx)
+        if (auth != null) {
+          val conn = openJson("${apiBase(appCtx)}/messenger/direct", auth, "POST")
+          conn.doOutput = true
+          conn.outputStream.use {
+            it.write(JSONObject().put("peer_user_id", peerUserId).toString().toByteArray(Charsets.UTF_8))
+          }
+          val code = conn.responseCode
+          val body = readBody(conn, code in 200..299)
+          conn.disconnect()
+          if (code in 200..299 && body.isNotBlank()) id = cleanApiString(JSONObject(body).optString("id", ""))
+          else android.util.Log.e("SxPanel", "POST /messenger/direct lỗi HTTP $code")
+        }
+      } catch (e: Exception) {
+        android.util.Log.e("SxPanel", "POST /messenger/direct lỗi: ${e.javaClass.simpleName}")
+      }
+      onDone(id)
+    }.start()
+  }
+
+  fun fetchUsers(ctx: Context): List<UserRow> {
+    val base = apiBase(ctx)
+    val auth = authHeader(ctx) ?: return emptyList()
+    return try {
+      val conn = openJson("$base/users/activity", auth, "GET")
+      val code = conn.responseCode
+      val body = readBody(conn, code in 200..299)
+      conn.disconnect()
+      if (code !in 200..299 || body.isBlank()) return emptyList()
+      val arr = JSONObject(body).optJSONArray("users") ?: return emptyList()
+      val out = ArrayList<UserRow>(arr.length())
+      for (i in 0 until arr.length()) {
+        val u = arr.optJSONObject(i) ?: continue
+        val id = u.optString("id", "")
+        if (id.isBlank()) continue
+        val name = listOf("full_name", "email")
+          .map { cleanApiString(u.optString(it, "")).orEmpty() }
+          .firstOrNull { it.isNotBlank() } ?: "Nhân viên"
+        out.add(UserRow(id, name, cleanApiString(u.optString("avatar", "")), u.optBoolean("online", false)))
+      }
+      out
+    } catch (e: Exception) {
+      android.util.Log.e("SxPanel", "GET /users/activity lỗi: ${e.javaClass.simpleName}")
+      emptyList()
+    }
+  }
+
+  /** Gửi một yêu cầu JSON ở luồng nền; onDone(true) nếu máy chủ trả 2xx. Lỗi chỉ ghi mã HTTP/loại lỗi (không ghi nội dung). */
+  private fun sendJsonAsync(ctx: Context, method: String, path: String, json: String, onDone: (Boolean) -> Unit) {
+    val appCtx = ctx.applicationContext
+    Thread {
+      var ok = false
+      try {
+        val auth = authHeader(appCtx)
+        if (auth != null) {
+          val conn = openJson("${apiBase(appCtx)}$path", auth, method)
+          conn.doOutput = true
+          conn.outputStream.use { it.write(json.toByteArray(Charsets.UTF_8)) }
+          val code = conn.responseCode
+          ok = code in 200..299
+          readBody(conn, ok)
+          conn.disconnect()
+          if (!ok) android.util.Log.e("SxPanel", "$method $path lỗi HTTP $code")
+        }
+      } catch (e: Exception) {
+        android.util.Log.e("SxPanel", "$method $path lỗi: ${e.javaClass.simpleName}")
+      }
+      onDone(ok)
+    }.start()
+  }
+
+  /** PATCH /messenger/groups/:id {name} — đổi tên nhóm (cùng API với app). */
+  fun renameGroup(ctx: Context, groupId: String, name: String, onDone: (Boolean) -> Unit) {
+    val trimmed = name.trim()
+    if (groupId.isBlank() || trimmed.isEmpty()) {
+      onDone(false)
+      return
+    }
+    sendJsonAsync(ctx, "PATCH", "/messenger/groups/$groupId", JSONObject().put("name", trimmed).toString(), onDone)
+  }
+
+  /** POST /messenger/groups/:id/members — thêm một thành viên (role member), như app. */
+  fun addGroupMember(ctx: Context, groupId: String, userId: String, onDone: (Boolean) -> Unit) {
+    if (groupId.isBlank() || userId.isBlank()) {
+      onDone(false)
+      return
+    }
+    val body = JSONObject().put(
+      "members",
+      JSONArray().put(JSONObject().put("user_id", userId).put("role", "member")),
+    ).toString()
+    sendJsonAsync(ctx, "POST", "/messenger/groups/$groupId/members", body, onDone)
+  }
+
+  /** POST /messenger/groups/:id/leave — rời nhóm (chỉ nhóm, không phải chat trực tiếp). Luồng nền; onDone(true) nếu máy chủ trả 2xx. */
+  fun leaveGroup(ctx: Context, groupId: String, onDone: (Boolean) -> Unit) {
+    if (groupId.isBlank()) {
+      onDone(false)
+      return
+    }
+    val appCtx = ctx.applicationContext
+    Thread {
+      var ok = false
+      try {
+        val auth = authHeader(appCtx)
+        if (auth != null) {
+          val conn = openJson("${apiBase(appCtx)}/messenger/groups/$groupId/leave", auth, "POST")
+          conn.doOutput = true
+          conn.outputStream.use { it.write("{}".toByteArray()) }
+          val code = conn.responseCode
+          ok = code in 200..299
+          readBody(conn, ok)
+          conn.disconnect()
+          if (!ok) android.util.Log.e("SxPanel", "POST /leave lỗi HTTP $code")
+        }
+      } catch (e: Exception) {
+        android.util.Log.e("SxPanel", "POST /leave lỗi: ${e.javaClass.simpleName}")
+      }
+      onDone(ok)
+    }.start()
   }
 
   fun fetchMessages(ctx: Context, groupId: String): List<ChatMessage> {
@@ -190,6 +450,37 @@ object BubbleChatApi {
     } catch (e: Exception) {
       android.util.Log.e("SxPanel", "GET /chat lỗi: ${e.javaClass.simpleName} ${e.message}")
       emptyList()
+    }
+  }
+
+  /** Một trang tin CŨ HƠN: [rows] tăng dần theo thời gian; [hasMore] = còn tin cũ hơn nữa (header X-Has-More). */
+  data class OlderPage(val rows: List<ChatMessage>, val hasMore: Boolean)
+
+  /**
+   * GET /messenger/groups/:id/chat?limit=40&before=<created_at của tin cũ nhất đang có>. Trả null khi lỗi (để thử lại sau),
+   * khác với trang rỗng (hết tin).
+   */
+  fun fetchOlderMessages(ctx: Context, groupId: String, beforeRaw: String): OlderPage? {
+    if (groupId.isBlank() || beforeRaw.isBlank()) return null
+    val base = apiBase(ctx)
+    val auth = authHeader(ctx) ?: return null
+    val myId = myUserId(ctx)
+    return try {
+      val before = java.net.URLEncoder.encode(beforeRaw, "UTF-8")
+      val conn = openJson("$base/messenger/groups/$groupId/chat?limit=40&before=$before", auth, "GET")
+      val code = conn.responseCode
+      val hasMoreHeader = conn.getHeaderField("X-Has-More")
+      val body = readBody(conn, code in 200..299)
+      conn.disconnect()
+      if (code !in 200..299) {
+        android.util.Log.e("SxPanel", "GET /chat (tin cũ) lỗi HTTP $code")
+        return null
+      }
+      val rows = if (body.isBlank()) emptyList() else parseMessages(JSONArray(body), myId)
+      OlderPage(rows, hasMoreHeader == "1" || (hasMoreHeader == null && rows.size >= 40))
+    } catch (e: Exception) {
+      android.util.Log.e("SxPanel", "GET /chat (tin cũ) lỗi: ${e.javaClass.simpleName}")
+      null
     }
   }
 
@@ -403,6 +694,7 @@ object BubbleChatApi {
       reactions = parseReactions(o.optJSONArray("reactions"), myUserId),
       avatarUrl = cleanApiString(o.optJSONObject("user")?.optString("avatar", ""))
         ?: cleanApiString(o.optString("sender_avatar", "")),
+      createdAtRaw = o.optString("created_at", ""),
     )
   }
 

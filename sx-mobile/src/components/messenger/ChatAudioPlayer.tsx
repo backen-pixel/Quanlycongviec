@@ -54,7 +54,9 @@ export default function ChatAudioPlayer({ url, mine, onLongPress, onMorePress, o
       finishedRef.current = true;
       setPlaying(false);
       setPos(0);
-      void soundRef.current?.setPositionAsync(0).catch(() => {});
+      // stopAsync = dừng hẳn + về đầu + TẮT cờ shouldPlay. Trước đây chỉ setPositionAsync(0) trong khi shouldPlay vẫn bật nên có thể
+      // tự phát lại. Chỉ phát khi người dùng chạm nút phát.
+      void soundRef.current?.stopAsync().catch(() => {});
     } else if (st.isPlaying) {
       finishedRef.current = false;
     }
@@ -64,7 +66,8 @@ export default function ChatAudioPlayer({ url, mine, onLongPress, onMorePress, o
     if (soundRef.current) return soundRef.current;
     setLoading(true);
     try {
-      const { sound } = await Audio.Sound.createAsync({ uri: url }, { shouldPlay: false }, onStatus);
+      // Không tự phát, không lặp: chỉ phát khi người dùng chạm nút phát, và phát đúng một lần.
+      const { sound } = await Audio.Sound.createAsync({ uri: url }, { shouldPlay: false, isLooping: false }, onStatus);
       soundRef.current = sound;
       return sound;
     } finally {
@@ -78,7 +81,9 @@ export default function ChatAudioPlayer({ url, mine, onLongPress, onMorePress, o
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: false,
         playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
+        // Phải bật: expo-av từ chối giành «audio focus» (AudioFocusNotAcquiredException «currently in the background») khi nó
+        // tưởng app đang ở nền — xảy ra trên máy này dù app đang hiện — và chỉ bỏ qua kiểm tra đó khi staysActiveInBackground = true.
+        staysActiveInBackground: true,
         shouldDuckAndroid: true,
         playThroughEarpieceAndroid: false,
       });
@@ -103,7 +108,9 @@ export default function ChatAudioPlayer({ url, mine, onLongPress, onMorePress, o
 
       await sound.playAsync();
       setPlaying(true);
-    } catch {
+    } catch (e) {
+      // Ghi lại lý do thật (trước đây bị nuốt) để còn tra: địa chỉ tệp (không có bí mật) + thông báo lỗi của trình phát.
+      console.error('[audio] không phát được:', url, (e as Error)?.message || String(e));
       await unloadSound();
       finishedRef.current = false;
       Alert.alert('Lỗi', 'Không phát được tin nhắn thoại.');

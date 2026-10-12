@@ -117,6 +117,9 @@ class OverlayBubbleService : Service() {
         val preview = intent.getStringExtra(EXTRA_MESSAGE).orEmpty()
         val increment = intent.getBooleanExtra(EXTRA_INCREMENT_BADGE, false)
         rememberIncomingId(gid, intent.getStringExtra(EXTRA_MESSAGE_ID))
+        // Người dùng chủ động «Mở bong bóng chat»: khung chat đang mở hoặc bị treo (vd. chờ trình chọn ảnh đã bị bỏ dở, khiến
+        // bong bóng bị giữ ẩn) thì đóng đi để bong bóng hiện ra. Tin đến tự động KHÔNG đóng khung (tránh mất nội dung đang soạn).
+        if (intent.getBooleanExtra(EXTRA_MANUAL, false) && chatPanel != null) closeChatPanel()
         val openGid = openPanelGroupId()
         if (openGid.isNotBlank()) {
           // Khung chat đang mở: tin của chính đoạn đang xem thì khung tự cập nhật (xem SHOW_PEEK) — không nảy bong bóng.
@@ -1119,7 +1122,7 @@ class OverlayBubbleService : Service() {
   }
 
   /** Chiều cao dải đầu chat phía trên khung chat (gồm thanh trạng thái). */
-  private fun chatHeadsReserve(): Int = statusBarHeight() + dp(76)
+  private fun chatHeadsReserve(): Int = statusBarHeight() + dp(84)
 
   /** Panel overlay native — không mở MainActivity, chat nổi trên app khác. */
   private fun showNativeChatPanel() {
@@ -1137,6 +1140,12 @@ class OverlayBubbleService : Service() {
       onStartCall = { gid, title, media -> openOutboundCallInApp(gid, title, media) },
       originProvider = { bubbleCenter() },
       onGroupRead = { gid -> onGroupMarkedRead(gid) },
+      onGroupRenamed = { gid, name ->
+        // Nhóm đổi tên ở trang Tùy chọn: cập nhật chồng bong bóng + dải đầu chat cho khớp.
+        convStack[gid]?.title = name
+        if (bubbleGroupId == gid) bubbleTitle = name
+        chatPanel?.updateHeads(chatHeads())
+      },
       onSelectHead = { gid, name ->
         // Chọn một đoạn chat khác (từ dải đầu chat hoặc trang «Đoạn chat»): chuyển cuộc đang mở, khung tự tải lại tin.
         // Đoạn chat chưa từng hiện bong bóng thì thêm vào chồng trước.
@@ -1686,6 +1695,7 @@ class OverlayBubbleService : Service() {
     const val EXTRA_SENDER = "sender"
     const val EXTRA_MESSAGE = "message"
     const val EXTRA_MESSAGE_ID = "message_id"
+    const val EXTRA_MANUAL = "manual_open"
     const val EXTRA_INCREMENT_BADGE = "increment_badge"
     const val EXTRA_CALL_ID = "call_id"
     const val EXTRA_CALL_FROM = "call_from"

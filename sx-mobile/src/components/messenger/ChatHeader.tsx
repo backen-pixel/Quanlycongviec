@@ -1,10 +1,9 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
 import React, { useMemo } from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import TapHighlight from '../TapHighlight';
 import MessengerAvatar from './MessengerAvatar';
 import { useTheme } from '../../context/ThemeContext';
-import { alertCallFeatureLocked } from '../../lib/callFeatureLock';
 import { getMessengerColors } from '../../lib/messengerTheme';
 import { Spacing } from '../../theme';
 
@@ -72,14 +71,6 @@ export default function ChatHeader({
   const { colors, isDark } = useTheme();
 
   const mc = getMessengerColors(colors, isDark);
-
-  const onCall = async () => {
-    alertCallFeatureLocked(Alert);
-  };
-
-  const onVideoCall = async () => {
-    alertCallFeatureLocked(Alert);
-  };
 
 
 
@@ -227,14 +218,7 @@ export default function ChatHeader({
 
       <View style={styles.actions}>
 
-        <TapHighlight style={styles.callBtn} onPress={onCall}>
-          <Ionicons name="call" size={18} color={mc.accent} />
-        </TapHighlight>
-
-        <TapHighlight style={styles.callBtn} onPress={onVideoCall}>
-          <Ionicons name="videocam" size={18} color={mc.accent} />
-        </TapHighlight>
-
+        {/* Đã ẩn nút gọi thoại / gọi video trong chat. */}
         {onSearch ? (
           <TapHighlight style={styles.callBtn} onPress={onSearch}>
             <Ionicons name="search" size={18} color={mc.accent} />
