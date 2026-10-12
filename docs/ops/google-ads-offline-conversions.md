@@ -8,7 +8,7 @@ từ lượt nhấp» của Google; Google tự tải tệp đó mỗi ngày qua
 
 | Tên trong Google Ads | Ý nghĩa |
 |---|---|
-| `VPT CRM - Cuoc goi that` | Ghi âm cuộc gọi từ app Android, dài từ 30 giây, không phải cuộc gọi đi, ghép được với lượt bấm nút gọi trên website có `gclid` (bấm trong khoảng 10 phút trước đến 1 phút sau khi cuộc gọi bắt đầu). Mỗi lượt bấm chỉ ghép một cuộc gọi (cuộc gọi sớm nhất). |
+| `VPT CRM - Cuoc goi that` | Ghi âm cuộc gọi từ app Android (không giới hạn thời lượng), không phải cuộc gọi đi, ghép được với lượt bấm nút gọi trên website có `gclid` (bấm trong khoảng 10 phút trước đến 1 phút sau khi cuộc gọi bắt đầu). Giờ gọi = `call_started_at`, thiếu thì lấy từ tên file ghi âm (xem «Giờ gọi» bên dưới); không xác định được giờ gọi → bỏ qua. Cùng một file tải lên nhiều lần (cùng công ty + tên file + dung lượng) chỉ tính một lần. Mỗi lượt bấm chỉ ghép một cuộc gọi (cuộc gọi sớm nhất). |
 | `VPT CRM - Khach hop le` | Lead đã được sale kéo sang lạnh/ấm/nóng hoặc chuyển Deal (cùng mốc «hợp lệ» của thử nghiệm P1). `gclid` lấy từ form website của lead (`lead_attribution`); nếu không có thì lấy dòng `gclid:` trong mô tả lead (chỉ khi mô tả có khối ghi chú `VPT_V1 | <thời điểm gửi form>` của plugin WordPress — lead trước 12/10/2026; lượt nhấp = thời điểm gửi form, thiếu thì = lúc tạo lead; bỏ `VPT_TEST_` và giá trị không hợp lệ); nếu vẫn không có thì lấy `gclid` của lượt bấm gọi đã ghép với ghi âm của lead đó. Mỗi lead một lần, thời điểm = lúc đạt mốc. |
 
 Không gửi: dữ liệu thử (`utm_source=vpt_test`, `gclid` bắt đầu `VPT_TEST_`, lead `is_test`), lượt bấm chỉ có
@@ -66,13 +66,34 @@ Thời gian theo giờ Việt Nam, dạng `yyyy-MM-dd HH:mm:ss`. Thời điểm 
 
 Admin xem tại bảng «Chuyển đổi website» → mục «Gửi chuyển đổi về Google Ads (60 ngày gần nhất)»
 (`GET /api/marketing-web/offline-conversions?from=&to=`): số «Cuộc gọi thật ghép được quảng cáo»,
-«Khách hợp lệ có gclid», chẩn đoán (ghi âm không ghép được lượt bấm, lượt bấm chỉ có gbraid/wbraid,
-khách hợp lệ từ form không có gclid, dữ liệu thử bị loại) và danh sách dòng với gclid che còn 6 ký tự cuối.
+«Khách hợp lệ có gclid», chẩn đoán (ghi âm không ghép được lượt bấm, ghi âm thiếu giờ gọi, upload trùng,
+lượt bấm chỉ có gbraid/wbraid, khách hợp lệ từ form không có gclid, dữ liệu thử bị loại) và danh sách dòng
+với gclid che còn 6 ký tự cuối.
+
+Chẩn đoán ghi âm (API): `recordings_considered`, `recordings_time_from_file_name` (giờ gọi lấy từ tên file),
+`recordings_no_call_time` (bỏ qua vì không có giờ gọi; đếm theo lúc tải lên trong khoảng), `recordings_duplicates_merged`,
+`recordings_skipped_outbound`, `recordings_matched`, `recordings_without_click`.
+
+## Giờ gọi khi app không gửi
+
+App `crm-mobile-v2` hiện không gửi `duration_sec`, `call_started_at`, `direction` và có thể tải lên trễ nhiều ngày,
+nên **không dùng lúc tải lên** làm giờ gọi. Trình ghi âm Samsung đặt tên file
+`<số hoặc tên danh bạ>_YYMMDD_HHMMSS.m4a` theo giờ Việt Nam, ví dụ
+`Ghi âm cuộc gọi 0385197809_261007_203408.m4a` = 07/10/2026 20:34:08. Chấp nhận thêm `YYYYMMDD`, dấu `-` hoặc
+khoảng trắng làm ngăn cách; ngày giờ không hợp lệ, trước 2015 hoặc sau hiện tại quá 2 ngày bị bỏ.
+(`backend/src/helpers/callRecordingMeta.js`)
+
+Bản ghi mới: khi app không gửi, route upload `POST /api/voice-recordings` tự điền `duration_sec` (đọc hộp `moov/mvhd`
+của file MP4/M4A/3GP trên đĩa tạm) và `call_started_at` (từ tên file); worker STT cũng điền hai cột này nếu còn trống
+khi chép lời. Lỗi đọc không chặn upload, không đổi API cho app. Thời lượng chỉ để tham khảo, **không** dùng để lọc.
+
+Bản ghi cũ: không cần backfill cho chuyển đổi — giờ gọi được tính từ tên file ngay lúc xuất. Cột
+`duration_sec`/`call_started_at` của các dòng cũ vẫn trống (không có script backfill).
 
 ## Giới hạn hiện tại
 
-- App Android chưa gửi `direction`/`call_started_at`: thời điểm gọi ước tính = lúc tải lên − thời lượng;
-  ghi âm tải lên trễ có thể không ghép được lượt bấm. Cuộc gọi đi chưa phân biệt được (trừ khi app gửi `outbound`).
+- Cuộc gọi đi chỉ loại được khi app gửi `direction=outbound`; hiện app chưa gửi nên mọi ghi âm có giờ gọi đều được xét.
+- Tên file không theo mẫu (trình ghi âm khác) và không có `call_started_at` → không xác định được giờ gọi, bị bỏ qua.
 - Không có bảng lưu lịch sử đã gửi: tính lại mỗi lần gọi; dựa vào khử trùng của Google.
 
 Mã nguồn: `backend/src/modules/marketingAutomation/googleOfflineConversions.js`,
