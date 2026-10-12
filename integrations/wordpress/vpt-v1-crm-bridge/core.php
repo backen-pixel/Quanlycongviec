@@ -70,7 +70,7 @@ final class VPT_V1_CRM_Core {
         // Fields added after 0.2.2 are noted only when present, so older notes stay identical.
         $fbclid = self::text($data['fbclid'] ?? '', 256);
         if ($fbclid !== '') { $notes .= "\nfbclid: " . $fbclid; }
-        $ttclid = self::text($data['ttclid'] ?? '', 256);
+        $ttclid = self::text($data['ttclid'] ?? '', 512);
         if ($ttclid !== '') { $notes .= "\nttclid: " . $ttclid; }
         $referrer = strtolower(self::text($data['vpt_referrer_host'] ?? '', 253));
         if ($referrer !== '' && preg_match('/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/D', $referrer)) {
@@ -97,6 +97,7 @@ final class VPT_V1_CRM_Core {
             if ($tracking[$field] !== '') { $attribution[$field] = $tracking[$field]; }
         }
         if ($fbclid !== '') { $attribution['fbclid'] = $fbclid; }
+        if ($ttclid !== '') { $attribution['ttclid'] = $ttclid; }
         if ($tracking['campaignid'] !== '') { $attribution['campaign_id'] = $tracking['campaignid']; }
         if ($tracking['adgroupid'] !== '') { $attribution['adset_id'] = $tracking['adgroupid']; }
         // Facebook ads link here with utm_campaign={{campaign.id}}&utm_content={{ad.id}}.

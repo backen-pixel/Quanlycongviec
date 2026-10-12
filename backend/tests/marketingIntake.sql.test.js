@@ -53,6 +53,8 @@ test('PostgreSQL: atomic intake, permissions, migration replay, scoped repair an
     sql('ALTER TABLE crm_leads ENABLE ROW LEVEL SECURITY; ALTER TABLE lead_attribution ENABLE ROW LEVEL SECURITY; GRANT SELECT, INSERT, UPDATE ON crm_leads,lead_attribution TO service_role;');
     const migration = read('database/717_marketing_intake.sql');
     sql(migration); sql(migration);
+    sql(read('database/718_web_conversion_events.sql'));
+    sql(read('database/722_tiktok_attribution_receipt.sql'));
     check("(SELECT count(*) FROM crm_leads WHERE assigned_at IS NOT NULL)=0");
     assert.throws(() => sql('SET ROLE anon; SELECT * FROM lead_attribution;'));
     assert.throws(() => sql('SET ROLE authenticated; SELECT * FROM crm_leads;'));

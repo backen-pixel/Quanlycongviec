@@ -64,7 +64,7 @@ async function runEnrichmentRaceChecks(t, { sql, runSql, company }) {
   };
   const current = async () => JSON.parse((await runSql(`SELECT row_to_json(a) FROM public.lead_attribution a WHERE lead_id='${leadId}';`)).trim());
   const base = { lead_id: leadId, company_id: company, platform: 'google' };
-  for (const click of ['gclid', 'fbclid', 'gbraid', 'wbraid']) {
+  for (const click of ['gclid', 'fbclid', 'gbraid', 'wbraid', 'ttclid']) {
     await t.test(`PostgreSQL rejects conflicting ${click} without partial UTM writes`, async () => {
       reset({ [click]: 'first-click', landing_url: 'https://example.test/first' });
       const before = await current();
@@ -76,7 +76,7 @@ async function runEnrichmentRaceChecks(t, { sql, runSql, company }) {
       assert.deepEqual(await current(), before);
     });
   }
-  for (const identity of ['fb_campaign_id', 'campaign_id', 'gclid']) {
+  for (const identity of ['fb_campaign_id', 'campaign_id', 'gclid', 'ttclid']) {
     await t.test(`PostgreSQL concurrent ${identity}-only writes keep one coherent touch`, async () => {
       reset();
       const helper = loadHelper(runSql, 2);

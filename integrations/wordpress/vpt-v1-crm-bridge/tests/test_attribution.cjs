@@ -6,19 +6,20 @@ const fs = require('node:fs');
 const path = require('node:path');
 const script = fs.readFileSync(path.join(__dirname,'../attribution.js'),'utf8');
 const now = 1791302400000;
-function run({url='https://vanphuthanh.net/tu-bep/',ref='',prior=null,blocked=false,saved:seed=null,extra={},win={}}={}) {
+function run({url='https://vanphuthanh.net/tu-bep/',ref='',prior=null,blocked=false,saved:seed=null,extra={},win={},missing=[],marker='VPT_V1'}={}) {
  const location = new URL(url), fields={}, attrs={}, handlers={}, saved=new Map();
  let clock=now;
  if(prior) saved.set('vpt_v1_attribution_session',JSON.stringify(prior));
  if(seed) for(const [k,v] of seed) saved.set(k,v);
- const names=['utm_source','utm_medium','utm_campaign','utm_content','utm_term','gclid','fbclid','gbraid','wbraid','campaignid','adgroupid','keyword','matchtype','device','vpt_referrer_host','vpt_landing_page'];
- names.forEach(k=>fields[k]={value:''});
- const form={querySelector(s){const n=s.match(/name="([^"]+)"/)[1];return n==='vpt_form'?{value:'VPT_V1'}:fields[n];},setAttribute(k,v){attrs[k]=v;}};
- const document={referrer:ref,readyState:'complete',querySelectorAll(){return[form]},addEventListener(k,v){handlers[k]=v;}};
+ const names=['utm_source','utm_medium','utm_campaign','utm_content','utm_term','gclid','fbclid','ttclid','gbraid','wbraid','campaignid','adgroupid','keyword','matchtype','device','vpt_referrer_host','vpt_landing_page'];
+ names.filter(k=>!missing.includes(k)).forEach(k=>fields[k]={value:''});
+ const added=[];
+ const form={querySelector(s){const n=s.match(/name="([^"]+)"/)[1];return n==='vpt_form'?(marker?{value:marker}:null):fields[n];},setAttribute(k,v){attrs[k]=v;},appendChild(field){added.push(field);fields[field.name]=field;}};
+ const document={referrer:ref,readyState:'complete',querySelectorAll(){return[form]},addEventListener(k,v){handlers[k]=v;},createElement(tag){assert.equal(tag,'input');return {value:''};}};
  const storage={getItem(k){if(blocked)throw Error('blocked');return saved.get(k)||null;},setItem(k,v){if(blocked)throw Error('blocked');saved.set(k,v);},removeItem(k){if(blocked)throw Error('blocked');saved.delete(k);}};
  const window={location,dataLayer:[],...win};
  vm.runInNewContext(script,{window,document,sessionStorage:storage,URL,URLSearchParams,Date:{now:()=>clock},...extra});
- return {saved,get data(){return Object.fromEntries(names.map(k=>[k,fields[k].value]));},attrs,handlers,window,get prior(){return JSON.parse(saved.get('vpt_v1_attribution_session')||'null');},form,advanceTime(ms){clock+=ms;}};
+ return {saved,added,get data(){return Object.fromEntries(names.map(k=>[k,fields[k]?.value]));},attrs,handlers,window,get prior(){return JSON.parse(saved.get('vpt_v1_attribution_session')||'null');},form,advanceTime(ms){clock+=ms;}};
 }
 test('Google organic entry retains sanitized landing and host',()=>{
  const r=run({url:'https://vanphuthanh.net/tu-bep/?private=synthetic#secret',ref:'https://www.google.com.vn/search?q=private'});
@@ -103,6 +104,55 @@ test('Facebook ad click keeps fbclid and ad id utm for the form',()=>{
  const r=run({url:'https://vanphuthanh.net/tu-bep/?utm_source=facebook&utm_medium=paid&utm_campaign=120200000000001&utm_content=120200000000002&fbclid=synthetic-fb',ref:'https://l.facebook.com/'});
  assert.equal(r.data.fbclid,'synthetic-fb');assert.equal(r.data.utm_content,'120200000000002');
  assert.equal(r.data.utm_source,'facebook');assert.equal(r.attrs['data-vpt-attribution'],'ready');
+});
+test('TikTok click ID is present for old CF7 templates, without changing source or adding duplicates',()=>{
+ const r=run({url:'https://vanphuthanh.net/?utm_source=TikTok&utm_medium=paid&ttclid=synthetic-tt',missing:['ttclid']});
+ assert.equal(r.data.ttclid,'synthetic-tt');assert.equal(r.data.utm_source,'TikTok');
+ assert.equal(r.added.length,1);assert.equal(r.added[0].type,'hidden');
+ r.handlers.submit();assert.equal(r.added.length,1);
+ const existing=run({url:'https://vanphuthanh.net/?ttclid=synthetic-tt'});
+ assert.equal(existing.data.ttclid,'synthetic-tt');assert.equal(existing.added.length,0);
+ for(const marker of ['OTHER',null]){
+  const other=run({url:'https://vanphuthanh.net/?ttclid=synthetic-tt',missing:['ttclid'],marker});
+  assert.equal(other.added.length,0);assert.equal(other.data.ttclid,undefined);
+ }
+});
+test('TikTok and Zalo paid, organic and QA UTMs stay raw for backend classification',()=>{
+ for(const source of ['tiktok','zalo','vpt_test']){
+  for(const medium of ['paid','organic','']){
+   const r=run({url:'https://vanphuthanh.net/?utm_source='+source+'&utm_medium='+medium+(source==='vpt_test'?'&ttclid=synthetic-qa':'')});
+   assert.equal(r.data.utm_source,source);assert.equal(r.data.utm_medium,medium);
+   assert.equal(r.data.ttclid,source==='vpt_test'?'synthetic-qa':'');
+   const body=clickOn(r,'https://zalo.me/synthetic')[0].body;
+   assert.equal(body.utm_source,source);assert.equal(body.utm_medium,medium||undefined);
+  }
+ }
+});
+test('TikTok click ID survives internal navigation, then clears on a new campaign or external touch',()=>{
+ const first=run({url:'https://vanphuthanh.net/?utm_source=tiktok&utm_medium=paid&ttclid=synthetic-tt'});
+ const next=run({url:'https://vanphuthanh.net/lien-he/',ref:'https://vanphuthanh.net/',prior:first.prior});
+ assert.equal(next.data.ttclid,'synthetic-tt');assert.equal(next.prior.expires,first.prior.expires);
+ assert.equal(clickOn(next,'tel:0908309222')[0].body.ttclid,'synthetic-tt');
+ for(const params of ['utm_source=tiktok&utm_medium=organic','utm_source=zalo&utm_medium=paid','gclid=synthetic-google']){
+  const replaced=run({url:'https://vanphuthanh.net/?'+params,prior:first.prior});
+  assert.equal(replaced.data.ttclid,'');assert.equal(clickOn(replaced,'tel:0908309222')[0].body.ttclid,undefined);
+ }
+ const external=run({ref:'https://www.google.com/',prior:first.prior});
+ assert.equal(external.data.ttclid,'');assert.equal(external.data.utm_medium,'organic');
+ const google=run({url:'https://vanphuthanh.net/?gclid=synthetic-google&utm_source=google&utm_medium=cpc'});
+ const tik=run({url:'https://vanphuthanh.net/?ttclid=synthetic-tt',prior:google.prior});
+ assert.equal(tik.data.gclid,'');assert.equal(tik.data.utm_source,'');assert.equal(tik.data.ttclid,'synthetic-tt');
+});
+test('TikTok click ID is sanitized, bounded to 512 characters, and expires at the original TTL',()=>{
+ for(const blocked of [false,true]){
+  const r=run({url:'https://vanphuthanh.net/?ttclid=%01'+('x'.repeat(520)),blocked});
+  assert.equal(r.data.ttclid,'x'.repeat(512));
+  r.advanceTime(29*60*1000);r.handlers.submit();assert.equal(r.data.ttclid.length,512);
+  r.advanceTime(60*1000);r.handlers.submit();assert.equal(r.data.ttclid,'');
+  const late=clickOn(r,'tel:0908309222')[0].body;assert.equal(late.ttclid,undefined);
+ }
+ const restored=run({ref:'https://vanphuthanh.net/',prior:{expires:now+1000,fields:{ttclid:'synthetic-tt'}}});
+ restored.advanceTime(1000);restored.handlers.submit();assert.equal(restored.data.ttclid,'');
 });
 function clickOn(r,href){
  const beacons=[];r.window.navigator={sendBeacon(url,body){beacons.push({url,body:JSON.parse(body)});return true;}};

@@ -76,7 +76,7 @@ test('concurrent different ads cannot mix campaign into the winning ad', async (
   assert.equal(h.row.fb_campaign_id, 'first-campaign');
 });
 
-for (const click of ['gclid', 'fbclid', 'gbraid', 'wbraid']) {
+for (const click of ['gclid', 'fbclid', 'gbraid', 'wbraid', 'ttclid']) {
   test(`different ${click} rejects the entire later touch, without borrowing campaign or keyword`, async () => {
     const h = harness({ platform: 'google', [click]: 'first-click', utm_campaign: null,
       utm_term: null, landing_url: 'https://example.test/first' });
@@ -113,4 +113,15 @@ test('repeated zero-row compare-and-set failures are bounded and never reported 
   assert.equal(result.skipped, 'xung_dot_dong_thoi');
   assert.equal(h.updates(), 3);
   assert.equal(h.row.fb_campaign_id, undefined);
+});
+
+
+test('TikTok concurrent click identities cannot mix campaign or raw first-touch evidence', async () => {
+  const h = harness({ platform: 'tiktok', raw: { original: true }, utm_source: 'tiktok' });
+  const results = await Promise.all(['A', 'B'].map(ttclid => h.write({ lead_id: 'lead',
+    company_id: 'company', platform: 'tiktok', ttclid, utm_campaign: ttclid + '-campaign' })));
+  assert.equal(results.filter(r => r.ok).length, 1);
+  assert.equal(h.row.utm_campaign, h.row.ttclid + '-campaign');
+  assert.equal(h.row.utm_source, 'tiktok');
+  assert.deepEqual(h.row.raw, { original: true });
 });

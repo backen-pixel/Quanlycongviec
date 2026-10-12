@@ -69,7 +69,7 @@ function docReferralMessenger(event) {
 function dangLuu(row) {
   return !!(row.fb_ad_id || row.fb_ref || row.fb_campaign_id || row.fb_form_id
     || row.utm_source || row.utm_campaign || row.gclid || row.fbclid || row.fb_source
-    || row.campaign_id || row.ad_id || row.gbraid || row.wbraid || row.landing_url);
+    || row.campaign_id || row.ad_id || row.gbraid || row.wbraid || row.ttclid || row.landing_url);
 }
 
 // Read one complete snapshot, then fill missing fields in ONE guarded UPDATE.
@@ -79,12 +79,12 @@ const ENRICHABLE_FIELDS = [
   'fb_ref', 'fb_source', 'fb_ad_title', 'fb_post_id', 'fb_form_id', 'fb_leadgen_id',
   'fb_creative_url', 'fb_creative_type', 'fb_creative_key',
   'campaign_id', 'ad_id', 'adset_id', 'utm_source', 'utm_medium', 'utm_campaign',
-  'utm_content', 'utm_term', 'gclid', 'fbclid', 'gbraid', 'wbraid',
+  'utm_content', 'utm_term', 'gclid', 'fbclid', 'gbraid', 'wbraid', 'ttclid',
   'landing_url', 'referrer_url', 'fbp', 'fbc',
 ];
 const TOUCH_IDENTITY_FIELDS = [
   'platform', 'fb_ad_id', 'fb_adset_id', 'fb_campaign_id', 'fb_form_id', 'fb_leadgen_id',
-  'ad_id', 'adset_id', 'campaign_id', 'gclid', 'fbclid', 'gbraid', 'wbraid', 'landing_url',
+  'ad_id', 'adset_id', 'campaign_id', 'gclid', 'fbclid', 'gbraid', 'wbraid', 'ttclid', 'landing_url',
 ];
 const SNAPSHOT_FIELDS = ['company_id', 'platform', ...ENRICHABLE_FIELDS];
 function readAttribution(row) {
@@ -221,6 +221,7 @@ async function quyKetWeb({ leadId, customerId, companyId, landingUrl, referrerUr
     fbclid: t?.fbclid || null,
     gbraid: t?.gbraid || null,
     wbraid: t?.wbraid || null,
+    ttclid: t?.ttclid || null,
     landing_url: t?.landing_url || chuoi(landingUrl),
     referrer_url: chuoi(referrerUrl),
     fbp: chuoi(fbp),

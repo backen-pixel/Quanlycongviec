@@ -62,3 +62,15 @@ test('invalid tracking is rejected before customer or lead writes; legacy payloa
   assert.equal((await h.send({})).statusCode, 201);
   assert.equal(h.writes.find(w => w.table === 'crm_leads').row.intake_attribution, undefined);
 });
+
+
+test('external form receipt sends TikTok evidence in the atomic CRM insert without changing raw source', async () => {
+  const h = harness(); const r = await h.send({ is_test: true, attribution: {
+    platform: 'tiktok', utm_source: 'tiktok', utm_medium: 'paid', ttclid: 'synthetic-click' } });
+  assert.equal(r.statusCode, 201);
+  const row = h.writes.find(w => w.table === 'crm_leads').row;
+  assert.equal(row.intake_attribution.ttclid, 'synthetic-click');
+  assert.equal(row.intake_attribution.utm_source, 'tiktok');
+  assert.equal(row.intake_attribution.utm_medium, 'paid');
+  assert.equal(row.company_id, 'scoped-company');
+});

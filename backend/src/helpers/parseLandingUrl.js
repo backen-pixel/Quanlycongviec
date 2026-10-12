@@ -14,7 +14,7 @@ function laUrl(s) {
 
 /**
  * @param {string} input URL đầy đủ hoặc chuỗi có chứa URL
- * @returns {null|{host,path,landing_url,utm_source,utm_medium,utm_campaign,utm_content,utm_term,gclid,fbclid,gbraid,wbraid,platform}}
+ * @returns {null|{host,path,landing_url,utm_source,utm_medium,utm_campaign,utm_content,utm_term,gclid,fbclid,gbraid,wbraid,ttclid,platform}}
  */
 function tachUrl(input) {
   const raw = String(input || '').trim();
@@ -39,6 +39,7 @@ function tachUrl(input) {
     fbclid: lay('fbclid'),
     gbraid: lay('gbraid'),
     wbraid: lay('wbraid'),
+    ttclid: lay('ttclid'),
   };
   for (const k of KHOA_UTM) ra[k] = lay(k);
 
@@ -46,6 +47,7 @@ function tachUrl(input) {
   if (ra.fbclid) ra.platform = 'facebook';
   else if (ra.gclid || ra.gbraid || ra.wbraid) ra.platform = 'google';
   else if (ra.utm_source) ra.platform = String(ra.utm_source).toLowerCase();
+  else if (ra.ttclid) ra.platform = 'tiktok';
   else ra.platform = 'direct';
 
   return ra;

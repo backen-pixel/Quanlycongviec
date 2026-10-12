@@ -80,7 +80,9 @@ test('platform rules match the WordPress bridge', () => {
   assert.equal(webClickEvent({ ...base, gclid: 'g' }).platform, 'google');
   assert.equal(webClickEvent({ ...base, fbclid: 'f' }).platform, 'facebook');
   const tt = webClickEvent({ ...base, ttclid: 't' });
-  assert.equal(tt.platform, 'tiktok'); assert.equal('ttclid' in tt, false);
+  assert.equal(tt.platform, 'tiktok'); assert.equal(tt.ttclid, 't');
+  const mixed = webClickEvent({ ...base, utm_source: 'original-source', gclid: 'g', ttclid: 't' });
+  assert.deepEqual([mixed.utm_source, mixed.gclid, mixed.ttclid], ['original-source', 'g', 't']);
   assert.equal(webClickEvent({ ...base, utm_source: 'tiktok', utm_medium: 'paid' }).platform, 'tiktok');
   assert.equal(webClickEvent({ ...base, utm_source: 'Google', utm_medium: 'organic' }).platform, 'google');
   const fb = webClickEvent({ ...base, utm_source: 'FB', utm_campaign: '120200000000001', utm_content: '120200000000002' });
@@ -90,4 +92,18 @@ test('platform rules match the WordPress bridge', () => {
   const google = webClickEvent({ ...base, utm_source: 'google', utm_content: '120200000000002', campaignid: '23976669573' });
   assert.deepEqual([google.ad_id, google.campaign_id], [null, '23976669573']);
   assert.throws(() => webClickEvent({ ...base, referrer_host: 'google.com/x?y' }), /referrer_host/);
+});
+
+
+test('TikTok click ID persists with raw QA/organic tags and duplicate clicks remain one event', async () => {
+  const db = fakeDb();
+  const body = click({ ttclid: 'synthetic-tiktok-click', utm_source: 'vpt_test', utm_medium: 'organic' });
+  assert.equal((await send({ db, body })).status, 204);
+  assert.equal((await send({ db, body })).status, 204);
+  assert.equal(db.rows.length, 1);
+  assert.equal(db.rows[0].ttclid, 'synthetic-tiktok-click');
+  assert.equal(db.rows[0].utm_source, 'vpt_test');
+  assert.equal(db.rows[0].utm_medium, 'organic');
+  assert.equal(db.rows[0].platform, 'vpt_test');
+  assert.equal((await send({ body: click({ ttclid: 'x'.repeat(513) }) })).status, 400);
 });

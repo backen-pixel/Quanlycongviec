@@ -1,3 +1,9 @@
+## 2026-10-12 — TikTok attribution: phân biệt nguồn trả phí và giữ click ID có cấu trúc (draft)
+
+Đang chuẩn bị PR trên `codex/tiktok-attribution-receipt-20261012`, base main0378112a, giữ plugin0.3.3 của PR109. Chặn nhận sai TikTok tự nhiên thành paid; `ttclid` đi từ plugin0.3.4 qua receipt bất biến/click event tới báo cáo và ranh giới first-touch. SQL722 là ứng viên, chưa áp; rollback giữ cột/receipt. Node38/38, WP JS25/25, PHP22/22+lint, PostgreSQL17.5 PGlite migration/replay/ACL/atomic/rollback đạt. Docker16 multi-session chưa chạy local; workflow sẽ kiểm. Không đổi ngân sách/OA/quảng cáo; không merge/deploy/cài WordPress hay tạo khách thật. [Phạm vi, bằng chứng và thứ tự phát hành](VPT_TIKTOK_ATTRIBUTION_RECEIPT_20261012.md).
+
+---
+
 ## 2026-10-12 (7) — team-project-tasks: bỏ việc mẫu bị bỏ quên (TB-2026-029) khỏi tab Công việc
 
 - Bảng `tasks` = việc xưởng theo dự án (sinh từ bộ mẫu, `status` todo/in_progress/done, `due_date`, `assignee_id`, `production_stage_id`, `metadata.workshop_area`), tách với `crm_tasks` (việc của deal). Chi tiết dự án có deal chỉ đọc `crm_tasks`; `tasks` chỉ hiện ở chi tiết khi dự án KHÔNG có deal.
