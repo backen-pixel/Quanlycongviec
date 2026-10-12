@@ -1,3 +1,6 @@
+## 2026-10-12 — Cuộc gọi đến từ Android (MacroDroid) vào CRM
+Thêm `POST /api/external/phone-calls` (X-Api-Key, `backend/src/routes/phoneCalls.js`, mount trước `/api/external`). Chuẩn hóa SĐT, chống trùng 30 phút, gắn lead/deal/khách sẵn có của công ty hoặc tạo lead qua chính handler `POST /api/external/leads`; đoán nguồn theo lượt bấm gọi web trong 10 phút. Cần migration `database/720_phone_call_intake.sql` (thêm `crm_call_logs.company_id`) — chưa chạy trên DB nào. Test: `backend/tests/phoneCalls.route.test.js`. Hướng dẫn: `docs/ops/phone-call-intake-macrodroid.md`. Chưa deploy, chưa đổi env.
+
 ## 2026-10-10 — Nạp guide-knowledge lên DB
 `syncFromFiles` từ `backend/data/guide-knowledge`: screens 230, guides 52, tour-guides 2, lead-detail 63. Không có `tasks.json` / `business-rules.json`. Trước và sau đều 347 mục, không hàng sửa tay. Giữ `hand_edited`.
 

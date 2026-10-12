@@ -493,7 +493,17 @@ app.use('/api/settings', require('./routes/settings'));
 app.use('/api/external/web-events', require('./routes/webEvents').createWebEventsRouter({
   getDb: () => require('./config/supabase').supabase,
 }));
-app.use('/api/external', require('./routes/external'));
+// Incoming calls from an Android phone (MacroDroid), X-Api-Key. Mounted before the generic keyed router.
+{
+  const externalRoutes = require('./routes/external');
+  const { createPhoneCallsRouter, leadCreatorFrom } = require('./routes/phoneCalls');
+  app.use('/api/external/phone-calls', createPhoneCallsRouter({
+    getDb: () => require('./config/supabase').supabase,
+    createLead: leadCreatorFrom(externalRoutes.handleCreateExternal),
+    checkRateLimit: externalRoutes.checkRateLimit,
+  }));
+  app.use('/api/external', externalRoutes);
+}
 try {
   app.use('/api/mcp', (req, res, next) => {
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
