@@ -648,7 +648,8 @@ r.get('/team-project-tasks', async (req, res) => {
     // Toàn bộ phần quét + gom nhóm gói trong `computeTeamTasks` để CACHE ngắn hạn: các trang 2, 3… (cuộn tiếp) và các lần
     // mở lại cùng bộ lọc không phải quét lại hàng nghìn dòng (HCB «Không hạn» ~5.500 việc: ~3,3s/trang khi quét tuần tự).
     const computeTeamTasks = async () => {
-      const applyScanFilters = (qy) => {
+      // `skipCompany`: bỏ lọc `company_id` của view — dùng cho việc `crm_task` của deal thuộc CÔNG TY KHÁC (xem `loadCrossCompanyCrmRows`).
+      const applyScanFilters = (qy, skipCompany = false) => {
         qy = qy.in('task_kind', TEAM_PROJECT_TASK_KINDS).not('project_id', 'is', null);
         if (noDeadlineMode) {
           qy = qy.is('deadline', null).lt('created_at', createdSince).order('created_at', { ascending: false });
@@ -665,11 +666,38 @@ r.get('/team-project-tasks', async (req, res) => {
         }
         qy = qy.order('unified_id', { ascending: true });
         qy = applyOpenOnlyFilter(qy);
-        if (effectiveCompany) qy = qy.eq('company_id', effectiveCompany);
+        if (effectiveCompany && !skipCompany) qy = qy.eq('company_id', effectiveCompany);
         if (assignee_id) qy = qy.eq('assignee_id', assignee_id);
         const needle = String(searchQ || '').trim();
         if (needle) qy = qy.ilike('title', `%${needle}%`);
         return qy;
+      };
+
+      // Việc `crm_task` của dự án thuộc công ty đang xem NHƯNG deal đặt hàng thuộc công ty khác (xưởng sản xuất hộ công ty
+      // khác, vd. HCB làm cho VPT / Phúc Đạt). View gán `company_id` của `crm_task` theo công ty của DEAL nên bị lọc
+      // `company_id = công ty` loại mất — trong khi chi tiết dự án vẫn hiện các việc này. Lấy bổ sung theo dự án của công ty,
+      // cùng bộ lọc hạn / người / từ khóa, chỉ gồm việc `crm_task` (việc ở bảng `tasks` đã có company_id = công ty dự án).
+      const loadCrossCompanyCrmRows = async (typedSetIn) => {
+        if (!effectiveCompany) return [];
+        const leads = await fetchAllPages(() => supabase
+          .from('crm_leads')
+          .select('project_id, projects!inner(company_id)')
+          .eq('projects.company_id', effectiveCompany)
+          .or(`company_id.is.null,company_id.neq.${effectiveCompany}`)
+          .not('project_id', 'is', null)
+          .order('project_id', { ascending: true }));
+        let projectIds = [...new Set((leads || []).map((l) => String(l.project_id)))];
+        if (typedSetIn) projectIds = projectIds.filter((id) => typedSetIn.has(id));
+        if (!projectIds.length) return [];
+        return fetchAllByIdsParallel({
+          table: 'unified_tasks_v',
+          columns: COLS,
+          key: 'project_id',
+          ids: projectIds,
+          // `in` trên view nhanh với khoảng ≤ ~200 id (xem TEAM_TASKS_IN_MAX) → chia khúc nhỏ.
+          idChunk: 100,
+          tune: (q) => applyScanFilters(q.eq('source', 'crm_task'), true),
+        });
       };
 
       // Lọc theo PHÂN LOẠI xưởng (`workshop_type_id`: mã loại hoặc `none`) — view không có cột này nên lấy tập dự án trước rồi
@@ -805,7 +833,14 @@ r.get('/team-project-tasks', async (req, res) => {
       }
       const { scanTotal, truncated } = scan;
       // Lọc lại theo tập dự án của loại (no-op với `in`; loại bỏ việc của dự án công ty khác khi dùng `not in`).
-      const typedRows = typedSet ? scan.rows.filter((t) => typedSet.has(String(t.project_id))) : scan.rows;
+      // Cộng thêm việc `crm_task` của dự án công ty này nhưng deal thuộc công ty khác (không trùng dòng đã quét vì company_id khác).
+      // Phần bổ sung: lỗi truy vấn thì bỏ qua (kết quả như trước đây) và ghi log, KHÔNG làm hỏng cả endpoint.
+      const crossRows = await loadCrossCompanyCrmRows(typedSet).catch((err) => {
+        console.warn('[work-tasks] team-project-tasks: bỏ qua việc crm của deal công ty khác —', err?.message || err);
+        return [];
+      });
+      const scanRows = crossRows.length ? scan.rows.concat(crossRows) : scan.rows;
+      const typedRows = typedSet ? scanRows.filter((t) => typedSet.has(String(t.project_id))) : scanRows;
       // Chỉ giữ việc thuộc phạm vi sản xuất (xem `restrictToProductionScope`) — làm TRƯỚC khi lấy bản «song sinh» và khử
       // trùng để việc bán hàng / dự án ngoài phạm vi không lọt vào số đếm.
       const scanned = await restrictToProductionScope(typedRows, effectiveCompany);
