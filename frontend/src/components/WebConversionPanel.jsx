@@ -17,6 +17,8 @@ export default function WebConversionPanel() {
   const [csv, setCsv] = useState('');
   const [spendMsg, setSpendMsg] = useState('');
   const [saving, setSaving] = useState(false);
+  const [offline, setOffline] = useState(null);
+  const [offlineError, setOfflineError] = useState('');
 
   // A system admin has no own company: use the company of the latest P1 trial (VPT).
   useEffect(() => {
@@ -41,6 +43,18 @@ export default function WebConversionPanel() {
       });
     return () => { alive = false; };
   }, [days, companyId, version]);
+
+  // Google Ads offline conversions (same 60-day window as the scheduled upload).
+  useEffect(() => {
+    if (companyId === undefined) return;
+    let alive = true;
+    const params = { ...vietnamRange(60), ...(companyId ? { company_id: companyId } : {}) };
+    setOfflineError('');
+    api.get(`${ROOT}/offline-conversions`, { params })
+      .then(({ data }) => { if (alive) setOffline(data); })
+      .catch(err => { if (alive) setOfflineError(err.response?.data?.error || 'Chưa tải được dữ liệu'); });
+    return () => { alive = false; };
+  }, [companyId, version]);
 
   const parsed = csv.trim() ? parseSpendCsv(csv, provider) : null;
 
@@ -113,6 +127,52 @@ export default function WebConversionPanel() {
           </p>
         </div>
       )}
+      <div className="mt-3 border-t pt-3 text-xs">
+        <h4 className="font-semibold text-gray-800">Gửi chuyển đổi về Google Ads (60 ngày gần nhất)</h4>
+        {offlineError && <p className="mt-1 text-red-600">{offlineError}</p>}
+        {!offline && !offlineError && <p className="mt-1 text-gray-500">Đang tải…</p>}
+        {offline && (
+          <div className="mt-1 space-y-1 text-gray-700">
+            <p>
+              Cuộc gọi thật ghép được quảng cáo: <b className="tabular-nums">{offline.counts.calls}</b>
+              {' · '}Khách hợp lệ có gclid: <b className="tabular-nums">{offline.counts.valid_leads}</b>
+            </p>
+            <p className="text-gray-500">
+              Ghi âm từ 30 giây đã xét {offline.diagnostics.recordings_considered}
+              {' · '}không ghép được lượt bấm gọi {offline.diagnostics.recordings_without_click}
+              {' · '}lượt bấm gọi có gclid {offline.diagnostics.call_clicks_with_gclid} (chưa ghép {offline.diagnostics.call_clicks_unmatched})
+              {' · '}chỉ có gbraid/wbraid {offline.diagnostics.call_clicks_braid_only + offline.diagnostics.valid_leads_braid_only}
+              {' · '}khách hợp lệ (form web) không có gclid {offline.diagnostics.valid_leads_without_gclid}
+              {' · '}bỏ qua dữ liệu thử {offline.diagnostics.test_excluded}
+            </p>
+            {offline.rows.length > 0 && (
+              <details>
+                <summary className="cursor-pointer text-sky-700">Xem {offline.rows.length} dòng sẽ gửi</summary>
+                <div className="overflow-x-auto">
+                  <table className="mt-1 w-full min-w-[560px]">
+                    <thead className="text-gray-500"><tr className="border-b">
+                      <th className="px-2 py-1 text-left font-medium">Loại</th><th className="px-2 py-1 text-left font-medium">Thời điểm</th>
+                      <th className="px-2 py-1 text-left font-medium">gclid</th><th className="px-2 py-1 text-left font-medium">Chiến dịch</th>
+                      <th className="px-2 py-1 text-left font-medium">Lead</th>
+                    </tr></thead>
+                    <tbody>
+                      {offline.rows.map((r, i) => (
+                        <tr key={`${r.type}-${r.recording_id || r.lead_id}-${i}`} className="border-b last:border-0">
+                          <td className="px-2 py-1">{r.type === 'CALL' ? 'Cuộc gọi thật' : 'Khách hợp lệ'}</td>
+                          <td className="px-2 py-1 tabular-nums">{r.conversion_time}</td>
+                          <td className="px-2 py-1 font-mono">{r.gclid_tail}</td>
+                          <td className="px-2 py-1">{r.campaign_id || '—'}</td>
+                          <td className="px-2 py-1 font-mono">{r.lead_id ? r.lead_id.slice(0, 8) : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </details>
+            )}
+          </div>
+        )}
+      </div>
       <div className="mt-3 border-t pt-3">
         <button type="button" onClick={() => setOpenSpend(o => !o)} className="cursor-pointer text-xs font-medium text-sky-700 hover:underline">
           {openSpend ? '▾' : '▸'} Nhập chi tiêu Google Ads / ChatGPT Ads
