@@ -45,6 +45,7 @@ import {
   calcCrmProductionTaskProgress,
   fetchCrmDealTasks,
   fetchDealIdForProject,
+  fetchProjectTaskBootstrap,
   fetchProductionProjectDetail,
   fetchProjectActivities,
   groupColumnsIntoBigGroups,
@@ -153,21 +154,29 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     }
     setErr('');
     try {
+      // Deal đọc việc lấy từ `task-bootstrap` (như web) — chạy song song với chi tiết dự án, lỗi thì rơi về cách cũ.
+      const bootstrapP = fetchProjectTaskBootstrap(forProjectId, { force, signal: ac.signal })
+        .catch(() => null);
       const detail = await fetchProductionProjectDetail(forProjectId, { force, signal: ac.signal });
       if (seq !== loadSeqRef.current || ac.signal.aborted) return;
       setProject(detail);
       // Header/tabs hiện ngay — không chờ tasks/comments.
       if (!silent) setLoading(false);
 
+      const bootstrap = await bootstrapP;
+      if (seq !== loadSeqRef.current || ac.signal.aborted) return;
+
+      // Dự án nhiều deal: «deal đầu tiên» có thể không giữ việc SX (chi tiết hiện 0 việc) — ưu tiên deal gốc của máy chủ.
       let resolvedDealId =
-        pickPrimaryCrmDealId(detail.crmDeals)
+        bootstrap?.leadId
+        || pickPrimaryCrmDealId(detail.crmDeals)
         || null;
       if (!resolvedDealId) {
         resolvedDealId = await fetchDealIdForProject(forProjectId, { force, signal: ac.signal });
       }
       if (seq !== loadSeqRef.current || ac.signal.aborted) return;
 
-      const workshopTypeId = detail.workshop_type_id || detail.workshop_type?.id || null;
+      const workshopTypeId = detail.workshop_type_id || detail.workshop_type?.id || bootstrap?.workshopTypeId || null;
 
       let taskRows = resolvedDealId
         ? await fetchCrmDealTasks(resolvedDealId, { workshopTypeId, force, signal: ac.signal })

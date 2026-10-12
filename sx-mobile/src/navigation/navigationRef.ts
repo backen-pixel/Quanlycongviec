@@ -13,7 +13,7 @@ export function navigate<Name extends keyof RootStackParamList>(
   }
 }
 
-/** Mở thẳng BubbleChat — không flash tab Home. */
+/** Mở thẳng màn hình chat THƯỜNG của app (ChatDetail) từ bong bóng — không flash tab Home, Back về tab chính. */
 export function resetToBubbleChat(threadId: string, title: string) {
   if (!navigationRef.isReady()) return;
   navigationRef.dispatch(
@@ -21,7 +21,7 @@ export function resetToBubbleChat(threadId: string, title: string) {
       index: 1,
       routes: [
         { name: 'Main' },
-        { name: 'BubbleChat', params: { threadId, title: title || 'Chat' } },
+        { name: 'ChatDetail', params: { threadId, title: title || 'Chat' } },
       ],
     }),
   );
@@ -30,7 +30,7 @@ export function resetToBubbleChat(threadId: string, title: string) {
 export function isOnBubbleChatRoute(threadId?: string): boolean {
   if (!navigationRef.isReady()) return false;
   const route = navigationRef.getCurrentRoute();
-  if (route?.name !== 'BubbleChat') return false;
+  if (route?.name !== 'ChatDetail' && route?.name !== 'BubbleChat') return false;
   if (!threadId) return true;
   const params = route.params as { threadId?: string } | undefined;
   return String(params?.threadId || '') === String(threadId);

@@ -10,11 +10,13 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Avatar from '../Avatar';
 import { useTheme } from '../../context/ThemeContext';
+import { isFloatingBubbleSupported } from '../../lib/floatingBubbleOverlay';
 import { avatarColorFromName } from '../../lib/messengerTheme';
 import { Radii, Spacing } from '../../theme';
 import type { MessengerThread } from '../../types/messenger';
 
-type ActionKey = 'createGroup' | 'delete';
+export type ConversationActionKey = 'openBubble' | 'createGroup' | 'delete';
+type ActionKey = ConversationActionKey;
 
 type Props = {
   visible: boolean;
@@ -119,6 +121,15 @@ export default function ConversationActionsSheet({
     sub: string;
     hidden?: boolean;
   }> = [
+    {
+      key: 'openBubble',
+      icon: 'chatbubble-ellipses-outline',
+      tint: '#059669',
+      iconBg: isDark ? '#064E3B' : '#ECFDF5',
+      title: 'Mở bong bóng chat',
+      sub: 'Hiện cuộc trò chuyện này thành bong bóng nổi',
+      hidden: !isFloatingBubbleSupported(),
+    },
     {
       key: 'createGroup',
       icon: 'people-outline',

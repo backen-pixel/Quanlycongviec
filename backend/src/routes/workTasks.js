@@ -43,6 +43,7 @@ const {
 } = require('../helpers/unifiedTasksQuery');
 const { fetchAllByIds, fetchAllByIdsParallel, fetchAllPages } = require('../helpers/supabaseFetchAll');
 const { SX_URL_SAFE_ID_MAX } = require('../helpers/sxChunkedIdPage');
+const { WORKSHOP_STATUSES, getWorkshopStageMap, getWonDealProjectIds } = require('../helpers/workshopKanban');
 const { resolveWorkRegionScope, taskMatchesRegionScope } = require('../helpers/workRegionFilter');
 const {
   projectOverviewCategoryId,
@@ -446,6 +447,9 @@ r.get('/summary', async (req, res) => {
  * có hạn đến hết `due_days` ngày tới, cho góc nhìn quản lý. Phân trang THEO NHÓM DỰ ÁN (mỗi nhóm kèm đủ việc
  * trong cửa sổ) để app chỉ tải phần đang xem; số đếm toàn bộ do máy chủ tính.
  *
+ * Chỉ tính việc thuộc PHẠM VI SẢN XUẤT (xem `restrictToProductionScope`): dự án mở được chi tiết SX + việc `crm_task` của
+ * quy trình sản xuất; việc giai đoạn bán hàng và dự án ngoài phạm vi SX không có trong số đếm.
+ *
  * Query: company_id, assignee_id, q, due_days (mặc định 7, tối đa 60), page, page_size (nhóm/trang, mặc định 20).
  * Trả: { counts: {overdue, soon, total, in_progress, groups}, page, page_size, has_more, tasks[] }.
  * Quá hạn xếp trước, nhóm có hạn cũ nhất lên đầu. Một việc có thể có cả bản ở `tasks` lẫn `crm_tasks` → khử trùng.
@@ -500,6 +504,57 @@ async function lookupUserNames(ids) {
   return out;
 }
 
+/**
+ * Chỉ giữ việc thuộc PHẠM VI SẢN XUẤT — cùng quy tắc với trang chi tiết dự án (web + app), để việc đếm ở tab Công việc
+ * mở ra được ở chi tiết dự án:
+ *  1. Dự án phải trong phạm vi SX như `GET /production/projects/:id` (deal thắng / cột kanban SX / trạng thái xưởng /
+ *     giai đoạn xưởng). Dự án ngoài phạm vi bị 403 «không thuộc phạm vi sản xuất» khi mở chi tiết.
+ *  2. Việc `crm_task` chỉ tính khi là việc của quy trình sản xuất (`stage_slug` bắt đầu `sx_` hoặc có
+ *     `production_pipeline_stage_id`) — như `GET /crm/leads/:id/tasks?task_scope=production`. Các việc giai đoạn bán hàng
+ *     (Bản hợp đồng, Báo giá, Bản vẽ 2D…) cũng là `crm_task` của deal đã có dự án nhưng không hiện ở chi tiết dự án SX.
+ * Việc ở bảng `tasks` (SX / Dự án) của dự án trong phạm vi vẫn giữ nguyên.
+ */
+async function restrictToProductionScope(rows, companyId) {
+  if (!rows.length) return rows;
+  const projectIds = [...new Set(rows.map((t) => String(t.project_id)))];
+  // `source_id` là id gốc của `crm_tasks`; thiếu thì lấy từ `unified_id` («crm_task:<uuid>») — không bao giờ gửi «undefined» xuống DB.
+  const crmIdOf = (t) => String(t.source_id || String(t.unified_id || '').replace(/^crm_task:/, ''));
+  const crmIds = rows.filter((t) => t.source === 'crm_task').map(crmIdOf).filter(Boolean);
+  const [wonIds, stageMap, projects, crmTasks] = await Promise.all([
+    getWonDealProjectIds(companyId || null),
+    getWorkshopStageMap(),
+    fetchAllByIdsParallel({
+      table: 'projects',
+      columns: 'id, status, current_stage_id, sx_kanban_column_id',
+      key: 'id',
+      ids: projectIds,
+    }),
+    fetchAllByIdsParallel({
+      table: 'crm_tasks',
+      columns: 'id, stage_slug, production_pipeline_stage_id',
+      key: 'id',
+      ids: crmIds,
+    }),
+  ]);
+  const won = new Set((wonIds || []).map(String));
+  const workshopStageIds = new Set((stageMap?.ids || []).map(String));
+  const inScope = new Set(
+    projects
+      .filter((p) => won.has(String(p.id))
+        || !!p.sx_kanban_column_id
+        || WORKSHOP_STATUSES.includes(p.status)
+        || (p.current_stage_id && workshopStageIds.has(String(p.current_stage_id))))
+      .map((p) => String(p.id)),
+  );
+  const sxCrm = new Set(
+    crmTasks
+      .filter((c) => String(c.stage_slug || '').startsWith('sx_') || c.production_pipeline_stage_id)
+      .map((c) => String(c.id)),
+  );
+  return rows.filter((t) => inScope.has(String(t.project_id))
+    && (t.source !== 'crm_task' || sxCrm.has(crmIdOf(t))));
+}
+
 r.get('/team-project-tasks', async (req, res) => {
   try {
     if (!isManagerLike(req.user)) return res.status(403).json({ error: 'Chỉ dành cho quản lý' });
@@ -515,7 +570,8 @@ r.get('/team-project-tasks', async (req, res) => {
     const nowMs = Date.now();
     const until = new Date(nowMs + dueDays * 86_400_000).toISOString();
     const createdSince = new Date(nowMs - createdDays * 86_400_000).toISOString();
-    const COLS = 'unified_id, source, project_id, lead_id, title, status, deadline, created_at, assignee_id, task_kind, project_code, project_name, lead_title';
+    // `source_id` cần cho `restrictToProductionScope` (tra `crm_tasks` theo id); thiếu cột này thì truy vấn nhận chuỗi «undefined» → 500.
+    const COLS = 'unified_id, source, source_id, project_id, lead_id, title, status, deadline, created_at, assignee_id, task_kind, project_code, project_name, lead_title';
     // no_deadline=1: mục riêng «Không hạn» — việc chưa xong KHÔNG có hạn và tạo từ lâu (trước `created_days` ngày);
     // phần mới tạo đã nằm ở danh sách chính. Lấy tách riêng để danh sách chính không phình theo hàng nghìn việc cũ.
     const noDeadlineMode = ['1', 'true'].includes(String(req.query.no_deadline || '').toLowerCase());
@@ -692,7 +748,10 @@ r.get('/team-project-tasks', async (req, res) => {
       }
       const { scanTotal, truncated } = scan;
       // Lọc lại theo tập dự án của loại (no-op với `in`; loại bỏ việc của dự án công ty khác khi dùng `not in`).
-      const scanned = typedSet ? scan.rows.filter((t) => typedSet.has(String(t.project_id))) : scan.rows;
+      const typedRows = typedSet ? scan.rows.filter((t) => typedSet.has(String(t.project_id))) : scan.rows;
+      // Chỉ giữ việc thuộc phạm vi sản xuất (xem `restrictToProductionScope`) — làm TRƯỚC khi lấy bản «song sinh» và khử
+      // trùng để việc bán hàng / dự án ngoài phạm vi không lọt vào số đếm.
+      const scanned = await restrictToProductionScope(typedRows, effectiveCompany);
 
       // Chip hạn xử lý: khử trùng phải thấy cả bản SX «song sinh» nằm NGOÀI khoảng. Nếu chỉ quét trong khoảng thì bản CRM
       // (hạn hôm nay) sống sót dù bản SX của chính việc đó đã quá hạn → việc quá hạn lọt vào «Hôm nay» / «Ngày mai».

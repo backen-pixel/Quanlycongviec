@@ -96,6 +96,7 @@ const DUE_OPTIONS: { id: SxDueFilter; label: string }[] = [
 type ViewMode = 'list' | 'kanban';
 
 const VIEW_MODE_KEY = 'sx_kanban_view_mode';
+const SHOW_ORPHAN_COL_KEY = 'sx_kanban_show_orphan_col';
 
 /** Số card render ban đầu + mỗi lần tải thêm khi cuộn — giúp cột nhiều dự án mở nhanh. */
 const CARD_PAGE_SIZE = 10;
@@ -249,6 +250,8 @@ export default function KanbanScreen() {
   const allCompaniesRef = useRef<CompanyOption[]>([]);
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
   const [filterPhone, setFilterPhone] = useState<PhoneFilterId>('');
+  /** Công tắc «Cột Chưa PL» — giống web `showOrphanColumn`, nhớ lại giữa các lần mở app. */
+  const [showOrphanToggle, setShowOrphanToggle] = useState(false);
   const [filterPersonId, setFilterPersonId] = useState('');
   const [colPickerOpen, setColPickerOpen] = useState(false);
   /** Dropdown nhanh ngoài sheet: person | workshop | deal | workType */
@@ -283,6 +286,21 @@ export default function KanbanScreen() {
   const switchViewMode = useCallback((next: ViewMode) => {
     setViewMode(next);
     void AsyncStorage.setItem(VIEW_MODE_KEY, next).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void AsyncStorage.getItem(SHOW_ORPHAN_COL_KEY)
+      .then((raw) => {
+        if (!cancelled && raw === '1') setShowOrphanToggle(true);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
+  const changeShowOrphanToggle = useCallback((next: boolean) => {
+    setShowOrphanToggle(next);
+    void AsyncStorage.setItem(SHOW_ORPHAN_COL_KEY, next ? '1' : '0').catch(() => {});
   }, []);
 
   // Overview «dự án quá hạn» → áp cùng bộ lọc sheet + focus thẻ trên List/Kanban.
@@ -947,7 +965,12 @@ export default function KanbanScreen() {
       if (filterWorkTypeId === 'none') {
         if (p.workshop_type_id) return false;
       } else if (filterWorkTypeId) {
-        if (String(p.workshop_type_id || '') !== String(filterWorkTypeId)) return false;
+        // Bật «Cột Chưa PL» thì dự án chưa phân loại vẫn giữ lại (vào cột ảo) — giống web.
+        if (!p.workshop_type_id) {
+          if (!showOrphanToggle) return false;
+        } else if (String(p.workshop_type_id) !== String(filterWorkTypeId)) {
+          return false;
+        }
       }
       if (dealCompanyExternalFilter && !projectMatchesDealCompanyExternalFilter(p, dealCompanyExternalFilter)) {
         return false;
@@ -961,6 +984,7 @@ export default function KanbanScreen() {
     overdueIds,
     myId,
     filterWorkTypeId,
+    showOrphanToggle,
     dealCompanyExternalFilter,
     filterPhone,
     filterPersonId,
@@ -990,11 +1014,12 @@ export default function KanbanScreen() {
     let n = scopeFilterCount;
     if (quickFilter !== 'all') n += 1;
     if (filterPhone) n += 1;
+    if (showOrphanToggle) n += 1;
     if (filterPersonId) n += 1;
     if (dueFilter) n += 1;
     if (search.trim()) n += 1;
     return n;
-  }, [scopeFilterCount, quickFilter, filterPhone, filterPersonId, dueFilter, search]);
+  }, [scopeFilterCount, quickFilter, filterPhone, showOrphanToggle, filterPersonId, dueFilter, search]);
 
   type ActiveChip = { key: string; label: string; onClear: () => void };
   /** ≥ số lựa chọn thực (bỏ «Tất cả») → chip ngoài dùng dropdown. */
@@ -1097,7 +1122,15 @@ export default function KanbanScreen() {
     active: boolean;
     onOpen: () => void;
     onClear?: () => void;
+    /** Chip công tắc (bật/tắt ngay khi bấm) — hiện ô tick thay cho mũi tên dropdown. */
+    toggle?: boolean;
   };
+
+  /** Board (theo xưởng/loại đang tải) có dự án chưa phân loại — điều kiện hiện chip công tắc. */
+  const hasOrphanInBoard = useMemo(
+    () => board.projects.some((p) => !p.workshop_type_id),
+    [board.projects],
+  );
 
   const filterDropdownChips = useMemo((): DropdownChip[] => {
     const chips: DropdownChip[] = [];
@@ -1147,6 +1180,17 @@ export default function KanbanScreen() {
         onClear: filterWorkTypeId ? () => setFilterWorkTypeId('') : undefined,
       });
     }
+    // Công tắc «Cột Chưa PL» (giống web): chỉ hiện khi có dự án chưa phân loại, hoặc đang bật để tắt lại được.
+    if (showOrphanToggle || hasOrphanInBoard) {
+      chips.push({
+        key: 'dd-orphan',
+        prefix: 'Cột Chưa PL',
+        label: showOrphanToggle ? 'Bật' : 'Tắt',
+        active: showOrphanToggle,
+        toggle: true,
+        onOpen: () => changeShowOrphanToggle(!showOrphanToggle),
+      });
+    }
     // Hạn xử lý: mọi tài khoản đều thấy (gộp Quá hạn / Hôm nay / Tuần này / Tuần sau).
     chips.push({
       key: 'dd-due',
@@ -1164,6 +1208,9 @@ export default function KanbanScreen() {
       .map((x) => x.c);
   }, [
     dueFilter,
+    showOrphanToggle,
+    hasOrphanInBoard,
+    changeShowOrphanToggle,
     usePersonDropdown,
     useWorkshopDropdown,
     useDealDropdown,
@@ -1184,14 +1231,37 @@ export default function KanbanScreen() {
   /** Cột ảo «Chưa phân loại» — chỉ hiện khi bộ lọc phân loại chọn «Chưa phân loại». */
   const showOrphanCol = filterWorkTypeId === 'none';
 
+  /** Có dự án chưa phân loại trong danh sách đang lọc — cột ảo chỉ hiện khi có thẻ (như web `hasOrphans`). */
+  const hasOrphanProjects = useMemo(
+    () => filteredProjects.some((p) => !p.workshop_type_id),
+    [filteredProjects],
+  );
+  /** Công tắc «Cột Chưa PL»: cột ảo đứng đầu, các cột pipeline giữ nguyên bên cạnh. */
+  const orphanColAlongside = showOrphanToggle && !showOrphanCol && hasOrphanProjects;
+
   /**
    * Stages để hiển thị (navigation, dots, cột active).
-   * Khi lọc «Chưa phân loại» chỉ hiện cột ảo; các bộ lọc khác dùng stages từ API.
+   * Khi lọc «Chưa phân loại» chỉ hiện cột ảo; bật công tắc «Cột Chưa PL» thì cột ảo nằm đầu rồi tới
+   * stages từ API; còn lại chỉ dùng stages từ API.
    */
-  const displayStages = useMemo<KanbanStage[]>(
-    () => (showOrphanCol ? [ORPHAN_STAGE] : stages),
-    [stages, showOrphanCol],
-  );
+  const displayStages = useMemo<KanbanStage[]>(() => {
+    if (showOrphanCol) return [ORPHAN_STAGE];
+    if (orphanColAlongside) return [ORPHAN_STAGE, ...stages];
+    return stages;
+  }, [stages, showOrphanCol, orphanColAlongside]);
+
+  // Cột ảo chen vào / rút khỏi đầu danh sách làm lệch chỉ số → bám theo id cột đang xem.
+  const prevDisplayStagesRef = useRef(displayStages);
+  useEffect(() => {
+    const prev = prevDisplayStagesRef.current;
+    prevDisplayStagesRef.current = displayStages;
+    if (prev === displayStages) return;
+    const id = prev[activeIndex]?.id;
+    if (!id) return;
+    const idx = displayStages.findIndex((s) => s.id === id);
+    if (idx >= 0 && idx !== activeIndex) setActiveIndex(idx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayStages]);
 
   const activeStage: KanbanStage | undefined = displayStages[activeIndex];
   const isOrphanColumn = activeStage?.id === ORPHAN_COL_ID;
@@ -1343,7 +1413,11 @@ export default function KanbanScreen() {
       if (listStageId === ORPHAN_COL_ID) {
         rows = rows.filter((p) => !p.workshop_type_id);
       } else {
-        rows = rows.filter((p) => displayColumnId(p, stages, stageIndex) === listStageId);
+        rows = rows.filter((p) => {
+          // Khi cột ảo «Chưa PL» đang hiện, dự án chưa phân loại chỉ thuộc cột ảo (khớp số đếm chip).
+          if (orphanColAlongside && !p.workshop_type_id) return false;
+          return displayColumnId(p, stages, stageIndex) === listStageId;
+        });
       }
     }
     const sorted = [...rows].sort((a, b) => {
@@ -1357,7 +1431,7 @@ export default function KanbanScreen() {
       return tb - ta;
     });
     return sorted;
-  }, [filteredProjects, listStageId, stages, stageIndex, highlightProjectId]);
+  }, [filteredProjects, listStageId, stages, stageIndex, highlightProjectId, orphanColAlongside]);
 
   const pagedListProjects = useMemo(
     () => listProjects.slice(0, visibleCount),
@@ -1593,7 +1667,7 @@ export default function KanbanScreen() {
   );
   const filterActive = search.trim().length > 0 || quickFilter !== 'all'
     || !!filterDealCompany || !!filterWorkTypeId
-    || !!filterPhone || !!filterPersonId || !!dueFilter;
+    || !!filterPhone || showOrphanToggle || !!filterPersonId || !!dueFilter;
 
   const resetFilters = useCallback(() => {
     setSearchInput('');
@@ -1604,8 +1678,9 @@ export default function KanbanScreen() {
     setFilterDealCompany('');
     setFilterWorkTypeId('');
     setFilterPhone('');
+    changeShowOrphanToggle(false);
     setFilterPersonId('');
-  }, []);
+  }, [changeShowOrphanToggle]);
 
   const moveCardTo = useCallback(
     async (project: ProductionProject, targetStageId: string) => {
@@ -1938,8 +2013,8 @@ export default function KanbanScreen() {
                   {chip.label}
                 </Text>
                 <Ionicons
-                  name="chevron-down"
-                  size={12}
+                  name={chip.toggle ? (chip.active ? 'checkbox' : 'square-outline') : 'chevron-down'}
+                  size={chip.toggle ? 14 : 12}
                   color={chip.active ? colors.primary : colors.textMuted}
                 />
               </Pressable>
@@ -2292,6 +2367,8 @@ export default function KanbanScreen() {
         }}
         filterPhone={filterPhone}
         onPhoneChange={setFilterPhone}
+        showOrphanColumn={showOrphanToggle}
+        onShowOrphanColumnChange={changeShowOrphanToggle}
         personOptions={personFilterOptions}
         filterPersonId={filterPersonId}
         onPersonChange={setFilterPersonId}

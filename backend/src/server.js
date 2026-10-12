@@ -409,6 +409,8 @@ try { app.use('/api/partner/v1', require('./routes/partner')); } catch (e) { con
 try { app.use('/api/ad-analytics', require('./routes/adAnalytics')); } catch (e) { console.warn('⚠️ Ad analytics route failed:', e.message); }
 try { app.use('/api/marketing-p1/qualification', require('./routes/p1Qualification')); } catch (e) { console.warn('⚠️ P1 qualification route failed:', e.message); }
 try { app.use('/api/marketing-web', require('./routes/webConversions').createWebConversionsRouter()); } catch (e) { console.warn('⚠️ Web conversions route failed:', e.message); }
+// Google Ads scheduled upload (HTTPS) — HTTP Basic auth from env, no JWT. Off (503) until env is set.
+try { app.use('/api/ads-conversions', require('./routes/googleAdsExport').createGoogleAdsExportRouter()); } catch (e) { console.warn('⚠️ Ads conversions export route failed:', e.message); }
 try { app.use('/api/ai-reply-drafts', require('./routes/aiReplyDrafts')); } catch (e) { console.warn('⚠️ AI reply drafts route failed:', e.message); }
 app.use('/api/management/project-logs', require('./routes/projectConstructionLogs'));
 app.use('/api/management', require('./routes/management'));
@@ -493,7 +495,17 @@ app.use('/api/settings', require('./routes/settings'));
 app.use('/api/external/web-events', require('./routes/webEvents').createWebEventsRouter({
   getDb: () => require('./config/supabase').supabase,
 }));
-app.use('/api/external', require('./routes/external'));
+// Incoming calls from an Android phone (MacroDroid), X-Api-Key. Mounted before the generic keyed router.
+{
+  const externalRoutes = require('./routes/external');
+  const { createPhoneCallsRouter, leadCreatorFrom } = require('./routes/phoneCalls');
+  app.use('/api/external/phone-calls', createPhoneCallsRouter({
+    getDb: () => require('./config/supabase').supabase,
+    createLead: leadCreatorFrom(externalRoutes.handleCreateExternal),
+    checkRateLimit: externalRoutes.checkRateLimit,
+  }));
+  app.use('/api/external', externalRoutes);
+}
 try {
   app.use('/api/mcp', (req, res, next) => {
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');

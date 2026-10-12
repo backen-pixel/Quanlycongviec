@@ -9,6 +9,7 @@ import type { MessengerNotifPayload } from '../lib/localMessengerNotification';
 import { buildMessengerNotifFromSocket } from '../lib/messengerNotifFromSocket';
 import { syncNativeAuthPrefs } from '../lib/nativeAuthSync';
 import {
+  isManualBubbleOpen,
   Overlay,
   setBubbleBadge,
   showChatBubbleForMessage,
@@ -109,7 +110,8 @@ export default function SystemBubbleSync() {
           await overlay.stopOverlay?.().catch(() => {});
           return;
         }
-        if (prefs.floatingChatBubbleOnlyWhenUnread && unreadRef.current <= 0) {
+        // Bong bóng do người dùng chủ động mở («Mở bong bóng chat») thì không gỡ chỉ vì không còn tin chưa đọc.
+        if (prefs.floatingChatBubbleOnlyWhenUnread && unreadRef.current <= 0 && !isManualBubbleOpen()) {
           await overlay.stopOverlay?.().catch(() => {});
           return;
         }

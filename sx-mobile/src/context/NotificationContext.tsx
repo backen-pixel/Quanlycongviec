@@ -46,8 +46,10 @@ export type MessengerToast = MessengerNotifPayload;
 type MessengerNotifListener = (payload: MessengerNotifPayload) => void;
 
 type MessengerMetaListener = (evt: {
-  type: 'reaction' | 'recall' | 'read' | 'members' | 'updated';
+  type: 'reaction' | 'recall' | 'read' | 'members' | 'updated' | 'typing';
   groupId: string;
+  /** Chỉ cho type 'typing': người kia đang gõ (true) hay đã dừng (false). */
+  isTyping?: boolean;
   messageId?: string;
   reactions?: import('../types/messenger').MessengerReaction[];
   message?: import('../types/messenger').MessengerMessage;
@@ -81,6 +83,8 @@ type NotificationCtx = {
   subscribeMessengerMeta: (fn: MessengerMetaListener) => () => void;
   subscribePresenceUpdate: (fn: PresenceListener) => () => void;
   emitPresencePing: () => void;
+  /** Phát «đang nhập» cho nhóm chat (máy chủ chuyển cho các thành viên khác; web dùng cùng sự kiện). */
+  emitMessengerTyping: (groupId: string, isTyping: boolean) => void;
   joinProjectRoom: (projectId: string) => void;
   leaveProjectRoom: (projectId: string) => void;
   joinLeadRoom: (leadId: string) => void;
@@ -146,6 +150,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     return () => setStaffOnlyNotifications(false);
   }, [isStaff]);
 
+  // Bộ nghe socket (effect riêng, ít phụ thuộc) cần gọi bản refreshUnread mới nhất mà không phải đăng ký lại socket.
+  const refreshUnreadRef = useRef<() => void>(() => {});
+
   const refreshUnread = useCallback(() => {
     if (!token || busyRef.current) return;
     busyRef.current = true;
@@ -157,6 +164,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         busyRef.current = false;
       });
   }, [token, isStaff]);
+  refreshUnreadRef.current = refreshUnread;
 
   const subscribeComment = useCallback((fn: CommentListener) => {
     listenersRef.current.add(fn);
@@ -185,6 +193,11 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
   const emitPresencePing = useCallback(() => {
     socketRef.current?.emit('presence:ping');
+  }, []);
+
+  const emitMessengerTyping = useCallback((groupId: string, isTyping: boolean) => {
+    if (!groupId) return;
+    socketRef.current?.emit('messenger_group:typing', { group_id: groupId, is_typing: isTyping });
   }, []);
 
   const emitMessengerChat = useCallback((msg: Record<string, unknown>) => {
@@ -683,6 +696,38 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
         fn(String(uid), !!p.online, p.last_ping_at);
       }
     };
+    // Người KHÁC đang gõ trong nhóm → báo cho màn hình chat (cùng sự kiện với web; máy chủ không gửi lại cho chính người gõ).
+    const onMessengerTyping = (raw: unknown) => {
+      const p = raw as { group_id?: string; user_id?: string; full_name?: string | null; is_typing?: boolean };
+      if (!p?.group_id || p.user_id == null) return;
+      if (uid && String(p.user_id) === String(uid)) return; // chính mình gõ ở máy khác
+      emitMessengerMeta({
+        type: 'typing',
+        groupId: String(p.group_id),
+        userId: String(p.user_id),
+        name: p.full_name ?? null,
+        isTyping: !!p.is_typing,
+      });
+    };
+    // CHÍNH MÌNH đã đọc bình luận ở web / máy khác: máy chủ đã đánh dấu các thông báo bình luận của dự án / lead đó là đã đọc
+    // → bỏ chấm chưa đọc của thông báo đang giữ và lấy lại số chuông đúng từ máy chủ (trước đây chỉ cập nhật khi tải lại).
+    const onCommentReadElsewhere = (raw: unknown) => {
+      const p = raw as { project_id?: string; lead_id?: string; user_id?: string };
+      if (!uid || p?.user_id == null || String(p.user_id) !== String(uid)) return;
+      const entityId = String(p.project_id ?? p.lead_id ?? '');
+      if (entityId) {
+        setLiveNotifications((prev) =>
+          prev.map((x) => {
+            if (x.is_read) return x;
+            const same = String(x.entity_id ?? '') === entityId || String(x.metadata?.project_id ?? '') === entityId;
+            return same ? { ...x, is_read: true } : x;
+          }),
+        );
+      }
+      refreshUnreadRef.current();
+      // Đang có lần tải khác dở tay thì lần gọi trên bị bỏ qua (busyRef) → gọi thêm một lần sau để chắc chắn lấy số mới.
+      setTimeout(() => refreshUnreadRef.current(), 1200);
+    };
     const onMessengerRead = (raw: unknown) => {
       const p = raw as { group_id?: string; user_id?: string; last_read_at?: string };
       if (!p?.group_id) return;
@@ -728,6 +773,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     s.on('task:updated', onTaskUpdated);
     s.on('messenger_group:chat', onMessengerChat);
     s.on('messenger_group:read', onMessengerRead);
+    s.on('messenger_group:typing', onMessengerTyping);
+    s.on('project:comment:read', onCommentReadElsewhere);
+    s.on('lead:comment:read', onCommentReadElsewhere);
     s.on('messenger_group:members', onMessengerMembers);
     s.on('messenger_group:updated', onMessengerUpdated);
 
@@ -759,6 +807,9 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       s.off('task:updated', onTaskUpdated);
       s.off('messenger_group:chat', onMessengerChat);
       s.off('messenger_group:read', onMessengerRead);
+      s.off('messenger_group:typing', onMessengerTyping);
+      s.off('project:comment:read', onCommentReadElsewhere);
+      s.off('lead:comment:read', onCommentReadElsewhere);
       s.off('messenger_group:members', onMessengerMembers);
       s.off('messenger_group:updated', onMessengerUpdated);
       s.off('messenger_group:reaction', onMessengerReaction);
@@ -794,6 +845,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       subscribeMessengerMeta,
       subscribePresenceUpdate,
       emitPresencePing,
+      emitMessengerTyping,
       joinProjectRoom,
       leaveProjectRoom,
       joinLeadRoom,
@@ -822,6 +874,7 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
       subscribeMessengerMeta,
       subscribePresenceUpdate,
       emitPresencePing,
+      emitMessengerTyping,
       joinProjectRoom,
       leaveProjectRoom,
       joinLeadRoom,

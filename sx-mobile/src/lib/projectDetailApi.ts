@@ -14,15 +14,18 @@ const K_DETAIL = 'sx:projectDetail:';
 const K_DEAL_TASKS = 'sx:dealTasks:';
 const K_ACTIVITIES = 'sx:projectActivities:';
 const K_PROJECT_DEAL = 'sx:projectDealId:';
+const K_TASK_BOOTSTRAP = 'sx:projectTaskBootstrap:';
 
 /** Gọi sau khi sửa dự án / công việc để lần đọc kế tiếp lấy dữ liệu mới. */
 export function invalidateProjectDetailCache(projectId?: string | null): void {
   if (projectId) {
     invalidateQuery(`${K_DETAIL}${projectId}`);
     invalidateQuery(`${K_ACTIVITIES}${projectId}`);
+    invalidateQuery(`${K_TASK_BOOTSTRAP}${projectId}`);
   } else {
     invalidateQueryPrefix(K_DETAIL);
     invalidateQueryPrefix(K_ACTIVITIES);
+    invalidateQueryPrefix(K_TASK_BOOTSTRAP);
   }
 }
 
@@ -611,6 +614,50 @@ async function fetchDealIdForProjectRaw(projectId: string): Promise<string | nul
   } catch {
     return null;
   }
+}
+
+export type ProjectTaskBootstrap = {
+  /** Deal «gốc» của dự án — deal cũ nhất không có deal cha; đây là deal web dùng để liệt kê công việc. */
+  leadId: string | null;
+  companyId: string | null;
+  workshopTypeId: string | null;
+};
+
+/**
+ * Deal + loại xưởng dùng để đọc công việc dự án — cùng nguồn với tab Công việc của web
+ * (`GET /production/projects/:id/task-bootstrap`). Dự án có nhiều deal (đơn bổ sung, deal nhân bản) mà lấy «deal
+ * đầu tiên trong `crmDeals`» thì có thể trúng deal không giữ việc sản xuất → chi tiết dự án hiện 0 việc dù tab
+ * Công việc vẫn đếm đủ.
+ */
+export async function fetchProjectTaskBootstrap(
+  projectId: string,
+  opts?: ReadOptions,
+): Promise<ProjectTaskBootstrap | null> {
+  return cachedQuery<ProjectTaskBootstrap | null>({
+    key: `${K_TASK_BOOTSTRAP}${projectId}`,
+    ttlMs: QUERY_TTL_MEDIUM,
+    force: opts?.force,
+    signal: opts?.signal,
+    fetcher: async () => {
+      try {
+        const { data } = await api.get<{
+          lead_id?: string | null;
+          company_id?: string | null;
+          workshop_type_id?: string | null;
+        }>(`/production/projects/${projectId}/task-bootstrap`);
+        return {
+          leadId: data?.lead_id ? String(data.lead_id) : null,
+          companyId: data?.company_id ? String(data.company_id) : null,
+          workshopTypeId: data?.workshop_type_id ? String(data.workshop_type_id) : null,
+        };
+      } catch (e) {
+        // Hủy yêu cầu phải nổi lên để người gọi bỏ kết quả; lỗi khác (máy chủ cũ chưa có route) → dùng đường cũ.
+        const name = (e as { name?: string })?.name;
+        if (name === 'CanceledError' || name === 'AbortError') throw e;
+        return null;
+      }
+    },
+  });
 }
 
 /** Cập nhật ngày dự án (đồng bộ web PUT /projects/:id). */
