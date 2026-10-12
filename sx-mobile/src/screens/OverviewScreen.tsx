@@ -1514,8 +1514,8 @@ export default function OverviewScreen() {
                           {section.code ? `${section.code} · ` : ''}{section.title || 'Deal'}
                         </Text>
                         <Text style={styles.dealGroupMeta} numberOfLines={1}>
-                          {section.tasks.length - openCount}/{section.tasks.length} xong
-                          {openCount > 0 ? ` · ${openCount} còn lại` : ''}
+                          {/* Danh sách quản lý chỉ gồm việc chưa xong nên không có tỉ lệ «x/y xong» đáng tin. */}
+                          {`${openCount} việc chưa xong`}
                           {nearestDue ? ' · ' : ''}
                           {nearestDue ? (
                             <Text style={{ color: hasOverdue ? colors.danger : dueToday ? colors.warning : colors.textMuted }}>
