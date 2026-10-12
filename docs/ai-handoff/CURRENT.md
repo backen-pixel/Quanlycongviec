@@ -10,6 +10,36 @@ Lưu ý: không commit `route-manifest*.json`, `route-parity-report.json`, `debu
 
 ---
 
+## 2026-10-11 — Khách biểu mẫu Facebook vào CRM; mốc hợp lệ tính cả chuyển Deal
+
+- **Khách biểu mẫu → CRM đang chạy.**
+  - Đi qua app Meta riêng «VPT Lead CRM» (ID 1454523093219159), webhook `/api/facebook/webhook/lead-ads`.
+  - Chỉ nối biểu mẫu `1438656288329447` (VPT — Tư vấn tủ bếp HCM). Khách vào bước TIẾP NHẬN, giao Admin Vạn Phú Thành.
+  - Khách thật đầu tiên vào CRM lúc 12:58 ngày 11/10.
+- **Khai báo trường biểu mẫu.** `fb_lead_form_mapping` đã khai `{ho_ten:"tên_đầy_đủ", sdt:"số_điện_thoại"}`.
+  - Biểu mẫu tạo bằng tiếng Việt dùng khóa tiếng Việt. Thiếu khai báo thì MỌI khách bị giữ với mã `FB_INBOX_LEAD_PHONE_REVIEW_REQUIRED`.
+  - Biểu mẫu mới: gọi `GET {form_id}?fields=name,questions`, rồi thêm binding và mapping.
+- **Mã truy cập Facebook.** `VPT_FB_LEAD_APP_ACCESS_TOKEN` trên Render là mã Trang «Không bao giờ hết hạn», cấp từ tài khoản Nguyễn Phạm Hùng.
+  - Quyền dữ liệu Meta hết khoảng 08/01/2027. Gia hạn bằng nút Generate Access Token; đã đặt lịch nhắc ngày 28/12/2026.
+  - Mã ngắn hạn cũ đã hết hạn thật. Triệu chứng khi mã hỏng: `FB_INBOX_PROVIDER_UNAVAILABLE`.
+- **Khách trùng số bị giữ.** Khách có số điện thoại đã tồn tại trong CRM bị giữ (`PHONE_REVIEW_REQUIRED`) và không hiện trên màn hình nào. Tác vụ lịch `fb-lead-form-held-check` kiểm tra hằng ngày lúc 08:30.
+- **PR #87:** theo Founder ngày 11/10, mốc hợp lệ P1 là Cold/Warm/Hot **hoặc chuyển Deal** (mọi cột deal, trừ cột thua và «Chuyển về lead»).
+- **Treo trong kế hoạch (Founder chọn bỏ qua ngày 11/10):** 17 khách biểu mẫu 01–10/10 chưa vào CRM, vì webhook không gửi lại khách cũ.
+  - Hệ quả: đến 11/10, đợt đo VPT 01 ghi 3.130.366 đ chi tiêu nhưng chỉ có 1 khách trong phạm vi. Chi phí mỗi khách VPT 01 của 07–10/10 vì vậy bị thổi cao.
+  - Báo cáo cuối kỳ phải nêu rõ điều này.
+  - Làm lại được bất cứ lúc nào: lấy leadgen_id từ file CSV của Trung tâm khách hàng tiềm năng, đẩy vào `facebook_page_inbox_enqueue_v1` dưới dạng sự kiện `leadgen`. Khách đã có sẵn trong CRM được chặn trùng theo số điện thoại.
+
+## 2026-10-10 — Trợ lý không chạy vì backend cũ giữ cổng 4000
+Bảng `guide_*` đã có (347 mục kiến thức, PostgREST đọc được). Tiến trình backend từ 12:07 không nạp lại `.env` lúc 13:34 nên `POST /api/copilotkit` trả 503, và cổng DB đã nghỉ 15 phút sau lỗi schema cache. Đã tắt tiến trình đó và bật lại; model `claude-sonnet-5` gọi thử được.
+
+## 2026-10-10 — Đã chạy SQL trợ lý Copilot (602, 603, 604)
+Chạy trên DB chính (`kdxypztstbeovyedmvem`) và DB dự phòng (`atcfpgxkgbszglrelfgr`) qua Management API, vì mật khẩu Postgres trong `backend/.env` bị từ chối (`28P01`). Trước đó chưa có bảng `guide_*`. Sau khi chạy có `guide_experiences`, `guide_knowledge` (kèm cột embedding), `guide_knowledge_version`, `guide_quota_turn`, `guide_chat_log`, các hàm `guide_*`, và `app_settings.guide_assistant` (hạn mức 30). Chưa nhúng vector (đúng như 603: vòng nền sẽ bù).
+
+## 2026-10-10 — Setup nhận thông báo Đặt xưởng khác
+Cài đặt pipeline sản xuất có mục «Nhận thông báo Đặt xưởng khác» (lưu `app_settings` key `sx_place_workshop_notify_users`). Metalla: Huy Metalla được @ khi công ty đặt đi hoặc được đặt tới.
+
+## 2026-10-10 — Đặt xưởng: ô tên dự án + lệnh bình luận /đổi tên
+Modal «Đặt xưởng khác» có ô tên, mặc định tên dự án đang mở; một xưởng dùng đúng tên đó, nhiều xưởng thêm tên công ty. Bình luận gõ `/đổi tên "tên hiện tại": tên mới` thì lưu `projects.name` và gửi thông báo «Đã đổi tên». Chưa deploy.
 ## 2026-10-10 (2) — SX mobile: khung chat bong bóng đánh dấu «đã đọc» thật, huy hiệu / dấu chưa đọc / thông báo được dọn
 
 Mobile (`sx-mobile/`, nhánh `fix/sx-mobile-bubble-da-doc`): nguyên nhân tin đã đọc vẫn hiện huy hiệu + dấu chưa đọc là `BubbleChatApi.markRead` bị gọi thẳng trên luồng chính (`OverlayChatPanel.show()`), Android chặn mạng (`NetworkOnMainThreadException`) và `catch` nuốt lỗi nên máy chủ KHÔNG BAO GIỜ nhận `PATCH /messenger/groups/:id/read`. Sửa: `markRead` chạy luồng nền, có callback kết quả thật (lỗi ghi log Error `SxPanel`); khung gọi «đã đọc» khi mở lần đầu, khi chuyển đoạn (đầu chat / trang «Đoạn chat») và khi có tin đến lúc đang xem đoạn đó (giãn 2 giây, có một lần gọi bù cuối); thành công thì `onGroupRead` → `OverlayBubbleService.onGroupMarkedRead`: trừ phần tin chưa đọc của đoạn (`convUnread`) khỏi huy hiệu, gỡ thông báo `msg:<mã tin>` của đoạn (`convMessageIds`, tối đa 30 mã/đoạn, chỉ trong RAM) và phát sự kiện JS `BubbleGroupRead`; danh sách «Đoạn chat» bỏ dấu đậm/số chưa đọc ngay (đoạn đang mở luôn coi là đã đọc). App JS: `MessengerContext.clearThreadUnread` + xử lý sự kiện socket `messenger_group:read` của chính mình; `SystemBubbleSync` nghe `BubbleGroupRead` (xoá số chưa đọc, gỡ thông báo hiện còn theo group) và hạ huy hiệu khi `unreadTotal` giảm lúc app ở nền.
@@ -59,7 +89,7 @@ Bật thử cần Founder đặt biến trên Render: P2_AI_DRAFTS_ENABLED, _COM
 
 ## 2026-10-09 — Tên CRM và tên xưởng tách riêng (chưa deploy)
 `PUT /crm/leads/:id` không còn copy tiêu đề sang `projects.name`. Kanban và chi tiết SX/VC hiển thị tên dự án. Tìm kiếm CRM và SX khớp cả hai tên.
-Chưa deploy. TB-2026-990 trên DB chính vẫn đang là «Anh Lộc - Cần giờ» ở cả deal và dự án.
+Chưa deploy. Đã trả tên dự án TB-2026-990 trên DB chính về «Chị Hạnh - Nhà Bè - nhà đã hoàn thiện»; tiêu đề deal vẫn «Anh Lộc - Cần giờ».
 
 ## 2026-10-08 — P2-1b: lưu sự kiện và dịch vụ AI soạn nháp (local)
 Thêm SQL 714/rollback, bộ chuyển RPC, dịch vụ và test giả; chỉ soạn nháp, không route/gửi tin/DB thật/mạng/bật cờ.

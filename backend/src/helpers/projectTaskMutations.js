@@ -32,6 +32,24 @@ async function createProjectTask(req, body) {
   const meta = b.metadata && typeof b.metadata === 'object' && !Array.isArray(b.metadata)
     ? b.metadata
     : null;
+
+  // ✅ Tự động gán production_stage_id từ cột SX hiện tại của dự án
+  let productionStageId = b.production_stage_id || null;
+  if (b.project_id && !productionStageId) {
+    try {
+      const { data: proj } = await supabase
+        .from('projects')
+        .select('sx_kanban_column_id')
+        .eq('id', b.project_id)
+        .maybeSingle();
+      if (proj?.sx_kanban_column_id) {
+        productionStageId = proj.sx_kanban_column_id;
+      }
+    } catch (e) {
+      console.warn('[tasks] auto-assign production_stage_id:', e.message);
+    }
+  }
+
   const insertRow = {
     project_id: b.project_id || null,
     stage_id: b.stage_id || null,
@@ -47,6 +65,7 @@ async function createProjectTask(req, body) {
     estimated_hours: b.estimated_hours || null,
     attachments: b.attachments || [],
     task_type: b.task_type || 'project',
+    production_stage_id: productionStageId,
   };
   if (meta) insertRow.metadata = meta;
 
@@ -207,6 +226,23 @@ async function updateProjectTask(req, taskId, body) {
   }
 
   notify(req.app?.get?.('io'), 'task:updated', data);
+
+  // ✅ Invalidate kanban cache khi status hoặc stage thay đổi
+  if (data && (b.status !== undefined || b.stage_id !== undefined)) {
+    try {
+      const { invalidateTags } = require('../middleware/responseCache');
+      const projectId = data?.project_id;
+      if (projectId && invalidateTags) {
+        await invalidateTags([
+          `kanban:${projectId}`,
+          `project:${projectId}`,
+          'kanban:*'
+        ]);
+      }
+    } catch (cacheErr) {
+      console.warn('[tasks] cache invalidation:', cacheErr.message);
+    }
+  }
 
   if (data?.status === 'done') {
     try { await scheduleNextWorkshopTaskAfterComplete(data); } catch (e) {

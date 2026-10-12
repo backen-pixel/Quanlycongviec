@@ -3135,11 +3135,18 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
       }
     }
 
+    // Dự án đặt ở xưởng khác dùng CHUNG tài liệu và deal với dự án nguồn — nó không có
+    // bản sao nào của riêng mình. Không mở rộng phạm vi thì tab Tài liệu và tab Bình
+    // luận bên xưởng nhận trống trơn, trong khi bên nguồn có đủ.
+    const { resolveWorkshopSourceProjectId } = require('../helpers/placeProjectAtWorkshops');
+    const sourceProjectId = await resolveWorkshopSourceProjectId(project.id);
+    const docProjectIds = sourceProjectId ? [project.id, sourceProjectId] : [project.id];
+
     const [documentsRes, commentsRes, incidentsRes] = await Promise.all([
       supabase
         .from('lead_documents')
         .select('*, creator:users!lead_documents_created_by_fkey(id, full_name)')
-        .eq('project_id', project.id)
+        .in('project_id', docProjectIds)
         .order('created_at', { ascending: false }),
       supabase
         .from('project_comments')
@@ -3157,6 +3164,19 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
 
     const documents = documentsRes.data || [];
     let crmSummary = await loadCrmDealsSummaryForProductionProject(project.id);
+    // Deal của dự án nguồn đứng TRƯỚC: frontend lấy deal đầu danh sách làm nguồn bình
+    // luận, nên xưởng nhận và xưởng nguồn cùng nhìn vào một luồng.
+    if (sourceProjectId) {
+      try {
+        const srcDeals = await loadCrmDealsSummaryForProductionProject(sourceProjectId);
+        if (srcDeals?.length) {
+          const daCo = new Set((crmSummary || []).map((d) => String(d.id)));
+          crmSummary = [...srcDeals.filter((d) => !daCo.has(String(d.id))), ...(crmSummary || [])];
+        }
+      } catch (e) {
+        console.warn('[production] deal dự án nguồn:', e.message);
+      }
+    }
     const dealCompanyIds = new Set(
       (crmSummary || [])
         .map((d) => d.company_id)

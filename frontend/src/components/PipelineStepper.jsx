@@ -19,6 +19,10 @@
  *                     RIÊNG dự án đang mở (bảng project_substage_status — migration 605).
  *   onDoiTrangThai  – (stageId, trangThaiMoi) => void; bấm vòng tròn việc song song
  *                     để tích hoàn thành (xong) / bỏ tích. Việc đã tích hiện ✓.
+ *                     CỘT ĐƠN (cột nhỏ đứng một mình / cột lớn chỉ có một cột nhỏ):
+ *                     nó là cả giai đoạn chứ không phải một việc bên trong giai đoạn,
+ *                     nên tích = chuyển giai đoạn — cùng luật stepper CRM: tích cột nào
+ *                     thì gọi `onMoveToStage` sang chính cột đó. Bỏ tích chỉ gỡ ✓.
  *
  * CÁCH VẼ CỘT LỒNG: cột lớn chạy NGANG, nối nhau bằng dấu «›» — đó là phần nối tiếp.
  * Việc song song xếp DỌC bên trong thẻ và cùng treo trên một thanh dọc bên trái.
@@ -130,21 +134,36 @@ export default function PipelineStepper({
     </div>
   );
 
-  /** Chấm việc song song: bấm vòng tròn = tích/bỏ hoàn thành. Cột lớn một việc: bấm = chuyển cột. */
-  const veCham = (s, tt, here, to, { checkable } = {}) => {
+  /**
+   * Cột đơn = cột nhỏ đứng một mình (không gán cột lớn, hoặc cột lớn chỉ có nó).
+   * Nó LÀ cả giai đoạn chứ không phải một việc song song bên trong giai đoạn,
+   * nên tích = chuyển giai đoạn, cùng luật với stepper CRM: tích cột nào thì
+   * thẻ sang chính cột đó. Bỏ tích chỉ gỡ dấu ✓, không đụng vị trí thẻ.
+   */
+  const tichCotDon = (s, tt) => {
+    const dangXong = tt === 'xong';
+    onDoiTrangThai?.(s.id, dangXong ? 'chua' : 'xong');
+    if (dangXong) return;
+    if (String(s.id) === curId) return; // thẻ đã nằm ở cột này rồi
+    onMoveToStage?.(s.id);
+  };
+
+  /** Chấm việc song song: bấm vòng tròn = tích/bỏ hoàn thành. Cột đơn: tích = chuyển giai đoạn. */
+  const veCham = (s, tt, here, to, { checkable, onTich, chuyenCot } = {}) => {
     const coTheTich = !!(checkable && onDoiTrangThai);
     const disabled = coTheTich ? false : !onMoveToStage;
     const title = coTheTich
       ? (tt === 'xong'
         ? `${s.name} — đã xong. Bấm vòng tròn để bỏ tích.`
-        : `${s.name} — bấm vòng tròn để đánh dấu hoàn thành.`)
+        : `${s.name} — bấm vòng tròn để đánh dấu hoàn thành${chuyenCot ? ' và chuyển thẻ sang cột này' : ''}.`)
       : `${s.name} — ${NHAN_TT[tt]}${here ? ' · thẻ dự án đang nằm ở cột này' : ''}${onMoveToStage ? '. Bấm để chuyển dự án sang cột này.' : ''}`;
     return (
     <button
       type="button"
       onClick={() => {
         if (coTheTich) {
-          onDoiTrangThai(s.id, tt === 'xong' ? 'chua' : 'xong');
+          if (onTich) onTich(tt);
+          else onDoiTrangThai(s.id, tt === 'xong' ? 'chua' : 'xong');
           return;
         }
         onMoveToStage?.(s.id);
@@ -297,7 +316,11 @@ export default function PipelineStepper({
                         const xong = tt === 'xong';
                         return (
                           <>
-                            {veCham(dau.s, tt, false, true, { checkable: !!onDoiTrangThai })}
+                            {veCham(dau.s, tt, false, true, {
+                              checkable: !!onDoiTrangThai,
+                              chuyenCot: !!onMoveToStage && String(dau.s.id) !== curId,
+                              onTich: (ttHienTai) => tichCotDon(dau.s, ttHienTai),
+                            })}
                             <button
                               type="button"
                               onClick={() => onMoveToStage?.(dau.s.id)}

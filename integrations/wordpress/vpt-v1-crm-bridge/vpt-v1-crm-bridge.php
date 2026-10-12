@@ -2,7 +2,7 @@
 /**
  * Plugin Name: VPT V1 — Form to CRM
  * Description: Private pilot bridge for CF7 form 11116 to VPT CRM, with durable intake, duplicate suppression and explicit review of uncertain writes.
- * Version: 0.2.2
+ * Version: 0.3.1
  * Requires PHP: 7.4
  * Author: Vạn Phú Thành
  */
@@ -16,6 +16,7 @@ final class VPT_V1_CRM_Bridge {
     const KEY = 'vpt_v1_crm_access_token';
     const PREFLIGHT = 'vpt_v1_crm_preflight';
     const HOOK = 'vpt_v1_crm_dispatch';
+    const RECEIPT = 'vpt_v1_crm_receipt_';
     private static $receipt = null;
 
     public static function boot() {
@@ -27,6 +28,7 @@ final class VPT_V1_CRM_Bridge {
         add_action(self::HOOK, array(__CLASS__,'dispatch'), 10, 1);
         add_action('admin_menu', array(__CLASS__,'menu'));
         add_action('admin_post_vpt_v1_crm_action', array(__CLASS__,'admin_action'));
+        add_action('rest_api_init', array(__CLASS__,'routes'));
     }
     public static function mode() { $s=get_option(self::SETTINGS,array()); return $s['mode'] ?? 'off'; }
     public static function key() { return defined('VPT_V1_CRM_ACCESS_TOKEN') ? (string) VPT_V1_CRM_ACCESS_TOKEN : (string) get_option(self::KEY,''); }
@@ -44,7 +46,7 @@ final class VPT_V1_CRM_Bridge {
 
     public static function tracking_script() {
         if (is_admin() || self::mode()==='off') { return; }
-        echo '<script data-nowprocket="1" data-cfasync="false" src="'.esc_url(plugins_url('attribution.js',__FILE__)).'?ver=0.2.2" defer></script>';
+        echo '<script data-nowprocket="1" data-cfasync="false" src="'.esc_url(plugins_url('attribution.js',__FILE__)).'?ver=0.3.1-'.(int) filemtime(__DIR__.'/attribution.js').'" defer></script>';
     }
     public static function product_form() {
         if (!in_array((int)get_the_ID(),array(6368,5864,6203),true)) { return; }
@@ -79,11 +81,33 @@ final class VPT_V1_CRM_Bridge {
             }
         }
         self::$receipt=array('status'=>'queued','mode'=>self::mode(),'request_id'=>$job['request_id']);
+        // Random request_id -> job hash, so the browser can wait for CRM confirmation (1 hour).
+        set_transient(self::RECEIPT . $job['request_id'],$id,HOUR_IN_SECONDS);
         $result=wp_schedule_single_event(time()+1,self::HOOK,array($id),true);
         if (is_wp_error($result) || $result === false) {
             $job['reason']='cron_not_scheduled_use_admin_queue';
             update_option(self::job_key($id),$job,false);
         }
+    }
+
+    public static function routes() {
+        register_rest_route('vpt-v1/v1','/receipt/(?P<rid>[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})',array(
+            'methods'=>'GET','permission_callback'=>'__return_true','callback'=>array(__CLASS__,'receipt')));
+    }
+    // Google Ads conversion fires only after the CRM confirmed the lead (0.3.1). The request_id is a
+    // random UUID known only to the submitting browser; the reply is a state word, never contact data.
+    public static function receipt($request) {
+        $id=get_transient(self::RECEIPT . $request['rid']);
+        $job=is_string($id) && preg_match('/^[a-f0-9]{64}$/',$id) ? get_option(self::job_key($id),false) : false;
+        if (!is_array($job) || ($job['request_id'] ?? '')!==$request['rid']) { $job=false; }
+        // Do not wait for WP-Cron: deliver a queued job now. dispatch() is CAS-guarded against double sends.
+        if ($job && $job['state']==='queued' && ($job['updated_at'] ?? 0)<=time()-2) {
+            self::dispatch($id);
+            $job=get_option(self::job_key($id),false);
+        }
+        $response=new WP_REST_Response(array('state'=>VPT_V1_CRM_Core::public_state($job)));
+        $response->header('Cache-Control','no-store, max-age=0');
+        return $response;
     }
 
     private static function cas($id,$old,$new) {

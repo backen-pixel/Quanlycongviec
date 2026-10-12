@@ -11,6 +11,9 @@ try {
     case 'response':
         $result = VPT_V1_CRM_Core::classify_response($input['status'], $input['body'], $input['transport_error']);
         break;
+    case 'receipt':
+        $result = method_exists('VPT_V1_CRM_Core', 'public_state') ? VPT_V1_CRM_Core::public_state($input['job']) : 'missing';
+        break;
     case 'scope':
         $result = array(
             'company'=>VPT_V1_CRM_Core::COMPANY,

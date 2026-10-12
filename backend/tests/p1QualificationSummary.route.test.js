@@ -21,9 +21,11 @@ function harness({ enabled = true, role = 'admin', company = A, tenant = [A, B],
       eq(key, value) { rows = rows.filter(row => row[key] === value); return q; },
       in(key, values) { rows = rows.filter(row => values.includes(row[key])); return q; },
       not(key) { rows = rows.filter(row => row[key] != null); return q; },
-      or(expr) { const terms = String(expr).split(',').map(term => term.split('.'));
-        rows = rows.filter(row => terms.some(([key, op, value]) => op === 'eq'
-          ? row[key] === value : op === 'is' && value === 'null' && row[key] == null)); return q; },
+      or(expr) { const terms = String(expr).split(/,(?![^(]*\))/).map(term => {
+          const [key, op, ...rest] = term.split('.'); return [key, op, rest.join('.')]; });
+        rows = rows.filter(row => terms.some(([key, op, value]) => op === 'eq' ? row[key] === value
+          : op === 'in' ? value.replace(/^\(|\)$/g, '').split(',').includes(row[key])
+            : op === 'is' && value === 'null' && row[key] == null)); return q; },
       gte(key, value) { rows = rows.filter(row => Date.parse(row[key]) >= Date.parse(value)); return q; },
       lte(key, value) { rows = rows.filter(row => String(row[key]) <= String(value)); return q; },
       lt(key, value) { rows = rows.filter(row => Date.parse(row[key]) < Date.parse(value)); return q; },
@@ -120,7 +122,10 @@ test('complete spend gives exact integer ceiling and no verdict', async () => {
   assert.equal(body.scope_check.status, 'NONE_IN_SCOPE');
   assert.equal(body.scope_check.not_in_connected_accounts, 3);
   assert.equal(body.milestone.cost_to_date.reliability, 'LOW_UNCONNECTED_ADS');
-  assert.ok(body.caveats.includes('LEADS_FROM_UNCONNECTED_ADS'));
+  assert.ok(body.caveats.includes('UNCONNECTED_ADS_EXCLUDED'));
+  assert.equal(body.measurement_scope, 'CONNECTED_AD_ACCOUNTS_ONLY');
+  assert.equal(body.excluded_unconnected_ads, 3);
+  assert.equal(body.milestone.in_scope_candidates, 0);
   assert.ok(body.caveats.includes('MILESTONE_IS_STAGE_PROXY'));
   assert.ok(body.caveats.includes('SPEND_AD_LEVEL_ONLY'));
   assert.doesNotMatch(JSON.stringify(body), /target_met|passed|changed_by|phone|email|Synthetic/);

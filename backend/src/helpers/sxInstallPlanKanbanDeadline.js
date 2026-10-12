@@ -10,6 +10,7 @@ const {
   buildSxInstallBackPlan,
   endYmdForDeadlineGroup,
   sxStageDeadlineGroup,
+  ngayNhomTuCotPipeline,
 } = require('./sxWorkshopSchedule');
 
 const AUTO_REASON = 'Tính từ ngày lắp (kế hoạch SX)';
@@ -43,6 +44,9 @@ function computeSxInstallPlanDeadline(project, stage, siblingStages = null) {
   const plan = buildSxInstallBackPlan(installYmd, {
     startYmd,
     slipDays: project?.sx_schedule_slip_days,
+    // Số ngày từng công đoạn do xưởng đặt ở Setup (`sla_days` trên cột pipeline).
+    // Chưa đặt thì rơi về mặc định, lịch không đổi một ngày so với trước.
+    ngayNhom: ngayNhomTuCotPipeline(siblingStages),
   });
   const iso = companyDeadlineIsoFromYmd(installYmd, project?.company_id);
   if (!iso) return null;
@@ -52,6 +56,9 @@ function computeSxInstallPlanDeadline(project, stage, siblingStages = null) {
     group,
     reason: AUTO_REASON,
     productionFinishYmd: plan.productionFinishYmd || null,
+    // Hạn riêng của CỘT LỚN thẻ đang đứng — thẻ Dashboard hiện thành dòng phụ dưới hạn chính.
+    // Hạn chính vẫn là ngày lắp (xem chú thích đầu hàm): xưởng chỉ đếm MỘT mốc.
+    groupEndYmd: endYmdForDeadlineGroup(plan, group) || null,
   };
 }
 

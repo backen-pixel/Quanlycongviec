@@ -46,14 +46,37 @@ class CorePatchTests(unittest.TestCase):
         if eligible:
             self.assertEqual(baseline["result"]["build"]["payload"]["source_name"], "Website VPT V1")
             self.assertNotEqual(baseline, candidate)
-        else:
-            self.assertEqual(baseline, candidate)
         old = copy.deepcopy(baseline)
         new = copy.deepcopy(candidate)
+        del new["result"]["build"]["payload"]["attribution"]
+        del new["result"]["build"]["payload"]["is_test"]
         del old["result"]["build"]["payload"]["source_name"]
         del new["result"]["build"]["payload"]["source_name"]
-        self.assertEqual(old, new, "Only source_name may change, including fingerprint, scope and notes")
+        self.assertEqual(old, new, "Only source_name and additive tracking contract may change; fingerprint, scope and notes remain identical")
         return candidate["result"]
+
+    def test_structured_campaign_clicks_and_test_flag(self):
+        built = call(PATCHED, request({"utm_source":"google", "campaignid":"23976669573",
+                      "adgroupid":"123456789", "gclid":"synthetic-click"}))["result"]["build"]["payload"]
+        self.assertEqual(built["attribution"]["campaign_id"], "23976669573")
+        self.assertEqual(built["attribution"]["adset_id"], "123456789")
+        self.assertEqual(built["attribution"]["gclid"], "synthetic-click")
+        self.assertFalse(built["is_test"])
+        marked = call(PATCHED, request({"your-name":"TEST VPT V1 isolated", "your-phone":"0000000001"},
+                      mode="test", is_admin=True))["result"]["build"]["payload"]
+        self.assertTrue(marked["is_test"])
+        self.assertNotIn("gclid", marked["attribution"])
+
+    def test_bridge_payload_accepted_by_backend_contract(self):
+        for data in [{}, {"utm_source":"google", "utm_medium":"cpc", "campaignid":"23976669573",
+                          "gclid":"synthetic-click", "gbraid":"synthetic-braid"}]:
+            built = call(PATCHED, request(data))["result"]["build"]["payload"]
+            js = "const fs=require('fs'); const {externalLeadTracking}=require('./backend/src/domain/externalLeadTracking'); console.log(JSON.stringify(externalLeadTracking(JSON.parse(fs.readFileSync(0,'utf8')))));"
+            result = subprocess.run(["node", "-e", js], cwd=ROOT.parents[2], input=json.dumps(built),
+                                    capture_output=True, text=True, check=True)
+            received = json.loads(result.stdout)
+            self.assertEqual(received["intake_attribution"], built["attribution"])
+            self.assertEqual(received["is_test"], built["is_test"])
 
     def test_canonical_chatgpt_paid_changes_only_source(self):
         self.compare_build(request({"utm_source": "chatgpt", "utm_medium": "paid"}), "ChatGPT Ads VPT V1", True)
@@ -68,10 +91,50 @@ class CorePatchTests(unittest.TestCase):
 
     def test_unrecognized_and_organic_sources_remain_website(self):
         for source, medium in [("chatgpt", "organic"), ("chatgpt", "cpc"), ("chatgpt", ""),
-                               ("openai", "paid"), ("facebook", "paid"), ("google", "organic"),
+                               ("openai", "paid"), ("facebook", "paid"),
                                ("", "paid"), ("", ""), ("chatgpt.com", "paid")]:
             with self.subTest(source=source, medium=medium):
                 self.compare_build(request({"utm_source": source, "utm_medium": medium}), "Website VPT V1")
+
+    def test_google_organic_has_distinct_source_but_preserves_business(self):
+        self.compare_build(request({"utm_source": " Google ", "utm_medium": " Organic "}), "SEO Google VPT V1", True)
+
+    def test_click_ids_prevent_organic_classification(self):
+        for key in ("gclid", "gbraid", "wbraid"):
+            with self.subTest(key=key):
+                self.compare_build(request({"utm_source": "google", "utm_medium": "organic", key: "synthetic-click"}), "Website VPT V1")
+
+    def test_referrer_and_landing_do_not_leak_queries_or_change_fingerprint(self):
+        direct = call(PATCHED, request())['result']
+        candidate = call(PATCHED, request({"utm_source":"google", "utm_medium":"organic", "vpt_referrer_host":"www.google.com.vn",
+                                           "vpt_landing_page":"https://www.vanphuthanh.net/tu-bep/?private=synthetic#secret"}))['result']
+        self.assertEqual(candidate['fingerprint'], direct['fingerprint'])
+        self.assertEqual(candidate['build']['business'], direct['build']['business'])
+        notes = candidate['build']['payload']['notes']
+        self.assertIn('\nvpt_landing_page: https://vanphuthanh.net/tu-bep/', notes)
+        self.assertIn('\nvpt_referrer_host: www.google.com.vn', notes)
+        self.assertNotIn('private=', notes)
+        self.assertNotIn('#secret', notes)
+        self.assertEqual(candidate['build']['payload']['attribution']['landing_url'], 'https://vanphuthanh.net/tu-bep/')
+        invalid = call(PATCHED, request({'vpt_referrer_host':'google.com/private?secret=x','vpt_landing_page':'https://evil.invalid/path'}))['result']
+        self.assertNotIn('vpt_referrer_host:', invalid['build']['payload']['notes'])
+        self.assertNotIn('vpt_landing_page:', invalid['build']['payload']['notes'])
+
+    def test_facebook_ad_ids_and_fbclid_become_structured_attribution(self):
+        built = call(PATCHED, request({"utm_source": "FB", "utm_medium": "paid", "utm_campaign": "120200000000001",
+                                       "utm_content": "120200000000002", "fbclid": "synthetic-fb"}))["result"]
+        a = built["build"]["payload"]["attribution"]
+        self.assertEqual(a["platform"], "facebook")
+        self.assertEqual(a["campaign_id"], "120200000000001")
+        self.assertEqual(a["ad_id"], "120200000000002")
+        self.assertEqual(a["fbclid"], "synthetic-fb")
+        self.assertIn("\nfbclid: synthetic-fb", built["build"]["payload"]["notes"])
+        self.assertEqual(built["fingerprint"], call(PATCHED, request())["result"]["fingerprint"])
+        named = call(PATCHED, request({"utm_source": "facebook", "utm_campaign": "tet sale", "utm_content": "video"}))["result"]
+        self.assertNotIn("ad_id", named["build"]["payload"]["attribution"])
+        self.assertNotIn("campaign_id", named["build"]["payload"]["attribution"])
+        google = call(PATCHED, request({"utm_source": "google", "utm_content": "120200000000002"}))["result"]
+        self.assertNotIn("ad_id", google["build"]["payload"]["attribution"])
 
     def test_test_mode_overrides_all_paid_sources(self):
         for source, medium in [("chatgpt", "paid"), ("google", "cpc"), ("", "")]:
@@ -158,6 +221,15 @@ class CorePatchTests(unittest.TestCase):
                 old, new = call(ORIGINAL, payload), call(PATCHED, payload)
                 self.assertEqual(old, new)
                 self.assertEqual(new, {"ok": True, "result": expected})
+
+    def test_public_receipt_state_exposes_only_delivery_state(self):
+        cases = [({"state": "sent", "lead_id": "00000000-0000-4000-8000-000000000001", "payload": {"phone": "0900000000"}}, "confirmed"),
+                 ({"state": "queued"}, "pending"), ({"state": "sending"}, "pending"),
+                 ({"state": "review"}, "failed"), ({"state": "blocked"}, "failed"),
+                 ({"state": "other"}, "unknown"), (None, "unknown")]
+        for job, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertEqual(call(PATCHED, {"operation": "receipt", "job": job}), {"ok": True, "result": expected})
 
     def test_scope_helpers_and_endpoint_unchanged(self):
         payload = dict(operation="scope", data={"nested": {"id": "synthetic", "company_id": "company-a"},

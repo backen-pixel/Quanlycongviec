@@ -58,6 +58,7 @@ export default function ProductionPhatSinhPage({
           storagePrefix={`${storagePrefix}_${coPhi}`}
           dashboardLink={dashboardLink}
           phatSinhOnly
+          onlyPrivate
           coPhi={coPhi}
         />
       </div>

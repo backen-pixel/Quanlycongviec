@@ -6,16 +6,32 @@ const { MILESTONE_SLUGS, loadMilestoneReached, summarizeMilestone } =
 const touch = (lead_id, cham_dau_luc = '2026-10-07T02:42:44.061Z') =>
   ({ lead_id, cham_dau_luc });
 const stage = (lead_id, slug, entered_at, changed_by = 'staff') =>
-  ({ lead_id, to_canonical_slug: slug, entered_at, changed_by });
-function dbRows(rows, fail = false) {
+  ({ lead_id, pipeline_type: 'lead', to_canonical_slug: slug, entered_at, changed_by });
+const deal = (lead_id, to_stage_id, entered_at, slug = null) =>
+  ({ lead_id, pipeline_type: 'deal', to_stage_id, to_canonical_slug: slug, entered_at, changed_by: 'staff' });
+const STAGES = [{ id: 'cho-sale', pipeline_type: 'deal', is_lost: false, allow_revert_to_lead: false },
+  { id: 'huy-deal', pipeline_type: 'deal', is_lost: true, allow_revert_to_lead: false },
+  { id: 've-lead', pipeline_type: 'deal', is_lost: false, allow_revert_to_lead: true }];
+function dbRows(rows, fail = false, stages = STAGES) {
   const chunks = [], pages = [];
   return { chunks, pages, from(name) {
+    if (name === 'crm_pipeline_stages') {
+      let picked = stages;
+      const s = { select() { return s; },
+        in(key, values) { picked = picked.filter(row => values.includes(row[key])); return s; },
+        then(resolve) { return Promise.resolve({ data: picked, error: null }).then(resolve); } };
+      return s;
+    }
     assert.equal(name, 'crm_lead_stage_history');
     let selected = rows, start = 0, end = 0;
     const q = {
       select() { return q; },
       in(key, values) { if (key === 'lead_id') chunks.push(values);
         selected = selected.filter(row => values.includes(row[key])); return q; },
+      or(expr) {
+        assert.equal(expr, `to_canonical_slug.in.(${MILESTONE_SLUGS.join(',')}),pipeline_type.eq.deal`);
+        selected = selected.filter(row => MILESTONE_SLUGS.includes(row.to_canonical_slug) ||
+          row.pipeline_type === 'deal'); return q; },
       not(key) { selected = selected.filter(row => row[key] != null); return q; },
       order() { return q; },
       range(a, b) { start = a; end = b + 1; pages.push(a); return q; },
@@ -51,6 +67,19 @@ test('cold, warm and hot each make a lead valid; unclassified or lost leads do n
   const result = await loadMilestoneReached(dbRows(rows), ids.map(id => touch(id)));
   assert.deepEqual([...result.reachedByLead.keys()].sort(), ['cold-only', 'hot-only', 'warm-only']);
   for (const slug of ['cold', 'warm', 'hot']) assert.ok(MILESTONE_SLUGS.includes(slug));
+});
+
+test('converting to a deal counts, even into unslugged deal stages; lost and revert stages do not', async () => {
+  const rows = [deal('cho-sale', 'cho-sale', '2026-10-08T00:00:00Z'),
+    deal('quoted', 'any', '2026-10-08T00:00:00Z', 'quoted'),
+    deal('huy', 'huy-deal', '2026-10-08T00:00:00Z'),
+    deal('ve-lead', 've-lead', '2026-10-08T00:00:00Z'),
+    deal('chet', 'chet', '2026-10-08T00:00:00Z', 'lost'),
+    deal('truoc', 'cho-sale', '2026-10-06T00:00:00Z'),
+    { ...deal('may', 'cho-sale', '2026-10-08T00:00:00Z'), changed_by: null }];
+  const ids = ['cho-sale', 'quoted', 'huy', 've-lead', 'chet', 'truoc', 'may'];
+  const result = await loadMilestoneReached(dbRows(rows), ids.map(id => touch(id)));
+  assert.deepEqual([...result.reachedByLead.keys()].sort(), ['cho-sale', 'quoted']);
 });
 
 test('history pages and lead chunks are complete; DB errors throw', async () => {

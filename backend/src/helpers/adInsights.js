@@ -55,7 +55,7 @@ async function napSoLieuTheoAd({ ngay = 90 } = {}) {
   const ids = [...new Set(rows.map((x) => String(x.lead_id)))];
   const [leadRows, diemRows, catRows, pageRows] = await Promise.all([
     layTheoLo('crm_leads', 'id', ids,
-      'id, type, phone, customer_id, actual_close_date, estimated_value, company_id'),
+      'id, type, phone, customer_id, actual_close_date, estimated_value, company_id, is_test'),
     layTheoLo('lead_quality_scores', 'lead_id', ids, 'lead_id, diem, nhan'),
     supabase.from('fb_ad_catalog').select('ad_id, campaign_name, ad_name')
       .then((x) => x.data || [], () => []),
@@ -67,7 +67,7 @@ async function napSoLieuTheoAd({ ngay = 90 } = {}) {
   const khachRows = await layTheoLoMem('customers', 'id', khachIds, 'id, phone');
   const mSdt = new Map(khachRows.map((c) => [String(c.id), c.phone]));
 
-  const mLead = new Map(leadRows.map((l) => [String(l.id), l]));
+  const mLead = new Map(leadRows.filter((l) => l.is_test !== true).map((l) => [String(l.id), l]));
   const mDiem = new Map(diemRows.map((x) => [String(x.lead_id), x]));
   const mCat = new Map(catRows.map((x) => [String(x.ad_id), x]));
   const mPage = new Map(pageRows.map((x) => [String(x.page_id), x.page_name]));

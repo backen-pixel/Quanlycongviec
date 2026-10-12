@@ -1,3 +1,17 @@
+## 0.3.1 (12/10/2026) — Google Ads conversion only after CRM confirmation
+
+Before 0.3.1 the browser reported the Google Ads form conversion as soon as the form was queued in WordPress, even if the CRM later rejected or never received the lead. Now the browser keeps the existing `vpt_v1_lead_request` dataLayer event, then asks `GET /wp-json/vpt-v1/v1/receipt/<request_id>` every few seconds (up to 10 minutes, resumed on the next page of the visit) and fires the conversion (and `vpt_v1_lead_confirmed`) only when the job state is `sent` (CRM returned a lead id). `review`/`blocked`/unknown never convert. The endpoint is public but keyed by the random request UUID known only to the submitting browser; it returns one state word and no contact data. A queued job older than 2 s is dispatched from that request instead of waiting for WP-Cron (same CAS-guarded `dispatch()`, no double send).
+
+## 0.3.0 (11/10/2026) — structured website attribution
+
+Merges the 08/10 structured-attribution update (CRM migration renumbered **717**) with the 0.2.4 SEO candidate (Google Organic source, referrer host, first landing page) and adds **fbclid** plus Facebook ad IDs: when utm_source is facebook/fb/instagram/ig, a numeric utm_campaign becomes campaign_id and a numeric utm_content becomes ad_id. Facebook ads must link with utm_source=facebook&utm_medium=paid&utm_campaign={{campaign.id}}&utm_content={{ad.id}}. CF7 form 11116 needs the hidden fields in form-hidden-fields.txt (adds [hidden fbclid]). Install only after migration 717 and the backend are live.
+
+### Prepared update 08/10/2026
+
+The current branch adds `is_test` and structured `attribution` to the existing CRM payload, mapping `campaignid`/`adgroupid` to generic `campaign_id`/`adset_id` and retaining captured UTM/gclid/gbraid/wbraid. Description, notes, company/owner/pipeline, source selection, business fingerprint and queue/confirmation policy are preserved. The source/fingerprint and deployment statements below describe the earlier patch, not this uninstalled update.
+
+Deploy only after CRM migration 717 and the backend contract are accepted. Existing queued jobs keep their serialized old payload; this patch does not replay/rewrite jobs. Roll back this additive update by reverting its `core.php` diff (not by reverting the older ChatGPT source fix). No WordPress settings or runtime network calls are part of the isolated tests. Full staging WordPress + CF7 + worker acceptance remains outstanding.
+
 # VPT V1 WordPress CRM bridge — ChatGPT paid source
 
 Bridge CF7 form `11116` → CRM VPT. This reviewed change maps normalized

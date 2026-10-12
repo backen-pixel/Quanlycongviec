@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import api from '../lib/api';
 import P1QualificationPanel from '../components/P1QualificationPanel';
 import AiDraftReportPanel from '../components/AiDraftReportPanel';
+import WebConversionPanel from '../components/WebConversionPanel';
 
 const TAB = [
   { key: 'insights', nhan: 'Nhận xét tự động' },
@@ -1496,6 +1497,7 @@ export default function AdAnalyticsPage({ embedded = false }) {
 
       <KhungMarketing trangThai={mkt} onXong={async () => { await taiMkt(); await refreshReportRef.current?.(); }} />
       <P1QualificationPanel duongDanLead={duongDanLead} />
+      <WebConversionPanel />
       <AiDraftReportPanel />
 
       <DaiChanDoan params={params} />

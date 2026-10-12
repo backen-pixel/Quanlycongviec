@@ -52,7 +52,7 @@ function chunk(arr, size = CHUNK) {
  * @param {{projectId: string, soNgay: number, dryRun?: boolean}} opts
  * @returns {Promise<{tasks: number, crm_tasks: number, so_ngay: number, skipped?: string}>}
  */
-async function donHanNhiemVuTheoMocLap({ projectId, soNgay, dryRun = false } = {}) {
+async function donHanNhiemVuTheoMocLap({ projectId, soNgay, dryRun = false, boQuaTaskIds = null } = {}) {
   const pid = String(projectId || '').trim();
   const n = Number(soNgay);
   const ketQua = { tasks: 0, crm_tasks: 0, so_ngay: n };
@@ -67,7 +67,13 @@ async function donHanNhiemVuTheoMocLap({ projectId, soNgay, dryRun = false } = {
   if (taskErr) {
     console.warn('[donHanNhiemVu] đọc tasks:', taskErr.message);
   } else {
-    const can = (taskRows || []).filter((t) => !TASK_DONE.has(String(t.status || '').toLowerCase()));
+    // Việc đã được `ganHanNhiemVuTheoCongDoan` tính ra ngày tuyệt đối thì KHÔNG dời nữa —
+    // dời thêm lần hai là đẩy nó lệch khỏi mốc công đoạn vừa tính đúng.
+    const boQua = boQuaTaskIds instanceof Set
+      ? boQuaTaskIds
+      : new Set((boQuaTaskIds || []).map((x) => String(x)));
+    const can = (taskRows || []).filter((t) => !TASK_DONE.has(String(t.status || '').toLowerCase()))
+      .filter((t) => !boQua.has(String(t.id)));
     const theoHan = new Map();
     for (const t of can) {
       const moi = doiNgay(t.due_date, n);

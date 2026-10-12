@@ -2505,11 +2505,24 @@ r.put('/:id', requireProjectEditOrSxKanbanWorkshopType(), async (req, res) => {
         const mocMoi = resolveSxPlanInstallYmd(data || {});
         const soNgay = (mocCu && mocMoi) ? soNgayGiua(mocCu, mocMoi) : 0;
         if (soNgay !== 0) {
-          const don = await donHanNhiemVuTheoMocLap({ projectId: req.params.id, soNgay });
-          if (don.tasks || don.crm_tasks) {
+          // Hai bước, theo thứ tự:
+          //  1) Việc nào biết mình thuộc công đoạn nào thì tính thẳng ra ngày đúng theo lịch
+          //     lùi từ ngày lắp — chính xác hơn dời mò.
+          //  2) Phần còn lại (chưa có production_stage_id, hoặc ở nhóm không có hạn SX) thì
+          //     dời đều như cũ, và bỏ qua những việc bước 1 vừa đặt.
+          const { ganHanNhiemVuTheoCongDoan } = require('../helpers/ganHanNhiemVuTheoCongDoan');
+          const gan = await ganHanNhiemVuTheoCongDoan({ projectId: req.params.id });
+          const don = await donHanNhiemVuTheoMocLap({
+            projectId: req.params.id,
+            soNgay,
+            boQuaTaskIds: gan.taskIds,
+          });
+          if (gan.ganDuoc || don.tasks || don.crm_tasks) {
             console.info(
-              `[PUT /projects] dồn hạn nhiệm vụ: project=${req.params.id} ${mocCu}→${mocMoi} `
-              + `(${soNgay > 0 ? '+' : ''}${soNgay} ngày) tasks=${don.tasks} crm_tasks=${don.crm_tasks}`,
+              `[PUT /projects] hạn nhiệm vụ: project=${req.params.id} ${mocCu}→${mocMoi} `
+              + `(${soNgay > 0 ? '+' : ''}${soNgay} ngày) `
+              + `gán theo công đoạn=${gan.ganDuoc} ${JSON.stringify(gan.theoNhom)} `
+              + `· dời đều tasks=${don.tasks} crm_tasks=${don.crm_tasks}`,
             );
           }
         }

@@ -4,7 +4,7 @@ import api from '../lib/api';
 import { publicFileUrl } from '../lib/publicFileUrl';
 import KnowledgeMediaGallery from '../components/KnowledgeMediaGallery';
 import KnowledgeSimulationPlayer, { SIM_BRIEF_SHORT, BriefRich } from '../components/KnowledgeSimulationPlayer';
-import { youtubeEmbedUrl } from '../lib/knowledgeMarkdown';
+import { youtubeEmbedUrl, renderMarkdownLines } from '../lib/knowledgeMarkdown';
 import {
   ChevronLeft, ChevronRight, CheckCircle2, Clock, Award, Loader2,
   PartyPopper, RotateCcw, BookOpen, ListChecks, ArrowRight, Trophy,
@@ -56,6 +56,13 @@ function QuizPlayer({ exercise, onSubmit, submitting, onAnswersChange }) {
   const [answers, setAnswers] = useState({});
   const [currentIdx, setCurrentIdx] = useState(0);
   const current = items[currentIdx];
+  /**
+   * Đề bài của bài tình huống phải nằm NGAY TRONG màn làm bài.
+   * Trước đây bối cảnh chỉ nằm ở nội dung bài học; vào làm bài là mất, học viên không
+   * còn căn cứ nào để trả lời. `questions.prompt` giữ bối cảnh và mở sẵn ở câu đầu.
+   */
+  const deBai = exercise.questions?.prompt || '';
+  const [moDeBai, setMoDeBai] = useState(true);
 
   useEffect(() => { onAnswersChange?.(answers); }, [answers, onAnswersChange]);
 
@@ -89,6 +96,31 @@ function QuizPlayer({ exercise, onSubmit, submitting, onAnswersChange }) {
           </span>
           <span className="text-xs text-gray-400">{answered} / {items.length} đã trả lời</span>
         </div>
+
+        {deBai && (
+          <div className="mb-4 rounded-xl border-2 border-amber-300 bg-amber-50 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setMoDeBai((v) => !v)}
+              className="w-full flex items-center gap-2 px-4 py-2.5 text-left cursor-pointer hover:bg-amber-100/60 transition-colors"
+            >
+              <span className="text-xs font-bold uppercase tracking-wide text-amber-800 flex-1">
+                Đề bài
+              </span>
+              <span className="text-[11px] font-semibold text-amber-700">
+                {moDeBai ? 'Thu gọn' : 'Mở ra'}
+              </span>
+              <ChevronLeft
+                className={`h-4 w-4 text-amber-700 transition-transform ${moDeBai ? 'rotate-90' : '-rotate-90'}`}
+              />
+            </button>
+            {moDeBai && (
+              <div className="px-4 pb-3 border-t border-amber-200 pt-3">
+                <div className="text-sm text-amber-950 leading-relaxed knowledge-md">{renderMarkdownLines(deBai)}</div>
+              </div>
+            )}
+          </div>
+        )}
 
         {current.type === 'multiple' ? (
           <div className="mb-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-50 border-2 border-emerald-300 text-emerald-800 text-sm font-bold animate-in fade-in">

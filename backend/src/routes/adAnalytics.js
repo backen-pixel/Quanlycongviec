@@ -98,7 +98,7 @@ async function docLeadTheoLo(ids, columns) {
   const unique = [...new Set(ids.map(String))];
   const batches = [];
   for (let i = 0; i < unique.length; i += 200) {
-    batches.push(docLeadBatBuoc(supabase.from('crm_leads').select(columns).in('id', unique.slice(i, i + 200))));
+    batches.push(docLeadBatBuoc(supabase.from('crm_leads').select(columns).eq('is_test', false).in('id', unique.slice(i, i + 200))));
   }
   return (await Promise.all(batches)).flat();
 }
