@@ -191,6 +191,17 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
 
 
 
+  /** Người dùng chủ động «Mở bong bóng chat»: đóng khung chat đang mở/treo (nếu có) rồi hiện bong bóng của đoạn này. */
+  @ReactMethod
+
+  fun openConvBubble(groupId: String, title: String, avatarLetter: String, avatarUrl: String) {
+
+    sendShowBubble(groupId, title, avatarLetter, avatarUrl, "", "", manual = true)
+
+  }
+
+
+
   @ReactMethod
 
   fun showConvBubbleWithAvatar(groupId: String, title: String, avatarLetter: String, avatarUrl: String) {
@@ -591,6 +602,7 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
     avatarUrl: String,
     sender: String = "",
     preview: String = "",
+    manual: Boolean = false,
   ) {
 
     if (groupId.isBlank()) return
@@ -598,6 +610,8 @@ class FloatingBubbleModule(private val reactContext: ReactApplicationContext) :
     val i = Intent(reactContext, OverlayBubbleService::class.java).apply {
 
       action = OverlayBubbleService.ACTION_SHOW_BUBBLE
+
+      if (manual) putExtra(OverlayBubbleService.EXTRA_MANUAL, true)
 
       putExtra(OverlayBubbleService.EXTRA_GROUP_ID, groupId)
 

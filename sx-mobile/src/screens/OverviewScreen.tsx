@@ -44,12 +44,16 @@ import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { boardFiltersFromSharedSnap, loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '../lib/kanbanFilterStorage';
 import {
   externalDealFilterFromSnap,
+  isMetallaOrHucabiCompanyId,
   isSystemAdmin,
+  productionCreateCompanyOptions,
   projectMatchesDealCompanyExternalFilter,
+  shouldShowDealCompanyFilter,
   workshopCompaniesForCrossViewer,
 } from '../lib/productionFilters';
 import { ensureNotificationPermission } from '../lib/pushRegistration';
 import {
+  fetchClientCompanies,
   fetchCompanies,
   fetchProductionBoard,
   fetchProductionBoardSummary,
@@ -225,6 +229,10 @@ export default function OverviewScreen() {
   const [filterCompany, setFilterCompany] = useState('');
   const [companyPickerOpen, setCompanyPickerOpen] = useState(false);
   const [typePickerOpen, setTypePickerOpen] = useState(false);
+  // Công ty ĐẶT HÀNG (deal_company_id) — cùng bộ lọc «Đặt hàng» của tab Dự án và của web; lưu chung qua kanbanFilterStorage.
+  const [dealPickerOpen, setDealPickerOpen] = useState(false);
+  const [filterDealCompany, setFilterDealCompany] = useState('');
+  const [clientCompaniesForDeal, setClientCompaniesForDeal] = useState<Awaited<ReturnType<typeof fetchClientCompanies>>>([]);
   /** true = loại hiện tại do app tự chọn, được phép nhảy tiếp nếu rỗng. */
   const autoPickedTypeRef = useRef(false);
   /** Lần mở app đầu tiên: cho phép tự nhảy khỏi phân loại ĐÃ LƯU nếu nó rỗng (xem effect bên dưới). */
@@ -304,6 +312,7 @@ export default function OverviewScreen() {
       const snap = await loadKanbanFilters().catch(() => null);
       let companyId = snap?.filterCompany || '';
       setFilterWorkTypeId(String(snap?.filterWorkTypeId || ''));
+      setFilterDealCompany(String(snap?.filterDealCompany || ''));
 
       let companyList = companiesRef.current;
       if (mode !== 'silent' || !companyList.length) {
@@ -512,6 +521,8 @@ export default function OverviewScreen() {
   // Đồng bộ khi Kanban/Work đổi filter (cùng snapshot → cùng cache key).
   useEffect(() => {
     const unsub = subscribeSharedFilters((snap) => {
+      // Tab Dự án (hoặc web/máy khác) đổi «Đặt hàng» → chip ở đây đổi theo.
+      setFilterDealCompany(String(snap.filterDealCompany || ''));
       const nextFilters = boardFiltersFromSharedSnap(snap);
       const prev = boardFiltersRef.current;
       const nextExt = externalDealFilterFromSnap(snap.filterDealCompany);
@@ -566,6 +577,63 @@ export default function OverviewScreen() {
     () => workTypeOptions.find((o) => o.id === filterWorkTypeId)?.label || 'Phân loại',
     [workTypeOptions, filterWorkTypeId],
   );
+
+  // ---- Bộ lọc «Công ty đặt hàng» (cùng quy tắc với tab Dự án) ----
+  const showDealCompanyFilter = useMemo(
+    () => teamView && shouldShowDealCompanyFilter(user, companies),
+    [teamView, user, companies],
+  );
+  /** Chỉ admin hệ thống được chọn; người khác chỉ thấy (đã khoá theo công ty của họ). */
+  const canPickDealCompany = sysAdmin && showDealCompanyFilter;
+
+  /** Xưởng dùng để hỏi danh sách công ty đặt hàng: xưởng đang chọn nếu là HCB/Metalla, không thì xưởng đầu tiên. */
+  const clientCompaniesWorkshopId = useMemo(() => {
+    if (filterCompany && isMetallaOrHucabiCompanyId(filterCompany, companies)) return filterCompany;
+    const opts = productionCreateCompanyOptions(companies);
+    return opts[0]?.id ? String(opts[0].id) : '';
+  }, [filterCompany, companies]);
+
+  useEffect(() => {
+    const cid = String(clientCompaniesWorkshopId || '').trim();
+    if (!showDealCompanyFilter || !cid) {
+      setClientCompaniesForDeal([]);
+      return undefined;
+    }
+    let cancel = false;
+    void fetchClientCompanies(cid)
+      .then((list) => { if (!cancel) setClientCompaniesForDeal(list); })
+      .catch(() => { if (!cancel) setClientCompaniesForDeal([]); });
+    return () => { cancel = true; };
+  }, [showDealCompanyFilter, clientCompaniesWorkshopId]);
+
+  const dealCompanyPickerOptions = useMemo(() => {
+    if (!showDealCompanyFilter) return [];
+    const crm = clientCompaniesForDeal.filter((c) => c.client_company_id);
+    const ext = clientCompaniesForDeal.filter((c) => !c.client_company_id);
+    const opts: { id: string; label: string }[] = [];
+    if (canPickDealCompany) opts.push({ id: '', label: 'Tất cả công ty đặt hàng' });
+    crm.forEach((c) => {
+      opts.push({
+        id: c.id,
+        label: `${c.short_name || c.name}${c.source === 'workshop' ? ' · đã liên kết' : ''}`,
+      });
+    });
+    ext.forEach((c) => opts.push({ id: c.id, label: c.short_name || c.name }));
+    return opts;
+  }, [showDealCompanyFilter, clientCompaniesForDeal, canPickDealCompany]);
+
+  const dealCompanyLabel = useMemo(() => {
+    if (!showDealCompanyFilter) return '';
+    if (!filterDealCompany) {
+      if (canPickDealCompany) return 'Tất cả đặt hàng';
+      const own = user?.company_id
+        ? companies.find((x) => String(x.id) === String(user.company_id))
+        : undefined;
+      return own ? `Đặt hàng: ${own.name}` : '';
+    }
+    const hit = dealCompanyPickerOptions.find((o) => o.id === filterDealCompany)?.label;
+    return hit ? `Đặt hàng: ${hit}` : 'Đặt hàng';
+  }, [showDealCompanyFilter, filterDealCompany, canPickDealCompany, dealCompanyPickerOptions, user?.company_id, companies]);
 
   useEffect(() => {
     // Đổi công ty → quên các loại đã thử của công ty cũ.
@@ -674,6 +742,17 @@ export default function OverviewScreen() {
     autoPickedTypeRef.current = false;
     await applyWorkType(id);
   }, [filterWorkTypeId, applyWorkType]);
+
+  const onSelectDealCompany = useCallback(async (id: string) => {
+    setDealPickerOpen(false);
+    if (!canPickDealCompany || id === filterDealCompany) return;
+    setFilterDealCompany(id);
+    // Như tab Dự án và web: đổi công ty đặt hàng thì phân loại về mặc định (loại đầu tiên có dữ liệu sẽ được chọn lại).
+    setFilterWorkTypeId('');
+    autoPickedTypeRef.current = true;
+    await saveKanbanFilters({ filterDealCompany: id, filterWorkTypeId: '' }).catch(() => {});
+    void load('refresh');
+  }, [canPickDealCompany, filterDealCompany, load]);
 
   const onSelectCompany = useCallback(async (id: string) => {
     setCompanyPickerOpen(false);
@@ -1086,6 +1165,23 @@ export default function OverviewScreen() {
           <Ionicons name="layers-outline" size={14} color={colors.primary} />
           <Text style={styles.scopeChipTxt} numberOfLines={1}>{workTypeLabel}</Text>
           <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
+        </Pressable>
+      ) : null}
+
+      {/* Công ty đặt hàng — cùng bộ lọc với tab Dự án và web. Chỉ admin hệ thống được đổi; người khác chỉ thấy giá trị đang áp dụng. */}
+      {showDealCompanyFilter && dealCompanyLabel ? (
+        <Pressable
+          style={[styles.scopeChip, lightHero && styles.scopeChipHero]}
+          onPress={() => { if (canPickDealCompany) setDealPickerOpen(true); }}
+          disabled={!canPickDealCompany}
+          accessibilityRole="button"
+          accessibilityLabel={`Lọc công ty đặt hàng: ${dealCompanyLabel}`}
+        >
+          <Ionicons name="cart-outline" size={14} color={colors.primary} />
+          <Text style={styles.scopeChipTxt} numberOfLines={1}>{dealCompanyLabel}</Text>
+          {canPickDealCompany ? (
+            <Ionicons name="chevron-down" size={14} color={colors.textMuted} />
+          ) : null}
         </Pressable>
       ) : null}
     </View>
@@ -1655,6 +1751,15 @@ export default function OverviewScreen() {
         selectedId={filterCompany}
         onSelect={(id) => { void onSelectCompany(id); }}
         onClose={() => setCompanyPickerOpen(false)}
+      />
+
+      <FilterPickerModal
+        visible={dealPickerOpen}
+        title="Công ty đặt hàng"
+        options={dealCompanyPickerOptions}
+        selectedId={filterDealCompany}
+        onSelect={(id) => { void onSelectDealCompany(id); }}
+        onClose={() => setDealPickerOpen(false)}
       />
 
       <FilterPickerModal

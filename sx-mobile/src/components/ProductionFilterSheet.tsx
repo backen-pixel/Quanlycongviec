@@ -30,6 +30,9 @@ type Props = {
   onQuickFilterChange?: (id: QuickFilterId) => void;
   filterPhone?: PhoneFilterId;
   onPhoneChange?: (id: PhoneFilterId) => void;
+  /** Công tắc «Cột Chưa PL» (giống web) — gom dự án chưa có phân loại vào cột ảo riêng. */
+  showOrphanColumn?: boolean;
+  onShowOrphanColumnChange?: (next: boolean) => void;
   personOptions?: FilterPickOption[];
   filterPersonId?: string;
   onPersonChange?: (id: string) => void;
@@ -220,6 +223,8 @@ export default function ProductionFilterSheet({
   onQuickFilterChange,
   filterPhone = '',
   onPhoneChange,
+  showOrphanColumn = false,
+  onShowOrphanColumnChange,
   personOptions = [],
   filterPersonId = '',
   onPersonChange,
@@ -461,6 +466,23 @@ export default function ProductionFilterSheet({
                 ))}
               </View>
             </FilterSection>
+
+            {onShowOrphanColumnChange ? (
+              <FilterSection
+                title="Cột «Chưa PL»"
+                subtitle="Gom dự án chưa phân loại vào một cột riêng"
+                colors={colors}
+              >
+                <View style={styles.chipWrap}>
+                  <Chip
+                    label={showOrphanColumn ? 'Đang hiện cột Chưa PL' : 'Hiện cột «Chưa PL»'}
+                    icon={showOrphanColumn ? 'checkbox' : 'square-outline'}
+                    active={showOrphanColumn}
+                    onPress={() => onShowOrphanColumnChange(!showOrphanColumn)}
+                  />
+                </View>
+              </FilterSection>
+            ) : null}
 
             {showWorkshopPicker && workshopOptions.length > 0 ? (
               <FilterSection

@@ -26,8 +26,9 @@ import { useNotifications } from './NotificationContext';
 type GroupMessageListener = (groupId: string, message: MessengerMessage) => void;
 
 type MessengerMetaListener = (evt: {
-  type: 'reaction' | 'recall' | 'read' | 'members' | 'updated';
+  type: 'reaction' | 'recall' | 'read' | 'members' | 'updated' | 'typing';
   groupId: string;
+  isTyping?: boolean;
   messageId?: string;
   reactions?: MessengerMessage['reactions'];
   message?: MessengerMessage;

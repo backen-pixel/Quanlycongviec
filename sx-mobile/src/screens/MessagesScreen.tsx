@@ -12,12 +12,14 @@ import React,
 import {
   Alert,
   FlatList,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
+  ToastAndroid,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -30,7 +32,13 @@ import {
   createDirectChat,
   fetchCallHistoryItems,
 } from '../lib/messengerApi';
-import ConversationActionsSheet from '../components/messenger/ConversationActionsSheet';
+import ConversationActionsSheet, {
+  type ConversationActionKey,
+} from '../components/messenger/ConversationActionsSheet';
+import {
+  ensureOverlayPermissionInteractive,
+  openChatBubbleForThread,
+} from '../lib/floatingBubbleOverlay';
 import { markThreadDeleted, loadDeletedThreadIds } from '../lib/messengerThreadStorage';
 import type { CallHistoryItem } from '../lib/messengerCallLog';
 import { formatPresenceLabel } from '../lib/messengerPresence';
@@ -229,7 +237,26 @@ export default function MessagesScreen() {
   };
 
   const handleThreadAction = useCallback(
-    (action: 'createGroup' | 'delete', thread: MessengerThread) => {
+    (action: ConversationActionKey, thread: MessengerThread) => {
+      if (action === 'openBubble') {
+        void (async () => {
+          const res = await openChatBubbleForThread({
+            id: thread.id,
+            name: thread.name,
+            avatarUrl: thread.avatarUrl,
+          });
+          if (res === 'ok') {
+            if (Platform.OS === 'android') ToastAndroid.show('Đã mở bong bóng chat', ToastAndroid.SHORT);
+          } else if (res === 'permission') {
+            await ensureOverlayPermissionInteractive();
+          } else if (res === 'disabled') {
+            Alert.alert('Bong bóng chat đang tắt', 'Hãy bật bong bóng chat trong cài đặt của app rồi thử lại.');
+          } else {
+            Alert.alert('Không mở được', 'Thiết bị này chưa hỗ trợ bong bóng chat.');
+          }
+        })();
+        return;
+      }
       if (action === 'createGroup') {
         const peerId = thread.peerId;
         if (!peerId) return;

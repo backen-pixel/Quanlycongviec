@@ -41,6 +41,7 @@ import Toast, { type ToastState } from '../components/Toast';
 import { useAuth } from '../context/AuthContext';
 import { useCall } from '../context/CallContext';
 import { useMessenger } from '../context/MessengerContext';
+import { useNotifications } from '../context/NotificationContext';
 import { getAppSocket, subscribeAppSocket } from '../lib/appSocket';
 import { useTheme } from '../context/ThemeContext';
 import {
@@ -114,7 +115,12 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
     getPeerPresence,
   } = useMessenger();
   const { joinGroupCall, status: callStatus } = useCall();
+  const { emitMessengerTyping } = useNotifications();
   const [activeGroupCall, setActiveGroupCall] = useState<ActiveGroupCallInfo | null>(null);
+  // «Đang nhập…»: những người khác đang gõ trong cuộc chat này (cùng sự kiện messenger_group:typing với web).
+  const [typingUsers, setTypingUsers] = useState<Record<string, { name: string; ts: number }>>({});
+  const typingThrottleRef = useRef(0);
+  const typingSentRef = useRef(false);
 
   const thread = threads.find((t) => t.id === threadId);
   const displayName = thread?.name || title || 'Chat';
@@ -233,7 +239,8 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
     return () => setMessengerFileForwardContext(null);
   }, [threadId, displayName]);
 
-  const composerPadBottom = keyboardVisible ? 8 : Math.max(insets.bottom, 10);
+  // Bàn phím đang mở: chừa khoảng trống dưới khung nhập (trước 8 → dính sát bàn phím).
+  const composerPadBottom = keyboardVisible ? 16 : Math.max(insets.bottom, 10);
   const headerBarHeight = Math.max(insets.top, 6) + 58;
 
   useEffect(() => {
@@ -403,6 +410,19 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
   useEffect(() => {
     return subscribeMessengerMeta((evt) => {
       if (String(evt.groupId) !== String(threadId)) return;
+      if (evt.type === 'typing') {
+        const typerId = evt.userId;
+        if (!typerId) return;
+        setTypingUsers((prev) => {
+          if (!evt.isTyping) {
+            if (!(typerId in prev)) return prev;
+            const { [typerId]: _gone, ...rest } = prev;
+            return rest;
+          }
+          return { ...prev, [typerId]: { name: evt.name || 'Ai đó', ts: Date.now() } };
+        });
+        return;
+      }
       if (evt.type === 'read') {
         refreshReceipts();
         return;
@@ -422,6 +442,65 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
       }
     });
   }, [threadId, subscribeMessengerMeta, mergeIncoming, navigation]);
+
+  // Mục «đang nhập» quá 5 giây không được làm mới thì coi như đã dừng (như web: tự dọn nếu không nhận được sự kiện dừng).
+  useEffect(() => {
+    const t = setInterval(() => {
+      const now = Date.now();
+      setTypingUsers((prev) => {
+        let changed = false;
+        const next: Record<string, { name: string; ts: number }> = {};
+        for (const [k, v] of Object.entries(prev)) {
+          if (now - v.ts > 5000) changed = true;
+          else next[k] = v;
+        }
+        return changed ? next : prev;
+      });
+    }, 1500);
+    return () => clearInterval(t);
+  }, []);
+
+  // Đổi cuộc chat / rời màn hình: xoá danh sách người đang nhập và báo «đã dừng» nếu mình đang ở trạng thái đang gõ.
+  useEffect(() => {
+    setTypingUsers({});
+    return () => {
+      if (typingSentRef.current) {
+        typingSentRef.current = false;
+        typingThrottleRef.current = 0;
+        emitMessengerTyping(threadId, false);
+      }
+    };
+  }, [threadId, emitMessengerTyping]);
+
+  // Gõ chữ → phát «đang nhập» (tối đa 2 giây một lần, như web); xoá hết chữ → báo dừng ngay.
+  const onDraftChange = useCallback(
+    (text: string) => {
+      setDraft(text);
+      if (!text.trim()) {
+        if (typingSentRef.current) {
+          typingSentRef.current = false;
+          typingThrottleRef.current = 0;
+          emitMessengerTyping(threadId, false);
+        }
+        return;
+      }
+      const now = Date.now();
+      if (now - typingThrottleRef.current >= 2000) {
+        typingThrottleRef.current = now;
+        typingSentRef.current = true;
+        emitMessengerTyping(threadId, true);
+      }
+    },
+    [threadId, emitMessengerTyping],
+  );
+
+  const typingLabel = useMemo(() => {
+    const names = Object.values(typingUsers).map((u) => u.name);
+    if (!names.length) return '';
+    if (names.length === 1) return `${names[0]} đang nhập…`;
+    if (names.length === 2) return `${names[0]} và ${names[1]} đang nhập…`;
+    return `${names[0]}, ${names[1]} và ${names.length - 2} người khác đang nhập…`;
+  }, [typingUsers]);
 
   const appendPendingFiles = useCallback((files: PendingChatFile[]) => {
     const err = validatePendingFiles(files);
@@ -512,7 +591,8 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
     setSending(true);
     const replyId = replyTo?.id || null;
     const filesToSend = [...pendingFiles];
-    setDraft('');
+    // Gửi xong: xoá khung nhập VÀ báo «đã dừng nhập» (onDraftChange('') phát tín hiệu dừng nếu đang ở trạng thái đang gõ).
+    onDraftChange('');
     setReplyTo(null);
     setPendingFiles([]);
     setEmojiOpen(false);
@@ -728,6 +808,25 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
           fontSize: 11,
           paddingVertical: 6,
         },
+        typingTxt: {
+          color: colors.textMuted,
+          fontSize: 12,
+          fontStyle: 'italic',
+          paddingHorizontal: Spacing.lg,
+          paddingTop: 4,
+          backgroundColor: colors.bg,
+        },
+        olderRow: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 8,
+          paddingVertical: 12,
+        },
+        olderTxt: {
+          color: colors.textMuted,
+          fontSize: 12,
+        },
         groupCallBanner: {
           marginHorizontal: Spacing.md,
           marginBottom: 8,
@@ -781,25 +880,13 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
         onOpenDetails={openDetails}
       />
 
-      {!isDirect && activeGroupCall && callStatus === 'idle' && (
-        <View style={styles.groupCallBanner}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.groupCallTitle}>
-              Cuộc gọi {activeGroupCall.kind === 'video' ? 'video' : 'thoại'} đang diễn ra
-            </Text>
-            <Text style={styles.groupCallSub} numberOfLines={1}>
-              {activeGroupCall.hostName ? `${activeGroupCall.hostName} đã bắt đầu` : 'Có cuộc gọi trong nhóm'}
-            </Text>
-          </View>
-          <Pressable style={styles.groupCallBtn} onPress={() => joinGroupCall(activeGroupCall)}>
-            <Text style={styles.groupCallBtnTxt}>Tham gia</Text>
-          </Pressable>
-        </View>
-      )}
+      {/* Đã ẩn thanh «Cuộc gọi đang diễn ra — Tham gia» trong nhóm chat (không còn điểm vào cuộc gọi trong chat). */}
 
+      {/* Android đã dùng adjustResize (cửa sổ tự co khi mở bàn phím, edge-to-edge tắt) → KHÔNG cộng thêm «padding» lần nữa: hai cơ chế
+          chồng nhau làm khung nhập bị đẩy lên một đoạn và giữ khoảng đệm cũ sau khi tắt bàn phím. Chỉ iOS cần KeyboardAvoidingView. */}
       <KeyboardAvoidingView
         style={styles.body}
-        behavior="padding"
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? headerBarHeight : 0}
       >
         {loading ? (
@@ -834,9 +921,13 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
               onEndReached={() => { void loadOlderMessages(); }}
               onEndReachedThreshold={0.25}
               ListFooterComponent={
-                loadingOlder ? (
-                  <View style={{ paddingVertical: 12, transform: [{ scaleY: -1 }] }}>
-                    <SpinningLoader size="small" color={mc.accent} />
+                // Danh sách đảo ngược: «footer» nằm ở ĐẦU cuộc trò chuyện (tin cũ nhất). Còn tin cũ → nhắc kéo; đang tải → báo đang tải.
+                hasMoreOlder || loadingOlder ? (
+                  <View style={styles.olderRow}>
+                    {loadingOlder ? <SpinningLoader size="small" color={mc.accent} /> : null}
+                    <Text style={styles.olderTxt}>
+                      {loadingOlder ? 'Đang tải tin cũ hơn…' : '↓ Kéo xuống để tải tin cũ hơn'}
+                    </Text>
                   </View>
                 ) : null
               }
@@ -934,13 +1025,17 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
           </View>
         ) : null}
 
+        {typingLabel ? (
+          <Text style={styles.typingTxt} numberOfLines={1}>{typingLabel}</Text>
+        ) : null}
+
         <ChatComposer
           draft={draft}
           sending={sending}
           pendingFiles={pendingFiles}
           emojiOpen={emojiOpen}
           paddingBottom={composerPadBottom}
-          onChangeDraft={setDraft}
+          onChangeDraft={onDraftChange}
           onSelectionChange={(start, end) => setDraftSel({ start, end })}
           placeholder={isGroupChat ? 'Nhắn tin… (@ nhắc tên)' : 'Nhắn tin...'}
           onSend={() => void sendMessage()}
@@ -950,6 +1045,7 @@ export default function ChatDetailScreen({ navigation, route }: Props) {
             setEmojiOpen((v) => !v);
           }}
           onAttach={onAttachPress}
+          onPickImage={() => void pickGallery()}
           onRemoveFile={(i) => setPendingFiles((p) => p.filter((_, idx) => idx !== i))}
           onInputFocus={() => setAttachOpen(false)}
           onVoiceSend={(file) => sendVoiceMessage(file)}

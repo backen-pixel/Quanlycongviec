@@ -16,6 +16,8 @@ function openBubbleChat(threadId: string, title: string) {
     if (isOnBubbleChatRoute(threadId)) return;
     resetToBubbleChat(threadId, title);
     void markMessengerGroupRead(threadId).catch(() => {});
+    // Chat thường không tự xoá «pending» như BubbleChatScreen trước đây → xoá ở đây để UpdateGate không bị giữ mãi.
+    consumeBubbleChatPendingAfterMount();
   };
 
   if (navigationRef.isReady()) {
