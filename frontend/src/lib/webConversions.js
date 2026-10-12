@@ -2,6 +2,8 @@
 
 export const PROVIDERS = [
   { value: 'GOOGLE', label: 'Google Ads' },
+  { value: 'TIKTOK', label: 'TikTok Ads' },
+  { value: 'ZALO', label: 'Zalo Ads' },
   { value: 'CHATGPT', label: 'ChatGPT Ads' },
 ];
 

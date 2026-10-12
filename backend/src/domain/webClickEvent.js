@@ -4,7 +4,7 @@
 // Allowlist only; unknown keys or oversized values are rejected, never stored.
 const KINDS = ['call', 'zalo', 'messenger'];
 const TEXT = { utm_source: 256, utm_medium: 256, utm_campaign: 256, utm_content: 256, utm_term: 256,
-  gclid: 512, fbclid: 512, gbraid: 512, wbraid: 512, campaignid: 64, adgroupid: 64 };
+  gclid: 512, fbclid: 512, gbraid: 512, wbraid: 512, ttclid: 512, campaignid: 64, adgroupid: 64 };
 const SITE_HOSTS = ['vanphuthanh.net', 'www.vanphuthanh.net'];
 const ALIASES = { fb: 'facebook', ig: 'instagram' };
 
@@ -49,7 +49,9 @@ function webClickEvent(body) {
   // Same platform rules as the WordPress bridge, so clicks and form leads group alike.
   let platform = field.utm_source.toLowerCase();
   platform = ALIASES[platform] || platform;
-  if (!platform) platform = (field.gclid || field.gbraid || field.wbraid) ? 'google' : field.fbclid ? 'facebook' : 'direct';
+  // ttclid only decides the platform; it is not stored (no column for it).
+  if (!platform) platform = (field.gclid || field.gbraid || field.wbraid) ? 'google' : field.fbclid ? 'facebook'
+    : field.ttclid ? 'tiktok' : 'direct';
   out.platform = platform.slice(0, 64);
   out.campaign_id = field.campaignid || null;
   out.adset_id = field.adgroupid || null;

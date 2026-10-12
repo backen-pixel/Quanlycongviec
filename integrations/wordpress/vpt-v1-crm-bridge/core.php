@@ -70,6 +70,8 @@ final class VPT_V1_CRM_Core {
         // Fields added after 0.2.2 are noted only when present, so older notes stay identical.
         $fbclid = self::text($data['fbclid'] ?? '', 256);
         if ($fbclid !== '') { $notes .= "\nfbclid: " . $fbclid; }
+        $ttclid = self::text($data['ttclid'] ?? '', 256);
+        if ($ttclid !== '') { $notes .= "\nttclid: " . $ttclid; }
         $referrer = strtolower(self::text($data['vpt_referrer_host'] ?? '', 253));
         if ($referrer !== '' && preg_match('/^[a-z0-9]+(?:[.-][a-z0-9]+)*$/D', $referrer)) {
             $notes .= "\nvpt_referrer_host: " . $referrer;
@@ -90,6 +92,7 @@ final class VPT_V1_CRM_Core {
         if ($platform !== '') { $attribution['platform'] = $platform; }
         elseif ($google_click) { $attribution['platform'] = 'google'; }
         elseif ($fbclid !== '') { $attribution['platform'] = 'facebook'; }
+        elseif ($ttclid !== '') { $attribution['platform'] = 'tiktok'; }
         foreach (array('utm_source','utm_medium','utm_campaign','utm_content','utm_term','gclid','gbraid','wbraid') as $field) {
             if ($tracking[$field] !== '') { $attribution[$field] = $tracking[$field]; }
         }

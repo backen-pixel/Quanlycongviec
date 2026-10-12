@@ -123,7 +123,7 @@ export default function WebConversionPanel() {
           <p className="mt-2 text-xs text-gray-500">
             {report.from} → {report.to}. Hợp lệ = khách đã kéo sang lạnh/ấm/nóng hoặc chuyển deal.
             Lượt bấm tính 1 lần mỗi lượt truy cập, không biết khách là ai.
-            Chi tiêu Facebook chỉ gồm quảng cáo có khách vào web; Google và ChatGPT lấy từ chi tiêu đã nhập.
+            Chi tiêu Facebook chỉ gồm quảng cáo có khách vào web; Google, TikTok, Zalo Ads và ChatGPT lấy từ chi tiêu đã nhập.
           </p>
         </div>
       )}
@@ -177,7 +177,7 @@ export default function WebConversionPanel() {
       </div>
       <div className="mt-3 border-t pt-3">
         <button type="button" onClick={() => setOpenSpend(o => !o)} className="cursor-pointer text-xs font-medium text-sky-700 hover:underline">
-          {openSpend ? '▾' : '▸'} Nhập chi tiêu Google Ads / ChatGPT Ads
+          {openSpend ? '▾' : '▸'} Nhập chi tiêu Google / TikTok / Zalo / ChatGPT Ads
         </button>
         {openSpend && (
           <div className="mt-2 space-y-2 text-xs">
