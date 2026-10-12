@@ -3,7 +3,7 @@
 const { tachUrl } = require('../helpers/parseLandingUrl');
 const FIELDS = ['platform', 'campaign_id', 'adset_id', 'ad_id',
   'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term',
-  'gclid', 'fbclid', 'gbraid', 'wbraid'];
+  'gclid', 'fbclid', 'gbraid', 'wbraid', 'ttclid'];
 
 // An allowlisted receipt; never parse description or infer paid traffic from Page names.
 function externalLeadTracking(body) {
@@ -29,6 +29,7 @@ function externalLeadTracking(body) {
   }
   for (const key of FIELDS) {
     const value = input[key]?.trim() || parsed?.[key];
+    if (key === 'ttclid' && value && value.length > 512) throw new Error('ttclid quá dài');
     if (value) receipt[key] = value;
   }
   if (parsed) receipt.landing_url = parsed.landing_url;

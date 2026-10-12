@@ -29,3 +29,18 @@ test('untrusted scope, raw, timestamps, numeric IDs and unbounded values rejecte
     assert.throws(() => parse({ attribution }));
   }
 });
+
+
+test('TikTok receipt keeps the click ID structured, bounded and separate from raw source', () => {
+  const r = parse({ is_test: true, attribution: {
+    landing_url: 'https://example.test/form?ttclid=click-from-url&utm_source=vpt_test',
+    ttclid: 'explicit-click', utm_medium: 'paid' } });
+  assert.equal(r.is_test, true);
+  assert.deepEqual(r.intake_attribution, { kenh: 'website', platform: 'vpt_test',
+    utm_source: 'vpt_test', utm_medium: 'paid', ttclid: 'explicit-click', landing_url: 'https://example.test/form' });
+  const plain = parse({ attribution: { landing_url: 'https://example.test/?ttclid=click-only' } });
+  assert.equal(plain.intake_attribution.platform, 'tiktok');
+  assert.equal(plain.intake_attribution.ttclid, 'click-only');
+  for (const ttclid of [1, null, 'x'.repeat(513)]) assert.throws(() => parse({ attribution: { ttclid } }));
+  assert.throws(() => parse({ attribution: { landing_url: 'https://example.test/?ttclid=' + 'x'.repeat(513) } }));
+});

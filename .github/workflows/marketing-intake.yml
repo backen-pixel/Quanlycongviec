@@ -3,6 +3,13 @@ on:
   pull_request:
     paths:
       - 'backend/src/domain/externalLeadTracking.js'
+      - 'backend/src/domain/webClickEvent.js'
+      - 'backend/src/helpers/parseLandingUrl.js'
+      - 'backend/src/modules/marketingAutomation/webConversions.js'
+      - 'backend/tests/webConversions*.test.js'
+      - 'backend/tests/webEvents.route.test.js'
+      - 'backend/tests/tiktokAttribution.sql.test.js'
+      - 'database/722_tiktok_attribution_receipt*.sql'
       - 'backend/src/helpers/leadAttribution.js'
       - 'backend/src/helpers/adInsights.js'
       - 'backend/src/helpers/mcpAdsBridge.js'
@@ -38,7 +45,11 @@ jobs:
       - name: Backend contracts, reports and isolated PostgreSQL
         run: |
           docker pull postgres:16-alpine
-          node --test backend/tests/externalLeadTracking.test.js backend/tests/externalLeadTracking.route.test.js backend/tests/leadAttribution.enrichment.test.js backend/tests/partnerMarketing.route.test.js backend/tests/marketingIntake.sql.test.js backend/tests/adAnalytics.correctness.test.js backend/tests/p1QualificationQueue.route.test.js backend/tests/p1QualificationSummary.route.test.js
+          node --test backend/tests/externalLeadTracking.test.js backend/tests/externalLeadTracking.route.test.js backend/tests/leadAttribution.enrichment.test.js backend/tests/partnerMarketing.route.test.js backend/tests/marketingIntake.sql.test.js backend/tests/tiktokAttribution.sql.test.js backend/tests/adAnalytics.correctness.test.js backend/tests/p1QualificationQueue.route.test.js backend/tests/p1QualificationSummary.route.test.js
+      - name: Website paid attribution and click routes (isolated Express dependency)
+        run: |
+          npm install --prefix "$RUNNER_TEMP/vpt-attribution-tests" --ignore-scripts --no-audit --no-fund express@5.2.1
+          NODE_PATH="$RUNNER_TEMP/vpt-attribution-tests/node_modules" node --test backend/tests/webConversions.test.js backend/tests/webConversionsUi.test.js backend/tests/webEvents.route.test.js
       - name: WordPress pure mapping and PHP-to-Node contract
         run: |
           php -n -l integrations/wordpress/vpt-v1-crm-bridge/core.php

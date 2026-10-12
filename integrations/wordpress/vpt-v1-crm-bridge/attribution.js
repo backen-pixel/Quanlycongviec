@@ -7,9 +7,10 @@
   var now = Date.now();
   var query = new URLSearchParams(window.location.search);
   var data = {}, prior = null, hasCampaign = false;
+  function fieldLimit(key) { return key === 'ttclid' ? 512 : 500; }
   campaignKeys.forEach(function (key) {
     var value = query.get(key);
-    if (value) { data[key] = value.replace(/[\x00-\x1f\x7f]/g, '').slice(0,500); hasCampaign = true; }
+    if (value) { data[key] = value.replace(/[\x00-\x1f\x7f]/g, '').slice(0,fieldLimit(key)); hasCampaign = true; }
   });
   try { prior = JSON.parse(sessionStorage.getItem(storageKey) || 'null'); } catch (_) {}
   var referrerHost = '';
@@ -18,7 +19,7 @@
   var newExternal = Boolean(referrerHost && !internal);
   var usePrior = !hasCampaign && !newExternal && prior && prior.expires > now && prior.fields && typeof prior.fields === 'object';
   if (usePrior) {
-    keys.forEach(function (key) { if (typeof prior.fields[key] === 'string') data[key] = prior.fields[key].slice(0,500); });
+    keys.forEach(function (key) { if (typeof prior.fields[key] === 'string') data[key] = prior.fields[key].slice(0,fieldLimit(key)); });
   } else {
     // Store host/path only: never persist referrer queries or search terms.
     data.vpt_referrer_host = newExternal ? referrerHost : '';
@@ -76,6 +77,13 @@
     document.querySelectorAll('form.wpcf7-form').forEach(function (form) {
       var marker = form.querySelector('[name="vpt_form"]');
       if (!marker || marker.value !== 'VPT_V1') return;
+      // Older CF7 form templates predate ttclid. Add this field only to the bridge form;
+      // CF7 includes non-underscore hidden inputs in its posted data. Do not duplicate it.
+      if (!form.querySelector('[name="ttclid"]')) {
+        var clickField = document.createElement('input');
+        clickField.type = 'hidden'; clickField.name = 'ttclid';
+        form.appendChild(clickField);
+      }
       keys.forEach(function (key) { var field = form.querySelector('[name="'+key+'"]'); if (field) field.value = data[key] || ''; });
       form.setAttribute('data-vpt-attribution', campaignKeys.some(function(key) { return Boolean(data[key]); }) ? 'ready' : 'direct');
     });

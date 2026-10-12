@@ -1,3 +1,9 @@
+## 2026-10-12 — TikTok attribution: phân biệt nguồn trả phí và giữ click ID có cấu trúc (draft)
+
+Đang chuẩn bị PR trên `codex/tiktok-attribution-receipt-20261012`, base main0378112a, giữ plugin0.3.3 của PR109. Chặn nhận sai TikTok tự nhiên thành paid; `ttclid` đi từ plugin0.3.4 qua receipt bất biến/click event tới báo cáo và ranh giới first-touch. SQL722 là ứng viên, chưa áp; rollback giữ cột/receipt. Node38/38, WP JS25/25, PHP22/22+lint, PostgreSQL17.5 PGlite migration/replay/ACL/atomic/rollback đạt. Docker16 multi-session chưa chạy local; workflow sẽ kiểm. Không đổi ngân sách/OA/quảng cáo; không merge/deploy/cài WordPress hay tạo khách thật. [Phạm vi, bằng chứng và thứ tự phát hành](VPT_TIKTOK_ATTRIBUTION_RECEIPT_20261012.md).
+
+---
+
 ## 2026-10-12 (2) — Tab Công việc: bỏ việc «chưa xong» giả; đổi nhãn «Chưa xong»; dòng nhóm quản lý «N việc chưa xong»
 
 Backend (`backend/src/routes/workTasks.js`, **CHƯA deploy**): `GET /api/work-tasks/team-project-tasks` bỏ các việc ở bảng `tasks` mà bản `crm_task` cùng tên (cùng dự án, thuộc quy trình SX) đã đóng và không còn bản nào đang mở — `dropTasksClosedOnDeal`, chạy sau khử trùng, chỉ đọc (`unified_tasks_v` + `crm_tasks`), không ghi. Nguyên nhân: chi tiết dự án đọc `crm_task`, tab ưu tiên bản `tasks`; khi `crm_task` đã `completed` mà `tasks` còn `todo` thì việc vẫn «chưa xong» và (nếu có hạn) «quá hạn». Đo HCB · Tủ bếp 12/10: tab 600 việc chưa xong vs chi tiết 516 mở (38 dự án, chỉ 6 khớp); 112 việc mở ở tab nhưng xong ở chi tiết, 40/149 «quá hạn» là giả (gồm nhóm việc giai đoạn đầu của TB-2026-1014/1025/1044 bị script gán hạn hồi tố 06–08/10 lúc 11:16–11:37); ngoài ra tab gộp việc cùng tên (−20) và thiếu 8 việc (TB-2026-1048 5 việc…) — CHƯA xử lý hai nhóm này. Bài học: test giả lần trước (#96) thiếu cột `source_id` nên không bắt được lỗi 500 — test nay kiểm cả tên cột so với cột thật của view.

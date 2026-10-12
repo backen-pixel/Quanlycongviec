@@ -3,16 +3,30 @@ const test = require('node:test'), assert = require('node:assert/strict');
 const http = require('node:http');
 const express = require('express');
 const { buildWebConversions, channelOf } = require('../src/modules/marketingAutomation/webConversions');
-const { createWebConversionsRouter } = require('../src/routes/webConversions');
+// Keep the route under test isolated: importing the production config starts DB health probes.
+const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
+const routeModule = { exports: {} };
+vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../src/routes/webConversions.js'), 'utf8'), {
+  module: routeModule, console, Date, Promise, require(id) {
+    if (id === 'express') return express;
+    if (id === '../config/supabase') return { supabase: null };
+    if (id === '../config/supabaseRouter') return { getActiveTarget: () => 'primary', withPrimaryDatabase: fn => fn() };
+    if (id === '../middleware/auth') return { auth: (_req, _res, next) => next() };
+    if (id === '../helpers/tenantScope') return { isTenantScopeEnforced: req => req.tenantScopeEnforced === true };
+    if (id.startsWith('../modules/marketingAutomation/')) return require('../src/' + id.slice(3));
+    throw Error('Unexpected dependency: ' + id);
+  },
+});
+const { createWebConversionsRouter } = routeModule.exports;
 
 const A = '991dc79d-cbf5-49f9-a364-35227cb47635', B = '11111111-1111-4111-8111-111111111111';
 
 function fakeDb(tables, { fail } = {}) {
   const writes = [];
   return { writes, from(name) {
-    let rows = [...(tables[name] || [])], start = 0, end = Infinity;
+    let rows = [...(tables[name] || [])], start = 0, end = Infinity, fields = null;
     const q = {
-      select() { return q; },
+      select(value) { fields = value; return q; },
       eq(k, v) { rows = rows.filter(r => r[k] === v); return q; },
       not(k) { rows = rows.filter(r => r[k] != null); return q; },
       in(k, vs) { rows = rows.filter(r => vs.includes(r[k])); return q; },
@@ -26,7 +40,7 @@ function fakeDb(tables, { fail } = {}) {
       range(a, b) { start = a; end = b + 1; return q; },
       async upsert(data, opts) { writes.push(['upsert', name, data, opts]); return { error: fail === name ? Error('x') : null }; },
       async insert(data) { writes.push(['insert', name, data]); return { error: fail === name ? Error('x') : null }; },
-      then(resolve) { return Promise.resolve({ data: rows.slice(start, end), error: fail === name ? Error('private') : null }).then(resolve); },
+      then(resolve) { return Promise.resolve({ data: rows.slice(start, end).map(row => fields && fields !== '*' ? Object.fromEntries(fields.split(',').map(key => [key, row[key]])) : row), error: fail === name ? Error('private') : null }).then(resolve); },
     };
     return q;
   } };
@@ -72,7 +86,14 @@ test('channel rules', () => {
   assert.equal(channelOf({ platform: 'chatgpt', utm_medium: 'paid' }), 'chatgpt_ads');
   assert.equal(channelOf({ platform: 'chatgpt', utm_medium: 'organic' }), 'other');
   assert.equal(channelOf({ platform: 'tiktok', utm_medium: 'paid' }), 'tiktok_ads');
-  assert.equal(channelOf({ platform: 'tiktok' }), 'tiktok_ads');
+  assert.equal(channelOf({ platform: 'tiktok' }), 'other');
+  assert.equal(channelOf({ platform: 'tiktok', ttclid: 'click' }), 'tiktok_ads');
+  assert.equal(channelOf({ ttclid: 'click' }), 'tiktok_ads');
+  for (const click of ['gclid', 'gbraid', 'wbraid']) {
+    assert.equal(channelOf({ platform: 'tiktok', ttclid: 'tiktok-click', [click]: 'google-click' }), 'other');
+  }
+  assert.equal(channelOf({ utm_source: 'tiktok', utm_medium: 'paid_social' }), 'tiktok_ads');
+  assert.equal(channelOf({ platform: 'tiktok', utm_medium: 'referral' }), 'other');
   assert.equal(channelOf({ platform: 'tiktok', utm_medium: 'organic' }), 'other');
   assert.equal(channelOf({ platform: 'zalo', utm_medium: 'paid' }), 'zalo_ads');
   assert.equal(channelOf({ platform: 'zalo' }), 'other');
@@ -143,7 +164,7 @@ test('route: spend upsert validates rows and logs every write', async () => {
   assert.equal(ok.status, 200); assert.equal(ok.body.saved, 1);
   const [upsert, log] = db.writes;
   assert.equal(upsert[1], 'ad_spend_daily_manual');
-  assert.deepEqual(upsert[3], { onConflict: 'company_id,provider,campaign_key,ngay' });
+  assert.deepEqual({ ...upsert[3] }, { onConflict: 'company_id,provider,campaign_key,ngay' });
   assert.equal(upsert[2][0].provider, 'GOOGLE'); assert.equal(upsert[2][0].company_id, A); assert.equal(upsert[2][0].nguon, 'csv');
   assert.equal(log[1], 'ad_spend_daily_manual_log'); assert.equal(log[2][0].entered_by, 'u1');
   for (const bad of [[], [{ ...row, provider: 'META' }], [{ ...row, chi_tieu_vnd: -1 }], [{ ...row, chi_tieu_vnd: 1.5 }],
@@ -161,4 +182,29 @@ test('live-site QA traffic (utm_source=vpt_test) is never counted', async () => 
       { id: 'q2', company_id: A, kind: 'call', platform: 'vpt_test', utm_source: 'VPT_TEST', occurred_at: T }] };
   const r = await buildWebConversions({ db: fakeDb(qa), companyId: A, from: '2026-10-06', to: '2026-10-12' });
   assert.equal(r.totals.conversions, 7);
+});
+
+
+test('TikTok report separates paid evidence, untagged organic, QA and distinct lead/click counts', async () => {
+  const lead = (id, extra) => ({ id, lead_id: id, company_id: A, kenh: 'website', platform: 'tiktok', cham_dau_luc: T, ...extra });
+  const event = (id, extra) => ({ id, company_id: A, kind: 'zalo', platform: 'tiktok', occurred_at: T, ...extra });
+  const input = { ...tables,
+    lead_attribution: [lead('paid-id', { ttclid: 'click-1' }), lead('paid-utm', { utm_medium: 'paid' }),
+      lead('organic', { utm_medium: 'organic' }), lead('untagged', {}),
+      lead('qa-source', { utm_source: 'vpt_test', ttclid: 'qa' }), lead('qa-flag', { ttclid: 'qa' }),
+      lead('paid-id', { ttclid: 'click-1' })],
+    crm_leads: ['paid-id', 'paid-utm', 'organic', 'untagged', 'qa-source', 'qa-flag'].map(id =>
+      ({ id, company_id: A, is_test: id === 'qa-flag' })),
+    crm_lead_stage_history: [{ lead_id: 'paid-id', pipeline_type: 'lead', to_canonical_slug: 'hot',
+      changed_by: 'sales', entered_at: '2026-10-12T05:00:00Z' }],
+    web_conversion_events: [event('paid-click', { ttclid: 'click-1' }), event('organic-click', {}),
+      event('qa-click', { utm_source: 'vpt_test', ttclid: 'qa' })],
+    ad_spend_daily_manual: [{ id: 'spend', company_id: A, provider: 'TIKTOK', ngay: '2026-10-12', chi_tieu_vnd: 300000 }],
+  };
+  const r = await buildWebConversions({ db: fakeDb(input), companyId: A, from: '2026-10-06', to: '2026-10-12' });
+  const by = Object.fromEntries(r.channels.map(c => [c.key, c]));
+  assert.deepEqual([by.tiktok_ads.form_leads, by.tiktok_ads.valid_leads, by.tiktok_ads.zalo], [2, 1, 1]);
+  assert.equal(by.tiktok_ads.cost_per_valid_vnd, 300000);
+  assert.deepEqual([by.other.form_leads, by.other.zalo], [2, 1]);
+  assert.equal(r.totals.form_leads, 4); // A form + Zalo click is not two new leads.
 });

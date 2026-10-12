@@ -23,14 +23,18 @@ const MAX_PAGES = 50;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 function channelOf(row) {
-  const platform = String(row.platform || '').toLowerCase();
+  const platform = String(row.platform || row.utm_source || '').toLowerCase();
   const medium = String(row.utm_medium || '').toLowerCase();
-  if (row.gclid || row.gbraid || row.wbraid) return 'google_ads';
+  const googleClick = Boolean(row.gclid || row.gbraid || row.wbraid);
+  // Conflicting provider click IDs cannot identify one paid source. Keep raw evidence unchanged.
+  if (googleClick && row.ttclid) return 'other';
+  if (googleClick) return 'google_ads';
+  if (row.ttclid) return 'tiktok_ads';
   if (platform === 'google') return PAID.includes(medium) ? 'google_ads'
     : medium === 'organic' ? 'seo' : 'other';
   if (platform === 'facebook' || platform === 'instagram') return 'facebook';
-  // A TikTok ad click without UTM still carries ttclid, which the site maps to platform tiktok.
-  if (platform === 'tiktok') return PAID.includes(medium) || medium === '' ? 'tiktok_ads' : 'other';
+  // A platform name alone is not evidence of paid traffic; older untagged visits remain unknown.
+  if (platform === 'tiktok') return PAID.includes(medium) ? 'tiktok_ads' : 'other';
   // Zalo OA chats and zalo.me links are not paid traffic; only tagged Zalo Ads count here.
   if (platform === 'zalo' && PAID.includes(medium)) return 'zalo_ads';
   if (platform === 'chatgpt' && medium === 'paid') return 'chatgpt_ads';
@@ -61,7 +65,7 @@ async function buildWebConversions({ db, companyId, from, to }) {
 
   // Form leads: website first touch in range, this company, not explicit test records.
   const touches = await readAll(() => db.from('lead_attribution')
-    .select('id,lead_id,platform,utm_source,utm_medium,gclid,gbraid,wbraid,ad_id,fb_ad_id,cham_dau_luc')
+    .select('id,lead_id,platform,utm_source,utm_medium,gclid,gbraid,wbraid,ttclid,ad_id,fb_ad_id,cham_dau_luc')
     .eq('company_id', companyId).eq('kenh', 'website').not('lead_id', 'is', null)
     .gte('cham_dau_luc', start).lt('cham_dau_luc', end)
     .order('cham_dau_luc', { ascending: true }).order('id', { ascending: true }));
@@ -84,7 +88,7 @@ async function buildWebConversions({ db, companyId, from, to }) {
   const { reachedByLead } = await loadMilestoneReached(db, leads);
 
   const clicks = await readAll(() => db.from('web_conversion_events')
-    .select('id,kind,platform,utm_source,utm_medium,gclid,gbraid,wbraid,ad_id,occurred_at')
+    .select('id,kind,platform,utm_source,utm_medium,gclid,gbraid,wbraid,ttclid,ad_id,occurred_at')
     .eq('company_id', companyId).gte('occurred_at', start).lt('occurred_at', end)
     .order('occurred_at', { ascending: true }).order('id', { ascending: true }));
 

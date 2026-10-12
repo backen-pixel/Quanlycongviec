@@ -43,13 +43,13 @@ function webClickEvent(body) {
   out.page_url = sitePage(body.page_url);
   out.landing_url = sitePage(body.landing_url);
   out.referrer_host = referrer || null;
-  for (const key of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'fbclid', 'gbraid', 'wbraid']) {
+  for (const key of ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'fbclid', 'gbraid', 'wbraid', 'ttclid']) {
     out[key] = field[key] || null;
   }
   // Same platform rules as the WordPress bridge, so clicks and form leads group alike.
   let platform = field.utm_source.toLowerCase();
   platform = ALIASES[platform] || platform;
-  // ttclid only decides the platform; it is not stored (no column for it).
+  // Preserve explicit UTM source; the structured click ID remains separate paid evidence.
   if (!platform) platform = (field.gclid || field.gbraid || field.wbraid) ? 'google' : field.fbclid ? 'facebook'
     : field.ttclid ? 'tiktok' : 'direct';
   out.platform = platform.slice(0, 64);

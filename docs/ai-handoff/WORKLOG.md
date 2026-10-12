@@ -1,3 +1,9 @@
+## 2026-10-12 — TikTok attribution: phân biệt nguồn trả phí và giữ click ID có cấu trúc (draft)
+
+Đang chuẩn bị PR trên `codex/tiktok-attribution-receipt-20261012`, base main0378112a, giữ plugin0.3.3 của PR109. Chặn nhận sai TikTok tự nhiên thành paid; `ttclid` đi từ plugin0.3.4 qua receipt bất biến/click event tới báo cáo và ranh giới first-touch. SQL722 là ứng viên, chưa áp; rollback giữ cột/receipt. Node38/38, WP JS25/25, PHP22/22+lint, PostgreSQL17.5 PGlite migration/replay/ACL/atomic/rollback đạt. Docker16 multi-session chưa chạy local; workflow sẽ kiểm. Không đổi ngân sách/OA/quảng cáo; không merge/deploy/cài WordPress hay tạo khách thật. [Phạm vi, bằng chứng và thứ tự phát hành](VPT_TIKTOK_ATTRIBUTION_RECEIPT_20261012.md).
+
+---
+
 ## 2026-10-12 (8) — App: bỏ mục «Không hạn» (cũ hơn 7 ngày) khỏi tab Công việc
 
 - Theo yêu cầu: gỡ nút «Xem việc không hạn (cũ hơn 7 ngày)» và toàn bộ luồng nạp mục riêng này ở `sx-mobile/src/screens/WorkScreen.tsx` (state `nd*`, `loadNoDeadline`, nhánh `ListFooterComponent`/`onEndReached`, style `ndBtn*`, tuỳ chọn `keepNd`). Phạm vi bạn chọn: CHỈ mục riêng; việc mới tạo ≤ 7 ngày chưa có hạn vẫn hiện ở danh sách chính (kèm nhãn «Không hạn» ở dòng nhóm).

@@ -69,7 +69,11 @@ class CorePatchTests(unittest.TestCase):
 
     def test_bridge_payload_accepted_by_backend_contract(self):
         for data in [{}, {"utm_source":"google", "utm_medium":"cpc", "campaignid":"23976669573",
-                          "gclid":"synthetic-click", "gbraid":"synthetic-braid"}]:
+                          "gclid":"synthetic-click", "gbraid":"synthetic-braid"},
+                     {"utm_source":"tiktok", "utm_medium":"paid", "ttclid":"synthetic-tiktok"},
+                     {"ttclid":"x" * 512}, {"utm_source":"zalo", "utm_medium":"paid"},
+                     {"utm_source":"tiktok", "utm_medium":"organic"},
+                     {"utm_source":"vpt_test", "ttclid":"synthetic-qa"}]:
             built = call(PATCHED, request(data))["result"]["build"]["payload"]
             js = "const fs=require('fs'); const {externalLeadTracking}=require('./backend/src/domain/externalLeadTracking'); console.log(JSON.stringify(externalLeadTracking(JSON.parse(fs.readFileSync(0,'utf8')))));"
             result = subprocess.run(["node", "-e", js], cwd=ROOT.parents[2], input=json.dumps(built),
@@ -77,6 +81,39 @@ class CorePatchTests(unittest.TestCase):
             received = json.loads(result.stdout)
             self.assertEqual(received["intake_attribution"], built["attribution"])
             self.assertEqual(received["is_test"], built["is_test"])
+
+    def test_tiktok_click_id_is_structured_preserving_raw_source_and_business_fingerprint(self):
+        direct = call(PATCHED, request())["result"]
+        for source, platform in [("", "tiktok"), ("TikTok", "tiktok"), ("vpt_test", "vpt_test"), ("zalo", "zalo")]:
+            with self.subTest(source=source):
+                result = call(PATCHED, request({"utm_source":source, "utm_medium":"paid", "ttclid":"synthetic-tiktok"}))["result"]
+                payload = result["build"]["payload"]
+                self.assertEqual(payload["attribution"]["ttclid"], "synthetic-tiktok")
+                self.assertEqual(payload["attribution"]["platform"], platform)
+                self.assertEqual(payload["attribution"].get("utm_source", ""), source)
+                self.assertIn("\nttclid: synthetic-tiktok", payload["notes"])
+                self.assertEqual(result["fingerprint"], direct["fingerprint"])
+                self.assertEqual(result["build"]["business"], direct["build"]["business"])
+        bounded = call(PATCHED, request({"ttclid":"<b>" + ("x" * 520) + "</b>\u0001"}))["result"]["build"]["payload"]
+        self.assertEqual(bounded["attribution"]["ttclid"], "x" * 512)
+
+    def test_tiktok_and_zalo_without_click_id_do_not_invent_paid_signals(self):
+        for source in ["tiktok", "zalo"]:
+            for medium in ["", "organic", "paid"]:
+                with self.subTest(source=source, medium=medium):
+                    built = call(PATCHED, request({"utm_source":source, "utm_medium":medium}))["result"]["build"]["payload"]
+                    self.assertEqual(built["attribution"]["platform"], source)
+                    self.assertEqual(built["attribution"].get("utm_medium", ""), medium)
+                    self.assertNotIn("ttclid", built["attribution"])
+
+    def test_tiktok_test_mode_remains_synthetic_and_preserves_diagnostic_attribution(self):
+        built = call(PATCHED, request({"your-name":"TEST VPT V1 isolated", "your-phone":"0000000001",
+                      "utm_source":"tiktok", "utm_medium":"paid", "ttclid":"synthetic-qa"},
+                      mode="test", is_admin=True))["result"]["build"]["payload"]
+        self.assertTrue(built["is_test"])
+        self.assertEqual(built["source_name"], "TEST VPT V1 — không tính khách")
+        self.assertEqual(built["attribution"]["ttclid"], "synthetic-qa")
+        self.assertEqual(built["attribution"]["utm_source"], "tiktok")
 
     def test_canonical_chatgpt_paid_changes_only_source(self):
         self.compare_build(request({"utm_source": "chatgpt", "utm_medium": "paid"}), "ChatGPT Ads VPT V1", True)
