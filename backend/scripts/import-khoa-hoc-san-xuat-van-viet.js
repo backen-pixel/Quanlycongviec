@@ -406,7 +406,9 @@ async function main() {
     title: 'Tình huống nghiệp vụ — 16 quyết định',
     instructions: 'Đọc kỹ phần bối cảnh tại nội dung bài học. Mỗi câu hỏi tương ứng với một quyết định nghiệp vụ. Điểm đạt từ 75 trên thang 100.',
     type: 'quiz',
-    questions: { items: QUIZ_TINH_HUONG },
+    // Bối cảnh đi THEO bài tập, không chỉ nằm ở nội dung bài học — vào làm bài
+    // mà không thấy đề thì không có căn cứ nào để trả lời.
+    questions: { prompt: TINH_HUONG_BRIEF, items: QUIZ_TINH_HUONG },
     passing_score: 75,
     max_attempts: 3,
     time_limit_minutes: 20,

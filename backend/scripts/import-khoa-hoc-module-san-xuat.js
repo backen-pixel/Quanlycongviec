@@ -398,7 +398,9 @@ async function main() {
     title: 'Tình huống xử lý phát sinh — 16 quyết định',
     instructions: 'Đọc kỹ bối cảnh ở phần bài học. Mỗi câu là một quyết định bạn phải ra trong tình huống đó. Đạt từ 75 điểm (12/16 câu).',
     type: 'quiz',
-    questions: { items: QUIZ_TINH_HUONG },
+    // Bối cảnh đi THEO bài tập, không chỉ nằm ở nội dung bài học — vào làm bài
+    // mà không thấy đề thì không có căn cứ nào để trả lời.
+    questions: { prompt: TINH_HUONG_BRIEF, items: QUIZ_TINH_HUONG },
     passing_score: 75,
     max_attempts: 3,
     time_limit_minutes: 20,
