@@ -881,3 +881,6 @@ r.get('/ping', apiKeyAuth, (req, res) => {
 });
 
 module.exports = r;
+// Reused in-process by POST /api/external/phone-calls (routes/phoneCalls.js).
+module.exports.handleCreateExternal = handleCreateExternal;
+module.exports.checkRateLimit = checkRateLimit;
