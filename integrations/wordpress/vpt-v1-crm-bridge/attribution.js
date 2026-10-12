@@ -1,6 +1,6 @@
 (function () {
   'use strict';
-  var campaignKeys = ['utm_source','utm_medium','utm_campaign','utm_content','utm_term','gclid','fbclid','gbraid','wbraid','campaignid','adgroupid','keyword','matchtype','device'];
+  var campaignKeys = ['utm_source','utm_medium','utm_campaign','utm_content','utm_term','gclid','fbclid','ttclid','gbraid','wbraid','campaignid','adgroupid','keyword','matchtype','device'];
   var keys = campaignKeys.concat(['vpt_referrer_host','vpt_landing_page']);
   var storageKey = 'vpt_v1_attribution_session';
   var ttl = 30 * 60 * 1000;
@@ -42,7 +42,7 @@
   } else { try { sessionStorage.removeItem(storageKey); } catch (_) {} }
   // Website click conversions (call / Zalo / Messenger) go to the CRM with this visit's source.
   var beaconUrl = 'https://tubep-backend.onrender.com/api/external/web-events';
-  var beaconKeys = ['utm_source','utm_medium','utm_campaign','utm_content','utm_term','gclid','fbclid','gbraid','wbraid','campaignid','adgroupid'];
+  var beaconKeys = ['utm_source','utm_medium','utm_campaign','utm_content','utm_term','gclid','fbclid','ttclid','gbraid','wbraid','campaignid','adgroupid'];
   function clickKind(href) {
     if (/^tel:/i.test(href)) return 'call';
     if (/^https?:\/\/(www\.)?zalo\.me\//i.test(href)) return 'zalo';

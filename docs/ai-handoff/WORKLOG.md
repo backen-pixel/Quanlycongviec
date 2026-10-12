@@ -1,3 +1,20 @@
+## 2026-10-12 (7) — Chuyển đổi website: thêm kênh TikTok Ads và Zalo Ads (plugin 0.3.2)
+
+- Founder duyệt thêm Zalo và TikTok vào chiến dịch đa kênh 13/10–09/11. Tổng ngân sách giữ 130 triệu: TikTok 20 tr, Zalo Ads 10 tr. Hai kênh này chạy từ tuần 2, sau khi Founder tạo tài khoản quảng cáo.
+- `webConversions.js`: thêm `tiktok_ads` và `zalo_ads` vào `CHANNELS`, cùng chi tiêu nhập tay TIKTOK/ZALO. Bảng 719 đã cho phép hai nguồn này nên không cần migration.
+- `channelOf`:
+  - `tiktok` có medium trả phí hoặc không có medium (quảng cáo TikTok luôn kèm ttclid) → `tiktok_ads`.
+  - `zalo` chỉ tính là Zalo Ads khi medium trả phí, vì link zalo.me và tin nhắn OA không phải lượt trả phí.
+- `ttclid` chỉ dùng để nhận ra platform `tiktok`; không có cột lưu nó.
+  - Ở web-events, `webClickEvent` nhận `ttclid` nhưng không ghi ra.
+  - Ở form, plugin ghi `ttclid` vào ghi chú (giống fbclid).
+- Plugin 0.3.2: `attribution.js` thêm `ttclid` vào danh sách tham số ghi và gửi đi. Chưa cài lên WordPress; cài như 0.3.1 rồi xóa cache WP Rocket.
+- Giao diện: ô nhập chi tiêu có thêm TikTok Ads và Zalo Ads.
+- Test: `webConversions`, `webEvents.route`, `webConversionsUi`, `externalLeadTracking` đạt 18/18. Máy không có PHP nên chưa chạy `php -l`; thay đổi PHP chỉ có 3 dòng.
+- Lưu ý đo Zalo: khách tạo từ tin nhắn Zalo OA đi theo nguồn mặc định của OA, không qua bảng này. Báo cáo chi phí Zalo Ads phải ghi rõ rằng tin nhắn OA tự nhiên cũng được đếm vào.
+
+---
+
 ## 2026-10-12 (6) — team-project-tasks: sửa việc bị đếm đôi do quét bổ sung theo dự án (HCB · Tủ bếp thừa 27 việc)
 
 - Triệu chứng sau #104/#105: HCB · Tủ bếp 559 vs chi tiết 539; thừa tập trung ở TB-2026-1037 (14) và 1038 (13). Bản #105 (lọc theo deal gốc) KHÔNG đổi số — tôi đoán sai nguyên nhân (cũng thử giả thuyết «lọc pipeline phân loại»: bác bỏ, 20/20 việc SX của deal gốc đều hiện ở chi tiết).

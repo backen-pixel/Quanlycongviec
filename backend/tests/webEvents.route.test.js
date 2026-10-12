@@ -79,6 +79,9 @@ test('platform rules match the WordPress bridge', () => {
   assert.equal(webClickEvent(base).platform, 'direct');
   assert.equal(webClickEvent({ ...base, gclid: 'g' }).platform, 'google');
   assert.equal(webClickEvent({ ...base, fbclid: 'f' }).platform, 'facebook');
+  const tt = webClickEvent({ ...base, ttclid: 't' });
+  assert.equal(tt.platform, 'tiktok'); assert.equal('ttclid' in tt, false);
+  assert.equal(webClickEvent({ ...base, utm_source: 'tiktok', utm_medium: 'paid' }).platform, 'tiktok');
   assert.equal(webClickEvent({ ...base, utm_source: 'Google', utm_medium: 'organic' }).platform, 'google');
   const fb = webClickEvent({ ...base, utm_source: 'FB', utm_campaign: '120200000000001', utm_content: '120200000000002' });
   assert.deepEqual([fb.platform, fb.campaign_id, fb.ad_id], ['facebook', '120200000000001', '120200000000002']);
