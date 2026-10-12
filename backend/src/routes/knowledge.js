@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { auth } = require('../middleware/auth');
 const { isAdminLike, isSystemAdmin } = require('../helpers/adminRole');
+const { tronDeChoNguoiHoc, doiVeChiSoGoc } = require('../helpers/knowledgeTronDe');
 const { gradeSimulation } = require('../helpers/knowledgeSimulationGrading');
 
 const r = Router();
@@ -723,6 +724,24 @@ async function ensureLessonViewedByUser(userId, lessonId, existingProg) {
 }
 
 /**
+ * Lượt thi hiện tại (1 = lượt đầu). Đếm từ lần bắt học lại gần nhất.
+ *
+ * Dùng chung cho HAI chỗ: lúc phục vụ đề (để tráo) và lúc chấm (để dịch đáp án về chỉ số gốc).
+ * Hai nơi mà tính khác nhau một đơn vị là hoán vị lệch và chấm sai toàn bộ, nên phải một hàm.
+ */
+async function soLuotHienTai(exerciseId, userId) {
+  const moc = await layMocHocLaiGanNhat(exerciseId, userId);
+  let q = supabase
+    .from('knowledge_exercise_submissions')
+    .select('id', { count: 'exact', head: true })
+    .eq('exercise_id', exerciseId)
+    .eq('user_id', userId);
+  if (moc) q = q.gt('submitted_at', moc);
+  const { count } = await q;
+  return (count || 0) + 1;
+}
+
+/**
  * Mốc bắt học lại gần nhất của một người ở một bài tập. Null = chưa từng phải học lại.
  *
  * Bảng `knowledge_exercise_resets` có thể chưa tồn tại (chưa chạy database/716). Khi đó trả
@@ -1428,7 +1447,21 @@ r.get('/exercises/:id', async (req, res) => {
         options,
         ...(image_url ? { image_url } : {}),
       }));
-      payload.questions = { items };
+      /**
+       * Tráo đề theo từng người và từng lượt.
+       *
+       * Số lượt phải tính GIỐNG HỆT chỗ chấm (`soLuotHienTai`) — lệch một đơn vị là hoán vị
+       * khác hẳn, và mọi đáp án bị dịch sai. Đó là lý do cả hai nơi gọi chung một hàm.
+       */
+      payload.questions = {
+        items: tronDeChoNguoiHoc(items, {
+          userId: req.user.userId,
+          exerciseId: req.params.id,
+          luot: await soLuotHienTai(req.params.id, req.user.userId),
+          tronCau: ex.shuffle_questions === true,
+          tronDapAn: ex.shuffle_options === true,
+        }),
+      };
     }
     if (!canManage(req) && ex.type === 'simulation') {
       payload.questions = {
@@ -1487,7 +1520,7 @@ r.patch('/exercises/:id', async (req, res) => {
   try {
     if (!canManage(req)) return res.status(403).json({ error: 'Không có quyền' });
     const update = { updated_at: new Date().toISOString() };
-    ['title', 'instructions', 'type', 'questions', 'passing_score', 'max_attempts', 'time_limit_minutes', 'image_url', 'video_url', 'video_type', 'attachments', 'sort_order'].forEach((f) => {
+    ['title', 'instructions', 'type', 'questions', 'passing_score', 'max_attempts', 'time_limit_minutes', 'image_url', 'video_url', 'video_type', 'attachments', 'sort_order', 'shuffle_questions', 'shuffle_options'].forEach((f) => {
       if (req.body[f] !== undefined) update[f] = req.body[f];
     });
     const { data, error } = await supabase
@@ -1548,38 +1581,41 @@ r.post('/exercises/:id/submit', async (req, res) => {
 
     // Lượt thi đếm TỪ LẦN BẮT HỌC LẠI GẦN NHẤT, không đếm toàn bộ lịch sử — xem
     // database/716 và `batHocLaiSauKhiTruotHetLuot` bên dưới.
-    const mocHocLai = await layMocHocLaiGanNhat(req.params.id, req.user.userId);
-    let qSoLuot = supabase
-      .from('knowledge_exercise_submissions')
-      .select('id', { count: 'exact', head: true })
-      .eq('exercise_id', req.params.id)
-      .eq('user_id', req.user.userId);
-    if (mocHocLai) qSoLuot = qSoLuot.gt('submitted_at', mocHocLai);
-    const { count } = await qSoLuot;
-    const attempt = (count || 0) + 1;
+    const attempt = await soLuotHienTai(req.params.id, req.user.userId);
     if (ex.max_attempts && attempt > ex.max_attempts) {
       return res.status(400).json({ error: `Đã hết lượt làm bài (tối đa ${ex.max_attempts})` });
     }
+
+    /**
+     * Đáp án gửi về là chỉ số trên đề ĐÃ TRÁO. Phải dịch về chỉ số gốc TRƯỚC khi chấm, không
+     * thì người làm đúng bị tính sai. Bài không bật tráo thì hàm trả nguyên, gọi vô điều kiện.
+     */
+    const answersGoc = doiVeChiSoGoc(ex.questions?.items, answers, {
+      userId: req.user.userId,
+      exerciseId: req.params.id,
+      luot: attempt,
+      tronDapAn: ex.shuffle_options === true,
+    });
 
     let score = null;
     let status = 'submitted';
     let quizDetails = null;
     let simRequiredFailed = false;
     if (ex.type === 'quiz') {
-      const graded = gradeQuiz(ex.questions, answers);
+      const graded = gradeQuiz(ex.questions, answersGoc);
       score = graded.score;
       quizDetails = graded.details;
       const pass = score >= (ex.passing_score ?? 70);
       status = pass ? 'passed' : 'failed';
     } else if (ex.type === 'simulation') {
-      const graded = gradeSimulation(ex.questions, answers);
+      const graded = gradeSimulation(ex.questions, answersGoc);
       score = graded.score;
       quizDetails = graded.details;
       simRequiredFailed = graded.requiredFailed;
       status = score >= (ex.passing_score ?? 70) && !graded.requiredFailed ? 'passed' : 'failed';
     } else if (ex.type === 'checklist') {
       const items = ex.questions?.items || [];
-      const done = items.filter((it) => answers?.[it.id]).length;
+      const done = items.filter((it) => answersGoc?.[it.id]).length;
       score = items.length ? Math.round((done / items.length) * 100) : 100;
       status = score >= (ex.passing_score ?? 70) ? 'passed' : 'failed';
     }
