@@ -504,6 +504,9 @@ async function lookupUserNames(ids) {
   return out;
 }
 
+/** Id gốc ở bảng `crm_tasks`; thiếu `source_id` thì lấy từ `unified_id` («crm_task:<uuid>») — không bao giờ gửi «undefined» xuống DB. */
+const crmTaskIdOf = (t) => String(t.source_id || String(t.unified_id || '').replace(/^crm_task:/, ''));
+
 /**
  * Chỉ giữ việc thuộc PHẠM VI SẢN XUẤT — cùng quy tắc với trang chi tiết dự án (web + app), để việc đếm ở tab Công việc
  * mở ra được ở chi tiết dự án:
@@ -517,9 +520,7 @@ async function lookupUserNames(ids) {
 async function restrictToProductionScope(rows, companyId) {
   if (!rows.length) return rows;
   const projectIds = [...new Set(rows.map((t) => String(t.project_id)))];
-  // `source_id` là id gốc của `crm_tasks`; thiếu thì lấy từ `unified_id` («crm_task:<uuid>») — không bao giờ gửi «undefined» xuống DB.
-  const crmIdOf = (t) => String(t.source_id || String(t.unified_id || '').replace(/^crm_task:/, ''));
-  const crmIds = rows.filter((t) => t.source === 'crm_task').map(crmIdOf).filter(Boolean);
+  const crmIds = rows.filter((t) => t.source === 'crm_task').map(crmTaskIdOf).filter(Boolean);
   const [wonIds, stageMap, projects, crmTasks] = await Promise.all([
     getWonDealProjectIds(companyId || null),
     getWorkshopStageMap(),
@@ -552,7 +553,141 @@ async function restrictToProductionScope(rows, companyId) {
       .map((c) => String(c.id)),
   );
   return rows.filter((t) => inScope.has(String(t.project_id))
-    && (t.source !== 'crm_task' || sxCrm.has(crmIdOf(t))));
+    && (t.source !== 'crm_task' || sxCrm.has(crmTaskIdOf(t))));
+}
+
+/**
+ * Các deal mà chi tiết dự án lấy việc `crm_task` từ đó, theo từng dự án: deal GỐC (cùng quy tắc `pickBootstrapDeal` của
+ * `GET /production/projects/:id/task-bootstrap`: deal cũ nhất không có deal cha) + deal con trực tiếp + lead fulfillment của
+ * các đơn thuộc deal gốc (`appendFulfillmentChildTasksForMasterDeal` gộp việc của chúng vào deal gốc).
+ *
+ * Một dự án có thể gắn nhiều deal (đơn bổ sung, deal nhân bản) nhưng chi tiết chỉ hiện việc của deal gốc — nên danh sách
+ * team không được đếm `crm_task` của deal khác (HCB: TB-2026-1037 / 1038 thừa 27 việc khi bỏ gộp theo tên).
+ * Trả `Map<projectId, Set<leadId>>`; dự án không có lead nào thì không có mục (giữ nguyên mọi việc).
+ */
+async function loadDetailLeadsByProject(projectIds) {
+  const leads = await fetchAllByIdsParallel({
+    table: 'crm_leads',
+    columns: 'id, type, parent_lead_id, created_at, project_id',
+    key: 'project_id',
+    ids: projectIds,
+    idChunk: 200,
+  });
+  const byProject = new Map();
+  for (const l of leads) {
+    const pid = String(l.project_id);
+    if (!byProject.has(pid)) byProject.set(pid, []);
+    byProject.get(pid).push(l);
+  }
+  const primaryOf = new Map();
+  for (const [pid, list] of byProject) {
+    const typed = list.filter((d) => String(d.type || '') === 'deal');
+    const pool = typed.length ? typed : list;
+    const roots = pool.filter((d) => d.parent_lead_id == null || String(d.parent_lead_id).trim() === '');
+    const preferred = roots.length ? roots : pool;
+    const first = [...preferred].sort((a, b) => {
+      const ca = String(a.created_at || '');
+      const cb = String(b.created_at || '');
+      if (ca !== cb) return ca.localeCompare(cb);
+      return String(a.id || '').localeCompare(String(b.id || ''));
+    })[0];
+    if (first) primaryOf.set(pid, String(first.id));
+  }
+  const orders = await fetchAllByIdsParallel({
+    table: 'orders',
+    columns: 'lead_id, fulfillment_lead_id',
+    key: 'lead_id',
+    ids: [...primaryOf.values()],
+    idChunk: 200,
+  });
+  const out = new Map();
+  for (const [pid, primary] of primaryOf) {
+    const allowed = new Set([primary]);
+    for (const l of byProject.get(pid) || []) {
+      if (String(l.parent_lead_id || '') === primary) allowed.add(String(l.id));
+    }
+    for (const o of orders) {
+      if (String(o.lead_id) === primary && o.fulfillment_lead_id) allowed.add(String(o.fulfillment_lead_id));
+    }
+    out.set(pid, allowed);
+  }
+  return out;
+}
+
+/** Việc `crm_task` có thuộc các deal mà chi tiết dự án hiện không (xem `loadDetailLeadsByProject`)? Việc ở bảng `tasks` luôn giữ. */
+function crmRowInDetailLeads(t, detailLeads) {
+  if (t.source !== 'crm_task') return true;
+  const allowed = detailLeads.get(String(t.project_id));
+  return !allowed || allowed.has(String(t.lead_id));
+}
+
+/** Trạng thái đã đóng — cùng bộ với `applyOpenOnlyFilter`. */
+const CLOSED_TASK_STATUSES = new Set(['done', 'completed', 'cancelled']);
+
+/**
+ * Bỏ khỏi tab Công việc các việc ở bảng `tasks` mà bản `crm_task` CÙNG TÊN trong cùng dự án đã xong.
+ *
+ * Mỗi việc sản xuất có hai bản: `tasks` (bảng việc xưởng) và `crm_task` (việc của deal). Chi tiết dự án đọc bản `crm_task`,
+ * còn danh sách này ưu tiên bản `tasks` (khử trùng). Khi bản `crm_task` đã hoàn thành mà bản `tasks` còn «todo» thì việc vẫn
+ * hiện là chưa xong — và nếu có hạn thì bị tính quá hạn — dù chi tiết dự án đã đánh dấu xong. Đo ở HCB · Tủ bếp: 112 / 600
+ * việc «chưa xong» và 40 / 149 việc «quá hạn» thuộc loại này.
+ *
+ * Chỉ bỏ khi mọi bản `crm_task` sản xuất cùng tên đều đã đóng (còn một bản đang mở thì giữ — trường hợp nhiều việc cùng tên
+ * ở các cột khác nhau). Việc không có bản `crm_task` tương ứng được giữ nguyên — TRỪ việc mẫu bị bỏ quên (không người nhận,
+ * không có `crm_task` sản xuất cùng tên, dự án đã có việc sản xuất ở deal): chi tiết dự án không hiện chúng nên tab cũng bỏ.
+ * KHÔNG ghi dữ liệu.
+ */
+async function dropTasksClosedOnDeal(rows, detailLeads) {
+  const taskRows = rows.filter((t) => t.source === 'task');
+  if (!taskRows.length) return rows;
+  const projectIds = [...new Set(taskRows.map((t) => String(t.project_id)))];
+  const crmRowsAll = await fetchAllByIdsParallel({
+    table: 'unified_tasks_v',
+    columns: 'unified_id, source_id, project_id, lead_id, title, status',
+    key: 'project_id',
+    ids: projectIds,
+    // `in` trên view nhanh với khoảng ≤ ~200 id (xem TEAM_TASKS_IN_MAX) → chia khúc nhỏ.
+    idChunk: 100,
+    tune: (q) => q.eq('source', 'crm_task').order('unified_id', { ascending: true }),
+  });
+  // Chỉ xét bản crm ở các deal mà chi tiết dự án hiện (bản ở deal khác không quyết định việc đã xong hay chưa).
+  const crmRows = detailLeads ? crmRowsAll.filter((c) => crmRowInDetailLeads({ ...c, source: 'crm_task' }, detailLeads)) : crmRowsAll;
+  if (!crmRows.length) return rows;
+  const crmDetail = await fetchAllByIdsParallel({
+    table: 'crm_tasks',
+    columns: 'id, stage_slug, production_pipeline_stage_id',
+    key: 'id',
+    ids: crmRows.map(crmTaskIdOf),
+  });
+  const sxCrm = new Set(
+    crmDetail
+      .filter((c) => String(c.stage_slug || '').startsWith('sx_') || c.production_pipeline_stage_id)
+      .map((c) => String(c.id)),
+  );
+  const keyOf = (t) => `${t.project_id}|${String(t.title || '').trim().toLowerCase()}`;
+  const state = new Map();
+  // Dự án đã có việc SẢN XUẤT ở deal mà chi tiết hiện (bất kể trạng thái) — chi tiết dự án lấy việc từ đó.
+  const projectsWithSxCrm = new Set();
+  for (const c of crmRows) {
+    if (!sxCrm.has(crmTaskIdOf(c))) continue;
+    projectsWithSxCrm.add(String(c.project_id));
+    const k = keyOf(c);
+    const s = state.get(k) || { open: 0, closed: 0 };
+    if (CLOSED_TASK_STATUSES.has(String(c.status || '').toLowerCase())) s.closed += 1;
+    else s.open += 1;
+    state.set(k, s);
+  }
+  return rows.filter((t) => {
+    if (t.source !== 'task') return true;
+    const s = state.get(keyOf(t));
+    // 1. Bản `crm_task` cùng tên đã đóng hết → việc đã xong ở chi tiết dự án.
+    if (s && s.closed > 0 && s.open === 0) return false;
+    // 2. Việc mẫu bị bỏ quên: CHƯA AI NHẬN, không có `crm_task` sản xuất nào cùng tên, mà dự án đã có việc sản xuất ở deal
+    //    (chi tiết chỉ hiện các việc đó). Vd. TB-2026-029: 14 việc mẫu tạo 13/04, không người nhận, hạn 14–15/04 đã quá hạn.
+    //    Việc đã giao cho một người, hoặc dự án chưa có việc SX ở deal (xưởng theo dõi bằng bảng `tasks`) thì giữ.
+    if (!s && !t.assignee_id && projectsWithSxCrm.has(String(t.project_id))) return false;
+    return true;
+  });
 }
 
 r.get('/team-project-tasks', async (req, res) => {
@@ -591,7 +726,8 @@ r.get('/team-project-tasks', async (req, res) => {
     // Toàn bộ phần quét + gom nhóm gói trong `computeTeamTasks` để CACHE ngắn hạn: các trang 2, 3… (cuộn tiếp) và các lần
     // mở lại cùng bộ lọc không phải quét lại hàng nghìn dòng (HCB «Không hạn» ~5.500 việc: ~3,3s/trang khi quét tuần tự).
     const computeTeamTasks = async () => {
-      const applyScanFilters = (qy) => {
+      // `skipCompany`: bỏ lọc `company_id` của view — dùng cho việc `crm_task` của deal thuộc CÔNG TY KHÁC (xem `loadCrossCompanyCrmRows`).
+      const applyScanFilters = (qy, skipCompany = false) => {
         qy = qy.in('task_kind', TEAM_PROJECT_TASK_KINDS).not('project_id', 'is', null);
         if (noDeadlineMode) {
           qy = qy.is('deadline', null).lt('created_at', createdSince).order('created_at', { ascending: false });
@@ -608,11 +744,38 @@ r.get('/team-project-tasks', async (req, res) => {
         }
         qy = qy.order('unified_id', { ascending: true });
         qy = applyOpenOnlyFilter(qy);
-        if (effectiveCompany) qy = qy.eq('company_id', effectiveCompany);
+        if (effectiveCompany && !skipCompany) qy = qy.eq('company_id', effectiveCompany);
         if (assignee_id) qy = qy.eq('assignee_id', assignee_id);
         const needle = String(searchQ || '').trim();
         if (needle) qy = qy.ilike('title', `%${needle}%`);
         return qy;
+      };
+
+      // Việc `crm_task` của dự án thuộc công ty đang xem NHƯNG deal đặt hàng thuộc công ty khác (xưởng sản xuất hộ công ty
+      // khác, vd. HCB làm cho VPT / Phúc Đạt). View gán `company_id` của `crm_task` theo công ty của DEAL nên bị lọc
+      // `company_id = công ty` loại mất — trong khi chi tiết dự án vẫn hiện các việc này. Lấy bổ sung theo dự án của công ty,
+      // cùng bộ lọc hạn / người / từ khóa, chỉ gồm việc `crm_task` (việc ở bảng `tasks` đã có company_id = công ty dự án).
+      const loadCrossCompanyCrmRows = async (typedSetIn) => {
+        if (!effectiveCompany) return [];
+        const leads = await fetchAllPages(() => supabase
+          .from('crm_leads')
+          .select('project_id, projects!inner(company_id)')
+          .eq('projects.company_id', effectiveCompany)
+          .or(`company_id.is.null,company_id.neq.${effectiveCompany}`)
+          .not('project_id', 'is', null)
+          .order('project_id', { ascending: true }));
+        let projectIds = [...new Set((leads || []).map((l) => String(l.project_id)))];
+        if (typedSetIn) projectIds = projectIds.filter((id) => typedSetIn.has(id));
+        if (!projectIds.length) return [];
+        return fetchAllByIdsParallel({
+          table: 'unified_tasks_v',
+          columns: COLS,
+          key: 'project_id',
+          ids: projectIds,
+          // `in` trên view nhanh với khoảng ≤ ~200 id (xem TEAM_TASKS_IN_MAX) → chia khúc nhỏ.
+          idChunk: 100,
+          tune: (q) => applyScanFilters(q.eq('source', 'crm_task'), true),
+        });
       };
 
       // Lọc theo PHÂN LOẠI xưởng (`workshop_type_id`: mã loại hoặc `none`) — view không có cột này nên lấy tập dự án trước rồi
@@ -748,10 +911,25 @@ r.get('/team-project-tasks', async (req, res) => {
       }
       const { scanTotal, truncated } = scan;
       // Lọc lại theo tập dự án của loại (no-op với `in`; loại bỏ việc của dự án công ty khác khi dùng `not in`).
-      const typedRows = typedSet ? scan.rows.filter((t) => typedSet.has(String(t.project_id))) : scan.rows;
+      // Cộng thêm việc `crm_task` của dự án công ty này nhưng deal thuộc công ty khác (không trùng dòng đã quét vì company_id khác).
+      // Phần bổ sung: lỗi truy vấn thì bỏ qua (kết quả như trước đây) và ghi log, KHÔNG làm hỏng cả endpoint.
+      const crossRows = await loadCrossCompanyCrmRows(typedSet).catch((err) => {
+        console.warn('[work-tasks] team-project-tasks: bỏ qua việc crm của deal công ty khác —', err?.message || err);
+        return [];
+      });
+      // Quét bổ sung theo DỰ ÁN nên cũng trả lại các dòng đã có ở lần quét chính (dự án nhiều deal, một deal thuộc công ty
+      // khác: việc của deal cùng công ty bị lấy hai lần → mỗi việc hiện đôi, HCB · Tủ bếp thừa 27 việc ở TB-2026-1037/1038)
+      // → chỉ thêm dòng CHƯA có theo `unified_id`.
+      const knownIds = new Set(scan.rows.map((t) => t.unified_id));
+      const crossNew = crossRows.filter((t) => !knownIds.has(t.unified_id));
+      const scanRows = crossNew.length ? scan.rows.concat(crossNew) : scan.rows;
+      const typedRows = typedSet ? scanRows.filter((t) => typedSet.has(String(t.project_id))) : scanRows;
       // Chỉ giữ việc thuộc phạm vi sản xuất (xem `restrictToProductionScope`) — làm TRƯỚC khi lấy bản «song sinh» và khử
       // trùng để việc bán hàng / dự án ngoài phạm vi không lọt vào số đếm.
-      const scanned = await restrictToProductionScope(typedRows, effectiveCompany);
+      const scopedRows = await restrictToProductionScope(typedRows, effectiveCompany);
+      // `crm_task` chỉ tính ở các deal mà chi tiết dự án hiện (deal gốc + con) — dự án nhiều deal không đếm thừa.
+      const detailLeads = await loadDetailLeadsByProject([...new Set(scopedRows.map((t) => String(t.project_id)))]);
+      const scanned = scopedRows.filter((t) => crmRowInDetailLeads(t, detailLeads));
 
       // Chip hạn xử lý: khử trùng phải thấy cả bản SX «song sinh» nằm NGOÀI khoảng. Nếu chỉ quét trong khoảng thì bản CRM
       // (hạn hôm nay) sống sót dù bản SX của chính việc đó đã quá hạn → việc quá hạn lọt vào «Hôm nay» / «Ngày mai».
@@ -782,14 +960,30 @@ r.get('/team-project-tasks', async (req, res) => {
       }
 
       // Khử trùng: ưu tiên bản ở bảng `tasks` (source != crm_task). `scanned` đã chỉ gồm dự án của loại được chọn (nếu có lọc).
+      // Một việc sản xuất có thể xuất hiện ở NHIỀU cột quy trình (cùng tên, mỗi cột một `crm_task`; chi tiết dự án liệt kê đủ
+      // từng cái) trong khi bảng `tasks` chỉ có MỘT dòng cho tên đó. Nên khóa «dự án + tên» chỉ gom bản `tasks` với MỘT bản
+      // `crm_task` (cặp song sinh); các `crm_task` còn lại là việc thật ở cột khác → giữ riêng, để số việc khớp chi tiết dự án
+      // (trước đây gộp hết thành một: HCB · Tủ bếp mất 20 việc, vd. «Sơn» ×3 ở TB-2026-1013).
       const keyOf = (t) => `${t.project_id}|${String(t.title || '').trim().toLowerCase()}`;
-      const chosen = new Map();
+      const deadlineMsOrMax = (t) => (t.deadline ? new Date(t.deadline).getTime() : Number.MAX_SAFE_INTEGER);
+      const groupsByKey = new Map();
       for (const t of scanned) {
         const k = keyOf(t);
-        const cur = chosen.get(k);
-        if (!cur || (cur.source === 'crm_task' && t.source !== 'crm_task')) chosen.set(k, t);
+        let g = groupsByKey.get(k);
+        if (!g) { g = { task: null, crm: [] }; groupsByKey.set(k, g); }
+        if (t.source === 'crm_task') g.crm.push(t);
+        else if (!g.task) g.task = t; // nhiều dòng `tasks` cùng tên vẫn gom thành một như trước
       }
-      let rows = [...chosen.values()];
+      const chosenRows = [];
+      for (const g of groupsByKey.values()) {
+        if (g.task) chosenRows.push(g.task);
+        // Có bản `tasks` → nó đại diện cho MỘT bản crm (bản hạn sớm nhất); phần còn lại giữ nguyên.
+        const crmSorted = g.crm.slice().sort((a, b) => deadlineMsOrMax(a) - deadlineMsOrMax(b)
+          || String(a.unified_id).localeCompare(String(b.unified_id)));
+        chosenRows.push(...(g.task ? crmSorted.slice(1) : crmSorted));
+      }
+      // Bỏ bản `tasks` còn «todo» mà bản `crm_task` cùng tên đã xong (chi tiết dự án coi là xong) — xem `dropTasksClosedOnDeal`.
+      let rows = await dropTasksClosedOnDeal(chosenRows, detailLeads);
       // Sau khi khử trùng mới áp khoảng hạn: chỉ giữ bản được chọn mà hạn của chính nó nằm trong khoảng.
       if (dueRange) {
         const fromMs = new Date(dueRange.from).getTime();

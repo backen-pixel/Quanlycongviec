@@ -1,7 +1,11 @@
 'use strict';
 
 // Google Ads offline click conversions for VPT, computed at request time (no table of its own):
-//  - CALL: a real call recording (>= 30 s, not outbound) matched to a website "call" click with a gclid.
+//  - CALL: a call recording (any length, not explicitly outbound) matched to a website "call" click with
+//    a gclid. Call time = call_started_at, else the time in the recorder file name (Samsung
+//    "<number>_YYMMDD_HHMMSS", Vietnam time); a recording with neither is skipped (the app can upload
+//    days after the call, so the upload time is never used). Duplicate uploads (same company +
+//    file_name + file_size) count once.
 //  - VALID_LEAD: a lead that reached the stage milestone (cold/warm/hot or open deal stage), with the
 //    gclid of its website form, else the gclid of the call click matched to one of its recordings.
 //    Website form leads from before lead_attribution existed (WordPress "VPT_V1" plugin) keep their
@@ -9,12 +13,12 @@
 //    lead_attribution gclid, with the "VPT_V1 | <ISO>" submit time as click time.
 // Only gclid is exported; gbraid/wbraid are counted in diagnostics. QA traffic is never exported.
 const { loadMilestoneReached } = require('./stageMilestone');
+const { parseRecordingFileTime } = require('../../helpers/callRecordingMeta');
 
 const CONVERSION_NAMES = Object.freeze({
   CALL: 'VPT CRM - Cuoc goi that',
   VALID_LEAD: 'VPT CRM - Khach hop le',
 });
-const MIN_CALL_SEC = 30;
 const CLICK_BEFORE_MS = 10 * 60000;
 const CLICK_AFTER_MS = 60000;
 const LOOKBACK_MS = 30 * 86400000; // earlier clicks/calls may still produce a conversion inside the window
@@ -48,14 +52,39 @@ function inboundLike(direction) {
   return !d || d === 'unknown' || d === 'in' || d === 'inbound' || d === 'incoming';
 }
 
-/** Call start: call_started_at, else upload time minus duration. */
-function callTimeMs(rec) {
+/**
+ * Call start: call_started_at, else the time in the recorder file name. Null when neither is known:
+ * the upload time is not used (the app may upload days after the call).
+ */
+function callTimeMs(rec, nowMs = Date.now()) {
   const started = Date.parse(rec.call_started_at);
-  if (rec.call_started_at && Number.isFinite(started)) return { ms: started, estimated: false };
-  const created = Date.parse(rec.created_at);
-  const dur = Number(rec.duration_sec);
-  if (!Number.isFinite(created) || !Number.isFinite(dur)) return null;
-  return { ms: created - Math.round(dur * 1000), estimated: true };
+  if (rec.call_started_at && Number.isFinite(started)) return { ms: started, source: 'call_started_at' };
+  const fromName = parseRecordingFileTime(rec.file_name, { nowMs });
+  if (fromName) return { ms: fromName.getTime(), source: 'file_name' };
+  return null;
+}
+
+/**
+ * Same company + file_name + file_size uploaded more than once: keep the earliest row (input is in
+ * created_at order), filling its empty fields from the copies. Rows without a name or size are kept.
+ */
+function dedupeRecordings(rows) {
+  const out = [];
+  const byKey = new Map();
+  let merged = 0;
+  for (const row of rows) {
+    const name = text(row.file_name);
+    const size = Number(row.file_size);
+    if (!name || !(size > 0)) { out.push(row); continue; }
+    const key = `${row.company_id || ''}|${name}|${size}`;
+    const kept = byKey.get(key);
+    if (!kept) { const copy = { ...row }; byKey.set(key, copy); out.push(copy); continue; }
+    merged++;
+    for (const f of ['lead_id', 'call_started_at', 'direction', 'duration_sec']) {
+      if (kept[f] == null || kept[f] === '') kept[f] = row[f];
+    }
+  }
+  return { rows: out, merged };
 }
 
 /** "yyyy-MM-dd HH:mm:ss" in Vietnam time (UTC+7, no DST). */
@@ -119,7 +148,8 @@ async function buildGoogleOfflineConversions({ db, companyId, fromMs, toMs }) {
   const loadFrom = new Date(fromMs - LOOKBACK_MS).toISOString();
   const inWindow = ms => ms >= fromMs && ms <= toMs;
   const d = {
-    recordings_considered: 0, recordings_estimated_time: 0, recordings_skipped_outbound: 0,
+    recordings_considered: 0, recordings_time_from_file_name: 0, recordings_no_call_time: 0,
+    recordings_duplicates_merged: 0, recordings_skipped_outbound: 0,
     recordings_matched: 0, recordings_without_click: 0,
     call_clicks: 0, call_clicks_with_gclid: 0, call_clicks_braid_only: 0, call_clicks_no_click_id: 0,
     call_clicks_unmatched: 0, test_excluded: 0, invalid_gclid: 0,
@@ -152,20 +182,26 @@ async function buildGoogleOfflineConversions({ db, companyId, fromMs, toMs }) {
     clicks.push({ id: row.id, ms, gclid, campaign_id: row.campaign_id || null, counted });
   }
 
-  // 2. Call recordings of the company (lookback + window), long enough and not outbound.
-  const recRows = await readAll(() => db.from('voice_recordings')
-    .select('id,lead_id,duration_sec,direction,call_started_at,created_at')
-    .eq('company_id', companyId).gte('duration_sec', MIN_CALL_SEC).gte('created_at', loadFrom)
+  // 2. Call recordings of the company uploaded since the lookback start (an upload is never before
+  //    its call), deduplicated, with a known call time and not outbound. Duration is not a filter.
+  const recRaw = await readAll(() => db.from('voice_recordings')
+    .select('id,company_id,lead_id,file_name,file_size,duration_sec,direction,call_started_at,created_at')
+    .eq('company_id', companyId).gte('created_at', loadFrom)
     .order('created_at', { ascending: true }).order('id', { ascending: true }));
+  const { rows: recRows, merged } = dedupeRecordings(recRaw);
+  d.recordings_duplicates_merged = merged;
+  const nowMs = Date.now();
   const recordings = [];
   for (const row of recRows) {
-    if (!(Number(row.duration_sec) >= MIN_CALL_SEC)) continue;
-    const time = callTimeMs(row);
-    if (!time) continue;
+    const time = callTimeMs(row, nowMs);
+    if (!time) {
+      if (inWindow(Date.parse(row.created_at))) d.recordings_no_call_time++; // counted by upload time
+      continue;
+    }
+    if (time.ms < fromMs - LOOKBACK_MS || time.ms > toMs) continue;
     const counted = inWindow(time.ms);
     if (!inboundLike(row.direction)) { if (counted) d.recordings_skipped_outbound++; continue; }
-    if (time.ms < fromMs - LOOKBACK_MS || time.ms > toMs) continue;
-    if (counted) { d.recordings_considered++; if (time.estimated) d.recordings_estimated_time++; }
+    if (counted) { d.recordings_considered++; if (time.source === 'file_name') d.recordings_time_from_file_name++; }
     recordings.push({ id: row.id, lead_id: row.lead_id || null, t: time.ms, counted });
   }
   const matches = matchCallsToClicks(recordings, clicks);
@@ -295,12 +331,16 @@ async function buildGoogleOfflineConversions({ db, companyId, fromMs, toMs }) {
 
 const CSV_HEADER = 'Google Click ID,Conversion Name,Conversion Time,Conversion Value,Conversion Currency';
 
-/** Google Ads click-conversion import file. Value left blank: the conversion action's default value applies. */
+/**
+ * Google Ads click-conversion import file. The header is the first line: Google Data Manager reads the
+ * first line as column names, so the time zone travels inside each time value instead of the legacy
+ * "Parameters:TimeZone=" line. Value left blank: the conversion action's default value applies.
+ */
 function toGoogleCsv(rows) {
-  const lines = ['Parameters:TimeZone=Asia/Ho_Chi_Minh', CSV_HEADER];
+  const lines = [CSV_HEADER];
   for (const row of rows) {
     if (!GCLID.test(row.gclid)) continue; // defensive: never write anything but a plain click id
-    lines.push([row.gclid, row.conversion_name, formatVietnamTime(row.conversion_ms), '', 'VND'].join(','));
+    lines.push([row.gclid, row.conversion_name, `${formatVietnamTime(row.conversion_ms)}+07:00`, '', 'VND'].join(','));
   }
   return `${lines.join('\r\n')}\r\n`;
 }
@@ -314,4 +354,4 @@ function previewRow(row) {
 
 module.exports = { CONVERSION_NAMES, DEFAULT_DAYS, CSV_HEADER, buildGoogleOfflineConversions,
   matchCallsToClicks, toGoogleCsv, previewRow, formatVietnamTime, maskGclid, callTimeMs, inboundLike,
-  parseVptV1Description };
+  parseVptV1Description, dedupeRecordings };

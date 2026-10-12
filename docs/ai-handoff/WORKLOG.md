@@ -1,3 +1,76 @@
+## 2026-10-12 (7) — team-project-tasks: bỏ việc mẫu bị bỏ quên (TB-2026-029) khỏi tab Công việc
+
+- Bảng `tasks` = việc xưởng theo dự án (sinh từ bộ mẫu, `status` todo/in_progress/done, `due_date`, `assignee_id`, `production_stage_id`, `metadata.workshop_area`), tách với `crm_tasks` (việc của deal). Chi tiết dự án có deal chỉ đọc `crm_tasks`; `tasks` chỉ hiện ở chi tiết khi dự án KHÔNG có deal.
+- TB-2026-029 (Phúc Đạt): 33 việc ở `tasks` (19 xong / 10 pending / 4 todo), tạo 13/04, cập nhật hàng loạt 11/10, không ai nhận, không `workshop_area`; 14 việc chưa xong có tên không tồn tại ở deal (chỉ 3/33 trùng việc SX của deal); 8 việc có hạn 14–15/04 → 8 «quá hạn» ở tab dù chi tiết dự án không hiện.
+- `dropTasksClosedOnDeal` thêm quy tắc 2: bỏ dòng `source='task'` khi CHƯA AI NHẬN + không có `crm_task` SX cùng tên + dự án đã có việc SX ở deal chi tiết hiện (`projectsWithSxCrm`). Việc đã giao người hoặc dự án chưa có việc SX ở deal (xưởng theo dõi bằng `tasks`) vẫn giữ. Quyết định theo yêu cầu «bỏ các dự án kiểu này khỏi tab»; CHƯA xác nhận với quản lý xưởng việc mẫu này có được dùng thật không.
+- Đo trước khi đẩy (3 xưởng, dữ liệu thật): chỉ TB-2026-029 bị ảnh hưởng — 8 việc (cả 8 quá hạn); Metalla / HCB không việc nào; 0 việc đã giao người bị loại; 0 dự án chưa có việc SX ở deal bị loại. Kỳ vọng Phúc Đạt 187 → 179, quá hạn 50 → 42.
+- Test giả có kiểm tên cột thật: 6 ca (giữ/bỏ) đạt.
+## 2026-10-12 (7) — Chuyển đổi website: thêm kênh TikTok Ads và Zalo Ads (plugin 0.3.2)
+
+- Founder duyệt thêm Zalo và TikTok vào chiến dịch đa kênh 13/10–09/11. Tổng ngân sách giữ 130 triệu: TikTok 20 tr, Zalo Ads 10 tr. Hai kênh này chạy từ tuần 2, sau khi Founder tạo tài khoản quảng cáo.
+- `webConversions.js`: thêm `tiktok_ads` và `zalo_ads` vào `CHANNELS`, cùng chi tiêu nhập tay TIKTOK/ZALO. Bảng 719 đã cho phép hai nguồn này nên không cần migration.
+- `channelOf`:
+  - `tiktok` có medium trả phí hoặc không có medium (quảng cáo TikTok luôn kèm ttclid) → `tiktok_ads`.
+  - `zalo` chỉ tính là Zalo Ads khi medium trả phí, vì link zalo.me và tin nhắn OA không phải lượt trả phí.
+- `ttclid` chỉ dùng để nhận ra platform `tiktok`; không có cột lưu nó.
+  - Ở web-events, `webClickEvent` nhận `ttclid` nhưng không ghi ra.
+  - Ở form, plugin ghi `ttclid` vào ghi chú (giống fbclid).
+- Plugin 0.3.2: `attribution.js` thêm `ttclid` vào danh sách tham số ghi và gửi đi. Chưa cài lên WordPress; cài như 0.3.1 rồi xóa cache WP Rocket.
+- Giao diện: ô nhập chi tiêu có thêm TikTok Ads và Zalo Ads.
+- Test: `webConversions`, `webEvents.route`, `webConversionsUi`, `externalLeadTracking` đạt 18/18. Máy không có PHP nên chưa chạy `php -l`; thay đổi PHP chỉ có 3 dòng.
+- Lưu ý đo Zalo: khách tạo từ tin nhắn Zalo OA đi theo nguồn mặc định của OA, không qua bảng này. Báo cáo chi phí Zalo Ads phải ghi rõ rằng tin nhắn OA tự nhiên cũng được đếm vào.
+
+---
+
+## 2026-10-12 (6) — team-project-tasks: sửa việc bị đếm đôi do quét bổ sung theo dự án (HCB · Tủ bếp thừa 27 việc)
+
+- Triệu chứng sau #104/#105: HCB · Tủ bếp 559 vs chi tiết 539; thừa tập trung ở TB-2026-1037 (14) và 1038 (13). Bản #105 (lọc theo deal gốc) KHÔNG đổi số — tôi đoán sai nguyên nhân (cũng thử giả thuyết «lọc pipeline phân loại»: bác bỏ, 20/20 việc SX của deal gốc đều hiện ở chi tiết).
+- Nguyên nhân thật: dữ liệu thật cho thấy mỗi `crm_task` hiện HAI lần cùng `source_id` (vd. «Sơn» 861892 ×2). `loadCrossCompanyCrmRows` (nhóm C, #102) quét theo DỰ ÁN nên với dự án nhiều deal có một deal thuộc công ty khác (1037/1038: 3 deal) nó trả cả việc của deal cùng công ty, trùng với lần quét chính; khử trùng ghép bản `tasks` với MỘT bản crm nên bản crm trùng còn lại hiện thêm.
+- `workTasks.js`: gộp `crossRows` vào `scan.rows` chỉ với dòng chưa có theo `unified_id`. Test giả 4 ca đạt. `loadDetailLeadsByProject` (#105) vẫn có tác dụng: chi tiết chỉ hiện deal gốc + con + fulfillment.
+- Việc cần làm sau deploy: so lại HCB · Tủ bếp / Metalla / Phúc Đạt với chi tiết (kỳ vọng thừa ≈ 0). Bài học thêm: khi bản vá không đổi số thì phải xem DÒNG DỮ LIỆU thật (tab vs chi tiết, cùng id) trước khi đoán nguyên nhân khác.
+
+---
+
+## 2026-10-12 (5) — team-project-tasks: chỉ đếm `crm_task` của deal mà chi tiết dự án hiện (sửa đếm thừa sau nhóm B)
+
+- Sau khi bỏ gộp theo tên (nhóm B), HCB · Tủ bếp ra 559 vs chi tiết 539: thừa 27 việc ở TB-2026-1037 (14) và 1038 (13) — dự án có 3 deal, lần quét lấy `crm_task` của MỌI deal còn chi tiết chỉ hiện deal gốc (trước đây gộp theo tên che mất). Phần còn lại của chênh lệch là dữ liệu đổi (chi tiết 516 → 539).
+- `workTasks.js`: `loadDetailLeadsByProject` = deal gốc (quy tắc `pickBootstrapDeal`) + deal con (`parent_lead_id`) + lead fulfillment của `orders` thuộc deal gốc (khớp `appendFulfillmentChildTasksForMasterDeal`); `crmRowInDetailLeads` lọc `crm_task` trong `computeTeamTasks` sau lọc phạm vi SX; `dropTasksClosedOnDeal(rows, detailLeads)` cũng chỉ xét bản crm ở các deal đó (thêm cột `lead_id`). Việc ở bảng `tasks` và dự án không có lead giữ nguyên.
+- Test giả kiểm cả tên cột thật (`crm_leads`, `orders`, view): P1 → {gốc, con, fulfillment}, loại việc deal khác và fulfillment của deal khác; bản đã xong ở deal khác không còn làm mất việc mở. Sau deploy cần đo lại HCB · Tủ bếp so với chi tiết (kỳ vọng thừa/thiếu ≈ 0 ngoài mục «Không hạn»).
+- Bài học: kiểm lại bằng phép so với chi tiết dự án NGAY sau mỗi lần deploy — hai lần liên tiếp (source_id, nhóm B) lỗi chỉ lộ ra trên dữ liệu thật.
+
+---
+
+## 2026-10-12 (4) — team-project-tasks: không còn gộp việc cùng tên ở nhiều cột (nhóm B)
+
+- Nguyên nhân: khử trùng theo khóa «dự án + tên việc» chỉ giữ MỘT dòng, trong khi chi tiết dự án liệt kê từng `crm_task` ở mỗi cột quy trình (vd. «Sơn» ×3 ở TB-2026-1013: `sx_kiem_tra_cheo`, `sx_pl_10b782a0`, `sx_pl_19c001f2`) và bảng `tasks` chỉ có MỘT dòng cho tên đó. HCB · Tủ bếp mất 20 việc (1013: 8, 1048: 8, 1037/1043/1030/1054: 1 mỗi dự án).
+- `workTasks.js` (`computeTeamTasks`): gom theo khóa như cũ nhưng giữ `task` (một dòng, các dòng `tasks` trùng tên vẫn gom) + các `crm_task` còn lại sau khi trừ MỘT bản song sinh (bản hạn sớm nhất, null xếp cuối). Không có bản `tasks` → giữ mọi `crm_task` cùng tên (trước đây cũng gộp). `dropTasksClosedOnDeal` chạy sau như cũ.
+- Test giả 7 ca đạt (T=1·C=3→3, T=1·C=1→1, T=0·C=2→2, T=2·C=0→1, khác dự án, hoa/thường). Chưa chạy trên DB thật; sau deploy kỳ vọng HCB · Tủ bếp 496 → 516 và «lệch so với chi tiết dự án» về 0 (loại trừ mục «Không hạn» cũ).
+
+---
+
+## 2026-10-12 (3) — team-project-tasks: lấy thêm việc crm của dự án mà deal thuộc công ty khác (nhóm C)
+
+- Nguyên nhân: `unified_tasks_v.company_id` của `crm_task` = công ty của DEAL, nên dự án HCB làm cho VPT / Phúc Đạt (TB-2026-1048, 898, 1064, 1057: deal 991dc79d… / 29677f68…) bị lọc `company_id = HCB` làm mất 8 việc `crm_task` chưa có bản `tasks` (chi tiết dự án vẫn hiện).
+- `workTasks.js`: `applyScanFilters(qy, skipCompany)`; `loadCrossCompanyCrmRows(typedSet)` lấy các dự án của công ty có deal thuộc công ty khác/null (`crm_leads` join `projects!inner`), rồi quét `unified_tasks_v` (source=crm_task, chia khúc 100) với cùng bộ lọc hạn/người/từ khóa nhưng bỏ lọc công ty; gộp vào `scan.rows` trước lọc loại/phạm vi SX/khử trùng. Lỗi truy vấn → bỏ qua + `console.warn`, không làm hỏng endpoint.
+- Test giả (khuôn truy vấn + cột view): không lọc `company_id` trên view, có `source=crm_task`, giao với tập dự án của loại, rỗng khi không có công ty. Chưa chạy trên DB thật (cần deploy); sau deploy kỳ vọng HCB · Tủ bếp +8 việc (488 → ~496) và 8 việc thiếu về 0.
+- Còn lại: nhóm B (20 việc cùng tên ở nhiều cột bị gộp) chưa xử lý.
+
+---
+
+## 2026-10-12 — Google Ads offline: giờ gọi từ tên file ghi âm, bỏ ngưỡng 30 giây
+Dữ liệu thật: app `crm-mobile-v2` không gửi `duration_sec`/`call_started_at`/`direction`, tải lên trễ (gọi 07/10, tải 12/10), cùng file có thể tải 2 lần. Helper mới `backend/src/helpers/callRecordingMeta.js`: `parseRecordingFileTime` (đuôi `_YYMMDD_HHMMSS` / `_YYYYMMDD_HHMMSS`, ngăn cách `_`/`-`/khoảng trắng, giờ VN, loại giá trị vô lý) và `parseMp4DurationSec` / `readMp4DurationSecFromFile` (hộp `moov/mvhd` v0/v1, không thêm thư viện). `googleOfflineConversions.js`: giờ gọi = `call_started_at` → tên file → bỏ qua (`recordings_no_call_time`), không còn dùng `created_at`; theo quyết định Founder **bỏ ngưỡng ≥30 giây** (không lọc theo thời lượng/transcript); gộp dòng trùng cùng công ty + `file_name` + `file_size` (`recordings_duplicates_merged`); chẩn đoán `recordings_estimated_time` đổi thành `recordings_time_from_file_name`. Bản ghi mới: route upload điền `duration_sec` (đọc file tạm) và `call_started_at` (tên file) khi app không gửi, sau bước chống trùng, lỗi không chặn upload; worker STT điền hai cột khi còn trống. Không backfill dòng cũ (không cần cho xuất chuyển đổi). Không migration, không SQL live, không đổi env. Test: `backend/tests/callRecordingMeta.test.js`, `backend/tests/googleOfflineConversions.test.js`.
+
+---
+
+## 2026-10-12 (2) — team-project-tasks bỏ việc `tasks` còn mở mà `crm_task` cùng tên đã xong; nhãn «Chưa xong»
+
+- `workTasks.js`: `crmTaskIdOf` (module-level; dự phòng id từ `unified_id`), `restrictToProductionScope` dùng lại; `dropTasksClosedOnDeal(rows)` gọi sau khử trùng trong `computeTeamTasks`: đọc `unified_tasks_v` (source=crm_task, theo `project_id`, chia khúc 100) + `crm_tasks.stage_slug/production_pipeline_stage_id` để chỉ tính bản SX; bỏ dòng `source='task'` khi khóa `project|tên` có bản crm đã đóng (done/completed/cancelled) và không có bản mở.
+- Test giả có kiểm tên cột so với cột thật của view (`COLS` ⊂ view): giữ/bỏ đúng 6 ca (crm xong, một mở một xong, việc bán hàng, không có crm, cancelled, crm mở).
+- Mobile: `WorkScreen.tsx` (chip + dòng số liệu «Chưa xong», dòng nhóm team «N việc chưa xong»), `OverviewScreen.tsx` (dòng nhóm quản lý).
+- Sau deploy cần đo lại HCB · Tủ bếp: kỳ vọng «chưa xong» giảm ~112, «QH» giảm ~40 so với 600/149 (số có thể đổi do dữ liệu đang được sửa).
+
+---
+
 ## 2026-10-12 — Google Ads offline: lấy gclid từ mô tả lead VPT_V1
 `lead_attribution` chưa có dòng website nào trên production; lead form web trước 12/10/2026 chỉ lưu tracking trong `crm_leads.description` (khối «Ghi chú: VPT_V1 | <ISO>»). `googleOfflineConversions.js` nay đọc thêm lead của công ty có marker này (tạo trong cửa sổ + 30 ngày lookback), lấy dòng `gclid:` sau marker cuối cùng khi lead không có gclid ở `lead_attribution` (thứ tự: lead_attribution → mô tả → lượt bấm gọi). Loại `VPT_TEST_`, dòng `TEST:`, utm_source=vpt_test, giá trị không khớp `^[A-Za-z0-9_-]{20,200}$`. Lượt nhấp = thời điểm marker (gửi form), thiếu thì = created_at. Chẩn đoán mới `valid_leads_via_description_gclid`; lead form tìm thấy theo cách này tính vào `website_form_leads` / `valid_leads_without_gclid`; `website_form_leads` không còn tính lead có gclid `VPT_TEST_`. Không migration, không SQL live, không đổi env. Test: `backend/tests/googleOfflineConversions.test.js`.
 

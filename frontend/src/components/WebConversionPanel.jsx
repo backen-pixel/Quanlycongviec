@@ -123,7 +123,7 @@ export default function WebConversionPanel() {
           <p className="mt-2 text-xs text-gray-500">
             {report.from} → {report.to}. Hợp lệ = khách đã kéo sang lạnh/ấm/nóng hoặc chuyển deal.
             Lượt bấm tính 1 lần mỗi lượt truy cập, không biết khách là ai.
-            Chi tiêu Facebook chỉ gồm quảng cáo có khách vào web; Google và ChatGPT lấy từ chi tiêu đã nhập.
+            Chi tiêu Facebook chỉ gồm quảng cáo có khách vào web; Google, TikTok, Zalo Ads và ChatGPT lấy từ chi tiêu đã nhập.
           </p>
         </div>
       )}
@@ -138,8 +138,10 @@ export default function WebConversionPanel() {
               {' · '}Khách hợp lệ có gclid: <b className="tabular-nums">{offline.counts.valid_leads}</b>
             </p>
             <p className="text-gray-500">
-              Ghi âm từ 30 giây đã xét {offline.diagnostics.recordings_considered}
+              Ghi âm đã xét {offline.diagnostics.recordings_considered}
               {' · '}không ghép được lượt bấm gọi {offline.diagnostics.recordings_without_click}
+              {' · '}thiếu giờ gọi (bỏ qua) {offline.diagnostics.recordings_no_call_time ?? 0}
+              {' · '}upload trùng {offline.diagnostics.recordings_duplicates_merged ?? 0}
               {' · '}lượt bấm gọi có gclid {offline.diagnostics.call_clicks_with_gclid} (chưa ghép {offline.diagnostics.call_clicks_unmatched})
               {' · '}chỉ có gbraid/wbraid {offline.diagnostics.call_clicks_braid_only + offline.diagnostics.valid_leads_braid_only}
               {' · '}khách hợp lệ (form web) không có gclid {offline.diagnostics.valid_leads_without_gclid}
@@ -175,7 +177,7 @@ export default function WebConversionPanel() {
       </div>
       <div className="mt-3 border-t pt-3">
         <button type="button" onClick={() => setOpenSpend(o => !o)} className="cursor-pointer text-xs font-medium text-sky-700 hover:underline">
-          {openSpend ? '▾' : '▸'} Nhập chi tiêu Google Ads / ChatGPT Ads
+          {openSpend ? '▾' : '▸'} Nhập chi tiêu Google / TikTok / Zalo / ChatGPT Ads
         </button>
         {openSpend && (
           <div className="mt-2 space-y-2 text-xs">

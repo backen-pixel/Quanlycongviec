@@ -2,19 +2,22 @@
 
 // W4: website conversions by channel — form leads (lead_attribution kenh='website'), valid leads
 // (same stage milestone as the P1 trial), call / Zalo / Messenger clicks (web_conversion_events)
-// and spend. Facebook spend counts only ads that actually sent visitors to the website; Google and
-// ChatGPT spend come from ad_spend_daily_manual until an API sync exists.
+// and spend. Facebook spend counts only ads that actually sent visitors to the website; Google, TikTok,
+// Zalo and ChatGPT spend come from ad_spend_daily_manual until an API sync exists.
 const { loadMilestoneReached } = require('./stageMilestone');
 const { toWholeVnd } = require('./spendCoverage');
 
 const CHANNELS = Object.freeze([
   { key: 'google_ads', label: 'Google Ads' },
   { key: 'facebook', label: 'Facebook / Instagram' },
+  { key: 'tiktok_ads', label: 'TikTok Ads' },
+  { key: 'zalo_ads', label: 'Zalo Ads' },
   { key: 'seo', label: 'Tìm kiếm tự nhiên (SEO)' },
   { key: 'chatgpt_ads', label: 'ChatGPT Ads' },
   { key: 'other', label: 'Trực tiếp / khác' },
 ]);
-const MANUAL_PROVIDER = { GOOGLE: 'google_ads', CHATGPT: 'chatgpt_ads' };
+const MANUAL_PROVIDER = { GOOGLE: 'google_ads', TIKTOK: 'tiktok_ads', ZALO: 'zalo_ads', CHATGPT: 'chatgpt_ads' };
+const PAID = ['cpc', 'ppc', 'paid_search', 'paid', 'paid_social'];
 const PAGE = 1000;
 const MAX_PAGES = 50;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -23,9 +26,13 @@ function channelOf(row) {
   const platform = String(row.platform || '').toLowerCase();
   const medium = String(row.utm_medium || '').toLowerCase();
   if (row.gclid || row.gbraid || row.wbraid) return 'google_ads';
-  if (platform === 'google') return ['cpc', 'ppc', 'paid_search', 'paid'].includes(medium) ? 'google_ads'
+  if (platform === 'google') return PAID.includes(medium) ? 'google_ads'
     : medium === 'organic' ? 'seo' : 'other';
   if (platform === 'facebook' || platform === 'instagram') return 'facebook';
+  // A TikTok ad click without UTM still carries ttclid, which the site maps to platform tiktok.
+  if (platform === 'tiktok') return PAID.includes(medium) || medium === '' ? 'tiktok_ads' : 'other';
+  // Zalo OA chats and zalo.me links are not paid traffic; only tagged Zalo Ads count here.
+  if (platform === 'zalo' && PAID.includes(medium)) return 'zalo_ads';
   if (platform === 'chatgpt' && medium === 'paid') return 'chatgpt_ads';
   return 'other';
 }

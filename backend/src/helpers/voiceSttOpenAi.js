@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const { voiceBucketName } = require('./voiceStorageUpload');
+const { parseMp4DurationSec } = require('./callRecordingMeta');
 
 const DEFAULT_MODEL = 'whisper-1';
 const DEFAULT_MAX_BYTES = 25 * 1024 * 1024;
@@ -263,12 +264,14 @@ async function transcribeVoiceRecordingRow(supabase, row) {
   }
 
   const { buffer, fileName } = await loadVoiceAudioBuffer(supabase, row.storage_path);
-  return transcribeAudioBuffer(buffer, {
+  const result = await transcribeAudioBuffer(buffer, {
     fileName: row.file_name || fileName,
     storagePath: row.storage_path,
     mimeType: row.mime_type,
     language: row.transcript_language || 'vi',
   });
+  // Duration read from the original file (MP4/M4A/3GP mvhd); null when it cannot be read.
+  return { ...result, duration_sec: parseMp4DurationSec(buffer) };
 }
 
 module.exports = {
