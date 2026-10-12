@@ -626,21 +626,6 @@ function createStyles(colors: AppColors, bottomInset: number) {
       backgroundColor: colors.bgElevated,
     },
     statusBtnTxt: { color: colors.text, fontSize: 12, fontWeight: '800' },
-    /** Nút mở mục «Không hạn» ở cuối danh sách. */
-    ndBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 8,
-      marginVertical: 16,
-      marginHorizontal: 16,
-      paddingVertical: 12,
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.card,
-    },
-    ndBtnTxt: { color: colors.textMuted, fontSize: 13, fontWeight: '800' },
     empty: {
       color: colors.textMuted,
       textAlign: 'center',
@@ -692,15 +677,6 @@ export default function WorkScreen() {
   /** Số đếm toàn bộ việc dự án của đội (máy chủ tính) — danh sách chỉ nạp theo trang. */
   const [teamCounts, setTeamCounts] = useState<TeamProjectCounts | null>(null);
   const [teamHasMore, setTeamHasMore] = useState(false);
-  /** Mục riêng «Không hạn»: việc chưa xong không có hạn, tạo từ lâu — nạp theo yêu cầu, theo trang nhóm dự án. */
-  const [ndOpen, setNdOpen] = useState(false);
-  const [ndTasks, setNdTasks] = useState<WorkTask[]>([]);
-  const [ndTotal, setNdTotal] = useState<number | null>(null);
-  const [ndHasMore, setNdHasMore] = useState(false);
-  const [ndLoading, setNdLoading] = useState(false);
-  const ndPageRef = useRef(0);
-  const ndHasMoreRef = useRef(false);
-  const ndLoadingRef = useRef(false);
   const teamHasMoreRef = useRef(false);
   const teamPageRef = useRef(1);
   const teamLoadingMoreRef = useRef(false);
@@ -841,7 +817,7 @@ export default function WorkScreen() {
    */
   const loadTeamProjects = useCallback(async (
     append: boolean,
-    o: { force?: boolean; companyId?: string | null; signal?: AbortSignal; seq?: number; keepNd?: boolean } = {},
+    o: { force?: boolean; companyId?: string | null; signal?: AbortSignal; seq?: number } = {},
   ) => {
     if (append) {
       if (teamLoadingMoreRef.current || !teamHasMoreRef.current) return;
@@ -849,16 +825,6 @@ export default function WorkScreen() {
     }
     const page = append ? teamPageRef.current + 1 : 1;
     const mySeq = o.seq ?? loadSeqRef.current;
-    if (!append && !o.keepNd) {
-      // Đổi bộ lọc / kéo làm mới: đóng mục «Không hạn» (sẽ nạp lại theo bộ lọc mới khi mở). Tải lại NỀN (silent:
-      // realtime, quay lại tab) thì giữ nguyên để mục đang mở không tự đóng dưới tay người dùng.
-      setNdOpen(false);
-      setNdTasks([]);
-      setNdTotal(null);
-      ndPageRef.current = 0;
-      ndHasMoreRef.current = false;
-      setNdHasMore(false);
-    }
     try {
       const res = await fetchTeamProjectTasksPage({
         companyId: o.companyId ?? (filterCompany || (canPickCompany ? null : (user?.company_id || null))),
@@ -885,39 +851,6 @@ export default function WorkScreen() {
       if (!isQueryAbortError(e)) console.warn('[WorkScreen] việc dự án của đội lỗi:', e);
     } finally {
       if (append) teamLoadingMoreRef.current = false;
-    }
-  }, [filterCompany, canPickCompany, user?.company_id, activeWorkTypeId]);
-
-  /** Nạp một trang nhóm dự án của mục «Không hạn» (append = trang kế tiếp). */
-  const loadNoDeadline = useCallback(async (append: boolean) => {
-    if (ndLoadingRef.current) return;
-    if (append && !ndHasMoreRef.current) return;
-    ndLoadingRef.current = true;
-    setNdLoading(true);
-    const page = append ? ndPageRef.current + 1 : 1;
-    try {
-      const res = await fetchTeamProjectTasksPage({
-        companyId: filterCompany || (canPickCompany ? null : (user?.company_id || null)),
-        assigneeId: assigneeFilterRef.current !== 'all' ? assigneeFilterRef.current : null,
-        workshopTypeId: activeWorkTypeId || null,
-        q: searchRef.current,
-        noDeadline: true,
-        page,
-      });
-      ndPageRef.current = res.page;
-      ndHasMoreRef.current = res.hasMore;
-      setNdHasMore(res.hasMore);
-      setNdTotal(res.counts.total);
-      setNdTasks((prev) => {
-        if (!append) return res.tasks;
-        const seen = new Set(prev.map((t) => t.id));
-        return [...prev, ...res.tasks.filter((t) => !seen.has(t.id))];
-      });
-    } catch (e) {
-      if (!isQueryAbortError(e)) console.warn('[WorkScreen] việc không hạn lỗi:', e);
-    } finally {
-      ndLoadingRef.current = false;
-      setNdLoading(false);
     }
   }, [filterCompany, canPickCompany, user?.company_id, activeWorkTypeId]);
 
@@ -973,7 +906,7 @@ export default function WorkScreen() {
       const q = searchRef.current.trim() || undefined;
       // Việc dự án của đội chạy SONG SONG với «Giao việc» (trước đây đợi «Giao việc» xong mới bắt đầu → cộng dồn thời gian chờ).
       if (!append && teamView && scope === 'team') {
-        void loadTeamProjects(false, { force: opts?.force, companyId, signal: ac.signal, seq, keepNd: silent && !opts?.force });
+        void loadTeamProjects(false, { force: opts?.force, companyId, signal: ac.signal, seq });
       }
       // Scope load — không gửi status (giữ KPI đúng trên mọi chip).
       const page = await fetchProductionWorkTasksPage({
@@ -1557,14 +1490,7 @@ export default function WorkScreen() {
       ? teamProjectTasks.filter((t) => !needle
         || `${t.title} ${t.lead?.title || ''} ${t.lead?.code || ''}`.toLowerCase().includes(needle))
       : [];
-    // Mục «Không hạn» (đã mở): nối vào cuối; khử trùng với danh sách chính theo id.
-    const ndRows = ndOpen && ndTasks.length ? ndTasks : [];
-    const mainSource = projectRows.length ? [...base, ...projectRows] : base;
-    let source = mainSource;
-    if (ndRows.length) {
-      const seenIds = new Set(mainSource.map((t) => t.id));
-      source = [...mainSource, ...ndRows.filter((t) => !seenIds.has(t.id))];
-    }
+    const source = projectRows.length ? [...base, ...projectRows] : base;
     return source.filter((t) => {
       // Quản lý / admin: việc đã hoàn thành không cần hiện (nhóm chỉ toàn việc xong cũng biến mất).
       if (teamView && isTaskDone(t.status)) return false;
@@ -1588,7 +1514,7 @@ export default function WorkScreen() {
       if (dueFilter && !dueMatches(taskDueIso(t), dueFilter)) return false;
       return true;
     });
-  }, [tasks, chipTasks, teamProjectTasks, ndOpen, ndTasks, search, statusFilter, dueFilter, unifiedSource, teamView, scope, assigneeFilter, filterCompany]);
+  }, [tasks, chipTasks, teamProjectTasks, search, statusFilter, dueFilter, unifiedSource, teamView, scope, assigneeFilter, filterCompany]);
 
   // Nhóm cần xử lý lên trước: có việc quá hạn → có việc đến hạn hôm nay → còn lại (giữ thứ tự cũ).
   const dealSections = useMemo(() => {
@@ -2301,35 +2227,14 @@ export default function WorkScreen() {
           // Hết «Giao việc» thì tải tiếp trang nhóm dự án của đội.
           if (!hasMoreTasksRef.current) {
             if (teamHasMoreRef.current) void loadTeamProjects(true, {});
-            else if (ndOpen && ndHasMoreRef.current) void loadNoDeadline(true);
             return;
           }
           void load(true, true);
         }}
         onEndReachedThreshold={0.35}
         ListFooterComponent={
-          filtered.length === 0 && !(teamView && scope === 'team')
+          filtered.length === 0
             ? null
-            : ndOpen && ndLoading
-              ? <SpinningLoader style={{ marginVertical: 16 }} color={colors.primary} />
-              : ndOpen && ndHasMore && !teamHasMore
-                ? <Text style={[styles.empty, { paddingVertical: 12 }]}>Vuốt thêm để tải tiếp việc không hạn…</Text>
-              // Hết danh sách chính → nút mở mục riêng «Không hạn» (việc cũ chưa có hạn, nạp theo yêu cầu).
-              : teamView && scope === 'team' && !teamHasMore && !hasMoreTasks && !loading
-                && (statusFilter === 'all' || statusFilter === 'pending')
-                && !ndOpen
-                ? (
-                  <Pressable
-                    style={({ pressed }) => [styles.ndBtn, pressed && { opacity: 0.7 }]}
-                    onPress={() => { setNdOpen(true); void loadNoDeadline(false); }}
-                    accessibilityRole="button"
-                  >
-                    <Ionicons name="calendar-clear-outline" size={16} color={colors.textMuted} />
-                    <Text style={styles.ndBtnTxt}>Xem việc không hạn (cũ hơn 7 ngày)</Text>
-                  </Pressable>
-                )
-            : filtered.length === 0
-              ? null
             : loadingMore
               ? (
                 <SpinningLoader style={{ marginVertical: 16 }} color={colors.primary} />
