@@ -1,3 +1,12 @@
+## 2026-10-12 (3) — team-project-tasks: lấy thêm việc crm của dự án mà deal thuộc công ty khác (nhóm C)
+
+- Nguyên nhân: `unified_tasks_v.company_id` của `crm_task` = công ty của DEAL, nên dự án HCB làm cho VPT / Phúc Đạt (TB-2026-1048, 898, 1064, 1057: deal 991dc79d… / 29677f68…) bị lọc `company_id = HCB` làm mất 8 việc `crm_task` chưa có bản `tasks` (chi tiết dự án vẫn hiện).
+- `workTasks.js`: `applyScanFilters(qy, skipCompany)`; `loadCrossCompanyCrmRows(typedSet)` lấy các dự án của công ty có deal thuộc công ty khác/null (`crm_leads` join `projects!inner`), rồi quét `unified_tasks_v` (source=crm_task, chia khúc 100) với cùng bộ lọc hạn/người/từ khóa nhưng bỏ lọc công ty; gộp vào `scan.rows` trước lọc loại/phạm vi SX/khử trùng. Lỗi truy vấn → bỏ qua + `console.warn`, không làm hỏng endpoint.
+- Test giả (khuôn truy vấn + cột view): không lọc `company_id` trên view, có `source=crm_task`, giao với tập dự án của loại, rỗng khi không có công ty. Chưa chạy trên DB thật (cần deploy); sau deploy kỳ vọng HCB · Tủ bếp +8 việc (488 → ~496) và 8 việc thiếu về 0.
+- Còn lại: nhóm B (20 việc cùng tên ở nhiều cột bị gộp) chưa xử lý.
+
+---
+
 ## 2026-10-12 — Google Ads offline: giờ gọi từ tên file ghi âm, bỏ ngưỡng 30 giây
 Dữ liệu thật: app `crm-mobile-v2` không gửi `duration_sec`/`call_started_at`/`direction`, tải lên trễ (gọi 07/10, tải 12/10), cùng file có thể tải 2 lần. Helper mới `backend/src/helpers/callRecordingMeta.js`: `parseRecordingFileTime` (đuôi `_YYMMDD_HHMMSS` / `_YYYYMMDD_HHMMSS`, ngăn cách `_`/`-`/khoảng trắng, giờ VN, loại giá trị vô lý) và `parseMp4DurationSec` / `readMp4DurationSecFromFile` (hộp `moov/mvhd` v0/v1, không thêm thư viện). `googleOfflineConversions.js`: giờ gọi = `call_started_at` → tên file → bỏ qua (`recordings_no_call_time`), không còn dùng `created_at`; theo quyết định Founder **bỏ ngưỡng ≥30 giây** (không lọc theo thời lượng/transcript); gộp dòng trùng cùng công ty + `file_name` + `file_size` (`recordings_duplicates_merged`); chẩn đoán `recordings_estimated_time` đổi thành `recordings_time_from_file_name`. Bản ghi mới: route upload điền `duration_sec` (đọc file tạm) và `call_started_at` (tên file) khi app không gửi, sau bước chống trùng, lỗi không chặn upload; worker STT điền hai cột khi còn trống. Không backfill dòng cũ (không cần cho xuất chuyển đổi). Không migration, không SQL live, không đổi env. Test: `backend/tests/callRecordingMeta.test.js`, `backend/tests/googleOfflineConversions.test.js`.
 
