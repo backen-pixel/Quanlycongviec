@@ -9,6 +9,7 @@
 const { supabase } = require('../config/supabase');
 const { runIfLeader } = require('../helpers/cronLeader');
 const { transcribeVoiceRecordingRow } = require('../helpers/voiceSttOpenAi');
+const { parseRecordingFileTime } = require('../helpers/callRecordingMeta');
 
 let timer = null;
 let running = false;
@@ -36,17 +37,29 @@ async function claimPendingRow(rowId) {
     .eq('stt_status', 'pending')
     .eq('prospect_class', 'prospect_lead')
     .select(
-      'id, storage_path, file_name, mime_type, file_size, duration_sec, stt_attempts, transcript_language',
+      'id, storage_path, file_name, mime_type, file_size, duration_sec, call_started_at, stt_attempts, transcript_language',
     )
     .maybeSingle();
   if (error) throw error;
   return data;
 }
 
-async function markDone(rowId, { text, model, language }) {
+/** Fill duration_sec / call_started_at the app did not send (from the audio and the file name). */
+function missingCallMeta(row, result) {
+  const patch = {};
+  if (row?.duration_sec == null && result?.duration_sec != null) patch.duration_sec = result.duration_sec;
+  if (!row?.call_started_at) {
+    const fromName = parseRecordingFileTime(row?.file_name);
+    if (fromName) patch.call_started_at = fromName.toISOString();
+  }
+  return patch;
+}
+
+async function markDone(rowId, { text, model, language }, extra = {}) {
   const { error } = await supabase
     .from('voice_recordings')
     .update({
+      ...extra,
       transcript: text,
       transcript_language: language || 'vi',
       stt_status: 'done',
@@ -80,7 +93,7 @@ async function markFailOrRetry(rowId, attempts, message) {
 async function processOne(row) {
   try {
     const result = await transcribeVoiceRecordingRow(supabase, row);
-    await markDone(row.id, result);
+    await markDone(row.id, result, missingCallMeta(row, result));
     console.log(`[voice-stt] done ${row.id} (${(result.text || '').length} chars)`);
   } catch (e) {
     console.warn(`[voice-stt] fail ${row.id}:`, e.message);
@@ -145,4 +158,4 @@ function stop() {
   timer = null;
 }
 
-module.exports = { start, stop, tick };
+module.exports = { start, stop, tick, missingCallMeta };

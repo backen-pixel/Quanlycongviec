@@ -60,8 +60,10 @@ function baseTables() {
       { id: 'r1', company_id: A, lead_id: 'L2', duration_sec: 120, direction: null, call_started_at: '2026-10-10T03:00:00Z', created_at: '2026-10-10T03:10:00Z' },
       // second recording at the same time competes for the same clicks: gets the next one (c0)
       { id: 'r2', company_id: A, lead_id: null, duration_sec: 60, direction: 'inbound', call_started_at: '2026-10-10T03:00:10Z', created_at: '2026-10-10T03:10:00Z' },
-      // no call_started_at: t = created_at - duration = 05:00:00
-      { id: 'r3', company_id: A, lead_id: null, duration_sec: 300, direction: null, call_started_at: null, created_at: '2026-10-09T05:05:00Z' },
+      // no call_started_at / duration, uploaded days later: t = file name time 12:00:00 VN = 05:00:00Z
+      { id: 'r3', company_id: A, lead_id: null, duration_sec: null, direction: null, call_started_at: null,
+        file_name: 'Ghi âm cuộc gọi 0385197809_261009_120000.m4a', file_size: 412121, created_at: '2026-10-12T02:00:00Z' },
+      // a short call is still a call (no duration rule); no gclid click near it
       { id: 'r4', company_id: A, lead_id: null, duration_sec: 20, direction: null, call_started_at: '2026-10-11T03:00:00Z', created_at: '2026-10-11T03:01:00Z' },
       { id: 'r5', company_id: A, lead_id: null, duration_sec: 90, direction: 'outbound', call_started_at: '2026-10-11T03:00:20Z', created_at: '2026-10-11T03:05:00Z' },
       { id: 'r6', company_id: A, lead_id: null, duration_sec: 90, direction: null, call_started_at: '2026-10-08T01:00:00Z', created_at: '2026-10-08T01:05:00Z' },
@@ -96,8 +98,12 @@ function baseTables() {
 }
 
 test('helpers: call time fallback, direction, Vietnam time format, masking', () => {
-  assert.deepEqual(G.callTimeMs({ call_started_at: '2026-10-10T03:00:00Z' }), { ms: at('2026-10-10T03:00:00Z'), estimated: false });
-  assert.deepEqual(G.callTimeMs({ created_at: '2026-10-10T03:05:00Z', duration_sec: 300 }), { ms: at('2026-10-10T03:00:00Z'), estimated: true });
+  assert.deepEqual(G.callTimeMs({ call_started_at: '2026-10-10T03:00:00Z', file_name: 'x_261001_000000.m4a' }),
+    { ms: at('2026-10-10T03:00:00Z'), source: 'call_started_at' });
+  assert.deepEqual(G.callTimeMs({ file_name: 'Ghi âm cuộc gọi 0385197809_261007_203408.m4a', created_at: '2026-10-12T03:05:00Z' }, NOW),
+    { ms: at('2026-10-07T13:34:08Z'), source: 'file_name' });
+  // upload time is never used as the call time
+  assert.equal(G.callTimeMs({ created_at: '2026-10-10T03:05:00Z', duration_sec: 300, file_name: 'rec.m4a' }), null);
   assert.ok(G.inboundLike(null) && G.inboundLike('INBOUND') && G.inboundLike('unknown'));
   assert.ok(!G.inboundLike('outbound') && !G.inboundLike('outgoing'));
   assert.equal(G.formatVietnamTime(at('2026-10-10T17:30:05.900Z')), '2026-10-11 00:30:05');
@@ -142,11 +148,11 @@ test('builds CALL and VALID_LEAD rows with ordering, sources and test exclusion'
   assert.ok(rows.every(r => !r.gclid.startsWith('VPT_TEST_')));
   for (let i = 1; i < rows.length; i++) assert.ok(rows[i - 1].conversion_ms <= rows[i].conversion_ms);
 
-  assert.equal(d.recordings_considered, 4); // r1 r2 r3 r6 (r4 short, r5 outbound)
+  assert.equal(d.recordings_considered, 5); // r1 r2 r3 r4 r6 (r5 outbound)
   assert.equal(d.recordings_skipped_outbound, 1);
-  assert.equal(d.recordings_estimated_time, 1);
+  assert.equal(d.recordings_time_from_file_name, 1);
   assert.equal(d.recordings_matched, 3);
-  assert.equal(d.recordings_without_click, 1);
+  assert.equal(d.recordings_without_click, 2); // r4, r6
   assert.equal(d.call_clicks_braid_only, 1);
   assert.equal(d.call_clicks_unmatched, 1); // c2
   assert.equal(d.valid_leads_without_gclid, 1); // L3
@@ -163,6 +169,53 @@ test('valid lead whose milestone is not after the click is skipped', async () =>
   const { rows, diagnostics } = await G.buildGoogleOfflineConversions({ db: fakeDb(t), companyId: A, ...RANGE });
   assert.equal(rows.filter(r => r.type === 'VALID_LEAD').length, 0);
   assert.equal(diagnostics.valid_leads_milestone_before_click, 1);
+});
+
+test('recordings: real app row (no duration/time/direction, late upload) matched by file name time', async () => {
+  const t = baseTables();
+  t.web_conversion_events = [
+    { id: 'k1', company_id: A, kind: 'call', gclid: GC(40), occurred_at: '2026-10-07T13:30:00Z' }];
+  t.voice_recordings = [
+    // same file uploaded twice: one conversion only
+    { id: 'v1', company_id: A, lead_id: null, duration_sec: null, direction: null, call_started_at: null,
+      file_name: 'Ghi âm cuộc gọi 0385197809_261007_203408.m4a', file_size: 412121, created_at: '2026-10-12T01:00:00Z' },
+    { id: 'v2', company_id: A, lead_id: 'L2', duration_sec: null, direction: null, call_started_at: null,
+      file_name: 'Ghi âm cuộc gọi 0385197809_261007_203408.m4a', file_size: 412121, created_at: '2026-10-12T01:05:00Z' },
+    // no call time anywhere: skipped, never placed at its upload time (a click sits right before it)
+    { id: 'v3', company_id: A, lead_id: null, duration_sec: 45, direction: null, call_started_at: null,
+      file_name: 'recording.m4a', file_size: 1000, created_at: '2026-10-08T01:00:30Z' },
+    // same name, different size: a different recording
+    { id: 'v4', company_id: A, lead_id: null, duration_sec: 5, direction: 'outbound', call_started_at: null,
+      file_name: 'Ghi âm cuộc gọi 0385197809_261007_203408.m4a', file_size: 999, created_at: '2026-10-12T01:06:00Z' },
+  ];
+  t.web_conversion_events.push({ id: 'k2', company_id: A, kind: 'call', gclid: GC(41), occurred_at: '2026-10-08T01:00:00Z' });
+  const { rows, diagnostics: d } = await G.buildGoogleOfflineConversions({ db: fakeDb(t), companyId: A, ...RANGE });
+  const calls = rows.filter(r => r.type === 'CALL');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].recording_id, 'v1');
+  assert.equal(calls[0].gclid, GC(40));
+  assert.equal(calls[0].conversion_ms, at('2026-10-07T13:34:08Z'));
+  assert.equal(calls[0].lead_id, 'L2'); // lead filled from the duplicate copy
+  assert.equal(d.recordings_duplicates_merged, 1);
+  assert.equal(d.recordings_no_call_time, 1);
+  assert.equal(d.recordings_time_from_file_name, 1);
+  assert.equal(d.recordings_skipped_outbound, 1);
+  assert.equal(d.recordings_considered, 1);
+  assert.equal(d.call_clicks_unmatched, 1); // k2 not matched to v3's upload time
+});
+
+test('dedupeRecordings keeps the earliest row and only merges same company + name + size', () => {
+  const { rows, merged } = G.dedupeRecordings([
+    { id: 'a', company_id: A, file_name: 'x_261007_203408.m4a', file_size: 10, lead_id: null },
+    { id: 'b', company_id: A, file_name: 'x_261007_203408.m4a', file_size: 10, lead_id: 'L', duration_sec: 33 },
+    { id: 'c', company_id: B, file_name: 'x_261007_203408.m4a', file_size: 10 },
+    { id: 'd', company_id: A, file_name: 'x_261007_203408.m4a', file_size: 0 },
+    { id: 'e', company_id: A, file_name: 'x_261007_203408.m4a', file_size: 0 },
+  ]);
+  assert.deepEqual(rows.map(r => r.id), ['a', 'c', 'd', 'e']);
+  assert.equal(merged, 1);
+  assert.equal(rows[0].lead_id, 'L');
+  assert.equal(rows[0].duration_sec, 33);
 });
 
 // Same shape as integrations/wordpress/vpt-v1-crm-bridge/core.php notes, merged by routes/external.js.

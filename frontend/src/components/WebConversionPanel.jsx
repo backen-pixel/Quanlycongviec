@@ -138,8 +138,10 @@ export default function WebConversionPanel() {
               {' · '}Khách hợp lệ có gclid: <b className="tabular-nums">{offline.counts.valid_leads}</b>
             </p>
             <p className="text-gray-500">
-              Ghi âm từ 30 giây đã xét {offline.diagnostics.recordings_considered}
+              Ghi âm đã xét {offline.diagnostics.recordings_considered}
               {' · '}không ghép được lượt bấm gọi {offline.diagnostics.recordings_without_click}
+              {' · '}thiếu giờ gọi (bỏ qua) {offline.diagnostics.recordings_no_call_time ?? 0}
+              {' · '}upload trùng {offline.diagnostics.recordings_duplicates_merged ?? 0}
               {' · '}lượt bấm gọi có gclid {offline.diagnostics.call_clicks_with_gclid} (chưa ghép {offline.diagnostics.call_clicks_unmatched})
               {' · '}chỉ có gbraid/wbraid {offline.diagnostics.call_clicks_braid_only + offline.diagnostics.valid_leads_braid_only}
               {' · '}khách hợp lệ (form web) không có gclid {offline.diagnostics.valid_leads_without_gclid}

@@ -12,6 +12,7 @@ const {
   digitsOnly,
 } = require('../helpers/phoneCrmLink');
 const { isAdminLike, isCompanyScopedAdmin } = require('../helpers/adminRole');
+const { parseRecordingFileTime, readMp4DurationSecFromFile } = require('../helpers/callRecordingMeta');
 const {
   uploadVoiceFromTempFile,
   removeVoiceObject,
@@ -1117,6 +1118,17 @@ r.post('/', upload.single('audio'), async (req, res) => {
           return res.status(200).json({ recording: attachPlayableUrl(dup), duplicate: true });
         }
       }
+    }
+
+    // App (crm-mobile-v2) often sends no duration / call time: recover them from the file itself.
+    // Done after the duplicate check so dedup behaves as before; never blocks the upload.
+    if (duration_sec == null) {
+      const parsed = await readMp4DurationSecFromFile(req.file.path).catch(() => null);
+      if (parsed != null) duration_sec = parsed;
+    }
+    if (!call_started_at) {
+      const fromName = parseRecordingFileTime(voiceFileNameFromUpload(req.file));
+      if (fromName) call_started_at = fromName.toISOString();
     }
 
     try {
