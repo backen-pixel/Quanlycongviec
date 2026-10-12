@@ -331,12 +331,16 @@ async function buildGoogleOfflineConversions({ db, companyId, fromMs, toMs }) {
 
 const CSV_HEADER = 'Google Click ID,Conversion Name,Conversion Time,Conversion Value,Conversion Currency';
 
-/** Google Ads click-conversion import file. Value left blank: the conversion action's default value applies. */
+/**
+ * Google Ads click-conversion import file. The header is the first line: Google Data Manager reads the
+ * first line as column names, so the time zone travels inside each time value instead of the legacy
+ * "Parameters:TimeZone=" line. Value left blank: the conversion action's default value applies.
+ */
 function toGoogleCsv(rows) {
-  const lines = ['Parameters:TimeZone=Asia/Ho_Chi_Minh', CSV_HEADER];
+  const lines = [CSV_HEADER];
   for (const row of rows) {
     if (!GCLID.test(row.gclid)) continue; // defensive: never write anything but a plain click id
-    lines.push([row.gclid, row.conversion_name, formatVietnamTime(row.conversion_ms), '', 'VND'].join(','));
+    lines.push([row.gclid, row.conversion_name, `${formatVietnamTime(row.conversion_ms)}+07:00`, '', 'VND'].join(','));
   }
   return `${lines.join('\r\n')}\r\n`;
 }
