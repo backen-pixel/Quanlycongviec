@@ -146,3 +146,12 @@ test('route: spend upsert validates rows and logs every write', async () => {
   assert.equal((await call(fakeDb(tables), { role: 'user', company_id: A }, 'PUT', '/spend', { rows: [row] })).status, 403);
   assert.equal((await call(fakeDb(tables, { fail: 'ad_spend_daily_manual_log' }), user, 'PUT', '/spend', { rows: [row] })).status, 503);
 });
+
+test('live-site QA traffic (utm_source=vpt_test) is never counted', async () => {
+  const qa = { ...tables,
+    lead_attribution: [...tables.lead_attribution, { id: 'q1', lead_id: 'L1', company_id: A, kenh: 'website', platform: 'vpt_test', utm_source: 'vpt_test', cham_dau_luc: '2026-10-12T02:00:00Z' }],
+    web_conversion_events: [...tables.web_conversion_events,
+      { id: 'q2', company_id: A, kind: 'call', platform: 'vpt_test', utm_source: 'VPT_TEST', occurred_at: T }] };
+  const r = await buildWebConversions({ db: fakeDb(qa), companyId: A, from: '2026-10-06', to: '2026-10-12' });
+  assert.equal(r.totals.conversions, 7);
+});
