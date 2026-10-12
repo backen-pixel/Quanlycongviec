@@ -874,15 +874,30 @@ r.get('/team-project-tasks', async (req, res) => {
       }
 
       // Khử trùng: ưu tiên bản ở bảng `tasks` (source != crm_task). `scanned` đã chỉ gồm dự án của loại được chọn (nếu có lọc).
+      // Một việc sản xuất có thể xuất hiện ở NHIỀU cột quy trình (cùng tên, mỗi cột một `crm_task`; chi tiết dự án liệt kê đủ
+      // từng cái) trong khi bảng `tasks` chỉ có MỘT dòng cho tên đó. Nên khóa «dự án + tên» chỉ gom bản `tasks` với MỘT bản
+      // `crm_task` (cặp song sinh); các `crm_task` còn lại là việc thật ở cột khác → giữ riêng, để số việc khớp chi tiết dự án
+      // (trước đây gộp hết thành một: HCB · Tủ bếp mất 20 việc, vd. «Sơn» ×3 ở TB-2026-1013).
       const keyOf = (t) => `${t.project_id}|${String(t.title || '').trim().toLowerCase()}`;
-      const chosen = new Map();
+      const deadlineMsOrMax = (t) => (t.deadline ? new Date(t.deadline).getTime() : Number.MAX_SAFE_INTEGER);
+      const groupsByKey = new Map();
       for (const t of scanned) {
         const k = keyOf(t);
-        const cur = chosen.get(k);
-        if (!cur || (cur.source === 'crm_task' && t.source !== 'crm_task')) chosen.set(k, t);
+        let g = groupsByKey.get(k);
+        if (!g) { g = { task: null, crm: [] }; groupsByKey.set(k, g); }
+        if (t.source === 'crm_task') g.crm.push(t);
+        else if (!g.task) g.task = t; // nhiều dòng `tasks` cùng tên vẫn gom thành một như trước
+      }
+      const chosenRows = [];
+      for (const g of groupsByKey.values()) {
+        if (g.task) chosenRows.push(g.task);
+        // Có bản `tasks` → nó đại diện cho MỘT bản crm (bản hạn sớm nhất); phần còn lại giữ nguyên.
+        const crmSorted = g.crm.slice().sort((a, b) => deadlineMsOrMax(a) - deadlineMsOrMax(b)
+          || String(a.unified_id).localeCompare(String(b.unified_id)));
+        chosenRows.push(...(g.task ? crmSorted.slice(1) : crmSorted));
       }
       // Bỏ bản `tasks` còn «todo» mà bản `crm_task` cùng tên đã xong (chi tiết dự án coi là xong) — xem `dropTasksClosedOnDeal`.
-      let rows = await dropTasksClosedOnDeal([...chosen.values()]);
+      let rows = await dropTasksClosedOnDeal(chosenRows);
       // Sau khi khử trùng mới áp khoảng hạn: chỉ giữ bản được chọn mà hạn của chính nó nằm trong khoảng.
       if (dueRange) {
         const fromMs = new Date(dueRange.from).getTime();
