@@ -1,3 +1,12 @@
+## 2026-10-12 (2) — team-project-tasks bỏ việc `tasks` còn mở mà `crm_task` cùng tên đã xong; nhãn «Chưa xong»
+
+- `workTasks.js`: `crmTaskIdOf` (module-level; dự phòng id từ `unified_id`), `restrictToProductionScope` dùng lại; `dropTasksClosedOnDeal(rows)` gọi sau khử trùng trong `computeTeamTasks`: đọc `unified_tasks_v` (source=crm_task, theo `project_id`, chia khúc 100) + `crm_tasks.stage_slug/production_pipeline_stage_id` để chỉ tính bản SX; bỏ dòng `source='task'` khi khóa `project|tên` có bản crm đã đóng (done/completed/cancelled) và không có bản mở.
+- Test giả có kiểm tên cột so với cột thật của view (`COLS` ⊂ view): giữ/bỏ đúng 6 ca (crm xong, một mở một xong, việc bán hàng, không có crm, cancelled, crm mở).
+- Mobile: `WorkScreen.tsx` (chip + dòng số liệu «Chưa xong», dòng nhóm team «N việc chưa xong»), `OverviewScreen.tsx` (dòng nhóm quản lý).
+- Sau deploy cần đo lại HCB · Tủ bếp: kỳ vọng «chưa xong» giảm ~112, «QH» giảm ~40 so với 600/149 (số có thể đổi do dữ liệu đang được sửa).
+
+---
+
 ## 2026-10-12 — Google Ads offline: lấy gclid từ mô tả lead VPT_V1
 `lead_attribution` chưa có dòng website nào trên production; lead form web trước 12/10/2026 chỉ lưu tracking trong `crm_leads.description` (khối «Ghi chú: VPT_V1 | <ISO>»). `googleOfflineConversions.js` nay đọc thêm lead của công ty có marker này (tạo trong cửa sổ + 30 ngày lookback), lấy dòng `gclid:` sau marker cuối cùng khi lead không có gclid ở `lead_attribution` (thứ tự: lead_attribution → mô tả → lượt bấm gọi). Loại `VPT_TEST_`, dòng `TEST:`, utm_source=vpt_test, giá trị không khớp `^[A-Za-z0-9_-]{20,200}$`. Lượt nhấp = thời điểm marker (gửi form), thiếu thì = created_at. Chẩn đoán mới `valid_leads_via_description_gclid`; lead form tìm thấy theo cách này tính vào `website_form_leads` / `valid_leads_without_gclid`; `website_form_leads` không còn tính lead có gclid `VPT_TEST_`. Không migration, không SQL live, không đổi env. Test: `backend/tests/googleOfflineConversions.test.js`.
 

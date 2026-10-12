@@ -185,7 +185,7 @@ const STATUS_CHIPS: {
   icon: keyof typeof Ionicons.glyphMap;
 }[] = [
   { key: 'all', label: 'Tất cả', icon: 'list-outline' },
-  { key: 'pending', label: 'Chưa', icon: 'time-outline' },
+  { key: 'pending', label: 'Chưa xong', icon: 'time-outline' },
   { key: 'in_progress', label: 'Đang', icon: 'play-outline' },
   { key: 'completed', label: 'Xong', icon: 'checkmark-circle-outline' },
   { key: 'overdue', label: 'Quá hạn', icon: 'alert-circle-outline' },
@@ -2042,8 +2042,10 @@ export default function WorkScreen() {
               {s.code ? `${s.code} · ` : ''}{s.title || 'Deal'}
             </Text>
             <Text style={styles.sectionMeta}>
-              {done}/{s.tasks.length} xong
-              {open > 0 ? ` · ${open} còn lại` : ''}
+              {teamView
+                // Máy chủ chỉ trả việc CHƯA XONG của cả đội nên «x/y xong» luôn là 0/y và lệch với chi tiết dự án.
+                ? `${open} việc chưa xong`
+                : `${done}/${s.tasks.length} xong${open > 0 ? ` · ${open} còn lại` : ''}`}
               {noDeadlineCount > 0 ? (
                 <Text style={{ fontWeight: '800' }}>
                   {` · ${noDeadlineCount === open ? 'Không hạn' : `${noDeadlineCount} không hạn`}`}
@@ -2233,7 +2235,7 @@ export default function WorkScreen() {
       {/* Mỗi mục «● Nhãn số» là MỘT Text (chấm tròn là ký tự) — trước đây View + View chấm + 2 Text. */}
       <View style={styles.statsLine}>
         <Text style={[styles.statsLabel, { color: colors.warning }]}>
-          {'● Chưa '}<Text style={styles.statsNum}>{stats.pending}</Text>
+          {'● Chưa xong '}<Text style={styles.statsNum}>{stats.pending}</Text>
         </Text>
         <Text style={[styles.statsLabel, { color: colors.primary }]}>
           {'● Đang '}<Text style={styles.statsNum}>{stats.inProgress}</Text>
