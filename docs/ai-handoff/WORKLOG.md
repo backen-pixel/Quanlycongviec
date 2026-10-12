@@ -1,3 +1,12 @@
+## 2026-10-12 (9) — team-project-tasks: hạn lấy theo `crm_task` (khớp chi tiết dự án)
+
+- Đối chiếu app↔web 12/10: web «Quản lý nhiệm vụ Sản xuất» đếm theo DANH MỤC (hạn danh mục = hạn kế hoạch nhóm, quá hạn = 0 ở cả 3 xưởng) còn app đếm theo từng việc (HCB 93, Metalla 39, Phúc Đạt 42) → hai định nghĩa, 0 dự án quá hạn trùng nhau; web liệt kê nhiều dự án hơn (HCB 66 vs 45). Quan trọng hơn: HCB 93 việc quá hạn ở tab thì chỉ 16 cũng quá hạn ở chi tiết dự án (46 có hạn xa, 31 không hạn); 85/93 lấy hạn từ `tasks.due_date` (cũ / do script gán) vì khử trùng ưu tiên bản `tasks`.
+- `workTasks.js` (`dropTasksClosedOnDeal`, quy tắc 3): việc `source='task'` có bản `crm_task` SX mở cùng tên (ở deal chi tiết hiện) → `deadline` = hạn SỚM NHẤT có giá trị của các bản crm mở (không có → null). Thêm cột `deadline` vào truy vấn view. Sau đó `computeTeamTasks` áp lại cửa sổ (hạn ≤ N ngày HOẶC mới tạo ≤ M ngày; bỏ qua chế độ `due_from/to` và `no_deadline`) nên việc có hạn xa / không hạn tạo từ lâu rời khỏi tab.
+- Mô phỏng trước khi đẩy (dữ liệu thật): HCB quá hạn 83 → 19, tổng 561 → 530 (31 việc rời cửa sổ); Metalla 39 → 2, 89 → 52; Phúc Đạt 42 → 0, 179 → 143. Test giả 5 ca (nhiều bản mở lấy hạn sớm nhất, crm không hạn → null, hạn xa, trùng giữ nguyên, không có crm giữ nguyên) + cửa sổ: đạt.
+- Hệ quả cần biết: việc cũ chưa có hạn ở chi tiết không còn hiện ở tab (mục «Không hạn» đã gỡ). Web vẫn dùng định nghĩa theo danh mục — chưa đổi.
+
+---
+
 ## 2026-10-12 (8) — App: bỏ mục «Không hạn» (cũ hơn 7 ngày) khỏi tab Công việc
 
 - Theo yêu cầu: gỡ nút «Xem việc không hạn (cũ hơn 7 ngày)» và toàn bộ luồng nạp mục riêng này ở `sx-mobile/src/screens/WorkScreen.tsx` (state `nd*`, `loadNoDeadline`, nhánh `ListFooterComponent`/`onEndReached`, style `ndBtn*`, tuỳ chọn `keepNd`). Phạm vi bạn chọn: CHỈ mục riêng; việc mới tạo ≤ 7 ngày chưa có hạn vẫn hiện ở danh sách chính (kèm nhãn «Không hạn» ở dòng nhóm).
