@@ -138,6 +138,15 @@ final class VPT_V1_CRM_Core {
         return array_values(array_unique($ids));
     }
 
+    /** Public receipt: only the delivery state leaves WordPress, never contact data or CRM ids. */
+    public static function public_state($job) {
+        $state = is_array($job) ? ($job['state'] ?? '') : '';
+        if ($state === 'sent') { return 'confirmed'; }
+        if (in_array($state, array('queued', 'sending'), true)) { return 'pending'; }
+        if (in_array($state, array('review', 'blocked'), true)) { return 'failed'; }
+        return 'unknown';
+    }
+
     public static function classify_response($status, $body, $transport_error = false) {
         if ($transport_error) { return array('state'=>'review','reason'=>'transport_outcome_unknown'); }
         $data = json_decode((string) $body, true);
