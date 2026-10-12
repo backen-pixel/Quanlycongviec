@@ -906,7 +906,12 @@ r.get('/team-project-tasks', async (req, res) => {
         console.warn('[work-tasks] team-project-tasks: bỏ qua việc crm của deal công ty khác —', err?.message || err);
         return [];
       });
-      const scanRows = crossRows.length ? scan.rows.concat(crossRows) : scan.rows;
+      // Quét bổ sung theo DỰ ÁN nên cũng trả lại các dòng đã có ở lần quét chính (dự án nhiều deal, một deal thuộc công ty
+      // khác: việc của deal cùng công ty bị lấy hai lần → mỗi việc hiện đôi, HCB · Tủ bếp thừa 27 việc ở TB-2026-1037/1038)
+      // → chỉ thêm dòng CHƯA có theo `unified_id`.
+      const knownIds = new Set(scan.rows.map((t) => t.unified_id));
+      const crossNew = crossRows.filter((t) => !knownIds.has(t.unified_id));
+      const scanRows = crossNew.length ? scan.rows.concat(crossNew) : scan.rows;
       const typedRows = typedSet ? scanRows.filter((t) => typedSet.has(String(t.project_id))) : scanRows;
       // Chỉ giữ việc thuộc phạm vi sản xuất (xem `restrictToProductionScope`) — làm TRƯỚC khi lấy bản «song sinh» và khử
       // trùng để việc bán hàng / dự án ngoài phạm vi không lọt vào số đếm.
