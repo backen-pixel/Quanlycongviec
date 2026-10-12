@@ -41,6 +41,9 @@ async function readAll(build) {
   throw Error('PAGE_LIMIT');
 }
 
+// Live-site QA traffic is tagged utm_source=vpt_test and never counted.
+const isQaRow = row => String(row.utm_source || '').toLowerCase() === 'vpt_test';
+
 const ceilDiv = (num, den) => den > 0 && Number.isSafeInteger(num)
   ? Number((BigInt(num) + BigInt(den) - 1n) / BigInt(den)) : null;
 
@@ -51,7 +54,7 @@ async function buildWebConversions({ db, companyId, from, to }) {
 
   // Form leads: website first touch in range, this company, not explicit test records.
   const touches = await readAll(() => db.from('lead_attribution')
-    .select('id,lead_id,platform,utm_medium,gclid,gbraid,wbraid,ad_id,fb_ad_id,cham_dau_luc')
+    .select('id,lead_id,platform,utm_source,utm_medium,gclid,gbraid,wbraid,ad_id,fb_ad_id,cham_dau_luc')
     .eq('company_id', companyId).eq('kenh', 'website').not('lead_id', 'is', null)
     .gte('cham_dau_luc', start).lt('cham_dau_luc', end)
     .order('cham_dau_luc', { ascending: true }).order('id', { ascending: true }));
@@ -66,6 +69,7 @@ async function buildWebConversions({ db, companyId, from, to }) {
   const leads = [];
   const seenLead = new Set();
   for (const row of touches) {
+    if (isQaRow(row)) continue;
     if (!real.has(row.lead_id) || seenLead.has(row.lead_id)) continue;
     seenLead.add(row.lead_id);
     leads.push(row);
@@ -73,7 +77,7 @@ async function buildWebConversions({ db, companyId, from, to }) {
   const { reachedByLead } = await loadMilestoneReached(db, leads);
 
   const clicks = await readAll(() => db.from('web_conversion_events')
-    .select('id,kind,platform,utm_medium,gclid,gbraid,wbraid,ad_id,occurred_at')
+    .select('id,kind,platform,utm_source,utm_medium,gclid,gbraid,wbraid,ad_id,occurred_at')
     .eq('company_id', companyId).gte('occurred_at', start).lt('occurred_at', end)
     .order('occurred_at', { ascending: true }).order('id', { ascending: true }));
 
@@ -88,6 +92,7 @@ async function buildWebConversions({ db, companyId, from, to }) {
   }
   const kindKey = { call: 'calls', zalo: 'zalo', messenger: 'messenger' };
   for (const row of clicks) {
+    if (isQaRow(row)) continue;
     const channel = channelOf(row);
     if (kindKey[row.kind]) stats[channel][kindKey[row.kind]]++;
     if (channel === 'facebook' && row.ad_id) facebookAds.add(row.ad_id);
