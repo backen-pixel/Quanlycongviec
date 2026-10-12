@@ -504,6 +504,9 @@ async function lookupUserNames(ids) {
   return out;
 }
 
+/** Id gốc ở bảng `crm_tasks`; thiếu `source_id` thì lấy từ `unified_id` («crm_task:<uuid>») — không bao giờ gửi «undefined» xuống DB. */
+const crmTaskIdOf = (t) => String(t.source_id || String(t.unified_id || '').replace(/^crm_task:/, ''));
+
 /**
  * Chỉ giữ việc thuộc PHẠM VI SẢN XUẤT — cùng quy tắc với trang chi tiết dự án (web + app), để việc đếm ở tab Công việc
  * mở ra được ở chi tiết dự án:
@@ -517,9 +520,7 @@ async function lookupUserNames(ids) {
 async function restrictToProductionScope(rows, companyId) {
   if (!rows.length) return rows;
   const projectIds = [...new Set(rows.map((t) => String(t.project_id)))];
-  // `source_id` là id gốc của `crm_tasks`; thiếu thì lấy từ `unified_id` («crm_task:<uuid>») — không bao giờ gửi «undefined» xuống DB.
-  const crmIdOf = (t) => String(t.source_id || String(t.unified_id || '').replace(/^crm_task:/, ''));
-  const crmIds = rows.filter((t) => t.source === 'crm_task').map(crmIdOf).filter(Boolean);
+  const crmIds = rows.filter((t) => t.source === 'crm_task').map(crmTaskIdOf).filter(Boolean);
   const [wonIds, stageMap, projects, crmTasks] = await Promise.all([
     getWonDealProjectIds(companyId || null),
     getWorkshopStageMap(),
@@ -552,7 +553,63 @@ async function restrictToProductionScope(rows, companyId) {
       .map((c) => String(c.id)),
   );
   return rows.filter((t) => inScope.has(String(t.project_id))
-    && (t.source !== 'crm_task' || sxCrm.has(crmIdOf(t))));
+    && (t.source !== 'crm_task' || sxCrm.has(crmTaskIdOf(t))));
+}
+
+/** Trạng thái đã đóng — cùng bộ với `applyOpenOnlyFilter`. */
+const CLOSED_TASK_STATUSES = new Set(['done', 'completed', 'cancelled']);
+
+/**
+ * Bỏ khỏi tab Công việc các việc ở bảng `tasks` mà bản `crm_task` CÙNG TÊN trong cùng dự án đã xong.
+ *
+ * Mỗi việc sản xuất có hai bản: `tasks` (bảng việc xưởng) và `crm_task` (việc của deal). Chi tiết dự án đọc bản `crm_task`,
+ * còn danh sách này ưu tiên bản `tasks` (khử trùng). Khi bản `crm_task` đã hoàn thành mà bản `tasks` còn «todo» thì việc vẫn
+ * hiện là chưa xong — và nếu có hạn thì bị tính quá hạn — dù chi tiết dự án đã đánh dấu xong. Đo ở HCB · Tủ bếp: 112 / 600
+ * việc «chưa xong» và 40 / 149 việc «quá hạn» thuộc loại này.
+ *
+ * Chỉ bỏ khi mọi bản `crm_task` sản xuất cùng tên đều đã đóng (còn một bản đang mở thì giữ — trường hợp nhiều việc cùng tên
+ * ở các cột khác nhau). Việc không có bản `crm_task` tương ứng được giữ nguyên. KHÔNG ghi dữ liệu.
+ */
+async function dropTasksClosedOnDeal(rows) {
+  const taskRows = rows.filter((t) => t.source === 'task');
+  if (!taskRows.length) return rows;
+  const projectIds = [...new Set(taskRows.map((t) => String(t.project_id)))];
+  const crmRows = await fetchAllByIdsParallel({
+    table: 'unified_tasks_v',
+    columns: 'unified_id, source_id, project_id, title, status',
+    key: 'project_id',
+    ids: projectIds,
+    // `in` trên view nhanh với khoảng ≤ ~200 id (xem TEAM_TASKS_IN_MAX) → chia khúc nhỏ.
+    idChunk: 100,
+    tune: (q) => q.eq('source', 'crm_task').order('unified_id', { ascending: true }),
+  });
+  if (!crmRows.length) return rows;
+  const crmDetail = await fetchAllByIdsParallel({
+    table: 'crm_tasks',
+    columns: 'id, stage_slug, production_pipeline_stage_id',
+    key: 'id',
+    ids: crmRows.map(crmTaskIdOf),
+  });
+  const sxCrm = new Set(
+    crmDetail
+      .filter((c) => String(c.stage_slug || '').startsWith('sx_') || c.production_pipeline_stage_id)
+      .map((c) => String(c.id)),
+  );
+  const keyOf = (t) => `${t.project_id}|${String(t.title || '').trim().toLowerCase()}`;
+  const state = new Map();
+  for (const c of crmRows) {
+    if (!sxCrm.has(crmTaskIdOf(c))) continue;
+    const k = keyOf(c);
+    const s = state.get(k) || { open: 0, closed: 0 };
+    if (CLOSED_TASK_STATUSES.has(String(c.status || '').toLowerCase())) s.closed += 1;
+    else s.open += 1;
+    state.set(k, s);
+  }
+  return rows.filter((t) => {
+    if (t.source !== 'task') return true;
+    const s = state.get(keyOf(t));
+    return !(s && s.closed > 0 && s.open === 0);
+  });
 }
 
 r.get('/team-project-tasks', async (req, res) => {
@@ -789,7 +846,8 @@ r.get('/team-project-tasks', async (req, res) => {
         const cur = chosen.get(k);
         if (!cur || (cur.source === 'crm_task' && t.source !== 'crm_task')) chosen.set(k, t);
       }
-      let rows = [...chosen.values()];
+      // Bỏ bản `tasks` còn «todo» mà bản `crm_task` cùng tên đã xong (chi tiết dự án coi là xong) — xem `dropTasksClosedOnDeal`.
+      let rows = await dropTasksClosedOnDeal([...chosen.values()]);
       // Sau khi khử trùng mới áp khoảng hạn: chỉ giữ bản được chọn mà hạn của chính nó nằm trong khoảng.
       if (dueRange) {
         const fromMs = new Date(dueRange.from).getTime();
