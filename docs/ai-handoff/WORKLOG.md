@@ -1,6 +1,7 @@
 ## 2026-10-12 — Google Ads offline: giờ gọi từ tên file ghi âm, bỏ ngưỡng 30 giây
 Dữ liệu thật: app `crm-mobile-v2` không gửi `duration_sec`/`call_started_at`/`direction`, tải lên trễ (gọi 07/10, tải 12/10), cùng file có thể tải 2 lần. Helper mới `backend/src/helpers/callRecordingMeta.js`: `parseRecordingFileTime` (đuôi `_YYMMDD_HHMMSS` / `_YYYYMMDD_HHMMSS`, ngăn cách `_`/`-`/khoảng trắng, giờ VN, loại giá trị vô lý) và `parseMp4DurationSec` / `readMp4DurationSecFromFile` (hộp `moov/mvhd` v0/v1, không thêm thư viện). `googleOfflineConversions.js`: giờ gọi = `call_started_at` → tên file → bỏ qua (`recordings_no_call_time`), không còn dùng `created_at`; theo quyết định Founder **bỏ ngưỡng ≥30 giây** (không lọc theo thời lượng/transcript); gộp dòng trùng cùng công ty + `file_name` + `file_size` (`recordings_duplicates_merged`); chẩn đoán `recordings_estimated_time` đổi thành `recordings_time_from_file_name`. Bản ghi mới: route upload điền `duration_sec` (đọc file tạm) và `call_started_at` (tên file) khi app không gửi, sau bước chống trùng, lỗi không chặn upload; worker STT điền hai cột khi còn trống. Không backfill dòng cũ (không cần cho xuất chuyển đổi). Không migration, không SQL live, không đổi env. Test: `backend/tests/callRecordingMeta.test.js`, `backend/tests/googleOfflineConversions.test.js`.
-n---
+
+---
 
 ## 2026-10-12 (2) — team-project-tasks bỏ việc `tasks` còn mở mà `crm_task` cùng tên đã xong; nhãn «Chưa xong»
 
