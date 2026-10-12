@@ -13,12 +13,14 @@
  *      • Target là cột intake (bucket_slug = INTAKE_BUCKET) → cho phép kéo lùi.
  *      • Target có order_index <= current order_index → kéo lùi.
  *      • Không xác định được currentColId (project chưa có cột Kanban SX nào).
+ *      • Phân loại (hoặc cả công ty) đã tắt công tắc trong `app_settings` — xem `sxChanKeoTheoNhiemVu.js`.
  *
  * Áp dụng cho `PATCH /production/projects/:id/stage` (kéo cột pipeline SX trên Kanban / Stepper).
  */
 
 const { supabase } = require('../config/supabase');
 const { INTAKE_BUCKET } = require('./workshopKanban');
+const { laMienTruChanKeo } = require('./sxChanKeoTheoNhiemVu');
 
 function buildBlockResponse(currentCol, targetCol, blockingItems) {
   const names = blockingItems.map((t) => `• ${t.title}`).join('\n');
@@ -84,26 +86,13 @@ async function resolveTargetSxColumn(targetColId) {
   return fetchSxColumnById(targetColId);
 }
 
-function foldTenLoai(value) {
-  return String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/đ/g, 'd')
-    .replace(/Đ/g, 'D')
-    .toLowerCase()
-    .trim();
-}
-
-/** Cánh kính / Cửa: kéo cột tự do, không bắt hoàn thành nhiệm vụ. */
-async function laLoaiKhongChanKeo(workshopTypeId) {
-  if (!workshopTypeId) return false;
-  const { data } = await supabase
-    .from('workshop_project_types')
-    .select('name')
-    .eq('id', workshopTypeId)
-    .maybeSingle();
-  const n = foldTenLoai(data?.name);
-  return n === 'canh kinh' || n === 'cua';
+/**
+ * Phân loại nào được kéo cột tự do — tra trong `app_settings`, không so TÊN nữa.
+ * Xem `sxChanKeoTheoNhiemVu.js`.
+ */
+async function laLoaiKhongChanKeo(companyId, workshopTypeId) {
+  if (!companyId && !workshopTypeId) return false;
+  return laMienTruChanKeo(companyId, workshopTypeId);
 }
 
 function shouldSkipGate(currentCol, targetCol) {
@@ -136,8 +125,8 @@ async function assertSxKanbanAdvanceAllowed({ projectId, targetColId, currentCol
 
     if (shouldSkipGate(currentCol, targetCol)) return { ok: true };
     if (
-      await laLoaiKhongChanKeo(currentCol.workshop_type_id)
-      || await laLoaiKhongChanKeo(targetCol.workshop_type_id)
+      await laLoaiKhongChanKeo(currentCol.company_id, currentCol.workshop_type_id)
+      || await laLoaiKhongChanKeo(targetCol.company_id, targetCol.workshop_type_id)
     ) {
       return { ok: true };
     }
