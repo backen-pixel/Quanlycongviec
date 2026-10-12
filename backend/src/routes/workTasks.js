@@ -517,7 +517,9 @@ async function lookupUserNames(ids) {
 async function restrictToProductionScope(rows, companyId) {
   if (!rows.length) return rows;
   const projectIds = [...new Set(rows.map((t) => String(t.project_id)))];
-  const crmIds = rows.filter((t) => t.source === 'crm_task').map((t) => String(t.source_id));
+  // `source_id` là id gốc của `crm_tasks`; thiếu thì lấy từ `unified_id` («crm_task:<uuid>») — không bao giờ gửi «undefined» xuống DB.
+  const crmIdOf = (t) => String(t.source_id || String(t.unified_id || '').replace(/^crm_task:/, ''));
+  const crmIds = rows.filter((t) => t.source === 'crm_task').map(crmIdOf).filter(Boolean);
   const [wonIds, stageMap, projects, crmTasks] = await Promise.all([
     getWonDealProjectIds(companyId || null),
     getWorkshopStageMap(),
@@ -550,7 +552,7 @@ async function restrictToProductionScope(rows, companyId) {
       .map((c) => String(c.id)),
   );
   return rows.filter((t) => inScope.has(String(t.project_id))
-    && (t.source !== 'crm_task' || sxCrm.has(String(t.source_id))));
+    && (t.source !== 'crm_task' || sxCrm.has(crmIdOf(t))));
 }
 
 r.get('/team-project-tasks', async (req, res) => {
@@ -568,7 +570,8 @@ r.get('/team-project-tasks', async (req, res) => {
     const nowMs = Date.now();
     const until = new Date(nowMs + dueDays * 86_400_000).toISOString();
     const createdSince = new Date(nowMs - createdDays * 86_400_000).toISOString();
-    const COLS = 'unified_id, source, project_id, lead_id, title, status, deadline, created_at, assignee_id, task_kind, project_code, project_name, lead_title';
+    // `source_id` cần cho `restrictToProductionScope` (tra `crm_tasks` theo id); thiếu cột này thì truy vấn nhận chuỗi «undefined» → 500.
+    const COLS = 'unified_id, source, source_id, project_id, lead_id, title, status, deadline, created_at, assignee_id, task_kind, project_code, project_name, lead_title';
     // no_deadline=1: mục riêng «Không hạn» — việc chưa xong KHÔNG có hạn và tạo từ lâu (trước `created_days` ngày);
     // phần mới tạo đã nằm ở danh sách chính. Lấy tách riêng để danh sách chính không phình theo hàng nghìn việc cũ.
     const noDeadlineMode = ['1', 'true'].includes(String(req.query.no_deadline || '').toLowerCase());
