@@ -71,6 +71,11 @@ test('channel rules', () => {
   assert.equal(channelOf({ platform: 'instagram' }), 'facebook');
   assert.equal(channelOf({ platform: 'chatgpt', utm_medium: 'paid' }), 'chatgpt_ads');
   assert.equal(channelOf({ platform: 'chatgpt', utm_medium: 'organic' }), 'other');
+  assert.equal(channelOf({ platform: 'tiktok', utm_medium: 'paid' }), 'tiktok_ads');
+  assert.equal(channelOf({ platform: 'tiktok' }), 'tiktok_ads');
+  assert.equal(channelOf({ platform: 'tiktok', utm_medium: 'organic' }), 'other');
+  assert.equal(channelOf({ platform: 'zalo', utm_medium: 'paid' }), 'zalo_ads');
+  assert.equal(channelOf({ platform: 'zalo' }), 'other');
 });
 
 test('report counts website leads, valid leads, clicks and spend by channel, scoped and without tests', async () => {
@@ -87,8 +92,10 @@ test('report counts website leads, valid leads, clicks and spend by channel, sco
   assert.deepEqual([by.seo.form_leads, by.seo.spend_vnd, by.seo.cost_per_conversion_vnd], [1, 0, null]);
   assert.deepEqual([by.other.form_leads, by.other.messenger], [1, 1]);
   assert.equal(by.chatgpt_ads.spend_vnd, null);
+  assert.deepEqual([by.tiktok_ads.spend_vnd, by.tiktok_ads.conversions, by.tiktok_ads.cost_per_valid_vnd], [9, 0, null]);
+  assert.equal(by.zalo_ads.spend_vnd, null);
   assert.equal(r.totals.conversions, 7);
-  assert.equal(r.totals.spend_vnd, 1500001);
+  assert.equal(r.totals.spend_vnd, 1500010);
 });
 
 test('invalid range and DB errors propagate', async () => {
