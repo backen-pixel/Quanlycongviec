@@ -2,7 +2,7 @@
 /**
  * Plugin Name: VPT V1 — Form to CRM
  * Description: Private pilot bridge for CF7 form 11116 to VPT CRM, with durable intake, duplicate suppression and explicit review of uncertain writes.
- * Version: 0.3.2
+ * Version: 0.3.3
  * Requires PHP: 7.4
  * Author: Vạn Phú Thành
  */
@@ -24,6 +24,8 @@ final class VPT_V1_CRM_Bridge {
         add_filter('wpcf7_feedback_response', array(__CLASS__,'feedback'));
         add_action('wp_head', array(__CLASS__,'tracking_script'), 2);
         add_action('woocommerce_single_product_summary', array(__CLASS__,'product_form'), 35);
+        add_action('woocommerce_before_shop_loop', array(__CLASS__,'kitchen_cta'), 5);
+        add_action('woocommerce_single_product_summary', array(__CLASS__,'kitchen_cta'), 36);
         add_action('wpcf7_before_send_mail', array(__CLASS__,'capture'), 20, 3);
         add_action(self::HOOK, array(__CLASS__,'dispatch'), 10, 1);
         add_action('admin_menu', array(__CLASS__,'menu'));
@@ -46,7 +48,7 @@ final class VPT_V1_CRM_Bridge {
 
     public static function tracking_script() {
         if (is_admin() || self::mode()==='off') { return; }
-        echo '<script data-nowprocket="1" data-cfasync="false" src="'.esc_url(plugins_url('attribution.js',__FILE__)).'?ver=0.3.2-'.(int) filemtime(__DIR__.'/attribution.js').'" defer></script>';
+        echo '<script data-nowprocket="1" data-cfasync="false" src="'.esc_url(plugins_url('attribution.js',__FILE__)).'?ver=0.3.3-'.(int) filemtime(__DIR__.'/attribution.js').'" defer></script>';
     }
     public static function product_form() {
         if (!in_array((int)get_the_ID(),array(6368,5864,6203),true)) { return; }
@@ -54,6 +56,32 @@ final class VPT_V1_CRM_Bridge {
         echo '<section id="tu-van-tu-bep-vpt-v1" style="margin-top:24px;padding:18px;border:1px solid #ddd;border-radius:8px"><h2 style="font-size:1.35em">Nhận tư vấn và báo giá tủ bếp</h2>';
         echo do_shortcode('[contact-form-7 id="11116" title="VPT V1 — Tư vấn tủ bếp inox và nhôm"]');
         echo '</section>';
+    }
+    // 0.3.3: accessory and appliance shoppers are often fitting out a new kitchen. Offer the whole-kitchen
+    // quote and jump to form 11116 already printed on the page, so the request enters the CRM.
+    const KITCHEN_ROOTS = array(24, 25, 83); // thiet-bi-nha-bep, phu-kien-tu-bep, combo-thiet-bi-nha-bep
+    public static function kitchen_upsell_page() {
+        $ids=array();
+        if (function_exists('is_product_category') && is_product_category()) {
+            $term=get_queried_object();
+            if ($term && isset($term->term_id)) { $ids[]=(int) $term->term_id; }
+        } elseif (function_exists('is_product') && is_product()) {
+            $terms=get_the_terms(get_the_ID(),'product_cat');
+            if (is_array($terms)) { foreach ($terms as $term) { $ids[]=(int) $term->term_id; } }
+        }
+        foreach ($ids as $id) {
+            $line=array_merge(array($id), array_map('intval', get_ancestors($id,'product_cat','taxonomy')));
+            if (array_intersect(self::KITCHEN_ROOTS, $line)) { return true; }
+        }
+        return false;
+    }
+    public static function kitchen_cta() {
+        if (self::mode()!=='live' || !self::kitchen_upsell_page()) { return; }
+        echo '<div class="vpt-lam-bep-moi" style="margin:12px 0 18px;padding:14px 16px;border:1px solid #f0c36d;border-radius:8px;background:#fff8e6">';
+        echo '<strong style="display:block;font-size:1.1em">Đang làm bếp mới?</strong>';
+        echo '<span>Xưởng Vạn Phú Thành báo giá trọn gói tủ bếp inox, nhôm kính kèm thiết bị và phụ kiện, lắp đặt một lần.</span> ';
+        echo '<a href="#wpcf7-f11116-o1" class="button primary is-small" style="margin:8px 0 0" onclick="var f=document.querySelector(\'[id^=wpcf7-f11116]\');if(f){f.scrollIntoView({behavior:\'smooth\'});return false;}">Nhận báo giá trọn gói</a>';
+        echo '</div>';
     }
     public static function feedback($response) {
         if (self::$receipt!==null) { $response['vpt_v1']=self::$receipt; }
