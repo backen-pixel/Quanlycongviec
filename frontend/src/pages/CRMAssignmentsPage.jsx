@@ -121,6 +121,7 @@ const DEADLINE_BUCKET_META = [
   { key: 'today',      label: '🟡 Hôm nay',     color: '#F59E0B' },
   { key: 'tomorrow',   label: '🟠 Ngày mai',    color: '#F97316' },
   { key: 'thisWeek',   label: '🔵 Tuần này',    color: '#3B82F6' },
+  { key: 'nextWeek',   label: '🟣 Tuần sau',    color: '#8B5CF6' },
   { key: 'later',      label: '⚪ Sau đó',      color: '#94A3B8' },
   { key: 'noDeadline', label: '⏳ Chưa có hạn', color: '#6B7280' },
 ];
@@ -145,10 +146,15 @@ function groupTasksByStatus(tasks) {
 }
 
 function emptyDeadlineGroups() {
-  return { overdue: [], today: [], tomorrow: [], thisWeek: [], later: [], noDeadline: [] };
+  return { overdue: [], today: [], tomorrow: [], thisWeek: [], nextWeek: [], later: [], noDeadline: [] };
 }
 
-/** Hôm nay → Ngày mai → phần còn lại của 7 ngày tới → sau đó. */
+/**
+ * Hôm nay → Ngày mai → hết 7 ngày tới → 7 ngày kế → sau đó.
+ *
+ * Tách «Tuần sau» khỏi «Sau đó»: gộp chung thì mọi việc từ ngày thứ 8 trở đi dồn vào
+ * một rổ, mà việc tuần sau là thứ người ta còn kịp sắp lịch, khác hẳn việc tháng sau.
+ */
 function classifyDeadlineBucket(deadline, today) {
   if (!deadline) return 'noDeadline';
   const d = new Date(deadline);
@@ -157,10 +163,13 @@ function classifyDeadlineBucket(deadline, today) {
   const dayAfter = new Date(today.getTime() + 2 * 86400000);
   const weekEnd = new Date(today);
   weekEnd.setDate(weekEnd.getDate() + 7);
+  const nextWeekEnd = new Date(today);
+  nextWeekEnd.setDate(nextWeekEnd.getDate() + 14);
   if (d < today) return 'overdue';
   if (d < tomorrow) return 'today';
   if (d < dayAfter) return 'tomorrow';
   if (d < weekEnd) return 'thisWeek';
+  if (d < nextWeekEnd) return 'nextWeek';
   return 'later';
 }
 
@@ -387,8 +396,9 @@ function SegmentedControl({ value, onChange, options, activeText = 'text-violet-
 
 const PRIVATE_INBOX_VIEW_MODES = [
   { id: 'deal', icon: Building2, label: 'Theo deal' },
-  { id: 'status', icon: ClipboardList, label: 'Trạng thái' },
+  { id: 'status', icon: ClipboardList, label: 'Kanban' },
   { id: 'deadline', icon: AlertTriangle, label: 'Deadline' },
+  { id: 'calendar', icon: Calendar, label: 'Lịch' },
 ];
 
 /** Primary + dropdown chế độ xem khác — giống CRM dashboard. */
@@ -1070,6 +1080,155 @@ function InboxKanbanBoard({ columns, grouped, actionLabel }) {
   );
 }
 
+/**
+ * Lịch tháng — mỗi ô là một ngày, việc xếp theo hạn.
+ *
+ * Bảng Deadline trả lời «còn bao lâu», lịch trả lời «ngày nào dồn việc». Hai câu khác
+ * nhau: nhìn rổ «Tuần này» không biết 14 việc đó rơi vào một ngày hay rải đều năm ngày.
+ *
+ * Việc chưa có hạn không lên lịch được — đếm riêng ở chân lịch cho khỏi biến mất.
+ */
+function InboxCalendarBoard({ tasks, actionLabel }) {
+  const homNay = new Date();
+  const [moc, setMoc] = useState(() => new Date(homNay.getFullYear(), homNay.getMonth(), 1));
+
+  const { oNgay, chuaCoHan } = useMemo(() => {
+    const map = new Map();
+    let trong = 0;
+    (tasks || []).forEach((t) => {
+      if (!t.deadline) { trong += 1; return; }
+      const d = new Date(t.deadline);
+      if (Number.isNaN(d.getTime())) { trong += 1; return; }
+      const k = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(t);
+    });
+    return { oNgay: map, chuaCoHan: trong };
+  }, [tasks]);
+
+  // Lịch bắt đầu từ thứ Hai — tuần làm việc của xưởng, không phải Chủ nhật kiểu Mỹ.
+  const dauThang = new Date(moc.getFullYear(), moc.getMonth(), 1);
+  const lech = (dauThang.getDay() + 6) % 7;
+  const dauLuoi = new Date(dauThang);
+  dauLuoi.setDate(dauLuoi.getDate() - lech);
+
+  const oLich = [];
+  for (let i = 0; i < 42; i += 1) {
+    const d = new Date(dauLuoi);
+    d.setDate(d.getDate() + i);
+    oLich.push(d);
+  }
+
+  const laHomNay = (d) => d.toDateString() === homNay.toDateString();
+  const trongThang = (d) => d.getMonth() === moc.getMonth();
+  const doiThang = (n) => setMoc(new Date(moc.getFullYear(), moc.getMonth() + n, 1));
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-200 bg-slate-50/80">
+        <button
+          type="button"
+          onClick={() => doiThang(-1)}
+          className="h-7 w-7 rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 cursor-pointer inline-flex items-center justify-center"
+          aria-label="Tháng trước"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <p className="text-sm font-bold text-slate-900 tabular-nums">
+          Tháng {moc.getMonth() + 1}/{moc.getFullYear()}
+        </p>
+        <button
+          type="button"
+          onClick={() => doiThang(1)}
+          className="h-7 w-7 rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 cursor-pointer inline-flex items-center justify-center"
+          aria-label="Tháng sau"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          onClick={() => setMoc(new Date(homNay.getFullYear(), homNay.getMonth(), 1))}
+          className="h-7 px-2.5 rounded-md border border-slate-200 bg-white text-[11px] font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
+        >
+          Hôm nay
+        </button>
+        {chuaCoHan > 0 && (
+          <span className="ml-auto text-[11px] font-medium text-slate-500">
+            {chuaCoHan} việc chưa có hạn — không lên lịch được
+          </span>
+        )}
+      </div>
+
+      <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50/60">
+        {['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].map((n, i) => (
+          <div
+            key={n}
+            className={`px-2 py-1.5 text-[11px] font-bold text-center ${i >= 5 ? 'text-slate-400' : 'text-slate-600'}`}
+          >
+            {n}
+          </div>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-7">
+        {oLich.map((d) => {
+          const viec = oNgay.get(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`) || [];
+          const quaHan = d < new Date(homNay.getFullYear(), homNay.getMonth(), homNay.getDate());
+          return (
+            <div
+              key={d.toISOString()}
+              className={`min-h-[94px] border-b border-r border-slate-100 p-1.5 ${
+                trongThang(d) ? 'bg-white' : 'bg-slate-50/50'
+              }`}
+            >
+              <div className="flex items-center gap-1 mb-1">
+                <span
+                  className={`inline-flex items-center justify-center h-5 min-w-[20px] px-1 rounded text-[11px] font-bold tabular-nums ${
+                    laHomNay(d)
+                      ? 'bg-indigo-600 text-white'
+                      : trongThang(d) ? 'text-slate-700' : 'text-slate-300'
+                  }`}
+                >
+                  {d.getDate()}
+                </span>
+                {viec.length > 0 && (
+                  <span
+                    className={`ml-auto text-[10px] font-bold tabular-nums px-1 rounded ${
+                      quaHan ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'
+                    }`}
+                  >
+                    {viec.length}
+                  </span>
+                )}
+              </div>
+              <div className="space-y-0.5">
+                {viec.slice(0, 3).map((t) => (
+                  <Link
+                    key={t.id}
+                    to={t.href || '#'}
+                    title={`${t.title || 'Nhiệm vụ'}${t.assignee?.full_name ? ` — ${t.assignee.full_name}` : ''}`}
+                    className={`block truncate rounded px-1 py-0.5 text-[10px] leading-tight border-l-2 hover:bg-slate-50 ${
+                      quaHan ? 'border-rose-400 text-rose-900' : 'border-indigo-300 text-slate-700'
+                    }`}
+                  >
+                    {t.title || 'Nhiệm vụ'}
+                  </Link>
+                ))}
+                {viec.length > 3 && (
+                  <p className="px-1 text-[10px] font-medium text-slate-400">+{viec.length - 3} việc nữa</p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <p className="px-3 py-1.5 text-[10px] text-slate-400 border-t border-slate-100">
+        Bấm tên việc để mở. {actionLabel ? `Thẻ dẫn tới: ${actionLabel.toLowerCase()}.` : ''}
+      </p>
+    </div>
+  );
+}
+
 function InboxStatusBoard({ tasks, actionLabel }) {
   const grouped = useMemo(() => groupTasksByStatus(tasks), [tasks]);
   return <InboxKanbanBoard columns={STATUS_BOARD_META} grouped={grouped} actionLabel={actionLabel} />;
@@ -1486,6 +1645,8 @@ function PrivateDealInbox({
         <InboxStatusBoard tasks={flatTasks} actionLabel="Mở nhiệm vụ" />
       ) : inboxView === 'deadline' ? (
         <InboxDeadlineBoard tasks={flatTasks} actionLabel="Mở nhiệm vụ" />
+      ) : inboxView === 'calendar' ? (
+        <InboxCalendarBoard tasks={flatTasks} actionLabel="Mở nhiệm vụ" />
       ) : (
         <div className="space-y-2">
           {filteredGroups.map((g) => {
