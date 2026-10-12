@@ -7,6 +7,7 @@ const { auth } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/newPermission');
 const { isSystemAdmin, isProductionAdmin, isProductionStaff } = require('../helpers/adminRole');
 const { filterWorkshopProjectTypesForClientCompany } = require('../helpers/workshopTypeClientScope');
+const { laMienTruChanKeo, datChanKeoChoPhanLoai } = require('../helpers/sxChanKeoTheoNhiemVu');
 
 const r = Router();
 r.use(auth);
@@ -77,6 +78,11 @@ r.get('/project-types', requirePermission('projects', 'view'), async (req, res) 
     if (clientCoId) {
       rows = await filterWorkshopProjectTypesForClientCompany(companyId, clientCoId, rows);
     }
+    // Cờ ảo: không nằm trong bảng, lưu ở `app_settings` (xem sxChanKeoTheoNhiemVu.js).
+    rows = await Promise.all(rows.map(async (t) => ({
+      ...t,
+      chan_keo_theo_nhiem_vu: !(await laMienTruChanKeo(t.company_id, t.id)),
+    })));
     res.json(rows);
   } catch (e) {
     console.error(e);
@@ -157,7 +163,13 @@ r.put('/project-types/:id', requirePermission('projects', 'edit'), async (req, r
       .select('*')
       .single();
     if (error) throw error;
-    res.json(data);
+    if (b.chan_keo_theo_nhiem_vu !== undefined) {
+      await datChanKeoChoPhanLoai(req.params.id, !!b.chan_keo_theo_nhiem_vu);
+    }
+    res.json({
+      ...data,
+      chan_keo_theo_nhiem_vu: !(await laMienTruChanKeo(data.company_id, data.id)),
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

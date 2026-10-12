@@ -108,6 +108,7 @@ export default function WorkshopTypeSettingsSection({ moduleContext, accent = 't
         applies_to: t.applies_to,
         order_index: t.order_index,
         is_active: t.is_active,
+        chan_keo_theo_nhiem_vu: t.chan_keo_theo_nhiem_vu !== false,
         description: t.description ?? '',
       });
       await loadTypes();
@@ -241,6 +242,17 @@ export default function WorkshopTypeSettingsSection({ moduleContext, accent = 't
                           />
                           Hiện
                         </label>
+                        <label
+                          className="flex items-center gap-1 text-[11px] text-gray-600 cursor-pointer shrink-0"
+                          title="Còn nhiệm vụ tick «Chặn chuyển giai đoạn» chưa xong thì không kéo thẻ sang cột phải được"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={t.chan_keo_theo_nhiem_vu !== false}
+                            onChange={(e) => setTypes((prev) => prev.map((x) => (x.id === t.id ? { ...x, chan_keo_theo_nhiem_vu: e.target.checked } : x)))}
+                          />
+                          Chặn kéo
+                        </label>
                         <button
                           type="button"
                           onClick={() => saveType(t)}
@@ -297,6 +309,17 @@ export default function WorkshopTypeSettingsSection({ moduleContext, accent = 't
                           onChange={(e) => setTypes((prev) => prev.map((x) => (x.id === t.id ? { ...x, is_active: e.target.checked } : x)))}
                         />
                         Hiện
+                      </label>
+                      <label
+                        className="flex items-center gap-1.5 text-[11px] text-gray-600 cursor-pointer"
+                        title="Còn nhiệm vụ tick «Chặn chuyển giai đoạn» chưa xong thì không kéo thẻ sang cột phải được"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={t.chan_keo_theo_nhiem_vu !== false}
+                          onChange={(e) => setTypes((prev) => prev.map((x) => (x.id === t.id ? { ...x, chan_keo_theo_nhiem_vu: e.target.checked } : x)))}
+                        />
+                        Chặn kéo
                       </label>
                       <button
                         type="button"
