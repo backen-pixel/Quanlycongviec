@@ -9,7 +9,7 @@ từ lượt nhấp» của Google; Google tự tải tệp đó mỗi ngày qua
 | Tên trong Google Ads | Ý nghĩa |
 |---|---|
 | `VPT CRM - Cuoc goi that` | Ghi âm cuộc gọi từ app Android, dài từ 30 giây, không phải cuộc gọi đi, ghép được với lượt bấm nút gọi trên website có `gclid` (bấm trong khoảng 10 phút trước đến 1 phút sau khi cuộc gọi bắt đầu). Mỗi lượt bấm chỉ ghép một cuộc gọi (cuộc gọi sớm nhất). |
-| `VPT CRM - Khach hop le` | Lead đã được sale kéo sang lạnh/ấm/nóng hoặc chuyển Deal (cùng mốc «hợp lệ» của thử nghiệm P1). `gclid` lấy từ form website của lead; nếu không có thì lấy `gclid` của lượt bấm gọi đã ghép với ghi âm của lead đó. Mỗi lead một lần, thời điểm = lúc đạt mốc. |
+| `VPT CRM - Khach hop le` | Lead đã được sale kéo sang lạnh/ấm/nóng hoặc chuyển Deal (cùng mốc «hợp lệ» của thử nghiệm P1). `gclid` lấy từ form website của lead (`lead_attribution`); nếu không có thì lấy dòng `gclid:` trong mô tả lead (chỉ khi mô tả có khối ghi chú `VPT_V1 | <thời điểm gửi form>` của plugin WordPress — lead trước 12/10/2026; lượt nhấp = thời điểm gửi form, thiếu thì = lúc tạo lead; bỏ `VPT_TEST_` và giá trị không hợp lệ); nếu vẫn không có thì lấy `gclid` của lượt bấm gọi đã ghép với ghi âm của lead đó. Mỗi lead một lần, thời điểm = lúc đạt mốc. |
 
 Không gửi: dữ liệu thử (`utm_source=vpt_test`, `gclid` bắt đầu `VPT_TEST_`, lead `is_test`), lượt bấm chỉ có
 `gbraid`/`wbraid` (chỉ đếm trong phần chẩn đoán). Tệp luôn chứa 60 ngày gần nhất; Google bỏ qua dòng trùng
