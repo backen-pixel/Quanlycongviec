@@ -54,12 +54,11 @@ Google báo «gclid không thuộc tài khoản» khi lượt nhấp đến từ
 ## Định dạng tệp
 
 ```
-Parameters:TimeZone=Asia/Ho_Chi_Minh
 Google Click ID,Conversion Name,Conversion Time,Conversion Value,Conversion Currency
-Cj0KCQ...,VPT CRM - Cuoc goi that,2026-10-10 10:00:00,,VND
+Cj0KCQ...,VPT CRM - Cuoc goi that,2026-10-10 10:00:00+07:00,,VND
 ```
 
-Thời gian theo giờ Việt Nam, dạng `yyyy-MM-dd HH:mm:ss`. Thời điểm chuyển đổi luôn sau lượt nhấp
+Thời gian theo giờ Việt Nam, dạng `yyyy-MM-dd HH:mm:ss+07:00` (múi giờ nằm trong từng giá trị). Không còn dòng `Parameters:TimeZone=`: Trình quản lý dữ liệu (Data Manager) đọc dòng đầu tiên làm tên cột. Thời điểm chuyển đổi luôn sau lượt nhấp
 (cuộc gọi: max(lúc gọi, lúc bấm + 1 giây); khách hợp lệ: bỏ qua nếu mốc không sau lượt nhấp).
 
 ## Xem trước trong CRM

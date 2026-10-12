@@ -276,7 +276,7 @@ test('description gclid fallback: marker required, test/invalid rejected, lead_a
   assert.equal(d.invalid_gclid, base.invalid_gclid + 1); // D4
   assert.ok(rows.every(r => !r.gclid.startsWith('VPT_TEST_')));
   const csv = G.toGoogleCsv(rows);
-  assert.match(csv, new RegExp(`${GC(21)},VPT CRM - Khach hop le,2026-10-06 11:00:00,,VND`));
+  assert.match(csv, new RegExp(`${GC(21)},VPT CRM - Khach hop le,2026-10-06 11:00:00\\+07:00,,VND`));
   assert.doesNotMatch(csv, new RegExp(`${GC(22)}|${GC(26)}|${GC(27)}|${GC(29)}`));
 });
 
@@ -296,13 +296,12 @@ test('description lead: click time is the form submit time, else created_at', as
   for (const r of rows) assert.ok(r.conversion_ms > r.click_ms);
 });
 
-test('CSV format: timezone line, header, Vietnam time, blank value, VND', () => {
+test('CSV format: header first, Vietnam time with offset, blank value, VND', () => {
   const csv = G.toGoogleCsv([
     { gclid: GC(1), conversion_name: G.CONVERSION_NAMES.CALL, conversion_ms: at('2026-10-10T03:00:00Z') },
     { gclid: 'bad,gclid"=cmd', conversion_name: G.CONVERSION_NAMES.CALL, conversion_ms: 0 }]);
-  assert.equal(csv, 'Parameters:TimeZone=Asia/Ho_Chi_Minh\r\n' +
-    'Google Click ID,Conversion Name,Conversion Time,Conversion Value,Conversion Currency\r\n' +
-    `${GC(1)},VPT CRM - Cuoc goi that,2026-10-10 10:00:00,,VND\r\n`);
+  assert.equal(csv, 'Google Click ID,Conversion Name,Conversion Time,Conversion Value,Conversion Currency\r\n' +
+    `${GC(1)},VPT CRM - Cuoc goi that,2026-10-10 10:00:00+07:00,,VND\r\n`);
 });
 
 async function request(app, path, headers = {}) {
@@ -343,10 +342,9 @@ test('CSV route: 503 without env, 401 on wrong or missing creds, CSV on success'
   assert.match(ok.headers['content-type'], /^text\/csv/);
   assert.equal(ok.headers['cache-control'], 'no-store');
   const lines = ok.body.trim().split('\r\n');
-  assert.equal(lines[0], 'Parameters:TimeZone=Asia/Ho_Chi_Minh');
-  assert.equal(lines[1], G.CSV_HEADER);
-  assert.equal(lines.length, 2 + 5); // 3 calls + 2 valid leads
-  assert.ok(lines.slice(2).every(l => /^[A-Za-z0-9_-]+,VPT CRM - (Cuoc goi that|Khach hop le),\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,,VND$/.test(l)));
+  assert.equal(lines[0], G.CSV_HEADER);
+  assert.equal(lines.length, 1 + 5); // 3 calls + 2 valid leads
+  assert.ok(lines.slice(1).every(l => /^[A-Za-z0-9_-]+,VPT CRM - (Cuoc goi that|Khach hop le),\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\+07:00,,VND$/.test(l)));
   const failed = await request(exportApp(ENV, { fail: 'voice_recordings' }), '/x/google.csv', basic('google', ENV.GOOGLE_ADS_EXPORT_PASSWORD));
   assert.equal(failed.status, 503); assert.doesNotMatch(failed.body, /private/);
 });
