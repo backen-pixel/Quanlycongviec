@@ -1,3 +1,37 @@
+## 2026-10-13 (2) — Tab Công việc: thêm chip lọc «Công ty đặt hàng» (app + team-project-tasks)
+
+- Theo yêu cầu. Backend `workTasks.js` (`GET /work-tasks/team-project-tasks`): nhận `deal_company_id` (UUID công ty CRM) và `deal_external_company_name` (khách ngoài danh mục — khớp không phân biệt hoa thường theo `crm_leads.external_company_name`). Hàm `restrictToDealCompany` dùng lại đúng đường tab Dự án / Kanban: `effectiveDealCompanyId` (người không phải admin hệ thống bị khoá về công ty của họ) → `resolveSxVisibilityRestrictIds` → tập `project_id` được phép, lọc sau `restrictToProductionScope`. Khoá cache (30s) thêm hai tham số + công ty/quyền của người gọi.
+- App: `teamProjectTasksApi.ts` thêm `dealCompanyId`/`dealExternalName` (vào khoá cache + tham số). `WorkScreen.tsx`: chip «Đặt hàng» (chỉ admin hệ thống, phạm vi Đội) + picker; danh sách lấy từ `fetchClientCompanies` (xưởng đang chọn HCB/Metalla, không thì xưởng đầu), giá trị dùng chung `filterDealCompany` với Tổng quan/Dự án qua `kanbanFilterStorage`; đổi công ty đặt hàng thì phân loại về mặc định như Tổng quan. Khi đang lọc: ẩn «Giao việc» (không có công ty đặt hàng) và số đếm chỉ tính việc dự án.
+- Kiểm: `tsc` không lỗi ở 2 file app; máy ảo hiện chip «Đặt hàng · Tất cả» và picker liệt kê HCB, Phúc Đạt, VPT, Bếp Việt, Canihome…; test giả backend 6 ca (có kiểm tên cột thật) đạt. CHƯA đo trên dữ liệu thật vì backend mới chưa deploy — sau merge cần so từng công ty đặt hàng (vd. Phúc Đạt, VPT, HCB) giữa tab và bộ lọc «Đặt hàng» ở danh sách dự án.
+
+---
+
+## 2026-10-13 — team-project-tasks: chỉ tính dự án CHƯA KẾT THÚC như «Quản lý nhiệm vụ Sản xuất»
+
+- So với web `GET /work-tasks/project-overview`: web lọc 3 tầng — (1) dự án `completed`/`cancelled` bị bỏ; (2) dự án sản xuất đã ở cột kết thúc (`isProductionTaskTerminalStage`: cờ `is_handover_to_logistics` / `counts_as_completed_revenue` / `counts_as_collected_revenue`, bucket `delivered|completed|done|collected`, hoặc tên «đã giao hàng» / «hoàn thành…» / «đã thu…») bị bỏ; (3) danh mục không còn việc mở bị bỏ. App (`team-project-tasks`) chỉ có tầng 3 (việc đã xong) và còn CHO PHÉP `completed` (nằm trong `WORKSHOP_STATUSES`).
+- `workTasks.js` `restrictToProductionScope`: thêm bộ lọc `projectEnded` (status completed/cancelled/canceled hoặc `sx_kanban_column_id` trỏ cột kết thúc) trước khi xét phạm vi SX; đọc `production_pipeline_stages` (id, name, bucket_slug + 3 cờ) song song, lỗi → bỏ qua lọc cột kết thúc + `console.warn` (fail-open). Gom nhóm theo dự án ở app đúng (một nhóm/dự án, `lead_id = project_id`); web gom theo DANH MỤC trong dự án — chưa đổi.
+- Test giả có kiểm tên cột thật (A đang SX giữ; completed/cancelled/cột bàn giao VC/«ĐƠN HÀNG ĐÃ GIAO» có cờ doanh thu/«Đã thu tiền» bỏ; chưa có cột giữ; bảng cột lỗi → vẫn bỏ completed/huỷ). Lưu ý: tên cột «ĐƠN HÀNG ĐÃ GIAO» KHÔNG tự bị coi là kết thúc theo tên (quy tắc web chỉ bắt «đã giao hàng»/«đã giao»), phải có cờ trên cột.
+- CHƯA đo trên dữ liệu thật (phiên web của agent đã hết hạn do tự đăng xuất lúc nửa đêm; người dùng sẽ đo sau khi merge). Cần đo: số dự án/việc của 3 xưởng rơi vào hai nhóm bị loại (HCB, Metalla, Phúc Đạt) và so lại với chi tiết dự án.
+
+---
+
+## 2026-10-12 (9) — team-project-tasks: hạn lấy theo `crm_task` (khớp chi tiết dự án)
+
+- Đối chiếu app↔web 12/10: web «Quản lý nhiệm vụ Sản xuất» đếm theo DANH MỤC (hạn danh mục = hạn kế hoạch nhóm, quá hạn = 0 ở cả 3 xưởng) còn app đếm theo từng việc (HCB 93, Metalla 39, Phúc Đạt 42) → hai định nghĩa, 0 dự án quá hạn trùng nhau; web liệt kê nhiều dự án hơn (HCB 66 vs 45). Quan trọng hơn: HCB 93 việc quá hạn ở tab thì chỉ 16 cũng quá hạn ở chi tiết dự án (46 có hạn xa, 31 không hạn); 85/93 lấy hạn từ `tasks.due_date` (cũ / do script gán) vì khử trùng ưu tiên bản `tasks`.
+- `workTasks.js` (`dropTasksClosedOnDeal`, quy tắc 3): việc `source='task'` có bản `crm_task` SX mở cùng tên (ở deal chi tiết hiện) → `deadline` = hạn SỚM NHẤT có giá trị của các bản crm mở (không có → null). Thêm cột `deadline` vào truy vấn view. Sau đó `computeTeamTasks` áp lại cửa sổ (hạn ≤ N ngày HOẶC mới tạo ≤ M ngày; bỏ qua chế độ `due_from/to` và `no_deadline`) nên việc có hạn xa / không hạn tạo từ lâu rời khỏi tab.
+- Mô phỏng trước khi đẩy (dữ liệu thật): HCB quá hạn 83 → 19, tổng 561 → 530 (31 việc rời cửa sổ); Metalla 39 → 2, 89 → 52; Phúc Đạt 42 → 0, 179 → 143. Test giả 5 ca (nhiều bản mở lấy hạn sớm nhất, crm không hạn → null, hạn xa, trùng giữ nguyên, không có crm giữ nguyên) + cửa sổ: đạt.
+- Hệ quả cần biết: việc cũ chưa có hạn ở chi tiết không còn hiện ở tab (mục «Không hạn» đã gỡ). Web vẫn dùng định nghĩa theo danh mục — chưa đổi.
+
+---
+
+## 2026-10-12 (8) — App: bỏ mục «Không hạn» (cũ hơn 7 ngày) khỏi tab Công việc
+
+- Theo yêu cầu: gỡ nút «Xem việc không hạn (cũ hơn 7 ngày)» và toàn bộ luồng nạp mục riêng này ở `sx-mobile/src/screens/WorkScreen.tsx` (state `nd*`, `loadNoDeadline`, nhánh `ListFooterComponent`/`onEndReached`, style `ndBtn*`, tuỳ chọn `keepNd`). Phạm vi bạn chọn: CHỈ mục riêng; việc mới tạo ≤ 7 ngày chưa có hạn vẫn hiện ở danh sách chính (kèm nhãn «Không hạn» ở dòng nhóm).
+- Không đổi backend: `fetchTeamProjectTasksPage` vẫn có tuỳ chọn `noDeadline` (không còn ai gọi) — có thể gỡ sau. Kiểm trên máy ảo: cuối danh sách HCB · Tủ bếp không còn nút; `tsc` không báo lỗi ở `WorkScreen.tsx`.
+- Hệ quả: các việc cũ chưa có hạn (vd. TB-2026-416: 14 việc tạo 18/07) không còn xem được từ tab Công việc; vẫn xem được trong chi tiết dự án.
+
+---
+
 ## 2026-10-12 (7) — team-project-tasks: bỏ việc mẫu bị bỏ quên (TB-2026-029) khỏi tab Công việc
 
 - Bảng `tasks` = việc xưởng theo dự án (sinh từ bộ mẫu, `status` todo/in_progress/done, `due_date`, `assignee_id`, `production_stage_id`, `metadata.workshop_area`), tách với `crm_tasks` (việc của deal). Chi tiết dự án có deal chỉ đọc `crm_tasks`; `tasks` chỉ hiện ở chi tiết khi dự án KHÔNG có deal.

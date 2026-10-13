@@ -47,8 +47,19 @@ import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import { loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '../lib/kanbanFilterStorage';
 import { REALTIME_TASK } from '../lib/realtimeModes';
-import { fetchCompanies, fetchWorkshopTypes, type CompanyOption, type WorkshopTypeOption } from '../lib/productionApi';
 import {
+  fetchClientCompanies,
+  fetchCompanies,
+  fetchWorkshopTypes,
+  type ClientCompanyOption,
+  type CompanyOption,
+  type WorkshopTypeOption,
+} from '../lib/productionApi';
+import {
+  isMetallaOrHucabiCompanyId,
+  isSystemAdmin,
+  productionCreateCompanyOptions,
+  shouldShowDealCompanyFilter,
   workshopCompaniesForCrossViewer,
 } from '../lib/productionFilters';
 import { canSeeAllWorkshopCompanies } from '../lib/roles';
@@ -626,21 +637,6 @@ function createStyles(colors: AppColors, bottomInset: number) {
       backgroundColor: colors.bgElevated,
     },
     statusBtnTxt: { color: colors.text, fontSize: 12, fontWeight: '800' },
-    /** Nút mở mục «Không hạn» ở cuối danh sách. */
-    ndBtn: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      gap: 8,
-      marginVertical: 16,
-      marginHorizontal: 16,
-      paddingVertical: 12,
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: colors.border,
-      backgroundColor: colors.card,
-    },
-    ndBtnTxt: { color: colors.textMuted, fontSize: 13, fontWeight: '800' },
     empty: {
       color: colors.textMuted,
       textAlign: 'center',
@@ -692,15 +688,6 @@ export default function WorkScreen() {
   /** Số đếm toàn bộ việc dự án của đội (máy chủ tính) — danh sách chỉ nạp theo trang. */
   const [teamCounts, setTeamCounts] = useState<TeamProjectCounts | null>(null);
   const [teamHasMore, setTeamHasMore] = useState(false);
-  /** Mục riêng «Không hạn»: việc chưa xong không có hạn, tạo từ lâu — nạp theo yêu cầu, theo trang nhóm dự án. */
-  const [ndOpen, setNdOpen] = useState(false);
-  const [ndTasks, setNdTasks] = useState<WorkTask[]>([]);
-  const [ndTotal, setNdTotal] = useState<number | null>(null);
-  const [ndHasMore, setNdHasMore] = useState(false);
-  const [ndLoading, setNdLoading] = useState(false);
-  const ndPageRef = useRef(0);
-  const ndHasMoreRef = useRef(false);
-  const ndLoadingRef = useRef(false);
   const teamHasMoreRef = useRef(false);
   const teamPageRef = useRef(1);
   const teamLoadingMoreRef = useRef(false);
@@ -724,12 +711,15 @@ export default function WorkScreen() {
   const [scope, setScope] = useState<ScopeFilter>(teamView ? 'team' : 'mine');
   const [assigneeFilter, setAssigneeFilter] = useState<string>('all');
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
-  const [quickPicker, setQuickPicker] = useState<'company' | 'assignee' | 'workType' | null>(null);
+  const [quickPicker, setQuickPicker] = useState<'company' | 'assignee' | 'workType' | 'deal' | null>(null);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [filterCompany, setFilterCompany] = useState('');
   /** Phân loại xưởng của công ty đang chọn — chỉ admin/quản lý dùng; cùng giá trị đã lưu với Tổng quan & Dự án. */
   const [workTypes, setWorkTypes] = useState<WorkshopTypeOption[]>([]);
   const [filterWorkTypeId, setFilterWorkTypeId] = useState('');
+  /** Công ty ĐẶT HÀNG (chủ deal) — dùng chung với Tổng quan/Dự án qua `filterDealCompany`; chỉ admin hệ thống chọn. */
+  const [filterDealCompany, setFilterDealCompany] = useState('');
+  const [clientCompaniesForDeal, setClientCompaniesForDeal] = useState<ClientCompanyOption[]>([]);
   const [filtersReady, setFiltersReady] = useState(false);
   const [search, setSearch] = useState('');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -835,13 +825,84 @@ export default function WorkScreen() {
     return workTypes.some((w) => String(w.id) === String(filterWorkTypeId)) ? filterWorkTypeId : '';
   }, [showWorkTypePicker, filterWorkTypeId, workTypes]);
 
+  // ---- Bộ lọc «Công ty đặt hàng» (cùng nguồn danh sách với tab Dự án / Tổng quan) ----
+  const showDealCompanyFilter = useMemo(
+    () => teamView && scope === 'team' && isSystemAdmin(user) && shouldShowDealCompanyFilter(user, companies),
+    [teamView, scope, user, companies],
+  );
+  /** Xưởng dùng để hỏi danh sách công ty đặt hàng: xưởng đang chọn nếu là HCB/Metalla, không thì xưởng đầu tiên. */
+  const clientCompaniesWorkshopId = useMemo(() => {
+    if (filterCompany && isMetallaOrHucabiCompanyId(filterCompany, companies)) return filterCompany;
+    const opts = productionCreateCompanyOptions(companies);
+    return opts[0]?.id ? String(opts[0].id) : '';
+  }, [filterCompany, companies]);
+
+  useEffect(() => {
+    const cid = String(clientCompaniesWorkshopId || '').trim();
+    if (!showDealCompanyFilter || !cid) {
+      setClientCompaniesForDeal([]);
+      return undefined;
+    }
+    let cancel = false;
+    void fetchClientCompanies(cid)
+      .then((list) => { if (!cancel) setClientCompaniesForDeal(list); })
+      .catch(() => { if (!cancel) setClientCompaniesForDeal([]); });
+    return () => { cancel = true; };
+  }, [showDealCompanyFilter, clientCompaniesWorkshopId]);
+
+  const dealCompanyOptions = useMemo(() => {
+    if (!showDealCompanyFilter) return [];
+    const crm = clientCompaniesForDeal.filter((c) => c.client_company_id);
+    const ext = clientCompaniesForDeal.filter((c) => !c.client_company_id);
+    const opts: { id: string; label: string }[] = [{ id: '', label: 'Tất cả công ty đặt hàng' }];
+    crm.forEach((c) => {
+      opts.push({
+        id: c.id,
+        label: `${c.short_name || c.name}${c.source === 'workshop' ? ' · đã liên kết' : ''}`,
+      });
+    });
+    ext.forEach((c) => opts.push({ id: c.id, label: c.short_name || c.name }));
+    return opts;
+  }, [showDealCompanyFilter, clientCompaniesForDeal]);
+
+  const dealCompanyLabel = useMemo(() => {
+    if (!filterDealCompany) return 'Tất cả';
+    return dealCompanyOptions.find((o) => o.id === filterDealCompany)?.label || 'Đã chọn';
+  }, [filterDealCompany, dealCompanyOptions]);
+
+  /** Tham số gửi máy chủ: công ty CRM → UUID; khách ngoài danh mục CRM → so theo tên. Rỗng = không lọc. */
+  const dealCompanyParam = useMemo(() => {
+    if (!showDealCompanyFilter || !filterDealCompany) return '';
+    const pick = clientCompaniesForDeal.find((c) => String(c.id) === String(filterDealCompany));
+    if (pick?.client_company_id) return String(pick.client_company_id);
+    if (pick) return '';
+    return filterDealCompany.startsWith('ext:') ? '' : String(filterDealCompany);
+  }, [showDealCompanyFilter, filterDealCompany, clientCompaniesForDeal]);
+  const dealExternalName = useMemo(() => {
+    if (!showDealCompanyFilter || !filterDealCompany) return '';
+    const pick = clientCompaniesForDeal.find((c) => String(c.id) === String(filterDealCompany));
+    if (!pick || pick.client_company_id) return '';
+    return String(pick.short_name || pick.name || '').trim();
+  }, [showDealCompanyFilter, filterDealCompany, clientCompaniesForDeal]);
+  /** Đang lọc theo công ty đặt hàng → «Giao việc» (không có công ty đặt hàng) không đưa vào danh sách/số đếm. */
+  const dealFilterActive = Boolean(dealCompanyParam || dealExternalName);
+
+  const onSelectDealCompany = useCallback(async (id: string) => {
+    setQuickPicker(null);
+    if (id === filterDealCompany) return;
+    setFilterDealCompany(id);
+    // Như Tổng quan/Dự án: đổi công ty đặt hàng thì phân loại về mặc định (loại đầu tiên được chọn lại).
+    setFilterWorkTypeId('');
+    await saveKanbanFilters({ filterDealCompany: id, filterWorkTypeId: '' }).catch(() => {});
+  }, [filterDealCompany]);
+
   /**
    * Việc dự án của đội (quản lý, phạm vi Đội): tải theo TRANG nhóm dự án từ máy chủ, cuộn đến đâu tải tiếp.
    * `assigneeFilter` và tìm kiếm cũng do máy chủ lọc — lọc ở máy chỉ thấy phần đã tải.
    */
   const loadTeamProjects = useCallback(async (
     append: boolean,
-    o: { force?: boolean; companyId?: string | null; signal?: AbortSignal; seq?: number; keepNd?: boolean } = {},
+    o: { force?: boolean; companyId?: string | null; signal?: AbortSignal; seq?: number } = {},
   ) => {
     if (append) {
       if (teamLoadingMoreRef.current || !teamHasMoreRef.current) return;
@@ -849,21 +910,13 @@ export default function WorkScreen() {
     }
     const page = append ? teamPageRef.current + 1 : 1;
     const mySeq = o.seq ?? loadSeqRef.current;
-    if (!append && !o.keepNd) {
-      // Đổi bộ lọc / kéo làm mới: đóng mục «Không hạn» (sẽ nạp lại theo bộ lọc mới khi mở). Tải lại NỀN (silent:
-      // realtime, quay lại tab) thì giữ nguyên để mục đang mở không tự đóng dưới tay người dùng.
-      setNdOpen(false);
-      setNdTasks([]);
-      setNdTotal(null);
-      ndPageRef.current = 0;
-      ndHasMoreRef.current = false;
-      setNdHasMore(false);
-    }
     try {
       const res = await fetchTeamProjectTasksPage({
         companyId: o.companyId ?? (filterCompany || (canPickCompany ? null : (user?.company_id || null))),
         assigneeId: assigneeFilterRef.current !== 'all' ? assigneeFilterRef.current : null,
         workshopTypeId: activeWorkTypeId || null,
+        dealCompanyId: dealCompanyParam || null,
+        dealExternalName: dealExternalName || null,
         q: searchRef.current,
         // Chip hạn xử lý do MÁY CHỦ lọc (lọc ở máy chỉ thấy nhóm đã tải; việc đến hạn hôm nay nằm ở trang sau nhóm quá hạn).
         ...dueRangeVN(dueFilterRef.current),
@@ -886,40 +939,7 @@ export default function WorkScreen() {
     } finally {
       if (append) teamLoadingMoreRef.current = false;
     }
-  }, [filterCompany, canPickCompany, user?.company_id, activeWorkTypeId]);
-
-  /** Nạp một trang nhóm dự án của mục «Không hạn» (append = trang kế tiếp). */
-  const loadNoDeadline = useCallback(async (append: boolean) => {
-    if (ndLoadingRef.current) return;
-    if (append && !ndHasMoreRef.current) return;
-    ndLoadingRef.current = true;
-    setNdLoading(true);
-    const page = append ? ndPageRef.current + 1 : 1;
-    try {
-      const res = await fetchTeamProjectTasksPage({
-        companyId: filterCompany || (canPickCompany ? null : (user?.company_id || null)),
-        assigneeId: assigneeFilterRef.current !== 'all' ? assigneeFilterRef.current : null,
-        workshopTypeId: activeWorkTypeId || null,
-        q: searchRef.current,
-        noDeadline: true,
-        page,
-      });
-      ndPageRef.current = res.page;
-      ndHasMoreRef.current = res.hasMore;
-      setNdHasMore(res.hasMore);
-      setNdTotal(res.counts.total);
-      setNdTasks((prev) => {
-        if (!append) return res.tasks;
-        const seen = new Set(prev.map((t) => t.id));
-        return [...prev, ...res.tasks.filter((t) => !seen.has(t.id))];
-      });
-    } catch (e) {
-      if (!isQueryAbortError(e)) console.warn('[WorkScreen] việc không hạn lỗi:', e);
-    } finally {
-      ndLoadingRef.current = false;
-      setNdLoading(false);
-    }
-  }, [filterCompany, canPickCompany, user?.company_id, activeWorkTypeId]);
+  }, [filterCompany, canPickCompany, user?.company_id, activeWorkTypeId, dealCompanyParam, dealExternalName]);
 
   const load = useCallback(async (
     silent = false,
@@ -973,7 +993,7 @@ export default function WorkScreen() {
       const q = searchRef.current.trim() || undefined;
       // Việc dự án của đội chạy SONG SONG với «Giao việc» (trước đây đợi «Giao việc» xong mới bắt đầu → cộng dồn thời gian chờ).
       if (!append && teamView && scope === 'team') {
-        void loadTeamProjects(false, { force: opts?.force, companyId, signal: ac.signal, seq, keepNd: silent && !opts?.force });
+        void loadTeamProjects(false, { force: opts?.force, companyId, signal: ac.signal, seq });
       }
       // Scope load — không gửi status (giữ KPI đúng trên mọi chip).
       const page = await fetchProductionWorkTasksPage({
@@ -1180,6 +1200,7 @@ export default function WorkScreen() {
       }
       setFilterCompany(companyId);
       setFilterWorkTypeId(String(snap?.filterWorkTypeId || ''));
+      setFilterDealCompany(String(snap?.filterDealCompany || ''));
       setFiltersReady(true);
     })();
     return () => { cancelled = true; };
@@ -1196,6 +1217,8 @@ export default function WorkScreen() {
       setFilterCompany((prev) => (prev === next ? prev : next));
       const nextType = String(snap.filterWorkTypeId || '');
       setFilterWorkTypeId((prev) => (prev === nextType ? prev : nextType));
+      const nextDeal = String(snap.filterDealCompany || '');
+      setFilterDealCompany((prev) => (prev === nextDeal ? prev : nextDeal));
     });
     return unsub;
   }, [canPickCompany, user?.company_id]);
@@ -1557,14 +1580,7 @@ export default function WorkScreen() {
       ? teamProjectTasks.filter((t) => !needle
         || `${t.title} ${t.lead?.title || ''} ${t.lead?.code || ''}`.toLowerCase().includes(needle))
       : [];
-    // Mục «Không hạn» (đã mở): nối vào cuối; khử trùng với danh sách chính theo id.
-    const ndRows = ndOpen && ndTasks.length ? ndTasks : [];
-    const mainSource = projectRows.length ? [...base, ...projectRows] : base;
-    let source = mainSource;
-    if (ndRows.length) {
-      const seenIds = new Set(mainSource.map((t) => t.id));
-      source = [...mainSource, ...ndRows.filter((t) => !seenIds.has(t.id))];
-    }
+    const source = projectRows.length ? [...base, ...projectRows] : base;
     return source.filter((t) => {
       // Quản lý / admin: việc đã hoàn thành không cần hiện (nhóm chỉ toàn việc xong cũng biến mất).
       if (teamView && isTaskDone(t.status)) return false;
@@ -1582,13 +1598,14 @@ export default function WorkScreen() {
       // DEAL (có thể khác xưởng) nên lọc theo đó sẽ ẩn mất việc thuộc dự án của xưởng mình.
       // Việc dự án (nguồn `/work-tasks`) đã được máy chủ lọc theo công ty; `company_id` của chúng có thể là công ty DEAL.
       const isProjectTask = t.source_kind === 'task' || t.source_kind === 'crm_task';
+      if (dealFilterActive && !isProjectTask) return false;
       if (!unifiedSource && !isProjectTask && filterCompany && String(t.company_id || '') !== String(filterCompany)) {
         return false;
       }
       if (dueFilter && !dueMatches(taskDueIso(t), dueFilter)) return false;
       return true;
     });
-  }, [tasks, chipTasks, teamProjectTasks, ndOpen, ndTasks, search, statusFilter, dueFilter, unifiedSource, teamView, scope, assigneeFilter, filterCompany]);
+  }, [tasks, chipTasks, teamProjectTasks, search, statusFilter, dueFilter, unifiedSource, teamView, scope, assigneeFilter, filterCompany, dealFilterActive]);
 
   // Nhóm cần xử lý lên trước: có việc quá hạn → có việc đến hạn hôm nay → còn lại (giữ thứ tự cũ).
   const dealSections = useMemo(() => {
@@ -1615,7 +1632,7 @@ export default function WorkScreen() {
   const REVEAL_INITIAL = 6;
   const REVEAL_STEP = 2;
   const [revealCount, setRevealCount] = useState(REVEAL_INITIAL);
-  const revealKey = `${statusFilter}|${search}|${assigneeFilter}|${filterCompany}|${activeWorkTypeId}|${dueFilter}`;
+  const revealKey = `${statusFilter}|${search}|${assigneeFilter}|${filterCompany}|${activeWorkTypeId}|${dueFilter}|${dealCompanyParam}|${dealExternalName}`;
   useEffect(() => { setRevealCount(REVEAL_INITIAL); }, [revealKey]);
   useEffect(() => {
     if (revealCount >= dealSections.length) return undefined;
@@ -1659,6 +1676,10 @@ export default function WorkScreen() {
     const pDoing = teamCounts?.inProgress ?? 0;
     const pPending = Math.max(0, (teamCounts?.total ?? 0) - pDoing);
     const pOverdue = teamCounts?.overdue ?? 0;
+    if (dealFilterActive) {
+      // «Giao việc» không có công ty đặt hàng → chỉ tính phần việc dự án đã được máy chủ lọc.
+      return { pending: pPending, inProgress: pDoing, done: 0, overdue: pOverdue };
+    }
     if (serverStats) {
       return {
         pending: serverStats.pending + pPending,
@@ -1673,7 +1694,7 @@ export default function WorkScreen() {
       done: statsScope.filter((t) => isTaskDone(t.status)).length,
       overdue: statsScope.filter((t) => isTaskOverdue(t)).length + pOverdue,
     };
-  }, [serverStats, statsScope, teamCounts]);
+  }, [serverStats, statsScope, teamCounts, dealFilterActive]);
 
   const personLabel = useMemo(() => {
     if (assigneeFilter === 'all') return 'Tất cả';
@@ -1788,6 +1809,16 @@ export default function WorkScreen() {
         onOpen: () => setQuickPicker('workType'),
       });
     }
+    if (showDealCompanyFilter) {
+      chips.push({
+        key: 'dd-deal',
+        prefix: 'Đặt hàng',
+        label: dealCompanyLabel,
+        active: Boolean(filterDealCompany),
+        onOpen: () => setQuickPicker('deal'),
+        onClear: filterDealCompany ? () => { void onSelectDealCompany(''); } : undefined,
+      });
+    }
     if (useAssigneeDropdown) {
       chips.push({
         key: 'dd-assignee',
@@ -1809,6 +1840,10 @@ export default function WorkScreen() {
     assigneeFilter,
     personLabel,
     onSelectCompany,
+    showDealCompanyFilter,
+    dealCompanyLabel,
+    filterDealCompany,
+    onSelectDealCompany,
   ]);
 
   const showFilterChipRow = activeFilterChips.length > 0 || filterDropdownChips.length > 0;
@@ -2301,35 +2336,14 @@ export default function WorkScreen() {
           // Hết «Giao việc» thì tải tiếp trang nhóm dự án của đội.
           if (!hasMoreTasksRef.current) {
             if (teamHasMoreRef.current) void loadTeamProjects(true, {});
-            else if (ndOpen && ndHasMoreRef.current) void loadNoDeadline(true);
             return;
           }
           void load(true, true);
         }}
         onEndReachedThreshold={0.35}
         ListFooterComponent={
-          filtered.length === 0 && !(teamView && scope === 'team')
+          filtered.length === 0
             ? null
-            : ndOpen && ndLoading
-              ? <SpinningLoader style={{ marginVertical: 16 }} color={colors.primary} />
-              : ndOpen && ndHasMore && !teamHasMore
-                ? <Text style={[styles.empty, { paddingVertical: 12 }]}>Vuốt thêm để tải tiếp việc không hạn…</Text>
-              // Hết danh sách chính → nút mở mục riêng «Không hạn» (việc cũ chưa có hạn, nạp theo yêu cầu).
-              : teamView && scope === 'team' && !teamHasMore && !hasMoreTasks && !loading
-                && (statusFilter === 'all' || statusFilter === 'pending')
-                && !ndOpen
-                ? (
-                  <Pressable
-                    style={({ pressed }) => [styles.ndBtn, pressed && { opacity: 0.7 }]}
-                    onPress={() => { setNdOpen(true); void loadNoDeadline(false); }}
-                    accessibilityRole="button"
-                  >
-                    <Ionicons name="calendar-clear-outline" size={16} color={colors.textMuted} />
-                    <Text style={styles.ndBtnTxt}>Xem việc không hạn (cũ hơn 7 ngày)</Text>
-                  </Pressable>
-                )
-            : filtered.length === 0
-              ? null
             : loadingMore
               ? (
                 <SpinningLoader style={{ marginVertical: 16 }} color={colors.primary} />
@@ -2509,6 +2523,14 @@ export default function WorkScreen() {
         options={workTypeOptions}
         selectedId={activeWorkTypeId}
         onSelect={(id) => { void onSelectWorkType(id); }}
+        onClose={() => setQuickPicker(null)}
+      />
+      <FilterPickerModal
+        visible={quickPicker === 'deal'}
+        title="Lọc theo công ty đặt hàng"
+        options={dealCompanyOptions}
+        selectedId={filterDealCompany}
+        onSelect={(id) => { void onSelectDealCompany(id); }}
         onClose={() => setQuickPicker(null)}
       />
       <FilterPickerModal
