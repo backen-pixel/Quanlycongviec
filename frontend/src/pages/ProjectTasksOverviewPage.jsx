@@ -522,6 +522,11 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     if (filterDealCompany && !String(filterDealCompany).startsWith('ext:')) return String(filterDealCompany);
     return '';
   }, [workshopMode, resolvedDealCompanyPick, filterDealCompany]);
+  // Khách đặt hàng ngoài danh mục CRM (`ext:…`): máy chủ so theo tên deal — cùng cách với app (tab Công việc).
+  const dealExternalNameParam = useMemo(() => {
+    if (!workshopMode || dealCompanyParam || !resolvedDealCompanyPick) return '';
+    return String(resolvedDealCompanyPick.short_name || resolvedDealCompanyPick.name || '').trim();
+  }, [workshopMode, dealCompanyParam, resolvedDealCompanyPick]);
   const selectedDealCompanyLabel = resolvedDealCompanyPick?.short_name
     || resolvedDealCompanyPick?.name
     || '';
@@ -561,6 +566,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       if (projectFilter) params.project_id = projectFilter;
       else if (companyFilter) params.company_id = companyFilter;
       if (workshopMode && dealCompanyParam) params.deal_company_id = dealCompanyParam;
+      else if (workshopMode && dealExternalNameParam) params.deal_external_company_name = dealExternalNameParam;
       const res = await api.get('/work-tasks/project-overview', { params });
       setTasks(res.data?.tasks || []);
       setStats(res.data?.stats || { total: 0, warning: 0, overdue: 0, by_module: {} });
@@ -570,7 +576,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     } finally {
       setLoading(false);
     }
-  }, [companiesReady, companyFilter, dealCompanyParam, fixedModuleKey, projectFilter, workshopMode]);
+  }, [companiesReady, companyFilter, dealCompanyParam, dealExternalNameParam, fixedModuleKey, projectFilter, workshopMode]);
 
   useEffect(() => { load(); }, [load]);
 
