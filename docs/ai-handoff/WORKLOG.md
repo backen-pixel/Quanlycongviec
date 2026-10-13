@@ -1,3 +1,14 @@
+## 2026-10-13 (6) — Tab Công việc: giữ việc `tasks` đang chặn kéo cột + bỏ «Giao việc» trùng việc dự án
+
+- Kiểm (13/10, chỉ đọc): (1) `tasks` còn mở có `blocks_stage_advance` + `production_stage_id` = cột SX hiện tại (đúng điều kiện `workshopStageAdvanceGate`): 9 việc / 7 dự án, cả 9 bị tab ẩn (không người nhận, không `crm_task` cùng tên). HCB (2 dự án, 3 việc) và Phúc Đạt (TB-2026-818, phân loại «Cửa») được miễn chặn trong `app_settings.sx_chan_keo_theo_nhiem_vu` nên KHÔNG chặn thật; NextGo (TB-2026-877/878/879/880, 5 việc, cột «Chờ vào xưởng») không được miễn → cổng vẫn chặn kéo thẻ bởi việc mà tab và chi tiết dự án đều không hiện. (2) «Giao việc» soi gương `crm_task`: HCB 2 giao việc mở, 1 trùng việc dự án trong tab («bị mẻ cánh»); Metalla 2, 0 trùng.
+- Backend `workTasks.js` (`GET /work-tasks/team-project-tasks`): `loadBlockingTasks(effectiveCompany, typedSet)` — `tasks` có cờ, chưa xong, đúng cột SX hiện tại của dự án, dự án chưa được miễn (`laMienTruChanKeo`), theo công ty / loại đang xem. Các việc này: lấy thêm cả khi nằm NGOÀI cửa sổ quét (truy vấn view theo `source_id`), đánh dấu `blocks_stage_advance: true`, được giữ qua quy tắc 1–2 của `dropTasksClosedOnDeal` và qua bước áp lại cửa sổ. Không áp ở chế độ «không hạn» / khoảng hạn / lọc người. Toàn hệ thống chỉ 89 việc có cờ + cột (9 đang ở đúng cột) nên truy vấn nhỏ; lỗi → rỗng + `console.warn`.
+- Backend: `loadAssignedCrmTaskIds` — id `crm_task` (mọi trang) có `crm_assignments` còn mở; trả thêm `assigned_crm_task_ids` trong phản hồi (cache chung 30s).
+- App: `teamProjectTasksApi.ts` đọc `assigned_crm_task_ids` → `assignedCrmTaskIds`; `WorkScreen.tsx` bỏ dòng «Giao việc» có `crm_task_id` nằm trong tập đó (danh sách, chip trạng thái và số đếm — `/stats` được trừ phần trùng). Chỉ áp ở phạm vi Đội.
+- Kiểm: test giả 6 ca cho hai helper (có kiểm tên bảng/cột thật: tasks, projects, crm_assignments), `node --check`, `tsc` không lỗi ở 2 file app; máy ảo vẫn hiển thị. CHƯA đo trên dữ liệu thật vì chưa deploy. Sau merge cần đo: NextGo phải có 5 việc chặn trong tab (gồm TB-2026-880 không hạn, tạo 17/09); HCB / Phúc Đạt không thêm việc nào; HCB tổng ≈ không đổi, việc «bị mẻ cánh» chỉ còn một lần; 103/103 dự án HCB + Metalla vẫn khớp chi tiết.
+- Hệ quả cần biết: việc chặn ở NextGo hiện ra như việc quá hạn (hạn 26/09). Chúng trông là việc mẫu «giao hàng / nghiệm thu» gắn nhầm cột «Chờ vào xưởng» — nên rà bộ mẫu hoặc miễn chặn NextGo (không tự sửa dữ liệu).
+
+---
+
 ## 2026-10-13 (5) — team-project-tasks: bản `tasks` đại diện thừa hưởng `created_at` của bản crm (cửa sổ «mới tạo»)
 
 - Đối chiếu 13/10 tab Công việc (cửa sổ mặc định 7 ngày) ↔ chi tiết dự án (việc mở có hạn ≤ 7 ngày hoặc tạo ≤ 7 ngày, từ `task-bootstrap` + `GET /crm/leads/:id/tasks?task_scope=production`): HCB 78/79 dự án khớp đúng số việc, Metalla 24/24; số quá hạn khớp tuyệt đối (HCB 19 = 19, Metalla 2 = 2). Lệch duy nhất: TB-2026-898 — tab 1 việc, chi tiết 11 trong cửa sổ.

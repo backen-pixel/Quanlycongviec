@@ -46,6 +46,7 @@ const { SX_URL_SAFE_ID_MAX } = require('../helpers/sxChunkedIdPage');
 const { WORKSHOP_STATUSES, getWorkshopStageMap, getWonDealProjectIds } = require('../helpers/workshopKanban');
 const { effectiveDealCompanyId } = require('../helpers/workshopCompanyScope');
 const { resolveSxVisibilityRestrictIds } = require('../helpers/sxKanbanSummary');
+const { laMienTruChanKeo } = require('../helpers/sxChanKeoTheoNhiemVu');
 const { resolveWorkRegionScope, taskMatchesRegionScope } = require('../helpers/workRegionFilter');
 const {
   projectOverviewCategoryId,
@@ -645,6 +646,87 @@ function crmRowInDetailLeads(t, detailLeads) {
 const CLOSED_TASK_STATUSES = new Set(['done', 'completed', 'cancelled']);
 
 /**
+ * Việc ở bảng `tasks` đang CHẶN KÉO CỘT Kanban SX — đúng điều kiện của `workshopStageAdvanceGate`: `blocks_stage_advance`, chưa
+ * xong, `production_stage_id` = cột SX hiện tại của dự án, và dự án chưa được miễn chặn (`laMienTruChanKeo`: theo công ty / phân
+ * loại trong `app_settings`). Chi tiết dự án chỉ đọc `crm_task` nên người kéo thẻ bị chặn bởi việc họ không thấy ở đâu; tab Công
+ * việc vì vậy phải giữ các việc này (kể cả chưa ai nhận / không có bản `crm_task` / hạn đã xa). Toàn hệ thống chỉ ~90 việc có cờ +
+ * cột nên truy vấn nhỏ. Lỗi → trả rỗng + log (không làm hỏng endpoint). Chỉ ĐỌC.
+ * @returns {Promise<Array<{ id: string, project_id: string, title: string, company_id: string|null, status: string }>>}
+ */
+async function loadBlockingTasks(effectiveCompany, typedSet) {
+  try {
+    const flagged = await fetchAllPages(() => supabase
+      .from('tasks')
+      .select('id, project_id, production_stage_id, status, title')
+      .eq('blocks_stage_advance', true)
+      .neq('status', 'done')
+      .not('production_stage_id', 'is', null)
+      .not('project_id', 'is', null)
+      .order('id', { ascending: true }));
+    if (!flagged.length) return [];
+    const projects = await fetchAllByIdsParallel({
+      table: 'projects',
+      columns: 'id, company_id, workshop_type_id, sx_kanban_column_id, status',
+      key: 'id',
+      ids: [...new Set(flagged.map((t) => String(t.project_id)))],
+      idChunk: 100,
+    });
+    const projectById = new Map(projects.map((p) => [String(p.id), p]));
+    const exemptCache = new Map();
+    const out = [];
+    for (const t of flagged) {
+      const p = projectById.get(String(t.project_id));
+      if (!p || !p.sx_kanban_column_id || String(p.sx_kanban_column_id) !== String(t.production_stage_id)) continue;
+      if (CLOSED_TASK_STATUSES.has(String(t.status || '').toLowerCase())) continue;
+      if (effectiveCompany && String(p.company_id || '') !== String(effectiveCompany)) continue;
+      if (typedSet && !typedSet.has(String(p.id))) continue;
+      const ek = `${p.company_id || ''}|${p.workshop_type_id || ''}`;
+      if (!exemptCache.has(ek)) exemptCache.set(ek, await laMienTruChanKeo(p.company_id, p.workshop_type_id));
+      if (exemptCache.get(ek)) continue; // công ty / phân loại được kéo tự do → việc này không chặn gì
+      out.push({
+        id: String(t.id),
+        project_id: String(t.project_id),
+        title: String(t.title || ''),
+        company_id: p.company_id ? String(p.company_id) : null,
+        status: String(t.status || ''),
+      });
+    }
+    return out;
+  } catch (err) {
+    console.warn('[work-tasks] team-project-tasks: bỏ qua việc chặn kéo cột —', err?.message || err);
+    return [];
+  }
+}
+
+/**
+ * `crm_task` (trong danh sách) đang có «Giao việc» còn mở soi gương ở `crm_assignments` — app cộng «Giao việc» với việc dự án nên
+ * việc đó bị đếm và hiện HAI lần. Trả mảng id `crm_task` để app bỏ dòng giao việc trùng. Lỗi → rỗng + log. Chỉ ĐỌC.
+ * @param {string[]} crmTaskIds
+ * @returns {Promise<string[]>}
+ */
+async function loadAssignedCrmTaskIds(crmTaskIds) {
+  const ids = [...new Set((crmTaskIds || []).filter(Boolean).map(String))];
+  if (!ids.length) return [];
+  try {
+    const rows = await fetchAllByIdsParallel({
+      table: 'crm_assignments',
+      columns: 'crm_task_id, status',
+      key: 'crm_task_id',
+      ids,
+      idChunk: 100,
+    });
+    return [...new Set(
+      rows
+        .filter((r) => r.crm_task_id && !CLOSED_TASK_STATUSES.has(String(r.status || '').toLowerCase()))
+        .map((r) => String(r.crm_task_id)),
+    )];
+  } catch (err) {
+    console.warn('[work-tasks] team-project-tasks: bỏ qua đối chiếu giao việc trùng —', err?.message || err);
+    return [];
+  }
+}
+
+/**
  * Bỏ khỏi tab Công việc các việc ở bảng `tasks` mà bản `crm_task` CÙNG TÊN trong cùng dự án đã xong.
  *
  * Mỗi việc sản xuất có hai bản: `tasks` (bảng việc xưởng) và `crm_task` (việc của deal). Chi tiết dự án đọc bản `crm_task`,
@@ -703,6 +785,9 @@ async function dropTasksClosedOnDeal(rows, detailLeads) {
   }
   const kept = rows.filter((t) => {
     if (t.source !== 'task') return true;
+    // Việc đang CHẶN KÉO CỘT (xem `loadBlockingTasks`) luôn giữ: cổng kéo cột đọc bảng `tasks` nên nó vẫn chặn dù chi tiết dự án
+    // không hiện.
+    if (t.blocks_stage_advance) return true;
     const s = state.get(keyOf(t));
     // 1. Bản `crm_task` cùng tên đã đóng hết → việc đã xong ở chi tiết dự án.
     if (s && s.closed > 0 && s.open === 0) return false;
@@ -1011,7 +1096,33 @@ r.get('/team-project-tasks', async (req, res) => {
       // → chỉ thêm dòng CHƯA có theo `unified_id`.
       const knownIds = new Set(scan.rows.map((t) => t.unified_id));
       const crossNew = crossRows.filter((t) => !knownIds.has(t.unified_id));
-      const scanRows = crossNew.length ? scan.rows.concat(crossNew) : scan.rows;
+      // Việc `tasks` đang chặn kéo cột: lấy thêm những việc nằm NGOÀI cửa sổ quét (không hạn / hạn xa, tạo từ lâu) để chúng không
+      // biến mất khỏi tab trong khi cổng kéo cột vẫn đọc chúng. Không áp ở chế độ «không hạn» / khoảng hạn / lọc người (việc
+      // này chưa ai nhận) — các chế độ đó có bộ lọc riêng.
+      const blockingList = (noDeadlineMode || dueRange || assignee_id) ? [] : await loadBlockingTasks(effectiveCompany, typedSet);
+      const blockingIdSet = new Set(blockingList.map((b) => b.id));
+      let blockingExtra = [];
+      if (blockingList.length) {
+        const haveTaskIds = new Set(scan.rows.filter((t) => t.source === 'task').map((t) => String(t.source_id)));
+        const needleB = String(searchQ || '').trim().toLowerCase();
+        const missing = blockingList.filter((b) => !haveTaskIds.has(b.id) && (!needleB || b.title.toLowerCase().includes(needleB)));
+        if (missing.length) {
+          blockingExtra = await fetchAllByIdsParallel({
+            table: 'unified_tasks_v',
+            columns: COLS,
+            key: 'source_id',
+            ids: missing.map((b) => b.id),
+            idChunk: 100,
+            tune: (q) => q.eq('source', 'task').order('unified_id', { ascending: true }),
+          }).catch((err) => {
+            console.warn('[work-tasks] team-project-tasks: bỏ qua việc chặn ngoài cửa sổ —', err?.message || err);
+            return [];
+          });
+          blockingExtra = blockingExtra.filter((t) => TEAM_PROJECT_TASK_KINDS.includes(t.task_kind) && t.project_id && !knownIds.has(t.unified_id));
+        }
+      }
+      const scanRowsBase = crossNew.length ? scan.rows.concat(crossNew) : scan.rows;
+      const scanRows = blockingExtra.length ? scanRowsBase.concat(blockingExtra) : scanRowsBase;
       const typedRows = typedSet ? scanRows.filter((t) => typedSet.has(String(t.project_id))) : scanRows;
       // Chỉ giữ việc thuộc phạm vi sản xuất (xem `restrictToProductionScope`) — làm TRƯỚC khi lấy bản «song sinh» và khử
       // trùng để việc bán hàng / dự án ngoài phạm vi không lọt vào số đếm.
@@ -1020,7 +1131,10 @@ r.get('/team-project-tasks', async (req, res) => {
       const scopedRows = await restrictToDealCompany(productionRows, { req, effectiveCompany, dealCompanyQ, dealExtName });
       // `crm_task` chỉ tính ở các deal mà chi tiết dự án hiện (deal gốc + con) — dự án nhiều deal không đếm thừa.
       const detailLeads = await loadDetailLeadsByProject([...new Set(scopedRows.map((t) => String(t.project_id)))]);
-      const scanned = scopedRows.filter((t) => crmRowInDetailLeads(t, detailLeads));
+      const scanned = scopedRows
+        .filter((t) => crmRowInDetailLeads(t, detailLeads))
+        // Đánh dấu việc đang chặn kéo cột để khử trùng / cửa sổ bên dưới giữ lại (xem `loadBlockingTasks`).
+        .map((t) => (t.source === 'task' && blockingIdSet.has(String(t.source_id)) ? { ...t, blocks_stage_advance: true } : t));
 
       // Chip hạn xử lý: khử trùng phải thấy cả bản SX «song sinh» nằm NGOÀI khoảng. Nếu chỉ quét trong khoảng thì bản CRM
       // (hạn hôm nay) sống sót dù bản SX của chính việc đó đã quá hạn → việc quá hạn lọt vào «Hôm nay» / «Ngày mai».
@@ -1089,6 +1203,7 @@ r.get('/team-project-tasks', async (req, res) => {
         const untilMs = new Date(until).getTime();
         const createdSinceMs = new Date(createdSince).getTime();
         rows = rows.filter((t) => {
+          if (t.blocks_stage_advance) return true; // việc chặn kéo cột: luôn hiện, bất kể hạn / ngày tạo
           const dl = t.deadline ? new Date(t.deadline).getTime() : null;
           if (dl != null && dl <= untilMs) return true;
           return createdDays > 0 && t.created_at && new Date(t.created_at).getTime() >= createdSinceMs;
@@ -1132,8 +1247,13 @@ r.get('/team-project-tasks', async (req, res) => {
         if (ta === 2) return String(b.newestCreated).localeCompare(String(a.newestCreated));
         return String(a.firstDeadline).localeCompare(String(b.firstDeadline));
       });
+      // «Giao việc» soi gương `crm_task` — app cộng cả hai nên báo id `crm_task` đã có giao việc mở để bỏ dòng trùng.
+      const assignedCrmTaskIds = await loadAssignedCrmTaskIds(
+        rows.filter((t) => t.source === 'crm_task').map(crmTaskIdOf),
+      );
       return {
         ordered,
+        assignedCrmTaskIds,
         counts: {
           overdue,
           soon: rows.length - overdue,
@@ -1159,7 +1279,7 @@ r.get('/team-project-tasks', async (req, res) => {
       teamTasksCache.set(cacheKey, computed);
       if (teamTasksCache.size > 30) teamTasksCache.delete(teamTasksCache.keys().next().value);
     }
-    const { ordered, counts } = computed;
+    const { ordered, counts, assignedCrmTaskIds } = computed;
 
     const start = (page - 1) * pageSize;
     const pageGroups = ordered.slice(start, start + pageSize);
@@ -1186,6 +1306,8 @@ r.get('/team-project-tasks', async (req, res) => {
       page,
       page_size: pageSize,
       has_more: start + pageSize < ordered.length,
+      // id `crm_task` (cả mọi trang) đang có «Giao việc» mở soi gương — app bỏ dòng giao việc trùng.
+      assigned_crm_task_ids: assignedCrmTaskIds || [],
       tasks,
     });
   } catch (e) {

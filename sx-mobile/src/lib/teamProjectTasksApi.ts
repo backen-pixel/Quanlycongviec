@@ -41,6 +41,8 @@ export type TeamProjectPage = {
   counts: TeamProjectCounts;
   hasMore: boolean;
   page: number;
+  /** Id `crm_task` (mọi trang) đang có «Giao việc» mở soi gương — màn hình bỏ dòng giao việc trùng để không đếm hai lần. */
+  assignedCrmTaskIds?: string[];
 };
 
 type Opts = {
@@ -156,6 +158,7 @@ export async function fetchTeamProjectTasksPage(o: Opts): Promise<TeamProjectPag
           counts?: Record<string, number>;
           tasks?: unknown[];
           has_more?: boolean;
+          assigned_crm_task_ids?: unknown[];
         }>('/work-tasks/team-project-tasks', {
           params: {
             page,
@@ -191,6 +194,9 @@ export async function fetchTeamProjectTasksPage(o: Opts): Promise<TeamProjectPag
           },
           hasMore: Boolean(data?.has_more),
           page,
+          assignedCrmTaskIds: (Array.isArray(data?.assigned_crm_task_ids) ? data.assigned_crm_task_ids : [])
+            .map((x) => String(x))
+            .filter(Boolean),
         };
       } catch (e) {
         const status = (e as { response?: { status?: number } })?.response?.status;
