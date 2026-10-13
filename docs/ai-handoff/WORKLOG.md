@@ -1,3 +1,15 @@
+## 2026-10-13 (12) — CI chung cho mọi PR (`.github/workflows/ci.yml`)
+
+- Trước: 6 workflow sẵn có chỉ chạy khi PR chạm đúng vài file marketing/facebook (lọc `paths`) → phần lớn PR (vd #123) không có check nào.
+- Nay `ci.yml` chạy cho mọi PR vào `main` + push `main`, không cần secret, không chạm DB thật (chạy từ gốc repo, không có `.env`):
+  - Backend (Node 18 + 22): `npm ci`, `node --check` toàn bộ `backend/src/*.js` (607 file), `node --test` 57 file `backend/tests/*.test.js` (844 test). Cài `@electric-sql/pglite@0.5.9` ngoài `package.json` qua `PGLITE_MODULE` cho 2 test `*.sql.test.js` (trước đây không nơi nào chạy).
+  - Frontend: `npm ci` + `npm run build`.
+- Tạm loại: `marketingIntake.sql.test.js` (cần Docker, đã chạy ở `marketing-intake.yml`); `module-deadline-policy.test.js` — test còn kỳ vọng cờ `deadline_disabled_at` làm trống hạn CRM, nhưng `resolveCrmDeadline` không đọc cờ này từ `cd372982` (tắt hạn = xoá ngày hạn). CẦN QUYẾT: cập nhật test hay khôi phục kiểm cờ.
+- `aiReportTools.test.js`: số tool 26 → 34 (code hiện có 34 tool, không trùng tên; test lỗi thời).
+- Kiểm: chạy đúng lệnh CI trên máy (Node 24) — 844/844 đạt, ~3 s. Build frontend chỉ kiểm trên GitHub.
+
+---
+
 ## 2026-10-13 — VPT Google Ads: luồng lead hợp lệ đã xác minh, draft PR #124
 
 - Người dùng yêu cầu thiết lập Google Ads đo lead hợp lệ từ CRM và xác nhận tài khoản **VPT 975-957-2942**. Nhánh `codex/vpt-qualified-google-ads-20261013`, code `69f069e`, [draft PR #124](https://github.com/backen-pixel/Quanlycongviec/pull/124); chưa merge/deploy/ghi DB thật/lưu Google Ads UI/nhập conversion. Đăng nhập Google Ads chưa hoàn tất. Kết nối đọc báo auto-tagging bật, hành động cũ `VPT CRM - Khach hop le` Primary + Many per click; chưa xác nhận UI trực tiếp hoặc mục tiêu chiến dịch.

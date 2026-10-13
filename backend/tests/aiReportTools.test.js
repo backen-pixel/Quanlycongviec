@@ -19,7 +19,7 @@ const lastMonth = resolveTimeRange('last_month');
 assert.ok(lastMonth.label_vn.startsWith('tháng '));
 
 const tools = OPENAI_TOOL_DEFINITIONS;
-assert.strictEqual(tools.length, 26);
+assert.strictEqual(tools.length, 34);
 assert.ok(tools.some((t) => t.function.name === 'get_company_lead_summary'));
 assert.ok(tools.some((t) => t.function.name === 'resolve_assignee_scope'));
 assert.ok(tools.some((t) => t.function.name === 'find_users_by_name'));
