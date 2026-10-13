@@ -1,4 +1,18 @@
-## 2026-10-13 — VPT: chuẩn bị xuất Google Ads từ lead hợp lệ đã xác minh (chưa deploy)
+## 2026-10-13 — Facebook VPT01: đối soát lead hợp lệ và CAPI CRM (chưa deploy)
+
+Người dùng yêu cầu làm luôn luồng Facebook. [Draft PR #127](https://github.com/backen-pixel/Quanlycongviec/pull/127), nhánh `codex/vpt-meta-qualified-leads-20261013` từ main `3c6761731b0e4a6e248a81e1484d101c3b82e049`; mã/SQL/giao diện và kiểm cục bộ đã chuẩn bị, **chưa merge/deploy, chưa ghi DB thật, chưa tạo/lưu token hoặc gửi Meta**. Đã hỏi riêng quyền cấp mã CAPI, lưu Render và gửi Meta Lead ID/time/opaque ID; đang chờ trả lời. [Vận hành, cấu hình, giới hạn, rollback](../ops/meta-qualified-feedback.md).
+
+Chỉ VPT01 `835757498658305`, công ty VPT `991dc79d-cbf5-49f9-a364-35227cb47635`, Page `409741855550833`; nguồn gốc Form bất biến 702 và Messenger 701, qualification v2 hiện hành, khử trùng/khách mới theo lịch sử CRM/shared master. Sender chỉ native Instant Form, giữ Messenger chờ cách đo. Outbox/RPC service-only, lease nguyên tử, ACK tối thiểu, UNKNOWN không tự resend, kiểm nguồn/primary/config và SQL preflight trước HTTP. Chốt giữ toàn scope/mode nếu UNKNOWN/lease hết hạn/accepted cần đối soát để tránh identity rekey gửi trùng sau gộp hồ sơ. Test/prod tách; accepted lịch sử không mất vì tuổi cửa sổ, thu hồi yêu cầu đối soát, chưa tự retract Meta. Panel admin phân biệt tiếp nhận bảy ngày, khách xác minh 60 ngày, Meta accepted và CPL; ẩn khi lọc công ty/Page khác.
+
+Đối chiếu chỉ đọc: Render primary `kdxypztstbeovyedmvem`, schema đủ; Page Bếp Vạn Phú Thành đúng công ty/autocreate; VPT01 đúng công ty, đồng bộ và ba ad catalog đầy đủ Page/company từ API lúc 13:20Z 13/10. Dataset hiện có `crm` `1575398160676100` owner business VPT `815284983995477`, chỉ chia sẻ VPT01; guide Meta `v26.0`. Có hai receipt Form, **không có qualification event VPT lúc đọc**. Không tự đánh dấu khách hợp lệ hay tạo conversion giả.
+
+PASS 132 test nguồn/qualification/export/route/service và 20 SQL thật bằng PGlite PG18.6; SQL mới chạy nguyên bản, baseline bỏ riêng catalog-count assertion PG17 cũ. Vite build PASS sau sửa JSX, review độc lập không còn P1/P2. Chưa kiểm sender/ACK/attribution Meta thật. Rollback tắt `VPT_META_FEEDBACK_ENABLED`, giữ ledger để ngăn trùng; không drop/xóa dữ liệu gửi.
+
+Google cập nhật: PR [#124](https://github.com/backen-pixel/Quanlycongviec/pull/124) đã merge/deploy backend/frontend theo user duyệt, SHA `3c676173…`. Action mới `VPT CRM - Lead hop le da xac minh` ID `7842337600` đã lưu Secondary/One/90 ngày. HTTPS đã xác thực; Data Manager dừng vì CSV header-only, chưa nguồn/lịch nhập hoàn tất. User xác nhận chưa có lead Google thật đã xác minh. Báo cáo cục bộ `D:\quản trị vận hành\vpt-qualified-deployment-20261013.md` giữ deploy IDs/ảnh. Chưa nghiệm thu khách mới/CPL ≤250k; kỳ chi/thuế/phí và phạm vi 130m/100m vẫn cần rõ.
+
+---
+
+## 2026-10-13 — VPT: chuẩn bị xuất Google Ads từ lead hợp lệ đã xác minh (trạng thái lúc mở PR; đã được cập nhật ở trên)
 
 Phạm vi **Vanphuthanh.net, 975-957-2942**, nhánh `codex/vpt-qualified-google-ads-20261013`, mã `69f069e`; [draft PR #124](https://github.com/backen-pixel/Quanlycongviec/pull/124), chưa merge/deploy, không ghi DB thật, không lưu Google Ads UI hoặc nhập conversion. Đăng nhập Google Ads chưa hoàn tất. Không có số khách mới/CPL thực tế đã nghiệm thu.
 
