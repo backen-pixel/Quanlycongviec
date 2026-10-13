@@ -1,3 +1,13 @@
+## 2026-10-13 (3) — Web «Quản lý nhiệm vụ Sản xuất»: lọc Công ty đặt hàng dùng chung quy tắc với app
+
+- Đối chiếu 13/10 (HCB, Metalla): khi lọc công ty đặt hàng, `GET /work-tasks/project-overview` chỉ giữ dự án có deal với `crm_leads.company_id` = công ty được chọn, còn app (tab Công việc / Dự án / Kanban) dùng `resolveSxVisibilityRestrictIds` → `getAccountingClientProjectIdsAtWorkshop` (deal có `company_id`, `external_company_id` hoặc tên khách khớp). Lệch 9 dự án (TB-2026-1056/1060/1061/1066/963 → VPT; 1013/1035/1055/1063 → Metalla): SELECT chỉ đọc cho thấy cả 9 đều có một deal thuộc `company_id` xưởng nhưng `external_company_id` trỏ tới VPT/Metalla (liên kết bằng id, không phải trùng tên) → app đúng, web bỏ sót.
+- `workTasks.js`: tách `dealCompanyProjectIdSet({req, effectiveCompany, dealCompanyQ, dealExtName, candidateProjectIds})` (trả Set project_id hoặc null) dùng chung cho `restrictToDealCompany` (team-project-tasks) và `/project-overview`; `/project-overview` nhận thêm `deal_external_company_name`. Người không phải admin hệ thống vẫn bị khóa về công ty của mình (`effectiveDealCompanyId`).
+- Web `ProjectTasksOverviewPage.jsx`: chọn khách ngoài danh mục CRM (`ext:…`) giờ gửi `deal_external_company_name` (trước đây không lọc gì, âm thầm hiện tất cả).
+- Kiểm: test giả 6 ca (có kiểm tên bảng/cột `crm_leads.project_id, external_company_name`) đạt; `node --check` ổn; `vite build` biên dịch đủ 6851 module nhưng dừng vì thiếu gói `zod` ở `AppGuideCopilotPanel.jsx` (lỗi môi trường sẵn có, không do thay đổi này). CHƯA đo trên dữ liệu thật — sau merge cần kiểm: HCB + VPT trên web phải có TB-2026-1056/1060/1061/1066; HCB + Metalla phải có TB-2026-1013/1035/1055/1063; Metalla + VPT phải có TB-2026-963; chọn một khách ngoài (vd. CANIHOME) phải lọc được.
+- Hệ quả: số dự án hiển thị trên web khi lọc theo công ty đặt hàng sẽ tăng ở các xưởng có deal đặt hộ (HCB, Metalla). Số liệu không lọc không đổi.
+
+---
+
 ## 2026-10-13 (2) — Tab Công việc: thêm chip lọc «Công ty đặt hàng» (app + team-project-tasks)
 
 - Theo yêu cầu. Backend `workTasks.js` (`GET /work-tasks/team-project-tasks`): nhận `deal_company_id` (UUID công ty CRM) và `deal_external_company_name` (khách ngoài danh mục — khớp không phân biệt hoa thường theo `crm_leads.external_company_name`). Hàm `restrictToDealCompany` dùng lại đúng đường tab Dự án / Kanban: `effectiveDealCompanyId` (người không phải admin hệ thống bị khoá về công ty của họ) → `resolveSxVisibilityRestrictIds` → tập `project_id` được phép, lọc sau `restrictToProductionScope`. Khoá cache (30s) thêm hai tham số + công ty/quyền của người gọi.

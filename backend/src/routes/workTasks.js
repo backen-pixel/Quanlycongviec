@@ -733,8 +733,8 @@ async function dropTasksClosedOnDeal(rows, detailLeads) {
  * danh mục (so tên với `crm_leads.external_company_name`, không phân biệt hoa/thường). Không truyền gì → không lọc.
  * `effectiveDealCompanyId` giữ nguyên quy tắc quyền: người không phải admin hệ thống luôn bị khóa vào công ty của mình.
  */
-async function restrictToDealCompany(rows, { req, effectiveCompany, dealCompanyQ, dealExtName }) {
-  if (!rows.length || (!dealCompanyQ && !dealExtName)) return rows;
+async function dealCompanyProjectIdSet({ req, effectiveCompany, dealCompanyQ, dealExtName, candidateProjectIds }) {
+  if (!dealCompanyQ && !dealExtName) return null;
   let allowed = null; // Set<projectId>; null = không giới hạn
   if (dealCompanyQ) {
     const restrict = await resolveSxVisibilityRestrictIds(
@@ -746,12 +746,11 @@ async function restrictToDealCompany(rows, { req, effectiveCompany, dealCompanyQ
     if (Array.isArray(restrict)) allowed = new Set(restrict.map(String));
   }
   if (dealExtName) {
-    const projectIds = [...new Set(rows.map((t) => String(t.project_id)))];
     const leads = await fetchAllByIdsParallel({
       table: 'crm_leads',
       columns: 'project_id, external_company_name',
       key: 'project_id',
-      ids: projectIds,
+      ids: [...new Set(candidateProjectIds.map(String))],
       idChunk: 200,
     });
     const want = dealExtName.trim().toLowerCase();
@@ -762,6 +761,18 @@ async function restrictToDealCompany(rows, { req, effectiveCompany, dealCompanyQ
     );
     allowed = allowed ? new Set([...allowed].filter((id) => extSet.has(id))) : extSet;
   }
+  return allowed;
+}
+
+async function restrictToDealCompany(rows, { req, effectiveCompany, dealCompanyQ, dealExtName }) {
+  if (!rows.length || (!dealCompanyQ && !dealExtName)) return rows;
+  const allowed = await dealCompanyProjectIdSet({
+    req,
+    effectiveCompany,
+    dealCompanyQ,
+    dealExtName,
+    candidateProjectIds: rows.map((t) => t.project_id),
+  });
   if (!allowed) return rows;
   return rows.filter((t) => allowed.has(String(t.project_id)));
 }
@@ -1291,6 +1302,7 @@ r.get('/project-overview', async (req, res) => {
     const requestedProjectId = String(req.query.project_id || '').trim();
     const requestedCompany = String(req.query.company_id || '').trim();
     const requestedDealCompany = String(req.query.deal_company_id || '').trim();
+    const requestedDealExtName = String(req.query.deal_external_company_name || '').trim();
     const effectiveCompany = isSystemAdmin(req.user)
       ? (requestedCompany || null)
       : (req.user?.company_id || null);
@@ -1400,14 +1412,19 @@ r.get('/project-overview', async (req, res) => {
     if (vcStagesRes.error) throw vcStagesRes.error;
 
     const sxStageById = new Map((sxStagesRes.data || []).map((stage) => [String(stage.id), stage]));
-    if (requestedDealCompany) {
-      const dealProjectIds = new Set(
-        (leads || [])
-          .filter((lead) => String(lead.company_id || '') === requestedDealCompany)
-          .map((lead) => String(lead.project_id || ''))
-          .filter(Boolean),
-      );
-      activeProjects = activeProjects.filter((project) => dealProjectIds.has(String(project.id)));
+    if (requestedDealCompany || requestedDealExtName) {
+      // Cùng quy tắc với app (tab Công việc / Dự án / Kanban): deal có `company_id`, `external_company_id` hoặc tên khách khớp.
+      // Trước đây chỉ so `company_id` của deal nên bỏ sót dự án đặt hàng qua `external_company_id` (vd. VPT đặt tại HCB).
+      const dealProjectIds = await dealCompanyProjectIdSet({
+        req,
+        effectiveCompany,
+        dealCompanyQ: requestedDealCompany,
+        dealExtName: requestedDealExtName,
+        candidateProjectIds: activeProjects.map((project) => project.id),
+      });
+      if (dealProjectIds) {
+        activeProjects = activeProjects.filter((project) => dealProjectIds.has(String(project.id)));
+      }
     }
     const projectById = new Map(activeProjects.map((project) => [String(project.id), project]));
     const leadById = new Map((leads || []).map((lead) => [String(lead.id), lead]));
