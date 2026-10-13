@@ -1,6 +1,7 @@
 export const stateLabel = status => ({ PENDING: 'Chờ', QUALIFIED: 'Hợp lệ', REJECTED: 'Loại' }[status] || 'Chờ');
 export const errorLabel = code => ({
   REVISION_CONFLICT: 'Dữ liệu đã đổi, đã tải lại', REQUEST_CONFLICT: 'Yêu cầu này đã dùng cho nội dung khác. Hãy chỉnh nội dung rồi thử lại.',
+  CONTEXT_CONFLICT: 'Hồ sơ khách đã đổi. Hãy mở hồ sơ, đối chiếu và xác minh lại.',
   SOURCE_UNAVAILABLE: 'Chưa tải được nguồn dữ liệu. Vui lòng thử lại.', WRITE_UNAVAILABLE: 'Chưa lưu được. Vui lòng thử lại.',
   TRIAL_DATES_MISSING: 'Đợt thử chưa có đủ ngày bắt đầu và kết thúc.',
 }[code] || 'Không xử lý được yêu cầu. Vui lòng thử lại.');
@@ -77,4 +78,17 @@ export function createRequestIdentity(uuid = () => crypto.randomUUID()) {
     current() { return id ||= uuid(); },
     reset() { id = undefined; },
   };
+}
+
+// Accept a UUID or a CRM detail link; reject other hosts/paths and ambiguous free text.
+export function qualificationLeadId(input, origin) {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const value = String(input || '').trim();
+  if (uuid.test(value)) return value.toLowerCase();
+  try {
+    const url = new URL(value, origin);
+    if (url.origin !== origin || url.search || url.hash) return null;
+    const match = /^\/crm\/(?:leads|deals)\/([^/]+)\/?$/.exec(url.pathname);
+    return match && uuid.test(match[1]) ? match[1].toLowerCase() : null;
+  } catch { return null; }
 }
