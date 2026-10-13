@@ -124,9 +124,9 @@ Key helpers: `isAdminLike()`, `isSystemAdmin()`, `isCompanyScopedAdmin()`, `isPr
 
 ## Database Migrations
 
-SQL files in `database/` directory (400+ files, numbered). Run manually via Supabase Dashboard SQL Editor or Management API. No automated migration runner.
+SQL files in `database/` directory (700+ files, numbered). Process: [`database/README.md`](database/README.md). New files must use the next free number (CI `db-migrations.yml` blocks duplicates/bad names). Run with `backend/scripts/migrate.js` (`npm run db:status` / `db:apply -- <file> --yes`), which records each run in `public.schema_migrations` per DB (primary/backup). Running it is still a live-DB action — needs explicit approval.
 
-To add a column, use the Supabase Management API:
+Legacy reference — raw Management API call (does not record in `schema_migrations`):
 ```js
 fetch(`https://api.supabase.com/v1/projects/${ref}/database/query`, {
   method: 'POST',

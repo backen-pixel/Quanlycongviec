@@ -1,3 +1,15 @@
+## 2026-10-13 (13) — Theo dõi migration DB: `schema_migrations` + `migrate.js` + CI chặn trùng số
+
+- Hiện trạng: `database/` 734 file, ~66 số migration trùng (không tính cặp `_rollback`), không có sổ nào cho biết DB primary/backup đã chạy tới file nào; ~30 script `apply-migration-NNN.js` viết riêng từng file.
+- `database/722_schema_migrations.sql` (+ rollback): bảng `public.schema_migrations(filename PK, checksum, applied_at, applied_by, source runner|baseline|manual, note)`, RLS bật, revoke anon/authenticated.
+- `backend/scripts/migrate.js` (`npm run db:status|db:apply|db:baseline`): `status` liệt kê file chưa chạy / đã sửa sau khi ghi sổ / có sổ mà mất file; `apply <file|số>` chạy file + ghi sổ trong cùng một lần gửi, bỏ qua file đã chạy, từ chối file đổi nội dung (trừ `--force`); `baseline --upto N` đánh dấu file cũ không chạy SQL. `--target primary|backup|both`, `--via api|pg` (mặc định api khi có token). Không `--yes` = chỉ in kế hoạch. Checksum chuẩn hoá CRLF→LF.
+- CI `.github/workflows/db-migrations.yml` + `backend/scripts/check-new-migrations.js`: PR thêm file `database/*.sql` sai tên (`<số>_<snake_case>.sql`) hoặc trùng số → lỗi; sửa file cũ → cảnh báo. Không kết nối DB.
+- Tài liệu: `database/README.md` (quy trình), CLAUDE.md mục Database Migrations, `docs/database/README.md`.
+- Kiểm: 8 unit test `migrationPlan.test.js` đạt. Khi thử `apply 715` (offline mong đợi) script đã thử đọc DB primary qua `--via pg` và bị từ chối xác thực (`password authentication failed`) — không đọc/ghi được gì; URL Postgres trong `backend/.env` máy này có vẻ sai mật khẩu → đổi mặc định sang api. CHƯA chạy trên DB thật.
+- CẦN LÀM (người có quyền, mỗi DB một lần): `db:baseline -- --upto <số cuối chắc chắn đã chạy> --target both --yes` rồi `db:apply -- 722 --target both --yes`.
+
+---
+
 ## 2026-10-13 — VPT Google Ads: luồng lead hợp lệ đã xác minh, draft PR #124
 
 - Người dùng yêu cầu thiết lập Google Ads đo lead hợp lệ từ CRM và xác nhận tài khoản **VPT 975-957-2942**. Nhánh `codex/vpt-qualified-google-ads-20261013`, code `69f069e`, [draft PR #124](https://github.com/backen-pixel/Quanlycongviec/pull/124); chưa merge/deploy/ghi DB thật/lưu Google Ads UI/nhập conversion. Đăng nhập Google Ads chưa hoàn tất. Kết nối đọc báo auto-tagging bật, hành động cũ `VPT CRM - Khach hop le` Primary + Many per click; chưa xác nhận UI trực tiếp hoặc mục tiêu chiến dịch.
