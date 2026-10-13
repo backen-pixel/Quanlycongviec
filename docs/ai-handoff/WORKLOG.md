@@ -1,3 +1,12 @@
+## 2026-10-13 — team-project-tasks: chỉ tính dự án CHƯA KẾT THÚC như «Quản lý nhiệm vụ Sản xuất»
+
+- So với web `GET /work-tasks/project-overview`: web lọc 3 tầng — (1) dự án `completed`/`cancelled` bị bỏ; (2) dự án sản xuất đã ở cột kết thúc (`isProductionTaskTerminalStage`: cờ `is_handover_to_logistics` / `counts_as_completed_revenue` / `counts_as_collected_revenue`, bucket `delivered|completed|done|collected`, hoặc tên «đã giao hàng» / «hoàn thành…» / «đã thu…») bị bỏ; (3) danh mục không còn việc mở bị bỏ. App (`team-project-tasks`) chỉ có tầng 3 (việc đã xong) và còn CHO PHÉP `completed` (nằm trong `WORKSHOP_STATUSES`).
+- `workTasks.js` `restrictToProductionScope`: thêm bộ lọc `projectEnded` (status completed/cancelled/canceled hoặc `sx_kanban_column_id` trỏ cột kết thúc) trước khi xét phạm vi SX; đọc `production_pipeline_stages` (id, name, bucket_slug + 3 cờ) song song, lỗi → bỏ qua lọc cột kết thúc + `console.warn` (fail-open). Gom nhóm theo dự án ở app đúng (một nhóm/dự án, `lead_id = project_id`); web gom theo DANH MỤC trong dự án — chưa đổi.
+- Test giả có kiểm tên cột thật (A đang SX giữ; completed/cancelled/cột bàn giao VC/«ĐƠN HÀNG ĐÃ GIAO» có cờ doanh thu/«Đã thu tiền» bỏ; chưa có cột giữ; bảng cột lỗi → vẫn bỏ completed/huỷ). Lưu ý: tên cột «ĐƠN HÀNG ĐÃ GIAO» KHÔNG tự bị coi là kết thúc theo tên (quy tắc web chỉ bắt «đã giao hàng»/«đã giao»), phải có cờ trên cột.
+- CHƯA đo trên dữ liệu thật (phiên web của agent đã hết hạn do tự đăng xuất lúc nửa đêm; người dùng sẽ đo sau khi merge). Cần đo: số dự án/việc của 3 xưởng rơi vào hai nhóm bị loại (HCB, Metalla, Phúc Đạt) và so lại với chi tiết dự án.
+
+---
+
 ## 2026-10-12 (9) — team-project-tasks: hạn lấy theo `crm_task` (khớp chi tiết dự án)
 
 - Đối chiếu app↔web 12/10: web «Quản lý nhiệm vụ Sản xuất» đếm theo DANH MỤC (hạn danh mục = hạn kế hoạch nhóm, quá hạn = 0 ở cả 3 xưởng) còn app đếm theo từng việc (HCB 93, Metalla 39, Phúc Đạt 42) → hai định nghĩa, 0 dự án quá hạn trùng nhau; web liệt kê nhiều dự án hơn (HCB 66 vs 45). Quan trọng hơn: HCB 93 việc quá hạn ở tab thì chỉ 16 cũng quá hạn ở chi tiết dự án (46 có hạn xa, 31 không hạn); 85/93 lấy hạn từ `tasks.due_date` (cũ / do script gán) vì khử trùng ưu tiên bản `tasks`.

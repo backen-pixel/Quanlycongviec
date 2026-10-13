@@ -515,13 +515,15 @@ const crmTaskIdOf = (t) => String(t.source_id || String(t.unified_id || '').repl
  *  2. Việc `crm_task` chỉ tính khi là việc của quy trình sản xuất (`stage_slug` bắt đầu `sx_` hoặc có
  *     `production_pipeline_stage_id`) — như `GET /crm/leads/:id/tasks?task_scope=production`. Các việc giai đoạn bán hàng
  *     (Bản hợp đồng, Báo giá, Bản vẽ 2D…) cũng là `crm_task` của deal đã có dự án nhưng không hiện ở chi tiết dự án SX.
+ *  3. Dự án phải CHƯA KẾT THÚC như trang «Quản lý nhiệm vụ Sản xuất» (`GET /project-overview`): bỏ dự án `completed` / huỷ và
+ *     dự án đã ở cột kết thúc SX (`isProductionTaskTerminalStage`: bàn giao vận chuyển, «đã giao hàng», «hoàn thành», «đã thu»).
  * Việc ở bảng `tasks` (SX / Dự án) của dự án trong phạm vi vẫn giữ nguyên.
  */
 async function restrictToProductionScope(rows, companyId) {
   if (!rows.length) return rows;
   const projectIds = [...new Set(rows.map((t) => String(t.project_id)))];
   const crmIds = rows.filter((t) => t.source === 'crm_task').map(crmTaskIdOf).filter(Boolean);
-  const [wonIds, stageMap, projects, crmTasks] = await Promise.all([
+  const [wonIds, stageMap, projects, crmTasks, productionStages] = await Promise.all([
     getWonDealProjectIds(companyId || null),
     getWorkshopStageMap(),
     fetchAllByIdsParallel({
@@ -536,15 +538,31 @@ async function restrictToProductionScope(rows, companyId) {
       key: 'id',
       ids: crmIds,
     }),
+    // Cột pipeline SX (bảng nhỏ) — để biết dự án đã ở cột KẾT THÚC chưa (`isProductionTaskTerminalStage`). Phần bổ sung: lỗi thì
+    // bỏ qua bộ lọc cột kết thúc (như trước đây) và ghi log, KHÔNG làm hỏng cả endpoint.
+    fetchAllPages(() => supabase
+      .from('production_pipeline_stages')
+      .select('id, name, bucket_slug, is_handover_to_logistics, counts_as_completed_revenue, counts_as_collected_revenue')
+      .order('id'))
+      .catch((err) => {
+        console.warn('[work-tasks] team-project-tasks: bỏ qua lọc cột kết thúc —', err?.message || err);
+        return [];
+      }),
   ]);
   const won = new Set((wonIds || []).map(String));
   const workshopStageIds = new Set((stageMap?.ids || []).map(String));
+  const stageById = new Map((productionStages || []).map((s) => [String(s.id), s]));
+  // Cùng quy tắc với trang «Quản lý nhiệm vụ Sản xuất» (`GET /project-overview`): chỉ tính dự án CHƯA KẾT THÚC —
+  // bỏ dự án đã hoàn thành / huỷ và dự án đã sang cột kết thúc SX (bàn giao vận chuyển, «đã giao hàng», «hoàn thành», «đã thu»…).
+  const projectEnded = (p) => ['completed', 'cancelled', 'canceled'].includes(String(p.status || '').toLowerCase())
+    || isProductionTaskTerminalStage(stageById.get(String(p.sx_kanban_column_id || '')));
   const inScope = new Set(
     projects
-      .filter((p) => won.has(String(p.id))
-        || !!p.sx_kanban_column_id
-        || WORKSHOP_STATUSES.includes(p.status)
-        || (p.current_stage_id && workshopStageIds.has(String(p.current_stage_id))))
+      .filter((p) => !projectEnded(p)
+        && (won.has(String(p.id))
+          || !!p.sx_kanban_column_id
+          || WORKSHOP_STATUSES.includes(p.status)
+          || (p.current_stage_id && workshopStageIds.has(String(p.current_stage_id)))))
       .map((p) => String(p.id)),
   );
   const sxCrm = new Set(
