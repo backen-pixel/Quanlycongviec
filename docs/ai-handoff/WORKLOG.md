@@ -1,3 +1,13 @@
+## 2026-10-13 (7) — Web «Quản lý nhiệm vụ Sản xuất»: thêm kiểu xem «Theo dự án» (gom như tab Công việc của app)
+
+- Theo yêu cầu «gộp các việc lại như tab Công việc của app, theo từng dự án» để hai nơi đồng nhất. Trang `/sx/project-tasks` (`ProjectTasksOverviewPage.jsx`, chỉ khi `fixedModule === 'sx'`) có thêm nút «Theo dự án» cạnh «Kanban» / «Hạn». Hai kiểu cũ giữ nguyên, mặc định vẫn là «Hạn» (kiểu xem lưu trong `sessionStorage` như trước, giờ nhận thêm giá trị `project`).
+- Kiểu mới đọc `GET /work-tasks/team-project-tasks` — CÙNG endpoint, cùng cửa sổ (`due_days=7`, `created_days=7`), cùng bộ lọc công ty đặt hàng / xưởng / người nhận (một người) / từ khóa với tab Công việc ở app — nên số liệu khớp app và chi tiết dự án (đã đo: 103/103 dự án HCB + Metalla khớp). Danh sách gom theo `project_id` giữ thứ tự máy chủ (quá hạn lên trước), mỗi dự án một dòng: «N việc chưa xong · đang làm · không hạn», nhãn «Quá hạn K», nút «Mở dự án»; bấm dòng mở danh sách việc (tên, trạng thái, hạn, người nhận). Phân trang theo nhóm dự án («Xem thêm dự án»); hiện cảnh báo khi máy chủ trả `truncated`.
+- Các thẻ KPI ở kiểu này lấy `counts` của máy chủ (Tổng, Chưa làm, Đang làm, Quá hạn; «Đã làm» = 0 vì danh sách chỉ có việc chưa xong). Các bộ lọc riêng của Kanban (hạn / tiến độ / khu vực / khoảng ngày) không áp ở kiểu này.
+- Khác biệt cần biết: Kanban / Hạn vẫn đếm theo DANH MỤC của bảng `tasks` (`child_total − child_completed`) nên số khác kiểu «Theo dự án» (đếm `crm_task` như chi tiết dự án). Chưa đổi nguồn của Kanban.
+- Kiểm: `vite build` biên dịch đủ 9273 module nhưng dừng vì thiếu gói `zod` ở `AppGuideCopilotPanel.jsx` (lỗi môi trường sẵn có); `eslint` không chạy được ở máy này (thiếu `@eslint/js`). CHƯA kiểm trên trình duyệt — sau merge cần mở trang, chọn «Theo dự án», đối chiếu số HCB (Tủ bếp) với tab Công việc ở app.
+
+---
+
 ## 2026-10-13 (6) — Tab Công việc: giữ việc `tasks` đang chặn kéo cột + bỏ «Giao việc» trùng việc dự án
 
 - Kiểm (13/10, chỉ đọc): (1) `tasks` còn mở có `blocks_stage_advance` + `production_stage_id` = cột SX hiện tại (đúng điều kiện `workshopStageAdvanceGate`): 9 việc / 7 dự án, cả 9 bị tab ẩn (không người nhận, không `crm_task` cùng tên). HCB (2 dự án, 3 việc) và Phúc Đạt (TB-2026-818, phân loại «Cửa») được miễn chặn trong `app_settings.sx_chan_keo_theo_nhiem_vu` nên KHÔNG chặn thật; NextGo (TB-2026-877/878/879/880, 5 việc, cột «Chờ vào xưởng») không được miễn → cổng vẫn chặn kéo thẻ bởi việc mà tab và chi tiết dự án đều không hiện. (2) «Giao việc» soi gương `crm_task`: HCB 2 giao việc mở, 1 trùng việc dự án trong tab («bị mẻ cánh»); Metalla 2, 0 trùng.
