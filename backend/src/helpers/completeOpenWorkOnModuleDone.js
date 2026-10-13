@@ -813,10 +813,37 @@ async function finalizeHcbCanhKinhOnSxDone({ projectIds = [], leadIds = [] } = {
     return { crm_tasks: 0, workshop_tasks: 0, assignments: 0, projects: 0 };
   }
 
-  const openCrm = await fetchOpenCrmTasks(leads);
+  // Việc SX: CHỈ đóng từ cột «Hoàn thành» trở về trước.
+  // Trước đây chỗ này quét hết nhiệm vụ còn mở, không nhìn cột. Cột đứng SAU «Hoàn thành»
+  // («Nợ quá hạn không thu tiền được», «Hủy») là trạng thái ngoại lệ chứ không phải việc
+  // đã làm xong — đóng bừa là mất dấu khoản nợ. Cùng luật với mọi đường khác.
+  let sxCrmDong = 0;
+  let sxWsDong = 0;
+  for (const pid of projects) {
+    const { data: p } = await supabase
+      .from('projects')
+      .select('sx_kanban_column_id')
+      .eq('id', pid)
+      .maybeSingle();
+    if (!p?.sx_kanban_column_id) continue;
+    const r = await completeSxWorkUpToShippedColumn({
+      projectId: pid,
+      shippedColumnId: p.sx_kanban_column_id,
+    });
+    if (r?.reason) {
+      console.warn(`[hcbCanhKinh] bỏ qua đóng việc SX: project=${pid} lý do=${r.reason}`);
+    }
+    sxCrmDong += r?.crm_tasks || 0;
+    sxWsDong += r?.workshop_tasks || 0;
+  }
+
+  // Việc CRM và VC/LĐ: vẫn đóng hết, đúng ý đồ cũ — để bên khác không bị treo quá hạn.
+  const openCrm = (await fetchOpenCrmTasks(leads))
+    .filter((t) => !String(t.stage_slug || '').startsWith('sx_'));
   const crmResult = await completeCrmTaskRows(openCrm);
 
-  const allWs = (await fetchWorkshopTasks(projects)).filter((t) => !isTerminalStatus(t.status));
+  const allWs = (await fetchWorkshopTasks(projects))
+    .filter((t) => !isTerminalStatus(t.status) && isLogisticsWorkshopTask(t));
   const workshopResult = await completeWorkshopTaskRows(allWs);
 
   const byTask = await completeLinkedAssignments({
@@ -849,8 +876,8 @@ async function finalizeHcbCanhKinhOnSxDone({ projectIds = [], leadIds = [] } = {
   const marked = await markProjectsCompleted(projects);
 
   return {
-    crm_tasks: crmResult.count,
-    workshop_tasks: workshopResult.count,
+    crm_tasks: crmResult.count + sxCrmDong,
+    workshop_tasks: workshopResult.count + sxWsDong,
     assignments: byTask + restAssignments,
     projects: marked,
     final_clear: cleared,

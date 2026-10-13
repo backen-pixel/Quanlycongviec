@@ -855,7 +855,7 @@ async function scheduleNextWorkshopTaskAfterComplete(taskData) {
   try {
     const { data: project } = await supabase
       .from('projects')
-      .select('id, sx_kanban_column_id')
+      .select('id, company_id, workshop_type_id, sx_kanban_column_id')
       .eq('id', taskData.project_id)
       .maybeSingle();
 
@@ -896,21 +896,36 @@ async function scheduleNextWorkshopTaskAfterComplete(taskData) {
       }
     }
 
-    // Tìm cột tiếp theo để auto-advance
+    // Tìm cột tiếp theo để auto-advance.
+    //
+    // PHẢI khoá trong đúng pipeline của dự án (công ty + phân loại xưởng). Mọi pipeline đều
+    // đánh `order_index` từ 1 nên số trùng nhau đầy; trước đây truy vấn không lọc công ty
+    // lẫn phân loại, `.gt(order_index).limit(1)` bốc đại một cột của công ty bất kỳ rồi gán
+    // cho dự án — thẻ nhảy sang pipeline khác và biến mất khỏi bảng xưởng.
     const { data: currentStageRow } = await supabase
       .from('production_pipeline_stages')
-      .select('order_index')
+      .select('order_index, company_id, workshop_type_id')
       .eq('id', project.sx_kanban_column_id)
       .maybeSingle();
 
-    const currentOrderIndex = currentStageRow?.order_index || 0;
-    const { data: nextStage, error: err3 } = await supabase
+    // Không xác định được vị trí cột hiện tại thì KHÔNG đoán: nhảy từ 0 là về cột đầu.
+    if (!Number.isFinite(Number(currentStageRow?.order_index))) {
+      return { ok: true, completed_but_no_next_stage: true, reason: 'current_stage_without_order' };
+    }
+    const currentOrderIndex = Number(currentStageRow.order_index);
+
+    let q = supabase
       .from('production_pipeline_stages')
       .select('id, order_index')
       .gt('order_index', currentOrderIndex)
       .order('order_index', { ascending: true })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
+    // Lấy phạm vi từ chính cột hiện tại; thiếu thì lấy của dự án.
+    const scopeCompany = currentStageRow.company_id || project.company_id || null;
+    const scopeType = currentStageRow.workshop_type_id || project.workshop_type_id || null;
+    if (scopeCompany) q = q.eq('company_id', scopeCompany);
+    if (scopeType) q = q.eq('workshop_type_id', scopeType);
+    const { data: nextStage, error: err3 } = await q.maybeSingle();
 
     if (!err3 && nextStage?.id) {
       const { error: err4 } = await supabase
