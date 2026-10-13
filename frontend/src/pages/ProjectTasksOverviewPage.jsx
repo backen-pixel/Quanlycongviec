@@ -409,9 +409,14 @@ function groupTasksByProject(rows) {
  * Một dự án = một dòng, bấm để mở danh sách công việc chưa xong — cùng cách gom và cùng nguồn số liệu
  * (`GET /work-tasks/team-project-tasks`) với tab Công việc của app.
  */
-const ProjectGroupRow = memo(function ProjectGroupRow({ group, expanded, onToggle, nowMs }) {
+const ProjectGroupRow = memo(function ProjectGroupRow({
+  group, expanded, onToggle, nowMs, showOverdue = true, showCreated = false,
+}) {
   const total = group.tasks.length;
-  const overdue = group.tasks.filter((task) => task.deadline && new Date(task.deadline).getTime() < nowMs).length;
+  // Mục «Chưa giao»: hạn cũ của việc mẫu không có ý nghĩa nên không tính / không tô đỏ quá hạn.
+  const overdue = showOverdue
+    ? group.tasks.filter((task) => task.deadline && new Date(task.deadline).getTime() < nowMs).length
+    : 0;
   const noDeadline = group.tasks.filter((task) => !task.deadline).length;
   const doing = group.tasks.filter((task) => String(task.status || '').toLowerCase() === 'in_progress').length;
   const href = group.project_id ? projectDetailPathForModule('production', group.project_id) : null;
@@ -458,7 +463,7 @@ const ProjectGroupRow = memo(function ProjectGroupRow({ group, expanded, onToggl
         <ul className="border-t border-gray-100 bg-gray-50/50 divide-y divide-gray-100">
           {group.tasks.map((task) => {
             const due = task.deadline ? new Date(task.deadline).getTime() : null;
-            const isOver = due != null && due < nowMs;
+            const isOver = showOverdue && due != null && due < nowMs;
             const status = String(task.status || '').toLowerCase();
             return (
               <li key={task.unified_id || task.id} className="flex items-center gap-3 px-3 py-2 pl-9 text-xs">
@@ -469,9 +474,22 @@ const ProjectGroupRow = memo(function ProjectGroupRow({ group, expanded, onToggl
                 >
                   {PROJECT_TASK_STATUS_LABEL[status] || task.status || '—'}
                 </span>
+                {task.closed_on_deal ? (
+                  <span
+                    className="shrink-0 rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-500 ring-1 ring-slate-200"
+                    title="Đã giao người ở bảng việc xưởng, nhưng việc cùng tên ở deal đã xong — không tính quá hạn"
+                  >
+                    Xong ở deal
+                  </span>
+                ) : null}
                 <span className={`w-20 shrink-0 text-right tabular-nums ${isOver ? 'font-semibold text-red-600' : 'text-gray-500'}`}>
                   {task.deadline ? formatDate(task.deadline) : 'Không hạn'}
                 </span>
+                {showCreated && task.created_at ? (
+                  <span className="hidden w-24 shrink-0 text-right tabular-nums text-gray-400 sm:block" title="Ngày tạo">
+                    Tạo {formatDate(task.created_at)}
+                  </span>
+                ) : null}
                 <span className="hidden w-32 shrink-0 truncate text-right text-gray-500 sm:block" title={task.assignee_name || ''}>
                   {task.assignee_name || 'Chưa có người nhận'}
                 </span>
@@ -698,6 +716,10 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
   const [teamLoading, setTeamLoading] = useState(false);
   const [teamError, setTeamError] = useState('');
   const [expandedProjects, setExpandedProjects] = useState({});
+  // «Chưa giao» (CHỈ Admin): mọi việc chưa có người nhận, kể cả việc cũ không hạn ngoài cửa sổ 7 ngày.
+  const [unassignedOnly, setUnassignedOnly] = useState(false);
+  const [unassignedTotal, setUnassignedTotal] = useState(null);
+  const unassignedActive = isAdmin && unassignedOnly;
   const teamSeqRef = useRef(0);
   const selectedAssigneeIds = normalizeWorkUnifiedUserIds(assigneeFilter);
   const singleAssigneeId = selectedAssigneeIds.length === 1 ? String(selectedAssigneeIds[0]) : '';
@@ -715,7 +737,8 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       if (companyFilter) params.company_id = companyFilter;
       if (dealCompanyParam) params.deal_company_id = dealCompanyParam;
       else if (dealExternalNameParam) params.deal_external_company_name = dealExternalNameParam;
-      if (singleAssigneeId) params.assignee_id = singleAssigneeId;
+      if (unassignedActive) params.unassigned = 1;
+      else if (singleAssigneeId) params.assignee_id = singleAssigneeId;
       if (trimmedQuery) params.q = trimmedQuery;
       const res = await api.get('/work-tasks/team-project-tasks', { params });
       if (seq !== teamSeqRef.current) return;
@@ -733,7 +756,26 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     } finally {
       if (seq === teamSeqRef.current) setTeamLoading(false);
     }
-  }, [companiesReady, companyFilter, dealCompanyParam, dealExternalNameParam, projectFilter, singleAssigneeId, trimmedQuery]);
+  }, [companiesReady, companyFilter, dealCompanyParam, dealExternalNameParam, projectFilter, singleAssigneeId, trimmedQuery, unassignedActive]);
+
+  // Số việc chưa giao (Admin) để hiện trên nút «Chưa giao (N)».
+  useEffect(() => {
+    if (!projectView || !isAdmin || !companiesReady || (!companyFilter && !projectFilter)) {
+      setUnassignedTotal(null);
+      return undefined;
+    }
+    let cancelled = false;
+    const params = {
+      page: 1, page_size: 1, lite: 1, unassigned: 1,
+    };
+    if (companyFilter) params.company_id = companyFilter;
+    if (dealCompanyParam) params.deal_company_id = dealCompanyParam;
+    else if (dealExternalNameParam) params.deal_external_company_name = dealExternalNameParam;
+    api.get('/work-tasks/team-project-tasks', { params })
+      .then((res) => { if (!cancelled) setUnassignedTotal(Number(res.data?.counts?.total) || 0); })
+      .catch(() => { if (!cancelled) setUnassignedTotal(null); });
+    return () => { cancelled = true; };
+  }, [projectView, isAdmin, companiesReady, companyFilter, projectFilter, dealCompanyParam, dealExternalNameParam]);
 
   useEffect(() => {
     if (!projectView) return undefined;
@@ -934,7 +976,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       notStarted: Math.max(0, (Number(teamCounts.total) || 0) - (Number(teamCounts.in_progress) || 0)),
       inProgress: Number(teamCounts.in_progress) || 0,
       completed: 0,
-      overdue: Number(teamCounts.overdue) || 0,
+      overdue: unassignedActive ? 0 : (Number(teamCounts.overdue) || 0),
     }
     : kpiStats;
 
@@ -1278,6 +1320,25 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
 
       {projectView ? (
         <div className="rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden">
+          {isAdmin ? (
+            <div className="flex items-center gap-2 border-b border-gray-100 px-3 py-2">
+              <button
+                type="button"
+                onClick={() => setUnassignedOnly((value) => !value)}
+                className={`h-8 px-3 rounded-lg border text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer ${
+                  unassignedOnly ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+                title="Chỉ Admin: xem mọi việc chưa có người nhận, kể cả việc cũ không hạn, để giao việc"
+              >
+                Chưa giao{unassignedTotal != null ? ` (${unassignedTotal})` : ''}
+              </button>
+              {unassignedOnly ? (
+                <span className="text-[11px] text-gray-500">
+                  Mọi việc chưa có người nhận (kể cả việc cũ không hạn) — chỉ Admin thấy mục này.
+                </span>
+              ) : null}
+            </div>
+          ) : null}
           {teamError ? (
             <div className="px-4 py-3 text-sm text-red-700 bg-red-50 border-b border-red-100">{teamError}</div>
           ) : null}
@@ -1294,6 +1355,8 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
                   expanded={!!expandedProjects[group.key]}
                   onToggle={() => setExpandedProjects((prev) => ({ ...prev, [group.key]: !prev[group.key] }))}
                   nowMs={Date.now()}
+                  showOverdue={!unassignedActive}
+                  showCreated={unassignedActive}
                 />
               ))}
             </div>

@@ -62,7 +62,7 @@ import {
   shouldShowDealCompanyFilter,
   workshopCompaniesForCrossViewer,
 } from '../lib/productionFilters';
-import { canSeeAllWorkshopCompanies } from '../lib/roles';
+import { canSeeAllWorkshopCompanies, isAdminLike } from '../lib/roles';
 import type { MainTabParamList } from '../navigation/MainTabs';
 import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
 import {
@@ -133,6 +133,14 @@ function dueMatches(iso: string | null | undefined, filter: WorkDueFilter): bool
   return day >= weekStart + 7 * DAY && day < weekStart + 14 * DAY;
 }
 /** Chip hạn xử lý → khoảng ngày lịch VN (YYYY-MM-DD, gồm hai đầu) để máy chủ lọc; rỗng nếu chưa chọn chip. */
+/** Ngày (giờ VN) dạng dd/mm/yyyy từ chuỗi ISO — dùng cho «Tạo …» ở mục Chưa giao. */
+function fmtVnDate(iso: string): string {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return '';
+  const [y, m, d] = vnYmd(ms).split('-');
+  return `${d}/${m}/${y}`;
+}
+
 function dueRangeVN(filter: WorkDueFilter): { dueFrom?: string; dueTo?: string } {
   if (!filter) return {};
   const DAY = 86_400_000;
@@ -679,6 +687,7 @@ export default function WorkScreen() {
    */
   const unifiedSource = !teamView;
   const canPickCompany = canSeeAllWorkshopCompanies(user);
+  const isAdmin = isAdminLike(user);
   const assignAdmin = isAssignmentsAdmin(user?.role);
   const ownCompanyId = user?.company_id ? String(user.company_id) : '';
 
@@ -689,6 +698,9 @@ export default function WorkScreen() {
   const [teamCounts, setTeamCounts] = useState<TeamProjectCounts | null>(null);
   /** Id `crm_task` đã có «Giao việc» mở soi gương (máy chủ báo) — dòng giao việc trùng bị bỏ để không đếm / hiện hai lần. */
   const [teamAssignedIds, setTeamAssignedIds] = useState<Set<string>>(() => new Set());
+  /** Mục «Chưa giao» (CHỈ Admin): xem mọi việc chưa có người nhận, kể cả việc cũ không hạn nằm ngoài cửa sổ 7 ngày. */
+  const [unassignedView, setUnassignedView] = useState(false);
+  const [unassignedTotal, setUnassignedTotal] = useState<number | null>(null);
   const [teamHasMore, setTeamHasMore] = useState(false);
   const teamHasMoreRef = useRef(false);
   const teamPageRef = useRef(1);
@@ -915,7 +927,8 @@ export default function WorkScreen() {
     try {
       const res = await fetchTeamProjectTasksPage({
         companyId: o.companyId ?? (filterCompany || (canPickCompany ? null : (user?.company_id || null))),
-        assigneeId: assigneeFilterRef.current !== 'all' ? assigneeFilterRef.current : null,
+        assigneeId: !unassignedView && assigneeFilterRef.current !== 'all' ? assigneeFilterRef.current : null,
+        unassigned: unassignedView,
         workshopTypeId: activeWorkTypeId || null,
         dealCompanyId: dealCompanyParam || null,
         dealExternalName: dealExternalName || null,
@@ -942,7 +955,27 @@ export default function WorkScreen() {
     } finally {
       if (append) teamLoadingMoreRef.current = false;
     }
-  }, [filterCompany, canPickCompany, user?.company_id, activeWorkTypeId, dealCompanyParam, dealExternalName]);
+  }, [filterCompany, canPickCompany, user?.company_id, activeWorkTypeId, dealCompanyParam, dealExternalName, unassignedView]);
+
+  // Số việc chưa giao (chỉ Admin, phạm vi Đội) — hiện trên chip «Chưa giao» để Admin biết có bao nhiêu việc chờ giao.
+  useEffect(() => {
+    if (!isAdmin || !teamView || scope !== 'team' || !filtersReady) {
+      setUnassignedTotal(null);
+      return undefined;
+    }
+    let cancel = false;
+    void fetchTeamProjectTasksPage({
+      companyId: filterCompany || (canPickCompany ? null : (user?.company_id || null)),
+      workshopTypeId: activeWorkTypeId || null,
+      dealCompanyId: dealCompanyParam || null,
+      dealExternalName: dealExternalName || null,
+      unassigned: true,
+      pageSize: 1,
+    })
+      .then((r) => { if (!cancel) setUnassignedTotal(r.counts.total); })
+      .catch(() => { if (!cancel) setUnassignedTotal(null); });
+    return () => { cancel = true; };
+  }, [isAdmin, teamView, scope, filtersReady, filterCompany, canPickCompany, user?.company_id, activeWorkTypeId, dealCompanyParam, dealExternalName]);
 
   const load = useCallback(async (
     silent = false,
@@ -1608,7 +1641,7 @@ export default function WorkScreen() {
       // DEAL (có thể khác xưởng) nên lọc theo đó sẽ ẩn mất việc thuộc dự án của xưởng mình.
       // Việc dự án (nguồn `/work-tasks`) đã được máy chủ lọc theo công ty; `company_id` của chúng có thể là công ty DEAL.
       const isProjectTask = t.source_kind === 'task' || t.source_kind === 'crm_task';
-      if (dealFilterActive && !isProjectTask) return false;
+      if ((dealFilterActive || unassignedView) && !isProjectTask) return false;
       if (!isProjectTask && isMirroredAssignment(t)) return false;
       if (!unifiedSource && !isProjectTask && filterCompany && String(t.company_id || '') !== String(filterCompany)) {
         return false;
@@ -1616,7 +1649,7 @@ export default function WorkScreen() {
       if (dueFilter && !dueMatches(taskDueIso(t), dueFilter)) return false;
       return true;
     });
-  }, [tasks, chipTasks, teamProjectTasks, search, statusFilter, dueFilter, unifiedSource, teamView, scope, assigneeFilter, filterCompany, dealFilterActive, isMirroredAssignment]);
+  }, [tasks, chipTasks, teamProjectTasks, search, statusFilter, dueFilter, unifiedSource, teamView, scope, assigneeFilter, filterCompany, dealFilterActive, unassignedView, isMirroredAssignment]);
 
   // Nhóm cần xử lý lên trước: có việc quá hạn → có việc đến hạn hôm nay → còn lại (giữ thứ tự cũ).
   const dealSections = useMemo(() => {
@@ -1643,7 +1676,7 @@ export default function WorkScreen() {
   const REVEAL_INITIAL = 6;
   const REVEAL_STEP = 2;
   const [revealCount, setRevealCount] = useState(REVEAL_INITIAL);
-  const revealKey = `${statusFilter}|${search}|${assigneeFilter}|${filterCompany}|${activeWorkTypeId}|${dueFilter}|${dealCompanyParam}|${dealExternalName}`;
+  const revealKey = `${statusFilter}|${search}|${assigneeFilter}|${filterCompany}|${activeWorkTypeId}|${dueFilter}|${dealCompanyParam}|${dealExternalName}|${unassignedView}`;
   useEffect(() => { setRevealCount(REVEAL_INITIAL); }, [revealKey]);
   useEffect(() => {
     if (revealCount >= dealSections.length) return undefined;
@@ -1688,6 +1721,9 @@ export default function WorkScreen() {
     const pDoing = teamCounts?.inProgress ?? 0;
     const pPending = Math.max(0, (teamCounts?.total ?? 0) - pDoing);
     const pOverdue = teamCounts?.overdue ?? 0;
+    if (unassignedView) {
+      return { pending: teamCounts?.total ?? 0, inProgress: 0, done: 0, overdue: 0 };
+    }
     if (dealFilterActive) {
       // «Giao việc» không có công ty đặt hàng → chỉ tính phần việc dự án đã được máy chủ lọc.
       return { pending: pPending, inProgress: pDoing, done: 0, overdue: pOverdue };
@@ -1710,7 +1746,7 @@ export default function WorkScreen() {
       done: statsScope.filter((t) => isTaskDone(t.status)).length,
       overdue: statsScope.filter((t) => isTaskOverdue(t)).length + pOverdue,
     };
-  }, [serverStats, statsScope, teamCounts, dealFilterActive, tasks, isMirroredAssignment]);
+  }, [serverStats, statsScope, teamCounts, dealFilterActive, unassignedView, tasks, isMirroredAssignment]);
 
   const personLabel = useMemo(() => {
     if (assigneeFilter === 'all') return 'Tất cả';
@@ -1835,6 +1871,18 @@ export default function WorkScreen() {
         onClear: filterDealCompany ? () => { void onSelectDealCompany(''); } : undefined,
       });
     }
+    if (isAdmin && teamView && scope === 'team') {
+      chips.push({
+        key: 'dd-unassigned',
+        prefix: 'Chưa giao',
+        label: unassignedView
+          ? `Đang xem${unassignedTotal != null ? ` (${unassignedTotal})` : ''}`
+          : (unassignedTotal != null ? String(unassignedTotal) : '…'),
+        active: unassignedView,
+        onOpen: () => setUnassignedView((v) => !v),
+        onClear: unassignedView ? () => setUnassignedView(false) : undefined,
+      });
+    }
     if (useAssigneeDropdown) {
       chips.push({
         key: 'dd-assignee',
@@ -1860,6 +1908,11 @@ export default function WorkScreen() {
     dealCompanyLabel,
     filterDealCompany,
     onSelectDealCompany,
+    isAdmin,
+    teamView,
+    scope,
+    unassignedView,
+    unassignedTotal,
   ]);
 
   const showFilterChipRow = activeFilterChips.length > 0 || filterDropdownChips.length > 0;
@@ -1945,6 +1998,12 @@ export default function WorkScreen() {
               <Text style={[styles.statusBadge, styles.statusBadgeTxt, { backgroundColor: colorWithAlpha(accent, 0.15), color: accent }]}>
                 {'● '}{statusPillLabel(task.status)}
               </Text>
+              {/* Đã giao người nhưng bản việc ở deal đã xong — vẫn hiện để không mất việc, không tính quá hạn. */}
+              {task.closed_on_deal ? (
+                <Text style={[styles.statusBadge, styles.statusBadgeTxt, { backgroundColor: colorWithAlpha(colors.textFaint, 0.18), color: colors.textFaint }]}>
+                  {'Xong ở deal'}
+                </Text>
+              ) : null}
               {/* Nhãn riêng cho việc quá hạn — nổi hơn dòng chữ hạn ở góc phải. */}
               {overdue ? (
                 <Text style={[styles.statusBadge, styles.statusBadgeTxt, { backgroundColor: colorWithAlpha(colors.danger, 0.15), color: colors.danger }]}>
@@ -1997,6 +2056,7 @@ export default function WorkScreen() {
             </View>
             <Text style={styles.infoTxt} numberOfLines={1}>
               {assigneeName}
+              {unassignedView && task.created_at ? ` · Tạo ${fmtVnDate(task.created_at)}` : ''}
             </Text>
           </View>
 
