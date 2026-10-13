@@ -1,3 +1,11 @@
+## 2026-10-13 (2) — Tab Công việc: thêm chip lọc «Công ty đặt hàng» (app + team-project-tasks)
+
+- Theo yêu cầu. Backend `workTasks.js` (`GET /work-tasks/team-project-tasks`): nhận `deal_company_id` (UUID công ty CRM) và `deal_external_company_name` (khách ngoài danh mục — khớp không phân biệt hoa thường theo `crm_leads.external_company_name`). Hàm `restrictToDealCompany` dùng lại đúng đường tab Dự án / Kanban: `effectiveDealCompanyId` (người không phải admin hệ thống bị khoá về công ty của họ) → `resolveSxVisibilityRestrictIds` → tập `project_id` được phép, lọc sau `restrictToProductionScope`. Khoá cache (30s) thêm hai tham số + công ty/quyền của người gọi.
+- App: `teamProjectTasksApi.ts` thêm `dealCompanyId`/`dealExternalName` (vào khoá cache + tham số). `WorkScreen.tsx`: chip «Đặt hàng» (chỉ admin hệ thống, phạm vi Đội) + picker; danh sách lấy từ `fetchClientCompanies` (xưởng đang chọn HCB/Metalla, không thì xưởng đầu), giá trị dùng chung `filterDealCompany` với Tổng quan/Dự án qua `kanbanFilterStorage`; đổi công ty đặt hàng thì phân loại về mặc định như Tổng quan. Khi đang lọc: ẩn «Giao việc» (không có công ty đặt hàng) và số đếm chỉ tính việc dự án.
+- Kiểm: `tsc` không lỗi ở 2 file app; máy ảo hiện chip «Đặt hàng · Tất cả» và picker liệt kê HCB, Phúc Đạt, VPT, Bếp Việt, Canihome…; test giả backend 6 ca (có kiểm tên cột thật) đạt. CHƯA đo trên dữ liệu thật vì backend mới chưa deploy — sau merge cần so từng công ty đặt hàng (vd. Phúc Đạt, VPT, HCB) giữa tab và bộ lọc «Đặt hàng» ở danh sách dự án.
+
+---
+
 ## 2026-10-13 — team-project-tasks: chỉ tính dự án CHƯA KẾT THÚC như «Quản lý nhiệm vụ Sản xuất»
 
 - So với web `GET /work-tasks/project-overview`: web lọc 3 tầng — (1) dự án `completed`/`cancelled` bị bỏ; (2) dự án sản xuất đã ở cột kết thúc (`isProductionTaskTerminalStage`: cờ `is_handover_to_logistics` / `counts_as_completed_revenue` / `counts_as_collected_revenue`, bucket `delivered|completed|done|collected`, hoặc tên «đã giao hàng» / «hoàn thành…» / «đã thu…») bị bỏ; (3) danh mục không còn việc mở bị bỏ. App (`team-project-tasks`) chỉ có tầng 3 (việc đã xong) và còn CHO PHÉP `completed` (nằm trong `WORKSHOP_STATUSES`).
