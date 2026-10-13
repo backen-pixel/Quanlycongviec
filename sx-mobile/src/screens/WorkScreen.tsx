@@ -687,6 +687,8 @@ export default function WorkScreen() {
   const [teamProjectTasks, setTeamProjectTasks] = useState<WorkTask[]>([]);
   /** Số đếm toàn bộ việc dự án của đội (máy chủ tính) — danh sách chỉ nạp theo trang. */
   const [teamCounts, setTeamCounts] = useState<TeamProjectCounts | null>(null);
+  /** Id `crm_task` đã có «Giao việc» mở soi gương (máy chủ báo) — dòng giao việc trùng bị bỏ để không đếm / hiện hai lần. */
+  const [teamAssignedIds, setTeamAssignedIds] = useState<Set<string>>(() => new Set());
   const [teamHasMore, setTeamHasMore] = useState(false);
   const teamHasMoreRef = useRef(false);
   const teamPageRef = useRef(1);
@@ -929,6 +931,7 @@ export default function WorkScreen() {
       teamHasMoreRef.current = res.hasMore;
       setTeamHasMore(res.hasMore);
       setTeamCounts(res.counts);
+      setTeamAssignedIds(new Set(res.assignedCrmTaskIds || []));
       setTeamProjectTasks((prev) => {
         if (!append) return res.tasks;
         const seen = new Set(prev.map((t) => t.id));
@@ -1019,6 +1022,7 @@ export default function WorkScreen() {
       if (!append && !(teamView && scope === 'team')) {
         setTeamProjectTasks([]);
         setTeamCounts(null);
+        setTeamAssignedIds(new Set());
         teamHasMoreRef.current = false;
       }
     } catch (e) {
@@ -1571,6 +1575,12 @@ export default function WorkScreen() {
       .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
   }, [tasks, teamProjectTasks, companyPeople]);
 
+  /** «Giao việc» soi gương một `crm_task` đang có trong danh sách việc dự án (phạm vi Đội) → trùng, bỏ. */
+  const isMirroredAssignment = useCallback((t: WorkTask): boolean => (
+    teamView && scope === 'team' && teamAssignedIds.size > 0
+    && !!t.crm_task_id && teamAssignedIds.has(String(t.crm_task_id))
+  ), [teamView, scope, teamAssignedIds]);
+
   const filtered = useMemo(() => {
     // Search đã gửi `q` lên server — không lọc lại client (tránh che match SĐT/lead).
     const base = statusFilter === 'all' || unifiedSource ? tasks : chipTasks;
@@ -1599,13 +1609,14 @@ export default function WorkScreen() {
       // Việc dự án (nguồn `/work-tasks`) đã được máy chủ lọc theo công ty; `company_id` của chúng có thể là công ty DEAL.
       const isProjectTask = t.source_kind === 'task' || t.source_kind === 'crm_task';
       if (dealFilterActive && !isProjectTask) return false;
+      if (!isProjectTask && isMirroredAssignment(t)) return false;
       if (!unifiedSource && !isProjectTask && filterCompany && String(t.company_id || '') !== String(filterCompany)) {
         return false;
       }
       if (dueFilter && !dueMatches(taskDueIso(t), dueFilter)) return false;
       return true;
     });
-  }, [tasks, chipTasks, teamProjectTasks, search, statusFilter, dueFilter, unifiedSource, teamView, scope, assigneeFilter, filterCompany, dealFilterActive]);
+  }, [tasks, chipTasks, teamProjectTasks, search, statusFilter, dueFilter, unifiedSource, teamView, scope, assigneeFilter, filterCompany, dealFilterActive, isMirroredAssignment]);
 
   // Nhóm cần xử lý lên trước: có việc quá hạn → có việc đến hạn hôm nay → còn lại (giữ thứ tự cũ).
   const dealSections = useMemo(() => {
@@ -1660,6 +1671,7 @@ export default function WorkScreen() {
   /** Stats fallback client — scope đã tải (search/KPI ưu tiên /stats). */
   const statsScope = useMemo(() => {
     return tasks.filter((t) => {
+      if (isMirroredAssignment(t)) return false;
       if (teamView && scope === 'team' && assigneeFilter !== 'all') {
         if (!taskAssignedToUser(t, assigneeFilter)) return false;
       }
@@ -1669,7 +1681,7 @@ export default function WorkScreen() {
       }
       return true;
     });
-  }, [tasks, teamView, scope, assigneeFilter, filterCompany, unifiedSource]);
+  }, [tasks, teamView, scope, assigneeFilter, filterCompany, unifiedSource, isMirroredAssignment]);
 
   const stats = useMemo(() => {
     // Cộng thêm việc dự án theo SỐ ĐẾM TOÀN BỘ của máy chủ (danh sách chỉ nạp theo trang nên không đếm từ đó được).
@@ -1681,11 +1693,15 @@ export default function WorkScreen() {
       return { pending: pPending, inProgress: pDoing, done: 0, overdue: pOverdue };
     }
     if (serverStats) {
+      // /stats đếm cả «Giao việc» đã soi gương một việc dự án — trừ phần trùng (đã nạp trong `tasks`) để khỏi đếm hai lần.
+      const dup = tasks.filter((t) => isMirroredAssignment(t) && !isTaskDone(t.status));
+      const dupDoing = dup.filter((t) => isTaskInProgress(t.status)).length;
+      const dupOverdue = dup.filter((t) => isTaskOverdue(t)).length;
       return {
-        pending: serverStats.pending + pPending,
-        inProgress: serverStats.in_progress + pDoing,
+        pending: Math.max(0, serverStats.pending - (dup.length - dupDoing)) + pPending,
+        inProgress: Math.max(0, serverStats.in_progress - dupDoing) + pDoing,
         done: serverStats.completed,
-        overdue: serverStats.overdue + pOverdue,
+        overdue: Math.max(0, serverStats.overdue - dupOverdue) + pOverdue,
       };
     }
     return {
@@ -1694,7 +1710,7 @@ export default function WorkScreen() {
       done: statsScope.filter((t) => isTaskDone(t.status)).length,
       overdue: statsScope.filter((t) => isTaskOverdue(t)).length + pOverdue,
     };
-  }, [serverStats, statsScope, teamCounts, dealFilterActive]);
+  }, [serverStats, statsScope, teamCounts, dealFilterActive, tasks, isMirroredAssignment]);
 
   const personLabel = useMemo(() => {
     if (assigneeFilter === 'all') return 'Tất cả';
