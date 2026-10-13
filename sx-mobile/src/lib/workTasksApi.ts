@@ -410,6 +410,7 @@ export function mapUnifiedToWorkTask(raw: Record<string, unknown>): WorkTask {
     status: String(raw.status || 'pending'),
     deadline,
     due_date: deadline,
+    created_at: str(raw.created_at),
     description: str(raw.description),
     priority: str(raw.priority),
     source: 'assignment',

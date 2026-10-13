@@ -56,6 +56,8 @@ type Opts = {
   dealExternalName?: string | null;
   /** true = mục «Không hạn»: việc chưa xong KHÔNG có hạn, tạo từ lâu (phần mới tạo đã ở danh sách chính). */
   noDeadline?: boolean;
+  /** true = mục «Chưa giao» (chỉ Admin): mọi việc chưa có người nhận, bất kể ngày tạo / hạn; máy chủ từ chối với vai trò khác. */
+  unassigned?: boolean;
   /** Khoảng hạn (YYYY-MM-DD, ngày VN, gồm hai đầu) cho chip Hôm nay / Ngày mai / Trong tuần / Tuần sau — máy chủ lọc. */
   dueFrom?: string | null;
   dueTo?: string | null;
@@ -147,7 +149,7 @@ async function fetchLegacy(o: Opts): Promise<TeamProjectPage> {
 export async function fetchTeamProjectTasksPage(o: Opts): Promise<TeamProjectPage> {
   const page = Math.max(1, o.page || 1);
   const pageSize = o.pageSize || TEAM_GROUPS_PER_PAGE;
-  const key = `${K_TEAM}${o.noDeadline ? 'nd|' : ''}${o.dueFrom ? `d${o.dueFrom}~${o.dueTo}|` : ''}${o.companyId || ''}|${o.assigneeId || ''}|${o.workshopTypeId || ''}|${o.dealCompanyId || ''}|${(o.dealExternalName || '').trim().toLowerCase()}|${(o.q || '').trim()}|${page}|${pageSize}`;
+  const key = `${K_TEAM}${o.noDeadline ? 'nd|' : ''}${o.unassigned ? 'un|' : ''}${o.dueFrom ? `d${o.dueFrom}~${o.dueTo}|` : ''}${o.companyId || ''}|${o.assigneeId || ''}|${o.workshopTypeId || ''}|${o.dealCompanyId || ''}|${(o.dealExternalName || '').trim().toLowerCase()}|${(o.q || '').trim()}|${page}|${pageSize}`;
   return cachedQuery<TeamProjectPage>({
     key,
     ttlMs: QUERY_TTL_SHORT,
@@ -170,6 +172,7 @@ export async function fetchTeamProjectTasksPage(o: Opts): Promise<TeamProjectPag
             // Lấy thêm việc MỚI TẠO trong N ngày qua dù chưa có hạn (máy chủ mặc định cũng là 7).
             created_days: NEW_TASK_DAYS,
             ...(o.noDeadline ? { no_deadline: 1 } : {}),
+            ...(o.unassigned ? { unassigned: 1 } : {}),
             ...(o.dueFrom && o.dueTo ? { due_from: o.dueFrom, due_to: o.dueTo } : {}),
             ...(o.companyId ? { company_id: o.companyId } : {}),
             ...(o.assigneeId ? { assignee_id: o.assigneeId } : {}),
@@ -202,7 +205,7 @@ export async function fetchTeamProjectTasksPage(o: Opts): Promise<TeamProjectPag
       } catch (e) {
         const status = (e as { response?: { status?: number } })?.response?.status;
         // 404 = máy chủ chưa deploy endpoint mới → dùng đường cũ (chỉ trang 1, đã gồm hết). Mục «Không hạn» thì bỏ qua.
-        if (status === 404 && page === 1 && !o.noDeadline) return fetchLegacy(o);
+        if (status === 404 && page === 1 && !o.noDeadline && !o.unassigned) return fetchLegacy(o);
         if (status === 404) return { tasks: [], counts: { overdue: 0, soon: 0, total: 0, inProgress: 0, groups: 0 }, hasMore: false, page };
         throw e;
       }

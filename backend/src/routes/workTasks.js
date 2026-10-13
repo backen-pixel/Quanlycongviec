@@ -4,7 +4,7 @@
 const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
-const { isSystemAdmin } = require('../helpers/adminRole');
+const { isSystemAdmin, isAdminLike } = require('../helpers/adminRole');
 const {
   createProjectTask,
   updateProjectTask,
@@ -739,7 +739,7 @@ async function loadAssignedCrmTaskIds(crmTaskIds) {
  * không có bản `crm_task` tương ứng luôn được giữ nguyên, kể cả chưa ai nhận (trước đây ẩn việc mẫu bị bỏ quên — đã bỏ quy
  * tắc đó vì việc chưa giao vẫn là việc thật). KHÔNG ghi dữ liệu.
  */
-async function dropTasksClosedOnDeal(rows, detailLeads) {
+async function dropTasksClosedOnDeal(rows, detailLeads, { dropWithTwin = false } = {}) {
   const taskRows = rows.filter((t) => t.source === 'task');
   if (!taskRows.length) return rows;
   const projectIds = [...new Set(taskRows.map((t) => String(t.project_id)))];
@@ -786,6 +786,9 @@ async function dropTasksClosedOnDeal(rows, detailLeads) {
     // không hiện.
     if (t.blocks_stage_advance) return true;
     const s = state.get(keyOf(t));
+    // Chế độ «Chưa giao»: đã có bản `crm_task` cùng tên (dù mở hay xong) thì bản crm mới là việc thật → bỏ bản `tasks` để khỏi hiện
+    // thành «chưa giao» khi bản crm đã có người nhận.
+    if (dropWithTwin && s) return false;
     // 1. Bản `crm_task` cùng tên đã đóng hết → việc đã xong ở chi tiết dự án. CHƯA GIAO ai thì bỏ; đã giao cho một người thì
     //    GIỮ (đánh dấu `closed_on_deal` ở bước dưới) để việc đang gắn với người không biến mất âm thầm.
     if (s && s.closed > 0 && s.open === 0 && !t.assignee_id) return false;
@@ -883,12 +886,16 @@ r.get('/team-project-tasks', async (req, res) => {
     // no_deadline=1: mục riêng «Không hạn» — việc chưa xong KHÔNG có hạn và tạo từ lâu (trước `created_days` ngày);
     // phần mới tạo đã nằm ở danh sách chính. Lấy tách riêng để danh sách chính không phình theo hàng nghìn việc cũ.
     const noDeadlineMode = ['1', 'true'].includes(String(req.query.no_deadline || '').toLowerCase());
+    // unassigned=1: mục «Chưa giao» DÀNH CHO ADMIN — mọi việc chưa có người nhận, bất kể ngày tạo / hạn (không áp cửa sổ N ngày) để
+    // Admin thấy và giao việc. Không cộng vào số chính. Các vai trò khác không dùng được.
+    const unassignedMode = ['1', 'true'].includes(String(req.query.unassigned || '').toLowerCase());
+    if (unassignedMode && !isAdminLike(req.user)) return res.status(403).json({ error: 'Mục «Chưa giao» chỉ dành cho Admin' });
     // due_from / due_to (YYYY-MM-DD, ngày lịch VN, gồm cả hai đầu): lọc việc theo KHOẢNG HẠN ở máy chủ (chip Hôm nay / Ngày
     // mai / Trong tuần…). Lọc ở máy chỉ thấy các nhóm đã tải, mà nhóm quá hạn xếp trước nên việc đến hạn hôm nay nằm ở trang sau.
     const dateRe = /^\d{4}-\d{2}-\d{2}$/;
     const dueFromRaw = String(req.query.due_from || '').trim();
     const dueToRaw = String(req.query.due_to || '').trim();
-    const dueRange = dateRe.test(dueFromRaw) && dateRe.test(dueToRaw) && !noDeadlineMode
+    const dueRange = dateRe.test(dueFromRaw) && dateRe.test(dueToRaw) && !noDeadlineMode && !unassignedMode
       ? {
         from: new Date(`${dueFromRaw}T00:00:00+07:00`).toISOString(),
         // Hết ngày due_to = đầu ngày kế tiếp (VN).
@@ -902,7 +909,10 @@ r.get('/team-project-tasks', async (req, res) => {
       // `skipCompany`: bỏ lọc `company_id` của view — dùng cho việc `crm_task` của deal thuộc CÔNG TY KHÁC (xem `loadCrossCompanyCrmRows`).
       const applyScanFilters = (qy, skipCompany = false) => {
         qy = qy.in('task_kind', TEAM_PROJECT_TASK_KINDS).not('project_id', 'is', null);
-        if (noDeadlineMode) {
+        if (unassignedMode) {
+          // Mọi việc chưa có người nhận, không giới hạn ngày tạo / hạn; mới tạo lên trước.
+          qy = qy.is('assignee_id', null).order('created_at', { ascending: false });
+        } else if (noDeadlineMode) {
           qy = qy.is('deadline', null).lt('created_at', createdSince).order('created_at', { ascending: false });
         } else if (dueRange) {
           // Chip hạn xử lý: chỉ việc có hạn nằm trong khoảng đã chọn (không kèm việc mới tạo).
@@ -918,7 +928,7 @@ r.get('/team-project-tasks', async (req, res) => {
         qy = qy.order('unified_id', { ascending: true });
         qy = applyOpenOnlyFilter(qy);
         if (effectiveCompany && !skipCompany) qy = qy.eq('company_id', effectiveCompany);
-        if (assignee_id) qy = qy.eq('assignee_id', assignee_id);
+        if (assignee_id && !unassignedMode) qy = qy.eq('assignee_id', assignee_id);
         const needle = String(searchQ || '').trim();
         if (needle) qy = qy.ilike('title', `%${needle}%`);
         return qy;
@@ -1098,7 +1108,7 @@ r.get('/team-project-tasks', async (req, res) => {
       // Việc `tasks` đang chặn kéo cột: lấy thêm những việc nằm NGOÀI cửa sổ quét (không hạn / hạn xa, tạo từ lâu) để chúng không
       // biến mất khỏi tab trong khi cổng kéo cột vẫn đọc chúng. Không áp ở chế độ «không hạn» / khoảng hạn / lọc người (việc
       // này chưa ai nhận) — các chế độ đó có bộ lọc riêng.
-      const blockingList = (noDeadlineMode || dueRange || assignee_id) ? [] : await loadBlockingTasks(effectiveCompany, typedSet);
+      const blockingList = (noDeadlineMode || unassignedMode || dueRange || assignee_id) ? [] : await loadBlockingTasks(effectiveCompany, typedSet);
       const blockingIdSet = new Set(blockingList.map((b) => b.id));
       let blockingExtra = [];
       if (blockingList.length) {
@@ -1179,7 +1189,10 @@ r.get('/team-project-tasks', async (req, res) => {
         else if (!g.task) g.task = t; // nhiều dòng `tasks` cùng tên vẫn gom thành một như trước
       }
       const chosenRows = [];
-      for (const g of groupsByKey.values()) {
+      // Chế độ «Chưa giao»: KHÔNG ghép «song sinh» — mọi dòng chưa giao đều là một việc riêng; bản `tasks` đã có bản `crm_task` cùng
+      // tên bị bỏ ở `dropTasksClosedOnDeal` (bản crm mới là việc thật; nếu nó chưa giao thì tự có mặt trong danh sách).
+      if (unassignedMode) chosenRows.push(...scanned);
+      else for (const g of groupsByKey.values()) {
         // Có bản `tasks` → nó đại diện cho MỘT bản crm (bản hạn sớm nhất); phần còn lại giữ nguyên.
         const crmSorted = g.crm.slice().sort((a, b) => deadlineMsOrMax(a) - deadlineMsOrMax(b)
           || String(a.unified_id).localeCompare(String(b.unified_id)));
@@ -1195,10 +1208,10 @@ r.get('/team-project-tasks', async (req, res) => {
         chosenRows.push(...(g.task ? crmSorted.slice(1) : crmSorted));
       }
       // Bỏ bản `tasks` còn «todo» mà bản `crm_task` cùng tên đã xong (chi tiết dự án coi là xong) — xem `dropTasksClosedOnDeal`.
-      let rows = await dropTasksClosedOnDeal(chosenRows, detailLeads);
+      let rows = await dropTasksClosedOnDeal(chosenRows, detailLeads, { dropWithTwin: unassignedMode });
       // Hạn đã đổi theo `crm_task` → áp lại cửa sổ của lần quét (có hạn ≤ N ngày tới, HOẶC mới tạo trong M ngày): việc có hạn
       // xa hơn cửa sổ / không hạn mà tạo từ lâu rời khỏi danh sách như mọi việc khác. Chế độ khoảng hạn / «không hạn» có lọc riêng.
-      if (!noDeadlineMode && !dueRange) {
+      if (!noDeadlineMode && !unassignedMode && !dueRange) {
         const untilMs = new Date(until).getTime();
         const createdSinceMs = new Date(createdSince).getTime();
         rows = rows.filter((t) => {
@@ -1245,6 +1258,8 @@ r.get('/team-project-tasks', async (req, res) => {
       // Nhóm 0–1 theo hạn gần nhất cũ → mới; nhóm 2 theo việc tạo MỚI NHẤT lên trước.
       const tierOf = (g) => (g.overdue ? 0 : g.firstDeadline != null && String(g.firstDeadline) <= until ? 1 : 2);
       const ordered = [...groups.values()].sort((a, b) => {
+        // «Chưa giao»: dự án có việc mới tạo gần nhất lên trước (hạn cũ của việc mẫu không có ý nghĩa để xếp).
+        if (unassignedMode) return String(b.newestCreated).localeCompare(String(a.newestCreated));
         const ta = tierOf(a); const tb = tierOf(b);
         if (ta !== tb) return ta - tb;
         if (ta === 2) return String(b.newestCreated).localeCompare(String(a.newestCreated));
@@ -1273,7 +1288,7 @@ r.get('/team-project-tasks', async (req, res) => {
 
     const cacheKey = JSON.stringify([
       effectiveCompany || '', assignee_id || '', String(req.query.workshop_type_id || ''),
-      String(searchQ || '').trim(), dueDays, createdDays, noDeadlineMode, dueFromRaw, dueToRaw,
+      String(searchQ || '').trim(), dueDays, createdDays, noDeadlineMode, unassignedMode, dueFromRaw, dueToRaw,
       dealCompanyQ, dealExtName.toLowerCase(), req.user?.company_id || '', isSystemAdmin(req.user) ? 'sys' : '',
     ]);
     let computed = teamTasksCache.get(cacheKey);
