@@ -1,3 +1,12 @@
+## 2026-10-13 (11) — Dọn repo: gỡ log debug sót trong đồng bộ SX→CRM, dọn file rác ở thư mục gốc
+
+- `backend/src/helpers/workshopKanban.js`: gỡ `agentDebugLog` (instrumentation phiên debug `fb4228` còn sót) — mỗi lần `syncCrmLeadSxPipelineFromProject` chạy, hàm này ghi thêm vào `debug-fb4228.log` ở gốc repo và gửi POST tới `127.0.0.1:7754` (kể cả trên production). Chỉ xoá 5 lời gọi + hàm + 2 `require` thừa (`fs`, `path`); các `console.warn` TRIGGER_ON/TARGET_SET giữ nguyên. Không đổi logic đồng bộ.
+- Gốc repo: xoá `debug-fb4228.log`, 5 file `000*.patch` + `HUONG-DAN-AP-PATCH.md` (patch đã dùng xong, còn trong lịch sử git). Bỏ theo dõi (giữ file trên máy) `HoaDon_OpenClaw_T3_2026.pdf`, `BaoCao_CongViec_T3_2026.xlsx`. Chuyển `BAO-CAO-*.md`, `DANH-GIA-ke-hoach-dong-bo-deadline.md`, `crm-split-report.pdf` → `docs/project/reports/root-archive/`. `.gitignore` thêm `debug-*.log`, `HoaDon_*.pdf`, `BaoCao_*.xlsx`.
+- KHÔNG đụng `uploads/`, `backend/uploads/`: `knowledge-screenshots` đang được bài đào tạo + `GuidePage.jsx` tham chiếu; APK `crm-mobile-v2` có thể là bản Render phục vụ tải về (`appReleaseDownload.js` đọc file trên disk) — cần người quyết.
+- Kiểm: `require` module ổn; không có test nào import `workshopKanban.js`. CHƯA chạy trên dữ liệu thật. Hoàn tác: revert commit.
+
+---
+
 ## 2026-10-13 (10) — Web «Quản lý nhiệm vụ Sản xuất»: thêm bộ lọc «Phân loại» (giống app)
 
 - Đối chiếu app ↔ web (13/10, cùng bộ lọc HCB + Đặt hàng Phúc Đạt): khớp từng dự án (10 dự án, 149 việc). Khác biệt duy nhất do app có chip «Phân loại» mà web không: HCB web 686 (mọi loại) vs app «Tủ bếp» 579 (= 686 − Cánh kính 100 − Đặt kính Metalla 7); «Chưa giao» web 267 vs app 178 (89 việc chưa giao thuộc dự án chưa phân loại — app chỉ thấy khi chọn «Chưa phân loại»). Cộng các loại ra đúng tổng không lọc (HCB 686, Metalla 28).
