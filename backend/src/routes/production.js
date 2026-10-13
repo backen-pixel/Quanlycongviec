@@ -2131,6 +2131,9 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
             override,
           );
           if (applied.empty) return { query: applied.query, empty: true };
+          // restrictIds đang được chia lô: lô hiện tại đã nằm trong `applied.query` (`id in lô`). Gọi lại scope sẽ
+          // gắn thêm `id in (TOÀN BỘ restrictIds)` — hai mệnh đề cộng lại vượt giới hạn URL PostgREST → 500 «Bad Request».
+          if (chunkTarget.name === 'restrictIds') return { query: applied.query, empty: false };
           const scoped = await applyParticipantOnlyProductionScope(
             applied.query, req.user, company_id, sx_workshop_company_id, deal_company_id,
           );
@@ -2256,6 +2259,8 @@ r.get('/projects', requirePermission('projects', 'view'), responseCache({ ttl: 2
             override,
           );
           if (app.empty) return { query: app.query, empty: true };
+          // Như nhánh Kanban theo cột: restrictIds đã chia lô thì không gắn lại `id in (toàn bộ)`.
+          if (chunkTargetMain.name === 'restrictIds') return { query: app.query, empty: false };
           const sc = await applyParticipantOnlyProductionScope(
             app.query, req.user, company_id, sx_workshop_company_id, deal_company_id,
           );
