@@ -408,6 +408,10 @@ try { app.use('/api/partner/v1', require('./routes/partner')); } catch (e) { con
 // Phân tích hiệu quả quảng cáo Facebook (nội bộ)
 try { app.use('/api/ad-analytics', require('./routes/adAnalytics')); } catch (e) { console.warn('⚠️ Ad analytics route failed:', e.message); }
 try { app.use('/api/marketing-p1/qualification', require('./routes/p1Qualification')); } catch (e) { console.warn('⚠️ P1 qualification route failed:', e.message); }
+try {
+  app.use('/api/meta-feedback', require('./routes/metaFeedback').createMetaFeedbackRouter());
+  require('./services/metaQualifiedFeedback').getMetaQualifiedFeedback().start();
+} catch { console.warn('Meta qualified feedback: ROUTE_UNAVAILABLE'); }
 try { app.use('/api/marketing-web', require('./routes/webConversions').createWebConversionsRouter()); } catch (e) { console.warn('⚠️ Web conversions route failed:', e.message); }
 // Google Ads scheduled upload (HTTPS) — HTTP Basic auth from env, no JWT. Off (503) until env is set.
 try { app.use('/api/ads-conversions', require('./routes/googleAdsExport').createGoogleAdsExportRouter()); } catch (e) { console.warn('⚠️ Ads conversions export route failed:', e.message); }

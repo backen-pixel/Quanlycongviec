@@ -8,6 +8,7 @@ import api from '../lib/api';
 import P1QualificationPanel from '../components/P1QualificationPanel';
 import AiDraftReportPanel from '../components/AiDraftReportPanel';
 import WebConversionPanel from '../components/WebConversionPanel';
+import MetaFeedbackPanel from '../components/MetaFeedbackPanel';
 
 const TAB = [
   { key: 'insights', nhan: 'Nhận xét tự động' },
@@ -1497,6 +1498,8 @@ export default function AdAnalyticsPage({ embedded = false }) {
 
       <KhungMarketing trangThai={mkt} onXong={async () => { await taiMkt(); await refreshReportRef.current?.(); }} />
       <P1QualificationPanel duongDanLead={duongDanLead} />
+      {(!congTy || congTy === '991dc79d-cbf5-49f9-a364-35227cb47635')
+        && (!pageId || pageId === '409741855550833') && <MetaFeedbackPanel />}
       <WebConversionPanel />
       <AiDraftReportPanel />
 
