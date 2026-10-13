@@ -51,7 +51,7 @@ VPT_META_FEEDBACK_TEST_EVENT_CODE=<mã từ Meta Test Events>
 
 ## Kiểm tra và nghiệm thu
 
-Đã PASS 132 test nguồn/export/qualification/router/service, 19 kiểm thử SQL thật với PGlite, Vite production build. PGlite 0.5.9 chạy PostgreSQL 18.6; baseline bỏ riêng catalog-count assertion cũ dành PG17, SQL mới chạy nguyên bản. DB primary hiện PG17.6 đã đối chiếu các cột; kiểm cục bộ chưa thay thế áp/kiểm DB thật. Cảnh báo Vite externalization/chunk lớn là baseline.
+Đã PASS 132 test nguồn/export/qualification/router/service, 20 kiểm thử SQL thật với PGlite, Vite production build. PGlite 0.5.9 chạy PostgreSQL 18.6; baseline bỏ riêng catalog-count assertion cũ dành PG17, SQL mới chạy nguyên bản. Claim được khóa theo target bằng advisory transaction lock và chặn lease mới khi còn processing; kiểm cục bộ dùng một phiên DB, chưa mô phỏng tranh chấp nhiều phiên. DB primary hiện PG17.6 đã đối chiếu các cột; kiểm cục bộ chưa thay thế áp/kiểm DB thật. Cảnh báo Vite externalization/chunk lớn là baseline.
 
 Nghiệm thu cần: lưu CRM sau submit; nguồn trả phí đúng; khách mới/khử trùng và bằng chứng xác minh; ACK Meta và attribution kiểm riêng; chi đúng kỳ/cùng phạm vi và thuế/phí. Meta accepted là số sự kiện, gồm cả tiếp nhận ban đầu, không phải số khách hợp lệ. Mẫu số khách hợp lệ và CPL vẫn cần đối soát. Chưa kết luận ≤250.000đ/khách; 130 triệu so với trần thử 100 triệu chưa rõ.
 

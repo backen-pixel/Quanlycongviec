@@ -215,6 +215,13 @@ DECLARE item public.meta_feedback_outbox; expired record; stamp timestamptz:=clo
 BEGIN
   PERFORM public.meta_feedback_assert_target_v1(p_target,p_mode);
   IF p_lease_token IS NULL THEN RAISE EXCEPTION 'META_LEASE_REQUIRED' USING ERRCODE='22023'; END IF;
+  -- Serialize lease decisions for this exact target. A prior send whose DB
+  -- completion is not confirmed remains the sole processing event until it is
+  -- completed or expires into UNKNOWN; another identity cannot bypass it.
+  PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    (p_target->>'company_id')::uuid::text||'|'||(p_target->>'dataset_id')||'|'||(p_target->>'ad_account_id')||'|'
+      ||(p_target->>'page_id')||'|'||p_mode,0));
+  stamp:=clock_timestamp();
   FOR expired IN SELECT id,lease_token FROM public.meta_feedback_outbox WHERE company_id=(p_target->>'company_id')::uuid
     AND dataset_id=p_target->>'dataset_id' AND ad_account_id=p_target->>'ad_account_id' AND page_id=p_target->>'page_id'
     AND mode=p_mode AND status='processing' AND locked_until<=stamp FOR UPDATE SKIP LOCKED LIMIT 100 LOOP
@@ -224,6 +231,9 @@ BEGIN
       reason_code='META_LEASE_EXPIRED',updated_at=stamp WHERE id=expired.id;
   END LOOP;
   IF (public.meta_feedback_guard_v1(p_target,p_mode)->>'blocked')::boolean THEN RETURN NULL; END IF;
+  IF EXISTS(SELECT 1 FROM public.meta_feedback_outbox WHERE company_id=(p_target->>'company_id')::uuid
+    AND dataset_id=p_target->>'dataset_id' AND ad_account_id=p_target->>'ad_account_id' AND page_id=p_target->>'page_id'
+    AND mode=p_mode AND status='processing' AND locked_until>stamp) THEN RETURN NULL; END IF;
   FOR scanned IN 1..100 LOOP
     SELECT * INTO item FROM public.meta_feedback_outbox WHERE company_id=(p_target->>'company_id')::uuid
       AND dataset_id=p_target->>'dataset_id' AND ad_account_id=p_target->>'ad_account_id' AND page_id=p_target->>'page_id'

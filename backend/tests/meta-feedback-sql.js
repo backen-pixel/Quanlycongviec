@@ -114,7 +114,7 @@ const reconcile = (rows, complete = false, history = null) =>
 async function historicalRow(row, status = 'accepted') {
   // Seed an already-existing old ledger entry to exercise time aging without
   // falsifying provider timestamps or shifting a new event into a valid window.
-  const values = { ...row, status, attempts: status === 'accepted' ? 1 : 0,
+  const values = { ...row, status, attempts: status === 'pending' ? 0 : 1,
     accepted_at: status === 'accepted' ? new Date(row.payload.event_time * 1000).toISOString() : null,
     fbtrace_id: status === 'accepted' ? 'historical_synthetic_trace' : null };
   const names = Object.keys(values);
@@ -378,20 +378,48 @@ test('preflight blocks an active lease when unknown or stale accepted proof appe
   for (const blockedStatus of ['unknown', 'accepted']) {
     await reset();
     const source = await fixture();
-    await enqueue(source.initial);
-    const earlier = await claim();
     await enqueue(source.qualified);
     const candidate = await claim();
     assert.equal(candidate.event_name, 'qualified_lead');
     assert.equal(await preflight(candidate), true);
-    if (blockedStatus === 'unknown') {
-      await finish(earlier, 'unknown', null, 'META_NETWORK_UNKNOWN');
-    } else {
-      await finish(earlier, 'accepted', { events_received: 1, fbtrace_id: 'preflight_trace' });
+    // Simulate an older persisted receipt becoming visible after this claim.
+    // Claim serialization itself is verified separately below.
+    await historicalRow(source.initial, blockedStatus);
+    if (blockedStatus === 'accepted') {
       await reconcile([current(source.qualified)], true, [current(source.qualified)]);
     }
     assert.equal(await preflight(candidate), false);
   }
+});
+
+test('same-target processing prevents another lease without blocking its own preflight', async () => {
+  const source = await fixture();
+  await enqueue(source.initial);
+  const active = await claim();
+  assert.equal(active.status, 'processing');
+  assert.equal(await preflight(active), true);
+  const another = await fixture();
+  const waiting = await enqueue(another.qualified);
+  assert.equal(await claim(), null);
+  const pending = (await service('SELECT status,attempts FROM public.meta_feedback_outbox WHERE id=$1', [waiting.id])).rows[0];
+  assert.deepEqual(pending, { status: 'pending', attempts: 0 });
+  assert.equal(await preflight(active), true);
+  const otherDataset = { ...target, dataset_id: '1575398160676198' };
+  const otherRow = prepareMetaFeedback({ ...another.event, event_name: 'qualified_lead' }, { target: otherDataset, mode: 'test' });
+  const productionRow = prepareMetaFeedback({ ...another.event, event_name: 'qualified_lead' }, { target, mode: 'production' });
+  await enqueue(otherRow);
+  await enqueue(productionRow);
+  const independent = await rpc('meta_feedback_claim_v1', [otherDataset, 'test', randomUUID()]);
+  const production = await claim('production');
+  assert.equal(independent.dataset_id, otherDataset.dataset_id);
+  assert.equal(production.mode, 'production');
+  assert.equal(await preflight(independent), true);
+  assert.equal(await preflight(production), true);
+  // Only an actual terminal ledger write frees this target; the active lease
+  // is cancelled here without manufacturing a provider acknowledgement.
+  await finish(active, 'cancelled', null, 'META_TEST_CANCELLED');
+  const resumed = await claim();
+  assert.equal(resumed.id, waiting.id);
 });
 
 test('dedup review interlock does not cross datasets or test/production mode', async () => {
