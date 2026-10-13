@@ -1636,6 +1636,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [allUsers, setAllUsers] = useState([]);
   const [projectDocs, setProjectDocs] = useState([]); // production-native documents
   const [driveFileCount, setDriveFileCount] = useState(0);
+  /** Luồng bình luận / kho file đang xem khi dự án có liên kết đặt xưởng ('' = dự án này). */
+  const [luongDangXem, setLuongDangXem] = useState('');
   const [taskFiles, setTaskFiles] = useState([]); // task file attachments
   const [projectActivities, setProjectActivities] = useState([]); // production-native activities
   const [showAddActivity, setShowAddActivity] = useState(false);
@@ -3232,6 +3234,40 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     crm_deals: project.crmDeals || project.crm_deals,
   }) || fallbackDealIdForTasks;
   const progressSlashCmds = progressSlash.commands;
+
+  // Đặt xưởng sinh ra dự án + deal riêng ở xưởng nhận, nên một đơn hàng có hai luồng
+  // bình luận và hai kho file. Cho chuyển qua lại thay vì gộp: gộp thì không rõ bình
+  // luận mới gửi vào luồng nào.
+  const luongLienQuan = Array.isArray(project?.luongLienQuan) ? project.luongLienQuan : [];
+  const luongChon = luongLienQuan.find((x) => String(x.project_id) === String(luongDangXem)) || null;
+  const nhanLuong = (x) => [x.company_name, x.project_code].filter(Boolean).join(' · ')
+    || (x.huong === 'nguon' ? 'Dự án gốc' : 'Xưởng nhận');
+  const chonLuong = (idDuAn) => (
+    luongLienQuan.length ? (
+      <div className="flex flex-wrap items-center gap-1.5 mb-3">
+        <span className="text-[11px] text-gray-500 mr-1">Luồng:</span>
+        <button
+          type="button"
+          onClick={() => setLuongDangXem('')}
+          className={`text-[11px] px-2.5 py-1 rounded-full border cursor-pointer ${!idDuAn ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}
+        >
+          Dự án này
+        </button>
+        {luongLienQuan.map((x) => (
+          <button
+            key={x.project_id}
+            type="button"
+            onClick={() => setLuongDangXem(x.project_id)}
+            title={x.huong === 'nguon' ? 'Dự án gốc đã đặt xưởng sang đây' : 'Dự án bên xưởng nhận'}
+            className={`text-[11px] px-2.5 py-1 rounded-full border cursor-pointer ${String(idDuAn) === String(x.project_id) ? 'bg-teal-600 text-white border-teal-600' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}
+          >
+            {x.huong === 'nguon' ? '⬅ ' : '➡ '}{nhanLuong(x)}
+          </button>
+        ))}
+      </div>
+    ) : null
+  );
+
   const dealLeadFromUrl = searchParams.get('deal_lead');
   const tasksLeadId = dealLeadFromUrl || crmLeadId;
   const focusCrmTaskId = searchParams.get('crm_task');
@@ -4017,11 +4053,15 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
 
               {/* Drive — file gắn từ Google Drive */}
               {activeTab === 'drive' && (
-                <DriveAttachments
-                  entityType={moduleKey === 'vc' ? 'vc_project' : 'production_project'}
-                  entityId={id}
-                  onCountChange={setDriveFileCount}
-                />
+                <>
+                  {chonLuong(luongChon?.project_id || '')}
+                  <DriveAttachments
+                    key={luongChon?.project_id || id}
+                    entityType={moduleKey === 'vc' ? 'vc_project' : 'production_project'}
+                    entityId={luongChon?.project_id || id}
+                    onCountChange={luongChon ? () => {} : setDriveFileCount}
+                  />
+                </>
               )}
 
               {/* Hoạt động */}
@@ -4254,12 +4294,20 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               {/* Bình luận deal / dự án — realtime */}
               {activeTab === 'comments' && (
                 project?.id
-                  ? (crmLeadId
+                  ? (<>
+                    {chonLuong(luongChon?.project_id || '')}
+                    {luongChon && !luongChon.lead_id && (
+                      <p className="text-sm text-gray-500 text-center py-8">
+                        Luồng «{nhanLuong(luongChon)}» chưa có deal CRM nên không có bình luận.
+                      </p>
+                    )}
+                    {(luongChon ? luongChon.lead_id : crmLeadId)
                     ? (
                       <CrmLeadCommentsPanel
-                        leadId={crmLeadId}
+                        key={luongChon ? luongChon.lead_id : crmLeadId}
+                        leadId={luongChon ? luongChon.lead_id : crmLeadId}
                         forModule={workshopShareMod}
-                        onCountChange={setCommentCount}
+                        onCountChange={luongChon ? () => {} : setCommentCount}
                         slashCommands={[buildProjectRenameSlashCommand(displayTitle), ...progressSlashCmds]}
                         onProjectRename={renameProjectFromComment}
                         onSlashCommand={async (cmd) => {
@@ -4268,7 +4316,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                         }}
                       />
                     )
-                    : (
+                    : (luongChon ? null : (
                       <ProjectCommentsPanel
                         projectId={project.id}
                         onCountChange={setCommentCount}
@@ -4279,7 +4327,8 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
                           if (res?.ok) refreshProjectSilently?.();
                         }}
                       />
-                    ))
+                    ))}
+                  </>)
                   : <p className="text-sm text-gray-500 text-center py-8">Chưa có dữ liệu để bình luận.</p>
               )}
 

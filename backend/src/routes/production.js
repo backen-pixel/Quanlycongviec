@@ -3139,8 +3139,16 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
     // bản sao nào của riêng mình. Không mở rộng phạm vi thì tab Tài liệu và tab Bình
     // luận bên xưởng nhận trống trơn, trong khi bên nguồn có đủ.
     const { resolveWorkshopSourceProjectId } = require('../helpers/placeProjectAtWorkshops');
+    const { layLuongLienQuanDatXuong } = require('../helpers/sxLuongLienQuanDatXuong');
     const sourceProjectId = await resolveWorkshopSourceProjectId(project.id);
-    const docProjectIds = sourceProjectId ? [project.id, sourceProjectId] : [project.id];
+    // Hai chiều, không chỉ một: đứng ở dự án NGUỒN cũng phải thấy tài liệu bên xưởng nhận.
+    // Trước đây chỉ mở rộng chiều xưởng→nguồn nên bên nguồn trống trơn.
+    const luongLienQuan = await layLuongLienQuanDatXuong(project.id);
+    const docProjectIds = [...new Set([
+      String(project.id),
+      ...(sourceProjectId ? [String(sourceProjectId)] : []),
+      ...luongLienQuan.map((x) => x.project_id),
+    ])];
 
     const [documentsRes, commentsRes, incidentsRes] = await Promise.all([
       supabase
@@ -3420,6 +3428,8 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
         sharedDocuments,
         hiddenDocumentsCount: hiddenDocuments.length,
         crmDeals: crmSummary || [],
+        // Luồng bình luận / kho file của dự án anh em qua đặt xưởng — giao diện cho chuyển qua lại.
+        luongLienQuan,
         crmSharedNotes,
         recentComments: commentsRes.data || [],
         incidents: incidentsRes.error ? [] : (incidentsRes.data || []),

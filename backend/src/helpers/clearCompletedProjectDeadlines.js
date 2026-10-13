@@ -6,6 +6,7 @@
 const { supabase } = require('../config/supabase');
 const {
   completeOpenWorkOnModuleDone,
+  completeSxWorkUpToShippedColumn,
   clearAllProjectDeadlinesOnInstallationDone,
   finalizeHcbCanhKinhOnSxDone,
   isCrmCompletedStage,
@@ -162,11 +163,29 @@ async function clearSxSchedulesOnCompletedForProjects(projectIds, { completeWork
 
   if (completeWork) {
     try {
-      await completeOpenWorkOnModuleDone({
-        module: 'production',
-        leadIds,
-        projectIds: ids,
-      });
+      if (cot?.id) {
+        // Biết chính xác cột vừa tới → CHỈ đóng việc từ cột đó TRỞ VỀ TRƯỚC.
+        //
+        // Trước đây chỗ này gọi thẳng completeOpenWorkOnModuleDone('production'), mà hàm đó
+        // đóng MỌI nhiệm vụ sx_* còn mở bất kể thứ tự cột. Pipeline nào xếp công nợ / thu tiền
+        // SAU cột «đã giao» thì kéo thẻ tới đó là đóng luôn cả việc thu tiền chưa làm —
+        // đã xảy ra thật, 13 nhiệm vụ bị đóng cùng một mốc giờ, trong đó có «Thu tiền».
+        for (const pid of ids) {
+          const r = await completeSxWorkUpToShippedColumn({ projectId: pid, shippedColumnId: cot.id });
+          // Không khớp pipeline thì KHÔNG đóng gì cả — và phải kêu lên, vì im lặng ở đây
+          // nghĩa là việc đáng đóng vẫn còn mở mà không ai biết.
+          if (r?.reason) {
+            console.warn(`[clearCompletedDeadlines] bỏ qua đóng việc SX: project=${pid} cột=${cot.id} lý do=${r.reason}`);
+          }
+        }
+      } else {
+        // Không biết cột (job quét lại, bật cờ cột hàng loạt) → giữ nguyên cách cũ.
+        await completeOpenWorkOnModuleDone({
+          module: 'production',
+          leadIds,
+          projectIds: ids,
+        });
+      }
     } catch (doneErr) {
       console.warn('[clearCompletedDeadlines] complete SX tasks:', doneErr.message);
     }
