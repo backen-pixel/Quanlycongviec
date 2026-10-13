@@ -315,6 +315,16 @@ r.patch('/:id/status', async (req, res) => {
       }
     }
 
+    // Soi sang sổ «theo deal» (`crm_tasks` sx_*). Xem `dongBoHaiSoNhiemVuSx.js`.
+    if (data && req.body?.status !== undefined) {
+      try {
+        const { soiTuSoDuAnSangSoDeal } = require('../helpers/dongBoHaiSoNhiemVuSx');
+        await soiTuSoDuAnSangSoDeal(data);
+      } catch (dbErr) {
+        console.warn('[tasks] đồng bộ hai sổ (patch):', dbErr.message);
+      }
+    }
+
     res.json({ task: data });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });

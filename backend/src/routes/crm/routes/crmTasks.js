@@ -1073,6 +1073,17 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
       }
     } catch (_) {}
 
+    // Soi sang sổ «theo dự án» (`tasks`) — cùng một việc được chép làm hai bản, tick bên
+    // này không đổi bên kia nên hai sổ vênh dần. Xem `dongBoHaiSoNhiemVuSx.js`.
+    if (b.status !== undefined) {
+      try {
+        const { soiTuSoDealSangSoDuAn } = require('../../../helpers/dongBoHaiSoNhiemVuSx');
+        await soiTuSoDealSangSoDuAn(data);
+      } catch (dbErr) {
+        console.warn('[crm_task] đồng bộ hai sổ:', dbErr.message);
+      }
+    }
+
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

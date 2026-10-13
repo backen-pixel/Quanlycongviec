@@ -250,6 +250,16 @@ async function updateProjectTask(req, taskId, body) {
     }
   }
 
+  // Soi sang sổ «theo deal» (`crm_tasks` sx_*). Xem `dongBoHaiSoNhiemVuSx.js`.
+  if (data && b.status !== undefined) {
+    try {
+      const { soiTuSoDuAnSangSoDeal } = require('./dongBoHaiSoNhiemVuSx');
+      await soiTuSoDuAnSangSoDeal(data);
+    } catch (e) {
+      console.warn('[tasks] đồng bộ hai sổ:', e.message);
+    }
+  }
+
   return { data: { task: data }, status: 200 };
 }
 
