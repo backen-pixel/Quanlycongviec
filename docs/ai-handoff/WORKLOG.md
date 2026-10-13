@@ -1,3 +1,14 @@
+## 2026-10-13 (5) — team-project-tasks: bản `tasks` đại diện thừa hưởng `created_at` của bản crm (cửa sổ «mới tạo»)
+
+- Đối chiếu 13/10 tab Công việc (cửa sổ mặc định 7 ngày) ↔ chi tiết dự án (việc mở có hạn ≤ 7 ngày hoặc tạo ≤ 7 ngày, từ `task-bootstrap` + `GET /crm/leads/:id/tasks?task_scope=production`): HCB 78/79 dự án khớp đúng số việc, Metalla 24/24; số quá hạn khớp tuyệt đối (HCB 19 = 19, Metalla 2 = 2). Lệch duy nhất: TB-2026-898 — tab 1 việc, chi tiết 11 trong cửa sổ.
+- Nguyên nhân: khử trùng (`groupsByKey`) cho bản `tasks` (từ bộ mẫu, tạo từ lâu) đứng thay MỘT bản `crm_task` cùng tên, nhưng bản thay thế mang `created_at` của chính nó; khi áp lại cửa sổ «mới tạo trong M ngày» nó rơi ra ngoài và việc `crm_task` mới tạo (10/12) mà nó đại diện biến mất. TB-2026-898: 9/10 việc tạo hôm qua mất (mỗi tên có hai bản crm — cột `sx_kiem_tra_cheo` 09/19 và `sx_pl_19c001f2` 10/12 — và một bản `tasks`).
+- Sửa `workTasks.js`: bản `tasks` đại diện lấy `created_at` của bản crm nó thay thế (`crmSorted[0]`) → số việc trong cửa sổ = số `crm_task` trong cửa sổ. Không có bản crm thì giữ `created_at` gốc. Test giả 5 ca đạt (và tái hiện lỗi 0≠1 trên bản cũ).
+- Quan sát khác (không đổi mã): web «Quản lý nhiệm vụ Sản xuất» (`/work-tasks/project-overview`) đếm theo DANH MỤC của bảng `tasks` (`child_total − child_completed`) nên số việc theo từng dự án khác chi tiết dự án (vd. TB-2026-066 web 13 / chi tiết 4; TB-2026-577 web 25 / chi tiết 15; TB-2026-108 web 34 / chi tiết 24), và danh sách dự án cũng khác: có dự án chỉ web có (TB-2026-077/082/086 không có deal; 589 không còn việc SX mở ở deal) và dự án chỉ tab có (có việc `crm_task` SX mở nhưng không có danh mục `tasks`). Đây là hai định nghĩa khác nhau, không phải lỗi dữ liệu.
+- Khi tự gộp nhiều lần gọi tab (cửa sổ 60 ngày + «không hạn») sẽ thấy trùng `tasks`↔`crm_task` vì mỗi lần gọi khử trùng riêng; trong MỘT lần gọi mặc định không có (đã kiểm: 0 tên nằm ở cả hai nguồn).
+- Cần đo sau merge: TB-2026-898 phải có 11 việc ở tab; HCB tổng ≈ 564 (bằng tổng «trong cửa sổ» ở chi tiết); các dự án khác không đổi.
+
+---
+
 ## 2026-10-13 (4) — GET /production/projects: sửa 500 «Bad Request» khi lọc đặt hàng ra tập id lớn
 
 - Triệu chứng (đo 13/10 bằng `fetch` chỉ đọc): `company_id=HCB&deal_company_id=HCB` → HTTP 500 `{"error":"Bad Request"}` ở mọi chế độ (`view=mobile`, `view=kanban`, `limit=5`); `summary=1` vẫn 200 (551 dự án); `deal_company_id=Metalla` (18 dự án) và `company_id=HCB` không lọc đặt hàng (686 dự án) vẫn 200. Tức chỉ hỏng khi `restrictIds` (id dự án thuộc công ty đặt hàng) dài hơn ngưỡng chia lô `SX_URL_SAFE_ID_MAX` = 300.
