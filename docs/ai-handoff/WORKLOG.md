@@ -1,3 +1,12 @@
+## 2026-10-13 (10) — Web «Quản lý nhiệm vụ Sản xuất»: thêm bộ lọc «Phân loại» (giống app)
+
+- Đối chiếu app ↔ web (13/10, cùng bộ lọc HCB + Đặt hàng Phúc Đạt): khớp từng dự án (10 dự án, 149 việc). Khác biệt duy nhất do app có chip «Phân loại» mà web không: HCB web 686 (mọi loại) vs app «Tủ bếp» 579 (= 686 − Cánh kính 100 − Đặt kính Metalla 7); «Chưa giao» web 267 vs app 178 (89 việc chưa giao thuộc dự án chưa phân loại — app chỉ thấy khi chọn «Chưa phân loại»). Cộng các loại ra đúng tổng không lọc (HCB 686, Metalla 28).
+- Web `ProjectTasksOverviewPage.jsx` (chỉ trang Sản xuất): ô chọn «Phân loại» trên đầu trang — «Tất cả» (mặc định, giữ hành vi cũ) / từng loại của xưởng (`GET /workshop/project-types?company_id&module=production`) / «Chưa phân loại»; có chip «Phân loại: …» ở «Đang lọc», đổi xưởng hoặc «Xóa tất cả» thì về «Tất cả». Không lưu giữa các lần mở trang.
+- Áp dụng cho CẢ ba kiểu xem: «Theo dự án» (`team-project-tasks?workshop_type_id` đã hỗ trợ sẵn, kể cả đếm «Chưa giao»), và Kanban / «Hạn»: `GET /work-tasks/project-overview` (`workTasks.js`) nhận thêm `workshop_type_id` (mã loại hoặc `none`), lọc theo `projects.workshop_type_id` (thêm cột vào truy vấn dự án), cùng quy ước với `team-project-tasks`. Không truyền tham số thì không đổi.
+- Kiểm: `node --check` ổn; web biên dịch qua bước transform (dừng ở lỗi thiếu `zod` sẵn có). CHƯA đo trên dữ liệu thật. Sau merge cần kiểm: chọn «Tủ bếp» ở HCB → «Theo dự án» ra 579 việc (như app), «Chưa giao» 178 (+ 89 khi chọn «Chưa phân loại» với lọc Phúc Đạt); Kanban cũng lọc theo loại; «Tất cả» → 686.
+
+---
+
 ## 2026-10-13 (9) — Mục «Chưa giao» dành cho Admin (app tab Công việc + web «Theo dự án»)
 
 - Yêu cầu: việc hiện ra để Admin dễ quản lý; có việc đã giao, có việc chưa giao; CHỈ Admin, Kanban giữ nguyên. Đo trước (13/10, chỉ đọc): việc `tasks` chưa giao còn mở ở phạm vi sản xuất = 2.293 (HCB 710, Phúc Đạt 636, Metalla 560, NextGo 366, chưa gắn xưởng 21); 94% tạo từ hơn 30 ngày trước, 94% không có hạn; chỉ 30 việc tạo ≤ 7 ngày. Việc `crm_task` SX chưa giao còn mở: HCB 1.997 (156 dự án), Phúc Đạt 460, Metalla 300, NextGo 175 — phần lớn cũ không hạn. Cửa sổ 7 ngày của tab/«Theo dự án» che hầu hết số này.
