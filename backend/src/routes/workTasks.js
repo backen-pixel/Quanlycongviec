@@ -1067,10 +1067,18 @@ r.get('/team-project-tasks', async (req, res) => {
       }
       const chosenRows = [];
       for (const g of groupsByKey.values()) {
-        if (g.task) chosenRows.push(g.task);
         // Có bản `tasks` → nó đại diện cho MỘT bản crm (bản hạn sớm nhất); phần còn lại giữ nguyên.
         const crmSorted = g.crm.slice().sort((a, b) => deadlineMsOrMax(a) - deadlineMsOrMax(b)
           || String(a.unified_id).localeCompare(String(b.unified_id)));
+        // Bản `tasks` (tạo từ bộ mẫu, thường rất cũ) mang `created_at` của chính nó nên khi áp lại cửa sổ «mới tạo trong M ngày»
+        // nó rơi ra ngoài, kéo theo việc `crm_task` mới tạo mà nó đại diện (TB-2026-898: 9/10 việc tạo hôm qua biến mất so với
+        // chi tiết dự án). Cho bản đại diện thừa hưởng `created_at` của bản crm nó thay thế → số việc trong cửa sổ = số `crm_task`
+        // trong cửa sổ, đúng như chi tiết dự án.
+        if (g.task) {
+          chosenRows.push(crmSorted.length && crmSorted[0].created_at
+            ? { ...g.task, created_at: crmSorted[0].created_at }
+            : g.task);
+        }
         chosenRows.push(...(g.task ? crmSorted.slice(1) : crmSorted));
       }
       // Bỏ bản `tasks` còn «todo» mà bản `crm_task` cùng tên đã xong (chi tiết dự án coi là xong) — xem `dropTasksClosedOnDeal`.
