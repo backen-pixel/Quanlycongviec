@@ -44,6 +44,8 @@ const {
 const { fetchAllByIds, fetchAllByIdsParallel, fetchAllPages } = require('../helpers/supabaseFetchAll');
 const { SX_URL_SAFE_ID_MAX } = require('../helpers/sxChunkedIdPage');
 const { WORKSHOP_STATUSES, getWorkshopStageMap, getWonDealProjectIds } = require('../helpers/workshopKanban');
+const { effectiveDealCompanyId } = require('../helpers/workshopCompanyScope');
+const { resolveSxVisibilityRestrictIds } = require('../helpers/sxKanbanSummary');
 const { resolveWorkRegionScope, taskMatchesRegionScope } = require('../helpers/workRegionFilter');
 const {
   projectOverviewCategoryId,
@@ -725,10 +727,51 @@ async function dropTasksClosedOnDeal(rows, detailLeads) {
   });
 }
 
+/**
+ * Lọc theo CÔNG TY ĐẶT HÀNG (công ty chủ deal) — cùng nguồn với tab Dự án / Kanban SX (`resolveSxVisibilityRestrictIds` →
+ * `getAccountingClientProjectIdsAtWorkshop`): `deal_company_id` = công ty CRM (UUID); `deal_external_company_name` = khách ngoài
+ * danh mục (so tên với `crm_leads.external_company_name`, không phân biệt hoa/thường). Không truyền gì → không lọc.
+ * `effectiveDealCompanyId` giữ nguyên quy tắc quyền: người không phải admin hệ thống luôn bị khóa vào công ty của mình.
+ */
+async function restrictToDealCompany(rows, { req, effectiveCompany, dealCompanyQ, dealExtName }) {
+  if (!rows.length || (!dealCompanyQ && !dealExtName)) return rows;
+  let allowed = null; // Set<projectId>; null = không giới hạn
+  if (dealCompanyQ) {
+    const restrict = await resolveSxVisibilityRestrictIds(
+      req.user,
+      effectiveCompany || null,
+      null,
+      effectiveDealCompanyId(req, dealCompanyQ, effectiveCompany || null),
+    );
+    if (Array.isArray(restrict)) allowed = new Set(restrict.map(String));
+  }
+  if (dealExtName) {
+    const projectIds = [...new Set(rows.map((t) => String(t.project_id)))];
+    const leads = await fetchAllByIdsParallel({
+      table: 'crm_leads',
+      columns: 'project_id, external_company_name',
+      key: 'project_id',
+      ids: projectIds,
+      idChunk: 200,
+    });
+    const want = dealExtName.trim().toLowerCase();
+    const extSet = new Set(
+      leads
+        .filter((l) => String(l.external_company_name || '').trim().toLowerCase() === want)
+        .map((l) => String(l.project_id)),
+    );
+    allowed = allowed ? new Set([...allowed].filter((id) => extSet.has(id))) : extSet;
+  }
+  if (!allowed) return rows;
+  return rows.filter((t) => allowed.has(String(t.project_id)));
+}
+
 r.get('/team-project-tasks', async (req, res) => {
   try {
     if (!isManagerLike(req.user)) return res.status(403).json({ error: 'Chỉ dành cho quản lý' });
     const { company_id, assignee_id, q: searchQ } = req.query;
+    const dealCompanyQ = String(req.query.deal_company_id || '').trim();
+    const dealExtName = String(req.query.deal_external_company_name || '').trim();
     const dueDays = Math.min(60, Math.max(0, parseInt(req.query.due_days, 10) || 7));
     const { page, pageSize } = parsePagination(req, 20, 100);
     const effectiveCompany = company_id || (!isSystemAdmin(req.user) ? req.user?.company_id : null);
@@ -961,7 +1004,9 @@ r.get('/team-project-tasks', async (req, res) => {
       const typedRows = typedSet ? scanRows.filter((t) => typedSet.has(String(t.project_id))) : scanRows;
       // Chỉ giữ việc thuộc phạm vi sản xuất (xem `restrictToProductionScope`) — làm TRƯỚC khi lấy bản «song sinh» và khử
       // trùng để việc bán hàng / dự án ngoài phạm vi không lọt vào số đếm.
-      const scopedRows = await restrictToProductionScope(typedRows, effectiveCompany);
+      const productionRows = await restrictToProductionScope(typedRows, effectiveCompany);
+      // Lọc công ty đặt hàng (chỉ khi app gửi tham số) — dùng cùng nguồn với tab Dự án.
+      const scopedRows = await restrictToDealCompany(productionRows, { req, effectiveCompany, dealCompanyQ, dealExtName });
       // `crm_task` chỉ tính ở các deal mà chi tiết dự án hiện (deal gốc + con) — dự án nhiều deal không đếm thừa.
       const detailLeads = await loadDetailLeadsByProject([...new Set(scopedRows.map((t) => String(t.project_id)))]);
       const scanned = scopedRows.filter((t) => crmRowInDetailLeads(t, detailLeads));
@@ -1087,6 +1132,7 @@ r.get('/team-project-tasks', async (req, res) => {
     const cacheKey = JSON.stringify([
       effectiveCompany || '', assignee_id || '', String(req.query.workshop_type_id || ''),
       String(searchQ || '').trim(), dueDays, createdDays, noDeadlineMode, dueFromRaw, dueToRaw,
+      dealCompanyQ, dealExtName.toLowerCase(), req.user?.company_id || '', isSystemAdmin(req.user) ? 'sys' : '',
     ]);
     let computed = teamTasksCache.get(cacheKey);
     if (!computed || Date.now() - computed.at > TEAM_TASKS_CACHE_MS) {

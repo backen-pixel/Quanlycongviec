@@ -47,8 +47,19 @@ import { useProductionRealtime } from '../hooks/useProductionRealtime';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import { loadKanbanFilters, saveKanbanFilters, subscribeSharedFilters } from '../lib/kanbanFilterStorage';
 import { REALTIME_TASK } from '../lib/realtimeModes';
-import { fetchCompanies, fetchWorkshopTypes, type CompanyOption, type WorkshopTypeOption } from '../lib/productionApi';
 import {
+  fetchClientCompanies,
+  fetchCompanies,
+  fetchWorkshopTypes,
+  type ClientCompanyOption,
+  type CompanyOption,
+  type WorkshopTypeOption,
+} from '../lib/productionApi';
+import {
+  isMetallaOrHucabiCompanyId,
+  isSystemAdmin,
+  productionCreateCompanyOptions,
+  shouldShowDealCompanyFilter,
   workshopCompaniesForCrossViewer,
 } from '../lib/productionFilters';
 import { canSeeAllWorkshopCompanies } from '../lib/roles';
@@ -700,12 +711,15 @@ export default function WorkScreen() {
   const [scope, setScope] = useState<ScopeFilter>(teamView ? 'team' : 'mine');
   const [assigneeFilter, setAssigneeFilter] = useState<string>('all');
   const [filterSheetOpen, setFilterSheetOpen] = useState(false);
-  const [quickPicker, setQuickPicker] = useState<'company' | 'assignee' | 'workType' | null>(null);
+  const [quickPicker, setQuickPicker] = useState<'company' | 'assignee' | 'workType' | 'deal' | null>(null);
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
   const [filterCompany, setFilterCompany] = useState('');
   /** Phân loại xưởng của công ty đang chọn — chỉ admin/quản lý dùng; cùng giá trị đã lưu với Tổng quan & Dự án. */
   const [workTypes, setWorkTypes] = useState<WorkshopTypeOption[]>([]);
   const [filterWorkTypeId, setFilterWorkTypeId] = useState('');
+  /** Công ty ĐẶT HÀNG (chủ deal) — dùng chung với Tổng quan/Dự án qua `filterDealCompany`; chỉ admin hệ thống chọn. */
+  const [filterDealCompany, setFilterDealCompany] = useState('');
+  const [clientCompaniesForDeal, setClientCompaniesForDeal] = useState<ClientCompanyOption[]>([]);
   const [filtersReady, setFiltersReady] = useState(false);
   const [search, setSearch] = useState('');
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -811,6 +825,77 @@ export default function WorkScreen() {
     return workTypes.some((w) => String(w.id) === String(filterWorkTypeId)) ? filterWorkTypeId : '';
   }, [showWorkTypePicker, filterWorkTypeId, workTypes]);
 
+  // ---- Bộ lọc «Công ty đặt hàng» (cùng nguồn danh sách với tab Dự án / Tổng quan) ----
+  const showDealCompanyFilter = useMemo(
+    () => teamView && scope === 'team' && isSystemAdmin(user) && shouldShowDealCompanyFilter(user, companies),
+    [teamView, scope, user, companies],
+  );
+  /** Xưởng dùng để hỏi danh sách công ty đặt hàng: xưởng đang chọn nếu là HCB/Metalla, không thì xưởng đầu tiên. */
+  const clientCompaniesWorkshopId = useMemo(() => {
+    if (filterCompany && isMetallaOrHucabiCompanyId(filterCompany, companies)) return filterCompany;
+    const opts = productionCreateCompanyOptions(companies);
+    return opts[0]?.id ? String(opts[0].id) : '';
+  }, [filterCompany, companies]);
+
+  useEffect(() => {
+    const cid = String(clientCompaniesWorkshopId || '').trim();
+    if (!showDealCompanyFilter || !cid) {
+      setClientCompaniesForDeal([]);
+      return undefined;
+    }
+    let cancel = false;
+    void fetchClientCompanies(cid)
+      .then((list) => { if (!cancel) setClientCompaniesForDeal(list); })
+      .catch(() => { if (!cancel) setClientCompaniesForDeal([]); });
+    return () => { cancel = true; };
+  }, [showDealCompanyFilter, clientCompaniesWorkshopId]);
+
+  const dealCompanyOptions = useMemo(() => {
+    if (!showDealCompanyFilter) return [];
+    const crm = clientCompaniesForDeal.filter((c) => c.client_company_id);
+    const ext = clientCompaniesForDeal.filter((c) => !c.client_company_id);
+    const opts: { id: string; label: string }[] = [{ id: '', label: 'Tất cả công ty đặt hàng' }];
+    crm.forEach((c) => {
+      opts.push({
+        id: c.id,
+        label: `${c.short_name || c.name}${c.source === 'workshop' ? ' · đã liên kết' : ''}`,
+      });
+    });
+    ext.forEach((c) => opts.push({ id: c.id, label: c.short_name || c.name }));
+    return opts;
+  }, [showDealCompanyFilter, clientCompaniesForDeal]);
+
+  const dealCompanyLabel = useMemo(() => {
+    if (!filterDealCompany) return 'Tất cả';
+    return dealCompanyOptions.find((o) => o.id === filterDealCompany)?.label || 'Đã chọn';
+  }, [filterDealCompany, dealCompanyOptions]);
+
+  /** Tham số gửi máy chủ: công ty CRM → UUID; khách ngoài danh mục CRM → so theo tên. Rỗng = không lọc. */
+  const dealCompanyParam = useMemo(() => {
+    if (!showDealCompanyFilter || !filterDealCompany) return '';
+    const pick = clientCompaniesForDeal.find((c) => String(c.id) === String(filterDealCompany));
+    if (pick?.client_company_id) return String(pick.client_company_id);
+    if (pick) return '';
+    return filterDealCompany.startsWith('ext:') ? '' : String(filterDealCompany);
+  }, [showDealCompanyFilter, filterDealCompany, clientCompaniesForDeal]);
+  const dealExternalName = useMemo(() => {
+    if (!showDealCompanyFilter || !filterDealCompany) return '';
+    const pick = clientCompaniesForDeal.find((c) => String(c.id) === String(filterDealCompany));
+    if (!pick || pick.client_company_id) return '';
+    return String(pick.short_name || pick.name || '').trim();
+  }, [showDealCompanyFilter, filterDealCompany, clientCompaniesForDeal]);
+  /** Đang lọc theo công ty đặt hàng → «Giao việc» (không có công ty đặt hàng) không đưa vào danh sách/số đếm. */
+  const dealFilterActive = Boolean(dealCompanyParam || dealExternalName);
+
+  const onSelectDealCompany = useCallback(async (id: string) => {
+    setQuickPicker(null);
+    if (id === filterDealCompany) return;
+    setFilterDealCompany(id);
+    // Như Tổng quan/Dự án: đổi công ty đặt hàng thì phân loại về mặc định (loại đầu tiên được chọn lại).
+    setFilterWorkTypeId('');
+    await saveKanbanFilters({ filterDealCompany: id, filterWorkTypeId: '' }).catch(() => {});
+  }, [filterDealCompany]);
+
   /**
    * Việc dự án của đội (quản lý, phạm vi Đội): tải theo TRANG nhóm dự án từ máy chủ, cuộn đến đâu tải tiếp.
    * `assigneeFilter` và tìm kiếm cũng do máy chủ lọc — lọc ở máy chỉ thấy phần đã tải.
@@ -830,6 +915,8 @@ export default function WorkScreen() {
         companyId: o.companyId ?? (filterCompany || (canPickCompany ? null : (user?.company_id || null))),
         assigneeId: assigneeFilterRef.current !== 'all' ? assigneeFilterRef.current : null,
         workshopTypeId: activeWorkTypeId || null,
+        dealCompanyId: dealCompanyParam || null,
+        dealExternalName: dealExternalName || null,
         q: searchRef.current,
         // Chip hạn xử lý do MÁY CHỦ lọc (lọc ở máy chỉ thấy nhóm đã tải; việc đến hạn hôm nay nằm ở trang sau nhóm quá hạn).
         ...dueRangeVN(dueFilterRef.current),
@@ -852,7 +939,7 @@ export default function WorkScreen() {
     } finally {
       if (append) teamLoadingMoreRef.current = false;
     }
-  }, [filterCompany, canPickCompany, user?.company_id, activeWorkTypeId]);
+  }, [filterCompany, canPickCompany, user?.company_id, activeWorkTypeId, dealCompanyParam, dealExternalName]);
 
   const load = useCallback(async (
     silent = false,
@@ -1113,6 +1200,7 @@ export default function WorkScreen() {
       }
       setFilterCompany(companyId);
       setFilterWorkTypeId(String(snap?.filterWorkTypeId || ''));
+      setFilterDealCompany(String(snap?.filterDealCompany || ''));
       setFiltersReady(true);
     })();
     return () => { cancelled = true; };
@@ -1129,6 +1217,8 @@ export default function WorkScreen() {
       setFilterCompany((prev) => (prev === next ? prev : next));
       const nextType = String(snap.filterWorkTypeId || '');
       setFilterWorkTypeId((prev) => (prev === nextType ? prev : nextType));
+      const nextDeal = String(snap.filterDealCompany || '');
+      setFilterDealCompany((prev) => (prev === nextDeal ? prev : nextDeal));
     });
     return unsub;
   }, [canPickCompany, user?.company_id]);
@@ -1508,13 +1598,14 @@ export default function WorkScreen() {
       // DEAL (có thể khác xưởng) nên lọc theo đó sẽ ẩn mất việc thuộc dự án của xưởng mình.
       // Việc dự án (nguồn `/work-tasks`) đã được máy chủ lọc theo công ty; `company_id` của chúng có thể là công ty DEAL.
       const isProjectTask = t.source_kind === 'task' || t.source_kind === 'crm_task';
+      if (dealFilterActive && !isProjectTask) return false;
       if (!unifiedSource && !isProjectTask && filterCompany && String(t.company_id || '') !== String(filterCompany)) {
         return false;
       }
       if (dueFilter && !dueMatches(taskDueIso(t), dueFilter)) return false;
       return true;
     });
-  }, [tasks, chipTasks, teamProjectTasks, search, statusFilter, dueFilter, unifiedSource, teamView, scope, assigneeFilter, filterCompany]);
+  }, [tasks, chipTasks, teamProjectTasks, search, statusFilter, dueFilter, unifiedSource, teamView, scope, assigneeFilter, filterCompany, dealFilterActive]);
 
   // Nhóm cần xử lý lên trước: có việc quá hạn → có việc đến hạn hôm nay → còn lại (giữ thứ tự cũ).
   const dealSections = useMemo(() => {
@@ -1541,7 +1632,7 @@ export default function WorkScreen() {
   const REVEAL_INITIAL = 6;
   const REVEAL_STEP = 2;
   const [revealCount, setRevealCount] = useState(REVEAL_INITIAL);
-  const revealKey = `${statusFilter}|${search}|${assigneeFilter}|${filterCompany}|${activeWorkTypeId}|${dueFilter}`;
+  const revealKey = `${statusFilter}|${search}|${assigneeFilter}|${filterCompany}|${activeWorkTypeId}|${dueFilter}|${dealCompanyParam}|${dealExternalName}`;
   useEffect(() => { setRevealCount(REVEAL_INITIAL); }, [revealKey]);
   useEffect(() => {
     if (revealCount >= dealSections.length) return undefined;
@@ -1585,6 +1676,10 @@ export default function WorkScreen() {
     const pDoing = teamCounts?.inProgress ?? 0;
     const pPending = Math.max(0, (teamCounts?.total ?? 0) - pDoing);
     const pOverdue = teamCounts?.overdue ?? 0;
+    if (dealFilterActive) {
+      // «Giao việc» không có công ty đặt hàng → chỉ tính phần việc dự án đã được máy chủ lọc.
+      return { pending: pPending, inProgress: pDoing, done: 0, overdue: pOverdue };
+    }
     if (serverStats) {
       return {
         pending: serverStats.pending + pPending,
@@ -1599,7 +1694,7 @@ export default function WorkScreen() {
       done: statsScope.filter((t) => isTaskDone(t.status)).length,
       overdue: statsScope.filter((t) => isTaskOverdue(t)).length + pOverdue,
     };
-  }, [serverStats, statsScope, teamCounts]);
+  }, [serverStats, statsScope, teamCounts, dealFilterActive]);
 
   const personLabel = useMemo(() => {
     if (assigneeFilter === 'all') return 'Tất cả';
@@ -1714,6 +1809,16 @@ export default function WorkScreen() {
         onOpen: () => setQuickPicker('workType'),
       });
     }
+    if (showDealCompanyFilter) {
+      chips.push({
+        key: 'dd-deal',
+        prefix: 'Đặt hàng',
+        label: dealCompanyLabel,
+        active: Boolean(filterDealCompany),
+        onOpen: () => setQuickPicker('deal'),
+        onClear: filterDealCompany ? () => { void onSelectDealCompany(''); } : undefined,
+      });
+    }
     if (useAssigneeDropdown) {
       chips.push({
         key: 'dd-assignee',
@@ -1735,6 +1840,10 @@ export default function WorkScreen() {
     assigneeFilter,
     personLabel,
     onSelectCompany,
+    showDealCompanyFilter,
+    dealCompanyLabel,
+    filterDealCompany,
+    onSelectDealCompany,
   ]);
 
   const showFilterChipRow = activeFilterChips.length > 0 || filterDropdownChips.length > 0;
@@ -2414,6 +2523,14 @@ export default function WorkScreen() {
         options={workTypeOptions}
         selectedId={activeWorkTypeId}
         onSelect={(id) => { void onSelectWorkType(id); }}
+        onClose={() => setQuickPicker(null)}
+      />
+      <FilterPickerModal
+        visible={quickPicker === 'deal'}
+        title="Lọc theo công ty đặt hàng"
+        options={dealCompanyOptions}
+        selectedId={filterDealCompany}
+        onSelect={(id) => { void onSelectDealCompany(id); }}
         onClose={() => setQuickPicker(null)}
       />
       <FilterPickerModal
