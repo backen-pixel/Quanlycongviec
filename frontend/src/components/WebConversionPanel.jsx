@@ -19,6 +19,7 @@ export default function WebConversionPanel() {
   const [saving, setSaving] = useState(false);
   const [offline, setOffline] = useState(null);
   const [offlineError, setOfflineError] = useState('');
+  const [qualified, setQualified] = useState(null), [qualifiedError, setQualifiedError] = useState('');
 
   // A system admin has no own company: use the company of the latest P1 trial (VPT).
   useEffect(() => {
@@ -57,6 +58,17 @@ export default function WebConversionPanel() {
   }, [companyId, version]);
 
   const parsed = csv.trim() ? parseSpendCsv(csv, provider) : null;
+
+  useEffect(() => {
+    if (companyId === undefined) return;
+    let alive = true;
+    setQualified(null); setQualifiedError('');
+    const params = { ...vietnamRange(60), ...(companyId ? { company_id: companyId } : {}) };
+    api.get(`${ROOT}/qualified-offline-conversions`, { params })
+      .then(({ data }) => { if (alive) setQualified(data); })
+      .catch(err => { if (alive) setQualifiedError(err.response?.data?.error || 'Chưa tải được dữ liệu xác minh'); });
+    return () => { alive = false; };
+  }, [companyId, version]);
 
   async function saveSpend() {
     if (!parsed?.rows.length || saving) return;
@@ -174,6 +186,31 @@ export default function WebConversionPanel() {
             )}
           </div>
         )}
+      </div>
+      <div className="mt-3 border-t pt-3 text-xs" aria-label="Lead đã xác minh gửi Google Ads">
+        <div className="flex items-center justify-between gap-2">
+          <h4 className="font-semibold">Lead hợp lệ đã xác minh → Google Ads (60 ngày)</h4>
+          <button type="button" onClick={() => setVersion(value => value + 1)} className="rounded border px-2 py-1">Tải lại xác minh</button>
+        </div>
+        {qualifiedError && <p role="alert" className="mt-1 text-red-600">{qualifiedError}</p>}
+        {!qualified && !qualifiedError && <p role="status" className="mt-1 text-gray-500">Đang tải…</p>}
+        {qualified && <div className="mt-2 space-y-1">
+          <p>Đủ điều kiện xuất: <b>{qualified.counts.qualified_leads}</b>. Đây là danh sách CRM chuẩn bị gửi; chưa chứng minh Google đã nhận hoặc quy được quảng cáo.</p>
+          <p className="text-gray-600">Loại do khách cũ/trùng trong CRM: {qualified.diagnostics.duplicate_or_returning}
+            {' · '}chưa rõ danh tính: {qualified.diagnostics.identity_unknown + qualified.diagnostics.identity_ambiguous}
+            {' · '}chưa chứng minh khách mới trong CRM: {qualified.diagnostics.new_customer_unproven}
+            {' · '}hồ sơ đổi sau xác minh: {qualified.diagnostics.qualification_stale}
+            {' · '}thiếu nguồn website/mã nhấp: {qualified.diagnostics.no_website_source + qualified.diagnostics.no_gclid + qualified.diagnostics.braid_only}
+            {' · '}nguồn cần đối soát: {qualified.diagnostics.source_conflict + qualified.diagnostics.source_time_unknown + qualified.diagnostics.invalid_gclid + qualified.diagnostics.qualification_before_source}
+            {' · '}dữ liệu thử/khách không còn: {qualified.diagnostics.test_source + qualified.diagnostics.missing_or_test_lead}</p>
+          <p className="text-gray-600">Khử trùng theo thông tin CRM đang có. Lịch sử khách thiếu hoặc chưa nhập vẫn cần đối soát; số này chưa dùng để nghiệm thu CPL khách mới.</p>
+          {!!qualified.rows.length && <details><summary className="cursor-pointer text-sky-700">Xem khách đủ điều kiện</summary>
+            <ul className="mt-1 space-y-1">{qualified.rows.map(row => <li key={row.lead_id}>
+              <a href={`/crm/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" className="text-sky-700 underline">Mở khách {row.lead_id.slice(0, 8)}</a>
+              {' · '}{row.conversion_time}{' · '}{row.gclid_tail}
+            </li>)}</ul>
+          </details>}
+        </div>}
       </div>
       <div className="mt-3 border-t pt-3">
         <button type="button" onClick={() => setOpenSpend(o => !o)} className="cursor-pointer text-xs font-medium text-sky-700 hover:underline">

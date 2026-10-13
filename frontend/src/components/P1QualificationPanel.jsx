@@ -3,7 +3,7 @@ import api from '../lib/api';
 import { stateLabel, errorLabel, validateForm, commandBody, createRequestIdentity,
   formatVnd, summaryReasonLabel, summaryCostLabel, milestoneCostLabel,
   milestoneTargetMultiple, scopeStatusLabel, scopeWarning, scopeAdLabel,
-  milestoneReliabilityLabel, connectedOnly, excludedNote } from '../lib/p1Qualification';
+  milestoneReliabilityLabel, connectedOnly, excludedNote, qualificationLeadId } from '../lib/p1Qualification';
 const ROOT = '/marketing-p1/qualification';
 const emptyForm = () => ({ contact_usable: false, need_in_scope: false, area_in_service: false, evidence_ref: '', reason: '' });
 export default function P1QualificationPanel({ duongDanLead }) {
@@ -16,6 +16,23 @@ export default function P1QualificationPanel({ duongDanLead }) {
   const [summaryLoading, setSummaryLoading] = useState(false), [summaryVersion, setSummaryVersion] = useState(0);
   const [form, setForm] = useState(emptyForm), identity = useRef(createRequestIdentity());
   const closeButton = useRef(null), opener = useRef(null);
+  const [directInput, setDirectInput] = useState(''), [directLead, setDirectLead] = useState(null);
+  const directRequest = useRef(0);
+  useEffect(() => () => { directRequest.current++; }, []);
+  async function lookupLead() {
+    const leadId = qualificationLeadId(directInput, window.location.origin);
+    if (!leadId) { setMessage('Nhập ID khách hoặc liên kết chi tiết Lead/Deal của CRM này.'); return; }
+    const request = ++directRequest.current;
+    setBusy(true); setDirectLead(null); setMessage('');
+    try {
+      const { data } = await api.get(`${ROOT}/leads/${leadId}`, { params: { include_context: '1' } });
+      if (request === directRequest.current) setDirectLead({ lead_id: leadId, code: data.lead?.code || leadId,
+        title: data.lead?.title, state: data, direct: true });
+    } catch (error) {
+      if (request === directRequest.current) setMessage(error.response?.status === 404
+        ? 'Không tìm thấy khách trong phạm vi được phép.' : errorLabel(error.response?.data?.reason_code));
+    } finally { if (request === directRequest.current) setBusy(false); }
+  }
   useEffect(() => {
     if (!enabled || !trialId) { setSummary(null); return; }
     let active = true;
@@ -80,21 +97,28 @@ export default function P1QualificationPanel({ duongDanLead }) {
     if (issue) { setMessage(issue); return; }
     setBusy(true);
     const { row, kind } = dialog;
-    const body = commandBody(kind, form, row.state.revision, identity.current.current());
+    const body = { ...commandBody(kind, form, row.state.revision, identity.current.current()),
+      ...(row.direct && kind !== 'revoke' && { expected_context_hash: row.state.context_hash }) };
     try {
       if (kind === 'revoke') await api.post(`${ROOT}/leads/${row.lead_id}/revoke`, body);
       else await api.put(`${ROOT}/leads/${row.lead_id}`, body);
       identity.current.reset(); setDialog(null); opener.current?.focus();
       setSummaryVersion(value => value + 1);
-      // Reload the current filter because the row can move out of it.
-      const { data } = await api.get(`${ROOT}/queue`, { params: { trial_id: trialId, state: filter } });
-      setRows(data.rows); setCursor(data.next_cursor); setMore(data.has_more); setMessage('Đã lưu trạng thái.');
+      if (row.direct) {
+        const { data } = await api.get(`${ROOT}/leads/${row.lead_id}`, { params: { include_context: '1' } });
+        setDirectLead({ ...row, state: data }); setMessage('Đã lưu trạng thái.');
+      } else {
+        // Reload the trial filter; direct review never adds Google leads to the Facebook cohort.
+        const { data } = await api.get(`${ROOT}/queue`, { params: { trial_id: trialId, state: filter } });
+        setRows(data.rows); setCursor(data.next_cursor); setMore(data.has_more); setMessage('Đã lưu trạng thái.');
+      }
     } catch (error) {
       const code = error.response?.data?.reason_code;
-      if (code === 'REVISION_CONFLICT') {
+      if (code === 'REVISION_CONFLICT' || code === 'CONTEXT_CONFLICT') {
         identity.current.reset(); setDialog(null); opener.current?.focus();
         try {
-          const { data } = await api.get(`${ROOT}/leads/${row.lead_id}`);
+          const { data } = await api.get(`${ROOT}/leads/${row.lead_id}`, { params: { include_context: '1' } });
+          if (row.direct) setDirectLead({ ...row, state: data });
           setRows(old => old.map(item => item.lead_id === row.lead_id
             ? { ...item, state: data } : item));
         } catch { /* Keep the conflict message visible. */ }
@@ -108,6 +132,22 @@ export default function P1QualificationPanel({ duongDanLead }) {
   }, {});
   return <section className="rounded-xl border border-gray-200 bg-white p-4" aria-label="Đánh dấu khách hợp lệ">
     <h2 className="text-lg font-semibold">Đánh dấu khách hợp lệ (đợt thử)</h2>
+    <div className="mt-3 rounded border border-gray-200 p-3" aria-label="Xác minh khách theo ID">
+      <label className="block text-sm font-medium">Xác minh Lead/Deal theo ID hoặc liên kết CRM
+        <input className="mt-1 w-full rounded border p-2" value={directInput} disabled={busy}
+          onChange={event => { directRequest.current++; setDirectInput(event.target.value); setDirectLead(null); }} />
+      </label>
+      <button type="button" disabled={busy} onClick={lookupLead} className="mt-2 rounded border px-3 py-2">Tải trạng thái khách</button>
+      <p className="mt-2 text-sm text-gray-600">Dùng cho cả khách website Google Ads. Xác minh dựa trên cuộc trao đổi thực tế và mã bằng chứng; khách này không được thêm vào đợt thử Facebook.</p>
+      {directLead && <div className="mt-2 text-sm">
+        <a href={duongDanLead(directLead.lead_id)} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline">Mở khách {directLead.code}</a>
+        <span className="ml-2">{stateLabel(directLead.state.status)}</span>
+        <p className="mt-1">{directLead.state.lead?.title || directLead.title || 'Mở hồ sơ để đối chiếu khách.'}</p>
+        {directLead.state.status !== 'QUALIFIED' && <button type="button" disabled={busy} onClick={event => open(directLead, 'QUALIFIED', event)} className="ml-3 text-emerald-700">Hợp lệ</button>}
+        {directLead.state.status !== 'REJECTED' && <button type="button" disabled={busy} onClick={event => open(directLead, 'REJECTED', event)} className="ml-3 text-rose-700">Loại</button>}
+        {directLead.state.status !== 'PENDING' && <button type="button" disabled={busy} onClick={event => open(directLead, 'revoke', event)} className="ml-3 text-gray-700">Thu hồi</button>}
+      </div>}
+    </div>
     <div className="mt-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm" aria-label="Tổng hợp đợt thử">
       {summaryLoading && <p role="status">Đang tải tổng hợp đợt thử…</p>}
       {summaryError && <p role="alert">Không tải được tổng hợp: {summaryError}</p>}
