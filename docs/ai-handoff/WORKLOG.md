@@ -1,3 +1,22 @@
+## 2026-10-13 (4) — GET /production/projects: sửa 500 «Bad Request» khi lọc đặt hàng ra tập id lớn
+
+- Triệu chứng (đo 13/10 bằng `fetch` chỉ đọc): `company_id=HCB&deal_company_id=HCB` → HTTP 500 `{"error":"Bad Request"}` ở mọi chế độ (`view=mobile`, `view=kanban`, `limit=5`); `summary=1` vẫn 200 (551 dự án); `deal_company_id=Metalla` (18 dự án) và `company_id=HCB` không lọc đặt hàng (686 dự án) vẫn 200. Tức chỉ hỏng khi `restrictIds` (id dự án thuộc công ty đặt hàng) dài hơn ngưỡng chia lô `SX_URL_SAFE_ID_MAX` = 300.
+- Nguyên nhân (đọc mã): `pickChunkTarget` chia `restrictIds` thành lô ≤300 và `applyProjectsListFilters` gắn `id in (lô)`, nhưng trong `buildQuery` của `fetchProjectIdPageChunked` code lại gọi `applyParticipantOnlyProductionScope` → `applyWorkshopProjectVisibilityScope` — hàm này tự gắn thêm `id in (TOÀN BỘ 551 id)` (nhánh `explicitDealCo`). Hai mệnh đề `id=in.(…)` cộng lại ≈ 33 KB, vượt ngưỡng URL PostgREST (~25 KB) → «Bad Request». Phần chia lô vì thế vô tác dụng đúng ở trường hợp nó sinh ra để xử lý.
+- Sửa `production.js` (hai `buildQuery`: nhánh Kanban theo cột và nhánh danh sách chính): khi `chunkTarget.name === 'restrictIds'` thì bỏ lời gọi scope thứ hai. An toàn vì `restrictIds` chính là `memberProjectIds` do cùng hàm đó (cùng tham số) trả ra ở phần mở đầu, và mọi nhánh của hàm có `memberProjectIds` khác null đều chỉ là `.in('id', memberProjectIds)` (đã đọc `applyWorkshopProjectVisibilityScope` và `applyCrossWorkshopVptProductionFilter`) — lô hiện tại đã bao hàm điều kiện đó.
+- Kiểm: `node --check` ổn. CHƯA chạy được endpoint trước khi deploy. Sau merge cần đo: `company_id=HCB&deal_company_id=HCB` phải 200 với `total` ≈ 551 (khớp `summary=1`), `limit=5` trả 5; thử cả `deal_company_id=Phúc Đạt/VPT` (so `total` với số bản trước) và hai xưởng; `GET /production/projects` không lọc đặt hàng vẫn 686.
+
+---
+
+## 2026-10-13 (3) — Web «Quản lý nhiệm vụ Sản xuất»: lọc Công ty đặt hàng dùng chung quy tắc với app
+
+- Đối chiếu 13/10 (HCB, Metalla): khi lọc công ty đặt hàng, `GET /work-tasks/project-overview` chỉ giữ dự án có deal với `crm_leads.company_id` = công ty được chọn, còn app (tab Công việc / Dự án / Kanban) dùng `resolveSxVisibilityRestrictIds` → `getAccountingClientProjectIdsAtWorkshop` (deal có `company_id`, `external_company_id` hoặc tên khách khớp). Lệch 9 dự án (TB-2026-1056/1060/1061/1066/963 → VPT; 1013/1035/1055/1063 → Metalla): SELECT chỉ đọc cho thấy cả 9 đều có một deal thuộc `company_id` xưởng nhưng `external_company_id` trỏ tới VPT/Metalla (liên kết bằng id, không phải trùng tên) → app đúng, web bỏ sót.
+- `workTasks.js`: tách `dealCompanyProjectIdSet({req, effectiveCompany, dealCompanyQ, dealExtName, candidateProjectIds})` (trả Set project_id hoặc null) dùng chung cho `restrictToDealCompany` (team-project-tasks) và `/project-overview`; `/project-overview` nhận thêm `deal_external_company_name`. Người không phải admin hệ thống vẫn bị khóa về công ty của mình (`effectiveDealCompanyId`).
+- Web `ProjectTasksOverviewPage.jsx`: chọn khách ngoài danh mục CRM (`ext:…`) giờ gửi `deal_external_company_name` (trước đây không lọc gì, âm thầm hiện tất cả).
+- Kiểm: test giả 6 ca (có kiểm tên bảng/cột `crm_leads.project_id, external_company_name`) đạt; `node --check` ổn; `vite build` biên dịch đủ 6851 module nhưng dừng vì thiếu gói `zod` ở `AppGuideCopilotPanel.jsx` (lỗi môi trường sẵn có, không do thay đổi này). CHƯA đo trên dữ liệu thật — sau merge cần kiểm: HCB + VPT trên web phải có TB-2026-1056/1060/1061/1066; HCB + Metalla phải có TB-2026-1013/1035/1055/1063; Metalla + VPT phải có TB-2026-963; chọn một khách ngoài (vd. CANIHOME) phải lọc được.
+- Hệ quả: số dự án hiển thị trên web khi lọc theo công ty đặt hàng sẽ tăng ở các xưởng có deal đặt hộ (HCB, Metalla). Số liệu không lọc không đổi.
+
+---
+
 ## 2026-10-13 (2) — Tab Công việc: thêm chip lọc «Công ty đặt hàng» (app + team-project-tasks)
 
 - Theo yêu cầu. Backend `workTasks.js` (`GET /work-tasks/team-project-tasks`): nhận `deal_company_id` (UUID công ty CRM) và `deal_external_company_name` (khách ngoài danh mục — khớp không phân biệt hoa thường theo `crm_leads.external_company_name`). Hàm `restrictToDealCompany` dùng lại đúng đường tab Dự án / Kanban: `effectiveDealCompanyId` (người không phải admin hệ thống bị khoá về công ty của họ) → `resolveSxVisibilityRestrictIds` → tập `project_id` được phép, lọc sau `restrictToProductionScope`. Khoá cache (30s) thêm hai tham số + công ty/quyền của người gọi.
