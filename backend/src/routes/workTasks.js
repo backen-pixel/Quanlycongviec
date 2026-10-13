@@ -1451,6 +1451,8 @@ r.get('/project-overview', async (req, res) => {
     const requestedCompany = String(req.query.company_id || '').trim();
     const requestedDealCompany = String(req.query.deal_company_id || '').trim();
     const requestedDealExtName = String(req.query.deal_external_company_name || '').trim();
+    // Phân loại xưởng (`projects.workshop_type_id`): mã loại hoặc `none` (chưa phân loại) — cùng quy ước với `team-project-tasks`.
+    const requestedWorkshopType = String(req.query.workshop_type_id || '').trim();
     const effectiveCompany = isSystemAdmin(req.user)
       ? (requestedCompany || null)
       : (req.user?.company_id || null);
@@ -1474,7 +1476,7 @@ r.get('/project-overview', async (req, res) => {
           project_manager_id, sales_person_id, responsible_person_id,
           production_person_id, logistics_person_id, installer_person_id, installation_person_id,
           deadline, production_deadline, production_finish_date, sx_kanban_deadline_at,
-          delivery_date, install_date, sx_reception_date, created_at, sx_schedule_slip_days
+          delivery_date, install_date, sx_reception_date, created_at, sx_schedule_slip_days, workshop_type_id
         `;
     let activeProjects;
     if (requestedProjectId) {
@@ -1502,6 +1504,13 @@ r.get('/project-overview', async (req, res) => {
       activeProjects = (projects || []).filter((project) => (
         !['completed', 'cancelled', 'canceled'].includes(String(project.status || '').toLowerCase())
       ));
+      if (requestedWorkshopType) {
+        const wantNone = requestedWorkshopType.toLowerCase() === 'none';
+        const wantType = requestedWorkshopType.toLowerCase();
+        activeProjects = activeProjects.filter((project) => (wantNone
+          ? !project.workshop_type_id
+          : String(project.workshop_type_id || '').toLowerCase() === wantType));
+      }
     }
     const projectIds = activeProjects.map((project) => project.id).filter(Boolean);
 

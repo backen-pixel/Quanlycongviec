@@ -576,10 +576,30 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     workshopMode ? String(readSxDashPersisted()?.filterDealCompany || '') : ''
   ));
   const [clientCompaniesForDeal, setClientCompaniesForDeal] = useState([]);
+  // Phân loại xưởng (giống app): '' = tất cả loại, 'none' = chưa phân loại, còn lại là mã loại. Không lưu — mặc định xem tất cả.
+  const [workTypeFilter, setWorkTypeFilter] = useState('');
+  const [workTypeOptions, setWorkTypeOptions] = useState([]);
+  useEffect(() => {
+    if (!workshopMode || !companyFilter) {
+      setWorkTypeOptions([]);
+      return undefined;
+    }
+    let cancelled = false;
+    api.get('/workshop/project-types', { params: { company_id: companyFilter, module: 'production' } })
+      .then((res) => {
+        if (cancelled) return;
+        setWorkTypeOptions((Array.isArray(res.data) ? res.data : [])
+          .map((t) => ({ id: String(t.id || ''), name: String(t.name || t.id || '') }))
+          .filter((t) => t.id));
+      })
+      .catch(() => { if (!cancelled) setWorkTypeOptions([]); });
+    return () => { cancelled = true; };
+  }, [workshopMode, companyFilter]);
   const canRemind = canSendTaskRemind(user);
   const applyCompany = useCallback((value) => {
     const next = String(value || '');
     setCompanyFilter(next);
+    setWorkTypeFilter('');
     setRegionFilter('');
     setAssigneeFilter([]);
     if (workshopMode) {
@@ -694,6 +714,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       else if (companyFilter) params.company_id = companyFilter;
       if (workshopMode && dealCompanyParam) params.deal_company_id = dealCompanyParam;
       else if (workshopMode && dealExternalNameParam) params.deal_external_company_name = dealExternalNameParam;
+      if (workshopMode && workTypeFilter) params.workshop_type_id = workTypeFilter;
       const res = await api.get('/work-tasks/project-overview', { params });
       setTasks(res.data?.tasks || []);
       setStats(res.data?.stats || { total: 0, warning: 0, overdue: 0, by_module: {} });
@@ -703,7 +724,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     } finally {
       setLoading(false);
     }
-  }, [companiesReady, companyFilter, dealCompanyParam, dealExternalNameParam, fixedModuleKey, projectFilter, workshopMode]);
+  }, [companiesReady, companyFilter, dealCompanyParam, dealExternalNameParam, fixedModuleKey, projectFilter, workTypeFilter, workshopMode]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -737,6 +758,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       if (companyFilter) params.company_id = companyFilter;
       if (dealCompanyParam) params.deal_company_id = dealCompanyParam;
       else if (dealExternalNameParam) params.deal_external_company_name = dealExternalNameParam;
+      if (workTypeFilter) params.workshop_type_id = workTypeFilter;
       if (unassignedActive) params.unassigned = 1;
       else if (singleAssigneeId) params.assignee_id = singleAssigneeId;
       if (trimmedQuery) params.q = trimmedQuery;
@@ -756,7 +778,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     } finally {
       if (seq === teamSeqRef.current) setTeamLoading(false);
     }
-  }, [companiesReady, companyFilter, dealCompanyParam, dealExternalNameParam, projectFilter, singleAssigneeId, trimmedQuery, unassignedActive]);
+  }, [companiesReady, companyFilter, dealCompanyParam, dealExternalNameParam, projectFilter, singleAssigneeId, trimmedQuery, unassignedActive, workTypeFilter]);
 
   // Số việc chưa giao (Admin) để hiện trên nút «Chưa giao (N)».
   useEffect(() => {
@@ -771,11 +793,12 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     if (companyFilter) params.company_id = companyFilter;
     if (dealCompanyParam) params.deal_company_id = dealCompanyParam;
     else if (dealExternalNameParam) params.deal_external_company_name = dealExternalNameParam;
+    if (workTypeFilter) params.workshop_type_id = workTypeFilter;
     api.get('/work-tasks/team-project-tasks', { params })
       .then((res) => { if (!cancelled) setUnassignedTotal(Number(res.data?.counts?.total) || 0); })
       .catch(() => { if (!cancelled) setUnassignedTotal(null); });
     return () => { cancelled = true; };
-  }, [projectView, isAdmin, companiesReady, companyFilter, projectFilter, dealCompanyParam, dealExternalNameParam]);
+  }, [projectView, isAdmin, companiesReady, companyFilter, projectFilter, dealCompanyParam, dealExternalNameParam, workTypeFilter]);
 
   useEffect(() => {
     if (!projectView) return undefined;
@@ -1000,6 +1023,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     progressFilter !== 'all',
     companyFilterActive,
     !!filterDealCompany,
+    !!workTypeFilter,
     !!regionFilter,
     selectedAssignees.length > 0,
     !!deadlineFrom,
@@ -1020,6 +1044,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     applyCompany(defaultCompanyId(companyOptions, user, canPickCompany, workshopMode));
     applyDealCompany('');
     setAssigneeFilter([]);
+    setWorkTypeFilter('');
     setRegionFilter('');
     setDeadlineFrom('');
     setDeadlineTo('');
@@ -1072,6 +1097,13 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       key: 'deal-company',
       label: `Đặt hàng: ${selectedDealCompanyLabel || filterDealCompany}`,
       clear: () => applyDealCompany(''),
+    },
+    workTypeFilter && {
+      key: 'work-type',
+      label: `Phân loại: ${workTypeFilter === 'none'
+        ? 'Chưa phân loại'
+        : (workTypeOptions.find((type) => type.id === workTypeFilter)?.name || workTypeFilter)}`,
+      clear: () => setWorkTypeFilter(''),
     },
     regionFilter && {
       key: 'region',
@@ -1146,6 +1178,20 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
                 );
               })}
             </div>
+            {workshopMode && workTypeOptions.length > 0 ? (
+              <select
+                value={workTypeFilter}
+                onChange={(event) => setWorkTypeFilter(event.target.value)}
+                aria-label="Phân loại"
+                className="h-9 max-w-[180px] rounded-lg border border-gray-200 bg-white px-2 text-xs font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-200 cursor-pointer"
+              >
+                <option value="">Phân loại: Tất cả</option>
+                {workTypeOptions.map((type) => (
+                  <option key={type.id} value={type.id}>{type.name}</option>
+                ))}
+                <option value="none">Chưa phân loại</option>
+              </select>
+            ) : null}
             <AdvFilterButton
               open={filtersOpen}
               active={activeAdvancedFilters > 0}
