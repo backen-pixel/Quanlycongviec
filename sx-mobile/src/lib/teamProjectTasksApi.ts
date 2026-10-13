@@ -70,7 +70,8 @@ function mapRow(raw: Record<string, unknown>): WorkTask {
   const t = mapUnifiedToWorkTask(raw);
   const id = raw.assignee_id ? String(raw.assignee_id) : '';
   const name = String(raw.assignee_name || '').trim();
-  const withWho = id && name ? { ...t, assignee: { id, full_name: name } as WorkTask['assignee'] } : t;
+  const withAssignee = id && name ? { ...t, assignee: { id, full_name: name } as WorkTask['assignee'] } : t;
+  const withWho = raw.closed_on_deal ? { ...withAssignee, closed_on_deal: true } : withAssignee;
   // Gom nhóm THEO DỰ ÁN: một dự án có thể gắn nhiều deal, view trả mỗi việc một bản cho từng deal nên sau khi
   // khử trùng các việc cùng dự án mang `lead_id` khác nhau → bị tách thành nhiều nhóm trùng tên. Deal thật vẫn
   // nằm ở `deal_id` (dùng cho việc `crm_task` khi cập nhật).

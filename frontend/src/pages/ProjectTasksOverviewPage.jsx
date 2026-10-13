@@ -469,6 +469,14 @@ const ProjectGroupRow = memo(function ProjectGroupRow({ group, expanded, onToggl
                 >
                   {PROJECT_TASK_STATUS_LABEL[status] || task.status || '—'}
                 </span>
+                {task.closed_on_deal ? (
+                  <span
+                    className="shrink-0 rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-500 ring-1 ring-slate-200"
+                    title="Đã giao người ở bảng việc xưởng, nhưng việc cùng tên ở deal đã xong — không tính quá hạn"
+                  >
+                    Xong ở deal
+                  </span>
+                ) : null}
                 <span className={`w-20 shrink-0 text-right tabular-nums ${isOver ? 'font-semibold text-red-600' : 'text-gray-500'}`}>
                   {task.deadline ? formatDate(task.deadline) : 'Không hạn'}
                 </span>

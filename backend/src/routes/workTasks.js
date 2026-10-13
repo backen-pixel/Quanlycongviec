@@ -735,9 +735,9 @@ async function loadAssignedCrmTaskIds(crmTaskIds) {
  * việc «chưa xong» và 40 / 149 việc «quá hạn» thuộc loại này.
  *
  * Chỉ bỏ khi mọi bản `crm_task` sản xuất cùng tên đều đã đóng (còn một bản đang mở thì giữ — trường hợp nhiều việc cùng tên
- * ở các cột khác nhau). Việc không có bản `crm_task` tương ứng được giữ nguyên — TRỪ việc mẫu bị bỏ quên (không người nhận,
- * không có `crm_task` sản xuất cùng tên, dự án đã có việc sản xuất ở deal): chi tiết dự án không hiện chúng nên tab cũng bỏ.
- * KHÔNG ghi dữ liệu.
+ * ở các cột khác nhau) VÀ việc chưa giao cho ai. Việc đã giao người thì giữ, gắn `closed_on_deal` (không tính quá hạn). Việc
+ * không có bản `crm_task` tương ứng luôn được giữ nguyên, kể cả chưa ai nhận (trước đây ẩn việc mẫu bị bỏ quên — đã bỏ quy
+ * tắc đó vì việc chưa giao vẫn là việc thật). KHÔNG ghi dữ liệu.
  */
 async function dropTasksClosedOnDeal(rows, detailLeads) {
   const taskRows = rows.filter((t) => t.source === 'task');
@@ -768,11 +768,8 @@ async function dropTasksClosedOnDeal(rows, detailLeads) {
   );
   const keyOf = (t) => `${t.project_id}|${String(t.title || '').trim().toLowerCase()}`;
   const state = new Map();
-  // Dự án đã có việc SẢN XUẤT ở deal mà chi tiết hiện (bất kể trạng thái) — chi tiết dự án lấy việc từ đó.
-  const projectsWithSxCrm = new Set();
   for (const c of crmRows) {
     if (!sxCrm.has(crmTaskIdOf(c))) continue;
-    projectsWithSxCrm.add(String(c.project_id));
     const k = keyOf(c);
     const s = state.get(k) || { open: 0, closed: 0, openDeadlineMs: [] };
     if (CLOSED_TASK_STATUSES.has(String(c.status || '').toLowerCase())) s.closed += 1;
@@ -789,12 +786,11 @@ async function dropTasksClosedOnDeal(rows, detailLeads) {
     // không hiện.
     if (t.blocks_stage_advance) return true;
     const s = state.get(keyOf(t));
-    // 1. Bản `crm_task` cùng tên đã đóng hết → việc đã xong ở chi tiết dự án.
-    if (s && s.closed > 0 && s.open === 0) return false;
-    // 2. Việc mẫu bị bỏ quên: CHƯA AI NHẬN, không có `crm_task` sản xuất nào cùng tên, mà dự án đã có việc sản xuất ở deal
-    //    (chi tiết chỉ hiện các việc đó). Vd. TB-2026-029: 14 việc mẫu tạo 13/04, không người nhận, hạn 14–15/04 đã quá hạn.
-    //    Việc đã giao cho một người, hoặc dự án chưa có việc SX ở deal (xưởng theo dõi bằng bảng `tasks`) thì giữ.
-    if (!s && !t.assignee_id && projectsWithSxCrm.has(String(t.project_id))) return false;
+    // 1. Bản `crm_task` cùng tên đã đóng hết → việc đã xong ở chi tiết dự án. CHƯA GIAO ai thì bỏ; đã giao cho một người thì
+    //    GIỮ (đánh dấu `closed_on_deal` ở bước dưới) để việc đang gắn với người không biến mất âm thầm.
+    if (s && s.closed > 0 && s.open === 0 && !t.assignee_id) return false;
+    // (Trước đây có quy tắc 2 ẩn việc mẫu chưa ai nhận / không có `crm_task` cùng tên — đã BỎ theo yêu cầu: việc chưa giao vẫn là
+    //  việc thật, hiện bình thường khi nằm trong cửa sổ; việc cũ không hạn vẫn do cửa sổ quyết định.)
     return true;
   });
   // 3. HẠN lấy theo `crm_task` (bản chi tiết dự án hiển thị) thay vì `tasks.due_date`: bản `tasks` hay cũ / do script gán nên
@@ -804,6 +800,9 @@ async function dropTasksClosedOnDeal(rows, detailLeads) {
   return kept.map((t) => {
     if (t.source !== 'task') return t;
     const s = state.get(keyOf(t));
+    // Đã giao người nhưng bản crm đã xong: giữ lại, gắn cờ `closed_on_deal`. Hạn cũ của bản `tasks` sẽ KHÔNG tính quá hạn (xem
+    // `computeTeamTasks`) — đã xong ở deal nên hạn đó không còn ý nghĩa; cửa sổ vẫn xét theo hạn / ngày tạo gốc.
+    if (s && s.closed > 0 && s.open === 0 && t.assignee_id && !t.blocks_stage_advance) return { ...t, closed_on_deal: true };
     if (!s || s.open === 0) return t;
     const ms = s.openDeadlineMs.length ? Math.min(...s.openDeadlineMs) : null;
     const current = t.deadline ? new Date(t.deadline).getTime() : null;
@@ -1219,6 +1218,10 @@ r.get('/team-project-tasks', async (req, res) => {
           return ms >= fromMs && ms < toMs;
         });
       }
+
+      // Việc đã giao người nhưng bản crm đã xong (`closed_on_deal`): vẫn hiện (cửa sổ / khoảng hạn đã xét ở trên theo hạn gốc) nhưng
+      // KHÔNG tính quá hạn — hạn cũ của bản `tasks` đã hết ý nghĩa khi việc xong ở deal (khớp số quá hạn của chi tiết dự án).
+      rows = rows.map((t) => (t.closed_on_deal && t.deadline ? { ...t, deadline: null } : t));
 
       let overdue = 0;
       let inProgress = 0;

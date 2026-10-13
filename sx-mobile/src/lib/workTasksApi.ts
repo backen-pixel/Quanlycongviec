@@ -43,6 +43,8 @@ export type WorkTask = CrmTask & {
   source_id?: string | null;
   /** Deal CRM thật của dòng (`lead_id` của nguồn gộp) — `lead_id` ở trên có thể rơi về id dự án. */
   deal_id?: string | null;
+  /** Việc đã giao người ở bảng `tasks` nhưng bản `crm_task` cùng tên đã xong ở deal — vẫn hiện, không tính quá hạn. */
+  closed_on_deal?: boolean;
 };
 
 export type WorkTasksQuery = {

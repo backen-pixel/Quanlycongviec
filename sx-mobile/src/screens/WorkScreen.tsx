@@ -1945,6 +1945,12 @@ export default function WorkScreen() {
               <Text style={[styles.statusBadge, styles.statusBadgeTxt, { backgroundColor: colorWithAlpha(accent, 0.15), color: accent }]}>
                 {'● '}{statusPillLabel(task.status)}
               </Text>
+              {/* Đã giao người nhưng bản việc ở deal đã xong — vẫn hiện để không mất việc, không tính quá hạn. */}
+              {task.closed_on_deal ? (
+                <Text style={[styles.statusBadge, styles.statusBadgeTxt, { backgroundColor: colorWithAlpha(colors.textFaint, 0.18), color: colors.textFaint }]}>
+                  {'Xong ở deal'}
+                </Text>
+              ) : null}
               {/* Nhãn riêng cho việc quá hạn — nổi hơn dòng chữ hạn ở góc phải. */}
               {overdue ? (
                 <Text style={[styles.statusBadge, styles.statusBadgeTxt, { backgroundColor: colorWithAlpha(colors.danger, 0.15), color: colors.danger }]}>
