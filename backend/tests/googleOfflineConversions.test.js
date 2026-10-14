@@ -97,6 +97,51 @@ function baseTables() {
   };
 }
 
+test('new website denial blocks legacy stage conversions and the linked call conversion', async () => {
+  const t = baseTables();
+  for (const id of ['L1', 'L2']) t.crm_leads.find(row => row.id === id).website_intake = { measurement_consent: false };
+  const { rows } = await G.buildGoogleOfflineConversions({ db: fakeDb(t), companyId: A, ...RANGE });
+  assert.equal(rows.some(row => ['L1', 'L2'].includes(row.lead_id)), false);
+  assert.equal(rows.some(row => row.recording_id === 'r1'), false);
+  assert.deepEqual(rows.filter(row => row.type === 'CALL').map(row => row.recording_id).sort(), ['r2', 'r3']);
+});
+
+test('literal true website choice preserves legacy stage/call output and absent or NULL metadata remains compatible', async () => {
+  const baseline = await G.buildGoogleOfflineConversions({ db: fakeDb(baseTables()), companyId: A, ...RANGE });
+  for (const metadata of [{ measurement_consent: true }, null]) {
+    const t = baseTables();
+    for (const row of t.crm_leads) row.website_intake = metadata;
+    const actual = await G.buildGoogleOfflineConversions({ db: fakeDb(t), companyId: A, ...RANGE });
+    assert.deepEqual(actual.rows, baseline.rows);
+    assert(actual.rows.some(row => row.type === 'VALID_LEAD' && row.lead_id === 'L1'));
+    assert(actual.rows.some(row => row.type === 'CALL' && row.recording_id === 'r1'));
+  }
+});
+
+test('missing or nonboolean consent in new metadata blocks stage, linked call and description fallback', async () => {
+  for (const consent of [undefined, null, 'true', 'false', 1, 0]) {
+    const t = baseTables();
+    for (const id of ['L1', 'L2']) t.crm_leads.find(row => row.id === id).website_intake =
+      consent === undefined ? {} : { measurement_consent: consent };
+    t.lead_attribution = t.lead_attribution.filter(row => row.lead_id !== 'L1');
+    t.crm_leads.find(row => row.id === 'L1').description = `VPT_V1 | 2026-10-05T03:00:00Z\ngclid: ${GC(7)}`;
+    const actual = await G.buildGoogleOfflineConversions({ db: fakeDb(t), companyId: A, ...RANGE });
+    assert.equal(actual.rows.some(row => ['L1', 'L2'].includes(row.lead_id)), false);
+    assert.equal(actual.rows.some(row => row.recording_id === 'r1'), false);
+  }
+});
+
+test('a linked call cannot bypass consent lookup through a missing or foreign-company Lead', async () => {
+  for (const missing of [true, false]) {
+    const t = baseTables();
+    if (missing) t.crm_leads = t.crm_leads.filter(row => row.id !== 'L2');
+    else t.crm_leads.find(row => row.id === 'L2').company_id = B;
+    const actual = await G.buildGoogleOfflineConversions({ db: fakeDb(t), companyId: A, ...RANGE });
+    assert.equal(actual.rows.some(row => row.recording_id === 'r1' || row.lead_id === 'L2'), false);
+    assert(actual.rows.some(row => row.type === 'VALID_LEAD' && row.lead_id === 'L1'));
+  }
+});
+
 test('helpers: call time fallback, direction, Vietnam time format, masking', () => {
   assert.deepEqual(G.callTimeMs({ call_started_at: '2026-10-10T03:00:00Z', file_name: 'x_261001_000000.m4a' }),
     { ms: at('2026-10-10T03:00:00Z'), source: 'call_started_at' });

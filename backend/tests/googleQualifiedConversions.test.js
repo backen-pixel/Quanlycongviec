@@ -42,6 +42,50 @@ const tables = () => ({ crm_leads: [lead()], p1_qualification_events: [event()],
   customers: [{ id: 'C1', phone: '0901234567', created_at: '2026-10-02T00:59:30Z' }] });
 const build = (t, opts) => Q.buildGoogleQualifiedConversions({ db: fakeDb(t, opts), companyId: A, fromMs: FROM, toMs: NOW });
 
+const websiteChoice = consent => ({ version: 1, request_id: '10000000-0000-4000-8000-000000000001',
+  api_key_id: '10000000-0000-4000-8000-000000000002', form_id: '11116', site_host: 'vanphuthanh.net',
+  submitted_at: '2026-10-02T00:59:00.000Z', landing_url: 'https://vanphuthanh.net/tu-bep/',
+  captured_at: null, fbc: null, fbp: null, measurement_consent: consent, consent_version: 'VPT_ADS_V1' });
+
+test('new website measurement denial excludes an otherwise qualified Google lead', async () => {
+  const t = tables();
+  assert.equal((await build(t)).rows.length, 1);
+  t.crm_leads[0].website_intake = websiteChoice(false);
+  const result = await build(t);
+  assert.equal(result.rows.length, 0);
+  assert.equal(result.diagnostics.exported, 0);
+  assert.equal(result.diagnostics.measurement_consent_required, 1);
+  assert.equal(Q.toQualifiedGoogleCsv(result.rows), Q.CSV_HEADER + '\r\n');
+});
+
+test('explicit true website choice preserves actual Google qualification time and dedup ID', async () => {
+  const t = tables(), legacy = (await build(t)).rows[0];
+  t.crm_leads[0].website_intake = websiteChoice(true);
+  const result = await build(t);
+  assert.equal(result.rows.length, 1);
+  assert.deepEqual(result.rows[0], legacy);
+  assert.equal(result.rows[0].conversion_ms, Date.parse(t.p1_qualification_events[0].recorded_at));
+});
+
+test('new website metadata with missing or nonboolean consent cannot inherit legacy permission', async () => {
+  for (const consent of [undefined, null, 'true', 'false', 1, 0]) {
+    const t = tables(); t.crm_leads[0].website_intake = websiteChoice(consent);
+    if (consent === undefined) delete t.crm_leads[0].website_intake.measurement_consent;
+    const result = await build(t);
+    assert.equal(result.rows.length, 0);
+    assert.equal(result.diagnostics.measurement_consent_required, 1);
+  }
+});
+
+test('legacy absent or NULL website metadata retains existing Google export behavior', async () => {
+  const absent = tables(), missing = await build(absent);
+  const nullable = tables(); nullable.crm_leads[0].website_intake = null;
+  const storedNull = await build(nullable);
+  assert.equal(missing.rows.length, 1);
+  assert.deepEqual(storedNull.rows, missing.rows);
+  assert.equal(storedNull.diagnostics.measurement_consent_required || 0, 0);
+});
+
 test('exports explicit qualification time, stable opaque order ID, no PII and supports Deal', async () => {
   const t = tables(); t.crm_leads[0].type = 'deal';
   const { rows, diagnostics } = await build(t);

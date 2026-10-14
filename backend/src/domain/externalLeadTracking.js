@@ -1,17 +1,21 @@
 'use strict';
 
 const { tachUrl } = require('../helpers/parseLandingUrl');
+const { websiteIntakeReceipt } = require('./websiteIntakeReceipt');
 const FIELDS = ['platform', 'campaign_id', 'adset_id', 'ad_id',
   'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term',
   'gclid', 'fbclid', 'gbraid', 'wbraid'];
 
 // An allowlisted receipt; never parse description or infer paid traffic from Page names.
-function externalLeadTracking(body) {
+function externalLeadTracking(body, options = {}) {
   if (body.is_test !== undefined && typeof body.is_test !== 'boolean') {
     throw new Error('is_test phải là boolean');
   }
   const input = body.attribution;
-  if (input === undefined) return { is_test: body.is_test === true };
+  if (input === undefined) {
+    if (body.website_intake !== undefined) throw new Error('Form website cần attribution');
+    return { is_test: body.is_test === true };
+  }
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw new Error('attribution phải là object');
   }
@@ -33,7 +37,8 @@ function externalLeadTracking(body) {
   }
   if (parsed) receipt.landing_url = parsed.landing_url;
   // No contact time is accepted from callers. Receipt time is the CRM insert time.
-  return { is_test: body.is_test === true, intake_attribution: receipt };
+  const website = websiteIntakeReceipt(body.website_intake, { ...options, attribution: receipt });
+  return { is_test: body.is_test === true, intake_attribution: receipt, ...(website && { website_intake: website }) };
 }
 
 module.exports = { externalLeadTracking };

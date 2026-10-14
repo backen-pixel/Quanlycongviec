@@ -1,3 +1,8 @@
 [hidden vpt_referrer_host]
 [hidden vpt_landing_page]
 [hidden fbclid]
+[hidden vpt_fbc]
+[hidden vpt_fbp]
+[hidden vpt_fb_captured_at]
+
+[acceptance your-ads-consent optional] Tôi đồng ý cho Vạn Phú Thành chia sẻ mã theo dõi và kết quả xác minh yêu cầu này với Google/Meta để đo hiệu quả quảng cáo. [/acceptance]
