@@ -1,15 +1,25 @@
 (function () {
   'use strict';
+  var measurementVersion = 'VPT_ADS_V1';
+  function measurementAllowed(proof) {
+    return proof && proof.measurement_consent === true && proof.consent_version === measurementVersion;
+  }
   var campaignKeys = ['utm_source','utm_medium','utm_campaign','utm_content','utm_term','gclid','fbclid','ttclid','gbraid','wbraid','campaignid','adgroupid','keyword','matchtype','device'];
-  var keys = campaignKeys.concat(['vpt_referrer_host','vpt_landing_page']);
+  var keys = campaignKeys.concat(['vpt_referrer_host','vpt_landing_page','vpt_fb_click_ms']);
   var storageKey = 'vpt_v1_attribution_session';
   var ttl = 30 * 60 * 1000;
   var now = Date.now();
   var query = new URLSearchParams(window.location.search);
   var data = {}, prior = null, hasCampaign = false;
   campaignKeys.forEach(function (key) {
+    if (!query.has(key)) return;
+    hasCampaign = true;
     var value = query.get(key);
-    if (value) { data[key] = value.replace(/[\x00-\x1f\x7f]/g, '').slice(0,500); hasCampaign = true; }
+    if (!value) return;
+    // An invalid new touch still ends the old source bundle. Never attribute
+    // a new Facebook entry to a previous Google click when its ID is unusable.
+    if (key === 'fbclid' && (query.getAll(key).length !== 1 || !/^[A-Za-z0-9_-]{1,500}$/.test(value))) return;
+    data[key] = value.replace(/[\x00-\x1f\x7f]/g, '').slice(0,500);
   });
   try { prior = JSON.parse(sessionStorage.getItem(storageKey) || 'null'); } catch (_) {}
   var referrerHost = '';
@@ -20,6 +30,9 @@
   if (usePrior) {
     keys.forEach(function (key) { if (typeof prior.fields[key] === 'string') data[key] = prior.fields[key].slice(0,500); });
   } else {
+    // Original observation of this URL click; never regenerate at form submit
+    // or CRM qualification. This is retained with the same attribution bundle.
+    if (data.fbclid && /^[A-Za-z0-9_-]{1,500}$/.test(data.fbclid)) data.vpt_fb_click_ms = String(now);
     // Store host/path only: never persist referrer queries or search terms.
     data.vpt_referrer_host = newExternal ? referrerHost : '';
     data.vpt_landing_page = 'https://vanphuthanh.net' + window.location.pathname;
@@ -77,11 +90,35 @@
       var marker = form.querySelector('[name="vpt_form"]');
       if (!marker || marker.value !== 'VPT_V1') return;
       keys.forEach(function (key) { var field = form.querySelector('[name="'+key+'"]'); if (field) field.value = data[key] || ''; });
+      var choice = form.querySelector('[name="your-ads-consent"]');
+      var matching = {vpt_fbc:'',vpt_fbp:'',vpt_fb_captured_at:''};
+      if (choice && choice.checked) {
+        function cookie(name) {
+          var all; try { all = document.cookie || ''; } catch (_) { return ''; }
+          var item = all.split(';').map(function (v) { return v.trim(); }).find(function (v) { return v.indexOf(name+'=') === 0; });
+          if (!item) return ''; try { return decodeURIComponent(item.slice(name.length+1)); } catch (_) { return ''; }
+        }
+        var fbc = cookie('_fbc'), fbp = cookie('_fbp');
+        var match = /^fb\.[0-2]\.(\d{13})\.([A-Za-z0-9_-]{1,500})$/.exec(fbc);
+        if (!(match && match[2] === data.fbclid && Number(match[1]) <= Date.now())) {
+          fbc = '';
+          // Meta's FBC format may use an actually observed URL fbclid. Do not
+          // synthesize a click ID or substitute the later submit/verify time.
+          if (/^[A-Za-z0-9_-]{1,500}$/.test(data.fbclid || '') && /^\d{13}$/.test(data.vpt_fb_click_ms || '')
+              && Number(data.vpt_fb_click_ms) <= Date.now()) fbc = 'fb.1.'+data.vpt_fb_click_ms+'.'+data.fbclid;
+          match = /^fb\.[0-2]\.(\d{13})\./.exec(fbc);
+        }
+        if (fbc && match) { matching.vpt_fbc=fbc; matching.vpt_fb_captured_at=new Date(Number(match[1])).toISOString(); }
+        var browser = /^fb\.[0-2]\.(\d{13})\.\d{1,30}$/.exec(fbp);
+        if (browser && Number(browser[1]) <= Date.now()) matching.vpt_fbp=fbp;
+      }
+      Object.keys(matching).forEach(function (key) { var field=form.querySelector('[name="'+key+'"]'); if(field) field.value=matching[key]; });
       form.setAttribute('data-vpt-attribution', campaignKeys.some(function(key) { return Boolean(data[key]); }) ? 'ready' : 'direct');
     });
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', populate); else populate();
   document.addEventListener('submit', populate, true);
+  document.addEventListener('change', function (event) { if (event.target && event.target.name === 'your-ads-consent') populate(); });
   document.addEventListener('wpcf7submit', function (event) {
     if (!event.detail || Number(event.detail.contactFormId) !== 11116) return;
     var receipt = event.detail.apiResponse && event.detail.apiResponse.vpt_v1;
@@ -92,6 +129,10 @@
     // This local event contains no names, phones, free text, or click IDs.
     // Destination copied from the verified Google Ads conversion setup, 2026-09-23.
     if (receipt.status !== 'queued' || !['live','test'].includes(receipt.mode) || !receipt.request_id) return;
+    if (!measurementAllowed(receipt)) {
+      node.setAttribute('data-vpt-ads-dispatch', receipt.measurement_consent === false ? 'consent_declined' : 'consent_unverified');
+      return;
+    }
     // TEST is server-authorized for administrators and routes only to the diagnostic goal.
     var isTest = receipt.mode === 'test';
     var requested = 'vpt_v1_request_' + receipt.request_id;
@@ -100,8 +141,9 @@
     window.dataLayer.push({event:isTest ? 'vpt_v1_test_request' : 'vpt_v1_lead_request',vpt_form_id:11116,transaction_id:receipt.request_id});
     node.setAttribute('data-vpt-measurement',isTest ? 'test_request' : 'lead_request');
     node.setAttribute('data-vpt-ads-dispatch','awaiting_crm');
-    remember({rid: receipt.request_id, test: isTest, until: Date.now() + waitMs});
-    watch(receipt.request_id, isTest, Date.now() + waitMs, node);
+    remember({rid: receipt.request_id, test: isTest, until: Date.now() + waitMs,
+      measurement_consent: true, consent_version: measurementVersion});
+    watch(receipt.request_id, isTest, Date.now() + waitMs, node, receipt);
   });
   // 0.3.1: the Google Ads conversion fires only after the CRM confirmed the lead. The browser asks the
   // site for the delivery state of its own random request_id; a reply is only a state word.
@@ -111,9 +153,10 @@
     try { var list = JSON.parse(sessionStorage.getItem(pendingKey) || '[]'); return Array.isArray(list) ? list : []; } catch (_) { return []; }
   }
   function savePending(list) { try { sessionStorage.setItem(pendingKey, JSON.stringify(list)); } catch (_) {} }
-  function remember(item) { savePending(pendingList().filter(function (p) { return p.rid !== item.rid; }).concat([item])); }
-  function forget(rid) { savePending(pendingList().filter(function (p) { return p.rid !== rid; })); }
-  function fireConversion(rid, isTest, node) {
+  function remember(item) { savePending(pendingList().filter(function (p) { return p && typeof p === 'object' && p.rid !== item.rid; }).concat([item])); }
+  function forget(rid) { savePending(pendingList().filter(function (p) { return p && typeof p === 'object' && p.rid !== rid; })); }
+  function fireConversion(rid, isTest, node, proof) {
+    if (!measurementAllowed(proof)) return;
     var dedupe = 'vpt_v1_event_' + rid;
     try { if (sessionStorage.getItem(dedupe)) return; sessionStorage.setItem(dedupe,'1'); } catch (_) {}
     window.dataLayer = window.dataLayer || [];
@@ -128,15 +171,17 @@
     }
     if (node) node.setAttribute('data-vpt-ads-dispatch','confirmed');
   }
-  function watch(rid, isTest, until, node) {
-    if (!/^[0-9a-f-]{36}$/.test(rid) || typeof window.fetch !== 'function') return;
+  function watch(rid, isTest, until, node, proof) {
+    if (!measurementAllowed(proof) || !/^[0-9a-f-]{36}$/.test(rid) || typeof window.fetch !== 'function') return;
     function ask() {
-      if (Date.now() > until) { forget(rid); if (node) node.setAttribute('data-vpt-ads-dispatch','timeout'); return; }
+      if (Date.now() >= until) { forget(rid); if (node) node.setAttribute('data-vpt-ads-dispatch','timeout'); return; }
       window.fetch('/wp-json/vpt-v1/v1/receipt/' + rid, {credentials: 'omit', cache: 'no-store'})
         .then(function (r) { return r.ok ? r.json() : {state: 'pending'}; })
         .then(function (body) {
+          // A response can arrive after the request's wait expired.
+          if (Date.now() >= until) { forget(rid); if (node) node.setAttribute('data-vpt-ads-dispatch','timeout'); return; }
           var state = body && body.state;
-          if (state === 'confirmed') { forget(rid); fireConversion(rid, isTest, node); return; }
+          if (state === 'confirmed') { forget(rid); fireConversion(rid, isTest, node, proof); return; }
           if (state === 'failed' || state === 'unknown') { forget(rid); if (node) node.setAttribute('data-vpt-ads-dispatch', state); return; }
           setTimeout(ask, 3000);
         }, function () { setTimeout(ask, 5000); });
@@ -144,7 +189,12 @@
     setTimeout(ask, 2000);
   }
   // Resume waits started on an earlier page of this visit.
-  pendingList().forEach(function (p) {
-    if (p && typeof p.rid === 'string' && p.until > Date.now()) watch(p.rid, p.test === true, p.until, null); else if (p) forget(p.rid);
+  var existingPending = pendingList();
+  var approvedPending = existingPending.filter(function (p) {
+    return measurementAllowed(p) && typeof p.rid === 'string' && /^[0-9a-f-]{36}$/.test(p.rid)
+      && typeof p.test === 'boolean' && Number.isSafeInteger(p.until)
+      && p.until > Date.now() && p.until <= Date.now() + waitMs;
   });
+  if (existingPending.length) savePending(approvedPending);
+  approvedPending.forEach(function (p) { watch(p.rid, p.test, p.until, null, p); });
 })();

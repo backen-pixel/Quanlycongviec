@@ -5,7 +5,7 @@ $input = json_decode(stream_get_contents(STDIN), true, 512, JSON_THROW_ON_ERROR)
 try {
     switch ($input['operation']) {
     case 'build':
-        $built = VPT_V1_CRM_Core::build($input['data'], $input['mode'], $input['is_admin'], $input['url'], $input['now']);
+        $built = VPT_V1_CRM_Core::build($input['data'], $input['mode'], $input['is_admin'], $input['url'], $input['now'], $input['submitted_ms'] ?? null);
         $result = array('build'=>$built, 'fingerprint'=>VPT_V1_CRM_Core::fingerprint($built['business'], 'isolated-synthetic-test-key'));
         break;
     case 'response':
