@@ -2126,9 +2126,11 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
     }
   }, [moduleKey, summarizeCrmTasks, project?.company_id, project?.company?.id, project?.logistics_company_id, project?.logistics_company?.id]);
 
+  const [sxCompletionRevision, setSxCompletionRevision] = useState(0);
   const handleCrmTaskSummaryChange = useCallback((summary) => {
     if (!summary || typeof summary.total !== 'number') return;
     setCrmDealTaskSummary(summary);
+    setSxCompletionRevision((revision) => revision + 1);
   }, []);
 
   useEffect(() => {
@@ -2679,20 +2681,24 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
       }
     })();
     return () => { song = false; };
-  }, [sxNhomStageIds, id, moduleKey]);
+  }, [sxNhomStageIds, id, moduleKey, sxCompletionRevision]);
 
   const doiTrangThaiO = useCallback(async (stageId, tt, opts) => {
     if (!id || !stageId) return;
     const k = String(stageId);
     let truoc;
-    setSxTrangThaiO((prev) => { truoc = prev[k]; return { ...prev, [k]: tt }; });
+    truoc = sxTrangThaiO[k];
+    // Completion must be accepted by the server before the UI shows Xong.
+    if (tt !== 'xong') setSxTrangThaiO((prev) => ({ ...prev, [k]: tt }));
     try {
-      await api.put('/production/substage-status', {
+      const { data } = await api.put('/production/substage-status', {
         project_id: id,
         stage_id: k,
         trang_thai: tt,
         pipeline: moduleKey === 'vc' ? 'logistics' : 'production',
       });
+      setSxTrangThaiO((prev) => ({ ...prev, [k]: data?.row?.trang_thai || tt }));
+      return true;
     } catch (e) {
       setSxTrangThaiO((prev) => {
         const next = { ...prev };
@@ -2700,8 +2706,9 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         return next;
       });
       if (!opts?.silent) alert(e?.response?.data?.error || 'Không lưu được trạng thái việc song song');
+      return false;
     }
-  }, [id, moduleKey]);
+  }, [id, moduleKey, sxTrangThaiO]);
 
   const saveCrmActivity = async () => {
     const dealId = project?.crmDeals?.[0]?.id;

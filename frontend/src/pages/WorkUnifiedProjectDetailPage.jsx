@@ -1212,10 +1212,12 @@ function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, sy
     let truoc;
     setTtSongSong((prev) => {
       truoc = prev[p]?.[k];
-      return { ...prev, [p]: { ...(prev[p] || {}), [k]: tt } };
+      return tt === 'xong' ? prev : { ...prev, [p]: { ...(prev[p] || {}), [k]: tt } };
     });
     try {
       await api.put('/production/substage-status', { project_id: p, stage_id: k, trang_thai: tt });
+      setTtSongSong((prev) => ({ ...prev, [p]: { ...(prev[p] || {}), [k]: tt } }));
+      return true;
     } catch (e) {
       // Trả đúng giá trị cũ — không đoán, tránh hiện sai trạng thái sản xuất.
       setTtSongSong((prev) => {
@@ -1224,6 +1226,7 @@ function ProgressTab({ projectId, leadId, project, lead, pipelines, onReload, sy
         return { ...prev, [p]: cua };
       });
       alert(e?.response?.data?.error || 'Không lưu được trạng thái việc song song');
+      return false;
     }
   }, []);
 

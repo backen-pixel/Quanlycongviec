@@ -1,3 +1,10 @@
+## 2026-10-14 — Quy tắc công đoạn Xong phải qua nhiệm vụ bắt buộc (đã duyệt)
+
+Anh Hùng đồng ý chỉ hiện Xong khi mọi nhiệm vụ bắt buộc trong công đoạn hoàn thành. [Phạm vi, API, kiểm thử, giới hạn đồng thời và rollback](../ops/workshop-stage-completion.md). Đã thêm gate SX ở GET/PUT substage-status, kiểm hai nguồn nhiệm vụ, fail closed; frontend chờ server và không suy từ vị trí/danh sách đang lọc. GET trả trạng thái hiệu lực, giữ lịch sử xác nhận cũ. Không đổi policy hạn hoặc gate VC/LĐ, không tự hoàn thành nhiệm vụ/backfill. 11 kiểm Node và build Vite PASS 39.34s. Chưa deploy/DB thật/staging; chưa coi là DONE trên production.
+
+
+---
+
 ## 2026-10-14 — VPT: kiểm và chuẩn bị tuyến website đo khách hợp lệ
 
 - Yêu cầu trực tiếp: kiểm và thiết lập Google/Facebook Ads kéo về website, tiếp nối Google verified lead và native Facebook PR127. Tách [draft PR#128](https://github.com/backen-pixel/Quanlycongviec/pull/128), mãchức năng `dafb166`, nhánh website từ main `3c6761731b0e4a6e248a81e1484d101c3b82e049`; không kéo PR127 như dependency, không merge/deploy/SQL thật hoặc gửi event trong phiên chuẩn bị này.
