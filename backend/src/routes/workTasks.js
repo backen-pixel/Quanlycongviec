@@ -1309,8 +1309,16 @@ r.get('/team-project-tasks', async (req, res) => {
       const chosenRows = [];
       // Chế độ «Chưa giao»: KHÔNG ghép «song sinh» — mọi dòng chưa giao đều là một việc riêng; bản `tasks` đã có bản `crm_task` cùng
       // tên bị bỏ ở `dropTasksClosedOnDeal` (bản crm mới là việc thật; nếu nó chưa giao thì tự có mặt trong danh sách).
-      if (unassignedMode) chosenRows.push(...scannedBase);
-      else for (const g of groupsByKey.values()) {
+      // Khử trùng theo `unified_id`: view `unified_tasks_v` trả MỘT việc `tasks` thành nhiều dòng khi dự án có nhiều deal
+      // (mỗi lead một dòng; HCB thừa ~3.400 dòng) — chế độ thường đã gom ở nhóm bên dưới, chế độ này thì không.
+      if (unassignedMode) {
+        const seenUnified = new Set();
+        for (const t of scannedBase) {
+          if (seenUnified.has(t.unified_id)) continue;
+          seenUnified.add(t.unified_id);
+          chosenRows.push(t);
+        }
+      } else for (const g of groupsByKey.values()) {
         // Có bản `tasks` → nó đại diện cho MỘT bản crm (bản hạn sớm nhất); phần còn lại giữ nguyên.
         const crmSorted = g.crm.slice().sort((a, b) => deadlineMsOrMax(a) - deadlineMsOrMax(b)
           || String(a.unified_id).localeCompare(String(b.unified_id)));
