@@ -103,6 +103,8 @@ r.get('/files/:id/thumbnail', authWithQueryToken, async (req, res) => {
 
     res.setHeader('Content-Type', thumb.contentType || 'image/jpeg');
     res.setHeader('Cache-Control', 'private, max-age=3600');
+    // Cùng lý do với /stream: <img> nhúng từ origin khác bị CORP mặc định của helmet chặn.
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     let aborted = false;
     req.on('close', () => {
       if (!res.writableEnded) {
@@ -138,6 +140,11 @@ r.get('/files/:id/stream', authWithQueryToken, async (req, res) => {
     res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
     res.setHeader('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`);
     res.setHeader('Accept-Ranges', 'bytes');
+    // helmet() đặt mặc định Cross-Origin-Resource-Policy: same-origin, khiến trình duyệt
+    // CHẶN tài nguyên này khi trang nhúng nó từ origin khác — kể cả lúc CORS đã cho phép.
+    // SPA chạy ở tubep-frontend-*, API ở tubep-backend-*, nên <video> đứng im ở 0:00.
+    // Nới riêng cho đường phát file; mọi route khác giữ nguyên mặc định của helmet.
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     if (status === 206) res.status(206);
     if (contentRange) res.setHeader('Content-Range', contentRange);
     if (contentLength) res.setHeader('Content-Length', contentLength);
