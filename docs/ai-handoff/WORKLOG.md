@@ -1,3 +1,13 @@
+## 2026-10-14 (4) — App tab Công việc: nhóm dự án nạp ở trang 2 bị chồng/mất; KPI «Chưa giao» quá hạn
+
+- Kiểm app ↔ web ↔ API (HCB · Tủ bếp, chỉ đọc): web khớp API tuyệt đối (công ty b78baba2…, lọc Phúc Đạt: TỔNG 2, «Chưa giao (92)», TB-2026-1021). Máy chủ phân trang đúng (20 nhóm/trang: 345 + 227 + 2 = 574 việc, 574 `unified_id` khác nhau, 0 trùng; «Chưa giao» 0 trùng sau PR khử trùng). Số đếm KPI app = API (574 / QH 19; «Chưa giao» 122 / QH 5).
+- LỖI app: KPI nói 574 việc nhưng danh sách chỉ thấy 28–29/42 dự án (thiếu 13 dự án = 140 việc, đều ở trang nạp thêm thứ 2; số việc của dự án có mặt đều đúng). Đã log trạng thái: app nhận đủ trang 2 (243 dòng), `dealSections` có đủ 42 nhóm, `renderRow` gọi cho cả 42 — nhưng màn hình hiện thứ tự khác nhau ở hai vị trí cuộn (…1026→1052→1055… và …1053→1054→1055…). Nguyên nhân: `dealSections` xếp lại TOÀN BỘ nhóm theo mã mỗi khi nạp thêm trang nên nhóm mới chen vào giữa danh sách FlatList đã đo → vị trí/phạm vi hiển thị tính sai, nhóm chồng nhau hoặc không thấy.
+- Sửa (`WorkScreen.tsx`, `workTasksApi.ts`): việc nạp từ trang ≥2 mang `team_page`; `dealSections` xếp theo (trang nạp, mức khẩn, trạng thái, mã) nên trang nạp thêm luôn NỐI ĐUÔI, không chen giữa. Đo lại trên máy ảo sau sửa: 42/42 dự án, 574/574 việc, so API từng dự án không lệch dòng nào.
+- Sửa nhỏ: ở mục «Chưa giao» KPI «QH» từng gán cứng 0 trong khi thẻ nhóm hiện «Quá hạn 5» → dùng `overdue` của máy chủ (đã loại việc «xong ở deal»): nay QH 5.
+- Còn lại: chưa kiểm trên máy thật; cảnh báo type có sẵn (NotificationContext, useRootNavigation, ProjectDetailScreen) không thuộc phần này.
+
+---
+
 ## 2026-10-14 12:47 — VPT: đã áp cột tương thích backup, còn lỗi replication riêng
 
 - Người dùng đã duyệt backup riêng. Áp `20261014022725_website_intake_backup_compat.sql` lên `QLCV_Backup / atcfpgxkgbszglrelfgr` thành công **12:45:05 Asia/Saigon (UTC+7)**; history `20261014054505 / website_intake_backup_compat_vpt_20261014`. Hậu kiểm **12:45:39**: JSONB nullable/default NULL; CRM9544/VPT3014 hàng không đổi, metadata0, không DDL backfill, ACL fingerprint `c1e488b30589fa3c45d7d80fe02ddcad` không đổi, RLS bật; không thêm policy/RPC/trigger/bảng receipt/outbox/private.
