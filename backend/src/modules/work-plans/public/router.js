@@ -2,9 +2,34 @@
 const { Router } = require('express');
 const { createService } = require('../application/service');
 const { normalize } = require('../domain/schedule');
+const { reportWindow, summarizePlans } = require('../domain/report');
 function createRouter({ repository, auth, scope, isManager, validateAssignees }) {
   const router = Router(); const service = createService(repository);
   router.use(auth);
+  router.get('/report', async (req,res) => {
+    if (process.env.WORK_PLANS_AGGREGATES_ENABLED !== '1') return res.json({enabled:false});
+    try {
+      const window = reportWindow(req.query.date);
+      const company = req.query.company_id || req.user.company_id;
+      if (!company) return res.status(400).json({error:'Chọn công ty để xem báo cáo sản xuất'});
+      const plans = [];
+      const seen = new Set();
+      for (let offset=0;;offset+=50) {
+        if (offset > 100000) throw new Error('Report scan exceeded limit');
+        const page = await repository.listPlans(company,offset,req.user.userId);
+        for (const row of page.rows) {
+          if (row.company_id !== company || seen.has(row.project_id)) continue;
+          seen.add(row.project_id);
+          const access = await scope(req,{status:()=>({json:()=>{}})},row.project_id);
+          if (!access || access.project.company_id !== company) continue;
+          const prior = await repository.versionAsOf(row.project_id,new Date(window.end).toISOString());
+          if (prior?.document?.active) plans.push({project_id:row.project_id,document:prior.document,actor_id:req.user.userId,can_manage:isManager(req.user,access.project)});
+        }
+        if (!page.more) break;
+      }
+      res.json({enabled:true,...summarizePlans(plans,window)});
+    } catch(e) {res.status(e.status||503).json({error:e.status?e.message:'Không tải đủ dữ liệu lịch sử kế hoạch sản xuất'});}
+  });
   async function context(req,res) {
     const access = await scope(req,res,req.params.id); if (!access) return null;
     if (!access.project.company_id) { res.status(400).json({ error: 'Dự án cần có công ty sản xuất trước khi lập kế hoạch' }); return null; }

@@ -111,7 +111,7 @@ export function groupTasksByDeadline(tasks, { openOnly = true } = {}) {
       continue;
     }
     const d = new Date(t.deadline);
-    if (d < today) groups.overdue.push(t);
+    if (d < today || (t.source === 'work_plan' && d < now)) groups.overdue.push(t);
     else if (d < new Date(today.getTime() + 86400000)) groups.today.push(t);
     else if (d < weekEnd) groups.thisWeek.push(t);
     else groups.later.push(t);

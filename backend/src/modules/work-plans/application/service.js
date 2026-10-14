@@ -53,7 +53,14 @@ function createService(repository, now = () => new Date().toISOString()) {
               (['name','stage_id','required','evidence_required'].some(k=>oldTask[k]!==next[k]) || JSON.stringify(oldTask.dependencies)!==JSON.stringify(next.dependencies))) fail('Mở lại nhiệm vụ trước khi đổi nội dung hoặc điều kiện hoàn thành');
           }
         }
-        doc.active = { ...doc.draft, approved_at: now(), approved_by: context.actorId };
+        // Freeze planned dates at approval. Reports must not recalculate an old
+        // baseline using today's clock or execution; actuals remain in execution.
+        doc.active = { ...doc.draft, approved_at: now(), approved_by: context.actorId,
+          plan_schema_version: 2,
+          planned_tasks: preview.graph.tasks.map(task => {
+            const dates = preview.tasks.find(item => item.id === task.id);
+            return { ...task, planned_start: dates.planned_start, deadline: dates.deadline };
+          }) };
         doc.baselines.push({ revision: body.expected_revision + 1, deadline: doc.active.deadline, approved_at: doc.active.approved_at, reason: doc.draft.reason });
         doc.draft = null;
       }

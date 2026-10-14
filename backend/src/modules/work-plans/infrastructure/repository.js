@@ -10,6 +10,7 @@ function createRepository(db) {
       return {rows:[...new Map(groups.flat().map(r=>[r.project_id,r])).values()],more:groups.some(g=>g.length===50)};
     },
     getPlan: async id => unwrap(await db.from('work_plan_instances').select('company_id,revision,document').eq('project_id',id).maybeSingle()),
+    versionAsOf: async (id,end) => unwrap(await db.from('work_plan_versions').select('revision,document').eq('project_id',id).lt('created_at',end).order('revision',{ascending:false}).limit(1).maybeSingle()),
     replay: async (id, hash, context) => {
       const row = unwrap(await db.from('work_plan_commands').select('request_hash,company_id,actor_id,result').eq('command_id',id).maybeSingle());
       if (!row) return null;

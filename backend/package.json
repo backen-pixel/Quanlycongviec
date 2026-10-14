@@ -7,7 +7,7 @@
     "node": ">=18.0.0"
   },
   "scripts": {
-    "test:work-plans": "node --test tests/work-plans.test.js tests/work-plans-sql.test.js tests/work-plans-ui.test.js",
+    "test:work-plans": "node --test tests/work-plans.test.js tests/work-plans-sql.test.js tests/work-plans-read-model.test.js tests/work-plans-ui.test.js",
     "start": "node --use-system-ca src/server.js",
     "dev": "node --use-system-ca --watch src/server.js",
     "fb:rescan-inbound-phones": "node scripts/rescan-fb-inbound-phones.js",

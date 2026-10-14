@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import ProductionPlanReport from '../components/ProductionPlanReport';
 import { useAuth } from '../lib/auth';
 import { isSystemAdmin, isCompanyScopedAdmin } from '../lib/adminRole';
 import {
@@ -2961,6 +2962,7 @@ function TeamMatrixPanel({ date, onDateChange }) {
             lựa chọn quyết định nội dung file (ngày / công ty / mẫu). */}
       </div>
 
+      {companyId && <ProductionPlanReport date={date} companyId={companyId} />}
       {!companyId && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
           Chọn công ty để xem bảng tổng hợp theo từng mục I–IV.

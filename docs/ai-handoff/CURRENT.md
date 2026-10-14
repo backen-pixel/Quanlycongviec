@@ -1,3 +1,11 @@
+## 2026-10-14 — Bước 1: nối tổng hợp; bước 2: staging chờ cơ sở dữ liệu riêng
+
+Anh Hùng giao bước 1 và 2, chọn Render My Workspace (tea-d47g0824d50c73856e80). Candidate bổ sung vào PR134: snapshot hạn từng task khi duyệt; private view unified_work_tasks_v chỉ service_role; bật bằng WORK_PLANS_AGGREGATES_ENABLED=1 sau hai migrations. Gateway nhiệm vụ/badge, quản lý SX, Work Unified thêm số việc/hoàn thành/quá hạn; báo cáo ngày thêm phần kế hoạch SX đọc revision trước mốc cuối ngày Việt Nam. Dự án cũ không backfill; nhiệm vụ SX cũ của dự án đã duyệt plan v2 không đếm song song; CRM trước bán và VC giữ nguồn riêng. Trạng thái miễn trừ đóng, cần review còn mở.
+
+Kiểm cục bộ 30/30 domain+HTTP+SQL+browser PASS, frontend build PASS; review độc lập đã sửa trùng tên, khôi phục nhiệm vụ legacy theo lọc nhân viên, hạn giữa ngày và miễn trừ trong management. Chưa kiểm staging/full-stack thật. Render chưa có staging; Supabase qlycv và QLCV_Backup là primary/failover, không dùng làm staging. Đã hỏi tổ chức tạo DB riêng (Pkmax-bit's Org); chờ trả lời, chưa tạo tài nguyên tính phí, chưa áp DB, merge/deploy production.
+
+---
+
 ## 2026-10-14 — Kế hoạch sản xuất linh hoạt (candidate, chưa deploy)
 
 User duyệt triển khai: hạn hoàn thành sản xuất; công đoạn/nhiệm vụ/thời lượng riêng; mẫu phiên bản dùng lại. [Draft PR #134](https://github.com/backen-pixel/Quanlycongviec/pull/134), nhánh `codex/flexible-production-plans-20261014`. Module Work Plans, migration service-only/RLS/atomic CAS+replay, UI lập/duyệt/mẫu/nhiệm vụ. Dự án cũ không backfill; dashboard legacy chưa đọc execution mới. [Hồ sơ, kiểm chứng và rollback](../ops/flexible-production-plans.md). 26/26 kiểm thử domain+HTTP+SQL+browser cục bộ và frontend build PASS; reviewer độc lập không còn blocker đã biết. Không merge/deploy hoặc áp DB thật.

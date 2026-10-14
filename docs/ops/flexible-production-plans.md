@@ -22,7 +22,7 @@ Tất cả bốn bảng bật RLS, không cấp quyền browser; RPC SECURITY IN
 
 ## Dự án cũ và giới hạn tích hợp
 
-Không backfill hoặc chuyển lịch cũ. Kanban, `tasks`/`crm_tasks`, hạn theo ngày lắp đặt và các báo cáo legacy vẫn giữ cơ chế hiện tại. Các views mới có đường dẫn riêng; chưa thay tổng hợp/badge/dashboard legacy bằng execution mới. Không coi các báo cáo legacy là tổng tiến độ canonical của kế hoạch linh hoạt. Mỗi dự án phải chọn và duyệt kế hoạch mới rõ ràng, tránh lập trùng việc đang thực hiện ở hệ thống cũ. Chưa có tự cân tải giữa nhiều dự án, tự chuyển cột Kanban hay nhắc việc tự động. Các phần này cần adapter/chặng triển khai tiếp, không được tuyên bố đã đồng nhất toàn hệ thống.
+Không backfill hoặc chuyển lịch cũ. Kanban, `tasks`/`crm_tasks`, hạn theo ngày lắp đặt và các báo cáo legacy vẫn giữ cơ chế hiện tại. Các views mới có đường dẫn riêng; candidate hiện có adapter tổng hợp qua private view (mặc định tắt), chưa bật trên môi trường thật. Không coi các báo cáo legacy là tổng tiến độ canonical của kế hoạch linh hoạt. Mỗi dự án phải chọn và duyệt kế hoạch mới rõ ràng, tránh lập trùng việc đang thực hiện ở hệ thống cũ. Chưa có tự cân tải giữa nhiều dự án, tự chuyển cột Kanban hay nhắc việc tự động. Các phần này cần adapter/chặng triển khai tiếp, không được tuyên bố đã đồng nhất toàn hệ thống.
 
 ## Kiểm chứng và phát hành
 
@@ -30,7 +30,7 @@ Chạy từ root:
 
 ```powershell
 $env:PLAYWRIGHT_CHANNEL='chrome' # hoặc cài Chromium cho Playwright và bỏ biến này
-node --test backend/tests/work-plans.test.js backend/tests/work-plans-sql.test.js backend/tests/work-plans-ui.test.js
+npm --prefix backend run test:work-plans
 cd frontend
 npm run build
 ```
@@ -40,3 +40,13 @@ PGlite thực thi migration thật trong PostgreSQL WASM cô lập: kiểm trans
 Sau phê duyệt phát hành: staging trước, áp `database/20261014034959_flexible_work_plans.sql` qua quy trình migration; backend trước frontend; tạo một dự án mới thí điểm. Kiểm quyền công ty, người nhận việc, hai tab đồng thời, mẫu phiên bản mới không sửa dự án cũ; kiểm dự án cũ/đếm legacy riêng. Chỉ lên production khi có phê duyệt rõ ràng theo AGENTS.md.
 
 Rollback: revert code PR, giữ nguyên bốn bảng/lịch sử đã ghi; không drop hoặc xóa execution. Không tự chuyển kế hoạch mới về task legacy. Các màn hình cũ vẫn hoạt động; cần giải quyết các dự án thí điểm đang chạy trước khi ngưng UI mới.
+
+## Adapter tổng hợp và staging (bước 1–2 ngày 14/10)
+
+Migration mới 20261014050004_work_plan_task_read_model.sql tạo unified_work_tasks_v SECURITY INVOKER, chỉ server/service_role. Sau khi áp cả hai migrations, bật WORK_PLANS_AGGREGATES_ENABLED=1. Snapshot planned_tasks v2 được ghi khi duyệt, chỉ cấu trúc/hạn kế hoạch; actuals vẫn từ execution. View thay nhiệm vụ tasks SX/Dự án và crm_tasks gắn stage SX của dự án đã chọn plan v2; không ghi lại hay xóa task cũ, không thay CRM trước bán/VC. Kế hoạch v1 muốn vào tổng hợp cần duyệt lại để có snapshot hạn; không tự backfill.
+
+Gateway dùng cùng projection cho phân trang và count; việc cùng tên khác ID giữ riêng. SX project overview nhận tập approved project độc lập bộ lọc nhân viên, không khôi phục legacy. Work Unified giữ tiến độ luồng giao hàng, thêm số việc kế hoạch SX riêng. Báo cáo ngày có phần kế hoạch linh hoạt: revision gần nhất trước cutoff (cuối ngày VN hoặc giờ đọc nếu hôm nay), đến hạn/hoàn thành trong ngày và tồn quá hạn ở cutoff; miễn trừ không phải hoàn thành thực tế; needs_review còn mở. Bảng này chưa cộng dữ liệu nhiệm vụ legacy vào chỉ tiêu plan.
+
+Rollback adapter: tắt WORK_PLANS_AGGREGATES_ENABLED, giữ bảng/view/lịch sử. Dự án đang thực hiện plan vẫn phải dùng UI kế hoạch để cập nhật; các task cũ không tự phản ánh execution mới khi tắt adapter.
+
+Staging: user chọn Render My Workspace. Không có service staging hiện hữu. Hai Supabase projects qlycv, QLCV_Backup là production/failover, không dùng làm DB thử. Chờ user chọn tổ chức DB mới trước khi kiểm chi phí/tạo project. Chưa tạo service, áp SQL hoặc deploy; chỉ test cô lập bằng dữ liệu giả. 30 test PASS; browser hiện kiểm editor/service, chưa kiểm các trang aggregate trong full-stack staging.
