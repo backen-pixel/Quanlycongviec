@@ -7,6 +7,16 @@
 
 ---
 
+## 2026-10-14 (3) — «Chưa giao» trả trùng dòng (lỗi «two children with the same key» trên app)
+
+- Phát hiện khi kiểm lỗi app: Metro báo lặp «Encountered two children with the same key» với khóa `t-task:<uuid>` (5 việc của TB-2026-589). Gọi `GET /work-tasks/team-project-tasks?unassigned=1` (Admin, chỉ đọc) thấy 35 `unified_id` bị trả 2+ lần toàn hệ thống (5 ở công ty chứa TB-2026-589); chế độ thường không trùng.
+- Nguyên nhân: view `unified_tasks_v` cố ý sinh MỘT dòng `tasks` cho MỖI lead của dự án (`is_primary_lead` true/false) → dự án nhiều deal có việc `tasks` bị nhân bản (đo bằng SELECT: Hucabi 3.277 việc thành 6.694 dòng, thừa 3.417; Phúc Đạt 68 việc thừa 68). Chế độ thường gom lại ở nhóm «song sinh» (`g.task`), còn chế độ «Chưa giao» đẩy thẳng `scannedBase` nên không khử trùng.
+- `workTasks.js` (`computeTeamTasks`): chế độ `unassigned` khử trùng theo `unified_id` (giữ dòng đầu). Không đổi chế độ khác, không ghi dữ liệu, không đụng view.
+- Hệ quả đã biết: các số «Chưa giao» ghi ở mục trước (14/10, HCB 323, Phúc Đạt 814, Metalla 128) có thể đang cộng cả dòng trùng → sau khi deploy cần đo lại (số sẽ giảm). Cần đo: `unassigned=1` không còn `unified_id` trùng; số «Chưa giao» công ty; app mở nhóm không còn log lỗi trùng key.
+- Chưa làm (cần người phụ trách quyết): view vẫn nhân bản việc `tasks` theo lead nên mọi nơi quét thẳng `unified_tasks_v` mà không lọc `is_primary_lead` hoặc không khử trùng đều có nguy cơ đếm thừa; đổi view là thay đổi CSDL.
+
+---
+
 ## 2026-10-14 (2) — Kế thừa người nhận từ `tasks` + nhóm «Việc xưởng riêng» trên Kanban
 
 - Bối cảnh (đo 14/10 sau khi Kanban chuyển sang `crm_task`): Kanban khớp chi tiết dự án 66/84 dự án HCB và 16/20 dự án Metalla (0 dự án ít hơn); phần Kanban nhiều hơn = đúng số việc `tasks` không có bản `crm_task` (10–11/dự án) + TB-2026-066 (56 việc deal con vì deal gốc `use_order_tasks=false`). Đợt gán nhân sự 08–12/10 chỉ ghi vào `tasks` nên HCB 1.401/2.026 `crm_task` SX «chưa giao» thực ra đã có người nhận ở bản `tasks` — mục «Chưa giao» của Admin và «Chưa gán» ở tab đếm thừa.
