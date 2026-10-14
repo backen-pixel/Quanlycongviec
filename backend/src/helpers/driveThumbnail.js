@@ -45,7 +45,11 @@ async function fetchUrlStream(url, label) {
   if (auth?.request) {
     try {
       const resp = await auth.request({ url, responseType: 'stream', timeout: 25_000 });
-      const ct = resp.headers?.['content-type'] || resp.headers?.['Content-Type'] || '';
+      // googleapis v173+ trả `Headers` của Web API: đọc bằng ngoặc vuông ra undefined,
+      // nên nhánh này âm thầm trượt xuống nhánh axios phía dưới. Dùng .get() khi có.
+      const ct = (typeof resp.headers?.get === 'function'
+        ? resp.headers.get('content-type')
+        : (resp.headers?.['content-type'] || resp.headers?.['Content-Type'])) || '';
       if (okImageContentType(ct)) return { stream: resp.data, contentType: ct || 'image/jpeg' };
     } catch (e) {
       console.warn(`[driveThumbnail] ${label} auth.request:`, e.message);
