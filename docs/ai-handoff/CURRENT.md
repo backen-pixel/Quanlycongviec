@@ -1,4 +1,26 @@
-## 2026-10-14 — VPT: website receipt + xác minh + phản hồi Ads, chờ phát hành
+## 2026-10-14 — VPT website: đã phát hành, TEST form → CRM đạt; Ads và backup còn chờ
+
+Người dùng đã duyệt phát hành [PR #128](https://github.com/backen-pixel/Quanlycongviec/pull/128) và tạo/lưu credential CAPI website riêng **chỉ ở chế độ test**. PR squash-merge lúc **09:09:49 ngày 14/10/2026 (Asia/Saigon, UTC+7)**, SHA `f4d7b8d20ab83869b516b805be27bc68edd8f7f6`. [Hồ sơ phát hành, bằng chứng và rollback](../ops/website-qualified-feedback.md) là trạng thái hiện tại; mục chuẩn bị bên dưới giữ làm lịch sử.
+
+Hai migration đã áp thành công lên primary `qlycv` (`kdxypztstbeovyedmvem`), history `20261014020814 / website_intake_receipts_vpt_20261014` và `20261014020825 / website_feedback_outbox_vpt_20261014`. Kiểm độc lập ACL/RLS, 13 RPC, 3 trigger và không backfill đạt. Render My Workspace: backend LIVE **09:11:19.848**, frontend LIVE **09:11:40.515**; backend redeploy cấu hình LIVE **09:13:59.548930**, cùng SHA trên.
+
+**Backup compatibility chưa chốt:** health **09:25:40** báo primary/backup HTTP200, active primary, không auto-failover; replication failed **2**, `PGRST204` vì backup thiếu `website_intake`. Candidate `20261014022725_website_intake_backup_compat.sql` chỉ thêm mirror column nullable JSONB, kiểm schema/reload cache; review và **5/5** kiểm SQL PASS, **chưa áp** lên `QLCV_Backup / atcfpgxkgbszglrelfgr`, cần phê duyệt riêng qua PR cụ thể. Không thêm rows/grants/RPC/receipt/outbox. Backup baseline chưa đủ qualification/receipt/sender; sửa cột không nghiệm thu failover hoặc Ads trên backup.
+
+WordPress đã lưu/read-back đủ ba file plugin **0.4.0** và CF7 **11116** khớp candidate; đã thấy checkbox đo quảng cáo riêng không tích sẵn và JS `0.4.0-1791944402`. WP Rocket cache đã xóa lúc **09:23**; `preflight_verified`. Khi cập nhật giữ LIVE/khóa cũ, không xử lý lại job cũ; sau cửa sổ TEST đã khôi phục LIVE và xác nhận UI. Hash và deployment ID cụ thể ở hồ sơ vận hành.
+
+Render backend đã lưu tám biến cấu hình cùng token riêng: `ENABLED=0`, `CONSENT=1`, `MODE=test`, công ty VPT / VPT 01 / Pixel `1000623629782763`, Graph `v26.0`; Test Event Code giữ private, không bật thêm Dataset Quality API. **Chưa chứng minh token hợp lệ, chưa provider ACK hoặc event Meta; không coi là kết nối đầu-cuối.** CRM UI lúc **09:21:54** hiển thị đã xác minh+có receipt **0**, sẵn sàng Meta **0**, ledger **0**, kết nối **Chưa bật**.
+
+**Bước 5 TEST form → CRM đã đạt:** người dùng duyệt cửa sổ TEST/email; một request hợp lệ `abfb393d-d9ee-4686-a113-0dc59a29a8b4` nhận receipt `confirmed`, measurement consent `false`, `VPT_ADS_V1`. Lần đầu validation tên thất bại không queue. SQL hậu kiểm độc lập **09:33:58.944** xác nhận đúng **1 Lead + 1 receipt + 1 attribution**, `is_test=true`, đúng VPT/customer/source/form/site/timestamps và Admin hoạt động cùng VPT theo default integration; matching/click IDs trống, public JSON chỉ fingerprint, qualification/outbox/attempts **0**. **CF7 trả `mail_failed`: email gửi thất bại**, không báo đã gửi; tuyến queue/CRM độc lập vẫn xác nhận. Đã restore LIVE; chưa nghiệm thu Ads/lead thật hoặc số CPL. Không tự xác minh khách thật, chế click ID/event Meta; Pixel nền không thuộc consent gate mới của bridge.
+
+Kiểm trước phát hành: **269** kiểm cục bộ (220 Node, 28 PHP, 21 SQL) và **8** kiểm CI PASS tại candidate `8a71ac057d23568005c63c862b7ba47d7f42002f`; không thay nghiệm thu hệ thống thật. Advisors riêng schema mới: **0 ERROR, 0 WARN, 5 INFO** (ba bảng service-only RLS không policy có chủ đích, FK `outbox_id` chưa index, index pending chưa dùng).
+
+Google VPT `975-957-2942`: action `7842337600` vẫn Secondary/One; Data Manager header-only còn chờ Lead thật đã xác minh để hoàn tất mapping/nguồn/lịch/nhập. Native Facebook **PR #127 vẫn draft, chưa triển khai**. Chưa có số khách mới/CPL/thuế phí được nghiệm thu hoặc căn cứ ≤250.000đ/khách; 130 triệu so với trần thử 100 triệu chưa làm rõ. Rollback phải giữ consent gate của **cả hai** Google exporters; nếu quay backend về trước gói này phải ngắt hai nguồn Google tới khi gate được khôi phục.
+
+---
+
+## 2026-10-14 — Lịch sử trước phát hành: chuẩn bị website receipt + xác minh + phản hồi Ads
+
+Mục này ghi trạng thái trước khi duyệt và phát hành PR #128; các câu “chưa triển khai” dưới đây không thay thế kết quả mới ở trên.
 
 Theo yêu cầu “kiểm và thiết lập” cho quảng cáo kéo về website, chuẩn bị [draft PR #128](https://github.com/backen-pixel/Quanlycongviec/pull/128), nhánh `codex/vpt-website-qualified-leads-20261014` từ main `3c6761731b0e4a6e248a81e1484d101c3b82e049`. **Chưa áp SQL/merge/deploy/cài WordPress/bật Meta website**, không qualify khách thật hoặc phát provider event. [Hồ sơ vận hành, phạm vi và rollback](../ops/website-qualified-feedback.md).
 
