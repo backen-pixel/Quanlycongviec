@@ -4,7 +4,7 @@ import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 export default function ProductionPlanTasksPage(){
   const {user}=useAuth();const [items,setItems]=useState([]),[mine,setMine]=useState(true),[late,setLate]=useState(false),[error,setError]=useState(''),[offset,setOffset]=useState(0),[more,setMore]=useState(false),[busy,setBusy]=useState(false);
-  async function load(reset=false){setBusy(true);setError('');try{const r=await api.get('/work-plans',{params:{offset:reset?0:offset}});setItems(old=>reset?r.data.items:[...old,...r.data.items]);setOffset(r.data.next_offset);setMore(r.data.more);}catch(e){setError(e.response?.data?.error||'Không tải được nhiệm vụ');}finally{setBusy(false);}}
+  async function load(reset=false){setBusy(true);setError('');try{const r=await api.get('/work-plans',{params:{offset:reset?0:offset}});setItems(old=>reset?r.data.items:[...new Map([...old,...r.data.items].map(p=>[p.project_id,p])).values()]);setOffset(r.data.next_offset);setMore(r.data.more);}catch(e){setError(e.response?.data?.error||'Không tải được nhiệm vụ');}finally{setBusy(false);}}
   useEffect(()=>{load(true);},[]);
   const uid=user?.userId||user?.id;
   const rows=items.flatMap(p=>p.schedule.tasks.map(t=>({...t,project_id:p.project_id}))).filter(t=>(!mine||t.assignee_id===uid)&&(!late||t.overdue||t.completed_late)).sort((a,b)=>Number(b.overdue)-Number(a.overdue)||Number(b.ready)-Number(a.ready)||a.deadline.localeCompare(b.deadline));

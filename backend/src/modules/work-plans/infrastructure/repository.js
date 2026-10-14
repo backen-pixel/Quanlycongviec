@@ -2,7 +2,13 @@
 function createRepository(db) {
   function unwrap(result) { if (result.error) { const e = new Error(result.error.message); e.status = ['40001','P0002'].includes(result.error.code) ? 409 : result.error.code === '42501' ? 403 : 500; throw e; } return result.data; }
   return {
-    listPlans: async (company,offset) => unwrap(await db.from('work_plan_instances').select('project_id,company_id,revision,document').eq('company_id',company).order('project_id').range(offset,offset+49)),
+    listPlans: async (company,offset,actor) => {
+      const query=()=>db.from('work_plan_instances').select('project_id,company_id,revision,document').order('project_id').range(offset,offset+49);
+      const results=await Promise.all([company?query().eq('company_id',company):Promise.resolve({data:[]}),
+        query().contains('document',{active:{graph:{tasks:[{assignee_id:actor}]}}})]);
+      const groups=results.map(unwrap);
+      return {rows:[...new Map(groups.flat().map(r=>[r.project_id,r])).values()],more:groups.some(g=>g.length===50)};
+    },
     getPlan: async id => unwrap(await db.from('work_plan_instances').select('company_id,revision,document').eq('project_id',id).maybeSingle()),
     replay: async (id, hash, context) => {
       const row = unwrap(await db.from('work_plan_commands').select('request_hash,company_id,actor_id,result').eq('command_id',id).maybeSingle());

@@ -14,6 +14,8 @@ create table public.work_plan_versions (
   created_at timestamptz not null default now(),
   primary key(project_id, revision)
 );
+create index work_plan_instances_company on public.work_plan_instances(company_id,project_id);
+create index work_plan_instances_assignment on public.work_plan_instances using gin(document jsonb_path_ops);
 create table public.work_plan_template_versions (
   template_id uuid not null,
   version integer not null check (version > 0),

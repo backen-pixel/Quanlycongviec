@@ -13,17 +13,17 @@ function createRouter({ repository, auth, scope, isManager, validateAssignees })
   const handle = fn => async (req,res) => { try { const ctx = await context(req,res); if (!ctx) return; await fn(req,res,ctx); } catch(e) { if (!res.headersSent) res.status(e.status || 500).json({error: e.status ? e.message : 'Không thể xử lý kế hoạch. Kiểm tra migration và kết nối dữ liệu.'}); } };
   router.get('/', async (req,res) => {
     try {
-      // Never take company from browser. System users choose a company in their account.
-      if (!req.user.company_id) return res.json({items:[],more:false});
+      // Company is server-owned; also include explicitly assigned cross-company projects.
       const offset = Math.max(0,Math.min(100000,parseInt(req.query.offset,10)||0));
-      const rows = await repository.listPlans(req.user.company_id,offset); const items=[];
+      const candidates = await repository.listPlans(req.user.company_id,offset,req.user.userId);
+      const rows = candidates.rows || candidates; const items=[];
       for (const row of rows) {
         const access = await scope(req,{status:()=>({json:()=>{}})},row.project_id); if (!access) continue;
         const ctx = {companyId:access.project.company_id,actorId:req.user.userId,manager:isManager(req.user,access.project)};
         const plan = await service.view(row.project_id,ctx);
         if (plan.schedule) items.push({project_id:row.project_id,can_manage:ctx.manager,schedule:plan.schedule});
       }
-      res.json({items,more:rows.length===50,next_offset:offset+50});
+      res.json({items,more:candidates.more??rows.length===50,next_offset:offset+50});
     } catch(e) {res.status(e.status||500).json({error:'Không tải được danh sách kế hoạch'});}
   });
   router.get('/:id', handle(async (req,res,ctx) => res.json(await service.view(req.params.id,ctx))));
