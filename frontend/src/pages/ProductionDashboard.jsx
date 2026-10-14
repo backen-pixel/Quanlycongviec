@@ -6347,12 +6347,13 @@ function SxMaTranSongSong({
     if (!projectId || !stage?.id) return;
     const k = `${projectId}:${stage.id}`;
     const truoc = ttRef.current[k];
-    setTrangThai((prev) => ({ ...prev, [k]: tt }));
+    if (tt !== 'xong') setTrangThai((prev) => ({ ...prev, [k]: tt }));
     setDangLuu((prev) => new Set(prev).add(k));
     try {
       await api.put('/production/substage-status', {
         project_id: projectId, stage_id: String(stage.id), trang_thai: tt,
       });
+      setTrangThai((prev) => ({ ...prev, [k]: tt }));
       setLoiLuu('');
     } catch (e) {
       // Trả đúng giá trị cũ, không đoán — tránh hiện sai trạng thái sản xuất.

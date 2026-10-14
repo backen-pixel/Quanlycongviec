@@ -79,14 +79,14 @@ export default function PipelineStepper({
   const ttCua = (s, i) => {
     const past = stageIsPast(s, i);
     const here = String(s.id) === curId;
-    if (!trangThaiO) return here ? 'dang' : (past ? 'xong' : 'chua');
+    if (!trangThaiO) return here ? 'dang' : (linearProgress ? 'chua' : (past ? 'xong' : 'chua'));
     return trangThaiCotHien({ raw: trangThaiO[String(s.id)], past, here });
   };
 
   /** Một bước trên stepper cổ điển — dùng cho CRM và cho pipeline chưa gán cột lớn. */
   const veBuoc = (s, i) => {
     const isCurrent = String(s.id) === curId;
-    const isPast = stageIsPast(s, i);
+    const isPast = linearProgress ? ttCua(s, i) === 'xong' : stageIsPast(s, i);
     return (
       <div key={s.id} className="flex flex-col items-center shrink-0 px-1 w-[7.5rem]">
         <button
@@ -140,9 +140,10 @@ export default function PipelineStepper({
    * nên tích = chuyển giai đoạn, cùng luật với stepper CRM: tích cột nào thì
    * thẻ sang chính cột đó. Bỏ tích chỉ gỡ dấu ✓, không đụng vị trí thẻ.
    */
-  const tichCotDon = (s, tt) => {
+  const tichCotDon = async (s, tt) => {
     const dangXong = tt === 'xong';
-    onDoiTrangThai?.(s.id, dangXong ? 'chua' : 'xong');
+    const saved = await onDoiTrangThai?.(s.id, dangXong ? 'chua' : 'xong');
+    if (saved === false) return;
     if (dangXong) return;
     if (String(s.id) === curId) return; // thẻ đã nằm ở cột này rồi
     onMoveToStage?.(s.id);
@@ -305,7 +306,7 @@ export default function PipelineStepper({
                       })}
                       {onDoiTrangThai && (
                         <p className="pl-1 pt-0.5 text-[9px] leading-snug text-gray-400">
-                          Bấm vòng tròn để tích hoàn thành từng việc
+                          Chỉ xác nhận Xong khi nhiệm vụ bắt buộc đã hoàn thành. Xem tab Công việc.
                         </p>
                       )}
                     </div>

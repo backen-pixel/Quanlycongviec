@@ -1239,6 +1239,7 @@ r.post('/pipeline-stages/seed-default-kitchen-glass', requirePermission('project
 // mà nó đang đứng. Bảng này ghi thêm: trong cột lớn đó, từng việc song song đang ở đâu.
 // Chưa có dòng = 'chua'. Bảng chưa tạo (migration chưa chạy) = trả rỗng, giao diện chạy như cũ.
 const PSS_TRANG_THAI = new Set(['chua', 'dang', 'xong']);
+const { loadRequiredStageTasks, blockersForStage, completionState, completionConflict } = require('../helpers/workshopStageCompletion');
 const isSubstageTableMissing = (e) => {
   const m = String(e?.message || '') + ' ' + String(e?.details || '');
   return /project_substage_status/i.test(m)
@@ -1264,7 +1265,23 @@ r.get('/substage-status', requirePermission('projects', 'view'), async (req, res
     if (projectId) q = q.eq('project_id', projectId);
     const { data, error } = await q;
     if (error) throw error;
-    res.json({ rows: data || [] });
+    let rows = data || [];
+    if (!logistics && rows.some((row) => row.trang_thai === 'xong')) {
+      const { data: stages, error: stageError } = await supabase.from('production_pipeline_stages')
+        .select('id,name,bucket_slug').in('id', ids);
+      if (stageError) throw stageError;
+      const stageById = new Map((stages || []).map((stage) => [String(stage.id), stage]));
+      const completedProjectIds = [...new Set(rows.filter((item) => item.trang_thai === 'xong').map((row) => row.project_id))];
+      const requiredTasks = await loadRequiredStageTasks(supabase, completedProjectIds);
+      rows = rows.map((row) => {
+        if (row.trang_thai !== 'xong') return row;
+        const stage = stageById.get(String(row.stage_id));
+        if (!stage) return { ...row, trang_thai: 'dang' };
+        const blockers = blockersForStage(requiredTasks, stage, row.project_id);
+        return { ...row, trang_thai: completionState(row.trang_thai, blockers), xong_luc: blockers.length ? null : row.xong_luc, required_open_count: blockers.length };
+      });
+    }
+    res.json({ rows });
   } catch (e) {
     if (isSubstageTableMissing(e)) return res.json({ rows: [], _note: 'migration_pending' });
     console.error('[production/substage-status GET]', e.message);
@@ -1288,7 +1305,7 @@ r.put('/substage-status', requireProductionKanbanEdit(), async (req, res) => {
 
     const stageTable = logistics ? 'logistics_pipeline_stages' : 'production_pipeline_stages';
     const [{ data: stage, error: stErr }, { data: prj, error: pjErr }] = await Promise.all([
-      supabase.from(stageTable).select('id, company_id').eq('id', stageId).maybeSingle(),
+      supabase.from(stageTable).select(logistics ? 'id, company_id' : 'id, company_id, name, bucket_slug').eq('id', stageId).maybeSingle(),
       supabase.from('projects').select('id, company_id, logistics_company_id').eq('id', projectId).maybeSingle(),
     ]);
     if (stErr) throw stErr;
@@ -1300,6 +1317,12 @@ r.put('/substage-status', requireProductionKanbanEdit(), async (req, res) => {
       : prj.company_id;
     if (stage.company_id && projectCompanyId && String(stage.company_id) !== String(projectCompanyId)) {
       return res.status(403).json({ error: 'Cột không thuộc công ty của dự án' });
+    }
+
+    if (!logistics && trangThai === 'xong') {
+      const required = await loadRequiredStageTasks(supabase, projectId);
+      const blockers = blockersForStage(required, stage);
+      if (blockers.length) return res.status(409).json(completionConflict(blockers));
     }
 
     const { data: cu, error: cuErr } = await supabase

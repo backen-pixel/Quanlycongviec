@@ -186,7 +186,7 @@ function resolveSxTaskProductionStageId(task, sxStages) {
   return null;
 }
 
-/** Gán mỗi nhiệm vụ SX vào đúng một cột: tên cột → id cột → slug. */
+/** Gán mỗi nhiệm vụ SX vào đúng một cột: id cột → tên cột → slug. */
 function assignSxTasksToStages(tasks, stages) {
   const list = stages || [];
   const byId = new Map(list.map((s) => [String(s.id), []]));
@@ -199,6 +199,7 @@ function assignSxTasksToStages(tasks, stages) {
     if (!nameN || !byId.has(id)) continue;
     for (const t of tasks || []) {
       if (!t?.id || claimed.has(t.id)) continue;
+      if (t.production_pipeline_stage_id || t.production_stage_id) continue;
       if (normalizeSxStageText(t.title) === nameN) {
         byId.get(id).push(t);
         claimed.add(t.id);
@@ -1820,8 +1821,7 @@ export default function CRMTasksTab({
 
   const doiTrangThaiCot = useCallback(async (stageId, tt, opts) => {
     if (onDoiTrangThai) {
-      await onDoiTrangThai(stageId, tt, opts);
-      return;
+      return onDoiTrangThai(stageId, tt, opts);
     }
     const pid = linkedProjectId;
     if (!pid || !stageId) return;
@@ -1829,7 +1829,7 @@ export default function CRMTasksTab({
     let truoc;
     setLocalTrangThaiO((prev) => {
       truoc = prev[k];
-      return { ...prev, [k]: tt };
+      return tt === 'xong' ? prev : { ...prev, [k]: tt };
     });
     try {
       await api.put('/production/substage-status', {
@@ -1838,6 +1838,8 @@ export default function CRMTasksTab({
         trang_thai: tt,
         pipeline: isLogisticsScope ? 'logistics' : 'production',
       });
+      setLocalTrangThaiO((prev) => ({ ...prev, [k]: tt }));
+      return true;
     } catch (e) {
       setLocalTrangThaiO((prev) => {
         const next = { ...prev };
@@ -1846,6 +1848,7 @@ export default function CRMTasksTab({
         return next;
       });
       if (!opts?.silent) alert(e.response?.data?.error || 'Không đánh dấu được cột');
+      return false;
     }
   }, [onDoiTrangThai, linkedProjectId, isLogisticsScope]);
 
@@ -2350,18 +2353,8 @@ export default function CRMTasksTab({
     });
   }, [useSxPipelineTaskUi, sxPipelineStages, useVcPipelineTaskUi, vcPipelineStages, embeddedVcKanbanStages, vcAreaTab, tasksByStage]);
 
-  useEffect(() => {
-    if (!sxPlanGroups) return undefined;
-    sxPlanGroups.forEach((g) => {
-      g.children.forEach((c) => {
-        const id = String(c.stage.id);
-        const allDone = c.stageTasks.length > 0 && c.completed === c.stageTasks.length;
-        const raw = sxTrangThaiO[id];
-        if (allDone && raw !== 'xong' && raw !== 'chua') void doiTrangThaiCot(id, 'xong', { silent: true });
-      });
-    });
-    return undefined;
-  }, [sxPlanGroups, sxTrangThaiO, doiTrangThaiCot]);
+  // A filtered task list is not proof that all required work on the stage is done.
+  // Confirm completion explicitly through the server gate, never as a render effect.
 
   /** Khóa giai đoạn — dùng khi sắp xếp kéo thả trong tab Công việc deal. */
   const getTaskStageKey = useCallback((task) => {

@@ -1150,6 +1150,12 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
                 ? `Các danh mục nhiệm vụ thuộc module ${fixedModuleConfig.label} của dự án còn hoạt động`
                 : 'Chỉ hiển thị nhiệm vụ của dự án còn hoạt động trong từng module'}
             </p>
+            {workshopMode && !projectView && (
+              <p className="text-xs text-amber-800 mt-1">
+                Quá hạn ở bảng này tính theo hạn thẻ sản xuất (ngày lắp đặt).
+                Kiểm tra thêm hạn hoàn thiện và hạn công đoạn trong chi tiết dự án.
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <div className="flex rounded-lg border border-gray-200 bg-white p-0.5" role="group" aria-label="Kiểu xem">

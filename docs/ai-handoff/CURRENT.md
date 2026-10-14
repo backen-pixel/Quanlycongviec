@@ -1,3 +1,10 @@
+## 2026-10-14 — Quy tắc công đoạn Xong phải qua nhiệm vụ bắt buộc (đã duyệt)
+
+Anh Hùng đồng ý chỉ hiện Xong khi mọi nhiệm vụ bắt buộc trong công đoạn hoàn thành. [Phạm vi, API, kiểm thử, giới hạn đồng thời và rollback](../ops/workshop-stage-completion.md). Đã thêm gate SX ở GET/PUT substage-status, kiểm hai nguồn nhiệm vụ, fail closed; frontend chờ server và không suy từ vị trí/danh sách đang lọc. GET trả trạng thái hiệu lực, giữ lịch sử xác nhận cũ. Không đổi policy hạn hoặc gate VC/LĐ, không tự hoàn thành nhiệm vụ/backfill. 11 kiểm Node và build Vite PASS 39.34s. Chưa deploy/DB thật/staging; chưa coi là DONE trên production.
+
+
+---
+
 ## 2026-10-14 — VPT: website receipt + xác minh + phản hồi Ads, chờ phát hành
 
 Theo yêu cầu “kiểm và thiết lập” cho quảng cáo kéo về website, chuẩn bị [draft PR #128](https://github.com/backen-pixel/Quanlycongviec/pull/128), nhánh `codex/vpt-website-qualified-leads-20261014` từ main `3c6761731b0e4a6e248a81e1484d101c3b82e049`. **Chưa áp SQL/merge/deploy/cài WordPress/bật Meta website**, không qualify khách thật hoặc phát provider event. [Hồ sơ vận hành, phạm vi và rollback](../ops/website-qualified-feedback.md).
