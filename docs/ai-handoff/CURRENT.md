@@ -1,3 +1,12 @@
+## 14/10/2026 — Kanban kế hoạch SX đã kiểm runtime staging
+
+Deploy dep-db7o12ek1f9s738e7io0 LIVE, runtime 56d0d2eace13f49ce022435bafbd7bb92192d54c; finished 13:19:43Z. GET board kiểm public API PASS: manager/staff đúng scope, other-company không thấy project, legacy no-plan giữ nguyên. Browser dashboard có 3 project giả: Cánh kính 0/6, Tủ bếp 1/7, các hạn SX và ready stages; nút Nhiệm vụ của 2 plan đến canonical editor, legacy vẫn đến project-tasks. Manager dự án no-plan có link Lập kế hoạch SX từ mẫu. Hai CRM deal giả mới chỉ để đưa các project fixture sẵn có vào Kanban; không đổi project/execution hoặc production.
+
+33/33 regression PASS, frontend build PASS, reviewer riêng no blockers. Ảnh: D:/quản trị vận hành/HoSoTuBepPro/templates/KANBAN_PLAN_STAGING.png; API proof BOARD_VERIFICATION.json cùng thư mục. Các KPI tổng/cột Kanban vẫn theo workflow hiện có, không tự đổi cột vì các công đoạn song song; thẻ riêng hiển thị công đoạn có việc sẵn sàng. Mẫu kính 6,5/7,5 ngày đã xuất bản trước đó vẫn dùng cho dự án mới; fixture demo 7/6 task dùng kiểm phần tích hợp, không phải các template mới đã duyệt để chạy.
+
+Đã hoàn thành phần hiển thị tiến độ quản lý dự án trên staging. Chưa merge/deploy production; không tự đồng bộ cột legacy hay giao người thật. Rollback tắt flag aggregate hoặc revert code, giữ lịch sử/template. Source template badge chỉ có khi kế hoạch được lập từ template; người cá nhân chỉ nhận số việc được giao.
+
+---
 ## 14/10/2026 — Quản lý dự án: tiến độ kế hoạch trên Kanban (candidate staging)
 
 Anh Hùng đồng ý nối quản lý dự án sau khi xem ảnh dashboard production. Thêm GET /work-plans/board bật bằng flag aggregates, tối đa 30 project IDs/request, kiểm scope từng dự án. Manager xem tổng tiến độ, tên mẫu/version nguồn, hạn SX; staff chỉ thống kê việc mình, không nhãn xong toàn dự án. Domain tính done/waived/review/overdue và mọi công đoạn có nhiệm vụ ready song song. Không tự ghi pipeline stage hoặc deadlines legacy.
@@ -2459,6 +2468,7 @@ Kèm 2 việc chặn khác: thu quyền `EXECUTE` của 4 hàm mới khỏi `ano
 233 test tổng hợp P1/adAnalytics/mốc/chi tiêu đạt; `node --check` đạt. `vite build` chưa chạy được vì thiếu `cross-env` tại máy; chưa kiểm DB/HTTP/dữ liệu thật hay duyệt UI. Không chạy SQL, bật cờ, commit hoặc push. Hoàn tác: bỏ diff P1-11 và hai mục bàn giao này.
 
 ---
+
 
 
 
