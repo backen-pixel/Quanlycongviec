@@ -50,3 +50,13 @@ Gateway dùng cùng projection cho phân trang và count; việc cùng tên khá
 Rollback adapter: tắt WORK_PLANS_AGGREGATES_ENABLED, giữ bảng/view/lịch sử. Dự án đang thực hiện plan vẫn phải dùng UI kế hoạch để cập nhật; các task cũ không tự phản ánh execution mới khi tắt adapter.
 
 Staging: user chọn Render My Workspace. Không có service staging hiện hữu. Hai Supabase projects qlycv, QLCV_Backup là production/failover, không dùng làm DB thử. Chờ user chọn tổ chức DB mới trước khi kiểm chi phí/tạo project. Chưa tạo service, áp SQL hoặc deploy; chỉ test cô lập bằng dữ liệu giả. 30 test PASS; browser hiện kiểm editor/service, chưa kiểm các trang aggregate trong full-stack staging.
+
+## Staging được cấp ngày 14/10/2026
+
+DB riêng: jdwgcivfqajpnlatrfwq (“Trang chuẩn bị”), Pkmax-bit's Org, MICRO +10 USD/tháng user duyệt; Render My Workspace. Bootstrap chỉ cấu trúc public từ catalog primary; không customer/user/order/task data, legacy functions/triggers/policies hoặc provider config. Toàn bộ bảng service-only/RLS, views security_invoker, extensions ở extensions schema. Đây là fixture tương thích các tuyến Work Plans/aggregate đang thử, không chứng minh mọi module/trigger legacy của production.
+
+backend/src/stagingServer.js là entry riêng: pin database ref, strong JWT, disable dotenv và lọc env provider/backup, không import server.js/jobs. Health probes tới staging còn chạy; business_jobs=false. Chỉ mở một số API cần cho kiểm tính năng và frontend, module không bật trả 404. Build VITE_STAGING_MODE=1, VITE_API_URL trống (same-origin); không để frontend fallback về production. Synthetic accounts/private fixture nằm ngoài repo.
+
+Test opt-in: STAGING_TEST_CREDENTIALS trỏ private fixture, node backend/tests/work-plans-staging-smoke.js (origin mặc định localhost:44010, hoặc Render staging đã kiểm định). Tự từ chối origin production. Kết quả tại local host + DB staging thật: PASS 13 task, same-title distinct IDs, employee/other-company gates, personal/team/project overview/report/WorkUnified, legacy not migrated. Frontend stage build và 30 local regression tests PASS.
+
+Rollback staging: dừng service staging hoặc quay lại candidate trước; giữ DB/history giả để tra soát. Không đổi production/backup. Chưa xóa DB có phí; chỉ xóa/dừng theo yêu cầu user sau nghiệm thu.

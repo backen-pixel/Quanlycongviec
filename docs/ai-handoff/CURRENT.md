@@ -1,3 +1,11 @@
+## 2026-10-14 — Staging đã có DB riêng; đang đưa candidate lên Render
+
+Anh Hùng chọn Pkmax-bit's Org, duyệt thêm 10 USD/tháng và đã tự tạo DB. Xác minh bằng connector + tab user: project jdwgcivfqajpnlatrfwq, tên “Trang chuẩn bị”, ap-northeast-2, ban đầu public rỗng. Đã tạo cấu trúc 343 bảng/1499 ràng buộc/5 views từ catalog primary (chỉ schema, không dữ liệu, không functions/triggers/policies cũ), service_role riêng; mọi bảng RLS và browser denied. Áp hai migrations Work Plans. Chỉ seed 2 công ty/3 tài khoản/3 dự án giả. Extensions chuyển sang extensions schema; advisor chỉ INFO rls_enabled_no_policy (backend-only chủ đích), không WARN/ERROR.
+
+Entry stagingServer khóa URL đúng DB này, không đọc .env, loại provider/backup env, JWT riêng, không import server.js hoặc lịch nghiệp vụ; health probe 15 giây vẫn chỉ vào staging. Frontend staging banner + API cùng host. 30 test cục bộ PASS, guard từ chối URL production PASS, build staging PASS; smoke HTTP thực + Supabase thực PASS cho 13 task/tủ bếp/cánh kính, trùng tên, quyền nhân viên/cross-company, báo cáo/team/WorkUnified và dự án cũ. Chưa có deploy Render hoặc kiểm browser toàn bộ app thật ở thời điểm mục này. Khóa/tài khoản thử lưu riêng ngoài repo, không dùng credential production.
+
+---
+
 ## 2026-10-14 — Bước 1: nối tổng hợp; bước 2: staging chờ cơ sở dữ liệu riêng
 
 Anh Hùng giao bước 1 và 2, chọn Render My Workspace (tea-d47g0824d50c73856e80). Candidate bổ sung vào PR134: snapshot hạn từng task khi duyệt; private view unified_work_tasks_v chỉ service_role; bật bằng WORK_PLANS_AGGREGATES_ENABLED=1 sau hai migrations. Gateway nhiệm vụ/badge, quản lý SX, Work Unified thêm số việc/hoàn thành/quá hạn; báo cáo ngày thêm phần kế hoạch SX đọc revision trước mốc cuối ngày Việt Nam. Dự án cũ không backfill; nhiệm vụ SX cũ của dự án đã duyệt plan v2 không đếm song song; CRM trước bán và VC giữ nguồn riêng. Trạng thái miễn trừ đóng, cần review còn mở.
