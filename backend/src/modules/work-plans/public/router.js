@@ -4,9 +4,10 @@ const { createService } = require('../application/service');
 const { normalize } = require('../domain/schedule');
 const { reportWindow, summarizePlans } = require('../domain/report');
 const {summarizeBoard}=require('../domain/board');
-function createRouter({ repository, auth, scope, isManager, validateAssignees }) {
+function createRouter({ repository, auth, scope, isManager, validateAssignees, collaborationRouter }) {
   const router = Router(); const service = createService(repository);
   router.use(auth);
+  if(collaborationRouter)router.use('/:id/tasks/:taskId',collaborationRouter);
   router.get('/board',async(req,res)=>{
     if(process.env.WORK_PLANS_AGGREGATES_ENABLED!=='1')return res.json({enabled:false,items:[]});
     try{

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
+import ProductionPlanTaskDetail from '../components/ProductionPlanTaskDetail';
 
 const examples = {
   cabinet: { name:'Tủ bếp — ví dụ 7 ngày', names:['Chốt bản vẽ','Chuẩn bị vật tư','Gia công thùng','Gia công cánh','Lắp ráp','Kiểm tra','Đóng gói'], days:[1,1,2,2,1,1,1], deps:[[],[0],[1],[1],[2,3],[4],[5]] },
@@ -13,11 +14,15 @@ const date = v => v ? new Date(v).toLocaleString('vi-VN',{timeZone:'Asia/Ho_Chi_
 const css = 'border rounded px-2 py-1.5 w-full bg-white';
 export default function ProductionPlanPage() {
   const {id}=useParams(); const url=`/work-plans/${id}`;
+  const [searchParams]=useSearchParams();
+  const requestedTask=searchParams.get('task');
   const [data,setData]=useState(null), [graph,setGraph]=useState(blank), [deadline,setDeadline]=useState('');
   const [templates,setTemplates]=useState([]), [source,setSource]=useState(null), [users,setUsers]=useState([]);
   const [error,setError]=useState(''), [busy,setBusy]=useState(false), [message,setMessage]=useState('');
   const [reason,setReason]=useState(''), [mine,setMine]=useState(true), [acceptLate,setAcceptLate]=useState(false);
   const [templateName,setTemplateName]=useState(''), [history,setHistory]=useState(null), [editing,setEditing]=useState(false), [taskForm,setTaskForm]=useState({});
+  const [detailTask,setDetailTask]=useState(null);
+  useEffect(()=>{const task=data?.schedule?.tasks.find(t=>t.id===requestedTask);if(task&&(data.can_manage||task.assignee_id===data.actor_id))setDetailTask(task.id);},[requestedTask,data?.actor_id,!!data?.schedule]);
   async function reload() {
     setBusy(true);setError('');
     try { const r=await api.get(url);setData(r.data);setMine(!r.data.can_manage);const d=r.data.document?.draft||r.data.document?.active;
@@ -66,6 +71,7 @@ export default function ProductionPlanPage() {
       {visible.map(t=>{const f=taskForm[t.id]||{};return <article className={`border rounded p-3 space-y-2 ${t.overdue?'border-red-300':''}`} key={t.id}>
         <div className="flex flex-wrap justify-between gap-2"><b>{t.name}</b><span>{t.needs_review?'Cần kiểm tra lại':t.status==='done'?(t.completed_late?'Hoàn thành trễ':'Hoàn thành'):t.status==='waived'?'Đã bỏ qua':t.overdue?'Trễ hạn':t.status==='doing'?'Đang làm':t.ready?'Có thể làm':'Chờ việc trước'}</span></div>
         <p>{userName(t.assignee_id)} · bắt đầu {date(t.planned_start)} · hạn {date(t.deadline)}</p>
+        {(data.can_manage||t.assignee_id===data.actor_id)&&<button className="text-indigo-700 underline" onClick={()=>setDetailTask(t.id)}>Chi tiết, bình luận và tài liệu</button>}
         {!!t.dependencies.length&&<p>Việc trước: {t.dependencies.map(d=>schedule.tasks.find(x=>x.id===d)?.name).join(', ')}</p>}
         {t.evidence&&<p className="whitespace-pre-wrap">Minh chứng: {t.evidence}</p>}{t.reason&&<p>Lý do: {t.reason}</p>}
         {(data.can_manage||t.assignee_id===data.actor_id)&&<div className="space-y-2"><input aria-label={`Minh chứng ${t.name}`} className={css} placeholder="Minh chứng / đường dẫn tài liệu" value={f.evidence??t.evidence} onChange={e=>formPatch(t.id,{evidence:e.target.value})}/>
@@ -99,5 +105,6 @@ export default function ProductionPlanPage() {
       <button className="text-teal-700" onClick={async()=>{try{const r=await api.get(`${url}/history`);setHistory(r.data);}catch(e){setError(e.response?.data?.error||'Không tải được lịch sử');}}}>Xem lịch sử</button>
       {history&&<ul className="space-y-1">{history.map(h=><li key={h.revision}>Phiên bản {h.revision} · {date(h.created_at)} · {h.document.active?.reason||'Cập nhật nhiệm vụ / bản nháp'} · hạn {date(h.document.active?.deadline)}</li>)}</ul>}
     </section>}
+    <ProductionPlanTaskDetail key={`${id}:${detailTask}`} projectId={id} task={schedule?.tasks.find(t=>t.id===detailTask)?{...schedule.tasks.find(t=>t.id===detailTask),dependency_names:schedule.tasks.find(t=>t.id===detailTask).dependencies.map(d=>schedule.tasks.find(x=>x.id===d)?.name||d)}:null} open={!!detailTask} onClose={()=>setDetailTask(null)} canManage={data?.can_manage} busy={busy} onCommand={command}/>
   </div>;
 }

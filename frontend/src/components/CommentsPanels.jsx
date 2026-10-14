@@ -3619,6 +3619,7 @@ export function CrmLeadHistoryPanel({ leadId, forModule = null }) {
 /** Bình luận dự án sản xuất — realtime qua socket `project:comment` */
 export function ProjectCommentsPanel({
   projectId,
+  allowAttachments = true,
   onCountChange,
   slashCommands = [],
   onSlashCommand,
@@ -3897,11 +3898,11 @@ export function ProjectCommentsPanel({
       onUnhideSystemDocument={unhideSystemDocument}
       onReply={(c) => { setReplyTo({ id: c.id, name: c.user?.full_name || 'Thành viên' }); setEditingId(null); }}
       onReaction={pickReaction}
-      enableAttachments
+      enableAttachments={allowAttachments}
       pendingFiles={pendingFiles}
       onFilesUploaded={handleFilesUploaded}
       uploadFiles={uploadCommentFiles}
-      onPasteFiles={handlePasteFiles}
+      onPasteFiles={allowAttachments ? handlePasteFiles : undefined}
       pasteUploadProgress={pasteProgress}
       onRemovePendingFile={(i) => setPendingFiles((prev) => prev.filter((_, idx) => idx !== i))}
       canSubmit={Boolean(body.trim() || pendingFiles.length)}

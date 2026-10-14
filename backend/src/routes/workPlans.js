@@ -5,8 +5,13 @@ const { assertProjectAccessible } = require('../helpers/projectAccessScope');
 const { canManage } = require('../modules/work-plans/application/permissions');
 const { createRepository } = require('../modules/work-plans/infrastructure/repository');
 const { createRouter } = require('../modules/work-plans/public/router');
+const {createCollaborationRepository}=require('../modules/work-plans/infrastructure/collaborationRepository');
+const {createCollaborationRouter}=require('../modules/work-plans/public/collaborationRouter');
+const collaborationRepository=createCollaborationRepository(supabase);
+const scope=(req,res,id)=>assertProjectAccessible(req,res,id,{mode:'company',operation:req.method==='GET'?'READ':'WRITE'});
 module.exports = createRouter({
   repository: createRepository(supabase), auth,
+  collaborationRouter:createCollaborationRouter({repository:collaborationRepository,scope,isManager:canManage}),
   // Commands additionally gate manager / task owner after project and tenant scope.
   scope: (req,res,id) => assertProjectAccessible(req,res,id,{mode:'company',operation:req.method === 'GET' ? 'READ' : 'WRITE'}),
   isManager: canManage,

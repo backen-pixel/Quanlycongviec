@@ -16,6 +16,7 @@ Object.assign(process.env, {
   REDIS_DISABLED:'1',PG_POOL_DISABLED:'1',RESPONSE_CACHE_DISABLED:'1',
   SUPABASE_FAILOVER_ENABLED:'0',SUPABASE_AUTO_FAILOVER:'0',SUPABASE_REPLICATION_DISABLED:'1',
   WORK_PLANS_AGGREGATES_ENABLED:'1',NODE_ENV:'production',
+  WORK_PLANS_COLLABORATION_ENABLED:'1',
 });
 const express = require('express');
 const helmet = require('helmet');

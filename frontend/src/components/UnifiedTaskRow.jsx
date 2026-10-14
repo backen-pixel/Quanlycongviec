@@ -69,7 +69,11 @@ function canSendTaskRemind(user) {
 
 function getDeepLink(task) {
   if (!task) return null;
-  if (task.source === 'work_plan' && task.project_id) return `/sx/projects/${task.project_id}/plan`;
+  if (task.source === 'work_plan' && task.project_id) {
+    const prefix=`${task.project_id}:`,sourceId=String(task.source_id||'');
+    const id=sourceId.startsWith(prefix)?sourceId.slice(prefix.length):'';
+    return `/sx/projects/${task.project_id}/plan${/^[a-zA-Z0-9_-]{1,80}$/.test(id)?`?task=${encodeURIComponent(id)}`:''}`;
+  }
   if (task.source === 'crm_task' && task.lead_id) {
     return `/crm/leads/${task.lead_id}`;
   }

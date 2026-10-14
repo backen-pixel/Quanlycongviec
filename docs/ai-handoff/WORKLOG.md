@@ -2701,3 +2701,15 @@ Deploy dep-db7o12ek1f9s738e7io0 LIVE, runtime 56d0d2eace13f49ce022435bafbd7bb921
 
 ---
 
+## 14/10/2026 — Chi tiết nhiệm vụ kế hoạch, bình luận và tài liệu (candidate staging)
+
+Anh Hùng yêu cầu nối ngay không gian làm việc chi tiết sang nhiệm vụ kế hoạch: bình luận, tài liệu, thao tác nhiệm vụ, không gian dự án. Thêm modal dùng Modal/ProjectCommentsPanel hiện có; tab chi tiết dùng command canonical, bình luận riêng task, upload/private signed download (8 MB/tệp), tab trao đổi chung dùng project_comments. Liên kết UnifiedTaskRow và personal task page thêm ?task= để mở đúng modal. Giao người vẫn ở editor kế hoạch; không tự gán người thật từ tên mẫu.
+
+Migration mới CLI-generated 20261014162507_work_plan_collaboration.sql đã áp riêng jdwgcivfqajpnlatrfwq: hai bảng service-only/RLS, bucket work-plan-files private; khóa row plan kiểm task/company và current-assignee hoặc quản lý DB khi insert; ngăn xóa task có bình luận/tệp. Feature WORK_PLANS_COLLABORATION_ENABLED mặc định off, staging bật1. Không áp production.
+
+36 regression PASS, collaboration SQL/privacy/assignment/replay/cleanup tests PASS; staging build PASS. Actual local HTTP+Supabase/private Storage PASS: staff post file/comment, manager read, wrong company/task file denied, replay no duplicate, private public URL denied, project room text POST/GET works. Reviewer không còn blocker sau sửa race quyền, giữ private object khi metadata result UNKNOWN thay vì xóa nhầm file đã commit, và review-required done revalidation.
+
+Giới hạn: task comments chưa có reactions/edit/delete/thread; pagination 30; private download 60s; upload unknown có thể cần đối soát private object, không claim zero orphan. Staging chỉ bật private task uploader; legacy project public uploader không bật, tab project chỉ trao đổi và dẫn tài liệu sang task. Không chuyển bình luận legacy sang nhiệm vụ mới, không sửa legacy execution. Browser/public deploy cuối còn chờ. Rollback tắt flag hoặc revert, giữ tables/bucket/history.
+
+---
+
