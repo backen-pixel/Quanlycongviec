@@ -105,6 +105,6 @@ export default function ProductionPlanPage() {
       <button className="text-teal-700" onClick={async()=>{try{const r=await api.get(`${url}/history`);setHistory(r.data);}catch(e){setError(e.response?.data?.error||'Không tải được lịch sử');}}}>Xem lịch sử</button>
       {history&&<ul className="space-y-1">{history.map(h=><li key={h.revision}>Phiên bản {h.revision} · {date(h.created_at)} · {h.document.active?.reason||'Cập nhật nhiệm vụ / bản nháp'} · hạn {date(h.document.active?.deadline)}</li>)}</ul>}
     </section>}
-    <ProductionPlanTaskDetail key={`${id}:${detailTask}`} projectId={id} task={schedule?.tasks.find(t=>t.id===detailTask)?{...schedule.tasks.find(t=>t.id===detailTask),dependency_names:schedule.tasks.find(t=>t.id===detailTask).dependencies.map(d=>schedule.tasks.find(x=>x.id===d)?.name||d)}:null} open={!!detailTask} onClose={()=>setDetailTask(null)} canManage={data?.can_manage} busy={busy} onCommand={command}/>
+    <ProductionPlanTaskDetail key={`${id}:${detailTask}`} projectId={id} task={schedule?.tasks.find(t=>t.id===detailTask)?{...schedule.tasks.find(t=>t.id===detailTask),dependency_names:schedule.tasks.find(t=>t.id===detailTask).dependencies.map(d=>schedule.tasks.find(x=>x.id===d)?.name||d)}:null} open={!!detailTask} onClose={()=>setDetailTask(null)} canManage={data?.can_manage} busy={busy} onCommand={command} assignees={users} commandError={error}/>
   </div>;
 }

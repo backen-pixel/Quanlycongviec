@@ -64,6 +64,16 @@ function createService(repository, now = () => new Date().toISOString()) {
         doc.baselines.push({ revision: body.expected_revision + 1, deadline: doc.active.deadline, approved_at: doc.active.approved_at, reason: doc.draft.reason });
         doc.draft = null;
       }
+    } else if(body.action==='reassign'){
+      if(!context.manager)denied('Chỉ quản lý được giao lại nhiệm vụ');
+      const task=doc.active?.graph?.tasks.find(t=>t.id===body.task_id);
+      if(!task)fail('Không tìm thấy nhiệm vụ đã duyệt');
+      if(!/^[0-9a-f-]{36}$/i.test(body.assignee_id||''))fail('Chọn người phụ trách hợp lệ');
+      const reason=String(body.reason||'').trim().slice(0,1000);if(!reason)fail('Cần ghi lý do đổi người phụ trách');
+      if(['done','waived'].includes(doc.execution[task.id]?.status)&&!doc.execution[task.id]?.needs_review)fail('Mở lại nhiệm vụ đã hoàn thành trước khi giao lại');
+      const previous=task.assignee_id;task.assignee_id=body.assignee_id;
+      const planned=doc.active.planned_tasks?.find(t=>t.id===task.id);if(planned)planned.assignee_id=body.assignee_id;
+      doc.assignment_latest||={};doc.assignment_latest[task.id]={previous,assignee_id:body.assignee_id,reason,actor_id:context.actorId,at:now()};
     } else if (body.action === 'task') {
       if (!doc.active) fail('Kế hoạch chưa được duyệt');
       const task = doc.active.graph.tasks.find(t => t.id === body.task_id);

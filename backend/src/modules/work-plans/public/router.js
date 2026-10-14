@@ -90,6 +90,10 @@ function createRouter({ repository, auth, scope, isManager, validateAssignees, c
       if (!ctx.manager) return res.status(403).json({error:'Chỉ quản lý dự án được lập kế hoạch'});
       await validateAssignees(normalize(req.body.graph).tasks, ctx, req.params.id);
     }
+    if(req.body.action==='reassign'){
+      if(!ctx.manager)return res.status(403).json({error:'Chỉ quản lý được giao lại nhiệm vụ'});
+      await validateAssignees([{assignee_id:req.body.assignee_id}],ctx,req.params.id);
+    }
     res.json(await service.command(req.params.id,req.body,ctx));
   }));
   router.post('/:id/templates', handle(async (req,res,ctx) => res.json(await service.publishTemplate(req.body,ctx))));

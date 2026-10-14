@@ -3,11 +3,13 @@ import api from '../lib/api';
 import Modal from './Modal';
 import {ProjectCommentsPanel} from './CommentsPanels';
 const date=v=>v?new Date(v).toLocaleString('vi-VN',{timeZone:'Asia/Ho_Chi_Minh'}):'—';
-export default function ProductionPlanTaskDetail({projectId,task,open,onClose,canManage,onCommand,busy}){
+export default function ProductionPlanTaskDetail({projectId,task,open,onClose,canManage,onCommand,busy,assignees=[],commandError=''}){
  const url=task?`/work-plans/${projectId}/tasks/${encodeURIComponent(task.id)}`:'';
  const identity=`${projectId}:${task?.id}`;
  const [tab,setTab]=useState('detail'),[comments,setComments]=useState([]),[body,setBody]=useState(''),[files,setFiles]=useState([]),[error,setError]=useState(''),[posting,setPosting]=useState(false),[next,setNext]=useState(null),[evidence,setEvidence]=useState(''),[reason,setReason]=useState(''),[reopen,setReopen]=useState(false);
  const requestId=useRef(null),generation=useRef(0),[loadedFor,setLoadedFor]=useState('');
+ const [assignee,setAssignee]=useState(task?.assignee_id||'');
+ useEffect(()=>setAssignee(task?.assignee_id||''),[identity,task?.assignee_id]);
  useEffect(()=>{generation.current++;setTab('detail');setComments([]);setFiles([]);setBody('');setError('');setPosting(false);setNext(null);setLoadedFor('');requestId.current=null;setEvidence(task?.evidence||'');setReason('');setReopen(false);},[identity,open]);
  useEffect(()=>{if(!open||!task)return;const g=generation.current;api.get(`${url}/comments`).then(r=>{if(g!==generation.current)return;setComments(r.data.comments);setNext(r.data.more?r.data.next_offset:null);setLoadedFor(identity);}).catch(e=>{if(g===generation.current)setError(e.response?.data?.error||'Không tải được bình luận nhiệm vụ');});return()=>{generation.current++;};},[url,open]);
  async function load(offset=0){const g=generation.current;const r=await api.get(`${url}/comments`,{params:{offset}});if(g!==generation.current)return;setComments(c=>offset?[...c,...r.data.comments]:r.data.comments);setNext(r.data.more?r.data.next_offset:null);setLoadedFor(identity);}
@@ -17,10 +19,10 @@ export default function ProductionPlanTaskDetail({projectId,task,open,onClose,ca
  if(!open||!task)return null;
  return <Modal open={open} onClose={onClose} title={task.name} size="xl"><div className="space-y-4">
   <div className="flex gap-2 border-b">{[['detail','Chi tiết công việc'],['comments','Bình luận và tài liệu'],['project','Không gian dự án']].map(([id,label])=><button key={id} className={`px-3 py-2 ${tab===id?'border-b-2 border-indigo-600 font-semibold':''}`} onClick={()=>setTab(id)}>{label}</button>)}</div>
-  {error&&<p role="alert" className="text-red-700">{error}</p>}
-  {tab==='detail'&&<section className="space-y-3"><p>Thời lượng: {task.hours} giờ · Vai trò: {task.role||'—'}</p><p>Bắt đầu: {date(task.planned_start)} · Hạn: {date(task.deadline)}</p><p>{task.needs_review?'Cần kiểm tra lại':task.status==='done'?'Hoàn thành':task.ready?'Có thể làm':'Chờ việc trước'}</p><p>Việc trước: {task.dependency_names?.join(', ')||'Không'}</p>
+  {(error||commandError)&&<p role="alert" className="text-red-700">{error||commandError}</p>}
+  {tab==='detail'&&<section className="space-y-3"><p>Thời lượng: {task.hours} giờ · Vai trò: {task.role||'—'}</p><p>Bắt đầu: {date(task.planned_start)} · Hạn: {date(task.deadline)}</p><p>{task.needs_review?'Cần kiểm tra lại':task.status==='done'?(task.completed_late?'Hoàn thành trễ':'Hoàn thành'):task.status==='waived'?'Đã bỏ qua':task.status==='doing'?'Đang làm':task.ready?'Có thể làm':'Chờ việc trước'}</p><p>Việc trước: {task.dependency_names?.join(', ')||'Không'}</p>
    <label className="block">Minh chứng hoàn thành<input className="border rounded p-2 w-full" value={evidence} onChange={e=>setEvidence(e.target.value)}/></label>
-   {canManage&&<><label className="block">Lý do mở lại / bỏ qua<input className="border rounded p-2 w-full" value={reason} onChange={e=>setReason(e.target.value)}/></label><label><input type="checkbox" checked={reopen} onChange={e=>setReopen(e.target.checked)}/> Yêu cầu kiểm tra lại các việc sau đã hoàn thành</label></>}
+   {canManage&&<><label className="block">Người phụ trách nhiệm vụ<select aria-label="Người phụ trách nhiệm vụ" className="border rounded p-2 w-full" value={assignee} onChange={e=>setAssignee(e.target.value)}><option value="">Chọn người</option>{assignees.map(u=><option key={u.id} value={u.id}>{u.full_name||u.name||u.email}</option>)}</select></label><label className="block">Lý do đổi người / mở lại / bỏ qua<input aria-label="Lý do điều chỉnh nhiệm vụ" className="border rounded p-2 w-full" value={reason} onChange={e=>setReason(e.target.value)}/></label><button className="border rounded px-3 py-2" disabled={busy||!assignee||assignee===task.assignee_id||!reason.trim()} onClick={()=>onCommand({action:'reassign',task_id:task.id,assignee_id:assignee,reason})}>Giao lại nhiệm vụ</button><label><input type="checkbox" checked={reopen} onChange={e=>setReopen(e.target.checked)}/> Yêu cầu kiểm tra lại các việc sau đã hoàn thành</label></>}
    <div className="flex gap-2">{[['doing','Bắt đầu'],['done','Hoàn thành'],...(canManage?[['pending','Mở lại'],['waived','Bỏ qua']]:[])].map(([status,label])=><button className="border rounded p-2" key={status} disabled={busy||(['doing','done'].includes(status)&&(!task.ready||(!task.needs_review&&['done','waived'].includes(task.status))))} onClick={()=>onCommand({action:'task',task_id:task.id,status,evidence,reason,reopen_successors:reopen})}>{label}</button>)}</div>
   </section>}
   {tab==='comments'&&<section className="space-y-4"><p>Trao đổi và tài liệu riêng của nhiệm vụ này. Tệp được lưu riêng tư, tối đa 8 MB/tệp.</p>

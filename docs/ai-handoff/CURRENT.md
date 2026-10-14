@@ -2484,3 +2484,9 @@ Kèm 2 việc chặn khác: thu quyền `EXECUTE` của 4 hàm mới khỏi `ano
 
 
 
+## Chi tiết nhiệm vụ: bổ sung giao lại người ngay trong workspace
+
+User yêu cầu giao việc ở cùng giao diện. Command reassign chỉ manager, phải có lý do và người nhận hợp lệ theo công ty/đội dự án; nhiệm vụ đã đóng cần mở lại/kiểm tra lại. Cập nhật graph và planned_tasks cùng CAS, giữ hạn, assignment_latest có kích thước theo task; lịch sử revision giữ thay đổi. Modal có dropdown người phụ trách/nút giao lại, hiển thị cả lỗi command trong popup.
+
+37/37 test PASS sau frontend build cuối; reviewer reassign không thấy blocker. Initial collab runtime a64ad313 LIVE ở dep-db7r2hhsrm7s7390cucg; public HTTP+Storage smoke PASS (comment/file, đúng scope, private public URL denied, project room, replay). Local browser query ?task=t1 mở đúng modal, bình luận text gửi từ UI và tệp cũ hiển thị. Follow-up assignment runtime/browser còn chờ kiểm sau deploy. Không migration mới cho giao lại và không production.
+
