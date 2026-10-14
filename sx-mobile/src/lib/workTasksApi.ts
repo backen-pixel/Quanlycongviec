@@ -45,6 +45,8 @@ export type WorkTask = CrmTask & {
   deal_id?: string | null;
   /** Việc đã giao người ở bảng `tasks` nhưng bản `crm_task` cùng tên đã xong ở deal — vẫn hiện, không tính quá hạn. */
   closed_on_deal?: boolean;
+  /** Trang nhóm dự án của đội mà dòng này được nạp ở (≥2 = nạp thêm khi cuộn) — chỉ để nhóm nạp sau luôn nối ĐUÔI danh sách. */
+  team_page?: number;
 };
 
 export type WorkTasksQuery = {
