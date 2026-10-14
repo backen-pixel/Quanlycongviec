@@ -657,7 +657,7 @@ async function callMcpReportTool(name, args = {}, req) {
         merged.company_id = ctx.last_company_id;
         auditCompanyId = merged.company_id;
       }
-      result = await callMcpCrmWriteTool(name, merged, user);
+      result = await callMcpCrmWriteTool(name, merged, user, { app: req?.app || null });
     } else if (MCP_MODULE_TOOL_SET.has(name)) {
       result = await callMcpModuleTool(name, merged, user);
     } else if (MCP_CRM_READ_TOOL_SET.has(name)) {

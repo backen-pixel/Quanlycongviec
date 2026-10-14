@@ -77,7 +77,7 @@ function assertCrmWritePath(method, path) {
  * Đẩy một lệnh ghi qua router CRM thật.
  * Dựng req/res giả giống hệt `invokeCrmGet`, chỉ khác là có method + body.
  */
-async function invokeCrmWrite({ method, path, body = {}, user }) {
+async function invokeCrmWrite({ method, path, body = {}, user, app = null }) {
   const m = String(method || '').toUpperCase();
   const safePath = assertCrmWritePath(m, path);
   if (!user?.id) {
@@ -114,7 +114,9 @@ async function invokeCrmWrite({ method, path, body = {}, user }) {
     },
     header(name) { return this.get(name); },
     ip: '127.0.0.1',
-    app: { get() { return null; } },
+    // Truyền `app` thật của tiến trình để route bắn được realtime (io) như thao tác tay.
+    // Không có thì trả null — mọi chỗ dùng io đều đã tự chặn `if (!io) return`.
+    app: app || { get() { return null; } },
   };
 
   const res = createMockRes();
@@ -313,7 +315,7 @@ function getMcpCrmWriteTools() {
   return MCP_CRM_WRITE_TOOLS;
 }
 
-async function callMcpCrmWriteTool(name, args = {}, user) {
+async function callMcpCrmWriteTool(name, args = {}, user, { app = null } = {}) {
   if (!MCP_CRM_WRITE_TOOL_SET.has(name)) {
     const err = new Error(`Tool ghi CRM không được phép: ${name}`);
     err.status = 404;
@@ -327,6 +329,7 @@ async function callMcpCrmWriteTool(name, args = {}, user) {
       path: '/leads',
       body: { ...body(a, LEAD_FIELDS), type: a.type === 'deal' ? 'deal' : 'lead' },
       user,
+      app,
     });
   }
   if (name === 'update_crm_lead') {
@@ -335,6 +338,7 @@ async function callMcpCrmWriteTool(name, args = {}, user) {
       path: `/leads/${a.id}`,
       body: body(a, LEAD_FIELDS),
       user,
+      app,
     });
   }
   if (name === 'move_crm_lead_stage') {
@@ -343,6 +347,7 @@ async function callMcpCrmWriteTool(name, args = {}, user) {
       path: `/leads/${a.id}/stage`,
       body: body(a, ['stage_id', 'reason']),
       user,
+      app,
     });
   }
   if (name === 'add_crm_lead_comment') {
@@ -351,6 +356,7 @@ async function callMcpCrmWriteTool(name, args = {}, user) {
       path: `/leads/${a.id}/comments`,
       body: body(a, ['body', 'parent_id']),
       user,
+      app,
     });
   }
   if (name === 'create_crm_lead_task') {
@@ -359,6 +365,7 @@ async function callMcpCrmWriteTool(name, args = {}, user) {
       path: `/leads/${a.lead_id}/tasks`,
       body: body(a, ['title', 'assignee_id', 'deadline', 'description', 'priority', 'stage_slug']),
       user,
+      app,
     });
   }
   if (name === 'update_crm_lead_task') {
@@ -367,11 +374,12 @@ async function callMcpCrmWriteTool(name, args = {}, user) {
       path: `/leads/${a.lead_id}/tasks/${a.task_id}`,
       body: body(a, ['status', 'title', 'assignee_id', 'deadline', 'notes']),
       user,
+      app,
     });
   }
   if (name === 'convert_crm_lead_to_deal') {
     return invokeCrmWrite({
-      method: 'POST', path: `/leads/${a.id}/convert-to-deal`, body: {}, user,
+      method: 'POST', path: `/leads/${a.id}/convert-to-deal`, body: {}, user, app,
     });
   }
   if (name === 'create_crm_customer') {
@@ -380,6 +388,7 @@ async function callMcpCrmWriteTool(name, args = {}, user) {
       path: '/customers',
       body: body(a, ['full_name', 'phone', 'email', 'address', 'company_id']),
       user,
+      app,
     });
   }
 
