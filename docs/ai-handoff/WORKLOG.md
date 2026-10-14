@@ -1,3 +1,8 @@
+## 2026-10-14 — Bản thiết kế quy trình sản xuất linh hoạt và dự án mẫu
+
+Theo anh Hùng đồng ý làm bản thiết kế: [Thiết kế DRAFT](../ba/THIET_KE_QUY_TRINH_SAN_XUAT_LINH_HOAT.md) mô tả cấu trúc riêng của từng dự án, phiên bản mẫu, đồ thị nhiệm vụ, tính lịch ngược/xuôi theo lịch ca, nhân viên thấy việc sẵn sàng và quản lý thấy việc trễ/ảnh hưởng. 7 ngày chỉ là ví dụ. Hai mẫu minh họa tính đường dài nhất: tủ bếp 7 ngày, cánh kính 6 ngày; chưa phải định mức xưởng. Chưa sửa code/DB hoặc deploy. Các lựa chọn giờ làm việc, mốc hoàn thành SX, miễn trừ nhiệm vụ và phân quyền cần duyệt cùng thiết kế. PR131 vẫn là gói xác nhận Xong riêng, chưa tự trở thành phần lập lịch mới.
+
+---
 ## 2026-10-14 — VPT: kiểm và chuẩn bị tuyến website đo khách hợp lệ
 
 - Yêu cầu trực tiếp: kiểm và thiết lập Google/Facebook Ads kéo về website, tiếp nối Google verified lead và native Facebook PR127. Tách [draft PR#128](https://github.com/backen-pixel/Quanlycongviec/pull/128), mãchức năng `dafb166`, nhánh website từ main `3c6761731b0e4a6e248a81e1484d101c3b82e049`; không kéo PR127 như dependency, không merge/deploy/SQL thật hoặc gửi event trong phiên chuẩn bị này.
