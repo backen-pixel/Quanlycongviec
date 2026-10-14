@@ -646,6 +646,35 @@ function crmRowInDetailLeads(t, detailLeads) {
 const CLOSED_TASK_STATUSES = new Set(['done', 'completed', 'cancelled']);
 
 /**
+ * Người nhận của việc ở bảng `tasks` theo khóa «dự án + tên việc» — để KẾ THỪA cho các `crm_task` cùng tên chưa có người nhận.
+ * Đợt gán nhân sự 08–12/10 chỉ ghi vào `tasks` (HCB: 1.401/2.026 `crm_task` SX chưa giao thực ra đã có người nhận ở bản `tasks`),
+ * nên tab / «Theo dự án» / «Chưa giao» phải xét cả hai bảng mới nói đúng ai đang phụ trách. Chỉ ĐỌC; lỗi → rỗng + log.
+ * @returns {Promise<Map<string, string>>} khóa `${projectId}|${tên thường}` → assignee_id
+ */
+async function loadTaskAssigneesByKey(projectIds) {
+  const out = new Map();
+  const ids = [...new Set((projectIds || []).filter(Boolean).map(String))];
+  if (!ids.length) return out;
+  try {
+    const rows = await fetchAllByIdsParallel({
+      table: 'tasks',
+      columns: 'id, project_id, title, assignee_id, status',
+      key: 'project_id',
+      ids,
+      idChunk: 100,
+      tune: (q) => q.not('assignee_id', 'is', null).neq('status', 'done').order('id'),
+    });
+    for (const r of rows) {
+      const key = `${r.project_id}|${String(r.title || '').trim().toLowerCase()}`;
+      if (r.assignee_id && !out.has(key)) out.set(key, String(r.assignee_id));
+    }
+  } catch (err) {
+    console.warn('[work-tasks] bỏ qua kế thừa người nhận từ tasks —', err?.message || err);
+  }
+  return out;
+}
+
+/**
  * Việc ở bảng `tasks` đang CHẶN KÉO CỘT Kanban SX — đúng điều kiện của `workshopStageAdvanceGate`: `blocks_stage_advance`, chưa
  * xong, `production_stage_id` = cột SX hiện tại của dự án, và dự án chưa được miễn chặn (`laMienTruChanKeo`: theo công ty / phân
  * loại trong `app_settings`). Chi tiết dự án chỉ đọc `crm_task` nên người kéo thẻ bị chặn bởi việc họ không thấy ở đâu; tab Công
@@ -879,8 +908,17 @@ function buildCrmSxOverviewChildren({
     }
     keptTaskRows.push(t);
   }
-  return { children: [...crmChildren, ...keptTaskRows], crmDetails };
+  return {
+    children: [...crmChildren, ...keptTaskRows],
+    crmDetails,
+    // Dự án đã có việc SX ở `crm_task`: việc `tasks` không có bản crm của dự án đó gom vào nhóm riêng «Việc xưởng riêng».
+    projectsWithCrmSx: new Set(crmChildren.map((child) => String(child.project_id))),
+  };
 }
+
+/** Nhóm trên Kanban cho việc ở bảng `tasks` KHÔNG có bản `crm_task` cùng tên (dự án đã có việc SX ở deal). */
+const WORKSHOP_OWN_CATEGORY_ID = 'workshop-own';
+const WORKSHOP_OWN_CATEGORY_TITLE = 'Việc xưởng riêng';
 
 /**
  * Lọc theo CÔNG TY ĐẶT HÀNG (công ty chủ deal) — cùng nguồn với tab Dự án / Kanban SX (`resolveSxVisibilityRestrictIds` →
@@ -1247,9 +1285,21 @@ r.get('/team-project-tasks', async (req, res) => {
       // `crm_task` (cặp song sinh); các `crm_task` còn lại là việc thật ở cột khác → giữ riêng, để số việc khớp chi tiết dự án
       // (trước đây gộp hết thành một: HCB · Tủ bếp mất 20 việc, vd. «Sơn» ×3 ở TB-2026-1013).
       const keyOf = (t) => `${t.project_id}|${String(t.title || '').trim().toLowerCase()}`;
+      // KẾ THỪA người nhận: `crm_task` chưa có người nhận mà bản `tasks` cùng tên đã được giao → hiện người đó (chỉ hiển thị, không ghi).
+      // Bản `tasks` có thể nằm ngoài cửa sổ quét nên đọc riêng theo dự án, không dựa vào `scanned`.
+      const assigneeByKey = scanned.some((t) => t.source === 'crm_task' && !t.assignee_id)
+        ? await loadTaskAssigneesByKey([...new Set(scanned.map((t) => String(t.project_id)))])
+        : new Map();
+      const scannedAll = scanned.map((t) => {
+        if (t.source !== 'crm_task' || t.assignee_id) return t;
+        const inherited = assigneeByKey.get(keyOf(t));
+        return inherited ? { ...t, assignee_id: inherited, assignee_inherited: true } : t;
+      });
+      // Mục «Chưa giao» (Admin): việc đã có người nhận ở bản `tasks` không còn là «chưa giao».
+      const scannedBase = unassignedMode ? scannedAll.filter((t) => !t.assignee_inherited) : scannedAll;
       const deadlineMsOrMax = (t) => (t.deadline ? new Date(t.deadline).getTime() : Number.MAX_SAFE_INTEGER);
       const groupsByKey = new Map();
-      for (const t of scanned) {
+      for (const t of scannedBase) {
         const k = keyOf(t);
         let g = groupsByKey.get(k);
         if (!g) { g = { task: null, crm: [] }; groupsByKey.set(k, g); }
@@ -1259,7 +1309,7 @@ r.get('/team-project-tasks', async (req, res) => {
       const chosenRows = [];
       // Chế độ «Chưa giao»: KHÔNG ghép «song sinh» — mọi dòng chưa giao đều là một việc riêng; bản `tasks` đã có bản `crm_task` cùng
       // tên bị bỏ ở `dropTasksClosedOnDeal` (bản crm mới là việc thật; nếu nó chưa giao thì tự có mặt trong danh sách).
-      if (unassignedMode) chosenRows.push(...scanned);
+      if (unassignedMode) chosenRows.push(...scannedBase);
       else for (const g of groupsByKey.values()) {
         // Có bản `tasks` → nó đại diện cho MỘT bản crm (bản hạn sớm nhất); phần còn lại giữ nguyên.
         const crmSorted = g.crm.slice().sort((a, b) => deadlineMsOrMax(a) - deadlineMsOrMax(b)
@@ -1796,6 +1846,7 @@ r.get('/project-overview', async (req, res) => {
     // + log, KHÔNG làm hỏng cả endpoint.
     let productionRows = productionTasks;
     let crmSxDetails = null;
+    let crmSxProjects = new Set();
     if (crmSxMode) {
       try {
         const productionProjectIdSet = new Set(productionProjectIds.map(String));
@@ -1816,6 +1867,7 @@ r.get('/project-overview', async (req, res) => {
         });
         productionRows = built.children;
         crmSxDetails = built.crmDetails;
+        crmSxProjects = built.projectsWithCrmSx;
       } catch (crmSxErr) {
         console.warn('[work-tasks] project-overview: dùng nguồn crm_task lỗi, quay về bảng tasks —', crmSxErr?.message || crmSxErr);
         productionRows = productionTasks;
@@ -1875,6 +1927,11 @@ r.get('/project-overview', async (req, res) => {
           title: sharedTitle || crmStage?.name || sxStage?.name || humanizeSlug(detail.stage_slug) || 'Nhiệm vụ CRM',
           order: sharedTitle ? 40 : (crmStage?.order_index ?? sxStage?.order_index ?? 999),
         };
+      }
+      // Kanban nguồn `crm_task`: việc `tasks` không có bản crm của dự án đã có việc SX ở deal → nhóm riêng (dự án chưa có việc SX ở
+      // deal thì giữ danh mục theo bộ mẫu như cũ để không mất cấu trúc).
+      if (crmSxDetails && task.source === 'task' && crmSxProjects.has(String(task.project_id))) {
+        return { id: WORKSHOP_OWN_CATEGORY_ID, title: WORKSHOP_OWN_CATEGORY_TITLE, order: 900 };
       }
       const detail = projectDetailById.get(String(task.source_id)) || {};
       const meta = detail.metadata && typeof detail.metadata === 'object' ? detail.metadata : {};
@@ -2703,10 +2760,31 @@ r.post('/project-overview/remind-complete', async (req, res) => {
     const detailById = new Map(detailRows.map((row) => [String(row.id), row]));
     const projectDetailById = source === 'task' ? detailById : new Map();
     const crmDetailById = source === 'crm_task' ? detailById : new Map();
-    const tasks = candidateTasks.filter((task) => (
-      taskOwnerLane(task) === lane
-      && projectOverviewCategoryId(task, projectDetailById, crmDetailById) === categoryId
-    ));
+    // Nhóm «Việc xưởng riêng» của Kanban nguồn `crm_task`: việc ở bảng `tasks` KHÔNG có bản `crm_task` cùng tên.
+    const isOwnGroup = lane === 'production' && categoryId === WORKSHOP_OWN_CATEGORY_ID;
+    let tasks;
+    if (isOwnGroup) {
+      const detailLeadsOwn = await loadDetailLeadsByProject([projectId]);
+      const ownLeadIds = [...(detailLeadsOwn.get(String(projectId)) || [])];
+      const crmTitleRows = ownLeadIds.length
+        ? await fetchAllByIdsParallel({
+          table: 'crm_tasks',
+          columns: 'id, lead_id, title, stage_slug, production_pipeline_stage_id',
+          key: 'lead_id',
+          ids: ownLeadIds,
+          tune: (q) => q.or('stage_slug.like.sx_%,production_pipeline_stage_id.not.is.null').order('id'),
+        })
+        : [];
+      const crmTitles = new Set(crmTitleRows.map((row) => String(row.title || '').trim().toLowerCase()));
+      tasks = candidateTasks.filter((task) => (
+        taskOwnerLane(task) === lane && !crmTitles.has(String(task.title || '').trim().toLowerCase())
+      ));
+    } else {
+      tasks = candidateTasks.filter((task) => (
+        taskOwnerLane(task) === lane
+        && projectOverviewCategoryId(task, projectDetailById, crmDetailById) === categoryId
+      ));
+    }
     if (!tasks.length) {
       return res.status(400).json({ error: 'Danh mục này không còn nhiệm vụ mở để nhắc' });
     }
@@ -2718,7 +2796,8 @@ r.post('/project-overview/remind-complete', async (req, res) => {
       const targetId = task.assignee_id || task.module_owner_id;
       if (!targetId) return;
       targets.add(String(targetId));
-      if (!task.assignee_id) {
+      // Nhóm «Việc xưởng riêng» chỉ NHẮC, không tự gán phụ trách xuống bảng `tasks` (tránh gán hàng loạt ngoài ý muốn).
+      if (!task.assignee_id && !isOwnGroup) {
         const key = `${task.source}:${targetId}`;
         if (!assignmentBatches.has(key)) {
           assignmentBatches.set(key, { source: task.source, targetId, ids: [] });
