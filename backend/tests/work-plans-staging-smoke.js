@@ -50,7 +50,9 @@ async function main() {
   assert.equal(rows.filter(t=>t.title==='Gia công').length,2,'Same-name tasks must remain distinct');
   assert.ok(rows.some(t=>t.source_id===c.ids.old_task),'Legacy task remains');
   await request(`/work-plans/${c.ids.cabinet}`,'other',undefined,403);
-  await command(c.ids.cabinet,{action:'draft',graph:cabinet,deadline},'staff',403);
+  // Cabinet fixture may explicitly appoint staff as the production lead;
+  // use glass (manager-led) to verify an ordinary assignee cannot plan.
+  await command(c.ids.glass,{action:'draft',graph:glass,deadline},'staff',403);
   const cabinetPlan=await request(`/work-plans/${c.ids.cabinet}`,'staff');
   if(!['done','waived'].includes(cabinetPlan.document.execution.t0?.status)) {
     const complete=await command(c.ids.cabinet,{action:'task',task_id:'t0',status:'done'},'staff');

@@ -1,3 +1,14 @@
+## 15/10/2026 00:03 Việt Nam — Workspace nhiệm vụ đã nghiệm thu staging
+
+Runtime 9716425e81434564c68fa2bcf1c75886c369ca20, deploy dep-db7r6lbrjlhs73cnou90 LIVE (finished 14/10 16:56:41Z = 23:56:41 VN). 37/37 tests PASS, build staging PASS, review riêng không còn blocker. Public HTTP smoke PASS task comments/file upload/private download/replay/project room. Reassign public smoke trên glass PASS: chỉ manager, lý do bắt buộc, người cũ bị thu hồi task room, hạn và execution giữ, đã phục hồi assignee. Browser canonical query mở modal, gửi comment từ UI và thấy tài liệu API đã tải; dropdown giao lại thao tác UI đã ghi vào DB, phục hồi người mẫu.
+
+Ảnh TASK_DETAIL_STAGING.png và TASK_DISCUSSION_STAGING.png; API proof TASK_COLLABORATION_VERIFICATION.json và TASK_REASSIGN_VERIFICATION.json trong D:/quản trị vận hành/HoSoTuBepPro/templates. Helper localhost44012 đã dừng. Trình duyệt giữ staging task dialog.
+
+Giới hạn QA: CUA chọn tệp bị extension chặn do chưa Allow access to file URLs, không tự đổi quyền extension. Upload/download thật đã kiểm qua HTTP/Storage; chưa hoàn tất tự động chọn file qua Chrome. Bình luận task cơ bản chưa có edit/delete/reactions/thread hoặc realtime; đóng/mở để đọc lại. Shared project room dùng panel cũ; staging chỉ bật private task uploader, không legacy public upload. Không claim toàn bộ module chi tiết cũ đã chuyển hết.
+
+Fixture cabinet hiện chỉ định staff là production_person_id, nên staff có quyền quản lý plan của riêng dự án đó theo rule đã có; không phải lỗi vượt quyền. Kiểm ordinary-assignee/revocation dùng glass do manager dẫn. Test opt-in điều chỉnh dùng glass cho staff draft403. Không đổi project lead, không sửa production hoặc dữ liệu thật. Chưa merge/phát hành production; cần nghiệm thu và rollout riêng theo hồ sơ ops, ba migrations trước flags. Rollback tắt flag collab/aggregate hoặc revert code, giữ bucket/bảng/history.
+
+---
 ## 14/10/2026 — Chi tiết nhiệm vụ kế hoạch, bình luận và tài liệu (candidate staging)
 
 Anh Hùng yêu cầu nối ngay không gian làm việc chi tiết sang nhiệm vụ kế hoạch: bình luận, tài liệu, thao tác nhiệm vụ, không gian dự án. Thêm modal dùng Modal/ProjectCommentsPanel hiện có; tab chi tiết dùng command canonical, bình luận riêng task, upload/private signed download (8 MB/tệp), tab trao đổi chung dùng project_comments. Liên kết UnifiedTaskRow và personal task page thêm ?task= để mở đúng modal. Giao người vẫn ở editor kế hoạch; không tự gán người thật từ tên mẫu.
@@ -2489,4 +2500,5 @@ Kèm 2 việc chặn khác: thu quyền `EXECUTE` của 4 hàm mới khỏi `ano
 User yêu cầu giao việc ở cùng giao diện. Command reassign chỉ manager, phải có lý do và người nhận hợp lệ theo công ty/đội dự án; nhiệm vụ đã đóng cần mở lại/kiểm tra lại. Cập nhật graph và planned_tasks cùng CAS, giữ hạn, assignment_latest có kích thước theo task; lịch sử revision giữ thay đổi. Modal có dropdown người phụ trách/nút giao lại, hiển thị cả lỗi command trong popup.
 
 37/37 test PASS sau frontend build cuối; reviewer reassign không thấy blocker. Initial collab runtime a64ad313 LIVE ở dep-db7r2hhsrm7s7390cucg; public HTTP+Storage smoke PASS (comment/file, đúng scope, private public URL denied, project room, replay). Local browser query ?task=t1 mở đúng modal, bình luận text gửi từ UI và tệp cũ hiển thị. Follow-up assignment runtime/browser còn chờ kiểm sau deploy. Không migration mới cho giao lại và không production.
+
 
