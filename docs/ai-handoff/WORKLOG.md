@@ -2675,3 +2675,9 @@ Kiểm tra: `node --check` đạt, `npx vite build` đạt. Chưa thử qua giao
 
 ---
 
+## Nghiệm thu staging — 14/10/2026 13:17 giờ Việt Nam
+
+Render deploy dep-db7hq8a5b2lc7380skjg LIVE, runtime SHA 12c22f918984c1689f0ca5a13d2cb3b7cf272dd7. Public smoke chạy lại PASS 13 nhiệm vụ, phân quyền, manager/personal/team/report/WorkUnified, legacy preserved. Browser production_admin mở /sx/plan-reports thành công: ngày 14/10, hoàn thành trong ngày 1, quá hạn 0 (dữ liệu mẫu); mốc/giờ đọc VN đúng. Local HTTP bổ sung kiểm project_code/assignee_name đầy đủ PASS cho 13 dòng. Ảnh kiểm chứng ngoài tracked files: docs/_tmp_staging_FINAL.png. Hoàn thành bước 1–2 trong phạm vi candidate + staging; không merge/deploy production. Đường dẫn và đăng nhập thử lưu ngoài repo, chỉ dữ liệu giả. Rollback/giới hạn như hồ sơ ops.
+
+---
+

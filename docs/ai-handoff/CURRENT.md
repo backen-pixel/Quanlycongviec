@@ -1,3 +1,8 @@
+## Nghiệm thu staging — 14/10/2026 13:17 giờ Việt Nam
+
+Render deploy dep-db7hq8a5b2lc7380skjg LIVE, runtime SHA 12c22f918984c1689f0ca5a13d2cb3b7cf272dd7. Public smoke chạy lại PASS 13 nhiệm vụ, phân quyền, manager/personal/team/report/WorkUnified, legacy preserved. Browser production_admin mở /sx/plan-reports thành công: ngày 14/10, hoàn thành trong ngày 1, quá hạn 0 (dữ liệu mẫu); mốc/giờ đọc VN đúng. Local HTTP bổ sung kiểm project_code/assignee_name đầy đủ PASS cho 13 dòng. Ảnh kiểm chứng ngoài tracked files: docs/_tmp_staging_FINAL.png. Hoàn thành bước 1–2 trong phạm vi candidate + staging; không merge/deploy production. Đường dẫn và đăng nhập thử lưu ngoài repo, chỉ dữ liệu giả. Rollback/giới hạn như hồ sơ ops.
+
+---
 ## 2026-10-14 — Staging Render hoạt động, sửa báo cáo SX và liên kết nhiệm vụ
 
 Đã deploy candidate e047a3a9 lên https://tubep-staging-work-plans.onrender.com (srv-db7hhgc9v7es73c3mdsg, My Workspace, runtime free, autoDeploy off). Health xác nhận DB riêng jdwgcivfqajpnlatrfwq/business_jobs=false. Smoke public HTTP thực PASS 13 nhiệm vụ, phân quyền, báo cáo, tổng hợp và dự án cũ. Browser manager kiểm editor, mẫu và overview; phát hiện và sửa liên kết phụ Công việc sang canonical plan, thêm /sx/plan-reports cho quản lý xưởng không có quyền tab báo cáo CRM team. Báo cáo bổ sung mã/tên công trình và người phụ trách từ tập nhiệm vụ đã lọc quyền, thời gian hiển thị giờ Việt Nam. Reviewer riêng không còn blocker. 30/30 regression PASS, build PASS, latest local full-stack smoke PASS. Bản sửa cuối đang chờ redeploy/kiểm browser; không merge main hoặc deploy production. Staging chỉ fixtures/tuyến tính năng này, chưa chứng minh mọi module legacy.
@@ -2445,4 +2450,5 @@ Kèm 2 việc chặn khác: thu quyền `EXECUTE` của 4 hàm mới khỏi `ano
 233 test tổng hợp P1/adAnalytics/mốc/chi tiêu đạt; `node --check` đạt. `vite build` chưa chạy được vì thiếu `cross-env` tại máy; chưa kiểm DB/HTTP/dữ liệu thật hay duyệt UI. Không chạy SQL, bật cờ, commit hoặc push. Hoàn tác: bỏ diff P1-11 và hai mục bàn giao này.
 
 ---
+
 
