@@ -11,6 +11,7 @@ on:
       - 'backend/tests/website*'
       - 'backend/tests/google*Conversions.test.js'
       - 'database/2026101400571*.sql'
+      - 'database/20261014022725_website_intake_backup_compat.sql'
       - 'integrations/wordpress/vpt-v1-crm-bridge/**'
       - '.github/workflows/vpt-website-qualified.yml'
 permissions:
@@ -43,4 +44,6 @@ jobs:
       - name: Install isolated PostgreSQL runtime outside repository
         run: npm install --prefix "$RUNNER_TEMP/vpt-website-pg" --no-audit --ignore-scripts --no-save @electric-sql/pglite@0.5.9
       - name: Actual PostgreSQL receipt, RLS, lease and delivery SQL
-        run: node backend/tests/website-feedback-sql.js "$RUNNER_TEMP/vpt-website-pg/node_modules/@electric-sql/pglite"
+        run: |
+          node backend/tests/website-feedback-sql.js "$RUNNER_TEMP/vpt-website-pg/node_modules/@electric-sql/pglite"
+          node backend/tests/website-backup-compat-sql.js "$RUNNER_TEMP/vpt-website-pg/node_modules/@electric-sql/pglite"
