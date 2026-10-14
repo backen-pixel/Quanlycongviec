@@ -6,6 +6,34 @@ const { createService } = require('../src/modules/work-plans/application/service
 const { createRouter } = require('../src/modules/work-plans/public/router');
 const { canManage } = require('../src/modules/work-plans/application/permissions');
 const { createRepository } = require('../src/modules/work-plans/infrastructure/repository');
+const {summarizeBoard}=require('../src/modules/work-plans/domain/board');
+test('Board preserves parallel ready stages, review and waiver semantics without leaking colleague tasks',()=>{
+  const g={stages:[{id:'s1',name:'Thùng'},{id:'s2',name:'Kính'}],tasks:[{id:'a',name:'Thùng',stage_id:'s1',hours:8,dependencies:[],assignee_id:actor},{id:'b',name:'Kính',stage_id:'s2',hours:8,dependencies:[],assignee_id:other}],calendar:{weekdays:[1,2,3,4,5,6],shifts:[[8,12],[13,17]]}};
+  const doc={active:{graph:g,deadline:'2026-10-12T12:00:00+07:00'},execution:{}};
+  const m={manager:true,actorId:actor};
+  const both=summarizeBoard(doc,m,'2026-10-12T12:01:00+07:00');assert.equal(both.total,2);assert.equal(both.open_stages.length,2);assert.equal(both.overdue,2);
+  const personal=summarizeBoard(doc,{manager:false,actorId:actor},'2026-10-12T12:01:00+07:00');assert.equal(personal.total,1);assert.deepEqual(personal.open_stages,[{id:'s1',name:'Thùng'}]);
+  doc.execution={a:{status:'done',needs_review:true},b:{status:'waived'}};
+  const reviewed=summarizeBoard(doc,m,'2026-10-12T12:01:00+07:00');assert.equal(reviewed.completed,0);assert.equal(reviewed.waived,1);assert.equal(reviewed.needs_review,1);assert.equal(reviewed.complete,false);
+  assert.equal(summarizeBoard(null,m).state,'none');assert.equal(summarizeBoard({draft:{}},m).state,'draft');
+});
+test('Board does not advertise a doing successor when its predecessor is reopened',()=>{
+  const g={stages:[{id:'s1',name:'Chuẩn bị'},{id:'s2',name:'Sơn'}],tasks:[{id:'a',name:'Kính',stage_id:'s1',hours:8,dependencies:[],assignee_id:other},{id:'b',name:'Sơn',stage_id:'s2',hours:8,dependencies:['a'],assignee_id:actor}]};
+  const d={active:{graph:g,deadline:'2026-11-01T17:00:00+07:00'},execution:{a:{status:'pending'},b:{status:'doing'}}};
+  const s=summarizeBoard(d,{manager:false,actorId:actor});assert.equal(s.blocked,true);assert.deepEqual(s.open_stages,[]);
+});
+test('Board HTTP validates batches, hides denied projects and surfaces read failures',async()=>{
+  const previous=process.env.WORK_PLANS_AGGREGATES_ENABLED;process.env.WORK_PLANS_AGGREGATES_ENABLED='1';
+  const express=require('express');const app=express();let failRead=false;
+  const repo={getPlan:async()=>{if(failRead)throw Error('offline');return null;}};
+  app.use('/plans',createRouter({repository:repo,auth:(req,res,next)=>{req.user={userId:actor,company_id:company};next();},scope:async(req,res,id)=>id===other?null:{project:{company_id:company}},isManager:()=>true}));
+  const server=app.listen(0,'127.0.0.1');await new Promise(r=>server.once('listening',r));
+  try{const url=`http://127.0.0.1:${server.address().port}/plans/board`;
+    assert.equal((await fetch(url+'?ids=invalid')).status,400);
+    const result=await(await fetch(url+`?ids=${actor},${other}`)).json();assert.equal(result.items.length,1);assert.equal(result.items[0].state,'none');
+    failRead=true;assert.equal((await fetch(url+`?ids=${actor}`)).status,503);
+  }finally{await new Promise(r=>server.close(r));if(previous===undefined)delete process.env.WORK_PLANS_AGGREGATES_ENABLED;else process.env.WORK_PLANS_AGGREGATES_ENABLED=previous;}
+});
 const actor='00000000-0000-4000-8000-000000000001', other='00000000-0000-4000-8000-000000000002', company='00000000-0000-4000-8000-000000000003';
 const now='2026-10-12T08:00:00+07:00', deadline='2026-10-19T17:00:00+07:00';
 const ctx={actorId:actor,companyId:company,manager:true};

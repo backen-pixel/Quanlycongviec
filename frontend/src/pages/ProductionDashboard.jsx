@@ -57,6 +57,7 @@ import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
 import KanbanCardOptionsMenu from '../components/KanbanCardOptionsMenu';
 import KanbanGotoProjectTasksBtn from '../components/KanbanGotoProjectTasksBtn';
+import {ProductionPlanBoardProvider,ProductionPlanBoardCard,useProductionPlanBoard} from '../components/ProductionPlanBoard';
 import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
@@ -3994,6 +3995,7 @@ export default function ProductionDashboard() {
 
   return (
     <div className="space-y-3">
+      <ProductionPlanBoardProvider projects={projects}>
       {/* Panel điều khiển xưởng SX — hành động, KPI, tìm kiếm */}
       <div className="ui-solid-white rounded-2xl border border-slate-200/90 bg-white shadow-md overflow-hidden ring-1 ring-slate-900/[0.04]">
         {/* Hành động + tìm kiếm + chế độ xem */}
@@ -5174,6 +5176,7 @@ export default function ProductionDashboard() {
         onClose={() => !deadlineBusy && setDeadlineCtx(null)}
         onConfirm={confirmDeadlineMove}
       />
+      </ProductionPlanBoardProvider>
     </div>
   );
 }
@@ -5571,6 +5574,7 @@ export const KanbanStageCard = memo(function KanbanStageCard({
 
 // ── KANBAN ITEM CARD (y hệt CRM KanbanCard) ─────────────────────────────────
 const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveStage, pipelineStages, calculateDays, isSelected, onToggleSelect, onHandoverVC, onOpenKanbanComment, workTypes, onSetWorkType, onOpenDeadline, onTogglePin, searchHighlighted = false }) {
+  const planSummary=useProductionPlanBoard(item.id);
   const navigate = useNavigate();
   const cardRef = useRef(null);
   const [handingOver, setHandingOver] = useState(false);
@@ -5783,6 +5787,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
           asLink
           moduleKey="sx"
           projectId={item.id}
+          to={planSummary&&['draft','approved'].includes(planSummary.state)?`/sx/projects/${item.id}/plan`:undefined}
           code={item.code}
           className="ml-auto"
         />
@@ -5796,6 +5801,7 @@ const KanbanCard = memo(function KanbanCard({ item, stage, columnAccent, onMoveS
       >
         {cardTitle}
       </h4>
+      <ProductionPlanBoardCard id={item.id}/>
 
       {/* Row phân loại — click đổi nhanh, không kích hoạt navigate (data-sx-quick-btn) */}
       {Array.isArray(workTypes) && workTypes.length > 0 && typeof onSetWorkType === 'function' && (

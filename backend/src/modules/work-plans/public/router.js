@@ -3,9 +3,32 @@ const { Router } = require('express');
 const { createService } = require('../application/service');
 const { normalize } = require('../domain/schedule');
 const { reportWindow, summarizePlans } = require('../domain/report');
+const {summarizeBoard}=require('../domain/board');
 function createRouter({ repository, auth, scope, isManager, validateAssignees }) {
   const router = Router(); const service = createService(repository);
   router.use(auth);
+  router.get('/board',async(req,res)=>{
+    if(process.env.WORK_PLANS_AGGREGATES_ENABLED!=='1')return res.json({enabled:false,items:[]});
+    try{
+      const ids=[...new Set(String(req.query.ids||'').split(',').filter(Boolean))];
+      if(!ids.length||ids.length>30||ids.some(id=>!/^[0-9a-f-]{36}$/i.test(id)))return res.status(400).json({error:'Cần 1–30 mã dự án hợp lệ'});
+      const items=[];
+      const readAt=new Date().toISOString();
+      for(const id of ids){
+        const access=await scope(req,{status:()=>({json:()=>{}})},id);
+        if(!access)continue;
+        const row=await repository.getPlan(id);
+        if(row&&row.company_id!==access.project.company_id)continue;
+        const ctx={manager:isManager(req.user,access.project),actorId:req.user.userId};
+        const summary=summarizeBoard(row?.document,ctx,readAt);
+        let templateName=null;
+        const source=row?.document?.active?.source_template;
+        if(source&&ctx.manager){const t=await repository.getTemplate(source.id,source.version,access.project.company_id);templateName=t?.document?.name||null;}
+        items.push({project_id:id,...summary,template_name:templateName});
+      }
+      res.json({enabled:true,read_at:readAt,items});
+    }catch(e){res.status(e.status||503).json({error:'Không tải đủ tiến độ kế hoạch sản xuất'});}
+  });
   router.get('/report', async (req,res) => {
     if (process.env.WORK_PLANS_AGGREGATES_ENABLED !== '1') return res.json({enabled:false});
     try {

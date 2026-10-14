@@ -72,3 +72,13 @@ Render deploy dep-db7hq8a5b2lc7380skjg LIVE, runtime SHA 12c22f918984c1689f0ca5a
 
 ---
 
+## 14/10/2026 — Quản lý dự án: tiến độ kế hoạch trên Kanban (candidate staging)
+
+Anh Hùng đồng ý nối quản lý dự án sau khi xem ảnh dashboard production. Thêm GET /work-plans/board bật bằng flag aggregates, tối đa 30 project IDs/request, kiểm scope từng dự án. Manager xem tổng tiến độ, tên mẫu/version nguồn, hạn SX; staff chỉ thống kê việc mình, không nhãn xong toàn dự án. Domain tính done/waived/review/overdue và mọi công đoạn có nhiệm vụ ready song song. Không tự ghi pipeline stage hoặc deadlines legacy.
+
+Dashboard card thêm tiến độ và đường mở canonical plan, manager dự án chưa có plan có link lập từ mẫu. Provider fetch batches theo tập IDs/user, đổi phạm vi không lộ cache cũ; refresh 60 giây/focus; lỗi không đổi thành zero. Legacy task buttons giữ khi không có plan; feature default off trên production. Không có migration mới.
+
+33 tests PASS, staging frontend build PASS, reviewer riêng không còn blocker sau sửa successor doing nhưng predecessor reopened. Chưa nghiệm thu runtime dashboard ở thời điểm mục này. Rollback tắt aggregate flag hoặc revert code; không xóa task/template/history. Không merge/main/deploy production. Tiếp theo manual deploy staging và kiểm API/browser trên dữ liệu giả.
+
+---
+
