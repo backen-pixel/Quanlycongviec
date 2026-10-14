@@ -20,6 +20,13 @@ const {
   MCP_MODULE_TOOL_SET, MCP_MODULE_SCOPES, getMcpModuleTools, callMcpModuleTool,
 } = require('./mcpModuleReadBridge');
 const {
+  MCP_CRM_WRITE_TOOL_SET, TOOL_PHA_HUY, getMcpCrmWriteTools, callMcpCrmWriteTool,
+} = require('./mcpCrmWriteBridge');
+const {
+  MCP_REPORT_OPS_TOOL_SET, MCP_REPORT_OPS_SCOPES, getMcpReportOpsTools, callMcpReportOpsTool,
+} = require('./mcpReportBridge');
+
+const {
   MCP_REASON,
   createMcpTraceId,
   mcpDeny,
@@ -122,6 +129,19 @@ const FULL_ORG_REPORT_SCHEMA = {
  * Thiếu thì client hiện thẳng `format_org_employee_tab_report_text`.
  */
 const TIEU_DE_TOOL = {
+  // — Ghi CRM —
+  create_crm_lead: 'Tạo lead/deal',
+  update_crm_lead: 'Sửa lead/deal',
+  move_crm_lead_stage: 'Chuyển giai đoạn lead/deal',
+  add_crm_lead_comment: 'Gửi bình luận vào deal',
+  create_crm_lead_task: 'Tạo nhiệm vụ trên deal',
+  update_crm_lead_task: 'Sửa / hoàn thành nhiệm vụ',
+  convert_crm_lead_to_deal: 'Chuyển lead thành deal',
+  create_crm_customer: 'Tạo khách hàng',
+  // — Báo cáo vận hành —
+  get_lead_source_report: 'Báo cáo nguồn lead',
+  get_stuck_leads_report: 'Báo cáo lead đọng',
+  get_production_overview_report: 'Tổng quan xưởng',
   get_org_overview_report_full: 'Báo cáo tổ chức (JSON đầy đủ)',
   get_org_overview_report: 'Báo cáo tổ chức (JSON)',
   format_org_overview_report_text: 'Báo cáo tổ chức (văn bản)',
@@ -256,12 +276,16 @@ function outputSchemaCho(name) {
  * `openWorldHint: false` vì đây là CRM nội bộ có biên giới rõ, không phải tra cứu Internet mở.
  */
 function trangBiMetadataTool(t) {
+  // Tool ghi phải khai báo đúng: client dùng hai cờ này để quyết định có hỏi lại
+  // người dùng trước khi chạy hay không. Khai sai là trợ lý tự ý đổi dữ liệu.
+  const laGhi = MCP_CRM_WRITE_TOOL_SET.has(t.name);
   const out = {
     ...t,
     title: TIEU_DE_TOOL[t.name] || t.name,
     annotations: {
-      readOnlyHint: true,
-      destructiveHint: false,
+      readOnlyHint: !laGhi,
+      destructiveHint: laGhi && TOOL_PHA_HUY.has(t.name),
+      idempotentHint: laGhi ? !t.name.startsWith('create_') : undefined,
       openWorldHint: false,
     },
   };
@@ -337,8 +361,20 @@ function getMcpReportTools(apiKey = null) {
   for (const t of getMcpModuleTools()) {
     if (!names.has(t.name)) { patched.push(t); names.add(t.name); }
   }
+  // Báo cáo vận hành — hiện theo scope của chính nó (crm_read / production_read).
+  for (const t of getMcpReportOpsTools()) {
+    if (!names.has(t.name)) { patched.push(t); names.add(t.name); }
+  }
+  // Tool GHI chỉ hiện với khoá đã bật `crm_write` — khoá cũ không tự nhiên có thêm quyền.
+  if (scopes.includes('crm_write')) {
+    for (const t of getMcpCrmWriteTools()) {
+      if (!names.has(t.name)) { patched.push(t); names.add(t.name); }
+    }
+  }
 
   return patched.filter((t) => {
+    if (MCP_REPORT_OPS_TOOL_SET.has(t.name)) return scopes.includes(MCP_REPORT_OPS_SCOPES[t.name]);
+    if (MCP_CRM_WRITE_TOOL_SET.has(t.name)) return scopes.includes('crm_write');
     if (MCP_ADS_TOOL_SET.has(t.name)) return allowAds;
     if (MCP_CRM_READ_TOOL_SET.has(t.name)) return allowCrm;
     // Module ngoai CRM chi hien khi key co dung scope cua module do.
@@ -351,6 +387,20 @@ function assertMcpScopeForTool(name, apiKey) {
   const scopes = Array.isArray(apiKey?.mcp_scopes) && apiKey.mcp_scopes.length
     ? apiKey.mcp_scopes
     : ['reports', 'crm_read'];
+  if (MCP_REPORT_OPS_TOOL_SET.has(name)) {
+    const can = MCP_REPORT_OPS_SCOPES[name];
+    if (!scopes.includes(can)) {
+      throw mcpDeny(MCP_REASON.CAPABILITY_DENIED, `API key không có quyền ${can}`, 403);
+    }
+    return;
+  }
+  // Ghi là quyền riêng, KHÔNG nằm trong mặc định. Phải bật tay trên từng khoá.
+  if (MCP_CRM_WRITE_TOOL_SET.has(name)) {
+    if (!scopes.includes('crm_write')) {
+      throw mcpDeny(MCP_REASON.CAPABILITY_DENIED, 'API key không có quyền crm_write', 403);
+    }
+    return;
+  }
   if (MCP_ADS_TOOL_SET.has(name)) {
     if (!scopes.includes('ads_read')) {
       throw mcpDeny(MCP_REASON.CAPABILITY_DENIED, 'API key không có quyền ads_read', 403);
@@ -530,7 +580,8 @@ function locHangTheoCongTyChoPhep(ketQua, allowed, tenTool) {
 
 function isMcpToolAllowed(name) {
   return MCP_REPORT_TOOL_SET.has(name) || MCP_CRM_READ_TOOL_SET.has(name)
-    || MCP_ADS_TOOL_SET.has(name) || MCP_MODULE_TOOL_SET.has(name);
+    || MCP_ADS_TOOL_SET.has(name) || MCP_MODULE_TOOL_SET.has(name)
+    || MCP_CRM_WRITE_TOOL_SET.has(name) || MCP_REPORT_OPS_TOOL_SET.has(name);
 }
 
 /** Tên gợi ý write — MCP giai đoạn này chỉ read. */
@@ -595,7 +646,19 @@ async function callMcpReportTool(name, args = {}, req) {
     if (merged.company_id) auditCompanyId = merged.company_id;
 
     let result;
-    if (MCP_MODULE_TOOL_SET.has(name)) {
+    if (MCP_REPORT_OPS_TOOL_SET.has(name)) {
+      if (!merged.company_id && ctx.last_company_id) {
+        merged.company_id = ctx.last_company_id;
+        auditCompanyId = merged.company_id;
+      }
+      result = await callMcpReportOpsTool(name, merged);
+    } else if (MCP_CRM_WRITE_TOOL_SET.has(name)) {
+      if (!merged.company_id && ctx.last_company_id) {
+        merged.company_id = ctx.last_company_id;
+        auditCompanyId = merged.company_id;
+      }
+      result = await callMcpCrmWriteTool(name, merged, user, { app: req?.app || null });
+    } else if (MCP_MODULE_TOOL_SET.has(name)) {
       result = await callMcpModuleTool(name, merged, user);
     } else if (MCP_CRM_READ_TOOL_SET.has(name)) {
       // Default company_id từ key cho alias list (không ghi đè path crm_api_get)
@@ -658,6 +721,8 @@ module.exports = {
   MCP_REPORT_TOOL_NAMES,
   MCP_REASON,
   getMcpReportTools,
+  // Xuất để test được tầng chặn scope mà không cần dựng HTTP.
+  assertMcpScopeForTool,
   resolveMcpActAsUser,
   callMcpReportTool,
   queryToReportArgs,

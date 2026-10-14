@@ -12,6 +12,7 @@ Full docs live under `docs/` — see [`docs/README.md`](./docs/README.md) and [`
 | ADR | `docs/adr/` |
 | BA / guides | `docs/ba/` |
 | API inventory | `docs/api/API_DOCUMENT.md` |
+| MCP — công dụng & quyền | `docs/api/MCP_CAPABILITIES.md` |
 | DB schema | `docs/database/DATABASE_SCHEMA.md` |
 | SQL migrations | `/database/*.sql` |
 | Coding standard | `docs/project/CODING_STANDARD.md` |

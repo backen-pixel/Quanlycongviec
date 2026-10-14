@@ -2,7 +2,23 @@
 
 Người dùng đã duyệt phát hành [PR #128](https://github.com/backen-pixel/Quanlycongviec/pull/128) và tạo/lưu credential CAPI website riêng **chỉ ở chế độ test**. Gói đã áp SQL primary, merge/deploy Render và cập nhật WordPress/form ngày **14/10/2026**; **một TEST form → CRM đã được đối soát, sender Meta vẫn tắt, provider/backup chưa nghiệm thu**. Đây là tuyến website riêng; không chứa hoặc kích hoạt tuyến Facebook native Form của [PR #127](https://github.com/backen-pixel/Quanlycongviec/pull/127), vẫn draft/chưa triển khai. Các giờ phát hành dưới đây dùng **Asia/Saigon (UTC+7)**.
 
-## Hồ sơ phát hành 14/10/2026
+## Cập nhật backup 12:47 ngày 14/10/2026
+
+Người dùng đã phê duyệt riêng `QLCV_Backup / atcfpgxkgbszglrelfgr`; migration [`20261014022725_website_intake_backup_compat.sql`](../../database/20261014022725_website_intake_backup_compat.sql) đã áp thành công lúc **12:45:05**, history `20261014054505 / website_intake_backup_compat_vpt_20261014`. Hậu kiểm **12:45:39** xác nhận cột `crm_leads.website_intake` JSONB nullable/default NULL; tổng CRM **9.544**, VPT **3.014** hàng giữ nguyên, metadata có giá trị **0**, không DDL backfill. ACL fingerprint `c1e488b30589fa3c45d7d80fe02ddcad` không đổi, RLS bật; không thêm policy/RPC/trigger/bảng receipt/outbox/private hoặc kích hoạt sender. Phê duyệt và sửa cột đã hoàn tất; backup baseline vẫn chưa đủ qualification/receipt/sender.
+
+| Health Asia/Saigon | Applied | Failed | Queue |
+|---|---:|---:|---:|
+| 12:44:18, trước sửa | 2.617 | 610 | 4.933 |
+| 12:46:04, sau sửa | 2.617 | 650 | 5.004 |
+| 12:47:28.725 | 2.645 | 661 | 5.220 |
+
+Primary/backup đều healthy, active primary. Last error mới **PGRST116** ở singular PATCH **`project_substage_status`**, là lỗi bản ghi/hàng đợi khác; không kết luận thiếu parent. Applied tăng sau sửa nhưng failed/backlog cũng tăng: **chưa khôi phục toàn bộ replication, chưa nghiệm thu failover**. Lúc **12:47:03.900**, metadata request TEST vẫn chưa có trên backup. Log Render lọc `website_intake` sau 12:45:05 có **0** mục; điều này không chứng minh request TEST đã đồng bộ hoặc hàng đợi đã hết lỗi. Không tự backfill/replay/tạo receipt thay cho bằng chứng.
+
+[PR #130](https://github.com/backen-pixel/Quanlycongviec/pull/130) có hai kiểm CI PASS tại HEAD cũ `ae8d66e32cada85b97bef68d366815cb11c4e893`; đang hợp nhất origin/main, **cần CI tại SHA merge/cuối mới**. TEST form → CRM primary đã đối soát và LIVE đã khôi phục; SMTP vẫn chưa sửa, Meta sender tắt/test và chưa provider ACK, Google Data Manager vẫn chờ Lead thật đã xác minh. Không qualified CPL mới.
+
+PR #130 chỉ SQL/docs/test, dự kiến squash với `[skip render]` theo [Render deploys](https://render.com/docs/deploys#skipping-an-auto-deploy) để không redeploy runtime/reset hàng đợi replication đang giữ trong bộ nhớ khi Redis tắt; đây là kế hoạch, chưa là kết quả merge.
+
+## Hồ sơ phát hành 14/10/2026 — gồm bản ghi trước sửa backup
 
 PR #128 squash-merge lúc **09:09:49**, SHA `f4d7b8d20ab83869b516b805be27bc68edd8f7f6`. Nhánh chuẩn bị trước đó là `codex/vpt-website-qualified-leads-20261014` từ main `3c6761731b0e4a6e248a81e1484d101c3b82e049`. Có **269** kiểm cục bộ PASS (220 Node, 28 PHP, 21 SQL) và **8** kiểm CI PASS tại exact candidate `8a71ac057d23568005c63c862b7ba47d7f42002f` trước release; đây không phải chứng minh form/Ads đầu-cuối.
 
@@ -23,7 +39,7 @@ Render **My Workspace**, tất cả cùng SHA release trên:
 | Frontend | `dep-db7e8ru7bikc73cub1bg` | 09:11:40.515 |
 | Backend redeploy cấu hình | `dep-db7ea5i5b2lc73fkc230` | 09:13:59.548930 |
 
-**Tương thích backup chưa chốt:** health lúc **09:25:40** báo primary và backup đều HTTP 200, active vẫn primary, không auto-failover; replication failed **2**, lỗi `PGRST204` vì backup thiếu cột `website_intake`. Candidate [`20261014022725_website_intake_backup_compat.sql`](../../database/20261014022725_website_intake_backup_compat.sql) chỉ thêm `crm_leads.website_intake` JSONB nullable, không default, kiểm schema rồi reload PostgREST cache; không ghi rows, thêm grants/RPC/receipt/outbox hoặc trigger của primary. Review và **5/5** kiểm SQL thật qua [`website-backup-compat-sql.js`](../../backend/tests/website-backup-compat-sql.js) PASS; CI đã thêm command tương ứng. **Chưa áp** lên `QLCV_Backup / atcfpgxkgbszglrelfgr`; phê duyệt primary không thay phê duyệt backup, cần PR cụ thể để xin quyền riêng. Backup baseline chưa đủ qualification/receipt/outbox/sender; mirror column chỉ sửa tương thích replication Lead, không chứng minh failover hoặc tuyến Ads chạy được trên backup.
+**Bản ghi lịch sử trước sửa backup, 09:25:** health lúc **09:25:40** báo primary và backup đều HTTP 200, active vẫn primary, không auto-failover; replication failed **2**, lỗi `PGRST204` vì backup thiếu cột `website_intake`. Candidate [`20261014022725_website_intake_backup_compat.sql`](../../database/20261014022725_website_intake_backup_compat.sql) chỉ thêm `crm_leads.website_intake` JSONB nullable, không default, kiểm schema rồi reload PostgREST cache; không ghi rows, thêm grants/RPC/receipt/outbox hoặc trigger của primary. Review và **5/5** kiểm SQL thật qua [`website-backup-compat-sql.js`](../../backend/tests/website-backup-compat-sql.js) PASS; CI đã thêm command tương ứng. Tại thời điểm đó **chưa áp/chưa được duyệt backup**; kết quả được duyệt và áp lúc12:45 ghi trong mục cập nhật mới phía trên. Backup baseline chưa đủ qualification/receipt/outbox/sender; mirror column chỉ sửa tương thích replication Lead, không chứng minh failover hoặc tuyến Ads chạy được trên backup.
 
 WordPress đã lưu/read-back đủ ba file plugin **0.4.0**; hash SHA-256 sau chuẩn hóa LF:
 
@@ -73,7 +89,7 @@ UTMs/fbclid và dữ liệu browser do khách cung cấp; receipt chứng minh b
 Release và lưu credential website test-only đã được duyệt; không dùng quyền đó để tự bật gửi production hoặc xác minh khách:
 
 1. **Đã hoàn tất:** PR #128/CI/backup và squash-merge tại SHA đã ghi. PR #127 không là dependency và chưa phát hành.
-2. **Đã hoàn tất trên primary:** áp receipt rồi outbox và kiểm ACL/RLS/triggers/RPC, không backfill. **Backup compatibility còn pending:** candidate mirror column đã review/5 tests, chưa áp và cần phê duyệt riêng cho backup. Không chạy lại migration primary hoặc coi HTTP 200 là replication đã đạt; backup chưa đủ qualified sender.
+2. **Đã hoàn tất trên primary và sửa cột backup:** receipt/outbox trên primary; backup mirror column đã được duyệt/áp/hậu kiểm lúc12:45, không backfill. **Overall replication còn lỗi PGRST116 trên project_substage_status**, failed/backlog tăng và metadata TEST chưa tới backup; không coi HTTP200 hoặc applied tăng là toàn tuyến đã khôi phục. Backup chưa đủ qualified sender, không chạy lại migration primary hoặc tạo receipt từ bản sao.
 3. **Đã hoàn tất:** backend/frontend Render và backend redeploy env cùng SHA. SQL đã có trước backend vì Google exporters đọc `website_intake`; worker giữ tắt.
 4. **Đã hoàn tất phần cài/read-back:** plugin 0.4.0 + form11116 + purge cache, giữ key/fields/nghiệp vụ/CTA; cửa sổ TEST được duyệt kết thúc và LIVE đã khôi phục. Request thực tế được kiểm riêng ở bước 5.
 5. **TEST form → CRM đạt:** own receipt confirmed + SQL proof đúng 1 Lead/receipt/attribution, is_testtrue, consentfalse, matching trống; qualification/outbox/attempts0. **CF7 mail_failed là lỗi gửi email riêng, chưa sửa/nghiệm thu email.** Không lấy queued hoặc email làm bằng chứng lưu CRM; không tự retry job uncertain/review, không qualification thật/click ID giả, TEST không tính CPL. LIVE đã khôi phục; nghiệm thu Ads/Lead thật còn chờ.

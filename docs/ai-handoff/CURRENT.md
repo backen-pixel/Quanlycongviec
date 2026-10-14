@@ -1,4 +1,16 @@
-## 2026-10-14 — VPT website: đã phát hành, TEST form → CRM đạt; Ads và backup còn chờ
+## 2026-10-14 12:47 — VPT: cột backup đã sửa, replication vẫn lỗi riêng
+
+Người dùng đã duyệt rõ việc áp SQL lên `QLCV_Backup / atcfpgxkgbszglrelfgr`. Migration `20261014022725_website_intake_backup_compat.sql` đã áp thành công lúc **12:45:05 Asia/Saigon (UTC+7)**, history `20261014054505 / website_intake_backup_compat_vpt_20261014`. Hậu kiểm **12:45:39**: `website_intake` là JSONB nullable/default NULL; CRM **9.544**, VPT **3.014** hàng giữ nguyên, metadata có giá trị **0**, không DDL backfill; ACL fingerprint `c1e488b30589fa3c45d7d80fe02ddcad` giữ nguyên, RLS bật, không thêm policy/RPC/trigger/bảng private. Chỉ mirror cột; backup chưa đủ qualification/receipt/outbox/sender.
+
+**Chưa khôi phục toàn bộ replication hoặc nghiệm thu failover.** Health **12:44:18 → 12:46:04 → 12:47:28.725**: applied **2.617 → 2.617 → 2.645**, failed **610 → 650 → 661**, queue **4.933 → 5.004 → 5.220**; primary/backup healthy, active primary. Last error mới là **PGRST116 trên singular PATCH `project_substage_status`**, không phải cột `website_intake` hay kết luận thiếu parent. Đọc lại **12:47:03.900** vẫn chưa thấy metadata request TEST trên backup. Log Render lọc `website_intake` sau 12:45:05 có 0 mục, không thay bằng chứng đồng bộ còn thiếu.
+
+[PR #130](https://github.com/backen-pixel/Quanlycongviec/pull/130) đang hợp nhất `origin/main`: hai kiểm CI đã PASS tại **HEAD cũ** `ae8d66e32cada85b97bef68d366815cb11c4e893`, cần CI trên SHA merge/cuối mới. TEST form → CRM primary đã đạt, LIVE đã khôi phục; SMTP vẫn lỗi kết nối host, chưa sửa/gửi thêm mail. Meta website vẫn tắt/test, token/provider ACK chưa chứng minh; Google Data Manager còn chờ Lead thật đã xác minh. Không thêm qualification, event hoặc kết luận CPL. Giữ consent gates của cả hai Google exporters khi rollback; xem [hồ sơ vận hành](../ops/website-qualified-feedback.md).
+
+---
+
+## 2026-10-14 — Hồ sơ 09:33 trước sửa backup: phát hành website và TEST form → CRM
+
+Các câu backup “chưa áp/chờ duyệt” trong mục này là lịch sử trước 12:45; kết quả mới ở trên.
 
 Người dùng đã duyệt phát hành [PR #128](https://github.com/backen-pixel/Quanlycongviec/pull/128) và tạo/lưu credential CAPI website riêng **chỉ ở chế độ test**. PR squash-merge lúc **09:09:49 ngày 14/10/2026 (Asia/Saigon, UTC+7)**, SHA `f4d7b8d20ab83869b516b805be27bc68edd8f7f6`. [Hồ sơ phát hành, bằng chứng và rollback](../ops/website-qualified-feedback.md) là trạng thái hiện tại; mục chuẩn bị bên dưới giữ làm lịch sử.
 

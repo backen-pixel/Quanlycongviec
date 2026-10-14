@@ -34,6 +34,38 @@ kiem('«Tiếp nhập…» KHÔNG khớp «Tiếp nhận…» — vùng mù, ph�
 
 kiem('tên rỗng → chuỗi rỗng (chỗ gọi bỏ qua)', chuanTen(null) === '' && chuanTen('   ') === '');
 
+// ── 3b. Chọn bản sao: KHÔNG được đụng việc cùng tên ở cột khác ──────────────
+const { _chonBanSao } = require('../src/helpers/dongBoHaiSoNhiemVuSx');
+const cotA = 'col-A'; const cotB = 'col-B';
+const ungVien = [
+  { id: 't1', production_stage_id: cotA, deadline: null },
+  { id: 't2', production_stage_id: cotB, deadline: null },
+];
+const cot = (t) => t.production_stage_id;
+
+let r = _chonBanSao(ungVien, cotA, cot);
+kiem('cùng cột → chọn đúng bản cùng cột', r.length === 1 && r[0].id === 't1', r.map((x) => x.id));
+
+r = _chonBanSao(ungVien, 'col-C', cot);
+kiem('gốc ở cột C, ứng viên đều ở cột khác → KHÔNG đụng cái nào', r.length === 0, r.map((x) => x.id));
+
+r = _chonBanSao(ungVien, null, cot);
+kiem('gốc không có cột → chỉ sửa MỘT bản, không quét cả cụm', r.length === 1);
+
+const coHan = [
+  { id: 'x1', production_stage_id: null, deadline: '2026-10-20' },
+  { id: 'x2', production_stage_id: null, deadline: '2026-10-05' },
+];
+r = _chonBanSao(coHan, null, cot);
+kiem('không bên nào có cột → lấy bản HẠN SỚM NHẤT', r.length === 1 && r[0].id === 'x2', r.map((x) => x.id));
+
+const motCoCot = [
+  { id: 'y1', production_stage_id: null, deadline: null },
+  { id: 'y2', production_stage_id: cotB, deadline: null },
+];
+r = _chonBanSao(motCoCot, cotA, cot);
+kiem('có ứng viên chưa gắn cột → vẫn sửa được một bản (không bỏ sót)', r.length === 1);
+
 if (!process.argv.includes('--that')) {
   console.log(`\n${dat} đạt · ${truot} trượt  (thêm --that để đo trên dữ liệu thật)`);
   process.exit(truot ? 1 : 0);
