@@ -124,6 +124,8 @@ const corsMainApp = cors({
     'X-No-Cache',
     // Trợ lý hướng dẫn khai chế độ của client để server gửi đúng bộ luật.
     'X-Guide-Full-Access',
+    // <video>/<audio> xin từng khúc file qua Range khi phát trên Drive.
+    'Range',
   ],
   exposedHeaders: [
     'Content-Disposition',
@@ -133,6 +135,14 @@ const corsMainApp = cors({
     'X-Count-Pending',
     'X-Count-In-Progress',
     'X-Count-Done',
+    // Thiếu ba header này thì video Drive không phát được trên production.
+    // Trang chạy ở tubep-frontend-*, API ở tubep-backend-* nên <video> là request
+    // CROSS-ORIGIN: server trả 206 kèm Content-Range, nhưng CORS không expose thì
+    // trình duyệt không đọc được, không biết độ dài và đứng im ở 0:00.
+    // Localhost không dính vì Vite proxy biến nó thành same-origin.
+    'Content-Range',
+    'Accept-Ranges',
+    'Content-Length',
   ],
   maxAge: CORS_PREFLIGHT_MAX_AGE,
 });
