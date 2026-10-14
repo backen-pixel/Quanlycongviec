@@ -1,6 +1,6 @@
 # VPT: khách quảng cáo → website → CRM → xác minh
 
-Gói website ngày 14/10/2026 được chuẩn bị trên nhánh `codex/vpt-website-qualified-leads-20261014`, từ main `3c6761731b0e4a6e248a81e1484d101c3b82e049`. **Chưa áp SQL, cập nhật WordPress, merge/deploy hoặc bật gửi Meta.** Đây là tuyến website riêng; không chứa hoặc kích hoạt tuyến Facebook native Form của [PR #127](https://github.com/backen-pixel/Quanlycongviec/pull/127).
+Gói website [draft PR#128](https://github.com/backen-pixel/Quanlycongviec/pull/128) ngày 14/10/2026 được chuẩn bị trên nhánh `codex/vpt-website-qualified-leads-20261014`, từ main `3c6761731b0e4a6e248a81e1484d101c3b82e049`. **Chưa áp SQL, cập nhật WordPress, merge/deploy hoặc bật gửi Meta.** Đây là tuyến website riêng; không chứa hoặc kích hoạt tuyến Facebook native Form của [PR #127](https://github.com/backen-pixel/Quanlycongviec/pull/127).
 
 ## Những gì đã kiểm trên hệ thống thật
 
