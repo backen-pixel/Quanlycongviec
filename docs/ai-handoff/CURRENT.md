@@ -1,3 +1,8 @@
+## 2026-10-14 — Staging Render hoạt động, sửa báo cáo SX và liên kết nhiệm vụ
+
+Đã deploy candidate e047a3a9 lên https://tubep-staging-work-plans.onrender.com (srv-db7hhgc9v7es73c3mdsg, My Workspace, runtime free, autoDeploy off). Health xác nhận DB riêng jdwgcivfqajpnlatrfwq/business_jobs=false. Smoke public HTTP thực PASS 13 nhiệm vụ, phân quyền, báo cáo, tổng hợp và dự án cũ. Browser manager kiểm editor, mẫu và overview; phát hiện và sửa liên kết phụ Công việc sang canonical plan, thêm /sx/plan-reports cho quản lý xưởng không có quyền tab báo cáo CRM team. Báo cáo bổ sung mã/tên công trình và người phụ trách từ tập nhiệm vụ đã lọc quyền, thời gian hiển thị giờ Việt Nam. Reviewer riêng không còn blocker. 30/30 regression PASS, build PASS, latest local full-stack smoke PASS. Bản sửa cuối đang chờ redeploy/kiểm browser; không merge main hoặc deploy production. Staging chỉ fixtures/tuyến tính năng này, chưa chứng minh mọi module legacy.
+
+---
 ## 2026-10-14 — Staging đã có DB riêng; đang đưa candidate lên Render
 
 Anh Hùng chọn Pkmax-bit's Org, duyệt thêm 10 USD/tháng và đã tự tạo DB. Xác minh bằng connector + tab user: project jdwgcivfqajpnlatrfwq, tên “Trang chuẩn bị”, ap-northeast-2, ban đầu public rỗng. Đã tạo cấu trúc 343 bảng/1499 ràng buộc/5 views từ catalog primary (chỉ schema, không dữ liệu, không functions/triggers/policies cũ), service_role riêng; mọi bảng RLS và browser denied. Áp hai migrations Work Plans. Chỉ seed 2 công ty/3 tài khoản/3 dự án giả. Extensions chuyển sang extensions schema; advisor chỉ INFO rls_enabled_no_policy (backend-only chủ đích), không WARN/ERROR.
@@ -2440,3 +2445,4 @@ Kèm 2 việc chặn khác: thu quyền `EXECUTE` của 4 hàm mới khỏi `ano
 233 test tổng hợp P1/adAnalytics/mốc/chi tiêu đạt; `node --check` đạt. `vite build` chưa chạy được vì thiếu `cross-env` tại máy; chưa kiểm DB/HTTP/dữ liệu thật hay duyệt UI. Không chạy SQL, bật cờ, commit hoặc push. Hoàn tác: bỏ diff P1-11 và hai mục bàn giao này.
 
 ---
+

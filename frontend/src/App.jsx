@@ -103,6 +103,7 @@ const ProductionDashboard = lazyWithRetry(() => import('./pages/ProductionDashbo
 const ProductionDetail = lazyWithRetry(() => import('./pages/ProductionDetail'));
 const ProductionPlanPage = lazyWithRetry(() => import('./pages/ProductionPlanPage'));
 const ProductionPlanTasksPage = lazyWithRetry(() => import('./pages/ProductionPlanTasksPage'));
+const ProductionPlanReportPage = lazyWithRetry(() => import('./pages/ProductionPlanReportPage'));
 const ProductionApprovalsPage = lazyWithRetry(() => import('./pages/ProductionApprovalsPage'));
 const ProductionPipelineSettingsPage = lazyWithRetry(() => import('./pages/ProductionPipelineSettingsPage'));
 const WorkshopTaskTemplatesPage = lazyWithRetry(() => import('./pages/WorkshopTaskTemplatesPage'));
@@ -637,6 +638,7 @@ export default function App() {
               <Route path="dashboard" element={<ProductionDashboard />} />
               <Route path="project-tasks" element={<Suspense fallback={<PageLoader />}><ProjectTasksOverviewPage fixedModule="sx" /></Suspense>} />
               <Route path="plan-tasks" element={<Suspense fallback={<PageLoader />}><ProductionPlanTasksPage /></Suspense>} />
+              <Route path="plan-reports" element={<Suspense fallback={<PageLoader />}><ProductionPlanReportPage /></Suspense>} />
               <Route path="pipeline" element={<ProductionDashboard variant="pipeline" />} />
               <Route path="approvals" element={<ProductionApprovalsPage />} />
               <Route path="pipeline-settings" element={<ProductionPipelineSettingsPage />} />

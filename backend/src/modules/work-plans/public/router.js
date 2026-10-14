@@ -27,7 +27,11 @@ function createRouter({ repository, auth, scope, isManager, validateAssignees })
         }
         if (!page.more) break;
       }
-      res.json({enabled:true,...summarizePlans(plans,window)});
+      const result=summarizePlans(plans,window);
+      const labels=await repository.reportLabels([...new Set(result.tasks.map(t=>t.project_id))],[...new Set(result.tasks.map(t=>t.assignee_id).filter(Boolean))]);
+      const projects=new Map(labels.projects.map(p=>[p.id,p])),users=new Map(labels.users.map(u=>[u.id,u]));
+      result.tasks=result.tasks.map(t=>({...t,project_code:projects.get(t.project_id)?.code||null,project_name:projects.get(t.project_id)?.name||null,assignee_name:users.get(t.assignee_id)?.full_name||null}));
+      res.json({enabled:true,...result});
     } catch(e) {res.status(e.status||503).json({error:e.status?e.message:'Không tải đủ dữ liệu lịch sử kế hoạch sản xuất'});}
   });
   async function context(req,res) {

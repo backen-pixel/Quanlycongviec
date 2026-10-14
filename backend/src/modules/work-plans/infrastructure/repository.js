@@ -11,6 +11,15 @@ function createRepository(db) {
     },
     getPlan: async id => unwrap(await db.from('work_plan_instances').select('company_id,revision,document').eq('project_id',id).maybeSingle()),
     versionAsOf: async (id,end) => unwrap(await db.from('work_plan_versions').select('revision,document').eq('project_id',id).lt('created_at',end).order('revision',{ascending:false}).limit(1).maybeSingle()),
+    reportLabels: async (projects,assignees) => {
+      async function read(table,columns,ids) {
+        const rows=[];
+        for(let offset=0;offset<ids.length;offset+=100) rows.push(...unwrap(await db.from(table).select(columns).in('id',ids.slice(offset,offset+100))));
+        return rows;
+      }
+      const [projectRows,userRows]=await Promise.all([read('projects','id,code,name',projects),read('users','id,full_name',assignees)]);
+      return {projects:projectRows,users:userRows};
+    },
     replay: async (id, hash, context) => {
       const row = unwrap(await db.from('work_plan_commands').select('request_hash,company_id,actor_id,result').eq('command_id',id).maybeSingle());
       if (!row) return null;

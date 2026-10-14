@@ -2669,3 +2669,9 @@ Kiểm tra: `node --check` đạt, `npx vite build` đạt. Chưa thử qua giao
 - Hệ thống vốn phân biệt được: `timePreset === ''` (Tất cả, không ngày) · tên preset (ngày tự suy, `showCustomDate: false`) · `'custom'` (người dùng tự chọn, `showCustomDate: true`). Nay điều kiện thành `search.length >= 2 && timePreset !== 'custom'` — giữ nguyên ý đồ cũ cho preset, tôn trọng khoảng tự chọn.
 - Thêm `timePreset` vào chữ ký hàm và **đủ 13/13 lời gọi** (dùng script khớp ngoặc, vì file còn 5 chỗ `customDateTo:` ở object khác — thay hàng loạt sẽ hỏng). Kiểm lại bằng script đếm: 13 lời gọi, 0 chỗ thiếu.
 - `npx vite build` đạt. Chưa thử trên trình duyệt. Hoàn tác: bỏ delta 1 file.
+## 2026-10-14 — Staging Render hoạt động, sửa báo cáo SX và liên kết nhiệm vụ
+
+Đã deploy candidate e047a3a9 lên https://tubep-staging-work-plans.onrender.com (srv-db7hhgc9v7es73c3mdsg, My Workspace, runtime free, autoDeploy off). Health xác nhận DB riêng jdwgcivfqajpnlatrfwq/business_jobs=false. Smoke public HTTP thực PASS 13 nhiệm vụ, phân quyền, báo cáo, tổng hợp và dự án cũ. Browser manager kiểm editor, mẫu và overview; phát hiện và sửa liên kết phụ Công việc sang canonical plan, thêm /sx/plan-reports cho quản lý xưởng không có quyền tab báo cáo CRM team. Báo cáo bổ sung mã/tên công trình và người phụ trách từ tập nhiệm vụ đã lọc quyền, thời gian hiển thị giờ Việt Nam. Reviewer riêng không còn blocker. 30/30 regression PASS, build PASS, latest local full-stack smoke PASS. Bản sửa cuối đang chờ redeploy/kiểm browser; không merge main hoặc deploy production. Staging chỉ fixtures/tuyến tính năng này, chưa chứng minh mọi module legacy.
+
+---
+

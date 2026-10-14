@@ -60,3 +60,9 @@ backend/src/stagingServer.js là entry riêng: pin database ref, strong JWT, dis
 Test opt-in: STAGING_TEST_CREDENTIALS trỏ private fixture, node backend/tests/work-plans-staging-smoke.js (origin mặc định localhost:44010, hoặc Render staging đã kiểm định). Tự từ chối origin production. Kết quả tại local host + DB staging thật: PASS 13 task, same-title distinct IDs, employee/other-company gates, personal/team/project overview/report/WorkUnified, legacy not migrated. Frontend stage build và 30 local regression tests PASS.
 
 Rollback staging: dừng service staging hoặc quay lại candidate trước; giữ DB/history giả để tra soát. Không đổi production/backup. Chưa xóa DB có phí; chỉ xóa/dừng theo yêu cầu user sau nghiệm thu.
+## 2026-10-14 — Staging Render hoạt động, sửa báo cáo SX và liên kết nhiệm vụ
+
+Đã deploy candidate e047a3a9 lên https://tubep-staging-work-plans.onrender.com (srv-db7hhgc9v7es73c3mdsg, My Workspace, runtime free, autoDeploy off). Health xác nhận DB riêng jdwgcivfqajpnlatrfwq/business_jobs=false. Smoke public HTTP thực PASS 13 nhiệm vụ, phân quyền, báo cáo, tổng hợp và dự án cũ. Browser manager kiểm editor, mẫu và overview; phát hiện và sửa liên kết phụ Công việc sang canonical plan, thêm /sx/plan-reports cho quản lý xưởng không có quyền tab báo cáo CRM team. Báo cáo bổ sung mã/tên công trình và người phụ trách từ tập nhiệm vụ đã lọc quyền, thời gian hiển thị giờ Việt Nam. Reviewer riêng không còn blocker. 30/30 regression PASS, build PASS, latest local full-stack smoke PASS. Bản sửa cuối đang chờ redeploy/kiểm browser; không merge main hoặc deploy production. Staging chỉ fixtures/tuyến tính năng này, chưa chứng minh mọi module legacy.
+
+---
+

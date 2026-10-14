@@ -168,6 +168,7 @@ function assignmentPageModuleOf(task) {
 }
 
 function overviewAssignmentsHref(task) {
+  if (task?.source === 'work_plan') return getDeepLink(task);
   const projectId = String(task?.project_id || '').trim();
   const pageModule = assignmentPageModuleOf(task);
   if (projectId) {
