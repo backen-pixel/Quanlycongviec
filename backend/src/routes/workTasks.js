@@ -1,3 +1,4 @@
+const { workTaskReadSource } = require('../modules/work-plans/infrastructure/readSource');
 /**
  * Gateway API /api/work-tasks — tổng hợp nhiệm vụ từ tasks, crm_tasks, crm_assignments.
  */
@@ -573,7 +574,8 @@ async function restrictToProductionScope(rows, companyId) {
       .filter((c) => String(c.stage_slug || '').startsWith('sx_') || c.production_pipeline_stage_id)
       .map((c) => String(c.id)),
   );
-  return rows.filter((t) => inScope.has(String(t.project_id))
+  const existingProjects = new Set(projects.map(p=>String(p.id)));
+  return rows.filter((t) => (inScope.has(String(t.project_id)) || (t.source === 'work_plan' && existingProjects.has(String(t.project_id))))
     && (t.source !== 'crm_task' || sxCrm.has(crmTaskIdOf(t))));
 }
 
@@ -773,7 +775,7 @@ async function dropTasksClosedOnDeal(rows, detailLeads, { dropWithTwin = false }
   if (!taskRows.length) return rows;
   const projectIds = [...new Set(taskRows.map((t) => String(t.project_id)))];
   const crmRowsAll = await fetchAllByIdsParallel({
-    table: 'unified_tasks_v',
+    table: workTaskReadSource(),
     columns: 'unified_id, source_id, project_id, lead_id, title, status, deadline',
     key: 'project_id',
     ids: projectIds,
@@ -795,7 +797,7 @@ async function dropTasksClosedOnDeal(rows, detailLeads, { dropWithTwin = false }
       .filter((c) => String(c.stage_slug || '').startsWith('sx_') || c.production_pipeline_stage_id)
       .map((c) => String(c.id)),
   );
-  const keyOf = (t) => `${t.project_id}|${String(t.title || '').trim().toLowerCase()}`;
+  const keyOf = (t) => t.source === 'work_plan' ? t.unified_id : `${t.project_id}|${String(t.title || '').trim().toLowerCase()}`;
   const state = new Map();
   for (const c of crmRows) {
     if (!sxCrm.has(crmTaskIdOf(c))) continue;
@@ -854,9 +856,10 @@ async function dropTasksClosedOnDeal(rows, detailLeads, { dropWithTwin = false }
  * @returns {{ children: object[], crmDetails: Map<string, object> }}
  */
 function buildCrmSxOverviewChildren({
-  tasksRows = [], sxCrmRows = [], leadProjectById, detailLeads = null, projectById, blockingTaskIds = null,
+  tasksRows = [], sxCrmRows = [], leadProjectById, detailLeads = null, projectById, blockingTaskIds = null, approvedPlanProjectIds = new Set(),
 }) {
   const projects = projectById instanceof Map ? projectById : new Map();
+  const planProjects = approvedPlanProjectIds;
   const leadProject = leadProjectById instanceof Map ? leadProjectById : new Map();
   const normTitle = (v) => String(v || '').trim().toLowerCase();
   const keyOf = (projectId, title) => `${projectId}|${normTitle(title)}`;
@@ -867,6 +870,7 @@ function buildCrmSxOverviewChildren({
     const slug = String(row?.stage_slug || '');
     if (!slug.startsWith('sx_') && !row?.production_pipeline_stage_id) continue;
     const projectId = leadProject.get(String(row.lead_id || ''));
+    if (planProjects.has(String(projectId))) continue;
     const project = projectId ? projects.get(String(projectId)) : null;
     if (!project) continue;
     if (!crmRowInDetailLeads({ source: 'crm_task', project_id: projectId, lead_id: row.lead_id }, detailLeads || new Map())) continue;
@@ -1057,7 +1061,7 @@ r.get('/team-project-tasks', async (req, res) => {
         if (typedSetIn) projectIds = projectIds.filter((id) => typedSetIn.has(id));
         if (!projectIds.length) return [];
         return fetchAllByIdsParallel({
-          table: 'unified_tasks_v',
+          table: workTaskReadSource(),
           columns: COLS,
           key: 'project_id',
           ids: projectIds,
@@ -1135,7 +1139,7 @@ r.get('/team-project-tasks', async (req, res) => {
             : q2.not('project_id', 'in', `(${pd.ids.join(',')})`);
         };
         const fetchBatch = async (from) => {
-          const r = await build(supabase.from('unified_tasks_v').select(COLS)).range(from, from + 999);
+          const r = await build(supabase.from(workTaskReadSource()).select(COLS)).range(from, from + 999);
           if (r.error) throw r.error;
           return r.data || [];
         };
@@ -1144,7 +1148,7 @@ r.get('/team-project-tasks', async (req, res) => {
         for (let from = 1000, n = 0; from < hint && n < TEAM_TASKS_SCAN_WAVE; from += 1000, n += 1) {
           spec.set(from, fetchBatch(from).catch(() => null));
         }
-        const first = await build(supabase.from('unified_tasks_v').select(COLS, { count: 'exact' })).range(0, 999);
+        const first = await build(supabase.from(workTaskReadSource()).select(COLS, { count: 'exact' })).range(0, 999);
         if (first.error) throw first.error;
         const rows = [...(first.data || [])];
         const scanTotal = Number(first.count) || rows.length;
@@ -1223,7 +1227,7 @@ r.get('/team-project-tasks', async (req, res) => {
         const missing = blockingList.filter((b) => !haveTaskIds.has(b.id) && (!needleB || b.title.toLowerCase().includes(needleB)));
         if (missing.length) {
           blockingExtra = await fetchAllByIdsParallel({
-            table: 'unified_tasks_v',
+            table: workTaskReadSource(),
             columns: COLS,
             key: 'source_id',
             ids: missing.map((b) => b.id),
@@ -1260,7 +1264,7 @@ r.get('/team-project-tasks', async (req, res) => {
           const chunks = [];
           for (let i = 0; i < crmProjectIds.length; i += 15) chunks.push(crmProjectIds.slice(i, i + 15));
           const twinParts = await Promise.all(chunks.map(async (ids) => {
-            let tq = supabase.from('unified_tasks_v').select(COLS)
+            let tq = supabase.from(workTaskReadSource()).select(COLS)
               .in('task_kind', TEAM_PROJECT_TASK_KINDS)
               .in('project_id', ids)
               .neq('source', 'crm_task')
@@ -1284,7 +1288,7 @@ r.get('/team-project-tasks', async (req, res) => {
       // từng cái) trong khi bảng `tasks` chỉ có MỘT dòng cho tên đó. Nên khóa «dự án + tên» chỉ gom bản `tasks` với MỘT bản
       // `crm_task` (cặp song sinh); các `crm_task` còn lại là việc thật ở cột khác → giữ riêng, để số việc khớp chi tiết dự án
       // (trước đây gộp hết thành một: HCB · Tủ bếp mất 20 việc, vd. «Sơn» ×3 ở TB-2026-1013).
-      const keyOf = (t) => `${t.project_id}|${String(t.title || '').trim().toLowerCase()}`;
+      const keyOf = (t) => t.source === 'work_plan' ? t.unified_id : `${t.project_id}|${String(t.title || '').trim().toLowerCase()}`;
       // KẾ THỪA người nhận: `crm_task` chưa có người nhận mà bản `tasks` cùng tên đã được giao → hiện người đó (chỉ hiển thị, không ghi).
       // Bản `tasks` có thể nằm ngoài cửa sổ quét nên đọc riêng theo dự án, không dựa vào `scanned`.
       const assigneeByKey = scanned.some((t) => t.source === 'crm_task' && !t.assignee_id)
@@ -1541,7 +1545,7 @@ async function finishProjectOverview(res, tasks, preloaded = null) {
     else if (lane === 'logistics') stats.by_module.vc += 1;
     else stats.by_module.sx += 1;
     const deadlineMs = task.deadline
-      ? (companyWorkEndMsFromRaw(task.deadline, task.company_id) ?? new Date(task.deadline).getTime())
+      ? (task.source === 'work_plan' ? Date.parse(task.deadline) : (companyWorkEndMsFromRaw(task.deadline, task.company_id) ?? new Date(task.deadline).getTime()))
       : null;
     if (deadlineMs != null && Number.isFinite(deadlineMs)) {
       if (deadlineMs < nowMs) stats.overdue += 1;
@@ -1708,8 +1712,12 @@ r.get('/project-overview', async (req, res) => {
     const projectById = new Map(activeProjects.map((project) => [String(project.id), project]));
     const leadById = new Map((leads || []).map((lead) => [String(lead.id), lead]));
     const vcStageById = new Map((vcStagesRes.data || []).map((stage) => [String(stage.id), stage]));
+    const approvedPlanRows = workTaskReadSource() === 'unified_work_tasks_v' && activeProjects.length
+      ? await fetchAllByIdsParallel({table:'work_plan_instances',columns:'project_id',key:'project_id',ids:activeProjects.map(p=>p.id),tune:q=>q.contains('document',{active:{plan_schema_version:2}})})
+      : [];
+    const approvedPlanProjectIds = new Set(approvedPlanRows.map(p=>String(p.project_id)));
     const productionProjectIds = activeProjects
-      .filter((project) => !isProductionTaskTerminalStage(sxStageById.get(String(project.sx_kanban_column_id || ''))))
+      .filter((project) => approvedPlanProjectIds.has(String(project.id)) || !isProductionTaskTerminalStage(sxStageById.get(String(project.sx_kanban_column_id || ''))))
       .map((project) => project.id);
     const logisticsProjectIds = activeProjects
       .filter((project) => !isLogisticsCompletedColumn(vcStageById.get(String(project.vc_kanban_column_id || ''))))
@@ -1732,7 +1740,7 @@ r.get('/project-overview', async (req, res) => {
     // vụ — đo thực tế cùng cỡ (6.163 so với 6.304 dòng) nên không tốn thêm.
     const crmTasksPromise = (!requestedModule || requestedModule === 'crm') && activeLeadIds.length
         ? fetchAllByIdsParallel({
-          table: 'unified_tasks_v',
+          table: workTaskReadSource(),
           columns: PROJECT_OVERVIEW_TASK_SELECT,
           key: 'lead_id',
           ids: activeLeadIds,
@@ -1764,11 +1772,11 @@ r.get('/project-overview', async (req, res) => {
 
     const productionTasksPromise = (!requestedModule || requestedModule === 'sx') && productionProjectIds.length
         ? fetchAllByIdsParallel({
-          table: 'unified_tasks_v',
+          table: workTaskReadSource(),
           columns: PROJECT_OVERVIEW_TASK_SELECT,
           key: 'project_id',
           ids: productionProjectIds,
-          tune: (q) => tuneTaskQuery(q.eq('source', 'task'), { kinds: ['SX', 'Dự án'] }),
+          tune: (q) => tuneTaskQuery(q.in('source', ['task', 'work_plan']), { kinds: ['SX', 'Dự án'] }),
           // 30,1 dòng/dự án đo được → 25 dự án/khúc ≈ 750 dòng, vừa một trang.
           idChunk: 25,
           chunkConcurrency: 16,
@@ -1777,7 +1785,7 @@ r.get('/project-overview', async (req, res) => {
 
     const logisticsTasksPromise = (!requestedModule || requestedModule === 'vc') && logisticsProjectIds.length
         ? fetchAllByIdsParallel({
-          table: 'unified_tasks_v',
+          table: workTaskReadSource(),
           columns: PROJECT_OVERVIEW_TASK_SELECT,
           key: 'project_id',
           ids: logisticsProjectIds,
@@ -1805,7 +1813,7 @@ r.get('/project-overview', async (req, res) => {
      */
     const projectTaskDetailsPromise = Promise.all([productionTasksPromise, logisticsTasksPromise])
       .then(([sxRows, vcRows]) => {
-        const ids = [...sxRows, ...vcRows].map((t) => t.source_id).filter(Boolean);
+        const ids = [...sxRows, ...vcRows].filter(t => t.source === 'task').map((t) => t.source_id).filter(Boolean);
         return ids.length
           ? fetchAllByIdsParallel({
             table: 'tasks',
@@ -1856,6 +1864,7 @@ r.get('/project-overview', async (req, res) => {
         const detailLeadsForOverview = await loadDetailLeadsByProject([...productionProjectIdSet]);
         const blockingList = await loadBlockingTasks(effectiveCompany, null);
         const built = buildCrmSxOverviewChildren({
+          approvedPlanProjectIds,
           tasksRows: productionTasks,
           sxCrmRows,
           leadProjectById: crmLeadProject,
@@ -1916,6 +1925,7 @@ r.get('/project-overview', async (req, res) => {
       return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
     };
     const categoryFor = (task) => {
+      if (task.source === 'work_plan') return { id: task.unified_id, title: task.title, order: 0 };
       if (task.source === 'crm_task') {
         const detail = crmDetailById.get(String(task.source_id)) || {};
         const sharedTitle = projectOverviewSharedCategoryTitle(detail);
@@ -1968,7 +1978,7 @@ r.get('/project-overview', async (req, res) => {
     const stampRows = [];
     const tasks = [...groupMap.values()].map((group) => {
       const childDone = (task) => (
-        group.lane === 'production' && !(crmSxDetails && task.source === 'crm_task')
+        group.lane === 'production' && task.source !== 'work_plan' && !(crmSxDetails && task.source === 'crm_task')
           ? workshopChildDone(task, sxCrmIndex)
           : terminalStatuses.has(String(task.status || '').toLowerCase())
       );
@@ -1980,7 +1990,7 @@ r.get('/project-overview', async (req, res) => {
       const project = projectById.get(String(first.project_id || '')) || null;
       const lead = leadById.get(String(first.lead_id || '')) || null;
       let deadline = null;
-      if (group.lane === 'production' && crmSxDetails) {
+      if (first.source === 'work_plan' || (group.lane === 'production' && crmSxDetails)) {
         // Nguồn `crm_task`: hạn THẬT = hạn sớm nhất của các việc con còn mở (như «Theo dự án» / app) — không dùng hạn kế hoạch của
         // nhóm (trước đây hầu hết thẻ cùng một mốc kế hoạch nên «Quá hạn» luôn 0). Không việc nào có hạn → «Chưa có hạn».
         const openMs = openChildren
@@ -2071,7 +2081,7 @@ r.get('/project-overview-summary', async (req, res) => {
     };
     const allKinds = [...moduleKinds.crm, ...moduleKinds.sx, ...moduleKinds.vc];
     const countTasks = async ({ kinds = allKinds, risk = '' } = {}) => {
-      let q = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true });
+      let q = supabase.from(workTaskReadSource()).select('unified_id', { count: 'exact', head: true });
       q = applyPrimaryLeadOnly(q, false);
       q = applyOpenOnlyFilter(q);
       q = q.in('task_kind', kinds);
@@ -2152,7 +2162,7 @@ r.get('/', async (req, res) => {
     // khi đó KHÔNG lọc is_primary_lead, nếu không task của lead thứ 2 biến mất.
     const applyListFilters = (q, opts = {}) => {
       if (source) {
-        const sources = String(source).split(',').map((s) => s.trim()).filter((s) => VALID_SOURCES.has(s));
+        const sources = String(source).split(',').map((s) => s.trim()).filter((s) => VALID_SOURCES.has(s) || (s === 'work_plan' && workTaskReadSource() === 'unified_work_tasks_v'));
         if (sources.length === 1) q = q.eq('source', sources[0]);
         else if (sources.length > 1) q = q.in('source', sources);
       }
@@ -2210,7 +2220,7 @@ r.get('/', async (req, res) => {
       };
       if (regionScope.leadIds.length) {
         merge(await fetchAllByIds({
-          table: 'unified_tasks_v',
+          table: workTaskReadSource(),
           columns: TASK_SELECT,
           key: 'lead_id',
           ids: regionScope.leadIds,
@@ -2219,7 +2229,7 @@ r.get('/', async (req, res) => {
       }
       if (regionScope.projectIds.length) {
         merge(await fetchAllByIds({
-          table: 'unified_tasks_v',
+          table: workTaskReadSource(),
           columns: TASK_SELECT,
           key: 'project_id',
           ids: regionScope.projectIds,
@@ -2231,7 +2241,7 @@ r.get('/', async (req, res) => {
       data = merged.slice(from, to + 1);
     } else if (regionScope?.none) {
       const { data: rows, error: noneErr } = await applyListFilters(
-        supabase.from('unified_tasks_v').select(TASK_SELECT).order('updated_at', { ascending: false }),
+        supabase.from(workTaskReadSource()).select(TASK_SELECT).order('updated_at', { ascending: false }),
       ).range(0, 499);
       if (noneErr) throw noneErr;
       const filtered = (rows || []).filter((t) => taskMatchesRegionScope(t, regionScope));
@@ -2239,7 +2249,7 @@ r.get('/', async (req, res) => {
       data = filtered.slice(from, to + 1);
     } else {
       let q = applyListFilters(
-        supabase.from('unified_tasks_v').select(TASK_SELECT, { count: 'exact' })
+        supabase.from(workTaskReadSource()).select(TASK_SELECT, { count: 'exact' })
           .order('updated_at', { ascending: false }),
       );
       q = q.range(from, to);
@@ -2266,14 +2276,14 @@ r.get('/by-project/:projectId', async (req, res) => {
     if (!access) return;
     const leadIds = await getLeadIdsForProject(projectId);
 
-    let qProject = supabase.from('unified_tasks_v').select(TASK_SELECT).eq('project_id', projectId);
+    let qProject = supabase.from(workTaskReadSource()).select(TASK_SELECT).eq('project_id', projectId);
     if (!isManagerLike(req.user)) qProject = applyEmployeeScope(qProject, req.user.userId);
     const { data: projectTasks, error: e1 } = await qProject;
     if (e1) throw e1;
 
     let crmTasks = [];
     if (leadIds.length) {
-      let qCrm = supabase.from('unified_tasks_v').select(TASK_SELECT).in('lead_id', leadIds);
+      let qCrm = supabase.from(workTaskReadSource()).select(TASK_SELECT).in('lead_id', leadIds);
       if (!isManagerLike(req.user)) qCrm = applyEmployeeScope(qCrm, req.user.userId);
       const { data: ct, error: e2 } = await qCrm;
       if (e2) throw e2;
@@ -2535,13 +2545,13 @@ r.post('/by-project/:projectId/remind-complete', async (req, res) => {
     }
 
     const leadIds = await getLeadIdsForProject(projectId);
-    let qProject = supabase.from('unified_tasks_v').select(TASK_SELECT).eq('project_id', projectId);
+    let qProject = supabase.from(workTaskReadSource()).select(TASK_SELECT).eq('project_id', projectId);
     const { data: projectTasks, error: e1 } = await qProject;
     if (e1) throw e1;
     let crmTasks = [];
     if (leadIds.length) {
       const { data: ct, error: e2 } = await supabase
-        .from('unified_tasks_v')
+        .from(workTaskReadSource())
         .select(TASK_SELECT)
         .in('lead_id', leadIds);
       if (e2) throw e2;
@@ -2734,7 +2744,7 @@ r.post('/project-overview/remind-complete', async (req, res) => {
       ? ['CRM-Deal', 'CRM-Lead', 'Giao việc']
       : lane === 'logistics' ? ['VC'] : ['SX', 'Dự án'];
     const candidateTasks = await fetchAllByIdsParallel({
-      table: 'unified_tasks_v',
+      table: workTaskReadSource(),
       columns: PROJECT_OVERVIEW_TASK_SELECT,
       key: 'project_id',
       ids: [projectId],
@@ -2861,7 +2871,7 @@ r.post('/:source/:id/remind-complete', async (req, res) => {
     if (!VALID_SOURCES.has(source)) return res.status(400).json({ error: 'source không hợp lệ' });
 
     const { data: rows, error: te } = await supabase
-      .from('unified_tasks_v')
+      .from(workTaskReadSource())
       .select(TASK_SELECT)
       .eq('source', source)
       .eq('source_id', String(id))

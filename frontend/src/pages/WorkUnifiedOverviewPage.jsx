@@ -242,6 +242,7 @@ function WorkKanbanCard({ it, variant = 'default' }) {
           <span className="truncate">{[it.deal_code, people[0]].filter(Boolean).join(' · ')}</span>
         </p>
       )}
+      {it.production_plan && <p className="text-xs text-blue-700">Kế hoạch SX: {it.production_plan.completed}/{it.production_plan.total} việc · {it.production_plan.overdue} quá hạn</p>}
       {dateBits.length > 0 && (
         <p className={`text-[11px] flex items-center gap-1 min-w-0 ${dateTone}`}>
           <Clock className="h-3 w-3 shrink-0" />
@@ -1496,7 +1497,7 @@ export default function WorkUnifiedOverviewPage() {
                 key: 'progress',
                 header: 'Tiến độ',
                 cellClassName: 'px-4 py-3 align-top text-gray-700 font-medium',
-                cell: (it) => `${it.progress_pct}%`,
+                cell: (it) => <>{it.progress_pct}%{it.production_plan && <Link className="block text-xs text-blue-700 underline" to={`/sx/projects/${it.id}/plan`}>Kế hoạch SX: {it.production_plan.completed}/{it.production_plan.total} việc · {it.production_plan.overdue} quá hạn</Link>}</>,
               },
               {
                 key: 'forecast',

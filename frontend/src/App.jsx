@@ -101,6 +101,8 @@ const LeadJourneyPage = lazyWithRetry(() => import('./pages/LeadJourneyPage'));
 const ProductionLayout = lazyWithRetry(() => import('./layouts/ProductionLayout'));
 const ProductionDashboard = lazyWithRetry(() => import('./pages/ProductionDashboard'));
 const ProductionDetail = lazyWithRetry(() => import('./pages/ProductionDetail'));
+const ProductionPlanPage = lazyWithRetry(() => import('./pages/ProductionPlanPage'));
+const ProductionPlanTasksPage = lazyWithRetry(() => import('./pages/ProductionPlanTasksPage'));
 const ProductionApprovalsPage = lazyWithRetry(() => import('./pages/ProductionApprovalsPage'));
 const ProductionPipelineSettingsPage = lazyWithRetry(() => import('./pages/ProductionPipelineSettingsPage'));
 const WorkshopTaskTemplatesPage = lazyWithRetry(() => import('./pages/WorkshopTaskTemplatesPage'));
@@ -634,6 +636,7 @@ export default function App() {
               <Route index element={<Navigate to="dashboard" replace />} />
               <Route path="dashboard" element={<ProductionDashboard />} />
               <Route path="project-tasks" element={<Suspense fallback={<PageLoader />}><ProjectTasksOverviewPage fixedModule="sx" /></Suspense>} />
+              <Route path="plan-tasks" element={<Suspense fallback={<PageLoader />}><ProductionPlanTasksPage /></Suspense>} />
               <Route path="pipeline" element={<ProductionDashboard variant="pipeline" />} />
               <Route path="approvals" element={<ProductionApprovalsPage />} />
               <Route path="pipeline-settings" element={<ProductionPipelineSettingsPage />} />
@@ -646,6 +649,7 @@ export default function App() {
               <Route path="events/schedule" element={<EventsInstallSchedulePage scope="production" />} />
               <Route path="trash" element={<Navigate to="/admin/trash?tab=sx" replace />} />
               <Route path="projects/:id" element={<ProductionDetail />} />
+              <Route path="projects/:id/plan" element={<Suspense fallback={<PageLoader />}><ProductionPlanPage /></Suspense>} />
             </Route>
             <Route path="/vc" element={<ProductionLayout />}>
               <Route index element={<Navigate to="dashboard" replace />} />

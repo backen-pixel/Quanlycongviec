@@ -10,6 +10,7 @@ import { normalizeKanbanStatus } from '../lib/workTasksDashboardUtils';
 const DONE_STATUSES = new Set(['done', 'completed', 'cancelled']);
 
 const SOURCE_LABELS = {
+  work_plan: 'Kế hoạch SX',
   task: 'Công việc',
   crm_task: 'CRM Lead/Deal',
   crm_assignment: 'Giao việc CRM',
@@ -68,6 +69,7 @@ function canSendTaskRemind(user) {
 
 function getDeepLink(task) {
   if (!task) return null;
+  if (task.source === 'work_plan' && task.project_id) return `/sx/projects/${task.project_id}/plan`;
   if (task.source === 'crm_task' && task.lead_id) {
     return `/crm/leads/${task.lead_id}`;
   }
@@ -96,7 +98,7 @@ export default function UnifiedTaskRow({ task, onStatusChange, onOpenExtras, com
   const remindCopy = remindButtonCopy(task);
   const responsibleName = task.assignee_name || task.effective_assignee_name || task.module_owner_name || null;
   const responsibleIsFallback = !task.assignee_id && !!responsibleName;
-  const canShowRemind = !!(task.source && task.source_id
+  const canShowRemind = !!(task.source !== 'work_plan' && task.source && task.source_id
     && (canSendTaskRemind(user) || typeof onStatusChange === 'function'));
   const remindTitle = isOpenTask
     ? remindCopy.title
@@ -165,7 +167,7 @@ export default function UnifiedTaskRow({ task, onStatusChange, onOpenExtras, com
         )}
         {(onStatusChange || canShowRemind) && (
           <div className="flex flex-wrap items-center gap-1.5 mt-2">
-            {onStatusChange && STATUS_ACTIONS.map((a) => (
+            {task.source !== 'work_plan' && onStatusChange && STATUS_ACTIONS.map((a) => (
               <button
                 key={a.key}
                 type="button"
@@ -202,7 +204,7 @@ export default function UnifiedTaskRow({ task, onStatusChange, onOpenExtras, com
         )}
       </div>
       <div className="shrink-0 flex flex-col items-end gap-1">
-        {onOpenExtras && (
+        {task.source !== 'work_plan' && onOpenExtras && (
           <button
             type="button"
             onClick={() => onOpenExtras(task)}

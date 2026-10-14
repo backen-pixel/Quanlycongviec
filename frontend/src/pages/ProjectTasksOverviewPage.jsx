@@ -131,6 +131,7 @@ function deadlineBucketOf(task, nowMs = Date.now()) {
   const rawDeadline = task?.deadline;
   if (!rawDeadline) return 'no_deadline';
   const company = task.company_id || task.company;
+  if (task.source === 'work_plan' && Date.parse(rawDeadline) < nowMs) return 'overdue';
   const dueMs = companyWorkEndMsFromRaw(rawDeadline, company) ?? new Date(rawDeadline).getTime();
   if (!Number.isFinite(dueMs)) return 'no_deadline';
   const dueYmd = vnYmdFromTs(dueMs);
@@ -182,6 +183,7 @@ function overviewAssignmentsHref(task) {
 }
 
 function overviewProjectHref(task) {
+  if (task?.source === 'work_plan') return getDeepLink(task);
   const projectId = String(task?.project_id || '').trim();
   const pageModule = assignmentPageModuleOf(task);
   if (pageModule === 'crm' && task?.lead_id) return `/crm/leads/${task.lead_id}`;
@@ -315,7 +317,7 @@ const TaskCard = memo(function TaskCard({ task, canRemind, showModule }) {
               Công việc
             </Link>
           )}
-          {canRemind && (
+          {task.source !== 'work_plan' && canRemind && (
             <button
               type="button"
               onClick={handleRemind}

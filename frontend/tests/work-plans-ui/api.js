@@ -1,0 +1,2 @@
+async function request(method,path,body,options){const query=options?.params?`?${new URLSearchParams(options.params)}`:'';const response=await fetch(`/api${path}${query}`,{method,headers:{'Content-Type':'application/json','X-Test-Role':new URLSearchParams(location.search).get('role')||'manager'},body:body?JSON.stringify(body):undefined});const data=await response.json();if(!response.ok)throw {response:{data,status:response.status}};return {data};}
+export default {get:(path,options)=>request('GET',path,null,options),post:(path,body)=>request('POST',path,body)};

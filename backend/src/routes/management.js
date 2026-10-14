@@ -1,3 +1,4 @@
+const { workTaskReadSource } = require('../modules/work-plans/infrastructure/readSource');
 /**
  * API module Quản lý — dashboard tổng hợp CRM + SX + VC và trang deal thống nhất.
  */
@@ -690,18 +691,22 @@ r.get('/overview', async (req, res) => {
     const install = vcInstall.install;
 
     // applyPrimaryLeadOnly: khử dòng nhân do dự án có nhiều deal (migration 594).
-    let taskQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
+    let taskQ = supabase.from(workTaskReadSource()).select('unified_id', { count: 'exact', head: true })
       .neq('status', 'completed').neq('status', 'done');
     taskQ = applyPrimaryLeadOnly(taskQ, false);
+    if (workTaskReadSource() === 'unified_work_tasks_v') taskQ = taskQ.or('source.neq.work_plan,status.neq.cancelled');
     taskQ = applyCompanyScopeFilter(taskQ, scope);
-    const { count: openTasks } = await taskQ;
+    const { count: openTasks, error: openTasksError } = await taskQ;
+    if (openTasksError) throw openTasksError;
 
-    let overdueQ = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true })
+    let overdueQ = supabase.from(workTaskReadSource()).select('unified_id', { count: 'exact', head: true })
       .lt('deadline', new Date().toISOString())
       .neq('status', 'completed').neq('status', 'done');
     overdueQ = applyPrimaryLeadOnly(overdueQ, false);
+    if (workTaskReadSource() === 'unified_work_tasks_v') overdueQ = overdueQ.or('source.neq.work_plan,status.neq.cancelled');
     overdueQ = applyCompanyScopeFilter(overdueQ, scope);
-    const { count: overdueTasks } = await overdueQ;
+    const { count: overdueTasks, error: overdueTasksError } = await overdueQ;
+    if (overdueTasksError) throw overdueTasksError;
 
     const totalDeals = Object.values(dealCounts).reduce((s, n) => s + n, 0);
     const totalLeads = Object.values(leadCounts).reduce((s, n) => s + n, 0);
@@ -880,14 +885,14 @@ async function fetchPostContractOverviewTasksViaQueries({
   // cũ (project trước, lead sau) vì `merge` giữ bản gặp đầu tiên cho mỗi unified_id.
   const [byProject, byLead] = await Promise.all([
     pids.length ? fetchAllByIdsParallel({
-      table: 'unified_tasks_v',
+      table: workTaskReadSource(),
       columns: OVERVIEW_TASK_SELECT,
       key: 'project_id',
       ids: pids,
       tune: (q) => tune(q, false),
     }) : Promise.resolve([]),
     lids.length ? fetchAllByIdsParallel({
-      table: 'unified_tasks_v',
+      table: workTaskReadSource(),
       columns: OVERVIEW_TASK_SELECT,
       key: 'lead_id',
       ids: lids,
@@ -1503,6 +1508,18 @@ async function queryWorkUnifiedList(req, opts = {}) {
     }
   }
 
+  const planTasks = workTaskReadSource() === 'unified_work_tasks_v' && projectIds.length
+    ? await fetchAllByIdsParallel({table:workTaskReadSource(),columns:'project_id,status,deadline',key:'project_id',ids:projectIds,tune:q=>q.eq('source','work_plan')})
+    : [];
+  const planSummaryByProject = new Map();
+  for (const task of planTasks) {
+    const id = String(task.project_id);
+    if (!planSummaryByProject.has(id)) planSummaryByProject.set(id,{total:0,completed:0,overdue:0});
+    const summary = planSummaryByProject.get(id);
+    summary.total++;
+    if (['done','completed','cancelled'].includes(task.status)) summary.completed++;
+    else if (task.deadline && Date.parse(task.deadline) < Date.now()) summary.overdue++;
+  }
   const buildItem = (p, dealMap) => {
     const flow = buildDeliveryFlow({ project: p, deliveryStages, pipelines: {} });
     const doneSteps = flow.filter((s) => s.status === 'done').length;
@@ -1588,6 +1605,7 @@ async function queryWorkUnifiedList(req, opts = {}) {
       current_stage_slug: currentStep?.key || null,
       current_stage_label: currentStep?.stage_name || currentStep?.label || null,
       progress_pct: progressPct,
+      production_plan: planSummaryByProject.get(String(p.id)) || null,
       forecast,
       days_remaining,
       delay_days,
@@ -2148,7 +2166,7 @@ r.get('/production-overview', async (req, res) => {
         : Promise.resolve({ data: [] }),
       projectIds.length
         ? fetchAllByIdsParallel({
-          table: 'unified_tasks_v',
+          table: workTaskReadSource(),
           columns: 'unified_id, source, source_id, project_id, title, status, priority, deadline, assignee_id, task_kind',
           key: 'project_id',
           ids: projectIds,
@@ -2479,7 +2497,7 @@ r.get('/deals/:leadId', async (req, res) => {
         .eq('lead_id', leadId).order('created_at', { ascending: false }).limit(30)
         .then(warnQ('management:crm_activities')),
       projectId
-        ? supabase.from('unified_tasks_v').select('unified_id, source, task_kind, title, status, deadline, assignee_id')
+        ? supabase.from(workTaskReadSource()).select('unified_id, source, task_kind, title, status, deadline, assignee_id')
           .eq('project_id', projectId).order('updated_at', { ascending: false }).limit(100)
         : Promise.resolve({ data: [] }),
       supabase.from('quotations').select('id, code, status, total, created_at')
@@ -2523,7 +2541,7 @@ r.get('/deals/:leadId', async (req, res) => {
 
     const countDone = (list, doneVals = new Set(['completed', 'done'])) => ({
       total: list.length,
-      done: list.filter((t) => doneVals.has(String(t.status))).length,
+      done: list.filter((t) => doneVals.has(String(t.status)) || (t.source === 'work_plan' && t.status === 'cancelled')).length,
     });
 
     res.json({
@@ -2634,11 +2652,13 @@ r.get('/production-overview/:projectId', async (req, res) => {
     const materialsReadyPct = materialsTotal > 0 ? Math.round((materialsReady / materialsTotal) * 100) : null;
     const openPrCount = (prs || []).filter((p) => ['draft', 'requested'].includes(p.status)).length;
 
-    let taskQuery = supabase.from('unified_tasks_v').select('unified_id, status, deadline').eq('project_id', projectId);
-    const { data: projectTasks } = await taskQuery;
+    let taskQuery = supabase.from(workTaskReadSource()).select('unified_id, source, status, deadline').eq('project_id', projectId);
+    const { data: projectTasks, error: projectTasksError } = await taskQuery;
+    if (projectTasksError) throw projectTasksError;
     let crmTasks = [];
     if (leadIds.length) {
-      const { data: ct } = await supabase.from('unified_tasks_v').select('unified_id, status, deadline').in('lead_id', leadIds);
+      const { data: ct, error: ctError } = await supabase.from(workTaskReadSource()).select('unified_id, source, status, deadline').in('lead_id', leadIds);
+      if (ctError) throw ctError;
       crmTasks = ct || [];
     }
     const seenTaskIds = new Set();
@@ -2648,7 +2668,7 @@ r.get('/production-overview/:projectId', async (req, res) => {
       return true;
     });
     const now = new Date();
-    const openTasks = allTasks.filter((t) => !DONE_TASK_STATUSES.includes(String(t.status)));
+    const openTasks = allTasks.filter((t) => !DONE_TASK_STATUSES.includes(String(t.status)) && !(t.source === 'work_plan' && t.status === 'cancelled'));
     const overdueTasks = openTasks.filter((t) => t.deadline && new Date(t.deadline) < now);
 
     const overdue = !!(project.deadline && new Date(project.deadline) < now);

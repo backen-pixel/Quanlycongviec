@@ -1,3 +1,4 @@
+const { workTaskReadSource } = require('../modules/work-plans/infrastructure/readSource');
 /**
  * Truy vấn chung cho unified_tasks_v — dùng bởi /api/work-tasks và heartbeat badge.
  */
@@ -101,7 +102,7 @@ function buildUnifiedTasksBaseQuery(user, {
   assignee_id, company_id, date_from, date_to, lead_id, assignee_lead_ids,
   status, task_kind, q: searchQ, open_only,
 } = {}) {
-  let q = supabase.from('unified_tasks_v').select('unified_id, task_kind, source, status, deadline, assignee_id, lead_id');
+  let q = supabase.from(workTaskReadSource()).select('unified_id, task_kind, source, status, deadline, assignee_id, lead_id');
 
   const effectiveCompany = company_id || (!isSystemAdmin(user) ? user?.company_id : null);
   if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
@@ -128,7 +129,7 @@ function buildUnifiedTasksBaseQuery(user, {
 }
 
 async function countUnifiedOpenTasks(user, opts = {}) {
-  let q = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true });
+  let q = supabase.from(workTaskReadSource()).select('unified_id', { count: 'exact', head: true });
   q = applyOpenOnlyFilter(q);
 
   const effectiveCompany = opts.company_id || (!isSystemAdmin(user) ? user?.company_id : null);
@@ -152,7 +153,7 @@ async function countUnifiedOpenTasks(user, opts = {}) {
 }
 
 async function countUnifiedOverdueTasks(user, opts = {}) {
-  let q = supabase.from('unified_tasks_v').select('unified_id', { count: 'exact', head: true });
+  let q = supabase.from(workTaskReadSource()).select('unified_id', { count: 'exact', head: true });
   q = applyOpenOnlyFilter(q);
   q = q.lt('deadline', new Date().toISOString());
   q = q.not('deadline', 'is', null);
