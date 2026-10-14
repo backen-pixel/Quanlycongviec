@@ -27,6 +27,15 @@ test('component gates on config and reads only qualification endpoints', () => {
   assert.doesNotMatch(component, /\bphone\b|so_dien_thoai|\bemail\b/i);
   assert.doesNotMatch(component, /api\.(?:get|put|post)\(\s*['"`]\/(?!marketing-p1\/qualification)/);
 });
+test('direct lookup accepts only UUID or same-origin CRM detail URLs', async () => {
+  const q = await import(`file:///${lib.replace(/\\/g, '/')}`);
+  const id = '83c1c4dd-1aca-4c87-a752-6548e6053abd', origin = 'https://crm.example.test';
+  for (const input of [id.toUpperCase(), `${origin}/crm/leads/${id}`, `/crm/deals/${id}/`])
+    assert.equal(q.qualificationLeadId(input, origin), id);
+  for (const input of ['lead-code', `${origin}/crm/leads/${id}?mutate=1`, `${origin}/crm/leads/${id}#x`,
+    `https://foreign.example.test/crm/leads/${id}`, `${origin}/crm/customers/${id}`])
+    assert.equal(q.qualificationLeadId(input, origin), null);
+});
 test('summary helpers show provisional money and explain unknown states in Vietnamese', async () => {
   const q = await import(`file:///${lib.replace(/\\/g, '/')}`);
   assert.equal(q.formatVnd(1000001), '1.000.001 đ');

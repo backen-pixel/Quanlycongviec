@@ -3,7 +3,7 @@ import {
 } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
-  AlertTriangle, Bell, CalendarClock, CalendarDays, CalendarOff, CheckCircle2, Circle, ClipboardList, Clock3, Factory, LayoutGrid, Loader2, RefreshCw, Search, Sun, Target, Truck, X,
+  AlertTriangle, Bell, CalendarClock, CalendarDays, CalendarOff, CheckCircle2, ChevronDown, ChevronRight, Circle, ClipboardList, Clock3, Factory, Layers, LayoutGrid, Loader2, RefreshCw, Search, Sun, Target, Truck, X,
 } from 'lucide-react';
 import api from '../lib/api';
 import { canSendTaskRemind, getDeepLink } from '../components/UnifiedTaskRow';
@@ -376,6 +376,132 @@ const KanbanColumn = memo(function KanbanColumn({
   );
 });
 
+const PROJECT_TASK_STATUS_LABEL = {
+  pending: 'Chưa làm',
+  todo: 'Chưa làm',
+  in_progress: 'Đang làm',
+  completed: 'Xong',
+  done: 'Xong',
+};
+
+/** Gom danh sách việc (đã sắp theo nhóm dự án từ máy chủ) thành từng dự án, giữ nguyên thứ tự. */
+function groupTasksByProject(rows) {
+  const map = new Map();
+  for (const task of rows) {
+    const key = String(task.project_id || task.lead_id || 'none');
+    let group = map.get(key);
+    if (!group) {
+      group = {
+        key,
+        project_id: task.project_id || null,
+        code: String(task.project_code || '').trim(),
+        name: String(task.project_name || task.lead_title || '').trim(),
+        tasks: [],
+      };
+      map.set(key, group);
+    }
+    group.tasks.push(task);
+  }
+  return [...map.values()];
+}
+
+/**
+ * Một dự án = một dòng, bấm để mở danh sách công việc chưa xong — cùng cách gom và cùng nguồn số liệu
+ * (`GET /work-tasks/team-project-tasks`) với tab Công việc của app.
+ */
+const ProjectGroupRow = memo(function ProjectGroupRow({
+  group, expanded, onToggle, nowMs, showOverdue = true, showCreated = false,
+}) {
+  const total = group.tasks.length;
+  // Mục «Chưa giao»: hạn cũ của việc mẫu không có ý nghĩa nên không tính / không tô đỏ quá hạn.
+  const overdue = showOverdue
+    ? group.tasks.filter((task) => task.deadline && new Date(task.deadline).getTime() < nowMs).length
+    : 0;
+  const noDeadline = group.tasks.filter((task) => !task.deadline).length;
+  const doing = group.tasks.filter((task) => String(task.status || '').toLowerCase() === 'in_progress').length;
+  const href = group.project_id ? projectDetailPathForModule('production', group.project_id) : null;
+  return (
+    <div>
+      <div className="flex items-center gap-2 px-3 py-2.5 hover:bg-gray-50/70">
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left cursor-pointer"
+          aria-expanded={expanded}
+        >
+          {expanded
+            ? <ChevronDown className="h-4 w-4 shrink-0 text-gray-400" />
+            : <ChevronRight className="h-4 w-4 shrink-0 text-gray-400" />}
+          <span className="min-w-0">
+            <span className="block truncate text-sm font-semibold text-gray-900">
+              {group.code ? <span className="text-teal-700">{group.code}</span> : <span className="text-gray-400">Chưa có mã</span>}
+              {group.name ? <span> · {group.name}</span> : null}
+            </span>
+            <span className="block text-[11px] text-gray-500">
+              {total} việc chưa xong
+              {doing ? <span> · {doing} đang làm</span> : null}
+              {noDeadline ? <span> · {noDeadline} không hạn</span> : null}
+            </span>
+          </span>
+        </button>
+        {overdue > 0 ? (
+          <span className="shrink-0 rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-700 tabular-nums">
+            Quá hạn {overdue}
+          </span>
+        ) : null}
+        {href ? (
+          <Link
+            to={href}
+            className="shrink-0 rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-50"
+            title="Mở dự án"
+          >
+            Mở dự án
+          </Link>
+        ) : null}
+      </div>
+      {expanded ? (
+        <ul className="border-t border-gray-100 bg-gray-50/50 divide-y divide-gray-100">
+          {group.tasks.map((task) => {
+            const due = task.deadline ? new Date(task.deadline).getTime() : null;
+            const isOver = showOverdue && due != null && due < nowMs;
+            const status = String(task.status || '').toLowerCase();
+            return (
+              <li key={task.unified_id || task.id} className="flex items-center gap-3 px-3 py-2 pl-9 text-xs">
+                <span className="min-w-0 flex-1 truncate font-medium text-gray-800" title={task.title}>{task.title}</span>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                  status === 'in_progress' ? 'bg-blue-50 text-blue-700' : 'bg-slate-100 text-slate-600'
+                }`}
+                >
+                  {PROJECT_TASK_STATUS_LABEL[status] || task.status || '—'}
+                </span>
+                {task.closed_on_deal ? (
+                  <span
+                    className="shrink-0 rounded-full bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-500 ring-1 ring-slate-200"
+                    title="Đã giao người ở bảng việc xưởng, nhưng việc cùng tên ở deal đã xong — không tính quá hạn"
+                  >
+                    Xong ở deal
+                  </span>
+                ) : null}
+                <span className={`w-20 shrink-0 text-right tabular-nums ${isOver ? 'font-semibold text-red-600' : 'text-gray-500'}`}>
+                  {task.deadline ? formatDate(task.deadline) : 'Không hạn'}
+                </span>
+                {showCreated && task.created_at ? (
+                  <span className="hidden w-24 shrink-0 text-right tabular-nums text-gray-400 sm:block" title="Ngày tạo">
+                    Tạo {formatDate(task.created_at)}
+                  </span>
+                ) : null}
+                <span className="hidden w-32 shrink-0 truncate text-right text-gray-500 sm:block" title={task.assignee_name || ''}>
+                  {task.assignee_name || 'Chưa có người nhận'}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </div>
+  );
+});
+
 function defaultCompanyId(list, user, canPickCompany, workshopMode = false) {
   if (workshopMode) {
     const saved = String(readSxDashPersisted()?.filterCompany || '').trim();
@@ -430,6 +556,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
   const [boardView, setBoardView] = useState(() => {
     try {
       const saved = sessionStorage.getItem(`projectTasksBoard:${fixedModuleKey || 'all'}`);
+      if (saved === 'project' && fixedModule === 'sx') return 'project';
       return saved === 'kanban' ? 'kanban' : 'deadline';
     } catch {
       return 'deadline';
@@ -449,10 +576,30 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     workshopMode ? String(readSxDashPersisted()?.filterDealCompany || '') : ''
   ));
   const [clientCompaniesForDeal, setClientCompaniesForDeal] = useState([]);
+  // Phân loại xưởng (giống app): '' = tất cả loại, 'none' = chưa phân loại, còn lại là mã loại. Không lưu — mặc định xem tất cả.
+  const [workTypeFilter, setWorkTypeFilter] = useState('');
+  const [workTypeOptions, setWorkTypeOptions] = useState([]);
+  useEffect(() => {
+    if (!workshopMode || !companyFilter) {
+      setWorkTypeOptions([]);
+      return undefined;
+    }
+    let cancelled = false;
+    api.get('/workshop/project-types', { params: { company_id: companyFilter, module: 'production' } })
+      .then((res) => {
+        if (cancelled) return;
+        setWorkTypeOptions((Array.isArray(res.data) ? res.data : [])
+          .map((t) => ({ id: String(t.id || ''), name: String(t.name || t.id || '') }))
+          .filter((t) => t.id));
+      })
+      .catch(() => { if (!cancelled) setWorkTypeOptions([]); });
+    return () => { cancelled = true; };
+  }, [workshopMode, companyFilter]);
   const canRemind = canSendTaskRemind(user);
   const applyCompany = useCallback((value) => {
     const next = String(value || '');
     setCompanyFilter(next);
+    setWorkTypeFilter('');
     setRegionFilter('');
     setAssigneeFilter([]);
     if (workshopMode) {
@@ -567,6 +714,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       else if (companyFilter) params.company_id = companyFilter;
       if (workshopMode && dealCompanyParam) params.deal_company_id = dealCompanyParam;
       else if (workshopMode && dealExternalNameParam) params.deal_external_company_name = dealExternalNameParam;
+      if (workshopMode && workTypeFilter) params.workshop_type_id = workTypeFilter;
       const res = await api.get('/work-tasks/project-overview', { params });
       setTasks(res.data?.tasks || []);
       setStats(res.data?.stats || { total: 0, warning: 0, overdue: 0, by_module: {} });
@@ -576,9 +724,92 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     } finally {
       setLoading(false);
     }
-  }, [companiesReady, companyFilter, dealCompanyParam, dealExternalNameParam, fixedModuleKey, projectFilter, workshopMode]);
+  }, [companiesReady, companyFilter, dealCompanyParam, dealExternalNameParam, fixedModuleKey, projectFilter, workTypeFilter, workshopMode]);
 
   useEffect(() => { load(); }, [load]);
+
+  // ---- Kiểu xem «Theo dự án» (chỉ trang Sản xuất): cùng endpoint và cùng cách gom với tab Công việc của app ----
+  const projectView = workshopMode && boardView === 'project';
+  const [teamTasks, setTeamTasks] = useState([]);
+  const [teamCounts, setTeamCounts] = useState(null);
+  const [teamPage, setTeamPage] = useState(1);
+  const [teamHasMore, setTeamHasMore] = useState(false);
+  const [teamLoading, setTeamLoading] = useState(false);
+  const [teamError, setTeamError] = useState('');
+  const [expandedProjects, setExpandedProjects] = useState({});
+  // «Chưa giao» (CHỈ Admin): mọi việc chưa có người nhận, kể cả việc cũ không hạn ngoài cửa sổ 7 ngày.
+  const [unassignedOnly, setUnassignedOnly] = useState(false);
+  const [unassignedTotal, setUnassignedTotal] = useState(null);
+  const unassignedActive = isAdmin && unassignedOnly;
+  const teamSeqRef = useRef(0);
+  const selectedAssigneeIds = normalizeWorkUnifiedUserIds(assigneeFilter);
+  const singleAssigneeId = selectedAssigneeIds.length === 1 ? String(selectedAssigneeIds[0]) : '';
+  const trimmedQuery = query.trim();
+
+  const loadTeam = useCallback(async (page = 1) => {
+    if (!companiesReady || (!companyFilter && !projectFilter)) return;
+    const seq = ++teamSeqRef.current;
+    setTeamLoading(true);
+    setTeamError('');
+    try {
+      const params = {
+        page, page_size: 20, lite: 1, due_days: 7, created_days: 7,
+      };
+      if (companyFilter) params.company_id = companyFilter;
+      if (dealCompanyParam) params.deal_company_id = dealCompanyParam;
+      else if (dealExternalNameParam) params.deal_external_company_name = dealExternalNameParam;
+      if (workTypeFilter) params.workshop_type_id = workTypeFilter;
+      if (unassignedActive) params.unassigned = 1;
+      else if (singleAssigneeId) params.assignee_id = singleAssigneeId;
+      if (trimmedQuery) params.q = trimmedQuery;
+      const res = await api.get('/work-tasks/team-project-tasks', { params });
+      if (seq !== teamSeqRef.current) return;
+      const rows = Array.isArray(res.data?.tasks) ? res.data.tasks : [];
+      setTeamTasks((prev) => {
+        if (page === 1) return rows;
+        const seen = new Set(prev.map((task) => task.unified_id));
+        return [...prev, ...rows.filter((task) => !seen.has(task.unified_id))];
+      });
+      setTeamCounts(res.data?.counts || null);
+      setTeamPage(page);
+      setTeamHasMore(Boolean(res.data?.has_more));
+    } catch (e) {
+      if (seq === teamSeqRef.current) setTeamError(e?.response?.data?.error || 'Không tải được việc theo dự án');
+    } finally {
+      if (seq === teamSeqRef.current) setTeamLoading(false);
+    }
+  }, [companiesReady, companyFilter, dealCompanyParam, dealExternalNameParam, projectFilter, singleAssigneeId, trimmedQuery, unassignedActive, workTypeFilter]);
+
+  // Số việc chưa giao (Admin) để hiện trên nút «Chưa giao (N)».
+  useEffect(() => {
+    if (!projectView || !isAdmin || !companiesReady || (!companyFilter && !projectFilter)) {
+      setUnassignedTotal(null);
+      return undefined;
+    }
+    let cancelled = false;
+    const params = {
+      page: 1, page_size: 1, lite: 1, unassigned: 1,
+    };
+    if (companyFilter) params.company_id = companyFilter;
+    if (dealCompanyParam) params.deal_company_id = dealCompanyParam;
+    else if (dealExternalNameParam) params.deal_external_company_name = dealExternalNameParam;
+    if (workTypeFilter) params.workshop_type_id = workTypeFilter;
+    api.get('/work-tasks/team-project-tasks', { params })
+      .then((res) => { if (!cancelled) setUnassignedTotal(Number(res.data?.counts?.total) || 0); })
+      .catch(() => { if (!cancelled) setUnassignedTotal(null); });
+    return () => { cancelled = true; };
+  }, [projectView, isAdmin, companiesReady, companyFilter, projectFilter, dealCompanyParam, dealExternalNameParam, workTypeFilter]);
+
+  useEffect(() => {
+    if (!projectView) return undefined;
+    const timer = setTimeout(() => { loadTeam(1); }, trimmedQuery ? 350 : 0);
+    return () => clearTimeout(timer);
+  }, [projectView, loadTeam, trimmedQuery]);
+
+  const projectGroups = useMemo(() => {
+    const groups = groupTasksByProject(teamTasks);
+    return projectFilter ? groups.filter((group) => String(group.project_id || '') === projectFilter) : groups;
+  }, [projectFilter, teamTasks]);
 
   const prepared = useMemo(() => {
     const nowMs = Date.now();
@@ -762,6 +993,16 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     };
   }, [tasksByBucket.overdue, visibleTasks]);
 
+  const shownKpi = projectView && teamCounts
+    ? {
+      total: Number(teamCounts.total) || 0,
+      notStarted: Math.max(0, (Number(teamCounts.total) || 0) - (Number(teamCounts.in_progress) || 0)),
+      inProgress: Number(teamCounts.in_progress) || 0,
+      completed: 0,
+      overdue: unassignedActive ? 0 : (Number(teamCounts.overdue) || 0),
+    }
+    : kpiStats;
+
   const selectedCompany = companyOptions
     .find((company) => String(company.id) === companyFilter);
   const selectedRegion = regionOptions
@@ -782,6 +1023,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     progressFilter !== 'all',
     companyFilterActive,
     !!filterDealCompany,
+    !!workTypeFilter,
     !!regionFilter,
     selectedAssignees.length > 0,
     !!deadlineFrom,
@@ -802,6 +1044,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     applyCompany(defaultCompanyId(companyOptions, user, canPickCompany, workshopMode));
     applyDealCompany('');
     setAssigneeFilter([]);
+    setWorkTypeFilter('');
     setRegionFilter('');
     setDeadlineFrom('');
     setDeadlineTo('');
@@ -855,6 +1098,13 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       label: `Đặt hàng: ${selectedDealCompanyLabel || filterDealCompany}`,
       clear: () => applyDealCompany(''),
     },
+    workTypeFilter && {
+      key: 'work-type',
+      label: `Phân loại: ${workTypeFilter === 'none'
+        ? 'Chưa phân loại'
+        : (workTypeOptions.find((type) => type.id === workTypeFilter)?.name || workTypeFilter)}`,
+      clear: () => setWorkTypeFilter(''),
+    },
     regionFilter && {
       key: 'region',
       label: regionFilter === WORK_UNIFIED_REGION_NONE
@@ -906,6 +1156,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
               {[
                 { id: 'kanban', label: 'Kanban', icon: LayoutGrid },
                 { id: 'deadline', label: 'Hạn', icon: CalendarDays },
+                ...(workshopMode ? [{ id: 'project', label: 'Theo dự án', icon: Layers }] : []),
               ].map((mode) => {
                 const Icon = mode.icon;
                 const active = boardView === mode.id;
@@ -927,6 +1178,20 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
                 );
               })}
             </div>
+            {workshopMode && workTypeOptions.length > 0 ? (
+              <select
+                value={workTypeFilter}
+                onChange={(event) => setWorkTypeFilter(event.target.value)}
+                aria-label="Phân loại"
+                className="h-9 max-w-[180px] rounded-lg border border-gray-200 bg-white px-2 text-xs font-semibold text-gray-700 outline-none focus:ring-2 focus:ring-blue-200 cursor-pointer"
+              >
+                <option value="">Phân loại: Tất cả</option>
+                {workTypeOptions.map((type) => (
+                  <option key={type.id} value={type.id}>{type.name}</option>
+                ))}
+                <option value="none">Chưa phân loại</option>
+              </select>
+            ) : null}
             <AdvFilterButton
               open={filtersOpen}
               active={activeAdvancedFilters > 0}
@@ -934,8 +1199,8 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
             />
             <button
               type="button"
-              onClick={load}
-              disabled={loading}
+              onClick={() => { load(); if (projectView) loadTeam(1); }}
+              disabled={loading || teamLoading}
               className="h-9 px-3 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 inline-flex items-center gap-1.5 hover:bg-gray-50 disabled:opacity-50 cursor-pointer"
             >
               <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
@@ -981,11 +1246,11 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
       <div className="rounded-2xl border border-slate-200/90 bg-white shadow-md ring-1 ring-slate-900/[0.04] overflow-hidden">
         <div className="border-b border-indigo-100/70 bg-white/40 px-2 sm:px-3 py-2 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
           {[
-            { key: 'total', label: 'Tổng', value: kpiStats.total, icon: ClipboardList, iconBg: 'bg-violet-100', iconColor: 'text-violet-700', active: riskFilter === 'all' && progressFilter === 'all', onClick: () => { setRiskFilter('all'); setProgressFilter('all'); } },
-            { key: 'not_started', label: 'Chưa làm', value: kpiStats.notStarted, icon: Circle, iconBg: 'bg-slate-100', iconColor: 'text-slate-600', active: progressFilter === 'not_started', onClick: () => { setProgressFilter((v) => (v === 'not_started' ? 'all' : 'not_started')); setRiskFilter('all'); } },
-            { key: 'in_progress', label: 'Đang làm', value: kpiStats.inProgress, icon: Clock3, iconBg: 'bg-blue-100', iconColor: 'text-blue-700', active: progressFilter === 'in_progress', onClick: () => { setProgressFilter((v) => (v === 'in_progress' ? 'all' : 'in_progress')); setRiskFilter('all'); } },
-            { key: 'completed', label: 'Đã làm', value: kpiStats.completed, icon: CheckCircle2, iconBg: 'bg-emerald-100', iconColor: 'text-emerald-700', active: false, onClick: null },
-            { key: 'overdue', label: 'Quá hạn', value: kpiStats.overdue, icon: AlertTriangle, iconBg: 'bg-red-100', iconColor: 'text-red-700', active: riskFilter === 'overdue', onClick: () => { setRiskFilter((v) => (v === 'overdue' ? 'all' : 'overdue')); setProgressFilter('all'); } },
+            { key: 'total', label: 'Tổng', value: shownKpi.total, icon: ClipboardList, iconBg: 'bg-violet-100', iconColor: 'text-violet-700', active: riskFilter === 'all' && progressFilter === 'all', onClick: () => { setRiskFilter('all'); setProgressFilter('all'); } },
+            { key: 'not_started', label: 'Chưa làm', value: shownKpi.notStarted, icon: Circle, iconBg: 'bg-slate-100', iconColor: 'text-slate-600', active: progressFilter === 'not_started', onClick: () => { setProgressFilter((v) => (v === 'not_started' ? 'all' : 'not_started')); setRiskFilter('all'); } },
+            { key: 'in_progress', label: 'Đang làm', value: shownKpi.inProgress, icon: Clock3, iconBg: 'bg-blue-100', iconColor: 'text-blue-700', active: progressFilter === 'in_progress', onClick: () => { setProgressFilter((v) => (v === 'in_progress' ? 'all' : 'in_progress')); setRiskFilter('all'); } },
+            { key: 'completed', label: 'Đã làm', value: shownKpi.completed, icon: CheckCircle2, iconBg: 'bg-emerald-100', iconColor: 'text-emerald-700', active: false, onClick: null },
+            { key: 'overdue', label: 'Quá hạn', value: shownKpi.overdue, icon: AlertTriangle, iconBg: 'bg-red-100', iconColor: 'text-red-700', active: riskFilter === 'overdue', onClick: () => { setRiskFilter((v) => (v === 'overdue' ? 'all' : 'overdue')); setProgressFilter('all'); } },
           ].map((kpi) => (
             <button
               key={kpi.key}
@@ -1099,7 +1364,68 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
         </div>
       </div>
 
-      {loading && !tasks.length ? (
+      {projectView ? (
+        <div className="rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden">
+          {isAdmin ? (
+            <div className="flex items-center gap-2 border-b border-gray-100 px-3 py-2">
+              <button
+                type="button"
+                onClick={() => setUnassignedOnly((value) => !value)}
+                className={`h-8 px-3 rounded-lg border text-xs font-semibold inline-flex items-center gap-1.5 cursor-pointer ${
+                  unassignedOnly ? 'border-amber-300 bg-amber-50 text-amber-800' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+                title="Chỉ Admin: xem mọi việc chưa có người nhận, kể cả việc cũ không hạn, để giao việc"
+              >
+                Chưa giao{unassignedTotal != null ? ` (${unassignedTotal})` : ''}
+              </button>
+              {unassignedOnly ? (
+                <span className="text-[11px] text-gray-500">
+                  Mọi việc chưa có người nhận (kể cả việc cũ không hạn) — chỉ Admin thấy mục này.
+                </span>
+              ) : null}
+            </div>
+          ) : null}
+          {teamError ? (
+            <div className="px-4 py-3 text-sm text-red-700 bg-red-50 border-b border-red-100">{teamError}</div>
+          ) : null}
+          {teamLoading && !teamTasks.length ? (
+            <div className="py-16 text-center text-sm text-gray-400">Đang tải việc theo dự án…</div>
+          ) : !projectGroups.length ? (
+            <div className="py-16 text-center text-sm text-gray-400">Không có việc chưa xong nào trong phạm vi này</div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {projectGroups.map((group) => (
+                <ProjectGroupRow
+                  key={group.key}
+                  group={group}
+                  expanded={!!expandedProjects[group.key]}
+                  onToggle={() => setExpandedProjects((prev) => ({ ...prev, [group.key]: !prev[group.key] }))}
+                  nowMs={Date.now()}
+                  showOverdue={!unassignedActive}
+                  showCreated={unassignedActive}
+                />
+              ))}
+            </div>
+          )}
+          {teamHasMore ? (
+            <div className="border-t border-gray-100 p-3 text-center">
+              <button
+                type="button"
+                onClick={() => loadTeam(teamPage + 1)}
+                disabled={teamLoading}
+                className="h-9 px-4 rounded-lg border border-gray-200 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 cursor-pointer"
+              >
+                {teamLoading ? 'Đang tải…' : 'Xem thêm dự án'}
+              </button>
+            </div>
+          ) : null}
+          {teamCounts?.truncated ? (
+            <div className="border-t border-amber-100 bg-amber-50 px-4 py-2 text-[11px] font-semibold text-amber-700">
+              Bộ lọc khớp nhiều hơn giới hạn quét của máy chủ — số đếm chỉ tính phần đầu (thực tế {teamCounts.scan_total || 'nhiều hơn'} dòng).
+            </div>
+          ) : null}
+        </div>
+      ) : loading && !tasks.length ? (
         <div className="py-16 text-center text-sm text-gray-400">
           {!companiesReady
             ? 'Đang tải danh sách công ty…'

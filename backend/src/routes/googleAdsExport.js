@@ -8,6 +8,7 @@ const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { getActiveTarget, withPrimaryDatabase } = require('../config/supabaseRouter');
 const { buildGoogleOfflineConversions, toGoogleCsv, DEFAULT_DAYS } = require('../modules/marketingAutomation/googleOfflineConversions');
+const { buildGoogleQualifiedConversions, toQualifiedGoogleCsv } = require('../modules/marketingAutomation/googleQualifiedConversions');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MIN_PASSWORD = 16;
@@ -53,6 +54,33 @@ function createGoogleAdsExportRouter({ db = supabase, env = process.env, primary
       return res.status(200).send(toGoogleCsv(rows));
     } catch {
       console.warn('[ads-conversions] SOURCE_UNAVAILABLE');
+      return res.status(503).type('text/plain').send('Source unavailable');
+    }
+  });
+  // Separate verified-lead export; the legacy stage/call endpoint above is unchanged.
+  router.get('/qualified-google.csv', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const user = env.GOOGLE_ADS_EXPORT_USER, password = env.GOOGLE_ADS_EXPORT_PASSWORD;
+    const companyId = env.VPT_WEB_EVENTS_COMPANY_ID;
+    if (!user || !password || password.length < MIN_PASSWORD || !UUID.test(companyId || ''))
+      return res.status(503).type('text/plain').send('Export not configured');
+    const given = basicCredentials(req.headers.authorization);
+    const okUser = given ? safeEqual(given.user, user) : false;
+    const okPassword = given ? safeEqual(given.password, password) : false;
+    if (!given || !(okUser & okPassword)) {
+      res.set('WWW-Authenticate', 'Basic realm="ads-conversions", charset="UTF-8"');
+      return res.status(401).type('text/plain').send('Unauthorized');
+    }
+    if (primary() !== 'primary') return res.status(503).type('text/plain').send('Source unavailable');
+    try {
+      const toMs = now();
+      const { rows } = await withPrimary(() => buildGoogleQualifiedConversions({ db, companyId,
+        fromMs: toMs - DEFAULT_DAYS * 86400000, toMs }));
+      res.set('Content-Type', 'text/csv; charset=utf-8');
+      res.set('Content-Disposition', 'inline; filename="google-qualified-leads.csv"');
+      return res.status(200).send(toQualifiedGoogleCsv(rows));
+    } catch {
+      console.warn('[ads-conversions] QUALIFIED_SOURCE_UNAVAILABLE');
       return res.status(503).type('text/plain').send('Source unavailable');
     }
   });

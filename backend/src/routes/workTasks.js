@@ -4,7 +4,7 @@
 const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
-const { isSystemAdmin } = require('../helpers/adminRole');
+const { isSystemAdmin, isAdminLike } = require('../helpers/adminRole');
 const {
   createProjectTask,
   updateProjectTask,
@@ -46,6 +46,7 @@ const { SX_URL_SAFE_ID_MAX } = require('../helpers/sxChunkedIdPage');
 const { WORKSHOP_STATUSES, getWorkshopStageMap, getWonDealProjectIds } = require('../helpers/workshopKanban');
 const { effectiveDealCompanyId } = require('../helpers/workshopCompanyScope');
 const { resolveSxVisibilityRestrictIds } = require('../helpers/sxKanbanSummary');
+const { laMienTruChanKeo } = require('../helpers/sxChanKeoTheoNhiemVu');
 const { resolveWorkRegionScope, taskMatchesRegionScope } = require('../helpers/workRegionFilter');
 const {
   projectOverviewCategoryId,
@@ -645,6 +646,87 @@ function crmRowInDetailLeads(t, detailLeads) {
 const CLOSED_TASK_STATUSES = new Set(['done', 'completed', 'cancelled']);
 
 /**
+ * Việc ở bảng `tasks` đang CHẶN KÉO CỘT Kanban SX — đúng điều kiện của `workshopStageAdvanceGate`: `blocks_stage_advance`, chưa
+ * xong, `production_stage_id` = cột SX hiện tại của dự án, và dự án chưa được miễn chặn (`laMienTruChanKeo`: theo công ty / phân
+ * loại trong `app_settings`). Chi tiết dự án chỉ đọc `crm_task` nên người kéo thẻ bị chặn bởi việc họ không thấy ở đâu; tab Công
+ * việc vì vậy phải giữ các việc này (kể cả chưa ai nhận / không có bản `crm_task` / hạn đã xa). Toàn hệ thống chỉ ~90 việc có cờ +
+ * cột nên truy vấn nhỏ. Lỗi → trả rỗng + log (không làm hỏng endpoint). Chỉ ĐỌC.
+ * @returns {Promise<Array<{ id: string, project_id: string, title: string, company_id: string|null, status: string }>>}
+ */
+async function loadBlockingTasks(effectiveCompany, typedSet) {
+  try {
+    const flagged = await fetchAllPages(() => supabase
+      .from('tasks')
+      .select('id, project_id, production_stage_id, status, title')
+      .eq('blocks_stage_advance', true)
+      .neq('status', 'done')
+      .not('production_stage_id', 'is', null)
+      .not('project_id', 'is', null)
+      .order('id', { ascending: true }));
+    if (!flagged.length) return [];
+    const projects = await fetchAllByIdsParallel({
+      table: 'projects',
+      columns: 'id, company_id, workshop_type_id, sx_kanban_column_id, status',
+      key: 'id',
+      ids: [...new Set(flagged.map((t) => String(t.project_id)))],
+      idChunk: 100,
+    });
+    const projectById = new Map(projects.map((p) => [String(p.id), p]));
+    const exemptCache = new Map();
+    const out = [];
+    for (const t of flagged) {
+      const p = projectById.get(String(t.project_id));
+      if (!p || !p.sx_kanban_column_id || String(p.sx_kanban_column_id) !== String(t.production_stage_id)) continue;
+      if (CLOSED_TASK_STATUSES.has(String(t.status || '').toLowerCase())) continue;
+      if (effectiveCompany && String(p.company_id || '') !== String(effectiveCompany)) continue;
+      if (typedSet && !typedSet.has(String(p.id))) continue;
+      const ek = `${p.company_id || ''}|${p.workshop_type_id || ''}`;
+      if (!exemptCache.has(ek)) exemptCache.set(ek, await laMienTruChanKeo(p.company_id, p.workshop_type_id));
+      if (exemptCache.get(ek)) continue; // công ty / phân loại được kéo tự do → việc này không chặn gì
+      out.push({
+        id: String(t.id),
+        project_id: String(t.project_id),
+        title: String(t.title || ''),
+        company_id: p.company_id ? String(p.company_id) : null,
+        status: String(t.status || ''),
+      });
+    }
+    return out;
+  } catch (err) {
+    console.warn('[work-tasks] team-project-tasks: bỏ qua việc chặn kéo cột —', err?.message || err);
+    return [];
+  }
+}
+
+/**
+ * `crm_task` (trong danh sách) đang có «Giao việc» còn mở soi gương ở `crm_assignments` — app cộng «Giao việc» với việc dự án nên
+ * việc đó bị đếm và hiện HAI lần. Trả mảng id `crm_task` để app bỏ dòng giao việc trùng. Lỗi → rỗng + log. Chỉ ĐỌC.
+ * @param {string[]} crmTaskIds
+ * @returns {Promise<string[]>}
+ */
+async function loadAssignedCrmTaskIds(crmTaskIds) {
+  const ids = [...new Set((crmTaskIds || []).filter(Boolean).map(String))];
+  if (!ids.length) return [];
+  try {
+    const rows = await fetchAllByIdsParallel({
+      table: 'crm_assignments',
+      columns: 'crm_task_id, status',
+      key: 'crm_task_id',
+      ids,
+      idChunk: 100,
+    });
+    return [...new Set(
+      rows
+        .filter((r) => r.crm_task_id && !CLOSED_TASK_STATUSES.has(String(r.status || '').toLowerCase()))
+        .map((r) => String(r.crm_task_id)),
+    )];
+  } catch (err) {
+    console.warn('[work-tasks] team-project-tasks: bỏ qua đối chiếu giao việc trùng —', err?.message || err);
+    return [];
+  }
+}
+
+/**
  * Bỏ khỏi tab Công việc các việc ở bảng `tasks` mà bản `crm_task` CÙNG TÊN trong cùng dự án đã xong.
  *
  * Mỗi việc sản xuất có hai bản: `tasks` (bảng việc xưởng) và `crm_task` (việc của deal). Chi tiết dự án đọc bản `crm_task`,
@@ -653,11 +735,11 @@ const CLOSED_TASK_STATUSES = new Set(['done', 'completed', 'cancelled']);
  * việc «chưa xong» và 40 / 149 việc «quá hạn» thuộc loại này.
  *
  * Chỉ bỏ khi mọi bản `crm_task` sản xuất cùng tên đều đã đóng (còn một bản đang mở thì giữ — trường hợp nhiều việc cùng tên
- * ở các cột khác nhau). Việc không có bản `crm_task` tương ứng được giữ nguyên — TRỪ việc mẫu bị bỏ quên (không người nhận,
- * không có `crm_task` sản xuất cùng tên, dự án đã có việc sản xuất ở deal): chi tiết dự án không hiện chúng nên tab cũng bỏ.
- * KHÔNG ghi dữ liệu.
+ * ở các cột khác nhau) VÀ việc chưa giao cho ai. Việc đã giao người thì giữ, gắn `closed_on_deal` (không tính quá hạn). Việc
+ * không có bản `crm_task` tương ứng luôn được giữ nguyên, kể cả chưa ai nhận (trước đây ẩn việc mẫu bị bỏ quên — đã bỏ quy
+ * tắc đó vì việc chưa giao vẫn là việc thật). KHÔNG ghi dữ liệu.
  */
-async function dropTasksClosedOnDeal(rows, detailLeads) {
+async function dropTasksClosedOnDeal(rows, detailLeads, { dropWithTwin = false } = {}) {
   const taskRows = rows.filter((t) => t.source === 'task');
   if (!taskRows.length) return rows;
   const projectIds = [...new Set(taskRows.map((t) => String(t.project_id)))];
@@ -686,11 +768,8 @@ async function dropTasksClosedOnDeal(rows, detailLeads) {
   );
   const keyOf = (t) => `${t.project_id}|${String(t.title || '').trim().toLowerCase()}`;
   const state = new Map();
-  // Dự án đã có việc SẢN XUẤT ở deal mà chi tiết hiện (bất kể trạng thái) — chi tiết dự án lấy việc từ đó.
-  const projectsWithSxCrm = new Set();
   for (const c of crmRows) {
     if (!sxCrm.has(crmTaskIdOf(c))) continue;
-    projectsWithSxCrm.add(String(c.project_id));
     const k = keyOf(c);
     const s = state.get(k) || { open: 0, closed: 0, openDeadlineMs: [] };
     if (CLOSED_TASK_STATUSES.has(String(c.status || '').toLowerCase())) s.closed += 1;
@@ -703,13 +782,18 @@ async function dropTasksClosedOnDeal(rows, detailLeads) {
   }
   const kept = rows.filter((t) => {
     if (t.source !== 'task') return true;
+    // Việc đang CHẶN KÉO CỘT (xem `loadBlockingTasks`) luôn giữ: cổng kéo cột đọc bảng `tasks` nên nó vẫn chặn dù chi tiết dự án
+    // không hiện.
+    if (t.blocks_stage_advance) return true;
     const s = state.get(keyOf(t));
-    // 1. Bản `crm_task` cùng tên đã đóng hết → việc đã xong ở chi tiết dự án.
-    if (s && s.closed > 0 && s.open === 0) return false;
-    // 2. Việc mẫu bị bỏ quên: CHƯA AI NHẬN, không có `crm_task` sản xuất nào cùng tên, mà dự án đã có việc sản xuất ở deal
-    //    (chi tiết chỉ hiện các việc đó). Vd. TB-2026-029: 14 việc mẫu tạo 13/04, không người nhận, hạn 14–15/04 đã quá hạn.
-    //    Việc đã giao cho một người, hoặc dự án chưa có việc SX ở deal (xưởng theo dõi bằng bảng `tasks`) thì giữ.
-    if (!s && !t.assignee_id && projectsWithSxCrm.has(String(t.project_id))) return false;
+    // Chế độ «Chưa giao»: đã có bản `crm_task` cùng tên (dù mở hay xong) thì bản crm mới là việc thật → bỏ bản `tasks` để khỏi hiện
+    // thành «chưa giao» khi bản crm đã có người nhận.
+    if (dropWithTwin && s) return false;
+    // 1. Bản `crm_task` cùng tên đã đóng hết → việc đã xong ở chi tiết dự án. CHƯA GIAO ai thì bỏ; đã giao cho một người thì
+    //    GIỮ (đánh dấu `closed_on_deal` ở bước dưới) để việc đang gắn với người không biến mất âm thầm.
+    if (s && s.closed > 0 && s.open === 0 && !t.assignee_id) return false;
+    // (Trước đây có quy tắc 2 ẩn việc mẫu chưa ai nhận / không có `crm_task` cùng tên — đã BỎ theo yêu cầu: việc chưa giao vẫn là
+    //  việc thật, hiện bình thường khi nằm trong cửa sổ; việc cũ không hạn vẫn do cửa sổ quyết định.)
     return true;
   });
   // 3. HẠN lấy theo `crm_task` (bản chi tiết dự án hiển thị) thay vì `tasks.due_date`: bản `tasks` hay cũ / do script gán nên
@@ -719,6 +803,9 @@ async function dropTasksClosedOnDeal(rows, detailLeads) {
   return kept.map((t) => {
     if (t.source !== 'task') return t;
     const s = state.get(keyOf(t));
+    // Đã giao người nhưng bản crm đã xong: giữ lại, gắn cờ `closed_on_deal`. Hạn cũ của bản `tasks` sẽ KHÔNG tính quá hạn (xem
+    // `computeTeamTasks`) — đã xong ở deal nên hạn đó không còn ý nghĩa; cửa sổ vẫn xét theo hạn / ngày tạo gốc.
+    if (s && s.closed > 0 && s.open === 0 && t.assignee_id && !t.blocks_stage_advance) return { ...t, closed_on_deal: true };
     if (!s || s.open === 0) return t;
     const ms = s.openDeadlineMs.length ? Math.min(...s.openDeadlineMs) : null;
     const current = t.deadline ? new Date(t.deadline).getTime() : null;
@@ -799,12 +886,16 @@ r.get('/team-project-tasks', async (req, res) => {
     // no_deadline=1: mục riêng «Không hạn» — việc chưa xong KHÔNG có hạn và tạo từ lâu (trước `created_days` ngày);
     // phần mới tạo đã nằm ở danh sách chính. Lấy tách riêng để danh sách chính không phình theo hàng nghìn việc cũ.
     const noDeadlineMode = ['1', 'true'].includes(String(req.query.no_deadline || '').toLowerCase());
+    // unassigned=1: mục «Chưa giao» DÀNH CHO ADMIN — mọi việc chưa có người nhận, bất kể ngày tạo / hạn (không áp cửa sổ N ngày) để
+    // Admin thấy và giao việc. Không cộng vào số chính. Các vai trò khác không dùng được.
+    const unassignedMode = ['1', 'true'].includes(String(req.query.unassigned || '').toLowerCase());
+    if (unassignedMode && !isAdminLike(req.user)) return res.status(403).json({ error: 'Mục «Chưa giao» chỉ dành cho Admin' });
     // due_from / due_to (YYYY-MM-DD, ngày lịch VN, gồm cả hai đầu): lọc việc theo KHOẢNG HẠN ở máy chủ (chip Hôm nay / Ngày
     // mai / Trong tuần…). Lọc ở máy chỉ thấy các nhóm đã tải, mà nhóm quá hạn xếp trước nên việc đến hạn hôm nay nằm ở trang sau.
     const dateRe = /^\d{4}-\d{2}-\d{2}$/;
     const dueFromRaw = String(req.query.due_from || '').trim();
     const dueToRaw = String(req.query.due_to || '').trim();
-    const dueRange = dateRe.test(dueFromRaw) && dateRe.test(dueToRaw) && !noDeadlineMode
+    const dueRange = dateRe.test(dueFromRaw) && dateRe.test(dueToRaw) && !noDeadlineMode && !unassignedMode
       ? {
         from: new Date(`${dueFromRaw}T00:00:00+07:00`).toISOString(),
         // Hết ngày due_to = đầu ngày kế tiếp (VN).
@@ -818,7 +909,10 @@ r.get('/team-project-tasks', async (req, res) => {
       // `skipCompany`: bỏ lọc `company_id` của view — dùng cho việc `crm_task` của deal thuộc CÔNG TY KHÁC (xem `loadCrossCompanyCrmRows`).
       const applyScanFilters = (qy, skipCompany = false) => {
         qy = qy.in('task_kind', TEAM_PROJECT_TASK_KINDS).not('project_id', 'is', null);
-        if (noDeadlineMode) {
+        if (unassignedMode) {
+          // Mọi việc chưa có người nhận, không giới hạn ngày tạo / hạn; mới tạo lên trước.
+          qy = qy.is('assignee_id', null).order('created_at', { ascending: false });
+        } else if (noDeadlineMode) {
           qy = qy.is('deadline', null).lt('created_at', createdSince).order('created_at', { ascending: false });
         } else if (dueRange) {
           // Chip hạn xử lý: chỉ việc có hạn nằm trong khoảng đã chọn (không kèm việc mới tạo).
@@ -834,7 +928,7 @@ r.get('/team-project-tasks', async (req, res) => {
         qy = qy.order('unified_id', { ascending: true });
         qy = applyOpenOnlyFilter(qy);
         if (effectiveCompany && !skipCompany) qy = qy.eq('company_id', effectiveCompany);
-        if (assignee_id) qy = qy.eq('assignee_id', assignee_id);
+        if (assignee_id && !unassignedMode) qy = qy.eq('assignee_id', assignee_id);
         const needle = String(searchQ || '').trim();
         if (needle) qy = qy.ilike('title', `%${needle}%`);
         return qy;
@@ -1011,7 +1105,33 @@ r.get('/team-project-tasks', async (req, res) => {
       // → chỉ thêm dòng CHƯA có theo `unified_id`.
       const knownIds = new Set(scan.rows.map((t) => t.unified_id));
       const crossNew = crossRows.filter((t) => !knownIds.has(t.unified_id));
-      const scanRows = crossNew.length ? scan.rows.concat(crossNew) : scan.rows;
+      // Việc `tasks` đang chặn kéo cột: lấy thêm những việc nằm NGOÀI cửa sổ quét (không hạn / hạn xa, tạo từ lâu) để chúng không
+      // biến mất khỏi tab trong khi cổng kéo cột vẫn đọc chúng. Không áp ở chế độ «không hạn» / khoảng hạn / lọc người (việc
+      // này chưa ai nhận) — các chế độ đó có bộ lọc riêng.
+      const blockingList = (noDeadlineMode || unassignedMode || dueRange || assignee_id) ? [] : await loadBlockingTasks(effectiveCompany, typedSet);
+      const blockingIdSet = new Set(blockingList.map((b) => b.id));
+      let blockingExtra = [];
+      if (blockingList.length) {
+        const haveTaskIds = new Set(scan.rows.filter((t) => t.source === 'task').map((t) => String(t.source_id)));
+        const needleB = String(searchQ || '').trim().toLowerCase();
+        const missing = blockingList.filter((b) => !haveTaskIds.has(b.id) && (!needleB || b.title.toLowerCase().includes(needleB)));
+        if (missing.length) {
+          blockingExtra = await fetchAllByIdsParallel({
+            table: 'unified_tasks_v',
+            columns: COLS,
+            key: 'source_id',
+            ids: missing.map((b) => b.id),
+            idChunk: 100,
+            tune: (q) => q.eq('source', 'task').order('unified_id', { ascending: true }),
+          }).catch((err) => {
+            console.warn('[work-tasks] team-project-tasks: bỏ qua việc chặn ngoài cửa sổ —', err?.message || err);
+            return [];
+          });
+          blockingExtra = blockingExtra.filter((t) => TEAM_PROJECT_TASK_KINDS.includes(t.task_kind) && t.project_id && !knownIds.has(t.unified_id));
+        }
+      }
+      const scanRowsBase = crossNew.length ? scan.rows.concat(crossNew) : scan.rows;
+      const scanRows = blockingExtra.length ? scanRowsBase.concat(blockingExtra) : scanRowsBase;
       const typedRows = typedSet ? scanRows.filter((t) => typedSet.has(String(t.project_id))) : scanRows;
       // Chỉ giữ việc thuộc phạm vi sản xuất (xem `restrictToProductionScope`) — làm TRƯỚC khi lấy bản «song sinh» và khử
       // trùng để việc bán hàng / dự án ngoài phạm vi không lọt vào số đếm.
@@ -1020,7 +1140,10 @@ r.get('/team-project-tasks', async (req, res) => {
       const scopedRows = await restrictToDealCompany(productionRows, { req, effectiveCompany, dealCompanyQ, dealExtName });
       // `crm_task` chỉ tính ở các deal mà chi tiết dự án hiện (deal gốc + con) — dự án nhiều deal không đếm thừa.
       const detailLeads = await loadDetailLeadsByProject([...new Set(scopedRows.map((t) => String(t.project_id)))]);
-      const scanned = scopedRows.filter((t) => crmRowInDetailLeads(t, detailLeads));
+      const scanned = scopedRows
+        .filter((t) => crmRowInDetailLeads(t, detailLeads))
+        // Đánh dấu việc đang chặn kéo cột để khử trùng / cửa sổ bên dưới giữ lại (xem `loadBlockingTasks`).
+        .map((t) => (t.source === 'task' && blockingIdSet.has(String(t.source_id)) ? { ...t, blocks_stage_advance: true } : t));
 
       // Chip hạn xử lý: khử trùng phải thấy cả bản SX «song sinh» nằm NGOÀI khoảng. Nếu chỉ quét trong khoảng thì bản CRM
       // (hạn hôm nay) sống sót dù bản SX của chính việc đó đã quá hạn → việc quá hạn lọt vào «Hôm nay» / «Ngày mai».
@@ -1066,7 +1189,10 @@ r.get('/team-project-tasks', async (req, res) => {
         else if (!g.task) g.task = t; // nhiều dòng `tasks` cùng tên vẫn gom thành một như trước
       }
       const chosenRows = [];
-      for (const g of groupsByKey.values()) {
+      // Chế độ «Chưa giao»: KHÔNG ghép «song sinh» — mọi dòng chưa giao đều là một việc riêng; bản `tasks` đã có bản `crm_task` cùng
+      // tên bị bỏ ở `dropTasksClosedOnDeal` (bản crm mới là việc thật; nếu nó chưa giao thì tự có mặt trong danh sách).
+      if (unassignedMode) chosenRows.push(...scanned);
+      else for (const g of groupsByKey.values()) {
         // Có bản `tasks` → nó đại diện cho MỘT bản crm (bản hạn sớm nhất); phần còn lại giữ nguyên.
         const crmSorted = g.crm.slice().sort((a, b) => deadlineMsOrMax(a) - deadlineMsOrMax(b)
           || String(a.unified_id).localeCompare(String(b.unified_id)));
@@ -1082,13 +1208,14 @@ r.get('/team-project-tasks', async (req, res) => {
         chosenRows.push(...(g.task ? crmSorted.slice(1) : crmSorted));
       }
       // Bỏ bản `tasks` còn «todo» mà bản `crm_task` cùng tên đã xong (chi tiết dự án coi là xong) — xem `dropTasksClosedOnDeal`.
-      let rows = await dropTasksClosedOnDeal(chosenRows, detailLeads);
+      let rows = await dropTasksClosedOnDeal(chosenRows, detailLeads, { dropWithTwin: unassignedMode });
       // Hạn đã đổi theo `crm_task` → áp lại cửa sổ của lần quét (có hạn ≤ N ngày tới, HOẶC mới tạo trong M ngày): việc có hạn
       // xa hơn cửa sổ / không hạn mà tạo từ lâu rời khỏi danh sách như mọi việc khác. Chế độ khoảng hạn / «không hạn» có lọc riêng.
-      if (!noDeadlineMode && !dueRange) {
+      if (!noDeadlineMode && !unassignedMode && !dueRange) {
         const untilMs = new Date(until).getTime();
         const createdSinceMs = new Date(createdSince).getTime();
         rows = rows.filter((t) => {
+          if (t.blocks_stage_advance) return true; // việc chặn kéo cột: luôn hiện, bất kể hạn / ngày tạo
           const dl = t.deadline ? new Date(t.deadline).getTime() : null;
           if (dl != null && dl <= untilMs) return true;
           return createdDays > 0 && t.created_at && new Date(t.created_at).getTime() >= createdSinceMs;
@@ -1104,6 +1231,10 @@ r.get('/team-project-tasks', async (req, res) => {
           return ms >= fromMs && ms < toMs;
         });
       }
+
+      // Việc đã giao người nhưng bản crm đã xong (`closed_on_deal`): vẫn hiện (cửa sổ / khoảng hạn đã xét ở trên theo hạn gốc) nhưng
+      // KHÔNG tính quá hạn — hạn cũ của bản `tasks` đã hết ý nghĩa khi việc xong ở deal (khớp số quá hạn của chi tiết dự án).
+      rows = rows.map((t) => (t.closed_on_deal && t.deadline ? { ...t, deadline: null } : t));
 
       let overdue = 0;
       let inProgress = 0;
@@ -1127,13 +1258,20 @@ r.get('/team-project-tasks', async (req, res) => {
       // Nhóm 0–1 theo hạn gần nhất cũ → mới; nhóm 2 theo việc tạo MỚI NHẤT lên trước.
       const tierOf = (g) => (g.overdue ? 0 : g.firstDeadline != null && String(g.firstDeadline) <= until ? 1 : 2);
       const ordered = [...groups.values()].sort((a, b) => {
+        // «Chưa giao»: dự án có việc mới tạo gần nhất lên trước (hạn cũ của việc mẫu không có ý nghĩa để xếp).
+        if (unassignedMode) return String(b.newestCreated).localeCompare(String(a.newestCreated));
         const ta = tierOf(a); const tb = tierOf(b);
         if (ta !== tb) return ta - tb;
         if (ta === 2) return String(b.newestCreated).localeCompare(String(a.newestCreated));
         return String(a.firstDeadline).localeCompare(String(b.firstDeadline));
       });
+      // «Giao việc» soi gương `crm_task` — app cộng cả hai nên báo id `crm_task` đã có giao việc mở để bỏ dòng trùng.
+      const assignedCrmTaskIds = await loadAssignedCrmTaskIds(
+        rows.filter((t) => t.source === 'crm_task').map(crmTaskIdOf),
+      );
       return {
         ordered,
+        assignedCrmTaskIds,
         counts: {
           overdue,
           soon: rows.length - overdue,
@@ -1150,7 +1288,7 @@ r.get('/team-project-tasks', async (req, res) => {
 
     const cacheKey = JSON.stringify([
       effectiveCompany || '', assignee_id || '', String(req.query.workshop_type_id || ''),
-      String(searchQ || '').trim(), dueDays, createdDays, noDeadlineMode, dueFromRaw, dueToRaw,
+      String(searchQ || '').trim(), dueDays, createdDays, noDeadlineMode, unassignedMode, dueFromRaw, dueToRaw,
       dealCompanyQ, dealExtName.toLowerCase(), req.user?.company_id || '', isSystemAdmin(req.user) ? 'sys' : '',
     ]);
     let computed = teamTasksCache.get(cacheKey);
@@ -1159,7 +1297,7 @@ r.get('/team-project-tasks', async (req, res) => {
       teamTasksCache.set(cacheKey, computed);
       if (teamTasksCache.size > 30) teamTasksCache.delete(teamTasksCache.keys().next().value);
     }
-    const { ordered, counts } = computed;
+    const { ordered, counts, assignedCrmTaskIds } = computed;
 
     const start = (page - 1) * pageSize;
     const pageGroups = ordered.slice(start, start + pageSize);
@@ -1186,6 +1324,8 @@ r.get('/team-project-tasks', async (req, res) => {
       page,
       page_size: pageSize,
       has_more: start + pageSize < ordered.length,
+      // id `crm_task` (cả mọi trang) đang có «Giao việc» mở soi gương — app bỏ dòng giao việc trùng.
+      assigned_crm_task_ids: assignedCrmTaskIds || [],
       tasks,
     });
   } catch (e) {
@@ -1311,6 +1451,8 @@ r.get('/project-overview', async (req, res) => {
     const requestedCompany = String(req.query.company_id || '').trim();
     const requestedDealCompany = String(req.query.deal_company_id || '').trim();
     const requestedDealExtName = String(req.query.deal_external_company_name || '').trim();
+    // Phân loại xưởng (`projects.workshop_type_id`): mã loại hoặc `none` (chưa phân loại) — cùng quy ước với `team-project-tasks`.
+    const requestedWorkshopType = String(req.query.workshop_type_id || '').trim();
     const effectiveCompany = isSystemAdmin(req.user)
       ? (requestedCompany || null)
       : (req.user?.company_id || null);
@@ -1334,7 +1476,7 @@ r.get('/project-overview', async (req, res) => {
           project_manager_id, sales_person_id, responsible_person_id,
           production_person_id, logistics_person_id, installer_person_id, installation_person_id,
           deadline, production_deadline, production_finish_date, sx_kanban_deadline_at,
-          delivery_date, install_date, sx_reception_date, created_at, sx_schedule_slip_days
+          delivery_date, install_date, sx_reception_date, created_at, sx_schedule_slip_days, workshop_type_id
         `;
     let activeProjects;
     if (requestedProjectId) {
@@ -1362,6 +1504,13 @@ r.get('/project-overview', async (req, res) => {
       activeProjects = (projects || []).filter((project) => (
         !['completed', 'cancelled', 'canceled'].includes(String(project.status || '').toLowerCase())
       ));
+      if (requestedWorkshopType) {
+        const wantNone = requestedWorkshopType.toLowerCase() === 'none';
+        const wantType = requestedWorkshopType.toLowerCase();
+        activeProjects = activeProjects.filter((project) => (wantNone
+          ? !project.workshop_type_id
+          : String(project.workshop_type_id || '').toLowerCase() === wantType));
+      }
     }
     const projectIds = activeProjects.map((project) => project.id).filter(Boolean);
 

@@ -248,7 +248,7 @@ async function handleCreateExternal(req, res) {
     } = req.body;
 
     let tracking;
-    try { tracking = externalLeadTracking(req.body); }
+    try { tracking = externalLeadTracking(req.body, { apiKeyId: req.apiKey.id, apiKeyName: req.apiKey.name, companyId: req.apiKey.company_id }); }
     catch (error) { return res.status(400).json({ error: error.message }); }
 
     const recordType = String(bodyType || 'lead').trim().toLowerCase() === 'deal' ? 'deal' : 'lead';

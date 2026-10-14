@@ -1,99 +1,158 @@
 # Gửi chuyển đổi offline về Google Ads (VPT)
 
-Mục tiêu: cho Google Ads biết lượt bấm quảng cáo nào thật sự thành **cuộc gọi thật** và **khách hợp lệ**,
-để chiến dịch tối ưu theo khách thật thay vì lượt bấm. CRM tạo một tệp CSV đúng mẫu «nhập lượt chuyển đổi
-từ lượt nhấp» của Google; Google tự tải tệp đó mỗi ngày qua HTTPS.
+## Trạng thái ngày 13/10/2026
 
-## Hai hành động chuyển đổi (đặt tên CHÍNH XÁC như dưới, kể cả dấu cách và gạch ngang)
+Phạm vi: **VPT — Vanphuthanh.net, tài khoản 975-957-2942**. Nhánh
+`codex/vpt-qualified-google-ads-20261013` đang chuẩn bị luồng **lead hợp lệ đã xác minh**.
+Chưa triển khai production, chưa lưu cấu hình mới trong Google Ads và chưa có bằng chứng Google nhận dữ liệu.
+Phiên đăng nhập Google Ads chưa hoàn tất. Kiểm thử hay số dòng xem trước không chứng minh đã vận hành.
 
-| Tên trong Google Ads | Ý nghĩa |
+Dữ liệu đọc từ kết nối Google Ads ngày 13/10 cho biết auto-tagging đang bật; hành động cũ
+`VPT CRM - Khach hop le` đang **Primary**, **Many per click**, cửa sổ 90 ngày.
+Chưa xác nhận trực tiếp trong UI hay rà mục tiêu từng chiến dịch; không dùng cấu hình này để kết luận tối ưu đúng khách đã xác minh.
+
+## Phân biệt các luồng
+
+| Hành động / tệp | Nội dung CRM | Bằng chứng khách mới đã xác minh? |
+|---|---|---|
+| `VPT CRM - Lead hop le da xac minh` — `qualified-google.csv` | Trạng thái xác minh hiện hành, bằng chứng liên hệ, nguồn form Google và kiểm danh tính/lịch sử CRM | Danh sách đủ điều kiện xuất; còn cần kiểm Google nhận và đối soát lịch sử khách |
+| `VPT CRM - Khach hop le` — `google.csv` | Cold/Warm/Hot hoặc chuyển Deal; có thể ghép GCLID qua cuộc gọi | **Không** — mốc bán hàng đại diện, chưa qua luồng xác minh mới |
+| `VPT CRM - Cuoc goi that` — `google.csv` | Ghi âm ghép lượt bấm gọi có GCLID theo thời gian | **Không** — ghép thời gian chưa chứng minh danh tính/nhu cầu |
+
+Tệp cũ giữ nguyên để tương thích. Không nối tệp cũ vào hành động mới hoặc cộng hai luồng thành số khách hợp lệ.
+Chuyển đổi form sau lưu CRM thành công chỉ chứng minh tiếp nhận form.
+
+## Điều kiện tệp xác minh mới
+
+Mỗi dòng phải đồng thời đáp ứng:
+
+1. Sự kiện có **revision mới nhất** của lead là `QUALIFIED`, có actor, mã bằng chứng, và
+   `contact_usable`, `need_in_scope`, `area_in_service` đều đúng. Xét revision trước khi lọc trạng thái:
+   `REJECTED` hay thu hồi về `PENDING` phải loại bản hợp lệ cũ.
+2. Lead/Deal thật thuộc VPT, `is_test=false`, còn tồn tại. `context_hash` phiên bản 2 khớp định danh,
+   company/customer và điện thoại lead/customer hiện tại. Sự kiện phiên bản cũ hoặc định danh/phone đã đổi
+   cần review lại; tiến độ Cold/Warm/Hot/chuyển Deal không tự làm mất xác minh.
+3. Khử trùng nội bộ theo customer, contact và điện thoại chuẩn hóa trên **toàn bộ lịch sử Lead/Deal VPT**.
+   Chỉ bản ghi đầu tiên của danh tính được xét; thiếu danh tính, phone mâu thuẫn hoặc lịch sử không rõ bị loại.
+4. Có customer master được tạo từ **mốc gửi form `VPT_V1` hợp lệ đến lúc tạo lead**.
+   Customer có trước form hoặc thiếu mốc bị giữ ở `new_customer_unproven`; không nới thời gian để suy khách cũ thành mới.
+5. Có GCLID nguồn website: ưu tiên `intake_attribution` bất biến, rồi `lead_attribution` có cấu trúc,
+   cuối cùng khối ghi chú form cũ `VPT_V1 | <thời điểm gửi form>`. Không ghép qua ghi âm/lượt bấm gọi.
+   Nguồn khác Google, GCLID/nguồn mâu thuẫn, dữ liệu thử, mã sai định dạng và chỉ có `gbraid`/`wbraid` bị loại.
+6. Thời điểm xác minh sau mốc nguồn và lúc tạo lead. CSV lấy **lúc ghi nhận xác minh**, múi giờ `+07:00`,
+   cửa sổ 60 ngày gần nhất.
+
+Không gộp/sửa hồ sơ khi xuất. Customer/contact/phone chỉ dùng nội bộ; CSV không gửi tên, email, điện thoại
+hay bằng chứng. `Order ID` mờ, ổn định, 61 ký tự: `vptq_` + 56 ký tự băm từ company/lead UUID và phiên bản,
+không băm từ phone/email.
+
+Đọc đủ trang với count chính xác; lỗi nguồn, thiếu bảng/cột, revision đổi trong lúc đọc hoặc hết giới hạn
+trả `503`, không trả tệp một phần hay giả số 0. Mỗi truy vấn tối đa 100 trang × 500 dòng.
+Không thêm SQL: cần nguồn hiện có **712** (qualification), **717** (intake) và bảng `customers` sẵn sàng
+trên DB chính. Chưa xác nhận đủ nguồn thật trong phiên này.
+
+## Xác minh trong CRM sau triển khai
+
+Admin mở trang quảng cáo CRM → **Đánh dấu khách hợp lệ (đợt thử)**:
+
+1. Dán UUID hoặc liên kết chi tiết `/crm/leads/<uuid>` / `/crm/deals/<uuid>` của chính CRM vào
+   **Xác minh Lead/Deal theo ID hoặc liên kết CRM**, bấm **Tải trạng thái khách**.
+2. Kiểm mã/tên khách, mở hồ sơ, đối chiếu cuộc trao đổi thực tế rồi chọn **Hợp lệ**.
+3. Xác nhận liên hệ dùng được, nhu cầu trong phạm vi, địa bàn phục vụ; nhập mã bằng chứng và lưu.
+   Loại/thu hồi cần lý do. Nếu định danh/phone hoặc revision đổi, tải lại, đối chiếu trước khi lưu.
+4. Bản hợp lệ cũ cần context phiên bản 2: **Thu hồi** rồi xác minh lại, không tự đánh dấu hàng loạt.
+
+Tuyến này dùng GET/PUT `/api/marketing-p1/qualification/leads/:leadId` và POST `/revoke` hiện có.
+GET chỉ trả context và mã/tên khi `include_context=1`; PUT từ tra cứu trực tiếp kèm
+`expected_context_hash` để phát hiện hồ sơ đổi trong lúc review. Quyền admin, company/tenant, DB chính
+và cờ `VPT_P1_REVIEW_WRITE=1` vẫn áp dụng. Lead Google trực tiếp không thêm vào cohort/chi tiêu Facebook.
+
+Ở **Chuyển đổi website** → **Lead hợp lệ đã xác minh → Google Ads (60 ngày)** xem số đủ điều kiện,
+lý do loại và GCLID đã che. Bấm **Tải lại xác minh** sau khi lưu. API admin:
+`GET /api/marketing-web/qualified-offline-conversions?from=YYYY-MM-DD&to=YYYY-MM-DD&company_id=<VPT>`.
+Preview API cho tối đa 120 ngày; giao diện/tệp theo lịch dùng 60 ngày. Số đủ điều kiện xuất chưa phải số Google nhận/quy quảng cáo.
+
+## Thiết lập Google Ads sau kiểm nguồn thật
+
+| Cài đặt hành động riêng trong 975-957-2942 | Giá trị dự kiến |
 |---|---|
-| `VPT CRM - Cuoc goi that` | Ghi âm cuộc gọi từ app Android (không giới hạn thời lượng), không phải cuộc gọi đi, ghép được với lượt bấm nút gọi trên website có `gclid` (bấm trong khoảng 10 phút trước đến 1 phút sau khi cuộc gọi bắt đầu). Giờ gọi = `call_started_at`, thiếu thì lấy từ tên file ghi âm (xem «Giờ gọi» bên dưới); không xác định được giờ gọi → bỏ qua. Cùng một file tải lên nhiều lần (cùng công ty + tên file + dung lượng) chỉ tính một lần. Mỗi lượt bấm chỉ ghép một cuộc gọi (cuộc gọi sớm nhất). |
-| `VPT CRM - Khach hop le` | Lead đã được sale kéo sang lạnh/ấm/nóng hoặc chuyển Deal (cùng mốc «hợp lệ» của thử nghiệm P1). `gclid` lấy từ form website của lead (`lead_attribution`); nếu không có thì lấy dòng `gclid:` trong mô tả lead (chỉ khi mô tả có khối ghi chú `VPT_V1 | <thời điểm gửi form>` của plugin WordPress — lead trước 12/10/2026; lượt nhấp = thời điểm gửi form, thiếu thì = lúc tạo lead; bỏ `VPT_TEST_` và giá trị không hợp lệ); nếu vẫn không có thì lấy `gclid` của lượt bấm gọi đã ghép với ghi âm của lead đó. Mỗi lead một lần, thời điểm = lúc đạt mốc. |
+| Tên chính xác | `VPT CRM - Lead hop le da xac minh` |
+| Nguồn / danh mục | Offline từ lượt nhấp / Qualified lead |
+| Số lượt | **One** |
+| Tối ưu hóa ban đầu | **Secondary** |
+| Cửa sổ sau lượt nhấp | 90 ngày |
+| Giá trị | Không sử dụng giá trị; CSV để trống giá trị, tiền tệ VND |
 
-Không gửi: dữ liệu thử (`utm_source=vpt_test`, `gclid` bắt đầu `VPT_TEST_`, lead `is_test`), lượt bấm chỉ có
-`gbraid`/`wbraid` (chỉ đếm trong phần chẩn đoán). Tệp luôn chứa 60 ngày gần nhất; Google bỏ qua dòng trùng
-(cùng gclid + tên + thời điểm) nên tải lại mỗi ngày không bị đếm đôi.
+Qualified lead là bước xác minh offline; One đếm theo lượt nhấp, không thay khử trùng giữa nhiều lượt nhấp ở CRM.
+[Qualified lead](https://support.google.com/google-ads/answer/11459091?hl=en),
+[Counting options](https://support.google.com/google-ads/answer/3438531?hl=en).
 
-## Bước 1 — Founder đặt biến môi trường trên Render (dịch vụ `tubep-backend`)
+Vào **Goals → Conversions → Summary → Create conversion action**, chọn offline/CRM và từ lượt nhấp
+theo UI hiện hành. Có thể tạo hành động trước, nối nguồn sau. Qua **Tools → Data manager**, nối **HTTPS**
+cho chuyển đổi và gắn hành động trên; nhập URL/user/password ở trường riêng, ánh xạ cột, kiểm lần chạy đầu.
+Tên mục có thể thay đổi theo UI.
+[Hướng dẫn HTTPS Data Manager](https://support.google.com/google-ads-data-manager/answer/14605515?hl=en).
 
-| Biến | Giá trị |
+URL sau triển khai: `https://tubep-backend.onrender.com/api/ads-conversions/qualified-google.csv`.
+
+| Biến backend Render | Yêu cầu |
 |---|---|
-| `GOOGLE_ADS_EXPORT_USER` | Tên đăng nhập tự đặt, ví dụ `google-ads-vpt` |
-| `GOOGLE_ADS_EXPORT_PASSWORD` | Mật khẩu ngẫu nhiên **tối thiểu 16 ký tự** (ngắn hơn thì tệp trả 503) |
-| `VPT_WEB_EVENTS_COMPANY_ID` | Đã có sẵn (công ty VPT) — không cần đổi |
+| `GOOGLE_ADS_EXPORT_USER` | Basic user riêng; dùng lại cấu hình export nếu đã thiết lập |
+| `GOOGLE_ADS_EXPORT_PASSWORD` | Mật khẩu ngẫu nhiên tối thiểu 16 ký tự; dùng lại cấu hình export nếu đã thiết lập |
+| `VPT_WEB_EVENTS_COMPANY_ID` | UUID VPT; kiểm đúng scope trước nối Google |
 
-Thiếu một trong các biến trên → địa chỉ tệp trả `503`. Không gửi mật khẩu qua chat; chỉ nhập vào Render và Google Ads.
+Không đưa secret vào chat, mã nguồn, URL/query string hoặc Sheet công khai; nhập trực tiếp vào Render/Google.
+Thiếu/sai cấu hình trả `503`; thiếu/sai Basic credential trả `401`. Endpoint `no-store`, chỉ DB chính.
+Chưa xác nhận credential production đầy đủ hoặc endpoint mới truy cập được.
 
-## Bước 2 — Tạo hai hành động chuyển đổi trong Google Ads
+CSV có header ngay dòng đầu:
 
-Làm hai lần, mỗi lần một tên ở bảng trên:
-
-1. **Mục tiêu (Goals) → Lượt chuyển đổi (Conversions) → Tóm tắt → + Hành động chuyển đổi mới (New conversion action)**.
-2. Chọn **Nhập (Import)** → **CRM, tệp hoặc nguồn dữ liệu khác (CRM, files, or other data sources)** →
-   **Theo dõi lượt chuyển đổi từ lượt nhấp (Track conversions from clicks)** → Tiếp tục.
-3. Tên hành động: đúng tên ở bảng trên. Danh mục: «Gọi điện» / «Khách hàng tiềm năng đủ điều kiện» tuỳ ý.
-4. Giá trị: tệp để trống cột giá trị, nên giá trị mặc định đặt ở đây sẽ được dùng (có thể để «Không sử dụng giá trị»).
-5. Số lượt: **Một (One)** cho «Khach hop le»; «Cuoc goi that» chọn Một hoặc Mọi lượt tuỳ chiến lược.
-6. Khoảng thời gian chuyển đổi sau lượt nhấp: 90 ngày.
-7. Có thể đặt «Cuoc goi that» làm chuyển đổi chính, «Khach hop le» là phụ cho đến khi đủ dữ liệu.
-
-Lưu ý: tài khoản phải bật **tự động gắn thẻ (auto-tagging)** để website nhận `gclid`.
-
-## Bước 3 — Lên lịch tải tệp mỗi ngày
-
-1. **Mục tiêu → Lượt chuyển đổi → Tải lên (Uploads) → + → Lịch biểu (Schedules) → + Lịch mới**.
-2. Nguồn: **HTTPS**. URL: `https://tubep-backend.onrender.com/api/ads-conversions/google.csv`
-3. Tên người dùng / mật khẩu: đúng `GOOGLE_ADS_EXPORT_USER` / `GOOGLE_ADS_EXPORT_PASSWORD` trên Render.
-4. Tần suất: **Hằng ngày**, giờ nên chọn sáng sớm (ví dụ 06:00).
-5. Bấm **Xem trước / Tải lên ngay** lần đầu để kiểm tra; Google báo số dòng thành công / lỗi.
-
-Lỗi thường gặp: `401` sai tên/mật khẩu; `503` thiếu biến môi trường hoặc CSDL chính chưa sẵn sàng;
-Google báo «gclid không thuộc tài khoản» khi lượt nhấp đến từ tài khoản quảng cáo khác.
-
-## Định dạng tệp
-
-```
-Google Click ID,Conversion Name,Conversion Time,Conversion Value,Conversion Currency
-Cj0KCQ...,VPT CRM - Cuoc goi that,2026-10-10 10:00:00+07:00,,VND
+```csv
+Google Click ID,Conversion Name,Conversion Time,Conversion Value,Conversion Currency,Order ID
 ```
 
-Thời gian theo giờ Việt Nam, dạng `yyyy-MM-dd HH:mm:ss+07:00` (múi giờ nằm trong từng giá trị). Không còn dòng `Parameters:TimeZone=`: Trình quản lý dữ liệu (Data Manager) đọc dòng đầu tiên làm tên cột. Thời điểm chuyển đổi luôn sau lượt nhấp
-(cuộc gọi: max(lúc gọi, lúc bấm + 1 giây); khách hợp lệ: bỏ qua nếu mốc không sau lượt nhấp).
+Ánh xạ GCLID, tên hành động, thời gian và Order ID vào trường tương ứng; không băm GCLID/Order ID.
+Thời gian có múi giờ; kiểm transformation lúc preview. Luồng này dùng **GCLID**, không triển khai
+enhanced conversions bằng email/phone hay Customer Match.
+[Định dạng nhập Data Manager](https://support.google.com/google-ads-data-manager/answer/14184381?hl=en).
 
-## Xem trước trong CRM
+Kiểm số dòng nhận/lỗi, tài khoản GCLID, đúng hành động/thời gian, lưu bằng chứng nhập; khi ổn mới chạy mỗi ngày
+(ví dụ 06:00 Việt Nam). Giữ **Secondary**, không đưa vào **custom goal** trong giai đoạn xác nhận.
+Secondary trong custom goal vẫn có thể tham gia bidding. Trước chuyển Primary phải rà mục tiêu từng chiến dịch
+và hành động form/call/proxy để không tối ưu/cộng nhầm nhiều bước.
+[Primary/Secondary và custom goals](https://support.google.com/google-ads/answer/11461796?hl=en).
 
-Admin xem tại bảng «Chuyển đổi website» → mục «Gửi chuyển đổi về Google Ads (60 ngày gần nhất)»
-(`GET /api/marketing-web/offline-conversions?from=&to=`): số «Cuộc gọi thật ghép được quảng cáo»,
-«Khách hợp lệ có gclid», chẩn đoán (ghi âm không ghép được lượt bấm, ghi âm thiếu giờ gọi, upload trùng,
-lượt bấm chỉ có gbraid/wbraid, khách hợp lệ từ form không có gclid, dữ liệu thử bị loại) và danh sách dòng
-với gclid che còn 6 ký tự cuối.
+## Giới hạn và nghiệm thu
 
-Chẩn đoán ghi âm (API): `recordings_considered`, `recordings_time_from_file_name` (giờ gọi lấy từ tên file),
-`recordings_no_call_time` (bỏ qua vì không có giờ gọi; đếm theo lúc tải lên trong khoảng), `recordings_duplicates_merged`,
-`recordings_skipped_outbound`, `recordings_matched`, `recordings_without_click`.
+- Thiếu lịch sử hoặc danh tính đổi có thể bỏ sót khách cũ. Customer tạo cùng lần tiếp nhận chỉ chứng minh
+  theo CRM đang có, chưa bảo đảm chưa từng là khách ngoài hệ thống.
+- Kiểm mốc customer rất chặt: đồng hồ lệch, thiếu marker form/lịch sử có thể under-count.
+  Đối soát dòng bị giữ; không nới điều kiện chỉ để đạt CPL.
+- GCLID hợp lệ chưa chứng minh thuộc VPT/còn trong cửa sổ Google nhận. Import diagnostics và quy quảng cáo là bước riêng.
+- Thu hồi/loại chỉ bỏ khỏi tệp tương lai, **không rút chuyển đổi Google đã nhập**. Chưa có ledger/tự retraction.
+  Cần lưu Order ID và quy trình điều chỉnh/retract bản nhập sai; giữ Secondary trong thời gian thử.
+- Chưa có số khách mới thực tế hoặc CPL nghiệm thu. Muốn kết luận `≤250.000đ/khách` cần đối soát khách duy nhất,
+  khách cũ, nguồn Google, kết quả nhập, chi đúng kỳ và thuế/phí; chốt kỳ theo lượt nhấp hay ngày xác minh.
+  Không dùng tổng Conversions có form/call làm mẫu số. Phạm vi 130 triệu so với trần thử 100 triệu vẫn chờ làm rõ.
 
-## Giờ gọi khi app không gửi
+## Luồng cũ và giờ ghi âm
 
-App `crm-mobile-v2` hiện không gửi `duration_sec`, `call_started_at`, `direction` và có thể tải lên trễ nhiều ngày,
-nên **không dùng lúc tải lên** làm giờ gọi. Trình ghi âm Samsung đặt tên file
-`<số hoặc tên danh bạ>_YYMMDD_HHMMSS.m4a` theo giờ Việt Nam, ví dụ
-`Ghi âm cuộc gọi 0385197809_261007_203408.m4a` = 07/10/2026 20:34:08. Chấp nhận thêm `YYYYMMDD`, dấu `-` hoặc
-khoảng trắng làm ngăn cách; ngày giờ không hợp lệ, trước 2015 hoặc sau hiện tại quá 2 ngày bị bỏ.
-(`backend/src/helpers/callRecordingMeta.js`)
+`google.csv` giữ hai hành động proxy và cửa sổ 60 ngày. Ghi âm không giới hạn thời lượng; chỉ loại cuộc gọi đi
+khi có `direction=outbound`, hiện app chưa gửi direction nên chưa xác định đầy đủ. Ghép lượt bấm trong khoảng
+10 phút trước đến 1 phút sau lúc gọi; một click ghép ghi âm sớm nhất. File cùng company/tên/dung lượng được gộp.
+Giờ gọi ưu tiên `call_started_at`, rồi tên file `<số hoặc tên>_YYMMDD_HHMMSS.m4a`; không dùng lúc upload.
+Thiếu giờ hợp lệ thì bỏ. Helper: `backend/src/helpers/callRecordingMeta.js`.
 
-Bản ghi mới: khi app không gửi, route upload `POST /api/voice-recordings` tự điền `duration_sec` (đọc hộp `moov/mvhd`
-của file MP4/M4A/3GP trên đĩa tạm) và `call_started_at` (từ tên file); worker STT cũng điền hai cột này nếu còn trống
-khi chép lời. Lỗi đọc không chặn upload, không đổi API cho app. Thời lượng chỉ để tham khảo, **không** dùng để lọc.
+Preview cũ `/api/marketing-web/offline-conversions` giữ chẩn đoán ghi âm/mốc bán hàng, che GCLID còn 6 ký tự cuối.
+Số “Khách hợp lệ có gclid” ở đây **không phải** số qua xác minh mới.
 
-Bản ghi cũ: không cần backfill cho chuyển đổi — giờ gọi được tính từ tên file ngay lúc xuất. Cột
-`duration_sec`/`call_started_at` của các dòng cũ vẫn trống (không có script backfill).
+## Rollback và nguồn mã
 
-## Giới hạn hiện tại
+Dừng/ngắt nguồn `qualified-google.csv` trong Data Manager, rồi revert bản sửa nếu cần.
+Không rollback SQL hay xóa dữ liệu xác minh; endpoint cũ không đổi. Dừng nguồn/revert không xóa conversion
+Google đã nhập; xử lý retract riêng.
 
-- Cuộc gọi đi chỉ loại được khi app gửi `direction=outbound`; hiện app chưa gửi nên mọi ghi âm có giờ gọi đều được xét.
-- Tên file không theo mẫu (trình ghi âm khác) và không có `call_started_at` → không xác định được giờ gọi, bị bỏ qua.
-- Không có bảng lưu lịch sử đã gửi: tính lại mỗi lần gọi; dựa vào khử trùng của Google.
-
-Mã nguồn: `backend/src/modules/marketingAutomation/googleOfflineConversions.js`,
-`backend/src/routes/googleAdsExport.js`, `backend/src/routes/webConversions.js`.
+Mã mới: `backend/src/modules/marketingAutomation/googleQualifiedConversions.js`, `qualificationContext.js`,
+`backend/src/routes/googleAdsExport.js`, `webConversions.js`, `p1Qualification.js`,
+`frontend/src/components/P1QualificationPanel.jsx`, `WebConversionPanel.jsx`, `frontend/src/lib/p1Qualification.js`.
+Proxy cũ: `backend/src/modules/marketingAutomation/googleOfflineConversions.js`.
