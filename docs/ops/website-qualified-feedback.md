@@ -56,6 +56,7 @@ Các bộ source/parser, sender/outbox, service/router HTTP, Google qualified/le
 
 - Tắt `VPT_META_WEB_FEEDBACK_ENABLED`, restart backend; giữ ledger/receipt/phiếu xác minh, không delete/retry unknown. Dừng nguồn Google nếu có import sai, xử lý adjustment riêng.
 - WordPress rollback riêng plugin+form từ backup đồng bộ và purge cache. Không đổi secret/mode hoặc job đang gửi; payload đã queue giữ nguyên. Backend cần giữ hỗ trợ receipt cho tới khi job mới được đối soát, nên không revert backend trước WordPress và hàng đợi.
+- Giữ consent gate của **cả hai** Google exporters khi rollback phần còn lại: các Lead đã từ chối vẫn tồn tại sau khi hàng đợi trống. Nếu phải revert backend về trước gói này, ngắt mọi nguồn `google.csv`/`qualified-google.csv` trước và giữ ngắt tới khi gate được khôi phục, tránh legacy export lại khách đã từ chối. Dừng Meta không dừng Google.
 - Frontend revert UI nếu cần. Không drop SQL/column/table và không sửa lịch sử để rollback; các migration additive không làm job cũ thành receipt mới.
 
 Chưa có số khách mới đã nghiệm thu, đối soát chi đúng kỳ/thuế/phí, hoặc kết luận ≤250.000đ/khách. Phạm vi 130 triệu so với trần thử 100 triệu vẫn cần quyết định của chủ sở hữu.
