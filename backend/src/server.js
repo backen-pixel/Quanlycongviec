@@ -486,6 +486,7 @@ zaloRouter._ioRef = io;
 app.use('/api/zalo', zaloRouter);
 // Inject io reference for realtime fb_message events
 app.use('/api/production', require('./routes/production'));
+app.use('/api/work-plans', require('./routes/workPlans'));
 try { app.use('/api/production/backup-sync', require('./routes/productionBackupSync')); } catch (e) { console.warn('⚠️ production backup-sync route failed:', e.message); }
 app.use('/api/logistics', require('./routes/logistics'));
 app.use('/api/accounting', require('./routes/accounting'));

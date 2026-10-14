@@ -333,6 +333,7 @@ const SX_MENU_GROUPS = [
     items: [
       { to: '/sx/dashboard', icon: LayoutDashboard, label: 'Dashboard xưởng', end: true },
       { to: '/sx/project-tasks', icon: CheckSquare, label: 'Quản lý nhiệm vụ' },
+      { to: '/sx/plan-tasks', icon: CheckSquare, label: 'Nhiệm vụ kế hoạch SX' },
       { to: '/sx/assignments', icon: ClipboardList, label: 'Giao việc Sản xuất' },
       { to: '/sx/phat-sinh', icon: ClipboardList, label: 'Quản lý phát sinh' },
       { to: '/management/project-logs', icon: History, label: 'Nhật ký công trình' },

@@ -1,7 +1,7 @@
 # Thiết kế quy trình sản xuất linh hoạt và dự án mẫu
 
-Ngày: 14/10/2026. Trạng thái: **DRAFT để anh Hùng duyệt thiết kế**.
-Anh đã đồng ý thực hiện bản thiết kế; chưa coi là phê duyệt triển khai, migration hoặc phát hành. Tài liệu này không thay đổi hệ thống đang chạy.
+Ngày: 14/10/2026. Trạng thái: **Anh Hùng đã duyệt triển khai; candidate được kiểm thử cục bộ**.
+Chưa áp migration, merge hoặc phát hành hệ thống thật. [Phạm vi mã đã triển khai, kiểm chứng và giới hạn tích hợp](../ops/flexible-production-plans.md). Tài liệu này giữ thiết kế đích; không coi mọi phần trong lộ trình bên dưới là đã chạy.
 
 ## 1. Mục tiêu đã chốt từ trao đổi
 

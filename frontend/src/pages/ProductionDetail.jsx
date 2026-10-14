@@ -3409,6 +3409,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          {moduleKey === 'sx' && <Link to={`/sx/projects/${project.id}/plan`} className="px-3 py-2 border rounded-lg text-teal-700">Kế hoạch sản xuất</Link>}
           <PinProjectButton
             projectId={project.id}
             code={displayCode}

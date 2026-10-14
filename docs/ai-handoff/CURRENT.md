@@ -1,3 +1,9 @@
+## 2026-10-14 — Kế hoạch sản xuất linh hoạt (candidate, chưa deploy)
+
+User duyệt triển khai: hạn hoàn thành sản xuất; công đoạn/nhiệm vụ/thời lượng riêng; mẫu phiên bản dùng lại. Nhánh `codex/flexible-production-plans-20261014`. Module Work Plans, migration service-only/RLS/atomic CAS+replay, UI lập/duyệt/mẫu/nhiệm vụ. Dự án cũ không backfill; dashboard legacy chưa đọc execution mới. [Hồ sơ, kiểm chứng và rollback](../ops/flexible-production-plans.md). Kiểm domain+HTTP+SQL+browser cục bộ; reviewer độc lập không còn blocker đã biết. Không merge/deploy hoặc áp DB thật.
+
+---
+
 ## 2026-10-14 — Bản thiết kế quy trình sản xuất linh hoạt và dự án mẫu
 
 Theo anh Hùng đồng ý làm bản thiết kế: [Thiết kế DRAFT](../ba/THIET_KE_QUY_TRINH_SAN_XUAT_LINH_HOAT.md) mô tả cấu trúc riêng của từng dự án, phiên bản mẫu, đồ thị nhiệm vụ, tính lịch ngược/xuôi theo lịch ca, nhân viên thấy việc sẵn sàng và quản lý thấy việc trễ/ảnh hưởng. 7 ngày chỉ là ví dụ. Hai mẫu minh họa tính đường dài nhất: tủ bếp 7 ngày, cánh kính 6 ngày; chưa phải định mức xưởng. Chưa sửa code/DB hoặc deploy. Các lựa chọn giờ làm việc, mốc hoàn thành SX, miễn trừ nhiệm vụ và phân quyền cần duyệt cùng thiết kế. PR131 vẫn là gói xác nhận Xong riêng, chưa tự trở thành phần lập lịch mới.
