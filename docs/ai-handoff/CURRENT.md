@@ -1,6 +1,6 @@
 ## 2026-10-14 — Kế hoạch sản xuất linh hoạt (candidate, chưa deploy)
 
-User duyệt triển khai: hạn hoàn thành sản xuất; công đoạn/nhiệm vụ/thời lượng riêng; mẫu phiên bản dùng lại. Nhánh `codex/flexible-production-plans-20261014`. Module Work Plans, migration service-only/RLS/atomic CAS+replay, UI lập/duyệt/mẫu/nhiệm vụ. Dự án cũ không backfill; dashboard legacy chưa đọc execution mới. [Hồ sơ, kiểm chứng và rollback](../ops/flexible-production-plans.md). Kiểm domain+HTTP+SQL+browser cục bộ; reviewer độc lập không còn blocker đã biết. Không merge/deploy hoặc áp DB thật.
+User duyệt triển khai: hạn hoàn thành sản xuất; công đoạn/nhiệm vụ/thời lượng riêng; mẫu phiên bản dùng lại. [Draft PR #134](https://github.com/backen-pixel/Quanlycongviec/pull/134), nhánh `codex/flexible-production-plans-20261014`. Module Work Plans, migration service-only/RLS/atomic CAS+replay, UI lập/duyệt/mẫu/nhiệm vụ. Dự án cũ không backfill; dashboard legacy chưa đọc execution mới. [Hồ sơ, kiểm chứng và rollback](../ops/flexible-production-plans.md). 25/25 kiểm thử domain+HTTP+SQL+browser cục bộ và frontend build PASS; reviewer độc lập không còn blocker đã biết. Không merge/deploy hoặc áp DB thật.
 
 ---
 

@@ -23,6 +23,7 @@ Migration SQL thật nằm ở `/database/*.sql` (root repo) — không nhân b�
 1. Kiến trúc V1.1, hiện trạng và tài liệu lịch sử → [mục lục kiến trúc](./architecture/README.md)
 2. Schema DB → [`database/DATABASE_SCHEMA.md`](./database/DATABASE_SCHEMA.md)
 3. API → [`api/API_DOCUMENT.md`](./api/API_DOCUMENT.md)
+   - MCP (trợ lý AI nối vào hệ thống) → [`api/MCP_CAPABILITIES.md`](./api/MCP_CAPABILITIES.md)
 4. Coding / inventory → [`project/CODING_STANDARD.md`](./project/CODING_STANDARD.md)
 5. Workflow Claude ↔ Cursor ↔ GitHub → [`project/workflow-claude-cursor-github.md`](./project/workflow-claude-cursor-github.md)
 6. Công việc AI hiện tại → [`ai-handoff/CURRENT.md`](./ai-handoff/CURRENT.md)
