@@ -1,3 +1,15 @@
+## 2026-10-15 — VPT: candidate Warm/Hot/Deal, SMTP qua kết nối; backup chưa nghiệm thu
+
+Founder yêu cầu tiếp tục hoàn thành bốn việc sau khi tạm dừng. [Hồ sơ khôi phục, bằng chứng, gate và rollback](../ops/vpt-operations-recovery-20261015.md) giữ chi tiết. Candidate trên nhánh `codex/vpt-operations-recovery-20261015`, chưa áp migration/merge/deploy, chưa qualify khách thật hoặc gửi provider event.
+
+Quy tắc mới: chuyển mới Warm/Hot hoặc Lead → Deal tự ghi nhận một lần, giữ mốc đầu tiên, không backfill hồ sơ cũ và không giả bằng chứng sale. Atomic RPC primary-only + ledger phương pháp giai đoạn; năm đường ghi được bao phủ, nguồn Google/Meta vẫn kiểm consent/khách mới/chống trùng/current-state. **11 SQL mới + 21 SQL website + 158 Node và frontend build đạt**; replication **36/36** qua review độc lập, đã chặn runtime auto-grants và alias UUID/company/type. Tích hợp main và CI SHA cuối còn chờ. Rollback ứng dụng không drop ledger/cột phương pháp đã dùng.
+
+SMTP WordPress đã lưu host đúng chứng chỉ `mail93132.maychuemail.com`, giữ SSL/465/credential. Email thử tới hộp VPT được phép đã qua bước kết nối nhưng còn cảnh báo hai SPF của `itso.vn`; chưa xác nhận inbox. Đã soạn yêu cầu để Founder gửi bên DNS/email, chưa sửa DNS/liên hệ nhà cung cấp. TEST ngày 14/10 đã thấy trên backup, vẫn không tính khách/CPL.
+
+Backup vẫn chưa khôi phục toàn bộ. Health **03:59:34 UTC**: active primary, Redis disabled, uptime879s, queue684/applied309/failed33. Render đã auto-deploy các commit khác nhiều lần; khoảng45.998 job RAM của process trước không có bằng chứng bảo toàn. Root đã tạm chuyển backend **Auto-Deploy Off**, không restart; cần kế hoạch reconciliation cả dữ liệu xóa/tombstone và dữ liệu backup bị ghép code khác UUID. Không auto merge/rekey user hoặc replay hàng loạt theo code/email. Candidate đang chặn các va chạm định danh thay vì ghi đè công ty/owner. Google Data Manager còn chờ khách thật; Meta website gửi thật vẫn tắt, chưa CPL được nghiệm thu.
+
+---
+
 ## 2026-10-14 12:47 — VPT: cột backup đã sửa, replication vẫn lỗi riêng
 
 Người dùng đã duyệt rõ việc áp SQL lên `QLCV_Backup / atcfpgxkgbszglrelfgr`. Migration `20261014022725_website_intake_backup_compat.sql` đã áp thành công lúc **12:45:05 Asia/Saigon (UTC+7)**, history `20261014054505 / website_intake_backup_compat_vpt_20261014`. Hậu kiểm **12:45:39**: `website_intake` là JSONB nullable/default NULL; CRM **9.544**, VPT **3.014** hàng giữ nguyên, metadata có giá trị **0**, không DDL backfill; ACL fingerprint `c1e488b30589fa3c45d7d80fe02ddcad` giữ nguyên, RLS bật, không thêm policy/RPC/trigger/bảng private. Chỉ mirror cột; backup chưa đủ qualification/receipt/outbox/sender.

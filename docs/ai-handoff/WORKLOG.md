@@ -1,3 +1,14 @@
+## 2026-10-15 — VPT: chuẩn bị policy giai đoạn và khôi phục vận hành
+
+- Founder giao hoàn tất quy tắc Warm/Hot/direct Deal, đồng bộ dự phòng, email/form và nghiệm thu Google/Meta. Đã resume sau yêu cầu tạm dừng. Làm trong worktree riêng `vpt-operations-recovery-20261015`, giữ checkout người dùng.
+- Candidate mới: migration `20261015020200_crm_stage_qualification_policy.sql`, adapter `crmStageQualificationWrite`, predicate `qualificationEvidence`, năm đường stage/type CRM, Google/Meta source checks/UI và CI. Ghi stage/history/qualification atomic; first event/time, no old-row qualification backfill, manual revoke, consent/source/new-customer gates. **11/11 SQL mới, 21/21 SQL hiện có, 158/158 Node, frontend build PASS**. Chưa DDL/DML production/merge/deploy/provider event.
+- Candidate replication: sửa mất body FK/escape, PATCH 0 hàng, retry ordering/retention/ACK và committed-RPC projection. Review đã đóng delayed projection sau DELETE, code collision khác UUID/type, partial PATCH scope và PATCH→DELETE liveness; runtime 401/403 không còn tự broad-grant. **36/36 kiểm focused + review độc lập đạt** tại commit `ff545cad`; code giai đoạn commit `2c64d4e5`. CI SHA cuối và vận hành còn chờ.
+- SMTP thật: đổi duy nhất host thành `mail93132.maychuemail.com`, giữ SSL465/credential/TLS validation; WP UI lưu/read-back đạt, email thử qua kết nối nhưng còn duplicate-SPF `itso.vn`. Inbox và form sau sửa chưa xác nhận. Không gửi mail khách hoặc sửa DNS.
+- Audit runtime **03:59:34 UTC** phát hiện process mới sau nhiều external auto-deploy, Redis disabled, queue684. Không chứng minh đã giữ khoảng45.998 job RAM cũ. Đã chuyển backend Auto-Deploy Off qua Render Settings, không restart. Chuẩn bị recovery plan có snapshot/mapping/tombstone trước phát hành, không tự ghép user/email hoặc CRM code khác UUID.
+- Bằng chứng và rollback: [hồ sơ vận hành](../ops/vpt-operations-recovery-20261015.md); ảnh và forensic chi tiết ngoài repo. Google chưa có dòng thật để map/import; Meta website gửi thật vẫn tắt. Chưa nghiệm thu CPL/failover.
+
+---
+
 ## 2026-10-14 (4) — App tab Công việc: nhóm dự án nạp ở trang 2 bị chồng/mất; KPI «Chưa giao» quá hạn
 
 - Kiểm app ↔ web ↔ API (HCB · Tủ bếp, chỉ đọc): web khớp API tuyệt đối (công ty b78baba2…, lọc Phúc Đạt: TỔNG 2, «Chưa giao (92)», TB-2026-1021). Máy chủ phân trang đúng (20 nhóm/trang: 345 + 227 + 2 = 574 việc, 574 `unified_id` khác nhau, 0 trùng; «Chưa giao» 0 trùng sau PR khử trùng). Số đếm KPI app = API (574 / QH 19; «Chưa giao» 122 / QH 5).
