@@ -1,0 +1,57 @@
+# Replication cutover capture preparation — 15 October 2026
+
+This candidate preserves current database rows and newly committed identity/deletion evidence for an explicit scope. It does not recover the lost process queue, replay jobs, restore business rows, merge identities, grant application permissions, or authorize a deployment. Every mode returns `cutover_ready:false` and `queue_inventory_complete:false`.
+
+## Files and execution boundary
+
+- `database/20261015050417_replication_cutover_preservation.sql`: owner-private logged storage and a pinned trigger function. Created with Supabase CLI 2.120.0 `migration new replication_cutover_preservation`, then moved into the repository's `database/` convention. Unapplied preparation as of review.
+- `backend/scripts/preserve-replication-cutover-20261015.js`: read-only inventory by default; separate explicit arm, snapshot, and verify modes. It imports no application startup module.
+- `backend/tests/replication-cutover-preservation-sql.js`: isolated PostgreSQL fixtures, no production connection or environment loading.
+
+Only the operator may run the mutating modes after review. Use the protected CLI session and strict TLS with the official CA through scoped `NODE_EXTRA_CA_CERTS`. Connection URLs are restricted to the fixed project pair and `/postgres`; URL query/hash overrides are removed. Do not substitute `rejectUnauthorized:false`, read secrets into logs, or invoke the full-clone/backup-schema-grant helpers.
+
+The owner-private schema is `vpt_cutover_20261015`. All four tables are logged with forced RLS and owner-only ACLs. Application roles, including `service_role`, cannot read or alter this schema or execute its function. The SECURITY DEFINER trigger is necessary only to write this private journal during existing business DML; its function body, owner, language, return type, exact search path/time zone and ACL are verified before the first arm and later captures.
+
+Dedicated encryption material is `VPT_RECOVERY_SNAPSHOT_KEY` (canonical base64 for exactly 32 random bytes) and `VPT_RECOVERY_SNAPSHOT_KEY_ID` (UUID). A key may be supplied through silent stdin using `--key-stdin --key-id <version UUID>`. Retain that exact private key version separately from ciphertext; a key ID is not key escrow. Keys are not JWT/auth credentials and must not be replaced by them. HKDF domain separation and AES-256-GCM bind the fixed projects, run, capture, phase, site, stream, part, row count and key version. CLI output contains metadata and sanitized reason codes only.
+
+## Scope and inventory gate
+
+The supported tables are exactly `crm_leads`, `project_substage_status`, `users`, `departments`, and `trash_items`; a requested subset is allowed. Each must be an ordinary logged table with a validated, non-null UUID primary key named `id`. Composite/no primary keys, other key types, partitioned/foreign relations and unknown scope are held. No source-side table is created or cloned.
+
+Inventory queries the complete PostgreSQL public catalog without a 200-row limit. It applies the runtime's exact light/default/custom skip-table rules and reports every remaining relation's kind, persistence, primary-key names/types and uncovered status. RPC endpoints are not assumed to be queued REST writes. Inventory is a conservative potential REST universe, not evidence that every listed relation currently has queued jobs.
+
+Read-only metadata on 15 October found primary 348 public relations (343 tables, 5 views) and backup 352 (347 tables, 5 views). Root confirmed the actual running process at 05:06:03 UTC: light mode enabled, custom skip override absent, and effective storage replication disabled. The matching light-skip universe is 340/344 relations: 335/339 base tables plus the five views per site. This five-table candidate leaves 330/334 base tables and the five views uncovered. Before skip filtering, structural classes are primary 261 UUID-`id`, 28 composite keys, 42 other single keys, 12 tables without a primary key; backup 278, 29, 40, and 0 respectively. These counts describe the catalog, not approved capture scope.
+
+The next inputs are relation/storage sizes and disk/WAL headroom, view dependency coverage, and a disposition for source/target schema differences and unsupported identities. The next implementation must explicitly review/allowlist eligible relations and their identities: generic composite/other keys require new catalog validation and tests; no-key relations and views require a separate disposition. Do not change the five-table check to an unrestricted wildcard, attach triggers to hundreds of tables, or call this queue preservation based on this candidate alone. The current light-mode process does not enqueue storage replication; historical storage parity and lost delete/update intents still need independent reconciliation even after future capture coverage is complete.
+
+## Arm and snapshot semantics
+
+The migration attaches no public trigger. `--arm` separately registers the exact table OIDs and catalog fingerprints on each site, then attaches two `ENABLE ALWAYS` triggers per table: AFTER ROW INSERT/UPDATE/DELETE (`vpt_cutover_identity_20261015`, type 29) and BEFORE STATEMENT TRUNCATE (`vpt_cutover_truncate_20261015`, type 34). TRUNCATE is held. Arming uses short table locks; `lock_timeout=2s`, `statement_timeout=15s`, and `idle_in_transaction_session_timeout=120s` make contention fail rather than silently continue. Review disk/WAL headroom and write latency before approval; no production capacity claim is made by synthetic tests.
+
+Both primary and backup must be armed before capturing a baseline, because the old backup worker can still mutate its target. The transactionally inserted journal records UUID identities, valid company UUIDs, allowlisted lead/deal type, a hash of freeform code, row digests, touched column names, transaction ID and observation time. It records direct SQL/RPC/cascade mutations and rolls back with failed DML. It stores no raw code/contact/password payload. The journal is identity/tombstone evidence, not complete row history or the contents/order of the old RAM queue. Journal insertion failure aborts that business mutation; this operational impact must be reviewed before arming.
+
+`--snapshot --run-id <run UUID>` captures both sites using separate repeatable-read transactions. Table rows and journal records are exported as database-produced JSON **text inside encrypted chunks**; numeric/bigint values are never parsed into JavaScript numbers. Storage object metadata is included when `storage.objects` exists; storage bytes and bucket policies are not copied. An encrypted manifest records per-stream counts, contiguous parts and raw-text digests. `--verify --run-id <run UUID> --capture-id <capture UUID>` authenticates every persisted chunk and manifest after commit, without printing decrypted rows.
+
+Each invocation produces a new immutable `capture_id`; repeated `--phase closing` snapshots are supported. Supplying an existing capture ID resumes only after authenticating its complete existing artifact set; it never overwrites or deletes previous evidence. A changed/missing part holds the operation. Export/storage budget must include both sites, repeated checkpoints, encrypted user/trash snapshots and accumulated journals; there is no automatic pruning.
+
+## Late commits and the closing fence
+
+Every checkpoint exports **all committed journal events for that run**. There is no `id > last_max`, sequence-based ACK or event deletion. A transaction can reserve a lower sequence ID and commit after an earlier checkpoint has already seen a higher ID. Repeated checkpoints therefore re-enumerate lower IDs as well. Transaction IDs and timestamps also do not prove commit order. Repeatable read gives one consistent snapshot per site; the two sites are not one distributed transaction.
+
+The label `closing` does not acquire a write fence. A real cutover requires a separately reviewed write-quiescence procedure, accounting for in-flight transactions, private/API/RPC/direct writers, scheduled tasks and the old worker. Render Maintenance Mode alone does not stop background work. A newly LIVE service does not prove the old process has stopped. Do not repair the blocking parent or release queued jobs while the old unsafe worker can still write.
+
+A future reconciler must preserve UUID ownership and proven tombstones, hold unresolved aliases, compare database-canonical row digests and exclude any baseline row changed by the captured event set until it is reread under the closing fence. Both old and new keys of primary-key changes are relevant. Compare/restore raw JSON text server-side; do not JSON-parse and reserialize large numeric values. This candidate performs no reconciliation, digest-based write eligibility, ACK or data restore, so a successful snapshot is not permission to apply baseline rows.
+
+## Partial-site outcomes and integration
+
+There is no two-phase commit. From the instant either COMMIT is dispatched, a lost response is conservatively `CUTOVER_PARTIAL_COMMIT_REVIEW_REQUIRED`, with safe run/capture/site identifiers. Rollback cannot prove that a dispatched COMMIT did not commit. Inspect both sites with fresh healthy clients before an explicitly reviewed retry. Do not delete registrations, triggers, journals or artifacts to make a retry succeed.
+
+For arm recovery, `--arm --run-id <same UUID>` validates an already committed registration in full and arms only the missing site. For checkpoint recovery, repeat `--snapshot` with the same run/capture/phase/key IDs; a committed site must pass complete authenticated readback, while the missing site is newly captured. These remain different-time site snapshots and keep readiness false; obtain a fresh closing checkpoint under the actual fence. Changed catalogs/config definitions or incomplete/tampered existing evidence hold recovery.
+
+The bounded three-row parent-repair tool rejects noninternal user/department triggers. Its integration must allow **only** these exact reviewed trigger definitions and pinned function/registration metadata, fingerprinting them in its encrypted snapshot. No arbitrary trigger relaxation is permitted. Arming changes its catalog fingerprint: the earlier preparatory three-row snapshot must become stale, and actual apply requires a fresh snapshot after reviewed journal registration. Never remove the journal to bypass that stale-snapshot guard.
+
+Deploy guards with the replication worker disabled only after a separately reviewed preservation plan covers the eligible universe/current storage/deletes and the remaining historic uncertainty. Prove the old process has stopped, create/verify the fresh bounded repair snapshot, apply the reviewed exact-ID parent repair, reconcile under the fence, and only then consider enabling a reviewed durable consumer. This document and five-table candidate do not satisfy that deployment gate.
+
+## Validation
+
+The 19 isolated PostgreSQL tests cover atomic I/U/D and cascades/rollback, TRUNCATE hold, private role/function/sequence denial, pinned bootstrap body, freeform-code privacy, exact raw numeric export, GCM/AAD tamper rejection, full persisted verification, late lower-ID re-enumeration, unknown first-COMMIT outcomes, explicit partial-site resume, idle-client rollback, unsupported identities and actual `pg` URL/TLS parsing. No production rows, triggers, ACLs, settings, queues or deployments were changed by these tests.

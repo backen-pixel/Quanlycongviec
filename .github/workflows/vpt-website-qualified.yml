@@ -10,6 +10,7 @@ on:
       - 'backend/src/helpers/crmStageQualificationWrite.js'
       - 'backend/src/helpers/supabaseReplication.js'
       - 'backend/scripts/recover-backup-user-parent-20261015.js'
+      - 'backend/scripts/preserve-replication-cutover-20261015.js'
       - 'backend/src/routes/crm/routes/leadLifecycle.js'
       - 'backend/src/services/websiteQualifiedFeedback.js'
       - 'backend/src/routes/websiteFeedback.js'
@@ -18,11 +19,13 @@ on:
       - 'backend/tests/crm-stage-qualification*'
       - 'backend/tests/supabase-replication-recovery.test.js'
       - 'backend/tests/backup-user-parent-recovery-sql.js'
+      - 'backend/tests/replication-cutover-preservation-sql.js'
       - 'database/2026101400571*.sql'
       - 'database/20261014022725_website_intake_backup_compat.sql'
       - 'database/20261015020200_crm_stage_qualification_policy.sql'
       - 'database/20261015041536_vpt_bounded_recovery_private_snapshot.sql'
       - 'database/20261015045032_vpt_recovery_dedicated_snapshot_key_v2.sql'
+      - 'database/20261015050417_replication_cutover_preservation.sql'
       - 'integrations/wordpress/vpt-v1-crm-bridge/**'
       - '.github/workflows/vpt-website-qualified.yml'
 permissions:
@@ -60,3 +63,4 @@ jobs:
           node backend/tests/website-backup-compat-sql.js "$RUNNER_TEMP/vpt-website-pg/node_modules/@electric-sql/pglite"
           node backend/tests/crm-stage-qualification-sql.js "$RUNNER_TEMP/vpt-website-pg/node_modules/@electric-sql/pglite"
           node backend/tests/backup-user-parent-recovery-sql.js "$RUNNER_TEMP/vpt-website-pg/node_modules/@electric-sql/pglite"
+          node backend/tests/replication-cutover-preservation-sql.js "$RUNNER_TEMP/vpt-website-pg/node_modules/@electric-sql/pglite"

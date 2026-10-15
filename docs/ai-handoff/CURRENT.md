@@ -10,6 +10,8 @@ Backup vẫn chưa khôi phục toàn bộ. Health **03:59:34 UTC**: active prim
 
 Dry-run guarded repair thực tế đã **PASS/0 hàng nghiệp vụ đổi** sau sửa parser pg. Private snapshot schema đã áp lên backup, history `20261015044748`; owner-only/FORCE RLS, app không usage/CRUD. Thử snapshot v1 giữ ở lỗi khóa, không lưu ciphertext. Candidate v2 dùng khóa ngẫu nhiên riêng 32 byte + UUID phiên bản, migration mới giữ nguyên v1, **27/27 SQL**; hai biến khóa đã lưu Render **Save only**, không deploy/đổi JWT hoặc lộ khóa. Journal/capture cho cutover đang chuẩn bị riêng; chưa bật Maintenance, arm trigger, mở FK hoặc replay. **3/3 CI SUCCESS tại `397e9472`**, v2 cần CI SHA mới.
 
+Checkpoint tiếp **04:57:36 UTC**: v2 migration history `20261015045650` đã áp; snapshot mã hóa `07d1bf6f-3c65-4337-b246-8eaf78c813bb` tạo/decrypt/read-back thật, ciphertext120.495byte, applied_at/result NULL, không hàng nghiệp vụ đổi. **3/3 CI SUCCESS tại `7b5f74f4`**. Health04:58:50 cùng process4435s: queue2977/enqueued4578/applied1566/failed442; chưa khôi phục replication. Snapshot này giới hạn ba hàng và phải làm lại sau thay catalog/arm journal, không chứng minh RAM/fullbackup đã bảo toàn.
+
 ---
 
 ## 2026-10-14 12:47 — VPT: cột backup đã sửa, replication vẫn lỗi riêng
