@@ -4,6 +4,7 @@
 - Hậu kiểm 04:44:50 UTC: ba cột, hai constraint validated, unique index, ba hàm SECURITY INVOKER service-only đủ; qualification/outbox/attempts 0. Không CRM update/backfill, không restart/deploy. Backend cũ chưa gọi RPC nên chưa kích hoạt auto qualification.
 - [Draft PR #139](https://github.com/backen-pixel/Quanlycongviec/pull/139) có main tích hợp `ec02dc7f`, 218 Node/frontend build và cả ba CI checks đạt. Dry-run guarded repair trên Render đã qua TLS với CA chính thức, giữ tại FK metadata parser (`name[]` OID1003); sửa tương thích `text[]` và thêm pg wire regression, không hạ guard. Private snapshot migration/snapshot/apply chưa thực hiện.
 - Backup cần baseline/journal bền vững qua cutover vì không có API pause/export đủ RAM queue; Maintenance không dừng background worker. Giữ Auto-Deploy Off, không mở FK khi old worker chưa dừng. DNS SPF vẫn hai record; chưa inbox/khách quảng cáo thật/provider ACK/CPL.
+- Tiếp lúc 04:47:48 UTC: áp kho snapshot private lên backup, history `20261015044748`; owner/FORCE RLS/app denial hậu kiểm đạt. Runtime dry-run `9c6799a8` PASS/eligible/0 hàng nghiệp vụ đổi. Snapshot v1 giữ `RECOVERY_KEY_UNAVAILABLE`, chưa lưu ciphertext; chuẩn bị migration v2 và dedicated 32-byte base64 key + UUID (27 SQL PASS), không dùng JWT mới hoặc sửa migration đã áp. Hai biến đã lưu Render Save only, bằng chứng UI che giá trị; service vẫn live `aaff6568` từ 03:45, không restart/deploy. CI `397e9472` cả ba SUCCESS. Bản capture/journal riêng vẫn candidate, chưa arm/maintenance/repair.
 
 ---
 

@@ -8,6 +8,8 @@ SMTP WordPress đã lưu host đúng chứng chỉ `mail93132.maychuemail.com`, 
 
 Backup vẫn chưa khôi phục toàn bộ. Health **03:59:34 UTC**: active primary, Redis disabled, uptime879s, queue684/applied309/failed33. Render đã auto-deploy các commit khác nhiều lần; khoảng45.998 job RAM của process trước không có bằng chứng bảo toàn. Root đã tạm chuyển backend **Auto-Deploy Off**, không restart; cần kế hoạch reconciliation cả dữ liệu xóa/tombstone và dữ liệu backup bị ghép code khác UUID. Không auto merge/rekey user hoặc replay hàng loạt theo code/email. Candidate đang chặn các va chạm định danh thay vì ghi đè công ty/owner. Google Data Manager còn chờ khách thật; Meta website gửi thật vẫn tắt, chưa CPL được nghiệm thu.
 
+Dry-run guarded repair thực tế đã **PASS/0 hàng nghiệp vụ đổi** sau sửa parser pg. Private snapshot schema đã áp lên backup, history `20261015044748`; owner-only/FORCE RLS, app không usage/CRUD. Thử snapshot v1 giữ ở lỗi khóa, không lưu ciphertext. Candidate v2 dùng khóa ngẫu nhiên riêng 32 byte + UUID phiên bản, migration mới giữ nguyên v1, **27/27 SQL**; hai biến khóa đã lưu Render **Save only**, không deploy/đổi JWT hoặc lộ khóa. Journal/capture cho cutover đang chuẩn bị riêng; chưa bật Maintenance, arm trigger, mở FK hoặc replay. **3/3 CI SUCCESS tại `397e9472`**, v2 cần CI SHA mới.
+
 ---
 
 ## 2026-10-14 12:47 — VPT: cột backup đã sửa, replication vẫn lỗi riêng

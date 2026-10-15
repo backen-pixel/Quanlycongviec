@@ -6,8 +6,10 @@ const {EventEmitter}=require('node:events');
 const {PGlite}=require(process.argv[2] || '@electric-sql/pglite');
 const recovery=require('../scripts/recover-backup-user-parent-20261015');
 const {SCOPE:S,recover,STORE}=recovery;
-const secret='synthetic-test-key-not-a-production-secret-20261015';
+const secret=Buffer.alloc(32,17).toString('base64'); // Synthetic isolated fixture only.
+const keyId='99999999-9999-4999-8999-999999999999';
 const migration=fs.readFileSync(path.resolve(__dirname,'../../database/20261015041536_vpt_bounded_recovery_private_snapshot.sql'),'utf8');
+const keyMigration=fs.readFileSync(path.resolve(__dirname,'../../database/20261015045032_vpt_recovery_dedicated_snapshot_key_v2.sql'),'utf8');
 const tests=[]; const test=(name,run)=>tests.push({name,run});
 const extra='77777777-7777-4777-8777-777777777777';
 const schema=`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS; CREATE ROLE authenticator;
@@ -58,6 +60,7 @@ async function create() {
     JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind='r' ORDER BY c.relname`;
   const beforeMigrationAcls=(await backup.query(aclQuery)).rows;
   await backup.exec(migration);
+  await backup.exec(keyMigration);
   assert.deepEqual((await backup.query(aclQuery)).rows,beforeMigrationAcls,'private migration must not alter existing public ACL/RLS');
   return {primary,backup};
 }
@@ -68,8 +71,8 @@ async function state(db) {
     result[table]=(await db.query(`SELECT to_jsonb(t) AS row FROM public.${table} t ORDER BY to_jsonb(t)::text`)).rows.map(r=>r.row);
   return result;
 }
-async function snapshot(pair) {return recover({...pair,mode:'snapshot',secret});}
-async function apply(pair,created,opts={}) {return recover({...pair,mode:'apply',secret,snapshotId:created.snapshot_id,...opts});}
+async function snapshot(pair) {return recover({...pair,mode:'snapshot',secret,keyId});}
+async function apply(pair,created,opts={}) {return recover({...pair,mode:'apply',secret,keyId,snapshotId:created.snapshot_id,...opts});}
 async function denied(db,sql,role) {
   await db.exec('SET ROLE '+role);
   try {await assert.rejects(()=>db.query(sql),e=>e.code==='42501');} finally {await db.exec('RESET ROLE');}
@@ -87,7 +90,8 @@ test('snapshot is encrypted, durable, owner-only, verified and does not alter pu
   const stored=(await pair.backup.query(`SELECT * FROM ${STORE}`)).rows[0];
   const raw=Buffer.from(stored.ciphertext).toString('utf8');
   for(const value of ['example.invalid','fixture-canonical-hash','fixture-backup-alias-hash']) assert.equal(raw.includes(value),false);
-  assert.equal(recovery.decrypt(stored,secret).before.alias.password,'fixture-backup-alias-hash');
+  assert.equal(recovery.decrypt(stored,secret,keyId).before.alias.password,'fixture-backup-alias-hash');
+  assert.equal(stored.algorithm,recovery.ALGORITHM); assert.equal(stored.key_id,keyId);
   assert.equal(stored.ciphertext_sha256,created.ciphertext_sha256);
   for(const role of ['anon','authenticated','service_role','authenticator']) {
     await denied(pair.backup,`SELECT * FROM ${STORE}`,role);
@@ -116,9 +120,9 @@ test('apply performs exactly one email update and two source-identical inserts, 
 }));
 test('apply without existing verified snapshot or with rotated key cannot touch rows',()=>withDB(async pair=>{
   const b=await state(pair.backup);
-  await assert.rejects(()=>recover({...pair,mode:'apply',secret,snapshotId:crypto.randomUUID()}),e=>e.recoveryCode==='RECOVERY_SNAPSHOT_MISSING_OR_APPLIED');
+  await assert.rejects(()=>recover({...pair,mode:'apply',secret,keyId,snapshotId:crypto.randomUUID()}),e=>e.recoveryCode==='RECOVERY_SNAPSHOT_MISSING_OR_APPLIED');
   const created=await snapshot(pair);
-  await assert.rejects(()=>apply(pair,created,{secret:secret+'rotated'}),e=>e.recoveryCode==='RECOVERY_SNAPSHOT_DECRYPT');
+  await assert.rejects(()=>apply(pair,created,{secret:Buffer.alloc(32,19).toString('base64')}),e=>e.recoveryCode==='RECOVERY_SNAPSHOT_DECRYPT');
   assert.deepEqual(await state(pair.backup),b);
 }));
 test('source or backup complete-row changes are held even if updated_at remains identical',()=>withDB(async pair=>{
@@ -207,19 +211,19 @@ test('DB round-trip guard holds unsafe numeric values before snapshot or apply c
   for(const value of ['9007199254740993','0.10000000000000000001']) {
     await pair.primary.query('UPDATE public.users SET salary=$1::numeric WHERE id=$2',[value,S.canonical]);
     await assert.rejects(()=>recover(pair),e=>e.recoveryCode==='RECOVERY_ROW_ROUND_TRIP_UNSAFE');
-    await assert.rejects(()=>recover({...pair,mode:'snapshot',secret}),e=>e.recoveryCode==='RECOVERY_ROW_ROUND_TRIP_UNSAFE');
+    await assert.rejects(()=>recover({...pair,mode:'snapshot',secret,keyId}),e=>e.recoveryCode==='RECOVERY_ROW_ROUND_TRIP_UNSAFE');
     await assert.rejects(()=>apply(pair,created),e=>e.recoveryCode==='RECOVERY_ROW_ROUND_TRIP_UNSAFE');
     assert.deepEqual(await state(pair.backup),b);
   }
   await pair.primary.query('UPDATE public.users SET salary=NULL WHERE id=$1',[S.canonical]);
   await pair.backup.query('UPDATE public.users SET salary=9007199254740993 WHERE id=$1',[S.alias]);
-  await assert.rejects(()=>recover({...pair,mode:'snapshot',secret}),e=>e.recoveryCode==='RECOVERY_ROW_ROUND_TRIP_UNSAFE');
+  await assert.rejects(()=>recover({...pair,mode:'snapshot',secret,keyId}),e=>e.recoveryCode==='RECOVERY_ROW_ROUND_TRIP_UNSAFE');
   assert.equal((await pair.backup.query(`SELECT count(*)::int n FROM ${STORE}`)).rows[0].n,1);
 }));
 test('matching source/backup schemas cannot both lose known email uniqueness and pass preflight',()=>withDB(async pair=>{
   for(const db of [pair.primary,pair.backup]) await db.exec('ALTER TABLE public.users DROP CONSTRAINT users_email_key');
   const b=await state(pair.backup);
-  await assert.rejects(()=>recover({...pair,mode:'snapshot',secret}),e=>e.recoveryCode==='RECOVERY_KNOWN_CONSTRAINT_MISSING');
+  await assert.rejects(()=>recover({...pair,mode:'snapshot',secret,keyId}),e=>e.recoveryCode==='RECOVERY_KNOWN_CONSTRAINT_MISSING');
   assert.deepEqual(await state(pair.backup),b);
 }));
 test('matching wrong critical column types are held rather than accepted by catalog parity',()=>withDB(async pair=>{
@@ -251,7 +255,7 @@ test('unsupported composite parent FK remains held after the wire type fix',()=>
   for(const db of [pair.primary,pair.backup]) await db.exec('ALTER TABLE public.users ADD CONSTRAINT fixture_id_email_unique UNIQUE(id,email)');
   await pair.backup.exec('CREATE TABLE public.fixture_composite_fk(user_id uuid,email varchar,FOREIGN KEY(user_id,email) REFERENCES public.users(id,email))');
   const b=await state(pair.backup);
-  await assert.rejects(()=>recover({...pair,mode:'snapshot',secret}),e=>e.recoveryCode==='RECOVERY_FK_UNSUPPORTED');
+  await assert.rejects(()=>recover({...pair,mode:'snapshot',secret,keyId}),e=>e.recoveryCode==='RECOVERY_FK_UNSUPPORTED');
   assert.deepEqual(await state(pair.backup),b);
   assert.equal((await pair.backup.query(`SELECT count(*)::int n FROM ${STORE}`)).rows[0].n,0);
 }));
@@ -296,6 +300,53 @@ test('argument handling is explicitly dry-run and errors contain only allowliste
   assert.equal(stripped.search,''); assert.equal(stripped.hash,'');
   assert.equal(recovery.safeCode(new Error('password=do-not-print@example.invalid')), 'RECOVERY_FAILED');
   assert.equal(recovery.safeCode({code:'23505',message:'private fixture'}),'RECOVERY_UNIQUE_CONFLICT');
+});
+test('new snapshots reject missing key version, JWT text and noncanonical or wrong-length dedicated keys',()=>withDB(async pair=>{
+  await assert.rejects(()=>recover({...pair,mode:'snapshot',secret}),e=>e.recoveryCode==='RECOVERY_KEY_ID_REQUIRED');
+  for(const bad of ['synthetic-legacy-jwt-text-at-least-32-bytes',Buffer.alloc(31).toString('base64'),Buffer.alloc(33).toString('base64'),secret.replace(/=$/,''),'00'.repeat(32)])
+    await assert.rejects(()=>recover({...pair,mode:'snapshot',secret:bad,keyId}),e=>e.recoveryCode==='RECOVERY_KEY_UNAVAILABLE');
+  assert.equal((await pair.backup.query(`SELECT count(*)::int n FROM ${STORE}`)).rows[0].n,0);
+}));
+test('dedicated key version is AAD-bound and retaining the original version permits recovery after rotation',()=>withDB(async pair=>{
+  const created=await snapshot(pair),other='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const stored=(await pair.backup.query(`SELECT * FROM ${STORE} WHERE id=$1`,[created.snapshot_id])).rows[0];
+  await assert.rejects(()=>apply(pair,created,{keyId:other}),e=>e.recoveryCode==='RECOVERY_KEY_ID_MISMATCH');
+  assert.throws(()=>recovery.decrypt({...stored,key_id:other},secret,other),e=>e.recoveryCode==='RECOVERY_SNAPSHOT_DECRYPT');
+  assert.deepEqual((await apply(pair,created,{keyId,secret})).committed,{alias_email_updates:1,department_inserts:1,user_inserts:1});
+}));
+test('new migration preserves legacy ciphertext and private ACLs, requiring its retained legacy JWT key',async()=>{
+  const db=new PGlite();
+  try {
+    await db.exec('CREATE ROLE anon;CREATE ROLE authenticated;CREATE ROLE service_role BYPASSRLS;CREATE ROLE authenticator;');
+    await db.exec(migration);
+    const id=crypto.randomUUID(),salt=crypto.randomBytes(32),nonce=crypto.randomBytes(12);
+    const legacySecret='synthetic-legacy-key-retained-only-for-this-isolated-test';
+    const payload={operation:recovery.OPERATION,scope:S,fixture:'private rollback fixture'};
+    const derived=Buffer.from(crypto.hkdfSync('sha256',Buffer.from(legacySecret),salt,Buffer.from('vpt/backup/20261015/identity-rollback/v1'),32));
+    const cipher=crypto.createCipheriv('aes-256-gcm',derived,nonce);
+    cipher.setAAD(Buffer.from([recovery.OPERATION,recovery.PRIMARY,recovery.BACKUP,id,recovery.LEGACY_ALGORITHM].join('|')));
+    const ciphertext=Buffer.concat([cipher.update(JSON.stringify(payload),'utf8'),cipher.final()]),tag=cipher.getAuthTag();derived.fill(0);
+    await db.query(`INSERT INTO ${STORE}(id,operation,source_project,backup_project,algorithm,salt,nonce,auth_tag,ciphertext,ciphertext_sha256)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,[id,recovery.OPERATION,recovery.PRIMARY,recovery.BACKUP,recovery.LEGACY_ALGORITHM,salt,nonce,tag,ciphertext,crypto.createHash('sha256').update(ciphertext).digest('hex')]);
+    const before=(await db.query(`SELECT * FROM ${STORE}`)).rows[0];
+    const aclQuery=`SELECT n.nspacl::text,c.relacl::text,c.relrowsecurity,c.relforcerowsecurity FROM pg_namespace n JOIN pg_class c ON c.relnamespace=n.oid WHERE c.oid=$1::regclass`;
+    const beforeAcl=(await db.query(aclQuery,[STORE])).rows;
+    await db.exec(keyMigration);
+    const after=(await db.query(`SELECT * FROM ${STORE}`)).rows[0],{key_id:added,...unchanged}=after;
+    assert.equal(added,null);assert.deepEqual(unchanged,before);
+    assert.deepEqual((await db.query(aclQuery,[STORE])).rows,beforeAcl);
+    assert.deepEqual(recovery.decrypt(after,undefined,undefined,legacySecret),payload);
+    assert.throws(()=>recovery.decrypt(after,secret,keyId),e=>e.recoveryCode==='RECOVERY_LEGACY_KEY_UNAVAILABLE');
+    await assert.rejects(()=>db.query(`UPDATE ${STORE} SET algorithm=$1 WHERE id=$2`,[recovery.ALGORITHM,id]),e=>e.code==='23514');
+    await assert.rejects(()=>db.query(`UPDATE ${STORE} SET key_id=$1 WHERE id=$2`,[keyId,id]),e=>e.code==='23514');
+    for(const role of ['anon','authenticated','service_role','authenticator']) await denied(db,`SELECT * FROM ${STORE}`,role);
+  } finally {await db.close();}
+});
+test('key input arguments never accept a secret value in command-line options',async()=>{
+  assert.deepEqual(recovery.parseArgs(['--snapshot','--snapshot-key-stdin','--snapshot-key-id',keyId]),
+    {mode:'snapshot',snapshotId:undefined,keyId,keyStdin:true});
+  assert.throws(()=>recovery.parseArgs(['--snapshot','--snapshot-key','must-not-be-accepted']),/RECOVERY_ARGUMENT_INVALID/);
+  assert.throws(()=>recovery.parseArgs(['--dry-run','--snapshot-key-stdin']),/RECOVERY_ARGUMENT_INVALID/);
 });
 (async()=>{let passed=0;for(const item of tests){try{await item.run();passed++;console.log('PASS '+item.name);}catch(e){console.error('FAIL '+item.name);console.error(e.stack);process.exitCode=1;break;}}
 console.log(`${passed}/${tests.length} actual PostgreSQL bounded recovery tests passed (PGlite).`);

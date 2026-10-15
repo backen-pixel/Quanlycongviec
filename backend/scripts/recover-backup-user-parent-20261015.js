@@ -9,7 +9,8 @@ const crypto = require('node:crypto');
 const PRIMARY = 'kdxypztstbeovyedmvem';
 const BACKUP = 'atcfpgxkgbszglrelfgr';
 const OPERATION = 'same_uuid_email_department_user_v1';
-const ALGORITHM = 'aes-256-gcm/hkdf-sha256/jwt_secret_v1';
+const ALGORITHM = 'aes-256-gcm/hkdf-sha256/dedicated_key_v2';
+const LEGACY_ALGORITHM = 'aes-256-gcm/hkdf-sha256/jwt_secret_v1';
 const STORE = 'vpt_recovery_20261015.identity_repair_snapshots';
 const SCOPE = Object.freeze({
   alias: 'b3da9ac6-b05c-41e6-9a74-0b1defd0a358',
@@ -47,28 +48,50 @@ function stable(value) {
 function fingerprint(value) { return crypto.createHash('sha256').update(stable(value) ?? 'undefined').digest('hex'); }
 function same(a,b) { return fingerprint(a) === fingerprint(b); }
 function quote(name) { return '"'+String(name).replaceAll('"','""')+'"'; }
-function aad(id) { return Buffer.from([OPERATION,PRIMARY,BACKUP,id,ALGORITHM].join('|')); }
-function derive(secret,salt) {
-  check(typeof secret === 'string' && Buffer.byteLength(secret) >= 32, 'RECOVERY_KEY_UNAVAILABLE');
+function aad(id,algorithm,keyId) {
+  const parts=[OPERATION,PRIMARY,BACKUP,id,algorithm];
+  if(algorithm===ALGORITHM) parts.push(keyId);
+  return Buffer.from(parts.join('|'));
+}
+function keyVersion(keyId) {
+  check(typeof keyId==='string' && UUID.test(keyId),'RECOVERY_KEY_ID_REQUIRED');
+  return keyId.toLowerCase();
+}
+function derive(secret,salt,keyId) {
+  check(typeof secret==='string' && /^[A-Za-z0-9+/]{43}=$/.test(secret),'RECOVERY_KEY_UNAVAILABLE');
+  const raw=Buffer.from(secret,'base64');
+  try {
+    check(raw.length===32 && raw.toString('base64')===secret,'RECOVERY_KEY_UNAVAILABLE');
+    return Buffer.from(crypto.hkdfSync('sha256',raw,salt,
+      Buffer.from('vpt/backup/20261015/identity-rollback/dedicated/v2/'+keyVersion(keyId)),32));
+  } finally {raw.fill(0);}
+}
+function deriveLegacy(secret,salt) {
+  check(typeof secret==='string' && Buffer.byteLength(secret)>=32,'RECOVERY_LEGACY_KEY_UNAVAILABLE');
   return Buffer.from(crypto.hkdfSync('sha256',Buffer.from(secret),salt,Buffer.from('vpt/backup/20261015/identity-rollback/v1'),32));
 }
-function encrypt(payload,secret,id) {
-  const salt=crypto.randomBytes(32),nonce=crypto.randomBytes(12),key=derive(secret,salt);
+function encrypt(payload,secret,id,keyId) {
+  keyId=keyVersion(keyId);
+  const salt=crypto.randomBytes(32),nonce=crypto.randomBytes(12),key=derive(secret,salt,keyId);
   try {
-    const cipher=crypto.createCipheriv('aes-256-gcm',key,nonce); cipher.setAAD(aad(id));
+    const cipher=crypto.createCipheriv('aes-256-gcm',key,nonce); cipher.setAAD(aad(id,ALGORITHM,keyId));
     const ciphertext=Buffer.concat([cipher.update(stable(payload),'utf8'),cipher.final()]);
     return {salt,nonce,auth_tag:cipher.getAuthTag(),ciphertext,
       ciphertext_sha256:crypto.createHash('sha256').update(ciphertext).digest('hex')};
   } finally { key.fill(0); }
 }
-function decrypt(row,secret) {
-  check(row.operation===OPERATION && row.source_project===PRIMARY && row.backup_project===BACKUP && row.algorithm===ALGORITHM,'RECOVERY_SNAPSHOT_SCOPE');
+function decrypt(row,secret,keyId,legacySecret) {
+  check(row.operation===OPERATION && row.source_project===PRIMARY && row.backup_project===BACKUP &&
+    [ALGORITHM,LEGACY_ALGORITHM].includes(row.algorithm),'RECOVERY_SNAPSHOT_SCOPE');
   const ciphertext=Buffer.from(row.ciphertext);
   check(crypto.createHash('sha256').update(ciphertext).digest('hex')===row.ciphertext_sha256,'RECOVERY_SNAPSHOT_DIGEST');
-  const key=derive(secret,Buffer.from(row.salt));
+  const legacy=row.algorithm===LEGACY_ALGORITHM;
+  if(legacy) check(row.key_id==null,'RECOVERY_SNAPSHOT_SCOPE');
+  else check(row.key_id===keyVersion(keyId),'RECOVERY_KEY_ID_MISMATCH');
+  const key=legacy?deriveLegacy(legacySecret,Buffer.from(row.salt)):derive(secret,Buffer.from(row.salt),row.key_id);
   try {
     const cipher=crypto.createDecipheriv('aes-256-gcm',key,Buffer.from(row.nonce));
-    cipher.setAAD(aad(row.id)); cipher.setAuthTag(Buffer.from(row.auth_tag));
+    cipher.setAAD(aad(row.id,row.algorithm,row.key_id)); cipher.setAuthTag(Buffer.from(row.auth_tag));
     const payload=JSON.parse(Buffer.concat([cipher.update(ciphertext),cipher.final()]).toString('utf8'));
     check(payload.operation===OPERATION && same(payload.scope,SCOPE),'RECOVERY_SNAPSHOT_SCOPE');
     return payload;
@@ -166,6 +189,9 @@ async function assertPrivateStore(client) {
     FROM pg_namespace n JOIN pg_class c ON c.relnamespace=n.oid JOIN pg_roles r ON r.rolname=current_user
     WHERE n.nspname='vpt_recovery_20261015' AND c.relname='identity_repair_snapshots' AND c.relkind='r'`);
   check(rows.length===1 && Object.values(rows[0]).every(v=>v===true),'RECOVERY_PRIVATE_STORE_REQUIRED');
+  const version=(await client.query(`SELECT a.atttypid='uuid'::regtype AS uuid_key_id FROM pg_attribute a
+    WHERE a.attrelid=$1::regclass AND a.attname='key_id' AND NOT a.attisdropped`,[STORE])).rows;
+  check(version.length===1 && version[0].uuid_key_id===true,'RECOVERY_KEY_SCHEMA_REQUIRED');
 }
 function guardScope(alias,canonical,department,backupAlias) {
   check(alias && canonical && department && backupAlias,'RECOVERY_SOURCE_OR_ALIAS_MISSING');
@@ -204,21 +230,21 @@ async function capture(primary,backup) {
   return {operation:OPERATION,scope:SCOPE,source:{alias,canonical,department},before:{alias:backupAlias,canonical:null,department:null},catalog,
     inbound:await inboundCounts(backup)};
 }
-async function saveSnapshot(backup,payload,secret,id,healthy) {
+async function saveSnapshot(backup,payload,secret,id,keyId,healthy) {
   await assertPrivateStore(backup);
-  const e=encrypt(payload,secret,id);
+  const e=encrypt(payload,secret,id,keyId);
   healthy();
-  await backup.query(`INSERT INTO ${STORE}(id,operation,source_project,backup_project,algorithm,salt,nonce,auth_tag,ciphertext,ciphertext_sha256)
-    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, [id,OPERATION,PRIMARY,BACKUP,ALGORITHM,e.salt,e.nonce,e.auth_tag,e.ciphertext,e.ciphertext_sha256]);
+  await backup.query(`INSERT INTO ${STORE}(id,operation,source_project,backup_project,algorithm,key_id,salt,nonce,auth_tag,ciphertext,ciphertext_sha256)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`, [id,OPERATION,PRIMARY,BACKUP,ALGORITHM,keyId,e.salt,e.nonce,e.auth_tag,e.ciphertext,e.ciphertext_sha256]);
   const saved=(await backup.query(`SELECT * FROM ${STORE} WHERE id=$1`,[id])).rows[0];
-  check(saved && same(decrypt(saved,secret),payload),'RECOVERY_SNAPSHOT_READBACK');
+  check(saved && same(decrypt(saved,secret,keyId),payload),'RECOVERY_SNAPSHOT_READBACK');
   return e.ciphertext_sha256;
 }
-async function loadSnapshot(backup,secret,id) {
+async function loadSnapshot(backup,secret,id,keyId,legacySecret) {
   await assertPrivateStore(backup);
   const saved=(await backup.query(`SELECT * FROM ${STORE} WHERE id=$1 FOR UPDATE`,[id])).rows[0];
   check(saved && !saved.applied_at,'RECOVERY_SNAPSHOT_MISSING_OR_APPLIED');
-  return {payload:decrypt(saved,secret),sha:saved.ciphertext_sha256};
+  return {payload:decrypt(saved,secret,keyId,legacySecret),sha:saved.ciphertext_sha256,keyId:saved.key_id,algorithm:saved.algorithm};
 }
 function expectedInbound(payload) {
   const expected=JSON.parse(JSON.stringify(payload.inbound));
@@ -257,9 +283,10 @@ async function writeRepair(backup,payload,healthy) {
   await assertPrivateStore(backup);
 }
 async function rollback(client) { try { await client.query('ROLLBACK'); } catch {} }
-async function recover({primary,backup,mode='dry-run',secret,snapshotId}) {
+async function recover({primary,backup,mode='dry-run',secret,keyId,legacySecret,snapshotId}) {
   check(['dry-run','snapshot','apply'].includes(mode),'RECOVERY_MODE_INVALID');
   if(mode==='apply') check(UUID.test(snapshotId||''),'RECOVERY_SNAPSHOT_ID_REQUIRED');
+  if(mode==='snapshot' || keyId!=null) keyId=keyVersion(keyId);
   const id=mode==='snapshot'?crypto.randomUUID():snapshotId;
   watchClient(primary); watchClient(backup);
   const healthy=()=>assertHealthy(primary,backup);
@@ -273,7 +300,7 @@ async function recover({primary,backup,mode='dry-run',secret,snapshotId}) {
     await backup.query("SET LOCAL TIME ZONE 'UTC'");
     await backup.query("SET LOCAL lock_timeout='2s'"); await backup.query("SET LOCAL statement_timeout='10s'");
     await backup.query("SET LOCAL idle_in_transaction_session_timeout='120s'");
-    const saved=mode==='apply'?await loadSnapshot(backup,secret,id):null;
+    const saved=mode==='apply'?await loadSnapshot(backup,secret,id,keyId,legacySecret):null;
     const payload=await capture(primary,backup);
     healthy();
     if(mode==='dry-run') {
@@ -281,10 +308,10 @@ async function recover({primary,backup,mode='dry-run',secret,snapshotId}) {
       return {ok:true,mode,eligible:true,planned:COUNTS,production_rows_changed:0};
     }
     if(mode==='snapshot') {
-      const sha=await saveSnapshot(backup,payload,secret,id,healthy);
+      const sha=await saveSnapshot(backup,payload,secret,id,keyId,healthy);
       await primary.query('SELECT 1'); healthy();
       await backup.query('COMMIT'); await rollback(primary);
-      return {ok:true,mode,snapshot_id:id,ciphertext_sha256:sha,production_rows_changed:0,private_snapshot_created:1};
+      return {ok:true,mode,snapshot_id:id,key_id:keyId,algorithm:ALGORITHM,ciphertext_sha256:sha,production_rows_changed:0,private_snapshot_created:1};
     }
     check(same(payload,saved.payload),'RECOVERY_SNAPSHOT_STATE_CHANGED');
     await writeRepair(backup,payload,healthy);
@@ -296,19 +323,22 @@ async function recover({primary,backup,mode='dry-run',secret,snapshotId}) {
     // idle-timeout/network failure cannot silently release its FOR SHARE locks.
     await primary.query('SELECT 1'); healthy();
     await backup.query('COMMIT'); await rollback(primary);
-    return {ok:true,mode,snapshot_id:id,ciphertext_sha256:saved.sha,committed:COUNTS,failover_ready:false};
+    return {ok:true,mode,snapshot_id:id,key_id:saved.keyId,algorithm:saved.algorithm,ciphertext_sha256:saved.sha,committed:COUNTS,failover_ready:false};
   } catch(e) { await rollback(backup); await rollback(primary); healthy(); throw e; }
 }
 function parseArgs(args) {
-  let mode='dry-run',snapshotId; const modes=args.filter(a=>['--dry-run','--snapshot','--apply'].includes(a));
+  let mode='dry-run',snapshotId,keyId,keyStdin=false; const modes=args.filter(a=>['--dry-run','--snapshot','--apply'].includes(a));
   check(modes.length<=1,'RECOVERY_MODE_INVALID'); if(modes[0]) mode=modes[0].slice(2);
   for(let i=0;i<args.length;i++) {
     if(['--dry-run','--snapshot','--apply'].includes(args[i])) continue;
     if(args[i]==='--snapshot-id') { check(!snapshotId && i+1<args.length,'RECOVERY_ARGUMENT_INVALID'); snapshotId=args[++i]; }
+    else if(args[i]==='--snapshot-key-id') {check(!keyId && i+1<args.length,'RECOVERY_ARGUMENT_INVALID');keyId=keyVersion(args[++i]);}
+    else if(args[i]==='--snapshot-key-stdin') {check(!keyStdin,'RECOVERY_ARGUMENT_INVALID');keyStdin=true;}
     else fail('RECOVERY_ARGUMENT_INVALID');
   }
   check(!snapshotId || (mode==='apply' && UUID.test(snapshotId)),'RECOVERY_ARGUMENT_INVALID');
-  return {mode,snapshotId};
+  check(!(mode==='dry-run' && (keyStdin || keyId)),'RECOVERY_ARGUMENT_INVALID');
+  return {mode,snapshotId,...(keyId?{keyId}:{}),...(keyStdin?{keyStdin}: {})};
 }
 function safeCode(e) {
   if(/^RECOVERY_[A-Z_]+$/.test(e?.recoveryCode||'')) return e.recoveryCode;
@@ -332,6 +362,12 @@ function validateUrl(raw,ref) {
 async function main() {
   const opts=parseArgs(process.argv.slice(2));
   require('dotenv').config({path:require('node:path').join(__dirname,'../.env'),quiet:true});
+  let secret=process.env.VPT_RECOVERY_SNAPSHOT_KEY;
+  if(opts.keyStdin) {
+    check(!process.stdin.isTTY,'RECOVERY_KEY_STDIN_PIPE_REQUIRED');
+    secret=require('node:fs').readFileSync(0,'utf8').trim();
+  }
+  const keyId=opts.keyId || process.env.VPT_RECOVERY_SNAPSHOT_KEY_ID;
   const {Client}=require('pg');
   const pUrl=validateUrl(process.env.SUPABASE_DB_URL||process.env.SUPABASE_DB_DIRECT_URL,PRIMARY);
   const bUrl=validateUrl(process.env.SUPABASE_BACKUP_DB_URL||process.env.SUPABASE_BACKUP_DB_DIRECT_URL,BACKUP);
@@ -340,9 +376,9 @@ async function main() {
   watchClient(primary); watchClient(backup);
   try {
     await primary.connect(); await backup.connect();
-    const result=await recover({primary,backup,...opts,secret:process.env.JWT_SECRET});
+    const result=await recover({primary,backup,...opts,secret,keyId,legacySecret:process.env.JWT_SECRET});
     console.log(JSON.stringify(result));
   } finally { await Promise.allSettled([primary.end(),backup.end()]); }
 }
 if(require.main===module) main().catch(e=>{ console.error(JSON.stringify({ok:false,reason:safeCode(e)})); process.exitCode=1; });
-module.exports={recover,parseArgs,safeCode,encrypt,decrypt,fingerprint,SCOPE,PRIMARY,BACKUP,STORE,OPERATION,ALGORITHM,validateUrl,watchClient};
+module.exports={recover,parseArgs,safeCode,encrypt,decrypt,fingerprint,SCOPE,PRIMARY,BACKUP,STORE,OPERATION,ALGORITHM,LEGACY_ALGORITHM,validateUrl,watchClient};
