@@ -124,6 +124,19 @@ const corsMainApp = cors({
     'X-No-Cache',
     // Trợ lý hướng dẫn khai chế độ của client để server gửi đúng bộ luật.
     'X-Guide-Full-Access',
+    /**
+     * Runtime CopilotKit TỰ gắn ba header này vào mọi request — không tắt được từ phía app.
+     * Thiếu chúng trong danh sách, preflight vẫn trả 204 (server không hề từ chối) nhưng
+     * TRÌNH DUYỆT lặng lẽ chặn POST thật: người dùng chỉ thấy "Không nhận được câu trả lời",
+     * còn log server không có lấy một dòng POST nào để mà lần.
+     *
+     * Đo trên production 14–15/10: 5 lượt OPTIONS /api/copilotkit đều 204, 0 lượt POST từ
+     * trình duyệt. Localhost không dính vì Vite proxy biến mọi thứ thành same-origin — không
+     * có CORS thì không có gì để chặn, nên lỗi chỉ lộ ra khi tách origin.
+     */
+    'X-CopilotKit-Runtime-Client-GQL-Version',
+    'X-CopilotKit-Runtime-Version',
+    'X-CopilotKit-Telemetry-Id',
     // <video>/<audio> xin từng khúc file qua Range khi phát trên Drive.
     'Range',
   ],
