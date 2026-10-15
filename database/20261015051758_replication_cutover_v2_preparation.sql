@@ -91,7 +91,7 @@ CREATE TABLE vpt_cutover_v2_20261015.artifacts (
   salt bytea NOT NULL CHECK(octet_length(salt)=32),
   nonce bytea NOT NULL CHECK(octet_length(nonce)=12),
   tag bytea NOT NULL CHECK(octet_length(tag)=16),
-  ciphertext bytea NOT NULL CHECK(octet_length(ciphertext) BETWEEN 1 AND 8388608),
+  ciphertext bytea NOT NULL CHECK(octet_length(ciphertext) BETWEEN 1 AND 33554432),
   ciphertext_sha256 text NOT NULL CHECK(ciphertext_sha256 ~ '^[a-f0-9]{64}$'),
   PRIMARY KEY(capture_id,stream,part),
   FOREIGN KEY(capture_id,receipt_kind) REFERENCES vpt_cutover_v2_20261015.receipts(capture_id,kind)

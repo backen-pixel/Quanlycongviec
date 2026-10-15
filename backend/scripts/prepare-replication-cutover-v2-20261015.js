@@ -12,8 +12,9 @@ const KEY_TYPES = new Set(['uuid','bigint','integer','smallint','text','characte
 const V1_TABLES = [...v1.SUPPORTED].sort();
 const CAPTURE_TRIGGER = 'vpt_cutover_v2_digest_20261015';
 const FENCE_TRIGGER = 'vpt_cutover_v2_fence_20261015';
-const CHUNK_BYTES = 8 * 1024 * 1024;
-const ROW_BYTES = 4 * 1024 * 1024;
+const CHUNK_BYTES = 32 * 1024 * 1024;
+const ROW_BYTES = 16 * 1024 * 1024;
+const FETCH_RAW_BUDGET = 128 * 1024 * 1024;
 const MAX_ARTIFACT_PARTS = 100000;
 const FUNCTIONS = Object.freeze({
   immutable_evidence:['7a7832b7d6060aba3ad1d42ffe0e5ff4e9b01348431cb8f3e7fadf3aba42e931',false,0,'trigger',false],
@@ -25,7 +26,7 @@ const FUNCTIONS = Object.freeze({
 });
 // Filled from the reviewed, fresh migration's PostgreSQL catalog descriptors.
 const PRIVATE_TABLE_SHA = Object.freeze({
-  artifacts:'b7ff69b2e6d7f569becc181d625040d3f5eddf52e85ae375e7dfd94ebfbac404',
+  artifacts:'31d65de5cf6f32500a50471e9e3c62bf7aa06144fda2327d8d49f164639c86db',
   control:'92f5c511dc76e7569b8e893e1c7b2193e3daaedf644bfc9f919570da9ce835ed',
   events:'f71e8fe8607ecb9aaff35e48fa9bf0f8aa9eb6362511026806f59963eb65df67',
   fence_audit:'9bbc078de1968b2edc7648903e2b340991d424a51eda83ac342651074e5c2e4c',
@@ -232,7 +233,7 @@ async function streamTable(c, entry, meta, secret, writeChunk) {
   const size=(await c.query(`SELECT count(*)::text AS rows,coalesce(sum(octet_length(to_jsonb(t)::text)),0)::text AS bytes,
     coalesce(max(octet_length(to_jsonb(t)::text)),0)::text AS max_row_bytes FROM public.${table} t`)).rows[0];
   check(BigInt(size.max_row_bytes)<=BigInt(ROW_BYTES),'CUTOVER_V2_ROW_TOO_LARGE');
-  const fetchRows=Math.max(1,Math.min(64,Math.floor(ROW_BYTES/Math.max(1,Number(size.max_row_bytes)))));
+  const fetchRows=Math.max(1,Math.min(64,Math.floor(FETCH_RAW_BUDGET/Math.max(1,Number(size.max_row_bytes)))));
   const ordering=entry.key_columns.length ? entry.key_columns.map(quote).join(',') : "encode(sha256(convert_to(to_jsonb(t)::text,'UTF8')),'hex'),to_jsonb(t)::text";
   await c.query(`DECLARE ${cursor} NO SCROLL CURSOR FOR SELECT to_jsonb(t)::text AS raw FROM public.${table} t ORDER BY ${ordering}`);
   let pending=[],encodedBytes=16,part=0,count=0n; const digest=crypto.createHash('sha256'); const artifacts=[];
@@ -379,5 +380,5 @@ async function main() {
   } finally {await Promise.allSettled([primary.end(),backup.end()]);}
 }
 if(require.main===module)main().catch(e=>{console.error(JSON.stringify({ok:false,reason:safeCode(e)}));process.exitCode=1;});
-module.exports={NS,ALG,V1_TABLES,CAPTURE_TRIGGER,FENCE_TRIGGER,prepare,createPlan,validatePlan,inventorySite,streamTable,encrypt,decrypt,
+module.exports={NS,ALG,V1_TABLES,CAPTURE_TRIGGER,FENCE_TRIGGER,CHUNK_BYTES,ROW_BYTES,FETCH_RAW_BUDGET,prepare,createPlan,validatePlan,inventorySite,streamTable,encrypt,decrypt,
   checkpointState,reserve,writeArtifact,seal,verifyCheckpoint,lockClosingFence,descriptor,privateContract,privateShapes,FUNCTIONS,hash,stable,safeCode};

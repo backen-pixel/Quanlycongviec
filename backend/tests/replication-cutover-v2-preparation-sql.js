@@ -125,8 +125,8 @@ test('closing capture requires active exact fence and committed chunks roll back
 }));
 test('adaptive bounded cursor chunks a larger fixture without OFFSET or numeric reserialization',()=>fixture(async db=>{
   const {site,sha}=await armFixture(db),m=meta(sha);await db.exec('DELETE FROM public.uuid_items');
-  for(let i=0;i<8;i++)await db.query('INSERT INTO public.uuid_items VALUES($1,$2,1.00000000000000000001)',[crypto.randomUUID(),'fixture'.repeat(180000)]);
-  await c.reserve(db,m);const result=await capture(db,site,m);assert.equal(result.rows,'8');assert.ok(result.parts>1);assert.equal((await c.verifyCheckpoint(db,m,KEY)).verified,true);
+  for(let i=0;i<6;i++)await db.query('INSERT INTO public.uuid_items VALUES($1,$2,1.00000000000000000001)',[crypto.randomUUID(),'fixture'.repeat(900000)]);
+  await c.reserve(db,m);const result=await capture(db,site,m);assert.equal(result.rows,'6');assert.ok(result.parts>1);assert.equal((await c.verifyCheckpoint(db,m,KEY)).verified,true);
 }));
 test('AES authentication binds fence/site/capture/version and rejects tampering with sanitized errors',()=>{
   const m={...meta('a'.repeat(64),'closing'),stream:'table:uuid_items',part:0,rows:1},a=c.encrypt('private fixture',m,KEY);assert.equal(c.decrypt(a,KEY),'private fixture');

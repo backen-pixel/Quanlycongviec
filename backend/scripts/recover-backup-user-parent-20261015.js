@@ -19,7 +19,7 @@ const JOURNAL_BODY_SHA256='8c9db9d44ac94d5c1b31b5601b7df78cfb4d8dde0f5b2b1a3c2c9
 const JOURNAL_TABLES=Object.freeze(['crm_leads','project_substage_status','users','departments','trash_items']);
 const V2_NS='vpt_cutover_v2_20261015',V2_FENCE='vpt_cutover_v2_fence_20261015';
 const V2_BODY_SHA='d64905ed2fba3714ddda5142c8cba7daff2cfe1166f9f8ecee0406ec35c90fde';
-const V2_DEPENDENCY_SHA='cebe5827e320809883cb14797689f77558a2c048688c083ada8cf491773b1086';
+const V2_DEPENDENCY_SHA='caf98b795281b0b1ddc0d2566f6912a3049a31da31863c55782519af626f81f2';
 // OID-independent catalog fingerprints from the two applied private snapshot
 // migrations and the frozen cutover migration. No runtime-discovered baseline.
 // PostgreSQL 18 adds contype='n' rows; attnotnull is pinned in every version,
@@ -653,6 +653,7 @@ async function main() {
 }
 if(require.main===module) main().catch(e=>{ console.error(JSON.stringify({ok:false,reason:safeCode(e)})); process.exitCode=1; });
 const CUTOVER_V2_REPAIR_CONTRACT=Object.freeze({version:'cutover_v2_parent_repair_v1',namespace:V2_NS,fence_function_sha256:V2_BODY_SHA,
+  dependency_helper_sha256:V2_DEPENDENCY_SHA,
   fence_trigger_name:V2_FENCE,fence_trigger_type:62,fence_trigger_enabled:'A',
   permit_signature:V2_NS+'.mint_permit(uuid,uuid,oid[],text[],text)',fingerprint_includes_v2:true});
 module.exports={recover,parseArgs,safeCode,encrypt,decrypt,fingerprint,SCOPE,PRIMARY,BACKUP,STORE,OPERATION,ALGORITHM,LEGACY_ALGORITHM,validateUrl,watchClient,
