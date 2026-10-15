@@ -540,6 +540,20 @@ try { app.use('/api/drive', require('./routes/drive')); } catch (e) { console.wa
 try { app.use('/api/batch-jobs', require('./routes/batchJobs')); } catch (e) { console.warn('⚠️ Batch jobs route failed to load:', e.message); }
 try { app.use('/api/admin/supabase', require('./routes/supabaseOps')); } catch (e) { console.warn('⚠️ Supabase ops route failed to load:', e.message); }
 
+// ─── File tĩnh của RIÊNG backend ──
+//
+// Zalo (và vài bên khác) xác minh quyền sở hữu domain bằng cách đọc một file HTML đặt ở
+// gốc. Frontend có sẵn `frontend/public/`, nhưng service backend trên Render KHÔNG build
+// frontend nên `frontend/dist` không tồn tại ở đó — cả khối express.static bên dưới bị bỏ
+// qua và mọi file gốc trả 404.
+//
+// Thư mục này chỉ chứa file xác minh domain, không chứa gì khác. Đặt sau toàn bộ route
+// /api nên không che được endpoint nào.
+const backendPublic = path.join(__dirname, '../public');
+if (require('fs').existsSync(backendPublic)) {
+  app.use(express.static(backendPublic, { maxAge: '1h', index: false }));
+}
+
 // ─── Serve Frontend (SPA) in production ──
 const frontendDist = path.join(__dirname, '../../frontend/dist');
 const fs = require('fs');
