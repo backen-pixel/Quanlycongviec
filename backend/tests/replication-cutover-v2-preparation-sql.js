@@ -163,4 +163,11 @@ test('private columns/defaults/CHECK/index expressions and sequence configuratio
   await assert.rejects(()=>c.privateContract(db),e=>e.cutoverCode==='CUTOVER_V2_PRIVATE_CONTRACT');await db.exec(`DROP INDEX ${c.NS}.injected`);
   await db.exec(`ALTER SEQUENCE ${c.NS}.events_id_seq INCREMENT BY 2`);await assert.rejects(()=>c.privateContract(db),e=>e.cutoverCode==='CUTOVER_V2_PRIVATE_CONTRACT');
 }));
+test('PG18 native NOT NULL constraint metadata is normalized while PG17 attnotnull remains strictly authoritative',()=>fixture(async db=>{
+  await c.privateContract(db);const before=await c.privateShapes(db);
+  const native=(await db.query(`SELECT conname::text AS name FROM pg_constraint WHERE conrelid='${c.NS}.receipts'::regclass AND contype='n' ORDER BY conname LIMIT 1`)).rows[0];
+  if(native){await db.exec(`ALTER TABLE ${c.NS}.receipts RENAME CONSTRAINT "${native.name}" TO fixture_native_notnull_name`);assert.deepEqual(await c.privateShapes(db),before);await c.privateContract(db);}
+  await db.exec(`ALTER TABLE ${c.NS}.receipts ALTER COLUMN descriptor_sha256 DROP NOT NULL`);
+  await assert.rejects(()=>c.privateContract(db),e=>e.cutoverCode==='CUTOVER_V2_PRIVATE_CONTRACT');
+}));
 (async()=>{let passed=0;for(const t of tests){try{await t.fn();passed++;console.log('PASS '+t.name);}catch(e){console.error('FAIL '+t.name);console.error(e.stack);process.exitCode=1;break;}}console.log(`${passed}/${tests.length} isolated PostgreSQL v2 preparation tests passed.`);})().catch(e=>{console.error(e.stack);process.exitCode=1;});

@@ -25,14 +25,14 @@ const FUNCTIONS = Object.freeze({
 });
 // Filled from the reviewed, fresh migration's PostgreSQL catalog descriptors.
 const PRIVATE_TABLE_SHA = Object.freeze({
-  artifacts:'b757d9ec08a834d2f9613266b19d8da8cb64927d429f2a47a8b8fe429749a622',
-  control:'a3117c0bf44c2c569aff05589e0cfd1efc8656063eda579be1b0672eb349dfdd',
-  events:'3ef88829eb00e3fff7839d3d4469e63b93a78c1d4195ca83e2fafc93c0c4e63f',
-  fence_audit:'d520352d71c836727bf9f6b870fa7248536a832f362b4ab7fc5ff40150cb2e62',
-  permits:'c81faf2c1b6bca879a9ad74858546cf2d5a73f2a2dfc26bffdc9d559eb2cbae9',
-  receipts:'ac064ad289ba3f5b325cc0603000bb4345ec8c76d0ca3375ecf3d7322654ec75',
-  registrations:'6bf28489be5650e4f3e8172b8628b912b478e4f6015f185a384ea38fab64d968',
-  runs:'77d9ea981a1d688f005afa81f4c8b465fc87e8c06f0fb8181741891444c04a91'
+  artifacts:'b7ff69b2e6d7f569becc181d625040d3f5eddf52e85ae375e7dfd94ebfbac404',
+  control:'92f5c511dc76e7569b8e893e1c7b2193e3daaedf644bfc9f919570da9ce835ed',
+  events:'f71e8fe8607ecb9aaff35e48fa9bf0f8aa9eb6362511026806f59963eb65df67',
+  fence_audit:'9bbc078de1968b2edc7648903e2b340991d424a51eda83ac342651074e5c2e4c',
+  permits:'4b6dd497b1f29b94cc6d3c561c484fa0d0732e1226b9d9e7e20c4ac3742fe81b',
+  receipts:'2e24e475998156db31d3a7a5d4bdbea205adbb0b680a89905a5fec82277dfcca',
+  registrations:'05a193b3766ed2f07b3f3e10eeaa7fd294aa64b08f2ba88c9545c6eb27753b88',
+  runs:'2566454c7d6c3bf0848b03153f405cbab7becd7ccf0cfef9f7f5bc7f970d83b4'
 });
 const PRIVATE_SEQUENCE_SHA = Object.freeze({
   events_id_seq:'e58a1bf24f4abe6c42acf65fa9e3fdcc2533d4800bbc3eea24736e1b68fa8a20',
@@ -101,7 +101,7 @@ async function privateShapes(c) {
   const rows=(await c.query(`SELECT t.relname::text AS name,
     coalesce((SELECT jsonb_agg(jsonb_build_object('name',a.attname,'type',a.atttypid::regtype::text,'typmod',a.atttypmod,'not_null',a.attnotnull,'generated',a.attgenerated,'identity',a.attidentity,
       'default',pg_get_expr(d.adbin,d.adrelid)) ORDER BY a.attnum) FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum WHERE a.attrelid=t.oid AND a.attnum>0 AND NOT a.attisdropped),'[]'::jsonb) AS columns,
-    coalesce((SELECT jsonb_agg(jsonb_build_object('name',p.conname,'kind',p.contype,'validated',p.convalidated,'definition',pg_get_constraintdef(p.oid,true)) ORDER BY p.conname) FROM pg_constraint p WHERE p.conrelid=t.oid),'[]'::jsonb) AS constraints,
+    coalesce((SELECT jsonb_agg(jsonb_build_object('name',p.conname,'kind',p.contype,'validated',p.convalidated,'definition',pg_get_constraintdef(p.oid,true)) ORDER BY p.conname) FROM pg_constraint p WHERE p.conrelid=t.oid AND p.contype<>'n'),'[]'::jsonb) AS constraints,
     coalesce((SELECT jsonb_agg(jsonb_build_object('definition',pg_get_indexdef(i.indexrelid),'valid',i.indisvalid,'ready',i.indisready) ORDER BY ic.relname) FROM pg_index i JOIN pg_class ic ON ic.oid=i.indexrelid WHERE i.indrelid=t.oid),'[]'::jsonb) AS indexes
     FROM pg_class t JOIN pg_namespace n ON n.oid=t.relnamespace WHERE n.nspname=$1 AND t.relkind='r' ORDER BY t.relname`,[NS])).rows;
   const sequences=(await c.query(`SELECT c.relname::text AS name,s.seqtypid::regtype::text AS type,s.seqstart::text,s.seqincrement::text,s.seqmax::text,s.seqmin::text,s.seqcache::text,s.seqcycle,
