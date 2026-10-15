@@ -13,6 +13,10 @@ const keyMigration=fs.readFileSync(path.resolve(__dirname,'../../database/202610
 const journalMigration=fs.readFileSync(path.resolve(__dirname,'../../database/20261015050417_replication_cutover_preservation.sql'),'utf8');
 const journal=require('../scripts/preserve-replication-cutover-20261015');
 const tests=[]; const test=(name,run)=>tests.push({name,run});
+let testDatabaseFactory=null,testRolesPrecreated=false;
+function setTestDatabaseFactory(factory,{rolesPrecreated=false}={}) {
+  assert.equal(typeof factory,'function');testDatabaseFactory=factory;testRolesPrecreated=rolesPrecreated;
+}
 const extra='77777777-7777-4777-8777-777777777777';
 const schema=`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS; CREATE ROLE authenticator;
   CREATE TABLE public.companies(id uuid PRIMARY KEY);
@@ -37,9 +41,11 @@ const schema=`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_r
   REVOKE ALL ON public.website_feedback_outbox FROM PUBLIC,anon,authenticated,service_role;
   GRANT SELECT,INSERT,UPDATE ON public.website_feedback_outbox TO service_role;`;
 async function create() {
-  const primary=new PGlite(),backup=new PGlite();
+  const primary=testDatabaseFactory?await testDatabaseFactory('primary'):new PGlite();let backup;
+  try {
+  backup=testDatabaseFactory?await testDatabaseFactory('backup'):new PGlite();
   for(const db of [primary,backup]) {
-    await db.exec(schema);
+    await db.exec(testRolesPrecreated?schema.replace(/^CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS; CREATE ROLE authenticator;/,''):schema);
     await db.query('INSERT INTO public.companies VALUES($1),($2)',[S.aliasCompany,S.canonicalCompany]);
     await db.query('INSERT INTO public.tenants VALUES($1),($2)',[S.aliasTenant,S.canonicalTenant]);
     await db.query('INSERT INTO public.division_units VALUES($1)',[extra]);
@@ -65,8 +71,12 @@ async function create() {
   await backup.exec(keyMigration);
   assert.deepEqual((await backup.query(aclQuery)).rows,beforeMigrationAcls,'private migration must not alter existing public ACL/RLS');
   return {primary,backup};
+  }catch(e){await Promise.allSettled([primary.close(),backup?.close()]);throw e;}
 }
-async function withDB(run) { const pair=await create(); try {await run(pair);} finally {await pair.primary.close();await pair.backup.close();} }
+async function withDB(run) { const pair=await create(); try {await run(pair);} finally {
+  const closed=await Promise.allSettled([pair.primary.close(),pair.backup.close()]);
+  const failed=closed.find(r=>r.status==='rejected');if(failed)throw failed.reason;
+} }
 async function state(db) {
   const result={};
   for(const table of ['users','departments','crm_leads','user_companies'])
@@ -627,6 +637,7 @@ test('PG17 private catalog projection omits only redundant PG18 NOT NULL rows an
   await assert.rejects(()=>apply(pair,created),e=>e.recoveryCode==='RECOVERY_PRIVATE_CATALOG_CHANGED');
   assert.deepEqual((await pair.backup.query(`SELECT applied_at,result FROM ${STORE} WHERE id=$1`,[created.snapshot_id])).rows[0],{applied_at:null,result:null});
 }));
-(async()=>{let passed=0;for(const item of tests){try{await item.run();passed++;console.log('PASS '+item.name);}catch(e){console.error('FAIL '+item.name);console.error(e.stack);process.exitCode=1;break;}}
+if(require.main===module)(async()=>{let passed=0;for(const item of tests){try{await item.run();passed++;console.log('PASS '+item.name);}catch(e){console.error('FAIL '+item.name);console.error(e.stack);process.exitCode=1;break;}}
 console.log(`${passed}/${tests.length} actual PostgreSQL bounded recovery tests passed (PGlite).`);
 })().catch(e=>{console.error(e.stack);process.exitCode=1;});
+module.exports={withDB,state,allPublicRows,snapshot,apply,armJournal,secret,keyId,S,STORE,setTestDatabaseFactory};

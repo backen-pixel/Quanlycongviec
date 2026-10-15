@@ -14,6 +14,8 @@ Capture v1 năm bảng đã qua19SQL/review, CLI inventory thậtPASS/0 hàng ng
 
 **Ads:** kiểm05:26:15UTC qualificationQUALIFIED,website realreceipts,realreceipts consent,outbox,attempts đều0. Google Data Manager còn chờ khách quảng cáo thật đủ điều kiện/map/import; action giữ Secondary/One. Meta website gửi thật vẫn tắt/test, chưa providerACK; không tạo conversion giả. Chưa có khách mới/CPL hoặc kết luận ≤250.000đ/khách được nghiệm thu. Rollback ứng dụng phải giữ schema/ledger và consent gates; không drop phương pháp đã dùng hoặc coi queue mới nhỏ hơn là đã phục hồi.
 
+Checkpoint tiếp: **4/4 CI SUCCESS tại `163b6f3e`, gồm9/9 actualPostgreSQL17.6** đa kết nối/death/lostCOMMITACK. Combined opt-in mới đã có42default+8focusedPGcôlập/reviewarchitecture, tool1e80735e…e60e71; adapter chỉ2DB disposableloopback đang đưa lênCI để kiểm8casePG17thật. Sizer863d3dfe vẫn đang chạy READONLY và đã qua150/335bảngprimary; bản4e9e7e5f metriccursor cũng đãreviewnhưng chưa chạy (top-levelCUAbindingcũtrỏ863). Dùng report.started_at làm freshnessbound, không dùng thời điểm kết thúc để làm mới bảng đo trước. DNS05:51vẫn2SPF; runtimecùngprocess7605s/queue5558/applied2075/failed1357. Chưa actualrepair/arm/merge/deploy.
+
 ---
 
 ## 2026-10-14 12:47 — VPT: cột backup đã sửa, replication vẫn lỗi riêng

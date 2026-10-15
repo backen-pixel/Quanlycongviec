@@ -17,6 +17,9 @@ const JOURNAL_CAPTURE='vpt_cutover_identity_20261015',JOURNAL_TRUNCATE='vpt_cuto
 // Frozen reviewed trigger function; normalize CRLF only, never arbitrary SQL.
 const JOURNAL_BODY_SHA256='8c9db9d44ac94d5c1b31b5601b7df78cfb4d8dde0f5b2b1a3c2c984b022777eb';
 const JOURNAL_TABLES=Object.freeze(['crm_leads','project_substage_status','users','departments','trash_items']);
+const V2_NS='vpt_cutover_v2_20261015',V2_FENCE='vpt_cutover_v2_fence_20261015';
+const V2_BODY_SHA='d64905ed2fba3714ddda5142c8cba7daff2cfe1166f9f8ecee0406ec35c90fde';
+const V2_DEPENDENCY_SHA='cebe5827e320809883cb14797689f77558a2c048688c083ada8cf491773b1086';
 // OID-independent catalog fingerprints from the two applied private snapshot
 // migrations and the frozen cutover migration. No runtime-discovered baseline.
 // PostgreSQL 18 adds contype='n' rows; attnotnull is pinned in every version,
@@ -203,6 +206,82 @@ async function journalPrivateStore(client) {
 function sortedStrings(value) {
   return Array.isArray(value) && value.every(v=>typeof v==='string') && new Set(value).size===value.length && same(value,[...value].sort());
 }
+function cutoverContext(value) {
+  check(value && typeof value==='object' && !Array.isArray(value) && same(Object.keys(value).sort(),['epochs','manifest_sha256','run_id']) &&
+    UUID.test(value.run_id||'') && /^[a-f0-9]{64}$/.test(value.manifest_sha256||'') && value.epochs &&
+    same(Object.keys(value.epochs).sort(),['backup','primary']) && ['primary','backup'].every(s=>UUID.test(value.epochs[s]||'')),
+    'RECOVERY_CUTOVER_V2_CONTEXT_INVALID');
+  return {run_id:value.run_id.toLowerCase(),manifest_sha256:value.manifest_sha256,
+    epochs:{primary:value.epochs.primary.toLowerCase(),backup:value.epochs.backup.toLowerCase()}};
+}
+function cutoverModule() {
+  const fs=require('node:fs'),path=require('node:path');
+  for(const [name,sha] of [['prepare-replication-cutover-v2-20261015.js',V2_DEPENDENCY_SHA],
+    ['preserve-replication-cutover-20261015.js','e47e7c734bcccf03a36c29ded8071543ea75ece55bf4ef52852821dd06e311d1']]) {
+    let actual;try{actual=crypto.createHash('sha256').update(fs.readFileSync(path.join(__dirname,name))).digest('hex');}catch{fail('RECOVERY_CUTOVER_V2_DEPENDENCY_CHANGED');}
+    check(actual===sha,'RECOVERY_CUTOVER_V2_DEPENDENCY_CHANGED');
+  }
+  return require('./prepare-replication-cutover-v2-20261015');
+}
+async function cutoverSite(client,site,input,v2) {
+  try {await v2.privateContract(client);}catch{fail('RECOVERY_CUTOVER_V2_PRIVATE_CONTRACT');}
+  const rows=(await client.query(`SELECT to_jsonb(c) AS control,to_jsonb(r) AS run,
+    c.deadline>clock_timestamp() AS unexpired,r.owner_oid=current_user::regrole::oid AS owner
+    FROM ${V2_NS}.control c JOIN ${V2_NS}.runs r ON r.id=c.run_id WHERE c.singleton FOR SHARE OF c,r`)).rows;
+  check(rows.length===1,'RECOVERY_CUTOVER_V2_FENCE_REQUIRED');
+  const {control,run,unexpired,owner}=rows[0];
+  check(owner && control.active && unexpired && control.run_id===input.run_id && control.epoch===input.epochs[site] &&
+    run.id===input.run_id && run.site===site && run.project_ref===(site==='primary'?PRIMARY:BACKUP) &&
+    run.manifest_sha256===input.manifest_sha256 && fingerprint(run.manifest)===input.manifest_sha256,'RECOVERY_CUTOVER_V2_FENCE_REQUIRED');
+  try {v2.validatePlan({descriptor:run.manifest,manifest_sha256:run.manifest_sha256});}catch{fail('RECOVERY_CUTOVER_V2_MANIFEST_CHANGED');}
+  const flags=run.manifest.flags;
+  check(flags && typeof flags.light==='boolean' && sortedStrings(flags.skip) && typeof flags.storage_enabled==='boolean','RECOVERY_CUTOVER_V2_MANIFEST_CHANGED');
+  const current=await v2.inventorySite(client,site,{SUPABASE_REPLICATION_LIGHT:flags.light?'1':'0',
+    SUPABASE_REPLICATION_SKIP_TABLES:flags.skip.length?flags.skip.join(','):' '});
+  const registrations=(await client.query(`SELECT table_oid::text,table_name,run_id::text,key_columns::text[],key_types::text[],mode,catalog_sha256
+    FROM ${V2_NS}.registrations WHERE table_name=ANY($1::text[]) ORDER BY table_name FOR SHARE`,[['departments','users']])).rows;
+  check(registrations.length===2 && registrations.every(r=>{
+    const approved=run.manifest.sites[site].tables.filter(t=>t.name===r.table_name),live=current.tables.filter(t=>t.name===r.table_name);
+    return approved.length===1 && live.length===1 && r.run_id===input.run_id && r.mode==='v1_external' && same(r.key_columns,['id']) && same(r.key_types,['uuid']) &&
+      approved[0].mode==='v1_external' && r.table_oid===approved[0].oid && r.table_oid===live[0].oid &&
+      r.catalog_sha256===approved[0].catalog_sha256 && r.catalog_sha256===live[0].catalog_sha256;
+  }),'RECOVERY_CUTOVER_V2_REGISTRATION_CHANGED');
+  const functions=(await client.query(`SELECT oid::text AS oid,encode(sha256(convert_to(replace(prosrc,E'\\r\\n',E'\\n'),'UTF8')),'hex') AS body_sha256,
+    encode(sha256(convert_to(pg_get_functiondef(oid),'UTF8')),'hex') AS definition_sha256 FROM pg_proc WHERE oid=$1::regprocedure`,[V2_NS+'.write_fence()'])).rows;
+  check(functions.length===1 && functions[0].body_sha256===V2_BODY_SHA,'RECOVERY_CUTOVER_V2_FUNCTION_CHANGED');
+  return {control,run:{id:run.id,site:run.site,project_ref:run.project_ref,manifest_sha256:run.manifest_sha256,owner_oid:run.owner_oid},
+    registrations,function:functions[0],private_shapes:await v2.privateShapes(client),dependency_sha256:V2_DEPENDENCY_SHA};
+}
+async function cutoverPair(primary,backup,input) {
+  const v2=cutoverModule(),p=await cutoverSite(primary,'primary',input,v2),b=await cutoverSite(backup,'backup',input,v2);
+  return {input,primary:p,backup:b};
+}
+function verifiedFence(triggers,context) {
+  const fences=triggers.filter(t=>t.tgname===V2_FENCE),f=fences[0];
+  check(fences.length===1 && f.function_oid===context.function.oid && f.tgenabled==='A' && f.tgtype===62 && f.tgnargs===0 && f.args_empty &&
+    f.no_when && f.unconstrained && !f.tgdeferrable && !f.tginitdeferred && f.no_transition_tables,'RECOVERY_CUTOVER_V2_TRIGGER_CHANGED');
+  return f;
+}
+async function cutoverUnexpired(client,context) {
+  const r=(await client.query(`SELECT active AND deadline>clock_timestamp() AND run_id=$1::uuid AND epoch=$2::uuid AS valid
+    FROM ${V2_NS}.control WHERE singleton FOR SHARE`,[context.control.run_id,context.control.epoch])).rows;
+  check(r.length===1 && r[0].valid,'RECOVERY_CUTOVER_V2_FENCE_REQUIRED');
+}
+async function repairPermit(backup,context,verify=false) {
+  const tables=context.registrations.map(r=>r.table_oid);
+  if(!verify) {
+    check((await backup.query(`SELECT count(*)::int n FROM ${V2_NS}.permits WHERE backend_pid=pg_backend_pid() AND transaction_id=txid_current()`)).rows[0].n===0,
+      'RECOVERY_CUTOVER_V2_PERMIT_CHANGED');
+    await backup.query(`SELECT ${V2_NS}.mint_permit($1::uuid,$2::uuid,$3::oid[],ARRAY['INSERT','UPDATE']::text[],'bounded_parent_repair')`,
+      [context.control.run_id,context.control.epoch,tables]);
+  }
+  const rows=(await backup.query(`SELECT run_id=$1::uuid AND epoch=$2::uuid AND actor=current_user::regrole::oid AND
+    table_oids=$3::oid[] AND operations=ARRAY['INSERT','UPDATE']::text[] AND expires_at>clock_timestamp() AS valid
+    FROM ${V2_NS}.permits WHERE backend_pid=pg_backend_pid() AND transaction_id=txid_current()`,[context.control.run_id,context.control.epoch,tables])).rows;
+  const audit=(await backup.query(`SELECT run_id=$1::uuid AND epoch=$2::uuid AND actor=current_user::regrole::oid AND reason='bounded_parent_repair' AS valid
+    FROM ${V2_NS}.fence_audit WHERE transaction_id=txid_current() AND action='permit'`,[context.control.run_id,context.control.epoch])).rows;
+  check(rows.length===1 && rows[0].valid && audit.length===1 && audit[0].valid,'RECOVERY_CUTOVER_V2_PERMIT_CHANGED');
+}
 async function journalContract(client,table,site,catalog,triggers) {
   const installed=(await client.query('SELECT to_regnamespace($1) IS NOT NULL AS present',[JOURNAL_NS])).rows[0]?.present;
   if(!installed) {check(triggers.length===0,'RECOVERY_TRIGGER_CHANGED');return null;}
@@ -244,7 +323,7 @@ async function journalContract(client,table,site,catalog,triggers) {
     'RECOVERY_JOURNAL_REGISTRATION_CHANGED');
   return {registration,private_acl:privateAcl,function:{oid:fn.oid,acl:fn.acl,body_sha256:JOURNAL_BODY_SHA256,definition_sha256:definitionSha,settings},triggers};
 }
-async function tableCatalog(client,table,site) {
+async function tableCatalog(client,table,site,cutover) {
   const rules=await rewriteRules(client,'public.'+table);
   check(rules.every(r=>r.ev_type==='1'),'RECOVERY_PUBLIC_RULE_CHANGED');
   const columns=(await client.query(`SELECT a.attname,a.atttypid::regtype::text AS type,a.atttypmod,a.attnotnull,
@@ -265,8 +344,9 @@ async function tableCatalog(client,table,site) {
     ? {id:'uuid',email:'character varying',password:'character varying',company_id:'uuid',tenant_id:'uuid',department_id:'uuid',salary:'numeric'}
     : {id:'uuid',slug:'character varying',manager_id:'uuid',parent_id:'uuid',company_id:'uuid',division_unit_id:'uuid'};
   check(Object.entries(requiredTypes).every(([name,type])=>columns.some(c=>c.attname===name && c.type===type)),'RECOVERY_KNOWN_TYPE_CHANGED');
-  const value={columns,constraints,rules},journal=await journalContract(client,table,site,value,triggers);
-  return {...value,...(journal?{journal}:{})};
+  const fence=cutover?verifiedFence(triggers,cutover):null;
+  const value={columns,constraints,rules},journal=await journalContract(client,table,site,value,cutover?triggers.filter(t=>t!==fence):triggers);
+  return {...value,...(journal?{journal}:{}),...(fence?{fence}:{})};
 }
 async function foreignKeys(client,table,inbound=false) {
   // attname is PostgreSQL's `name` type. pg parses text[] (OID1009), while
@@ -347,7 +427,7 @@ function guardScope(alias,canonical,department,backupAlias) {
   check(typeof alias.email==='string' && alias.email.length>0 && typeof canonical.email==='string' && canonical.email.length>0 &&
     alias.email!==canonical.email && backupAlias.email===canonical.email,'RECOVERY_EMAIL_RELATION_CHANGED');
 }
-async function capture(primary,backup) {
+async function capture(primary,backup,cutover) {
   // Always lock both source users in stable UUID order, then the one department.
   const users=(await primary.query(`SELECT to_jsonb(t) AS row FROM public.users t
     WHERE id=ANY($1::uuid[]) ORDER BY id FOR SHARE`, [[SCOPE.alias,SCOPE.canonical]])).rows.map(r=>r.row);
@@ -364,18 +444,20 @@ async function capture(primary,backup) {
   check((await backup.query('SELECT id FROM public.departments WHERE slug=$1',[department.slug])).rows.length===0,'RECOVERY_DEPARTMENT_COLLISION');
   const catalog={};
   for(const table of ['users','departments']) {
-    const source=await tableCatalog(primary,table,'primary'),target=await tableCatalog(backup,table,'backup');
+    const source=await tableCatalog(primary,table,'primary',cutover?.primary),target=await tableCatalog(backup,table,'backup',cutover?.backup);
     const sourcePublic={columns:source.columns,constraints:source.constraints,rules:source.rules},targetPublic={columns:target.columns,constraints:target.constraints,rules:target.rules};
     check(same(sourcePublic,targetPublic),'RECOVERY_SCHEMA_CHANGED');
     check(!!source.journal===!!target.journal,'RECOVERY_JOURNAL_PAIR_INCOMPLETE');
-    catalog[table]={...targetPublic,...(source.journal?{journal:{primary:source.journal,backup:target.journal}}:{})};
+    catalog[table]={...targetPublic,...(source.journal?{journal:{primary:source.journal,backup:target.journal}}:{}),
+      ...(cutover?{cutover_v2_fences:{primary:source.fence,backup:target.fence}}:{})};
   }
   const journals=Object.values(catalog).flatMap(c=>c.journal?[c.journal.primary,c.journal.backup]:[]);
   check(!journals.length || (journals.length===4 && new Set(journals.map(j=>j.registration.run_id)).size===1 &&
     journals.every(j=>same(j.registration.definition.tables,journals[0].registration.definition.tables))),'RECOVERY_JOURNAL_PAIR_INCOMPLETE');
+  if(cutover) check(journals.length===4 && journals.every(j=>j.registration.run_id===cutover.input.run_id),'RECOVERY_CUTOVER_V2_RUN_CHANGED');
   await parentsExist(backup,'departments',department); await parentsExist(backup,'users',canonical);
   return {operation:OPERATION,scope:SCOPE,source:{alias,canonical,department},before:{alias:backupAlias,canonical:null,department:null},catalog,
-    inbound:await inboundCounts(backup)};
+    inbound:await inboundCounts(backup),...(cutover?{cutover_v2:cutover}:{})};
 }
 async function saveSnapshot(backup,payload,secret,id,keyId,healthy) {
   await assertPrivateStore(backup);
@@ -453,10 +535,11 @@ async function assertRepairJournal(backup,payload,runId,beforeDigest) {
   check(actual.length===3 && same(ordered(actual),ordered(expected)),'RECOVERY_JOURNAL_REPAIR_NOT_CONFIRMED');
 }
 async function rollback(client) { try { await client.query('ROLLBACK'); } catch {} }
-async function recover({primary,backup,mode='dry-run',secret,keyId,legacySecret,snapshotId}) {
+async function recover({primary,backup,mode='dry-run',secret,keyId,legacySecret,snapshotId,cutoverV2}) {
   check(['dry-run','snapshot','apply'].includes(mode),'RECOVERY_MODE_INVALID');
   if(mode==='apply') check(UUID.test(snapshotId||''),'RECOVERY_SNAPSHOT_ID_REQUIRED');
   if(mode==='snapshot' || keyId!=null) keyId=keyVersion(keyId);
+  if(cutoverV2!==undefined) cutoverV2=cutoverContext(cutoverV2);
   const id=mode==='snapshot'?crypto.randomUUID():snapshotId;
   watchClient(primary); watchClient(backup);
   const healthy=()=>assertHealthy(primary,backup);
@@ -471,8 +554,10 @@ async function recover({primary,backup,mode='dry-run',secret,keyId,legacySecret,
     await backup.query("SET LOCAL lock_timeout='2s'"); await backup.query("SET LOCAL statement_timeout='10s'");
     await backup.query("SET LOCAL idle_in_transaction_session_timeout='120s'");
     const saved=mode==='apply'?await loadSnapshot(backup,secret,id,keyId,legacySecret):null;
-    const payload=await capture(primary,backup);
+    const cutover=cutoverV2?await cutoverPair(primary,backup,cutoverV2):null;
+    const payload=await capture(primary,backup,cutover);
     if(mode!=='dry-run') payload.private_snapshot_catalog=await assertPrivateStore(backup);
+    if(cutover) {await cutoverUnexpired(primary,cutover.primary);await cutoverUnexpired(backup,cutover.backup);}
     healthy();
     if(mode==='dry-run') {
       await rollback(backup); await rollback(primary);
@@ -481,14 +566,20 @@ async function recover({primary,backup,mode='dry-run',secret,keyId,legacySecret,
     if(mode==='snapshot') {
       const sha=await saveSnapshot(backup,payload,secret,id,keyId,healthy);
       await primary.query('SELECT 1'); healthy();
+      if(cutover) {await cutoverUnexpired(primary,cutover.primary);await cutoverUnexpired(backup,cutover.backup);healthy();}
       await backup.query('COMMIT'); await rollback(primary);
       return {ok:true,mode,snapshot_id:id,key_id:keyId,algorithm:ALGORITHM,ciphertext_sha256:sha,production_rows_changed:0,private_snapshot_created:1};
     }
     check(same(payload,saved.payload),'RECOVERY_SNAPSHOT_STATE_CHANGED');
+    if(cutover) {
+      await cutoverUnexpired(primary,cutover.primary);await cutoverUnexpired(backup,cutover.backup);healthy();
+      await repairPermit(backup,cutover.backup);
+    }
     const journalRun=payload.catalog.users.journal?.backup.registration.run_id;
     const journalBefore=journalRun?await assertRepairJournal(backup,payload,journalRun):undefined;
     await writeRepair(backup,payload,healthy);
     if(journalRun) await assertRepairJournal(backup,payload,journalRun,journalBefore);
+    if(cutover) await repairPermit(backup,cutover.backup,true);
     healthy();
     const marked=await backup.query(`UPDATE ${STORE} SET applied_at=clock_timestamp(),result=$1::jsonb WHERE id=$2 AND applied_at IS NULL RETURNING id`,[JSON.stringify(COUNTS),id]);
     check(marked.rows.length===1,'RECOVERY_SNAPSHOT_MARK_NOT_CONFIRMED');
@@ -496,23 +587,25 @@ async function recover({primary,backup,mode='dry-run',secret,keyId,legacySecret,
     // Refresh the source transaction before the final health check, so an
     // idle-timeout/network failure cannot silently release its FOR SHARE locks.
     await primary.query('SELECT 1'); healthy();
+    if(cutover) {await cutoverUnexpired(primary,cutover.primary);await cutoverUnexpired(backup,cutover.backup);healthy();}
     await backup.query('COMMIT'); await rollback(primary);
     return {ok:true,mode,snapshot_id:id,key_id:saved.keyId,algorithm:saved.algorithm,ciphertext_sha256:saved.sha,committed:COUNTS,failover_ready:false};
   } catch(e) { await rollback(backup); await rollback(primary); healthy(); throw e; }
 }
 function parseArgs(args) {
-  let mode='dry-run',snapshotId,keyId,keyStdin=false; const modes=args.filter(a=>['--dry-run','--snapshot','--apply'].includes(a));
+  let mode='dry-run',snapshotId,keyId,keyStdin=false,cutoverV2ContextFile; const modes=args.filter(a=>['--dry-run','--snapshot','--apply'].includes(a));
   check(modes.length<=1,'RECOVERY_MODE_INVALID'); if(modes[0]) mode=modes[0].slice(2);
   for(let i=0;i<args.length;i++) {
     if(['--dry-run','--snapshot','--apply'].includes(args[i])) continue;
     if(args[i]==='--snapshot-id') { check(!snapshotId && i+1<args.length,'RECOVERY_ARGUMENT_INVALID'); snapshotId=args[++i]; }
     else if(args[i]==='--snapshot-key-id') {check(!keyId && i+1<args.length,'RECOVERY_ARGUMENT_INVALID');keyId=keyVersion(args[++i]);}
     else if(args[i]==='--snapshot-key-stdin') {check(!keyStdin,'RECOVERY_ARGUMENT_INVALID');keyStdin=true;}
+    else if(args[i]==='--cutover-v2-context') {check(!cutoverV2ContextFile && i+1<args.length,'RECOVERY_ARGUMENT_INVALID');cutoverV2ContextFile=args[++i];}
     else fail('RECOVERY_ARGUMENT_INVALID');
   }
   check(!snapshotId || (mode==='apply' && UUID.test(snapshotId)),'RECOVERY_ARGUMENT_INVALID');
   check(!(mode==='dry-run' && (keyStdin || keyId)),'RECOVERY_ARGUMENT_INVALID');
-  return {mode,snapshotId,...(keyId?{keyId}:{}),...(keyStdin?{keyStdin}: {})};
+  return {mode,snapshotId,...(keyId?{keyId}:{}),...(keyStdin?{keyStdin}: {}),...(cutoverV2ContextFile?{cutoverV2ContextFile}:{})};
 }
 function safeCode(e) {
   if(/^RECOVERY_[A-Z_]+$/.test(e?.recoveryCode||'')) return e.recoveryCode;
@@ -535,6 +628,10 @@ function validateUrl(raw,ref) {
 }
 async function main() {
   const opts=parseArgs(process.argv.slice(2));
+  if(opts.cutoverV2ContextFile) {
+    let raw;try {raw=require('node:fs').readFileSync(opts.cutoverV2ContextFile,'utf8');check(Buffer.byteLength(raw)<=4096,'RECOVERY_CUTOVER_V2_CONTEXT_INVALID');
+      opts.cutoverV2=cutoverContext(JSON.parse(raw));}catch{fail('RECOVERY_CUTOVER_V2_CONTEXT_INVALID');}
+  }
   require('dotenv').config({path:require('node:path').join(__dirname,'../.env'),quiet:true});
   let secret=process.env.VPT_RECOVERY_SNAPSHOT_KEY;
   if(opts.keyStdin) {
@@ -555,4 +652,8 @@ async function main() {
   } finally { await Promise.allSettled([primary.end(),backup.end()]); }
 }
 if(require.main===module) main().catch(e=>{ console.error(JSON.stringify({ok:false,reason:safeCode(e)})); process.exitCode=1; });
-module.exports={recover,parseArgs,safeCode,encrypt,decrypt,fingerprint,SCOPE,PRIMARY,BACKUP,STORE,OPERATION,ALGORITHM,LEGACY_ALGORITHM,validateUrl,watchClient};
+const CUTOVER_V2_REPAIR_CONTRACT=Object.freeze({version:'cutover_v2_parent_repair_v1',namespace:V2_NS,fence_function_sha256:V2_BODY_SHA,
+  fence_trigger_name:V2_FENCE,fence_trigger_type:62,fence_trigger_enabled:'A',
+  permit_signature:V2_NS+'.mint_permit(uuid,uuid,oid[],text[],text)',fingerprint_includes_v2:true});
+module.exports={recover,parseArgs,safeCode,encrypt,decrypt,fingerprint,SCOPE,PRIMARY,BACKUP,STORE,OPERATION,ALGORITHM,LEGACY_ALGORITHM,validateUrl,watchClient,
+  journalPrivateStore,CUTOVER_V2_REPAIR_CONTRACT};

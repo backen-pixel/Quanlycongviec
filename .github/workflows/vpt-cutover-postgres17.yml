@@ -3,6 +3,9 @@ on:
   pull_request:
     paths:
       - 'backend/scripts/*replication-cutover*20261015.js'
+      - 'backend/scripts/recover-backup-user-parent-20261015.js'
+      - 'backend/tests/backup-user-parent-recovery-cutover-v2*'
+      - 'backend/tests/backup-user-parent-recovery-sql.js'
       - 'backend/tests/replication-cutover*'
       - 'database/20261015051758_replication_cutover_v2_preparation.sql'
       - '.github/workflows/vpt-cutover-postgres17.yml'
@@ -44,4 +47,12 @@ jobs:
         run: |
           node --check backend/scripts/prepare-replication-cutover-v2-20261015.js
           node backend/tests/replication-cutover-postgres17.js "$RUNNER_TEMP/vpt-cutover-pg17/node_modules/pg"
+          git diff --check
+      - name: Combined journal, durable fence and bounded repair on two fresh databases
+        env:
+          VPT_CUTOVER_TEST_ONLY: '1'
+          VPT_CUTOVER_TEST_DATABASE_URL: postgresql://postgres:vpt-synthetic-only-20261015@127.0.0.1:65432/vpt_cutover_synthetic
+        run: |
+          node --check backend/scripts/recover-backup-user-parent-20261015.js
+          node backend/tests/backup-user-parent-recovery-cutover-v2-postgres17.js "$RUNNER_TEMP/vpt-cutover-pg17/node_modules/pg"
           git diff --check

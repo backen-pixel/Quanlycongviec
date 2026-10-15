@@ -20,6 +20,7 @@ on:
       - 'backend/tests/crm-stage-qualification*'
       - 'backend/tests/supabase-replication-recovery.test.js'
       - 'backend/tests/backup-user-parent-recovery-sql.js'
+      - 'backend/tests/backup-user-parent-recovery-cutover-v2-sql.js'
       - 'backend/tests/replication-cutover-preservation-sql.js'
       - 'backend/tests/replication-cutover-v2-preparation-sql.js'
       - 'database/2026101400571*.sql'
@@ -67,5 +68,6 @@ jobs:
           node backend/tests/website-backup-compat-sql.js "$RUNNER_TEMP/vpt-website-pg/node_modules/@electric-sql/pglite"
           node backend/tests/crm-stage-qualification-sql.js "$RUNNER_TEMP/vpt-website-pg/node_modules/@electric-sql/pglite"
           node backend/tests/backup-user-parent-recovery-sql.js "$RUNNER_TEMP/vpt-website-pg/node_modules/@electric-sql/pglite"
+          node backend/tests/backup-user-parent-recovery-cutover-v2-sql.js "$RUNNER_TEMP/vpt-website-pg/node_modules/@electric-sql/pglite"
           node backend/tests/replication-cutover-preservation-sql.js "$RUNNER_TEMP/vpt-website-pg/node_modules/@electric-sql/pglite"
           node backend/tests/replication-cutover-v2-preparation-sql.js "$RUNNER_TEMP/vpt-website-pg/node_modules/@electric-sql/pglite"
