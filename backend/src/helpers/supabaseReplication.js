@@ -16,6 +16,7 @@ const { getRedisIfReady } = require('../config/redis');
 const { runIfLeader } = require('./cronLeader');
 
 const REDIS_KEY = 'supabase:replication:pending';
+const REDIS_CONSUMER_KEY = 'supabase:replication:consumer';
 const memQueue = [];
 
 const _stats = {
@@ -74,27 +75,15 @@ function canReplicate() {
   return isReplicationConfigured() && isActivePrimary();
 }
 
-/** Retry REST backup một lần sau khi cấp GRANT nếu 403/42501. */
-async function backupFetchWithGrantRetry(fetchFn) {
-  let res = await fetchFn();
+/** Preserve error bodies without widening backup ACLs or retrying denied writes. */
+async function backupFetchWithErrorText(fetchFn) {
+  const res = await fetchFn();
   if (res.ok) return { res, text: '' };
-  let text = await res.text().catch(() => '');
-  const permissionDenied = (res.status === 403 || res.status === 401)
-    && /42501|permission denied|Grant the required privileges/i.test(text);
-  if (!permissionDenied) return { res, text };
-  try {
-    const { applyBackupSchemaGrants } = require('./backupSchemaGrants');
-    await applyBackupSchemaGrants({
-      force: true,
-      onLog: (m) => console.warn('[replication]', m),
-    });
-  } catch (e) {
-    console.warn('[replication] grants failed:', e.message);
-    return { res, text };
+  if (res.status === 401 || res.status === 403) {
+    await res.text().catch(() => '');
+    throw replicationFailure('REPLICATION_BACKUP_PERMISSION_DENIED', null, res.status);
   }
-  res = await fetchFn();
-  if (res.ok) return { res, text: '' };
-  text = await res.text().catch(() => '');
+  const text = await res.text().catch(() => '');
   return { res, text };
 }
 
@@ -154,7 +143,17 @@ function primaryHeaders() {
 
 function parseFkMissingFromError(errOrText) {
   const text = String(errOrText?.message || errOrText || '');
-  const m = text.match(/Key \(([^)]+)\)=\(([^)]+)\) is not present in table "([^"]+)"/);
+  let details = text;
+  // PostgREST quotes the parent table inside its JSON details string. Decode
+  // that string before matching, including errors prefixed by our operation.
+  const jsonStart = text.indexOf('{');
+  if (jsonStart >= 0) {
+    try {
+      const parsed = JSON.parse(text.slice(jsonStart));
+      if (typeof parsed.details === 'string') details = parsed.details;
+    } catch { /* A plain PostgreSQL error can still be matched below. */ }
+  }
+  const m = details.match(/Key \(([^)]+)\)=\(([^)]+)\) is not present in table "([^"]+)"/);
   if (!m) return null;
   return { childColumn: m[1], parentId: m[2], parentTable: m[3] };
 }
@@ -246,6 +245,14 @@ function sanitizeReplicationRestPath(path) {
 
 function sanitizeReplicationHeaders(headers = {}) {
   const h = { ...headers };
+  // Queue jobs must not retain the primary service credential. backupHeaders
+  // supplies the destination credential only when the job is applied.
+  for (const key of Object.keys(h)) {
+    if (['authorization', 'apikey', 'cookie', 'set-cookie'].includes(key.toLowerCase())) delete h[key];
+    if (key.toLowerCase() === 'accept') delete h[key];
+  }
+  // A primary client's .single() Accept header is not a replication contract.
+  h.accept = 'application/json';
   const preferKey = Object.keys(h).find((k) => k.toLowerCase() === 'prefer');
   const prefer = preferKey ? String(h[preferKey]) : '';
   const parts = prefer.split(',').map((s) => s.trim()).filter(Boolean);
@@ -296,19 +303,21 @@ async function patchBackupRowByConflictColumns(table, columns, row) {
   if (filters.length !== columns.length) return false;
   const { id, created_at, ...patch } = row;
   const res = await undiciFetch(
-    `${backupBase}/rest/v1/${table}?${filters.join('&')}`,
+    `${backupBase}/rest/v1/${table}?${filters.join('&')}&select=id`,
     {
       method: 'PATCH',
       headers: {
         ...backupHeaders({}),
         'content-type': 'application/json',
-        prefer: 'return=minimal',
+        prefer: 'return=representation',
       },
       body: JSON.stringify(stripRowForBackupReplication(table, patch)),
       dispatcher: supabaseDispatcher,
     },
   );
-  return res.ok;
+  if (!res.ok) return false;
+  await confirmedBackupRow(res, table);
+  return true;
 }
 
 async function retryDuplicateUpsertOnBackup(table, path, body) {
@@ -341,14 +350,33 @@ function isMissingRowReplicationError(errOrText) {
   return /→ 406\b|PGRST116|contains 0 rows|→ 404\b|"code":"PGRST116"/i.test(text);
 }
 
+function replicationFailure(code, table, status) {
+  const error = new Error(`${code}${table ? ` ${table}` : ''}${status ? ` HTTP ${status}` : ''}`);
+  error.code = code;
+  return error;
+}
+
+// A successful HTTP PATCH can affect zero rows. Never count that as restoring
+// a missing FK parent (for example users.id colliding on a different email ID).
+async function confirmedBackupRow(res, table, expectedId) {
+  const rows = await res.json().catch(() => null);
+  if (!Array.isArray(rows) || rows.length !== 1 || !rows[0]?.id ||
+      (expectedId && rows[0].id !== expectedId)) {
+    throw replicationFailure('REPLICATION_WRITE_UNCONFIRMED', table, res.status);
+  }
+  return rows[0];
+}
+
 async function backupRowExists(table, id) {
   const backupBase = trimBase(config.supabaseBackupUrl);
   const res = await undiciFetch(
     `${backupBase}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}&select=id`,
     { headers: backupHeaders({}), dispatcher: supabaseDispatcher },
   );
-  if (!res.ok) return false;
-  const rows = await res.json().catch(() => []);
+  if (!res.ok) throw replicationFailure('REPLICATION_BACKUP_READ_FAILED', table, res.status);
+  const rows = await res.json().catch(() => null);
+  if (!Array.isArray(rows) || rows.length > 1 || rows.some(row => row?.id !== id))
+    throw replicationFailure('REPLICATION_BACKUP_READ_INVALID', table);
   return Array.isArray(rows) && rows.length > 0;
 }
 
@@ -358,8 +386,10 @@ async function fetchPrimaryRow(table, id) {
     `${primaryBase}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}&select=*`,
     { headers: primaryHeaders(), dispatcher: supabaseDispatcher },
   );
-  if (!res.ok) return null;
-  const rows = await res.json().catch(() => []);
+  if (!res.ok) throw replicationFailure('REPLICATION_PRIMARY_READ_FAILED', table, res.status);
+  const rows = await res.json().catch(() => null);
+  if (!Array.isArray(rows) || rows.length > 1 || rows.some(row => row?.id !== id))
+    throw replicationFailure('REPLICATION_PRIMARY_READ_INVALID', table);
   return Array.isArray(rows) && rows.length ? rows[0] : null;
 }
 
@@ -374,20 +404,62 @@ async function fetchBackupContactIdByNaturalKey(pageId, psid) {
   return Array.isArray(rows) && rows.length ? rows[0].id : null;
 }
 
-async function fetchBackupLeadIdByCode(code, type = 'lead') {
+async function fetchBackupLeadByCode(code) {
   if (!code) return null;
   const backupBase = trimBase(config.supabaseBackupUrl);
-  let url = `${backupBase}/rest/v1/crm_leads?code=eq.${encodeURIComponent(code)}&select=id,type&limit=1`;
-  if (type) url += `&type=eq.${encodeURIComponent(type)}`;
+  const url = `${backupBase}/rest/v1/crm_leads?code=eq.${encodeURIComponent(code)}&select=id,type,company_id&limit=2`;
   const res = await undiciFetch(url, { headers: backupHeaders({}), dispatcher: supabaseDispatcher });
-  if (!res.ok) return null;
-  const rows = await res.json().catch(() => []);
-  return Array.isArray(rows) && rows.length ? rows[0].id : null;
+  if (!res.ok) throw replicationFailure('REPLICATION_BACKUP_READ_FAILED', 'crm_leads', res.status);
+  const rows = await res.json().catch(() => null);
+  if (!Array.isArray(rows) || rows.length > 1 || rows.some(row => !row?.id))
+    throw replicationFailure('REPLICATION_BACKUP_READ_INVALID', 'crm_leads');
+  return rows.length ? rows[0] : null;
 }
 
-/** Upsert crm_leads — lead có code unique: merge theo code nếu backup uuid khác primary. */
+function assertCrmLeadIdentity(backupRow, sourceRow) {
+  if (!backupRow) return;
+  if (backupRow.id !== sourceRow.id ||
+      (Object.hasOwn(sourceRow, 'company_id') && sourceRow.company_id !== backupRow.company_id)) {
+    throw replicationFailure('REPLICATION_IDENTITY_CONFLICT', 'crm_leads');
+  }
+}
+
+async function validateCrmLeadBackupIdentity(row, { checkPrimaryIdentity = false } = {}) {
+  if (!row || typeof row !== 'object') return;
+  if (checkPrimaryIdentity && row.id) {
+    const current = await fetchPrimaryRow('crm_leads', row.id);
+    if (!current) {
+      await validateCrmLeadBackupIdentity(row);
+      return { sourceMissing: true, id: row.id };
+    }
+    if (!['company_id', 'code', 'type'].every(key => Object.hasOwn(current, key)))
+      throw replicationFailure('REPLICATION_PRIMARY_READ_INVALID', 'crm_leads');
+    if (Object.hasOwn(row, 'company_id') && row.company_id !== current.company_id)
+      throw replicationFailure('REPLICATION_IDENTITY_CONFLICT', 'crm_leads');
+    // The original body is still what will be sent. Check its supplied code as
+    // well, so an old code cannot bypass a newer current-source identity check.
+    await validateCrmLeadBackupIdentity(row);
+    // Partial queued PATCHes do not carry ownership/code. Check authoritative
+    // primary identity while preserving the original mutation body unchanged.
+    row = { ...row, company_id: current.company_id, code: current.code, type: current.type };
+  }
+  if (row.id && Object.hasOwn(row, 'company_id')) {
+    const backupBase = trimBase(config.supabaseBackupUrl);
+    const res = await undiciFetch(`${backupBase}/rest/v1/crm_leads?id=eq.${encodeURIComponent(row.id)}&select=id,company_id`,
+      { headers: backupHeaders({}), dispatcher: supabaseDispatcher });
+    if (!res.ok) throw replicationFailure('REPLICATION_BACKUP_READ_FAILED', 'crm_leads', res.status);
+    const rows = await res.json().catch(() => null);
+    if (!Array.isArray(rows) || rows.length > 1 || rows.some(value => value?.id !== row.id))
+      throw replicationFailure('REPLICATION_BACKUP_READ_INVALID', 'crm_leads');
+    assertCrmLeadIdentity(rows[0], row);
+  }
+  if (row.code) assertCrmLeadIdentity(await fetchBackupLeadByCode(row.code), row);
+}
+
+/** Upsert crm_leads without inferring identity from a shared code. */
 async function upsertCrmLeadOnBackup(row, depth = 0) {
   if (!row) return null;
+  await validateCrmLeadBackupIdentity(row);
   for (const col of REPLICATION_PARENT_DEPS.crm_leads || []) {
     const pid = row[col];
     if (!pid) continue;
@@ -415,9 +487,7 @@ async function upsertCrmLeadOnBackup(row, depth = 0) {
       },
     );
     if (patchRes.ok) {
-      const patched = await patchRes.json().catch(() => null);
-      const patchedRow = Array.isArray(patched) ? patched[0] : patched;
-      return patchedRow?.id || backupId;
+      return (await confirmedBackupRow(patchRes, 'crm_leads', backupId)).id;
     }
     const patchText = await patchRes.text().catch(() => '');
     const patchFk = parseFkMissingFromError(patchText);
@@ -429,9 +499,10 @@ async function upsertCrmLeadOnBackup(row, depth = 0) {
   }
 
   if (isLeadWithCode) {
-    const existingByCode = await fetchBackupLeadIdByCode(row.code, 'lead');
+    const existingByCode = await fetchBackupLeadByCode(row.code);
     if (existingByCode) {
-      const patchedId = await patchLeadById(existingByCode, payload);
+      assertCrmLeadIdentity(existingByCode, row);
+      const patchedId = await patchLeadById(existingByCode.id, payload);
       if (patchedId) return patchedId;
     }
   }
@@ -448,9 +519,7 @@ async function upsertCrmLeadOnBackup(row, depth = 0) {
   });
 
   if (res.ok) {
-    const saved = await res.json().catch(() => null);
-    const savedRow = Array.isArray(saved) ? saved[0] : saved;
-    return savedRow?.id || row.id || null;
+    return (await confirmedBackupRow(res, 'crm_leads', row.id)).id;
   }
 
   const text = await res.text().catch(() => '');
@@ -461,9 +530,10 @@ async function upsertCrmLeadOnBackup(row, depth = 0) {
   }
 
   if ((res.status === 409 || /23505|duplicate key/i.test(text)) && isLeadWithCode) {
-    const existingByCode = await fetchBackupLeadIdByCode(row.code, 'lead');
+    const existingByCode = await fetchBackupLeadByCode(row.code);
     if (existingByCode) {
-      const patchedId = await patchLeadById(existingByCode, payload);
+      assertCrmLeadIdentity(existingByCode, row);
+      const patchedId = await patchLeadById(existingByCode.id, payload);
       if (patchedId) return patchedId;
     }
   }
@@ -473,10 +543,10 @@ async function upsertCrmLeadOnBackup(row, depth = 0) {
 
 /** Upsert facebook_contacts theo (page_id, psid) — tránh 409 khi backup có uuid khác primary. */
 async function ensureCrmLeadOnBackup(leadId, depth = 0) {
-  if (!leadId || depth > 6) return null;
+  if (!leadId || depth > 6) throw replicationFailure('REPLICATION_PARENT_DEPTH', 'crm_leads');
   if (await backupRowExists('crm_leads', leadId)) return leadId;
   const row = await fetchPrimaryRow('crm_leads', leadId);
-  if (!row) return null;
+  if (!row) throw replicationFailure('REPLICATION_PRIMARY_ROW_MISSING', 'crm_leads');
   return upsertCrmLeadOnBackup(row, depth);
 }
 
@@ -487,14 +557,12 @@ async function ensureFacebookContactParents(row, depth = 0) {
     const backupLeadId = await ensureCrmLeadOnBackup(row.lead_id, depth);
     if (backupLeadId) {
       next = { ...next, lead_id: backupLeadId };
-    } else {
-      next = { ...next, lead_id: null };
     }
   }
   if (row.customer_id) {
     await ensureRowOnBackup('customers', row.customer_id, depth);
     if (!(await backupRowExists('customers', row.customer_id))) {
-      next = { ...next, customer_id: null };
+      throw replicationFailure('REPLICATION_PARENT_UNCONFIRMED', 'customers');
     }
   }
   return next;
@@ -508,7 +576,7 @@ async function upsertFacebookContactOnBackup(row, depth = 0) {
 
   const rowToWrite = await ensureFacebookContactParents(row, depth);
 
-  const upsertRes = await backupFetchWithGrantRetry(() => undiciFetch(
+  const { res: upsertRes, text: upsertText } = await backupFetchWithErrorText(() => undiciFetch(
     `${backupBase}/rest/v1/facebook_contacts?on_conflict=page_id,psid`,
     {
       method: 'POST',
@@ -520,15 +588,13 @@ async function upsertFacebookContactOnBackup(row, depth = 0) {
       body: JSON.stringify(rowToWrite),
       dispatcher: supabaseDispatcher,
     },
-  )).then(({ res }) => res);
+  ));
 
   if (upsertRes.ok) {
-    const saved = await upsertRes.json().catch(() => null);
-    const savedRow = Array.isArray(saved) ? saved[0] : saved;
-    return savedRow?.id || row.id || null;
+    return (await confirmedBackupRow(upsertRes, 'facebook_contacts')).id;
   }
 
-  const text = await upsertRes.text().catch(() => '');
+  const text = upsertText || await upsertRes.text().catch(() => '');
   const fk = parseFkMissingFromError(text);
   if (fk && depth < 6) {
     await ensureRowOnBackup(fk.parentTable, fk.parentId, depth + 1);
@@ -551,9 +617,7 @@ async function upsertFacebookContactOnBackup(row, depth = 0) {
       },
     );
     if (patchRes.ok) {
-      const patched = await patchRes.json().catch(() => null);
-      const patchedRow = Array.isArray(patched) ? patched[0] : patched;
-      return patchedRow?.id || (await fetchBackupContactIdByNaturalKey(pageId, psid));
+      return (await confirmedBackupRow(patchRes, 'facebook_contacts')).id;
     }
     const patchText = await patchRes.text().catch(() => '');
     const patchFk = parseFkMissingFromError(patchText);
@@ -568,9 +632,9 @@ async function upsertFacebookContactOnBackup(row, depth = 0) {
 }
 
 async function ensureFacebookContactOnBackup(primaryContactId, depth = 0) {
-  if (!primaryContactId || depth > 4) return null;
+  if (!primaryContactId || depth > 4) throw replicationFailure('REPLICATION_PARENT_DEPTH', 'facebook_contacts');
   const row = await fetchPrimaryRow('facebook_contacts', primaryContactId);
-  if (!row) return null;
+  if (!row) throw replicationFailure('REPLICATION_PRIMARY_ROW_MISSING', 'facebook_contacts');
   return upsertFacebookContactOnBackup(row, depth);
 }
 
@@ -616,31 +680,33 @@ async function postRowToBackup(table, row, depth = 0) {
   }
 
   const backupBase = trimBase(config.supabaseBackupUrl);
-  const res = await backupFetchWithGrantRetry(() => undiciFetch(
-    `${backupBase}/rest/v1/${table}?on_conflict=id`,
+  const { res, text: responseText } = await backupFetchWithErrorText(() => undiciFetch(
+    `${backupBase}/rest/v1/${table}?on_conflict=id&select=id`,
     {
       method: 'POST',
       headers: {
         ...backupHeaders({}),
         'content-type': 'application/json',
-        prefer: 'resolution=merge-duplicates,return=minimal',
+        prefer: 'resolution=merge-duplicates,return=representation',
       },
       body: JSON.stringify(payload),
       dispatcher: supabaseDispatcher,
     },
-  )).then(({ res: r }) => r);
-  if (res.ok) return;
-  const text = await res.text().catch(() => '');
+  ));
+  if (res.ok) {
+    await confirmedBackupRow(res, table, row.id);
+    return;
+  }
+  const text = responseText || await res.text().catch(() => '');
   const fk = parseFkMissingFromError(text);
   if (fk && depth < 4) {
     await ensureRowOnBackup(fk.parentTable, fk.parentId, depth + 1);
-    // template_item_id nullable — nếu parent vẫn thiếu thì bỏ FK để không kẹt 409
+    // Keep the FK intact if the source parent cannot be restored.
     if (
       fk.childColumn === 'template_item_id'
       && !(await backupRowExists('crm_daily_report_template_items', fk.parentId))
     ) {
-      payload = { ...payload, template_item_id: null };
-      return postRowToBackup(table, payload, depth + 1);
+      throw replicationFailure('REPLICATION_PARENT_UNCONFIRMED', fk.parentTable);
     }
     return postRowToBackup(table, row, depth + 1);
   }
@@ -648,25 +714,34 @@ async function postRowToBackup(table, row, depth = 0) {
   if ((res.status === 409 || /23505|duplicate key/i.test(text)) && payload?.id) {
     const { id, created_at, ...patch } = payload;
     const patchRes = await undiciFetch(
-      `${backupBase}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}`,
+      `${backupBase}/rest/v1/${table}?id=eq.${encodeURIComponent(id)}&select=id`,
       {
         method: 'PATCH',
         headers: {
           ...backupHeaders({}),
           'content-type': 'application/json',
-          prefer: 'return=minimal',
+          prefer: 'return=representation',
         },
         body: JSON.stringify(patch),
         dispatcher: supabaseDispatcher,
       },
     );
-    if (patchRes.ok) return;
+    if (patchRes.ok) {
+      try {
+        await confirmedBackupRow(patchRes, table, id);
+      } catch (error) {
+        if (table === 'users' && /23505/.test(text))
+          throw replicationFailure('REPLICATION_IDENTITY_CONFLICT', table);
+        throw error;
+      }
+      return;
+    }
   }
   throw new Error(`backup upsert ${table} → ${res.status} ${text.slice(0, 200)}`);
 }
 
 async function ensureRowOnBackup(table, id, depth = 0) {
-  if (!table || !id || depth > 6) return;
+  if (!table || !id || depth > 6) throw replicationFailure('REPLICATION_PARENT_DEPTH', table);
   if (table === 'facebook_contacts') {
     await ensureFacebookContactOnBackup(id, depth);
     return;
@@ -677,13 +752,14 @@ async function ensureRowOnBackup(table, id, depth = 0) {
   }
   if (await backupRowExists(table, id)) return;
   const row = await fetchPrimaryRow(table, id);
-  if (!row) return;
+  if (!row) throw replicationFailure('REPLICATION_PRIMARY_ROW_MISSING', table);
   await postRowToBackup(table, row, depth);
 }
 
 async function ensureReplicationTargetRow(job) {
   const method = String(job.method || '').toUpperCase();
-  if (!['PATCH', 'PUT', 'DELETE'].includes(method)) return;
+  // A delete must never recreate the row it is supposed to remove.
+  if (!['PATCH', 'PUT'].includes(method)) return;
   const path = sanitizeReplicationRestPath(job.path);
   const table = restTableFromPath(path);
   if (!table) return;
@@ -710,60 +786,134 @@ async function ensureReplicationParents(job) {
 async function redisPush(job) {
   const redis = getRedisIfReady();
   if (redis) {
-    await redis.lpush(REDIS_KEY, JSON.stringify(job));
+    await redis.rpush(REDIS_KEY, JSON.stringify(job));
     return;
   }
   memQueue.push(job);
 }
 
-/** Đẩy job xuống cuối hàng — dùng khi FK chưa sẵn sàng, xử lý job khác trước. */
-async function redisPushTail(job) {
-  const redis = getRedisIfReady();
+async function requeueReplicationJob(job, err, entry) {
+  const retry = Math.min(Number.isSafeInteger(job.retry) && job.retry > 0 ? job.retry + 1 : 1, 1000000);
+  const now = Date.now();
+  // Never discard a failed operation. A blocked parent requires reconciliation,
+  // not a successful-looking decrease in queue depth after twelve failures.
+  const delay = Math.min(300000, 5000 * 2 ** Math.min(retry - 1, 6));
+  const next = { ...job, retry, deferred_at: new Date(now).toISOString(),
+    next_attempt_at: new Date(now + delay).toISOString() };
+  // Keep a failed operation ahead of every later operation for the same row.
+  // Moving it to the tail could replay stale data after a newer PATCH/DELETE.
+  if (!entry) throw replicationFailure('REPLICATION_QUEUE_RETRY_UNCONFIRMED');
+  await replaceQueueEntry(entry, next);
+}
+
+function replicationRetryDue(job) {
+  const when = Date.parse(job?.next_attempt_at || '');
+  return !Number.isFinite(when) || when <= Date.now();
+}
+
+function replicationErrorSummary(error) {
+  const message = String(error?.message || error || '');
+  const code = typeof error?.code === 'string' && /^[A-Z0-9_]+$/.test(error.code)
+    ? error.code : message.match(/"code"\s*:\s*"([A-Z0-9_]+)"/)?.[1] || 'REPLICATION_APPLY_FAILED';
+  const table = message.match(/backup (?:upsert |(?:POST|PATCH|PUT|DELETE) \/rest\/v1\/)([a-z_]+)/i)?.[1];
+  const fk = parseFkMissingFromError(message);
+  return [code, table, fk && `parent=${fk.parentTable} column=${fk.childColumn}`,
+    message.match(/HTTP \d{3}/)?.[0]].filter(Boolean).join(' ');
+}
+
+async function pendingQueueEntries(redis) {
   if (redis) {
-    await redis.rpush(REDIS_KEY, JSON.stringify(job));
+    const raw = await redis.lrange(REDIS_KEY, 0, -1);
+    return raw.map(value => ({ job: JSON.parse(value), raw: value, redis }));
+  }
+  return memQueue.slice().map(job => ({ job }));
+}
+
+async function withQueueConsumer(fn) {
+  const redis = getRedisIfReady();
+  if (!redis) return fn(null, async () => {});
+  const token = randomUUID();
+  let acquired;
+  try { acquired = await redis.set(REDIS_CONSUMER_KEY, token, 'NX'); }
+  catch { throw replicationFailure('REPLICATION_CONSUMER_LOCK_UNAVAILABLE'); }
+  if (acquired !== 'OK') return { processed: 0, failed: 0, deferred: 0, skipped: true, consumer_locked: true };
+  // Deliberately no TTL: an expired lease could permit a new consumer while an
+  // old HTTP write is still in flight. After a crash, operators must prove the
+  // old process stopped before recovering this lock. Never auto-delete it.
+  const assertOwned = async () => {
+    let owner;
+    try { owner = await redis.get(REDIS_CONSUMER_KEY); }
+    catch { throw replicationFailure('REPLICATION_CONSUMER_LOCK_UNAVAILABLE'); }
+    if (owner !== token) throw replicationFailure('REPLICATION_CONSUMER_LOCK_LOST');
+  };
+  try { return await fn(redis, assertOwned); }
+  finally {
+    try {
+      await redis.eval(`
+        if redis.call('GET', KEYS[1]) == ARGV[1] then
+          return redis.call('DEL', KEYS[1])
+        end
+        return 0`, 1, REDIS_CONSUMER_KEY, token);
+    } catch {
+      console.warn('[supabase-replication] REPLICATION_CONSUMER_LOCK_RELEASE_UNCONFIRMED');
+    }
+  }
+}
+
+async function replaceQueueEntry(entry, next) {
+  if (entry.redis) {
+    // Compare and replace atomically: another writer can append while we work.
+    const updated = await entry.redis.eval(`
+      local values = redis.call('LRANGE', KEYS[1], 0, -1)
+      for i, value in ipairs(values) do
+        if value == ARGV[1] then
+          redis.call('LSET', KEYS[1], i - 1, ARGV[2])
+          return 1
+        end
+      end
+      return 0`, 1, REDIS_KEY, entry.raw, JSON.stringify(next));
+    if (Number(updated) !== 1) throw replicationFailure('REPLICATION_QUEUE_RETRY_UNCONFIRMED');
     return;
   }
-  memQueue.unshift(job);
+  const index = memQueue.indexOf(entry.job);
+  if (index < 0) throw replicationFailure('REPLICATION_QUEUE_RETRY_UNCONFIRMED');
+  memQueue[index] = next;
 }
 
-function isDeferrableReplicationError(err) {
-  const msg = String(err?.message || err || '');
-  return /→ 409\b|42501|permission denied|Grant the required privileges/i.test(msg)
-    || /"code":"23503"|foreign key|is not present in table|PGRST116|→ 406\b|→ 404\b|contains 0 rows|"code":"23505"|duplicate key/i.test(msg);
-}
-
-async function requeueReplicationJob(job, err) {
-  const retry = (job.retry || 0) + 1;
-  if (retry > 12) {
-    console.warn('[supabase-replication] bỏ job sau 12 lần:', job.path || job.bucket, err?.message);
+async function acknowledgeQueueEntry(entry) {
+  if (entry.redis) {
+    const removed = await entry.redis.lrem(REDIS_KEY, 1, entry.raw);
+    if (Number(removed) !== 1) throw replicationFailure('REPLICATION_QUEUE_ACK_UNCONFIRMED');
     return;
   }
-  const next = { ...job, retry, deferred_at: new Date().toISOString() };
-  if (isDeferrableReplicationError(err)) {
-    await redisPushTail(next);
-  } else if (getRedisIfReady()) {
-    await redisPush(next);
-  } else {
-    memQueue.push(next);
-  }
+  const index = memQueue.indexOf(entry.job);
+  if (index < 0) throw replicationFailure('REPLICATION_QUEUE_ACK_UNCONFIRMED');
+  memQueue.splice(index, 1);
 }
 
-async function redisPop(timeoutSec = 1) {
-  const redis = getRedisIfReady();
-  if (redis) {
-    const res = await redis.brpop(REDIS_KEY, timeoutSec);
-    return res ? JSON.parse(res[1]) : null;
+function replicationScopes(job) {
+  if (job.type === 'storage') return [{ table: `storage:${job.bucket || '*'}`, key: job.path || '*' }];
+  const table = restTableFromPath(job.path);
+  if (!table) return [{ table: '*', key: '*' }];
+  // These tables can map distinct primary IDs onto a shared natural-key row.
+  if (['crm_leads', 'facebook_contacts'].includes(table)) return [{ table, key: '*' }];
+  const conflicts = parseOnConflictColumns(job.path);
+  if (conflicts && (conflicts.length !== 1 || conflicts[0] !== 'id')) return [{ table, key: '*' }];
+  const id = extractEqFilterId(job.path, 'id');
+  if (id) return [{ table, key: id }];
+  if (String(job.method).toUpperCase() === 'POST') {
+    const parsed = parseJsonBody(job.body);
+    const rows = parsed ? (Array.isArray(parsed) ? parsed : [parsed]) : [];
+    if (rows.length && rows.every(row => typeof row?.id === 'string' && row.id))
+      return rows.map(row => ({ table, key: row.id }));
   }
-  return memQueue.shift() || null;
+  // Arbitrary filters/composite keys can overlap. A table fence is conservative.
+  return [{ table, key: '*' }];
 }
 
-async function redisPopNonBlocking() {
-  const redis = getRedisIfReady();
-  if (redis) {
-    const item = await redis.lpop(REDIS_KEY);
-    return item ? JSON.parse(item) : null;
-  }
-  return memQueue.shift() || null;
+function scopesOverlap(left, right) {
+  return left.some(a => right.some(b => a.table === '*' || b.table === '*' ||
+    (a.table === b.table && (a.key === '*' || b.key === '*' || a.key === b.key))));
 }
 
 /**
@@ -796,6 +946,27 @@ function maybeEnqueueRestReplication(originalUrl, init, response) {
   });
 }
 
+/** Mirror a primary CRM RPC's committed row; never replay business RPCs on backup. */
+async function enqueueCommittedCrmLeadReplication(row) {
+  if (!row || typeof row !== 'object' || Array.isArray(row) ||
+      typeof row.id !== 'string' || !row.id.trim()) {
+    throw replicationFailure('REPLICATION_COMMITTED_ROW_INVALID', 'crm_leads');
+  }
+  const path = '/rest/v1/crm_leads?on_conflict=id';
+  if (!canReplicate() || shouldSkipRestUrl(path)) return { enqueued: false, skipped: true };
+  let body;
+  try { body = JSON.stringify(stripRowForBackupReplication('crm_leads', row)); }
+  catch { throw replicationFailure('REPLICATION_COMMITTED_ROW_INVALID', 'crm_leads'); }
+  const job = { id: randomUUID(), type: 'rest', method: 'POST', path,
+    committed_crm_projection: true, entity_id: row.id,
+    headers: sanitizeReplicationHeaders({ 'content-type': 'application/json' }),
+    body, enqueued_at: new Date().toISOString() };
+  try { await redisPush(job); }
+  catch { throw replicationFailure('REPLICATION_QUEUE_ENQUEUE_FAILED', 'crm_leads'); }
+  _stats.enqueued += 1;
+  return { enqueued: true, job_id: job.id };
+}
+
 /**
  * Dual-write storage sau upload primary thành công.
  */
@@ -820,10 +991,22 @@ function replicateStorageUpload({ bucket, storagePath, mimetype, upsert = true }
 }
 
 async function applyRestJob(job) {
+  if (job.committed_crm_projection) {
+    const id = job.entity_id;
+    if (typeof id !== 'string' || !id) throw replicationFailure('REPLICATION_COMMITTED_ROW_INVALID', 'crm_leads');
+    // A delayed RPC response can arrive after a newer write/delete. Reconcile
+    // the current source state instead of replaying its stale returned snapshot.
+    const current = await fetchPrimaryRow('crm_leads', id);
+    if (!current) await validateCrmLeadBackupIdentity(parseJsonBody(job.body));
+    return applyRestJob({ ...job, committed_crm_projection: false,
+      method: current ? 'POST' : 'DELETE',
+      path: current ? '/rest/v1/crm_leads?on_conflict=id' : `/rest/v1/crm_leads?id=eq.${encodeURIComponent(id)}`,
+      body: current ? JSON.stringify(current) : null });
+  }
   const path = sanitizeReplicationRestPath(job.path);
   const method = String(job.method || 'GET').toUpperCase();
   const table = restTableFromPath(path);
-  let headers = sanitizeReplicationHeaders(backupHeaders(job.headers || {}));
+  let headers = backupHeaders(sanitizeReplicationHeaders(job.headers || {}));
   headers = ensureUpsertPrefer(headers, path, method);
   let body = job.body ?? undefined;
   if (body != null && table === 'facebook_messages') {
@@ -836,8 +1019,28 @@ async function applyRestJob(job) {
     headers['content-type'] = headers['content-type'] || 'application/json';
   }
   headers.prefer = headers.prefer || 'return=minimal';
+  if (['PATCH', 'PUT'].includes(method)) {
+    const preferences = headers.prefer.split(',').map(part => part.trim())
+      .filter(part => part && !part.toLowerCase().startsWith('return='));
+    headers.prefer = [...preferences, 'return=representation'].join(',');
+  }
 
   const prepared = { ...job, path, body };
+  if (table === 'crm_leads' && ['POST', 'PATCH', 'PUT'].includes(method)) {
+    const parsed = parseJsonBody(body);
+    const rows = parsed ? (Array.isArray(parsed) ? parsed : [parsed]) : [];
+    for (const row of rows) {
+      const identity = await validateCrmLeadBackupIdentity({ ...row, id: row?.id || extractEqFilterId(path, 'id') }, { checkPrimaryIdentity: true });
+      if (identity?.sourceMissing) {
+        if (rows.length !== 1) throw replicationFailure('REPLICATION_SOURCE_ABSENCE_RECONCILIATION_REQUIRED', 'crm_leads');
+        // The source has authoritatively deleted this exact UUID. Apply a real
+        // idempotent delete rather than holding an obsolete PATCH ahead of its
+        // later DELETE forever. Known code/context aliases were checked above;
+        // historical unknown aliases still require separate reconciliation.
+        return applyRestJob({ ...job, method: 'DELETE', path: `/rest/v1/crm_leads?id=eq.${encodeURIComponent(identity.id)}`, body: null });
+      }
+    }
+  }
   await ensureReplicationParents(prepared);
   await ensureReplicationTargetRow(prepared);
 
@@ -853,8 +1056,21 @@ async function applyRestJob(job) {
     });
   }
 
-  let { res, text } = await backupFetchWithGrantRetry(doFetch);
-  if (res.ok) return;
+  async function confirmed(res) {
+    if (!res.ok) return false;
+    if (['PATCH', 'PUT'].includes(method)) {
+      const rows = await res.json().catch(() => null);
+      const expectedId = extractEqFilterId(path, 'id');
+      if (!Array.isArray(rows) || rows.length === 0 ||
+          rows.some(row => !row || typeof row !== 'object' || Array.isArray(row) || Object.keys(row).length === 0) ||
+          (expectedId && (rows.length !== 1 || rows[0].id !== expectedId)))
+        throw replicationFailure('REPLICATION_WRITE_UNCONFIRMED', table, res.status);
+    }
+    return true;
+  }
+
+  let { res, text } = await backupFetchWithErrorText(doFetch);
+  if (await confirmed(res)) return;
   if (!text) text = await res.text().catch(() => '');
   if (method === 'DELETE' && (res.status === 404 || /PGRST116|0 rows/i.test(text))) {
     return;
@@ -869,7 +1085,7 @@ async function applyRestJob(job) {
     }
     if (fk) await ensureRowOnBackup(fk.parentTable, fk.parentId);
     res = await doFetch();
-    if (res.ok) return;
+    if (await confirmed(res)) return;
     text = await res.text().catch(() => '');
     if (method === 'DELETE' && (res.status === 404 || /PGRST116|0 rows/i.test(text))) {
       return;
@@ -921,34 +1137,65 @@ async function applyStorageJob(job) {
 async function applyJob(job) {
   if (job.type === 'storage') await applyStorageJob(job);
   else await applyRestJob(job);
-  _stats.applied += 1;
-  _stats.last_applied_at = new Date().toISOString();
+}
+
+async function processQueueBatch(maxJobs, force = false) {
+  return withQueueConsumer(async (redis, assertOwned) => {
+    let processed = 0;
+    let failed = 0;
+    let deferred = 0;
+    const blocked = [];
+    // Snapshot pending order to carry every earlier fence, including a long
+    // blocked prefix. HTTP attempts remain bounded; unrelated rows can progress.
+    const limit = Math.max(1, Math.min(1000, Math.floor(Number(maxJobs)) || 100));
+    const entries = await pendingQueueEntries(redis);
+    for (const entry of entries) {
+      if (processed + failed >= limit) break;
+      const { job } = entry;
+      if (!force && !isActivePrimary()) break;
+      const scopes = replicationScopes(job);
+      if (!replicationRetryDue(job) || scopesOverlap(scopes, blocked)) {
+        blocked.push(...scopes);
+        deferred++;
+        continue;
+      }
+      try {
+        await assertOwned();
+        await applyJob(job);
+        await assertOwned();
+        await acknowledgeQueueEntry(entry);
+        _stats.applied += 1;
+        _stats.last_applied_at = new Date().toISOString();
+        processed += 1;
+      } catch (e) {
+        failed += 1;
+        _stats.failed += 1;
+        _stats.last_error = replicationErrorSummary(e);
+        if (/^REPLICATION_CONSUMER_LOCK_/.test(e.code || '')) throw e;
+        if ((job.retry || 0) < 3) {
+          console.warn('[supabase-replication] apply failed:',
+            job.type === 'storage' ? 'storage' : restTableFromPath(job.path), _stats.last_error);
+        }
+        blocked.push(...scopes);
+        await requeueReplicationJob(job, e, entry);
+      }
+    }
+    return { processed, failed, deferred };
+  });
 }
 
 async function drainReplicationQueue({ maxJobs = 100, force = false } = {}) {
-  if (!isReplicationConfigured()) {
+  if (!isReplicationConfigured() || (!force && !isActivePrimary()) || _workerBusy) {
     return { processed: 0, failed: 0, remaining: await getQueueDepth(), skipped: true };
   }
-  if (!force && !isActivePrimary()) {
-    return { processed: 0, failed: 0, remaining: await getQueueDepth(), skipped: true };
+  _workerBusy = true;
+  let result;
+  try {
+    result = await processQueueBatch(maxJobs, force);
+  } finally {
+    _workerBusy = false;
   }
-  let processed = 0;
-  let failed = 0;
-  while (processed + failed < maxJobs) {
-    const job = await redisPopNonBlocking();
-    if (!job) break;
-    if (!force && !isActivePrimary()) break;
-    try {
-      await applyJob(job);
-      processed += 1;
-    } catch (e) {
-      failed += 1;
-      _stats.failed += 1;
-      _stats.last_error = e.message;
-      await requeueReplicationJob(job, e);
-    }
-  }
-  return { processed, failed, remaining: await getQueueDepth() };
+  return { ...result, remaining: await getQueueDepth() };
 }
 
 async function workerTickBatch() {
@@ -957,29 +1204,12 @@ async function workerTickBatch() {
 
   const cfg = replicationConfig();
   _workerBusy = true;
-  let processed = 0;
   try {
-    for (let i = 0; i < cfg.batchSize; i++) {
-      const job = await redisPopNonBlocking();
-      if (!job) break;
-      if (!isActivePrimary()) break;
-      try {
-        await applyJob(job);
-        processed += 1;
-      } catch (e) {
-        _stats.failed += 1;
-        _stats.last_error = e.message;
-        if ((job.retry || 0) < 3) {
-          console.warn('[supabase-replication] apply failed:', job.type, job.path || job.bucket, e.message);
-        }
-        await requeueReplicationJob(job, e);
-        if (!isDeferrableReplicationError(e)) break;
-      }
-    }
+    const result = await processQueueBatch(cfg.batchSize);
+    return { ...result, idle: result.processed === 0 };
   } finally {
     _workerBusy = false;
   }
-  return { processed, idle: processed === 0 };
 }
 
 async function workerTick() {
@@ -1020,6 +1250,7 @@ function sanitizeReplicationJob(job) {
     storage_path: job.type === 'storage' ? (job.path || job.storage_path) : null,
     enqueued_at: job.enqueued_at || null,
     retry: job.retry || 0,
+    next_attempt_at: job.next_attempt_at || null,
     summary: summarizeReplicationJob(job),
   };
 }
@@ -1052,6 +1283,10 @@ function getReplicationStatus() {
   return {
     enabled: isReplicationConfigured(),
     active_primary: isActivePrimary(),
+    queue_storage: getRedisIfReady() ? 'redis' : 'process_memory',
+    retry_policy: 'retain_with_backoff',
+    queue_ordering: 'fifo_per_entity',
+    redis_consumer_recovery: 'manual_after_owner_stopped',
     ...replicationConfig(),
     ..._stats,
   };
@@ -1099,6 +1334,7 @@ module.exports = {
   canReplicate,
   isReplicationConfigured,
   maybeEnqueueRestReplication,
+  enqueueCommittedCrmLeadReplication,
   replicateStorageUpload,
   startReplicationWorker,
   getReplicationStatus,
