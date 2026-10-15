@@ -1,3 +1,10 @@
+## 15/10/2026 — Tự chuyển công đoạn theo kế hoạch (candidate staging)
+
+Anh Hùng yêu cầu mọi nhiệm vụ trong công đoạn hoàn tất mới chuyển; lịch giao/kích hoạt nhiệm vụ theo phụ thuộc giữ nguyên. Domain progression đọc canonical execution, xét tất cả nhiệm vụ kể cả tùy chọn; miễn trừ quản lý đóng việc, needs_review giữ mở. Khâu hiện tại là khâu chưa xong đầu tiên; các khâu ready song song hiển thị riêng. Mở lại việc quay về khâu cần xử lý. Không thay task dependencies/dates hay tự gửi thông báo mới.
+
+Dashboard thêm chế độ Theo kế hoạch tự nhóm theo cấu trúc công đoạn, không ghi pipeline legacy; bảng này không thay KPI/cột Kanban legacy. Chỉ các dự án đã tải và có quyền manager có progression toàn dự án; staff xem phần việc theo cơ chế cũ. Refresh mỗi phút/khi focus; lỗi tải rõ, disabled/unavailable không treo pending. Plan detail đổi ngay theo response command.
+
+38/38 tests PASS gồm browser transition, stage ordering, disabled/denied; staging build PASS 40.34s; reviewer độc lập không còn blocker sau guard cuối. Chưa deploy phiên bản này lúc ghi candidate. Không migration mới; rollback revert code, giữ execution/history. User đã yêu cầu đưa lên staging để nghiệm thu, không production.
 ## 15/10/2026 00:03 Việt Nam — Workspace nhiệm vụ đã nghiệm thu staging
 
 Runtime 9716425e81434564c68fa2bcf1c75886c369ca20, deploy dep-db7r6lbrjlhs73cnou90 LIVE (finished 14/10 16:56:41Z = 23:56:41 VN). 37/37 tests PASS, build staging PASS, review riêng không còn blocker. Public HTTP smoke PASS task comments/file upload/private download/replay/project room. Reassign public smoke trên glass PASS: chỉ manager, lý do bắt buộc, người cũ bị thu hồi task room, hạn và execution giữ, đã phục hồi assignee. Browser canonical query mở modal, gửi comment từ UI và thấy tài liệu API đã tải; dropdown giao lại thao tác UI đã ghi vào DB, phục hồi người mẫu.

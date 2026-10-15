@@ -57,7 +57,7 @@ import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import KanbanCardQuickMove from '../components/KanbanCardQuickMove';
 import KanbanCardOptionsMenu from '../components/KanbanCardOptionsMenu';
 import KanbanGotoProjectTasksBtn from '../components/KanbanGotoProjectTasksBtn';
-import {ProductionPlanBoardProvider,ProductionPlanBoardCard,useProductionPlanBoard} from '../components/ProductionPlanBoard';
+import {ProductionPlanBoardProvider,ProductionPlanBoardCard,useProductionPlanBoard,ProductionPlanAutoBoard} from '../components/ProductionPlanBoard';
 import { useWorkshopStaffFilter } from '../hooks/useWorkshopStaffFilter';
 import {
   peekWorkshopPipelineCardFocus, clearWorkshopPipelineCardFocus, markWorkshopPipelineCardFocus,
@@ -111,10 +111,11 @@ import AnchoredDropdownMenu from '../components/AnchoredDropdownMenu';
 
 const INTAKE_BUCKET = 'won_pending';
 
-const WS_DASH_VIEW_MODES = ['kanban', 'list', 'planner', 'deadline', 'comments', 'calendar'];
+const WS_DASH_VIEW_MODES = ['kanban', 'plan-stages', 'list', 'planner', 'deadline', 'comments', 'calendar'];
 
 const SX_VIEW_MODES = [
   { id: 'kanban', icon: LayoutGrid, label: 'Kanban' },
+  { id: 'plan-stages', icon: LayoutGrid, label: 'Theo kế hoạch' },
   { id: 'list', icon: List, label: 'Danh sách' },
   { id: 'planner', icon: Users, label: 'Planner' },
   { id: 'deadline', icon: Clock, label: 'Deadline' },
@@ -4810,6 +4811,7 @@ export default function ProductionDashboard() {
           />
       )}
 
+      {viewMode === 'plan-stages' && <ProductionPlanAutoBoard projects={scopeProjects} />}
       {viewMode === 'list' && <ProductionListView pipeline={filteredKanbanPipeline} calculateDays={calculateDays} />}
 
       {viewMode === 'planner' && <ProductionPlannerView pipeline={filteredKanbanPipeline} />}

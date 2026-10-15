@@ -1,5 +1,6 @@
 'use strict';
 const {schedule}=require('./schedule');
+const {progression}=require('./progression');
 function summarizeBoard(document,context,now=new Date().toISOString()) {
   if(!document?.active)return {state:document?.draft?'draft':'none',scope:context.manager?'project':'assigned'};
   const active=document.active;
@@ -15,6 +16,7 @@ function summarizeBoard(document,context,now=new Date().toISOString()) {
     overdue:open.filter(t=>t.overdue).length,needs_review:open.filter(t=>t.needs_review).length,
     complete:tasks.length>0&&open.length===0,
     open_stages:result.graph.stages.filter(s=>ids.has(s.id)).map(s=>({id:s.id,name:s.name})),
-    blocked:open.length>0&&ready.length===0};
+    blocked:open.length>0&&ready.length===0,
+    progression:context.manager?progression(result):null};
 }
 module.exports={summarizeBoard};

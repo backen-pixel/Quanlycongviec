@@ -7,6 +7,22 @@ const { createRouter } = require('../src/modules/work-plans/public/router');
 const { canManage } = require('../src/modules/work-plans/application/permissions');
 const { createRepository } = require('../src/modules/work-plans/infrastructure/repository');
 const {summarizeBoard}=require('../src/modules/work-plans/domain/board');
+const {progression}=require('../src/modules/work-plans/domain/progression');
+test('stage progression waits for every task, preserves parallel branches and returns on reopen',()=>{
+  const result={graph:{stages:[{id:'a',name:'Vật tư'},{id:'b',name:'Gia công'},{id:'c',name:'Đóng gói'}]},tasks:[
+    {id:'1',stage_id:'a',status:'done',ready:true},
+    {id:'2',stage_id:'a',status:'pending',ready:true,required:false},
+    {id:'3',stage_id:'b',status:'pending',ready:true},
+    {id:'4',stage_id:'c',status:'pending',ready:false}]};
+  assert.equal(progression(result).current.id,'a');
+  assert.deepEqual(progression(result).parallel.map(s=>s.id),['b']);
+  result.tasks[1].status='done';assert.equal(progression(result).current.id,'b');
+  result.tasks[2].status='done';result.tasks[3].ready=true;
+  assert.equal(progression(result).current.id,'c');
+  result.tasks[3].status='done';assert.equal(progression(result).complete,true);
+  result.tasks[0].needs_review=true;assert.equal(progression(result).current.id,'a');
+  assert.equal(progression(result).stages[0].review,true);
+});
 test('Board preserves parallel ready stages, review and waiver semantics without leaking colleague tasks',()=>{
   const g={stages:[{id:'s1',name:'Thùng'},{id:'s2',name:'Kính'}],tasks:[{id:'a',name:'Thùng',stage_id:'s1',hours:8,dependencies:[],assignee_id:actor},{id:'b',name:'Kính',stage_id:'s2',hours:8,dependencies:[],assignee_id:other}],calendar:{weekdays:[1,2,3,4,5,6],shifts:[[8,12],[13,17]]}};
   const doc={active:{graph:g,deadline:'2026-10-12T12:00:00+07:00'},execution:{}};

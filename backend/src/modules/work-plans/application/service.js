@@ -1,6 +1,7 @@
 'use strict';
 const { createHash } = require('node:crypto');
 const { schedule, templateGraph, fail } = require('../domain/schedule');
+const {progression}=require('../domain/progression');
 function denied(message) { const e = new Error(message); e.status = 403; throw e; }
 function createService(repository, now = () => new Date().toISOString()) {
   async function view(projectId, context) {
@@ -12,7 +13,7 @@ function createService(repository, now = () => new Date().toISOString()) {
   function present(revision, document, context) {
     const active = document.active;
     const result = active ? schedule(active.graph, active.deadline, now(), document.execution) : null;
-    return { revision, document, schedule: result,
+    return { revision, document, schedule: result, progression:result?progression(result):null,
       preview: document.draft ? schedule(document.draft.graph,document.draft.deadline,now(),document.execution) : null,
       can_manage: context.manager, actor_id: context.actorId };
   }

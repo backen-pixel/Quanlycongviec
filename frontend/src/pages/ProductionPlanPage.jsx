@@ -66,7 +66,12 @@ export default function ProductionPlanPage() {
       <p className="text-gray-600">Dự kiến dựa trên thứ tự và thời lượng; việc đang làm được tính đủ thời lượng. Chưa cân tải người/máy giữa các dự án.</p>
       {!schedule.feasible&&<p className="text-red-700">Dự kiến vượt hạn sản xuất. Quản lý cần xử lý việc chặn hoặc điều chỉnh kế hoạch.</p>}
       {schedule.collisions.length>0&&<p className="text-amber-800">Có {schedule.collisions.length} cặp nhiệm vụ cùng người bị trùng lịch.</p>}
-      <div className="flex flex-wrap gap-2">{schedule.stages.map(s=><span className={`rounded px-3 py-1 ${s.complete?'bg-green-100':'bg-gray-100'}`} key={s.id}>{s.name}: {s.complete?'hoàn thành':'chưa xong'}</span>)}</div>
+      {data.progression&&<div className="rounded border border-indigo-200 bg-indigo-50 p-3" aria-live="polite">
+        <strong>{data.progression.complete?'Đã hoàn tất kế hoạch sản xuất':`Công đoạn hiện tại: ${data.progression.current.name}`}</strong>
+        <p>Tự chuyển sau khi tất cả nhiệm vụ của công đoạn đã hoàn tất hoặc được quản lý miễn trừ. Việc cần kiểm tra lại vẫn tính là chưa xong.</p>
+        {data.progression.parallel.length>0&&<p>Có thể làm song song: {data.progression.parallel.map(s=>s.name).join(', ')}</p>}
+      </div>}
+      <div className="flex flex-wrap gap-2">{(data.progression?.stages||schedule.stages).map(s=><span className={`rounded px-3 py-1 ${s.complete?'bg-green-100':s.id===data.progression?.current?.id?'bg-indigo-100 font-semibold':'bg-gray-100'}`} key={s.id}>{s.name}: {s.complete?'hoàn thành':s.id===data.progression?.current?.id?'đang thực hiện':'chưa xong'}</span>)}</div>
       {!visible.length&&<p>Không có nhiệm vụ trong bộ lọc này.</p>}
       {visible.map(t=>{const f=taskForm[t.id]||{};return <article className={`border rounded p-3 space-y-2 ${t.overdue?'border-red-300':''}`} key={t.id}>
         <div className="flex flex-wrap justify-between gap-2"><b>{t.name}</b><span>{t.needs_review?'Cần kiểm tra lại':t.status==='done'?(t.completed_late?'Hoàn thành trễ':'Hoàn thành'):t.status==='waived'?'Đã bỏ qua':t.overdue?'Trễ hạn':t.status==='doing'?'Đang làm':t.ready?'Có thể làm':'Chờ việc trước'}</span></div>
