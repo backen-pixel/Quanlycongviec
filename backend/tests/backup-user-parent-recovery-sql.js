@@ -226,6 +226,35 @@ test('matching wrong critical column types are held rather than accepted by cata
   for(const db of [pair.primary,pair.backup]) await db.exec('ALTER TABLE public.users ALTER COLUMN email TYPE text');
   await assert.rejects(()=>recover(pair),e=>e.recoveryCode==='RECOVERY_KNOWN_TYPE_CHANGED');
 }));
+test('FK metadata survives actual PostgreSQL OIDs and the production pg wire parsers',()=>withDB(async pair=>{
+  const pgTypes=require(process.argv[3] || 'pg').types;
+  const probe=await pair.primary.query("SELECT ARRAY['id'::name] old_shape,ARRAY['id'::text] supported_shape");
+  assert.deepEqual(probe.fields.map(f=>f.dataTypeID),[1003,1009]);
+  assert.equal(pgTypes.getTypeParser(1003)('{id}'),'{id}');
+  assert.deepEqual(pgTypes.getTypeParser(1009)('{id}'),['id']);
+  function wire(client) {return {query:async(...args)=>{
+    const result=await client.query(...args);
+    const rows=result.rows.map(row=>{
+      const parsed={...row};
+      for(const field of result.fields || []) if([1003,1009].includes(field.dataTypeID) && Array.isArray(row[field.name])) {
+        const encoded='{'+row[field.name].map(value=>'"'+value.replaceAll('\\','\\\\').replaceAll('"','\\"')+'"').join(',')+'}';
+        parsed[field.name]=pgTypes.getTypeParser(field.dataTypeID)(encoded);
+      }
+      return parsed;
+    });return {...result,rows};
+  }};}
+  const clients={primary:wire(pair.primary),backup:wire(pair.backup)};
+  const created=await snapshot(clients);
+  assert.deepEqual((await apply(clients,created)).committed,{alias_email_updates:1,department_inserts:1,user_inserts:1});
+}));
+test('unsupported composite parent FK remains held after the wire type fix',()=>withDB(async pair=>{
+  for(const db of [pair.primary,pair.backup]) await db.exec('ALTER TABLE public.users ADD CONSTRAINT fixture_id_email_unique UNIQUE(id,email)');
+  await pair.backup.exec('CREATE TABLE public.fixture_composite_fk(user_id uuid,email varchar,FOREIGN KEY(user_id,email) REFERENCES public.users(id,email))');
+  const b=await state(pair.backup);
+  await assert.rejects(()=>recover({...pair,mode:'snapshot',secret}),e=>e.recoveryCode==='RECOVERY_FK_UNSUPPORTED');
+  assert.deepEqual(await state(pair.backup),b);
+  assert.equal((await pair.backup.query(`SELECT count(*)::int n FROM ${STORE}`)).rows[0].n,0);
+}));
 test('idle source error is consumed without raw logging and aborts before further writes',()=>withDB(async pair=>{
   const created=await snapshot(pair),before=await state(pair.backup);
   const source=new EventEmitter();source.query=(...args)=>pair.primary.query(...args);

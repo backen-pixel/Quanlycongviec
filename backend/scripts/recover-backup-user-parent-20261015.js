@@ -108,11 +108,13 @@ async function tableCatalog(client,table) {
   return {columns,constraints};
 }
 async function foreignKeys(client,table,inbound=false) {
+  // attname is PostgreSQL's `name` type. pg parses text[] (OID1009), while
+  // name[] (OID1003) would arrive as a raw string rather than an array.
   return (await client.query(`SELECT con.conname,ns.nspname AS child_schema,c.relname AS child_table,
     pn.nspname AS parent_schema,p.relname AS parent_table,con.convalidated,
-    ARRAY(SELECT a.attname FROM unnest(con.conkey) WITH ORDINALITY k(num,ord)
+    ARRAY(SELECT a.attname::text FROM unnest(con.conkey) WITH ORDINALITY k(num,ord)
       JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=k.num ORDER BY k.ord) AS child_columns,
-    ARRAY(SELECT a.attname FROM unnest(con.confkey) WITH ORDINALITY k(num,ord)
+    ARRAY(SELECT a.attname::text FROM unnest(con.confkey) WITH ORDINALITY k(num,ord)
       JOIN pg_attribute a ON a.attrelid=p.oid AND a.attnum=k.num ORDER BY k.ord) AS parent_columns,
     pg_get_constraintdef(con.oid,true) AS definition
     FROM pg_constraint con JOIN pg_class c ON c.oid=con.conrelid JOIN pg_namespace ns ON ns.oid=c.relnamespace
@@ -122,7 +124,8 @@ async function foreignKeys(client,table,inbound=false) {
 async function inboundCounts(client) {
   const result=[];
   for(const table of ['users','departments']) for(const fk of await foreignKeys(client,table,true)) {
-    check(fk.convalidated && fk.parent_columns.length===1 && fk.parent_columns[0]==='id' && fk.child_columns.length===1,'RECOVERY_FK_UNSUPPORTED');
+    check(fk.convalidated && Array.isArray(fk.parent_columns) && Array.isArray(fk.child_columns) &&
+      fk.parent_columns.length===1 && fk.parent_columns[0]==='id' && fk.child_columns.length===1,'RECOVERY_FK_UNSUPPORTED');
     result.push({definition:fk,counts:[]});
   }
   // Hundreds of individual round trips could outlive the short source lock.
@@ -142,7 +145,8 @@ async function inboundCounts(client) {
 }
 async function parentsExist(client,table,value) {
   for(const fk of await foreignKeys(client,table)) {
-    check(fk.convalidated && fk.child_columns.length===fk.parent_columns.length,'RECOVERY_FK_UNSUPPORTED');
+    check(fk.convalidated && Array.isArray(fk.child_columns) && Array.isArray(fk.parent_columns) &&
+      fk.child_columns.length===fk.parent_columns.length && fk.child_columns.length>0,'RECOVERY_FK_UNSUPPORTED');
     const values=fk.child_columns.map(c=>value[c]);
     if(values.every(v=>v==null)) continue;
     check(values.every(v=>v!=null),'RECOVERY_PARENT_PARTIAL_NULL');

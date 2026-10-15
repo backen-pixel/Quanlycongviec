@@ -1,3 +1,12 @@
+## 2026-10-15 11:44 — VPT: đã chuẩn bị policy trên primary, chưa phát hành backend
+
+- Theo yêu cầu Founder hoàn thành cả bốn việc, đã áp riêng `20261015020200_crm_stage_qualification_policy.sql` lên primary qlycv bằng migration tool; history `20261015044416 / crm_stage_qualification_policy_vpt_20261015`, SHA256 `555dc310042617d70f073b04fb43e671f986106b059e21b94489e62c01e102c9`.
+- Hậu kiểm 04:44:50 UTC: ba cột, hai constraint validated, unique index, ba hàm SECURITY INVOKER service-only đủ; qualification/outbox/attempts 0. Không CRM update/backfill, không restart/deploy. Backend cũ chưa gọi RPC nên chưa kích hoạt auto qualification.
+- [Draft PR #139](https://github.com/backen-pixel/Quanlycongviec/pull/139) có main tích hợp `ec02dc7f`, 218 Node/frontend build và cả ba CI checks đạt. Dry-run guarded repair trên Render đã qua TLS với CA chính thức, giữ tại FK metadata parser (`name[]` OID1003); sửa tương thích `text[]` và thêm pg wire regression, không hạ guard. Private snapshot migration/snapshot/apply chưa thực hiện.
+- Backup cần baseline/journal bền vững qua cutover vì không có API pause/export đủ RAM queue; Maintenance không dừng background worker. Giữ Auto-Deploy Off, không mở FK khi old worker chưa dừng. DNS SPF vẫn hai record; chưa inbox/khách quảng cáo thật/provider ACK/CPL.
+
+---
+
 ## 2026-10-15 — VPT: chuẩn bị policy giai đoạn và khôi phục vận hành
 
 - Founder giao hoàn tất quy tắc Warm/Hot/direct Deal, đồng bộ dự phòng, email/form và nghiệm thu Google/Meta. Đã resume sau yêu cầu tạm dừng. Làm trong worktree riêng `vpt-operations-recovery-20261015`, giữ checkout người dùng.
