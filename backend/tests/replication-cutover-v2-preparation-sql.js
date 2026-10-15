@@ -128,6 +128,12 @@ test('adaptive bounded cursor chunks a larger fixture without OFFSET or numeric 
   for(let i=0;i<6;i++)await db.query('INSERT INTO public.uuid_items VALUES($1,$2,1.00000000000000000001)',[crypto.randomUUID(),'fixture'.repeat(900000)]);
   await c.reserve(db,m);const result=await capture(db,site,m);assert.equal(result.rows,'6');assert.ok(result.parts>1);assert.equal((await c.verifyCheckpoint(db,m,KEY)).verified,true);
 }));
+test('small rows use the 4096-row cap while every FETCH retains its 128MiB scalar byte bound',()=>fixture(async db=>{
+  await db.exec("DELETE FROM public.uuid_items;INSERT INTO public.uuid_items SELECT md5(g::text)::uuid,repeat('x',100),1.00000000000000000001 FROM generate_series(1,4100) g");
+  const {site,sha}=await armFixture(db),m=meta(sha),fetches=[];
+  const client={exec:sql=>db.exec(sql),query:(sql,args)=>{const f=/^FETCH FORWARD (\d+)/.exec(sql);if(f)fetches.push(Number(f[1]));return db.query(sql,args);}};
+  await c.reserve(db,m);const result=await capture(client,site,m);assert.equal(result.rows,'4100');assert.deepEqual(fetches,[4096,4096]);assert.equal((await c.verifyCheckpoint(db,m,KEY)).verified,true);
+}));
 test('AES authentication binds fence/site/capture/version and rejects tampering with sanitized errors',()=>{
   const m={...meta('a'.repeat(64),'closing'),stream:'table:uuid_items',part:0,rows:1},a=c.encrypt('private fixture',m,KEY);assert.equal(c.decrypt(a,KEY),'private fixture');
   for(const change of [{site:'backup'},{capture_id:B},{fence_epoch:EPOCH},{key_id:A},{manifest_sha256:'b'.repeat(64)}])assert.throws(()=>c.decrypt({...a,...change},KEY),/CUTOVER_V2_ARTIFACT_DECRYPT/);

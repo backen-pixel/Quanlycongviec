@@ -133,7 +133,7 @@ test('combined CLI/API context is explicit and malformed or partial scopes canno
   await assert.rejects(()=>recovery.recover({cutoverV2:{run_id:crypto.randomUUID()}}),e=>e.recoveryCode==='RECOVERY_CUTOVER_V2_CONTEXT_INVALID');
   assert.equal(Object.isFrozen(recovery.CUTOVER_V2_REPAIR_CONTRACT),true);
   assert.equal(recovery.CUTOVER_V2_REPAIR_CONTRACT.version,'cutover_v2_parent_repair_v1');
-  assert.equal(recovery.CUTOVER_V2_REPAIR_CONTRACT.dependency_helper_sha256,'caf98b795281b0b1ddc0d2566f6912a3049a31da31863c55782519af626f81f2');
+  assert.equal(recovery.CUTOVER_V2_REPAIR_CONTRACT.dependency_helper_sha256,'a51117d2082f2f7ad522cae38912433946c7d6a3d7d9625b2cf8bbbbf56fd7f3');
   assert.equal(typeof recovery.journalPrivateStore,'function');
 });
 

@@ -19,7 +19,7 @@ const JOURNAL_BODY_SHA256='8c9db9d44ac94d5c1b31b5601b7df78cfb4d8dde0f5b2b1a3c2c9
 const JOURNAL_TABLES=Object.freeze(['crm_leads','project_substage_status','users','departments','trash_items']);
 const V2_NS='vpt_cutover_v2_20261015',V2_FENCE='vpt_cutover_v2_fence_20261015';
 const V2_BODY_SHA='d64905ed2fba3714ddda5142c8cba7daff2cfe1166f9f8ecee0406ec35c90fde';
-const V2_DEPENDENCY_SHA='caf98b795281b0b1ddc0d2566f6912a3049a31da31863c55782519af626f81f2';
+const V2_DEPENDENCY_SHA='a51117d2082f2f7ad522cae38912433946c7d6a3d7d9625b2cf8bbbbf56fd7f3';
 // OID-independent catalog fingerprints from the two applied private snapshot
 // migrations and the frozen cutover migration. No runtime-discovered baseline.
 // PostgreSQL 18 adds contype='n' rows; attnotnull is pinned in every version,
