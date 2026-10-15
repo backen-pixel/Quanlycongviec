@@ -472,15 +472,25 @@ function buildMcpToolContext(req, user) {
   const keyCompanyId = req.apiKey?.company_id
     || (allowed?.length === 1 ? allowed[0] : null)
     || null;
+  // `personal_recipient_user_id` bóp báo cáo về RIÊNG một người: resolveAssigneeIds
+  // thấy nó là trả ngay [userId] rồi mọi truy vấn lọc `assigned_to IN (...)`.
+  //
+  // Đặt vô điều kiện thì người xem toàn tổ chức hỏi «hôm nay công ty có bao nhiêu lead»
+  // lại nhận số lead của riêng họ. Đo thật: Phúc Đạt ngày 15/10 có 6 lead mới (đều giao
+  // cho một sale), act-as Admin Hệ Thống trả 0, act-as chính sale đó trả 6. Sai mà
+  // KHÔNG báo lỗi — số vẫn đúng định dạng, chỉ luôn thấp hơn thực tế.
+  //
+  // Cùng luật với `applyActAsVisibility` ngay bên dưới: org-wide thì không thu hẹp.
+  const orgWide = isMcpOrgWideViewer(user);
   return {
     sender_user_id: user.id,
-    personal_recipient_user_id: user.id,
+    ...(orgWide ? {} : { personal_recipient_user_id: user.id }),
     last_company_id: keyCompanyId || user.company_id || null,
     days_offset: 0,
     mcp_api_key_name: req.apiKey?.name || null,
     mcp_all_companies: req.apiKey?.all_companies === true,
     mcp_allowed_company_ids: getKeyAllowedCompanyIds(req.apiKey),
-    mcp_org_wide: isMcpOrgWideViewer(user),
+    mcp_org_wide: orgWide,
   };
 }
 
