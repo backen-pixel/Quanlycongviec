@@ -42,6 +42,12 @@ Kiểm metadata storage attachments thấy primary 16.346, backup 8.704 object; 
 
 ## Nghiệm thu và rollback
 
+Tool khôi phục giới hạn `backend/scripts/recover-backup-user-parent-20261015.js` đã qua **21/21 PostgreSQL tests và hai review độc lập**. Mặc định `--dry-run`, không sửa hàng nghiệp vụ. `--snapshot` chỉ lưu ciphertext AES-256-GCM vào schema owner-only `vpt_recovery_20261015` trên backup; cần áp migration riêng `20261015041536_vpt_bounded_recovery_private_snapshot.sql` bằng công cụ migration trước. `--apply --snapshot-id <UUID>` là bước riêng, yêu cầu snapshot decrypt/read-back và fingerprint toàn hàng/nguồn/catalog/inbound FK còn khớp. Nguồn giữ hai user và một department bằng FOR SHARE trong REPEATABLE READ qua lúc backup SERIALIZABLE COMMIT. Chỉ email của cùng UUID được đổi, thêm đúng department/user nguồn; không đổi FK, role hoặc memberships.
+
+Snapshot dùng HKDF theo domain từ đúng phiên bản `JWT_SECRET` hiện có trên server. Không xuất khóa, URL DB, contact hoặc password ra terminal/repo. Phải giữ khả năng truy xuất riêng tư đúng phiên bản khóa này trong thời gian cần phục hồi; đổi khóa và mất phiên bản cũ làm ciphertext không giải được. Private schema/table không cấp quyền app, không nằm trong Data API, không sửa ACL công khai. Script giữ lỗi numeric có thể bị JavaScript làm tròn, sai kiểu/PK/unique, mất kết nối/khóa nguồn, schema hoặc FK thay đổi. Runtime grant tự động đã được đóng ở candidate; manual helper vẫn không được chạy.
+
+Tool **không có undo tự động sau commit**. Nếu COMMIT mất phản hồi, kiểm `applied_at/result` của snapshot và exact postimage bằng kênh bảo mật trước khi thử lại; không suy client báo lỗi nghĩa là đã rollback. Có FK mới sau commit thì không xóa user/department vừa thêm để đảo thao tác. Snapshot trước ảnh và rollback trong transaction không chứng minh đã khôi phục queue hoặc toàn bộ backup. Giữ bước `--apply` cho đến khi worker đang chạy có guard định danh phù hợp; mở FK khi worker cũ còn ghép code khác UUID có thể cho ghi sai tiếp diễn.
+
 1. Review không còn lỗi chặn; kiểm lại trên SHA cuối sau tích hợp main, không phát hành bản cũ làm mất cập nhật khác.
 2. Có kế hoạch queue/reconciliation trước restart; dữ liệu thiếu, backup-only, lịch sử và các thao tác xóa phải được đối chiếu riêng.
 3. Áp migration primary trước backend sử dụng RPC; hậu kiểm schema, grants, RLS và không backfill. Không áp policy nghiệp vụ chỉ-primary lên backup như một bản mirror.
