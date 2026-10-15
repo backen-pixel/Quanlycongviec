@@ -225,6 +225,7 @@ export default function ZaloPage() {
   const [reply, setReply] = useState('');
   const [sending, setSending] = useState(false);
   const [search, setSearch] = useState('');
+  const [locOaId, setLocOaId] = useState('');
   const [loadingContacts, setLoadingContacts] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [accounts, setAccounts] = useState([]);
@@ -257,13 +258,16 @@ export default function ZaloPage() {
 
   const loadContacts = useCallback(() => {
     setLoadingContacts(true);
-    const q = search ? `?search=${encodeURIComponent(search)}` : '';
+    const ps = new URLSearchParams();
+    if (search) ps.set('search', search);
+    if (locOaId) ps.set('oa_id', locOaId);
+    const q = ps.toString() ? `?${ps.toString()}` : '';
     fetch(`${API}/api/zalo/contacts${q}`, { headers: hdr() })
       .then((r) => (r.ok ? r.json() : { data: [] }))
       .then((d) => setContacts(d.data || []))
       .catch(() => setContacts([]))
       .finally(() => setLoadingContacts(false));
-  }, [search]);
+  }, [search, locOaId]);
 
   const loadAccounts = useCallback(() => {
     fetch(`${API}/api/zalo/accounts`, { headers: hdr() })
@@ -312,7 +316,7 @@ export default function ZaloPage() {
   }, [tab, loadContacts]);
 
   useEffect(() => {
-    if (tab === 'settings' || tab === 'contacts') loadAccounts();
+    if (tab === 'settings' || tab === 'contacts' || tab === 'inbox') loadAccounts();
   }, [tab, loadAccounts]);
 
   useEffect(() => {
@@ -673,6 +677,36 @@ export default function ZaloPage() {
                 <RefreshCw size={15} className={loadingContacts ? 'animate-spin' : ''} />
               </button>
               </div>
+              {accounts.length > 1 && (
+                <div className="mt-2 flex flex-wrap gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setLocOaId('')}
+                    className={`px-2.5 py-1 text-[11px] font-semibold rounded-full border transition ${
+                      !locOaId
+                        ? 'bg-[#0068FF] text-white border-[#0068FF] shadow-sm'
+                        : 'bg-white text-gray-500 border-sky-100 hover:bg-sky-50'
+                    }`}
+                  >
+                    Tất cả OA
+                  </button>
+                  {accounts.map((a) => (
+                    <button
+                      key={a.oa_id}
+                      type="button"
+                      onClick={() => setLocOaId(a.oa_id)}
+                      title={a.oa_id}
+                      className={`px-2.5 py-1 text-[11px] font-semibold rounded-full border transition max-w-[150px] truncate ${
+                        String(locOaId) === String(a.oa_id)
+                          ? 'bg-[#0068FF] text-white border-[#0068FF] shadow-sm'
+                          : 'bg-white text-gray-500 border-sky-100 hover:bg-sky-50'
+                      }`}
+                    >
+                      {a.oa_name || a.oa_id}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain [scrollbar-width:thin]">
               {loadingContacts && !contacts.length ? (
@@ -687,6 +721,7 @@ export default function ZaloPage() {
                 contacts.map((c) => {
                   const isActive = selectedId === c.id;
                   const hasUnread = (c.unread_count || 0) > 0;
+                  const tenOa = accounts.find((a) => String(a.oa_id) === String(c.oa_id))?.oa_name;
                   return (
                     <button
                       key={c.id}
@@ -716,6 +751,11 @@ export default function ZaloPage() {
                         <p className={`text-xs truncate mt-0.5 ${hasUnread ? 'text-gray-700 font-medium' : 'text-gray-500'}`}>
                           {c.last_message_preview || '—'}
                         </p>
+                        {!locOaId && tenOa && accounts.length > 1 ? (
+                          <span className="inline-flex mt-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-500 border border-slate-200/80 max-w-full truncate">
+                            {tenOa}
+                          </span>
+                        ) : null}
                         {c.lead?.code ? (
                           <Link
                             to={`/crm/leads/${c.lead.id}`}

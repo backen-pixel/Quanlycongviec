@@ -17,6 +17,11 @@ const {
   callMcpAdsTool,
 } = require('./mcpAdsBridge');
 const {
+  MCP_CHANNEL_TOOL_SET,
+  getMcpChannelTools,
+  callMcpChannelTool,
+} = require('./mcpChannelReadBridge');
+const {
   MCP_MODULE_TOOL_SET, MCP_MODULE_SCOPES, getMcpModuleTools, callMcpModuleTool,
 } = require('./mcpModuleReadBridge');
 const {
@@ -192,6 +197,10 @@ const TIEU_DE_TOOL = {
   find_wasted_spend: 'Quảng cáo tiêu tiền kém hiệu quả',
   list_pages: 'Danh sách page Facebook',
   get_conversion_events: 'Đơn đã chốt theo chiến dịch',
+  list_chat_channels: 'Danh sách page Facebook và OA Zalo',
+  get_chat_overview: 'Số liệu hộp thư Facebook / Zalo',
+  search_chat_contacts: 'Tìm liên hệ trong hộp thư chat',
+  get_chat_conversation: 'Nội dung hội thoại một liên hệ',
   production_api_get: 'Dữ liệu Sản xuất',
   logistics_api_get: 'Dữ liệu Vận chuyển – Lắp đặt',
   accounting_api_get: 'Dữ liệu Kế toán',
@@ -357,6 +366,12 @@ function getMcpReportTools(apiKey = null) {
     }
   }
 
+  // Kênh chat (Facebook Messenger, Zalo OA) — scope riêng `channels_read`.
+  // Đọc được cả nội dung hội thoại khách hàng nên KHÔNG nằm trong mặc định.
+  for (const t of getMcpChannelTools()) {
+    if (!names.has(t.name)) { patched.push(t); names.add(t.name); }
+  }
+
   // Cong doc cac module ngoai CRM (san xuat, VC, ke toan, du an, nhiem vu, KPI, su kien).
   for (const t of getMcpModuleTools()) {
     if (!names.has(t.name)) { patched.push(t); names.add(t.name); }
@@ -376,6 +391,7 @@ function getMcpReportTools(apiKey = null) {
     if (MCP_REPORT_OPS_TOOL_SET.has(t.name)) return scopes.includes(MCP_REPORT_OPS_SCOPES[t.name]);
     if (MCP_CRM_WRITE_TOOL_SET.has(t.name)) return scopes.includes('crm_write');
     if (MCP_ADS_TOOL_SET.has(t.name)) return allowAds;
+    if (MCP_CHANNEL_TOOL_SET.has(t.name)) return scopes.includes('channels_read');
     if (MCP_CRM_READ_TOOL_SET.has(t.name)) return allowCrm;
     // Module ngoai CRM chi hien khi key co dung scope cua module do.
     if (MCP_MODULE_TOOL_SET.has(t.name)) return scopes.includes(MCP_MODULE_SCOPES[t.name]);
@@ -404,6 +420,13 @@ function assertMcpScopeForTool(name, apiKey) {
   if (MCP_ADS_TOOL_SET.has(name)) {
     if (!scopes.includes('ads_read')) {
       throw mcpDeny(MCP_REASON.CAPABILITY_DENIED, 'API key không có quyền ads_read', 403);
+    }
+    return;
+  }
+  // Kênh chat đọc được hội thoại riêng của khách — phải bật tay `channels_read`.
+  if (MCP_CHANNEL_TOOL_SET.has(name)) {
+    if (!scopes.includes('channels_read')) {
+      throw mcpDeny(MCP_REASON.CAPABILITY_DENIED, 'API key không có quyền channels_read', 403);
     }
     return;
   }
@@ -472,15 +495,25 @@ function buildMcpToolContext(req, user) {
   const keyCompanyId = req.apiKey?.company_id
     || (allowed?.length === 1 ? allowed[0] : null)
     || null;
+  // `personal_recipient_user_id` bóp báo cáo về RIÊNG một người: resolveAssigneeIds
+  // thấy nó là trả ngay [userId] rồi mọi truy vấn lọc `assigned_to IN (...)`.
+  //
+  // Đặt vô điều kiện thì người xem toàn tổ chức hỏi «hôm nay công ty có bao nhiêu lead»
+  // lại nhận số lead của riêng họ. Đo thật: Phúc Đạt ngày 15/10 có 6 lead mới (đều giao
+  // cho một sale), act-as Admin Hệ Thống trả 0, act-as chính sale đó trả 6. Sai mà
+  // KHÔNG báo lỗi — số vẫn đúng định dạng, chỉ luôn thấp hơn thực tế.
+  //
+  // Cùng luật với `applyActAsVisibility` ngay bên dưới: org-wide thì không thu hẹp.
+  const orgWide = isMcpOrgWideViewer(user);
   return {
     sender_user_id: user.id,
-    personal_recipient_user_id: user.id,
+    ...(orgWide ? {} : { personal_recipient_user_id: user.id }),
     last_company_id: keyCompanyId || user.company_id || null,
     days_offset: 0,
     mcp_api_key_name: req.apiKey?.name || null,
     mcp_all_companies: req.apiKey?.all_companies === true,
     mcp_allowed_company_ids: getKeyAllowedCompanyIds(req.apiKey),
-    mcp_org_wide: isMcpOrgWideViewer(user),
+    mcp_org_wide: orgWide,
   };
 }
 
@@ -581,6 +614,7 @@ function locHangTheoCongTyChoPhep(ketQua, allowed, tenTool) {
 function isMcpToolAllowed(name) {
   return MCP_REPORT_TOOL_SET.has(name) || MCP_CRM_READ_TOOL_SET.has(name)
     || MCP_ADS_TOOL_SET.has(name) || MCP_MODULE_TOOL_SET.has(name)
+    || MCP_CHANNEL_TOOL_SET.has(name)
     || MCP_CRM_WRITE_TOOL_SET.has(name) || MCP_REPORT_OPS_TOOL_SET.has(name);
 }
 
@@ -626,6 +660,13 @@ async function callMcpReportTool(name, args = {}, req) {
     // Ads tools chỉ đọc số tổng hợp — không cần user act-as.
     if (MCP_ADS_TOOL_SET.has(name)) {
       const ketQua = await callMcpAdsTool(name, args || {}, req.apiKey);
+      finishAudit('allow', MCP_REASON.ALLOWED);
+      return locHangTheoCongTyChoPhep(ketQua, getKeyAllowedCompanyIds(req.apiKey), name);
+    }
+
+    // Kênh chat: phạm vi lấy từ chính khoá (giống ads), không cần user act-as.
+    if (MCP_CHANNEL_TOOL_SET.has(name)) {
+      const ketQua = await callMcpChannelTool(name, req.apiKey, args || {});
       finishAudit('allow', MCP_REASON.ALLOWED);
       return locHangTheoCongTyChoPhep(ketQua, getKeyAllowedCompanyIds(req.apiKey), name);
     }
@@ -723,6 +764,7 @@ module.exports = {
   getMcpReportTools,
   // Xuất để test được tầng chặn scope mà không cần dựng HTTP.
   assertMcpScopeForTool,
+  isMcpToolAllowed,
   resolveMcpActAsUser,
   callMcpReportTool,
   queryToReportArgs,
