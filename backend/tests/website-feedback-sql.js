@@ -410,7 +410,7 @@ test('true revoke/rekey of accepted proof holds further delivery without resendi
   assert.deepEqual(old, { status: 'accepted', stale: true, attempts: 1 });
 });
 
-(async () => {
+if (require.main === module) (async () => {
   const receiptMigration = fs.readFileSync(receiptPath, 'utf8'), feedbackMigration = fs.readFileSync(feedbackPath, 'utf8');
   assert(receiptMigration.trim() && feedbackMigration.trim(), 'Reviewed migrations must contain SQL');
   db = new PGlite();
@@ -425,3 +425,4 @@ test('true revoke/rekey of accepted proof holds further delivery without resendi
   }
   console.log(`${passed}/${tests.length} actual PostgreSQL website tests passed (formal migrations; PGlite).`);
 })().catch(error => { console.error(error.stack); process.exitCode = 1; }).finally(async () => { if (db) await db.close(); });
+module.exports = { baselineSQL };

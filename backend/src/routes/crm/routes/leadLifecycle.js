@@ -20,6 +20,7 @@ const { deleteExclusiveProjectsForLeads } = require('../../../helpers/deleteExcl
 const { invalidateCrmDeadlineSnapshots } = require('../../../helpers/crmDeadlineSnapshotCache');
 const { syncOpenCrmTaskDeadlines } = require('../../../helpers/crmOpenTaskDeadlineSync');
 const { MODULE, resolveModuleDeadline } = require('../../../helpers/moduleDeadlinePolicy');
+const { writeCrmLead } = require('../../../helpers/crmStageQualificationWrite');
 
 const { enabledPageIds } = require('../../../helpers/facebookMessengerReceipt');
 const { FACEBOOK_ATOMIC_LEAD_PAGE_ID, createFacebookLeadOnce } = require('../../../helpers/facebookAtomicLead');
@@ -874,19 +875,19 @@ r.put('/leads/:id', async (req, res) => {
     }
 
     const patchVcJoin = crmSchemaCompat.vcPipelineStageAvailable ? ', vc_pipeline_stage:logistics_pipeline_stages(id, name, color, icon, bucket_slug)' : '';
-    let { data, error } = await supabase.from('crm_leads')
-      .update({ ...safeBody, updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon), sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name))' + patchVcJoin)
-      .single();
+    const putResult = await writeCrmLead({ db: supabase, req, leadId: id, oldLead,
+      patch: { ...safeBody, updated_at: new Date().toISOString() },
+      select: '*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon), sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name))' + patchVcJoin });
+    let { data, error } = putResult;
     if (error && isVcRelationshipError(error)) {
       crmSchemaCompat.vcPipelineStageAvailable = false;
       crmSchemaCompat.leadSelectMigrationChecked = false;
-      ({ data, error } = await supabase.from('crm_leads')
-        .update({ ...safeBody, updated_at: new Date().toISOString() })
-        .eq('id', id)
-        .select('*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon), sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name))')
-        .single());
+      // Read-only hydration retry: the first update may already have committed.
+      const select = '*, customer:customers(id, full_name, phone), stage:crm_pipeline_stages!crm_leads_stage_id_fkey(id, name, color, icon), sx_pipeline_stage:production_pipeline_stages(id, name, color, icon, bucket_slug, company:companies(id, name, short_name))';
+      ({ data, error } = putResult.mutationCommitted
+        ? await supabase.from('crm_leads').select(select).eq('id', id).single()
+        : await writeCrmLead({ db: supabase, req, leadId: id, oldLead,
+          patch: { ...safeBody, updated_at: new Date().toISOString() }, select }));
     }
     if (error) throw error;
 
@@ -1782,9 +1783,8 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
       const v = await assertCrmAssigneeUserMatchesLeadCompany(supabase, ownerId, companyId);
       if (!v.ok) return res.status(400).json({ error: v.error });
     }
-    const { data: updatedLead, error: leadError } = await supabase
-      .from('crm_leads')
-      .update({
+    const { data: updatedLead, error: leadError } = await writeCrmLead({ db: supabase, req,
+      leadId: req.params.id, oldLead: lead, patch: {
         type: 'deal',
         stage_id: firstDealStage.id,
         pipeline_id: pipelineForDeal || lead.pipeline_id || null,
@@ -1795,10 +1795,7 @@ r.post('/leads/:id/convert-to-deal', async (req, res) => {
         updated_at: new Date().toISOString(),
         stage_entered_at: new Date().toISOString(),
         revert_to_lead_reason: null,
-      })
-      .eq('id', req.params.id)
-      .select('*')
-      .single();
+      } });
 
     if (leadError) throw leadError;
 
@@ -2199,12 +2196,8 @@ r.post('/leads/:id/convert-to-lead', async (req, res) => {
       updatePayload.project_id = null;
     }
 
-    const { data: updatedLead, error: updateErr } = await supabase
-      .from('crm_leads')
-      .update(updatePayload)
-      .eq('id', req.params.id)
-      .select('*')
-      .single();
+    const { data: updatedLead, error: updateErr } = await writeCrmLead({ db: supabase, req,
+      leadId: req.params.id, oldLead: lead, patch: updatePayload });
     if (updateErr) throw updateErr;
 
     try {
@@ -2542,11 +2535,15 @@ r.patch('/leads/:id/stage', async (req, res) => {
       }
     }
     
-    let { data: updatedLeadRow, error } = await supabase.from('crm_leads').update(updates).eq('id', req.params.id).select('*').single();
+    let { data: updatedLeadRow, error } = await writeCrmLead({ db: supabase, req,
+      leadId: req.params.id, oldLead: lead, patch: updates });
     if (error && /kanban_deadline/.test(error.message || '')) {
       delete updates.kanban_deadline_at;
       delete updates.kanban_deadline_reason;
-      ({ data: updatedLeadRow, error } = await supabase.from('crm_leads').update(updates).eq('id', req.params.id).select('*').single());
+      // A missing deadline column aborts the atomic transaction. Never silently
+      // save a stage after returning a rejected deadline request.
+      if (!hasDeadlineInput) ({ data: updatedLeadRow, error } = await writeCrmLead({ db: supabase, req,
+        leadId: req.params.id, oldLead: lead, patch: updates }));
       if (!error && hasDeadlineInput) {
         return res.status(503).json({
           error: 'Chưa cài đặt cột deadline trên database. Chạy migration database/280_crm_kanban_deadline.sql',
@@ -3296,12 +3293,8 @@ r.post('/leads/:id/reopen', async (req, res) => {
       }
     }
 
-    const { data: updated, error } = await supabase
-      .from('crm_leads')
-      .update(updates)
-      .eq('id', leadId)
-      .select('*')
-      .single();
+    const { data: updated, error } = await writeCrmLead({ db: supabase, req,
+      leadId, oldLead: lead, patch: updates });
     if (error) throw error;
 
     try {

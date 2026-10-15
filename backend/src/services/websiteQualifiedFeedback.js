@@ -35,6 +35,7 @@ function createWebsiteQualifiedFeedback({ db, getConfig = getWebsiteFeedbackConf
         counts: { verified_receipted: snapshot.rows.length, meta_ready: snapshot.rows.filter(r => r.delivery_supported === true).length,
           meta_held: snapshot.rows.filter(r => r.delivery_supported !== true).length }, diagnostics: counters(snapshot.diagnostics),
         rows: snapshot.rows.slice(0,100).map(r => ({ lead_id: r.lead_id, qualified_at: new Date(r.qualified_ms).toISOString(),
+          qualification_method: r.qualification_method || 'manual_v1',
           acquired_at: new Date(r.acquired_ms).toISOString(), delivery_supported: r.delivery_supported === true, hold_reason: r.hold_reason || null })), delivery };
     });
   }
