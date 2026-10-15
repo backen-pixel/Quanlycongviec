@@ -122,8 +122,16 @@ const corsMainApp = cors({
     'X-Supabase-Monitor-Token',
     'X-Device-Id',
     'X-No-Cache',
-    // Trợ lý hướng dẫn khai chế độ của client để server gửi đúng bộ luật.
+    /**
+     * Trợ lý hướng dẫn khai chế độ của client để server gửi đúng bộ luật.
+     * CẢ BA phải có mặt: AppGuideCopilotPanel gửi chúng cùng một lúc, và CORS là luật
+     * "tất cả hoặc không" — thiếu MỘT cái là trình duyệt huỷ cả request. Đo trên production:
+     * gửi riêng 3 header CopilotKit thì tới được server (401), thêm x-guide-allow-delete
+     * hoặc x-guide-moods vào là "Failed to fetch" ngay.
+     */
     'X-Guide-Full-Access',
+    'X-Guide-Allow-Delete',
+    'X-Guide-Moods',
     /**
      * Runtime CopilotKit TỰ gắn ba header này vào mọi request — không tắt được từ phía app.
      * Thiếu chúng trong danh sách, preflight vẫn trả 204 (server không hề từ chối) nhưng
