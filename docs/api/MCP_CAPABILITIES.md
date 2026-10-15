@@ -3,7 +3,7 @@
 MCP là cầu nối để trợ lý AI (Claude, ChatGPT, Cursor, OpenClaw…) nói chuyện trực tiếp với hệ
 thống. Tài liệu này liệt kê **làm được gì**, **chưa làm được gì**, và **cần quyền nào**.
 
-Cập nhật: 14/10/2026 · **68 tool** · nguồn: `backend/src/helpers/mcp*.js`
+Cập nhật: 15/10/2026 · **72 tool** · nguồn: `backend/src/helpers/mcp*.js`
 
 ---
 
@@ -16,9 +16,10 @@ Cập nhật: 14/10/2026 · **68 tool** · nguồn: `backend/src/helpers/mcp*.js
 | Báo cáo vận hành | Nguồn lead · Lead đọng · Tổng quan xưởng | `crm_read` / `production_read` | 3 |
 | Ghi CRM ⚠️ | Tạo/sửa lead-deal, chuyển giai đoạn, bình luận, nhiệm vụ, khách hàng | `crm_write` | 8 |
 | Quảng cáo | Hiệu quả chiến dịch, chất lượng lead, tìm quảng cáo đốt tiền | `ads_read` | 7 |
+| Kênh chat ⚠️ | Hộp thư Facebook Messenger · Zalo OA — kể cả nội dung hội thoại | `channels_read` | 4 |
 | Module khác | Sản xuất, VC-Lắp đặt, Kế toán, Dự án, Nhiệm vụ, KPI, Sự kiện | mỗi module một scope | 7 |
 
-**Mặc định một khoá chỉ thấy 43/68 tool** (`reports` + `crm_read`). Mọi thứ khác phải bật tay.
+**Mặc định một khoá chỉ thấy 43/72 tool** (`reports` + `crm_read`). Mọi thứ khác phải bật tay.
 
 ---
 
@@ -134,6 +135,30 @@ Cột "Phá hủy" khai qua `destructiveHint`; client dùng cờ này để hỏ
 
 ---
 
+## 6b. Kênh chat — `channels_read` ⚠️
+
+| Tool | Công dụng |
+|---|---|
+| `list_chat_channels` | Page Facebook + OA Zalo trong phạm vi khoá, kèm số liên hệ và tình trạng token |
+| `get_chat_overview` | Liên hệ mới, tin nhận/gửi, chưa đọc, đã thành lead — tách theo từng page/OA |
+| `search_chat_contacts` | Tìm liên hệ theo tên / SĐT / kênh. Không kèm nội dung tin |
+| `get_chat_conversation` | **Nội dung hội thoại** của một liên hệ cụ thể |
+
+Đo thật trên hệ: 13 kênh · 21.653 liên hệ · 142.793 tin.
+
+**Không bao giờ trả về** `access_token`, `secret_key`, `refresh_token`, `webhook_verify_token`.
+Riêng Zalo có thêm `tinh_trang_token` dạng chữ ("còn 24h", "refresh_token HẾT HẠN…") để
+biết OA nào sắp chết mà không lộ khoá.
+
+> ⚠️ `get_chat_conversation` đọc được **hội thoại riêng của khách hàng**. Đây là lý do
+> `channels_read` KHÔNG nằm trong mặc định và phải bật tay trên từng khoá.
+
+Phạm vi công ty lấy từ `company_id` / `allowed_company_ids` của khoá, chặn hai lớp: lọc
+kênh hợp lệ trước, rồi gateway lọc lại kết quả. `allowed_page_ids` (nếu khai) thu hẹp
+thêm xuống đúng page đó.
+
+---
+
 ## 7. Module ngoài CRM
 
 Mỗi module một tool, nhận `path` + `query`, có whitelist riêng. Bảy tool phủ **83 endpoint**.
@@ -192,8 +217,9 @@ node tests/mcp-search-fetch.js         # 16
 node tests/mcp-phien-song-sot.js       #  9
 node tests/mcp-loc-cong-ty.js          #  7
 node tests/mcp-audit-reason-codes.js   #  5
+node tests/mcp-kenh-chat.js            # 26 (+4 với --that)
 ```
 
-**98 phép thử, 7/7 bộ xanh.**
+**128 phép thử, 8/8 bộ xanh.**
 
 Lưu ý: 22 phép của tầng ghi kiểm **cổng chặn**, không phép nào thực sự ghi một dòng.
