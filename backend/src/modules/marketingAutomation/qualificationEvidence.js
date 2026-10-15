@@ -1,6 +1,9 @@
 'use strict';
 
 const STAGE_METHOD = 'stage_based_v1';
+// Creation remains Warm/Hot or direct Lead->Deal. Known forward Lead stages
+// retain that first evidence; unknown/custom slugs are held for review.
+const CURRENT_LEAD_STAGES = Object.freeze(['warm','hot','survey_scheduled','survey_done']);
 const EXTRA_COLUMNS = ',qualification_method,stage_history_id,stage_evidence';
 const text = value => typeof value === 'string' ? value.trim() : '';
 const time = value => value ? Date.parse(value) : NaN;
@@ -83,7 +86,7 @@ function stageQualificationReason(event, lead, proof) {
   const stage = proof.stages.get(lead.stage_id);
   if (!stage || stage.is_active !== true || stage.pipeline_id !== lead.pipeline_id
     || proof.pipelines.get(stage.pipeline_id)?.company_id !== lead.company_id || stage.is_lost === true || !(lead.type === 'deal'
-    || (lead.type === 'lead' && ['warm', 'hot'].includes(stage.canonical_slug)))) return 'stage_policy_held';
+    || (lead.type === 'lead' && CURRENT_LEAD_STAGES.includes(stage.canonical_slug)))) return 'stage_policy_held';
   return null;
 }
 

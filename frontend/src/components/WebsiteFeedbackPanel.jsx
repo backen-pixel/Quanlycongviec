@@ -55,12 +55,12 @@ export default function WebsiteFeedbackPanel({ companyId }) {
         {' · '}Đủ điều kiện chuẩn bị gửi Meta: <b>{snapshot.counts.meta_ready}</b>
         {' · '}Chưa đủ điều kiện gửi Meta: <b>{snapshot.counts.meta_held}</b>.</p>
       <p className="text-gray-500">Cập nhật {time(snapshot.as_of)}. Gồm khách hợp lệ theo lần chuyển mới Warm/Hot/Deal hoặc xác minh thủ công, kèm biên nhận form mới.
-        Lịch sử khách ngoài CRM vẫn cần đối soát. Chưa dùng số này để nghiệm thu CPL.</p>
+        Sang Hẹn khảo sát hoặc Gặp showroom/xưởng vẫn giữ mốc hợp lệ đầu tiên. Lịch sử khách ngoài CRM vẫn cần đối soát. Chưa dùng số này để nghiệm thu CPL.</p>
       <p className="text-gray-500">Thiếu biên nhận form: {snapshot.diagnostics.no_website_receipt ?? 0}
         {' · '}khách cũ/trùng: {snapshot.diagnostics.duplicate_or_returning ?? 0}
         {' · '}chưa chứng minh khách mới: {snapshot.diagnostics.new_customer_unproven ?? 0}
         {' · '}hồ sơ đổi sau xác minh: {snapshot.diagnostics.qualification_stale ?? 0}
-        {' · '}giữ do rời giai đoạn hợp lệ: {snapshot.diagnostics.stage_policy_held ?? 0}.</p>
+        {' · '}giữ do Cold, cột thua hoặc giai đoạn chưa xác định: {snapshot.diagnostics.stage_policy_held ?? 0}.</p>
       {!!snapshot.rows.length && <details><summary className="cursor-pointer text-sky-700">Xem {snapshot.rows.length} hồ sơ đối soát</summary>
         <ul className="mt-1 space-y-1">{snapshot.rows.map(row => <li key={row.lead_id}>
           <LeadLink id={row.lead_id} />{' · '}xác minh {time(row.qualified_at)}{' · '}

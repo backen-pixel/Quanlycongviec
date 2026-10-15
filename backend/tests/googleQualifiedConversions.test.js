@@ -80,6 +80,20 @@ test('Cold/lost holds and re-entry resumes one Google order/time; manual revocat
   t.p1_qualification_events.push(event('L1', { id: 'manual-revoke', revision: 2, status: 'PENDING' }));
   assert.equal((await build(t)).rows.length, 0);
 });
+test('known forward Lead stages retain first Google order/time without accepting an unrecorded trigger or unknown stage',async()=>{
+  const t=stagePolicy(tables()),first=(await build(t)).rows[0];
+  for(const slug of ['survey_scheduled','survey_done']) {
+    t.crm_pipeline_stages[0].canonical_slug=slug;
+    const next=(await build(t)).rows[0];
+    assert.equal(next.order_id,first.order_id);assert.equal(next.conversion_ms,first.conversion_ms);
+  }
+  t.crm_pipeline_stages[0].canonical_slug='custom_forward_unknown';
+  assert.equal((await build(t)).diagnostics.stage_policy_held,1);
+  t.crm_pipeline_stages[0].canonical_slug='survey_done';
+  t.crm_lead_stage_history[0].to_canonical_slug='survey_done';
+  t.p1_qualification_events[0].stage_evidence.to_canonical_slug='survey_done';
+  assert.equal((await build(t)).diagnostics.invalid_qualification,1);
+});
 test('stage policy cannot bypass source, consent, actual actor/history, context or new-customer gates', async () => {
   for (const change of [t => { t.crm_lead_stage_history[0].changed_by = 'someone-else'; },
     t => { t.p1_qualification_events[0].stage_evidence.qualified_at = '2026-10-04T00:00:00Z'; },

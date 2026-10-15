@@ -5,11 +5,13 @@ const { randomUUID,createHash } = require('node:crypto');
 const { PGlite } = require(process.argv[2] || '@electric-sql/pglite');
 const { baselineSQL } = require('./website-feedback-sql');
 const { qualificationContext } = require('../src/modules/marketingAutomation/qualificationContext');
+const { stageQualificationReason } = require('../src/modules/marketingAutomation/qualificationEvidence');
 const { prepareWebsiteFeedback } = require('../src/modules/marketingAutomation/websiteFeedbackOutbox');
 const read = name => fs.readFileSync(path.resolve(__dirname, '../../database', name), 'utf8');
 const COMPANY = '991dc79d-cbf5-49f9-a364-35227cb47635', OTHER = randomUUID();
 const actor = randomUUID(), owner = randomUUID(), pipeline = randomUUID();
-const stages = { cold: randomUUID(), warm: randomUUID(), hot: randomUUID(), deal: randomUUID(), lost: randomUUID() };
+const stages = { cold: randomUUID(), warm: randomUUID(), hot: randomUUID(), survey_scheduled: randomUUID(),
+  survey_done: randomUUID(), unknown: randomUUID(), deal: randomUUID(), lost: randomUUID() };
 const tests = [], test = (name, run) => tests.push({ name, run });
 let db;
 async function admin(sql, args = []) { await db.exec('RESET ROLE'); return db.query(sql, args); }
@@ -29,6 +31,18 @@ async function write(id, target, patch = {}, overrides = {}) {
   return service('SELECT public.crm_lead_stage_write_v1($1,$2,$3,$4,$5,$6) AS value',
     [id, overrides.company || COMPANY, overrides.actor || actor, overrides.expectedStage || l.stage_id,
       l.type, JSON.stringify({ stage_id: stages[target], ...patch })]);
+}
+async function evidenceEligibility(id,e) {
+  const lead=await current(id);
+  const h=(await admin('SELECT * FROM public.crm_lead_stage_history WHERE id=$1',[e.stage_history_id])).rows[0];
+  const stage=(await admin('SELECT * FROM public.crm_pipeline_stages WHERE id=$1',[lead.stage_id])).rows[0];
+  const p=(await admin('SELECT * FROM public.crm_pipelines WHERE id=$1',[stage.pipeline_id])).rows[0];
+  // Exporters receive PostgREST ISO strings, whereas the SQL driver returns Date.
+  const [eventProof,historyProof]=JSON.parse(JSON.stringify([e,h]));
+  const js=stageQualificationReason(eventProof,lead,{histories:new Map([[h.id,historyProof]]),stages:new Map([[stage.id,stage]]),pipelines:new Map([[p.id,p]])});
+  const sql=(await service('SELECT public.crm_qualification_evidence_current_v1($1) ok',[e.id])).rows[0].ok;
+  assert.equal(sql,js===null,'SQL and JS must agree on current-stage eligibility');
+  return sql;
 }
 test('migration is future-only and service-only; no synthetic manual proof is created by adding it', async () => {
   assert.equal((await admin('SELECT count(*)::int n FROM public.p1_qualification_events')).rows[0].n, 0);
@@ -72,6 +86,40 @@ test('Cold regression holds stage-based qualification and valid re-entry resumes
   assert.equal((await service('SELECT public.crm_qualification_evidence_current_v1($1) ok', [first.id])).rows[0].ok, false);
   await write(id, 'hot'); assert.deepEqual(await events(id), [first]);
   assert.equal((await service('SELECT public.crm_qualification_evidence_current_v1($1) ok', [first.id])).rows[0].ok, true);
+});
+test('Warm to both known forward stages preserves one first event and SQL/JS eligibility; Cold/lost/unknown still hold',async()=>{
+  const id=await fixture();await write(id,'warm');const[first]=await events(id);
+  for(const target of ['survey_scheduled','survey_done']) {
+    await write(id,target);assert.deepEqual(await events(id),[first]);
+    assert.equal(await evidenceEligibility(id,first),true);
+  }
+  for(const target of ['cold','lost','unknown']) {
+    await write(id,target);assert.equal(await evidenceEligibility(id,first),false);
+    await write(id,'survey_done');assert.equal(await evidenceEligibility(id,first),true);
+    assert.deepEqual(await events(id),[first]);
+  }
+});
+test('direct Cold to a forward stage and old forward rows do not create or backfill qualification',async()=>{
+  for(const target of ['survey_scheduled','survey_done']) {
+    const id=await fixture();await write(id,target);await write(id,target);assert.equal((await events(id)).length,0);
+    const old=await fixture(target);await write(old,target);assert.equal((await events(old)).length,0);
+  }
+});
+test('forward-stage evidence still requires active same-pipeline/company metadata and honors later manual revocation',async()=>{
+  const id=await fixture();await write(id,'hot');const[first]=await events(id);await write(id,'survey_done');
+  await admin('UPDATE public.crm_pipeline_stages SET is_active=false WHERE id=$1',[stages.survey_done]);
+  assert.equal(await evidenceEligibility(id,first),false);
+  await admin('UPDATE public.crm_pipeline_stages SET is_active=true WHERE id=$1',[stages.survey_done]);
+  await admin('UPDATE public.crm_pipelines SET company_id=$1 WHERE id=$2',[OTHER,pipeline]);
+  assert.equal(await evidenceEligibility(id,first),false);
+  await admin('UPDATE public.crm_pipelines SET company_id=$1 WHERE id=$2',[COMPANY,pipeline]);
+  assert.equal(await evidenceEligibility(id,first),true);
+  await admin(`INSERT INTO public.p1_qualification_events(company_id,canonical_lead_id,revision,status,
+    contact_usable,need_in_scope,area_in_service,actor_id,request_id,context_hash,input)
+    VALUES($1,$2,2,'PENDING',false,false,false,$3,$4,$5,'{}'::jsonb)`,
+    [COMPANY,id,actor,'fixture-revoke:'+id,first.context_hash]);
+  await write(id,'warm');await write(id,'survey_done');
+  const list=await events(id);assert.equal(list.length,2);assert.equal(list.at(-1).status,'PENDING');
 });
 test('unknown/inactive or cross-company stage configuration cannot keep policy evidence eligible',async()=>{
   const id=await fixture();await write(id,'warm');const[e]=await events(id);
@@ -142,12 +190,39 @@ test('real website sender SQL accepts recorded policy evidence and holds Cold/re
     {target,mode:'test'});
   const out=(await service('SELECT public.web_feedback_enqueue_v1($1) value',[JSON.stringify(row)])).rows[0].value;
   assert.equal((await service('SELECT public.web_feedback_source_current_v1($1) ok',[out.id])).rows[0].ok,true);
+  for(const forward of ['survey_scheduled','survey_done']) {
+    await write(id,forward);
+    assert.equal((await service('SELECT public.web_feedback_source_current_v1($1) ok',[out.id])).rows[0].ok,true);
+    const retained=(await service('SELECT public.web_feedback_enqueue_v1($1) value',[JSON.stringify(row)])).rows[0].value;
+    assert.equal(retained.id,out.id);assert.equal(retained.event_id,out.event_id);assert.deepEqual(await events(id),[e]);
+  }
   await write(id,'cold');
   assert.equal((await service('SELECT public.web_feedback_source_current_v1($1) ok',[out.id])).rows[0].ok,false);
   await write(id,'hot');
   assert.equal((await service('SELECT public.web_feedback_source_current_v1($1) ok',[out.id])).rows[0].ok,true);
   const same=(await service('SELECT public.web_feedback_enqueue_v1($1) value',[JSON.stringify(row)])).rows[0].value;
   assert.equal(same.id,out.id);assert.equal(same.attempts,0);assert.equal((await events(id)).length,1);
+  await admin(`INSERT INTO public.p1_qualification_events(company_id,canonical_lead_id,revision,status,
+    contact_usable,need_in_scope,area_in_service,actor_id,request_id,context_hash,input)
+    VALUES($1,$2,2,'PENDING',false,false,false,$3,$4,$5,'{}'::jsonb)`,
+    [COMPANY,id,actor,'fixture-outbox-revoke:'+id,e.context_hash]);
+  await write(id,'survey_done');
+  assert.equal((await service('SELECT public.web_feedback_source_current_v1($1) ok',[out.id])).rows[0].ok,false);
+});
+test('forward migration rejects a changed old evidence body atomically instead of silently replacing unrelated policy',async()=>{
+  const original=(await admin("SELECT pg_get_functiondef('public.crm_qualification_evidence_current_v1(uuid)'::regprocedure) definition")).rows[0].definition;
+  const old=read('20261015020200_crm_stage_qualification_policy.sql').replace(/\r\n/g,'\n');
+  const oldFunction=old.slice(old.indexOf('CREATE FUNCTION public.crm_qualification_evidence_current_v1'),
+    old.indexOf('REVOKE ALL ON FUNCTION public.crm_qualification_evidence_current_v1'))
+    .replace('CREATE FUNCTION','CREATE OR REPLACE FUNCTION').replace('  RETURN true;\nEND $$;',()=> '  RETURN false;\nEND $$;');
+  try {
+    await db.exec(oldFunction);
+    const altered=(await admin("SELECT prosrc FROM pg_proc WHERE oid='public.crm_qualification_evidence_current_v1(uuid)'::regprocedure")).rows[0].prosrc;
+    assert.ok(altered.includes('  RETURN false;'));
+    await assert.rejects(()=>db.exec(read('20261015050300_crm_qualification_forward_stages.sql')),/FORWARD_STAGE_EVIDENCE_BASELINE_MISMATCH/);
+    await db.exec('ROLLBACK');
+    assert.equal((await admin("SELECT prosrc FROM pg_proc WHERE oid='public.crm_qualification_evidence_current_v1(uuid)'::regprocedure")).rows[0].prosrc,altered);
+  } finally {await db.exec('ROLLBACK');await db.exec(original);}
 });
 
 (async () => {
@@ -165,6 +240,16 @@ test('real website sender SQL accepts recorded policy evidence and holds Cold/re
     VALUES($1,$2,$3,$3,$4,$5)`, [id,pipeline,slug,slug==='deal'?'deal':slug==='lost'?'both':'lead',slug==='lost']);
   await db.exec(read('145_crm_stage_history.sql'));
   await db.exec(read('20261015020200_crm_stage_qualification_policy.sql'));
+  const functionsBefore=(await admin(`SELECT p.proname,p.proacl::text,p.prosecdef,p.provolatile,p.proconfig,
+    CASE WHEN p.proname='crm_lead_stage_write_v1' THEN p.prosrc ELSE NULL END AS creation_source
+    FROM pg_proc p WHERE p.oid IN('public.crm_qualification_evidence_current_v1(uuid)'::regprocedure,
+      'public.crm_lead_stage_write_v1(uuid,uuid,uuid,uuid,text,jsonb)'::regprocedure) ORDER BY p.proname`)).rows;
+  await db.exec(read('20261015050300_crm_qualification_forward_stages.sql'));
+  assert.deepEqual((await admin(`SELECT p.proname,p.proacl::text,p.prosecdef,p.provolatile,p.proconfig,
+    CASE WHEN p.proname='crm_lead_stage_write_v1' THEN p.prosrc ELSE NULL END AS creation_source
+    FROM pg_proc p WHERE p.oid IN('public.crm_qualification_evidence_current_v1(uuid)'::regprocedure,
+      'public.crm_lead_stage_write_v1(uuid,uuid,uuid,uuid,text,jsonb)'::regprocedure) ORDER BY p.proname`)).rows,functionsBefore,
+    'forward migration must preserve ACL/security metadata and the unchanged qualification-creation RPC');
   let passed=0;
   for (const {name,run} of tests) { await run(); passed++; console.log('PASS '+name); }
   console.log(`${passed}/${tests.length} actual PostgreSQL stage-policy tests passed.`);

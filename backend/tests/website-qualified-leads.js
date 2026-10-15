@@ -144,6 +144,23 @@ test('stage-based website quality preserves consent, receipt, matching and conta
   assert.equal((await run(noFbc)).rows[0].delivery_supported,false);
   await assert.rejects(run(stagePolicy(fixture()), {fail:'crm_lead_stage_history'}),/SOURCE_UNAVAILABLE/);
 });
+test('known forward Lead stages preserve first Meta event/time; Cold/lost/unknown and revoked evidence remain held',async()=>{
+  const {prepareWebsiteFeedback}=require('../src/modules/marketingAutomation/websiteFeedbackOutbox');
+  const target={company_id:COMPANY,ad_account_id:'act_'+ACCOUNT,site_host:'vanphuthanh.net',dataset_id:'1575398160676100'};
+  const t=stagePolicy(fixture()),first=(await run(t)).rows[0],event=prepareWebsiteFeedback(first,{target,mode:'test'});
+  for(const slug of ['survey_scheduled','survey_done']) {
+    t.crm_pipeline_stages[0].canonical_slug=slug;const next=(await run(t)).rows[0];
+    assert.equal(next.qualified_ms,first.qualified_ms);
+    assert.equal(prepareWebsiteFeedback(next,{target,mode:'test'}).event_id,event.event_id);
+  }
+  for(const slug of ['cold','lost','unknown_forward']) {
+    t.crm_pipeline_stages[0].canonical_slug=slug;
+    assert.equal((await run(t)).diagnostics.stage_policy_held,1);
+  }
+  t.crm_pipeline_stages[0].canonical_slug='survey_done';
+  t.p1_qualification_events.push({...t.p1_qualification_events[0],id:U(999),revision:2,status:'PENDING',qualification_method:'manual_v1'});
+  assert.equal((await run(t)).rows.length,0);
+});
 test('deleted stage-qualified lead does not block a valid website customer or enter feedback source',async()=>{
   const t=stagePolicy(fixture());
   t.p1_qualification_events.push({...t.p1_qualification_events[0],id:U(899),canonical_lead_id:U(898),stage_history_id:U(897)});

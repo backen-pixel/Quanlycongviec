@@ -12,6 +12,8 @@ Dry-run guarded repair thực tế đã **PASS/0 hàng nghiệp vụ đổi** sa
 
 Checkpoint tiếp **04:57:36 UTC**: v2 migration history `20261015045650` đã áp; snapshot mã hóa `07d1bf6f-3c65-4337-b246-8eaf78c813bb` tạo/decrypt/read-back thật, ciphertext120.495byte, applied_at/result NULL, không hàng nghiệp vụ đổi. **3/3 CI SUCCESS tại `7b5f74f4`**. Health04:58:50 cùng process4435s: queue2977/enqueued4578/applied1566/failed442; chưa khôi phục replication. Snapshot này giới hạn ba hàng và phải làm lại sau thay catalog/arm journal, không chứng minh RAM/fullbackup đã bảo toàn.
 
+Candidate forward-stage giữ mốc khi khách đã đủ điều kiện tiến sang `survey_scheduled`/`survey_done`, vẫn giữ Cold/lost/unknown; không tạo qualification trực tiếp Cold→khảo sát. Cách hiểu này đã báo Founder trong khi câu hỏi tùy chọn còn chờ, không ghi thành quyết định mới đã xác nhận riêng. New migration chỉ thay evidence predicate; creation RPC không đổi. **15 SQL stage +21 SQL website +129 Node scoped của reviewer đạt; frontend build39,57s đạt**. Capture v1 năm bảng đã commit `ea22101e`, 19 SQL/review đạt nhưng chưa áp/arm, luôn readiness false; full-universe headroom cần đăng nhập Supabase (tab đã mở/câu hỏi đang chờ), không mở rộng DDL hoặc restart trước đủ bằng chứng.
+
 ---
 
 ## 2026-10-14 12:47 — VPT: cột backup đã sửa, replication vẫn lỗi riêng
