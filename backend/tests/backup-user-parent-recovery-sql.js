@@ -10,6 +10,8 @@ const secret=Buffer.alloc(32,17).toString('base64'); // Synthetic isolated fixtu
 const keyId='99999999-9999-4999-8999-999999999999';
 const migration=fs.readFileSync(path.resolve(__dirname,'../../database/20261015041536_vpt_bounded_recovery_private_snapshot.sql'),'utf8');
 const keyMigration=fs.readFileSync(path.resolve(__dirname,'../../database/20261015045032_vpt_recovery_dedicated_snapshot_key_v2.sql'),'utf8');
+const journalMigration=fs.readFileSync(path.resolve(__dirname,'../../database/20261015050417_replication_cutover_preservation.sql'),'utf8');
+const journal=require('../scripts/preserve-replication-cutover-20261015');
 const tests=[]; const test=(name,run)=>tests.push({name,run});
 const extra='77777777-7777-4777-8777-777777777777';
 const schema=`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role BYPASSRLS; CREATE ROLE authenticator;
@@ -71,8 +73,19 @@ async function state(db) {
     result[table]=(await db.query(`SELECT to_jsonb(t) AS row FROM public.${table} t ORDER BY to_jsonb(t)::text`)).rows.map(r=>r.row);
   return result;
 }
+async function allPublicRows(db) {
+  const result={};
+  const tables=(await db.query(`SELECT c.relname::text AS name FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname='public' AND c.relkind='r' ORDER BY c.relname`)).rows;
+  for(const table of tables) result[table.name]=(await db.query(`SELECT to_jsonb(t) AS row FROM public."${table.name.replaceAll('"','""')}" t ORDER BY to_jsonb(t)::text`)).rows.map(r=>r.row);
+  return result;
+}
 async function snapshot(pair) {return recover({...pair,mode:'snapshot',secret,keyId});}
 async function apply(pair,created,opts={}) {return recover({...pair,mode:'apply',secret,keyId,snapshotId:created.snapshot_id,...opts});}
+async function armJournal(pair) {
+  for(const db of [pair.primary,pair.backup]) await db.exec(journalMigration);
+  return journal.preserve({...pair,mode:'arm',tables:['departments','users']});
+}
 async function denied(db,sql,role) {
   await db.exec('SET ROLE '+role);
   try {await assert.rejects(()=>db.query(sql),e=>e.code==='42501');} finally {await db.exec('RESET ROLE');}
@@ -348,6 +361,272 @@ test('key input arguments never accept a secret value in command-line options',a
   assert.throws(()=>recovery.parseArgs(['--snapshot','--snapshot-key','must-not-be-accepted']),/RECOVERY_ARGUMENT_INVALID/);
   assert.throws(()=>recovery.parseArgs(['--dry-run','--snapshot-key-stdin']),/RECOVERY_ARGUMENT_INVALID/);
 });
+test('exact armed journals require a fresh snapshot and preserve three repair events without altering source or owner references',()=>withDB(async pair=>{
+  for(const db of [pair.primary,pair.backup]) await db.exec('UPDATE public.users SET salary=12.3400');
+  const old=await snapshot(pair),p=await state(pair.primary),b=await state(pair.backup);
+  const run=await armJournal(pair);
+  await assert.rejects(()=>apply(pair,old),e=>e.recoveryCode==='RECOVERY_SNAPSHOT_STATE_CHANGED');
+  assert.deepEqual(await state(pair.primary),p);assert.deepEqual(await state(pair.backup),b);
+  const fresh=await snapshot(pair),saved=(await pair.backup.query(`SELECT * FROM ${STORE} WHERE id=$1`,[fresh.snapshot_id])).rows[0];
+  const payload=recovery.decrypt(saved,secret,keyId);
+  assert.equal(payload.catalog.users.journal.primary.registration.run_id,run.run_id);
+  assert.equal(payload.catalog.departments.journal.backup.registration.run_id,run.run_id);
+  assert.deepEqual((await apply(pair,fresh)).committed,{alias_email_updates:1,department_inserts:1,user_inserts:1});
+  const events=(await pair.backup.query(`SELECT * FROM ${journal.NS}.events ORDER BY id`)).rows;
+  assert.equal(events.length,3);assert.equal((await pair.primary.query(`SELECT count(*)::int n FROM ${journal.NS}.events`)).rows[0].n,0);
+  assert.equal(events.filter(e=>e.table_name==='users' && e.operation==='UPDATE').length,1);
+  assert.doesNotMatch(JSON.stringify(events),/fixture-.*hash|example\.invalid/);
+  assert.deepEqual(await state(pair.primary),p);assert.deepEqual((await state(pair.backup)).crm_leads,b.crm_leads);
+}));
+test('journal function body, SECURITY DEFINER, exact settings and owner-only function ACL cannot drift',()=>withDB(async pair=>{
+  await armJournal(pair);
+  const fn=journal.NS+'.capture_identity_change()';
+  const original=(await pair.primary.query('SELECT pg_get_functiondef($1::regprocedure) definition',[fn])).rows[0].definition;
+  const before=await state(pair.backup);
+  const mutations=[`ALTER FUNCTION ${fn} SECURITY INVOKER`,`ALTER FUNCTION ${fn} STABLE`,`ALTER FUNCTION ${fn} SET search_path=public`,
+    `ALTER FUNCTION ${fn} SET timezone='Asia/Ho_Chi_Minh'`,`GRANT EXECUTE ON FUNCTION ${fn} TO authenticated`];
+  for(const mutation of mutations) {
+    await pair.primary.exec(mutation);
+    await assert.rejects(()=>recover({...pair,mode:'snapshot',secret,keyId}),e=>e.recoveryCode==='RECOVERY_JOURNAL_FUNCTION_CHANGED');
+    await pair.primary.exec(original);await pair.primary.exec(`REVOKE ALL ON FUNCTION ${fn} FROM PUBLIC,anon,authenticated,service_role,authenticator`);
+  }
+  const run=(await pair.primary.query(`SELECT * FROM ${journal.NS}.runs`)).rows[0];
+  await pair.primary.exec(`CREATE OR REPLACE FUNCTION ${fn} RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog SET timezone='UTC' AS $$ BEGIN RETURN NULL; END $$`);
+  const altered=(await pair.primary.query('SELECT prosrc,pg_get_functiondef(oid) definition FROM pg_proc WHERE oid=$1::regprocedure',[fn])).rows[0];
+  const definition={...run.definition,capture_body_sha256:crypto.createHash('sha256').update(altered.prosrc.replace(/\r\n/g,'\n')).digest('hex'),
+    capture_function_sha256:crypto.createHash('sha256').update(altered.definition).digest('hex')};
+  await pair.primary.query(`UPDATE ${journal.NS}.runs SET definition=$1,definition_sha256=$2`,[definition,recovery.fingerprint(definition)]);
+  await assert.rejects(()=>recover({...pair,mode:'snapshot',secret,keyId}),e=>e.recoveryCode==='RECOVERY_JOURNAL_FUNCTION_CHANGED');
+  assert.deepEqual(await state(pair.backup),before);
+}));
+test('journal triggers must be the exact ALWAYS pair with reviewed function, type and no extra trigger',()=>withDB(async pair=>{
+  await armJournal(pair);const cap='vpt_cutover_identity_20261015',trunc='vpt_cutover_truncate_20261015';
+  for(const mode of ['DISABLE','ENABLE REPLICA','ENABLE']) {
+    await pair.backup.exec(`ALTER TABLE public.users ${mode} TRIGGER ${cap}`);
+    await assert.rejects(()=>recover({...pair,mode:'snapshot',secret,keyId}),e=>e.recoveryCode==='RECOVERY_JOURNAL_TRIGGER_CHANGED');
+    await pair.backup.exec(`ALTER TABLE public.users ENABLE ALWAYS TRIGGER ${cap}`);
+  }
+  const original=(await pair.backup.query('SELECT pg_get_triggerdef(oid,true) definition FROM pg_trigger WHERE tgrelid=$1::regclass AND tgname=$2',['public.users',cap])).rows[0].definition;
+  await pair.backup.exec(`DROP TRIGGER ${cap} ON public.users;CREATE TRIGGER ${cap} AFTER INSERT ON public.users FOR EACH ROW EXECUTE FUNCTION ${journal.NS}.capture_identity_change();ALTER TABLE public.users ENABLE ALWAYS TRIGGER ${cap}`);
+  await assert.rejects(()=>recover({...pair,mode:'snapshot',secret,keyId}),e=>e.recoveryCode==='RECOVERY_JOURNAL_TRIGGER_CHANGED');
+  await pair.backup.exec(`DROP TRIGGER ${cap} ON public.users;${original};ALTER TABLE public.users ENABLE ALWAYS TRIGGER ${cap}`);
+  await pair.backup.exec(`CREATE FUNCTION public.fixture_extra_journal() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW;END $$;CREATE TRIGGER fixture_extra BEFORE UPDATE ON public.users FOR EACH ROW EXECUTE FUNCTION public.fixture_extra_journal()`);
+  await assert.rejects(()=>recover({...pair,mode:'snapshot',secret,keyId}),e=>e.recoveryCode==='RECOVERY_TRIGGER_CHANGED');
+  await pair.backup.exec(`DROP TRIGGER fixture_extra ON public.users;DROP TRIGGER ${cap} ON public.users;DROP TRIGGER ${trunc} ON public.users`);
+  await assert.rejects(()=>recover({...pair,mode:'snapshot',secret,keyId}),e=>e.recoveryCode==='RECOVERY_JOURNAL_TRIGGER_MISSING');
+}));
+test('journal registration validates project/site, catalog, sorted scope and one run across both projects',()=>withDB(async pair=>{
+  await armJournal(pair);
+  const run=(await pair.backup.query(`SELECT * FROM ${journal.NS}.runs`)).rows[0];
+  const before=await state(pair.backup);
+  for(const change of [{project_ref:recovery.PRIMARY},{site:'primary'},{tables:['users','departments']},{capture_body_sha256:'0'.repeat(64)},{unsupported_contract_version:2}]) {
+    const d={...run.definition,...change};
+    await pair.backup.query(`UPDATE ${journal.NS}.runs SET definition=$1,definition_sha256=$2`,[d,recovery.fingerprint(d)]);
+    await assert.rejects(()=>recover({...pair,mode:'snapshot',secret,keyId}),e=>e.recoveryCode==='RECOVERY_JOURNAL_REGISTRATION_CHANGED');
+  }
+  await pair.backup.query(`UPDATE ${journal.NS}.runs SET definition=$1,definition_sha256=$2`,[run.definition,run.definition_sha256]);
+  const registered=(await pair.backup.query(`SELECT catalog_sha256 FROM ${journal.NS}.registrations WHERE table_name='users'`)).rows[0];
+  await pair.backup.query(`UPDATE ${journal.NS}.registrations SET catalog_sha256=$1 WHERE table_name='users'`,['0'.repeat(64)]);
+  await assert.rejects(()=>recover({...pair,mode:'snapshot',secret,keyId}),e=>e.recoveryCode==='RECOVERY_JOURNAL_REGISTRATION_CHANGED');
+  await pair.backup.query(`UPDATE ${journal.NS}.registrations SET catalog_sha256=$1 WHERE table_name='users'`,[registered.catalog_sha256]);
+  const otherRun=crypto.randomUUID();
+  await pair.backup.query(`INSERT INTO ${journal.NS}.runs(id,operation,site,definition,definition_sha256) VALUES($1,$2,$3,$4,$5)`,
+    [otherRun,run.operation,run.site,run.definition,run.definition_sha256]);
+  await pair.backup.query(`UPDATE ${journal.NS}.registrations SET run_id=$1`,[otherRun]);
+  await assert.rejects(()=>recover({...pair,mode:'snapshot',secret,keyId}),e=>e.recoveryCode==='RECOVERY_JOURNAL_PAIR_INCOMPLETE');
+  assert.deepEqual(await state(pair.backup),before);
+}));
+test('journal private schema/table or sequence app grants block the repair before a snapshot or business write',()=>withDB(async pair=>{
+  await armJournal(pair);
+  const before=await state(pair.backup);
+  await pair.primary.exec(`GRANT SELECT ON ${journal.NS}.events TO service_role`);
+  await assert.rejects(()=>recover({...pair,mode:'snapshot',secret,keyId}),e=>e.recoveryCode==='RECOVERY_JOURNAL_PRIVATE_REQUIRED');
+  await pair.primary.exec(`REVOKE ALL ON ${journal.NS}.events FROM service_role;GRANT USAGE ON SEQUENCE ${journal.NS}.events_id_seq TO authenticated`);
+  await assert.rejects(()=>recover({...pair,mode:'snapshot',secret,keyId}),e=>e.recoveryCode==='RECOVERY_JOURNAL_PRIVATE_REQUIRED');
+  await pair.primary.exec(`REVOKE ALL ON SEQUENCE ${journal.NS}.events_id_seq FROM authenticated;CREATE POLICY fixture_extra ON ${journal.NS}.events TO authenticated USING(true)`);
+  await assert.rejects(()=>recover({...pair,mode:'snapshot',secret,keyId}),e=>e.recoveryCode==='RECOVERY_JOURNAL_PRIVATE_REQUIRED');
+  assert.deepEqual(await state(pair.backup),before);
+}));
+test('public rewrite rules cannot add hidden writes with or without the exact journal',()=>withDB(async pair=>{
+  const before=await state(pair.backup);
+  for(const db of [pair.primary,pair.backup]) await db.exec('CREATE TABLE public.fixture_unplanned_sideeffect(id integer)');
+  for(const armed of [false,true]) {
+    if(armed) await armJournal(pair);
+    const created=await snapshot(pair);
+    for(const db of [pair.primary,pair.backup]) for(const table of ['users','departments']) {
+      const operation=table==='users'?'UPDATE':'INSERT';
+      await db.exec(`CREATE RULE fixture_unplanned AS ON ${operation} TO public.${table} DO ALSO INSERT INTO public.fixture_unplanned_sideeffect VALUES(1)`);
+      await assert.rejects(()=>snapshot(pair),e=>e.recoveryCode==='RECOVERY_PUBLIC_RULE_CHANGED');
+      await assert.rejects(()=>apply(pair,created),e=>e.recoveryCode==='RECOVERY_PUBLIC_RULE_CHANGED');
+      assert.equal((await db.query('SELECT count(*)::int n FROM public.fixture_unplanned_sideeffect')).rows[0].n,0);
+      await db.exec(`DROP RULE fixture_unplanned ON public.${table}`);
+    }
+  }
+  assert.deepEqual(await state(pair.backup),before);
+}));
+test('private journal rewrite rules are rejected on every table and project before they can discard or redirect events',()=>withDB(async pair=>{
+  await armJournal(pair);const before=await state(pair.backup);
+  for(const db of [pair.primary,pair.backup]) for(const table of ['runs','registrations','events','artifacts']) {
+    await db.exec(`CREATE RULE fixture_discard AS ON INSERT TO ${journal.NS}.${table} DO INSTEAD NOTHING`);
+    await assert.rejects(()=>snapshot(pair),e=>e.recoveryCode==='RECOVERY_JOURNAL_PRIVATE_HOOK_CHANGED');
+    await db.exec(`DROP RULE fixture_discard ON ${journal.NS}.${table}`);
+  }
+  assert.equal((await pair.backup.query(`SELECT count(*)::int n FROM ${STORE}`)).rows[0].n,0);
+  assert.deepEqual(await state(pair.backup),before);
+}));
+test('private journal noninternal triggers cannot introduce writes on any of the four tables',()=>withDB(async pair=>{
+  await armJournal(pair);const before=await state(pair.backup);
+  for(const db of [pair.primary,pair.backup]) {
+    await db.exec(`CREATE TABLE public.fixture_unplanned_sideeffect(id integer);
+      CREATE FUNCTION public.fixture_private_hook() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN INSERT INTO public.fixture_unplanned_sideeffect VALUES(1);RETURN NEW;END $$`);
+    for(const table of ['runs','registrations','events','artifacts']) {
+      await db.exec(`CREATE TRIGGER fixture_hook BEFORE INSERT ON ${journal.NS}.${table} FOR EACH ROW EXECUTE FUNCTION public.fixture_private_hook()`);
+      await assert.rejects(()=>snapshot(pair),e=>e.recoveryCode==='RECOVERY_JOURNAL_PRIVATE_HOOK_CHANGED');
+      await db.exec(`DROP TRIGGER fixture_hook ON ${journal.NS}.${table}`);
+    }
+    assert.equal((await db.query('SELECT count(*)::int n FROM public.fixture_unplanned_sideeffect')).rows[0].n,0);
+  }
+  assert.deepEqual(await state(pair.backup),before);
+}));
+test('missing, extra or tampered same-transaction journal events roll back all three writes and the snapshot mark',async()=>{
+  for(const fault of ['missing','extra','digest']) {
+    // A CLI attempt opens fresh connections. Isolate each adversarial DDL fault
+    // too, rather than inheriting a PGlite SPI plan from the prior rollback.
+    await withDB(async pair=>{
+    await armJournal(pair);const created=await snapshot(pair),before=await allPublicRows(pair.backup);
+    const snapshotBefore=(await pair.backup.query(`SELECT applied_at,result FROM ${STORE} WHERE id=$1`,[created.snapshot_id])).rows[0];
+    let injected=false;
+    const backup={query:async(sql,args)=>{
+      if(!injected && fault==='missing' && sql.startsWith('UPDATE public.users SET email')) {
+        injected=true;await pair.backup.exec(`CREATE RULE fixture_discard_events AS ON INSERT TO ${journal.NS}.events DO INSTEAD NOTHING`);
+      }
+      const result=await pair.backup.query(sql,args);
+      if(!injected && sql.startsWith('INSERT INTO public.\"users\"')) {
+        injected=true;
+        if(fault==='extra') await pair.backup.exec(`INSERT INTO ${journal.NS}.events(run_id,table_name,operation,transaction_id,old_key,new_key,old_context,new_context,old_digest,new_digest,touched_columns)
+          SELECT run_id,table_name,operation,transaction_id,old_key,new_key,old_context,new_context,old_digest,new_digest,touched_columns FROM ${journal.NS}.events ORDER BY id LIMIT 1`);
+        else await pair.backup.exec(`UPDATE ${journal.NS}.events SET new_digest=repeat('0',64) WHERE operation='UPDATE'`);
+      }
+      return result;
+    }};
+    await assert.rejects(()=>apply({...pair,backup},created),e=>e.recoveryCode==='RECOVERY_JOURNAL_REPAIR_NOT_CONFIRMED');
+    assert.equal(injected,true);assert.deepEqual(await allPublicRows(pair.backup),before);
+    assert.equal((await pair.backup.query(`SELECT count(*)::int n FROM ${journal.NS}.events`)).rows[0].n,0);
+    assert.deepEqual((await pair.backup.query(`SELECT applied_at,result FROM ${STORE} WHERE id=$1`,[created.snapshot_id])).rows[0],snapshotBefore);
+    assert.equal((await pair.backup.query(`SELECT count(*)::int n FROM pg_rewrite WHERE ev_class=$1::regclass`,[journal.NS+'.events'])).rows[0].n,0);
+    });
+  }
+  await withDB(async pair=>{
+  await armJournal(pair);const created=await snapshot(pair);
+  await pair.backup.exec(`INSERT INTO ${journal.NS}.events(run_id,table_name,operation,transaction_id,new_key,touched_columns)
+    SELECT id,'users','INSERT',txid_current(),jsonb_build_object('id','unrelated-previous-transaction'),ARRAY['id'] FROM ${journal.NS}.runs`);
+  assert.deepEqual((await apply(pair,created)).committed,{alias_email_updates:1,department_inserts:1,user_inserts:1});
+  assert.equal((await pair.backup.query(`SELECT count(*)::int n FROM ${journal.NS}.events`)).rows[0].n,4);
+  });
+});
+test('private rollback snapshot rules or triggers cannot redirect the snapshot or its applied marker',()=>withDB(async pair=>{
+  await pair.backup.exec(`CREATE RULE fixture_snapshot_rule AS ON UPDATE TO ${STORE} DO INSTEAD NOTHING`);
+  await assert.rejects(()=>snapshot(pair),e=>e.recoveryCode==='RECOVERY_PRIVATE_STORE_HOOK_CHANGED');
+  await pair.backup.exec(`DROP RULE fixture_snapshot_rule ON ${STORE};
+    CREATE FUNCTION public.fixture_snapshot_hook() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW;END $$;
+    CREATE TRIGGER fixture_snapshot_trigger BEFORE INSERT ON ${STORE} FOR EACH ROW EXECUTE FUNCTION public.fixture_snapshot_hook()`);
+  await assert.rejects(()=>snapshot(pair),e=>e.recoveryCode==='RECOVERY_PRIVATE_STORE_HOOK_CHANGED');
+  assert.equal((await pair.backup.query(`SELECT count(*)::int n FROM ${STORE}`)).rows[0].n,0);
+}));
+test('all five private tables reject added volatile defaults before snapshot and after snapshot without hidden business writes',()=>withDB(async pair=>{
+  await armJournal(pair);
+  await pair.backup.exec(`CREATE TABLE public.fixture_unplanned_default(id integer);
+    CREATE FUNCTION public.fixture_default() RETURNS integer LANGUAGE plpgsql VOLATILE AS $$
+    BEGIN INSERT INTO public.fixture_unplanned_default VALUES(1);RETURN 1;END $$`);
+  const created=await snapshot(pair);
+  for(const table of [STORE,...['runs','registrations','events','artifacts'].map(t=>journal.NS+'.'+t)]) {
+    await pair.backup.exec(`ALTER TABLE ${table} ADD COLUMN fixture_extra integer DEFAULT public.fixture_default()`);
+    // ADD COLUMN itself evaluates a volatile default for preexisting private
+    // rows. Reset that deliberate fixture setup effect before calling the tool.
+    await pair.backup.exec('TRUNCATE public.fixture_unplanned_default');
+    const before=await allPublicRows(pair.backup),count=(await pair.backup.query(`SELECT count(*)::int n FROM ${STORE}`)).rows[0].n;
+    await assert.rejects(()=>snapshot(pair),e=>e.recoveryCode==='RECOVERY_PRIVATE_CATALOG_CHANGED');
+    await assert.rejects(()=>apply(pair,created),e=>e.recoveryCode==='RECOVERY_PRIVATE_CATALOG_CHANGED');
+    assert.deepEqual(await allPublicRows(pair.backup),before);
+    assert.equal((await pair.backup.query(`SELECT count(*)::int n FROM ${STORE}`)).rows[0].n,count);
+    assert.deepEqual((await pair.backup.query(`SELECT applied_at,result FROM ${STORE} WHERE id=$1`,[created.snapshot_id])).rows[0],{applied_at:null,result:null});
+    await pair.backup.exec(`ALTER TABLE ${table} DROP COLUMN fixture_extra`);
+  }
+}));
+test('all five private tables reject extra volatile CHECK constraints before snapshot and after snapshot',()=>withDB(async pair=>{
+  await armJournal(pair);
+  await pair.backup.exec(`CREATE TABLE public.fixture_unplanned_check(id integer);
+    CREATE FUNCTION public.fixture_check() RETURNS boolean LANGUAGE plpgsql VOLATILE AS $$
+    BEGIN INSERT INTO public.fixture_unplanned_check VALUES(1);RETURN true;END $$`);
+  const created=await snapshot(pair);
+  for(const table of [STORE,...['runs','registrations','events','artifacts'].map(t=>journal.NS+'.'+t)]) {
+    await pair.backup.exec(`ALTER TABLE ${table} ADD CONSTRAINT fixture_extra_check CHECK(public.fixture_check())`);
+    await pair.backup.exec('TRUNCATE public.fixture_unplanned_check');
+    const before=await allPublicRows(pair.backup);
+    await assert.rejects(()=>snapshot(pair),e=>e.recoveryCode==='RECOVERY_PRIVATE_CATALOG_CHANGED');
+    await assert.rejects(()=>apply(pair,created),e=>e.recoveryCode==='RECOVERY_PRIVATE_CATALOG_CHANGED');
+    assert.deepEqual(await allPublicRows(pair.backup),before);
+    assert.deepEqual((await pair.backup.query(`SELECT applied_at,result FROM ${STORE} WHERE id=$1`,[created.snapshot_id])).rows[0],{applied_at:null,result:null});
+    await pair.backup.exec(`ALTER TABLE ${table} DROP CONSTRAINT fixture_extra_check`);
+  }
+}));
+test('private column type/null/default/identity, missing columns and expression or partial indexes cannot drift',()=>withDB(async pair=>{
+  await armJournal(pair);const created=await snapshot(pair),events=journal.NS+'.events';
+  const changes=[
+    [`ALTER TABLE ${events} ALTER COLUMN observed_at SET DEFAULT now()`,`ALTER TABLE ${events} ALTER COLUMN observed_at SET DEFAULT clock_timestamp()`],
+    [`ALTER TABLE ${STORE} ALTER COLUMN created_at DROP DEFAULT`,`ALTER TABLE ${STORE} ALTER COLUMN created_at SET DEFAULT clock_timestamp()`],
+    [`ALTER TABLE ${events} ALTER COLUMN table_name DROP NOT NULL`,`ALTER TABLE ${events} ALTER COLUMN table_name SET NOT NULL`],
+    [`ALTER TABLE ${events} ALTER COLUMN new_digest TYPE varchar(64)`,`ALTER TABLE ${events} ALTER COLUMN new_digest TYPE text`],
+    [`ALTER TABLE ${events} ALTER COLUMN id SET GENERATED BY DEFAULT`,`ALTER TABLE ${events} ALTER COLUMN id SET GENERATED ALWAYS`],
+    [`CREATE INDEX fixture_expr ON ${events} ((lower(table_name)))`,`DROP INDEX ${journal.NS}.fixture_expr`],
+    [`CREATE INDEX fixture_partial ON ${events} (table_name) WHERE operation='UPDATE'`,`DROP INDEX ${journal.NS}.fixture_partial`],
+  ];
+  for(const [change,undo] of changes) {
+    await pair.backup.exec(change);
+    await assert.rejects(()=>snapshot(pair),e=>e.recoveryCode==='RECOVERY_PRIVATE_CATALOG_CHANGED');
+    await assert.rejects(()=>apply(pair,created),e=>e.recoveryCode==='RECOVERY_PRIVATE_CATALOG_CHANGED');
+    await pair.backup.exec(undo);
+  }
+  await pair.backup.exec(`ALTER TABLE ${events} DROP COLUMN old_context`);
+  await assert.rejects(()=>snapshot(pair),e=>e.recoveryCode==='RECOVERY_PRIVATE_CATALOG_CHANGED');
+  assert.deepEqual((await pair.backup.query(`SELECT applied_at,result FROM ${STORE} WHERE id=$1`,[created.snapshot_id])).rows[0],{applied_at:null,result:null});
+}));
+test('identity sequence parameters and exact ownership target are pinned while advancing last_value remains valid',()=>withDB(async pair=>{
+  await armJournal(pair);const seq=journal.NS+'.events_id_seq',created=await snapshot(pair);
+  for(const [change,undo] of [[`INCREMENT BY 2`,`INCREMENT BY 1`],[`CACHE 2`,`CACHE 1`],[`START WITH 2`,`START WITH 1`],[`CYCLE`,`NO CYCLE`]]) {
+    await pair.backup.exec(`ALTER SEQUENCE ${seq} ${change}`);
+    await assert.rejects(()=>snapshot(pair),e=>e.recoveryCode==='RECOVERY_JOURNAL_PRIVATE_REQUIRED');
+    await assert.rejects(()=>apply(pair,created),e=>e.recoveryCode==='RECOVERY_JOURNAL_PRIVATE_REQUIRED');
+    await pair.backup.exec(`ALTER SEQUENCE ${seq} ${undo}`);
+  }
+  await pair.backup.exec(`ALTER SEQUENCE ${seq} RENAME TO fixture_identity_sequence`);
+  await assert.rejects(()=>snapshot(pair),e=>e.recoveryCode==='RECOVERY_JOURNAL_PRIVATE_REQUIRED');
+  await pair.backup.exec(`ALTER SEQUENCE ${journal.NS}.fixture_identity_sequence RENAME TO events_id_seq`);
+  await pair.backup.query('SELECT nextval($1::regclass)',[seq]);
+  assert.deepEqual((await apply(pair,created)).committed,{alias_email_updates:1,department_inserts:1,user_inserts:1});
+}));
+test('PG17 private catalog projection omits only redundant PG18 NOT NULL rows and retains strict column nullability guards',()=>withDB(async pair=>{
+  await armJournal(pair);const created=await snapshot(pair);
+  const saved=(await pair.backup.query(`SELECT * FROM ${STORE} WHERE id=$1`,[created.snapshot_id])).rows[0];
+  const payload=recovery.decrypt(saved,secret,keyId),catalogs=[...payload.private_snapshot_catalog,
+    ...payload.catalog.users.journal.backup.private_acl.catalogs];
+  assert.equal(catalogs.length,5);
+  assert.equal(recovery.fingerprint(payload.private_snapshot_catalog[0].catalog),'175c945b272b12c01ff276b893d7d5eaecbe695fed9a60c5a99fdcb24a09c1f4');
+  for(const row of catalogs) {
+    assert.ok(row.catalog.constraints.every(c=>c.type!=='n'));
+    assert.ok(row.catalog.columns.some(c=>c.not_null===true));
+  }
+  // PG17 already lacks these rows. On PG18 this assertion proves that the
+  // projection actually removed them rather than weakening attnotnull checks.
+  const version=Number((await pair.backup.query('SHOW server_version_num')).rows[0].server_version_num);
+  const native=(await pair.backup.query(`SELECT count(*)::int n FROM pg_constraint WHERE contype='n' AND conrelid=$1::regclass`,[STORE])).rows[0].n;
+  if(version>=180000) assert.ok(native>0);else assert.equal(native,0);
+  await pair.backup.exec(`ALTER TABLE ${STORE} ALTER COLUMN source_project DROP NOT NULL`);
+  await assert.rejects(()=>snapshot(pair),e=>e.recoveryCode==='RECOVERY_PRIVATE_CATALOG_CHANGED');
+  await assert.rejects(()=>apply(pair,created),e=>e.recoveryCode==='RECOVERY_PRIVATE_CATALOG_CHANGED');
+  assert.deepEqual((await pair.backup.query(`SELECT applied_at,result FROM ${STORE} WHERE id=$1`,[created.snapshot_id])).rows[0],{applied_at:null,result:null});
+}));
 (async()=>{let passed=0;for(const item of tests){try{await item.run();passed++;console.log('PASS '+item.name);}catch(e){console.error('FAIL '+item.name);console.error(e.stack);process.exitCode=1;break;}}
 console.log(`${passed}/${tests.length} actual PostgreSQL bounded recovery tests passed (PGlite).`);
 })().catch(e=>{console.error(e.stack);process.exitCode=1;});

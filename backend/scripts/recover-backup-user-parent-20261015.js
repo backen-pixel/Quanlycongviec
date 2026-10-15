@@ -12,6 +12,22 @@ const OPERATION = 'same_uuid_email_department_user_v1';
 const ALGORITHM = 'aes-256-gcm/hkdf-sha256/dedicated_key_v2';
 const LEGACY_ALGORITHM = 'aes-256-gcm/hkdf-sha256/jwt_secret_v1';
 const STORE = 'vpt_recovery_20261015.identity_repair_snapshots';
+const JOURNAL_NS='vpt_cutover_20261015',JOURNAL_OP='current_state_cutover_v1';
+const JOURNAL_CAPTURE='vpt_cutover_identity_20261015',JOURNAL_TRUNCATE='vpt_cutover_truncate_20261015';
+// Frozen reviewed trigger function; normalize CRLF only, never arbitrary SQL.
+const JOURNAL_BODY_SHA256='8c9db9d44ac94d5c1b31b5601b7df78cfb4d8dde0f5b2b1a3c2c984b022777eb';
+const JOURNAL_TABLES=Object.freeze(['crm_leads','project_substage_status','users','departments','trash_items']);
+// OID-independent catalog fingerprints from the two applied private snapshot
+// migrations and the frozen cutover migration. No runtime-discovered baseline.
+// PostgreSQL 18 adds contype='n' rows; attnotnull is pinned in every version,
+// so omit only those redundant rows to retain the PostgreSQL 17 contract.
+const PRIVATE_TABLE_SHA256=Object.freeze({
+  'vpt_recovery_20261015.identity_repair_snapshots':'175c945b272b12c01ff276b893d7d5eaecbe695fed9a60c5a99fdcb24a09c1f4',
+  'vpt_cutover_20261015.artifacts':'a29d671e372d550b7314f206b3168ae33a26fe5f01b5b4f3d828ff669b4d6337',
+  'vpt_cutover_20261015.events':'faf8a8ae4fd16d677a7f4c1940607ed68a5ccad52509ea73fdf4a039440ad784',
+  'vpt_cutover_20261015.registrations':'4e7b1544f8031b9f4486de0645233a798b730718503137e28ddd1a962dd708d1',
+  'vpt_cutover_20261015.runs':'0c9d9a038e0b07ea31b51dd1381292b5c6e581c4ddebf20316a15996e915bc31',
+});
 const SCOPE = Object.freeze({
   alias: 'b3da9ac6-b05c-41e6-9a74-0b1defd0a358',
   canonical: '5cc467f8-1394-4f80-8bbc-725953b91df7',
@@ -111,7 +127,126 @@ async function assertRoundTrip(client,table,value) {
     [value.id,JSON.stringify(value)]);
   check(result.rows.length===1 && result.rows[0].exact===true,'RECOVERY_ROW_ROUND_TRIP_UNSAFE');
 }
-async function tableCatalog(client,table) {
+async function rewriteRules(client,relation) {
+  return (await client.query(`SELECT rulename::text,ev_type::text,is_instead,pg_get_ruledef(oid,true) AS definition
+    FROM pg_rewrite WHERE ev_class=$1::regclass ORDER BY rulename`,[relation])).rows;
+}
+async function privateTableCatalogs(client,namespace) {
+  return (await client.query(`SELECT c.relname::text AS table_name,jsonb_build_object(
+    'kind',c.relkind::text,'persistence',c.relpersistence::text,
+    'columns',coalesce((SELECT jsonb_agg(jsonb_build_object('position',a.attnum,'name',a.attname::text,
+      'type',format_type(a.atttypid,a.atttypmod),'not_null',a.attnotnull,'generated',a.attgenerated::text,'identity',a.attidentity::text,
+      'default',pg_get_expr(d.adbin,d.adrelid),'collation',CASE WHEN a.attcollation<>0 THEN cn.nspname||'.'||co.collname END,
+      'only_builtin_default',NOT EXISTS(SELECT 1 FROM pg_depend dep WHERE dep.classid='pg_attrdef'::regclass AND dep.objid=d.oid
+        AND dep.refclassid='pg_proc'::regclass AND dep.refobjid<>'pg_catalog.clock_timestamp()'::regprocedure)) ORDER BY a.attnum)
+      FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+      LEFT JOIN pg_collation co ON co.oid=a.attcollation LEFT JOIN pg_namespace cn ON cn.oid=co.collnamespace
+      WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped),'[]'::jsonb),
+    'constraints',coalesce((SELECT jsonb_agg(jsonb_build_object('name',con.conname::text,'type',con.contype::text,
+      'validated',con.convalidated,'definition',pg_get_constraintdef(con.oid,true)) ORDER BY con.conname)
+      FROM pg_constraint con WHERE con.conrelid=c.oid AND con.contype<>'n'),'[]'::jsonb),
+    'indexes',coalesce((SELECT jsonb_agg(jsonb_build_object('name',ic.relname::text,'definition',pg_get_indexdef(i.indexrelid),
+      'valid',i.indisvalid,'ready',i.indisready,'live',i.indislive,'plain',i.indexprs IS NULL AND i.indpred IS NULL) ORDER BY ic.relname)
+      FROM pg_index i JOIN pg_class ic ON ic.oid=i.indexrelid WHERE i.indrelid=c.oid),'[]'::jsonb)) AS catalog
+    FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname=$1 AND c.relkind IN('r','p','f','v','m') ORDER BY c.relname`,[namespace])).rows;
+}
+async function assertPrivateTableCatalogs(client,namespace) {
+  const rows=await privateTableCatalogs(client,namespace);
+  const expected=Object.keys(PRIVATE_TABLE_SHA256).filter(k=>k.startsWith(namespace+'.'));
+  check(rows.length===expected.length && rows.every(r=>fingerprint(r.catalog)===PRIVATE_TABLE_SHA256[namespace+'.'+r.table_name]),
+    'RECOVERY_PRIVATE_CATALOG_CHANGED');
+  return rows;
+}
+async function journalPrivateStore(client) {
+  const rows=(await client.query(`SELECT n.nspowner=r.oid AND r.rolname='postgres' AS owned,
+    NOT EXISTS(SELECT 1 FROM aclexplode(coalesce(n.nspacl,acldefault('n',n.nspowner))) a WHERE a.grantee<>n.nspowner) AS schema_private,
+    count(t.oid)::int AS tables,bool_and(t.relname=ANY($2::text[]) AND t.relowner=r.oid AND t.relrowsecurity AND t.relforcerowsecurity AND t.relpersistence='p') AS protected,
+    bool_and(NOT EXISTS(SELECT 1 FROM aclexplode(coalesce(t.relacl,acldefault('r',t.relowner))) a WHERE a.grantee<>t.relowner)) AS table_private,
+    bool_and(NOT EXISTS(SELECT 1 FROM pg_roles p WHERE p.rolname IN('anon','authenticated','service_role','authenticator') AND
+      (has_schema_privilege(p.oid,n.oid,'USAGE') OR has_table_privilege(p.oid,t.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')))) AS app_denied,
+    n.nspacl::text AS schema_acl,jsonb_agg(jsonb_build_object('name',t.relname,'acl',t.relacl::text,'rls',t.relrowsecurity,'force',t.relforcerowsecurity) ORDER BY t.relname) AS table_acls
+    FROM pg_namespace n JOIN pg_roles r ON r.rolname=current_user JOIN pg_class t ON t.relnamespace=n.oid AND t.relkind='r'
+    WHERE n.nspname=$1 GROUP BY n.oid,r.oid,r.rolname`,[JOURNAL_NS,['runs','registrations','events','artifacts']])).rows;
+  check(rows.length===1 && rows[0].tables===4 && ['owned','schema_private','protected','table_private','app_denied'].every(k=>rows[0][k]===true),'RECOVERY_JOURNAL_PRIVATE_REQUIRED');
+  const catalogs=await assertPrivateTableCatalogs(client,JOURNAL_NS);
+  const rules=(await client.query(`SELECT c.relname::text AS table_name,r.rulename::text,r.ev_type::text,r.is_instead,pg_get_ruledef(r.oid,true) AS definition
+    FROM pg_rewrite r JOIN pg_class c ON c.oid=r.ev_class JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname=$1 ORDER BY c.relname,r.rulename`,[JOURNAL_NS])).rows;
+  const triggers=(await client.query(`SELECT c.relname::text AS table_name,t.tgname::text,pg_get_triggerdef(t.oid,true) AS definition
+    FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+    WHERE n.nspname=$1 AND NOT t.tgisinternal ORDER BY c.relname,t.tgname`,[JOURNAL_NS])).rows;
+  check(rules.length===0 && triggers.length===0,'RECOVERY_JOURNAL_PRIVATE_HOOK_CHANGED');
+  const policies=(await client.query(`SELECT t.relname::text AS table_name,p.polname::text AS name,p.polpermissive,p.polcmd::text AS command,
+    p.polroles=ARRAY[r.oid]::oid[] AS owner_role,pg_get_expr(p.polqual,p.polrelid) AS using_expr,pg_get_expr(p.polwithcheck,p.polrelid) AS check_expr
+    FROM pg_namespace n JOIN pg_class t ON t.relnamespace=n.oid AND t.relkind='r'
+    JOIN pg_policy p ON p.polrelid=t.oid JOIN pg_roles r ON r.rolname=current_user
+    WHERE n.nspname=$1 ORDER BY t.relname,p.polname`,[JOURNAL_NS])).rows;
+  check(policies.length===4 && new Set(policies.map(p=>p.table_name)).size===4 &&
+    policies.every(p=>p.name==='owner_only' && p.polpermissive && p.command==='*' && p.owner_role && p.using_expr==='true' && p.check_expr==='true'),
+    'RECOVERY_JOURNAL_PRIVATE_REQUIRED');
+  const sequences=(await client.query(`SELECT count(*)::int AS n,bool_and(s.relname='events_id_seq' AND s.relowner=r.oid AND s.relpersistence='p' AND
+    q.seqtypid='bigint'::regtype AND q.seqstart=1 AND q.seqincrement=1 AND q.seqmin=1 AND q.seqmax=9223372036854775807 AND q.seqcache=1 AND NOT q.seqcycle AND
+    s.oid=to_regclass(pg_get_serial_sequence($2,'id')) AND
+    (SELECT count(*) FROM pg_depend dep WHERE dep.classid='pg_class'::regclass AND dep.objid=s.oid AND dep.refclassid='pg_class'::regclass AND dep.deptype IN('a','i'))=1 AND
+    EXISTS(SELECT 1 FROM pg_depend dep JOIN pg_attribute a ON a.attrelid=dep.refobjid AND a.attnum=dep.refobjsubid
+      WHERE dep.classid='pg_class'::regclass AND dep.objid=s.oid AND dep.refclassid='pg_class'::regclass AND dep.deptype='i' AND dep.refobjid=$2::regclass AND a.attname='id') AND
+    NOT EXISTS(SELECT 1 FROM aclexplode(coalesce(s.relacl,acldefault('S',s.relowner))) a WHERE a.grantee<>s.relowner) AND
+    NOT EXISTS(SELECT 1 FROM pg_roles p WHERE p.rolname IN('anon','authenticated','service_role','authenticator') AND has_sequence_privilege(p.oid,s.oid,'USAGE,SELECT,UPDATE'))) AS private,
+    jsonb_agg(jsonb_build_object('name',s.relname,'acl',s.relacl::text,'start',q.seqstart::text,'increment',q.seqincrement::text,
+      'min',q.seqmin::text,'max',q.seqmax::text,'cache',q.seqcache::text,'cycle',q.seqcycle,'owned_identity',true) ORDER BY s.relname) AS acls
+    FROM pg_class s JOIN pg_namespace n ON n.oid=s.relnamespace JOIN pg_sequence q ON q.seqrelid=s.oid
+    JOIN pg_roles r ON r.rolname=current_user WHERE n.nspname=$1 AND s.relkind='S'`,[JOURNAL_NS,JOURNAL_NS+'.events'])).rows[0];
+  check(sequences?.n===1 && sequences.private===true,'RECOVERY_JOURNAL_PRIVATE_REQUIRED');
+  return {schema_acl:rows[0].schema_acl,table_acls:rows[0].table_acls,catalogs,rules,triggers,policies,sequence_acls:sequences.acls};
+}
+function sortedStrings(value) {
+  return Array.isArray(value) && value.every(v=>typeof v==='string') && new Set(value).size===value.length && same(value,[...value].sort());
+}
+async function journalContract(client,table,site,catalog,triggers) {
+  const installed=(await client.query('SELECT to_regnamespace($1) IS NOT NULL AS present',[JOURNAL_NS])).rows[0]?.present;
+  if(!installed) {check(triggers.length===0,'RECOVERY_TRIGGER_CHANGED');return null;}
+  const privateAcl=await journalPrivateStore(client);
+  const registrations=(await client.query(`SELECT r.id::text AS run_id,r.operation,r.site,r.definition,r.definition_sha256,
+    g.table_name,g.table_oid::text AS table_oid,g.pk_columns::text[],g.catalog_sha256
+    FROM ${JOURNAL_NS}.registrations g JOIN ${JOURNAL_NS}.runs r ON r.id=g.run_id
+    WHERE g.table_name=$1 FOR SHARE OF g,r`,[table])).rows;
+  if(!triggers.length) {check(registrations.length===0,'RECOVERY_JOURNAL_TRIGGER_MISSING');return null;}
+  check(triggers.length===2 && triggers.every(t=>[JOURNAL_CAPTURE,JOURNAL_TRUNCATE].includes(t.tgname)),'RECOVERY_TRIGGER_CHANGED');
+  const functions=(await client.query(`SELECT p.oid::text AS oid,p.prosecdef,p.proowner=r.oid AND r.rolname='postgres' AS owned,
+    p.proconfig::text[],pg_get_functiondef(p.oid) AS definition,p.prosrc AS source,
+    p.prorettype='trigger'::regtype AND p.pronargs=0 AND l.lanname='plpgsql' AND p.prokind='f' AND p.provolatile='v' AND
+      p.proparallel='u' AND NOT p.proisstrict AND NOT p.proleakproof AND NOT p.proretset AS correct_type,
+    NOT EXISTS(SELECT 1 FROM aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a WHERE a.grantee<>p.proowner) AS private,
+    p.proacl::text AS acl
+    FROM pg_proc p JOIN pg_roles r ON r.rolname=current_user JOIN pg_language l ON l.oid=p.prolang
+    WHERE p.oid=to_regprocedure($1)`,[JOURNAL_NS+'.capture_identity_change()'])).rows;
+  const fn=functions[0],settings=fn?.proconfig;
+  check(functions.length===1 && fn.owned && fn.prosecdef && fn.private && fn.correct_type && Array.isArray(settings) &&
+    same(settings.map(s=>s.toLowerCase()).sort(),['search_path=pg_catalog','timezone=utc']) &&
+    crypto.createHash('sha256').update(String(fn.source).replace(/\r\n/g,'\n')).digest('hex')===JOURNAL_BODY_SHA256,'RECOVERY_JOURNAL_FUNCTION_CHANGED');
+  for(const trigger of triggers) check(trigger.tgenabled==='A' && trigger.function_oid===fn.oid && trigger.tgnargs===0 && trigger.args_empty && trigger.no_when &&
+    trigger.unconstrained && !trigger.tgdeferrable && !trigger.tginitdeferred && trigger.no_transition_tables &&
+    trigger.tgtype===(trigger.tgname===JOURNAL_CAPTURE?29:34),'RECOVERY_JOURNAL_TRIGGER_CHANGED');
+  check(registrations.length===1,'RECOVERY_JOURNAL_REGISTRATION_CHANGED');
+  const registration=registrations[0],d=registration.definition;
+  const relation=(await client.query("SELECT oid::text AS oid,relkind='r' AND relpersistence='p' AS permanent_table FROM pg_class WHERE oid=$1::regclass",['public.'+table])).rows[0];
+  const registeredCatalog={columns:catalog.columns.map(c=>({name:c.attname,type:c.type,atttypmod:c.atttypmod,attnotnull:c.attnotnull,attgenerated:c.attgenerated,attidentity:c.attidentity})),
+    constraints:catalog.constraints,triggers:[],pk:['id']};
+  const definitionSha=crypto.createHash('sha256').update(fn.definition).digest('hex');
+  check(UUID.test(registration.run_id) && registration.operation===JOURNAL_OP && registration.site===site &&
+    d?.operation===JOURNAL_OP && same(Object.keys(d).sort(),['capture_body_sha256','capture_function_sha256','eligible','operation','project_ref','site','skip','tables']) &&
+    d.site===site && d.project_ref===(site==='primary'?PRIMARY:BACKUP) &&
+    sortedStrings(d.tables) && ['users','departments'].every(t=>d.tables.includes(t)) && d.tables.every(t=>JOURNAL_TABLES.includes(t)) &&
+    sortedStrings(d.eligible) && sortedStrings(d.skip) && d.tables.every(t=>d.eligible.includes(t)) && d.eligible.every(t=>!d.skip.includes(t)) &&
+    d.capture_body_sha256===JOURNAL_BODY_SHA256 && d.capture_function_sha256===definitionSha && fingerprint(d)===registration.definition_sha256 &&
+    relation.permanent_table && registration.table_oid===relation.oid && same(registration.pk_columns,['id']) && registration.catalog_sha256===fingerprint(registeredCatalog),
+    'RECOVERY_JOURNAL_REGISTRATION_CHANGED');
+  return {registration,private_acl:privateAcl,function:{oid:fn.oid,acl:fn.acl,body_sha256:JOURNAL_BODY_SHA256,definition_sha256:definitionSha,settings},triggers};
+}
+async function tableCatalog(client,table,site) {
+  const rules=await rewriteRules(client,'public.'+table);
+  check(rules.every(r=>r.ev_type==='1'),'RECOVERY_PUBLIC_RULE_CHANGED');
   const columns=(await client.query(`SELECT a.attname,a.atttypid::regtype::text AS type,a.atttypmod,a.attnotnull,
     a.attgenerated,a.attidentity,pg_get_expr(d.adbin,d.adrelid) AS default_expr
     FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
@@ -119,8 +254,10 @@ async function tableCatalog(client,table) {
   check(columns.length && columns.every(c=>!c.attgenerated && !c.attidentity),'RECOVERY_SCHEMA_UNSUPPORTED');
   const constraints=(await client.query(`SELECT conname,contype,convalidated,pg_get_constraintdef(oid,true) AS definition
     FROM pg_constraint WHERE conrelid=$1::regclass ORDER BY conname`, ['public.'+table])).rows;
-  const triggers=(await client.query('SELECT tgname FROM pg_trigger WHERE tgrelid=$1::regclass AND NOT tgisinternal', ['public.'+table])).rows;
-  check(triggers.length===0,'RECOVERY_TRIGGER_CHANGED');
+  const triggers=(await client.query(`SELECT tgname::text,tgenabled::text,tgtype,tgfoid::text AS function_oid,tgnargs,
+    octet_length(tgargs)=0 AS args_empty,tgqual IS NULL AS no_when,tgconstraint=0 AS unconstrained,
+    tgdeferrable,tginitdeferred,(tgoldtable IS NULL AND tgnewtable IS NULL) AS no_transition_tables,
+    pg_get_triggerdef(oid,true) AS definition FROM pg_trigger WHERE tgrelid=$1::regclass AND NOT tgisinternal ORDER BY tgname`, ['public.'+table])).rows;
   check(constraints.every(c=>c.convalidated),'RECOVERY_CONSTRAINT_UNVALIDATED');
   const required=table==='users'?['PRIMARY KEY (id)','UNIQUE (email)']:['PRIMARY KEY (id)','UNIQUE (slug)'];
   check(required.every(def=>constraints.some(c=>c.convalidated && c.definition===def)),'RECOVERY_KNOWN_CONSTRAINT_MISSING');
@@ -128,7 +265,8 @@ async function tableCatalog(client,table) {
     ? {id:'uuid',email:'character varying',password:'character varying',company_id:'uuid',tenant_id:'uuid',department_id:'uuid',salary:'numeric'}
     : {id:'uuid',slug:'character varying',manager_id:'uuid',parent_id:'uuid',company_id:'uuid',division_unit_id:'uuid'};
   check(Object.entries(requiredTypes).every(([name,type])=>columns.some(c=>c.attname===name && c.type===type)),'RECOVERY_KNOWN_TYPE_CHANGED');
-  return {columns,constraints};
+  const value={columns,constraints,rules},journal=await journalContract(client,table,site,value,triggers);
+  return {...value,...(journal?{journal}:{})};
 }
 async function foreignKeys(client,table,inbound=false) {
   // attname is PostgreSQL's `name` type. pg parses text[] (OID1009), while
@@ -192,6 +330,9 @@ async function assertPrivateStore(client) {
   const version=(await client.query(`SELECT a.atttypid='uuid'::regtype AS uuid_key_id FROM pg_attribute a
     WHERE a.attrelid=$1::regclass AND a.attname='key_id' AND NOT a.attisdropped`,[STORE])).rows;
   check(version.length===1 && version[0].uuid_key_id===true,'RECOVERY_KEY_SCHEMA_REQUIRED');
+  check((await rewriteRules(client,STORE)).length===0 && (await client.query(
+    'SELECT 1 FROM pg_trigger WHERE tgrelid=$1::regclass AND NOT tgisinternal',[STORE])).rows.length===0,'RECOVERY_PRIVATE_STORE_HOOK_CHANGED');
+  return assertPrivateTableCatalogs(client,'vpt_recovery_20261015');
 }
 function guardScope(alias,canonical,department,backupAlias) {
   check(alias && canonical && department && backupAlias,'RECOVERY_SOURCE_OR_ALIAS_MISSING');
@@ -223,9 +364,15 @@ async function capture(primary,backup) {
   check((await backup.query('SELECT id FROM public.departments WHERE slug=$1',[department.slug])).rows.length===0,'RECOVERY_DEPARTMENT_COLLISION');
   const catalog={};
   for(const table of ['users','departments']) {
-    const source=await tableCatalog(primary,table),target=await tableCatalog(backup,table);
-    check(same(source,target),'RECOVERY_SCHEMA_CHANGED'); catalog[table]=target;
+    const source=await tableCatalog(primary,table,'primary'),target=await tableCatalog(backup,table,'backup');
+    const sourcePublic={columns:source.columns,constraints:source.constraints,rules:source.rules},targetPublic={columns:target.columns,constraints:target.constraints,rules:target.rules};
+    check(same(sourcePublic,targetPublic),'RECOVERY_SCHEMA_CHANGED');
+    check(!!source.journal===!!target.journal,'RECOVERY_JOURNAL_PAIR_INCOMPLETE');
+    catalog[table]={...targetPublic,...(source.journal?{journal:{primary:source.journal,backup:target.journal}}:{})};
   }
+  const journals=Object.values(catalog).flatMap(c=>c.journal?[c.journal.primary,c.journal.backup]:[]);
+  check(!journals.length || (journals.length===4 && new Set(journals.map(j=>j.registration.run_id)).size===1 &&
+    journals.every(j=>same(j.registration.definition.tables,journals[0].registration.definition.tables))),'RECOVERY_JOURNAL_PAIR_INCOMPLETE');
   await parentsExist(backup,'departments',department); await parentsExist(backup,'users',canonical);
   return {operation:OPERATION,scope:SCOPE,source:{alias,canonical,department},before:{alias:backupAlias,canonical:null,department:null},catalog,
     inbound:await inboundCounts(backup)};
@@ -282,6 +429,29 @@ async function writeRepair(backup,payload,healthy) {
   check(same(await inboundCounts(backup),expectedInbound(payload)),'RECOVERY_INBOUND_CHANGED');
   await assertPrivateStore(backup);
 }
+async function assertRepairJournal(backup,payload,runId,beforeDigest) {
+  const actual=(await backup.query(`SELECT run_id::text,table_name,operation,old_key,new_key,old_digest,new_digest,touched_columns::text[]
+    FROM ${JOURNAL_NS}.events WHERE transaction_id=txid_current() ORDER BY id`)).rows;
+  if(beforeDigest===undefined) {
+    check(actual.length===0,'RECOVERY_JOURNAL_TRANSACTION_NOT_EMPTY');
+    return (await backup.query(`SELECT encode(sha256(convert_to(to_jsonb(t)::text,'UTF8')),'hex') AS digest
+      FROM public.users t WHERE id=$1`,[SCOPE.alias])).rows[0]?.digest;
+  }
+  const writes=[{table:'users',operation:'UPDATE',before:payload.before.alias,after:{...payload.before.alias,email:payload.source.alias.email},touched:['email']},
+    {table:'departments',operation:'INSERT',before:null,after:payload.source.department,touched:Object.keys(payload.source.department).sort()},
+    {table:'users',operation:'INSERT',before:null,after:payload.source.canonical,touched:Object.keys(payload.source.canonical).sort()}];
+  // Hash actual typed PG rows, including numeric scale and timestamp precision.
+  // Full-row postchecks already bound their values to the reviewed source.
+  const digests=(await backup.query(`SELECT 0 AS position,encode(sha256(convert_to(to_jsonb(t)::text,'UTF8')),'hex') AS digest FROM public.users t WHERE id=$1
+    UNION ALL SELECT 1,encode(sha256(convert_to(to_jsonb(t)::text,'UTF8')),'hex') FROM public.departments t WHERE id=$2
+    UNION ALL SELECT 2,encode(sha256(convert_to(to_jsonb(t)::text,'UTF8')),'hex') FROM public.users t WHERE id=$3 ORDER BY position`,
+    [SCOPE.alias,SCOPE.department,SCOPE.canonical])).rows;
+  check(typeof beforeDigest==='string' && digests.length===3,'RECOVERY_JOURNAL_REPAIR_NOT_CONFIRMED');
+  const expected=writes.map((w,i)=>({run_id:runId,table_name:w.table,operation:w.operation,old_key:w.before?{id:w.before.id}:null,
+    new_key:{id:w.after.id},old_digest:i===0?beforeDigest:null,new_digest:digests[i].digest,touched_columns:w.touched}));
+  const ordered=rows=>rows.map(v=>({v,key:fingerprint(v)})).sort((a,b)=>a.key.localeCompare(b.key)).map(x=>x.v);
+  check(actual.length===3 && same(ordered(actual),ordered(expected)),'RECOVERY_JOURNAL_REPAIR_NOT_CONFIRMED');
+}
 async function rollback(client) { try { await client.query('ROLLBACK'); } catch {} }
 async function recover({primary,backup,mode='dry-run',secret,keyId,legacySecret,snapshotId}) {
   check(['dry-run','snapshot','apply'].includes(mode),'RECOVERY_MODE_INVALID');
@@ -302,6 +472,7 @@ async function recover({primary,backup,mode='dry-run',secret,keyId,legacySecret,
     await backup.query("SET LOCAL idle_in_transaction_session_timeout='120s'");
     const saved=mode==='apply'?await loadSnapshot(backup,secret,id,keyId,legacySecret):null;
     const payload=await capture(primary,backup);
+    if(mode!=='dry-run') payload.private_snapshot_catalog=await assertPrivateStore(backup);
     healthy();
     if(mode==='dry-run') {
       await rollback(backup); await rollback(primary);
@@ -314,7 +485,10 @@ async function recover({primary,backup,mode='dry-run',secret,keyId,legacySecret,
       return {ok:true,mode,snapshot_id:id,key_id:keyId,algorithm:ALGORITHM,ciphertext_sha256:sha,production_rows_changed:0,private_snapshot_created:1};
     }
     check(same(payload,saved.payload),'RECOVERY_SNAPSHOT_STATE_CHANGED');
+    const journalRun=payload.catalog.users.journal?.backup.registration.run_id;
+    const journalBefore=journalRun?await assertRepairJournal(backup,payload,journalRun):undefined;
     await writeRepair(backup,payload,healthy);
+    if(journalRun) await assertRepairJournal(backup,payload,journalRun,journalBefore);
     healthy();
     const marked=await backup.query(`UPDATE ${STORE} SET applied_at=clock_timestamp(),result=$1::jsonb WHERE id=$2 AND applied_at IS NULL RETURNING id`,[JSON.stringify(COUNTS),id]);
     check(marked.rows.length===1,'RECOVERY_SNAPSHOT_MARK_NOT_CONFIRMED');
