@@ -1,3 +1,15 @@
+## 2026-10-15 13:15 — VPT: actual PG17 combined đã đạt, tiếp tục gate dung lượng
+
+- **06:35UTC:** profile2 `55267869` actualPG17.6 PASS9+8+large/small4096 benchmark,peakRSS794.456.064byte/gate1GiB. Coordinator bulk/finalguardreviewPASS/12local+3genuinecasespendingCI, capacity28/adapterguardPASS. Read-onlyplan held0/335+339bảng/5viewmỗibên,metadata1.642.799byte. D7bothsitecomplete06:23:11 encoded1.110.768.303/884.388.569byte;12exactaggregate≤3.952ms. Vẫn chưaarm/repair/deploy; reserves/freshcapacity cần chứng minh thêm.
+
+- Cả4CI tại19cf2498 đã đạt:9multisession+8combined trên PostgreSQL17.6 thật; 42default+8combined cục bộ. Chưa merge/deploy/arm/repair/restart.
+- Lượt đo primary335bảng có raw1.046.143.579byte/encoded1.110.709.859byte/max12.547.819byte,3bảng vượt4MiB; backupaggregate timeout. Đang chạy cursor metadata-only d7cee82c trên cả hai site. Không bỏ bảng hoặc lấy thời điểm cuối làm mới số đo đầu.
+- Profile16/32MiB và128MiBrawFETCH được review/localtest, chờ benchmark PG17 tại SHA mới. Capacity v1 cần trên8,4GB artifacts, đang thêm v2 exactencoded có same-snapshot check, giữ2storage×2retention cùng reserve. Không đổi gói/disk/cost.
+- DNS06:14UTC vẫn2SPF; primary06:15:27UTC qualified/realreceipts/consentrealreceipts/outbox/attempts0. Không conversion/CPL nghiệm thu.
+- **06:19UTC:** profilecd89d431actualPG17.6 PASS9đa phiên+8combined+12dòng12,6MBUTF8benchmark, peakRSS545.128.448byte/gate1GiB, FETCH10/6chunk. Coordinator/capacity và vận hành vẫn chưa nghiệm thu; không áp/arm/restart.
+
+---
+
 ## 2026-10-15 11:44 — VPT: đã chuẩn bị policy trên primary, chưa phát hành backend
 
 - Theo yêu cầu Founder hoàn thành cả bốn việc, đã áp riêng `20261015020200_crm_stage_qualification_policy.sql` lên primary qlycv bằng migration tool; history `20261015044416 / crm_stage_qualification_policy_vpt_20261015`, SHA256 `555dc310042617d70f073b04fb43e671f986106b059e21b94489e62c01e102c9`.

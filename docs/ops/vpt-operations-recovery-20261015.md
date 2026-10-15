@@ -1,5 +1,21 @@
 # VPT — khôi phục vận hành và quy tắc khách hợp lệ ngày 15/10/2026
 
+## Checkpoint 13:15 ngày 15/10 (06:15 UTC)
+
+PR #139 vẫn draft; chưa merge/deploy/restart, chưa arm journal/fence hay áp sửa ba hàng. Cả bốn CI tại `19cf2498` đã đạt, gồm 9/9 kiểm đa phiên và 8/8 kiểm repair/fence tích hợp trên PostgreSQL 17.6 thật. Bản nâng giới hạn dòng/chunk 16/32 MiB đang kiểm riêng; kết quả của bản cũ không thay bằng chứng tại SHA mới.
+
+Tiếp **06:19 UTC**, profile `cd89d431` đã qua [PostgreSQL 17.6 thật](https://github.com/backen-pixel/Quanlycongviec/actions/runs/38691624584/job/116278594169): 9 đa phiên, 8 combined và benchmark 12 dòng UTF-8 ×12.600.103 byte, 6 chunk, FETCH10, peak RSS **545.128.448 byte**, dưới gate 1 GiB. Dòng quá16MiB bị giữ trước truyền. Đây là kiểm dữ liệu giả ở CI, chưa chứng minh thời gian/dung lượng/coverage của capture production hoặc hoạt động ứng dụng sau phát hành.
+
+**06:35 UTC:** [profile2 `55267869`](https://github.com/backen-pixel/Quanlycongviec/actions/runs/38692709825/job/116282091907) đã đạt9+8 và cả hai benchmark: 12 dòng12,6MB cùng batch4.096 dòng khoảng30KB chứa Unicode, peakRSS794.456.064byte<1GiB. FETCH vẫn chịu128MiBraw/16MiBrow/32MiBchunk; tăng số dòng nhỏ mỗi lượt để giảm roundtrip, không bỏ dữ liệu. Coordinator có bulk kiểm catalog, giao dịch riêng có hạn, receipt bền vững, kiểm cùng snapshot/expiry/RLS/quota; review độc lập và12local tests đạt, đang kiểm15case thực tế qua adapter guarded. Capacity28tests và adapter own-key/session guard đạt. Chưa đưa các công cụ này chạy ghi trên production.
+
+Lượt sizing cursor **06:13:29–06:23:11 UTC** đã đủ cả335/339bảng: primary1.054.289dòng/raw1.046.197.300/encoded1.110.768.303byte; backup714.274dòng/raw838.462.134/encoded884.388.569byte. Report SHA256`f4b91d282c066953121c4e64a98dc3ae6913f02c8c59844c7667d7428c0faf6f`. Actual aggregatepreflight12lượt cùng15stimeout đạt, cao nhất3.952ms. Read-onlyplan trước v1arm có held0/5view mỗi bên, manifest`3240de9e94fe2291fae553fc5ae6b7118f234ebded748642e4832e04cf33cc3e`, canonicalmetadata1.642.799byte. Plan phải tạo lại sau v1hooks; sizing cũ hết hạn không được đổi timestamp để dùng lại. UI06:26 primary2,11GBused/8, backup2,44/8; phép tính capacity với bound bảo thủ chỉ là sơ bộ, chưa chứng minh reserve/WAL/temp đủ hoặc cấp phép lifecycle.
+
+Đo chỉ đọc primary lần trước hoàn tất lúc 05:58:37 UTC: 335 bảng, 1.054.196 dòng, raw JSON 1.046.143.579 byte, JSON string UTF-8 1.110.709.859 byte, dòng lớn nhất 12.547.819 byte. Ba bảng vượt giới hạn 4 MiB cũ là `crm_task_attachments`, `lead_documents`, `projects`; không bỏ qua các bảng này. Lượt backup aggregate chạm timeout; phép đo cursor chỉ trả hai số độ dài mỗi dòng đang chạy lại cả hai site. Dùng thời điểm bắt đầu làm giới hạn độ mới, không dùng thời điểm kết thúc để làm mới bảng đã đo trước.
+
+Ngân sách bảo thủ 2×raw ×2 storage ×2 bản giữ vượt 8,4 GB trước reserve, nên chưa đạt dung lượng. Đang bổ sung attestation v2 đo chính xác byte JSON string, kiểm lại trong cùng snapshot; vẫn giữ storage factor, hai bản giữ và reserve riêng, không giảm ngầm tiêu chuẩn hoặc đổi gói dịch vụ. Render có giới hạn RAM khoảng 2 GiB, sử dụng 487–544 MB trong lần đọc 06:02 UTC; benchmark dòng lớn phải chứng minh bộ nhớ trước khi dùng thật.
+
+DNS kiểm lại 06:14 UTC vẫn hai SPF `itso.vn`; inbox/form sau sửa chưa được kiểm nhận. SQL primary 06:15:27 UTC: qualification `QUALIFIED`, receipt website thật, receipt thật đồng ý đo, outbox và attempts đều 0. Chưa có chuyển đổi Google/Meta hay CPL nghiệm thu.
+
 ## Phạm vi được giao
 
 Founder yêu cầu hoàn thành bốn việc: tự ghi nhận khách hợp lệ khi chuyển mới sang Warm, Hot hoặc thẳng từ Lead sang Deal; khôi phục đồng bộ dự phòng và bảo toàn dữ liệu; kiểm chứng email/form; nghiệm thu Google/Meta bằng khách thật. Sau yêu cầu tạm dừng, Founder đã yêu cầu tiếp tục cả bốn việc. Phạm vi quảng cáo vẫn là VPT Google Ads `975-957-2942`, website `vanphuthanh.net`, Meta website dataset `1000623629782763`.
