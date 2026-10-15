@@ -12,6 +12,7 @@ Mỗi khách giữ mốc đủ điều kiện đầu tiên, không cộng lặp 
 - Bản vá mirror column `website_intake` của PR #130 đã áp lên backup ngày 14/10; không đồng nghĩa backup đã đủ schema riêng qualification/receipt/outbox hoặc được nghiệm thu failover.
 - Ngày 15/10, WP Mail SMTP đã lưu SMTP Host `mail93132.maychuemail.com`, giữ SSL/465, xác thực và credential hiện có. Đây là CNAME đích của `mail.itso.vn`, khớp chứng chỉ `*.maychuemail.com`; không tắt xác minh TLS.
 - Một email thử đã được yêu cầu gửi tới hộp thư VPT được Founder cho phép. UI không còn lỗi kết nối và chuyển sang kết quả cảnh báo deliverability. Chưa có bằng chứng thư tới inbox. DNS `itso.vn` trả hai TXT SPF; đã soạn nội dung để Founder chuyển bên quản trị DNS/email kiểm tra, chưa sửa DNS hay liên hệ bên thứ ba.
+- DNS công khai kiểm lại **05:24 UTC** vẫn trả cả hai TXT bắt đầu `v=spf1`; chưa có thay đổi SPF để kiểm nhận email/form sau sửa.
 - Backend Render My Workspace đã được chuyển **Auto-Deploy: Off** qua Settings trong phiên khôi phục. Không restart/suspend/deploy bởi tác vụ này. Mục đích là tránh commit khác tiếp tục làm mất queue RAM trước khi có kế hoạch khôi phục. Khi vận hành ổn định, người phụ trách phát hành cần quyết định khôi phục On Commit hoặc After CI Checks Pass; không tự bật lại khi queue chưa bền vững.
 - **11:44:16 Asia/Saigon ngày 15/10**, migration policy giai đoạn đã áp riêng lên primary `qlycv`, history `20261015044416 / crm_stage_qualification_policy_vpt_20261015`, file SHA256 `555dc310042617d70f073b04fb43e671f986106b059e21b94489e62c01e102c9`. Hậu kiểm 04:44:50 UTC: đủ ba cột, hai constraint validated, unique index và ba hàm invoker chỉ service-role được execute; qualification/outbox/attempts vẫn 0. Không ghi CRM/backfill hay restart Render. Backend cũ chưa dùng RPC mới nên **tự qualification chưa được kích hoạt**.
 
@@ -27,6 +28,10 @@ Google/Meta đọc bằng chứng của phương pháp giai đoạn, kiểm lạ
 
 Candidate đi tiếp đã kiểm độc lập **15/15 stage SQL, 21/21 website SQL, 129/129 Node trong tám file reviewer chọn**; frontend build đạt **39,57 giây** sau đổi nhãn. Không cộng các tổng scoped khác nhau thành số kiểm toàn repo. RPC tạo sự kiện, qualification/event/outbox ID và timestamp đầu tiên giữ nguyên; manual revoke vẫn chặn.
 
+Migration đi tiếp đã áp primary **05:15:42 UTC**, history `20261015051542 / crm_qualification_forward_stages_vpt_20261015`. Hậu kiểm **05:16:06 UTC**: predicate đã có hai forward stages, helper invoker/stable/service-only, body SHA256 `324db8ade2d83e79edfa14ab23fa7049a612927e945ce5d344316989a103a449`; qualification/outbox/attempts vẫn 0. Chưa merge/deploy backend. Root chạy đúng tám file core của workflow sau đổi: **153/153 Node PASS**, log ngoài repo `vpt-forward-core-node-20261015.log`.
+
+**3/3 CI SUCCESS tại `8f5aa59dc82672913c6d93e6eaa6c889cb2a7bdd`** (independent-connections, synthetic Node18 và Node22). Các tổng kiểm ở những checkpoint cũ bên dưới là lịch sử, không thay kiểm SHA cuối khi có sửa mới.
+
 Kiểm candidate giai đoạn: **11/11 PostgreSQL mới, 21/21 PostgreSQL website hiện có và 158/158 Node** đạt. Frontend `npm run build` đạt (Vite 6.4.1, 19.181 modules); còn các cảnh báo bundle/dependency hiện có. CI Node 18/22 được bổ sung để chạy các kiểm mới. Kiểm cô lập không chứng minh đã triển khai hoặc Google/Meta đã nhận khách thật.
 
 Candidate replication đã qua review độc lập và **36/36 kiểm focused**: giữ job đến khi write/ACK được xác nhận, retry có backoff và giữ thứ tự từng đối tượng, không coi PATCH 0 hàng là thành công, bảo toàn body lỗi FK, đọc primary có kiểm tra lỗi, chặn xung đột định danh và không tự đổi owner/FK để né lỗi. Guard kiểm cả code cũ/current, mọi type và PATCH không có company; source vắng tường minh được đối soát exact-ID, lỗi đọc/alias giữ lại. HTTP 401/403 không còn tự gọi broad schema grants. Main tích hợp có **218 Node**, frontend build đạt và **3/3 CI SUCCESS tại `ec02dc7f`**. Bản sửa tương thích parser pg và gói capture đang chuẩn bị cần kiểm lại tại SHA cuối; chưa nghiệm thu runtime.
@@ -36,6 +41,8 @@ Candidate replication đã qua review độc lập và **36/36 kiểm focused**:
 Lần đọc health `2026-10-15T03:59:34.849Z`: active primary, cả hai API healthy, Redis disabled, uptime khoảng 879 giây, queue 684, applied 309, failed 33. Đây là số trong vòng đời process mới, không phải tổng lịch sử đồng bộ.
 
 Hậu kiểm **04:58:50.903 UTC**: service `ok`, cùng process uptime 4.435 giây, queue **2.977**, enqueued **4.578**, applied **1.566**, failed **442**. Tác vụ chưa restart; số applied tăng không đủ chứng minh lỗi đã khắc phục hoặc backlog drain. Auto-Deploy vẫn Off, Maintenance chưa bật.
+
+Health **05:26 UTC**: cùng process uptime6.093giây, activeprimary/LIGHTtrue/storagefalse, queue**4.449**,enqueued6.324,applied1.796,failed1.027. Lỗi mới vẫn FK thiếu project của CRM; không khắc phục bằng mở hàng parent hàng loạt cho worker cũ. Candidate chưa chạy nên đây chưa là kết quả kiểm nhận bản sửa.
 
 Render ghi các auto-deploy từ commit khác ở 02:59, 03:08, 03:32 và 03:45 UTC; live 03:45:08 tại `aaff6568fb9e96a86c0b42e54cd8db4147fe26b5`. Hàng đợi khoảng 45.998 đã quan sát ở process cũ không được chứng minh đã bảo toàn; không lấy queue mới nhỏ hơn/queue bằng 0 làm bằng chứng khôi phục. Endpoint hiện có chỉ trả tối đa 200 metadata đã giảm dữ liệu, không xuất đầy đủ body hoặc chuyển RAM sang Redis. Không mở inspector/đọc raw process memory để lấy queue.
 
@@ -63,6 +70,8 @@ Không có API hiện hành để pause/export đủ RAM queue trong process. Ma
 
 [Candidate capture giới hạn](replication-cutover-preservation-20261015.md) đã qua review độc lập và **19/19 PostgreSQL tests**; mặc định inventory chỉ đọc, arm/snapshot/verify là bước riêng. Chưa áp migration `20261015050417_replication_cutover_preservation.sql` hoặc attach trigger. Chỉ bao phủ năm bảng quan sát/repair, luôn `cutover_ready=false`; không dùng nó thay chứng minh toàn bộ phạm vi. Runtime **05:06:03 UTC** xác nhận primary, Redis disabled, LIGHT true, storage replication false, không custom skip override; queue3472/applied1673/failed520. Phạm vi LIGHT còn 335/339 bảng cơ sở eligible primary/backup và năm view mỗi bên; năm bảng này để lại 330/334 bảng cơ sở chưa phủ. Đang kiểm PK/schema, dung lượng/headroom và cách xử lý bảng không PK/view trước thiết kế capture mở rộng; không attach hàng trăm trigger hoặc clone/drop để né gate.
 
+CLI inventory thực tế `e47e7c73` trên Render đã PASS, đúng coverage primary340/backup344 relations, chưa phủ330/334 bảng cơ sở, `cutover_ready=false`, `queue_inventory_complete=false`, 0 hàng nghiệp vụ đổi. Chưa DDL/arm capture. Kiểm read-only **05:20 UTC** xác nhận users/departments trên cả hai DB không có non-SELECT rewrite rule; candidate exact-journal integration đang bổ sung guard rule/trigger để giữ bounded repair nếu metadata thay đổi. Các case review cô lập không phải bằng chứng production đang có rule bất thường.
+
 1. Review không còn lỗi chặn; kiểm lại trên SHA cuối sau tích hợp main, không phát hành bản cũ làm mất cập nhật khác.
 2. Có kế hoạch queue/reconciliation trước restart; dữ liệu thiếu, backup-only, lịch sử và các thao tác xóa phải được đối chiếu riêng.
 3. Áp migration primary trước backend sử dụng RPC; hậu kiểm schema, grants, RLS và không backfill. Không áp policy nghiệp vụ chỉ-primary lên backup như một bản mirror.
@@ -71,5 +80,7 @@ Không có API hiện hành để pause/export đủ RAM queue trong process. Ma
 6. Google Data Manager còn chờ dòng khách thật đủ điều kiện để đọc/map/import. Meta website vẫn giữ gửi thật tắt; chỉ xét bật sau kiểm nhận đúng nguồn/consent và provider ACK. Chưa có CPL hoặc kết luận ≤250.000đ/khách.
 
 Hậu kiểm primary **04:12:58 UTC ngày 15/10**: qualification VPT `QUALIFIED` 0, website receipt gắn lead thật không TEST 0, website outbox/attempts 0. Không tạo dữ liệu giả để hoàn tất mapping hoặc nghiệm thu quảng cáo.
+
+Kiểm lại **05:26:15 UTC**: cả năm số qualificationQUALIFIED,website realreceipts,realreceipts consent,outbox,attempts vẫn **0**. Chưa có khách website thật đủ bằng chứng để gửi/nghiệm thu Google hoặc Meta.
 
 Rollback ứng dụng có thể giữ schema/phương pháp mới; không drop cột/index/ledger đã dùng hoặc phục hồi constraint ba boolean true khi có sự kiện giai đoạn. Giữ lịch sử nghiệp vụ và consent gates của cả hai Google exporters. Rollback không tự đảo conversion đã nhập hoặc khôi phục hàng đợi RAM đã mất.
