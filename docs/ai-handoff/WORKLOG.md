@@ -1,5 +1,7 @@
 ## 2026-10-15 13:15 — VPT: actual PG17 combined đã đạt, tiếp tục gate dung lượng
 
+- **06:47UTC:** cả4CI31840d1eSUCCESS, actualPG17.6 9+8+15/0deferred; peakRSS859.545.600byte. Hai thống kê đọc06:38→06:40, slots0/archivekhônglỗimới, maxWAL4096MB/tempunlimited; rateWAL53/17KB/s chỉđại diện tải thường. ReviewerBLOCK8GBfullcapture, đềxuất12GB cả2site; phíđĩa thêm~1USD/tháng/chưathuế vàtắtSpendCaptoànorg cầnFounderduyệtriêng. Câu hỏi pending, không hành động phụ thuộc. ChưaDDLjournal/arm/repair/maintenance/merge/deploy/restart/billing; đo sizing cũđãexpired. Fileđềxuất vàJSONbằngchứng lưu ngoàirepo; không thayrawcipher/key/fingerprint.
+
 - **06:35UTC:** profile2 `55267869` actualPG17.6 PASS9+8+large/small4096 benchmark,peakRSS794.456.064byte/gate1GiB. Coordinator bulk/finalguardreviewPASS/12local+3genuinecasespendingCI, capacity28/adapterguardPASS. Read-onlyplan held0/335+339bảng/5viewmỗibên,metadata1.642.799byte. D7bothsitecomplete06:23:11 encoded1.110.768.303/884.388.569byte;12exactaggregate≤3.952ms. Vẫn chưaarm/repair/deploy; reserves/freshcapacity cần chứng minh thêm.
 
 - Cả4CI tại19cf2498 đã đạt:9multisession+8combined trên PostgreSQL17.6 thật; 42default+8combined cục bộ. Chưa merge/deploy/arm/repair/restart.

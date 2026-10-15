@@ -1,5 +1,15 @@
 # VPT — khôi phục vận hành và quy tắc khách hợp lệ ngày 15/10/2026
 
+## Quyết định vận hành 06:47 UTC: chưa được phép capture với đĩa8GB
+
+Cả4CI tại`31840d1e` đã đạt; [PostgreSQL17.6 thật](https://github.com/backen-pixel/Quanlycongviec/actions/runs/38693515701/job/116284660829) xác nhận9fence+8combined+15lifecycle,0deferred và0DBsynthetic còn lại. Benchmark12×12,6MB và4.096dòng nhỏ đạt, peakRSS859.545.600byte<1GiB. Coordinator sourceSHA`9fd1363a1bee2e49e1f64eef02291e2946ee7c91e2d7db6516900b1e1ef87f7e` (bỏ một dòng trắng EOF từ bản review), helperA511 và repair362101 đã pin. Main45399d59 thêm một script MCP không liên quan đã tích hợp; chưa mergePR/appdeploy.
+
+Đọc thống kê hai site06:38→06:40 thấy slots0, archiver không tăng lỗi, không idletransaction; WAL thông thường khoảng53/17KB/s. Hai server cấu hìnhmax_wal_size4096MB (softlimit),temp_file_limit=-1; không đổi settings, không đọc tệp máy chủ bằng SQL. Tốc độ tải thường không chứng minh amplification WAL/TOAST khi INSERT khối ciphertext. Với2MiBmetadata và reserves1GiB, primary chỉ còn34.520.201byte ngoài các khoản đó theo bound đĩa/UI bảo thủ. Reviewer vận hành **BLOCK8GB cho full2-capture**, giữ toàn bộ reserve, không làm tròn/giảm ngân sách để vượt gate.
+
+Đề xuất12GB gp3 cho cảqlycv/QLCV_Backup, giới hạn tựtăng12GB, giữ compute. Khoảng trống bổ sung4GB mỗi bên vượt nhu cầu sơ bộ1,7GBprimary/0,9GBbackup; vẫn phải đo mới sau thay đổi. [Giá công khai](https://supabase.com/docs/guides/platform/manage-your-usage/disk-size) 0,125USD/GB/tháng phần vượt8GB cho chi phí đĩa tăng khoảng1USD/thángtổng/chưathuế, tính theo giờ. Phải tắtSpendCapTOÀNTỔCHỨC để vượt8GB; điều đó cho phép các loại phí vượt hạn mức khác, không phải trần hóa đơn1USD. Founder đang được hỏi riêng; chưa có câu trả lời. Không tự thay billing/disk, arm/DDLjournal, bật bảo trì, repair, merge/deploy/restart. Lưu ciphertext sangStorage là backend bảo toàn mới cần review/tests; chưa tạo kho hoặc mở quyền để thay thế tự động.
+
+Sizing06:13–06:23 đã hết hạn, trước mọi lifecycle cần đo mới và kế hoạch mới sauv1arm. V1/v2journal chưa cài ở cảhai DB. Snapshot ba hàng đã lưu trước đó giữ nguyên và chưa apply. Email SPF/inbox và khách quảng cáo thật/providerACK vẫn chưa nghiệm thu; không cóCPL.
+
 ## Checkpoint 13:15 ngày 15/10 (06:15 UTC)
 
 PR #139 vẫn draft; chưa merge/deploy/restart, chưa arm journal/fence hay áp sửa ba hàng. Cả bốn CI tại `19cf2498` đã đạt, gồm 9/9 kiểm đa phiên và 8/8 kiểm repair/fence tích hợp trên PostgreSQL 17.6 thật. Bản nâng giới hạn dòng/chunk 16/32 MiB đang kiểm riêng; kết quả của bản cũ không thay bằng chứng tại SHA mới.
