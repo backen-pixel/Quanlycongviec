@@ -1,3 +1,13 @@
+## 2026-10-16 — BOS-ARCH-DESIGN-01: gói thiết kế tổng thể để giao xây
+
+Theo lệnh thiết kế hiện hành, hoàn thiện [bộ bàn giao](../architecture/overall-design-20261016/SUMMARY.md) tại nhánh `codex/bos-arch-design-01-20261016`, baseline main `fe3f4398ebf2186596c108a7570f83e3bbef104a`. **DESIGN_COMPLETE, A01–A12 DESIGN_PASS** qua review nhiều phiên; lựa chọn mới vẫn PROPOSED, không tự thay Founder decisions/ADR đã duyệt. Đủ sáu miền/L1–L10/sáu Hệ, inventory nguồn, authority/quyền,16 contracts,36 schema definitions/30 fixtures, request-response/event,9 Mermaid sources và PNG/SVG tổng thể,7 mini-ADR, P0–P5/B00–B12 và nguồn lực/cost.
+
+12 kiểm offline đạt; kiểm cấu trúc sơ đồ/SVG/PNG và hình trực quan đạt trong giới hạn ghi ở [EVIDENCE](../architecture/overall-design-20261016/EVIDENCE.md). **T01–T32 NOT_RUN; Mermaid parser/render NOT_RUN.** Hai PNG tham chiếu/setup brief V3.1 chưa tìm thấy trong phạm vi kiểm; nguồn PDF V3.1 và brief hiện hành đã đối chiếu, không bịa setup. Scope khách/legacy tenant, hai đường tiền/mirror, durable Zalo ACK và cap/fence còn là việc xây/harden có gate, không claim đã sửa runtime.
+
+Chỉ thêm tài liệu/fixture/checker và navigation/handoff. Không setup/cài/gỡ, áp SQL, đổi job/binding/quyền/ngân sách, paid AI call, merge/deploy hoặc thay CRM/Paperclip/OpenClaw đang chạy. Gói xây tiếp theo đề xuất B00/B01 + phần hữu hạn B02/B03, cần nhiệm vụ xây riêng. Rollback tài liệu: revert commit gói, không rollback dữ liệu nghiệp vụ. Các mục bên dưới giữ trạng thái lịch sử của từng việc.
+
+---
+
 ## 2026-10-16 — Dọn thư mục tài nguyên Android lồng trùng
 
 Gỡ 17 tệp ở `crm-mobile-v2/plugins/native-android/res/res/`: 16 tệp trùng bản tương ứng ở `res/`, một `styles_call.xml` là bản cũ thiếu `Theme.BubbleCompose`. Plugin `withIncomingCallAndroid.js` chỉ đọc danh sách tài nguyên ở `res/` bên ngoài; không có tham chiếu tới thư mục lồng. Kiểm luồng sao chép native bằng chính hàm plugin với filesystem đích giả lập: trước/sau đều 44 tệp, gồm 18 resource, cùng đường dẫn đích và SHA-256, không thiếu tệp. Chưa chạy Android build hoặc phát hành app. Khôi phục bằng revert commit dọn thư mục; tài nguyên canonical và các bản sao phục vụ ứng dụng riêng được giữ nguyên.

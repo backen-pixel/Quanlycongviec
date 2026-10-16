@@ -1,3 +1,12 @@
+## 2026-10-16 — BOS-ARCH-DESIGN-01: hoàn thiện thiết kế tổng thể
+
+- Phạm vi theo brief hiện hành: thiết kế để giao xây, không setup/deploy/thay hệ đang chạy. Tạo worktree/nhánh tài liệu riêng từ main `fe3f4398ebf2186596c108a7570f83e3bbef104a`; checkout công việc khác được giữ riêng.
+- [Gói thiết kế](../architecture/overall-design-20261016/SUMMARY.md): sáu miền chung một boundary, L1–L10/sáu Hệ, đối chiếu code/SQL/source/live read có giới hạn;16 contracts/authority/quyền,36 definitions/30 fixtures,4 request-response examples+event,9 nguồn Mermaid/PNG/SVG,7 mini-ADR PROPOSED, backlog/trace T01–T32 và resource/TCO/130 triệu Marketing riêng.
+- Review độc lập A01–A12 DESIGN_PASS sau sửa role matrix, receipt theo phase, pre-ACK IDs, consent/precondition, task-only callback, cap purpose, cancellation không retry, Case không cần Project giả và conversion identity. 12 LOCAL_DESIGN_CHECK đạt, kiểm cấu trúc/ảnh trong phạm vi đạt; T01–T32 vẫn NOT_RUN, Mermaid parser chưa chạy. [Nguồn/giới hạn/review](../architecture/overall-design-20261016/EVIDENCE.md).
+- Chỉ thay tài liệu/fixture/checker; không startup ứng dụng, SQL thật, runtime schedules/binding/quyền/cap, paid AI call, merge hoặc deploy. Đề xuất gói xây riêng B00/B01 và lát B02/B03. Hoàn tác bằng revert commit tài liệu; không có dữ liệu nghiệp vụ cần rollback.
+
+---
+
 ## 2026-10-16 — Dọn bản tài nguyên Android lồng dư
 
 - Phạm vi từ `main` tại `e8d94ecc`: chỉ gỡ `crm-mobile-v2/plugins/native-android/res/res/` (17 tệp, 22.921 byte). So cùng đường dẫn tương đối ở `res/`: 16 tệp giống hoàn toàn, `values/styles_call.xml` là bản cũ. Bản canonical giữ `Theme.BubbleCompose`.

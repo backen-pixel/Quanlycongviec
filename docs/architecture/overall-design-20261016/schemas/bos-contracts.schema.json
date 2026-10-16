@@ -1,0 +1,3197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:bos:design:contracts:0.1.0",
+  "title": "BOS design-only record envelopes; not deployed API schemas",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "data_class",
+    "record_type",
+    "resolved_context",
+    "body"
+  ],
+  "properties": {
+    "data_class": {
+      "type": "string",
+      "enum": [
+        "SYNTHETIC"
+      ]
+    },
+    "record_type": {
+      "type": "string",
+      "enum": [
+        "Party",
+        "Need",
+        "WorkItem",
+        "Fact",
+        "Consent",
+        "Asset",
+        "Content",
+        "CampaignPlan",
+        "Touchpoint",
+        "Handoff",
+        "Quote",
+        "Acceptance",
+        "Order",
+        "Payment",
+        "Refund",
+        "Project",
+        "ServiceCase",
+        "Rule",
+        "Decision",
+        "Command",
+        "Receipt",
+        "Reservation",
+        "CapacityReservation",
+        "AITask",
+        "AIRun",
+        "Callback",
+        "Expectation",
+        "Outcome",
+        "IntakeEvent"
+      ]
+    },
+    "resolved_context": {
+      "$ref": "#/$defs/Scope"
+    },
+    "body": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Party"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Party"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Need"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Need"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "WorkItem"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/WorkItem"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Fact"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Fact"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Consent"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Consent"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Asset"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Asset"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Content"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Content"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "CampaignPlan"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/CampaignPlan"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Touchpoint"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Touchpoint"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Handoff"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Handoff"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Quote"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Quote"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Acceptance"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Acceptance"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Order"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Order"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Payment"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Payment"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Refund"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Refund"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Project"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Project"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "ServiceCase"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/ServiceCase"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Rule"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Rule"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Decision"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Decision"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Command"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Command"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Receipt"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Receipt"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Reservation"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Reservation"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "CapacityReservation"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/CapacityReservation"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "AITask"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/AITask"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "AIRun"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/AIRun"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Callback"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Callback"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Expectation"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Expectation"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "Outcome"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/Outcome"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_type": {
+            "const": "IntakeEvent"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "body": {
+            "$ref": "#/$defs/IntakeEvent"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "Scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tenant_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "company_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "actor_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "actor_type": {
+          "type": "string",
+          "enum": [
+            "HUMAN",
+            "AGENT",
+            "SERVICE",
+            "SOURCE_ADAPTER"
+          ]
+        },
+        "delegation_ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "authority_epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "scopes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "authenticated_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "company_id",
+        "actor_id",
+        "actor_type",
+        "delegation_ref",
+        "authority_epoch",
+        "scopes",
+        "authenticated_at"
+      ]
+    },
+    "Money": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        },
+        "amount_minor": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "exponent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4
+        },
+        "basis_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "currency",
+        "amount_minor",
+        "exponent",
+        "basis_ref"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "currency": {
+                "const": "VND"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "exponent": {
+                "const": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "FactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fact_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "snapshot_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "fact_id",
+        "revision",
+        "snapshot_hash"
+      ]
+    },
+    "Target": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "account_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "resource_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "resource_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "provider",
+        "account_id",
+        "resource_type",
+        "resource_id"
+      ]
+    },
+    "Precondition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "ABSENT",
+            "MATCH_REVISION",
+            "READ_ONLY"
+          ]
+        },
+        "resource_revision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "absence_key": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "kind",
+        "resource_revision",
+        "absence_key"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "ABSENT"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "resource_revision": {
+                "type": "null"
+              },
+              "absence_key": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "MATCH_REVISION"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "resource_revision": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "absence_key": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "READ_ONLY"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "resource_revision": {
+                "type": "null"
+              },
+              "absence_key": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "ConsentRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "consent_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "party_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "purpose": {
+          "type": "string",
+          "enum": [
+            "CONTACT",
+            "AD_MEASUREMENT",
+            "REMARKETING"
+          ]
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "account_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "consent_id",
+        "revision",
+        "party_id",
+        "purpose",
+        "channel",
+        "account_id"
+      ]
+    },
+    "ConsentContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "applicability": {
+          "type": "string",
+          "enum": [
+            "REQUIRED",
+            "NOT_APPLICABLE"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConsentRef"
+          },
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "applicability",
+        "reason",
+        "refs"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "applicability": {
+                "const": "REQUIRED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "refs": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "applicability": {
+                "const": "NOT_APPLICABLE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "refs": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Party": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "contact_private_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "relationship_scope_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "display_name",
+        "contact_private_ref",
+        "relationship_scope_ref"
+      ]
+    },
+    "Need": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "party_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "stage": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "qualification": {
+          "type": "string",
+          "enum": [
+            "PENDING",
+            "QUALIFIED",
+            "UNQUALIFIED"
+          ]
+        },
+        "qualification_evidence_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "source_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "party_id",
+        "description",
+        "stage",
+        "qualification",
+        "qualification_evidence_ref",
+        "source_refs"
+      ]
+    },
+    "WorkItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_type": {
+          "type": "string",
+          "enum": [
+            "CRM",
+            "WORK",
+            "SX",
+            "VC",
+            "SERVICE"
+          ]
+        },
+        "native_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "owner_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "due_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "OPEN",
+            "ASSIGNED",
+            "IN_PROGRESS",
+            "WAITING_INPUT",
+            "REVIEW",
+            "COMPLETED",
+            "CANCELLED"
+          ]
+        },
+        "acceptance_criteria": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "source_type",
+        "native_id",
+        "owner_id",
+        "due_at",
+        "state",
+        "acceptance_criteria"
+      ]
+    },
+    "Fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "subject_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "subject_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "source_system": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "source_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "recorded_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "verification": {
+          "type": "string",
+          "enum": [
+            "REPORTED",
+            "VERIFIED",
+            "CONFLICT",
+            "UNKNOWN"
+          ]
+        },
+        "verification_evidence_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "snapshot_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "coverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "subject_type",
+        "subject_id",
+        "source_system",
+        "source_ref",
+        "observed_at",
+        "recorded_at",
+        "verification",
+        "verification_evidence_ref",
+        "snapshot_hash",
+        "coverage"
+      ]
+    },
+    "Consent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "party_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "purpose": {
+          "type": "string",
+          "enum": [
+            "CONTACT",
+            "AD_MEASUREMENT",
+            "REMARKETING"
+          ]
+        },
+        "channel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "account_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "REPORTED",
+            "GRANTED",
+            "REVOKED",
+            "EXPIRED"
+          ]
+        },
+        "notice_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "evidence_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "effective_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "party_id",
+        "purpose",
+        "channel",
+        "account_id",
+        "state",
+        "notice_version",
+        "evidence_ref",
+        "effective_at"
+      ]
+    },
+    "Asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "blob_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "rights_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "rights_expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source_evidence_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "DRAFT",
+            "APPROVED",
+            "REVOKED",
+            "ARCHIVED"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "blob_ref",
+        "rights_ref",
+        "rights_expires_at",
+        "source_evidence_ref",
+        "state"
+      ]
+    },
+    "Content": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "brief_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "asset_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "payload_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "DRAFT",
+            "IN_REVIEW",
+            "APPROVED",
+            "SCHEDULED",
+            "PUBLISHED",
+            "REJECTED",
+            "REVOKED",
+            "ARCHIVED"
+          ]
+        },
+        "review_decision_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "brief_ref",
+        "asset_refs",
+        "payload_hash",
+        "state",
+        "review_decision_ref"
+      ]
+    },
+    "CampaignPlan": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "objective_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "plan_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "channel_bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Target"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "budget_plan_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "period_start": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "period_end": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "DRAFT",
+            "APPROVED",
+            "ACTIVE",
+            "PAUSED",
+            "CLOSED"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "objective_ref",
+        "plan_ref",
+        "channel_bindings",
+        "budget_plan_ref",
+        "period_start",
+        "period_end",
+        "state"
+      ]
+    },
+    "Touchpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "source_system": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "native_event_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "occurred_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "identity_evidence_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "source_kind": {
+          "type": "string",
+          "enum": [
+            "PAID",
+            "ORGANIC",
+            "DIRECT",
+            "UNKNOWN"
+          ]
+        },
+        "consent_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "consent_revision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "source_system",
+        "native_event_id",
+        "occurred_at",
+        "identity_evidence_ref",
+        "source_kind",
+        "consent_id",
+        "consent_revision"
+      ]
+    },
+    "Handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "need_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "owner_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "accountable_owner_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "due_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "WAITING_OWNER",
+            "ASSIGNED",
+            "DELIVERED",
+            "ACCEPTED",
+            "REJECTED"
+          ]
+        },
+        "milestone_evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "need_id",
+        "owner_id",
+        "accountable_owner_id",
+        "due_at",
+        "state",
+        "milestone_evidence_refs"
+      ]
+    },
+    "Quote": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "need_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "lines_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "total": {
+          "$ref": "#/$defs/Money"
+        },
+        "terms_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "DRAFT",
+            "ISSUED",
+            "ACCEPTED",
+            "SUPERSEDED",
+            "CANCELLED"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "need_id",
+        "lines_ref",
+        "total",
+        "terms_hash",
+        "state"
+      ]
+    },
+    "Acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "quote_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "quote_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "quote_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "customer_evidence_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "accepted_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "quote_id",
+        "quote_revision",
+        "quote_hash",
+        "customer_evidence_ref",
+        "accepted_at"
+      ]
+    },
+    "Order": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "quote_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "acceptance_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "total": {
+          "$ref": "#/$defs/Money"
+        },
+        "execution_unit_keys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "DRAFT",
+            "CONFIRMED",
+            "IN_FULFILMENT",
+            "FULFILLED",
+            "CANCELLED"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "quote_id",
+        "acceptance_id",
+        "total",
+        "execution_unit_keys",
+        "state"
+      ]
+    },
+    "Payment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "order_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "transaction_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "source_system": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "amount": {
+          "$ref": "#/$defs/Money"
+        },
+        "evidence_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "REPORTED",
+            "PENDING_RECONCILIATION",
+            "RECONCILED",
+            "REJECTED"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "order_id",
+        "transaction_ref",
+        "source_system",
+        "amount",
+        "evidence_ref",
+        "state"
+      ]
+    },
+    "Refund": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "payment_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "adjustment_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "transaction_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "amount": {
+          "$ref": "#/$defs/Money"
+        },
+        "evidence_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "REQUESTED",
+            "APPROVED",
+            "RECONCILED",
+            "REJECTED"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "payment_id",
+        "adjustment_id",
+        "transaction_ref",
+        "amount",
+        "evidence_ref",
+        "state"
+      ]
+    },
+    "Project": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "order_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "execution_unit_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "owner_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "milestone_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "capacity_reservation_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "PROPOSED",
+            "ACCEPTED",
+            "PLANNED",
+            "IN_PROGRESS",
+            "DELIVERED",
+            "ACCEPTED_BY_CUSTOMER",
+            "CLOSED",
+            "ON_HOLD",
+            "CANCELLED"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "order_id",
+        "execution_unit_key",
+        "owner_id",
+        "milestone_refs",
+        "capacity_reservation_ref",
+        "state"
+      ]
+    },
+    "ServiceCase": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "party_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "order_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "project_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "request_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "case_kind": {
+          "type": "string",
+          "enum": [
+            "SUPPORT",
+            "WARRANTY"
+          ]
+        },
+        "owner_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "due_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "policy_ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "policy_revision": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "warranty_context_ref": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "source_type": {
+              "type": "string",
+              "enum": [
+                "ORDER",
+                "PROJECT",
+                "PRODUCT",
+                "INSTALLATION",
+                "ENTITLEMENT"
+              ]
+            },
+            "source_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "source_revision": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "evidence_ref": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            }
+          },
+          "required": [
+            "source_type",
+            "source_id",
+            "source_revision",
+            "evidence_ref"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "OPEN",
+            "TRIAGED",
+            "ASSIGNED",
+            "SCHEDULED",
+            "IN_PROGRESS",
+            "RESOLVED",
+            "CLOSED",
+            "REOPENED",
+            "WAITING_POLICY",
+            "WAITING_CUSTOMER"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "party_id",
+        "order_id",
+        "project_id",
+        "request_ref",
+        "case_kind",
+        "owner_id",
+        "due_at",
+        "policy_ref",
+        "policy_revision",
+        "warranty_context_ref",
+        "state"
+      ]
+    },
+    "Rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "evaluator_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "evaluator_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "parameter_schema_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "policy_scope_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "hard_deny": {
+          "type": "boolean"
+        },
+        "issued_by": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "effective_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "DRAFT",
+            "REVIEWED",
+            "PUBLISHED",
+            "RETIRED"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "evaluator_id",
+        "evaluator_version",
+        "parameter_schema_ref",
+        "policy_scope_ref",
+        "hard_deny",
+        "issued_by",
+        "effective_at",
+        "state"
+      ]
+    },
+    "Decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "target": {
+          "$ref": "#/$defs/Target"
+        },
+        "payload_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "fact_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FactRef"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "rule_versions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "consent_context": {
+          "$ref": "#/$defs/ConsentContext"
+        },
+        "precondition": {
+          "$ref": "#/$defs/Precondition"
+        },
+        "autonomy": {
+          "type": "string",
+          "enum": [
+            "C0",
+            "C1",
+            "C2",
+            "C3"
+          ]
+        },
+        "approval_ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "reservation_ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "issued_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "PASS",
+            "WAITING_INPUT",
+            "WAITING_APPROVAL",
+            "REJECTED"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "action",
+        "target",
+        "payload_hash",
+        "fact_refs",
+        "rule_versions",
+        "consent_context",
+        "precondition",
+        "autonomy",
+        "approval_ref",
+        "reservation_ref",
+        "issued_at",
+        "expires_at",
+        "state"
+      ]
+    },
+    "Command": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "decision_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "target": {
+          "$ref": "#/$defs/Target"
+        },
+        "payload_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "precondition": {
+          "$ref": "#/$defs/Precondition"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "reservation_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "fencing_epoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cancellation_requested_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "cancellation_tombstone_ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "RECEIVED",
+            "VALIDATED",
+            "WAITING_INPUT",
+            "WAITING_APPROVAL",
+            "READY",
+            "EXECUTING",
+            "SUCCEEDED",
+            "REJECTED",
+            "FAILED",
+            "UNKNOWN",
+            "RECONCILING",
+            "MANUAL_REVIEW",
+            "CANCEL_REQUESTED",
+            "CANCELLED"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "decision_id",
+        "action",
+        "target",
+        "payload_hash",
+        "idempotency_key",
+        "precondition",
+        "expires_at",
+        "reservation_id",
+        "fencing_epoch",
+        "cancellation_requested_at",
+        "cancellation_tombstone_ref",
+        "state"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "CANCEL_REQUESTED",
+                  "CANCELLED"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "cancellation_requested_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "cancellation_tombstone_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "command_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "intake_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "execution_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "DURABLE_ACCEPTANCE",
+            "DISPATCH_INTENT",
+            "PROVIDER_ACCEPTED",
+            "BUSINESS_COMMITTED",
+            "RECONCILED"
+          ]
+        },
+        "stage_result": {
+          "type": "string",
+          "enum": [
+            "RECORDED",
+            "ACCEPTED",
+            "APPLIED",
+            "CONFIRMED_NO_EFFECT",
+            "ERROR",
+            "UNKNOWN"
+          ]
+        },
+        "command_outcome": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "enum": [
+            "SUCCEEDED",
+            "FAILED",
+            "CANCELLED",
+            "UNKNOWN",
+            null
+          ]
+        },
+        "cancellation_tombstone_ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "external_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "evidence_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "readback_ref": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "command_id",
+        "intake_id",
+        "execution_id",
+        "phase",
+        "stage_result",
+        "command_outcome",
+        "cancellation_tombstone_ref",
+        "external_id",
+        "observed_at",
+        "evidence_ref",
+        "readback_ref"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "const": "DURABLE_ACCEPTANCE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "intake_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "execution_id": {
+                "type": "null"
+              },
+              "stage_result": {
+                "const": "RECORDED"
+              },
+              "command_outcome": {
+                "type": "null"
+              },
+              "external_id": {
+                "type": "null"
+              },
+              "readback_ref": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "const": "DISPATCH_INTENT"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "command_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "execution_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "stage_result": {
+                "const": "RECORDED"
+              },
+              "command_outcome": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "const": "PROVIDER_ACCEPTED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "command_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "execution_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "stage_result": {
+                "const": "ACCEPTED"
+              },
+              "command_outcome": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "const": "BUSINESS_COMMITTED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "command_outcome": {
+                "const": "SUCCEEDED"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command_outcome": {
+                "const": "SUCCEEDED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "phase": {
+                "type": "string",
+                "enum": [
+                  "BUSINESS_COMMITTED",
+                  "RECONCILED"
+                ]
+              },
+              "stage_result": {
+                "const": "APPLIED"
+              },
+              "command_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "execution_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "readback_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "stage_result": {
+                "const": "CONFIRMED_NO_EFFECT"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "phase": {
+                "const": "RECONCILED"
+              },
+              "command_outcome": {
+                "type": "string",
+                "enum": [
+                  "FAILED",
+                  "CANCELLED"
+                ]
+              },
+              "command_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "readback_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command_outcome": {
+                "const": "CANCELLED"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "phase": {
+                "const": "RECONCILED"
+              },
+              "stage_result": {
+                "const": "CONFIRMED_NO_EFFECT"
+              },
+              "command_id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "readback_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              },
+              "cancellation_tombstone_ref": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2048
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Reservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "budget_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "purpose": {
+          "type": "string",
+          "enum": [
+            "MARKETING",
+            "MODEL_CALL"
+          ]
+        },
+        "effect_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "upper_bound": {
+          "$ref": "#/$defs/Money"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "HELD",
+            "SETTLED",
+            "RELEASED",
+            "PENDING_RECONCILIATION"
+          ]
+        },
+        "price_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "budget_id",
+        "purpose",
+        "effect_key",
+        "upper_bound",
+        "state",
+        "price_version",
+        "expires_at"
+      ]
+    },
+    "CapacityReservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "resource_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "units": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "unit": {
+          "type": "string",
+          "enum": [
+            "SLOT",
+            "MINUTE"
+          ]
+        },
+        "window_start": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "window_end": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "HELD",
+            "SETTLED",
+            "RELEASED",
+            "PENDING_RECONCILIATION"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "project_id",
+        "resource_id",
+        "units",
+        "unit",
+        "window_start",
+        "window_end",
+        "expires_at",
+        "state"
+      ]
+    },
+    "AITask": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "business_work_item_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "native_task_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "template_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "output_schema_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "cap_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "due_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "QUEUED",
+            "RUNNING",
+            "WAITING_INPUT",
+            "REVIEW",
+            "SUCCEEDED",
+            "FAILED",
+            "CANCELLED"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "business_work_item_id",
+        "native_task_id",
+        "template_ref",
+        "output_schema_ref",
+        "cap_ref",
+        "due_at",
+        "state"
+      ]
+    },
+    "AIRun": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ai_task_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "native_run_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "workflow_execution_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "usage_reservation_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "QUEUED",
+            "RUNNING",
+            "SUCCEEDED",
+            "FAILED",
+            "CANCELLED",
+            "UNKNOWN"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "ai_task_id",
+        "native_run_id",
+        "generation",
+        "workflow_execution_id",
+        "usage_reservation_id",
+        "state"
+      ]
+    },
+    "Callback": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ai_task_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "ai_run_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "command_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "uuid"
+        },
+        "result_kind": {
+          "type": "string",
+          "enum": [
+            "TASK_RESULT",
+            "EFFECT_RESULT",
+            "USAGE"
+          ]
+        },
+        "mapping_version": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "event_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "body_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "signature_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "sent_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "event": {
+          "type": "string",
+          "enum": [
+            "COMPLETED",
+            "FAILED",
+            "CANCELLED",
+            "USAGE_REPORTED"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "ai_task_id",
+        "ai_run_id",
+        "command_id",
+        "result_kind",
+        "mapping_version",
+        "generation",
+        "event_key",
+        "body_hash",
+        "signature_ref",
+        "sent_at",
+        "event"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "result_kind": {
+                "const": "EFFECT_RESULT"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "command_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Expectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "metric_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "cohort_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "baseline_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "guardrail_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "observation_start": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "observation_end": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "sample_requirement_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "owner_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "metric_ref",
+        "cohort_ref",
+        "baseline_ref",
+        "guardrail_refs",
+        "observation_start",
+        "observation_end",
+        "sample_requirement_ref",
+        "owner_id"
+      ]
+    },
+    "Outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "expectation_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "metric_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "source_fact_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FactRef"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "coverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "value": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "WAITING_OUTCOME",
+            "OBSERVED",
+            "INCONCLUSIVE",
+            "NEEDS_DATA"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "expectation_id",
+        "metric_ref",
+        "source_fact_refs",
+        "coverage",
+        "value",
+        "reason",
+        "state"
+      ]
+    },
+    "IntakeEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "schema_version": {
+          "type": "string",
+          "enum": [
+            "1.0"
+          ]
+        },
+        "source_event_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "event_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "integration_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "occurred_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "received_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "payload_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "correlation_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "causation_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "is_test": {
+          "type": "boolean"
+        },
+        "private_payload_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        },
+        "evidence_ref": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048
+        }
+      },
+      "required": [
+        "id",
+        "revision",
+        "schema_version",
+        "source_event_id",
+        "event_type",
+        "integration_id",
+        "occurred_at",
+        "received_at",
+        "payload_hash",
+        "correlation_id",
+        "causation_id",
+        "is_test",
+        "private_payload_ref",
+        "evidence_ref"
+      ]
+    }
+  }
+}

@@ -1,0 +1,46 @@
+%% DESIGN_PROPOSAL / NOT_LIVE. No infrastructure created. Environment boundaries are mandatory.
+flowchart LR
+  subgraph DESIGN["LOCAL DESIGN — thực hiện đợt này"]
+    Docs["Markdown / Mermaid / JSON Schema"]
+    Fixtures["Synthetic fixtures / offline checks<br/>No credentials or paid calls"]
+    Docs --- Fixtures
+  end
+  subgraph DEV["DEV — đề xuất, chưa setup"]
+    DevAPI["Backend + worker<br/>Deny outbound by default"]
+    DevDB[("Isolated PostgreSQL<br/>Synthetic tenantA/A1/A2 and B/B1")]
+    Mock["Mock channels + model adapter<br/>Paperclip test organization"]
+    DevAPI --> DevDB
+    DevAPI --> Mock
+  end
+  subgraph STAGE["STAGING — đề xuất, chưa setup"]
+    StageUI["Pinned React build"]
+    StageAPI["Pinned Express modules"]
+    StageWorker["Worker / fenced commands"]
+    StageDB[("Separate DB / object storage")]
+    StageSecret["Environment-scoped secret references<br/>Company binding / egress allowlist"]
+    Sandbox["Provider test/sandbox<br/>No paid/scheduled effect unless assigned"]
+    StageUI --> StageAPI --> StageDB
+    StageWorker --> StageDB
+    StageWorker --> StageSecret --> Sandbox
+    Restore["Isolated restore target<br/>Recovery read/reconcile before replay"]
+    StageDB -. "Restore drill" .-> Restore
+  end
+  subgraph PROD["PRODUCTION / PILOT — inventory only; no change in this task"]
+    Render["Existing Render Express / React<br/>Deployed SHA today UNVERIFIED"]
+    Primary[("CRM Primary existing<br/>Single business writer")]
+    Backup[("CRM Backup existing<br/>Parity / restore NOT VERIFIED")]
+    LocalAI["Existing WSL Paperclip / OpenClaw pilot<br/>Fresh health verified; not HA"]
+    Ext["Existing channels / accounting<br/>Rights per account UNVERIFIED"]
+    Render --> Primary
+    Primary -. "Async replication per source evidence<br/>Not guaranteed complete" .-> Backup
+    LocalAI -. "Future narrow adapter; no direct DB authority" .-> Render
+    Render -. "Existing integrations; verify per gate" .-> Ext
+  end
+  Docs -. "Independent build assignment after review" .-> DevAPI
+  DevAPI -. "Contract/auth/race checks" .-> StageAPI
+  StageAPI -. "Separate release task + acceptance gate" .-> Render
+  Observer["Proposed observer outside main process<br/>Readiness · queue age · source freshness · cap exposure · recovery"]
+  Observer -. "Read/alert only" .-> StageAPI
+  Observer -. "Observe; do not mutate" .-> PROD
+  Note["No cross-environment credentials or shared DB.<br/>Backup freshness ≠ restore success. RPO/RTO need measured drills.<br/>Writer switch: freeze → reconcile watermark → revoke old epoch → open new writer."]
+  STAGE --- Note

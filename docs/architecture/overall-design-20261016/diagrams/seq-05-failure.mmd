@@ -1,0 +1,64 @@
+%% DESIGN_PROPOSAL / NOT_LIVE. Failure scenarios are future acceptance paths, NOT_RUN.
+sequenceDiagram
+  autonumber
+  participant Src as Source / requester
+  participant In as Receiver + identity resolver
+  participant DB as Inbox / command / cap transaction
+  participant Owner as Domain + fallback owner
+  participant Guard as Rules / consent / authority
+  participant Worker as Fenced execution worker
+  participant Provider as External provider
+  participant Rec as Authorized reconciler
+  Note over Src,Rec: DESIGN_PROPOSAL / NOT_LIVE. Duplicate, missing owner, revocation, lease expiry and UNKNOWN paths.
+  Src->>In: Retry same source_event_id/type and scope-bound integration
+  In->>DB: Lookup atomic composite key and payload hash
+  alt Same key/hash
+    DB-->>Src: Same receipt and intake_id; no second Need
+  else Same key/different hash
+    DB-->>Src: 409 SOURCE_EVENT_CONFLICT; quarantine + owner
+  else New durable event
+    DB->>Owner: Dispatch intake after persistence
+    alt No eligible owner
+      Owner->>DB: WAITING_OWNER + responsible fallback + due time
+      Owner-->>Src: Accepted inquiry; human assignment pending
+    else Eligible owner
+      Owner->>DB: Stable handoff + separate human ACK milestones
+    end
+  end
+  Worker->>DB: Claim existing READY command with lease + fence N
+  DB-->>Worker: Command exact hash / expected version / reservation / Decision
+  Guard->>Guard: Consent revoked or membership/rule/rights changed to revision N+1
+  Worker->>Guard: Last-moment recheck current source revisions and authority
+  alt Consent revoked / scope denied / decision expired
+    Guard-->>Worker: CONSENT_REVOKED / SCOPE_DENIED / DECISION_STALE
+    Worker->>DB: Reject effect; append reason, release only proven unused hold
+    Note over Worker,Provider: Approval cannot override hard deny. No external call.
+  else All checks remain valid
+    Worker->>DB: Record DISPATCH_INTENT and stable effect key under fence N
+    Worker->>Provider: Authorized call; provider idempotency/conditional mutation when available
+    Provider--xWorker: Response lost after possible write
+    Worker->>DB: UNKNOWN + unresolved exposure; preserve original command/effect key
+    Note over DB,Worker: Lease expiry is not proof of no effect. DB fence cannot recall a call already in flight.
+    Rec->>DB: Claim reconciliation with newer fence; old fence rejected
+    Rec->>Provider: Readback by provider account/native ID/effect fingerprint
+    alt Confirmed effect occurred
+      Provider-->>Rec: Matching state/receipt evidence
+      Rec->>DB: Append reconciled SUCCEEDED receipt + settle once
+    else Confirmed not applied
+      Provider-->>Rec: Authoritative no-effect evidence
+      Rec->>DB: Read durable cancellation intent/tombstone
+      alt Cancellation intent exists
+        Rec->>DB: CANCELLED with no-effect evidence; no retry
+      else No cancellation intent
+        Rec->>Guard: Fresh evaluation of original intent and any new approval
+        Rec->>DB: FAILED then same command/effect key attempt only if valid; recheck tombstone
+      end
+    else Still ambiguous / provider lacks readback
+      Provider-->>Rec: Insufficient evidence
+      Rec->>DB: MANUAL_REVIEW; keep UNKNOWN hold + owner/deadline
+    end
+  end
+  Src->>In: Attempt a new command key for same unresolved business intent
+  In->>DB: Check outstanding effect identity + reservation
+  DB-->>Src: Conflict / link original UNKNOWN; no evasion by new key
+  Note over Src,Rec: Recovery restores in read/reconcile mode; no automatic outbox replay or blind resend.

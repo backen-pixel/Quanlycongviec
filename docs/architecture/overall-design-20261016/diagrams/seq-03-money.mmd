@@ -1,0 +1,58 @@
+%% DESIGN_PROPOSAL / NOT_LIVE. Order, cash and revenue are separate facts.
+sequenceDiagram
+  autonumber
+  participant Sales as Sales / CRM commercial façade
+  participant Customer as Customer acceptance evidence
+  participant Order as Order service
+  participant Work as Work / Project / Service
+  participant Finance as Finance authority façade
+  participant Src as Bank / accountant / accounting adapter
+  participant Gov as Governance + L6
+  participant Measure as L8 / conversion adapter
+  Note over Sales,Measure: DESIGN_PROPOSAL / NOT_LIVE. C-PROJECT / C-PAYMENT, verified scope, revision and idempotency for every write.
+  Sales->>Sales: Issue Quote revision with lines/tax/terms and evidence
+  Customer->>Sales: Acceptance tied to exact Quote revision + source/time
+  Sales->>Order: order.requested + acceptance_ref + stable business key
+  Order->>Order: Validate company, acceptance, expected revision; persist confirmed Order
+  Order-->>Sales: order.confirmed with revision and total basis
+  Order->>Work: Execution unit key + accepted deliverables + scope buyer/executor
+  Work->>Work: Validate authority/capacity; reuse one Project per unit key
+  Work-->>Order: project.accepted; milestones / delivery.accepted evidence
+  Note right of Work: One Order may have multiple Projects, workshops and delivery batches.
+  Src->>Finance: Payment report + canonical transaction key + amount/currency + evidence
+  Finance->>Finance: Authenticate source/binding/company; register legacy aliases
+  alt Same transaction already registered via mirrored source
+    Finance-->>Src: Existing canonical payment; no duplicate cash
+  else Conflicting identity / evidence / amount
+    Finance-->>Src: CONFLICT or PENDING_RECONCILIATION with owner
+  else Report accepted
+    Finance->>Finance: Persist REPORTED then verify source/statement
+    Finance->>Src: Read/reconcile actual transaction and accounting evidence
+    Src-->>Finance: Confirmed / missing / ambiguous evidence
+    alt Evidence proves receipt
+      Finance->>Finance: Append RECONCILED payment and audit
+      Finance->>Order: Derived receivable / paid projection with source revision
+      Finance->>Measure: payment.reconciled; source/evidence/company/order
+      Measure->>Measure: Apply metric/version and stable conversion identity
+      Note right of Measure: Order version change does not create a second Purchase.
+    else Evidence not conclusive
+      Finance-->>Order: Pending/UNKNOWN; do not mark paid
+    end
+  end
+  Customer->>Finance: Refund request referring original payment
+  Finance->>Gov: Exact refund action, scope, original evidence, expected state
+  Gov->>Gov: Rule/approval/cap checks; valid decision → fenced command
+  Gov->>Src: Authorized refund through scoped adapter, stable adjustment ID
+  alt Refund effect confirmed by reconciliation
+    Src-->>Finance: Distinct refund transaction and evidence
+    Finance->>Finance: Append RECONCILED refund referencing original payment
+    Finance->>Measure: refund.reconciled + adjustment_id + original conversion ref
+    Finance->>Order: Net cash/receivable projection updated
+  else Refund response lost after possible effect
+    Gov-->>Finance: UNKNOWN; hold and reconcile, no second refund
+  end
+  Work->>Work: Delivery acceptance → ServiceCase with verified policy_ref
+  Work->>Finance: Service direct cost or compensation proposal; no direct money write
+  Measure->>Measure: Distinct order value, cash, revenue policy, refunds and attribution coverage
+  Note over Finance,Measure: crm_deal_payments / payment_records mirrors count once via alias map; no third business money ledger.
+  Note over Sales,Measure: Thank-you view, Hot/Win stage, AI completion and provider conversion are not payment evidence.
