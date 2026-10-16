@@ -12,6 +12,10 @@ ALTER TABLE project_incidents
   ADD COLUMN IF NOT EXISTS deadline      TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS closed_at     TIMESTAMPTZ;
 
+-- Lỗi HỆ THỐNG không thuộc dự án nào: nút hỏng ở màn hình Cài đặt thì gắn vào dự án nào?
+-- Ép có project_id sẽ buộc người báo chọn bừa một dự án, và thống kê theo dự án hoá sai.
+ALTER TABLE project_incidents ALTER COLUMN project_id DROP NOT NULL;
+
 COMMENT ON COLUMN project_incidents.error_type_id IS
   'Loại lỗi (shared_workspace_error_types). source_kind quyết định đây là lỗi vận hành hay hệ thống.';
 COMMENT ON COLUMN project_incidents.assignee_id IS 'Người đang xử lý lỗi.';

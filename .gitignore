@@ -40,3 +40,8 @@ replay_*.log
 backend/supabase/.temp/
 # Nhật ký của scripts/optimize-user-avatars.js (chứa URL avatar người dùng — giữ cục bộ để khôi phục)
 backend/scripts/avatar-optimize-*.log.jsonl
+
+# Debug log cục bộ và tài liệu nội bộ (hoá đơn, báo cáo Excel) — KHÔNG commit
+debug-*.log
+HoaDon_*.pdf
+BaoCao_*.xlsx

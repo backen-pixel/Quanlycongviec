@@ -106,6 +106,7 @@ const ProductionPipelineSettingsPage = lazyWithRetry(() => import('./pages/Produ
 const WorkshopTaskTemplatesPage = lazyWithRetry(() => import('./pages/WorkshopTaskTemplatesPage'));
 const ProductionHandoverSettingsPage = lazyWithRetry(() => import('./pages/ProductionHandoverSettingsPage'));
 const ProductionBackupSyncPage = lazyWithRetry(() => import('./pages/ProductionBackupSyncPage'));
+const BehaviorInsightPage = lazyWithRetry(() => import('./pages/BehaviorInsightPage'));
 const ProductionAssignmentsPage = lazyWithRetry(() => import('./pages/ProductionAssignmentsPage'));
 const ProductionPhatSinhPage = lazyWithRetry(() => import('./pages/ProductionPhatSinhPage'));
 const LogisticsAssignmentsPage = lazyWithRetry(() => import('./pages/LogisticsAssignmentsPage'));
@@ -243,6 +244,7 @@ import { Settings } from 'lucide-react';
 
 import PinnedProjectsWidget from './components/PinnedProjectsWidget';
 import { AppGuideCopilot } from './features/guide';
+import MenuChuotPhaiBaoLoi from './features/baoloi/MenuChuotPhaiBaoLoi';
 import { ThemeProvider, useTheme } from './components/ThemeProvider';
 import { CrmNotesFabProvider } from './context/CrmNotesFabContext';
 import { MessengerDockProvider } from './context/MessengerDockContext';
@@ -254,6 +256,7 @@ import CopyToastHost from './components/CopyToastHost';
 import ZaloMultiCopyHost from './components/ZaloMultiCopyHost';
 import { RequireCrmElevated, RequireCrmSocialInbox, RequireExecutive, RequirePlatformAdmin } from './components/RequireRole';
 import { useActivityRouteTracker } from './hooks/useActivityRouteTracker';
+import { useActivityClickTracker } from './hooks/useActivityClickTracker';
 import { isCrmSharedPath } from './lib/sidebarModuleContext';
 import ReleaseNoteLoginModal from './components/ReleaseNoteLoginModal';
 import SharedProviders from './shared/SharedProviders';
@@ -292,6 +295,7 @@ function ProtectedLayout() {
   const { loading: moduleAccessLoading, crmOnly } = useModuleAccess();
   const { activeAnimatedScene } = useTheme() || {};
   useActivityRouteTracker(!!user);
+  useActivityClickTracker(!!user);
 
   useEffect(() => {
     if (crmOnly) {
@@ -405,6 +409,10 @@ function ProtectedLayout() {
           </div>
           <PinnedProjectsWidget />
           <AppGuideCopilot />
+          {/* Chuột phải ở bất kỳ đâu → báo lỗi, đã chỉ sẵn vào thành phần dưới con trỏ. */}
+          <MenuChuotPhaiBaoLoi
+            onBaoLoi={(d) => { window.__baoLoi?.(d) || console.info('[bao-loi]', d); }}
+          />
         </div>
       </ProductTourProvider>
     </CrmNotesFabProvider>
@@ -475,6 +483,7 @@ export default function App() {
             <Route path="/management" element={<ManagementDashboard />} />
             <Route path="/management/deals/:leadId" element={<UnifiedDealPage />} />
             <Route path="/management/backup-sync" element={<ProductionBackupSyncPage />} />
+            <Route path="/management/behavior-insight" element={<Suspense fallback={<PageLoader />}><BehaviorInsightPage /></Suspense>} />
             <Route path="/management/mcp-api" element={<RequireCrmElevated><McpReportApiPage /></RequireCrmElevated>} />
             <Route path="/management/project-deadlines" element={<RequireCrmElevated><ProjectDeadlineDispatchPage /></RequireCrmElevated>} />
             <Route path="/dashboard/classic" element={<Navigate to="/dashboard" replace />} />

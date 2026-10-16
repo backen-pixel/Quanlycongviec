@@ -517,6 +517,7 @@ zaloRouter._ioRef = io;
 app.use('/api/zalo', zaloRouter);
 // Inject io reference for realtime fb_message events
 app.use('/api/production', require('./routes/production'));
+app.use('/api/bao-loi', require('./routes/baoLoi'));
 try { app.use('/api/production/backup-sync', require('./routes/productionBackupSync')); } catch (e) { console.warn('⚠️ production backup-sync route failed:', e.message); }
 app.use('/api/logistics', require('./routes/logistics'));
 app.use('/api/accounting', require('./routes/accounting'));
@@ -554,6 +555,7 @@ try { app.use('/api/assistant', require('./routes/assistant')); } catch (e) { co
 try { app.use('/api/copilotkit', require('./routes/guide')); } catch (e) { console.warn('⚠️ Guide (CopilotKit) route failed to load:', e.message); }
 try { app.use('/api/ai-chat-bot', require('./routes/aiChatBot')); } catch (e) { console.warn('⚠️ AI Chat Bot route failed to load:', e.message); }
 try { app.use('/api/user-activity', require('./routes/userActivityLog')); } catch (e) { console.warn('⚠️ User Activity Log route failed to load:', e.message); }
+try { app.use('/api/analytics/behavior-insight', require('./routes/userBehaviorInsight')); } catch (e) { console.warn('⚠️ User Behavior Insight route failed to load:', e.message); }
 try { app.use('/api/auth-events', require('./routes/authEventLog')); } catch (e) { console.warn('⚠️ Auth Event Log route failed to load:', e.message); }
 try { app.use('/api/integrations/stringee', require('./routes/stringee')); } catch (e) { console.warn('⚠️ Stringee route failed to load:', e.message); }
 try { app.use('/api/calc', require('./routes/calc')); } catch (e) { console.warn('⚠️ Calc (Tính toán) route failed to load:', e.message); }
