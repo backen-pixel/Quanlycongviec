@@ -2,7 +2,7 @@
 /**
  * Plugin Name: VPT V1 — Form to CRM
  * Description: Private pilot bridge for CF7 form 11116 to VPT CRM, with durable intake, duplicate suppression and explicit review of uncertain writes.
- * Version: 0.3.3
+ * Version: 0.4.0
  * Requires PHP: 7.4
  * Author: Vạn Phú Thành
  */
@@ -48,7 +48,7 @@ final class VPT_V1_CRM_Bridge {
 
     public static function tracking_script() {
         if (is_admin() || self::mode()==='off') { return; }
-        echo '<script data-nowprocket="1" data-cfasync="false" src="'.esc_url(plugins_url('attribution.js',__FILE__)).'?ver=0.3.3-'.(int) filemtime(__DIR__.'/attribution.js').'" defer></script>';
+        echo '<script data-nowprocket="1" data-cfasync="false" src="'.esc_url(plugins_url('attribution.js',__FILE__)).'?ver=0.4.0-'.(int) filemtime(__DIR__.'/attribution.js').'" defer></script>';
     }
     public static function product_form() {
         if (!in_array((int)get_the_ID(),array(6368,5864,6203),true)) { return; }
@@ -93,13 +93,16 @@ final class VPT_V1_CRM_Bridge {
         if ((int) $form->id() !== self::FORM || self::mode() === 'off') { return; }
         if (!$submission || $abort) { return; }
         try {
-            $built=VPT_V1_CRM_Core::build($submission->get_posted_data(), self::mode(), current_user_can('manage_options'), $submission->get_meta('url'), time());
+            $built=VPT_V1_CRM_Core::build($submission->get_posted_data(), self::mode(), current_user_can('manage_options'), $submission->get_meta('url'), time(), (int) floor(microtime(true)*1000));
         } catch (RuntimeException $e) {
             update_option('vpt_v1_crm_last_notice',array('at'=>time(),'reason'=>$e->getMessage()),false);
             return; // Keep CF7's existing email path unchanged.
         }
         $id=VPT_V1_CRM_Core::fingerprint($built['business'],wp_salt('auth'));
         $job=array('state'=>'queued','request_id'=>wp_generate_uuid4(),'created_at'=>time(),'updated_at'=>time(),'mode'=>self::mode(),'attempts'=>0,'payload'=>$built['payload'],'reason'=>'awaiting_worker');
+        // Generated on the server before the job is persisted. Every retry keeps
+        // this original request, timestamp and measurement choice.
+        $job['payload']['website_intake']['request_id']=$job['request_id'];
         // Unique option_name: concurrent identical submissions cannot both enqueue.
         if (!add_option(self::job_key($id),$job,'',false)) {
             $existing=get_option(self::job_key($id),false);
@@ -108,7 +111,9 @@ final class VPT_V1_CRM_Bridge {
                 self::$receipt=array('status'=>'duplicate','mode'=>self::mode()); return;
             }
         }
-        self::$receipt=array('status'=>'queued','mode'=>self::mode(),'request_id'=>$job['request_id']);
+        self::$receipt=array('status'=>'queued','mode'=>self::mode(),'request_id'=>$job['request_id'],
+            'measurement_consent'=>$job['payload']['website_intake']['measurement_consent'],
+            'consent_version'=>$job['payload']['website_intake']['consent_version']);
         // Random request_id -> job hash, so the browser can wait for CRM confirmation (1 hour).
         set_transient(self::RECEIPT . $job['request_id'],$id,HOUR_IN_SECONDS);
         $result=wp_schedule_single_event(time()+1,self::HOOK,array($id),true);

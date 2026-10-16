@@ -15,6 +15,13 @@
  * chỉnh theo. Ghép theo tên vì hai bảng không có khoá nối nào khác — bộ mẫu sinh ra
  * chúng độc lập.
  *
+ * GHÉP THEO CỘT TRƯỚC, TÊN SAU
+ * Một việc có thể xuất hiện ở NHIỀU cột quy trình với CÙNG TÊN — mỗi cột một `crm_task`,
+ * và đó là việc THẬT khác nhau, không phải bản sao («Sơn» ×2–3 ở 209 cụm). Ghép chỉ theo
+ * tên rồi sửa cả cụm là đóng oan việc ở cột chưa tới.
+ * Nên: cùng cột thì ghép đích danh; không xác định được cột thì chỉ sửa MỘT bản
+ * (hạn sớm nhất) chứ không quét cả cụm.
+ *
  * GIỚI HẠN PHẢI BIẾT
  * Tên lệch là trượt. Dữ liệu đang có «Tiếp nhập thông tin dự án» và «Tiếp nhận thông tin
  * dự án» sống song song (lỗi chính tả trong bộ mẫu) — hai cái đó KHÔNG soi được sang nhau.
@@ -45,6 +52,25 @@ function chuanTen(s) {
     .toLowerCase()
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/**
+ * Trong các ứng viên trùng tên, chọn ĐÚNG bản sao của `goc`.
+ *  - Cùng cột quy trình → đó là cặp song sinh, lấy hết những cái cùng cột.
+ *  - Không bên nào xác định được cột → lấy MỘT bản, hạn sớm nhất (cùng luật với
+ *    `/work-tasks` khi gom cặp song sinh), để không đụng việc ở cột khác.
+ */
+function chonBanSao(ungVien, cotGoc, cotCuaUngVien) {
+  if (!ungVien.length) return [];
+  if (cotGoc) {
+    const cungCot = ungVien.filter((t) => String(cotCuaUngVien(t) || '') === String(cotGoc));
+    if (cungCot.length) return cungCot;
+    // Ứng viên nào cũng có cột, mà không cái nào trùng cột gốc → việc ở cột khác, KHÔNG đụng.
+    if (ungVien.every((t) => cotCuaUngVien(t))) return [];
+  }
+  const hanMs = (t) => (t.deadline ? new Date(t.deadline).getTime() : Number.MAX_SAFE_INTEGER);
+  return [[...ungVien].sort((a, b) => hanMs(a) - hanMs(b)
+    || String(a.id).localeCompare(String(b.id)))[0]];
 }
 
 function laViecSxCuaSoDuAn(row) {
@@ -98,11 +124,12 @@ async function soiTuSoDealSangSoDuAn(task) {
 
     const { data: ds, error } = await supabase
       .from('tasks')
-      .select('id, title, status, metadata')
+      .select('id, title, status, metadata, production_stage_id, deadline')
       .eq('project_id', projectId);
     if (error) throw error;
 
-    const banSao = (ds || []).filter((t) => laViecSxCuaSoDuAn(t) && chuanTen(t.title) === ten);
+    const ungVien = (ds || []).filter((t) => laViecSxCuaSoDuAn(t) && chuanTen(t.title) === ten);
+    const banSao = chonBanSao(ungVien, task.production_pipeline_stage_id, (t) => t.production_stage_id);
     if (!banSao.length) {
       console.info(`[dongBoHaiSo] không thấy bản sao bên sổ dự án: «${task.title}» (dự án ${projectId})`);
       return { khong_tim_thay: true };
@@ -141,12 +168,13 @@ async function soiTuSoDuAnSangSoDeal(task) {
     const xong = TASK_TERMINAL.has(String(task.status || '').toLowerCase());
     const { data: ds, error } = await supabase
       .from('crm_tasks')
-      .select('id, title, status')
+      .select('id, title, status, production_pipeline_stage_id, deadline')
       .in('lead_id', leadIds)
       .like('stage_slug', 'sx_%');
     if (error) throw error;
 
-    const banSao = (ds || []).filter((t) => chuanTen(t.title) === ten);
+    const ungVien = (ds || []).filter((t) => chuanTen(t.title) === ten);
+    const banSao = chonBanSao(ungVien, task.production_stage_id, (t) => t.production_pipeline_stage_id);
     if (!banSao.length) {
       console.info(`[dongBoHaiSo] không thấy bản sao bên sổ deal: «${task.title}» (dự án ${task.project_id})`);
       return { khong_tim_thay: true };
@@ -172,4 +200,6 @@ module.exports = {
   soiTuSoDealSangSoDuAn,
   soiTuSoDuAnSangSoDeal,
   chuanTen,
+  /** Lộ ra để test được luật chọn bản sao — không dùng ở nơi khác. */
+  _chonBanSao: chonBanSao,
 };
