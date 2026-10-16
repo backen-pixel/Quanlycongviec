@@ -7,7 +7,7 @@
 
 Migration SQL (nguồn chuẩn thay đổi schema):
 
-- Thư mục repo: `/database/*.sql` (đánh số tăng dần)
+- Thư mục repo: `/database/*.sql` (đánh số tăng dần) — quy trình chạy và theo dõi: [`/database/README.md`](../../database/README.md)
 - Không sửa migration đã chạy trên production — chỉ thêm file mới
 - Mọi thay đổi DB phải có migration + kiểm tra dữ liệu cũ + rollback note trong PR
 
