@@ -1,3 +1,12 @@
+## 2026-10-16 — Hàng rào chặn ghi cutover: người dùng thấy `CUTOVER_V2_WRITE_FENCED` thô
+
+- Hiện tượng: 16/10 lúc 14:41–15:04 (VN) người dùng gửi bình luận/tải tệp thì trình duyệt bật alert đúng chuỗi `CUTOVER_V2_WRITE_FENCED`. Không phải lỗi ứng dụng: trigger `vpt_cutover_v2_20261015.write_fence` trên 336 bảng public từ chối mọi INSERT/UPDATE/DELETE khi hàng rào đóng; route trả thẳng `e.message` nên chuỗi thô ra tới alert().
+- Mốc đọc từ `fence_audit` (chỉ đọc, 2 site): initialize 07:26:02 UTC, activate 07:41:24 UTC (đóng), release 08:04:56 UTC (primary) và 08:05:16 UTC (backup). Hiện `control.active=false` cả hai site, `run_id` khớp registrations nên không còn `CONTROL_MISMATCH`. Thao tác ghi trong khung giờ đó đã bị từ chối, không lưu — phải gửi lại.
+- Sửa: `backend/src/helpers/dbWriteFence.js` + middleware `/api/*` đổi mọi mã `CUTOVER_*` trong body lỗi sang câu tiếng Việt, trả 503 kèm `Retry-After` khi hàng rào thuộc loại chờ được, giữ `db_code` cho kỹ thuật. Chỉ soi `error/message/details/hint/raw_message` nên không đụng nội dung người dùng nhập. `frontend/src/lib/dbWriteFence.js` lặp lại ở axios interceptor phòng khi backend chưa deploy. 7 case: `npm run test:db-fence`.
+- Không tự mở/đóng hàng rào, không chạm billing/disk, không DDL. Việc mở hàng rào vẫn chỉ chủ sở hữu DB làm bằng `release` của CLI vận hành. 677 trigger cutover vẫn còn trên bảng public — mỗi lệnh ghi lấy khoá `FOR SHARE` trên dòng control; vô hại khi hàng rào mở nhưng rủi ro tái diễn còn đó cho tới khi vận hành gỡ.
+
+---
+
 ## 2026-10-16 — Dọn bản tài nguyên Android lồng dư
 
 - Phạm vi từ `main` tại `e8d94ecc`: chỉ gỡ `crm-mobile-v2/plugins/native-android/res/res/` (17 tệp, 22.921 byte). So cùng đường dẫn tương đối ở `res/`: 16 tệp giống hoàn toàn, `values/styles_call.xml` là bản cũ. Bản canonical giữ `Theme.BubbleCompose`.
