@@ -1,0 +1,45 @@
+%% BOS-ARCH-DESIGN-01 | DESIGN_PROPOSAL / NOT_LIVE | 16/10/2026
+%% Editable responsibility model; arrows are contracts, not evidence of live integration.
+flowchart TB
+  CH["Kênh bên ngoài<br/>Website · Meta · Google · TikTok · Zalo · ChatGPT Ads<br/>Quyền từng tài khoản: UNVERIFIED"]
+  FOUNDER["Founder và nhân sự<br/>Mục tiêu · ủy quyền · ngoại lệ"]
+  CODEX["Codex / Software Factory<br/>Thiết kế · code · kiểm thử · review<br/>Ngoài runtime nghiệp vụ"]
+
+  subgraph BOS["MỘT BUSINESS AI OS — DESIGN_PROPOSAL / NOT_LIVE"]
+    direction TB
+    subgraph DOM["CÁC MIỀN NGHIỆP VỤ NGANG HÀNG"]
+      direction LR
+      FCC["Founder Control Center<br/>Mục tiêu / chênh lệch / quyết định"]
+      MKT["Marketing<br/>Plan · content · campaign · nguồn khách"]
+      CRM["Sales / CRM<br/>Party · Need · khảo sát · Quote"]
+      OPS["Vận hành & giao giá trị<br/>Project · WorkItem · giao/lắp"]
+      CARE["Chăm sóc & bảo hành<br/>ServiceCase · lịch hẹn · giải quyết"]
+      FIN["Tài chính & đơn hàng<br/>Order · thu/hoàn · đối soát"]
+    end
+    subgraph SHARED["NỀN CHUNG — MỌI MIỀN CÙNG DÙNG, KHÔNG NHÂN LÕI"]
+      direction TB
+      IN["L1 Kênh/adapters + L2 Tiếp nhận<br/>Binding backend · xác thực nguồn · durable inbox trước ACK"]
+      TRUTH["L3 Sự thật<br/>CRM / Work / Finance có chủ · revision · bằng chứng · độ mới"]
+      GOV["L4 Quy luật + L5 Quyết định + L6 Thực thi<br/>Một registry · C0–C3 · Decision → Command → Receipt<br/>Pháp → Lệ → Lý → Tình · recheck trước tác dụng"]
+      INTEL["L7 AI + L8 Đo/học + L9 Trải nghiệm<br/>Paperclip → AI gateway → runtime adapter<br/>Expectation / Outcome · cockpit / hộp việc"]
+      BASE["L10 Nền tảng xuyên suốt<br/>Tenant/company · identity/quyền · audit · cap/reservation · backup/restore"]
+    end
+    FCC & MKT & CRM & OPS & CARE & FIN --- TRUTH
+    IN -->|"C-INGEST, độc lập AI"| TRUTH
+    TRUTH --> GOV
+    GOV --> INTEL
+    BASE --- IN
+    BASE --- GOV
+    BASE --- INTEL
+  end
+  CH --> IN
+  FOUNDER --> FCC
+  CODEX -. "Gói xây / review; phát hành là nhiệm vụ riêng" .-> BOS
+  NOTE["CRM / Work / Finance giữ dữ liệu chuẩn; AI không tự xác nhận khách, thu tiền hay hoàn thành nghiệp vụ.<br/>10 tầng logic không phải 10 microservice/DB. Mũi tên không chứng minh đã triển khai."]
+  BOS --- NOTE
+  classDef domain fill:#eff6ff,stroke:#2563eb,color:#0f172a;
+  classDef core fill:#ecfdf5,stroke:#059669,color:#0f172a;
+  classDef ext fill:#f8fafc,stroke:#64748b,color:#334155;
+  class FCC,MKT,CRM,OPS,CARE,FIN domain;
+  class IN,TRUTH,GOV,INTEL,BASE core;
+  class CH,FOUNDER,CODEX,NOTE ext;

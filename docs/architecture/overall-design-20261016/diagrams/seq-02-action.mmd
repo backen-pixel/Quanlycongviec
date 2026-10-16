@@ -1,0 +1,63 @@
+%% DESIGN_PROPOSAL / NOT_LIVE. No content published or advertising budget changed.
+sequenceDiagram
+  autonumber
+  participant Actor as Human / narrow AI workload
+  participant M as Marketing service
+  participant Identity as Backend identity + scope
+  participant Gov as L4/L5 Rule / Decision / Approval
+  participant Facts as L3 Facts / Consent / Asset rights
+  participant Cap as L10 canonical cap ledger
+  participant Q as L6 command / outbox / worker
+  participant Native as Scoped channel adapter / provider
+  participant R as Receipt + L8 reporting
+  Note over Actor,R: DESIGN_PROPOSAL / NOT_LIVE. C-CONTENT, C-CAMPAIGN, C-ACTION, C-COMMAND, C-RECEIPT.
+  Actor->>M: Plan/content/campaign revision + assets + requested action
+  M->>Identity: Authenticate actor, membership, delegation, company and target binding
+  Identity-->>M: Effective scopes + authority epoch; selector cannot grant access
+  M->>Facts: Current content hash / rights expiry / consent / resource revision
+  Facts-->>M: Source revisions, evidence and freshness or missing reason
+  M->>Gov: Action proposal binding exact target/account/payload/fact refs
+  Gov->>Gov: Versioned rules; Pháp → Lệ → Lý → Tình; C0–C3
+  alt Invalid scope or hard forbidden
+    Gov-->>Actor: REJECTED; cannot enter approval queue to bypass
+  else Missing required fact, rights or budget basis
+    Gov-->>Actor: WAITING_INPUT + owner/deadline
+  else Valid C2 action requiring approval
+    Gov-->>Actor: Preview exact digest, rule/fact versions, cap and TTL
+    Actor->>Gov: Authorized approver signs same digest + expiry
+    Gov->>Gov: Persist immutable approval; C3 framework change handled separately
+  else C1 within effective delegation
+    Gov->>Gov: Persist bounded authorization + gate trace
+  end
+  opt Valid current Decision and approval when required
+    Gov->>Cap: Reserve scoped exposure with stable obligation key
+    Cap-->>Gov: Reservation_ref or CAP_EXCEEDED / CAP_UNSET
+    Gov->>Q: Persist Command + hash + ABSENT/MATCH precondition + reservation when required
+    Q-->>Actor: 202 command_id + pure receipt_ref; not publish success
+    Q->>Q: Atomic claim / lease / monotonic fence
+    Q->>Identity: Recheck membership, company status and authority epoch
+    Q->>Facts: Recheck revision, consent, asset rights and expected state
+    Q->>Gov: Recheck exact hash, rules, approval and TTL
+    Q->>Cap: Recheck hold and total exposure
+    alt Any decision dependency invalidated
+      Q->>R: REJECTED / DECISION_STALE / WAITING_INPUT; no effect
+      Q->>Cap: Release only proven unused reservation portion
+    else All guards pass
+      Q->>Q: Persist DISPATCH_INTENT + effect key before external call
+      Q->>Native: Credential-bound target + same effect key; provider limits
+      alt Confirmed effect and provider receipt
+        Native-->>Q: Native object ID / provider acceptance evidence
+        Q->>Native: Readback exact target and operation fingerprint
+        Native-->>Q: Current state/evidence
+        Q->>R: SUCCEEDED receipt if sufficient; source/native revision
+        Q->>Cap: Settle actual; replace matched reservation, no double count
+      else Response lost after possible effect
+        Q->>R: UNKNOWN; preserve intent + hold
+        Q->>Native: Read/reconcile by effect key/native ID
+        Note over Q,Native: Never redispatch blindly or generate new command to evade UNKNOWN.
+      end
+    end
+  end
+  Actor->>R: GET receipt by command_id
+  R-->>Actor: Pure read current state + evidence/as_of; no retry side effect
+  Note over M,R: Internal plan APPROVED is separate from native ACTIVE/PUBLISHED. 130m is Marketing cap, no reallocation in design.

@@ -1,0 +1,24 @@
+sequenceDiagram
+  participant P as Form / Meta / Zalo
+  participant I as BOS L2 Receiver
+  participant DB as Scoped inbox and outbox
+  participant C as CRM presales writer
+  participant G as L5 and L6
+  participant O as Owner
+  P->>I: authenticated event / account binding
+  I->>DB: atomic insert unique event key + canonical hash
+  DB-->>I: durable receipt
+  I-->>P: protocol ACK after commit
+  DB->>C: idempotent projection with scoped customer lookup
+  C->>DB: Need + assignment + outbox
+  DB->>O: internal assignment notification
+  O->>C: authenticated ACK with expected revision
+  C->>DB: accepted evidence
+  alt overdue without ACK
+    DB->>G: propose reassign
+    G->>G: PHAP LE LY TINH + C2 policy
+    G->>O: delivered notice and veto window
+    G->>DB: serialize veto / dispatch / latest ACK
+    G->>C: command only if authorized
+  end
+  C->>DB: committed receipt and reconciliation

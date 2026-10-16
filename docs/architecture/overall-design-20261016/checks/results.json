@@ -1,0 +1,62 @@
+{
+  "checked_at": "2026-10-16T07:12:00.888767+00:00",
+  "classification": "LOCAL_DESIGN_CHECK",
+  "schema_validator": "strict emitted-keyword subset; NOT Draft2020-12 standards conformance",
+  "synthetic_records": 30,
+  "checks": [
+    {
+      "id": "LC01-schema-examples-and-negative-shapes",
+      "status": "LOCAL_DESIGN_CHECK_PASS"
+    },
+    {
+      "id": "LC02-scope-A1-A2-B1-and-missing-tenant",
+      "status": "LOCAL_DESIGN_CHECK_PASS"
+    },
+    {
+      "id": "LC03-native-event-key-payload-conflict",
+      "status": "LOCAL_DESIGN_CHECK_PASS"
+    },
+    {
+      "id": "LC04-fresh-decision-and-hard-deny",
+      "status": "LOCAL_DESIGN_CHECK_PASS"
+    },
+    {
+      "id": "LC05-unknown-no-blind-retry-and-guarded-release",
+      "status": "LOCAL_DESIGN_CHECK_PASS"
+    },
+    {
+      "id": "LC06-callback-generation-cancel-scope",
+      "status": "LOCAL_DESIGN_CHECK_PASS"
+    },
+    {
+      "id": "LC07-budget-settlement-and-unknown-hold",
+      "status": "LOCAL_DESIGN_CHECK_PASS"
+    },
+    {
+      "id": "LC08-cpl-coverage-and-conversion-identity",
+      "status": "LOCAL_DESIGN_CHECK_PASS"
+    },
+    {
+      "id": "LC09-traceability-and-live-NOT_RUN",
+      "status": "LOCAL_DESIGN_CHECK_PASS"
+    },
+    {
+      "id": "LC10-local-document-links",
+      "status": "LOCAL_DESIGN_CHECK_PASS"
+    },
+    {
+      "id": "LC11-phase-consent-precondition-and-nullable-intent",
+      "status": "LOCAL_DESIGN_CHECK_PASS"
+    },
+    {
+      "id": "LC12-linked-fixture-autonomy-and-reservation-purpose",
+      "status": "LOCAL_DESIGN_CHECK_PASS"
+    }
+  ],
+  "limitations": [
+    "No application startup, credentials or network",
+    "No DB concurrency/fencing proof",
+    "No cryptographic callback verification",
+    "No provider/business/live acceptance"
+  ]
+}

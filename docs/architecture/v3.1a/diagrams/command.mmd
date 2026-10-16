@@ -1,0 +1,23 @@
+stateDiagram-v2
+  [*] --> RECEIVED
+  RECEIVED --> VALIDATED
+  RECEIVED --> REJECTED
+  VALIDATED --> READY
+  READY --> EXECUTING: fresh authority lease fence
+  READY --> CANCELLED: durable cancel before effect
+  READY --> REJECTED: stale or revoked authority
+  EXECUTING --> SUCCEEDED: effect reconciled
+  EXECUTING --> FAILED_NO_EFFECT: proven no effect
+  EXECUTING --> UNKNOWN: result ambiguous
+  EXECUTING --> CANCEL_REQUESTED: cancellation after dispatch
+  UNKNOWN --> RECONCILING
+  CANCEL_REQUESTED --> RECONCILING
+  RECONCILING --> SUCCEEDED: effect exists
+  RECONCILING --> FAILED_NO_EFFECT: proven absent
+  RECONCILING --> CANCELLED: absent and tombstone
+  RECONCILING --> MANUAL_REVIEW: insufficient evidence
+  MANUAL_REVIEW --> RECONCILING: new evidence
+  FAILED_NO_EFFECT --> VALIDATED: retry allowed same effect key
+  SUCCEEDED --> [*]
+  CANCELLED --> [*]
+  REJECTED --> [*]

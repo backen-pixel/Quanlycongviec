@@ -1,0 +1,51 @@
+%% DESIGN_PROPOSAL / NOT_LIVE. Baseline/source evidence: INVENTORY.md.
+flowchart TB
+  Channels["External platforms / website<br/>Native IDs and permission bindings"]
+  Users["Human user / delegated workload"]
+  Models["Model providers / runtime<br/>No direct business credentials"]
+  subgraph BOS["BUSINESS AI OS — MODULES PROPOSED, NOT LIVE CERTIFICATION"]
+    UI["React / Founder / domain UI<br/>Reuse; C-QUERY + requests"]
+    Scope["L10 Identity / scope resolver<br/>Membership + company + delegation + epoch"]
+    Receiver["L1/L2 receiver adapters<br/>Signature/token + binding + schema"]
+    Inbox[("Primary durable Inbox<br/>Composite source key + payload hash")]
+    Facades["L3 domain façades<br/>CRM · Marketing · Work · Service · Finance"]
+    Facts["Fact projections<br/>Owner refs + revisions + as_of/coverage"]
+    Policy["L4/L5 Governance<br/>One Rule / Decision / Approval registry"]
+    Cap[("L10 canonical cap ledger<br/>Reservations / usage / UNKNOWN exposure")]
+    Command[("L6 Command / outbox<br/>claim + lease + monotone fence + intent")]
+    Worker["L6 worker / adapter<br/>Revalidate scope + TTL + facts + consent + cap"]
+    Receipt[("Receipt / audit / reconciliation<br/>Pure read by command identity")]
+    AI["L7 AI gateway + Paperclip bridge<br/>Task/run/native mapping + signed callbacks"]
+    PC["Paperclip<br/>Own AI task/run and AI scheduling"]
+    Reporting["L8 reporting<br/>Expectation / Outcome / Adjustment proposals"]
+    Primary[("Current business Primary<br/>customers / crm_leads / quotes / orders<br/>tasks / projects / finance — reuse via façades")]
+    Optional["OPTIONAL n8n connector/workflow<br/>No authority, cap or business writer"]
+  end
+  Channels --> Receiver --> Inbox --> Facades
+  Users --> UI --> Scope
+  Scope --> Facades
+  Facades --> Primary
+  Facades --> Facts --> Reporting --> UI
+  Facades --> Policy
+  Policy --> Cap
+  Policy --> Command
+  Command --> Worker
+  Worker --> Scope
+  Worker --> Policy
+  Worker --> Cap
+  Worker -->|"Only approved domain mutation"| Facades
+  Worker -->|"Scoped target adapter + stable effect key"| Channels
+  Worker --> Receipt
+  Receipt --> Reporting
+  Facades -->|"C-AI; WorkItem remains domain-owned"| AI
+  AI --> PC
+  PC -->|"Each paid call through gateway"| AI
+  AI --> Cap
+  AI --> Models
+  Models -->|"Authenticated callback / usage evidence"| AI
+  AI --> Receipt
+  AI -->|"Action proposal only"| Policy
+  Optional -. "Restricted contracts; one scheduler owner" .-> Scope
+  Optional -. "C-ACTION/C-COMMAND only" .-> Policy
+  Note["Durable ingest does not call LLM. Provider ACK ≠ domain committed ≠ reconciled outcome.<br/>No AI/n8n direct DB/Ads token. Source code reuse does not prove deployed invariants."]
+  BOS --- Note

@@ -1,0 +1,59 @@
+%% DESIGN_PROPOSAL / NOT_LIVE. No model call, agent dispatch or paid effect was executed.
+sequenceDiagram
+  autonumber
+  participant Work as Domain WorkItem owner
+  participant Bridge as BOS AI bridge + identity
+  participant PC as Paperclip task/run owner
+  participant Gateway as AI gateway / runtime adapter
+  participant Cap as L10 canonical AI cap
+  participant Runtime as Runtime / model provider
+  participant Review as Authorized reviewer
+  participant Store as Mapping / receipts / cancellation tombstone
+  Note over Work,Store: DESIGN_PROPOSAL / NOT_LIVE. C-AI + C-BUDGET. Four distinct IDs persist; AI result never closes business state.
+  Work->>Bridge: AgentSpec version + WorkItem ref + scoped input + allowed tools + cap/deadline
+  Bridge->>Bridge: Resolve actor/tenant/company, delegation and ai.dispatch scope
+  Bridge->>Store: Persist dispatch intent and mapping generation before request
+  Bridge->>PC: Create/reuse task with stable dispatch key
+  PC-->>Bridge: ai_task_id + ai_run_id; native execution ref when known
+  Bridge->>Store: Bind business_work_item_id / ai_task_id / ai_run_id / workflow_execution_id
+  PC->>Gateway: Execute bounded run using registered adapter
+  Gateway->>Cap: Atomic reserve worst-case call cost including tools/retry/review
+  alt Price, FX or cap UNSET / insufficient scope
+    Cap-->>Gateway: CAP_UNSET / CAP_EXCEEDED; no paid call
+    Gateway-->>PC: WAITING_INPUT / bounded failure
+  else Reservation committed
+    Cap-->>Gateway: reservation_ref + limit
+    Gateway->>Runtime: Call allowlisted model/tool path; no direct CRM/Ads credentials
+    alt Authenticated callback arrives normally
+      Runtime-->>Bridge: IDs + generation/event + signed body/time/nonce/audience + usage
+      Bridge->>Bridge: Verify sender binding, signature, replay key and server scope
+      Bridge->>Store: Same callback key/hash replay or conflict quarantine
+      Bridge->>Cap: Settle trusted usage once; do not discard retry/reviewer usage
+      Bridge->>Review: Output + sources + review criteria
+      opt Review needs another model call
+        Review->>Gateway: Review request with same scope and sublimit
+        Gateway->>Cap: New reservation before reviewer call
+        Gateway->>Runtime: Reviewer call only after reserve
+      end
+      Review-->>Work: Review evidence and proposed result
+      Work->>Work: Domain owner validates acceptance separately
+    else Callback lost or times out
+      Gateway->>Store: AI run UNKNOWN / pending callback reconciliation
+      Gateway->>Cap: Usage UNKNOWN keeps hold; no automatic refund
+      Bridge->>PC: Pure read task/run receipt by original dispatch key
+      PC-->>Bridge: Native run status/usage evidence or still unknown
+      Bridge->>Store: Reconcile existing mapping; do not create replacement run blindly
+    end
+  end
+  opt Parent cancels before or during runtime
+    Work->>Bridge: Authenticated cancellation by generation
+    Bridge->>Store: Durable cancellation tombstone; keep usage/effect obligations
+    Bridge->>PC: Request cancellation idempotently
+    PC->>Runtime: Best effort stop under adapter capabilities
+    Runtime-->>Bridge: Late completion / usage / possible effect
+    Bridge->>Store: Authenticate + record late evidence; do not reopen cancelled task
+    Bridge->>Cap: Reconcile actual usage once; unresolved usage remains held
+    Bridge-->>Work: CANCELLED or CANCEL_REQUESTED/RECONCILING with evidence
+  end
+  Note over Gateway,Runtime: Network/tool enforcement must block bypass; prompt-only limits are insufficient.
+  Note over Work,Store: Paperclip owns AI scheduling; existing business jobs keep their owner until explicit cutover.

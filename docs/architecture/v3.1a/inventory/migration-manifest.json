@@ -1,0 +1,3421 @@
+{
+  "schema_version": "bos.v3.1a.migration-source-manifest.v1",
+  "task_id": "BOS-V31A-ARCH-01",
+  "status": "SOURCE_VERIFIED_NOT_APPLIED_HISTORY",
+  "source_sha": "49c4fda6f256ed1517213fb0a1bf831c869919d6",
+  "product_source_sha": "fe3f4398ebf2186596c108a7570f83e3bbef104a",
+  "catalog_root": "database/",
+  "selection": "Root numeric SQL via existing migrationPlan.listMigrations; rollback and unnumbered excluded",
+  "checksum_algorithm": "sha256 of UTF-8 content normalized CRLF to LF; unchanged final newline",
+  "catalog_hash_algorithm": "sha256(JSON.stringify(files)) in existing listMigrations order",
+  "catalog_sha256": "acaecabf9c8c62d5ff4e500f4dcb157e5591a519301ac6cc49e8278ac6456afe",
+  "root_sql_count": 738,
+  "forward_migration_count": 722,
+  "rollback_files": [
+    "700_revoke_anon_public_access_rollback.sql",
+    "710_p1_trial_registry_rollback.sql",
+    "712_p1_qualification_rollback.sql",
+    "713_p1_trial_snapshots_rollback.sql",
+    "714_ai_reply_drafts_rollback.sql",
+    "715_unified_tasks_v_task_kind_theo_nhiem_vu_rollback.sql",
+    "717_marketing_intake_rollback.sql",
+    "718_web_conversion_events_rollback.sql",
+    "719_ad_spend_manual_rollback.sql",
+    "720_phone_call_intake_rollback.sql",
+    "722_schema_migrations_rollback.sql"
+  ],
+  "excluded_unnumbered_files": [
+    "diagnose_location.sql",
+    "fix_install_address.sql",
+    "fix_notification_type_enum.sql",
+    "seed_phu_kien_products.sql",
+    "supabase_delete_leads_users_by_vn_date.sql"
+  ],
+  "duplicate_numeric_prefixes": [
+    {
+      "number": 20,
+      "filenames": [
+        "20_lead_deal_pipeline.sql",
+        "20_product_code_structure.sql"
+      ]
+    },
+    {
+      "number": 21,
+      "filenames": [
+        "21_crm_pipelines.sql",
+        "21_product_categories.sql"
+      ]
+    },
+    {
+      "number": 22,
+      "filenames": [
+        "22_events.sql",
+        "22_fix_duplicate_messages.sql",
+        "22_lead_members_chat.sql",
+        "22_push_subscriptions.sql",
+        "22_quotation_excel_columns.sql",
+        "22_shared_task_notes.sql",
+        "22_spec_factor.sql",
+        "22_vat_per_item.sql",
+        "22b_shared_attachments.sql"
+      ]
+    },
+    {
+      "number": 23,
+      "filenames": [
+        "23_crm_company_filter.sql",
+        "23_facebook_default_company.sql",
+        "23_release_notes.sql"
+      ]
+    },
+    {
+      "number": 24,
+      "filenames": [
+        "24_fix_duplicate_messages.sql",
+        "24_item_full_columns.sql"
+      ]
+    },
+    {
+      "number": 25,
+      "filenames": [
+        "25_facebook_contacts_last_synced.sql",
+        "25_planner_order.sql"
+      ]
+    },
+    {
+      "number": 36,
+      "filenames": [
+        "36_auto_project_config.sql",
+        "36_notification_preferences_logistics_deadlines.sql"
+      ]
+    },
+    {
+      "number": 38,
+      "filenames": [
+        "38_document_sync_link.sql",
+        "38_template_item_visibility_defaults.sql"
+      ]
+    },
+    {
+      "number": 46,
+      "filenames": [
+        "46_lead_duplicate_and_customer_sync.sql",
+        "46_lead_duplicate_scanner.sql"
+      ]
+    },
+    {
+      "number": 51,
+      "filenames": [
+        "51_crm_leads_page_ids_hotfix.sql",
+        "51_fb_attended_status_rpc.sql"
+      ]
+    },
+    {
+      "number": 52,
+      "filenames": [
+        "52_fb_contact_ids_inbound_range_rpc.sql",
+        "52_sx_crm_share_flags.sql"
+      ]
+    },
+    {
+      "number": 53,
+      "filenames": [
+        "53_fb_unattended_count_by_page_rpc.sql",
+        "53_production_pipeline_stages.sql"
+      ]
+    },
+    {
+      "number": 68,
+      "filenames": [
+        "68_messenger_chat_stats_mentions.sql",
+        "68_messenger_groups_crm_lead.sql"
+      ]
+    },
+    {
+      "number": 102,
+      "filenames": [
+        "102_document_share_modules.sql",
+        "102_users_is_active_null.sql"
+      ]
+    },
+    {
+      "number": 103,
+      "filenames": [
+        "103_crm_leads_use_order_tasks.sql",
+        "103_facebook_contacts_sync_flags.sql"
+      ]
+    },
+    {
+      "number": 104,
+      "filenames": [
+        "104_crm_leads_page_ids_hide_children.sql",
+        "104_crm_leads_sx_template_company.sql"
+      ]
+    },
+    {
+      "number": 134,
+      "filenames": [
+        "134_company_division_units.sql",
+        "134_crm_lead_type_workshop_production_templates.sql"
+      ]
+    },
+    {
+      "number": 153,
+      "filenames": [
+        "153_crm_followup_care_dismissals.sql",
+        "153_crm_kpi_scoring_rules.sql"
+      ]
+    },
+    {
+      "number": 160,
+      "filenames": [
+        "160_crm_task_completion_requires_evidence.sql",
+        "160_quotations_region_scope.sql"
+      ]
+    },
+    {
+      "number": 169,
+      "filenames": [
+        "169_crm_company_deadline_config.sql",
+        "169_quotations_source_excel_file.sql"
+      ]
+    },
+    {
+      "number": 170,
+      "filenames": [
+        "170_crm_user_planner.sql",
+        "170_quotations_sale_discount.sql"
+      ]
+    },
+    {
+      "number": 291,
+      "filenames": [
+        "291_messenger_contact_nicknames.sql",
+        "291_reset_tubep_pipeline.sql"
+      ]
+    },
+    {
+      "number": 292,
+      "filenames": [
+        "292_messenger_group_member_nicknames.sql",
+        "292_reset_kinh_pipeline.sql"
+      ]
+    },
+    {
+      "number": 314,
+      "filenames": [
+        "314_crm_assignments_production_module.sql",
+        "314_zalo_oa_default_module.sql"
+      ]
+    },
+    {
+      "number": 326,
+      "filenames": [
+        "326_crm_leads_stage_counts_rpc.sql",
+        "326_zalo_oa_n8n_webhook.sql"
+      ]
+    },
+    {
+      "number": 327,
+      "filenames": [
+        "327_crm_leads_kanban_indexes.sql",
+        "327_zalo_oa_n8n_sync_profile_webhook.sql"
+      ]
+    },
+    {
+      "number": 350,
+      "filenames": [
+        "350_crm_pipeline_stages_counts_as_expected_revenue.sql",
+        "350_drive_entity_links.sql"
+      ]
+    },
+    {
+      "number": 352,
+      "filenames": [
+        "352_crm_stage_allow_revert_to_lead.sql",
+        "352_drive_org_folders_cleanup.sql",
+        "352_module_tier_permissions.sql"
+      ]
+    },
+    {
+      "number": 353,
+      "filenames": [
+        "353_project_comment_read_receipts.sql",
+        "353_user_has_permission_system_role.sql"
+      ]
+    },
+    {
+      "number": 354,
+      "filenames": [
+        "354_backfill_role_tier_permissions.sql",
+        "354_drive_module_and_category.sql"
+      ]
+    },
+    {
+      "number": 365,
+      "filenames": [
+        "365_crm_leads_stage_counts_values.sql",
+        "365_vpt_ketoan_participant_scope.sql"
+      ]
+    },
+    {
+      "number": 366,
+      "filenames": [
+        "366_accounting_external_company_link.sql",
+        "366a_user_role_add_accounting_enum.sql",
+        "366b_fix_external_company_linked_backfill.sql"
+      ]
+    },
+    {
+      "number": 380,
+      "filenames": [
+        "380_backup_service_role_grants.sql",
+        "380_minh_pd_crm_production_phucdat.sql",
+        "380_projects_collected_amount.sql"
+      ]
+    },
+    {
+      "number": 400,
+      "filenames": [
+        "400_file_attachments_notes_column.sql",
+        "400_users_google_auth.sql"
+      ]
+    },
+    {
+      "number": 401,
+      "filenames": [
+        "401_facebook_messages_fb_message_id_full_unique.sql",
+        "401_saas_free_plan_3_users.sql"
+      ]
+    },
+    {
+      "number": 402,
+      "filenames": [
+        "402_fb_new_senders_by_page_daily.sql",
+        "402_saas_plan_quotas.sql"
+      ]
+    },
+    {
+      "number": 415,
+      "filenames": [
+        "415_logistics_handover_settings_ngoc_linh.sql",
+        "415_vpt_deal_pipeline_revert_to_lead_first.sql"
+      ]
+    },
+    {
+      "number": 418,
+      "filenames": [
+        "418_messenger_chat_wallpapers.sql",
+        "418_phuc_dat_logistics_vc_ld_task_template.sql"
+      ]
+    },
+    {
+      "number": 420,
+      "filenames": [
+        "420_hide_quote_contract_from_production_vpt_phucdat.sql",
+        "420_phuc_dat_logistics_6task_default.sql"
+      ]
+    },
+    {
+      "number": 423,
+      "filenames": [
+        "423_accounting_bank_accounts_payment_stages.sql",
+        "423_projects_sx_kanban_column.sql"
+      ]
+    },
+    {
+      "number": 470,
+      "filenames": [
+        "470_crm_leads_full_filter_parity.sql",
+        "470_phuc_dat_vc_ld_handover_to_install.sql"
+      ]
+    },
+    {
+      "number": 471,
+      "filenames": [
+        "471_crm_filter_summary_rpc.sql",
+        "471_phuc_dat_sx_handover_to_logistics.sql"
+      ]
+    },
+    {
+      "number": 472,
+      "filenames": [
+        "472_crm_search_trigram_indexes.sql",
+        "472_task_file_note_recorded.sql"
+      ]
+    },
+    {
+      "number": 473,
+      "filenames": [
+        "473_accounting_role.sql",
+        "473_crm_deadline_bucket_counts_rpc.sql"
+      ]
+    },
+    {
+      "number": 474,
+      "filenames": [
+        "474_crm_deadline_bucket_pages_rpc.sql",
+        "474_custom_app_modules_backup_soft.sql",
+        "474_custom_app_modules.sql"
+      ]
+    },
+    {
+      "number": 475,
+      "filenames": [
+        "475_app_module_companies.sql",
+        "475_crm_kanban_stage_pages_rpc.sql"
+      ]
+    },
+    {
+      "number": 488,
+      "filenames": [
+        "488_crm_deadline_current_stage_tasks.sql",
+        "488_sx_kanban_column_counts_rpc.sql"
+      ]
+    },
+    {
+      "number": 489,
+      "filenames": [
+        "489_phuc_dat_clear_premature_hot_deadlines.sql",
+        "489_push_device_tokens_app_key.sql"
+      ]
+    },
+    {
+      "number": 530,
+      "filenames": [
+        "530_hcb_deadlines_1730.sql",
+        "530_workflow_flow_steps_module_key.sql"
+      ]
+    },
+    {
+      "number": 554,
+      "filenames": [
+        "554_knowledge_seed_crm_detail_buttons.sql",
+        "554_project_deadline_dispatches_nullable_project.sql"
+      ]
+    },
+    {
+      "number": 567,
+      "filenames": [
+        "567_knowledge_seed_dat_xuong_khac.sql",
+        "567_tenant_usage_summary_rpc.sql"
+      ]
+    },
+    {
+      "number": 580,
+      "filenames": [
+        "580_clear_all_project_deadlines_after_install_done.sql",
+        "580_file_attachments_notes_column.sql"
+      ]
+    },
+    {
+      "number": 588,
+      "filenames": [
+        "588_hcb_tubep_kanban_to_hoan_thien.sql",
+        "588_perf_fb_contacts_page_covering_index.sql"
+      ]
+    },
+    {
+      "number": 589,
+      "filenames": [
+        "589_apply_planner_order_missing_column.sql",
+        "589_hcb_canh_kinh_cua_kanban.sql"
+      ]
+    },
+    {
+      "number": 590,
+      "filenames": [
+        "590_hcb_congno_dedupe.sql",
+        "590_perf_fb_unattended_count_single_pass.sql"
+      ]
+    },
+    {
+      "number": 599,
+      "filenames": [
+        "599_crm_assignments_report_view.sql",
+        "599_hcb_tubep_kanban_retry.sql",
+        "599_hcb_tubep_khoi_phuc_15_cot.sql"
+      ]
+    },
+    {
+      "number": 602,
+      "filenames": [
+        "602_guide_assistant_en.sql",
+        "602_hcb_tubep_fix_progress.sql"
+      ]
+    },
+    {
+      "number": 603,
+      "filenames": [
+        "603_guide_knowledge_vectors.sql",
+        "603_hcb_tra_tien_do_ve_10_09.sql",
+        "603a_xuat_tien_do_10_09_tu_ban_PITR.sql"
+      ]
+    },
+    {
+      "number": 604,
+      "filenames": [
+        "604_guide_assistant_settings_to_db.sql",
+        "604_production_pipeline_group_key.sql"
+      ]
+    },
+    {
+      "number": 606,
+      "filenames": [
+        "606_crm_deadline_not_hidden_by_interacted.sql",
+        "606_task_template_gia_von.sql"
+      ]
+    },
+    {
+      "number": 620,
+      "filenames": [
+        "620_tich_thu_cong_cot_pipeline.sql",
+        "620_user_role_ecosystem_admin.sql"
+      ]
+    },
+    {
+      "number": 621,
+      "filenames": [
+        "621_bao_loi_van_hanh_he_thong.sql",
+        "621_hst_admin_user_companies.sql"
+      ]
+    },
+    {
+      "number": 629,
+      "filenames": [
+        "629_production_pipeline_clears_deadline.sql",
+        "629_work_overview_tasks_rpc.sql"
+      ]
+    },
+    {
+      "number": 630,
+      "filenames": [
+        "630_production_pipeline_dashboard_kpi.sql",
+        "630_work_overview_tasks_assignee_name.sql"
+      ]
+    },
+    {
+      "number": 639,
+      "filenames": [
+        "639_facebook_contact_lead_atomic.sql",
+        "639_partner_key_tenant_page_scope.sql"
+      ]
+    },
+    {
+      "number": 640,
+      "filenames": [
+        "640_backfill_lead_attribution_page.sql",
+        "640_facebook_messenger_receipts.sql"
+      ]
+    },
+    {
+      "number": 641,
+      "filenames": [
+        "641_backfill_ad_id_from_webhook_logs.sql",
+        "641_facebook_referral_attribution.sql"
+      ]
+    },
+    {
+      "number": 647,
+      "filenames": [
+        "647_fix_creative_key_ads_image.sql",
+        "647_remove_truong_trong_thanh_assignments.sql"
+      ]
+    }
+  ],
+  "applied_history": "UNKNOWN; no DB query performed by inventory author",
+  "blank_db_replay": "FAILED_BEFORE_FIRST_MIGRATION_COMPLETED; actual runner first000 on isolated PostgreSQL18.1",
+  "files": [
+    {
+      "filename": "000_verify_crm_supabase_project.sql",
+      "checksum": "bab36ca95c3517bffa546f2886b9dc9e4b75ca5bb574947420920d6620e267a9"
+    },
+    {
+      "filename": "19_crm_sales.sql",
+      "checksum": "52e759058395d341813a45846fd010de61b8d87ea804346b42993a60ed080b89"
+    },
+    {
+      "filename": "20_lead_deal_pipeline.sql",
+      "checksum": "df5c6c15af72960535f154a43fa0212d1c7c78b415e302a9d360dbf2a462617e"
+    },
+    {
+      "filename": "20_product_code_structure.sql",
+      "checksum": "fc3a58ff449363a3dc42938a4b34423ba972d1ebcf81d0047351ead2bcb9fb36"
+    },
+    {
+      "filename": "21_crm_pipelines.sql",
+      "checksum": "caf0089fb420d87bee934a32d2367fe0cd6b167b46b5ce3c2325ef924d6da598"
+    },
+    {
+      "filename": "21_product_categories.sql",
+      "checksum": "d1ec80bda004ef1be37d67edf3fa9b93c4e00a6de78fbff94e112b0e09696f29"
+    },
+    {
+      "filename": "22_events.sql",
+      "checksum": "c366bae2d448ca9083b45d5ee756fa22bc037db1ec206f8623250b426eb1f7f3"
+    },
+    {
+      "filename": "22_fix_duplicate_messages.sql",
+      "checksum": "7dc6f303eedb4195c79f3c35076211f32b511183d770a19f3304651912f30d5a"
+    },
+    {
+      "filename": "22_lead_members_chat.sql",
+      "checksum": "4aec170424911d90d28398521a2825e966adbd1c293f16dcf59c9c44710ee636"
+    },
+    {
+      "filename": "22_push_subscriptions.sql",
+      "checksum": "394f3781af78e2c60cde40ab28fe0fab1b5606ca03b2352fe2e999443cf00149"
+    },
+    {
+      "filename": "22_quotation_excel_columns.sql",
+      "checksum": "9289038e0300155b92a68b57f87841a023f3a0f85fc0a4357a4ae8c6901fd0e5"
+    },
+    {
+      "filename": "22_shared_task_notes.sql",
+      "checksum": "8d7d5213a792c5b7cbcb123872044416f773a64f47e41cac30290ccf910dba2a"
+    },
+    {
+      "filename": "22_spec_factor.sql",
+      "checksum": "0c54428b22b8a07ab9a4e568fcbc5400994bceb073f00c4377878e9f07bff06d"
+    },
+    {
+      "filename": "22_vat_per_item.sql",
+      "checksum": "c6b0452d02cbb18fbc992a162b894a59cf63578305769ce81cd6943048ce36ab"
+    },
+    {
+      "filename": "22b_shared_attachments.sql",
+      "checksum": "807df8b4faf31311abe2dfb4474000b5689af666daac367c43359e31ed803355"
+    },
+    {
+      "filename": "23_crm_company_filter.sql",
+      "checksum": "a0d0600fafa6bac728289a1da9cc53d5c3024c4fb6f80b81985acf4729120cbb"
+    },
+    {
+      "filename": "23_facebook_default_company.sql",
+      "checksum": "337c9a6c96315874588ec3738624ec77b0baf0a054ca7d15dd5c8178d8ba0697"
+    },
+    {
+      "filename": "23_release_notes.sql",
+      "checksum": "340a340f7e9a8d569e18dea23ab946839dd2ad221a8c74748323f0daed012b7a"
+    },
+    {
+      "filename": "24_fix_duplicate_messages.sql",
+      "checksum": "ee8355f5ef89fd8c601733d65059f45f80f31e4022c99e123846d523df49c37f"
+    },
+    {
+      "filename": "24_item_full_columns.sql",
+      "checksum": "2dcdba15f4cff6105f1db2f2f26b69b2855b7dcec4f5965079c837f6d38080a2"
+    },
+    {
+      "filename": "25_facebook_contacts_last_synced.sql",
+      "checksum": "6971ffa5e24c36b2cf8b40dfb208f506cbccd156ab7a69703ae180041610ba7c"
+    },
+    {
+      "filename": "25_planner_order.sql",
+      "checksum": "288ab4c60579b3c1388637564eb82886ffcf206aab10a68116dec55a2f08041b"
+    },
+    {
+      "filename": "26_project_deadline_notes.sql",
+      "checksum": "86becc497144d1e6ad4ef6327016c0e5768ce23719309d484d48582aa04687e6"
+    },
+    {
+      "filename": "27_cascade_delete.sql",
+      "checksum": "55cb88117ab0a61e4d394df74a53a08c5fc7dcad6126635556c36ea366e83184"
+    },
+    {
+      "filename": "28_crm_tasks.sql",
+      "checksum": "7e9979177bad259dbddc0e7869affaa22066f6a71620cdf84b10f0fbb9a96ed1"
+    },
+    {
+      "filename": "29_crm_task_attachments.sql",
+      "checksum": "f5229ab827105082293ef096bed03525870cd0b2ec96daf665876ba70adfb01d"
+    },
+    {
+      "filename": "30_reset_process_templates.sql",
+      "checksum": "765411631b094a31a3f1a7beafc6cc8204bda15f19fd62f60678e91ae90105a8"
+    },
+    {
+      "filename": "31_seed_templates_flows.sql",
+      "checksum": "bfa03d48f6f361a032cb487afa6f9475762d1c38ae63e0a02205fcf1c0d73952"
+    },
+    {
+      "filename": "32_crm_template_pipeline_type.sql",
+      "checksum": "2a40396843469a5de05fd3e078ba7e049413fcefad91e0087bad61a22d4dc8f3"
+    },
+    {
+      "filename": "33_seed_default_template_items.sql",
+      "checksum": "b2e9f4e3f0b7fdfb94078d4ad139e5211884da42e559bf802ea582e06de81d64"
+    },
+    {
+      "filename": "34_lead_owner.sql",
+      "checksum": "1ed8a37ed04136f29cf83edafd7b935c86d0c4991c7a92cd2272505eda827897"
+    },
+    {
+      "filename": "35_document_sync_visibility.sql",
+      "checksum": "c3a27b263f164d24e625bce090d8d64e9f5bcc1bfcbbf2f742621567a2db7e09"
+    },
+    {
+      "filename": "36_auto_project_config.sql",
+      "checksum": "fb58be4458aed1d5eb4b8cace5ffed56f76780fc30c54b98b11f19776ae9e48e"
+    },
+    {
+      "filename": "36_notification_preferences_logistics_deadlines.sql",
+      "checksum": "b8088c0b82f1f0a3677c1c10ab9c487b33acdec9713275b6d82f68ba609ddf4d"
+    },
+    {
+      "filename": "37_document_visibility_companies.sql",
+      "checksum": "1d97822c9de6908af926ba81ba37bc0893fb1ae86dde9144cc1be0cdc1007136"
+    },
+    {
+      "filename": "38_document_sync_link.sql",
+      "checksum": "c424ff1cadf1491024287cc2adc1a5ef1537f68401a5ac70d8236f731d2ffb8f"
+    },
+    {
+      "filename": "38_template_item_visibility_defaults.sql",
+      "checksum": "ef12530beb0bad3377c4fe4dc07a2f6fac87f5e9f9d9de3667b6deab6449a395"
+    },
+    {
+      "filename": "39_auto_gen_tasks_trigger.sql",
+      "checksum": "b0eea99330b4d78ba4485b4c7c93554513af4d37d66d3a0657ea27279d68fbd3"
+    },
+    {
+      "filename": "40_deal_won_auto_project_trigger.sql",
+      "checksum": "380fc681f559ce08df0bacfb9d9e57f141fd88676bc08e19252c38ab7bd51a0a"
+    },
+    {
+      "filename": "41_cascade_delete_company.sql",
+      "checksum": "1501dee8b09f24fe608fbdc945397903b74502a3cf08939f80e02aeeccbce36d"
+    },
+    {
+      "filename": "42_facebook_integration.sql",
+      "checksum": "dac288e747970183c7ba301fb919989eb281cca9dac98bdd2b057acf5847b535"
+    },
+    {
+      "filename": "43_department_reactions.sql",
+      "checksum": "f2872faa6a3b2a2f4cac141ef965e5640041b3a43eeea460560d320de234df8f"
+    },
+    {
+      "filename": "44_fb_webhook_logs.sql",
+      "checksum": "aad403b6f89dce85a19a91ac895b6a8ce8fd33ba3e4c96efab68b6e15a71d725"
+    },
+    {
+      "filename": "45_app_settings.sql",
+      "checksum": "2003f7eac5b78ed413b4e20215da4c55ef20e86af0a7fc1d0265139c304dafb1"
+    },
+    {
+      "filename": "46_lead_duplicate_and_customer_sync.sql",
+      "checksum": "2798d3da6617ac5333fc24838c7cfd9403b30f3d191ddf6a65b727a7a1166805"
+    },
+    {
+      "filename": "46_lead_duplicate_scanner.sql",
+      "checksum": "4267c158eee270e19a82c8e420997f3b6b3d799489e8bddfc58eb9968dff40d5"
+    },
+    {
+      "filename": "47_bugfixes.sql",
+      "checksum": "cec48ada1948f9d4c33a45d4f1f251f02ae572c6ea00f32add135758869908b0"
+    },
+    {
+      "filename": "48_call_logs.sql",
+      "checksum": "656af67643a8f94f94fa950f94ace79a67ef873edd9321cc13cc894c04f385c3"
+    },
+    {
+      "filename": "49_zalo_pipeline_stage.sql",
+      "checksum": "41047735aea0f754da3f579941d70bc5877925c6b1a30367ae7cb59e45c9e3a0"
+    },
+    {
+      "filename": "50_fb_last_inbound_rpc.sql",
+      "checksum": "8607ad6c22f098ea06ef30cab622db2c3f53a4bf02e8940408d72ec6760e9477"
+    },
+    {
+      "filename": "51_crm_leads_page_ids_hotfix.sql",
+      "checksum": "58924ebcbd335898e3fba4b72c602cdeb56ba81b173cfb333958053db7976b3d"
+    },
+    {
+      "filename": "51_fb_attended_status_rpc.sql",
+      "checksum": "7bf313cbdefd9e76bb2c2f25158703d2862d54289c9e450dce1ac27ba60a58bd"
+    },
+    {
+      "filename": "52_fb_contact_ids_inbound_range_rpc.sql",
+      "checksum": "018c75460afdf55a6bfff7393f1dfa412b65d82a29c3eb57338581d74990f36b"
+    },
+    {
+      "filename": "52_sx_crm_share_flags.sql",
+      "checksum": "3ba5aaeb4c94a9b0904fbb1a659db714acdac0ca36321babba18105982d9afd8"
+    },
+    {
+      "filename": "53_fb_unattended_count_by_page_rpc.sql",
+      "checksum": "37186cced1bb88a696006ad1ea73a9e1ed9b3e0c71829ba4c3dd51c6cf624eda"
+    },
+    {
+      "filename": "53_production_pipeline_stages.sql",
+      "checksum": "288b4c4dd970b5a5586f62818c424f9709b5292c1cb56f1d226e8f66e7cbf1f6"
+    },
+    {
+      "filename": "54_crm_leads_sx_pipeline_stage.sql",
+      "checksum": "24a5a128e542f38f0a1e57c2150ee5bd1310131ad0a8c749103e98461c7eb5b7"
+    },
+    {
+      "filename": "55_workshop_task_templates.sql",
+      "checksum": "96f58fbcba10c62372a26b7b8639b6215d6671a986bbeac5f8be94479f83f510"
+    },
+    {
+      "filename": "56_seed_workshop_task_templates.sql",
+      "checksum": "6777b3720506c8d40195adfbc05699be95f9fa735ba32c034475c3f98872f6e6"
+    },
+    {
+      "filename": "57_workshop_template_crm_parity.sql",
+      "checksum": "2aaff700e6ecce9098aafadf07c49ec7e32ccedd6c2f08b124b2788bb881e953"
+    },
+    {
+      "filename": "58_crm_leads_page_ids_assignee_strict.sql",
+      "checksum": "531cf686c652b10e779553953455f9e391ece04adf04d5a9e59f316fdbb22a51"
+    },
+    {
+      "filename": "59_crm_lead_seen_by.sql",
+      "checksum": "e103d904e3db6962a8c5f083232a082e23377e0b3d764fcca28fcbdca0cd63e9"
+    },
+    {
+      "filename": "60_crm_pipelines_zalo_template.sql",
+      "checksum": "0c678f134b35a6039ba14c91d3ac390023a4398091e2002aa7d87ac4ca9fdba2"
+    },
+    {
+      "filename": "61_voice_recordings.sql",
+      "checksum": "a92d004254989159da5447fd24e8d0c5c76fa5f60d10dc1a9b2c0b1cf8074249"
+    },
+    {
+      "filename": "62_voice_recordings_call_fields.sql",
+      "checksum": "4018f45e78bed293320b97b0a3f37ff9af4f8847bde7d8282c1455e698879792"
+    },
+    {
+      "filename": "63_voice_recordings_crm_link.sql",
+      "checksum": "099c6e2626e8cafb2da4f0fd72433019ea587eda7cfdad7e232d438c90c7e64b"
+    },
+    {
+      "filename": "64_storage_bucket_ghi_am.sql",
+      "checksum": "750ed5f4b983cbb5e4cbfc1fd7f831d798b27c7af257edfe462158c7d95def9a"
+    },
+    {
+      "filename": "65_messenger_groups.sql",
+      "checksum": "87cf2c18bd59130da91bb5c55613625e2763c38cbc92571395e3e5b83a6b3e31"
+    },
+    {
+      "filename": "66_messenger_groups_direct.sql",
+      "checksum": "75529ec89feeab90a5b7da270f4fc02f065e3a6679329a083f6efc6f792f07da"
+    },
+    {
+      "filename": "67_user_activity_and_messenger_pins.sql",
+      "checksum": "45fc0b7e4d85c8dea769ca8d0b244652f8d694efd4e001b9dad6448c0ce264a9"
+    },
+    {
+      "filename": "68_messenger_chat_stats_mentions.sql",
+      "checksum": "8c55c7b98a63d2bd7dce0de2ce61db1543503b379859b7e232a0a327e387391b"
+    },
+    {
+      "filename": "68_messenger_groups_crm_lead.sql",
+      "checksum": "da6a54b7a0773b29850c6eca310539397facc09da6bd29785fc59e1430c60734"
+    },
+    {
+      "filename": "69_notification_preferences_modules.sql",
+      "checksum": "4367312a2d4e1b4d25e4874806fedaad3464c77e17a9d0eb149e39752f888300"
+    },
+    {
+      "filename": "70_messenger_read_receipts.sql",
+      "checksum": "65c2e449ad72c3414e9c46f4b83a24e4c615da60d6fb9384048eba5144dea2c9"
+    },
+    {
+      "filename": "71_misa_integration.sql",
+      "checksum": "c349fdcb6b777b421f8a0f02889d026863cf2b0aa0382d0f3c7d7c60f060d27f"
+    },
+    {
+      "filename": "72_seed_production_task_templates.sql",
+      "checksum": "1a2d73f6b4ed702b9ef13042e941f664ae8cf65e2457c7a1a327e1caa00cd5b5"
+    },
+    {
+      "filename": "73_production_pipeline_extra_stages.sql",
+      "checksum": "435743b8d0aa4e2cc33f8f5be388bb1023ea22aaebee968d632768d209376b60"
+    },
+    {
+      "filename": "74_file_attachments_notes.sql",
+      "checksum": "ae935958dec2ec2d530a3427c63f1066580ab896afe5c3e68dcb77818d5a5f82"
+    },
+    {
+      "filename": "75_crm_deal_san_xuat_stage.sql",
+      "checksum": "2ca3ddce66489632eeb8d29e62193bdf84cfb1632171c5240fa5458661ba87ae"
+    },
+    {
+      "filename": "76_project_production_fields.sql",
+      "checksum": "2ded91653c7786edc62e9b120719fa5e03bb022d5a161e51785a3b403b2a2107"
+    },
+    {
+      "filename": "77_logistics_pipeline_stages.sql",
+      "checksum": "87c0731781bdffd4e195757d38ac40cb682e983251bafef47139a6f070adb0cd"
+    },
+    {
+      "filename": "78_pipeline_sync_flags.sql",
+      "checksum": "aa552276eaedc935f27c6bffb757e33f1b74639b653583856813a65a6911342d"
+    },
+    {
+      "filename": "79_workshop_teams.sql",
+      "checksum": "f0787d4b23c6307382688d1cf36b69021144e6a92109ff8a789542cacc23b9e1"
+    },
+    {
+      "filename": "80_production_pipeline_sample_stages.sql",
+      "checksum": "f397c49220a2513dcafc33879887e9eb9c33145335a28e85957415a546aef4f7"
+    },
+    {
+      "filename": "81_vc_pipeline_stage_on_leads.sql",
+      "checksum": "36d2cea08fb90674317033c70f3b3d117d1af932c561bdf960cf93371d1d5955"
+    },
+    {
+      "filename": "82_vc_pipeline_stage_fk.sql",
+      "checksum": "20deed9a34ffa1eb8096ca5f8ba767cb78f03e68c9c1ea55796d7089d886c937"
+    },
+    {
+      "filename": "83_projects_vc_kanban_column.sql",
+      "checksum": "a85fa3b1d59aeda182bfc831f691903421d1f25c4523ba3a08b4e65c2901117e"
+    },
+    {
+      "filename": "84_projects_install_address.sql",
+      "checksum": "36277a3c03041a19925b171c0f13ec194ca6c7517ce75a9db84e2059c31ed08b"
+    },
+    {
+      "filename": "85_projects_vc_kanban_fk.sql",
+      "checksum": "cd4fe3eb5fb8ee1a2a7900da4270f70854a44cd953e3ef57c0afcd48abfb6535"
+    },
+    {
+      "filename": "86_production_pipeline_crm_sync_type.sql",
+      "checksum": "ddcc5b3b5e162810c12fe4e624bf9ffc0d5f23876460390c3bbe4ca7bc63fc93"
+    },
+    {
+      "filename": "87_crm_pipeline_sync_role_sx.sql",
+      "checksum": "f5bfc734bed96c84e3f4bcf78fc0e633f149f398ffd1a79cc570676d4a5f9ffc"
+    },
+    {
+      "filename": "88_ensure_handover_columns.sql",
+      "checksum": "af2d4a38bdfeafabb5a371295d9249754b98c455e609a3d52ba91dc7e038853f"
+    },
+    {
+      "filename": "89_crm_pipeline_vc_sync_roles.sql",
+      "checksum": "3a38f175742705f6488ab39c51d135f66c83caca18b5417a62718605fe1dc2cc"
+    },
+    {
+      "filename": "90_crm_hoadon_vc_customer_care_role.sql",
+      "checksum": "f8cd752cfc35355576085a0bb673ed45abf6e82e7f3258a499fe86a0cee8aa56"
+    },
+    {
+      "filename": "91_pipeline_crm_target_stage.sql",
+      "checksum": "53a6774a3b149ed21f8a4e9cdf492f2121cb65fba2f52907a0d5911782fbcf77"
+    },
+    {
+      "filename": "92_crm_deal_sx_handover_manual.sql",
+      "checksum": "a3efc06402079f07b410b7e671af29287f955a78be9700654a3f4f9957feed23"
+    },
+    {
+      "filename": "93_production_pipeline_crm_target_fk_fix.sql",
+      "checksum": "3a2a628bf776f1ee10239ba85bade0788e99691168004305ccfa56bff9183d21"
+    },
+    {
+      "filename": "94_crm_company_pipelines_backfill.sql",
+      "checksum": "6fb305ab7a3f17177f7d173b61f4b5cda0475ad250fe4980a0ab2dec1a53e14b"
+    },
+    {
+      "filename": "95_crm_lead_deal_types_by_company.sql",
+      "checksum": "0226ce8181eba33d11bf3137dd604fc73c43f388fd18eae1e581098b6a3131bb"
+    },
+    {
+      "filename": "96_facebook_pages_default_lead_type.sql",
+      "checksum": "5b39541813add12f95984fa0c46522984c00c3b45378b6d808e8a9cc0903726a"
+    },
+    {
+      "filename": "97_workshop_project_types.sql",
+      "checksum": "236d44b7fb9db70f81e685c3304fba8925f4e45c2db1ac0de7aba6b7608c2a73"
+    },
+    {
+      "filename": "98_ecosystem_module_scopes.sql",
+      "checksum": "dd59bedb4162c5e1c8737b76a85a697c190cf08771a50338e05828aa0632d1d6"
+    },
+    {
+      "filename": "99_project_orders_fulfillment.sql",
+      "checksum": "b00e2fce0e94f88890237b2a3ab1129dcd00da5528dbb46372cbf7e5f3648979"
+    },
+    {
+      "filename": "100_companies_is_active_null.sql",
+      "checksum": "8393f5791735cfba5d3cb54b946e7e17bc0f19b249c325963bb9deba4659cb90"
+    },
+    {
+      "filename": "101_sx_vc_pipeline_company_id.sql",
+      "checksum": "b0b3362133d448e8b8371ca8572cf457cdd671b96ab21855a1c6f9ceeae38723"
+    },
+    {
+      "filename": "102_document_share_modules.sql",
+      "checksum": "8950cdacb43423e3262f03702e499e6d795f6d787591da52e322c90cf1298ac5"
+    },
+    {
+      "filename": "102_users_is_active_null.sql",
+      "checksum": "baa8764624926124c720624022c28c345e0e44f8068e791555b2a80738668788"
+    },
+    {
+      "filename": "103_crm_leads_use_order_tasks.sql",
+      "checksum": "1f9f937268f82e14b41062134639d743cde9f62538f3f024c871dd5be8286780"
+    },
+    {
+      "filename": "103_facebook_contacts_sync_flags.sql",
+      "checksum": "1768af2ecd49ef6701b227c13a2b05926b24d804b6891e2947ca5ef5f775318b"
+    },
+    {
+      "filename": "104_crm_leads_page_ids_hide_children.sql",
+      "checksum": "ee59974f8bb8966ece42c653de5cd1d9d2aec62e55f6f8909ccbd7f086c0bb4b"
+    },
+    {
+      "filename": "104_crm_leads_sx_template_company.sql",
+      "checksum": "d64639613e1f1e581488e715243aecfd7adda187f5057730e933d2f70b20cb2b"
+    },
+    {
+      "filename": "105_quotations_fulfillment_link.sql",
+      "checksum": "3e805fca03de1394329525046652594eb4c0f5a3274f28bea08f355dc912c239"
+    },
+    {
+      "filename": "106_orders_kind.sql",
+      "checksum": "19afe1098ad6d998c41152d5620ea7b08d7c5f508dc93ed7fb2231d216a2e592"
+    },
+    {
+      "filename": "107_orders_sx_handover_fields.sql",
+      "checksum": "ad696f0f532d87481b69c12473d1f70718e905ec3b7861de9166c8f8229fb9d1"
+    },
+    {
+      "filename": "108_crm_leads_code_unique.sql",
+      "checksum": "c4ab4f67ae3e415df0d9ad5ffd6f7a0637a378633a9cb80ba3baad105606f7bb"
+    },
+    {
+      "filename": "109_order_cross_acceptances.sql",
+      "checksum": "cb1d346e831aba45d7619ca3655a378929f62219bc87e58ac2d173c9fbbc9182"
+    },
+    {
+      "filename": "110_deal_cross_scores_customer_ratings.sql",
+      "checksum": "dac2d60e645557ea389b25511865f9b1afc4e241d47c78abf06dc470c8bc8a69"
+    },
+    {
+      "filename": "111_workshop_task_templates_company_id.sql",
+      "checksum": "ad8e68f61a3bf23e3299afb42fffc9c023a27246b624d17b18bff3970ba264ea"
+    },
+    {
+      "filename": "112_lead_documents_source_project_task.sql",
+      "checksum": "ec17fc872043d5ae1a58e4ce21d06dea30bf74e708b5f05a378958c5554060ae"
+    },
+    {
+      "filename": "113_quotations_deposit_fields.sql",
+      "checksum": "53277d71aeea7457b3db822d34d53b12288d3bdfe14383cadaaa70c46c7efb95"
+    },
+    {
+      "filename": "114_project_expenses.sql",
+      "checksum": "56a9529cdef121e91f74200c67cee3d452360bb531df93d4a39e0391d6e1614d"
+    },
+    {
+      "filename": "115_quotation_edit_history.sql",
+      "checksum": "527a7a4bbf287c509e3c9db501cd937f9fa5f3f35e67563feb5278f136bbd048"
+    },
+    {
+      "filename": "116_orders_display_parity.sql",
+      "checksum": "c3d3052a472ec07c492b409d27208b4389747059f4e4d8d6827cf55575f0578c"
+    },
+    {
+      "filename": "117_lead_documents_crm_task_classification.sql",
+      "checksum": "740ac2c1d81cb96f0fb7ca02ccdd37dc9b45158faaebbfd3cc47c6d168b25bb5"
+    },
+    {
+      "filename": "118_lead_documents_sync_workshop_flags.sql",
+      "checksum": "4761f2841e24f0a123f22f96889cb6c3e8686011fda218f2dfb74cc8c71225e8"
+    },
+    {
+      "filename": "119_crm_company_scope_commercial.sql",
+      "checksum": "f1634c993060f5296ff60973ea019aaf085ea9243906285221bc8f4d0a0e9f21"
+    },
+    {
+      "filename": "120_products_categories_company_id.sql",
+      "checksum": "e7e278620cca311551158f9e6c725d9f0c6391ae5f0d4950ae68e2a82cfe9069"
+    },
+    {
+      "filename": "121_crm_source_categories.sql",
+      "checksum": "b71e2d672a6a723c0c596b6cd8be3f929a5aa850c37d0268e05c4137818958a7"
+    },
+    {
+      "filename": "122_crm_sources_facebook_company_id.sql",
+      "checksum": "bae5334aaeec06f3a7f82ec1757f2f6f0e41e357bb7895b1a82246c0bd2fea5c"
+    },
+    {
+      "filename": "123_admin_van_phu_thanh_user.sql",
+      "checksum": "6dde49bd89463d573309e499314d8d370d5fa3df7d5f65be2391536f2b3efa12"
+    },
+    {
+      "filename": "124_fix_admin_vpt_email_login.sql",
+      "checksum": "347716ee37a004552daf387c51cfc4258f220f71c5f7d3210ed9419cbd59d918"
+    },
+    {
+      "filename": "125_crm_pipeline_bep_van_phu_thanh.sql",
+      "checksum": "7ef88b890d007e5623720218828465b43b7a6407d2dbcea84962124e4ac1af87"
+    },
+    {
+      "filename": "126_crm_task_templates_clone_phuc_dat_to_vpt.sql",
+      "checksum": "f11629505394e56d362b455291c5ff494248e1520bca7d3f841063234ff6743c"
+    },
+    {
+      "filename": "127_crm_pipeline_stage_default_probability.sql",
+      "checksum": "2c8bea6e220f2f834d1ee1bfc6be00e47b3fcebf18c94153b6abb3028f59437e"
+    },
+    {
+      "filename": "128_backfill_crm_events_company_id.sql",
+      "checksum": "a02a33e37353ce73c0285badb6576dc9c9949dc345307b3361f02276cd6ef0c4"
+    },
+    {
+      "filename": "129_crm_auto_lead_blocked_phones.sql",
+      "checksum": "3c5d8335ca3a31fe6dd7a86422880f265f01aeb140c9de9cc5142267d1e7f2d0"
+    },
+    {
+      "filename": "130_facebook_inbox_canned_replies.sql",
+      "checksum": "b9d973fdcb7c86dd368dd916fce09be788f6ddf601069d88a8df472de8a3c609"
+    },
+    {
+      "filename": "131_crm_company_regions.sql",
+      "checksum": "970c0781a9ef268dfe42dde69715979149434021fa9436799a80e6fcfafd7e49"
+    },
+    {
+      "filename": "132_facebook_pages_default_region.sql",
+      "checksum": "c5afd1c5495f02d8491f783e08e0f357f5cecc529014e992bc83aa8bf0128701"
+    },
+    {
+      "filename": "133_crm_pipeline_stage_description.sql",
+      "checksum": "67ae881e2b423713f8ded6a1fce49e0bedae2e7d4c354a7bf11429e3a8b355ea"
+    },
+    {
+      "filename": "134_company_division_units.sql",
+      "checksum": "fd92eecc3be47e9588b78f92854e8ddbefe3d9732a173ffac51e8f446a6ec2b4"
+    },
+    {
+      "filename": "134_crm_lead_type_workshop_production_templates.sql",
+      "checksum": "f308ae4321da8684b629158fa8510bb57c827896087c71866249a8853847af28"
+    },
+    {
+      "filename": "135_departments_division_unit.sql",
+      "checksum": "208ace1476e7fbdf6294677d6a5959ac28c80f212b5e4e837ae75efb73f6346b"
+    },
+    {
+      "filename": "136_ecosystem_units_team_id.sql",
+      "checksum": "c2e891caa87f65e089baa152594bc55a6a134ae909c57489c19a507288df7d39"
+    },
+    {
+      "filename": "137_company_regions_division_unit.sql",
+      "checksum": "519ea2ad64501a3a150447042177152aaf56b4ce81ae34e6ffc73490691fb97a"
+    },
+    {
+      "filename": "138_crm_lead_types_default_production_company.sql",
+      "checksum": "373b5618c2c2f8d1237b683f60fad6ea34cc277ebf94738cf04b9f1f10b6faf2"
+    },
+    {
+      "filename": "139_production_handover_settings.sql",
+      "checksum": "94290ab25a4b9bd216cdace2795f206c2a202f33439565e2deff5fcd1f23a622"
+    },
+    {
+      "filename": "140_projects_logistics_company_id.sql",
+      "checksum": "ea4cb4e581b1081b58ecebccc9dc93743aa8d940d98bd4d928dd04785188c251"
+    },
+    {
+      "filename": "141_pipeline_stage_progress_percent.sql",
+      "checksum": "9e73dd8229240a4fdbd8e160db80afa878d97eb084e341af737a4ed3c48ad640"
+    },
+    {
+      "filename": "142_external_api_logs.sql",
+      "checksum": "1604fb71bb61b0ed1d56c8ad52b31a97385c637daf910724383ba6d4f7a121fc"
+    },
+    {
+      "filename": "143_voice_recordings_deleted_tombstone.sql",
+      "checksum": "ec533f2d998e4dd7660d8c6059006f0e6a24a28e33618e70babc9e41e25914da"
+    },
+    {
+      "filename": "144_crm_activities_attachments.sql",
+      "checksum": "170a321d5790323bf69b54da6cc5be7aad04c8e7c0cdfdd320707539f5173acd"
+    },
+    {
+      "filename": "145_crm_stage_history.sql",
+      "checksum": "ffbb4e7bf628ee6733228f4fa60d8ff9e0136e988f8d4bf779529142a537bdac"
+    },
+    {
+      "filename": "146_crm_pipeline_stages_canonical_slug.sql",
+      "checksum": "156e173ea7c181bf8c7d3825cc6d87952b8dcc09645dae353bb88ba63d5dc6a7"
+    },
+    {
+      "filename": "147_crm_leads_kpi_fields.sql",
+      "checksum": "3bbe433824402088e70e8d769fca6b214d1f10a9d0eebf689aa400e1b5f2418a"
+    },
+    {
+      "filename": "148_crm_kpi_schema.sql",
+      "checksum": "43b5f88c377c0557d81081d7fa63546946406ca47e058c2d5f79e646058ac4ee"
+    },
+    {
+      "filename": "149_seed_kpi_test_leads.sql",
+      "checksum": "b36b84c92cf5b93662a2f0f1f02688e59eadd912fad188f0ac3e7560328e01b2"
+    },
+    {
+      "filename": "150_crm_leads_stage_entered_at_sla.sql",
+      "checksum": "d9a8a399955d7e636186fc1b4391e1d34ed1650c374cbd1b358d0a4995810ecb"
+    },
+    {
+      "filename": "151_trash_items.sql",
+      "checksum": "3f91a67839e9369de5e0ab9028ab2cd3652e0511e20ff2c8490055a1e9a3a3ef"
+    },
+    {
+      "filename": "152_external_api_keys.sql",
+      "checksum": "3dbdc74e973e84a23eac30c3712dedffcdd5bf6c1fccddf89a434dd777113079"
+    },
+    {
+      "filename": "153_crm_followup_care_dismissals.sql",
+      "checksum": "4b2ae34c07bc4bae453364fc78376592ad5d4cffff27c25a1f1620d6d2ad5b0b"
+    },
+    {
+      "filename": "153_crm_kpi_scoring_rules.sql",
+      "checksum": "e9c342bf3ceedd94ee9374604581af029902af55d3ecb07e5e07999dc2fd924f"
+    },
+    {
+      "filename": "154_crm_kpi_ledger.sql",
+      "checksum": "8efc2486eea09299a57e02393ad5f7f0c052a1821b8f70a346b1f57055c515d0"
+    },
+    {
+      "filename": "155_crm_kpi_ledger_trigger_fix.sql",
+      "checksum": "6c8d622984b72c04bcdb771018737d5637802a01c586e27cc269391cbb27496e"
+    },
+    {
+      "filename": "156_trash_items_delete_reason.sql",
+      "checksum": "1b6568f16344457439ee62d467b8b3e98949d813883a804461f56f6c76631d3f"
+    },
+    {
+      "filename": "157_crm_lead_care_marks.sql",
+      "checksum": "fc3e0127d322c6110cb0ece9187d31da5d05dceb1a47f49d0c27bf52e7381b16"
+    },
+    {
+      "filename": "158_disable_project_notifications.sql",
+      "checksum": "bbd6012becec8372c19d7b2d26a5c95327456fc82ec679f5f7fff32ec8dcdb19"
+    },
+    {
+      "filename": "159_kpi_business_calendar.sql",
+      "checksum": "744673eaa6af6d9d58f688e3479c0ecee4c6d3c5ab272a4b31f9cb14565f1328"
+    },
+    {
+      "filename": "160_crm_task_completion_requires_evidence.sql",
+      "checksum": "d857c81fdf501739be1ae7e779b4c826012e9c259122b7525937e19d0aee7f2a"
+    },
+    {
+      "filename": "160_quotations_region_scope.sql",
+      "checksum": "e350d01e2d6244e3981f01c4c47292d386cb31902e74e43bb93f321f166b1351"
+    },
+    {
+      "filename": "161_crm_task_attachment_counts_rpc.sql",
+      "checksum": "2a628b3ef0909a6dd00998e57e37797c174a9d7f444c3962bed8f0ccda9f9fe7"
+    },
+    {
+      "filename": "162_kpi_group_a_applies_to_sales_all.sql",
+      "checksum": "3c082d237a5e66ab6f9108402dfb310fb83081d21d382976b78e1a2e50894f1f"
+    },
+    {
+      "filename": "163_add_sales_admin_role.sql",
+      "checksum": "627ef2aa5fd887e5f1819d1f7d59d5a0caa8c7c2252cf2571197f7661d6695a0"
+    },
+    {
+      "filename": "164_seed_kpi_group_a_test_cases.sql",
+      "checksum": "1d8181b3b567e54ec522d43f214d2e724812f30ae98a7b6f919dcc162a18ebd0"
+    },
+    {
+      "filename": "165_user_role_add_sales_admin_enum.sql",
+      "checksum": "60c00af093a5b541855fa2cfee0d28a41ab7cfcb23454e6972e175cda778327a"
+    },
+    {
+      "filename": "166_pipeline_stages_counts_as_won_revenue.sql",
+      "checksum": "d5a558ac87a9f3bc76bfe96538af1f0e0ca7f13a7fc2c5552b23d7689956a49c"
+    },
+    {
+      "filename": "167_pipeline_stages_counts_as_completed_revenue.sql",
+      "checksum": "23f8f00a116c180c0721ec10bd417110cf65203ac21c83ba68b9bb60b11050a8"
+    },
+    {
+      "filename": "168_crm_task_b1_customer_note_contact.sql",
+      "checksum": "f8bd5d34456fc536805d2adba39b324e8e611a48eb1983ae9dfc69808c710473"
+    },
+    {
+      "filename": "169_crm_company_deadline_config.sql",
+      "checksum": "816b106908c7ce86189db96059fd1e77d116c497f489d041cc4e537f4e221ea8"
+    },
+    {
+      "filename": "169_quotations_source_excel_file.sql",
+      "checksum": "485be55babfce3c86d4f0fde6722ed0fb5d68d0686c628f70a04ab042b2cb977"
+    },
+    {
+      "filename": "170_crm_user_planner.sql",
+      "checksum": "7b78b7782166243e729dbaf5d6b2cba7784d3481b773d146fa4641317abd50d7"
+    },
+    {
+      "filename": "170_quotations_sale_discount.sql",
+      "checksum": "802c8dd1075bdfcc880e347cdfb7badc543af282e150c1c3c32aa22ec8637f55"
+    },
+    {
+      "filename": "171_crm_lead_comments.sql",
+      "checksum": "95b67326da61f47920821902efa6b7667c408e517c18044c9092a4d1accb6983"
+    },
+    {
+      "filename": "172_crm_lead_comments_parent_id.sql",
+      "checksum": "499a6405d2e0bd803d0085456ab43e370f72110990ef0eace351162b46a51627"
+    },
+    {
+      "filename": "173_crm_lead_comment_reactions.sql",
+      "checksum": "0a215c8004b9bec0b30cf57345ccb7c1b4ccd89d8b8cd7d9e8ed4d4badb09a03"
+    },
+    {
+      "filename": "174_user_role_enum_add_executive_values.sql",
+      "checksum": "e8e8c303726292123400817a378db9c28703f992e90594a82f8a3aa33d550800"
+    },
+    {
+      "filename": "175_internal_social_feed.sql",
+      "checksum": "80bee0d45e1d8e454d9f530acea9c6684a01f19d9a0f348010fded4f15a92660"
+    },
+    {
+      "filename": "176_internal_social_attachments.sql",
+      "checksum": "2c1f7918399aeba4d3a633b30f0af8376994e9d5493834873ead7c816ea7592f"
+    },
+    {
+      "filename": "177_internal_social_like_reactions.sql",
+      "checksum": "62442d8f0cc08c3f8b4ee71a27ca134bf0871ae4f6ff77202a4fb9c5a5ec54bf"
+    },
+    {
+      "filename": "178_internal_social_comment_thread_reactions.sql",
+      "checksum": "94f39dfab791123f46f22204bdff8befb7402e10ce9f048d68244587ee27950a"
+    },
+    {
+      "filename": "179_internal_social_posts_video_url.sql",
+      "checksum": "00d248fb55f342fa096ad89be4b50527f730da2b0807d2c06c1e417b8c31eee6"
+    },
+    {
+      "filename": "180_internal_social_schedule_visibility_hide_share.sql",
+      "checksum": "e80c68c85c9ea0039e30e830dc9ff9cc152c7dc97bfdcf6fd22efc6f012ee049"
+    },
+    {
+      "filename": "181_crm_pipeline_stages_sla_zero_disable.sql",
+      "checksum": "4e20825fc559d344060fd19c1a26cbb5e7d0c94b80d3e33203274e13e36777c3"
+    },
+    {
+      "filename": "182_facebook_pages_settings_updated_at.sql",
+      "checksum": "cef5c7aa75540c17cd688c64c5fae5e131535dcf510e67c86643d4b8c6179fad"
+    },
+    {
+      "filename": "183_kpi_definitions_calc_params.sql",
+      "checksum": "6ad676b32b44265fc4ad921ae997f00c9c8322e3115eb4a6c8740fd5747f54d6"
+    },
+    {
+      "filename": "184_crm_artifact_share_modules.sql",
+      "checksum": "e9b31812f8a1ee10bbec96c07c2de411e60a467e97cba2173741c7df1fa79847"
+    },
+    {
+      "filename": "185_kpi_sla_breach_ignore_zero.sql",
+      "checksum": "716c73308879b61897f26ab4fa8ab049772707f9b44d0393a6243d36f28d0007"
+    },
+    {
+      "filename": "186_kpi_lead_converted_event.sql",
+      "checksum": "e965b52be2dc5e064db26f739c09cd72018de354685b93e6d291c4f69751b724"
+    },
+    {
+      "filename": "187_release_notes_messenger_kpi_may2026.sql",
+      "checksum": "edb501768c418fe72c8ed07f2c2429a7f6946e61eb50c693706d4d0588511382"
+    },
+    {
+      "filename": "188_dedupe_deal_won_stages.sql",
+      "checksum": "35f1ed743350b270a4d179597ab74c185f1ab028f034937962b6db938abc74ae"
+    },
+    {
+      "filename": "189_repair_pipeline_crm_target_after_dedupe.sql",
+      "checksum": "89ad94defca46a6d2ec42b49ab5c06821b454d63aca36ed3e61b18329a172d5d"
+    },
+    {
+      "filename": "190_release_notes_crm_pipeline_orphan_unlock.sql",
+      "checksum": "b37a2ba4a83753bfe318d9ab39a0368bd89556775915580e21db02987d075a83"
+    },
+    {
+      "filename": "191_crm_assignments.sql",
+      "checksum": "5f73de0b8783f70b079600da0df006a10a24db2f00b18d3cbe4496f17b9b9350"
+    },
+    {
+      "filename": "192_crm_assignment_assignees.sql",
+      "checksum": "a71a67c040c5f7ff62d6e87c58db5a290026cdf2959214426678a8f8be614eaa"
+    },
+    {
+      "filename": "193_crm_assignment_comments.sql",
+      "checksum": "dd325ac52af65de5c53be60e9f4bd372e3ed722447eace725f70f7d592dffd98"
+    },
+    {
+      "filename": "194_crm_assignment_files.sql",
+      "checksum": "0ca6c302e2b70550299c408d40188082ab816e779b00e8d7e8041d8264ea120b"
+    },
+    {
+      "filename": "195_crm_assignment_comments_parent_id.sql",
+      "checksum": "f5888b7370c4874e51a2ae117cb88f0dfa7f6dc9916ff6e06a012cc816dc0987"
+    },
+    {
+      "filename": "196_release_notes_crm_assignments.sql",
+      "checksum": "c219660da6508a60ce75aa145e2e1ff1c398fd6ab53e0b5ab0bba210a81cdb9a"
+    },
+    {
+      "filename": "197_notifications_entity_id_text.sql",
+      "checksum": "d9d53fd5ee1fdc69b98ca9520f1bf5a212ba1e7d9e7d4054c8090fe0b045286a"
+    },
+    {
+      "filename": "198_crm_assignment_columns_shared.sql",
+      "checksum": "e70d87d6432fbe57adf6fc9f26c2d91418e2a3cf13b9fce6e3f7c3e83ea55a50"
+    },
+    {
+      "filename": "199_internal_social_last_read.sql",
+      "checksum": "1e2e5ca8e17756147c674a3b5030ec4a04f5e206b6235c12326aca3c2d0253da"
+    },
+    {
+      "filename": "200_internal_social_post_companies.sql",
+      "checksum": "aba95560791125abf9d51fae9a23d4b54f5304129fe6489aa6fa284f260d9afa"
+    },
+    {
+      "filename": "201_users_social_profile.sql",
+      "checksum": "b1fa8bfb62999712d2280ee390085fea5621f897bba5cb2642f2979c94888c66"
+    },
+    {
+      "filename": "202_crm_lead_user_flags.sql",
+      "checksum": "c85cac8267d1d1106bf1e2914c6aee2c0e2ea28948d3ebe635589f90f4d62f48"
+    },
+    {
+      "filename": "203_crm_events_cancel_reason.sql",
+      "checksum": "9c3882a433a93e70e47007c361d61ecf9ef5c88a63c4cae571be685dc8df3407"
+    },
+    {
+      "filename": "204_push_device_tokens.sql",
+      "checksum": "bd4ca01f47f54d468283b04469e1e002d0c360d53ff38297d623c510467345ca"
+    },
+    {
+      "filename": "205_user_devices.sql",
+      "checksum": "a8bd66efa19dce94e3afd00abb2df49d687e2126bec705ad9c69758c10d08bda"
+    },
+    {
+      "filename": "206_user_devices_network_geo.sql",
+      "checksum": "6eebf057beb6a123acf69b0aabfa01b6c66519aafa9e1c058ec69df87befe52f"
+    },
+    {
+      "filename": "207_company_regions_address.sql",
+      "checksum": "7fb29ca8d21ee69de8bf56710a4ce3952d390515bce6a3f7608aa1f38e7e30e3"
+    },
+    {
+      "filename": "208_user_current_location.sql",
+      "checksum": "e6ba4187d13f2557742f4d90b5655dec8df325112cb66517297f0400c886793a"
+    },
+    {
+      "filename": "209_geocode_cache.sql",
+      "checksum": "1aeb6e62e939bfe7932fa1ed3c7c7aa85598b8cdbcb5687c4648e85b3645697b"
+    },
+    {
+      "filename": "210_cleanup_invalid_geo.sql",
+      "checksum": "e9cfa318f8312d8e293a84d9eda0542ff36a20939f2c4c4270a93aadb304d138"
+    },
+    {
+      "filename": "211_company_regions_geo.sql",
+      "checksum": "15e6f5623bc7f66253c79dc6917b270046a4b33096faf6610b176f3ce08349d3"
+    },
+    {
+      "filename": "212_constrain_vietnam_geo.sql",
+      "checksum": "51f9b7d098514f4dfb0dfc90b3e085f83bd5efcec510b2a3d96a4eaebc7fc7a2"
+    },
+    {
+      "filename": "213_crm_task_blocks_stage_advance.sql",
+      "checksum": "63bd83235066b084c2db8516a68c780692d582b13323f0d941e843138f36fb6b"
+    },
+    {
+      "filename": "214_crm_task_templates_pipeline_stage.sql",
+      "checksum": "8c78441903773256318d989533ca7c93845bb24ec525a6c57e3c15d69a3640bd"
+    },
+    {
+      "filename": "215_crm_task_templates_slug_nullable.sql",
+      "checksum": "c4ceebaf102c996c238623e77339cda496cc84ce920b8960f9964817cccc6016"
+    },
+    {
+      "filename": "216_sales_admin_full_admin_permissions.sql",
+      "checksum": "0ee501e09cb60eb08c9d59ef1032807c326acf6ccd87b2440235c499387d6acf"
+    },
+    {
+      "filename": "217_knowledge_base.sql",
+      "checksum": "6943ceffc3b753331570d34a4da3c3ffbf0700c2c9ebfb872b2bfa03969ddae2"
+    },
+    {
+      "filename": "218_knowledge_seed.sql",
+      "checksum": "69661074817496f26cc10eb79511b19a6a56a3391ef87d1889b3b8ec31aa0fdd"
+    },
+    {
+      "filename": "219_knowledge_media.sql",
+      "checksum": "ad9ea9a0227d0c1912dbb7897fd545d8e6bedb2fc0df31fbc33a53a70ff5f26a"
+    },
+    {
+      "filename": "220_knowledge_seed_media.sql",
+      "checksum": "41a3bc0dc4711cf5b4ae3e5ecb38827a1a8d0f4cfef4b723490168adf2f01d60"
+    },
+    {
+      "filename": "221_knowledge_advanced.sql",
+      "checksum": "aeb3a47189a4b242a60ff6aaa80808e51356d80fb285054436cf8f69f9e1b170"
+    },
+    {
+      "filename": "222_knowledge_seed_advanced.sql",
+      "checksum": "6e4967339d591e3b3b1f6074c4037e5d4de9e0c2c72a24deb36c264bdacd6065"
+    },
+    {
+      "filename": "223_ai_chat_bot.sql",
+      "checksum": "7421dca44228d3caaf92152b9719c46f6f68baffff8f7f7bef5aa435b0ccc51a"
+    },
+    {
+      "filename": "224_ai_chat_bot_playbooks.sql",
+      "checksum": "dad94c8dc86922f25363df4eb6529380244e1ee9cc374e745346b357cb857dde"
+    },
+    {
+      "filename": "225_dedupe_crm_task_templates_per_stage.sql",
+      "checksum": "d27607f800fcb06d556618d388209e7fb81d2832afe4acbcbc774e13929b3dbc"
+    },
+    {
+      "filename": "226_ai_chat_bot_schedules_prompt_kind_nullable.sql",
+      "checksum": "11b4fb4fd46f3942f6c3bb0194397cf36b0153357a3c83fe2ed14f0092d32fcd"
+    },
+    {
+      "filename": "227_drop_legacy_auto_gen_tasks_trigger.sql",
+      "checksum": "f44794c37a4808973fa3f3b06b5b28a185ab75c6800499b7500f3d190503d974"
+    },
+    {
+      "filename": "228_dedupe_single_deal_tasks.sql",
+      "checksum": "adc0fc34c7dda74bf6e7f799608e6bad01b6867462bead4556651ae492877345"
+    },
+    {
+      "filename": "229_ai_chat_bot_playbook_dataflow.sql",
+      "checksum": "da0f7ac7270ca0824d2dcf220315eb120ff7c3d589d67ff4df37c8b7a5ced79c"
+    },
+    {
+      "filename": "230_ai_chat_bot_deadline_playbooks.sql",
+      "checksum": "edb16fff97eadaeb3d494026fe1faff582b832631a3d7b04596bd5c5845f089d"
+    },
+    {
+      "filename": "231_ai_chat_bot_company_report.sql",
+      "checksum": "b1c999558aca8e74aeb212010499c5b2035e1d2f106b6ba1f9b3102cb93534c5"
+    },
+    {
+      "filename": "232_crm_task_show_excel_quotation_upload.sql",
+      "checksum": "7a69aea9c59a384feb96a0d54ef2741418aa0c20463b33d409f5c93d76a229ab"
+    },
+    {
+      "filename": "233_ai_chat_bot_report_scope.sql",
+      "checksum": "8ab779babe63218ef96c15786a8b67a7aa9112bca5f996a271fcccef08840e15"
+    },
+    {
+      "filename": "234_ai_chat_bot_personal_scope.sql",
+      "checksum": "83ed755dca99a40d7a545103efa13c1eaa49df1a81bdc106bda44dde56372fc0"
+    },
+    {
+      "filename": "235_user_activity_log.sql",
+      "checksum": "c021536a51fbb2644c1884a55babd65ab86f42e8a1e13e93b305abefd71e4479"
+    },
+    {
+      "filename": "236_ai_chat_bot_user_facts.sql",
+      "checksum": "d3de452e926f6d9050bb7031c1e6249b8ca0ce0d7571a3539a814fac54616bad"
+    },
+    {
+      "filename": "237_ai_chat_bot_lead_deadline_v2.sql",
+      "checksum": "5b7c8ad46e1dc443eaa9d273edd335381b8d40c04ce2d05490d937d58cda509f"
+    },
+    {
+      "filename": "238_ai_chat_bot_region_scope.sql",
+      "checksum": "929828573238df5b60fa44767dd3b88a628a145f2a78c062a4cf9e39aec8167f"
+    },
+    {
+      "filename": "239_ai_chat_bot_lead_links_md.sql",
+      "checksum": "2fbeb461cd1505b89987e8497cd19e1c7c42dd53301f61c9c2a7c914334fa596"
+    },
+    {
+      "filename": "240_ai_chat_bot_recipient_users.sql",
+      "checksum": "ab10ef1e211089c2fad80f3aef371368716e93821882d701ce229e25a58e393a"
+    },
+    {
+      "filename": "241_auth_event_log.sql",
+      "checksum": "8305b8ceb4ba4b33ebc8e5eee9d66fa21084d6b5baf8a98cbbbbcba1f2ccbeeb"
+    },
+    {
+      "filename": "242_vc_soft_delete.sql",
+      "checksum": "d4af5a5a8c7a4302f6d935fb7e3ed81a6134fc0f476532ddedd4545b551f884f"
+    },
+    {
+      "filename": "243_vc_delete_reason.sql",
+      "checksum": "2fab171fb82fe2c6ba6f9df164c123e0d1c7fa6d7aadb2f1e46e4b7ce7039ed6"
+    },
+    {
+      "filename": "244_audit_log.sql",
+      "checksum": "13530d749c9bf773d80989d1110b09130438bb5284c6445eb937dc4d123c2352"
+    },
+    {
+      "filename": "245_crm_events_module.sql",
+      "checksum": "2f5cb01e4be93dafc8a283144965c52a12dc66ccacdf216b6a16007842a39a23"
+    },
+    {
+      "filename": "246_user_role_module_admins.sql",
+      "checksum": "9125c527b711d190e7cddd9ae3506799d0d2002605cb39a350d9e05339efea35"
+    },
+    {
+      "filename": "247_sx_user_planner.sql",
+      "checksum": "fdb63f03c070d2aa96256890e830e4df69d0b797d04d3ee6825ddaeb76023bb9"
+    },
+    {
+      "filename": "248_project_comments_threads_reactions.sql",
+      "checksum": "7d4b3549bd941f433a8d594f0e5db2df2000393c4ea910771ad73a9d40d9baf7"
+    },
+    {
+      "filename": "249_workshop_task_templates_pipeline_stage.sql",
+      "checksum": "879806cfcdcb45a3659c3072209b1715c2fd977c3766549b77320b9ce0e65ca9"
+    },
+    {
+      "filename": "250_workshop_templates_keep_global.sql",
+      "checksum": "902f8c6d697c97d9c1e89912bface783614853e37b8779424137a8437c0d1a61"
+    },
+    {
+      "filename": "251_production_pipeline_workshop_type.sql",
+      "checksum": "4e7b6817ea9e0b835db4e797a8375b1089738205cbb8863fe5b070c18bc0f35c"
+    },
+    {
+      "filename": "252_workshop_default_kitchen_glass_pipelines.sql",
+      "checksum": "a2167bae1770621cbd37b9af3ea451fdb36b113966fbfdeccf8e6804873b5218"
+    },
+    {
+      "filename": "253_reset_company_pipelines.sql",
+      "checksum": "5e90ae2754342a3f0826c8262cced6e7418248c9bcc9b96e71614b831289c37c"
+    },
+    {
+      "filename": "254_reset_and_reseed_kitchen_glass.sql",
+      "checksum": "d095a0e3e38244e4ca78a81029ed3985f470131127f5263a77e041b52d9377ae"
+    },
+    {
+      "filename": "255_workshop_default_type_cua.sql",
+      "checksum": "e3e77a8f4f44043218f373119566823f05b11c0bea4d1e4e01306c522f80ce5e"
+    },
+    {
+      "filename": "256_workshop_task_blocks_stage_advance.sql",
+      "checksum": "6ce71d256bcdf595b09c1bee259dba8c209b154949b4005470ab166567c2ad5f"
+    },
+    {
+      "filename": "257_clear_knowledge_lessons_and_exercises.sql",
+      "checksum": "ec2b056572466d4662d63cee13e8e14d99744b022cd15e1b4d880a855412dbe9"
+    },
+    {
+      "filename": "258_knowledge_certificates.sql",
+      "checksum": "ce0dac3c87ec849fbcedf1aa505b8f016f155ea51d315adeb9af5fd3daf7a48a"
+    },
+    {
+      "filename": "259_knowledge_seed_lead_course.sql",
+      "checksum": "1dae0bbf9e3a4147d94ae538ee742e098269f9f81bf599ef4411b24e67cde377"
+    },
+    {
+      "filename": "260_knowledge_certificate_badge.sql",
+      "checksum": "387e56ebc9ed13c6f1800d2747ea45d0a299e06c0da033c6e8f4ce68ff1f1ebf"
+    },
+    {
+      "filename": "261_knowledge_course_deadline.sql",
+      "checksum": "4715450c96e1f6d8bc005e198c5595d8a4fcc6f479b3e57d18c51b8dae759c60"
+    },
+    {
+      "filename": "262_knowledge_seed_deal_course.sql",
+      "checksum": "36b4c264b1a00c93ae1ea19487389c0b5f9c4983ce5c468b72324a8b3836575d"
+    },
+    {
+      "filename": "263_knowledge_seed_crm_software_guide.sql",
+      "checksum": "eab43195dea33aabff9680228f0612b98eed1c88201e75746e0e52712031353a"
+    },
+    {
+      "filename": "264_knowledge_crm_guide_extra_features.sql",
+      "checksum": "cb21153933caca554936753b397e3d6803115031ebd2b0f643bf847505458f97"
+    },
+    {
+      "filename": "270_unified_tasks_history.sql",
+      "checksum": "ede51013d4f6c0e4a4bd03f57e660a560ce48fb42e276b6e3c5fb075dcf2e42d"
+    },
+    {
+      "filename": "271_backfill_unified_task_history.sql",
+      "checksum": "e730c96a9ced13875adf5ea39f77f1d66de694124e4b088fde0e7844703e6ef2"
+    },
+    {
+      "filename": "272_clear_old_knowledge_seed.sql",
+      "checksum": "9ab1fd438384bed7d18b5ce1afc6589fc033fa26e36dbd2f880a8b58710990e2"
+    },
+    {
+      "filename": "273_knowledge_final_exam.sql",
+      "checksum": "c2e5dc81ee71682fd1e51ff741bbeb226f43997c74671fb59b2648549c058ebc"
+    },
+    {
+      "filename": "274_complete_lead_course_system_admin.sql",
+      "checksum": "4a2abb7f4a714f1b479dadd9ddf334ef7ba36a0416d18763c458b8fe2439a9c0"
+    },
+    {
+      "filename": "275_delete_user_hard.sql",
+      "checksum": "ab33cae53e71ac1a5be917f6a254c6e0cc723ec768a784336c37301e4aeb0d6b"
+    },
+    {
+      "filename": "276_fix_unified_history_polymorphic.sql",
+      "checksum": "27384178b04fc0a3d6e8b7ffdedb4f15b0c5e3384701feb7c28c4d3a3c3f93c4"
+    },
+    {
+      "filename": "277_knowledge_reseed_5_pillars_note.sql",
+      "checksum": "f2596bb7a89efe0412775172ee9b419c59c1e208b2a48af1a836844c2c36f060"
+    },
+    {
+      "filename": "278_knowledge_seed_collab_guide.sql",
+      "checksum": "998e783b46854ece306e9db1bfefb4c2e5a5e58b48ff6b9ba9aa7a534bfafe7f"
+    },
+    {
+      "filename": "279_messenger_group_avatar.sql",
+      "checksum": "18f283ff02dbbb125135b9a9e90306ef3ca39f8c108df62ec6e255e02cb0d0fc"
+    },
+    {
+      "filename": "280_crm_kanban_deadline.sql",
+      "checksum": "86a5adb299363275fe16ba020210daa8431886b05eedb4bbae1add63b0ffd5bb"
+    },
+    {
+      "filename": "281_messenger_group_list_stats_v3.sql",
+      "checksum": "dff44b3f4984d2993c92aeae8918f259f0adc5cc85fa1fc7fbc596125f7af9af"
+    },
+    {
+      "filename": "282_messenger_mention_user_ids.sql",
+      "checksum": "d72e80f52ab824e00effe71b4d57ff21bc35cddd77aace2a86adfc78b53d80e8"
+    },
+    {
+      "filename": "283_messenger_group_list_stats_v4_call_preview.sql",
+      "checksum": "a568ebd6464e87c20d72afb66d2fdff0ba42336aa0115adadb8efeeff60e85e8"
+    },
+    {
+      "filename": "284_crm_assignments_lead_id.sql",
+      "checksum": "e76543f012433dfff2fbdf9d0c213cff50d97e6aa410e4a2a209dc41cd2b1d99"
+    },
+    {
+      "filename": "285_crm_task_assignees.sql",
+      "checksum": "82259e32eee1b3dc4f5f1e23542212f6d36bb1ddc9fe46b08896880a5a9c2300"
+    },
+    {
+      "filename": "286_crm_assignments_crm_task_id.sql",
+      "checksum": "1518ac861ffda176ec68cb552952388ba661843f069f4d2401f923aed4849a3e"
+    },
+    {
+      "filename": "287_production_pipeline_sx_kpi_sla.sql",
+      "checksum": "1c405f0ec431f13761a214edab375d25c1283c66eae784c4392dd35477cfafc5"
+    },
+    {
+      "filename": "288_production_kanban_deadline.sql",
+      "checksum": "bbcfa5ef06444c7dfb8059fd6f00342a73bf9aff609493d19f80c7bb17af212c"
+    },
+    {
+      "filename": "289_production_staff_role.sql",
+      "checksum": "268b6b73ae027a654aed3a37e80ffffb4e8a1b303603ac467e4c4cdcd6835b70"
+    },
+    {
+      "filename": "290_zalo_oa_inbox.sql",
+      "checksum": "ba3e290c535b3130850c31c3f5e4097e8bda56e0b7b9a5130028f07528d268a0"
+    },
+    {
+      "filename": "291_messenger_contact_nicknames.sql",
+      "checksum": "2cf363400eda8db4c2760dadbc8e9cd14dd99e739f72715c156573510a9333fc"
+    },
+    {
+      "filename": "291_reset_tubep_pipeline.sql",
+      "checksum": "754fcaf9a9d7109d55d625bfc15cedb858286a2b58002008b847fc6b8ffb1254"
+    },
+    {
+      "filename": "292_messenger_group_member_nicknames.sql",
+      "checksum": "ce7c03b40c5ba6bc580b4ada229299ddc3f014f82596d835a4c0b7db1156afbb"
+    },
+    {
+      "filename": "292_reset_kinh_pipeline.sql",
+      "checksum": "7d0e375ae59b4bf5259ff5f60b121a7d7a187ec1924804277ede5b970775e2a1"
+    },
+    {
+      "filename": "293_production_workshop_type_default_staff.sql",
+      "checksum": "3b8a4976c87e3b041174a1daea07e7745a82efe239d0fb350a23b8250b88d0f4"
+    },
+    {
+      "filename": "294_workshop_type_staff_primary.sql",
+      "checksum": "a1ce15da05576917c115b315d797819e994184a7f901289c9013df238397fcb1"
+    },
+    {
+      "filename": "295_workshop_task_templates_workshop_type.sql",
+      "checksum": "e883773ae9004d66a009cb9447d5e6150a0149c0d1aae74abf7ac80538ec07a3"
+    },
+    {
+      "filename": "296_production_pipeline_collected_revenue.sql",
+      "checksum": "36cc2ca1bb5017241d9499ef22b66f7f23357697da6996005a995722a67b2a2e"
+    },
+    {
+      "filename": "297_crm_clone_phuc_dat_pipeline_to_metala.sql",
+      "checksum": "5a6a3b4cfb8c485e9708f5a0d6025b0cfaeefee100136dac68a7c47dd7e58e71"
+    },
+    {
+      "filename": "298_metala_b2b_data_dau_vao_pipeline.sql",
+      "checksum": "b40a32e3ea5f9c8a154b1c10d027f5c2a81305563715bf845435d5d5b9593ccb"
+    },
+    {
+      "filename": "299_metala_data_dau_ra_pipeline.sql",
+      "checksum": "6de62e1b473bd63fa5240c995217a8a4cb7ab30eb657d95e454e832150bae459"
+    },
+    {
+      "filename": "300_projects_order_delivery_dates.sql",
+      "checksum": "c44dedf4ab675a8fa2c08e96a8e8c63be80e1fea72735129868a1ae6288e71ff"
+    },
+    {
+      "filename": "301_crm_leads_external_company_name.sql",
+      "checksum": "0aed39a5c5e4626fa96bf8abc4dc5d6e92956ff42cab39e1ec064c1ec7a8322e"
+    },
+    {
+      "filename": "302_production_external_companies.sql",
+      "checksum": "ab51747c0c846200933f005aaaf2f44f66d2fb18e692691ec7cdf395bc54e0e7"
+    },
+    {
+      "filename": "303_production_pipeline_switch_workshop_type.sql",
+      "checksum": "82e314293034e106f49d4504dbffa096fe47de9858035e6c04842cc932ffe7f0"
+    },
+    {
+      "filename": "304_facebook_pages_default_target_type.sql",
+      "checksum": "086e7c828264ced3710b9e819b5504e1e7694672e2ab3643b4d7bc0b3d8768cf"
+    },
+    {
+      "filename": "305_facebook_pages_default_module_key.sql",
+      "checksum": "b17db8c1899296cab31544e031689f649542bd466cbf37d2ef93bd926cd2bdb3"
+    },
+    {
+      "filename": "306_projects_production_value.sql",
+      "checksum": "7efdf762cefd160732c93ffd07f68c4c8f475f2e6f735f6acc72f2039d10da73"
+    },
+    {
+      "filename": "307_facebook_pages_drop_lead_type_fk.sql",
+      "checksum": "053291eb323dcec401e58121eb4fd45f627db73457cdacefa1f426b01199a8c3"
+    },
+    {
+      "filename": "308_crm_tasks_checklist.sql",
+      "checksum": "0171a0bd645e064579178cbcc526501e39630021ef56b60229f0659554f87481"
+    },
+    {
+      "filename": "309_crm_task_attachments_checklist_id.sql",
+      "checksum": "7d19d841e4de3e552be622ed36c45fa1f35bfdee876be94a9c3729dc94904d7b"
+    },
+    {
+      "filename": "310_app_update_registry.sql",
+      "checksum": "1584433c30bb2ebf50cc237196a865d5876015278d43fc49ef2574d569813028"
+    },
+    {
+      "filename": "311_tubep_demo_app.sql",
+      "checksum": "8804d428272f97a693b8505b4f39729440080b0fd13fcb321117adff67ff93ca"
+    },
+    {
+      "filename": "312_app_scan_dir.sql",
+      "checksum": "8741a3d2e577c60503fc566809849767b9807f51d07d3f400d237c59605eca3e"
+    },
+    {
+      "filename": "313_app_scan_dir_per_user.sql",
+      "checksum": "2ee4895d2b56523f86487454d851727ad5455cec2536ce51c49979dcbc1f17ae"
+    },
+    {
+      "filename": "314_crm_assignments_production_module.sql",
+      "checksum": "845815aec9628363d6f1687db82c68f3eb97ca3f8db7fa438865c66f8aad5122"
+    },
+    {
+      "filename": "314_zalo_oa_default_module.sql",
+      "checksum": "955d7fb2be118f4764e491cdddc3baf04041683a693d6f89155c341a0b20a262"
+    },
+    {
+      "filename": "315_task_required_evidence_file_types.sql",
+      "checksum": "2c4ce5deb82468ee9a02b42897f6184f8f911078f7ef02997357df4de252bd83"
+    },
+    {
+      "filename": "316_task_quick_verdict.sql",
+      "checksum": "0a4a8af27d77a967f57d419cf3f6763686472ed30f69b2815ec096acdfa5815d"
+    },
+    {
+      "filename": "317_crm_production_dual_roles.sql",
+      "checksum": "d18983318b4f76dfb77adec01f55c353e44dfcfbd6a705de6c001a4859182681"
+    },
+    {
+      "filename": "318_cross_company_executor.sql",
+      "checksum": "cb18c2c552da222b6844c0f49dba948c2c7915a6f08dfefb301c06eed78c0866"
+    },
+    {
+      "filename": "319_zalo_oa_refresh_token.sql",
+      "checksum": "a350a1fa01bf4f00a6c86f4228f732bdf0af4e8a1c626e6ff030b6b4b4a9d9dc"
+    },
+    {
+      "filename": "320_minh_pd_production_admin_phucdat.sql",
+      "checksum": "1b6d740c726435d52be38b08bd9969aa2ab004b87e869f11e453ab20f06c880b"
+    },
+    {
+      "filename": "321_production_logistics_admin_permissions.sql",
+      "checksum": "ba9f7b57cc6f29b8dc0bc602ab43cc1e84f4de5df7978bb9f78e67f09c95a57d"
+    },
+    {
+      "filename": "322_minh_pd_crm_staff_sx_admin.sql",
+      "checksum": "3f61c191ab193a83f1f85c2957aa0888c176054745d36b57838a2ba606e891e0"
+    },
+    {
+      "filename": "323_crm_task_template_executor_company.sql",
+      "checksum": "6c84f2ff889ba657a84721f399c883da9b9a8b334d343c103489eed4f12b9f12"
+    },
+    {
+      "filename": "324_crm_projects_deposit_fields.sql",
+      "checksum": "f92c6270c3e89575b844c85df96d98073c388e95a5d064624e3ecd90b78b2c7c"
+    },
+    {
+      "filename": "325_crm_leads_zalo_no_phone_kanban.sql",
+      "checksum": "df8e4a197a06f50abf607e0686cde2232f1875d2efad0b78a93ca2246e1e73d4"
+    },
+    {
+      "filename": "326_crm_leads_stage_counts_rpc.sql",
+      "checksum": "3b06ba97f3fb874aba256cae85f933430185cc42a024506d049a13fc3f87cb5c"
+    },
+    {
+      "filename": "326_zalo_oa_n8n_webhook.sql",
+      "checksum": "6509c43b63aa4de23c44ed0356cbf68bae90d82b6380a26893fed698a01e13c4"
+    },
+    {
+      "filename": "327_crm_leads_kanban_indexes.sql",
+      "checksum": "05e805890abfb46ccaa5ace09baa1b59b99aaea6b73987a1c7537f0f76b5df48"
+    },
+    {
+      "filename": "327_zalo_oa_n8n_sync_profile_webhook.sql",
+      "checksum": "bdb7a41ce2d014c82af2da399e4e41b502d8e70eedf71905c2b3013688d2379b"
+    },
+    {
+      "filename": "328_zalo_oa_n8n_trigger_token.sql",
+      "checksum": "f9cc6923207d42ee54773a543d9a2cbf74207ab991014c5f8dbcfa4a56a16943"
+    },
+    {
+      "filename": "329_crm_task_assignment_artifact_link.sql",
+      "checksum": "dbaff1c938a875aeb0775fbe7eb3b5bc6b13384955571d1cc111f5bdd7c93978"
+    },
+    {
+      "filename": "330_template_item_default_assignee.sql",
+      "checksum": "9ec7d0e8fdd0bafb862f1df00b3e5d116a63f5ec9ff49016555dbdbf475857d4"
+    },
+    {
+      "filename": "331_template_item_default_assignee_ids.sql",
+      "checksum": "1ad273c2dbad8ed96de1e337e0fd7bf8fcee6f6b510cbae75cb69010a7c018b2"
+    },
+    {
+      "filename": "332_crm_assignment_columns_is_in_progress.sql",
+      "checksum": "ea6c7f95f1a24c8a14446b4b806a4bf03aab74750d79f6f76981eb2c3aa126db"
+    },
+    {
+      "filename": "333_calc_module.sql",
+      "checksum": "187f95f71eb6f62ffe8075443f9438c57e136ecf54cf447291ba05a183d1249e"
+    },
+    {
+      "filename": "334_zalo_oa_phuc_dat_default_pipeline_source.sql",
+      "checksum": "a7198b0f2949974b9ec3aa8b9828d51e5ffeadd0c77b5ba5eb85e3693fe3d956"
+    },
+    {
+      "filename": "335_zalo_leads_sync_oa_kanban.sql",
+      "checksum": "2780461392638a09d772f1501b3b60664b94d7c9b27273fe48947877ed47dc52"
+    },
+    {
+      "filename": "336_crm_pipeline_nextgo_deal.sql",
+      "checksum": "d4e10601978ac95a0febbaf1a21a650a8bfce82521073d6f98e126b6e9ed7821"
+    },
+    {
+      "filename": "337_crm_referrers.sql",
+      "checksum": "dead8eb41f6ab38fb4b3d8b48e529deb033d62365c31d2c02e9eb05e1798bac5"
+    },
+    {
+      "filename": "338_nextgo_staff_seed.sql",
+      "checksum": "231b3424fdfa0677c13018078b19123e9091a6d7564b593bb64f08490ca8fd52"
+    },
+    {
+      "filename": "339_crm_lead_types_color.sql",
+      "checksum": "2329520b981328686936e46720bbf4002e198b8294d7a06a7c837752b4c51030"
+    },
+    {
+      "filename": "340_nextgo_admin_maithanhtruyen.sql",
+      "checksum": "b6fdc16f67ed809e6027d201ff8ed591b01fbde3dedff9a01e3cefcfd2b18ba9"
+    },
+    {
+      "filename": "341_crm_dept_plans.sql",
+      "checksum": "4956d70af146c2eadb30ebb3220d2ed4486c51a87277c40810a777a6ac126ded"
+    },
+    {
+      "filename": "342_luonggiayen_crm_social_inbox.sql",
+      "checksum": "9be4c0cb3e2c82b527e62df4bfed8624d37f7ebc72b46080ea86471de0c46ac1"
+    },
+    {
+      "filename": "343_internal_social_post_blocked_companies.sql",
+      "checksum": "6b364c69b3463c4ef7121c8d5f1b1263689dc5bb36b7187c20f9d4814f5a3d95"
+    },
+    {
+      "filename": "344_drive_roots.sql",
+      "checksum": "fdac45c9aca3ac195c2975372bfe90d961ffd344bc8e444c3f0b5766e51954ac"
+    },
+    {
+      "filename": "345_drive_folders.sql",
+      "checksum": "0182d7d8d6f5c9484c68307d2d9b2433330a83d944722c74b0fc51842dd8cb87"
+    },
+    {
+      "filename": "346_drive_files.sql",
+      "checksum": "038c6919c2caf1ef6b9b9e2591a616bd025a57e924eb125d2797689ff6d32044"
+    },
+    {
+      "filename": "347_drive_permissions.sql",
+      "checksum": "336bd145538d7e0f5343c2c9ce978b6e159a41f392ad0d5b312837278520f0ee"
+    },
+    {
+      "filename": "348_drive_stars.sql",
+      "checksum": "67d9717d1861239436041e3854c7d524684c7b116c50f1b713ddaf2fa299ce33"
+    },
+    {
+      "filename": "349_drive_activity_log.sql",
+      "checksum": "2d113a663a1127fbe42ba0e578dc279d220d3ae0b107b76fb8ab03e28d5146ee"
+    },
+    {
+      "filename": "350_crm_pipeline_stages_counts_as_expected_revenue.sql",
+      "checksum": "b4adb3ffbf16408b43360669fd85bdf15a46dbd0c0390f66aca5d88a491d895d"
+    },
+    {
+      "filename": "350_drive_entity_links.sql",
+      "checksum": "84ca56053d9cd4886dd286e66880f031632ade1ed25a9cb3c590cbe085f83cdd"
+    },
+    {
+      "filename": "351_drive_permission_codes.sql",
+      "checksum": "024bc25dd95870da1488b0bedd4e6fcfc6b1be5148bf2d3f8d61dfb10bd99e4e"
+    },
+    {
+      "filename": "352_crm_stage_allow_revert_to_lead.sql",
+      "checksum": "e32ec0e659e81a31f1d5bb9dd1b81d4ddc00b91878383b157a03027928562bd3"
+    },
+    {
+      "filename": "352_drive_org_folders_cleanup.sql",
+      "checksum": "8a8d671ed52732091e9d01c33b92f17e90b117d8eab9803ac44cf441a80a77a7"
+    },
+    {
+      "filename": "352_module_tier_permissions.sql",
+      "checksum": "c65d82eb399b3ae3749dc9d751e3cec8d77da5ee0006b06142ea5f36b6377a25"
+    },
+    {
+      "filename": "353_project_comment_read_receipts.sql",
+      "checksum": "3d891b033e261c712fec449943b97d056ec875d1ff2779a6dbf5f6c850c2d37a"
+    },
+    {
+      "filename": "353_user_has_permission_system_role.sql",
+      "checksum": "9fa554b59eb97b7f489cc37ff24522d5774996934b1e90520d3de91783e7aceb"
+    },
+    {
+      "filename": "354_backfill_role_tier_permissions.sql",
+      "checksum": "44530a2fa0f7406c8c71438f0a31889e79ac4212b4ce6d738e42fcaf4838f371"
+    },
+    {
+      "filename": "354_drive_module_and_category.sql",
+      "checksum": "9c00037310d8ade44ff518b4bcb8cd81cd149f102a39202c663330ee47eeb723"
+    },
+    {
+      "filename": "355_drive_acl_region.sql",
+      "checksum": "72f5985c4fc431550d75a1e521151e47d26c1602dc425833d4ee7dac400b681c"
+    },
+    {
+      "filename": "356_drive_roots_module_meta.sql",
+      "checksum": "252954eb86b7c44f7c72e46bd5fa839528b214ae080049111d6014a92a1a9485"
+    },
+    {
+      "filename": "357_crm_assignment_schedules.sql",
+      "checksum": "6b1cb65502cebac8d34fbecb7aae93a2655ccbbf98681609d45ad0e894aada28"
+    },
+    {
+      "filename": "358_release_notes_drive_integration.sql",
+      "checksum": "d1569a1ca4d6f62303408909989f3c77b40b31d12947226f6275fcd13075560e"
+    },
+    {
+      "filename": "359_release_notes_drive_images.sql",
+      "checksum": "d6858322bd4e0e4a533bf5fdf4d29352b4b3513cdd02c17558ecd3b69f721001"
+    },
+    {
+      "filename": "360_system_batch_jobs.sql",
+      "checksum": "97a18717ecd24303cbba93ed20b58f0b3f24f23536fe3a149380ddde3af7a316"
+    },
+    {
+      "filename": "361_facebook_auto_master_schedule.sql",
+      "checksum": "9010eff51781100d42567945a5b5b95363120073bf869ade8d9fc76cdfe91222"
+    },
+    {
+      "filename": "362_crm_lead_comments_attachments.sql",
+      "checksum": "6063ac07911d3583c04f2542066d03259b939b8eb3f2270ec5dfcbaa0e24ef8b"
+    },
+    {
+      "filename": "363_vpt_ketoan_admin_company_scope.sql",
+      "checksum": "2dfd99de5d6f7439fd97e3c4b2e864a3a03b5f84612683075f326021fb543449"
+    },
+    {
+      "filename": "364_crm_leads_member_visibility.sql",
+      "checksum": "98f3714f1f6e13a75197272d56d484b8c4601a74e31f02cc7ce3b42964b2acaa"
+    },
+    {
+      "filename": "365_crm_leads_stage_counts_values.sql",
+      "checksum": "51178e6aa27dbd365fb4fe10a2962c6e44b1c4248f76fc3ea501bd4358d7a693"
+    },
+    {
+      "filename": "365_vpt_ketoan_participant_scope.sql",
+      "checksum": "c8a58eaf485f80e5618b82a6f13b34c3038f7bde3dcda562e09acb53849a982d"
+    },
+    {
+      "filename": "366_accounting_external_company_link.sql",
+      "checksum": "638f5119e9c751b2b5938b9dd6a34ba29b195280605ec5d0f5aac055874f52e7"
+    },
+    {
+      "filename": "366a_user_role_add_accounting_enum.sql",
+      "checksum": "ba0d9082811962b583beaaad2e44223950ad413feba796aebab68ce8becb8b16"
+    },
+    {
+      "filename": "366b_fix_external_company_linked_backfill.sql",
+      "checksum": "db710d9bd321096c63b4903d0eb007616c7e8c465f509db7df9b6d4d4a1fd3f4"
+    },
+    {
+      "filename": "367_crm_rpc_external_company_scope.sql",
+      "checksum": "75b4b08578ac2675b80809e2a6c8c8f62680c2077547dacf8e6b1481cf529393"
+    },
+    {
+      "filename": "368_phuongcuc_accounting_vpt.sql",
+      "checksum": "39205e02a31eb70ee4bdaa3e175c3ae15e94be1ba3ca8bebdb68a1357855ec40"
+    },
+    {
+      "filename": "369_vpt_accounting_phuongcuc_ketoanvanphuthanh.sql",
+      "checksum": "3c249aad8f79ecb156e9288f4b8f9c5b779ce3aad2ce4c800fefe8b70f97ba6d"
+    },
+    {
+      "filename": "370_external_catalog_vpt_crm_link.sql",
+      "checksum": "55aa92e76ff1b66f226fbe1a7476d1eba4cf4e0c7c4bd7fa5aa2a2e4d654f807"
+    },
+    {
+      "filename": "371_minh_phucdatdoor_phucdat_production_scope.sql",
+      "checksum": "423f9a8cdff930c46645dff71756f6d75ac7682685f1733f5ae91a34024c756f"
+    },
+    {
+      "filename": "372_production_workshop_type_clients.sql",
+      "checksum": "481be5f71395f19e191eb49d772593981f0a72fa44f94f95967bc6087114ecc7"
+    },
+    {
+      "filename": "373_clears_delivery_deadline_on_complete.sql",
+      "checksum": "eac320be3dbd7a887c936a46b8df91e33c66da58e0cda96ed584497cacfdb4c0"
+    },
+    {
+      "filename": "374_file_attachments_shared_to_crm.sql",
+      "checksum": "5b9c252da2081149a3a0c7ec7815f142f8e16cd823a0063ef87109d43f124cc0"
+    },
+    {
+      "filename": "375_facebook_image_sets.sql",
+      "checksum": "7c26b013b722331375fc710c066a50ed09e2bff1888477720bc42ff5dd6a0f32"
+    },
+    {
+      "filename": "376_drive_company_images_root.sql",
+      "checksum": "fb95e3b96104d35d1e9c0c6f425ab93cc0d5483f88361aee615075daa4835f65"
+    },
+    {
+      "filename": "377_crm_pipelines_allow_employee_delete.sql",
+      "checksum": "d5f73b43ae4635eea918e2c058b3db277b85c36fa7a3ab1a4fed1ba937f38755"
+    },
+    {
+      "filename": "378_projects_deposit_amount.sql",
+      "checksum": "2fe80c2bae31fc423bee94ee3c18f394f513ba6b2eacc3c9bfc662cdabe89248"
+    },
+    {
+      "filename": "379_supabase_failback_log.sql",
+      "checksum": "5732cfd8f83b681d8a7341559ab4f28e56bf267442fdf2862a98040b36d6b6bb"
+    },
+    {
+      "filename": "380_backup_service_role_grants.sql",
+      "checksum": "9f638861a6ad233369cbdde7fe134d0ac35e00e30db31bdb7ce97968a77b1bb8"
+    },
+    {
+      "filename": "380_minh_pd_crm_production_phucdat.sql",
+      "checksum": "4f5c4240eadb17ae9224307d2440762d432dc67b21bd15ee2dc82cc88f7aa27a"
+    },
+    {
+      "filename": "380_projects_collected_amount.sql",
+      "checksum": "014b2665ef5a4051c9e3f71f19afee32fa5664bc11631ac3c6651ba249c131fa"
+    },
+    {
+      "filename": "381_user_activity_log_device_location.sql",
+      "checksum": "bfa6316193e33f9383cc4f58316e035ad8c7f0bb4869a6f92f7a94523de076e1"
+    },
+    {
+      "filename": "382_stage_show_sx_transfer.sql",
+      "checksum": "95958edb3c553fda6f1be6bc918d1a664f1b834e809e7474e288580547086998"
+    },
+    {
+      "filename": "383_tenants.sql",
+      "checksum": "575f4277ab18de5fe48afc2878b4ee9f2fdc2117ca0f2c7ae35bfa1f41c42ef1"
+    },
+    {
+      "filename": "384_tenant_feature_flags.sql",
+      "checksum": "88145824edcb4b40798a534507df7331b6e4621ea9131ad0c2ba8ab8431068a9"
+    },
+    {
+      "filename": "385_add_tenant_id_columns.sql",
+      "checksum": "f9f4e919ac4f9a255f31ed520d31edcd6cb75e575354dec3f08f727479c8f367"
+    },
+    {
+      "filename": "386_data_migration_default_tenant.sql",
+      "checksum": "e99c6235114de3dda90cc4de3689379f81cb01aec604dce7e5147f598364a7ae"
+    },
+    {
+      "filename": "387_platform_permissions.sql",
+      "checksum": "0ad7d273507b02c09296d8b76a512bbe2380bd855c1723e76040346ee1ce068d"
+    },
+    {
+      "filename": "388_ai_chat_bot_session_context.sql",
+      "checksum": "47f48f11eea53cd096c2866007e0c01527e190cd72a98ebbd39fbb64f8e97d0e"
+    },
+    {
+      "filename": "389_ai_chat_bot_lead_expiring_tomorrow.sql",
+      "checksum": "bf42412cfeed346e4ef89349d14358b242ffb6457fe46d6ad86c100297a05b02"
+    },
+    {
+      "filename": "390_ai_bot_user_skills.sql",
+      "checksum": "ad61dd18438eb30729e3e0b1a629c73ed1e07a0f49de92d9429d76841d4f53a1"
+    },
+    {
+      "filename": "391_fix_backup_users_pkey.sql",
+      "checksum": "984f890771d7a9d578433aa42dddca2a26b4afb585e7c58b60003cc95e845442"
+    },
+    {
+      "filename": "392_tenant_isolation_db.sql",
+      "checksum": "52b88f724549aaada9bd8d15c97bf902d7a4d665b4fa617e31df60c152809127"
+    },
+    {
+      "filename": "393_ai_bot_skill_workshop.sql",
+      "checksum": "ebda8b3d7400b08f900154a35ff98e2459c2816d1c18d2b65cf3b0d295c28dcf"
+    },
+    {
+      "filename": "394_ai_bot_schedule_broadcast.sql",
+      "checksum": "1f0da49945b2642d7cc8948e4ec50d7bfa780673ebffe059603a9c7fa5af4d4b"
+    },
+    {
+      "filename": "395_ai_bot_reminder_schedules.sql",
+      "checksum": "ec62b378b68b72a11352f2a2c4028ff684e900db0b5137d71e6571cb466949de"
+    },
+    {
+      "filename": "396_ai_bot_time_scope_day_cycle.sql",
+      "checksum": "644126d2dbf4e555fc76ceae6d4bd5d1f047e637c665be76bf530ba09510ebd8"
+    },
+    {
+      "filename": "397_saas_store.sql",
+      "checksum": "02ee9bf5aae3dec78ce2abd02768274c2084859f22ca3aa527ce1f2ce8970d07"
+    },
+    {
+      "filename": "398_saas_plans.sql",
+      "checksum": "33d0ac413d603c0020248eaa26e3ef168a36b104225b107e57a40c2ca223a719"
+    },
+    {
+      "filename": "399_saas_payment.sql",
+      "checksum": "565e7afb9cd46c9ffdc8a34c436e3de0c606f0285b1780806fd400923c22aef6"
+    },
+    {
+      "filename": "400_file_attachments_notes_column.sql",
+      "checksum": "8d857785a99eeeace0cbd5ccd1456f51cd218d39bd6033e8d3700aa4e4cd855a"
+    },
+    {
+      "filename": "400_users_google_auth.sql",
+      "checksum": "6955df1d84c50c954f285c3e3862712b29cefefa02db50157a8fd3ad2ba48cad"
+    },
+    {
+      "filename": "401_facebook_messages_fb_message_id_full_unique.sql",
+      "checksum": "c54a16be32356f9f46feea55f9514adf06a2134e78aff42395d554cd6cc450a5"
+    },
+    {
+      "filename": "401_saas_free_plan_3_users.sql",
+      "checksum": "44471cbabdbbe5a243d3a5737822fd641e08bc7bbabcd1a97395890c7f58cfdb"
+    },
+    {
+      "filename": "402_fb_new_senders_by_page_daily.sql",
+      "checksum": "193f2485665cbaf89593a033235e934d76328da6b942700b1c2f1febef85d8a5"
+    },
+    {
+      "filename": "402_saas_plan_quotas.sql",
+      "checksum": "5037d3b5ed9a434af2b7de5fbef5d58b7d1660605a6de1c7597800afe0134c96"
+    },
+    {
+      "filename": "403_lead_documents_source_drive_file.sql",
+      "checksum": "1686602e638fb6c520f8aac71a1d7ecf8149f8a06e18ccc597b37ca6067cb840"
+    },
+    {
+      "filename": "404_metalla_data_dau_ra_cong_no_bao_gia_task_template.sql",
+      "checksum": "c93b00f55526994cce255c5e18a82c1f12dcdd147b4cef5e52b702a693bf2e70"
+    },
+    {
+      "filename": "405_phuc_dat_disable_2d3d_evidence_requirement.sql",
+      "checksum": "4a402899dd6bf171a060b9c282b8cf60e423c3784a2df630131ed6a0678ae6e7"
+    },
+    {
+      "filename": "406_phuc_dat_disable_all_task_evidence_requirement.sql",
+      "checksum": "af016df1a59d3d02af7d3bf8527f2e12f1f035117b4bb29893d0bee10788019e"
+    },
+    {
+      "filename": "407_ban_ve_sx_checklist_share.sql",
+      "checksum": "d83e9fcab817b6c34ee5ffa06d10a179d0641311e970dd98eec18ef4a73a7bbd"
+    },
+    {
+      "filename": "408_hcb_clear_deadlines_chuan_bi_xong_tubep.sql",
+      "checksum": "595db5d3fe54c254bb8b1475fc96d4064d01f0a0c0cd31485a9fd559d1fc6b2c"
+    },
+    {
+      "filename": "409_crm_template_item_share_defaults.sql",
+      "checksum": "4d9a093a99c3780c4b528582c7148a1758adb7484094e13705f76ca17f998ddf"
+    },
+    {
+      "filename": "410_crm_lead_comment_read_receipts.sql",
+      "checksum": "f0b0d1f7e07dc334fd5ad2e5b776e0b509a340b394651bf0089195ecf82b4b20"
+    },
+    {
+      "filename": "411_external_api_keys_refresh_token.sql",
+      "checksum": "1b29e18c4811ed92c9af7452bc688cacf289aaa39b05af1c4eb11eed2837331f"
+    },
+    {
+      "filename": "412_production_pipeline_stage_default_staff.sql",
+      "checksum": "9c88fcb09060f704e8f48a4da8fcf40d79464ad499ccec58a620dcc5723fd981"
+    },
+    {
+      "filename": "413_production_pipeline_stage_staff_kinds.sql",
+      "checksum": "ee66f8396a7f5cdb4e4d891e19bebfc875a4476d9eeebcc3d88c2fde8cdf925d"
+    },
+    {
+      "filename": "414_phuc_dat_logistics_ngoc_linh.sql",
+      "checksum": "f140fba9627b490f88adf26e518940f43fb2d04b7fc01b145274f312866fbbb7"
+    },
+    {
+      "filename": "415_logistics_handover_settings_ngoc_linh.sql",
+      "checksum": "f8a1a94629cd22f17b7f1ac652bb9ab7e7454ea5ccd13bf4b592220076200df0"
+    },
+    {
+      "filename": "415_vpt_deal_pipeline_revert_to_lead_first.sql",
+      "checksum": "a34bd5b16fec39fa23ef9adfbfa2f966b81a59cd1ac0c72896553b9c20a0dfb2"
+    },
+    {
+      "filename": "416_vc_mobile_app.sql",
+      "checksum": "d0f8f99866062252e5b847b8d86af0c31102b25a2015c89ace3e9086257cf1e9"
+    },
+    {
+      "filename": "417_crm_pipeline_stage_default_assignee.sql",
+      "checksum": "613feebfaee92343ed070dd847ad45434ac62df6762bd451e752ee67479e1fdb"
+    },
+    {
+      "filename": "418_messenger_chat_wallpapers.sql",
+      "checksum": "14ec31cab32b7754ba6fe3c551ea7d2f684263c574c2890ffcf247fb01b2f596"
+    },
+    {
+      "filename": "418_phuc_dat_logistics_vc_ld_task_template.sql",
+      "checksum": "847d2146754edfc5558216bab0d52b190e86abca973514022aa8659b73c01c02"
+    },
+    {
+      "filename": "419_phuc_dat_logistics_simple_vc_ld.sql",
+      "checksum": "03bb1f8b04fe66bd52b9dcac7ebbcc36489eb151b69fa82333f89ba95e6760c1"
+    },
+    {
+      "filename": "420_hide_quote_contract_from_production_vpt_phucdat.sql",
+      "checksum": "fa90698c3f53be12b92c1e2d6e5bc377c6d8b6240ed2084a877f6ec9636dc61a"
+    },
+    {
+      "filename": "420_phuc_dat_logistics_6task_default.sql",
+      "checksum": "83e015340e5d7f6576e9967bae4c5de63e4346fd058775bf7b5f3a6a3f003afe"
+    },
+    {
+      "filename": "421_phuc_dat_vc_ld_pipeline_tasks_reset.sql",
+      "checksum": "17551f7ca5f0e93d6f1c5482c7774a4c71409f81af67313a110a7442d32b6d9a"
+    },
+    {
+      "filename": "422_vc_ld_global_default_template.sql",
+      "checksum": "7654cd768c8a3f775cdd6d8776f4b13f4b423bd29fba533906d5e6528efb6d84"
+    },
+    {
+      "filename": "423_accounting_bank_accounts_payment_stages.sql",
+      "checksum": "dff1503488046f8d21ec3bbfc4cc447c9cb47a1078694dd9b394730a48e3691b"
+    },
+    {
+      "filename": "423_projects_sx_kanban_column.sql",
+      "checksum": "20b7d8566f2617bbc2238cbf30a99b367039cf1b6c7445abc3482216e9a19c87"
+    },
+    {
+      "filename": "424_crm_pipeline_stage_revert_to_lead_target.sql",
+      "checksum": "c463b128ad1d23776a3033ca96dc9ed856c1553ca2776f2d52b74796bd79f40d"
+    },
+    {
+      "filename": "428_crm_pipelines_region_split_vpt.sql",
+      "checksum": "3f50943f0c5f504ab16d004a38908bcc2ba6c10485cacbac937b5f4455b16094"
+    },
+    {
+      "filename": "429_accounting_bank_accounts_region.sql",
+      "checksum": "1cd97c0f5dc37bf47e0e43eb1b391d736c3b4532cedd69137096df6e8dc9ed0e"
+    },
+    {
+      "filename": "430_crm_leads_search_by_customer_phone.sql",
+      "checksum": "6830c72bf2a1367c8e719c1b0580eb8eda87e8a60d613c255439af78f1f3adfb"
+    },
+    {
+      "filename": "431_workshop_project_types_description.sql",
+      "checksum": "1b35b9fa4dde4621cf2f359e94d566245ec3e281a43e3868be3b0f3343fd6fc7"
+    },
+    {
+      "filename": "432_invoice_items_add_standard_area.sql",
+      "checksum": "56094fcbafe28d3b496f70c5dcba94d1ee572dc6b7ad240d82cf1a85da59054d"
+    },
+    {
+      "filename": "433_notification_prefs_comment_show_on_screen.sql",
+      "checksum": "2b88d2c81fe3ef009b1ff909fb2512e1fe7af69cc2ee20e9586535225f81a1ac"
+    },
+    {
+      "filename": "434_procurement_lite.sql",
+      "checksum": "1f1a1bdd713a5ca64d42feacaa17e35e91dc762decc44c4ab73b7333b0e0dd12"
+    },
+    {
+      "filename": "435_phuc_dat_vc_ld_pipeline_10stages.sql",
+      "checksum": "f929874644c92c7e8c572939da22adf1579e31dcbc523ef3bd7ef1ec2bdcda88"
+    },
+    {
+      "filename": "436_logistics_stage_handover_to_install.sql",
+      "checksum": "1efff24ce4d484a071b062817fd42ebad8a2f7bd30c1691de5a9ef944447ca2a"
+    },
+    {
+      "filename": "437_seed_vc_ld_stage_task_templates.sql",
+      "checksum": "fb574afd2d8590b8982eadb8eff3401082b5a9c0af62c8cfc983220e7a4f75f9"
+    },
+    {
+      "filename": "438_external_api_keys_mcp_scopes.sql",
+      "checksum": "3edaa9395251ffa7423b84f62d9d69245acc8ea55f82f7a16c24ae6b07608986"
+    },
+    {
+      "filename": "439_external_api_keys_allowed_companies.sql",
+      "checksum": "b9bc603c15206afca16c248a94a5597aed3be4bb2c124a72a32b544b4e3c5947"
+    },
+    {
+      "filename": "440_purchasing_module.sql",
+      "checksum": "8efb2f578cf6ca51b1b5dc67e036c72d7a6200b40268cdf9f6cde50e83d43c57"
+    },
+    {
+      "filename": "441_phuc_dat_sx_bao_gia_task.sql",
+      "checksum": "0433b2f36c0e3cf80485e85ecfa856c1bd215d953e7f783a25c5b446dc93c996"
+    },
+    {
+      "filename": "442_metalla_disable_sx_column_deadlines.sql",
+      "checksum": "5f264a88bf4100b236056cc14992ddfce68bfa1967d98adab74da8fc8c7ff58d"
+    },
+    {
+      "filename": "443_projects_created_from_sx_finance_split.sql",
+      "checksum": "f263fd4678e24d5e6dd6c0871da0c764e22233385f31f7e84e3ef2a5a310f284"
+    },
+    {
+      "filename": "444_crm_leads_null_region_visibility.sql",
+      "checksum": "2475e69bcf4082a82e282ee925b1e9b4d4cfd559efa9bb6cc15af032f3afb474"
+    },
+    {
+      "filename": "445_voice_recordings_stt.sql",
+      "checksum": "539af6cfa914e155c38455c5ee885f588a9259b41dbe91410d2d60b3bdb1c1a5"
+    },
+    {
+      "filename": "446_crm_leads_assignee_region_visibility.sql",
+      "checksum": "00fdd7da4830aa5d570c2cdf6962d6ceddf67c32e8a1cd306e830a2ec9fdf3d5"
+    },
+    {
+      "filename": "447_voice_recordings_crm_auto_skip_create.sql",
+      "checksum": "fe001e92d34d88b50f90616895af3a0326c5eb86c858fa22e71c4d04d16a7754"
+    },
+    {
+      "filename": "448_clear_deadlines_leads_without_phone.sql",
+      "checksum": "4090a619d04130f807ec7e0c7e3e63436a08d5c0080512ea5c42e572fcea73c2"
+    },
+    {
+      "filename": "449_phuc_dat_disable_sla_lead_intake_columns.sql",
+      "checksum": "3e93adfc95ad1c29c9d75e403e766c8bccdfdf9bac930850abf59e036629bb6d"
+    },
+    {
+      "filename": "450_phuc_dat_merge_deal_stages_to_surveyed.sql",
+      "checksum": "56de1345cfe0b132d1ae2d0d0a70393c26222f92498f65a46aff977a94065971"
+    },
+    {
+      "filename": "451_vpt_phucdat_hinh_anh_thuc_te_require_image.sql",
+      "checksum": "97c06b961e1cf97018faf342ef03a4fe026d5805bf3a1231fabd474b72ab783f"
+    },
+    {
+      "filename": "452_vpt_phucdat_blocks_only_surveyed_stage.sql",
+      "checksum": "11d4deb8ae0adb114fe175ecbd80efc298f3365a21b9f3b89063e411d136c364"
+    },
+    {
+      "filename": "453_crm_sx_visibility_and_workshop_type_link.sql",
+      "checksum": "11c1eb3f9aebc40a884f6f853a7266e735a881a9656767ae570394d4f3eb3c03"
+    },
+    {
+      "filename": "454_crm_lead_type_production_links.sql",
+      "checksum": "3bb2578a3d766aa37fecc9b5dbab860ed4fe6ff5337c364cd4b82a7c29eb1c5e"
+    },
+    {
+      "filename": "455_nextgo_thung_carton_sx_link.sql",
+      "checksum": "ad13e4cedffdd38611d8d9a0dafa41c1af344545b68449cd878cb923bc642746"
+    },
+    {
+      "filename": "456_nextgo_paper_packaging_sx_pipeline.sql",
+      "checksum": "d419c6bb174e8509bca89a07c9edc9d472380d0b6c1fcbbc77f090cb4ef5eb69"
+    },
+    {
+      "filename": "457_nextgo_product_types_task_templates.sql",
+      "checksum": "17bf941225d7eb1507f42d83e030724c07c103e0041cceb7adde3b7267a98637"
+    },
+    {
+      "filename": "458_vc_booking_and_packaging_trigger.sql",
+      "checksum": "e3bb60dabafc5231947ae0e23a857e711044f7650d6e03408d66ca4cae72b7c9"
+    },
+    {
+      "filename": "459_vpt_remove_showroom_stage_to_chuan_bi_xay.sql",
+      "checksum": "41567a5633e5441b4d7663ec8d58617d7697ed5038ddca10d967bd2ef2a402db"
+    },
+    {
+      "filename": "460_crm_task_attachment_counts_include_inline_notes.sql",
+      "checksum": "13d593cc1033d1c4bd43c9a0ae23122a0848addcf6b3dc237f0503871f453623"
+    },
+    {
+      "filename": "461_vpt_hcm_restore_showroom_stage.sql",
+      "checksum": "ba2c00c8e376dded45482cc127aeda81cf8c4e355fae36ccb148dd0120fd84b3"
+    },
+    {
+      "filename": "462_notifications_dismissed_at.sql",
+      "checksum": "27815b7d8392587de3df2a0cf179898b31d11dcd4f44c7caa6ebb4289df6bc43"
+    },
+    {
+      "filename": "463_notification_mutes.sql",
+      "checksum": "4fc8bcd3e7178889a79b202caa6da3e1bcb1de4008027027f6423c3452b934fc"
+    },
+    {
+      "filename": "464_crm_task_auto_upload_attachments_to_drive.sql",
+      "checksum": "a51be3a252b1c78f3c4c00119a3b38a9b0e081033914acc9da514c2927912fda"
+    },
+    {
+      "filename": "465_vc_handover_via_comment.sql",
+      "checksum": "c9564a32648955e63f67e86765a4345ccf8474e5fa989b79cc2950fef83c735b"
+    },
+    {
+      "filename": "466_crm_task_fill_form.sql",
+      "checksum": "811cc07626310cfa245b0b97d4a63288cd05c5f4b68c462b5b3c220595ce6795"
+    },
+    {
+      "filename": "467_crm_leads_revert_to_lead_reason.sql",
+      "checksum": "a9a31c7790a552b3165f752d955a3a1d2974b61f4486df84ab0ef835c21eed8b"
+    },
+    {
+      "filename": "468_crm_task_deadline_days.sql",
+      "checksum": "4b5e3d4df512236441036069af4a68e96dcacb51d36cb2edd0d3234a6d802d95"
+    },
+    {
+      "filename": "469_crm_task_deadline_hours_minutes.sql",
+      "checksum": "189d3bbac67421687137393b7fd09044b644a2dc01b364d535f2178cff25b08f"
+    },
+    {
+      "filename": "470_crm_leads_full_filter_parity.sql",
+      "checksum": "8a915abd476acffc482f915ead732dd06721e0e5e2647ba235f629117b292fcb"
+    },
+    {
+      "filename": "470_phuc_dat_vc_ld_handover_to_install.sql",
+      "checksum": "b6ac1d6aeeaf6c01ac27ada105ae5beb650c81c0abe3c563734f05ffe827af96"
+    },
+    {
+      "filename": "471_crm_filter_summary_rpc.sql",
+      "checksum": "ec46b3aef2bee358062972f0758bce5a8c479a5a4070fab11e4a3a2d61bd7bbc"
+    },
+    {
+      "filename": "471_phuc_dat_sx_handover_to_logistics.sql",
+      "checksum": "d30ddf143a678644f60c8ef36de977d85e3f48debd1e3798c38c030697e2ab21"
+    },
+    {
+      "filename": "472_crm_search_trigram_indexes.sql",
+      "checksum": "aab2a7b3640493c136c203cca7289ad0998f83e0dcf72c0b6c6606175de2474a"
+    },
+    {
+      "filename": "472_task_file_note_recorded.sql",
+      "checksum": "ff38a28a36f88fcbcbaa5d839ce1c676b2a04dc9d03e2f70b4f46a609293c4eb"
+    },
+    {
+      "filename": "473_accounting_role.sql",
+      "checksum": "dd0e8269561420df214c3507f3a21112f1a43ae8d57e1bedf2d7e96454287f6b"
+    },
+    {
+      "filename": "473_crm_deadline_bucket_counts_rpc.sql",
+      "checksum": "cf6a312f29b177e9b42148b4f29970f6aacb12e735b1b6630b295d71f4299bfd"
+    },
+    {
+      "filename": "474_crm_deadline_bucket_pages_rpc.sql",
+      "checksum": "db41955269e95c860b8d187c8ed21922a406e33984c5faef7abe09f3504287d1"
+    },
+    {
+      "filename": "474_custom_app_modules_backup_soft.sql",
+      "checksum": "93e22737c3806805a83927a263d06a6dcdab2aaa2472de0817df2214623d1788"
+    },
+    {
+      "filename": "474_custom_app_modules.sql",
+      "checksum": "2b35b39beafdcb484deb824248ec271c5611e77939545559cdfc79f8ca20c06e"
+    },
+    {
+      "filename": "475_app_module_companies.sql",
+      "checksum": "d8719384e4458bc42fcb681d1604b2d1e48c2bc89b886227a934bf0404f9dfb5"
+    },
+    {
+      "filename": "475_crm_kanban_stage_pages_rpc.sql",
+      "checksum": "0e2bab4f39d9718fba30e1a00da062518115a788cbfa3371041d032b3dffd742"
+    },
+    {
+      "filename": "476_app_modules_category_icon.sql",
+      "checksum": "4d99a13af43185592cee03438247f447c84dd3f3ef022dd8050a413ff7070178"
+    },
+    {
+      "filename": "477_app_module_tabs.sql",
+      "checksum": "b766ce3fe0d90d61f97a79d2dceb436d310fb38cff345c4495694e0726332ade"
+    },
+    {
+      "filename": "478_app_module_stage_flags.sql",
+      "checksum": "a38d5e9b42862eebdbcb96c17076884acf758d310f82103c1c3e32a24a8a918c"
+    },
+    {
+      "filename": "479_app_module_stage_bucket_per_tab.sql",
+      "checksum": "1ced7dfdc69c8049365483f7560ebd10000671a0ef9143a95efd8e947cabaaef"
+    },
+    {
+      "filename": "480_crm_assignments_assignment_module_logistics.sql",
+      "checksum": "623ad9206e42acc99cfbb59f8af5e01f0d0ce881851055636da5f9c0051b57b1"
+    },
+    {
+      "filename": "481_phuc_dat_disable_lead_task_deadlines_to_warm.sql",
+      "checksum": "0ddde57c68d1631db5ecd5765a2f5aea4ab70a13b24e9eb004a7daed82a5a8d1"
+    },
+    {
+      "filename": "482_existing_deal_actual_images_remove_stage_blocks.sql",
+      "checksum": "0dcaae86edcb397244476d52a040aac1e2f38bcbfd072cfe9f94d7626171a9bd"
+    },
+    {
+      "filename": "483_vpt_disable_all_lead_task_deadlines.sql",
+      "checksum": "6816f67e610ccf981b2fa437055f9868563704c6cdc445f0368e5060e0a6e8f2"
+    },
+    {
+      "filename": "484_vpt_hcm_disable_all_auto_task_deadlines.sql",
+      "checksum": "afe1ed38f806f82869f3a1b1f55f68eb34f6e62a4fd75bfc887c882c79276ee2"
+    },
+    {
+      "filename": "485_shared_workspace_task_source.sql",
+      "checksum": "625a67dce5976df1ade44bb74e57a6a02d276b977d3b408e16d66a7ef13cfca2"
+    },
+    {
+      "filename": "486_crm_lead_disable_all_deadlines.sql",
+      "checksum": "b86ce639718cee6d9fa96e4e550bb7dca686e17aa9fbd8c06f210999daf830eb"
+    },
+    {
+      "filename": "487_phuc_dat_material_preparation_tasks.sql",
+      "checksum": "2762ba1e050e386e8aaee61e91291a31526dbdbb489103da1c904aa1d71cb781"
+    },
+    {
+      "filename": "488_crm_deadline_current_stage_tasks.sql",
+      "checksum": "7339c5ba8a47c32ce9c4e4b987246265500f14a55d3b5407ca718afd30aeff06"
+    },
+    {
+      "filename": "488_sx_kanban_column_counts_rpc.sql",
+      "checksum": "dd8e5be4f45266ca9534ff8db86da483c1c48806afeac9ff79c1866152beb203"
+    },
+    {
+      "filename": "489_phuc_dat_clear_premature_hot_deadlines.sql",
+      "checksum": "257d5730b62cea7574c4f781792cd4487bdba6b0466a64cf54f494c7c79917f1"
+    },
+    {
+      "filename": "489_push_device_tokens_app_key.sql",
+      "checksum": "ec2a928447fe1fc4d374cfaa201f33aec71dde99c52c19976d9ca4c65512b248"
+    },
+    {
+      "filename": "490_phuc_dat_hot_tasks_wrong_cold_stage.sql",
+      "checksum": "3f1925d51e17a2e582e0044230d05dcd259c8e705335e5c934312318515cf16d"
+    },
+    {
+      "filename": "491_phuc_dat_fb_leads_off_pipeline_chung.sql",
+      "checksum": "21cdbef79327dfb703f6042ae7dc6983ec139ff2c4157bb12556b7167c781185"
+    },
+    {
+      "filename": "492_phuc_dat_kitchen_nhathau_off_vpt_stage.sql",
+      "checksum": "da180283b6c8495794123aa378c73a940f7bba31c7f038de738e8ed7ca0fdc2c"
+    },
+    {
+      "filename": "493_event_type_video_shoot.sql",
+      "checksum": "68c5f66cc2701949f9f3021bf24b16e10c238892553491f9c4b7611e4b083df8"
+    },
+    {
+      "filename": "494_handover_confirm_users.sql",
+      "checksum": "740af14dbc6d74aa23f00be8cb8166e5ea16886e9148021af1cfc7ff8877c62d"
+    },
+    {
+      "filename": "495_phuc_dat_vat_tu_four_tasks.sql",
+      "checksum": "2cd78b7359e9596cd11da28ac33e9607eb73fd43853f4123c6ca6989444e2537"
+    },
+    {
+      "filename": "496_phuc_dat_vat_tu_tasks_no_project.sql",
+      "checksum": "9fe9243e2e60ac673ffcbff38f3e5faeb9b5fda2af288c6cfd4f77d11d3a3424"
+    },
+    {
+      "filename": "497_phuc_dat_crm_sx_four_tasks.sql",
+      "checksum": "343e5cba1cefe419b7f4c8d48f5f2038d2d59f3b010b2bc524ce28f78379cac9"
+    },
+    {
+      "filename": "498_vc_ld_pipeline_six_stages.sql",
+      "checksum": "5f63f5a4d7dafa29bd67cca29b5ee970519f94229653091c465f26730380133e"
+    },
+    {
+      "filename": "499_delete_crm_deal_photo_handover_tasks.sql",
+      "checksum": "5bf263580b05d6d29c23f8dea8a0c4b81e40102d7a68af76aed123693a5876b8"
+    },
+    {
+      "filename": "500_vc_ld_stage_photo_tasks.sql",
+      "checksum": "4b328f126f41f5b734315ceaf49cdc9cff0f0c0d18b34405976e792435029840"
+    },
+    {
+      "filename": "501_vc_dang_giao_crm_sync_delivery.sql",
+      "checksum": "2814e6a07226c4196a9bd6b37493567659709b500cbe118b1b65927110e818a8"
+    },
+    {
+      "filename": "502_crm_deal_projects.sql",
+      "checksum": "e7767124515b8e2f79540344df9319dba07446b0786db0012c2b0b8b4304ff05"
+    },
+    {
+      "filename": "503_clear_sx_deadlines_on_completed_collected.sql",
+      "checksum": "3619ee4075d7f614f783e232097e602767fb98d69287fa90de8abf5921193dae"
+    },
+    {
+      "filename": "504_permission_catalog_gaps.sql",
+      "checksum": "09502fa80e029bb3dd52beb0bfc71eb6b67e4591a4bae23e6d9ac0a0fa8bd30d"
+    },
+    {
+      "filename": "505_user_module_roles.sql",
+      "checksum": "0357f51a2aefc418ed0c1c9ef32e83b612626ff7dca825adb40bca6dde846226"
+    },
+    {
+      "filename": "506_crm_events_occurrence_dates.sql",
+      "checksum": "cbfe1d9009a92c2181c0d73a5a67673c06e16b263964745f0364ed6a9531aabd"
+    },
+    {
+      "filename": "507_crm_assignments_custom_module.sql",
+      "checksum": "1ca0578ad88a2490794d45bc1c98b61ccebfc9797f9c3012c064e9916e828157"
+    },
+    {
+      "filename": "508_crm_events_module_custom.sql",
+      "checksum": "7980162820e85dd4fb74c045d0226f4fb024b19509406a9c08f7c57d8da90c06"
+    },
+    {
+      "filename": "509_crm_daily_reports.sql",
+      "checksum": "7f09d7852cef6328599f4e89c8dc9126f9310f35a325772371307769f4a8f01d"
+    },
+    {
+      "filename": "510_crm_daily_report_metric_key.sql",
+      "checksum": "db9af7b69d83b5f3a2e513abe81f4441d1f8416ebbe81a9f23bc4a7e3c604f8a"
+    },
+    {
+      "filename": "511_crm_daily_report_extra_metrics.sql",
+      "checksum": "5fc78ff9b34eec56965a1183ccae5727115df628ce635acfe9c9d59e48f246c7"
+    },
+    {
+      "filename": "512_crm_daily_report_extra_metric_fixed_ids.sql",
+      "checksum": "17a094687722a8b42198e316d48b272943b1c8a0d368c0fca806ca7d418d11bf"
+    },
+    {
+      "filename": "513_crm_daily_report_4_sections.sql",
+      "checksum": "bf2b9b217593acccb4de76b41662fa2f63e904d0fe9f89352a8bc0b164ed5a1f"
+    },
+    {
+      "filename": "514_crm_daily_report_role_templates.sql",
+      "checksum": "2d75d42589c15e37aba6db346d15f0d716fe5216f394be2223ce6475fd2eca3e"
+    },
+    {
+      "filename": "515_crm_daily_report_user_extras.sql",
+      "checksum": "8f03e751d9549e5e5e6e58fba7a3357376737a8f72fa5bccb43d9d34ab90ec37"
+    },
+    {
+      "filename": "516_crm_daily_report_design_template.sql",
+      "checksum": "03f269aaf7d4ec0c5600a361d531078cd78ee56b29cba587fa1072eea20d096d"
+    },
+    {
+      "filename": "517_crm_daily_report_sale_deal_rename.sql",
+      "checksum": "dfd1affcfa8d3610778138ada7c16e406db0d3e20366f42ec3957270a97f03c7"
+    },
+    {
+      "filename": "518_crm_daily_report_sale_deal_items.sql",
+      "checksum": "ac1a757a237ad7387f0e550e7bd33a5d2c18839b6c4ff8ccc4761da9cad9d3cc"
+    },
+    {
+      "filename": "519_deposit_installments.sql",
+      "checksum": "9792bb5d2b5f94eb7c2edf98828da090e9547306642040907bc345adb5f50680"
+    },
+    {
+      "filename": "520_projects_production_finish_date.sql",
+      "checksum": "dd416e938d6a618748b6471b9ade3ff5b8dadee3c0510574cbbfe6b5fd0dc324"
+    },
+    {
+      "filename": "521_crm_leads_source_customer_deal_id.sql",
+      "checksum": "a971e299a5b890089db51dddc58bfa6fad5e25df743913df67f91570e8fd7368"
+    },
+    {
+      "filename": "522_projects_sx_reception_date.sql",
+      "checksum": "d6b7d8505103069ff6d9a06a7eabaa32303869e5486bbc4a58bfb79d999ca663"
+    },
+    {
+      "filename": "523_production_pipeline_deadline_group.sql",
+      "checksum": "8b8f3903b0abf44fa45382745e5b5b0160999dd29b88ac49eec83e9eea40674c"
+    },
+    {
+      "filename": "524_backfill_production_finish_date.sql",
+      "checksum": "313d1a376c6440898ec05f52ada04f2149e21e8ea8c2249f7bb27265ba721e6f"
+    },
+    {
+      "filename": "525_hcb_tubep_ban_thanh_pham.sql",
+      "checksum": "a0644d3c06965bd7e7bc384700d7dacdead8996a5e74fca3c640f72148887751"
+    },
+    {
+      "filename": "526_vpt_logistics_lapdat3.sql",
+      "checksum": "1f05a790cfb0ae1cff970b12238ee489d6bce5ae55c4beedb547a370dc3ae425"
+    },
+    {
+      "filename": "527_hcb_phan_quang_hung_admin_all_projects.sql",
+      "checksum": "d99f6f8b5a9edd808a854b081c1ee012cfd399e1afee75752edbbbbc59d3070e"
+    },
+    {
+      "filename": "528_project_workshop_placements.sql",
+      "checksum": "fc53cf7ea67aab87b97908163dedafb21f0d8d1ebff77592b79aa3223946fb46"
+    },
+    {
+      "filename": "529_sx_deadline_schedule_and_phat_sinh.sql",
+      "checksum": "629ec6b95e2e364172f694e4c5dfcc55c99c4dd1d7095c4865b8f3e6dc181438"
+    },
+    {
+      "filename": "530_hcb_deadlines_1730.sql",
+      "checksum": "69788d9865c2a3d89cd36233a2f8882998f03d780e309dc8ed829ff0764f8f52"
+    },
+    {
+      "filename": "530_workflow_flow_steps_module_key.sql",
+      "checksum": "cf1efed62d772283355687afca8cbc67906c95a5683bfaae3e1d446ce81f87e5"
+    },
+    {
+      "filename": "531_workflow_flow_graph.sql",
+      "checksum": "ebbd608d929a73be92ed5a22a32947256d8049aff45a83192cfb0c24edef18c6"
+    },
+    {
+      "filename": "532_vc_temp_install_staging.sql",
+      "checksum": "791418b4924dd20436e5cb10e1b3313dbfb9e445064b24bd728c42296f759243"
+    },
+    {
+      "filename": "533_crm_daily_report_user_templates.sql",
+      "checksum": "a012052362a8f21869afe5635adf83b3f427d6930d6c1ff0d4a9b9d929d86779"
+    },
+    {
+      "filename": "534_knowledge_seed_sx_vc_plan_course.sql",
+      "checksum": "94fef6d1e125a521794ae5daf600dae32375fcd302b9f37047d0c6d095951380"
+    },
+    {
+      "filename": "535_knowledge_sim_exercise_sx_vc.sql",
+      "checksum": "bf19373ad523f5183f0c6eab48d8117eac52bff4b0435b21de621936ff9f0b84"
+    },
+    {
+      "filename": "536_metalla_thach_all_projects.sql",
+      "checksum": "0009ae27905901c767bcf7f9f82e234c92824b4f8bac3fcb15384380fc2b84cb"
+    },
+    {
+      "filename": "537_workflow_flow_node_kind.sql",
+      "checksum": "5e1788ab8cbb7ef51a396b60dee591c47efd562a7937810b977652bd1e03780a"
+    },
+    {
+      "filename": "538_workflow_flow_runtime_log.sql",
+      "checksum": "13aafae515b115c1f1fac26e799fa5e5a8ee7493aa38eae8c37eb05a51fc0aca"
+    },
+    {
+      "filename": "539_workflow_flow_ai_report_node.sql",
+      "checksum": "4294f4b40f7917a967e21af4ef4091c7345f349dfb38ffdd464728f942f8e379"
+    },
+    {
+      "filename": "540_phuc_dat_admin_hong_phuong_company_scope.sql",
+      "checksum": "9b22ffa060df1e14430e446f868430f8581bd7f9d391447135c9c1443afa9cfb"
+    },
+    {
+      "filename": "541_sales_company_workshop_module_scope.sql",
+      "checksum": "124e0d4db5d9a888276cad36b46693be125d29fe0b8dadd8c2e2679004634739"
+    },
+    {
+      "filename": "542_workflow_flow_ai_nodes.sql",
+      "checksum": "91dbe83946e771e2da38dd9605d91a22eeef6fc1f9cebbd6236ec8c0f2a21b6d"
+    },
+    {
+      "filename": "543_project_delivery_workflow_stages.sql",
+      "checksum": "aa3c50109265e4cad073446589dcefff31831a41cd4e80e8e30fa0f5ef6791a9"
+    },
+    {
+      "filename": "544_project_module_company_sync.sql",
+      "checksum": "6a10fd2ba39d71a6a8343532992768381788618f9b3887d750d861adf0071ac8"
+    },
+    {
+      "filename": "545_sx_post_delivery_ignore_overdue.sql",
+      "checksum": "bb7d36e1e89ce19d8cf602a4a0b999fabdbad51e3193d5ae6a498cb20e7676e2"
+    },
+    {
+      "filename": "546_vpt_vc_temp_install_staging.sql",
+      "checksum": "d1cbf139f3d25714a38fe187a7654c806da45fa64d7b63a1fde0c786a7c2ab3e"
+    },
+    {
+      "filename": "547_backfill_vc_temp_install_staging.sql",
+      "checksum": "c305cdd330e6c39661a7b929a899d6cb18027c3175adfb70df41bf44f790a1c8"
+    },
+    {
+      "filename": "548_vpt_remap_global_vc_columns.sql",
+      "checksum": "614cc7b63e560c0b854a9383614fdd5199055d26a51558faf702bfa56624e20b"
+    },
+    {
+      "filename": "549_shared_workspace_error_types.sql",
+      "checksum": "91f2827d397d027915fc8dbff67c52b2fb5336e1862c1e9d5cd859dc5bf350ec"
+    },
+    {
+      "filename": "550_users_zalo_id.sql",
+      "checksum": "b5ba834be0b3c0572d27884d40eaada0e85c8873f9de76de05029c9b0f8be9d8"
+    },
+    {
+      "filename": "551_shared_workspace_phat_sinh_kinds.sql",
+      "checksum": "093c87c7ce215a643e84cea305006022d2d5bcc9d26aa3a937e36a94feb2caa8"
+    },
+    {
+      "filename": "552_shared_workspace_ecosystem_scope.sql",
+      "checksum": "2e0da1ad4542b44c43157a2a47bb4ef890ebd0137ee35e834a1999b98c4c1cf7"
+    },
+    {
+      "filename": "553_project_deadline_dispatches.sql",
+      "checksum": "1cddaeba8196bef8844de1529355a76071eb325b7102ac8a7ba5e0618d7d9c2b"
+    },
+    {
+      "filename": "554_knowledge_seed_crm_detail_buttons.sql",
+      "checksum": "5c9e0ad072383d3d651d75487b1e882b4b4b9ea3c0e2605a114a6e4c962b864f"
+    },
+    {
+      "filename": "554_project_deadline_dispatches_nullable_project.sql",
+      "checksum": "05ee617f78e132555096addbcf980dc56c2db4b1a544afcf8a745a3af61fdf45"
+    },
+    {
+      "filename": "555_knowledge_seed_sx_detail_buttons.sql",
+      "checksum": "696322a52ed51a33eb7d4054d11ae1d1e9afdfc0b44e78d190eb88899c3e5029"
+    },
+    {
+      "filename": "556_knowledge_seed_vc_detail_buttons.sql",
+      "checksum": "37b6fd855ca9c8cc4294e5b629bc0b9cb3e384a4516e4458eb55a1eed0ecaff8"
+    },
+    {
+      "filename": "557_crm_filter_summary_deal_value_sums.sql",
+      "checksum": "150ca215202b2f9d6e106c2263b79d9d496033f17ecc99f308ce006ba33d9d2f"
+    },
+    {
+      "filename": "558_crm_leads_rpc_tenant_scope.sql",
+      "checksum": "9e3270663d0155fc9c3ceba9f049850886aa76a1cd6add0aad1e8a2efbda427c"
+    },
+    {
+      "filename": "559_crm_filter_summary_kanban_tenant_scope.sql",
+      "checksum": "23fbfb858fb0807d1a577b45aa3a4d4623038f99223ae03fa035d4139520969e"
+    },
+    {
+      "filename": "560_projects_sx_kanban_column_composite_index.sql",
+      "checksum": "28ec6edafac10cb9fb1a4b393b46e9876cfab2f306ba47b3033b56f0f8b17272"
+    },
+    {
+      "filename": "561_sx_kanban_stage_page_ids_rpc.sql",
+      "checksum": "1a8f9358e345dee0d02231a146fb58c554604c19f9b13e6077cb9f164b42fcb0"
+    },
+    {
+      "filename": "562_crm_leads_page_ids_fast_path.sql",
+      "checksum": "e56de1f7fc30ee05994422551780bcd7968a0275c499fc02e305a4ca63110d1c"
+    },
+    {
+      "filename": "563_hcb_truong_trong_thanh_all_projects.sql",
+      "checksum": "ed49d545f0ba3ffa0e98aa31c0b607e4bf5192679d17f793d92ae17443594f78"
+    },
+    {
+      "filename": "564_sx_kanban_column_counts_no_division.sql",
+      "checksum": "b99d463e331cf9c352da8b73a7c5a48034d931baac1a0916ede1f118f90cbeba"
+    },
+    {
+      "filename": "565_rescan_clear_deadlines_on_completed.sql",
+      "checksum": "c724656b687a2e877729f99f2f66d05236e9aee35889284089a3a5f0ee58194d"
+    },
+    {
+      "filename": "566_crm_daily_report_snapshots.sql",
+      "checksum": "367b61de000522e0236de98553191db6ed89c8934acdb34001f1b83f290a124d"
+    },
+    {
+      "filename": "567_knowledge_seed_dat_xuong_khac.sql",
+      "checksum": "5cc0a1e3a040477dadd5d4be7cea27109be9016d552d1ae067e7b641a1f44888"
+    },
+    {
+      "filename": "567_tenant_usage_summary_rpc.sql",
+      "checksum": "7778c95d4492f3508045e163d37f19c2fb0f74aab3dc161f0168daeaafe31e02"
+    },
+    {
+      "filename": "568_projects_has_crm_deal_column.sql",
+      "checksum": "ae08e29ce290e01fd9e9d67ba1f878107fd9bd2d84e0edde413be981aefca9d4"
+    },
+    {
+      "filename": "569_project_list_enrich_rpc.sql",
+      "checksum": "eb8be9df1b17ebc5391475daf85e47bcf25bf260118988a0e4a7e57ec2f748a9"
+    },
+    {
+      "filename": "570_project_kanban_board_rpc.sql",
+      "checksum": "cb909c7abdb8787fd65c9cd56bce515718edde7cab1a399013a346c3b9b3eb13"
+    },
+    {
+      "filename": "571_project_kanban_pages_multi.sql",
+      "checksum": "3078ddc67466795b6e8e614744cfa3b771102d20c42748fd2bd32dfb8b712404"
+    },
+    {
+      "filename": "572_project_views_paging_rpc.sql",
+      "checksum": "49507e9d1accee03a8ef200be9ff8365f5bc4621433cb49e286003f760ac9014"
+    },
+    {
+      "filename": "573_overview_lead_stage_counts_rpc.sql",
+      "checksum": "8bd54fc8a7da1e9627db73f1f6b952f9dedc0121069eb30623c1aab50e963b4b"
+    },
+    {
+      "filename": "574_project_deadline_at_shared.sql",
+      "checksum": "95c53b5a9d30e7935736da81d7e0d029329e65521109b63329d7b68f9064aec4"
+    },
+    {
+      "filename": "575_fb_analytics_range_rpc.sql",
+      "checksum": "980681546bc3f01452a6982dc5d51a82c1445f22a11a99948d5cad9559b62b07"
+    },
+    {
+      "filename": "576_truong_trong_thanh_phucdat_vpt_projects.sql",
+      "checksum": "5e9c3f0db1000de48c3b6d63192acdb7b78bc5a79706d435746441f472dee2b3"
+    },
+    {
+      "filename": "577_public_share_links.sql",
+      "checksum": "e76b85e540da444b16f8b951fb2c4d831e8a25807dba6a0e021e07345828d0cd"
+    },
+    {
+      "filename": "578_public_share_links_expires_nullable.sql",
+      "checksum": "41c75830fa03282f63c48332585d3933ae31c685988575e70aec9c88292f746c"
+    },
+    {
+      "filename": "579_fb_attended_first_inbound.sql",
+      "checksum": "fd9f7cfb0124ed541f8bcfcf0f2530cab93523d64ae5dffc41f88ede42c8597c"
+    },
+    {
+      "filename": "580_clear_all_project_deadlines_after_install_done.sql",
+      "checksum": "a3e24c93f1dbc392e253ff34f4cdfde17da192f841479a8491b59d2750ed390b"
+    },
+    {
+      "filename": "580_file_attachments_notes_column.sql",
+      "checksum": "8d857785a99eeeace0cbd5ccd1456f51cd218d39bd6033e8d3700aa4e4cd855a"
+    },
+    {
+      "filename": "581_facebook_messages_fb_message_id_full_unique.sql",
+      "checksum": "c54a16be32356f9f46feea55f9514adf06a2134e78aff42395d554cd6cc450a5"
+    },
+    {
+      "filename": "582_fb_new_senders_by_page_daily.sql",
+      "checksum": "193f2485665cbaf89593a033235e934d76328da6b942700b1c2f1febef85d8a5"
+    },
+    {
+      "filename": "583_perf_notifications_index_and_dup_index_cleanup.sql",
+      "checksum": "26187f23e4ce9647e7a7e8168a01c8918ab6a3671b3ff03c15041d19c4e47409"
+    },
+    {
+      "filename": "584_perf_drop_dup_index_fb_contacts_psid.sql",
+      "checksum": "b946ab438ea8484aa720c91c5c16a79df01868afb514998548560ece54ce9005"
+    },
+    {
+      "filename": "585_perf_projects_list_order_indexes.sql",
+      "checksum": "2db6a6935b7cb76597a0f0513a4f992153958de34b1e939d961c562171f6f300"
+    },
+    {
+      "filename": "586_perf_hot_query_indexes.sql",
+      "checksum": "765925578c413e72dbca92ccfff5dd83fecd5f6b03b343115289ff44ce73e7f4"
+    },
+    {
+      "filename": "587_fix_missing_columns_causing_log_errors.sql",
+      "checksum": "5447bcb229f401a275b9933890ceeb227aaa57030ffaf7c995dcb8dac7e7f0bd"
+    },
+    {
+      "filename": "588_hcb_tubep_kanban_to_hoan_thien.sql",
+      "checksum": "b1b43da5a47da101fd85bb4b9811444b23c0f92f615b211582218bb1f2944ac4"
+    },
+    {
+      "filename": "588_perf_fb_contacts_page_covering_index.sql",
+      "checksum": "0d08c19a38bd2f0b6af60a48d013e46333aa5eb7cbb11ee6d27bc451d431c01b"
+    },
+    {
+      "filename": "589_apply_planner_order_missing_column.sql",
+      "checksum": "3fb1a3c82a6f00877a5e36a0f568f1c274b6a626bf5ef3f48272766cdc79f04d"
+    },
+    {
+      "filename": "589_hcb_canh_kinh_cua_kanban.sql",
+      "checksum": "0cd060edd4d64ee5517c448a367b5926252d05b49c33926599c1feecec9b18d4"
+    },
+    {
+      "filename": "590_hcb_congno_dedupe.sql",
+      "checksum": "b2158453deaef475eb6c089766013f36343f923cf1f438987eb8ed6d8920f303"
+    },
+    {
+      "filename": "590_perf_fb_unattended_count_single_pass.sql",
+      "checksum": "59b3c5629e62ebae034d0afe3b043b359e0d3591da78a38f3d89c4f358af58c3"
+    },
+    {
+      "filename": "591_lead_messages_is_pinned.sql",
+      "checksum": "45637c309c75c704f09ddbf53cc4ae835ed34d230927d894d0ff69b57bcf678a"
+    },
+    {
+      "filename": "592_security_revoke_anon_rpc_and_fix_rls_mismatch.sql",
+      "checksum": "4937469642ef5c79526f7634d11dac318f484ac66ff92c3cb35bfc5132e4aa03"
+    },
+    {
+      "filename": "593_unified_tasks_v_is_primary_lead.sql",
+      "checksum": "8d9d7743ebc2ffd733343f9e01aa78ae97d5a45d63b0a76ad774b824c3a6acd7"
+    },
+    {
+      "filename": "594_unified_tasks_v_primary_lead_branch_split.sql",
+      "checksum": "90ac78b4ee3f51171cd0db2a093ad3cd441c9091ab91d3d6eaa42b89c42c3e27"
+    },
+    {
+      "filename": "595_don_giao_viec_mo_coi_DA_CHAY.sql",
+      "checksum": "b83fb3248ed086bf10ad57f319b986b5b2ac6d69ca83df3587a18d33709d8463"
+    },
+    {
+      "filename": "596_unified_module_deadline_policy.sql",
+      "checksum": "15ef178ddd1718d60820c4b259dc86e4d74dbc14809572d10e29f8ee2773ebbc"
+    },
+    {
+      "filename": "597_nextgo_instance_empty_tenant.sql",
+      "checksum": "5686b38aa578645d8e166c43b49153f3c5ee5b1187a9fb08486d6f6835da3758"
+    },
+    {
+      "filename": "598_hcb_sx_column_templates.sql",
+      "checksum": "cf7cacaef5f8c7a7dac74cbbc7cfe59906f587f4d5a03f6bf0d64ff9bbb5b9b3"
+    },
+    {
+      "filename": "599_crm_assignments_report_view.sql",
+      "checksum": "5d8a7b06e5092b431e7dd1b83aa739cdd2a40d9195f6400098e06b4521f532d2"
+    },
+    {
+      "filename": "599_hcb_tubep_kanban_retry.sql",
+      "checksum": "c2364de50fa3b33e4912fd2f682ad2918ed1c1289d04960900b8ec83e8f41ff8"
+    },
+    {
+      "filename": "599_hcb_tubep_khoi_phuc_15_cot.sql",
+      "checksum": "2492780611a3029203a64620ccd80c0246692040a12e1756b04f2df5e2168d6c"
+    },
+    {
+      "filename": "600_hcb_tubep_restore_pipeline.sql",
+      "checksum": "768b139b391dc3f64d5b7cae9533227784e508a67ccd2bf226dd9d2f5db3408b"
+    },
+    {
+      "filename": "601_hcb_kinh_cua_restore_pipeline.sql",
+      "checksum": "4fa5609947c1c08267b84ea7ad694e0aca2c5794e21f7e2cdd51336cb7c1f09a"
+    },
+    {
+      "filename": "602_guide_assistant_en.sql",
+      "checksum": "8774bed255b25749e50dc3caefdd9423d53a7dc6af1404232652f274f058fe3d"
+    },
+    {
+      "filename": "602_hcb_tubep_fix_progress.sql",
+      "checksum": "9ee52261d0c39a7c0f164085b60ab2ae075851fee9a5dd47b436e4e9e50cb8e0"
+    },
+    {
+      "filename": "603_guide_knowledge_vectors.sql",
+      "checksum": "e94c5bd700ee328a1cb99aeb3b136ad719aa5869739dadb76ea14e232731bf1a"
+    },
+    {
+      "filename": "603_hcb_tra_tien_do_ve_10_09.sql",
+      "checksum": "4ff9901d935c38d264eb7371d5eb428a46afb91725549cc7c8a5843fbc05d7ea"
+    },
+    {
+      "filename": "603a_xuat_tien_do_10_09_tu_ban_PITR.sql",
+      "checksum": "77cea263a2dc681f60bf58a890fee66bca9c6b65add8c1409604e3424dad1869"
+    },
+    {
+      "filename": "604_guide_assistant_settings_to_db.sql",
+      "checksum": "543aa92626e4d815e6651f3799adb9bcfb9aa21f6f8d601b2804be2f874cf5e2"
+    },
+    {
+      "filename": "604_production_pipeline_group_key.sql",
+      "checksum": "428de260db0bcc30486495735f389dc6244218498c5b43d462f7e2b44447948c"
+    },
+    {
+      "filename": "605_project_substage_status.sql",
+      "checksum": "b6fe0237426f32f3e962aa3c47afa1b0c94dcbb6f3c40af8e366872aa6573127"
+    },
+    {
+      "filename": "606_crm_deadline_not_hidden_by_interacted.sql",
+      "checksum": "e9413f2dc020ac215dc28746c0b4ad65d75c5e491885944a4851800eb3a6c07f"
+    },
+    {
+      "filename": "606_task_template_gia_von.sql",
+      "checksum": "d09d7dc7c77e655c463b4300c2883109a2c4e18c309203ba21ed49606c724aa1"
+    },
+    {
+      "filename": "607_hcb_tubep_split_ban_thanh_pham.sql",
+      "checksum": "661b9d435a39037ab5d174b49d8b41bba928f42d00cdeafbbbb3451324ac5ce3"
+    },
+    {
+      "filename": "608_hcb_canh_kinh_hien_cot_thanh_toan.sql",
+      "checksum": "80b12edd8e2b680705130ec44f2b9b660608ea851f97697d38019c7b05f117d0"
+    },
+    {
+      "filename": "609_hcb_fill_workshop_type_staff.sql",
+      "checksum": "bf3e6ff8ff0d69dc07cb529d7ae274d5aa3538cf79e261481b787313557720ab"
+    },
+    {
+      "filename": "610_hcb_canh_kinh_tiep_nhan_khong_chan_keo.sql",
+      "checksum": "42c0bf9e7ecdfe54f669aabab5f2e41d996829b76b9826e8d44f485ee15faa89"
+    },
+    {
+      "filename": "611_hcb_canh_kinh_cua_khong_chan_keo.sql",
+      "checksum": "aa39591fab4cb0d68ebcd5fbe750cbbd2c1e79a00db4eb5f001bdc485910ec3d"
+    },
+    {
+      "filename": "612_hcb_dong_goi_group_key.sql",
+      "checksum": "b57beee1047ae21bdd2edd892f215f341e0b7939dde993267acd98d75f1fcea4"
+    },
+    {
+      "filename": "613_production_pipeline_group_sort.sql",
+      "checksum": "7a2c11e4c433244be8b0162e1fcf65e6d4936d3a78e304c172245b8f2cb58a85"
+    },
+    {
+      "filename": "614_production_pipeline_board_tab.sql",
+      "checksum": "b43b30b87f6bfc880d3e0bb32d952566a7f027be17f2e3d1c53bcb7ae6bb9b0d"
+    },
+    {
+      "filename": "615_hcb_tubep_dong_goi_group_key.sql",
+      "checksum": "dc7a86a87c5f777e8b34a5ebbd9c6d59af9eb7c11c520db9848507a796545baf"
+    },
+    {
+      "filename": "616_hcb_dong_goi_pipeline_column.sql",
+      "checksum": "90fbe8174bbed37f1bf63a21c4b93c6ecb05b702c351ec2a8f26ed20384f52a6"
+    },
+    {
+      "filename": "617_phucdat_van_signed_deal_members.sql",
+      "checksum": "5da22720ad27e7cc80b5cea78d054cb8c82f73c53559a4794aba7155561578e6"
+    },
+    {
+      "filename": "618_crm_pipeline_stage_default_members.sql",
+      "checksum": "96feb65bb73fef2b65f4a3e2554b5fefec95e7247849cb1dd2e3be703127ff08"
+    },
+    {
+      "filename": "619_sync_lifecycle_deadlines.sql",
+      "checksum": "f875b1be04387a70568542bcba24b7301fd60083b7a56cee221b389ebd716ca7"
+    },
+    {
+      "filename": "620_tich_thu_cong_cot_pipeline.sql",
+      "checksum": "1c87e8303922efde0e76e5ce06580d1c7f3893971a7f76627205bdd866c19f99"
+    },
+    {
+      "filename": "620_user_role_ecosystem_admin.sql",
+      "checksum": "9ea8030f37e2bed9768de84279fe1a8fe8f6b48a8875e403b5939274aba878a2"
+    },
+    {
+      "filename": "621_bao_loi_van_hanh_he_thong.sql",
+      "checksum": "3472dbe327bb0b83044c08aee2e177dddb94b178f896a124f18ad23e5cde57dc"
+    },
+    {
+      "filename": "621_hst_admin_user_companies.sql",
+      "checksum": "4d6622193e0c7bb010d8e987fde2b4908f16269ecdc95782e4008bc6d524562b"
+    },
+    {
+      "filename": "622_cost_hub.sql",
+      "checksum": "7d9be31d50eeb08b1be19dda93ec5c359d49cc7d980fa46c55d13f626dd9760f"
+    },
+    {
+      "filename": "623_cost_hub_region.sql",
+      "checksum": "73fd1ae5f41240f1500bd91559f9c7ff9c06204d53561ee31cd408ff0bfff7b6"
+    },
+    {
+      "filename": "624_cost_types_excel.sql",
+      "checksum": "03dad05a2e8728a3b9aa68eec5b4d8b55ed77118e7e7f8f9d9ca7b2a61af7d0c"
+    },
+    {
+      "filename": "625_workshop_task_templates_region.sql",
+      "checksum": "29e4e6ddee53caef38da88ca4168df55618f577cf7f8c421655baa1d90a741d1"
+    },
+    {
+      "filename": "626_cost_nhom_gia_von.sql",
+      "checksum": "3362ffe4cdadb6867ebbc522a1b12ec9a23265fba1a290b404b44702c72faefe"
+    },
+    {
+      "filename": "627_cost_types_doanh_thu.sql",
+      "checksum": "0d8261e8b5c37210efd6031610b38e42bd7ba8fca85f72ebc69fbf96f3937aa9"
+    },
+    {
+      "filename": "628_crm_deadline_always_show.sql",
+      "checksum": "2f7e3549f9326807c922c0daf585de73db1b863c688ce96723f17be8ae3d8fbc"
+    },
+    {
+      "filename": "629_production_pipeline_clears_deadline.sql",
+      "checksum": "0094d5538247ca3dc9b6d25f750b08786ad521b122b9efb3a5c0ea6b9b4038ee"
+    },
+    {
+      "filename": "629_work_overview_tasks_rpc.sql",
+      "checksum": "c28805bb6c5016074259b25952367a69b48ed02ecb469791bbfd024676e266dd"
+    },
+    {
+      "filename": "630_production_pipeline_dashboard_kpi.sql",
+      "checksum": "6da9fee74168ab4ff7329fc3182135adc77090e8ad25e6664c89737a1a5cc60a"
+    },
+    {
+      "filename": "630_work_overview_tasks_assignee_name.sql",
+      "checksum": "52cbcf003ad1bc2c8195f0e31a3a6758f773d5df86cebc3323db20cdadf61488"
+    },
+    {
+      "filename": "631_logistics_pipeline_dashboard_kpi.sql",
+      "checksum": "264fd4642bc2199572bbdc86dde1e0accde2d6d07dd299032cc2456f0c3342f4"
+    },
+    {
+      "filename": "632_logistics_pipeline_group_key.sql",
+      "checksum": "17ebce104003841b836bfd0432a72235e6bb3d5b8359bc428ffd29a5b593d4ff"
+    },
+    {
+      "filename": "633_vcld_one_task_per_stage.sql",
+      "checksum": "0f3892c3cda83497b67de751085ae24b4c3fbe29d7e51b3eee30d10f9ee9154a"
+    },
+    {
+      "filename": "634_vcld_task_column_backfill.sql",
+      "checksum": "a1c99cc76710cccec0d5ff659ae8c44fd2d997a80b176bf56335645e9f2a108a"
+    },
+    {
+      "filename": "635_vc_substage_status.sql",
+      "checksum": "8c632b2c8ccdf7c5053d6fd637615a178f0fbc30714cb5e9be9714c92206809f"
+    },
+    {
+      "filename": "638_lead_attribution_quality_partner.sql",
+      "checksum": "6afdd58d08a463f8d3549a6f0d1103e43bab28d14a8a90e4270bfc784282892a"
+    },
+    {
+      "filename": "639_facebook_contact_lead_atomic.sql",
+      "checksum": "138cf60b7099fa450eb87c1d5956270a4674eac3de578e25d7096002b35b127c"
+    },
+    {
+      "filename": "639_partner_key_tenant_page_scope.sql",
+      "checksum": "490b747d9893c0665445cf18bcdfe4bec381da627330c85d3c97d92c58d07d2e"
+    },
+    {
+      "filename": "640_backfill_lead_attribution_page.sql",
+      "checksum": "464800daf76dc8d69f7e0a45afd6e608663ba98e7bee41151552925ea6b34027"
+    },
+    {
+      "filename": "640_facebook_messenger_receipts.sql",
+      "checksum": "4b91805144eb792627ed92d49b8a37ab88a548fac80d70c110320d22b282bbcd"
+    },
+    {
+      "filename": "641_backfill_ad_id_from_webhook_logs.sql",
+      "checksum": "e5e8664f347c0e9dc67d96aef68ca80e4f4ff195da2c69461dd809a8042f4a59"
+    },
+    {
+      "filename": "641_facebook_referral_attribution.sql",
+      "checksum": "40d198ad817f46f0c8628c0cb680ad0032faaec738ae5342fab5d4e9044447cf"
+    },
+    {
+      "filename": "642_fb_ad_catalog.sql",
+      "checksum": "dca7ee920afe05ed46456e2333e3c2bbe8e3d0fe7a4342e56cf7f17b0b92b340"
+    },
+    {
+      "filename": "643_fb_ad_analysis.sql",
+      "checksum": "2d195762d23c803f24005872774fc762b0b0f3cce0b7944a58bf667515443248"
+    },
+    {
+      "filename": "644_fb_marketing_sync.sql",
+      "checksum": "a755f0d1c4ce642ebf4927fedd0f489dcc5eae9d0dcdea3dd0afe301e55134b2"
+    },
+    {
+      "filename": "645_fb_creative_reaction_leadform.sql",
+      "checksum": "2ed9041f1c8a5fd9d2d577a0f0b84b7a7a2126c659bd380f79c5917bd8e130ae"
+    },
+    {
+      "filename": "646_backfill_fb_creative_from_logs.sql",
+      "checksum": "6676477166c9c0939ba8ab0aa495ab67a9fa8f3474277cdaf31db1f02533e884"
+    },
+    {
+      "filename": "647_fix_creative_key_ads_image.sql",
+      "checksum": "4788da0556ca7f3f246bc09eca964b3e23ddbc849f7504f48669b408c8dc95f0"
+    },
+    {
+      "filename": "647_remove_truong_trong_thanh_assignments.sql",
+      "checksum": "f50d7b46d5176dbfbf7e8ad92520fb4d9681706882781ada3e1ee822a7e4666b"
+    },
+    {
+      "filename": "648_sx_phat_sinh_order.sql",
+      "checksum": "f7ec299bcd280e044a42f84e554c3a4650e7cc7db32e1fed14cf2d2fb8a1850c"
+    },
+    {
+      "filename": "649_va_cot_thieu_projects_drive_acl.sql",
+      "checksum": "563004b9b1c4bada2330addcda71b5ae62b8ed7b7926752a7a05746a1d2195f2"
+    },
+    {
+      "filename": "700_revoke_anon_public_access.sql",
+      "checksum": "ad59c92449a49af45a9cd01e1c908a7f83a104dac18d390d9ff370c4c5792a73"
+    },
+    {
+      "filename": "701_facebook_page_inbox.sql",
+      "checksum": "2c9de95d069532359f25e71af45c9c98301357f7d50dd5424c7b6bf33747b652"
+    },
+    {
+      "filename": "702_facebook_lead_ads_intake.sql",
+      "checksum": "886b393d1191ba1e548981bf09b8fb1a5d275660da547453e3fcc202930188a6"
+    },
+    {
+      "filename": "710_p1_trial_registry.sql",
+      "checksum": "c92fb79dc4a6a4cefe310604a74752fd69d15fe6ce31e98e8cc7bfa8b8020331"
+    },
+    {
+      "filename": "712_p1_qualification.sql",
+      "checksum": "51d49bbc9b3f23cb9cdc5469cdb7a46236016d98c5255f6333e9e780fa7d09ad"
+    },
+    {
+      "filename": "713_p1_trial_snapshots.sql",
+      "checksum": "16f2391124dff41b19f65c4596bde90c3fff17bc8ffcf19aa9a26f4becfbf27b"
+    },
+    {
+      "filename": "714_ai_reply_drafts.sql",
+      "checksum": "e1aa0a94e5da071384eb68663e288cb848b8686b2779c55a09c52abaf066fd5f"
+    },
+    {
+      "filename": "715_unified_tasks_v_task_kind_theo_nhiem_vu.sql",
+      "checksum": "22dc415c3e408b212e2693a96226a963f6d738d68216bfc6001274ff11f74a57"
+    },
+    {
+      "filename": "716_knowledge_hoc_lai_sau_3_lan_truot.sql",
+      "checksum": "b948be08fed75ed5794af216f05265661e97c68e34b261d2e209422d80d18f2f"
+    },
+    {
+      "filename": "717_marketing_intake.sql",
+      "checksum": "e4e2cddef3c0803f29cf117cacb69ddedb24c4c58b6896bf0901ede9b9779c13"
+    },
+    {
+      "filename": "718_web_conversion_events.sql",
+      "checksum": "84b1a70ba87299712844b097c9ce82fcf2bbdecb99030eb849acff80ba5879eb"
+    },
+    {
+      "filename": "719_ad_spend_manual.sql",
+      "checksum": "e8e11c59e60e5ff0b8f7dd818fb0d122353f25f4e9c15743c22bdc36c15eabcf"
+    },
+    {
+      "filename": "720_phone_call_intake.sql",
+      "checksum": "e68819ec8ae0997a8990e2606fd3b5b409755347b3686bab046afcf4391af862"
+    },
+    {
+      "filename": "721_knowledge_tron_de.sql",
+      "checksum": "21e7aad39a3885289e5a2cef4b9d0506fabff5a7c680e5f9964c95dde4ba9735"
+    },
+    {
+      "filename": "722_schema_migrations.sql",
+      "checksum": "e33683c9d79f7468f108af141178bc8aa654a9781ab084131356f54183ffa50b"
+    },
+    {
+      "filename": "20261014005710_website_intake_receipts.sql",
+      "checksum": "30f99b0706d2edf3903395257ef649e54c4b56543b4b76e30e4404e90287bcc8"
+    },
+    {
+      "filename": "20261014005713_website_feedback_outbox.sql",
+      "checksum": "47b452c2ce1a4bc3a699dfa74fd947611f62bebda1ffc8bec547e2a32b149766"
+    },
+    {
+      "filename": "20261014022725_website_intake_backup_compat.sql",
+      "checksum": "4c4fa73933d7ab2f3da081c984f9b0a7106387d91b8e9e369a1f5a96acca4f95"
+    }
+  ],
+  "blank_db_evidence_ref": "../checks/blank-db-results.json",
+  "full_catalog_replay": "NOT_RUN; raw seed/repair SQL intentionally not looped",
+  "live_schema_comparison": "UNKNOWN; read-only live catalog not supplied"
+}

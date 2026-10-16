@@ -1,0 +1,57 @@
+%% DESIGN_PROPOSAL / NOT_LIVE. Symbolic messages; no customer or provider event executed.
+sequenceDiagram
+  autonumber
+  participant Source as Website form / native lead or message
+  participant In as L1/L2 Receiver
+  participant Scope as Backend identity + integration binding
+  participant DB as Primary inbox / domain transaction
+  participant CRM as CRM façade + intake worker
+  participant Notify as Notification adapter
+  participant Owner as Human Sales owner
+  participant M as Marketing / L8 projection
+  Note over Source,M: DESIGN_PROPOSAL / NOT_LIVE. Contract C-INGEST + C-HANDOFF; source evidence is not qualification.
+  Source->>In: Source event + source_event_id/type/time + original source trail
+  In->>Scope: Verify signature/token, source account and active binding
+  Scope-->>In: Server-resolved tenant/company/integration and binding revision
+  alt Source invalid or binding outside scope
+    In-->>Source: 401/403; no ACK / no business write
+  else Verified source
+    In->>DB: Atomic insert inbox + unique composite key + canonical payload hash
+    Note right of DB: tenant + company + integration + source_event_id + event_type
+    alt Same key and same hash
+      DB-->>In: Existing intake_id and receipt
+      In-->>Source: Same protocol result; no duplicate Need
+    else Same key but different hash
+      DB-->>In: SOURCE_EVENT_CONFLICT + quarantine evidence
+      In-->>Source: 409; do not retry with a new event key
+    else Persistence unavailable
+      DB-->>In: No committed inbox
+      In-->>Source: Retryable error; never ACK lost event
+    else Durable commit confirmed
+      DB-->>In: intake_id / state RECEIVED / receipt_ref
+      In-->>Source: Native ACK or 202 after commit
+      Note over Source,In: ACK does not prove Lead created. No LLM call or manual approval in intake path.
+      CRM->>DB: Claim persisted item with lease/fence
+      CRM->>Scope: Recheck company binding and writer authority
+      CRM->>DB: Scoped Party lookup + legitimate Need policy + attribution evidence
+      Note right of CRM: Phone is not event dedup. Existing external lookup needs scoped façade before reuse.
+      alt Missing active eligible owner
+        CRM->>DB: Save Need WAITING_OWNER + accountable fallback and SLA
+        CRM->>M: need.created + coverage + owner exception
+      else Eligible owner found by versioned assignment rule
+        CRM->>DB: Atomic Need/handoff assignment + notification outbox
+        CRM->>Notify: Deliver by stable notification key
+        Notify-->>CRM: Provider delivery receipt or UNKNOWN
+        CRM->>DB: delivered_at only with delivery evidence
+        Owner->>CRM: Authenticated handoff ACK accepted/rejected + evidence
+        CRM->>Scope: Verify actual assignee or explicit delegated ACK permission
+        CRM->>DB: accepted_at / outcome; no fabricated first_response
+        Owner->>CRM: Actual outbound evidence with source/time/recipient
+        CRM->>DB: first_response_at after consent/scope/evidence checks
+        CRM->>M: handoff assigned/delivered/accepted/first_response events
+      end
+      CRM->>M: Qualification / quote / order results via owner events
+    end
+  end
+  Note over In,M: Organic source needs retained eligible trail through internal pages/form; missing proof remains UNKNOWN.
+  Note over CRM,M: CONTACT and AD_MEASUREMENT rights separate. TEST excluded from live KPI. AI down does not stop valid intake.

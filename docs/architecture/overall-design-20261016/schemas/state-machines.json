@@ -1,0 +1,82 @@
+{
+  "label": "LOCAL_DESIGN_MODEL_NOT_RUNTIME",
+  "Command": {
+    "RECEIVED": [
+      "VALIDATED",
+      "REJECTED",
+      "CANCELLED"
+    ],
+    "VALIDATED": [
+      "READY",
+      "WAITING_INPUT",
+      "WAITING_APPROVAL",
+      "REJECTED",
+      "CANCELLED"
+    ],
+    "WAITING_INPUT": [
+      "VALIDATED",
+      "REJECTED",
+      "CANCELLED"
+    ],
+    "WAITING_APPROVAL": [
+      "READY",
+      "REJECTED",
+      "CANCELLED"
+    ],
+    "READY": [
+      "EXECUTING",
+      "WAITING_INPUT",
+      "WAITING_APPROVAL",
+      "REJECTED",
+      "CANCELLED"
+    ],
+    "EXECUTING": [
+      "SUCCEEDED",
+      "FAILED",
+      "UNKNOWN",
+      "CANCEL_REQUESTED"
+    ],
+    "UNKNOWN": [
+      "RECONCILING"
+    ],
+    "RECONCILING": [
+      "SUCCEEDED",
+      "FAILED",
+      "CANCELLED",
+      "MANUAL_REVIEW"
+    ],
+    "CANCEL_REQUESTED": [
+      "RECONCILING"
+    ],
+    "FAILED": [
+      "VALIDATED"
+    ],
+    "MANUAL_REVIEW": [
+      "RECONCILING"
+    ],
+    "SUCCEEDED": [],
+    "REJECTED": [],
+    "CANCELLED": []
+  },
+  "Reservation": {
+    "HELD": [
+      "SETTLED",
+      "RELEASED",
+      "PENDING_RECONCILIATION"
+    ],
+    "PENDING_RECONCILIATION": [
+      "SETTLED",
+      "RELEASED"
+    ],
+    "SETTLED": [],
+    "RELEASED": []
+  },
+  "guards": {
+    "FAILED->VALIDATED": "Confirmed no effect AND no cancellation intent/tombstone; keep command/effect key; obtain fresh decision",
+    "RECONCILING->CANCELLED": "Durable cancellation intent/tombstone AND confirmed no effect; never mere timeout",
+    "RECONCILING->SUCCEEDED": "Confirmed effect even after cancellation; compensate through a separate authorized command",
+    "PENDING_RECONCILIATION->RELEASED": "Readback/provider evidence proves no billable usage/effect",
+    "EXECUTING->FAILED": "Known no effect, never mere timeout",
+    "WAITING_APPROVAL->READY": "Current same-digest approval and all gates PASS"
+  }
+}
