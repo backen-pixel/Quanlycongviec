@@ -93,6 +93,34 @@ export function cardDaysOverdue(deadlineIso: string, nowMs: number = Date.now())
   return Math.max(0, Math.round((b - a) / 86_400_000));
 }
 
+/** Các nhiệm vụ cùng một đơn (dự án). */
+export type OverdueSection = {
+  key: string;
+  projectId: string;
+  code: string;
+  title: string;
+  companyName: string | null;
+  cards: OverdueCard[];
+};
+
+/** Gom nhiệm vụ theo đơn; thẻ quá hạn (cũ nhất trước) lên trước thẻ hôm nay, nên đơn có việc quá hạn lâu nhất đứng đầu. */
+export function groupCardsByProject(cards: OverdueCard[]): OverdueSection[] {
+  const rank = (c: OverdueCard) => (c.kind === 'overdue' ? 0 : 1);
+  const sorted = [...cards].sort((a, b) => rank(a) - rank(b)
+    || new Date(a.deadline).getTime() - new Date(b.deadline).getTime());
+  const map = new Map<string, OverdueSection>();
+  for (const c of sorted) {
+    const key = c.projectId || `t:${c.id}`;
+    let s = map.get(key);
+    if (!s) {
+      s = { key, projectId: c.projectId, code: c.projectCode, title: c.projectName, companyName: c.companyName, cards: [] };
+      map.set(key, s);
+    }
+    s.cards.push(c);
+  }
+  return [...map.values()];
+}
+
 function str(v: unknown): string | null {
   return v != null && String(v).trim() !== '' ? String(v).trim() : null;
 }

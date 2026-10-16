@@ -176,6 +176,20 @@ export function logExport({ module, feature, label, metadata }) {
   });
 }
 
+/** Ghi nhận submit form — thành công hay lỗi đều ghi, lỗi là tín hiệu "khó khăn" */
+export function logSubmitForm({ module, feature, label, entity_type, entity_id, success = true, error, metadata }) {
+  enqueue({
+    action_type: 'submit_form',
+    module,
+    feature,
+    entity_type,
+    entity_id,
+    label,
+    metadata: success ? metadata : { ...metadata, error: String(error || '').slice(0, 200) },
+    importance: success ? 1 : 2,
+  });
+}
+
 /** Ghi nhận điều hướng route — tự gọi từ useActivityRouteTracker */
 export function logNavigate({ path, referrer_path, label }) {
   enqueue({

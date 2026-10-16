@@ -255,6 +255,7 @@ import CopyToastHost from './components/CopyToastHost';
 import ZaloMultiCopyHost from './components/ZaloMultiCopyHost';
 import { RequireCrmElevated, RequireCrmSocialInbox, RequireExecutive, RequirePlatformAdmin } from './components/RequireRole';
 import { useActivityRouteTracker } from './hooks/useActivityRouteTracker';
+import { useActivityClickTracker } from './hooks/useActivityClickTracker';
 import { isCrmSharedPath } from './lib/sidebarModuleContext';
 import ReleaseNoteLoginModal from './components/ReleaseNoteLoginModal';
 import SharedProviders from './shared/SharedProviders';
@@ -293,6 +294,7 @@ function ProtectedLayout() {
   const { loading: moduleAccessLoading, crmOnly } = useModuleAccess();
   const { activeAnimatedScene } = useTheme() || {};
   useActivityRouteTracker(!!user);
+  useActivityClickTracker(!!user);
 
   useEffect(() => {
     if (crmOnly) {
