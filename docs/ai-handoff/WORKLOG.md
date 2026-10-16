@@ -1,3 +1,12 @@
+## 2026-10-13 (12) — CI chung cho mọi PR (`.github/workflows/ci.yml`)
+
+- Trước: 6 workflow sẵn có chỉ chạy khi PR chạm đúng vài file marketing/facebook (lọc `paths`) → phần lớn PR (vd #123) không có check nào.
+- Nay `ci.yml` chạy cho mọi PR vào `main` + push `main`, không cần secret, không chạm DB thật (chạy từ gốc repo, không có `.env`):
+  - Backend (Node 18 + 22): `npm ci`, `node --check` toàn bộ `backend/src/*.js` (607 file), `node --test` 57 file `backend/tests/*.test.js` (844 test). Cài `@electric-sql/pglite@0.5.9` ngoài `package.json` qua `PGLITE_MODULE` cho 2 test `*.sql.test.js` (trước đây không nơi nào chạy).
+  - Frontend: `npm ci` + `npm run build`.
+- Tạm loại: `marketingIntake.sql.test.js` (cần Docker, đã chạy ở `marketing-intake.yml`); `module-deadline-policy.test.js` — test còn kỳ vọng cờ `deadline_disabled_at` làm trống hạn CRM, nhưng `resolveCrmDeadline` không đọc cờ này từ `cd372982` (tắt hạn = xoá ngày hạn). CẦN QUYẾT: cập nhật test hay khôi phục kiểm cờ.
+- `aiReportTools.test.js`: số tool 26 → 34 (code hiện có 34 tool, không trùng tên; test lỗi thời).
+- Kiểm: chạy đúng lệnh CI trên máy (Node 24) — 844/844 đạt, ~3 s. Build frontend chỉ kiểm trên GitHub.
 ## 2026-10-13 (11) — Dọn repo: gỡ log debug sót trong đồng bộ SX→CRM, dọn file rác ở thư mục gốc
 
 - `backend/src/helpers/workshopKanban.js`: gỡ `agentDebugLog` (instrumentation phiên debug `fb4228` còn sót) — mỗi lần `syncCrmLeadSxPipelineFromProject` chạy, hàm này ghi thêm vào `debug-fb4228.log` ở gốc repo và gửi POST tới `127.0.0.1:7754` (kể cả trên production). Chỉ xoá 5 lời gọi + hàm + 2 `require` thừa (`fs`, `path`); các `console.warn` TRIGGER_ON/TARGET_SET giữ nguyên. Không đổi logic đồng bộ.

@@ -1,0 +1,66 @@
+name: CI (moi PR)
+# Kiem tra chung cho MOI pull request vao main — khong can secret, khong cham DB that.
+# Cac workflow marketing-* / facebook-* / vpt-* van chay rieng theo paths.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  backend:
+    name: Backend (cu phap + unit test, Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 26]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Cai dependency backend
+        run: npm ci --prefix backend --no-audit --no-fund
+      - name: Cai PGlite (Postgres trong bo nho) cho test *.sql.test.js
+        run: |
+          npm install --prefix "$RUNNER_TEMP/pglite" --no-save --no-audit --no-fund @electric-sql/pglite@0.5.9
+          echo "PGLITE_MODULE=$RUNNER_TEMP/pglite/node_modules/@electric-sql/pglite/dist/index.cjs" >> "$GITHUB_ENV"
+      - name: Kiem tra cu phap backend/src
+        run: git ls-files 'backend/src/*.js' | xargs -n 50 -P 4 sh -c 'for f; do node --check "$f" || exit 255; done' _
+      - name: Unit test (backend/tests/*.test.js)
+        # Chay tu goc repo: khong co .env => khong ket noi Supabase that.
+        # module-deadline-policy.test.js tam loai: test con doc co deadline_disabled_at,
+        # nhung tu cd372982 "tat han" la xoa ngay han — cho quyet dinh nghiep vu.
+        # marketingIntake.sql.test.js can Docker Postgres — da chay o marketing-intake.yml.
+        run: |
+          files=$(ls backend/tests/*.test.js | grep -vE 'module-deadline-policy\.test\.js|marketingIntake\.sql\.test\.js')
+          node --test --test-reporter=spec $files
+
+  frontend:
+    name: Frontend (vite build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Cai dependency frontend
+        run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Build
+        run: npm run build --prefix frontend
