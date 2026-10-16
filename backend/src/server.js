@@ -304,6 +304,10 @@ app.use((err, req, res, next) => {
   return next(err);
 });
 
+// Hàng rào chặn ghi của cutover DB: đổi message thô CUTOVER_* sang tiếng Việt
+const { dbWriteFenceResponder } = require('./helpers/dbWriteFence');
+app.use('/api', dbWriteFenceResponder);
+
 // Metrics middleware — đặt trước các route để đếm mọi request /api/*
 const { metricsMiddleware, getSnapshot, resetMetrics } = require('./helpers/requestMetrics');
 app.use(metricsMiddleware);
