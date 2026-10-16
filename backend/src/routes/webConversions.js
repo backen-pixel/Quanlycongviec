@@ -9,6 +9,8 @@ const { isTenantScopeEnforced } = require('../helpers/tenantScope');
 const { buildWebConversions } = require('../modules/marketingAutomation/webConversions');
 const { buildGoogleOfflineConversions, previewRow, CONVERSION_NAMES } =
   require('../modules/marketingAutomation/googleOfflineConversions');
+const { buildGoogleQualifiedConversions, previewQualifiedRow, CONVERSION_NAME } =
+  require('../modules/marketingAutomation/googleQualifiedConversions');
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -79,6 +81,18 @@ function createWebConversionsRouter({ db = supabase, primary = getActiveTarget, 
         counts: { calls: rows.filter(x => x.type === 'CALL').length,
           valid_leads: rows.filter(x => x.type === 'VALID_LEAD').length },
         rows: rows.map(previewRow), diagnostics });
+    });
+  });
+
+  router.get('/qualified-offline-conversions', (req, res) => {
+    const r = range(req);
+    if (!r) return reply(res, 400, 'Khoảng ngày không hợp lệ (tối đa 120 ngày)', 'INVALID_RANGE');
+    return guarded(req, res, async company => {
+      const fromMs = Date.parse(`${r.from}T00:00:00+07:00`);
+      const toMs = Math.min(Date.parse(`${r.to}T00:00:00+07:00`) + 86400000 - 1, now());
+      const { rows, diagnostics } = await buildGoogleQualifiedConversions({ db, companyId: company, fromMs, toMs });
+      return res.json({ from: r.from, to: r.to, conversion_name: CONVERSION_NAME,
+        counts: { qualified_leads: rows.length }, diagnostics, rows: rows.map(previewQualifiedRow) });
     });
   });
 

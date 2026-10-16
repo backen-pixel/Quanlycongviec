@@ -1,3 +1,65 @@
+## 2026-10-14 12:47 — VPT: cột backup đã sửa, replication vẫn lỗi riêng
+
+Người dùng đã duyệt rõ việc áp SQL lên `QLCV_Backup / atcfpgxkgbszglrelfgr`. Migration `20261014022725_website_intake_backup_compat.sql` đã áp thành công lúc **12:45:05 Asia/Saigon (UTC+7)**, history `20261014054505 / website_intake_backup_compat_vpt_20261014`. Hậu kiểm **12:45:39**: `website_intake` là JSONB nullable/default NULL; CRM **9.544**, VPT **3.014** hàng giữ nguyên, metadata có giá trị **0**, không DDL backfill; ACL fingerprint `c1e488b30589fa3c45d7d80fe02ddcad` giữ nguyên, RLS bật, không thêm policy/RPC/trigger/bảng private. Chỉ mirror cột; backup chưa đủ qualification/receipt/outbox/sender.
+
+**Chưa khôi phục toàn bộ replication hoặc nghiệm thu failover.** Health **12:44:18 → 12:46:04 → 12:47:28.725**: applied **2.617 → 2.617 → 2.645**, failed **610 → 650 → 661**, queue **4.933 → 5.004 → 5.220**; primary/backup healthy, active primary. Last error mới là **PGRST116 trên singular PATCH `project_substage_status`**, không phải cột `website_intake` hay kết luận thiếu parent. Đọc lại **12:47:03.900** vẫn chưa thấy metadata request TEST trên backup. Log Render lọc `website_intake` sau 12:45:05 có 0 mục, không thay bằng chứng đồng bộ còn thiếu.
+
+[PR #130](https://github.com/backen-pixel/Quanlycongviec/pull/130) đang hợp nhất `origin/main`: hai kiểm CI đã PASS tại **HEAD cũ** `ae8d66e32cada85b97bef68d366815cb11c4e893`, cần CI trên SHA merge/cuối mới. TEST form → CRM primary đã đạt, LIVE đã khôi phục; SMTP vẫn lỗi kết nối host, chưa sửa/gửi thêm mail. Meta website vẫn tắt/test, token/provider ACK chưa chứng minh; Google Data Manager còn chờ Lead thật đã xác minh. Không thêm qualification, event hoặc kết luận CPL. Giữ consent gates của cả hai Google exporters khi rollback; xem [hồ sơ vận hành](../ops/website-qualified-feedback.md).
+
+---
+
+## 2026-10-14 — Hồ sơ 09:33 trước sửa backup: phát hành website và TEST form → CRM
+
+Các câu backup “chưa áp/chờ duyệt” trong mục này là lịch sử trước 12:45; kết quả mới ở trên.
+
+Người dùng đã duyệt phát hành [PR #128](https://github.com/backen-pixel/Quanlycongviec/pull/128) và tạo/lưu credential CAPI website riêng **chỉ ở chế độ test**. PR squash-merge lúc **09:09:49 ngày 14/10/2026 (Asia/Saigon, UTC+7)**, SHA `f4d7b8d20ab83869b516b805be27bc68edd8f7f6`. [Hồ sơ phát hành, bằng chứng và rollback](../ops/website-qualified-feedback.md) là trạng thái hiện tại; mục chuẩn bị bên dưới giữ làm lịch sử.
+
+Hai migration đã áp thành công lên primary `qlycv` (`kdxypztstbeovyedmvem`), history `20261014020814 / website_intake_receipts_vpt_20261014` và `20261014020825 / website_feedback_outbox_vpt_20261014`. Kiểm độc lập ACL/RLS, 13 RPC, 3 trigger và không backfill đạt. Render My Workspace: backend LIVE **09:11:19.848**, frontend LIVE **09:11:40.515**; backend redeploy cấu hình LIVE **09:13:59.548930**, cùng SHA trên.
+
+**Backup compatibility chưa chốt:** health **09:25:40** báo primary/backup HTTP200, active primary, không auto-failover; replication failed **2**, `PGRST204` vì backup thiếu `website_intake`. Candidate `20261014022725_website_intake_backup_compat.sql` chỉ thêm mirror column nullable JSONB, kiểm schema/reload cache; review và **5/5** kiểm SQL PASS, **chưa áp** lên `QLCV_Backup / atcfpgxkgbszglrelfgr`, cần phê duyệt riêng qua PR cụ thể. Không thêm rows/grants/RPC/receipt/outbox. Backup baseline chưa đủ qualification/receipt/sender; sửa cột không nghiệm thu failover hoặc Ads trên backup.
+
+WordPress đã lưu/read-back đủ ba file plugin **0.4.0** và CF7 **11116** khớp candidate; đã thấy checkbox đo quảng cáo riêng không tích sẵn và JS `0.4.0-1791944402`. WP Rocket cache đã xóa lúc **09:23**; `preflight_verified`. Khi cập nhật giữ LIVE/khóa cũ, không xử lý lại job cũ; sau cửa sổ TEST đã khôi phục LIVE và xác nhận UI. Hash và deployment ID cụ thể ở hồ sơ vận hành.
+
+Render backend đã lưu tám biến cấu hình cùng token riêng: `ENABLED=0`, `CONSENT=1`, `MODE=test`, công ty VPT / VPT 01 / Pixel `1000623629782763`, Graph `v26.0`; Test Event Code giữ private, không bật thêm Dataset Quality API. **Chưa chứng minh token hợp lệ, chưa provider ACK hoặc event Meta; không coi là kết nối đầu-cuối.** CRM UI lúc **09:21:54** hiển thị đã xác minh+có receipt **0**, sẵn sàng Meta **0**, ledger **0**, kết nối **Chưa bật**.
+
+**Bước 5 TEST form → CRM đã đạt:** người dùng duyệt cửa sổ TEST/email; một request hợp lệ `abfb393d-d9ee-4686-a113-0dc59a29a8b4` nhận receipt `confirmed`, measurement consent `false`, `VPT_ADS_V1`. Lần đầu validation tên thất bại không queue. SQL hậu kiểm độc lập **09:33:58.944** xác nhận đúng **1 Lead + 1 receipt + 1 attribution**, `is_test=true`, đúng VPT/customer/source/form/site/timestamps và Admin hoạt động cùng VPT theo default integration; matching/click IDs trống, public JSON chỉ fingerprint, qualification/outbox/attempts **0**. **CF7 trả `mail_failed`: email gửi thất bại**, không báo đã gửi; tuyến queue/CRM độc lập vẫn xác nhận. Đã restore LIVE; chưa nghiệm thu Ads/lead thật hoặc số CPL. Không tự xác minh khách thật, chế click ID/event Meta; Pixel nền không thuộc consent gate mới của bridge.
+
+Kiểm trước phát hành: **269** kiểm cục bộ (220 Node, 28 PHP, 21 SQL) và **8** kiểm CI PASS tại candidate `8a71ac057d23568005c63c862b7ba47d7f42002f`; không thay nghiệm thu hệ thống thật. Advisors riêng schema mới: **0 ERROR, 0 WARN, 5 INFO** (ba bảng service-only RLS không policy có chủ đích, FK `outbox_id` chưa index, index pending chưa dùng).
+
+Google VPT `975-957-2942`: action `7842337600` vẫn Secondary/One; Data Manager header-only còn chờ Lead thật đã xác minh để hoàn tất mapping/nguồn/lịch/nhập. Native Facebook **PR #127 vẫn draft, chưa triển khai**. Chưa có số khách mới/CPL/thuế phí được nghiệm thu hoặc căn cứ ≤250.000đ/khách; 130 triệu so với trần thử 100 triệu chưa làm rõ. Rollback phải giữ consent gate của **cả hai** Google exporters; nếu quay backend về trước gói này phải ngắt hai nguồn Google tới khi gate được khôi phục.
+
+---
+
+## 2026-10-14 — Lịch sử trước phát hành: chuẩn bị website receipt + xác minh + phản hồi Ads
+
+Mục này ghi trạng thái trước khi duyệt và phát hành PR #128; các câu “chưa triển khai” dưới đây không thay thế kết quả mới ở trên.
+
+Theo yêu cầu “kiểm và thiết lập” cho quảng cáo kéo về website, chuẩn bị [draft PR #128](https://github.com/backen-pixel/Quanlycongviec/pull/128), nhánh `codex/vpt-website-qualified-leads-20261014` từ main `3c6761731b0e4a6e248a81e1484d101c3b82e049`. **Chưa áp SQL/merge/deploy/cài WordPress/bật Meta website**, không qualify khách thật hoặc phát provider event. [Hồ sơ vận hành, phạm vi và rollback](../ops/website-qualified-feedback.md).
+
+Đã đọc hệ thống: primary08:21 ngày14/10 có2 hồ sơ website thật,0 phiếu xác minh VPT, chưa có receipt/outbox mới; cả2 nguồn Google organic, không click ID Ads. Form11116 hiện chỉ có đồng ý liên hệ, chưa consent đo quảng cáo riêng. Website tải Google AW-460207797/GTM-5HS4MSR và hai PixelMeta1000623629782763/1129111234253260. EventsManager xác nhận Pixel tổng1000623629782763 thuộc VPT815284983995477, chia sẻ VPT01 cùng các accountVPT khác; dùng làm đích website đề xuất, chưa tạo token/bật gửi. Pixel112… chưa xác định quyền, không gỡ/đổi. WordPress đã đăng nhập; đã sao lưu ba file0.3.3 và form11116 ngoài repo, source trùng GitHEAD sau chuẩn hóa; modeLIVE/secret giữ. Candidate fullform0.4.0 đã chuẩn bị, chưa lưu website. WPVibe hết quota, đọc bằng editorWP.
+
+Gói mới: biên nhận request/source/time/consent bất biến, Lead+attribution717+receipt atomic; không backfill và không claim Customer+Lead atomic. Chỉ dedicatedintegration label; credential UUID không hardcode hoặc lộ trong public Lead JSON, chỉ fingerprint; receipt service-only giữ privatekeyID. Plugin0.4.0 giữ business fingerprint/notes/jobs, timestamp mili giây, consent đo riêng không tích sẵn; denial vẫn lưu liên hệ nhưng không measurement của bridge. Google cả qualified lẫn legacy stage/call export chặn metadata mới không consent; legacyNULL giữ. Meta source yêu cầu latestqualification/evidence/context/newcustomer/fullhistory, đúng paid ad/campaign/account/catalog, originalFBC/FBP; customVPTCRMQualifiedLead/giờxácminh/system_generated, không PII/nativeLeadID/browserLead giả.
+
+Hai SQL mới `20261014005710_website_intake_receipts.sql`, `20261014005713_website_feedback_outbox.sql`; **áp trước backend** vì Google export nay đọc column mới. Worker default-off/primary-only, ledger táchtest-production, guardUNKNOWN/expiredlease/acceptedstale, fullhistoryreconcile và preflight. UI đổi nhãn proxy sang Có mốc bán hàng, panel website xác minh+receipt/metaReady/held/history, lỗi bỏ số cũ, không qualifiedCPL. Bản xem giao diện cục bộ chỉ dữ liệu giả.
+
+Trạng thái trước đó cần giữ: **PR#124 đã merge/deploy** backend+frontend RenderMyWorkspace ngày13/10 tạimaintrên. AdsVPT975-957-2942 đã lưu action7842337600 `VPT CRM - Lead hop le da xac minh`, QualifiedLead/One/Secondary/NoValue/90days. HTTPSBasic thành công nhưng header-onlyCSV; DataManager còn chờ khách thật để hoàn tất mapping/source/schedule/import. Không nâng Primary/bidgoal. **PR#127 nativeFacebook vẫn draft/chưa deploy**, không dependency gói website; consent/token/SQL-releaseapproval native còn pending, không tự thay đíchCRM1575398160676100 bằng Pixelwebsite.
+
+Kiểm cuối: Node220/220, PHP28/28, actualSQL21/21 PASS; lint6PHP, Vitebuild và UIharness PASS. Review độc lập không còn blocker mã trọng yếu. CIwebsite Node18/22 có trong gói, kiểm cô lập không chứng minh WordPress/Ads thật. Không có số khách mới/CPL nghiệm thu, chưa đủ căn cứ ≤250.000đ/khách hoặc hẹn hoàn tất; 130 triệu so với trần thử100 triệu chưa được làm rõ. Các mục13/10 bên dưới là lịch sử theo thời điểm, không thay trạng thái mới này.
+
+---
+
+## 2026-10-13 — VPT: chuẩn bị xuất Google Ads từ lead hợp lệ đã xác minh (chưa deploy)
+
+Phạm vi **Vanphuthanh.net, 975-957-2942**, nhánh `codex/vpt-qualified-google-ads-20261013`, mã `69f069e`; [draft PR #124](https://github.com/backen-pixel/Quanlycongviec/pull/124), chưa merge/deploy, không ghi DB thật, không lưu Google Ads UI hoặc nhập conversion. Đăng nhập Google Ads chưa hoàn tất. Không có số khách mới/CPL thực tế đã nghiệm thu.
+
+Thêm riêng Basic-auth `/api/ads-conversions/qualified-google.csv` và preview admin che GCLID. Chỉ xuất revision mới nhất `QUALIFIED` có actor/bằng chứng/ba điều kiện; context v2 khớp định danh/phone hiện tại (tiến độ bán hàng không làm mất xác minh), khách thật VPT, GCLID website không mâu thuẫn và kiểm khách mới theo toàn bộ lịch sử Lead/Deal VPT + customer master tạo từ form `VPT_V1` đến lead. Thiếu proof loại, lỗi nguồn/phân trang trả 503; Order ID mờ ổn định, không gửi phone/email. UI cho tra cứu UUID/liên kết CRM bằng route qualification hiện có; không thêm vào cohort Facebook. Không SQL mới; cần nguồn 712/717 hiện có sẵn sàng. [Chi tiết vận hành và giới hạn](../ops/google-ads-offline-conversions.md).
+
+Giữ `google.csv` cũ (Cold/Warm/Hot/Deal và ghép ghi âm) nguyên trạng; không dùng proxy làm bằng chứng xác minh. Snapshot kết nối đọc ngày 13/10: hành động cũ `VPT CRM - Khach hop le` Primary/Many per click, auto-tagging bật. Hành động mới dự kiến `VPT CRM - Lead hop le da xac minh`, Qualified lead/One/Secondary/90 ngày qua Data Manager HTTPS Basic; chỉ xem xét Primary sau kiểm nhập và mục tiêu từng chiến dịch, không đưa vào custom goal lúc thử. Thu hồi chỉ bỏ tệp tương lai, chưa tự retract Google đã nhập; thiếu lịch sử/clock/form marker có thể giữ hoặc bỏ sót khách, chưa bảo đảm khách mới ngoài CRM.
+
+Kiểm cục bộ: **97/97** test trên 7 file export/qualification/route/queue/summary/UI; Vite production build PASS (cảnh báo baseline externalization/chunk lớn). Review độc lập không có lỗi trọng yếu còn mở. Chưa kiểm HTTP/DB/Google thật. Rollback: dừng nguồn mới trong Data Manager rồi revert mã; không rollback SQL, endpoint cũ giữ nguyên; xử lý conversion Google đã nhập sai riêng.
+
+---
+
 ## 2026-10-12 (2) — Tab Công việc: bỏ việc «chưa xong» giả; đổi nhãn «Chưa xong»; dòng nhóm quản lý «N việc chưa xong»
 
 Backend (`backend/src/routes/workTasks.js`, **CHƯA deploy**): `GET /api/work-tasks/team-project-tasks` bỏ các việc ở bảng `tasks` mà bản `crm_task` cùng tên (cùng dự án, thuộc quy trình SX) đã đóng và không còn bản nào đang mở — `dropTasksClosedOnDeal`, chạy sau khử trùng, chỉ đọc (`unified_tasks_v` + `crm_tasks`), không ghi. Nguyên nhân: chi tiết dự án đọc `crm_task`, tab ưu tiên bản `tasks`; khi `crm_task` đã `completed` mà `tasks` còn `todo` thì việc vẫn «chưa xong» và (nếu có hạn) «quá hạn». Đo HCB · Tủ bếp 12/10: tab 600 việc chưa xong vs chi tiết 516 mở (38 dự án, chỉ 6 khớp); 112 việc mở ở tab nhưng xong ở chi tiết, 40/149 «quá hạn» là giả (gồm nhóm việc giai đoạn đầu của TB-2026-1014/1025/1044 bị script gán hạn hồi tố 06–08/10 lúc 11:16–11:37); ngoài ra tab gộp việc cùng tên (−20) và thiếu 8 việc (TB-2026-1048 5 việc…) — CHƯA xử lý hai nhóm này. Bài học: test giả lần trước (#96) thiếu cột `source_id` nên không bắt được lỗi 500 — test nay kiểm cả tên cột so với cột thật của view.

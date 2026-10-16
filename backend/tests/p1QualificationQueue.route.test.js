@@ -65,6 +65,7 @@ function harness({ enabled = true, role = 'admin', company = A, tenant = [A, B],
     '../modules/marketingAutomation/trialSummary': require('../src/modules/marketingAutomation/trialSummary'),
     '../modules/marketingAutomation/spendCoverage': require('../src/modules/marketingAutomation/spendCoverage'),
     '../modules/marketingAutomation/policy': require('../src/modules/marketingAutomation/policy'),
+    '../modules/marketingAutomation/qualificationContext': require('../src/modules/marketingAutomation/qualificationContext'),
   };
   vm.runInNewContext(`(function(require,module,process){${source}\n})`,
     { Buffer, Date, Error, console, JSON, Object, String, Number, Map, Array, Set },

@@ -60,6 +60,7 @@ function harness({ enabled = true, role = 'admin', company = A, tenant = [A, B],
     '../modules/marketingAutomation/trialSummary': require('../src/modules/marketingAutomation/trialSummary'),
     '../modules/marketingAutomation/spendCoverage': require('../src/modules/marketingAutomation/spendCoverage'),
     '../modules/marketingAutomation/policy': require('../src/modules/marketingAutomation/policy'),
+    '../modules/marketingAutomation/qualificationContext': require('../src/modules/marketingAutomation/qualificationContext'),
     '../modules/marketingAutomation/stageMilestone': require('../src/modules/marketingAutomation/stageMilestone'),
   };
   vm.runInNewContext(`(function(require,module,process){${source}\n})`,

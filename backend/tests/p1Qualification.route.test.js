@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { createHash } = require('node:crypto');
+const { qualificationContext } = require('../src/modules/marketingAutomation/qualificationContext');
 
 const source = fs.readFileSync(path.join(__dirname, '../src/routes/p1Qualification.js'), 'utf8');
 const leadId = '11111111-1111-4111-8111-111111111111';
@@ -18,11 +18,12 @@ const body = () => ({ request_id: 'synthetic-request', expected_revision: 0,
   area_in_service: true, evidence_ref: 'synthetic-evidence' });
 
 function harness({ enabled = true, session = user(), leadCompany = companyA,
-  tenantCompanyIds = [companyA, companyB], target = 'primary', missing = false } = {}) {
+  tenantCompanyIds = [companyA, companyB], target = 'primary', missing = false,
+  leadPatch = {}, customer = null, customerError = false } = {}) {
   const layers = [], calls = [], events = [], requests = new Map();
   let rpcError = null;
   const lead = { id: leadId, company_id: leadCompany, customer_id: null,
-    phone: 'synthetic-private-phone', stage_id: null };
+    phone: 'synthetic-private-phone', stage_id: null, ...leadPatch };
   const db = {
     from(table) {
       calls.push(['from', table]);
@@ -30,7 +31,9 @@ function harness({ enabled = true, session = user(), leadCompany = companyA,
         calls.push(['select', columns]);
         return { eq(column, value) {
           calls.push(['eq', column, value]);
-          return { async maybeSingle() { return { data: missing ? null : lead, error: null }; } };
+          return { async maybeSingle() { return table === 'customers'
+            ? { data: customer, error: customerError ? Error('private customer read') : null }
+            : { data: missing ? null : lead, error: null }; } };
         } };
       } };
     },
@@ -74,10 +77,11 @@ function harness({ enabled = true, session = user(), leadCompany = companyA,
     '../modules/marketingAutomation/trialSummary': require('../src/modules/marketingAutomation/trialSummary'),
     '../modules/marketingAutomation/spendCoverage': require('../src/modules/marketingAutomation/spendCoverage'),
     '../modules/marketingAutomation/policy': require('../src/modules/marketingAutomation/policy'),
+    '../modules/marketingAutomation/qualificationContext': { qualificationContext },
   };
   vm.runInNewContext(`(function(require,module,process){${source}\n})`,
     { Buffer, console, JSON, Object, String, Number }).call(null,
-    name => name === 'node:crypto' ? { createHash } : imports[name],
+    name => imports[name],
     { exports: {} }, { env: { VPT_P1_REVIEW_WRITE: enabled ? '1' : '0' } });
   async function send(method = 'GET', data = undefined, overrides = {}) {
     const req = { user: session, tenantCompanyIds, params: { leadId }, body: data, ...overrides };
@@ -92,7 +96,7 @@ function harness({ enabled = true, session = user(), leadCompany = companyA,
     }
     return res;
   }
-  return { send, calls, events, setRpcError(value) { rpcError = value; } };
+  return { send, calls, events, lead, customer, setRpcError(value) { rpcError = value; } };
 }
 
 test('flag off returns 404 without DB access', async () => {
@@ -144,8 +148,7 @@ test('body identity and unknown keys are rejected; RPC uses session and CRM iden
   assert.equal(args._company_id, companyA);
   assert.match(args._payload.context_hash, /^[a-f0-9]{64}$/);
   assert.equal(args._payload.context_hash,
-    createHash('sha256').update(JSON.stringify([leadId, companyA, null,
-      'synthetic-private-phone', null])).digest('hex'));
+    qualificationContext(h.lead, null));
 });
 test('GET returns pending default and never exposes CRM phone or stored input', async () => {
   const h = harness();
@@ -154,6 +157,30 @@ test('GET returns pending default and never exposes CRM phone or stored input', 
   const result = await h.send();
   assert.equal(result.body.status, 'QUALIFIED');
   assert.doesNotMatch(JSON.stringify(result.body), /synthetic-private-phone|input|company_id|context_hash/);
+});
+test('direct lookup returns bounded CRM label/context and rejects changed actual customer contact before write', async () => {
+  const h = harness({ leadPatch: { customer_id: 'customer-1', phone: null, code: 'LEAD-SYNTHETIC', title: 'Synthetic lead' },
+    customer: { id: 'customer-1', phone: '0901234567' } });
+  const lookup = await h.send('GET', undefined, { query: { include_context: '1' } });
+  assert.equal(lookup.statusCode, 200); assert.equal(lookup.body.lead.code, 'LEAD-SYNTHETIC');
+  assert.equal(lookup.body.context_hash, qualificationContext(h.lead, h.customer));
+  assert.doesNotMatch(JSON.stringify(lookup.body), /0901234567|customer-1/);
+  h.customer.phone = '0911234567';
+  const response = await h.send('PUT', { ...body(), expected_context_hash: lookup.body.context_hash });
+  assert.equal(response.statusCode, 409); assert.equal(response.body.reason_code, 'CONTEXT_CONFLICT');
+  assert.equal(h.events.length, 0);
+  const fresh = await h.send('GET', undefined, { query: { include_context: '1' } });
+  assert.equal((await h.send('PUT', { ...body(), expected_context_hash: fresh.body.context_hash })).statusCode, 200);
+  assert.equal(h.events[0].input.context_hash, qualificationContext(h.lead, h.customer));
+});
+test('linked customer source failure cannot produce new qualification or expose raw errors', async () => {
+  for (const options of [{ customer: null }, { customer: { id: 'another-customer', phone: '0901234567' } },
+    { customer: { id: 'customer-1' }, customerError: true }]) {
+    const h = harness({ leadPatch: { customer_id: 'customer-1' }, ...options });
+    assert.equal((await h.send('PUT', body())).statusCode, 503);
+    assert.equal((await h.send('GET', undefined, { query: { include_context: '1' } })).statusCode, 503);
+    assert.equal(h.events.length, 0); assert.equal((await h.send()).statusCode, 200);
+  }
 });
 test('revoke sends only reason and server context', async () => {
   const h = harness();

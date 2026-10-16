@@ -185,7 +185,7 @@ async function runOneBatch() {
           pushLog(`✅ ${contact.display_name}: SĐT ${phone || '—'} → Lead ${lead.code || lead.id}`, 'ok');
         }
       } else if (phone) {
-        const updated = await updateZaloLeadFromExtract(contact.lead_id, phone, extractedAddress, contact.display_name);
+        const updated = await updateZaloLeadFromExtract(contact.lead_id, phone, extractedAddress, contact.display_name, contact.oa_id);
         if (updated) {
           batchUpdated++;
           state.leadsUpdated++;

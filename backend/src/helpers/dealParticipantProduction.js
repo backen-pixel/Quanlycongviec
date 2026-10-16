@@ -267,6 +267,56 @@ async function filterProjectIdsBySxWorkshopCompany(projectIds, sxWorkshopCompany
   return (data || []).map((p) => String(p.id));
 }
 
+/**
+ * Hai đầu của một liên kết ĐẶT XƯỞNG đều được xem cả hai dự án.
+ *
+ * VÌ SAO
+ * Đặt xưởng sẽ @-nhắc nhân viên xưởng nhận vào bình luận của dự án NGUỒN, và thông báo
+ * gửi đi cũng trỏ vào dự án nguồn (`placeProjectAtWorkshops`). Nhưng luật cũ chỉ cho mở
+ * dự án ở xưởng khác khi nó thuộc deal của chính công ty mình — nên người xưởng nhận bấm
+ * vào thông báo thì ăn 403 «Dự án không thuộc deal công ty của bạn tại xưởng này».
+ * Mời người ta vào làm rồi chặn không cho xem là mâu thuẫn, không phải bảo mật.
+ *
+ * Mở cả hai chiều:
+ *   - mình là XƯỞNG NHẬN  → xem được dự án nguồn
+ *   - mình là bên ĐẶT HÀNG → xem được dự án con bên xưởng nhận
+ *
+ * Phạm vi vẫn hẹp: chỉ những dự án có liên kết đặt xưởng đích danh với công ty mình,
+ * không phải toàn bộ dự án của xưởng đó.
+ */
+async function laHaiDauCuaDatXuong(projectId, clientCompanyId) {
+  if (!projectId || !clientCompanyId) return false;
+  try {
+    // Mình là xưởng nhận của dự án này?
+    const { data: laNguon, error: e1 } = await supabase
+      .from('project_workshop_placements')
+      .select('target_company_id')
+      .eq('source_project_id', projectId);
+    if (e1) throw e1;
+    if ((laNguon || []).some((r) => String(r.target_company_id || '') === String(clientCompanyId))) {
+      return true;
+    }
+
+    // Dự án này là bản đặt xưởng của một dự án bên công ty mình?
+    const { data: laDich, error: e2 } = await supabase
+      .from('project_workshop_placements')
+      .select('source_project_id')
+      .eq('target_project_id', projectId);
+    if (e2) throw e2;
+    const nguonIds = (laDich || []).map((r) => r.source_project_id).filter(Boolean);
+    if (!nguonIds.length) return false;
+    const { data: duAnNguon, error: e3 } = await supabase
+      .from('projects')
+      .select('id, company_id')
+      .in('id', nguonIds);
+    if (e3) throw e3;
+    return (duAnNguon || []).some((p) => String(p.company_id || '') === String(clientCompanyId));
+  } catch (e) {
+    console.warn('[dealParticipantProduction] laHaiDauCuaDatXuong:', e.message);
+    return false;
+  }
+}
+
 async function userCanAccessCrossWorkshopProductionProject(user, projectId) {
   if (!isCrossWorkshopProductionViewer(user) || !projectId) return false;
   const { data: proj } = await supabase
@@ -289,9 +339,12 @@ async function userCanAccessCrossWorkshopProductionProject(user, projectId) {
   if (await isMetallaOrHucabiCompanyId(proj.company_id)) {
     if (!clientCoId) return false;
     const ids = await getAccountingClientProjectIdsAtWorkshop(proj.company_id, clientCoId);
-    return ids.some((id) => String(id) === String(projectId));
+    if (ids.some((id) => String(id) === String(projectId))) return true;
+    // Không thuộc deal công ty mình, nhưng có liên kết đặt xưởng đích danh thì vẫn cho xem.
+    return laHaiDauCuaDatXuong(projectId, clientCoId);
   }
-  return false;
+  // Dự án ở công ty thứ ba: chỉ mở khi có liên kết đặt xưởng với công ty mình.
+  return laHaiDauCuaDatXuong(projectId, clientCoId);
 }
 
 /**
@@ -727,6 +780,7 @@ module.exports = {
   getLeadMemberProjectIdsForUser,
   userCanAccessProductionProjectAsParticipant,
   userCanAccessCrossWorkshopProductionProject,
+  laHaiDauCuaDatXuong,
   canCrossWorkshopProductionViewerUseCompanyQuery,
   isMetallaOrHucabiCompanyId,
   isMetallaOrHucabiCompanyIdSync,

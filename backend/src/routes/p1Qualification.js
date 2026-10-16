@@ -1,6 +1,5 @@
 'use strict';
 
-const { createHash } = require('node:crypto');
 const { Router } = require('express');
 const { supabase } = require('../config/supabase');
 const { getActiveTarget, withPrimaryDatabase } = require('../config/supabaseRouter');
@@ -10,6 +9,7 @@ const { canMarkQualified, setQualification, revokeQualification, getQualificatio
   require('../modules/marketingAutomation/qualification');
 const { loadTrialCohort } = require('../modules/marketingAutomation/trialCohort');
 const { buildTrialSummary } = require('../modules/marketingAutomation/trialSummary');
+const { qualificationContext } = require('../modules/marketingAutomation/qualificationContext');
 
 const router = Router();
 router.use((req, res, next) => process.env.VPT_P1_REVIEW_WRITE === '1'
@@ -17,7 +17,7 @@ router.use((req, res, next) => process.env.VPT_P1_REVIEW_WRITE === '1'
 router.use(auth);
 
 const SET_KEYS = ['request_id', 'expected_revision', 'status', 'contact_usable',
-  'need_in_scope', 'area_in_service', 'evidence_ref', 'reason'];
+  'need_in_scope', 'area_in_service', 'evidence_ref', 'reason', 'expected_context_hash'];
 const REVOKE_KEYS = ['request_id', 'expected_revision', 'reason'];
 const PUBLIC_KEYS = ['id', 'status', 'contact_usable', 'need_in_scope',
   'area_in_service', 'evidence_ref', 'reason', 'revision', 'recorded_at', 'actor_id'];
@@ -28,12 +28,14 @@ const visible = row => Object.fromEntries(PUBLIC_KEYS.filter(key => row[key] !==
 
 function errorReply(res, error) {
   const code = ['INVALID_COMMAND', 'REASON_REQUIRED', 'EVIDENCE_REQUIRED',
-    'REVISION_CONFLICT', 'REQUEST_CONFLICT', 'COMPANY_MISMATCH']
+    'REVISION_CONFLICT', 'REQUEST_CONFLICT', 'COMPANY_MISMATCH', 'CONTEXT_CONFLICT']
     .find(item => error?.code === item || String(error?.message || '').includes(item));
   if (code === 'INVALID_COMMAND' || code === 'REASON_REQUIRED' || code === 'EVIDENCE_REQUIRED')
     return reply(res, 400, 'Dữ liệu xác nhận không hợp lệ', code);
   if (code === 'REVISION_CONFLICT')
     return reply(res, 409, 'Trạng thái đã đổi, vui lòng tải lại trạng thái', code);
+  if (code === 'CONTEXT_CONFLICT')
+    return reply(res, 409, 'Hồ sơ khách đã đổi, vui lòng tải lại và xác minh', code);
   if (code === 'REQUEST_CONFLICT')
     return reply(res, 409, 'Phát lại đúng cùng request_id hoặc dùng request_id mới', code);
   if (code === 'COMPANY_MISMATCH')
@@ -57,24 +59,38 @@ async function handle(req, res, kind) {
   try {
     return await withPrimaryDatabase(async () => {
       const { data: lead, error } = await supabase.from('crm_leads')
-        .select('id,company_id,customer_id,phone,stage_id').eq('id', req.params.leadId).maybeSingle();
+        .select('id,company_id,customer_id,phone,stage_id,code,title,type').eq('id', req.params.leadId).maybeSingle();
       if (error) throw error;
       if (!lead) return reply(res, 404, 'Không tìm thấy khách', 'NOT_FOUND');
       if (isTenantScopeEnforced(req) && !(req.tenantCompanyIds || []).includes(lead.company_id))
         return reply(res, 403, 'Không tìm thấy khách', 'FORBIDDEN');
       if (!canMarkQualified({ role: req.user.role, userCompanyId: req.user.company_id }, lead.company_id))
         return reply(res, 403, 'Không có quyền xác nhận khách', 'FORBIDDEN');
+      // Customers are shared across companies; authorize via the company lead above.
+      let customer = null;
+      if (lead.customer_id && (kind === 'set' || req.query?.include_context === '1')) {
+        const result = await supabase.from('customers').select('id,phone')
+          .eq('id', lead.customer_id).maybeSingle();
+        if (result.error || !result.data || result.data.id !== lead.customer_id)
+          throw result.error || Error('SOURCE_UNAVAILABLE');
+        customer = result.data;
+      }
       if (kind === 'get') {
         const state = await getQualification(supabase,
           { companyId: lead.company_id, canonicalLeadId: lead.id });
-        return res.json(state ? visible(state) : { status: 'PENDING', revision: 0 });
+        const response = state ? visible(state) : { status: 'PENDING', revision: 0 };
+        if (req.query?.include_context === '1') {
+          response.lead = { id: lead.id, code: lead.code, title: lead.title, type: lead.type };
+          response.context_hash = qualificationContext(lead, customer);
+        }
+        return res.json(response);
       }
       const body = req.body;
       if (!validBody(body, kind === 'set' ? SET_KEYS : REVOKE_KEYS))
         return reply(res, 400, 'Dữ liệu xác nhận không hợp lệ', 'INVALID_COMMAND');
-      const contextHash = createHash('sha256').update(JSON.stringify([
-        lead.id, lead.company_id, lead.customer_id, lead.phone, lead.stage_id,
-      ])).digest('hex');
+      const contextHash = qualificationContext(lead, customer);
+      if (body.expected_context_hash !== undefined && body.expected_context_hash !== contextHash)
+        return reply(res, 409, 'Hồ sơ khách đã đổi, vui lòng tải lại và xác minh', 'CONTEXT_CONFLICT');
       const input = { companyId: lead.company_id, actorId: req.user.userId,
         requestId: body.request_id, canonicalLeadId: lead.id,
         expectedRevision: body.expected_revision,

@@ -21,6 +21,7 @@ export const SX_NHAN_COT_LON = {
   gia_cong: 'Gia công',
   hoan_thien: 'Hoàn thiện',
   dong_goi: 'Đóng gói',
+  van_chuyen: 'Vận chuyển',
   cong_no: 'Công nợ',
 };
 

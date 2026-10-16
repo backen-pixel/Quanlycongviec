@@ -330,6 +330,23 @@ async function getFileMeta(googleFileId) {
 }
 
 /** Stream download nội dung file → trả ReadableStream để route proxy về client. */
+/**
+ * Đọc một header của phản hồi googleapis.
+ *
+ * Từ googleapis v173 (gaxios chạy trên fetch), `res.headers` là một đối tượng `Headers`
+ * của Web API chứ không còn là object thường — `headers['content-range']` trả `undefined`,
+ * phải gọi `headers.get(...)`. Đây chính là lỗi làm video trong Drive không xem được:
+ * route trả HTTP 206 nhưng KHÔNG kèm `Content-Range`, trình duyệt coi đó là phản hồi hỏng
+ * và bỏ luôn, thẻ <video> đứng ở 0:00.
+ *
+ * Giữ cả hai lối đọc để không gãy nếu sau này quay về object thường.
+ */
+function docHeader(headers, ten) {
+  if (!headers) return undefined;
+  if (typeof headers.get === 'function') return headers.get(ten) ?? undefined;
+  return headers[ten] ?? headers[String(ten).toLowerCase()];
+}
+
 async function getDownloadStream(googleFileId, { range } = {}) {
   const drive = getDriveClient();
   const opts = { responseType: 'stream' };
@@ -341,8 +358,8 @@ async function getDownloadStream(googleFileId, { range } = {}) {
   return {
     stream: res.data,
     status: res.status,
-    contentRange: res.headers['content-range'],
-    contentLength: res.headers['content-length'],
+    contentRange: docHeader(res.headers, 'content-range'),
+    contentLength: docHeader(res.headers, 'content-length'),
   };
 }
 
@@ -401,6 +418,8 @@ async function listChildren(parentId, { pageSize = 200 } = {}) {
 }
 
 module.exports = {
+  // Xuất để test được cách đọc header (googleapis đổi kiểu từ v173).
+  _docHeader: docHeader,
   isConfigured,
   getAuthMode,
   getDriveClient,

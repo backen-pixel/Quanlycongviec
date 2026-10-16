@@ -1,10 +1,31 @@
 'use strict';
 const test = require('node:test'), assert = require('node:assert/strict');
 const http = require('node:http');
+const fs = require('node:fs'), path = require('node:path');
+const { Module, createRequire } = require('node:module');
 const express = require('express');
 const G = require('../src/modules/marketingAutomation/googleOfflineConversions');
-const { createGoogleAdsExportRouter } = require('../src/routes/googleAdsExport');
-const { createWebConversionsRouter } = require('../src/routes/webConversions');
+
+// Compile the actual Express handlers with their unused default infrastructure
+// isolated. Tests inject synthetic DB/auth/primary dependencies below; importing
+// them must not load .env, start health probes or initialize a real Supabase SDK.
+function loadRoute(name) {
+  const filename = path.resolve(__dirname, '../src/routes/' + name + '.js');
+  const loaded = new Module(filename), actualRequire = createRequire(filename);
+  const unconfigured = () => { throw Error('Test infrastructure must be explicitly injected'); };
+  loaded.filename = filename;
+  loaded.require = dependency => {
+    if (dependency === '../config/supabase') return { supabase: { from: unconfigured } };
+    if (dependency === '../config/supabaseRouter') return { getActiveTarget: unconfigured, withPrimaryDatabase: unconfigured };
+    if (dependency === '../middleware/auth') return { auth: (_req, res) => res.status(401).json({ error: 'Test authentication required' }) };
+    if (dependency === '../helpers/tenantScope') return { isTenantScopeEnforced: req => req?.tenantContext?.enforced === true };
+    return actualRequire(dependency);
+  };
+  loaded._compile(fs.readFileSync(filename, 'utf8'), filename);
+  return loaded.exports;
+}
+const { createGoogleAdsExportRouter } = loadRoute('googleAdsExport');
+const { createWebConversionsRouter } = loadRoute('webConversions');
 
 const A = '991dc79d-cbf5-49f9-a364-35227cb47635', B = '11111111-1111-4111-8111-111111111111';
 const cmp = (a, b) => (typeof b === 'number' ? Number(a) - b : Date.parse(a) - Date.parse(b));
@@ -96,6 +117,51 @@ function baseTables() {
     crm_pipeline_stages: [],
   };
 }
+
+test('new website denial blocks legacy stage conversions and the linked call conversion', async () => {
+  const t = baseTables();
+  for (const id of ['L1', 'L2']) t.crm_leads.find(row => row.id === id).website_intake = { measurement_consent: false };
+  const { rows } = await G.buildGoogleOfflineConversions({ db: fakeDb(t), companyId: A, ...RANGE });
+  assert.equal(rows.some(row => ['L1', 'L2'].includes(row.lead_id)), false);
+  assert.equal(rows.some(row => row.recording_id === 'r1'), false);
+  assert.deepEqual(rows.filter(row => row.type === 'CALL').map(row => row.recording_id).sort(), ['r2', 'r3']);
+});
+
+test('literal true website choice preserves legacy stage/call output and absent or NULL metadata remains compatible', async () => {
+  const baseline = await G.buildGoogleOfflineConversions({ db: fakeDb(baseTables()), companyId: A, ...RANGE });
+  for (const metadata of [{ measurement_consent: true }, null]) {
+    const t = baseTables();
+    for (const row of t.crm_leads) row.website_intake = metadata;
+    const actual = await G.buildGoogleOfflineConversions({ db: fakeDb(t), companyId: A, ...RANGE });
+    assert.deepEqual(actual.rows, baseline.rows);
+    assert(actual.rows.some(row => row.type === 'VALID_LEAD' && row.lead_id === 'L1'));
+    assert(actual.rows.some(row => row.type === 'CALL' && row.recording_id === 'r1'));
+  }
+});
+
+test('missing or nonboolean consent in new metadata blocks stage, linked call and description fallback', async () => {
+  for (const consent of [undefined, null, 'true', 'false', 1, 0]) {
+    const t = baseTables();
+    for (const id of ['L1', 'L2']) t.crm_leads.find(row => row.id === id).website_intake =
+      consent === undefined ? {} : { measurement_consent: consent };
+    t.lead_attribution = t.lead_attribution.filter(row => row.lead_id !== 'L1');
+    t.crm_leads.find(row => row.id === 'L1').description = `VPT_V1 | 2026-10-05T03:00:00Z\ngclid: ${GC(7)}`;
+    const actual = await G.buildGoogleOfflineConversions({ db: fakeDb(t), companyId: A, ...RANGE });
+    assert.equal(actual.rows.some(row => ['L1', 'L2'].includes(row.lead_id)), false);
+    assert.equal(actual.rows.some(row => row.recording_id === 'r1'), false);
+  }
+});
+
+test('a linked call cannot bypass consent lookup through a missing or foreign-company Lead', async () => {
+  for (const missing of [true, false]) {
+    const t = baseTables();
+    if (missing) t.crm_leads = t.crm_leads.filter(row => row.id !== 'L2');
+    else t.crm_leads.find(row => row.id === 'L2').company_id = B;
+    const actual = await G.buildGoogleOfflineConversions({ db: fakeDb(t), companyId: A, ...RANGE });
+    assert.equal(actual.rows.some(row => row.recording_id === 'r1' || row.lead_id === 'L2'), false);
+    assert(actual.rows.some(row => row.type === 'VALID_LEAD' && row.lead_id === 'L1'));
+  }
+});
 
 test('helpers: call time fallback, direction, Vietnam time format, masking', () => {
   assert.deepEqual(G.callTimeMs({ call_started_at: '2026-10-10T03:00:00Z', file_name: 'x_261001_000000.m4a' }),
@@ -305,17 +371,19 @@ test('CSV format: header first, Vietnam time with offset, blank value, VND', () 
 });
 
 async function request(app, path, headers = {}) {
-  const server = app.listen(0);
+  const server = await new Promise(resolve => {
+    const listener = app.listen(0, '127.0.0.1', () => resolve(listener));
+  });
   try {
     const { port } = server.address();
     return await new Promise((resolve, reject) => {
-      http.get({ port, path, headers }, res => {
+      http.get({ hostname: '127.0.0.1', port, path, headers }, res => {
         let body = ''; res.setEncoding('utf8');
         res.on('data', c => { body += c; });
         res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
       }).on('error', reject);
     });
-  } finally { server.close(); }
+  } finally { await new Promise(resolve => server.close(resolve)); }
 }
 
 const ENV = { GOOGLE_ADS_EXPORT_USER: 'google', GOOGLE_ADS_EXPORT_PASSWORD: 'a-long-test-password-123', VPT_WEB_EVENTS_COMPANY_ID: A };

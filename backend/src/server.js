@@ -122,8 +122,31 @@ const corsMainApp = cors({
     'X-Supabase-Monitor-Token',
     'X-Device-Id',
     'X-No-Cache',
-    // Trợ lý hướng dẫn khai chế độ của client để server gửi đúng bộ luật.
+    /**
+     * Trợ lý hướng dẫn khai chế độ của client để server gửi đúng bộ luật.
+     * CẢ BA phải có mặt: AppGuideCopilotPanel gửi chúng cùng một lúc, và CORS là luật
+     * "tất cả hoặc không" — thiếu MỘT cái là trình duyệt huỷ cả request. Đo trên production:
+     * gửi riêng 3 header CopilotKit thì tới được server (401), thêm x-guide-allow-delete
+     * hoặc x-guide-moods vào là "Failed to fetch" ngay.
+     */
     'X-Guide-Full-Access',
+    'X-Guide-Allow-Delete',
+    'X-Guide-Moods',
+    /**
+     * Runtime CopilotKit TỰ gắn ba header này vào mọi request — không tắt được từ phía app.
+     * Thiếu chúng trong danh sách, preflight vẫn trả 204 (server không hề từ chối) nhưng
+     * TRÌNH DUYỆT lặng lẽ chặn POST thật: người dùng chỉ thấy "Không nhận được câu trả lời",
+     * còn log server không có lấy một dòng POST nào để mà lần.
+     *
+     * Đo trên production 14–15/10: 5 lượt OPTIONS /api/copilotkit đều 204, 0 lượt POST từ
+     * trình duyệt. Localhost không dính vì Vite proxy biến mọi thứ thành same-origin — không
+     * có CORS thì không có gì để chặn, nên lỗi chỉ lộ ra khi tách origin.
+     */
+    'X-CopilotKit-Runtime-Client-GQL-Version',
+    'X-CopilotKit-Runtime-Version',
+    'X-CopilotKit-Telemetry-Id',
+    // <video>/<audio> xin từng khúc file qua Range khi phát trên Drive.
+    'Range',
   ],
   exposedHeaders: [
     'Content-Disposition',
@@ -133,6 +156,14 @@ const corsMainApp = cors({
     'X-Count-Pending',
     'X-Count-In-Progress',
     'X-Count-Done',
+    // Thiếu ba header này thì video Drive không phát được trên production.
+    // Trang chạy ở tubep-frontend-*, API ở tubep-backend-* nên <video> là request
+    // CROSS-ORIGIN: server trả 206 kèm Content-Range, nhưng CORS không expose thì
+    // trình duyệt không đọc được, không biết độ dài và đứng im ở 0:00.
+    // Localhost không dính vì Vite proxy biến nó thành same-origin.
+    'Content-Range',
+    'Accept-Ranges',
+    'Content-Length',
   ],
   maxAge: CORS_PREFLIGHT_MAX_AGE,
 });
@@ -409,6 +440,10 @@ try { app.use('/api/partner/v1', require('./routes/partner')); } catch (e) { con
 try { app.use('/api/ad-analytics', require('./routes/adAnalytics')); } catch (e) { console.warn('⚠️ Ad analytics route failed:', e.message); }
 try { app.use('/api/marketing-p1/qualification', require('./routes/p1Qualification')); } catch (e) { console.warn('⚠️ P1 qualification route failed:', e.message); }
 try { app.use('/api/marketing-web', require('./routes/webConversions').createWebConversionsRouter()); } catch (e) { console.warn('⚠️ Web conversions route failed:', e.message); }
+try {
+  app.use('/api/website-feedback', require('./routes/websiteFeedback').createWebsiteFeedbackRouter());
+  require('./services/websiteQualifiedFeedback').getWebsiteQualifiedFeedback().start();
+} catch { console.warn('Website feedback: ROUTE_UNAVAILABLE'); }
 // Google Ads scheduled upload (HTTPS) — HTTP Basic auth from env, no JWT. Off (503) until env is set.
 try { app.use('/api/ads-conversions', require('./routes/googleAdsExport').createGoogleAdsExportRouter()); } catch (e) { console.warn('⚠️ Ads conversions export route failed:', e.message); }
 try { app.use('/api/ai-reply-drafts', require('./routes/aiReplyDrafts')); } catch (e) { console.warn('⚠️ AI reply drafts route failed:', e.message); }
@@ -482,6 +517,7 @@ zaloRouter._ioRef = io;
 app.use('/api/zalo', zaloRouter);
 // Inject io reference for realtime fb_message events
 app.use('/api/production', require('./routes/production'));
+app.use('/api/bao-loi', require('./routes/baoLoi'));
 try { app.use('/api/production/backup-sync', require('./routes/productionBackupSync')); } catch (e) { console.warn('⚠️ production backup-sync route failed:', e.message); }
 app.use('/api/logistics', require('./routes/logistics'));
 app.use('/api/accounting', require('./routes/accounting'));
@@ -519,12 +555,27 @@ try { app.use('/api/assistant', require('./routes/assistant')); } catch (e) { co
 try { app.use('/api/copilotkit', require('./routes/guide')); } catch (e) { console.warn('⚠️ Guide (CopilotKit) route failed to load:', e.message); }
 try { app.use('/api/ai-chat-bot', require('./routes/aiChatBot')); } catch (e) { console.warn('⚠️ AI Chat Bot route failed to load:', e.message); }
 try { app.use('/api/user-activity', require('./routes/userActivityLog')); } catch (e) { console.warn('⚠️ User Activity Log route failed to load:', e.message); }
+try { app.use('/api/analytics/behavior-insight', require('./routes/userBehaviorInsight')); } catch (e) { console.warn('⚠️ User Behavior Insight route failed to load:', e.message); }
 try { app.use('/api/auth-events', require('./routes/authEventLog')); } catch (e) { console.warn('⚠️ Auth Event Log route failed to load:', e.message); }
 try { app.use('/api/integrations/stringee', require('./routes/stringee')); } catch (e) { console.warn('⚠️ Stringee route failed to load:', e.message); }
 try { app.use('/api/calc', require('./routes/calc')); } catch (e) { console.warn('⚠️ Calc (Tính toán) route failed to load:', e.message); }
 try { app.use('/api/drive', require('./routes/drive')); } catch (e) { console.warn('⚠️ Drive route failed to load:', e.message); }
 try { app.use('/api/batch-jobs', require('./routes/batchJobs')); } catch (e) { console.warn('⚠️ Batch jobs route failed to load:', e.message); }
 try { app.use('/api/admin/supabase', require('./routes/supabaseOps')); } catch (e) { console.warn('⚠️ Supabase ops route failed to load:', e.message); }
+
+// ─── File tĩnh của RIÊNG backend ──
+//
+// Zalo (và vài bên khác) xác minh quyền sở hữu domain bằng cách đọc một file HTML đặt ở
+// gốc. Frontend có sẵn `frontend/public/`, nhưng service backend trên Render KHÔNG build
+// frontend nên `frontend/dist` không tồn tại ở đó — cả khối express.static bên dưới bị bỏ
+// qua và mọi file gốc trả 404.
+//
+// Thư mục này chỉ chứa file xác minh domain, không chứa gì khác. Đặt sau toàn bộ route
+// /api nên không che được endpoint nào.
+const backendPublic = path.join(__dirname, '../public');
+if (require('fs').existsSync(backendPublic)) {
+  app.use(express.static(backendPublic, { maxAge: '1h', index: false }));
+}
 
 // ─── Serve Frontend (SPA) in production ──
 const frontendDist = path.join(__dirname, '../../frontend/dist');

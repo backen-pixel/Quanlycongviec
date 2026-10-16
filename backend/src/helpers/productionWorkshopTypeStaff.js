@@ -1420,7 +1420,73 @@ async function savePipelineStageDefaultStaff(stageId, companyId, blockInput) {
     if (insErr) throw insErr;
   }
 
-  return { saved: rows.length };
+  const nhiemVuGiaoLai = await giaoLaiNhiemVuTheoPhuTrachCot(stageId, primaryUserId);
+  return { saved: rows.length, nhiem_vu_giao_lai: nhiemVuGiaoLai };
+}
+
+/**
+ * Đổi phụ trách chính của một cột → giao lại các nhiệm vụ CHƯA XONG của cột đó.
+ *
+ * Không có bước này thì khai phụ trách mới chỉ ăn vào nhiệm vụ sinh ra sau đó; việc
+ * đang tồn vẫn nằm ở người cũ, và người dùng tưởng thao tác không có tác dụng.
+ *
+ * Phạm vi: nhiệm vụ sinh từ bộ mẫu CÓ GẮN đúng cột này. Không đụng:
+ *   · nhiệm vụ đã hoàn thành — sửa lại là làm sai lịch sử ai thực sự làm;
+ *   · nhiệm vụ mà mẫu đã chỉ định người riêng (`default_assignee_id`) — đó là chỉ định
+ *     cố ý, phụ trách cột chỉ là giá trị mặc định khi mẫu bỏ trống.
+ */
+/** Trạng thái nhiệm vụ CHƯA kết thúc — việc đã xong không bao giờ bị giao lại. */
+const TRANG_THAI_CHUA_XONG = ['pending', 'todo', 'in_progress', 'review'];
+
+async function giaoLaiNhiemVuTheoPhuTrachCot(stageId, primaryUserId) {
+  if (!stageId || !primaryUserId) return 0;
+  try {
+    const { data: tpls } = await supabase
+      .from('workshop_task_templates')
+      .select('id')
+      .eq('production_stage_id', stageId)
+      .eq('is_active', true);
+    if (!tpls?.length) return 0;
+
+    const { data: items } = await supabase
+      .from('workshop_task_template_items')
+      .select('id, default_assignee_id')
+      .in('template_id', tpls.map((t) => t.id));
+    const coNguoiRieng = new Set(
+      (items || []).filter((i) => i.default_assignee_id).map((i) => String(i.id)),
+    );
+
+    let tong = 0;
+    for (const t of tpls) {
+      const { data: ts } = await supabase
+        .from('tasks')
+        .select('id, metadata')
+        // Liệt kê trạng thái CHƯA xong thay vì loại trừ mỗi 'done'.
+        // Hôm nay bảng tasks chỉ có pending / todo / done. Nếu sau này thêm một trạng
+        // thái kết thúc nữa, cách loại-trừ sẽ âm thầm giao lại cả việc đã xong và hỏng
+        // lịch sử; cách liệt-kê thì cùng lắm bỏ sót vài việc — người dùng thấy ngay.
+        .in('status', TRANG_THAI_CHUA_XONG)
+        .neq('assignee_id', primaryUserId)
+        .contains('metadata', { workshop_template_id: String(t.id) })
+        .limit(5000);
+      const ids = (ts || [])
+        .filter((x) => !coNguoiRieng.has(String(x.metadata?.workshop_template_item_id || '')))
+        .map((x) => x.id);
+      for (let i = 0; i < ids.length; i += 200) {
+        const lo = ids.slice(i, i + 200);
+        const { error } = await supabase
+          .from('tasks')
+          .update({ assignee_id: primaryUserId, updated_at: new Date().toISOString() })
+          .in('id', lo);
+        if (error) { console.warn('[stage-staff] giao lai nhiem vu:', error.message); break; }
+        tong += lo.length;
+      }
+    }
+    return tong;
+  } catch (e) {
+    console.warn('[stage-staff] giao lai nhiem vu:', e.message);
+    return 0;
+  }
 }
 
 /**
