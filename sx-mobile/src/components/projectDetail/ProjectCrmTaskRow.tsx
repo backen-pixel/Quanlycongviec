@@ -100,6 +100,8 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
   const { colors } = useTheme();
   const [expanded, setExpanded] = useState(false);
   const done = isTaskDone(task.status);
+  // «Đang làm» (bấm ô tròn lần 1): web hiện đồng hồ xanh (STATUS_ICONS) — app cũng phải hiện, không để vòng tròn trống.
+  const inProgress = !done && task.status === 'in_progress';
   const assignees = taskAssignees(task);
   const assignee = assignees[0] || null;
   const deadline = taskDeadline(task);
@@ -109,6 +111,8 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
 
   const [modal, setModal] = useState<ModalKind>(null);
   const [busy, setBusy] = useState(false);
+  // Đổi trạng thái (ô tròn) có cờ bận RIÊNG: dùng chung `busy` thì nút máy ảnh bên dưới cũng quay theo.
+  const [statusBusy, setStatusBusy] = useState(false);
 
   const [noteDraft, setNoteDraft] = useState('');
   const [attachments, setAttachments] = useState<TaskAttachment[]>([]);
@@ -228,14 +232,17 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
   const toggleStatus = async () => {
     const cur = task.status || 'pending';
     const next = cur === 'completed' ? 'pending' : cur === 'pending' ? 'in_progress' : 'completed';
-    setBusy(true);
+    setStatusBusy(true);
+    // Lạc quan: đổi biểu tượng NGAY, máy chủ xử lý chậm (PUT làm đồng bộ hai sổ, assignment, thông báo… rồi mới trả lời).
+    onUpdated({ ...task, status: next });
     try {
       const updated = await updateCrmTask(dealId, task.id, { status: next });
       onUpdated(updated);
     } catch (e) {
+      onUpdated(task);
       Alert.alert('Lỗi', formatApiError(e));
     } finally {
-      setBusy(false);
+      setStatusBusy(false);
     }
   };
 
@@ -505,11 +512,9 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
   const styles = useMemo(
     () =>
       StyleSheet.create({
-        // Dòng phẳng nằm trong khung giai đoạn (giống web): không viền/bo riêng, ngăn cách bằng đường kẻ mảnh.
+        // Dòng phẳng nằm trong ô xám nhạt riêng của màn chi tiết dự án (mỗi việc một ô): không viền / bo riêng.
         row: {
           backgroundColor: 'transparent',
-          borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: colors.border,
           paddingHorizontal: 12,
           paddingTop: 10,
           paddingBottom: 6,
@@ -521,8 +526,6 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
           minHeight: 42,
           paddingHorizontal: 12,
           backgroundColor: 'transparent',
-          borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: colors.border,
         },
         compactCheck: {
           width: 16,
@@ -561,6 +564,7 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
           marginTop: 1,
         },
         checkDone: { borderColor: colors.success, backgroundColor: colors.success + '22' },
+        checkDoing: { borderColor: colors.primary, backgroundColor: colors.primary + '22' },
         body: { flex: 1, minWidth: 0 },
         title: { color: colors.text, fontSize: 14, fontWeight: '700' },
         titleDone: { color: colors.textMuted, textDecorationLine: 'line-through' },
@@ -573,6 +577,16 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
           paddingVertical: 3,
           borderRadius: Radii.sm,
         },
+        doingPill: {
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 4,
+          paddingHorizontal: 8,
+          paddingVertical: 3,
+          borderRadius: Radii.full,
+          backgroundColor: colors.primary + '1F',
+        },
+        doingPillTxt: { color: colors.primary, fontSize: 11, fontWeight: '800' },
         metaText: { color: colors.textFaint, fontSize: 11, fontWeight: '600' },
         metaTextActive: { color: colors.primary },
         metaOverdue: { color: colors.danger },
@@ -1038,8 +1052,9 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
         onPress={() => setExpanded(true)}
         accessibilityLabel={`${task.title}, bấm để mở rộng`}
       >
-        <View style={[styles.compactCheck, done && styles.checkDone]}>
+        <View style={[styles.compactCheck, done && styles.checkDone, inProgress && styles.checkDoing]}>
           {done ? <Ionicons name="checkmark" size={11} color={colors.success} /> : null}
+          {inProgress ? <Ionicons name="time" size={11} color={colors.primary} /> : null}
         </View>
         <Text style={[styles.compactTitle, done && styles.titleDone]} numberOfLines={1}>{task.title}</Text>
         <Text
@@ -1062,8 +1077,14 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
           </View>
         ) : null}
         <View style={styles.top}>
-          <TapHighlight style={[styles.check, done && styles.checkDone]} onPress={() => void toggleStatus()} disabled={busy || readOnly}>
+          <TapHighlight
+            style={[styles.check, done && styles.checkDone, inProgress && styles.checkDoing, statusBusy && { opacity: 0.6 }]}
+            onPress={() => void toggleStatus()}
+            disabled={busy || statusBusy || readOnly}
+            accessibilityLabel={done ? 'Đã hoàn thành' : inProgress ? 'Đang làm' : 'Chưa bắt đầu'}
+          >
             {done ? <Ionicons name="checkmark" size={14} color={colors.success} /> : null}
+            {inProgress ? <Ionicons name="time" size={14} color={colors.primary} /> : null}
           </TapHighlight>
           <View style={styles.body}>
             <Text style={[styles.title, done && styles.titleDone]} numberOfLines={2}>
@@ -1107,6 +1128,12 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
               </TapHighlight>
             ) : null}
             <View style={styles.meta}>
+              {inProgress ? (
+                <View style={styles.doingPill}>
+                  <Ionicons name="time" size={12} color={colors.primary} />
+                  <Text style={styles.doingPillTxt}>Đang làm</Text>
+                </View>
+              ) : null}
               <TapHighlight
                 style={styles.metaBtn}
                 pressStyle={{ backgroundColor: colors.primarySoft }}

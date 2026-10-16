@@ -206,6 +206,7 @@ const NHAN_COT_LON: Record<string, string> = {
   gia_cong: 'Gia công',
   hoan_thien: 'Hoàn thiện',
   dong_goi: 'Đóng gói',
+  van_chuyen: 'Vận chuyển',
   cong_no: 'Công nợ',
 };
 
@@ -214,6 +215,8 @@ export type CrmTaskBigGroup = {
   key: string;
   label: string;
   color?: string | null;
+  /** Cột chưa gán `group_key` tự đứng riêng (khoá `__rieng__…`): tên nhóm = tên cột nên không cần dòng cột riêng. */
+  riengLe: boolean;
   columns: CrmTaskStageGroup[];
   /** Mọi việc của các cột bên trong — dùng cho «Xong hết» cả mục lớn. */
   tasks: CrmTask[];
@@ -229,34 +232,64 @@ export type CrmTaskBigGroup = {
 export function groupColumnsIntoBigGroups(
   columns: CrmTaskStageGroup[],
   stages: KanbanStage[] = [],
+  /** Đưa nhóm chứa cột này lên đầu (mở từ một việc cụ thể — màn hình cuộn tới đúng chỗ). */
+  opts?: { firstColKey?: string | null },
 ): CrmTaskBigGroup[] {
   const stageById = new Map((stages || []).map((s) => [String(s.id), s]));
-  const order: string[] = [];
-  const byKey = new Map<string, { label: string; cols: CrmTaskStageGroup[]; sort: number | null }>();
+  type Acc = { key: string; label: string; cols: CrmTaskStageGroup[]; sort: number | null; riengLe: boolean; moc: number };
+  const byKey = new Map<string, Acc>();
   for (const col of columns) {
     const stage = stageById.get(String(col.key));
     const gk = stage?.group_key ? String(stage.group_key).trim() : '';
     const key = gk || `__rieng__${col.key}`;
     if (!byKey.has(key)) {
-      byKey.set(key, { label: gk ? (NHAN_COT_LON[gk] || gk) : col.label, cols: [], sort: null });
-      order.push(key);
+      byKey.set(key, {
+        key,
+        label: gk ? (NHAN_COT_LON[gk] || gk) : col.label,
+        cols: [],
+        sort: null,
+        riengLe: !gk,
+        moc: 9999,
+      });
     }
     const g = byKey.get(key)!;
     g.cols.push(col);
+    // «moc» = order_index nhỏ nhất của các cột trong nhóm (khớp web `gomCotTheoNhom`).
+    const oi = Number(stage?.order_index);
+    if (Number.isFinite(oi)) g.moc = Math.min(g.moc, oi);
     const gs = Number(stage?.group_sort);
     if (Number.isFinite(gs) && gs > 0) g.sort = g.sort == null ? gs : Math.min(g.sort, gs);
   }
-  const hasCustom = [...byKey.values()].some((g) => g.sort != null);
-  const keys = hasCustom
-    ? [...order].sort((a, b) => (byKey.get(a)!.sort ?? 9999) - (byKey.get(b)!.sort ?? 9999) || order.indexOf(a) - order.indexOf(b))
-    : order;
-  return keys.map((key) => {
-    const g = byKey.get(key)!;
+
+  // Thứ tự nhóm — khớp web `sapXepNhomCotLon`: có `group_sort` tuỳ chỉnh thì theo đó (cột đứng riêng không so `group_sort`),
+  // chưa có thì theo vị trí cột; riêng «Đóng gói» luôn sau «Hoàn thiện».
+  const list = [...byKey.values()];
+  if (list.some((g) => g.sort != null)) {
+    list.sort((a, b) => {
+      if (!a.riengLe && !b.riengLe) {
+        const ta = a.sort ?? 9999;
+        const tb = b.sort ?? 9999;
+        if (ta !== tb) return ta - tb;
+      }
+      return a.moc - b.moc;
+    });
+  } else {
+    const mocHoanThien = list.find((g) => g.key === 'hoan_thien')?.moc ?? null;
+    const hienThi = (g: Acc) => (g.key === 'dong_goi' && mocHoanThien != null && g.moc <= mocHoanThien ? mocHoanThien + 0.5 : g.moc);
+    list.sort((a, b) => hienThi(a) - hienThi(b));
+  }
+  if (opts?.firstColKey) {
+    const idx = list.findIndex((g) => g.cols.some((c) => String(c.key) === String(opts.firstColKey)));
+    if (idx > 0) list.unshift(...list.splice(idx, 1));
+  }
+
+  return list.map((g) => {
     const tasks = g.cols.flatMap((c) => c.tasks);
     return {
-      key,
+      key: g.key,
       label: g.label,
       color: g.cols[0]?.color ?? null,
+      riengLe: g.riengLe,
       columns: g.cols,
       tasks,
       openCount: g.cols.reduce((n, c) => n + c.openCount, 0),
@@ -389,6 +422,8 @@ export function resolveCrmTaskStageLabel(task: CrmTask): string {
 export function groupCrmTasksByStage(
   tasks: CrmTask[],
   sxStages: KanbanStage[] = [],
+  /** true = giữ cả cột chưa có việc («0/0») như web (`sxPlanGroups` đi qua MỌI cột của quy trình). */
+  opts?: { includeEmpty?: boolean },
 ): CrmTaskStageGroup[] {
   const stages = [...(sxStages || [])].sort(
     (a, b) => (Number(a.order_index) || 0) - (Number(b.order_index) || 0),
@@ -411,7 +446,7 @@ export function groupCrmTasksByStage(
     const sections: CrmTaskStageGroup[] = [];
     for (const s of stages) {
       const list = sortTasksInStage(map.get(String(s.id)) || []);
-      if (!list.length) continue;
+      if (!list.length && !opts?.includeEmpty) continue;
       sections.push({
         key: String(s.id),
         label: s.name || 'Giai đoạn',
