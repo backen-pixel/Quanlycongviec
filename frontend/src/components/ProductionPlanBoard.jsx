@@ -39,26 +39,29 @@ export function ProductionPlanAutoBoard({projects}){
     if(plan.error){failed++;continue;}
     if(plan.state!=='approved'||!plan.progression){legacy++;continue;}
     const progress=plan.progression;
+    const visible=progress.complete?[null]:(progress.active_stages||[progress.current]);
+    if(!visible.length)visible.push(null);
+    for(const stage of visible){
     // Only group projects whose complete ordered stage definitions agree.
-    const key=progress.complete?'complete':`${JSON.stringify(progress.stages.map(s=>[s.id,s.name]))}:${progress.current.id}`;
-    if(!columns.has(key))columns.set(key,{name:progress.complete?'Hoàn tất sản xuất':progress.current.name,
+    const key=progress.complete?'complete':!stage?'waiting':`${JSON.stringify(progress.stages.map(s=>[s.id,s.name]))}:${stage.id}`;
+    if(!columns.has(key))columns.set(key,{name:progress.complete?'Hoàn tất sản xuất':stage?.name||'Đang chờ điều kiện',
       group:progress.complete?'':JSON.stringify(progress.stages.map(s=>[s.id,s.name])),
-      order:progress.complete?Number.MAX_SAFE_INTEGER:progress.stages.findIndex(s=>s.id===progress.current.id),
+      order:stage?progress.stages.findIndex(s=>s.id===stage.id):Number.MAX_SAFE_INTEGER,
       complete:progress.complete,items:[]});
-    columns.get(key).items.push({project,plan});
+    columns.get(key).items.push({project,plan,stage});
+    }
   }
   return <section className="space-y-3" aria-label="Bảng tự chuyển công đoạn theo kế hoạch">
-    <p className="text-sm text-slate-600">Thẻ tự chuyển theo thứ tự công đoạn trong kế hoạch đã duyệt khi mọi nhiệm vụ đã xong hoặc được miễn trừ. Mỗi dự án có công đoạn riêng; các khâu song song ghi trên thẻ. Cập nhật mỗi phút và khi quay lại cửa sổ.</p>
+    <p className="text-sm text-slate-600">Một dự án hiện ở mọi công đoạn có việc sẵn sàng, đang làm hoặc cần kiểm tra lại. Xong tất cả nhiệm vụ thì thẻ rời công đoạn đó; các khâu còn lại tiếp tục độc lập theo phụ thuộc. Số trên cột là số thẻ công đoạn, không cộng thành số dự án duy nhất. Cập nhật mỗi phút và khi quay lại cửa sổ.</p>
     {!!pending&&<p role="status">Đang đọc kế hoạch của {pending} dự án.</p>}
     {!!failed&&<p role="alert" className="text-red-700">Chưa đọc được {failed} dự án. Không thể xác định công đoạn.</p>}
     {!!legacy&&<p className="text-sm">{legacy} dự án chưa có kế hoạch đã duyệt hoặc chỉ có quyền xem phần việc cá nhân. Xem các dự án này trong Kanban hiện có.</p>}
     <div className="flex gap-3 overflow-x-auto pb-3">{[...columns.entries()].sort(([,a],[,b])=>Number(a.complete)-Number(b.complete)||a.group.localeCompare(b.group)||a.order-b.order).map(([key,col])=><div key={key} className="w-72 shrink-0 rounded-lg bg-slate-100 p-3 space-y-3">
       <h3 className="font-semibold">{col.name} · {col.items.length}</h3>
-      {col.items.map(({project,plan})=><article key={project.id} className="rounded border bg-white p-3 space-y-2">
+      {col.items.map(({project,plan,stage})=><article key={project.id} className="rounded border bg-white p-3 space-y-2">
         <Link className="font-semibold text-indigo-700 underline" to={`/sx/projects/${project.id}/plan`}>{project.name||project.code||'Dự án'}</Link>
         <div>Hoàn thành {plan.completed}/{plan.total}{plan.waived?` · Miễn trừ ${plan.waived}`:''}</div>
-        {plan.progression.current&&<div>Khâu hiện tại: {plan.progression.current.closed}/{plan.progression.current.total} nhiệm vụ đã đóng</div>}
-        {!!plan.progression.parallel.length&&<div>Song song: {plan.progression.parallel.map(s=>s.name).join(', ')}</div>}
+        {stage&&<div>Tiến độ {stage.name}: {stage.closed}/{stage.total} nhiệm vụ đã đóng</div>}
         {!!plan.needs_review&&<div className="text-amber-700">Cần kiểm tra lại: {plan.needs_review}</div>}
         {!!plan.overdue&&<div className="text-red-700">Quá hạn: {plan.overdue}</div>}
       </article>)}

@@ -67,11 +67,10 @@ export default function ProductionPlanPage() {
       {!schedule.feasible&&<p className="text-red-700">Dự kiến vượt hạn sản xuất. Quản lý cần xử lý việc chặn hoặc điều chỉnh kế hoạch.</p>}
       {schedule.collisions.length>0&&<p className="text-amber-800">Có {schedule.collisions.length} cặp nhiệm vụ cùng người bị trùng lịch.</p>}
       {data.progression&&<div className="rounded border border-indigo-200 bg-indigo-50 p-3" aria-live="polite">
-        <strong>{data.progression.complete?'Đã hoàn tất kế hoạch sản xuất':`Công đoạn hiện tại: ${data.progression.current.name}`}</strong>
-        <p>Tự chuyển sau khi tất cả nhiệm vụ của công đoạn đã hoàn tất hoặc được quản lý miễn trừ. Việc cần kiểm tra lại vẫn tính là chưa xong.</p>
-        {data.progression.parallel.length>0&&<p>Có thể làm song song: {data.progression.parallel.map(s=>s.name).join(', ')}</p>}
+        <strong>{data.progression.complete?'Đã hoàn tất kế hoạch sản xuất':`Công đoạn đang thực hiện: ${data.progression.active_stages?.map(s=>s.name).join(', ')||'Đang chờ điều kiện'}`}</strong>
+        <p>Mỗi công đoạn đóng riêng khi tất cả nhiệm vụ hoàn tất hoặc được quản lý miễn trừ. Lịch và phụ thuộc nhiệm vụ giữ nguyên; việc cần kiểm tra lại vẫn tính là chưa xong.</p>
       </div>}
-      <div className="flex flex-wrap gap-2">{(data.progression?.stages||schedule.stages).map(s=><span className={`rounded px-3 py-1 ${s.complete?'bg-green-100':s.id===data.progression?.current?.id?'bg-indigo-100 font-semibold':'bg-gray-100'}`} key={s.id}>{s.name}: {s.complete?'hoàn thành':s.id===data.progression?.current?.id?'đang thực hiện':'chưa xong'}</span>)}</div>
+      <div className="flex flex-wrap gap-2">{(data.progression?.stages||schedule.stages).map(s=><span className={`rounded px-3 py-1 ${s.complete?'bg-green-100':s.in_progress?'bg-indigo-100 font-semibold':'bg-gray-100'}`} key={s.id}>{s.name}: {s.complete?'hoàn thành':s.in_progress?'đang thực hiện':'chờ điều kiện'}</span>)}</div>
       {!visible.length&&<p>Không có nhiệm vụ trong bộ lọc này.</p>}
       {visible.map(t=>{const f=taskForm[t.id]||{};return <article className={`border rounded p-3 space-y-2 ${t.overdue?'border-red-300':''}`} key={t.id}>
         <div className="flex flex-wrap justify-between gap-2"><b>{t.name}</b><span>{t.needs_review?'Cần kiểm tra lại':t.status==='done'?(t.completed_late?'Hoàn thành trễ':'Hoàn thành'):t.status==='waived'?'Đã bỏ qua':t.overdue?'Trễ hạn':t.status==='doing'?'Đang làm':t.ready?'Có thể làm':'Chờ việc trước'}</span></div>

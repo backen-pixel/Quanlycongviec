@@ -15,13 +15,17 @@ test('stage progression waits for every task, preserves parallel branches and re
     {id:'3',stage_id:'b',status:'pending',ready:true},
     {id:'4',stage_id:'c',status:'pending',ready:false}]};
   assert.equal(progression(result).current.id,'a');
+  assert.deepEqual(progression(result).active_stages.map(s=>s.id),['a','b']);
+  assert.deepEqual(progression(result).waiting_stages.map(s=>s.id),['c']);
   assert.deepEqual(progression(result).parallel.map(s=>s.id),['b']);
   result.tasks[1].status='done';assert.equal(progression(result).current.id,'b');
+  assert.deepEqual(progression(result).active_stages.map(s=>s.id),['b']);
   result.tasks[2].status='done';result.tasks[3].ready=true;
   assert.equal(progression(result).current.id,'c');
   result.tasks[3].status='done';assert.equal(progression(result).complete,true);
   result.tasks[0].needs_review=true;assert.equal(progression(result).current.id,'a');
   assert.equal(progression(result).stages[0].review,true);
+  assert.deepEqual(progression(result).active_stages.map(s=>s.id),['a']);
 });
 test('Board preserves parallel ready stages, review and waiver semantics without leaking colleague tasks',()=>{
   const g={stages:[{id:'s1',name:'Thùng'},{id:'s2',name:'Kính'}],tasks:[{id:'a',name:'Thùng',stage_id:'s1',hours:8,dependencies:[],assignee_id:actor},{id:'b',name:'Kính',stage_id:'s2',hours:8,dependencies:[],assignee_id:other}],calendar:{weekdays:[1,2,3,4,5,6],shifts:[[8,12],[13,17]]}};

@@ -28,8 +28,7 @@ test('Browser: template to draft to approved plan, own tasks, completion, templa
     await page.getByRole('button',{name:'Duyệt và giao thực hiện'}).click();await page.getByRole('heading',{name:'Nhiệm vụ đang thực hiện'}).waitFor();assert.equal(row.document.active.graph.tasks.length,6);
     try{await page.locator('article').first().waitFor({timeout:5000});}catch(e){throw new Error(`${e.message}\n${JSON.stringify(row.document.active.graph.tasks.map(t=>t.assignee_id))}\n${(await page.locator('body').innerText()).slice(0,5000)}`);}
     const article=page.locator('article').filter({has:page.getByText('Chốt kích thước',{exact:true})});await article.getByRole('button',{name:'Hoàn thành',exact:true}).click();await page.waitForFunction(()=>document.querySelector('article')?.innerText.includes('Hoàn thành'));assert.equal(row.document.execution.t1.status,'done');
-    await page.getByText('Công đoạn hiện tại: Gia công kính',{exact:true}).waitFor();
-    await page.getByText('Có thể làm song song: Gia công khung',{exact:true}).waitFor();
+    await page.getByText('Công đoạn đang thực hiện: Gia công kính, Gia công khung',{exact:true}).waitFor();
     await page.getByLabel('Tên mẫu').fill('Cánh kính tiêu chuẩn');await page.getByRole('button',{name:'Lưu thành mẫu mới',exact:true}).click();await page.getByRole('status').filter({hasText:'Đã xuất bản mẫu'}).waitFor();assert.equal(templates[0].document.graph.tasks[0].assignee_id,null);assert.equal(templates[0].document.graph.tasks[0].status,undefined);
     await page.screenshot({path:path.resolve(__dirname,'../../docs/_tmp_work_plans_ui.png'),fullPage:true});
     await page.goto(`${url}?role=staff`);await page.getByRole('heading',{name:'Nhiệm vụ đang thực hiện'}).waitFor();assert.equal(await page.getByRole('heading',{name:'Lập và điều chỉnh kế hoạch'}).count(),0);
@@ -44,7 +43,7 @@ test('Browser: template to draft to approved plan, own tasks, completion, templa
     board={enabled:true,items:[]};await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
     await page.getByText('Chưa có kế hoạch được phép hiển thị trên bảng công đoạn.',{exact:true}).waitFor();
     const stages=[{id:'a',name:'Thiết kế'},{id:'b',name:'Đóng gói'}];
-    const item=(project_id,index)=>({project_id,state:'approved',scope:'project',total:2,completed:index,waived:0,progression:{stages,current:stages[index],complete:false,parallel:[]}});
+    const item=(project_id,index)=>({project_id,state:'approved',scope:'project',total:2,completed:index,waived:0,progression:{stages,current:stages[index],complete:false,active_stages:[stages[index]],parallel:[]}});
     board={enabled:true,items:[item(actor,1),item('00000000-0000-4000-8000-000000000003',0)]};
     await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
     await page.getByRole('heading',{name:'Thiết kế · 1',exact:true}).waitFor();
@@ -53,6 +52,14 @@ test('Browser: template to draft to approved plan, own tasks, completion, templa
     await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
     await page.getByRole('heading',{name:'Đóng gói · 2',exact:true}).waitFor();
     assert.equal(await page.getByRole('heading',{name:'Thiết kế · 1',exact:true}).count(),0);
+    board.items[0].progression.active_stages=stages;
+    await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+    await page.getByRole('heading',{name:'Thiết kế · 1',exact:true}).waitFor();
+    assert.equal(await page.getByRole('link',{name:'Dự án sau',exact:true}).count(),2);
+    board.items[0].progression.active_stages=[stages[1]];
+    await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+    await page.getByRole('heading',{name:'Thiết kế · 1',exact:true}).waitFor({state:'hidden'});
+    assert.equal(await page.getByRole('link',{name:'Dự án sau',exact:true}).count(),1);
     assert.deepEqual(errors,[]);
   }finally{if(browser)await browser.close();if(vite)await vite.close();await new Promise(r=>server.close(r));}
 });

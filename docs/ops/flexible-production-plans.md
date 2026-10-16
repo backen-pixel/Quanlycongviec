@@ -136,3 +136,9 @@ Runtime 792cefce6e4db8305f128a86094f6444ea3b213d, deploy dep-db82m2on74is73di514
 
 Browser thật đã mở Dashboard → Thêm → Theo kế hoạch, thấy hai dự án mẫu tại công đoạn canonical, legacy hiển thị chưa có kế hoạch. Ảnh HoSoTuBepPro/templates/STAGE_PROGRESSION_STAGING.png; proof STAGE_PROGRESSION_VERIFICATION.json. 38/38 tests và build PASS; reviewer cuối no blockers. Không thay Kanban/KPI legacy; bảng mới theo kế hoạch chỉ dự án đã tải, manager toàn dự án, refresh mỗi phút/focus. Không production. Bước sau: nghiệm thu trọn dự án từ hai template mới với tài khoản/lịch thực tế chọn rõ; tự chuyển đã kiểm trên fixture hiện có, không tuyên bố toàn bộ quy trình thật đã nghiệm thu.
 
+## 16/10/2026 — Hiển thị dự án ở mọi công đoạn đang thực hiện
+
+Anh Hùng trả lời lựa chọn trễ: Hiện ở mọi công đoạn đang thực hiện. Thay phương án một thẻ tại khâu chưa xong đầu tiên. Domain progression thêm active_stages gồm khâu có nhiệm vụ mở ready/doing/needs_review; waiting_stages riêng. Board render từng khâu active với closed/total của chính khâu; hoàn tất khâu thì thẻ rời khâu đó, hoàn tất toàn dự án chỉ một thẻ Hoàn tất. Không có khâu active thì hiển thị chờ điều kiện. Nhiều thẻ không cộng thành số dự án duy nhất; giữ lịch/phụ thuộc/giao người, quyền scope và KPI/cột legacy.
+
+38/38 tests PASS, browser phủ hai thẻ cùng dự án và nhánh xong biến mất; review riêng no blockers. Build/deploy mới cần xác nhận trước khi gọi là đã lên staging. Không migration/flag mới; rollback revert code, giữ canonical execution/history. Không production.
+

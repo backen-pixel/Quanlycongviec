@@ -1,3 +1,8 @@
+## 16/10/2026 — Hiển thị dự án ở mọi công đoạn đang thực hiện
+
+Anh Hùng trả lời lựa chọn trễ: Hiện ở mọi công đoạn đang thực hiện. Thay phương án một thẻ tại khâu chưa xong đầu tiên. Domain progression thêm active_stages gồm khâu có nhiệm vụ mở ready/doing/needs_review; waiting_stages riêng. Board render từng khâu active với closed/total của chính khâu; hoàn tất khâu thì thẻ rời khâu đó, hoàn tất toàn dự án chỉ một thẻ Hoàn tất. Không có khâu active thì hiển thị chờ điều kiện. Nhiều thẻ không cộng thành số dự án duy nhất; giữ lịch/phụ thuộc/giao người, quyền scope và KPI/cột legacy.
+
+38/38 tests PASS, browser phủ hai thẻ cùng dự án và nhánh xong biến mất; review riêng no blockers. Build/deploy mới cần xác nhận trước khi gọi là đã lên staging. Không migration/flag mới; rollback revert code, giữ canonical execution/history. Không production.
 ## 15/10/2026 08:28 Việt Nam — Tự chuyển công đoạn đã lên staging
 
 Runtime 792cefce6e4db8305f128a86094f6444ea3b213d, deploy dep-db82m2on74is73di5140 LIVE, finished 01:27:41Z. Public smoke PASS lúc 01:28:00Z: hoàn thành t0 chuyển s0→s1, board trả cùng công đoạn; mở lại phục hồi s0. Graph/người nhận/phụ thuộc/hạn giữ nguyên; dữ liệu giả đã mở lại về trạng thái ban đầu, giữ lịch sử kiểm thử. Lần gọi trước khi deploy LIVE chưa thấy progression, không có ghi dữ liệu; kiểm sau LIVE PASS.
