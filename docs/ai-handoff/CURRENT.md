@@ -2527,3 +2527,5 @@ User yêu cầu giao việc ở cùng giao diện. Command reassign chỉ manage
 37/37 test PASS sau frontend build cuối; reviewer reassign không thấy blocker. Initial collab runtime a64ad313 LIVE ở dep-db7r2hhsrm7s7390cucg; public HTTP+Storage smoke PASS (comment/file, đúng scope, private public URL denied, project room, replay). Local browser query ?task=t1 mở đúng modal, bình luận text gửi từ UI và tệp cũ hiển thị. Follow-up assignment runtime/browser còn chờ kiểm sau deploy. Không migration mới cho giao lại và không production.
 
 
+
+16/10/2026 21:39 VN: Render deploy dep-db93bs3l550s73fnj44g LIVE, runtime94b0320abd59b2ead86f8965de72d8f2b6f48272, finished14:39:03Z.38/38 tests và buildPASS; reviewer no blockers. Browser production/session không phản hồi khi mở staging (timeout), chưa xác minh UI live sau deploy. Không claim nghiệm thu runtime đầy đủ; production không đổi. URL https://tubep-staging-work-plans.onrender.com. Rollback revert commit UI và deploy lại staging, giữ data/history.
