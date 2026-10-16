@@ -854,7 +854,12 @@
      màn hình: căn giữa thì lúc thu gọn quả bóng rơi vào chính giữa nội dung. */
   left: var(--agb-trai, 24px);
   bottom: 18px;
-  z-index: 56;
+  /* LUÔN NẰM TRÊN mọi giao diện khác. Trước đây 56 — thấp hơn gần như mọi hộp thoại trong
+     app (đo được: z-[10000] … z-[99997]), nên mở bất kỳ modal nào là ô hỏi biến mất và người
+     dùng mất lối hỏi đúng lúc họ đang bí.
+     99998: trên hộp thoại cao nhất (99997), vẫn DƯỚI lớp tour (100050) và tooltip bước
+     (100052) — che mất lời giải thích của tour thì hỏng cả tour. */
+  z-index: 99998;
   display: flex;
   align-items: center;
   gap: 8px;
