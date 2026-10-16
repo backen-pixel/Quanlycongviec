@@ -13,9 +13,11 @@ import {
   cardDaysOverdue,
   fetchOverdueCards,
   fetchProjectCardChildren,
+  groupCardsByProject,
   isCardOverdue,
   type CardChild,
   type OverdueCard,
+  type OverdueSection,
 } from '../lib/overdueCardsApi';
 import { isQueryAbortError } from '../lib/queryCache';
 import { isSystemAdmin } from '../lib/roles';
@@ -31,17 +33,8 @@ import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
  * quản lý…) chỉ nhận dữ liệu xưởng của mình. Chỉ đọc.
  */
 
-type Section = {
-  key: string;
-  projectId: string;
-  code: string;
-  title: string;
-  companyName: string | null;
-  cards: OverdueCard[];
-};
-
 type Row =
-  | { kind: 'head'; key: string; section: Section }
+  | { kind: 'head'; key: string; section: OverdueSection }
   | { kind: 'card'; key: string; card: OverdueCard }
   | { kind: 'child'; key: string; child: CardChild }
   | { kind: 'note'; key: string; text: string; loading?: boolean };
@@ -60,24 +53,6 @@ const CHIP_PALETTE = ['#EF4444', '#64748B', '#8B5CF6', '#0EA5E9', '#10B981'];
 /** Bỏ dấu + hạ chữ thường để tìm kiếm tiếng Việt không phân biệt dấu. */
 function fold(s: string): string {
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'd').toLowerCase();
-}
-
-/** Gom theo đơn; thẻ quá hạn (cũ nhất trước) lên trước thẻ hôm nay, nên đơn có việc quá hạn lâu nhất đứng đầu. */
-function buildSections(cards: OverdueCard[]): Section[] {
-  const rank = (c: OverdueCard) => (c.kind === 'overdue' ? 0 : 1);
-  const sorted = [...cards].sort((a, b) => rank(a) - rank(b)
-    || new Date(a.deadline).getTime() - new Date(b.deadline).getTime());
-  const map = new Map<string, Section>();
-  for (const c of sorted) {
-    const key = c.projectId || `t:${c.id}`;
-    let s = map.get(key);
-    if (!s) {
-      s = { key, projectId: c.projectId, code: c.projectCode, title: c.projectName, companyName: c.companyName, cards: [] };
-      map.set(key, s);
-    }
-    s.cards.push(c);
-  }
-  return [...map.values()];
 }
 
 /** Màu nhấn của một thẻ theo mức nghiêm trọng: càng quá hạn lâu càng đỏ; hôm nay màu tím. */
@@ -195,7 +170,7 @@ export default function WorkOverdueScreen() {
     ).includes(needle));
   }, [cards, picked, needle]);
 
-  const sections = useMemo(() => buildSections(shown), [shown]);
+  const sections = useMemo(() => groupCardsByProject(shown), [shown]);
   const rows = useMemo(() => {
     const out: Row[] = [];
     for (const s of sections) {
@@ -258,7 +233,7 @@ export default function WorkOverdueScreen() {
             {overdueN > 0 ? (
               <View style={styles.metaRow}>
                 <Ionicons name="alert-circle-outline" size={15} color={colors.danger} />
-                <Text style={[styles.meta, { color: colors.danger }]} numberOfLines={1}>
+                <Text style={[styles.meta, { color: colors.danger }]} numberOfLines={2}>
                   {`${overdueN} quá hạn${oldest > 0 ? ` · ${oldest} ngày` : ''}`}
                   {sysAdmin && s.companyName ? ` · ${s.companyName.trim()}` : ''}
                 </Text>
@@ -267,7 +242,7 @@ export default function WorkOverdueScreen() {
             {todayN > 0 ? (
               <View style={styles.metaRow}>
                 <Ionicons name="today-outline" size={15} color={TODAY_COLOR} />
-                <Text style={[styles.meta, { color: TODAY_COLOR }]} numberOfLines={1}>
+                <Text style={[styles.meta, { color: TODAY_COLOR }]} numberOfLines={2}>
                   {`${todayN} đến hạn hôm nay`}
                   {overdueN === 0 && sysAdmin && s.companyName ? ` · ${s.companyName.trim()}` : ''}
                 </Text>
@@ -337,10 +312,13 @@ export default function WorkOverdueScreen() {
               {isToday ? 'Hôm nay' : (d > 0 ? `Quá hạn ${d} ngày` : 'Quá hạn')}
             </Text>
           </View>
-          <Text style={styles.taskMetaFlat} numberOfLines={1}>
+          {/* Hai dòng riêng (không dồn một dòng rồi bị cắt «14/30 chưa …» khi có mũi tên mở / đóng bên phải). */}
+          <Text style={styles.taskMetaFlat} numberOfLines={2}>
             {`Hạn ${formatTaskDeadline(c.deadline)} · ${c.assigneeName || 'Chưa giao'}`}
-            {c.childTotal > 0 ? ` · ${open}/${c.childTotal} chưa xong` : ''}
           </Text>
+          {c.childTotal > 0 ? (
+            <Text style={styles.taskMetaFlat} numberOfLines={1}>{`${open}/${c.childTotal} việc chưa xong`}</Text>
+          ) : null}
         </View>
         <Ionicons
           name={isOpen ? 'chevron-down' : 'chevron-forward'}

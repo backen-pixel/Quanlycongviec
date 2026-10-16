@@ -64,6 +64,7 @@ import {
 } from '../lib/productionApi';
 import { getCachedBoard, isCachedBoardFresh } from '../lib/productionBoardCache';
 import { REALTIME_BOARD_TASK } from '../lib/realtimeModes';
+import { cardDaysOverdue, fetchOverdueCards, groupCardsByProject, type OverdueCard } from '../lib/overdueCardsApi';
 import { fetchTeamProjectTasksPage } from '../lib/teamProjectTasksApi';
 import {
   computeSxBoardKpis,
@@ -208,6 +209,9 @@ export default function OverviewScreen() {
   const [tasksLoaded, setTasksLoaded] = useState(false);
   /** Quản lý: tổng việc DỰ ÁN quá hạn theo máy chủ (danh sách chỉ nạp trang đầu). null = chưa biết / nhân viên. */
   const [teamProjectOverdue, setTeamProjectOverdue] = useState<number | null>(null);
+  /** NHIỆM VỤ quá hạn (quản lý) — cùng nguồn / cách tính với tab Công việc và Kanban web. null = chưa có / tải lỗi. */
+  const [teamOverdueCards, setTeamOverdueCards] = useState<OverdueCard[] | null>(null);
+  const teamOverdueCardsRef = useRef<OverdueCard[] | null>(null);
   const teamOverdueRef = useRef<number | null>(null);
   /** Đang tải lại sau khi đổi phân loại (xem `applyWorkType`). */
   const [typeSwitching, setTypeSwitching] = useState(false);
@@ -405,8 +409,13 @@ export default function OverviewScreen() {
               signal: ac.signal,
               force: mode === 'refresh',
             }),
-          ]).then(([assignments, projectPage]) => {
+            // Số NHIỆM VỤ quá hạn cho banner (như tab Công việc). Phần bổ sung: lỗi → null, banner rơi về số việc như cũ.
+            fetchOverdueCards({ force: mode === 'refresh' }).then((r) => r.cards).catch(() => null),
+          ]).then(([assignments, projectPage, overdueCards]) => {
             teamOverdueRef.current = projectPage.counts.overdue;
+            teamOverdueCardsRef.current = overdueCards
+              ? overdueCards.filter((c) => c.kind === 'overdue' && (!companyId || c.companyId === companyId))
+              : null;
             return [...assignments, ...projectPage.tasks];
           })
             .catch((e): WorkTask[] | null => {
@@ -486,6 +495,7 @@ export default function OverviewScreen() {
       if (myTasks) {
         setTasks(myTasks);
         setTeamProjectOverdue(ownOnly ? null : teamOverdueRef.current);
+        setTeamOverdueCards(ownOnly ? null : teamOverdueCardsRef.current);
         setTasksFailed(false);
         setTasksLoaded(true);
       } else {
@@ -854,11 +864,19 @@ export default function OverviewScreen() {
 
   const openTaskSections = useMemo(() => groupTasksByDeal(overdueTasks), [overdueTasks]);
 
-  const taskPages = totalPagesOf(openTaskSections.length, TASK_PAGE_SIZE);
+  // Quản lý: danh sách quá hạn là NHIỆM VỤ gom theo đơn (như tab Công việc); tải lỗi / nhân viên thì dùng danh sách việc như cũ.
+  const useMissionList = teamView && teamOverdueCards != null;
+  const missionSections = useMemo(
+    () => (teamOverdueCards ? groupCardsByProject(teamOverdueCards) : []),
+    [teamOverdueCards],
+  );
+  const listSectionCount = useMissionList ? missionSections.length : openTaskSections.length;
+  const taskPages = totalPagesOf(listSectionCount, TASK_PAGE_SIZE);
   const dealPages = totalPagesOf(overdueDeals.length, DEAL_PAGE_SIZE);
   const safeTaskPage = Math.min(taskPage, taskPages);
   const safeDealPage = Math.min(dealPage, dealPages);
   const previewTaskSections = pageSlice(openTaskSections, safeTaskPage, TASK_PAGE_SIZE);
+  const previewMissionSections = pageSlice(missionSections, safeTaskPage, TASK_PAGE_SIZE);
   const previewDeals = pageSlice(overdueDeals, safeDealPage, DEAL_PAGE_SIZE);
 
   useEffect(() => {
@@ -1133,9 +1151,13 @@ export default function OverviewScreen() {
   ];
 
   const overdueDealCount = ownOnly ? staffOverdueDeals.length : kpis.overdue;
-  const overdueTotal = overdueTaskCount + overdueDealCount;
+  // Banner quản lý đếm NHIỆM VỤ quá hạn (cùng nguồn với tab Công việc / Kanban web) thay vì việc con; chưa có số (tải lỗi) thì rơi về số việc.
+  const bannerIsMission = teamView && teamOverdueCards != null;
+  const bannerTaskCount = bannerIsMission ? (teamOverdueCards as OverdueCard[]).length : overdueTaskCount;
+  const bannerTaskNoun = bannerIsMission ? 'nhiệm vụ' : 'công việc';
+  const overdueTotal = bannerTaskCount + overdueDealCount;
   /** Lẫn cả hai loại thì mới cần tách nút; một loại thì tiêu đề đã nói đủ. */
-  const bothOverdueKinds = overdueTaskCount > 0 && overdueDealCount > 0;
+  const bothOverdueKinds = bannerTaskCount > 0 && overdueDealCount > 0;
 
   /** Chip lọc công ty / phân loại: chỉ quản lý cần. Nhân viên bị khóa theo công ty của mình nên hai chip này không đổi được gì.
    *  Giao diện sáng: nằm TRONG hero xanh (đúng thiết kế); giao diện tối: nằm đầu vùng cuộn như cũ. */
@@ -1349,7 +1371,7 @@ export default function OverviewScreen() {
           <Pressable
             onPress={bothOverdueKinds
               ? undefined
-              : overdueTaskCount > 0
+              : bannerTaskCount > 0
                 ? () => goWork('overdue')
                 : openOverdueProjects}
             disabled={bothOverdueKinds}
@@ -1383,17 +1405,17 @@ export default function OverviewScreen() {
                   lẫn cả hai loại, nếu không thì nói thẳng là công việc hay dự án. */}
               <View style={styles.alertTitleRow}>
                 <Text style={styles.alertCount}>
-                  {overdueTaskCount > 0 && overdueDealCount > 0
+                  {bannerTaskCount > 0 && overdueDealCount > 0
                     ? overdueTotal
-                    : overdueTaskCount > 0
-                      ? overdueTaskCount
+                    : bannerTaskCount > 0
+                      ? bannerTaskCount
                       : overdueDealCount}
                 </Text>
                 <Text style={styles.alertTitle} numberOfLines={1}>
-                  {overdueTaskCount > 0 && overdueDealCount > 0
+                  {bannerTaskCount > 0 && overdueDealCount > 0
                     ? 'hạng mục quá hạn'
-                    : overdueTaskCount > 0
-                      ? 'công việc quá hạn'
+                    : bannerTaskCount > 0
+                      ? `${bannerTaskNoun} quá hạn`
                       : 'dự án quá hạn'}
                 </Text>
               </View>
@@ -1403,7 +1425,7 @@ export default function OverviewScreen() {
               {bothOverdueKinds ? (
                 <View style={styles.alertActions}>
                   <Pressable style={styles.alertChip} hitSlop={6} onPress={() => goWork('overdue')}>
-                    <Text style={styles.alertChipTxt}>{overdueTaskCount} công việc</Text>
+                    <Text style={styles.alertChipTxt}>{bannerTaskCount} {bannerTaskNoun}</Text>
                     <Ionicons name="chevron-forward" size={13} color={colors.danger} />
                   </Pressable>
                   <Pressable style={styles.alertChip} hitSlop={6} onPress={openOverdueProjects}>
@@ -1427,7 +1449,7 @@ export default function OverviewScreen() {
           teamView && !tasksFailed ? (
             <View style={styles.okBanner}>
               <Ionicons name="checkmark-circle" size={20} color={colors.success} />
-              <Text style={styles.okTxt}>Không có công việc / dự án quá hạn</Text>
+              <Text style={styles.okTxt}>{`Không có ${bannerTaskNoun} / dự án quá hạn`}</Text>
             </View>
           ) : null
         )}
@@ -1461,16 +1483,104 @@ export default function OverviewScreen() {
         <SectionHeader
           icon="alarm-outline"
           iconColor={colors.danger}
-          title="Công việc quá hạn"
-          actionLabel={overdueTaskCount > 0 ? `Tất cả (${overdueTaskCount})` : 'Xem công việc'}
-          onAction={() => goWork(overdueTaskCount > 0 ? 'overdue' : 'all')}
+          title={useMissionList ? 'Nhiệm vụ quá hạn' : 'Công việc quá hạn'}
+          actionLabel={bannerTaskCount > 0 ? `Tất cả (${bannerTaskCount})` : 'Xem công việc'}
+          onAction={() => goWork(bannerTaskCount > 0 ? 'overdue' : 'all')}
         />
         <View style={styles.card}>
-          {previewTaskSections.length === 0 ? (
+          {(useMissionList ? previewMissionSections.length : previewTaskSections.length) === 0 ? (
             <View style={styles.emptyRow}>
               <Ionicons name="checkbox-outline" size={20} color={colors.textFaint} />
-              <Text style={styles.emptyTxt}>Không có công việc quá hạn</Text>
+              <Text style={styles.emptyTxt}>{`Không có ${useMissionList ? 'nhiệm vụ' : 'công việc'} quá hạn`}</Text>
             </View>
+          ) : useMissionList ? (
+            <>
+              {previewMissionSections.map((section, sIdx) => {
+                const expanded = !!expandedTaskLeads[section.key];
+                const oldest = cardDaysOverdue(section.cards[0].deadline);
+                return (
+                  <View key={section.key} style={sIdx > 0 ? styles.dealGroupGap : undefined}>
+                    <Pressable style={styles.dealGroupHead} onPress={() => toggleOverviewTaskSection(section.key)}>
+                      <Ionicons name={expanded ? 'chevron-down' : 'chevron-forward'} size={16} color={colors.textMuted} />
+                      <View style={[styles.taskDot, { backgroundColor: colors.danger }]} />
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <Text style={styles.dealGroupTitle} numberOfLines={1}>
+                          {section.code ? `${section.code} · ` : ''}{section.title || 'Đơn hàng'}
+                        </Text>
+                        <Text style={styles.dealGroupMeta} numberOfLines={2}>
+                          <Text style={{ color: colors.danger }}>
+                            {`${section.cards.length} nhiệm vụ quá hạn${oldest > 0 ? ` · lâu nhất ${oldest} ngày` : ''}`}
+                          </Text>
+                          {section.companyName ? ` · ${section.companyName.trim()}` : ''}
+                        </Text>
+                      </View>
+                      {section.projectId ? (
+                        <Pressable
+                          style={({ pressed }) => [styles.viewBtn, pressed && styles.pressed]}
+                          hitSlop={6}
+                          onPress={() => openProjectDetail(String(section.projectId))}
+                          accessibilityLabel={`Xem dự án ${section.code}`}
+                        >
+                          <Text style={styles.viewBtnTxt}>Xem</Text>
+                        </Pressable>
+                      ) : null}
+                    </Pressable>
+                    {expanded
+                      ? section.cards.map((c, idx) => {
+                          const days = cardDaysOverdue(c.deadline);
+                          const open = Math.max(0, c.childTotal - c.childCompleted);
+                          return (
+                            <Pressable
+                              key={c.id}
+                              style={[styles.rowItem, styles.dealTaskRow, idx > 0 && styles.rowBorder]}
+                              onPress={() => {
+                                if (section.projectId) openProjectDetail(String(section.projectId));
+                                else goWork('overdue');
+                              }}
+                            >
+                              <View style={[styles.rowIcon, { backgroundColor: colors.dangerSoft }]}>
+                                <Ionicons name="alert-circle" size={18} color={colors.danger} />
+                              </View>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.rowTitle} numberOfLines={2}>{c.title}</Text>
+                                <Text style={styles.rowSub} numberOfLines={2}>
+                                  Phụ trách: {c.assigneeName || 'Chưa gán'}
+                                </Text>
+                                <Text style={styles.rowSub} numberOfLines={2}>
+                                  {`Hạn ${formatTaskDeadline(c.deadline)} · Quá hạn${days > 0 ? ` ${days} ngày` : ''}`}
+                                </Text>
+                                {c.childTotal > 0 ? (
+                                  <Text style={styles.rowSub} numberOfLines={1}>{`${open}/${c.childTotal} việc chưa xong`}</Text>
+                                ) : null}
+                              </View>
+                              <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+                            </Pressable>
+                          );
+                        })
+                      : null}
+                  </View>
+                );
+              })}
+              {listSectionCount > TASK_PAGE_SIZE ? (
+                <View style={styles.pager}>
+                  <Pressable
+                    style={[styles.pageBtn, safeTaskPage <= 1 && styles.pageBtnDisabled]}
+                    disabled={safeTaskPage <= 1}
+                    onPress={() => setTaskPage((p) => Math.max(1, p - 1))}
+                  >
+                    <Ionicons name="chevron-back" size={16} color={safeTaskPage <= 1 ? colors.textFaint : colors.text} />
+                  </Pressable>
+                  <Text style={styles.pageLabel}>Trang {safeTaskPage}/{taskPages}</Text>
+                  <Pressable
+                    style={[styles.pageBtn, safeTaskPage >= taskPages && styles.pageBtnDisabled]}
+                    disabled={safeTaskPage >= taskPages}
+                    onPress={() => setTaskPage((p) => Math.min(taskPages, p + 1))}
+                  >
+                    <Ionicons name="chevron-forward" size={16} color={safeTaskPage >= taskPages ? colors.textFaint : colors.text} />
+                  </Pressable>
+                </View>
+              ) : null}
+            </>
           ) : (
             <>
               {previewTaskSections.map((section, sIdx) => {
