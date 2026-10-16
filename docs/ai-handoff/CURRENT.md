@@ -1,3 +1,6 @@
+## 16/10/2026 — Làm rõ vận hành kế hoạch sau rà production
+
+Đã chỉnh UI staging: nhiệm vụ hiện tên công đoạn, cảnh báo thiếu người/hạn; dự án chưa có kế hoạch duyệt hiện thiếu kế hoạch và dẫn đối chiếu lịch sử cũ. Công đoạn tự tổng hợp từ nhiệm vụ, miễn trừ có lý do; không sao chép dấu tích legacy. Editor cho đổi công đoạn giữ task ID/phụ thuộc; preview thêm công đoạn/người. Chặn nút bắt đầu/hoàn thành lặp khi task đóng, vẫn cho needs_review xác nhận lại. Không đổi domain/migration/production hoặc dữ liệu cũ. 38/38 tests PASS với PLAYWRIGHT_CHANNEL=chrome, thêm chuyển công đoạn draft→approve; build PASS50.15s. Review riêng không blocker. Triển khai staging đang thực hiện; chưa gọi là live. Rollback revert commit UI, giữ dữ liệu/history.
 ## 16/10/2026 08:11 VN — Hiển thị nhiều công đoạn đã lên staging
 
 Runtime 3cccc9bd65d9ffa013816da0195e8284bfa5fc73, deploy dep-db8nh0ivcj2c739smjh0 LIVE 01:10:38Z =08:10:38 VN. Public synthetic smoke PASS 08:11:09 VN: hoàn thành t1 mở đồng thời s2/s3 (Công đoạn3/4), board thống nhất, mở lại phục hồi s1; graph/người/phụ thuộc/hạn giữ nguyên. Proof HoSoTuBepPro/templates/PARALLEL_STAGE_VERIFICATION.json, chỉ fixture mẫu. 38/38 tests PASS gồm real local browser multicard/disappearance, build PASS59.27s, review no blockers.

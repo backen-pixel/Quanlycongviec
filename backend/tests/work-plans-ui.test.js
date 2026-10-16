@@ -22,10 +22,12 @@ test('Browser: template to draft to approved plan, own tasks, completion, templa
     await page.goto(url);try{await page.getByRole('heading',{name:'Lập và điều chỉnh kế hoạch'}).waitFor({timeout:10000});}catch(e){throw new Error(`${e.message}\n${errors.join('\n')}\n${(await page.content()).slice(0,2000)}`);}
     assert.equal(await page.locator('h1').evaluate(el=>getComputedStyle(el).fontSize),'24px');
     await page.getByLabel('Dùng quy trình mẫu').selectOption('example:glass');
+    await page.getByLabel('Công đoạn của Đóng gói',{exact:true}).selectOption('s5');
     await page.getByLabel('Hạn hoàn thành sản xuất').fill('2026-11-30T17:00');
     const assignees=page.getByLabel('Người phụ trách');assert.equal(await assignees.count(),6);for(const select of await assignees.all())await select.selectOption(actor);
-    await page.getByRole('button',{name:'Lưu nháp và tính lịch'}).click();await page.getByRole('heading',{name:'Lịch dự kiến bản nháp',exact:true}).waitFor();assert.equal(row.document.active,null);assert.equal(row.document.draft.graph.tasks.length,6);
-    await page.getByRole('button',{name:'Duyệt và giao thực hiện'}).click();await page.getByRole('heading',{name:'Nhiệm vụ đang thực hiện'}).waitFor();assert.equal(row.document.active.graph.tasks.length,6);
+    await page.getByRole('button',{name:'Lưu nháp và tính lịch'}).click();await page.getByRole('heading',{name:'Lịch dự kiến bản nháp',exact:true}).waitFor();assert.equal(row.document.active,null);assert.equal(row.document.draft.graph.tasks.length,6);assert.equal(row.document.draft.graph.tasks.find(t=>t.id==='t6').stage_id,'s5');
+    assert.equal((await page.locator('thead').innerText()).trim(),'Công đoạn'+'\t'+'Nhiệm vụ'+'\t'+'Phụ trách'+'\t'+'Bắt đầu'+'\t'+'Hạn chót');
+    await page.getByRole('button',{name:'Duyệt và giao thực hiện'}).click();await page.getByRole('heading',{name:'Nhiệm vụ đang thực hiện'}).waitFor();assert.equal(row.document.active.graph.tasks.length,6);assert.equal(row.document.active.graph.tasks.find(t=>t.id==='t6').stage_id,'s5');
     try{await page.locator('article').first().waitFor({timeout:5000});}catch(e){throw new Error(`${e.message}\n${JSON.stringify(row.document.active.graph.tasks.map(t=>t.assignee_id))}\n${(await page.locator('body').innerText()).slice(0,5000)}`);}
     const article=page.locator('article').filter({has:page.getByText('Chốt kích thước',{exact:true})});await article.getByRole('button',{name:'Hoàn thành',exact:true}).click();await page.waitForFunction(()=>document.querySelector('article')?.innerText.includes('Hoàn thành'));assert.equal(row.document.execution.t1.status,'done');
     await page.getByText('Công đoạn đang thực hiện: Gia công kính, Gia công khung',{exact:true}).waitFor();

@@ -2731,3 +2731,6 @@ Fixture cabinet hiện chỉ định staff là production_person_id, nên staff 
 
 ---
 
+## 16/10/2026 — Làm rõ vận hành kế hoạch sau rà production
+
+Đã chỉnh UI staging: nhiệm vụ hiện tên công đoạn, cảnh báo thiếu người/hạn; dự án chưa có kế hoạch duyệt hiện thiếu kế hoạch và dẫn đối chiếu lịch sử cũ. Công đoạn tự tổng hợp từ nhiệm vụ, miễn trừ có lý do; không sao chép dấu tích legacy. Editor cho đổi công đoạn giữ task ID/phụ thuộc; preview thêm công đoạn/người. Chặn nút bắt đầu/hoàn thành lặp khi task đóng, vẫn cho needs_review xác nhận lại. Không đổi domain/migration/production hoặc dữ liệu cũ. 38/38 tests PASS với PLAYWRIGHT_CHANNEL=chrome, thêm chuyển công đoạn draft→approve; build PASS50.15s. Review riêng không blocker. Triển khai staging đang thực hiện; chưa gọi là live. Rollback revert commit UI, giữ dữ liệu/history.
