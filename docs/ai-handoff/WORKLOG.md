@@ -1,3 +1,11 @@
+## 2026-10-16 — Dọn bản tài nguyên Android lồng dư
+
+- Phạm vi từ `main` tại `e8d94ecc`: chỉ gỡ `crm-mobile-v2/plugins/native-android/res/res/` (17 tệp, 22.921 byte). So cùng đường dẫn tương đối ở `res/`: 16 tệp giống hoàn toàn, `values/styles_call.xml` là bản cũ. Bản canonical giữ `Theme.BubbleCompose`.
+- Đã đọc plugin và rà tham chiếu: `copyCallNative` dùng `RES_FILES` ở `res/layout`, `res/values`, `res/drawable`, `res/xml`, không đọc `res/res`. Các ứng dụng SX/VC có resource riêng; ảnh nguồn và ảnh deploy được script đồng bộ có chủ đích, giữ nguyên. Tài liệu kiến trúc HTML/PDF lịch sử và V1.1 có vai trò riêng, không gộp/xóa theo tên.
+- Kiểm trước/sau bằng hàm sao chép thật trong VM, giả lập filesystem đích: 44 tệp native, gồm 18 resource, đường dẫn đích và SHA-256 giống hoàn toàn; không thiếu nguồn hoặc trùng đích. Không cài dependency, không Android build, không merge/deploy. Hoàn tác bằng revert commit này để phục hồi đúng 17 tệp.
+
+---
+
 ## 2026-10-14 (4) — App tab Công việc: nhóm dự án nạp ở trang 2 bị chồng/mất; KPI «Chưa giao» quá hạn
 
 - Kiểm app ↔ web ↔ API (HCB · Tủ bếp, chỉ đọc): web khớp API tuyệt đối (công ty b78baba2…, lọc Phúc Đạt: TỔNG 2, «Chưa giao (92)», TB-2026-1021). Máy chủ phân trang đúng (20 nhóm/trang: 345 + 227 + 2 = 574 việc, 574 `unified_id` khác nhau, 0 trùng; «Chưa giao» 0 trùng sau PR khử trùng). Số đếm KPI app = API (574 / QH 19; «Chưa giao» 122 / QH 5).
