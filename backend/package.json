@@ -26,6 +26,7 @@
     "storage:sync-backup:dry": "node scripts/sync-storage-to-backup.js --dry-run",
     "ota:publish": "node scripts/publish-ota.js",
     "test:cache": "node tests/response-cache-smoke.js",
+    "test:db-fence": "node --test tests/db-write-fence.test.js",
     "test:tenant": "node tests/tenant-isolation-smoke.js",
     "test:anon-exposure": "node tests/anon-exposure-smoke.js",
     "test:crm-split": "node tests/crm-split-50-cases.js",

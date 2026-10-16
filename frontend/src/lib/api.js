@@ -4,6 +4,7 @@ import { disconnectSocket } from './socket';
 import { resetClientSessionState } from './sessionReset';
 import { getSupabaseMonitorToken, clearSupabaseMonitorToken } from './supabaseMonitorAuth';
 import { getCachedActivityContext } from './deviceHeartbeat';
+import { normalizeFenceError } from './dbWriteFence';
 
 const API_URL = resolveApiOrigin();
 
@@ -77,6 +78,9 @@ api.interceptors.request.use((c) => {
 });
 
 api.interceptors.response.use(r => r, (err) => {
+  // DB đang khóa ghi (cutover) — đổi CUTOVER_* thành câu tiếng Việt trước khi
+  // các màn hình alert() message này ra cho người dùng.
+  normalizeFenceError(err);
   if (err.response?.status === 403 && err.response?.data?.code === 'MONITOR_LOCKED') {
     const sent = err.config?.headers?.['X-Supabase-Monitor-Token'];
     if (sent) clearSupabaseMonitorToken();
