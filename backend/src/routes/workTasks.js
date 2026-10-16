@@ -1579,6 +1579,9 @@ r.get('/project-overview', async (req, res) => {
     const requestedDealExtName = String(req.query.deal_external_company_name || '').trim();
     // Phân loại xưởng (`projects.workshop_type_id`): mã loại hoặc `none` (chưa phân loại) — cùng quy ước với `team-project-tasks`.
     const requestedWorkshopType = String(req.query.workshop_type_id || '').trim();
+    // include_children=1: kèm danh sách VIỆC CON của từng thẻ (app mobile mở nhiệm vụ ở màn «Quá hạn & Hôm nay»). Mặc định tắt
+    // để các nơi gọi hiện có (web, tổng quan) không phải nhận thêm dữ liệu.
+    const includeChildren = ['1', 'true'].includes(String(req.query.include_children || '').toLowerCase());
     const effectiveCompany = isSystemAdmin(req.user)
       ? (requestedCompany || null)
       : (req.user?.company_id || null);
@@ -2048,6 +2051,22 @@ r.get('/project-overview', async (req, res) => {
         module_owner_name: first.module_owner_name || null,
         effective_assignee_id: assigned?.effective_assignee_id || first.module_owner_id || null,
         effective_assignee_name: assigned?.effective_assignee_name || first.module_owner_name || null,
+        ...(includeChildren ? {
+          // Việc chưa xong lên trước, rồi theo hạn gần nhất; `done` dùng đúng quy tắc đếm `child_completed` của thẻ.
+          children: group.children
+            .map((child) => ({
+              unified_id: child.unified_id,
+              source: child.source,
+              source_id: child.source_id,
+              title: child.title,
+              status: child.status,
+              deadline: child.deadline || null,
+              done: childDone(child),
+              assignee_name: child.effective_assignee_name || child.assignee_name || null,
+            }))
+            .sort((a, b) => Number(a.done) - Number(b.done)
+              || String(a.deadline || '9999').localeCompare(String(b.deadline || '9999'))),
+        } : {}),
       };
     }).filter(Boolean);
     if (stampRows.length) {

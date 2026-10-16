@@ -12,6 +12,7 @@ import MessagesScreen from '../screens/MessagesScreen';
 import OverviewScreen from '../screens/OverviewScreen';
 import PlannerScreen from '../screens/PlannerScreen';
 import ProfileScreen, { SX_OPEN_CREATE_DEAL } from '../screens/ProfileScreen';
+import WorkOverdueScreen from '../screens/WorkOverdueScreen';
 import WorkScreen from '../screens/WorkScreen';
 import FloatingTabBar from './FloatingTabBar';
 
@@ -45,6 +46,15 @@ const Tab = createBottomTabNavigator<MainTabParamList>();
 function CreateDealPlaceholder() {
   const { colors } = useTheme();
   return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
+}
+
+/**
+ * Tab «Công việc»: quản lý (admin, admin hệ thống, quản lý…) chỉ thấy các việc QUÁ HẠN — admin hệ thống thấy mọi xưởng,
+ * vai trò còn lại chỉ xưởng của mình (xem WorkOverdueScreen). Nhân viên giữ danh sách việc của chính mình.
+ */
+function WorkTab() {
+  const { user } = useAuth();
+  return canViewTeamWork(user) ? <WorkOverdueScreen /> : <WorkScreen />;
 }
 
 export default function MainTabs() {
@@ -94,7 +104,7 @@ export default function MainTabs() {
         <Tab.Screen name="Kanban" component={KanbanScreen} options={{ title: 'Dự án' }} />
         {/* Ô giữa: nút + tạo đơn (chỉ quản lý/admin). Nhân viên không thấy nên 4 tab còn lại trải đều. */}
         <Tab.Screen name="CreateDeal" component={CreateDealPlaceholder} options={{ title: 'Tạo đơn' }} />
-        <Tab.Screen name="Work" component={WorkScreen} options={{ title: 'Công việc' }} />
+        <Tab.Screen name="Work" component={WorkTab} options={{ title: 'Công việc' }} />
         <Tab.Screen name="Messages" component={MessagesScreen} options={{ title: 'Tin nhắn' }} />
         {/* Mở từ menu, không có chỗ trên thanh. */}
         <Tab.Screen name="Profile" component={ProfileScreen} />

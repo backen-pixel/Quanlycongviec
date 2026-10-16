@@ -1,3 +1,23 @@
+## 2026-10-16 — VPT: đã áp dung lượng 12 GB; PR #139 chưa phát hành
+
+Founder đã phê duyệt thay đổi dung lượng/chi phí. Theo checkpoint vận hành đã xác nhận, đĩa primary và backup hiện đều **12 GB**, giới hạn autoscale đều **12 GB**; **Spend Cap cấp tổ chức đã tắt** trong phạm vi phê duyệt. Các mục ngày 15/10 còn ghi chờ quyết định 12 GB là lịch sử. Cần đo lại sizing/capacity và kiểm gate tại thời điểm thực hiện bước dữ liệu; giữ nguyên timestamp/fingerprint cũ.
+
+**Checkpoint vận hành 07:14:45 UTC:** v1 private SQL đã áp primary history `20261016071153`/backup `20261016071159`; v2 prep primary `20261016071348`/backup `20261016071413`. V1 armed cả hai lúc 07:12:33.931 UTC, run `30a4e894-3d2c-4b7c-a65b-bc70bd047350`, mỗi bên 5 bảng/10 ALWAYS trigger, 0 hàng nghiệp vụ đổi. Plan sau arm: manifest `097952669c7ef255e89fa1f6c5efb2e2ccda2c7cdbb413e925338a7719397d13`, primary 336/backup 339 bảng + 5 view mỗi bên, held 0. V2 private contract primary inspect PASS; registrations 0, control chưa có fence active. Chưa heavy capture, repair hoặc deploy; đang chuẩn bị phép đo dung lượng mới. Các mục bên dưới nói journal chưa cài là lịch sử.
+
+Đồng bộ nhánh `codex/vpt-operations-recovery-20261015` với `origin/main` tại `fe3f4398`, giữ các thay đổi mới của người dùng và cả hai phía hồ sơ bàn giao. Chỉ CURRENT/WORKLOG cần giải quyết conflict. Main có hai import tới `useActivityClickTracker`/`BehaviorInsightPage` nhưng thiếu cả hai file trong Git và checkout gốc; sửa build bằng cách bỏ đúng hai import, hook call và route chưa có implementation, giữ menu báo lỗi cùng activity route/logger. Hồi quy 153/153, migration unit 8/8, hai overview helper, syntax 10 file, kiểm tên/số migration và frontend build (1m18s) đều đạt; CI SHA merge mới sau push còn chờ. [Draft PR #139](https://github.com/backen-pixel/Quanlycongviec/pull/139) chưa merge hoặc triển khai bởi tác vụ này; không chạy SQL, replay, ghi sửa dữ liệu nghiệp vụ hay phát event Ads trong phiên đồng bộ nhánh.
+
+Runtime do tác nhân khác đã có deploy **16/10 lúc 06:18 UTC**, mã `fe3f4398`. Nghiệm thu gói VPT, bảo toàn queue RAM cũ, khách quảng cáo thật và CPL vẫn cần bằng chứng riêng.
+
+Kiểm Ads mới lúc 07:15:38 UTC: cả năm số đếm qualification/website receipt thật/receipt thật có consent/outbox/attempts đều 0. DNS 07:02 UTC vẫn có hai SPF; chưa xác nhận inbox hoặc nghiệm thu Ads/CPL.
+
+---
+
+## 2026-10-16 — Dọn thư mục tài nguyên Android lồng trùng
+
+Gỡ 17 tệp ở `crm-mobile-v2/plugins/native-android/res/res/`: 16 tệp trùng bản tương ứng ở `res/`, một `styles_call.xml` là bản cũ thiếu `Theme.BubbleCompose`. Plugin `withIncomingCallAndroid.js` chỉ đọc danh sách tài nguyên ở `res/` bên ngoài; không có tham chiếu tới thư mục lồng. Kiểm luồng sao chép native bằng chính hàm plugin với filesystem đích giả lập: trước/sau đều 44 tệp, gồm 18 resource, cùng đường dẫn đích và SHA-256, không thiếu tệp. Chưa chạy Android build hoặc phát hành app. Khôi phục bằng revert commit dọn thư mục; tài nguyên canonical và các bản sao phục vụ ứng dụng riêng được giữ nguyên.
+
+---
+
 ## 2026-10-15 — VPT: bốn việc đang làm; chưa phát hành ứng dụng hoặc nghiệm thu Ads
 
 **Checkpoint 06:47 UTC — chờ quyết định dung lượng/chi phí:** cả4CI tại `31840d1e` SUCCESS; actualPG17.6 đạt9fence+8combined+15lifecycle,0deferred/0DBsynthetic còn lại; benchmark large/small4096 peakRSS859.545.600byte<1GiB. Main45399d59 đã tích hợp (chỉ thêm script MCP khác), không mất thay đổi người dùng. Reviewer vận hành chưa duyệt8GB cho2fullcaptures: primary chỉ còn34.520.201byte ngoài reserves theo phép tính bảo thủ/2MiBmetadata; WAL/TOAST của bulkciphertext chưa đo. Đề xuất12GB mỗi project vàmaxautoscale12GB (~1USD/thángtổng chưathuế, chỉphầnđĩa) đòi tắtSpendCapTOÀNTỔCHỨC; câu hỏi phê duyệt riêng đang chờ Founder. Không tự đổi billing/disk, khôngDDL/arm/maintenance/repair/merge/deploy/restart. Cảjournal v1/v2 vẫn chưa cài. Nguồn sizing06:13–06:23 đãhết hạn, phảiđo mới; kế hoạch trướcv1arm phải tạo lại sauhooks, không sửa timestamp/fingerprint cũ. Bằng chứng/đề xuất chi tiết lưu ngoàirepo trong workspace vận hành.

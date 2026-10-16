@@ -1,0 +1,32 @@
+name: DB migrations (ten + so thu tu)
+# Chan PR them file /database/*.sql sai quy uoc hoac trung so. Khong ket noi DB.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'database/**'
+      - 'backend/scripts/migrate.js'
+      - 'backend/scripts/check-new-migrations.js'
+      - 'backend/scripts/lib/migrationPlan.js'
+      - 'backend/tests/migrationPlan.test.js'
+      - '.github/workflows/db-migrations.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  migrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Unit test migrationPlan
+        run: node --test backend/tests/migrationPlan.test.js
+      - name: Kiem tra migration moi trong PR
+        if: github.event_name == 'pull_request'
+        run: node backend/scripts/check-new-migrations.js "origin/${{ github.base_ref }}"

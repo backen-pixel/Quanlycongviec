@@ -1871,6 +1871,7 @@ export default function CRMTasksTab({
       raw: sxTrangThaiO[String(stage?.id || '')],
       past: stageDaQua(stage),
       allTasksDone,
+      tichThuCong: !!stage?.tich_thu_cong,
     });
   }, [sxTrangThaiO, stageDaQua]);
 

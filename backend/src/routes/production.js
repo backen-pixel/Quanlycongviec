@@ -902,8 +902,11 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
     ['name', 'color', 'icon', 'order_index', 'is_active', 'workflow_stage_id', 'bucket_slug',
       'is_handover_to_logistics', 'is_phat_sinh', 'converts_workshop_type', 'target_workshop_type_id',
       'crm_sync_type', 'crm_target_stage_id', 'progress_percent',
-      'workshop_type_id', 'is_packaging_done', 'group_key', 'group_sort', 'board_tab'].forEach((f) => {
-      if (b[f] !== undefined) update[f] = f === 'is_packaging_done' ? !!b[f] : b[f];
+      'workshop_type_id', 'is_packaging_done', 'group_key', 'group_sort', 'board_tab',
+      'tich_thu_cong'].forEach((f) => {
+      if (b[f] !== undefined) {
+        update[f] = (f === 'is_packaging_done' || f === 'tich_thu_cong') ? !!b[f] : b[f];
+      }
     });
     if (update.group_sort !== undefined) {
       const n = Number(update.group_sort);
@@ -3456,6 +3459,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
           group_key: c.group_key ?? null,
           deadline_group: c.deadline_group ?? null,
           workshop_type_id: c.workshop_type_id ?? null,
+          tich_thu_cong: c.tich_thu_cong ?? false,
           }));
           try {
             const { enrichPipelineStagesWithDefaultStaff } = require('../helpers/productionWorkshopTypeStaff');

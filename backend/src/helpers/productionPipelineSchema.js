@@ -33,6 +33,7 @@ let pipelineGroupKeyColumnAvailable = true;
 let pipelineGroupSortColumnAvailable = true;
 /** Cột board_tab (migration 614) — tab Dashboard Sản xuất / Công nợ */
 let pipelineBoardTabColumnAvailable = true;
+let pipelineTichThuCongColumnAvailable = true;
 /** Cột is_phat_sinh (migration 648) — cột đơn phát sinh */
 let pipelinePhatSinhColumnAvailable = true;
 /** Cột converts_workshop_type / target_workshop_type_id (migration 303) */
@@ -309,6 +310,19 @@ function isPipelineBoardTabMissingError(err) {
   return s.includes('board_tab') && (s.includes('does not exist') || s.includes('could not find'));
 }
 
+function isPipelineTichThuCongMissingError(err) {
+  if (!err || !pipelineTichThuCongColumnAvailable) return false;
+  const s = String(err.message || err.details || err.hint || '').toLowerCase();
+  return s.includes('tich_thu_cong') && (s.includes('does not exist') || s.includes('could not find') || s.includes('schema cache'));
+}
+
+function markPipelineTichThuCongColumnMissing() {
+  if (pipelineTichThuCongColumnAvailable) {
+    console.warn('[production_pipeline_stages] Cột tich_thu_cong chưa có. Chạy database/620_tich_thu_cong_cot_pipeline.sql.');
+  }
+  pipelineTichThuCongColumnAvailable = false;
+}
+
 function isPipelinePhatSinhMissingError(err) {
   if (!err || !pipelinePhatSinhColumnAvailable) return false;
   const s = String(err.message || err.details || err.hint || '').toLowerCase();
@@ -410,6 +424,7 @@ function buildPipelineStageSelect() {
   const gKey = pipelineGroupKeyColumnAvailable ? 'group_key, ' : '';
   const gSort = pipelineGroupSortColumnAvailable ? 'group_sort, ' : '';
   const gTab = pipelineBoardTabColumnAvailable ? 'board_tab, ' : '';
+  const ttc = pipelineTichThuCongColumnAvailable ? 'tich_thu_cong, ' : '';
   const phatSinh = pipelinePhatSinhColumnAvailable ? 'is_phat_sinh, ' : '';
   const sw = pipelineSwitchWorkshopTypeColumnAvailable ? 'converts_workshop_type, ' : '';
   let twt = '';
@@ -432,7 +447,7 @@ function buildPipelineStageSelect() {
       t = 'crm_target_stage_id, ';
     }
   }
-  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, is_packaging_done, ${h}${sw}${twt}${pp}${kpi}${reqDl}${clrDl}${dashKpi}${dlGroup}${gKey}${gSort}${gTab}${phatSinh}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
+  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, is_packaging_done, ${h}${sw}${twt}${pp}${kpi}${reqDl}${clrDl}${dashKpi}${dlGroup}${gKey}${gSort}${gTab}${ttc}${phatSinh}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
 }
 
 /** Áp dụng retry khi SELECT 1 cột pipeline (embed / cột thiếu). */
@@ -605,6 +620,7 @@ function stripHandoverFields(obj) {
   if (!pipelineGroupKeyColumnAvailable) delete o.group_key;
   if (!pipelineGroupSortColumnAvailable) delete o.group_sort;
   if (!pipelineBoardTabColumnAvailable) delete o.board_tab;
+  if (!pipelineTichThuCongColumnAvailable) delete o.tich_thu_cong;
   if (!pipelinePhatSinhColumnAvailable) delete o.is_phat_sinh;
   if (!pipelineSwitchWorkshopTypeColumnAvailable) {
     delete o.converts_workshop_type;
@@ -634,6 +650,7 @@ function _resetForTests() {
   pipelineGroupKeyColumnAvailable = true;
   pipelineGroupSortColumnAvailable = true;
   pipelineBoardTabColumnAvailable = true;
+  pipelineTichThuCongColumnAvailable = true;
   pipelinePhatSinhColumnAvailable = true;
   pipelineSwitchWorkshopTypeColumnAvailable = true;
   pipelineTargetWorkshopTypeJoinAvailable = true;

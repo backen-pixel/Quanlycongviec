@@ -243,6 +243,7 @@ import { Settings } from 'lucide-react';
 
 import PinnedProjectsWidget from './components/PinnedProjectsWidget';
 import { AppGuideCopilot } from './features/guide';
+import MenuChuotPhaiBaoLoi from './features/baoloi/MenuChuotPhaiBaoLoi';
 import { ThemeProvider, useTheme } from './components/ThemeProvider';
 import { CrmNotesFabProvider } from './context/CrmNotesFabContext';
 import { MessengerDockProvider } from './context/MessengerDockContext';
@@ -405,6 +406,10 @@ function ProtectedLayout() {
           </div>
           <PinnedProjectsWidget />
           <AppGuideCopilot />
+          {/* Chuột phải ở bất kỳ đâu → báo lỗi, đã chỉ sẵn vào thành phần dưới con trỏ. */}
+          <MenuChuotPhaiBaoLoi
+            onBaoLoi={(d) => { window.__baoLoi?.(d) || console.info('[bao-loi]', d); }}
+          />
         </div>
       </ProductTourProvider>
     </CrmNotesFabProvider>
