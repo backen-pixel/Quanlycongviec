@@ -4,6 +4,15 @@
 - Gốc repo: xoá `debug-fb4228.log`, 5 file `000*.patch` + `HUONG-DAN-AP-PATCH.md` (patch đã dùng xong, còn trong lịch sử git). Bỏ theo dõi (giữ file trên máy) `HoaDon_OpenClaw_T3_2026.pdf`, `BaoCao_CongViec_T3_2026.xlsx`. Chuyển `BAO-CAO-*.md`, `DANH-GIA-ke-hoach-dong-bo-deadline.md`, `crm-split-report.pdf` → `docs/project/reports/root-archive/`. `.gitignore` thêm `debug-*.log`, `HoaDon_*.pdf`, `BaoCao_*.xlsx`.
 - KHÔNG đụng `uploads/`, `backend/uploads/`: `knowledge-screenshots` đang được bài đào tạo + `GuidePage.jsx` tham chiếu; APK `crm-mobile-v2` có thể là bản Render phục vụ tải về (`appReleaseDownload.js` đọc file trên disk) — cần người quyết.
 - Kiểm: `require` module ổn; không có test nào import `workshopKanban.js`. CHƯA chạy trên dữ liệu thật. Hoàn tác: revert commit.
+## 2026-10-13 (13) — Theo dõi migration DB: `schema_migrations` + `migrate.js` + CI chặn trùng số
+
+- Hiện trạng: `database/` 734 file, ~66 số migration trùng (không tính cặp `_rollback`), không có sổ nào cho biết DB primary/backup đã chạy tới file nào; ~30 script `apply-migration-NNN.js` viết riêng từng file.
+- `database/722_schema_migrations.sql` (+ rollback): bảng `public.schema_migrations(filename PK, checksum, applied_at, applied_by, source runner|baseline|manual, note)`, RLS bật, revoke anon/authenticated.
+- `backend/scripts/migrate.js` (`npm run db:status|db:apply|db:baseline`): `status` liệt kê file chưa chạy / đã sửa sau khi ghi sổ / có sổ mà mất file; `apply <file|số>` chạy file + ghi sổ trong cùng một lần gửi, bỏ qua file đã chạy, từ chối file đổi nội dung (trừ `--force`); `baseline --upto N` đánh dấu file cũ không chạy SQL. `--target primary|backup|both`, `--via api|pg` (mặc định api khi có token). Không `--yes` = chỉ in kế hoạch. Checksum chuẩn hoá CRLF→LF.
+- CI `.github/workflows/db-migrations.yml` + `backend/scripts/check-new-migrations.js`: PR thêm file `database/*.sql` sai tên (`<số>_<snake_case>.sql`) hoặc trùng số → lỗi; sửa file cũ → cảnh báo. Không kết nối DB.
+- Tài liệu: `database/README.md` (quy trình), CLAUDE.md mục Database Migrations, `docs/database/README.md`.
+- Kiểm: 8 unit test `migrationPlan.test.js` đạt. Khi thử `apply 715` (offline mong đợi) script đã thử đọc DB primary qua `--via pg` và bị từ chối xác thực (`password authentication failed`) — không đọc/ghi được gì; URL Postgres trong `backend/.env` máy này có vẻ sai mật khẩu → đổi mặc định sang api. CHƯA chạy trên DB thật.
+- CẦN LÀM (người có quyền, mỗi DB một lần): `db:baseline -- --upto <số cuối chắc chắn đã chạy> --target both --yes` rồi `db:apply -- 722 --target both --yes`.
 ## 2026-10-14 (4) — App tab Công việc: nhóm dự án nạp ở trang 2 bị chồng/mất; KPI «Chưa giao» quá hạn
 
 - Kiểm app ↔ web ↔ API (HCB · Tủ bếp, chỉ đọc): web khớp API tuyệt đối (công ty b78baba2…, lọc Phúc Đạt: TỔNG 2, «Chưa giao (92)», TB-2026-1021). Máy chủ phân trang đúng (20 nhóm/trang: 345 + 227 + 2 = 574 việc, 574 `unified_id` khác nhau, 0 trùng; «Chưa giao» 0 trùng sau PR khử trùng). Số đếm KPI app = API (574 / QH 19; «Chưa giao» 122 / QH 5).
