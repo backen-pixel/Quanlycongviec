@@ -152,7 +152,7 @@ async function buildGoogleOfflineConversions({ db, companyId, fromMs, toMs }) {
     recordings_duplicates_merged: 0, recordings_skipped_outbound: 0,
     recordings_matched: 0, recordings_without_click: 0,
     call_clicks: 0, call_clicks_with_gclid: 0, call_clicks_braid_only: 0, call_clicks_no_click_id: 0,
-    call_clicks_unmatched: 0, test_excluded: 0, invalid_gclid: 0,
+    call_clicks_unmatched: 0, test_excluded: 0, invalid_gclid: 0, measurement_consent_required: 0,
     website_form_leads: 0, valid_leads: 0, valid_leads_with_gclid: 0, valid_leads_via_form_gclid: 0,
     valid_leads_via_call_gclid: 0, valid_leads_via_description_gclid: 0, valid_leads_without_gclid: 0,
     valid_leads_braid_only: 0, valid_leads_milestone_before_click: 0,
@@ -210,10 +210,30 @@ async function buildGoogleOfflineConversions({ db, companyId, fromMs, toMs }) {
 
   const rows = [];
   const callClickByLead = new Map();
+  // A new website request's measurement choice applies to the older Google
+  // export too, including a call linked to that request. Existing NULL metadata
+  // retains its original policy; a new explicit denial cannot bypass it via a
+  // sales milestone or the description fallback.
+  const withheld = new Set();
+  const mayMeasure = row => {
+    if (row.website_intake != null && row.website_intake.measurement_consent !== true) {
+      if (!withheld.has(row.id)) { withheld.add(row.id); d.measurement_consent_required++; }
+      return false;
+    }
+    return true;
+  };
+  const linkedIds = [...new Set(recordings.filter(r => r.lead_id).map(r => r.lead_id))];
+  const linkedAllowed = new Set();
+  for (let i = 0; i < linkedIds.length; i += 100) {
+    const { data, error } = await db.from('crm_leads').select('id,is_test,website_intake')
+      .eq('company_id', companyId).in('id', linkedIds.slice(i, i + 100));
+    if (error || !Array.isArray(data)) throw error || Error('SOURCE_UNAVAILABLE');
+    for (const row of data) if (row.is_test !== true && mayMeasure(row)) linkedAllowed.add(row.id);
+  }
   for (const rec of [...recordings].sort((a, b) => a.t - b.t)) {
     const click = matches.get(rec.id);
     if (rec.counted) { if (click) d.recordings_matched++; else d.recordings_without_click++; }
-    if (!click) continue;
+    if (!click || (rec.lead_id && !linkedAllowed.has(rec.lead_id))) continue;
     if (rec.lead_id && !callClickByLead.has(rec.lead_id)) callClickByLead.set(rec.lead_id, click);
     if (!rec.counted) continue;
     rows.push({ type: 'CALL', conversion_name: CONVERSION_NAMES.CALL, gclid: click.gclid,
@@ -253,10 +273,10 @@ async function buildGoogleOfflineConversions({ db, companyId, fromMs, toMs }) {
   const leadIds = [...new Set([...formByLead.keys(), ...descByLead.keys(), ...callClickByLead.keys()])];
   const real = new Set();
   for (let i = 0; i < leadIds.length; i += 100) {
-    const { data, error } = await db.from('crm_leads').select('id,is_test')
+    const { data, error } = await db.from('crm_leads').select('id,is_test,website_intake')
       .eq('company_id', companyId).in('id', leadIds.slice(i, i + 100));
     if (error || !Array.isArray(data)) throw error || Error('SOURCE_UNAVAILABLE');
-    for (const row of data) if (row.is_test !== true) real.add(row.id);
+    for (const row of data) if (row.is_test !== true && mayMeasure(row)) real.add(row.id);
   }
 
   // 5. One source per lead: lead_attribution gclid first, then the description gclid (only when

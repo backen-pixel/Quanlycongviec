@@ -155,7 +155,7 @@ async function buildGoogleQualifiedConversions({ db, companyId, fromMs, toMs }) 
   for (let i = 0; i < candidates.length; i += 100) {
     const ids = candidates.slice(i, i + 100).map(row => row.canonical_lead_id);
     const records = await readAll(() => db.from('crm_leads')
-      .select('id,company_id,type,is_test,customer_id,facebook_contact_id,phone,stage_id,created_at,intake_attribution,description', { count: 'exact' })
+      .select('id,company_id,type,is_test,customer_id,facebook_contact_id,phone,stage_id,created_at,intake_attribution,website_intake,description', { count: 'exact' })
       .eq('company_id', companyId).in('id', ids).order('id'));
     for (const row of records) {
       if (row.company_id !== companyId || !ids.includes(row.id) || details.has(row.id)) throw unavailable();
@@ -174,6 +174,11 @@ async function buildGoogleQualifiedConversions({ db, companyId, fromMs, toMs }) 
     const lead = details.get(event.canonical_lead_id), canonical = byId.get(event.canonical_lead_id);
     if (!lead || !canonical || lead.company_id !== companyId || lead.is_test !== false ||
         !['lead', 'deal'].includes(lead.type)) { diagnostics.missing_or_test_lead++; continue; }
+    // New receipt contracts carry an explicit per-request measurement choice.
+    // Old rows remain under the existing export scope; never override a new denial.
+    if (lead.website_intake != null && lead.website_intake.measurement_consent !== true) {
+      diagnostics.measurement_consent_required = (diagnostics.measurement_consent_required || 0) + 1; continue;
+    }
     // Refuse a racing identity change between history and detailed reads.
     if (lead.customer_id !== canonical.customer_id || lead.facebook_contact_id !== canonical.facebook_contact_id ||
         lead.created_at !== canonical.created_at || lead.phone !== canonical.phone) throw unavailable();

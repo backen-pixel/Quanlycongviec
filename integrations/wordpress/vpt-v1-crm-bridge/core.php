@@ -30,7 +30,7 @@ final class VPT_V1_CRM_Core {
         return preg_match('/^(0[35789][0-9]{8}|02[0-9]{9})$/', $digits) ? $digits : '';
     }
 
-    public static function build($data, $mode, $is_admin, $submitted_url, $now) {
+    public static function build($data, $mode, $is_admin, $submitted_url, $now, $submitted_ms = null) {
         if (!in_array($mode, array('test', 'live'), true)) { throw new RuntimeException('bridge_off'); }
         $test = $mode === 'test';
         if ($test && !$is_admin) { throw new RuntimeException('test_requires_admin'); }
@@ -68,8 +68,8 @@ final class VPT_V1_CRM_Core {
         if ($test) { $notes .= "\nTEST: KHÔNG GỌI, không báo giá, không tính doanh thu/chuyển đổi."; }
         foreach ($tracking as $key => $value) { $notes .= "\n" . $key . ': ' . $value; }
         // Fields added after 0.2.2 are noted only when present, so older notes stay identical.
-        $fbclid = self::text($data['fbclid'] ?? '', 256);
-        if ($fbclid !== '') { $notes .= "\nfbclid: " . $fbclid; }
+        $fbclid = self::text($data['fbclid'] ?? '', 500);
+        if ($fbclid !== '') { $notes .= "\nfbclid: " . self::text($data['fbclid'] ?? '', 256); }
         $ttclid = self::text($data['ttclid'] ?? '', 256);
         if ($ttclid !== '') { $notes .= "\nttclid: " . $ttclid; }
         $referrer = strtolower(self::text($data['vpt_referrer_host'] ?? '', 253));
@@ -107,6 +107,21 @@ final class VPT_V1_CRM_Core {
             if (preg_match('/^\d{6,32}$/D', $tracking['utm_content'])) { $attribution['ad_id'] = $tracking['utm_content']; }
         }
         $business = array('name'=>$name,'phone'=>$phone,'area'=>$area,'material'=>$material,'timeline'=>$timeline,'message'=>$message,'test'=>$test);
+        // Optional per-request advertising measurement choice. Contact consent above
+        // continues to control intake; denying measurement does not discard a lead.
+        $measure = in_array('1', (array)($data['your-ads-consent'] ?? array()), true);
+        $fbc = $measure ? self::text($data['vpt_fbc'] ?? '', 520) : '';
+        $fbp = $measure ? self::text($data['vpt_fbp'] ?? '', 70) : '';
+        $capture = $measure ? self::text($data['vpt_fb_captured_at'] ?? '', 40) : '';
+        // Keep subsecond precision: a real click just before submission must not
+        // appear later than the server's rounded-down submission time.
+        $submitted_ms = $submitted_ms === null ? $now * 1000 : $submitted_ms;
+        if (!is_int($submitted_ms) || $submitted_ms < 0) { throw new RuntimeException('invalid_submit_time'); }
+        $submitted_at = gmdate('Y-m-d\TH:i:s', intdiv($submitted_ms, 1000)) . sprintf('.%03d+00:00', $submitted_ms % 1000);
+        $website = array('version'=>1, 'request_id'=>null, 'form_id'=>'11116', 'site_host'=>'vanphuthanh.net',
+            'submitted_at'=>$submitted_at, 'landing_url'=>$attribution['landing_url'] ?? $page,
+            'captured_at'=>$capture !== '' ? $capture : null, 'fbc'=>$fbc !== '' ? $fbc : null,
+            'fbp'=>$fbp !== '' ? $fbp : null, 'measurement_consent'=>$measure, 'consent_version'=>'VPT_ADS_V1');
         return array(
             'business'=>$business,
             'payload'=>array(
@@ -115,7 +130,7 @@ final class VPT_V1_CRM_Core {
                 'region_id'=>self::REGION, 'pipeline_id'=>self::PIPELINE,
                 'lead_type_id'=>self::LEAD_TYPE, 'assigned_to'=>self::OWNER,
                 'source_name'=>$source, 'description'=>'Vật liệu: ' . $material . "\nDự kiến: " . $timeline . "\nGhi chú: " . $message,
-                'notes'=>$notes, 'is_test'=>$test, 'attribution'=>$attribution
+                'notes'=>$notes, 'is_test'=>$test, 'attribution'=>$attribution, 'website_intake'=>$website
             )
         );
     }

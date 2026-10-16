@@ -217,6 +217,33 @@ async function getOaConfigById(oaId) {
   return data;
 }
 
+const _oaNameCache = {};
+
+/** Lấy tên OA đã đặt ở cài đặt (zalo_oa_accounts.oa_name), có nhớ tạm. */
+async function layTenOaTheoOaId(oaId) {
+  const key = String(oaId || '').trim();
+  if (!key) return null;
+  if (Object.prototype.hasOwnProperty.call(_oaNameCache, key)) return _oaNameCache[key];
+  const { data } = await supabase.from('zalo_oa_accounts')
+    .select('oa_name').eq('oa_id', key).maybeSingle();
+  _oaNameCache[key] = data?.oa_name || null;
+  return _oaNameCache[key];
+}
+
+/**
+ * Ghép tên khách với tên OA để biết khách đến từ OA nào.
+ *   tenKemOa('Trần Văn Nam', 'OA Phúc Đạt') → 'Trần Văn Nam - OA Phúc Đạt'
+ * Không ghép lặp nếu tên đã kèm sẵn tên OA đó.
+ */
+function tenKemOa(displayName, oaName) {
+  const ten = String(displayName || '').trim();
+  const oa = String(oaName || '').trim();
+  if (!oa) return ten;
+  if (!ten) return oa;
+  if (ten.toLowerCase().endsWith(oa.toLowerCase())) return ten;
+  return `${ten} - ${oa}`;
+}
+
 async function createLeadFromZaloContact(oaConfig, contact, content, extractedPhone, extractedAddress) {
   if (!contact?.id) return null;
   const ownerId = oaConfig?.default_lead_owner_id || oaConfig?.created_by || null;
@@ -294,7 +321,7 @@ async function createLeadFromZaloContact(oaConfig, contact, content, extractedPh
   const sourceId = await resolveZaloSourceId(oaConfig);
   const typeLabel = createType === 'deal' ? 'Deal' : 'Lead';
   const displayName = contact.display_name || 'KH Zalo';
-  const title = `[Zalo ${typeLabel}] ${displayName}`;
+  const title = `[Zalo ${typeLabel}] ${tenKemOa(displayName, oaConfig?.oa_name)}`;
   const codePrefix = createType === 'deal' ? 'DEAL' : 'LEAD';
   const code = await nextCrmCode(codePrefix);
   const descParts = [`Nguồn: Zalo OA`];
@@ -455,7 +482,7 @@ async function runZaloBatchApplyOaRouting({ oaId, io, limit = 500 } = {}) {
   return { updated, total: list.length, tasks_created: tasksCreatedTotal, results: results.slice(0, 100) };
 }
 
-async function updateZaloLeadFromExtract(leadId, phone, address, displayName) {
+async function updateZaloLeadFromExtract(leadId, phone, address, displayName, oaId) {
   if (!leadId) return false;
   const { data: lead } = await supabase.from('crm_leads')
     .select('id, customer_id, description, title, install_address')
@@ -494,7 +521,7 @@ async function updateZaloLeadFromExtract(leadId, phone, address, displayName) {
   const defaultNames = ['zalo kh', 'lead zalo oa', 'kh zalo', 'zalo'];
   const curTitle = (lead.title || '').toLowerCase().trim();
   if (displayName && defaultNames.some((d) => curTitle.startsWith(d) || curTitle === d)) {
-    leadUpd.title = displayName;
+    leadUpd.title = tenKemOa(displayName, await layTenOaTheoOaId(oaId));
   }
 
   if (Object.keys(leadUpd).length > 1) {
@@ -680,7 +707,7 @@ async function runZaloBatchExtractPhones({ io, offset = 0, limit = 0, forceResca
     }
 
     if (lead && contact.lead_id) {
-      await updateZaloLeadFromExtract(contact.lead_id, extractedPhone, extractedAddress, contact.display_name);
+      await updateZaloLeadFromExtract(contact.lead_id, extractedPhone, extractedAddress, contact.display_name, contact.oa_id);
     }
 
     updated++;
@@ -904,8 +931,9 @@ async function syncZaloContactProfile(contact, oaConfig) {
         || isPlaceholderZaloDisplayName(leadRow.title, contact.user_id);
       if (titlePlaceholder) {
         const lbl = leadRow.type === 'deal' ? 'Deal' : 'Lead';
+        const tenOa = oaConfig?.oa_name || await layTenOaTheoOaId(contact.oa_id);
         await supabase.from('crm_leads')
-          .update({ title: `[Zalo ${lbl}] ${profile.display_name}`, updated_at: new Date().toISOString() })
+          .update({ title: `[Zalo ${lbl}] ${tenKemOa(profile.display_name, tenOa)}`, updated_at: new Date().toISOString() })
           .eq('id', contact.lead_id);
       }
       if (leadRow.customer_id) {
@@ -999,6 +1027,8 @@ module.exports = {
   applyZaloOaRoutingToLead,
   runZaloBatchApplyOaRouting,
   updateZaloLeadFromExtract,
+  tenKemOa,
+  layTenOaTheoOaId,
   runZaloBatchExtractPhones,
   runZaloBatchCreateLeads,
   isPlaceholderZaloDisplayName,

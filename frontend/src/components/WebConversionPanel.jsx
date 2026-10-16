@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import api from '../lib/api';
 import { PROVIDERS, formatVnd, vietnamRange, parseSpendCsv } from '../lib/webConversions';
+import WebsiteFeedbackPanel from './WebsiteFeedbackPanel';
 
 const ROOT = '/marketing-web';
+const VPT_COMPANY = '991dc79d-cbf5-49f9-a364-35227cb47635';
 
 /** W4: website conversions (form, call, Zalo, Messenger) and cost by channel. Admin only; hidden otherwise. */
 export default function WebConversionPanel() {
   const [days, setDays] = useState(7);
-  const [companyId, setCompanyId] = useState(undefined);
+  const companyId = VPT_COMPANY;
   const [report, setReport] = useState(null);
   const [error, setError] = useState('');
   const [hidden, setHidden] = useState(false);
@@ -21,20 +23,11 @@ export default function WebConversionPanel() {
   const [offlineError, setOfflineError] = useState('');
   const [qualified, setQualified] = useState(null), [qualifiedError, setQualifiedError] = useState('');
 
-  // A system admin has no own company: use the company of the latest P1 trial (VPT).
-  useEffect(() => {
-    let alive = true;
-    api.get('/marketing-p1/qualification/trials')
-      .then(({ data }) => { if (alive) setCompanyId(data?.trials?.[0]?.company_id || null); })
-      .catch(() => { if (alive) setCompanyId(null); });
-    return () => { alive = false; };
-  }, []);
-
   useEffect(() => {
     if (companyId === undefined) return;
     let alive = true;
     const params = { ...vietnamRange(days), ...(companyId ? { company_id: companyId } : {}) };
-    setError('');
+    setReport(null); setError('');
     api.get(`${ROOT}/summary`, { params })
       .then(({ data }) => { if (alive) setReport(data); })
       .catch(err => {
@@ -50,7 +43,7 @@ export default function WebConversionPanel() {
     if (companyId === undefined) return;
     let alive = true;
     const params = { ...vietnamRange(60), ...(companyId ? { company_id: companyId } : {}) };
-    setOfflineError('');
+    setOffline(null); setOfflineError('');
     api.get(`${ROOT}/offline-conversions`, { params })
       .then(({ data }) => { if (alive) setOffline(data); })
       .catch(err => { if (alive) setOfflineError(err.response?.data?.error || 'Chưa tải được dữ liệu'); });
@@ -105,10 +98,10 @@ export default function WebConversionPanel() {
             <thead className="text-gray-500">
               <tr className="border-b">
                 <th className="px-2 py-1.5 text-left font-medium">Kênh</th>
-                <th className={cell}>Điền form</th><th className={cell}>Hợp lệ</th>
+                <th className={cell}>Điền form</th><th className={cell}>Có mốc bán hàng</th>
                 <th className={cell}>Bấm gọi</th><th className={cell}>Bấm Zalo</th><th className={cell}>Bấm Messenger</th>
                 <th className={cell}>Tổng chuyển đổi</th><th className={cell}>Chi tiêu</th>
-                <th className={cell}>CP / chuyển đổi</th><th className={cell}>CP / khách hợp lệ</th>
+                <th className={cell}>CP / chuyển đổi</th><th className={cell}>CP / mốc bán hàng</th>
               </tr>
             </thead>
             <tbody>
@@ -133,21 +126,22 @@ export default function WebConversionPanel() {
             </tbody>
           </table>
           <p className="mt-2 text-xs text-gray-500">
-            {report.from} → {report.to}. Hợp lệ = khách đã kéo sang lạnh/ấm/nóng hoặc chuyển deal.
+            {report.from} → {report.to}. Mốc bán hàng = khách đã kéo sang lạnh/ấm/nóng hoặc chuyển deal; chưa chứng minh khách hợp lệ đã xác minh.
             Lượt bấm tính 1 lần mỗi lượt truy cập, không biết khách là ai.
             Chi tiêu Facebook chỉ gồm quảng cáo có khách vào web; Google, TikTok, Zalo Ads và ChatGPT lấy từ chi tiêu đã nhập.
           </p>
         </div>
       )}
       <div className="mt-3 border-t pt-3 text-xs">
-        <h4 className="font-semibold text-gray-800">Gửi chuyển đổi về Google Ads (60 ngày gần nhất)</h4>
+        <h4 className="font-semibold text-gray-800">Nguồn Google Ads cũ: cuộc gọi và mốc bán hàng (60 ngày)</h4>
+        <p className="mt-1 text-gray-500">Nguồn này dùng tín hiệu bán hàng trước đây; chưa phải kết quả xác minh chất lượng khách.</p>
         {offlineError && <p className="mt-1 text-red-600">{offlineError}</p>}
         {!offline && !offlineError && <p className="mt-1 text-gray-500">Đang tải…</p>}
         {offline && (
           <div className="mt-1 space-y-1 text-gray-700">
             <p>
               Cuộc gọi thật ghép được quảng cáo: <b className="tabular-nums">{offline.counts.calls}</b>
-              {' · '}Khách hợp lệ có gclid: <b className="tabular-nums">{offline.counts.valid_leads}</b>
+              {' · '}Khách có mốc bán hàng và mã nhấp: <b className="tabular-nums">{offline.counts.valid_leads}</b>
             </p>
             <p className="text-gray-500">
               Ghi âm đã xét {offline.diagnostics.recordings_considered}
@@ -156,7 +150,8 @@ export default function WebConversionPanel() {
               {' · '}upload trùng {offline.diagnostics.recordings_duplicates_merged ?? 0}
               {' · '}lượt bấm gọi có gclid {offline.diagnostics.call_clicks_with_gclid} (chưa ghép {offline.diagnostics.call_clicks_unmatched})
               {' · '}chỉ có gbraid/wbraid {offline.diagnostics.call_clicks_braid_only + offline.diagnostics.valid_leads_braid_only}
-              {' · '}khách hợp lệ (form web) không có gclid {offline.diagnostics.valid_leads_without_gclid}
+              {' · '}khách có mốc (form web) không có gclid {offline.diagnostics.valid_leads_without_gclid}
+              {' · '}chưa đồng ý đo quảng cáo {offline.diagnostics.measurement_consent_required ?? 0}
               {' · '}bỏ qua dữ liệu thử {offline.diagnostics.test_excluded}
             </p>
             {offline.rows.length > 0 && (
@@ -172,7 +167,7 @@ export default function WebConversionPanel() {
                     <tbody>
                       {offline.rows.map((r, i) => (
                         <tr key={`${r.type}-${r.recording_id || r.lead_id}-${i}`} className="border-b last:border-0">
-                          <td className="px-2 py-1">{r.type === 'CALL' ? 'Cuộc gọi thật' : 'Khách hợp lệ'}</td>
+                          <td className="px-2 py-1">{r.type === 'CALL' ? 'Cuộc gọi thật' : 'Có mốc bán hàng'}</td>
                           <td className="px-2 py-1 tabular-nums">{r.conversion_time}</td>
                           <td className="px-2 py-1 font-mono">{r.gclid_tail}</td>
                           <td className="px-2 py-1">{r.campaign_id || '—'}</td>
@@ -203,6 +198,7 @@ export default function WebConversionPanel() {
             {' · '}thiếu nguồn website/mã nhấp: {qualified.diagnostics.no_website_source + qualified.diagnostics.no_gclid + qualified.diagnostics.braid_only}
             {' · '}nguồn cần đối soát: {qualified.diagnostics.source_conflict + qualified.diagnostics.source_time_unknown + qualified.diagnostics.invalid_gclid + qualified.diagnostics.qualification_before_source}
             {' · '}dữ liệu thử/khách không còn: {qualified.diagnostics.test_source + qualified.diagnostics.missing_or_test_lead}</p>
+          <p className="text-gray-600">Form mới chưa đồng ý đo quảng cáo: {qualified.diagnostics.measurement_consent_required ?? 0}.</p>
           <p className="text-gray-600">Khử trùng theo thông tin CRM đang có. Lịch sử khách thiếu hoặc chưa nhập vẫn cần đối soát; số này chưa dùng để nghiệm thu CPL khách mới.</p>
           {!!qualified.rows.length && <details><summary className="cursor-pointer text-sky-700">Xem khách đủ điều kiện</summary>
             <ul className="mt-1 space-y-1">{qualified.rows.map(row => <li key={row.lead_id}>
@@ -212,6 +208,7 @@ export default function WebConversionPanel() {
           </details>}
         </div>}
       </div>
+      <WebsiteFeedbackPanel companyId={companyId} />
       <div className="mt-3 border-t pt-3">
         <button type="button" onClick={() => setOpenSpend(o => !o)} className="cursor-pointer text-xs font-medium text-sky-700 hover:underline">
           {openSpend ? '▾' : '▸'} Nhập chi tiêu Google / TikTok / Zalo / ChatGPT Ads

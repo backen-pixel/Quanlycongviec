@@ -14,10 +14,9 @@ import {
   productionWorkshopFilterCompanies,
 } from '../lib/crossWorkshopProduction';
 import {
-  useKanbanColumnTheme,
-  KANBAN_COLUMN_RAIL_CLASS,
-  KANBAN_BOARD_COLUMN_RAILS_CLASS,
-} from '../lib/kanbanColumnTheme';
+  InboxKanbanBoard as InboxKanbanBoardChung,
+  InboxCalendarBoard as InboxCalendarBoardChung,
+} from '../components/inbox/InboxBoards';
 import { formatDate } from '../lib/utils';
 import { unpackAssignmentsDict } from '../lib/assignmentDictPayload';
 import {
@@ -1020,212 +1019,39 @@ function InboxTaskRow({ task, actionLabel = 'Mở', extraMeta = null }) {
  * badge đếm bo góc. Trước đây hai bảng dưới đây tự vẽ cột 18rem nền trắng, nên
  * người dùng đi từ dashboard sang thấy như hai phần mềm khác nhau.
  */
-function InboxKanbanColumn({ label, count, columnIndex, children, emptyLabel = 'Không có nhiệm vụ' }) {
-  const columnTheme = useKanbanColumnTheme(columnIndex);
-  return (
-    <div
-      className={`flex flex-col flex-shrink-0 w-[15rem] max-[400px]:w-[13.5rem] rounded-lg kanban-column-surface ${KANBAN_COLUMN_RAIL_CLASS}`}
-      style={{ backgroundColor: columnTheme.columnBg }}
-    >
-      <div
-        className="sticky top-0 z-10 px-2 py-2.5 border-b rounded-t-md kanban-column-surface"
-        style={{
-          backgroundColor: columnTheme.headerBg,
-          borderColor: columnTheme.border,
-          boxShadow: columnTheme.headerShadow,
-        }}
-      >
-        <div className="flex flex-nowrap items-center gap-1 min-w-0">
-          <h3 className="flex-1 min-w-0 text-sm font-semibold truncate leading-snug text-black" title={label}>
-            {label}
-          </h3>
-          <span
-            className="inline-flex items-center justify-center min-w-[24px] h-[22px] px-1.5 rounded-md text-[13px] font-bold tabular-nums leading-none shrink-0"
-            style={{
-              backgroundColor: columnTheme.badgeBg,
-              color: columnTheme.accent,
-              border: `1px solid ${columnTheme.badgeBorder}`,
-            }}
-          >
-            {count}
-          </span>
-        </div>
-      </div>
-      <div className="flex-1 p-1.5 space-y-1.5 min-h-[120px] max-h-[62vh] overflow-y-auto">
-        {count > 0 ? children : (
-          <p className="text-[11px] text-slate-400 text-center py-8">{emptyLabel}</p>
-        )}
-      </div>
-    </div>
-  );
-}
-
+/**
+ * Kanban · Deadline · Lịch dùng khung CHUNG ở components/inbox/InboxBoards.jsx — trang Báo lỗi
+ * dùng đúng bộ đó. Ở đây chỉ còn phần riêng của nhiệm vụ: hình hài từng thẻ.
+ */
 function InboxKanbanBoard({ columns, grouped, actionLabel }) {
   return (
-    <div
-      className={`flex gap-2 overflow-x-auto pb-2 ${KANBAN_BOARD_COLUMN_RAILS_CLASS}`}
-      style={{ minHeight: 300 }}
-    >
-      {columns.map((col, i) => {
-        const list = grouped[col.key] || [];
-        return (
-          <InboxKanbanColumn key={col.key} label={col.label} count={list.length} columnIndex={i}>
-            {list.map((t) => (
-              <InboxTaskRow key={t.id} task={t} actionLabel={actionLabel} />
-            ))}
-          </InboxKanbanColumn>
-        );
-      })}
-    </div>
+    <InboxKanbanBoardChung
+      columns={columns}
+      grouped={grouped}
+      emptyLabel="Không có nhiệm vụ"
+      renderItem={(t) => <InboxTaskRow key={t.id} task={t} actionLabel={actionLabel} />}
+    />
   );
 }
 
-/**
- * Lịch tháng — mỗi ô là một ngày, việc xếp theo hạn.
- *
- * Bảng Deadline trả lời «còn bao lâu», lịch trả lời «ngày nào dồn việc». Hai câu khác
- * nhau: nhìn rổ «Tuần này» không biết 14 việc đó rơi vào một ngày hay rải đều năm ngày.
- *
- * Việc chưa có hạn không lên lịch được — đếm riêng ở chân lịch cho khỏi biến mất.
- */
 function InboxCalendarBoard({ tasks, actionLabel }) {
-  const homNay = new Date();
-  const [moc, setMoc] = useState(() => new Date(homNay.getFullYear(), homNay.getMonth(), 1));
-
-  const { oNgay, chuaCoHan } = useMemo(() => {
-    const map = new Map();
-    let trong = 0;
-    (tasks || []).forEach((t) => {
-      if (!t.deadline) { trong += 1; return; }
-      const d = new Date(t.deadline);
-      if (Number.isNaN(d.getTime())) { trong += 1; return; }
-      const k = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-      if (!map.has(k)) map.set(k, []);
-      map.get(k).push(t);
-    });
-    return { oNgay: map, chuaCoHan: trong };
-  }, [tasks]);
-
-  // Lịch bắt đầu từ thứ Hai — tuần làm việc của xưởng, không phải Chủ nhật kiểu Mỹ.
-  const dauThang = new Date(moc.getFullYear(), moc.getMonth(), 1);
-  const lech = (dauThang.getDay() + 6) % 7;
-  const dauLuoi = new Date(dauThang);
-  dauLuoi.setDate(dauLuoi.getDate() - lech);
-
-  const oLich = [];
-  for (let i = 0; i < 42; i += 1) {
-    const d = new Date(dauLuoi);
-    d.setDate(d.getDate() + i);
-    oLich.push(d);
-  }
-
-  const laHomNay = (d) => d.toDateString() === homNay.toDateString();
-  const trongThang = (d) => d.getMonth() === moc.getMonth();
-  const doiThang = (n) => setMoc(new Date(moc.getFullYear(), moc.getMonth() + n, 1));
-
   return (
-    <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-200 bg-slate-50/80">
-        <button
-          type="button"
-          onClick={() => doiThang(-1)}
-          className="h-7 w-7 rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 cursor-pointer inline-flex items-center justify-center"
-          aria-label="Tháng trước"
+    <InboxCalendarBoardChung
+      items={tasks}
+      nhanChuaCoHan="chưa có hạn"
+      renderItem={(t, { quaHan } = {}) => (
+        <Link
+          key={t.id}
+          to={t.href || '#'}
+          title={`${t.title || 'Nhiệm vụ'}${t.assignee?.full_name ? ` — ${t.assignee.full_name}` : ''}`}
+          className={`block truncate rounded px-1 py-0.5 text-[10px] leading-tight border-l-2 hover:bg-slate-50 ${
+            quaHan ? 'border-rose-400 text-rose-900' : 'border-indigo-300 text-slate-700'
+          }`}
         >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        <p className="text-sm font-bold text-slate-900 tabular-nums">
-          Tháng {moc.getMonth() + 1}/{moc.getFullYear()}
-        </p>
-        <button
-          type="button"
-          onClick={() => doiThang(1)}
-          className="h-7 w-7 rounded-md border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 cursor-pointer inline-flex items-center justify-center"
-          aria-label="Tháng sau"
-        >
-          <ChevronRight className="h-4 w-4" />
-        </button>
-        <button
-          type="button"
-          onClick={() => setMoc(new Date(homNay.getFullYear(), homNay.getMonth(), 1))}
-          className="h-7 px-2.5 rounded-md border border-slate-200 bg-white text-[11px] font-semibold text-slate-600 hover:bg-slate-100 cursor-pointer"
-        >
-          Hôm nay
-        </button>
-        {chuaCoHan > 0 && (
-          <span className="ml-auto text-[11px] font-medium text-slate-500">
-            {chuaCoHan} việc chưa có hạn — không lên lịch được
-          </span>
-        )}
-      </div>
-
-      <div className="grid grid-cols-7 border-b border-slate-200 bg-slate-50/60">
-        {['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].map((n, i) => (
-          <div
-            key={n}
-            className={`px-2 py-1.5 text-[11px] font-bold text-center ${i >= 5 ? 'text-slate-400' : 'text-slate-600'}`}
-          >
-            {n}
-          </div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-7">
-        {oLich.map((d) => {
-          const viec = oNgay.get(`${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`) || [];
-          const quaHan = d < new Date(homNay.getFullYear(), homNay.getMonth(), homNay.getDate());
-          return (
-            <div
-              key={d.toISOString()}
-              className={`min-h-[94px] border-b border-r border-slate-100 p-1.5 ${
-                trongThang(d) ? 'bg-white' : 'bg-slate-50/50'
-              }`}
-            >
-              <div className="flex items-center gap-1 mb-1">
-                <span
-                  className={`inline-flex items-center justify-center h-5 min-w-[20px] px-1 rounded text-[11px] font-bold tabular-nums ${
-                    laHomNay(d)
-                      ? 'bg-indigo-600 text-white'
-                      : trongThang(d) ? 'text-slate-700' : 'text-slate-300'
-                  }`}
-                >
-                  {d.getDate()}
-                </span>
-                {viec.length > 0 && (
-                  <span
-                    className={`ml-auto text-[10px] font-bold tabular-nums px-1 rounded ${
-                      quaHan ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'
-                    }`}
-                  >
-                    {viec.length}
-                  </span>
-                )}
-              </div>
-              <div className="space-y-0.5">
-                {viec.slice(0, 3).map((t) => (
-                  <Link
-                    key={t.id}
-                    to={t.href || '#'}
-                    title={`${t.title || 'Nhiệm vụ'}${t.assignee?.full_name ? ` — ${t.assignee.full_name}` : ''}`}
-                    className={`block truncate rounded px-1 py-0.5 text-[10px] leading-tight border-l-2 hover:bg-slate-50 ${
-                      quaHan ? 'border-rose-400 text-rose-900' : 'border-indigo-300 text-slate-700'
-                    }`}
-                  >
-                    {t.title || 'Nhiệm vụ'}
-                  </Link>
-                ))}
-                {viec.length > 3 && (
-                  <p className="px-1 text-[10px] font-medium text-slate-400">+{viec.length - 3} việc nữa</p>
-                )}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <p className="px-3 py-1.5 text-[10px] text-slate-400 border-t border-slate-100">
-        Bấm tên việc để mở. {actionLabel ? `Thẻ dẫn tới: ${actionLabel.toLowerCase()}.` : ''}
-      </p>
-    </div>
+          {t.title || 'Nhiệm vụ'}
+        </Link>
+      )}
+    />
   );
 }
 

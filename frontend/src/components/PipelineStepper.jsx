@@ -79,8 +79,13 @@ export default function PipelineStepper({
   const ttCua = (s, i) => {
     const past = stageIsPast(s, i);
     const here = String(s.id) === curId;
-    if (!trangThaiO) return here ? 'dang' : (past ? 'xong' : 'chua');
-    return trangThaiCotHien({ raw: trangThaiO[String(s.id)], past, here });
+    const tichThuCong = !!s.tich_thu_cong;
+    if (!trangThaiO) {
+      if (here) return 'dang';
+      if (past) return tichThuCong ? 'chua' : 'xong';
+      return 'chua';
+    }
+    return trangThaiCotHien({ raw: trangThaiO[String(s.id)], past, here, tichThuCong });
   };
 
   /** Một bước trên stepper cổ điển — dùng cho CRM và cho pipeline chưa gán cột lớn. */

@@ -6,7 +6,23 @@ const { isAdminLike, isSystemAdmin } = require('./adminRole');
 const { normalizeAssignRole } = require('./assignmentAssigneeRoles');
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const SOURCE_KINDS = new Set(['customer_request', 'employee_error']);
+/**
+ * Hai nhóm đầu là PHÁT SINH (việc nảy sinh ngoài kế hoạch — trang Không gian chung).
+ * Hai nhóm sau là BÁO LỖI (trang Quản lý lỗi):
+ *   loi_van_hanh — làm sai quy trình, sai số liệu, quên bước. Người xử lý: quản lý xưởng.
+ *   loi_he_thong — phần mềm hỏng: nút không chạy, hiện sai, không lưu. Người xử lý: kỹ thuật.
+ *
+ * Dùng CHUNG một bảng danh mục thay vì dựng bảng thứ hai: nơi setup, API, màn hình gán
+ * người xử lý đều đã có và chạy ổn. Mỗi trang chỉ lọc theo nhóm của mình nên danh sách
+ * không lẫn vào nhau.
+ */
+const SOURCE_KINDS = new Set([
+  'customer_request', 'employee_error',
+  'loi_van_hanh', 'loi_he_thong',
+]);
+
+/** Hai nhóm thuộc trang Báo lỗi — dùng để lọc danh mục cho đúng trang. */
+const SOURCE_KINDS_BAO_LOI = new Set(['loi_van_hanh', 'loi_he_thong']);
 
 function normalizeErrorTypeId(raw) {
   if (raw === undefined) return undefined;
@@ -103,6 +119,7 @@ async function replaceErrorTypeStaff(errorTypeId, staff) {
 module.exports = {
   UUID_RE,
   SOURCE_KINDS,
+  SOURCE_KINDS_BAO_LOI,
   normalizeErrorTypeId,
   normalizeSourceKind,
   isErrorTypeSchemaError,

@@ -1,0 +1,41 @@
+<div class="vpt-v1-consultation">
+<p>Để lại thông tin, Vạn Phú Thành sẽ liên hệ tư vấn cấu hình và báo giá theo nhu cầu của anh/chị.</p>
+<label>Họ và tên <span aria-hidden="true">*</span>
+[text* your-name autocomplete:name placeholder "Tên của anh/chị"]</label>
+<label>Số điện thoại <span aria-hidden="true">*</span>
+[tel* your-phone autocomplete:tel minlength:9 maxlength:15 placeholder "Số điện thoại để tư vấn"]</label>
+<label>Khu vực lắp đặt / giao hàng <span aria-hidden="true">*</span>
+[text* your-area placeholder "Quận/huyện, tỉnh/thành phố"]</label>
+<label>Sản phẩm quan tâm
+[select your-material default:get default:post_meta"Cần tư vấn lựa chọn" "Tủ bếp inox" "Tủ bếp nhôm nguyên tấm" "Tủ bếp nhôm kính" "Thiết bị bếp GrandX" "Bếp từ GrandX" "Máy hút mùi GrandX" "Máy rửa bát GrandX" "Lò nướng / vi sóng GrandX" "Chậu / vòi rửa GrandX" "Nồi chiên GrandX" "Bếp gas GrandX" "Bộ nồi GrandX" "Phụ kiện tủ bếp GrandX"]</label>
+<details class="vpt-v1-details">
+<summary style="cursor:pointer;padding:12px 0;">Bổ sung nhu cầu (không bắt buộc)</summary>
+<label>Dự kiến mua / lắp đặt
+[select your-timeline "Chưa xác định" "Trong 1 tháng" "Trong 1–3 tháng" "Sau 3 tháng"]</label>
+<label>Ghi chú (không bắt buộc)
+[textarea your-message 40x3 default:get placeholder "Kích thước bếp, ngân sách hoặc yêu cầu cần tư vấn"]</label>
+</details>
+[acceptance your-consent] Tôi đồng ý để Vạn Phú Thành sử dụng thông tin trên nhằm liên hệ tư vấn và báo giá theo yêu cầu này. [/acceptance]
+[acceptance your-ads-consent optional] Tôi đồng ý cho Vạn Phú Thành chia sẻ mã theo dõi và kết quả xác minh yêu cầu này với Google/Meta để đo hiệu quả quảng cáo. [/acceptance]
+[hidden vpt_form "VPT_V1"]
+[hidden utm_source default:get]
+[hidden utm_medium default:get]
+[hidden utm_campaign default:get]
+[hidden utm_content default:get]
+[hidden utm_term default:get]
+[hidden gclid default:get]
+[hidden fbclid default:get]
+[hidden gbraid default:get]
+[hidden wbraid default:get]
+[hidden campaignid default:get]
+[hidden adgroupid default:get]
+[hidden keyword default:get]
+[hidden matchtype default:get]
+[hidden device default:get]
+[submit "Nhận tư vấn và báo giá"]
+</div>
+[hidden vpt_referrer_host]
+[hidden vpt_landing_page]
+[hidden vpt_fbc]
+[hidden vpt_fbp]
+[hidden vpt_fb_captured_at]

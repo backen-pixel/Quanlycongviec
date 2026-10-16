@@ -945,10 +945,12 @@ export default function WorkScreen() {
       setTeamHasMore(res.hasMore);
       setTeamCounts(res.counts);
       setTeamAssignedIds(new Set(res.assignedCrmTaskIds || []));
+      // Gắn số trang cho phần nạp thêm để `dealSections` nối chúng vào ĐUÔI (xem ghi chú ở đó).
+      const tagged = res.page >= 2 ? res.tasks.map((t) => ({ ...t, team_page: res.page })) : res.tasks;
       setTeamProjectTasks((prev) => {
-        if (!append) return res.tasks;
+        if (!append) return tagged;
         const seen = new Set(prev.map((t) => t.id));
-        return [...prev, ...res.tasks.filter((t) => !seen.has(t.id))];
+        return [...prev, ...tagged.filter((t) => !seen.has(t.id))];
       });
     } catch (e) {
       if (!isQueryAbortError(e)) console.warn('[WorkScreen] việc dự án của đội lỗi:', e);
@@ -1660,12 +1662,16 @@ export default function WorkScreen() {
     };
     // Cùng mức khẩn thì Đang làm → Chưa làm → Hoàn thành (khớp Tổng quan).
     const toneRank: Record<string, number> = { overdue: 0, doing: 1, todo: 2, done: 3 };
+    // Trang nạp thêm khi cuộn (`team_page` ≥ 2) luôn NỐI ĐUÔI các nhóm đã có, không xếp lại chen vào giữa: nhóm chen
+    // vào giữa danh sách đã đo làm FlatList tính sai vị trí → nhiều nhóm chồng lên nhau / không thấy (HCB · Tủ bếp:
+    // chỉ thấy 29/42 dự án dù số đếm đúng 574 việc). Máy chủ đã xếp sẵn các trang theo thứ tự ưu tiên nên không mất gì.
+    const pageRank = (s: DealTaskSection) => s.tasks.reduce((m, t) => Math.min(m, t.team_page ?? 0), Number.MAX_SAFE_INTEGER);
     return groupTasksByDeal(filtered)
       .map((s, i) => {
         const tone = summarizeTaskGroup(s.tasks).tone;
-        return { s, i, u: urgency(s), r: tone ? toneRank[tone] : 4 };
+        return { s, i, p: pageRank(s), u: urgency(s), r: tone ? toneRank[tone] : 4 };
       })
-      .sort((a, b) => a.u - b.u || a.r - b.r || a.i - b.i)
+      .sort((a, b) => a.p - b.p || a.u - b.u || a.r - b.r || a.i - b.i)
       .map((x) => x.s);
   }, [filtered]);
 
@@ -1684,7 +1690,6 @@ export default function WorkScreen() {
     return () => clearTimeout(t);
   }, [revealCount, dealSections.length]);
   const revealing = revealCount < dealSections.length;
-
   const flatRows = useMemo(() => {
     const rows: ListRow[] = [];
     for (const section of dealSections.slice(0, revealCount)) {
@@ -1722,7 +1727,8 @@ export default function WorkScreen() {
     const pPending = Math.max(0, (teamCounts?.total ?? 0) - pDoing);
     const pOverdue = teamCounts?.overdue ?? 0;
     if (unassignedView) {
-      return { pending: teamCounts?.total ?? 0, inProgress: 0, done: 0, overdue: 0 };
+      // Máy chủ đã loại việc «xong ở deal» khỏi số quá hạn → dùng thẳng, khớp nhãn «Quá hạn N» ở thẻ nhóm.
+      return { pending: teamCounts?.total ?? 0, inProgress: 0, done: 0, overdue: pOverdue };
     }
     if (dealFilterActive) {
       // «Giao việc» không có công ty đặt hàng → chỉ tính phần việc dự án đã được máy chủ lọc.
