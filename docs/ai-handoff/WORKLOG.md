@@ -1,3 +1,24 @@
+## 2026-10-16 14:02 UTC — VPT: nhận triển khai website/n8n và chuẩn bị scope revision an toàn
+
+- Founder xác nhận làm theo đề xuất giữ lần chuyển mới Warm/Hot/direct Deal đầu tiên, mỗi khách một lần; không backfill, không thêm phiếu sale. N8n là transport/đối soát, không tự tạo qualification từ email/form.
+- Main mới `24bc1749` đã ghép vào recovery tại local merge `e642226e`, bảo toàn các thay đổi hiện hành; WORKLOG giữ hai phía. Main nay có hook useActivityClickTracker nên phục hồi App.jsx đúng main, không giữ bản gỡ tạm. Render ngoài tác vụ đã deploy 24bc lúc09:49:46UTC, oldfe3 deactivated; root chưa deploy. Read13:54 xác nhận hai fence inactive/epoch không đổi, maintenance OFF. Logs worker vẫn lỗi parent users và bỏ job sau12 lần, chưa khôi phục backlog.
+- Thêm M1 guard+14/14 Node tests tại `integrations/n8n/`; xác nhận template CF7 hiện tại bằng WordPress admin vì WPVibe hết lượt. Dấu form chỉ HOLD/manual reconcile, không khẳng định durable capture/CRM receipt/success. Không lookup route GET có side effect, POST fallback, replay job cũ hoặc đổi plugin/form. Published n8n graph/version không đổi. Tạo inactive synthetic-only workflow gE1H2WGDyRUnopnq, readback6nodes/connection exactmatch, validation0errors/0warnings. Không credential/Gmail/CRM/Ads call trong workflow này; chưa chạy trên n8n, còn cần login đã hỏi Founder.
+- Full inactive clone đã bị validator từ chối trước tạo vì node cũ Kiểm tra user rời; không sửa nhánh PhúcĐạt hoặc nối node lạ để vượt gate. Candidate sáu node chỉ kiểm guard bằng dữ liệu tổng hợp, không thay toàn luồng production.
+- V3 coordinator/repair/private ledger SQL mới cho đúng một bảng primary bổ sung đang review, không sửa năm script frozen hoặc manifest cũ. Root kiểm hash cả disk/Git của năm file khớp nguyên pin. Chưa áp SQL, register, fence, capture, repair apply, merge PR hoặc deploy. Cần DDL quiet window và capacity đo mới; bằng chứng08h đã hết hạn.
+- Sau merge:101 kiểm core/regression PASS; bài HTTP ban đầu thiếu express trong môi trường thử, cài express5.2.1 ngoài repo tại vpt-http-verify-20261016 rồi13/13 actual loopback HTTP PASS. V3 pure7/7 và actual isolated PGlite18 repair10/10 PASS; actual PG17.6 mới đang chờ CI. CI cấu hình thêm v3 và M1, chưa push tại checkpoint này. Không có bằng chứng inbox/provider ACK/CPL mới.
+- Hoàn tất source/review V3: coordinator ca1bafe4…66b9c854, repair f7ef7570…25b67d, SQL11230afb…bc2144bc; reviewer độc lập PASS, root scope15/15PGlite18 PASS (3đa phiên deferred), repair10/10PGlite và7purePASS. M1 exportJSON/IF/HOLD được reviewer chạy thật trongVM:1legacy+3hold, không network/credential/PIIoutput. CI PG17adapter bắt buộc10repair+18scope,skipped/deferred0. Frontendbuild67sPASS,8migrationunitPASS. Primary14:09:13UTC năm số qualification/realwebsite/consentedreal/outbox/attempts đều0; DNS14:06 vẫn haiSPF. Không thay đổi production hoặc dùng review thay gate vận hành.
+
+---
+
+## 2026-10-16 08:13 UTC — VPT: chốt nguyên nhân hold và hậu kiểm khôi phục dịch vụ
+
+- Diagnostic READ ONLY 08:09:50: primary thêm `_bulk_hoanthanh_sx_20261016` (337 thay 336); không có catalog/derived/excluded delta khác, phạm vi/cấu trúc 339 bảng phía backup khớp plan. Plan/fingerprint đã chốt giữ nguyên, không tự mở scope hoặc rerun bypass. Root đang chờ Founder xác nhận tác vụ bulk SX bên ngoài đã xong trước khi lập lại phạm vi/review; không nhắn task khác.
+- Closing attempt fail primary activate 08:03:42 vì `scope_changed`, trước COMMIT/epoch transition, hai site reserved/committed 0. Sau explicit release, SQL cả hai inactive/deadline NULL; Maintenance OFF/HTTP200. Cờ Save Only đã rollback về `SUPABASE_REPLICATION_DISABLED=0` và readback, worker/runtime cũ không đổi. V1/V2 schema/registration 138 actions và dry-run ba hàng PASS được giữ; chưa capture/repair apply/merge/deploy/restart. Recovery ba hàng chưa phải full backup parity.
+- WP queue 08:13: 20 jobs = 19 sent + 1 queued, review/blocked/sending 0; queued tạo `2026-10-07T22:53:30Z`, attempts 0/awaiting_worker, thiếu explicit serialized `is_test`, không có Lead/receipt CRM khớp nên không replay. CRM website receipt 1 TEST/real 0/consented-real 0; SPF vẫn hai bản lúc 08:03:48. Không có nghiệm thu inbox/Ads/CPL mới.
+- Head `269bc112`/5 CI PASS không đổi. Phiên này chỉ cập nhật CURRENT/WORKLOG và [checkpoint ngoài repo](<D:/quản trị vận hành/vpt-live-operations-checkpoint-20261016.md>), có [trace form 08:13 không PII](<D:/quản trị vận hành/vpt-live-operations-checkpoint-20261016.md#trace-form-website-0813>); không stage/commit/push hoặc thao tác production.
+
+---
+
 ## 2026-10-16 — VPT: ghi nhận phê duyệt 12 GB và đồng bộ main
 
 - Founder đã phê duyệt phần dung lượng/chi phí; checkpoint vận hành xác nhận cả primary/backup đã đặt đĩa 12 GB và max autoscale 12 GB, Spend Cap tổ chức đã tắt. Phiên Git này chỉ ghi nhận kết quả, không thao tác billing hoặc DB. Sizing/capacity ngày 15/10 đã hết hạn; đo mới trước bước dữ liệu, giữ timestamp/fingerprint lịch sử.

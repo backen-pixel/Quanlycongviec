@@ -4,10 +4,13 @@ on:
     paths:
       - 'backend/scripts/*replication-cutover*20261015.js'
       - 'backend/scripts/recover-backup-user-parent-20261015.js'
+      - 'backend/scripts/*-v3-20261016.js'
       - 'backend/tests/backup-user-parent-recovery-cutover-v2*'
+      - 'backend/tests/backup-user-parent-recovery-v3*'
       - 'backend/tests/backup-user-parent-recovery-sql.js'
       - 'backend/tests/replication-cutover*'
       - 'database/20261015051758_replication_cutover_v2_preparation.sql'
+      - 'database/*_replication_cutover_scope_revision.sql'
       - '.github/workflows/vpt-cutover-postgres17.yml'
   workflow_dispatch:
 permissions:
@@ -55,6 +58,15 @@ jobs:
         run: |
           node --check backend/scripts/recover-backup-user-parent-20261015.js
           node backend/tests/backup-user-parent-recovery-cutover-v2-postgres17.js "$RUNNER_TEMP/vpt-cutover-pg17/node_modules/pg" --lifecycle
+          git diff --check
+      - name: Additions-only scope revision and bounded v3 repair on fresh databases
+        env:
+          VPT_CUTOVER_TEST_ONLY: '1'
+          VPT_CUTOVER_TEST_DATABASE_URL: postgresql://postgres:vpt-synthetic-only-20261015@127.0.0.1:65432/vpt_cutover_synthetic
+        run: |
+          node --check backend/scripts/coordinate-replication-cutover-v3-20261016.js
+          node --check backend/scripts/recover-backup-user-parent-v3-20261016.js
+          node backend/tests/backup-user-parent-recovery-v3-postgres17.js "$RUNNER_TEMP/vpt-cutover-pg17/node_modules/pg"
           git diff --check
       - name: Bounded UTF8 12.6MB row streaming and client memory profile on PostgreSQL 17.6
         env:

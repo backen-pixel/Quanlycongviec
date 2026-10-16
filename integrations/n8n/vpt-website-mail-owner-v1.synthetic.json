@@ -1,0 +1,172 @@
+{
+  "name": "VPT website — kiểm thử chống trùng (16-10, chưa phát hành)",
+  "nodes": [
+    {
+      "id": "vpt-synthetic-manual-20261016",
+      "name": "Chạy kiểm thử nội bộ",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -2400,
+        1056
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "vpt-synthetic-fixtures-20261016",
+      "name": "Chỉ dữ liệu tổng hợp",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2176,
+        1056
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return [{ json: { subject: '[VPT V1] Tư vấn tủ bếp / thiết bị — Synthetic Test — 0000000001', text: 'DỮ LIỆU TỔNG HỢP\\nMã form: VPT_V1', fixture: 'managed' } }, { json: { subject: 'Synthetic legacy form', text: 'Mã form: OLD_FORM\\nDỮ LIỆU TỔNG HỢP', fixture: 'legacy' } }, { json: { subject: '[VPT V1] Tư vấn', text: 'DỮ LIỆU TỔNG HỢP', fixture: 'ambiguous' } }, { json: { subject: 'Synthetic unreadable', html: '<p>Fixture only</p>', fixture: 'unreadable' } }];"
+      }
+    },
+    {
+      "id": "vpt-owner-code-20261016",
+      "name": "VPT11116 — đối soát một nguồn ghi",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1728,
+        1056
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const classifyVptWebsiteMail = function classifyVptWebsiteMail(mail) {\n  const result = (route, reason) => ({ version: 1, route, reason });\n  const unreadable = () => result('hold', 'mail_shape_unreadable');\n  if (!mail || typeof mail !== 'object' || Array.isArray(mail)) return unreadable();\n  if (typeof mail.text !== 'string' || mail.text.length > 2097152) return unreadable();\n\n  let subject;\n  if (Object.prototype.hasOwnProperty.call(mail, 'subject')) {\n    // Prefer Gmail's parsed Subject; do not infer it from customer body text.\n    subject = mail.subject;\n  } else {\n    // Also support Gmail API-style header fixtures when no parsed Subject exists.\n    const headers = mail.payload && Array.isArray(mail.payload.headers)\n      ? mail.payload.headers : mail.headers;\n    if (Array.isArray(headers)) {\n      const matches = headers.filter(h => h && typeof h.name === 'string'\n        && h.name.toLowerCase() === 'subject');\n      if (matches.length !== 1) return unreadable();\n      subject = matches[0].value;\n    } else if (headers && typeof headers === 'object') {\n      const names = Object.keys(headers).filter(k => k.toLowerCase() === 'subject');\n      if (names.length !== 1) return unreadable();\n      subject = headers[names[0]];\n      if (typeof subject === 'string') subject = subject.replace(/^subject:[ \\t]*/i, '');\n    } else return unreadable();\n  }\n  if (typeof subject !== 'string' || subject.length > 4096 || /[\\r\\n]/.test(subject)) return unreadable();\n\n  const prefix = '[VPT V1] Tư vấn tủ bếp / thiết bị — ';\n  const formLine = 'Mã form: VPT_V1';\n  const normalizedSubject = subject.normalize('NFC');\n  const lines = mail.text.normalize('NFC').split(/\\r\\n|\\r|\\n/);\n  const exactSubject = normalizedSubject.startsWith(prefix) && normalizedSubject.length > prefix.length;\n  const exactFormLines = lines.filter(line => line === formLine).length;\n  // Broader signals only HOLD malformed/quoted/ambiguous variants; they never\n  // turn an email into a confirmed submission or grant a fallback POST.\n  const visible = value => value.replace(/[\\u200B-\\u200D\\u2060\\uFEFF]/g, '');\n  const subjectSignals = visible(normalizedSubject).match(/\\[\\s*vpt[\\s_-]*v1\\s*\\]/giu) || [];\n  const formSignals = visible(lines.join('\\n')).match(/(?:mã|ma)\\s*form\\s*[:：]\\s*vpt[\\s_-]*v1/giu) || [];\n  if (exactSubject && exactFormLines === 1 && subjectSignals.length === 1 && formSignals.length === 1) {\n    return result('hold', 'bridge_form_reconcile_required');\n  }\n  if (exactSubject || exactFormLines || subjectSignals.length || formSignals.length) {\n    return result('hold', 'ambiguous_bridge_markers');\n  }\n  return result('legacy', 'no_bridge_markers');\n};\nconst metadataKey = \"_vptWebsiteMailOwnerV1\";\nreturn $input.all().map((item, index) => {\n  if (!item || !item.json || typeof item.json !== 'object' || Array.isArray(item.json)\n      || Object.prototype.hasOwnProperty.call(item.json, metadataKey)) {\n    throw new Error('VPT_MAIL_OWNER_INPUT_INVALID');\n  }\n  return { ...item, json: { ...item.json, [metadataKey]: classifyVptWebsiteMail(item.json) },\n    pairedItem: { item: index } };\n});"
+      },
+      "notes": "Guard form identity only. HOLD does not establish saved CRM, receipt, consent or qualification. No HTTP or queue replay."
+    },
+    {
+      "id": "vpt-owner-if-20261016",
+      "name": "Chỉ thư legacy được tạo hồ sơ",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -1504,
+        1056
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "vpt-owner-legacy-condition",
+              "leftValue": "={{ $json._vptWebsiteMailOwnerV1.version === 1 && $json._vptWebsiteMailOwnerV1.route === 'legacy' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "vpt-owner-hold-20261016",
+      "name": "GIỮ ĐỐI SOÁT — không tạo khách lần hai",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1280,
+        1296
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return $input.all().map((item, index) => ({ json: { version: 1, route: 'hold', reason: ['bridge_form_reconcile_required', 'ambiguous_bridge_markers', 'mail_shape_unreadable'].includes(item.json?._vptWebsiteMailOwnerV1?.reason) ? item.json._vptWebsiteMailOwnerV1.reason : 'guard_result_unreadable' }, pairedItem: { item: index } }));"
+      },
+      "notes": "Original mail remains in Gmail. Reconcile the bridge queue; this result is not saved/qualified or delivered proof."
+    },
+    {
+      "id": "vpt-legacy-terminal-20261016",
+      "name": "LEGACY — kiểm thử, không tạo hồ sơ",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1280,
+        960
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "return $input.all().map((item, index) => ({ json: { version: 1, route: 'legacy', reason: item.json._vptWebsiteMailOwnerV1.reason, fixture: item.json.fixture }, pairedItem: { item: index } }));"
+      }
+    }
+  ],
+  "connections": {
+    "Chạy kiểm thử nội bộ": {
+      "main": [
+        [
+          {
+            "node": "Chỉ dữ liệu tổng hợp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chỉ dữ liệu tổng hợp": {
+      "main": [
+        [
+          {
+            "node": "VPT11116 — đối soát một nguồn ghi",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "VPT11116 — đối soát một nguồn ghi": {
+      "main": [
+        [
+          {
+            "node": "Chỉ thư legacy được tạo hồ sơ",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chỉ thư legacy được tạo hồ sơ": {
+      "main": [
+        [
+          {
+            "node": "LEGACY — kiểm thử, không tạo hồ sơ",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "GIỮ ĐỐI SOÁT — không tạo khách lần hai",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Asia/Ho_Chi_Minh",
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "none",
+    "saveManualExecutions": false
+  }
+}

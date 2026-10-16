@@ -1,3 +1,29 @@
+## 2026-10-16 14:02 UTC — VPT: đã nhận triển khai website/n8n, giữ quy tắc Warm/Hot/Deal
+
+Founder đã yêu cầu làm tiếp và chốt đề xuất: lần chuyển mới đầu tiên Warm, Hot hoặc trực tiếp Lead→Deal tính một khách đủ điều kiện; không thêm xác minh sale, không backfill. Website/n8n điều phối tiếp nhận, không tạo nguồn qualification thứ hai hoặc đếm form như khách hợp lệ. Consent/nguồn/khử trùng và provider ACK vẫn là gate gửi/đối soát riêng.
+
+Đã ghép main `24bc1749` vào nhánh recovery, local merge `e642226e`; giữ thay đổi của người dùng và cả hai phần WORKLOG. Main đã bổ sung hook thiếu nên App.jsx hiện đúng origin/main, thay cho bản sửa tạm bốn dòng trước. Render do tác vụ khác đã deploy `24bc1749`, `dep-db8v5o0n74is73cuv6s0` LIVE 09:49:46 UTC; old deploy fe3 đã deactivated. Root không deploy lần này. 13:54 UTC xác nhận maintenance OFF, cả hai control inactive, epoch không đổi. Worker mới vẫn lỗi parent FK và bỏ job sau 12 lần; không tuyên bố queue đã khôi phục.
+
+M1 chống trùng email: `integrations/n8n/` thêm guard thuần và 14/14 kiểm Node PASS; form11116 do WP bridge ghi, email có dấu form được giữ đối soát thay vì tạo lần hai. Dấu form không chứng minh job đã lưu hoặc CRM nhận; nhánh HOLD không có GET receipt/POST/replay. Luồng kiểm thử tổng hợp [gE1H2WGDyRUnopnq](https://brain.ai.vn/workflow/gE1H2WGDyRUnopnq) đã tạo inactive, sáu node/connection readback khớp và validation 0 lỗi/0 cảnh báo; chưa chạy trên n8n. Production `Form website PĐ-VPT` vẫn nguyên active version f78674d8…; cần đăng nhập n8n để cập nhật, đã hỏi Founder. WPVibe hết lượt nên đọc mẫu CF7 bằng phiên WordPress đã đăng nhập; không đổi plugin/form.
+
+V3 đã bổ sung ledger phạm vi append-only cho đúng một bảng primary `_bulk_hoanthanh_sx_20261016`, giữ manifest cũ và năm script frozen nguyên bytes. Coordinator SHA `ca1bafe432e4d5de69a9bde2a6780efc4887aceb4a1a32474b7f9cff66b9c854`, repair `f7ef75702f6e4e3f5741a75052abd61259e1df7e131b347baf4221763a25b67d`, SQL `11230afb0fac01e4df28e805dbee32bda8f7ba8a6241f0a4898ef9bcbc2144bc`; review độc lập PASS. Root đã chạy15scope+10repair actual PGlite18 và7pure PASS; ba ca nhiều phiên chờ PG17.6 CI. [Hợp đồng và gate vận hành](../replication-cutover-v3-scope-revision-20261016.md). Chưa áp migration, đăng ký bảng, capture, sửa ba hàng, merge PR hoặc deploy. Lượt bulk ngoài tác vụ/DDL freeze chưa có xác nhận, capacity cũ đã hết hạn; không dùng kiểm thử để bỏ qua gate này.
+
+Sau tích hợp main:101 core/regression +13 HTTP thực tế trên loopback,14M1,7pureV3,8migration unit PASS; frontend build67s PASS. Thư viện thử express5.2.1 cài ngoài repo. Read primary14:09:13UTC: qualificationQUALIFIED/website receipt thật/receipt thật có consent/outbox/attempts đều0; DNS14:06 vẫn haiSPF. Chưa xác nhận khách quảng cáo thật, provider ACK, email inbox hoặc CPL.
+
+---
+
+## 2026-10-16 08:13 UTC — VPT: scope drift đã rõ; dịch vụ trở lại, chưa phát hành
+
+Đối chiếu chỉ đọc 08:09:50 xác định primary có thêm `_bulk_hoanthanh_sx_20261016`: **337 bảng so với 336** trong plan đã chốt; không có thay đổi catalog/derived/excluded khác, **phạm vi/cấu trúc 339 bảng phía backup khớp plan**. Giữ nguyên plan/fingerprint cũ; không mở rộng scope hoặc rerun để vượt guard. Root đang hỏi Founder tác vụ bulk SX bên ngoài đã xong chưa, rồi mới chốt lại phạm vi và review kế hoạch mới.
+
+Closing attempt dừng ngay primary activate 08:03:42 với `scope_changed`, trước COMMIT/epoch transition; hai site reserved/committed capture đều **0**. Root đã explicit release: cả hai fence inactive/deadline NULL, Render Maintenance **OFF**, HTTP **200**. Save Only `SUPABASE_REPLICATION_DISABLED=0` đã readback xác nhận, worker cũ không đổi. V1/V2 private schema, registration 138 actions và dry-run ba hàng PASS được giữ; **chưa capture, repair apply, merge/deploy hoặc restart**. Ba hàng chỉ gỡ parent FK, chưa chứng minh toàn bộ backup.
+
+WordPress 08:13 có **20 jobs: 19 sent, 1 queued**, review/blocked/sending đều 0. Job queued tạo `2026-10-07T22:53:30Z`, chưa thử gửi, lý do awaiting_worker; thiếu cờ `is_test` được lưu rõ và chưa có Lead/receipt CRM khớp nên **không replay**. CRM có 1 website receipt TEST, **0 khách thật / 0 khách thật có consent**. DNS 08:03:48 vẫn hai SPF; chưa xác nhận inbox, provider ACK hoặc CPL.
+
+Candidate `269bc112` giữ **5/5 CI jobs PASS**, không đổi source. [Checkpoint vận hành và nguồn đầy đủ](<D:/quản trị vận hành/vpt-live-operations-checkpoint-20261016.md>), [trace form 08:13](<D:/quản trị vận hành/vpt-live-operations-checkpoint-20261016.md#trace-form-website-0813>). Các mục bên dưới giữ lịch sử theo thời điểm ghi.
+
+---
+
 ## 2026-10-16 — VPT: đã áp dung lượng 12 GB; PR #139 chưa phát hành
 
 Founder đã phê duyệt thay đổi dung lượng/chi phí. Theo checkpoint vận hành đã xác nhận, đĩa primary và backup hiện đều **12 GB**, giới hạn autoscale đều **12 GB**; **Spend Cap cấp tổ chức đã tắt** trong phạm vi phê duyệt. Các mục ngày 15/10 còn ghi chờ quyết định 12 GB là lịch sử. Cần đo lại sizing/capacity và kiểm gate tại thời điểm thực hiện bước dữ liệu; giữ nguyên timestamp/fingerprint cũ.
