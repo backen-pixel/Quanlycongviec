@@ -1,0 +1,191 @@
+{
+  "observed_at": "2026-10-16T07:53:42.025614+00:00",
+  "kind": "LOCAL_ARTIFACT_CHECK_NOT_RUNTIME",
+  "results": [
+    {
+      "name": "TASK_same_line_count",
+      "status": "PASS"
+    },
+    {
+      "name": "TASK_only_author_line_redacted",
+      "status": "PASS"
+    },
+    {
+      "name": "source_quotes_exact_at_L24_L85_L110",
+      "status": "PASS"
+    },
+    {
+      "name": "local_markdown_links",
+      "status": "PASS"
+    },
+    {
+      "name": "T01_T20_exact_names_and_conditions",
+      "status": "PASS"
+    },
+    {
+      "name": "24_new_cases_not_run",
+      "status": "PASS"
+    },
+    {
+      "name": "722_manifest_entries",
+      "status": "PASS"
+    },
+    {
+      "name": "migration_manifest_content_hashes",
+      "status": "PASS"
+    },
+    {
+      "name": "migration_manifest_catalog_hash",
+      "status": "PASS"
+    },
+    {
+      "name": "secret_pii_pattern_scan",
+      "status": "PASS"
+    },
+    {
+      "name": "mermaid_sources_present",
+      "status": "PASS"
+    }
+  ],
+  "scanner": {
+    "name": "bos-local-secret-pii-pattern-scanner",
+    "version": "1.0",
+    "scope_base": "fe3f4398ebf2186596c108a7570f83e3bbef104a",
+    "text_files": 80,
+    "binary_files_not_text_scanned": 1,
+    "rule_ids": [
+      "PRIVATE_KEY",
+      "COMMON_TOKEN",
+      "JWT",
+      "PASSWORD_URL",
+      "EMAIL",
+      "VN_PHONE",
+      "SOURCE_AUTHOR_NAME"
+    ],
+    "findings": [],
+    "preexisting_baseline_matches": [
+      {
+        "file": "docs/ai-handoff/CURRENT.md",
+        "line": 779,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/CURRENT.md",
+        "line": 1298,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/CURRENT.md",
+        "line": 1316,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/CURRENT.md",
+        "line": 1319,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/CURRENT.md",
+        "line": 1456,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/CURRENT.md",
+        "line": 2246,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/CURRENT.md",
+        "line": 2246,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/CURRENT.md",
+        "line": 2248,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/CURRENT.md",
+        "line": 2263,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/CURRENT.md",
+        "line": 2149,
+        "rule": "VN_PHONE"
+      },
+      {
+        "file": "docs/ai-handoff/CURRENT.md",
+        "line": 118,
+        "rule": "SOURCE_AUTHOR_NAME"
+      },
+      {
+        "file": "docs/ai-handoff/WORKLOG.md",
+        "line": 1013,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/WORKLOG.md",
+        "line": 1407,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/WORKLOG.md",
+        "line": 1414,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/WORKLOG.md",
+        "line": 1424,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/WORKLOG.md",
+        "line": 1904,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/WORKLOG.md",
+        "line": 2111,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/WORKLOG.md",
+        "line": 2136,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/WORKLOG.md",
+        "line": 2173,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/WORKLOG.md",
+        "line": 2292,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/WORKLOG.md",
+        "line": 2292,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/WORKLOG.md",
+        "line": 2293,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/WORKLOG.md",
+        "line": 2321,
+        "rule": "EMAIL"
+      },
+      {
+        "file": "docs/ai-handoff/WORKLOG.md",
+        "line": 2510,
+        "rule": "EMAIL"
+      }
+    ],
+    "limitations": "Full new-file/changed-file regex scan; identical legacy baseline lines classified separately and not introduced in this PR. Regex + known source author check, not exhaustive PII/secret detection; images/binaries require manual review. Does not query or export real customer data."
+  },
+  "mermaid_parser_render": "NOT_RUN"
+}

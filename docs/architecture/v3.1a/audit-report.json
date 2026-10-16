@@ -1,0 +1,188 @@
+{
+  "schema_version": "ecc.agent-architecture-audit.report.v1",
+  "schema_origin": {
+    "kind": "LOCAL_FORMALIZATION_OF_SKILL_EXAMPLE",
+    "skill_ref": "C:/Users/Tudonghoa/.codex/plugins/cache/ecc/ecc/2.2.3/skills/agent-architecture-audit/SKILL.md#report-schema",
+    "upstream_validator_status": "NOT_SUPPLIED",
+    "local_schema_ref": "contracts/audit-report.schema.json",
+    "limitation": "Schema cục bộ formal hóa shape ví dụ công khai trong skill và thêm provenance/status rõ ràng. Chưa được kiểm bằng validator máy đọc upstream ECC vì chưa được cung cấp; không tuyên bố upstream certification."
+  },
+  "executive_verdict": {
+    "overall_health": "high_risk",
+    "primary_failure_mode": "Static review thấy memory admission/recall theo user, model paths chưa có bằng chứng sole gateway, tool requirement còn prompt-only và missing usage bị đổi thành zero. Đây là rủi ro thiết kế/mã trong phạm vi đã đọc, không phải kết luận có sự cố/rò dữ liệu production đã tái hiện.",
+    "most_urgent_fix": "Trước mở AI M1, dùng company-bound memory và code-enforced gateway/scope/cap/evidence gate; tiếp nhận khách deterministic vẫn chạy. Không thay runtime đang chạy trong nhiệm vụ thiết kế."
+  },
+  "scope": {
+    "target_name": "Quanlycongviec AI paths / BOS V3.1a D6 design boundary",
+    "model_stack": [
+      "OpenAI chat-completions trong aiConversation/aiReplyDraft; gpt-4o-mini là code default, chưa kiểm model live",
+      "Guide CopilotKit/AI SDK có primary model và mood/intent/librarian calls; config live chưa xác minh",
+      "Paperclip/OpenClaw là adapter đích trong thiết kế; báo cáo này không kiểm runtime invocation live"
+    ],
+    "layers_to_audit": [
+      "system_prompt",
+      "session_history",
+      "long_term_memory",
+      "distillation_and_recall",
+      "tool_selection_and_execution",
+      "tool_interpretation",
+      "answer_shaping_and_transport",
+      "hidden_repair_and_auxiliary_calls",
+      "persistence"
+    ],
+    "baseline_sha": "fe3f4398ebf2186596c108a7570f83e3bbef104a",
+    "review_mode": "STATIC_READ_ONLY_DESIGN_REVIEW",
+    "review_date": "2026-10-16",
+    "live_tests": "NOT_RUN",
+    "scope_limitation": "Đọc có mục tiêu các helpers aiConversation/aiUserMemory, aiReplyDraft module/provider/policy, guideStepGuard/guideExperience/CopilotKit và tests/eval liên quan. Không runtime exploit, không gửi dữ liệu khách/model call, không chứng minh mọi path trong toàn repo đã kiểm. Mã nguồn không thay bằng chứng SHA/config đang deploy."
+  },
+  "original_audit_reconciliation": {
+    "status": "UNKNOWN",
+    "referenced_original_count": 9,
+    "original_report_status": "NOT_FOUND_IN_SCOPED_SEARCH",
+    "diagram_assessment_status": "ORIGINAL_TEN_FIX_ASSESSMENT_NOT_FOUND",
+    "mapping": [],
+    "search_scope": [
+      "Tên file Downloads liên quan BOS/BUSINESS_AI/V3.1/V2.3/audit/đánh giá/kiến trúc",
+      "Tên file và nội dung docs repo liên quan agent/audit; cụm 9 phát hiện, 9 findings, 10 điểm, ecc.agent-architecture-audit.report",
+      "Markdown/JSON/text/HTML liên quan trong Downloads; V3.1 PDF text extract đã có"
+    ],
+    "limitation": "Brief có nhắc audit gốc 9 phát hiện và bản đánh giá 10 sửa sơ đồ nhưng chưa tìm được nguồn gốc trong phạm vi đọc. Chín finding L7-L01..L7-L09 là review bổ sung local, không mặc định tương ứng chín finding gốc; không thể giữ/hạ/nâng/đóng finding gốc trước khi có nguyên bản và map bằng chứng."
+  },
+  "findings": [
+    {
+      "finding_id": "L7-L01",
+      "original_finding_id": null,
+      "status": "PARTIAL_CONTROL_DESIGN_GAP",
+      "severity": "high",
+      "title": "External conversation chưa có typed taint xuyên luồng draft",
+      "mechanism": "Draft service đọc Messenger content, anonymize rồi chuyển user string cho model. Prompt/regex validation có ích nhưng input/output ở ranh giới đọc chưa mang typed taint/authority lineage để bảo đảm văn bản nguồn ngoài chỉ là dữ liệu.",
+      "source_layer": "system_prompt / tool_interpretation",
+      "root_cause": "Trust boundary đang dựa một phần vào vị trí prompt và policy text thay vì typed trust/scope/provenance contract được service kiểm.",
+      "evidence_refs": ["backend/src/modules/aiReplyDraft/service.js:32", "backend/src/modules/aiReplyDraft/service.js:44", "backend/src/modules/aiReplyDraft/service.js:61", "backend/src/modules/aiReplyDraft/policy.js:23"],
+      "confidence": 0.95,
+      "recommended_fix": "Receiver gắn taint/source refs, propagate qua summary/recall; model đọc ngoài ở C0, structured extraction chỉ proposal; action đi L5/L6 với scope/evidence/cap độc lập. Giữ anonymize/no-send hiện có và bổ sung injection fixture.",
+      "scope_limit": "Không thấy exploit; draft path đã có validation/no-send nên không kết luận model hiện có thể tự gửi khách từ path này."
+    },
+    {
+      "finding_id": "L7-L02",
+      "original_finding_id": null,
+      "status": "OPEN_STATIC_FINDING",
+      "severity": "high",
+      "title": "Memory user-only chưa đạt company-bound contract",
+      "mechanism": "Persist/load memory helper lọc user_id và inject facts vào system prompt. Trong các hàm đã đọc không có company/tenant key, nên một user tham gia nhiều scope không được các hàm này tự cô lập memory theo D6.",
+      "source_layer": "long_term_memory / persistence",
+      "root_cause": "Memory admission/lookup key thiếu company_scope; recalled user facts được nối trực tiếp vào privileged prompt context.",
+      "evidence_refs": ["backend/src/helpers/aiUserMemory.js:203", "backend/src/helpers/aiUserMemory.js:208", "backend/src/helpers/aiUserMemory.js:311", "backend/src/helpers/aiUserMemory.js:317", "backend/src/helpers/aiConversation.js:601", "backend/src/helpers/aiConversation.js:604"],
+      "confidence": 0.99,
+      "recommended_fix": "Scope memory/session/cache theo tenant+company trước retrieval; user đổi company mở phiên mới; quarantine memory thiếu scope, không fallback kho chung; admission/correction giữ provenance và policy.",
+      "scope_limit": "Static gap không chứng minh dữ liệu hai công ty thực tế đã bị trộn/rò. Không đọc dữ liệu khách hoặc thử truy cập chéo scope."
+    },
+    {
+      "finding_id": "L7-L03",
+      "original_finding_id": null,
+      "status": "OPEN_STATIC_FINDING",
+      "severity": "high",
+      "title": "Tool-required report có đường trả lời không gọi tool",
+      "mechanism": "Prompt yêu cầu in nguyên tool report, nhưng vòng gọi dùng tool_choice auto và trả narrative khi choice không có tool_calls. Không có gate tại nhánh trả này buộc verified report/claim phải trỏ execution/evidence đúng mốc.",
+      "source_layer": "tool_selection / tool_execution",
+      "root_cause": "Yêu cầu dùng tool là chỉ dẫn ngôn ngữ; response protocol chưa cưỡng chế evidence cho loại câu trả lời cần nguồn.",
+      "evidence_refs": ["backend/src/helpers/aiConversation.js:60", "backend/src/helpers/aiConversation.js:83", "backend/src/helpers/aiConversation.js:190", "backend/src/helpers/aiConversation.js:633", "backend/src/helpers/aiConversation.js:647", "backend/src/helpers/aiConversation.js:651"],
+      "confidence": 0.99,
+      "recommended_fix": "Route intent cần số liệu/action-result qua code tool/evidence gate; deterministic renderer dùng typed tool result; thiếu execution receipt phải NEEDS_INPUT/UNVERIFIED, không công bố claim đã làm.",
+      "scope_limit": "Không yêu cầu mọi greeting/narrative luôn gọi tool. Finding áp dụng report/claim mà business contract yêu cầu nguồn."
+    },
+    {
+      "finding_id": "L7-L04",
+      "original_finding_id": null,
+      "status": "PARTIAL_CONTROL_DESIGN_GAP",
+      "severity": "high",
+      "title": "Nhiều model paths chưa có bằng chứng sole gateway/atomic shared cap",
+      "mechanism": "Draft path đọc usedToday/checkBudget rồi gọi provider; aiConversation gọi provider trực tiếp; guide có model call phụ. Các đường này chưa chứng minh tất cả đều reserve atomically dưới một cap L10 và không thể đi direct egress.",
+      "source_layer": "tool_execution / hidden_repair_loops",
+      "root_cause": "Nhiều wrapper có budget/call control cục bộ nhưng chưa có contract và enforcement một chủ cho mọi call/retry/reviewer/subagent.",
+      "evidence_refs": ["backend/src/modules/aiReplyDraft/service.js:54", "backend/src/modules/aiReplyDraft/service.js:57", "backend/src/modules/aiReplyDraft/service.js:61", "backend/src/modules/aiReplyDraft/provider.js:36", "backend/src/helpers/aiConversation.js:625", "backend/src/routes/guide/copilotkit.js:320", "backend/src/routes/guide/copilotkit.js:345"],
+      "confidence": 0.98,
+      "recommended_fix": "Inventory mọi primary/auxiliary/retry/reviewer path, gateway reserve-before-call và settle UNKNOWN, deny provider egress/credential bypass cho runtime. Chuyển từng đường với cutoff/fencing, không tự sửa runtime trong lượt thiết kế.",
+      "scope_limit": "Chưa kiểm network policy/config runtime hoặc tuyên bố mọi call live đang vượt cap; đây là thiếu bằng chứng enforcement toàn tuyến theo yêu cầu đích."
+    },
+    {
+      "finding_id": "L7-L05",
+      "original_finding_id": null,
+      "status": "OPEN_STATIC_FINDING",
+      "severity": "high",
+      "title": "Missing provider usage bị đổi thành zero",
+      "mechanism": "Provider trả prompt/completion token0 khi usage field thiếu/không safe integer. Service chấp nhận số nguyên không âm và tính/persist cost từ đó, làm thiếu usage có thể thành chi phí0 thay PENDING_RECONCILIATION.",
+      "source_layer": "persistence / tool_interpretation",
+      "root_cause": "Không tách usage certainty khỏi giá trị token; default0 hợp thức hóa thông tin chưa có bằng chứng.",
+      "evidence_refs": ["backend/src/modules/aiReplyDraft/provider.js:50", "backend/src/modules/aiReplyDraft/provider.js:51", "backend/src/modules/aiReplyDraft/provider.js:52", "backend/src/modules/aiReplyDraft/service.js:63", "backend/src/modules/aiReplyDraft/service.js:67", "backend/src/modules/aiReplyDraft/service.js:75"],
+      "confidence": 0.99,
+      "recommended_fix": "Giữ usage/cost null với reason khi provider thiếu usage; giữ reservation/exposure đến readback/settlement; phân biệt nội dung có thể dùng và billing certainty, test missing usage/timeout/late usage.",
+      "scope_limit": "Không có số tiền thất thoát thực tế hoặc provider trace live trong phạm vi review."
+    },
+    {
+      "finding_id": "L7-L08",
+      "original_finding_id": null,
+      "status": "SCOPED_COVERAGE_GAP",
+      "severity": "high",
+      "title": "Bounded reviewer protocol D6 chưa có bằng chứng trong các module đọc",
+      "mechanism": "Scoped service/provider/policy không có protocol reviewer PASS|FAIL gắn immutable artifact hash và max_rounds. Tool-step guard thật đã có nhưng giới hạn bước tool không thay trần vòng producer-reviewer và tổng call/cost.",
+      "source_layer": "hidden_repair_loops / tool_execution",
+      "root_cause": "Vòng review/repair đích chưa được định nghĩa và cưỡng chế như một state machine độc lập với tool-step loop.",
+      "evidence_refs": ["backend/src/modules/aiReplyDraft/service.js:19", "backend/src/modules/aiReplyDraft/provider.js:25", "backend/src/modules/aiReplyDraft/policy.js:34", "backend/src/helpers/guideStepGuard.js:129", "backend/src/helpers/guideStepGuard.js:152"],
+      "confidence": 0.85,
+      "recommended_fix": "Reviewer least-privilege read-only, strict PASS|FAIL/hash/checkrefs; producer riêng sửa revision mới; aggregate max_rounds/call/time/cap, invalid schema/hashFAIL và no task reset bypass.",
+      "scope_limit": "Đây là scoped coverage gap của D6, không kết luận không có reviewer ở bất kỳ file/hệ khác."
+    },
+    {
+      "finding_id": "L7-L06",
+      "original_finding_id": null,
+      "status": "OPEN_STATIC_FINDING",
+      "severity": "medium",
+      "title": "Length slicing có thể làm mất nghĩa output/tool evidence",
+      "mechanism": "Nhánh trả narrative cắt1900 ký tự; tool message JSON stringify cắt8000 ký tự. Cắt chuỗi sau serialization có thể làm JSON không hợp lệ hoặc bỏ phần evidence cần thiết mà không có typed truncation envelope.",
+      "source_layer": "answer_shaping / platform_rendering",
+      "root_cause": "Payload/report size control đang dựa cắt raw text thay pagination/structured artifact references và truncation certainty.",
+      "evidence_refs": ["backend/src/helpers/aiConversation.js:651", "backend/src/helpers/aiConversation.js:685"],
+      "confidence": 0.99,
+      "recommended_fix": "Bound fields trước serialization; pagination/artifact ref cho report dài; giữ typed numeric/source fields, truncation flag+hash và render consistency tests; không cắt JSON/tiền giữa chuỗi.",
+      "scope_limit": "Không có screenshot/log lỗi người dùng đã tái hiện; finding chỉ chứng minh cơ chế slicing trong mã."
+    },
+    {
+      "finding_id": "L7-L07",
+      "original_finding_id": null,
+      "status": "PARTIAL_CONTROL_DESIGN_GAP",
+      "severity": "medium",
+      "title": "Provenance model/prompt mới một phần, chưa đủ D6 artifact lineage",
+      "mechanism": "Draft payload đã lưu model và prompt_version nhưng scoped payload này chưa lưu prompt_hash, AI_GENERATED origin, AgentSpec/eval lineage để tái dựng và phân biệt nội dung AI với fact nghiệp vụ đã xác minh.",
+      "source_layer": "distillation / persistence",
+      "root_cause": "Artifact provenance envelope chưa thống nhất đủ source/version/hash/verification semantics.",
+      "evidence_refs": ["backend/src/modules/aiReplyDraft/service.js:73", "backend/src/modules/aiReplyDraft/service.js:74", "backend/src/modules/aiReplyDraft/service.js:75"],
+      "confidence": 0.95,
+      "recommended_fix": "AI_GENERATED + immutable artifact hash, prompt/spec/model/tool/eval versions và taint/source refs; review/edit giữ lineage, không tự promote thành VERIFIED source.",
+      "scope_limit": "Ghi nhận model/prompt_version đã có; không nói toàn repo không lưu provenance ở nơi khác."
+    },
+    {
+      "finding_id": "L7-L09",
+      "original_finding_id": null,
+      "status": "SCOPED_COVERAGE_GAP",
+      "severity": "medium",
+      "title": "Eval hiện có chưa chứng minh behavior gate D6",
+      "mechanism": "Knowledge eval trực tiếp đo searchKnowledge, bỏ qua model; draft tests dùng mock provider và kiểm hành vi module cụ thể. Chưa có bằng chứng corpus release D6 cho injection/company-memory/reviewer mutation/egress tied prompt/model/spec versions trong tập đã đọc.",
+      "source_layer": "system_prompt / hidden_repair_loops / persistence",
+      "root_cause": "Test/eval ở cấp retrieval/module chưa được map thành release contract cho ranh giới AI toàn tuyến.",
+      "evidence_refs": ["scripts/guide/knowledge-eval.js:11", "scripts/guide/knowledge-eval.js:52", "backend/tests/aiReplyDraftService.test.js:7", "backend/tests/aiReplyDraftService.test.js:18"],
+      "confidence": 0.9,
+      "recommended_fix": "Dùng lại tests hiện có, bổ sung D6-E01..E12 trong ai-boundary.md, manifest prompt/model/tool/spec/eval versions và hard gates scope/permission/side effects. Fixture/schema pass riêng với behavioral/staging/live NOT_RUN.",
+      "scope_limit": "Không tuyên bố không có test toàn repo; behavior LLM/egress eval chưa chạy và không được tự gọi trả phí trong nhiệm vụ này."
+    }
+  ],
+  "ordered_fix_plan": [
+    {"order": 1, "goal": "Chốt source/scope và company-bound memory contract", "why_now": "Taint/memory có thể làm dữ liệu ngoài hoặc company khác đi vào privileged context.", "expected_effect": "M1 AI đọc đúng company, không tự promote memory/source thành authority; deterministic intake không bị phụ thuộc AI."},
+    {"order": 2, "goal": "Một gateway/cap authority và usage certainty", "why_now": "Direct/auxiliary model calls và usage0 fallback chưa đáp ứng reserve-before-every-call.", "expected_effect": "Retry/reviewer/subagent không lách cap; missing usage giữ UNKNOWN exposure, có owner đối soát."},
+    {"order": 3, "goal": "Code-gate tool evidence và deterministic numeric reporting", "why_now": "Prompt-only bắt dùng tool vẫn có no-tool response path.", "expected_effect": "Không công bố report/action claim khi thiếu execution/source receipt; số liệu không do model tự tính lại."},
+    {"order": 4, "goal": "Reviewer read-only và vòng sửa hữu hạn", "why_now": "D6 cần PASS|FAIL/hash/max_rounds, khác tool-step guard.", "expected_effect": "Producer tạo revision sửa, reviewer không mutate; hết round/cost/time thì exception, không silent repair/reset."},
+    {"order": 5, "goal": "Provenance, typed transport và behavioral release eval", "why_now": "Model/prompt/version và output slicing cần contract tái dựng/kiểm hồi quy.", "expected_effect": "AI_GENERATED/source/version/hash nhất quán qua render/persistence; D6 corpus test tách mock/staging/live."},
+    {"order": 6, "goal": "Đối chiếu audit gốc khi được cung cấp", "why_now": "Chưa có nguyên bản9 finding hoặc10điểm sửa sơ đồ; không thể cập nhật trạng thái gốc trung thực.", "expected_effect": "Map original IDs sang bằng chứng local và ghi giữ/hạ/nâng/đóng có lý do; hiện tại original reconciliation vẫn UNKNOWN."}
+  ]
+}

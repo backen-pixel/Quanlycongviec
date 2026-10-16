@@ -1,0 +1,1664 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:bos:v31a:contracts",
+  "title": "V3.1a design contracts, not deployed routes",
+  "definitions": {
+    "Scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tenant_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "company_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        }
+      },
+      "required": [
+        "tenant_id",
+        "company_id"
+      ]
+    },
+    "Taint": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "labels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "EXTERNAL_UNTRUSTED",
+              "AI_GENERATED",
+              "VALIDATED_FACT"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "origin_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+          },
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "policy_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "labels",
+        "origin_refs",
+        "policy_version"
+      ]
+    },
+    "Gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "PASS",
+            "DENY",
+            "UNKNOWN"
+          ]
+        },
+        "rule_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+          },
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "reason_code": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+          },
+          "minItems": 0,
+          "maxItems": 256,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "status",
+        "rule_refs",
+        "reason_code",
+        "evidence_refs"
+      ]
+    },
+    "Approval": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "actor_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "authority": {
+          "type": "string",
+          "enum": [
+            "C2",
+            "C3"
+          ]
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "approval_id",
+        "actor_ref",
+        "authority",
+        "digest",
+        "expires_at"
+      ]
+    },
+    "Notice": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "notice_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "recipient_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "delivery_evidence_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "PENDING",
+            "DELIVERED",
+            "FAILED",
+            "UNKNOWN",
+            "VETOED"
+          ]
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "delivered_at": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "not_before": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "veto_revision": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "notice_id",
+        "recipient_ref",
+        "delivery_evidence_ref",
+        "state",
+        "digest",
+        "delivered_at",
+        "not_before",
+        "expires_at",
+        "veto_revision"
+      ]
+    },
+    "AuthorizationContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "principal_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "principal_kind": {
+          "type": "string",
+          "enum": [
+            "USER",
+            "SERVICE"
+          ]
+        },
+        "delegation_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "authority_epoch": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "grant_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "entity_ref": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+            },
+            "account_ref": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "entity_ref",
+            "account_ref"
+          ]
+        },
+        "consent_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+          },
+          "minItems": 0,
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "consent_evaluation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "NOT_APPLICABLE",
+                "GRANTED",
+                "DENIED",
+                "UNKNOWN"
+              ]
+            },
+            "purpose": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+            },
+            "reason_code": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+            }
+          },
+          "required": [
+            "status",
+            "purpose",
+            "reason_code"
+          ]
+        },
+        "precondition": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "EXISTS_AT_VERSION",
+                "ABSENT"
+              ]
+            },
+            "entity_ref": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+            },
+            "version": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "entity_ref",
+            "version"
+          ]
+        }
+      },
+      "required": [
+        "principal_ref",
+        "principal_kind",
+        "delegation_ref",
+        "authority_epoch",
+        "grant_ref",
+        "target",
+        "consent_refs",
+        "consent_evaluation",
+        "precondition"
+      ]
+    },
+    "SnapshotRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "version",
+        "hash"
+      ]
+    },
+    "IntakeAcceptanceReceipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "schema_version": {
+          "const": "3.1a.1"
+        },
+        "company_scope": {
+          "$ref": "#/definitions/Scope"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "record_type": {
+          "const": "IntakeAcceptanceReceipt"
+        },
+        "intake_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "DURABLE",
+            "PROJECTED"
+          ]
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "CONFIRMED",
+            "CONFLICT",
+            "QUARANTINED"
+          ]
+        },
+        "binding_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "event_key": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+          },
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "projection_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "schema_version",
+        "company_scope",
+        "trace_id",
+        "created_at",
+        "record_type",
+        "intake_ref",
+        "phase",
+        "outcome",
+        "binding_id",
+        "event_key",
+        "evidence_refs",
+        "projection_ref"
+      ]
+    },
+    "IntakeEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "schema_version": {
+          "const": "3.1a.1"
+        },
+        "company_scope": {
+          "$ref": "#/definitions/Scope"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "record_type": {
+          "const": "IntakeEvent"
+        },
+        "connector": {
+          "type": "string",
+          "enum": [
+            "website_form",
+            "meta_lead_ads",
+            "zalo_oa"
+          ]
+        },
+        "binding_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "binding_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "native_account_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "native_event_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "event_type": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "occurred_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "canonical_payload_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "raw_payload_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "taint": {
+          "$ref": "#/definitions/Taint"
+        },
+        "authentication": {
+          "type": "string",
+          "enum": [
+            "VERIFIED"
+          ]
+        },
+        "transport": {
+          "type": "string",
+          "enum": [
+            "WEBHOOK",
+            "POLL",
+            "FORM"
+          ]
+        },
+        "consent_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "intake_status": {
+          "type": "string",
+          "enum": [
+            "DURABLE",
+            "PROJECTED",
+            "QUARANTINED",
+            "CONFLICT"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "schema_version",
+        "company_scope",
+        "trace_id",
+        "created_at",
+        "record_type",
+        "connector",
+        "binding_id",
+        "binding_version",
+        "native_account_id",
+        "native_event_id",
+        "event_type",
+        "occurred_at",
+        "idempotency_key",
+        "canonical_payload_hash",
+        "raw_payload_ref",
+        "taint",
+        "authentication",
+        "transport",
+        "consent_ref",
+        "intake_status"
+      ]
+    },
+    "FactProjection": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "schema_version": {
+          "const": "3.1a.1"
+        },
+        "company_scope": {
+          "$ref": "#/definitions/Scope"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "record_type": {
+          "const": "FactProjection"
+        },
+        "entity_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "source_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "source_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "as_of": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "authority": {
+          "type": "string",
+          "enum": [
+            "DOMAIN_VERIFIED",
+            "EXTERNAL_CLAIM",
+            "AI_GENERATED"
+          ]
+        },
+        "value": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "missing_reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "coverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "metric_definition_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "taint": {
+          "$ref": "#/definitions/Taint"
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+          },
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "id",
+        "schema_version",
+        "company_scope",
+        "trace_id",
+        "created_at",
+        "record_type",
+        "entity_ref",
+        "source_ref",
+        "source_revision",
+        "as_of",
+        "expires_at",
+        "authority",
+        "value",
+        "unit",
+        "missing_reason",
+        "coverage",
+        "metric_definition_version",
+        "taint",
+        "evidence_refs"
+      ]
+    },
+    "DecisionRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "schema_version": {
+          "const": "3.1a.1"
+        },
+        "company_scope": {
+          "$ref": "#/definitions/Scope"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "record_type": {
+          "const": "DecisionRecord"
+        },
+        "authorization_context": {
+          "$ref": "#/definitions/AuthorizationContext"
+        },
+        "fact_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SnapshotRef"
+          },
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "rule_refs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SnapshotRef"
+          },
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "action": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "payload_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "fact_snapshot_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "rule_snapshot_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "expected_entity_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "authority_class": {
+          "type": "string",
+          "enum": [
+            "C0",
+            "C1",
+            "C2_NOTIFY",
+            "C2_APPROVE",
+            "C3"
+          ]
+        },
+        "gates": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "PHAP": {
+              "$ref": "#/definitions/Gate"
+            },
+            "LE": {
+              "$ref": "#/definitions/Gate"
+            },
+            "LY": {
+              "$ref": "#/definitions/Gate"
+            },
+            "TINH": {
+              "$ref": "#/definitions/Gate"
+            }
+          },
+          "required": [
+            "PHAP",
+            "LE",
+            "LY",
+            "TINH"
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "PROPOSED",
+            "EVALUATING",
+            "NEEDS_INPUT",
+            "DENIED",
+            "WAITING_APPROVAL",
+            "WAITING_NOTICE",
+            "NOTICE_PENDING",
+            "AUTHORIZED",
+            "VETOED",
+            "EXPIRED",
+            "CONSUMED",
+            "READ_ONLY"
+          ]
+        },
+        "valid_until": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Approval"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "notice": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Notice"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "policy_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "authorization_basis": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "READ_ONLY",
+                "PUBLISHED_POLICY",
+                "EXPLICIT_APPROVAL",
+                "NOTICE_WINDOW_ELAPSED"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "schema_version",
+        "company_scope",
+        "trace_id",
+        "created_at",
+        "record_type",
+        "authorization_context",
+        "fact_refs",
+        "rule_refs",
+        "action",
+        "payload_hash",
+        "fact_snapshot_hash",
+        "rule_snapshot_hash",
+        "expected_entity_revision",
+        "authority_class",
+        "gates",
+        "state",
+        "valid_until",
+        "approval",
+        "notice",
+        "policy_ref",
+        "authorization_basis",
+        "digest"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "AUTHORIZED",
+                  "CONSUMED"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "authority_class": {
+                "not": {
+                  "const": "C0"
+                }
+              },
+              "authorization_basis": {
+                "enum": [
+                  "PUBLISHED_POLICY",
+                  "EXPLICIT_APPROVAL",
+                  "NOTICE_WINDOW_ELAPSED"
+                ]
+              },
+              "gates": {
+                "properties": {
+                  "PHAP": {
+                    "properties": {
+                      "status": {
+                        "const": "PASS"
+                      }
+                    }
+                  },
+                  "LE": {
+                    "properties": {
+                      "status": {
+                        "const": "PASS"
+                      }
+                    }
+                  },
+                  "LY": {
+                    "properties": {
+                      "status": {
+                        "const": "PASS"
+                      }
+                    }
+                  },
+                  "TINH": {
+                    "properties": {
+                      "status": {
+                        "const": "PASS"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "READ_ONLY"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "authority_class": {
+                "const": "C0"
+              },
+              "authorization_basis": {
+                "const": "READ_ONLY"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "Command": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "schema_version": {
+          "const": "3.1a.1"
+        },
+        "company_scope": {
+          "$ref": "#/definitions/Scope"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "record_type": {
+          "const": "Command"
+        },
+        "decision_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "decision_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "action": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "payload_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "payload_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "effect_key": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "expected_entity_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "RECEIVED",
+            "VALIDATED",
+            "READY",
+            "EXECUTING",
+            "SUCCEEDED",
+            "FAILED_NO_EFFECT",
+            "UNKNOWN",
+            "RECONCILING",
+            "CANCEL_REQUESTED",
+            "CANCELLED",
+            "REJECTED",
+            "MANUAL_REVIEW"
+          ]
+        },
+        "deadline": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "attempt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lease_owner": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lease_until": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reservation_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_receipt_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "schema_version",
+        "company_scope",
+        "trace_id",
+        "created_at",
+        "record_type",
+        "decision_ref",
+        "decision_digest",
+        "action",
+        "payload_ref",
+        "payload_hash",
+        "effect_key",
+        "expected_entity_revision",
+        "state",
+        "deadline",
+        "attempt",
+        "fence",
+        "lease_owner",
+        "lease_until",
+        "reservation_ref",
+        "last_receipt_ref"
+      ]
+    },
+    "Receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "schema_version": {
+          "const": "3.1a.1"
+        },
+        "company_scope": {
+          "$ref": "#/definitions/Scope"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "record_type": {
+          "const": "Receipt"
+        },
+        "command_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "effect_key": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "ACCEPTED",
+            "COMMITTED",
+            "RECONCILED"
+          ]
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "CONFIRMED",
+            "NO_EFFECT",
+            "UNKNOWN"
+          ]
+        },
+        "provider_ref": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+          },
+          "minItems": 1,
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "adapter_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "request_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "result_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": [
+        "id",
+        "schema_version",
+        "company_scope",
+        "trace_id",
+        "created_at",
+        "record_type",
+        "command_ref",
+        "effect_key",
+        "phase",
+        "outcome",
+        "provider_ref",
+        "evidence_refs",
+        "observed_at",
+        "adapter_version",
+        "request_hash",
+        "result_hash"
+      ]
+    },
+    "AgentSpec": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "schema_version": {
+          "const": "3.1a.1"
+        },
+        "company_scope": {
+          "$ref": "#/definitions/Scope"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "record_type": {
+          "const": "AgentSpec"
+        },
+        "taint": {
+          "$ref": "#/definitions/Taint"
+        },
+        "max_rounds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "agent_spec_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "prompt_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "model_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "WORKER",
+            "REVIEWER"
+          ]
+        },
+        "allowed_tools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+          },
+          "minItems": 0,
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "capability": {
+          "type": "string",
+          "enum": [
+            "C0",
+            "PROPOSE_ONLY"
+          ]
+        },
+        "memory_namespace": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "eval_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "max_model_calls": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "budget_policy_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "output_label": {
+          "const": "AI_GENERATED"
+        }
+      },
+      "required": [
+        "id",
+        "schema_version",
+        "company_scope",
+        "trace_id",
+        "created_at",
+        "record_type",
+        "taint",
+        "max_rounds",
+        "agent_spec_version",
+        "prompt_hash",
+        "model_id",
+        "role",
+        "allowed_tools",
+        "capability",
+        "memory_namespace",
+        "eval_version",
+        "max_model_calls",
+        "budget_policy_ref",
+        "output_label"
+      ]
+    },
+    "CycleRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "schema_version": {
+          "const": "3.1a.1"
+        },
+        "company_scope": {
+          "$ref": "#/definitions/Scope"
+        },
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "record_type": {
+          "const": "CycleRecord"
+        },
+        "taint": {
+          "$ref": "#/definitions/Taint"
+        },
+        "max_rounds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "agent_spec_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "prompt_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "model_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "agent_spec_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "session_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "memory_namespace": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "round_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "model_call_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "max_model_calls": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "objective_ref": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+        },
+        "fact_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+          },
+          "minItems": 0,
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "rule_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+          },
+          "minItems": 0,
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "resource_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+          },
+          "minItems": 0,
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "decision_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+          },
+          "minItems": 0,
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "command_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+          },
+          "minItems": 0,
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "outcome_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+          },
+          "minItems": 0,
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "adjustment_refs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+          },
+          "minItems": 0,
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "artifact_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "review": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "verdict": {
+                  "type": "string",
+                  "enum": [
+                    "PASS",
+                    "FAIL"
+                  ]
+                },
+                "artifact_hash": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "reviewer_spec_ref": {
+                  "type": "string",
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_:-]{2,127}$"
+                },
+                "eval_version": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                }
+              },
+              "required": [
+                "verdict",
+                "artifact_hash",
+                "reviewer_spec_ref",
+                "eval_version"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "OPEN",
+            "NEEDS_INPUT",
+            "REVIEW",
+            "COMPLETE",
+            "ROUND_LIMIT",
+            "BUDGET_BLOCKED",
+            "WAITING_MEASUREMENT"
+          ]
+        },
+        "output_label": {
+          "const": "AI_GENERATED"
+        }
+      },
+      "required": [
+        "id",
+        "schema_version",
+        "company_scope",
+        "trace_id",
+        "created_at",
+        "record_type",
+        "taint",
+        "max_rounds",
+        "agent_spec_version",
+        "prompt_hash",
+        "model_id",
+        "agent_spec_ref",
+        "session_ref",
+        "memory_namespace",
+        "round_index",
+        "model_call_count",
+        "max_model_calls",
+        "objective_ref",
+        "fact_refs",
+        "rule_refs",
+        "resource_refs",
+        "decision_refs",
+        "command_refs",
+        "outcome_refs",
+        "adjustment_refs",
+        "artifact_hash",
+        "review",
+        "state",
+        "output_label"
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/definitions/IntakeAcceptanceReceipt"
+    },
+    {
+      "$ref": "#/definitions/IntakeEvent"
+    },
+    {
+      "$ref": "#/definitions/FactProjection"
+    },
+    {
+      "$ref": "#/definitions/DecisionRecord"
+    },
+    {
+      "$ref": "#/definitions/Command"
+    },
+    {
+      "$ref": "#/definitions/Receipt"
+    },
+    {
+      "$ref": "#/definitions/CycleRecord"
+    },
+    {
+      "$ref": "#/definitions/AgentSpec"
+    }
+  ]
+}

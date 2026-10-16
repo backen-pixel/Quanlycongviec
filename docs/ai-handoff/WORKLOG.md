@@ -1,3 +1,9 @@
+## 2026-10-16 — BOS-ARCH-DESIGN-01 / V3.1a
+
+Bổ sung gói `docs/architecture/v3.1a/` trên `design/v3.1a`: W0/source evidence, toàn hệ và Marketing, L1–L10, ADR/contracts/state/AI/connectors/data model, audit local và kế hoạch/acceptance. Kiểm schema/model offline và scratch runner; baseline lỗi trước migration đầu, live UNKNOWN, nguồn audit/diagram assessment chưa xác minh theo xác nhận Founder. Draft bàn giao có evidence gaps; không tự nhận nghiệm thu production. Không setup/deploy/shared migration/live data writes/paid calls. Xem README gói cho kết quả cuối và đầu vào còn thiếu.
+
+---
+
 ## 2026-10-16 — BOS-ARCH-DESIGN-01: hoàn thiện thiết kế tổng thể
 
 - Phạm vi theo brief hiện hành: thiết kế để giao xây, không setup/deploy/thay hệ đang chạy. Tạo worktree/nhánh tài liệu riêng từ main `fe3f4398ebf2186596c108a7570f83e3bbef104a`; checkout công việc khác được giữ riêng.

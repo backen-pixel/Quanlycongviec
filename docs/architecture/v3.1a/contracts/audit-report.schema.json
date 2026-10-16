@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:bos:v3.1a:local-ecc-agent-architecture-audit-report:1",
+  "title": "Local formalization of the public skill report shape; not an upstream ECC validator",
+  "description": "BOS design-only validator derived from SKILL.md Report Schema example for ecc.agent-architecture-audit.report.v1. The upstream machine validator was not supplied. Additional provenance/status fields are local extensions, not a claim of upstream certification.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "schema_origin", "executive_verdict", "scope", "original_audit_reconciliation", "findings", "ordered_fix_plan"],
+  "properties": {
+    "schema_version": {"const": "ecc.agent-architecture-audit.report.v1"},
+    "schema_origin": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "skill_ref", "upstream_validator_status", "local_schema_ref", "limitation"],
+      "properties": {
+        "kind": {"const": "LOCAL_FORMALIZATION_OF_SKILL_EXAMPLE"},
+        "skill_ref": {"type": "string", "minLength": 1},
+        "upstream_validator_status": {"const": "NOT_SUPPLIED"},
+        "local_schema_ref": {"const": "contracts/audit-report.schema.json"},
+        "limitation": {"type": "string", "minLength": 1}
+      }
+    },
+    "executive_verdict": {
+      "type": "object", "additionalProperties": false,
+      "required": ["overall_health", "primary_failure_mode", "most_urgent_fix"],
+      "properties": {
+        "overall_health": {"enum": ["high_risk", "medium_risk", "low_risk", "unknown"]},
+        "primary_failure_mode": {"type": "string", "minLength": 1},
+        "most_urgent_fix": {"type": "string", "minLength": 1}
+      }
+    },
+    "scope": {
+      "type": "object", "additionalProperties": false,
+      "required": ["target_name", "model_stack", "layers_to_audit", "baseline_sha", "review_mode", "review_date", "live_tests", "scope_limitation"],
+      "properties": {
+        "target_name": {"type": "string", "minLength": 1},
+        "model_stack": {"$ref": "#/$defs/StringList"},
+        "layers_to_audit": {"$ref": "#/$defs/StringList"},
+        "baseline_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "review_mode": {"const": "STATIC_READ_ONLY_DESIGN_REVIEW"},
+        "review_date": {"type": "string", "format": "date"},
+        "live_tests": {"const": "NOT_RUN"},
+        "scope_limitation": {"type": "string", "minLength": 1}
+      }
+    },
+    "original_audit_reconciliation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "referenced_original_count", "original_report_status", "diagram_assessment_status", "mapping", "search_scope", "limitation"],
+      "properties": {
+        "status": {"const": "UNKNOWN"},
+        "referenced_original_count": {"const": 9},
+        "original_report_status": {"const": "NOT_FOUND_IN_SCOPED_SEARCH"},
+        "diagram_assessment_status": {"const": "ORIGINAL_TEN_FIX_ASSESSMENT_NOT_FOUND"},
+        "mapping": {"type": "array", "maxItems": 0},
+        "search_scope": {"$ref": "#/$defs/StringList"},
+        "limitation": {"type": "string", "minLength": 1}
+      }
+    },
+    "findings": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["finding_id", "original_finding_id", "status", "severity", "title", "mechanism", "source_layer", "root_cause", "evidence_refs", "confidence", "recommended_fix", "scope_limit"],
+        "properties": {
+          "finding_id": {"type": "string", "pattern": "^L7-L[0-9]{2}$"},
+          "original_finding_id": {"type": "null"},
+          "status": {"enum": ["OPEN_STATIC_FINDING", "PARTIAL_CONTROL_DESIGN_GAP", "SCOPED_COVERAGE_GAP"]},
+          "severity": {"enum": ["critical", "high", "medium", "low"]},
+          "title": {"type": "string", "minLength": 1},
+          "mechanism": {"type": "string", "minLength": 1},
+          "source_layer": {"type": "string", "minLength": 1},
+          "root_cause": {"type": "string", "minLength": 1},
+          "evidence_refs": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[^:]+:[1-9][0-9]*$"}},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "recommended_fix": {"type": "string", "minLength": 1},
+          "scope_limit": {"type": "string", "minLength": 1}
+        }
+      }
+    },
+    "ordered_fix_plan": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["order", "goal", "why_now", "expected_effect"],
+        "properties": {
+          "order": {"type": "integer", "minimum": 1},
+          "goal": {"type": "string", "minLength": 1},
+          "why_now": {"type": "string", "minLength": 1},
+          "expected_effect": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "StringList": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+  }
+}

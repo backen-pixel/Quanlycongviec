@@ -1,0 +1,18 @@
+flowchart TB
+  Founder["Founder / nhân sự — L9"] --> G["L5 Decision / bốn cửa / C0–C3"]
+  Channels["L1 Website • Meta Lead Ads • Zalo OA"] --> I["L2 Signed receiver / binding / durable inbox"]
+  I --> F["L3 Fact façade — CRM / Work / Finance"]
+  F --> G
+  R["L4 Versioned Rule Registry"] --> G
+  G --> X["L6 Command / lease / fence / outbox"]
+  X --> Domain["Domain writer / native adapter"]
+  Domain --> Receipt["Receipt / reconciliation"]
+  Receipt --> F
+  F --> Measure["L8 Metrics / Outcome / Adjustment proposal"]
+  Measure --> Founder
+  AI["L7 Gateway / AgentSpec / one-company session / bounded reviewer"] -->|"C0 read / proposal"| G
+  F -->|"scoped tainted context"| AI
+  Runtime["Paperclip / OpenClaw adapter"] --> AI
+  Foundation["L10 Identity • tenant/company • cap • audit • operations"] -.-> G
+  Foundation -.-> X
+  Internal["n8n nội bộ — ngoài đường sản phẩm"]

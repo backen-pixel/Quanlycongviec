@@ -1,0 +1,55 @@
+{
+  "source_policy": "Original files remain in user Downloads. Manifest pins filename/bytes/hash; no original PII-bearing author line is published.",
+  "recorded_at": "2026-10-16T07:53:38.606517+00:00",
+  "files": [
+    {
+      "filename": "BOS-V31A-ARCH-01 — Nhiệm vụ thiết kế kiến trúc giao Codex.md",
+      "source_location_class": "USER_PROVIDED_DOWNLOADS",
+      "status": "READ",
+      "sha256": "8c191af46a08a65bedfe0e711003d536120735aa8595cbc0b0f753a51e430997",
+      "bytes": 16730
+    },
+    {
+      "filename": "BUSINESS_AI_OS_KIEN_TRUC_V3_1_SAN_PHAM_20261016.pdf",
+      "source_location_class": "USER_PROVIDED_DOWNLOADS",
+      "status": "READ",
+      "sha256": "efb9370f8a6150ad09447e06acafcadc0ce26841ece44ed3bf3f5d26289744ec",
+      "bytes": 232165
+    },
+    {
+      "filename": "BUSINESS_AI_OS_KIEN_TRUC_V2_3_N8N_20261016.pdf",
+      "source_location_class": "USER_PROVIDED_DOWNLOADS",
+      "status": "READ",
+      "sha256": "dc8797431dfd45bb582a1ded77ead91bccf4fcc5ce1234adc63da71a47ac2b82",
+      "bytes": 171517
+    },
+    {
+      "filename": "Business AI OS V3.0 — Kiến trúc sản phẩm cho SME đa ngành.pdf",
+      "source_location_class": "USER_PROVIDED_DOWNLOADS",
+      "status": "READ",
+      "sha256": "48db12b2c2f36a4c97750be117caddc8066185dd7b2c19f6ea2c27350c177c25",
+      "bytes": 313610
+    },
+    {
+      "filename": "BUSINESS_AI_OS_KIEN_TRUC_TONG_THE_20261016.png",
+      "source_location_class": "USER_PROVIDED_DOWNLOADS",
+      "status": "READ",
+      "sha256": "2e26f273e2de130fe3981ddc8743d6420df099e153150db6644840bb561e23f6",
+      "bytes": 513171
+    }
+  ],
+  "missing_sources": [
+    {
+      "name": "original nine-finding architecture audit",
+      "status": "SOURCE_UNVERIFIED"
+    },
+    {
+      "name": "original ten-point diagram assessment",
+      "status": "SOURCE_UNVERIFIED"
+    },
+    {
+      "name": "BOS-V23-SETUP-01 original task",
+      "status": "SOURCE_UNVERIFIED"
+    }
+  ]
+}

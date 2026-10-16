@@ -1,5 +1,11 @@
 # Architecture
 
+## Gói V3.1a — bổ sung W0 và kỹ thuật ngày 16/10/2026
+
+- [Điểm vào thiết kế tổng thể V3.1a](./v3.1a/00-README.md): toàn Business AI OS có Marketing tích hợp, kế thừa gói tổng thể; M1 là chặng xây đầu.
+- Inventory mã, 10 tầng, 10 ADR, contracts/fixtures, decision/command, connectors/AI boundary và kế hoạch M1. **Chưa nghiệm thu G0/production**: baseline probe thất bại, schema live UNKNOWN; audit gốc/đánh giá sơ đồ chưa xác minh. Xem [nguồn còn thiếu](./v3.1a/open-questions.md).
+
+
 ## Gói thiết kế tổng thể BOS-ARCH-DESIGN-01 — 16/10/2026
 
 - [Tóm tắt và bộ bàn giao](./overall-design-20261016/SUMMARY.md): một Business AI OS đủ sáu miền, đối chiếu nguồn đã có, contracts/schema/fixtures, sơ đồ, ADR đề xuất và backlog nghiệm thu để giao xây dựng.

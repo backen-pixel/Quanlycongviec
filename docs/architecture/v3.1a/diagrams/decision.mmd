@@ -1,0 +1,27 @@
+stateDiagram-v2
+  [*] --> PROPOSED
+  PROPOSED --> EVALUATING
+  EVALUATING --> DENIED: any PHAP LE LY TINH DENY
+  EVALUATING --> NEEDS_INPUT: UNKNOWN or stale context
+  NEEDS_INPUT --> EVALUATING: new evidence or revision
+  EVALUATING --> READ_ONLY: C0
+  EVALUATING --> AUTHORIZED: C1 and published policy
+  EVALUATING --> WAITING_NOTICE: C2_NOTIFY approved closed list
+  WAITING_NOTICE --> NOTICE_PENDING: DELIVERED with exact digest
+  WAITING_NOTICE --> NEEDS_INPUT: missing delivery
+  NOTICE_PENDING --> VETOED: veto wins dispatch lock
+  NOTICE_PENDING --> NEEDS_INPUT: stale preconditions
+  NOTICE_PENDING --> AUTHORIZED: window elapsed no veto under lock
+  EVALUATING --> WAITING_APPROVAL: C2_APPROVE or C3
+  WAITING_APPROVAL --> DENIED: refused
+  WAITING_APPROVAL --> AUTHORIZED: valid exact authority and digest
+  AUTHORIZED --> CONSUMED: atomic durable command
+  AUTHORIZED --> NEEDS_INPUT: changed facts rules authority
+  NOTICE_PENDING --> EXPIRED: TTL
+  WAITING_APPROVAL --> EXPIRED: TTL
+  AUTHORIZED --> EXPIRED: TTL
+  READ_ONLY --> [*]
+  DENIED --> [*]
+  VETOED --> [*]
+  EXPIRED --> [*]
+  CONSUMED --> [*]

@@ -1,0 +1,403 @@
+{
+  "observed_at": "2026-10-16T07:49:49.738Z",
+  "validator": "Ajv 8.20.0",
+  "kind": "LOCAL_DESIGN_CHECK_NOT_RUNTIME",
+  "count": 79,
+  "results": [
+    {
+      "name": "valid_IntakeEvent",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "valid_FactProjection",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "valid_DecisionRecord",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "valid_Command",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "valid_Receipt",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "valid_AgentSpec",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "valid_CycleRecord",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "valid_IntakeAcceptanceReceipt",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "missing_AgentSpec_taint",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "missing_AgentSpec_company_scope",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "missing_AgentSpec_max_rounds",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "missing_AgentSpec_agent_spec_version",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "missing_AgentSpec_prompt_hash",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "missing_AgentSpec_model_id",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "missing_CycleRecord_taint",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "missing_CycleRecord_company_scope",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "missing_CycleRecord_max_rounds",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "missing_CycleRecord_agent_spec_version",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "missing_CycleRecord_prompt_hash",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "missing_CycleRecord_model_id",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "reviewer_cannot_return_replacement_text",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "scope_cannot_be_wildcard",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "unknown_record_property_rejected",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "gate_unknown_enum_rejected",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "PHAP_DENY",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "PHAP_UNKNOWN",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "LE_DENY",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "LE_UNKNOWN",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "LY_DENY",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "LY_UNKNOWN",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "TINH_DENY",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "TINH_UNKNOWN",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "all_four_low_risk_actions_notice_path",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "veto",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "window_not_elapsed",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "unapproved_allowlist",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "expired",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "stale_facts",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "stale_rules",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "stale_revision",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "no_lock",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "veto_race_revision",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "company_mismatch",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "unknown_notice_delivery",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "customer_message_outside_allowlist",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "notice_does_not_create_approval",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "explicit_C2_APPROVE",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "explicit_C3",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "C0",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "C1",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "valid_cycle",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "memory_company",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "company_session",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "review_hash",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "round_limit",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "call_limit",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "taint_downgrade",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "prompt_version",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "accepted_receipt_is_not_business_success",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "terminal_CONSUMED",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "terminal_DENIED",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "terminal_VETOED",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "terminal_EXPIRED",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "late_delivery_cannot_shorten_window",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "delivery_evidence_required",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "recipient_must_have_veto_authority",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "consent_na_cannot_bypass_customer_contact",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "target_precondition_mismatch",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "version_precondition_mismatch",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "absent_precondition_wrong_version",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "consent_denied",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "consent_unknown",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "consent_granted_missing_refs",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "authority_epoch_revoked",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "valid_absent_precondition",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "taint_origin_swap_rejected",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "taint_policy_swap_rejected",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "C1_stale_digest",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    },
+    {
+      "name": "audit_schema",
+      "status": "PASS",
+      "class": "LOCAL_DESIGN_CHECK"
+    }
+  ]
+}
