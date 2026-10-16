@@ -197,8 +197,9 @@ test('production entrypoint has fixed run/base and all five frozen source hashes
 testPg17('registration waits for concurrent owner DDL, then rejects the changed addition catalog before installing a hook',()=>pair(async p=>{
   const writer=await p.primary.newSession(),registrar=await p.primary.newSession();
   try{
+    const opts=await options(p,'primary','register',{tables:[production.ADDITION]});
     await writer.query('BEGIN');await writer.query(`ALTER TABLE public.${production.ADDITION} ADD COLUMN synthetic_late text`);
-    const pending=p.life.runAction(registrar,await options(p,'primary','register',{tables:[production.ADDITION]}));let settled=false;pending.then(()=>{settled=true;},()=>{settled=true;});
+    const pending=p.life.runAction(registrar,opts);let settled=false;pending.then(()=>{settled=true;},()=>{settled=true;});
     await until(async()=>{assert.equal(settled,false);return (await p.primary.query('SELECT $1::int=ANY(pg_blocking_pids($2::int)) blocked',[writer.processID,registrar.processID])).rows[0].blocked;});
     await writer.query('COMMIT');await assert.rejects(()=>pending,e=>e.cutoverCode==='CUTOVER_LIFECYCLE_PUBLIC_CATALOG_CHANGED');
     assert.equal((await p.primary.query(`SELECT count(*)::int n FROM ${NS}.registrations WHERE table_name=$1`,[production.ADDITION])).rows[0].n,0);
