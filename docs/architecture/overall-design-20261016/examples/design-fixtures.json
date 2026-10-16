@@ -1,0 +1,913 @@
+[
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Party",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000001",
+      "revision": 1,
+      "display_name": "SYNTHETIC:display_name",
+      "contact_private_ref": "SYNTHETIC:contact_private_ref",
+      "relationship_scope_ref": "SYNTHETIC:relationship_scope_ref"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Need",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000002",
+      "revision": 1,
+      "party_id": "00000000-0000-0000-0000-000000000001",
+      "description": "SYNTHETIC:description",
+      "stage": "SYNTHETIC:stage",
+      "qualification": "PENDING",
+      "qualification_evidence_ref": "SYNTHETIC:qualification_evidence_ref",
+      "source_refs": [
+        "SYNTHETIC:source_refs"
+      ]
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "WorkItem",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000003",
+      "revision": 1,
+      "source_type": "CRM",
+      "native_id": "SYNTHETIC:native_id",
+      "owner_id": "00000000-0000-0000-0000-000000000001",
+      "due_at": "2026-01-02T00:00:00Z",
+      "state": "OPEN",
+      "acceptance_criteria": [
+        "SYNTHETIC:acceptance_criteria"
+      ]
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Fact",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000004",
+      "revision": 1,
+      "subject_type": "SYNTHETIC:subject_type",
+      "subject_id": "00000000-0000-0000-0000-000000000001",
+      "source_system": "SYNTHETIC:source_system",
+      "source_ref": "SYNTHETIC:source_ref",
+      "observed_at": "2026-01-01T00:00:00Z",
+      "recorded_at": "2026-01-01T00:00:00Z",
+      "verification": "REPORTED",
+      "verification_evidence_ref": "SYNTHETIC:verification_evidence_ref",
+      "snapshot_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "coverage": 1
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Consent",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000005",
+      "revision": 1,
+      "party_id": "00000000-0000-0000-0000-000000000001",
+      "purpose": "CONTACT",
+      "channel": "SYNTHETIC:channel",
+      "account_id": "SYNTHETIC:account_id",
+      "state": "REPORTED",
+      "notice_version": "SYNTHETIC:notice_version",
+      "evidence_ref": "SYNTHETIC:evidence_ref",
+      "effective_at": "2026-01-01T00:00:00Z"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Asset",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000006",
+      "revision": 1,
+      "blob_ref": "SYNTHETIC:blob_ref",
+      "rights_ref": "SYNTHETIC:rights_ref",
+      "rights_expires_at": "2026-01-02T00:00:00Z",
+      "source_evidence_ref": "SYNTHETIC:source_evidence_ref",
+      "state": "DRAFT"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Content",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000007",
+      "revision": 1,
+      "brief_ref": "SYNTHETIC:brief_ref",
+      "asset_refs": [
+        "00000000-0000-0000-0000-000000000001"
+      ],
+      "payload_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "state": "DRAFT",
+      "review_decision_ref": "SYNTHETIC:review_decision_ref"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "CampaignPlan",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000008",
+      "revision": 1,
+      "objective_ref": "SYNTHETIC:objective_ref",
+      "plan_ref": "SYNTHETIC:plan_ref",
+      "channel_bindings": [
+        {
+          "provider": "SYNTHETIC:provider",
+          "account_id": "SYNTHETIC:account_id",
+          "resource_type": "SYNTHETIC:resource_type",
+          "resource_id": null
+        }
+      ],
+      "budget_plan_ref": "SYNTHETIC:budget_plan_ref",
+      "period_start": "2026-01-01T00:00:00Z",
+      "period_end": "2026-01-02T00:00:00Z",
+      "state": "DRAFT"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Touchpoint",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000009",
+      "revision": 1,
+      "source_system": "SYNTHETIC:source_system",
+      "native_event_id": "SYNTHETIC:native_event_id",
+      "occurred_at": "2026-01-01T00:00:00Z",
+      "identity_evidence_ref": "SYNTHETIC:identity_evidence_ref",
+      "source_kind": "PAID",
+      "consent_id": null,
+      "consent_revision": null
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Handoff",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-00000000000a",
+      "revision": 1,
+      "need_id": "00000000-0000-0000-0000-000000000002",
+      "owner_id": null,
+      "accountable_owner_id": "00000000-0000-0000-0000-000000000001",
+      "due_at": "2026-01-02T00:00:00Z",
+      "state": "WAITING_OWNER",
+      "milestone_evidence_refs": [
+        "SYNTHETIC:milestone_evidence_refs"
+      ]
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Quote",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-00000000000b",
+      "revision": 1,
+      "need_id": "00000000-0000-0000-0000-000000000002",
+      "lines_ref": "SYNTHETIC:lines_ref",
+      "total": {
+        "currency": "VND",
+        "amount_minor": 1,
+        "exponent": 0,
+        "basis_ref": "SYNTHETIC:basis_ref"
+      },
+      "terms_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "state": "DRAFT"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Acceptance",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-00000000000c",
+      "revision": 1,
+      "quote_id": "00000000-0000-0000-0000-00000000000b",
+      "quote_revision": 1,
+      "quote_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "customer_evidence_ref": "SYNTHETIC:customer_evidence_ref",
+      "accepted_at": "2026-01-01T00:00:00Z"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Order",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-00000000000d",
+      "revision": 1,
+      "quote_id": "00000000-0000-0000-0000-00000000000b",
+      "acceptance_id": "00000000-0000-0000-0000-00000000000c",
+      "total": {
+        "currency": "VND",
+        "amount_minor": 1,
+        "exponent": 0,
+        "basis_ref": "SYNTHETIC:basis_ref"
+      },
+      "execution_unit_keys": [
+        "SYNTHETIC:execution_unit_keys"
+      ],
+      "state": "DRAFT"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Payment",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-00000000000e",
+      "revision": 1,
+      "order_id": "00000000-0000-0000-0000-00000000000d",
+      "transaction_ref": "SYNTHETIC:transaction_ref",
+      "source_system": "SYNTHETIC:source_system",
+      "amount": {
+        "currency": "VND",
+        "amount_minor": 1,
+        "exponent": 0,
+        "basis_ref": "SYNTHETIC:basis_ref"
+      },
+      "evidence_ref": "SYNTHETIC:evidence_ref",
+      "state": "REPORTED"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Refund",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-00000000000f",
+      "revision": 1,
+      "payment_id": "00000000-0000-0000-0000-00000000000e",
+      "adjustment_id": "00000000-0000-0000-0000-000000000001",
+      "transaction_ref": "SYNTHETIC:transaction_ref",
+      "amount": {
+        "currency": "VND",
+        "amount_minor": 1,
+        "exponent": 0,
+        "basis_ref": "SYNTHETIC:basis_ref"
+      },
+      "evidence_ref": "SYNTHETIC:evidence_ref",
+      "state": "REQUESTED"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Project",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000010",
+      "revision": 1,
+      "order_id": "00000000-0000-0000-0000-00000000000d",
+      "execution_unit_key": "SYNTHETIC:execution_unit_key",
+      "owner_id": "00000000-0000-0000-0000-000000000001",
+      "milestone_refs": [
+        "SYNTHETIC:milestone_refs"
+      ],
+      "capacity_reservation_ref": "SYNTHETIC:capacity_reservation_ref",
+      "state": "PROPOSED"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "ServiceCase",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000011",
+      "revision": 1,
+      "party_id": "00000000-0000-0000-0000-000000000001",
+      "order_id": null,
+      "project_id": null,
+      "request_ref": "SYNTHETIC:request_ref",
+      "case_kind": "SUPPORT",
+      "owner_id": "00000000-0000-0000-0000-000000000001",
+      "due_at": "2026-01-02T00:00:00Z",
+      "policy_ref": null,
+      "policy_revision": null,
+      "warranty_context_ref": null,
+      "state": "WAITING_POLICY"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Rule",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000012",
+      "revision": 1,
+      "evaluator_id": "SYNTHETIC:evaluator_id",
+      "evaluator_version": "SYNTHETIC:evaluator_version",
+      "parameter_schema_ref": "SYNTHETIC:parameter_schema_ref",
+      "policy_scope_ref": "SYNTHETIC:policy_scope_ref",
+      "hard_deny": true,
+      "issued_by": "00000000-0000-0000-0000-000000000001",
+      "effective_at": "2026-01-01T00:00:00Z",
+      "state": "DRAFT"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Decision",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000013",
+      "revision": 1,
+      "action": "fixture.campaign.create",
+      "target": {
+        "provider": "SYNTHETIC:adapter",
+        "account_id": "SYNTHETIC:account-A1",
+        "resource_type": "campaign",
+        "resource_id": null
+      },
+      "payload_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "fact_refs": [
+        {
+          "fact_id": "00000000-0000-0000-0000-000000000004",
+          "revision": 1,
+          "snapshot_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "rule_versions": [
+        "SYNTHETIC:rule_versions"
+      ],
+      "consent_context": {
+        "applicability": "NOT_APPLICABLE",
+        "reason": "SYNTHETIC draft campaign without personal audience/contact",
+        "refs": []
+      },
+      "precondition": {
+        "kind": "ABSENT",
+        "resource_revision": null,
+        "absence_key": "SYNTHETIC:campaign-business-key-1"
+      },
+      "autonomy": "C1",
+      "approval_ref": null,
+      "reservation_ref": null,
+      "issued_at": "2026-01-01T00:00:00Z",
+      "expires_at": "2026-01-02T00:00:00Z",
+      "state": "PASS"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Command",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000014",
+      "revision": 1,
+      "decision_id": "00000000-0000-0000-0000-000000000013",
+      "action": "fixture.campaign.create",
+      "target": {
+        "provider": "SYNTHETIC:adapter",
+        "account_id": "SYNTHETIC:account-A1",
+        "resource_type": "campaign",
+        "resource_id": null
+      },
+      "payload_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "idempotency_key": "SYNTHETIC:idempotency_key",
+      "precondition": {
+        "kind": "ABSENT",
+        "resource_revision": null,
+        "absence_key": "SYNTHETIC:campaign-business-key-1"
+      },
+      "expires_at": "2026-01-02T00:00:00Z",
+      "reservation_id": "00000000-0000-0000-0000-000000000016",
+      "fencing_epoch": 1,
+      "cancellation_requested_at": null,
+      "cancellation_tombstone_ref": null,
+      "state": "RECEIVED"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Receipt",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000015",
+      "revision": 1,
+      "command_id": "00000000-0000-0000-0000-000000000014",
+      "intake_id": "00000000-0000-0000-0000-00000000001d",
+      "execution_id": null,
+      "phase": "DURABLE_ACCEPTANCE",
+      "stage_result": "RECORDED",
+      "command_outcome": null,
+      "cancellation_tombstone_ref": null,
+      "external_id": null,
+      "observed_at": "2026-01-01T00:00:00Z",
+      "evidence_ref": "SYNTHETIC:evidence_ref",
+      "readback_ref": null
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Reservation",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000016",
+      "revision": 1,
+      "budget_id": "00000000-0000-0000-0000-000000000001",
+      "purpose": "MARKETING",
+      "effect_key": "SYNTHETIC:effect_key",
+      "upper_bound": {
+        "currency": "VND",
+        "amount_minor": 1,
+        "exponent": 0,
+        "basis_ref": "SYNTHETIC:basis_ref"
+      },
+      "state": "HELD",
+      "price_version": "SYNTHETIC:price_version",
+      "expires_at": "2026-01-02T00:00:00Z"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "CapacityReservation",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000017",
+      "revision": 1,
+      "project_id": "00000000-0000-0000-0000-000000000010",
+      "resource_id": "SYNTHETIC:resource_id",
+      "units": 1,
+      "unit": "SLOT",
+      "window_start": "2026-01-01T00:00:00Z",
+      "window_end": "2026-01-02T00:00:00Z",
+      "expires_at": "2026-01-02T00:00:00Z",
+      "state": "HELD"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "AITask",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000018",
+      "revision": 1,
+      "business_work_item_id": "00000000-0000-0000-0000-000000000003",
+      "native_task_id": "SYNTHETIC:native-task-1",
+      "template_ref": "SYNTHETIC:template_ref",
+      "output_schema_ref": "SYNTHETIC:output_schema_ref",
+      "cap_ref": "SYNTHETIC:cap_ref",
+      "due_at": "2026-01-02T00:00:00Z",
+      "state": "RUNNING"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "AIRun",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000019",
+      "revision": 1,
+      "ai_task_id": "00000000-0000-0000-0000-000000000018",
+      "native_run_id": "SYNTHETIC:native-run-1",
+      "generation": 1,
+      "workflow_execution_id": null,
+      "usage_reservation_id": "00000000-0000-0000-0000-000000000384",
+      "state": "RUNNING"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Callback",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-00000000001a",
+      "revision": 1,
+      "ai_task_id": "00000000-0000-0000-0000-000000000018",
+      "ai_run_id": "00000000-0000-0000-0000-000000000019",
+      "command_id": null,
+      "result_kind": "TASK_RESULT",
+      "mapping_version": 1,
+      "generation": 1,
+      "event_key": "SYNTHETIC:event_key",
+      "body_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "signature_ref": "SYNTHETIC:signature_ref",
+      "sent_at": "2026-01-01T00:00:00Z",
+      "event": "COMPLETED"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Expectation",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-00000000001b",
+      "revision": 1,
+      "metric_ref": "SYNTHETIC:metric_ref",
+      "cohort_ref": "SYNTHETIC:cohort_ref",
+      "baseline_ref": "SYNTHETIC:baseline_ref",
+      "guardrail_refs": [
+        "SYNTHETIC:guardrail_refs"
+      ],
+      "observation_start": "2026-01-01T00:00:00Z",
+      "observation_end": "2026-01-02T00:00:00Z",
+      "sample_requirement_ref": "SYNTHETIC:sample_requirement_ref",
+      "owner_id": "00000000-0000-0000-0000-000000000001"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Outcome",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-00000000001c",
+      "revision": 1,
+      "expectation_id": "00000000-0000-0000-0000-00000000001b",
+      "metric_ref": "SYNTHETIC:metric_ref",
+      "source_fact_refs": [
+        {
+          "fact_id": "00000000-0000-0000-0000-000000000004",
+          "revision": 1,
+          "snapshot_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "coverage": 1,
+      "value": null,
+      "reason": "SYNTHETIC:reason",
+      "state": "WAITING_OUTCOME"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "IntakeEvent",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-00000000001d",
+      "revision": 1,
+      "schema_version": "1.0",
+      "source_event_id": "SYNTHETIC:source_event_id",
+      "event_type": "SYNTHETIC:event_type",
+      "integration_id": "00000000-0000-0000-0000-000000000001",
+      "occurred_at": "2026-01-01T00:00:00Z",
+      "received_at": "2026-01-01T00:00:00Z",
+      "payload_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "correlation_id": "00000000-0000-0000-0000-000000000001",
+      "causation_id": "00000000-0000-0000-0000-000000000001",
+      "is_test": true,
+      "private_payload_ref": "SYNTHETIC:private_payload_ref",
+      "evidence_ref": "SYNTHETIC:evidence_ref"
+    }
+  },
+  {
+    "data_class": "SYNTHETIC",
+    "record_type": "Reservation",
+    "resolved_context": {
+      "tenant_id": "00000000-0000-0000-0000-000000000064",
+      "company_id": "00000000-0000-0000-0000-000000000065",
+      "actor_id": "00000000-0000-0000-0000-000000000066",
+      "actor_type": "AGENT",
+      "delegation_ref": "SYNTHETIC:delegation-1",
+      "authority_epoch": 1,
+      "scopes": [
+        "fixture.campaign.create"
+      ],
+      "authenticated_at": "2026-01-01T00:00:00Z"
+    },
+    "body": {
+      "id": "00000000-0000-0000-0000-000000000384",
+      "revision": 1,
+      "budget_id": "00000000-0000-0000-0000-000000000001",
+      "purpose": "MODEL_CALL",
+      "effect_key": "SYNTHETIC:model-attempt-1",
+      "upper_bound": {
+        "currency": "VND",
+        "amount_minor": 1,
+        "exponent": 0,
+        "basis_ref": "SYNTHETIC:basis_ref"
+      },
+      "state": "HELD",
+      "price_version": "SYNTHETIC:model-price-v1",
+      "expires_at": "2026-01-02T00:00:00Z"
+    }
+  }
+]

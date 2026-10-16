@@ -1,0 +1,204 @@
+{
+  "classification": "SYNTHETIC_DESIGN_TRANSCRIPT_NOT_RUN",
+  "version": "0.1.0",
+  "warning": "No endpoint called. Server resolves identity, tenant/company and target binding; client fields cannot grant scope.",
+  "exchanges": [
+    {
+      "contract": "C-INGEST",
+      "authentication": "SYNTHETIC authenticated source binding; signature verified over raw body by adapter",
+      "request": {
+        "method": "POST",
+        "path": "/api/bos/v1/integrations/SYNTHETIC-binding-A1/events",
+        "headers": {
+          "Idempotency-Key": "SYNTHETIC-native-event-1"
+        },
+        "body": {
+          "schema_version": "1.0",
+          "source_event_id": "SYNTHETIC-native-event-1",
+          "event_type": "lead.created.v1",
+          "occurred_at": "2026-01-01T00:00:00Z",
+          "data": {
+            "form_id": "SYNTHETIC:form-1",
+            "inquiry": "SYNTHETIC:test inquiry"
+          },
+          "payload_hash": "f10eb6bc660aafbfb5c9a59b3e4bb75a67754f63130159bca91219940024e7fd"
+        }
+      },
+      "response": {
+        "status": 202,
+        "body": {
+          "intake_id": "00000000-0000-0000-0000-00000000001d",
+          "state": "RECEIVED",
+          "receipt_ref": "SYNTHETIC:durable-intake-receipt",
+          "lead_id": null,
+          "effect_certainty": "NOT_ASSERTED"
+        }
+      },
+      "event_after_commit": {
+        "schema_version": "1.0",
+        "event_id": "00000000-0000-0000-0000-0000000002bc",
+        "event_type": "channel.event.accepted.v1",
+        "source_event_id": "SYNTHETIC-native-event-1",
+        "source_system": "SYNTHETIC:website-adapter",
+        "integration_id": "00000000-0000-0000-0000-000000000001",
+        "occurred_at": "2026-01-01T00:00:00Z",
+        "received_at": "2026-01-01T00:00:00Z",
+        "resolved_context": {
+          "tenant_id": "00000000-0000-0000-0000-000000000064",
+          "company_id": "00000000-0000-0000-0000-000000000065",
+          "actor_id": "00000000-0000-0000-0000-000000000068",
+          "actor_type": "SOURCE_ADAPTER",
+          "delegation_ref": null,
+          "authority_epoch": 1,
+          "scopes": [
+            "intake.accept"
+          ],
+          "authenticated_at": "2026-01-01T00:00:00Z"
+        },
+        "subject_type": "IntakeEvent",
+        "subject_id": "00000000-0000-0000-0000-00000000001d",
+        "subject_revision": 1,
+        "payload_hash": "f10eb6bc660aafbfb5c9a59b3e4bb75a67754f63130159bca91219940024e7fd",
+        "correlation_id": "00000000-0000-0000-0000-000000000001",
+        "causation_id": "00000000-0000-0000-0000-000000000001",
+        "is_test": true,
+        "data": {
+          "intake_id": "00000000-0000-0000-0000-00000000001d",
+          "source_event_type": "lead.created.v1",
+          "private_payload_ref": "SYNTHETIC:server-stored-source-payload"
+        },
+        "evidence_ref": "SYNTHETIC:source-signature-and-commit-proof"
+      },
+      "hash_example": "Illustrative SHA256 of canonical envelope excluding payload_hash. Native adapters must retain raw-body signature proof and version their canonicalizer; never trust client hash.",
+      "event_hash_semantics": "payload_hash preserves the authenticated original source-envelope digest shown above; source record carries canonicalizer version. Accepted-event data contains references, not raw private payload."
+    },
+    {
+      "contract": "C-ACTION",
+      "authentication": "SYNTHETIC authenticated C1 delegation, server-resolved company scope",
+      "request": {
+        "method": "POST",
+        "path": "/api/bos/v1/action-proposals",
+        "headers": {
+          "Idempotency-Key": "SYNTHETIC-proposal-1"
+        },
+        "body": {
+          "action": "fixture.campaign.create",
+          "target": {
+            "provider": "SYNTHETIC:adapter",
+            "account_id": "SYNTHETIC:account-A1",
+            "resource_type": "campaign",
+            "resource_id": null
+          },
+          "fact_refs": [
+            {
+              "fact_id": "00000000-0000-0000-0000-000000000004",
+              "revision": 1,
+              "snapshot_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          ],
+          "precondition": {
+            "kind": "ABSENT",
+            "resource_revision": null,
+            "absence_key": "SYNTHETIC:campaign-business-key-1"
+          },
+          "payload": {
+            "name": "SYNTHETIC:draft-campaign",
+            "desired_status": "DRAFT"
+          },
+          "objective_ref": "SYNTHETIC:objective-1",
+          "requested_autonomy": "C1"
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "decision_id": "00000000-0000-0000-0000-000000000013",
+          "state": "PASS",
+          "autonomy": "C1",
+          "expires_at": "2026-01-02T00:00:00Z",
+          "command_id": null,
+          "next_action": "Submit identical intent to C-COMMAND; PASS is not an effect receipt",
+          "gate_trace": [
+            {
+              "gate": "PHAP",
+              "result": "PASS",
+              "evidence_ref": "SYNTHETIC:gate-proof-1"
+            },
+            {
+              "gate": "LE",
+              "result": "PASS",
+              "evidence_ref": "SYNTHETIC:gate-proof-2"
+            },
+            {
+              "gate": "LY",
+              "result": "PASS",
+              "evidence_ref": "SYNTHETIC:gate-proof-3"
+            },
+            {
+              "gate": "TINH",
+              "result": "PASS",
+              "evidence_ref": "SYNTHETIC:gate-proof-4"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "contract": "C-AI",
+      "authentication": "SYNTHETIC key binding/signature/nonce/audience verified by server; native IDs supplement original mapping",
+      "request": {
+        "method": "POST",
+        "path": "/api/bos/v1/ai/callbacks",
+        "body": {
+          "id": "00000000-0000-0000-0000-00000000001a",
+          "revision": 1,
+          "ai_task_id": "00000000-0000-0000-0000-000000000018",
+          "ai_run_id": "00000000-0000-0000-0000-000000000019",
+          "command_id": null,
+          "result_kind": "TASK_RESULT",
+          "mapping_version": 1,
+          "generation": 1,
+          "event_key": "SYNTHETIC:event_key",
+          "body_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "signature_ref": "SYNTHETIC:signature_ref",
+          "sent_at": "2026-01-01T00:00:00Z",
+          "event": "COMPLETED"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "callback_id": "00000000-0000-0000-0000-00000000001a",
+          "recorded": true,
+          "task_result_ref": "SYNTHETIC:review-queue-output",
+          "command_id": null,
+          "business_success": false,
+          "next_action": "Independent review; domain owner evaluates acceptance"
+        }
+      }
+    },
+    {
+      "contract": "C-RECEIPT",
+      "authentication": "SYNTHETIC scoped read permission",
+      "request": {
+        "method": "GET",
+        "path": "/api/bos/v1/commands/00000000-0000-0000-0000-000000000014/receipts"
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "command_id": "00000000-0000-0000-0000-000000000014",
+          "state": "UNKNOWN",
+          "effect_certainty": "UNKNOWN",
+          "receipt_refs": [
+            "SYNTHETIC:dispatch-intent"
+          ],
+          "next_action": "Authorized reconciliation; no blind resend",
+          "retryable": false,
+          "reservation_state": "PENDING_RECONCILIATION"
+        }
+      },
+      "scenario": "Independent later snapshot after dispatch response loss; fixture initial RECEIVED state is not a live log."
+    }
+  ]
+}

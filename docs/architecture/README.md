@@ -1,5 +1,10 @@
 # Architecture
 
+## Gói thiết kế tổng thể BOS-ARCH-DESIGN-01 — 16/10/2026
+
+- [Tóm tắt và bộ bàn giao](./overall-design-20261016/SUMMARY.md): một Business AI OS đủ sáu miền, đối chiếu nguồn đã có, contracts/schema/fixtures, sơ đồ, ADR đề xuất và backlog nghiệm thu để giao xây dựng.
+- [Nguồn và kết quả review](./overall-design-20261016/EVIDENCE.md): phân biệt code/live/đề xuất; phạm vi chỉ thiết kế, không setup/deploy hoặc thay hệ thống đang chạy. Các lựa chọn mới PROPOSED, không thay bản ghi Founder/ADR đã duyệt bên dưới.
+
 ## Điểm vào Business AI OS V1.1
 
 - [Kiến trúc V1.1](./BUSINESS_AI_OS_ARCHITECTURE_V1_1.md): chuẩn đích theo hướng Founder đã duyệt; bản ghi chặng 0 qua review/merge, không chứng nhận runtime.

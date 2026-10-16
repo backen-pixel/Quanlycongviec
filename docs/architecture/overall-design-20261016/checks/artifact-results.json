@@ -1,0 +1,14 @@
+{
+  "classification": "LOCAL_DESIGN_CHECK",
+  "checked_at": "2026-10-16T07:12:00.872320+00:00",
+  "mermaid_sources": 9,
+  "block_structure": "PASS",
+  "svg_xml": "PASS",
+  "json_syntax": "PASS",
+  "png_dimensions": [
+    1800,
+    1760
+  ],
+  "mermaid_parser_render": "NOT_RUN",
+  "limits": "Structural sanity only; visual review recorded in EVIDENCE; no runtime proof"
+}

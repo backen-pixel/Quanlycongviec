@@ -1,0 +1,347 @@
+%% DESIGN_PROPOSAL / NOT_LIVE. Logical ownership, not SQL migration.
+%% Legacy physical mapping and single writer are in CONTRACTS.md section2 / INVENTORY.md.
+%% Value objects and reference edges below do not require new physical tables or FK columns.
+%% SERVICE_CASE.party_id + envelope company resolve exactly one authorized PARTY_SCOPE.
+%% Service intake permits null order/project/policy/context; warranty adjudication requires verified policy+context.
+%% DECISION requires one-or-more fact/rule refs; consent refs may be empty only for NOT_APPLICABLE with reason.
+%% COMMAND.precondition kind is ABSENT, MATCH_REVISION or READ_ONLY; READ_ONLY never authorizes an effect.
+%% RECEIPT phase determines required refs: DURABLE_ACCEPTANCE requires intake; dispatch/effect requires command.
+erDiagram
+  TENANT ||--o{ COMPANY : contains
+  COMPANY ||--o{ MEMBERSHIP : scopes
+  PARTY ||--o{ PARTY_SCOPE : has
+  COMPANY ||--o{ PARTY_SCOPE : authorizes
+  PARTY_SCOPE ||--o{ NEED : requests
+  NEED ||--o{ HANDOFF : assigned
+  NEED ||--o{ QUOTE : priced
+  QUOTE ||--o{ CUSTOMER_ACCEPTANCE : exact_revision
+  CUSTOMER_ACCEPTANCE ||--o{ ORDER : authorizes
+  ORDER ||--o{ PROJECT : execution_units
+  PROJECT ||--o{ WORK_ITEM : schedules
+  NEED ||--o{ WORK_ITEM : presales
+  ORDER ||--o{ PAYMENT : reports
+  PAYMENT ||--o{ REFUND : reverses
+  PARTY_SCOPE ||--o{ SERVICE_CASE : mandatory_party_in_scope
+  ORDER |o--o{ SERVICE_CASE : optional_order
+  PROJECT |o--o{ SERVICE_CASE : optional_project
+  PARTY_SCOPE ||--o{ CONSENT_EVENT : purpose_channel
+  MARKETING_PLAN ||--o{ CAMPAIGN_PLAN : defines
+  MARKETING_PLAN ||--o{ CONTENT : commissions
+  CONTENT ||--o{ ASSET_RIGHTS : cites
+  CAMPAIGN_PLAN ||--o{ NATIVE_BINDING : maps
+  NATIVE_BINDING ||--o{ TOUCHPOINT : observes
+  NEED ||--o{ ATTRIBUTION : credited
+  TOUCHPOINT ||--o{ ATTRIBUTION : evidence
+  FACT }|--o{ DECISION : one_or_more_fact_refs
+  RULE }|--o{ DECISION : one_or_more_rule_versions
+  CONSENT_EVENT }o--o{ DECISION : conditional_consent_refs
+  DECISION ||--o| APPROVAL : exact_digest
+  DECISION ||--o{ COMMAND : authorizes
+  COMMAND ||--o{ CLAIM : fenced_attempts
+  COMMAND |o--o{ RECEIPT : nullable_command_phase_dependent
+  INTAKE_EVENT |o--o{ RECEIPT : nullable_intake_phase_dependent
+  BUDGET ||--o{ RESERVATION : reserves
+  COMMAND ||--o| RESERVATION : exposure
+  RESERVATION ||--o{ USAGE : settles
+  WORK_ITEM ||--o{ AI_TASK : delegates
+  AI_TASK ||--o{ AI_RUN : attempts
+  AI_RUN ||--o{ RUNTIME_MAPPING : native_ids
+  AI_RUN ||--o{ RESERVATION : per_call
+  EXPECTATION ||--o{ OUTCOME : measured
+  FACT }|--o{ OUTCOME : source_revisions
+  OUTCOME ||--o{ ADJUSTMENT : proposes
+  RULE ||--o{ ADJUSTMENT : old_version
+  TENANT {
+    uuid id PK
+    string status
+    int revision
+  }
+  COMPANY {
+    uuid id PK
+    uuid tenant_id FK
+    int revision
+  }
+  MEMBERSHIP {
+    uuid actor_id
+    uuid company_id FK
+    string scopes
+    int authority_epoch
+  }
+  PARTY {
+    uuid id PK
+    string crm_native_ref
+    string private_contact_ref
+    int revision
+  }
+  PARTY_SCOPE {
+    uuid id PK
+    uuid party_id FK
+    uuid company_id FK
+    string authority_ref
+  }
+  NEED {
+    uuid id PK
+    uuid party_scope_id FK
+    string crm_lead_or_deal_ref
+    string stage
+    int revision
+  }
+  HANDOFF {
+    uuid id PK
+    uuid need_id FK
+    uuid assignee_id
+    datetime assigned_at
+    datetime delivered_at
+    datetime accepted_at
+    datetime first_response_at
+  }
+  QUOTE {
+    uuid id PK
+    uuid need_id FK
+    int revision
+    string amount_basis_ref
+  }
+  CUSTOMER_ACCEPTANCE {
+    uuid id PK
+    uuid quote_id FK
+    int quote_revision
+    string evidence_ref
+  }
+  ORDER {
+    uuid id PK
+    uuid acceptance_id FK
+    int revision
+    string status
+  }
+  PROJECT {
+    uuid id PK
+    uuid order_id FK
+    string execution_unit_key
+    string responsible_company_ref
+    int revision
+  }
+  WORK_ITEM {
+    uuid id PK
+    string source_type
+    string native_id
+    string canonical_writer
+    string state
+    int revision
+  }
+  PAYMENT {
+    uuid id PK
+    uuid order_id FK
+    string canonical_transaction_ref
+    string legacy_alias_refs
+    string evidence_ref
+    string reconciliation_state
+  }
+  REFUND {
+    uuid id PK
+    uuid original_payment_id FK
+    string adjustment_key
+    string evidence_ref
+    string reconciliation_state
+  }
+  SERVICE_CASE {
+    uuid id PK
+    uuid party_id FK "Required; resolved company membership"
+    uuid order_id FK "Nullable"
+    uuid project_id FK "Nullable"
+    string request_ref
+    string case_kind "SUPPORT or WARRANTY"
+    string policy_ref "Nullable until verified policy"
+    int policy_revision "Nullable until verified policy"
+    object warranty_context_ref "Nullable until warranty adjudication"
+    string appointment_ref
+    string state
+    int revision
+  }
+  CONSENT_EVENT {
+    uuid id PK
+    uuid party_scope_id FK
+    string purpose_channel_account
+    string grant_or_revoke
+    string evidence_ref
+    int revision
+  }
+  MARKETING_PLAN {
+    uuid id PK
+    uuid company_id FK
+    string objective_period_ref
+    string budget_plan_ref
+    int revision
+  }
+  CONTENT {
+    uuid id PK
+    uuid marketing_plan_id FK
+    string payload_hash
+    string approved_revision_ref
+    string state
+    int revision
+  }
+  ASSET_RIGHTS {
+    uuid id PK
+    string blob_ref
+    string rights_evidence_ref
+    datetime valid_until
+    int revision
+  }
+  CAMPAIGN_PLAN {
+    uuid id PK
+    uuid marketing_plan_id FK
+    string objective_schedule_ref
+    int revision
+  }
+  NATIVE_BINDING {
+    uuid id PK
+    uuid campaign_plan_id FK
+    uuid integration_id
+    string provider_account_object_ids
+    int binding_revision
+  }
+  TOUCHPOINT {
+    uuid id PK
+    uuid integration_id
+    string source_event_ref
+    string identity_proof_ref
+    datetime occurred_at
+  }
+  ATTRIBUTION {
+    uuid id PK
+    uuid need_id FK
+    uuid touchpoint_id FK
+    string model_version_share
+    string evidence_ref
+  }
+  FACT {
+    uuid id PK
+    string owner_subject_ref
+    int source_revision
+    string snapshot_hash
+    datetime observed_as_of
+  }
+  RULE {
+    uuid id PK
+    int published_version
+    string scope_validity
+    string hard_predicates
+  }
+  DECISION {
+    uuid id PK
+    string resolved_scope_actor_epoch
+    string payload_target_hash
+    array fact_refs "One or more source revisions"
+    array rule_versions "One or more published rule refs"
+    object consent_context "REQUIRED with refs or NOT_APPLICABLE with reason"
+    object precondition "ABSENT or MATCH_REVISION or READ_ONLY"
+    string gate_result
+    datetime expires_at
+  }
+  APPROVAL {
+    uuid id PK
+    uuid decision_id FK
+    string exact_digest
+    uuid approver_id
+    datetime expires_at
+  }
+  COMMAND {
+    uuid id PK
+    uuid decision_id FK
+    string idempotency_key
+    string payload_hash
+    object precondition "ABSENT: absence_key; MATCH_REVISION: resource_revision; READ_ONLY: no effect"
+    int fencing_epoch
+    datetime cancellation_requested_at "Nullable before cancellation"
+    string cancellation_tombstone_ref "Durable; nullable before cancellation"
+    string state
+  }
+  CLAIM {
+    uuid id PK
+    uuid command_id FK
+    string lease_owner_token
+    int fencing_epoch
+    datetime lease_expires_at
+  }
+  RECEIPT {
+    uuid id PK
+    uuid command_id FK "Nullable; required for dispatch/effect phases"
+    uuid intake_id FK "Nullable; required DURABLE_ACCEPTANCE"
+    uuid execution_id "Nullable before execution ACK"
+    string phase "DURABLE_ACCEPTANCE DISPATCH_INTENT PROVIDER_ACCEPTED BUSINESS_COMMITTED RECONCILED"
+    string stage_result "RECORDED ACCEPTED APPLIED CONFIRMED_NO_EFFECT ERROR UNKNOWN"
+    string command_outcome "Nullable; SUCCEEDED FAILED CANCELLED UNKNOWN"
+    string cancellation_tombstone_ref "Nullable; required CANCELLED"
+    string external_id "Nullable until native ID known"
+    string evidence_ref
+    string readback_ref "Nullable until required by outcome"
+  }
+  INTAKE_EVENT {
+    uuid id PK
+    int revision
+    string schema_version
+    string source_event_id
+    string event_type
+    uuid integration_id
+    string resolved_tenant_company_scope "Envelope; backend verified"
+    string payload_hash
+    datetime received_at
+    string private_payload_ref
+  }
+  BUDGET {
+    uuid id PK
+    uuid company_id FK
+    string period_currency_basis
+    int cap_minor
+  }
+  RESERVATION {
+    uuid id PK
+    uuid budget_id FK
+    string action_or_model_call_ref
+    int upper_bound_minor
+    string settlement_state
+  }
+  USAGE {
+    uuid id PK
+    uuid reservation_id FK
+    string provider_usage_key
+    int actual_minor
+    string evidence_state
+  }
+  AI_TASK {
+    uuid id PK
+    uuid business_work_item_id FK
+    string paperclip_task_ref
+    string template_version
+  }
+  AI_RUN {
+    uuid id PK
+    uuid ai_task_id FK
+    string paperclip_run_ref
+    string state
+  }
+  RUNTIME_MAPPING {
+    uuid id PK
+    uuid ai_run_id FK
+    string workflow_execution_id
+    string engine_native_ids
+    int generation
+    datetime cancellation_tombstone
+  }
+  EXPECTATION {
+    uuid id PK
+    string metric_version_cohort_window
+    string baseline_hypothesis_ref
+  }
+  OUTCOME {
+    uuid id PK
+    uuid expectation_id FK
+    string source_revision_coverage
+    string result_state
+  }
+  ADJUSTMENT {
+    uuid id PK
+    uuid outcome_id FK
+    string old_rule_version
+    string proposed_diff_test_rollback
+  }
