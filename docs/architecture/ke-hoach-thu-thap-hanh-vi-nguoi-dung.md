@@ -3,6 +3,68 @@
 > Viết ngày 16/10/2026. Khảo sát trực tiếp trên mã nguồn hiện tại, không phải đề xuất từ đầu —
 > phần lớn hạ tầng cần thiết đã tồn tại, chỉ còn thiếu tầng nối và 2 khoảng trống nhỏ.
 
+## Kiểm thử với dữ liệu THẬT (17/10/2026) — 3 lỗi tìm ra và đã sửa
+
+Chạy `getUserBehaviorInsight()` thẳng trên Supabase thật (chỉ đọc), đối chiếu từng con số bằng
+truy vấn độc lập. Thời gian chạy 2,8–3,2s cho kỳ 7 ngày.
+
+**Khớp:** `activity_rows` 632 = DB 632 ✓ · phát sinh 0 = 0 ✓
+
+**Lỗi 1 — kênh không lọc theo công ty (NGHIÊM TRỌNG).** Bảng tin nhắn không có `company_id` nên
+`fetchChannelTouches` gom cả page công ty khác: mở báo cáo công ty **HCB** lại thấy page của
+**Phúc Đạt** và **NextGo**. Đã lọc theo `facebook_pages/zalo_oa_accounts.default_company_id`
+(page chưa gán công ty thì vẫn giữ, bỏ đi sẽ giấu mất dữ liệu).
+
+**Lỗi 2 — việc quá hạn biến mất âm thầm (NGHIÊM TRỌNG).** Công ty HCB có **210** việc quá hạn
+nhưng báo cáo hiện **0**; Phúc Đạt **268** thì báo cáo **14**. Nguyên nhân: việc thuộc công ty
+nhưng người thực hiện có `company_id = NULL` (7/9 người) hoặc thuộc công ty khác, nên bị
+`userSet.has()` loại. Cộng theo từng người → mất sạch. Đã thêm `sources.overdue_total` +
+`overdue_unassigned` và cảnh báo trên giao diện. Kiểm lại: 14 + 254 = 268 = DB ✓.
+
+**Lỗi 3 — cột "Người phụ trách" trống dù đã gán.** Toàn bộ page Phúc Đạt do một người có
+`company_id = NULL` phụ trách, mà tên lại tra trong tập user của công ty → trống. Đã tra tên
+riêng, không phụ thuộc tập user. Kiểm lại: 4/4 kênh hiện đúng "Sale Admin Nhã" ✓.
+
+**Giới hạn đo được trên dữ liệu thật — chưa sửa, cần biết khi đọc báo cáo:**
+
+| Quan sát thật | Hệ quả |
+|---|---|
+| `outbound_by_via` = 2.317 tin "(chưa ghi nguồn)", **0 tin** có `sent_by` | Thời gian phản hồi khách = 0 cho mọi người. Chỉ số này chỉ chạy khi nhân viên trả lời **trong phần mềm** |
+| "Làm việc/ngày" chỉ 1–7 phút dù có 84–230 thao tác | `active_minutes` chỉ cộng khoảng cách ≤ 2 phút giữa 2 thao tác; log hiện quá thưa (chủ yếu `navigate`) nên gần như không cộng được gì. **Con số này chưa đáng tin** |
+| `xong=37` nhưng `đúng hạn=0, trễ=0` | Việc hoàn thành phần lớn **không có deadline** → không tách được sớm/trễ |
+| `xử lý TB = 2.383 giờ` (≈99 ngày) | Việc tạo từ rất lâu mới hoàn thành; đúng về mặt tính toán nhưng cần đọc là "tuổi việc", không phải "công sức" |
+| `facebook_comments.replied_by does not exist` | Migration 725 **chưa chạy** trên DB này |
+
+## Giai đoạn 10 — Chỉ số thời gian + phân loại tổ chức + giao diện chat (17/10/2026)
+
+**Giao diện khách & tin nhắn theo mẫu CRM Facebook/Zalo.** Khảo sát trước: hai trang
+`FacebookPage.jsx`/`ZaloPage.jsx` **không tách component dùng chung** (toàn bộ nằm trong hàm nội
+bộ `InboxTab`, không export; Zalo vẽ lại riêng) nên không import lại được — phải dựng lại theo
+mẫu. Đã bám đúng: dòng hội thoại có avatar + badge chưa đọc + chip SĐT/Lead; bong bóng chat tin
+khách trái nền trắng viền xám, tin mình phải nền gradient xanh, có dải ngày, ảnh hiện trực tiếp.
+(Nếu sau này muốn gọn hơn: tách `components/messenger/ConversationList + MessageBubble` rồi
+refactor cả 3 trang — hiện Facebook/Zalo đang trùng lặp đáng kể.)
+
+**Bốn nhóm chỉ số thời gian**, mỗi nhóm một nguồn khác nhau nên **không cộng dồn được**:
+
+| Chỉ số | Nguồn | Cách tính |
+|---|---|---|
+| Phản hồi khách | `facebook_messages`/`zalo_messages` | Từ tin khách đầu chuỗi đến tin nhân viên trả lời kế tiếp; chỉ tính tin có `sent_by`. Cờ chậm: quá 1 giờ |
+| Làm việc thực tế/ngày | `user_activity_log` | `active_minutes / days_active` (đã có sẵn từ `computeHabitByUser`) |
+| Xử lý 1 việc | `unified_tasks_v` | `completed_at − created_at` (khác sớm/trễ hạn vốn so với `deadline`) |
+| Xử lý 1 giai đoạn deal | `crm_lead_stage_history` | `duration_seconds`, quy cho `changed_by` (người bấm chuyển giai đoạn) |
+
+Thời gian phản hồi tính **ngay trong `fetchChannelTouches`** để không phải đọc lại bảng tin nhắn
+lần hai. Khách còn đang chờ chưa ai trả lời → `sources.pending_replies`.
+
+**Phân loại theo công ty + module.** `fetchCompanyUsers` lấy thêm `position`, `department_id`,
+join `departments`/`companies` (có fallback nếu DB thiếu cột). Module lấy từ bảng
+`user_module_roles` (database/505) — truy vấn riêng vì bảng này không có FK cứng tới `users` nên
+PostgREST không join được; user chưa có dòng nào thì suy từ `users.role`, không suy được thì xếp
+"(chưa gán module)" chứ không đoán. Giao diện: dropdown lọc Công ty/Module (chỉ hiện khi có ≥2 giá
+trị) + chia bảng thành nhóm có tiêu đề — nhóm theo **công ty** khi đang xem nhiều công ty, ngược
+lại nhóm theo **module**.
+
 ## Giai đoạn 9 — Đọc nội dung bình luận + nhiệm vụ phát sinh (17/10/2026)
 
 **Nội dung bình luận** — thêm nguồn drill `comments` (`module=internal` cho Dự án + Phân công,

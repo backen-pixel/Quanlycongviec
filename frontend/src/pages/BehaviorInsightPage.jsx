@@ -346,29 +346,75 @@ function LogList({ lines, empty }) {
   );
 }
 
-/* ── Khung hội thoại với khách (bong bóng chat) ────────────────────────────── */
+/* ── Ảnh đại diện khách — chữ cái đầu, màu suy từ tên cho ổn định giữa các lần mở ── */
+function ChatAvatar({ name, pic }) {
+  if (pic) return <img src={pic} alt="" className="w-10 h-10 rounded-full object-cover shrink-0" />;
+  const hue = [...String(name || '?')].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
+  return (
+    <div
+      className="w-10 h-10 rounded-full shrink-0 grid place-items-center text-white text-[13px] font-semibold"
+      style={{ background: `hsl(${hue} 55% 52%)` }}
+    >
+      {initials(name)}
+    </div>
+  );
+}
+
+/**
+ * Khung hội thoại với khách — bám theo mẫu bong bóng của trang CRM Facebook/Zalo
+ * (FacebookPage.jsx InboxTab) để người đã quen 2 trang đó đọc được ngay: tin khách bên trái nền
+ * trắng, tin mình bên phải nền xanh gradient, có dải ngày, ảnh hiện trực tiếp.
+ * Hai trang gốc không tách component dùng chung nên ở đây dựng lại theo mẫu, không import được.
+ */
 function ChatThread({ rows }) {
   if (!rows.length) return <Empty text="Chưa có tin nhắn nào với khách này" />;
   return (
-    <div className="space-y-2">
+    <div className="bg-gray-50 -m-5 p-4 space-y-2">
       {rows.map((m, i) => {
-        const mine = m.direction === 'outbound';
+        const isOut = m.direction === 'outbound';
+        const prev = rows[i - 1];
+        const newDay = !prev || new Date(prev.at).toDateString() !== new Date(m.at).toDateString();
+        const isImage = (m.message_type === 'image' || m.attachment_type === 'image') && m.attachment_url;
         return (
-          <div key={i} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[75%] rounded-2xl px-3 py-2 text-[13px] ${
-              mine ? 'bg-teal-600 text-white rounded-br-sm' : 'bg-slate-100 text-slate-800 rounded-bl-sm'
-            }`}>
-              {m.text && <div className="whitespace-pre-wrap break-words">{m.text}</div>}
-              {!m.text && m.attachment_url && (
-                <a href={m.attachment_url} target="_blank" rel="noopener noreferrer"
-                  className={`underline ${mine ? 'text-white' : 'text-teal-700'}`}>
-                  [{m.message_type || 'tệp đính kèm'}]
-                </a>
-              )}
-              {!m.text && !m.attachment_url && <span className="italic opacity-70">[{m.message_type}]</span>}
-              <div className={`text-[10px] mt-1 ${mine ? 'text-teal-100' : 'text-slate-400'}`}>
-                {fmtStamp(m.at)}{mine && m.sender ? ` · ${m.sender}` : ''}
-                {mine && !m.sender ? ' · không rõ người gửi' : ''}
+          <div key={i}>
+            {newDay && (
+              <div className="flex justify-center my-3">
+                <span className="text-[10px] text-gray-500 bg-gray-200 rounded-full px-2.5 py-0.5">
+                  {new Date(m.at).toLocaleDateString('vi-VN', { weekday: 'short', day: '2-digit', month: '2-digit' })}
+                </span>
+              </div>
+            )}
+            <div className={`flex min-w-0 ${isOut ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[min(75%,100%)] min-w-0 w-fit rounded-2xl px-4 py-2.5 shadow-sm overflow-hidden ${
+                isOut
+                  ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md'
+                  : 'bg-white text-gray-800 rounded-bl-md border border-gray-100'
+              }`}>
+                {isImage && (
+                  <a href={m.attachment_url} target="_blank" rel="noopener noreferrer">
+                    <img src={m.attachment_url} alt="" className="max-w-[280px] rounded-xl mb-1" />
+                  </a>
+                )}
+                {!isImage && m.attachment_url && (
+                  <a
+                    href={m.attachment_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`text-[13px] underline ${isOut ? 'text-blue-100' : 'text-blue-600'}`}
+                  >
+                    📎 {m.message_type || 'tệp đính kèm'}
+                  </a>
+                )}
+                {m.text && (
+                  <p className="text-[13px] leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{m.text}</p>
+                )}
+                {!m.text && !m.attachment_url && (
+                  <p className="text-[13px] italic opacity-70">[{m.message_type}]</p>
+                )}
+                <p className={`text-[10px] mt-1 ${isOut ? 'text-blue-200' : 'text-gray-400'}`}>
+                  {fmtStamp(m.at)}
+                  {isOut && (m.sender ? ` · ${m.sender}` : ' · không rõ người gửi')}
+                </p>
               </div>
             </div>
           </div>
@@ -442,9 +488,9 @@ function DrillModal({ open, onClose, title, subtitle, query, days }) {
 
           {!loading && !error && isChat && <ChatThread rows={rows} />}
 
-          {/* Danh sách khách của 1 page/OA — bấm 1 dòng để mở hội thoại */}
+          {/* Danh sách khách của 1 page/OA — dựng theo mẫu dòng hội thoại của trang CRM Facebook */}
           {!loading && !error && isCustomers && rows.length > 0 && (
-            <div className="divide-y divide-slate-100">
+            <div className="-m-5 divide-y divide-gray-50">
               {rows.map((c) => (
                 <button
                   key={c.contact_id}
@@ -454,17 +500,31 @@ function DrillModal({ open, onClose, title, subtitle, query, days }) {
                     subtitle: `${c.channel}${c.phone ? ' · ' + c.phone : ''} — nội dung trao đổi`,
                     query: { source: 'chat', channel: c.channel, contact_id: c.contact_id, user_id: active.query.user_id },
                   })}
-                  className="w-full text-left py-2 flex items-baseline gap-3 hover:bg-slate-50 rounded-lg px-1.5 -mx-1.5"
+                  className="w-full text-left flex items-center gap-3 px-4 py-3 hover:bg-gray-50 transition-all"
                 >
-                  <span className="text-xs text-slate-400 tabular-nums shrink-0 w-24">{fmtStamp(c.at)}</span>
-                  <span className="text-[13px] text-slate-800 min-w-0 flex-1 truncate">
-                    {c.name}
-                    {c.phone && <span className="text-slate-400 text-[11px] ml-1">{c.phone}</span>}
-                  </span>
-                  <span className="text-[11px] text-slate-500 tabular-nums shrink-0">
-                    {fmtNum(c.inbound)} đến / {fmtNum(c.outbound)} đi
-                  </span>
-                  <ChevronRight className="w-4 h-4 text-slate-300 shrink-0" />
+                  <div className="relative shrink-0">
+                    <ChatAvatar name={c.name} />
+                    {c.unread > 0 && (
+                      <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] rounded-full w-5 h-5 flex items-center justify-center font-bold shadow">
+                        {c.unread}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-sm truncate ${c.unread > 0 ? 'font-bold text-gray-900' : 'font-medium text-gray-700'}`}>
+                      {c.name}
+                    </p>
+                    <p className="text-xs text-gray-400 truncate mt-0.5">
+                      {c.phone ? `📞 ${c.phone}` : ''}
+                      {c.phone && c.lead_id ? ' · ' : ''}
+                      {c.lead_id ? '🏷 đã thành Lead' : (!c.phone ? 'Chưa có số điện thoại' : '')}
+                    </p>
+                  </div>
+                  <div className="text-[10px] text-gray-400 shrink-0 text-right">
+                    <div>{fmtStamp(c.at)}</div>
+                    <div className="mt-0.5 tabular-nums">{fmtNum(c.inbound)} đến · {fmtNum(c.outbound)} đi</div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-gray-300 shrink-0" />
                 </button>
               ))}
             </div>
@@ -567,6 +627,7 @@ function UserDetail({ row, days }) {
   const internalCmt = row.comments?.internal || {};
   const customerCmt = row.comments?.customer || {};
   const ps = row.phat_sinh || {};
+  const tm = row.timing || {};
   const byDay = h.by_day || [];
   const maxDay = Math.max(1, ...byDay.map((d) => d.events));
   const [drill, setDrill] = useState(null); // {title, subtitle, query}
@@ -665,13 +726,42 @@ function UserDetail({ row, days }) {
         />
         {(crud.recent || []).length > 0 && (
           <>
-            <div className="text-[11px] uppercase tracking-wide text-slate-400 mt-4 mb-2">Gần nhất</div>
-            <LogList
-              empty=""
-              lines={(crud.recent || []).map((e) => ({
-                at: e.at, tag: ACTION_LABEL[e.action] || e.action || '?', text: e.description || e.entity,
-              }))}
-            />
+            <div className="text-[11px] uppercase tracking-wide text-slate-400 mt-4 mb-1">Sửa gì, ở dự án nào</div>
+            <div className="max-h-72 overflow-y-auto">
+              {(crud.recent || []).map((e, i) => (
+                <div key={i} className="py-2.5 border-b border-slate-100 last:border-0">
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <span className="text-xs text-slate-400 tabular-nums shrink-0">{fmtStamp(e.at)}</span>
+                    <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[11px] shrink-0">
+                      {ACTION_LABEL[e.action] || e.action}
+                    </span>
+                    {e.entity_label
+                      ? <span className="text-[13px] font-medium text-slate-800">{e.entity_label}</span>
+                      : <span className="text-[13px] text-slate-500">{e.description || e.entity}</span>}
+                    {e.project?.code && e.entity !== 'project' && (
+                      <span className="text-[11px] text-slate-400">· thuộc {e.project.code}</span>
+                    )}
+                  </div>
+                  {/* Trường nào đổi, từ gì sang gì — backend diff sẵn old_values/new_values */}
+                  {Array.isArray(e.changes) && e.changes.length > 0 ? (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5">
+                      {e.changes.map((c, ci) => (
+                        <span key={ci} className="inline-flex items-baseline gap-1 text-[11px] bg-slate-50 ring-1 ring-slate-200 rounded-md px-1.5 py-0.5">
+                          <span className="text-slate-500">{c.field}</span>
+                          <span className="text-slate-400 line-through">{c.from}</span>
+                          <span className="text-slate-300">→</span>
+                          <span className="text-slate-900 font-medium">{c.to}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    e.description && e.entity_label && (
+                      <div className="mt-1 text-[12px] text-slate-500">{e.description}</div>
+                    )
+                  )}
+                </div>
+              ))}
+            </div>
           </>
         )}
       </Card>
@@ -850,6 +940,54 @@ function UserDetail({ row, days }) {
         )}
       </Card>
 
+      {/* 4 nhóm chỉ số thời gian — mỗi nhóm một nguồn khác nhau, không cộng dồn với nhau được. */}
+      <Card title="Chỉ số thời gian" icon={Clock} right={tm.reply_count ? `${tm.reply_avg_min} phút/phản hồi` : '—'}>
+        <div className="space-y-3">
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-slate-400 mb-1.5">Phản hồi khách (Facebook / Zalo)</div>
+            {tm.reply_count ? (
+              <dl className="grid grid-cols-3 gap-2">
+                <div className="rounded-xl bg-slate-50 px-3 py-2">
+                  <dt className="text-[11px] text-slate-500">Trung bình</dt>
+                  <dd className="text-lg font-bold text-slate-900 tabular-nums leading-tight">{tm.reply_avg_min}<span className="text-[11px] font-normal text-slate-400"> phút</span></dd>
+                </div>
+                <div className="rounded-xl bg-slate-50 px-3 py-2">
+                  <dt className="text-[11px] text-slate-500">Chậm nhất</dt>
+                  <dd className="text-lg font-bold text-slate-900 tabular-nums leading-tight">{fmtMinutesShort(Math.round(tm.reply_max_min))}</dd>
+                </div>
+                <div className="rounded-xl bg-slate-50 px-3 py-2" title="Số lần khách phải chờ quá 1 giờ">
+                  <dt className="text-[11px] text-slate-500">Quá 1 giờ</dt>
+                  <dd className={`text-lg font-bold tabular-nums leading-tight ${tm.reply_slow_count ? 'text-rose-700' : 'text-slate-900'}`}>{fmtNum(tm.reply_slow_count)}</dd>
+                </div>
+              </dl>
+            ) : <Empty text="Chưa có lần trả lời khách nào quy được cho người này" />}
+          </div>
+
+          <div className="grid grid-cols-3 gap-2">
+            <div className="rounded-xl bg-slate-50 px-3 py-2" title="Phút thao tác thật trung bình mỗi ngày có mặt">
+              <dt className="text-[11px] text-slate-500">Làm việc / ngày</dt>
+              <dd className="text-lg font-bold text-slate-900 tabular-nums leading-tight">{fmtMinutesShort(tm.work_minutes_per_day)}</dd>
+            </div>
+            <div className="rounded-xl bg-slate-50 px-3 py-2" title="Từ lúc tạo việc đến lúc hoàn thành">
+              <dt className="text-[11px] text-slate-500">Xử lý 1 việc</dt>
+              <dd className="text-lg font-bold text-slate-900 tabular-nums leading-tight">
+                {tm.handle_count ? `${tm.handle_hours_avg}g` : '—'}
+              </dd>
+            </div>
+            <div className="rounded-xl bg-slate-50 px-3 py-2" title="Thời gian lead/deal nằm ở 1 giai đoạn trước khi người này đẩy sang giai đoạn sau">
+              <dt className="text-[11px] text-slate-500">1 giai đoạn deal</dt>
+              <dd className="text-lg font-bold text-slate-900 tabular-nums leading-tight">
+                {tm.stage_moves ? `${tm.stage_hours_avg}g` : '—'}
+              </dd>
+            </div>
+          </div>
+          <div className="text-[11px] text-slate-400 leading-5">
+            Bốn nhóm trên lấy từ bốn nguồn khác nhau (tin nhắn · nhật ký thao tác · công việc · lịch sử
+            giai đoạn deal) — xem riêng từng nhóm, không cộng dồn.
+          </div>
+        </div>
+      </Card>
+
       <Card title="Thời gian hoàn thành việc" icon={CheckCircle2} right={`${fmtNum(row.done_tasks)} đã xong`}>
         <dl className="grid grid-cols-2 gap-2 mb-3">
           <div className="rounded-xl bg-slate-50 px-3 py-2">
@@ -971,6 +1109,8 @@ function BehaviorInsightContent() {
   const [days, setDays] = useState(7);
   const [q, setQ] = useState('');
   const [sortKey, setSortKey] = useState('active_events');
+  const [companyFilter, setCompanyFilter] = useState('');
+  const [moduleFilter, setModuleFilter] = useState('');
   const [openId, setOpenId] = useState(null);
   // Xem khách / hội thoại của 1 kênh từ bảng mức công ty — {title, subtitle, query}
   const [channelDrill, setChannelDrill] = useState(null);
@@ -989,9 +1129,34 @@ function BehaviorInsightContent() {
 
   useEffect(() => { load(days); }, [load, days]);
 
+  const NO_COMPANY = '(chưa gán công ty)';
+  const NO_MODULE = '(chưa gán module)';
+
+  /** Danh sách công ty / module có thật trong dữ liệu — không hard-code để khỏi lệch với DB. */
+  const orgOptions = useMemo(() => {
+    const companies = new Set();
+    const modules = new Set();
+    for (const r of data.items || []) {
+      companies.add(r.company_name || NO_COMPANY);
+      const ms = r.modules || [];
+      if (ms.length) ms.forEach((m) => modules.add(m));
+      else modules.add(NO_MODULE);
+    }
+    return { companies: [...companies].sort(), modules: [...modules].sort() };
+  }, [data.items]);
+
   const rows = useMemo(() => {
     const kw = q.trim().toLowerCase();
-    const list = data.items.filter((r) => !kw || (r.name || '').toLowerCase().includes(kw));
+    const list = data.items.filter((r) => {
+      if (kw && !(r.name || '').toLowerCase().includes(kw)) return false;
+      if (companyFilter && (r.company_name || NO_COMPANY) !== companyFilter) return false;
+      if (moduleFilter) {
+        const ms = r.modules || [];
+        const has = ms.length ? ms.includes(moduleFilter) : moduleFilter === NO_MODULE;
+        if (!has) return false;
+      }
+      return true;
+    });
     const val = (r) => ({
       active_events: r.active_events,
       crud: r.crud?.total || 0,
@@ -1001,7 +1166,24 @@ function BehaviorInsightContent() {
       done_tasks: r.done_tasks || 0,
     }[sortKey] || 0);
     return [...list].sort((a, b) => val(b) - val(a));
-  }, [data.items, q, sortKey]);
+  }, [data.items, q, sortKey, companyFilter, moduleFilter]);
+
+  /**
+   * Chia bảng thành nhóm có tiêu đề. Nhóm theo CÔNG TY khi đang xem nhiều công ty, ngược lại
+   * (chỉ 1 công ty) thì nhóm theo MODULE — nhóm theo thứ chỉ có 1 giá trị thì vô nghĩa.
+   */
+  const groups = useMemo(() => {
+    const multiCompany = orgOptions.companies.length > 1 && !companyFilter;
+    const map = new Map();
+    for (const r of rows) {
+      const key = multiCompany
+        ? (r.company_name || NO_COMPANY)
+        : ((r.modules || [])[0] || NO_MODULE);
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(r);
+    }
+    return { by: multiCompany ? 'công ty' : 'module', list: [...map.entries()] };
+  }, [rows, orgOptions.companies.length, companyFilter]);
 
   const totals = useMemo(() => {
     const t = { people: rows.length, events: 0, crud: 0, comments: 0, active: 0, idle: 0, difficulty: 0, overdue: 0, done: 0 };
@@ -1130,6 +1312,20 @@ function BehaviorInsightContent() {
           <Tile icon={CheckCircle2} label="Việc hoàn thành" value={fmtNum(totals.done)} tone="teal" />
         </div>
 
+        {/* Việc quá hạn của công ty KHÔNG quy được cho nhân viên nào — cộng theo từng người sẽ bỏ
+            sót đúng phần này. Đo thật: Phúc Đạt 268 việc quá hạn thì 254 rơi vào nhóm này. */}
+        {!loading && data.sources?.overdue_unassigned > 0 && (
+          <div className="flex items-start gap-2 text-[13px] text-amber-900 bg-amber-50 ring-1 ring-amber-200 rounded-xl px-3 py-2.5">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>
+              Công ty có <strong>{fmtNum(data.sources.overdue_total)}</strong> việc quá hạn, nhưng{' '}
+              <strong>{fmtNum(data.sources.overdue_unassigned)}</strong> việc chưa giao cho ai hoặc giao cho
+              người không thuộc danh sách nhân viên công ty — số “quá hạn” theo từng người bên dưới
+              <strong> không bao gồm</strong> phần này.
+            </span>
+          </div>
+        )}
+
         {/* Tìm + sắp xếp */}
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative">
@@ -1148,6 +1344,29 @@ function BehaviorInsightContent() {
           >
             {SORTS.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
           </select>
+
+          {/* Lọc theo tổ chức — chỉ hiện khi có từ 2 giá trị trở lên, 1 giá trị thì lọc vô nghĩa */}
+          {orgOptions.companies.length > 1 && (
+            <select
+              value={companyFilter}
+              onChange={(e) => setCompanyFilter(e.target.value)}
+              className="px-3 py-2 text-[13px] rounded-xl ring-1 ring-slate-200 bg-white shadow-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+            >
+              <option value="">Mọi công ty</option>
+              {orgOptions.companies.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          )}
+          {orgOptions.modules.length > 1 && (
+            <select
+              value={moduleFilter}
+              onChange={(e) => setModuleFilter(e.target.value)}
+              className="px-3 py-2 text-[13px] rounded-xl ring-1 ring-slate-200 bg-white shadow-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+            >
+              <option value="">Mọi module</option>
+              {orgOptions.modules.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          )}
+
           <div className="ml-auto text-[11px] text-slate-400">
             {data.range?.from ? `Từ ${fmtStamp(data.range.from)} đến nay` : ''} · {fmtNum(rows.length)} nhân viên
           </div>
@@ -1181,7 +1400,16 @@ function BehaviorInsightContent() {
                 </div>
               )}
 
-              {!loading && rows.map((r, idx) => {
+              {!loading && groups.list.map(([groupName, groupRows]) => (
+                <div key={groupName}>
+                  {/* Tiêu đề nhóm — chỉ hiện khi thật sự có nhiều hơn 1 nhóm */}
+                  {groups.list.length > 1 && (
+                    <div className="sticky top-0 z-[1] bg-slate-50/95 backdrop-blur px-4 py-1.5 border-b border-slate-200 flex items-baseline gap-2">
+                      <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{groupName}</span>
+                      <span className="text-[11px] text-slate-400">{fmtNum(groupRows.length)} người</span>
+                    </div>
+                  )}
+                  {groupRows.map((r, idx) => {
                 const h = r.habit || {};
                 const attention = attentionCount(r);
                 const open = openId === r.user_id;
@@ -1205,7 +1433,14 @@ function BehaviorInsightContent() {
                           <span className="block text-[13px] font-semibold text-slate-900 truncate leading-tight">
                             <span className="text-slate-300 tabular-nums mr-1.5">{idx + 1}</span>{r.name}
                           </span>
-                          <span className="block text-[11px] text-slate-400 truncate">{r.role || r.email || ''}</span>
+                          <span className="block text-[11px] text-slate-400 truncate">
+                            {[
+                              r.position || r.role,
+                              r.department_name,
+                              // Hiện tên nhóm đối lập với nhóm đang chia, để không lặp lại tiêu đề nhóm
+                              groups.by === 'công ty' ? (r.modules || []).join(', ') : r.company_name,
+                            ].filter(Boolean).join(' · ') || r.email || ''}
+                          </span>
                         </span>
                       </div>
                       <div className="px-3 text-right">
@@ -1251,7 +1486,9 @@ function BehaviorInsightContent() {
                     {open && <UserDetail row={r} days={days} />}
                   </div>
                 );
-              })}
+                  })}
+                </div>
+              ))}
             </div>
           </div>
         </div>
@@ -1303,7 +1540,7 @@ function BehaviorInsightContent() {
                         </td>
                         <td className="py-2 px-3 text-slate-700">
                           {c.owner_user_id
-                            ? (nameOf.get(c.owner_user_id) || 'Nhân viên khác công ty')
+                            ? (c.owner_name || nameOf.get(c.owner_user_id) || 'Nhân viên khác công ty')
                             : <span className="text-amber-700 text-[12px]">Chưa gán người phụ trách</span>}
                         </td>
                         <td className="py-2 px-3 text-right font-semibold text-slate-900 tabular-nums">{fmtNum(c.customers)}</td>

@@ -46,13 +46,74 @@ function resolveWindow({ dateFrom, dateTo } = {}) {
   return { dateFrom: from.toISOString(), dateTo: dateTo || null };
 }
 
-/** user_activity_log không có company_id — phải lấy danh sách user_id của công ty trước. */
+/**
+ * user_activity_log không có company_id — phải lấy danh sách user_id của công ty trước.
+ * Lấy kèm công ty + phòng ban để báo cáo nhóm được theo tổ chức (hiện tên ngắn nếu có).
+ */
 async function fetchCompanyUsers(companyId) {
-  let q = supabase.from('users').select('id, full_name, email, role');
+  const full = 'id, full_name, email, role, position, department_id, company_id,'
+    + ' departments:department_id(id, name), companies:company_id(id, name, short_name)';
+  let q = supabase.from('users').select(full);
   if (companyId) q = q.eq('company_id', companyId);
-  const { data, error } = await q.limit(2000);
-  if (error) throw new Error(error.message);
+  let { data, error } = await q.limit(2000);
+  if (error) {
+    // DB thiếu cột/quan hệ (vd position chưa migrate) — hạ xuống bộ cột chắc chắn có, còn hơn
+    // để cả báo cáo chết vì một cột phụ dùng để nhóm.
+    let q2 = supabase.from('users').select('id, full_name, email, role, company_id');
+    if (companyId) q2 = q2.eq('company_id', companyId);
+    ({ data, error } = await q2.limit(2000));
+    if (error) throw new Error(error.message);
+  }
   return data || [];
+}
+
+/**
+ * Module mà nhân viên được gán — bảng `user_module_roles` (database/505_user_module_roles.sql).
+ * Không JOIN được qua PostgREST vì bảng này không có FK cứng tới users, nên truy vấn riêng.
+ * User chưa có dòng nào thì suy từ `users.role` (bảng dưới), không đoán bừa thì xếp "Chưa gán".
+ */
+const ROLE_TO_MODULE = {
+  production_staff: 'production',
+  production_admin: 'production',
+  crm_production_staff: 'production',
+  crm_production_admin: 'production',
+  accounting: 'accounting',
+  accountant: 'accounting',
+  purchasing: 'purchasing',
+  sales: 'crm',
+  sales_admin: 'crm',
+};
+
+const MODULE_LABEL_VI = {
+  crm: 'CRM', production: 'Sản xuất', logistics: 'Vận chuyển',
+  accounting: 'Kế toán', purchasing: 'Mua hàng', tinhtoan: 'Tính toán',
+};
+
+async function fetchUserModules(userIds) {
+  if (!userIds.length) return new Map();
+  const byUser = new Map();
+  try {
+    for (const part of chunk(userIds)) {
+      const { data, error } = await supabase
+        .from('user_module_roles').select('user_id, module_key').in('user_id', part);
+      if (error) throw error;
+      for (const r of data || []) {
+        if (!byUser.has(r.user_id)) byUser.set(r.user_id, new Set());
+        byUser.get(r.user_id).add(r.module_key);
+      }
+    }
+  } catch {
+    // Bảng chưa migrate -> trả rỗng, phần gọi sẽ fallback sang role.
+  }
+  return byUser;
+}
+
+/** Nhãn module của 1 user: ưu tiên bảng gán, không có thì suy từ role. */
+function resolveUserModules(userId, role, moduleMap) {
+  const keys = moduleMap.get(userId);
+  if (keys && keys.size) return [...keys].map((k) => MODULE_LABEL_VI[k] || k);
+  const fromRole = ROLE_TO_MODULE[String(role || '').toLowerCase()];
+  return fromRole ? [MODULE_LABEL_VI[fromRole] || fromRole] : [];
 }
 
 async function fetchActivityRows(userIds, { dateFrom, dateTo }) {
@@ -228,7 +289,7 @@ function chunk(arr, size = 200) {
  * trả lời bằng app Facebook/Zalo gốc) không gắn người gửi — những tin đó đếm vào `unattributed`,
  * không chia cho ai, để không khen nhầm người này và bỏ sót người kia.
  */
-async function fetchChannelTouches(userIds, { dateFrom, dateTo }) {
+async function fetchChannelTouches(userIds, companyId, { dateFrom, dateTo }) {
   const userSet = new Set(userIds);
   const empty = { byUser: new Map(), unattributed: { facebook: 0, zalo: 0 }, failed: [] };
   if (!userIds.length) return empty;
@@ -282,6 +343,9 @@ async function fetchChannelTouches(userIds, { dateFrom, dateTo }) {
 
   // `${channel}::${tên page/OA}` -> user_id được cấu hình phụ trách kênh đó.
   const channelOwnerOf = new Map();
+  // Thời gian phản hồi khách, theo nhân viên thực sự bấm trả lời.
+  const replyByUser = new Map();
+  let pendingReplies = 0;
 
   const sources = [
     { channel: 'Facebook', msg: 'facebook_messages', contact: 'facebook_contacts', ownerCol: 'page_id', pageTable: 'facebook_pages', pageKey: 'page_id', pageName: 'page_name' },
@@ -301,19 +365,32 @@ async function fetchChannelTouches(userIds, { dateFrom, dateTo }) {
       // lead mới — xem routes/facebook.js và database/290_zalo_oa_inbox.sql). Đây là TRÁCH NHIỆM
       // theo cấu hình, KHÔNG phải bằng chứng người đó bấm gửi từng tin — giữ riêng khỏi `channels`
       // (đo hành động thật qua sent_by), không trộn vào nhau.
-      const { data: pages } = await supabase.from(src.pageTable).select(`${src.pageKey}, ${src.pageName}, default_lead_owner_id`);
+      const { data: pages } = await supabase
+        .from(src.pageTable).select(`${src.pageKey}, ${src.pageName}, default_lead_owner_id, default_company_id`);
       const pageName = new Map((pages || []).map((p) => [p[src.pageKey], p[src.pageName]]));
       for (const p of pages || []) {
         if (p.default_lead_owner_id) {
           channelOwnerOf.set(`${src.channel}::${p[src.pageName] || p[src.pageKey]}`, p.default_lead_owner_id);
         }
       }
+      /**
+       * Bảng tin nhắn KHÔNG có company_id nên trước đây phần "khách đổ về theo kênh" gom cả page
+       * của công ty khác — đo trên dữ liệu thật: xem báo cáo công ty HCB lại thấy page của Phúc Đạt
+       * và NextGo. Lọc theo `default_company_id` của page. Page chưa gán công ty thì vẫn giữ (không
+       * biết của ai, bỏ đi sẽ giấu mất dữ liệu).
+       */
+      const pageAllowed = (pid) => {
+        if (!companyId) return true;
+        const p = (pages || []).find((x) => x[src.pageKey] === pid);
+        return !p || !p.default_company_id || p.default_company_id === companyId;
+      };
 
       // Khách = lead nếu đã nối, không thì chính cuộc hội thoại (1 contact = 1 khách).
       const customerOf = (m, c) => m.lead_id || c.leadId || (m.contact_id ? `contact:${m.contact_id}` : null);
 
       for (const m of msgs) {
         const c = contactMap.get(m.contact_id) || {};
+        if (!pageAllowed(c.owner)) continue;
         const owner = pageName.get(c.owner) || c.owner || '(không rõ trang)';
         const key = `${src.channel}::${owner}`;
         if (!pageStats.has(key)) {
@@ -339,9 +416,64 @@ async function fetchChannelTouches(userIds, { dateFrom, dateTo }) {
         const c = contactMap.get(m.contact_id) || {};
         touch(m.sent_by, src.channel, pageName.get(c.owner) || c.owner || '(không rõ trang)', customerOf(m, c));
       }
+
+      /**
+       * THỜI GIAN PHẢN HỒI KHÁCH: với mỗi tin khách gửi đến, tìm tin nhân viên trả lời KẾ TIẾP
+       * trong cùng hội thoại; khoảng cách đó là thời gian chờ của khách. Chỉ tính cho tin trả lời
+       * có `sent_by` (trả lời trong phần mềm) — trả lời bằng app Facebook/Zalo gốc không biết ai
+       * nên không quy cho ai, đếm riêng vào `no_reply`/không tính.
+       * Nhiều tin khách liên tiếp trước 1 lần trả lời: chỉ tính từ tin ĐẦU của chuỗi, vì đó mới là
+       * lúc khách bắt đầu chờ.
+       */
+      const byContact = new Map();
+      for (const m of msgs) {
+        if (!pageAllowed((contactMap.get(m.contact_id) || {}).owner)) continue;
+        if (!byContact.has(m.contact_id)) byContact.set(m.contact_id, []);
+        byContact.get(m.contact_id).push(m);
+      }
+      for (const list of byContact.values()) {
+        list.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+        let waitingSince = null;
+        for (const m of list) {
+          if (m.direction === 'inbound') {
+            if (waitingSince == null) waitingSince = new Date(m.created_at).getTime();
+            continue;
+          }
+          if (waitingSince == null) continue; // tin đi chủ động, không phải trả lời
+          const ms = new Date(m.created_at).getTime() - waitingSince;
+          waitingSince = null;
+          if (ms < 0) continue;
+          if (m.sent_by && userSet.has(m.sent_by)) {
+            if (!replyByUser.has(m.sent_by)) replyByUser.set(m.sent_by, { count: 0, totalMs: 0, maxMs: 0, slowCount: 0 });
+            const r = replyByUser.get(m.sent_by);
+            r.count += 1;
+            r.totalMs += ms;
+            if (ms > r.maxMs) r.maxMs = ms;
+            if (ms > SLOW_REPLY_MS) r.slowCount += 1;
+          }
+        }
+        // Chuỗi kết thúc mà vẫn còn khách đang chờ = chưa ai trả lời tới thời điểm đọc báo cáo.
+        if (waitingSince != null) pendingReplies += 1;
+      }
     } catch (e) {
       failed.push({ source: src.channel, reason: e.message });
     }
+  }
+
+  /**
+   * Tên người phụ trách kênh — tra RIÊNG, không lấy từ danh sách nhân viên công ty. Đo trên dữ
+   * liệu thật: mọi page của Phúc Đạt đều do một người có `company_id = NULL` phụ trách, nếu chỉ
+   * tra trong tập user của công ty thì cột "Người phụ trách" trống trơn dù đã gán đầy đủ.
+   */
+  const ownerNames = new Map();
+  const ownerIds = [...new Set([...channelOwnerOf.values()])].filter(Boolean);
+  if (ownerIds.length) {
+    try {
+      for (const part of chunk(ownerIds)) {
+        const { data } = await supabase.from('users').select('id, full_name, email').in('id', part);
+        for (const u of data || []) ownerNames.set(u.id, u.full_name || u.email);
+      }
+    } catch { /* thiếu tên thì UI hiện id, không làm hỏng báo cáo */ }
   }
 
   const channels = [...pageStats.values()]
@@ -354,6 +486,7 @@ async function fetchChannelTouches(userIds, { dateFrom, dateTo }) {
       leads: st.leads.size, // đã nối được sang crm_leads
       // Ai được cấu hình phụ trách kênh này (có thể null nếu chưa đặt trong trang thiết lập).
       owner_user_id: channelOwnerOf.get(`${st.channel}::${st.name}`) || null,
+      owner_name: ownerNames.get(channelOwnerOf.get(`${st.channel}::${st.name}`)) || null,
     }))
     .sort((a, b) => b.customers - a.customers);
 
@@ -369,7 +502,7 @@ async function fetchChannelTouches(userIds, { dateFrom, dateTo }) {
     ownedByUser.get(ch.owner_user_id).push(ch);
   }
 
-  return { byUser, unattributed, failed, channels, byVia, ownedByUser };
+  return { byUser, unattributed, failed, channels, byVia, ownedByUser, replyByUser, pendingReplies };
 }
 
 /**
@@ -519,6 +652,7 @@ async function fetchCommentRows(userIds, { dateFrom, dateTo }) {
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const SLOW_REPLY_MS = 60 * 60 * 1000; // trả lời khách sau hơn 1 giờ = chậm
 
 /**
  * Việc đã hoàn thành trong kỳ — đối trọng với `overdue_tasks` để không chỉ nhìn mặt xấu. Kèm
@@ -533,7 +667,7 @@ async function fetchDoneByAssignee(userIds, companyId, { dateFrom, dateTo }) {
   const build = () => {
     let q = supabase
       .from('unified_tasks_v')
-      .select('assignee_id, completed_at, deadline')
+      .select('assignee_id, completed_at, deadline, created_at')
       .not('completed_at', 'is', null)
       .order('completed_at', { ascending: false });
     if (companyId) q = q.eq('company_id', companyId);
@@ -545,13 +679,23 @@ async function fetchDoneByAssignee(userIds, companyId, { dateFrom, dateTo }) {
   const { rows } = await fetchAllPaged(build);
   const byUser = {};
   const ensure = (uid) => {
-    if (!byUser[uid]) byUser[uid] = { total: 0, on_time: 0, late: 0, no_deadline: 0, late_days_sum: 0, early_days_sum: 0 };
+    if (!byUser[uid]) {
+      byUser[uid] = {
+        total: 0, on_time: 0, late: 0, no_deadline: 0, late_days_sum: 0, early_days_sum: 0,
+        // Thời gian XỬ LÝ: từ lúc tạo việc đến lúc xong — khác với sớm/trễ hạn (so với deadline).
+        handle_count: 0, handle_hours_sum: 0,
+      };
+    }
     return byUser[uid];
   };
   for (const row of rows) {
     if (!userSet.has(row.assignee_id)) continue;
     const u = ensure(row.assignee_id);
     u.total += 1;
+    if (row.created_at) {
+      const h = (new Date(row.completed_at).getTime() - new Date(row.created_at).getTime()) / 3600000;
+      if (h >= 0) { u.handle_count += 1; u.handle_hours_sum += h; }
+    }
     if (!row.deadline) { u.no_deadline += 1; continue; }
     const diffDays = (new Date(row.completed_at).getTime() - new Date(row.deadline).getTime()) / DAY_MS;
     if (diffDays > 0) { u.late += 1; u.late_days_sum += diffDays; }
@@ -625,6 +769,67 @@ async function fetchPhatSinhByAssignee(userIds, companyId, { dateFrom, dateTo })
   }
 }
 
+/**
+ * THỜI GIAN XỬ LÝ LEAD/DEAL — `crm_lead_stage_history` (database/145) ghi mỗi lần đổi giai đoạn
+ * kèm `duration_seconds` của giai đoạn vừa rời và `changed_by` (ai bấm chuyển). Quy cho người
+ * BẤM CHUYỂN, nghĩa là "người này đẩy lead qua giai đoạn sau bao lâu", không phải "ai sở hữu lead".
+ * Chỉ tính dòng đã đóng (`exited_at` có giá trị) vì dòng đang mở chưa biết tổng thời gian.
+ */
+async function fetchLeadStageTimeByUser(userIds, { dateFrom, dateTo }) {
+  if (!userIds.length) return { byUser: new Map(), failed: null };
+  const userSet = new Set(userIds);
+  try {
+    const build = () => {
+      let q = supabase
+        .from('crm_lead_stage_history')
+        .select('changed_by, duration_seconds, exited_at')
+        .not('changed_by', 'is', null)
+        .not('duration_seconds', 'is', null)
+        .order('exited_at', { ascending: false });
+      if (dateFrom) q = q.gte('exited_at', dateFrom);
+      if (dateTo) q = q.lt('exited_at', dateTo);
+      return q;
+    };
+    const { rows } = await fetchAllPaged(build);
+    const byUser = new Map();
+    for (const r of rows) {
+      if (!userSet.has(r.changed_by)) continue;
+      if (!byUser.has(r.changed_by)) byUser.set(r.changed_by, { count: 0, hoursSum: 0, maxHours: 0 });
+      const u = byUser.get(r.changed_by);
+      const h = Number(r.duration_seconds) / 3600;
+      if (!Number.isFinite(h) || h < 0) continue;
+      u.count += 1;
+      u.hoursSum += h;
+      if (h > u.maxHours) u.maxHours = h;
+    }
+    return { byUser, failed: null };
+  } catch (e) {
+    return { byUser: new Map(), failed: e.message };
+  }
+}
+
+/** Gộp 4 nhóm chỉ số thời gian thành payload phẳng cho UI. */
+function packTiming2(reply, leadStage, done, habit) {
+  const r1 = (n) => Math.round(n * 10) / 10;
+  const perDay = habit && habit.days_active ? habit.active_minutes / habit.days_active : 0;
+  return {
+    // 1. Phản hồi khách (phút)
+    reply_count: reply?.count || 0,
+    reply_avg_min: reply?.count ? r1(reply.totalMs / reply.count / 60000) : 0,
+    reply_max_min: reply?.maxMs ? r1(reply.maxMs / 60000) : 0,
+    reply_slow_count: reply?.slowCount || 0,
+    // 2. Làm việc thực tế: phút thao tác trung bình mỗi ngày có mặt
+    work_minutes_per_day: Math.round(perDay),
+    // 3. Xử lý công việc: từ lúc tạo tới lúc xong (giờ)
+    handle_count: done?.handle_count || 0,
+    handle_hours_avg: done?.handle_count ? r1(done.handle_hours_sum / done.handle_count) : 0,
+    // 4. Xử lý lead/deal: thời gian ở 1 giai đoạn trước khi đẩy sang giai đoạn sau (giờ)
+    stage_moves: leadStage?.count || 0,
+    stage_hours_avg: leadStage?.count ? r1(leadStage.hoursSum / leadStage.count) : 0,
+    stage_hours_max: leadStage?.maxHours ? r1(leadStage.maxHours) : 0,
+  };
+}
+
 function packPhatSinh(p) {
   if (!p) return { total: 0, open: 0, overdue: 0, done: 0, by_kind: [] };
   return {
@@ -681,14 +886,21 @@ async function fetchOverdueByAssignee(userIds, companyId) {
   };
   const { rows } = await fetchAllPaged(build);
   const byUser = {};
+  /**
+   * Việc quá hạn CỦA CÔNG TY nhưng người thực hiện không nằm trong danh sách nhân viên công ty
+   * (chưa giao ai, hoặc giao cho người không gắn company_id / người công ty khác). Đo trên dữ
+   * liệu thật: công ty HCB có 210 việc quá hạn mà TẤT CẢ đều rơi vào nhóm này — nếu chỉ cộng
+   * theo nhân viên thì báo cáo hiện 0, người đọc tưởng không còn việc trễ nào. Phải nói ra.
+   */
+  let unassigned = 0;
   for (const row of rows) {
-    if (!userSet.has(row.assignee_id)) continue;
+    if (!userSet.has(row.assignee_id)) { unassigned += 1; continue; }
     if (!byUser[row.assignee_id]) byUser[row.assignee_id] = { count: 0, days_sum: 0 };
     const u = byUser[row.assignee_id];
     u.count += 1;
     u.days_sum += (now - new Date(row.deadline).getTime()) / DAY_MS;
   }
-  return byUser;
+  return { byUser, unassigned, total: rows.length };
 }
 
 /**
@@ -999,16 +1211,19 @@ async function getUserBehaviorInsight({ companyId, dateFrom, dateTo } = {}) {
   const users = await fetchCompanyUsers(companyId);
   const userIds = users.map((u) => u.id);
 
-  const [activity, guideRows, overdueByUser, auditRows, comments, doneByUser, touches, fbComments, phatSinh] = await Promise.all([
+  const [activity, guideRows, overdue, auditRows, comments, doneByUser, touches, fbComments, phatSinh,
+    moduleMap, leadStage] = await Promise.all([
     fetchActivityRows(userIds, win),
     fetchGuideRows(userIds, companyId, win),
     fetchOverdueByAssignee(userIds, companyId),
     fetchAuditRows(userIds, win),
     fetchCommentRows(userIds, win),
     fetchDoneByAssignee(userIds, companyId, win),
-    fetchChannelTouches(userIds, win),
+    fetchChannelTouches(userIds, companyId, win),
     fetchFacebookCommentStats(userIds, companyId, win),
     fetchPhatSinhByAssignee(userIds, companyId, win),
+    fetchUserModules(userIds),
+    fetchLeadStageTimeByUser(userIds, win),
   ]);
   const activityRows = activity.rows;
   const commentRows = comments.rows;
@@ -1045,18 +1260,29 @@ async function getUserBehaviorInsight({ companyId, dateFrom, dateTo } = {}) {
         ? [...difficultyByUser.get(u.id).values()].sort((a, b) => b.count - a.count)
         : [];
 
+      const habit = packHabit(habitByUser.get(u.id));
+      const co = Array.isArray(u.companies) ? u.companies[0] : u.companies;
+      const dept = Array.isArray(u.departments) ? u.departments[0] : u.departments;
+
       return {
         user_id: u.id,
         name: u.full_name || u.email || u.id,
         email: u.email || null,
         role: u.role || null,
+        position: u.position || null,
+        // Nhóm theo tổ chức — company_id có thể null (admin hệ thống), khi đó hiện "Chưa gán công ty".
+        company_id: u.company_id || null,
+        company_name: co?.short_name || co?.name || null,
+        department_name: dept?.name || null,
+        modules: resolveUserModules(u.id, u.role, moduleMap),
+        timing: packTiming2(touches.replyByUser?.get(u.id), leadStage.byUser.get(u.id), doneByUser[u.id], habit),
         active_events: activeEventsByUser.get(u.id) || 0,
         idle_minutes: idle ? Math.round(idle.totalMs / 60000) : 0,
         top_idle_paths: topIdlePaths,
         difficulty_signals: difficultySignals,
         guide_questions: guideCountByUser.get(u.id) || 0,
-        ...packTiming(overdueByUser[u.id], doneByUser[u.id]),
-        habit: packHabit(habitByUser.get(u.id)),
+        ...packTiming(overdue.byUser[u.id], doneByUser[u.id]),
+        habit,
         crud: packCrud(crudByUser.get(u.id)),
         comments: packComments(commentByUser.get(u.id)),
         customers: packCustomers(touches.byUser.get(u.id), leadCustomersByUser.get(u.id), touches.ownedByUser?.get(u.id)),
@@ -1115,6 +1341,16 @@ async function getUserBehaviorInsight({ companyId, dateFrom, dateTo } = {}) {
       facebook_comments: fbComments.company,
       facebook_comments_issue: fbComments.failed,
       phat_sinh_issue: phatSinh.failed,
+      lead_stage_issue: leadStage.failed,
+      // Khách còn đang chờ, chưa ai trả lời tính tới lúc mở báo cáo.
+      pending_replies: touches.pendingReplies || 0,
+      /**
+       * Việc quá hạn của công ty KHÔNG quy được cho nhân viên nào trong danh sách (chưa giao, hoặc
+       * giao cho người không gắn công ty). Cộng số theo từng người sẽ bỏ sót đúng phần này — phải
+       * hiện riêng, nếu không người đọc thấy tổng 0 lại tưởng không còn việc trễ.
+       */
+      overdue_total: overdue.total || 0,
+      overdue_unassigned: overdue.unassigned || 0,
     },
     items,
   };
