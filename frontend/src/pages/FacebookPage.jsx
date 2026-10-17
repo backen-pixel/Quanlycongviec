@@ -3,12 +3,13 @@ import { useAuth } from '../lib/auth';
 import { isAdminLike, isCrmSocialInboxUser, isCrmSocialInboxCompanyLocked } from '../lib/adminRole';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import api from '../lib/api';
+import WebsiteProductsPanel from '../components/WebsiteProductsPanel';
 import {
   MessageCircle, Users, FileText, MessageSquare, Settings, Send, Search, ExternalLink,
   Link2, Plus, ChevronRight, Bell, Image, Paperclip, RefreshCw, ToggleLeft, ToggleRight,
   X, Trash2, Edit3, UserPlus, Phone, Mail, MoreHorizontal, Check, Copy, Save, Eye, EyeOff,
   Mic, MicOff, File, Camera, Smile, ArrowLeft, BarChart3, StickyNote, Activity, Images,
-  Calendar, Megaphone,
+  Calendar, Megaphone, Store,
 } from 'lucide-react';
 import DateRangePickerPopover from '../components/DateRangePickerPopover';
 import AutoToolPanel from '../components/AutoToolPanel';
@@ -349,6 +350,7 @@ export default function FacebookPage() {
     { id: 'comments', label: 'Bình luận', icon: MessageSquare, badge: stats?.comments_today },
     { id: 'auto-lead', label: 'Tự động', icon: UserPlus },
     ...(isAdmin ? [{ id: 'ad-campaigns', label: 'Chiến dịch quảng cáo', icon: Megaphone }] : []),
+    ...(isAdmin ? [{ id: 'web-products', label: 'Sản phẩm website', icon: Store }] : []),
     ...(isAdmin ? [{ id: 'auto-companies', label: 'Auto công ty', icon: Activity }] : []),
     ...(isAdmin ? [{ id: 'webhook', label: 'Webhook', icon: Activity }] : []),
     {
@@ -462,6 +464,9 @@ export default function FacebookPage() {
         {tab === 'settings' && <SettingsTab onPagesChanged={loadFbTokenSummary} fbCompanyQs={fbCompanyQs} />}
         {tab === 'auto-lead' && <AutoLeadTab />}
         {tab === 'auto-companies' && isAdmin && <FacebookAutoCompaniesPanel embedded />}
+        {tab === 'web-products' && isAdmin && (
+          <KhungBatLoi ten="Sản phẩm website"><WebsiteProductsPanel /></KhungBatLoi>
+        )}
         {tab === 'ad-campaigns' && isAdmin && (
           <KhungBatLoi ten="Chiến dịch quảng cáo"><AdAnalyticsPage embedded /></KhungBatLoi>
         )}
