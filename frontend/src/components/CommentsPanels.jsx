@@ -40,7 +40,7 @@ import api from '../lib/api';
 import { logCRUD } from '../lib/activityLogger';
 import { parseProjectRenameCommand, renameNoticeBody } from '../lib/projectRenameComment';
 import { useAuth } from '../lib/auth';
-import { isAdminLike, isStrictAdmin } from '../lib/adminRole';
+import { isAdminLike, isSystemAdmin } from '../lib/adminRole';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmCommentFullDateTime, formatCrmFbRelativeTime } from './crmFbCommentUi';
 import { CrmCommentMentionComposer, linkifyCommentString, renderCrmCommentBody } from './crmCommentMentionUi';
 import { uploadMixedCommentFiles } from '../lib/oversizedDriveUpload';
@@ -2823,7 +2823,7 @@ function CommentThread({
         ? `Bình luận riêng tư — chỉ hiện với: ${privateAudienceNames.join(', ') || '—'}`
         : '';
       const canEditComment = isCommentOwner(c, user);
-      const canRemoveComment = canEditComment || isStrictAdmin(user);
+      const canRemoveComment = canEditComment || isSystemAdmin(user);
       return (
         <div key={c.id} className={depth > 0 ? 'ml-5 border-l border-[#ccd0d5] pl-2.5 pt-0.5' : ''}>
           <div className="group/crx flex gap-2 rounded-lg px-1 py-1.5 transition-colors hover:bg-black/[0.025]">
