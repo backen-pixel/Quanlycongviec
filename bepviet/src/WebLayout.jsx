@@ -3,9 +3,9 @@ import { useEffect, useState } from 'react';
 import { THONG_TIN } from './data/thongTin';
 
 const MENU = [
-  { to: '/web', ten: 'Trang chủ', end: true },
-  { to: '/web/san-pham', ten: 'Sản phẩm' },
-  { to: '/web/lien-he', ten: 'Liên hệ' },
+  { to: '/', ten: 'Trang chủ', end: true },
+  { to: '/san-pham', ten: 'Sản phẩm' },
+  { to: '/lien-he', ten: 'Liên hệ' },
 ];
 
 export default function WebLayout() {
@@ -21,10 +21,8 @@ export default function WebLayout() {
     <div className="min-h-screen bg-stone-50 font-sans text-stone-800">
       <header className="sticky top-0 z-40 border-b border-stone-200 bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3">
-          <Link to="/web" className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-stone-900 text-sm font-bold text-amber-400">
-              VPT
-            </span>
+          <Link to="/" className="flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-stone-900 text-sm font-bold text-amber-400">BV</span>
             <span className="leading-tight">
               <span className="block text-base font-bold text-stone-900">{THONG_TIN.ten}</span>
               <span className="block text-xs text-stone-500">{THONG_TIN.slogan}</span>
@@ -121,16 +119,11 @@ export default function WebLayout() {
                   </Link>
                 </li>
               ))}
-              <li>
-                <Link to="/login" className="transition hover:text-amber-400">
-                  Đăng nhập hệ thống nội bộ
-                </Link>
-              </li>
             </ul>
           </div>
         </div>
         <div className="border-t border-stone-800 py-5 text-center text-xs text-stone-500">
-          © {new Date().getFullYear()} {THONG_TIN.ten}. Nội dung demo — cập nhật trong frontend/src/web/data.
+          © {new Date().getFullYear()} {THONG_TIN.ten}. Nội dung demo — cập nhật trong bepviet/src/data.
         </div>
       </footer>
     </div>

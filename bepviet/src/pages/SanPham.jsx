@@ -231,7 +231,7 @@ export default function SanPham() {
               </ul>
 
               <Link
-                to="/web/lien-he"
+                to="/lien-he"
                 state={{ sanPham: xem.ten }}
                 className="mt-7 block rounded-xl bg-stone-900 py-3 text-center text-sm font-semibold text-white transition hover:bg-amber-600"
               >

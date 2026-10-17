@@ -27,13 +27,13 @@ export default function TrangChu() {
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link
-                to="/web/san-pham"
+                to="/san-pham"
                 className="rounded-xl bg-amber-500 px-6 py-3 text-sm font-semibold text-white transition hover:bg-amber-600"
               >
                 Xem mẫu tủ bếp
               </Link>
               <Link
-                to="/web/lien-he"
+                to="/lien-he"
                 className="rounded-xl border border-white/30 px-6 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
               >
                 Nhận báo giá
@@ -74,7 +74,7 @@ export default function TrangChu() {
                   })}
                 </ul>
                 <Link
-                  to="/web/lien-he"
+                  to="/lien-he"
                   className="mt-5 block rounded-xl bg-stone-900 py-3 text-center text-sm font-semibold text-white transition hover:bg-amber-600"
                 >
                   Gửi kích thước — nhận báo giá
@@ -104,7 +104,7 @@ export default function TrangChu() {
             <h2 className="text-2xl font-bold text-stone-900 md:text-3xl">Mẫu tủ bếp bán chạy</h2>
             <p className="mt-2 text-stone-600">Những bố cục được khách hàng chọn nhiều nhất trong năm nay.</p>
           </div>
-          <Link to="/web/san-pham" className="text-sm font-semibold text-amber-700 hover:underline">
+          <Link to="/san-pham" className="text-sm font-semibold text-amber-700 hover:underline">
             Xem tất cả sản phẩm →
           </Link>
         </div>
@@ -141,7 +141,7 @@ export default function TrangChu() {
           </p>
           <div className="mt-7 flex flex-wrap justify-center gap-3">
             <Link
-              to="/web/lien-he"
+              to="/lien-he"
               className="rounded-xl bg-amber-500 px-6 py-3 text-sm font-semibold transition hover:bg-amber-600"
             >
               Nhận báo giá miễn phí

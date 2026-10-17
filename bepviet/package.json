@@ -1,0 +1,23 @@
+{
+  "name": "bepviet-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Website gioi thieu & ban hang tu bep Bep Viet (frontend tinh, khong goi API)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "react-router-dom": "^7.6.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.1",
+    "@vitejs/plugin-react": "^4.5.2",
+    "tailwindcss": "^4.2.1",
+    "vite": "^6.4.1"
+  }
+}
