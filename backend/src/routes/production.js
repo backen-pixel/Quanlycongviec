@@ -2739,7 +2739,7 @@ const MIGRATION_300_COLS = 'order_date, delivery_date,';
 /** Columns added in migration 520 — ngày hoàn thiện SX (= delivery − 2) */
 const MIGRATION_520_COLS = 'production_finish_date, ';
 const MIGRATION_529_COLS = 'sx_schedule_slip_days, ';
-/** Columns added in migration 722 — xác nhận tiếp nhận đơn SX */
+/** Columns added in migration 726 — xác nhận tiếp nhận đơn SX */
 const SX_RECEIVED_COLS = 'sx_received_at, sx_received_by, ';
 const SX_RECEIVED_EMBED = 'sx_received_by_user:users!projects_sx_received_by_fkey(id, full_name, avatar), ';
 function isSxReceivedColMissingError(err) {

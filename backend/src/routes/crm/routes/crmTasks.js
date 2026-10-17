@@ -876,13 +876,21 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
       }
     }
 
-    const result = await updateCrmLeadTask(req, req.params.leadId, req.params.taskId, b);
+    // Chỉ đổi trạng thái (ô tròn ở web / app): trả lời NGAY sau khi ghi `crm_tasks`, phần còn lại (assignment sync,
+    // thông báo, socket, log hoạt động, đồng bộ sổ dự án) chạy tiếp sau khi đã trả lời — trước đây app chờ hết mới đổi icon.
+    const statusOnly = !!b && Object.keys(b).length === 1 && b.status !== undefined;
+    const result = await updateCrmLeadTask(req, req.params.leadId, req.params.taskId, b, { deferSideEffects: statusOnly });
     if (result.error) {
       if (result.code) return res.status(result.status || 400).json({ error: result.error, code: result.code });
       return res.status(result.status || 500).json({ error: result.error });
     }
     const data = result.data;
     if (b.deadline !== undefined) invalidateCrmDeadlineSnapshots();
+    if (statusOnly) {
+      res.json(data);
+      // Đợi assignment sync xong rồi mới thông báo / phát socket để người nhận refetch thấy dữ liệu đã đồng bộ (như trước).
+      try { await result.drained; } catch (_) { /* drain không ném lỗi */ }
+    }
 
     // 🔔 NOTIFICATION: Task CRM cập nhật
     try {
@@ -1084,8 +1092,11 @@ r.put('/leads/:leadId/tasks/:taskId', async (req, res) => {
       }
     }
 
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    if (!res.headersSent) res.json(data);
+  } catch (e) {
+    if (res.headersSent) console.warn('[crm_task] PUT sau khi đã trả lời:', e.message);
+    else res.status(500).json({ error: e.message });
+  }
 });
 
 r.post('/leads/:leadId/tasks/:taskId/restore-checklist', async (req, res) => {

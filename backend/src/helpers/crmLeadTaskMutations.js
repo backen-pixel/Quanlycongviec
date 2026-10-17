@@ -409,7 +409,7 @@ async function createCrmLeadTask(req, leadId, body) {
   return { data, status: 201, leadId: targetLeadId, sideEffects };
 }
 
-async function updateCrmLeadTask(req, leadId, taskId, body) {
+async function updateCrmLeadTask(req, leadId, taskId, body, opts = {}) {
   const b = body;
   let priorEvidenceRow = null;
   let resolvedChecklist = null;
@@ -733,7 +733,10 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
     });
   }
   outbox.enqueue('notify_assignees', runNotifyAddedAssignees);
-  const sideEffects = await outbox.drain();
+  // `deferSideEffects`: người gọi muốn trả lời ngay (đổi trạng thái từ ô tròn) → assignment sync / thông báo chạy NỀN,
+  // trả về `drained` để người gọi tự đợi trước khi phát socket (thứ tự sau-commit giữ nguyên). drain() không ném lỗi.
+  const drained = outbox.drain();
+  const sideEffects = opts.deferSideEffects ? null : await drained;
 
   return {
     data,
@@ -743,6 +746,7 @@ async function updateCrmLeadTask(req, leadId, taskId, body) {
     priorAssigneeIds,
     newAssigneeIds,
     sideEffects,
+    drained: opts.deferSideEffects ? drained : null,
   };
 }
 

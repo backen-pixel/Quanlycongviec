@@ -1,3 +1,9 @@
+## 2026-10-16 — Dọn thư mục tài nguyên Android lồng trùng
+
+Gỡ 17 tệp ở `crm-mobile-v2/plugins/native-android/res/res/`: 16 tệp trùng bản tương ứng ở `res/`, một `styles_call.xml` là bản cũ thiếu `Theme.BubbleCompose`. Plugin `withIncomingCallAndroid.js` chỉ đọc danh sách tài nguyên ở `res/` bên ngoài; không có tham chiếu tới thư mục lồng. Kiểm luồng sao chép native bằng chính hàm plugin với filesystem đích giả lập: trước/sau đều 44 tệp, gồm 18 resource, cùng đường dẫn đích và SHA-256, không thiếu tệp. Chưa chạy Android build hoặc phát hành app. Khôi phục bằng revert commit dọn thư mục; tài nguyên canonical và các bản sao phục vụ ứng dụng riêng được giữ nguyên.
+
+---
+
 ## 2026-10-14 12:47 — VPT: cột backup đã sửa, replication vẫn lỗi riêng
 
 Người dùng đã duyệt rõ việc áp SQL lên `QLCV_Backup / atcfpgxkgbszglrelfgr`. Migration `20261014022725_website_intake_backup_compat.sql` đã áp thành công lúc **12:45:05 Asia/Saigon (UTC+7)**, history `20261014054505 / website_intake_backup_compat_vpt_20261014`. Hậu kiểm **12:45:39**: `website_intake` là JSONB nullable/default NULL; CRM **9.544**, VPT **3.014** hàng giữ nguyên, metadata có giá trị **0**, không DDL backfill; ACL fingerprint `c1e488b30589fa3c45d7d80fe02ddcad` giữ nguyên, RLS bật, không thêm policy/RPC/trigger/bảng private. Chỉ mirror cột; backup chưa đủ qualification/receipt/outbox/sender.
