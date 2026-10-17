@@ -381,7 +381,8 @@ const MARKETING_MENU_GROUPS = [
     title: '1. Website bán hàng',
     emoji: '🛒',
     items: [
-      { to: '/marketing/san-pham-web', icon: ShoppingBag, label: 'Sản phẩm website', end: true, adminOnly: true },
+      { to: '/marketing/website', icon: Globe, label: 'Website', end: true, adminOnly: true },
+      { to: '/marketing/san-pham-web', icon: ShoppingBag, label: 'Sản phẩm website', adminOnly: true },
     ],
   },
   {

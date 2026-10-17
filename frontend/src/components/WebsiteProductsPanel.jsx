@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import { useAuth } from '../lib/auth';
 
 /**
- * Quản lý mẫu tủ bếp hiển thị trên website bán hàng (bảng web_products).
- * Website là static site riêng, đọc qua GET /api/public/web/products?company_id=...
+ * Quản lý mẫu tủ bếp của MỘT website (bảng web_products, lọc theo site_id).
+ * Danh sách website quản lý ở tab "Website" — bảng web_sites.
+ * Site tĩnh đọc qua GET /api/public/web/products?site=<site_key>.
  *
  * Đây KHÔNG phải trang /products (danh mục thành phẩm nội bộ cho báo giá/sản xuất).
  */
@@ -33,8 +35,11 @@ export default function WebsiteProductsPanel() {
   const { user } = useAuth();
   const laAdminHeThong = user?.role === 'admin' && !user?.company_id;
 
+  const [searchParams, setSearchParams] = useSearchParams();
   const [companies, setCompanies] = useState([]);
   const [companyId, setCompanyId] = useState(user?.company_id || '');
+  const [sites, setSites] = useState([]);
+  const [siteId, setSiteId] = useState(searchParams.get('site') || '');
   const [items, setItems] = useState([]);
   const [dangTai, setDangTai] = useState(false);
   const [canMigration, setCanMigration] = useState(false);
@@ -51,15 +56,48 @@ export default function WebsiteProductsPanel() {
       .catch(() => setCompanies([]));
   }, [laAdminHeThong]);
 
-  const taiDanhSach = useCallback(async () => {
+  // Danh sách website để chọn. Đổi công ty thì nạp lại và bỏ chọn site cũ.
+  useEffect(() => {
     if (laAdminHeThong && !companyId) {
+      setSites([]);
+      return;
+    }
+    api
+      .get('/marketing-web/sites', { params: companyId ? { company_id: companyId } : {} })
+      .then((r) => {
+        const ds = r.data?.items || [];
+        setSites(ds);
+        setSiteId((truoc) => (ds.some((s) => s.id === truoc) ? truoc : ds[0]?.id || ''));
+      })
+      .catch(() => setSites([]));
+  }, [companyId, laAdminHeThong]);
+
+  // Giữ site đang chọn trên URL để chia sẻ/refresh không mất ngữ cảnh.
+  useEffect(() => {
+    setSearchParams(
+      (truoc) => {
+        const p = new URLSearchParams(truoc);
+        if (siteId) p.set('site', siteId);
+        else p.delete('site');
+        return p;
+      },
+      { replace: true },
+    );
+  }, [siteId, setSearchParams]);
+
+  const siteDangChon = useMemo(() => sites.find((s) => s.id === siteId) || null, [sites, siteId]);
+
+  const taiDanhSach = useCallback(async () => {
+    if (!siteId) {
       setItems([]);
       return;
     }
     setDangTai(true);
     setLoi('');
     try {
-      const r = await api.get('/marketing-web/products', { params: companyId ? { company_id: companyId } : {} });
+      const r = await api.get('/marketing-web/products', {
+        params: { site_id: siteId, ...(companyId ? { company_id: companyId } : {}) },
+      });
       setItems(r.data?.items || []);
       setCanMigration(!!r.data?.migration_required);
     } catch (e) {
@@ -68,7 +106,7 @@ export default function WebsiteProductsPanel() {
     } finally {
       setDangTai(false);
     }
-  }, [companyId, laAdminHeThong]);
+  }, [siteId, companyId]);
 
   useEffect(() => {
     taiDanhSach();
@@ -110,7 +148,7 @@ export default function WebsiteProductsPanel() {
     }
     setDangLuu(true);
     setLoi('');
-    const body = { ...form, company_id: companyId || undefined };
+    const body = { ...form, site_id: siteId, company_id: companyId || undefined };
     try {
       if (form.id) await api.put(`/marketing-web/products/${form.id}`, body);
       else await api.post('/marketing-web/products', body);
@@ -140,6 +178,7 @@ export default function WebsiteProductsPanel() {
         features: sp.features || [],
         images: sp.images || [],
         [truong]: !sp[truong],
+        site_id: sp.site_id || siteId,
         company_id: companyId || undefined,
       });
       await taiDanhSach();
@@ -166,6 +205,19 @@ export default function WebsiteProductsPanel() {
             ))}
           </select>
         )}
+        <select
+          value={siteId}
+          onChange={(e) => setSiteId(e.target.value)}
+          className="rounded-lg border border-gray-300 px-3 py-2 text-sm"
+        >
+          <option value="">— Chọn website —</option>
+          {sites.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+              {s.is_active === false ? ' (tạm tắt)' : ''}
+            </option>
+          ))}
+        </select>
         <input
           value={timKiem}
           onChange={(e) => setTimKiem(e.target.value)}
@@ -175,7 +227,7 @@ export default function WebsiteProductsPanel() {
         <button
           type="button"
           onClick={moThem}
-          disabled={laAdminHeThong && !companyId}
+          disabled={!siteId}
           className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
         >
           + Thêm mẫu
@@ -198,10 +250,23 @@ export default function WebsiteProductsPanel() {
 
       {loi && <div className="rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700">{loi}</div>}
 
-      {companyId && (
+      {sites.length === 0 && !dangTai && (
+        <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+          Chưa có website nào. Tạo ở tab{' '}
+          <Link to="/marketing/website" className="font-semibold underline">
+            Website
+          </Link>{' '}
+          trước, rồi quay lại đây thêm sản phẩm cho nó.
+        </div>
+      )}
+
+      {siteDangChon && (
         <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600">
-          Website đọc dữ liệu qua: <code className="rounded bg-white px-1.5 py-0.5">/api/public/web/products?company_id={companyId}</code>
-          <span className="ml-2">— đặt giá trị này vào biến <code>VITE_COMPANY_ID</code> của site bepviet.</span>
+          Website <strong>{siteDangChon.name}</strong> đọc dữ liệu qua:{' '}
+          <code className="rounded bg-white px-1.5 py-0.5">/api/public/web/products?site={siteDangChon.site_key}</code>
+          <span className="ml-2">
+            — đặt <code>VITE_SITE_KEY={siteDangChon.site_key}</code> ở site tĩnh.
+          </span>
         </div>
       )}
 
@@ -231,9 +296,9 @@ export default function WebsiteProductsPanel() {
             {!dangTai && ketQua.length === 0 && (
               <tr>
                 <td colSpan={8} className="p-6 text-center text-gray-500">
-                  {laAdminHeThong && !companyId
-                    ? 'Chọn công ty sở hữu website để bắt đầu.'
-                    : 'Chưa có mẫu nào. Bấm "Thêm mẫu" để tạo mẫu đầu tiên.'}
+                  {!siteId
+                    ? 'Chọn website để xem sản phẩm của nó.'
+                    : 'Website này chưa có mẫu nào. Bấm "Thêm mẫu" để tạo mẫu đầu tiên.'}
                 </td>
               </tr>
             )}
