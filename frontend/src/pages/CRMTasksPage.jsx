@@ -7,7 +7,7 @@ import { useDefaultCompanyOnce } from '../hooks/useDefaultCompanyOnce';
 import { formatDate, PRIORITY_LABELS, TASK_PRIORITY_COLORS as PRIORITY_COLORS } from '../lib/utils';
 import {
   List, Calendar, Users, AlertTriangle, Search, CheckCircle2, Circle, Clock,
-  User, Eye, Target, X, Building2,
+  User, Eye, Target, X, Building2, LayoutGrid, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 
 const LS_CRM_TASKS_COMPANY = 'crm_tasks_overview_company_id';
@@ -135,6 +135,49 @@ export default function CRMTasksPage() {
     return { assignees: Object.values(map), unassigned };
   }, [filtered]);
 
+  // Kanban groups (theo trạng thái)
+  const kanbanGroups = useMemo(() => {
+    const groups = { pending: [], in_progress: [], completed: [] };
+    filtered.forEach((t) => {
+      (groups[t.status] || groups.pending).push(t);
+    });
+    return groups;
+  }, [filtered]);
+
+  // Lịch: state tháng đang xem + gom việc có hạn theo ngày (giờ VN).
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1);
+  });
+  const calendarDays = useMemo(() => {
+    const year = calendarMonth.getFullYear();
+    const month = calendarMonth.getMonth();
+    const firstOfMonth = new Date(year, month, 1);
+    // Tuần bắt đầu Thứ 2: dồn Chủ nhật (0) xuống cuối.
+    const leadingBlank = (firstOfMonth.getDay() + 6) % 7;
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const cells = [];
+    for (let i = 0; i < leadingBlank; i += 1) cells.push(null);
+    for (let day = 1; day <= daysInMonth; day += 1) cells.push(new Date(year, month, day));
+    while (cells.length % 7 !== 0) cells.push(null);
+    return cells;
+  }, [calendarMonth]);
+  const tasksByDay = useMemo(() => {
+    const map = new Map();
+    filtered.forEach((t) => {
+      if (!t.deadline) return;
+      const d = new Date(t.deadline);
+      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(t);
+    });
+    return map;
+  }, [filtered]);
+  const todayKey = useMemo(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+  }, []);
+
   // Deadline groups
   const deadlineGroups = useMemo(() => {
     const now = new Date(); const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -231,7 +274,7 @@ export default function CRMTasksPage() {
             </div>
           )}
         <div className="flex items-center gap-1">
-          {[{ id: 'list', icon: List, label: 'List' }, { id: 'deadline', icon: AlertTriangle, label: 'Deadline' }, { id: 'planner', icon: Users, label: 'Planner' }].map(v => (
+          {[{ id: 'kanban', icon: LayoutGrid, label: 'Kanban' }, { id: 'list', icon: List, label: 'List' }, { id: 'deadline', icon: AlertTriangle, label: 'Deadline' }, { id: 'planner', icon: Users, label: 'Planner' }, { id: 'calendar', icon: Calendar, label: 'Lịch' }].map(v => (
             <button key={v.id} onClick={() => setViewMode(v.id)}
               className={`h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer ${viewMode === v.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
               <v.icon className="h-3.5 w-3.5" />{v.label}
@@ -338,6 +381,28 @@ export default function CRMTasksPage() {
         {hasFilters && <button onClick={clearFilters} className="col-span-2 sm:col-span-1 h-9 px-3 text-xs text-red-500 hover:bg-red-50 rounded-lg cursor-pointer flex items-center justify-center sm:justify-start gap-1"><X className="h-3 w-3" />Xóa lọc</button>}
       </div>
 
+      {/* KANBAN VIEW */}
+      {viewMode === 'kanban' && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3" data-guide-khu-vuc="Chế độ xem Kanban">
+          {[
+            { key: 'pending', label: '⚪ Chưa làm', tasks: kanbanGroups.pending, color: 'border-gray-200 bg-gray-50' },
+            { key: 'in_progress', label: '🔵 Đang làm', tasks: kanbanGroups.in_progress, color: 'border-blue-300 bg-blue-50' },
+            { key: 'completed', label: '🟢 Hoàn thành', tasks: kanbanGroups.completed, color: 'border-emerald-300 bg-emerald-50' },
+          ].map(group => (
+            <div key={group.key} className={`border rounded-xl ${group.color}`} data-guide-khu-vuc={group.label}>
+              <div className="px-4 py-2 font-semibold text-sm flex items-center justify-between">
+                <span>{group.label} <span className="text-gray-400 font-normal">({group.tasks.length})</span></span>
+              </div>
+              <div className="bg-white rounded-b-xl overflow-y-auto" style={{ maxHeight: '640px' }}>
+                {group.tasks.length === 0 ? (
+                  <p className="text-center text-xs text-gray-400 py-6">Không có công việc</p>
+                ) : group.tasks.map(t => <TaskCard key={t.id} task={t} />)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* LIST VIEW */}
       {viewMode === 'list' && (
         <div
@@ -408,6 +473,68 @@ export default function CRMTasksPage() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* CALENDAR VIEW */}
+      {viewMode === 'calendar' && (
+        <div className="bg-white rounded-xl border overflow-hidden" data-guide-khu-vuc="Chế độ xem Lịch">
+          <div className="flex items-center justify-between px-4 py-2.5 border-b bg-gray-50">
+            <button
+              type="button"
+              onClick={() => setCalendarMonth((d) => new Date(d.getFullYear(), d.getMonth() - 1, 1))}
+              className="h-7 w-7 rounded-lg hover:bg-gray-200 flex items-center justify-center cursor-pointer"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <span className="text-sm font-semibold" style={{ color: '#000000' }}>
+              Tháng {calendarMonth.getMonth() + 1}/{calendarMonth.getFullYear()}
+            </span>
+            <button
+              type="button"
+              onClick={() => setCalendarMonth((d) => new Date(d.getFullYear(), d.getMonth() + 1, 1))}
+              className="h-7 w-7 rounded-lg hover:bg-gray-200 flex items-center justify-center cursor-pointer"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="grid grid-cols-7 border-b bg-gray-50 text-[11px] font-semibold text-gray-500">
+            {['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'].map((label) => (
+              <div key={label} className="px-2 py-1.5 text-center">{label}</div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7">
+            {calendarDays.map((date, idx) => {
+              if (!date) return <div key={`blank-${idx}`} className="min-h-[96px] border-b border-r bg-gray-50/40" />;
+              const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+              const dayTasks = tasksByDay.get(key) || [];
+              const isToday = key === todayKey;
+              return (
+                <div key={key} className="min-h-[96px] border-b border-r p-1.5 align-top">
+                  <span className={`text-[11px] font-semibold ${isToday ? 'inline-flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-white' : 'text-gray-500'}`}>
+                    {date.getDate()}
+                  </span>
+                  <div className="mt-1 space-y-0.5">
+                    {dayTasks.slice(0, 3).map((t) => (
+                      <Link
+                        key={t.id}
+                        to={`/crm/leads/${t.lead_id}`}
+                        title={t.title}
+                        className={`block truncate rounded px-1 py-0.5 text-[10px] font-medium ${
+                          t.status === 'completed' ? 'bg-emerald-50 text-emerald-700 line-through' : 'bg-blue-50 text-blue-700'
+                        }`}
+                      >
+                        {t.title}
+                      </Link>
+                    ))}
+                    {dayTasks.length > 3 && (
+                      <span className="block text-[10px] text-gray-400">+{dayTasks.length - 3} khác</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
