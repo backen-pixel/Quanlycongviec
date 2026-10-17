@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { SAN_PHAM } from '../data/sanPham';
+import { useCatalog } from '../lib/useCatalog';
 import { THONG_TIN } from '../data/thongTin';
 
 const RONG = {
@@ -14,6 +14,7 @@ const RONG = {
 };
 
 export default function LienHe() {
+  const { sanPham: SAN_PHAM } = useCatalog();
   const { state } = useLocation();
   const [form, setForm] = useState({ ...RONG, quanTam: state?.sanPham || '' });
   const [loi, setLoi] = useState({});

@@ -2,14 +2,8 @@ import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import TheSanPham from '../components/TheSanPham';
 import AnhSanPham from '../components/AnhSanPham';
-import {
-  SAN_PHAM,
-  DANH_MUC,
-  VAT_LIEU,
-  dinhDangGia,
-  tenDanhMuc,
-  tenVatLieu,
-} from '../data/sanPham';
+import { dinhDangGia } from '../data/sanPham';
+import { useCatalog } from '../lib/useCatalog';
 
 const MUC_GIA = [
   { id: 'tat-ca', ten: 'Mọi mức giá', loc: () => true },
@@ -25,6 +19,7 @@ const SAP_XEP = [
 ];
 
 export default function SanPham() {
+  const { sanPham: SAN_PHAM, danhMuc: DANH_MUC, vatLieu: VAT_LIEU } = useCatalog();
   const [danhMuc, setDanhMuc] = useState('tat-ca');
   const [vatLieu, setVatLieu] = useState('tat-ca');
   const [mucGia, setMucGia] = useState('tat-ca');
@@ -45,7 +40,7 @@ export default function SanPham() {
     if (sapXep === 'gia-tang') ds = [...ds].sort((a, b) => a.gia - b.gia);
     if (sapXep === 'gia-giam') ds = [...ds].sort((a, b) => b.gia - a.gia);
     return ds;
-  }, [danhMuc, vatLieu, mucGia, sapXep, tuKhoa]);
+  }, [SAN_PHAM, danhMuc, vatLieu, mucGia, sapXep, tuKhoa]);
 
   const datLai = () => {
     setDanhMuc('tat-ca');
@@ -201,7 +196,7 @@ export default function SanPham() {
               </button>
             </div>
             <div className="p-6">
-              <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">{tenDanhMuc(xem.danhMuc)}</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">{xem.danhMucTen}</p>
               <h2 className="mt-1 text-2xl font-bold text-stone-900">{xem.ten}</h2>
               <p className="mt-3 text-stone-600">{xem.moTa}</p>
 
@@ -214,7 +209,7 @@ export default function SanPham() {
                 </div>
                 <div className="rounded-xl bg-stone-50 p-4">
                   <dt className="text-xs text-stone-500">Vật liệu</dt>
-                  <dd className="mt-1 font-semibold text-stone-900">{tenVatLieu(xem.vatLieu)}</dd>
+                  <dd className="mt-1 font-semibold text-stone-900">{xem.vatLieuTen}</dd>
                 </div>
                 <div className="rounded-xl bg-stone-50 p-4">
                   <dt className="text-xs text-stone-500">Kích thước mẫu</dt>

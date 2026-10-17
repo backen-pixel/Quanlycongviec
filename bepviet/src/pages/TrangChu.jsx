@@ -1,10 +1,14 @@
 import { Link } from 'react-router-dom';
 import TheSanPham from '../components/TheSanPham';
-import { SAN_PHAM, QUY_TRINH, CAM_KET, DANH_MUC } from '../data/sanPham';
+import { QUY_TRINH, CAM_KET } from '../data/sanPham';
+import { useCatalog } from '../lib/useCatalog';
 import { THONG_TIN } from '../data/thongTin';
 
 export default function TrangChu() {
-  const noiBat = SAN_PHAM.filter((sp) => sp.noiBat).slice(0, 3);
+  const { sanPham: SAN_PHAM, danhMuc: DANH_MUC } = useCatalog();
+  // Chưa đánh dấu mẫu nào nổi bật thì lấy tạm 3 mẫu đầu để khối này không trống.
+  const coNoiBat = SAN_PHAM.filter((sp) => sp.noiBat);
+  const noiBat = (coNoiBat.length ? coNoiBat : SAN_PHAM).slice(0, 3);
 
   return (
     <>
@@ -62,6 +66,8 @@ export default function TrangChu() {
                 <ul className="mt-4 space-y-3 text-sm text-stone-700">
                   {DANH_MUC.slice(0, 4).map((d) => {
                     const re = SAN_PHAM.filter((s) => s.danhMuc === d.id);
+                    // Kiểu bếp chưa có mẫu nào thì bỏ qua, tránh Math.min() ra Infinity.
+                    if (!re.length) return null;
                     const min = Math.min(...re.map((s) => s.gia));
                     return (
                       <li key={d.id} className="flex items-center justify-between border-b border-stone-200 pb-2">

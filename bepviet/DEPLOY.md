@@ -40,6 +40,26 @@ npm run dev
 
 Mặc định chạy ở http://localhost:5180 — không đụng cổng 5173 của frontend ERP.
 
+## Nối dữ liệu từ ERP (tùy chọn)
+
+Sản phẩm, giá và danh mục có thể quản lý trong ERP: **module Marketing → tab "Sản phẩm website"**.
+Website đọc qua API công khai, không cần đăng nhập.
+
+Thêm 2 biến môi trường cho Static Site trên Render (**Settings → Environment**):
+
+| Key | Value |
+|---|---|
+| `VITE_API_URL` | `https://tubep-backend.onrender.com` |
+| `VITE_COMPANY_ID` | UUID công ty sở hữu website — hiện sẵn trong tab "Sản phẩm website" |
+
+Biến đọc lúc **build**, nên đổi xong phải **Manual Deploy → Clear build cache & deploy**.
+
+Cơ chế an toàn: thiếu biến, API lỗi, hoặc ERP chưa nhập mẫu nào → website tự dùng dữ liệu tĩnh
+trong `src/data/sanPham.js`. Không bao giờ có trang trắng vì backend chết.
+
+Phía ERP cần chạy `database/727_web_products.sql` trước khi nhập sản phẩm (xem nhánh
+`feat/marketing-web-products`).
+
 ## Sửa nội dung
 
 - Sản phẩm, danh mục, vật liệu, quy trình, cam kết: `src/data/sanPham.js`

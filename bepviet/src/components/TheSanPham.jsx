@@ -1,5 +1,5 @@
 import AnhSanPham from './AnhSanPham';
-import { dinhDangGia, tenDanhMuc, tenVatLieu } from '../data/sanPham';
+import { dinhDangGia } from '../data/sanPham';
 
 export default function TheSanPham({ sp, onXem }) {
   return (
@@ -13,10 +13,10 @@ export default function TheSanPham({ sp, onXem }) {
         )}
       </div>
       <div className="flex flex-1 flex-col gap-2 p-5">
-        <p className="text-xs font-medium uppercase tracking-wide text-amber-700">{tenDanhMuc(sp.danhMuc)}</p>
+        <p className="text-xs font-medium uppercase tracking-wide text-amber-700">{sp.danhMucTen}</p>
         <h3 className="text-lg font-semibold text-stone-900">{sp.ten}</h3>
         <p className="line-clamp-2 text-sm text-stone-600">{sp.moTa}</p>
-        <p className="mt-1 text-sm text-stone-500">{tenVatLieu(sp.vatLieu)}</p>
+        <p className="mt-1 text-sm text-stone-500">{sp.vatLieuTen}</p>
         <div className="mt-auto flex items-end justify-between pt-4">
           <div>
             <p className="text-xs text-stone-500">Giá từ</p>
