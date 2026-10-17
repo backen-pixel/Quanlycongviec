@@ -5,7 +5,18 @@ const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { isSystemAdmin, isAdminLike } = require('../helpers/adminRole');
-const { applyCompanyTenantScope } = require('../helpers/tenantScope');
+const { applyCompanyTenantScope, isTenantScopeEnforced, TENANT_EMPTY_COMPANY_SENTINEL } = require('../helpers/tenantScope');
+
+/**
+ * Lọc `unified_tasks_v` theo công ty của hệ sinh thái người dùng, nhưng GIỮ dòng không có `company_id`
+ * (việc Cá nhân / Dự án / Giao việc không gắn công ty) — `applyCompanyTenantScope` thuần `IN` sẽ làm mất chúng.
+ */
+function applyTenantScopeKeepNoCompany(query, req) {
+  if (!isTenantScopeEnforced(req)) return query;
+  const ids = req.tenantCompanyIds || [];
+  if (!ids.length) return query.or(`company_id.eq.${TENANT_EMPTY_COMPANY_SENTINEL},company_id.is.null`);
+  return query.or(`company_id.in.(${ids.join(',')}),company_id.is.null`);
+}
 const {
   createProjectTask,
   updateProjectTask,
@@ -2219,6 +2230,8 @@ r.get('/', async (req, res) => {
       }
 
       if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
+      // Không có công ty cụ thể (Admin hệ thống xem tất cả / NV xem việc được giao cho mình) → vẫn chỉ trong hệ sinh thái của mình.
+      else q = applyTenantScopeKeepNoCompany(q, req);
 
       if (!isManagerLike(req.user)) {
         q = applyEmployeeScope(q, req.user.userId);

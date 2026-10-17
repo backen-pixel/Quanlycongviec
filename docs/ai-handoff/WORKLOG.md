@@ -1,3 +1,13 @@
+## 2026-10-17 (2) — `GET /work-tasks` (danh sách unified) cũng lộ việc của tenant khác
+
+- Đã deploy bản sửa `team-project-tasks` / `project-overview` và đo lại: quá hạn 119 → 21, dòng NextGo 0. Phần còn lại ở mục trước («CHƯA sửa») là `GET /work-tasks` — `applyListFilters` chỉ có `if (effectiveCompany) eq('company_id')`, Admin hệ thống không chọn công ty thì không bị lọc gì.
+- Đo trên `unified_tasks_v` (chỉ đọc): 159.317 dòng, trong đó 13.873 dòng thuộc tenant NextGo (CRM-Deal 12.007, SX 972, VC 252, Giao việc 633, CRM-Lead 9) mà Admin tenant mặc định đọc được qua endpoint này. 31 dòng không có `company_id` (Dự án 21, CRM-Lead 7, Giao việc 2, Cá nhân 1) đều của người dùng tenant mặc định → bộ lọc phải GIỮ dòng `company_id` rỗng, nên không dùng `applyCompanyTenantScope` (thuần `IN`, sẽ làm mất chúng).
+- Sửa `backend/src/routes/workTasks.js`: thêm `applyTenantScopeKeepNoCompany(q, req)` = `company_id IN (công ty của tenant) OR company_id IS NULL` (tenant rỗng → chỉ dòng null), gọi trong `applyListFilters` khi không có `effectiveCompany`. Phủ cả nhánh NV xem việc được giao cho mình (`ownTasksView`, vẫn cho việc ở công ty khác CÙNG tenant), nhánh theo khu vực và nhánh thường. Không ép tenant (platform_admin / chưa có `tenant_id`) → không đổi.
+- Chạy thử bằng truy vấn đếm thật (chỉ đọc, qua client supabase của backend): tổng 159.317; sau lọc 145.444 (= 159.317 − 13.873 ✔); NextGo còn lại sau lọc 0; chồng `.or()` thứ hai (lọc trạng thái mở) cho kết quả AND đúng (114.914 → 101.840).
+- Còn lại: dòng `company_id` rỗng của tenant khác sẽ vẫn lọt (hiện 0 dòng) — nếu sau này có, cần lọc theo `assignee_id/created_by_id` thuộc tenant. Các endpoint khác của `workTasks.js` dùng `effectiveCompany` (`by-project`, `lead-options`, `project-overview-summary`…) chưa rà. Chưa deploy; cần đo lại sau deploy.
+
+---
+
 ## 2026-10-17 — Tab Công việc lộ việc của hệ sinh thái khác (tenant) cho Admin hệ thống
 
 - Phát hiện khi đối chiếu app/web (chỉ đọc, API thật, tài khoản admin không gắn công ty, tenant «Hệ sinh thái mặc định»): `GET /work-tasks/team-project-tasks` không chọn công ty trả 1.244 việc, trong đó 133 việc (98 quá hạn, 8+ dự án mã `…-NGC`) thuộc tenant NextGo. Mở chi tiết các dự án đó bằng cùng tài khoản → 403 `tenant_scope_denied` / `tenant_company_denied`. Tổng quá hạn hiện 119 trong khi 4 công ty của tenant chỉ có 21 (Metalla 2, HCB 19, Phúc Đạt 0, VPT 0).
