@@ -2630,10 +2630,15 @@ r.post('/by-project/:projectId/remind-complete', async (req, res) => {
  * Người nhận: người được giao của việc, hoặc người của bản `tasks` cùng tên (kế thừa), hoặc phụ trách module — KHÔNG ghi `assignee_id`
  * (luồng cũ tự gán phụ trách xuống bảng `tasks`; với `crm_task` không làm vậy để khỏi gán hàng loạt ngoài ý muốn).
  */
-async function remindCrmSxCategory(req, res, { projectId, categoryId, categoryTitle }) {
+/**
+ * Việc con của một danh mục khi nguồn SX là `crm_task` (Kanban nguồn mới).
+ * Tách riêng để cả nút «Nhắc» lẫn nút xổ việc trên thẻ dùng chung một cách gom nhóm —
+ * hai nơi tự gom sẽ lệch nhau ngay lần đổi quy tắc danh mục kế tiếp.
+ */
+async function loadCrmSxCategoryTasks({ projectId, categoryId }) {
   const detailLeads = await loadDetailLeadsByProject([projectId]);
   const leadIds = [...(detailLeads.get(String(projectId)) || [])];
-  if (!leadIds.length) return false;
+  if (!leadIds.length) return null;
   const crmRows = await fetchAllByIdsParallel({
     table: 'crm_tasks',
     columns: 'id, lead_id, title, status, stage_slug, production_pipeline_stage_id, assignee_id',
@@ -2651,7 +2656,7 @@ async function remindCrmSxCategory(req, res, { projectId, categoryId, categoryTi
   const matching = open.filter((row) => (
     projectOverviewCategoryId({ source: 'crm_task', source_id: row.id }, new Map(), detailById) === categoryId
   ));
-  if (!matching.length) return false;
+  if (!matching.length) return null;
 
   const [taskRows, projectRows] = await Promise.all([
     fetchAllByIdsParallel({
@@ -2686,6 +2691,13 @@ async function remindCrmSxCategory(req, res, { projectId, categoryId, categoryTi
     project_name: project.name || null,
   }));
   await enrichTaskModuleOwners(tasks);
+  return { tasks, project };
+}
+
+async function remindCrmSxCategory(req, res, { projectId, categoryId, categoryTitle }) {
+  const found = await loadCrmSxCategoryTasks({ projectId, categoryId });
+  if (!found) return false;
+  const { tasks, project } = found;
   const targets = new Set();
   tasks.forEach((task) => {
     const targetId = task.assignee_id || task.module_owner_id;
@@ -2718,6 +2730,96 @@ async function remindCrmSxCategory(req, res, { projectId, categoryId, categoryTi
   return true;
 }
 
+/**
+ * Việc con của một danh mục trên thẻ «Quản lý nhiệm vụ dự án» (nguồn `tasks` / `crm_task` cũ).
+ * Dùng chung cho nút «Nhắc» và nút xổ việc trên thẻ — xem `loadCrmSxCategoryTasks` cho nguồn SX mới.
+ */
+async function loadProjectOverviewGroupTasks({ projectId, categoryId, lane }) {
+  const source = lane === 'sales' ? 'crm_task' : 'task';
+  const kinds = lane === 'sales'
+    ? ['CRM-Deal', 'CRM-Lead', 'Giao việc']
+    : lane === 'logistics' ? ['VC'] : ['SX', 'Dự án'];
+  const candidateTasks = await fetchAllByIdsParallel({
+    table: 'unified_tasks_v',
+    columns: PROJECT_OVERVIEW_TASK_SELECT,
+    key: 'project_id',
+    ids: [projectId],
+    tune: (query) => {
+      let q = query.eq('source', source).in('task_kind', kinds);
+      q = applyPrimaryLeadOnly(q, source === 'crm_task');
+      q = applyOpenOnlyFilter(q);
+      return q.order('unified_id');
+    },
+  });
+  const sourceIds = candidateTasks.map((task) => task.source_id);
+  const detailRows = sourceIds.length
+    ? await fetchAllByIdsParallel({
+      table: source === 'crm_task' ? 'crm_tasks' : 'tasks',
+      columns: source === 'crm_task'
+        ? 'id, stage_slug, pipeline_stage_id, production_pipeline_stage_id'
+        : 'id, metadata, production_stage_id, stage_id',
+      key: 'id',
+      ids: sourceIds,
+      tune: (q) => q.order('id'),
+    })
+    : [];
+  const detailById = new Map(detailRows.map((row) => [String(row.id), row]));
+  const projectDetailById = source === 'task' ? detailById : new Map();
+  const crmDetailById = source === 'crm_task' ? detailById : new Map();
+  // Nhóm «Việc xưởng riêng» của Kanban nguồn `crm_task`: việc ở bảng `tasks` KHÔNG có bản `crm_task` cùng tên.
+  const isOwnGroup = lane === 'production' && categoryId === WORKSHOP_OWN_CATEGORY_ID;
+  let tasks;
+  if (isOwnGroup) {
+    const detailLeadsOwn = await loadDetailLeadsByProject([projectId]);
+    const ownLeadIds = [...(detailLeadsOwn.get(String(projectId)) || [])];
+    const crmTitleRows = ownLeadIds.length
+      ? await fetchAllByIdsParallel({
+        table: 'crm_tasks',
+        columns: 'id, lead_id, title, stage_slug, production_pipeline_stage_id',
+        key: 'lead_id',
+        ids: ownLeadIds,
+        tune: (q) => q.or('stage_slug.like.sx_%,production_pipeline_stage_id.not.is.null').order('id'),
+      })
+      : [];
+    const crmTitles = new Set(crmTitleRows.map((row) => String(row.title || '').trim().toLowerCase()));
+    tasks = candidateTasks.filter((task) => (
+      taskOwnerLane(task) === lane && !crmTitles.has(String(task.title || '').trim().toLowerCase())
+    ));
+  } else {
+    tasks = candidateTasks.filter((task) => (
+      taskOwnerLane(task) === lane
+      && projectOverviewCategoryId(task, projectDetailById, crmDetailById) === categoryId
+    ));
+  }
+  return tasks;
+}
+
+// GET /api/work-tasks/project-overview/children — việc con của một thẻ danh mục trên Kanban nhiệm vụ dự án
+r.get('/project-overview/children', async (req, res) => {
+  try {
+    const projectId = String(req.query.project_id || '').trim();
+    const categoryId = String(req.query.category_id || '').trim();
+    const lane = String(req.query.owner_lane || '').trim();
+    if (!projectId || !categoryId || !['sales', 'production', 'logistics'].includes(lane)) {
+      return res.status(400).json({ error: 'Thiếu dự án hoặc danh mục nhiệm vụ' });
+    }
+    const access = await assertProjectAccessible(req, res, projectId, { operation: 'READ', mode: 'company' });
+    if (!access) return;
+
+    // Nguồn SX mới gom theo `crm_task`; không khớp thì rơi về nguồn cũ (`tasks`).
+    if (lane === 'production') {
+      const found = await loadCrmSxCategoryTasks({ projectId, categoryId });
+      if (found?.tasks?.length) return res.json({ tasks: found.tasks });
+    }
+    const tasks = await loadProjectOverviewGroupTasks({ projectId, categoryId, lane });
+    await enrichTaskModuleOwners(tasks);
+    res.json({ tasks });
+  } catch (e) {
+    console.error('[work-tasks] project-overview/children:', e);
+    res.status(500).json({ error: e.message || 'Lỗi' });
+  }
+});
+
 // POST /api/work-tasks/project-overview/remind-complete — nhắc một danh mục nhiệm vụ lớn
 r.post('/project-overview/remind-complete', async (req, res) => {
   try {
@@ -2727,7 +2829,6 @@ r.post('/project-overview/remind-complete', async (req, res) => {
     const projectId = String(req.body?.project_id || '').trim();
     const categoryId = String(req.body?.category_id || '').trim();
     const lane = String(req.body?.owner_lane || '').trim();
-    const source = lane === 'sales' ? 'crm_task' : 'task';
     const categoryTitle = String(req.body?.title || 'Nhiệm vụ dự án').trim().slice(0, 160);
     if (!projectId || !categoryId || !['sales', 'production', 'logistics'].includes(lane)) {
       return res.status(400).json({ error: 'Thiếu dự án hoặc danh mục nhiệm vụ cần nhắc' });
@@ -2738,61 +2839,7 @@ r.post('/project-overview/remind-complete', async (req, res) => {
     // Nhóm việc SX lấy từ `crm_task` (Kanban nguồn mới) → nhắc theo `crm_task`; không phải nhóm đó thì rơi xuống luồng cũ (`tasks`).
     if (lane === 'production' && await remindCrmSxCategory(req, res, { projectId, categoryId, categoryTitle })) return;
 
-    const kinds = lane === 'sales'
-      ? ['CRM-Deal', 'CRM-Lead', 'Giao việc']
-      : lane === 'logistics' ? ['VC'] : ['SX', 'Dự án'];
-    const candidateTasks = await fetchAllByIdsParallel({
-      table: 'unified_tasks_v',
-      columns: PROJECT_OVERVIEW_TASK_SELECT,
-      key: 'project_id',
-      ids: [projectId],
-      tune: (query) => {
-        let q = query.eq('source', source).in('task_kind', kinds);
-        q = applyPrimaryLeadOnly(q, source === 'crm_task');
-        q = applyOpenOnlyFilter(q);
-        return q.order('unified_id');
-      },
-    });
-    const sourceIds = candidateTasks.map((task) => task.source_id);
-    const detailRows = sourceIds.length
-      ? await fetchAllByIdsParallel({
-        table: source === 'crm_task' ? 'crm_tasks' : 'tasks',
-        columns: source === 'crm_task'
-          ? 'id, stage_slug, pipeline_stage_id, production_pipeline_stage_id'
-          : 'id, metadata, production_stage_id, stage_id',
-        key: 'id',
-        ids: sourceIds,
-        tune: (q) => q.order('id'),
-      })
-      : [];
-    const detailById = new Map(detailRows.map((row) => [String(row.id), row]));
-    const projectDetailById = source === 'task' ? detailById : new Map();
-    const crmDetailById = source === 'crm_task' ? detailById : new Map();
-    // Nhóm «Việc xưởng riêng» của Kanban nguồn `crm_task`: việc ở bảng `tasks` KHÔNG có bản `crm_task` cùng tên.
-    const isOwnGroup = lane === 'production' && categoryId === WORKSHOP_OWN_CATEGORY_ID;
-    let tasks;
-    if (isOwnGroup) {
-      const detailLeadsOwn = await loadDetailLeadsByProject([projectId]);
-      const ownLeadIds = [...(detailLeadsOwn.get(String(projectId)) || [])];
-      const crmTitleRows = ownLeadIds.length
-        ? await fetchAllByIdsParallel({
-          table: 'crm_tasks',
-          columns: 'id, lead_id, title, stage_slug, production_pipeline_stage_id',
-          key: 'lead_id',
-          ids: ownLeadIds,
-          tune: (q) => q.or('stage_slug.like.sx_%,production_pipeline_stage_id.not.is.null').order('id'),
-        })
-        : [];
-      const crmTitles = new Set(crmTitleRows.map((row) => String(row.title || '').trim().toLowerCase()));
-      tasks = candidateTasks.filter((task) => (
-        taskOwnerLane(task) === lane && !crmTitles.has(String(task.title || '').trim().toLowerCase())
-      ));
-    } else {
-      tasks = candidateTasks.filter((task) => (
-        taskOwnerLane(task) === lane
-        && projectOverviewCategoryId(task, projectDetailById, crmDetailById) === categoryId
-      ));
-    }
+    const tasks = await loadProjectOverviewGroupTasks({ projectId, categoryId, lane });
     if (!tasks.length) {
       return res.status(400).json({ error: 'Danh mục này không còn nhiệm vụ mở để nhắc' });
     }

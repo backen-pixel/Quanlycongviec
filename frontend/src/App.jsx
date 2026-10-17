@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation, useParams,
 import { Suspense, lazy, Component, useEffect } from 'react';
 import { AuthProvider, useAuth } from './lib/auth';
 import { lazyWithRetry, isChunkLoadErrorMessage } from './lib/lazyWithRetry';
+import { WEB_ROUTES } from './web/routes';
 
 class ErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null, errorInfo: null }; }
@@ -107,6 +108,7 @@ const WorkshopTaskTemplatesPage = lazyWithRetry(() => import('./pages/WorkshopTa
 const ProductionHandoverSettingsPage = lazyWithRetry(() => import('./pages/ProductionHandoverSettingsPage'));
 const ProductionBackupSyncPage = lazyWithRetry(() => import('./pages/ProductionBackupSyncPage'));
 const BehaviorInsightPage = lazyWithRetry(() => import('./pages/BehaviorInsightPage'));
+const BehaviorGalaxyPage = lazyWithRetry(() => import('./pages/BehaviorGalaxyPage'));
 const ProductionAssignmentsPage = lazyWithRetry(() => import('./pages/ProductionAssignmentsPage'));
 const ProductionPhatSinhPage = lazyWithRetry(() => import('./pages/ProductionPhatSinhPage'));
 const LogisticsAssignmentsPage = lazyWithRetry(() => import('./pages/LogisticsAssignmentsPage'));
@@ -161,10 +163,13 @@ const PipelineSettingsPage = lazyWithRetry(() => import('./pages/PipelineSetting
 const CRMSourcesSettingsPage = lazyWithRetry(() => import('./pages/CRMSourcesSettingsPage'));
 const CRMCustomersPage = lazyWithRetry(() => import('./pages/CRMCustomersPage'));
 const CRMTasksPage = lazyWithRetry(() => import('./pages/CRMTasksPage'));
+const CrmProjectTasksPage = lazyWithRetry(() => import('./pages/CrmProjectTasksPage'));
+const CrmPhatSinhPage = lazyWithRetry(() => import('./pages/CrmPhatSinhPage'));
 const CRMAssignmentsPage = lazyWithRetry(() => import('./pages/CRMAssignmentsPage'));
 const SharedWorkspaceAssignmentsReportPage = lazyWithRetry(() => import('./pages/SharedWorkspaceAssignmentsReportPage'));
 const ProjectConstructionLogsPage = lazyWithRetry(() => import('./pages/ProjectConstructionLogsPage'));
 const SharedWorkspaceErrorTypesPage = lazyWithRetry(() => import('./pages/SharedWorkspaceErrorTypesPage'));
+const QuanLyLoiPage = lazyWithRetry(() => import('./pages/QuanLyLoiPage'));
 const CrmDeptPlanPage = lazyWithRetry(() => import('./pages/CrmDeptPlanPage'));
 const CrmDailyReportPage = lazyWithRetry(() => import('./pages/CrmDailyReportPage'));
 const CrmDailyWorkHistoryPage = lazyWithRetry(() => import('./pages/CrmDailyWorkHistoryPage'));
@@ -474,6 +479,7 @@ export default function App() {
           <Route path="/modules/payment/return" element={<SaasPaymentReturnPage />} />
           <Route path="/privacy" element={<Suspense fallback={<PageLoader />}><PrivacyPage /></Suspense>} />
           <Route path="/s/:token" element={<Suspense fallback={<PageLoader />}><PublicSharePage /></Suspense>} />
+          {WEB_ROUTES}
           <Route element={<ProtectedLayout />}>
             <Route path="/setup" element={<Outlet />} />
             <Route path="/" element={<DefaultRedirect />} />
@@ -482,6 +488,7 @@ export default function App() {
             <Route path="/management/deals/:leadId" element={<UnifiedDealPage />} />
             <Route path="/management/backup-sync" element={<ProductionBackupSyncPage />} />
             <Route path="/management/behavior-insight" element={<Suspense fallback={<PageLoader />}><BehaviorInsightPage /></Suspense>} />
+            <Route path="/management/behavior-galaxy" element={<Suspense fallback={<PageLoader />}><BehaviorGalaxyPage /></Suspense>} />
             <Route path="/management/mcp-api" element={<RequireCrmElevated><McpReportApiPage /></RequireCrmElevated>} />
             <Route path="/management/project-deadlines" element={<RequireCrmElevated><ProjectDeadlineDispatchPage /></RequireCrmElevated>} />
             <Route path="/dashboard/classic" element={<Navigate to="/dashboard" replace />} />
@@ -501,6 +508,7 @@ export default function App() {
             <Route path="/management/production-overview/:id" element={<Suspense fallback={<PageLoader />}><ProductionProjectDetailPage /></Suspense>} />
             <Route path="/management/shared-workspace-report" element={<SharedWorkspaceAssignmentsReportPage />} />
             <Route path="/management/project-logs" element={<Suspense fallback={<PageLoader />}><ProjectConstructionLogsPage /></Suspense>} />
+            <Route path="/management/bao-loi" element={<Suspense fallback={<PageLoader />}><QuanLyLoiPage /></Suspense>} />
             <Route path="/management/shared-workspace-settings" element={<RequireCrmElevated><SharedWorkspaceErrorTypesPage /></RequireCrmElevated>} />
             <Route path="/management/cost-setup" element={<Suspense fallback={<PageLoader />}><AccountingCostSetupPage backTo="/management/work-unified" backLabel="Work Unified" /></Suspense>} />
             <Route path="/work/flows" element={<Suspense fallback={<PageLoader />}><ModuleFlowSetupPage /></Suspense>} />
@@ -627,13 +635,13 @@ export default function App() {
             <Route path="/crm/customers" element={<CRMCustomersPage />} />
             <Route path="/crm/tasks" element={<CRMTasksPage />} />
             <Route path="/crm/assignments" element={<CRMAssignmentsPage />} />
-            <Route path="/crm/phat-sinh" element={<ProductionPhatSinhPage companiesModule="crm" assignmentModule="crm" storagePrefix="crm_phat_sinh" dashboardLink="/crm/dashboard" />} />
+            <Route path="/crm/phat-sinh" element={<CrmPhatSinhPage />} />
             <Route path="/crm/dept-plan" element={<CrmDeptPlanPage />} />
             <Route path="/crm/daily-reports" element={<CrmDailyReportPage />} />
             <Route path="/crm/daily-reports/history" element={<CrmDailyWorkHistoryPage />} />
             <Route path="/production/assignments" element={<Navigate to="/sx/assignments" replace />} />
             <Route path="/crm/follow-up-care" element={<CrmFollowUpCarePage />} />
-            <Route path="/crm/project-tasks" element={<Suspense fallback={<PageLoader />}><div className="w-auto lg:w-full max-w-none pt-2 pb-0 -ml-3 -mr-3 lg:mr-[-28px] px-2"><ProjectTasksOverviewPage fixedModule="crm" /></div></Suspense>} />
+            <Route path="/crm/project-tasks" element={<Suspense fallback={<PageLoader />}><div className="w-auto lg:w-full max-w-none pt-2 pb-0 -ml-3 -mr-3 lg:mr-[-28px] px-2"><CrmProjectTasksPage /></div></Suspense>} />
             <Route path="/crm/task-templates" element={<RequireCrmElevated><CRMTemplatesPage /></RequireCrmElevated>} />
             <Route path="/crm/auto-project-config" element={<RequireCrmElevated><AutoProjectConfigPage /></RequireCrmElevated>} />
             <Route path="/crm/products" element={<ProductsPage />} />

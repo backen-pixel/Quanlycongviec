@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef, useDeferredValue, memo, Fragment } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
+import { logCRUD } from '../lib/activityLogger';
 import { getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isSystemAdmin, isProductionAdmin, isProductionStaff } from '../lib/adminRole';
@@ -2625,6 +2626,11 @@ export default function ProductionDashboard() {
       const results = await Promise.allSettled(
         idsToDelete.map((id) => api.delete(`/projects/${id}`, { data: { delete_reason: reason || undefined } })),
       );
+      results.forEach((r, i) => {
+        if (r.status === 'fulfilled') {
+          logCRUD({ action: 'delete', module: 'projects', entity_type: 'project', entity_id: idsToDelete[i], label: 'Xoá dự án' });
+        }
+      });
       const failed = results.filter((r) => r.status === 'rejected');
       if (failed.length) {
         const msg = failed[0]?.reason?.response?.data?.error || failed[0]?.reason?.message || 'Lỗi xóa';

@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { KanbanBoardEdgeScrollChrome } from '../lib/kanbanEdgeScrollControls';
 import api from '../lib/api';
+import { logCRUD } from '../lib/activityLogger';
 import { useAuth } from '../lib/auth';
 import { markWorkshopPipelineCardFocus } from '../lib/workshopPipelineStorage';
 import { FbCrmAvatar, FbCrmCommentComposer, formatCrmCommentFullDateTime, formatCrmFbRelativeTime } from './crmFbCommentUi';
@@ -1686,6 +1687,7 @@ function ProductionCommentCard({ item, expanded, onToggle, onChanged, navigate, 
       const r = await api.post(`/projects/${item.id}/comments`, payload);
       const row = r.data?.comment || r.data;
       if (row?.id) {
+        logCRUD({ action: 'create', module: 'projects', feature: 'comments', entity_type: 'project_comment', entity_id: row.id, label: 'Trao đổi trong dự án' });
         setComments((prev) => upsertComment(prev, row));
       } else {
         await load({ silent: true });

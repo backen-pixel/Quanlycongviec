@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import api from '../lib/api';
+import { logCRUD } from '../lib/activityLogger';
 import Modal from './Modal';
 import { FileUploadButton, FilePreview, FileList } from './FileUpload';
 import ParticipantManager from './ParticipantManager';
@@ -41,17 +42,24 @@ export default function TaskDetailModal({ taskId, open, onClose, onUpdated }) {
   };
 
   const updateStatus = async (status) => {
-    await api.patch(`/tasks/${taskId}/status`, { status }); loadTask(); onUpdated?.();
+    await api.patch(`/tasks/${taskId}/status`, { status });
+    logCRUD({ action: 'update', module: 'tasks', feature: 'task_detail', entity_type: 'task', entity_id: taskId, label: `Đổi trạng thái công việc → ${status}` });
+    loadTask(); onUpdated?.();
   };
 
   const deleteTask = async () => {
     if (!confirm('Xóa công việc này? Hành động không thể hoàn tác.')) return;
-    try { await api.delete(`/tasks/${taskId}`); onUpdated?.(); onClose(); } catch {}
+    try {
+      await api.delete(`/tasks/${taskId}`);
+      logCRUD({ action: 'delete', module: 'tasks', feature: 'task_detail', entity_type: 'task', entity_id: taskId, label: 'Xoá công việc' });
+      onUpdated?.(); onClose();
+    } catch {}
   };
 
   const saveEdit = async () => {
     try {
       await api.put(`/tasks/${taskId}`, editForm);
+      logCRUD({ action: 'update', module: 'tasks', feature: 'task_detail', entity_type: 'task', entity_id: taskId, label: 'Sửa công việc' });
       setEditing(false); loadTask(); onUpdated?.();
     } catch {}
   };

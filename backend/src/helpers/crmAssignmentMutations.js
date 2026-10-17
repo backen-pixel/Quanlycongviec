@@ -6,6 +6,10 @@ const {
   persistAssignmentNotification,
   buildAssignmentNotificationInsert,
 } = require('./crmAssignmentNotifications');
+const {
+  isSharedWorkspaceBornTask,
+  isTaskSourceColumnError,
+} = require('./sharedWorkspaceTaskSource');
 
 const ADMIN_ROLES = new Set(['ecosystem_admin', 'admin', 'manager', 'sales_admin', 'crm_production_admin']);
 const isAdmin = (req) => ADMIN_ROLES.has(String(req.user?.role || '').toLowerCase());
@@ -302,10 +306,38 @@ async function updateCrmAssignment(req, assignmentId, body) {
   return { data: { assignment: data, assignee_ids: finalAssignees }, status: 200 };
 }
 
+/**
+ * Đọc crm_tasks gắn nhiệm vụ — chỉ trả về khi task do form Không gian chung đẻ ra.
+ * Task tạo riêng trên deal (rồi mới sync ra nhiệm vụ) trả null để không bị xóa lây.
+ */
+async function loadSharedWorkspaceBornTask(crmTaskId) {
+  if (!crmTaskId) return null;
+  let { data, error } = await supabase.from('crm_tasks')
+    .select('id, stage_slug, task_source_type').eq('id', crmTaskId).maybeSingle();
+  if (error && isTaskSourceColumnError(error)) {
+    ({ data, error } = await supabase.from('crm_tasks')
+      .select('id, stage_slug').eq('id', crmTaskId).maybeSingle());
+  }
+  if (error || !data) return null;
+  return isSharedWorkspaceBornTask(data) ? data : null;
+}
+
 async function deleteCrmAssignment(req, assignmentId) {
   const { data: row } = await supabase.from('crm_assignments')
-    .select('id, created_by_id').eq('id', assignmentId).maybeSingle();
+    .select('id, created_by_id, lead_id, crm_task_id').eq('id', assignmentId).maybeSingle();
   if (!row) return { error: 'Không tìm thấy nhiệm vụ', status: 404 };
+
+  // Nhiệm vụ Không gian chung đi kèm một crm_tasks sinh cùng lúc. Chỉ xóa dòng nhiệm vụ thì
+  // task ở lại mồ côi: vẫn nằm trong inbox trang Giao việc và vẫn bị tính quá hạn.
+  // Xóa task trước — FK crm_assignments_crm_task_id_fkey ON DELETE CASCADE gỡ luôn nhiệm vụ.
+  const bornTask = await loadSharedWorkspaceBornTask(row.crm_task_id);
+  if (bornTask) {
+    const { error } = await supabase.from('crm_tasks').delete().eq('id', bornTask.id);
+    if (error) return { error: error.message, status: 500 };
+    emitAssignmentRealtime(req, row, 'assignment_deleted');
+    return { data: { ok: true, deleted_crm_task_id: bornTask.id }, status: 200 };
+  }
+
   const { error } = await supabase.from('crm_assignments').delete().eq('id', assignmentId);
   if (error) return { error: error.message, status: 500 };
   emitAssignmentRealtime(req, row, 'assignment_deleted');

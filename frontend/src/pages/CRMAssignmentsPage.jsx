@@ -17,6 +17,9 @@ import {
   InboxKanbanBoard as InboxKanbanBoardChung,
   InboxCalendarBoard as InboxCalendarBoardChung,
 } from '../components/inbox/InboxBoards';
+import {
+  DEADLINE_BUCKET_META, groupByDeadline, emptyDeadlineGroups, classifyDeadlineBucket,
+} from '../components/inbox/inboxDeadline';
 import { formatDate } from '../lib/utils';
 import { unpackAssignmentsDict } from '../lib/assignmentDictPayload';
 import {
@@ -115,16 +118,6 @@ const STATUS_BOARD_META = [
   },
 ];
 
-const DEADLINE_BUCKET_META = [
-  { key: 'overdue',    label: '🔴 Quá hạn',     color: '#EF4444' },
-  { key: 'today',      label: '🟡 Hôm nay',     color: '#F59E0B' },
-  { key: 'tomorrow',   label: '🟠 Ngày mai',    color: '#F97316' },
-  { key: 'thisWeek',   label: '🔵 Tuần này',    color: '#3B82F6' },
-  { key: 'nextWeek',   label: '🟣 Tuần sau',    color: '#8B5CF6' },
-  { key: 'later',      label: '⚪ Sau đó',      color: '#94A3B8' },
-  { key: 'noDeadline', label: '⏳ Chưa có hạn', color: '#6B7280' },
-];
-
 function normalizeTaskStatus(status) {
   const s = String(status || 'pending').toLowerCase();
   if (s === 'completed' || s === 'done') return 'completed';
@@ -144,43 +137,9 @@ function groupTasksByStatus(tasks) {
   return g;
 }
 
-function emptyDeadlineGroups() {
-  return { overdue: [], today: [], tomorrow: [], thisWeek: [], nextWeek: [], later: [], noDeadline: [] };
-}
-
-/**
- * Hôm nay → Ngày mai → hết 7 ngày tới → 7 ngày kế → sau đó.
- *
- * Tách «Tuần sau» khỏi «Sau đó»: gộp chung thì mọi việc từ ngày thứ 8 trở đi dồn vào
- * một rổ, mà việc tuần sau là thứ người ta còn kịp sắp lịch, khác hẳn việc tháng sau.
- */
-function classifyDeadlineBucket(deadline, today) {
-  if (!deadline) return 'noDeadline';
-  const d = new Date(deadline);
-  if (Number.isNaN(d.getTime())) return 'noDeadline';
-  const tomorrow = new Date(today.getTime() + 86400000);
-  const dayAfter = new Date(today.getTime() + 2 * 86400000);
-  const weekEnd = new Date(today);
-  weekEnd.setDate(weekEnd.getDate() + 7);
-  const nextWeekEnd = new Date(today);
-  nextWeekEnd.setDate(nextWeekEnd.getDate() + 14);
-  if (d < today) return 'overdue';
-  if (d < tomorrow) return 'today';
-  if (d < dayAfter) return 'tomorrow';
-  if (d < weekEnd) return 'thisWeek';
-  if (d < nextWeekEnd) return 'nextWeek';
-  return 'later';
-}
-
+/** Lỗi và nhiệm vụ chia rổ hạn y hệt nhau — logic ở components/inbox/inboxDeadline.js. */
 function groupTasksByDeadline(tasks) {
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const g = emptyDeadlineGroups();
-  (tasks || []).forEach((t) => {
-    if (normalizeTaskStatus(t.status) === 'completed') return;
-    g[classifyDeadlineBucket(t.deadline, today)].push(t);
-  });
-  return g;
+  return groupByDeadline(tasks, { boQua: (t) => normalizeTaskStatus(t.status) === 'completed' });
 }
 
 function computeTaskStats(tasks) {

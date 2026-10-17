@@ -81,6 +81,65 @@ async function fetchAllRows(table, select, apply) {
 }
 
 /**
+ * Cột tắt hạn (Đã giao → Chốt công nợ → Thu tiền → …): nhiệm vụ dự án và việc giao
+ * còn mở KHÔNG được tính quá hạn nữa — đơn đã rời xưởng, phần còn lại là việc công nợ.
+ *
+ * Chỉ bỏ hạn, KHÔNG tích hoàn thành: việc chốt công nợ / thu tiền sau mốc giao hàng
+ * vẫn là việc thật chưa làm (xem `completeSxWorkUpToShippedColumn`), đóng giùm là ghi sai.
+ *
+ * Hạn cũ KHÔNG ghi tay ở đây: trigger DB `trg_unified_task_history_tasks` /
+ * `trg_unified_task_history_crm_assignments` đã đẩy `old_value` vào
+ * `unified_task_history` cho mọi UPDATE — ghi thêm là timeline hiện hai dòng một việc.
+ *
+ * Phạm vi: `tasks` của dự án + `crm_assignments` module production. Nhiệm vụ CRM
+ * (`crm_tasks` slug deal_*) giữ nguyên hạn — luồng bán hàng không thuộc cột SX này.
+ */
+async function tatHanNhiemVuSxConMo(projectIds, leadIds, nowIso) {
+  const pids = uniqIds(projectIds);
+  const lids = uniqIds(leadIds);
+  const taskIds = new Set();
+  let assignments = 0;
+
+  // Hai cột hạn tách hai lượt: `tasks.deadline` là cột thêm sau, DB cũ chưa chắc có.
+  for (const field of ['due_date', 'deadline']) {
+    for (const part of chunk(pids)) {
+      const { data, error } = await supabase
+        .from('tasks')
+        .update({ [field]: null, updated_at: nowIso })
+        .in('project_id', part)
+        .neq('status', 'done')
+        .not(field, 'is', null)
+        .select('id');
+      if (error) {
+        if (!new RegExp(field).test(String(error.message || ''))) {
+          console.warn(`[clearCompletedDeadlines] tắt hạn nhiệm vụ (${field}):`, error.message);
+        }
+        continue;
+      }
+      for (const row of data || []) taskIds.add(String(row.id));
+    }
+  }
+
+  for (const part of chunk(lids)) {
+    const { data, error } = await supabase
+      .from('crm_assignments')
+      .update({ deadline: null, updated_at: nowIso })
+      .in('lead_id', part)
+      .eq('assignment_module', 'production')
+      .in('status', ['pending', 'in_progress'])
+      .not('deadline', 'is', null)
+      .select('id');
+    if (error) {
+      console.warn('[clearCompletedDeadlines] tắt hạn việc giao SX:', error.message);
+      continue;
+    }
+    assignments += (data || []).length;
+  }
+
+  return { tasks: taskIds.size, assignments };
+}
+
+/**
  * Kéo vào cột SX «Hoàn thành» / Đã công / Đã thu:
  * chỉ xóa deadline SX + hoàn thành NV SX còn mở + hủy lịch hẹn SX.
  * Không đụng deadline CRM, VC/LĐ và các ngày giao/lắp lịch sử.
@@ -161,6 +220,8 @@ async function clearSxSchedulesOnCompletedForProjects(projectIds, { completeWork
     }
   }
 
+  const hanNhiemVu = await tatHanNhiemVuSxConMo(ids, leadIds, nowIso);
+
   if (completeWork) {
     try {
       if (cot?.id) {
@@ -200,7 +261,12 @@ async function clearSxSchedulesOnCompletedForProjects(projectIds, { completeWork
     console.warn('[clearCompletedDeadlines] HCB Cánh kính finalize:', ckErr.message);
   }
 
-  return { projects: ids.length, leads: leadIds.length };
+  return {
+    projects: ids.length,
+    leads: leadIds.length,
+    tasks_deadline_off: hanNhiemVu.tasks,
+    assignments_deadline_off: hanNhiemVu.assignments,
+  };
 }
 
 async function fetchMapByIds(table, select, ids) {
@@ -498,6 +564,7 @@ function projectIsInCompletedKanban(project, sets) {
 
 module.exports = {
   clearSxSchedulesOnCompletedForProjects,
+  tatHanNhiemVuSxConMo,
   rescanCompletedAndClearDeadlines,
   loadCompletedKanbanColumnSets,
   projectIsInCompletedKanban,

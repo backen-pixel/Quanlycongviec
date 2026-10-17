@@ -133,13 +133,22 @@ r.get('/', async (req, res) => {
     const { data, error, count } = await q;
     if (error) throw error;
 
-    if (group_by === 'status') {
-      const cols = { pending: [], todo: [], in_progress: [], review: [], done: [], blocked: [], deferred: [] };
-      data?.forEach(t => { if (cols[t.status]) cols[t.status].push(t); else if (cols.todo) cols.todo.push(t); });
-      return res.json({ columns: cols, total: count ?? data?.length });
+    // Nhiệm vụ chưa gán ai vẫn phải hiện người phụ trách khai trong setup cột pipeline.
+    let rows = data || [];
+    try {
+      const { attachStageDefaultStaffToTasks } = require('../helpers/productionWorkshopTypeStaff');
+      rows = await attachStageDefaultStaffToTasks(rows);
+    } catch (staffErr) {
+      console.warn('[tasks] stage default staff:', staffErr.message);
     }
 
-    res.json({ tasks: data, total: count ?? data?.length, page, page_size: pageSize });
+    if (group_by === 'status') {
+      const cols = { pending: [], todo: [], in_progress: [], review: [], done: [], blocked: [], deferred: [] };
+      rows.forEach(t => { if (cols[t.status]) cols[t.status].push(t); else if (cols.todo) cols.todo.push(t); });
+      return res.json({ columns: cols, total: count ?? rows.length });
+    }
+
+    res.json({ tasks: rows, total: count ?? rows.length, page, page_size: pageSize });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Lỗi' }); }
 });
 

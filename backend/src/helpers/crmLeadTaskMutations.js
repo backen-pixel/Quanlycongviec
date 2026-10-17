@@ -276,6 +276,9 @@ async function createCrmLeadTask(req, leadId, body) {
       ? b.form_data
       : {},
   };
+  if (b.production_pipeline_stage_id !== undefined) {
+    insertRow.production_pipeline_stage_id = b.production_pipeline_stage_id || null;
+  }
   if (b.executor_company_id !== undefined) {
     insertRow.executor_company_id = normalizeTaskExecutorCompanyId(
       b.executor_company_id,

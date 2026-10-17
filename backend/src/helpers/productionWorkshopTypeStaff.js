@@ -1269,6 +1269,72 @@ function collectUserIdsFromPipelineStaffBlock(block) {
   ].filter(Boolean).map(String);
 }
 
+/**
+ * Gắn «người phụ trách theo setup cột» vào từng nhiệm vụ dự án.
+ *
+ * Nhiệm vụ SX sinh từ bộ mẫu thường chưa gán ai, nên danh sách trong chi tiết dự án
+ * trống tên — trong khi cột pipeline đã khai báo sẵn NV mặc định. Hàm này trả thêm
+ * `stage_default_staff` để UI hiện tên đó, KHÔNG ghi `assignee_id`: người phụ trách
+ * theo cột là cấu hình, không phải phân công thật trên thẻ.
+ */
+async function attachStageDefaultStaffToTasks(tasks) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  const stageIds = [...new Set(list
+    .map((t) => (t?.production_stage_id ? String(t.production_stage_id) : null))
+    .filter(Boolean))];
+  if (!stageIds.length) return list;
+
+  let staffMap;
+  try {
+    staffMap = await loadPipelineStageDefaultStaffMap(stageIds);
+  } catch (e) {
+    console.warn('[stageDefaultStaff] load map:', e.message);
+    return list;
+  }
+  if (!staffMap?.size) return list;
+
+  const userIds = [...new Set(
+    [...staffMap.values()].flatMap((block) => collectUserIdsFromPipelineStaffBlock(block)),
+  )];
+  const userById = new Map();
+  if (userIds.length) {
+    const { data: users, error } = await supabase
+      .from('users')
+      .select('id, full_name, avatar')
+      .in('id', userIds);
+    if (error) console.warn('[stageDefaultStaff] load users:', error.message);
+    for (const u of users || []) userById.set(String(u.id), u);
+  }
+
+  const stageById = new Map();
+  {
+    const { data: stages, error } = await supabase
+      .from('production_pipeline_stages')
+      .select('id, name')
+      .in('id', stageIds);
+    if (error) console.warn('[stageDefaultStaff] load stages:', error.message);
+    for (const s of stages || []) stageById.set(String(s.id), s);
+  }
+
+  return list.map((t) => {
+    const key = t?.production_stage_id ? String(t.production_stage_id) : null;
+    const block = key ? staffMap.get(key) : null;
+    if (!block) return t;
+    const users = (block.userIds || []).map((id) => userById.get(String(id))).filter(Boolean);
+    const primary = block.primaryUserId ? userById.get(String(block.primaryUserId)) || null : null;
+    if (!users.length && !primary) return t;
+    return {
+      ...t,
+      stage_default_staff: {
+        stage_id: key,
+        stage_name: stageById.get(key)?.name || null,
+        primary_user: primary,
+        users,
+      },
+    };
+  });
+}
+
 async function enrichPipelineStagesWithDefaultStaff(stages) {
   const list = stages || [];
   if (!list.length) return list;
@@ -1939,6 +2005,7 @@ module.exports = {
   getDefaultStaffForPipelineStage,
   formatPipelineStageDefaultsForApi,
   enrichPipelineStagesWithDefaultStaff,
+  attachStageDefaultStaffToTasks,
   savePipelineStageDefaultStaff,
   applyPipelineStageDefaultStaffToProject,
   mergeDealLeadMembers,

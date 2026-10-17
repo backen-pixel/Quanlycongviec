@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { clearFormDraft, readFormDraft, useFormDraft } from '../lib/formDraft';
 import api from '../lib/api';
+import { logCRUD } from '../lib/activityLogger';
 import Modal from './Modal';
 import { FileUploadButton, FilePreview } from './FileUpload';
 import { ChevronDown, ChevronRight, Building2, Users } from 'lucide-react';
@@ -159,6 +160,7 @@ export default function TaskCreateModal({ open, onClose, onCreated, projectId, s
       console.log('Payload:', payload);
       const response = await api.post('/tasks', payload);
       console.log('Task created:', response.data);
+      logCRUD({ action: 'create', module: 'tasks', feature: 'task_create', entity_type: 'task', entity_id: response.data?.id || response.data?.task?.id, label: 'Tạo công việc mới' });
       clearFormDraft(draftKey);
       onCreated?.();
       onClose();

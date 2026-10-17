@@ -44,7 +44,9 @@
   border-radius: 8px;
   box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.25), 0 0 16px rgba(99, 102, 241, 0.5);
   pointer-events: none;
-  z-index: 55;
+  /* Cùng lý do với bé bot: nút được khoanh sáng có thể nằm trong modal (z-[10000]+), vòng sáng
+     ở 55 thì khoanh vào chỗ không ai thấy. 99996: trên hộp thoại, dưới ô hỏi (99998) và bé bot. */
+  z-index: 99996;
   transition: top 0.15s ease, left 0.15s ease, width 0.15s ease, height 0.15s ease;
 }
 
@@ -363,7 +365,7 @@
 /* ── Nhân vật hệ thống (GuideMascot.jsx) ──
    Kích thước ở đây PHẢI khớp W / H trong GuideMascot.jsx: việc chọn đứng bên nào được tính bằng
    số TRƯỚC khi phần tử có layout, nên hai nơi lệch nhau là ngón tay chỉ trượt.
-   z-index 55 = ngang vòng sáng, thấp hơn khung chat (70) nên không bao giờ che khung chat. */
+   Lớp vẽ: xem ghi chú z-index ngay trong khối bên dưới. */
 .app-guide-mascot {
   position: fixed;
   top: 0;
@@ -371,7 +373,12 @@
   width: 146px;
   height: 132px;
   pointer-events: none;
-  z-index: 55;
+  /* LUÔN Ở LỚP TRÊN CÙNG. Trước đây 55 — thấp hơn gần như mọi hộp thoại trong app (đo được:
+     z-[80] … z-[99997]), nên mở modal/panel nào là bé bot cùng bong bóng lời thoại chui xuống
+     dưới, người dùng tưởng trợ lý tắt. 99999: trên hộp thoại cao nhất (99997) và trên cả ô hỏi
+     (99998), vẫn DƯỚI lớp tour (100050) và tooltip bước (100052).
+     `pointer-events: none` giữ nguyên nên nằm trên cũng không nuốt cú bấm nào. */
+  z-index: 99999;
   /* Di chuyển bằng transform (chạy trên GPU), KHÔNG bằng top/left — animate top/left bắt trình
      duyệt tính lại layout mỗi khung hình, trên trang kanban vài nghìn phần tử là thấy giật. */
   transition: transform 0.42s cubic-bezier(0.33, 1, 0.68, 1), opacity 0.28s ease;

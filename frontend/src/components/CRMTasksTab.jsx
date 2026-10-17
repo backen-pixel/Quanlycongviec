@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useLayoutEffect, useCallback } fr
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import api from '../lib/api';
+import { logCRUD } from '../lib/activityLogger';
 import { compressImage } from '../lib/compressImage';
 import { connectSocket, getSocket } from '../lib/socket';
 import { useAuth } from '../lib/auth';
@@ -436,6 +437,28 @@ const LEAD_MEMBER_ROLE_LABEL = Object.fromEntries(LEAD_MEMBER_ROLES.map((r) => [
 function taskAssigneeList(task) {
   if (task?.assignees?.length) return task.assignees;
   return task?.assignee ? [task.assignee] : [];
+}
+
+/**
+ * Tên người đứng sau một cột nhiệm vụ: ưu tiên người đã gán trên công việc của cột,
+ * chưa ai gán thì lấy NV mặc định khai trong setup cột (`default_staff` từ API).
+ */
+function nguoiPhuTrachCot(child) {
+  const ten = [];
+  const daCo = new Set();
+  for (const t of child?.stageTasks || []) {
+    for (const u of taskAssigneeList(t)) {
+      const id = String(u?.id || '');
+      if (!u?.full_name || !id || daCo.has(id)) continue;
+      daCo.add(id);
+      ten.push(u.full_name);
+    }
+  }
+  if (ten.length) return { ten, theoSetup: false };
+  const setup = (child?.stage?.default_staff?.users || [])
+    .map((u) => u?.full_name)
+    .filter(Boolean);
+  return { ten: setup, theoSetup: true };
 }
 
 function AssigneePickerBlock({
@@ -1347,33 +1370,41 @@ export default function CRMTasksTab({
     };
   }, [leadId]);
 
-  const addTask = async (stageKey) => {
+  const addTask = async (stageKey, mode) => {
     if (!newTask.title.trim()) return;
     try {
-      // Pipeline mode: stageKey = pipeline_stage_id (UUID).
-      // Non-pipeline: stageKey = stage_slug (string).
+      // Cột SX (bảng «cha = cột lớn, con = cột nhỏ»): stageKey = production_pipeline_stages.id (UUID).
+      // Pipeline CRM: stageKey = pipeline_stage_id (UUID). Không pipeline: stageKey = stage_slug (string).
       const stageMeta = usePipelineTaskUi ? STAGES.find((s) => s.slug === stageKey) : null;
       const payload = {
         ...newTask,
         deadline: newTask.deadline ? datetimeLocalValueToIso(newTask.deadline) : null,
-        ...(usePipelineTaskUi
+        ...(mode === 'sx-plan'
           ? {
-              pipeline_stage_id: stageKey,
-              stage_slug: stageMeta?.label || null, // gửi tên stage để hiển thị (không bắt buộc)
-              order_index: tasks.filter((t) => t.pipeline_stage_id === stageKey).length,
+              production_pipeline_stage_id: stageKey,
+              order_index: (tasksByStage[stageKey] || []).length,
             }
-          : {
-              stage_slug: stageKey,
-              order_index: tasks.filter((t) => t.stage_slug === stageKey).length,
-            }),
+          : usePipelineTaskUi
+            ? {
+                pipeline_stage_id: stageKey,
+                stage_slug: stageMeta?.label || null, // gửi tên stage để hiển thị (không bắt buộc)
+                order_index: tasks.filter((t) => t.pipeline_stage_id === stageKey).length,
+              }
+            : {
+                stage_slug: stageKey,
+                order_index: tasks.filter((t) => t.stage_slug === stageKey).length,
+              }),
       };
       const { data } = await api.post(`/crm/leads/${leadId}/tasks`, payload);
+      logCRUD({ action: 'create', module: 'crm', feature: 'lead_tasks', entity_type: 'crm_task', entity_id: data?.id, label: 'Tạo công việc CRM' });
       setNewTask({ title: '', priority: 'medium', deadline: '', assignee_id: '', supervisor_id: '' });
       setShowAdd(null);
       if (data?.id) {
         setTasks((prev) => [...prev, data]);
-        const expKey = data.pipeline_stage_id || data.stage_slug;
-        if (expKey) setExpandedStages((s) => ({ ...s, [expKey]: true }));
+        if (mode !== 'sx-plan') {
+          const expKey = data.pipeline_stage_id || data.stage_slug;
+          if (expKey) setExpandedStages((s) => ({ ...s, [expKey]: true }));
+        }
       } else loadTasks();
     } catch (e) { alert(e.response?.data?.error || 'Lỗi'); }
   };
@@ -1528,6 +1559,7 @@ export default function CRMTasksTab({
         if (updates.deadline !== undefined) body.due_date = updates.deadline;
         if (updates.order_index !== undefined) body.order_index = updates.order_index;
         const { data } = await api.put(`/tasks/${taskId}`, body);
+        logCRUD({ action: 'update', module: 'tasks', feature: 'lead_tasks', entity_type: 'task', entity_id: taskId, label: 'Sửa công việc' });
         setTasks((p) => p.map((t) => (t.id === taskId ? {
           ...t,
           ...updates,
@@ -1540,6 +1572,7 @@ export default function CRMTasksTab({
       }
       const lid = apiLeadIdForTaskId(taskId);
       const { data } = await api.put(`/crm/leads/${lid}/tasks/${taskId}`, updates);
+      logCRUD({ action: 'update', module: 'crm', feature: 'lead_tasks', entity_type: 'crm_task', entity_id: taskId, label: 'Sửa công việc CRM' });
       setTasks((p) => p.map((t) => (t.id === taskId ? mergeChecklistIntoTaskState(t, data, updates) : t)));
       const becameCompleted = updates.status === 'completed' && prevTask?.status !== 'completed';
       if (shouldClearDeliveryOnTaskComplete(prevTask, becameCompleted)) {
@@ -1894,6 +1927,7 @@ export default function CRMTasksTab({
     setTasks((p) => p.filter((t) => t.id !== taskId));
     try {
       await api.delete(`/crm/leads/${apiLeadIdForTaskId(taskId)}/tasks/${taskId}`);
+      logCRUD({ action: 'delete', module: 'crm', feature: 'lead_tasks', entity_type: 'crm_task', entity_id: taskId, label: 'Xoá công việc CRM' });
     } catch (e) {
       setTasks(prevTasks);
       alert('Lỗi');
@@ -2345,11 +2379,29 @@ export default function CRMTasksTab({
         key: g.key,
         nhan: g.nhan,
         children,
+        // Chỉ cột SX mới gán được `production_pipeline_stage_id` khi tạo việc mới — cột VC bucket
+        // theo `logistics_pipeline_stage_id` (nguồn dữ liệu khác), nên không bật "Thêm việc" ở đó.
+        isSxColumn: sxMode,
         completed: children.reduce((n, c) => n + c.completed, 0),
         total: children.reduce((n, c) => n + c.stageTasks.length, 0),
       };
     });
   }, [useSxPipelineTaskUi, sxPipelineStages, useVcPipelineTaskUi, vcPipelineStages, embeddedVcKanbanStages, vcAreaTab, tasksByStage]);
+
+  /** stage.id → tên NV mặc định khai trong setup cột, để đổ xuống dòng việc chưa gán ai. */
+  const nvSetupTheoCot = useMemo(() => {
+    const m = new Map();
+    const nguon = [
+      ...(sxPipelineStages || []),
+      ...(vcPipelineStages || []),
+      ...(embeddedVcKanbanStages || []),
+    ];
+    for (const st of nguon) {
+      const ten = (st?.default_staff?.users || []).map((u) => u?.full_name).filter(Boolean);
+      if (st?.id && ten.length) m.set(String(st.id), ten);
+    }
+    return m;
+  }, [sxPipelineStages, vcPipelineStages, embeddedVcKanbanStages]);
 
   useEffect(() => {
     if (!sxPlanGroups) return undefined;
@@ -3715,7 +3767,7 @@ export default function CRMTasksTab({
   };
 
   // TaskRow renders inline — see renderTaskRow below
-  const renderTaskRow = (task) => {
+  const renderTaskRow = (task, stageKey = null) => {
     if (isSharedWorkspace && isChecklistOnlyInShared(task)) return null;
     const StatusIcon = STATUS_ICONS[task.status] || Circle;
     const isOverdue = task.deadline && new Date(task.deadline) < new Date() && task.status !== 'completed';
@@ -3739,6 +3791,10 @@ export default function CRMTasksTab({
       !!task.completion_requires_customer_contact) &&
       task.status !== 'completed';
     const assignees = taskAssigneeList(task);
+    // Chưa gán ai → đổ người khai trong setup cột xuống cho biết ai đứng mũi.
+    const tenTheoSetup = (!assignees.length && stageKey)
+      ? (nvSetupTheoCot.get(String(stageKey)) || [])
+      : [];
     const hasCollapsedMeta = showInternalBadge || showEvidenceBadge || assignees.length > 0;
     const workshopViewOnly = isWorkshopViewOnlyOrderDocs(task, isProductionScope || showSxTasksInUi);
     return (
@@ -3800,6 +3856,27 @@ export default function CRMTasksTab({
                 >
                   <Globe className="h-2.5 w-2.5" />
                   {isMyExecutorTask ? 'Giao cho bạn' : `Giao ${executorLabel}`}
+                </span>
+              )}
+              {/* Người được gán — hiện ngay trên dòng việc, không phải bung «Chi tiết» mới thấy. */}
+              {!isExpanded && assignees.length > 0 && (
+                <span
+                  className="shrink-0 text-[10px] text-blue-700 bg-blue-50 border border-blue-100 px-1.5 py-0.5 rounded flex items-center gap-0.5 max-w-[200px] truncate"
+                  title={`Người được gán: ${assignees.map((u) => u.full_name).filter(Boolean).join(', ')}`}
+                >
+                  <User className="h-2.5 w-2.5 shrink-0" />
+                  {assignees.map((u) => u.full_name).filter(Boolean).slice(0, 2).join(', ')}
+                  {assignees.length > 2 ? ` +${assignees.length - 2}` : ''}
+                </span>
+              )}
+              {!isExpanded && tenTheoSetup.length > 0 && (
+                <span
+                  className="shrink-0 text-[10px] text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded flex items-center gap-0.5 max-w-[200px] truncate"
+                  title={`Chưa gán ai — người phụ trách theo setup cột: ${tenTheoSetup.join(', ')}`}
+                >
+                  <User className="h-2.5 w-2.5 shrink-0" />
+                  {tenTheoSetup.slice(0, 2).join(', ')}
+                  {tenTheoSetup.length > 2 ? ` +${tenTheoSetup.length - 2}` : ''}
                 </span>
               )}
               {!isExpanded && hasCollapsedMeta && (
@@ -4604,7 +4681,7 @@ export default function CRMTasksTab({
     );
   };
 
-  const AddTaskForm = ({ stageSlug }) => (
+  const AddTaskForm = ({ stageSlug, mode }) => (
     <div className="bg-blue-50 rounded-lg p-3 space-y-2 mt-2">
       <input value={newTask.title} onChange={e => setNewTask(p => ({...p, title: e.target.value}))}
         placeholder="Tên công việc..." className="w-full px-3 py-1.5 rounded-lg border text-sm outline-none focus:border-blue-500" autoFocus />
@@ -4627,7 +4704,7 @@ export default function CRMTasksTab({
         </select>
       </div>
       <div className="flex gap-2">
-        <button onClick={() => addTask(stageSlug)} className="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs font-medium cursor-pointer hover:bg-blue-700"><Save className="h-3 w-3 inline mr-1" />Thêm</button>
+        <button onClick={() => addTask(stageSlug, mode)} className="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs font-medium cursor-pointer hover:bg-blue-700"><Save className="h-3 w-3 inline mr-1" />Thêm</button>
         <button onClick={() => setShowAdd(null)} className="px-3 py-1 bg-gray-100 text-gray-600 rounded-lg text-xs cursor-pointer hover:bg-gray-200">Hủy</button>
       </div>
     </div>
@@ -4918,7 +4995,9 @@ export default function CRMTasksTab({
           {sxPlanGroups.map((g) => {
             const expanded = expandedPlanGroups[g.key] !== false;
             const groupTasks = g.children.flatMap((c) => c.stageTasks);
-            const groupOpenCount = g.children.filter((c) => expandedPlanChildTasks[c.slug]).length;
+            // Cùng quy ước với từng cột: chưa bấm thì cột có việc coi như đang mở.
+            const groupOpenCount = g.children
+              .filter((c) => (expandedPlanChildTasks[c.slug] ?? c.stageTasks.length > 0)).length;
             const groupTasksOpen = groupOpenCount > 0;
             return (
               <div key={g.key} className="border rounded-lg overflow-hidden">
@@ -4982,14 +5061,16 @@ export default function CRMTasksTab({
                 {expanded && (
                   <div className="px-2 py-1.5 space-y-0.5">
                     {g.children.map((c) => {
-                      const tasksOpen = !!expandedPlanChildTasks[c.slug];
+                      // Cột có việc thì mở sẵn — người dùng bấm thì theo lựa chọn của họ.
+                      const tasksOpen = expandedPlanChildTasks[c.slug] ?? c.stageTasks.length > 0;
+                      const phuTrach = nguoiPhuTrachCot(c);
                       const taskBundles = groupStageTasksByBundle(c.slug, c.stageTasks);
                       return (
                         <div key={c.slug} className="rounded-md">
                           <div className="flex items-stretch gap-1">
                             <button
                               type="button"
-                              onClick={() => setExpandedPlanChildTasks((p) => ({ ...p, [c.slug]: !p[c.slug] }))}
+                              onClick={() => setExpandedPlanChildTasks((p) => ({ ...p, [c.slug]: !tasksOpen }))}
                               className="flex flex-1 min-w-0 items-center gap-2 py-1.5 px-2 rounded-md hover:bg-violet-50/70 cursor-pointer text-left"
                               title={tasksOpen ? 'Ẩn công việc cột này' : 'Hiện công việc thuộc cột này'}
                             >
@@ -4998,6 +5079,17 @@ export default function CRMTasksTab({
                                 : <ChevronRight className="h-3.5 w-3.5 text-gray-400 shrink-0" />}
                               <span className="text-sm shrink-0">{c.stage.icon || '📋'}</span>
                               <span className="text-sm font-medium text-gray-800 truncate flex-1">{c.stage.name}</span>
+                              {phuTrach.ten.length > 0 && (
+                                <span
+                                  className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 max-w-[40%] truncate ${
+                                    phuTrach.theoSetup ? 'text-gray-500 bg-gray-100' : 'text-blue-700 bg-blue-50'
+                                  }`}
+                                  title={`${phuTrach.theoSetup ? 'Người phụ trách theo setup cột' : 'Người được gán việc'}: ${phuTrach.ten.join(', ')}`}
+                                >
+                                  {phuTrach.ten.slice(0, 2).join(', ')}
+                                  {phuTrach.ten.length > 2 ? ` +${phuTrach.ten.length - 2}` : ''}
+                                </span>
+                              )}
                               <span className="text-[10px] text-gray-400 tabular-nums shrink-0">
                                 {c.completed}/{c.stageTasks.length}
                               </span>
@@ -5043,9 +5135,23 @@ export default function CRMTasksTab({
                                       <span className="text-gray-400 font-normal">({bundle.tasks.length})</span>
                                     </p>
                                   )}
-                                  {bundle.tasks.map((t) => renderTaskRow(t))}
+                                  {bundle.tasks.map((t) => renderTaskRow(t, c.slug))}
                                 </div>
                               ))}
+                              {/* Chỉ cột SX mới gắn được production_pipeline_stage_id khi tạo — cột VC bucket theo nguồn khác. */}
+                              {g.isSxColumn && (
+                                showAdd === c.slug ? (
+                                  <AddTaskForm stageSlug={c.slug} mode="sx-plan" />
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setShowAdd(c.slug)}
+                                    className="text-[10px] text-blue-600 hover:text-blue-800 flex items-center gap-1 cursor-pointer px-2 py-1"
+                                  >
+                                    <Plus className="h-3 w-3" /> Thêm việc
+                                  </button>
+                                )
+                              )}
                             </div>
                           )}
                         </div>
@@ -5131,7 +5237,7 @@ export default function CRMTasksTab({
                             <span className="text-gray-400 font-normal">({bundle.tasks.length})</span>
                           </p>
                         )}
-                        {bundle.tasks.map((t) => renderTaskRow(t))}
+                        {bundle.tasks.map((t) => renderTaskRow(t, stage.slug))}
                       </div>
                     ))}
                     {showAdd === stage.slug ? (

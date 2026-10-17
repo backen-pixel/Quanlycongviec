@@ -18,6 +18,8 @@ export default function NewProductionProjectModal({ onClose, onCreated }) {
     estimated_value: '',
     priority: 'medium',
     deadline: '',
+    install_date: '',
+    delivery_date: '',
     production_person_id: '',
     workshop_type_id: '',
     ...(saved?.formData || {}),
@@ -63,6 +65,11 @@ export default function NewProductionProjectModal({ onClose, onCreated }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.name.trim()) { setError('Vui lòng nhập tên dự án'); return; }
+    // Xưởng phải biết mốc thời gian mới xếp được lịch — thiếu cả hai thì không cho tạo.
+    if (!formData.install_date && !formData.delivery_date) {
+      setError('Nhập ngày lắp đặt hoặc ngày giao hàng mới tạo được dự án');
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -73,6 +80,9 @@ export default function NewProductionProjectModal({ onClose, onCreated }) {
         estimated_value: formData.estimated_value ? Number(formData.estimated_value) : null,
         priority: formData.priority,
         deadline: formData.deadline || null,
+        install_date: formData.install_date || null,
+        delivery_date: formData.delivery_date || null,
+        created_from_sx: true,
         production_person_id: formData.production_person_id || null,
         workshop_type_id: formData.workshop_type_id || null,
         flow_id: flowId || null,
@@ -240,6 +250,35 @@ export default function NewProductionProjectModal({ onClose, onCreated }) {
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
               />
             </div>
+          </div>
+
+          {/* Mốc thời gian — bắt buộc ít nhất một */}
+          <div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Ngày lắp đặt <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={formData.install_date}
+                  onChange={e => set('install_date', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  Ngày giao hàng <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={formData.delivery_date}
+                  onChange={e => set('delivery_date', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+                />
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 mt-1.5">Nhập ít nhất một trong hai mốc để xưởng xếp lịch.</p>
           </div>
 
           {/* Footer buttons */}

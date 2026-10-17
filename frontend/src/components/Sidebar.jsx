@@ -10,10 +10,10 @@ import {
   LayoutDashboard, FolderKanban, CheckSquare, Users, Settings, LogOut, Lock,
   ChevronLeft, ChevronRight, ChevronDown, ChevronUp, UserCircle, Package, ClipboardList, 
   UserPlus, Building2, Building, Network, Layers, GitBranch, Shield, UsersRound,
-  Target, FileText, ShoppingCart, ShoppingBag, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic, Award, Plus,
+  Target, FileText, ShoppingCart, ShoppingBag, Receipt, Activity, BarChart3, Phone, Palette, ListChecks, Mic, Award, Plus, Orbit,
   BookOpen, FolderTree, Factory, Calendar, CalendarClock, CalendarRange, Megaphone, MessageCircle, ArrowRightLeft, ClipboardCheck, FileCheck, Key, Puzzle, Tags, MapPin, UserCog, LayoutGrid, Timer, Trash2, Clock, Share2, ShieldOff, Smartphone, GraduationCap, Bot, Compass, Download, UserMinus,
   Sigma, Calculator, FileUp, History as HistoryIcon, History, HardDrive, Database, Globe, CreditCard, Sparkles, Pin, Wallet,
-  Menu as MenuIcon, X as XIcon,
+  Menu as MenuIcon, X as XIcon, Bug,
 } from 'lucide-react';
 import { useIsMobile } from '../hooks/useIsMobile';
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -118,6 +118,8 @@ const MENU_GROUPS = [
       { to: '/settings/app-updates', icon: Smartphone, label: 'Cập nhật App' },
       { to: '/settings/request-monitor', icon: Activity, label: 'Theo dõi Request' },
       { to: '/management/backup-sync', icon: Database, label: 'Giám sát Supabase' },
+      { to: '/management/behavior-insight', icon: Activity, label: 'Hành vi người dùng', adminOnly: true },
+      { to: '/management/behavior-galaxy', icon: Orbit, label: 'Thiên hà dữ liệu', adminOnly: true },
       { to: '/management/project-deadlines', icon: Clock, label: 'Cảnh báo hạn công trình', adminOnly: true },
         { to: '/management/mcp-api', icon: Bot, label: 'MCP API báo cáo', adminOnly: true },
       // { to: '/templates', icon: ClipboardList, label: 'Dự án mẫu' },
@@ -145,6 +147,7 @@ const CONGVIEC_MENU_GROUPS = [
     emoji: '✅',
     items: [
       { to: '/management/shared-workspace-report', icon: BarChart3, label: 'Báo cáo phát sinh' },
+      { to: '/management/bao-loi', icon: Bug, label: 'Quản lý lỗi' },
       { to: '/management/project-logs', icon: History, label: 'Nhật ký công trình' },
       { to: '/personal-tasks', icon: UserPlus, label: 'NV cá nhân' },
     ],

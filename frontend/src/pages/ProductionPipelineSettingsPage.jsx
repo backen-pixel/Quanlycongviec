@@ -338,6 +338,7 @@ export default function ProductionPipelineSettingsPage() {
     counts_as_collected_revenue: false,
     requires_deadline: false,
     clears_deadline: false,
+    dong_het_viec: false,
     dashboard_kpi: '',
     deadline_group: '',
     group_key: '',
@@ -1081,6 +1082,7 @@ export default function ProductionPipelineSettingsPage() {
     counts_as_collected_revenue: !!form.counts_as_collected_revenue,
     requires_deadline: !!form.requires_deadline,
     clears_deadline: !!form.clears_deadline,
+    dong_het_viec: !!form.dong_het_viec,
     dashboard_kpi: form.dashboard_kpi || null,
     deadline_group: form.deadline_group || null,
     group_key: form.group_key || null,
@@ -1116,6 +1118,7 @@ export default function ProductionPipelineSettingsPage() {
       counts_as_collected_revenue: false,
       requires_deadline: false,
       clears_deadline: false,
+      dong_het_viec: false,
       dashboard_kpi: '',
       deadline_group: '',
     group_key: '',
@@ -1158,6 +1161,7 @@ export default function ProductionPipelineSettingsPage() {
       counts_as_collected_revenue: !!stage.counts_as_collected_revenue,
       requires_deadline: !!stage.requires_deadline,
       clears_deadline: !!stage.clears_deadline,
+      dong_het_viec: !!stage.dong_het_viec,
       dashboard_kpi: stage.dashboard_kpi || '',
       deadline_group: stage.deadline_group || '',
       group_key: stage.group_key || '',
@@ -3574,6 +3578,15 @@ export default function ProductionPipelineSettingsPage() {
                         className="rounded border-slate-400"
                       />
                       <Ban className="h-3.5 w-3.5 text-slate-700" /> Tắt deadline khi kéo thẻ tới cột
+                    </label>
+                    <label className="flex items-center gap-2 text-xs cursor-pointer text-emerald-950 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200">
+                      <input
+                        type="checkbox"
+                        checked={!!form.dong_het_viec}
+                        onChange={(e) => setForm((f) => ({ ...f, dong_het_viec: e.target.checked }))}
+                        className="rounded border-emerald-400"
+                      />
+                      <ListChecks className="h-3.5 w-3.5 text-emerald-700" /> Đóng hết việc khi kéo thẻ tới cột
                     </label>
                     <label className="flex items-center gap-2 text-xs cursor-pointer text-amber-950 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200">
                       <input

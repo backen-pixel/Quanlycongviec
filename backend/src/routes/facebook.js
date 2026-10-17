@@ -3398,7 +3398,43 @@ async function createLeadFromFacebookInner(pageId, contact, source, extraData = 
   return lead;
 }
 
-async function sendMessengerReply(pageId, psid, text) {
+/**
+ * Dấu người gửi đính vào `message.metadata` của Send API và được Facebook trả nguyên văn trong
+ * sự kiện echo. Giữ thật ngắn (trần 1000 ký tự của Facebook) và KHÔNG nhét thông tin nhạy cảm —
+ * chuỗi này đi qua máy chủ Facebook.
+ */
+const FB_ECHO_META_PREFIX = 'vpt1:';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function buildEchoMeta(userId, via = 'app') {
+  if (userId && UUID_RE.test(String(userId))) return `${FB_ECHO_META_PREFIX}${via}:${userId}`;
+  // Tin do hệ thống tự gửi (auto-reply, công cụ) — không có người bấm, nhưng vẫn phải phân biệt
+  // được với tin nhân viên trả lời bằng app Facebook gốc.
+  return `${FB_ECHO_META_PREFIX}${via}:-`;
+}
+
+/** Trả { userId, via } nếu echo mang dấu của phần mềm mình, ngược lại null. */
+function parseEchoMeta(raw) {
+  if (typeof raw !== 'string' || !raw.startsWith(FB_ECHO_META_PREFIX)) return null;
+  const [via, userId] = raw.slice(FB_ECHO_META_PREFIX.length).split(':');
+  if (!via) return null;
+  if (UUID_RE.test(String(userId || ''))) return { userId, via };
+  return userId === '-' ? { userId: null, via } : null;
+}
+
+/**
+ * Tin gửi đi đến từ đâu — để báo cáo phân biệt "trả lời trong phần mềm" với "trả lời bằng app
+ * Facebook gốc". Facebook KHÔNG cho biết admin nào bấm gửi ở Page Inbox / Business Suite, nên
+ * những tin đó vĩnh viễn không có người gửi; ghi rõ nguồn còn hơn để trống rồi đoán mò.
+ */
+function resolveEchoOrigin(msg) {
+  const parsed = parseEchoMeta(msg?.metadata);
+  if (parsed) return { sentBy: parsed.userId, sentVia: parsed.via };
+  if (msg?.app_id) return { sentBy: null, sentVia: 'other_app', appId: String(msg.app_id) };
+  return { sentBy: null, sentVia: 'meta_inbox' };
+}
+
+async function sendMessengerReply(pageId, psid, text, echoMeta = null) {
   const page = await getPageConfig(pageId);
   if (!page?.access_token) return null;
 
@@ -3407,7 +3443,9 @@ async function sendMessengerReply(pageId, psid, text) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       recipient: { id: psid },
-      message: { text },
+      // `metadata` được Facebook gửi NGUYÊN VĂN trở lại trong sự kiện echo (giới hạn 1000 ký tự).
+      // Đây là cách duy nhất để biết echo này do phần mềm mình gửi, và do AI nào/người nào bấm.
+      message: echoMeta ? { text, metadata: echoMeta } : { text },
       messaging_type: 'RESPONSE',
       access_token: page.access_token,
     }),
@@ -3418,7 +3456,7 @@ async function sendMessengerReply(pageId, psid, text) {
 }
 
 // Gửi attachment (image/file/audio/video) qua URL
-async function sendMessengerAttachment(pageId, psid, type, url) {
+async function sendMessengerAttachment(pageId, psid, type, url, echoMeta = null) {
   const page = await getPageConfig(pageId);
   if (!page?.access_token) return null;
 
@@ -3432,6 +3470,7 @@ async function sendMessengerAttachment(pageId, psid, type, url) {
           type, // image, audio, video, file
           payload: { url, is_reusable: true },
         },
+        ...(echoMeta ? { metadata: echoMeta } : {}),
       },
       messaging_type: 'RESPONSE',
       access_token: page.access_token,
@@ -3498,7 +3537,7 @@ async function createMessengerImageSender(contact) {
     pageId,
     accessToken,
     async sendByUrl(psid, url) {
-      return sendMessengerAttachment(pageId, psid, 'image', url);
+      return sendMessengerAttachment(pageId, psid, 'image', url, buildEchoMeta(null, 'tool'));
     },
     async sendByBuffer(psid, buffer, { mimetype = 'image/jpeg', filename = 'image.jpg' } = {}) {
       const uploaded = await uploadMessengerAttachmentBuffer(
@@ -3844,6 +3883,15 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
     if (!pageInbox) console.log(`[FB] 💬 Message type: ${messageType}, content: ${content?.substring(0, 50)}${content?.length > 50 ? '...' : ''}`);
     if (!pageInbox) console.log(`[FB] 📎 Attachment: ${attachmentUrl || 'None'}`);
 
+    // Echo = tin do page gửi đi, vọng ngược về webhook. Nếu nó mang dấu của phần mềm mình thì
+    // quy được cho đúng người bấm gửi; nếu không thì ghi nhận nguồn (Page Inbox / app khác) —
+    // Facebook không tiết lộ admin nào bấm gửi ở Business Suite.
+    const echoOrigin = isEcho ? resolveEchoOrigin(msg) : null;
+    const msgMeta = {
+      ...(msg.attachments ? { attachments: msg.attachments } : {}),
+      ...(echoOrigin ? { sent_via: echoOrigin.sentVia, ...(echoOrigin.appId ? { app_id: echoOrigin.appId } : {}) } : {}),
+    };
+
     // Save message — dùng upsert để tránh duplicate
     const insertData = {
       contact_id: contact.id,
@@ -3854,7 +3902,8 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
       content,
       attachment_url: attachmentUrl,
       attachment_type: attachmentType,
-      metadata: msg.attachments ? { attachments: msg.attachments } : null,
+      metadata: Object.keys(msgMeta).length ? msgMeta : null,
+      ...(echoOrigin?.sentBy ? { sent_by: echoOrigin.sentBy } : {}),
     };
 
     // Upsert: nếu fb_message_id đã tồn tại thì bỏ qua (onConflict ignore)
@@ -4089,7 +4138,7 @@ async function handleMessagingInner(pageId, event, io, partnerPsid, durable = fa
       if (!pageInbox && !isReplay && isFirstMessage && autoLeadCfg.auto_reply_first_message) {
         const page = await getPageConfig(pageId);
         if (page?.auto_reply_message) {
-          await sendMessengerReply(pageId, partnerPsid, page.auto_reply_message);
+          await sendMessengerReply(pageId, partnerPsid, page.auto_reply_message, buildEchoMeta(null, 'auto_reply'));
         }
       }
 
@@ -5524,6 +5573,10 @@ r.post('/contacts/:id/sync-history', authMiddleware, async (req, res) => {
         content: msg.message || (attachmentUrl ? `[${messageType}]` : ''),
         attachment_url: attachmentUrl,
         created_at: msg.created_time || new Date().toISOString(),
+        // Đồng bộ ngược từ Graph API: Facebook không nói admin nào gửi, và tin do phần mềm mình
+        // gửi thì đã có sẵn trong DB (vòng lặp này bỏ qua trùng fb_message_id). Ghi rõ là không
+        // xác định được, không để trống cho người đọc tự suy diễn.
+        metadata: isFromPage ? { sent_via: 'sync_unknown' } : null,
       });
       synced++;
     }
@@ -5691,23 +5744,30 @@ r.post('/contacts/:contactId/reply', authMiddleware, async (req, res) => {
     let msgType = 'text';
     let content = message || '';
 
+    // Dấu người gửi đi kèm tin — Facebook trả lại nguyên văn trong echo nên tin này quy được
+    // cho đúng người, kể cả khi echo về trước lúc mình kịp ghi DB.
+    const echoMeta = buildEchoMeta(req.user.userId, 'app');
+
     // Gửi attachment nếu có
     if (attachment_url) {
       const type = attachment_type || 'file'; // image, audio, video, file
-      result = await sendMessengerAttachment(contact.page_id, contact.psid, type, attachment_url);
+      result = await sendMessengerAttachment(contact.page_id, contact.psid, type, attachment_url, echoMeta);
       msgType = type;
       if (!content) content = `[${type}]`;
     }
 
     // Gửi text nếu có
     if (message) {
-      result = await sendMessengerReply(contact.page_id, contact.psid, message);
+      result = await sendMessengerReply(contact.page_id, contact.psid, message, echoMeta);
     }
 
     if (result?.error) return res.status(500).json({ error: result.error.message });
 
-    // Save outbound message
-    const { data: saved } = await supabase.from('facebook_messages').insert({
+    // Save outbound message.
+    // UPSERT chứ không INSERT: echo của chính tin này có thể đã về trước và tạo sẵn dòng (cùng
+    // fb_message_id). INSERT sẽ đụng unique rồi rơi vào im lặng, mất luôn `sent_by` — đúng cái
+    // lỗ làm 3.316 tin trong 7 ngày không biết ai gửi.
+    const outRow = {
       contact_id: contact.id,
       lead_id: contact.lead_id,
       fb_message_id: result?.message_id,
@@ -5717,7 +5777,13 @@ r.post('/contacts/:contactId/reply', authMiddleware, async (req, res) => {
       attachment_url: attachment_url || null,
       attachment_type: attachment_type || null,
       sent_by: req.user.userId,
-    }).select().single();
+      metadata: { sent_via: 'app' },
+    };
+    const { data: saved } = result?.message_id
+      ? await supabase.from('facebook_messages')
+          .upsert(outRow, { onConflict: 'fb_message_id' })
+          .select().single()
+      : await supabase.from('facebook_messages').insert(outRow).select().single();
 
     res.json(saved);
 
@@ -5810,9 +5876,19 @@ r.post('/comments/:id/reply', authMiddleware, async (req, res) => {
     const result = await resp.json();
     if (result.error) return res.status(500).json({ error: result.error.message });
 
-    // Update comment as replied
-    await supabase.from('facebook_comments').update({ replied: true, reply_text: message }).eq('id', req.params.id);
-    
+    // Update comment as replied — replied_by cho báo cáo hành vi người dùng biết ai đã trả lời
+    // (database/725_facebook_comments_replied_by.sql). req.user luôn có vì route dùng authMiddleware.
+    // Fallback bỏ replied_by nếu migration 725 chưa chạy, để không làm hỏng cả việc ghi
+    // replied/reply_text vốn đã chạy ổn từ trước — cùng cách activityContext.js xử lý cột mới.
+    {
+      const { error: replyUpdateErr } = await supabase.from('facebook_comments')
+        .update({ replied: true, reply_text: message, replied_by: req.user?.id || null })
+        .eq('id', req.params.id);
+      if (replyUpdateErr && String(replyUpdateErr.message || '').toLowerCase().includes('replied_by')) {
+        await supabase.from('facebook_comments').update({ replied: true, reply_text: message }).eq('id', req.params.id);
+      }
+    }
+
     res.json({ success: true, comment_id: result.id });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

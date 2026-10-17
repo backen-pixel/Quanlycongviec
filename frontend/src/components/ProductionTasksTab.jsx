@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../lib/api';
+import { logCRUD } from '../lib/activityLogger';
 import { compressImage } from '../lib/compressImage';
 import { formatDate, PRIORITY_LABELS, TASK_PRIORITY_COLORS as PRIORITY_COLORS } from '../lib/utils';
 import { publicFileUrl, getFileOpenAnchorProps } from '../lib/publicFileUrl';
@@ -22,6 +23,19 @@ function taskStatus(t) {
   if (t.status === 'done' || t.status === 'completed') return 'completed';
   if (t.status === 'in_progress') return 'in_progress';
   return 'pending';
+}
+
+/**
+ * Tên người phụ trách khai trong setup cột pipeline (`stage_default_staff` từ API).
+ * Ẩn khi trùng người đã gán trên thẻ — hiện hai lần một tên chỉ làm rối.
+ */
+function nguoiTheoCot(task) {
+  const block = task?.stage_default_staff;
+  if (!block) return '';
+  const nguoi = block.primary_user || (block.users || [])[0] || null;
+  if (!nguoi?.full_name) return '';
+  if (task.assignee_id && String(task.assignee_id) === String(nguoi.id)) return '';
+  return nguoi.full_name;
 }
 
 export default function ProductionTasksTab({
@@ -348,7 +362,7 @@ export default function ProductionTasksTab({
   const addTask = async (stageId) => {
     if (!newTask.title.trim()) return;
     try {
-      await api.post('/tasks', {
+      const { data } = await api.post('/tasks', {
         project_id: projectId,
         stage_id: stageId,
         title: newTask.title.trim(),
@@ -358,6 +372,7 @@ export default function ProductionTasksTab({
         task_type: 'project',
         order_index: tasks.filter(t => t.stage_id === stageId).length,
       });
+      logCRUD({ action: 'create', module: 'tasks', feature: 'project_tasks', entity_type: 'task', entity_id: data?.id, label: 'Tạo công việc' });
       setNewTask({ title: '', priority: 'medium', due_date: '', assignee_id: '' });
       setShowAdd(null);
       loadTasks();
@@ -377,13 +392,18 @@ export default function ProductionTasksTab({
     const next = st === 'completed' ? 'todo' : st === 'pending' ? 'in_progress' : 'done';
     try {
       await api.put(`/tasks/${task.id}`, { status: next });
+      logCRUD({ action: 'update', module: 'tasks', feature: 'project_tasks', entity_type: 'task', entity_id: task.id, label: `Đổi trạng thái công việc → ${next}` });
       setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: next } : t));
     } catch (e) { alert('Lỗi'); }
   };
 
   const deleteTask = async (taskId) => {
     if (!confirm('Xóa công việc này?')) return;
-    try { await api.delete(`/tasks/${taskId}`); loadTasks(); } catch (e) { alert('Lỗi'); }
+    try {
+      await api.delete(`/tasks/${taskId}`);
+      logCRUD({ action: 'delete', module: 'tasks', feature: 'project_tasks', entity_type: 'task', entity_id: taskId, label: 'Xoá công việc' });
+      loadTasks();
+    } catch (e) { alert('Lỗi'); }
   };
 
   const updateEditPopoverPosition = useCallback(() => {
@@ -621,6 +641,14 @@ export default function ProductionTasksTab({
                 </span>
               )}
               {task.assignee && <span className="text-[10px] text-blue-600 flex items-center gap-0.5"><User className="h-2.5 w-2.5" />{task.assignee.full_name}</span>}
+              {nguoiTheoCot(task) && (
+                <span
+                  className="text-[10px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded-full flex items-center gap-0.5"
+                  title={`Người phụ trách khai trong setup cột${task.stage_default_staff?.stage_name ? ` «${task.stage_default_staff.stage_name}»` : ''}`}
+                >
+                  <User className="h-2.5 w-2.5" />{nguoiTheoCot(task)}
+                </span>
+              )}
               {atts.length > 0 && (
                 <span className="text-[10px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-full flex items-center gap-0.5 font-medium">
                   <Paperclip className="h-2.5 w-2.5" />{atts.length} file

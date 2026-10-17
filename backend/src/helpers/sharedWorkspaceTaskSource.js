@@ -107,6 +107,20 @@ function resolvePhatSinhFields(body = {}) {
   return { ok: true, phat_sinh_kind, department_id };
 }
 
+/** stage_slug của crm_tasks do form Phân công Không gian chung sinh ra. */
+const SHARED_WORKSPACE_STAGE_SLUGS = new Set(['shared_workspace', 'sx_shared', 'vc_shared']);
+
+/**
+ * Task có phải sinh cùng lúc với nhiệm vụ Không gian chung không.
+ * Phân biệt với task tạo riêng trên deal rồi mới sync ra crm_assignments — loại đó
+ * không được xóa theo khi gỡ nhiệm vụ.
+ */
+function isSharedWorkspaceBornTask(task) {
+  if (!task) return false;
+  if (normalizeTaskSourceType(task.task_source_type)) return true;
+  return SHARED_WORKSPACE_STAGE_SLUGS.has(String(task.stage_slug || '').trim().toLowerCase());
+}
+
 function isTaskSourceColumnError(err) {
   const m = String(err?.message || '').toLowerCase();
   return m.includes('task_source_type') || m.includes('employee_error_module')
@@ -128,4 +142,6 @@ module.exports = {
   resolvePhatSinhFields,
   stageSlugForAssignModule,
   isTaskSourceColumnError,
+  SHARED_WORKSPACE_STAGE_SLUGS,
+  isSharedWorkspaceBornTask,
 };

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { clearFormDraft, readFormDraft, useFormDraft } from '../lib/formDraft';
 import api from '../lib/api';
+import { logCRUD } from '../lib/activityLogger';
 import Modal from './Modal';
 import { FileUploadButton, FilePreview } from './FileUpload';
 import {
@@ -119,7 +120,8 @@ export default function ProjectCreateModal({ open, onClose, onCreated }) {
         })),
         quotation_files: quotationFiles,
       };
-      await api.post('/projects/create-with-flow', payload);
+      const { data } = await api.post('/projects/create-with-flow', payload);
+      logCRUD({ action: 'create', module: 'projects', feature: 'create_with_flow', entity_type: 'project', entity_id: data?.project?.id, label: 'Tạo dự án mới' });
       clearFormDraft(draftKey);
       onCreated?.();
       onClose();

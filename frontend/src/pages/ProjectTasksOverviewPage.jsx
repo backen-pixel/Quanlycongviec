@@ -15,6 +15,9 @@ import {
   normalizeWorkUnifiedUserIds,
   WORK_UNIFIED_REGION_NONE,
 } from '../components/WorkUnifiedFilterFields';
+import { createPortal } from 'react-dom';
+import UnifiedTaskRow from '../components/UnifiedTaskRow';
+import WorkTaskExtrasPanel from '../components/WorkTaskExtrasPanel';
 import KanbanColumnVirtualList from '../components/KanbanColumnVirtualList';
 import WorkshopPipelineKanbanScroll from '../components/WorkshopPipelineKanbanScroll';
 import { useAuth } from '../lib/auth';
@@ -197,9 +200,16 @@ function overviewProjectLinkTitle(task) {
   return 'Mở dự án';
 }
 
-const TaskCard = memo(function TaskCard({ task, canRemind, showModule }) {
+const TaskCard = memo(function TaskCard({ task, canRemind, showModule, onTaskChanged }) {
   const [reminding, setReminding] = useState(false);
   const [reminded, setReminded] = useState(false);
+  // Xổ việc con ngay trên thẻ — khỏi phải mở sang trang quản lý công việc để tích xong.
+  const [moViec, setMoViec] = useState(false);
+  const [viecCon, setViecCon] = useState(null);
+  const [dangTaiViec, setDangTaiViec] = useState(false);
+  const [loiViec, setLoiViec] = useState('');
+  const [dangLuuId, setDangLuuId] = useState(null);
+  const [extrasTask, setExtrasTask] = useState(null);
   const href = overviewProjectHref(task);
   const assignmentsHref = overviewAssignmentsHref(task);
   const responsibleName = task.assignee_name || task.effective_assignee_name || '';
@@ -211,6 +221,53 @@ const TaskCard = memo(function TaskCard({ task, canRemind, showModule }) {
   const projectCode = String(task.project_code || '').trim();
   const projectName = String(task.project_name || task.lead_title || '').trim();
   const placeBits = [task.company_name, task.region_name].filter(Boolean).join(' · ');
+
+  const taiViecCon = useCallback(async () => {
+    if (!task.project_id || !task.category_id || !task.owner_lane) {
+      setLoiViec('Thẻ này chưa gắn danh mục nên không xổ được việc.');
+      return;
+    }
+    setDangTaiViec(true);
+    setLoiViec('');
+    try {
+      const res = await api.get('/work-tasks/project-overview/children', {
+        params: {
+          project_id: task.project_id,
+          category_id: task.category_id,
+          owner_lane: task.owner_lane,
+        },
+      });
+      setViecCon(res.data?.tasks || []);
+    } catch (e) {
+      setLoiViec(e?.response?.data?.error || 'Không tải được danh sách công việc');
+    } finally {
+      setDangTaiViec(false);
+    }
+  }, [task.project_id, task.category_id, task.owner_lane]);
+
+  const doiMoViec = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const sau = !moViec;
+    setMoViec(sau);
+    if (sau && viecCon === null && !dangTaiViec) void taiViecCon();
+  };
+
+  const doiTrangThaiViec = async (child, actionKey) => {
+    setDangLuuId(child.unified_id);
+    try {
+      await api.patch(`/work-tasks/${child.source}/${child.source_id}`, {
+        status: actionKey,
+        ...(child.lead_id ? { lead_id: child.lead_id } : {}),
+      });
+      await taiViecCon();
+      onTaskChanged?.();
+    } catch (e) {
+      alert(e?.response?.data?.error || 'Không cập nhật được trạng thái công việc');
+    } finally {
+      setDangLuuId(null);
+    }
+  };
 
   const handleRemind = async (event) => {
     event.preventDefault();
@@ -295,6 +352,7 @@ const TaskCard = memo(function TaskCard({ task, canRemind, showModule }) {
   );
 
   return (
+    <>
     <article
       data-project-task-card={task.id}
       className={`rounded-lg border border-gray-100 bg-white p-2.5 shadow-sm hover:border-blue-200 hover:shadow transition-all ${href ? 'cursor-pointer' : ''}`}
@@ -305,6 +363,19 @@ const TaskCard = memo(function TaskCard({ task, canRemind, showModule }) {
       <div className="mt-2 pt-2 border-t border-gray-50 min-h-7 flex items-center gap-2">
         {href ? <Link to={href} className="flex items-center gap-1.5 min-w-0 flex-1" title={overviewProjectLinkTitle(task)}>{personRow}</Link> : personRow}
         <div className="ml-auto flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={doiMoViec}
+            className={`inline-flex h-7 items-center gap-1 rounded-md border px-2 text-[10px] font-semibold ${
+              moViec
+                ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
+            }`}
+            title={moViec ? 'Thu gọn danh sách công việc' : 'Xổ danh sách công việc của nhiệm vụ này'}
+          >
+            {moViec ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            Việc
+          </button>
           {assignmentsHref && (
             <Link
               to={assignmentsHref}
@@ -329,20 +400,85 @@ const TaskCard = memo(function TaskCard({ task, canRemind, showModule }) {
           )}
         </div>
       </div>
+
+      {moViec && (
+        <div className="mt-2 border-t border-gray-100 pt-2 space-y-1.5">
+          {dangTaiViec && (
+            <p className="flex items-center gap-1.5 text-[11px] text-gray-500">
+              <Loader2 className="h-3 w-3 animate-spin" /> Đang tải công việc…
+            </p>
+          )}
+          {!dangTaiViec && loiViec && (
+            <p className="text-[11px] text-red-600">{loiViec}</p>
+          )}
+          {!dangTaiViec && !loiViec && viecCon?.length === 0 && (
+            <p className="text-[11px] text-gray-400">Không còn công việc nào đang mở.</p>
+          )}
+          {!dangTaiViec && (viecCon || []).map((child) => (
+            <div
+              key={child.unified_id}
+              className={dangLuuId === child.unified_id ? 'opacity-50 pointer-events-none' : ''}
+            >
+              <UnifiedTaskRow
+                task={child}
+                compact
+                onStatusChange={doiTrangThaiViec}
+                onOpenExtras={setExtrasTask}
+              />
+            </div>
+          ))}
+        </div>
+      )}
     </article>
+
+    {extrasTask && createPortal(
+      <div
+        className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/40"
+        onClick={() => setExtrasTask(null)}
+      >
+        <div
+          className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col"
+          onClick={(e) => e.stopPropagation()}
+          role="dialog"
+        >
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 shrink-0">
+            <h2 className="text-sm font-bold text-gray-900 truncate">{extrasTask.title}</h2>
+            <button
+              type="button"
+              onClick={() => setExtrasTask(null)}
+              className="p-1 rounded-md text-gray-400 hover:text-gray-700 hover:bg-gray-100 cursor-pointer shrink-0"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto p-4">
+            <WorkTaskExtrasPanel task={extrasTask} />
+          </div>
+        </div>
+      </div>,
+      document.body,
+    )}
+    </>
   );
 });
 
 const KanbanColumn = memo(function KanbanColumn({
-  column, tasks, focused, canRemind, showModule,
+  column, tasks, focused, canRemind, showModule, onTaskChanged,
 }) {
   const Icon = column.icon;
   const scrollRef = useRef(null);
   const [scrollReady, setScrollReady] = useState(false);
   useEffect(() => { setScrollReady(true); }, []);
   const renderTaskCard = useCallback(
-    (task) => <TaskCard task={task} canRemind={canRemind} showModule={showModule} />,
-    [canRemind, showModule],
+    (task) => (
+      <TaskCard
+        task={task}
+        canRemind={canRemind}
+        showModule={showModule}
+        onTaskChanged={onTaskChanged}
+      />
+    ),
+    [canRemind, showModule, onTaskChanged],
   );
   return (
     <section className={`rounded-xl border bg-gray-50/70 overflow-hidden min-w-[260px] w-[280px] shrink-0 ${
@@ -384,7 +520,7 @@ const PROJECT_TASK_STATUS_LABEL = {
   done: 'Xong',
 };
 
-/** Gom danh sách việc (đã sắp theo nhóm dự án từ máy chủ) thành từng dự án, giữ nguyên thứ tự. */
+/** Gom danh sách việc (đã sắp theo nhóm dự án từ máy chủ, hoặc đã lọc sẵn ở trang CRM) thành từng dự án, giữ nguyên thứ tự. */
 function groupTasksByProject(rows) {
   const map = new Map();
   for (const task of rows) {
@@ -394,6 +530,10 @@ function groupTasksByProject(rows) {
       group = {
         key,
         project_id: task.project_id || null,
+        lead_id: task.lead_id || null,
+        // Chỉ có ở trang CRM (nhóm từ `visibleTasks`, đã gắn `_module`) — trang SX nhóm từ
+        // `team-project-tasks` không có cột này nên mặc định về «production» như cũ.
+        module: task._module || null,
         code: String(task.project_code || '').trim(),
         name: String(task.project_name || task.lead_title || '').trim(),
         tasks: [],
@@ -419,7 +559,12 @@ const ProjectGroupRow = memo(function ProjectGroupRow({
     : 0;
   const noDeadline = group.tasks.filter((task) => !task.deadline).length;
   const doing = group.tasks.filter((task) => String(task.status || '').toLowerCase() === 'in_progress').length;
-  const href = group.project_id ? projectDetailPathForModule('production', group.project_id) : null;
+  // Nhóm từ trang CRM (có `group.module`) → mở lead/deal; nhóm từ trang SX (team-project-tasks, không có `module`) → mở dự án SX như cũ.
+  const isCrmGroup = group.module?.key === 'crm';
+  const href = isCrmGroup
+    ? (group.lead_id ? `/crm/leads/${group.lead_id}` : null)
+    : (group.project_id ? projectDetailPathForModule('production', group.project_id) : null);
+  const openLabel = isCrmGroup ? 'Mở lead/deal' : 'Mở dự án';
   return (
     <div>
       <div className="flex items-center gap-2 px-3 py-2.5 hover:bg-gray-50/70">
@@ -453,9 +598,9 @@ const ProjectGroupRow = memo(function ProjectGroupRow({
           <Link
             to={href}
             className="shrink-0 rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-semibold text-blue-700 hover:bg-blue-50"
-            title="Mở dự án"
+            title={openLabel}
           >
-            Mở dự án
+            {openLabel}
           </Link>
         ) : null}
       </div>
@@ -556,7 +701,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
   const [boardView, setBoardView] = useState(() => {
     try {
       const saved = sessionStorage.getItem(`projectTasksBoard:${fixedModuleKey || 'all'}`);
-      if (saved === 'project' && fixedModule === 'sx') return 'project';
+      if (saved === 'project' && (fixedModule === 'sx' || fixedModule === 'crm')) return 'project';
       return saved === 'kanban' ? 'kanban' : 'deadline';
     } catch {
       return 'deadline';
@@ -730,6 +875,9 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
 
   // ---- Kiểu xem «Theo dự án» (chỉ trang Sản xuất): cùng endpoint và cùng cách gom với tab Công việc của app ----
   const projectView = workshopMode && boardView === 'project';
+  // ---- Kiểu xem «Theo dự án» cho trang CRM: gom lại từ `visibleTasks` đã tải sẵn (không gọi
+  // `/work-tasks/team-project-tasks` — API đó chỉ dành cho quản lý và chỉ hiểu dự án SX/VC) ----
+  const crmProjectView = fixedModuleKey === 'crm' && boardView === 'project';
   const [teamTasks, setTeamTasks] = useState([]);
   const [teamCounts, setTeamCounts] = useState(null);
   const [teamPage, setTeamPage] = useState(1);
@@ -951,6 +1099,14 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
     prepared, progressFilter, projectFilter, regionFilter, riskFilter,
   ]);
 
+  // Chỉ còn việc chưa xong — khớp nghĩa "X việc chưa xong" mà ProjectGroupRow hiển thị.
+  const crmProjectGroups = useMemo(() => {
+    const unfinished = visibleTasks.filter((task) => (
+      !['completed', 'done'].includes(String(task.status || '').toLowerCase())
+    ));
+    return groupTasksByProject(unfinished);
+  }, [visibleTasks]);
+
   const tasksByBucket = useMemo(() => Object.fromEntries(
     COLUMNS.map((column) => [
       column.key,
@@ -1157,6 +1313,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
                 { id: 'kanban', label: 'Kanban', icon: LayoutGrid },
                 { id: 'deadline', label: 'Hạn', icon: CalendarDays },
                 ...(workshopMode ? [{ id: 'project', label: 'Theo dự án', icon: Layers }] : []),
+                ...(fixedModuleKey === 'crm' ? [{ id: 'project', label: 'Theo deal', icon: Layers }] : []),
               ].map((mode) => {
                 const Icon = mode.icon;
                 const active = boardView === mode.id;
@@ -1425,6 +1582,26 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
             </div>
           ) : null}
         </div>
+      ) : crmProjectView ? (
+        <div className="rounded-xl border border-gray-100 bg-white shadow-sm overflow-hidden">
+          {loading && !tasks.length ? (
+            <div className="py-16 text-center text-sm text-gray-400">Đang tải nhiệm vụ theo deal…</div>
+          ) : !crmProjectGroups.length ? (
+            <div className="py-16 text-center text-sm text-gray-400">Không có nhiệm vụ chưa xong nào trong phạm vi này</div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {crmProjectGroups.map((group) => (
+                <ProjectGroupRow
+                  key={group.key}
+                  group={group}
+                  expanded={!!expandedProjects[group.key]}
+                  onToggle={() => setExpandedProjects((prev) => ({ ...prev, [group.key]: !prev[group.key] }))}
+                  nowMs={Date.now()}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       ) : loading && !tasks.length ? (
         <div className="py-16 text-center text-sm text-gray-400">
           {!companiesReady
@@ -1447,6 +1624,7 @@ export default function ProjectTasksOverviewPage({ fixedModule = '' }) {
                 focused={focusRisk === column.key}
                 canRemind={canRemind}
                 showModule={!fixedModuleKey}
+                onTaskChanged={load}
               />
             ))}
           </div>

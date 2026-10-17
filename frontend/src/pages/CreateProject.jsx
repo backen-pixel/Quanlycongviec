@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
+import { logCRUD } from '../lib/activityLogger';
 import { FileUploadButton } from '../components/FileUpload';
 import EmployeePicker from '../components/EmployeePicker';
 import FlowModuleComposer from '../components/FlowModuleComposer';
@@ -166,6 +167,7 @@ export default function CreateProject() {
         deadline: form.deadline || null,
       };
       const { data } = await api.post('/projects/create-with-flow', payload);
+      logCRUD({ action: 'create', module: 'projects', feature: 'create_with_flow', entity_type: 'project', entity_id: data.project.id, label: 'Tạo dự án mới (tự động)' });
       setAutoStatus('✅ Tạo dự án thành công!');
       setTimeout(() => navigate(`/management/work-unified/${data.project.id}`), 800);
     } catch (e) {
@@ -330,6 +332,7 @@ export default function CreateProject() {
         deadline: form.deadline || null,
       };
       const { data } = await api.post('/projects/create-with-flow', payload);
+      logCRUD({ action: 'create', module: 'projects', feature: 'create_with_flow', entity_type: 'project', entity_id: data.project.id, label: 'Tạo dự án mới' });
       navigate(`/management/work-unified/${data.project.id}`);
     } catch (e) {
       alert(e.response?.data?.error || 'Lỗi tạo dự án');

@@ -307,7 +307,7 @@ r.get('/channel-filters', requireAdmin, async (_req, res) => {
 
 /* ─────────────────── PLAYBOOKS (mẫu nội dung AI) ─────────────────── */
 
-const VALID_DATA_SOURCES = ['channel_context', 'kpi', 'none', 'company_report', 'company_daily', 'org_overview', 'reminder'];
+const VALID_DATA_SOURCES = ['channel_context', 'kpi', 'none', 'company_report', 'company_daily', 'org_overview', 'reminder', 'user_behavior_insight'];
 
 function validatePlaybook(body, { allowMissingPrompt = false } = {}) {
   const errors = [];

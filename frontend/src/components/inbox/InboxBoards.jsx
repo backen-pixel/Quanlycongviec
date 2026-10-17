@@ -16,12 +16,20 @@ import {
   KANBAN_BOARD_COLUMN_RAILS_CLASS,
 } from '../../lib/kanbanColumnTheme';
 
-export function InboxKanbanColumn({ label, count, columnIndex, children, emptyLabel = 'Không có mục nào' }) {
+export function InboxKanbanColumn({
+  label, count, columnIndex, children, emptyLabel = 'Không có mục nào',
+  onDragOver, onDragLeave, onDrop, noiBat = false,
+}) {
   const columnTheme = useKanbanColumnTheme(columnIndex);
   return (
     <div
-      className={`flex flex-col flex-shrink-0 w-[15rem] max-[400px]:w-[13.5rem] rounded-lg kanban-column-surface ${KANBAN_COLUMN_RAIL_CLASS}`}
+      className={`flex flex-col flex-shrink-0 w-[15rem] max-[400px]:w-[13.5rem] rounded-lg kanban-column-surface ${KANBAN_COLUMN_RAIL_CLASS} ${
+        noiBat ? 'ring-2 ring-rose-400 ring-offset-1' : ''
+      }`}
       style={{ backgroundColor: columnTheme.columnBg }}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
     >
       <div
         className="sticky top-0 z-10 px-2 py-2.5 border-b rounded-t-md kanban-column-surface"
@@ -61,7 +69,12 @@ export function InboxKanbanColumn({ label, count, columnIndex, children, emptyLa
  * Thiếu nó thì bảng vẫn vẽ ra cột và con số đúng, chỉ là trống ruột; nên cảnh báo chứ không
  * để im lìm.
  */
-export function InboxKanbanBoard({ columns, grouped, renderItem, emptyLabel }) {
+/**
+ * `keoTha` (tuỳ chọn) bật kéo thả giữa các cột:
+ *   { cotDangKeo, onVao(key), onRa(), onTha(key) }
+ * Trang nào không truyền thì bảng y như cũ — thẻ không kéo được, không thêm handler nào.
+ */
+export function InboxKanbanBoard({ columns, grouped, renderItem, emptyLabel, keoTha }) {
   return (
     <div
       className={`flex gap-2 overflow-x-auto pb-2 ${KANBAN_BOARD_COLUMN_RAILS_CLASS}`}
@@ -76,6 +89,10 @@ export function InboxKanbanBoard({ columns, grouped, renderItem, emptyLabel }) {
             count={list.length}
             columnIndex={i}
             emptyLabel={emptyLabel}
+            noiBat={keoTha?.cotDangKeo === col.key}
+            onDragOver={keoTha ? (e) => { e.preventDefault(); keoTha.onVao?.(col.key); } : undefined}
+            onDragLeave={keoTha ? () => keoTha.onRa?.() : undefined}
+            onDrop={keoTha ? (e) => { e.preventDefault(); keoTha.onTha?.(col.key); } : undefined}
           >
             {list.map((item) => renderItem(item))}
           </InboxKanbanColumn>

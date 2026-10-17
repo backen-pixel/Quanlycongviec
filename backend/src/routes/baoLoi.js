@@ -255,4 +255,56 @@ r.post('/:id/comments', async (req, res) => {
   }
 });
 
+// ── TỆP ĐÍNH KÈM (ảnh chụp, video quay, tệp người dùng chọn) ─────────────────
+/**
+ * Hai bước: frontend đẩy tệp lên `/api/upload` lấy URL, rồi gọi vào đây để GẮN vào lỗi.
+ *
+ * Vì sao không dùng thẳng `entity_id` của `/api/upload`: nhánh đó insert cả `storage_path`
+ * — cột không có trong `file_attachments` — và không kiểm `error`, nên hàng rơi mất trong
+ * im lặng. Ở đây chỉ ghi đúng các cột có thật và trả lỗi ra nếu ghi hỏng.
+ */
+r.post('/:id/files', async (req, res) => {
+  try {
+    const ds = Array.isArray(req.body?.files) ? req.body.files : [];
+    if (!ds.length) return res.status(400).json({ error: 'Không có tệp' });
+
+    const { data: loi } = await supabase.from('project_incidents')
+      .select('id').eq('id', req.params.id).maybeSingle();
+    if (!loi) return res.status(404).json({ error: 'Không thấy lỗi' });
+
+    const rows = ds
+      .filter((f) => f?.file_url && f?.file_name)
+      .map((f) => ({
+        entity_type: 'project_incident',
+        entity_id: loi.id,
+        file_name: String(f.file_name).slice(0, 255),
+        file_url: String(f.file_url),
+        file_size: Number(f.file_size) || 0,
+        mime_type: f.mime_type ? String(f.mime_type).slice(0, 100) : null,
+        uploaded_by: req.user?.id || req.user?.userId || null,
+      }));
+    if (!rows.length) return res.status(400).json({ error: 'Tệp thiếu đường dẫn' });
+
+    const { data, error } = await supabase.from('file_attachments').insert(rows).select();
+    if (error) throw error;
+    res.status(201).json({ data: data || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+r.get('/:id/files', async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('file_attachments')
+      .select('*, nguoi_gui:users!file_attachments_uploaded_by_fkey(id, full_name, avatar)')
+      .eq('entity_type', 'project_incident')
+      .eq('entity_id', req.params.id)
+      .order('created_at');
+    if (error) throw error;
+    res.json({ data: data || [] });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = r;

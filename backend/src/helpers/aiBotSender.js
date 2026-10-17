@@ -1088,7 +1088,7 @@ async function resolvePlaybookForSchedule(schedule) {
 
 /* ════════════════════ INSERT MESSAGE + EMIT SOCKET ════════════════════ */
 
-async function insertDepartmentBotMessage(departmentId, content, io, channelInfo) {
+async function insertDepartmentBotMessage(departmentId, content, io, channelInfo, attachments = null) {
   // Lưu ý: KHÔNG đặt is_system=true. Bot xuất hiện như một "nhân viên" bình thường,
   // chỉ khác ở cờ users.is_bot=true để FE web/mobile tô badge 🤖. Nhờ vậy:
   //   - Tin nhắn không bị FE render thành "system pill" nhỏ giữa.
@@ -1100,6 +1100,7 @@ async function insertDepartmentBotMessage(departmentId, content, io, channelInfo
       sender_id: AI_BOT_USER_ID,
       content,
       is_system: false,
+      ...(attachments && attachments.length ? { attachments } : {}),
     })
     .select(`
       *,
@@ -1127,7 +1128,7 @@ async function insertDepartmentBotMessage(departmentId, content, io, channelInfo
   return data;
 }
 
-async function insertGroupBotMessage(groupId, content, io, channelInfo) {
+async function insertGroupBotMessage(groupId, content, io, channelInfo, attachments = null) {
   // Bot không cần là thành viên — emit thẳng vào room (mọi thành viên đã join sẽ nhận).
   // is_system=false để FE hiển thị giống tin nhắn nhân viên (không phải pill hệ thống).
   // Vẫn nhận biết là bot qua users.is_bot=true → FE tô badge 🤖 + avatar gradient.
@@ -1139,6 +1140,7 @@ async function insertGroupBotMessage(groupId, content, io, channelInfo) {
       content,
       message_type: 'text',
       is_system: false,
+      ...(attachments && attachments.length ? { attachments } : {}),
     })
     .select('*, user:users!messenger_group_messages_user_id_fkey(id, full_name, avatar, is_bot)')
     .single();
@@ -1332,6 +1334,79 @@ async function runScheduleSend(schedule, io, runOpts = {}) {
           broadcast: bc,
           message: bc.ok ? `Đã gửi kênh chính + ${bc.ok} DM copy` : undefined,
         };
+      }
+
+      return {
+        status: 'ok',
+        message_id: inserted?.id || null,
+        preview: content.slice(0, 240),
+        playbook_code: playbook.code,
+      };
+    } catch (e) {
+      return { status: 'error', error: e.message };
+    }
+  }
+
+  /**
+   * Báo cáo hành vi & khó khăn người dùng — không qua LLM, số liệu lấy thẳng từ
+   * userBehaviorInsight.js (user_activity_log + guide_chat_log + unified_tasks_v), đóng gói PDF
+   * rồi đính kèm vào tin nhắn. Xem docs/architecture/ke-hoach-thu-thap-hanh-vi-nguoi-dung.md.
+   */
+  if (dsAuto === 'user_behavior_insight') {
+    try {
+      const { getUserBehaviorInsight } = require('./userBehaviorInsight');
+      const { buildUserBehaviorInsightPdfBuffer } = require('./userBehaviorInsightPdf');
+      const { uploadBufferToStorage } = require('./storageUpload');
+
+      const companyId = schedule.company_whitelist?.[0] || null;
+      const vnDateStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Ho_Chi_Minh' }).format(new Date());
+      // 00:00 giờ VN hôm nay → giờ VN cố định UTC+7 (không DST), quy thẳng ra ISO UTC.
+      const dateFrom = new Date(`${vnDateStr}T00:00:00+07:00`).toISOString();
+      const dateTo = new Date().toISOString();
+
+      const { items } = await getUserBehaviorInsight({ companyId, dateFrom, dateTo });
+
+      let companyName = null;
+      if (companyId) {
+        const { data: co } = await supabase.from('companies').select('name').eq('id', companyId).maybeSingle();
+        companyName = co?.name || null;
+      }
+
+      const pdfBuffer = await buildUserBehaviorInsightPdfBuffer({
+        items, dateFrom: vnDateStr, dateTo: vnDateStr, companyName,
+      });
+
+      const folder = `behavior-insight/${schedule.channel_type}-${schedule.channel_id}`.replace(/\/+/g, '/');
+      const fileName = `bao-cao-hanh-vi-${vnDateStr}.pdf`;
+      const stored = await uploadBufferToStorage(pdfBuffer, {
+        originalName: fileName,
+        mimetype: 'application/pdf',
+        size: pdfBuffer.length,
+        bucket: process.env.SUPABASE_MESSENGER_BUCKET || 'attachments',
+        folderPrefix: folder,
+      });
+      const attachments = [{
+        name: fileName,
+        url: stored.file_url,
+        type: 'application/pdf',
+        size: pdfBuffer.length,
+        storage_path: stored.storage_path,
+      }];
+
+      const totalDifficulty = items.reduce(
+        (s, r) => s + (r.difficulty_signals || []).reduce((a, d) => a + (d.count || 0), 0),
+        0,
+      );
+      const totalOverdue = items.reduce((s, r) => s + (r.overdue_tasks || 0), 0);
+      const content = `📊 Báo cáo hành vi người dùng ngày ${vnDateStr}\n`
+        + `${items.length} nhân viên có hoạt động · ${totalDifficulty} lần khó khăn ghi nhận · ${totalOverdue} việc quá hạn.\n`
+        + 'Chi tiết trong file PDF đính kèm.';
+
+      let inserted;
+      if (schedule.channel_type === 'department') {
+        inserted = await insertDepartmentBotMessage(schedule.channel_id, content, io, channelInfo, attachments);
+      } else {
+        inserted = await insertGroupBotMessage(schedule.channel_id, content, io, channelInfo, attachments);
       }
 
       return {

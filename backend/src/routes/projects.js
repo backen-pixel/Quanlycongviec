@@ -1535,6 +1535,11 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
     if (!b.customer_id) {
       return res.status(400).json({ error: 'Chọn khách hàng (customer_id)' });
     }
+    // Dự án tạo thẳng từ Sản xuất: không có mốc lắp/giao thì xưởng không xếp được lịch
+    // và thẻ rơi vào nhóm «không hạn». Deal CRM chuyển sang không qua nhánh này.
+    if (b.created_from_sx && !b.install_date && !b.delivery_date) {
+      return res.status(400).json({ error: 'Nhập ngày lắp đặt hoặc ngày giao hàng mới tạo được dự án' });
+    }
 
     const projectCompanyId = b.company_id || req.user?.company_id || null;
     if (await enforceQuotaForRequest(req, res, projectCompanyId, 'projects_total')) return;
@@ -1632,6 +1637,11 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
       flow_id: b.flow_id || null,
       quotation_files: Array.isArray(b.quotation_files) ? b.quotation_files : [],
       consult_date: new Date().toISOString(),
+      // Mốc thời gian modal SX gửi lên — trước đây rơi hết, dự án tạo xong luôn trống hạn.
+      deadline: b.deadline || null,
+      install_date: b.install_date || null,
+      delivery_date: b.delivery_date || null,
+      ...(b.created_from_sx ? { created_from_sx: true } : {}),
       ...(logisticsCompanyIdOnCreate ? { logistics_company_id: logisticsCompanyIdOnCreate } : {}),
       ...(vcIntakeColId ? { vc_kanban_column_id: vcIntakeColId } : {}),
     });
@@ -1642,6 +1652,7 @@ r.post('/', requirePermission('projects', 'create'), async (req, res) => {
         'quotation_files', 'workshop_type_id', 'consult_date',
         'consulting_person_id', 'design_person_id', 'quotation_person_id', 'contract_person_id',
         'production_person_id', 'shipping_person_id', 'installation_person_id', 'care_person_id',
+        'deadline', 'install_date', 'delivery_date', 'created_from_sx',
       ].forEach((k) => { delete o[k]; });
       return o;
     };

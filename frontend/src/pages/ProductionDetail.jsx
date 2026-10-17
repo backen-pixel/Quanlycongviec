@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useCrmNotesFab } from '../context/CrmNotesFabContext';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
+import { logCRUD } from '../lib/activityLogger';
 import { taskBelongsToWorkshopModule, taskBelongsToVcSubTab } from '../lib/workshopTaskScope';
 import { markWorkshopPipelineCardFocus, markWorkshopProjectRename } from '../lib/workshopPipelineStorage';
 import {
@@ -450,6 +451,7 @@ function WorkshopInfoPanel({
         projectPatch.production_deadline = finish;
       }
       await api.put(`/projects/${project.id}`, projectPatch);
+      logCRUD({ action: 'update', module: 'projects', feature: 'detail_field', entity_type: 'project', entity_id: project.id, label: `Sửa trường ${field}` });
 
       // Đồng bộ sang deal CRM (cùng nguồn với phiếu/bàn giao VC của sale).
       if (crmDeal?.id) {
@@ -1672,6 +1674,7 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   const [placeSxTargets, setPlaceSxTargets] = useState([]);
   const [placeSxBusy, setPlaceSxBusy] = useState(false);
   const [phatSinhBusy, setPhatSinhBusy] = useState(false);
+  const [xacNhanTiepNhanBusy, setXacNhanTiepNhanBusy] = useState(false);
   const [placeSxErr, setPlaceSxErr] = useState('');
   const [placeSxName, setPlaceSxName] = useState('');
   const [workshopPlacements, setWorkshopPlacements] = useState({ placed: [], received_from: [] });
@@ -2650,6 +2653,25 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   // Đặt hook ở đây, TRƯỚC mấy nhánh return sớm (loadError / loading) bên dưới,
   // nếu để sau thì hook thành có điều kiện và React sẽ vỡ thứ tự hook.
   const [sxTrangThaiO, setSxTrangThaiO] = useState({});
+
+  // Quy trình (PipelineStepper) chiếm nguyên màn, mặc định gập lại; nhớ lựa chọn của người xem.
+  const KHOA_HIEN_QUY_TRINH = 'sx_detail_hien_quy_trinh';
+  const [hienQuyTrinh, setHienQuyTrinh] = useState(() => {
+    try {
+      return localStorage.getItem(KHOA_HIEN_QUY_TRINH) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const doiHienQuyTrinh = useCallback(() => {
+    setHienQuyTrinh((truoc) => {
+      const sau = !truoc;
+      try {
+        localStorage.setItem(KHOA_HIEN_QUY_TRINH, sau ? '1' : '0');
+      } catch { /* chế độ riêng tư chặn localStorage — bỏ qua */ }
+      return sau;
+    });
+  }, []);
   const sxNhomStageIds = useMemo(() => {
     const stages = moduleKey === 'vc' ? project?.vcKanbanStages : project?.sxKanbanStages;
     return (stages || []).map((st) => String(st.id)).filter(Boolean).join(',');
@@ -3295,6 +3317,28 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
   ));
   const documentsForZipTotal = safeProjectDocs.length + visibleCrmSharedDocs.length + safeTaskFiles.length;
 
+  // Xác nhận tiếp nhận: nút nhấp nháy để NV được giao SX không bỏ sót đơn mới.
+  const needsSxReceiveConfirm = moduleKey !== 'vc' && !!project?.id && !project?.sx_received_at;
+  const canConfirmSxReceive = canManageTeam;
+  const handleXacNhanTiepNhan = async () => {
+    if (!project?.id || xacNhanTiepNhanBusy) return;
+    setXacNhanTiepNhanBusy(true);
+    try {
+      const { data } = await api.post(`/production/projects/${project.id}/xac-nhan-tiep-nhan`);
+      const received = data?.project || data;
+      setProject((prev) => (prev ? {
+        ...prev,
+        sx_received_at: received?.sx_received_at || new Date().toISOString(),
+        sx_received_by: received?.sx_received_by || uidSelf,
+        sx_received_by_user: received?.sx_received_by_user || prev.sx_received_by_user,
+      } : prev));
+    } catch (e) {
+      window.alert(e.response?.data?.error || e.message || 'Không xác nhận được');
+    } finally {
+      setXacNhanTiepNhanBusy(false);
+    }
+  };
+
   const handleDownloadAllDocuments = async () => {
     if (downloadingDocsZip || documentsForZipTotal === 0) return;
     setDownloadingDocsZip(true);
@@ -3416,6 +3460,18 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
             href={moduleKey === 'vc' ? `/vc/projects/${project.id}` : `/sx/projects/${project.id}`}
             module={moduleKey === 'vc' ? 'vc' : 'sx'}
           />
+          {needsSxReceiveConfirm && canConfirmSxReceive && (
+            <button
+              type="button"
+              disabled={xacNhanTiepNhanBusy}
+              onClick={handleXacNhanTiepNhan}
+              title="Dự án mới chưa có ai xác nhận đã tiếp nhận"
+              className="h-9 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 animate-pulse shadow-[0_0_0_3px_rgba(245,158,11,0.35)]"
+            >
+              {xacNhanTiepNhanBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+              {xacNhanTiepNhanBusy ? 'Đang xác nhận…' : 'Xác nhận tiếp nhận'}
+            </button>
+          )}
           {moduleKey !== 'vc' && (() => {
             const sourceCid = String(project.company_id || project.company?.id || '');
             const canPlace = isSystemAdmin(user) || isAdminLike(user)
@@ -3537,16 +3593,31 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
         </div>
       )}
 
-      {/* Pipeline — shared PipelineStepper component */}
-      <PipelineStepper
-        stages={safePipelineStages}
-        currentStageId={currentStageId}
-        onMoveToStage={moveStage}
-        linearProgress
-        nhomSongSong={safePipelineStages.some((st) => String(st?.group_key || '').trim())}
-        trangThaiO={sxTrangThaiO}
-        onDoiTrangThai={doiTrangThaiO}
-      />
+      {/* Pipeline — shared PipelineStepper component, mặc định ẩn cho gọn màn hình */}
+      <div>
+        <button
+          type="button"
+          onClick={doiHienQuyTrinh}
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-900 bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 cursor-pointer hover:bg-gray-50 transition"
+          title={hienQuyTrinh ? 'Ẩn sơ đồ quy trình' : 'Hiện sơ đồ quy trình các cột'}
+        >
+          <ChevronDown className={`h-3.5 w-3.5 transition-transform ${hienQuyTrinh ? '' : '-rotate-90'}`} />
+          {hienQuyTrinh ? 'Ẩn quy trình' : 'Quy trình'}
+        </button>
+        {hienQuyTrinh && (
+          <div className="mt-3">
+            <PipelineStepper
+              stages={safePipelineStages}
+              currentStageId={currentStageId}
+              onMoveToStage={moveStage}
+              linearProgress
+              nhomSongSong={safePipelineStages.some((st) => String(st?.group_key || '').trim())}
+              trangThaiO={sxTrangThaiO}
+              onDoiTrangThai={doiTrangThaiO}
+            />
+          </div>
+        )}
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         {/* Cột trái — giống LeadDetail */}
@@ -4295,6 +4366,22 @@ export default function ProductionDetail({ moduleKey = 'sx' }) {
               {activeTab === 'comments' && (
                 project?.id
                   ? (<>
+                    {needsSxReceiveConfirm && canConfirmSxReceive && (
+                      <div className="mb-3 flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
+                        <span className="text-sm text-amber-800 font-medium">
+                          ⚠️ Dự án này chưa có ai xác nhận tiếp nhận.
+                        </span>
+                        <button
+                          type="button"
+                          disabled={xacNhanTiepNhanBusy}
+                          onClick={handleXacNhanTiepNhan}
+                          className="h-9 px-3 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-50 animate-pulse shadow-[0_0_0_3px_rgba(245,158,11,0.35)] shrink-0"
+                        >
+                          {xacNhanTiepNhanBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+                          {xacNhanTiepNhanBusy ? 'Đang xác nhận…' : 'Xác nhận tiếp nhận'}
+                        </button>
+                      </div>
+                    )}
                     {chonLuong(luongChon?.project_id || '')}
                     {luongChon && !luongChon.lead_id && (
                       <p className="text-sm text-gray-500 text-center py-8">

@@ -34,6 +34,8 @@ let pipelineGroupSortColumnAvailable = true;
 /** Cột board_tab (migration 614) — tab Dashboard Sản xuất / Công nợ */
 let pipelineBoardTabColumnAvailable = true;
 let pipelineTichThuCongColumnAvailable = true;
+/** Cột dong_het_viec (migration 724) — vào cột thì đóng hết nhiệm vụ SX còn mở */
+let pipelineDongHetViecColumnAvailable = true;
 /** Cột is_phat_sinh (migration 648) — cột đơn phát sinh */
 let pipelinePhatSinhColumnAvailable = true;
 /** Cột converts_workshop_type / target_workshop_type_id (migration 303) */
@@ -323,6 +325,19 @@ function markPipelineTichThuCongColumnMissing() {
   pipelineTichThuCongColumnAvailable = false;
 }
 
+function isPipelineDongHetViecMissingError(err) {
+  if (!err || !pipelineDongHetViecColumnAvailable) return false;
+  const s = String(err.message || err.details || err.hint || '').toLowerCase();
+  return s.includes('dong_het_viec') && (s.includes('does not exist') || s.includes('could not find') || s.includes('schema cache'));
+}
+
+function markPipelineDongHetViecColumnMissing() {
+  if (pipelineDongHetViecColumnAvailable) {
+    console.warn('[production_pipeline_stages] Cột dong_het_viec chưa có. Chạy database/724_production_pipeline_dong_het_viec.sql.');
+  }
+  pipelineDongHetViecColumnAvailable = false;
+}
+
 function isPipelinePhatSinhMissingError(err) {
   if (!err || !pipelinePhatSinhColumnAvailable) return false;
   const s = String(err.message || err.details || err.hint || '').toLowerCase();
@@ -425,6 +440,7 @@ function buildPipelineStageSelect() {
   const gSort = pipelineGroupSortColumnAvailable ? 'group_sort, ' : '';
   const gTab = pipelineBoardTabColumnAvailable ? 'board_tab, ' : '';
   const ttc = pipelineTichThuCongColumnAvailable ? 'tich_thu_cong, ' : '';
+  const dhv = pipelineDongHetViecColumnAvailable ? 'dong_het_viec, ' : '';
   const phatSinh = pipelinePhatSinhColumnAvailable ? 'is_phat_sinh, ' : '';
   const sw = pipelineSwitchWorkshopTypeColumnAvailable ? 'converts_workshop_type, ' : '';
   let twt = '';
@@ -447,7 +463,7 @@ function buildPipelineStageSelect() {
       t = 'crm_target_stage_id, ';
     }
   }
-  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, is_packaging_done, ${h}${sw}${twt}${pp}${kpi}${reqDl}${clrDl}${dashKpi}${dlGroup}${gKey}${gSort}${gTab}${ttc}${phatSinh}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
+  return `id, ${cid}name, color, icon, order_index, is_active, workflow_stage_id, bucket_slug, crm_sync_type, is_packaging_done, ${h}${sw}${twt}${pp}${kpi}${reqDl}${clrDl}${dashKpi}${dlGroup}${gKey}${gSort}${gTab}${ttc}${dhv}${phatSinh}${wt}${t}workflow_stage:workflow_stages(id, slug, name, color, icon)`;
 }
 
 /** Áp dụng retry khi SELECT 1 cột pipeline (embed / cột thiếu). */
@@ -550,6 +566,7 @@ const INSERT_COLUMN_RETRIES = [
   [isPipelineGroupKeyMissingError, markPipelineGroupKeyColumnMissing],
   [isPipelineGroupSortMissingError, markPipelineGroupSortColumnMissing],
   [isPipelineBoardTabMissingError, markPipelineBoardTabColumnMissing],
+  [isPipelineDongHetViecMissingError, markPipelineDongHetViecColumnMissing],
   [isPipelinePhatSinhMissingError, markPipelinePhatSinhColumnMissing],
   [isPipelineSwitchWorkshopTypeMissingError, markPipelineSwitchWorkshopTypeColumnMissing],
   [isPipelineWorkshopTypeMissingError, markPipelineWorkshopTypeColumnMissing],
@@ -621,6 +638,7 @@ function stripHandoverFields(obj) {
   if (!pipelineGroupSortColumnAvailable) delete o.group_sort;
   if (!pipelineBoardTabColumnAvailable) delete o.board_tab;
   if (!pipelineTichThuCongColumnAvailable) delete o.tich_thu_cong;
+  if (!pipelineDongHetViecColumnAvailable) delete o.dong_het_viec;
   if (!pipelinePhatSinhColumnAvailable) delete o.is_phat_sinh;
   if (!pipelineSwitchWorkshopTypeColumnAvailable) {
     delete o.converts_workshop_type;
@@ -651,12 +669,15 @@ function _resetForTests() {
   pipelineGroupSortColumnAvailable = true;
   pipelineBoardTabColumnAvailable = true;
   pipelineTichThuCongColumnAvailable = true;
+  pipelineDongHetViecColumnAvailable = true;
   pipelinePhatSinhColumnAvailable = true;
   pipelineSwitchWorkshopTypeColumnAvailable = true;
   pipelineTargetWorkshopTypeJoinAvailable = true;
 }
 
 module.exports = {
+  isPipelineDongHetViecMissingError,
+  markPipelineDongHetViecColumnMissing,
   isHandoverMissingError,
   isCrmTargetStageMissingError,
   isCrmTargetStageEmbedRelationshipError,

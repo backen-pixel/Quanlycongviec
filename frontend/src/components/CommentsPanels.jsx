@@ -37,6 +37,7 @@ import {
   X,
 } from 'lucide-react';
 import api from '../lib/api';
+import { logCRUD } from '../lib/activityLogger';
 import { parseProjectRenameCommand, renameNoticeBody } from '../lib/projectRenameComment';
 import { useAuth } from '../lib/auth';
 import { isAdminLike, isStrictAdmin } from '../lib/adminRole';
@@ -3763,6 +3764,7 @@ export function ProjectCommentsPanel({
       const r = await api.post(`/projects/${activeProjectId}/comments`, payload);
       const row = r.data?.comment || r.data;
       if (row?.id) {
+        logCRUD({ action: 'create', module: 'projects', feature: 'comments', entity_type: 'project_comment', entity_id: row.id, label: 'Trao đổi trong dự án' });
         setComments((prev) => {
           const next = upsertComment(prev, row);
           if (next.length !== (prev || []).length) onCountChange?.(next.length);

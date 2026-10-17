@@ -68,6 +68,7 @@ const { clearSxSchedulesOnCompletedForProjects } = require('../helpers/clearComp
 const {
   isSxShippedColumn,
   completeSxWorkUpToShippedColumn,
+  completeOpenWorkOnModuleDone,
 } = require('../helpers/completeOpenWorkOnModuleDone');
 const { MODULE, resolveModuleDeadline } = require('../helpers/moduleDeadlinePolicy');
 const { applyProjectTenantScope, assertRowCompanyInTenant, isTenantScopeEnforced } = require('../helpers/tenantScope');
@@ -828,6 +829,7 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
       crm_sync_type: isIntake || wantsHandover || wantsSwitchType || wantsPhatSinh ? null : (b.crm_sync_type || null),
       crm_target_stage_id: isIntake || wantsHandover || wantsSwitchType || wantsPhatSinh ? null : (b.crm_target_stage_id || null),
       is_packaging_done: !isIntake && !wantsHandover && !wantsSwitchType && !wantsPhatSinh ? !!b.is_packaging_done : false,
+      dong_het_viec: !isIntake && !wantsPhatSinh ? !!b.dong_het_viec : false,
       company_id: insertCompanyId || null,
       workshop_type_id: workshopTypeId,
       ...parseProductionStageKpiBody(b),
@@ -836,6 +838,7 @@ r.post('/pipeline-stages', requirePermission('projects', 'edit'), async (req, re
       insertPayload.deadline_group = null;
       insertPayload.requires_deadline = false;
       insertPayload.clears_deadline = false;
+      insertPayload.dong_het_viec = false;
       insertPayload.dashboard_kpi = null;
     } else {
       if (b.group_key !== undefined) {
@@ -903,9 +906,9 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
       'is_handover_to_logistics', 'is_phat_sinh', 'converts_workshop_type', 'target_workshop_type_id',
       'crm_sync_type', 'crm_target_stage_id', 'progress_percent',
       'workshop_type_id', 'is_packaging_done', 'group_key', 'group_sort', 'board_tab',
-      'tich_thu_cong'].forEach((f) => {
+      'tich_thu_cong', 'dong_het_viec'].forEach((f) => {
       if (b[f] !== undefined) {
-        update[f] = (f === 'is_packaging_done' || f === 'tich_thu_cong') ? !!b[f] : b[f];
+        update[f] = (f === 'is_packaging_done' || f === 'tich_thu_cong' || f === 'dong_het_viec') ? !!b[f] : b[f];
       }
     });
     if (update.group_sort !== undefined) {
@@ -1001,6 +1004,9 @@ r.put('/pipeline-stages/:id', requirePermission('projects', 'edit'), async (req,
     let u = stripHandoverFields(mapSwitchWorkshopTypeBodyToDb({ ...update }));
     if (enablingClearsDeadline && u.clears_deadline === undefined) {
       return res.status(400).json({ error: 'Chưa chạy migration 629 (cột Tắt hạn).' });
+    }
+    if (b.dong_het_viec === true && u.dong_het_viec === undefined) {
+      return res.status(400).json({ error: 'Chưa chạy migration 724 (cột Đóng hết việc).' });
     }
     const settingDashboardKpi = b.dashboard_kpi !== undefined && b.dashboard_kpi;
     if (settingDashboardKpi && u.dashboard_kpi === undefined) {
@@ -2733,6 +2739,15 @@ const MIGRATION_300_COLS = 'order_date, delivery_date,';
 /** Columns added in migration 520 — ngày hoàn thiện SX (= delivery − 2) */
 const MIGRATION_520_COLS = 'production_finish_date, ';
 const MIGRATION_529_COLS = 'sx_schedule_slip_days, ';
+/** Columns added in migration 722 — xác nhận tiếp nhận đơn SX */
+const SX_RECEIVED_COLS = 'sx_received_at, sx_received_by, ';
+const SX_RECEIVED_EMBED = 'sx_received_by_user:users!projects_sx_received_by_fkey(id, full_name, avatar), ';
+function isSxReceivedColMissingError(err) {
+  return /sx_received_at|sx_received_by/.test(String(err?.message || ''));
+}
+function stripSxReceivedCols(sel) {
+  return sel.replace(SX_RECEIVED_EMBED, '').replace(SX_RECEIVED_COLS, '');
+}
 function isExternalCompanyNameMissingError(err) {
   const m = String(err?.message || '');
   return m.includes('external_company_name');
@@ -2800,9 +2815,10 @@ function stripKanbanStateCols(sel) {
 }
 
 const PROJECT_DETAIL_SELECT = `
-        id, company_id, source_project_id, code, name, description, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_address, install_date, pickup_at, pickup_notes, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_529_COLS} ${MIGRATION_76_COLS} status, notes, created_at,
+        id, company_id, source_project_id, code, name, description, estimated_value, production_value, deposit_amount, collected_amount, priority, deadline, install_address, install_date, pickup_at, pickup_notes, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_529_COLS} ${MIGRATION_76_COLS} ${SX_RECEIVED_COLS} status, notes, created_at,
         current_stage_id, ${KANBAN_STATE_COLS} ${WORKSHOP_TYPE_SCALAR}
         ${WORKSHOP_TYPE_EMBED}
+        ${SX_RECEIVED_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
         customer:customers(id, full_name, phone, email, address, city),
         company:companies!projects_company_id_fkey(id, name, short_name),
@@ -2832,7 +2848,7 @@ const PROJECT_DETAIL_SELECT = `
 // Fallback select khi DB thiếu cột/relationship mới (FK users, task_checklists, participants…)
 // Mục tiêu: vẫn mở được chi tiết dự án + hiển thị stage/tag đúng.
 const PROJECT_DETAIL_SELECT_MIN = `
-        id, company_id, source_project_id, code, name, description, estimated_value, production_value, priority, deadline, install_address, install_date, pickup_at, pickup_notes, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_529_COLS} status, notes, created_at,
+        id, company_id, source_project_id, code, name, description, estimated_value, production_value, priority, deadline, install_address, install_date, pickup_at, pickup_notes, ${MIGRATION_300_COLS} ${MIGRATION_520_COLS} ${MIGRATION_529_COLS} ${SX_RECEIVED_COLS} status, notes, created_at,
         current_stage_id, ${KANBAN_STATE_COLS} ${WORKSHOP_TYPE_SCALAR}
         ${WORKSHOP_TYPE_EMBED}
         current_stage:workflow_stages(id, slug, name, color, icon),
@@ -2908,6 +2924,74 @@ r.get('/projects/:id/task-bootstrap', requirePermission('projects', 'view'), asy
       workshop_type_id: project.workshop_type_id || null,
     });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/**
+ * Nhân viên SX bấm "Xác nhận tiếp nhận" dự án — tắt nút nhấp nháy ở đầu trang chi
+ * tiết và ở đầu tab Bình luận. Idempotent: đã xác nhận rồi thì trả về trạng thái cũ.
+ */
+r.post('/projects/:id/xac-nhan-tiep-nhan', requirePermission('projects', 'edit'), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const uid = req.user?.userId || req.user?.id;
+    if (!uid) return res.status(401).json({ error: 'Chưa đăng nhập' });
+
+    const { data: existing, error: loadErr } = await supabase
+      .from('projects')
+      .select('id, code, name, sx_received_at')
+      .eq('id', id)
+      .maybeSingle();
+    if (loadErr) throw loadErr;
+    if (!existing) return res.status(404).json({ error: 'Không tìm thấy dự án' });
+    if (existing.sx_received_at) {
+      return res.json({ ok: true, already: true, sx_received_at: existing.sx_received_at });
+    }
+
+    const nowIso = new Date().toISOString();
+    const { data: updated, error } = await supabase
+      .from('projects')
+      .update({ sx_received_at: nowIso, sx_received_by: uid })
+      .eq('id', id)
+      .select('id, sx_received_at, sx_received_by, sx_received_by_user:users!projects_sx_received_by_fkey(id, full_name, avatar)')
+      .single();
+    if (error) throw error;
+
+    const confirmerName = updated?.sx_received_by_user?.full_name || 'Nhân viên';
+    const projectLabel = existing.name || existing.code || 'dự án';
+
+    await logDealActivityComment(req, {
+      projectId: id,
+      body: `✅ ${confirmerName} đã xác nhận tiếp nhận dự án.`,
+      commentType: null,
+    });
+
+    // Báo cho người chịu trách nhiệm CRM của deal gắn với dự án này — họ cần biết
+    // xưởng đã nhận việc để theo dõi tiến độ, không phải chờ hỏi lại.
+    try {
+      const { data: leads } = await supabase
+        .from('crm_leads')
+        .select('id, type, parent_lead_id, created_at, title, assigned_to, lead_owner_id')
+        .eq('project_id', id)
+        .order('created_at', { ascending: true })
+        .limit(30);
+      const deal = pickBootstrapDeal(leads);
+      const responsibleId = deal?.assigned_to || deal?.lead_owner_id;
+      if (deal && responsibleId && String(responsibleId) !== String(uid)) {
+        await createNotif(req, responsibleId, 'sx_received',
+          '📦 Xưởng đã tiếp nhận đơn hàng',
+          `${confirmerName} đã xác nhận tiếp nhận «${deal.title || projectLabel}» tại xưởng sản xuất.`,
+          'crm_deal', deal.id,
+          { ecosystem_module_key: 'crm' });
+      }
+    } catch (notifErr) {
+      console.warn('[xac-nhan-tiep-nhan] notify CRM owner:', notifErr.message);
+    }
+
+    res.json({ ok: true, project: updated });
+  } catch (e) {
+    console.error('[xac-nhan-tiep-nhan]', e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -2999,12 +3083,21 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
         .eq('id', projectId)
         .single());
     }
+    // Migration 722 not yet applied — retry without sx_received_at/by (ẩn nút "Xác nhận tiếp nhận")
+    if (error && isSxReceivedColMissingError(error)) {
+      ({ data: project, error } = await supabase
+        .from('projects')
+        .select(stripSxReceivedCols(PROJECT_DETAIL_SELECT))
+        .eq('id', projectId)
+        .single());
+    }
     // Relationship/columns not ready — retry with minimal select (no optional embeds)
     if (error && (error.message?.includes('relationship') || error.message?.includes('does not exist'))) {
       let minSel = PROJECT_DETAIL_SELECT_MIN;
       if (isWorkshopTypeEmbedError(error)) minSel = stripWorkshopTypeEmbed(minSel);
       if (isWorkshopTypeColumnError(error)) minSel = stripWorkshopTypeAll(minSel);
       if (isKanbanStateColMissingError(error)) minSel = stripKanbanStateCols(minSel);
+      if (isSxReceivedColMissingError(error)) minSel = stripSxReceivedCols(minSel);
       ({ data: project, error } = await supabase.from('projects').select(minSel).eq('id', projectId).single());
     }
 
@@ -3460,6 +3553,7 @@ r.get('/projects/:id', requirePermission('projects', 'view'), async (req, res) =
           deadline_group: c.deadline_group ?? null,
           workshop_type_id: c.workshop_type_id ?? null,
           tich_thu_cong: c.tich_thu_cong ?? false,
+          dong_het_viec: c.dong_het_viec ?? false,
           }));
           try {
             const { enrichPipelineStagesWithDefaultStaff } = require('../helpers/productionWorkshopTypeStaff');
@@ -3969,6 +4063,26 @@ r.patch('/projects/:id/stage', requireProductionKanbanEdit(), async (req, res) =
               }
             } catch (shipErr) {
               console.warn('[production] completeSxWorkUpToShippedColumn:', shipErr.message);
+            }
+          }
+          // Cột tick «Đóng hết việc» (cuối chuỗi: công nợ đã chốt / đã thu tiền): đơn coi như
+          // xong hẳn → tích hoàn thành MỌI nhiệm vụ SX còn mở, kể cả việc ở các cột sau mốc
+          // giao hàng mà `completeSxWorkUpToShippedColumn` cố ý chừa lại. Việc VC/lắp đặt
+          // không đụng tới — module đó có luồng đóng riêng.
+          if (colChanged && colRow?.dong_het_viec) {
+            try {
+              const rDone = await completeOpenWorkOnModuleDone({
+                module: 'production',
+                projectIds: [id],
+              });
+              if (rDone?.crm_tasks || rDone?.workshop_tasks || rDone?.assignments) {
+                console.info(
+                  `[production] SX đóng hết việc: project=${id} stage=${colId} `
+                  + `crm_tasks=${rDone.crm_tasks} tasks=${rDone.workshop_tasks} assignments=${rDone.assignments}`,
+                );
+              }
+            } catch (doneErr) {
+              console.warn('[production] completeOpenWorkOnModuleDone (dong_het_viec):', doneErr.message);
             }
           }
           if (shouldApplyPipelineTemplates) {
