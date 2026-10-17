@@ -2,7 +2,6 @@ import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation, useParams,
 import { Suspense, lazy, Component, useEffect } from 'react';
 import { AuthProvider, useAuth } from './lib/auth';
 import { lazyWithRetry, isChunkLoadErrorMessage } from './lib/lazyWithRetry';
-import { WEB_ROUTES } from './web/routes';
 
 class ErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null, errorInfo: null }; }
@@ -479,7 +478,6 @@ export default function App() {
           <Route path="/modules/payment/return" element={<SaasPaymentReturnPage />} />
           <Route path="/privacy" element={<Suspense fallback={<PageLoader />}><PrivacyPage /></Suspense>} />
           <Route path="/s/:token" element={<Suspense fallback={<PageLoader />}><PublicSharePage /></Suspense>} />
-          {WEB_ROUTES}
           <Route element={<ProtectedLayout />}>
             <Route path="/setup" element={<Outlet />} />
             <Route path="/" element={<DefaultRedirect />} />
