@@ -1,3 +1,13 @@
+## 2026-10-17 — Tab Công việc lộ việc của hệ sinh thái khác (tenant) cho Admin hệ thống
+
+- Phát hiện khi đối chiếu app/web (chỉ đọc, API thật, tài khoản admin không gắn công ty, tenant «Hệ sinh thái mặc định»): `GET /work-tasks/team-project-tasks` không chọn công ty trả 1.244 việc, trong đó 133 việc (98 quá hạn, 8+ dự án mã `…-NGC`) thuộc tenant NextGo. Mở chi tiết các dự án đó bằng cùng tài khoản → 403 `tenant_scope_denied` / `tenant_company_denied`. Tổng quá hạn hiện 119 trong khi 4 công ty của tenant chỉ có 21 (Metalla 2, HCB 19, Phúc Đạt 0, VPT 0).
+- Gốc: `effectiveCompany = company_id || (!isSystemAdmin ? user.company_id : null)` → Admin hệ thống không chọn công ty thì không lọc `company_id` của view `unified_tasks_v`, và file không có điều kiện tenant nào. `req.tenantCompanyIds` đã có sẵn từ `auth` (`attachTenantContext`) nhưng route không dùng.
+- Sửa `backend/src/routes/workTasks.js`: (1) `team-project-tasks` — khi không có `effectiveCompany` thì `applyCompanyTenantScope(qy, req)` (chỉ áp cho nhánh quét chính, nhánh `skipCompany` của việc deal công ty khác vẫn theo dự án của công ty đã chọn); (2) cùng bộ lọc cho truy vấn tập dự án theo loại xưởng; (3) khóa cache `teamTasksCache` thêm `req.tenantId` (trước đó Admin hệ thống của tenant khác có thể nhận nhầm kết quả đã cache của tenant này); (4) `project-overview` — cùng bộ lọc khi không chọn công ty. Người dùng không bị ép tenant (platform_admin / legacy không `tenant_id`) giữ nguyên hành vi.
+- CHƯA sửa: `GET /work-tasks` (danh sách unified, `applyListFilters`) có cùng kiểu `if (effectiveCompany) …` nhưng chứa cả việc `Cá nhân` có thể không có `company_id`; thêm lọc tenant ở đó cần xử lý riêng để không làm mất việc cá nhân.
+- Kỳ vọng sau deploy (không chọn công ty, tài khoản như trên): total 1.244 → 1.111, quá hạn 119 → 21; số theo từng công ty không đổi. Chưa deploy, chưa chạy endpoint — chỉ `node --check` và chạy thử `applyCompanyTenantScope` với truy vấn giả (enforced → `in company_id`, danh sách rỗng → sentinel, không ép → không lọc).
+
+---
+
 ## 2026-10-16 — Hàng rào chặn ghi cutover: người dùng thấy `CUTOVER_V2_WRITE_FENCED` thô
 
 - Hiện tượng: 16/10 lúc 14:41–15:04 (VN) người dùng gửi bình luận/tải tệp thì trình duyệt bật alert đúng chuỗi `CUTOVER_V2_WRITE_FENCED`. Không phải lỗi ứng dụng: trigger `vpt_cutover_v2_20261015.write_fence` trên 336 bảng public từ chối mọi INSERT/UPDATE/DELETE khi hàng rào đóng; route trả thẳng `e.message` nên chuỗi thô ra tới alert().
