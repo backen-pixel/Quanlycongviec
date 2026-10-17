@@ -27,6 +27,7 @@ export const CRM_CROSS_MODULE_PATHS = [
 
 const BUILTIN_MODULE_SCOPES = new Set([
   'crm', 'work', 'congviec', 'sx', 'vc', 'calc', 'knowledge', 'ketoan', 'muahang',
+  'marketing',
 ]);
 
 export function isCustomModuleScope(scope) {
@@ -144,6 +145,7 @@ export function isWorkPrimaryPath(pathname) {
 export function resolveModuleFromPathname(pathname) {
   const customKey = parseAppModuleKeyFromPath(pathname);
   if (customKey) return customModuleScopeId(customKey);
+  if (pathname.startsWith('/marketing')) return 'marketing';
   if (pathname.startsWith('/tools/voice-recordings')) return 'crm';
   if (pathname.startsWith('/crm')) {
     // /crm/events, /crm/activity, /crm/messenger được dùng chung — nhường

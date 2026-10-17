@@ -7,6 +7,7 @@ import {
   ShoppingBag,
   Sigma,
   GraduationCap,
+  Megaphone,
   Layers,
   Puzzle,
 } from 'lucide-react';
@@ -156,6 +157,24 @@ export const APP_MODULE_DEFINITIONS = [
       iconWrap: 'bg-emerald-500/18 ring-1 ring-emerald-300/30 shadow-inner shadow-emerald-900/20',
       dot: 'bg-emerald-400',
     },
+    mod: 'crm',
+  },
+  {
+    id: 'marketing',
+    path: '/marketing',
+    name: 'Marketing',
+    desc: 'Sản phẩm website, quảng cáo & chuyển đổi',
+    Icon: Megaphone,
+    iconClass: 'bg-gradient-to-br from-pink-500 to-rose-600 text-white shadow-sm',
+    category: 'Tiếp thị',
+    categoryClass: 'bg-pink-50 text-pink-700 border-pink-100',
+    sidebarAccent: {
+      ring: 'ring-pink-400/35 hover:ring-pink-300/55',
+      card: 'bg-gradient-to-br from-pink-500/22 via-pink-500/8 to-transparent hover:from-pink-500/30',
+      iconWrap: 'bg-pink-500/18 ring-1 ring-pink-300/30 shadow-inner shadow-pink-900/20',
+      dot: 'bg-pink-400',
+    },
+    // Dung chung quyen voi CRM: ai vao duoc CRM thi thay module Marketing.
     mod: 'crm',
   },
   {
@@ -310,6 +329,7 @@ export function resolveActiveAppModuleId({
   isMuahang,
   isVC,
   isSX,
+  isMarketing,
   isCRM,
   isCongViec,
   customModuleId = null,
@@ -321,6 +341,8 @@ export function resolveActiveAppModuleId({
   if (isMuahang) return 'muahang';
   if (isVC) return 'vc';
   if (isSX) return 'sx';
+  // Marketing phai xet TRUOC CRM: no dung chung quyen 'crm' nhung la module rieng.
+  if (isMarketing) return 'marketing';
   if (isCRM) return 'crm';
   if (isCongViec) return 'congviec';
   return 'work';

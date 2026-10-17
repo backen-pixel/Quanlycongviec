@@ -374,6 +374,27 @@ const SX_MENU_GROUPS = [
   },
 ];
 
+// MARKETING menu structure
+const MARKETING_MENU_GROUPS = [
+  {
+    id: 'marketing-website',
+    title: '1. Website bán hàng',
+    emoji: '🛒',
+    items: [
+      { to: '/marketing/san-pham-web', icon: ShoppingBag, label: 'Sản phẩm website', end: true, adminOnly: true },
+    ],
+  },
+  {
+    id: 'marketing-ads',
+    title: '2. Quảng cáo & chuyển đổi',
+    emoji: '📣',
+    items: [
+      { to: '/marketing/quang-cao', icon: Megaphone, label: 'Chiến dịch & chuyển đổi', adminOnly: true },
+      { to: '/crm/facebook', icon: MessageCircle, label: 'Facebook / Messenger', socialInboxAccess: true },
+    ],
+  },
+];
+
 // KNOWLEDGE (KIẾN THỨC) menu structure
 const KNOWLEDGE_MENU_GROUPS = [
   {
@@ -965,7 +986,10 @@ export default function Sidebar() {
   const isCustomApp = !!customAppModuleKey;
   const isKnowledge = !isCustomApp && (location.pathname.startsWith('/knowledge') || activeModule === 'knowledge');
   const isCalc = !isCustomApp && !isKnowledge && (location.pathname.startsWith('/calc') || activeModule === 'calc');
-  const isCRM = !isCustomApp && !isKnowledge && !isCalc && isCrmSidebarActive(location.pathname, activeModule, crmOnly);
+  const isMarketing = !isCustomApp && !isKnowledge && !isCalc
+    && (location.pathname.startsWith('/marketing') || activeModule === 'marketing');
+  const isCRM = !isCustomApp && !isKnowledge && !isCalc && !isMarketing
+    && isCrmSidebarActive(location.pathname, activeModule, crmOnly);
   const isKetoan = !isCustomApp && !isKnowledge && !isCalc && (location.pathname.startsWith('/ketoan') || activeModule === 'ketoan');
   const isMuahang = !isCustomApp && !isKnowledge && !isCalc && !isKetoan && (location.pathname.startsWith('/mua-hang') || activeModule === 'muahang');
   const isSX = !isCustomApp && !isKnowledge && !isCalc && !isKetoan && !isMuahang && (location.pathname.startsWith('/sx') || activeModule === 'sx');
@@ -981,8 +1005,9 @@ export default function Sidebar() {
           : isMuahang ? 'muahang'
             : isVC ? 'vc'
               : isSX ? 'sx'
-                : isCongViec ? 'congviec'
-                  : isCRM ? 'crm'
+                : isMarketing ? 'marketing'
+                  : isCongViec ? 'congviec'
+                    : isCRM ? 'crm'
                     : 'platform';
   const customMenuGroups = useMemo(
     () => (isCustomApp ? buildCustomAppModuleMenuGroups(customAppModuleKey, customModMeta) : []),
@@ -1002,7 +1027,9 @@ export default function Sidebar() {
               ? VC_MENU_GROUPS
               : isSX
                 ? SX_MENU_GROUPS
-                : isCongViec
+                : isMarketing
+                  ? MARKETING_MENU_GROUPS
+                  : isCongViec
                   ? CONGVIEC_MENU_GROUPS
                   : isCRM
                     ? null
@@ -1167,6 +1194,7 @@ export default function Sidebar() {
         isMuahang={isMuahang}
         isVC={isVC}
         isSX={isSX}
+        isMarketing={isMarketing}
         isCRM={isCRM}
         isCongViec={isCongViec}
         customModuleId={customModuleId}
@@ -1242,6 +1270,7 @@ export default function Sidebar() {
             isMuahang={isMuahang}
             isVC={isVC}
             isSX={isSX}
+          isMarketing={isMarketing}
           isCRM={isCRM}
           isCongViec={isCongViec}
           customModuleId={customModuleId}

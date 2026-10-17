@@ -202,6 +202,9 @@ const KnowledgeCertificateDetailPage = lazyWithRetry(() => import('./pages/Knowl
 const CategoriesPage = lazyWithRetry(() => import('./pages/CategoriesPage'));
 const PrivacyPage = lazyWithRetry(() => import('./pages/PrivacyPage'));
 const PublicSharePage = lazyWithRetry(() => import('./pages/PublicSharePage'));
+// Module Marketing
+const AdAnalyticsPage = lazyWithRetry(() => import('./pages/AdAnalyticsPage'));
+const MarketingWebProductsPage = lazyWithRetry(() => import('./pages/MarketingWebProductsPage'));
 const VoiceRecordingsPage = lazyWithRetry(() => import('./pages/VoiceRecordingsPage'));
 const MessengerHubPage = lazyWithRetry(() => import('./pages/MessengerHubPage'));
 const ActiveUsersPage = lazyWithRetry(() => import('./pages/ActiveUsersPage'));
@@ -490,6 +493,10 @@ export default function App() {
             <Route path="/management/behavior-insight" element={<Suspense fallback={<PageLoader />}><BehaviorInsightPage /></Suspense>} />
             <Route path="/management/behavior-galaxy" element={<Suspense fallback={<PageLoader />}><BehaviorGalaxyPage /></Suspense>} />
             <Route path="/management/mcp-api" element={<RequireCrmElevated><McpReportApiPage /></RequireCrmElevated>} />
+            {/* Module Marketing */}
+            <Route path="/marketing" element={<Navigate to="/marketing/san-pham-web" replace state={{ moduleContext: 'marketing' }} />} />
+            <Route path="/marketing/san-pham-web" element={<RequireCrmElevated><Suspense fallback={<PageLoader />}><MarketingWebProductsPage /></Suspense></RequireCrmElevated>} />
+            <Route path="/marketing/quang-cao" element={<RequireCrmElevated><Suspense fallback={<PageLoader />}><AdAnalyticsPage /></Suspense></RequireCrmElevated>} />
             <Route path="/management/project-deadlines" element={<RequireCrmElevated><ProjectDeadlineDispatchPage /></RequireCrmElevated>} />
             <Route path="/dashboard/classic" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard/divisions" element={<Navigate to="/dashboard" replace />} />
