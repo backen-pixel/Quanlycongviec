@@ -48,8 +48,13 @@ export function formatCommentTime(iso?: string | null): string {
 
 export function groupCommentsByParent(flat: ProjectComment[]): Map<string, ProjectComment[]> {
   const map = new Map<string, ProjectComment[]>();
+  // Tải theo trang: trả lời có bình luận cha CHƯA tải (nằm ở trang cũ hơn) vẫn phải hiện — coi như bình luận gốc
+  // cho tới khi cha được tải (lúc đó tự lồng lại đúng chỗ).
+  const loaded = new Set(flat.map((c) => String(c.id)));
   for (const c of flat) {
-    const pk = c.parent_id != null && c.parent_id !== '' ? String(c.parent_id) : '__root__';
+    const pk = c.parent_id != null && c.parent_id !== '' && loaded.has(String(c.parent_id))
+      ? String(c.parent_id)
+      : '__root__';
     if (!map.has(pk)) map.set(pk, []);
     map.get(pk)!.push(c);
   }
@@ -57,6 +62,17 @@ export function groupCommentsByParent(flat: ProjectComment[]): Map<string, Proje
     arr.sort((a, b) => String(a.created_at || '').localeCompare(String(b.created_at || '')));
   }
   return map;
+}
+
+/**
+ * Bình luận gửi từ danh sách nhiệm vụ mở đầu bằng «[Tên nhiệm vụ] nội dung». Tách nhãn ra để vẽ nổi bật; không có nhãn thì
+ * `label = null`. Chỉ nhận nhãn Ở ĐẦU (không đụng «[…]» nằm giữa câu); nhãn rỗng / quá dài không tính.
+ */
+export function splitTaskLabel(content?: string | null): { label: string | null; rest: string } {
+  const text = String(content ?? '');
+  const m = text.match(/^\s*\[([^\]\n]{1,120})\]\s*/);
+  if (!m || !m[1].trim()) return { label: null, rest: text };
+  return { label: m[1].trim(), rest: text.slice(m[0].length) };
 }
 
 export function flattenCommentTree(

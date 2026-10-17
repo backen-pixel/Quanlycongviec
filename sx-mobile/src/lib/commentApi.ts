@@ -50,6 +50,7 @@ export function threadCommentCountCacheKey(source: CommentThreadSource): string 
 export function invalidateThreadCommentsCache(source?: CommentThreadSource | null): void {
   if (source) {
     invalidateQuery(threadCommentsCacheKey(source));
+    invalidateQuery(threadCommentsPageCacheKey(source));
     invalidateQuery(threadCommentCountCacheKey(source));
   } else {
     invalidateQueryPrefix(K_THREAD);
@@ -178,6 +179,116 @@ export async function fetchThreadComments(
   return rows;
 }
 
+/** Số bình luận tải mỗi trang — mới nhất trước, cũ hơn tải thêm khi người dùng cuộn lên. */
+export const COMMENT_PAGE_SIZE = 20;
+
+export type ThreadCommentsPage = {
+  /** Cũ → mới. */
+  rows: ProjectComment[];
+  /** Còn bình luận cũ hơn trang này chưa tải. */
+  hasMore: boolean;
+};
+
+export type FetchThreadCommentsPageOptions = {
+  /** `created_at` của bình luận cũ nhất đang có — chỉ lấy những cái cũ hơn mốc này; bỏ trống = trang mới nhất. */
+  before?: string | null;
+  limit?: number;
+  force?: boolean;
+  signal?: AbortSignal;
+};
+
+function threadCommentsPageCacheKey(source: CommentThreadSource): string {
+  return source.kind === 'lead'
+    ? `${K_THREAD}page1:lead:${source.leadId}`
+    : `${K_THREAD}page1:project:${source.projectId}`;
+}
+
+async function fetchThreadCommentsPageNetwork(
+  source: CommentThreadSource,
+  before: string | null,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<ThreadCommentsPage> {
+  if (source.kind === 'lead') {
+    // Máy chủ đã hỗ trợ `limit` + `before` và trả `X-Has-More` — chỉ truyền về trang cần, không đổ cả luồng.
+    const res = await api.get<unknown>(`/crm/leads/${source.leadId}/comments`, {
+      params: { limit, ...(before ? { before } : {}) },
+      signal,
+    });
+    const list = Array.isArray(res.data) ? res.data : [];
+    const rows = list.map((row) => mapAnyCommentRow(row as Record<string, unknown>));
+    const hdr = (res.headers as Record<string, unknown> | undefined)?.['x-has-more'];
+    return { rows, hasMore: String(hdr ?? '') === '1' };
+  }
+  // Luồng «dự án» cũ chưa có phân trang phía máy chủ → lấy cả luồng (có cache) rồi cắt trang ở máy.
+  const all = [...(await fetchThreadComments(source, { signal }))].sort((a, b) =>
+    String(a.created_at || '').localeCompare(String(b.created_at || '')));
+  const older = before ? all.filter((c) => String(c.created_at || '') < before) : all;
+  return { rows: older.slice(-limit), hasMore: older.length > limit };
+}
+
+/**
+ * Một TRANG bình luận (mặc định 20 cái mới nhất; truyền `before` để lấy trang cũ hơn).
+ * Chỉ trang mới nhất được cache ngắn hạn (mở lại bảng bình luận không phải tải lại); trang cũ luôn lấy tươi.
+ */
+export async function fetchThreadCommentsPage(
+  source: CommentThreadSource,
+  opts?: FetchThreadCommentsPageOptions,
+): Promise<ThreadCommentsPage> {
+  const limit = opts?.limit ?? COMMENT_PAGE_SIZE;
+  const before = opts?.before ? String(opts.before) : null;
+  if (before) return fetchThreadCommentsPageNetwork(source, before, limit, opts?.signal);
+  return cachedQuery<ThreadCommentsPage>({
+    key: threadCommentsPageCacheKey(source),
+    ttlMs: QUERY_TTL_SHORT,
+    force: opts?.force,
+    signal: opts?.signal,
+    fetcher: () => fetchThreadCommentsPageNetwork(source, null, limit, opts?.signal),
+  });
+}
+
+/**
+ * Ghép trang MỚI NHẤT vừa tải với những bình luận cũ hơn đã có sẵn (làm mới ngầm khi có tin realtime không được
+ * làm mất phần người dùng đã cuộn tải). `keptOlder` = còn giữ bình luận cũ hơn trang mới.
+ */
+export function mergeLatestComments(
+  prev: ProjectComment[],
+  latest: ProjectComment[],
+): { rows: ProjectComment[]; keptOlder: boolean } {
+  if (!latest.length) return { rows: prev, keptOlder: prev.length > 0 };
+  const ids = new Set(latest.map((c) => String(c.id)));
+  const minLatest = latest.reduce((m, c) => (String(c.created_at || '') < m ? String(c.created_at || '') : m), '￿');
+  const older = prev.filter((c) => !ids.has(String(c.id)) && String(c.created_at || '') < minLatest);
+  return { rows: [...older, ...latest], keptOlder: older.length > 0 };
+}
+
+/** Thêm trang cũ hơn vào đầu danh sách (bỏ trùng). */
+export function prependOlderComments(prev: ProjectComment[], older: ProjectComment[]): ProjectComment[] {
+  if (!older.length) return prev;
+  const ids = new Set(prev.map((c) => String(c.id)));
+  return [...older.filter((c) => !ids.has(String(c.id))), ...prev];
+}
+
+/** `created_at` của bình luận MỚI nhất trong danh sách (mốc «đã xem» khi người dùng mở luồng bình luận). */
+export function newestCommentTime(rows: ProjectComment[]): string | null {
+  let max: string | null = null;
+  for (const c of rows) {
+    const t = String(c.created_at || '');
+    if (t && (max == null || t > max)) max = t;
+  }
+  return max;
+}
+
+/** `created_at` của bình luận cũ nhất trong danh sách (mốc `before` cho trang kế tiếp). */
+export function oldestCommentTime(rows: ProjectComment[]): string | null {
+  let min: string | null = null;
+  for (const c of rows) {
+    const t = String(c.created_at || '');
+    if (t && (min == null || t < min)) min = t;
+  }
+  return min;
+}
+
 async function fetchCommentCountFromIndex(source: CommentThreadSource): Promise<number> {
   if (source.kind === 'lead') {
     const { data } = await api.get<Record<string, { count?: number }>>(
@@ -267,6 +378,36 @@ export async function postThreadComment(
   return created;
 }
 
+/**
+ * Sửa nội dung một bình luận — chỉ TÁC GIẢ sửa được (máy chủ chặn người khác). Chỉ đổi phần chữ, giữ nguyên file đính kèm.
+ * Luồng deal: `PATCH /crm/lead-comments/:id {body}`; luồng dự án cũ: `PATCH /projects/:id/comments/:commentId {content}`.
+ */
+export async function editThreadComment(
+  source: CommentThreadSource,
+  commentId: string,
+  text: string,
+): Promise<ProjectComment> {
+  const trimmed = String(text || '').trim();
+  const res = source.kind === 'project'
+    ? await api.patch<Record<string, unknown>>(`/projects/${source.projectId}/comments/${commentId}`, { content: trimmed })
+    : await api.patch<Record<string, unknown>>(`/crm/lead-comments/${commentId}`, { body: trimmed });
+  invalidateThreadCommentsCache(source);
+  return mapAnyCommentRow((res.data || {}) as Record<string, unknown>);
+}
+
+/**
+ * Xoá một bình luận — tác giả, hoặc admin hệ thống / admin công ty (máy chủ kiểm quyền; không đủ quyền → 403 «Không có quyền
+ * xóa bình luận này»). Luồng deal xoá MỀM (ẩn), luồng dự án cũ xoá hẳn.
+ */
+export async function deleteThreadComment(source: CommentThreadSource, commentId: string): Promise<void> {
+  if (source.kind === 'project') {
+    await api.delete(`/projects/${source.projectId}/comments/${commentId}`);
+  } else {
+    await api.delete(`/crm/lead-comments/${commentId}`);
+  }
+  invalidateThreadCommentsCache(source);
+}
+
 export async function toggleThreadCommentReaction(
   source: CommentThreadSource,
   commentId: string,
@@ -284,6 +425,10 @@ export async function toggleThreadCommentReaction(
   patchQueryData<ProjectComment[]>(threadCommentsCacheKey(source), (prev) =>
     prev.map((c) => (c.id === commentId ? { ...c, reactions: reactions || c.reactions } : c)),
   );
+  patchQueryData<ThreadCommentsPage>(threadCommentsPageCacheKey(source), (prev) => ({
+    ...prev,
+    rows: prev.rows.map((c) => (c.id === commentId ? { ...c, reactions: reactions || c.reactions } : c)),
+  }));
 
   return reactions || { summary: [], mine: null };
 }

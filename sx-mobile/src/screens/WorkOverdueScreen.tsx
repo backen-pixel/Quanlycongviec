@@ -1,12 +1,12 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useRoute } from '@react-navigation/native';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import ProjectCommentModal from '../components/ProjectCommentModal';
 import SpinningLoader from '../components/SpinningLoader';
 import TapHighlight from '../components/TapHighlight';
-import { TODAY_COLOR } from '../components/TaskGroupTag';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import {
@@ -17,13 +17,14 @@ import {
   isCardOverdue,
   type CardChild,
   type OverdueCard,
-  type OverdueSection,
 } from '../lib/overdueCardsApi';
+import { fetchProjectUnreadComments, type UnreadComments } from '../lib/projectCommentCounts';
 import { isQueryAbortError } from '../lib/queryCache';
 import { isSystemAdmin } from '../lib/roles';
 import { formatTaskDeadline } from '../lib/workTasksApi';
 import { useRootNavigation } from '../navigation/useRootNavigation';
 import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
+import type { ProductionProject } from '../types';
 
 /**
  * Tab «Công việc» của QUẢN LÝ: các NHIỆM VỤ QUÁ HẠN và đến hạn HÔM NAY, gom theo đơn — cùng nguồn và cùng cách chia nhóm
@@ -34,7 +35,6 @@ import { Radii, Spacing, colorWithAlpha, type AppColors } from '../theme';
  */
 
 type Row =
-  | { kind: 'head'; key: string; section: OverdueSection }
   | { kind: 'card'; key: string; card: OverdueCard }
   | { kind: 'child'; key: string; child: CardChild }
   | { kind: 'note'; key: string; text: string; loading?: boolean };
@@ -45,8 +45,6 @@ type KidsState = 'loading' | 'error' | 'done';
 const ALL = '';
 /** Khoá chip cho thẻ không có công ty. */
 const NO_COMPANY = '__none__';
-const ORANGE = '#F97316';
-const AMBER = '#F59E0B';
 /** Màu icon xưởng trên chip, xoay vòng theo thứ tự. */
 const CHIP_PALETTE = ['#EF4444', '#64748B', '#8B5CF6', '#0EA5E9', '#10B981'];
 
@@ -55,13 +53,9 @@ function fold(s: string): string {
   return s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'd').toLowerCase();
 }
 
-/** Màu nhấn của một thẻ theo mức nghiêm trọng: càng quá hạn lâu càng đỏ; hôm nay màu tím. */
+/** Màu nhấn của một thẻ: quá hạn luôn ĐỎ (không chia mức cam / vàng nữa); hôm nay màu XANH LÁ. */
 function accentOf(card: OverdueCard, colors: AppColors): string {
-  if (card.kind === 'today') return TODAY_COLOR;
-  const d = cardDaysOverdue(card.deadline);
-  if (d >= 30) return colors.danger;
-  if (d >= 8) return ORANGE;
-  return AMBER;
+  return card.kind === 'today' ? colors.success : colors.danger;
 }
 
 export default function WorkOverdueScreen() {
@@ -74,9 +68,24 @@ export default function WorkOverdueScreen() {
 
   const [cards, setCards] = useState<OverdueCard[]>([]);
   const [picked, setPicked] = useState(ALL);
+  /** Bảng bình luận đang mở (dự án + nhãn = tên nhiệm vụ, hiện cố định phía trên ô nhập); null = đóng. */
+  const [commentFor, setCommentFor] = useState<{ project: ProductionProject; label: string } | null>(null);
+  /** Bình luận MỚI chưa xem của luồng deal theo `projectId` — huy hiệu «N mới» trên icon bình luận (đã xem thì không có). */
+  const [commentUnread, setCommentUnread] = useState<Record<string, UnreadComments>>({});
+  const myId = String(user?.id || (user as { userId?: string } | null)?.userId || '');
+  // Từ Tổng quan (banner / «Tất cả» của danh sách quá hạn) sang đây: chọn đúng xưởng đang lọc ở Tổng quan. Chỉ admin hệ thống
+  // có chip xưởng; vai trò khác máy chủ đã khoá một xưởng nên không cần. `at` đổi mỗi lần điều hướng → áp lại cả khi cùng công ty.
+  const route = useRoute();
+  const navParams = route.params as { companyId?: string; at?: number } | undefined;
+  const navCompany = navParams?.companyId;
+  const navAt = navParams?.at;
+  const scrollRef = useRef<ScrollView>(null);
+  useEffect(() => {
+    if (sysAdmin && navCompany) setPicked(navCompany);
+    // Mỗi lần được chuyển sang từ Tổng quan: về đầu danh sách (không giữ vị trí cuộn của lần xem trước).
+    if (navAt) scrollRef.current?.scrollTo({ y: 0, animated: false });
+  }, [sysAdmin, navCompany, navAt]);
   const [query, setQuery] = useState('');
-  /** Đơn đang thu gọn (ẩn nhiệm vụ bên trong) — khoá = `Section.key`. Mặc định mở hết. */
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   /** Nhiệm vụ đang mở để xem việc con — khoá = `OverdueCard.id`. Mặc định đóng. */
   const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
   /** Việc con đã tải, theo `OverdueCard.id`. */
@@ -122,6 +131,10 @@ export default function WorkOverdueScreen() {
       if (seq !== seqRef.current) return;
       setCards(res.cards);
       setError(null);
+      // Bình luận mới cho huy hiệu: nạp ngầm (không chặn danh sách), lỗi thì thôi không hiện. Thay hẳn (không gộp) để luồng đã xem biến mất.
+      void fetchProjectUnreadComments(res.cards.map((c) => c.projectId), myId)
+        .then((m) => { if (seq === seqRef.current) setCommentUnread(m); })
+        .catch(() => {});
     } catch (e) {
       if (isQueryAbortError(e) || seq !== seqRef.current) return;
       setError('Không tải được danh sách. Kéo xuống để thử lại.');
@@ -170,99 +183,35 @@ export default function WorkOverdueScreen() {
     ).includes(needle));
   }, [cards, picked, needle]);
 
-  const sections = useMemo(() => groupCardsByProject(shown), [shown]);
+  // Danh sách phẳng các nhiệm vụ (không còn dòng tên đơn): vẫn xếp theo thứ tự gom đơn nên nhiệm vụ cùng đơn đứng liền nhau.
+  const flatCards = useMemo(() => groupCardsByProject(shown).flatMap((s) => s.cards), [shown]);
   const rows = useMemo(() => {
     const out: Row[] = [];
-    for (const s of sections) {
-      out.push({ kind: 'head', key: `h-${s.key}`, section: s });
-      if (collapsed[s.key]) continue;
-      for (const c of s.cards) {
-        out.push({ kind: 'card', key: `c-${c.id}`, card: c });
-        if (!expandedCards[c.id]) continue;
-        const list = kids[c.id];
-        const st = kidsState[c.projectId];
-        if (list && list.length > 0) {
-          for (const k of list) out.push({ kind: 'child', key: `k-${c.id}-${k.id}`, child: k });
-        } else if (list) {
-          out.push({ kind: 'note', key: `n-${c.id}`, text: 'Nhiệm vụ này chưa có việc con.' });
-        } else if (st === 'error') {
-          out.push({ kind: 'note', key: `n-${c.id}`, text: 'Không tải được việc con. Chạm nhiệm vụ để mở lại và thử lại.' });
-        } else if (st === 'done') {
-          out.push({ kind: 'note', key: `n-${c.id}`, text: 'Máy chủ chưa hỗ trợ xem việc con — cần cập nhật máy chủ.' });
-        } else {
-          out.push({ kind: 'note', key: `n-${c.id}`, text: 'Đang tải việc con…', loading: true });
-        }
+    for (const c of flatCards) {
+      out.push({ kind: 'card', key: `c-${c.id}`, card: c });
+      if (!expandedCards[c.id]) continue;
+      const list = kids[c.id];
+      const st = kidsState[c.projectId];
+      if (list && list.length > 0) {
+        for (const k of list) out.push({ kind: 'child', key: `k-${c.id}-${k.id}`, child: k });
+      } else if (list) {
+        out.push({ kind: 'note', key: `n-${c.id}`, text: 'Nhiệm vụ này chưa có việc con.' });
+      } else if (st === 'error') {
+        out.push({ kind: 'note', key: `n-${c.id}`, text: 'Không tải được việc con. Chạm nhiệm vụ để mở lại và thử lại.' });
+      } else if (st === 'done') {
+        out.push({ kind: 'note', key: `n-${c.id}`, text: 'Máy chủ chưa hỗ trợ xem việc con — cần cập nhật máy chủ.' });
+      } else {
+        out.push({ kind: 'note', key: `n-${c.id}`, text: 'Đang tải việc con…', loading: true });
       }
     }
     return out;
-  }, [sections, collapsed, expandedCards, kids, kidsState]);
-
-  const toggleSection = useCallback((key: string) => {
-    setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }));
-  }, []);
-  const allCollapsed = sections.length > 0 && sections.every((s) => collapsed[s.key]);
-  const toggleAll = useCallback(() => {
-    setCollapsed(allCollapsed ? {} : Object.fromEntries(sections.map((s) => [s.key, true])));
-  }, [allCollapsed, sections]);
+  }, [flatCards, expandedCards, kids, kidsState]);
 
   const subtitle = sysAdmin
     ? (picked === ALL ? 'Tất cả công việc cần theo dõi' : `${companyChips.find((c) => c.id === picked)?.name || 'Xưởng đã chọn'} · cần theo dõi`)
     : `${(cards[0]?.companyName || 'Xưởng của bạn').trim()} · cần theo dõi`;
 
   const renderRow = ({ item }: { item: Row }) => {
-    if (item.kind === 'head') {
-      const s = item.section;
-      const overdueN = s.cards.filter((c) => c.kind === 'overdue').length;
-      const todayN = s.cards.length - overdueN;
-      const oldest = overdueN > 0 ? cardDaysOverdue(s.cards[0].deadline) : 0;
-      const accent = overdueN > 0 ? colors.danger : TODAY_COLOR;
-      const isCollapsed = !!collapsed[s.key];
-      return (
-        <TapHighlight
-          style={[styles.card, styles.headCard]}
-          onPress={() => toggleSection(s.key)}
-        >
-          <View style={[styles.accent, { backgroundColor: accent }]} />
-          <View style={[styles.iconCircle, { backgroundColor: colorWithAlpha(accent, 0.14) }]}>
-            <Ionicons name="clipboard" size={22} color={accent} />
-          </View>
-          <View style={styles.body}>
-            <Text style={styles.headTitle} numberOfLines={1}>
-              {s.code ? `${s.code} · ` : ''}{s.title || 'Đơn hàng'}
-            </Text>
-            {overdueN > 0 ? (
-              <View style={styles.metaRow}>
-                <Ionicons name="alert-circle-outline" size={15} color={colors.danger} />
-                <Text style={[styles.meta, { color: colors.danger }]} numberOfLines={2}>
-                  {`${overdueN} quá hạn${oldest > 0 ? ` · ${oldest} ngày` : ''}`}
-                  {sysAdmin && s.companyName ? ` · ${s.companyName.trim()}` : ''}
-                </Text>
-              </View>
-            ) : null}
-            {todayN > 0 ? (
-              <View style={styles.metaRow}>
-                <Ionicons name="today-outline" size={15} color={TODAY_COLOR} />
-                <Text style={[styles.meta, { color: TODAY_COLOR }]} numberOfLines={2}>
-                  {`${todayN} đến hạn hôm nay`}
-                  {overdueN === 0 && sysAdmin && s.companyName ? ` · ${s.companyName.trim()}` : ''}
-                </Text>
-              </View>
-            ) : null}
-          </View>
-          {s.projectId ? (
-            <Pressable
-              onPress={() => openProjectDetail(s.projectId)}
-              hitSlop={10}
-              accessibilityLabel="Mở chi tiết dự án"
-              style={styles.openBtn}
-            >
-              <Ionicons name="open-outline" size={19} color={colors.primary} />
-            </Pressable>
-          ) : null}
-          <Ionicons name={isCollapsed ? 'chevron-forward' : 'chevron-down'} size={20} color={colors.textMuted} />
-        </TapHighlight>
-      );
-    }
     if (item.kind === 'note') {
       return (
         <View style={[styles.noteRow]}>
@@ -296,7 +245,6 @@ export default function WorkOverdueScreen() {
     const accent = accentOf(c, colors);
     const isToday = c.kind === 'today';
     const d = cardDaysOverdue(c.deadline);
-    const open = Math.max(0, c.childTotal - c.childCompleted);
     const isOpen = !!expandedCards[c.id];
     return (
       // Nhiệm vụ của đơn: hàng phẳng nền xám; bấm để mở / đóng danh sách việc con bên trong.
@@ -306,6 +254,13 @@ export default function WorkOverdueScreen() {
       >
         <View style={[styles.taskDot, { backgroundColor: accent }]} />
         <View style={styles.taskBodyFlat}>
+          {/* Không còn dòng tên đơn nên mỗi nhiệm vụ tự ghi mã đơn (và xưởng với admin hệ thống) để biết thuộc đơn nào. */}
+          {c.projectCode ? (
+            <Text style={[styles.taskCode, { color: accent }]} numberOfLines={1}>
+              {c.projectCode}
+              {sysAdmin && c.companyName ? ` · ${c.companyName.trim()}` : ''}
+            </Text>
+          ) : null}
           <View style={styles.taskTop}>
             <Text style={styles.taskTitleFlat} numberOfLines={2}>{c.title}</Text>
             <Text style={[styles.taskTagFlat, { color: accent }]} numberOfLines={1}>
@@ -317,15 +272,48 @@ export default function WorkOverdueScreen() {
             {`Hạn ${formatTaskDeadline(c.deadline)} · ${c.assigneeName || 'Chưa giao'}`}
           </Text>
           {c.childTotal > 0 ? (
-            <Text style={styles.taskMetaFlat} numberOfLines={1}>{`${open}/${c.childTotal} việc chưa xong`}</Text>
+            <Text style={styles.taskMetaFlat} numberOfLines={1}>{`${c.childCompleted}/${c.childTotal} việc đã xong`}</Text>
           ) : null}
         </View>
+        {c.projectId ? (
+          <Pressable
+            onPress={() => openProjectDetail(c.projectId)}
+            hitSlop={10}
+            accessibilityLabel="Mở chi tiết dự án"
+            style={styles.openBtn}
+          >
+            <Ionicons name="open-outline" size={18} color={colors.primary} />
+          </Pressable>
+        ) : null}
         <Ionicons
           name={isOpen ? 'chevron-down' : 'chevron-forward'}
           size={18}
           color={colors.textMuted}
           style={styles.taskChevron}
         />
+        {/* Bình luận: góc dưới bên phải, mở NGAY bảng bình luận của dự án (không rời màn hình), ô nhập điền sẵn tên nhiệm vụ. */}
+        {c.projectId ? (
+          <Pressable
+            onPress={() => setCommentFor({
+              project: { id: c.projectId, code: c.projectCode, name: c.projectName },
+              label: c.title,
+            })}
+            hitSlop={10}
+            accessibilityLabel={`Bình luận dự án ${c.projectCode}`}
+            style={styles.commentBtn}
+          >
+            <Ionicons name="chatbubble-ellipses-outline" size={21} color={colors.primary} />
+            {/* Chỉ hiện khi có bình luận MỚI chưa xem («2+», xem rồi thì biến mất); đè lên góc icon cho gọn, dễ nhìn. */}
+            {commentUnread[c.projectId] ? (() => {
+              const label = `${commentUnread[c.projectId].count}+`;
+              return (
+                <View style={[styles.commentBadge, { width: Math.max(19, 9 + label.length * 7) }]}>
+                  <Text style={styles.commentBadgeTxt} numberOfLines={1}>{label}</Text>
+                </View>
+              );
+            })() : null}
+          </Pressable>
+        ) : null}
       </TapHighlight>
     );
   };
@@ -399,13 +387,6 @@ export default function WorkOverdueScreen() {
         ) : null}
       </View>
 
-      {!loading && sections.length > 1 ? (
-        <Pressable onPress={toggleAll} hitSlop={8} style={styles.collapseAll}>
-          <Ionicons name={allCollapsed ? 'chevron-expand' : 'chevron-collapse'} size={16} color={colors.primary} />
-          <Text style={styles.collapseAllText}>{allCollapsed ? 'Mở rộng tất cả' : 'Thu gọn tất cả'}</Text>
-        </Pressable>
-      ) : null}
-
       {loading ? (
         <View style={styles.center}>
           <SpinningLoader size="large" color={colors.primary} />
@@ -414,6 +395,7 @@ export default function WorkOverdueScreen() {
         // ScrollView vẽ TOÀN BỘ dòng (danh sách quá hạn ngắn) thay vì FlatList: FlatList tính sai vị trí khi thu gọn / mở một đơn
         // giữa danh sách đã đo (dòng chồng nhau, vùng bấm lệch → bấm tiêu đề đơn không ăn).
         <ScrollView
+          ref={scrollRef}
           contentContainerStyle={styles.listContent}
           keyboardShouldPersistTaps="handled"
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
@@ -435,6 +417,28 @@ export default function WorkOverdueScreen() {
         </ScrollView>
       )}
       </View>
+
+      <ProjectCommentModal
+        visible={!!commentFor}
+        project={commentFor?.project ?? null}
+        taskLabel={commentFor?.label}
+        onClose={() => {
+          const pid = commentFor?.project.id;
+          setCommentFor(null);
+          // Đã xem xong: tính lại huy hiệu của dự án này (đã ghi nhận «đã xem» khi mở bảng) → «mới» tắt.
+          if (pid) {
+            void fetchProjectUnreadComments([pid], myId)
+              .then((m) => setCommentUnread((prev) => {
+                const next = { ...prev };
+                if (m[pid]) next[pid] = m[pid];
+                else delete next[pid];
+                return next;
+              }))
+              .catch(() => {});
+          }
+        }}
+        onPosted={() => { /* huy hiệu chỉ đếm bình luận MỚI của người khác nên không đổi khi gửi */ }}
+      />
     </View>
   );
 }
@@ -548,8 +552,6 @@ function createStyles(colors: AppColors) {
       flexDirection: 'row',
       alignItems: 'flex-start',
       gap: 10,
-      marginLeft: 16,
-      marginTop: -6,
       paddingVertical: 11,
       paddingHorizontal: 12,
       borderRadius: 14,
@@ -558,6 +560,20 @@ function createStyles(colors: AppColors) {
     },
     taskDot: { width: 8, height: 8, borderRadius: 4, marginTop: 7 },
     taskChevron: { marginTop: 3 },
+    commentBtn: { position: 'absolute', right: 14, bottom: 9, padding: 2 },
+    commentBadge: {
+      position: 'absolute',
+      top: -9,
+      right: -8,
+      height: 19,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: colors.danger,
+      borderWidth: 1.5,
+      borderColor: colorWithAlpha(colors.textMuted, 0.13),
+    },
+    commentBadgeTxt: { color: '#FFFFFF', fontSize: 11, fontWeight: '800' },
     // Việc con bên trong nhiệm vụ: thụt vào thêm một bậc, nền nhạt hơn dòng nhiệm vụ.
     childRow: {
       flexDirection: 'row',
@@ -588,6 +604,7 @@ function createStyles(colors: AppColors) {
     taskBodyFlat: { flex: 1, minWidth: 0, gap: 2 },
     taskTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
     taskTitleFlat: { flex: 1, color: colors.text, fontSize: 14, fontWeight: '600' },
+    taskCode: { color: colors.primary, fontSize: 11.5, fontWeight: '800', letterSpacing: 0.2 },
     taskTagFlat: { fontSize: 12, fontWeight: '700', marginTop: 1 },
     taskMetaFlat: { color: colors.textMuted, fontSize: 12, fontWeight: '500' },
     accent: { position: 'absolute', left: 0, top: 0, bottom: 0, width: 6 },

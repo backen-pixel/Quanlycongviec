@@ -392,12 +392,13 @@ export default function KanbanScreen() {
     [filterDealCompany, clientCompaniesForDeal],
   );
 
-  const clientCompaniesWorkshopId = useMemo(() => {
+  // Danh sách là «khách của MỘT xưởng» và máy chủ loại chính xưởng đó ra → không chọn được xưởng thì hỏi CẢ HAI rồi gộp
+  // (trước đây chỉ xưởng đầu tiên = Metalla nên thiếu đúng công ty Metalla).
+  const clientCompaniesWorkshopKey = useMemo(() => {
     if (filterCompany && isMetallaOrHucabiCompanyId(filterCompany, companies)) {
-      return filterCompany;
+      return String(filterCompany);
     }
-    const opts = productionCreateCompanyOptions(companies);
-    return opts[0]?.id ? String(opts[0].id) : '';
+    return productionCreateCompanyOptions(companies).map((o) => String(o.id)).filter(Boolean).join(',');
   }, [filterCompany, companies]);
 
   const workshopCompanyPickerList = useMemo(() => {
@@ -744,17 +745,31 @@ export default function KanbanScreen() {
   }, [dealCompanyParam]);
 
   useEffect(() => {
-    const cid = String(clientCompaniesWorkshopId || '').trim();
-    if (!cid) {
+    const ids = clientCompaniesWorkshopKey.split(',').filter(Boolean);
+    if (!ids.length) {
       setClientCompaniesForDeal([]);
       return;
     }
     let cancel = false;
-    void fetchClientCompanies(cid)
-      .then((list) => { if (!cancel) setClientCompaniesForDeal(list); })
-      .catch(() => { if (!cancel) setClientCompaniesForDeal([]); });
+    void Promise.all(ids.map((cid) => fetchClientCompanies(cid).catch(() => [])))
+      .then((lists) => {
+        if (cancel) return;
+        // Gộp các xưởng: trùng công ty CRM (cùng client_company_id) hoặc trùng tên danh mục ngoài thì chỉ giữ một dòng.
+        const seen = new Set<string>();
+        const merged: Awaited<ReturnType<typeof fetchClientCompanies>> = [];
+        for (const c of lists.flat()) {
+          const key = c.client_company_id
+            ? `crm:${c.client_company_id}`
+            : `ext:${(c.short_name || c.name).trim().toLowerCase()}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(c);
+        }
+        merged.sort((a, b) => String(a.short_name || a.name).localeCompare(String(b.short_name || b.name), 'vi'));
+        setClientCompaniesForDeal(merged);
+      });
     return () => { cancel = true; };
-  }, [clientCompaniesWorkshopId]);
+  }, [clientCompaniesWorkshopKey]);
 
   useEffect(() => {
     if (!showDealCompanyFilter || filterDealCompany || isAdmin) return;
@@ -840,18 +855,20 @@ export default function KanbanScreen() {
     if (!showDealCompanyFilter) return [];
     const crm = clientCompaniesForDeal.filter((c) => c.client_company_id);
     const ext = clientCompaniesForDeal.filter((c) => !c.client_company_id);
-    const opts: { id: string; label: string }[] = [];
+    const opts: { id: string; label: string; group?: string }[] = [];
     if (canPickDealCompany) {
       opts.push({ id: '', label: 'Tất cả công ty đặt hàng' });
     }
+    // Chia nhóm như web: «Công ty CRM» / «Danh mục công ty ngoài».
     crm.forEach((c) => {
       opts.push({
         id: c.id,
-        label: `${c.short_name || c.name}${c.source === 'workshop' ? ' · đã liên kết' : ''}`,
+        label: `${c.short_name || c.name}${c.source === 'workshop' ? ' · đã liên kết' : ''}`.trim(),
+        group: 'Công ty CRM',
       });
     });
     ext.forEach((c) => {
-      opts.push({ id: c.id, label: c.short_name || c.name });
+      opts.push({ id: c.id, label: c.short_name || c.name, group: 'Danh mục công ty ngoài' });
     });
     return opts;
   }, [showDealCompanyFilter, clientCompaniesForDeal, canPickDealCompany]);

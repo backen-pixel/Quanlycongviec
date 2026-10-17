@@ -14,7 +14,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { HIT_TARGET, Radii, Spacing } from '../theme';
 
-export type FilterOption = { id: string; label: string };
+/** `group`: tên nhóm — khi đổi nhóm so với dòng liền trước thì chèn tiêu đề nhóm (các dòng cùng nhóm phải đứng liền nhau). */
+export type FilterOption = { id: string; label: string; group?: string };
 
 type Props = {
   visible: boolean;
@@ -119,6 +120,19 @@ export default function FilterPickerModal({
           borderBottomColor: colors.border,
           minHeight: HIT_TARGET,
         },
+        groupHeader: {
+          paddingHorizontal: Spacing.lg,
+          paddingTop: 14,
+          paddingBottom: 6,
+          color: colors.textMuted,
+          fontSize: 12,
+          fontWeight: '800',
+          letterSpacing: 0.4,
+          textTransform: 'uppercase',
+          backgroundColor: colors.cardAlt,
+        },
+        /** Dòng thuộc một nhóm: thụt vào so với tiêu đề nhóm. */
+        rowGrouped: { paddingLeft: Spacing.lg + 12 },
         rowActive: { backgroundColor: colors.primarySoft },
         rowText: { flex: 1, color: colors.text, fontSize: 14, fontWeight: '600', marginRight: 8 },
         rowTextActive: { color: colors.primary, fontWeight: '800' },
@@ -167,11 +181,16 @@ export default function FilterPickerModal({
             style={styles.list}
             keyboardShouldPersistTaps="handled"
             ListEmptyComponent={<Text style={styles.empty}>Không có kết quả</Text>}
-            renderItem={({ item }) => {
+            renderItem={({ item, index }) => {
               const active = selectedId === item.id;
+              const prevGroup = index > 0 ? filtered[index - 1].group : undefined;
+              const showGroup = Boolean(item.group) && item.group !== prevGroup;
+              const grouped = Boolean(item.group);
               return (
+                <>
+                  {showGroup ? <Text style={styles.groupHeader}>{item.group}</Text> : null}
                 <TouchableOpacity
-                  style={[styles.row, active && styles.rowActive]}
+                  style={[styles.row, grouped && styles.rowGrouped, active && styles.rowActive]}
                   onPress={() => {
                     onSelect(item.id);
                     onClose();
@@ -190,6 +209,7 @@ export default function FilterPickerModal({
                   </Text>
                   {active ? <Ionicons name="checkmark" size={18} color={colors.primary} /> : null}
                 </TouchableOpacity>
+                </>
               );
             }}
           />

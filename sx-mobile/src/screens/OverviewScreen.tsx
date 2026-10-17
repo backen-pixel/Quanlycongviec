@@ -124,6 +124,8 @@ const PAGE_HPAD = 14;
 const ALERT_BADGE_W = 76;
 /** Số nhóm deal trên mỗi trang preview Tổng quan (không phải số task). */
 const TASK_PAGE_SIZE = 4;
+/** Số nhiệm vụ quá hạn hiện ở Tổng quan của quản lý (danh sách đầy đủ ở tab Công việc). */
+const MISSION_PREVIEW_LIMIT = 4;
 const DEAL_PAGE_SIZE = 4;
 const PRIORITY_FETCH_LIMIT = 80;
 /** Số dòng xem trước mỗi mục ở bố cục nhân viên — phần còn lại qua «Xem tất cả».
@@ -469,8 +471,7 @@ export default function OverviewScreen() {
         if (ownOnly) {
           setKpis(computeSxBoardKpis(scoped, bestBoard.stages));
         } else if (summary) {
-          const client = computeSxBoardKpis(bestBoard.projects, bestBoard.stages);
-          setKpis({
+          const client = computeSxBoardKpis(bestBoard.projects, bestBoard.stages);          setKpis({
             ...EMPTY_KPI,
             total: summary.total,
             producing: summary.producing,
@@ -596,39 +597,59 @@ export default function OverviewScreen() {
   /** Chỉ admin hệ thống được chọn; người khác chỉ thấy (đã khoá theo công ty của họ). */
   const canPickDealCompany = sysAdmin && showDealCompanyFilter;
 
-  /** Xưởng dùng để hỏi danh sách công ty đặt hàng: xưởng đang chọn nếu là HCB/Metalla, không thì xưởng đầu tiên. */
-  const clientCompaniesWorkshopId = useMemo(() => {
-    if (filterCompany && isMetallaOrHucabiCompanyId(filterCompany, companies)) return filterCompany;
-    const opts = productionCreateCompanyOptions(companies);
-    return opts[0]?.id ? String(opts[0].id) : '';
+  /**
+   * Xưởng dùng để hỏi danh sách công ty đặt hàng: xưởng đang chọn nếu là HCB/Metalla; nếu không (vd đang xem công ty khác /
+   * chưa chọn xưởng) thì hỏi CẢ HAI xưởng rồi gộp. Danh sách là «khách của MỘT xưởng» và máy chủ loại chính xưởng đó ra, nên
+   * chỉ hỏi một xưởng (trước đây luôn xưởng đầu tiên = Metalla) thì chip thiếu đúng công ty Metalla.
+   */
+  const clientCompaniesWorkshopIds = useMemo(() => {
+    if (filterCompany && isMetallaOrHucabiCompanyId(filterCompany, companies)) return [String(filterCompany)];
+    return productionCreateCompanyOptions(companies).map((o) => String(o.id)).filter(Boolean);
   }, [filterCompany, companies]);
+  const clientCompaniesWorkshopKey = clientCompaniesWorkshopIds.join(',');
 
   useEffect(() => {
-    const cid = String(clientCompaniesWorkshopId || '').trim();
-    if (!showDealCompanyFilter || !cid) {
+    const ids = clientCompaniesWorkshopKey.split(',').filter(Boolean);
+    if (!showDealCompanyFilter || !ids.length) {
       setClientCompaniesForDeal([]);
       return undefined;
     }
     let cancel = false;
-    void fetchClientCompanies(cid)
-      .then((list) => { if (!cancel) setClientCompaniesForDeal(list); })
-      .catch(() => { if (!cancel) setClientCompaniesForDeal([]); });
+    void Promise.all(ids.map((cid) => fetchClientCompanies(cid).catch(() => [])))
+      .then((lists) => {
+        if (cancel) return;
+        // Gộp các xưởng: trùng công ty CRM (cùng client_company_id) hoặc trùng tên danh mục ngoài thì chỉ giữ một dòng.
+        const seen = new Set<string>();
+        const merged: Awaited<ReturnType<typeof fetchClientCompanies>> = [];
+        for (const c of lists.flat()) {
+          const key = c.client_company_id
+            ? `crm:${c.client_company_id}`
+            : `ext:${(c.short_name || c.name).trim().toLowerCase()}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          merged.push(c);
+        }
+        merged.sort((a, b) => String(a.short_name || a.name).localeCompare(String(b.short_name || b.name), 'vi'));
+        setClientCompaniesForDeal(merged);
+      });
     return () => { cancel = true; };
-  }, [showDealCompanyFilter, clientCompaniesWorkshopId]);
+  }, [showDealCompanyFilter, clientCompaniesWorkshopKey]);
 
   const dealCompanyPickerOptions = useMemo(() => {
     if (!showDealCompanyFilter) return [];
     const crm = clientCompaniesForDeal.filter((c) => c.client_company_id);
     const ext = clientCompaniesForDeal.filter((c) => !c.client_company_id);
-    const opts: { id: string; label: string }[] = [];
+    const opts: { id: string; label: string; group?: string }[] = [];
     if (canPickDealCompany) opts.push({ id: '', label: 'Tất cả công ty đặt hàng' });
+    // Chia nhóm như web: «Công ty CRM» / «Danh mục công ty ngoài».
     crm.forEach((c) => {
       opts.push({
         id: c.id,
-        label: `${c.short_name || c.name}${c.source === 'workshop' ? ' · đã liên kết' : ''}`,
+        label: `${c.short_name || c.name}${c.source === 'workshop' ? ' · đã liên kết' : ''}`.trim(),
+        group: 'Công ty CRM',
       });
     });
-    ext.forEach((c) => opts.push({ id: c.id, label: c.short_name || c.name }));
+    ext.forEach((c) => opts.push({ id: c.id, label: c.short_name || c.name, group: 'Danh mục công ty ngoài' }));
     return opts;
   }, [showDealCompanyFilter, clientCompaniesForDeal, canPickDealCompany]);
 
@@ -829,7 +850,6 @@ export default function OverviewScreen() {
   useEffect(() => () => {
     if (summaryDebounceRef.current) clearTimeout(summaryDebounceRef.current);
   }, []);
-
   // Quay lại tab Tổng quan → catch-up nhẹ (realtime onlyWhenFocused bỏ qua khi ở tab khác).
   useFocusEffect(
     useCallback(() => {
@@ -866,17 +886,19 @@ export default function OverviewScreen() {
 
   // Quản lý: danh sách quá hạn là NHIỆM VỤ gom theo đơn (như tab Công việc); tải lỗi / nhân viên thì dùng danh sách việc như cũ.
   const useMissionList = teamView && teamOverdueCards != null;
-  const missionSections = useMemo(
-    () => (teamOverdueCards ? groupCardsByProject(teamOverdueCards) : []),
+  // Danh sách PHẲNG các nhiệm vụ (không còn dòng gộp theo đơn, như tab Công việc); vẫn theo thứ tự gom đơn nên cùng đơn đứng liền nhau.
+  const missionCards = useMemo(
+    () => (teamOverdueCards ? groupCardsByProject(teamOverdueCards).flatMap((s) => s.cards) : []),
     [teamOverdueCards],
   );
-  const listSectionCount = useMissionList ? missionSections.length : openTaskSections.length;
+  const listSectionCount = useMissionList ? missionCards.length : openTaskSections.length;
   const taskPages = totalPagesOf(listSectionCount, TASK_PAGE_SIZE);
   const dealPages = totalPagesOf(overdueDeals.length, DEAL_PAGE_SIZE);
   const safeTaskPage = Math.min(taskPage, taskPages);
   const safeDealPage = Math.min(dealPage, dealPages);
   const previewTaskSections = pageSlice(openTaskSections, safeTaskPage, TASK_PAGE_SIZE);
-  const previewMissionSections = pageSlice(missionSections, safeTaskPage, TASK_PAGE_SIZE);
+  // Tổng quan chỉ là TÓM TẮT: 5 nhiệm vụ quá hạn nặng nhất, phần còn lại xem ở «Tất cả» (tab Công việc) — không phân trang.
+  const previewMissionCards = missionCards.slice(0, MISSION_PREVIEW_LIMIT);
   const previewDeals = pageSlice(overdueDeals, safeDealPage, DEAL_PAGE_SIZE);
 
   useEffect(() => {
@@ -902,9 +924,11 @@ export default function OverviewScreen() {
       tabNav.navigate('Work', {
         scope: teamView ? 'team' : 'mine',
         status,
+        // Giữ đúng công ty đang lọc ở Tổng quan (banner / danh sách đã đếm theo công ty này).
+        ...(teamView ? { at: Date.now(), ...(filterCompany ? { companyId: String(filterCompany) } : {}) } : {}),
       });
     },
-    [tabNav, teamView],
+    [tabNav, teamView, filterCompany],
   );
 
   // ── Dữ liệu cho bố cục NHÂN VIÊN ────────────────────────────────────────
@@ -1082,32 +1106,12 @@ export default function OverviewScreen() {
   );
 
   // Đã bỏ «Tổng dự án» và «Hoàn tất» khỏi lưới theo yêu cầu (số vẫn xem được ở tab Dự án).
+  // Bốn ô chỉ để XEM số liệu — không có `onPress` nên bấm vào không chuyển màn hình (lối vào đã có ở thanh tab, banner quá hạn và mục «Dự án quá hạn»).
   const kpiItems: KpiStat[] = [
-    { key: 'producing', label: 'Đang sản xuất', value: kpis.producing, color: KPI_CYAN, icon: 'play-outline', onPress: goKanban },
-    {
-      key: 'await',
-      label: 'Chờ vận chuyển',
-      value: kpis.awaitingDelivery,
-      color: KPI_PURPLE,
-      icon: 'pause-outline',
-      onPress: goKanban,
-    },
-    {
-      key: 'shipped',
-      label: 'Đã vận chuyển',
-      value: kpis.shipped,
-      color: colors.success,
-      icon: 'checkmark-outline',
-      onPress: goKanban,
-    },
-    {
-      key: 'overdue',
-      label: 'Quá hạn dự án',
-      value: kpis.overdue,
-      color: colors.danger,
-      icon: 'alert-circle-outline',
-      onPress: () => { if (kpis.overdue > 0) openOverdueProjects(); else goKanban(); },
-    },
+    { key: 'producing', label: 'Đang sản xuất', value: kpis.producing, color: KPI_CYAN, icon: 'play-outline' },
+    { key: 'await', label: 'Chờ vận chuyển', value: kpis.awaitingDelivery, color: KPI_PURPLE, icon: 'pause-outline' },
+    { key: 'shipped', label: 'Đã vận chuyển', value: kpis.shipped, color: colors.success, icon: 'checkmark-outline' },
+    { key: 'overdue', label: 'Quá hạn dự án', value: kpis.overdue, color: colors.danger, icon: 'alert-circle-outline' },
   ];
 
   /**
@@ -1488,97 +1492,49 @@ export default function OverviewScreen() {
           onAction={() => goWork(bannerTaskCount > 0 ? 'overdue' : 'all')}
         />
         <View style={styles.card}>
-          {(useMissionList ? previewMissionSections.length : previewTaskSections.length) === 0 ? (
+          {(useMissionList ? previewMissionCards.length : previewTaskSections.length) === 0 ? (
             <View style={styles.emptyRow}>
               <Ionicons name="checkbox-outline" size={20} color={colors.textFaint} />
               <Text style={styles.emptyTxt}>{`Không có ${useMissionList ? 'nhiệm vụ' : 'công việc'} quá hạn`}</Text>
             </View>
           ) : useMissionList ? (
             <>
-              {previewMissionSections.map((section, sIdx) => {
-                const expanded = !!expandedTaskLeads[section.key];
-                const oldest = cardDaysOverdue(section.cards[0].deadline);
+              {previewMissionCards.map((c, idx) => {
+                const days = cardDaysOverdue(c.deadline);
                 return (
-                  <View key={section.key} style={sIdx > 0 ? styles.dealGroupGap : undefined}>
-                    <Pressable style={styles.dealGroupHead} onPress={() => toggleOverviewTaskSection(section.key)}>
-                      <Ionicons name={expanded ? 'chevron-down' : 'chevron-forward'} size={16} color={colors.textMuted} />
-                      <View style={[styles.taskDot, { backgroundColor: colors.danger }]} />
-                      <View style={{ flex: 1, minWidth: 0 }}>
-                        <Text style={styles.dealGroupTitle} numberOfLines={1}>
-                          {section.code ? `${section.code} · ` : ''}{section.title || 'Đơn hàng'}
-                        </Text>
-                        <Text style={styles.dealGroupMeta} numberOfLines={2}>
-                          <Text style={{ color: colors.danger }}>
-                            {`${section.cards.length} nhiệm vụ quá hạn${oldest > 0 ? ` · lâu nhất ${oldest} ngày` : ''}`}
-                          </Text>
-                          {section.companyName ? ` · ${section.companyName.trim()}` : ''}
+                  <Pressable
+                    key={c.id}
+                    style={({ pressed }) => [styles.rowItem, idx > 0 && styles.rowBorder, pressed && styles.pressed]}
+                    // Chạm một nhiệm vụ → sang tab Công việc (danh sách quá hạn) theo đúng công ty đang lọc, không mở thẳng dự án.
+                    onPress={() => goWork('overdue')}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${c.title}, đơn ${c.projectCode}, mở tab Công việc`}
+                  >
+                    <View style={[styles.taskDot, { backgroundColor: colors.danger, alignSelf: 'flex-start', marginTop: 5 }]} />
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      {/* Gọn 2 dòng: tên + số ngày quá hạn; dưới là mã đơn · người nhận · tiến độ (không còn dòng «Hạn …» riêng, số ngày đã nói rõ mức trễ). */}
+                      <View style={styles.missionTop}>
+                        <Text style={[styles.rowTitle, { flex: 1 }]} numberOfLines={1}>{c.title}</Text>
+                        <Text style={styles.missionTag} numberOfLines={1}>
+                          {days > 0 ? `Quá ${days} ngày` : 'Quá hạn'}
                         </Text>
                       </View>
-                      {section.projectId ? (
-                        <Pressable
-                          style={({ pressed }) => [styles.viewBtn, pressed && styles.pressed]}
-                          hitSlop={6}
-                          onPress={() => openProjectDetail(String(section.projectId))}
-                          accessibilityLabel={`Xem dự án ${section.code}`}
-                        >
-                          <Text style={styles.viewBtnTxt}>Xem</Text>
-                        </Pressable>
-                      ) : null}
-                    </Pressable>
-                    {expanded
-                      ? section.cards.map((c, idx) => {
-                          const days = cardDaysOverdue(c.deadline);
-                          const open = Math.max(0, c.childTotal - c.childCompleted);
-                          return (
-                            <Pressable
-                              key={c.id}
-                              style={[styles.rowItem, styles.dealTaskRow, idx > 0 && styles.rowBorder]}
-                              onPress={() => {
-                                if (section.projectId) openProjectDetail(String(section.projectId));
-                                else goWork('overdue');
-                              }}
-                            >
-                              <View style={[styles.rowIcon, { backgroundColor: colors.dangerSoft }]}>
-                                <Ionicons name="alert-circle" size={18} color={colors.danger} />
-                              </View>
-                              <View style={{ flex: 1 }}>
-                                <Text style={styles.rowTitle} numberOfLines={2}>{c.title}</Text>
-                                <Text style={styles.rowSub} numberOfLines={2}>
-                                  Phụ trách: {c.assigneeName || 'Chưa gán'}
-                                </Text>
-                                <Text style={styles.rowSub} numberOfLines={2}>
-                                  {`Hạn ${formatTaskDeadline(c.deadline)} · Quá hạn${days > 0 ? ` ${days} ngày` : ''}`}
-                                </Text>
-                                {c.childTotal > 0 ? (
-                                  <Text style={styles.rowSub} numberOfLines={1}>{`${open}/${c.childTotal} việc chưa xong`}</Text>
-                                ) : null}
-                              </View>
-                              <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
-                            </Pressable>
-                          );
-                        })
-                      : null}
-                  </View>
+                      <Text style={styles.rowSub} numberOfLines={1}>
+                        <Text style={styles.missionCode}>{c.projectCode || 'Đơn hàng'}</Text>
+                        {!filterCompany && c.companyName ? ` · ${c.companyName.trim()}` : ''}
+                        {` · ${c.assigneeName || 'Chưa giao'}`}
+                        {c.childTotal > 0 ? ` · ${c.childCompleted}/${c.childTotal} việc` : ''}
+                      </Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={16} color={colors.textFaint} />
+                  </Pressable>
                 );
               })}
-              {listSectionCount > TASK_PAGE_SIZE ? (
-                <View style={styles.pager}>
-                  <Pressable
-                    style={[styles.pageBtn, safeTaskPage <= 1 && styles.pageBtnDisabled]}
-                    disabled={safeTaskPage <= 1}
-                    onPress={() => setTaskPage((p) => Math.max(1, p - 1))}
-                  >
-                    <Ionicons name="chevron-back" size={16} color={safeTaskPage <= 1 ? colors.textFaint : colors.text} />
-                  </Pressable>
-                  <Text style={styles.pageLabel}>Trang {safeTaskPage}/{taskPages}</Text>
-                  <Pressable
-                    style={[styles.pageBtn, safeTaskPage >= taskPages && styles.pageBtnDisabled]}
-                    disabled={safeTaskPage >= taskPages}
-                    onPress={() => setTaskPage((p) => Math.min(taskPages, p + 1))}
-                  >
-                    <Ionicons name="chevron-forward" size={16} color={safeTaskPage >= taskPages ? colors.textFaint : colors.text} />
-                  </Pressable>
-                </View>
+              {missionCards.length > MISSION_PREVIEW_LIMIT ? (
+                <Pressable style={({ pressed }) => [styles.missionMore, pressed && styles.pressed]} onPress={() => goWork('overdue')}>
+                  <Text style={styles.missionMoreTxt}>{`Xem thêm ${missionCards.length - MISSION_PREVIEW_LIMIT} nhiệm vụ`}</Text>
+                  <Ionicons name="chevron-forward" size={14} color={colors.primary} />
+                </Pressable>
               ) : null}
             </>
           ) : (
@@ -2214,6 +2170,20 @@ function createStyles(colors: AppColors) {
       justifyContent: 'center',
     },
     avatarTxt: { fontSize: 12, fontWeight: '800' },
+    missionCode: { color: colors.danger, fontSize: 11, fontWeight: '800', letterSpacing: 0.2 },
+    missionTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
+    missionMore: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 4,
+      paddingVertical: 11,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: colors.border,
+      backgroundColor: colors.cardAlt,
+    },
+    missionMoreTxt: { color: colors.primary, fontSize: 12.5, fontWeight: '800' },
+    missionTag: { color: colors.danger, fontSize: 11.5, fontWeight: '800', marginTop: 1 },
     rowTitle: { color: colors.text, fontSize: 12.5, fontWeight: '700' },
     rowSub: { color: colors.textMuted, fontSize: 11, fontWeight: '600', marginTop: 2 },
     pager: {

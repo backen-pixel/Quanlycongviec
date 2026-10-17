@@ -3859,7 +3859,8 @@ r.get('/:id/comments/read-receipts', async (req, res) => {
 r.delete('/:id/comments/:commentId', async (req, res) => {
   try {
     if (!(await assertProjectAccessible(req, res, req.params.id, { operation: 'WRITE', mode: 'sensitive' }))) return;
-    const isAdmin = isCrmSystemAdminUser(req.user) || isCrmCompanyAdminUser(req.user);
+    // Chỉ ADMIN HỆ THỐNG mới xóa được bình luận của người khác; admin công ty và mọi người còn lại chỉ xóa bình luận của chính mình.
+    const isAdmin = isCrmSystemAdminUser(req.user);
     let q = supabase.from('project_comments').delete().eq('id', req.params.commentId).select('id');
     if (!isAdmin) q = q.eq('user_id', req.user.userId);
     const { data: removed, error } = await q;

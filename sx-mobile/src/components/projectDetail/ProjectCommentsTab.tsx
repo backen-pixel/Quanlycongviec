@@ -23,9 +23,18 @@ import { formatApiError } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useNotifications } from '../../context/NotificationContext';
 import { useTheme } from '../../context/ThemeContext';
+import CommentActionsSheet from '../CommentActionsSheet';
+import { isSystemAdmin } from '../../lib/roles';
 import {
-  fetchThreadComments,
+  deleteThreadComment,
+  editThreadComment,
+  fetchThreadCommentCount,
+  fetchThreadCommentsPage,
+  mergeLatestComments,
+  newestCommentTime,
+  oldestCommentTime,
   postThreadComment,
+  prependOlderComments,
   resolveCommentSource,
   toggleThreadCommentReaction,
 } from '../../lib/commentApi';
@@ -37,6 +46,7 @@ import {
   commentAttachmentHref,
   type CommentAttachment,
 } from '../../lib/commentAttachments';
+import { markCommentsSeen } from '../../lib/commentSeen';
 import { useFileDownload } from '../../hooks/useFileDownload';
 import DownloadProgressModal from '../DownloadProgressModal';
 import {
@@ -52,6 +62,7 @@ import {
   COMMENT_REACTION_EMOJI,
   extractSystemFileLink,
   flattenCommentTree,
+  splitTaskLabel,
   formatCommentTime,
   groupCommentsByParent,
   isImageFileName,
@@ -77,6 +88,11 @@ type Props = {
   dealId?: string | null;
   authorTagUserId?: string | null;
   onCountChange?: (count: number) => void;
+  /**
+   * Tab đang hiện trước mắt người dùng. Tab giữ mounted khi chuyển tab (ẩn bằng display:none) nên cần biết để chỉ ghi nhận
+   * «đã xem bình luận» khi người dùng thật sự đang nhìn (mặc định true).
+   */
+  active?: boolean;
 };
 
 export default function ProjectCommentsTab({
@@ -84,6 +100,7 @@ export default function ProjectCommentsTab({
   dealId,
   authorTagUserId,
   onCountChange,
+  active = true,
 }: Props) {
   const { colors } = useTheme();
   const { user } = useAuth();
@@ -103,6 +120,27 @@ export default function ProjectCommentsTab({
   const myId = String(user?.id || user?.userId || '');
 
   const [comments, setComments] = useState<ProjectComment[]>([]);
+  /** Tải theo trang: mới nhất trước, bình luận cũ hơn tải thêm khi người dùng cuộn lên. */
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  /** Tổng số bình luận của luồng khi chưa tải hết (null = đã tải hết → dùng độ dài danh sách). */
+  const [totalCount, setTotalCount] = useState<number | null>(null);
+  const commentsRef = useRef<ProjectComment[]>([]);
+  commentsRef.current = comments;
+  const hasMoreRef = useRef(false);
+  hasMoreRef.current = hasMore;
+  const loadingOlderRef = useRef(false);
+  /** Vừa thêm trang CŨ vào đầu danh sách → không coi là «có tin mới». */
+  const olderJustLoadedRef = useRef(false);
+  /** Chỉ tải thêm sau khi người dùng THẬT SỰ vuốt (lúc mới mở vị trí cuộn còn ở đầu trước khi nhảy xuống đáy). */
+  const userScrolledRef = useRef(false);
+  /** Khoá luồng của lần tải mới nhất — bỏ qua kết quả của lần tải đã cũ (đổi luồng giữa chừng). */
+  const loadKeyRef = useRef('');
+  /** Bình luận đang mở bảng «Sửa / Xóa» (null = đóng) và cờ đang xoá. */
+  const [actionFor, setActionFor] = useState<ProjectComment | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
+  /** Đang sửa bình luận nào (ô nhập chuyển sang chế độ sửa); null = soạn bình luận mới. */
+  const [editing, setEditing] = useState<{ id: string; label: string | null } | null>(null);
   const [members, setMembers] = useState<CommentMentionMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -161,6 +199,48 @@ export default function ProjectCommentsTab({
         sortBtnText: { color: colors.text, fontSize: 13, fontWeight: '700' },
         list: { flex: 1 },
         listWrap: { flex: 1, position: 'relative' },
+        taskTag: {
+          alignSelf: 'flex-start',
+          maxWidth: '100%',
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingHorizontal: 10,
+          paddingVertical: 4,
+          marginBottom: 6,
+          borderRadius: Radii.full,
+          backgroundColor: colors.primarySoft,
+          borderWidth: 1,
+          borderColor: colors.primary + '55',
+        },
+        taskTagTxt: { flexShrink: 1, color: colors.primary, fontSize: 12.5, fontWeight: '800' },
+        taskChip: {
+          alignSelf: 'flex-start',
+          maxWidth: '100%',
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingHorizontal: 10,
+          paddingVertical: 4,
+          marginBottom: 8,
+          borderRadius: Radii.full,
+          backgroundColor: colors.cardAlt,
+          borderWidth: 1,
+          borderColor: colors.border,
+        },
+        taskChipTxt: { flexShrink: 1, color: colors.textMuted, fontSize: 12, fontWeight: '700' },
+        olderBtn: {
+          alignSelf: 'center',
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 6,
+          paddingHorizontal: 14,
+          paddingVertical: 8,
+          marginBottom: 10,
+          borderRadius: Radii.full,
+          backgroundColor: colors.primarySoft,
+        },
+        olderTxt: { color: colors.primary, fontSize: 12.5, fontWeight: '700' },
         jumpNewBtn: {
           position: 'absolute',
           alignSelf: 'center',
@@ -446,15 +526,59 @@ export default function ProjectCommentsTab({
     const silent = Boolean(opts?.silent);
     const force = Boolean(opts?.force);
     if (!silent) setLoading(true);
+    // `dealId` đến muộn → `source` đổi từ luồng «dự án» sang luồng deal giữa chừng, hai lần tải chạy song song; kết quả của lần
+    // cũ (luồng dự án thường RỖNG) về sau không được ghi đè kết quả đúng.
+    const reqKey = JSON.stringify(source);
+    loadKeyRef.current = reqKey;
+    let stale = false;
     try {
-      const rows = await fetchThreadComments(source, { force });
-      setComments(rows);
-      onCountRef.current?.(rows.length);
+      // Chỉ trang MỚI NHẤT (20 bình luận); làm mới ngầm thì giữ phần cũ hơn người dùng đã cuộn tải.
+      const page = await fetchThreadCommentsPage(source, { force });
+      if (loadKeyRef.current !== reqKey) { stale = true; return; }
+      const prev = commentsRef.current;
+      const merged = silent && prev.length ? mergeLatestComments(prev, page.rows) : { rows: page.rows, keptOlder: false };
+      setComments(merged.rows);
+      const more = merged.keptOlder ? hasMoreRef.current : page.hasMore;
+      setHasMore(more);
+      if (more) {
+        // Còn trang cũ: tổng số lấy từ chỉ mục nhẹ, không phải độ dài danh sách đang hiện.
+        void fetchThreadCommentCount(source, { force: true })
+          .then((n) => {
+            setTotalCount(n);
+            onCountRef.current?.(n);
+          })
+          .catch(() => {});
+      } else {
+        setTotalCount(null);
+        onCountRef.current?.(merged.rows.length);
+      }
       setErr('');
     } catch (e) {
-      if (!silent) setErr(formatApiError(e));
+      if (loadKeyRef.current === reqKey && !silent) setErr(formatApiError(e));
     } finally {
-      if (!silent) setLoading(false);
+      // Lần tải cũ bị bỏ thì để lần tải mới tự tắt «đang tải».
+      if (!silent && !stale && loadKeyRef.current === reqKey) setLoading(false);
+    }
+  }, [source]);
+
+  /** Cuộn lên gần đầu → tải trang bình luận cũ hơn (một lần một trang). */
+  const loadOlder = useCallback(async () => {
+    if (!hasMoreRef.current || loadingOlderRef.current) return;
+    const before = oldestCommentTime(commentsRef.current);
+    if (!before) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    try {
+      const page = await fetchThreadCommentsPage(source, { before });
+      olderJustLoadedRef.current = true;
+      setComments((prev) => prependOlderComments(prev, page.rows));
+      setHasMore(page.hasMore);
+      if (!page.hasMore) setTotalCount(null);
+    } catch (e) {
+      setErr(formatApiError(e));
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
     }
   }, [source]);
 
@@ -507,6 +631,12 @@ export default function ProjectCommentsTab({
     }
   }, [loadComments, loadMembers]);
 
+  // Tab đang hiện = người dùng đang xem các bình luận mới nhất → ghi nhận «đã xem» (huy hiệu «mới» ở danh sách nhiệm vụ tắt).
+  useEffect(() => {
+    if (!active || source.kind !== 'lead' || !comments.length) return;
+    void markCommentsSeen(source.leadId, newestCommentTime(comments));
+  }, [active, source, comments]);
+
   const commentById = useMemo(() => {
     const m = new Map<string, ProjectComment>();
     comments.forEach((c) => m.set(c.id, c));
@@ -518,7 +648,25 @@ export default function ProjectCommentsTab({
     return flattenCommentTree(grouped, sort);
   }, [comments, sort]);
 
+  /**
+   * Sau lần nhảy về tin mới nhất (không hoạt ảnh) danh sách còn đang dựng dần (ảnh, tệp đính kèm, dòng chưa đo) nên đáy
+   * dịch xuống — trong khoảng này mỗi lần nội dung đổi kích thước lại cuộn xuống đáy, ngừng ngay khi người dùng vuốt.
+   */
+  const settleBottomUntilRef = useRef(0);
+
   const scrollToNewest = useCallback((animated = true) => {
+    if (!animated) {
+      settleBottomUntilRef.current = Date.now() + 2500;
+      userScrolledRef.current = false;
+      // Không chỉ chờ sự kiện đổi kích thước: ảnh / tệp đính kèm dựng muộn nên cuộn lại đáy vài lần trong ~2 giây đầu.
+      if (sort === 'oldest') {
+        [250, 600, 1100, 1800].forEach((ms) => setTimeout(() => {
+          if (!userScrolledRef.current && Date.now() < settleBottomUntilRef.current) {
+            listRef.current?.scrollToEnd({ animated: false });
+          }
+        }, ms));
+      }
+    }
     const run = () => {
       if (sort === 'oldest') {
         listRef.current?.scrollToEnd({ animated });
@@ -552,7 +700,12 @@ export default function ProjectCommentsTab({
       setNearNewest(near);
     }
     if (near) setPendingNewCount(0);
-  }, [sort]);
+    // Gần ĐẦU danh sách cũ (đỉnh khi «Mới dưới», đáy khi «Mới trên») → tải thêm bình luận cũ hơn.
+    const distOld = sort === 'oldest'
+      ? contentOffset.y
+      : contentSize.height - layoutMeasurement.height - contentOffset.y;
+    if (userScrolledRef.current && distOld < 240) void loadOlder();
+  }, [sort, loadOlder]);
 
   // Mở tab / đổi sort / xong tải → nhảy tới tin mới nhất.
   useEffect(() => {
@@ -570,6 +723,10 @@ export default function ProjectCommentsTab({
     setNearNewest(true);
     setPendingNewCount(0);
     prevCommentLenRef.current = 0;
+    setHasMore(false);
+    setTotalCount(null);
+    olderJustLoadedRef.current = false;
+    userScrolledRef.current = false;
   }, [projectId, dealId]);
 
   useEffect(() => {
@@ -590,6 +747,11 @@ export default function ProjectCommentsTab({
     const len = comments.length;
     const prev = prevCommentLenRef.current;
     prevCommentLenRef.current = len;
+    // Trang cũ vừa được thêm vào ĐẦU danh sách: không phải tin mới.
+    if (olderJustLoadedRef.current) {
+      olderJustLoadedRef.current = false;
+      return;
+    }
     if (prev <= 0 || len <= prev) return;
     const added = len - prev;
     if (nearNewestRef.current) {
@@ -601,6 +763,26 @@ export default function ProjectCommentsTab({
   }, [comments.length, scrollToNewest]);
 
   const showJumpToNew = !nearNewest && flatList.length > 0 && !loading;
+
+  /** Nút / vòng quay ở ĐẦU danh sách cũ: tải bình luận cũ hơn khi chạm (ngoài việc tự tải khi cuộn lên). */
+  const olderControl = hasMore ? (
+    <TouchableOpacity
+      style={styles.olderBtn}
+      onPress={() => {
+        userScrolledRef.current = true;
+        void loadOlder();
+      }}
+      disabled={loadingOlder}
+      activeOpacity={0.8}
+    >
+      {loadingOlder ? (
+        <SpinningLoader size="small" color={colors.primary} />
+      ) : (
+        <Ionicons name="time-outline" size={15} color={colors.primary} />
+      )}
+      <Text style={styles.olderTxt}>{loadingOlder ? 'Đang tải bình luận cũ…' : 'Xem bình luận cũ hơn'}</Text>
+    </TouchableOpacity>
+  ) : null;
 
   /** Tất cả ảnh trong thread → lightbox chuyển nhanh giữa các hình. */
   const threadImages: GalleryImage[] = useMemo(() => {
@@ -685,11 +867,72 @@ export default function ProjectCommentsTab({
     );
   };
 
+  /** Bắt đầu sửa: đưa nội dung vào ô nhập (file đính kèm giữ nguyên, chỉ sửa phần chữ). */
+  const startEdit = (comment: ProjectComment) => {
+    setActionFor(null);
+    setReplyTo(null);
+    setPendingFiles([]);
+    setErr('');
+    // Nhãn nhiệm vụ «[…]» ở đầu giữ nguyên là NHÃN cố định (không nằm trong ô nhập); ô nhập chỉ chứa phần nội dung.
+    const { label, rest } = splitTaskLabel(comment.content);
+    setEditing({ id: comment.id, label });
+    setBody(rest);
+    setCursor(rest.length);
+    setTimeout(() => inputRef.current?.focus(), 150);
+  };
+
+  const cancelEdit = () => {
+    setEditing(null);
+    setBody('');
+    setCursor(0);
+  };
+
+  /** Xoá bình luận đang mở bảng thao tác (đã qua bước xác nhận trong bảng). */
+  const confirmDelete = async () => {
+    const target = actionFor;
+    if (!target) return;
+    setActionBusy(true);
+    try {
+      await deleteThreadComment(source, target.id);
+      setComments((prev) => prev.filter((c) => c.id !== target.id));
+      if (editing?.id === target.id) cancelEdit();
+      setActionFor(null);
+      // Tổng số / huy hiệu cập nhật lại từ máy chủ.
+      void loadComments({ silent: true, force: true });
+    } catch (e) {
+      setActionFor(null);
+      setErr(formatApiError(e));
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
   const submit = async () => {
     if (!canSubmit) return;
     const text = body.trim();
     setPosting(true);
     setErr('');
+    // Đang SỬA một bình luận → lưu nội dung mới (chỉ phần chữ; người được nhắc từ lần đầu không bị thông báo lại).
+    if (editing) {
+      try {
+        // Gắn lại nhãn nhiệm vụ cố định vào đầu nội dung đã sửa.
+        const finalText = editing.label ? `[${editing.label}] ${text}` : text;
+        const updated = await editThreadComment(source, editing.id, finalText);
+        setComments((prev) => prev.map((c) => (
+          c.id === editing.id
+            ? { ...c, content: updated.content || finalText, updated_at: updated.updated_at || new Date().toISOString() }
+            : c
+        )));
+        setEditing(null);
+        setBody('');
+        setCursor(0);
+      } catch (e) {
+        setErr(formatApiError(e));
+      } finally {
+        setPosting(false);
+      }
+      return;
+    }
     try {
       const mentionUserIds =
         source.kind === 'lead'
@@ -874,6 +1117,15 @@ export default function ProjectCommentsTab({
     const pickerOpen = reactionPickerId === item.id;
     const nestOffset = depth > 0 ? Math.min(depth - 1, 3) * REPLY_DEPTH_STEP : 0;
     const avatarUri = resolveMediaUrl(item.user?.avatar);
+    // Quyền hiển thị nút ⋯ (máy chủ vẫn là nơi quyết định): sửa = CHỈ tác giả; xóa = tác giả, hoặc ADMIN HỆ THỐNG (xóa của người khác).
+    // Mọi người còn lại (kể cả admin công ty) không sửa / xóa được bình luận của nhau.
+    const isMineComment = Boolean(myId) && String(item.user_id) === myId;
+    const canEditComment = isMineComment && Boolean(item.content?.trim());
+    const canDeleteComment = isMineComment || isSystemAdmin(user);
+    // «[Tên nhiệm vụ] nội dung» → nhãn nổi bật + nội dung.
+    const taskTag = splitTaskLabel(item.content);
+    const isEdited = Boolean(item.updated_at)
+      && new Date(String(item.updated_at)).getTime() - new Date(String(item.created_at)).getTime() > 5000;
 
     return (
       <View style={[styles.commentRow, nestOffset > 0 && { marginLeft: nestOffset }]}>
@@ -900,12 +1152,21 @@ export default function ProjectCommentsTab({
               ) : null}
               {isAuthor ? <Text style={styles.authorTag}>Tác giả</Text> : null}
             </View>
-            {item.content ? renderContentWithMentions(item.content) : null}
+            {taskTag.label ? (
+              <View style={styles.taskTag}>
+                <Ionicons name="pricetag" size={12} color={colors.primary} />
+                <Text style={styles.taskTagTxt} numberOfLines={2}>{taskTag.label}</Text>
+              </View>
+            ) : null}
+            {taskTag.rest ? renderContentWithMentions(taskTag.rest) : null}
             <CommentAttachmentsBlock attachments={item.attachments} onOpenImage={openThreadImage} />
           </View>
 
           <View style={styles.metaRow}>
-            <Text style={styles.timeText}>{formatCommentTime(item.created_at)}</Text>
+            <Text style={styles.timeText}>
+              {formatCommentTime(item.created_at)}
+              {isEdited ? ' · đã sửa' : ''}
+            </Text>
             <TapHighlight
               style={[styles.actionPill, (mineEmoji || pickerOpen) && styles.actionPillActive]}
               onPress={() => setReactionPickerId((cur) => (cur === item.id ? null : item.id))}
@@ -929,6 +1190,16 @@ export default function ProjectCommentsTab({
             >
               <Text style={styles.actionText}>Trả lời</Text>
             </TapHighlight>
+            {/* Sửa (chỉ tác giả) / Xóa (tác giả hoặc admin); nhật ký tự động của hệ thống (vẽ ở nhánh riêng) không có thao tác. */}
+            {canEditComment || canDeleteComment ? (
+              <TapHighlight
+                style={styles.actionPill}
+                onPress={() => { setReactionPickerId(null); setActionFor(item); }}
+                accessibilityLabel="Sửa hoặc xóa bình luận"
+              >
+                <Ionicons name="ellipsis-horizontal" size={14} color={colors.textMuted} />
+              </TapHighlight>
+            ) : null}
           </View>
 
           {pickerOpen ? (
@@ -965,7 +1236,7 @@ export default function ProjectCommentsTab({
       <View style={styles.sortRow}>
         <Text style={styles.sortLabel}>
           {source.kind === 'lead' ? 'Bình luận deal' : 'Bình luận dự án'}
-          {comments.length ? ` · ${comments.length}` : ''}
+          {(totalCount ?? comments.length) ? ` · ${totalCount ?? comments.length}` : ''}
         </Text>
         <TouchableOpacity
           style={styles.sortBtn}
@@ -994,18 +1265,36 @@ export default function ProjectCommentsTab({
           renderItem={({ item }) => renderComment(item.comment, item.depth)}
           contentContainerStyle={styles.listContent}
           keyboardShouldPersistTaps="handled"
-          initialNumToRender={12}
+          // Dựng đủ cả trang đầu (20) ngay: chiều cao thật đã biết nên «cuộn xuống đáy» không rơi vào ước lượng.
+          initialNumToRender={20}
           maxToRenderPerBatch={10}
           windowSize={7}
           removeClippedSubviews={Platform.OS === 'android'}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void onRefresh()} />}
-          onScrollBeginDrag={() => setReactionPickerId(null)}
+          onScrollBeginDrag={() => {
+            userScrolledRef.current = true;
+            setReactionPickerId(null);
+          }}
+          // Tải thêm bình luận cũ ở ĐẦU danh sách mà không làm nhảy vị trí đang xem.
+          maintainVisibleContentPosition={sort === 'oldest' ? { minIndexForVisible: 0 } : undefined}
+          ListHeaderComponent={sort === 'oldest' ? olderControl : null}
+          ListFooterComponent={sort === 'newest' ? olderControl : null}
           onScroll={onListScroll}
           scrollEventThrottle={16}
           onContentSizeChange={() => {
             if (!didInitialScrollRef.current && !loading && flatList.length) {
               didInitialScrollRef.current = true;
               scrollToNewest(false);
+              return;
+            }
+            // Đang «ổn định» sau lần nhảy về tin mới nhất: nội dung dài ra thì bám theo đáy (chưa vuốt thì chưa thôi).
+            if (
+              sort === 'oldest'
+              && !loading
+              && !userScrolledRef.current
+              && Date.now() < settleBottomUntilRef.current
+            ) {
+              listRef.current?.scrollToEnd({ animated: false });
               return;
             }
             // Chỉ stick khi vừa đánh dấu (tin mới / gửi) — không stick vì ảnh/layout muộn.
@@ -1097,7 +1386,19 @@ export default function ProjectCommentsTab({
         </ScrollView>
       ) : null}
 
-      {replyTo ? (
+      {editing ? (
+        <View style={styles.replyBar}>
+          <Ionicons name="create-outline" size={16} color={colors.primary} style={{ marginRight: 6 }} />
+          <Text style={styles.replyText} numberOfLines={1}>
+            <Text style={styles.replyName}>Đang sửa bình luận</Text>
+          </Text>
+          <TouchableOpacity onPress={cancelEdit} hitSlop={8} disabled={posting}>
+            <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 13 }}>Hủy</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {replyTo && !editing ? (
         <View style={styles.replyBar}>
           <Text style={styles.replyText} numberOfLines={1}>
             Trả lời <Text style={styles.replyName}>{replyTo.name}</Text>
@@ -1146,11 +1447,18 @@ export default function ProjectCommentsTab({
       ) : null}
 
       <View style={[styles.composer, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+        {/* Đang sửa bình luận có nhãn nhiệm vụ: nhãn là NHÃN cố định (xám, không xoá được), ô nhập chỉ chứa nội dung. */}
+        {editing?.label ? (
+          <View style={styles.taskChip} accessibilityLabel={`Bình luận về nhiệm vụ ${editing.label}`}>
+            <Ionicons name="pricetag" size={12} color={colors.textMuted} />
+            <Text style={styles.taskChipTxt} numberOfLines={1}>{editing.label}</Text>
+          </View>
+        ) : null}
         <View style={styles.composerRow}>
           <TouchableOpacity
             style={styles.iconBtn}
             onPress={() => void pickDocuments()}
-            disabled={uploading || posting}
+            disabled={uploading || posting || Boolean(editing)}
           >
             {uploading ? (
               <SpinningLoader size="small" color={colors.primary} />
@@ -1168,7 +1476,9 @@ export default function ProjectCommentsTab({
             }}
             onSelectionChange={(e) => setCursor(e.nativeEvent.selection.start)}
             placeholder={
-              replyTo
+              editing
+                ? 'Nội dung bình luận…'
+                : replyTo
                 ? `Trả lời ${replyTo.name}…`
                 : source.kind === 'lead'
                   ? `Bình luận (@ nhắc) · ${authorLabel}`
@@ -1192,6 +1502,17 @@ export default function ProjectCommentsTab({
           </TouchableOpacity>
         </View>
       </View>
+
+      <CommentActionsSheet
+        visible={!!actionFor}
+        preview={actionFor?.content || ''}
+        canEdit={Boolean(actionFor) && String(actionFor?.user_id) === myId && Boolean(actionFor?.content?.trim())}
+        canDelete
+        busy={actionBusy}
+        onEdit={() => { if (actionFor) startEdit(actionFor); }}
+        onDelete={() => void confirmDelete()}
+        onClose={() => setActionFor(null)}
+      />
 
       <ImageGalleryLightbox
         visible={galleryOpen && threadImages.length > 0}
