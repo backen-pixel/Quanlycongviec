@@ -5,6 +5,7 @@ const { Router } = require('express');
 const { auth } = require('../middleware/auth');
 const { supabase } = require('../config/supabase');
 const { isSystemAdmin, isAdminLike } = require('../helpers/adminRole');
+const { applyCompanyTenantScope } = require('../helpers/tenantScope');
 const {
   createProjectTask,
   updateProjectTask,
@@ -1034,6 +1035,8 @@ r.get('/team-project-tasks', async (req, res) => {
         qy = qy.order('unified_id', { ascending: true });
         qy = applyOpenOnlyFilter(qy);
         if (effectiveCompany && !skipCompany) qy = qy.eq('company_id', effectiveCompany);
+        // Không chọn công ty (Admin hệ thống xem tất cả) → vẫn chỉ trong các công ty của hệ sinh thái mình, nếu không lộ việc của tenant khác.
+        else if (!skipCompany) qy = applyCompanyTenantScope(qy, req);
         if (assignee_id && !unassignedMode) qy = qy.eq('assignee_id', assignee_id);
         const needle = String(searchQ || '').trim();
         if (needle) qy = qy.ilike('title', `%${needle}%`);
@@ -1087,6 +1090,7 @@ r.get('/team-project-tasks', async (req, res) => {
           const build = (cols, opts) => {
             let pq = supabase.from('projects').select(cols, opts).order('id', { ascending: true });
             if (effectiveCompany) pq = pq.eq('company_id', effectiveCompany);
+            else pq = applyCompanyTenantScope(pq, req);
             if (typeFilter) pq = isNone ? pq.is('workshop_type_id', null) : pq.eq('workshop_type_id', typeRaw);
             return pq;
           };
@@ -1416,6 +1420,7 @@ r.get('/team-project-tasks', async (req, res) => {
       effectiveCompany || '', assignee_id || '', String(req.query.workshop_type_id || ''),
       String(searchQ || '').trim(), dueDays, createdDays, noDeadlineMode, unassignedMode, dueFromRaw, dueToRaw,
       dealCompanyQ, dealExtName.toLowerCase(), req.user?.company_id || '', isSystemAdmin(req.user) ? 'sys' : '',
+      req.tenantId || '',
     ]);
     let computed = teamTasksCache.get(cacheKey);
     if (!computed || Date.now() - computed.at > TEAM_TASKS_CACHE_MS) {
@@ -1632,6 +1637,7 @@ r.get('/project-overview', async (req, res) => {
           .select(PROJECT_OVERVIEW_PROJECT_SELECT)
           .order('id');
         if (effectiveCompany) q = q.eq('company_id', effectiveCompany);
+        else q = applyCompanyTenantScope(q, req);
         return q;
       });
       activeProjects = (projects || []).filter((project) => (
