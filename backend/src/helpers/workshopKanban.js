@@ -1,8 +1,5 @@
-const fs = require('fs');
-const path = require('path');
 const { supabase } = require('../config/supabase');
 
-const AGENT_DEBUG_LOG_PATH = path.join(__dirname, '../../../debug-fb4228.log');
 const { normalizeWorkshopCompanyId } = require('./workshopCompanyScope');
 const {
   buildPipelineStageSelect,
@@ -1347,29 +1344,6 @@ async function syncSxKanbanFromCrmProductionStage(leadId) {
  *   - Project rời "Chờ vào xưởng" (có current_stage_id thực) → stage_id = "Sản xuất"
  *   - Project quay về intake (current_stage_id = null) → stage_id = "Thắng"
  */
-/** @param {string} location @param {string} message @param {object} data @param {string} hypothesisId */
-function agentDebugLog(location, message, data, hypothesisId) {
-  const payload = {
-    sessionId: 'fb4228',
-    location,
-    message,
-    data,
-    hypothesisId,
-    timestamp: Date.now(),
-    runId: 'post-fix',
-  };
-  // #region agent log
-  try {
-    fs.appendFileSync(AGENT_DEBUG_LOG_PATH, `${JSON.stringify(payload)}\n`);
-  } catch (_) { /* ignore */ }
-  fetch('http://127.0.0.1:7754/ingest/c6417520-0159-4c13-a5f9-ac15886b2276', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'fb4228' },
-    body: JSON.stringify(payload),
-  }).catch(() => {});
-  // #endregion
-}
-
 /**
  * @param {string} projectId
  * @param {{ keepCrmStageLeadIds?: string[] }} [opts]
@@ -1418,7 +1392,6 @@ async function syncCrmLeadSxPipelineFromProject(projectId, opts = {}) {
       .single());
   }
   if (!project) {
-    agentDebugLog('workshopKanban.js:syncCrm', 'project not found', { projectId }, 'E');
     return;
   }
 
@@ -1511,25 +1484,6 @@ async function syncCrmLeadSxPipelineFromProject(projectId, opts = {}) {
     || prodPipeAll.find((r) => preferredSxCol && String(r.id) === String(preferredSxCol))
     || prodPipeAll.find((r) => project.current_stage_id && r.workflow_stage_id && String(r.workflow_stage_id) === String(project.current_stage_id));
 
-  agentDebugLog(
-    'workshopKanban.js:syncCrm:context',
-    'pipeline context',
-    {
-      projectId,
-      projectCompanyId: project.company_id || null,
-      currentStageId: project.current_stage_id || null,
-      stageUuid: preferredSxCol || stageUuid || null,
-      projectSxKanbanColumnId: project.sx_kanban_column_id || null,
-      currentRowId: currentRow?.id || null,
-      currentRowName: currentRow?.name || null,
-      currentRowOrder: currentRow?.order_index ?? null,
-      crmTargetStageId: currentRow?.crm_target_stage_id || null,
-      crmSyncType: currentRow?.crm_sync_type || null,
-      pipeRowCount: prodPipeAll.length,
-      hasStageUuidInRows,
-    },
-    'D',
-  );
 
   // ── Priority 0: cột SX được đánh dấu «Hàng đã hoàn thiện đóng gói» ──
   // Auto sync CRM sang stage có sync_role='sx_completed' để sale kéo tiếp qua Vận chuyển.
@@ -1623,22 +1577,6 @@ async function syncCrmLeadSxPipelineFromProject(projectId, opts = {}) {
             }),
           );
         }
-        agentDebugLog(
-          'workshopKanban.js:syncCrm:targetBranch',
-          'lead patch decision',
-          {
-            leadId: lead.id,
-            branch: 'crm_target_stage_id',
-            skipReasons,
-            hasHandover: !!lead.sx_handover_at,
-            canOverwrite,
-            stageName: st?.name || null,
-            stageIsWon: !!st?.is_won,
-            stageSyncRole: st?.sync_role || null,
-            patchKeys: Object.keys(patch),
-          },
-          skipReasons.includes('no_sx_handover_at') ? 'A' : skipReasons.includes('race_guard_blocked') ? 'B' : 'D',
-        );
         if (!Object.keys(patch).length) return Promise.resolve();
         return supabase.from('crm_leads').update(patch).eq('id', lead.id);
       }),
@@ -1659,17 +1597,6 @@ async function syncCrmLeadSxPipelineFromProject(projectId, opts = {}) {
     }
   }
 
-  agentDebugLog(
-    'workshopKanban.js:syncCrm:legacy',
-    'production trigger sync',
-    {
-      projectId,
-      isInCrmProductionTriggerStage,
-      currentRowSyncType: currentRow?.crm_sync_type || null,
-      isInRealProductionStage,
-    },
-    isInCrmProductionTriggerStage ? 'D' : 'C',
-  );
 
   const { data: leads } = await supabase
     .from('crm_leads')
@@ -1733,26 +1660,6 @@ async function syncCrmLeadSxPipelineFromProject(projectId, opts = {}) {
         );
       }
 
-      agentDebugLog(
-        'workshopKanban.js:syncCrm:legacyLead',
-        'lead patch decision',
-        {
-          leadId: lead.id,
-          branch: 'crm_sync_type_production',
-          skipReasons,
-          hasHandover: !!lead.sx_handover_at,
-          canOverwrite,
-          isInCrmProductionTriggerStage,
-          stageName: st?.name || null,
-          stageIsWon: !!st?.is_won,
-          stageSyncRole: st?.sync_role || null,
-          updateKeys: Object.keys(update),
-        },
-        skipReasons.includes('no_sx_handover_at') ? 'A'
-          : skipReasons.includes('race_guard_blocked') ? 'B'
-            : skipReasons.includes('no_sx_production_crm_stage') ? 'C'
-              : skipReasons.includes('not_in_trigger') ? 'D' : 'D',
-      );
 
       if (!Object.keys(update).length) return Promise.resolve();
       return supabase.from('crm_leads').update(update).eq('id', lead.id);

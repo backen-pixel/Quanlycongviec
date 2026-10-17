@@ -24,6 +24,7 @@ import ProjectCrmTaskRow from '../components/projectDetail/ProjectCrmTaskRow';
 import ProjectDocumentsTab from '../components/projectDetail/ProjectDocumentsTab';
 import ProjectMembersTab from '../components/projectDetail/ProjectMembersTab';
 import ProjectSharedWorkspaceTab from '../components/projectDetail/ProjectSharedWorkspaceTab';
+import StageBulkCompleteSheet from '../components/projectDetail/StageBulkCompleteSheet';
 import SpinningLoader from '../components/SpinningLoader';
 import TapHighlight from '../components/TapHighlight';
 import { formatApiError } from '../api/client';
@@ -383,43 +384,30 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     setTasks((prev) => prev.filter((t) => t.id !== taskId));
   }, []);
 
-  const completeStageAll = useCallback((group: { label: string; tasks: CrmTask[] }) => {
-    if (!dealId) return;
-    const toComplete = group.tasks.filter((t) => !isCrmProductionTaskDone(t.status));
-    if (!toComplete.length) {
-      Alert.alert('Xong hết', 'Không còn nhiệm vụ chưa hoàn thành trong giai đoạn này.');
-      return;
-    }
-    Alert.alert(
-      'Xong hết',
-      `Đánh dấu hoàn thành ${toComplete.length} nhiệm vụ trong «${group.label}»?`,
-      [
-        { text: 'Hủy', style: 'cancel' },
-        {
-          text: 'Xong hết',
-          onPress: () => {
-            void (async () => {
-              const prev = tasks;
-              const ids = new Set(toComplete.map((t) => t.id));
-              setBulkBusy(true);
-              setTasks((p) => p.map((t) => (ids.has(t.id) ? { ...t, status: 'completed' } : t)));
-              try {
-                await Promise.all(
-                  toComplete.map((t) => updateCrmTask(dealId, t.id, { status: 'completed' })),
-                );
-                await load(true, true);
-              } catch (e) {
-                setTasks(prev);
-                Alert.alert('Lỗi', formatApiError(e));
-              } finally {
-                setBulkBusy(false);
-              }
-            })();
-          },
-        },
-      ],
-    );
+  /** Ghi «hoàn thành» cho các việc đã chọn (lạc quan, lỗi thì hoàn lại). Không hỏi xác nhận — bảng xác nhận (StageBulkCompleteSheet) hỏi trước. */
+  const completeTasksNow = useCallback((toComplete: CrmTask[]) => {
+    if (!dealId || !toComplete.length) return;
+    void (async () => {
+      const prev = tasks;
+      const ids = new Set(toComplete.map((t) => t.id));
+      setBulkBusy(true);
+      setTasks((p) => p.map((t) => (ids.has(t.id) ? { ...t, status: 'completed' } : t)));
+      try {
+        await Promise.all(
+          toComplete.map((t) => updateCrmTask(dealId, t.id, { status: 'completed' })),
+        );
+        await load(true, true);
+      } catch (e) {
+        setTasks(prev);
+        Alert.alert('Lỗi', formatApiError(e));
+      } finally {
+        setBulkBusy(false);
+      }
+    })();
   }, [dealId, tasks, load]);
+
+  /** Nhóm lớn hoặc cột đang mở bảng xác nhận «Hoàn thành tất cả» (null = đóng). */
+  const [bulkSheet, setBulkSheet] = useState<{ label: string; tone: string; tasks: CrmTask[] } | null>(null);
 
   const openDateEditor = useCallback((field: EditableDateField, current?: string | null) => {
     setDateDraft(parseDateValue(current));
@@ -551,6 +539,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
 
   /** Nhóm theo quy trình SX — cùng thứ tự web (stage + order_index). */
   const taskGroups = useMemo(
+    // Ẩn cột chưa có việc (giảm tải) — khác web, web hiện cả cột «0/0».
     () => groupCrmTasksByStage(tasks, project?.sxKanbanStages || []),
     [tasks, project?.sxKanbanStages],
   );
@@ -598,28 +587,36 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     [colToggles, project?.sx_kanban_column_id, highlightTaskId, canSeeMoney, staffUserId],
   );
 
+  // Mở từ một việc cụ thể → nhóm chứa việc đó lên đầu (màn hình cuộn tới đúng chỗ); còn lại theo thứ tự của web.
   const bigGroups = useMemo(
-    () => groupColumnsIntoBigGroups(orderedTaskGroups, project?.sxKanbanStages || []),
-    [orderedTaskGroups, project?.sxKanbanStages],
+    () => groupColumnsIntoBigGroups(orderedTaskGroups, project?.sxKanbanStages || [], {
+      firstColKey: highlightTaskId ? orderedTaskGroups[0]?.key : null,
+    }),
+    [orderedTaskGroups, project?.sxKanbanStages, highlightTaskId],
   );
+
+  /** Nhóm lớn đang THU (ẩn danh sách cột bên trong) — khoá = `CrmTaskBigGroup.key`; mặc định mở như web. Chỉ áp cho nhóm có tên. */
+  const [groupClosed, setGroupClosed] = useState<Record<string, boolean>>({});
 
   const taskSections = useMemo(
     (): Array<SectionListData<TaskListItem, CrmTaskBigGroup>> =>
-      bigGroups.map((g) => ({
-        ...g,
-        data: dealId
-          ? g.columns.flatMap((col): TaskListItem[] => {
+      bigGroups.map((g) => {
+        let data: TaskListItem[] = [];
+        if (dealId) {
+          if (!groupClosed[g.key]) {
+            // Mọi nhóm LUÔN có dòng cột — kể cả nhóm chỉ một cột và cột chưa gán nhóm lớn (tên nhóm = tên cột), như web
+            // (`CRMTasksTab` vẽ mọi phần tử của `gomCotTheoNhom` giống nhau).
+            data = g.columns.flatMap((col): TaskListItem[] => {
               const open = isColOpen(col);
-              // Giai đoạn chỉ có một cột: bỏ dòng cột (trùng tên giai đoạn), đầu khung đã đủ để mở/thu.
-              const rows: TaskListItem[] = g.columns.length === 1
-                ? []
-                : [{ kind: 'col', key: `col:${col.key}`, col, open }];
+              const rows: TaskListItem[] = [{ kind: 'col', key: `col:${col.key}`, col, open }];
               if (open) col.tasks.forEach((t) => rows.push({ kind: 'task', key: String(t.id), task: t }));
               return rows;
-            })
-          : [],
-      })),
-    [bigGroups, dealId, isColOpen],
+            });
+          }
+        }
+        return { ...g, data };
+      }),
+    [bigGroups, dealId, isColOpen, groupClosed],
   );
 
   useEffect(() => {
@@ -805,46 +802,41 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           lineHeight: 12,
         },
         // Một khung cho cả giai đoạn (giống web): đầu khung = tiêu đề, giữa = dòng cột + việc, chân khung đóng lại.
+        // Phân cấp giống tab Công việc: giai đoạn = thẻ trắng có thanh màu; cột = dòng xám nhạt thụt vào; việc = ô xám nhạt hơn
+        // thụt sâu hơn — mỗi cấp là một khối riêng (không còn khung viền liền một mảng).
         stageCard: {
-          borderTopWidth: 1,
-          borderRightWidth: 1,
-          borderLeftWidth: 4,
+          borderWidth: 1,
+          borderLeftWidth: 5,
           borderColor: colors.border,
-          borderTopLeftRadius: Radii.lg,
-          borderTopRightRadius: Radii.lg,
+          borderRadius: Radii.lg,
           backgroundColor: colors.card,
           paddingHorizontal: 10,
-          paddingVertical: 8,
+          paddingVertical: 10,
           gap: 6,
         },
-        frameSide: {
-          marginHorizontal: Spacing.lg,
-          borderLeftWidth: 4,
-          borderRightWidth: 1,
-          borderRightColor: colors.border,
-          backgroundColor: colors.card,
+        stageGap: { height: 6 },
+        colBox: {
+          marginRight: Spacing.lg,
+          marginLeft: Spacing.lg + 14,
+          marginTop: 6,
+          borderRadius: 14,
+          backgroundColor: colorWithAlpha(colors.textMuted, 0.13),
         },
-        frameBottom: {
-          marginHorizontal: Spacing.lg,
-          height: 8,
-          borderLeftWidth: 4,
-          borderRightWidth: 1,
-          borderBottomWidth: 1,
-          borderRightColor: colors.border,
-          borderBottomColor: colors.border,
-          borderBottomLeftRadius: Radii.lg,
-          borderBottomRightRadius: Radii.lg,
-          backgroundColor: colors.card,
-          marginBottom: 10,
+        taskBox: {
+          marginRight: Spacing.lg,
+          marginLeft: Spacing.lg + 14,
+          marginTop: 6,
+          borderRadius: 12,
+          overflow: 'hidden',
+          backgroundColor: colorWithAlpha(colors.textMuted, 0.06),
         },
+        taskBoxDeep: { marginLeft: Spacing.lg + 32 },
         colRow: {
           flexDirection: 'row',
           alignItems: 'center',
           gap: 6,
           paddingLeft: 10,
           paddingRight: 4,
-          borderTopWidth: StyleSheet.hairlineWidth,
-          borderTopColor: colors.border,
         },
         colMain: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 9 },
         colIcon: { fontSize: 14 },
@@ -855,10 +847,10 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         colDoneBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
         colDoneBtnOn: { opacity: 1 },
         colEmpty: { color: colors.textFaint, fontSize: 11.5, paddingLeft: 22, paddingVertical: 6 },
-        stageTop: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-        stageTitle: { flex: 1, fontSize: 13, fontWeight: '900', letterSpacing: 0.3 },
-        stageBtns: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6 },
-        stageMeta: { fontSize: 11, fontWeight: '700', marginRight: 'auto' },
+        stageTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+        stageTitleBtn: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
+        stageTitle: { flexShrink: 1, fontSize: 13, fontWeight: '900', letterSpacing: 0.3 },
+        stageMeta: { flexShrink: 0, fontSize: 11, fontWeight: '700' },
         stageChip: {
           flexDirection: 'row',
           alignItems: 'center',
@@ -869,6 +861,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           borderWidth: 1,
           backgroundColor: colors.card,
         },
+        stageMore: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
         stageChipDone: { borderColor: colors.border, backgroundColor: colors.card },
         stageChipTxt: { fontSize: 11, fontWeight: '800' },
         groupHeader: {
@@ -1208,41 +1201,40 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
   ) => {
     const big = section as unknown as CrmTaskBigGroup;
     const tone = big.color || colors.primary;
-    const anyOpen = big.columns.some((c) => isColOpen(c));
-    const setAllCols = (open: boolean) =>
-      setColToggles((m) => {
-        const next = { ...m };
-        big.columns.forEach((c) => { next[c.key] = open; });
-        return next;
-      });
+    /** Mở = đang hiện danh sách cột của nhóm. */
+    const groupExpanded = !groupClosed[big.key];
     return (
       <View style={{ paddingHorizontal: Spacing.lg, marginTop: 4 }}>
         {/* Đầu khung giai đoạn giống web: tiêu đề viết hoa theo màu, «N cột · x/y», Ẩn/Hiện việc, Xong hết. */}
         <View style={[styles.stageCard, { borderLeftColor: tone }]}>
-          <Pressable
-            style={styles.stageTop}
-            onPress={() => setAllCols(!anyOpen)}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: anyOpen }}
-          >
-            <Ionicons name={anyOpen ? 'chevron-down' : 'chevron-forward'} size={16} color={tone} />
-            <Text style={[styles.stageTitle, { color: tone }]} numberOfLines={1}>
-              {String(big.label || '').toUpperCase()}
-            </Text>
-          </Pressable>
-          <View style={styles.stageBtns}>
-            <Text style={[styles.stageMeta, { color: colors.textMuted }]}>
-              {big.columns.length > 1 ? `${big.columns.length} cột · ` : ''}{big.doneCount}/{big.tasks.length}
-            </Text>
-            {/* «Xong hết» đóng cả giai đoạn một lần — chỉ quản lý, tránh nhân viên bấm nhầm. */}
+          <View style={styles.stageTop}>
+            <Pressable
+              style={styles.stageTitleBtn}
+              // Mũi tên mở / đóng DANH SÁCH CỘT của nhóm (như web).
+              onPress={() => setGroupClosed((m) => ({ ...m, [big.key]: !m[big.key] }))}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: groupExpanded }}
+            >
+              <Ionicons name={groupExpanded ? 'chevron-down' : 'chevron-forward'} size={16} color={tone} />
+              <Text style={[styles.stageTitle, { color: tone }]} numberOfLines={1}>
+                {String(big.label || '').toUpperCase()}
+              </Text>
+              <Text style={[styles.stageMeta, { color: colors.textMuted }]} numberOfLines={1}>
+                {/* «N nhiệm vụ» = số cột (mục) trong nhóm; «x/y việc» = việc đã xong / tổng. */}
+                {`${big.columns.length} nhiệm vụ${big.tasks.length > 0 ? ` · ${big.doneCount}/${big.tasks.length} việc` : ''}`}
+              </Text>
+            </Pressable>
+            {/* Hoàn thành hàng loạt: ẩn sau nút «⋯» (menu → hộp xác nhận) để không bị đọc nhầm là trạng thái «đã xong»; chỉ quản lý. */}
             {canSeeMoney && big.openCount > 0 && dealId ? (
               <Pressable
-                style={[styles.stageChip, styles.stageChipDone, bulkBusy && { opacity: 0.6 }]}
+                style={[styles.stageMore, bulkBusy && { opacity: 0.6 }]}
                 disabled={bulkBusy}
-                onPress={() => completeStageAll(big)}
+                hitSlop={6}
+                accessibilityRole="button"
+                accessibilityLabel={`Thao tác nhóm ${big.label}`}
+                onPress={() => setBulkSheet({ label: String(big.label || '').toUpperCase(), tone, tasks: big.tasks })}
               >
-                <Ionicons name="checkmark-done-outline" size={13} color={colors.success} />
-                <Text style={[styles.stageChipTxt, { color: colors.success }]}>Xong hết</Text>
+                <Ionicons name="ellipsis-horizontal" size={18} color={colors.textMuted} />
               </Pressable>
             ) : null}
           </View>
@@ -1262,13 +1254,8 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
     return people.some((p) => p?.id != null && String(p.id) === myId);
   };
 
-  // Chân khung: đóng viền dưới + bo góc cho mục lớn (các dòng giữa chỉ có viền hai bên).
-  const renderTaskSectionFooter = (
-    { section }: { section: SectionListData<TaskListItem, CrmTaskBigGroup> },
-  ) => {
-    const tone = (section as unknown as CrmTaskBigGroup).color || colors.primary;
-    return <View style={[styles.frameBottom, { borderLeftColor: tone }]} />;
-  };
+  // Chân mục lớn: chỉ là khoảng cách giữa các giai đoạn (mỗi cấp đã là khối riêng, không còn khung liền).
+  const renderTaskSectionFooter = () => <View style={styles.stageGap} />;
 
   const renderTaskItem = ({ item, section }: { item: TaskListItem; section: SectionListData<TaskListItem, CrmTaskBigGroup> }) => {
     if (!dealId) return null;
@@ -1280,7 +1267,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
       const pct = total ? Math.round((col.doneCount / total) * 100) : 0;
       const allDone = total > 0 && col.openCount === 0;
       return (
-        <View style={[styles.frameSide, { borderLeftColor: tone }]}>
+        <View style={styles.colBox}>
           <View style={styles.colRow}>
             <Pressable
               style={styles.colMain}
@@ -1302,7 +1289,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
               <Pressable
                 style={[styles.colDoneBtn, allDone && styles.colDoneBtnOn, bulkBusy && { opacity: 0.6 }]}
                 disabled={bulkBusy || total === 0 || allDone}
-                onPress={() => completeStageAll(col)}
+                onPress={() => setBulkSheet({ label: col.label, tone, tasks: col.tasks })}
                 accessibilityLabel={allDone ? 'Cột đã xong' : 'Tích hoàn thành cột này'}
               >
                 <Ionicons
@@ -1319,8 +1306,9 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
         </View>
       );
     }
+    // Mọi nhóm đều có dòng cột nên việc luôn thụt sâu thêm một bậc.
     return (
-      <View style={[styles.frameSide, { borderLeftColor: tone, paddingLeft: 14 }]}>
+      <View style={[styles.taskBox, styles.taskBoxDeep]}>
         <ProjectCrmTaskRow
           task={item.task}
           dealId={dealId}
@@ -1632,6 +1620,20 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
           </View>
         ) : null}
       </View>
+
+      <StageBulkCompleteSheet
+        visible={!!bulkSheet}
+        label={bulkSheet?.label || ''}
+        tone={bulkSheet?.tone || colors.primary}
+        openCount={bulkSheet ? bulkSheet.tasks.filter((t) => !isCrmProductionTaskDone(t.status)).length : 0}
+        totalCount={bulkSheet?.tasks.length || 0}
+        onDismiss={() => setBulkSheet(null)}
+        onConfirm={() => {
+          const list = (bulkSheet?.tasks || []).filter((t) => !isCrmProductionTaskDone(t.status));
+          setBulkSheet(null);
+          completeTasksNow(list);
+        }}
+      />
 
       <Modal
         visible={!!editingMoneyField}

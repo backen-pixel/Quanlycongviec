@@ -106,7 +106,6 @@ const ProductionPipelineSettingsPage = lazyWithRetry(() => import('./pages/Produ
 const WorkshopTaskTemplatesPage = lazyWithRetry(() => import('./pages/WorkshopTaskTemplatesPage'));
 const ProductionHandoverSettingsPage = lazyWithRetry(() => import('./pages/ProductionHandoverSettingsPage'));
 const ProductionBackupSyncPage = lazyWithRetry(() => import('./pages/ProductionBackupSyncPage'));
-const BehaviorInsightPage = lazyWithRetry(() => import('./pages/BehaviorInsightPage'));
 const ProductionAssignmentsPage = lazyWithRetry(() => import('./pages/ProductionAssignmentsPage'));
 const ProductionPhatSinhPage = lazyWithRetry(() => import('./pages/ProductionPhatSinhPage'));
 const LogisticsAssignmentsPage = lazyWithRetry(() => import('./pages/LogisticsAssignmentsPage'));
@@ -481,7 +480,6 @@ export default function App() {
             <Route path="/management" element={<ManagementDashboard />} />
             <Route path="/management/deals/:leadId" element={<UnifiedDealPage />} />
             <Route path="/management/backup-sync" element={<ProductionBackupSyncPage />} />
-            <Route path="/management/behavior-insight" element={<Suspense fallback={<PageLoader />}><BehaviorInsightPage /></Suspense>} />
             <Route path="/management/mcp-api" element={<RequireCrmElevated><McpReportApiPage /></RequireCrmElevated>} />
             <Route path="/management/project-deadlines" element={<RequireCrmElevated><ProjectDeadlineDispatchPage /></RequireCrmElevated>} />
             <Route path="/dashboard/classic" element={<Navigate to="/dashboard" replace />} />
