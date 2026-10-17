@@ -1,0 +1,77 @@
+name: VPT cutover PostgreSQL 17.6 (synthetic)
+on:
+  pull_request:
+    paths:
+      - 'backend/scripts/*replication-cutover*20261015.js'
+      - 'backend/scripts/recover-backup-user-parent-20261015.js'
+      - 'backend/scripts/*-v3-20261016.js'
+      - 'backend/tests/backup-user-parent-recovery-cutover-v2*'
+      - 'backend/tests/backup-user-parent-recovery-v3*'
+      - 'backend/tests/backup-user-parent-recovery-sql.js'
+      - 'backend/tests/replication-cutover*'
+      - 'database/20261015051758_replication_cutover_v2_preparation.sql'
+      - 'database/*_replication_cutover_scope_revision.sql'
+      - '.github/workflows/vpt-cutover-postgres17.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  postgres17:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        # Official index digest independently verified from Registry V2.
+        image: postgres:17.6@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929
+        env:
+          POSTGRES_DB: vpt_cutover_synthetic
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: vpt-synthetic-only-20261015
+        ports:
+          - '127.0.0.1:65432:5432'
+        options: >-
+          --health-cmd "pg_isready -U postgres -d vpt_cutover_synthetic"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pinned isolated PostgreSQL client outside repository
+        run: npm install --prefix "$RUNNER_TEMP/vpt-cutover-pg17" --ignore-scripts --no-audit --no-save pg@8.19.0
+      - name: Genuine multi-session fence, process-death and COMMIT-ACK tests
+        env:
+          VPT_CUTOVER_TEST_ONLY: '1'
+          VPT_CUTOVER_TEST_DATABASE_URL: postgresql://postgres:vpt-synthetic-only-20261015@127.0.0.1:65432/vpt_cutover_synthetic
+        run: |
+          node --check backend/scripts/prepare-replication-cutover-v2-20261015.js
+          node backend/tests/replication-cutover-postgres17.js "$RUNNER_TEMP/vpt-cutover-pg17/node_modules/pg"
+          git diff --check
+      - name: Combined journal, durable fence, bounded repair and lifecycle on fresh databases
+        env:
+          VPT_CUTOVER_TEST_ONLY: '1'
+          VPT_CUTOVER_TEST_DATABASE_URL: postgresql://postgres:vpt-synthetic-only-20261015@127.0.0.1:65432/vpt_cutover_synthetic
+        run: |
+          node --check backend/scripts/recover-backup-user-parent-20261015.js
+          node backend/tests/backup-user-parent-recovery-cutover-v2-postgres17.js "$RUNNER_TEMP/vpt-cutover-pg17/node_modules/pg" --lifecycle
+          git diff --check
+      - name: Additions-only scope revision and bounded v3 repair on fresh databases
+        env:
+          VPT_CUTOVER_TEST_ONLY: '1'
+          VPT_CUTOVER_TEST_DATABASE_URL: postgresql://postgres:vpt-synthetic-only-20261015@127.0.0.1:65432/vpt_cutover_synthetic
+        run: |
+          node --check backend/scripts/coordinate-replication-cutover-v3-20261016.js
+          node --check backend/scripts/recover-backup-user-parent-v3-20261016.js
+          node backend/tests/backup-user-parent-recovery-v3-postgres17.js "$RUNNER_TEMP/vpt-cutover-pg17/node_modules/pg"
+          git diff --check
+      - name: Bounded UTF8 12.6MB row streaming and client memory profile on PostgreSQL 17.6
+        env:
+          VPT_CUTOVER_TEST_ONLY: '1'
+          VPT_CUTOVER_TEST_DATABASE_URL: postgresql://postgres:vpt-synthetic-only-20261015@127.0.0.1:65432/vpt_cutover_synthetic
+        run: |
+          node --expose-gc --max-old-space-size=640 backend/tests/replication-cutover-postgres17-large-row.js "$RUNNER_TEMP/vpt-cutover-pg17/node_modules/pg"
+          git diff --check

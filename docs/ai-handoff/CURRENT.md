@@ -1,6 +1,70 @@
+## 2026-10-16 14:02 UTC — VPT: đã nhận triển khai website/n8n, giữ quy tắc Warm/Hot/Deal
+
+Founder đã yêu cầu làm tiếp và chốt đề xuất: lần chuyển mới đầu tiên Warm, Hot hoặc trực tiếp Lead→Deal tính một khách đủ điều kiện; không thêm xác minh sale, không backfill. Website/n8n điều phối tiếp nhận, không tạo nguồn qualification thứ hai hoặc đếm form như khách hợp lệ. Consent/nguồn/khử trùng và provider ACK vẫn là gate gửi/đối soát riêng.
+
+Đã ghép main `24bc1749` vào nhánh recovery, local merge `e642226e`; giữ thay đổi của người dùng và cả hai phần WORKLOG. Main đã bổ sung hook thiếu nên App.jsx hiện đúng origin/main, thay cho bản sửa tạm bốn dòng trước. Render do tác vụ khác đã deploy `24bc1749`, `dep-db8v5o0n74is73cuv6s0` LIVE 09:49:46 UTC; old deploy fe3 đã deactivated. Root không deploy lần này. 13:54 UTC xác nhận maintenance OFF, cả hai control inactive, epoch không đổi. Worker mới vẫn lỗi parent FK và bỏ job sau 12 lần; không tuyên bố queue đã khôi phục.
+
+M1 chống trùng email: `integrations/n8n/` thêm guard thuần và 14/14 kiểm Node PASS; form11116 do WP bridge ghi, email có dấu form được giữ đối soát thay vì tạo lần hai. Dấu form không chứng minh job đã lưu hoặc CRM nhận; nhánh HOLD không có GET receipt/POST/replay. Luồng kiểm thử tổng hợp [gE1H2WGDyRUnopnq](https://brain.ai.vn/workflow/gE1H2WGDyRUnopnq) đã tạo inactive, sáu node/connection readback khớp và validation 0 lỗi/0 cảnh báo; chưa chạy trên n8n. Production `Form website PĐ-VPT` vẫn nguyên active version f78674d8…; cần đăng nhập n8n để cập nhật, đã hỏi Founder. WPVibe hết lượt nên đọc mẫu CF7 bằng phiên WordPress đã đăng nhập; không đổi plugin/form.
+
+V3 đã bổ sung ledger phạm vi append-only cho đúng một bảng primary `_bulk_hoanthanh_sx_20261016`, giữ manifest cũ và năm script frozen nguyên bytes. Coordinator SHA `ca1bafe432e4d5de69a9bde2a6780efc4887aceb4a1a32474b7f9cff66b9c854`, repair `f7ef75702f6e4e3f5741a75052abd61259e1df7e131b347baf4221763a25b67d`, SQL `11230afb0fac01e4df28e805dbee32bda8f7ba8a6241f0a4898ef9bcbc2144bc`; review độc lập PASS. Root đã chạy15scope+10repair actual PGlite18 và7pure PASS; ba ca nhiều phiên chờ PG17.6 CI. [Hợp đồng và gate vận hành](../replication-cutover-v3-scope-revision-20261016.md). Chưa áp migration, đăng ký bảng, capture, sửa ba hàng, merge PR hoặc deploy. Lượt bulk ngoài tác vụ/DDL freeze chưa có xác nhận, capacity cũ đã hết hạn; không dùng kiểm thử để bỏ qua gate này.
+
+Sau tích hợp main:101 core/regression +13 HTTP thực tế trên loopback,14M1,7pureV3,8migration unit PASS; frontend build67s PASS. Thư viện thử express5.2.1 cài ngoài repo. Read primary14:09:13UTC: qualificationQUALIFIED/website receipt thật/receipt thật có consent/outbox/attempts đều0; DNS14:06 vẫn haiSPF. Chưa xác nhận khách quảng cáo thật, provider ACK, email inbox hoặc CPL.
+
+---
+
+## 2026-10-16 08:13 UTC — VPT: scope drift đã rõ; dịch vụ trở lại, chưa phát hành
+
+Đối chiếu chỉ đọc 08:09:50 xác định primary có thêm `_bulk_hoanthanh_sx_20261016`: **337 bảng so với 336** trong plan đã chốt; không có thay đổi catalog/derived/excluded khác, **phạm vi/cấu trúc 339 bảng phía backup khớp plan**. Giữ nguyên plan/fingerprint cũ; không mở rộng scope hoặc rerun để vượt guard. Root đang hỏi Founder tác vụ bulk SX bên ngoài đã xong chưa, rồi mới chốt lại phạm vi và review kế hoạch mới.
+
+Closing attempt dừng ngay primary activate 08:03:42 với `scope_changed`, trước COMMIT/epoch transition; hai site reserved/committed capture đều **0**. Root đã explicit release: cả hai fence inactive/deadline NULL, Render Maintenance **OFF**, HTTP **200**. Save Only `SUPABASE_REPLICATION_DISABLED=0` đã readback xác nhận, worker cũ không đổi. V1/V2 private schema, registration 138 actions và dry-run ba hàng PASS được giữ; **chưa capture, repair apply, merge/deploy hoặc restart**. Ba hàng chỉ gỡ parent FK, chưa chứng minh toàn bộ backup.
+
+WordPress 08:13 có **20 jobs: 19 sent, 1 queued**, review/blocked/sending đều 0. Job queued tạo `2026-10-07T22:53:30Z`, chưa thử gửi, lý do awaiting_worker; thiếu cờ `is_test` được lưu rõ và chưa có Lead/receipt CRM khớp nên **không replay**. CRM có 1 website receipt TEST, **0 khách thật / 0 khách thật có consent**. DNS 08:03:48 vẫn hai SPF; chưa xác nhận inbox, provider ACK hoặc CPL.
+
+Candidate `269bc112` giữ **5/5 CI jobs PASS**, không đổi source. [Checkpoint vận hành và nguồn đầy đủ](<D:/quản trị vận hành/vpt-live-operations-checkpoint-20261016.md>), [trace form 08:13](<D:/quản trị vận hành/vpt-live-operations-checkpoint-20261016.md#trace-form-website-0813>). Các mục bên dưới giữ lịch sử theo thời điểm ghi.
+
+---
+
+## 2026-10-16 — VPT: đã áp dung lượng 12 GB; PR #139 chưa phát hành
+
+Founder đã phê duyệt thay đổi dung lượng/chi phí. Theo checkpoint vận hành đã xác nhận, đĩa primary và backup hiện đều **12 GB**, giới hạn autoscale đều **12 GB**; **Spend Cap cấp tổ chức đã tắt** trong phạm vi phê duyệt. Các mục ngày 15/10 còn ghi chờ quyết định 12 GB là lịch sử. Cần đo lại sizing/capacity và kiểm gate tại thời điểm thực hiện bước dữ liệu; giữ nguyên timestamp/fingerprint cũ.
+
+**Checkpoint vận hành 07:14:45 UTC:** v1 private SQL đã áp primary history `20261016071153`/backup `20261016071159`; v2 prep primary `20261016071348`/backup `20261016071413`. V1 armed cả hai lúc 07:12:33.931 UTC, run `30a4e894-3d2c-4b7c-a65b-bc70bd047350`, mỗi bên 5 bảng/10 ALWAYS trigger, 0 hàng nghiệp vụ đổi. Plan sau arm: manifest `097952669c7ef255e89fa1f6c5efb2e2ccda2c7cdbb413e925338a7719397d13`, primary 336/backup 339 bảng + 5 view mỗi bên, held 0. V2 private contract primary inspect PASS; registrations 0, control chưa có fence active. Chưa heavy capture, repair hoặc deploy; đang chuẩn bị phép đo dung lượng mới. Các mục bên dưới nói journal chưa cài là lịch sử.
+
+Đồng bộ nhánh `codex/vpt-operations-recovery-20261015` với `origin/main` tại `fe3f4398`, giữ các thay đổi mới của người dùng và cả hai phía hồ sơ bàn giao. Chỉ CURRENT/WORKLOG cần giải quyết conflict. Main có hai import tới `useActivityClickTracker`/`BehaviorInsightPage` nhưng thiếu cả hai file trong Git và checkout gốc; sửa build bằng cách bỏ đúng hai import, hook call và route chưa có implementation, giữ menu báo lỗi cùng activity route/logger. Hồi quy 153/153, migration unit 8/8, hai overview helper, syntax 10 file, kiểm tên/số migration và frontend build (1m18s) đều đạt; CI SHA merge mới sau push còn chờ. [Draft PR #139](https://github.com/backen-pixel/Quanlycongviec/pull/139) chưa merge hoặc triển khai bởi tác vụ này; không chạy SQL, replay, ghi sửa dữ liệu nghiệp vụ hay phát event Ads trong phiên đồng bộ nhánh.
+
+Runtime do tác nhân khác đã có deploy **16/10 lúc 06:18 UTC**, mã `fe3f4398`. Nghiệm thu gói VPT, bảo toàn queue RAM cũ, khách quảng cáo thật và CPL vẫn cần bằng chứng riêng.
+
+Kiểm Ads mới lúc 07:15:38 UTC: cả năm số đếm qualification/website receipt thật/receipt thật có consent/outbox/attempts đều 0. DNS 07:02 UTC vẫn có hai SPF; chưa xác nhận inbox hoặc nghiệm thu Ads/CPL.
+
+---
+
 ## 2026-10-16 — Dọn thư mục tài nguyên Android lồng trùng
 
 Gỡ 17 tệp ở `crm-mobile-v2/plugins/native-android/res/res/`: 16 tệp trùng bản tương ứng ở `res/`, một `styles_call.xml` là bản cũ thiếu `Theme.BubbleCompose`. Plugin `withIncomingCallAndroid.js` chỉ đọc danh sách tài nguyên ở `res/` bên ngoài; không có tham chiếu tới thư mục lồng. Kiểm luồng sao chép native bằng chính hàm plugin với filesystem đích giả lập: trước/sau đều 44 tệp, gồm 18 resource, cùng đường dẫn đích và SHA-256, không thiếu tệp. Chưa chạy Android build hoặc phát hành app. Khôi phục bằng revert commit dọn thư mục; tài nguyên canonical và các bản sao phục vụ ứng dụng riêng được giữ nguyên.
+
+---
+
+## 2026-10-15 — VPT: bốn việc đang làm; chưa phát hành ứng dụng hoặc nghiệm thu Ads
+
+**Checkpoint 06:47 UTC — chờ quyết định dung lượng/chi phí:** cả4CI tại `31840d1e` SUCCESS; actualPG17.6 đạt9fence+8combined+15lifecycle,0deferred/0DBsynthetic còn lại; benchmark large/small4096 peakRSS859.545.600byte<1GiB. Main45399d59 đã tích hợp (chỉ thêm script MCP khác), không mất thay đổi người dùng. Reviewer vận hành chưa duyệt8GB cho2fullcaptures: primary chỉ còn34.520.201byte ngoài reserves theo phép tính bảo thủ/2MiBmetadata; WAL/TOAST của bulkciphertext chưa đo. Đề xuất12GB mỗi project vàmaxautoscale12GB (~1USD/thángtổng chưathuế, chỉphầnđĩa) đòi tắtSpendCapTOÀNTỔCHỨC; câu hỏi phê duyệt riêng đang chờ Founder. Không tự đổi billing/disk, khôngDDL/arm/maintenance/repair/merge/deploy/restart. Cảjournal v1/v2 vẫn chưa cài. Nguồn sizing06:13–06:23 đãhết hạn, phảiđo mới; kế hoạch trướcv1arm phải tạo lại sauhooks, không sửa timestamp/fingerprint cũ. Bằng chứng/đề xuất chi tiết lưu ngoàirepo trong workspace vận hành.
+
+**Checkpoint 06:35 UTC:** profile2 `55267869` đã đạt actual PostgreSQL17.6 (9 đa phiên,8 combined,12 dòng12,6MB và batch4.096 dòng; peakRSS794.456.064byte<1GiB). Coordinator finite/bulk catalog đã review độc lập và12local lifecycle PASS; đang đưa15case gồm3đa phiên mới lênCI cùng capacity28 và adapter guard. Read-only plan thực tế primary335/backup339bảng+5view mỗi bên, held0, canonicalmetadata1.642.799byte. Sizer đầy đủ kết thúc06:23:11, primaryencoded1.110.768.303byte/backup884.388.569byte; cả12aggregatepreflight15s đạt (cao nhất3.952ms). Dung lượng/reserves cần đo mới trước action; chưa cấp phép cutover từ phép tính sơ bộ, chưaDDL/arm/repair/merge/deploy/restart.
+
+Founder đã yêu cầu tiếp tục hoàn thành cả bốn việc sau lần tạm dừng. [Draft PR #139](https://github.com/backen-pixel/Quanlycongviec/pull/139), nhánh `codex/vpt-operations-recovery-20261015`; chưa merge/deploy, chưa qualify khách thật hoặc gửi provider event. [Hồ sơ khôi phục, bằng chứng, gate và rollback](../ops/vpt-operations-recovery-20261015.md) và WORKLOG giữ lịch sử chi tiết.
+
+**CRM:** chuyển mới Warm/Hot hoặc Lead → Deal tự ghi nhận một lần, giữ mốc đầu tiên, không backfill hoặc giả bằng chứng sale. Năm đường ghi dùng atomic primary-only RPC; Google/Meta vẫn kiểm consent, khách mới, nguồn, chống trùng và trạng thái hiện tại. Hai SQL primary đã áp, history `20261015044416` và `20261015051542`; hậu kiểm05:16:06UTC service-only/invoker/stable, qualification/outbox/attempts0. Backend cũ chưa gọi RPC nên tự qualification **chưa hoạt động**. Candidate giữ qualification khi đã đi tiếp `survey_scheduled`/`survey_done`, không tạo mới từ Cold→khảo sát; đây là cách hiểu làm việc đã báo, câu hỏi tùy chọn chưa được Founder trả lời riêng. Kiểm mới nhất: 15 stageSQL,21 websiteSQL,153 coreNode workflow và frontend build39,57sPASS; **3/3 CI SUCCESS tại `8f5aa59d`**.
+
+**Email/form:** plugin/form PR128 đã LIVE và TEST vào primary rồi mirror backup; TEST không tính khách/CPL. SMTP đã đổi host đúng chứng chỉ `mail93132.maychuemail.com`, giữ SSL465/TLS/credential; test qua kết nối nhưng chưa xác nhận inbox. DNS công khai kiểm lại05:24UTC vẫn có hai SPF của `itso.vn`; Founder đang liên hệ quản trị DNS. Không sửa DNS/liên hệ nhà cung cấp thay Founder.
+
+**Backup:** chưa khôi phục toàn bộ. Runtime05:26UTC activeprimary,LIGHTtrue,storagereplicationfalse; cùng process uptime6093s,queue4449/applied1796/failed1027; Redis đã xác nhận disabled. Khoảng45.998 job RAM của process cũ trước các auto-deploy chưa có bằng chứng bảo toàn. Backend Auto-Deploy đã Off; tác vụ không restart/deploy. Candidate replication36/36 và review đạt, chặn alias UUID/company/type, giữ retry/ACK và bỏ runtime broad-grant. Không mở FK cho worker cũ hoặc chạy fullclone/runBackupSync.
+
+Kho snapshot private backup đã áp qua history `20261015044748`/`20261015045650`; owner-only/FORCERLS. Khóa riêng32byte+UUID lưu Render Saveonly, không đổi JWT/lộ khóa. Snapshot thật04:57:36UTC `07d1bf6f-3c65-4337-b246-8eaf78c813bb` đã decrypt/readback (120.495byte), applied_at/resultNULL,0 hàng nghiệp vụ đổi. Chỉ bảo vệ ba hàng dự kiến sửa; không chứng minh bảo toàn RAM/toànbackup. Integration journal mới **42SQL/parser/review PASS** tại toolf47bfe74/test031b9a13, chặn rule/default/CHECK/index/seqdrift và đòi đúng3sameTXevents. PG17STOREpin175c945b…c1f4 đã khớp đọc thật; chỉ chuẩn hóa redundantcontype'n', giữattnotnull. Cần snapshot mới sau catalog cuối; chưa actualapply/release.
+
+Capture v1 năm bảng đã qua19SQL/review, CLI inventory thậtPASS/0 hàng nghiệp vụ đổi nhưng còn330/334 bảng cơ sở chưa phủ, readinessfalse. V2 prep15SQL/reviewPASS đã commitd1f25259, đang thêm PG17normalization/coordinator/multisessiontests; chưa áp/arm. Supabase đã vào được bằng phiên GitHub sẵn có: primary8GBused2,12GB; backup8GBused2,44GB, I/O1%, spendcap8GB; không đổi gói/cost. Phép đo serialized metadata-only đang chạy READONLY trên Render, chưa có kết quả; capacity/fullcoverage/fence/oldstop chưa đủ. Không cần Founder đăng nhập Supabase thêm. Chưa Maintenance/repair/replay.
+
+**Ads:** kiểm05:26:15UTC qualificationQUALIFIED,website realreceipts,realreceipts consent,outbox,attempts đều0. Google Data Manager còn chờ khách quảng cáo thật đủ điều kiện/map/import; action giữ Secondary/One. Meta website gửi thật vẫn tắt/test, chưa providerACK; không tạo conversion giả. Chưa có khách mới/CPL hoặc kết luận ≤250.000đ/khách được nghiệm thu. Rollback ứng dụng phải giữ schema/ledger và consent gates; không drop phương pháp đã dùng hoặc coi queue mới nhỏ hơn là đã phục hồi.
+
+Checkpoint **06:15 UTC**: **4/4 CI SUCCESS tại `19cf2498`**, gồm9/9 actualPostgreSQL17.6 đa phiên/death/lostCOMMITACK và8/8 combined repair/fence. Profile16/32MiB mới đang kiểm riêng. Lượt sizer863 đã kết thúc: primary335bảng/1.054.196dòng/raw1.046.143.579byte/encoded1.110.709.859byte/maxrow12.547.819byte; backup timeout. Lượtcursor SHA`d7cee82c…30062` đang chạy READONLY cả hai site; chỉ trả độ dài, không raw khách. Ngân sách bảo thủ vượt8,4GB nên capacity chưa đạt; v2 exactencoded vẫn giữ storage2×retention2 và reserves, phải đối chiếu same-snapshot. Dùng report.started_at làm freshnessbound. DNS06:14vẫn2SPF; SQL06:15:27 cả5sốAds vẫn0. Chưa actualrepair/arm/merge/deploy hoặc thay gói/cost.
 
 ---
 

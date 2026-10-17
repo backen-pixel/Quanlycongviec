@@ -1,9 +1,10 @@
 'use strict';
 
-// Read-only website proof. A saved form, sales stage or button click is not qualification.
+// Read-only website proof. Only recorded manual or explicit stage-policy evidence qualifies.
 const { createHash } = require('node:crypto');
 const { readAll, linkedIdentities, normalizePhone } = require('./googleQualifiedConversions');
 const { qualificationContext } = require('./qualificationContext');
+const { EXTRA_COLUMNS, basicQualification, loadStageProof, stageQualificationReason } = require('./qualificationEvidence');
 const { FBC, FBP, WEBSITE_API_KEY_NAME } = require('../../domain/websiteIntakeReceipt');
 const DAY = 86400000, MAX_CATALOG_AGE = DAY, EVENT_MAX_AGE = 7 * DAY;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -59,8 +60,8 @@ function matchingProof(receipt, nowMs) {
   return null;
 }
 
-const eventColumns = 'id,company_id,canonical_lead_id,revision,status,contact_usable,need_in_scope,area_in_service,evidence_ref,actor_id,recorded_at,context_hash';
-const leadColumns = 'id,company_id,type,is_test,customer_id,facebook_contact_id,phone,created_at,intake_attribution,website_intake';
+const eventColumns = 'id,company_id,canonical_lead_id,revision,status,contact_usable,need_in_scope,area_in_service,evidence_ref,actor_id,recorded_at,context_hash' + EXTRA_COLUMNS;
+const leadColumns = 'id,company_id,type,is_test,customer_id,facebook_contact_id,phone,created_at,intake_attribution,website_intake,stage_id,pipeline_id';
 const attrColumns = 'id,lead_id,customer_id,contact_id,company_id,kenh,platform,campaign_id,adset_id,ad_id,fb_campaign_id,fb_adset_id,fb_ad_id,fb_page_id,fb_form_id,fb_leadgen_id,utm_source,utm_medium,utm_campaign,utm_content,utm_term,gclid,fbclid,gbraid,wbraid,landing_url,cham_dau_luc';
 const receiptColumns = 'id,company_id,lead_id,customer_id,api_key_id,form_id,site_host,submitted_at,saved_at,landing_url,source,fbc,fbp,captured_at,measurement_consent,consent_version';
 
@@ -70,7 +71,7 @@ async function buildWebsiteQualifiedLeads({ db, companyId, adAccountId, fromMs, 
       !Number.isSafeInteger(toMs) || !Number.isSafeInteger(nowMs) || fromMs > toMs || toMs > nowMs)
     throw fail('INVALID_RANGE');
   const diagnostics = { qualified_current: 0, exported: 0, delivery_ready: 0, delivery_held: 0,
-    not_current_qualified: 0, invalid_qualification: 0, qualification_stale: 0,
+    not_current_qualified: 0, invalid_qualification: 0, qualification_stale: 0, stage_policy_held: 0,
     qualification_before_source: 0, outside_window: 0, missing_or_test_lead: 0,
     identity_unknown: 0, identity_ambiguous: 0, duplicate_or_returning: 0, new_customer_unproven: 0,
     no_website_receipt: 0, projection_mismatch: 0, source_conflict: 0, test_source: 0,
@@ -216,17 +217,19 @@ async function buildWebsiteQualifiedLeads({ db, companyId, adAccountId, fromMs, 
     return null;
   }
   const rows = [], reconciliationRows = [];
+  const stageProof = await loadStageProof({ db, events: [...latest.values()], leads, read });
   for (const lead of history) {
     const event = latest.get(lead.id);
     if (!event || event.status !== 'QUALIFIED') { diagnostics.not_current_qualified++; continue; }
     if (lead.is_test !== false) { diagnostics.missing_or_test_lead++; continue; }
     const qualified = time(event.recorded_at), customer = customers.get(lead.customer_id);
-    if (!UUID.test(event.actor_id || '') || !text(event.evidence_ref) || event.contact_usable !== true ||
-        event.need_in_scope !== true || event.area_in_service !== true || !Number.isSafeInteger(qualified)) {
+    if (!UUID.test(event.actor_id || '') || !basicQualification(event) || !Number.isSafeInteger(qualified)) {
       diagnostics.invalid_qualification++; continue;
     }
     diagnostics.qualified_current++;
     if (event.context_hash !== qualificationContext(lead, customer)) { diagnostics.qualification_stale++; continue; }
+    const stageReason = stageQualificationReason(event, lead, stageProof);
+    if (stageReason) { diagnostics[stageReason]++; continue; }
     if (ambiguous.has(lead.id)) { diagnostics.identity_ambiguous++; continue; }
     if (!first.has(lead.id)) { diagnostics.identity_unknown++; continue; }
     if (first.get(lead.id) !== lead.id) { diagnostics.duplicate_or_returning++; continue; }
@@ -248,6 +251,7 @@ async function buildWebsiteQualifiedLeads({ db, companyId, adAccountId, fromMs, 
     const base = { ...facts, lead_id: lead.id, company_id: companyId,
       identity_key: createHash('sha256').update(companyId + '|' + first.get(lead.id)).digest('hex'),
       qualification_id: event.id, qualification_revision: event.revision,
+      qualification_method: event.qualification_method || 'manual_v1',
       context_hash: qualificationContext(lead, customer), qualified_ms: qualified,
       fbc: r.fbc || null, fbp: r.fbp || null, fbclid: r.source.fbclid,
       captured_at: r.captured_at || null, captured_ms: Number.isSafeInteger(time(r.captured_at)) ? time(r.captured_at) : null,

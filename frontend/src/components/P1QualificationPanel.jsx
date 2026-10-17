@@ -132,6 +132,7 @@ export default function P1QualificationPanel({ duongDanLead }) {
   }, {});
   return <section className="rounded-xl border border-gray-200 bg-white p-4" aria-label="Đánh dấu khách hợp lệ">
     <h2 className="text-lg font-semibold">Đánh dấu khách hợp lệ (đợt thử)</h2>
+    <p className="mt-2 text-sm text-gray-600">VPT: chuyển mới sang Warm, Hot hoặc từ Lead sang Deal tự ghi nhận hợp lệ theo giai đoạn, không cần phiếu sale. Hồ sơ cũ không được tự cộng lại. Xác minh thủ công bên dưới vẫn dùng khi cần kiểm hoặc thu hồi.</p>
     <div className="mt-3 rounded border border-gray-200 p-3" aria-label="Xác minh khách theo ID">
       <label className="block text-sm font-medium">Xác minh Lead/Deal theo ID hoặc liên kết CRM
         <input className="mt-1 w-full rounded border p-2" value={directInput} disabled={busy}
@@ -142,6 +143,7 @@ export default function P1QualificationPanel({ duongDanLead }) {
       {directLead && <div className="mt-2 text-sm">
         <a href={duongDanLead(directLead.lead_id)} target="_blank" rel="noopener noreferrer" className="text-blue-700 underline">Mở khách {directLead.code}</a>
         <span className="ml-2">{stateLabel(directLead.state.status)}</span>
+        {directLead.state.qualification_method === 'stage_based_v1' && <span className="ml-2">Theo giai đoạn CRM</span>}
         <p className="mt-1">{directLead.state.lead?.title || directLead.title || 'Mở hồ sơ để đối chiếu khách.'}</p>
         {directLead.state.status !== 'QUALIFIED' && <button type="button" disabled={busy} onClick={event => open(directLead, 'QUALIFIED', event)} className="ml-3 text-emerald-700">Hợp lệ</button>}
         {directLead.state.status !== 'REJECTED' && <button type="button" disabled={busy} onClick={event => open(directLead, 'REJECTED', event)} className="ml-3 text-rose-700">Loại</button>}

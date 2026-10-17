@@ -4,6 +4,7 @@
 const { createHash } = require('node:crypto');
 const { parseVptV1Description, formatVietnamTime, maskGclid } = require('./googleOfflineConversions');
 const { qualificationContext } = require('./qualificationContext');
+const { EXTRA_COLUMNS, basicQualification, loadStageProof, stageQualificationReason } = require('./qualificationEvidence');
 const CONVERSION_NAME = 'VPT CRM - Lead hop le da xac minh';
 const CSV_HEADER = 'Google Click ID,Conversion Name,Conversion Time,Conversion Value,Conversion Currency,Order ID';
 const PAGE = 500, MAX_PAGES = 100;
@@ -104,12 +105,12 @@ function linkedIdentities(leads, customers = new Map()) {
   return { first, ambiguous };
 }
 
-const qualificationColumns = 'id,company_id,canonical_lead_id,revision,status,contact_usable,need_in_scope,area_in_service,evidence_ref,actor_id,recorded_at,context_hash';
+const qualificationColumns = 'id,company_id,canonical_lead_id,revision,status,contact_usable,need_in_scope,area_in_service,evidence_ref,actor_id,recorded_at,context_hash' + EXTRA_COLUMNS;
 async function buildGoogleQualifiedConversions({ db, companyId, fromMs, toMs }) {
   if (!companyId || !Number.isFinite(fromMs) || !Number.isFinite(toMs) || fromMs > toMs)
     throw Object.assign(Error('INVALID_RANGE'), { code: 'INVALID_RANGE' });
   const diagnostics = { qualified_current: 0, exported: 0, not_current_qualified: 0,
-    invalid_qualification: 0, outside_window: 0, missing_or_test_lead: 0,
+    invalid_qualification: 0, stage_policy_held: 0, outside_window: 0, missing_or_test_lead: 0,
     identity_unknown: 0, identity_ambiguous: 0, duplicate_or_returning: 0, new_customer_unproven: 0, qualification_stale: 0,
     no_website_source: 0, no_gclid: 0, braid_only: 0, invalid_gclid: 0,
     source_time_unknown: 0, source_conflict: 0, test_source: 0, qualification_before_source: 0 };
@@ -128,8 +129,7 @@ async function buildGoogleQualifiedConversions({ db, companyId, fromMs, toMs }) 
   for (const event of latest.values()) {
     if (event.status !== 'QUALIFIED') { diagnostics.not_current_qualified++; continue; }
     const ms = time(event.recorded_at);
-    if (!event.actor_id || !text(event.evidence_ref) || event.contact_usable !== true ||
-        event.need_in_scope !== true || event.area_in_service !== true || !Number.isFinite(ms)) {
+    if (!basicQualification(event)) {
       diagnostics.invalid_qualification++; continue;
     }
     diagnostics.qualified_current++;
@@ -155,7 +155,7 @@ async function buildGoogleQualifiedConversions({ db, companyId, fromMs, toMs }) 
   for (let i = 0; i < candidates.length; i += 100) {
     const ids = candidates.slice(i, i + 100).map(row => row.canonical_lead_id);
     const records = await readAll(() => db.from('crm_leads')
-      .select('id,company_id,type,is_test,customer_id,facebook_contact_id,phone,stage_id,created_at,intake_attribution,website_intake,description', { count: 'exact' })
+      .select('id,company_id,type,is_test,customer_id,facebook_contact_id,phone,stage_id,pipeline_id,created_at,intake_attribution,website_intake,description', { count: 'exact' })
       .eq('company_id', companyId).in('id', ids).order('id'));
     for (const row of records) {
       if (row.company_id !== companyId || !ids.includes(row.id) || details.has(row.id)) throw unavailable();
@@ -170,6 +170,10 @@ async function buildGoogleQualifiedConversions({ db, companyId, fromMs, toMs }) 
     }
   }
   const rows = [];
+  const stageSnapshots = [];
+  const stageProof = await loadStageProof({ db, events: candidates, leads: [...details.values()], read: async query => {
+    const records = await readAll(query); stageSnapshots.push({ query, records }); return records;
+  } });
   for (const event of candidates) {
     const lead = details.get(event.canonical_lead_id), canonical = byId.get(event.canonical_lead_id);
     if (!lead || !canonical || lead.company_id !== companyId || lead.is_test !== false ||
@@ -184,6 +188,8 @@ async function buildGoogleQualifiedConversions({ db, companyId, fromMs, toMs }) 
         lead.created_at !== canonical.created_at || lead.phone !== canonical.phone) throw unavailable();
     const currentContext = qualificationContext(lead, customers.get(lead.customer_id));
     if (event.context_hash !== currentContext) { diagnostics.qualification_stale++; continue; }
+    const stageReason = stageQualificationReason(event, lead, stageProof);
+    if (stageReason) { diagnostics[stageReason]++; continue; }
     if (ambiguous.has(lead.id)) { diagnostics.identity_ambiguous++; continue; }
     if (!first.has(lead.id)) { diagnostics.identity_unknown++; continue; }
     if (first.get(lead.id) !== lead.id) { diagnostics.duplicate_or_returning++; continue; }
@@ -202,12 +208,15 @@ async function buildGoogleQualifiedConversions({ db, companyId, fromMs, toMs }) 
       diagnostics.qualification_before_source++; continue;
     }
     rows.push({ conversion_name: CONVERSION_NAME, conversion_ms: ms, gclid: source.gclid,
+      qualification_method: event.qualification_method || 'manual_v1',
       lead_id: lead.id, source_kind: source.kind,
       order_id: `vptq_${createHash('sha256').update(`${companyId}|${lead.id}|qualified-v1`).digest('hex').slice(0, 56)}` });
   }
   // Events are append-only. Catch revocations/new revisions while we read CRM/identity sources.
   const checked = await readAll(eventQuery);
   if (JSON.stringify(checked) !== JSON.stringify(events)) throw unavailable();
+  for (const { query, records } of stageSnapshots)
+    if (JSON.stringify(await readAll(query)) !== JSON.stringify(records)) throw unavailable();
   rows.sort((a, b) => a.conversion_ms - b.conversion_ms || a.order_id.localeCompare(b.order_id));
   diagnostics.exported = rows.length;
   return { rows, diagnostics };
@@ -223,6 +232,7 @@ function toQualifiedGoogleCsv(rows) {
   return `${lines.join('\r\n')}\r\n`;
 }
 const previewQualifiedRow = row => ({ lead_id: row.lead_id, gclid_tail: maskGclid(row.gclid),
-  conversion_time: `${formatVietnamTime(row.conversion_ms)}+07:00`, source_kind: row.source_kind });
+  conversion_time: `${formatVietnamTime(row.conversion_ms)}+07:00`, source_kind: row.source_kind,
+  qualification_method: row.qualification_method || 'manual_v1' });
 module.exports = { CONVERSION_NAME, CSV_HEADER, readAll, sourceForLead, linkedIdentities, normalizePhone,
   buildGoogleQualifiedConversions, toQualifiedGoogleCsv, previewQualifiedRow };

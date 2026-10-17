@@ -199,11 +199,12 @@ export default function WebConversionPanel() {
             {' · '}nguồn cần đối soát: {qualified.diagnostics.source_conflict + qualified.diagnostics.source_time_unknown + qualified.diagnostics.invalid_gclid + qualified.diagnostics.qualification_before_source}
             {' · '}dữ liệu thử/khách không còn: {qualified.diagnostics.test_source + qualified.diagnostics.missing_or_test_lead}</p>
           <p className="text-gray-600">Form mới chưa đồng ý đo quảng cáo: {qualified.diagnostics.measurement_consent_required ?? 0}.</p>
+          <p className="text-gray-600">Giữ do quay về Cold, vào cột thua hoặc chưa xác định được giai đoạn: {qualified.diagnostics.stage_policy_held ?? 0}. Tính lần đầu khách sang Warm, Hot hoặc thẳng Deal; sang Hẹn khảo sát, Gặp showroom/xưởng vẫn giữ mốc cũ, mỗi khách tính một lần.</p>
           <p className="text-gray-600">Khử trùng theo thông tin CRM đang có. Lịch sử khách thiếu hoặc chưa nhập vẫn cần đối soát; số này chưa dùng để nghiệm thu CPL khách mới.</p>
           {!!qualified.rows.length && <details><summary className="cursor-pointer text-sky-700">Xem khách đủ điều kiện</summary>
             <ul className="mt-1 space-y-1">{qualified.rows.map(row => <li key={row.lead_id}>
               <a href={`/crm/leads/${row.lead_id}`} target="_blank" rel="noopener noreferrer" className="text-sky-700 underline">Mở khách {row.lead_id.slice(0, 8)}</a>
-              {' · '}{row.conversion_time}{' · '}{row.gclid_tail}
+              {' · '}{row.conversion_time}{' · '}{row.gclid_tail}{' · '}{row.qualification_method === 'stage_based_v1' ? 'Theo giai đoạn CRM' : 'Xác minh thủ công'}
             </li>)}</ul>
           </details>}
         </div>}

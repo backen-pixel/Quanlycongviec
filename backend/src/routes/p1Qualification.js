@@ -20,7 +20,7 @@ const SET_KEYS = ['request_id', 'expected_revision', 'status', 'contact_usable',
   'need_in_scope', 'area_in_service', 'evidence_ref', 'reason', 'expected_context_hash'];
 const REVOKE_KEYS = ['request_id', 'expected_revision', 'reason'];
 const PUBLIC_KEYS = ['id', 'status', 'contact_usable', 'need_in_scope',
-  'area_in_service', 'evidence_ref', 'reason', 'revision', 'recorded_at', 'actor_id'];
+  'area_in_service', 'evidence_ref', 'reason', 'revision', 'recorded_at', 'actor_id', 'qualification_method'];
 const reply = (res, status, error, reason_code) =>
   res.status(status).json({ error, reason_code });
 const visible = row => Object.fromEntries(PUBLIC_KEYS.filter(key => row[key] !== undefined)

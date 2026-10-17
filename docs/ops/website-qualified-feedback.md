@@ -1,5 +1,7 @@
 # VPT: khách quảng cáo → website → CRM → xác minh
 
+**Cập nhật nghiệp vụ ngày 15/10:** Founder đã chốt chuyển mới sang Warm, Hot hoặc thẳng Lead → Deal là đủ điều kiện, mỗi khách giữ một mốc đầu tiên; không cần phiếu sale riêng. Candidate PR #139 và hai SQL primary đã chuẩn bị quy tắc này, backend chưa phát hành. Mô tả phiếu manual_v1 bên dưới là luồng phiên bản trước; consent, nguồn quảng cáo, khách mới và chống trùng vẫn bắt buộc trước xuất/gửi. Xem [trạng thái triển khai và bằng chứng mới nhất](vpt-operations-recovery-20261015.md).
+
 Người dùng đã duyệt phát hành [PR #128](https://github.com/backen-pixel/Quanlycongviec/pull/128) và tạo/lưu credential CAPI website riêng **chỉ ở chế độ test**. Gói đã áp SQL primary, merge/deploy Render và cập nhật WordPress/form ngày **14/10/2026**; **một TEST form → CRM đã được đối soát, sender Meta vẫn tắt, provider/backup chưa nghiệm thu**. Đây là tuyến website riêng; không chứa hoặc kích hoạt tuyến Facebook native Form của [PR #127](https://github.com/backen-pixel/Quanlycongviec/pull/127), vẫn draft/chưa triển khai. Các giờ phát hành dưới đây dùng **Asia/Saigon (UTC+7)**.
 
 ## Cập nhật backup 12:47 ngày 14/10/2026

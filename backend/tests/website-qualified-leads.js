@@ -97,6 +97,75 @@ const run = (tables = fixture(), options = {}, args = {}) => build({ db: fakeDb(
 function requalify(t) {
   t.p1_qualification_events[0].context_hash = qualificationContext(t.crm_leads[0], t.customers[0]);
 }
+function stagePolicy(t, directDeal = false) {
+  const e = t.p1_qualification_events[0], l = t.crm_leads[0]; l.stage_id = U(800);
+  l.pipeline_id = U(802);
+  if (directDeal) l.type = 'deal';
+  const h = { id: U(801), lead_id: l.id, pipeline_type: l.type, from_stage_id: U(799), to_stage_id: l.stage_id,
+    to_canonical_slug: directDeal ? 'designing' : 'warm', entered_at: e.recorded_at, changed_by: e.actor_id };
+  Object.assign(e, { qualification_method: 'stage_based_v1', stage_history_id: h.id,
+    contact_usable: false, need_in_scope: false, area_in_service: false, evidence_ref: null,
+    stage_evidence: { policy_version: 'stage_based_v1', from_type: 'lead', to_type: l.type,
+      from_stage_id: h.from_stage_id, to_stage_id: h.to_stage_id, to_canonical_slug: h.to_canonical_slug,
+      history_id: h.id, qualified_at: h.entered_at, actor_id: h.changed_by, context_hash: e.context_hash } });
+  t.crm_lead_stage_history = [h];
+  t.crm_pipeline_stages = [{ id: l.stage_id, pipeline_id:l.pipeline_id, canonical_slug: h.to_canonical_slug, is_lost: false, is_active:true }];
+  t.crm_pipelines = [{ id:l.pipeline_id,company_id:COMPANY }];
+  return t;
+}
+
+test('stage-based Warm/Hot and direct Deal use actual first transition time with stable Meta event ID', async () => {
+  const { prepareWebsiteFeedback } = require('../src/modules/marketingAutomation/websiteFeedbackOutbox');
+  const target = { company_id: COMPANY, ad_account_id: 'act_' + ACCOUNT,
+    site_host: 'vanphuthanh.net', dataset_id: '1575398160676100' };
+  for (const directDeal of [false, true]) {
+    const t = stagePolicy(fixture(), directDeal), first = (await run(t)).rows[0];
+    assert.equal(first.delivery_supported, true); assert.equal(first.qualification_method, 'stage_based_v1');
+    const prepared = prepareWebsiteFeedback(first, {target,mode:'test'});
+    t.crm_leads[0].type = 'deal'; t.crm_pipeline_stages[0].canonical_slug = 'designing';
+    const next = (await run(t)).rows[0];
+    assert.equal(next.qualified_ms, first.qualified_ms);
+    assert.equal(prepareWebsiteFeedback(next, {target,mode:'test'}).event_id,prepared.event_id);
+    t.crm_pipeline_stages[0].is_lost = true;
+    assert.equal((await run(t)).diagnostics.stage_policy_held,1);
+    t.crm_pipeline_stages[0].is_lost = false;
+    assert.equal(prepareWebsiteFeedback((await run(t)).rows[0], {target,mode:'test'}).event_id,prepared.event_id);
+  }
+});
+test('stage-based website quality preserves consent, receipt, matching and contact gates', async () => {
+  for (const change of [t => { t.crm_lead_stage_history[0].changed_by = U(999); },
+    t => { t.customers[0].phone = '0911234567'; }, t => { t.crm_lead_stage_history[0].entered_at = SUBMITTED; }]) {
+    const t = stagePolicy(fixture()); change(t); assert.equal((await run(t)).rows.length,0);
+  }
+  const denied = stagePolicy(fixture()); Object.assign(denied.website_intake_receipts[0],
+    {measurement_consent:false,fbc:null,fbp:null,captured_at:null}); syncMetadata(denied);
+  assert.equal((await run(denied)).rows[0].delivery_supported,false);
+  const noFbc = stagePolicy(fixture()); noFbc.website_intake_receipts[0].fbc = null; syncMetadata(noFbc);
+  assert.equal((await run(noFbc)).rows[0].delivery_supported,false);
+  await assert.rejects(run(stagePolicy(fixture()), {fail:'crm_lead_stage_history'}),/SOURCE_UNAVAILABLE/);
+});
+test('known forward Lead stages preserve first Meta event/time; Cold/lost/unknown and revoked evidence remain held',async()=>{
+  const {prepareWebsiteFeedback}=require('../src/modules/marketingAutomation/websiteFeedbackOutbox');
+  const target={company_id:COMPANY,ad_account_id:'act_'+ACCOUNT,site_host:'vanphuthanh.net',dataset_id:'1575398160676100'};
+  const t=stagePolicy(fixture()),first=(await run(t)).rows[0],event=prepareWebsiteFeedback(first,{target,mode:'test'});
+  for(const slug of ['survey_scheduled','survey_done']) {
+    t.crm_pipeline_stages[0].canonical_slug=slug;const next=(await run(t)).rows[0];
+    assert.equal(next.qualified_ms,first.qualified_ms);
+    assert.equal(prepareWebsiteFeedback(next,{target,mode:'test'}).event_id,event.event_id);
+  }
+  for(const slug of ['cold','lost','unknown_forward']) {
+    t.crm_pipeline_stages[0].canonical_slug=slug;
+    assert.equal((await run(t)).diagnostics.stage_policy_held,1);
+  }
+  t.crm_pipeline_stages[0].canonical_slug='survey_done';
+  t.p1_qualification_events.push({...t.p1_qualification_events[0],id:U(999),revision:2,status:'PENDING',qualification_method:'manual_v1'});
+  assert.equal((await run(t)).rows.length,0);
+});
+test('deleted stage-qualified lead does not block a valid website customer or enter feedback source',async()=>{
+  const t=stagePolicy(fixture());
+  t.p1_qualification_events.push({...t.p1_qualification_events[0],id:U(899),canonical_lead_id:U(898),stage_history_id:U(897)});
+  const result=await run(t);assert.equal(result.rows.length,1);assert.equal(result.rows[0].lead_id,t.crm_leads[0].id);
+});
 
 test('new paid website qualification has original matching, time and stable opaque identity; no native Lead ID or PII', async () => {
   const t = fixture(), db = fakeDb(t), result = await build({ db, companyId: COMPANY,

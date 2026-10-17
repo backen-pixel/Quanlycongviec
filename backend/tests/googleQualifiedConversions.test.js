@@ -7,9 +7,10 @@ const A = '991dc79d-cbf5-49f9-a364-35227cb47635', B = '11111111-1111-4111-8111-1
 const FROM = Date.parse('2026-10-01T00:00:00Z'), NOW = Date.parse('2026-10-13T12:00:00Z');
 const GC = 'Cj0KCQ_Real_Synthetic_Click_1234567890';
 function fakeDb(tables, options = {}) {
-  let eventReads = 0;
+  let eventReads = 0; const reads = {};
   return { from(name) {
-    let rows = [...(tables[name] || [])], orders = [], start = 0, end = Infinity;
+    reads[name] = (reads[name] || 0) + 1; options.change?.(name, reads[name], tables);
+    let rows = JSON.parse(JSON.stringify(tables[name] || [])), orders = [], start = 0, end = Infinity;
     if (name === 'p1_qualification_events' && ++eventReads > 1 && options.revokeDuringRead)
       rows.push({ ...tables[name][0], id: 'q-revoke', revision: 2, status: 'PENDING' });
     const q = { select() { return q; }, eq(k, v) { if (options.ignoreFilters !== name) rows = rows.filter(r => r[k] === v); return q; },
@@ -41,6 +42,85 @@ const event = (id = 'L1', rest = {}) => ({ id: `Q-${id}`, company_id: A, canonic
 const tables = () => ({ crm_leads: [lead()], p1_qualification_events: [event()], lead_attribution: [],
   customers: [{ id: 'C1', phone: '0901234567', created_at: '2026-10-02T00:59:30Z' }] });
 const build = (t, opts) => Q.buildGoogleQualifiedConversions({ db: fakeDb(t, opts), companyId: A, fromMs: FROM, toMs: NOW });
+function stagePolicy(t, directDeal = false) {
+  const e = t.p1_qualification_events[0], l = t.crm_leads[0];
+  l.pipeline_id = 'P1';
+  if (directDeal) l.type = 'deal';
+  const h = { id: 'H1', lead_id: l.id, pipeline_type: l.type, from_stage_id: 'S0', to_stage_id: l.stage_id,
+    to_canonical_slug: directDeal ? 'designing' : 'warm', entered_at: e.recorded_at, changed_by: e.actor_id };
+  Object.assign(e, { qualification_method: 'stage_based_v1', stage_history_id: h.id,
+    contact_usable: false, need_in_scope: false, area_in_service: false, evidence_ref: null,
+    stage_evidence: { policy_version: 'stage_based_v1', from_type: 'lead', to_type: l.type,
+      from_stage_id: h.from_stage_id, to_stage_id: h.to_stage_id, to_canonical_slug: h.to_canonical_slug,
+      history_id: h.id, qualified_at: h.entered_at, actor_id: h.changed_by, context_hash: e.context_hash } });
+  t.crm_lead_stage_history = [h];
+  t.crm_pipeline_stages = [{ id: l.stage_id, pipeline_id: l.pipeline_id, canonical_slug: h.to_canonical_slug, is_lost: false, is_active: true }];
+  t.crm_pipelines = [{ id: l.pipeline_id, company_id: A }];
+  return t;
+}
+
+test('explicit Warm/Hot or direct Deal policy exports first time without fabricating manual booleans', async () => {
+  for (const directDeal of [false, true]) {
+    const t = stagePolicy(tables(), directDeal); const first = (await build(t)).rows[0];
+    assert.equal(first.qualification_method, 'stage_based_v1');
+    assert.equal(first.conversion_ms, Date.parse(t.p1_qualification_events[0].recorded_at));
+    t.crm_leads[0].type = 'deal'; t.crm_pipeline_stages[0].canonical_slug = 'designing';
+    assert.equal((await build(t)).rows[0].order_id, first.order_id);
+    assert.equal((await build(t)).rows[0].conversion_ms, first.conversion_ms);
+  }
+});
+test('Cold/lost holds and re-entry resumes one Google order/time; manual revocation remains authoritative', async () => {
+  const t = stagePolicy(tables()), first = (await build(t)).rows[0];
+  for (const change of [() => { t.crm_pipeline_stages[0].canonical_slug = 'cold'; },
+    () => { t.crm_pipeline_stages[0].canonical_slug = 'warm'; t.crm_pipeline_stages[0].is_lost = true; }]) {
+    change(); assert.equal((await build(t)).diagnostics.stage_policy_held, 1);
+  }
+  t.crm_pipeline_stages[0].is_lost = false;
+  assert.equal((await build(t)).rows[0].order_id, first.order_id);
+  t.p1_qualification_events.push(event('L1', { id: 'manual-revoke', revision: 2, status: 'PENDING' }));
+  assert.equal((await build(t)).rows.length, 0);
+});
+test('known forward Lead stages retain first Google order/time without accepting an unrecorded trigger or unknown stage',async()=>{
+  const t=stagePolicy(tables()),first=(await build(t)).rows[0];
+  for(const slug of ['survey_scheduled','survey_done']) {
+    t.crm_pipeline_stages[0].canonical_slug=slug;
+    const next=(await build(t)).rows[0];
+    assert.equal(next.order_id,first.order_id);assert.equal(next.conversion_ms,first.conversion_ms);
+  }
+  t.crm_pipeline_stages[0].canonical_slug='custom_forward_unknown';
+  assert.equal((await build(t)).diagnostics.stage_policy_held,1);
+  t.crm_pipeline_stages[0].canonical_slug='survey_done';
+  t.crm_lead_stage_history[0].to_canonical_slug='survey_done';
+  t.p1_qualification_events[0].stage_evidence.to_canonical_slug='survey_done';
+  assert.equal((await build(t)).diagnostics.invalid_qualification,1);
+});
+test('stage policy cannot bypass source, consent, actual actor/history, context or new-customer gates', async () => {
+  for (const change of [t => { t.crm_lead_stage_history[0].changed_by = 'someone-else'; },
+    t => { t.p1_qualification_events[0].stage_evidence.qualified_at = '2026-10-04T00:00:00Z'; },
+    t => { t.p1_qualification_events[0].contact_usable = true; },
+    t => { t.customers[0].phone = '0911234567'; },
+    t => { t.customers[0].created_at = '2025-01-01T00:00:00Z'; },
+    t => { t.crm_leads[0].website_intake = websiteChoice(false); },
+    t => { t.crm_leads[0].intake_attribution.utm_source = 'facebook'; }]) {
+    const t = stagePolicy(tables()); change(t); assert.equal((await build(t)).rows.length, 0);
+  }
+  await assert.rejects(build(stagePolicy(tables()), { fail: 'crm_lead_stage_history' }), /SOURCE_UNAVAILABLE/);
+});
+test('policy stage config/ownership and a Cold regression during source reads fail closed',async()=>{
+  for(const change of [t=>{t.crm_pipeline_stages[0].is_active=false;},
+    t=>{t.crm_pipelines[0].company_id=B;},t=>{t.crm_pipeline_stages[0].canonical_slug=null;}]){
+    const t=stagePolicy(tables());change(t);assert.equal((await build(t)).diagnostics.stage_policy_held,1);
+  }
+  await assert.rejects(build(stagePolicy(tables()),{change(name,n,t){
+    if(name==='crm_leads' && n===4)t.crm_leads[0].stage_id='COLD';
+  }}),/SOURCE_UNAVAILABLE/);
+});
+test('deleted stage-qualified lead is excluded without blocking another valid customer export',async()=>{
+  const t=stagePolicy(tables());
+  t.p1_qualification_events.push({...t.p1_qualification_events[0],id:'Q-DELETED',canonical_lead_id:'DELETED',stage_history_id:'H-DELETED'});
+  const result=await build(t);assert.deepEqual(result.rows.map(r=>r.lead_id),['L1']);
+  assert.equal(result.diagnostics.missing_or_test_lead,1);
+});
 
 const websiteChoice = consent => ({ version: 1, request_id: '10000000-0000-4000-8000-000000000001',
   api_key_id: '10000000-0000-4000-8000-000000000002', form_id: '11116', site_host: 'vanphuthanh.net',
