@@ -187,8 +187,9 @@ const corsExternalApi = cors({
   maxAge: CORS_PREFLIGHT_MAX_AGE,
 });
 app.use((req, res, next) => {
+  // /api/public: chi doc, khong cookie — website tinh o domain khac goi truc tiep.
   if (req.path.startsWith('/api/external') || req.path.startsWith('/api/mcp')
-    || req.path.startsWith('/api/partner')) {
+    || req.path.startsWith('/api/public') || req.path.startsWith('/api/partner')) {
     return corsExternalApi(req, res, next);
   }
   return corsMainApp(req, res, next);
@@ -444,6 +445,12 @@ try { app.use('/api/partner/v1', require('./routes/partner')); } catch (e) { con
 try { app.use('/api/ad-analytics', require('./routes/adAnalytics')); } catch (e) { console.warn('⚠️ Ad analytics route failed:', e.message); }
 try { app.use('/api/marketing-p1/qualification', require('./routes/p1Qualification')); } catch (e) { console.warn('⚠️ P1 qualification route failed:', e.message); }
 try { app.use('/api/marketing-web', require('./routes/webConversions').createWebConversionsRouter()); } catch (e) { console.warn('⚠️ Web conversions route failed:', e.message); }
+// San pham website ban hang: quan tri trong module marketing, doc cong khai cho static site.
+try {
+  const webCatalog = require('./routes/webCatalog');
+  app.use('/api/marketing-web', webCatalog.adminRouter);
+  app.use('/api/public/web', webCatalog.publicRouter);
+} catch (e) { console.warn('⚠️ Web catalog route failed:', e.message); }
 try {
   app.use('/api/website-feedback', require('./routes/websiteFeedback').createWebsiteFeedbackRouter());
   require('./services/websiteQualifiedFeedback').getWebsiteQualifiedFeedback().start();
