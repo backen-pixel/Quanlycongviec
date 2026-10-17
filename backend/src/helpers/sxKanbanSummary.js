@@ -418,9 +418,10 @@ async function thinScanSummary(ctx, opts = {}) {
   {
     const batch = scanned.rows;
     for (const row of batch) {
+      // Khoá cột HIỂN THỊ (đã ép về «Bàn giao VC» khi dự án đã sang VC) — dùng cho cả badge cột lẫn KPI Đang SX / Chờ VC / Đã VC.
+      const displayKey = displayColumnCountKey(row, stageById, sortedStages, handoverMinOrder);
       if (needColumnCounts) {
-        const key = displayColumnCountKey(row, stageById, sortedStages, handoverMinOrder);
-        counts[key] = (counts[key] || 0) + 1;
+        counts[displayKey] = (counts[displayKey] || 0) + 1;
       }
       total += 1;
       const colId = row?.sx_kanban_column_id ? String(row.sx_kanban_column_id) : null;
@@ -429,7 +430,11 @@ async function thinScanSummary(ctx, opts = {}) {
       if (bucket && Object.prototype.hasOwnProperty.call(deadline_counts, bucket)) {
         deadline_counts[bucket] += 1;
       }
-      const kpiKey = classifyRowStageKpi(row, stage);
+      // KPI theo cột HIỂN THỊ chứ không theo cột thô: web (`ProductionDashboard` cộng badge cột theo cờ cột) và badge cột đã
+      // tính theo cột hiển thị; tính theo cột thô thì dự án bàn giao sang VC mà cột lưu còn «Sản xuất» bị đếm là Đang SX
+      // trong khi nằm ở cột Bàn giao VC (Chờ VC) → app lệch web 1 đơn ở mỗi ô.
+      const kpiStage = (displayKey !== '__none__' && stageById.get(displayKey)) || stage;
+      const kpiKey = classifyRowStageKpi(row, kpiStage);
       if (kpiKey && Object.prototype.hasOwnProperty.call(stage_kpis, kpiKey)) {
         stage_kpis[kpiKey] += 1;
       }

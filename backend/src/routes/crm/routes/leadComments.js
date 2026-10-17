@@ -448,7 +448,8 @@ r.delete('/lead-comments/:cid', async (req, res) => {
     const userId = req.user?.userId;
     if (!userId) return res.status(401).json({ error: 'Unauthorized' });
     const cid = Number(req.params.cid);
-    const isAdmin = isCrmSystemAdminUser(req.user) || isCrmCompanyAdminUser(req.user);
+    // Chỉ ADMIN HỆ THỐNG mới xóa được bình luận của người khác; admin công ty và mọi người còn lại chỉ xóa bình luận của chính mình.
+    const isAdmin = isCrmSystemAdminUser(req.user);
     const { data: existing } = await supabase
       .from('crm_lead_comments')
       .select('lead_id')

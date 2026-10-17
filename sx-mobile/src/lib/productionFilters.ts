@@ -29,7 +29,8 @@ export function isMetallaOrHucabiCompany(company?: CompanyRow | null): boolean {
   if (!company) return false;
   const sn = String(company.short_name || '').trim().toUpperCase();
   const name = String(company.name || '').trim().toLowerCase();
-  return sn === 'HCB' || name.includes('metalla') || name.includes('hucabi');
+  // Danh sách công ty của app có thể chỉ mang TÊN HIỂN THỊ «HCB» (không có short_name, không có chữ «hucabi») — vẫn là xưởng Hucabi.
+  return sn === 'HCB' || name === 'hcb' || name.includes('metalla') || name.includes('hucabi');
 }
 
 export function isMetallaOrHucabiCompanyId(companyId: string | null | undefined, companies: CompanyRow[]): boolean {

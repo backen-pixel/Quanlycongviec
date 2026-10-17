@@ -672,6 +672,19 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
           justifyContent: 'center',
         },
         actionBtnPhoto: { backgroundColor: colors.primary + '14' },
+        fileBadge: {
+          position: 'absolute',
+          top: -3,
+          right: -3,
+          minWidth: 16,
+          height: 16,
+          borderRadius: 8,
+          backgroundColor: colors.primary,
+          alignItems: 'center',
+          justifyContent: 'center',
+          paddingHorizontal: 3,
+        },
+        fileBadgeTxt: { color: '#fff', fontSize: 9, fontWeight: '800' },
         actionBtnVideo: { backgroundColor: '#A855F714' },
         actionBtnPrimary: {
           backgroundColor: colors.primary + '18',
@@ -1183,12 +1196,18 @@ export default function ProjectCrmTaskRow({ task, dealId, onUpdated, onDeleted, 
             )}
           </TapHighlight>
           <TapHighlight
-            style={styles.actionBtn}
+            style={[styles.actionBtn, fileCount > 0 && styles.actionBtnPhoto]}
             pressStyle={styles.actionBtnActive}
             onPress={openAttach}
             hitSlop={4}
+            accessibilityLabel={fileCount > 0 ? `Đính kèm, ${fileCount} file` : 'Đính kèm'}
           >
-            <Ionicons name="attach-outline" size={18} color={colors.textMuted} />
+            <Ionicons name="attach-outline" size={18} color={fileCount > 0 ? colors.primary : colors.textMuted} />
+            {fileCount > 0 ? (
+              <View style={styles.fileBadge}>
+                <Text style={styles.fileBadgeTxt}>{fileCount > 9 ? '9+' : String(fileCount)}</Text>
+              </View>
+            ) : null}
           </TapHighlight>
           <TapHighlight
             style={styles.actionBtn}

@@ -1610,6 +1610,7 @@ export default function ProjectDetailScreen({ route, navigation }: Props) {
               dealId={dealId}
               authorTagUserId={project?.production_person_id}
               onCountChange={setCommentCount}
+              active={tab === 'comments'}
             />
           </View>
         ) : null}

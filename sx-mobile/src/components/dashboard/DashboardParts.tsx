@@ -22,7 +22,8 @@ export type KpiStat = {
   icon: IoniconName;
   /** Màu chủ đạo của ô — chữ số, icon và nền chuyển sắc đều suy từ đây. */
   color: string;
-  onPress: () => void;
+  /** Không truyền = ô chỉ để xem số liệu, không bấm / chuyển màn hình. */
+  onPress?: () => void;
 };
 
 /** Một ô trong lưới Lối tắt. */
@@ -139,6 +140,36 @@ export function KpiCard({
     colorWithAlpha(stat.color, isDark ? 0.46 : 0.2),
     colorWithAlpha(stat.color, isDark ? 0.08 : 0.03),
   ];
+  // Bố cục NGANG: trong lưới 2 cột thẻ đã rộng, xếp dọc icon/số/nhãn làm thẻ
+  // cao gấp đôi mức cần thiết và đẩy nội dung phía dưới xuống sâu.
+  const body = (
+    <LinearGradient
+      colors={grad}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={[s.kpiFill, compact && s.kpiFillCompact]}
+    >
+      <View style={[s.kpiIcon, compact && s.kpiIconCompact, { backgroundColor: stat.color }]}>
+        <Ionicons name={stat.icon} size={compact ? 14 : 16} color={colors.white} />
+      </View>
+      <View style={[s.kpiText, compact && s.kpiTextCompact]}>
+        <Text style={[s.kpiValue, compact && s.kpiValueCompact, { color: stat.color }]}>
+          {stat.value}
+        </Text>
+        <Text style={[s.kpiLabel, compact && s.kpiLabelCompact]} numberOfLines={1}>
+          {stat.label}
+        </Text>
+      </View>
+    </LinearGradient>
+  );
+  // Không có `onPress` → ô chỉ hiển thị (không Pressable, không hiệu ứng nhấn, không chuyển màn hình).
+  if (!stat.onPress) {
+    return (
+      <View style={[s.kpiCard, style]} accessibilityLabel={`${stat.label}: ${stat.value}`}>
+        {body}
+      </View>
+    );
+  }
   return (
     <Pressable
       style={({ pressed }) => [s.kpiCard, style, pressed && s.pressed]}
@@ -146,26 +177,7 @@ export function KpiCard({
       accessibilityRole="button"
       accessibilityLabel={`${stat.label}: ${stat.value}`}
     >
-      {/* Bố cục NGANG: trong lưới 2 cột thẻ đã rộng, xếp dọc icon/số/nhãn làm thẻ
-          cao gấp đôi mức cần thiết và đẩy nội dung phía dưới xuống sâu. */}
-      <LinearGradient
-        colors={grad}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={[s.kpiFill, compact && s.kpiFillCompact]}
-      >
-        <View style={[s.kpiIcon, compact && s.kpiIconCompact, { backgroundColor: stat.color }]}>
-          <Ionicons name={stat.icon} size={compact ? 14 : 16} color={colors.white} />
-        </View>
-        <View style={[s.kpiText, compact && s.kpiTextCompact]}>
-          <Text style={[s.kpiValue, compact && s.kpiValueCompact, { color: stat.color }]}>
-            {stat.value}
-          </Text>
-          <Text style={[s.kpiLabel, compact && s.kpiLabelCompact]} numberOfLines={1}>
-            {stat.label}
-          </Text>
-        </View>
-      </LinearGradient>
+      {body}
     </Pressable>
   );
 }

@@ -20,6 +20,10 @@ export type WorkTabParams = {
   /** Lọc Đội / Tôi — Overview «của tôi» truyền `mine`. */
   scope?: 'mine' | 'team';
   status?: 'all' | 'pending' | 'in_progress' | 'completed' | 'overdue';
+  /** Công ty đang lọc ở Tổng quan — màn «Quá hạn & Hôm nay» của quản lý chọn đúng chip xưởng này. */
+  companyId?: string;
+  /** Mốc thời gian mỗi lần điều hướng: để cùng một `companyId` vẫn áp lại sau khi người dùng đã đổi chip. */
+  at?: number;
 };
 
 export type KanbanTabParams = {
