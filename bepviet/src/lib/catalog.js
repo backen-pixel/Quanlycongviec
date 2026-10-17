@@ -1,14 +1,18 @@
 // Nguồn dữ liệu sản phẩm: ưu tiên API của ERP, hỏng thì rơi về dữ liệu tĩnh.
 //
 // Cấu hình bằng biến môi trường lúc build (Render → Environment):
-//   VITE_API_URL     = https://tubep-backend.onrender.com
-//   VITE_COMPANY_ID  = <uuid công ty sở hữu website, lấy trong ERP → Marketing → Sản phẩm website>
+//   VITE_API_URL   = https://tubep-backend.onrender.com
+//   VITE_SITE_KEY  = mã site trong ERP → Marketing → Website (VD "bepviet")
 //
-// Thiếu một trong hai biến → chạy hoàn toàn bằng dữ liệu tĩnh, web vẫn đầy đủ.
+// VITE_COMPANY_ID vẫn chạy được cho cấu hình cũ, nhưng nên chuyển sang VITE_SITE_KEY:
+// một công ty có thể có nhiều website, company_id không phân biệt được site nào.
+//
+// Thiếu cấu hình → chạy hoàn toàn bằng dữ liệu tĩnh, web vẫn đầy đủ.
 
 import { SAN_PHAM, DANH_MUC, VAT_LIEU } from '../data/sanPham';
 
 const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+const SITE_KEY = import.meta.env.VITE_SITE_KEY || '';
 const COMPANY_ID = import.meta.env.VITE_COMPANY_ID || '';
 const TIMEOUT_MS = 8000;
 
@@ -63,12 +67,16 @@ export function duLieuTinh() {
 }
 
 export async function layDanhMucSanPham() {
-  if (!API_URL || !COMPANY_ID) return duLieuTinh();
+  if (!API_URL || (!SITE_KEY && !COMPANY_ID)) return duLieuTinh();
+
+  const thamSo = SITE_KEY
+    ? `site=${encodeURIComponent(SITE_KEY)}`
+    : `company_id=${encodeURIComponent(COMPANY_ID)}`;
 
   const huy = new AbortController();
   const hen = setTimeout(() => huy.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(`${API_URL}/api/public/web/products?company_id=${encodeURIComponent(COMPANY_ID)}`, {
+    const res = await fetch(`${API_URL}/api/public/web/products?${thamSo}`, {
       signal: huy.signal,
       headers: { Accept: 'application/json' },
     });

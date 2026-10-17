@@ -42,15 +42,21 @@ Mặc định chạy ở http://localhost:5180 — không đụng cổng 5173 c�
 
 ## Nối dữ liệu từ ERP (tùy chọn)
 
-Sản phẩm, giá và danh mục có thể quản lý trong ERP: **module Marketing → tab "Sản phẩm website"**.
-Website đọc qua API công khai, không cần đăng nhập.
+Sản phẩm, giá và danh mục quản lý trong ERP: **module Marketing**. Module này quản lý
+nhiều website; bepviet là một site trong đó, nhận diện bằng **mã site** (`site_key`).
+
+1. ERP → Marketing → **Website** → tạo site, đặt mã site là `bepviet`
+2. ERP → Marketing → **Sản phẩm website** → chọn site `bepviet` → nhập mẫu
 
 Thêm 2 biến môi trường cho Static Site trên Render (**Settings → Environment**):
 
 | Key | Value |
 |---|---|
 | `VITE_API_URL` | `https://tubep-backend.onrender.com` |
-| `VITE_COMPANY_ID` | UUID công ty sở hữu website — hiện sẵn trong tab "Sản phẩm website" |
+| `VITE_SITE_KEY` | `bepviet` — đúng mã site đã đặt trong ERP |
+
+(`VITE_COMPANY_ID` của cấu hình cũ vẫn chạy, nhưng không phân biệt được nhiều site
+trong cùng công ty — nên chuyển sang `VITE_SITE_KEY`.)
 
 Biến đọc lúc **build**, nên đổi xong phải **Manual Deploy → Clear build cache & deploy**.
 
